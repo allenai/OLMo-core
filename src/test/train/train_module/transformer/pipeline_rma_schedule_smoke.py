@@ -51,6 +51,7 @@ def main() -> None:
     local_rank = int(os.environ.get("LOCAL_RANK", rank))
     torch.cuda.set_device(local_rank)
     device = torch.device("cuda", local_rank)
+    p2p_backend = os.getenv("OLMO_RMA_SCHEDULE_SMOKE_BACKEND", "nccl_rma")
 
     num_stages = 4
     local_stage_ids = (rank, rank + world_size)
@@ -64,7 +65,7 @@ def main() -> None:
                 num_stages,
                 device,
                 group=dist.group.WORLD,
-                p2p_backend="nccl_rma",
+                p2p_backend=p2p_backend,
             )
         )
 
@@ -88,7 +89,7 @@ def main() -> None:
 
     dist.barrier()
     if rank == 0:
-        print("Pipeline NCCL RMA schedule smoke test passed", flush=True)
+        print(f"Pipeline {p2p_backend} schedule smoke test passed", flush=True)
     dist.destroy_process_group()
 
 

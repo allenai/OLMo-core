@@ -127,10 +127,14 @@ def test_pipeline_p2p_nccl_cta_caps_validate_range():
         pp_config._validate_p2p_nccl_ctas()
 
 
-def test_pipeline_rma_backend_rejects_nccl_cta_caps():
+@pytest.mark.parametrize(
+    "p2p_backend",
+    [PipelineP2PBackend.nccl_rma, PipelineP2PBackend.nccl_rma_ack],
+)
+def test_pipeline_rma_backend_rejects_nccl_cta_caps(p2p_backend):
     pp_config = TransformerPipelineParallelConfig(
         degree=4,
-        p2p_backend=PipelineP2PBackend.nccl_rma,
+        p2p_backend=p2p_backend,
         p2p_nccl_min_ctas=1,
     )
 
@@ -138,10 +142,14 @@ def test_pipeline_rma_backend_rejects_nccl_cta_caps():
         pp_config._validate_p2p_nccl_ctas()
 
 
-def test_pipeline_rma_backend_requires_custom_stage_implementation():
+@pytest.mark.parametrize(
+    "p2p_backend",
+    [PipelineP2PBackend.nccl_rma, PipelineP2PBackend.nccl_rma_ack],
+)
+def test_pipeline_rma_backend_requires_custom_stage_implementation(p2p_backend):
     pp_config = TransformerPipelineParallelConfig(
         degree=2,
-        p2p_backend=PipelineP2PBackend.nccl_rma,
+        p2p_backend=p2p_backend,
         use_custom_stage_implementation=False,
     )
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import site
 import sys
 from pathlib import Path
@@ -12,43 +13,133 @@ from .cuda_extension_utils import load_cuda_extension
 
 _CUDA_EXTENSION = None
 _CUDA_EXTENSION_ERROR: Optional[Exception] = None
+_MIN_NCCL_RMA_VERSION = 22900
 
 
-def _find_nccl_paths() -> tuple[Path, Path]:
-    include_candidates: list[Path] = []
-    lib_candidates: list[Path] = []
+def _nccl_header_version(include_dir: Path) -> Optional[int]:
+    header = include_dir / "nccl.h"
+    try:
+        text = header.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return None
+
+    match = re.search(r"^\s*#\s*define\s+NCCL_VERSION_CODE\s+(\d+)\s*$", text, re.MULTILINE)
+    if match is None:
+        return None
+    return int(match.group(1))
+
+
+def _nccl_lib_file(lib_dir: Path) -> Optional[Path]:
+    for name in ("libnccl.so.2", "libnccl.so"):
+        path = lib_dir / name
+        if path.is_file():
+            return path
+    return None
+
+
+def _candidate_nccl_paths() -> list[tuple[Path, list[Path], str]]:
+    candidates: list[tuple[Path, list[Path], str]] = []
 
     nccl_include = os.getenv("NCCL_INCLUDE_DIR")
-    if nccl_include:
-        include_candidates.append(Path(nccl_include))
-
     nccl_lib = os.getenv("NCCL_LIB_DIR")
-    if nccl_lib:
-        lib_candidates.append(Path(nccl_lib))
+    if nccl_include or nccl_lib:
+        include_dir = Path(nccl_include) if nccl_include else Path("/usr/include")
+        lib_dirs = [Path(nccl_lib)] if nccl_lib else []
+        if not lib_dirs:
+            lib_dirs.extend(
+                [
+                    include_dir.parent / "lib",
+                    include_dir.parent / "lib64",
+                    Path("/usr/lib/x86_64-linux-gnu"),
+                    Path("/usr/local/cuda/lib64"),
+                ]
+            )
+        candidates.append((include_dir, lib_dirs, "NCCL_INCLUDE_DIR/NCCL_LIB_DIR"))
 
     nccl_home = os.getenv("NCCL_HOME")
     if nccl_home:
         home = Path(nccl_home)
-        include_candidates.append(home / "include")
-        lib_candidates.append(home / "lib")
-        lib_candidates.append(home / "lib64")
+        candidates.append((home / "include", [home / "lib", home / "lib64"], "NCCL_HOME"))
 
     for base in site.getsitepackages() + [site.getusersitepackages()] + sys.path:
         if not base:
             continue
         root = Path(base) / "nvidia" / "nccl"
-        include_candidates.append(root / "include")
-        lib_candidates.append(root / "lib")
+        candidates.append((root / "include", [root / "lib"], str(root)))
 
-    include_dir = next((path for path in include_candidates if (path / "nccl.h").is_file()), None)
-    if include_dir is None:
-        raise RuntimeError("Could not locate NCCL include dir. Set NCCL_INCLUDE_DIR or NCCL_HOME.")
+    candidates.extend(
+        [
+            (
+                Path("/usr/local/cuda/include"),
+                [Path("/usr/local/cuda/lib64"), Path("/usr/local/cuda/lib")],
+                "/usr/local/cuda",
+            ),
+            (
+                Path("/usr/include"),
+                [Path("/usr/lib/x86_64-linux-gnu"), Path("/usr/lib64"), Path("/usr/lib")],
+                "/usr",
+            ),
+        ]
+    )
 
-    lib_dir = next((path for path in lib_candidates if (path / "libnccl.so.2").is_file()), None)
-    if lib_dir is None:
-        raise RuntimeError("Could not locate NCCL lib dir. Set NCCL_LIB_DIR or NCCL_HOME.")
+    return candidates
 
-    return include_dir, lib_dir
+
+def _find_nccl_paths(required_version: int = _MIN_NCCL_RMA_VERSION) -> tuple[Path, Path, Path]:
+    skipped: list[str] = []
+
+    for include_dir, lib_dirs, source in _candidate_nccl_paths():
+        header = include_dir / "nccl.h"
+        if not header.is_file():
+            skipped.append(f"{source}: missing {header}")
+            continue
+
+        header_version = _nccl_header_version(include_dir)
+        if header_version is None:
+            skipped.append(f"{source}: could not parse NCCL_VERSION_CODE from {header}")
+            continue
+        if header_version < required_version:
+            skipped.append(
+                f"{source}: NCCL header version {header_version} is older than {required_version}"
+            )
+            continue
+
+        for lib_dir in lib_dirs:
+            lib_file = _nccl_lib_file(lib_dir)
+            if lib_file is not None:
+                return include_dir, lib_dir, lib_file
+
+        skipped.append(
+            f"{source}: header {header} is usable but no libnccl.so.2/libnccl.so was found "
+            f"in {[str(path) for path in lib_dirs]}"
+        )
+
+    detail = "\n  - ".join(skipped) if skipped else "no NCCL candidates were inspected"
+    raise RuntimeError(
+        "NCCL RMA P2P requires NCCL headers and runtime >= "
+        f"{required_version}. Could not find a usable NCCL install.\n"
+        "Checked candidates:\n"
+        f"  - {detail}\n"
+        "Set NCCL_HOME, or set NCCL_INCLUDE_DIR and NCCL_LIB_DIR, to a NCCL 2.29+ install."
+    )
+
+
+def _nccl_link_flag(lib_file: Path) -> str:
+    if lib_file.name == "libnccl.so.2":
+        return "-l:libnccl.so.2"
+    return "-lnccl"
+
+
+def availability_error() -> Optional[str]:
+    try:
+        _find_nccl_paths()
+    except Exception as e:
+        return str(e)
+    return None
+
+
+def is_available() -> bool:
+    return availability_error() is None
 
 
 def _load_cuda_extension():
@@ -58,7 +149,7 @@ def _load_cuda_extension():
         return _CUDA_EXTENSION
 
     this_dir = Path(__file__).resolve().parent
-    include_dir, lib_dir = _find_nccl_paths()
+    include_dir, lib_dir, lib_file = _find_nccl_paths()
     try:
         _CUDA_EXTENSION = load_cuda_extension(
             base_name="nccl_rma_p2p_ext",
@@ -67,7 +158,7 @@ def _load_cuda_extension():
             extra_include_paths=[include_dir],
             extra_ldflags=[
                 f"-L{lib_dir}",
-                "-lnccl",
+                _nccl_link_flag(lib_file),
                 f"-Wl,-rpath,{lib_dir}",
             ],
             verbose_env_names=("OLMO_NCCL_RMA_EXT_VERBOSE",),
@@ -132,6 +223,11 @@ def put_signal(
 @torch.compiler.disable
 def wait_signal(context_id: int, *, peer: int, op_count: int) -> None:
     _load_cuda_extension().wait_signal(context_id, peer, op_count)
+
+
+@torch.compiler.disable
+def signal(context_id: int, *, peer: int) -> None:
+    _load_cuda_extension().signal(context_id, peer)
 
 
 @torch.compiler.disable

@@ -32,9 +32,10 @@ def main() -> None:
         num_stages=2,
     )
     transport.prepare_step(
-        num_microbatches=1,
+        num_microbatches=4,
         payload_shape=(4, 8),
         payload_dtype=torch.float32,
+        slot_depth=2,
     )
 
     peer = 1 - rank
@@ -48,7 +49,25 @@ def main() -> None:
         handle = op.start()
         handle.wait()
         expected = torch.arange(32, device=device, dtype=torch.float32).view(4, 8) + 101
-        _check_equal("fwd", op.recv_slot, expected)
+        _check_equal("fwd", op.output_tensor, expected)
+        first_output = op.output_tensor
+    dist.barrier()
+
+    if rank == 0:
+        src = torch.arange(32, device=device, dtype=torch.float32).view(4, 8) + 303
+        handle = transport.make_send_op(("F", 0, 1, 2), peer=peer, tensor=src).start()
+        handle.wait()
+    else:
+        op = transport.make_recv_op(("F", 0, 1, 2), peer=peer)
+        handle = op.start()
+        handle.wait()
+        expected = torch.arange(32, device=device, dtype=torch.float32).view(4, 8) + 303
+        _check_equal("fwd reused slot", op.output_tensor, expected)
+        _check_equal(
+            "fwd copied output after slot reuse",
+            first_output,
+            torch.arange(32, device=device, dtype=torch.float32).view(4, 8) + 101,
+        )
     dist.barrier()
 
     if rank == 1:
@@ -60,7 +79,7 @@ def main() -> None:
         handle = op.start()
         handle.wait()
         expected = torch.arange(32, device=device, dtype=torch.float32).view(4, 8) + 202
-        _check_equal("bwd", op.recv_slot, expected)
+        _check_equal("bwd", op.output_tensor, expected)
     dist.barrier()
 
     transport.close()

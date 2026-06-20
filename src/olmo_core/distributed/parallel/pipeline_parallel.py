@@ -81,6 +81,7 @@ class PipelineP2PBackend(StrEnum):
 
     nccl = "nccl"
     nccl_rma = "nccl_rma"
+    nccl_rma_ack = "nccl_rma_ack"
     nccl_device = "nccl_device"
 
 
@@ -115,8 +116,10 @@ class PipelineParallelConfig(Config):
     """
     Pipeline activation/gradient P2P backend. ``nccl`` is the existing
     two-sided torch.distributed P2P path. ``nccl_rma`` is the experimental
-    NCCL 2.29 PutSignal/WaitSignal path. ``nccl_device`` is reserved for a
-    future NCCL device API / GIN backend.
+    NCCL 2.29 PutSignal/WaitSignal path with a bounded receive-slot ring.
+    ``nccl_rma_ack`` is the one-lane RMA path with receiver-free ack
+    communicators. ``nccl_device`` is reserved for a future NCCL device API /
+    GIN backend.
     """
 
     p2p_nccl_min_ctas: Optional[int] = None

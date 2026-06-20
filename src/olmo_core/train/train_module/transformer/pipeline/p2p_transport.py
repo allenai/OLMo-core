@@ -72,6 +72,11 @@ class _RMASendWork(_RMAWork):
     def __init__(self, transport: "NCCLRMAPipelineP2PTransport", op: "RMASendOp") -> None:
         super().__init__()
         _debug(f"send start key={op.key} peer={op.peer} offset={op.offset_bytes}")
+        if op.wait_for_ack:
+            if op.ack_context_id is None:
+                raise RuntimeError("RMA send op requires an ack context but none was provided")
+            _debug(f"send wait ack key={op.key} peer={op.peer} channel={op.channel_index}")
+            nccl_rma_p2p.wait_signal(op.ack_context_id, peer=op.peer, op_count=1)
         op.send_slot.copy_(op.tensor, non_blocking=True)
         nccl_rma_p2p.put_signal(
             transport.context_id,
@@ -110,6 +115,13 @@ class _RMARecvWork(_RMAWork):
                 peer=self.op.peer,
                 op_count=self.op.expected_signal_count,
             )
+            self.op.output_tensor.copy_(self.op.recv_slot, non_blocking=True)
+            if self.op.ack_context_id is not None:
+                _debug(
+                    "send ack "
+                    f"key={self.op.key} peer={self.op.peer} channel={self.op.channel_index}"
+                )
+                nccl_rma_p2p.signal(self.op.ack_context_id, peer=self.op.peer)
             self._record_event()
             self._wait_enqueued = True
             _debug(
@@ -134,6 +146,9 @@ class RMASendOp:
     tensor: torch.Tensor
     send_slot: torch.Tensor
     offset_bytes: int
+    channel_index: int
+    wait_for_ack: bool
+    ack_context_id: Optional[int]
 
     def start(self) -> _RMASendWork:
         return _RMASendWork(self.transport, self)
@@ -145,7 +160,10 @@ class RMARecvOp:
     key: P2PKey
     peer: int
     recv_slot: torch.Tensor
+    output_tensor: torch.Tensor
     expected_signal_count: int
+    channel_index: int
+    ack_context_id: Optional[int]
 
     def start(self) -> _RMARecvWork:
         return _RMARecvWork(self.transport, self)
@@ -158,6 +176,7 @@ class NCCLRMAPipelineP2PTransport:
         group: dist.ProcessGroup,
         device: torch.device,
         num_stages: int,
+        use_ack: bool = False,
     ) -> None:
         if device.type != "cuda":
             raise RuntimeError("NCCL RMA P2P requires a CUDA device")
@@ -167,6 +186,7 @@ class NCCLRMAPipelineP2PTransport:
         self.group_rank = dist.get_rank(group)
         self.group_size = dist.get_world_size(group)
         self.num_stages = num_stages
+        self.use_ack = use_ack
 
         unique_id = _broadcast_nccl_unique_id(group, device)
         self.context_id = nccl_rma_p2p.init(
@@ -175,6 +195,19 @@ class NCCLRMAPipelineP2PTransport:
             world_size=self.group_size,
             device=device.index if device.index is not None else torch.cuda.current_device(),
         )
+        self.num_channels = 2 * max(num_stages - 1, 1)
+        self.ack_context_ids: list[int] = []
+        if self.use_ack:
+            for channel_index in range(self.num_channels):
+                ack_unique_id = _broadcast_nccl_unique_id(group, device)
+                ack_context_id = nccl_rma_p2p.init(
+                    ack_unique_id,
+                    rank=self.group_rank,
+                    world_size=self.group_size,
+                    device=device.index if device.index is not None else torch.cuda.current_device(),
+                )
+                self.ack_context_ids.append(ack_context_id)
+                _debug(f"initialized ack context channel={channel_index}")
 
         self.window_id: Optional[int] = None
         self.window: Optional[torch.Tensor] = None
@@ -183,11 +216,13 @@ class NCCLRMAPipelineP2PTransport:
         self.payload_numel = 0
         self.payload_nbytes = 0
         self.num_microbatches = 0
+        self.slot_depth = 0
         self.num_slots = 0
+        self._send_channel_started = [False for _ in range(self.num_channels)]
         _debug(
             "initialized "
             f"group_rank={self.group_rank} group_size={self.group_size} "
-            f"num_stages={self.num_stages}"
+            f"num_stages={self.num_stages} use_ack={self.use_ack}"
         )
 
     def close(self) -> None:
@@ -195,6 +230,9 @@ class NCCLRMAPipelineP2PTransport:
             nccl_rma_p2p.free_window(self.context_id, self.window_id)
             self.window_id = None
             self.window = None
+        for ack_context_id in self.ack_context_ids:
+            nccl_rma_p2p.destroy(ack_context_id)
+        self.ack_context_ids = []
         nccl_rma_p2p.destroy(self.context_id)
 
     def prepare_step(
@@ -203,13 +241,23 @@ class NCCLRMAPipelineP2PTransport:
         num_microbatches: int,
         payload_shape: tuple[int, ...],
         payload_dtype: torch.dtype,
+        slot_depth: int = 2,
     ) -> None:
+        if num_microbatches < 1:
+            raise RuntimeError(f"NCCL RMA P2P requires at least one microbatch, got {num_microbatches}")
+        if slot_depth < 1:
+            raise RuntimeError(f"NCCL RMA P2P slot_depth must be >= 1, got {slot_depth}")
+        if self.use_ack and slot_depth != 1:
+            raise RuntimeError("NCCL RMA ack mode requires slot_depth=1")
+        slot_depth = min(slot_depth, num_microbatches)
+
         if (
             self.window is not None
-            and self.num_microbatches == num_microbatches
+            and self.slot_depth == slot_depth
             and self.payload_shape == payload_shape
             and self.payload_dtype == payload_dtype
         ):
+            self.num_microbatches = num_microbatches
             return
 
         if self.window_id is not None:
@@ -224,7 +272,8 @@ class NCCLRMAPipelineP2PTransport:
         self.payload_nbytes = (
             self.payload_numel * torch.empty((), dtype=payload_dtype).element_size()
         )
-        self.num_slots = 2 * max(self.num_stages - 1, 1) * num_microbatches
+        self.slot_depth = slot_depth
+        self.num_slots = self.num_channels * slot_depth
 
         window_id, window = nccl_rma_p2p.alloc_window(
             self.context_id,
@@ -235,11 +284,11 @@ class NCCLRMAPipelineP2PTransport:
         self.window = window
         _debug(
             "prepared window "
-            f"num_slots={self.num_slots} payload_shape={payload_shape} "
+            f"num_slots={self.num_slots} slot_depth={slot_depth} payload_shape={payload_shape} "
             f"payload_dtype={payload_dtype}"
         )
 
-    def _slot_index(self, key: P2PKey) -> int:
+    def _channel_index(self, key: P2PKey) -> int:
         kind, src_stage, dst_stage, mb_index = key
         if kind == "F":
             direction = 0
@@ -254,7 +303,13 @@ class NCCLRMAPipelineP2PTransport:
         if not (0 <= mb_index < self.num_microbatches):
             raise RuntimeError(f"Invalid P2P microbatch in key: {key}")
 
-        return (direction * (self.num_stages - 1) + edge_index) * self.num_microbatches + mb_index
+        return direction * (self.num_stages - 1) + edge_index
+
+    def _slot_index(self, key: P2PKey) -> int:
+        channel_index = self._channel_index(key)
+        _kind, _src_stage, _dst_stage, mb_index = key
+        slot_lane = mb_index % self.slot_depth
+        return channel_index * self.slot_depth + slot_lane
 
     def _slot(self, key: P2PKey) -> tuple[int, torch.Tensor]:
         if self.window is None:
@@ -273,7 +328,14 @@ class NCCLRMAPipelineP2PTransport:
             )
         if tensor.dtype != self.payload_dtype:
             raise RuntimeError(f"NCCL RMA P2P tensor dtype {tensor.dtype} does not match {self.payload_dtype}")
+        channel_index = self._channel_index(key)
         slot_index, send_slot = self._slot(key)
+        wait_for_ack = False
+        ack_context_id: Optional[int] = None
+        if self.use_ack:
+            wait_for_ack = self._send_channel_started[channel_index]
+            self._send_channel_started[channel_index] = True
+            ack_context_id = self.ack_context_ids[channel_index]
         _debug(f"make send key={key} peer={peer} slot={slot_index}")
         return RMASendOp(
             transport=self,
@@ -282,10 +344,40 @@ class NCCLRMAPipelineP2PTransport:
             tensor=tensor.contiguous(),
             send_slot=send_slot,
             offset_bytes=slot_index * self.payload_nbytes,
+            channel_index=channel_index,
+            wait_for_ack=wait_for_ack,
+            ack_context_id=ack_context_id,
         )
 
-    def make_recv_op(self, key: P2PKey, *, peer: int) -> RMARecvOp:
+    def make_recv_op(
+        self,
+        key: P2PKey,
+        *,
+        peer: int,
+        output_tensor: Optional[torch.Tensor] = None,
+    ) -> RMARecvOp:
+        channel_index = self._channel_index(key)
         slot_index, recv_slot = self._slot(key)
+        if self.payload_shape is None or self.payload_dtype is None:
+            raise RuntimeError("NCCL RMA P2P transport has not been prepared for this step")
+        if output_tensor is None:
+            output_tensor = torch.empty(
+                self.payload_shape,
+                device=self.device,
+                dtype=self.payload_dtype,
+            )
+        if not output_tensor.is_cuda:
+            raise RuntimeError("NCCL RMA P2P receive output tensor must be CUDA")
+        if tuple(output_tensor.size()) != self.payload_shape:
+            raise RuntimeError(
+                f"NCCL RMA P2P receive output shape {tuple(output_tensor.size())} "
+                f"does not match {self.payload_shape}"
+            )
+        if output_tensor.dtype != self.payload_dtype:
+            raise RuntimeError(
+                f"NCCL RMA P2P receive output dtype {output_tensor.dtype} "
+                f"does not match {self.payload_dtype}"
+            )
         # NCCL 2.29.7 exposes only signal index/context 0, so waits consume one
         # signal from the peer-wide signal queue. Correctness depends on keeping
         # per-peer send order and wait order consistent in the pipeline schedule.
@@ -299,5 +391,8 @@ class NCCLRMAPipelineP2PTransport:
             key=key,
             peer=peer,
             recv_slot=recv_slot,
+            output_tensor=output_tensor,
             expected_signal_count=1,
+            channel_index=channel_index,
+            ack_context_id=self.ack_context_ids[channel_index] if self.use_ack else None,
         )

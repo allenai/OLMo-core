@@ -167,6 +167,33 @@ class CustomScheduleInterleaved1F1B():
             )
         self.configure_pipeline_order()
 
+    def _rma_slot_depth(self) -> int:
+        env_value = os.environ.get("OLMO_NCCL_RMA_P2P_SLOT_DEPTH")
+        if self.p2p_backend == "nccl_rma_ack":
+            if env_value is not None and int(env_value) != 1:
+                raise RuntimeError(
+                    "p2p_backend='nccl_rma_ack' requires OLMO_NCCL_RMA_P2P_SLOT_DEPTH=1"
+                )
+            return 1
+
+        if env_value is not None:
+            slot_depth = int(env_value)
+            if slot_depth < 1:
+                raise RuntimeError(
+                    "OLMO_NCCL_RMA_P2P_SLOT_DEPTH must be >= 1, "
+                    f"got {slot_depth}"
+                )
+            return slot_depth
+
+        if not self.enable_p2p_overlap:
+            return 1
+        if self.max_p2p_overlap_steps is None:
+            raise RuntimeError(
+                "nccl_rma P2P requires a bounded max_p2p_overlap_steps or an explicit "
+                "OLMO_NCCL_RMA_P2P_SLOT_DEPTH"
+            )
+        return max(1, self.max_p2p_overlap_steps + 1)
+
     def __init__(
         self,
         stages: list[CustomPipelineStage],
@@ -203,11 +230,12 @@ class CustomScheduleInterleaved1F1B():
         if any(getattr(stage, "p2p_backend", "nccl") != self.p2p_backend for stage in stages):
             raise RuntimeError("All local pipeline stages must use the same P2P backend")
         self.p2p_transport: Optional[NCCLRMAPipelineP2PTransport] = None
-        if self.p2p_backend == "nccl_rma":
+        if self.p2p_backend in {"nccl_rma", "nccl_rma_ack"}:
             self.p2p_transport = NCCLRMAPipelineP2PTransport(
                 group=stages[0].p2p_group,
                 device=stages[0].device,
                 num_stages=stages[0].num_stages,
+                use_ack=self.p2p_backend == "nccl_rma_ack",
             )
             for stage in stages:
                 stage.set_p2p_transport(self.p2p_transport)
@@ -510,6 +538,7 @@ class CustomScheduleInterleaved1F1B():
                 num_microbatches=self._n_microbatches,
                 payload_shape=tuple(payload_meta.size()),
                 payload_dtype=payload_meta.dtype,
+                slot_depth=self._rma_slot_depth(),
             )
 
         stage_index_to_stage: dict[int, CustomPipelineStage] = {
@@ -604,7 +633,7 @@ class CustomScheduleInterleaved1F1B():
             if not keyed_ops:
                 return
             with nvtx.annotate("P2P", color="blue"):
-                if self.p2p_backend == "nccl_rma":
+                if self.p2p_backend in {"nccl_rma", "nccl_rma_ack"}:
                     handles = [op.start() for _key, _op_kind, op in keyed_ops]
                 else:
                     handles = dist.batch_isend_irecv([op for _key, _op_kind, op in keyed_ops])
@@ -964,6 +993,7 @@ class CustomSchedule1F1BV(CustomScheduleInterleaved1F1B):
                 num_microbatches=self._n_microbatches,
                 payload_shape=tuple(payload_meta.size()),
                 payload_dtype=payload_meta.dtype,
+                slot_depth=self._rma_slot_depth(),
             )
 
         stage_index_to_stage: dict[int, CustomPipelineStage] = {
@@ -992,7 +1022,7 @@ class CustomSchedule1F1BV(CustomScheduleInterleaved1F1B):
         completed_p2p_overlap_compute_steps = 0
 
         def debug(message: str) -> None:
-            if self.p2p_backend != "nccl_rma" or os.environ.get("OLMO_NCCL_RMA_P2P_DEBUG") != "1":
+            if self.p2p_backend not in {"nccl_rma", "nccl_rma_ack"} or os.environ.get("OLMO_NCCL_RMA_P2P_DEBUG") != "1":
                 return
             print(f"[rank {self.rank} pipeline-rma] {message}", flush=True)
 
@@ -1338,7 +1368,7 @@ class CustomSchedule1F1BV(CustomScheduleInterleaved1F1B):
                                 f"peer={peer} key={key} "
                                 f"kinds={[op_kind for _, op_kind, _ in peer_keyed_ops]}"
                             )
-                            if self.p2p_backend == "nccl_rma":
+                            if self.p2p_backend in {"nccl_rma", "nccl_rma_ack"}:
                                 handles = [op.start() for _, _, op in peer_keyed_ops]
                             else:
                                 handles = dist.batch_isend_irecv([op for _, _, op in peer_keyed_ops])

@@ -38,7 +38,15 @@ void check_nccl(ncclResult_t status, const char* expr) {
 #define CUDA_CHECK(cmd) check_cuda((cmd), #cmd)
 #define NCCL_CHECK(cmd) check_nccl((cmd), #cmd)
 
-constexpr int kRequiredNcclVersion = 22900;
+#define OLMO_NCCL_RMA_REQUIRED_VERSION 22900
+
+#if NCCL_VERSION_CODE >= OLMO_NCCL_RMA_REQUIRED_VERSION
+#define OLMO_NCCL_RMA_HAS_API 1
+#else
+#define OLMO_NCCL_RMA_HAS_API 0
+#endif
+
+constexpr int kRequiredNcclVersion = OLMO_NCCL_RMA_REQUIRED_VERSION;
 
 struct WindowInfo {
   ncclWindow_t win = nullptr;
@@ -159,6 +167,15 @@ int runtime_version() {
 }
 
 int init_context(py::bytes unique_id_bytes, int rank, int world_size, int device) {
+#if !OLMO_NCCL_RMA_HAS_API
+  TORCH_CHECK(
+      false,
+      "NCCL RMA prototype was compiled against NCCL header version ",
+      NCCL_VERSION_CODE,
+      ", but NCCL PutSignal/WaitSignal requires header >= ",
+      kRequiredNcclVersion);
+#endif
+
   const int version = runtime_version_unlocked();
   TORCH_CHECK(
       version >= kRequiredNcclVersion,
@@ -242,6 +259,14 @@ void put_signal(
     int peer,
     int window_id,
     size_t peer_window_offset_bytes) {
+#if !OLMO_NCCL_RMA_HAS_API
+  TORCH_CHECK(
+      false,
+      "NCCL RMA put_signal requires NCCL header >= ",
+      kRequiredNcclVersion,
+      ", compiled against ",
+      NCCL_VERSION_CODE);
+#else
   std::lock_guard<std::mutex> lock(g_mutex);
   ContextInfo& ctx = get_context(context_id);
   WindowInfo& window = get_window(ctx, window_id);
@@ -274,9 +299,18 @@ void put_signal(
       0,
       ctx.comm,
       stream));
+#endif
 }
 
 void wait_signal(int context_id, int peer, int op_count) {
+#if !OLMO_NCCL_RMA_HAS_API
+  TORCH_CHECK(
+      false,
+      "NCCL RMA wait_signal requires NCCL header >= ",
+      kRequiredNcclVersion,
+      ", compiled against ",
+      NCCL_VERSION_CODE);
+#else
   std::lock_guard<std::mutex> lock(g_mutex);
   ContextInfo& ctx = get_context(context_id);
   TORCH_CHECK(peer >= 0 && peer < ctx.world_size, "Invalid peer rank: ", peer);
@@ -290,6 +324,26 @@ void wait_signal(int context_id, int peer, int op_count) {
   desc.sigIdx = 0;
   desc.ctx = 0;
   NCCL_CHECK(ncclWaitSignal(1, &desc, ctx.comm, stream));
+#endif
+}
+
+void signal(int context_id, int peer) {
+#if !OLMO_NCCL_RMA_HAS_API
+  TORCH_CHECK(
+      false,
+      "NCCL RMA signal requires NCCL header >= ",
+      kRequiredNcclVersion,
+      ", compiled against ",
+      NCCL_VERSION_CODE);
+#else
+  std::lock_guard<std::mutex> lock(g_mutex);
+  ContextInfo& ctx = get_context(context_id);
+  TORCH_CHECK(peer >= 0 && peer < ctx.world_size, "Invalid peer rank: ", peer);
+
+  c10::cuda::CUDAGuard device_guard(ctx.device);
+  cudaStream_t stream = at::cuda::getCurrentCUDAStream(ctx.device).stream();
+  NCCL_CHECK(ncclSignal(peer, 0, 0, 0, ctx.comm, stream));
+#endif
 }
 
 void free_window(int context_id, int window_id) {
@@ -379,6 +433,12 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
       py::arg("peer"),
       py::arg("op_count"),
       "Enqueue ncclWaitSignal on the current CUDA stream");
+  m.def(
+      "signal",
+      &signal,
+      py::arg("context_id"),
+      py::arg("peer"),
+      "Enqueue ncclSignal on the current CUDA stream");
   m.def("free_window", &free_window, py::arg("context_id"), py::arg("window_id"));
   m.def("destroy", &destroy_context, py::arg("context_id"));
 }

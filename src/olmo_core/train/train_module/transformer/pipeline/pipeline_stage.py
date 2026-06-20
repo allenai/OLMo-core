@@ -149,7 +149,7 @@ class CustomPipelineStage:
                 f"Pipeline group size {self.group_size} cannot be larger than number of stages {self.num_stages}"
             )
 
-        if self.p2p_backend not in {"nccl", "nccl_rma"}:
+        if self.p2p_backend not in {"nccl", "nccl_rma", "nccl_rma_ack"}:
             raise RuntimeError(f"Unsupported custom pipeline P2P backend: {self.p2p_backend}")
 
         # map microbatch ID to list of forward tensor args
@@ -453,9 +453,9 @@ class CustomPipelineStage:
         assert meta is not None
 
         key = ("F", source_stage_index, self.stage_index, fwd_chunk_id)
-        if getattr(self, "p2p_backend", "nccl") == "nccl_rma":
+        if getattr(self, "p2p_backend", "nccl") in {"nccl_rma", "nccl_rma_ack"}:
             op = self._get_rma_recv_op(key, source_stage_index)
-            self.received_activations[fwd_chunk_id] = op.recv_slot
+            self.received_activations[fwd_chunk_id] = op.output_tensor
             return [op]  # type: ignore[list-item]
 
         recv_buffer = _make_tensor_from_meta(meta, self.device)
@@ -481,7 +481,7 @@ class CustomPipelineStage:
         assert buffer.size() == meta.size()
         assert buffer.dtype == meta.dtype
 
-        if getattr(self, "p2p_backend", "nccl") == "nccl_rma":
+        if getattr(self, "p2p_backend", "nccl") in {"nccl_rma", "nccl_rma_ack"}:
             key = ("F", self.stage_index, dst_stage_index, fwd_chunk_id)
             return [self._get_rma_send_op(key, dst_stage_index, buffer.detach())]  # type: ignore[list-item]
 
@@ -507,7 +507,7 @@ class CustomPipelineStage:
         assert send_buffer.size() == meta.size()
         assert send_buffer.dtype == meta.dtype
 
-        if getattr(self, "p2p_backend", "nccl") == "nccl_rma":
+        if getattr(self, "p2p_backend", "nccl") in {"nccl_rma", "nccl_rma_ack"}:
             key = ("B", self.stage_index, dest_stage_index, bwd_chunk_id)
             return [self._get_rma_send_op(key, dest_stage_index, send_buffer.detach())]  # type: ignore[list-item]
 
@@ -531,9 +531,9 @@ class CustomPipelineStage:
         assert meta is not None
 
         key = ("B", source_stage_index, self.stage_index, bwd_chunk_id)
-        if getattr(self, "p2p_backend", "nccl") == "nccl_rma":
+        if getattr(self, "p2p_backend", "nccl") in {"nccl_rma", "nccl_rma_ack"}:
             op = self._get_rma_recv_op(key, source_stage_index)
-            self.received_grads[bwd_chunk_id] = op.recv_slot
+            self.received_grads[bwd_chunk_id] = op.output_tensor
             return [op]  # type: ignore[list-item]
 
         recv_buffer = _make_tensor_from_meta(meta, self.device)
