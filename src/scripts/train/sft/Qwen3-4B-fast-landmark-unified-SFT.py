@@ -28,6 +28,7 @@ from olmo_core.train.callbacks import (
 )
 from olmo_core.train.train_module import (
     TransformerActivationCheckpointingConfig,
+    TransformerContextParallelConfig,
     TransformerDataParallelConfig,
     TransformerDataParallelWrappingStrategy,
     TransformerTrainModuleConfig,
@@ -146,9 +147,14 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
             param_dtype=DType.bfloat16,
             reduce_dtype=DType.float32,
             wrapping_strategy=TransformerDataParallelWrappingStrategy.full,
-            # No CP with packing (cu_doc_lens + CP unsupported); shard with FSDP. Bump if you OOM.
-            shard_degree=8,
+            # CP (degree 8) now carries the long-context sharding (packing + CP supported as of
+            # d9b1289d); replicate params per CP group. Raise this (FSDP per CP group) if you OOM.
+            shard_degree=1,
         ),
+        # Ulysses CP: the fast-landmark mixer gathers the full sequence per rank before the grouped
+        # softmax; packing's cu_doc_lens is supported under CP (per-doc RoPE per shard, mask on the
+        # gathered seq). Shards the 64k window across a node's 8 GPUs -- the long-context memory win.
+        cp_config=TransformerContextParallelConfig.ulysses(degree=8),
         ac_config=TransformerActivationCheckpointingConfig(
             mode=TransformerActivationCheckpointingMode.budget,
             activation_memory_budget=0.7,
