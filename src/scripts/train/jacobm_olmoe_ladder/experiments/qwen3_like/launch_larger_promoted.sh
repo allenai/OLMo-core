@@ -22,6 +22,7 @@ EPHEMERAL_SAVE_INTERVAL="${EPHEMERAL_SAVE_INTERVAL:-500}"
 EVAL_INTERVAL="${EVAL_INTERVAL:-2000}"
 QWEN3_LIKE_VARIANTS="${QWEN3_LIKE_VARIANTS:-active_matched true_3d_depth_matched}"
 MODEL_SIZES="${MODEL_SIZES:-480m 810m}"
+CX_VALUES="${CX_VALUES:-1 2 4 8}"
 
 mkdir -p "${LOG_DIR}"
 
@@ -55,6 +56,16 @@ qwen_tag_for() {
   esac
 }
 
+should_launch_cx() {
+  local want="$1"
+  for cx_value in ${CX_VALUES}; do
+    if [[ "${cx_value}" == "${want}" ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
 launch_one() {
   local model_size="$1"
   local qwen_variant="$2"
@@ -70,6 +81,11 @@ launch_one() {
   if (( global_batch_size_seq % denom != 0 )); then
     echo "Invalid batch settings for ${model_size} ${qwen_variant} Cx${cx}: global_batch_size_seq=${global_batch_size_seq} is not divisible by nodes*gpus*micro_bsz=${denom}" >&2
     exit 1
+  fi
+
+  if ! should_launch_cx "${cx}"; then
+    echo "Skipping ${model_size} ${qwen_variant} Cx${cx}; CX_VALUES=${CX_VALUES}"
+    return 0
   fi
 
   local name="${RUN_PREFIX}-${model_size}-cx${cx}-${qwen_tag}-${lr_tag}-${SWEEP_SUFFIX}"
@@ -176,7 +192,7 @@ launch_model() {
       launch_one 1p2b "${qwen_variant}" "${qwen_tag}" 1 b256k 32 8 2 4e-4 lr4e-4
       launch_one 1p2b "${qwen_variant}" "${qwen_tag}" 2 b384k 48 8 2 6e-4 lr6e-4
       launch_one 1p2b "${qwen_variant}" "${qwen_tag}" 4 b512k 64 8 2 3e-4 lr3e-4
-      launch_one 1p2b "${qwen_variant}" "${qwen_tag}" 8 b768k 96 8 4 2e-4 lr2e-4
+      launch_one 1p2b "${qwen_variant}" "${qwen_tag}" 8 b768k 96 8 4 4e-4 lr4e-4
       ;;
     *)
       echo "Unsupported promoted Qwen3-like model size: ${model_size}" >&2

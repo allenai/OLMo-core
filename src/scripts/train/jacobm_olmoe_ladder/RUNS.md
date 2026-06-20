@@ -1299,3 +1299,21 @@ Queued the first 1.2B Qwen3-like promoted wave after 275M/480M results showed go
 | `q3-1p2b-cx4-q3td128e8k-lr3e-4-r1` | `true_3d_depth_matched` | 1.2B | 4 | 3e-4 | 524,288 | 64 | 8 | 1 | 2 | https://beaker.org/ex/01KVJ34BFBN49YH2AKVSHS0GW5 | Legal accumulation: `64 / (1 * 8 * 2) = 4`. |
 | `q3-1p2b-cx8-q3td128e8k-lr2e-4-r1` | `true_3d_depth_matched` | 1.2B | 8 | 2e-4 | 786,432 | 96 | 8 | 1 | 4 | https://beaker.org/ex/01KVJ34PWJAAAD3AWB58SVQCKT | Legal accumulation: `96 / (1 * 8 * 4) = 3`. |
 
+## 2026-06-20 Qwen3-Like 1.2B Cx8 LR Correction
+
+After adding the same-global-batch 1.2B Cx8 baseline `gpu32-ep1mb1` point to the baseline plots, the corrected best observed Cx8 LR is `4e-4`, not the colder one-node-only `2e-4` view. The original Qwen-like 1.2B Cx8 `2e-4` jobs were stopped before starting and replaced with `4e-4` jobs. The global batch remains `96` sequences / `786,432` tokens, `EP=1`, `mb=4`, one Holmes node, low-priority/preemptible, compile-on, and Beaker-reported `autoResume=true`.
+
+Stopped colder Cx8 jobs:
+
+| Name | Variant | LR | Beaker | Finalized UTC | Notes |
+| --- | --- | ---: | --- | --- | --- |
+| `q3-1p2b-cx8-q3am128e8k-lr2e-4-r1` | `active_matched` | 2e-4 | https://beaker.org/ex/01KVJ335S4S3YXSVDQ56NX4PG1 | 2026-06-20 09:05 | Stopped before scheduling/starting. |
+| `q3-1p2b-cx8-q3td128e8k-lr2e-4-r1` | `true_3d_depth_matched` | 2e-4 | https://beaker.org/ex/01KVJ34PWJAAAD3AWB58SVQCKT | 2026-06-20 09:05 | Stopped before scheduling/starting. |
+
+Replacement Cx8 jobs:
+
+| Name | Variant | Model | Cx | LR | Batch tokens | GBS seq | GPUs | EP | MB | Beaker | Notes |
+| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |
+| `q3-1p2b-cx8-q3am128e8k-lr4e-4-r1` | `active_matched` | 1.2B | 8 | 4e-4 | 786,432 | 96 | 8 | 1 | 4 | https://beaker.org/ex/01KVJ4GXHKR0DP3PXHPR5ZZ6GB | Legal accumulation: `96 / (1 * 8 * 4) = 3`. |
+| `q3-1p2b-cx8-q3td128e8k-lr4e-4-r1` | `true_3d_depth_matched` | 1.2B | 8 | 4e-4 | 786,432 | 96 | 8 | 1 | 4 | https://beaker.org/ex/01KVJ4H8PTJDJCGHHFRB8CD3GP | Legal accumulation: `96 / (1 * 8 * 4) = 3`. |
+
