@@ -13,7 +13,6 @@ from olmo_core.float8 import Float8Config
 from olmo_core.internal.common import build_launch_config, get_root_dir, get_work_dir
 from olmo_core.internal.experiment import CliContext, ExperimentConfig, main
 from olmo_core.launch.beaker import BeakerLaunchConfig, OLMoCoreBeakerImage
-from olmo_core.nn.lm_head import LMLossImplementation
 from olmo_core.nn.transformer import (
     TransformerActivationCheckpointingMode,
     TransformerConfig,
@@ -34,55 +33,49 @@ from olmo_core.train.train_module import (
 )
 
 # ---------------------------------------------------------------------------
-# Single-epoch SFT for Qwen3-4B + SPARSE LANDMARK attention, with CORRECTLY-MASKED
-# sequence packing (each conversation is its own document; no cross-document attention).
+# Unified task-suite SFT for Qwen3-4B + FAST LANDMARK attention, with correctly-masked
+# sequence packing (each suite example is its own document; no cross-document attention).
 #
-# The packed counterpart of ``Qwen3-4B-sparse-landmark-SFT.py``. The difference is entirely in the
-# data pipeline:
+# This is the multitask counterpart of Qwen3-4B-fast-landmark-packed-SFT.py: the data is the
+# *combined* suite SFT mix produced by src/scripts/data/convert_unified_to_sft.py (vendored
+# build_prompt -> Qwen3 chat template -> EOS-separated token_ids/labels_mask shards). The model,
+# packing, and parallelism are identical to the packed RLHN/RAG script -- only the dataset path
+# changes. Eval is the oe-eval cr_* suite (branch prasann/longctx-eval), whose prompts use the
+# SAME build_prompt, so train and eval inputs are byte-identical.
 #
-#   * Data: ``LandmarkPackingInstanceSource`` (NOT ``ConcatAndChunk -> LandmarkInstanceSource``).
-#     It inserts landmark tokens *per document* (each document occupies a whole number of landmark
-#     chunks), greedily packs whole documents into ``SEQUENCE_LENGTH`` windows, and emits block-
-#     aligned ``doc_lens``. The trainer forwards those to the model; sparse landmark then masks so a
-#     query only attends to *past chunks' landmarks within its own document* (and its own chunk),
-#     with RoPE positions reset per document. Over-long documents are dropped (a warning is logged if
-#     many are -- raise ``SEQUENCE_LENGTH`` if so).
-#
-#   * ``generate_doc_lengths`` is left False: boundaries come from the packing source, not EOS tokens.
-#     (EOS-derived boundaries are NOT chunk-aligned and the landmark attention would reject them --
-#     the guard against the *wrong* kind of packing.)
-#
-# Parallelism is unchanged from the cross-attending sparse script: SparseLandmarkAttention does not
-# support context parallelism, so each rank processes the full window and we shard with FSDP
-# (shard_degree=8) + full activation checkpointing. (Context parallelism is doubly out here: it is
-# also incompatible with packing's cu_doc_lens.)
+#   * Data: LandmarkPackingInstanceSource over a NumpyDocumentSource of the combined shards --
+#     per-document landmark insertion + greedy packing + block-aligned doc_lens.
+#   * generate_doc_lengths=False (boundaries come from the packing source, not EOS).
+#   * NO context parallelism (cu_doc_lens + CP unsupported by landmark attn); shard with FSDP.
 # ---------------------------------------------------------------------------
 
 MEM_FREQ = 63
-BLOCK_SIZE = MEM_FREQ + 1  # 64 (the sparse "chunk" size L)
+BLOCK_SIZE = MEM_FREQ + 1  # 64
 SEQUENCE_LENGTH = 65536  # emitted (landmark-space) instance length; must be divisible by BLOCK_SIZE
 
 LANDMARK_TOKEN_ID = 151860  # Qwen3 reserved token used as the landmark (memory) token
 
-RLHN_DATASET_PATH = "/weka/oe-training-default/ai2-llm/checkpoints/amandab/rlhn_sft_qwen_63k"
-RAG_NEAR_DATASET_PATH = (
-    "/weka/oe-training-default/ai2-llm/checkpoints/prasanns/rag_sft_qwen/nq_hotpotqa_near"
-)
+# Combined suite SFT shards (token_ids_part_*.npy + labels_mask_*.npy), written by
+# convert_unified_to_sft.py from the combined unified JSONL. Override via --dataset path or here.
+DATA_ROOT = "/weka/oe-training-default/ai2-llm/checkpoints/prasanns/suite_it_sft_qwen/combined"
 
 
 def resolve_dataset_path(run_name: str) -> str:
-    """NEAR rung (NQ+HotpotQA RAG-QA) when the run name contains 'rag', else the FAR (RLHN) rung."""
-    return RAG_NEAR_DATASET_PATH if "rag" in run_name else RLHN_DATASET_PATH
+    """Single combined suite mix (no per-task selection)."""
+    return DATA_ROOT
 
 
-BASE_CHECKPOINT = "/weka/oe-training-default/ai2-llm/checkpoints/q4b-sparse-landmark-dolma3longmino/step2385/model_and_optim"
+# Fast-landmark CPT checkpoint to initialize from (same base as the packed RLHN/RAG SFT).
+BASE_CHECKPOINT = "/weka/oe-training-default/ai2-llm/checkpoints/q4b-fast-landmark-dolma3longmino/step2385/model_and_optim"
 
 NUM_NODES = 4
 
+# Global batch in *tokens* (incl. landmark + pad). rank_microbatch=SEQUENCE_LENGTH, 32 GPUs, no CP
+# (each rank its own DP replica) -> SEQUENCE_LENGTH * 32 ~ 2M tokens.
 GLOBAL_BATCH_SIZE = SEQUENCE_LENGTH * 32
 
 LR = 5e-5
-NUM_EPOCHS = 1
+NUM_EPOCHS = 1  # large multitask mix; raise if undertrained
 
 
 def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
@@ -91,7 +84,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     )
     root_dir = get_root_dir(cli_context.cluster)
     work_dir = get_work_dir(root_dir)
-    save_dir = f"{root_dir}/checkpoints/{cli_context.run_name}"
+    save_dir = f"{root_dir}/checkpoints/prasanns/{cli_context.run_name}"
 
     beaker_launch_config: Optional[BeakerLaunchConfig] = build_launch_config(
         name=cli_context.run_name,
@@ -110,15 +103,12 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
 
     model_config = TransformerConfig.qwen3_4B(
         vocab_size=tokenizer_config.padded_vocab_size(),
-        sparse_landmark=True,
+        fast_landmark=True,
         mem_freq=MEM_FREQ,
-        num_landmarks=1,
     )
-    # Fused linear cross-entropy (Liger): never materializes the full 64k x vocab logits.
-    model_config.lm_head.loss_implementation = LMLossImplementation.fused_linear
 
     train_module_config = TransformerTrainModuleConfig(
-        rank_microbatch_size=SEQUENCE_LENGTH,  # full window per rank (no CP)
+        rank_microbatch_size=SEQUENCE_LENGTH,  # one packed window per rank
         max_sequence_length=SEQUENCE_LENGTH,
         optim=SkipStepAdamWConfig(
             lr=LR,
@@ -135,20 +125,20 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
             param_dtype=DType.bfloat16,
             reduce_dtype=DType.float32,
             wrapping_strategy=TransformerDataParallelWrappingStrategy.full,
+            # No CP with packing (cu_doc_lens + CP unsupported); shard with FSDP. Bump if you OOM.
             shard_degree=8,
         ),
-        # No context parallelism (sparse landmark doesn't support it, and packing's cu_doc_lens is
-        # incompatible with CP regardless); full activation checkpointing for the 64k window.
         ac_config=TransformerActivationCheckpointingConfig(
-            mode=TransformerActivationCheckpointingMode.full,
+            mode=TransformerActivationCheckpointingMode.budget,
+            activation_memory_budget=0.7,
         ),
         float8_config=Float8Config(enabled=False),
         z_loss_multiplier=None,
         max_grad_norm=1.0,
     )
 
-    # Packed landmark SFT data pipeline (chunk-aligned, intra-document masked):
-    #   NumpyDocumentSource (EOS-delimited SFT examples + labels_mask)
+    # Packed landmark SFT pipeline (block-aligned, intra-document masked):
+    #   NumpyDocumentSource (EOS-delimited examples + labels_mask)
     #     -> LandmarkPackingInstanceSource (per-doc landmark insertion + greedy packing + doc_lens)
     clean_path = resolve_dataset_path(cli_context.run_name).rstrip("/")
     instance_source_config = LandmarkPackingInstanceSourceConfig(
@@ -170,9 +160,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         global_batch_size=GLOBAL_BATCH_SIZE,
         seed=34521,
         num_workers=4,
-        # IMPORTANT: leave generate_doc_lengths=False -- the packing source emits chunk-aligned
-        # doc_lens; EOS-derived doc_lens would NOT be chunk-aligned and would be rejected.
-        generate_doc_lengths=False,
+        generate_doc_lengths=False,  # doc_lens come from the packing source (block-aligned)
     )
 
     trainer_config = (
@@ -228,9 +216,9 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
 
 if __name__ == "__main__":
     """
-    Single-epoch packed (intra-document masked) SFT of Qwen3-4B + sparse-landmark attention.
+    Single-epoch packed (intra-document masked) unified-suite SFT of Qwen3-4B + fast-landmark.
 
-        python src/scripts/train/sft/Qwen3-4B-sparse-landmark-packed-SFT.py \\
-            launch q4b-sparse-landmark-packed-sft ai2/jupiter-cirrascale-2
+        python src/scripts/train/sft/Qwen3-4B-fast-landmark-unified-SFT.py \\
+            launch q4b-fast-landmark-unified-sft ai2/jupiter-cirrascale-2
     """
     main(config_builder=build_experiment_config)

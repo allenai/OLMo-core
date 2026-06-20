@@ -155,8 +155,8 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     #     -> LandmarkPackingInstanceSource (per-doc landmark insertion + greedy packing + doc_lens)
     clean_path = resolve_dataset_path(cli_context.run_name).rstrip("/")
     instance_source_config = LandmarkPackingInstanceSourceConfig(
-        source=NumpyDocumentSourceConfig.from_npy(
-            f"{clean_path}/token_ids_part_*.npy",
+        source=NumpyDocumentSourceConfig(
+            source_paths=[f"{clean_path}/token_ids_part_*.npy"],
             tokenizer=tokenizer_config,
             label_mask_paths=[f"{clean_path}/labels_mask_*.npy"],
             expand_glob=True,
