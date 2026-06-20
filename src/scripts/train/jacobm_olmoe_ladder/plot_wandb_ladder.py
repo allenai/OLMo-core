@@ -76,7 +76,7 @@ CANONICAL_FAMILY_BY_MODEL_CX = {
         1: ("gpu8-ep1mb2", "original"),
         2: ("b384k", "original"),
         4: ("gpu8-ep1mb2", "original"),
-        8: ("gpu8-ep1mb4", "original"),
+        8: ("gpu8-ep1mb4", "gpu32-ep1mb1", "original"),
     },
 }
 

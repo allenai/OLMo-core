@@ -14,6 +14,7 @@ CURRENT_FAMILY_MARKERS = (
     "gpu8-ep1mb2",
     "gpu8-ep1mb4",
     "gpu8-ep1mb16",
+    "gpu32-ep1mb1",
 )
 
 LR_TAG_RE = re.compile(r"lr([0-9]+(?:\.[0-9]+)?e-[0-9]+)")
@@ -118,6 +119,7 @@ def family_label_from_name(name: str) -> str:
     if "b384k" in name and "gpu2-ep1mb8" in name:
         return "b384k-gpu2-ep1mb8"
     for marker in (
+        "gpu32-ep1mb1",
         "gpu8-ep1mb16",
         "gpu8-ep1mb4",
         "gpu8-ep1mb2",
