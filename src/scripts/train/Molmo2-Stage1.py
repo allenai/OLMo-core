@@ -19,7 +19,7 @@ Run without arguments for usage. Quick local smoke test on synthetic data::
 import logging
 import sys
 from dataclasses import dataclass
-from typing import List, cast
+from typing import List, Optional, cast
 
 from olmo_core.config import Config, DType
 from olmo_core.data.multimodal import (
@@ -50,6 +50,7 @@ from olmo_core.train.callbacks import (
     ConfigSaverCallback,
     GarbageCollectorCallback,
     GPUMemoryMonitorCallback,
+    WandBCallback,
 )
 from olmo_core.train.train_module import (
     MultimodalTransformerTrainModuleConfig,
@@ -89,6 +90,11 @@ BEAKER_CLUSTER = "ai2/jupiter"
 NUM_NODES = 1
 BEAKER_WORKSPACE = "ai2/OLMo-core"
 BEAKER_BUDGET = "ai2/oe-other"
+
+# Logging. Set WANDB_PROJECT to None to disable W&B (requires the WANDB_API_KEY secret
+# in the Beaker workspace). Metrics always go to the console regardless.
+WANDB_PROJECT: Optional[str] = "molmo2-stage1"
+WANDB_ENTITY: Optional[str] = "ai2"
 
 ###########################
 #### END CONFIGURATION ####
@@ -188,6 +194,16 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
         .with_callback(
             "checkpointer",
             CheckpointerCallback(save_interval=2000, ephemeral_save_interval=500, save_async=True),
+        )
+        .with_callback(
+            "wandb",
+            WandBCallback(
+                name=run_name,
+                entity=WANDB_ENTITY,
+                project=WANDB_PROJECT,
+                enabled=WANDB_PROJECT is not None,
+                cancel_check_interval=10,
+            ),
         )
         .with_callback("config_saver", ConfigSaverCallback())
         .with_callback("garbage_collector", GarbageCollectorCallback())
