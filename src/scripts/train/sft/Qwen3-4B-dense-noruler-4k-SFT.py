@@ -13,7 +13,7 @@ from olmo_core.internal.common import build_launch_config, get_root_dir, get_wor
 from olmo_core.internal.experiment import CliContext, ExperimentConfig, main
 from olmo_core.launch.beaker import BeakerLaunchConfig, OLMoCoreBeakerImage
 from olmo_core.nn.attention import AttentionBackendName
-from olmo_core.nn.transformer import TransformerActivationCheckpointingMode, TransformerConfig
+from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import LinearWithWarmup, OptimGroupOverride, SkipStepAdamWConfig
 from olmo_core.train import Duration, LoadStrategy, TrainerConfig
 from olmo_core.train.callbacks import (
@@ -23,7 +23,6 @@ from olmo_core.train.callbacks import (
     WandBCallback,
 )
 from olmo_core.train.train_module import (
-    TransformerActivationCheckpointingConfig,
     TransformerDataParallelConfig,
     TransformerDataParallelWrappingStrategy,
     TransformerTrainModuleConfig,
@@ -123,11 +122,9 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
             # (~0.5B params/GPU) fits comfortably; the 8 ranks are still the data-parallel dim.
             shard_degree=8,
         ),
-        # No CP: at 4k the sequence fits comfortably on one GPU; FSDP handles param/optim memory.
-        ac_config=TransformerActivationCheckpointingConfig(
-            mode=TransformerActivationCheckpointingMode.budget,
-            activation_memory_budget=0.7,
-        ),
+        # No CP and no activation checkpointing: at 4k with FSDP sharding the per-GPU model (~0.5B
+        # params) and activations are small enough to fit on 80GB without either. (AC 'budget' mode
+        # also requires compile, which we disable for fast startup on this tiny probe.)
         float8_config=Float8Config(enabled=False),
         z_loss_multiplier=None,
         max_grad_norm=1.0,
