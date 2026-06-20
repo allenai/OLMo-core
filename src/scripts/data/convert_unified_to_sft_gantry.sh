@@ -41,6 +41,8 @@ gantry run \
   --workspace "${WORKSPACE}" \
   --budget "${BUDGET}" \
   "${CLUSTER_ARGS[@]}" \
+  --python-manager conda \
+  --system-python \
   --weka "${WEKA}:/weka/${WEKA}" \
   --cpus "${CPUS}" \
   --gpus 0 \
@@ -49,6 +51,6 @@ gantry run \
   --shared-memory 32GiB \
   --timeout 0 \
   --env TOKENIZERS_PARALLELISM=true \
-  --install "pip install -e ." \
+  --install "pip install -e . && pip install transformers numpy jinja2" \
   --yes \
   -- python src/scripts/data/convert_unified_to_sft.py "$@"
