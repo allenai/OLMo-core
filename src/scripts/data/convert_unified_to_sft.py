@@ -197,18 +197,28 @@ def main() -> None:
     assert tok.vocab_size <= np.iinfo(TOKEN_DTYPE).max
 
     writer = ShardWriter(args.out_dir, args.flush_tokens)
-    n_written = n_skipped_too_long = n_skipped_bad = 0
+    n_written = n_skipped_too_long = n_skipped_bad = n_skipped_build = 0
     by_task: dict = {}
+    skipped_build_by_task: dict = {}
 
     for example in iter_examples(args.input_jsonl, args.limit, args.limit_per_file):
         task = example.get("_task", args.task)
         cot_mode = example.get("_cot_mode", args.cot_mode)
         if task is None:
             raise ValueError("Row has no '_task' and --task was not provided.")
-        user_content, answer = build_prompt(
-            example, task=task, query_position=args.query_position,
-            use_alpaca=False, cot_mode=cot_mode,
-        )
+        try:
+            user_content, answer = build_prompt(
+                example, task=task, query_position=args.query_position,
+                use_alpaca=False, cot_mode=cot_mode,
+            )
+        except (KeyError, ValueError, TypeError, IndexError) as e:
+            # Schema/build mismatch (e.g. a HELMET-rerank row tagged `rerank` lacks `documents`).
+            # Skip + count per task rather than killing the whole job; the summary surfaces it.
+            n_skipped_build += 1
+            skipped_build_by_task[task] = skipped_build_by_task.get(task, 0) + 1
+            if skipped_build_by_task[task] <= 3:
+                log.warning("build_prompt failed for _task=%s (%s: %s); skipping row.", task, type(e).__name__, e)
+            continue
         # Cheap pre-filter before paying for a long tokenization.
         if len(user_content) + len(answer) > args.max_seq_len * 8:
             n_skipped_too_long += 1
@@ -255,6 +265,8 @@ def main() -> None:
         "num_parts": writer.part,
         "skipped_too_long": n_skipped_too_long,
         "skipped_bad": n_skipped_bad,
+        "skipped_build_error": n_skipped_build,
+        "skipped_build_by_task": skipped_build_by_task,
     }
     with open(os.path.join(args.out_dir, "metadata.json"), "w") as f:
         json.dump(meta, f, indent=2)
