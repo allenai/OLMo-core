@@ -157,7 +157,7 @@ class SamplingInstanceSource(InstanceSource):
                 self.work_dir / f"{self.fingerprint}-{source.fingerprint}-indices.npy"
             )
             source_sample_paths.append(source_sample_path)
-            if self.fs_local_rank == 0:
+            if self.fs_local_rank == 0 and not source_sample_path.is_file():
                 n_repetitions = sample_size // len(source)
                 remaining_sample_size = sample_size % len(source)
                 source_indices = build_global_indices(
