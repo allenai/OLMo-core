@@ -67,6 +67,7 @@ from .checkpoint import Checkpointer
 from .common import (
     TRAIN_CE_LOSS_METRIC,
     TRAIN_PPL_METRIC,
+    WEIGHTED_MEAN_WEIGHT_PREFIX,
     Duration,
     DurationUnit,
     LoadStrategy,
@@ -1041,6 +1042,7 @@ class Trainer:
         reduce_type: Optional[ReduceType] = None,
         namespace: Optional[str] = None,
         merge_strategy: MetricMergeStrategy = MetricMergeStrategy.warn,
+        weight: Optional[Union[float, torch.Tensor]] = None,
     ):
         """
         Record a new metric for the current step.
@@ -1054,15 +1056,55 @@ class Trainer:
             ``None`` means no reduction.
         :param namespace: A namespace to record the metric under, i.g. "train" or "optim".
         :param merge_strategy: How to merge metrics when duplicates are logged.
+        :param weight: The weight for the metric. Required when ``reduce_type`` is
+            :data:`ReduceType.weighted_mean`.
         """
         if namespace is not None:
             name = f"{namespace.rstrip('/')}/{name.lstrip('/')}"
 
-        if not isinstance(value, torch.Tensor):
-            value = torch.tensor(value)
-        else:
-            value = get_local_tensor(value.detach()).float()
+        value = self._to_metric_tensor(value)
 
+        if reduce_type == ReduceType.weighted_mean:
+            if weight is None:
+                raise ValueError(
+                    "'weight' is required when reduce_type is ReduceType.weighted_mean"
+                )
+            weight = self._to_metric_tensor(weight, like=value)
+            value = value * weight
+        elif weight is not None:
+            raise ValueError(
+                "'weight' should only be provided when reduce_type is ReduceType.weighted_mean"
+            )
+
+        self._store_metric(name, value, reduce_type, merge_strategy)
+
+        if reduce_type == ReduceType.weighted_mean:
+            weight_name = WEIGHTED_MEAN_WEIGHT_PREFIX + name
+            self._store_metric(weight_name, weight, ReduceType.sum, merge_strategy)
+
+    @staticmethod
+    def _to_metric_tensor(
+        value: Union[float, torch.Tensor],
+        *,
+        like: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        if isinstance(value, torch.Tensor):
+            tensor = get_local_tensor(value.detach())
+        else:
+            tensor = torch.tensor(value)
+
+        tensor = tensor.float()
+        if like is not None:
+            tensor = tensor.to(device=like.device, dtype=like.dtype)
+        return tensor
+
+    def _store_metric(
+        self,
+        name: str,
+        value: torch.Tensor,
+        reduce_type: Optional[ReduceType],
+        merge_strategy: MetricMergeStrategy,
+    ):
         if self.global_step not in self._metrics:
             self._metrics[self.global_step] = OrderedDict()
 
