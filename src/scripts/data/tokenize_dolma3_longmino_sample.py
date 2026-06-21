@@ -116,6 +116,13 @@ def iter_texts(shard_path: str):
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--out-dir", default=DEFAULT_OUT)
+    parser.add_argument(
+        "--tokenizer",
+        default=TOKENIZER,
+        help="HF tokenizer to use. Default is the Qwen3.5 tokenizer; pass e.g. 'Qwen/Qwen3-0.6B' "
+        "to produce shards compatible with the Qwen3-4B (eos 151643) model line. The doc "
+        "separator '<|endoftext|>' is resolved per-tokenizer.",
+    )
     parser.add_argument("--target-tokens", type=int, default=15_000_000_000)
     parser.add_argument("--flush-tokens", type=int, default=500_000_000)  # ~2 GB part files
     parser.add_argument("--batch-docs", type=int, default=1000)
@@ -146,15 +153,15 @@ def main() -> None:
 
     from transformers import AutoTokenizer
 
-    tok = AutoTokenizer.from_pretrained(TOKENIZER)
+    tok = AutoTokenizer.from_pretrained(args.tokenizer)
     assert tok.vocab_size <= np.iinfo(DTYPE).max
     eos_token_id = tok.convert_tokens_to_ids(SEP_TOKEN)
     assert eos_token_id is not None and eos_token_id != tok.unk_token_id, (
-        f"tokenizer {TOKENIZER!r} has no {SEP_TOKEN!r} token"
+        f"tokenizer {args.tokenizer!r} has no {SEP_TOKEN!r} token"
     )
     assert eos_token_id <= np.iinfo(DTYPE).max
     log.info(
-        f"Using tokenizer {TOKENIZER!r} (vocab {tok.vocab_size:,}, "
+        f"Using tokenizer {args.tokenizer!r} (vocab {tok.vocab_size:,}, "
         f"doc separator {SEP_TOKEN!r}={eos_token_id})"
     )
 
@@ -223,7 +230,7 @@ def main() -> None:
                     "next_part": next_part,
                     "target_tokens": args.target_tokens,
                     "dataset": DATASET,
-                    "tokenizer": TOKENIZER,
+                    "tokenizer": args.tokenizer,
                     "eos_token_id": eos_token_id,
                     "dtype": "uint32",
                 },
@@ -293,7 +300,7 @@ def main() -> None:
                 "next_part": next_part,
                 "target_tokens": args.target_tokens,
                 "dataset": DATASET,
-                "tokenizer": TOKENIZER,
+                "tokenizer": args.tokenizer,
                 "eos_token_id": eos_token_id,
                 "dtype": "uint32",
                 "complete": total_tokens >= args.target_tokens,
