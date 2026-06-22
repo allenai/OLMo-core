@@ -17,15 +17,39 @@ packer), this carries variable-shape image tensors alongside the token sequence.
 
 from .collator import MultimodalCollator, MultimodalCollatorConfig
 from .data_loader import MultimodalDataLoader
+from .mixture_data_loader import MixtureDataLoader
 from .pixmo_cap import PixMoCapDataset, PixMoCapDatasetConfig
-from .sequence_builder import ATTEND_ALL_SUBSEGMENT_ID, build_packed_sequence
+from .pixmo_points import (
+    CoSynPointDataset,
+    CoSynPointDatasetConfig,
+    PixMoCountDataset,
+    PixMoCountDatasetConfig,
+    PixMoPointsDataset,
+    PixMoPointsDatasetConfig,
+)
+from .sequence_builder import (
+    ATTEND_ALL_SUBSEGMENT_ID,
+    build_branched_sequence,
+    build_packed_sequence,
+)
+from .tulu import Tulu4Dataset, Tulu4DatasetConfig
 
 __all__ = [
     "PixMoCapDataset",
     "PixMoCapDatasetConfig",
+    "PixMoPointsDataset",
+    "PixMoPointsDatasetConfig",
+    "PixMoCountDataset",
+    "PixMoCountDatasetConfig",
+    "CoSynPointDataset",
+    "CoSynPointDatasetConfig",
+    "Tulu4Dataset",
+    "Tulu4DatasetConfig",
     "MultimodalCollator",
     "MultimodalCollatorConfig",
     "MultimodalDataLoader",
+    "MixtureDataLoader",
     "build_packed_sequence",
+    "build_branched_sequence",
     "ATTEND_ALL_SUBSEGMENT_ID",
 ]

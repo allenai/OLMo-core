@@ -66,17 +66,16 @@ class MultimodalCollator:
     def _pad_1d(self, arrays: List[np.ndarray], value, max_len: int, dtype) -> torch.Tensor:
         out = np.full((len(arrays), max_len), value, dtype=dtype)
         for i, a in enumerate(arrays):
-            out[i, : len(a)] = a
+            k = min(len(a), max_len)
+            out[i, :k] = a[:k]
         return torch.from_numpy(out)
 
     def __call__(self, examples: List[Dict[str, Any]]) -> Dict[str, torch.Tensor]:
         max_len = max(len(ex["input_ids"]) for ex in examples)
         if self.pad_sequence_length is not None:
-            if max_len > self.pad_sequence_length:
-                raise ValueError(
-                    f"example length {max_len} exceeds pad_sequence_length "
-                    f"{self.pad_sequence_length}"
-                )
+            # Truncate over-long examples to the fixed length (tail-cut). The image block
+            # is always at the front, so <im_patch> tokens (and their pooled-row count) are
+            # preserved; only trailing branch/response tokens are dropped.
             max_len = self.pad_sequence_length
         max_crops = max(ex["images"].shape[0] for ex in examples)
         max_pool = max(ex["pooled_patches_idx"].shape[0] for ex in examples)
@@ -102,17 +101,22 @@ class MultimodalCollator:
             ),
         }
 
-        # Images: (B, max_crops, n_patches, patch_dim), pad new crops with 0.
-        images = np.zeros((len(examples), max_crops, n_patches, patch_dim), dtype=np.float32)
-        # Pooled patch indices: (B, max_pool, pool_size), pad with -1 (connector ignores).
-        pooled = np.full((len(examples), max_pool, pool_size), -1, dtype=np.int64)
-        for i, ex in enumerate(examples):
-            im = ex["images"]
-            images[i, : im.shape[0]] = im
-            pp = ex["pooled_patches_idx"]
-            pooled[i, : pp.shape[0]] = pp
-        batch["images"] = torch.from_numpy(images)
-        batch["pooled_patches_idx"] = torch.from_numpy(pooled)
+        # Images. Text-only examples contribute 0 crops / 0 pooled rows. If *no* example in
+        # the batch has an image, omit images entirely (the model takes the text-only path).
+        if max_crops > 0:
+            images = np.zeros((len(examples), max_crops, n_patches, patch_dim), dtype=np.float32)
+            # Pooled patch indices: (B, max_pool, pool_size), pad with -1 (connector ignores;
+            # text-only rows are entirely -1 -> contribute no spliced features).
+            pooled = np.full((len(examples), max(max_pool, 1), pool_size), -1, dtype=np.int64)
+            for i, ex in enumerate(examples):
+                im = ex["images"]
+                if im.shape[0]:
+                    images[i, : im.shape[0]] = im
+                pp = ex["pooled_patches_idx"]
+                if pp.shape[0]:
+                    pooled[i, : pp.shape[0]] = pp
+            batch["images"] = torch.from_numpy(images)
+            batch["pooled_patches_idx"] = torch.from_numpy(pooled)
 
         # Subsegment ids only when at least one example is multi-branch (packed). For
         # padded / single-branch positions a uniform id leaves attention unrestricted.

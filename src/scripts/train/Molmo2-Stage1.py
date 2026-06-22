@@ -24,9 +24,14 @@ from typing import List, Optional, cast
 
 from olmo_core.config import Config, DType
 from olmo_core.data.multimodal import (
+    CoSynPointDatasetConfig,
+    MixtureDataLoader,
     MultimodalCollatorConfig,
     MultimodalDataLoader,
     PixMoCapDatasetConfig,
+    PixMoCountDatasetConfig,
+    PixMoPointsDatasetConfig,
+    Tulu4DatasetConfig,
 )
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.distributed.utils import get_rank, get_world_size
@@ -85,6 +90,11 @@ ALPHA_F = 0.1
 # Data: the canonical PixMoCap "cap" dataset (HF DatasetDict, load_from_disk). Override as needed.
 DATASET_PATH = "/weka/oe-training-default/mm-olmo/torch_datasets/pixmo_datasets/cap"
 MAX_STEPS = 4000
+
+# Stage-1 mixture rates (mm_olmo train_captioner --pointing/--nlp). Caption gets the
+# remainder (1 - POINTING_RATE - NLP_RATE). Set both to 0.0 for a caption-only run.
+POINTING_RATE = 0.30
+NLP_RATE = 0.10
 
 # Beaker.
 BEAKER_CLUSTER = "ai2/jupiter"
@@ -272,6 +282,36 @@ def _init_weights_from_hf(model: MultimodalLM, model_cfg: MultimodalLMConfig) ->
     del converted
 
 
+def _build_mixture_sources(tokenizer, config: ExperimentConfig):
+    """Build the caption + pointing + NLP sources and their sampling weights (mm_olmo
+    SubMixture): caption gets ``1 - POINTING_RATE - NLP_RATE``; the pointing group shares
+    ``POINTING_RATE`` split by sqrt(size); NLP gets ``NLP_RATE``."""
+    import numpy as np
+
+    p, n = POINTING_RATE, NLP_RATE
+    datasets: List = [config.dataset.build(tokenizer)]  # caption
+    weights: List[float] = [max(1.0 - p - n, 0.0)]
+
+    if p > 0:
+        pointing = [
+            PixMoPointsDatasetConfig(kind="basic", max_crops=MAX_CROPS).build(tokenizer),
+            PixMoCountDatasetConfig(max_crops=MAX_CROPS).build(tokenizer),
+            PixMoPointsDatasetConfig(kind="high_frequency", max_crops=MAX_CROPS).build(tokenizer),
+            CoSynPointDatasetConfig(max_crops=MAX_CROPS).build(tokenizer),
+        ]
+        frac = np.sqrt(np.array([len(d) for d in pointing], dtype=np.float64))
+        frac = frac / frac.sum()
+        datasets += pointing
+        weights += [p * float(f) for f in frac]
+
+    if n > 0:
+        datasets.append(Tulu4DatasetConfig().build(tokenizer))
+        weights.append(n)
+
+    log.info("Mixture sources / weights: %s", [(type(d).__name__, round(w, 3)) for d, w in zip(datasets, weights)])
+    return datasets, weights
+
+
 def train(config: ExperimentConfig):
     seed_all(config.init_seed)
 
@@ -282,20 +322,34 @@ def train(config: ExperimentConfig):
 
     train_module = config.train_module.build(model)
 
-    dataset = config.dataset.build(tokenizer)
     collator = config.collator.build()
     # Derive the data-parallel world size / rank from the train module's DP process
     # group so each rank reads its own shard (must match the trainer's DP degree).
     dp_pg = train_module.dp_process_group
-    data_loader = MultimodalDataLoader(
-        dataset,
-        collator,
-        work_dir=config.trainer.save_folder,
-        global_batch_size=GLOBAL_BATCH_SIZE,
-        seed=config.data_seed,
-        dp_world_size=get_world_size(dp_pg),
-        dp_rank=get_rank(dp_pg),
-    )
+    dp_world_size, dp_rank = get_world_size(dp_pg), get_rank(dp_pg)
+
+    if POINTING_RATE > 0 or NLP_RATE > 0:
+        datasets, weights = _build_mixture_sources(tokenizer, config)
+        data_loader = MixtureDataLoader(
+            datasets,
+            weights,
+            collator,
+            work_dir=config.trainer.save_folder,
+            global_batch_size=GLOBAL_BATCH_SIZE,
+            seed=config.data_seed,
+            dp_world_size=dp_world_size,
+            dp_rank=dp_rank,
+        )
+    else:
+        data_loader = MultimodalDataLoader(
+            config.dataset.build(tokenizer),
+            collator,
+            work_dir=config.trainer.save_folder,
+            global_batch_size=GLOBAL_BATCH_SIZE,
+            seed=config.data_seed,
+            dp_world_size=dp_world_size,
+            dp_rank=dp_rank,
+        )
 
     trainer = config.trainer.build(train_module, data_loader)
 

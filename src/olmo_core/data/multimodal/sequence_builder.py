@@ -19,7 +19,7 @@ See :class:`~olmo_core.nn.vision.MultimodalLM` for how ``subsegment_ids`` /
 
 from __future__ import annotations
 
-from typing import Dict, List, Sequence
+from typing import Dict, List, Sequence, Tuple
 
 import numpy as np
 
@@ -181,5 +181,127 @@ def build_packed_sequence(
         out["subsegment_ids"] = np.concatenate(
             [np.full(len(p["tokens"]), p["subsegment_id"], dtype=np.int64) for p in parts],
             0,
+        )
+    return out
+
+
+def build_branched_sequence(
+    prefix_ids: Sequence[int],
+    branches: Sequence[Tuple[Sequence[int], Sequence[int]]],
+    *,
+    eos_id: int,
+    image_token_ids: frozenset = IMAGE_TOKEN_IDS,
+    loss_token_weighting: str = "root_subsegments",
+) -> Dict[str, np.ndarray]:
+    """Assemble a packed example where each branch carries its OWN user turn.
+
+    Unlike :func:`build_packed_sequence` (caption: a shared prompt in the prefix, branches
+    are assistant-only and carry over the prefix's last token), this handles the
+    pointing/counting layout where the shared prefix is just ``BOS + image block`` and each
+    branch is a full ``(user-turn, assistant-answer)`` pair. Branches are isolated by
+    subsegment and share an overlapping position range starting right after the prefix (no
+    carry-over, since each branch begins with its own user turn).
+
+    :param prefix_ids: Shared prefix token IDs (BOS + image block), all non-loss.
+    :param branches: One ``(context_ids, response_ids)`` per annotation — ``context_ids`` is
+        the non-loss user turn (e.g. ``<|im_start|>user\\n{q}<|im_end|>\\n<|im_start|>assistant\\n``),
+        ``response_ids`` is the loss-bearing assistant answer.
+    :param eos_id: EOS token id (target at each branch end).
+    :param loss_token_weighting: as in :func:`build_packed_sequence`.
+
+    :returns: Same dict shape as :func:`build_packed_sequence`.
+    """
+    if loss_token_weighting not in LOSS_TOKEN_WEIGHTINGS:
+        raise ValueError(f"Unknown loss_token_weighting {loss_token_weighting!r}")
+    n_branches = len(branches)
+    if n_branches == 0:
+        raise ValueError("`branches` must be non-empty")
+    prefix_ids = list(prefix_ids)
+    root_length = loss_token_weighting == "root_subsegments_root_tokens"
+
+    parts: List[dict] = []
+    multi = n_branches > 1
+
+    def _branch_part(context, response, subseg_id):
+        context, response = list(context), list(response)
+        tokens = context + response
+        w = 1.0
+        if root_length:
+            n_resp = len(response) + 1
+            w = 2.0 / np.sqrt(n_resp) if n_resp else 0.0
+        loss = np.zeros(len(tokens), dtype=np.float32)
+        loss[len(context) :] = w  # loss only on the response (assistant) tokens
+        seg_end = np.zeros(len(tokens), dtype=bool)
+        seg_end[-1] = True
+        return dict(loss=loss, seg_end=seg_end, subsegment_id=subseg_id, tokens=tokens)
+
+    if not multi:
+        # Single turn: prefix + context + response, fully causal, no subsegments.
+        ctx, resp = branches[0]
+        bp = _branch_part(ctx, resp, None)
+        tokens = prefix_ids + bp["tokens"]
+        loss = np.concatenate([np.zeros(len(prefix_ids), dtype=np.float32), bp["loss"]])
+        seg_end = np.concatenate([np.zeros(len(prefix_ids), dtype=bool), bp["seg_end"]])
+        parts.append(
+            dict(
+                tokens=np.asarray(tokens, dtype=np.int64),
+                loss=loss,
+                position=np.arange(len(tokens), dtype=np.int64),
+                subsegment_id=None,
+                seg_end=seg_end,
+            )
+        )
+    else:
+        start_position = len(prefix_ids)  # branches continue from end of prefix (no carry-over)
+        parts.append(
+            dict(
+                tokens=np.asarray(prefix_ids, dtype=np.int64),
+                loss=np.zeros(len(prefix_ids), dtype=np.float32),
+                position=np.arange(len(prefix_ids), dtype=np.int64),
+                subsegment_id=ATTEND_ALL_SUBSEGMENT_ID,
+                seg_end=np.zeros(len(prefix_ids), dtype=bool),
+            )
+        )
+        for branch_idx, (ctx, resp) in enumerate(branches):
+            bp = _branch_part(ctx, resp, branch_idx)
+            n = len(bp["tokens"])
+            parts.append(
+                dict(
+                    tokens=np.asarray(bp["tokens"], dtype=np.int64),
+                    loss=bp["loss"],
+                    position=np.arange(start_position, start_position + n, dtype=np.int64),
+                    subsegment_id=branch_idx,
+                    seg_end=bp["seg_end"],
+                )
+            )
+
+    input_ids = np.concatenate([p["tokens"] for p in parts], 0)
+    loss_mask = np.concatenate([p["loss"] for p in parts], 0)
+    position_ids = np.concatenate([p["position"] for p in parts], 0)
+    seg_ends = np.concatenate([p["seg_end"] for p in parts], 0)
+
+    labels = np.zeros_like(input_ids)
+    labels[:-1] = input_ids[1:]
+    labels[seg_ends] = eos_id
+
+    loss_mask_shifted = np.zeros_like(loss_mask)
+    loss_mask_shifted[:-1] = loss_mask[1:]
+    loss_mask_shifted[seg_ends] = loss_mask[seg_ends]
+    if multi and loss_token_weighting in ("root_subsegments", "root_subsegments_root_tokens"):
+        loss_mask_shifted = loss_mask_shifted / np.sqrt(n_branches)
+
+    token_type_ids = np.isin(input_ids, np.fromiter(image_token_ids, dtype=np.int64)).astype(
+        np.int64
+    )
+    out: Dict[str, np.ndarray] = {
+        "input_ids": input_ids,
+        "labels": labels,
+        "loss_masks": loss_mask_shifted.astype(np.float32),
+        "position_ids": position_ids,
+        "token_type_ids": token_type_ids,
+    }
+    if multi:
+        out["subsegment_ids"] = np.concatenate(
+            [np.full(len(p["tokens"]), p["subsegment_id"], dtype=np.int64) for p in parts], 0
         )
     return out
