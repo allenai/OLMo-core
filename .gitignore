@@ -64,3 +64,6 @@ core
 # local-only artifacts (never commit): preserved eval-score dumps + scratch configs
 /eval_results_kept/
 /configfile.txt
+
+# Claude Code session/memory dir
+.claude/
