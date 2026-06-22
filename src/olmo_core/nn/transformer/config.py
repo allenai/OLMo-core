@@ -17,8 +17,10 @@ from ..attention import (
     AttentionConfig,
     AttentionType,
     GateConfig,
+    GateGranularity,
     SlidingWindowAttentionConfig,
 )
+from ..attention.recurrent import GatedDeltaNetConfig
 from ..buffer_cache import BufferCache
 from ..config import ModelConfig, ModuleConfig
 from ..feed_forward import ActivationFunction, FeedForwardConfig, FeedForwardType
@@ -328,8 +330,13 @@ class TransformerConfig(ModelConfig):
     block_pattern: Optional[List[str]] = None
     block_overrides: Optional[Dict[int, TransformerBlockConfig]] = None
     embed_scale: Optional[float] = None
+    tie_word_embeddings: bool = False
 
     def __post_init__(self):
+        if self.tie_word_embeddings and self.name == TransformerType.normalized:
+            raise OLMoConfigurationError(
+                "Tying word embeddings is not supported with the normalized transformer"
+            )
         validate_block_resolution_config(
             n_layers=self.n_layers,
             block=self.block,
@@ -380,6 +387,7 @@ class TransformerConfig(ModelConfig):
                 block_overrides=self.block_overrides,
                 block_pattern=self.block_pattern,
                 embed_scale=self.embed_scale,
+                tie_word_embeddings=self.tie_word_embeddings,
             )
         elif self.name == TransformerType.normalized:
             assert self.embedding_norm is None
@@ -414,6 +422,7 @@ class TransformerConfig(ModelConfig):
                 embedding_init_std=self.embedding_init_std,
                 block_overrides=self.block_overrides,
                 block_pattern=self.block_pattern,
+                tie_word_embeddings=self.tie_word_embeddings,
             )
         else:
             raise NotImplementedError(self.name)
@@ -466,6 +475,10 @@ class TransformerConfig(ModelConfig):
         # LM head.
         num_params += self.lm_head.num_params(self.d_model, self.vocab_size)
 
+        # The LM head weight is shared with the embeddings when tied.
+        if self.tie_word_embeddings:
+            num_params -= self.d_model * self.vocab_size
+
         return num_params
 
     @property
@@ -486,6 +499,10 @@ class TransformerConfig(ModelConfig):
 
         # LM head.
         num_active_params += self.lm_head.num_params(self.d_model, self.vocab_size)
+
+        # The LM head weight is shared with the embeddings when tied.
+        if self.tie_word_embeddings:
+            num_active_params -= self.d_model * self.vocab_size
 
         return num_active_params
 
@@ -1301,6 +1318,7 @@ class TransformerConfig(ModelConfig):
             feed_forward=FeedForwardConfig(
                 hidden_size=3072, bias=False, dtype=kwargs.get("dtype", DType.float32)
             ),
+            tie_word_embeddings=kwargs.pop("tie_word_embeddings", True),
             **kwargs,
         )
 
@@ -1337,6 +1355,7 @@ class TransformerConfig(ModelConfig):
             feed_forward=FeedForwardConfig(
                 hidden_size=6144, bias=False, dtype=kwargs.get("dtype", DType.float32)
             ),
+            tie_word_embeddings=kwargs.pop("tie_word_embeddings", True),
             **kwargs,
         )
 
@@ -1373,6 +1392,7 @@ class TransformerConfig(ModelConfig):
             feed_forward=FeedForwardConfig(
                 hidden_size=9728, bias=False, dtype=kwargs.get("dtype", DType.float32)
             ),
+            tie_word_embeddings=kwargs.pop("tie_word_embeddings", True),
             **kwargs,
         )
 
@@ -1451,6 +1471,159 @@ class TransformerConfig(ModelConfig):
             feed_forward=FeedForwardConfig(
                 hidden_size=25600, bias=False, dtype=kwargs.get("dtype", DType.float32)
             ),
+            **kwargs,
+        )
+
+    @classmethod
+    def qwen3_5_0_8B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        return cls.qwen3_5_like(
+            d_model=1024,
+            vocab_size=vocab_size,
+            n_layers=kwargs.pop("n_layers", 24),
+            n_heads=kwargs.pop("n_heads", 8),
+            n_kv_heads=kwargs.pop("n_kv_heads", 2),
+            head_dim=kwargs.pop("head_dim", 256),
+            intermediate_size=kwargs.pop("intermediate_size", 3584),
+            linear_num_key_heads=kwargs.pop("linear_num_key_heads", 16),
+            linear_num_value_heads=kwargs.pop("linear_num_value_heads", 16),
+            **kwargs,
+        )
+
+    @classmethod
+    def qwen3_5_4B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        return cls.qwen3_5_like(
+            d_model=2560,
+            vocab_size=vocab_size,
+            n_layers=kwargs.pop("n_layers", 32),
+            n_heads=kwargs.pop("n_heads", 16),
+            n_kv_heads=kwargs.pop("n_kv_heads", 4),
+            head_dim=kwargs.pop("head_dim", 256),
+            intermediate_size=kwargs.pop("intermediate_size", 9216),
+            linear_num_key_heads=kwargs.pop("linear_num_key_heads", 16),
+            linear_num_value_heads=kwargs.pop("linear_num_value_heads", 32),
+            **kwargs,
+        )
+
+    @classmethod
+    def qwen3_5_9B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        return cls.qwen3_5_like(
+            d_model=4096,
+            vocab_size=vocab_size,
+            n_layers=kwargs.pop("n_layers", 32),
+            n_heads=kwargs.pop("n_heads", 16),
+            n_kv_heads=kwargs.pop("n_kv_heads", 4),
+            head_dim=kwargs.pop("head_dim", 256),
+            intermediate_size=kwargs.pop("intermediate_size", 12288),
+            linear_num_key_heads=kwargs.pop("linear_num_key_heads", 16),
+            linear_num_value_heads=kwargs.pop("linear_num_value_heads", 32),
+            **kwargs,
+        )
+
+    @classmethod
+    def qwen3_5_27B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        return cls.qwen3_5_like(
+            d_model=5120,
+            vocab_size=vocab_size,
+            n_layers=kwargs.pop("n_layers", 64),
+            n_heads=kwargs.pop("n_heads", 24),
+            n_kv_heads=kwargs.pop("n_kv_heads", 4),
+            head_dim=kwargs.pop("head_dim", 256),
+            intermediate_size=kwargs.pop("intermediate_size", 17408),
+            linear_num_key_heads=kwargs.pop("linear_num_key_heads", 16),
+            linear_num_value_heads=kwargs.pop("linear_num_value_heads", 48),
+            **kwargs,
+        )
+
+    @classmethod
+    def qwen3_5_like(
+        cls,
+        *,
+        d_model: int,
+        vocab_size: int,
+        n_layers: int,
+        n_heads: int,
+        n_kv_heads: int,
+        head_dim: int,
+        intermediate_size: int,
+        linear_num_key_heads: int = 16,
+        linear_num_value_heads: int = 32,
+        linear_key_head_dim: int = 128,
+        linear_value_head_dim: int = 128,
+        linear_conv_kernel_dim: int = 4,
+        rope_theta: int = 10_000_000,
+        partial_rotary_factor: float = 0.25,
+        layer_norm_eps: float = 1e-6,
+        fused_ops: bool = False,
+        use_flash: Optional[bool] = None,
+        attn_backend: Optional[AttentionBackendName] = None,
+        dtype: DType = DType.float32,
+        **kwargs,
+    ) -> "TransformerConfig":
+        """
+        Create a Qwen3.5-like hybrid model configuration.
+
+        Qwen3.5 dense models combine Gated DeltaNet (linear attention) layers with
+        full attention layers in a 3:1 ratio. Both layer types use pre-norm blocks with
+        Qwen-style RMS normalization, per-head QK norm and output gating on full-attention
+        layers, and partial RoPE (25% of head dimension by default).
+        """
+        layer_norm = LayerNormConfig(
+            name=LayerNormType.qwen_rms,
+            eps=layer_norm_eps,
+            bias=False,
+            dtype=dtype,
+        )
+
+        gdn_block = TransformerBlockConfig(
+            name=TransformerBlockType.default,
+            sequence_mixer=GatedDeltaNetConfig(
+                n_heads=linear_num_key_heads,
+                n_v_heads=linear_num_value_heads,
+                head_dim=linear_key_head_dim,
+                expand_v=linear_value_head_dim / linear_key_head_dim,
+                allow_neg_eigval=False,
+                conv_size=linear_conv_kernel_dim,
+                norm_eps=layer_norm_eps,
+                dtype=dtype,
+            ),
+            feed_forward=FeedForwardConfig(hidden_size=intermediate_size, bias=False, dtype=dtype),
+            layer_norm=layer_norm,
+        )
+
+        attn_block = TransformerBlockConfig(
+            name=TransformerBlockType.default,
+            sequence_mixer=AttentionConfig(
+                name=AttentionType.default,
+                n_heads=n_heads,
+                n_kv_heads=n_kv_heads,
+                head_dim=head_dim,
+                bias=False,
+                rope=RoPEConfig(
+                    name=RoPEType.default,
+                    theta=rope_theta,
+                    full_precision=kwargs.pop("rope_full_precision", False),
+                    partial_rotary_factor=partial_rotary_factor,
+                ),
+                gate=GateConfig(granularity=GateGranularity.elementwise),
+                qk_norm=layer_norm,
+                use_head_qk_norm=True,
+                use_flash=use_flash,
+                backend=attn_backend,
+                dtype=dtype,
+            ),
+            feed_forward=FeedForwardConfig(hidden_size=intermediate_size, bias=False, dtype=dtype),
+            layer_norm=layer_norm,
+        )
+
+        return cls(
+            d_model=d_model,
+            vocab_size=vocab_size,
+            n_layers=n_layers,
+            block={"gdn": gdn_block, "attn": attn_block},
+            block_pattern=["gdn", "gdn", "gdn", "attn"],
+            lm_head=LMHeadConfig(layer_norm=layer_norm, bias=False, dtype=dtype),
+            dtype=dtype,
+            tie_word_embeddings=kwargs.pop("tie_word_embeddings", True),
             **kwargs,
         )
 

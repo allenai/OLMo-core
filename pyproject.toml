@@ -65,7 +65,7 @@ eval = ["ai2-olmo-eval==0.9.0"]
 fa4 = ["flash-attn-4>=4.0.0b4 ; sys_platform == 'linux'"]
 fla = ["flash-linear-attention==0.4.1"]
 torchao = ["torchao==0.15.0"]
-transformers = ["transformers"]
+transformers = ["transformers>=5.4.0"]
 wandb = ["wandb"]
 all = ["ai2-olmo-core[dev,beaker,comet,dion,eval,fa4,fla,torchao,transformers,wandb]"]
 
@@ -79,7 +79,7 @@ environments = [
 include-package-data = true
 
 [tool.setuptools.package-data]
-olmo_core = ["py.typed", "*.txt"]
+olmo_core = ["py.typed", "*.txt", "nn/_csrc/*.cpp"]
 
 [tool.setuptools.dynamic]
 version = { attr = "olmo_core.version.VERSION" }
