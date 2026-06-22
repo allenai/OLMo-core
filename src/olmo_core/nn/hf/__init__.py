@@ -14,6 +14,7 @@ from .config import (
 from .convert import (
     convert_hybrid_state_from_hf,
     convert_hybrid_state_to_hf,
+    convert_qwen3_5_state_from_hf,
     convert_state_from_hf,
     convert_state_to_hf,
     get_converter_from_hf,
@@ -29,6 +30,7 @@ __all__ = [
     "convert_checkpoint_to_hf",
     "convert_hybrid_state_from_hf",
     "convert_hybrid_state_to_hf",
+    "convert_qwen3_5_state_from_hf",
     "convert_state_from_hf",
     "convert_state_to_hf",
     "get_converter_from_hf",
