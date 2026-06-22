@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added `TransformerConfig.olmo3_hybrid_7B`, a preset for the Olmo Hybrid 7B model (Gated Delta Net + attention layers in a `[gdn, gdn, gdn, attn]` pattern).
+- Added `convert_hybrid_state_from_hf` and wired hybrid (`olmo_hybrid`) model dispatch into both `convert_state_from_hf` and `convert_state_to_hf`, enabling bidirectional HF weight conversion for hybrid models.
 - Added `OutputDiscardCheckpoint`, an activation-recompute primitive for cases where the output of a checkpointed region dominates memory rather than its intermediates (e.g. precision casts, FFN up-projections). Forward runs under `no_grad`, the output's storage can be freed after downstream consumption, and a backward hook recomputes and rebinds the freed storage in place via a C++ `share_storage` extension (with a Python fallback for environments without a C++ toolchain).
 - Added Qwen3.5 dense model configs (0.8B, 4B, 9B, 27B) with hybrid Gated DeltaNet + full-attention architecture.
 - Added partial RoPE support via ``partial_rotary_factor`` on :class:`~olmo_core.nn.rope.RoPEConfig`.

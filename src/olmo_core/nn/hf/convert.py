@@ -1,5 +1,4 @@
 import logging
-import re
 from typing import Any, Dict, List
 
 import torch
@@ -704,6 +703,12 @@ def convert_state_from_hf(
     :param model_type: The model type of the HF model.
     """
 
+    if model_type is None:
+        model_type = getattr(config, "model_type", None)
+
+    if model_type == "olmo_hybrid":
+        return convert_hybrid_state_from_hf(hf_state, _hybrid_layer_types_from_config(config))
+
     converter = _get_converter_from_hf(model_type=model_type)
 
     if model_type in {"qwen3_5", "qwen3_5_text"}:
@@ -781,6 +786,9 @@ def convert_state_to_hf(
         :class:`DTensor` or :class:`ShardedTensor`
     """
 
+    if config.model_type == "olmo_hybrid":
+        return convert_hybrid_state_to_hf(olmo_core_state, _hybrid_layer_types_from_config(config))
+
     converter = _get_converter_to_hf(config.model_type)
 
     converted_state = _convert_state(config, olmo_core_state, converter)
@@ -845,7 +853,39 @@ HYBRID_SHARED_KEY_MAP: Dict[str, str] = {
     "lm_head.w_out.weight": "lm_head.weight",
 }
 
-_HYBRID_BLOCK_KEY_RE = re.compile(r"^blocks\.(\d+)\.(.+)$")
+
+def _build_hybrid_mapping_templates(
+    layer_types: List[str], *, to_hf: bool
+) -> List[StateMappingTemplate]:
+    """
+    Build concrete (placeholder-free) :class:`StateMappingTemplate`s for a hybrid model.
+
+    For each layer, the GDN (``"linear_attention"``) or attention (``"full_attention"``) suffix
+    map is selected so the per-layer-type naming difference is baked into the concrete keys. The
+    resulting templates can be fed to a standard :class:`StateConverter`.
+
+    :param layer_types: Per-layer type list (``"linear_attention"`` or ``"full_attention"``).
+    :param to_hf: If ``True``, map OLMo-core keys to HF keys, otherwise HF keys to OLMo-core keys.
+    """
+
+    def template(olmo_key: str, hf_key: str) -> StateMappingTemplate:
+        src, dst = (olmo_key, hf_key) if to_hf else (hf_key, olmo_key)
+        return StateMappingTemplate(src, dst)
+
+    templates = [template(olmo_key, hf_key) for olmo_key, hf_key in HYBRID_SHARED_KEY_MAP.items()]
+
+    for layer_idx, layer_type in enumerate(layer_types):
+        key_map = (
+            HYBRID_GDN_LAYER_KEY_MAP
+            if layer_type == "linear_attention"
+            else HYBRID_ATTN_LAYER_KEY_MAP
+        )
+        templates.extend(
+            template(f"blocks.{layer_idx}.{olmo_suffix}", f"model.layers.{layer_idx}.{hf_suffix}")
+            for olmo_suffix, hf_suffix in key_map.items()
+        )
+
+    return templates
 
 
 @beta_feature
@@ -863,33 +903,33 @@ def convert_hybrid_state_to_hf(
     :param state_dict: An unsharded OLMo-core model state dict.
     :param layer_types: Per-layer type list (``"linear_attention"`` or ``"full_attention"``).
     """
-    hf_state: Dict[str, Any] = {}
+    templates = _build_hybrid_mapping_templates(layer_types, to_hf=True)
+    return StateConverter(templates).convert(state_dict, placeholder_bounds={})
 
-    for olmo_key, value in state_dict.items():
-        # Try shared (non-block) keys first.
-        if olmo_key in HYBRID_SHARED_KEY_MAP:
-            hf_state[HYBRID_SHARED_KEY_MAP[olmo_key]] = value
-            continue
 
-        m = _HYBRID_BLOCK_KEY_RE.match(olmo_key)
-        if m is None:
-            raise KeyError(f"Unmapped key: {olmo_key}")
+@beta_feature
+def convert_hybrid_state_from_hf(
+    state_dict: Dict[str, Any],
+    layer_types: List[str],
+) -> Dict[str, Any]:
+    """
+    Convert an HF ``olmo_hybrid`` state dict to OLMo-core format.
 
-        layer_idx = int(m.group(1))
-        suffix = m.group(2)
+    Inverse of :func:`convert_hybrid_state_to_hf`: uses the same suffix maps in the HF ->
+    OLMo-core direction, selecting per layer based on *layer_types*.
 
-        key_map = (
-            HYBRID_GDN_LAYER_KEY_MAP
-            if layer_types[layer_idx] == "linear_attention"
-            else HYBRID_ATTN_LAYER_KEY_MAP
+    :param state_dict: An unsharded HF ``olmo_hybrid`` model state dict.
+    :param layer_types: Per-layer type list (``"linear_attention"`` or ``"full_attention"``).
+    """
+    templates = _build_hybrid_mapping_templates(layer_types, to_hf=False)
+    return StateConverter(templates).convert(state_dict, placeholder_bounds={})
+
+
+def _hybrid_layer_types_from_config(config: PretrainedConfig) -> List[str]:
+    """Read the per-layer type list from an HF ``olmo_hybrid`` config."""
+    layer_types = getattr(config, "layer_types", None)
+    if layer_types is None:
+        raise ValueError(
+            "olmo_hybrid HF config is missing the `layer_types` field required for conversion."
         )
-        if suffix not in key_map:
-            raise KeyError(
-                f"Unmapped block suffix for layer {layer_idx} "
-                f"(type={layer_types[layer_idx]!r}): {olmo_key}"
-            )
-
-        hf_key = f"model.layers.{layer_idx}.{key_map[suffix]}"
-        hf_state[hf_key] = value
-
-    return hf_state
+    return list(layer_types)

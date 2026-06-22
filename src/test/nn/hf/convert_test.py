@@ -1,8 +1,18 @@
+from types import SimpleNamespace
+
 import pytest
 import torch
 from transformers import AutoConfig, AutoModelForCausalLM, Olmo2Config, Qwen3_5Config
 
-from olmo_core.nn.hf.convert import convert_state_from_hf, convert_state_to_hf
+from olmo_core.nn.hf.convert import (
+    HYBRID_ATTN_LAYER_KEY_MAP,
+    HYBRID_GDN_LAYER_KEY_MAP,
+    HYBRID_SHARED_KEY_MAP,
+    convert_hybrid_state_from_hf,
+    convert_hybrid_state_to_hf,
+    convert_state_from_hf,
+    convert_state_to_hf,
+)
 
 try:
     from transformers import FlexOlmoConfig  # type: ignore
@@ -385,3 +395,40 @@ def test_logprobs_match_after_roundtrip(model_id: str, model_type: str):
     rt_logprobs = torch.log_softmax(rt_logits, dim=-1)
 
     torch.testing.assert_close(rt_logprobs, ref_logprobs, rtol=1e-5, atol=1e-5)
+
+
+# Layer 0 is GDN (linear_attention), layer 1 is standard attention (full_attention).
+_HYBRID_LAYER_TYPES = ["linear_attention", "full_attention"]
+
+
+def _make_hybrid_olmo_core_state() -> dict:
+    torch.manual_seed(0)
+    state = {olmo_key: torch.randn(3) for olmo_key in HYBRID_SHARED_KEY_MAP}
+    for olmo_suffix in HYBRID_GDN_LAYER_KEY_MAP:
+        state[f"blocks.0.{olmo_suffix}"] = torch.randn(3)
+    for olmo_suffix in HYBRID_ATTN_LAYER_KEY_MAP:
+        state[f"blocks.1.{olmo_suffix}"] = torch.randn(3)
+    return state
+
+
+def test_convert_hybrid_state_roundtrip():
+    olmo_core_state = _make_hybrid_olmo_core_state()
+
+    hf_state = convert_hybrid_state_to_hf(olmo_core_state, _HYBRID_LAYER_TYPES)
+    roundtrip_state = convert_hybrid_state_from_hf(hf_state, _HYBRID_LAYER_TYPES)
+
+    assert set(roundtrip_state.keys()) == set(olmo_core_state.keys())
+    for key, value in olmo_core_state.items():
+        torch.testing.assert_close(roundtrip_state[key], value)
+
+
+def test_convert_state_hybrid_dispatch_roundtrip():
+    config = SimpleNamespace(model_type="olmo_hybrid", layer_types=_HYBRID_LAYER_TYPES)
+    olmo_core_state = _make_hybrid_olmo_core_state()
+
+    hf_state = convert_state_to_hf(config, olmo_core_state)
+    roundtrip_state = convert_state_from_hf(config, hf_state, model_type="olmo_hybrid")
+
+    assert set(roundtrip_state.keys()) == set(olmo_core_state.keys())
+    for key, value in olmo_core_state.items():
+        torch.testing.assert_close(roundtrip_state[key], value)
