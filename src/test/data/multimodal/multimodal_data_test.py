@@ -132,8 +132,11 @@ def test_mixture_data_loader_weighted_sampling(tmp_path):
 
     batch = next(iter(dl))
     assert tuple(batch["input_ids"].shape) == (4, _SEQ)
-    # all sources here are text-only -> the batch omits images entirely
-    assert "images" not in batch
+    # all sources here are text-only -> the batch still emits a single dummy zero crop
+    # (with all-(-1) pooled indices) so the vision/connector path runs on every rank,
+    # keeping FSDP collectives in lockstep. Nothing is spliced (no <im_patch> tokens).
+    assert tuple(batch["images"].shape) == (4, 1, 729, _PATCH_DIM)
+    assert (batch["pooled_patches_idx"] == -1).all()
 
 
 def test_mixture_data_loader_normalizes_weights(tmp_path):

@@ -242,6 +242,14 @@ class MultimodalLM(nn.Module):
 
             image_features = self._encode_images(images, pooled_patches_idx)  # (B, n_pooled, d)
 
+            # Tie the connector output into the autograd graph on *every* forward that ran
+            # the vision path, even when no rows are spliced below (e.g. an all-text
+            # microbatch handed a dummy zero crop by the collator). This adds exactly 0 to
+            # the activations but keeps the connector's FSDP reduce-scatter — and the vision
+            # all-gather — firing on every rank each step, so collectives stay in lockstep
+            # across ranks regardless of how text-only vs image examples are distributed.
+            h = h + 0.0 * image_features.sum().to(h.dtype)
+
             # Keep only valid pooled rows (a row is padding iff *all* its patch
             # indices are -1, e.g. added by a batch collator to equalize ``n_pooled``
             # across examples). Selecting in row-major order keeps each example's

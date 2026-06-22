@@ -101,22 +101,28 @@ class MultimodalCollator:
             ),
         }
 
-        # Images. Text-only examples contribute 0 crops / 0 pooled rows. If *no* example in
-        # the batch has an image, omit images entirely (the model takes the text-only path).
-        if max_crops > 0:
-            images = np.zeros((len(examples), max_crops, n_patches, patch_dim), dtype=np.float32)
-            # Pooled patch indices: (B, max_pool, pool_size), pad with -1 (connector ignores;
-            # text-only rows are entirely -1 -> contribute no spliced features).
-            pooled = np.full((len(examples), max(max_pool, 1), pool_size), -1, dtype=np.int64)
-            for i, ex in enumerate(examples):
-                im = ex["images"]
-                if im.shape[0]:
-                    images[i, : im.shape[0]] = im
-                pp = ex["pooled_patches_idx"]
-                if pp.shape[0]:
-                    pooled[i, : pp.shape[0]] = pp
-            batch["images"] = torch.from_numpy(images)
-            batch["pooled_patches_idx"] = torch.from_numpy(pooled)
+        # Images. Text-only examples contribute 0 real crops / 0 pooled rows. We *always*
+        # emit an images tensor (never None): a fully text-only batch gets a single dummy
+        # zero crop whose pooled indices are all -1, so it splices no features into the
+        # sequence. This keeps the vision + connector forward running on every rank every
+        # step, so their FSDP all-gather / reduce-scatter collectives stay in lockstep even
+        # when a rank's whole microbatch is text-only (a mismatch there deadlocks NCCL).
+        # ``MultimodalLM.forward`` adds a 0-weighted tie so the connector also participates
+        # in the backward pass for these dummy crops.
+        crops = max(max_crops, 1)
+        images = np.zeros((len(examples), crops, n_patches, patch_dim), dtype=np.float32)
+        # Pooled patch indices: (B, max_pool, pool_size), pad with -1 (connector ignores;
+        # text-only rows are entirely -1 -> contribute no spliced features).
+        pooled = np.full((len(examples), max(max_pool, 1), pool_size), -1, dtype=np.int64)
+        for i, ex in enumerate(examples):
+            im = ex["images"]
+            if im.shape[0]:
+                images[i, : im.shape[0]] = im
+            pp = ex["pooled_patches_idx"]
+            if pp.shape[0]:
+                pooled[i, : pp.shape[0]] = pp
+        batch["images"] = torch.from_numpy(images)
+        batch["pooled_patches_idx"] = torch.from_numpy(pooled)
 
         # Subsegment ids only when at least one example is multi-branch (packed). For
         # padded / single-branch positions a uniform id leaves attention unrestricted.
