@@ -1317,3 +1317,46 @@ Replacement Cx8 jobs:
 | `q3-1p2b-cx8-q3am128e8k-lr4e-4-r1` | `active_matched` | 1.2B | 8 | 4e-4 | 786,432 | 96 | 8 | 1 | 4 | https://beaker.org/ex/01KVJ4GXHKR0DP3PXHPR5ZZ6GB | Legal accumulation: `96 / (1 * 8 * 4) = 3`. |
 | `q3-1p2b-cx8-q3td128e8k-lr4e-4-r1` | `true_3d_depth_matched` | 1.2B | 8 | 4e-4 | 786,432 | 96 | 8 | 1 | 4 | https://beaker.org/ex/01KVJ4H8PTJDJCGHHFRB8CD3GP | Legal accumulation: `96 / (1 * 8 * 4) = 3`. |
 
+## 2026-06-22 Status Check and Plot Refresh
+
+Status check scoped to recent/open tracker rows rather than the full historical run set. Plots were regenerated with `INCLUDE_RUNNING=1 REFRESH_STALE_CACHE=1`, and `PLOTTED_RESULTS.md` was regenerated from the same cached W&B data with completed runs only. During the refresh, the expert-granularity plotter was fixed to define the same `PLOTTABLE_STATES = {"finished", "running"}` filter used by the other plotters, so crashed/failed terminal runs remain excluded when `--include-running` is set.
+
+Newly finalized since the 2026-06-20 tracker update:
+
+| Name | Beaker | Finalized UTC | Notes |
+| --- | --- | --- | --- |
+| `eg-1p2b-cx2-eg24e2k-lr3e-4-r1` | https://beaker.org/ex/01KVFDD6YEDEZD7F06RYB6FPK5 | 2026-06-20 21:07 | 1.2B EG Cx2 coarse finished cleanly. |
+| `eg-1p2b-cx2-eg96e8k-lr3e-4-r1` | https://beaker.org/ex/01KVFDG3FS2GVD8Z3Q26CQJ7MV | 2026-06-21 08:53 | 1.2B EG Cx2 fine finished cleanly. |
+| `eg-810m-cx8-eg96e8k-lr4e-4-r1` | https://beaker.org/ex/01KV1XQMPM62PXBRPGX1MYD059 | 2026-06-20 08:18 | 810M EG Cx8 fine manual restart finished cleanly. |
+| `eg-1p2b-cx8-eg24e2k-lr4e-4-r1` | https://beaker.org/ex/01KV4ZJCSV6NFW52ENF8T7DNPH | 2026-06-21 07:27 | 1.2B EG Cx8 coarse manual restart finished cleanly. |
+| `sp-810m-cx2-sp192e4k-lr4e-4-r2` | https://beaker.org/ex/01KVEGF07SQE61D4JJXQ9H6S7V | 2026-06-21 02:29 | 810M total-sparsity `sp192e4k` Cx2 replacement finished cleanly. |
+| `q3-810m-cx2-q3am128e8k-lr5.6e-4-r1` | https://beaker.org/ex/01KVFDM5KWV2FHX2NYASD43GWF | 2026-06-20 22:33 | Qwen-like active-matched 810M Cx2 finished cleanly. |
+| `q3-810m-cx4-q3am128e8k-lr4e-4-r1` | https://beaker.org/ex/01KVFDMV84805JW8VJYEXZ4SPW | 2026-06-21 20:05 | Qwen-like active-matched 810M Cx4 finished cleanly. |
+| `q3-810m-cx2-q3td128e8k-lr5.6e-4-r1` | https://beaker.org/ex/01KVFDPNGJDX45X41MZ247N717 | 2026-06-21 16:31 | Qwen-like true-3D 810M Cx2 finished cleanly. |
+| `q3-810m-cx4-q3td128e8k-lr4e-4-r1` | https://beaker.org/ex/01KVFDQ2FHVRFFD97SDYBMD694 | 2026-06-21 23:16 | Qwen-like true-3D 810M Cx4 finished cleanly. |
+
+Still running or started at the status check:
+
+| Name | Beaker | Started UTC | Notes |
+| --- | --- | --- | --- |
+| `eg-1p2b-cx8-eg96e8k-lr4e-4-r1` | https://beaker.org/ex/01KV4ZJRYRHYF4SMV965SZGWTE | 2026-06-19 12:04 | 1.2B EG Cx8 fine still running. |
+| `sp-810m-cx4-sp192e4k-lr3e-4-r2` | https://beaker.org/ex/01KVEGFC3RQVYFW07077WNKMV0 | 2026-06-20 21:10 | 810M total-sparsity `sp192e4k` Cx4 running. |
+| `sp-810m-cx8-sp192e4k-lr3e-4-r2` | https://beaker.org/ex/01KVEGFQWQGQ6JWNBHC5YR23B1 | 2026-06-21 02:31 | 810M total-sparsity `sp192e4k` Cx8 running. |
+| `q3-810m-cx8-q3am128e8k-lr4e-4-r1` | https://beaker.org/ex/01KVFDNGV9TDAP885HG5MD68FB | 2026-06-21 23:01 | Qwen-like active-matched 810M Cx8 running. |
+| `q3-810m-cx8-q3td128e8k-lr4e-4-r1` | https://beaker.org/ex/01KVFDQH6BQSBMRHBKZD5RE46W | 2026-06-21 23:17 | Qwen-like true-3D 810M Cx8 running. |
+| `q3-1p2b-cx2-q3am128e8k-lr6e-4-r1` | https://beaker.org/ex/01KVJ32E9D5MQ00NNAW4QJTGMW | 2026-06-22 05:46 | Qwen-like active-matched 1.2B Cx2 running. |
+| `q3-1p2b-cx4-q3am128e8k-lr3e-4-r1` | https://beaker.org/ex/01KVJ32TJEXX4XR9FY0QN8PA0T | 2026-06-21 21:57 | Qwen-like active-matched 1.2B Cx4 running. |
+
+Created/scheduled but not started at the status check:
+
+| Name | Beaker | Latest job created UTC | Notes |
+| --- | --- | --- | --- |
+| `q3-1p2b-cx1-q3am128e8k-lr4e-4-r1` | https://beaker.org/ex/01KVJ3237BYM0Y9NVA6FWM3H4Z | 2026-06-22 05:41 | Scheduled on Holmes but not started in latest attempt. |
+| `q3-1p2b-cx1-q3td128e8k-lr4e-4-r1` | https://beaker.org/ex/01KVJ33HPRPCQ6ERM46864M1Z3 | 2026-06-22 05:00 | Waiting on Holmes capacity/latest attempt. |
+| `q3-1p2b-cx2-q3td128e8k-lr6e-4-r1` | https://beaker.org/ex/01KVJ33YG7A5DKD5EPZDTSFRPR | 2026-06-22 05:00 | Waiting on Holmes capacity/latest attempt. |
+| `q3-1p2b-cx4-q3td128e8k-lr3e-4-r1` | https://beaker.org/ex/01KVJ34BFBN49YH2AKVSHS0GW5 | 2026-06-20 08:42 | Waiting on Holmes capacity/latest attempt. |
+| `q3-1p2b-cx8-q3am128e8k-lr4e-4-r1` | https://beaker.org/ex/01KVJ4GXHKR0DP3PXHPR5ZZ6GB | 2026-06-20 09:06 | Corrected Cx8 `4e-4` replacement; waiting on Holmes capacity/latest attempt. |
+| `q3-1p2b-cx8-q3td128e8k-lr4e-4-r1` | https://beaker.org/ex/01KVJ4H8PTJDJCGHHFRB8CD3GP | 2026-06-20 09:07 | Corrected Cx8 `4e-4` replacement; waiting on Holmes capacity/latest attempt. |
+
+Plot refresh updated all plot families. The visible high-signal changes are in expert granularity, total sparsity, Qwen3-like 810M/1.2B, shared expert, and dense schedule. No jobs were launched during this status check.
+

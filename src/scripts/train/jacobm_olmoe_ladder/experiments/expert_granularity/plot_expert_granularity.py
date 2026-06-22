@@ -28,6 +28,7 @@ LOSS_KEY = "train/CE loss"
 TOKENS_KEY = "throughput/total tokens"
 FIELDS = ["_step", TOKENS_KEY, LOSS_KEY]
 LR_RE = re.compile(r"lr([0-9]+(?:\.[0-9]+)?e-[0-9]+)")
+PLOTTABLE_STATES = {"finished", "running"}
 
 SUMMARY_VARIANTS = [
     SummaryVariant(
