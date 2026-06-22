@@ -244,6 +244,10 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
     launch_config.env_secrets = [
         s for s in launch_config.env_secrets if s.name in ("BEAKER_TOKEN", "WANDB_API_KEY")
     ]
+    # The pointing/counting Arrow datasets on weka were saved with `datasets >= 4`, whose
+    # `List` feature type the image's older `datasets` can't deserialize. Upgrade after the
+    # package install (olmo-core does not pin `datasets`, so this is not clobbered).
+    launch_config.post_setup = "pip install -U 'datasets>=4,<6'"
 
     return ExperimentConfig(
         model=model_config,
