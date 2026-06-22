@@ -6,12 +6,9 @@ import torch
 try:
     import triton  # type: ignore
     import triton.language as tl  # type: ignore
-
-    _HAS_TRITON = True
 except ImportError:
     triton = None  # type: ignore[assignment]
     tl = None  # type: ignore[assignment]
-    _HAS_TRITON = False
 
 from olmo_core.kernels.moe_chunk_reorder import moe_chunk_permute, moe_chunk_unpermute
 from olmo_core.kernels.moe_permute_drop import moe_permute_drop_fwd
@@ -338,7 +335,7 @@ def moe_permute_1d_fused_drop_no_compile(
     return dropped, row_id_map
 
 
-if _HAS_TRITON:
+if triton is not None:
 
     @triton.jit
     def _fused_unpermute_row_id_remap_kernel(
@@ -400,7 +397,12 @@ def _build_fused_unpermute_row_id_map(
     if n_rows == 0:
         return out
 
-    if _HAS_TRITON and row_id_map_i32.is_cuda and inverse_reorder_i64.is_cuda and num_kept.is_cuda:
+    if (
+        triton is not None
+        and row_id_map_i32.is_cuda
+        and inverse_reorder_i64.is_cuda
+        and num_kept.is_cuda
+    ):
         block = 1024
         grid = (triton.cdiv(n_rows, block),)
         _fused_unpermute_row_id_remap_kernel[grid](
