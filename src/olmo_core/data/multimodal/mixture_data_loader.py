@@ -61,7 +61,9 @@ class MixtureDataLoader(DataLoaderBase):
                 "MixtureDataLoader requires the collator to have a fixed `pad_sequence_length`."
             )
         if len(datasets) != len(weights) or not datasets:
-            raise OLMoConfigurationError("datasets and weights must be non-empty and the same length")
+            raise OLMoConfigurationError(
+                "datasets and weights must be non-empty and the same length"
+            )
         self.datasets = list(datasets)
         w = np.asarray(weights, dtype=np.float64)
         self.weights = (w / w.sum()).tolist()
@@ -130,7 +132,11 @@ class MixtureDataLoader(DataLoaderBase):
         return self.global_batch_size
 
     def state_dict(self) -> Dict[str, Any]:
-        return {"batches_processed": self.batches_processed, "epoch": self._epoch, "seed": self.seed}
+        return {
+            "batches_processed": self.batches_processed,
+            "epoch": self._epoch,
+            "seed": self.seed,
+        }
 
     def load_state_dict(self, state_dict: Dict[str, Any]):
         self.batches_processed = state_dict.get("batches_processed", 0)

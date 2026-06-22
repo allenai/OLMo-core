@@ -21,7 +21,9 @@ from olmo_core.nn.vision.molmo2_tokens import N_PATCHES_SQ, PATCH_DIM, POOL_H, P
 
 __all__ = ["Tulu4DatasetConfig", "Tulu4Dataset"]
 
-_DATA = "/weka/oe-training-default/mm-olmo/torch_datasets/olmo-3-instruct-sft-no-tools-classified-v3"
+_DATA = (
+    "/weka/oe-training-default/mm-olmo/torch_datasets/olmo-3-instruct-sft-no-tools-classified-v3"
+)
 
 
 def _format_messages(parts: List[Dict[str, str]]) -> Optional[List[Dict[str, str]]]:
@@ -33,7 +35,9 @@ def _format_messages(parts: List[Dict[str, str]]) -> Optional[List[Dict[str, str
     if parts[0]["role"] == "system":
         if len(parts) < 2 or parts[1]["role"] != "user":
             return None
-        out.append({"role": "user", "content": f"System: {parts[0]['content']}\n{parts[1]['content']}"})
+        out.append(
+            {"role": "user", "content": f"System: {parts[0]['content']}\n{parts[1]['content']}"}
+        )
         parts = parts[2:]
     elif parts[0]["role"] == "assistant":
         return None
@@ -99,7 +103,13 @@ class Tulu4Dataset:
                 return False
             return True
 
-        cols = ["category", "source", "first_message_qwen3_tokens", "empty_messages", "has_special_token"]
+        cols = [
+            "category",
+            "source",
+            "first_message_qwen3_tokens",
+            "empty_messages",
+            "has_special_token",
+        ]
         return ds.filter(_keep, input_columns=cols)
 
     def __len__(self) -> int:
@@ -151,5 +161,8 @@ class Tulu4Dataset:
         messages = _format_messages(list(self._data[i]["messages"]))
         if messages is None:
             # Filtered datasets should not contain these, but guard: fall back to next.
-            messages = [{"role": "user", "content": "Hello"}, {"role": "assistant", "content": "Hi."}]
+            messages = [
+                {"role": "user", "content": "Hello"},
+                {"role": "assistant", "content": "Hi."},
+            ]
         return self._text_sequence(messages)

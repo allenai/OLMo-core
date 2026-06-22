@@ -308,7 +308,10 @@ def _build_mixture_sources(tokenizer, config: ExperimentConfig):
         datasets.append(Tulu4DatasetConfig().build(tokenizer))
         weights.append(n)
 
-    log.info("Mixture sources / weights: %s", [(type(d).__name__, round(w, 3)) for d, w in zip(datasets, weights)])
+    log.info(
+        "Mixture sources / weights: %s",
+        [(type(d).__name__, round(w, 3)) for d, w in zip(datasets, weights)],
+    )
     return datasets, weights
 
 
