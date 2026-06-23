@@ -57,3 +57,34 @@ def run_reduce_metrics():
 @pytest.mark.parametrize("backend", BACKENDS)
 def test_reduce_metrics(backend):
     run_distributed_test(run_reduce_metrics, backend=backend)
+
+
+def run_reduce_metrics_inconsistent_per_step():
+    # Regression test: ranks record DIFFERENT reducible metric names on the *same* step (here rank 0
+    # logs an extra metric, as happens when e.g. a throughput metric is skipped on a rank whose
+    # micro-batch had no tokens). The caller still passes ``metrics_consistent=True`` -- exactly what
+    # the trainer does from its registry-level check, which doesn't catch per-step divergence. This
+    # used to build mismatched all-reduce tensors across ranks and DEADLOCK. ``reduce_metrics`` must
+    # detect the divergence, fall back to the consistent-handling path, and still return correct
+    # values (no hang).
+    device = get_default_device()
+    rank = dist.get_rank()
+    raw_metrics = {
+        0: {
+            "train/CrossEntropyLoss": torch.tensor(2.0 if rank == 0 else 4.0, device=device),
+        },
+    }
+    metrics_reduce_type = {"train/CrossEntropyLoss": ReduceType.mean}
+    if rank == 0:
+        raw_metrics[0]["train/throughput"] = torch.tensor(5.0, device=device)
+        metrics_reduce_type["train/throughput"] = ReduceType.mean
+
+    metrics = reduce_metrics(raw_metrics, metrics_reduce_type, device, metrics_consistent=True)
+
+    assert metrics[0]["train/CrossEntropyLoss"] == 3.0  # mean over both ranks: (2 + 4) / 2
+    assert metrics[0]["train/throughput"] == 5.0  # recorded on one rank only
+
+
+@pytest.mark.parametrize("backend", BACKENDS)
+def test_reduce_metrics_inconsistent_per_step(backend):
+    run_distributed_test(run_reduce_metrics_inconsistent_per_step, backend=backend)

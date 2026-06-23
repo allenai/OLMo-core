@@ -218,6 +218,26 @@ def reduce_metrics(
 
     world_size = get_world_size(process_group)
     divide_factor = get_reduce_divide_factor(world_size)
+
+    # The ``metrics_consistent=True`` fast path builds its all-reduce tensors from each rank's
+    # *per-step* recorded metric names, so it deadlocks if those names differ across ranks for any
+    # step -- e.g. a callback that records a throughput metric only on ranks whose micro-batch had
+    # tokens, which leaves some ranks with an extra key on the final step. The caller's
+    # ``metrics_consistent`` hint is derived from the metric *registry* (the union of names ever
+    # seen) and so does not catch this per-step divergence. Cheaply verify the actual per-step names
+    # agree across ranks (one all-gather, on the same process group and thread as the fallback
+    # path's own collectives) and downgrade to the consistent-handling path if they don't.
+    if metrics_consistent:
+        local_step_metric_names: Dict[int, List[str]] = {
+            step: sorted(name for name in step_metrics if metrics_reduce_type.get(name) is not None)
+            for step, step_metrics in metrics.items()
+        }
+        all_ranks_step_metric_names = all_gather_object(
+            local_step_metric_names, group=process_group
+        )
+        if any(names != local_step_metric_names for names in all_ranks_step_metric_names):
+            metrics_consistent = False
+
     all_steps_metric_world_sizes: Dict[int, Dict[str, int]] = {}
     all_steps_metrics_reduce_type: Dict[int, Dict[str, Optional[ReduceType]]] = {}
     if not metrics_consistent:
