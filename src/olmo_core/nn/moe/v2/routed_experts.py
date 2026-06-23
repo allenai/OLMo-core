@@ -63,19 +63,6 @@ from olmo_core.nn.fp8_weight import FP8WeightCacheSpec, FP8WeightStore
 from .fp8 import MoERowwiseFP8Config, normalize_rowwise_fp8_config
 
 
-def _debug_is_inf_or_nan(x):
-    return torch.logical_or(~torch.isfinite(x), torch.isnan(x))
-
-
-def _debug_get_row_indices_for_nan_or_inf(x):
-    return torch.where(_debug_is_inf_or_nan(x).any(dim=-1))[0]
-
-
-def _debug_get_row_indices_for_nan_or_inf_before_end(x, end):
-    naninf_row_indices = _debug_get_row_indices_for_nan_or_inf(x)
-    return naninf_row_indices[naninf_row_indices < end]
-
-
 def _identity_fp8_rhs(weight: torch.Tensor) -> torch.Tensor:
     return weight
 
@@ -252,13 +239,13 @@ def gmm(
             )
         else:
             out_tensor = F.grouped_mm(a, b_grouped_mm, offs=offs)
-        # WARNING: https://docs.pytorch.org/docs/stable/generated/torch.nn.functional.grouped_mm.html
-        # "offs[i] marks the end of group i and offs[-1] must be strictly less than the total length of that operand’s sliced dimension"
-        # so padded positions are always necessary? I think "strictly less than" is a documentation mistake
-
-        # BIG NOTE: grouped_mm's returned value containes uninitialized values for the padded positions (pos > offsets[-1]), which can be NaN and may cause later ops to produce NaN in valid positions.
-        # if _debug_get_row_indices_for_nan_or_inf_before_end(out, batch_sizes.sum()).numel() > 0:
-        #     raise RuntimeError(f"NaN or Inf detected in grouped_mm output in valid tokens. batch_sizes={batch_sizes} offs={offs} out={out}")
+        # NOTE: grouped_mm leaves the padding rows beyond the last offset (pos >= offs[-1])
+        # uninitialized; those values can be NaN/Inf and must not be consumed by downstream ops
+        # on valid tokens. To debug a suspected leak into the valid rows, enable:
+        #     valid = int(batch_sizes.sum())
+        #     bad = torch.nonzero(~torch.isfinite(out_tensor[:valid]).all(dim=-1)).flatten()
+        #     if bad.numel():
+        #         raise RuntimeError(f"non-finite grouped_mm output in valid rows {bad.tolist()}")
         return out_tensor
 
     if out is not None or input_grad_out is not None:
