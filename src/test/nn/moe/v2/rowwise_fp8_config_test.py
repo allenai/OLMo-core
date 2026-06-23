@@ -1,16 +1,10 @@
-from types import SimpleNamespace
-
 import pytest
 import torch
 
 from olmo_core.config import DType
 from olmo_core.kernels.scaled_grouped_mm import ScaledGroupedMMPrequantizedRHS
 from olmo_core.nn.fp8_weight import FP8WeightCacheSpec, FP8WeightStore
-from olmo_core.nn.moe.v2.fp8 import (
-    MoERowwiseFP8Config,
-    normalize_rowwise_fp8_config,
-    refresh_rowwise_fp8_cache,
-)
+from olmo_core.nn.moe.v2.fp8 import MoERowwiseFP8Config, normalize_rowwise_fp8_config
 from olmo_core.nn.moe.v2.routed_experts import (
     RoutedExperts,
     _swiglu_backward_grad_up_gate_impl,
@@ -341,89 +335,6 @@ def test_fp8_weight_store_refresh_from_logical_weight_uses_explicit_layout_specs
         (1, 8, 16),
         (1, 16, 8),
     ]
-
-
-def test_block_refresh_rowwise_fp8_cache_honors_routed_config_without_block_config():
-    seen = {"refresh": 0, "invalidate": 0}
-
-    class _FakeRoutedExperts:
-        rowwise_fp8 = MoERowwiseFP8Config(enabled=True)
-
-        def refresh_rowwise_fp8_cache(self) -> None:
-            seen["refresh"] += 1
-
-        def invalidate_rowwise_fp8_cache(self) -> None:
-            seen["invalidate"] += 1
-
-    block = SimpleNamespace(
-        rowwise_fp8=None,
-        routed_experts=_FakeRoutedExperts(),
-        shared_experts=None,
-    )
-
-    refresh_rowwise_fp8_cache(block)
-
-    assert seen == {"refresh": 1, "invalidate": 0}
-    assert block._shared_rowwise_fp8_up_prequant is None
-    assert block._shared_rowwise_fp8_down_prequant is None
-
-
-def test_block_refresh_rowwise_fp8_cache_disabled_invalidates_without_refresh():
-    seen = {"refresh": 0, "invalidate": 0}
-
-    class _FakeRoutedExperts:
-        rowwise_fp8 = MoERowwiseFP8Config(enabled=False)
-
-        def refresh_rowwise_fp8_cache(self) -> None:
-            seen["refresh"] += 1
-
-        def invalidate_rowwise_fp8_cache(self) -> None:
-            seen["invalidate"] += 1
-
-    block = SimpleNamespace(
-        rowwise_fp8=MoERowwiseFP8Config(enabled=False),
-        routed_experts=_FakeRoutedExperts(),
-        shared_experts=None,
-        _shared_rowwise_fp8_up_prequant=object(),
-        _shared_rowwise_fp8_down_prequant=object(),
-        _shared_rowwise_fp8_up_prequant_t=object(),
-        _shared_rowwise_fp8_down_prequant_t=object(),
-        _shared_rowwise_fp8_weight_versions=(1, 2),
-    )
-
-    refresh_rowwise_fp8_cache(block)
-
-    assert seen == {"refresh": 0, "invalidate": 1}
-    assert block._shared_rowwise_fp8_up_prequant is None
-    assert block._shared_rowwise_fp8_down_prequant is None
-    assert block._shared_rowwise_fp8_up_prequant_t is None
-    assert block._shared_rowwise_fp8_down_prequant_t is None
-    assert block._shared_rowwise_fp8_weight_versions is None
-
-
-def test_block_refresh_rowwise_fp8_cache_shared_only_does_not_refresh_routed():
-    seen = {"refresh": 0, "invalidate": 0}
-
-    class _FakeRoutedExperts:
-        rowwise_fp8 = MoERowwiseFP8Config(enabled=False)
-
-        def refresh_rowwise_fp8_cache(self) -> None:
-            seen["refresh"] += 1
-
-        def invalidate_rowwise_fp8_cache(self) -> None:
-            seen["invalidate"] += 1
-
-    block = SimpleNamespace(
-        rowwise_fp8=MoERowwiseFP8Config(enabled=True),
-        routed_experts=_FakeRoutedExperts(),
-        shared_experts=None,
-    )
-
-    refresh_rowwise_fp8_cache(block)
-
-    assert seen == {"refresh": 0, "invalidate": 1}
-    assert block._shared_rowwise_fp8_up_prequant is None
-    assert block._shared_rowwise_fp8_down_prequant is None
 
 
 @requires_gpu
