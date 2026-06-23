@@ -138,6 +138,12 @@ class SpeedMonitorCallback(Callback):
                 num_flops_per_token := self._get_num_flops_per_token(self._step_seq_len)
             ) is not None:
                 self._step_flops = num_flops_per_token * self._step_tokens
+                # Train modules with a non-token-based compute component (e.g. a vision
+                # encoder running per-image) can report extra FLOPs for this batch that
+                # don't scale with token count. Opt-in via `extra_flops_per_batch`.
+                extra_fn = getattr(self.trainer.train_module, "extra_flops_per_batch", None)
+                if extra_fn is not None and (extra := extra_fn(batch)):
+                    self._step_flops += extra // self._parallel_degree
                 self._total_flops += self._step_flops
 
     def post_step(self):

@@ -342,6 +342,17 @@ class MultimodalTransformerTrainModule(TransformerTrainModule):
             warn_once(f"Unable to estimate num flops per token: {ex}")
         return None
 
+    def extra_flops_per_batch(self, batch: Dict[str, Any]) -> int:
+        """Vision-encoder + connector FLOPs for ``batch`` (read by the speed monitor and
+        added to the per-token LM FLOPs). The ViT processes every crop in ``batch["images"]``
+        — including padded / dummy crops — so we size it off that tensor's shape."""
+        images = batch.get("images")
+        if images is None:
+            return 0
+        b, t, n_patches = int(images.shape[0]), int(images.shape[1]), int(images.shape[2])
+        n_pooled = int((batch["input_ids"] == self._multimodal.cfg.image_patch_token_id).sum())
+        return self._multimodal.image_encoder_flops(b * t, n_patches, n_pooled)
+
 
 @dataclass
 class MultimodalTransformerTrainModuleConfig(TrainModuleConfig):

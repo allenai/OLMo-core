@@ -127,9 +127,44 @@ class MultimodalLM(nn.Module):
         return self.lm.is_moe
 
     def num_flops_per_token(self, seq_len: int) -> int:
-        """Idealized FLOPs/token. Delegates to the LM (vision-tower FLOPs are not
-        counted, matching how throughput/MFU is reported for the language model)."""
+        """Idealized FLOPs/token for the language model only. The vision encoder /
+        connector run per-image (not per-token), so their FLOPs are reported separately
+        via :meth:`image_encoder_flops` and added to the throughput/MFU accounting."""
         return self.lm.num_flops_per_token(seq_len)
+
+    @property
+    def _n_vision_params(self) -> int:
+        if not hasattr(self, "_n_vision_params_cache"):
+            self._n_vision_params_cache = sum(p.numel() for p in self.vision.parameters())
+        return self._n_vision_params_cache
+
+    @property
+    def _n_connector_params(self) -> int:
+        if not hasattr(self, "_n_connector_params_cache"):
+            self._n_connector_params_cache = sum(p.numel() for p in self.connector.parameters())
+        return self._n_connector_params_cache
+
+    def image_encoder_flops(
+        self, n_crops: int, n_patches_per_crop: int, n_pooled_tokens: int
+    ) -> int:
+        """Idealized FLOPs for the vision half of one batch, for MFU accounting.
+
+        The ViT processes every (padded) crop in the batch, so ``n_crops`` should be the
+        full ``B * n_crops`` of the images tensor. The encoder is **frozen** → forward-only
+        (2 FLOPs/param/patch for the linear layers, plus the attention score+context
+        quadratic ``4·L·P·d`` per patch). The connector is **trained** → 6 FLOPs/param
+        (fwd+bwd) per pooled output token.
+
+        :param n_crops: total number of image crops processed by the ViT this batch.
+        :param n_patches_per_crop: patches per crop fed to the ViT (``P``).
+        :param n_pooled_tokens: number of pooled ``<im_patch>`` tokens produced.
+        """
+        d = self.cfg.vision.image_emb_dim
+        n_layers = self.cfg.vision.image_num_layers
+        n_raw = n_crops * n_patches_per_crop
+        vit = n_raw * (2 * self._n_vision_params + 4 * n_layers * n_patches_per_crop * d)
+        connector = n_pooled_tokens * 6 * self._n_connector_params
+        return int(vit + connector)
 
     def _encode_images(
         self,
