@@ -17,7 +17,7 @@ from olmo_core.distributed.parallel.context_parallel import (
     all_to_all_single_hp2cp,
 )
 from olmo_core.distributed.parallel.tensor_parallel import SequenceParallel
-from olmo_core.distributed.utils import get_rank
+from olmo_core.distributed.utils import get_rank, get_world_size
 from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.nn.attention.base import SequenceMixer, SequenceMixerConfig
@@ -822,9 +822,31 @@ class Attention(SequenceMixer):
                     "sharded by the context parallel load balancer"
                 )
 
+            # Under Ulysses CP with sequence packing, RoPE is applied on this rank's contiguous
+            # shard (length ``T``) *before* the all-to-all gathers the full sequence, while
+            # ``cu_doc_lens`` still describes the full (un-sharded) sequence. Feeding that full
+            # ``cu_doc_lens`` to RoPE's per-document branch indexes a shard-sized position table with
+            # full-sequence offsets, which overflows (e.g. an out-of-bounds CUDA gather). Convert to
+            # explicit per-document positions for the local shard instead -- correct even for
+            # documents that straddle a rank boundary -- mirroring :class:`LandmarkAttention`. The
+            # full ``cu_doc_lens`` is still used for masking inside the backend, after the gather.
+            rope_cu_doc_lens = cu_doc_lens
+            if (
+                cu_doc_lens is not None
+                and position_ids is None
+                and self.cp_enabled
+                and self.backend.uly is not None
+            ):
+                cp_pg = self.backend.cp_pg
+                assert cp_pg is not None
+                position_ids = build_local_packed_position_ids(
+                    cu_doc_lens, B, T, get_rank(cp_pg), get_world_size(cp_pg)
+                )
+                rope_cu_doc_lens = None
+
             start_pos = self.kv_cache_manager.current_position() if self.kv_cache_manager else None
             q, k = self._apply_rope(
-                q, k, start_pos, pos_sin, pos_cos, freqs_cis, cu_doc_lens, position_ids
+                q, k, start_pos, pos_sin, pos_cos, freqs_cis, rope_cu_doc_lens, position_ids
             )
 
         return q, k, v

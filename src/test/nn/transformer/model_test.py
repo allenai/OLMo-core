@@ -400,6 +400,93 @@ def test_context_parallel_transformer_ulysses(
     )
 
 
+def run_context_parallel_transformer_ulysses_packed(
+    checkpoint_dir, outputs_path, doc_lens, max_doc_len: int
+):
+    device = get_default_device()
+    config = get_transformer_config(
+        "olmo2", dtype=torch.bfloat16, attn_backend=AttentionBackendName.flash_2
+    )
+
+    mesh = init_device_mesh(device.type, (get_world_size(),), mesh_dim_names=("cp",))
+
+    model = config.build()
+    model.apply_cp(mesh["cp"], uly=UlyssesContextParallelStyle())
+    model.init_weights(device=device, max_seq_len=512)
+    load_model_and_optim_state(checkpoint_dir, model)
+
+    # The model shards input_ids and the RoPE buffers internally via the Ulysses load balancer; the
+    # document boundaries are passed through unchanged, so RoPE runs per-document on the local shard.
+    input_ids = get_transformer_inputs().to(device)
+    local_logits = model(
+        input_ids=input_ids,
+        doc_lens=torch.tensor([doc_lens], dtype=torch.int32),
+        max_doc_lens=[max_doc_len],
+    )
+    logits = DTensor.from_local(local_logits, mesh, (Shard(1),))
+
+    og_logits = torch.load(outputs_path, map_location=device)
+    tol_scale = 4.0  # requires slightly more tolerance than default
+    torch.testing.assert_close(
+        og_logits, get_full_tensor(logits), rtol=BF16_RTOL * tol_scale, atol=BF16_ATOL * tol_scale
+    )
+
+
+@requires_multi_gpu
+@requires_flash_attn_2
+def test_context_parallel_transformer_ulysses_packing_matches_full(tmp_path):
+    """
+    Ulysses CP + sequence packing (intra-document masking) for a dense (non-landmark) transformer.
+
+    Regression test for an out-of-bounds RoPE position index: under Ulysses CP, RoPE runs on this
+    rank's contiguous shard (length ``seq_len // cp_degree``) *before* the all-to-all, while
+    ``cu_doc_lens`` still describes the full sequence. A document longer than the shard then yields a
+    per-document position beyond the shard-sized RoPE table -> out-of-bounds gather (a CUDA
+    device-side assert in real runs). The fix converts ``cu_doc_lens`` to explicit per-shard
+    ``position_ids`` for RoPE. CP must reproduce the single-rank packed forward exactly.
+    """
+    seed_all(0)
+    device = torch.device("cuda")
+    config = get_transformer_config(
+        "olmo2", dtype=torch.bfloat16, attn_backend=AttentionBackendName.flash_2
+    )
+
+    model = config.build()
+    model.init_weights(device=device, max_seq_len=512)
+
+    input_ids = get_transformer_inputs().to(device)  # shape (1, 128)
+    seq_len = input_ids.size(1)
+    # With CP degree 2 the per-rank shard is seq_len // 2 = 64. The leading 80-token document exceeds
+    # the shard and straddles the rank boundary -- exactly the case that overflowed the RoPE table.
+    doc_lens = [80, 48]
+    assert sum(doc_lens) == seq_len
+    max_doc_len = max(doc_lens)
+
+    logits = model(
+        input_ids=input_ids,
+        doc_lens=torch.tensor([doc_lens], dtype=torch.int32),
+        max_doc_lens=[max_doc_len],
+    )
+
+    outputs_path = tmp_path / "logits.pt"
+    torch.save(logits, outputs_path)
+
+    checkpoint_dir = tmp_path / "checkpoint"
+    save_model_and_optim_state(checkpoint_dir, model)
+
+    run_distributed_test(
+        run_context_parallel_transformer_ulysses_packed,
+        backend="nccl",
+        start_method="spawn",
+        func_args=(
+            checkpoint_dir,
+            outputs_path,
+            doc_lens,
+            max_doc_len,
+        ),
+    )
+
+
 def run_init_with_hsdp(architecture: str):
     assert dist.get_world_size() == 4
     mesh = build_world_mesh(
