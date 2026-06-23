@@ -1394,3 +1394,61 @@ Created/queued but not started at the status check:
 | `q3-1p2b-cx8-q3td128e8k-lr4e-4-r1` | https://beaker.org/ex/01KVJ4H8PTJDJCGHHFRB8CD3GP | 2026-06-20 09:07 | Corrected true-3D Cx8 `4e-4` replacement; still not started. |
 
 Finished-only plot refresh changed expert granularity 1.2B Cx8, total-sparsity 810M Cx4/Cx8, Qwen3-like 810M Cx8, and their summary plots. No jobs were launched during this status check.
+
+
+## 2026-06-23 Dense Schedule and Shared Expert Promoted Launches
+
+Queued the remaining dense schedule and shared expert promoted grid on Titan urgent after deciding not to wait on Holmes. All jobs use the original workspace `ai2/OLMo-3-moe-experiments`, cluster `ai2/titan`, budget `ai2/oe-other`, priority `urgent`, image `tianhuat/olmo-core-torch211-2404-cu128`, compile-on, Weka `oe-training-default`, `EP=1`, and baseline best-observed LR transfers. No `--preemptible` flag is used for these Titan urgent jobs.
+
+Launch order was all 480M first, then 810M, then 1.2B. Batch settings are the usual promoted settings: 480M uses 4 GPUs for Cx1/2/4 and 8 GPUs for Cx8; 810M and 1.2B use 8 GPUs for all Cx values.
+
+Dense schedule launchers:
+
+| Name | Model | Variant | Cx | LR | GBS seq | GPUs | MB | Beaker |
+| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | --- |
+| `ds-480m-cx1-ds0-sh-lr1.2e-3-r1` | 480M | dense0_shared | 1 | 1.2e-3 | 32 | 4 | 8 | https://beaker.org/ex/01KVV1CZVG06AQRE9YJN6HVCJY |
+| `ds-480m-cx2-ds0-sh-lr9e-4-r1` | 480M | dense0_shared | 2 | 9e-4 | 48 | 4 | 4 | https://beaker.org/ex/01KVV1DA8EAHMVBM57HAHKV9TP |
+| `ds-480m-cx4-ds0-sh-lr8e-4-r1` | 480M | dense0_shared | 4 | 8e-4 | 64 | 4 | 8 | https://beaker.org/ex/01KVV1DPPPV8HBR844VHGNG3JC |
+| `ds-480m-cx8-ds0-sh-lr8e-4-r1` | 480M | dense0_shared | 8 | 8e-4 | 96 | 8 | 4 | https://beaker.org/ex/01KVV1E2AH1GPJNPGSDW37XPP5 |
+| `ds-480m-cx1-ds2-sh-lr1.2e-3-r1` | 480M | dense2_shared | 1 | 1.2e-3 | 32 | 4 | 8 | https://beaker.org/ex/01KVV1EDZWQSSHA4YF25QGQJ00 |
+| `ds-480m-cx2-ds2-sh-lr9e-4-r1` | 480M | dense2_shared | 2 | 9e-4 | 48 | 4 | 4 | https://beaker.org/ex/01KVV1ESV5CNP1H981VDH3A3T5 |
+| `ds-480m-cx4-ds2-sh-lr8e-4-r1` | 480M | dense2_shared | 4 | 8e-4 | 64 | 4 | 8 | https://beaker.org/ex/01KVV1F5QEP0C8FFC3CDW8JG8S |
+| `ds-480m-cx8-ds2-sh-lr8e-4-r1` | 480M | dense2_shared | 8 | 8e-4 | 96 | 8 | 4 | https://beaker.org/ex/01KVV1FNX61ZWWVQ8S6GW726D8 |
+| `ds-480m-cx1-ds4-sh-lr1.2e-3-r1` | 480M | dense4_shared | 1 | 1.2e-3 | 32 | 4 | 8 | https://beaker.org/ex/01KVV1GZRFHDPMKZ42F5VKPWZB |
+| `ds-480m-cx2-ds4-sh-lr9e-4-r1` | 480M | dense4_shared | 2 | 9e-4 | 48 | 4 | 4 | https://beaker.org/ex/01KVV1J50HB640YVZC281S1EFV |
+| `ds-480m-cx4-ds4-sh-lr8e-4-r1` | 480M | dense4_shared | 4 | 8e-4 | 64 | 4 | 8 | https://beaker.org/ex/01KVV1K3G5ZWD4SZ23GHM103XT |
+| `ds-480m-cx8-ds4-sh-lr8e-4-r1` | 480M | dense4_shared | 8 | 8e-4 | 96 | 8 | 4 | https://beaker.org/ex/01KVV1M34XRJVE60K6MQNM9B4J |
+| `ds-810m-cx1-ds0-sh-lr6e-4-r1` | 810M | dense0_shared | 1 | 6e-4 | 32 | 8 | 4 | https://beaker.org/ex/01KVV1TQEETCC76CS0R2JNH9YZ |
+| `ds-810m-cx2-ds0-sh-lr5.6e-4-r1` | 810M | dense0_shared | 2 | 5.6e-4 | 48 | 8 | 2 | https://beaker.org/ex/01KVV1VH6PBPP31RD0SM58BM46 |
+| `ds-810m-cx4-ds0-sh-lr4e-4-r1` | 810M | dense0_shared | 4 | 4e-4 | 64 | 8 | 4 | https://beaker.org/ex/01KVV1WC9YCBY0PFA78QM1E12P |
+| `ds-810m-cx8-ds0-sh-lr4e-4-r1` | 810M | dense0_shared | 8 | 4e-4 | 96 | 8 | 4 | https://beaker.org/ex/01KVV1X7T3RPAX3B0SAK4HTKT8 |
+| `ds-810m-cx1-ds2-sh-lr6e-4-r1` | 810M | dense2_shared | 1 | 6e-4 | 32 | 8 | 4 | https://beaker.org/ex/01KVV1Y7V48ZG09C34XYHNSRZ2 |
+| `ds-810m-cx2-ds2-sh-lr5.6e-4-r1` | 810M | dense2_shared | 2 | 5.6e-4 | 48 | 8 | 2 | https://beaker.org/ex/01KVV1Z3EJ66SEPY2BB4A3ZH59 |
+| `ds-810m-cx4-ds2-sh-lr4e-4-r1` | 810M | dense2_shared | 4 | 4e-4 | 64 | 8 | 4 | https://beaker.org/ex/01KVV1ZW8RSN4EGZEN54MA18VN |
+| `ds-810m-cx8-ds2-sh-lr4e-4-r1` | 810M | dense2_shared | 8 | 4e-4 | 96 | 8 | 4 | https://beaker.org/ex/01KVV20XZKCAXGRMTB9MDVFAWN |
+| `ds-810m-cx1-ds4-sh-lr6e-4-r1` | 810M | dense4_shared | 1 | 6e-4 | 32 | 8 | 4 | https://beaker.org/ex/01KVV21W5MQFCX9R6NWC7FCARD |
+| `ds-810m-cx2-ds4-sh-lr5.6e-4-r1` | 810M | dense4_shared | 2 | 5.6e-4 | 48 | 8 | 2 | https://beaker.org/ex/01KVV22W9JRH1FFKVVQAYRZV8F |
+| `ds-810m-cx4-ds4-sh-lr4e-4-r1` | 810M | dense4_shared | 4 | 4e-4 | 64 | 8 | 4 | https://beaker.org/ex/01KVV23RDA44XBKW3D59DBYYEX |
+| `ds-810m-cx8-ds4-sh-lr4e-4-r1` | 810M | dense4_shared | 8 | 4e-4 | 96 | 8 | 4 | https://beaker.org/ex/01KVV24VVNWDCGF6JSFKXYJ024 |
+| `ds-1p2b-cx1-ds0-sh-lr4e-4-r1` | 1.2B | dense0_shared | 1 | 4e-4 | 32 | 8 | 2 | https://beaker.org/ex/01KVV26CWEGWR09P5JBVR1QX24 |
+| `ds-1p2b-cx2-ds0-sh-lr6e-4-r1` | 1.2B | dense0_shared | 2 | 6e-4 | 48 | 8 | 2 | https://beaker.org/ex/01KVV27GXZ5DRQMRKWHN5G5BYA |
+| `ds-1p2b-cx4-ds0-sh-lr3e-4-r1` | 1.2B | dense0_shared | 4 | 3e-4 | 64 | 8 | 2 | https://beaker.org/ex/01KVV28EST9EFM4ZF43BP2FN15 |
+| `ds-1p2b-cx8-ds0-sh-lr4e-4-r1` | 1.2B | dense0_shared | 8 | 4e-4 | 96 | 8 | 4 | https://beaker.org/ex/01KVV29F7ZM9RW8DWF073QYYGF |
+| `ds-1p2b-cx1-ds2-sh-lr4e-4-r1` | 1.2B | dense2_shared | 1 | 4e-4 | 32 | 8 | 2 | https://beaker.org/ex/01KVV2AGRGJBFMPVKVN64G5754 |
+| `ds-1p2b-cx2-ds2-sh-lr6e-4-r1` | 1.2B | dense2_shared | 2 | 6e-4 | 48 | 8 | 2 | https://beaker.org/ex/01KVV2BE87YJBG7E68XCKRMTH4 |
+| `ds-1p2b-cx4-ds2-sh-lr3e-4-r1` | 1.2B | dense2_shared | 4 | 3e-4 | 64 | 8 | 2 | https://beaker.org/ex/01KVV2CCDP7P9C9HM6RYAMM2M8 |
+| `ds-1p2b-cx8-ds2-sh-lr4e-4-r1` | 1.2B | dense2_shared | 8 | 4e-4 | 96 | 8 | 4 | https://beaker.org/ex/01KVV2CVAH6ZYWMRYC8TRDS4DJ |
+| `ds-1p2b-cx1-ds4-sh-lr4e-4-r1` | 1.2B | dense4_shared | 1 | 4e-4 | 32 | 8 | 2 | https://beaker.org/ex/01KVV2DBHBF9BPT3SS3VH5K71W |
+| `ds-1p2b-cx2-ds4-sh-lr6e-4-r1` | 1.2B | dense4_shared | 2 | 6e-4 | 48 | 8 | 2 | https://beaker.org/ex/01KVV2DYRCB5ZDNTZHBD0MXGNX |
+| `ds-1p2b-cx4-ds4-sh-lr3e-4-r1` | 1.2B | dense4_shared | 4 | 3e-4 | 64 | 8 | 2 | https://beaker.org/ex/01KVV2EE8YK7B0MF0EFJ3P9YCZ |
+| `ds-1p2b-cx8-ds4-sh-lr4e-4-r1` | 1.2B | dense4_shared | 8 | 4e-4 | 96 | 8 | 4 | https://beaker.org/ex/01KVV2F1R6M48R02BKM9RVJZH0 |
+
+Shared expert remaining launches:
+
+| Name | Model | Variant | Cx | LR | GBS seq | GPUs | MB | Beaker |
+| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | --- |
+| `se-480m-cx1-se0m9-lr1.2e-3-r1` | 480M | no_shared_matched_active | 1 | 1.2e-3 | 32 | 4 | 8 | https://beaker.org/ex/01KVV1PVHBPE33XRTVF97HAZ1Y |
+| `se-480m-cx2-se0m9-lr9e-4-r1` | 480M | no_shared_matched_active | 2 | 9e-4 | 48 | 4 | 4 | https://beaker.org/ex/01KVV1QTFGB2JVZMSQZX8JVSW3 |
+| `se-480m-cx4-se0m9-lr8e-4-r1` | 480M | no_shared_matched_active | 4 | 8e-4 | 64 | 4 | 8 | https://beaker.org/ex/01KVV1RQDKHRTTTZNZ7ZWC5V90 |
+| `se-480m-cx8-se0m9-lr8e-4-r1` | 480M | no_shared_matched_active | 8 | 8e-4 | 96 | 8 | 4 | https://beaker.org/ex/01KVV1SHCZDHM17VHV0XWCA1J0 |
+| `se-1p2b-cx8-se0m9-lr4e-4-r1` | 1.2B | no_shared_matched_active | 8 | 4e-4 | 96 | 8 | 4 | https://beaker.org/ex/01KVV2FTHMVKP4ARF5B2A86DN5 |

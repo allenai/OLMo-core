@@ -13,8 +13,8 @@ Legend: `done` = at least one finished/plotted run exists; `run` = currently run
 | Experiment | Remaining not-yet-queued / not-started cells | Notes |
 | --- | --- | --- |
 | Total sparsity | 1.2B Cx1/2/4/8 for high total 96E/top4 and huge total 192E/top4 | 275M, 480M, and 810M are done. |
-| Dense schedule | 480M, 810M, and 1.2B Cx1/2/4/8 for dense0, dense2, and dense4 | 275M LR searches are done; promotions have not started. |
-| Shared expert | 480M Cx1/2/4/8 and 1.2B Cx8 for no-shared routed-9/8d | Shared expert is a main experiment category; remaining cells were held/canceled earlier for queue pressure, not excluded. |
+| Dense schedule | None beyond queued 480M/810M/1.2B promotions | 275M LR searches are done; all larger dense0/dense2/dense4 promotions were queued on Titan urgent, compile-on, 2026-06-23. |
+| Shared expert | None beyond queued 480M Cx1/2/4/8 and 1.2B Cx8 | Shared expert is a main experiment category; remaining cells were queued on Titan urgent, compile-on, 2026-06-23. |
 | Qwen-like | None beyond currently running/queued 810M/1.2B tail jobs | Let the active/queued Beaker surface drain unless a run fails. |
 | Expert granularity | None for main coarse/fine grid | Diagnostic 192E/384E remains intentionally limited to 275M Cx1. |
 | Baseline | None for Cx1/2/4/8 main grid | Current grid complete. |
@@ -29,10 +29,10 @@ Legend: `done` = at least one finished/plotted run exists; `run` = currently run
 | Expert granularity | diagnostic 192E/384E | done Cx1 only | hold | hold | hold | Diagnostic only; intentionally not part of current full ladder. |
 | Total sparsity | high total 96E/top4 | done Cx1/2/4/8 | done Cx1/2/4/8 | done Cx1/2/4/8 | todo Cx1/2/4/8 | 810M promoted wave complete. |
 | Total sparsity | huge total 192E/top4 | done Cx1/2/4/8 | done Cx1/2/4/8 | done Cx1/2/4/8 | todo Cx1/2/4/8 | 810M Cx4/Cx8 replacements finished since last status. |
-| Shared expert | no shared, routed 9/8 d | done Cx1/2/4/8 | todo Cx1/2/4/8 | done Cx1/2/4/8 | done Cx1/2/4, todo Cx8 | Main experiment category; 480M was canceled earlier to avoid flooding and 1.2B Cx8 remains to launch. |
-| Dense schedule | dense0 + shared | done Cx1/2/4/8 | todo Cx1/2/4/8 | todo Cx1/2/4/8 | todo Cx1/2/4/8 | Only 275M LR search finished so far. |
-| Dense schedule | dense2 + shared | done Cx1/2/4/8 | todo Cx1/2/4/8 | todo Cx1/2/4/8 | todo Cx1/2/4/8 | Only 275M LR search finished so far. |
-| Dense schedule | dense4 + shared | done Cx1/2/4/8 | todo Cx1/2/4/8 | todo Cx1/2/4/8 | todo Cx1/2/4/8 | Only 275M LR search finished so far. |
+| Shared expert | no shared, routed 9/8 d | done Cx1/2/4/8 | queued Cx1/2/4/8 | done Cx1/2/4/8 | done Cx1/2/4, queued Cx8 | 480M and 1.2B Cx8 queued on Titan urgent, compile-on, 2026-06-23. |
+| Dense schedule | dense0 + shared | done Cx1/2/4/8 | queued Cx1/2/4/8 | queued Cx1/2/4/8 | queued Cx1/2/4/8 | Larger promotions queued on Titan urgent, compile-on, 2026-06-23. |
+| Dense schedule | dense2 + shared | done Cx1/2/4/8 | queued Cx1/2/4/8 | queued Cx1/2/4/8 | queued Cx1/2/4/8 | Larger promotions queued on Titan urgent, compile-on, 2026-06-23. |
+| Dense schedule | dense4 + shared | done Cx1/2/4/8 | queued Cx1/2/4/8 | queued Cx1/2/4/8 | queued Cx1/2/4/8 | Larger promotions queued on Titan urgent, compile-on, 2026-06-23. |
 | Qwen3-like | active matched 4.5d | done Cx1/2/4/8 | done Cx1/2/4/8 | done Cx1/2/4, run Cx8 | done Cx1, queued Cx2/Cx8, run Cx4 | 1.2B Cx2 has had low-priority preemptions; latest attempt is created. |
 | Qwen3-like | true 3.0d + depth | done Cx1/2/4/8 | done Cx1/2/4/8 | done Cx1/2/4/8 | run Cx1, queued Cx2/4/8 | 810M Cx8 finished 2026-06-23. |
 
@@ -48,3 +48,6 @@ Legend: `done` = at least one finished/plotted run exists; `run` = currently run
 | `q3-1p2b-cx4-q3td128e8k-lr3e-4-r1` | queued | created 2026-06-23 18:31 | https://beaker.org/ex/01KVJ34BFBN49YH2AKVSHS0GW5 | True-3D 1.2B Cx4. |
 | `q3-1p2b-cx8-q3am128e8k-lr4e-4-r1` | queued | created 2026-06-20 09:06 | https://beaker.org/ex/01KVJ4GXHKR0DP3PXHPR5ZZ6GB | Corrected active-matched 1.2B Cx8 4e-4 job. |
 | `q3-1p2b-cx8-q3td128e8k-lr4e-4-r1` | queued | created 2026-06-20 09:07 | https://beaker.org/ex/01KVJ4H8PTJDJCGHHFRB8CD3GP | Corrected true-3D 1.2B Cx8 4e-4 job. |
+| `ds-{480m,810m,1p2b}-cx{1,2,4,8}-ds{0,2,4}-sh-*-r1` | queued | created 2026-06-23 20:07-20:24 | see `RUNS.md` 2026-06-23 launch section | 36 dense-schedule promoted jobs on Titan urgent, compile-on. |
+| `se-480m-cx{1,2,4,8}-se0m9-*-r1` | queued | created 2026-06-23 20:10-20:12 | see `RUNS.md` 2026-06-23 launch section | Shared-expert 480M promoted jobs on Titan urgent, compile-on. |
+| `se-1p2b-cx8-se0m9-lr4e-4-r1` | queued | created 2026-06-23 20:24 | https://beaker.org/ex/01KVV2FTHMVKP4ARF5B2A86DN5 | Remaining shared-expert 1.2B Cx8 on Titan urgent, compile-on. |
