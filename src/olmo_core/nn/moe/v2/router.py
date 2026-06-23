@@ -538,17 +538,17 @@ class MoERouterV2(nn.Module):
             # shape: (batch_size, seq_len, top_k)
             expert_weights, expert_indices = self.get_top_k(scores)
 
-        # TODO: check
-        # WARN: does not work with PP
+        # NOTE: this expert-index recompute cache assumes a single in-flight microbatch with a
+        # strict first-forward-then-recompute ordering, so it is incompatible with pipeline
+        # parallelism, where interleaved microbatch forwards/recomputes would corrupt the
+        # single cache slot.
         if self.use_recompute_cache:
             if self._recompute_cache is None:  # first forward
                 if torch.is_grad_enabled():
                     self._recompute_cache = expert_indices.detach()  # save for recompute
             else:  # recompute
                 expert_indices = self._recompute_cache  # use saved expert indices
-                self._recompute_cache = None  #
-        else:
-            pass
+                self._recompute_cache = None
 
         if self.normalize_expert_weights is not None:
             expert_weights = expert_weights.div(
