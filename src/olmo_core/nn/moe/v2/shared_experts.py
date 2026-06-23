@@ -26,6 +26,15 @@ def _swiglu(up: torch.Tensor, gate: torch.Tensor) -> torch.Tensor:
 class SharedExpertsConfig(Config):
     """
     Configuration for shared experts in a MoE block.
+
+    .. note::
+        Unlike the rest of the codebase, this config stores dimension-related fields
+        (e.g. ``d_model``, ``hidden_size``, ``num_experts``) directly. Other configs keep
+        such dimensions out of the config and instead receive them only as arguments to
+        :meth:`build` (e.g. ``AttentionConfig.build(d_model, ...)``), so the dimensions live
+        in a single place and flow down from the top-level transformer config. The v2 configs
+        deviate by duplicating the dimensions here. This should be unified in the future to
+        follow the dimension-agnostic ``build(d_model, ...)`` convention.
     """
 
     d_model: int
