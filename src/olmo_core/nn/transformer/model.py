@@ -532,6 +532,8 @@ class Transformer(nn.Module):
         loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
         return_logits: Optional[bool] = None,
         logits_to_keep: Union[int, torch.Tensor] = 0,
+        pos_sin: Optional[torch.Tensor] = None,
+        pos_cos: Optional[torch.Tensor] = None,
         **kwargs,
     ) -> Union[torch.Tensor, LMOutputWithLoss]:
         """
@@ -579,6 +581,22 @@ class Transformer(nn.Module):
             logits_to_keep=logits_to_keep,
             **kwargs,
         )
+
+        # Externally-provided RoPE buffers (e.g. M-RoPE / multimodal 3D rotary). When
+        # supplied, every attention block uses these instead of computing 1D RoPE from
+        # sequential positions. Sequence-mixers that ignore RoPE (e.g. GatedDeltaNet)
+        # simply drop these via ``**kwargs``. Not supported with context parallelism,
+        # which shards/derives its own RoPE buffers.
+        if pos_sin is not None or pos_cos is not None:
+            if self._cp_load_balancer is not None:
+                raise RuntimeError(
+                    "External `pos_sin`/`pos_cos` (e.g. M-RoPE) are not supported with "
+                    "context parallelism."
+                )
+            if pos_sin is not None:
+                all_block_kwargs["pos_sin"] = move_to_device(pos_sin, self.device)
+            if pos_cos is not None:
+                all_block_kwargs["pos_cos"] = move_to_device(pos_cos, self.device)
 
         # Get embeddings but pass-through for non-existent layers to allow easy
         # pipeline parallel configuration.
