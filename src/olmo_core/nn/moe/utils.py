@@ -72,8 +72,13 @@ def async_copy_to_cpu(
     dtoh_event = dtoh_stream.record_event(event)
     dtoh_event = cast(torch.cuda.Event, dtoh_event)
 
-    # NOTE: gpu_buf.record_stream(dtoh_stream) would keep the source alive until the
-    # copy finishes, but does not work under torch.compile.
+    # NOTE: gpu_buf.record_stream(dtoh_stream) would tell the caching allocator the source
+    # is still in use on dtoh_stream and keep it alive until the copy finishes, but it does
+    # not work under torch.compile. Without it, a source whose storage is freed on the
+    # default stream before the event is waited on could be recycled mid-copy. Real callers
+    # pass persistent buffers (not temporaries) for gpu_buf, so this does not arise today;
+    # revisit (record the source on dtoh_stream, or keep it alive) if a caller ever passes
+    # a transient source.
     if return_event:
         return cpu_buf, dtoh_stream, dtoh_event
 
@@ -155,6 +160,13 @@ class _MoePermuteDropIndexMapAutograd(torch.autograd.Function):
         requested_offsets = torch.cumsum(requested_i64, dim=0) - requested_i64
         keep_offsets = torch.cumsum(keep_i64, dim=0) - keep_i64
 
+        # NOTE: the CUDA wrapper treats num_out_tokens <= 0 as the sentinel "use
+        # expanded_rows", so an all-dropped microbatch (every kept split zero ->
+        # num_out_tokens == 0) would get a full-size buffer back instead of an empty one,
+        # and downstream expert compute could read unwritten rows. Real callers always pass
+        # the full num_tokens*top_k count and size the output buffer accordingly, so this
+        # does not arise today; special-case the zero-kept path (or use a non-colliding
+        # sentinel) here if that ever changes.
         dropped, row_id_map = moe_permute_drop_fwd(
             inp=inp,
             routing_map=routing_map,
@@ -556,6 +568,11 @@ def moe_unpermute_1d_fused_drop_no_compile(
             "packed_keep_mask/local_inverse_reorder_indices size mismatch: "
             f"{packed_keep_mask.numel()} vs {local_inverse_reorder_indices.numel()}"
         )
+    # NOTE: the EP dispatch/combine paths keep full-size buffers and represent drops via
+    # reorder-to-tail + packed_keep_mask, so inp always carries the full expanded row count
+    # (num_tokens*top_k) rather than only the kept rows. If a future path ever passes
+    # kept-only input (num_kept rows), relax this to compare against num_kept and have the
+    # row-id remap mark dropped entries as -1.
     if inp.shape[0] != packed_keep_mask.numel():
         raise ValueError(
             f"input rows ({inp.shape[0]}) must equal packed_keep_mask size ({packed_keep_mask.numel()})"
