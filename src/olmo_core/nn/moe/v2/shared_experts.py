@@ -75,6 +75,12 @@ class SharedExperts(nn.Module):
     Shared experts work like a regular feed-forward but can support more than 1 expert.
     All experts will have the same number of input tokens, so it's possible that we concatenate
     the weights of all experts and use a single linear layer to process the input.
+
+    :meth:`forward` runs the whole module. :meth:`forward1` and :meth:`forward2` split it into
+    two numerically-equivalent halves (the input projection producing ``(up, gate)``, then
+    SwiGLU + the down-projection) so an expert-parallel block can run the shared experts on a
+    separate CUDA stream and overlap each half with the routed experts' dispatch/combine
+    all-to-all communication. The non-EP path just calls :meth:`forward`.
     """
 
     def __init__(
