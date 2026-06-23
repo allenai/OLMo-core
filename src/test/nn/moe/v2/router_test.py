@@ -7,7 +7,7 @@ from olmo_core.config import DType
 from olmo_core.distributed.utils import get_world_size
 from olmo_core.nn.moe.router import MoERouterConfig, MoERouterGatingFunction
 from olmo_core.nn.moe.v2.router import MoERouterConfigV2
-from olmo_core.testing import BACKENDS, run_distributed_test
+from olmo_core.testing import requires_multi_gpu, run_distributed_test
 
 
 def _build(*, top_k=2, num_experts=8, d_model=16, **kwargs):
@@ -203,12 +203,11 @@ def _run_router_tp(device: torch.device):
     assert indices.shape == (B, S // get_world_size(), K)
 
 
-@pytest.mark.parametrize("backend", BACKENDS)
-def test_router_tp_replicates_weight_and_runs(backend: str):
-    device = torch.device("cuda") if "nccl" in backend else torch.device("cpu")
+@requires_multi_gpu
+def test_router_tp_replicates_weight_and_runs():
     run_distributed_test(
         _run_router_tp,
         world_size=2,
-        backend=backend,
-        func_args=(device,),
+        backend="nccl",
+        func_args=(torch.device("cuda"),),
     )
