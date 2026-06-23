@@ -233,7 +233,7 @@ jobs:
           # image with both torch 2.10 and the CUDA toolkit (nvcc). Their tests are
           # version-gated and skip on the torch 2.9 image above.
           - name: Test MoE kernels (GPU, torch 2.10)
-            image: tianhuat/olmo-core-torch210-2404-cu128
+            image: petew/olmo-core-tch2100cu130-2026-01-23 # tianhuat/olmo-core-torch210-2404-cu128
             gpus: 2
             run: |
               pytest -v --color=yes --durations=3 -m gpu \
