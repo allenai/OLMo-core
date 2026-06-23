@@ -263,6 +263,12 @@ def gmm(
 
     if out is not None or input_grad_out is not None:
         raise RuntimeError("gmm(out=..., input_grad_out=...) requires torch grouped_mm backend")
+    if grouped_gemm is None:
+        raise RuntimeError(
+            "RoutedExperts grouped matmul requires either torch>=2.10 "
+            "(torch.nn.functional.grouped_mm) or the optional `grouped_gemm` package; "
+            "neither is available."
+        )
     return gmm_no_compile(a, b, batch_sizes, trans_b)
 
 
@@ -519,6 +525,15 @@ class RoutedExperts(nn.Module):
                 and self.rowwise_fp8.fp8_only_params
             ),
         )
+
+        self.reset_parameters()
+
+    def reset_parameters(self) -> None:
+        # Standalone default; the model-level init may override this with a depth-scaled std
+        # (and an EP generator for the sharded expert weights).
+        std = 0.02
+        for w in (self.w_up_gate, self.w_down):
+            nn.init.trunc_normal_(w, mean=0.0, std=std, a=-3 * std, b=3 * std)
 
     def _sync_rowwise_fp8_weight_anchors(self) -> None:
         fp8_only_params = (
@@ -805,6 +820,12 @@ class RoutedExperts(nn.Module):
                 prequantized_input_q=rowwise_fp8_input_q,
                 prequantized_input_scales=rowwise_fp8_input_scales,
             )
+        # NOTE: with fp8_only_params=True the bf16 expert anchors are also grad-disabled
+        # (requires_grad=False), so reaching this bf16 fallback *during training* would silently
+        # produce no expert-weight gradients. This guard only catches the storage-released case;
+        # a grad-context-aware guard (raise when grad is enabled but the anchors don't require
+        # grad, without breaking eval, where grad-disabled bf16 is fine) is deferred to the GPU
+        # FP8 correctness pass.
         if (
             self.rowwise_fp8 is not None
             and self.rowwise_fp8.enabled
@@ -867,6 +888,12 @@ class RoutedExperts(nn.Module):
         return h
 
     def apply_ep(self, ep_mesh: DeviceMesh, **kwargs):
+        # NOTE: this allocates each rank's local expert shard as fresh (uninitialized) storage
+        # rather than scattering an already-initialized weight — expert parallelism is applied
+        # before init/load, and the sharded params are filled afterward by the model-level init
+        # (init_moe_v2, with an EP generator) or a checkpoint load.
+        # NOTE: the ep_dp/ep_mp mesh dim names must be reconciled with the repo's EP mesh builder
+        # (get_ep_mesh) when the EP train-module integration lands.
         # shard dim 0 to ep_mp, replicate on ep_dp mesh
         self.ep_mesh = ep_mesh["ep_dp", "ep_mp"]
         # with torch.no_grad():  # just to avoid tracking the rebind below

@@ -64,6 +64,23 @@ def test_rowwise_fp8_allows_disabling_fp8_only_params():
     assert cfg.fp8_only_params is False
 
 
+def test_routed_experts_build_initializes_weights():
+    # Regression: build() must initialize the expert parameters (they were previously left as
+    # raw torch.empty storage), so a freshly built module has finite, non-zero weights.
+    module = RoutedExperts(
+        d_model=16,
+        hidden_size=32,
+        num_experts=4,
+        bias=False,
+        dtype=DType.float32,
+        init_device="cpu",
+    )
+    assert torch.isfinite(module.w_up_gate).all()
+    assert torch.isfinite(module.w_down).all()
+    assert module.w_up_gate.abs().sum() > 0
+    assert module.w_down.abs().sum() > 0
+
+
 def test_routed_experts_accepts_rowwise_fp8_dict():
     module = RoutedExperts(
         d_model=512,
