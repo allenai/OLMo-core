@@ -95,11 +95,7 @@ class MoERouterConfigV2(Config):
         """
         The number of params that the module will have once built.
         """
-        num_params = 0
-
-        num_params += self.d_model * self.num_experts
-
-        return num_params
+        return self.d_model * self.num_experts
 
     def build(
         self,
