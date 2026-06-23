@@ -330,55 +330,15 @@ def scaled_grouped_mm_q_fp8_weight_no_compile(
     )
 
 
-# if env variable OLMO_USE_TORCH_GROUPED_MM is set, use its value to determine whether to use torch grouped_mm;
-env_val = os.getenv("OLMO_USE_TORCH_GROUPED_MM")
-USE_TORCH_GROUPED_MM: Optional[bool]
-if env_val is not None:
-    if env_val.lower() in ("1", "true", "yes"):
-        USE_TORCH_GROUPED_MM = True
-    elif env_val.lower() in ("0", "false", "no"):
-        USE_TORCH_GROUPED_MM = False
-    else:
-        raise ValueError(
-            f"Invalid value for OLMO_USE_TORCH_GROUPED_MM: {env_val}. Expected one of (1, 0, true, false, yes, no)."
-        )
-else:
-    # otherwise, use feature detection and version gate.
-    USE_TORCH_GROUPED_MM = None
+def use_torch_grouped_mm() -> bool:
+    # ``torch.nn.functional.grouped_mm`` was added in torch 2.10; feature-detect it
+    # (same approach as ``olmo_core.testing.has_torch_grouped_mm``).
+    return hasattr(F, "grouped_mm")
 
 
-def use_torch_grouped_mm():
-    global USE_TORCH_GROUPED_MM
-    if USE_TORCH_GROUPED_MM is not None:
-        return USE_TORCH_GROUPED_MM
-
-    torch_version = torch.__version__.split("+")[0]  # strip local build suffix, e.g. +cu128
-    try:
-        major_str, minor_str, *_ = torch_version.split(".")
-        major, minor = int(major_str), int(minor_str)
-        meets_version_gate = major > 2 or (major == 2 and minor >= 10)
-    except (ValueError, TypeError):
-        # Fall back to feature detection on unusual version strings.
-        meets_version_gate = hasattr(F, "grouped_mm")
-
-    # grouped_mm was added in torch 2.10; hasattr keeps this robust to local builds.
-    USE_TORCH_GROUPED_MM = meets_version_gate and hasattr(F, "grouped_mm")
-    return USE_TORCH_GROUPED_MM
-
-
-REQUIRES_HOST_SIDE_SPLIT_SIZES = None  # cache the result of whether host-side split sizes are required, since it does not change during runtime and checking it requires parsing torch version every time.
-
-
-def requires_host_side_split_sizes():
-    # read from cache if available
-    global REQUIRES_HOST_SIDE_SPLIT_SIZES
-    if REQUIRES_HOST_SIDE_SPLIT_SIZES is not None:
-        return REQUIRES_HOST_SIDE_SPLIT_SIZES
-
-    # grouped_gemm cublas mode requires host-side split sizes, grouped_mm does not.
-    REQUIRES_HOST_SIDE_SPLIT_SIZES = not use_torch_grouped_mm()
-
-    return REQUIRES_HOST_SIDE_SPLIT_SIZES
+def requires_host_side_split_sizes() -> bool:
+    # grouped_gemm cublas mode requires host-side split sizes; torch grouped_mm does not.
+    return not use_torch_grouped_mm()
 
 
 @dataclass
