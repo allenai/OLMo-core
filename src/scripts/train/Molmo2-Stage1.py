@@ -72,6 +72,7 @@ log = logging.getLogger(__name__)
 
 MODEL_ID = "allenai/Molmo2-4B"  # HF checkpoint to initialise from (also provides the tokenizer)
 SEQUENCE_LENGTH = 4096  # fixed pad length; mm_olmo stage 1 uses ~5248
+USE_FLEX_ATTN = False  # True -> fused FlexAttention backend for the multimodal masks (~+8% MFU)
 MAX_CROPS = 8
 
 # Instance-based batching (mm_olmo: global 8, device microbatch 1), expressed in tokens.
@@ -248,10 +249,12 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
     # `List` feature type the image's older `datasets` can't deserialize. Upgrade after the
     # package install (olmo-core does not pin `datasets`, so this is not clobbered).
     launch_config.post_setup = "pip install -U 'datasets>=4,<6'"
-    # [flexattn branch] use the fused FlexAttention backend for the multimodal masks.
-    launch_config.env_vars = list(launch_config.env_vars) + [
-        BeakerEnvVar(name="OLMO2_FLEX_ATTN", value="1")
-    ]
+    # Optionally use the fused FlexAttention backend for the multimodal masks (~+8% MFU on
+    # the stage-1 mixture vs the dense `torch` backend; see USE_FLEX_ATTN).
+    if USE_FLEX_ATTN:
+        launch_config.env_vars = list(launch_config.env_vars) + [
+            BeakerEnvVar(name="OLMO2_FLEX_ATTN", value="1")
+        ]
 
     return ExperimentConfig(
         model=model_config,
