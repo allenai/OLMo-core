@@ -41,6 +41,15 @@ def _cast_to_fp32(x: torch.Tensor) -> torch.Tensor:
 class MoERouterConfigV2(Config):
     """
     A configuration class for easily building any of the different MoE router modules.
+
+    .. note::
+        Unlike the rest of the codebase, this config stores dimension-related fields
+        (e.g. ``d_model``, ``num_experts``) directly. Other configs keep such dimensions
+        out of the config and instead receive them only as arguments to :meth:`build`
+        (e.g. ``AttentionConfig.build(d_model, ...)``), so the dimensions live in a single
+        place and flow down from the top-level transformer config. The v2 configs deviate
+        by duplicating the dimensions here. This should be unified in the future to follow
+        the dimension-agnostic ``build(d_model, ...)`` convention.
     """
 
     d_model: int
