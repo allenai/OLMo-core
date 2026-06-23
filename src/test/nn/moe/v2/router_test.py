@@ -5,7 +5,7 @@ from torch.distributed.tensor import DTensor, Replicate, Shard, distribute_tenso
 
 from olmo_core.config import DType
 from olmo_core.distributed.utils import get_world_size
-from olmo_core.nn.moe.router import MoERouterGatingFunction
+from olmo_core.nn.moe.router import MoERouterConfig, MoERouterGatingFunction
 from olmo_core.nn.moe.v2.router import MoERouterConfigV2
 from olmo_core.testing import BACKENDS, run_distributed_test
 
@@ -142,6 +142,34 @@ def test_router_use_quant_scores_matches_plain_for_separated_scores():
     router.use_quant_scores = False
     _, indices_ref, _, _ = router(x, False)
     assert torch.equal(indices, indices_ref)
+
+
+@pytest.mark.parametrize(
+    "gating", [MoERouterGatingFunction.softmax, MoERouterGatingFunction.sigmoid]
+)
+@pytest.mark.parametrize("top_k", [1, 2])
+def test_v2_router_matches_v1_with_defaults(top_k: int, gating: MoERouterGatingFunction):
+    torch.manual_seed(0)
+    D, E = 16, 8
+
+    v1 = MoERouterConfig(top_k=top_k, gating_function=gating, dtype=DType.float32).build(
+        d_model=D, num_experts=E, init_device="cpu"
+    )
+    v2 = MoERouterConfigV2(
+        d_model=D, num_experts=E, top_k=top_k, gating_function=gating, dtype=DType.float32
+    ).build(init_device="cpu")
+
+    # Same (flat num_experts*d_model) weights -> identical routing with default settings.
+    with torch.no_grad():
+        v2.weight.copy_(v1.weight)
+
+    x = torch.randn(2, 4, D)
+    w1, i1, bspe1, _ = v1(x)
+    w2, i2, bspe2, _ = v2(x, False)
+
+    torch.testing.assert_close(w2, w1)
+    assert torch.equal(i2, i1)
+    torch.testing.assert_close(bspe2, bspe1)
 
 
 # NOTE: ``use_recompute_fp32_cast`` is exercised end-to-end on GPU. It routes the fp32 cast
