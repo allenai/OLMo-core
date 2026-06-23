@@ -102,6 +102,22 @@ def _cmake_cuda_architectures(torch_cuda_arch_list: str) -> str:
     return ";".join(archs)
 
 
+def _torch_cuda_arch_list_from_cmake_architectures(cuda_architectures: str) -> str:
+    torch_archs: list[str] = []
+    for arch in cuda_architectures.split(";"):
+        normalized = _normalize_cuda_arch_for_cmake(arch)
+        if normalized is None:
+            continue
+        match = re.fullmatch(r"(\d+)(\d)([a-z]?)", normalized)
+        if match is None:
+            continue
+        major, minor, suffix = match.groups()
+        torch_arch = f"{major}.{minor}{suffix}"
+        if torch_arch not in torch_archs:
+            torch_archs.append(torch_arch)
+    return " ".join(torch_archs)
+
+
 def _infer_cmake_cuda_architectures(torch_module) -> str | None:
     explicit = os.getenv("CMAKE_CUDA_ARCHITECTURES") or os.getenv("CUDAARCHS")
     if explicit:
@@ -118,6 +134,11 @@ def _infer_cmake_cuda_architectures(torch_module) -> str | None:
     for device_idx in range(torch_module.cuda.device_count()):
         major, minor = torch_module.cuda.get_device_capability(device_idx)
         arch = f"{major}{minor}"
+        if major == 10 and _env_bool(
+            "OLMO_SYMM_VDEV2D_BLACKWELL_FEATURE_ARCH",
+            True,
+        ):
+            arch = f"{arch}a"
         if arch not in archs:
             archs.append(arch)
     return ";".join(archs) if archs else None
@@ -132,6 +153,7 @@ def _build_extension_setuptools(*, inplace: bool, verbose: bool, force: bool) ->
     cuda_dir = this_dir / "cuda"
     cpp_src = cuda_dir / "symm_mem_vdev2d.cpp"
     cu_src = cuda_dir / "symm_mem_vdev2d_kernel.cu"
+    wave_cu_src = cuda_dir / "symm_mem_vdev2d_wave_kernel.cu"
 
     include_dir, lib_dir, host_so, device_a = _find_nvshmem_paths()
 
@@ -141,7 +163,7 @@ def _build_extension_setuptools(*, inplace: bool, verbose: bool, force: bool) ->
 
     ext = CUDAExtension(
         name="olmo_core.kernels._symm_mem_vdev2d_ext_gpu",
-        sources=[str(cpp_src), str(cu_src)],
+        sources=[str(cpp_src), str(cu_src), str(wave_cu_src)],
         include_dirs=[str(include_dir)],
         library_dirs=[str(lib_dir), "/usr/local/cuda/lib64"],
         dlink=True,
@@ -231,6 +253,12 @@ def _build_extension_cmake(*, inplace: bool, verbose: bool, force: bool) -> None
     if shutil.which("ninja"):
         cmake_args.extend(["-G", "Ninja"])
 
+    cmake_env = os.environ.copy()
+    if cuda_architectures and "TORCH_CUDA_ARCH_LIST" not in cmake_env:
+        torch_arch_list = _torch_cuda_arch_list_from_cmake_architectures(cuda_architectures)
+        if torch_arch_list:
+            cmake_env["TORCH_CUDA_ARCH_LIST"] = torch_arch_list
+
     build_args = [
         "cmake",
         "--build",
@@ -242,8 +270,8 @@ def _build_extension_cmake(*, inplace: bool, verbose: bool, force: bool) -> None
     if jobs and jobs > 0:
         build_args.extend(["--parallel", str(jobs)])
 
-    subprocess.run(cmake_args, check=True)
-    subprocess.run(build_args, check=True)
+    subprocess.run(cmake_args, check=True, env=cmake_env)
+    subprocess.run(build_args, check=True, env=cmake_env)
 
     so_name = f"_symm_mem_vdev2d_ext_gpu{ext_suffix}"
     target_path = output_dir / so_name

@@ -7,7 +7,6 @@ from typing import List, Tuple
 
 import torch
 import torch.distributed as dist
-import torch.distributed._symmetric_memory as symm_mem
 
 # Example:
 # torchrun --standalone --nproc-per-node=4 \
@@ -69,25 +68,20 @@ def _event_timed_ms(fn, iters: int) -> List[float]:
 
 
 def _setup_nvshmem_backend(group: dist.ProcessGroup, device: torch.device) -> str:
-    if not symm_mem.is_nvshmem_available():
-        raise RuntimeError("NVSHMEM is not available in this environment.")
+    from olmo_core.kernels import olmo_symm_mem
 
-    backend = symm_mem.get_backend(device)
-    if backend is None or backend.upper() != "NVSHMEM":
-        symm_mem.set_backend("NVSHMEM")
-
-    world_group_name = dist.group.WORLD.group_name
-    group_name = group.group_name
-    symm_mem.enable_symm_mem_for_group(world_group_name)
-    symm_mem.enable_symm_mem_for_group(group_name)
-    return group_name
+    os.environ["OLMO_USE_OWN_SYMM_MEM"] = "1"
+    olmo_symm_mem.register_group(group, device=device)
+    return group.group_name
 
 
 def _alloc_rendezvous_symm_tensor(
     shape: Tuple[int, ...], dtype: torch.dtype, device: torch.device, group: dist.ProcessGroup
 ) -> torch.Tensor:
-    t = symm_mem.empty(shape, dtype=dtype, device=device)
-    symm_mem.rendezvous(t, group=group)
+    from olmo_core.kernels import olmo_symm_mem
+
+    t = olmo_symm_mem.empty(shape, dtype=dtype, device=device, group=group)
+    olmo_symm_mem.rendezvous(t, group=group)
     return t
 
 
@@ -108,7 +102,7 @@ def _make_reference(
     src_rows: torch.Tensor,
     probs: torch.Tensor,
     out_dtype: torch.dtype,
-) -> tuple[torch.Tensor, torch.Tensor]:
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     rows, top_k = src_ranks.shape
     cols = all_expert_out.shape[2]
     routes = rows * top_k
@@ -126,7 +120,7 @@ def _make_reference(
     gathered_f32 = gathered_3d.to(dtype=torch.float32)
     ref_unweighted = gathered_f32.sum(dim=1).to(dtype=out_dtype)
     ref_weighted = (gathered_f32 * probs.unsqueeze(-1)).sum(dim=1).to(dtype=out_dtype)
-    return ref_unweighted, ref_weighted
+    return gathered_3d, ref_unweighted, ref_weighted
 
 
 def main() -> None:
@@ -172,6 +166,10 @@ def main() -> None:
     fused_unweighted = torch.empty_like(baseline_unweighted)
     baseline_weighted = torch.empty_like(baseline_unweighted)
     fused_weighted = torch.empty_like(baseline_unweighted)
+    baseline_gathered = torch.empty(
+        (args.rows, args.top_k, args.cols), device=device, dtype=dtype
+    )
+    fused_gathered = torch.empty_like(baseline_gathered)
 
     def run_baseline_unweighted() -> None:
         rowwise_combine_get(
@@ -249,6 +247,26 @@ def main() -> None:
     run_fused_unweighted()
     run_baseline_weighted()
     run_fused_weighted()
+    rowwise_combine_get(
+        expert_out,
+        baseline_weighted,
+        src_ranks,
+        src_rows,
+        group_name,
+        probs=probs,
+        nblocks=args.nblocks,
+        gathered_out=baseline_gathered,
+    )
+    rowwise_combine_get_fused(
+        expert_out,
+        fused_weighted,
+        src_ranks,
+        src_rows,
+        group_name,
+        probs=probs,
+        nblocks=args.nblocks,
+        gathered_out=fused_gathered,
+    )
     torch.cuda.synchronize(device)
     dist.barrier(group=group)
 
@@ -256,7 +274,7 @@ def main() -> None:
     gathered_expert_out = [torch.empty_like(expert_out) for _ in range(world_size)]
     dist.all_gather(gathered_expert_out, expert_out, group=group)
     all_expert_out = torch.stack(gathered_expert_out, dim=0)
-    ref_unweighted, ref_weighted = _make_reference(
+    ref_gathered, ref_unweighted, ref_weighted = _make_reference(
         all_expert_out,
         src_ranks,
         src_rows,
@@ -285,15 +303,24 @@ def main() -> None:
     close_baseline_vs_fused_weighted = torch.allclose(
         baseline_weighted, fused_weighted, atol=atol, rtol=rtol
     )
+    close_baseline_gathered = torch.allclose(
+        baseline_gathered, ref_gathered, atol=atol, rtol=rtol
+    )
+    close_fused_gathered = torch.allclose(fused_gathered, ref_gathered, atol=atol, rtol=rtol)
+    close_baseline_vs_fused_gathered = torch.allclose(
+        baseline_gathered, fused_gathered, atol=atol, rtol=rtol
+    )
 
     max_abs_diff_unweighted = float((baseline_unweighted - fused_unweighted).abs().max().item())
     max_abs_diff_weighted = float((baseline_weighted - fused_weighted).abs().max().item())
+    max_abs_diff_gathered = float((baseline_gathered - fused_gathered).abs().max().item())
     max_abs_diff_ref_baseline = float((baseline_unweighted - ref_unweighted).abs().max().item())
     max_abs_diff_ref_fused = float((fused_unweighted - ref_unweighted).abs().max().item())
     max_abs_diff_ref_baseline_weighted = float(
         (baseline_weighted - ref_weighted).abs().max().item()
     )
     max_abs_diff_ref_fused_weighted = float((fused_weighted - ref_weighted).abs().max().item())
+    max_abs_diff_ref_fused_gathered = float((fused_gathered - ref_gathered).abs().max().item())
 
     local_ok = (
         close_baseline_unweighted
@@ -302,6 +329,9 @@ def main() -> None:
         and close_fused_weighted
         and close_baseline_vs_fused_unweighted
         and close_baseline_vs_fused_weighted
+        and close_baseline_gathered
+        and close_fused_gathered
+        and close_baseline_vs_fused_gathered
     )
     ok_tensor = torch.tensor([1 if local_ok else 0], device=device, dtype=torch.int32)
     dist.all_reduce(ok_tensor, op=dist.ReduceOp.MIN, group=group)
@@ -324,12 +354,17 @@ def main() -> None:
         "close_fused_weighted": bool(close_fused_weighted),
         "close_baseline_vs_fused_unweighted": bool(close_baseline_vs_fused_unweighted),
         "close_baseline_vs_fused_weighted": bool(close_baseline_vs_fused_weighted),
+        "close_baseline_gathered": bool(close_baseline_gathered),
+        "close_fused_gathered": bool(close_fused_gathered),
+        "close_baseline_vs_fused_gathered": bool(close_baseline_vs_fused_gathered),
         "max_abs_diff_unweighted": max_abs_diff_unweighted,
         "max_abs_diff_weighted": max_abs_diff_weighted,
+        "max_abs_diff_gathered": max_abs_diff_gathered,
         "max_abs_diff_ref_baseline": max_abs_diff_ref_baseline,
         "max_abs_diff_ref_fused": max_abs_diff_ref_fused,
         "max_abs_diff_ref_baseline_weighted": max_abs_diff_ref_baseline_weighted,
         "max_abs_diff_ref_fused_weighted": max_abs_diff_ref_fused_weighted,
+        "max_abs_diff_ref_fused_gathered": max_abs_diff_ref_fused_gathered,
     }
     gathered = [None] * world_size
     dist.all_gather_object(gathered, result, group=group)
@@ -361,7 +396,8 @@ def main() -> None:
                 f"speedup_w={speedup_weighted:.3f}x "
                 f"bw_w_base={bw_base_weighted:.2f}GB/s bw_w_fused={bw_fused_weighted:.2f}GB/s "
                 f"max_diff_unw={item['max_abs_diff_unweighted']:.6f} "
-                f"max_diff_w={item['max_abs_diff_weighted']:.6f}",
+                f"max_diff_w={item['max_abs_diff_weighted']:.6f} "
+                f"max_diff_gathered={item['max_abs_diff_gathered']:.6f}",
                 flush=True,
             )
             if not global_ok:
@@ -370,12 +406,16 @@ def main() -> None:
                     f"close(fused_unw/ref)={item['close_fused_unweighted']} "
                     f"close(base_w/ref)={item['close_baseline_weighted']} "
                     f"close(fused_w/ref)={item['close_fused_weighted']} "
+                    f"close(base_g/ref)={item['close_baseline_gathered']} "
+                    f"close(fused_g/ref)={item['close_fused_gathered']} "
                     f"close(base_vs_fused_unw)={item['close_baseline_vs_fused_unweighted']} "
                     f"close(base_vs_fused_w)={item['close_baseline_vs_fused_weighted']} "
+                    f"close(base_vs_fused_g)={item['close_baseline_vs_fused_gathered']} "
                     f"max_ref_diff_base_unw={item['max_abs_diff_ref_baseline']:.6f} "
                     f"max_ref_diff_fused_unw={item['max_abs_diff_ref_fused']:.6f} "
                     f"max_ref_diff_base_w={item['max_abs_diff_ref_baseline_weighted']:.6f} "
-                    f"max_ref_diff_fused_w={item['max_abs_diff_ref_fused_weighted']:.6f}",
+                    f"max_ref_diff_fused_w={item['max_abs_diff_ref_fused_weighted']:.6f} "
+                    f"max_ref_diff_fused_g={item['max_abs_diff_ref_fused_gathered']:.6f}",
                     flush=True,
                 )
 

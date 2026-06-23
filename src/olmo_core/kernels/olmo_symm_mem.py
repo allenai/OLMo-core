@@ -125,6 +125,27 @@ def empty(
     return ext.olmo_symm_empty(tuple(int(dim) for dim in shape), dtype, resolved_device)
 
 
+def peer_base_ptrs(
+    tensor: torch.Tensor,
+    *,
+    group: dist.ProcessGroup,
+    barrier: bool = True,
+) -> torch.Tensor:
+    """Return device int64 direct peer base pointers for a symmetric tensor.
+
+    This is a setup/prewarm primitive for CUDA-owned peer-window kernels. It
+    registers the group, optionally waits until all ranks have allocated their
+    matching symmetric tensor, then returns a device tensor indexed by group
+    rank. The extension fails closed when a peer is not directly addressable.
+    """
+
+    register_group(group, device=tensor.device)
+    if barrier:
+        dist.barrier(group=group)
+    ext = _load_cuda_extension()
+    return ext.olmo_symm_peer_base_ptrs(tensor, group.group_name)
+
+
 def barrier(group: dist.ProcessGroup, *, device: torch.device | str | int | None = None) -> None:
     """Enqueue an NVSHMEM barrier for the OLMo bootstrap world on the current CUDA stream."""
     if _BOOTSTRAP_GLOBAL_RANKS is None:

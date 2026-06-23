@@ -68,7 +68,8 @@ add_library(
   ${TARGET_NAME}
   MODULE
   symm_mem_vdev2d.cpp
-  symm_mem_vdev2d_kernel.cu)
+  symm_mem_vdev2d_kernel.cu
+  symm_mem_vdev2d_wave_kernel.cu)
 
 target_compile_definitions(
   ${TARGET_NAME}

@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <cub/cub.cuh>
+#include <cmath>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -53,6 +54,7 @@ namespace {
 struct OlmoSymmGroupInfo {
   int world_size = 0;
   int* rank_to_pe_dev = nullptr;
+  std::vector<int> rank_to_pe_host;
 };
 
 struct OlmoSymmState {
@@ -527,6 +529,7 @@ template <typename scalar_t, bool HAS_PROBS>
 __global__ void combineRowsGetKernel(
     const scalar_t* expert_out,
     scalar_t* out,
+    scalar_t* gathered_out,
     const int64_t* src_ranks,
     const int64_t* src_rows,
     const float* probs,
@@ -585,6 +588,17 @@ __global__ void combineRowsGetKernel(
       int64_t peer = src_ranks[route];
       int64_t src_row = src_rows[route];
       if (peer < 0 || src_row < 0) {
+        if (gathered_out != nullptr) {
+          scalar_t* gathered_route_ptr =
+              gathered_out + (row * top_k + k) * dim + warp_col_base;
+#pragma unroll
+          for (int i = 0; i < ROWWISE_COMBINE_FUSED_VECS_PER_THREAD; ++i) {
+            int elem = i * WARP_SIZE + lane_id;
+            if (elem < warp_chunk_elems) {
+              gathered_route_ptr[elem] = static_cast<scalar_t>(0.0f);
+            }
+          }
+        }
         continue;
       }
 
@@ -614,6 +628,11 @@ __global__ void combineRowsGetKernel(
         int elem = i * WARP_SIZE + lane_id;
         if (elem < warp_chunk_elems) {
           float v = static_cast<float>(warp_shared_row[elem]);
+          if (gathered_out != nullptr) {
+            scalar_t* gathered_route_ptr =
+                gathered_out + (row * top_k + k) * dim + warp_col_base;
+            gathered_route_ptr[elem] = warp_shared_row[elem];
+          }
           acc[i] += v * p;
         }
       }
@@ -863,6 +882,68 @@ at::Tensor olmo_symm_empty(
   return tensor;
 }
 
+at::Tensor olmo_symm_peer_base_ptrs(
+    at::Tensor& tensor,
+    const std::string& group_name) {
+  auto& state = olmo_symm_state();
+  std::vector<int> rank_to_pe;
+  int device_idx = -1;
+  int my_pe = -1;
+  {
+    std::lock_guard<std::mutex> lock(state.mutex);
+    TORCH_CHECK(state.initialized, "OLMo symmetric memory is not initialized");
+    auto it = state.groups.find(group_name);
+    TORCH_CHECK(
+        it != state.groups.end(),
+        "OLMo symmetric-memory group ",
+        group_name,
+        " is not registered");
+    rank_to_pe = it->second.rank_to_pe_host;
+    device_idx = state.device_idx;
+    my_pe = state.rank;
+  }
+
+  TORCH_CHECK(tensor.is_cuda(), "symmetric tensor must be CUDA");
+  TORCH_CHECK(tensor.numel() > 0, "symmetric tensor must be non-empty");
+  TORCH_CHECK(
+      tensor.get_device() == device_idx,
+      "symmetric tensor must be on the NVSHMEM bootstrap device ",
+      device_idx,
+      ", got ",
+      tensor.get_device());
+  c10::cuda::CUDAGuard guard(tensor.device());
+
+  void* local_ptr = tensor.mutable_data_ptr();
+  std::vector<int64_t> host_ptrs(rank_to_pe.size(), 0);
+  for (size_t rank_idx = 0; rank_idx < rank_to_pe.size(); ++rank_idx) {
+    const int peer = rank_to_pe[rank_idx];
+    void* peer_ptr = peer == my_pe ? local_ptr : nvshmem_ptr(local_ptr, peer);
+    TORCH_CHECK(
+        peer_ptr != nullptr,
+        "NVSHMEM symmetric allocation for group ",
+        group_name,
+        " is not directly addressable for group rank ",
+        rank_idx,
+        " (PE ",
+        peer,
+        "). The BF16 wave peer-window path currently supports only "
+        "directly peer-visible intra-node workspaces.");
+    host_ptrs[rank_idx] = static_cast<int64_t>(reinterpret_cast<uintptr_t>(peer_ptr));
+  }
+
+  auto out = at::empty(
+      {static_cast<int64_t>(host_ptrs.size())},
+      at::TensorOptions().device(tensor.device()).dtype(at::kLong));
+  auto stream = at::cuda::getCurrentCUDAStream();
+  AT_CUDA_CHECK(cudaMemcpyAsync(
+      out.mutable_data_ptr<int64_t>(),
+      host_ptrs.data(),
+      host_ptrs.size() * sizeof(int64_t),
+      cudaMemcpyHostToDevice,
+      stream.stream()));
+  return out;
+}
+
 void olmo_symm_register_group(
     const std::string& group_name,
     const std::vector<int64_t>& rank_to_pe) {
@@ -902,6 +983,7 @@ void olmo_symm_register_group(
   OlmoSymmGroupInfo info;
   info.world_size = static_cast<int>(host_rank_to_pe.size());
   info.rank_to_pe_dev = rank_to_pe_dev;
+  info.rank_to_pe_host = std::move(host_rank_to_pe);
   state.groups.emplace(group_name, info);
 }
 
@@ -1577,6 +1659,7 @@ void rowwise_combine_get_fused(
     const std::optional<at::Tensor>& probs,
     const std::string& group_name,
     int64_t nblocks,
+    const std::optional<at::Tensor>& gathered_out,
     bool pre_barrier,
     bool post_barrier) {
   auto* olmo_group = olmo_symm_find_group(group_name);
@@ -1637,6 +1720,21 @@ void rowwise_combine_get_fused(
     probs_ptr = probs->data_ptr<float>();
   }
 
+  if (gathered_out.has_value()) {
+    TORCH_CHECK(
+        gathered_out->defined(),
+        "gathered_out optional tensor must be defined");
+    TORCH_CHECK(
+        gathered_out->device() == device,
+        "gathered_out must be on the same CUDA device as other arguments");
+    TORCH_CHECK(
+        gathered_out->is_contiguous(),
+        "gathered_out must be contiguous");
+    TORCH_CHECK(
+        gathered_out->scalar_type() == out.scalar_type(),
+        "gathered_out must have the same dtype as out");
+  }
+
   c10::cuda::CUDAGuard guard(device);
   auto stream = at::cuda::getCurrentCUDAStream();
   nvshmem_team_t team = NVSHMEM_TEAM_WORLD;
@@ -1654,6 +1752,22 @@ void rowwise_combine_get_fused(
   int64_t expert_capacity_rows = expert_out.size(0);
   int64_t expert_row_stride = expert_out.stride(0);
   int64_t out_row_stride = out.stride(0);
+  if (gathered_out.has_value()) {
+    TORCH_CHECK(
+        gathered_out->dim() == 3,
+        "gathered_out must be rank-3 [N, K, D]");
+    TORCH_CHECK(
+        gathered_out->size(0) == num_out_rows &&
+            gathered_out->size(1) == top_k &&
+            gathered_out->size(2) == dim,
+        "gathered_out shape mismatch: expected [",
+        num_out_rows,
+        ", ",
+        top_k,
+        ", ",
+        dim,
+        "]");
+  }
   int num_blocks = resolve_num_blocks_rowwise(
       num_out_rows * top_k, nblocks, world_within_direct_access);
   TORCH_CHECK(num_blocks > 0, "resolved nblocks must be > 0");
@@ -1687,11 +1801,15 @@ void rowwise_combine_get_fused(
       [&] {
         const scalar_t* expert_out_typed = expert_out.data_ptr<scalar_t>();
         scalar_t* out_typed = out.mutable_data_ptr<scalar_t>();
+        scalar_t* gathered_out_typed = gathered_out.has_value()
+            ? gathered_out->mutable_data_ptr<scalar_t>()
+            : nullptr;
         if (probs_ptr == nullptr) {
           combineRowsGetKernel<scalar_t, false>
               <<<grid, block, 0, stream>>>(
                   expert_out_typed,
                   out_typed,
+                  gathered_out_typed,
                   src_ranks_ptr,
                   src_rows_ptr,
                   nullptr,
@@ -1709,6 +1827,7 @@ void rowwise_combine_get_fused(
               <<<grid, block, 0, stream>>>(
                   expert_out_typed,
                   out_typed,
+                  gathered_out_typed,
                   src_ranks_ptr,
                   src_rows_ptr,
                   probs_ptr,
