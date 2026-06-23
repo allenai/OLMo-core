@@ -4,7 +4,22 @@ Last updated: 2026-06-23 UTC.
 
 This table is a scan-friendly status matrix for planned ladder cells. It is separate from `RUNS.md` (chronological launch/status log) and `PLOTTED_RESULTS.md` (finished-only plotted rows and losses).
 
+Main experiment categories: baseline, dense schedule, expert granularity, Qwen-like, shared expert, and total sparsity. Rows marked diagnostic are tracked for context but are not part of the main full-grid completion target.
+
 Legend: `done` = at least one finished/plotted run exists; `run` = currently running in Beaker; `queued` = created/scheduled but not started; `todo` = planned/not started; `hold` = intentionally not prioritized yet.
+
+## Current Full-Grid Gaps
+
+| Experiment | Remaining not-yet-queued / not-started cells | Notes |
+| --- | --- | --- |
+| Total sparsity | 1.2B Cx1/2/4/8 for high total 96E/top4 and huge total 192E/top4 | 275M, 480M, and 810M are done. |
+| Dense schedule | 480M, 810M, and 1.2B Cx1/2/4/8 for dense0, dense2, and dense4 | 275M LR searches are done; promotions have not started. |
+| Shared expert | 480M Cx1/2/4/8 and 1.2B Cx8 for no-shared routed-9/8d | Shared expert is a main experiment category; remaining cells were held/canceled earlier for queue pressure, not excluded. |
+| Qwen-like | None beyond currently running/queued 810M/1.2B tail jobs | Let the active/queued Beaker surface drain unless a run fails. |
+| Expert granularity | None for main coarse/fine grid | Diagnostic 192E/384E remains intentionally limited to 275M Cx1. |
+| Baseline | None for Cx1/2/4/8 main grid | Current grid complete. |
+
+## Status Matrix
 
 | Experiment | Variant / comparison | 275M | 480M | 810M | 1.2B | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -14,7 +29,7 @@ Legend: `done` = at least one finished/plotted run exists; `run` = currently run
 | Expert granularity | diagnostic 192E/384E | done Cx1 only | hold | hold | hold | Diagnostic only; intentionally not part of current full ladder. |
 | Total sparsity | high total 96E/top4 | done Cx1/2/4/8 | done Cx1/2/4/8 | done Cx1/2/4/8 | todo Cx1/2/4/8 | 810M promoted wave complete. |
 | Total sparsity | huge total 192E/top4 | done Cx1/2/4/8 | done Cx1/2/4/8 | done Cx1/2/4/8 | todo Cx1/2/4/8 | 810M Cx4/Cx8 replacements finished since last status. |
-| Shared expert | no shared, routed 9/8 d | done Cx1/2/4/8 | todo Cx1/2/4/8 | done Cx1/2/4/8 | done Cx1/2/4, todo Cx8 | 480M was canceled earlier to avoid flooding; can promote later. |
+| Shared expert | no shared, routed 9/8 d | done Cx1/2/4/8 | todo Cx1/2/4/8 | done Cx1/2/4/8 | done Cx1/2/4, todo Cx8 | Main experiment category; 480M was canceled earlier to avoid flooding and 1.2B Cx8 remains to launch. |
 | Dense schedule | dense0 + shared | done Cx1/2/4/8 | todo Cx1/2/4/8 | todo Cx1/2/4/8 | todo Cx1/2/4/8 | Only 275M LR search finished so far. |
 | Dense schedule | dense2 + shared | done Cx1/2/4/8 | todo Cx1/2/4/8 | todo Cx1/2/4/8 | todo Cx1/2/4/8 | Only 275M LR search finished so far. |
 | Dense schedule | dense4 + shared | done Cx1/2/4/8 | todo Cx1/2/4/8 | todo Cx1/2/4/8 | todo Cx1/2/4/8 | Only 275M LR search finished so far. |
