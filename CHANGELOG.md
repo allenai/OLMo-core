@@ -29,6 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - The CPU `Test` CI job now caches `HF_HOME` across runs so the HuggingFace roundtrip tests (Qwen3-0.6B, Gemma-3-270m) don't re-download their checkpoints every run.
 - Excluded `mark_dynamic` from `torch.compile` tracing (`@torch.compiler.disable`).
+- Fixed a thread leak in `threaded_generator()`: the producer thread would block forever on a full queue when the consumer was abandoned before exhaustion (e.g. whenever a data loader's epoch iterator isn't fully consumed), leaking threads over the course of training.
 - Clearer error messages (now include the offending values) when a rank batch size isn't divisible by the sequence length, or `max_target_sequence_length` isn't a multiple of `sequence_length`.
 - S3 uploads/downloads now also retry on transient SSL errors (`ssl.SSLError`, botocore/urllib3 `SSLError`).
 - Distributed checkpoint writes now clone each tensor before serialization to avoid accidentally writing the full backing storage of a view/shared tensor, with a guard that raises `OLMoCheckpointError` if a written tensor is unexpectedly larger than its `nbytes`.
