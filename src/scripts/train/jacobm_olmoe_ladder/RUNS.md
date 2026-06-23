@@ -1360,3 +1360,37 @@ Created/scheduled but not started at the status check:
 
 Plot refresh updated all plot families. The visible high-signal changes are in expert granularity, total sparsity, Qwen3-like 810M/1.2B, shared expert, and dense schedule. No jobs were launched during this status check.
 
+
+## 2026-06-23 Status Check and Finished-Only Plot Refresh
+
+Status check scoped to tracker rows that were still running, queued, or otherwise ambiguous at the previous update. Plots were regenerated without `INCLUDE_RUNNING`, so all refreshed plot artifacts now use finished runs only. `PLOTTED_RESULTS.md` was regenerated from the same finished-only policy. A scan-friendly status matrix was added in `RUN_TRACKER.md`.
+
+Newly finalized since the 2026-06-22 tracker update:
+
+| Name | Beaker | Finalized UTC | Notes |
+| --- | --- | --- | --- |
+| `eg-1p2b-cx8-eg96e8k-lr4e-4-r1` | https://beaker.org/ex/01KV4ZJRYRHYF4SMV965SZGWTE | 2026-06-22 13:02 | 1.2B EG Cx8 fine finished cleanly. |
+| `sp-810m-cx4-sp192e4k-lr3e-4-r2` | https://beaker.org/ex/01KVEGFC3RQVYFW07077WNKMV0 | 2026-06-22 12:00 | 810M total-sparsity `sp192e4k` Cx4 replacement finished cleanly. |
+| `sp-810m-cx8-sp192e4k-lr3e-4-r2` | https://beaker.org/ex/01KVEGFQWQGQ6JWNBHC5YR23B1 | 2026-06-23 18:37 | 810M total-sparsity `sp192e4k` Cx8 replacement finished cleanly. |
+| `q3-810m-cx8-q3td128e8k-lr4e-4-r1` | https://beaker.org/ex/01KVFDQH6BQSBMRHBKZD5RE46W | 2026-06-23 17:50 | Qwen-like true-3D 810M Cx8 finished cleanly after preemptible retries. |
+| `q3-1p2b-cx1-q3am128e8k-lr4e-4-r1` | https://beaker.org/ex/01KVJ3237BYM0Y9NVA6FWM3H4Z | 2026-06-23 00:15 | Qwen-like active-matched 1.2B Cx1 finished cleanly. |
+
+Still running or started at the status check:
+
+| Name | Beaker | Started UTC | Notes |
+| --- | --- | --- | --- |
+| `q3-810m-cx8-q3am128e8k-lr4e-4-r1` | https://beaker.org/ex/01KVFDNGV9TDAP885HG5MD68FB | 2026-06-23 19:00 | Active-matched Qwen-like 810M Cx8; many low-priority preemptions so far. |
+| `q3-1p2b-cx4-q3am128e8k-lr3e-4-r1` | https://beaker.org/ex/01KVJ32TJEXX4XR9FY0QN8PA0T | 2026-06-23 17:52 | Active-matched Qwen-like 1.2B Cx4 running. |
+| `q3-1p2b-cx1-q3td128e8k-lr4e-4-r1` | https://beaker.org/ex/01KVJ33HPRPCQ6ERM46864M1Z3 | 2026-06-23 19:00 | True-3D Qwen-like 1.2B Cx1 running. |
+
+Created/queued but not started at the status check:
+
+| Name | Beaker | Latest job created UTC | Notes |
+| --- | --- | --- | --- |
+| `q3-1p2b-cx2-q3am128e8k-lr6e-4-r1` | https://beaker.org/ex/01KVJ32E9D5MQ00NNAW4QJTGMW | 2026-06-23 19:02 | Active-matched Qwen-like 1.2B Cx2; latest attempt created after earlier preemptions. |
+| `q3-1p2b-cx2-q3td128e8k-lr6e-4-r1` | https://beaker.org/ex/01KVJ33YG7A5DKD5EPZDTSFRPR | 2026-06-23 18:31 | True-3D Qwen-like 1.2B Cx2 waiting on Holmes capacity/latest attempt. |
+| `q3-1p2b-cx4-q3td128e8k-lr3e-4-r1` | https://beaker.org/ex/01KVJ34BFBN49YH2AKVSHS0GW5 | 2026-06-23 18:31 | True-3D Qwen-like 1.2B Cx4 waiting on Holmes capacity/latest attempt. |
+| `q3-1p2b-cx8-q3am128e8k-lr4e-4-r1` | https://beaker.org/ex/01KVJ4GXHKR0DP3PXHPR5ZZ6GB | 2026-06-20 09:06 | Corrected active-matched Cx8 `4e-4` replacement; still not started. |
+| `q3-1p2b-cx8-q3td128e8k-lr4e-4-r1` | https://beaker.org/ex/01KVJ4H8PTJDJCGHHFRB8CD3GP | 2026-06-20 09:07 | Corrected true-3D Cx8 `4e-4` replacement; still not started. |
+
+Finished-only plot refresh changed expert granularity 1.2B Cx8, total-sparsity 810M Cx4/Cx8, Qwen3-like 810M Cx8, and their summary plots. No jobs were launched during this status check.
