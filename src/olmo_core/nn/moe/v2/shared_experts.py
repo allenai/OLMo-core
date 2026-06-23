@@ -13,9 +13,9 @@ from olmo_core.config import Config, DType
 
 
 # SwiGLU is intentionally SiLU-gated here, matching the fused fast paths (forward1/forward2)
-# and the routed-expert kernels, which also hardcode SiLU. Folding the codebase's several
-# SwiGLU sites (the configurable FeedForward, the v1 MoE MLP, routed_experts) into one shared
-# helper is a general cross-module refactor, tracked separately rather than done here.
+# and the routed-expert kernels, which also hardcode SiLU.
+# TODO: fold the codebase's several SwiGLU sites (the configurable FeedForward, the v1 MoE
+# MLP, routed_experts) into one shared helper — a general cross-module refactor.
 def _swiglu(up: torch.Tensor, gate: torch.Tensor) -> torch.Tensor:
     return up * F.silu(gate)
 
