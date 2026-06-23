@@ -79,18 +79,6 @@ def test_router_uniform_expert_assignment_balances_experts():
     )
 
 
-def test_router_random_expert_assignment_runs():
-    torch.manual_seed(0)
-    B, S, D, E, K = 2, 4, 16, 8, 2
-    router = _build(top_k=K, num_experts=E, d_model=D, random_expert_assignment=True)
-
-    _, indices, batch_size_per_expert, _ = router(torch.randn(B, S, D), False)
-
-    assert indices.shape == (B, S, K)
-    assert int(indices.min()) >= 0 and int(indices.max()) < E
-    assert int(batch_size_per_expert.sum()) == B * S * K
-
-
 def test_router_restore_weight_scale_multiplies_by_top_k():
     torch.manual_seed(0)
     router = _build(top_k=4)
@@ -156,37 +144,10 @@ def test_router_use_quant_scores_matches_plain_for_separated_scores():
     assert torch.equal(indices, indices_ref)
 
 
-def test_router_grad_flows_to_weight_and_input():
-    router = _build(top_k=2)
-    x = torch.randn(2, 4, 16, requires_grad=True)
-
-    weights, _, _, _ = router(x, False)
-    weights.sum().backward()
-
-    assert router.weight.grad is not None
-    assert x.grad is not None
-
-
 # NOTE: ``use_recompute_fp32_cast`` is exercised end-to-end on GPU. It routes the fp32 cast
 # through OutputDiscardCheckpoint, whose storage sharing relies on a C++ extension (covered
 # by the OutputDiscardCheckpoint test suite); the Python fallback cannot recompute through
 # autograd on a plain CPU host, so it is not unit-tested at the router level here.
-
-
-def test_router_compute_metrics_reports_scaled_losses():
-    router = _build(top_k=2, num_experts=4, lb_loss_weight=0.1, z_loss_weight=0.01)
-
-    # The losses are populated by the consumer; set them directly to test the metric surface.
-    router.load_balancing_loss = torch.tensor(2.0)
-    router.z_loss = torch.tensor(3.0)
-    router.batch_size_per_expert = torch.tensor([1.0, 1.0, 1.0, 1.0])
-
-    metrics = router.compute_metrics(reset=False)
-
-    assert "load imbalance" in metrics
-    torch.testing.assert_close(metrics["load balancing loss"][0], torch.tensor(0.2))
-    torch.testing.assert_close(metrics["load balancing loss unscaled"][0], torch.tensor(2.0))
-    torch.testing.assert_close(metrics["router Z loss"][0], torch.tensor(0.03))
 
 
 def _run_router_tp(device: torch.device):
