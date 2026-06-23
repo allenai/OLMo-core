@@ -12,14 +12,12 @@ except ImportError:
 from olmo_core.config import Config, DType
 
 
-# TODO: unify the SwiGLU implementations. This hardcodes SiLU, whereas the standard
-# FeedForward (nn/feed_forward.py) exposes a configurable `ActivationFunction`; the v1
-# MoE expert MLP (nn/moe/mlp.py) and routed_experts.py each roll their own as well.
-# Consider a shared helper (and a configurable-but-SwiGLU-only activation here).
+# SwiGLU is intentionally SiLU-gated here, matching the fused fast paths (forward1/forward2)
+# and the routed-expert kernels, which also hardcode SiLU. Folding the codebase's several
+# SwiGLU sites (the configurable FeedForward, the v1 MoE MLP, routed_experts) into one shared
+# helper is a general cross-module refactor, tracked separately rather than done here.
 def _swiglu(up: torch.Tensor, gate: torch.Tensor) -> torch.Tensor:
-    gate = F.silu(gate)
-    hidden = up * gate
-    return hidden
+    return up * F.silu(gate)
 
 
 @dataclass
