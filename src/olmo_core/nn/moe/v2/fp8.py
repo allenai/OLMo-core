@@ -23,7 +23,14 @@ if TYPE_CHECKING:
 
 
 class MoERowwiseFP8ScaleMode(StrEnum):
+    """
+    An enumeration of the supported rowwise-FP8 scale-computation modes.
+    """
+
     rceil = "rceil"
+    """
+    Round the per-row scale up to the next power of two (round-ceiling).
+    """
 
 
 @beta_feature
