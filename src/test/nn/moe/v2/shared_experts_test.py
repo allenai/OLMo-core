@@ -5,18 +5,26 @@ from olmo_core.nn.moe.v2.shared_experts import SharedExpertsConfig
 
 
 def _build(*, d_model=16, hidden_size=32, num_experts=2):
-    module = SharedExpertsConfig(
+    # build() initializes the weights (kaiming_uniform), so no manual init is needed.
+    return SharedExpertsConfig(
         d_model=d_model,
         hidden_size=hidden_size,
         num_experts=num_experts,
         bias=False,
         dtype=DType.float32,
     ).build(init_device="cpu")
-    # Weights are allocated with torch.empty; initialize them for a deterministic forward.
-    with torch.no_grad():
-        module.w_up_gate.normal_()
-        module.w_down.normal_()
-    return module
+
+
+def test_shared_experts_build_initializes_weights():
+    # Regression: build() must initialize the parameters (they were previously left as raw
+    # torch.empty storage), so a freshly built module yields finite weights and output.
+    module = SharedExpertsConfig(
+        d_model=16, hidden_size=32, num_experts=2, bias=False, dtype=DType.float32
+    ).build(init_device="cpu")
+
+    assert torch.isfinite(module.w_up_gate).all()
+    assert torch.isfinite(module.w_down).all()
+    assert torch.isfinite(module(torch.randn(2, 4, 16))).all()
 
 
 def test_shared_experts_num_params():

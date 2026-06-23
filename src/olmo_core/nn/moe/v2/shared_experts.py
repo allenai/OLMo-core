@@ -1,3 +1,4 @@
+import math
 from dataclasses import dataclass
 
 import torch
@@ -89,6 +90,17 @@ class SharedExperts(nn.Module):
         )
         # Per-expert down: (E, H, D)
         self.w_down = nn.Parameter(torch.empty(E, H, D, device=init_device, dtype=dtype.as_pt()))
+
+        self.reset_parameters()
+
+    def reset_parameters(self) -> None:
+        # Setting a=sqrt(5) in kaiming_uniform is the same as initializing with
+        # uniform(-1/sqrt(in_features), 1/sqrt(in_features)). For details, see
+        # https://github.com/pytorch/pytorch/issues/57109
+        # Matches the v1 MoE expert MLPs (nn/moe/mlp.py) so a freshly built module has sane
+        # weights even before any model-level init runs.
+        for w in (self.w_up_gate, self.w_down):
+            nn.init.kaiming_uniform_(w, a=math.sqrt(5))
 
     def _raise_if_fp8_anchor_storage_released(self) -> None:
         if getattr(self, "_fp8_anchor_storage_released", False):
