@@ -45,6 +45,8 @@ class MixtureDataLoader(DataLoaderBase):
         global_batch_size: int,
         seed: int = 0,
         epoch_instances: Optional[int] = None,
+        pack: bool = False,
+        est_tokens_per_example: int = 1400,
         dp_world_size: int = 1,
         dp_rank: int = 0,
         fs_local_rank: Optional[int] = None,
@@ -70,6 +72,8 @@ class MixtureDataLoader(DataLoaderBase):
         self.collator = collator
         self.seed = seed
         self.seq_len = collator.pad_sequence_length
+        self.pack = pack
+        self.est_tokens_per_example = est_tokens_per_example
         self._sizes = [len(d) for d in self.datasets]
         self.epoch_instances = epoch_instances or sum(self._sizes)
         self._order: Optional[List] = None  # list of (src_idx, example_idx)
@@ -84,6 +88,12 @@ class MixtureDataLoader(DataLoaderBase):
 
     @property
     def total_batches(self) -> Optional[int]:
+        if self.pack:
+            # Examples are packed several-per-sequence, so an epoch is fewer batches. Estimate
+            # the pack count from the average real length (exact count is data-dependent; the
+            # cycled packer keeps ranks in sync and the run is step-bounded regardless).
+            est_packs = max(1, (self.epoch_instances * self.est_tokens_per_example) // self.seq_len)
+            return est_packs // self._global_instances
         return self.epoch_instances // self._global_instances
 
     def reshuffle(self, epoch: Optional[int] = None, **kwargs):
@@ -91,7 +101,14 @@ class MixtureDataLoader(DataLoaderBase):
             self._epoch = epoch
         epoch = self._epoch if self._epoch is not None else 1
         rng = np.random.RandomState(self.seed + epoch)
-        n = (self.total_batches or 0) * self._global_instances
+        # Number of example refs to draw. When packing, an epoch consumes ~all examples
+        # (several per packed sequence), so draw a full epoch of examples; otherwise draw
+        # exactly enough to fill ``total_batches`` of one-example-per-slot batches.
+        n = (
+            self.epoch_instances
+            if self.pack
+            else (self.total_batches or 0) * self._global_instances
+        )
         # Per-source shuffled cycles (sampling within a source without replacement until
         # exhausted, then reshuffle — covers sources smaller than their sampled count).
         perms = [rng.permutation(s) if s else np.array([], dtype=int) for s in self._sizes]
@@ -112,8 +129,19 @@ class MixtureDataLoader(DataLoaderBase):
     def _iter_batches(self) -> Iterable[Dict[str, Any]]:
         if self._order is None:
             raise RuntimeError("call reshuffle() before iterating")
-        gi, ri = self._global_instances, self._rank_instances
+        ri = self._rank_instances
         n_batches = self.total_batches or 0
+        if self.pack:
+            from .packing import iter_packs
+
+            rank_refs = self._order[self.dp_rank :: self.dp_world_size]
+            gen = iter_packs(rank_refs, lambda r: self.datasets[r[0]][r[1]], self.seq_len)
+            for _ in range(self.batches_processed * ri):  # resume: replay consumed packs
+                next(gen)
+            for _ in range(self.batches_processed, n_batches):
+                yield self.collator([next(gen) for _ in range(ri)])
+            return
+        gi = self._global_instances
         for b in range(self.batches_processed, n_batches):
             global_slice = self._order[b * gi : (b + 1) * gi]
             rank_slice = global_slice[self.dp_rank * ri : (self.dp_rank + 1) * ri]
@@ -124,7 +152,14 @@ class MixtureDataLoader(DataLoaderBase):
         ri = max(self._rank_instances, 1)
         # Pull from the first non-empty source.
         src = next((i for i, s in enumerate(self._sizes) if s), 0)
-        examples = [self.datasets[src][i % max(self._sizes[src], 1)] for i in range(ri)]
+        size = max(self._sizes[src], 1)
+        if self.pack:
+            from .packing import iter_packs
+
+            refs = [(src, i % size) for i in range(max(ri * 4, 4))]
+            gen = iter_packs(refs, lambda r: self.datasets[r[0]][r[1]], self.seq_len)
+            return self.collator([next(gen) for _ in range(ri)])
+        examples = [self.datasets[src][i % size] for i in range(ri)]
         return self.collator(examples)
 
     def global_num_tokens_in_batch(self, batch: Dict[str, Any]) -> Optional[int]:

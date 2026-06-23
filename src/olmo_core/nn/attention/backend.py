@@ -557,7 +557,7 @@ class FlexAttentionBackend(AttentionBackend):
     @staticmethod
     def _per_token_from_masks(
         or_mask: Optional[torch.Tensor], and_mask: Optional[torch.Tensor]
-    ) -> Tuple[Optional[torch.Tensor], Optional[torch.Tensor]]:
+    ) -> Tuple[Optional[torch.Tensor], Optional[torch.Tensor], Optional[torch.Tensor]]:
         """Recover the per-token vectors behind the multimodal masks.
 
         FlexAttention's ``mask_mod`` must index per-token vectors (``v[b, q_idx]``), not the
@@ -566,22 +566,41 @@ class FlexAttentionBackend(AttentionBackend):
 
         * ``or_mask[b, q, kv] = is_image[q] & is_image[kv]`` (an outer product), so
           ``is_image`` is its diagonal.
-        * ``and_mask[b, q, kv] = (seg[q] <= seg[kv])`` (a total preorder). The rank
-          ``seg_code[q] = #{kv : seg[kv] < seg[q]}`` preserves the order exactly
-          (``seg_code[q] <= seg_code[kv] ⇔ seg[q] <= seg[kv]``), and
-          ``seg[kv] < seg[q] = and_mask[kv, q] & ¬and_mask[q, kv]``.
+        * ``and_mask[b, q, kv] = same_example & (seg[q] <= seg[kv])``. ``same_example``
+          (block-diagonal, identity within an example, from sequence packing) is
+          ``and_mask | and_mask.T`` (within an example one of the two preorder directions
+          always holds; across examples both are false). Packed examples are contiguous, so
+          the per-token ``example_id`` is the running count of example boundaries
+          (``¬same_example`` between adjacent tokens). The within-example subsegment rank
+          ``seg_code[q] = #{kv : seg[kv] < seg[q]}`` (``= and_mask[kv,q] & ¬and_mask[q,kv]``,
+          which is automatically example-local) preserves ``seg[q] <= seg[kv]`` exactly.
+
+        For a single unpacked example ``same_example`` is all-true, so ``example_id`` is all
+        zero (a no-op) and ``seg_code`` reduces to the plain subsegment rank.
         """
         is_image = None
         if or_mask is not None:
             is_image = or_mask[:, 0].diagonal(dim1=-2, dim2=-1).contiguous()  # (B, S) bool
         seg_code = None
+        example_id = None
         if and_mask is not None:
-            a = and_mask[:, 0]  # (B, S, S): a[b, q, kv] = seg[q] <= seg[kv]
+            a = and_mask[:, 0]  # (B, S, S): a[b, q, kv] = same_example & (seg[q] <= seg[kv])
             strictly_less = a.transpose(-1, -2) & (~a)  # [b, q, kv] = seg[kv] < seg[q]
-            seg_code = strictly_less.sum(dim=-1)  # (B, S) long
-        return is_image, seg_code
+            seg_code = strictly_less.sum(dim=-1)  # (B, S) long, example-local rank
+            same = a | a.transpose(-1, -2)  # (B, S, S) equivalence (block-diagonal)
+            B, S = a.shape[0], a.shape[1]
+            example_id = torch.zeros(B, S, dtype=torch.int64, device=a.device)
+            if S > 1:
+                adj_same = same.diagonal(offset=-1, dim1=-2, dim2=-1)  # (B, S-1): same[p, p-1]
+                example_id[:, 1:] = torch.cumsum((~adj_same).to(torch.int64), dim=-1)
+        return is_image, seg_code, example_id
 
-    def _build_mask_mod(self, is_image: Optional[torch.Tensor], seg_code: Optional[torch.Tensor]):
+    def _build_mask_mod(
+        self,
+        is_image: Optional[torch.Tensor],
+        seg_code: Optional[torch.Tensor],
+        example_id: Optional[torch.Tensor],
+    ):
         ws_left, ws_right = self.window_size
         has_window = self.window_size != (-1, -1)
 
@@ -595,11 +614,14 @@ class FlexAttentionBackend(AttentionBackend):
                 if ws_right >= 0:
                     allow = allow & (kv_idx - q_idx <= ws_right)
             # OR the bidirectional image allow-mask onto the base, then AND the subsegment
-            # keep-mask — exactly `(causal | or_mask) & and_mask` from TorchAttentionBackend.
+            # keep-mask and the packed-example block-diagonal — exactly
+            # `(causal | or_mask) & and_mask` from TorchAttentionBackend.
             if is_image is not None:
                 allow = allow | (is_image[b, q_idx] & is_image[b, kv_idx])
             if seg_code is not None:
                 allow = allow & (seg_code[b, q_idx] <= seg_code[b, kv_idx])
+            if example_id is not None:
+                allow = allow & (example_id[b, q_idx] == example_id[b, kv_idx])
             return allow
 
         return mask_mod
@@ -655,8 +677,8 @@ class FlexAttentionBackend(AttentionBackend):
         S_kv = k.shape[2]
         om = or_mask.to(device=q.device, dtype=torch.bool) if or_mask is not None else None
         am = and_mask.to(device=q.device, dtype=torch.bool) if and_mask is not None else None
-        is_image, seg_code = self._per_token_from_masks(om, am)
-        mask_mod = self._build_mask_mod(is_image, seg_code)
+        is_image, seg_code, example_id = self._per_token_from_masks(om, am)
+        mask_mod = self._build_mask_mod(is_image, seg_code, example_id)
         # `B`/`H=None` so the mask may depend on the batch index (image / subsegment ids are
         # per-example) but broadcasts over heads. Rebuilt each step since the masks are data
         # dependent; block-sparsity makes this cheap.

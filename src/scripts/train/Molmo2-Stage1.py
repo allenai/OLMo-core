@@ -73,6 +73,7 @@ log = logging.getLogger(__name__)
 MODEL_ID = "allenai/Molmo2-4B"  # HF checkpoint to initialise from (also provides the tokenizer)
 SEQUENCE_LENGTH = 4096  # fixed pad length; mm_olmo stage 1 uses ~5248
 USE_FLEX_ATTN = False  # True -> fused FlexAttention backend for the multimodal masks (~+8% MFU)
+PACK_SEQUENCES = True  # pack several examples per sequence (most are ~1.4k of 4096 tokens)
 MAX_CROPS = 8
 
 # Instance-based batching (mm_olmo: global 8, device microbatch 1), expressed in tokens.
@@ -351,6 +352,7 @@ def train(config: ExperimentConfig):
             work_dir=config.trainer.save_folder,
             global_batch_size=GLOBAL_BATCH_SIZE,
             seed=config.data_seed,
+            pack=PACK_SEQUENCES,
             dp_world_size=dp_world_size,
             dp_rank=dp_rank,
         )

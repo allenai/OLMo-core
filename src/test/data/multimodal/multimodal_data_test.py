@@ -13,6 +13,7 @@ from olmo_core.data.multimodal.grounding import (
     normalize_points,
     pointing_answer,
 )
+from olmo_core.data.multimodal.packing import greedy_pack_indices, pack_examples
 
 _SEQ = 8
 _PATCH_DIM = 14 * 14 * 3
@@ -137,6 +138,70 @@ def test_mixture_data_loader_weighted_sampling(tmp_path):
     # keeping FSDP collectives in lockstep. Nothing is spliced (no <im_patch> tokens).
     assert tuple(batch["images"].shape) == (4, 1, 729, _PATCH_DIM)
     assert (batch["pooled_patches_idx"] == -1).all()
+
+
+# ---------------------------------------------------------------------------
+# Sequence packing
+# ---------------------------------------------------------------------------
+
+
+def _img_example(n_text: int, n_crops: int, tag: int):
+    L = n_crops + n_text  # n_crops <im_patch> tokens (id 1) + text
+    return dict(
+        input_ids=np.array([1] * n_crops + [tag] * n_text, dtype=np.int64),
+        labels=np.full(L, tag, dtype=np.int64),
+        loss_masks=np.ones(L, dtype=np.float32),
+        position_ids=np.arange(L, dtype=np.int64),
+        token_type_ids=np.array([1] * n_crops + [0] * n_text, dtype=np.int64),
+        images=np.full((n_crops, 729, _PATCH_DIM), float(tag), dtype=np.float32),
+        pooled_patches_idx=np.arange(n_crops * 4).reshape(n_crops, 4).astype(np.int64),
+    )
+
+
+def test_greedy_pack_indices():
+    # next-fit: [3,3]->ok(6), +5 overflows 8 -> new group, +2 fits(7)
+    assert greedy_pack_indices([3, 3, 5, 2], seq_len=8) == [[0, 1], [2, 3]]
+    assert greedy_pack_indices([10], seq_len=8) == [[0]]  # over-length example alone
+
+
+def test_pack_examples_concat_and_offsets():
+    a = _img_example(n_text=3, n_crops=1, tag=5)  # len 4, 1 crop
+    b = _img_example(n_text=2, n_crops=2, tag=7)  # len 4, 2 crops
+    packed = pack_examples([a, b])
+
+    assert packed["input_ids"].tolist() == [1, 5, 5, 5, 1, 1, 7, 7]
+    assert packed["position_ids"].tolist() == [
+        0,
+        1,
+        2,
+        3,
+        0,
+        1,
+        2,
+        3,
+    ]  # positions reset per example
+    assert packed["example_ids"].tolist() == [0, 0, 0, 0, 1, 1, 1, 1]
+    # images concatenated along the crop axis (1 + 2 = 3 crops)
+    assert packed["images"].shape == (3, 729, _PATCH_DIM)
+    # b's pooled indices are offset by a's crop-patch count (1 crop * 729 patches)
+    np.testing.assert_array_equal(packed["pooled_patches_idx"][0], [0, 1, 2, 3])  # a
+    np.testing.assert_array_equal(packed["pooled_patches_idx"][1], np.arange(4) + 729)  # b crop 0
+    np.testing.assert_array_equal(
+        packed["pooled_patches_idx"][2], np.arange(4, 8) + 729
+    )  # b crop 1
+
+
+def test_mixture_data_loader_packs(tmp_path):
+    ds = [_FakeDataset(200, 10), _FakeDataset(100, 20)]
+    coll = MultimodalCollatorConfig(pad_token_id=0, pad_sequence_length=_SEQ).build()
+    dl = MixtureDataLoader(
+        ds, [0.5, 0.5], coll, work_dir=str(tmp_path), global_batch_size=2 * _SEQ, seed=0, pack=True
+    )
+    dl.reshuffle(epoch=1)
+    batch = next(iter(dl))
+    # _FakeDataset emits length-6 text-only examples; with _SEQ=8 only one fits per pack.
+    assert tuple(batch["input_ids"].shape) == (2, _SEQ)
+    assert "example_ids" in batch  # packing marks example membership
 
 
 def test_mixture_data_loader_normalizes_weights(tmp_path):

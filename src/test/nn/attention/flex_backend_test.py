@@ -51,7 +51,7 @@ def test_flex_per_token_recovery():
     """The per-token vectors recovered from the masks reproduce the originals."""
     B, S = 2, 16
     or_mask, and_mask = _make_masks(B, S, "both")
-    is_image, seg_code = FlexAttentionBackend._per_token_from_masks(or_mask, and_mask)
+    is_image, seg_code, example_id = FlexAttentionBackend._per_token_from_masks(or_mask, and_mask)
 
     # is_image is exactly the diagonal-implied per-token image flag.
     expected_is_image = torch.zeros(B, S, dtype=torch.bool)
@@ -60,4 +60,27 @@ def test_flex_per_token_recovery():
 
     # seg_code preserves the `seg[q] <= seg[kv]` preorder exactly.
     recovered = (seg_code[:, :, None] <= seg_code[:, None, :]).unsqueeze(1)
+    assert torch.equal(recovered, and_mask)
+
+    # A single (unpacked) example -> every token is in the same example.
+    assert torch.equal(example_id, torch.zeros(B, S, dtype=torch.int64))
+
+
+def test_flex_per_token_recovery_packed():
+    """With a block-diagonal `and_mask` (two packed examples) the recovered example_id
+    labels the two contiguous blocks and seg_code stays example-local."""
+    B, S = 1, 12
+    # Two packed examples: tokens [0:5] and [5:12], each a single causal segment.
+    example = torch.zeros(B, S, dtype=torch.long)
+    example[:, 5:] = 1
+    same = example[:, :, None] == example[:, None, :]
+    # within each example a constant subsegment -> seg rule all-true; AND the block-diagonal.
+    and_mask = same.unsqueeze(1)
+    _, seg_code, example_id = FlexAttentionBackend._per_token_from_masks(None, and_mask)
+    assert torch.equal(example_id, example)
+    # the recovered (example_eq & seg_rule) must reproduce the block-diagonal and_mask
+    recovered = (
+        (example_id[:, :, None] == example_id[:, None, :])
+        & (seg_code[:, :, None] <= seg_code[:, None, :])
+    ).unsqueeze(1)
     assert torch.equal(recovered, and_mask)

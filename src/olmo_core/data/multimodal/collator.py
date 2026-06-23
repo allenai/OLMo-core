@@ -126,12 +126,21 @@ class MultimodalCollator:
 
         # Subsegment ids only when at least one example is multi-branch (packed). For
         # padded / single-branch positions a uniform id leaves attention unrestricted.
-        subseg_arrays: Optional[List[np.ndarray]] = None
         if any("subsegment_ids" in ex for ex in examples):
             subseg_arrays = [
                 ex.get("subsegment_ids", np.zeros(len(ex["input_ids"]), dtype=np.int64))
                 for ex in examples
             ]
             batch["subsegment_ids"] = self._pad_1d(subseg_arrays, 0, max_len, np.int64)
+
+        # Example ids (sequence packing): mark which packed example each token belongs to so
+        # the model can block cross-example attention. Pad positions get a distinct sentinel
+        # (-1) so padding is isolated from every real example.
+        if any("example_ids" in ex for ex in examples):
+            example_arrays = [
+                ex.get("example_ids", np.zeros(len(ex["input_ids"]), dtype=np.int64))
+                for ex in examples
+            ]
+            batch["example_ids"] = self._pad_1d(example_arrays, -1, max_len, np.int64)
 
         return batch

@@ -209,6 +209,7 @@ class MultimodalLM(nn.Module):
         token_type_ids: Optional[torch.Tensor] = None,
         subsegment_ids: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.Tensor] = None,
+        example_ids: Optional[torch.Tensor] = None,
         **kwargs,
     ) -> Union[torch.Tensor, LMOutputWithLoss]:
         """
@@ -326,10 +327,23 @@ class MultimodalLM(nn.Module):
         # matching mm_olmo's ``attention_mask & subsegment_mask``. The shared prefix uses
         # the largest id so it only attends itself, while each branch attends the prefix
         # and itself but not sibling branches.
+        # ``example_ids`` (sequence packing) adds a block-diagonal keep-mask so a token never
+        # attends across a packed-example boundary: AND ``example_ids[q] == example_ids[k]``
+        # onto the subsegment rule. For a single (unpacked) example every id is equal, so it
+        # is a no-op. The OR'd image mask is scoped too, since the whole expression is
+        # ``(causal | or_mask) & and_mask``.
         and_mask: Optional[torch.Tensor] = None
+        seg_rule: Optional[torch.Tensor] = None
         if subsegment_ids is not None:
             seg = subsegment_ids.to(device)
-            and_mask = (seg[:, :, None] <= seg[:, None, :]).unsqueeze(1)  # (B, 1, S, S)
+            seg_rule = seg[:, :, None] <= seg[:, None, :]  # (B, S, S)
+        if example_ids is not None:
+            eid = example_ids.to(device)
+            same_example = eid[:, :, None] == eid[:, None, :]  # (B, S, S)
+            combined = same_example & seg_rule if seg_rule is not None else same_example
+            and_mask = combined.unsqueeze(1)  # (B, 1, S, S)
+        elif seg_rule is not None:
+            and_mask = seg_rule.unsqueeze(1)
 
         if position_ids is not None:
             position_ids = position_ids.to(device)
