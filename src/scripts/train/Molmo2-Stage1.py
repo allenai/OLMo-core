@@ -74,6 +74,7 @@ MODEL_ID = "allenai/Molmo2-4B"  # HF checkpoint to initialise from (also provide
 SEQUENCE_LENGTH = 4096  # fixed pad length; mm_olmo stage 1 uses ~5248
 USE_FLEX_ATTN = False  # True -> fused FlexAttention backend for the multimodal masks (~+8% MFU)
 PACK_SEQUENCES = True  # pack several examples per sequence (most are ~1.4k of 4096 tokens)
+COMPILE_MODEL = False  # torch.compile the LM (fuses pointwise ops; one-time compile warmup)
 MAX_CROPS = 8
 
 # Instance-based batching (mm_olmo: global 8, device microbatch 1), expressed in tokens.
@@ -185,6 +186,7 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
         freeze_params=["vision.*"],
         z_loss_multiplier=1e-4,
         max_grad_norm=1.0,
+        compile_model=COMPILE_MODEL,
         autocast_precision=DType.bfloat16,
         scheduler=PerGroupScheduler(
             schedulers={"connector": CosWithWarmup(warmup=CONNECTOR_WARMUP, alpha_f=ALPHA_F)},

@@ -42,6 +42,8 @@ class SpeedMonitorCallback(Callback):
     _step_tokens: int = 0
     _step_seq_len: int = 0
     _step_flops: int = 0
+    _step_examples: int = 0
+    _total_examples: int = 0
     _parallel_degree: int = 1
     _bps_avg: Optional[float] = None
     _tps_avg: Optional[float] = None
@@ -133,6 +135,18 @@ class SpeedMonitorCallback(Callback):
             self._step_seq_len = batch["input_ids"].shape[1]
             self._total_tokens += self._step_tokens
 
+            # Examples (= images, for image-bearing data) per step — a packing-aware
+            # throughput measure (tokens conflate real/pad/image). With sequence packing a
+            # row holds several examples (per-token ``example_ids`` 0..K-1, pad = -1), so
+            # count ``max(example_ids)+1`` per row; otherwise one example per row.
+            if "example_ids" in batch:
+                per_row = batch["example_ids"].amax(dim=1) + 1  # all-pad row -> 0
+                examples_in_batch = int(per_row.clamp(min=0).sum())
+            else:
+                examples_in_batch = batch["input_ids"].shape[0]
+            self._step_examples = examples_in_batch // self._parallel_degree
+            self._total_examples += self._step_examples
+
             self._step_flops = 0
             if (
                 num_flops_per_token := self._get_num_flops_per_token(self._step_seq_len)
@@ -157,6 +171,7 @@ class SpeedMonitorCallback(Callback):
             self._total_steps = 0
             self._total_tokens = 0
             self._total_flops = 0
+            self._total_examples = 0
             self._start_time = counter
             self._first_step = False
             self._step_last_logged = counter
@@ -165,6 +180,15 @@ class SpeedMonitorCallback(Callback):
         step_time = counter - self._step_last_logged
         total_time = counter - self._start_time
         self._step_last_logged = counter
+
+        if self._step_examples and self._total_examples:
+            self.trainer.record_metric(
+                "throughput/device/examples per second", self._step_examples / step_time
+            )
+            self.trainer.record_metric(
+                "throughput/device/examples per second (actual avg)",
+                self._total_examples / total_time,
+            )
 
         if self._step_tokens and self._total_tokens:
             tps = self._step_tokens / step_time
