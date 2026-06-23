@@ -35,6 +35,11 @@ class SharedExpertsConfig(Config):
     dtype: DType
 
     def build(self, init_device: str = "cpu") -> "SharedExperts":
+        """
+        Build the corresponding shared-experts module.
+
+        :param init_device: The device to initialize the parameters on, e.g. "cpu", "meta".
+        """
         kwargs = self.as_dict()
 
         return SharedExperts(init_device=init_device, **kwargs)
@@ -42,8 +47,6 @@ class SharedExpertsConfig(Config):
     def num_params(self) -> int:
         """
         The number of params that the module will have once built.
-
-        :param d_model: The model dimensionality.
         """
 
         params = 3 * self.d_model * self.hidden_size  # up, gate, down
