@@ -468,25 +468,30 @@ class _TEUnpermuteIndexMapMaskedAutograd(torch.autograd.Function):
         inp, row_id_map, probs, packed_keep_mask = ctx.saved_tensors
         grad_inp = None
         grad_probs = None
-        if ctx.needs_input_grad[0]:
+        # Run the unpermute backward when either the expert outputs (input 0) or the
+        # merging probabilities (input 2) need gradients. The kernel produces both
+        # gradients in one pass, so gating only on input 0 would drop the prob
+        # gradients when the experts are frozen but the router is still trained.
+        if ctx.needs_input_grad[0] or ctx.needs_input_grad[2]:
+            # Only write into the caller's gradient buffer when the input-0 gradient was
+            # actually requested, and never when that buffer aliases ``inp`` (which the
+            # prob-gradient path still reads).
+            out_buffer = ctx.backward_grad_input_buffer if ctx.needs_input_grad[0] else None
+            if (
+                out_buffer is not None
+                and ctx.needs_input_grad[2]
+                and out_buffer.untyped_storage().data_ptr() == inp.untyped_storage().data_ptr()
+            ):
+                out_buffer = None
             grad_inp, grad_probs = moe_unpermute_bwd_cuda(
                 grad_output=grad_output,
                 input_fwd=inp,
                 row_id_map=row_id_map,
                 probs=probs,
                 keep_mask=packed_keep_mask,
-                out=(
-                    None
-                    if (
-                        ctx.needs_input_grad[2]
-                        and ctx.backward_grad_input_buffer is not None
-                        and ctx.backward_grad_input_buffer.untyped_storage().data_ptr()
-                        == inp.untyped_storage().data_ptr()
-                    )
-                    else ctx.backward_grad_input_buffer
-                ),
+                out=out_buffer,
             )
-            if ctx.backward_grad_input_buffer is not None:
+            if ctx.needs_input_grad[0] and ctx.backward_grad_input_buffer is not None:
                 grad_inp_uses_buffer = (
                     grad_inp.untyped_storage().data_ptr()
                     == ctx.backward_grad_input_buffer.untyped_storage().data_ptr()
@@ -500,6 +505,8 @@ class _TEUnpermuteIndexMapMaskedAutograd(torch.autograd.Function):
                         grad_inp_uses_buffer
                     ), "Expected moe_unpermute_bwd to write to backward_grad_input_buffer"
 
+        if not ctx.needs_input_grad[0]:
+            grad_inp = None
         if not ctx.needs_input_grad[2]:
             grad_probs = None
         return grad_inp, None, grad_probs, None, None
