@@ -19,6 +19,7 @@ from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.distributed.parallel.pipeline_parallel import PipelineScheduleType
 from olmo_core.float8 import AOFloat8LinearConfig, Float8Config
 from olmo_core.internal.experiment import CommonComponents, main, ExperimentConfig
+from olmo_core.nn.attention import SlidingWindowAttentionConfig
 from olmo_core.nn.lm_head import LMLossImplementation
 from olmo_core.nn.moe import (
     MoEConfig,
@@ -75,6 +76,7 @@ from olmo_core.train.callbacks import (
     TorchMemoryHistoryCallback
 )
 from olmo_core.train.train_module import (
+    TransformerContextParallelConfig,
     TransformerDataParallelConfig,
     TransformerDataParallelWrappingStrategy,
     TransformerTrainModuleConfig,
@@ -123,7 +125,7 @@ def _env_int(name: str, default: int) -> int:
     return default if value is None else int(value)
 
 
-VARIANT_NAME = os.environ.get("OLMOE3_TESTRUN_VARIANT", "testrun10-nopp-ep4-gdn-bf16-norecompute")
+VARIANT_NAME = os.environ.get("OLMOE3_TESTRUN_VARIANT", "testrun")
 
 IN_EVAL_MODE = False
 import sys
@@ -153,15 +155,16 @@ MLP_RATIO = EFFECTIVE_MLP / D_MODEL
 DENSE_LAYER_MLP = (TOP_K * MOE_HIDDEN_SIZE + SHARED_MLP_HIDDEN_SIZE * NUM_SHARED_EXPERTS)
 
 # DP_DIM=2
-EP_DIM=_env_int("OLMOE3_TESTRUN_EP_DIM", 4)
-PP_DIM=_env_int("OLMOE3_TESTRUN_PP_DIM", 1)
+EP_DIM=_env_int("OLMOE3_TESTRUN_EP_DIM", 2)
+PP_DIM=_env_int("OLMOE3_TESTRUN_PP_DIM", 2)
+CP_DIM=_env_int("OLMOE3_TESTRUN_CP_DIM", 1)
 
 # ref
 REF_NUM_NODES=8
 LR_ALPHA = 0.53
 
 # stage 1 - 1M - 
-MAX_DURATION = _env_int("OLMOE3_TESTRUN_MAX_DURATION", int(10e9))
+MAX_DURATION = _env_int("OLMOE3_TESTRUN_MAX_DURATION", int(100e9))
 MICRO_BSZ = _env_int("OLMOE3_TESTRUN_MICRO_BSZ", 2)
 GLOBAL_BATCH_SIZE_SEQ=_env_int("OLMOE3_TESTRUN_GLOBAL_BATCH_SIZE_SEQ", (8 * 8) * 2 * 1)
 # NO LR_REF_BSZ=4M
@@ -187,7 +190,7 @@ GLOBAL_BATCH_TOKENS_IN_M = GLOBAL_BATCH_SIZE // 1024 // 1024
 
 
 
-SCHED_WARMUP_TOKENS = int((10e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE)
+SCHED_WARMUP_TOKENS = int((5e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE)
 SCHED_FAST_DECAY_TOKENS = int((0e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE)
 SCHED_LONG_DECAY_TOKENS = int((11990e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE)
 SCHED_MID_FRACTION = 1.0
@@ -218,14 +221,17 @@ else:
 USE_COMPILE=_env_bool("OLMOE3_TESTRUN_USE_COMPILE", True)
 USE_NO_SYNC_EP=True
 # USE_AC=False
-PER_LAYER_RECOMPUTE=_env_bool("OLMOE3_TESTRUN_PER_LAYER_RECOMPUTE", False)
+PER_LAYER_RECOMPUTE=_env_bool("OLMOE3_TESTRUN_PER_LAYER_RECOMPUTE", True)
 USE_TBO=False
 GRAD_ACC_IN_FP32=True
 GRAD_REDUCE_IN_FP32=True
 UNIFORM_ASSIGN=False
 RANDOM_ASSIGN=False
 USE_ROWWISE_A2A=True
-USE_FP8=_env_bool("OLMOE3_TESTRUN_USE_FP8", False)
+USE_FP8=_env_bool("OLMOE3_TESTRUN_USE_FP8", True)
+USE_FP8_ATTN_QKV=USE_FP8
+USE_FP8_ATTN_OUT=USE_FP8
+USE_FP8_ATTN_SAVE_QKV=False
 ROWWISE_A2A_NBLOCKS=256 if EP_DIM <=8 else 64 # for intra-node, can use more blocks to increase overlap; for inter-node, the bottleneck is the network, so fewer blocks can reduce overhead.
 SEED = 2026
 USE_MUON = False
@@ -234,6 +240,8 @@ PRODUCTION_RUN = True
 TAG=VARIANT_NAME
 if not USE_COMPILE:
     TAG += "_nocompile"
+if CP_DIM > 1:
+    TAG += f"_cp{CP_DIM}"
 # save a little bit of memory
 # import torch._functorch.config  # Force initialization by accessing dynamo first
 # torch._functorch.config.activation_memory_budget = 0.1
@@ -241,15 +249,21 @@ if not USE_COMPILE:
 
 
 from olmo_core.nn.lm_head import LMHeadConfig, LMHeadType
-from olmo_core.nn.attention.recurrent import GatedDeltaNetConfig
+from olmo_core.nn.rope import RoPEConfig, RoPEScalingConfig, RoPEType
+from olmo_core.nn.attention import AttentionConfig, AttentionType
 from olmo_core.nn.layer_norm import LayerNormType, LayerNormConfig
-
 # from olmo_core.nn.moe.v2.block import LayerNormConfigV2
 def build_model_config(common: CommonComponents) -> OLMoDDPModelConfig:
     from olmo_core.nn.ddp.block import OLMoDDPTransformerBlockConfig
+    from olmo_core.nn.moe.v2.ep_config import (
+        ExpertParallelConfig,
+        ExpertParallelPath,
+        ExpertParallelSchedule,
+    )
     from olmo_core.nn.moe.v2.fp8 import MoERowwiseFP8Config
     from olmo_core.nn.moe.v2.shared_experts import SharedExpertsConfig
     from olmo_core.nn.moe.v2.routed_experts import RoutedExpertsConfig
+    from olmo_core.nn.attention.backend import AttentionBackendName
     
     d_model = D_MODEL
     dtype = DType.float32
@@ -259,6 +273,19 @@ def build_model_config(common: CommonComponents) -> OLMoDDPModelConfig:
         eps=1e-6,
         bias=False,
         dtype=dtype,
+    )
+    use_block_no_sync_ep = USE_NO_SYNC_EP and EP_DIM > 1
+    block_ep_path = (
+        ExpertParallelPath.rowwise_nvshmem
+        if use_block_no_sync_ep and USE_ROWWISE_A2A
+        else ExpertParallelPath.no_sync_1d
+        if use_block_no_sync_ep
+        else ExpertParallelPath.sync_1d
+    )
+    block_ep_schedule = (
+        ExpertParallelSchedule.tbo
+        if USE_TBO and block_ep_path == ExpertParallelPath.rowwise_nvshmem
+        else ExpertParallelSchedule.normal
     )
     config = OLMoDDPModelConfig(
         init_seed=SEED,
@@ -274,29 +301,41 @@ def build_model_config(common: CommonComponents) -> OLMoDDPModelConfig:
         block=OLMoDDPTransformerBlockConfig(
             name=TransformerBlockType.moe_fused_v2,
             use_peri_norm=USE_PERI_NORM,
-            ep_no_sync=USE_NO_SYNC_EP,
+            ep=ExpertParallelConfig(
+                path=block_ep_path,
+                schedule=block_ep_schedule,
+                share_combine_out=PER_LAYER_RECOMPUTE, # if layer-recompute, want to make combine_out shared (not per-layer persistent) to save memory; extra copy overhead applies.
+                share_dispatch_out=PER_LAYER_RECOMPUTE, # if layer-recompute, want to make dispatch_out shared (not per-layer persistent) to save memory; extra copy overhead applies.
+                shared_slots=2 if block_ep_schedule == ExpertParallelSchedule.tbo else 1,
+                rowwise_nblocks=ROWWISE_A2A_NBLOCKS,
+                capacity_factor=1.5,
+                # capacity_factor=1.125,
+                # capacity_factor=1.1875,
+                # capacity_factor=1.21875,
+            ),
             checkpoint_permute_moe_unpermute=False,
             checkpoint_attn=False,
             checkpoint_second_unpermute=False,
-            ep_no_sync_share_combine_out=PER_LAYER_RECOMPUTE, # if layer-recompute, want to make combine_out shared (not per-layer persistent) to save memory; extra copy overhead applies.
-            ep_no_sync_share_dispatch_out=PER_LAYER_RECOMPUTE, # if layer-recompute, want to make dispatch_out shared (not per-layer persistent) to save memory; extra copy overhead applies.
-            ep_no_sync_shared_slots=2 if USE_TBO else 1,
-            ep_no_sync_use_rowwise_all_to_all=USE_ROWWISE_A2A,
-            ep_no_sync_rowwise_nblocks=ROWWISE_A2A_NBLOCKS,
-            ep_no_sync_capacity_factor=1.25,
-            # ep_no_sync_capacity_factor=1.125,
-            # ep_no_sync_capacity_factor=1.1875,
-            # ep_no_sync_capacity_factor=1.21875,
             rowwise_fp8=MoERowwiseFP8Config(
                 enabled=USE_FP8,
             ) if USE_ROWWISE_A2A else None,
-            sequence_mixer=GatedDeltaNetConfig(
+            attention=AttentionConfig(
+                name=AttentionType.fused_v2,
+                # name=AttentionType.default,
                 n_heads=NUM_HEAD,
-                n_v_heads=NUM_HEAD,
-                head_dim=HEAD_DIM,
-                expand_v=1.0,
-                allow_neg_eigval=True,
+                n_kv_heads=NUM_KV_HEAD,
+                bias=False,
+                rope=RoPEConfig(name=RoPEType.default, theta=500_000, scaling=None, full_precision=True),
+                qk_norm=layer_norm ,
+                backend=AttentionBackendName.flash_4,
+                use_head_qk_norm=True,
                 dtype=dtype,
+                d_attn=D_ATTN,
+                mxfp8_qkv_projection=USE_FP8_ATTN_QKV,
+                mxfp8_out_projection=USE_FP8_ATTN_OUT,
+                mxfp8_save_qkv_for_backward=USE_FP8_ATTN_SAVE_QKV,
+                use_recompute_qkv_prep=False,
+                # use_recompute_qkv_prep=not PER_LAYER_RECOMPUTE, # only enable when not doing per-layer recompute
             ),
             attention_norm=layer_norm,
             routed_experts=RoutedExpertsConfig(
@@ -355,6 +394,12 @@ def build_model_config(common: CommonComponents) -> OLMoDDPModelConfig:
     
     # config.lm_head.loss_implementation = LMLossImplementation.fused_linear
     config.lm_head.loss_implementation = LMLossImplementation.default
+    WINDOW_SIZE=2048
+    config.block.attention.sliding_window = SlidingWindowAttentionConfig(
+        force_full_attention_on_first_layer=False,
+        force_full_attention_on_last_layer=True,
+        pattern=[WINDOW_SIZE, -1]
+    )
 
     dense_block_config = OLMoDDPTransformerBlockConfig(
         name=TransformerBlockType.moe_fused_v2,
@@ -362,13 +407,23 @@ def build_model_config(common: CommonComponents) -> OLMoDDPModelConfig:
         rowwise_fp8=MoERowwiseFP8Config(
             enabled=USE_FP8,
         ) if USE_ROWWISE_A2A else None,
-        sequence_mixer=GatedDeltaNetConfig(
+        attention=AttentionConfig(
+            name=AttentionType.fused_v2,
+            # name=AttentionType.default,
             n_heads=NUM_HEAD,
-            n_v_heads=NUM_HEAD,
-            head_dim=HEAD_DIM,
-            expand_v=1.0,
-            allow_neg_eigval=True,
+            n_kv_heads=NUM_KV_HEAD,
+            bias=False,
+            rope=RoPEConfig(name=RoPEType.default, theta=500_000, scaling=None, full_precision=True),
+            qk_norm=layer_norm ,
+            backend=AttentionBackendName.flash_4,
+            use_head_qk_norm=True,
             dtype=dtype,
+            d_attn=D_ATTN,
+            mxfp8_qkv_projection=USE_FP8_ATTN_QKV,
+            mxfp8_out_projection=USE_FP8_ATTN_OUT,
+            mxfp8_save_qkv_for_backward=USE_FP8_ATTN_SAVE_QKV,
+            use_recompute_qkv_prep=False,
+            # use_recompute_qkv_prep=not PER_LAYER_RECOMPUTE, # only enable when not doing per-layer recompute
         ),
         routed_experts=None,
         routed_experts_router=None,
@@ -457,6 +512,7 @@ def build_train_module_config(common: CommonComponents) -> OLMoDDPTrainModuleCon
             accumulate_grads_in_fp32=GRAD_ACC_IN_FP32,
         ),
         ep_config=TransformerExpertParallelConfig(degree=EP_DIM) if EP_DIM != 1 else None, # EP=1 means no expert parallel
+        cp_config=TransformerContextParallelConfig.ulysses(degree=CP_DIM) if CP_DIM > 1 else None,
         pp_config=TransformerPipelineParallelConfig(
             degree=PP_DIM,
             # schedule=PipelineScheduleType.custom_1F1B,

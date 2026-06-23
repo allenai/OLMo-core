@@ -11,6 +11,6 @@ os.environ.setdefault("OLMOE3_TESTRUN_PER_LAYER_RECOMPUTE", "1")
 os.environ.setdefault("OLMOE3_TESTRUN_MICRO_BSZ", "2")
 
 runpy.run_path(
-    str(Path(__file__).with_name("OLMoE3-dev-260518-testrun.py")),
+    str(Path(__file__).with_name("OLMoE3-dev-260623-testrun.py")),
     run_name="__main__",
 )
