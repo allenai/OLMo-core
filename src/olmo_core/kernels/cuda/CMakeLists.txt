@@ -135,3 +135,75 @@ target_link_options(
   ${TARGET_NAME}
   PRIVATE
     "-Wl,-rpath,${NVSHMEM_LIB_DIR}")
+
+set(TMA_IBGDA_TARGET_NAME _tma_ibgda_ep_ext_gpu)
+
+add_library(
+  ${TMA_IBGDA_TARGET_NAME}
+  MODULE
+  tma_ibgda_ep.cpp
+  tma_ibgda_ep_kernel.cu)
+
+target_compile_definitions(
+  ${TMA_IBGDA_TARGET_NAME}
+  PRIVATE
+    TORCH_EXTENSION_NAME=${TMA_IBGDA_TARGET_NAME})
+if(DEFINED GLIBCXX_USE_CXX11_ABI)
+  target_compile_definitions(
+    ${TMA_IBGDA_TARGET_NAME}
+    PRIVATE
+      _GLIBCXX_USE_CXX11_ABI=${GLIBCXX_USE_CXX11_ABI})
+endif()
+
+if(TORCH_CXX_FLAGS)
+  target_compile_options(
+    ${TMA_IBGDA_TARGET_NAME}
+    PRIVATE
+      $<$<COMPILE_LANGUAGE:CXX>:${TORCH_CXX_FLAGS_LIST}>)
+endif()
+
+target_compile_options(
+  ${TMA_IBGDA_TARGET_NAME}
+  PRIVATE
+    $<$<COMPILE_LANGUAGE:CXX>:-O3>
+    $<$<COMPILE_LANGUAGE:CUDA>:-O3>
+    $<$<COMPILE_LANGUAGE:CUDA>:-rdc=true>
+    $<$<COMPILE_LANGUAGE:CUDA>:-U__CUDA_NO_HALF_OPERATORS__>
+    $<$<COMPILE_LANGUAGE:CUDA>:-U__CUDA_NO_HALF_CONVERSIONS__>
+    $<$<COMPILE_LANGUAGE:CUDA>:-U__CUDA_NO_BFLOAT16_CONVERSIONS__>
+    $<$<COMPILE_LANGUAGE:CUDA>:-U__CUDA_NO_HALF2_OPERATORS__>)
+
+target_include_directories(
+  ${TMA_IBGDA_TARGET_NAME}
+  PRIVATE
+    ${TORCH_INCLUDE_DIRS}
+    ${NVSHMEM_INCLUDE_DIR})
+
+target_link_directories(
+  ${TMA_IBGDA_TARGET_NAME}
+  PRIVATE
+    ${NVSHMEM_LIB_DIR})
+
+target_link_libraries(
+  ${TMA_IBGDA_TARGET_NAME}
+  PRIVATE
+    ${TORCH_LIBRARIES}
+    ${TORCH_PYTHON_LIBRARY}
+    Python3::Module
+    ${NVSHMEM_HOST_SO}
+    ${NVSHMEM_DEVICE_A}
+    ${CUDADEVRT_LIBRARY}
+    ${CUDA_DRIVER_LIBRARY})
+
+set_target_properties(
+  ${TMA_IBGDA_TARGET_NAME}
+  PROPERTIES
+    PREFIX ""
+    SUFFIX "${PY_EXT_SUFFIX}"
+    CUDA_SEPARABLE_COMPILATION ON
+    CUDA_RESOLVE_DEVICE_SYMBOLS ON)
+
+target_link_options(
+  ${TMA_IBGDA_TARGET_NAME}
+  PRIVATE
+    "-Wl,-rpath,${NVSHMEM_LIB_DIR}")
