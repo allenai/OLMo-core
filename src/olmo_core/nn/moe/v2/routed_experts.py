@@ -29,13 +29,17 @@ import os
 try:
     import grouped_gemm  # type: ignore
     import grouped_gemm.ops  # type: ignore  # noqa: F401
-except Exception:  # pragma: no cover - import guard
+except ImportError:  # pragma: no cover - import guard
     grouped_gemm = None  # type: ignore[assignment]
 import weakref
 from dataclasses import dataclass
 from typing import Iterator, Optional, cast
 
-import nvtx
+try:
+    import nvtx
+except ImportError:
+    from olmo_core._nvtx import nvtx
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -373,7 +377,18 @@ def requires_host_side_split_sizes():
 
 @dataclass
 class RoutedExpertsConfig(Config):
-    """Configuration for routed experts in a MoE block."""
+    """
+    Configuration for routed experts in a MoE block.
+
+    .. note::
+        Unlike the rest of the codebase, this config stores dimension-related fields
+        (e.g. ``d_model``, ``hidden_size``, ``num_experts``) directly. Other configs keep
+        such dimensions out of the config and instead receive them only as arguments to
+        :meth:`build` (e.g. ``AttentionConfig.build(d_model, ...)``), so the dimensions live
+        in a single place and flow down from the top-level transformer config. The v2 configs
+        deviate by duplicating the dimensions here. This should be unified in the future to
+        follow the dimension-agnostic ``build(d_model, ...)`` convention.
+    """
 
     # Input (and output) dimension of the experts
     d_model: int
@@ -397,14 +412,17 @@ class RoutedExpertsConfig(Config):
         self,
         init_device: str = "cpu",
     ) -> "RoutedExperts":
+        """
+        Build the corresponding routed-experts module.
+
+        :param init_device: The device to initialize the parameters on, e.g. "cpu", "meta".
+        """
         kwargs = self.as_dict()
         return RoutedExperts(init_device=init_device, **kwargs)
 
     def num_params(self) -> int:
         """
         The number of params that the module will have once built.
-
-        :param d_model: The model dimensionality.
         """
 
         params = 3 * self.d_model * self.hidden_size  # up, gate, down

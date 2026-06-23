@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Callable, Mapping, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Callable, Mapping, Optional
 
-import nvtx
 import torch
 
+try:
+    import nvtx
+except ImportError:
+    from olmo_core._nvtx import nvtx
+
 from olmo_core.config import Config, StrEnum
+from olmo_core.doc_utils import beta_feature
 from olmo_core.kernels import (
     prequantize_scaled_grouped_mm_rhs,
     scaled_grouped_mm_q,
@@ -21,6 +26,7 @@ class MoERowwiseFP8ScaleMode(StrEnum):
     rceil = "rceil"
 
 
+@beta_feature
 @dataclass
 class MoERowwiseFP8Config(Config):
     enabled: bool = True
@@ -199,7 +205,7 @@ def shared_experts_forward1_rowwise_fp8(
     x: torch.Tensor,
     *,
     use_fast_accum: bool,
-) -> Tuple[torch.Tensor, torch.Tensor]:
+) -> tuple[torch.Tensor, torch.Tensor]:
     assert block.shared_experts is not None
     if x.ndim == 3:
         B, S, D = x.shape
