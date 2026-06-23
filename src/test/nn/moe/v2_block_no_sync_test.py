@@ -20,10 +20,12 @@ def test_v2_extracted_forward_module_names_importable():
         ep_no_sync_1d,
         ep_no_sync_buffers,
         ep_no_sync_rowwise,
+        ep_no_sync_tma_ibgda,
         ep_no_sync_tbo_1d,
         ep_sync_1d,
         ep_sync_tbo,
         no_ep,
+        tma_ibgda,
         tbo_state,
     )
 
@@ -36,7 +38,9 @@ def test_v2_extracted_forward_module_names_importable():
     assert hasattr(ep_no_sync_buffers, "_NoSyncSymmBuffers")
     assert hasattr(ep_no_sync_1d, "combined_forward_ep_no_sync_1d")
     assert hasattr(ep_no_sync_rowwise, "combined_forward_ep_no_sync_rowwise")
+    assert hasattr(ep_no_sync_tma_ibgda, "combined_forward_ep_no_sync_tma_ibgda")
     assert hasattr(ep_no_sync_tbo_1d, "combined_forward_ep_no_sync_tbo")
+    assert hasattr(tma_ibgda, "tma_ibgda_rowwise_dispatch_bf16")
     assert hasattr(tbo_state, "SyncedTboPendingContext")
 
 
@@ -62,6 +66,9 @@ def _build_block(
     init_device: str = "cuda",
     ep_no_sync_use_2d_all_to_all: bool = False,
     ep_no_sync_use_rowwise_all_to_all: bool = False,
+    ep_no_sync_rowwise_backend: str = "nvshmem",
+    ep_no_sync_tma_ibgda_num_sms: int | None = None,
+    ep_no_sync_tma_ibgda_symmetric_expert_out: bool = False,
 ) -> OLMoDDPTransformerBlock:
     layer_norm = LayerNormConfig(
         name=LayerNormType.rms,
@@ -107,10 +114,77 @@ def _build_block(
         ep_no_sync=ep_no_sync,
         ep_no_sync_use_2d_all_to_all=ep_no_sync_use_2d_all_to_all,
         ep_no_sync_use_rowwise_all_to_all=ep_no_sync_use_rowwise_all_to_all,
+        ep_no_sync_rowwise_backend=ep_no_sync_rowwise_backend,
+        ep_no_sync_tma_ibgda_num_sms=ep_no_sync_tma_ibgda_num_sms,
+        ep_no_sync_tma_ibgda_symmetric_expert_out=ep_no_sync_tma_ibgda_symmetric_expert_out,
         ep_no_sync_capacity_factor=ep_no_sync_capacity_factor,
         ep_no_sync_major_align=1,
         init_device=init_device,
     )
+
+
+def test_v2_tma_ibgda_backend_config_is_stored():
+    block = _build_block(
+        ep_no_sync=True,
+        ep_no_sync_use_rowwise_all_to_all=True,
+        ep_no_sync_rowwise_backend="tma_ibgda",
+        init_device="cpu",
+    )
+    assert block.ep_no_sync_rowwise_backend == "tma_ibgda"
+    assert callable(block.combined_forward_ep_no_sync_tma_ibgda)
+
+
+def test_v2_tma_ibgda_num_sms_config_is_stored():
+    block = _build_block(
+        ep_no_sync=True,
+        ep_no_sync_use_rowwise_all_to_all=True,
+        ep_no_sync_rowwise_backend="tma_ibgda",
+        ep_no_sync_tma_ibgda_num_sms=32,
+        init_device="cpu",
+    )
+    assert block.ep_no_sync_tma_ibgda_num_sms == 32
+
+
+def test_v2_tma_ibgda_symmetric_expert_out_config_is_stored():
+    block = _build_block(
+        ep_no_sync=True,
+        ep_no_sync_use_rowwise_all_to_all=True,
+        ep_no_sync_rowwise_backend="tma_ibgda",
+        ep_no_sync_tma_ibgda_symmetric_expert_out=True,
+        init_device="cpu",
+    )
+    assert block.ep_no_sync_tma_ibgda_symmetric_expert_out is True
+
+
+def test_v2_tma_ibgda_num_sms_rejects_currently_unsafe_low_values():
+    with pytest.raises(OLMoConfigurationError, match="ep_no_sync_tma_ibgda_num_sms"):
+        _build_block(
+            ep_no_sync=True,
+            ep_no_sync_use_rowwise_all_to_all=True,
+            ep_no_sync_rowwise_backend="tma_ibgda",
+            ep_no_sync_tma_ibgda_num_sms=16,
+            init_device="cpu",
+        )
+
+
+def test_v2_tma_ibgda_backend_requires_rowwise_backend():
+    with pytest.raises(OLMoConfigurationError, match="requires ep_no_sync_use_rowwise_all_to_all"):
+        _build_block(
+            ep_no_sync=True,
+            ep_no_sync_use_rowwise_all_to_all=False,
+            ep_no_sync_rowwise_backend="tma_ibgda",
+            init_device="cpu",
+        )
+
+
+def test_v2_tma_ibgda_backend_rejects_unknown_backend():
+    with pytest.raises(OLMoConfigurationError, match="ep_no_sync_rowwise_backend"):
+        _build_block(
+            ep_no_sync=True,
+            ep_no_sync_use_rowwise_all_to_all=True,
+            ep_no_sync_rowwise_backend="unknown",
+            init_device="cpu",
+        )
 
 
 def _init_block_params(block: OLMoDDPTransformerBlock):
@@ -407,6 +481,89 @@ def _run_ep_no_sync_rowwise_matches_synced():
         torch.testing.assert_close(p_rowwise.grad, p_ep.grad, atol=1e-3, rtol=1e-3)
 
 
+def _run_ep_no_sync_tma_ibgda_matches_synced_bf16(
+    *,
+    symmetric_expert_out: bool = False,
+    run_backward: bool = True,
+):
+    ep_mesh = _build_ep_mesh()
+
+    block_ep = _build_block(
+        ep_no_sync=False,
+        d_model=128,
+        hidden_size=256,
+        num_experts=8,
+        top_k=2,
+        uniform_expert_assignment=False,
+    )
+    block_tma = _build_block(
+        ep_no_sync=True,
+        ep_no_sync_use_rowwise_all_to_all=True,
+        ep_no_sync_rowwise_backend="tma_ibgda",
+        d_model=128,
+        hidden_size=256,
+        num_experts=8,
+        top_k=2,
+        uniform_expert_assignment=False,
+        ep_no_sync_tma_ibgda_symmetric_expert_out=symmetric_expert_out,
+    )
+    block_ep.apply_ep(ep_mesh)
+    block_tma.apply_ep(ep_mesh)
+
+    _init_block_params(block_ep)
+    block_tma.load_state_dict(block_ep.state_dict())
+    _install_deterministic_topk_router(block_ep)
+    _install_deterministic_topk_router(block_tma)
+
+    block_ep.to(dtype=torch.bfloat16)
+    block_tma.to(dtype=torch.bfloat16)
+    if run_backward:
+        block_ep.train()
+        block_tma.train()
+    else:
+        block_ep.eval()
+        block_tma.eval()
+    block_tma.ep_no_sync_rowwise_nblocks = 128
+
+    x = (0.2 * torch.randn(1, 16, block_ep.d_model, device="cuda")).to(
+        dtype=torch.bfloat16
+    )
+    x_ep = x.detach().clone().requires_grad_(run_backward)
+    x_tma = x.detach().clone().requires_grad_(run_backward)
+
+    with torch.set_grad_enabled(run_backward):
+        y_ep = block_ep(x_ep)
+        y_tma = block_tma(x_tma)
+    assert y_tma.shape == y_ep.shape
+    assert torch.isfinite(y_tma).all()
+    torch.testing.assert_close(y_tma, y_ep, atol=2e-2, rtol=2e-2)
+    if not run_backward:
+        return
+
+    loss_ep = y_ep.float().square().mean() + 0.1 * y_ep.float().sum()
+    loss_tma = y_tma.float().square().mean() + 0.1 * y_tma.float().sum()
+    loss_ep.backward()
+    loss_tma.backward()
+
+    assert x_tma.grad is not None
+    assert x_ep.grad is not None
+    torch.testing.assert_close(x_tma.grad, x_ep.grad, atol=3e-2, rtol=3e-2)
+
+    ep_params = dict(block_ep.named_parameters())
+    tma_params = dict(block_tma.named_parameters())
+    for name, p_ep in ep_params.items():
+        p_tma = tma_params[name]
+        if p_ep.grad is None or p_tma.grad is None:
+            continue
+        torch.testing.assert_close(
+            p_tma.grad,
+            p_ep.grad,
+            atol=5e-2,
+            rtol=5e-2,
+            msg=f"TMA/IBGDA gradient mismatch for {name}",
+        )
+
+
 def _run_ep_no_sync_rowwise_drop_matches_independent_rowwise_block():
     ep_mesh = _build_ep_mesh()
 
@@ -497,6 +654,27 @@ def test_v2_ep_no_sync_hard_fail_setup():
 @requires_multi_gpu
 def test_v2_ep_no_sync_rowwise_matches_synced():
     run_distributed_test(_run_ep_no_sync_rowwise_matches_synced, backend="nccl", start_method="spawn")
+
+
+@requires_multi_gpu
+@requires_grouped_gemm
+def test_v2_ep_no_sync_tma_ibgda_matches_synced_bf16():
+    run_distributed_test(
+        _run_ep_no_sync_tma_ibgda_matches_synced_bf16,
+        backend="nccl",
+        start_method="spawn",
+    )
+
+
+@requires_multi_gpu
+@requires_grouped_gemm
+def test_v2_ep_no_sync_tma_ibgda_symmetric_expert_out_matches_synced_bf16():
+    run_distributed_test(
+        _run_ep_no_sync_tma_ibgda_matches_synced_bf16,
+        backend="nccl",
+        start_method="spawn",
+        func_kwargs={"symmetric_expert_out": True, "run_backward": False},
+    )
 
 
 def test_v2_ep_no_sync_2d_all_to_all_rejected():
