@@ -33,6 +33,11 @@ except ImportError:
     moe_unpermute = None  # type: ignore[assignment]
 
 
+def has_triton() -> bool:
+    """Whether Triton is available."""
+    return triton is not None
+
+
 @torch.compiler.disable  # helper runs eagerly
 def async_copy_to_cpu(
     gpu_buf, event=None, return_event=True
@@ -335,7 +340,7 @@ def moe_permute_1d_fused_drop_no_compile(
     return dropped, row_id_map
 
 
-if triton is not None:
+if has_triton():
 
     @triton.jit
     def _fused_unpermute_row_id_remap_kernel(
@@ -397,12 +402,7 @@ def _build_fused_unpermute_row_id_map(
     if n_rows == 0:
         return out
 
-    if (
-        triton is not None
-        and row_id_map_i32.is_cuda
-        and inverse_reorder_i64.is_cuda
-        and num_kept.is_cuda
-    ):
+    if has_triton() and row_id_map_i32.is_cuda and inverse_reorder_i64.is_cuda and num_kept.is_cuda:
         block = 1024
         grid = (triton.cdiv(n_rows, block),)
         _fused_unpermute_row_id_remap_kernel[grid](
