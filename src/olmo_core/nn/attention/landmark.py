@@ -121,7 +121,12 @@ def build_local_packed_position_ids(
     # Flattened-over-batch global position of local token (z, t): z * seq_len + (rank shard offset).
     global_flat = z * seq_len + cp_rank * seq_len_local + t  # (batch_size, seq_len_local)
     flat = global_flat.reshape(-1)
-    doc_id = torch.bucketize(flat, boundaries[1:], right=True)
+    # Map each flat position to its document. Bucketize against the *full* ``boundaries`` (then shift
+    # by one) rather than the ``boundaries[1:]`` slice: under torch.compile ``cu_doc_lens`` has a
+    # dynamic length, so the slice is a SliceView whose stride inductor cannot lower (InductorError:
+    # SliceView). ``bucketize(.., boundaries, right=True) - 1`` is numerically identical -- for a
+    # position in ``[b_i, b_{i+1})`` it counts boundaries ``b_0..b_i`` (i+1 of them) and subtracts 1.
+    doc_id = torch.bucketize(flat, boundaries, right=True) - 1
     pos = flat - boundaries[doc_id]
     return pos.view(batch_size, seq_len_local)
 

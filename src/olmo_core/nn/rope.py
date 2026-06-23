@@ -554,11 +554,19 @@ class RotaryEmbedding(RotaryEmbeddingBase):
                     raise RuntimeError(
                         f"'position_ids' must have shape {(B, k_len)}, got {tuple(pos_idx.shape)}"
                     )
-                # Derive the absolute-position sin/cos buffer here (long enough for the largest
-                # requested position): the passed pos_sin/pos_cos has been CP-sharded so its rows are
-                # this rank's sequence slice, not absolute positions.
-                max_pos = int(pos_idx.max().item())
-                pos_sin, pos_cos = self._get_rotary_embedding(max_pos + 1, q_.device)
+                # Index an absolute-position sin/cos buffer by ``position_ids``: the passed
+                # pos_sin/pos_cos has been CP-sharded so its rows are this rank's sequence slice, not
+                # absolute positions. Reuse the pre-warmed buffer (covering every position up to the
+                # model's max sequence length, with any RoPE scaling already applied) sized from the
+                # cache rather than from the data-dependent ``pos_idx.max()`` -- the latter forces a
+                # host sync / dynamic shape that breaks torch.compile (InductorError: SliceView).
+                cached_sin = self._cache.get("rope_pos_sin")
+                if cached_sin is not None:
+                    pos_sin, pos_cos = self._get_rotary_embedding(cached_sin.shape[-2], q_.device)
+                else:
+                    pos_sin, pos_cos = self._get_rotary_embedding(
+                        int(pos_idx.max().item()) + 1, q_.device
+                    )
                 pos_sin, pos_cos = pos_sin.type_as(q_), pos_cos.type_as(q_)
                 sin_sel = pos_sin.index_select(0, pos_idx.reshape(-1)).view(B, k_len, -1)
                 cos_sel = pos_cos.index_select(0, pos_idx.reshape(-1)).view(B, k_len, -1)
