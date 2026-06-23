@@ -40,7 +40,7 @@ from olmo_core.internal.common import (
     get_beaker_username,
     get_root_dir,
 )
-from olmo_core.launch.beaker import BeakerLaunchConfig
+from olmo_core.launch.beaker import BeakerEnvVar, BeakerLaunchConfig
 from olmo_core.nn.vision import MultimodalLM, MultimodalLMConfig
 from olmo_core.optim import AdamWConfig, CosWithWarmup, OptimGroupOverride, PerGroupScheduler
 from olmo_core.train import (
@@ -248,6 +248,10 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
     # `List` feature type the image's older `datasets` can't deserialize. Upgrade after the
     # package install (olmo-core does not pin `datasets`, so this is not clobbered).
     launch_config.post_setup = "pip install -U 'datasets>=4,<6'"
+    # [flexattn branch] use the fused FlexAttention backend for the multimodal masks.
+    launch_config.env_vars = list(launch_config.env_vars) + [
+        BeakerEnvVar(name="OLMO2_FLEX_ATTN", value="1")
+    ]
 
     return ExperimentConfig(
         model=model_config,

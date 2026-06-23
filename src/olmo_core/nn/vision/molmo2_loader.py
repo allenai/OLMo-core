@@ -373,7 +373,19 @@ def _build_lm_config(text_cfg, total_vocab_size: int) -> TransformerConfig:
     that constructs the ``TransformerConfig`` directly from the HF fields rather
     than matching dimensions to a preset.
     """
+    import os
+
     from ..attention import AttentionBackendName
+
+    # The multimodal masks (bidirectional image tokens + subsegment branch isolation) only
+    # run on the dense ``torch`` backend or the fused ``flex`` (FlexAttention) backend.
+    # ``torch`` is the safe default; set ``OLMO2_FLEX_ATTN=1`` to use FlexAttention (much
+    # faster for these masks, requires a GPU + torch.compile).
+    attn_backend = (
+        AttentionBackendName.flex
+        if os.environ.get("OLMO2_FLEX_ATTN") == "1"
+        else AttentionBackendName.torch
+    )
 
     hidden_size = text_cfg.hidden_size
     n_layers = text_cfg.num_hidden_layers
@@ -385,14 +397,14 @@ def _build_lm_config(text_cfg, total_vocab_size: int) -> TransformerConfig:
         return TransformerConfig.qwen3_4B(
             vocab_size=total_vocab_size,
             rope_theta=rope_theta,
-            attn_backend=AttentionBackendName.torch,
+            attn_backend=attn_backend,
             dtype=DType.float32,
         )
     if qk_norm_type == "qwen3" and hidden_size == 4096 and n_layers == 36:
         return TransformerConfig.qwen3_8B(
             vocab_size=total_vocab_size,
             rope_theta=rope_theta,
-            attn_backend=AttentionBackendName.torch,
+            attn_backend=attn_backend,
             dtype=DType.float32,
         )
     if hidden_size == 4096 and n_layers == 32:
@@ -415,7 +427,7 @@ def _build_lm_config(text_cfg, total_vocab_size: int) -> TransformerConfig:
         return TransformerConfig.olmo3_7B(
             vocab_size=total_vocab_size,
             rope_theta=rope_theta,
-            attn_backend=AttentionBackendName.torch,
+            attn_backend=attn_backend,
             dtype=DType.float32,
         )
     raise Molmo2LoaderError(
