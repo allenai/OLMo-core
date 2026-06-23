@@ -93,6 +93,7 @@ class SharedExperts(nn.Module):
         self.reset_parameters()
 
     def reset_parameters(self) -> None:
+        # Standalone default; the model-level init may override this with a depth-scaled std.
         std = 0.02
         for w in (self.w_up_gate, self.w_down):
             nn.init.trunc_normal_(w, mean=0.0, std=std, a=-3 * std, b=3 * std)
