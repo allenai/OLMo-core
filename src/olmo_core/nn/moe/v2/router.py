@@ -525,7 +525,7 @@ class MoERouterV2(nn.Module):
             # TODO: merge into get_top_k
             scores_sel = self._quantize_scores(scores)
             scores_sel = self._break_ties(scores_sel)
-            expert_indices = self.get_top_k(scores_sel).indices
+            _, expert_indices = self.get_top_k(scores_sel)
 
             # weights from original scores/logits (not quantized), to keep smooth grads
             expert_weights = scores.gather(-1, expert_indices)
