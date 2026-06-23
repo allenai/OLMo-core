@@ -343,23 +343,23 @@ class RoutedExpertsConfig(Config):
         follow the dimension-agnostic ``build(d_model, ...)`` convention.
     """
 
-    # Input (and output) dimension of the experts
     d_model: int
+    """Input (and output) dimension of the experts."""
 
-    # Hidden (intermediate) dimension of the experts
     hidden_size: int
+    """Hidden (intermediate) dimension of the experts."""
 
-    # Number of routed experts
     num_experts: int
+    """Number of routed experts."""
 
-    # Whether to use bias in the experts
     bias: bool
+    """Whether to use bias in the experts."""
 
-    # default dtype for the experts
     dtype: DType
+    """Default dtype for the experts."""
 
-    # Optional FP8 config used by rowwise EP no-sync path.
     rowwise_fp8: Optional[MoERowwiseFP8Config] = None
+    """Optional FP8 config used by the rowwise EP no-sync path."""
 
     def build(
         self,
