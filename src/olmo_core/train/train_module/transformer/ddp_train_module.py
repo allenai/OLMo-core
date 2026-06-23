@@ -1473,16 +1473,29 @@ class OLMoDDPTrainModule(TrainModule):
                         
                         input_ids, labels, model_kwargs = self._prepare_batch(micro_batch)
                         # Run forward pass, get losses.
-                        _, loss, ce_loss, z_loss = self.model_forward_no_pipeline(
+                        debug_dump_logits = self._debug_should_dump("logits")
+                        lm_output = self.model_forward_no_pipeline(
                             input_ids,
                             labels=labels,
                             ignore_index=self.label_ignore_index,
                             loss_reduction="sum",
                             z_loss_multiplier=self.z_loss_multiplier,
                             loss_div_factor=batch_num_tokens_for_loss,
-                            return_logits=False,
+                            return_logits=debug_dump_logits,
                             **model_kwargs,
                         )
+                        if debug_dump_logits:
+                            self._debug_dump_lm_output(
+                                lm_output,
+                                input_ids=input_ids,
+                                labels=labels,
+                                micro_batch_idx=micro_batch_idx,
+                            )
+                        assert isinstance(lm_output, LMOutputWithLoss)
+                        loss = lm_output.loss
+                        ce_loss = lm_output.ce_loss
+                        z_loss = lm_output.z_loss
+                        del lm_output
                         # Update total batch CE and Z loss.
                         ce_batch_loss += get_local_tensor(ce_loss.detach())
                         del ce_loss
@@ -1904,6 +1917,11 @@ class OLMoDDPTrainModule(TrainModule):
     def optim_step(self):
         from olmo_core.optim.moe_optimizer import OLMoDDPOptimizer
         optim = self._require_optimizer()
+        debug_dump_grads = self._debug_should_dump("grads")
+        if debug_dump_grads:
+            self._debug_dump_model_grads("pre_optim")
+        if debug_dump_grads or self._debug_dump_optim_grad_norms or self._debug_log_optim_grad_norms:
+            setattr(optim, "_olmo_debug_global_step", self.trainer.global_step)
 
         # dist.barrier()
         # if dist.get_rank() == 0:
@@ -1964,6 +1982,265 @@ class OLMoDDPTrainModule(TrainModule):
         """
         with self._model_forward_context():
             return self.model_parts[0](input_ids, labels=labels, **kwargs)
+
+    @cached_property
+    def _debug_dump_dir_cached(self) -> Optional[str]:
+        return os.getenv("OLMO_DEBUG_DUMP_DIR")
+
+    def _debug_dump_dir(self) -> Optional[str]:
+        return self._debug_dump_dir_cached
+
+    @cached_property
+    def _debug_dump_run_id_cached(self) -> str:
+        return os.getenv("OLMO_DEBUG_RUN_ID", "run")
+
+    def _debug_dump_run_id(self) -> str:
+        return self._debug_dump_run_id_cached
+
+    @cached_property
+    def _debug_dump_sample_size_cached(self) -> int:
+        raw = os.getenv("OLMO_DEBUG_DUMP_SAMPLE_SIZE", "32")
+        try:
+            return max(1, int(raw))
+        except ValueError:
+            return 32
+
+    def _debug_dump_sample_size(self) -> int:
+        return self._debug_dump_sample_size_cached
+
+    @cached_property
+    def _debug_dump_steps(self) -> Optional[set[int]]:
+        raw = os.getenv("OLMO_DEBUG_DUMP_STEPS")
+        if not raw:
+            return None
+        try:
+            return {int(part.strip()) for part in raw.split(",") if part.strip()}
+        except ValueError:
+            return None
+
+    def _debug_env_flag(self, name: str, default: bool = False) -> bool:
+        raw = os.getenv(name)
+        if raw is None:
+            return default
+        return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+    @cached_property
+    def _debug_dump_optim_grad_norms(self) -> bool:
+        return self._debug_env_flag("OLMO_DEBUG_DUMP_OPTIM_GRAD_NORMS", False)
+
+    @cached_property
+    def _debug_log_optim_grad_norms(self) -> bool:
+        return os.getenv("OLMO_DDP_DEBUG_GRAD_NORMS") is not None
+
+    @lru_cache(maxsize=None)
+    def _debug_dump_kind_enabled(self, kind: str) -> bool:
+        raw_kind = os.getenv(f"OLMO_DEBUG_DUMP_{kind.upper()}", "0").strip().lower()
+        return raw_kind in {"1", "true", "yes", "on"}
+
+    def _debug_should_dump(self, kind: str) -> bool:
+        if self._debug_dump_dir() is None:
+            return False
+        if not self._debug_dump_kind_enabled(kind):
+            return False
+        steps = self._debug_dump_steps
+        if steps is None:
+            return True
+        return self.trainer.global_step in steps
+
+    def _debug_rank_in_filter(self, env_name: str) -> bool:
+        raw = os.getenv(env_name, "all").strip().lower()
+        rank = get_rank() if is_distributed() else 0
+        if raw in {"all", "*"}:
+            return True
+        return str(rank) in {part.strip() for part in raw.split(",")}
+
+    @torch.no_grad()
+    def _debug_tensor_payload(self, tensor: torch.Tensor) -> Dict[str, Any]:
+        local = get_local_tensor(tensor.detach())
+        flat = local.reshape(-1)
+        sample_n = self._debug_dump_sample_size()
+        if flat.numel() == 0:
+            sample = flat.float().cpu()
+            sample_indices = torch.empty(0, dtype=torch.long)
+        elif flat.numel() <= sample_n * 2:
+            sample = flat.float().cpu()
+            sample_indices = torch.arange(flat.numel(), dtype=torch.long)
+        else:
+            # Build indices on CPU in float64. CUDA linspace over very large tensors can
+            # round the final index past the end before index_select sees it.
+            sample_indices = torch.linspace(
+                0,
+                flat.numel() - 1,
+                steps=sample_n,
+                dtype=torch.float64,
+            ).round().long().clamp_(0, flat.numel() - 1)
+            sample = flat.index_select(0, sample_indices.to(device=flat.device)).float().cpu()
+        return {
+            "shape": tuple(local.shape),
+            "dtype": str(local.dtype),
+            "numel": local.numel(),
+            "sample": sample,
+            "sample_indices": sample_indices,
+            "sample_sum": sample.sum(),
+            "sample_abs_max": sample.abs().max() if sample.numel() > 0 else torch.tensor(0.0),
+        }
+
+    def _debug_dump_path(self, kind: str, suffix: str) -> str:
+        dump_root = self._debug_dump_dir()
+        assert dump_root is not None
+        rank = get_rank() if is_distributed() else 0
+        dump_dir = os.path.join(dump_root, self._debug_dump_run_id(), f"rank{rank:03d}")
+        os.makedirs(dump_dir, exist_ok=True)
+        return os.path.join(dump_dir, f"step{self.trainer.global_step:06d}_{suffix}_{kind}.pt")
+
+    def _debug_dump_step_dir(self, suffix: str) -> str:
+        dump_root = self._debug_dump_dir()
+        assert dump_root is not None
+        rank = get_rank() if is_distributed() else 0
+        dump_dir = os.path.join(
+            dump_root,
+            self._debug_dump_run_id(),
+            f"rank{rank:03d}",
+            f"step{self.trainer.global_step:06d}_{suffix}",
+        )
+        os.makedirs(dump_dir, exist_ok=True)
+        return dump_dir
+
+    @staticmethod
+    def _debug_safe_filename(name: str) -> str:
+        return "".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in name)
+
+    @torch.no_grad()
+    def _debug_dump_lm_output(
+        self,
+        lm_output: Union[torch.Tensor, LMOutputWithLoss],
+        *,
+        input_ids: torch.Tensor,
+        labels: Optional[torch.Tensor],
+        micro_batch_idx: int,
+    ) -> None:
+        if not isinstance(lm_output, LMOutputWithLoss):
+            return
+        payload: Dict[str, Any] = {
+            "kind": "logits",
+            "rank": get_rank() if is_distributed() else 0,
+            "step": self.trainer.global_step,
+            "micro_batch_idx": micro_batch_idx,
+            "input_ids": self._debug_tensor_payload(input_ids),
+            "labels": None if labels is None else self._debug_tensor_payload(labels),
+            "loss": self._debug_tensor_payload(lm_output.loss),
+            "ce_loss": self._debug_tensor_payload(lm_output.ce_loss),
+            "z_loss": None
+            if lm_output.z_loss is None
+            else self._debug_tensor_payload(lm_output.z_loss),
+            "logits": None
+            if lm_output.logits is None
+            else self._debug_tensor_payload(lm_output.logits),
+        }
+        torch.save(payload, self._debug_dump_path("logits", f"mb{micro_batch_idx:03d}"))
+
+    @torch.no_grad()
+    def _debug_dump_model_grads(self, phase: str) -> None:
+        if self._debug_env_flag("OLMO_DEBUG_DUMP_FULL_GRADS", False):
+            self._debug_dump_full_model_grads(phase)
+            if not self._debug_env_flag("OLMO_DEBUG_DUMP_SAMPLE_GRADS_WITH_FULL", False):
+                return
+
+        entries: List[Dict[str, Any]] = []
+        for part_idx, model in enumerate(self.model_parts):
+            for name, param in model.named_parameters():
+                if not param.requires_grad:
+                    continue
+                entry: Dict[str, Any] = {
+                    "part_idx": part_idx,
+                    "name": name,
+                    "param_shape": tuple(param.shape),
+                    "param_dtype": str(param.dtype),
+                }
+                if param.grad is not None:
+                    entry["grad"] = self._debug_tensor_payload(param.grad)
+                main_grad = getattr(param, "_main_grad_fp32", None)
+                if main_grad is not None:
+                    entry["main_grad_fp32"] = self._debug_tensor_payload(main_grad)
+                if "grad" in entry or "main_grad_fp32" in entry:
+                    entries.append(entry)
+
+        payload = {
+            "kind": "model_grads",
+            "rank": get_rank() if is_distributed() else 0,
+            "step": self.trainer.global_step,
+            "phase": phase,
+            "entries": entries,
+        }
+        torch.save(payload, self._debug_dump_path("model_grads", phase))
+
+    @torch.no_grad()
+    def _debug_dump_full_model_grads(self, phase: str) -> None:
+        if not self._debug_rank_in_filter("OLMO_DEBUG_DUMP_FULL_GRADS_RANKS"):
+            return
+        rank = get_rank() if is_distributed() else 0
+        step_dir = self._debug_dump_step_dir(f"{phase}_full_model_grads")
+        entries: List[Dict[str, Any]] = []
+        for part_idx, model in enumerate(self.model_parts):
+            for param_idx, (name, param) in enumerate(model.named_parameters()):
+                if not param.requires_grad:
+                    continue
+                tensors: List[Tuple[str, torch.Tensor]] = []
+                if param.grad is not None:
+                    tensors.append(("grad", param.grad))
+                main_grad = getattr(param, "_main_grad_fp32", None)
+                if main_grad is not None:
+                    tensors.append(("main_grad_fp32", main_grad))
+
+                for grad_name, tensor in tensors:
+                    local = get_local_tensor(tensor.detach())
+                    file_name = (
+                        f"part{part_idx:03d}_param{param_idx:04d}_"
+                        f"{grad_name}_{self._debug_safe_filename(name)}.pt"
+                    )
+                    torch.save(
+                        {
+                            "kind": "full_model_grad",
+                            "rank": rank,
+                            "step": self.trainer.global_step,
+                            "phase": phase,
+                            "part_idx": part_idx,
+                            "param_idx": param_idx,
+                            "name": name,
+                            "grad_name": grad_name,
+                            "param_shape": tuple(param.shape),
+                            "param_dtype": str(param.dtype),
+                            "grad_shape": tuple(local.shape),
+                            "grad_dtype": str(local.dtype),
+                            "tensor": local.cpu(),
+                        },
+                        os.path.join(step_dir, file_name),
+                    )
+                    entries.append(
+                        {
+                            "part_idx": part_idx,
+                            "param_idx": param_idx,
+                            "name": name,
+                            "grad_name": grad_name,
+                            "file": file_name,
+                            "param_shape": tuple(param.shape),
+                            "param_dtype": str(param.dtype),
+                            "grad_shape": tuple(local.shape),
+                            "grad_dtype": str(local.dtype),
+                            "numel": local.numel(),
+                        }
+                    )
+
+        torch.save(
+            {
+                "kind": "full_model_grads_manifest",
+                "rank": rank,
+                "step": self.trainer.global_step,
+                "phase": phase,
+                "entries": entries,
+            },
+            os.path.join(step_dir, "manifest.pt"),
+        )
 
     @lru_cache
     def num_flops_per_token(self, seq_len: int) -> int:

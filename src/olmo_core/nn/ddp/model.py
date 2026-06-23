@@ -565,7 +565,14 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
     def apply_compile(self):
         super().apply_compile()
         self._tbo_last_step = torch.compile(self._tbo_last_step)
-        self.forward_embed = torch.compile(self.forward_embed)
+        compile_forward_embed = os.getenv("OLMO_COMPILE_FORWARD_EMBED", "1").strip().lower() not in {
+            "0",
+            "false",
+            "no",
+            "off",
+        }
+        if compile_forward_embed:
+            self.forward_embed = torch.compile(self.forward_embed)
         # self._forward_blocks = torch.compile(self._forward_blocks)
 
     def apply_ddp(

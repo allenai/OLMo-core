@@ -1198,13 +1198,23 @@ class OLMoDDPOptimizer:
 
     def _maybe_log_debug_grad_norms(self, total_grad_norm: torch.Tensor) -> None:
         raw_limit = os.getenv("OLMO_DDP_DEBUG_GRAD_NORMS")
-        if raw_limit is None:
+        dump_root = (
+            os.getenv("OLMO_DEBUG_DUMP_DIR")
+            if os.getenv("OLMO_DEBUG_DUMP_OPTIM_GRAD_NORMS", "").strip().lower()
+            in {"1", "true", "yes", "on"}
+            else None
+        )
+        if raw_limit is None and dump_root is None:
             return
-        try:
-            limit = int(raw_limit)
-        except ValueError:
-            limit = 20
-        if limit <= 0:
+        if raw_limit is None:
+            limit = 0
+        else:
+            try:
+                limit = int(raw_limit)
+            except ValueError:
+                limit = 20
+        dump_enabled = dump_root is not None
+        if limit <= 0 and not dump_enabled:
             return
         rank_filter = os.getenv("OLMO_DDP_DEBUG_GRAD_NORMS_RANKS", "0").strip().lower()
         rank = dist.get_rank() if dist.is_available() and dist.is_initialized() else 0
@@ -1212,6 +1222,18 @@ class OLMoDDPOptimizer:
             part.strip() for part in rank_filter.split(",")
         }:
             return
+
+        step = getattr(self, "_olmo_debug_global_step", -1)
+        raw_steps = os.getenv("OLMO_DEBUG_DUMP_STEPS")
+        if dump_enabled and raw_steps:
+            try:
+                steps = {int(part.strip()) for part in raw_steps.split(",") if part.strip()}
+            except ValueError:
+                steps = set()
+            if steps and step not in steps:
+                dump_enabled = False
+                if limit <= 0:
+                    return
 
         total_value = total_grad_norm.detach().float().item()
         raw_min = os.getenv("OLMO_DDP_DEBUG_GRAD_NORMS_MIN")
@@ -1242,16 +1264,40 @@ class OLMoDDPOptimizer:
                 entries.append((local_norm, name, param_group["pg"], placements))
 
         entries.sort(reverse=True, key=lambda item: item[0])
-        top_lines = "\n".join(
-            f"  {idx + 1:02d}. norm={norm:.6g} pg={pg} placements={placements} name={name}"
-            for idx, (norm, name, pg, placements) in enumerate(entries[:limit])
-        )
-        log.warning(
-            "Debug grad norms on rank %s: total=%s top local entries:\n%s",
-            rank,
-            total_value,
-            top_lines,
-        )
+        if dump_enabled:
+            run_id = os.getenv("OLMO_DEBUG_RUN_ID", "run")
+            assert dump_root is not None
+            dump_dir = os.path.join(dump_root, run_id, f"rank{rank:03d}")
+            os.makedirs(dump_dir, exist_ok=True)
+            torch.save(
+                {
+                    "kind": "optim_grad_norms",
+                    "rank": rank,
+                    "step": step,
+                    "total_grad_norm": _to_local_tensor(total_grad_norm.detach()).float().cpu(),
+                    "entries": [
+                        {
+                            "local_norm": norm,
+                            "name": name,
+                            "param_group": pg,
+                            "placements": placements,
+                        }
+                        for norm, name, pg, placements in entries
+                    ],
+                },
+                os.path.join(dump_dir, f"step{step:06d}_optim_grad_norms.pt"),
+            )
+        if limit > 0:
+            top_lines = "\n".join(
+                f"  {idx + 1:02d}. norm={norm:.6g} pg={pg} placements={placements} name={name}"
+                for idx, (norm, name, pg, placements) in enumerate(entries[:limit])
+            )
+            log.warning(
+                "Debug grad norms on rank %s: total=%s top local entries:\n%s",
+                rank,
+                total_value,
+                top_lines,
+            )
 
     def _local_total_norm(self, grads: List[torch.Tensor]) -> torch.Tensor:
         norms: List[torch.Tensor] = []

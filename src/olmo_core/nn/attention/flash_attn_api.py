@@ -1,4 +1,5 @@
 import logging
+import os
 from typing import Optional, Tuple
 
 import torch
@@ -32,6 +33,16 @@ except ImportError:
     ring_flash_attn = None  # type: ignore
 
 log = logging.getLogger(__name__)
+
+
+def _env_flag(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() not in {"0", "false", "no", "off"}
+
+
+_OLMO_FA4_DETERMINISTIC = _env_flag("OLMO_FA4_DETERMINISTIC", False)
 
 
 def has_flash_attn_2() -> bool:
@@ -461,9 +472,13 @@ def dispatch_flash_attn_4(
     causal: bool = False,
     window_size: Tuple[int, int] = (-1, -1),
     seqused_k: Optional[torch.Tensor] = None,
+    deterministic: Optional[bool] = None,
 ) -> torch.Tensor:
     if flash_attn_4 is None:
         raise RuntimeError("flash-attn 4 (CUTE implementation) is required!")
+
+    if deterministic is None:
+        deterministic = _OLMO_FA4_DETERMINISTIC
 
     if window_size == (-1, -1) or (window_size == (-1, 0) and causal):
         window_size = (None, None)  # type: ignore
@@ -483,6 +498,7 @@ def dispatch_flash_attn_4(
             softmax_scale=softmax_scale,
             causal=causal,
             window_size=window_size,
+            deterministic=deterministic,
         )[0]
 
     if cu_seqlens is not None:
@@ -506,6 +522,7 @@ def dispatch_flash_attn_4(
             softmax_scale=softmax_scale,
             causal=causal,
             window_size=window_size,
+            deterministic=deterministic,
         )[0]
     else:
         return flash_attn_4.flash_attn_func(
@@ -515,4 +532,5 @@ def dispatch_flash_attn_4(
             softmax_scale=softmax_scale,
             causal=causal,
             window_size=window_size,
+            deterministic=deterministic,
         )[0]
