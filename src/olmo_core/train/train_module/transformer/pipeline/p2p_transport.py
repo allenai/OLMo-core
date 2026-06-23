@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 import os
+import socket
 from dataclasses import dataclass
-from typing import Optional
+from typing import Iterator, Optional
 
 import torch
 import torch.distributed as dist
+import nvtx
 
 from olmo_core.kernels import nccl_rma_p2p
 
@@ -17,6 +20,17 @@ def _debug(message: str) -> None:
         return
     rank = dist.get_rank() if dist.is_initialized() else "?"
     print(f"[rank {rank} nccl-rma-p2p] {message}", flush=True)
+
+
+def rma_group_hostnames(group: dist.ProcessGroup) -> set[str]:
+    local_hostname = socket.gethostname().split(".")[0]
+    hostnames: list[Optional[str]] = [None for _ in range(dist.get_world_size(group))]
+    dist.all_gather_object(hostnames, local_hostname, group=group)
+    return {hostname for hostname in hostnames if hostname is not None}
+
+
+def rma_group_spans_nodes(group: dist.ProcessGroup) -> bool:
+    return len(rma_group_hostnames(group)) > 1
 
 
 def _dtype_name(dtype: torch.dtype) -> str:
@@ -33,6 +47,16 @@ def _dtype_name(dtype: torch.dtype) -> str:
     if dtype == torch.uint8:
         return "uint8"
     raise RuntimeError(f"Unsupported NCCL RMA P2P dtype: {dtype}")
+
+
+def _send_label(key: P2PKey) -> str:
+    kind, src_stage, _dst_stage, mb_index = key
+    return f"{src_stage}{kind}{mb_index}-S"
+
+
+def _recv_label(key: P2PKey) -> str:
+    kind, _src_stage, dst_stage, mb_index = key
+    return f"{dst_stage}{kind}{mb_index}-R"
 
 
 def _broadcast_nccl_unique_id(group: dist.ProcessGroup, device: torch.device) -> bytes:
@@ -64,6 +88,13 @@ class _RMAWork:
     def is_completed(self) -> bool:
         return self._event is not None and self._event.query()
 
+    def _wait_event(self) -> None:
+        if self._event is None:
+            return
+        # Keep the dependency on the CUDA stream instead of stalling the host
+        # thread with cudaEventSynchronize.
+        torch.cuda.current_stream().wait_event(self._event)
+
     def wait(self) -> None:
         raise NotImplementedError
 
@@ -71,26 +102,32 @@ class _RMAWork:
 class _RMASendWork(_RMAWork):
     def __init__(self, transport: "NCCLRMAPipelineP2PTransport", op: "RMASendOp") -> None:
         super().__init__()
+        label = _send_label(op.key)
         _debug(f"send start key={op.key} peer={op.peer} offset={op.offset_bytes}")
-        if op.wait_for_ack:
-            if op.ack_context_id is None:
-                raise RuntimeError("RMA send op requires an ack context but none was provided")
-            _debug(f"send wait ack key={op.key} peer={op.peer} channel={op.channel_index}")
-            nccl_rma_p2p.wait_signal(op.ack_context_id, peer=op.peer, op_count=1)
-        op.send_slot.copy_(op.tensor, non_blocking=True)
-        nccl_rma_p2p.put_signal(
-            transport.context_id,
-            op.send_slot,
-            peer=op.peer,
-            window_id=transport.window_id,
-            peer_window_offset_bytes=op.offset_bytes,
-        )
-        self._record_event()
+        with transport.send_stream_context(wait_for_compute=True):
+            op.tensor.record_stream(torch.cuda.current_stream())
+            with nvtx.annotate(label, color="blue"):
+                if op.wait_for_ack:
+                    if op.ack_context_id is None:
+                        raise RuntimeError("RMA send op requires an ack context but none was provided")
+                    _debug(f"send wait ack key={op.key} peer={op.peer} channel={op.channel_index}")
+                    with nvtx.annotate(f"{label}-wait-ack", color="purple"):
+                        nccl_rma_p2p.wait_signal(op.ack_context_id, peer=op.peer, op_count=1)
+                with nvtx.annotate(f"{label}-copy-in", color="purple"):
+                    op.send_slot.copy_(op.tensor, non_blocking=True)
+                with nvtx.annotate(f"{label}-put-signal", color="purple"):
+                    nccl_rma_p2p.put_signal(
+                        transport.context_id,
+                        op.send_slot,
+                        peer=op.peer,
+                        window_id=transport.window_id,
+                        peer_window_offset_bytes=op.offset_bytes,
+                    )
+                self._record_event()
         _debug(f"send enqueued key={op.key} peer={op.peer} offset={op.offset_bytes}")
 
     def wait(self) -> None:
-        if self._event is not None:
-            self._event.synchronize()
+        self._wait_event()
 
 
 class _RMARecvWork(_RMAWork):
@@ -105,24 +142,30 @@ class _RMARecvWork(_RMAWork):
 
     def wait(self) -> None:
         if not self._wait_enqueued:
+            label = _recv_label(self.op.key)
             _debug(
                 "wait start "
                 f"key={self.op.key} peer={self.op.peer} "
                 f"op_count={self.op.expected_signal_count}"
             )
-            nccl_rma_p2p.wait_signal(
-                self.transport.context_id,
-                peer=self.op.peer,
-                op_count=self.op.expected_signal_count,
-            )
-            self.op.output_tensor.copy_(self.op.recv_slot, non_blocking=True)
-            if self.op.ack_context_id is not None:
-                _debug(
-                    "send ack "
-                    f"key={self.op.key} peer={self.op.peer} channel={self.op.channel_index}"
-                )
-                nccl_rma_p2p.signal(self.op.ack_context_id, peer=self.op.peer)
-            self._record_event()
+            self.op.output_tensor.record_stream(torch.cuda.current_stream())
+            with nvtx.annotate(label, color="blue"):
+                with nvtx.annotate(f"{label}-wait-signal", color="purple"):
+                    nccl_rma_p2p.wait_signal(
+                        self.transport.context_id,
+                        peer=self.op.peer,
+                        op_count=self.op.expected_signal_count,
+                    )
+                with nvtx.annotate(f"{label}-copy-out", color="purple"):
+                    self.op.output_tensor.copy_(self.op.recv_slot, non_blocking=True)
+                if self.op.ack_context_id is not None:
+                    _debug(
+                        "send ack "
+                        f"key={self.op.key} peer={self.op.peer} channel={self.op.channel_index}"
+                    )
+                    with nvtx.annotate(f"{label}-ack", color="purple"):
+                        nccl_rma_p2p.signal(self.op.ack_context_id, peer=self.op.peer)
+                self._record_event()
             self._wait_enqueued = True
             _debug(
                 "wait enqueued "
@@ -130,10 +173,9 @@ class _RMARecvWork(_RMAWork):
                 f"op_count={self.op.expected_signal_count}"
             )
         assert self._event is not None
-        self._event.synchronize()
+        self._wait_event()
         _debug(
-            "wait done "
-            f"key={self.op.key} peer={self.op.peer} "
+            f"wait dependency enqueued key={self.op.key} peer={self.op.peer} "
             f"op_count={self.op.expected_signal_count}"
         )
 
@@ -187,6 +229,14 @@ class NCCLRMAPipelineP2PTransport:
         self.group_size = dist.get_world_size(group)
         self.num_stages = num_stages
         self.use_ack = use_ack
+        self.hostnames = rma_group_hostnames(group)
+        if len(self.hostnames) > 1:
+            raise RuntimeError(
+                "NCCL RMA P2P host APIs are not supported for this inter-node "
+                f"communicator; group spans hosts {sorted(self.hostnames)}. "
+                "Use p2p_backend=\"nccl\" for inter-node PP, or use the RMA "
+                "backend only for single-node PP groups."
+            )
 
         unique_id = _broadcast_nccl_unique_id(group, device)
         self.context_id = nccl_rma_p2p.init(
@@ -219,13 +269,36 @@ class NCCLRMAPipelineP2PTransport:
         self.slot_depth = 0
         self.num_slots = 0
         self._send_channel_started = [False for _ in range(self.num_channels)]
+        with torch.cuda.device(device):
+            self._send_stream = torch.cuda.Stream(priority=0)
         _debug(
             "initialized "
             f"group_rank={self.group_rank} group_size={self.group_size} "
-            f"num_stages={self.num_stages} use_ack={self.use_ack}"
+            f"num_stages={self.num_stages} use_ack={self.use_ack} "
+            "send_stream=dedicated recv_stream=compute"
         )
 
+    @contextmanager
+    def _stream_context(
+        self,
+        stream: torch.cuda.Stream,
+        *,
+        wait_for_compute: bool,
+    ) -> Iterator[None]:
+        with torch.cuda.device(self.device):
+            if wait_for_compute:
+                stream.wait_stream(torch.cuda.current_stream())
+            with torch.cuda.stream(stream):
+                yield
+
+    def send_stream_context(self, *, wait_for_compute: bool) -> Iterator[None]:
+        return self._stream_context(self._send_stream, wait_for_compute=wait_for_compute)
+
+    def _synchronize_before_teardown(self) -> None:
+        torch.cuda.synchronize(self.device)
+
     def close(self) -> None:
+        self._synchronize_before_teardown()
         if self.window_id is not None:
             nccl_rma_p2p.free_window(self.context_id, self.window_id)
             self.window_id = None
@@ -261,6 +334,7 @@ class NCCLRMAPipelineP2PTransport:
             return
 
         if self.window_id is not None:
+            self._synchronize_before_teardown()
             nccl_rma_p2p.free_window(self.context_id, self.window_id)
 
         self.num_microbatches = num_microbatches
