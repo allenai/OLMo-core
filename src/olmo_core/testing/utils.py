@@ -6,6 +6,7 @@ import torch
 
 import olmo_core.nn.attention.flash_attn_api as flash_attn_api
 import olmo_core.nn.attention.flash_linear_attn_api as flash_linear_attn_api
+import olmo_core.nn.moe.utils as moe_utils
 
 log = logging.getLogger(__name__)
 
@@ -23,6 +24,7 @@ has_flash_attn_2 = flash_attn_api.has_flash_attn_2()
 has_flash_attn_3 = flash_attn_api.has_flash_attn_3()
 has_flash_attn_4 = flash_attn_api.has_flash_attn_4()
 has_fla = flash_linear_attn_api.has_fla()
+has_triton = moe_utils.has_triton()
 has_torchao = False
 has_grouped_gemm = False
 has_te = False
@@ -146,6 +148,18 @@ FLA_MARKS = (
 
 def requires_fla(func):
     for mark in FLA_MARKS:
+        func = mark(func)
+    return func
+
+
+TRITON_MARKS = (
+    pytest.mark.gpu,
+    pytest.mark.skipif(not has_triton, reason="Requires triton"),
+)
+
+
+def requires_triton(func):
+    for mark in TRITON_MARKS:
         func = mark(func)
     return func
 

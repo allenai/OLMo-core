@@ -11,6 +11,7 @@ from .utils import (
     LOW_PRECISION_DTYPES,
     MULTI_GPU_MARKS,
     TE_MARKS,
+    TRITON_MARKS,
     has_cuda,
     has_flash_attn_2,
     has_flash_attn_4,
@@ -19,6 +20,7 @@ from .utils import (
     has_quack,
     has_torch_grouped_mm,
     has_torchao,
+    has_triton,
     requires_flash_attn_2,
     requires_flash_attn_4,
     requires_gpu,
@@ -27,6 +29,7 @@ from .utils import (
     requires_quack,
     requires_te,
     requires_torch_grouped_mm,
+    requires_triton,
 )
 
 __all__ = [
@@ -41,6 +44,7 @@ __all__ = [
     "INIT_DEVICES",
     "LOW_PRECISION_DTYPES",
     "MULTI_GPU_MARKS",
+    "TRITON_MARKS",
     "has_cuda",
     "has_flash_attn_2",
     "has_flash_attn_4",
@@ -48,6 +52,7 @@ __all__ = [
     "has_multiple_gpus",
     "has_torch_grouped_mm",
     "has_torchao",
+    "has_triton",
     "has_quack",
     "requires_flash_attn_2",
     "requires_flash_attn_4",
@@ -55,6 +60,7 @@ __all__ = [
     "requires_gpu",
     "requires_grouped_gemm",
     "requires_torch_grouped_mm",
+    "requires_triton",
     "requires_quack",
     "requires_multi_gpu",
     "run_distributed_test",
