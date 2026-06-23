@@ -226,7 +226,7 @@ def restore_drop_unpermute_1d(
         -1,
         self.routed_experts_router.top_k,
     )
-    backend = self.ep_no_sync_restore_unpermute_backend
+    backend = self.ep.restore_unpermute_backend
 
     if backend == "te_fused":
         return cast(
@@ -273,7 +273,7 @@ def restore_drop_unpermute_1d(
         )
     if backend == "cuda":
         raise RuntimeError(
-            "ep_no_sync_restore_unpermute_backend='cuda' is not implemented yet. "
+            "EP restore_unpermute_backend='cuda' is not implemented yet. "
             "TODO: add a custom CUDA path mirroring TE _moe_unpermute_index_map semantics."
         )
-    raise RuntimeError(f"Unhandled ep_no_sync_restore_unpermute_backend: {backend}")
+    raise RuntimeError(f"Unhandled EP restore_unpermute_backend: {backend}")

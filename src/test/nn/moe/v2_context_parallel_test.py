@@ -20,6 +20,10 @@ from olmo_core.nn.attention import AttentionConfig, AttentionType
 from olmo_core.nn.layer_norm import LayerNormConfig, LayerNormType
 from olmo_core.nn.moe import MoERouterGatingFunction
 from olmo_core.nn.ddp.block import OLMoDDPTransformerBlock
+from olmo_core.nn.moe.v2.ep_config import (
+    ExpertParallelConfig as MoEExpertParallelConfig,
+    ExpertParallelPath,
+)
 from olmo_core.nn.moe.v2.routed_experts import RoutedExpertsConfig
 from olmo_core.nn.moe.v2.router import MoERouterConfigV2
 from olmo_core.nn.rope import RoPEConfig, RoPEType
@@ -48,6 +52,13 @@ def _build_block(
     ep_no_sync: bool = False,
     ep_no_sync_use_rowwise_all_to_all: bool = False,
 ) -> OLMoDDPTransformerBlock:
+    ep_path = (
+        ExpertParallelPath.rowwise_nvshmem
+        if ep_no_sync and ep_no_sync_use_rowwise_all_to_all
+        else ExpertParallelPath.no_sync_1d
+        if ep_no_sync
+        else ExpertParallelPath.sync_1d
+    )
     layer_norm = LayerNormConfig(
         name=LayerNormType.rms,
         eps=1e-6,
@@ -87,9 +98,7 @@ def _build_block(
             dtype=DType.float32,
         ),
         feed_forward_norm=layer_norm,
-        ep_no_sync=ep_no_sync,
-        ep_no_sync_use_rowwise_all_to_all=ep_no_sync_use_rowwise_all_to_all,
-        ep_no_sync_rowwise_nblocks=128,
+        ep=MoEExpertParallelConfig(path=ep_path, rowwise_nblocks=128),
         init_device=init_device,
     )
 
@@ -114,6 +123,13 @@ def _build_model(
         eps=1e-6,
         bias=False,
         dtype=DType.float32,
+    )
+    ep_path = (
+        ExpertParallelPath.rowwise_nvshmem
+        if ep_no_sync and ep_no_sync_use_rowwise_all_to_all
+        else ExpertParallelPath.no_sync_1d
+        if ep_no_sync
+        else ExpertParallelPath.sync_1d
     )
     config = MoEFusedV2TransformerConfig(
         name=TransformerType.moe_fused_v2,
@@ -155,9 +171,7 @@ def _build_model(
                 dtype=DType.float32,
             ),
             feed_forward_norm=layer_norm,
-            ep_no_sync=ep_no_sync,
-            ep_no_sync_use_rowwise_all_to_all=ep_no_sync_use_rowwise_all_to_all,
-            ep_no_sync_rowwise_nblocks=128,
+            ep=MoEExpertParallelConfig(path=ep_path, rowwise_nblocks=128),
         ),
     )
     return config.build(init_device=init_device)
@@ -622,8 +636,8 @@ def _run_moe_v2_folded_cp_rowwise_ep_train_module_cuda() -> None:
         unwrapped = getattr(model_part, "module", model_part)
         for block in unwrapped.blocks.values():
             assert isinstance(block, OLMoDDPTransformerBlock)
-            assert block.ep_no_sync
-            assert block.ep_no_sync_use_rowwise_all_to_all
+            assert block.ep.no_sync
+            assert block.ep.uses_rowwise_buffers
             _install_deterministic_topk_router(block)
 
     recorded_ce_losses: list[torch.Tensor] = []
@@ -804,8 +818,8 @@ def _run_moe_v2_folded_cp_rowwise_ep_pp_train_module_cuda() -> None:
         unwrapped = getattr(model_part, "module", model_part)
         for block in unwrapped.blocks.values():
             assert isinstance(block, OLMoDDPTransformerBlock)
-            assert block.ep_no_sync
-            assert block.ep_no_sync_use_rowwise_all_to_all
+            assert block.ep.no_sync
+            assert block.ep.uses_rowwise_buffers
             _install_deterministic_topk_router(block)
 
     recorded_ce_losses: list[torch.Tensor] = []

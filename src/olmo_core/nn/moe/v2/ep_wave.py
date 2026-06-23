@@ -28,6 +28,7 @@ from .ep_no_sync_rowwise_helpers import (
     accumulate_ep_no_sync_rowwise_metrics,
     build_rowwise_route_maps,
 )
+from .ep_config import ExpertParallelPath
 from .routed_experts import (
     ExpertActivation,
     requires_host_side_split_sizes,
@@ -45,16 +46,10 @@ def _env_flag(name: str, default: bool = False) -> bool:
 
 
 def _check_ep_wave_supported(block: "OLMoDDPTransformerBlock", x: torch.Tensor) -> None:
-    if not block.ep_no_sync:
-        raise RuntimeError("combined_forward_ep_wave requires ep_no_sync=True")
-    if not block.ep_no_sync_use_rowwise_all_to_all:
+    if block.ep.path != ExpertParallelPath.wave_mega:
         raise RuntimeError(
-            "combined_forward_ep_wave uses the rowwise NVSHMEM backend; "
-            "set ep_no_sync_use_rowwise_all_to_all=True"
-        )
-    if block.ep_no_sync_use_2d_all_to_all:
-        raise RuntimeError(
-            "ep_no_sync_use_2d_all_to_all=True is not supported by combined_forward_ep_wave"
+            "combined_forward_ep_wave requires "
+            f"path={ExpertParallelPath.wave_mega!r}"
         )
     if block.ep_pg is None:
         raise RuntimeError("combined_forward_ep_wave requires block.apply_ep(...) first")
@@ -90,7 +85,7 @@ def _use_bf16_persistent_mega_forward(
     top_k: int,
 ) -> bool:
     if not (
-        bool(getattr(block, "ep_no_sync_wave_use_bf16_persistent_mega_forward", False))
+        block.ep.wave_use_bf16_persistent_mega_forward
         or _env_flag("OLMO_EP_WAVE_USE_BF16_PERSISTENT_MEGA")
     ):
         return False
@@ -317,7 +312,7 @@ def combined_forward_ep_wave(
     if not _use_bf16_persistent_mega_forward(block, x, top_k):
         raise RuntimeError(
             "OLMo wave EP requires the fused BF16 MegaMoE target. Set "
-            "ep_no_sync_wave_use_bf16_persistent_mega_forward=True or "
+            "EP wave_use_bf16_persistent_mega_forward=True or "
             "OLMO_EP_WAVE_USE_BF16_PERSISTENT_MEGA=1; otherwise use rowwise EP."
         )
 
@@ -523,7 +518,7 @@ def combined_forward_ep_wave(
             allowed_splits=allowed_splits,
             keep_from_src_dest_local=keep_from_src_dest_local,
         )
-        rowwise_nblocks = self.ep_no_sync_rowwise_nblocks
+        rowwise_nblocks = self.ep.rowwise_nblocks
 
     if self.shared_experts is not None:
         with torch.cuda.stream(self.get_dense_stream()):
@@ -573,7 +568,7 @@ def combined_forward_ep_wave(
         route_probs,
         group_name,
         self.ep_pg,
-        self.ep_no_sync_rowwise_nblocks,
+        self.ep.rowwise_nblocks,
         expert_out_aliases_symm_expert_out,
         True,
         False,

@@ -30,7 +30,6 @@ from olmo_core.utils import get_default_device, mark_dynamic, move_to_device
 from .block import OLMoDDPTransformerBlock, OLMoDDPTransformerBlockConfig
 from ..moe.v2.ep_no_sync_buffers import (
     _NoSyncSymmSharedPool,
-    _NoSyncTboPendingContext,
     compute_ep_no_sync_rank_capacity,
     get_ep_no_sync_buffers,
     get_ep_no_sync_rowwise_fp8_buffers,
@@ -39,28 +38,17 @@ from ..moe.v2.ep_no_sync_buffers import (
     use_ep_no_sync_rowwise_symm_combine_out,
     use_ep_no_sync_rowwise_symm_dispatch_in,
 )
-from ..moe.v2.ep_no_sync_tbo_1d import (
-    ep_no_sync_stage_c_launch,
-    ep_no_sync_stage_tail,
-)
 from ..moe.v2.ep_no_sync_tbo_rowwise import (
     _NoSyncRowwiseTboPendingContext,
     ep_no_sync_rowwise_tbo_stage_c_launch,
     ep_no_sync_rowwise_tbo_stage_tail,
 )
-from ..moe.v2.tbo_state import SyncedTboPendingContext
+from ..moe.v2.ep_config import ExpertParallelPath
 from ..moe.v2.checkpointing import checkpoint_recompute_context_fn
-from olmo_core.ops import moe as ops
 from ..lm_head import LMHeadConfig, LMOutputWithLoss
 import nvtx
 from torch.utils.checkpoint import checkpoint, CheckpointFunction
 from torch.distributed._composable.replicate import replicate
-
-from ..moe.utils import (
-    moe_unpermute_no_compile,
-    moe_permute_no_compile,
-    moe_sort_chunks_by_index_no_compile,
-)
 from ..moe.v2.te.cpu_offload import (
     get_cpu_offload_context,
     CpuOffloadHook
@@ -202,7 +190,7 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
 
     def named_ep_no_sync_blocks(self) -> Iterator[tuple[str, OLMoDDPTransformerBlock]]:
         for block_key, block in self.named_routed_blocks():
-            if block.ep_no_sync:
+            if block.ep.no_sync:
                 yield block_key, block
 
     def ep_no_sync_blocks(self) -> Iterator[OLMoDDPTransformerBlock]:
@@ -247,10 +235,17 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
                 first_moe_idx = idx
             if is_routed_block:
                 moe_block = cast(OLMoDDPTransformerBlock, block)
-                if moe_block.ep_no_sync and moe_block.ep_no_sync_shared_slots < 2:
+                if moe_block.ep.no_sync and moe_block.ep.shared_slots < 2:
                     raise OLMoConfigurationError(
-                        "When TBO and EP no-sync are enabled, ep_no_sync_shared_slots must be >= 2 "
-                        f"(block={moe_block.block_idx}, got {moe_block.ep_no_sync_shared_slots})."
+                        "When TBO and EP no-sync are enabled, EP shared_slots must be >= 2 "
+                        f"(block={moe_block.block_idx}, got {moe_block.ep.shared_slots})."
+                    )
+                if moe_block.ep.path != ExpertParallelPath.rowwise_nvshmem:
+                    raise OLMoConfigurationError(
+                        "TBO is only supported with "
+                        f"EP path={ExpertParallelPath.rowwise_nvshmem!r}; "
+                        f"got EP path={moe_block.ep.path!r} "
+                        f"(block={moe_block.block_idx})."
                     )
         
         return first_moe_idx
@@ -316,7 +311,7 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
         return sum(
             1
             for block in self.ep_no_sync_blocks()
-            if not block.ep_no_sync_use_rowwise_all_to_all
+            if not block.ep.uses_rowwise_buffers
         )
 
     @torch.no_grad()
@@ -400,7 +395,6 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
         dtype = param.dtype
         device = param.device
         d_model = self.d_model
-        top_k = first_block.routed_experts_router.top_k
         prewarm_local_microbatch_size = max_local_microbatch_size
         if self.tbo:
             if max_local_microbatch_size % 2 != 0:
@@ -410,11 +404,15 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
                 )
             prewarm_local_microbatch_size = max_local_microbatch_size // 2
 
-        num_out_tokens = prewarm_local_microbatch_size * top_k
-        rank_capacity = compute_ep_no_sync_rank_capacity(first_block, num_out_tokens)
+        max_rank_capacity = 1
 
         for block_key, block in ep_blocks:
-            if block.ep_no_sync_use_rowwise_all_to_all:
+            assert block.routed_experts_router is not None
+            top_k = block.routed_experts_router.top_k
+            num_out_tokens = prewarm_local_microbatch_size * top_k
+            rank_capacity = compute_ep_no_sync_rank_capacity(block, num_out_tokens)
+            max_rank_capacity = max(max_rank_capacity, rank_capacity)
+            if block.ep.uses_rowwise_buffers:
                 rowwise_fp8_cfg = block.rowwise_fp8
                 use_rowwise_fp8 = (
                     rowwise_fp8_cfg is not None
@@ -461,7 +459,7 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
                 lease_dispatch_out = runtime_uses_lifetime_leases
                 lease_combine_out = use_symm_combine_out and runtime_uses_lifetime_leases
                 lease_combine_gather = use_symm_combine_gather and runtime_uses_lifetime_leases
-                slot_indices = range(block.ep_no_sync_shared_slots) if self.tbo else (None,)
+                slot_indices = range(block.ep.shared_slots) if self.tbo else (None,)
                 for slot_idx in slot_indices:
                     get_ep_no_sync_buffers(
                         block,
@@ -543,7 +541,7 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
             for _ in range(pad_count):
                 if olmo_symm_mem.is_enabled():
                     tensor = olmo_symm_mem.empty(
-                        (rank_capacity, d_model),
+                        (max_rank_capacity, d_model),
                         dtype=dtype,
                         device=device,
                         group=first_block.ep_pg,
@@ -552,7 +550,7 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
                 else:
                     assert symm_mem is not None
                     tensor = symm_mem.empty(
-                        (rank_capacity, d_model),
+                        (max_rank_capacity, d_model),
                         dtype=dtype,
                         device=device,
                     )
@@ -639,15 +637,15 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
             # collectives, but can hang inside symm_mem.empty() before the
             # explicit EP rendezvous runs. Use the regular DeviceMesh EP group
             # for no-sync blocks.
-            block.apply_ep(ep_mesh, ep_pg=None if block.ep_no_sync else ep_mp_group)
-            if block.ep_no_sync:
+            block.apply_ep(ep_mesh, ep_pg=None if block.ep.no_sync else ep_mp_group)
+            if block.ep.no_sync:
                 ep_no_sync_blocks.append(block)
 
         if ep_no_sync_blocks:
-            slot_counts = {block.ep_no_sync_shared_slots for block in ep_no_sync_blocks}
+            slot_counts = {block.ep.shared_slots for block in ep_no_sync_blocks}
             if len(slot_counts) != 1:
                 raise OLMoConfigurationError(
-                    "All EP no-sync blocks must use the same ep_no_sync_shared_slots "
+                    "All EP no-sync blocks must use the same EP shared_slots "
                     f"value, got {sorted(slot_counts)}"
                 )
             shared_slots = next(iter(slot_counts))
@@ -1028,8 +1026,8 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
         for block_key, block in self.named_routed_blocks():
             with nvtx.annotate(f"fwd_block_{block_key}", color="blue"):
                 # with self.offload_context:
-                # x0, x1_ctx = block.checkpointed_combined_forward_ep_tbo(x0, x1_ctx, x1_is_fresh, **block_kwargs)
-                x0, x1_ctx = block.combined_forward_ep_tbo(x0, x1_ctx, x1_is_fresh, **all_block_kwargs)
+                # x0, x1_ctx = block.checkpointed_combined_forward_rowwise_nvshmem_tbo(x0, x1_ctx, x1_is_fresh, **block_kwargs)
+                x0, x1_ctx = block.combined_forward_rowwise_nvshmem_tbo(x0, x1_ctx, x1_is_fresh, **all_block_kwargs)
                 x1_is_fresh = False # after the first TBO block, x1 is no longer fresh
 
             # if torch.is_grad_enabled() and self.offload_sync_func is not None:
@@ -1056,84 +1054,10 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
             h1 = self.maybe_forward_lm_head(x1, lm_head_kwargs, labels=labels1)
             return h0, h1
 
-        if isinstance(x1_ctx, _NoSyncTboPendingContext):
-            with nvtx.annotate("TBO-1", color='orange'):
-                pending_ctx = ep_no_sync_stage_c_launch(x1_ctx.block, x1_ctx)
-
-            h0 = self.maybe_forward_lm_head(x0, lm_head_kwargs, labels=labels0)
-
-            with nvtx.annotate("TBO-1", color='orange'):
-                x1 = ep_no_sync_stage_tail(x1_ctx.block, pending_ctx)
-
-            h1 = self.maybe_forward_lm_head(x1, lm_head_kwargs, labels=labels1)
-            return h0, h1
-
-        if not isinstance(x1_ctx, SyncedTboPendingContext):
-            raise RuntimeError(
-                "Expected synced TBO context for the final TBO step, "
-                f"got type={type(x1_ctx)}"
-            )
-        with nvtx.annotate("TBO-1", color='orange'):
-            global_x1 = x1_ctx.global_x
-            send_counts1 = x1_ctx.send_counts
-            recv_counts1 = x1_ctx.recv_counts
-            last_block = x1_ctx.last_block
-
-            assert last_block.routed_experts_router is not None
-            # finish reverse all2all and other ops for x1
-            with nvtx.annotate("reverse_all_to_all", color='green'):
-                global_x1 = cast(torch.Tensor, global_x1)
-                global_x1, local_x1, local_x_handle1 = ops.all_to_all_async(
-                # local_x1, local_x_handle1 = ops.all_to_all(
-                    global_x1,
-                    send_counts1,
-                    recv_counts1,
-                    group=last_block.ep_pg,
-                    # async_op=True,
-                )
-            
-            reversed_local_x_permutation_mapping1 = x1_ctx.reversed_local_x_permutation_mapping
-            local_x_global_routed_expert_weights1 = x1_ctx.local_x_global_routed_expert_weights
-            hidden_shape_before_permute1 = x1_ctx.hidden_shape_before_permute
-            in_shape1 = x1_ctx.in_shape
-            mixed_shared_out1 = x1_ctx.mixed_shared_out
-            attn_res_out1 = x1_ctx.attn_res_out
-            
-            assert last_block is not None
-            assert local_x_handle1 is not None
-            assert last_block.routed_experts_router is not None
-            
-        # x0 lm head
-        h0 = self.maybe_forward_lm_head(x0, lm_head_kwargs, labels=labels0)
-
-
-        with nvtx.annotate("TBO-1", color='orange'):
-            # local_x_handle1.wait()
-            local_x1 = ops.all_to_all_wait(global_x1, local_x1, local_x_handle1)
-
-
-            ## 9. Unpermute the (local) tokens returned by all-to-all communication ##
-            with nvtx.annotate("Unpermute-Merge local tokens", color='green'):
-                local_x1 = moe_unpermute_no_compile(
-                    inp=local_x1,
-                    row_id_map=reversed_local_x_permutation_mapping1,
-                    merging_probs=local_x_global_routed_expert_weights1.view(-1, last_block.routed_experts_router.top_k),
-                    restore_shape=hidden_shape_before_permute1,
-                    map_type='index',
-                )
-            ## end
-        
-            
-            local_x1 = local_x1.view(in_shape1)
-
-            mlp_out1 = last_block._merge_routed_and_shared(local_x1, mixed_shared_out1)
-
-            x1 = attn_res_out1 + last_block.feed_forward_norm(mlp_out1)
-
-        # Get final logits but again pass-through in case of pipeline parallelism.
-        h1 = self.maybe_forward_lm_head(x1, lm_head_kwargs, labels=labels1)
-
-        return h0, h1
+        raise RuntimeError(
+            "Expected rowwise NVSHMEM TBO pending context for the final TBO step, "
+            f"got type={type(x1_ctx)}"
+        )
 
     def _merge_tbo_outputs(
         self,

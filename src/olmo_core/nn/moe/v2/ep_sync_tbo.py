@@ -28,13 +28,10 @@ def combined_forward_ep_tbo(
     **kwargs,
 ) -> Tuple[torch.Tensor, object]:
     self = block
-    if self.ep_no_sync:
-        return self.combined_forward_ep_no_sync_tbo(
-            x0,
-            x1_ctx,
-            x1_is_fresh,
-            loss_div_factor=loss_div_factor,
-            **kwargs,
+    if self.ep.no_sync:
+        raise RuntimeError(
+            "1D no-sync TBO was removed. Use "
+            "ExpertParallelConfig(path='rowwise_nvshmem', schedule='tbo') instead."
         )
 
     assert self.routed_experts is not None

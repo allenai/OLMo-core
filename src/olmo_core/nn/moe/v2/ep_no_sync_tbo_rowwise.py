@@ -35,6 +35,7 @@ from .ep_no_sync_rowwise_helpers import (
     accumulate_ep_no_sync_rowwise_metrics,
     build_rowwise_route_maps,
 )
+from .ep_config import ExpertParallelPath
 from .routed_experts import requires_host_side_split_sizes, use_torch_grouped_mm
 
 if TYPE_CHECKING:
@@ -144,8 +145,11 @@ class _NoSyncRowwiseTboPendingContext:
 
 
 def _check_rowwise_tbo_supported(block: "OLMoDDPTransformerBlock") -> None:
-    if not block.ep_no_sync_use_rowwise_all_to_all:
-        raise RuntimeError("Rowwise no-sync TBO requires ep_no_sync_use_rowwise_all_to_all=True")
+    if block.ep.path != ExpertParallelPath.rowwise_nvshmem:
+        raise RuntimeError(
+            "Rowwise no-sync TBO requires "
+            f"path={ExpertParallelPath.rowwise_nvshmem!r}"
+        )
     if block.rowwise_fp8 is not None and block.rowwise_fp8.enabled:
         raise NotImplementedError(
             "Rowwise FP8 is not implemented for no-sync TBO yet. "
@@ -169,12 +173,6 @@ def ep_no_sync_rowwise_tbo_stage_a(
     assert use_torch_grouped_mm() == True, "EP no-sync implementation requires torch.grouped_mm support"
     assert not requires_host_side_split_sizes(), "EP no-sync implementation does not support host-side split size communication"
     _check_rowwise_tbo_supported(self)
-    if self.ep_no_sync_use_2d_all_to_all:
-        raise RuntimeError(
-            "ep_no_sync_use_2d_all_to_all=True is no longer supported: "
-            "the 2D all_to_all path was removed due to correctness/performance issues."
-        )
-
     group_name = get_ep_no_sync_group_name(self)
     slot_idx = ep_no_sync_slot_for_lane(self, lane_id)
     B, S, D = x.shape
@@ -327,7 +325,7 @@ def ep_no_sync_rowwise_tbo_stage_a(
             allowed_splits=allowed_splits,
             keep_from_src_dest_local=keep_from_src_dest_local,
         )
-        rowwise_nblocks = self.ep_no_sync_rowwise_nblocks
+        rowwise_nblocks = self.ep.rowwise_nblocks
         # _tbo_debug_print(
         #     self,
         #     f"A{lane_id}:route-maps-exit nblocks={rowwise_nblocks}",

@@ -16,6 +16,7 @@ from olmo_core.nn.layer_norm import LayerNormConfig, LayerNormType
 from olmo_core.nn.lm_head import LMHeadConfig, LMLossImplementation
 from olmo_core.nn.moe import MoELoadBalancingLossGranularity, MoERouterGatingFunction
 from olmo_core.nn.ddp.block import OLMoDDPTransformerBlockConfig
+from olmo_core.nn.moe.v2.ep_config import ExpertParallelConfig, ExpertParallelPath
 from olmo_core.nn.moe.v2.routed_experts import RoutedExpertsConfig
 from olmo_core.nn.moe.v2.router import MoERouterConfigV2
 from olmo_core.nn.moe.v2.shared_experts import SharedExpertsConfig
@@ -321,9 +322,16 @@ def build_qwen3_moe_config(
         name=TransformerBlockType.moe_fused_v2,
         use_pre_norm=True,
         use_peri_norm=False,
-        ep_no_sync=use_ep_no_sync,
-        ep_no_sync_use_rowwise_all_to_all=use_rowwise_all_to_all,
-        ep_no_sync_capacity_factor=ep_no_sync_capacity_factor,
+        ep=ExpertParallelConfig(
+            path=(
+                ExpertParallelPath.rowwise_nvshmem
+                if use_ep_no_sync and use_rowwise_all_to_all
+                else ExpertParallelPath.no_sync_1d
+                if use_ep_no_sync
+                else ExpertParallelPath.sync_1d
+            ),
+            capacity_factor=ep_no_sync_capacity_factor,
+        ),
         checkpoint_attn=compile_friendly_recompute,
         checkpoint_permute_moe_unpermute=compile_friendly_recompute,
         checkpoint_second_unpermute=compile_friendly_recompute,

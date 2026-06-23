@@ -6,6 +6,7 @@ from olmo_core.nn.ddp.block import OLMoDDPTransformerBlockConfig
 from olmo_core.nn.lm_head import LMHeadConfig
 from olmo_core.nn.layer_norm import LayerNormConfig, LayerNormType
 from olmo_core.nn.moe import MoERouterGatingFunction
+from olmo_core.nn.moe.v2.ep_config import ExpertParallelConfig, ExpertParallelPath
 from olmo_core.nn.moe.v2.routed_experts import RoutedExpertsConfig
 from olmo_core.nn.moe.v2.router import MoERouterConfigV2
 from olmo_core.nn.moe.v2.shared_experts import SharedExpertsConfig
@@ -78,7 +79,7 @@ def _routed_block_config() -> OLMoDDPTransformerBlockConfig:
         ),
         shared_experts=None,
         shared_experts_router=None,
-        ep_no_sync=True,
+        ep=ExpertParallelConfig(path=ExpertParallelPath.no_sync_1d),
     )
 
 

@@ -18,6 +18,7 @@ from .ep_no_sync_rowwise_helpers import (
     accumulate_ep_no_sync_rowwise_metrics,
     build_rowwise_route_maps,
 )
+from .ep_config import ExpertParallelPath
 from .routed_experts import requires_host_side_split_sizes, use_torch_grouped_mm
 from .tma_ibgda import (
     TmaIbgdaBackendConfig,
@@ -31,21 +32,12 @@ if TYPE_CHECKING:
 
 
 def _check_tma_ibgda_supported(block: "OLMoDDPTransformerBlock", x: torch.Tensor) -> None:
-    if not block.ep_no_sync:
-        raise RuntimeError("TMA/IBGDA rowwise backend requires ep_no_sync=True")
-    if block.ep_no_sync_use_wave:
+    if block.ep.path != ExpertParallelPath.rowwise_tma_ibgda:
         raise RuntimeError(
-            "TMA/IBGDA rowwise backend is separate from wave EP and does not use "
-            "combined_forward_ep_wave"
+            "TMA/IBGDA rowwise backend requires "
+            f"path={ExpertParallelPath.rowwise_tma_ibgda!r}"
         )
-    if not block.ep_no_sync_use_rowwise_all_to_all:
-        raise RuntimeError(
-            "TMA/IBGDA backend replaces rowwise EP transport and requires "
-            "ep_no_sync_use_rowwise_all_to_all=True"
-        )
-    if block.ep_no_sync_use_2d_all_to_all:
-        raise RuntimeError("TMA/IBGDA rowwise backend does not support 2D all-to-all")
-    if block.checkpoint_combined_ep_tbo:
+    if block.ep.schedule.value == "tbo" or block.ep.checkpoint_tbo:
         raise RuntimeError("TMA/IBGDA rowwise backend does not support TBO yet")
     if block.ep_pg is None:
         raise RuntimeError("TMA/IBGDA rowwise backend requires block.apply_ep(...) first")
@@ -197,16 +189,16 @@ def combined_forward_ep_no_sync_tma_ibgda(
     if not route_probs.is_contiguous():
         route_probs = route_probs.contiguous()
 
-    tma_num_sms = self.ep_no_sync_tma_ibgda_num_sms
+    tma_num_sms = self.ep.tma_ibgda_num_sms
     if tma_num_sms is None:
-        tma_num_sms = self.ep_no_sync_rowwise_nblocks
+        tma_num_sms = self.ep.rowwise_nblocks
 
     tma_config = TmaIbgdaBackendConfig(
         num_sms_dispatch=tma_num_sms,
         num_sms_combine=tma_num_sms,
         static_route_budget=rank_capacity,
         validate_gpu_route_preprocess=False,
-        write_expert_out_to_symmetric=self.ep_no_sync_tma_ibgda_symmetric_expert_out,
+        write_expert_out_to_symmetric=self.ep.tma_ibgda_symmetric_expert_out,
     )
 
     dispatch_rank_major, dispatch_handle = tma_ibgda_rowwise_dispatch_bf16(

@@ -40,6 +40,7 @@ from olmo_core.nn.attention import AttentionConfig, AttentionType
 from olmo_core.nn.ddp.block import OLMoDDPTransformerBlock
 from olmo_core.nn.layer_norm import LayerNormConfig, LayerNormType
 from olmo_core.nn.moe import MoERouterGatingFunction
+from olmo_core.nn.moe.v2.ep_config import ExpertParallelConfig, ExpertParallelPath
 from olmo_core.nn.moe.v2.routed_experts import RoutedExpertsConfig
 from olmo_core.nn.moe.v2.router import MoERouterConfigV2
 from olmo_core.nn.moe.v2.shared_experts import SharedExpertsConfig
@@ -336,15 +337,19 @@ def _build_block(
         ),
         shared_experts_router=None,
         feed_forward_norm=layer_norm,
-        ep_no_sync=True,
-        ep_no_sync_use_wave=use_wave,
-        ep_no_sync_wave_use_bf16_persistent_mega_forward=use_bf16_persistent_mega,
-        ep_no_sync_use_rowwise_all_to_all=True,
-        ep_no_sync_capacity_factor=capacity_factor,
-        ep_no_sync_major_align=1,
+        ep=ExpertParallelConfig(
+            path=ExpertParallelPath.wave_mega
+            if use_wave
+            else ExpertParallelPath.rowwise_nvshmem,
+            capacity_factor=capacity_factor,
+            major_align=1,
+            rowwise_nblocks=rowwise_nblocks,
+            wave_use_bf16_persistent_mega_forward=(
+                use_bf16_persistent_mega and use_wave
+            ),
+        ),
         init_device="cuda",
     )
-    block.ep_no_sync_rowwise_nblocks = rowwise_nblocks
     return block
 
 

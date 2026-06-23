@@ -23,7 +23,7 @@ except ImportError:
 _EP_SYMM_GROUP0_ALIAS_LOCK = threading.Lock()
 _EP_SYMM_GROUP0_ALIAS_RANKS: Optional[Tuple[int, ...]] = None
 
-from olmo_core.config import Config, DType, StrEnum
+from olmo_core.config import DType
 from olmo_core.distributed.utils import barrier, get_fs_local_rank, get_rank, get_world_size
 from olmo_core.kernels import (
     ScaledGroupedMMPrequantizedRHS,
@@ -42,7 +42,6 @@ from ..layer_norm import LayerNormConfig
 from ..moe import MoERouterGatingFunction
 from ..moe import MoERouterConfig as MoERouterConfigV1
 from ..moe.loss import MoELoadBalancingLossGranularity
-from ..moe.utils import wait_stream_no_compile
 from ..moe.v2.routed_experts import (
     RoutedExperts,
     RoutedExpertsConfig,
@@ -59,6 +58,10 @@ from ..moe.v2.fp8 import (
     refresh_rowwise_fp8_cache as _refresh_rowwise_fp8_cache,
     shared_experts_forward_rowwise_fp8,
 )
+from ..moe.v2.ep_config import (
+    ExpertParallelConfig,
+    ExpertParallelPath,
+)
 from ..moe.v2.ep_no_sync_buffers import (
     _NoSyncSymmSharedPool,
     resolve_ep_no_sync_rowwise_symm_options,
@@ -66,7 +69,6 @@ from ..moe.v2.ep_no_sync_buffers import (
 from ..moe.v2.ep_sync_1d import (
     combined_forward_ep_1d as _combined_forward_ep_1d,
 )
-from ..moe.v2.ep_sync_tbo import combined_forward_ep_tbo as _combined_forward_ep_tbo
 from ..moe.v2.no_ep import combined_forward_no_ep as _combined_forward_no_ep
 from ..moe.v2.ep_no_sync_1d import combined_forward_ep_no_sync_1d as _combined_forward_ep_no_sync_1d
 from ..moe.v2.ep_no_sync_rowwise import (
@@ -75,12 +77,12 @@ from ..moe.v2.ep_no_sync_rowwise import (
 from ..moe.v2.ep_no_sync_tma_ibgda import (
     combined_forward_ep_no_sync_tma_ibgda as _combined_forward_ep_no_sync_tma_ibgda,
 )
+from ..moe.v2.ep_wave import (
+    combined_forward_ep_wave as _combined_forward_ep_wave,
+)
 from ..moe.v2.ep_no_sync_rowwise_helpers import (
     add_ep_no_sync_rowwise_metrics,
     reset_ep_no_sync_rowwise_metrics,
-)
-from ..moe.v2.ep_no_sync_tbo_1d import (
-    combined_forward_ep_no_sync_tbo as _combined_forward_ep_no_sync_tbo,
 )
 from ..moe.v2.ep_no_sync_tbo_rowwise import (
     combined_forward_ep_no_sync_tbo_rowwise as _combined_forward_ep_no_sync_tbo_rowwise,
@@ -145,24 +147,8 @@ class OLMoDDPTransformerBlockConfig(TransformerBlockConfig):
     use_pre_norm: bool = False
     checkpoint_attn: bool = False
     checkpoint_permute_moe_unpermute: bool = False
-    checkpoint_combined_ep_tbo: bool = False
     checkpoint_second_unpermute: bool = False
-    ep_no_sync: bool = False
-    ep_no_sync_use_2d_all_to_all: bool = False
-    ep_no_sync_use_rowwise_all_to_all: bool = False
-    ep_no_sync_rowwise_backend: str = "nvshmem"
-    ep_no_sync_rowwise_nblocks: int = 256
-    ep_no_sync_tma_ibgda_num_sms: Optional[int] = None
-    ep_no_sync_tma_ibgda_symmetric_expert_out: bool = False
-    ep_no_sync_share_dispatch_out: bool = False
-    ep_no_sync_capacity_factor: float = 1.25
-    ep_no_sync_shared_slots: int = 1
-    ep_no_sync_share_combine_out: bool = False
-    ep_no_sync_major_align: int = 1
-    ep_no_sync_restore_unpermute_backend: str = "te_fused"
-    ep_no_sync_rowwise_symm_dispatch_in: Optional[bool] = None
-    ep_no_sync_rowwise_symm_combine_out: Optional[bool] = None
-    ep_no_sync_rowwise_symm_combine_gather: Optional[bool] = None
+    ep: Optional[ExpertParallelConfig] = None
     rowwise_fp8: Optional[MoERowwiseFP8Config] = None
 
     def build(
@@ -313,24 +299,8 @@ class OLMoDDPTransformerBlock(olmo_core.nn.transformer.block.TransformerBlockBas
         feed_forward_residual_alpha: Optional[float] = None,
         checkpoint_attn = False,
         checkpoint_permute_moe_unpermute = False,
-        checkpoint_combined_ep_tbo = False,
         checkpoint_second_unpermute=False,
-        ep_no_sync: bool = False,
-        ep_no_sync_use_2d_all_to_all: bool = False,
-        ep_no_sync_use_rowwise_all_to_all: bool = False,
-        ep_no_sync_rowwise_backend: str = "nvshmem",
-        ep_no_sync_rowwise_nblocks: int = 256,
-        ep_no_sync_tma_ibgda_num_sms: Optional[int] = None,
-        ep_no_sync_tma_ibgda_symmetric_expert_out: bool = False,
-        ep_no_sync_share_dispatch_out: bool = False,
-        ep_no_sync_capacity_factor: float = 1.25,
-        ep_no_sync_shared_slots: int = 1,
-        ep_no_sync_share_combine_out: bool = False,
-        ep_no_sync_major_align: int = 1,
-        ep_no_sync_restore_unpermute_backend: str = "te_fused",
-        ep_no_sync_rowwise_symm_dispatch_in: Optional[bool] = None,
-        ep_no_sync_rowwise_symm_combine_out: Optional[bool] = None,
-        ep_no_sync_rowwise_symm_combine_gather: Optional[bool] = None,
+        ep: Optional[ExpertParallelConfig] = None,
         rowwise_fp8: Optional[MoERowwiseFP8Config] = None,
         init_device: str = "cpu",
         cache: Optional[BufferCache] = None,
@@ -475,46 +445,9 @@ class OLMoDDPTransformerBlock(olmo_core.nn.transformer.block.TransformerBlockBas
 
         self.checkpoint_attn = checkpoint_attn
         self.checkpoint_permute_moe_unpermute = checkpoint_permute_moe_unpermute
-        self.checkpoint_combined_ep_tbo = checkpoint_combined_ep_tbo
         self.checkpoint_second_unpermute = checkpoint_second_unpermute
-        self.ep_no_sync = ep_no_sync
-        self.ep_no_sync_use_2d_all_to_all = ep_no_sync_use_2d_all_to_all
-        self.ep_no_sync_use_rowwise_all_to_all = ep_no_sync_use_rowwise_all_to_all
-        self.ep_no_sync_rowwise_backend = ep_no_sync_rowwise_backend.lower()
-        self.ep_no_sync_rowwise_nblocks = int(ep_no_sync_rowwise_nblocks)
-        self.ep_no_sync_tma_ibgda_num_sms = (
-            None if ep_no_sync_tma_ibgda_num_sms is None else int(ep_no_sync_tma_ibgda_num_sms)
-        )
-        self.ep_no_sync_tma_ibgda_symmetric_expert_out = bool(
-            ep_no_sync_tma_ibgda_symmetric_expert_out
-        )
-        self.ep_no_sync_share_dispatch_out = ep_no_sync_share_dispatch_out
-        if self.ep_no_sync_use_2d_all_to_all:
-            raise OLMoConfigurationError(
-                "ep_no_sync_use_2d_all_to_all=True is no longer supported: "
-                "the 2D all_to_all path was removed due to correctness/performance issues."
-            )
-        if self.ep_no_sync_rowwise_backend not in ("nvshmem", "tma_ibgda"):
-            raise OLMoConfigurationError(
-                "ep_no_sync_rowwise_backend must be one of 'nvshmem'|'tma_ibgda' "
-                f"(got {self.ep_no_sync_rowwise_backend!r})"
-            )
-        if (
-            self.ep_no_sync_rowwise_backend == "tma_ibgda"
-            and not self.ep_no_sync_use_rowwise_all_to_all
-        ):
-            raise OLMoConfigurationError(
-                "ep_no_sync_rowwise_backend='tma_ibgda' replaces the rowwise EP transport "
-                "and requires ep_no_sync_use_rowwise_all_to_all=True"
-            )
-        self.ep_no_sync_capacity_factor = ep_no_sync_capacity_factor
-        self.ep_no_sync_shared_slots = ep_no_sync_shared_slots
-        self.ep_no_sync_share_combine_out = ep_no_sync_share_combine_out
-        self.ep_no_sync_major_align = ep_no_sync_major_align
-        self.ep_no_sync_restore_unpermute_backend = ep_no_sync_restore_unpermute_backend.lower()
-        self.ep_no_sync_rowwise_symm_dispatch_in = ep_no_sync_rowwise_symm_dispatch_in
-        self.ep_no_sync_rowwise_symm_combine_out = ep_no_sync_rowwise_symm_combine_out
-        self.ep_no_sync_rowwise_symm_combine_gather = ep_no_sync_rowwise_symm_combine_gather
+        self.ep = ep.copy(deep=True) if ep is not None else ExpertParallelConfig()
+        self.ep.validate()
         self._ep_symm_group_name: Optional[str] = None
         self._ep_no_sync_symm_cache: Dict[str, torch.Tensor] = {}
         self._ep_no_sync_static_buffer_cache: Dict[Tuple[object, ...], object] = {}
@@ -531,37 +464,6 @@ class OLMoDDPTransformerBlock(olmo_core.nn.transformer.block.TransformerBlockBas
         self._ep_no_sync_rowwise_total_tokens_sum: Optional[torch.Tensor] = None
         self._ep_no_sync_rowwise_symm_util_max: Optional[torch.Tensor] = None
         # self._ep_no_sync_forward_call_count: int = 0
-
-        if self.ep_no_sync_capacity_factor <= 0:
-            raise OLMoConfigurationError(
-                f"ep_no_sync_capacity_factor must be > 0 (got {self.ep_no_sync_capacity_factor})"
-            )
-        if self.ep_no_sync_shared_slots < 1:
-            raise OLMoConfigurationError(
-                f"ep_no_sync_shared_slots must be >= 1 (got {self.ep_no_sync_shared_slots})"
-            )
-        if self.ep_no_sync_major_align < 1:
-            raise OLMoConfigurationError(
-                f"ep_no_sync_major_align must be >= 1 (got {self.ep_no_sync_major_align})"
-            )
-        if self.ep_no_sync_rowwise_nblocks < 0:
-            raise OLMoConfigurationError(
-                f"ep_no_sync_rowwise_nblocks must be >= 0 (got {self.ep_no_sync_rowwise_nblocks})"
-            )
-        if (
-            self.ep_no_sync_tma_ibgda_num_sms is not None
-            and self.ep_no_sync_tma_ibgda_num_sms < 32
-        ):
-            raise OLMoConfigurationError(
-                "ep_no_sync_tma_ibgda_num_sms must be >= 32 when set "
-                f"(got {self.ep_no_sync_tma_ibgda_num_sms})"
-            )
-        if self.ep_no_sync_restore_unpermute_backend not in ("te_fused", "te_unfused", "cuda"):
-            raise OLMoConfigurationError(
-                "ep_no_sync_restore_unpermute_backend must be one of "
-                "'te_fused'|'te_unfused'|'cuda' "
-                f"(got {self.ep_no_sync_restore_unpermute_backend!r})"
-            )
 
     def invalidate_rowwise_fp8_cache(self) -> None:
         _invalidate_rowwise_fp8_cache(self)
@@ -781,14 +683,17 @@ class OLMoDDPTransformerBlock(olmo_core.nn.transformer.block.TransformerBlockBas
     ) -> torch.Tensor:
         if self.routed_experts:
             if self.ep_enabled:
-                if self.ep_no_sync and self.training: # in eval mode, different ranks might get different input token counts, and no-sync can freeze
-                    if self.ep_no_sync_use_rowwise_all_to_all:
-                        if self.ep_no_sync_rowwise_backend == "tma_ibgda":
-                            no_sync_forward = self.combined_forward_ep_no_sync_tma_ibgda
-                        else:
-                            no_sync_forward = self.combined_forward_ep_no_sync_rowwise
-                    else:
+                if self.ep.no_sync and self.training: # in eval mode, different ranks might get different input token counts, and no-sync can freeze
+                    if self.ep.path == ExpertParallelPath.wave_mega:
+                        no_sync_forward = self.combined_forward_ep_wave
+                    elif self.ep.path == ExpertParallelPath.rowwise_tma_ibgda:
+                        no_sync_forward = self.combined_forward_ep_no_sync_tma_ibgda
+                    elif self.ep.path == ExpertParallelPath.rowwise_nvshmem:
+                        no_sync_forward = self.combined_forward_ep_no_sync_rowwise
+                    elif self.ep.path == ExpertParallelPath.no_sync_1d:
                         no_sync_forward = self.combined_forward_ep_no_sync_1d
+                    else:
+                        raise RuntimeError(f"Unsupported EP no-sync path {self.ep.path!r}")
                     debug_out = maybe_dump_ep_no_sync_saved_activations(
                         self,
                         x,
@@ -945,11 +850,11 @@ class OLMoDDPTransformerBlock(olmo_core.nn.transformer.block.TransformerBlockBas
         self._ep_enabled = True
         self.ep_pg = ep_pg if ep_pg is not None else ep_mp_mesh.get_group()
 
-        if self.ep_no_sync:
-            if olmo_symm_mem.is_enabled() and not self.ep_no_sync_use_rowwise_all_to_all:
+        if self.ep.no_sync:
+            if olmo_symm_mem.is_enabled() and not self.ep.uses_rowwise_buffers:
                 raise RuntimeError(
                     "OLMo-owned symmetric memory currently supports only the rowwise "
-                    "EP no-sync path. Set OLMO_USE_OWN_SYMM_MEM=0 to use the legacy "
+                    "or wave/Mega EP no-sync paths. Set OLMO_USE_OWN_SYMM_MEM=0 to use the legacy "
                     "torch.ops.symm_mem.all_to_all_vdev path."
                 )
             if _symm_mem is None and not olmo_symm_mem.is_enabled():
@@ -984,7 +889,7 @@ class OLMoDDPTransformerBlock(olmo_core.nn.transformer.block.TransformerBlockBas
                     f"(block={self.block_idx}, rank={get_rank(self.ep_pg)}): {e}"
                 ) from e
             self._ep_symm_group_name = group_name
-            if self.ep_no_sync_use_rowwise_all_to_all:
+            if self.ep.uses_rowwise_buffers:
                 resolve_ep_no_sync_rowwise_symm_options(self)
             self._ep_no_sync_symm_cache.clear()
             self._ep_no_sync_static_buffer_cache.clear()
@@ -1019,8 +924,11 @@ class OLMoDDPTransformerBlock(olmo_core.nn.transformer.block.TransformerBlockBas
             # dynamic=False
         )
 
-        # NOTE: the tbo might be called by the outer model directly (by block.combined_forward_ep_tbo(x, ...) instead of block(x, ...)), so need to compile it here as well
-        self.combined_forward_ep_tbo = torch.compile(self.combined_forward_ep_tbo)
+        # NOTE: the rowwise NVSHMEM TBO forward is called by the outer model
+        # directly, so compile it here as well.
+        self.combined_forward_rowwise_nvshmem_tbo = torch.compile(
+            self.combined_forward_rowwise_nvshmem_tbo
+        )
         self._res_norm_attn = torch.compile(self._res_norm_attn)
 
 
@@ -1099,42 +1007,20 @@ class OLMoDDPTransformerBlock(olmo_core.nn.transformer.block.TransformerBlockBas
             rowwise_fp8_cfg.assert_runtime_supported()
             self._rowwise_fp8_checked = True
 
-        if mlp_inp.is_cuda:
-            wait_stream_no_compile(
-                this_stream=self.get_dense_stream(),
-                other_stream=torch.cuda.current_stream(),
+        if use_rowwise_fp8:
+            assert rowwise_fp8_cfg is not None
+            shared_out = shared_experts_forward_rowwise_fp8(
+                self,
+                mlp_inp,
+                use_fast_accum=rowwise_fp8_cfg.use_fast_accum,
             )
-            with torch.cuda.stream(self.get_dense_stream()):
-                if use_rowwise_fp8:
-                    assert rowwise_fp8_cfg is not None
-                    shared_out = shared_experts_forward_rowwise_fp8(
-                        self,
-                        mlp_inp,
-                        use_fast_accum=rowwise_fp8_cfg.use_fast_accum,
-                    )
-                else:
-                    shared_out = self.shared_experts(mlp_inp)
-                mlp_out = self._mix_shared_out(
-                    shared_out,
-                    shared_expert_weights,
-                    attn_res_out.shape,
-                )
-            wait_stream_no_compile(torch.cuda.current_stream(), self.get_dense_stream())
         else:
-            if use_rowwise_fp8:
-                assert rowwise_fp8_cfg is not None
-                shared_out = shared_experts_forward_rowwise_fp8(
-                    self,
-                    mlp_inp,
-                    use_fast_accum=rowwise_fp8_cfg.use_fast_accum,
-                )
-            else:
-                shared_out = self.shared_experts(mlp_inp)
-            mlp_out = self._mix_shared_out(
-                shared_out,
-                shared_expert_weights,
-                attn_res_out.shape,
-            )
+            shared_out = self.shared_experts(mlp_inp)
+        mlp_out = self._mix_shared_out(
+            shared_out,
+            shared_expert_weights,
+            attn_res_out.shape,
+        )
 
         return self._res_norm_mlp(attn_res_out, mlp_out)
 
@@ -1206,7 +1092,27 @@ class OLMoDDPTransformerBlock(olmo_core.nn.transformer.block.TransformerBlockBas
             **kwargs,
         )
 
-    def combined_forward_ep_no_sync_tbo(
+    def combined_forward_ep_wave(
+        self,
+        x: torch.Tensor,
+        *,
+        loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
+        **kwargs,
+    ) -> torch.Tensor:
+        checkpoint_state = self._ep_no_sync_rowwise_static_checkpoint_state
+        if checkpoint_state is None:
+            checkpoint_state = get_rowwise_checkpoint_state()
+        activation_checkpointing, accumulate_routed_aux_loss_metrics = checkpoint_state
+        return _combined_forward_ep_wave(
+            self,
+            x,
+            activation_checkpointing=activation_checkpointing,
+            accumulate_routed_aux_loss_metrics=accumulate_routed_aux_loss_metrics,
+            loss_div_factor=loss_div_factor,
+            **kwargs,
+        )
+
+    def combined_forward_rowwise_nvshmem_tbo(
         self,
         x0: torch.Tensor,
         x1_ctx: object,
@@ -1215,16 +1121,13 @@ class OLMoDDPTransformerBlock(olmo_core.nn.transformer.block.TransformerBlockBas
         loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
         **kwargs,
     ) -> Tuple[torch.Tensor, object]:
-        if self.ep_no_sync_use_rowwise_all_to_all:
-            return _combined_forward_ep_no_sync_tbo_rowwise(
-                self,
-                x0,
-                x1_ctx,
-                x1_is_fresh,
-                loss_div_factor=loss_div_factor,
-                **kwargs,
+        if self.ep.path != ExpertParallelPath.rowwise_nvshmem:
+            raise RuntimeError(
+                "EP TBO is only supported with "
+                f"path={ExpertParallelPath.rowwise_nvshmem!r}; "
+                f"got path={self.ep.path!r}"
             )
-        return _combined_forward_ep_no_sync_tbo(
+        return _combined_forward_ep_no_sync_tbo_rowwise(
             self,
             x0,
             x1_ctx,
@@ -1247,7 +1150,7 @@ class OLMoDDPTransformerBlock(olmo_core.nn.transformer.block.TransformerBlockBas
             **kwargs,
         )
 
-    def combined_forward_ep_tbo(
+    def checkpointed_combined_forward_rowwise_nvshmem_tbo(
         self,
         x0: torch.Tensor,
         x1_ctx: object,
@@ -1256,27 +1159,9 @@ class OLMoDDPTransformerBlock(olmo_core.nn.transformer.block.TransformerBlockBas
         loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
         **kwargs,
     ) -> Tuple[torch.Tensor, object]:
-        return _combined_forward_ep_tbo(
-            self,
-            x0,
-            x1_ctx,
-            x1_is_fresh,
-            loss_div_factor=loss_div_factor,
-            **kwargs,
-        )
-
-    def checkpointed_combined_forward_ep_tbo(
-        self,
-        x0: torch.Tensor,
-        x1_ctx: object,
-        x1_is_fresh: bool,
-        *,
-        loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
-        **kwargs,
-    ) -> Tuple[torch.Tensor, object]:
-        if self.checkpoint_combined_ep_tbo:
+        if self.ep.checkpoint_tbo:
             out = checkpoint(
-                self.combined_forward_ep_tbo,
+                self.combined_forward_rowwise_nvshmem_tbo,
                 x0,
                 x1_ctx,
                 x1_is_fresh,
@@ -1286,7 +1171,7 @@ class OLMoDDPTransformerBlock(olmo_core.nn.transformer.block.TransformerBlockBas
             )
             return cast(Tuple[torch.Tensor, object], out)
         else:
-            return self.combined_forward_ep_tbo(
+            return self.combined_forward_rowwise_nvshmem_tbo(
                 x0,
                 x1_ctx,
                 x1_is_fresh,

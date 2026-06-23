@@ -30,6 +30,7 @@ from olmo_core.nn.attention import AttentionConfig, AttentionType
 from olmo_core.nn.ddp.block import OLMoDDPTransformerBlock
 from olmo_core.nn.layer_norm import LayerNormConfig, LayerNormType
 from olmo_core.nn.moe import MoERouterGatingFunction
+from olmo_core.nn.moe.v2.ep_config import ExpertParallelConfig, ExpertParallelPath
 from olmo_core.nn.moe.v2.routed_experts import RoutedExpertsConfig
 from olmo_core.nn.moe.v2.router import MoERouterConfigV2
 from olmo_core.nn.moe.v2.shared_experts import SharedExpertsConfig
@@ -152,6 +153,11 @@ def _build_block(
     random_routing: bool,
 ) -> OLMoDDPTransformerBlock:
     rowwise_backend = "nvshmem" if mode == "rowwise" else mode
+    ep_path = (
+        ExpertParallelPath.rowwise_tma_ibgda
+        if rowwise_backend == "tma_ibgda"
+        else ExpertParallelPath.rowwise_nvshmem
+    )
     layer_norm = LayerNormConfig(
         name=LayerNormType.rms,
         eps=1e-6,
@@ -202,16 +208,18 @@ def _build_block(
         ),
         shared_experts_router=None,
         feed_forward_norm=layer_norm,
-        ep_no_sync=True,
-        ep_no_sync_use_rowwise_all_to_all=True,
-        ep_no_sync_rowwise_backend=rowwise_backend,
-        ep_no_sync_rowwise_nblocks=rowwise_nblocks,
-        ep_no_sync_tma_ibgda_num_sms=tma_ibgda_num_sms,
-        ep_no_sync_tma_ibgda_symmetric_expert_out=(
-            tma_ibgda_symmetric_expert_out and rowwise_backend == "tma_ibgda"
+        ep=ExpertParallelConfig(
+            path=ep_path,
+            rowwise_nblocks=rowwise_nblocks,
+            tma_ibgda_num_sms=(
+                tma_ibgda_num_sms if rowwise_backend == "tma_ibgda" else None
+            ),
+            tma_ibgda_symmetric_expert_out=(
+                tma_ibgda_symmetric_expert_out and rowwise_backend == "tma_ibgda"
+            ),
+            capacity_factor=capacity_factor,
+            major_align=1,
         ),
-        ep_no_sync_capacity_factor=capacity_factor,
-        ep_no_sync_major_align=1,
         init_device="cuda",
     )
     return block.to(dtype=torch.bfloat16)

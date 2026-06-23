@@ -54,15 +54,10 @@ def ep_no_sync_stage_a(
     assert self.num_local_routed_experts is not None
     assert use_torch_grouped_mm() == True, "EP no-sync implementation requires torch.grouped_mm support"
     assert not requires_host_side_split_sizes(), "EP no-sync implementation does not support host-side split size communication"
-    if self.ep_no_sync_use_2d_all_to_all:
+    if self.ep.uses_rowwise_buffers:
         raise RuntimeError(
-            "ep_no_sync_use_2d_all_to_all=True is no longer supported: "
-            "the 2D all_to_all path was removed due to correctness/performance issues."
-        )
-    if self.ep_no_sync_use_rowwise_all_to_all:
-        raise RuntimeError(
-            "ep_no_sync_use_rowwise_all_to_all=True is only implemented for "
-            "combined_forward_ep_no_sync_rowwise() (non-TBO path) right now."
+            "1D no-sync TBO was removed. Use "
+            "ExpertParallelConfig(path='rowwise_nvshmem', schedule='tbo') instead."
         )
 
     group_name = get_ep_no_sync_group_name(self)

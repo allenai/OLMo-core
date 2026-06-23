@@ -8,6 +8,11 @@ from olmo_core.config import DType
 from olmo_core.nn.layer_norm import LayerNormConfig, LayerNormType
 from olmo_core.nn.moe import MoERouterGatingFunction
 from olmo_core.nn.ddp.block import OLMoDDPTransformerBlock
+from olmo_core.nn.moe.v2.ep_config import (
+    ExpertParallelConfig,
+    ExpertParallelPath,
+    ExpertParallelSchedule,
+)
 from olmo_core.nn.moe.v2.routed_experts import RoutedExpertsConfig
 from olmo_core.nn.moe.v2.router import MoERouterConfigV2
 from olmo_core.testing import requires_multi_gpu, run_distributed_test
@@ -38,6 +43,11 @@ def _build_tbo_model(*, two_batch_overlap: bool, ep_no_sync: bool = False):
         eps=1e-6,
         bias=False,
         dtype=DType.float32,
+    )
+    ep_path = (
+        ExpertParallelPath.rowwise_nvshmem
+        if ep_no_sync
+        else ExpertParallelPath.sync_1d
     )
     config = MoEFusedV2TransformerConfig(
         name=TransformerType.moe_fused_v2,
@@ -79,10 +89,17 @@ def _build_tbo_model(*, two_batch_overlap: bool, ep_no_sync: bool = False):
                 dtype=DType.float32,
             ),
             feed_forward_norm=layer_norm,
-            ep_no_sync=ep_no_sync,
-            ep_no_sync_capacity_factor=8.0,
-            ep_no_sync_major_align=1,
-            ep_no_sync_shared_slots=2 if two_batch_overlap and ep_no_sync else 1,
+            ep=ExpertParallelConfig(
+                path=ep_path,
+                schedule=(
+                    ExpertParallelSchedule.tbo
+                    if two_batch_overlap and ep_no_sync
+                    else ExpertParallelSchedule.normal
+                ),
+                capacity_factor=8.0,
+                major_align=1,
+                shared_slots=2 if two_batch_overlap and ep_no_sync else 1,
+            ),
         ),
     )
     return config.build(init_device="cuda")

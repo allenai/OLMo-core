@@ -53,8 +53,17 @@ def _assert_expert_grad_matches_no_ep_global_sum(no_ep_block, ep_block, *, atol:
         )
 
 
-def _run_dropless_path_matches_no_ep(*, rowwise: bool):
+def _run_dropless_path_matches_no_ep(
+    *,
+    rowwise: bool,
+    shared: bool = False,
+):
     ep_mesh = _build_ep_mesh()
+    shared_kwargs = (
+        {"num_shared_experts": 1, "shared_hidden_size": 512}
+        if shared
+        else {}
+    )
 
     no_ep_block = _build_block(
         ep_no_sync=False,
@@ -63,15 +72,18 @@ def _run_dropless_path_matches_no_ep(*, rowwise: bool):
         num_experts=8,
         top_k=2,
         uniform_expert_assignment=False,
+        **shared_kwargs,
     )
     ep_block = _build_block(
         ep_no_sync=rowwise,
+        ep_no_sync_use_rowwise_all_to_all=rowwise,
         ep_no_sync_capacity_factor=8.0,
         d_model=512,
         hidden_size=1024,
         num_experts=8,
         top_k=2,
         uniform_expert_assignment=False,
+        **shared_kwargs,
     )
     ep_block.apply_ep(ep_mesh)
 
@@ -81,8 +93,8 @@ def _run_dropless_path_matches_no_ep(*, rowwise: bool):
     _install_deterministic_topk_router(ep_block)
 
     if rowwise:
-        ep_block.ep_no_sync_use_rowwise_all_to_all = True
-        ep_block.ep_no_sync_rowwise_nblocks = 128
+        ep_block.ep.rowwise_nblocks = 128
+        ep_block.ep.validate()
 
     no_ep_block.train()
     ep_block.train()
@@ -115,7 +127,6 @@ def _run_dropless_path_matches_no_ep(*, rowwise: bool):
         atol=1e-3,
         rtol=1e-3,
     )
-
 
 @requires_multi_gpu
 def test_v2_synced_ep_dropless_matches_no_ep():

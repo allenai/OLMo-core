@@ -8,6 +8,7 @@ import torch
 
 import olmo_core.nn.ddp.block as block_mod
 import olmo_core.nn.ddp.model as model_mod
+from olmo_core.nn.moe.v2.ep_config import ExpertParallelPath
 from olmo_core.nn.moe.v2 import ep_no_sync_tbo_rowwise as rowwise_tbo
 
 
@@ -18,15 +19,12 @@ def test_block_selects_rowwise_no_sync_tbo(monkeypatch):
         calls.append(("rowwise", block, x0, x1_ctx, x1_is_fresh, kwargs))
         return "rowwise-out", "rowwise-ctx"
 
-    def fake_1d(*args, **kwargs):
-        calls.append(("1d", args, kwargs))
-        return "1d-out", "1d-ctx"
-
     monkeypatch.setattr(block_mod, "_combined_forward_ep_no_sync_tbo_rowwise", fake_rowwise)
-    monkeypatch.setattr(block_mod, "_combined_forward_ep_no_sync_tbo", fake_1d)
 
-    fake_block = SimpleNamespace(ep_no_sync_use_rowwise_all_to_all=True)
-    out, ctx = block_mod.OLMoDDPTransformerBlock.combined_forward_ep_no_sync_tbo(
+    fake_block = SimpleNamespace(
+        ep=SimpleNamespace(path=ExpertParallelPath.rowwise_nvshmem),
+    )
+    out, ctx = block_mod.OLMoDDPTransformerBlock.combined_forward_rowwise_nvshmem_tbo(
         fake_block,
         "x0",
         {"x1": "x1"},
@@ -47,7 +45,7 @@ def test_block_selects_rowwise_no_sync_tbo(monkeypatch):
     ]
 
 
-def test_block_keeps_existing_1d_tbo_when_rowwise_disabled(monkeypatch):
+def test_block_rejects_tbo_when_rowwise_nvshmem_disabled(monkeypatch):
     calls = []
 
     monkeypatch.setattr(
@@ -56,27 +54,23 @@ def test_block_keeps_existing_1d_tbo_when_rowwise_disabled(monkeypatch):
         lambda *args, **kwargs: calls.append(("rowwise", args, kwargs)),
     )
 
-    def fake_1d(block, x0, x1_ctx, x1_is_fresh, **kwargs):
-        calls.append(("1d", block, x0, x1_ctx, x1_is_fresh, kwargs))
-        return "1d-out", "1d-ctx"
-
-    monkeypatch.setattr(block_mod, "_combined_forward_ep_no_sync_tbo", fake_1d)
-
-    fake_block = SimpleNamespace(ep_no_sync_use_rowwise_all_to_all=False)
-    out, ctx = block_mod.OLMoDDPTransformerBlock.combined_forward_ep_no_sync_tbo(
-        fake_block,
-        "x0",
-        {"x1": "x1"},
-        True,
+    fake_block = SimpleNamespace(
+        ep=SimpleNamespace(path=ExpertParallelPath.no_sync_1d),
     )
+    with pytest.raises(RuntimeError, match="only supported"):
+        block_mod.OLMoDDPTransformerBlock.combined_forward_rowwise_nvshmem_tbo(
+            fake_block,
+            "x0",
+            {"x1": "x1"},
+            True,
+        )
 
-    assert (out, ctx) == ("1d-out", "1d-ctx")
-    assert calls[0][0] == "1d"
+    assert calls == []
 
 
 def test_rowwise_tbo_fails_closed_for_fp8():
     block = SimpleNamespace(
-        ep_no_sync_use_rowwise_all_to_all=True,
+        ep=SimpleNamespace(path=ExpertParallelPath.rowwise_nvshmem),
         rowwise_fp8=SimpleNamespace(enabled=True),
     )
 

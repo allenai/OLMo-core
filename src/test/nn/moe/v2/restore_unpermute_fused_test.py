@@ -62,6 +62,7 @@ def _build_block(backend: str = "te_fused"):
     from olmo_core.nn.layer_norm import LayerNormConfig, LayerNormType
     from olmo_core.nn.moe import MoERouterGatingFunction
     from olmo_core.nn.ddp.block import OLMoDDPTransformerBlock
+    from olmo_core.nn.moe.v2.ep_config import ExpertParallelConfig, ExpertParallelPath
     from olmo_core.nn.moe.v2.routed_experts import RoutedExpertsConfig
     from olmo_core.nn.moe.v2.router import MoERouterConfigV2
 
@@ -104,8 +105,10 @@ def _build_block(backend: str = "te_fused"):
             dtype=DType.float32,
         ),
         feed_forward_norm=layer_norm,
-        ep_no_sync=True,
-        ep_no_sync_restore_unpermute_backend=backend,
+        ep=ExpertParallelConfig(
+            path=ExpertParallelPath.no_sync_1d,
+            restore_unpermute_backend=backend,
+        ),
         init_device="cuda",
     )
 
@@ -254,7 +257,7 @@ def test_restore_unpermute_backend_selector_behavior():
         block = _build_block()
     except ImportError as exc:
         pytest.skip(f"Skipping selector behavior test due import error: {exc}")
-    assert block.ep_no_sync_restore_unpermute_backend == "te_fused"
+    assert block.ep.restore_unpermute_backend == "te_fused"
 
     torch.manual_seed(23)
     device = torch.device("cuda")
@@ -293,7 +296,8 @@ def test_restore_unpermute_backend_selector_behavior():
     probs = torch.rand(num_tokens, top_k, device=device, dtype=torch.float32)
     num_kept = packed_keep_mask.to(dtype=torch.long).sum(dtype=torch.long)
 
-    block.ep_no_sync_restore_unpermute_backend = "te_unfused"
+    block.ep.restore_unpermute_backend = "te_unfused"
+    block.ep.validate()
     out_reference = restore_drop_unpermute_1d(
         block,
         combine_out=combine_out,
@@ -304,7 +308,8 @@ def test_restore_unpermute_backend_selector_behavior():
         local_x_global_routed_expert_weights=probs,
         hidden_shape_before_permute=torch.Size([num_tokens, d_model]),
     )
-    block.ep_no_sync_restore_unpermute_backend = "te_fused"
+    block.ep.restore_unpermute_backend = "te_fused"
+    block.ep.validate()
     out_fused = restore_drop_unpermute_1d(
         block,
         combine_out=combine_out,
@@ -317,7 +322,8 @@ def test_restore_unpermute_backend_selector_behavior():
     )
     torch.testing.assert_close(out_fused, out_reference, atol=5e-3, rtol=5e-3)
 
-    block.ep_no_sync_restore_unpermute_backend = "cuda"
+    block.ep.restore_unpermute_backend = "cuda"
+    block.ep.validate()
     with pytest.raises(RuntimeError, match="not implemented yet"):
         _ = restore_drop_unpermute_1d(
             block,

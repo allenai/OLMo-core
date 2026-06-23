@@ -702,7 +702,7 @@ class _NoSyncSymmSharedPool:
 
 
 def get_ep_no_sync_group_name(block: "OLMoDDPTransformerBlock") -> str:
-    if not block.ep_no_sync:
+    if not block.ep.no_sync:
         raise RuntimeError("EP no-sync is not enabled for this block")
     if block._ep_symm_group_name is None:
         raise RuntimeError(
@@ -1120,7 +1120,7 @@ def get_ep_no_sync_rowwise_fp8_buffers(
         )
         dispatch_out_q = dispatch_out_lease.tensor("dispatch_out_q")
         dispatch_out_scales = dispatch_out_lease.tensor("dispatch_out_scales")
-    elif block._ep_no_sync_shared_pool is not None and block.ep_no_sync_share_dispatch_out:
+    elif block._ep_no_sync_shared_pool is not None and block.ep.share_dispatch_out:
         dispatch_out_lease = None
         dispatch_out_q, dispatch_out_scales = (
             block._ep_no_sync_shared_pool.get_rowwise_fp8_dispatch_out_slot(
@@ -1229,7 +1229,10 @@ def _resolve_rowwise_symm_option(
     env_name: str,
     auto_enabled: bool = True,
 ) -> bool:
-    configured = getattr(block, attr_name, None)
+    if attr_name.startswith("ep."):
+        configured = getattr(block.ep, attr_name.split(".", 1)[1], None)
+    else:
+        configured = getattr(block, attr_name, None)
     if configured is not None:
         return bool(configured)
     env_value = os.getenv(env_name)
@@ -1242,23 +1245,23 @@ def _resolve_rowwise_symm_option(
 
 def resolve_ep_no_sync_rowwise_symm_options(block: "OLMoDDPTransformerBlock") -> None:
     """Resolve rowwise symmetric-buffer policy before compiled forwards run."""
-    if block.ep_no_sync_rowwise_symm_dispatch_in is None:
-        block.ep_no_sync_rowwise_symm_dispatch_in = _resolve_rowwise_symm_option(
+    if block.ep.rowwise_symm_dispatch_in is None:
+        block.ep.rowwise_symm_dispatch_in = _resolve_rowwise_symm_option(
             block,
-            attr_name="ep_no_sync_rowwise_symm_dispatch_in",
+            attr_name="ep.rowwise_symm_dispatch_in",
             env_name="OLMO_MOE_ROWWISE_SYMM_DISPATCH_IN",
         )
-    if block.ep_no_sync_rowwise_symm_combine_out is None:
-        block.ep_no_sync_rowwise_symm_combine_out = _resolve_rowwise_symm_option(
+    if block.ep.rowwise_symm_combine_out is None:
+        block.ep.rowwise_symm_combine_out = _resolve_rowwise_symm_option(
             block,
-            attr_name="ep_no_sync_rowwise_symm_combine_out",
+            attr_name="ep.rowwise_symm_combine_out",
             env_name="OLMO_MOE_ROWWISE_SYMM_COMBINE_OUT",
             auto_enabled=False,
         )
-    if block.ep_no_sync_rowwise_symm_combine_gather is None:
-        block.ep_no_sync_rowwise_symm_combine_gather = _resolve_rowwise_symm_option(
+    if block.ep.rowwise_symm_combine_gather is None:
+        block.ep.rowwise_symm_combine_gather = _resolve_rowwise_symm_option(
             block,
-            attr_name="ep_no_sync_rowwise_symm_combine_gather",
+            attr_name="ep.rowwise_symm_combine_gather",
             env_name="OLMO_MOE_ROWWISE_SYMM_COMBINE_GATHER",
         )
 
@@ -1414,7 +1417,7 @@ def get_cached_ep_no_sync_rowwise_fp8_buffers(
 def use_ep_no_sync_rowwise_symm_dispatch_in(block: "OLMoDDPTransformerBlock") -> bool:
     return _resolve_rowwise_symm_option(
         block,
-        attr_name="ep_no_sync_rowwise_symm_dispatch_in",
+        attr_name="ep.rowwise_symm_dispatch_in",
         env_name="OLMO_MOE_ROWWISE_SYMM_DISPATCH_IN",
     )
 
@@ -1422,7 +1425,7 @@ def use_ep_no_sync_rowwise_symm_dispatch_in(block: "OLMoDDPTransformerBlock") ->
 def use_ep_no_sync_rowwise_symm_combine_out(block: "OLMoDDPTransformerBlock") -> bool:
     return _resolve_rowwise_symm_option(
         block,
-        attr_name="ep_no_sync_rowwise_symm_combine_out",
+        attr_name="ep.rowwise_symm_combine_out",
         env_name="OLMO_MOE_ROWWISE_SYMM_COMBINE_OUT",
         auto_enabled=False,
     )
@@ -1431,7 +1434,7 @@ def use_ep_no_sync_rowwise_symm_combine_out(block: "OLMoDDPTransformerBlock") ->
 def use_ep_no_sync_rowwise_symm_combine_gather(block: "OLMoDDPTransformerBlock") -> bool:
     return _resolve_rowwise_symm_option(
         block,
-        attr_name="ep_no_sync_rowwise_symm_combine_gather",
+        attr_name="ep.rowwise_symm_combine_gather",
         env_name="OLMO_MOE_ROWWISE_SYMM_COMBINE_GATHER",
     )
 
@@ -1552,12 +1555,12 @@ def get_ep_no_sync_buffers(
                 need_dispatch_in=need_dispatch_in,
                 need_dispatch_meta=need_dispatch_meta,
                 include_dispatch_out=(
-                    need_dispatch_out and block.ep_no_sync_share_dispatch_out and not lease_dispatch_out
+                    need_dispatch_out and block.ep.share_dispatch_out and not lease_dispatch_out
                 ),
                 need_combine_in=need_combine_in,
                 need_combine_meta=need_combine_meta,
                 include_combine_out=(
-                    need_combine_out and block.ep_no_sync_share_combine_out and not lease_combine_out
+                    need_combine_out and block.ep.share_combine_out and not lease_combine_out
                 ),
                 d_model=d_model,
                 dtype=dtype,
@@ -1823,5 +1826,5 @@ def compute_ep_no_sync_rank_capacity(block: "OLMoDDPTransformerBlock", num_out_t
     # same value (not divided by ep_world_size).
     return max(
         1,
-        int(math.ceil(block.ep_no_sync_capacity_factor * float(num_out_tokens))),
+        int(math.ceil(block.ep.capacity_factor * float(num_out_tokens))),
     )

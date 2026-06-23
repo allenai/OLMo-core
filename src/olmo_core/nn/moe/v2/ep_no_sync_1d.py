@@ -48,12 +48,6 @@ def combined_forward_ep_no_sync_1d(
     assert self.num_local_routed_experts is not None
     assert use_torch_grouped_mm() == True, "EP no-sync implementation requires torch.grouped_mm support"
     assert not requires_host_side_split_sizes(), "EP no-sync implementation does not support host-side split size communication"
-    if self.ep_no_sync_use_2d_all_to_all:
-        raise RuntimeError(
-            "ep_no_sync_use_2d_all_to_all=True is no longer supported: "
-            "the 2D all_to_all path was removed due to correctness/performance issues."
-        )
-
     group_name = get_ep_no_sync_group_name(self)
     B, S, D = x.shape
 
