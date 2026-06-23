@@ -85,6 +85,11 @@ class MoERouterConfigV2(Config):
     Save the fp32 cast of the router input through an ``OutputDiscardCheckpoint`` and
     recompute it in backward, trading extra backward compute for memory.
     """
+    use_quant_scores: bool = False
+    """
+    Select the top-k experts from quantized (tie-broken) scores while keeping the
+    expert weights from the original scores to preserve smooth gradients.
+    """
 
     def num_params(self) -> int:
         """
@@ -150,6 +155,7 @@ class MoERouterV2(nn.Module):
         restore_weight_scale: bool = False,
         original_top_k: Optional[int] = None,
         use_recompute_fp32_cast: bool = False,
+        use_quant_scores: bool = False,
         dtype: torch.dtype = torch.float32,
     ):
         super().__init__()
@@ -174,6 +180,7 @@ class MoERouterV2(nn.Module):
         self.restore_weight_scale = restore_weight_scale
         self.original_top_k = original_top_k
         self.use_recompute_fp32_cast = use_recompute_fp32_cast
+        self.use_quant_scores = use_quant_scores
 
         if self.bias_gamma is not None:
             assert self.bias_gamma > 0
@@ -518,8 +525,7 @@ class MoERouterV2(nn.Module):
             # If we only need the scores, return them directly.
             return scores, None, None, None
 
-        UES_QUANT_SCORES = False
-        if UES_QUANT_SCORES:
+        if self.use_quant_scores:
             # TODO: merge into get_top_k
             scores_sel = self._quantize_scores(scores)
             scores_sel = self._break_ties(scores_sel)
