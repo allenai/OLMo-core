@@ -177,12 +177,6 @@ jobs:
             image: &gpu_test_image tylerr/olmo-core-tch291cu128-2025-11-25
             gpus: 2
             run: |
-              # TEMP: force cu128 torch to match the Beaker CUDA 12.8 driver; the default
-              # torch 2.10 wheel is a CUDA-13 build that fails CUDA init, so every GPU test
-              # silently skips. Fail loudly if CUDA is still unavailable.
-              pip install --force-reinstall --index-url https://download.pytorch.org/whl/cu128 \
-                torch==2.9.1 torchvision torchaudio
-              python -c 'import torch; assert torch.cuda.is_available()'
               pytest -v --color=yes --durations=3 -m gpu \
                 --ignore-glob='src/test/distributed/checkpoint*' \
                 --ignore-glob='src/test/nn/transformer*' \
@@ -196,10 +190,6 @@ jobs:
             image: *gpu_test_image
             gpus: 2
             run: |
-              # TEMP: force cu128 torch (matches Beaker CUDA 12.8 driver); see Test (GPU) job.
-              pip install --force-reinstall --index-url https://download.pytorch.org/whl/cu128 \
-                torch==2.9.1 torchvision torchaudio
-              python -c 'import torch; assert torch.cuda.is_available()'
               pytest -v --color=yes --durations=3 -m gpu \
                 src/test/distributed/checkpoint*
 
@@ -207,10 +197,6 @@ jobs:
             image: *gpu_test_image
             gpus: 2
             run: |
-              # TEMP: force cu128 torch (matches Beaker CUDA 12.8 driver); see Test (GPU) job.
-              pip install --force-reinstall --index-url https://download.pytorch.org/whl/cu128 \
-                torch==2.9.1 torchvision torchaudio
-              python -c 'import torch; assert torch.cuda.is_available()'
               pytest -v --color=yes --durations=3 -m gpu \
                 src/test/nn/transformer*
 
@@ -218,10 +204,6 @@ jobs:
             image: *gpu_test_image
             gpus: 2
             run: |
-              # TEMP: force cu128 torch (matches Beaker CUDA 12.8 driver); see Test (GPU) job.
-              pip install --force-reinstall --index-url https://download.pytorch.org/whl/cu128 \
-                torch==2.9.1 torchvision torchaudio
-              python -c 'import torch; assert torch.cuda.is_available()'
               pytest -v --color=yes --durations=3 -m gpu \
                 src/test/nn/attention*
 
@@ -229,10 +211,6 @@ jobs:
             image: *gpu_test_image
             gpus: 2
             run: |
-              # TEMP: force cu128 torch (matches Beaker CUDA 12.8 driver); see Test (GPU) job.
-              pip install --force-reinstall --index-url https://download.pytorch.org/whl/cu128 \
-                torch==2.9.1 torchvision torchaudio
-              python -c 'import torch; assert torch.cuda.is_available()'
               pytest -v --color=yes --durations=3 -m gpu \
                 src/test/nn/moe*
 
@@ -240,10 +218,6 @@ jobs:
             image: *gpu_test_image
             gpus: 2
             run: |
-              # TEMP: force cu128 torch (matches Beaker CUDA 12.8 driver); see Test (GPU) job.
-              pip install --force-reinstall --index-url https://download.pytorch.org/whl/cu128 \
-                torch==2.9.1 torchvision torchaudio
-              python -c 'import torch; assert torch.cuda.is_available()'
               pytest -v --color=yes --durations=3 -m gpu \
                 src/test/optim*
 
@@ -251,10 +225,6 @@ jobs:
             image: *gpu_test_image
             gpus: 2
             run: |
-              # TEMP: force cu128 torch (matches Beaker CUDA 12.8 driver); see Test (GPU) job.
-              pip install --force-reinstall --index-url https://download.pytorch.org/whl/cu128 \
-                torch==2.9.1 torchvision torchaudio
-              python -c 'import torch; assert torch.cuda.is_available()'
               pytest -v --color=yes -m gpu \
                 src/integration_tests/
 
@@ -266,13 +236,6 @@ jobs:
             image: tianhuat/olmo-core-torch210-2404-cu128
             gpus: 2
             run: |
-              # TEMP: force cu128 torch to match the Beaker CUDA 12.8 driver; the default
-              # torch 2.10 wheel is a CUDA-13 build that fails CUDA init, so every test
-              # silently skips. 2.10.0 still has torch.nn.functional.grouped_mm. Fail loudly
-              # if CUDA is still unavailable.
-              pip install --force-reinstall --index-url https://download.pytorch.org/whl/cu128 \
-                torch==2.10.0 torchvision torchaudio
-              python -c 'import torch; assert torch.cuda.is_available()'
               pytest -v --color=yes --durations=3 -m gpu \
                 src/test/kernels/
     steps:
@@ -332,7 +295,7 @@ jobs:
             --env 'CUBLAS_WORKSPACE_CONFIG=:16:8' \
             --env-secret 'AWS_ACCESS_KEY_ID=AWS_ACCESS_KEY_ID' \
             --env-secret 'AWS_SECRET_ACCESS_KEY=AWS_SECRET_ACCESS_KEY' \
-            -- bash -ec "${{ matrix.task.run }}"
+            -- ${{ matrix.task.run }}
 
   release:
     name: Release
