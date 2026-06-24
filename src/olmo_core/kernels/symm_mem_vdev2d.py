@@ -212,6 +212,48 @@ def rowwise_combine_get(
         post_barrier,
     )
 
+
+@torch.compiler.disable
+def rowwise_combine_put(
+    expert_out: torch.Tensor,
+    gathered_out: torch.Tensor,
+    inverse_route_meta: torch.Tensor,
+    row_start: torch.Tensor,
+    num_rows: torch.Tensor,
+    group_name: str,
+    *,
+    nblocks: int = 0,
+    pre_barrier: bool = False,
+    post_barrier: bool = True,
+) -> None:
+    ext = _load_cuda_extension()
+    if gathered_out.ndim == 3:
+        gathered_flat = gathered_out.view(gathered_out.shape[0] * gathered_out.shape[1], gathered_out.shape[2])
+    else:
+        gathered_flat = gathered_out
+    ext.rowwise_combine_put(
+        expert_out,
+        gathered_flat,
+        inverse_route_meta,
+        row_start,
+        num_rows,
+        group_name,
+        nblocks,
+        pre_barrier,
+        post_barrier,
+    )
+
+
+@torch.compiler.disable
+def rowwise_reduce_gathered_routes(
+    gathered: torch.Tensor,
+    probs: torch.Tensor,
+    out: torch.Tensor,
+    route_ranks: Optional[torch.Tensor] = None,
+) -> None:
+    ext = _load_cuda_extension()
+    ext.rowwise_reduce_gathered_routes(gathered, probs, out, route_ranks)
+
 @nvtx.annotate("rowwise_combine_get_scaled")
 def rowwise_combine_get_scaled(
     expert_out_q: torch.Tensor,

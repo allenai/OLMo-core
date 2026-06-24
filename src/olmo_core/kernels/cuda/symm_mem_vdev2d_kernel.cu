@@ -369,6 +369,57 @@ __global__ void dispatchRowsPut(
 #endif
 }
 
+__global__ void combineRowsPutRange(
+    const void* expert_out_data,
+    void* gathered_data,
+    const int64_t* inverse_route_meta,
+    const int64_t* row_start_ptr,
+    const int64_t* num_rows_ptr,
+    size_t row_bytes,
+    int64_t expert_capacity_rows,
+    int64_t gathered_capacity_rows,
+    nvshmem_team_t team,
+    const int* rank_to_pe,
+    int group_size) {
+#ifndef _NVSHMEM_DEVICELIB_SUPPORTED
+  CUDA_KERNEL_ASSERT_MSG(false, "SM arch unsupported for NVSHMEM");
+#else
+  CUDA_KERNEL_ASSERT(team != NVSHMEM_TEAM_INVALID);
+  int npes = olmo_route_npes(team, rank_to_pe, group_size);
+  int warp_id = threadIdx.x / WARP_SIZE;
+
+  int64_t row_start = *row_start_ptr;
+  int64_t num_rows = *num_rows_ptr;
+  int64_t row_end = row_start + num_rows;
+  CUDA_KERNEL_ASSERT(row_start >= 0);
+  CUDA_KERNEL_ASSERT(num_rows >= 0);
+  CUDA_KERNEL_ASSERT(row_end <= expert_capacity_rows);
+
+  int64_t local_row =
+      static_cast<int64_t>(blockIdx.x) * ROWWISE_WARPS_PER_BLOCK + warp_id;
+  int64_t row_stride =
+      static_cast<int64_t>(gridDim.x) * ROWWISE_WARPS_PER_BLOCK;
+  for (; local_row < num_rows; local_row += row_stride) {
+    int64_t row = row_start + local_row;
+    int64_t peer = inverse_route_meta[row * 2];
+    int64_t gathered_row = inverse_route_meta[row * 2 + 1];
+    if (peer < 0 || gathered_row < 0) {
+      continue;
+    }
+
+    CUDA_KERNEL_ASSERT(peer < npes);
+    CUDA_KERNEL_ASSERT(gathered_row < gathered_capacity_rows);
+
+    auto peer_global = olmo_route_peer_global(team, rank_to_pe, static_cast<int>(peer));
+    nvshmemx_putmem_warp(
+        (char*)gathered_data + static_cast<size_t>(gathered_row) * row_bytes,
+        (const char*)expert_out_data + static_cast<size_t>(row) * row_bytes,
+        row_bytes,
+        peer_global);
+  }
+#endif
+}
+
 template <typename scalar_t>
 __global__ void dispatchRowsPutWeighted(
     const scalar_t* input_data,
@@ -520,6 +571,44 @@ __global__ void combineRowsReduceKernel(
       v *= probs[row * top_k + k];
     }
     acc += v;
+  }
+
+  out[row * dim + col] = static_cast<scalar_t>(acc);
+}
+
+template <typename scalar_t, typename prob_t, bool HAS_ROUTE_RANKS>
+__global__ void combineGatheredRowsWeightedReduceKernel(
+    const scalar_t* gathered,
+    const prob_t* probs,
+    const int64_t* route_ranks,
+    scalar_t* out,
+    int64_t num_out_rows,
+    int64_t top_k,
+    int64_t dim) {
+  int64_t row = blockIdx.x;
+  int64_t col = static_cast<int64_t>(blockIdx.y) * blockDim.x + threadIdx.x;
+  if (row >= num_out_rows) {
+    return;
+  }
+
+  if (col >= dim) {
+    return;
+  }
+
+  float acc = 0.0f;
+  int64_t base = row * top_k * dim + col;
+  int64_t prob_base = row * top_k;
+  for (int64_t k = 0; k < top_k; ++k) {
+    if constexpr (HAS_ROUTE_RANKS) {
+      if (route_ranks[prob_base + k] < 0) {
+        continue;
+      }
+    }
+    float p = static_cast<float>(probs[prob_base + k]);
+    if (p == 0.0f) {
+      continue;
+    }
+    acc += static_cast<float>(gathered[base + k * dim]) * p;
   }
 
   out[row * dim + col] = static_cast<scalar_t>(acc);
@@ -1649,6 +1738,261 @@ void rowwise_combine_get(
         "nvshmemx_barrier_on_stream (post) failed with status ",
         post_barrier_status);
   }
+}
+
+void rowwise_combine_put(
+    at::Tensor& expert_out,
+    at::Tensor& gathered_out,
+    at::Tensor& inverse_route_meta,
+    at::Tensor& row_start,
+    at::Tensor& num_rows,
+    const std::string& group_name,
+    int64_t nblocks,
+    bool pre_barrier,
+    bool post_barrier) {
+  auto* olmo_group = olmo_symm_find_group(group_name);
+  TORCH_CHECK(
+      olmo_group != nullptr,
+      "OLMo rowwise combine PUT requires registered OLMo symmetric-memory group ",
+      group_name);
+
+  TORCH_CHECK(
+      nblocks >= 0, "nblocks must be non-negative (0 means auto), got ", nblocks);
+  TORCH_CHECK(expert_out.dim() == 2, "expert_out must be rank-2 [C, D]");
+  TORCH_CHECK(gathered_out.dim() == 2, "gathered_out must be rank-2 [R, D]");
+  TORCH_CHECK(
+      inverse_route_meta.dim() == 2 && inverse_route_meta.size(1) == 2,
+      "inverse_route_meta must be rank-2 [C, 2]");
+  TORCH_CHECK(
+      inverse_route_meta.size(0) == expert_out.size(0),
+      "inverse_route_meta first dim must match expert_out rows");
+  TORCH_CHECK(
+      expert_out.size(1) == gathered_out.size(1),
+      "expert_out and gathered_out must have the same hidden dim (D)");
+  TORCH_CHECK(row_start.numel() == 1, "row_start must be a scalar tensor");
+  TORCH_CHECK(num_rows.numel() == 1, "num_rows must be a scalar tensor");
+
+  TORCH_CHECK(
+      expert_out.is_contiguous() && gathered_out.is_contiguous() &&
+          inverse_route_meta.is_contiguous(),
+      "expert_out, gathered_out, and inverse_route_meta must be contiguous");
+  TORCH_CHECK(
+      expert_out.dtype() == gathered_out.dtype(),
+      "expert_out and gathered_out must have the same dtype");
+  TORCH_CHECK(
+      inverse_route_meta.scalar_type() == at::kLong,
+      "inverse_route_meta must be int64");
+  TORCH_CHECK(
+      row_start.scalar_type() == at::kLong && num_rows.scalar_type() == at::kLong,
+      "row_start and num_rows must be int64");
+
+  auto device = expert_out.device();
+  TORCH_CHECK(
+      device.type() == at::DeviceType::CUDA && gathered_out.device() == device &&
+          inverse_route_meta.device() == device && row_start.device() == device &&
+          num_rows.device() == device,
+      "all tensor arguments must be on the same CUDA device");
+  c10::cuda::CUDAGuard guard(device);
+
+  auto stream = at::cuda::getCurrentCUDAStream();
+  nvshmem_team_t team = NVSHMEM_TEAM_WORLD;
+  const int* rank_to_pe_dev = nullptr;
+  int group_size = 0;
+  bool world_within_direct_access = true;
+  rank_to_pe_dev = olmo_group->rank_to_pe_dev;
+  group_size = olmo_group->world_size;
+  maybe_init_nvshmem_cumodule(reinterpret_cast<const void*>(combineRowsPutRange));
+
+  int64_t expert_capacity_rows = expert_out.size(0);
+  int64_t gathered_capacity_rows = gathered_out.size(0);
+  size_t row_bytes =
+      static_cast<size_t>(expert_out.stride(0)) * expert_out.element_size();
+  int num_blocks = resolve_num_blocks_rowwise(
+      expert_capacity_rows, nblocks, world_within_direct_access);
+  TORCH_CHECK(num_blocks > 0, "resolved nblocks must be > 0");
+
+  if (pre_barrier) {
+    int pre_barrier_status = nvshmemx_barrier_on_stream(team, stream.stream());
+    TORCH_CHECK(
+        pre_barrier_status == 0,
+        "nvshmemx_barrier_on_stream (pre) failed with status ",
+        pre_barrier_status);
+  }
+
+  const void* expert_out_ptr = expert_out.data_ptr();
+  void* gathered_out_ptr = gathered_out.mutable_data_ptr();
+  const int64_t* inverse_route_meta_ptr =
+      reinterpret_cast<const int64_t*>(inverse_route_meta.data_ptr());
+  const int64_t* row_start_ptr =
+      reinterpret_cast<const int64_t*>(row_start.data_ptr());
+  const int64_t* num_rows_ptr =
+      reinterpret_cast<const int64_t*>(num_rows.data_ptr());
+
+  void* args[] = {
+      &expert_out_ptr,
+      &gathered_out_ptr,
+      &inverse_route_meta_ptr,
+      &row_start_ptr,
+      &num_rows_ptr,
+      &row_bytes,
+      &expert_capacity_rows,
+      &gathered_capacity_rows,
+      &team,
+      &rank_to_pe_dev,
+      &group_size};
+  nvshmemx_collective_launch(
+      (const void*)combineRowsPutRange,
+      dim3(num_blocks),
+      dim3(ROWWISE_THREADS_PER_BLOCK),
+      args,
+      0,
+      stream);
+
+  if (post_barrier) {
+    int post_barrier_status = nvshmemx_barrier_on_stream(team, stream.stream());
+    TORCH_CHECK(
+        post_barrier_status == 0,
+        "nvshmemx_barrier_on_stream (post) failed with status ",
+        post_barrier_status);
+  }
+}
+
+void rowwise_reduce_gathered_routes(
+    at::Tensor& gathered,
+    at::Tensor& probs,
+    at::Tensor& out,
+    const std::optional<at::Tensor>& route_ranks) {
+  TORCH_CHECK(gathered.dim() == 3, "gathered must be rank-3 [N, K, D]");
+  TORCH_CHECK(probs.dim() == 2, "probs must be rank-2 [N, K]");
+  TORCH_CHECK(out.dim() == 2, "out must be rank-2 [N, D]");
+  TORCH_CHECK(
+      probs.size(0) == gathered.size(0) && probs.size(1) == gathered.size(1),
+      "probs shape must match gathered [N, K]");
+  TORCH_CHECK(
+      out.size(0) == gathered.size(0) && out.size(1) == gathered.size(2),
+      "out shape must match gathered [N, D]");
+  TORCH_CHECK(
+      gathered.is_contiguous() && probs.is_contiguous() && out.is_contiguous(),
+      "gathered, probs, and out must be contiguous");
+  TORCH_CHECK(
+      gathered.scalar_type() == out.scalar_type(),
+      "gathered and out must have the same dtype");
+  TORCH_CHECK(
+      probs.scalar_type() == at::kFloat || probs.scalar_type() == at::kHalf ||
+          probs.scalar_type() == at::kBFloat16,
+      "probs must be float32, float16, or bfloat16");
+
+  auto device = gathered.device();
+  TORCH_CHECK(
+      device.type() == at::DeviceType::CUDA && probs.device() == device &&
+          out.device() == device,
+      "all tensor arguments must be on the same CUDA device");
+  const int64_t* route_ranks_ptr = nullptr;
+  if (route_ranks.has_value()) {
+    TORCH_CHECK(route_ranks->defined(), "route_ranks optional tensor must be defined");
+    TORCH_CHECK(route_ranks->dim() == 2, "route_ranks must be rank-2 [N, K]");
+    TORCH_CHECK(
+        route_ranks->size(0) == gathered.size(0) &&
+            route_ranks->size(1) == gathered.size(1),
+        "route_ranks shape must match gathered [N, K]");
+    TORCH_CHECK(
+        route_ranks->device() == device,
+        "route_ranks must be on the same CUDA device as other arguments");
+    TORCH_CHECK(route_ranks->is_contiguous(), "route_ranks must be contiguous");
+    TORCH_CHECK(route_ranks->scalar_type() == at::kLong, "route_ranks must be int64");
+    route_ranks_ptr = reinterpret_cast<const int64_t*>(route_ranks->data_ptr());
+  }
+  c10::cuda::CUDAGuard guard(device);
+
+  int64_t num_out_rows = gathered.size(0);
+  int64_t top_k = gathered.size(1);
+  int64_t dim = gathered.size(2);
+  auto stream = at::cuda::getCurrentCUDAStream();
+  constexpr int THREADS = 256;
+  dim3 block(THREADS);
+  dim3 grid(
+      static_cast<unsigned int>(num_out_rows),
+      static_cast<unsigned int>(at::ceil_div(dim, static_cast<int64_t>(THREADS))));
+
+  AT_DISPATCH_FLOATING_TYPES_AND2(
+      at::kHalf,
+      at::kBFloat16,
+      gathered.scalar_type(),
+      "combineGatheredRowsWeightedReduceKernel",
+      [&] {
+        const scalar_t* gathered_typed = gathered.data_ptr<scalar_t>();
+        scalar_t* out_typed = out.mutable_data_ptr<scalar_t>();
+        if (probs.scalar_type() == at::kFloat) {
+          const float* probs_typed = probs.data_ptr<float>();
+          if (route_ranks_ptr == nullptr) {
+            combineGatheredRowsWeightedReduceKernel<scalar_t, float, false>
+                <<<grid, block, 0, stream>>>(
+                    gathered_typed,
+                    probs_typed,
+                    nullptr,
+                    out_typed,
+                    num_out_rows,
+                    top_k,
+                    dim);
+          } else {
+            combineGatheredRowsWeightedReduceKernel<scalar_t, float, true>
+                <<<grid, block, 0, stream>>>(
+                    gathered_typed,
+                    probs_typed,
+                    route_ranks_ptr,
+                    out_typed,
+                    num_out_rows,
+                    top_k,
+                    dim);
+          }
+        } else if (probs.scalar_type() == at::kHalf) {
+          const at::Half* probs_typed = probs.data_ptr<at::Half>();
+          if (route_ranks_ptr == nullptr) {
+            combineGatheredRowsWeightedReduceKernel<scalar_t, at::Half, false>
+                <<<grid, block, 0, stream>>>(
+                    gathered_typed,
+                    probs_typed,
+                    nullptr,
+                    out_typed,
+                    num_out_rows,
+                    top_k,
+                    dim);
+          } else {
+            combineGatheredRowsWeightedReduceKernel<scalar_t, at::Half, true>
+                <<<grid, block, 0, stream>>>(
+                    gathered_typed,
+                    probs_typed,
+                    route_ranks_ptr,
+                    out_typed,
+                    num_out_rows,
+                    top_k,
+                    dim);
+          }
+        } else {
+          const at::BFloat16* probs_typed = probs.data_ptr<at::BFloat16>();
+          if (route_ranks_ptr == nullptr) {
+            combineGatheredRowsWeightedReduceKernel<scalar_t, at::BFloat16, false>
+                <<<grid, block, 0, stream>>>(
+                    gathered_typed,
+                    probs_typed,
+                    nullptr,
+                    out_typed,
+                    num_out_rows,
+                    top_k,
+                    dim);
+          } else {
+            combineGatheredRowsWeightedReduceKernel<scalar_t, at::BFloat16, true>
+                <<<grid, block, 0, stream>>>(
+                    gathered_typed,
+                    probs_typed,
+                    route_ranks_ptr,
+                    out_typed,
+                    num_out_rows,
+                    top_k,
+                    dim);
+          }
+        }
+      });
 }
 
 void rowwise_combine_get_fused(

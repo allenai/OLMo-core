@@ -13,6 +13,7 @@ class ExpertParallelPath(StrEnum):
     no_sync_2d_removed = "no_sync_2d_removed"
     rowwise_nvshmem = "rowwise_nvshmem"
     rowwise_tma_ibgda = "rowwise_tma_ibgda"
+    rowwise_wave = "rowwise_wave"
     wave_mega = "wave_mega"
 
 
@@ -43,6 +44,8 @@ class ExpertParallelConfig(Config):
     tma_ibgda_combine_num_sms: Optional[int] = None
     tma_ibgda_preprocess_num_sms: Optional[int] = None
     tma_ibgda_symmetric_expert_out: bool = False
+    rowwise_wave_num_waves: int = 1
+    rowwise_wave_mode: str = "expert"
     wave_use_bf16_persistent_mega_forward: bool = False
     checkpoint_tbo: bool = False
 
@@ -50,6 +53,7 @@ class ExpertParallelConfig(Config):
         self.path = ExpertParallelPath(self.path)
         self.schedule = ExpertParallelSchedule(self.schedule)
         self.restore_unpermute_backend = self.restore_unpermute_backend.lower()
+        self.rowwise_wave_mode = self.rowwise_wave_mode.lower()
 
         if self.path == ExpertParallelPath.no_sync_2d_removed:
             raise OLMoConfigurationError(
@@ -71,6 +75,25 @@ class ExpertParallelConfig(Config):
         if self.rowwise_nblocks < 0:
             raise OLMoConfigurationError(
                 f"EP rowwise_nblocks must be >= 0 (got {self.rowwise_nblocks})"
+            )
+        if self.rowwise_wave_num_waves < 1:
+            raise OLMoConfigurationError(
+                "EP rowwise_wave_num_waves must be >= 1 "
+                f"(got {self.rowwise_wave_num_waves})"
+            )
+        if self.rowwise_wave_mode != "expert":
+            raise OLMoConfigurationError(
+                "EP rowwise_wave_mode currently supports only 'expert' "
+                f"(got {self.rowwise_wave_mode!r})"
+            )
+        if (
+            self.path != ExpertParallelPath.rowwise_wave
+            and self.rowwise_wave_num_waves != 1
+        ):
+            raise OLMoConfigurationError(
+                "EP rowwise_wave_num_waves is only valid with "
+                f"path={ExpertParallelPath.rowwise_wave!r} "
+                f"(got path={self.path!r})"
             )
         tma_ibgda_num_sms_fields = {
             "tma_ibgda_num_sms": self.tma_ibgda_num_sms,
@@ -144,6 +167,7 @@ class ExpertParallelConfig(Config):
         return self.path in {
             ExpertParallelPath.rowwise_nvshmem,
             ExpertParallelPath.rowwise_tma_ibgda,
+            ExpertParallelPath.rowwise_wave,
         }
 
     @property
@@ -158,7 +182,10 @@ class ExpertParallelConfig(Config):
 
     @property
     def rowwise_transport(self) -> Optional[str]:
-        if self.path == ExpertParallelPath.rowwise_nvshmem:
+        if self.path in {
+            ExpertParallelPath.rowwise_nvshmem,
+            ExpertParallelPath.rowwise_wave,
+        }:
             return "nvshmem"
         if self.path == ExpertParallelPath.rowwise_tma_ibgda:
             return "tma_ibgda"

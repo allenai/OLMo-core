@@ -13,6 +13,7 @@ Nsight Systems example:
 
 Modes:
     rowwise: baseline rowwise NVSHMEM EP.
+    rowwise_wave: sequential expert-major rowwise-wave EP.
     wave: model-facing forward-only OLMo wave bring-up path.
     standard_ep_mega: standalone standard-shape EP4/32-expert fused BF16
         MegaMoE megakernel path. This is a kernel benchmark, not model wiring.
@@ -55,6 +56,7 @@ class BenchCase:
     kernel_standard_ep_mega_peer_group: bool = False
     kernel_standard_ep_mega_collective: bool = False
     kernel_standard_ep_mega_umma: bool = False
+    rowwise_wave: bool = False
 
 
 def _parse_modes(raw: str) -> list[BenchCase]:
@@ -65,6 +67,12 @@ def _parse_modes(raw: str) -> list[BenchCase]:
             continue
         if mode == "rowwise":
             cases.append(BenchCase("rowwise", False))
+        elif mode in {
+            "rowwise_wave",
+            "rowwise_wave_expert",
+            "rowwise_wave_expert_sequential",
+        }:
+            cases.append(BenchCase("rowwise_wave", False, rowwise_wave=True))
         elif mode in {
             "wave",
             "olmo_wave",
@@ -156,7 +164,7 @@ def _parse_modes(raw: str) -> list[BenchCase]:
             )
         else:
             raise ValueError(
-                f"Unknown mode {mode!r}. Expected rowwise,wave,bf16_persistent_mega,"
+                f"Unknown mode {mode!r}. Expected rowwise,rowwise_wave,wave,bf16_persistent_mega,"
                 "standard_ep_mega,standard_ep_mega_umma,"
                 "standard_ep_mega_peer_group,standard_ep_mega_peer_group_umma,"
                 "standard_ep_mega_collective,standard_ep_mega_collective_umma"
@@ -180,6 +188,7 @@ def _parse_args() -> argparse.Namespace:
         default="rowwise",
         help=(
             "Comma-separated modes. 'rowwise' is the current baseline. "
+            "'rowwise_wave' selects sequential expert-major rowwise waves. "
             "'wave'/'bf16_persistent_mega' select the model-facing forward-only "
             "wave path. 'standard_ep_mega' runs the standalone standard-shape "
             "fused BF16 megakernel. Suffix standard_ep_mega modes with '_umma' "
@@ -197,6 +206,12 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--top-k", type=int, default=4)
     parser.add_argument("--capacity-factor", type=float, default=1.25)
     parser.add_argument("--rowwise-nblocks", type=int, default=256)
+    parser.add_argument(
+        "--rowwise-wave-num-waves",
+        type=int,
+        default=4,
+        help="Number of contiguous local-expert waves for --modes rowwise_wave.",
+    )
     parser.add_argument("--warmup", type=int, default=2)
     parser.add_argument("--iters", type=int, default=2)
     parser.add_argument(
@@ -281,6 +296,8 @@ def _build_block(
     rowwise_nblocks: int,
     use_wave: bool,
     use_bf16_persistent_mega: bool,
+    rowwise_wave: bool,
+    rowwise_wave_num_waves: int,
     include_shared_expert: bool,
     shared_hidden_size: int,
     uniform_routing: bool,
@@ -338,12 +355,19 @@ def _build_block(
         shared_experts_router=None,
         feed_forward_norm=layer_norm,
         ep=ExpertParallelConfig(
-            path=ExpertParallelPath.wave_mega
-            if use_wave
-            else ExpertParallelPath.rowwise_nvshmem,
+            path=(
+                ExpertParallelPath.rowwise_wave
+                if rowwise_wave
+                else ExpertParallelPath.wave_mega
+                if use_wave
+                else ExpertParallelPath.rowwise_nvshmem
+            ),
             capacity_factor=capacity_factor,
             major_align=1,
             rowwise_nblocks=rowwise_nblocks,
+            rowwise_wave_num_waves=(
+                rowwise_wave_num_waves if rowwise_wave else 1
+            ),
             wave_use_bf16_persistent_mega_forward=(
                 use_bf16_persistent_mega and use_wave
             ),
@@ -369,6 +393,11 @@ def _compile_hot_modules(block: OLMoDDPTransformerBlock) -> None:
     if block.routed_experts is not None:
         block.routed_experts.forward = torch.compile(  # type: ignore[method-assign]
             block.routed_experts.forward,
+            fullgraph=False,
+            dynamic=False,
+        )
+        block.routed_experts.forward_row_offset = torch.compile(  # type: ignore[method-assign]
+            block.routed_experts.forward_row_offset,
             fullgraph=False,
             dynamic=False,
         )
@@ -457,19 +486,25 @@ def _run_one_iter(
     input_dtype: torch.dtype,
     label: str,
     pass_type: str,
+    static_input: torch.Tensor | None = None,
 ) -> None:
-    torch.cuda.nvtx.range_push(f"{label}/input")
-    try:
-        x = torch.randn(
-            1,
-            tokens,
-            d_model,
-            device="cuda",
-            dtype=input_dtype,
-            requires_grad=(pass_type == "forward_backward"),
-        )
-    finally:
-        torch.cuda.nvtx.range_pop()
+    if static_input is None:
+        torch.cuda.nvtx.range_push(f"{label}/input")
+        try:
+            x = torch.randn(
+                1,
+                tokens,
+                d_model,
+                device="cuda",
+                dtype=input_dtype,
+                requires_grad=(pass_type == "forward_backward"),
+            )
+        finally:
+            torch.cuda.nvtx.range_pop()
+    else:
+        if pass_type != "forward":
+            raise RuntimeError("static_input is only supported for forward profiling")
+        x = static_input
 
     torch.cuda.nvtx.range_push(f"{label}/forward")
     try:
@@ -1039,7 +1074,7 @@ def _bench_standard_ep_mega_kernel_case(
             torch.cuda.nvtx.range_pop()
         end.record()
         events.append((start, end))
-        if peer_group or collective:
+        if (peer_group or collective) and not args.profile:
             # These modes enqueue NVSHMEM stream barriers before each launch.
             # Keep measured iterations host-ordered so the benchmark does not
             # stack multiple distributed barrier epochs on the stream.
@@ -1122,6 +1157,12 @@ def _bench_case(
             "forward-only bring-up path.",
             flush=True,
         )
+    if rank == 0 and case.rowwise_wave:
+        print(
+            "[bench] mode=rowwise_wave selects the experimental sequential "
+            "expert-major rowwise backend, not the MegaMoE megakernel path.",
+            flush=True,
+        )
     torch.manual_seed(20260619 + rank)
     torch.cuda.reset_peak_memory_stats()
     config_dtype, input_dtype = _dtype_config(args.dtype)
@@ -1137,6 +1178,8 @@ def _bench_case(
             rowwise_nblocks=args.rowwise_nblocks,
             use_wave=case.use_wave,
             use_bf16_persistent_mega=case.use_bf16_persistent_mega,
+            rowwise_wave=case.rowwise_wave,
+            rowwise_wave_num_waves=args.rowwise_wave_num_waves,
             include_shared_expert=not args.no_shared_expert,
             shared_hidden_size=args.shared_hidden_size,
             uniform_routing=not args.random_routing,
@@ -1158,6 +1201,16 @@ def _bench_case(
     finally:
         torch.cuda.nvtx.range_pop()
 
+    static_input = None
+    if args.profile and args.pass_type == "forward":
+        static_input = torch.randn(
+            1,
+            tokens,
+            args.d_model,
+            device="cuda",
+            dtype=input_dtype,
+        )
+
     for idx in range(args.warmup):
         label = f"BENCH/{case.name}/tokens_{tokens}/warmup_{idx}"
         torch.cuda.nvtx.range_push(f"{label}/total")
@@ -1169,6 +1222,7 @@ def _bench_case(
                 input_dtype=input_dtype,
                 label=label,
                 pass_type=args.pass_type,
+                static_input=static_input,
             )
         finally:
             torch.cuda.nvtx.range_pop()
@@ -1195,14 +1249,17 @@ def _bench_case(
                 input_dtype=input_dtype,
                 label=label,
                 pass_type=args.pass_type,
+                static_input=static_input,
             )
         finally:
             torch.cuda.nvtx.range_pop()
         end.record()
         events.append((start, end))
-        if case.use_wave:
-            # The wave path currently uses peer-group NVSHMEM stream barriers.
-            # Keep benchmark iterations host-ordered; this is not model wiring.
+        if (case.use_wave or case.rowwise_wave) and not args.profile:
+            # These experimental modes use rowwise/NVSHMEM stream barriers.
+            # Keep benchmark iterations host-ordered. During nsys profiling,
+            # leave iterations queued and synchronize after cudaProfilerStop()
+            # so the profile does not contain inter-iteration host syncs.
             end.synchronize()
 
     if args.profile:
@@ -1229,6 +1286,7 @@ def _bench_case(
             f"compile={'none' if not args.compile or args.no_compile else ('block' if args.compile_block else 'experts')} "
             f"d={args.d_model} hidden={args.hidden_size} experts={args.num_experts} "
             f"top_k={args.top_k} cap={capacity_factor} "
+            f"rowwise_wave_num_waves={args.rowwise_wave_num_waves if case.rowwise_wave else 0} "
             f"ms/iter(max_rank)={max_ms:.3f} "
             f"local_tokens/s={tokens / (max_ms / 1000.0):.1f} "
             f"global_tokens/s={tokens * world_size / (max_ms / 1000.0):.1f} "

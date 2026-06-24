@@ -208,6 +208,53 @@ def test_routed_experts_forward_matches_baseline_with_different_pad_positions():
 
 
 @requires_gpu
+def test_routed_experts_forward_row_offset_writes_canonical_window():
+    torch.manual_seed(123)
+    device = torch.device("cuda")
+
+    module = RoutedExperts(
+        d_model=64,
+        hidden_size=96,
+        num_experts=4,
+        bias=False,
+        dtype=DType.bfloat16,
+        init_device="cuda",
+    )
+    module.eval()
+    with torch.no_grad():
+        module.w_up_gate.normal_(mean=0.0, std=0.02)
+        module.w_down.normal_(mean=0.0, std=0.02)
+
+    counts = torch.tensor([8, 16, 8, 8], device=device, dtype=torch.int32)
+    row_start = torch.cumsum(counts.to(dtype=torch.long), dim=0)[0]
+    capacity = int(counts.sum().item())
+    x = torch.randn(capacity, module.d_model, device=device, dtype=torch.bfloat16)
+    out = torch.full((capacity, module.d_model), -3.0, device=device, dtype=torch.bfloat16)
+
+    with torch.no_grad():
+        y = module.forward_row_offset(
+            x,
+            counts,
+            expert_start=1,
+            expert_end=3,
+            row_start=row_start,
+            down_proj_out=out,
+        )
+
+    expected = torch.full_like(out, -3.0)
+    cursor = int(row_start.item())
+    for expert_idx in (1, 2):
+        count = int(counts[expert_idx].item())
+        up_gate = x[cursor : cursor + count] @ module.w_up_gate[expert_idx].T
+        up, gate = up_gate.chunk(2, dim=-1)
+        h = up * F.silu(gate)
+        expected[cursor : cursor + count] = h @ module.w_down[expert_idx]
+        cursor += count
+
+    torch.testing.assert_close(y, expected, atol=1e-2, rtol=1e-2)
+
+
+@requires_gpu
 @requires_grouped_gemm
 def test_routed_experts_speed_vs_pad_positions():
     if os.getenv("OLMO_RUN_ROUTED_EXPERTS_PERF_TEST", "0") != "1":

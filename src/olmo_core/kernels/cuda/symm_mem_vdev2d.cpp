@@ -69,6 +69,23 @@ void rowwise_combine_get(
     bool pre_barrier,
     bool post_barrier);
 
+void rowwise_combine_put(
+    torch::Tensor& expert_out,
+    torch::Tensor& gathered_out,
+    torch::Tensor& inverse_route_meta,
+    torch::Tensor& row_start,
+    torch::Tensor& num_rows,
+    const std::string& group_name,
+    int64_t nblocks,
+    bool pre_barrier,
+    bool post_barrier);
+
+void rowwise_reduce_gathered_routes(
+    torch::Tensor& gathered,
+    torch::Tensor& probs,
+    torch::Tensor& out,
+    const std::optional<torch::Tensor>& route_ranks);
+
 void rowwise_combine_get_fused(
     torch::Tensor& expert_out,
     torch::Tensor& out,
@@ -184,6 +201,29 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
       py::arg("gathered_out") = std::nullopt,
       py::arg("pre_barrier") = true,
       py::arg("post_barrier") = false);
+
+  m.def(
+      "rowwise_combine_put",
+      &rowwise_combine_put,
+      "NVSHMEM row-wise combine PUT: put local expert rows to remote gathered route slots",
+      py::arg("expert_out"),
+      py::arg("gathered_out"),
+      py::arg("inverse_route_meta"),
+      py::arg("row_start"),
+      py::arg("num_rows"),
+      py::arg("group_name"),
+      py::arg("nblocks") = 0,
+      py::arg("pre_barrier") = false,
+      py::arg("post_barrier") = true);
+
+  m.def(
+      "rowwise_reduce_gathered_routes",
+      &rowwise_reduce_gathered_routes,
+      "Reduce gathered row-wise route slots with route probabilities",
+      py::arg("gathered"),
+      py::arg("probs"),
+      py::arg("out"),
+      py::arg("route_ranks") = std::nullopt);
 
   m.def(
       "rowwise_combine_get_fused",

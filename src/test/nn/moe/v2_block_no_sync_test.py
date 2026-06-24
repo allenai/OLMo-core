@@ -30,6 +30,7 @@ def test_v2_extracted_forward_module_names_importable():
         ep_no_sync_1d,
         ep_no_sync_buffers,
         ep_no_sync_rowwise,
+        ep_no_sync_rowwise_wave,
         ep_no_sync_tma_ibgda,
         ep_wave,
         ep_sync_1d,
@@ -45,6 +46,7 @@ def test_v2_extracted_forward_module_names_importable():
     assert hasattr(ep_no_sync_buffers, "_NoSyncSymmBuffers")
     assert hasattr(ep_no_sync_1d, "combined_forward_ep_no_sync_1d")
     assert hasattr(ep_no_sync_rowwise, "combined_forward_ep_no_sync_rowwise")
+    assert hasattr(ep_no_sync_rowwise_wave, "combined_forward_ep_no_sync_rowwise_wave")
     assert hasattr(ep_no_sync_tma_ibgda, "combined_forward_ep_no_sync_tma_ibgda")
     assert hasattr(ep_wave, "combined_forward_ep_wave")
     assert hasattr(tma_ibgda, "tma_ibgda_rowwise_dispatch_bf16")
@@ -202,6 +204,26 @@ def test_v2_ep_config_selects_rowwise_tma_ibgda_path():
     assert block.ep.tma_ibgda_num_sms == 32
 
 
+def test_v2_ep_config_selects_rowwise_wave_path():
+    block = _build_block(
+        ep_no_sync=False,
+        ep=ExpertParallelConfig(
+            path=ExpertParallelPath.rowwise_wave,
+            rowwise_wave_num_waves=4,
+            rowwise_wave_mode="EXPERT",
+        ),
+        init_device="cpu",
+    )
+    assert block.ep.path == ExpertParallelPath.rowwise_wave
+    assert block.ep.no_sync is True
+    assert block.ep.is_rowwise is True
+    assert block.ep.is_wave is False
+    assert block.ep.uses_rowwise_buffers is True
+    assert block.ep.rowwise_transport == "nvshmem"
+    assert block.ep.rowwise_wave_num_waves == 4
+    assert block.ep.rowwise_wave_mode == "expert"
+
+
 def test_v2_ep_config_tbo_only_allows_rowwise_nvshmem():
     ExpertParallelConfig(
         path=ExpertParallelPath.rowwise_nvshmem,
@@ -212,6 +234,7 @@ def test_v2_ep_config_tbo_only_allows_rowwise_nvshmem():
         ExpertParallelPath.sync_1d,
         ExpertParallelPath.no_sync_1d,
         ExpertParallelPath.rowwise_tma_ibgda,
+        ExpertParallelPath.rowwise_wave,
         ExpertParallelPath.wave_mega,
     ):
         with pytest.raises(OLMoConfigurationError, match="only supported"):
@@ -425,6 +448,28 @@ def test_v2_tma_ibgda_symmetric_expert_out_requires_tma_ibgda_path():
         ).validate()
 
 
+def test_v2_rowwise_wave_num_waves_requires_rowwise_wave_path():
+    with pytest.raises(OLMoConfigurationError, match="rowwise_wave_num_waves"):
+        ExpertParallelConfig(
+            path=ExpertParallelPath.rowwise_nvshmem,
+            rowwise_wave_num_waves=2,
+        ).validate()
+
+
+def test_v2_rowwise_wave_rejects_invalid_mode_and_num_waves():
+    with pytest.raises(OLMoConfigurationError, match="rowwise_wave_num_waves"):
+        ExpertParallelConfig(
+            path=ExpertParallelPath.rowwise_wave,
+            rowwise_wave_num_waves=0,
+        ).validate()
+
+    with pytest.raises(OLMoConfigurationError, match="rowwise_wave_mode"):
+        ExpertParallelConfig(
+            path=ExpertParallelPath.rowwise_wave,
+            rowwise_wave_mode="token",
+        ).validate()
+
+
 def test_v2_tma_ibgda_backend_rejects_unknown_backend():
     with pytest.raises(OLMoConfigurationError, match="ep_no_sync_rowwise_backend"):
         _build_block(
@@ -443,6 +488,18 @@ def test_v2_ep_wave_forward_method_is_available():
         init_device="cpu",
     )
     assert callable(block.combined_forward_ep_wave)
+
+
+def test_v2_rowwise_wave_forward_method_is_available():
+    block = _build_block(
+        ep_no_sync=False,
+        ep=ExpertParallelConfig(
+            path=ExpertParallelPath.rowwise_wave,
+            rowwise_wave_num_waves=2,
+        ),
+        init_device="cpu",
+    )
+    assert callable(block.combined_forward_ep_no_sync_rowwise_wave)
 
 
 def test_v2_ep_wave_rejects_tbo_checkpointing():
@@ -3069,6 +3126,81 @@ def _run_ep_no_sync_rowwise_matches_synced():
         torch.testing.assert_close(p_rowwise.grad, p_ep.grad, atol=1e-3, rtol=1e-3)
 
 
+def _run_ep_no_sync_rowwise_wave_matches_rowwise():
+    ep_mesh = _build_ep_mesh()
+
+    block_rowwise = _build_block(
+        ep_no_sync=True,
+        ep_no_sync_use_rowwise_all_to_all=True,
+        d_model=128,
+        hidden_size=256,
+        num_experts=8,
+        top_k=4,
+        uniform_expert_assignment=False,
+    )
+    block_wave = _build_block(
+        ep_no_sync=False,
+        ep=ExpertParallelConfig(
+            path=ExpertParallelPath.rowwise_wave,
+            capacity_factor=2.0,
+            rowwise_nblocks=128,
+            rowwise_wave_num_waves=2,
+        ),
+        d_model=128,
+        hidden_size=256,
+        num_experts=8,
+        top_k=4,
+        uniform_expert_assignment=False,
+    )
+    block_rowwise.apply_ep(ep_mesh)
+    block_wave.apply_ep(ep_mesh)
+
+    _init_block_params(block_rowwise)
+    block_wave.load_state_dict(block_rowwise.state_dict())
+    _install_deterministic_topk_router(block_rowwise)
+    _install_deterministic_topk_router(block_wave)
+
+    block_rowwise.ep.rowwise_nblocks = 128
+    block_wave.ep.rowwise_nblocks = 128
+    block_rowwise.ep.validate()
+    block_wave.ep.validate()
+    block_rowwise.train()
+    block_wave.train()
+
+    x = torch.randn(1, 16, block_rowwise.d_model, device="cuda", dtype=torch.float32, requires_grad=True)
+    x_wave = x.detach().clone().requires_grad_(True)
+
+    with pytest.warns(RuntimeWarning, match="rowwise_wave"):
+        y_wave = block_wave(x_wave)
+    y_rowwise = block_rowwise(x)
+    assert y_wave.shape == y_rowwise.shape
+    assert torch.isfinite(y_wave).all()
+    torch.testing.assert_close(y_wave, y_rowwise, atol=1e-3, rtol=1e-3)
+
+    loss_rowwise = y_rowwise.square().mean() + (0.1 * y_rowwise.sum())
+    loss_wave = y_wave.square().mean() + (0.1 * y_wave.sum())
+    loss_rowwise.backward()
+    loss_wave.backward()
+
+    assert x_wave.grad is not None
+    assert x.grad is not None
+    torch.testing.assert_close(x_wave.grad, x.grad, atol=2e-3, rtol=2e-3)
+
+    rowwise_params = dict(block_rowwise.named_parameters())
+    wave_params = dict(block_wave.named_parameters())
+    for name, p_rowwise in rowwise_params.items():
+        p_wave = wave_params[name]
+        if p_rowwise.grad is None or p_wave.grad is None:
+            continue
+        torch.testing.assert_close(
+            p_wave.grad,
+            p_rowwise.grad,
+            atol=3e-3,
+            rtol=3e-3,
+            msg=f"rowwise_wave gradient mismatch for {name}",
+        )
+
+
 def _run_ep_no_sync_tma_ibgda_matches_synced_bf16(
     *,
     symmetric_expert_out: bool = False,
@@ -3465,6 +3597,16 @@ def test_v2_ep_no_sync_hard_fail_setup():
 @requires_multi_gpu
 def test_v2_ep_no_sync_rowwise_matches_synced():
     run_distributed_test(_run_ep_no_sync_rowwise_matches_synced, backend="nccl", start_method="spawn")
+
+
+@requires_multi_gpu
+@requires_grouped_gemm
+def test_v2_ep_no_sync_rowwise_wave_matches_rowwise():
+    run_distributed_test(
+        _run_ep_no_sync_rowwise_wave_matches_rowwise,
+        backend="nccl",
+        start_method="spawn",
+    )
 
 
 @requires_multi_gpu

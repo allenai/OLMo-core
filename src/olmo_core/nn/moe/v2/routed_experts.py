@@ -30,12 +30,10 @@ try:
     import grouped_gemm.ops  # type: ignore  # noqa: F401
 except Exception:  # pragma: no cover - import guard
     grouped_gemm = None  # type: ignore[assignment]
-from abc import abstractmethod
 import weakref
 import torch
 import torch.nn as nn
-from ...moe import MoERouterConfig as MoERouterConfigV1
-from typing import Iterator, List, Optional
+from typing import Iterator, Optional
 import nvtx
 from olmo_core.config import Config, DType, StrEnum
 from olmo_core.kernels import (
@@ -43,6 +41,7 @@ from olmo_core.kernels import (
     ScaledGroupedMMPrequantizedLHS,
     ScaledGroupedMMPrequantizedRHS,
     grouped_mm as grouped_mm_with_buffers,
+    grouped_mm_row_offset,
     scaled_grouped_mm_q,
     scaled_grouped_mm_q_fp8_weight,
 )
@@ -57,6 +56,7 @@ from olmo_core.kernels.mxfp8_utils import (
     swiglu_quantize_rows_from_mxfp8,
     swiglu_quantize_rows_to_mxfp8,
 )
+from olmo_core.kernels.swiglu import swiglu_valid_prefix
 
 
 class ExpertActivation(StrEnum):
@@ -855,7 +855,8 @@ class RoutedExperts(nn.Module):
                 output_size=up_gate.shape[0],
             )
 
-        h = self.chunk_and_activate(up_gate) # -> (BS, H)
+        num_valid_rows = batch_size_per_expert_tensor.sum()
+        h = self.chunk_and_activate(up_gate, num_elements=num_valid_rows) # -> (BS, H)
         
         # down projection
         down = gmm(
@@ -874,6 +875,84 @@ class RoutedExperts(nn.Module):
 
         return cast(torch.Tensor, down)  # ensure type is Tensor
 
+    @nvtx.annotate("RoutedExperts.forward_row_offset", color="blue")
+    def forward_row_offset(
+        self,
+        x: torch.Tensor,
+        batch_size_per_expert: torch.Tensor,
+        *,
+        expert_start: int,
+        expert_end: int,
+        row_start: torch.Tensor,
+        down_proj_out: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        """
+        Forward a contiguous local-expert window in its canonical rowwise-EP rows.
+
+        ``row_start`` is a CUDA scalar holding the first canonical row for
+        ``expert_start``. The grouped-MM data-prep kernel shifts A/C pointers by
+        that scalar, so no activation repack is needed for wave execution.
+        """
+        if torch.is_grad_enabled():
+            raise RuntimeError("forward_row_offset is forward-only and requires no_grad")
+        if requires_host_side_split_sizes():
+            raise RuntimeError("forward_row_offset requires the torch grouped_mm backend")
+        if not use_torch_grouped_mm():
+            raise RuntimeError("forward_row_offset requires torch grouped_mm support")
+        if self.activation != ExpertActivation.swiglu:
+            raise RuntimeError("forward_row_offset currently requires swiglu activation")
+        if self.b_up_gate is not None or self.b_down is not None:
+            raise RuntimeError("forward_row_offset does not support expert biases")
+        if self.rowwise_fp8 is not None and self.rowwise_fp8.enabled:
+            raise RuntimeError("forward_row_offset does not support rowwise FP8 experts yet")
+        if not x.is_cuda:
+            raise RuntimeError("forward_row_offset requires CUDA input")
+        if batch_size_per_expert.device != x.device:
+            raise RuntimeError("batch_size_per_expert must be on the same CUDA device as x")
+        if row_start.device != x.device or row_start.numel() != 1:
+            raise RuntimeError("row_start must be a CUDA scalar on the same device as x")
+        if expert_start < 0 or expert_end > self.num_local_experts or expert_start >= expert_end:
+            raise RuntimeError(
+                f"invalid expert range [{expert_start}, {expert_end}) for {self.num_local_experts} local experts"
+            )
+
+        batch_size_per_expert_tensor = batch_size_per_expert.to(dtype=torch.int32)
+        batch_size_window = batch_size_per_expert_tensor[int(expert_start) : int(expert_end)]
+        num_valid_rows = batch_size_window.sum()
+
+        up_gate = torch.empty(
+            (x.shape[0], self.w_up_gate.shape[1]),
+            device=x.device,
+            dtype=x.dtype,
+        )
+        grouped_mm_row_offset(
+            x,
+            self.w_up_gate[int(expert_start) : int(expert_end)].transpose(1, 2),
+            batch_size_window,
+            row_start=row_start,
+            out=up_gate,
+        )
+
+        h = self.chunk_and_activate(
+            up_gate,
+            num_elements=num_valid_rows,
+            start=row_start,
+        )
+        if down_proj_out is None:
+            down_proj_out = torch.empty(
+                (x.shape[0], self.w_down.shape[2]),
+                device=x.device,
+                dtype=x.dtype,
+            )
+        grouped_mm_row_offset(
+            h,
+            self.w_down[int(expert_start) : int(expert_end)],
+            batch_size_window,
+            row_start=row_start,
+            out=down_proj_out,
+        )
+        return down_proj_out
+
     def act_and_down(self, up_gate: torch.Tensor, batch_size_per_expert_tensor: torch.Tensor) -> torch.Tensor:
         # swiglu + down projection
         # so that it apply activation checkpointing if needed
@@ -883,7 +962,8 @@ class RoutedExperts(nn.Module):
                 batch_size_per_expert_tensor,
                 output_size=up_gate.shape[0],
             )
-        h = self.chunk_and_activate(up_gate) # -> (BS, H)
+        num_valid_rows = batch_size_per_expert_tensor.sum()
+        h = self.chunk_and_activate(up_gate, num_elements=num_valid_rows) # -> (BS, H)
         
         down = gmm(h, self.w_down, batch_size_per_expert_tensor, trans_b=False) # -> (BS, H)
         if self.b_down is not None:
@@ -904,13 +984,23 @@ class RoutedExperts(nn.Module):
         repeats = batch_size_per_expert_tensor.to(device=bias.device, dtype=torch.long)
         return torch.repeat_interleave(bias, repeats, dim=0, output_size=output_size)
 
-    def chunk_and_activate(self, up_gate: torch.Tensor) -> torch.Tensor:
-        # NOTE: this might include pad tokens, but I decide not to exlude pads:
-        # 1 chunk_and_activate is cheap relative to MoE GEMMs, even at 2x capacity.
-        # 2 Excluding tail pads without sync is hard with stock PyTorch ops; 
-        #   true compute-skipping usually needs dynamic slicing (.item() sync) or a custom kernel.
-        # 3 Extra pad-handling ops can cost more than just doing SiLU on full buffer.
+    def chunk_and_activate(
+        self,
+        up_gate: torch.Tensor,
+        *,
+        num_elements: Optional[torch.Tensor] = None,
+        start: torch.Tensor | int | None = None,
+    ) -> torch.Tensor:
+        # Forward-only EP can skip padded tail rows with a custom kernel while
+        # keeping training on the autograd-backed PyTorch activation.
         if self.activation == ExpertActivation.swiglu:
+            if (
+                num_elements is not None
+                and up_gate.is_cuda
+                and num_elements.device == up_gate.device
+                and not torch.is_grad_enabled()
+            ):
+                return swiglu_valid_prefix(up_gate, num_elements, start=start)
             up, gate = up_gate.chunk(2, dim=-1)
             h = up * F.silu(gate) # -> (BS, H)
         elif self.activation == ExpertActivation.gpt_oss_swiglu:
