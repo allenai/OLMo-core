@@ -52,12 +52,27 @@ WEKA="${WEKA:-oe-training-default}"
 PRIORITY="${PRIORITY:-urgent}"
 CPUS="${CPUS:-16}"
 NAME="${NAME:-longctx-sft-convert}"
+# Default to the OLMo-core stable Beaker image: the converter's deps (transformers, numpy, tqdm,
+# jinja2, huggingface_hub) are already baked in, and the image is cached on essentially every AI2
+# node, so there's no ~3-min cold image pull and no per-job pip install. Keep this in sync with
+# OLMoCoreBeakerImage.stable in src/olmo_core/launch/beaker.py. Set IMAGE="" to fall back to
+# gantry's base image + an explicit pip install of just the converter deps.
+IMAGE="${IMAGE:-tylerr/olmo-core-tch291cu128-2025-11-25}"
 
 CLUSTER_ARGS=()
 IFS=',' read -ra _CLUSTERS <<< "${CLUSTER}"
 for c in "${_CLUSTERS[@]}"; do
   CLUSTER_ARGS+=(--cluster "$c")
 done
+
+# Fast path (IMAGE set): use the baked image and override gantry's default `pip install -e .`
+# (the whole OLMo-core package -- slow) with a no-op. Slow path (IMAGE=""): base image + pip.
+INSTALL_ARGS=()
+if [[ -n "${IMAGE}" ]]; then
+  INSTALL_ARGS+=(--beaker-image "${IMAGE}" --install "true")
+else
+  INSTALL_ARGS+=(--install "pip install transformers numpy tqdm jinja2 'huggingface_hub>=0.24'")
+fi
 
 gantry run \
   --name "${NAME}" \
@@ -76,6 +91,6 @@ gantry run \
   --shared-memory 32GiB \
   --timeout 0 \
   --env TOKENIZERS_PARALLELISM=true \
-  --install "pip install transformers numpy tqdm jinja2 'huggingface_hub>=0.24'" \
+  "${INSTALL_ARGS[@]}" \
   --yes \
   -- python src/scripts/data/convert_longctx_tasks_to_sft.py "$@"
