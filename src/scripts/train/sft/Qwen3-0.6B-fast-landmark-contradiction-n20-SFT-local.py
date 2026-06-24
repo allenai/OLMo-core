@@ -67,11 +67,11 @@ from olmo_core.train.train_module import (
 )
 from olmo_core.utils import seed_all
 
-# ---- landmark / sequence geometry (identical to the Beaker script) ----
-MEM_FREQ = 63
-BLOCK_SIZE = MEM_FREQ + 1  # 64
-SEQUENCE_LENGTH = 2048
-CONTENT_SEQUENCE_LENGTH = SEQUENCE_LENGTH // BLOCK_SIZE * MEM_FREQ  # 2016
+# ---- landmark / sequence geometry ----
+# mem_freq is the landmark spacing; block_size = mem_freq + 1 (mem_freq content toks + 1 landmark).
+# Default 63 -> block 64 (matches the beaker run). Override with --mem-freq (e.g. 127 -> block 128).
+DEFAULT_MEM_FREQ = 63
+SEQUENCE_LENGTH = 2048  # must be divisible by block_size (64|128|...)
 LANDMARK_TOKEN_ID = 151860
 
 # ---- LOCAL paths (shared NFS, readable from any Berkeley GPU node) ----
@@ -93,6 +93,18 @@ def build_and_fit(opts: argparse.Namespace) -> None:
     run_name_with_ts = f"{run_name}-{datetime.now().astimezone().strftime('%Y%m%dT%H%M%S%z')}"
     save_folder = opts.save_folder or f"{SAVE_ROOT}/{run_name}"
 
+    # Landmark geometry from --mem-freq.
+    mem_freq = opts.mem_freq
+    block_size = mem_freq + 1
+    if SEQUENCE_LENGTH % block_size != 0:
+        raise SystemExit(
+            f"SEQUENCE_LENGTH={SEQUENCE_LENGTH} not divisible by block_size={block_size} "
+            f"(mem_freq+1); pick a mem_freq where (mem_freq+1) divides {SEQUENCE_LENGTH}."
+        )
+    content_sequence_length = SEQUENCE_LENGTH // block_size * mem_freq
+    print(f"[geometry] mem_freq={mem_freq} block_size={block_size} "
+          f"seq_len={SEQUENCE_LENGTH} content_len={content_sequence_length}", flush=True)
+
     tokenizer_config = TokenizerConfig.qwen3()
     # Shards are separated by single EOS tokens; qwen3 ties bos==eos, so drop BOS for segmentation.
     doc_tokenizer_config = replace(tokenizer_config, bos_token_id=None)
@@ -100,7 +112,7 @@ def build_and_fit(opts: argparse.Namespace) -> None:
     model_config = TransformerConfig.qwen3_0_6B(
         vocab_size=tokenizer_config.padded_vocab_size(),
         fast_landmark=True,
-        mem_freq=MEM_FREQ,
+        mem_freq=mem_freq,
     )
 
     train_module_config = TransformerTrainModuleConfig(
@@ -132,11 +144,11 @@ def build_and_fit(opts: argparse.Namespace) -> None:
         source=PadToLengthInstanceSourceConfig.from_npy(
             f"{DATA_PATH}/token_ids_part_*.npy",
             tokenizer=doc_tokenizer_config,
-            sequence_length=CONTENT_SEQUENCE_LENGTH,
+            sequence_length=content_sequence_length,
             label_mask_paths=[f"{DATA_PATH}/labels_mask_*.npy"],
             expand_glob=True,
         ),
-        mem_freq=MEM_FREQ,
+        mem_freq=mem_freq,
         mem_id=LANDMARK_TOKEN_ID,
     )
 
@@ -205,6 +217,8 @@ def main() -> None:
     ap.add_argument("--save-folder", default=None, help=f"default {SAVE_ROOT}/<run-name>")
     ap.add_argument("--epochs", type=int, default=NUM_EPOCHS)
     ap.add_argument("--max-steps", type=int, default=0, help="stop after N steps (0 = full; smoke)")
+    ap.add_argument("--mem-freq", type=int, default=DEFAULT_MEM_FREQ,
+                    help="landmark spacing; block_size = mem_freq+1 (63->64, 127->128)")
     ap.add_argument("--lr", type=float, default=LR)
     ap.add_argument("--no-compile", dest="compile", action="store_false")
     ap.add_argument("--no-wandb", dest="wandb", action="store_false")

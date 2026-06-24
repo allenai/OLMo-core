@@ -21,7 +21,9 @@ set -uo pipefail
 REPO=/accounts/projects/berkeleynlp/prasann/projects/OLMo-core
 NGPU="${NGPU:-8}"
 MAX_STEPS="${MAX_STEPS:-0}"
-echo "=== HOST=$(hostname)  NGPU=$NGPU  MAX_STEPS=$MAX_STEPS  START=$(date '+%F %T') ==="
+MEM_FREQ="${MEM_FREQ:-63}"          # 63->block64 (default), 127->block128 (2x chunks)
+RUN_NAME="${RUN_NAME:-q06b-fast-contra-n20-sft-local-mf${MEM_FREQ}}"
+echo "=== HOST=$(hostname) NGPU=$NGPU MAX_STEPS=$MAX_STEPS MEM_FREQ=$MEM_FREQ RUN=$RUN_NAME START=$(date '+%F %T') ==="
 
 source /system/linux/miniforge-3.13/etc/profile.d/conda.sh
 ENV=/data/prasann/conda/envs/corpus-reasoning-olmo
@@ -43,5 +45,5 @@ cd "$REPO"
 MAXARG=""; [ "$MAX_STEPS" -gt 0 ] && MAXARG="--max-steps $MAX_STEPS"
 torchrun --nproc_per_node="$NGPU" \
   src/scripts/train/sft/Qwen3-0.6B-fast-landmark-contradiction-n20-SFT-local.py \
-  --run-name q06b-fast-contra-n20-sft-local $MAXARG $WANDB_FLAG
+  --run-name "$RUN_NAME" --mem-freq "$MEM_FREQ" $MAXARG $WANDB_FLAG
 echo "=== DONE $(date '+%F %T')  rc=$? ==="
