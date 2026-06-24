@@ -1,9 +1,9 @@
 #!/bin/bash
 # Build / publish the corpus-reasoning visualization website FROM the OLMo-core repo.
 #
-# The viz pipeline lives in the corpus-reasoning submodule (./corpus-reasoning/viz).
-# This thin wrapper just delegates to it, so you can drive the same website from
-# either repo:
+# The viz pipeline lives in the corpus-reasoning checkout (./corpus-reasoning/viz),
+# a standalone clone (no longer an OLMo-core submodule). This thin wrapper just
+# delegates to it, so you can drive the same website from either repo:
 #
 #   # from OLMo-core:
 #   bash viz.sh                 # build corpus-reasoning/viz/outputs/index.html
@@ -20,10 +20,11 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SUB="$ROOT/corpus-reasoning"
 
-# Make sure the submodule is checked out (and current with the pinned commit).
+# Make sure the corpus-reasoning checkout is present. It used to be a git submodule
+# (private SSH URL, which broke gantry/Beaker launches), so it's now a plain clone.
 if [[ ! -f "$SUB/viz/run.sh" ]]; then
-  echo "[viz.sh] initializing corpus-reasoning submodule..."
-  git -C "$ROOT" submodule update --init "$SUB"
+  echo "[viz.sh] corpus-reasoning not found at '$SUB'; cloning..."
+  git clone git@github.com:PrasannS/corpus-reasoning.git "$SUB"
 fi
 
 # Pin experiment-config source to this OLMo-core checkout.
