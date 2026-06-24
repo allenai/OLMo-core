@@ -18,7 +18,8 @@ os.environ["QWEN_DEFAULT_DATA_PATH"] = (
     "qwen_retokenized_olmo_mix_0925_education_jobs_first1m.uint32.npy"
 )
 os.environ.setdefault("QWEN_EP_DIM", "8")
-os.environ.setdefault("QWEN_USE_EP_NO_SYNC", "false")
+os.environ.setdefault("QWEN_EP_PATH", "rowwise_nvshmem")
+os.environ.setdefault("QWEN_EP_CAPACITY_FACTOR", "8.0")
 os.environ.setdefault("QWEN_PER_LAYER_RECOMPUTE", "true")
 os.environ.setdefault("QWEN_ATTENTION_BACKEND", "torch")
 os.environ.setdefault("QWEN_SEQUENCE_LENGTH", "512")

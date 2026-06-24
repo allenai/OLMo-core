@@ -18,9 +18,8 @@ os.environ["GPT_OSS_DEFAULT_DATA_PATH"] = (
     "gpt_oss_retokenized_olmo_mix_0925_education_jobs_first1m.uint32.npy"
 )
 os.environ.setdefault("GPT_OSS_EP_DIM", "8")
-os.environ.setdefault("GPT_OSS_USE_EP_NO_SYNC", "true")
-os.environ.setdefault("GPT_OSS_USE_ROWWISE_A2A", "true")
-os.environ.setdefault("GPT_OSS_EP_NO_SYNC_CAPACITY_FACTOR", "8.0")
+os.environ.setdefault("GPT_OSS_EP_PATH", "rowwise_nvshmem")
+os.environ.setdefault("GPT_OSS_EP_CAPACITY_FACTOR", "8.0")
 os.environ.setdefault("GPT_OSS_PER_LAYER_RECOMPUTE", "true")
 os.environ.setdefault("GPT_OSS_ATTENTION_BACKEND", "torch")
 os.environ.setdefault("GPT_OSS_SEQUENCE_LENGTH", "512")

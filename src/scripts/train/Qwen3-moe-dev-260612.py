@@ -44,6 +44,7 @@ from olmo_core.nn.moe.v2.qwen import (
     build_qwen3_moe_config,
     build_qwen3_moe_config_from_hf_config,
 )
+from olmo_core.nn.moe.v2.ep_config import ExpertParallelConfig, ExpertParallelPath
 from olmo_core.optim import CosWithWarmup, OLMoDDPOptimizerConfig, OptimGroupOverride
 from olmo_core.train import Duration, TrainerConfig
 from olmo_core.train.callbacks import CheckpointerCallback, WandBCallback
@@ -84,6 +85,25 @@ def _env_list(name: str) -> list[str]:
     if raw is None or raw.strip() == "":
         return []
     return [item.strip() for item in raw.split(",") if item.strip()]
+
+
+def _ep_path_from_env(prefix: str, ep_dim: int) -> ExpertParallelPath:
+    raw = os.getenv(f"{prefix}_EP_PATH")
+    if raw is not None and raw.strip() != "":
+        return ExpertParallelPath(raw.strip())
+
+    use_no_sync = ep_dim > 1 and _env_bool(f"{prefix}_USE_EP_NO_SYNC", True)
+    if not use_no_sync:
+        return ExpertParallelPath.sync_1d
+    use_rowwise = _env_bool(f"{prefix}_USE_ROWWISE_A2A", True)
+    return ExpertParallelPath.rowwise_nvshmem if use_rowwise else ExpertParallelPath.no_sync_1d
+
+
+def _ep_capacity_factor_from_env(prefix: str, default: float = 1.25) -> float:
+    raw = os.getenv(f"{prefix}_EP_CAPACITY_FACTOR")
+    if raw is not None and raw.strip() != "":
+        return float(raw)
+    return _env_float(f"{prefix}_EP_NO_SYNC_CAPACITY_FACTOR", default)
 
 
 def _text_config(hf_config: Mapping[str, Any]) -> Mapping[str, Any]:
@@ -156,8 +176,12 @@ USE_COMPILE = _env_bool("QWEN_USE_COMPILE", False)
 PER_LAYER_RECOMPUTE = _env_bool("QWEN_PER_LAYER_RECOMPUTE", False)
 MAX_LAYERS = _env_int_optional("QWEN_MAX_LAYERS")
 EP_DIM = _env_int("QWEN_EP_DIM", 1)
-USE_EP_NO_SYNC = EP_DIM > 1 and _env_bool("QWEN_USE_EP_NO_SYNC", True)
-USE_ROWWISE_A2A = EP_DIM > 1 and _env_bool("QWEN_USE_ROWWISE_A2A", True)
+EP_PATH = _ep_path_from_env("QWEN", EP_DIM)
+EP_CAPACITY_FACTOR = _ep_capacity_factor_from_env("QWEN")
+if EP_DIM <= 1 and EP_PATH != ExpertParallelPath.sync_1d:
+    raise ValueError(f"QWEN_EP_PATH={EP_PATH!r} requires QWEN_EP_DIM > 1")
+EP_CONFIG = ExpertParallelConfig(path=EP_PATH, capacity_factor=EP_CAPACITY_FACTOR)
+EP_CONFIG.validate()
 
 DATA_MIX = os.getenv("QWEN_DATA_MIX", DataMix.OLMo_mix_0925.value)
 DATA_MIX_BASE_DIR = os.getenv("QWEN_MIX_BASE_DIR", "s3://ai2-llm")
@@ -184,8 +208,7 @@ def build_model_config(common: CommonComponents):
             init_seed=SEED,
             attention_backend=ATTENTION_BACKEND,
             compile_friendly_recompute=PER_LAYER_RECOMPUTE,
-            use_ep_no_sync=USE_EP_NO_SYNC,
-            use_rowwise_all_to_all=USE_ROWWISE_A2A,
+            ep=EP_CONFIG,
             **_layer_overrides_for_limit(text_config, MAX_LAYERS),
         )
 
@@ -228,8 +251,7 @@ def build_model_config(common: CommonComponents):
             init_seed=SEED,
             attention_backend=ATTENTION_BACKEND,
             compile_friendly_recompute=PER_LAYER_RECOMPUTE,
-            use_ep_no_sync=USE_EP_NO_SYNC,
-            use_rowwise_all_to_all=USE_ROWWISE_A2A,
+            ep=EP_CONFIG,
         )
 
     return build_debug_qwen3_moe_config(
@@ -244,8 +266,7 @@ def build_model_config(common: CommonComponents):
         init_seed=SEED,
         attention_backend=ATTENTION_BACKEND,
         compile_friendly_recompute=PER_LAYER_RECOMPUTE,
-        use_ep_no_sync=USE_EP_NO_SYNC,
-        use_rowwise_all_to_all=USE_ROWWISE_A2A,
+        ep=EP_CONFIG,
     )
 
 
