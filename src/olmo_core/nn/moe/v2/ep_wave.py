@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Optional, Tuple, Union, cast
 import torch
 import torch.distributed as dist
 
-from olmo_core.kernels.symm_mem_vdev2d import (
+from olmo_core.kernels.wave_mega_ep import (
     rowwise_bf16_mega_moe_local_umma_compute,
     rowwise_bf16_mega_moe_standard_ep_forward_persistent_workspace_peer_group,
     rowwise_bf16_mega_moe_standard_ep_forward_persistent_workspace_peer_group_umma,

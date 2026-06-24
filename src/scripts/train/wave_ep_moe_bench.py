@@ -551,7 +551,7 @@ def _build_standard_ep_mega_kernel_state(
             "standard_ep_mega_peer_group/collective requires torchrun --nproc-per-node=4"
         )
 
-    from olmo_core.kernels.symm_mem_vdev2d import (
+    from olmo_core.kernels.wave_mega_ep import (
         rowwise_bf16_mega_moe_standard_ep_workspace_config,
     )
 
@@ -720,7 +720,7 @@ def _run_one_standard_ep_mega_kernel_iter(
     collective: bool,
     umma: bool = False,
 ) -> None:
-    from olmo_core.kernels.symm_mem_vdev2d import (
+    from olmo_core.kernels.wave_mega_ep import (
         rowwise_bf16_mega_moe_standard_ep_forward_persistent_workspace,
         rowwise_bf16_mega_moe_standard_ep_forward_persistent_workspace_collective_world_umma,
         rowwise_bf16_mega_moe_standard_ep_forward_persistent_workspace_collective_world,

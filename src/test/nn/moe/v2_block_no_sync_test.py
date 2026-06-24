@@ -2572,7 +2572,9 @@ def test_v2_ep_wave_has_no_deepep_runtime_dependency():
         repo_root / "pyproject.toml",
         repo_root / "src" / "olmo_core" / "nn" / "ddp" / "block.py",
         repo_root / "src" / "olmo_core" / "nn" / "moe" / "v2" / "ep_wave.py",
+        repo_root / "src" / "olmo_core" / "kernels" / "wave_mega_ep.py",
         repo_root / "src" / "olmo_core" / "kernels" / "cuda" / "symm_mem_vdev2d_kernel.cu",
+        repo_root / "src" / "olmo_core" / "kernels" / "cuda" / "wave_mega_ep.cpp",
         repo_root / "src" / "olmo_core" / "kernels" / "cuda" / "symm_mem_vdev2d_wave_kernel.cu",
         repo_root / "src" / "olmo_core" / "kernels" / "cuda" / "olmo_bf16_mega_moe" / "barrier.cuh",
         repo_root / "src" / "olmo_core" / "kernels" / "cuda" / "olmo_bf16_mega_moe" / "buffers.cuh",
@@ -2602,7 +2604,9 @@ def test_v2_ep_wave_has_no_cuda_synchronization_calls():
         repo_root / "src" / "olmo_core" / "nn" / "ddp" / "block.py",
         repo_root / "src" / "olmo_core" / "nn" / "moe" / "v2" / "ep_wave.py",
         repo_root / "src" / "olmo_core" / "kernels" / "symm_mem_vdev2d.py",
+        repo_root / "src" / "olmo_core" / "kernels" / "wave_mega_ep.py",
         repo_root / "src" / "olmo_core" / "kernels" / "cuda" / "symm_mem_vdev2d.cpp",
+        repo_root / "src" / "olmo_core" / "kernels" / "cuda" / "wave_mega_ep.cpp",
         repo_root / "src" / "olmo_core" / "kernels" / "cuda" / "symm_mem_vdev2d_kernel.cu",
         repo_root / "src" / "olmo_core" / "kernels" / "cuda" / "symm_mem_vdev2d_wave_kernel.cu",
         repo_root / "src" / "olmo_core" / "kernels" / "cuda" / "olmo_bf16_mega_moe" / "barrier.cuh",
@@ -2629,6 +2633,27 @@ def test_v2_ep_wave_has_no_cuda_synchronization_calls():
         text = path.read_text()
         for pattern in forbidden:
             assert pattern not in text, f"{pattern} found in {path}"
+
+
+def test_v2_ep_wave_uses_dedicated_extension_boundary():
+    from olmo_core.kernels import symm_mem_vdev2d, wave_mega_ep
+
+    assert wave_mega_ep._EXTENSION_MODULE_NAME.endswith("._wave_mega_ep_ext_gpu")
+    assert symm_mem_vdev2d._EXTENSION_MODULE_NAME.endswith("._symm_mem_vdev2d_ext_gpu")
+    assert (
+        symm_mem_vdev2d.rowwise_bf16_mega_moe_standard_ep_workspace_config.__module__
+        == "olmo_core.kernels.wave_mega_ep"
+    )
+
+    repo_root = Path(__file__).resolve().parents[4]
+    cmake_source = (
+        repo_root / "src" / "olmo_core" / "kernels" / "cuda" / "CMakeLists.txt"
+    ).read_text()
+    symm_target_source = cmake_source.split("set(WAVE_MEGA_TARGET_NAME", maxsplit=1)[0]
+    wave_target_source = cmake_source.split("set(WAVE_MEGA_TARGET_NAME", maxsplit=1)[1]
+    assert "symm_mem_vdev2d_wave_kernel.cu" not in symm_target_source
+    assert "wave_mega_ep.cpp" in wave_target_source
+    assert "symm_mem_vdev2d_wave_kernel.cu" in wave_target_source
 
 
 def test_v2_ep_wave_training_script_exposes_wave_toggles():
