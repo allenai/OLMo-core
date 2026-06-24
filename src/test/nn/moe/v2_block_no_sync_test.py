@@ -1216,7 +1216,6 @@ def test_v2_ep_wave_bf16_w1_wmma_device_contract():
     w1_out_cpu = w1_out.cpu().float()
 
     for slot, route_idx in enumerate(packed_route_cpu.tolist()):
-        token_idx = route_idx
         expert_idx = route_expert_indices.flatten()[route_idx].item()
         expected = packed_input_cpu[slot].to(torch.float32) @ up_gate_weight[expert_idx].cpu().float().T
         torch.testing.assert_close(w1_out_cpu[slot], expected, rtol=0.02, atol=2.0)
@@ -1316,7 +1315,6 @@ def test_v2_ep_wave_bf16_local_persistent_forward_debug_device_contract():
     device = torch.device("cuda", torch.cuda.current_device())
     torch.manual_seed(3108)
     tokens = 4
-    top_k = 2
     hidden = 16
     intermediate = 16
     experts = 2
@@ -3198,6 +3196,81 @@ def _run_ep_no_sync_rowwise_wave_matches_rowwise():
             atol=3e-3,
             rtol=3e-3,
             msg=f"rowwise_wave gradient mismatch for {name}",
+        )
+
+    block_rowwise_bf16 = _build_block(
+        ep_no_sync=True,
+        ep_no_sync_use_rowwise_all_to_all=True,
+        d_model=128,
+        hidden_size=256,
+        num_experts=8,
+        top_k=4,
+        uniform_expert_assignment=False,
+    )
+    block_wave_bf16 = _build_block(
+        ep_no_sync=False,
+        ep=ExpertParallelConfig(
+            path=ExpertParallelPath.rowwise_wave,
+            capacity_factor=2.0,
+            rowwise_nblocks=32,
+            rowwise_wave_num_waves=2,
+        ),
+        d_model=128,
+        hidden_size=256,
+        num_experts=8,
+        top_k=4,
+        uniform_expert_assignment=False,
+    )
+    block_rowwise_bf16.apply_ep(ep_mesh)
+    block_wave_bf16.apply_ep(ep_mesh)
+
+    _init_block_params(block_rowwise_bf16)
+    block_wave_bf16.load_state_dict(block_rowwise_bf16.state_dict())
+    _install_deterministic_topk_router(block_rowwise_bf16)
+    _install_deterministic_topk_router(block_wave_bf16)
+
+    block_rowwise_bf16.to(dtype=torch.bfloat16)
+    block_wave_bf16.to(dtype=torch.bfloat16)
+    block_rowwise_bf16.ep.rowwise_nblocks = 32
+    block_wave_bf16.ep.rowwise_nblocks = 32
+    block_rowwise_bf16.ep.validate()
+    block_wave_bf16.ep.validate()
+    block_rowwise_bf16.train()
+    block_wave_bf16.train()
+
+    x_bf16 = (0.2 * torch.randn(1, 16, block_rowwise_bf16.d_model, device="cuda")).to(
+        dtype=torch.bfloat16
+    )
+    x_bf16.requires_grad_(True)
+    x_wave_bf16 = x_bf16.detach().clone().requires_grad_(True)
+
+    y_rowwise_bf16 = block_rowwise_bf16(x_bf16)
+    y_wave_bf16 = block_wave_bf16(x_wave_bf16)
+    assert y_wave_bf16.shape == y_rowwise_bf16.shape
+    assert torch.isfinite(y_wave_bf16).all()
+    torch.testing.assert_close(y_wave_bf16, y_rowwise_bf16, atol=2e-2, rtol=2e-2)
+
+    loss_rowwise_bf16 = y_rowwise_bf16.square().mean() + (0.1 * y_rowwise_bf16.sum())
+    loss_wave_bf16 = y_wave_bf16.square().mean() + (0.1 * y_wave_bf16.sum())
+    loss_rowwise_bf16.backward()
+    loss_wave_bf16.backward()
+
+    assert x_wave_bf16.grad is not None
+    assert x_bf16.grad is not None
+    torch.testing.assert_close(x_wave_bf16.grad, x_bf16.grad, atol=2e-2, rtol=2e-2)
+
+    rowwise_bf16_params = dict(block_rowwise_bf16.named_parameters())
+    wave_bf16_params = dict(block_wave_bf16.named_parameters())
+    for name, p_rowwise in rowwise_bf16_params.items():
+        p_wave = wave_bf16_params[name]
+        if p_rowwise.grad is None or p_wave.grad is None:
+            continue
+        torch.testing.assert_close(
+            p_wave.grad,
+            p_rowwise.grad,
+            atol=3e-2,
+            rtol=3e-2,
+            msg=f"bf16 rowwise_wave gradient mismatch for {name}",
         )
 
     block_rowwise_eval = _build_block(

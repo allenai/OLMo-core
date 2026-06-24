@@ -7,8 +7,11 @@ from typing import TYPE_CHECKING, Optional, Tuple, Union, cast
 import nvtx
 import torch
 import torch.distributed as dist
+import torch.nn.functional as F
 
+from olmo_core.kernels import grouped_mm_row_offset
 from olmo_core.kernels import symm_mem_vdev2d as symm_mem_vdev2d_kernels
+from olmo_core.kernels.swiglu import swiglu_backward_valid_prefix, swiglu_valid_prefix
 from olmo_core.utils import get_or_init_stream
 
 from ...moe.utils import (
@@ -16,7 +19,7 @@ from ...moe.utils import (
     wait_event_no_compile,
     wait_stream_no_compile,
 )
-from .comm import _DispatchRowwiseAutograd
+from .comm import _DispatchRowwiseAutograd, _RowwiseCombineWeightedAutograd
 from .ep_config import ExpertParallelPath
 from .ep_no_sync_buffers import (
     compute_ep_no_sync_rank_capacity,
@@ -30,7 +33,11 @@ from .ep_no_sync_rowwise_helpers import (
     accumulate_ep_no_sync_rowwise_metrics,
     build_rowwise_route_maps,
 )
-from .routed_experts import requires_host_side_split_sizes, use_torch_grouped_mm
+from .routed_experts import (
+    ExpertActivation,
+    requires_host_side_split_sizes,
+    use_torch_grouped_mm,
+)
 
 if TYPE_CHECKING:
     from olmo_core.nn.ddp.block import OLMoDDPTransformerBlock
@@ -200,6 +207,592 @@ class _RowwiseGatherSlotsAutograd(torch.autograd.Function):
         return grad_expert_out, None, None, None, None, None, None, None, None, None
 
 
+def _rowwise_wave_grouped_wgrad(
+    grad_out: torch.Tensor,
+    mat_a: torch.Tensor,
+    offs: torch.Tensor,
+) -> torch.Tensor:
+    return F.grouped_mm(mat_a.transpose(-2, -1), grad_out, offs=offs)
+
+
+class _RowwiseWaveDispatchExpertsCombineAutograd(torch.autograd.Function):
+    """Fused BF16 rowwise-wave routed-expert region.
+
+    The fused node keeps the whole MoE transport/MLP/combine region behind
+    one autograd boundary so forward and backward can manage wave streams
+    explicitly.
+    """
+
+    @staticmethod
+    def forward(  # type: ignore[override]
+        ctx,
+        source_input: torch.Tensor,
+        probs: torch.Tensor,
+        w_up_gate: torch.Tensor,
+        w_down: torch.Tensor,
+        dispatch_out: torch.Tensor,
+        combine_in: torch.Tensor,
+        gathered_routes: torch.Tensor,
+        dst_ranks: torch.Tensor,
+        dst_rows: torch.Tensor,
+        compact_route_records: torch.Tensor,
+        compact_wave_offsets: torch.Tensor,
+        inverse_route_meta: torch.Tensor,
+        batch_size_per_local_expert: torch.Tensor,
+        local_expert_base_rows: torch.Tensor,
+        group_name: str,
+        group: dist.ProcessGroup,
+        nblocks: int,
+        wave_groups: Tuple[Tuple[int, int], ...],
+        recompute_linear1: bool,
+        recompute_act: bool,
+        dispatch_out_lease,
+        gathered_routes_lease,
+    ) -> torch.Tensor:
+        if source_input.ndim != 2:
+            raise RuntimeError(
+                f"rowwise-wave expects source_input [N, D], got {tuple(source_input.shape)}"
+            )
+        if probs.ndim != 2:
+            raise RuntimeError(f"probs must be [N, K], got {tuple(probs.shape)}")
+        if dst_ranks.shape != probs.shape or dst_rows.shape != probs.shape:
+            raise RuntimeError(
+                "dst_ranks/dst_rows/probs shape mismatch: "
+                f"{tuple(dst_ranks.shape)}, {tuple(dst_rows.shape)}, {tuple(probs.shape)}"
+            )
+        if dispatch_out.ndim != 2 or dispatch_out.shape[1] != source_input.shape[1]:
+            raise RuntimeError(
+                "dispatch_out must be [C, D] with D matching source_input: "
+                f"{tuple(dispatch_out.shape)} vs {tuple(source_input.shape)}"
+            )
+        if combine_in.shape != dispatch_out.shape:
+            raise RuntimeError(
+                f"combine_in must match dispatch_out shape, got {tuple(combine_in.shape)} "
+                f"vs {tuple(dispatch_out.shape)}"
+            )
+        if gathered_routes.ndim != 3 or gathered_routes.shape[:2] != probs.shape:
+            raise RuntimeError(
+                "gathered_routes must be [N, K, D] matching probs: "
+                f"{tuple(gathered_routes.shape)} vs {tuple(probs.shape)}"
+            )
+        if gathered_routes.shape[2] != source_input.shape[1]:
+            raise RuntimeError(
+                "gathered_routes hidden dim must match source_input: "
+                f"{gathered_routes.shape[2]} vs {source_input.shape[1]}"
+            )
+        if w_up_gate.ndim != 3 or w_down.ndim != 3:
+            raise RuntimeError("w_up_gate and w_down must be grouped expert weights")
+        if w_up_gate.shape[0] != w_down.shape[0]:
+            raise RuntimeError("w_up_gate and w_down expert counts must match")
+        if w_up_gate.shape[2] != source_input.shape[1] or w_down.shape[2] != source_input.shape[1]:
+            raise RuntimeError("expert weight d_model mismatch with source_input")
+        if w_up_gate.shape[1] != 2 * w_down.shape[1]:
+            raise RuntimeError("rowwise-wave fused node currently supports SwiGLU expert weights only")
+        if batch_size_per_local_expert.ndim != 1:
+            raise RuntimeError("batch_size_per_local_expert must be rank-1")
+        if local_expert_base_rows.ndim != 1:
+            raise RuntimeError("local_expert_base_rows must be rank-1")
+        if nblocks < 0:
+            raise RuntimeError(f"nblocks must be >= 0 (got {nblocks})")
+        recompute_linear1 = bool(recompute_linear1)
+        recompute_act = bool(recompute_act)
+
+        source_input_contig = source_input if source_input.is_contiguous() else source_input.contiguous()
+        probs_f32 = probs if probs.dtype == torch.float32 else probs.to(dtype=torch.float32)
+        if not probs_f32.is_contiguous():
+            probs_f32 = probs_f32.contiguous()
+        dst_ranks_i64 = dst_ranks if dst_ranks.dtype == torch.long else dst_ranks.to(dtype=torch.long)
+        dst_rows_i64 = dst_rows if dst_rows.dtype == torch.long else dst_rows.to(dtype=torch.long)
+        if not dst_ranks_i64.is_contiguous():
+            dst_ranks_i64 = dst_ranks_i64.contiguous()
+        if not dst_rows_i64.is_contiguous():
+            dst_rows_i64 = dst_rows_i64.contiguous()
+        batch_sizes_i32 = batch_size_per_local_expert.to(dtype=torch.int32)
+        if not batch_sizes_i32.is_contiguous():
+            batch_sizes_i32 = batch_sizes_i32.contiguous()
+        batch_sizes_i64 = batch_size_per_local_expert.to(dtype=torch.long)
+        if not batch_sizes_i64.is_contiguous():
+            batch_sizes_i64 = batch_sizes_i64.contiguous()
+        local_bases_i64 = local_expert_base_rows.to(dtype=torch.long)
+        if not local_bases_i64.is_contiguous():
+            local_bases_i64 = local_bases_i64.contiguous()
+
+        num_waves = len(wave_groups)
+        if compact_wave_offsets.numel() != num_waves + 1:
+            raise RuntimeError(
+                "compact_wave_offsets must have one more element than wave_groups: "
+                f"{compact_wave_offsets.numel()} vs {num_waves}"
+            )
+
+        dispatch_stream = get_or_init_stream(
+            id=f"rowwise_wave_dispatch_{group_name}",
+            priority=-10,
+        )
+        compute_stream = torch.cuda.current_stream()
+        combine_stream = get_or_init_stream(
+            id=f"rowwise_wave_combine_{group_name}",
+            priority=-10,
+        )
+        wait_stream_no_compile(dispatch_stream, compute_stream)
+        wait_stream_no_compile(combine_stream, compute_stream)
+
+        dispatch_done_events: list[torch.cuda.Event] = []
+        compute_done_events: list[torch.cuda.Event] = []
+        wave_row_ranges: list[tuple[torch.Tensor, torch.Tensor]] = []
+        needs_backward = any(ctx.needs_input_grad[:4])
+        save_linear1 = needs_backward and not recompute_linear1
+        save_act = needs_backward and not recompute_act and ctx.needs_input_grad[3]
+        saved_up_gate = (
+            torch.empty(
+                (dispatch_out.shape[0], w_up_gate.shape[1]),
+                device=dispatch_out.device,
+                dtype=dispatch_out.dtype,
+            )
+            if save_linear1
+            else source_input_contig.new_empty(0)
+        )
+        saved_h = (
+            torch.empty(
+                (dispatch_out.shape[0], w_down.shape[1]),
+                device=dispatch_out.device,
+                dtype=dispatch_out.dtype,
+            )
+            if save_act
+            else source_input_contig.new_empty(0)
+        )
+        for wave_idx, (start, end) in enumerate(wave_groups):
+            wave_label = f"rowwise_wave/wave_{wave_idx}/experts_{int(start)}_{int(end)}"
+            wave_row_start = local_bases_i64[int(start)]
+            wave_num_rows = batch_sizes_i64[int(start) : int(end)].sum()
+            wave_row_ranges.append((wave_row_start, wave_num_rows))
+
+            with torch.cuda.stream(dispatch_stream):
+                with nvtx.annotate(f"{wave_label}/dispatch", color="green"):
+                    symm_mem_vdev2d_kernels.rowwise_dispatch_put_compact(
+                        source_input_contig,
+                        dispatch_out,
+                        compact_route_records,
+                        compact_wave_offsets,
+                        wave_idx,
+                        group_name,
+                        nblocks=int(nblocks),
+                        pre_barrier=False,
+                        post_barrier=True,
+                    )
+                dispatch_done_events.append(record_stream_event_no_compile(dispatch_stream))
+
+            wait_event_no_compile(compute_stream, dispatch_done_events[wave_idx])
+            with torch.cuda.stream(compute_stream):
+                with nvtx.annotate(wave_label, color="orange"):
+                    with nvtx.annotate(f"{wave_label}/experts", color="purple"):
+                        batch_size_window = batch_sizes_i32[int(start) : int(end)]
+                        up_gate = (
+                            saved_up_gate
+                            if save_linear1
+                            else torch.empty(
+                                (dispatch_out.shape[0], w_up_gate.shape[1]),
+                                device=dispatch_out.device,
+                                dtype=dispatch_out.dtype,
+                            )
+                        )
+                        grouped_mm_row_offset(
+                            dispatch_out,
+                            w_up_gate[int(start) : int(end)].transpose(1, 2),
+                            batch_size_window,
+                            row_start=wave_row_start,
+                            out=up_gate,
+                        )
+                        h = swiglu_valid_prefix(
+                            up_gate,
+                            wave_num_rows,
+                            start=wave_row_start,
+                            out=saved_h if save_act else None,
+                        )
+                        grouped_mm_row_offset(
+                            h,
+                            w_down[int(start) : int(end)],
+                            batch_size_window,
+                            row_start=wave_row_start,
+                            out=combine_in,
+                        )
+                compute_done_events.append(record_stream_event_no_compile(compute_stream))
+
+        dispatch_done_event = record_stream_event_no_compile(dispatch_stream)
+        wait_event_no_compile(combine_stream, dispatch_done_event)
+        for wave_idx, (start, end) in enumerate(wave_groups):
+            wave_label = f"rowwise_wave/wave_{wave_idx}/experts_{int(start)}_{int(end)}"
+            wave_row_start, wave_num_rows = wave_row_ranges[wave_idx]
+            wait_event_no_compile(combine_stream, compute_done_events[wave_idx])
+            with torch.cuda.stream(combine_stream):
+                with nvtx.annotate(f"{wave_label}/combine_put", color="red"):
+                    symm_mem_vdev2d_kernels.rowwise_combine_put(
+                        combine_in,
+                        gathered_routes,
+                        inverse_route_meta,
+                        wave_row_start,
+                        wave_num_rows,
+                        group_name,
+                        nblocks=int(nblocks),
+                        pre_barrier=False,
+                        post_barrier=True,
+                    )
+        wait_stream_no_compile(compute_stream, combine_stream)
+
+        out = torch.empty(
+            (source_input.shape[0], source_input.shape[1]),
+            device=source_input.device,
+            dtype=source_input.dtype,
+        )
+        symm_mem_vdev2d_kernels.rowwise_reduce_gathered_routes(
+            gathered_routes,
+            probs_f32,
+            out,
+            route_ranks=dst_ranks_i64,
+        )
+
+        if needs_backward:
+            ctx.group = group
+            ctx.group_name = group_name
+            ctx.nblocks = int(nblocks)
+            ctx.recompute_linear1 = recompute_linear1
+            ctx.recompute_act = recompute_act
+            ctx.probs_input_dtype = probs.dtype
+            ctx.source_input_shape = tuple(source_input.shape)
+            ctx.dispatch_out = dispatch_out
+            ctx.combine_in = combine_in
+            ctx.gathered_routes = gathered_routes
+            ctx.dispatch_out_lease = dispatch_out_lease
+            ctx.gathered_routes_lease = gathered_routes_lease
+            ctx.wave_groups = tuple((int(start), int(end)) for start, end in wave_groups)
+            ctx.save_for_backward(
+                probs_f32,
+                dst_ranks_i64,
+                dst_rows_i64,
+                compact_route_records,
+                compact_wave_offsets,
+                inverse_route_meta,
+                batch_sizes_i32,
+                batch_sizes_i64,
+                local_bases_i64,
+                w_up_gate,
+                w_down,
+                saved_up_gate,
+                saved_h,
+            )
+        else:
+            if dispatch_out_lease is not None:
+                dispatch_out_lease.release()
+            if gathered_routes_lease is not None:
+                gathered_routes_lease.release()
+        return out
+
+    @staticmethod
+    def backward(ctx, grad_out: torch.Tensor):  # type: ignore[override]
+        (
+            probs,
+            dst_ranks,
+            _dst_rows,
+            compact_route_records,
+            compact_wave_offsets,
+            inverse_route_meta,
+            batch_sizes_i32,
+            batch_sizes_i64,
+            local_bases_i64,
+            w_up_gate,
+            w_down,
+            saved_up_gate,
+            saved_h,
+        ) = ctx.saved_tensors
+        grad_out_contig = grad_out if grad_out.is_contiguous() else grad_out.contiguous()
+        dispatch_out = ctx.dispatch_out
+        combine_in = ctx.combine_in
+        gathered_routes = ctx.gathered_routes
+        offs = torch.cumsum(batch_sizes_i32, dim=0, dtype=torch.int32)
+
+        grad_probs = None
+        if ctx.needs_input_grad[1]:
+            with nvtx.annotate("rowwise_wave/backward/grad_probs", color="blue"):
+                grad_out_for_probs = grad_out_contig
+                if grad_out_for_probs.dtype != gathered_routes.dtype:
+                    grad_out_for_probs = grad_out_for_probs.to(dtype=gathered_routes.dtype)
+                grad_probs = torch.bmm(
+                    gathered_routes,
+                    grad_out_for_probs.unsqueeze(-1),
+                ).squeeze(-1)
+                grad_probs = torch.where(dst_ranks >= 0, grad_probs, torch.zeros_like(grad_probs))
+                if grad_probs.dtype != ctx.probs_input_dtype:
+                    grad_probs = grad_probs.to(dtype=ctx.probs_input_dtype)
+
+        need_expert_backward = (
+            ctx.needs_input_grad[0]
+            or ctx.needs_input_grad[2]
+            or ctx.needs_input_grad[3]
+        )
+        grad_source = None
+        grad_w_up_gate = None
+        grad_w_down = None
+        if need_expert_backward:
+            need_grad_h = ctx.needs_input_grad[0] or ctx.needs_input_grad[2]
+            need_h_for_wgrad = ctx.needs_input_grad[3]
+            have_saved_up_gate = saved_up_gate.numel() != 0
+            have_saved_h = saved_h.numel() != 0
+            need_up_gate = need_grad_h or (need_h_for_wgrad and not have_saved_h)
+            up_gate = (
+                saved_up_gate
+                if have_saved_up_gate
+                else torch.empty(
+                    (dispatch_out.shape[0], w_up_gate.shape[1]),
+                    device=dispatch_out.device,
+                    dtype=dispatch_out.dtype,
+                )
+                if need_up_gate
+                else None
+            )
+            h = (
+                saved_h
+                if have_saved_h
+                else torch.empty(
+                    (dispatch_out.shape[0], w_down.shape[1]),
+                    device=dispatch_out.device,
+                    dtype=dispatch_out.dtype,
+                )
+                if need_h_for_wgrad
+                else None
+            )
+            grad_h = None
+            if need_grad_h:
+                grad_h = torch.empty(
+                    (dispatch_out.shape[0], w_down.shape[1]),
+                    device=dispatch_out.device,
+                    dtype=dispatch_out.dtype,
+                )
+            grad_up_gate = None
+            if need_grad_h:
+                grad_up_gate = torch.empty(
+                    (dispatch_out.shape[0], w_up_gate.shape[1]),
+                    device=dispatch_out.device,
+                    dtype=dispatch_out.dtype,
+                )
+            grad_dispatch = torch.empty_like(dispatch_out) if ctx.needs_input_grad[0] else None
+
+            compute_stream = torch.cuda.current_stream()
+            combine_grad_stream = get_or_init_stream(
+                id=f"rowwise_wave_backward_combine_grad_{ctx.group_name}",
+                priority=-10,
+            )
+            dispatch_grad_stream = (
+                get_or_init_stream(
+                    id=f"rowwise_wave_backward_dispatch_grad_{ctx.group_name}",
+                    priority=-10,
+                )
+                if grad_dispatch is not None
+                else None
+            )
+            wait_stream_no_compile(combine_grad_stream, compute_stream)
+            if dispatch_grad_stream is not None:
+                wait_stream_no_compile(dispatch_grad_stream, compute_stream)
+
+            wave_infos = []
+            combine_grad_done_events: list[torch.cuda.Event] = []
+            for wave_idx, (start, end) in enumerate(ctx.wave_groups):
+                wave_label = f"rowwise_wave/backward/wave_{wave_idx}/experts_{start}_{end}"
+                wave_row_start = local_bases_i64[start]
+                wave_num_rows = batch_sizes_i64[start:end].sum()
+                batch_size_window = batch_sizes_i32[start:end]
+                wave_infos.append(
+                    (
+                        wave_idx,
+                        start,
+                        end,
+                        wave_label,
+                        wave_row_start,
+                        wave_num_rows,
+                        batch_size_window,
+                    )
+                )
+
+                with torch.cuda.stream(combine_grad_stream):
+                    with nvtx.annotate(f"{wave_label}/combine_grad_put", color="red"):
+                        symm_mem_vdev2d_kernels.rowwise_dispatch_put_compact_weighted(
+                            grad_out_contig,
+                            combine_in,
+                            compact_route_records,
+                            compact_wave_offsets,
+                            wave_idx,
+                            probs,
+                            ctx.group_name,
+                            nblocks=ctx.nblocks,
+                            pre_barrier=False,
+                            post_barrier=True,
+                        )
+                    combine_grad_done_events.append(record_stream_event_no_compile(combine_grad_stream))
+
+            compute_done_events: list[torch.cuda.Event] = []
+            for (
+                wave_idx,
+                start,
+                end,
+                wave_label,
+                wave_row_start,
+                wave_num_rows,
+                batch_size_window,
+            ) in wave_infos:
+                wait_event_no_compile(compute_stream, combine_grad_done_events[wave_idx])
+                with torch.cuda.stream(compute_stream):
+                    with nvtx.annotate(wave_label, color="orange"):
+                        if need_up_gate and not have_saved_up_gate:
+                            assert up_gate is not None
+                            with nvtx.annotate(f"{wave_label}/recompute_linear1", color="purple"):
+                                grouped_mm_row_offset(
+                                    dispatch_out,
+                                    w_up_gate[start:end].transpose(1, 2),
+                                    batch_size_window,
+                                    row_start=wave_row_start,
+                                    out=up_gate,
+                                )
+                        if need_h_for_wgrad and not have_saved_h:
+                            assert up_gate is not None
+                            assert h is not None
+                            with nvtx.annotate(f"{wave_label}/recompute_act", color="yellow"):
+                                swiglu_valid_prefix(
+                                    up_gate,
+                                    wave_num_rows,
+                                    start=wave_row_start,
+                                    out=h,
+                                )
+
+                        if grad_h is not None:
+                            with nvtx.annotate(f"{wave_label}/dgrad_down_linear2", color="blue"):
+                                grouped_mm_row_offset(
+                                    combine_in,
+                                    w_down[start:end].transpose(1, 2),
+                                    batch_size_window,
+                                    row_start=wave_row_start,
+                                    out=grad_h,
+                                )
+                            assert up_gate is not None
+                            assert grad_up_gate is not None
+                            with nvtx.annotate(f"{wave_label}/swiglu_backward", color="yellow"):
+                                swiglu_backward_valid_prefix(
+                                    up_gate,
+                                    grad_h,
+                                    wave_num_rows,
+                                    start=wave_row_start,
+                                    out=grad_up_gate,
+                                )
+                            if grad_dispatch is not None:
+                                with nvtx.annotate(f"{wave_label}/dgrad_up_gate_linear1", color="blue"):
+                                    grouped_mm_row_offset(
+                                        grad_up_gate,
+                                        w_up_gate[start:end],
+                                        batch_size_window,
+                                        row_start=wave_row_start,
+                                        out=grad_dispatch,
+                                    )
+                    if dispatch_grad_stream is not None:
+                        compute_done_events.append(record_stream_event_no_compile(compute_stream))
+
+            if dispatch_grad_stream is not None:
+                # The two backward comm stages both use NVSHMEM barriers inside
+                # the transport kernels. Keep those collective epochs ordered
+                # across streams/ranks: compute may overlap combine-grad PUTs,
+                # but dispatch-grad PUTs must not interleave with later
+                # combine-grad barrier epochs.
+                wait_event_no_compile(dispatch_grad_stream, combine_grad_done_events[-1])
+                for (
+                    wave_idx,
+                    _start,
+                    _end,
+                    wave_label,
+                    wave_row_start,
+                    wave_num_rows,
+                    _batch_size_window,
+                ) in wave_infos:
+                    wait_event_no_compile(dispatch_grad_stream, compute_done_events[wave_idx])
+                    with torch.cuda.stream(dispatch_grad_stream):
+                        with nvtx.annotate(f"{wave_label}/dispatch_grad_put", color="green"):
+                            symm_mem_vdev2d_kernels.rowwise_combine_put(
+                                grad_dispatch,
+                                gathered_routes,
+                                inverse_route_meta,
+                                wave_row_start,
+                                wave_num_rows,
+                                ctx.group_name,
+                                nblocks=ctx.nblocks,
+                                pre_barrier=False,
+                                post_barrier=True,
+                            )
+
+            if ctx.needs_input_grad[3]:
+                assert h is not None
+                with nvtx.annotate("rowwise_wave/backward/wgrad_down", color="purple"):
+                    grad_w_down = _rowwise_wave_grouped_wgrad(
+                        combine_in,
+                        h,
+                        offs,
+                    )
+
+            if need_grad_h:
+                assert grad_up_gate is not None
+                if ctx.needs_input_grad[2]:
+                    with nvtx.annotate("rowwise_wave/backward/wgrad_up_gate", color="purple"):
+                        grad_w_up_gate = _rowwise_wave_grouped_wgrad(
+                            grad_up_gate,
+                            dispatch_out,
+                            offs,
+                        ).transpose(1, 2).contiguous()
+
+                if ctx.needs_input_grad[0]:
+                    grad_source = torch.empty(
+                        ctx.source_input_shape,
+                        device=grad_out.device,
+                        dtype=grad_out.dtype,
+                    )
+                    assert dispatch_grad_stream is not None
+                    wait_stream_no_compile(compute_stream, dispatch_grad_stream)
+                    with nvtx.annotate("rowwise_wave/backward/reduce_grad_source", color="green"):
+                        symm_mem_vdev2d_kernels.rowwise_reduce_gathered_routes_unweighted(
+                            gathered_routes,
+                            grad_source,
+                            route_ranks=dst_ranks,
+                        )
+
+        if ctx.dispatch_out_lease is not None:
+            ctx.dispatch_out_lease.release()
+        if ctx.gathered_routes_lease is not None:
+            ctx.gathered_routes_lease.release()
+        ctx.dispatch_out_lease = None
+        ctx.gathered_routes_lease = None
+        ctx.dispatch_out = None
+        ctx.combine_in = None
+        ctx.gathered_routes = None
+        ctx.group = None
+        return (
+            grad_source,
+            grad_probs,
+            grad_w_up_gate,
+            grad_w_down,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+
+
 def combined_forward_ep_no_sync_rowwise_wave(
     block: OLMoDDPTransformerBlock,
     x: torch.Tensor,
@@ -287,11 +880,10 @@ def combined_forward_ep_no_sync_rowwise_wave(
     num_input_tokens = moe_inp.shape[0]
     top_k = self.routed_experts_router.top_k
     rank_capacity = compute_ep_no_sync_rank_capacity(self, num_out_tokens)
-    # The compact/event-staged rowwise-wave path is currently forward-only:
-    # it uses row-offset grouped GEMM and range-aware combine PUT over shared
-    # scratch buffers. The grad-enabled path below keeps the stable-slot
-    # semantics but uses normal autograd-capable rowwise dispatch/combine.
-    use_compact_forward_path = not torch.is_grad_enabled()
+    use_fused_wave_node = moe_inp.dtype == torch.bfloat16
+    lease_dispatch_out = torch.is_grad_enabled()
+    lease_combine_gather = torch.is_grad_enabled() and use_fused_wave_node
+    need_combine_gather = use_fused_wave_node
     with torch.no_grad():
         requested_splits = local_batch_size_per_global_routed_expert.to(dtype=torch.long)
         (
@@ -316,25 +908,27 @@ def combined_forward_ep_no_sync_rowwise_wave(
             rank_capacity=rank_capacity,
         )
 
-    buffers = get_cached_ep_no_sync_buffers(
-        self,
-        dispatch_in_cap=num_out_tokens,
-        dispatch_out_cap=rank_capacity,
-        combine_in_cap=rank_capacity,
-        combine_out_cap=num_input_tokens,
-        d_model=moe_inp.shape[-1],
-        dtype=moe_inp.dtype,
-        device=moe_inp.device,
-        need_dispatch_in=False,
-        need_dispatch_meta=False,
-        need_dispatch_out=True,
-        need_combine_in=True,
-        need_combine_meta=False,
-        need_combine_out=False,
-        need_combine_gather=use_compact_forward_path,
-        combine_gather_cap=num_input_tokens if use_compact_forward_path else 0,
-        combine_gather_top_k=top_k if use_compact_forward_path else 0,
-    )
+    buffers = None
+    if not lease_dispatch_out and not lease_combine_gather:
+        buffers = get_cached_ep_no_sync_buffers(
+            self,
+            dispatch_in_cap=num_out_tokens,
+            dispatch_out_cap=rank_capacity,
+            combine_in_cap=rank_capacity,
+            combine_out_cap=num_input_tokens,
+            d_model=moe_inp.shape[-1],
+            dtype=moe_inp.dtype,
+            device=moe_inp.device,
+            need_dispatch_in=False,
+            need_dispatch_meta=False,
+            need_dispatch_out=True,
+            need_combine_in=True,
+            need_combine_meta=False,
+            need_combine_out=False,
+            need_combine_gather=need_combine_gather,
+            combine_gather_cap=num_input_tokens if need_combine_gather else 0,
+            combine_gather_top_k=top_k if need_combine_gather else 0,
+        )
     if buffers is None:
         buffers = get_ep_no_sync_buffers(
             self,
@@ -351,9 +945,11 @@ def combined_forward_ep_no_sync_rowwise_wave(
             need_combine_in=True,
             need_combine_meta=False,
             need_combine_out=False,
-            need_combine_gather=use_compact_forward_path,
-            combine_gather_cap=num_input_tokens if use_compact_forward_path else 0,
-            combine_gather_top_k=top_k if use_compact_forward_path else 0,
+            need_combine_gather=need_combine_gather,
+            combine_gather_cap=num_input_tokens if need_combine_gather else 0,
+            combine_gather_top_k=top_k if need_combine_gather else 0,
+            lease_dispatch_out=lease_dispatch_out,
+            lease_combine_gather=lease_combine_gather,
         )
 
     routing_map = local_x_global_routed_expert_indices.view(-1, top_k).int()
@@ -366,268 +962,132 @@ def combined_forward_ep_no_sync_rowwise_wave(
     else:
         shared_out_up, shared_out_gate = None, None
 
-    if use_compact_forward_path:
-        route_out = buffers.combine_gather
-    else:
-        route_out = torch.zeros(
-            (num_input_tokens, top_k, moe_inp.shape[-1]),
-            device=moe_inp.device,
-            dtype=moe_inp.dtype,
-        )
+    if use_fused_wave_node:
+        if self.routed_experts.activation != ExpertActivation.swiglu:
+            raise RuntimeError("rowwise_wave fused autograd currently requires swiglu routed experts")
+        if self.routed_experts.b_up_gate is not None or self.routed_experts.b_down is not None:
+            raise RuntimeError("rowwise_wave fused autograd does not support expert biases yet")
+        if self.routed_experts.rowwise_fp8 is not None and self.routed_experts.rowwise_fp8.enabled:
+            raise RuntimeError("rowwise_wave fused autograd does not support rowwise FP8 experts yet")
+
+    route_out = buffers.combine_gather if use_fused_wave_node else None
     wave_groups = _rowwise_wave_groups(
         self.num_local_routed_experts,
         self.ep.rowwise_wave_num_waves,
     )
 
-    if use_compact_forward_path:
-        with torch.no_grad():
-            batch_size_per_local_expert_full = recv_splits_by_src_local.sum(
-                dim=0,
-                dtype=torch.long,
-            )
-            local_expert_base_rows_full = (
-                torch.cumsum(batch_size_per_local_expert_full, dim=0)
-                - batch_size_per_local_expert_full
-            )
-            dst_ranks_full, dst_rows_full = build_rowwise_route_maps(
-                self,
-                routing_map=routing_map,
-                allowed_splits=allowed_splits,
-                keep_from_src_dest_local=keep_from_src_dest_local,
-            )
-            compact_route_records, compact_wave_offsets = (
-                symm_mem_vdev2d_kernels.rowwise_build_compact_route_records(
-                    dst_ranks_full,
-                    dst_rows_full,
-                    routing_map,
-                    num_local_experts=self.num_local_routed_experts,
-                    num_waves=len(wave_groups),
-                    nblocks=rowwise_nblocks,
-                )
-            )
-            inverse_route_meta = get_or_init_ep_no_sync_symm_tensor(
-                self,
-                name="rowwise_wave_inverse_route_meta",
-                shape=(rank_capacity, 2),
-                dtype=torch.long,
-                device=moe_inp.device,
-            )
-            symm_mem_vdev2d_kernels.rowwise_inverse_route_meta_put_compact(
-                inverse_route_meta,
-                compact_route_records,
-                compact_wave_offsets,
-                src_rank=dist.get_rank(self.ep_pg),
-                group_name=group_name,
+    with torch.no_grad():
+        batch_size_per_local_expert_full = recv_splits_by_src_local.sum(
+            dim=0,
+            dtype=torch.long,
+        )
+        local_expert_base_rows_full = (
+            torch.cumsum(batch_size_per_local_expert_full, dim=0)
+            - batch_size_per_local_expert_full
+        )
+        dst_ranks_full, dst_rows_full = build_rowwise_route_maps(
+            self,
+            routing_map=routing_map,
+            allowed_splits=allowed_splits,
+            keep_from_src_dest_local=keep_from_src_dest_local,
+        )
+        compact_route_records, compact_wave_offsets = (
+            symm_mem_vdev2d_kernels.rowwise_build_compact_route_records(
+                dst_ranks_full,
+                dst_rows_full,
+                routing_map,
+                num_local_experts=self.num_local_routed_experts,
+                num_waves=len(wave_groups),
                 nblocks=rowwise_nblocks,
-                pre_barrier=False,
-                post_barrier=True,
             )
-    else:
-        batch_size_per_local_expert_full = None
-        local_expert_base_rows_full = None
-        dst_ranks_full = None
-        dst_rows_full = None
-        compact_route_records = None
-        compact_wave_offsets = None
-        inverse_route_meta = None
-
-    if use_compact_forward_path:
-        assert batch_size_per_local_expert_full is not None
-        assert local_expert_base_rows_full is not None
-        assert inverse_route_meta is not None
-        assert compact_route_records is not None
-        assert compact_wave_offsets is not None
-
-        num_waves = len(wave_groups)
-        dispatch_stream = get_or_init_stream(
-            id=f"rowwise_wave_dispatch_{group_name}",
-            priority=-10,
         )
-        compute_stream = torch.cuda.current_stream()
-        combine_stream = get_or_init_stream(
-            id=f"rowwise_wave_combine_{group_name}",
-            priority=-10,
-        )
-        wait_stream_no_compile(dispatch_stream, compute_stream)
-        wait_stream_no_compile(combine_stream, compute_stream)
-
-        wave_row_ranges: list[tuple[torch.Tensor, torch.Tensor]] = []
-        dispatch_done_events: list[torch.cuda.Event] = []
-        compute_done_events: list[torch.cuda.Event] = []
-        for wave_idx, (start, end) in enumerate(wave_groups):
-            wave_label = f"rowwise_wave/wave_{wave_idx}/experts_{int(start)}_{int(end)}"
-            wave_row_start = local_expert_base_rows_full[int(start)]
-            wave_num_rows = batch_size_per_local_expert_full[int(start) : int(end)].sum()
-            wave_row_ranges.append((wave_row_start, wave_num_rows))
-
-            with torch.cuda.stream(dispatch_stream):
-                with nvtx.annotate(f"{wave_label}/dispatch", color="green"):
-                    symm_mem_vdev2d_kernels.rowwise_dispatch_put_compact(
-                        moe_inp,
-                        buffers.dispatch_out,
-                        compact_route_records,
-                        compact_wave_offsets,
-                        wave_idx,
-                        group_name,
-                        nblocks=rowwise_nblocks,
-                        pre_barrier=False,
-                        post_barrier=True,
-                    )
-                dispatch_done_events.append(record_stream_event_no_compile(dispatch_stream))
-
-            wait_event_no_compile(compute_stream, dispatch_done_events[wave_idx])
-            with torch.cuda.stream(compute_stream):
-                with nvtx.annotate(wave_label, color="orange"):
-                    with nvtx.annotate(f"{wave_label}/experts", color="purple"):
-                        self.routed_experts.forward_row_offset(
-                            buffers.dispatch_out,
-                            batch_size_per_local_expert_full,
-                            expert_start=start,
-                            expert_end=end,
-                            row_start=wave_row_start,
-                            down_proj_out=buffers.combine_in.detach(),
-                        )
-                compute_done_event = record_stream_event_no_compile(compute_stream)
-                compute_done_events.append(compute_done_event)
-
-        dispatch_done_event = record_stream_event_no_compile(dispatch_stream)
-        wait_event_no_compile(combine_stream, dispatch_done_event)
-        for wave_idx, (start, end) in enumerate(wave_groups):
-            wave_label = f"rowwise_wave/wave_{wave_idx}/experts_{int(start)}_{int(end)}"
-            wave_row_start, wave_num_rows = wave_row_ranges[wave_idx]
-            compute_done_event = compute_done_events[wave_idx]
-            wait_event_no_compile(combine_stream, compute_done_event)
-            with torch.cuda.stream(combine_stream):
-                with nvtx.annotate(f"{wave_label}/combine_put", color="red"):
-                    symm_mem_vdev2d_kernels.rowwise_combine_put(
-                        buffers.combine_in,
-                        route_out,
-                        inverse_route_meta,
-                        wave_row_start,
-                        wave_num_rows,
-                        group_name,
-                        nblocks=rowwise_nblocks,
-                        pre_barrier=False,
-                        post_barrier=True,
-                    )
-        wait_stream_no_compile(compute_stream, combine_stream)
-    else:
-        for wave_idx, (start, end) in enumerate(wave_groups):
-            wave_label = f"rowwise_wave/wave_{wave_idx}/experts_{int(start)}_{int(end)}"
-            with nvtx.annotate(wave_label, color="orange"):
-                with nvtx.annotate(f"{wave_label}/route", color="blue"):
-                    with torch.no_grad():
-                        local_mask = _wave_local_expert_mask(
-                            num_local_experts=self.num_local_routed_experts,
-                            start=start,
-                            end=end,
-                            device=keep_from_src_dest_local.device,
-                        )
-                        global_mask = _wave_global_expert_mask(
-                            ep_world_size=self.ep_world_size,
-                            num_local_experts=self.num_local_routed_experts,
-                            start=start,
-                            end=end,
-                            device=allowed_splits.device,
-                        )
-                        wave_allowed_splits = torch.where(
-                            global_mask,
-                            allowed_splits,
-                            torch.zeros_like(allowed_splits),
-                        )
-                        wave_keep_from_src_dest_local = torch.where(
-                            local_mask.view(1, 1, -1),
-                            keep_from_src_dest_local,
-                            torch.zeros_like(keep_from_src_dest_local),
-                        )
-                        wave_recv_splits_by_src_local = torch.where(
-                            local_mask.view(1, -1),
-                            recv_splits_by_src_local,
-                            torch.zeros_like(recv_splits_by_src_local),
-                        )
-                        batch_size_per_local_expert = wave_recv_splits_by_src_local.sum(
-                            dim=0,
-                            dtype=torch.long,
-                        )
-                        dst_ranks, dst_rows = build_rowwise_route_maps(
-                            self,
-                            routing_map=routing_map,
-                            allowed_splits=wave_allowed_splits,
-                            keep_from_src_dest_local=wave_keep_from_src_dest_local,
-                        )
-
-                with nvtx.annotate(f"{wave_label}/dispatch", color="green"):
-                    dispatch_rank_major = _DispatchRowwiseAutograd.apply(
-                        moe_inp,
-                        None,
-                        dst_ranks,
-                        dst_rows,
-                        buffers.dispatch_out,
-                        None,
-                        group_name,
-                        self.ep_pg,
-                        rowwise_nblocks,
-                        False,
-                        False,
-                        True,
-                        False,
-                    )
-                    dispatch_rank_major_for_experts = dispatch_rank_major.clone()
-                    down_proj_out = buffers.combine_in.detach()
-
-                with nvtx.annotate(f"{wave_label}/experts", color="purple"):
-                    expert_out = self.routed_experts(
-                        dispatch_rank_major_for_experts,
-                        batch_size_per_local_expert,
-                        down_proj_out=down_proj_out,
-                        up_proj_input_grad_out=None,
-                    )
-
-                with nvtx.annotate(f"{wave_label}/combine_get", color="red"):
-                    expert_out_for_gather = expert_out
-                    expert_out_aliases_symm_expert_out = (
-                        expert_out.data_ptr() == buffers.combine_in.data_ptr()
-                        and expert_out.storage_offset() == buffers.combine_in.storage_offset()
-                        and tuple(expert_out.shape) == tuple(buffers.combine_in.shape)
-                    )
-                    wave_route_out = _RowwiseGatherSlotsAutograd.apply(
-                        expert_out_for_gather,
-                        buffers.combine_in,
-                        dst_ranks,
-                        dst_rows,
-                        group_name,
-                        self.ep_pg,
-                        rowwise_nblocks,
-                        expert_out_aliases_symm_expert_out,
-                        True,
-                        False,
-                    )
-                    route_out = route_out + wave_route_out
-
-    if use_compact_forward_path:
-        local_x = torch.empty(
-            (num_input_tokens, moe_inp.shape[-1]),
+        inverse_route_meta = get_or_init_ep_no_sync_symm_tensor(
+            self,
+            name="rowwise_wave_inverse_route_meta",
+            shape=(rank_capacity, 2),
+            dtype=torch.long,
             device=moe_inp.device,
-            dtype=moe_inp.dtype,
         )
-        route_probs_for_reduce = route_probs
-        assert dst_ranks_full is not None
-        route_probs_for_reduce = torch.where(
-            dst_ranks_full >= 0,
-            route_probs_for_reduce,
-            torch.zeros_like(route_probs_for_reduce),
+        symm_mem_vdev2d_kernels.rowwise_inverse_route_meta_put_compact(
+            inverse_route_meta,
+            compact_route_records,
+            compact_wave_offsets,
+            src_rank=dist.get_rank(self.ep_pg),
+            group_name=group_name,
+            nblocks=rowwise_nblocks,
+            pre_barrier=False,
+            post_barrier=True,
         )
-        if not route_probs_for_reduce.is_contiguous():
-            route_probs_for_reduce = route_probs_for_reduce.contiguous()
-        symm_mem_vdev2d_kernels.rowwise_reduce_gathered_routes(
+
+    if use_fused_wave_node:
+        assert route_out is not None
+        local_x = _RowwiseWaveDispatchExpertsCombineAutograd.apply(
+            moe_inp,
+            route_probs,
+            self.routed_experts.w_up_gate,
+            self.routed_experts.w_down,
+            buffers.dispatch_out,
+            buffers.combine_in,
             route_out,
-            route_probs_for_reduce,
-            local_x,
+            dst_ranks_full,
+            dst_rows_full,
+            compact_route_records,
+            compact_wave_offsets,
+            inverse_route_meta,
+            batch_size_per_local_expert_full,
+            local_expert_base_rows_full,
+            group_name,
+            self.ep_pg,
+            rowwise_nblocks,
+            wave_groups,
+            self.ep.rowwise_wave_recompute_linear1,
+            self.ep.rowwise_wave_recompute_act,
+            buffers.dispatch_out_lease,
+            buffers.combine_gather_lease,
         )
     else:
-        local_x = torch.sum(
-            route_out * route_probs.to(dtype=route_out.dtype).unsqueeze(-1),
-            dim=1,
+        dispatch_rank_major = _DispatchRowwiseAutograd.apply(
+            moe_inp,
+            None,
+            dst_ranks_full,
+            dst_rows_full,
+            buffers.dispatch_out,
+            buffers.dispatch_out_lease,
+            group_name,
+            self.ep_pg,
+            rowwise_nblocks,
+            False,
+            True,
+            True,
+            False,
+        )
+        expert_out = self.routed_experts(
+            dispatch_rank_major,
+            batch_size_per_local_expert_full,
+            down_proj_out=buffers.combine_in.detach(),
+            up_proj_input_grad_out=buffers.dispatch_out.detach(),
+        )
+        expert_out_aliases_symm_expert_out = (
+            expert_out.data_ptr() == buffers.combine_in.data_ptr()
+            and expert_out.storage_offset() == buffers.combine_in.storage_offset()
+            and tuple(expert_out.shape) == tuple(buffers.combine_in.shape)
+        )
+        local_x = _RowwiseCombineWeightedAutograd.apply(
+            expert_out,
+            buffers.combine_in,
+            None,
+            None,
+            None,
+            None,
+            dst_ranks_full,
+            dst_rows_full,
+            route_probs,
+            group_name,
+            self.ep_pg,
+            rowwise_nblocks,
+            expert_out_aliases_symm_expert_out,
+            True,
+            False,
         )
 
     wait_stream_no_compile(

@@ -93,6 +93,18 @@ void rowwise_dispatch_put_compact(
     bool pre_barrier,
     bool post_barrier);
 
+void rowwise_dispatch_put_compact_weighted(
+    torch::Tensor& input,
+    torch::Tensor& out,
+    torch::Tensor& route_records,
+    torch::Tensor& wave_offsets,
+    int64_t wave_idx,
+    torch::Tensor& probs,
+    const std::string& group_name,
+    int64_t nblocks,
+    bool pre_barrier,
+    bool post_barrier);
+
 void rowwise_inverse_route_meta_put_compact(
     torch::Tensor& inverse_route_meta,
     torch::Tensor& route_records,
@@ -129,6 +141,11 @@ void rowwise_combine_put(
 void rowwise_reduce_gathered_routes(
     torch::Tensor& gathered,
     torch::Tensor& probs,
+    torch::Tensor& out,
+    const std::optional<torch::Tensor>& route_ranks);
+
+void rowwise_reduce_gathered_routes_unweighted(
+    torch::Tensor& gathered,
     torch::Tensor& out,
     const std::optional<torch::Tensor>& route_ranks);
 
@@ -280,6 +297,21 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
       py::arg("post_barrier") = true);
 
   m.def(
+      "rowwise_dispatch_put_compact_weighted",
+      &rowwise_dispatch_put_compact_weighted,
+      "NVSHMEM compact weighted row-wise dispatch: put active compact route records scaled by route probabilities",
+      py::arg("input"),
+      py::arg("out"),
+      py::arg("route_records"),
+      py::arg("wave_offsets"),
+      py::arg("wave_idx"),
+      py::arg("probs"),
+      py::arg("group_name"),
+      py::arg("nblocks") = 0,
+      py::arg("pre_barrier") = false,
+      py::arg("post_barrier") = true);
+
+  m.def(
       "rowwise_inverse_route_meta_put_compact",
       &rowwise_inverse_route_meta_put_compact,
       "NVSHMEM compact row-wise metadata PUT for inverse route maps",
@@ -327,6 +359,14 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
       "Reduce gathered row-wise route slots with route probabilities",
       py::arg("gathered"),
       py::arg("probs"),
+      py::arg("out"),
+      py::arg("route_ranks") = std::nullopt);
+
+  m.def(
+      "rowwise_reduce_gathered_routes_unweighted",
+      &rowwise_reduce_gathered_routes_unweighted,
+      "Reduce gathered row-wise route slots without route probabilities",
+      py::arg("gathered"),
       py::arg("out"),
       py::arg("route_ranks") = std::nullopt);
 

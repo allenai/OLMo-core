@@ -46,6 +46,8 @@ class ExpertParallelConfig(Config):
     tma_ibgda_symmetric_expert_out: bool = False
     rowwise_wave_num_waves: int = 1
     rowwise_wave_mode: str = "expert"
+    rowwise_wave_recompute_linear1: bool = False
+    rowwise_wave_recompute_act: bool = False
     wave_use_bf16_persistent_mega_forward: bool = False
     checkpoint_tbo: bool = False
 

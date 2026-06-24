@@ -239,6 +239,35 @@ def rowwise_dispatch_put_compact(
 
 
 @torch.compiler.disable
+def rowwise_dispatch_put_compact_weighted(
+    input: torch.Tensor,
+    out: torch.Tensor,
+    route_records: torch.Tensor,
+    wave_offsets: torch.Tensor,
+    wave_idx: int,
+    probs: torch.Tensor,
+    group_name: str,
+    *,
+    nblocks: int = 0,
+    pre_barrier: bool = False,
+    post_barrier: bool = True,
+) -> None:
+    ext = _load_cuda_extension()
+    ext.rowwise_dispatch_put_compact_weighted(
+        input,
+        out,
+        route_records,
+        wave_offsets,
+        int(wave_idx),
+        probs,
+        group_name,
+        nblocks,
+        pre_barrier,
+        post_barrier,
+    )
+
+
+@torch.compiler.disable
 def rowwise_inverse_route_meta_put_compact(
     inverse_route_meta: torch.Tensor,
     route_records: torch.Tensor,
@@ -377,6 +406,17 @@ def rowwise_reduce_gathered_routes(
 ) -> None:
     ext = _load_cuda_extension()
     ext.rowwise_reduce_gathered_routes(gathered, probs, out, route_ranks)
+
+
+@torch.compiler.disable
+def rowwise_reduce_gathered_routes_unweighted(
+    gathered: torch.Tensor,
+    out: torch.Tensor,
+    route_ranks: Optional[torch.Tensor] = None,
+) -> None:
+    ext = _load_cuda_extension()
+    ext.rowwise_reduce_gathered_routes_unweighted(gathered, out, route_ranks)
+
 
 @nvtx.annotate("rowwise_combine_get_scaled")
 def rowwise_combine_get_scaled(

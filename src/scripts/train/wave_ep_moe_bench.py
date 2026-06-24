@@ -212,13 +212,35 @@ def _parse_args() -> argparse.Namespace:
         default=4,
         help="Number of contiguous local-expert waves for --modes rowwise_wave.",
     )
+    parser.add_argument(
+        "--rowwise-wave-recompute-linear1",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help=(
+            "Whether rowwise_wave backward recomputes expert linear1/up-gate. "
+            "Default is false, which saves the forward linear1 output."
+        ),
+    )
+    parser.add_argument(
+        "--rowwise-wave-recompute-act",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help=(
+            "Whether rowwise_wave backward recomputes the SwiGLU activation output. "
+            "Default is false, which saves the forward activation output."
+        ),
+    )
     parser.add_argument("--warmup", type=int, default=2)
     parser.add_argument("--iters", type=int, default=2)
     parser.add_argument(
         "--pass-type",
-        choices=("forward", "forward_backward"),
+        choices=("forward", "backward", "forward_backward"),
         default="forward_backward",
-        help="Measure forward only or training-style forward+backward.",
+        help=(
+            "Measure forward only, backward only, or training-style "
+            "forward+backward. Backward-only prepares the graph before the "
+            "timed region."
+        ),
     )
     parser.add_argument("--compile", action="store_true", help="Enable torch.compile on expert modules.")
     parser.add_argument("--no-compile", action="store_true", help="Deprecated no-op; compile is disabled by default.")
@@ -298,6 +320,8 @@ def _build_block(
     use_bf16_persistent_mega: bool,
     rowwise_wave: bool,
     rowwise_wave_num_waves: int,
+    rowwise_wave_recompute_linear1: bool,
+    rowwise_wave_recompute_act: bool,
     include_shared_expert: bool,
     shared_hidden_size: int,
     uniform_routing: bool,
@@ -367,6 +391,12 @@ def _build_block(
             rowwise_nblocks=rowwise_nblocks,
             rowwise_wave_num_waves=(
                 rowwise_wave_num_waves if rowwise_wave else 1
+            ),
+            rowwise_wave_recompute_linear1=(
+                rowwise_wave_recompute_linear1 if rowwise_wave else False
+            ),
+            rowwise_wave_recompute_act=(
+                rowwise_wave_recompute_act if rowwise_wave else False
             ),
             wave_use_bf16_persistent_mega_forward=(
                 use_bf16_persistent_mega and use_wave
@@ -497,7 +527,7 @@ def _run_one_iter(
                 d_model,
                 device="cuda",
                 dtype=input_dtype,
-                requires_grad=(pass_type == "forward_backward"),
+                requires_grad=(pass_type in ("backward", "forward_backward")),
             )
         finally:
             torch.cuda.nvtx.range_pop()
@@ -525,6 +555,59 @@ def _run_one_iter(
     finally:
         torch.cuda.nvtx.range_pop()
 
+    torch.cuda.nvtx.range_push(f"{label}/backward")
+    try:
+        loss.backward()
+    finally:
+        torch.cuda.nvtx.range_pop()
+
+    torch.cuda.nvtx.range_push(f"{label}/zero_grad")
+    try:
+        block.zero_grad(set_to_none=True)
+    finally:
+        torch.cuda.nvtx.range_pop()
+
+
+def _prepare_backward_loss(
+    block: OLMoDDPTransformerBlock,
+    *,
+    tokens: int,
+    d_model: int,
+    input_dtype: torch.dtype,
+    label: str,
+) -> torch.Tensor:
+    torch.cuda.nvtx.range_push(f"{label}/input")
+    try:
+        x = torch.randn(
+            1,
+            tokens,
+            d_model,
+            device="cuda",
+            dtype=input_dtype,
+            requires_grad=True,
+        )
+    finally:
+        torch.cuda.nvtx.range_pop()
+
+    torch.cuda.nvtx.range_push(f"{label}/forward_prep")
+    try:
+        y = block(x)
+    finally:
+        torch.cuda.nvtx.range_pop()
+
+    torch.cuda.nvtx.range_push(f"{label}/loss_prep")
+    try:
+        return y.square().mean()
+    finally:
+        torch.cuda.nvtx.range_pop()
+
+
+def _run_backward_from_loss(
+    block: OLMoDDPTransformerBlock,
+    loss: torch.Tensor,
+    *,
+    label: str,
+) -> None:
     torch.cuda.nvtx.range_push(f"{label}/backward")
     try:
         loss.backward()
@@ -1180,6 +1263,8 @@ def _bench_case(
             use_bf16_persistent_mega=case.use_bf16_persistent_mega,
             rowwise_wave=case.rowwise_wave,
             rowwise_wave_num_waves=args.rowwise_wave_num_waves,
+            rowwise_wave_recompute_linear1=args.rowwise_wave_recompute_linear1,
+            rowwise_wave_recompute_act=args.rowwise_wave_recompute_act,
             include_shared_expert=not args.no_shared_expert,
             shared_hidden_size=args.shared_hidden_size,
             uniform_routing=not args.random_routing,
@@ -1221,7 +1306,11 @@ def _bench_case(
                 d_model=args.d_model,
                 input_dtype=input_dtype,
                 label=label,
-                pass_type=args.pass_type,
+                pass_type=(
+                    "forward_backward"
+                    if args.pass_type == "backward"
+                    else args.pass_type
+                ),
                 static_input=static_input,
             )
         finally:
@@ -1237,20 +1326,42 @@ def _bench_case(
     events: list[tuple[torch.cuda.Event, torch.cuda.Event]] = []
     for idx in range(args.iters):
         label = f"BENCH/{case.name}/tokens_{tokens}/iter_{idx}"
+        backward_loss = None
+        if args.pass_type == "backward":
+            torch.cuda.nvtx.range_push(f"{label}/prep")
+            try:
+                backward_loss = _prepare_backward_loss(
+                    block,
+                    tokens=tokens,
+                    d_model=args.d_model,
+                    input_dtype=input_dtype,
+                    label=label,
+                )
+            finally:
+                torch.cuda.nvtx.range_pop()
+
         start = torch.cuda.Event(enable_timing=True)
         end = torch.cuda.Event(enable_timing=True)
         start.record()
         torch.cuda.nvtx.range_push(f"{label}/total")
         try:
-            _run_one_iter(
-                block,
-                tokens=tokens,
-                d_model=args.d_model,
-                input_dtype=input_dtype,
-                label=label,
-                pass_type=args.pass_type,
-                static_input=static_input,
-            )
+            if args.pass_type == "backward":
+                assert backward_loss is not None
+                _run_backward_from_loss(
+                    block,
+                    backward_loss,
+                    label=label,
+                )
+            else:
+                _run_one_iter(
+                    block,
+                    tokens=tokens,
+                    d_model=args.d_model,
+                    input_dtype=input_dtype,
+                    label=label,
+                    pass_type=args.pass_type,
+                    static_input=static_input,
+                )
         finally:
             torch.cuda.nvtx.range_pop()
         end.record()
@@ -1287,6 +1398,8 @@ def _bench_case(
             f"d={args.d_model} hidden={args.hidden_size} experts={args.num_experts} "
             f"top_k={args.top_k} cap={capacity_factor} "
             f"rowwise_wave_num_waves={args.rowwise_wave_num_waves if case.rowwise_wave else 0} "
+            f"rowwise_wave_recompute_linear1={args.rowwise_wave_recompute_linear1 if case.rowwise_wave else False} "
+            f"rowwise_wave_recompute_act={args.rowwise_wave_recompute_act if case.rowwise_wave else False} "
             f"ms/iter(max_rank)={max_ms:.3f} "
             f"local_tokens/s={tokens / (max_ms / 1000.0):.1f} "
             f"global_tokens/s={tokens * world_size / (max_ms / 1000.0):.1f} "
