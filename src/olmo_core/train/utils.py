@@ -219,24 +219,28 @@ def reduce_metrics(
     world_size = get_world_size(process_group)
     divide_factor = get_reduce_divide_factor(world_size)
 
-    # The ``metrics_consistent=True`` fast path builds its all-reduce tensors from each rank's
-    # *per-step* recorded metric names, so it deadlocks if those names differ across ranks for any
-    # step -- e.g. a callback that records a throughput metric only on ranks whose micro-batch had
-    # tokens, which leaves some ranks with an extra key on the final step. The caller's
-    # ``metrics_consistent`` hint is derived from the metric *registry* (the union of names ever
-    # seen) and so does not catch this per-step divergence. Cheaply verify the actual per-step names
-    # agree across ranks (one all-gather, on the same process group and thread as the fallback
-    # path's own collectives) and downgrade to the consistent-handling path if they don't.
-    if metrics_consistent:
-        local_step_metric_names: Dict[int, List[str]] = {
-            step: sorted(name for name in step_metrics if metrics_reduce_type.get(name) is not None)
-            for step, step_metrics in metrics.items()
-        }
-        all_ranks_step_metric_names = all_gather_object(
-            local_step_metric_names, group=process_group
-        )
-        if any(names != local_step_metric_names for names in all_ranks_step_metric_names):
-            metrics_consistent = False
+    # Align metrics across ranks so every rank reduces exactly the same (step, reducible-name) set.
+    # The fast path builds its all-reduce tensors from each rank's *local* steps and per-step names,
+    # so it deadlocks if either differs across ranks -- e.g. a rank that recorded a metric on a step
+    # the others didn't, or that recorded nothing this interval. The caller guarantees every rank
+    # calls reduce_metrics (uniform participation), so this all-gather is collective; it runs on the
+    # same process group/thread as the reduces below (the async bookkeeping thread), so it can't race
+    # a main-thread collective. We gather each rank's per-step reducible-name signature, pad every
+    # rank up to the union of steps, and fall back to the consistent-handling path when signatures
+    # diverge. ``metrics`` may be empty on this rank (it still must participate).
+    local_signature: Dict[int, List[str]] = {
+        step: sorted(name for name in step_metrics if metrics_reduce_type.get(name) is not None)
+        for step, step_metrics in metrics.items()
+    }
+    all_signatures = all_gather_object(local_signature, group=process_group)
+    union_steps = sorted({step for signature in all_signatures for step in signature})
+    if not union_steps:
+        # No rank recorded anything this interval.
+        return out
+    if any(signature != local_signature for signature in all_signatures):
+        metrics_consistent = False
+        for step in union_steps:
+            metrics.setdefault(step, {})
 
     all_steps_metric_world_sizes: Dict[int, Dict[str, int]] = {}
     all_steps_metrics_reduce_type: Dict[int, Dict[str, Optional[ReduceType]]] = {}
@@ -259,9 +263,9 @@ def reduce_metrics(
     max_metric_values: List[torch.Tensor] = []
 
     for step in sorted(metrics.keys()):
-        step_metrics_reduce_type: Dict[
-            str, Optional[ReduceType]
-        ] = all_steps_metrics_reduce_type.get(step, metrics_reduce_type)
+        step_metrics_reduce_type: Dict[str, Optional[ReduceType]] = (
+            all_steps_metrics_reduce_type.get(step, metrics_reduce_type)
+        )
         step_sum_metric_names: List[str] = []
         step_sum_metric_values: List[torch.Tensor] = []
         step_max_metric_names: List[str] = []
