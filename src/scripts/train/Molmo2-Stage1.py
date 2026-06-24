@@ -72,9 +72,9 @@ log = logging.getLogger(__name__)
 
 MODEL_ID = "allenai/Molmo2-4B"  # HF checkpoint to initialise from (also provides the tokenizer)
 SEQUENCE_LENGTH = 4096  # fixed pad length; mm_olmo stage 1 uses ~5248
-USE_FLEX_ATTN = False  # True -> fused FlexAttention backend for the multimodal masks (~+8% MFU)
+USE_FLEX_ATTN = True  # fused FlexAttention backend for the multimodal masks (~+8% MFU)
 PACK_SEQUENCES = True  # pack several examples per sequence (most are ~1.4k of 4096 tokens)
-COMPILE_MODEL = False  # torch.compile the LM (fuses pointwise ops; one-time compile warmup)
+COMPILE_MODEL = True  # torch.compile the LM (fuses pointwise ops; one-time compile warmup)
 DATA_PREFETCH_WORKERS = 4  # background threads preprocessing examples (0 = synchronous)
 MAX_CROPS = 8
 
