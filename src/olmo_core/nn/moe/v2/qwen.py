@@ -35,6 +35,23 @@ QWEN3_MOE_LAYER_PATTERN = (
 QWEN3_DENSE_MOE_LAYER_TYPE = "full_attention"
 
 
+def _resolve_ep_config(
+    ep: ExpertParallelConfig | None,
+    *,
+    ep_path: ExpertParallelPath | str,
+    ep_capacity_factor: float,
+) -> ExpertParallelConfig:
+    if ep is None:
+        ep = ExpertParallelConfig(
+            path=ExpertParallelPath(ep_path),
+            capacity_factor=ep_capacity_factor,
+        )
+    else:
+        ep = deepcopy(ep)
+    ep.validate()
+    return ep
+
+
 def _text_config(hf_config: Mapping[str, Any]) -> Mapping[str, Any]:
     return hf_config.get("text_config", hf_config)
 
@@ -282,9 +299,9 @@ def build_qwen3_moe_config(
     router_aux_loss_weight: float | None = 0.001,
     router_z_loss_weight: float | None = None,
     compile_friendly_recompute: bool = False,
-    use_ep_no_sync: bool = False,
-    use_rowwise_all_to_all: bool = False,
-    ep_no_sync_capacity_factor: float = 1.25,
+    ep: ExpertParallelConfig | None = None,
+    ep_path: ExpertParallelPath | str = ExpertParallelPath.sync_1d,
+    ep_capacity_factor: float = 1.25,
 ) -> OLMoDDPModelConfig:
     layer_types = _resolve_layer_types(layer_types, n_layers)
     layer_norm = LayerNormConfig(
@@ -322,16 +339,7 @@ def build_qwen3_moe_config(
         name=TransformerBlockType.moe_fused_v2,
         use_pre_norm=True,
         use_peri_norm=False,
-        ep=ExpertParallelConfig(
-            path=(
-                ExpertParallelPath.rowwise_nvshmem
-                if use_ep_no_sync and use_rowwise_all_to_all
-                else ExpertParallelPath.no_sync_1d
-                if use_ep_no_sync
-                else ExpertParallelPath.sync_1d
-            ),
-            capacity_factor=ep_no_sync_capacity_factor,
-        ),
+        ep=_resolve_ep_config(ep, ep_path=ep_path, ep_capacity_factor=ep_capacity_factor),
         checkpoint_attn=compile_friendly_recompute,
         checkpoint_permute_moe_unpermute=compile_friendly_recompute,
         checkpoint_second_unpermute=compile_friendly_recompute,

@@ -123,7 +123,7 @@ def _env_int(name: str, default: int) -> int:
     return default if value is None else int(value)
 
 
-VARIANT_NAME = os.environ.get("OLMOE3_TESTRUN_VARIANT", "testrun10-nopp-ep4-gdn-bf16-norecompute")
+VARIANT_NAME = os.environ.get("OLMOE3_TESTRUN_VARIANT", "testrun10-nopp-noep-gdn-bf16-norecompute")
 
 IN_EVAL_MODE = False
 import sys
@@ -153,7 +153,7 @@ MLP_RATIO = EFFECTIVE_MLP / D_MODEL
 DENSE_LAYER_MLP = (TOP_K * MOE_HIDDEN_SIZE + SHARED_MLP_HIDDEN_SIZE * NUM_SHARED_EXPERTS)
 
 # DP_DIM=2
-EP_DIM=_env_int("OLMOE3_TESTRUN_EP_DIM", 4)
+EP_DIM=_env_int("OLMOE3_TESTRUN_EP_DIM", 1)
 PP_DIM=_env_int("OLMOE3_TESTRUN_PP_DIM", 1)
 
 # ref
@@ -187,7 +187,7 @@ GLOBAL_BATCH_TOKENS_IN_M = GLOBAL_BATCH_SIZE // 1024 // 1024
 
 
 
-SCHED_WARMUP_TOKENS = int((10e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE)
+SCHED_WARMUP_TOKENS = int((5e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE)
 SCHED_FAST_DECAY_TOKENS = int((0e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE)
 SCHED_LONG_DECAY_TOKENS = int((11990e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE)
 SCHED_MID_FRACTION = 1.0

@@ -19,7 +19,6 @@ from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.distributed.parallel.pipeline_parallel import PipelineScheduleType
 from olmo_core.float8 import AOFloat8LinearConfig, Float8Config
 from olmo_core.internal.experiment import CommonComponents, main, ExperimentConfig
-from olmo_core.nn.attention import SlidingWindowAttentionConfig
 from olmo_core.nn.lm_head import LMLossImplementation
 from olmo_core.nn.moe import (
     MoEConfig,
@@ -76,7 +75,6 @@ from olmo_core.train.callbacks import (
     TorchMemoryHistoryCallback
 )
 from olmo_core.train.train_module import (
-    TransformerContextParallelConfig,
     TransformerDataParallelConfig,
     TransformerDataParallelWrappingStrategy,
     TransformerTrainModuleConfig,
@@ -125,14 +123,7 @@ def _env_int(name: str, default: int) -> int:
     return default if value is None else int(value)
 
 
-def _env_choice(name: str, default: str, choices: tuple[str, ...]) -> str:
-    value = os.environ.get(name, default).lower()
-    if value not in choices:
-        raise ValueError(f"{name} must be one of {choices}, got {value!r}")
-    return value
-
-
-VARIANT_NAME = os.environ.get("OLMOE3_TESTRUN_VARIANT", "testrun")
+VARIANT_NAME = os.environ.get("OLMOE3_TESTRUN_VARIANT", "testrun12-nopp-noep-gdn-bf16-norecompute")
 
 IN_EVAL_MODE = False
 import sys
@@ -141,7 +132,7 @@ if len(sys.argv) > 1 and sys.argv[1] == "eval_checkpoints":
 
 
 EVAL_INTERVAL = 2000
-SAVE_INTERVAL = 2000
+SAVE_INTERVAL = 500
 
 NUM_EXPERTS = 32
 TOP_K = 4
@@ -162,16 +153,15 @@ MLP_RATIO = EFFECTIVE_MLP / D_MODEL
 DENSE_LAYER_MLP = (TOP_K * MOE_HIDDEN_SIZE + SHARED_MLP_HIDDEN_SIZE * NUM_SHARED_EXPERTS)
 
 # DP_DIM=2
-EP_DIM=_env_int("OLMOE3_TESTRUN_EP_DIM", 2)
-PP_DIM=_env_int("OLMOE3_TESTRUN_PP_DIM", 2)
-CP_DIM=_env_int("OLMOE3_TESTRUN_CP_DIM", 1)
+EP_DIM=_env_int("OLMOE3_TESTRUN_EP_DIM", 1)
+PP_DIM=_env_int("OLMOE3_TESTRUN_PP_DIM", 1)
 
 # ref
 REF_NUM_NODES=8
 LR_ALPHA = 0.53
 
 # stage 1 - 1M - 
-MAX_DURATION = _env_int("OLMOE3_TESTRUN_MAX_DURATION", int(100e9))
+MAX_DURATION = _env_int("OLMOE3_TESTRUN_MAX_DURATION", int(10e9))
 MICRO_BSZ = _env_int("OLMOE3_TESTRUN_MICRO_BSZ", 2)
 GLOBAL_BATCH_SIZE_SEQ=_env_int("OLMOE3_TESTRUN_GLOBAL_BATCH_SIZE_SEQ", (8 * 8) * 2 * 1)
 # NO LR_REF_BSZ=4M
@@ -213,7 +203,7 @@ EXPERT_LR = LR
 # EXPERT_LR = LR * math.sqrt(TOP_K / NUM_EXPERTS)  # scale lr for expert params, # 1/4.8989 = 0.204
 # EXPERT_LR = LR * 0.5  # scale lr for expert params, empirical choice
 
-NUM_LAYERS=_env_int("OLMOE3_TESTRUN_NUM_LAYERS", 8)
+NUM_LAYERS=8
 
 if PP_DIM > 1:
     MINUS_LAST_STAGE=0
@@ -228,38 +218,34 @@ else:
 USE_COMPILE=_env_bool("OLMOE3_TESTRUN_USE_COMPILE", True)
 USE_NO_SYNC_EP=True
 # USE_AC=False
-PER_LAYER_RECOMPUTE=_env_bool("OLMOE3_TESTRUN_PER_LAYER_RECOMPUTE", True)
+PER_LAYER_RECOMPUTE=_env_bool("OLMOE3_TESTRUN_PER_LAYER_RECOMPUTE", False)
 USE_TBO=False
 GRAD_ACC_IN_FP32=True
 GRAD_REDUCE_IN_FP32=True
 UNIFORM_ASSIGN=False
 RANDOM_ASSIGN=False
 USE_ROWWISE_A2A=True
-ROWWISE_BACKEND=_env_choice("OLMOE3_TESTRUN_ROWWISE_BACKEND", "nvshmem", ("nvshmem", "tma_ibgda"))
-USE_FP8=_env_bool("OLMOE3_TESTRUN_USE_FP8", True)
-USE_FP8_ATTN_QKV=USE_FP8
-USE_FP8_ATTN_OUT=USE_FP8
-USE_FP8_ATTN_SAVE_QKV=False
+USE_FP8=_env_bool("OLMOE3_TESTRUN_USE_FP8", False)
 ROWWISE_A2A_NBLOCKS=256 if EP_DIM <=8 else 64 # for intra-node, can use more blocks to increase overlap; for inter-node, the bottleneck is the network, so fewer blocks can reduce overhead.
 SEED = 2026
 USE_MUON = False
 USE_PERI_NORM = True
-PRODUCTION_RUN = _env_bool("OLMOE3_TESTRUN_PRODUCTION_RUN", True)
+PRODUCTION_RUN = True
 TAG=VARIANT_NAME
 if not USE_COMPILE:
     TAG += "_nocompile"
-if CP_DIM > 1:
-    TAG += f"_cp{CP_DIM}"
 # save a little bit of memory
 # import torch._functorch.config  # Force initialization by accessing dynamo first
 # torch._functorch.config.activation_memory_budget = 0.1
 
 
 
-from olmo_core.nn.lm_head import LMHeadConfig, LMHeadType
-from olmo_core.nn.rope import RoPEConfig, RoPEScalingConfig, RoPEType
-from olmo_core.nn.attention import AttentionConfig, AttentionType
+from olmo_core.nn.attention import AttentionBackendName, AttentionConfig, AttentionType
+from olmo_core.nn.attention.recurrent import GatedDeltaNetConfig
 from olmo_core.nn.layer_norm import LayerNormType, LayerNormConfig
+from olmo_core.nn.lm_head import LMHeadConfig, LMHeadType
+from olmo_core.nn.rope import RoPEConfig, RoPEType
+
 # from olmo_core.nn.moe.v2.block import LayerNormConfigV2
 def build_model_config(common: CommonComponents) -> OLMoDDPModelConfig:
     from olmo_core.nn.ddp.block import OLMoDDPTransformerBlockConfig
@@ -271,7 +257,6 @@ def build_model_config(common: CommonComponents) -> OLMoDDPModelConfig:
     from olmo_core.nn.moe.v2.fp8 import MoERowwiseFP8Config
     from olmo_core.nn.moe.v2.shared_experts import SharedExpertsConfig
     from olmo_core.nn.moe.v2.routed_experts import RoutedExpertsConfig
-    from olmo_core.nn.attention.backend import AttentionBackendName
     
     d_model = D_MODEL
     dtype = DType.float32
@@ -284,9 +269,7 @@ def build_model_config(common: CommonComponents) -> OLMoDDPModelConfig:
     )
     use_block_no_sync_ep = USE_NO_SYNC_EP and EP_DIM > 1
     block_ep_path = (
-        ExpertParallelPath.rowwise_tma_ibgda
-        if use_block_no_sync_ep and USE_ROWWISE_A2A and ROWWISE_BACKEND == "tma_ibgda"
-        else ExpertParallelPath.rowwise_nvshmem
+        ExpertParallelPath.rowwise_nvshmem
         if use_block_no_sync_ep and USE_ROWWISE_A2A
         else ExpertParallelPath.no_sync_1d
         if use_block_no_sync_ep
@@ -297,18 +280,39 @@ def build_model_config(common: CommonComponents) -> OLMoDDPModelConfig:
         if USE_TBO and block_ep_path == ExpertParallelPath.rowwise_nvshmem
         else ExpertParallelSchedule.normal
     )
-    config = OLMoDDPModelConfig(
-        init_seed=SEED,
-        d_model=d_model,
-        two_batch_overlap=USE_TBO,
-        recompute_each_block=PER_LAYER_RECOMPUTE,
-        recompute_all_blocks_by_chunk=False,
-        # recompute_block_keys=["0", "1", "2"], # recompute dense layer
-        vocab_size=common.tokenizer.padded_vocab_size(),
-        n_layers=NUM_LAYERS,
-        embed_scale=math.sqrt(d_model),
-        embedding_norm=layer_norm,
-        block=OLMoDDPTransformerBlockConfig(
+
+    def attn_mixer() -> AttentionConfig:
+        return AttentionConfig(
+            name=AttentionType.fused_v2,
+            n_heads=NUM_HEAD,
+            n_kv_heads=NUM_KV_HEAD,
+            bias=False,
+            rope=RoPEConfig(
+                name=RoPEType.default,
+                theta=500_000,
+                scaling=None,
+                full_precision=True,
+            ),
+            qk_norm=layer_norm,
+            backend=AttentionBackendName.flash_4,
+            use_head_qk_norm=True,
+            dtype=dtype,
+            d_attn=D_ATTN,
+            use_recompute_qkv_prep=False,
+        )
+
+    def gdn_mixer() -> GatedDeltaNetConfig:
+        return GatedDeltaNetConfig(
+            n_heads=NUM_HEAD,
+            n_v_heads=NUM_HEAD,
+            head_dim=HEAD_DIM,
+            expand_v=1.0,
+            allow_neg_eigval=True,
+            dtype=dtype,
+        )
+
+    def routed_block(sequence_mixer) -> OLMoDDPTransformerBlockConfig:
+        return OLMoDDPTransformerBlockConfig(
             name=TransformerBlockType.moe_fused_v2,
             use_peri_norm=USE_PERI_NORM,
             ep=ExpertParallelConfig(
@@ -318,7 +322,7 @@ def build_model_config(common: CommonComponents) -> OLMoDDPModelConfig:
                 share_dispatch_out=PER_LAYER_RECOMPUTE, # if layer-recompute, want to make dispatch_out shared (not per-layer persistent) to save memory; extra copy overhead applies.
                 shared_slots=2 if block_ep_schedule == ExpertParallelSchedule.tbo else 1,
                 rowwise_nblocks=ROWWISE_A2A_NBLOCKS,
-                capacity_factor=1.5,
+                capacity_factor=1.25,
                 # capacity_factor=1.125,
                 # capacity_factor=1.1875,
                 # capacity_factor=1.21875,
@@ -329,24 +333,7 @@ def build_model_config(common: CommonComponents) -> OLMoDDPModelConfig:
             rowwise_fp8=MoERowwiseFP8Config(
                 enabled=USE_FP8,
             ) if USE_ROWWISE_A2A else None,
-            attention=AttentionConfig(
-                name=AttentionType.fused_v2,
-                # name=AttentionType.default,
-                n_heads=NUM_HEAD,
-                n_kv_heads=NUM_KV_HEAD,
-                bias=False,
-                rope=RoPEConfig(name=RoPEType.default, theta=500_000, scaling=None, full_precision=True),
-                qk_norm=layer_norm ,
-                backend=AttentionBackendName.flash_4,
-                use_head_qk_norm=True,
-                dtype=dtype,
-                d_attn=D_ATTN,
-                mxfp8_qkv_projection=USE_FP8_ATTN_QKV,
-                mxfp8_out_projection=USE_FP8_ATTN_OUT,
-                mxfp8_save_qkv_for_backward=USE_FP8_ATTN_SAVE_QKV,
-                use_recompute_qkv_prep=False,
-                # use_recompute_qkv_prep=not PER_LAYER_RECOMPUTE, # only enable when not doing per-layer recompute
-            ),
+            sequence_mixer=sequence_mixer,
             attention_norm=layer_norm,
             routed_experts=RoutedExpertsConfig(
                 d_model=d_model,
@@ -394,7 +381,59 @@ def build_model_config(common: CommonComponents) -> OLMoDDPModelConfig:
                 use_recompute_fp32_cast=False,
             ) if NUM_SHARED_EXPERTS > 1 else None, # only need router if > 1 expert
             feed_forward_norm=layer_norm,
-        ),
+        )
+
+    def dense_block(sequence_mixer) -> OLMoDDPTransformerBlockConfig:
+        return OLMoDDPTransformerBlockConfig(
+            name=TransformerBlockType.moe_fused_v2,
+            use_peri_norm=USE_PERI_NORM,
+            rowwise_fp8=MoERowwiseFP8Config(
+                enabled=USE_FP8,
+            ) if USE_ROWWISE_A2A else None,
+            sequence_mixer=sequence_mixer,
+            routed_experts=None,
+            routed_experts_router=None,
+            shared_experts=SharedExpertsConfig(
+                d_model=d_model,
+                hidden_size=DENSE_LAYER_MLP,
+                num_experts=1,
+                bias=False,
+                dtype=dtype,
+            ),
+            shared_experts_router=None,
+            attention_norm=layer_norm,
+            feed_forward_norm=layer_norm,
+        )
+
+    block_pattern = [
+        (
+            "attn_dense" if layer_idx == 0 else "attn_moe"
+        )
+        if (layer_idx + 1) % 4 == 0
+        else (
+            "gdn_dense" if layer_idx == 0 else "gdn_moe"
+        )
+        for layer_idx in range(NUM_LAYERS)
+    ]
+
+    config = OLMoDDPModelConfig(
+        init_seed=SEED,
+        d_model=d_model,
+        two_batch_overlap=USE_TBO,
+        recompute_each_block=PER_LAYER_RECOMPUTE,
+        recompute_all_blocks_by_chunk=False,
+        # recompute_block_keys=["0", "1", "2"], # recompute dense layer
+        vocab_size=common.tokenizer.padded_vocab_size(),
+        n_layers=NUM_LAYERS,
+        embed_scale=math.sqrt(d_model),
+        embedding_norm=layer_norm,
+        block={
+            "gdn_moe": routed_block(gdn_mixer()),
+            "attn_moe": routed_block(attn_mixer()),
+            "gdn_dense": dense_block(gdn_mixer()),
+            "attn_dense": dense_block(attn_mixer()),
+        },
+        block_pattern=block_pattern,
         lm_head=LMHeadConfig(layer_norm=layer_norm, bias=False, dtype=dtype),
         name=TransformerType.moe_fused_v2,
 
@@ -404,59 +443,6 @@ def build_model_config(common: CommonComponents) -> OLMoDDPModelConfig:
     
     # config.lm_head.loss_implementation = LMLossImplementation.fused_linear
     config.lm_head.loss_implementation = LMLossImplementation.default
-    WINDOW_SIZE=2048
-    config.block.attention.sliding_window = SlidingWindowAttentionConfig(
-        force_full_attention_on_first_layer=False,
-        force_full_attention_on_last_layer=True,
-        pattern=[WINDOW_SIZE, -1]
-    )
-
-    dense_block_config = OLMoDDPTransformerBlockConfig(
-        name=TransformerBlockType.moe_fused_v2,
-        use_peri_norm=USE_PERI_NORM,
-        rowwise_fp8=MoERowwiseFP8Config(
-            enabled=USE_FP8,
-        ) if USE_ROWWISE_A2A else None,
-        attention=AttentionConfig(
-            name=AttentionType.fused_v2,
-            # name=AttentionType.default,
-            n_heads=NUM_HEAD,
-            n_kv_heads=NUM_KV_HEAD,
-            bias=False,
-            rope=RoPEConfig(name=RoPEType.default, theta=500_000, scaling=None, full_precision=True),
-            qk_norm=layer_norm ,
-            backend=AttentionBackendName.flash_4,
-            use_head_qk_norm=True,
-            dtype=dtype,
-            d_attn=D_ATTN,
-            mxfp8_qkv_projection=USE_FP8_ATTN_QKV,
-            mxfp8_out_projection=USE_FP8_ATTN_OUT,
-            mxfp8_save_qkv_for_backward=USE_FP8_ATTN_SAVE_QKV,
-            use_recompute_qkv_prep=False,
-            # use_recompute_qkv_prep=not PER_LAYER_RECOMPUTE, # only enable when not doing per-layer recompute
-        ),
-        routed_experts=None,
-        routed_experts_router=None,
-        shared_experts=SharedExpertsConfig(
-            d_model=d_model,
-            hidden_size=DENSE_LAYER_MLP,
-            num_experts=1,
-            bias=False,
-            dtype=dtype,
-        ),
-        shared_experts_router=None,
-        attention_norm=layer_norm,
-        feed_forward_norm=layer_norm,
-    ) 
-    from copy import deepcopy
-    # First block will be a regular transformer block (no MoE component).
-    config.block_overrides = {
-        0: deepcopy(dense_block_config),
-        # 1: deepcopy(dense_block_config),
-        
-        # also make last layer dense
-        # NUM_LAYERS-1: deepcopy(dense_block_config),
-    }
     
     return config
 
@@ -522,7 +508,6 @@ def build_train_module_config(common: CommonComponents) -> OLMoDDPTrainModuleCon
             accumulate_grads_in_fp32=GRAD_ACC_IN_FP32,
         ),
         ep_config=TransformerExpertParallelConfig(degree=EP_DIM) if EP_DIM != 1 else None, # EP=1 means no expert parallel
-        cp_config=TransformerContextParallelConfig.ulysses(degree=CP_DIM) if CP_DIM > 1 else None,
         pp_config=TransformerPipelineParallelConfig(
             degree=PP_DIM,
             # schedule=PipelineScheduleType.custom_1F1B,
