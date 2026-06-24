@@ -88,26 +88,6 @@ def _wave_global_expert_mask(
     return local_mask.repeat(ep_world_size)
 
 
-def _mask_route_maps_for_local_expert_range(
-    *,
-    dst_ranks: torch.Tensor,
-    dst_rows: torch.Tensor,
-    route_local_experts: torch.Tensor,
-    start: int,
-    end: int,
-) -> Tuple[torch.Tensor, torch.Tensor]:
-    neg_ones = torch.full_like(dst_ranks, -1)
-    wave_mask = (
-        (dst_ranks >= 0)
-        & (route_local_experts >= int(start))
-        & (route_local_experts < int(end))
-    )
-    return (
-        torch.where(wave_mask, dst_ranks, neg_ones),
-        torch.where(wave_mask, dst_rows, neg_ones),
-    )
-
-
 class _RowwiseGatherSlotsAutograd(torch.autograd.Function):
     @staticmethod
     def forward(  # type: ignore[override]
@@ -406,15 +386,15 @@ def combined_forward_ep_no_sync_rowwise_wave(
                 allowed_splits=allowed_splits,
                 keep_from_src_dest_local=keep_from_src_dest_local,
             )
-            route_experts = routing_map.to(dtype=torch.long)
-            safe_route_experts = torch.where(
-                route_experts >= 0,
-                route_experts,
-                torch.zeros_like(route_experts),
-            )
-            route_local_experts = torch.remainder(
-                safe_route_experts,
-                self.num_local_routed_experts,
+            compact_route_records, compact_wave_offsets = (
+                symm_mem_vdev2d_kernels.rowwise_build_compact_route_records(
+                    dst_ranks_full,
+                    dst_rows_full,
+                    routing_map,
+                    num_local_experts=self.num_local_routed_experts,
+                    num_waves=len(wave_groups),
+                    nblocks=rowwise_nblocks,
+                )
             )
             inverse_route_meta = get_or_init_ep_no_sync_symm_tensor(
                 self,
@@ -423,21 +403,12 @@ def combined_forward_ep_no_sync_rowwise_wave(
                 dtype=torch.long,
                 device=moe_inp.device,
             )
-            inverse_route_meta_in = torch.empty(
-                (num_out_tokens, 2),
-                device=moe_inp.device,
-                dtype=torch.long,
-            )
-            inverse_route_meta_in[:, 0].fill_(dist.get_rank(self.ep_pg))
-            inverse_route_meta_in[:, 1].copy_(
-                torch.arange(num_out_tokens, device=moe_inp.device, dtype=torch.long)
-            )
-            symm_mem_vdev2d_kernels.rowwise_dispatch_put(
-                inverse_route_meta_in,
+            symm_mem_vdev2d_kernels.rowwise_inverse_route_meta_put_compact(
                 inverse_route_meta,
-                dst_ranks_full.reshape(-1, 1).contiguous(),
-                dst_rows_full.reshape(-1, 1).contiguous(),
-                group_name,
+                compact_route_records,
+                compact_wave_offsets,
+                src_rank=dist.get_rank(self.ep_pg),
+                group_name=group_name,
                 nblocks=rowwise_nblocks,
                 pre_barrier=False,
                 post_barrier=True,
@@ -447,7 +418,8 @@ def combined_forward_ep_no_sync_rowwise_wave(
         local_expert_base_rows_full = None
         dst_ranks_full = None
         dst_rows_full = None
-        route_local_experts = None
+        compact_route_records = None
+        compact_wave_offsets = None
         inverse_route_meta = None
 
     for wave_idx, (start, end) in enumerate(wave_groups):
@@ -455,30 +427,22 @@ def combined_forward_ep_no_sync_rowwise_wave(
         with nvtx.annotate(wave_label, color="orange"):
             with nvtx.annotate(f"{wave_label}/route", color="blue"):
                 with torch.no_grad():
-                    local_mask = _wave_local_expert_mask(
-                        num_local_experts=self.num_local_routed_experts,
-                        start=start,
-                        end=end,
-                        device=keep_from_src_dest_local.device,
-                    )
                     if use_reused_route_maps:
                         assert batch_size_per_local_expert_full is not None
                         assert local_expert_base_rows_full is not None
-                        assert dst_ranks_full is not None
-                        assert dst_rows_full is not None
-                        assert route_local_experts is not None
                         assert inverse_route_meta is not None
+                        assert compact_route_records is not None
+                        assert compact_wave_offsets is not None
                         batch_size_per_local_expert = batch_size_per_local_expert_full
                         wave_row_start = local_expert_base_rows_full[int(start)]
                         wave_num_rows = batch_size_per_local_expert_full[int(start) : int(end)].sum()
-                        dst_ranks, dst_rows = _mask_route_maps_for_local_expert_range(
-                            dst_ranks=dst_ranks_full,
-                            dst_rows=dst_rows_full,
-                            route_local_experts=route_local_experts,
+                    else:
+                        local_mask = _wave_local_expert_mask(
+                            num_local_experts=self.num_local_routed_experts,
                             start=start,
                             end=end,
+                            device=keep_from_src_dest_local.device,
                         )
-                    else:
                         global_mask = _wave_global_expert_mask(
                             ep_world_size=self.ep_world_size,
                             num_local_experts=self.num_local_routed_experts,
@@ -513,25 +477,38 @@ def combined_forward_ep_no_sync_rowwise_wave(
                         )
 
             with nvtx.annotate(f"{wave_label}/dispatch", color="green"):
-                dispatch_rank_major = _DispatchRowwiseAutograd.apply(
-                    moe_inp,
-                    None,
-                    dst_ranks,
-                    dst_rows,
-                    buffers.dispatch_out,
-                    None,
-                    group_name,
-                    self.ep_pg,
-                    rowwise_nblocks,
-                    False,
-                    False,
-                    True,
-                    False,
-                )
                 if use_reused_route_maps:
-                    dispatch_rank_major_for_experts = dispatch_rank_major
+                    assert compact_route_records is not None
+                    assert compact_wave_offsets is not None
+                    symm_mem_vdev2d_kernels.rowwise_dispatch_put_compact(
+                        moe_inp,
+                        buffers.dispatch_out,
+                        compact_route_records,
+                        compact_wave_offsets,
+                        wave_idx,
+                        group_name,
+                        nblocks=rowwise_nblocks,
+                        pre_barrier=False,
+                        post_barrier=True,
+                    )
+                    dispatch_rank_major_for_experts = buffers.dispatch_out
                     down_proj_out = buffers.combine_in.detach()
                 else:
+                    dispatch_rank_major = _DispatchRowwiseAutograd.apply(
+                        moe_inp,
+                        None,
+                        dst_ranks,
+                        dst_rows,
+                        buffers.dispatch_out,
+                        None,
+                        group_name,
+                        self.ep_pg,
+                        rowwise_nblocks,
+                        False,
+                        False,
+                        True,
+                        False,
+                    )
                     dispatch_rank_major_for_experts = dispatch_rank_major.clone()
                     down_proj_out = buffers.combine_in.detach()
 

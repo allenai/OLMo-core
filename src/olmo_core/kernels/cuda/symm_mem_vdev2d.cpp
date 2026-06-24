@@ -57,6 +57,39 @@ void rowwise_dispatch_put(
     bool pre_barrier,
     bool post_barrier);
 
+void rowwise_build_compact_route_records(
+    torch::Tensor& dst_ranks,
+    torch::Tensor& dst_rows,
+    torch::Tensor& route_experts,
+    torch::Tensor& route_records,
+    torch::Tensor& wave_counts,
+    torch::Tensor& wave_fill_counts,
+    torch::Tensor& wave_offsets,
+    int64_t num_local_experts,
+    int64_t num_waves,
+    int64_t nblocks);
+
+void rowwise_dispatch_put_compact(
+    torch::Tensor& input,
+    torch::Tensor& out,
+    torch::Tensor& route_records,
+    torch::Tensor& wave_offsets,
+    int64_t wave_idx,
+    const std::string& group_name,
+    int64_t nblocks,
+    bool pre_barrier,
+    bool post_barrier);
+
+void rowwise_inverse_route_meta_put_compact(
+    torch::Tensor& inverse_route_meta,
+    torch::Tensor& route_records,
+    torch::Tensor& wave_offsets,
+    int64_t src_rank,
+    const std::string& group_name,
+    int64_t nblocks,
+    bool pre_barrier,
+    bool post_barrier);
+
 void rowwise_combine_get(
     torch::Tensor& expert_out,
     torch::Tensor& out,
@@ -182,6 +215,48 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
       py::arg("dst_ranks"),
       py::arg("dst_rows"),
       py::arg("probs") = std::nullopt,
+      py::arg("group_name"),
+      py::arg("nblocks") = 0,
+      py::arg("pre_barrier") = false,
+      py::arg("post_barrier") = true);
+
+  m.def(
+      "rowwise_build_compact_route_records",
+      &rowwise_build_compact_route_records,
+      "Build compact row-wise route records and per-wave offsets on GPU",
+      py::arg("dst_ranks"),
+      py::arg("dst_rows"),
+      py::arg("route_experts"),
+      py::arg("route_records"),
+      py::arg("wave_counts"),
+      py::arg("wave_fill_counts"),
+      py::arg("wave_offsets"),
+      py::arg("num_local_experts"),
+      py::arg("num_waves"),
+      py::arg("nblocks") = 0);
+
+  m.def(
+      "rowwise_dispatch_put_compact",
+      &rowwise_dispatch_put_compact,
+      "NVSHMEM compact row-wise dispatch: put only active compact route records",
+      py::arg("input"),
+      py::arg("out"),
+      py::arg("route_records"),
+      py::arg("wave_offsets"),
+      py::arg("wave_idx"),
+      py::arg("group_name"),
+      py::arg("nblocks") = 0,
+      py::arg("pre_barrier") = false,
+      py::arg("post_barrier") = true);
+
+  m.def(
+      "rowwise_inverse_route_meta_put_compact",
+      &rowwise_inverse_route_meta_put_compact,
+      "NVSHMEM compact row-wise metadata PUT for inverse route maps",
+      py::arg("inverse_route_meta"),
+      py::arg("route_records"),
+      py::arg("wave_offsets"),
+      py::arg("src_rank"),
       py::arg("group_name"),
       py::arg("nblocks") = 0,
       py::arg("pre_barrier") = false,

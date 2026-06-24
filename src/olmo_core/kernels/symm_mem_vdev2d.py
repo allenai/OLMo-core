@@ -140,6 +140,93 @@ def rowwise_dispatch_put(
 
 
 @torch.compiler.disable
+def rowwise_build_compact_route_records(
+    dst_ranks: torch.Tensor,
+    dst_rows: torch.Tensor,
+    route_experts: torch.Tensor,
+    *,
+    num_local_experts: int,
+    num_waves: int,
+    nblocks: int = 0,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    if dst_ranks.ndim != 2 or dst_rows.ndim != 2 or route_experts.ndim != 2:
+        raise ValueError("dst_ranks, dst_rows, and route_experts must be rank-2 [N, K]")
+    if tuple(dst_ranks.shape) != tuple(dst_rows.shape) or tuple(dst_ranks.shape) != tuple(route_experts.shape):
+        raise ValueError("dst_ranks, dst_rows, and route_experts must have identical shapes")
+    ext = _load_cuda_extension()
+    num_routes = dst_ranks.numel()
+    route_records = torch.empty((num_routes, 4), device=dst_ranks.device, dtype=torch.long)
+    wave_counts = torch.empty((int(num_waves),), device=dst_ranks.device, dtype=torch.long)
+    wave_fill_counts = torch.empty_like(wave_counts)
+    wave_offsets = torch.empty((int(num_waves) + 1,), device=dst_ranks.device, dtype=torch.long)
+    ext.rowwise_build_compact_route_records(
+        dst_ranks,
+        dst_rows,
+        route_experts,
+        route_records,
+        wave_counts,
+        wave_fill_counts,
+        wave_offsets,
+        int(num_local_experts),
+        int(num_waves),
+        int(nblocks),
+    )
+    return route_records, wave_offsets
+
+
+@torch.compiler.disable
+def rowwise_dispatch_put_compact(
+    input: torch.Tensor,
+    out: torch.Tensor,
+    route_records: torch.Tensor,
+    wave_offsets: torch.Tensor,
+    wave_idx: int,
+    group_name: str,
+    *,
+    nblocks: int = 0,
+    pre_barrier: bool = False,
+    post_barrier: bool = True,
+) -> None:
+    ext = _load_cuda_extension()
+    ext.rowwise_dispatch_put_compact(
+        input,
+        out,
+        route_records,
+        wave_offsets,
+        int(wave_idx),
+        group_name,
+        nblocks,
+        pre_barrier,
+        post_barrier,
+    )
+
+
+@torch.compiler.disable
+def rowwise_inverse_route_meta_put_compact(
+    inverse_route_meta: torch.Tensor,
+    route_records: torch.Tensor,
+    wave_offsets: torch.Tensor,
+    *,
+    src_rank: int,
+    group_name: str,
+    nblocks: int = 0,
+    pre_barrier: bool = False,
+    post_barrier: bool = True,
+) -> None:
+    ext = _load_cuda_extension()
+    ext.rowwise_inverse_route_meta_put_compact(
+        inverse_route_meta,
+        route_records,
+        wave_offsets,
+        int(src_rank),
+        group_name,
+        nblocks,
+        pre_barrier,
+        post_barrier,
+    )
+
+
+@torch.compiler.disable
 def rowwise_dispatch_put_scaled(
     input_hp: torch.Tensor,
     out_q: torch.Tensor,

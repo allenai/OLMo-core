@@ -117,6 +117,14 @@ __device__ __forceinline__ int olmo_route_peer_global(
       : rank_to_pe[peer];
 }
 
+__device__ __forceinline__ int64_t olmo_atomic_add_i64(
+    int64_t* ptr,
+    int64_t value) {
+  return static_cast<int64_t>(atomicAdd(
+      reinterpret_cast<unsigned long long*>(ptr),
+      static_cast<unsigned long long>(value)));
+}
+
 __device__ int64_t prefixSum(int64_t* odata, int64_t* idata, int n) {
   using BlockScanT =
       cub::BlockScan<int64_t, THREADS_PER_BLOCK, cub::BLOCK_SCAN_WARP_SCANS>;
@@ -364,6 +372,175 @@ __global__ void dispatchRowsPut(
         (char*)out_data + static_cast<size_t>(dst_row) * row_bytes,
         (const char*)input_data + static_cast<size_t>(src_row) * row_bytes,
         row_bytes,
+        peer_global);
+  }
+#endif
+}
+
+template <typename route_expert_t>
+__global__ void countCompactRowwiseRoutes(
+    const int64_t* dst_ranks,
+    const int64_t* dst_rows,
+    const route_expert_t* route_experts,
+    int64_t* wave_counts,
+    int64_t num_routes,
+    int64_t top_k,
+    int64_t num_local_experts,
+    int64_t num_waves,
+    int64_t experts_per_wave) {
+  int64_t route_id = static_cast<int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+  int64_t stride = static_cast<int64_t>(gridDim.x) * blockDim.x;
+  for (; route_id < num_routes; route_id += stride) {
+    int64_t peer = dst_ranks[route_id];
+    int64_t dst_row = dst_rows[route_id];
+    int64_t expert = static_cast<int64_t>(route_experts[route_id]);
+    if (peer < 0 || dst_row < 0 || expert < 0) {
+      continue;
+    }
+    int64_t local_expert = expert % num_local_experts;
+    int64_t wave = local_expert / experts_per_wave;
+    wave = wave >= num_waves ? num_waves - 1 : wave;
+    olmo_atomic_add_i64(wave_counts + wave, 1);
+  }
+}
+
+__global__ void prefixCompactRowwiseRouteCounts(
+    const int64_t* wave_counts,
+    int64_t* wave_fill_counts,
+    int64_t* wave_offsets,
+    int64_t num_waves) {
+  if (threadIdx.x != 0 || blockIdx.x != 0) {
+    return;
+  }
+  int64_t acc = 0;
+  wave_offsets[0] = 0;
+  for (int64_t wave = 0; wave < num_waves; ++wave) {
+    wave_fill_counts[wave] = 0;
+    acc += wave_counts[wave];
+    wave_offsets[wave + 1] = acc;
+  }
+}
+
+template <typename route_expert_t>
+__global__ void fillCompactRowwiseRoutes(
+    const int64_t* dst_ranks,
+    const int64_t* dst_rows,
+    const route_expert_t* route_experts,
+    int64_t* route_records,
+    int64_t* wave_fill_counts,
+    const int64_t* wave_offsets,
+    int64_t num_routes,
+    int64_t top_k,
+    int64_t num_local_experts,
+    int64_t num_waves,
+    int64_t experts_per_wave) {
+  int64_t route_id = static_cast<int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+  int64_t stride = static_cast<int64_t>(gridDim.x) * blockDim.x;
+  for (; route_id < num_routes; route_id += stride) {
+    int64_t peer = dst_ranks[route_id];
+    int64_t dst_row = dst_rows[route_id];
+    int64_t expert = static_cast<int64_t>(route_experts[route_id]);
+    if (peer < 0 || dst_row < 0 || expert < 0) {
+      continue;
+    }
+    int64_t local_expert = expert % num_local_experts;
+    int64_t wave = local_expert / experts_per_wave;
+    wave = wave >= num_waves ? num_waves - 1 : wave;
+    int64_t compact_idx =
+        wave_offsets[wave] + olmo_atomic_add_i64(wave_fill_counts + wave, 1);
+    int64_t* record = route_records + compact_idx * 4;
+    record[0] = route_id / top_k;
+    record[1] = dst_row;
+    record[2] = peer;
+    record[3] = route_id;
+  }
+}
+
+__global__ void dispatchRowsPutCompact(
+    const void* input_data,
+    void* out_data,
+    const int64_t* route_records,
+    const int64_t* wave_offsets,
+    int64_t wave_idx,
+    size_t row_bytes,
+    int64_t num_input_rows,
+    int64_t out_capacity_rows,
+    nvshmem_team_t team,
+    const int* rank_to_pe,
+    int group_size) {
+#ifndef _NVSHMEM_DEVICELIB_SUPPORTED
+  CUDA_KERNEL_ASSERT_MSG(false, "SM arch unsupported for NVSHMEM");
+#else
+  CUDA_KERNEL_ASSERT(team != NVSHMEM_TEAM_INVALID);
+  int npes = olmo_route_npes(team, rank_to_pe, group_size);
+  int warp_id = threadIdx.x / WARP_SIZE;
+
+  int64_t route_start = wave_offsets[wave_idx];
+  int64_t route_end = wave_offsets[wave_idx + 1];
+  int64_t local_idx =
+      static_cast<int64_t>(blockIdx.x) * ROWWISE_WARPS_PER_BLOCK + warp_id;
+  int64_t stride = static_cast<int64_t>(gridDim.x) * ROWWISE_WARPS_PER_BLOCK;
+  for (; route_start + local_idx < route_end; local_idx += stride) {
+    const int64_t* record = route_records + (route_start + local_idx) * 4;
+    int64_t src_row = record[0];
+    int64_t dst_row = record[1];
+    int64_t peer = record[2];
+    CUDA_KERNEL_ASSERT(src_row >= 0 && src_row < num_input_rows);
+    CUDA_KERNEL_ASSERT(dst_row >= 0 && dst_row < out_capacity_rows);
+    CUDA_KERNEL_ASSERT(peer >= 0 && peer < npes);
+
+    auto peer_global = olmo_route_peer_global(team, rank_to_pe, static_cast<int>(peer));
+    nvshmemx_putmem_warp(
+        (char*)out_data + static_cast<size_t>(dst_row) * row_bytes,
+        (const char*)input_data + static_cast<size_t>(src_row) * row_bytes,
+        row_bytes,
+        peer_global);
+  }
+#endif
+}
+
+__global__ void inverseRouteMetaPutCompact(
+    int64_t* inverse_route_meta,
+    const int64_t* route_records,
+    const int64_t* wave_offsets,
+    int64_t num_waves,
+    int64_t src_rank,
+    int64_t inverse_capacity_rows,
+    nvshmem_team_t team,
+    const int* rank_to_pe,
+    int group_size) {
+#ifndef _NVSHMEM_DEVICELIB_SUPPORTED
+  CUDA_KERNEL_ASSERT_MSG(false, "SM arch unsupported for NVSHMEM");
+#else
+  CUDA_KERNEL_ASSERT(team != NVSHMEM_TEAM_INVALID);
+  __shared__ int64_t shared_meta[ROWWISE_WARPS_PER_BLOCK][2];
+  int npes = olmo_route_npes(team, rank_to_pe, group_size);
+  int warp_id = threadIdx.x / WARP_SIZE;
+  int lane_id = threadIdx.x % WARP_SIZE;
+
+  int64_t route_end = wave_offsets[num_waves];
+  int64_t compact_idx =
+      static_cast<int64_t>(blockIdx.x) * ROWWISE_WARPS_PER_BLOCK + warp_id;
+  int64_t stride = static_cast<int64_t>(gridDim.x) * ROWWISE_WARPS_PER_BLOCK;
+  for (; compact_idx < route_end; compact_idx += stride) {
+    const int64_t* record = route_records + compact_idx * 4;
+    int64_t dst_row = record[1];
+    int64_t peer = record[2];
+    int64_t route_id = record[3];
+    CUDA_KERNEL_ASSERT(dst_row >= 0 && dst_row < inverse_capacity_rows);
+    CUDA_KERNEL_ASSERT(peer >= 0 && peer < npes);
+    if (lane_id == 0) {
+      shared_meta[warp_id][0] = src_rank;
+    } else if (lane_id == 1) {
+      shared_meta[warp_id][1] = route_id;
+    }
+    __syncwarp();
+
+    auto peer_global = olmo_route_peer_global(team, rank_to_pe, static_cast<int>(peer));
+    nvshmemx_putmem_warp(
+        inverse_route_meta + dst_row * 2,
+        shared_meta[warp_id],
+        2 * sizeof(int64_t),
         peer_global);
   }
 #endif
@@ -1526,6 +1703,381 @@ void rowwise_dispatch_put(
               stream);
         });
   }
+  if (post_barrier) {
+    int post_barrier_status = nvshmemx_barrier_on_stream(team, stream.stream());
+    TORCH_CHECK(
+        post_barrier_status == 0,
+        "nvshmemx_barrier_on_stream (post) failed with status ",
+        post_barrier_status);
+  }
+}
+
+void rowwise_build_compact_route_records(
+    at::Tensor& dst_ranks,
+    at::Tensor& dst_rows,
+    at::Tensor& route_experts,
+    at::Tensor& route_records,
+    at::Tensor& wave_counts,
+    at::Tensor& wave_fill_counts,
+    at::Tensor& wave_offsets,
+    int64_t num_local_experts,
+    int64_t num_waves,
+    int64_t nblocks) {
+  TORCH_CHECK(
+      nblocks >= 0, "nblocks must be non-negative (0 means auto), got ", nblocks);
+  TORCH_CHECK(num_local_experts > 0, "num_local_experts must be > 0");
+  TORCH_CHECK(num_waves > 0, "num_waves must be > 0");
+  TORCH_CHECK(
+      dst_ranks.dim() == 2 && dst_rows.dim() == 2 && route_experts.dim() == 2,
+      "dst_ranks, dst_rows, and route_experts must be rank-2 [N, K]");
+  TORCH_CHECK(
+      dst_ranks.sizes() == dst_rows.sizes() &&
+          dst_ranks.sizes() == route_experts.sizes(),
+      "dst_ranks, dst_rows, and route_experts must have identical shapes");
+  TORCH_CHECK(
+      route_records.dim() == 2 && route_records.size(1) == 4,
+      "route_records must be rank-2 [N*K, 4]");
+  TORCH_CHECK(
+      route_records.size(0) == dst_ranks.numel(),
+      "route_records first dim must equal dst_ranks.numel()");
+  TORCH_CHECK(
+      wave_counts.dim() == 1 && wave_counts.size(0) == num_waves,
+      "wave_counts must be rank-1 [num_waves]");
+  TORCH_CHECK(
+      wave_fill_counts.dim() == 1 && wave_fill_counts.size(0) == num_waves,
+      "wave_fill_counts must be rank-1 [num_waves]");
+  TORCH_CHECK(
+      wave_offsets.dim() == 1 && wave_offsets.size(0) == num_waves + 1,
+      "wave_offsets must be rank-1 [num_waves + 1]");
+
+  TORCH_CHECK(
+      dst_ranks.is_contiguous() && dst_rows.is_contiguous() &&
+          route_experts.is_contiguous() && route_records.is_contiguous() &&
+          wave_counts.is_contiguous() && wave_fill_counts.is_contiguous() &&
+          wave_offsets.is_contiguous(),
+      "all route tensors must be contiguous");
+  TORCH_CHECK(
+      dst_ranks.scalar_type() == at::kLong && dst_rows.scalar_type() == at::kLong,
+      "dst_ranks and dst_rows must be int64");
+  TORCH_CHECK(
+      route_experts.scalar_type() == at::kInt ||
+          route_experts.scalar_type() == at::kLong,
+      "route_experts must be int32 or int64");
+  TORCH_CHECK(
+      route_records.scalar_type() == at::kLong &&
+          wave_counts.scalar_type() == at::kLong &&
+          wave_fill_counts.scalar_type() == at::kLong &&
+          wave_offsets.scalar_type() == at::kLong,
+      "route_records, wave_counts, wave_fill_counts, and wave_offsets must be int64");
+
+  auto device = dst_ranks.device();
+  TORCH_CHECK(
+      device.type() == at::DeviceType::CUDA && dst_rows.device() == device &&
+          route_experts.device() == device && route_records.device() == device &&
+          wave_counts.device() == device && wave_fill_counts.device() == device &&
+          wave_offsets.device() == device,
+      "all tensor arguments must be on the same CUDA device");
+  c10::cuda::CUDAGuard guard(device);
+
+  auto stream = at::cuda::getCurrentCUDAStream();
+  int64_t num_routes = dst_ranks.numel();
+  int64_t top_k = dst_ranks.size(1);
+  int64_t experts_per_wave = at::ceil_div(num_local_experts, num_waves);
+  int num_blocks = resolve_num_blocks_rowwise(num_routes, nblocks, true);
+  TORCH_CHECK(num_blocks > 0, "resolved nblocks must be > 0");
+
+  C10_CUDA_CHECK(cudaMemsetAsync(
+      wave_counts.mutable_data_ptr<int64_t>(),
+      0,
+      static_cast<size_t>(num_waves) * sizeof(int64_t),
+      stream.stream()));
+
+  const int64_t* dst_ranks_ptr =
+      reinterpret_cast<const int64_t*>(dst_ranks.data_ptr());
+  const int64_t* dst_rows_ptr =
+      reinterpret_cast<const int64_t*>(dst_rows.data_ptr());
+  int64_t* route_records_ptr =
+      reinterpret_cast<int64_t*>(route_records.mutable_data_ptr());
+  int64_t* wave_counts_ptr =
+      reinterpret_cast<int64_t*>(wave_counts.mutable_data_ptr());
+  int64_t* wave_fill_counts_ptr =
+      reinterpret_cast<int64_t*>(wave_fill_counts.mutable_data_ptr());
+  int64_t* wave_offsets_ptr =
+      reinterpret_cast<int64_t*>(wave_offsets.mutable_data_ptr());
+
+  if (route_experts.scalar_type() == at::kInt) {
+    const int32_t* route_experts_ptr = route_experts.data_ptr<int32_t>();
+    countCompactRowwiseRoutes<int32_t><<<
+        dim3(num_blocks),
+        dim3(ROWWISE_THREADS_PER_BLOCK),
+        0,
+        stream>>>(
+        dst_ranks_ptr,
+        dst_rows_ptr,
+        route_experts_ptr,
+        wave_counts_ptr,
+        num_routes,
+        top_k,
+        num_local_experts,
+        num_waves,
+        experts_per_wave);
+  } else {
+    const int64_t* route_experts_ptr =
+        reinterpret_cast<const int64_t*>(route_experts.data_ptr());
+    countCompactRowwiseRoutes<int64_t><<<
+        dim3(num_blocks),
+        dim3(ROWWISE_THREADS_PER_BLOCK),
+        0,
+        stream>>>(
+        dst_ranks_ptr,
+        dst_rows_ptr,
+        route_experts_ptr,
+        wave_counts_ptr,
+        num_routes,
+        top_k,
+        num_local_experts,
+        num_waves,
+        experts_per_wave);
+  }
+  C10_CUDA_KERNEL_LAUNCH_CHECK();
+
+  prefixCompactRowwiseRouteCounts<<<dim3(1), dim3(1), 0, stream>>>(
+      wave_counts_ptr,
+      wave_fill_counts_ptr,
+      wave_offsets_ptr,
+      num_waves);
+  C10_CUDA_KERNEL_LAUNCH_CHECK();
+
+  if (route_experts.scalar_type() == at::kInt) {
+    const int32_t* route_experts_ptr = route_experts.data_ptr<int32_t>();
+    fillCompactRowwiseRoutes<int32_t><<<
+        dim3(num_blocks),
+        dim3(ROWWISE_THREADS_PER_BLOCK),
+        0,
+        stream>>>(
+        dst_ranks_ptr,
+        dst_rows_ptr,
+        route_experts_ptr,
+        route_records_ptr,
+        wave_fill_counts_ptr,
+        wave_offsets_ptr,
+        num_routes,
+        top_k,
+        num_local_experts,
+        num_waves,
+        experts_per_wave);
+  } else {
+    const int64_t* route_experts_ptr =
+        reinterpret_cast<const int64_t*>(route_experts.data_ptr());
+    fillCompactRowwiseRoutes<int64_t><<<
+        dim3(num_blocks),
+        dim3(ROWWISE_THREADS_PER_BLOCK),
+        0,
+        stream>>>(
+        dst_ranks_ptr,
+        dst_rows_ptr,
+        route_experts_ptr,
+        route_records_ptr,
+        wave_fill_counts_ptr,
+        wave_offsets_ptr,
+        num_routes,
+        top_k,
+        num_local_experts,
+        num_waves,
+        experts_per_wave);
+  }
+  C10_CUDA_KERNEL_LAUNCH_CHECK();
+}
+
+void rowwise_dispatch_put_compact(
+    at::Tensor& input,
+    at::Tensor& out,
+    at::Tensor& route_records,
+    at::Tensor& wave_offsets,
+    int64_t wave_idx,
+    const std::string& group_name,
+    int64_t nblocks,
+    bool pre_barrier,
+    bool post_barrier) {
+  auto* olmo_group = olmo_symm_find_group(group_name);
+  TORCH_CHECK(
+      olmo_group != nullptr,
+      "OLMo compact rowwise dispatch requires registered OLMo symmetric-memory group ",
+      group_name);
+  TORCH_CHECK(
+      nblocks >= 0, "nblocks must be non-negative (0 means auto), got ", nblocks);
+  TORCH_CHECK(input.dim() == 2, "input must be rank-2 [N, D]");
+  TORCH_CHECK(out.dim() == 2, "out must be rank-2 [C, D]");
+  TORCH_CHECK(
+      route_records.dim() == 2 && route_records.size(1) == 4,
+      "route_records must be rank-2 [R, 4]");
+  TORCH_CHECK(wave_offsets.dim() == 1, "wave_offsets must be rank-1");
+  TORCH_CHECK(wave_idx >= 0, "wave_idx must be non-negative");
+  TORCH_CHECK(
+      wave_idx + 1 < wave_offsets.size(0),
+      "wave_idx is outside wave_offsets range");
+  TORCH_CHECK(
+      input.size(1) == out.size(1),
+      "input and out must have the same hidden dim (D)");
+  TORCH_CHECK(
+      input.is_contiguous() && out.is_contiguous() &&
+          route_records.is_contiguous() && wave_offsets.is_contiguous(),
+      "input, out, route_records, and wave_offsets must be contiguous");
+  TORCH_CHECK(input.dtype() == out.dtype(), "input and out dtype mismatch");
+  TORCH_CHECK(
+      route_records.scalar_type() == at::kLong &&
+          wave_offsets.scalar_type() == at::kLong,
+      "route_records and wave_offsets must be int64");
+
+  auto device = input.device();
+  TORCH_CHECK(
+      device.type() == at::DeviceType::CUDA && out.device() == device &&
+          route_records.device() == device && wave_offsets.device() == device,
+      "all tensor arguments must be on the same CUDA device");
+  c10::cuda::CUDAGuard guard(device);
+
+  auto stream = at::cuda::getCurrentCUDAStream();
+  nvshmem_team_t team = NVSHMEM_TEAM_WORLD;
+  const int* rank_to_pe_dev = olmo_group->rank_to_pe_dev;
+  int group_size = olmo_group->world_size;
+  maybe_init_nvshmem_cumodule(reinterpret_cast<const void*>(dispatchRowsPutCompact));
+
+  const void* input_ptr = input.data_ptr();
+  void* out_ptr = out.mutable_data_ptr();
+  const int64_t* route_records_ptr =
+      reinterpret_cast<const int64_t*>(route_records.data_ptr());
+  const int64_t* wave_offsets_ptr =
+      reinterpret_cast<const int64_t*>(wave_offsets.data_ptr());
+  int64_t num_input_rows = input.size(0);
+  int64_t out_capacity_rows = out.size(0);
+  size_t row_bytes = static_cast<size_t>(input.stride(0)) * input.element_size();
+  int num_blocks = resolve_num_blocks_rowwise(
+      route_records.size(0), nblocks, true);
+  TORCH_CHECK(num_blocks > 0, "resolved nblocks must be > 0");
+
+  if (pre_barrier) {
+    int pre_barrier_status = nvshmemx_barrier_on_stream(team, stream.stream());
+    TORCH_CHECK(
+        pre_barrier_status == 0,
+        "nvshmemx_barrier_on_stream (pre) failed with status ",
+        pre_barrier_status);
+  }
+
+  void* args[] = {
+      &input_ptr,
+      &out_ptr,
+      &route_records_ptr,
+      &wave_offsets_ptr,
+      &wave_idx,
+      &row_bytes,
+      &num_input_rows,
+      &out_capacity_rows,
+      &team,
+      &rank_to_pe_dev,
+      &group_size};
+  nvshmemx_collective_launch(
+      (const void*)dispatchRowsPutCompact,
+      dim3(num_blocks),
+      dim3(ROWWISE_THREADS_PER_BLOCK),
+      args,
+      0,
+      stream);
+
+  if (post_barrier) {
+    int post_barrier_status = nvshmemx_barrier_on_stream(team, stream.stream());
+    TORCH_CHECK(
+        post_barrier_status == 0,
+        "nvshmemx_barrier_on_stream (post) failed with status ",
+        post_barrier_status);
+  }
+}
+
+void rowwise_inverse_route_meta_put_compact(
+    at::Tensor& inverse_route_meta,
+    at::Tensor& route_records,
+    at::Tensor& wave_offsets,
+    int64_t src_rank,
+    const std::string& group_name,
+    int64_t nblocks,
+    bool pre_barrier,
+    bool post_barrier) {
+  auto* olmo_group = olmo_symm_find_group(group_name);
+  TORCH_CHECK(
+      olmo_group != nullptr,
+      "OLMo compact inverse route metadata PUT requires registered OLMo symmetric-memory group ",
+      group_name);
+  TORCH_CHECK(
+      nblocks >= 0, "nblocks must be non-negative (0 means auto), got ", nblocks);
+  TORCH_CHECK(
+      inverse_route_meta.dim() == 2 && inverse_route_meta.size(1) == 2,
+      "inverse_route_meta must be rank-2 [C, 2]");
+  TORCH_CHECK(
+      route_records.dim() == 2 && route_records.size(1) == 4,
+      "route_records must be rank-2 [R, 4]");
+  TORCH_CHECK(wave_offsets.dim() == 1, "wave_offsets must be rank-1");
+  TORCH_CHECK(wave_offsets.size(0) >= 2, "wave_offsets must contain at least one wave");
+  TORCH_CHECK(src_rank >= 0, "src_rank must be non-negative");
+  TORCH_CHECK(
+      inverse_route_meta.is_contiguous() && route_records.is_contiguous() &&
+          wave_offsets.is_contiguous(),
+      "inverse_route_meta, route_records, and wave_offsets must be contiguous");
+  TORCH_CHECK(
+      inverse_route_meta.scalar_type() == at::kLong &&
+          route_records.scalar_type() == at::kLong &&
+          wave_offsets.scalar_type() == at::kLong,
+      "inverse_route_meta, route_records, and wave_offsets must be int64");
+
+  auto device = inverse_route_meta.device();
+  TORCH_CHECK(
+      device.type() == at::DeviceType::CUDA &&
+          route_records.device() == device && wave_offsets.device() == device,
+      "all tensor arguments must be on the same CUDA device");
+  c10::cuda::CUDAGuard guard(device);
+
+  auto stream = at::cuda::getCurrentCUDAStream();
+  nvshmem_team_t team = NVSHMEM_TEAM_WORLD;
+  const int* rank_to_pe_dev = olmo_group->rank_to_pe_dev;
+  int group_size = olmo_group->world_size;
+  maybe_init_nvshmem_cumodule(
+      reinterpret_cast<const void*>(inverseRouteMetaPutCompact));
+
+  int64_t* inverse_route_meta_ptr =
+      reinterpret_cast<int64_t*>(inverse_route_meta.mutable_data_ptr());
+  const int64_t* route_records_ptr =
+      reinterpret_cast<const int64_t*>(route_records.data_ptr());
+  const int64_t* wave_offsets_ptr =
+      reinterpret_cast<const int64_t*>(wave_offsets.data_ptr());
+  int64_t num_waves = wave_offsets.size(0) - 1;
+  int64_t inverse_capacity_rows = inverse_route_meta.size(0);
+  int num_blocks = resolve_num_blocks_rowwise(route_records.size(0), nblocks, true);
+  TORCH_CHECK(num_blocks > 0, "resolved nblocks must be > 0");
+
+  if (pre_barrier) {
+    int pre_barrier_status = nvshmemx_barrier_on_stream(team, stream.stream());
+    TORCH_CHECK(
+        pre_barrier_status == 0,
+        "nvshmemx_barrier_on_stream (pre) failed with status ",
+        pre_barrier_status);
+  }
+
+  void* args[] = {
+      &inverse_route_meta_ptr,
+      &route_records_ptr,
+      &wave_offsets_ptr,
+      &num_waves,
+      &src_rank,
+      &inverse_capacity_rows,
+      &team,
+      &rank_to_pe_dev,
+      &group_size};
+  nvshmemx_collective_launch(
+      (const void*)inverseRouteMetaPutCompact,
+      dim3(num_blocks),
+      dim3(ROWWISE_THREADS_PER_BLOCK),
+      args,
+      0,
+      stream);
+
   if (post_barrier) {
     int post_barrier_status = nvshmemx_barrier_on_stream(team, stream.stream());
     TORCH_CHECK(
