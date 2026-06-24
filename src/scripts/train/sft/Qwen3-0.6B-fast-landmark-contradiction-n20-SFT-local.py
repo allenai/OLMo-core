@@ -187,12 +187,16 @@ def build_and_fit(opts: argparse.Namespace) -> None:
         .with_callback("config_saver", ConfigSaverCallback())
     )
     if opts.wandb:
+        # entity defaults to None -> the logged-in user's default wandb entity. The local run uses a
+        # personal wandb key (from ~/.netrc) which cannot write to the AI2 org entity
+        # 'prasanns-allen-institute-for-ai' (that's only reachable with the AI2 beaker secret), so
+        # leave entity unset locally. Override with --wandb-entity if you have org access.
         trainer_config = trainer_config.with_callback(
             "wandb",
             WandBCallback(
                 name=run_name_with_ts,
                 group=run_name,
-                entity="prasanns-allen-institute-for-ai",
+                entity=opts.wandb_entity,
                 project="memory-networks",
                 enabled=True,
                 cancel_check_interval=10,
@@ -222,6 +226,8 @@ def main() -> None:
     ap.add_argument("--lr", type=float, default=LR)
     ap.add_argument("--no-compile", dest="compile", action="store_false")
     ap.add_argument("--no-wandb", dest="wandb", action="store_false")
+    ap.add_argument("--wandb-entity", default=None,
+                    help="wandb entity (default: your default entity; the AI2 org needs org access)")
     opts = ap.parse_args()
 
     prepare_training_environment()
