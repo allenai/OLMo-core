@@ -33,11 +33,14 @@ conda activate "$ENV"
 # Use THIS working tree's olmo_core (fast_landmark lives here), not the env's editable clone.
 export PYTHONPATH="$REPO/src"
 export TOKENIZERS_PARALLELISM=false
-# wandb auth: enabled if WANDB_API_KEY is set OR ~/.netrc has a wandb entry; else --no-wandb.
-WANDB_FLAG=""
-if [ -z "${WANDB_API_KEY:-}" ] && ! grep -q "api.wandb.ai" "$HOME/.netrc" 2>/dev/null; then
-  WANDB_FLAG="--no-wandb"; echo "WARN: no wandb creds -> --no-wandb"
+# wandb auth: olmo-core's WandBCallback REQUIRES the WANDB_API_KEY env var (it does NOT read
+# ~/.netrc), so export it from ~/.netrc when not already set. Fall back to --no-wandb if neither.
+if [ -z "${WANDB_API_KEY:-}" ]; then
+  WANDB_API_KEY=$(awk '/machine api.wandb.ai/{f=1} f&&/password/{print $2; exit}' "$HOME/.netrc" 2>/dev/null)
+  export WANDB_API_KEY
 fi
+WANDB_FLAG=""
+[ -z "${WANDB_API_KEY:-}" ] && WANDB_FLAG="--no-wandb" && echo "WARN: no wandb creds -> --no-wandb"
 
 # Pin clean GPUs (defensive; mooney is usually idle).
 mapfile -t CLEAN < <(nvidia-smi --query-gpu=memory.used,uuid --format=csv,noheader,nounits | awk -F', ' '$1+0 < 2000 {print $2}')
