@@ -10,7 +10,121 @@
 #include <tuple>
 #include <vector>
 
+#include "olmo_bf16_tma_ibgda_ep/metadata.cuh"
+#include "olmo_bf16_tma_ibgda_ep/workspace.cuh"
+
 namespace py = pybind11;
+
+size_t align_up(size_t value, size_t alignment) {
+  TORCH_CHECK(alignment > 0, "alignment must be positive");
+  return ((value + alignment - 1) / alignment) * alignment;
+}
+
+py::dict peer_window_layout_to_dict(
+    const olmo::tma_ibgda_ep::PeerWindowLayout& layout) {
+  py::dict out;
+  out["route_records_offset"] = py::int_(layout.route_records_offset);
+  out["routes_per_rank_offset"] = py::int_(layout.routes_per_rank_offset);
+  out["rank_offsets_offset"] = py::int_(layout.rank_offsets_offset);
+  out["overflow_by_rank_offset"] = py::int_(layout.overflow_by_rank_offset);
+  out["payload_window_offset"] = py::int_(layout.payload_window_offset);
+  out["send_doorbells_offset"] = py::int_(layout.send_doorbells_offset);
+  out["recv_completions_offset"] = py::int_(layout.recv_completions_offset);
+  out["rank_stride_bytes"] = py::int_(layout.rank_stride_bytes);
+  out["route_records_bytes"] = py::int_(layout.route_records_bytes);
+  out["routes_per_rank_bytes"] = py::int_(layout.routes_per_rank_bytes);
+  out["rank_offsets_bytes"] = py::int_(layout.rank_offsets_bytes);
+  out["overflow_by_rank_bytes"] = py::int_(layout.overflow_by_rank_bytes);
+  out["payload_window_bytes_per_rank"] =
+      py::int_(layout.payload_window_bytes_per_rank);
+  out["send_doorbells_bytes"] = py::int_(layout.send_doorbells_bytes);
+  out["recv_completions_bytes"] = py::int_(layout.recv_completions_bytes);
+  out["ep_world_size"] = py::int_(layout.ep_world_size);
+  out["rank_capacity"] = py::int_(layout.rank_capacity);
+  out["hidden_size"] = py::int_(layout.hidden_size);
+  out["dtype_bytes"] = py::int_(layout.dtype_bytes);
+  out["total_peer_window_bytes"] =
+      py::int_(layout.rank_stride_bytes * layout.ep_world_size);
+  return out;
+}
+
+py::dict plan_peer_window_layout(
+    int64_t num_routes,
+    int64_t ep_world_size,
+    int64_t rank_capacity,
+    int64_t hidden_size,
+    int64_t dtype_bytes) {
+  TORCH_CHECK(num_routes >= 0, "num_routes must be non-negative");
+  TORCH_CHECK(ep_world_size > 0, "ep_world_size must be positive");
+  TORCH_CHECK(rank_capacity >= 0, "rank_capacity must be non-negative");
+  TORCH_CHECK(hidden_size > 0, "hidden_size must be positive");
+  TORCH_CHECK(dtype_bytes > 0, "dtype_bytes must be positive");
+  TORCH_CHECK(
+      ep_world_size <= std::numeric_limits<int32_t>::max(),
+      "ep_world_size too large for PeerWindowLayout");
+  TORCH_CHECK(
+      rank_capacity <= std::numeric_limits<int32_t>::max(),
+      "rank_capacity too large for PeerWindowLayout");
+  TORCH_CHECK(
+      hidden_size <= std::numeric_limits<int32_t>::max(),
+      "hidden_size too large for PeerWindowLayout");
+  TORCH_CHECK(
+      dtype_bytes <= std::numeric_limits<int32_t>::max(),
+      "dtype_bytes too large for PeerWindowLayout");
+
+  constexpr size_t alignment = olmo::tma_ibgda_ep::kWorkspaceAlignment;
+  olmo::tma_ibgda_ep::PeerWindowLayout layout{};
+  layout.route_records_bytes =
+      static_cast<size_t>(num_routes) * sizeof(olmo::tma_ibgda_ep::RouteRecord);
+  layout.routes_per_rank_bytes =
+      static_cast<size_t>(ep_world_size) * sizeof(int64_t);
+  layout.rank_offsets_bytes =
+      static_cast<size_t>(ep_world_size + 1) * sizeof(int64_t);
+  layout.overflow_by_rank_bytes = static_cast<size_t>(ep_world_size);
+  layout.payload_window_bytes_per_rank =
+      static_cast<size_t>(rank_capacity) * static_cast<size_t>(hidden_size) *
+      static_cast<size_t>(dtype_bytes);
+  layout.send_doorbells_bytes =
+      static_cast<size_t>(ep_world_size) * olmo::tma_ibgda_ep::kDoorbellBytes;
+  layout.recv_completions_bytes =
+      static_cast<size_t>(ep_world_size) * olmo::tma_ibgda_ep::kCompletionBytes;
+
+  size_t cursor = 0;
+  layout.route_records_offset = cursor;
+  cursor += layout.route_records_bytes;
+  cursor = align_up(cursor, alignment);
+
+  layout.routes_per_rank_offset = cursor;
+  cursor += layout.routes_per_rank_bytes;
+  cursor = align_up(cursor, alignment);
+
+  layout.rank_offsets_offset = cursor;
+  cursor += layout.rank_offsets_bytes;
+  cursor = align_up(cursor, alignment);
+
+  layout.overflow_by_rank_offset = cursor;
+  cursor += layout.overflow_by_rank_bytes;
+  cursor = align_up(cursor, alignment);
+
+  layout.payload_window_offset = cursor;
+  cursor += layout.payload_window_bytes_per_rank;
+  cursor = align_up(cursor, alignment);
+
+  layout.send_doorbells_offset = cursor;
+  cursor += layout.send_doorbells_bytes;
+  cursor = align_up(cursor, alignment);
+
+  layout.recv_completions_offset = cursor;
+  cursor += layout.recv_completions_bytes;
+  layout.rank_stride_bytes = align_up(cursor, alignment);
+
+  layout.ep_world_size = static_cast<int32_t>(ep_world_size);
+  layout.rank_capacity = static_cast<int32_t>(rank_capacity);
+  layout.hidden_size = static_cast<int32_t>(hidden_size);
+  layout.dtype_bytes = static_cast<int32_t>(dtype_bytes);
+
+  return peer_window_layout_to_dict(layout);
+}
 
 void tma_ibgda_dispatch_bf16_peer_launcher(
     const torch::Tensor& input,
@@ -186,6 +300,51 @@ void check_route_records(const torch::Tensor& route_records, const char* name) {
   TORCH_CHECK(route_records.is_contiguous(), name, " must be contiguous");
 }
 
+void check_preprocess_outputs(
+    const torch::Tensor& dst_ranks,
+    const torch::Tensor& route_records,
+    const torch::Tensor& routes_per_rank,
+    const torch::Tensor& rank_offsets,
+    const torch::Tensor& overflow_by_rank,
+    const torch::Tensor& route_ordinals,
+    const torch::Tensor& errors,
+    int64_t ep_world_size) {
+  check_route_records(route_records, "route_records");
+  TORCH_CHECK(route_records.size(0) == dst_ranks.numel(), "route_records first dim must match route map numel");
+  TORCH_CHECK(route_records.device() == dst_ranks.device(), "route_records device mismatch");
+  TORCH_CHECK(routes_per_rank.is_cuda(), "routes_per_rank must be CUDA");
+  TORCH_CHECK(routes_per_rank.scalar_type() == torch::kInt64, "routes_per_rank must be int64");
+  TORCH_CHECK(
+      routes_per_rank.dim() == 1 && routes_per_rank.size(0) == ep_world_size,
+      "routes_per_rank shape mismatch");
+  TORCH_CHECK(routes_per_rank.device() == dst_ranks.device(), "routes_per_rank device mismatch");
+  TORCH_CHECK(routes_per_rank.is_contiguous(), "routes_per_rank must be contiguous");
+  TORCH_CHECK(rank_offsets.is_cuda(), "rank_offsets must be CUDA");
+  TORCH_CHECK(rank_offsets.scalar_type() == torch::kInt64, "rank_offsets must be int64");
+  TORCH_CHECK(
+      rank_offsets.dim() == 1 && rank_offsets.size(0) == ep_world_size + 1,
+      "rank_offsets shape mismatch");
+  TORCH_CHECK(rank_offsets.device() == dst_ranks.device(), "rank_offsets device mismatch");
+  TORCH_CHECK(rank_offsets.is_contiguous(), "rank_offsets must be contiguous");
+  TORCH_CHECK(overflow_by_rank.is_cuda(), "overflow_by_rank must be CUDA");
+  TORCH_CHECK(overflow_by_rank.scalar_type() == torch::kBool, "overflow_by_rank must be bool");
+  TORCH_CHECK(
+      overflow_by_rank.dim() == 1 && overflow_by_rank.size(0) == ep_world_size,
+      "overflow_by_rank shape mismatch");
+  TORCH_CHECK(overflow_by_rank.device() == dst_ranks.device(), "overflow_by_rank device mismatch");
+  TORCH_CHECK(overflow_by_rank.is_contiguous(), "overflow_by_rank must be contiguous");
+  TORCH_CHECK(route_ordinals.is_cuda(), "route_ordinals must be CUDA");
+  TORCH_CHECK(route_ordinals.scalar_type() == torch::kInt64, "route_ordinals must be int64");
+  TORCH_CHECK(route_ordinals.sizes() == dst_ranks.sizes(), "route_ordinals shape mismatch");
+  TORCH_CHECK(route_ordinals.device() == dst_ranks.device(), "route_ordinals device mismatch");
+  TORCH_CHECK(route_ordinals.is_contiguous(), "route_ordinals must be contiguous");
+  TORCH_CHECK(errors.is_cuda(), "errors must be CUDA");
+  TORCH_CHECK(errors.scalar_type() == torch::kInt32, "errors must be int32");
+  TORCH_CHECK(errors.dim() == 1 && errors.size(0) == 3, "errors shape mismatch");
+  TORCH_CHECK(errors.device() == dst_ranks.device(), "errors device mismatch");
+  TORCH_CHECK(errors.is_contiguous(), "errors must be contiguous");
+}
+
 }  // namespace
 
 void enable_peer_access_for_all_visible_devices() {
@@ -211,10 +370,15 @@ void enable_peer_access_for_all_visible_devices() {
   }
 }
 
-std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
-preprocess_routes(
+void preprocess_routes_into(
     torch::Tensor dst_ranks,
     torch::Tensor dst_rows,
+    torch::Tensor route_records,
+    torch::Tensor routes_per_rank,
+    torch::Tensor rank_offsets,
+    torch::Tensor overflow_by_rank,
+    torch::Tensor route_ordinals,
+    torch::Tensor errors,
     int64_t ep_world_size,
     int64_t rank_capacity,
     int64_t static_route_budget,
@@ -237,17 +401,17 @@ preprocess_routes(
   TORCH_CHECK(
       static_route_budget <= static_cast<int64_t>(std::numeric_limits<int32_t>::max()),
       "static_route_budget exceeds int32 metadata range");
+  check_preprocess_outputs(
+      dst_ranks,
+      route_records,
+      routes_per_rank,
+      rank_offsets,
+      overflow_by_rank,
+      route_ordinals,
+      errors,
+      ep_world_size);
 
   c10::cuda::CUDAGuard guard(dst_ranks.device());
-  auto int32_options = dst_ranks.options().dtype(torch::kInt32);
-  auto int64_options = dst_ranks.options().dtype(torch::kInt64);
-  auto bool_options = dst_ranks.options().dtype(torch::kBool);
-  auto route_records = torch::empty({dst_ranks.numel(), 8}, int32_options);
-  auto routes_per_rank = torch::empty({ep_world_size}, int64_options);
-  auto rank_offsets = torch::empty({ep_world_size + 1}, int64_options);
-  auto overflow_by_rank = torch::empty({ep_world_size}, bool_options);
-  auto route_ordinals = torch::empty(dst_ranks.sizes(), int64_options);
-  auto errors = torch::empty({3}, int32_options);
   tma_ibgda_preprocess_routes_launcher(
       dst_ranks,
       dst_rows,
@@ -262,6 +426,45 @@ preprocess_routes(
       rank_capacity,
       static_route_budget,
       nblocks);
+}
+
+std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
+preprocess_routes(
+    torch::Tensor dst_ranks,
+    torch::Tensor dst_rows,
+    int64_t ep_world_size,
+    int64_t rank_capacity,
+    int64_t static_route_budget,
+    int64_t nblocks,
+    const c10::optional<torch::Tensor>& probs) {
+  check_route_maps(dst_ranks, dst_rows, dst_ranks.size(0));
+  TORCH_CHECK(ep_world_size > 0, "ep_world_size must be positive");
+  TORCH_CHECK(rank_capacity > 0, "rank_capacity must be positive");
+
+  c10::cuda::CUDAGuard guard(dst_ranks.device());
+  auto int32_options = dst_ranks.options().dtype(torch::kInt32);
+  auto int64_options = dst_ranks.options().dtype(torch::kInt64);
+  auto bool_options = dst_ranks.options().dtype(torch::kBool);
+  auto route_records = torch::empty({dst_ranks.numel(), 8}, int32_options);
+  auto routes_per_rank = torch::empty({ep_world_size}, int64_options);
+  auto rank_offsets = torch::empty({ep_world_size + 1}, int64_options);
+  auto overflow_by_rank = torch::empty({ep_world_size}, bool_options);
+  auto route_ordinals = torch::empty(dst_ranks.sizes(), int64_options);
+  auto errors = torch::empty({3}, int32_options);
+  preprocess_routes_into(
+      dst_ranks,
+      dst_rows,
+      route_records,
+      routes_per_rank,
+      rank_offsets,
+      overflow_by_rank,
+      route_ordinals,
+      errors,
+      ep_world_size,
+      rank_capacity,
+      static_route_budget,
+      nblocks,
+      probs);
   return std::make_tuple(
       route_records,
       routes_per_rank,
@@ -518,7 +721,43 @@ void route_dot_bf16_ibgda_records(
       out);
 }
 
+py::dict extension_contract() {
+  py::dict contract;
+  contract["extension_module"] = "_tma_ibgda_ep_ext_gpu";
+  contract["route_record_bytes"] =
+      py::int_(sizeof(olmo::tma_ibgda_ep::RouteRecord));
+  contract["route_record_words"] = py::int_(
+      sizeof(olmo::tma_ibgda_ep::RouteRecord) / sizeof(int32_t));
+  contract["route_flag_valid"] =
+      py::int_(static_cast<int>(olmo::tma_ibgda_ep::ROUTE_FLAG_VALID));
+  contract["workspace_alignment"] =
+      py::int_(olmo::tma_ibgda_ep::kWorkspaceAlignment);
+  contract["doorbell_bytes"] = py::int_(olmo::tma_ibgda_ep::kDoorbellBytes);
+  contract["completion_bytes"] =
+      py::int_(olmo::tma_ibgda_ep::kCompletionBytes);
+  contract["peer_window_layout_bytes"] =
+      py::int_(sizeof(olmo::tma_ibgda_ep::PeerWindowLayout));
+  contract["kernel_launch_config_bytes"] =
+      py::int_(sizeof(olmo::tma_ibgda_ep::KernelLaunchConfig));
+  contract["bf16_only"] = py::bool_(true);
+  contract["has_gpu_route_preprocess"] = py::bool_(true);
+  contract["has_ibgda_dispatch"] = py::bool_(true);
+  contract["has_tma_load_dispatch"] = py::bool_(true);
+  contract["has_ibgda_combine"] = py::bool_(true);
+  contract["has_route_dot_backward"] = py::bool_(true);
+  contract["has_peer_window_layout_planner"] = py::bool_(true);
+  return contract;
+}
+
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
+  m.def(
+      "extension_contract",
+      &extension_contract,
+      "Return the OLMo TMA/IBGDA extension ABI/capability contract");
+  m.def(
+      "plan_peer_window_layout",
+      &plan_peer_window_layout,
+      "Plan the OLMo TMA/IBGDA peer-window layout using the CUDA-side ABI");
   m.def(
       "get_unique_id",
       &tma_ibgda_get_unique_id,
@@ -560,6 +799,23 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
       "Build OLMo TMA/IBGDA route records and per-rank metadata on GPU",
       py::arg("dst_ranks"),
       py::arg("dst_rows"),
+      py::arg("ep_world_size"),
+      py::arg("rank_capacity"),
+      py::arg("static_route_budget") = -1,
+      py::arg("nblocks") = 0,
+      py::arg("probs") = py::none());
+  m.def(
+      "preprocess_routes_into",
+      &preprocess_routes_into,
+      "Build OLMo TMA/IBGDA route metadata into caller-provided tensors",
+      py::arg("dst_ranks"),
+      py::arg("dst_rows"),
+      py::arg("route_records"),
+      py::arg("routes_per_rank"),
+      py::arg("rank_offsets"),
+      py::arg("overflow_by_rank"),
+      py::arg("route_ordinals"),
+      py::arg("errors"),
       py::arg("ep_world_size"),
       py::arg("rank_capacity"),
       py::arg("static_route_budget") = -1,

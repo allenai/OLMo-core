@@ -39,6 +39,9 @@ class ExpertParallelConfig(Config):
     rowwise_symm_combine_gather: Optional[bool] = None
 
     tma_ibgda_num_sms: Optional[int] = None
+    tma_ibgda_dispatch_num_sms: Optional[int] = None
+    tma_ibgda_combine_num_sms: Optional[int] = None
+    tma_ibgda_preprocess_num_sms: Optional[int] = None
     tma_ibgda_symmetric_expert_out: bool = False
     wave_use_bf16_persistent_mega_forward: bool = False
     checkpoint_tbo: bool = False
@@ -69,20 +72,25 @@ class ExpertParallelConfig(Config):
             raise OLMoConfigurationError(
                 f"EP rowwise_nblocks must be >= 0 (got {self.rowwise_nblocks})"
             )
-        if self.tma_ibgda_num_sms is not None and self.tma_ibgda_num_sms < 32:
-            raise OLMoConfigurationError(
-                "EP tma_ibgda_num_sms must be >= 32 when set "
-                f"(got {self.tma_ibgda_num_sms})"
-            )
-        if (
-            self.tma_ibgda_num_sms is not None
-            and self.path != ExpertParallelPath.rowwise_tma_ibgda
-        ):
-            raise OLMoConfigurationError(
-                "EP tma_ibgda_num_sms is only valid with "
-                f"path={ExpertParallelPath.rowwise_tma_ibgda!r} "
-                f"(got path={self.path!r})"
-            )
+        tma_ibgda_num_sms_fields = {
+            "tma_ibgda_num_sms": self.tma_ibgda_num_sms,
+            "tma_ibgda_dispatch_num_sms": self.tma_ibgda_dispatch_num_sms,
+            "tma_ibgda_combine_num_sms": self.tma_ibgda_combine_num_sms,
+            "tma_ibgda_preprocess_num_sms": self.tma_ibgda_preprocess_num_sms,
+        }
+        for field_name, value in tma_ibgda_num_sms_fields.items():
+            if value is None:
+                continue
+            if value < 32:
+                raise OLMoConfigurationError(
+                    f"EP {field_name} must be >= 32 when set (got {value})"
+                )
+            if self.path != ExpertParallelPath.rowwise_tma_ibgda:
+                raise OLMoConfigurationError(
+                    f"EP {field_name} is only valid with "
+                    f"path={ExpertParallelPath.rowwise_tma_ibgda!r} "
+                    f"(got path={self.path!r})"
+                )
         if (
             self.tma_ibgda_symmetric_expert_out
             and self.path != ExpertParallelPath.rowwise_tma_ibgda
@@ -155,3 +163,31 @@ class ExpertParallelConfig(Config):
         if self.path == ExpertParallelPath.rowwise_tma_ibgda:
             return "tma_ibgda"
         return None
+
+    @property
+    def resolved_tma_ibgda_dispatch_num_sms(self) -> int:
+        return (
+            self.tma_ibgda_dispatch_num_sms
+            if self.tma_ibgda_dispatch_num_sms is not None
+            else self.tma_ibgda_num_sms
+            if self.tma_ibgda_num_sms is not None
+            else self.rowwise_nblocks
+        )
+
+    @property
+    def resolved_tma_ibgda_combine_num_sms(self) -> int:
+        return (
+            self.tma_ibgda_combine_num_sms
+            if self.tma_ibgda_combine_num_sms is not None
+            else self.tma_ibgda_num_sms
+            if self.tma_ibgda_num_sms is not None
+            else self.rowwise_nblocks
+        )
+
+    @property
+    def resolved_tma_ibgda_preprocess_num_sms(self) -> Optional[int]:
+        return (
+            self.tma_ibgda_preprocess_num_sms
+            if self.tma_ibgda_preprocess_num_sms is not None
+            else self.tma_ibgda_num_sms
+        )

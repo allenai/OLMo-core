@@ -65,6 +65,33 @@ def is_available() -> bool:
 
 
 @torch.compiler.disable
+def extension_contract() -> dict[str, object]:
+    ext = _load_cuda_extension()
+    return dict(ext.extension_contract())
+
+
+@torch.compiler.disable
+def plan_peer_window_layout(
+    *,
+    num_routes: int,
+    ep_world_size: int,
+    rank_capacity: int,
+    hidden_size: int,
+    dtype_bytes: int,
+) -> dict[str, int]:
+    ext = _load_cuda_extension()
+    return dict(
+        ext.plan_peer_window_layout(
+            int(num_routes),
+            int(ep_world_size),
+            int(rank_capacity),
+            int(hidden_size),
+            int(dtype_bytes),
+        )
+    )
+
+
+@torch.compiler.disable
 def enable_peer_access_for_all_visible_devices() -> None:
     ext = _load_cuda_extension()
     ext.enable_peer_access_for_all_visible_devices()
@@ -109,7 +136,7 @@ def init_symmetric_memory(group: dist.ProcessGroup, device: torch.device) -> Non
 
 @torch.compiler.disable
 def empty_symmetric(
-    shape: tuple[int, int],
+    shape: tuple[int, ...],
     *,
     dtype: torch.dtype,
     device: torch.device,
@@ -159,6 +186,41 @@ def preprocess_routes(
     return ext.preprocess_routes(
         dst_ranks,
         dst_rows,
+        int(ep_world_size),
+        int(rank_capacity),
+        -1 if static_route_budget is None else int(static_route_budget),
+        int(nblocks),
+        probs,
+    )
+
+
+@torch.compiler.disable
+def preprocess_routes_into(
+    dst_ranks: torch.Tensor,
+    dst_rows: torch.Tensor,
+    *,
+    route_records: torch.Tensor,
+    routes_per_rank: torch.Tensor,
+    rank_offsets: torch.Tensor,
+    overflow_by_rank: torch.Tensor,
+    route_ordinals: torch.Tensor,
+    errors: torch.Tensor,
+    ep_world_size: int,
+    rank_capacity: int,
+    static_route_budget: Optional[int] = None,
+    probs: Optional[torch.Tensor] = None,
+    nblocks: int = 0,
+) -> None:
+    ext = _load_cuda_extension()
+    ext.preprocess_routes_into(
+        dst_ranks,
+        dst_rows,
+        route_records,
+        routes_per_rank,
+        rank_offsets,
+        overflow_by_rank,
+        route_ordinals,
+        errors,
         int(ep_world_size),
         int(rank_capacity),
         -1 if static_route_budget is None else int(static_route_budget),

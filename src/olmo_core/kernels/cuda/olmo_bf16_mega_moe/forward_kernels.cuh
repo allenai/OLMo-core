@@ -645,11 +645,16 @@ OLMO_BF16_MEGA_DEVICE inline void compute_bf16_umma_linear_tile_to_bf16(
 
   uint32_t tma_phase = 0;
   for (int64_t k_start = 0; k_start < in_features; k_start += kTileK) {
-    for (uint32_t idx = threadIdx.x; idx < kTileM * kTileK; idx += blockDim.x) {
-      smem_a[idx] = __float2bfloat16(0.0f);
-    }
-    for (uint32_t idx = threadIdx.x; idx < kTileN * kTileK; idx += blockDim.x) {
-      smem_b[idx] = __float2bfloat16(0.0f);
+    const bool need_pre_tma_zero =
+        (k_start + static_cast<int64_t>(kTileK) > in_features) ||
+        (n_start + static_cast<int64_t>(kTileN) > out_features);
+    if (need_pre_tma_zero) {
+      for (uint32_t idx = threadIdx.x; idx < kTileM * kTileK; idx += blockDim.x) {
+        smem_a[idx] = __float2bfloat16(0.0f);
+      }
+      for (uint32_t idx = threadIdx.x; idx < kTileN * kTileK; idx += blockDim.x) {
+        smem_b[idx] = __float2bfloat16(0.0f);
+      }
     }
     __syncthreads();
 
@@ -2590,18 +2595,21 @@ __global__ void standard_ep_full_forward_megakernel_debug_kernel(
       src_token_topk_indices[idx] = -1;
     }
   }
-  for (int64_t idx = thread_start; idx < packed_capacity * hidden; idx += thread_stride) {
-    packed_input[idx] = __float2bfloat16(0.0f);
-    packed_expert_out[idx] = __float2bfloat16(0.0f);
-  }
-  for (int64_t idx = thread_start; idx < num_route_slots * hidden; idx += thread_stride) {
-    gathered_out[idx] = __float2bfloat16(0.0f);
-  }
-  for (int64_t idx = thread_start; idx < packed_capacity * intermediate; idx += thread_stride) {
-    h[idx] = __float2bfloat16(0.0f);
-  }
-  for (int64_t idx = thread_start; idx < num_tokens * hidden; idx += thread_stride) {
-    out[idx] = __float2bfloat16(0.0f);
+  const bool clear_full_runtime_buffers = !use_umma_compute;
+  if (clear_full_runtime_buffers) {
+    for (int64_t idx = thread_start; idx < packed_capacity * hidden; idx += thread_stride) {
+      packed_input[idx] = __float2bfloat16(0.0f);
+      packed_expert_out[idx] = __float2bfloat16(0.0f);
+    }
+    for (int64_t idx = thread_start; idx < num_route_slots * hidden; idx += thread_stride) {
+      gathered_out[idx] = __float2bfloat16(0.0f);
+    }
+    for (int64_t idx = thread_start; idx < packed_capacity * intermediate; idx += thread_stride) {
+      h[idx] = __float2bfloat16(0.0f);
+    }
+    for (int64_t idx = thread_start; idx < num_tokens * hidden; idx += thread_stride) {
+      out[idx] = __float2bfloat16(0.0f);
+    }
   }
 
   __nv_bfloat16* source_input_window =
@@ -2611,8 +2619,10 @@ __global__ void standard_ep_full_forward_megakernel_debug_kernel(
   for (int64_t idx = thread_start; idx < num_tokens * hidden; idx += thread_stride) {
     source_input_window[idx] = source_input[idx];
   }
-  for (int64_t idx = thread_start; idx < num_route_slots * hidden; idx += thread_stride) {
-    local_output_window[idx] = __float2bfloat16(0.0f);
+  if (clear_full_runtime_buffers) {
+    for (int64_t idx = thread_start; idx < num_route_slots * hidden; idx += thread_stride) {
+      local_output_window[idx] = __float2bfloat16(0.0f);
+    }
   }
 
   standard_ep_phase_barrier</*kTag=*/1>(

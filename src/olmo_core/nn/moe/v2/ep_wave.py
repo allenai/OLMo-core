@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import warnings
 from typing import TYPE_CHECKING, Optional, Tuple, Union, cast
 
 import torch
@@ -9,6 +10,7 @@ import torch.distributed as dist
 from olmo_core.kernels.symm_mem_vdev2d import (
     rowwise_bf16_mega_moe_local_umma_compute,
     rowwise_bf16_mega_moe_standard_ep_forward_persistent_workspace_peer_group,
+    rowwise_bf16_mega_moe_standard_ep_forward_persistent_workspace_peer_group_umma,
     rowwise_bf16_mega_moe_standard_ep_workspace_config,
 )
 
@@ -36,6 +38,24 @@ from .routed_experts import (
 
 if TYPE_CHECKING:
     from olmo_core.nn.ddp.block import OLMoDDPTransformerBlock
+
+
+_EP_WAVE_EXPERIMENTAL_WARNING_EMITTED = False
+
+
+def _warn_ep_wave_experimental() -> None:
+    global _EP_WAVE_EXPERIMENTAL_WARNING_EMITTED
+    if _EP_WAVE_EXPERIMENTAL_WARNING_EMITTED:
+        return
+    warnings.warn(
+        "combined_forward_ep_wave is experimental: it is a BF16 forward-only "
+        "MegaMoE/wave bring-up path for profiling under torch.no_grad(); "
+        "training/backward is intentionally unsupported and rowwise EP should "
+        "remain the production backend.",
+        RuntimeWarning,
+        stacklevel=2,
+    )
+    _EP_WAVE_EXPERIMENTAL_WARNING_EMITTED = True
 
 
 def _env_flag(name: str, default: bool = False) -> bool:
@@ -154,13 +174,25 @@ def _standard_ep_peer_group_cache_key(
     hidden: int,
     intermediate: int,
     device: torch.device,
-) -> tuple[int, int, int, int]:
+    use_umma: bool,
+) -> tuple[int, int, int, int, int]:
     return (
         int(num_tokens),
         int(hidden),
         int(intermediate),
         int(device.index if device.index is not None else torch.cuda.current_device()),
+        int(use_umma),
     )
+
+
+def _use_standard_ep_peer_group_umma(
+    *,
+    hidden: int,
+    intermediate: int,
+) -> bool:
+    if _env_flag("OLMO_EP_WAVE_DISABLE_STANDARD_EP_UMMA"):
+        return False
+    return hidden % 128 == 0 and intermediate % 128 == 0
 
 
 def _get_standard_ep_peer_group_cache(
@@ -170,7 +202,7 @@ def _get_standard_ep_peer_group_cache(
     hidden: int,
     intermediate: int,
     device: torch.device,
-) -> dict[str, torch.Tensor | dict[str, int] | tuple[int, int, int, int]]:
+) -> dict[str, torch.Tensor | dict[str, int] | tuple[int, int, int, int, int]]:
     if block.ep_pg is None:
         raise RuntimeError("standard EP peer-group forward requires block.apply_ep(...) first")
     from olmo_core.kernels import olmo_symm_mem
@@ -180,10 +212,14 @@ def _get_standard_ep_peer_group_cache(
         hidden=hidden,
         intermediate=intermediate,
         device=device,
+        use_umma=_use_standard_ep_peer_group_umma(
+            hidden=hidden,
+            intermediate=intermediate,
+        ),
     )
     cache = getattr(block, "_ep_wave_standard_ep_peer_group_cache", None)
     if cache is not None and cache.get("key") == key:
-        return cast(dict[str, torch.Tensor | dict[str, int] | tuple[int, int, int, int]], cache)
+        return cast(dict[str, torch.Tensor | dict[str, int] | tuple[int, int, int, int, int]], cache)
 
     workspace_config = rowwise_bf16_mega_moe_standard_ep_workspace_config(
         num_tokens=num_tokens,
@@ -199,9 +235,14 @@ def _get_standard_ep_peer_group_cache(
     rank_workspace_bases = olmo_symm_mem.peer_base_ptrs(workspace, group=block.ep_pg)
     local_packed_capacity = workspace_config["local_packed_capacity"]
     num_route_slots = workspace_config["num_route_slots"]
-    tensor_cache: dict[str, torch.Tensor | dict[str, int] | tuple[int, int, int, int]] = {
+    use_umma = _use_standard_ep_peer_group_umma(
+        hidden=hidden,
+        intermediate=intermediate,
+    )
+    tensor_cache: dict[str, torch.Tensor | dict[str, int] | tuple[int, int, int, int, int]] = {
         "key": key,
         "workspace_config": workspace_config,
+        "use_umma": torch.tensor(int(use_umma), device=device, dtype=torch.int32),
         "workspace": workspace,
         "rank_workspace_bases": rank_workspace_bases,
         "gathered_out": torch.empty(
@@ -248,6 +289,17 @@ def _get_standard_ep_peer_group_cache(
             dtype=torch.int32,
         ),
     }
+    if use_umma:
+        tensor_cache["w1_up"] = torch.empty(
+            (local_packed_capacity, intermediate),
+            device=device,
+            dtype=torch.bfloat16,
+        )
+        tensor_cache["w1_gate"] = torch.empty(
+            (local_packed_capacity, intermediate),
+            device=device,
+            dtype=torch.bfloat16,
+        )
     setattr(block, "_ep_wave_standard_ep_peer_group_cache", tensor_cache)
     return tensor_cache
 
@@ -271,27 +323,53 @@ def _standard_ep_peer_group_forward(
         intermediate=intermediate,
         device=moe_inp.device,
     )
-    rowwise_bf16_mega_moe_standard_ep_forward_persistent_workspace_peer_group(
-        moe_inp.contiguous(),
-        cast(torch.Tensor, cache["gathered_out"]),
-        cast(torch.Tensor, cache["out"]),
-        route_expert_indices.to(dtype=torch.long).contiguous(),
-        route_probs.to(dtype=torch.float32).contiguous(),
-        block.routed_experts.w_up_gate.contiguous(),
-        block.routed_experts.w_down.contiguous(),
-        cast(torch.Tensor, cache["workspace"]),
-        cast(torch.Tensor, cache["rank_workspace_bases"]),
-        cast(torch.Tensor, cache["global_counts"]),
-        cast(torch.Tensor, cache["global_offsets"]),
-        cast(torch.Tensor, cache["expert_cursors"]),
-        cast(torch.Tensor, cache["packed_route"]),
-        cast(torch.Tensor, cache["route_to_slot"]),
-        cast(torch.Tensor, cache["packed_input"]),
-        cast(torch.Tensor, cache["h"]),
-        cast(torch.Tensor, cache["packed_expert_out"]),
-        cast(torch.Tensor, cache["barrier_state"]),
-        caller_rank_idx=dist.get_rank(block.ep_pg),
-    )
+    use_umma = bool(cast(torch.Tensor, cache["use_umma"]).item())
+    if use_umma:
+        rowwise_bf16_mega_moe_standard_ep_forward_persistent_workspace_peer_group_umma(
+            moe_inp.contiguous(),
+            cast(torch.Tensor, cache["gathered_out"]),
+            cast(torch.Tensor, cache["out"]),
+            route_expert_indices.to(dtype=torch.long).contiguous(),
+            route_probs.to(dtype=torch.float32).contiguous(),
+            block.routed_experts.w_up_gate.contiguous(),
+            block.routed_experts.w_down.contiguous(),
+            cast(torch.Tensor, cache["workspace"]),
+            cast(torch.Tensor, cache["rank_workspace_bases"]),
+            cast(torch.Tensor, cache["global_counts"]),
+            cast(torch.Tensor, cache["global_offsets"]),
+            cast(torch.Tensor, cache["expert_cursors"]),
+            cast(torch.Tensor, cache["packed_route"]),
+            cast(torch.Tensor, cache["route_to_slot"]),
+            cast(torch.Tensor, cache["packed_input"]),
+            cast(torch.Tensor, cache["h"]),
+            cast(torch.Tensor, cache["packed_expert_out"]),
+            cast(torch.Tensor, cache["barrier_state"]),
+            cast(torch.Tensor, cache["w1_up"]),
+            cast(torch.Tensor, cache["w1_gate"]),
+            caller_rank_idx=dist.get_rank(block.ep_pg),
+        )
+    else:
+        rowwise_bf16_mega_moe_standard_ep_forward_persistent_workspace_peer_group(
+            moe_inp.contiguous(),
+            cast(torch.Tensor, cache["gathered_out"]),
+            cast(torch.Tensor, cache["out"]),
+            route_expert_indices.to(dtype=torch.long).contiguous(),
+            route_probs.to(dtype=torch.float32).contiguous(),
+            block.routed_experts.w_up_gate.contiguous(),
+            block.routed_experts.w_down.contiguous(),
+            cast(torch.Tensor, cache["workspace"]),
+            cast(torch.Tensor, cache["rank_workspace_bases"]),
+            cast(torch.Tensor, cache["global_counts"]),
+            cast(torch.Tensor, cache["global_offsets"]),
+            cast(torch.Tensor, cache["expert_cursors"]),
+            cast(torch.Tensor, cache["packed_route"]),
+            cast(torch.Tensor, cache["route_to_slot"]),
+            cast(torch.Tensor, cache["packed_input"]),
+            cast(torch.Tensor, cache["h"]),
+            cast(torch.Tensor, cache["packed_expert_out"]),
+            cast(torch.Tensor, cache["barrier_state"]),
+            caller_rank_idx=dist.get_rank(block.ep_pg),
+        )
     return cast(torch.Tensor, cache["out"])
 
 
@@ -304,8 +382,15 @@ def combined_forward_ep_wave(
     loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
     **kwargs,
 ) -> torch.Tensor:
-    """Forward-only BF16 wave EP path using the standard EP peer-group megakernel."""
+    """Experimental BF16 wave EP forward path.
+
+    This path is intentionally forward-only and should be used only under
+    ``torch.no_grad()`` for correctness/profiling experiments. It fails closed
+    for grad-enabled training, activation checkpointing, unsupported shapes, and
+    non-BF16 routed expert compute until a real wave backward exists.
+    """
     _check_ep_wave_supported(block, x)
+    _warn_ep_wave_experimental()
     assert block.routed_experts_router is not None
     assert block.routed_experts is not None
     top_k = block.routed_experts_router.top_k

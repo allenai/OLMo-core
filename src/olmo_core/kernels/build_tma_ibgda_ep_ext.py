@@ -8,7 +8,7 @@ import sysconfig
 from pathlib import Path
 
 
-from .build_symm_mem_vdev2d_ext import (
+from .cuda_build_utils import (
     _env_bool,
     _find_nvshmem_paths,
     _infer_cmake_cuda_architectures,

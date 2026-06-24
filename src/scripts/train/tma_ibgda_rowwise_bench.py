@@ -67,6 +67,37 @@ def _parse_modes(raw: str) -> list[str]:
     return modes
 
 
+def _tma_ibgda_contract_for_log(modes: list[str]) -> str | None:
+    if "tma_ibgda" not in modes:
+        return None
+    try:
+        from olmo_core.kernels import tma_ibgda_ep
+
+        if not tma_ibgda_ep.is_available():
+            return "unavailable"
+        contract = tma_ibgda_ep.extension_contract()
+    except Exception as e:
+        return f"unavailable:{type(e).__name__}:{e}"
+
+    keys = (
+        "route_record_bytes",
+        "route_record_words",
+        "workspace_alignment",
+        "doorbell_bytes",
+        "completion_bytes",
+        "peer_window_layout_bytes",
+        "kernel_launch_config_bytes",
+        "bf16_only",
+        "has_gpu_route_preprocess",
+        "has_ibgda_dispatch",
+        "has_tma_load_dispatch",
+        "has_ibgda_combine",
+        "has_route_dot_backward",
+        "has_peer_window_layout_planner",
+    )
+    return ",".join(f"{key}={contract.get(key)!r}" for key in keys)
+
+
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Model-facing rowwise NVSHMEM vs TMA/IBGDA MoE benchmark"
@@ -83,7 +114,29 @@ def _parse_args() -> argparse.Namespace:
         "--tma-ibgda-num-sms",
         type=int,
         default=None,
-        help="TMA/IBGDA launch block count. Defaults to --rowwise-nblocks.",
+        help=(
+            "Common TMA/IBGDA launch block count fallback. Dispatch/combine "
+            "default to --rowwise-nblocks when neither this nor their "
+            "stage-specific knobs are set."
+        ),
+    )
+    parser.add_argument(
+        "--tma-ibgda-dispatch-num-sms",
+        type=int,
+        default=None,
+        help="TMA/IBGDA dispatch launch block count.",
+    )
+    parser.add_argument(
+        "--tma-ibgda-combine-num-sms",
+        type=int,
+        default=None,
+        help="TMA/IBGDA combine launch block count.",
+    )
+    parser.add_argument(
+        "--tma-ibgda-preprocess-num-sms",
+        type=int,
+        default=None,
+        help="TMA/IBGDA route-preprocess launch block count.",
     )
     parser.add_argument(
         "--tma-ibgda-symmetric-expert-out",
@@ -147,6 +200,9 @@ def _build_block(
     capacity_factor: float,
     rowwise_nblocks: int,
     tma_ibgda_num_sms: int | None,
+    tma_ibgda_dispatch_num_sms: int | None,
+    tma_ibgda_combine_num_sms: int | None,
+    tma_ibgda_preprocess_num_sms: int | None,
     tma_ibgda_symmetric_expert_out: bool,
     include_shared_expert: bool,
     shared_hidden_size: int,
@@ -213,6 +269,15 @@ def _build_block(
             rowwise_nblocks=rowwise_nblocks,
             tma_ibgda_num_sms=(
                 tma_ibgda_num_sms if rowwise_backend == "tma_ibgda" else None
+            ),
+            tma_ibgda_dispatch_num_sms=(
+                tma_ibgda_dispatch_num_sms if rowwise_backend == "tma_ibgda" else None
+            ),
+            tma_ibgda_combine_num_sms=(
+                tma_ibgda_combine_num_sms if rowwise_backend == "tma_ibgda" else None
+            ),
+            tma_ibgda_preprocess_num_sms=(
+                tma_ibgda_preprocess_num_sms if rowwise_backend == "tma_ibgda" else None
             ),
             tma_ibgda_symmetric_expert_out=(
                 tma_ibgda_symmetric_expert_out and rowwise_backend == "tma_ibgda"
@@ -335,6 +400,9 @@ def _bench_mode(
         capacity_factor=args.capacity_factor,
         rowwise_nblocks=args.rowwise_nblocks,
         tma_ibgda_num_sms=args.tma_ibgda_num_sms,
+        tma_ibgda_dispatch_num_sms=args.tma_ibgda_dispatch_num_sms,
+        tma_ibgda_combine_num_sms=args.tma_ibgda_combine_num_sms,
+        tma_ibgda_preprocess_num_sms=args.tma_ibgda_preprocess_num_sms,
         tma_ibgda_symmetric_expert_out=args.tma_ibgda_symmetric_expert_out,
         include_shared_expert=not args.no_shared_expert,
         shared_hidden_size=args.shared_hidden_size,
@@ -432,6 +500,7 @@ def main() -> None:
     ep_mesh = _build_ep_mesh(world_size)
 
     if rank == 0:
+        tma_contract = _tma_ibgda_contract_for_log(modes)
         print(
             "TMA/IBGDA rowwise benchmark "
             f"world_size={world_size} local_rank0_device={torch.cuda.get_device_name(local_rank)} "
@@ -440,7 +509,11 @@ def main() -> None:
             f"num_experts={args.num_experts} top_k={args.top_k} "
             f"rowwise_nblocks={args.rowwise_nblocks} "
             f"tma_ibgda_num_sms={args.tma_ibgda_num_sms} "
-            f"tma_ibgda_symmetric_expert_out={args.tma_ibgda_symmetric_expert_out}",
+            f"tma_ibgda_dispatch_num_sms={args.tma_ibgda_dispatch_num_sms} "
+            f"tma_ibgda_combine_num_sms={args.tma_ibgda_combine_num_sms} "
+            f"tma_ibgda_preprocess_num_sms={args.tma_ibgda_preprocess_num_sms} "
+            f"tma_ibgda_symmetric_expert_out={args.tma_ibgda_symmetric_expert_out} "
+            f"tma_ibgda_extension_contract={tma_contract}",
             flush=True,
         )
 

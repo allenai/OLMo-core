@@ -253,6 +253,53 @@ def test_v2_tma_ibgda_num_sms_config_is_stored():
     assert block.ep.tma_ibgda_num_sms == 32
 
 
+def test_v2_tma_ibgda_stage_num_sms_config_is_stored():
+    block = _build_block(
+        ep_no_sync=False,
+        ep=ExpertParallelConfig(
+            path=ExpertParallelPath.rowwise_tma_ibgda,
+            rowwise_nblocks=96,
+            tma_ibgda_num_sms=64,
+            tma_ibgda_dispatch_num_sms=128,
+            tma_ibgda_combine_num_sms=160,
+            tma_ibgda_preprocess_num_sms=192,
+        ),
+        init_device="cpu",
+    )
+    assert block.ep.resolved_tma_ibgda_dispatch_num_sms == 128
+    assert block.ep.resolved_tma_ibgda_combine_num_sms == 160
+    assert block.ep.resolved_tma_ibgda_preprocess_num_sms == 192
+
+
+def test_v2_tma_ibgda_num_sms_is_stage_fallback():
+    block = _build_block(
+        ep_no_sync=False,
+        ep=ExpertParallelConfig(
+            path=ExpertParallelPath.rowwise_tma_ibgda,
+            rowwise_nblocks=96,
+            tma_ibgda_num_sms=64,
+        ),
+        init_device="cpu",
+    )
+    assert block.ep.resolved_tma_ibgda_dispatch_num_sms == 64
+    assert block.ep.resolved_tma_ibgda_combine_num_sms == 64
+    assert block.ep.resolved_tma_ibgda_preprocess_num_sms == 64
+
+
+def test_v2_tma_ibgda_stage_num_sms_default_to_rowwise_nblocks_except_preprocess():
+    block = _build_block(
+        ep_no_sync=False,
+        ep=ExpertParallelConfig(
+            path=ExpertParallelPath.rowwise_tma_ibgda,
+            rowwise_nblocks=96,
+        ),
+        init_device="cpu",
+    )
+    assert block.ep.resolved_tma_ibgda_dispatch_num_sms == 96
+    assert block.ep.resolved_tma_ibgda_combine_num_sms == 96
+    assert block.ep.resolved_tma_ibgda_preprocess_num_sms is None
+
+
 def test_v2_tma_ibgda_symmetric_expert_out_config_is_stored():
     block = _build_block(
         ep_no_sync=True,
@@ -264,8 +311,69 @@ def test_v2_tma_ibgda_symmetric_expert_out_config_is_stored():
     assert block.ep.tma_ibgda_symmetric_expert_out is True
 
 
+def test_v2_tma_ibgda_symmetric_expert_out_flag_detects_direct_buffer():
+    from olmo_core.nn.moe.v2.ep_no_sync_tma_ibgda import (
+        _resolve_symmetric_expert_out_flag,
+    )
+
+    expert_out = torch.empty((4, 8), dtype=torch.bfloat16)
+    assert (
+        _resolve_symmetric_expert_out_flag(
+            requested=True,
+            returned_expert_out=expert_out,
+            symmetric_expert_out=expert_out,
+        )
+        is True
+    )
+
+
+def test_v2_tma_ibgda_symmetric_expert_out_flag_ignores_unrequested_buffer():
+    from olmo_core.nn.moe.v2.ep_no_sync_tma_ibgda import (
+        _resolve_symmetric_expert_out_flag,
+    )
+
+    expert_out = torch.empty((4, 8), dtype=torch.bfloat16)
+    assert (
+        _resolve_symmetric_expert_out_flag(
+            requested=False,
+            returned_expert_out=expert_out,
+            symmetric_expert_out=None,
+        )
+        is False
+    )
+
+
+def test_v2_tma_ibgda_symmetric_expert_out_flag_rejects_missing_buffer():
+    from olmo_core.nn.moe.v2.ep_no_sync_tma_ibgda import (
+        _resolve_symmetric_expert_out_flag,
+    )
+
+    expert_out = torch.empty((4, 8), dtype=torch.bfloat16)
+    with pytest.raises(RuntimeError, match="no symmetric buffer"):
+        _resolve_symmetric_expert_out_flag(
+            requested=True,
+            returned_expert_out=expert_out,
+            symmetric_expert_out=None,
+        )
+
+
+def test_v2_tma_ibgda_symmetric_expert_out_flag_rejects_indirect_output():
+    from olmo_core.nn.moe.v2.ep_no_sync_tma_ibgda import (
+        _resolve_symmetric_expert_out_flag,
+    )
+
+    symmetric_expert_out = torch.empty((4, 8), dtype=torch.bfloat16)
+    returned_expert_out = torch.empty_like(symmetric_expert_out)
+    with pytest.raises(RuntimeError, match="returned a different tensor"):
+        _resolve_symmetric_expert_out_flag(
+            requested=True,
+            returned_expert_out=returned_expert_out,
+            symmetric_expert_out=symmetric_expert_out,
+        )
+
+
 def test_v2_tma_ibgda_num_sms_rejects_currently_unsafe_low_values():
-    with pytest.raises(OLMoConfigurationError, match="ep_no_sync_tma_ibgda_num_sms"):
+    with pytest.raises(OLMoConfigurationError, match="tma_ibgda_num_sms"):
         _build_block(
             ep_no_sync=True,
             ep_no_sync_use_rowwise_all_to_all=True,
@@ -281,6 +389,32 @@ def test_v2_tma_ibgda_num_sms_requires_tma_ibgda_path():
             path=ExpertParallelPath.rowwise_nvshmem,
             tma_ibgda_num_sms=32,
         ).validate()
+
+
+def test_v2_tma_ibgda_stage_num_sms_requires_tma_ibgda_path():
+    for field_name in (
+        "tma_ibgda_dispatch_num_sms",
+        "tma_ibgda_combine_num_sms",
+        "tma_ibgda_preprocess_num_sms",
+    ):
+        with pytest.raises(OLMoConfigurationError, match=field_name):
+            ExpertParallelConfig(
+                path=ExpertParallelPath.rowwise_nvshmem,
+                **{field_name: 32},
+            ).validate()
+
+
+def test_v2_tma_ibgda_stage_num_sms_rejects_currently_unsafe_low_values():
+    for field_name in (
+        "tma_ibgda_dispatch_num_sms",
+        "tma_ibgda_combine_num_sms",
+        "tma_ibgda_preprocess_num_sms",
+    ):
+        with pytest.raises(OLMoConfigurationError, match=field_name):
+            ExpertParallelConfig(
+                path=ExpertParallelPath.rowwise_tma_ibgda,
+                **{field_name: 16},
+            ).validate()
 
 
 def test_v2_tma_ibgda_symmetric_expert_out_requires_tma_ibgda_path():

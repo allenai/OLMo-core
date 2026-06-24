@@ -9,6 +9,7 @@ from olmo_core.nn.moe.v2.tma_ibgda import (
     TMA_IBGDA_ROUTE_RECORD_BYTES,
     TMA_IBGDA_WORKSPACE_ALIGNMENT,
     TmaIbgdaBackendConfig,
+    TmaIbgdaBackendUnavailable,
     build_tma_ibgda_route_metadata,
     is_tma_ibgda_backend_available,
     plan_tma_ibgda_peer_windows,
@@ -30,8 +31,11 @@ def test_tma_ibgda_kernel_loader_uses_separate_extension_symbols():
     from olmo_core.kernels import tma_ibgda_ep
 
     assert isinstance(tma_ibgda_ep.is_available(), bool)
+    assert hasattr(tma_ibgda_ep, "extension_contract")
+    assert hasattr(tma_ibgda_ep, "plan_peer_window_layout")
     assert hasattr(tma_ibgda_ep, "dispatch_bf16_peer")
     assert hasattr(tma_ibgda_ep, "preprocess_routes")
+    assert hasattr(tma_ibgda_ep, "preprocess_routes_into")
     assert hasattr(tma_ibgda_ep, "route_records_with_probs")
     assert hasattr(tma_ibgda_ep, "dispatch_bf16_ibgda")
     assert hasattr(tma_ibgda_ep, "dispatch_bf16_ibgda_records")
@@ -42,6 +46,580 @@ def test_tma_ibgda_kernel_loader_uses_separate_extension_symbols():
     assert hasattr(tma_ibgda_ep, "route_dot_bf16_ibgda_records")
     assert hasattr(tma_ibgda_ep, "barrier_all_on_stream")
     assert hasattr(tma_ibgda_ep, "signal_all_and_wait")
+
+
+def test_tma_ibgda_built_extension_contract_matches_python_constants():
+    from olmo_core.kernels import tma_ibgda_ep
+
+    if not tma_ibgda_ep.is_available():
+        pytest.skip("TMA/IBGDA CUDA extension is not built")
+
+    contract = tma_ibgda_ep.extension_contract()
+    assert contract["extension_module"] == "_tma_ibgda_ep_ext_gpu"
+    assert contract["route_record_bytes"] == TMA_IBGDA_ROUTE_RECORD_BYTES
+    assert contract["route_record_words"] == TMA_IBGDA_ROUTE_RECORD_BYTES // 4
+    assert contract["route_flag_valid"] == 1
+    assert contract["workspace_alignment"] == TMA_IBGDA_WORKSPACE_ALIGNMENT
+    assert contract["doorbell_bytes"] == TMA_IBGDA_DOORBELL_BYTES
+    assert contract["completion_bytes"] == TMA_IBGDA_COMPLETION_BYTES
+    assert contract["peer_window_layout_bytes"] > 0
+    assert contract["kernel_launch_config_bytes"] > 0
+    assert contract["bf16_only"] is True
+    assert contract["has_gpu_route_preprocess"] is True
+    assert contract["has_ibgda_dispatch"] is True
+    assert contract["has_tma_load_dispatch"] is True
+    assert contract["has_ibgda_combine"] is True
+    assert contract["has_route_dot_backward"] is True
+    assert contract["has_peer_window_layout_planner"] is True
+
+
+def test_tma_ibgda_backend_contract_validator_accepts_expected_contract():
+    from olmo_core.nn.moe.v2.tma_ibgda.backend import _check_kernel_contract
+
+    class FakeTmaIbgdaExt:
+        @staticmethod
+        def extension_contract():
+            return {
+                "extension_module": "_tma_ibgda_ep_ext_gpu",
+                "route_record_bytes": TMA_IBGDA_ROUTE_RECORD_BYTES,
+                "route_record_words": TMA_IBGDA_ROUTE_RECORD_BYTES // 4,
+                "route_flag_valid": 1,
+                "workspace_alignment": TMA_IBGDA_WORKSPACE_ALIGNMENT,
+                "doorbell_bytes": TMA_IBGDA_DOORBELL_BYTES,
+                "completion_bytes": TMA_IBGDA_COMPLETION_BYTES,
+                "peer_window_layout_bytes": 128,
+                "kernel_launch_config_bytes": 24,
+                "bf16_only": True,
+                "has_gpu_route_preprocess": True,
+                "has_ibgda_dispatch": True,
+                "has_tma_load_dispatch": True,
+                "has_ibgda_combine": True,
+                "has_route_dot_backward": True,
+                "has_peer_window_layout_planner": True,
+            }
+
+    _check_kernel_contract(FakeTmaIbgdaExt())
+
+
+def test_tma_ibgda_backend_contract_validator_rejects_stale_extension():
+    from olmo_core.nn.moe.v2.tma_ibgda.backend import _check_kernel_contract
+
+    class FakeTmaIbgdaExt:
+        @staticmethod
+        def extension_contract():
+            return {
+                "extension_module": "_tma_ibgda_ep_ext_gpu",
+                "route_record_bytes": 16,
+                "route_record_words": 4,
+                "route_flag_valid": 1,
+                "workspace_alignment": TMA_IBGDA_WORKSPACE_ALIGNMENT,
+                "doorbell_bytes": TMA_IBGDA_DOORBELL_BYTES,
+                "completion_bytes": TMA_IBGDA_COMPLETION_BYTES,
+                "peer_window_layout_bytes": 128,
+                "kernel_launch_config_bytes": 24,
+                "bf16_only": True,
+                "has_gpu_route_preprocess": True,
+                "has_ibgda_dispatch": True,
+                "has_tma_load_dispatch": True,
+                "has_ibgda_combine": True,
+                "has_route_dot_backward": True,
+                "has_peer_window_layout_planner": True,
+            }
+
+    with pytest.raises(TmaIbgdaBackendUnavailable, match="route_record_bytes"):
+        _check_kernel_contract(FakeTmaIbgdaExt())
+
+
+def test_tma_ibgda_backend_contract_validator_rejects_bad_peer_window_layout():
+    from olmo_core.nn.moe.v2.tma_ibgda.backend import _check_kernel_contract
+
+    class FakeTmaIbgdaExt:
+        @staticmethod
+        def extension_contract():
+            return {
+                "extension_module": "_tma_ibgda_ep_ext_gpu",
+                "route_record_bytes": TMA_IBGDA_ROUTE_RECORD_BYTES,
+                "route_record_words": TMA_IBGDA_ROUTE_RECORD_BYTES // 4,
+                "route_flag_valid": 1,
+                "workspace_alignment": TMA_IBGDA_WORKSPACE_ALIGNMENT,
+                "doorbell_bytes": TMA_IBGDA_DOORBELL_BYTES,
+                "completion_bytes": TMA_IBGDA_COMPLETION_BYTES,
+                "peer_window_layout_bytes": 0,
+                "kernel_launch_config_bytes": 24,
+                "bf16_only": True,
+                "has_gpu_route_preprocess": True,
+                "has_ibgda_dispatch": True,
+                "has_tma_load_dispatch": True,
+                "has_ibgda_combine": True,
+                "has_route_dot_backward": True,
+                "has_peer_window_layout_planner": True,
+            }
+
+    with pytest.raises(TmaIbgdaBackendUnavailable, match="peer_window_layout_bytes"):
+        _check_kernel_contract(FakeTmaIbgdaExt())
+
+
+def test_tma_ibgda_backend_contract_validator_requires_contract_symbol():
+    from olmo_core.nn.moe.v2.tma_ibgda.backend import _check_kernel_contract
+
+    with pytest.raises(TmaIbgdaBackendUnavailable, match="extension_contract"):
+        _check_kernel_contract(object())
+
+
+def test_tma_ibgda_cuda_side_peer_window_layout_matches_python_plan():
+    from olmo_core.kernels import tma_ibgda_ep
+
+    if not tma_ibgda_ep.is_available():
+        pytest.skip("TMA/IBGDA CUDA extension is not built")
+
+    metadata = build_tma_ibgda_route_metadata(
+        torch.tensor([[0, 1], [1, -1], [0, 1]], dtype=torch.long),
+        torch.tensor([[0, 0], [1, -1], [2, 3]], dtype=torch.long),
+        ep_world_size=2,
+        rank_capacity=4,
+    )
+    plan = plan_tma_ibgda_peer_windows(
+        metadata,
+        hidden_size=7,
+        dtype=torch.bfloat16,
+    )
+    dtype_bytes = torch.empty((), dtype=plan.dtype).element_size()
+    layout = tma_ibgda_ep.plan_peer_window_layout(
+        num_routes=metadata.num_routes,
+        ep_world_size=metadata.ep_world_size,
+        rank_capacity=metadata.rank_capacity,
+        hidden_size=plan.hidden_size,
+        dtype_bytes=dtype_bytes,
+    )
+
+    for key in (
+        "route_records_offset",
+        "routes_per_rank_offset",
+        "rank_offsets_offset",
+        "overflow_by_rank_offset",
+        "payload_window_offset",
+        "send_doorbells_offset",
+        "recv_completions_offset",
+        "rank_stride_bytes",
+        "total_peer_window_bytes",
+        "route_records_bytes",
+        "routes_per_rank_bytes",
+        "rank_offsets_bytes",
+        "overflow_by_rank_bytes",
+        "payload_window_bytes_per_rank",
+        "send_doorbells_bytes",
+        "recv_completions_bytes",
+        "ep_world_size",
+        "rank_capacity",
+        "hidden_size",
+    ):
+        assert layout[key] == getattr(plan, key)
+    assert layout["dtype_bytes"] == dtype_bytes
+
+
+def test_tma_ibgda_peer_window_payload_view_uses_planned_offset():
+    from olmo_core.nn.moe.v2.tma_ibgda.backend import _payload_view_from_peer_window
+
+    metadata = build_tma_ibgda_route_metadata(
+        torch.tensor([[0, 1], [1, -1]], dtype=torch.long),
+        torch.tensor([[0, 0], [1, -1]], dtype=torch.long),
+        ep_world_size=2,
+        rank_capacity=3,
+    )
+    plan = plan_tma_ibgda_peer_windows(
+        metadata,
+        hidden_size=5,
+        dtype=torch.bfloat16,
+    )
+    window = torch.empty((plan.rank_stride_bytes,), dtype=torch.uint8)
+
+    payload = _payload_view_from_peer_window(window, plan, dtype=torch.bfloat16)
+
+    assert payload.shape == (3, 5)
+    assert payload.dtype == torch.bfloat16
+    assert payload.data_ptr() == window.data_ptr() + plan.payload_window_offset
+    assert payload.is_contiguous()
+
+
+def test_tma_ibgda_peer_window_section_views_use_planned_offsets():
+    from olmo_core.nn.moe.v2.tma_ibgda.backend import _peer_window_views_from_window
+
+    metadata = build_tma_ibgda_route_metadata(
+        torch.tensor([[0, 1], [1, -1]], dtype=torch.long),
+        torch.tensor([[0, 0], [1, -1]], dtype=torch.long),
+        ep_world_size=2,
+        rank_capacity=3,
+    )
+    plan = plan_tma_ibgda_peer_windows(
+        metadata,
+        hidden_size=5,
+        dtype=torch.bfloat16,
+    )
+    window = torch.empty((plan.rank_stride_bytes,), dtype=torch.uint8)
+
+    views = _peer_window_views_from_window(window, plan)
+
+    expected = {
+        "route_records": (
+            views.route_records,
+            plan.route_records_offset,
+            (metadata.num_routes, TMA_IBGDA_ROUTE_RECORD_BYTES // 4),
+            torch.int32,
+        ),
+        "routes_per_rank": (
+            views.routes_per_rank,
+            plan.routes_per_rank_offset,
+            (metadata.ep_world_size,),
+            torch.long,
+        ),
+        "rank_offsets": (
+            views.rank_offsets,
+            plan.rank_offsets_offset,
+            (metadata.ep_world_size + 1,),
+            torch.long,
+        ),
+        "overflow_by_rank": (
+            views.overflow_by_rank,
+            plan.overflow_by_rank_offset,
+            (metadata.ep_world_size,),
+            torch.bool,
+        ),
+        "payload": (
+            views.payload,
+            plan.payload_window_offset,
+            (metadata.rank_capacity, plan.hidden_size),
+            torch.bfloat16,
+        ),
+        "send_doorbells": (
+            views.send_doorbells,
+            plan.send_doorbells_offset,
+            (metadata.ep_world_size,),
+            torch.long,
+        ),
+        "recv_completions": (
+            views.recv_completions,
+            plan.recv_completions_offset,
+            (metadata.ep_world_size,),
+            torch.long,
+        ),
+    }
+    assert views.window is window
+    for tensor, offset, shape, dtype in expected.values():
+        assert tensor.data_ptr() == window.data_ptr() + offset
+        assert tuple(tensor.shape) == shape
+        assert tensor.dtype == dtype
+        assert tensor.is_contiguous()
+
+
+def test_tma_ibgda_empty_peer_window_views_local_rank_uses_planned_sections():
+    from olmo_core.nn.moe.v2.tma_ibgda.backend import _empty_peer_window_views
+
+    metadata = build_tma_ibgda_route_metadata(
+        torch.tensor([[0, 0], [0, -1]], dtype=torch.long),
+        torch.tensor([[0, 1], [2, -1]], dtype=torch.long),
+        ep_world_size=1,
+        rank_capacity=3,
+    )
+    plan = plan_tma_ibgda_peer_windows(
+        metadata,
+        hidden_size=6,
+        dtype=torch.bfloat16,
+    )
+
+    views = _empty_peer_window_views(
+        plan,
+        device=torch.device("cpu"),
+        process_group=None,
+        world_size=1,
+        kind="test",
+    )
+
+    assert views.window.shape == (plan.rank_stride_bytes,)
+    assert views.window.dtype == torch.uint8
+    assert views.route_records.data_ptr() == views.window.data_ptr() + plan.route_records_offset
+    assert views.routes_per_rank.data_ptr() == views.window.data_ptr() + plan.routes_per_rank_offset
+    assert views.rank_offsets.data_ptr() == views.window.data_ptr() + plan.rank_offsets_offset
+    assert views.overflow_by_rank.data_ptr() == views.window.data_ptr() + plan.overflow_by_rank_offset
+    assert views.payload.data_ptr() == views.window.data_ptr() + plan.payload_window_offset
+    assert views.payload.shape == (metadata.rank_capacity, plan.hidden_size)
+
+
+def test_tma_ibgda_peer_window_payload_view_rejects_small_window():
+    from olmo_core.nn.moe.v2.tma_ibgda.backend import _payload_view_from_peer_window
+
+    metadata = build_tma_ibgda_route_metadata(
+        torch.tensor([[0]], dtype=torch.long),
+        torch.tensor([[0]], dtype=torch.long),
+        ep_world_size=1,
+        rank_capacity=1,
+    )
+    plan = plan_tma_ibgda_peer_windows(
+        metadata,
+        hidden_size=1,
+        dtype=torch.bfloat16,
+    )
+
+    with pytest.raises(RuntimeError, match="too small"):
+        _payload_view_from_peer_window(
+            torch.empty((plan.rank_stride_bytes - 1,), dtype=torch.uint8),
+            plan,
+            dtype=torch.bfloat16,
+        )
+
+
+def test_tma_ibgda_combine_handle_validator_accepts_matching_handle():
+    from olmo_core.nn.moe.v2.tma_ibgda.backend import (
+        TmaIbgdaDispatchHandle,
+        _check_dispatch_handle_matches_combine,
+    )
+
+    cfg = TmaIbgdaBackendConfig(static_route_budget=4)
+    group = object()
+    ranks = torch.tensor([[0, 1], [1, -1]], dtype=torch.long)
+    rows = torch.tensor([[0, 0], [1, -1]], dtype=torch.long)
+    metadata = build_tma_ibgda_route_metadata(
+        ranks,
+        rows,
+        ep_world_size=2,
+        rank_capacity=4,
+        static_route_budget=cfg.static_route_budget,
+    )
+    handle = TmaIbgdaDispatchHandle(
+        metadata=metadata,
+        group_name="ep",
+        config=cfg,
+        process_group=group,
+        peer_out_ptrs=torch.empty((0,), dtype=torch.long),
+        dst_ranks_version=getattr(ranks, "_version", None),
+        dst_rows_version=getattr(rows, "_version", None),
+    )
+
+    _check_dispatch_handle_matches_combine(
+        handle,
+        group_name="ep",
+        src_ranks=ranks,
+        src_rows=rows,
+        ep_world_size=2,
+        rank_capacity=4,
+        process_group=group,
+        config=cfg,
+    )
+
+
+def test_tma_ibgda_combine_handle_validator_rejects_group_mismatch():
+    from olmo_core.nn.moe.v2.tma_ibgda.backend import (
+        TmaIbgdaDispatchHandle,
+        _check_dispatch_handle_matches_combine,
+    )
+
+    cfg = TmaIbgdaBackendConfig()
+    ranks = torch.tensor([[0]], dtype=torch.long)
+    rows = torch.tensor([[0]], dtype=torch.long)
+    metadata = build_tma_ibgda_route_metadata(ranks, rows, ep_world_size=1)
+    handle = TmaIbgdaDispatchHandle(
+        metadata=metadata,
+        group_name="dispatch",
+        config=cfg,
+        process_group=None,
+        peer_out_ptrs=torch.empty((0,), dtype=torch.long),
+    )
+
+    with pytest.raises(RuntimeError, match="group mismatch"):
+        _check_dispatch_handle_matches_combine(
+            handle,
+            group_name="combine",
+            src_ranks=ranks,
+            src_rows=rows,
+            ep_world_size=1,
+            rank_capacity=None,
+            process_group=None,
+            config=None,
+        )
+
+
+def test_tma_ibgda_combine_handle_validator_rejects_route_tensor_mismatch():
+    from olmo_core.nn.moe.v2.tma_ibgda.backend import (
+        TmaIbgdaDispatchHandle,
+        _check_dispatch_handle_matches_combine,
+    )
+
+    cfg = TmaIbgdaBackendConfig()
+    ranks = torch.tensor([[0, 0]], dtype=torch.long)
+    rows = torch.tensor([[0, 1]], dtype=torch.long)
+    metadata = build_tma_ibgda_route_metadata(
+        ranks,
+        rows,
+        ep_world_size=1,
+        rank_capacity=2,
+    )
+    handle = TmaIbgdaDispatchHandle(
+        metadata=metadata,
+        group_name="ep",
+        config=cfg,
+        process_group=None,
+        peer_out_ptrs=torch.empty((0,), dtype=torch.long),
+    )
+
+    with pytest.raises(RuntimeError, match="route tensor mismatch"):
+        _check_dispatch_handle_matches_combine(
+            handle,
+            group_name="ep",
+            src_ranks=ranks.clone(),
+            src_rows=rows.clone(),
+            ep_world_size=1,
+            rank_capacity=2,
+            process_group=None,
+            config=cfg,
+        )
+
+
+def test_tma_ibgda_combine_handle_validator_rejects_config_mismatch():
+    from olmo_core.nn.moe.v2.tma_ibgda.backend import (
+        TmaIbgdaDispatchHandle,
+        _check_dispatch_handle_matches_combine,
+    )
+
+    cfg = TmaIbgdaBackendConfig(num_sms_dispatch=32)
+    ranks = torch.tensor([[0]], dtype=torch.long)
+    rows = torch.tensor([[0]], dtype=torch.long)
+    metadata = build_tma_ibgda_route_metadata(ranks, rows, ep_world_size=1)
+    handle = TmaIbgdaDispatchHandle(
+        metadata=metadata,
+        group_name="ep",
+        config=cfg,
+        process_group=None,
+        peer_out_ptrs=torch.empty((0,), dtype=torch.long),
+    )
+
+    with pytest.raises(RuntimeError, match="config mismatch"):
+        _check_dispatch_handle_matches_combine(
+            handle,
+            group_name="ep",
+            src_ranks=ranks,
+            src_rows=rows,
+            ep_world_size=1,
+            rank_capacity=None,
+            process_group=None,
+            config=TmaIbgdaBackendConfig(num_sms_dispatch=64),
+        )
+
+
+def test_tma_ibgda_combine_handle_validator_rejects_peer_window_plan_mismatch():
+    from olmo_core.nn.moe.v2.tma_ibgda.backend import (
+        TmaIbgdaDispatchHandle,
+        _check_dispatch_handle_matches_combine,
+    )
+
+    cfg = TmaIbgdaBackendConfig()
+    ranks = torch.tensor([[0]], dtype=torch.long)
+    rows = torch.tensor([[0]], dtype=torch.long)
+    metadata = build_tma_ibgda_route_metadata(ranks, rows, ep_world_size=1)
+    handle = TmaIbgdaDispatchHandle(
+        metadata=metadata,
+        group_name="ep",
+        config=cfg,
+        process_group=None,
+        peer_out_ptrs=torch.empty((0,), dtype=torch.long),
+        peer_window_plan=plan_tma_ibgda_peer_windows(
+            metadata,
+            hidden_size=4,
+            dtype=torch.bfloat16,
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="peer-window hidden_size mismatch"):
+        _check_dispatch_handle_matches_combine(
+            handle,
+            group_name="ep",
+            src_ranks=ranks,
+            src_rows=rows,
+            ep_world_size=1,
+            rank_capacity=None,
+            process_group=None,
+            config=cfg,
+            payload_hidden_size=8,
+            payload_dtype=torch.bfloat16,
+        )
+
+
+def test_tma_ibgda_combine_handle_validator_rejects_mutated_route_tensor():
+    from olmo_core.nn.moe.v2.tma_ibgda.backend import (
+        TmaIbgdaDispatchHandle,
+        _check_dispatch_handle_matches_combine,
+    )
+
+    cfg = TmaIbgdaBackendConfig()
+    ranks = torch.tensor([[0]], dtype=torch.long)
+    rows = torch.tensor([[0]], dtype=torch.long)
+    metadata = build_tma_ibgda_route_metadata(ranks, rows, ep_world_size=1)
+    handle = TmaIbgdaDispatchHandle(
+        metadata=metadata,
+        group_name="ep",
+        config=cfg,
+        process_group=None,
+        peer_out_ptrs=torch.empty((0,), dtype=torch.long),
+        dst_ranks_version=getattr(ranks, "_version", None),
+        dst_rows_version=getattr(rows, "_version", None),
+    )
+
+    rows[0, 0] = 1
+
+    with pytest.raises(RuntimeError, match="version mismatch"):
+        _check_dispatch_handle_matches_combine(
+            handle,
+            group_name="ep",
+            src_ranks=ranks,
+            src_rows=rows,
+            ep_world_size=1,
+            rank_capacity=None,
+            process_group=None,
+            config=cfg,
+        )
+
+
+@pytest.mark.parametrize("expert_out_is_symmetric", [False, True])
+def test_tma_ibgda_combine_backward_preserves_symmetric_expert_out_flag(
+    monkeypatch,
+    expert_out_is_symmetric,
+):
+    from olmo_core.nn.moe.v2.tma_ibgda import backend as tma_backend
+
+    seen_route_dot_flags = []
+
+    def fake_combine(expert_out, *args, **kwargs):
+        return expert_out.clone()
+
+    def fake_dispatch(grad_out, *args, **kwargs):
+        return grad_out.clone(), None, None, None
+
+    def fake_route_dot(expert_out, grad_out, src_ranks, src_rows, **kwargs):
+        seen_route_dot_flags.append(kwargs["expert_out_is_symmetric"])
+        return torch.ones_like(src_ranks, dtype=torch.float32)
+
+    monkeypatch.setattr(tma_backend, "_combine_bf16_peer_raw", fake_combine)
+    monkeypatch.setattr(tma_backend, "_dispatch_bf16_peer_raw", fake_dispatch)
+    monkeypatch.setattr(tma_backend, "_route_dot_bf16_peer_raw", fake_route_dot)
+
+    expert_out = torch.randn((2, 3), requires_grad=True)
+    src_ranks = torch.zeros((2, 1), dtype=torch.long)
+    src_rows = torch.zeros((2, 1), dtype=torch.long)
+    probs = torch.ones((2, 1), dtype=torch.float32, requires_grad=True)
+
+    out = tma_backend._TmaIbgdaCombineAutograd.apply(
+        expert_out,
+        src_ranks,
+        src_rows,
+        probs,
+        1,
+        2,
+        None,
+        TmaIbgdaBackendConfig(),
+        None,
+        expert_out_is_symmetric,
+    )
+    out.sum().backward()
+
+    assert seen_route_dot_flags == [expert_out_is_symmetric]
 
 
 def test_tma_ibgda_metadata_counts_offsets_and_ordinals():

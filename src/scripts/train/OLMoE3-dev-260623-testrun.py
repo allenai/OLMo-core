@@ -104,7 +104,7 @@ def _get_split_points(original_num_layers: int, num_stages: int, minus_last_stag
     return new_num_layers, split_points
 
 
-SEQUENCE_LENGTH = 8192
+SEQUENCE_LENGTH = int(os.environ.get("OLMOE3_TESTRUN_SEQUENCE_LENGTH", 8192))
 
 torch.set_float32_matmul_precision('high')
 
@@ -133,6 +133,8 @@ def _env_choice(name: str, default: str, choices: tuple[str, ...]) -> str:
 
 
 VARIANT_NAME = os.environ.get("OLMOE3_TESTRUN_VARIANT", "testrun")
+DATA_MIX = DataMix(os.environ.get("OLMOE3_TESTRUN_DATA_MIX", DataMix.OLMo_mix_0925.value))
+DATA_NUM_WORKERS = _env_int("OLMOE3_TESTRUN_DATA_NUM_WORKERS", 8)
 
 IN_EVAL_MODE = False
 import sys
@@ -676,7 +678,7 @@ def build_data_components(
     # DATA_WORK_DIR = "/tmp/dataset-cache"
 
     dataset_config = NumpyFSLDatasetConfig.from_data_mix(
-        DataMix.OLMo_mix_0925,
+        DATA_MIX,
         # DataMix.OLMo_mix_0625,
         # DataMix.OLMoE_mix_0824_dev,
         tokenizer=common.tokenizer,
@@ -695,7 +697,7 @@ def build_data_components(
     )
 
     data_loader_config = NumpyDataLoaderConfig(
-        global_batch_size=common.global_batch_size, seed=34521, num_workers=8
+        global_batch_size=common.global_batch_size, seed=34521, num_workers=DATA_NUM_WORKERS
     )
 
     return DataComponents(dataset=dataset_config, data_loader=data_loader_config)

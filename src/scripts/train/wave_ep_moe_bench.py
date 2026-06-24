@@ -385,6 +385,62 @@ def _compile_hot_modules(block: OLMoDDPTransformerBlock) -> None:
         )
 
 
+def _install_ep_balanced_router(block: OLMoDDPTransformerBlock) -> None:
+    """Install deterministic routing that exercises every EP destination rank.
+
+    The default uniform benchmark router can concentrate routes on a subset of
+    expert shards for tiny smoke shapes. The peer-group wave path is still an
+    experimental standard-shape bring-up kernel, so benchmark it with a route
+    pattern that intentionally sends one top-k slot to each EP rank.
+    """
+
+    def _make_forward(router):
+        def _forward(local_x, scores_only, loss_div_factor=None):
+            del loss_div_factor
+            B, S, _ = local_x.shape
+            if scores_only:
+                return torch.ones(
+                    B,
+                    S,
+                    router.num_experts,
+                    device=local_x.device,
+                    dtype=local_x.dtype,
+                ), None, None, None
+
+            tokens = B * S
+            token_idx = torch.arange(tokens, device=local_x.device, dtype=torch.long).view(
+                tokens,
+                1,
+            )
+            topk_idx = torch.arange(
+                router.top_k,
+                device=local_x.device,
+                dtype=torch.long,
+            ).view(1, router.top_k)
+            experts_per_rank = router.num_experts // router.top_k
+            expert_indices = topk_idx * experts_per_rank + (
+                token_idx + dist.get_rank() + topk_idx
+            ) % experts_per_rank
+            expert_indices = expert_indices.view(B, S, router.top_k).contiguous()
+
+            expert_weights = torch.full(
+                (B, S, router.top_k),
+                1.0 / float(router.top_k),
+                device=local_x.device,
+                dtype=local_x.dtype,
+            )
+            batch_size_per_expert = torch.bincount(
+                expert_indices.reshape(-1),
+                minlength=router.num_experts,
+            ).to(dtype=torch.long)
+            return expert_weights, expert_indices, batch_size_per_expert, None
+
+        return _forward
+
+    assert block.routed_experts_router is not None
+    block.routed_experts_router.forward = _make_forward(block.routed_experts_router)
+
+
 def _cuda_profiler_start() -> None:
     torch.cuda.cudart().cudaProfilerStart()
 
@@ -983,6 +1039,11 @@ def _bench_standard_ep_mega_kernel_case(
             torch.cuda.nvtx.range_pop()
         end.record()
         events.append((start, end))
+        if peer_group or collective:
+            # These modes enqueue NVSHMEM stream barriers before each launch.
+            # Keep measured iterations host-ordered so the benchmark does not
+            # stack multiple distributed barrier epochs on the stream.
+            end.synchronize()
 
     if args.profile:
         _cuda_profiler_stop()
@@ -1061,7 +1122,6 @@ def _bench_case(
             "forward-only bring-up path.",
             flush=True,
         )
-
     torch.manual_seed(20260619 + rank)
     torch.cuda.reset_peak_memory_stats()
     config_dtype, input_dtype = _dtype_config(args.dtype)
@@ -1086,6 +1146,8 @@ def _bench_case(
         if not args.full_block:
             _patch_moe_only(block)
         block.apply_ep(ep_mesh)
+        if case.use_wave and not args.random_routing:
+            _install_ep_balanced_router(block)
         block.train()
         compile_enabled = bool(args.compile and not args.no_compile)
         if compile_enabled:
@@ -1138,6 +1200,10 @@ def _bench_case(
             torch.cuda.nvtx.range_pop()
         end.record()
         events.append((start, end))
+        if case.use_wave:
+            # The wave path currently uses peer-group NVSHMEM stream barriers.
+            # Keep benchmark iterations host-ordered; this is not model wiring.
+            end.synchronize()
 
     if args.profile:
         _cuda_profiler_stop()

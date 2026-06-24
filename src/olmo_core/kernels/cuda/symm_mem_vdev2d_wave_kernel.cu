@@ -3153,6 +3153,14 @@ void rowwise_bf16_mega_moe_standard_ep_forward_persistent_workspace(
         "standard EP peer-workspace cross-rank barriers require rank-local "
         "expert ownership");
   }
+  const int64_t device_sms = olmo::bf16_mega_moe::current_device_sm_count();
+  TORCH_CHECK(
+      device_sms >= static_cast<int64_t>(olmo::bf16_mega_moe::kernels::kStandardSchedulerSms),
+      "standard EP persistent grid barrier requires at least ",
+      olmo::bf16_mega_moe::kernels::kStandardSchedulerSms,
+      " resident CTAs/SMs on the current device, got ",
+      device_sms,
+      " SMs");
   check_long_1d(
       rank_workspace_bases,
       "rank_workspace_bases",
@@ -3201,10 +3209,20 @@ void rowwise_bf16_mega_moe_standard_ep_forward_persistent_workspace(
         "nvshmemx_barrier_on_stream (standard EP pre-clear) failed with status ",
         pre_clear_barrier_status);
   }
+  const bool force_full_workspace_clear =
+      std::getenv("OLMO_EP_WAVE_FORCE_FULL_WORKSPACE_CLEAR") != nullptr;
+  const bool clear_only_workspace_metadata =
+      use_umma_compute &&
+      use_peer_workspace_bases &&
+      rank_local_expert_owner &&
+      !force_full_workspace_clear;
+  const int64_t workspace_clear_bytes = clear_only_workspace_metadata
+      ? static_cast<int64_t>(olmo::bf16_mega_moe::kernels::standard_ep_metadata_bytes())
+      : required_workspace_bytes;
   C10_CUDA_CHECK(cudaMemsetAsync(
       workspace.data_ptr(),
       0,
-      static_cast<size_t>(required_workspace_bytes),
+      static_cast<size_t>(workspace_clear_bytes),
       stream.stream()));
   C10_CUDA_CHECK(cudaMemsetAsync(
       barrier_state.data_ptr<int>(),

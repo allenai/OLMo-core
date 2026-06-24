@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import warnings
 from typing import TYPE_CHECKING, Optional, Tuple, Union, cast
 
 import torch
@@ -29,6 +30,54 @@ from .tma_ibgda import (
 
 if TYPE_CHECKING:
     from olmo_core.nn.ddp.block import OLMoDDPTransformerBlock
+
+
+_TMA_IBGDA_EXPERIMENTAL_WARNING_EMITTED = False
+
+
+def _warn_tma_ibgda_experimental() -> None:
+    global _TMA_IBGDA_EXPERIMENTAL_WARNING_EMITTED
+    if _TMA_IBGDA_EXPERIMENTAL_WARNING_EMITTED:
+        return
+    warnings.warn(
+        "combined_forward_ep_no_sync_tma_ibgda is experimental: it is an "
+        "opt-in BF16 rowwise EP transport backend, not the production default. "
+        "Use rowwise_nvshmem for production runs unless this path has been "
+        "validated on the target shape/node.",
+        RuntimeWarning,
+        stacklevel=2,
+    )
+    _TMA_IBGDA_EXPERIMENTAL_WARNING_EMITTED = True
+
+
+def _resolve_symmetric_expert_out_flag(
+    *,
+    requested: bool,
+    returned_expert_out: torch.Tensor,
+    symmetric_expert_out: Optional[torch.Tensor],
+) -> bool:
+    if not requested:
+        return False
+    if symmetric_expert_out is None:
+        raise RuntimeError(
+            "TMA/IBGDA symmetric expert output was requested but no symmetric buffer "
+            "was allocated"
+        )
+
+    same_tensor = (
+        returned_expert_out.data_ptr() == symmetric_expert_out.data_ptr()
+        and returned_expert_out.shape == symmetric_expert_out.shape
+        and returned_expert_out.stride() == symmetric_expert_out.stride()
+        and returned_expert_out.dtype == symmetric_expert_out.dtype
+        and returned_expert_out.device == symmetric_expert_out.device
+    )
+    if not same_tensor:
+        raise RuntimeError(
+            "TMA/IBGDA symmetric expert output was requested, but routed experts "
+            "returned a different tensor. This path requires the routed expert down "
+            "projection to write directly into the symmetric output buffer."
+        )
+    return True
 
 
 def _check_tma_ibgda_supported(block: "OLMoDDPTransformerBlock", x: torch.Tensor) -> None:
@@ -71,10 +120,49 @@ def combined_forward_ep_no_sync_tma_ibgda(
     loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
     **kwargs,
 ) -> torch.Tensor:
-    """BF16 rowwise EP no-sync path using the OLMo-owned TMA/IBGDA backend."""
+    """Experimental BF16 rowwise EP no-sync path using TMA/IBGDA transport.
+
+    This path is an opt-in rowwise transport replacement for experiments and
+    benchmarking. It is guarded to BF16 CUDA execution without TBO/FP8 and
+    should not replace the default rowwise NVSHMEM backend until validated for
+    the specific training shape and cluster.
+    """
 
     del activation_checkpointing
     _check_tma_ibgda_supported(block, x)
+    _warn_tma_ibgda_experimental()
+
+    block_inp = x
+    del x
+
+    attn_res_out = block._checkpointed_res_norm_attn(block_inp, **kwargs)
+
+    kwargs.pop("max_doc_len", None)
+    kwargs.pop("cu_doc_lens", None)
+    return _combined_forward_ep_no_sync_tma_ibgda_moe_eager(
+        block,
+        attn_res_out,
+        accumulate_routed_aux_loss_metrics=accumulate_routed_aux_loss_metrics,
+        loss_div_factor=loss_div_factor,
+    )
+
+
+@torch.compiler.disable
+def _combined_forward_ep_no_sync_tma_ibgda_moe_eager(
+    block: "OLMoDDPTransformerBlock",
+    attn_res_out: torch.Tensor,
+    *,
+    accumulate_routed_aux_loss_metrics: Optional[bool] = None,
+    loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
+) -> torch.Tensor:
+    """Run the TMA/IBGDA rowwise MoE section outside torch.compile.
+
+    PyTorch AOTAutograd currently fails to partition the router sort/control
+    dependency in this path. Keep the rowwise TMA/IBGDA transport and route-map
+    setup eager while allowing the attention prefix of the block to remain
+    compile eligible.
+    """
+
     self = block
     assert self.routed_experts is not None
     assert self.routed_experts_router is not None
@@ -83,15 +171,7 @@ def combined_forward_ep_no_sync_tma_ibgda(
     assert self.ep_pg is not None
 
     group_name = get_ep_no_sync_group_name(self)
-    B, S, D = x.shape
-
-    block_inp = x
-    del x
-
-    attn_res_out = self._checkpointed_res_norm_attn(block_inp, **kwargs)
-
-    kwargs.pop("max_doc_len", None)
-    kwargs.pop("cu_doc_lens", None)
+    B, S, D = attn_res_out.shape
     moe_inp = self._prepare_moe_input(attn_res_out)
 
     (
@@ -189,13 +269,10 @@ def combined_forward_ep_no_sync_tma_ibgda(
     if not route_probs.is_contiguous():
         route_probs = route_probs.contiguous()
 
-    tma_num_sms = self.ep.tma_ibgda_num_sms
-    if tma_num_sms is None:
-        tma_num_sms = self.ep.rowwise_nblocks
-
     tma_config = TmaIbgdaBackendConfig(
-        num_sms_dispatch=tma_num_sms,
-        num_sms_combine=tma_num_sms,
+        num_sms_dispatch=self.ep.resolved_tma_ibgda_dispatch_num_sms,
+        num_sms_combine=self.ep.resolved_tma_ibgda_combine_num_sms,
+        num_sms_preprocess=self.ep.resolved_tma_ibgda_preprocess_num_sms,
         static_route_budget=rank_capacity,
         validate_gpu_route_preprocess=False,
         write_expert_out_to_symmetric=self.ep.tma_ibgda_symmetric_expert_out,
@@ -237,6 +314,11 @@ def combined_forward_ep_no_sync_tma_ibgda(
         up_proj_input_grad_out=dispatch_rank_major.detach(),
         use_rowwise_fp8=False,
     )
+    expert_out_is_symmetric = _resolve_symmetric_expert_out_flag(
+        requested=write_symmetric_expert_out,
+        returned_expert_out=dispatch_rank_major,
+        symmetric_expert_out=symmetric_expert_out,
+    )
 
     wait_stream_no_compile(
         this_stream=self.get_dense_stream(),
@@ -254,7 +336,7 @@ def combined_forward_ep_no_sync_tma_ibgda(
         rank_capacity=rank_capacity,
         process_group=self.ep_pg,
         config=tma_config,
-        expert_out_is_symmetric=False,
+        expert_out_is_symmetric=expert_out_is_symmetric,
     )
 
     if self.shared_experts is not None:
