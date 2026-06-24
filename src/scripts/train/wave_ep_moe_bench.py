@@ -13,7 +13,7 @@ Nsight Systems example:
 
 Modes:
     rowwise: baseline rowwise NVSHMEM EP.
-    rowwise_wave: sequential expert-major rowwise-wave EP.
+    rowwise_wave: expert-major rowwise-wave EP.
     wave: model-facing forward-only OLMo wave bring-up path.
     standard_ep_mega: standalone standard-shape EP4/32-expert fused BF16
         MegaMoE megakernel path. This is a kernel benchmark, not model wiring.
@@ -188,7 +188,7 @@ def _parse_args() -> argparse.Namespace:
         default="rowwise",
         help=(
             "Comma-separated modes. 'rowwise' is the current baseline. "
-            "'rowwise_wave' selects sequential expert-major rowwise waves. "
+            "'rowwise_wave' selects expert-major rowwise waves. "
             "'wave'/'bf16_persistent_mega' select the model-facing forward-only "
             "wave path. 'standard_ep_mega' runs the standalone standard-shape "
             "fused BF16 megakernel. Suffix standard_ep_mega modes with '_umma' "
@@ -205,7 +205,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--num-experts", type=int, default=32)
     parser.add_argument("--top-k", type=int, default=4)
     parser.add_argument("--capacity-factor", type=float, default=1.25)
-    parser.add_argument("--rowwise-nblocks", type=int, default=256)
+    parser.add_argument("--rowwise-nblocks", type=int, default=32)
     parser.add_argument(
         "--rowwise-wave-num-waves",
         type=int,
@@ -1159,8 +1159,8 @@ def _bench_case(
         )
     if rank == 0 and case.rowwise_wave:
         print(
-            "[bench] mode=rowwise_wave selects the experimental sequential "
-            "expert-major rowwise backend, not the MegaMoE megakernel path.",
+            "[bench] mode=rowwise_wave selects the experimental expert-major "
+            "rowwise backend, not the MegaMoE megakernel path.",
             flush=True,
         )
     torch.manual_seed(20260619 + rank)

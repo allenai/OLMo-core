@@ -101,6 +101,20 @@ OlmoSymmGroupInfo* olmo_symm_find_group(const std::string& group_name) {
   return &it->second;
 }
 
+int olmo_symm_group_local_rank(const OlmoSymmGroupInfo& group, int global_rank) {
+  for (size_t rank_idx = 0; rank_idx < group.rank_to_pe_host.size(); ++rank_idx) {
+    if (group.rank_to_pe_host[rank_idx] == global_rank) {
+      return static_cast<int>(rank_idx);
+    }
+  }
+  TORCH_CHECK(
+      false,
+      "Current NVSHMEM PE ",
+      global_rank,
+      " is not a member of the requested OLMo symmetric-memory group");
+  return -1;
+}
+
 __device__ __forceinline__ int olmo_route_npes(
     nvshmem_team_t team,
     const int* rank_to_pe,
@@ -123,6 +137,13 @@ __device__ __forceinline__ int64_t olmo_atomic_add_i64(
   return static_cast<int64_t>(atomicAdd(
       reinterpret_cast<unsigned long long*>(ptr),
       static_cast<unsigned long long>(value)));
+}
+
+__device__ __forceinline__ uint64_t olmo_load_acquire_sys_u64(
+    const uint64_t* ptr) {
+  uint64_t ret;
+  asm volatile("ld.acquire.sys.global.u64 %0, [%1];" : "=l"(ret) : "l"(ptr));
+  return ret;
 }
 
 __device__ int64_t prefixSum(int64_t* odata, int64_t* idata, int n) {
@@ -166,6 +187,23 @@ __device__ int64_t prefixSum_warp(int64_t* odata, int64_t* idata, int n) {
     odata[tid] = thread_data;
   }
   return warp_aggregate;
+}
+
+__global__ void waitSignalPeersKernel(
+    uint64_t* signals,
+    int64_t signal_row,
+    int64_t group_size,
+    uint64_t generation) {
+  int64_t peer = static_cast<int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+  if (peer >= group_size) {
+    return;
+  }
+  uint64_t* slot =
+      signals + static_cast<size_t>(signal_row) * static_cast<size_t>(group_size) +
+      static_cast<size_t>(peer);
+  while (olmo_load_acquire_sys_u64(slot) < generation) {
+    __nanosleep(100);
+  }
 }
 
 template <bool HAS_IN_OFFSETS>
@@ -1273,6 +1311,135 @@ void olmo_symm_world_barrier() {
       barrier_status == 0,
       "nvshmemx_barrier_on_stream (world) failed with status ",
       barrier_status);
+}
+
+void rowwise_signal_peers_on_stream(
+    at::Tensor& signals,
+    int64_t signal_row,
+    int64_t generation,
+    const std::string& group_name,
+    bool quiet_before_signal) {
+  auto& state = olmo_symm_state();
+  std::vector<int> rank_to_pe;
+  int local_rank = -1;
+  int device_idx = -1;
+  {
+    std::lock_guard<std::mutex> lock(state.mutex);
+    TORCH_CHECK(state.initialized, "OLMo symmetric memory is not initialized");
+    auto it = state.groups.find(group_name);
+    TORCH_CHECK(
+        it != state.groups.end(),
+        "OLMo symmetric-memory group ",
+        group_name,
+        " is not registered");
+    rank_to_pe = it->second.rank_to_pe_host;
+    local_rank = olmo_symm_group_local_rank(it->second, state.rank);
+    device_idx = state.device_idx;
+  }
+
+  TORCH_CHECK(signals.is_cuda(), "signals must be a CUDA tensor");
+  TORCH_CHECK(signals.scalar_type() == at::kLong, "signals must be int64");
+  TORCH_CHECK(signals.is_contiguous(), "signals must be contiguous");
+  TORCH_CHECK(signals.dim() == 2, "signals must be rank-2 [rows, group_size]");
+  TORCH_CHECK(
+      signals.size(1) == static_cast<int64_t>(rank_to_pe.size()),
+      "signals second dim must match group size: got ",
+      signals.size(1),
+      ", expected ",
+      rank_to_pe.size());
+  TORCH_CHECK(
+      signal_row >= 0 && signal_row < signals.size(0),
+      "signal_row out of range: ",
+      signal_row,
+      " for signals rows ",
+      signals.size(0));
+  TORCH_CHECK(generation > 0, "generation must be positive");
+  TORCH_CHECK(
+      signals.get_device() == device_idx,
+      "signals must be on the NVSHMEM bootstrap device ",
+      device_idx,
+      ", got ",
+      signals.get_device());
+
+  c10::cuda::CUDAGuard guard(signals.device());
+  auto stream = at::cuda::getCurrentCUDAStream();
+  auto* signal_ptr = reinterpret_cast<uint64_t*>(signals.mutable_data_ptr<int64_t>());
+  uint64_t* local_slot =
+      signal_ptr + static_cast<size_t>(signal_row) * rank_to_pe.size() + local_rank;
+  uint64_t gen = static_cast<uint64_t>(generation);
+
+  if (quiet_before_signal) {
+    nvshmemx_quiet_on_stream(stream.stream());
+  }
+  for (int peer_global : rank_to_pe) {
+    nvshmemx_signal_op_on_stream(
+        local_slot,
+        gen,
+        NVSHMEM_SIGNAL_SET,
+        peer_global,
+        stream.stream());
+  }
+  C10_CUDA_CHECK(cudaGetLastError());
+}
+
+void rowwise_wait_signal_peers_on_stream(
+    at::Tensor& signals,
+    int64_t signal_row,
+    int64_t generation,
+    const std::string& group_name) {
+  auto& state = olmo_symm_state();
+  int group_size = -1;
+  int device_idx = -1;
+  {
+    std::lock_guard<std::mutex> lock(state.mutex);
+    TORCH_CHECK(state.initialized, "OLMo symmetric memory is not initialized");
+    auto it = state.groups.find(group_name);
+    TORCH_CHECK(
+        it != state.groups.end(),
+        "OLMo symmetric-memory group ",
+        group_name,
+        " is not registered");
+    group_size = it->second.world_size;
+    device_idx = state.device_idx;
+  }
+
+  TORCH_CHECK(signals.is_cuda(), "signals must be a CUDA tensor");
+  TORCH_CHECK(signals.scalar_type() == at::kLong, "signals must be int64");
+  TORCH_CHECK(signals.is_contiguous(), "signals must be contiguous");
+  TORCH_CHECK(signals.dim() == 2, "signals must be rank-2 [rows, group_size]");
+  TORCH_CHECK(
+      signals.size(1) == group_size,
+      "signals second dim must match group size: got ",
+      signals.size(1),
+      ", expected ",
+      group_size);
+  TORCH_CHECK(
+      signal_row >= 0 && signal_row < signals.size(0),
+      "signal_row out of range: ",
+      signal_row,
+      " for signals rows ",
+      signals.size(0));
+  TORCH_CHECK(generation > 0, "generation must be positive");
+  TORCH_CHECK(
+      signals.get_device() == device_idx,
+      "signals must be on the NVSHMEM bootstrap device ",
+      device_idx,
+      ", got ",
+      signals.get_device());
+
+  c10::cuda::CUDAGuard guard(signals.device());
+  auto stream = at::cuda::getCurrentCUDAStream();
+  auto* signal_ptr = reinterpret_cast<uint64_t*>(signals.mutable_data_ptr<int64_t>());
+  uint64_t gen = static_cast<uint64_t>(generation);
+  constexpr int threads = 256;
+  int blocks = static_cast<int>(at::ceil_div(static_cast<int64_t>(group_size), static_cast<int64_t>(threads)));
+  waitSignalPeersKernel<<<blocks, threads, 0, stream>>>(
+      signal_ptr,
+      signal_row,
+      static_cast<int64_t>(group_size),
+      gen);
+  C10_CUDA_KERNEL_LAUNCH_CHECK();
+  C10_CUDA_CHECK(cudaGetLastError());
 }
 
 void all_to_all_vdev_2d_nblocks(

@@ -29,6 +29,19 @@ bool olmo_symm_has_group(const std::string& group_name);
 
 void olmo_symm_world_barrier();
 
+void rowwise_signal_peers_on_stream(
+    torch::Tensor& signals,
+    int64_t signal_row,
+    int64_t generation,
+    const std::string& group_name,
+    bool quiet_before_signal);
+
+void rowwise_wait_signal_peers_on_stream(
+    torch::Tensor& signals,
+    int64_t signal_row,
+    int64_t generation,
+    const std::string& group_name);
+
 void all_to_all_vdev_2d_nblocks(
     torch::Tensor& input,
     torch::Tensor& out,
@@ -182,6 +195,23 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
       "olmo_symm_world_barrier",
       &olmo_symm_world_barrier,
       "Enqueue an NVSHMEM_TEAM_WORLD barrier on the current CUDA stream for the OLMo NVSHMEM bootstrap world");
+  m.def(
+      "rowwise_signal_peers_on_stream",
+      &rowwise_signal_peers_on_stream,
+      "Quiet prior rowwise NVSHMEM work on the current stream and signal all peers for one signal row",
+      py::arg("signals"),
+      py::arg("signal_row"),
+      py::arg("generation"),
+      py::arg("group_name"),
+      py::arg("quiet_before_signal") = true);
+  m.def(
+      "rowwise_wait_signal_peers_on_stream",
+      &rowwise_wait_signal_peers_on_stream,
+      "Wait on the current stream until all peers have signaled one row",
+      py::arg("signals"),
+      py::arg("signal_row"),
+      py::arg("generation"),
+      py::arg("group_name"));
 
   m.def(
       "all_to_all_vdev_2d_nblocks",

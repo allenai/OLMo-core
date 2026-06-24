@@ -31,7 +31,7 @@ class ExpertParallelConfig(Config):
     shared_slots: int = 1
     major_align: int = 1
 
-    rowwise_nblocks: int = 256
+    rowwise_nblocks: int = 32
     share_dispatch_out: bool = False
     share_combine_out: bool = False
     restore_unpermute_backend: str = "te_fused"

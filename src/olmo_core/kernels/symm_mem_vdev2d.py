@@ -62,6 +62,43 @@ def nvshmem_world_barrier() -> None:
 
 
 @torch.compiler.disable
+def rowwise_signal_peers_on_stream(
+    signals: torch.Tensor,
+    signal_row: int,
+    generation: int,
+    group_name: str,
+    *,
+    quiet_before_signal: bool = True,
+) -> None:
+    """Signal every peer in ``group_name`` for one row of a symmetric signal tensor."""
+    ext = _load_cuda_extension()
+    ext.rowwise_signal_peers_on_stream(
+        signals,
+        int(signal_row),
+        int(generation),
+        group_name,
+        bool(quiet_before_signal),
+    )
+
+
+@torch.compiler.disable
+def rowwise_wait_signal_peers_on_stream(
+    signals: torch.Tensor,
+    signal_row: int,
+    generation: int,
+    group_name: str,
+) -> None:
+    """Wait on the current CUDA stream until every peer has signaled one row."""
+    ext = _load_cuda_extension()
+    ext.rowwise_wait_signal_peers_on_stream(
+        signals,
+        int(signal_row),
+        int(generation),
+        group_name,
+    )
+
+
+@torch.compiler.disable
 def olmo_symm_peer_base_ptrs(tensor: torch.Tensor, group_name: str) -> torch.Tensor:
     """Return device int64 peer-visible base pointers for an OLMo symmetric tensor."""
     ext = _load_cuda_extension()

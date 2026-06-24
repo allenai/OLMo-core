@@ -3200,6 +3200,56 @@ def _run_ep_no_sync_rowwise_wave_matches_rowwise():
             msg=f"rowwise_wave gradient mismatch for {name}",
         )
 
+    block_rowwise_eval = _build_block(
+        ep_no_sync=True,
+        ep_no_sync_use_rowwise_all_to_all=True,
+        d_model=128,
+        hidden_size=256,
+        num_experts=8,
+        top_k=4,
+        uniform_expert_assignment=False,
+    )
+    block_wave_eval = _build_block(
+        ep_no_sync=False,
+        ep=ExpertParallelConfig(
+            path=ExpertParallelPath.rowwise_wave,
+            capacity_factor=2.0,
+            rowwise_nblocks=32,
+            rowwise_wave_num_waves=4,
+        ),
+        d_model=128,
+        hidden_size=256,
+        num_experts=8,
+        top_k=4,
+        uniform_expert_assignment=False,
+    )
+    block_rowwise_eval.apply_ep(ep_mesh)
+    block_wave_eval.apply_ep(ep_mesh)
+
+    _init_block_params(block_rowwise_eval)
+    block_wave_eval.load_state_dict(block_rowwise_eval.state_dict())
+    _install_deterministic_topk_router(block_rowwise_eval)
+    _install_deterministic_topk_router(block_wave_eval)
+
+    block_rowwise_eval.to(dtype=torch.bfloat16)
+    block_wave_eval.to(dtype=torch.bfloat16)
+    block_rowwise_eval.ep.rowwise_nblocks = 32
+    block_wave_eval.ep.rowwise_nblocks = 32
+    block_rowwise_eval.ep.validate()
+    block_wave_eval.ep.validate()
+    block_rowwise_eval.eval()
+    block_wave_eval.eval()
+
+    x_eval = (0.2 * torch.randn(1, 16, block_rowwise_eval.d_model, device="cuda")).to(
+        dtype=torch.bfloat16
+    )
+    with torch.no_grad():
+        y_rowwise_eval = block_rowwise_eval(x_eval)
+        y_wave_eval = block_wave_eval(x_eval.detach().clone())
+    assert y_wave_eval.shape == y_rowwise_eval.shape
+    assert torch.isfinite(y_wave_eval).all()
+    torch.testing.assert_close(y_wave_eval, y_rowwise_eval, atol=2e-2, rtol=2e-2)
+
 
 def _run_ep_no_sync_tma_ibgda_matches_synced_bf16(
     *,
