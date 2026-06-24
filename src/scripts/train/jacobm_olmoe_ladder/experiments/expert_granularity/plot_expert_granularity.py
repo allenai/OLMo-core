@@ -173,14 +173,20 @@ def baseline_variant_name(name: str) -> str | None:
 
 
 def expert_variant_name(name: str) -> str | None:
+    repaired_cx2_name = "cx2" in name and (
+        "b384k" in name
+        or "eg-480m" in name
+        or "eg-810m-cx2" in name
+        or "eg-1p2b-cx2" in name
+    )
     if "eg24e2k" in name:
-        if "cx2" in name and ("b384k" in name or "eg-480m" in name):
+        if repaired_cx2_name:
             return "coarse_24e_top2_b384k"
         if "cx2" in name:
             return "coarse_24e_top2_b512k"
         return "coarse_24e_top2"
     if "eg96e8k" in name:
-        if "cx2" in name and ("b384k" in name or "eg-480m" in name):
+        if repaired_cx2_name:
             return "fine_96e_top8_b384k"
         if "cx2" in name:
             return "fine_96e_top8_b512k"
