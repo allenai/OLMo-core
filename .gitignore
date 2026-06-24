@@ -67,3 +67,6 @@ core
 
 # Claude Code session/memory dir
 .claude/
+
+# corpus-reasoning kept as a standalone clone (was a submodule; removed so gantry launches work)
+/corpus-reasoning/
