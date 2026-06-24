@@ -114,7 +114,14 @@ def cx_from_name(name: str) -> int | None:
 def model_from_name(name: str) -> str | None:
     if "tiny-275m" in name or "sp-275m" in name or "se-275m" in name or "eg-275m" in name or "ds-275m" in name:
         return "275m"
-    if "mid_480m" in name or "mid-480m" in name or "m480-cx" in name or "eg-480m" in name:
+    if (
+        "mid_480m" in name
+        or "mid-480m" in name
+        or "m480-cx" in name
+        or "eg-480m" in name
+        or "se-480m" in name
+        or "ds-480m" in name
+    ):
         return "480m"
     if "810m" in name:
         return "810m"

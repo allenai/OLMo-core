@@ -1452,3 +1452,35 @@ Shared expert remaining launches:
 | `se-480m-cx4-se0m9-lr8e-4-r1` | 480M | no_shared_matched_active | 4 | 8e-4 | 64 | 4 | 8 | https://beaker.org/ex/01KVV1RQDKHRTTTZNZ7ZWC5V90 |
 | `se-480m-cx8-se0m9-lr8e-4-r1` | 480M | no_shared_matched_active | 8 | 8e-4 | 96 | 8 | 4 | https://beaker.org/ex/01KVV1SHCZDHM17VHV0XWCA1J0 |
 | `se-1p2b-cx8-se0m9-lr4e-4-r1` | 1.2B | no_shared_matched_active | 8 | 4e-4 | 96 | 8 | 4 | https://beaker.org/ex/01KVV2FTHMVKP4ARF5B2A86DN5 |
+
+## 2026-06-24 Shared-Expert Status Audit and Duplicate Cleanup
+
+Audited the shared-expert `no_shared_matched_active` runs after the 2026-06-23 Titan relaunches revealed that the 480M checkpoints already existed. The 2026-06-15 Holmes promoted runs through 1.2B Cx4 are Beaker-finalized with exit code 0 and have final-looking Weka checkpoint directories. The current remaining shared-expert promoted cell is 1.2B Cx8.
+
+The shared-expert plotter was also fixed to classify `se-480m-*` names as 480M; before this fix, the completed 480M shared-expert runs were missing from the generated shared-expert plotted-result table even though Beaker and Weka showed completion.
+
+Canonical promoted shared-expert status:
+
+| Name | Beaker | Status | Finalized UTC | Checkpoint step | Notes |
+| --- | --- | --- | --- | ---: | --- |
+| `se-480m-cx1-se0m9-lr1.2e-3-r1` | https://beaker.org/ex/01KV6973XM7G19ZPA1NS7Y1GNK | finalized, exit 0 | 2026-06-15 22:34 | 29022 | Canonical Holmes compile-on run. |
+| `se-480m-cx2-se0m9-lr9e-4-r1` | https://beaker.org/ex/01KV69N19B2G4B5VCH375PW7AT | finalized, exit 0 | 2026-06-16 01:52 | 38696 | Canonical Holmes legal-microbatch run. |
+| `se-480m-cx4-se0m9-lr8e-4-r1` | https://beaker.org/ex/01KV697TS4XZ3DC834CDMZ7G49 | finalized, exit 0 | 2026-06-16 06:14 | 58044 | Canonical Holmes compile-on run. |
+| `se-480m-cx8-se0m9-lr8e-4-r1` | https://beaker.org/ex/01KV6986KXTDCGEV6P7QT8QRRS | finalized, exit 0 | 2026-06-16 07:58 | 77392 | Canonical Holmes compile-on run. |
+| `se-810m-cx1-se0m9-lr6e-4-r1` | https://beaker.org/ex/01KV698JMNYGCGVMVWSG9ZYKG5 | finalized, exit 0 | 2026-06-16 01:56 | 52648 | Canonical Holmes compile-on run. |
+| `se-810m-cx2-se0m9-lr5.6e-4-r1` | https://beaker.org/ex/01KV69NCK5KQPSSVEET8GKZ833 | finalized, exit 0 | 2026-06-16 10:22 | 70197 | Canonical Holmes legal-microbatch run. |
+| `se-810m-cx4-se0m9-lr4e-4-r1` | https://beaker.org/ex/01KV699AA6XVSNJ33WTJPDR9JT | finalized, exit 0 | 2026-06-16 16:01 | 105295 | Canonical Holmes compile-on run. |
+| `se-810m-cx8-se0m9-lr4e-4-r1` | https://beaker.org/ex/01KV699NQMH6B3ZR5SXQKVBGPF | finalized, exit 0 | 2026-06-17 13:07 | 140394 | Canonical Holmes compile-on run. |
+| `se-1p2b-cx1-se0m9-lr4e-4-r1` | https://beaker.org/ex/01KV69A1ZGD6SZH4A7TT3F7C54 | finalized, exit 0 | 2026-06-16 11:52 | 81190 | Canonical Holmes compile-on run. |
+| `se-1p2b-cx2-se0m9-lr6e-4-r1` | https://beaker.org/ex/01KV69ADE3VQ7JPXSEZ00KK4S8 | finalized, exit 0 | 2026-06-17 02:38 | 108253 | Canonical Holmes compile-on run. |
+| `se-1p2b-cx4-se0m9-lr3e-4-r1` | https://beaker.org/ex/01KV69ASNJF9D05MM7KDBHKPH7 | finalized, exit 0 | 2026-06-18 01:37 | 162379 | Canonical Holmes compile-on run. |
+| `se-1p2b-cx8-se0m9-lr4e-4-r1` | https://beaker.org/ex/01KVV2FTHMVKP4ARF5B2A86DN5 | created/queued |  |  | Remaining promoted shared-expert cell; Titan urgent compile-on. |
+
+Duplicate 2026-06-23 Titan relaunch cleanup:
+
+| Name | Beaker | Status | Notes |
+| --- | --- | --- | --- |
+| `se-480m-cx1-se0m9-lr1.2e-3-r1` | https://beaker.org/ex/01KVV1PVHBPE33XRTVF97HAZ1Y | finalized, exit 0 | Duplicate resume/eval-only against already-complete checkpoint. |
+| `se-480m-cx2-se0m9-lr9e-4-r1` | https://beaker.org/ex/01KVV1QTFGB2JVZMSQZX8JVSW3 | finalized, exit 0 | Duplicate resume/eval-only against already-complete checkpoint. |
+| `se-480m-cx4-se0m9-lr8e-4-r1` | https://beaker.org/ex/01KVV1RQDKHRTTTZNZ7ZWC5V90 | finalized, exit 0 | Duplicate resume/eval-only against already-complete checkpoint. |
+| `se-480m-cx8-se0m9-lr8e-4-r1` | https://beaker.org/ex/01KVV1SHCZDHM17VHV0XWCA1J0 | stopped before start | Stopped on 2026-06-24 after confirming canonical 480M Cx8 completion. |

@@ -1,6 +1,6 @@
 # Ladder Run Tracker
 
-Last updated: 2026-06-23 UTC.
+Last updated: 2026-06-24 UTC.
 
 This table is a scan-friendly status matrix for planned ladder cells. It is separate from `RUNS.md` (chronological launch/status log) and `PLOTTED_RESULTS.md` (finished-only plotted rows and losses).
 
@@ -14,7 +14,7 @@ Legend: `done` = at least one finished/plotted run exists; `run` = currently run
 | --- | --- | --- |
 | Total sparsity | 1.2B Cx1/2/4/8 for high total 96E/top4 and huge total 192E/top4 | 275M, 480M, and 810M are done. |
 | Dense schedule | None beyond queued 480M/810M/1.2B promotions | 275M LR searches are done; all larger dense0/dense2/dense4 promotions were queued on Titan urgent, compile-on, 2026-06-23. |
-| Shared expert | None beyond queued 480M Cx1/2/4/8 and 1.2B Cx8 | Shared expert is a main experiment category; remaining cells were queued on Titan urgent, compile-on, 2026-06-23. |
+| Shared expert | 1.2B Cx8 queued/created | 480M, 810M, and 1.2B Cx1/2/4 are Beaker-finalized with exit code 0. The 2026-06-23 duplicate 480M relaunches were eval-only resumes; duplicate Cx8 was stopped before start. |
 | Qwen-like | None beyond currently running/queued 810M/1.2B tail jobs | Let the active/queued Beaker surface drain unless a run fails. |
 | Expert granularity | None for main coarse/fine grid | Diagnostic 192E/384E remains intentionally limited to 275M Cx1. |
 | Baseline | None for Cx1/2/4/8 main grid | Current grid complete. |
@@ -29,7 +29,7 @@ Legend: `done` = at least one finished/plotted run exists; `run` = currently run
 | Expert granularity | diagnostic 192E/384E | done Cx1 only | hold | hold | hold | Diagnostic only; intentionally not part of current full ladder. |
 | Total sparsity | high total 96E/top4 | done Cx1/2/4/8 | done Cx1/2/4/8 | done Cx1/2/4/8 | todo Cx1/2/4/8 | 810M promoted wave complete. |
 | Total sparsity | huge total 192E/top4 | done Cx1/2/4/8 | done Cx1/2/4/8 | done Cx1/2/4/8 | todo Cx1/2/4/8 | 810M Cx4/Cx8 replacements finished since last status. |
-| Shared expert | no shared, routed 9/8 d | done Cx1/2/4/8 | queued Cx1/2/4/8 | done Cx1/2/4/8 | done Cx1/2/4, queued Cx8 | 480M and 1.2B Cx8 queued on Titan urgent, compile-on, 2026-06-23. |
+| Shared expert | no shared, routed 9/8 d | done Cx1/2/4/8 | done Cx1/2/4/8 | done Cx1/2/4/8 | done Cx1/2/4, queued Cx8 | 480M/810M/1.2B Cx1-4 finalized cleanly; 1.2B Cx8 remains queued. Shared plotter 480M name parsing was fixed 2026-06-24 after the status audit. |
 | Dense schedule | dense0 + shared | done Cx1/2/4/8 | queued Cx1/2/4/8 | queued Cx1/2/4/8 | queued Cx1/2/4/8 | Larger promotions queued on Titan urgent, compile-on, 2026-06-23. |
 | Dense schedule | dense2 + shared | done Cx1/2/4/8 | queued Cx1/2/4/8 | queued Cx1/2/4/8 | queued Cx1/2/4/8 | Larger promotions queued on Titan urgent, compile-on, 2026-06-23. |
 | Dense schedule | dense4 + shared | done Cx1/2/4/8 | queued Cx1/2/4/8 | queued Cx1/2/4/8 | queued Cx1/2/4/8 | Larger promotions queued on Titan urgent, compile-on, 2026-06-23. |
@@ -49,5 +49,16 @@ Legend: `done` = at least one finished/plotted run exists; `run` = currently run
 | `q3-1p2b-cx8-q3am128e8k-lr4e-4-r1` | queued | created 2026-06-20 09:06 | https://beaker.org/ex/01KVJ4GXHKR0DP3PXHPR5ZZ6GB | Corrected active-matched 1.2B Cx8 4e-4 job. |
 | `q3-1p2b-cx8-q3td128e8k-lr4e-4-r1` | queued | created 2026-06-20 09:07 | https://beaker.org/ex/01KVJ4H8PTJDJCGHHFRB8CD3GP | Corrected true-3D 1.2B Cx8 4e-4 job. |
 | `ds-{480m,810m,1p2b}-cx{1,2,4,8}-ds{0,2,4}-sh-*-r1` | queued | created 2026-06-23 20:07-20:24 | see `RUNS.md` 2026-06-23 launch section | 36 dense-schedule promoted jobs on Titan urgent, compile-on. |
-| `se-480m-cx{1,2,4,8}-se0m9-*-r1` | queued | created 2026-06-23 20:10-20:12 | see `RUNS.md` 2026-06-23 launch section | Shared-expert 480M promoted jobs on Titan urgent, compile-on. |
+| `se-480m-cx{1,2,4}-se0m9-*-r1` duplicate relaunches | done | finalized 2026-06-23 20:24-20:45 | see `RUNS.md` 2026-06-24 audit | Duplicate eval-only resumes against already-complete checkpoints. |
+| `se-480m-cx8-se0m9-lr8e-4-r1` duplicate relaunch | stopped | stopped 2026-06-24 01:34 | https://beaker.org/ex/01KVV1SHCZDHM17VHV0XWCA1J0 | Stopped before start after confirming prior Holmes run completed. |
 | `se-1p2b-cx8-se0m9-lr4e-4-r1` | queued | created 2026-06-23 20:24 | https://beaker.org/ex/01KVV2FTHMVKP4ARF5B2A86DN5 | Remaining shared-expert 1.2B Cx8 on Titan urgent, compile-on. |
+
+## Tracking Hygiene
+
+Before launching any promoted run, check all three evidence sources for the exact semantic run name and checkpoint save folder:
+
+1. `RUNS.md` for prior launch records and Beaker IDs.
+2. Beaker/W&B finished state for the prior semantic run name.
+3. Weka checkpoint folder for final-looking `step*` directories.
+
+Launchers should eventually refuse to submit when the target save folder already contains a final-looking checkpoint unless an explicit override such as `ALLOW_RESUME_FINISHED=1` is set. The tracker should be regenerated from Beaker/W&B/checkpoint evidence rather than manually inferred from the chronological launch log.
