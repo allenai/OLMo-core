@@ -12,7 +12,8 @@ roughly ``weight`` of the examples. Batches are reported in *tokens*
 
 from __future__ import annotations
 
-from typing import Any, Dict, Iterable, List, Optional, Sequence
+import itertools
+from typing import Any, Dict, Iterable, Iterator, List, Optional, Sequence
 
 import numpy as np
 
@@ -20,6 +21,8 @@ from olmo_core.exceptions import OLMoConfigurationError
 
 from ..data_loader import DataLoaderBase
 from .collator import MultimodalCollator
+from .packing import iter_packs
+from .prefetch import prefetch_map
 
 __all__ = ["MixtureDataLoader"]
 
@@ -47,6 +50,7 @@ class MixtureDataLoader(DataLoaderBase):
         epoch_instances: Optional[int] = None,
         pack: bool = False,
         est_tokens_per_example: int = 1400,
+        prefetch_workers: int = 0,
         dp_world_size: int = 1,
         dp_rank: int = 0,
         fs_local_rank: Optional[int] = None,
@@ -74,6 +78,7 @@ class MixtureDataLoader(DataLoaderBase):
         self.seq_len = collator.pad_sequence_length
         self.pack = pack
         self.est_tokens_per_example = est_tokens_per_example
+        self.prefetch_workers = prefetch_workers
         self._sizes = [len(d) for d in self.datasets]
         self.epoch_instances = epoch_instances or sum(self._sizes)
         self._order: Optional[List] = None  # list of (src_idx, example_idx)
@@ -132,10 +137,8 @@ class MixtureDataLoader(DataLoaderBase):
         ri = self._rank_instances
         n_batches = self.total_batches or 0
         if self.pack:
-            from .packing import iter_packs
-
             rank_refs = self._order[self.dp_rank :: self.dp_world_size]
-            gen = iter_packs(rank_refs, lambda r: self.datasets[r[0]][r[1]], self.seq_len)
+            gen = iter_packs(self._example_stream(rank_refs), self.seq_len)
             for _ in range(self.batches_processed * ri):  # resume: replay consumed packs
                 next(gen)
             for _ in range(self.batches_processed, n_batches):
@@ -148,16 +151,24 @@ class MixtureDataLoader(DataLoaderBase):
             examples = [self.datasets[src][idx] for src, idx in rank_slice]
             yield self.collator(examples)
 
+    def _example_stream(self, rank_refs: Sequence) -> Iterator[Dict[str, Any]]:
+        """Infinite stream of example dicts for this rank: cycle the refs, load each example
+        (heavy image preprocessing) on a background thread pool when ``prefetch_workers > 0``
+        so it overlaps the GPU step, yielding in order to keep packing deterministic."""
+        return prefetch_map(
+            lambda r: self.datasets[r[0]][r[1]],
+            itertools.cycle(rank_refs),
+            num_workers=self.prefetch_workers,
+        )
+
     def get_mock_batch(self) -> Dict[str, Any]:
         ri = max(self._rank_instances, 1)
         # Pull from the first non-empty source.
         src = next((i for i, s in enumerate(self._sizes) if s), 0)
         size = max(self._sizes[src], 1)
         if self.pack:
-            from .packing import iter_packs
-
             refs = [(src, i % size) for i in range(max(ri * 4, 4))]
-            gen = iter_packs(refs, lambda r: self.datasets[r[0]][r[1]], self.seq_len)
+            gen = iter_packs(self._example_stream(refs), self.seq_len)
             return self.collator([next(gen) for _ in range(ri)])
         examples = [self.datasets[src][i % size] for i in range(ri)]
         return self.collator(examples)

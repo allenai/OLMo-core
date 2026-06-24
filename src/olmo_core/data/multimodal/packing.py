@@ -26,7 +26,7 @@ per example (and hence for the pack).
 
 from __future__ import annotations
 
-from typing import Any, Callable, Dict, Iterator, List, Sequence
+from typing import Dict, Iterable, Iterator, List, Sequence
 
 import numpy as np
 
@@ -128,33 +128,31 @@ def pack_examples(examples: List[Dict[str, np.ndarray]]) -> Dict[str, np.ndarray
 
 
 def iter_packs(
-    refs: Sequence[Any],
-    get_example: Callable[[Any], Dict[str, np.ndarray]],
+    examples: Iterable[Dict[str, np.ndarray]],
     seq_len: int,
 ) -> Iterator[Dict[str, np.ndarray]]:
-    """Greedily next-fit-pack examples from ``refs`` into ``<= seq_len`` sequences forever.
+    """Greedily next-fit-pack a stream of example dicts into ``<= seq_len`` sequences.
 
-    Cycles ``refs`` indefinitely (the caller caps the number of batches), so every data-
-    parallel rank yields the same number of batches regardless of how its examples happen to
-    pack — avoiding a collective desync. An example longer than ``seq_len`` is emitted alone
-    (the collator tail-truncates it; the image block at the front is preserved).
+    ``examples`` is an iterator of example dicts — typically an infinite, cycled (and
+    optionally prefetched) stream, in which case this yields indefinitely and the caller
+    caps the number of batches. Cycling in the caller keeps every data-parallel rank
+    yielding the same number of batches regardless of how its examples pack (no collective
+    desync). An example longer than ``seq_len`` is emitted alone (the collator tail-truncates
+    it; the image block at the front is preserved). A finite stream flushes a final partial
+    pack.
 
-    :param refs: example references (indices, ``(src, idx)`` tuples, …) for this rank.
-    :param get_example: maps a ref to its example dict.
+    :param examples: iterator of per-example dicts (the heavy loading happens upstream, so it
+        can be prefetched off the training thread).
     :param seq_len: target packed length.
     """
-    if len(refs) == 0:
-        raise ValueError("iter_packs requires a non-empty `refs`")
     cur: List[Dict[str, np.ndarray]] = []
     cur_len = 0
-    i = 0
-    n = len(refs)
-    while True:
-        ex = get_example(refs[i % n])
-        i += 1
+    for ex in examples:
         length = len(ex["input_ids"])
         if cur and cur_len + length > seq_len:
             yield pack_examples(cur)
             cur, cur_len = [], 0
         cur.append(ex)
         cur_len += length
+    if cur:
+        yield pack_examples(cur)

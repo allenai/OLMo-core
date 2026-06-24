@@ -75,6 +75,7 @@ SEQUENCE_LENGTH = 4096  # fixed pad length; mm_olmo stage 1 uses ~5248
 USE_FLEX_ATTN = False  # True -> fused FlexAttention backend for the multimodal masks (~+8% MFU)
 PACK_SEQUENCES = True  # pack several examples per sequence (most are ~1.4k of 4096 tokens)
 COMPILE_MODEL = False  # torch.compile the LM (fuses pointwise ops; one-time compile warmup)
+DATA_PREFETCH_WORKERS = 4  # background threads preprocessing examples (0 = synchronous)
 MAX_CROPS = 8
 
 # Instance-based batching (mm_olmo: global 8, device microbatch 1), expressed in tokens.
@@ -355,6 +356,7 @@ def train(config: ExperimentConfig):
             global_batch_size=GLOBAL_BATCH_SIZE,
             seed=config.data_seed,
             pack=PACK_SEQUENCES,
+            prefetch_workers=DATA_PREFETCH_WORKERS,
             dp_world_size=dp_world_size,
             dp_rank=dp_rank,
         )

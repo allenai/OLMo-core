@@ -13,7 +13,8 @@ from olmo_core.data.multimodal.grounding import (
     normalize_points,
     pointing_answer,
 )
-from olmo_core.data.multimodal.packing import greedy_pack_indices, pack_examples
+from olmo_core.data.multimodal.packing import greedy_pack_indices, iter_packs, pack_examples
+from olmo_core.data.multimodal.prefetch import prefetch_map
 
 _SEQ = 8
 _PATCH_DIM = 14 * 14 * 3
@@ -189,6 +190,31 @@ def test_pack_examples_concat_and_offsets():
     np.testing.assert_array_equal(
         packed["pooled_patches_idx"][2], np.arange(4, 8) + 729
     )  # b crop 1
+
+
+def test_prefetch_map_order_and_completeness():
+    import time
+
+    def slow(x):
+        time.sleep(0.001 * ((x * 7) % 5))  # uneven work so threads finish out of order
+        return x * x
+
+    items = list(range(50))
+    for workers in (0, 1, 4):
+        out = list(prefetch_map(slow, iter(items), num_workers=workers, max_in_flight=8))
+        assert out == [x * x for x in items]  # order preserved, nothing dropped
+
+
+def test_prefetch_does_not_change_packing():
+    # Packing output must be identical whether examples are loaded sync or prefetched.
+    exs = [_img_example(n_text=3 + (i % 4), n_crops=1, tag=i + 2) for i in range(12)]
+    get = lambda i: exs[i]  # noqa: E731
+    sync = list(iter_packs((get(i) for i in range(12)), seq_len=12))
+    pref = list(iter_packs(prefetch_map(get, iter(range(12)), num_workers=4), seq_len=12))
+    assert len(sync) == len(pref)
+    for a, b in zip(sync, pref):
+        np.testing.assert_array_equal(a["input_ids"], b["input_ids"])
+        np.testing.assert_array_equal(a["example_ids"], b["example_ids"])
 
 
 def test_mixture_data_loader_packs(tmp_path):
