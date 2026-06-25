@@ -112,7 +112,10 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
             param_dtype=DType.bfloat16,
             reduce_dtype=DType.float32,
             wrapping_strategy=TransformerDataParallelWrappingStrategy.full,
-            shard_degree=1,
+            # Shard params/optim within each node (8-way) and replicate across the 4 nodes. The
+            # landmark kernel's full-64k, all-16-head activations leave no room for a replicated
+            # optimizer (~9 GB/GPU); sharding frees it. Still 32 data-parallel ranks (grad-accum 2).
+            shard_degree=8,
         ),
         ac_config=TransformerActivationCheckpointingConfig(
             mode=TransformerActivationCheckpointingMode.budget,
