@@ -14,6 +14,7 @@ from olmo_core.internal.common import build_launch_config, get_root_dir, get_wor
 from olmo_core.internal.experiment import CliContext, ExperimentConfig, main
 from olmo_core.launch.beaker import BeakerLaunchConfig, OLMoCoreBeakerImage
 from olmo_core.nn.attention import AttentionBackendName
+from olmo_core.nn.lm_head import LMLossImplementation
 from olmo_core.nn.rope import YaRNRoPEScalingConfig
 from olmo_core.nn.transformer import (
     TransformerActivationCheckpointingMode,
@@ -82,6 +83,10 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     ).with_rope_scaling(
         YaRNRoPEScalingConfig(factor=2, beta_fast=32, beta_slow=1, old_context_len=32768)
     )
+    # Fuse the LM-head projection with cross-entropy (Liger): never materializes the full
+    # [64k, vocab] logit tensor, which otherwise OOMs at 64k without context parallelism to
+    # split the sequence (the 4B base runs avoided this via CP=8 instead).
+    model_config.lm_head.loss_implementation = LMLossImplementation.fused_linear
 
     train_module_config = TransformerTrainModuleConfig(
         rank_microbatch_size=SEQUENCE_LENGTH,  # 1 instance per rank per micro-step

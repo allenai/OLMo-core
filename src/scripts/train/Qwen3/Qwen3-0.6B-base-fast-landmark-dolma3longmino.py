@@ -14,6 +14,7 @@ from olmo_core.float8 import Float8Config
 from olmo_core.internal.common import build_launch_config, get_root_dir, get_work_dir
 from olmo_core.internal.experiment import CliContext, ExperimentConfig, main
 from olmo_core.launch.beaker import BeakerLaunchConfig, OLMoCoreBeakerImage
+from olmo_core.nn.lm_head import LMLossImplementation
 from olmo_core.nn.transformer import (
     TransformerActivationCheckpointingMode,
     TransformerConfig,
@@ -88,6 +89,10 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         fast_landmark=True,
         mem_freq=MEM_FREQ,
     )
+    # Fuse the LM-head projection with cross-entropy (Liger): never materializes the full
+    # [64k, vocab] logit tensor, which is large at 64k without context parallelism to split
+    # the sequence (the 4B base runs avoided this via CP=8 instead).
+    model_config.lm_head.loss_implementation = LMLossImplementation.fused_linear
 
     train_module_config = TransformerTrainModuleConfig(
         rank_microbatch_size=SEQUENCE_LENGTH,  # 1 instance per rank per micro-step
