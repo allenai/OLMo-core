@@ -29,6 +29,7 @@ from olmo_core.train.callbacks import (
 )
 from olmo_core.train.train_module import (
     TransformerActivationCheckpointingConfig,
+    TransformerContextParallelConfig,
     TransformerDataParallelConfig,
     TransformerDataParallelWrappingStrategy,
     TransformerTrainModuleConfig,
@@ -73,9 +74,9 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         beaker_image=OLMoCoreBeakerImage.stable,
         workspace="ai2/flex2",
         budget="ai2/oe-other",
-        # 0.6B fits a full 64k sequence per GPU (no CP needed), so each rank runs landmark
-        # attention over the whole sequence with all 16 heads. 4 nodes × 8 GPUs = 32 DP replicas
-        # → 2 grad-accum steps at 64 instances/step.
+        # The fast-landmark kernel's full-64k activations over all 16 heads don't fit on one GPU,
+        # so we split with ulysses CP=2 (8 heads/rank). 4 nodes × 8 GPUs / CP=2 = 16 DP replicas
+        # → 4 grad-accum steps at 64 instances/step.
         num_nodes=4,
     )
     if beaker_launch_config is not None:
@@ -112,11 +113,13 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
             param_dtype=DType.bfloat16,
             reduce_dtype=DType.float32,
             wrapping_strategy=TransformerDataParallelWrappingStrategy.full,
-            # Shard params/optim within each node (8-way) and replicate across the 4 nodes. The
-            # landmark kernel's full-64k, all-16-head activations leave no room for a replicated
-            # optimizer (~9 GB/GPU); sharding frees it. Still 32 data-parallel ranks (grad-accum 2).
+            # Shard params/optim within each node (8-way) and replicate across nodes.
             shard_degree=8,
         ),
+        # Ulysses CP: the (fast) landmark attention does its own cp2hp/hp2cp all-to-all so each rank
+        # gathers the full sequence with n_heads/2 = 8 q-heads (and 8/2 = 4 kv-heads) before the
+        # grouped softmax. Halves per-rank attention+activation memory vs no CP.
+        cp_config=TransformerContextParallelConfig.ulysses(degree=2),
         ac_config=TransformerActivationCheckpointingConfig(
             mode=TransformerActivationCheckpointingMode.budget,
             activation_memory_budget=0.7,
