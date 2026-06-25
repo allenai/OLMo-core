@@ -14,14 +14,18 @@ if TYPE_CHECKING:
 
 
 def _rowwise_route_debug_enabled() -> bool:
-    if os.getenv("OLMO_TBO_VERBOSE_DEBUG_PRINT", "0").strip().lower() not in {
+    verbose = (
+        os.getenv("OLMO_ROWWISE_VERBOSE_DEBUG_PRINT")
+        or os.getenv("OLMO_TBO_VERBOSE_DEBUG_PRINT", "0")
+    )
+    if verbose.strip().lower() not in {
         "1",
         "true",
         "yes",
         "on",
     }:
         return False
-    ranks = os.getenv("OLMO_TBO_DEBUG_RANKS")
+    ranks = os.getenv("OLMO_ROWWISE_DEBUG_RANKS") or os.getenv("OLMO_TBO_DEBUG_RANKS")
     if not ranks or not dist.is_available() or not dist.is_initialized():
         return True
     rank = str(dist.get_rank())
@@ -48,7 +52,7 @@ def _rowwise_route_debug_print(
     if not _rowwise_route_debug_enabled():
         return
     parts = [
-        "[OLMO_TBO_DEBUG]",
+        "[OLMO_ROWWISE_ROUTE_DEBUG]",
         _rowwise_route_rank_tag(),
         f"block={block.block_idx}",
         f"route_maps:{label}",

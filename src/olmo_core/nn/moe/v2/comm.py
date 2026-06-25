@@ -809,9 +809,17 @@ class _RowwiseCombineWeightedAutograd(torch.autograd.Function):
             symm_gathered_routes_view = symm_gathered_routes.narrow(0, 0, gathered_shape[0])
             if not symm_gathered_routes_view.is_contiguous():
                 raise RuntimeError("symm_gathered_routes staging view must be contiguous")
-        if need_grad_probs and symm_gathered_routes_view is not None:
+        if symm_gathered_routes_view is not None:
             gathered_routes_for_kernel = symm_gathered_routes_view
-            gathered_routes = gathered_routes_for_kernel
+            gathered_routes = (
+                gathered_routes_for_kernel
+                if need_grad_probs
+                else torch.empty(
+                    (0, 0, symm_expert_out.shape[1]),
+                    device=symm_expert_out.device,
+                    dtype=symm_expert_out.dtype,
+                )
+            )
         elif need_grad_probs:
             gathered_routes_for_kernel = torch.empty(
                 gathered_shape,

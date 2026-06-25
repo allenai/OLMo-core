@@ -26,8 +26,10 @@ Modes:
 from __future__ import annotations
 
 import argparse
+import math
 import os
 import statistics
+import time
 import types
 from dataclasses import dataclass
 from typing import Iterable
@@ -1137,11 +1139,21 @@ def _bench_standard_ep_mega_kernel_case(
         dist.barrier()
         _cuda_profiler_start()
 
+    host_sync_timing = os.getenv("OLMO_BENCH_HOST_SYNC_TIMING", "0").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
     events: list[tuple[torch.cuda.Event, torch.cuda.Event]] = []
+    host_times: list[float] = []
     for idx in range(args.iters):
         label = f"BENCH/{mode_name}/tokens_{tokens}/iter_{idx}"
         start = torch.cuda.Event(enable_timing=True)
         end = torch.cuda.Event(enable_timing=True)
+        if host_sync_timing:
+            torch.cuda.synchronize()
+        host_start = time.perf_counter() if host_sync_timing else 0.0
         start.record()
         torch.cuda.nvtx.range_push(f"{label}/total")
         try:
@@ -1323,7 +1335,14 @@ def _bench_case(
         dist.barrier()
         _cuda_profiler_start()
 
+    host_sync_timing = os.getenv("OLMO_BENCH_HOST_SYNC_TIMING", "0").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
     events: list[tuple[torch.cuda.Event, torch.cuda.Event]] = []
+    host_times: list[float] = []
     for idx in range(args.iters):
         label = f"BENCH/{case.name}/tokens_{tokens}/iter_{idx}"
         backward_loss = None
@@ -1342,6 +1361,9 @@ def _bench_case(
 
         start = torch.cuda.Event(enable_timing=True)
         end = torch.cuda.Event(enable_timing=True)
+        if host_sync_timing:
+            torch.cuda.synchronize()
+        host_start = time.perf_counter() if host_sync_timing else 0.0
         start.record()
         torch.cuda.nvtx.range_push(f"{label}/total")
         try:
@@ -1366,6 +1388,9 @@ def _bench_case(
             torch.cuda.nvtx.range_pop()
         end.record()
         events.append((start, end))
+        if host_sync_timing:
+            torch.cuda.synchronize()
+            host_times.append((time.perf_counter() - host_start) * 1000.0)
         if (case.use_wave or case.rowwise_wave) and not args.profile:
             # These experimental modes use rowwise/NVSHMEM stream barriers.
             # Keep benchmark iterations host-ordered. During nsys profiling,
@@ -1381,14 +1406,22 @@ def _bench_case(
         events[-1][1].synchronize()
     times = [start.elapsed_time(end) for start, end in events]
     local_ms = statistics.median(times)
+    local_host_ms = statistics.median(host_times) if host_times else float("nan")
     local_mem_gib = torch.cuda.max_memory_allocated() / 1024**3
-    local = torch.tensor([local_ms, local_mem_gib], device="cuda")
+    local = torch.tensor([local_ms, local_host_ms, local_mem_gib], device="cuda")
     gathered = [torch.empty_like(local) for _ in range(world_size)]
     dist.all_gather(gathered, local)
 
     if rank == 0:
         max_ms = _median_rank_ms(gathered)
-        max_mem_gib = max(float(v[1].item()) for v in gathered)
+        max_host_ms = max(float(v[1].item()) for v in gathered)
+        max_mem_gib = max(float(v[2].item()) for v in gathered)
+        host_timing_part = (
+            f"host_ms/iter(max_rank)={max_host_ms:.3f} "
+            if math.isfinite(max_host_ms)
+            else ""
+        )
+        throughput_ms = max_host_ms if math.isfinite(max_host_ms) else max_ms
         print(
             "BENCH "
             f"{case.name}: ranks={world_size} tokens/rank={tokens} "
@@ -1401,8 +1434,9 @@ def _bench_case(
             f"rowwise_wave_recompute_linear1={args.rowwise_wave_recompute_linear1 if case.rowwise_wave else False} "
             f"rowwise_wave_recompute_act={args.rowwise_wave_recompute_act if case.rowwise_wave else False} "
             f"ms/iter(max_rank)={max_ms:.3f} "
-            f"local_tokens/s={tokens / (max_ms / 1000.0):.1f} "
-            f"global_tokens/s={tokens * world_size / (max_ms / 1000.0):.1f} "
+            f"{host_timing_part}"
+            f"local_tokens/s={tokens / (throughput_ms / 1000.0):.1f} "
+            f"global_tokens/s={tokens * world_size / (throughput_ms / 1000.0):.1f} "
             f"max_mem_GiB={max_mem_gib:.2f}",
             flush=True,
         )

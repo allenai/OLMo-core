@@ -19,28 +19,32 @@ except ImportError:
     _symm_mem = None  # type: ignore[assignment]
 
 
-def _tbo_buffer_debug_enabled() -> bool:
-    if os.getenv("OLMO_TBO_VERBOSE_DEBUG_PRINT", "0").strip().lower() not in {
+def _rowwise_buffer_debug_enabled() -> bool:
+    verbose = (
+        os.getenv("OLMO_ROWWISE_VERBOSE_DEBUG_PRINT")
+        or os.getenv("OLMO_TBO_VERBOSE_DEBUG_PRINT", "0")
+    )
+    if verbose.strip().lower() not in {
         "1",
         "true",
         "yes",
         "on",
     }:
         return False
-    ranks = os.getenv("OLMO_TBO_DEBUG_RANKS")
+    ranks = os.getenv("OLMO_ROWWISE_DEBUG_RANKS") or os.getenv("OLMO_TBO_DEBUG_RANKS")
     if not ranks or not dist.is_available() or not dist.is_initialized():
         return True
     rank = str(dist.get_rank())
     return rank in {part.strip() for part in ranks.split(",") if part.strip()}
 
 
-def _tbo_buffer_debug_print(message: str) -> None:
-    if not _tbo_buffer_debug_enabled():
+def _rowwise_buffer_debug_print(message: str) -> None:
+    if not _rowwise_buffer_debug_enabled():
         return
     rank = dist.get_rank() if dist.is_available() and dist.is_initialized() else "?"
     print(
         (
-            "[OLMO_TBO_DEBUG] "
+            "[OLMO_ROWWISE_BUFFER_DEBUG] "
             f"rank={rank} local_rank={os.getenv('LOCAL_RANK', '?')} "
             f"{message}"
         ),
@@ -83,18 +87,18 @@ def _alloc_ep_symm_tensor(
     device: torch.device,
     group: dist.ProcessGroup,
 ) -> torch.Tensor:
-    # _tbo_buffer_debug_print(f"symm_alloc:enter shape={shape} dtype={dtype} device={device}")
+    _rowwise_buffer_debug_print(f"symm_alloc:enter shape={shape} dtype={dtype} device={device}")
     if olmo_symm_mem.is_enabled():
         symm_tensor = olmo_symm_mem.empty(shape, dtype=dtype, device=device, group=group)
         olmo_symm_mem.rendezvous(symm_tensor, group=group)
-        # _tbo_buffer_debug_print(f"symm_alloc:exit shape={shape} dtype={dtype} device={device}")
+        _rowwise_buffer_debug_print(f"symm_alloc:exit shape={shape} dtype={dtype} device={device}")
         return symm_tensor
 
     if _symm_mem is None:
         raise RuntimeError("EP no-sync requires torch.distributed._symmetric_memory")
     symm_tensor = _symm_mem.empty(shape, dtype=dtype, device=device)
     _symm_mem.rendezvous(symm_tensor, group=group)
-    # _tbo_buffer_debug_print(f"symm_alloc:exit shape={shape} dtype={dtype} device={device}")
+    _rowwise_buffer_debug_print(f"symm_alloc:exit shape={shape} dtype={dtype} device={device}")
     return symm_tensor
 
 
@@ -479,7 +483,7 @@ class _NoSyncSymmSharedPool:
         cached = slot_cache.get(name)
         needs_realloc = cached is None or not _cached_symm_tensor_covers(cached, shape, dtype, device)
         # cache_state = "alloc" if needs_realloc else "cached"
-        # _tbo_buffer_debug_print(
+        # _rowwise_buffer_debug_print(
         #     f"shared_slot:{cache_state}:enter slot={slot_idx} name={name} "
         #     f"shape={shape} dtype={dtype} device={device}"
         # )
@@ -491,7 +495,7 @@ class _NoSyncSymmSharedPool:
                 group=self.group,
             )
             slot_cache[name] = symm_tensor
-        # _tbo_buffer_debug_print(
+        # _rowwise_buffer_debug_print(
         #     f"shared_slot:{cache_state}:exit slot={slot_idx} name={name} "
         #     f"cached_shape={tuple(slot_cache[name].shape)} return_shape={shape}"
         # )
@@ -744,11 +748,11 @@ def get_or_init_ep_no_sync_symm_tensor(
 
     cached = block._ep_no_sync_symm_cache.get(name)
     needs_realloc = cached is None or not _cached_symm_tensor_covers(cached, shape, dtype, device)
-    # cache_state = "alloc" if needs_realloc else "cached"
-    # _tbo_buffer_debug_print(
-    #     f"block_cache:{cache_state}:enter block={block.block_idx} name={name} "
-    #     f"shape={shape} dtype={dtype} device={device}"
-    # )
+    cache_state = "alloc" if needs_realloc else "cached"
+    _rowwise_buffer_debug_print(
+        f"block_cache:{cache_state}:enter block={block.block_idx} name={name} "
+        f"shape={shape} dtype={dtype} device={device}"
+    )
     if needs_realloc:
         try:
             symm_tensor = _alloc_ep_symm_tensor(
@@ -764,10 +768,10 @@ def get_or_init_ep_no_sync_symm_tensor(
             ) from e
         block._ep_no_sync_symm_cache[name] = symm_tensor
 
-    # _tbo_buffer_debug_print(
-    #     f"block_cache:{cache_state}:exit block={block.block_idx} name={name} "
-    #     f"cached_shape={tuple(block._ep_no_sync_symm_cache[name].shape)} return_shape={shape}"
-    # )
+    _rowwise_buffer_debug_print(
+        f"block_cache:{cache_state}:exit block={block.block_idx} name={name} "
+        f"cached_shape={tuple(block._ep_no_sync_symm_cache[name].shape)} return_shape={shape}"
+    )
     return _view_cached_symm_tensor(block._ep_no_sync_symm_cache[name], shape)
 
 
@@ -1524,14 +1528,14 @@ def get_ep_no_sync_buffers(
     resolved_slot_idx = block._ep_no_sync_shared_slot if slot_idx is None else slot_idx
     name_suffix = f"_slot{resolved_slot_idx}" if slot_idx is not None else ""
     chunk_reorder_backend = resolve_ep_no_sync_chunk_reorder_backend()
-    # _tbo_buffer_debug_print(
-    #     f"get_buffers:enter block={block.block_idx} slot={resolved_slot_idx} "
-    #     f"suffix={name_suffix or '<none>'} shared_pool={block._ep_no_sync_shared_pool is not None} "
-    #     f"need_dispatch_in={need_dispatch_in} need_dispatch_meta={need_dispatch_meta} "
-    #     f"need_dispatch_out={need_dispatch_out} need_combine_in={need_combine_in} "
-    #     f"need_combine_meta={need_combine_meta} need_combine_out={need_combine_out} "
-    #     f"need_combine_gather={need_combine_gather}"
-    # )
+    _rowwise_buffer_debug_print(
+        f"get_buffers:enter block={block.block_idx} slot={resolved_slot_idx} "
+        f"suffix={name_suffix or '<none>'} shared_pool={block._ep_no_sync_shared_pool is not None} "
+        f"need_dispatch_in={need_dispatch_in} need_dispatch_meta={need_dispatch_meta} "
+        f"need_dispatch_out={need_dispatch_out} need_combine_in={need_combine_in} "
+        f"need_combine_meta={need_combine_meta} need_combine_out={need_combine_out} "
+        f"need_combine_gather={need_combine_gather}"
+    )
     if block._ep_no_sync_shared_pool is not None:
         if chunk_reorder_backend == "te":
             if not block._ep_no_sync_te_backend_warned:
@@ -1543,9 +1547,9 @@ def get_ep_no_sync_buffers(
                 )
                 block._ep_no_sync_te_backend_warned = True
         else:
-            # _tbo_buffer_debug_print(
-            #     f"get_buffers:shared_slot-enter block={block.block_idx} slot={resolved_slot_idx}"
-            # )
+            _rowwise_buffer_debug_print(
+                f"get_buffers:shared_slot-enter block={block.block_idx} slot={resolved_slot_idx}"
+            )
             transient_slot = block._ep_no_sync_shared_pool.get_slot(
                 slot_idx=resolved_slot_idx,
                 dispatch_in_cap=dispatch_in_cap,
@@ -1567,9 +1571,9 @@ def get_ep_no_sync_buffers(
                 device=device,
                 ep_world_size=ep_world_size,
             )
-            # _tbo_buffer_debug_print(
-            #     f"get_buffers:shared_slot-exit block={block.block_idx} slot={resolved_slot_idx}"
-            # )
+            _rowwise_buffer_debug_print(
+                f"get_buffers:shared_slot-exit block={block.block_idx} slot={resolved_slot_idx}"
+            )
     empty_data = torch.empty((0,), dtype=dtype, device=device)
     empty_i64 = torch.empty((0,), dtype=torch.int64, device=device)
 
@@ -1763,7 +1767,7 @@ def get_ep_no_sync_buffers(
         combine_gather = empty_data
         combine_gather_lease = None
 
-    # _tbo_buffer_debug_print(f"get_buffers:exit block={block.block_idx} slot={resolved_slot_idx}")
+    _rowwise_buffer_debug_print(f"get_buffers:exit block={block.block_idx} slot={resolved_slot_idx}")
     buffers = _NoSyncSymmBuffers(
         dispatch_in=dispatch_in,
         dispatch_in_rank_splits=dispatch_in_rank_splits,

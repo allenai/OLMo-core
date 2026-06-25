@@ -278,6 +278,7 @@ def rowwise_inverse_route_meta_put_compact(
     nblocks: int = 0,
     pre_barrier: bool = False,
     post_barrier: bool = True,
+    scalar_put: bool = False,
 ) -> None:
     ext = _load_cuda_extension()
     ext.rowwise_inverse_route_meta_put_compact(
@@ -289,6 +290,26 @@ def rowwise_inverse_route_meta_put_compact(
         nblocks,
         pre_barrier,
         post_barrier,
+        scalar_put,
+    )
+
+
+@torch.compiler.disable
+def rowwise_build_inverse_route_meta_from_global_records(
+    inverse_route_meta: torch.Tensor,
+    global_route_records: torch.Tensor,
+    global_wave_offsets: torch.Tensor,
+    *,
+    local_rank: int,
+    nblocks: int = 0,
+) -> None:
+    ext = _load_cuda_extension()
+    ext.rowwise_build_inverse_route_meta_from_global_records(
+        inverse_route_meta,
+        global_route_records,
+        global_wave_offsets,
+        int(local_rank),
+        nblocks,
     )
 
 

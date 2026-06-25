@@ -6,6 +6,8 @@ from typing import TYPE_CHECKING, Optional, Tuple, Union, cast
 
 import torch
 
+from olmo_core.kernels import symm_mem_vdev2d as symm_mem_vdev2d_kernels
+
 from ...moe.utils import wait_stream_no_compile
 from .comm import (
     _DispatchRowwiseAutograd,
@@ -17,6 +19,8 @@ from .comm import (
 from .checkpointing import get_rowwise_checkpoint_state
 from .ep_no_sync_common import (
     padded_local_expert_splits_for_capacity,
+    rowwise_stage_debug_print,
+    rowwise_stage_debug_sync,
     sync_tail_drop_allowed_splits_single_a2a,
 )
 from .ep_no_sync_buffers import (
@@ -27,6 +31,7 @@ from .ep_no_sync_buffers import (
     get_cached_ep_no_sync_rowwise_fp8_buffers,
     get_ep_no_sync_buffers,
     get_ep_no_sync_group_name,
+    get_or_init_ep_no_sync_symm_tensor,
     get_ep_no_sync_rowwise_fp8_buffers,
     use_ep_no_sync_rowwise_symm_combine_gather,
     use_ep_no_sync_rowwise_symm_combine_out,
@@ -55,6 +60,36 @@ def _debug_tensors_enabled() -> bool:
     }
 
 
+def _rowwise_ep_spans_nodes(block: "OLMoDDPTransformerBlock") -> bool:
+    local_world_size = 0
+    try:
+        local_world_size = int(os.getenv("LOCAL_WORLD_SIZE", "0") or "0")
+    except ValueError:
+        local_world_size = 0
+    local_cuda_devices = torch.cuda.device_count() if torch.cuda.is_available() else 0
+    intra_node_limit = max(local_world_size, local_cuda_devices, 8)
+    return block.ep_world_size > intra_node_limit
+
+
+def _rowwise_regular_combine_put_enabled(block: "OLMoDDPTransformerBlock") -> bool:
+    raw = os.getenv("OLMO_MOE_ROWWISE_COMBINE_PUT", "auto").strip().lower()
+    if raw in {"auto", ""}:
+        # Current measurements:
+        # - single-node/NVLink regular rowwise is faster with PUT combine;
+        # - inter-node/IB regular rowwise is faster with GET combine, provided
+        #   the local GET destination is symmetric/NVSHMEM-visible.
+        return not _rowwise_ep_spans_nodes(block)
+    if raw in {"1", "true", "yes", "on"}:
+        return True
+    if raw in {"0", "false", "no", "off"}:
+        return False
+    raise RuntimeError(
+        "OLMO_MOE_ROWWISE_COMBINE_PUT must be one of "
+        "auto|0|1|true|false|yes|no|on|off, got "
+        f"{raw!r}"
+    )
+
+
 def combined_forward_ep_no_sync_rowwise(
     block: OLMoDDPTransformerBlock,
     x: torch.Tensor,
@@ -74,6 +109,12 @@ def combined_forward_ep_no_sync_rowwise(
     assert not requires_host_side_split_sizes(), "EP no-sync implementation does not support host-side split size communication"
     group_name = get_ep_no_sync_group_name(self)
     B, S, D = x.shape
+    rowwise_stage_debug_print(
+        "rowwise:enter",
+        block=self.block_idx,
+        shape=tuple(x.shape),
+        group=group_name,
+    )
 
     block_inp = x
     del x
@@ -93,6 +134,12 @@ def combined_forward_ep_no_sync_rowwise(
         moe_inp,
         False,
         loss_div_factor=loss_div_factor,
+    )
+    rowwise_stage_debug_print(
+        "rowwise:router-exit",
+        block=self.block_idx,
+        numel=int(local_x_global_routed_expert_indices.numel()),
+        top_k=self.routed_experts_router.top_k,
     )
 
     wait_stream_no_compile(
@@ -148,12 +195,21 @@ def combined_forward_ep_no_sync_rowwise(
         and (not activation_checkpointing)
         and use_ep_no_sync_rowwise_symm_combine_gather(self)
     )
+    use_regular_combine_put = (
+        (not use_rowwise_fp8)
+        and (not activation_checkpointing)
+        and (not torch.is_grad_enabled())
+        and _rowwise_regular_combine_put_enabled(self)
+    )
+    if use_regular_combine_put:
+        use_symm_combine_gather = True
     force_scratch_lifetime_buffers = bool(
         getattr(self, "_ep_no_sync_force_scratch_lifetime_buffers", False)
     )
     if force_scratch_lifetime_buffers:
         use_symm_combine_out = False
         use_symm_combine_gather = False
+        use_regular_combine_put = False
     lease_lifetime_buffers = (
         torch.is_grad_enabled()
         and not activation_checkpointing
@@ -167,6 +223,12 @@ def combined_forward_ep_no_sync_rowwise(
     with torch.no_grad():
         requested_splits = local_batch_size_per_global_routed_expert.to(dtype=torch.long)
         rank_capacity = compute_ep_no_sync_rank_capacity(self, num_out_tokens)
+        rowwise_stage_debug_print(
+            "rowwise:sync-tail-enter",
+            block=self.block_idx,
+            rank_capacity=rank_capacity,
+            num_out_tokens=num_out_tokens,
+        )
         (
             allowed_splits,
             recv_splits_by_src_local,
@@ -180,6 +242,11 @@ def combined_forward_ep_no_sync_rowwise(
                 rank_capacity=rank_capacity,
                 return_keep_matrix=True,
             ),
+        )
+        rowwise_stage_debug_print(
+            "rowwise:sync-tail-exit",
+            block=self.block_idx,
+            rank_capacity=rank_capacity,
         )
         dispatch_in_cap = num_out_tokens
         dispatch_out_cap = rank_capacity
@@ -239,6 +306,13 @@ def combined_forward_ep_no_sync_rowwise(
         combine_in_q = fp8_buffers.combine_in_q
         combine_in_scales = fp8_buffers.combine_in_scales
     else:
+        rowwise_stage_debug_print(
+            "rowwise:get-buffers-enter",
+            block=self.block_idx,
+            dispatch_out_cap=dispatch_out_cap,
+            combine_in_cap=combine_in_cap,
+            d_model=moe_inp.shape[-1],
+        )
         buffers = get_cached_ep_no_sync_buffers(
             self,
             dispatch_in_cap=dispatch_in_cap,
@@ -258,6 +332,7 @@ def combined_forward_ep_no_sync_rowwise(
             combine_gather_cap=num_input_tokens,
             combine_gather_top_k=top_k,
         )
+        buffers_cache_hit = buffers is not None
         if buffers is None:
             buffers = get_ep_no_sync_buffers(
                 self,
@@ -278,7 +353,13 @@ def combined_forward_ep_no_sync_rowwise(
                 combine_gather_cap=num_input_tokens,
                 combine_gather_top_k=top_k,
             )
+        rowwise_stage_debug_print(
+            "rowwise:get-buffers-exit",
+            block=self.block_idx,
+            cached=buffers_cache_hit,
+        )
         if lease_dispatch_out or lease_combine_out or lease_combine_gather:
+            rowwise_stage_debug_print("rowwise:leases-enter", block=self.block_idx)
             leases = acquire_ep_no_sync_rowwise_lifetime_leases(
                 self,
                 dispatch_out_cap=dispatch_out_cap,
@@ -319,6 +400,7 @@ def combined_forward_ep_no_sync_rowwise(
                 combine_out_lease=leases.combine_out_lease,
                 combine_gather_lease=leases.combine_gather_lease,
             )
+            rowwise_stage_debug_print("rowwise:leases-exit", block=self.block_idx)
 
     routing_map = local_x_global_routed_expert_indices.view(
         -1, top_k
@@ -343,6 +425,7 @@ def combined_forward_ep_no_sync_rowwise(
         )
 
     with torch.no_grad():
+        rowwise_stage_debug_print("rowwise:build-route-enter", block=self.block_idx)
         dst_ranks, dst_rows = build_rowwise_route_maps(
             self,
             routing_map=routing_map,
@@ -350,6 +433,49 @@ def combined_forward_ep_no_sync_rowwise(
             keep_from_src_dest_local=keep_from_src_dest_local,
         )
         rowwise_nblocks = self.ep.rowwise_nblocks
+        rowwise_stage_debug_print(
+            "rowwise:build-route-exit",
+            block=self.block_idx,
+            nblocks=rowwise_nblocks,
+        )
+        inverse_route_meta = None
+        rowwise_combine_row_start = None
+        rowwise_combine_num_rows = None
+        if use_regular_combine_put:
+            rowwise_stage_debug_print("rowwise:combine-put-meta-enter", block=self.block_idx)
+            compact_route_records, compact_wave_offsets = (
+                symm_mem_vdev2d_kernels.rowwise_build_compact_route_records(
+                    dst_ranks,
+                    dst_rows,
+                    routing_map,
+                    num_local_experts=self.num_local_routed_experts,
+                    num_waves=1,
+                    nblocks=rowwise_nblocks,
+                )
+            )
+            inverse_route_meta = get_or_init_ep_no_sync_symm_tensor(
+                self,
+                name="rowwise_inverse_route_meta",
+                shape=(rank_capacity, 2),
+                dtype=torch.long,
+                device=moe_inp.device,
+            )
+            inverse_route_meta.fill_(-1)
+            symm_mem_vdev2d_kernels.rowwise_inverse_route_meta_put_compact(
+                inverse_route_meta,
+                compact_route_records,
+                compact_wave_offsets,
+                src_rank=torch.distributed.get_rank(self.ep_pg),
+                group_name=group_name,
+                nblocks=rowwise_nblocks,
+                pre_barrier=True,
+                post_barrier=True,
+                scalar_put=use_symm_dispatch_in,
+            )
+            rowwise_combine_row_start = batch_size_per_local_expert.new_zeros(())
+            rowwise_combine_num_rows = batch_size_per_local_expert.sum()
+            rowwise_stage_debug_print("rowwise:combine-put-meta-exit", block=self.block_idx)
+            rowwise_stage_debug_sync("rowwise:combine-put-meta", moe_inp.device)
 
     if self.shared_experts is not None:
         with torch.cuda.stream(self.get_dense_stream()):
@@ -449,6 +575,7 @@ def combined_forward_ep_no_sync_rowwise(
         assert buffers is not None
         source_input_aliases_symm_input = False
         grad_out_aliases_symm_out = True
+        rowwise_stage_debug_print("rowwise:dispatch-enter", block=self.block_idx)
         dispatch_rank_major = _DispatchRowwiseAutograd.apply(
             moe_inp,
             buffers.dispatch_in if use_symm_dispatch_in else None,
@@ -464,8 +591,11 @@ def combined_forward_ep_no_sync_rowwise(
             True,
             False,
         )
+        rowwise_stage_debug_print("rowwise:dispatch-exit", block=self.block_idx)
+        rowwise_stage_debug_sync("rowwise:dispatch", moe_inp.device)
 
     if not use_fused_rowwise_fp8:
+        rowwise_stage_debug_print("rowwise:experts-enter", block=self.block_idx)
         if _debug_tensors_enabled() and self.block_idx == 0:
             self._debug_rowwise_dispatch_rank_major = dispatch_rank_major.detach()
             self._debug_rowwise_padded_batch_size_per_local_expert = (
@@ -483,6 +613,8 @@ def combined_forward_ep_no_sync_rowwise(
             rowwise_fp8_input_q=(dispatch_out_q if use_rowwise_fp8 else None),
             rowwise_fp8_input_scales=(dispatch_out_scales if use_rowwise_fp8 else None),
         )
+        rowwise_stage_debug_print("rowwise:experts-exit", block=self.block_idx)
+        rowwise_stage_debug_sync("rowwise:experts", dispatch_rank_major.device)
         if _debug_tensors_enabled() and self.block_idx == 0:
             self._debug_rowwise_expert_out_rank_major = dispatch_rank_major.detach()
 
@@ -516,23 +648,56 @@ def combined_forward_ep_no_sync_rowwise(
             and dispatch_rank_major.storage_offset() == buffers.combine_in.storage_offset()
             and tuple(dispatch_rank_major.shape) == tuple(buffers.combine_in.shape)
         )
-        local_x = _RowwiseCombineWeightedAutograd.apply(
-            dispatch_rank_major,
-            buffers.combine_in,
-            buffers.combine_out if use_symm_combine_out else None,
-            buffers.combine_out_lease if use_symm_combine_out else None,
-            buffers.combine_gather if use_symm_combine_gather else None,
-            buffers.combine_gather_lease if use_symm_combine_gather else None,
-            dst_ranks,
-            dst_rows,
-            route_probs,
-            group_name,
-            self.ep_pg,
-            self.ep.rowwise_nblocks,
-            expert_out_aliases_symm_expert_out,
-            True,
-            False,
-        )
+        rowwise_stage_debug_print("rowwise:combine-enter", block=self.block_idx)
+        if use_regular_combine_put:
+            assert inverse_route_meta is not None
+            assert rowwise_combine_row_start is not None
+            assert rowwise_combine_num_rows is not None
+            if not expert_out_aliases_symm_expert_out:
+                buffers.combine_in.copy_(dispatch_rank_major)
+            symm_mem_vdev2d_kernels.rowwise_combine_put(
+                buffers.combine_in,
+                buffers.combine_gather,
+                inverse_route_meta,
+                rowwise_combine_row_start,
+                rowwise_combine_num_rows,
+                group_name,
+                nblocks=self.ep.rowwise_nblocks,
+                pre_barrier=True,
+                post_barrier=True,
+            )
+            local_x = torch.empty(
+                (num_input_tokens, moe_inp.shape[-1]),
+                device=moe_inp.device,
+                dtype=moe_inp.dtype,
+            )
+            probs_f32 = route_probs if route_probs.dtype == torch.float32 else route_probs.float()
+            symm_mem_vdev2d_kernels.rowwise_reduce_gathered_routes(
+                buffers.combine_gather,
+                probs_f32,
+                local_x,
+                route_ranks=dst_ranks,
+            )
+        else:
+            local_x = _RowwiseCombineWeightedAutograd.apply(
+                dispatch_rank_major,
+                buffers.combine_in,
+                buffers.combine_out if use_symm_combine_out else None,
+                buffers.combine_out_lease if use_symm_combine_out else None,
+                buffers.combine_gather if use_symm_combine_gather else None,
+                buffers.combine_gather_lease if use_symm_combine_gather else None,
+                dst_ranks,
+                dst_rows,
+                route_probs,
+                group_name,
+                self.ep_pg,
+                self.ep.rowwise_nblocks,
+                expert_out_aliases_symm_expert_out,
+                True,
+                False,
+            )
+        rowwise_stage_debug_print("rowwise:combine-exit", block=self.block_idx)
+        rowwise_stage_debug_sync("rowwise:combine", local_x.device)
     if _debug_tensors_enabled() and self.block_idx == 0:
         self._debug_rowwise_combined_local_x = local_x.detach()
 
@@ -566,6 +731,7 @@ def combined_forward_ep_no_sync_rowwise(
     mlp_out = self._merge_routed_and_shared(local_x, mixed_shared_out)
 
     final_out = self._res_norm_mlp(attn_res_out, mlp_out)
+    rowwise_stage_debug_print("rowwise:exit", block=self.block_idx)
     return self._attach_routed_aux_loss(
         final_out,
         routed_expert_router_aux_loss_info,

@@ -113,7 +113,15 @@ void rowwise_inverse_route_meta_put_compact(
     const std::string& group_name,
     int64_t nblocks,
     bool pre_barrier,
-    bool post_barrier);
+    bool post_barrier,
+    bool scalar_put);
+
+void rowwise_build_inverse_route_meta_from_global_records(
+    torch::Tensor& inverse_route_meta,
+    torch::Tensor& global_route_records,
+    torch::Tensor& global_wave_offsets,
+    int64_t local_rank,
+    int64_t nblocks);
 
 void rowwise_combine_get(
     torch::Tensor& expert_out,
@@ -322,7 +330,18 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
       py::arg("group_name"),
       py::arg("nblocks") = 0,
       py::arg("pre_barrier") = false,
-      py::arg("post_barrier") = true);
+      py::arg("post_barrier") = true,
+      py::arg("scalar_put") = false);
+
+  m.def(
+      "rowwise_build_inverse_route_meta_from_global_records",
+      &rowwise_build_inverse_route_meta_from_global_records,
+      "Build compact row-wise inverse route maps locally from globally gathered route records",
+      py::arg("inverse_route_meta"),
+      py::arg("global_route_records"),
+      py::arg("global_wave_offsets"),
+      py::arg("local_rank"),
+      py::arg("nblocks") = 0);
 
   m.def(
       "rowwise_combine_get",

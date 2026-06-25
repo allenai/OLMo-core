@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import time
 from typing import TYPE_CHECKING, Optional, Tuple, Union, cast
 
 import nvtx
@@ -40,14 +41,18 @@ def padded_local_expert_splits_for_capacity(
 
 
 def _ep_sync_debug_enabled() -> bool:
-    if os.getenv("OLMO_TBO_VERBOSE_DEBUG_PRINT", "0").strip().lower() not in {
+    verbose = (
+        os.getenv("OLMO_ROWWISE_VERBOSE_DEBUG_PRINT")
+        or os.getenv("OLMO_TBO_VERBOSE_DEBUG_PRINT", "0")
+    )
+    if verbose.strip().lower() not in {
         "1",
         "true",
         "yes",
         "on",
     }:
         return False
-    ranks = os.getenv("OLMO_TBO_DEBUG_RANKS")
+    ranks = os.getenv("OLMO_ROWWISE_DEBUG_RANKS") or os.getenv("OLMO_TBO_DEBUG_RANKS")
     if not ranks or not dist.is_available() or not dist.is_initialized():
         return True
     rank = str(dist.get_rank())
@@ -67,9 +72,50 @@ def _ep_sync_tensor_desc(name: str, tensor: torch.Tensor) -> str:
 def _ep_sync_debug_print(label: str, **tensors: torch.Tensor) -> None:
     if not _ep_sync_debug_enabled():
         return
-    parts = ["[OLMO_TBO_DEBUG]", _ep_sync_rank_tag(), label]
+    parts = ["[OLMO_ROWWISE_SYNC_DEBUG]", _ep_sync_rank_tag(), label]
     parts.extend(_ep_sync_tensor_desc(name, tensor) for name, tensor in tensors.items())
     print(" | ".join(str(part) for part in parts), flush=True)
+
+
+def rowwise_stage_debug_enabled() -> bool:
+    if os.getenv("OLMO_ROWWISE_STAGE_DEBUG", "0").strip().lower() not in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }:
+        return False
+    ranks = os.getenv("OLMO_ROWWISE_STAGE_DEBUG_RANKS") or os.getenv("OLMO_TBO_DEBUG_RANKS")
+    if not ranks or not dist.is_available() or not dist.is_initialized():
+        return True
+    if ranks.strip().lower() in {"all", "*"}:
+        return True
+    rank = str(dist.get_rank())
+    return rank in {part.strip() for part in ranks.split(",") if part.strip()}
+
+
+def rowwise_stage_debug_print(label: str, **fields: object) -> None:
+    if not rowwise_stage_debug_enabled():
+        return
+    parts = ["[OLMO_ROWWISE_STAGE]", f"t={time.perf_counter():.6f}", _ep_sync_rank_tag(), label]
+    parts.extend(f"{name}={value}" for name, value in fields.items())
+    print(" | ".join(str(part) for part in parts), flush=True)
+
+
+def rowwise_stage_debug_sync(label: str, device: torch.device | None = None) -> None:
+    if os.getenv("OLMO_ROWWISE_STAGE_DEBUG_SYNC", "0").strip().lower() not in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }:
+        return
+    rowwise_stage_debug_print(f"{label}:sync-enter")
+    if device is None:
+        torch.cuda.synchronize()
+    else:
+        torch.cuda.synchronize(device)
+    rowwise_stage_debug_print(f"{label}:sync-exit")
 
 
 @nvtx.annotate("_build_keep_reorder")
@@ -141,25 +187,25 @@ def sync_tail_drop_allowed_splits_single_a2a(
         device=requested.device,
         dtype=requested.dtype,
     )
-    # _ep_sync_debug_print(
-    #     (
-    #         "sync_tail_drop:all_gather-enter "
-    #         f"block={self.block_idx} ep_world_size={self.ep_world_size} "
-    #         f"num_local_experts={self.num_local_routed_experts} rank_capacity={rank_capacity}"
-    #     ),
-    #     requested=requested,
-    #     gathered_payload=gathered_payload,
-    # )
+    _ep_sync_debug_print(
+        (
+            "sync_tail_drop:all_gather-enter "
+            f"block={self.block_idx} ep_world_size={self.ep_world_size} "
+            f"num_local_experts={self.num_local_routed_experts} rank_capacity={rank_capacity}"
+        ),
+        requested=requested,
+        gathered_payload=gathered_payload,
+    )
     dist.all_gather_into_tensor(
         gathered_payload,
         requested,
         group=self.ep_pg,
     )
-    # _ep_sync_debug_print(
-    #     f"sync_tail_drop:all_gather-exit block={self.block_idx}",
-    #     requested=requested,
-    #     gathered_payload=gathered_payload,
-    # )
+    _ep_sync_debug_print(
+        f"sync_tail_drop:all_gather-exit block={self.block_idx}",
+        requested=requested,
+        gathered_payload=gathered_payload,
+    )
 
     gathered_payload_2d = gathered_payload.view(self.ep_world_size, expected_splits)
     global_requested = gathered_payload_2d.view(

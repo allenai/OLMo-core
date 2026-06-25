@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import os
 import warnings
 from typing import TYPE_CHECKING, Optional, Tuple, Union, cast
 
@@ -27,8 +28,13 @@ from .ep_no_sync_buffers import (
     get_ep_no_sync_buffers,
     get_ep_no_sync_group_name,
     get_or_init_ep_no_sync_symm_tensor,
+    use_ep_no_sync_rowwise_symm_dispatch_in,
 )
-from .ep_no_sync_common import sync_tail_drop_allowed_splits_single_a2a
+from .ep_no_sync_common import (
+    rowwise_stage_debug_print,
+    rowwise_stage_debug_sync,
+    sync_tail_drop_allowed_splits_single_a2a,
+)
 from .ep_no_sync_rowwise_helpers import (
     accumulate_ep_no_sync_rowwise_metrics,
     build_rowwise_route_maps,
@@ -44,6 +50,19 @@ if TYPE_CHECKING:
 
 
 _ROWWISE_WAVE_EXPERIMENTAL_WARNING_EMITTED = False
+
+
+def _use_rowwise_wave_global_route_meta() -> bool:
+    raw = os.getenv("OLMO_MOE_ROWWISE_WAVE_GLOBAL_ROUTE_META", "1").strip().lower()
+    if raw in {"1", "true", "yes", "on"}:
+        return True
+    if raw in {"0", "false", "no", "off"}:
+        return False
+    raise RuntimeError(
+        "OLMO_MOE_ROWWISE_WAVE_GLOBAL_ROUTE_META must be one of "
+        "0|1|true|false|yes|no|on|off, got "
+        f"{raw!r}"
+    )
 
 
 def _warn_rowwise_wave_experimental() -> None:
@@ -230,6 +249,7 @@ class _RowwiseWaveDispatchExpertsCombineAutograd(torch.autograd.Function):
         probs: torch.Tensor,
         w_up_gate: torch.Tensor,
         w_down: torch.Tensor,
+        dispatch_input: torch.Tensor,
         dispatch_out: torch.Tensor,
         combine_in: torch.Tensor,
         gathered_routes: torch.Tensor,
@@ -252,6 +272,11 @@ class _RowwiseWaveDispatchExpertsCombineAutograd(torch.autograd.Function):
         if source_input.ndim != 2:
             raise RuntimeError(
                 f"rowwise-wave expects source_input [N, D], got {tuple(source_input.shape)}"
+            )
+        if dispatch_input.ndim != 2 or dispatch_input.shape != source_input.shape:
+            raise RuntimeError(
+                "dispatch_input must be [N, D] matching source_input: "
+                f"{tuple(dispatch_input.shape)} vs {tuple(source_input.shape)}"
             )
         if probs.ndim != 2:
             raise RuntimeError(f"probs must be [N, K], got {tuple(probs.shape)}")
@@ -298,6 +323,7 @@ class _RowwiseWaveDispatchExpertsCombineAutograd(torch.autograd.Function):
         recompute_act = bool(recompute_act)
 
         source_input_contig = source_input if source_input.is_contiguous() else source_input.contiguous()
+        dispatch_input_contig = dispatch_input if dispatch_input.is_contiguous() else dispatch_input.contiguous()
         probs_f32 = probs if probs.dtype == torch.float32 else probs.to(dtype=torch.float32)
         if not probs_f32.is_contiguous():
             probs_f32 = probs_f32.contiguous()
@@ -360,6 +386,13 @@ class _RowwiseWaveDispatchExpertsCombineAutograd(torch.autograd.Function):
             if save_act
             else source_input_contig.new_empty(0)
         )
+        rowwise_stage_debug_print(
+            "rowwise_wave:fused-forward-enter",
+            rows=source_input.shape[0],
+            d_model=source_input.shape[1],
+            waves=num_waves,
+            nblocks=nblocks,
+        )
         for wave_idx, (start, end) in enumerate(wave_groups):
             wave_label = f"rowwise_wave/wave_{wave_idx}/experts_{int(start)}_{int(end)}"
             wave_row_start = local_bases_i64[int(start)]
@@ -368,8 +401,14 @@ class _RowwiseWaveDispatchExpertsCombineAutograd(torch.autograd.Function):
 
             with torch.cuda.stream(dispatch_stream):
                 with nvtx.annotate(f"{wave_label}/dispatch", color="green"):
+                    rowwise_stage_debug_print(
+                        "rowwise_wave:dispatch-compact-enter",
+                        wave=wave_idx,
+                        start=int(start),
+                        end=int(end),
+                    )
                     symm_mem_vdev2d_kernels.rowwise_dispatch_put_compact(
-                        source_input_contig,
+                        dispatch_input_contig,
                         dispatch_out,
                         compact_route_records,
                         compact_wave_offsets,
@@ -379,12 +418,26 @@ class _RowwiseWaveDispatchExpertsCombineAutograd(torch.autograd.Function):
                         pre_barrier=False,
                         post_barrier=True,
                     )
+                    rowwise_stage_debug_print(
+                        "rowwise_wave:dispatch-compact-exit",
+                        wave=wave_idx,
+                    )
+                    rowwise_stage_debug_sync(
+                        f"rowwise_wave:dispatch-compact:{wave_idx}",
+                        dispatch_out.device,
+                    )
                 dispatch_done_events.append(record_stream_event_no_compile(dispatch_stream))
 
             wait_event_no_compile(compute_stream, dispatch_done_events[wave_idx])
             with torch.cuda.stream(compute_stream):
                 with nvtx.annotate(wave_label, color="orange"):
                     with nvtx.annotate(f"{wave_label}/experts", color="purple"):
+                        rowwise_stage_debug_print(
+                            "rowwise_wave:experts-enter",
+                            wave=wave_idx,
+                            start=int(start),
+                            end=int(end),
+                        )
                         batch_size_window = batch_sizes_i32[int(start) : int(end)]
                         up_gate = (
                             saved_up_gate
@@ -415,6 +468,14 @@ class _RowwiseWaveDispatchExpertsCombineAutograd(torch.autograd.Function):
                             row_start=wave_row_start,
                             out=combine_in,
                         )
+                        rowwise_stage_debug_print(
+                            "rowwise_wave:experts-exit",
+                            wave=wave_idx,
+                        )
+                        rowwise_stage_debug_sync(
+                            f"rowwise_wave:experts:{wave_idx}",
+                            combine_in.device,
+                        )
                 compute_done_events.append(record_stream_event_no_compile(compute_stream))
 
         dispatch_done_event = record_stream_event_no_compile(dispatch_stream)
@@ -425,6 +486,12 @@ class _RowwiseWaveDispatchExpertsCombineAutograd(torch.autograd.Function):
             wait_event_no_compile(combine_stream, compute_done_events[wave_idx])
             with torch.cuda.stream(combine_stream):
                 with nvtx.annotate(f"{wave_label}/combine_put", color="red"):
+                    rowwise_stage_debug_print(
+                        "rowwise_wave:combine-put-enter",
+                        wave=wave_idx,
+                        start=int(start),
+                        end=int(end),
+                    )
                     symm_mem_vdev2d_kernels.rowwise_combine_put(
                         combine_in,
                         gathered_routes,
@@ -436,6 +503,14 @@ class _RowwiseWaveDispatchExpertsCombineAutograd(torch.autograd.Function):
                         pre_barrier=False,
                         post_barrier=True,
                     )
+                    rowwise_stage_debug_print(
+                        "rowwise_wave:combine-put-exit",
+                        wave=wave_idx,
+                    )
+                    rowwise_stage_debug_sync(
+                        f"rowwise_wave:combine-put:{wave_idx}",
+                        gathered_routes.device,
+                    )
         wait_stream_no_compile(compute_stream, combine_stream)
 
         out = torch.empty(
@@ -443,12 +518,15 @@ class _RowwiseWaveDispatchExpertsCombineAutograd(torch.autograd.Function):
             device=source_input.device,
             dtype=source_input.dtype,
         )
+        rowwise_stage_debug_print("rowwise_wave:reduce-enter")
         symm_mem_vdev2d_kernels.rowwise_reduce_gathered_routes(
             gathered_routes,
             probs_f32,
             out,
             route_ranks=dst_ranks_i64,
         )
+        rowwise_stage_debug_print("rowwise_wave:reduce-exit")
+        rowwise_stage_debug_sync("rowwise_wave:reduce", out.device)
 
         if needs_backward:
             ctx.group = group
@@ -484,6 +562,7 @@ class _RowwiseWaveDispatchExpertsCombineAutograd(torch.autograd.Function):
                 dispatch_out_lease.release()
             if gathered_routes_lease is not None:
                 gathered_routes_lease.release()
+        rowwise_stage_debug_print("rowwise_wave:fused-forward-exit")
         return out
 
     @staticmethod
@@ -591,6 +670,11 @@ class _RowwiseWaveDispatchExpertsCombineAutograd(torch.autograd.Function):
             wait_stream_no_compile(combine_grad_stream, compute_stream)
             if dispatch_grad_stream is not None:
                 wait_stream_no_compile(dispatch_grad_stream, compute_stream)
+            rowwise_stage_debug_print(
+                "rowwise_wave:fused-backward-enter",
+                waves=len(ctx.wave_groups),
+                nblocks=ctx.nblocks,
+            )
 
             wave_infos = []
             combine_grad_done_events: list[torch.cuda.Event] = []
@@ -613,6 +697,12 @@ class _RowwiseWaveDispatchExpertsCombineAutograd(torch.autograd.Function):
 
                 with torch.cuda.stream(combine_grad_stream):
                     with nvtx.annotate(f"{wave_label}/combine_grad_put", color="red"):
+                        rowwise_stage_debug_print(
+                            "rowwise_wave:backward-combine-grad-put-enter",
+                            wave=wave_idx,
+                            start=start,
+                            end=end,
+                        )
                         symm_mem_vdev2d_kernels.rowwise_dispatch_put_compact_weighted(
                             grad_out_contig,
                             combine_in,
@@ -624,6 +714,14 @@ class _RowwiseWaveDispatchExpertsCombineAutograd(torch.autograd.Function):
                             nblocks=ctx.nblocks,
                             pre_barrier=False,
                             post_barrier=True,
+                        )
+                        rowwise_stage_debug_print(
+                            "rowwise_wave:backward-combine-grad-put-exit",
+                            wave=wave_idx,
+                        )
+                        rowwise_stage_debug_sync(
+                            f"rowwise_wave:backward-combine-grad-put:{wave_idx}",
+                            combine_in.device,
                         )
                     combine_grad_done_events.append(record_stream_event_no_compile(combine_grad_stream))
 
@@ -640,6 +738,12 @@ class _RowwiseWaveDispatchExpertsCombineAutograd(torch.autograd.Function):
                 wait_event_no_compile(compute_stream, combine_grad_done_events[wave_idx])
                 with torch.cuda.stream(compute_stream):
                     with nvtx.annotate(wave_label, color="orange"):
+                        rowwise_stage_debug_print(
+                            "rowwise_wave:backward-experts-enter",
+                            wave=wave_idx,
+                            start=start,
+                            end=end,
+                        )
                         if need_up_gate and not have_saved_up_gate:
                             assert up_gate is not None
                             with nvtx.annotate(f"{wave_label}/recompute_linear1", color="purple"):
@@ -689,6 +793,14 @@ class _RowwiseWaveDispatchExpertsCombineAutograd(torch.autograd.Function):
                                         row_start=wave_row_start,
                                         out=grad_dispatch,
                                     )
+                        rowwise_stage_debug_print(
+                            "rowwise_wave:backward-experts-exit",
+                            wave=wave_idx,
+                        )
+                        rowwise_stage_debug_sync(
+                            f"rowwise_wave:backward-experts:{wave_idx}",
+                            dispatch_out.device,
+                        )
                     if dispatch_grad_stream is not None:
                         compute_done_events.append(record_stream_event_no_compile(compute_stream))
 
@@ -711,6 +823,10 @@ class _RowwiseWaveDispatchExpertsCombineAutograd(torch.autograd.Function):
                     wait_event_no_compile(dispatch_grad_stream, compute_done_events[wave_idx])
                     with torch.cuda.stream(dispatch_grad_stream):
                         with nvtx.annotate(f"{wave_label}/dispatch_grad_put", color="green"):
+                            rowwise_stage_debug_print(
+                                "rowwise_wave:backward-dispatch-grad-put-enter",
+                                wave=wave_idx,
+                            )
                             symm_mem_vdev2d_kernels.rowwise_combine_put(
                                 grad_dispatch,
                                 gathered_routes,
@@ -721,6 +837,14 @@ class _RowwiseWaveDispatchExpertsCombineAutograd(torch.autograd.Function):
                                 nblocks=ctx.nblocks,
                                 pre_barrier=False,
                                 post_barrier=True,
+                            )
+                            rowwise_stage_debug_print(
+                                "rowwise_wave:backward-dispatch-grad-put-exit",
+                                wave=wave_idx,
+                            )
+                            rowwise_stage_debug_sync(
+                                f"rowwise_wave:backward-dispatch-grad-put:{wave_idx}",
+                                gathered_routes.device,
                             )
 
             if ctx.needs_input_grad[3]:
@@ -751,10 +875,16 @@ class _RowwiseWaveDispatchExpertsCombineAutograd(torch.autograd.Function):
                     assert dispatch_grad_stream is not None
                     wait_stream_no_compile(compute_stream, dispatch_grad_stream)
                     with nvtx.annotate("rowwise_wave/backward/reduce_grad_source", color="green"):
+                        rowwise_stage_debug_print("rowwise_wave:backward-reduce-grad-source-enter")
                         symm_mem_vdev2d_kernels.rowwise_reduce_gathered_routes_unweighted(
                             gathered_routes,
                             grad_source,
                             route_ranks=dst_ranks,
+                        )
+                        rowwise_stage_debug_print("rowwise_wave:backward-reduce-grad-source-exit")
+                        rowwise_stage_debug_sync(
+                            "rowwise_wave:backward-reduce-grad-source",
+                            grad_source.device,
                         )
 
         if ctx.dispatch_out_lease is not None:
@@ -772,6 +902,7 @@ class _RowwiseWaveDispatchExpertsCombineAutograd(torch.autograd.Function):
             grad_probs,
             grad_w_up_gate,
             grad_w_down,
+            None,
             None,
             None,
             None,
@@ -832,6 +963,12 @@ def combined_forward_ep_no_sync_rowwise_wave(
 
     group_name = get_ep_no_sync_group_name(self)
     B, S, D = x.shape
+    rowwise_stage_debug_print(
+        "rowwise_wave:enter",
+        block=self.block_idx,
+        shape=tuple(x.shape),
+        group=group_name,
+    )
 
     block_inp = x
     del x
@@ -851,6 +988,12 @@ def combined_forward_ep_no_sync_rowwise_wave(
         moe_inp,
         False,
         loss_div_factor=loss_div_factor,
+    )
+    rowwise_stage_debug_print(
+        "rowwise_wave:router-exit",
+        block=self.block_idx,
+        numel=int(local_x_global_routed_expert_indices.numel()),
+        top_k=self.routed_experts_router.top_k,
     )
 
     wait_stream_no_compile(
@@ -881,11 +1024,19 @@ def combined_forward_ep_no_sync_rowwise_wave(
     top_k = self.routed_experts_router.top_k
     rank_capacity = compute_ep_no_sync_rank_capacity(self, num_out_tokens)
     use_fused_wave_node = moe_inp.dtype == torch.bfloat16
+    use_symm_dispatch_in = use_ep_no_sync_rowwise_symm_dispatch_in(self)
     lease_dispatch_out = torch.is_grad_enabled()
     lease_combine_gather = torch.is_grad_enabled() and use_fused_wave_node
     need_combine_gather = use_fused_wave_node
     with torch.no_grad():
         requested_splits = local_batch_size_per_global_routed_expert.to(dtype=torch.long)
+        rowwise_stage_debug_print(
+            "rowwise_wave:sync-tail-enter",
+            block=self.block_idx,
+            rank_capacity=rank_capacity,
+            num_out_tokens=num_out_tokens,
+            use_symm_dispatch_in=use_symm_dispatch_in,
+        )
         (
             allowed_splits,
             recv_splits_by_src_local,
@@ -900,6 +1051,11 @@ def combined_forward_ep_no_sync_rowwise_wave(
                 return_keep_matrix=True,
             ),
         )
+        rowwise_stage_debug_print(
+            "rowwise_wave:sync-tail-exit",
+            block=self.block_idx,
+            rank_capacity=rank_capacity,
+        )
         accumulate_ep_no_sync_rowwise_metrics(
             self,
             drop_token_cnt=_drop_token_cnt,
@@ -910,6 +1066,12 @@ def combined_forward_ep_no_sync_rowwise_wave(
 
     buffers = None
     if not lease_dispatch_out and not lease_combine_gather:
+        rowwise_stage_debug_print(
+            "rowwise_wave:get-cached-buffers-enter",
+            block=self.block_idx,
+            dispatch_out_cap=rank_capacity,
+            need_dispatch_in=use_symm_dispatch_in,
+        )
         buffers = get_cached_ep_no_sync_buffers(
             self,
             dispatch_in_cap=num_out_tokens,
@@ -919,7 +1081,7 @@ def combined_forward_ep_no_sync_rowwise_wave(
             d_model=moe_inp.shape[-1],
             dtype=moe_inp.dtype,
             device=moe_inp.device,
-            need_dispatch_in=False,
+            need_dispatch_in=use_symm_dispatch_in,
             need_dispatch_meta=False,
             need_dispatch_out=True,
             need_combine_in=True,
@@ -929,7 +1091,19 @@ def combined_forward_ep_no_sync_rowwise_wave(
             combine_gather_cap=num_input_tokens if need_combine_gather else 0,
             combine_gather_top_k=top_k if need_combine_gather else 0,
         )
+        rowwise_stage_debug_print(
+            "rowwise_wave:get-cached-buffers-exit",
+            block=self.block_idx,
+            hit=buffers is not None,
+        )
     if buffers is None:
+        rowwise_stage_debug_print(
+            "rowwise_wave:get-buffers-enter",
+            block=self.block_idx,
+            dispatch_out_cap=rank_capacity,
+            need_dispatch_in=use_symm_dispatch_in,
+            need_combine_gather=need_combine_gather,
+        )
         buffers = get_ep_no_sync_buffers(
             self,
             dispatch_in_cap=num_out_tokens,
@@ -939,7 +1113,7 @@ def combined_forward_ep_no_sync_rowwise_wave(
             d_model=moe_inp.shape[-1],
             dtype=moe_inp.dtype,
             device=moe_inp.device,
-            need_dispatch_in=False,
+            need_dispatch_in=use_symm_dispatch_in,
             need_dispatch_meta=False,
             need_dispatch_out=True,
             need_combine_in=True,
@@ -951,6 +1125,18 @@ def combined_forward_ep_no_sync_rowwise_wave(
             lease_dispatch_out=lease_dispatch_out,
             lease_combine_gather=lease_combine_gather,
         )
+        rowwise_stage_debug_print("rowwise_wave:get-buffers-exit", block=self.block_idx)
+
+    dispatch_input = moe_inp
+    if use_symm_dispatch_in:
+        rowwise_stage_debug_print("rowwise_wave:stage-dispatch-input-enter", block=self.block_idx)
+        dispatch_input = buffers.dispatch_in.narrow(0, 0, moe_inp.shape[0])
+        if not dispatch_input.is_contiguous():
+            raise RuntimeError("rowwise_wave symmetric dispatch staging view must be contiguous")
+        with torch.no_grad():
+            dispatch_input.copy_(moe_inp)
+        rowwise_stage_debug_print("rowwise_wave:stage-dispatch-input-exit", block=self.block_idx)
+        rowwise_stage_debug_sync("rowwise_wave:stage-dispatch-input", dispatch_input.device)
 
     routing_map = local_x_global_routed_expert_indices.view(-1, top_k).int()
     route_probs = local_x_global_routed_expert_weights.view(-1, top_k)
@@ -977,6 +1163,7 @@ def combined_forward_ep_no_sync_rowwise_wave(
     )
 
     with torch.no_grad():
+        rowwise_stage_debug_print("rowwise_wave:build-route-enter", block=self.block_idx)
         batch_size_per_local_expert_full = recv_splits_by_src_local.sum(
             dim=0,
             dtype=torch.long,
@@ -991,6 +1178,8 @@ def combined_forward_ep_no_sync_rowwise_wave(
             allowed_splits=allowed_splits,
             keep_from_src_dest_local=keep_from_src_dest_local,
         )
+        rowwise_stage_debug_print("rowwise_wave:build-route-exit", block=self.block_idx)
+        rowwise_stage_debug_print("rowwise_wave:compact-route-enter", block=self.block_idx)
         compact_route_records, compact_wave_offsets = (
             symm_mem_vdev2d_kernels.rowwise_build_compact_route_records(
                 dst_ranks_full,
@@ -1001,6 +1190,9 @@ def combined_forward_ep_no_sync_rowwise_wave(
                 nblocks=rowwise_nblocks,
             )
         )
+        rowwise_stage_debug_print("rowwise_wave:compact-route-exit", block=self.block_idx)
+        rowwise_stage_debug_sync("rowwise_wave:compact-route", moe_inp.device)
+        rowwise_stage_debug_print("rowwise_wave:inverse-meta-alloc-enter", block=self.block_idx)
         inverse_route_meta = get_or_init_ep_no_sync_symm_tensor(
             self,
             name="rowwise_wave_inverse_route_meta",
@@ -1008,16 +1200,78 @@ def combined_forward_ep_no_sync_rowwise_wave(
             dtype=torch.long,
             device=moe_inp.device,
         )
-        symm_mem_vdev2d_kernels.rowwise_inverse_route_meta_put_compact(
-            inverse_route_meta,
-            compact_route_records,
-            compact_wave_offsets,
-            src_rank=dist.get_rank(self.ep_pg),
-            group_name=group_name,
-            nblocks=rowwise_nblocks,
-            pre_barrier=False,
-            post_barrier=True,
-        )
+        local_ep_rank = dist.get_rank(self.ep_pg)
+        if _use_rowwise_wave_global_route_meta():
+            ep_world_size = dist.get_world_size(self.ep_pg)
+            rowwise_stage_debug_print(
+                "rowwise_wave:inverse-meta-global-sync-enter",
+                block=self.block_idx,
+                world_size=ep_world_size,
+            )
+            with nvtx.annotate("rowwise_wave/global_route_records_all_gather", color="blue"):
+                compact_route_records_flat = compact_route_records.reshape(-1)
+                global_route_records_flat = torch.empty(
+                    ep_world_size * compact_route_records_flat.numel(),
+                    device=compact_route_records.device,
+                    dtype=compact_route_records.dtype,
+                )
+                dist.all_gather_into_tensor(
+                    global_route_records_flat,
+                    compact_route_records_flat,
+                    group=self.ep_pg,
+                )
+                global_route_records = global_route_records_flat.view(
+                    ep_world_size,
+                    *compact_route_records.shape,
+                )
+
+                compact_wave_offsets_flat = compact_wave_offsets.reshape(-1)
+                global_wave_offsets_flat = torch.empty(
+                    ep_world_size * compact_wave_offsets_flat.numel(),
+                    device=compact_wave_offsets.device,
+                    dtype=compact_wave_offsets.dtype,
+                )
+                dist.all_gather_into_tensor(
+                    global_wave_offsets_flat,
+                    compact_wave_offsets_flat,
+                    group=self.ep_pg,
+                )
+                global_wave_offsets = global_wave_offsets_flat.view(
+                    ep_world_size,
+                    compact_wave_offsets.numel(),
+                )
+            rowwise_stage_debug_print(
+                "rowwise_wave:inverse-meta-local-build-enter",
+                block=self.block_idx,
+            )
+            with nvtx.annotate("rowwise_wave/build_inverse_route_meta_local", color="blue"):
+                symm_mem_vdev2d_kernels.rowwise_build_inverse_route_meta_from_global_records(
+                    inverse_route_meta,
+                    global_route_records,
+                    global_wave_offsets,
+                    local_rank=local_ep_rank,
+                    nblocks=rowwise_nblocks,
+                )
+            rowwise_stage_debug_print(
+                "rowwise_wave:inverse-meta-local-build-exit",
+                block=self.block_idx,
+            )
+            rowwise_stage_debug_sync("rowwise_wave:inverse-meta-local-build", moe_inp.device)
+        else:
+            rowwise_stage_debug_print("rowwise_wave:inverse-meta-put-enter", block=self.block_idx)
+            symm_mem_vdev2d_kernels.rowwise_inverse_route_meta_put_compact(
+                inverse_route_meta,
+                compact_route_records,
+                compact_wave_offsets,
+                src_rank=local_ep_rank,
+                group_name=group_name,
+                nblocks=rowwise_nblocks,
+                pre_barrier=False,
+                post_barrier=True,
+                scalar_put=use_symm_dispatch_in,
+            )
+            rowwise_stage_debug_print("rowwise_wave:inverse-meta-put-exit", block=self.block_idx)
+            rowwise_stage_debug_sync("rowwise_wave:inverse-meta-put", moe_inp.device)
 
     if use_fused_wave_node:
         assert route_out is not None
@@ -1026,6 +1280,7 @@ def combined_forward_ep_no_sync_rowwise_wave(
             route_probs,
             self.routed_experts.w_up_gate,
             self.routed_experts.w_down,
+            dispatch_input,
             buffers.dispatch_out,
             buffers.combine_in,
             route_out,
@@ -1048,7 +1303,7 @@ def combined_forward_ep_no_sync_rowwise_wave(
     else:
         dispatch_rank_major = _DispatchRowwiseAutograd.apply(
             moe_inp,
-            None,
+            buffers.dispatch_in if use_symm_dispatch_in else None,
             dst_ranks_full,
             dst_rows_full,
             buffers.dispatch_out,
@@ -1115,6 +1370,7 @@ def combined_forward_ep_no_sync_rowwise_wave(
     mlp_out = self._merge_routed_and_shared(local_x, mixed_shared_out)
 
     final_out = self._res_norm_mlp(attn_res_out, mlp_out)
+    rowwise_stage_debug_print("rowwise_wave:exit", block=self.block_idx)
     return self._attach_routed_aux_loss(
         final_out,
         routed_expert_router_aux_loss_info,
