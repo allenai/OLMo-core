@@ -354,6 +354,19 @@ class Transformer(nn.Module):
                     generator=generator,
                 )
 
+            # Fused MoE-v2 weights.
+            from ..moe.v2.block import MoEFusedV2TransformerBlock
+
+            if isinstance(block, MoEFusedV2TransformerBlock):
+                self.init_method.init_moe_v2(
+                    block,
+                    d_model=self.d_model,
+                    block_idx=block.block_idx,
+                    num_blocks=self.n_layers,
+                    std=self.init_std,
+                    generator=generator,
+                )
+
             if isinstance(att, (Attention, FusedAttention)):
                 # Warm up attention backend cache.
                 if max_seq_len is not None and att.backend is not None:
