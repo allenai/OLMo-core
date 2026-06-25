@@ -67,8 +67,8 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         workspace="ai2/flex2",
         budget="ai2/oe-other",
         # 0.6B fits a full 64k sequence per GPU (no CP needed), so every rank is its own DP
-        # replica. 8 nodes × 8 GPUs = 64 DP replicas = the 64 instances/step → grad-accum 1.
-        num_nodes=8,
+        # replica. 4 nodes × 8 GPUs = 32 DP replicas → 2 grad-accum steps at 64 instances/step.
+        num_nodes=4,
     )
     if beaker_launch_config is not None:
         beaker_launch_config.priority = "urgent"

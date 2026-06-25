@@ -80,9 +80,9 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         workspace="ai2/flex2",
         budget="ai2/oe-other",
         # 0.6B fits a full 64k sequence per GPU (no CP needed), so each rank runs (compressive)
-        # landmark attention over the whole sequence with all 16 heads. 8 nodes × 8 GPUs = 64 DP
-        # replicas = the 64 instances/step → grad-accum 1.
-        num_nodes=8,
+        # landmark attention over the whole sequence with all 16 heads. 4 nodes × 8 GPUs = 32 DP
+        # replicas → 2 grad-accum steps at 64 instances/step.
+        num_nodes=4,
     )
     if beaker_launch_config is not None:
         beaker_launch_config.priority = "urgent"
@@ -208,7 +208,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
 if __name__ == "__main__":
     """
     Qwen3-0.6B + COMPRESSIVE fast landmark attention at 64k on the 15B dolma3_longmino sample
-    (8 nodes, urgent). The 0.6B analog of Qwen3-4B-base-fast-compressive-landmark-dolma3longmino.py.
+    (4 nodes, urgent). The 0.6B analog of Qwen3-4B-base-fast-compressive-landmark-dolma3longmino.py.
     dry_run must be run on a GPU node (the fast kernel imports triton).
 
         python src/scripts/train/Qwen3/Qwen3-0.6B-base-fast-compressive-landmark-dolma3longmino.py \\
