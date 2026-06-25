@@ -212,6 +212,9 @@ class _SwiGLUQuantizeRowsFromMXFP8Autograd(torch.autograd.Function):
 
 @torch.compiler.disable
 def gmm_no_compile(a, b, batch_sizes, trans_b=False):
+    # TODO: the third-party grouped_gemm op requires bf16 inputs (cf. the v1 DroplessMoEMLP
+    # path), so this torch<2.10 fallback would fail for a float32-built RoutedExperts. Cast
+    # a/b to bf16 and restore the original dtype if/when this path is exercised.
     return grouped_gemm.ops.gmm(a, b, batch_sizes, trans_b)
 
 
