@@ -1,0 +1,907 @@
+"""
+Notes on torch grouped_mm backend behavior (PyTorch 2.10):
+
+- torch.nn.functional.grouped_mm(...) calls aten::_grouped_mm.
+- CUDA path in aten/native/cuda/GroupedBlas.cpp chooses:
+  1) Fast path: at::cuda::detail::bf16bf16_grouped_mm(...)
+  2) Fallback: _grouped_mm_fallback(...)
+
+Fast path conditions (CUDA):
+- mat_a dtype == bf16
+- mat_b dtype == bf16
+- out_dtype (or default) == bf16
+- _scaled_mm_allowed_device(sm90_only=true, sm100_only=true) is true
+  (in 2.10 this means device major == 9 or 10 only)
+- grouped-mm CUTLASS kernels are built
+  (!USE_ROCM, !Windows, CUDA_VERSION >= 12.0)
+
+Fallback behavior:
+- Uses offs.cpu() and loops over groups with mm_out/bmm_out.
+- This can introduce D2H sync for device offs.
+
+Implication:
+- On CUDA devices outside the fastpath gate (e.g. major 12 in PyTorch 2.10),
+  grouped_mm falls back even if offs is on GPU.
+"""
+
+import os
+
+try:
+    import grouped_gemm  # type: ignore
+    import grouped_gemm.ops  # type: ignore  # noqa: F401
+except ImportError:  # pragma: no cover - import guard
+    grouped_gemm = None  # type: ignore[assignment]
+import weakref
+from dataclasses import dataclass
+from typing import Iterator, Optional, cast
+
+try:
+    import nvtx
+except ImportError:
+    from olmo_core._nvtx import nvtx
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torch.distributed.device_mesh import DeviceMesh
+
+from olmo_core.config import Config, DType
+from olmo_core.kernels import (
+    OlmoMXFP8Tensor,
+    ScaledGroupedMMPrequantizedLHS,
+    ScaledGroupedMMPrequantizedRHS,
+)
+from olmo_core.kernels import grouped_mm as grouped_mm_with_buffers
+from olmo_core.kernels import scaled_grouped_mm_q, scaled_grouped_mm_q_fp8_weight
+from olmo_core.kernels.mxfp8_utils import (
+    dequantize_rows_from_mxfp8,
+    swiglu_quantize_rows_from_mxfp8,
+    swiglu_quantize_rows_to_mxfp8,
+)
+from olmo_core.nn.fp8_weight import FP8WeightCacheSpec, FP8WeightStore
+
+from .fp8 import MoERowwiseFP8Config, normalize_rowwise_fp8_config
+
+
+def _identity_fp8_rhs(weight: torch.Tensor) -> torch.Tensor:
+    return weight
+
+
+def _transpose_last2_fp8_rhs(weight: torch.Tensor) -> torch.Tensor:
+    return weight.transpose(-2, -1)
+
+
+_ROUTED_UP_GATE_FP8_CACHE_SPECS = (
+    FP8WeightCacheSpec("rhs", _transpose_last2_fp8_rhs),
+    FP8WeightCacheSpec("rhs_for_dgrad", _identity_fp8_rhs),
+)
+_ROUTED_DOWN_FP8_CACHE_SPECS = (
+    FP8WeightCacheSpec("rhs", _identity_fp8_rhs),
+    FP8WeightCacheSpec("rhs_for_dgrad", _transpose_last2_fp8_rhs),
+)
+
+
+class _SwiGLUQuantizeRowsMXFP8Autograd(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, up_gate: torch.Tensor, block_size: int):  # type: ignore[override]
+        h, h_q, h_scales = swiglu_quantize_rows_to_mxfp8(
+            up_gate,
+            block_size=int(block_size),
+        )
+        if up_gate.requires_grad:
+            ctx.save_for_backward(up_gate)
+        else:
+            ctx.save_for_backward()
+        return h, h_q, h_scales
+
+    @staticmethod
+    def backward(ctx, grad_h: torch.Tensor, grad_h_q: torch.Tensor, grad_h_scales: torch.Tensor):  # type: ignore[override]
+        del grad_h_q, grad_h_scales
+        if not ctx.needs_input_grad[0]:
+            return None, None
+        if grad_h is None:
+            up_gate = ctx.saved_tensors[0]
+            return torch.zeros_like(up_gate), None
+
+        (up_gate,) = ctx.saved_tensors
+        grad_up_gate = swiglu_backward_grad_up_gate(up_gate, grad_h)
+        return OlmoMXFP8Tensor.from_hp(grad_up_gate), None
+
+
+def _swiglu_backward_grad_up_gate_impl(up_gate: torch.Tensor, grad_h: torch.Tensor) -> torch.Tensor:
+    hidden = up_gate.shape[-1] // 2
+    up = up_gate[:, :hidden]
+    gate = up_gate[:, hidden:]
+
+    gate_f32 = gate.to(torch.float32)
+    grad_h_f32 = grad_h.to(torch.float32)
+    up_f32 = up.to(torch.float32)
+
+    sig = torch.sigmoid(gate_f32)
+    silu_gate = gate_f32 * sig
+    dsilu = sig * (1.0 + gate_f32 * (1.0 - sig))
+
+    grad_up = grad_h_f32 * silu_gate
+    grad_gate = grad_h_f32 * up_f32 * dsilu
+    return torch.cat((grad_up, grad_gate), dim=-1).to(dtype=up_gate.dtype)
+
+
+_swiglu_backward_grad_up_gate_compiled = torch.compile(
+    _swiglu_backward_grad_up_gate_impl,
+    fullgraph=True,
+    dynamic=False,
+)
+
+
+def swiglu_backward_grad_up_gate(up_gate: torch.Tensor, grad_h: torch.Tensor) -> torch.Tensor:
+    if (
+        up_gate.is_cuda
+        and grad_h.is_cuda
+        and os.getenv("OLMO_MXFP8_COMPILE_SWIGLU_BWD", "1").strip().lower()
+        in {"1", "true", "yes", "on"}
+    ):
+        return _swiglu_backward_grad_up_gate_compiled(up_gate, grad_h)
+    return _swiglu_backward_grad_up_gate_impl(up_gate, grad_h)
+
+
+@torch.compiler.disable
+def swiglu_quantize_rows_mxfp8_autograd(
+    up_gate: torch.Tensor,
+    block_size: int,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    return _SwiGLUQuantizeRowsMXFP8Autograd.apply(up_gate, int(block_size))
+
+
+class _SwiGLUQuantizeRowsFromMXFP8Autograd(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, up_gate_q: torch.Tensor, up_gate_scales: torch.Tensor, block_size: int):  # type: ignore[override]
+        h, h_q, h_scales = swiglu_quantize_rows_from_mxfp8(
+            up_gate_q,
+            up_gate_scales,
+            block_size=int(block_size),
+        )
+        if up_gate_q.requires_grad:
+            ctx.save_for_backward(up_gate_q, up_gate_scales)
+            ctx.block_size = int(block_size)
+        else:
+            ctx.save_for_backward()
+            ctx.block_size = int(block_size)
+        return h, h_q, h_scales
+
+    @staticmethod
+    def backward(ctx, grad_h: torch.Tensor, grad_h_q: torch.Tensor, grad_h_scales: torch.Tensor):  # type: ignore[override]
+        del grad_h_q, grad_h_scales
+        if not ctx.needs_input_grad[0]:
+            return None, None, None
+
+        up_gate_q, up_gate_scales = ctx.saved_tensors
+        if grad_h is None:
+            return (
+                torch.zeros(
+                    up_gate_q.shape,
+                    dtype=torch.bfloat16,
+                    device=up_gate_q.device,
+                ),
+                None,
+                None,
+            )
+
+        up_gate = dequantize_rows_from_mxfp8(
+            up_gate_q,
+            up_gate_scales,
+            block_size=int(ctx.block_size),
+            out_dtype=torch.bfloat16,
+        )
+        hidden = up_gate.shape[-1] // 2
+        up = up_gate[:, :hidden]
+        gate = up_gate[:, hidden:]
+
+        gate_f32 = gate.to(torch.float32)
+        grad_h_f32 = grad_h.to(torch.float32)
+        up_f32 = up.to(torch.float32)
+
+        sig = torch.sigmoid(gate_f32)
+        silu_gate = gate_f32 * sig
+        dsilu = sig * (1.0 + gate_f32 * (1.0 - sig))
+
+        grad_up = grad_h_f32 * silu_gate
+        grad_gate = grad_h_f32 * up_f32 * dsilu
+        grad_up_gate = torch.cat((grad_up, grad_gate), dim=-1).to(dtype=torch.bfloat16)
+        return grad_up_gate, None, None
+
+
+@torch.compiler.disable
+def gmm_no_compile(a, b, batch_sizes, trans_b=False):
+    # TODO: the third-party grouped_gemm op requires bf16 inputs (cf. the v1 DroplessMoEMLP
+    # path), so this torch<2.10 fallback would fail for a float32-built RoutedExperts. Cast
+    # a/b to bf16 and restore the original dtype if/when this path is exercised.
+    return grouped_gemm.ops.gmm(a, b, batch_sizes, trans_b)
+
+
+def gmm(
+    a: torch.Tensor,
+    b: torch.Tensor,
+    batch_sizes: torch.Tensor,
+    trans_b: bool = False,
+    out: Optional[torch.Tensor] = None,
+    input_grad_out: Optional[torch.Tensor] = None,
+) -> torch.Tensor:
+    if use_torch_grouped_mm():
+        # torch.nn.functional.grouped_mm has no trans_b argument.
+        # It expects mat_b to be (num_groups, K, N), so we transpose when
+        # emulating grouped_gemm(..., trans_b=True).
+        b_grouped_mm = b.transpose(1, 2) if trans_b else b
+        offs = torch.cumsum(batch_sizes.to(dtype=torch.int32), dim=0, dtype=torch.int32)
+        if out is not None or input_grad_out is not None:
+            out_tensor = grouped_mm_with_buffers(
+                a,
+                b_grouped_mm,
+                offs=offs,
+                out=out,
+                input_grad_out=input_grad_out,
+            )
+        else:
+            out_tensor = F.grouped_mm(a, b_grouped_mm, offs=offs)
+        # NOTE: grouped_mm leaves the padding rows beyond the last offset (pos >= offs[-1])
+        # uninitialized; those values can be NaN/Inf and must not be consumed by downstream ops
+        # on valid tokens. To debug a suspected leak into the valid rows, enable:
+        #     valid = int(batch_sizes.sum())
+        #     bad = torch.nonzero(~torch.isfinite(out_tensor[:valid]).all(dim=-1)).flatten()
+        #     if bad.numel():
+        #         raise RuntimeError(f"non-finite grouped_mm output in valid rows {bad.tolist()}")
+        return out_tensor
+
+    if out is not None or input_grad_out is not None:
+        raise RuntimeError("gmm(out=..., input_grad_out=...) requires torch grouped_mm backend")
+    if grouped_gemm is None:
+        raise RuntimeError(
+            "RoutedExperts grouped matmul requires either torch>=2.10 "
+            "(torch.nn.functional.grouped_mm) or the optional `grouped_gemm` package; "
+            "neither is available."
+        )
+    return gmm_no_compile(a, b, batch_sizes, trans_b)
+
+
+@torch.compiler.disable
+def scaled_grouped_mm_q_no_compile(
+    mat_a: torch.Tensor,
+    mat_b: torch.Tensor,
+    *,
+    offs: torch.Tensor,
+    use_fast_accum: bool,
+    prequantized_lhs: Optional[ScaledGroupedMMPrequantizedLHS] = None,
+    prequantized_rhs: Optional[ScaledGroupedMMPrequantizedRHS] = None,
+    prequantized_rhs_for_dgrad: Optional[ScaledGroupedMMPrequantizedRHS] = None,
+) -> torch.Tensor:
+    kwargs = dict(
+        offs=offs,
+        use_fast_accum=use_fast_accum,
+        prequantized_lhs=prequantized_lhs,
+        prequantized_rhs=prequantized_rhs,
+    )
+    if prequantized_rhs_for_dgrad is not None:
+        kwargs["prequantized_rhs_for_dgrad"] = prequantized_rhs_for_dgrad
+    return scaled_grouped_mm_q(
+        mat_a,
+        mat_b,
+        **kwargs,
+    )
+
+
+@torch.compiler.disable
+def scaled_grouped_mm_q_fp8_weight_no_compile(
+    mat_a: torch.Tensor,
+    grad_anchor: torch.Tensor,
+    *,
+    offs: torch.Tensor,
+    use_fast_accum: bool,
+    prequantized_lhs: Optional[ScaledGroupedMMPrequantizedLHS] = None,
+    prequantized_rhs: ScaledGroupedMMPrequantizedRHS,
+    prequantized_rhs_for_dgrad: ScaledGroupedMMPrequantizedRHS,
+    wgrad_sink: Optional[FP8WeightStore] = None,
+    wgrad_sink_transpose_last2: bool = False,
+    wgrad_sink_squeeze_first_dim: bool = False,
+) -> torch.Tensor:
+    kwargs = dict(
+        offs=offs,
+        use_fast_accum=use_fast_accum,
+        prequantized_lhs=prequantized_lhs,
+        prequantized_rhs=prequantized_rhs,
+        prequantized_rhs_for_dgrad=prequantized_rhs_for_dgrad,
+    )
+    if wgrad_sink is not None:
+        kwargs["wgrad_sink"] = wgrad_sink
+        kwargs["wgrad_sink_transpose_last2"] = wgrad_sink_transpose_last2
+        kwargs["wgrad_sink_squeeze_first_dim"] = wgrad_sink_squeeze_first_dim
+    return scaled_grouped_mm_q_fp8_weight(
+        mat_a,
+        grad_anchor,
+        **kwargs,
+    )
+
+
+def use_torch_grouped_mm() -> bool:
+    # ``torch.nn.functional.grouped_mm`` was added in torch 2.10; feature-detect it
+    # (same approach as ``olmo_core.testing.has_torch_grouped_mm``).
+    return hasattr(F, "grouped_mm")
+
+
+def requires_host_side_split_sizes() -> bool:
+    # grouped_gemm cublas mode requires host-side split sizes; torch grouped_mm does not.
+    return not use_torch_grouped_mm()
+
+
+@dataclass
+class RoutedExpertsConfig(Config):
+    """
+    Configuration for routed experts in a MoE block.
+
+    .. note::
+        Unlike the rest of the codebase, this config stores dimension-related fields
+        (e.g. ``d_model``, ``hidden_size``, ``num_experts``) directly. Other configs keep
+        such dimensions out of the config and instead receive them only as arguments to
+        :meth:`build` (e.g. ``AttentionConfig.build(d_model, ...)``), so the dimensions live
+        in a single place and flow down from the top-level transformer config. The v2 configs
+        deviate by duplicating the dimensions here. This should be unified in the future to
+        follow the dimension-agnostic ``build(d_model, ...)`` convention.
+    """
+
+    d_model: int
+    """Input (and output) dimension of the experts."""
+
+    hidden_size: int
+    """Hidden (intermediate) dimension of the experts."""
+
+    num_experts: int
+    """Number of routed experts."""
+
+    bias: bool
+    """Whether to use bias in the experts."""
+
+    dtype: DType
+    """Default dtype for the experts."""
+
+    rowwise_fp8: Optional[MoERowwiseFP8Config] = None
+    """Optional FP8 config used by the rowwise EP no-sync path."""
+
+    def build(
+        self,
+        init_device: str = "cpu",
+    ) -> "RoutedExperts":
+        """
+        Build the corresponding routed-experts module.
+
+        :param init_device: The device to initialize the parameters on, e.g. "cpu", "meta".
+        """
+        kwargs = self.as_dict()
+        return RoutedExperts(init_device=init_device, **kwargs)
+
+    def num_params(self) -> int:
+        """
+        The number of params that the module will have once built.
+        """
+
+        params = 3 * self.d_model * self.hidden_size  # up, gate, down
+        if self.bias:
+            params += 2 * self.hidden_size  # up and gate bias
+            params += self.d_model  # down bias
+
+        params *= self.num_experts  # for each expert
+
+        return params
+
+    def num_active_params(self, top_k: int) -> int:
+        """
+        The number of params that the module will have once built, given the top_k experts.
+
+        :param top_k: The number of experts to use.
+        """
+        if top_k <= 0:
+            raise ValueError("top_k must be greater than 0")
+        if top_k > self.num_experts:
+            raise ValueError(
+                f"top_k ({top_k}) cannot be greater than num_experts ({self.num_experts})"
+            )
+
+        params = 3 * self.d_model * self.hidden_size  # up, gate, down
+        if self.bias:
+            params += 2 * self.hidden_size  # up and gate bias
+            params += self.d_model  # down bias
+
+        params *= top_k  # for each expert
+
+        return params
+
+
+class RoutedExperts(nn.Module):
+    def __init__(
+        self,
+        d_model: int,
+        hidden_size: int,
+        num_experts: int,
+        bias: bool,
+        dtype: DType,
+        rowwise_fp8: Optional[MoERowwiseFP8Config] = None,
+        init_device: str = "cpu",
+    ):
+        super().__init__()
+        self.d_model = d_model
+        self.hidden_size = hidden_size
+        self.num_experts = num_experts
+        assert not bias, "Routed experts do not support bias for now."
+        self.w_up_gate = nn.Parameter(
+            torch.empty(
+                num_experts, 2 * hidden_size, d_model, dtype=dtype.as_pt(), device=init_device
+            ),
+        )
+
+        self.w_down = nn.Parameter(
+            torch.empty(num_experts, hidden_size, d_model, dtype=dtype.as_pt(), device=init_device),
+        )
+        owner_ref = weakref.ref(self)
+        self.w_up_gate._moe_rowwise_fp8_cache_owner = owner_ref  # type: ignore[attr-defined]
+        self.w_down._moe_rowwise_fp8_cache_owner = owner_ref  # type: ignore[attr-defined]
+
+        # assume no ep in init
+        self.num_local_experts: int = num_experts
+        self.ep_dim: int = 1
+        self.ep_rank: int = 0
+        self.rowwise_fp8 = normalize_rowwise_fp8_config(rowwise_fp8)
+        self._rowwise_fp8_checked = False
+        self._rowwise_fp8_up_gate_prequant: Optional[ScaledGroupedMMPrequantizedRHS] = None
+        self._rowwise_fp8_down_prequant: Optional[ScaledGroupedMMPrequantizedRHS] = None
+        self._rowwise_fp8_up_gate_prequant_t: Optional[ScaledGroupedMMPrequantizedRHS] = None
+        self._rowwise_fp8_down_prequant_t: Optional[ScaledGroupedMMPrequantizedRHS] = None
+        self._rowwise_fp8_weight_versions: Optional[tuple[int, int]] = None
+        self._rowwise_fp8_up_gate_weight = FP8WeightStore(
+            logical_name="w_up_gate",
+            logical_shape=tuple(self.w_up_gate.shape),
+            cache_specs=_ROUTED_UP_GATE_FP8_CACHE_SPECS,
+            anchor_param=self.w_up_gate,
+            optimizer_enabled=(
+                self.rowwise_fp8 is not None
+                and self.rowwise_fp8.enabled
+                and self.rowwise_fp8.fp8_only_params
+            ),
+        )
+        self._rowwise_fp8_down_weight = FP8WeightStore(
+            logical_name="w_down",
+            logical_shape=tuple(self.w_down.shape),
+            cache_specs=_ROUTED_DOWN_FP8_CACHE_SPECS,
+            anchor_param=self.w_down,
+            optimizer_enabled=(
+                self.rowwise_fp8 is not None
+                and self.rowwise_fp8.enabled
+                and self.rowwise_fp8.fp8_only_params
+            ),
+        )
+
+        self.reset_parameters()
+
+    def reset_parameters(self) -> None:
+        # Standalone default; the model-level init may override this with a depth-scaled std
+        # (and an EP generator for the sharded expert weights).
+        std = 0.02
+        for w in (self.w_up_gate, self.w_down):
+            nn.init.trunc_normal_(w, mean=0.0, std=std, a=-3 * std, b=3 * std)
+
+    def _sync_rowwise_fp8_weight_anchors(self) -> None:
+        fp8_only_params = (
+            self.rowwise_fp8 is not None
+            and self.rowwise_fp8.enabled
+            and self.rowwise_fp8.fp8_only_params
+        )
+        self._rowwise_fp8_up_gate_weight.anchor_param = self.w_up_gate
+        self._rowwise_fp8_up_gate_weight.logical_shape = tuple(self.w_up_gate.shape)
+        self._rowwise_fp8_up_gate_weight.optimizer_enabled = fp8_only_params
+        self._rowwise_fp8_down_weight.anchor_param = self.w_down
+        self._rowwise_fp8_down_weight.logical_shape = tuple(self.w_down.shape)
+        self._rowwise_fp8_down_weight.optimizer_enabled = fp8_only_params
+        if fp8_only_params:
+            self.w_up_gate.requires_grad_(False)
+            self.w_down.requires_grad_(False)
+
+    def disable_mxfp8_expert_anchor_grads(self) -> None:
+        cfg = self.rowwise_fp8
+        if cfg is None or not cfg.enabled or not cfg.fp8_only_params:
+            return
+        self._sync_rowwise_fp8_weight_anchors()
+        self.w_up_gate.grad = None
+        self.w_down.grad = None
+        if hasattr(self.w_up_gate, "_main_grad_fp32"):
+            self.w_up_gate._main_grad_fp32 = None  # type: ignore[attr-defined]
+        if hasattr(self.w_down, "_main_grad_fp32"):
+            self.w_down._main_grad_fp32 = None  # type: ignore[attr-defined]
+
+    def release_mxfp8_expert_anchor_storage(self) -> None:
+        cfg = self.rowwise_fp8
+        if cfg is None or not cfg.enabled or not cfg.fp8_only_params:
+            return
+        self._sync_rowwise_fp8_weight_anchors()
+        self._rowwise_fp8_up_gate_weight.release_anchor_storage()
+        self._rowwise_fp8_down_weight.release_anchor_storage()
+
+    def named_fp8_weight_stores(self) -> Iterator[tuple[str, FP8WeightStore]]:
+        self._sync_rowwise_fp8_weight_anchors()
+        yield "w_up_gate", self._rowwise_fp8_up_gate_weight
+        yield "w_down", self._rowwise_fp8_down_weight
+
+    def named_mxfp8_expert_weights(self) -> Iterator[tuple[str, FP8WeightStore]]:
+        yield from self.named_fp8_weight_stores()
+
+    def zero_mxfp8_expert_weight_grads(self, set_to_none: bool = True) -> None:
+        for _, weight in self.named_mxfp8_expert_weights():
+            weight.zero_grad(set_to_none=set_to_none)
+
+    def set_mxfp8_expert_weight_main_grads_to_none(self) -> None:
+        for _, weight in self.named_mxfp8_expert_weights():
+            weight.set_main_grad_to_none()
+
+    def zero_grad(self, set_to_none: bool = True) -> None:
+        super().zero_grad(set_to_none=set_to_none)
+        self.zero_mxfp8_expert_weight_grads(set_to_none=set_to_none)
+
+    def _sync_mxfp8_weight_grad_from_anchor(
+        self,
+        weight: FP8WeightStore,
+        anchor: torch.nn.Parameter,
+    ) -> None:
+        anchor_grad = getattr(anchor, "_main_grad_fp32", None)
+        if anchor_grad is None:
+            anchor_grad = anchor.grad
+        if anchor_grad is None:
+            return
+        weight.replace_wgrad(anchor_grad)
+
+    def sync_mxfp8_expert_weight_grads_from_anchor(self) -> None:
+        cfg = self.rowwise_fp8
+        if cfg is None or not cfg.enabled or not cfg.fp8_only_params:
+            return
+        self._sync_mxfp8_weight_grad_from_anchor(
+            self._rowwise_fp8_up_gate_weight,
+            self.w_up_gate,
+        )
+        self._sync_mxfp8_weight_grad_from_anchor(
+            self._rowwise_fp8_down_weight,
+            self.w_down,
+        )
+
+    def invalidate_rowwise_fp8_cache(self) -> None:
+        self._rowwise_fp8_up_gate_prequant = None
+        self._rowwise_fp8_down_prequant = None
+        self._rowwise_fp8_up_gate_prequant_t = None
+        self._rowwise_fp8_down_prequant_t = None
+        self._rowwise_fp8_weight_versions = None
+        self._rowwise_fp8_up_gate_weight.invalidate()
+        self._rowwise_fp8_down_weight.invalidate()
+
+    @torch.no_grad()
+    def refresh_rowwise_fp8_cache(self) -> None:
+        cfg = self.rowwise_fp8
+        if cfg is None or not cfg.enabled:
+            self.invalidate_rowwise_fp8_cache()
+            return
+        self._sync_rowwise_fp8_weight_anchors()
+        if cfg.fp8_only_params and (
+            self._rowwise_fp8_up_gate_weight.anchor_storage_released
+            or self._rowwise_fp8_down_weight.anchor_storage_released
+        ):
+            if (
+                self._rowwise_fp8_up_gate_weight.prequantized_rhs is None
+                or self._rowwise_fp8_up_gate_weight.prequantized_rhs_for_dgrad is None
+                or self._rowwise_fp8_down_weight.prequantized_rhs is None
+                or self._rowwise_fp8_down_weight.prequantized_rhs_for_dgrad is None
+            ):
+                raise RuntimeError(
+                    "Cannot refresh rowwise FP8 routed expert caches from released bf16 anchors. "
+                    "The optimizer must refresh MXFP8 stores directly from fp32 main params."
+                )
+            self._rowwise_fp8_up_gate_prequant = self._rowwise_fp8_up_gate_weight.prequantized_rhs
+            self._rowwise_fp8_up_gate_prequant_t = (
+                self._rowwise_fp8_up_gate_weight.prequantized_rhs_for_dgrad
+            )
+            self._rowwise_fp8_down_prequant = self._rowwise_fp8_down_weight.prequantized_rhs
+            self._rowwise_fp8_down_prequant_t = (
+                self._rowwise_fp8_down_weight.prequantized_rhs_for_dgrad
+            )
+            self._rowwise_fp8_weight_versions = None
+            return
+        if self.w_up_gate.device.type != "cuda" or self.w_down.device.type != "cuda":
+            self.invalidate_rowwise_fp8_cache()
+            return
+        self._rowwise_fp8_up_gate_weight.refresh_from_logical_weight(
+            self.w_up_gate,
+            version_tensors=(self.w_up_gate,),
+        )
+        self._rowwise_fp8_down_weight.refresh_from_logical_weight(
+            self.w_down,
+            version_tensors=(self.w_down,),
+        )
+        self._rowwise_fp8_up_gate_prequant = self._rowwise_fp8_up_gate_weight.prequantized_rhs
+        self._rowwise_fp8_up_gate_prequant_t = (
+            self._rowwise_fp8_up_gate_weight.prequantized_rhs_for_dgrad
+        )
+        self._rowwise_fp8_down_prequant = self._rowwise_fp8_down_weight.prequantized_rhs
+        self._rowwise_fp8_down_prequant_t = self._rowwise_fp8_down_weight.prequantized_rhs_for_dgrad
+        self._rowwise_fp8_weight_versions = (
+            int(self.w_up_gate._version),
+            int(self.w_down._version),
+        )
+
+    def _use_rowwise_fp8(self, x: torch.Tensor, *, enabled: bool) -> bool:
+        if not enabled:
+            return False
+        cfg = self.rowwise_fp8
+        if cfg is None or not cfg.enabled:
+            return False
+        if x.device.type != "cuda":
+            return False
+        if x.dtype not in (torch.bfloat16, torch.float16, torch.float32):
+            return False
+        if not self._rowwise_fp8_checked:
+            cfg.assert_runtime_supported()
+            self._rowwise_fp8_checked = True
+        return True
+
+    def _forward_rowwise_fp8(
+        self,
+        x: torch.Tensor,
+        batch_size_per_expert_tensor: torch.Tensor,
+        *,
+        prequantized_input_q: Optional[torch.Tensor] = None,
+        prequantized_input_scales: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        cfg = self.rowwise_fp8
+        assert cfg is not None
+
+        up_gate_weight = self._rowwise_fp8_up_gate_weight
+        down_weight = self._rowwise_fp8_down_weight
+        up_gate_prequant = up_gate_weight.require_prequantized_rhs()
+        up_gate_prequant_t = up_gate_weight.require_prequantized_rhs_for_dgrad()
+        down_prequant = down_weight.require_prequantized_rhs()
+        down_prequant_t = down_weight.require_prequantized_rhs_for_dgrad()
+        offs = torch.cumsum(
+            batch_size_per_expert_tensor.to(dtype=torch.int32), dim=0, dtype=torch.int32
+        )
+        prequantized_lhs = None
+        if prequantized_input_q is not None and prequantized_input_scales is not None:
+            prequantized_lhs = ScaledGroupedMMPrequantizedLHS(
+                mat_a_q=prequantized_input_q,
+                scale_a=prequantized_input_scales,
+                mat_a_shape=tuple(x.shape),
+                scales_are_blocked=False,
+            )
+
+        up_kwargs = dict(
+            offs=offs,
+            use_fast_accum=cfg.use_fast_accum,
+            prequantized_lhs=prequantized_lhs,
+            prequantized_rhs=up_gate_prequant,
+            prequantized_rhs_for_dgrad=up_gate_prequant_t,
+        )
+        if cfg.fp8_only_params:
+            up_kwargs["wgrad_sink"] = up_gate_weight
+            up_kwargs["wgrad_sink_transpose_last2"] = True
+        up_gate_anchor = self.w_up_gate.transpose(1, 2)
+        if cfg.fp8_only_params:
+            up_gate_anchor = up_gate_anchor.detach()
+        up_gate = scaled_grouped_mm_q_fp8_weight_no_compile(
+            x,
+            up_gate_anchor,
+            **up_kwargs,
+        )
+        up_gate = cast(torch.Tensor, up_gate)
+        h, h_q, h_scales = swiglu_quantize_rows_mxfp8_autograd(
+            up_gate,
+            int(cfg.block_size),
+        )
+        h_prequantized_lhs = ScaledGroupedMMPrequantizedLHS(
+            mat_a_q=h_q,
+            scale_a=h_scales,
+            mat_a_shape=tuple(h.shape),
+            scales_are_blocked=False,
+        )
+
+        down_kwargs = dict(
+            offs=offs,
+            use_fast_accum=cfg.use_fast_accum,
+            prequantized_lhs=h_prequantized_lhs,
+            prequantized_rhs=down_prequant,
+            prequantized_rhs_for_dgrad=down_prequant_t,
+        )
+        if cfg.fp8_only_params:
+            down_kwargs["wgrad_sink"] = down_weight
+        down_anchor = self.w_down.detach() if cfg.fp8_only_params else self.w_down
+        down = scaled_grouped_mm_q_fp8_weight_no_compile(
+            h,
+            down_anchor,
+            **down_kwargs,
+        )
+
+        return cast(torch.Tensor, down)
+
+    # @torch.compiler.disable(recursive=False)
+    @nvtx.annotate("RoutedExperts.forward", color="blue")
+    def forward(
+        self,
+        x: torch.Tensor,
+        batch_size_per_expert: torch.Tensor,
+        *,
+        down_proj_out: Optional[torch.Tensor] = None,
+        up_proj_input_grad_out: Optional[torch.Tensor] = None,
+        use_rowwise_fp8: bool = False,
+        rowwise_fp8_input_q: Optional[torch.Tensor] = None,
+        rowwise_fp8_input_scales: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        """
+        `batch_size_per_expert` specifies the number of tokens in x for each expert.
+        """
+
+        assert isinstance(
+            batch_size_per_expert, torch.Tensor
+        ), "only accept Tensor for batch_size_per_expert"
+
+        if requires_host_side_split_sizes():
+            # CPU-side split sizes are required by grouped_gemm cublas mode.
+            # grouped_gemm CUTLASS mode can accept device-side split sizes, but it is slow.
+            # Always assume grouped_gemm runs in cublas mode.
+            assert (
+                batch_size_per_expert.device.type == "cpu"
+            ), "batch_size_per_expert must be on cpu"
+            batch_size_per_expert_tensor = batch_size_per_expert.to(
+                dtype=torch.int64
+            )  # int64 required for grouped_gemm
+        else:
+            assert (
+                batch_size_per_expert.device.type == "cuda"
+            ), "batch_size_per_expert expected to be on GPU"
+            # grouped_mm expects int32 offsets derived from split sizes.
+            batch_size_per_expert_tensor = batch_size_per_expert.to(dtype=torch.int32)
+
+        if x.numel() == 0:
+            if down_proj_out is not None:
+                return down_proj_out
+            return x
+
+        if self._use_rowwise_fp8(x, enabled=use_rowwise_fp8):
+            return self._forward_rowwise_fp8(
+                x,
+                batch_size_per_expert_tensor,
+                prequantized_input_q=rowwise_fp8_input_q,
+                prequantized_input_scales=rowwise_fp8_input_scales,
+            )
+        # NOTE: with fp8_only_params=True the bf16 expert anchors are also grad-disabled
+        # (requires_grad=False), so reaching this bf16 fallback *during training* would silently
+        # produce no expert-weight gradients. This guard only catches the storage-released case;
+        # a grad-context-aware guard (raise when grad is enabled but the anchors don't require
+        # grad, without breaking eval, where grad-disabled bf16 is fine) is deferred to the GPU
+        # FP8 correctness pass.
+        if (
+            self.rowwise_fp8 is not None
+            and self.rowwise_fp8.enabled
+            and self.rowwise_fp8.fp8_only_params
+            and (
+                self._rowwise_fp8_up_gate_weight.anchor_storage_released
+                or self._rowwise_fp8_down_weight.anchor_storage_released
+            )
+        ):
+            raise RuntimeError(
+                "RoutedExperts with fp8_only_params=True cannot fall back to bf16 grouped-mm "
+                "after bf16 expert anchor storage has been released"
+            )
+
+        w_up_gate = self.w_up_gate  # (E, H, 2D)
+        w_down = self.w_down  # (E, H, D)
+
+        # up + gate projection
+        up_gate = gmm(
+            x,
+            w_up_gate,
+            batch_size_per_expert_tensor,
+            trans_b=True,
+            input_grad_out=up_proj_input_grad_out,
+        )  # -> (BS, 2H)
+
+        up_gate = cast(torch.Tensor, up_gate)  # ensure type is Tensor
+
+        h = self.chunk_and_activate(up_gate)  # -> (BS, H)
+
+        # down projection
+        down = gmm(
+            h,
+            w_down,
+            batch_size_per_expert_tensor,
+            trans_b=False,
+            out=down_proj_out,
+        )  # -> (BS, D)
+
+        return cast(torch.Tensor, down)  # ensure type is Tensor
+
+    def act_and_down(
+        self, up_gate: torch.Tensor, batch_size_per_expert_tensor: torch.Tensor
+    ) -> torch.Tensor:
+        # swiglu + down projection
+        # so that it apply activation checkpointing if needed
+        h = self.chunk_and_activate(up_gate)  # -> (BS, H)
+
+        down = gmm(h, self.w_down, batch_size_per_expert_tensor, trans_b=False)  # -> (BS, H)
+        return down
+
+    def chunk_and_activate(self, up_gate: torch.Tensor) -> torch.Tensor:
+        # NOTE: this might include pad tokens, but I decide not to exlude pads:
+        # 1 chunk_and_activate is cheap relative to MoE GEMMs, even at 2x capacity.
+        # 2 Excluding tail pads without sync is hard with stock PyTorch ops;
+        #   true compute-skipping usually needs dynamic slicing (.item() sync) or a custom kernel.
+        # 3 Extra pad-handling ops can cost more than just doing SiLU on full buffer.
+        up, gate = up_gate.chunk(2, dim=-1)
+        h = up * F.silu(gate)  # -> (BS, H)
+        return h
+
+    def apply_ep(self, ep_mesh: DeviceMesh, **kwargs):
+        # NOTE: this allocates each rank's local expert shard as fresh (uninitialized) storage
+        # rather than scattering an already-initialized weight — expert parallelism is applied
+        # before init/load, and the sharded params are filled afterward by the model-level init
+        # (init_moe_v2, with an EP generator) or a checkpoint load.
+        # NOTE: the ep_dp/ep_mp mesh dim names must be reconciled with the repo's EP mesh builder
+        # (get_ep_mesh) when the EP train-module integration lands.
+        # shard dim 0 to ep_mp, replicate on ep_dp mesh
+        self.ep_mesh = ep_mesh["ep_dp", "ep_mp"]
+        # with torch.no_grad():  # just to avoid tracking the rebind below
+        self.ep_dim = ep_mesh["ep_mp"].size()
+        self.ep_rank = ep_mesh["ep_mp"].get_local_rank()
+
+        assert (
+            self.num_experts % self.ep_dim == 0
+        ), "num_experts must be divisible by the number of expert partitions"
+        self.num_local_experts = self.num_experts // self.ep_dim
+
+        self.w_up_gate = nn.Parameter(
+            torch.empty(
+                self.num_local_experts,
+                2 * self.hidden_size,
+                self.d_model,
+                dtype=self.w_up_gate.dtype,
+                device=self.w_up_gate.device,
+            ),
+        )
+
+        self.w_down = nn.Parameter(
+            torch.empty(
+                self.num_local_experts,
+                self.hidden_size,
+                self.d_model,
+                dtype=self.w_down.dtype,
+                device=self.w_down.device,
+            ),
+        )
+        owner_ref = weakref.ref(self)
+        self.w_up_gate._moe_rowwise_fp8_cache_owner = owner_ref  # type: ignore[attr-defined]
+        self.w_down._moe_rowwise_fp8_cache_owner = owner_ref  # type: ignore[attr-defined]
+        self._rowwise_fp8_up_gate_weight = FP8WeightStore(
+            logical_name="w_up_gate",
+            logical_shape=tuple(self.w_up_gate.shape),
+            cache_specs=_ROUTED_UP_GATE_FP8_CACHE_SPECS,
+            anchor_param=self.w_up_gate,
+            optimizer_enabled=(
+                self.rowwise_fp8 is not None
+                and self.rowwise_fp8.enabled
+                and self.rowwise_fp8.fp8_only_params
+            ),
+        )
+        self._rowwise_fp8_down_weight = FP8WeightStore(
+            logical_name="w_down",
+            logical_shape=tuple(self.w_down.shape),
+            cache_specs=_ROUTED_DOWN_FP8_CACHE_SPECS,
+            anchor_param=self.w_down,
+            optimizer_enabled=(
+                self.rowwise_fp8 is not None
+                and self.rowwise_fp8.enabled
+                and self.rowwise_fp8.fp8_only_params
+            ),
+        )
+        self.invalidate_rowwise_fp8_cache()
+
+        self._ep_sharded = True
+
+    def extra_repr(self):
+        return f"num_experts={self.num_experts}, hidden_size={self.hidden_size}, d_model={self.d_model}"
