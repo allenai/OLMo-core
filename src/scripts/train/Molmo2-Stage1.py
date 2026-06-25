@@ -129,6 +129,9 @@ class ExperimentConfig(Config):
     model_id: str = MODEL_ID
     data_seed: int = 34521
     init_seed: int = 12536
+    global_batch_size: int = GLOBAL_BATCH_SIZE
+    """Global batch in *tokens* (= global instances × seq len). Override to scale the batch;
+    pair with ``--train_module.rank_microbatch_size`` to set sequences/forward (GEMM size)."""
 
 
 def _build_model_config() -> MultimodalLMConfig:
@@ -353,7 +356,7 @@ def train(config: ExperimentConfig):
             weights,
             collator,
             work_dir=config.trainer.save_folder,
-            global_batch_size=GLOBAL_BATCH_SIZE,
+            global_batch_size=config.global_batch_size,
             seed=config.data_seed,
             pack=PACK_SEQUENCES,
             prefetch_workers=DATA_PREFETCH_WORKERS,
@@ -365,7 +368,7 @@ def train(config: ExperimentConfig):
             config.dataset.build(tokenizer),
             collator,
             work_dir=config.trainer.save_folder,
-            global_batch_size=GLOBAL_BATCH_SIZE,
+            global_batch_size=config.global_batch_size,
             seed=config.data_seed,
             dp_world_size=dp_world_size,
             dp_rank=dp_rank,
