@@ -1,0 +1,1338 @@
+import logging
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Dict,
+    Iterator,
+    List,
+    Literal,
+    Optional,
+    Tuple,
+    Union,
+    cast,
+)
+
+import nvtx
+import torch
+import torch.distributed as dist
+from torch.distributed._composable.replicate import replicate
+from torch.distributed.device_mesh import DeviceMesh
+from torch.utils.checkpoint import (
+    CheckpointPolicy,
+    SelectiveCheckpointContext,
+    checkpoint,
+    noop_context_fn,
+)
+
+import olmo_core.nn.transformer
+from olmo_core.distributed.parallel import get_pp_mesh
+from olmo_core.distributed.utils import hide_from_torch, unhide_from_torch
+from olmo_core.exceptions import OLMoConfigurationError
+from olmo_core.kernels import olmo_symm_mem
+from olmo_core.ops import moe as ops
+from olmo_core.utils import mark_dynamic
+
+from ...lm_head import LMOutputWithLoss
+from ..utils import moe_unpermute_no_compile
+from .block import MoEFusedV2TransformerBlock
+from .checkpointing import checkpoint_recompute_context_fn
+
+# NOTE: the expert-parallel "no-sync" families (ep_no_sync_buffers / ep_no_sync_tbo_1d /
+# ep_no_sync_tbo_rowwise) are imported lazily inside the methods that use them
+# (prewarm_ep_no_sync_symm_buffers, apply_ep, _tbo_last_step), so this module imports
+# cleanly without those files present. They ship in later, stacked PRs.
+from .tbo_state import SyncedTboPendingContext
+
+if TYPE_CHECKING:
+    from olmo_core.nn.fp8_weight import FP8WeightStore
+    from olmo_core.train.common import ReduceType
+
+    from .ep_no_sync_buffers import _NoSyncSymmSharedPool
+log = logging.getLogger(__name__)
+
+# aten = torch.ops.aten
+# c10d = torch.ops.c10d
+
+should_save_ops = [
+    torch.ops.aten.mm.default,
+    torch.ops.aten.bmm.default,
+    torch.ops.aten.addmm.default,
+    torch.ops.aten.rand_like.default,
+    # torch.ops.c10d.alltoall_base_.default,
+    # torch.ops.flash_attn_3.fwd.default,
+]
+try:
+    should_save_ops.append(torch.ops.flash_attn._flash_attn_forward.default)
+except (AttributeError, RuntimeError):  # pragma: no cover - flash_attn unavailable
+    pass
+
+
+def policy_fn(ctx: SelectiveCheckpointContext, op, *args, **kwargs):
+    # print(f'ctx: {ctx}, op: {op}')
+    if op in should_save_ops:
+        # save outputs of these ops; don't recompute them
+        return CheckpointPolicy.MUST_SAVE
+    else:
+        # everything else can be recomputed
+        return CheckpointPolicy.PREFER_RECOMPUTE
+
+
+# recompute_context_fn = functools.partial(create_selective_checkpoint_contexts, policy_fn)
+recompute_context_fn = checkpoint_recompute_context_fn
+
+# from olmo_core.nn.utils import selective_checkpointing_context_fn
+# recompute_context_fn = selective_checkpointing_context_fn
+
+
+def _fp32_post_grad_acc_hook(param: torch.Tensor):
+    g = param.grad
+    if g is None:
+        return
+    # upcast and accumulate in-place (no graph)
+
+    if param._main_grad_fp32 is None:  # type: ignore[attr-defined]
+        # first time init
+        param._main_grad_fp32 = g.to(torch.float32)  # type: ignore[attr-defined]
+    else:
+        # param._main_grad_fp32.add_(g.to(torch.float32)) # type: ignore[attr-defined]
+        param._main_grad_fp32.add_(g)  # type: ignore[attr-defined]
+    # drop BF16 .grad to avoid double-accum & save memory
+    param.grad = None
+
+
+class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
+    """
+    An MoE transformer implementation, to be used with one of the
+    :class:`MoETransformerBlock` block types.
+    """
+
+    def __init__(self, *args, **kwargs):
+        self.tbo = kwargs.pop("two_batch_overlap")
+        self.recompute_all_blocks_by_chunk = kwargs.pop("recompute_all_blocks_by_chunk")
+        self.recompute_each_block = kwargs.pop("recompute_each_block")
+        self.recompute_block_keys: Optional[List[str]] = kwargs.pop("recompute_block_keys")
+        self.checkpoint_tbo_dense_layers = False
+        self.has_grad_accum_fp32_buffer = False  # whether the model has grad accum buffer for fp32 master grad, will be set in `attach_fp32_accum`
+
+        super().__init__(*args, **kwargs)
+        self.ep_enabled = False  # default
+        self._ep_modules = []
+        # Historical padding tensors for single-world symmetric-memory paths:
+        # every PE had to execute the same allocation sequence even when PP
+        # stages owned different numbers of MoE blocks. Current OLMo-owned EP
+        # paths should generally avoid needing these.
+        self._ep_no_sync_dummy_symm_tensors: List[torch.Tensor] = []
+
+        assert not (
+            self.recompute_all_blocks_by_chunk and self.recompute_each_block
+        ), "Only one of recompute_all_blocks_by_chunk and recompute_each_block can be True."
+        assert not (
+            self.tbo and self.recompute_each_block
+        ), "Cannot use TBO when recompute_each_block is True."
+
+        self.cpu_offload = False  # NOTE : CPU activation offload is not useful due to low pcie bandwidth, so disable it for now
+
+        # not used
+        # self.offload_context, self.offload_sync_func = get_cpu_offload_context(
+        #     enabled=self.cpu_offload,
+        #     num_layers=4,
+        #     model_layers=self.n_layers,
+        # )
+
+    # def reset_offload_handler(self): # NOTE: cpu activation offload should not be used
+    #     if self.cpu_offload:
+    #         assert isinstance(self.offload_context, CpuOffloadHook)
+    #         self.offload_context.offload_handler.groupid_reset()
+
+    def _check_tbo_requirements(self):
+        # make sure dense blocks only appear before moe blocks
+        # because TBO requires that moe blocks are consecutive
+        # [dense, dense, moe, moe] is ok
+        # [dense, moe, dense, moe] is not ok
+        found_moe = False
+        first_moe_idx = None
+        for idx, block in enumerate(self.blocks.values()):
+            if found_moe and not block.is_moe:
+                raise OLMoConfigurationError(
+                    "When TBO is enabled, all dense blocks must appear before MoE blocks."
+                )
+            if block.is_moe and not found_moe:
+                found_moe = True
+                first_moe_idx = idx
+            if block.is_moe:
+                moe_block = cast(MoEFusedV2TransformerBlock, block)
+                if moe_block.ep_no_sync and moe_block.ep_no_sync_shared_slots < 2:
+                    raise OLMoConfigurationError(
+                        "When TBO and EP no-sync are enabled, ep_no_sync_shared_slots must be >= 2 "
+                        f"(block={moe_block.block_idx}, got {moe_block.ep_no_sync_shared_slots})."
+                    )
+
+        return first_moe_idx
+
+    def purge_cuda_events(self):
+        # set all events to None (so that the model can be deepcopied in PP split)
+        for layer in self.blocks.values():
+            if layer.is_moe:
+                layer = cast(MoEFusedV2TransformerBlock, layer)
+                layer.purge_cuda_events()
+
+    def install_cuda_events(self):
+        # re-install events after deepcopy
+        for layer in self.blocks.values():
+            if layer.is_moe:
+                layer = cast(MoEFusedV2TransformerBlock, layer)
+                layer.install_cuda_events()
+
+    @property
+    def is_moe(self) -> bool:
+        return True
+
+    def num_flops_per_token(self, seq_len: int) -> int:
+        # TODO: check if it works with PP, does it compute one model part only? or the full model?
+        return super().num_flops_per_token(seq_len)
+
+    def compute_auxiliary_metrics(
+        self, reset: bool = True
+    ) -> Dict[str, Tuple[torch.Tensor, Optional["ReduceType"]]]:
+        from olmo_core.train.common import ReduceType
+
+        mean_offset = 1.0
+        if self.pp_enabled:
+            # Change the divisor to 'world_size // pp_group_size'
+            mean_offset = self._pp_group_size
+
+        out: Dict[str, Tuple[torch.Tensor, Optional["ReduceType"]]] = {}
+        for block_idx, block in self.blocks.items():
+            if not block.is_moe:
+                continue
+            block = cast(MoEFusedV2TransformerBlock, block)
+            block_metrics = block.compute_metrics(reset=reset)
+            for metric_name, (metric_val, reduce_type) in block_metrics.items():
+                out[f"block {int(block_idx):02d}/{metric_name}"] = (metric_val, reduce_type)
+
+                if self.pp_enabled and reduce_type == ReduceType.mean:
+                    metric_val = metric_val.float() * mean_offset
+
+                if metric_name not in out:
+                    out[metric_name] = (metric_val, reduce_type)
+                elif reduce_type in (ReduceType.mean, ReduceType.sum):
+                    out[metric_name] = (
+                        out[metric_name][0] + metric_val,
+                        reduce_type,
+                    )
+                elif reduce_type == ReduceType.max:
+                    out[metric_name] = (torch.max(out[metric_name][0], metric_val), reduce_type)
+                else:
+                    raise NotImplementedError(reduce_type)
+        return out
+
+    def reset_auxiliary_metrics(self):
+        for block in self.blocks.values():
+            if not block.is_moe:
+                continue
+            cast(MoEFusedV2TransformerBlock, block).reset_metrics()
+
+    def count_ep_no_sync_blocks(self) -> int:
+        return sum(
+            1
+            for block in self.blocks.values()
+            if block.is_moe and isinstance(block, MoEFusedV2TransformerBlock) and block.ep_no_sync
+        )
+
+    @torch.no_grad()
+    def refresh_rowwise_fp8_cache(self) -> None:
+        for block in self.blocks.values():
+            if not block.is_moe or not isinstance(block, MoEFusedV2TransformerBlock):
+                continue
+            block.refresh_rowwise_fp8_cache()
+
+    def named_fp8_weight_stores(self) -> Iterator[tuple[str, "FP8WeightStore"]]:
+        for block_key, block in self.blocks.items():
+            if not block.is_moe or not isinstance(block, MoEFusedV2TransformerBlock):
+                continue
+            for name, weight in block.named_fp8_weight_stores():
+                yield f"blocks.{block_key}.{name}", weight
+
+    def named_mxfp8_expert_weights(self) -> Iterator[tuple[str, "FP8WeightStore"]]:
+        yield from self.named_fp8_weight_stores()
+
+    def zero_fp8_weight_store_grads(self, set_to_none: bool = True) -> None:
+        for _, weight in self.named_fp8_weight_stores():
+            weight.zero_grad(set_to_none=set_to_none)
+
+    def zero_mxfp8_expert_weight_grads(self, set_to_none: bool = True) -> None:
+        self.zero_fp8_weight_store_grads(set_to_none=set_to_none)
+
+    def disable_fp8_weight_anchor_grads(self) -> None:
+        for block in self.blocks.values():
+            if not block.is_moe or not isinstance(block, MoEFusedV2TransformerBlock):
+                continue
+            block.disable_fp8_weight_anchor_grads()
+
+    def disable_mxfp8_expert_anchor_grads(self) -> None:
+        self.disable_fp8_weight_anchor_grads()
+
+    def release_fp8_weight_anchor_storage(self) -> None:
+        for block in self.blocks.values():
+            if not block.is_moe or not isinstance(block, MoEFusedV2TransformerBlock):
+                continue
+            block.release_fp8_weight_anchor_storage()
+
+    def release_mxfp8_expert_anchor_storage(self) -> None:
+        self.release_fp8_weight_anchor_storage()
+
+    def sync_fp8_weight_store_grads_from_anchor(self) -> None:
+        for block in self.blocks.values():
+            if not block.is_moe or not isinstance(block, MoEFusedV2TransformerBlock):
+                continue
+            block.sync_fp8_weight_store_grads_from_anchor()
+
+    def sync_mxfp8_expert_weight_grads_from_anchor(self) -> None:
+        self.sync_fp8_weight_store_grads_from_anchor()
+
+    def zero_grad(self, set_to_none: bool = True) -> None:
+        super().zero_grad(set_to_none=set_to_none)
+        self.zero_fp8_weight_store_grads(set_to_none=set_to_none)
+
+    @torch.no_grad()
+    def prewarm_ep_no_sync_symm_buffers(
+        self,
+        *,
+        max_local_microbatch_size: int,
+        pad_to_block_count: int,
+        rowwise_lifetime_lease_slots: Optional[int] = None,
+    ) -> None:
+        from .ep_no_sync_buffers import (
+            compute_ep_no_sync_rank_capacity,
+            get_ep_no_sync_buffers,
+            get_ep_no_sync_rowwise_fp8_buffers,
+            prewarm_ep_no_sync_rowwise_lifetime_leases,
+            use_ep_no_sync_rowwise_symm_combine_gather,
+            use_ep_no_sync_rowwise_symm_combine_out,
+            use_ep_no_sync_rowwise_symm_dispatch_in,
+        )
+
+        ep_blocks = [
+            (block_key, cast(MoEFusedV2TransformerBlock, block))
+            for block_key, block in self.blocks.items()
+            if block.is_moe and isinstance(block, MoEFusedV2TransformerBlock) and block.ep_no_sync
+        ]
+        if not ep_blocks:
+            if pad_to_block_count != 0:
+                raise RuntimeError(
+                    "Cannot pad EP no-sync symmetric allocations for a model part "
+                    "with no EP no-sync blocks"
+                )
+            return
+
+        first_block = ep_blocks[0][1]
+        assert first_block.routed_experts_router is not None
+        if first_block.ep_pg is None:
+            raise RuntimeError("EP no-sync block is missing ep_pg during symmetric prewarm")
+
+        param = next((p for p in self.parameters() if p.is_floating_point()), None)
+        if param is None:
+            raise RuntimeError("Cannot infer dtype/device for EP no-sync symmetric prewarm")
+        dtype = param.dtype
+        device = param.device
+        d_model = self.d_model
+        top_k = first_block.routed_experts_router.top_k
+        prewarm_local_microbatch_size = max_local_microbatch_size
+        if self.tbo:
+            if max_local_microbatch_size % 2 != 0:
+                raise RuntimeError(
+                    "TBO EP no-sync symmetric prewarm requires an even local microbatch size "
+                    f"(got {max_local_microbatch_size})"
+                )
+            prewarm_local_microbatch_size = max_local_microbatch_size // 2
+
+        num_out_tokens = prewarm_local_microbatch_size * top_k
+        rank_capacity = compute_ep_no_sync_rank_capacity(first_block, num_out_tokens)
+
+        for block_key, block in ep_blocks:
+            if block.ep_no_sync_use_rowwise_all_to_all:
+                rowwise_fp8_cfg = block.rowwise_fp8
+                use_rowwise_fp8 = (
+                    rowwise_fp8_cfg is not None
+                    and rowwise_fp8_cfg.enabled
+                    and device.type == "cuda"
+                )
+                use_symm_dispatch_in = (
+                    not use_rowwise_fp8
+                ) and use_ep_no_sync_rowwise_symm_dispatch_in(block)
+                use_symm_combine_out = (
+                    not use_rowwise_fp8
+                ) and use_ep_no_sync_rowwise_symm_combine_out(block)
+                use_symm_combine_gather = (
+                    not use_rowwise_fp8
+                ) and use_ep_no_sync_rowwise_symm_combine_gather(block)
+                block_is_checkpointed = (
+                    self.recompute_all_blocks_by_chunk
+                    or self.recompute_each_block
+                    or (
+                        self.recompute_block_keys is not None
+                        and block_key in self.recompute_block_keys
+                    )
+                )
+                block_uses_checkpointing = (
+                    block_is_checkpointed
+                    or block.checkpoint_attn
+                    or block.checkpoint_permute_moe_unpermute
+                )
+                block._ep_no_sync_rowwise_static_checkpoint_state = (
+                    None if block_uses_checkpointing else (False, True)
+                )
+                # With our checkpoint context, the original checkpointed forward
+                # and its recompute both use scratch buffers; no long-lived lease
+                # is needed. Force the rowwise path into scratch-buffer mode for
+                # checkpointed blocks so compiled checkpoint paths do not depend
+                # on Python-side checkpoint-context detection.
+                block._ep_no_sync_force_scratch_lifetime_buffers = block_is_checkpointed
+                runtime_uses_lifetime_leases = not block._ep_no_sync_force_scratch_lifetime_buffers
+                if not runtime_uses_lifetime_leases:
+                    use_symm_combine_out = False
+                    use_symm_combine_gather = False
+                lease_dispatch_out = runtime_uses_lifetime_leases
+                lease_combine_out = use_symm_combine_out and runtime_uses_lifetime_leases
+                lease_combine_gather = use_symm_combine_gather and runtime_uses_lifetime_leases
+                slot_indices = range(block.ep_no_sync_shared_slots) if self.tbo else (None,)
+                for slot_idx in slot_indices:
+                    get_ep_no_sync_buffers(
+                        block,
+                        dispatch_in_cap=num_out_tokens,
+                        dispatch_out_cap=rank_capacity,
+                        combine_in_cap=rank_capacity,
+                        combine_out_cap=prewarm_local_microbatch_size,
+                        d_model=d_model,
+                        dtype=dtype,
+                        device=device,
+                        slot_idx=slot_idx,
+                        need_dispatch_in=use_symm_dispatch_in,
+                        need_dispatch_meta=False,
+                        need_dispatch_out=(not use_rowwise_fp8) and not lease_dispatch_out,
+                        need_combine_in=not use_rowwise_fp8,
+                        need_combine_meta=False,
+                        need_combine_out=use_symm_combine_out and not lease_combine_out,
+                        need_combine_gather=use_symm_combine_gather and not lease_combine_gather,
+                        combine_gather_cap=prewarm_local_microbatch_size,
+                        combine_gather_top_k=top_k,
+                    )
+                prewarm_ep_no_sync_rowwise_lifetime_leases(
+                    block,
+                    dispatch_out_cap=rank_capacity,
+                    combine_out_cap=prewarm_local_microbatch_size,
+                    combine_gather_cap=prewarm_local_microbatch_size,
+                    combine_gather_top_k=top_k,
+                    d_model=d_model,
+                    dtype=dtype,
+                    device=device,
+                    use_rowwise_fp8=use_rowwise_fp8,
+                    block_size=(rowwise_fp8_cfg.block_size if rowwise_fp8_cfg is not None else 0),
+                    need_dispatch_out=lease_dispatch_out,
+                    need_combine_out=lease_combine_out,
+                    need_combine_gather=lease_combine_gather,
+                    num_slots=rowwise_lifetime_lease_slots,
+                )
+                if use_rowwise_fp8:
+                    assert rowwise_fp8_cfg is not None
+                    rowwise_fp8_cfg.assert_runtime_supported()
+                    get_ep_no_sync_rowwise_fp8_buffers(
+                        block,
+                        dispatch_out_cap=rank_capacity,
+                        combine_in_cap=rank_capacity,
+                        d_model=d_model,
+                        block_size=rowwise_fp8_cfg.block_size,
+                        device=device,
+                        need_dispatch_out=not lease_dispatch_out,
+                    )
+            else:
+                get_ep_no_sync_buffers(
+                    block,
+                    dispatch_in_cap=num_out_tokens,
+                    dispatch_out_cap=rank_capacity,
+                    combine_in_cap=rank_capacity,
+                    combine_out_cap=num_out_tokens,
+                    d_model=d_model,
+                    dtype=dtype,
+                    device=device,
+                )
+
+        # Dummy padding keeps the symmetric allocation sequence aligned in older
+        # single-world designs where different PP stages had different local MoE
+        # block counts. In the current per-model-part prewarm path this should
+        # usually be zero.
+        pad_count = pad_to_block_count - len(ep_blocks)
+        if pad_count < 0:
+            raise RuntimeError(
+                f"pad_to_block_count ({pad_to_block_count}) is smaller than local EP no-sync block count ({len(ep_blocks)})"
+            )
+        if pad_count:
+            torch_symm_mem: Any = None
+            if not olmo_symm_mem.is_enabled():
+                try:
+                    import torch.distributed._symmetric_memory as _torch_symm_mem
+                except ImportError as e:
+                    raise RuntimeError(
+                        "EP no-sync requires torch.distributed._symmetric_memory"
+                    ) from e
+                torch_symm_mem = _torch_symm_mem
+            for _ in range(pad_count):
+                if olmo_symm_mem.is_enabled():
+                    tensor = olmo_symm_mem.empty(
+                        (rank_capacity, d_model),
+                        dtype=dtype,
+                        device=device,
+                        group=first_block.ep_pg,
+                    )
+                    olmo_symm_mem.rendezvous(tensor, group=first_block.ep_pg)
+                else:
+                    assert torch_symm_mem is not None
+                    tensor = torch_symm_mem.empty(
+                        (rank_capacity, d_model),
+                        dtype=dtype,
+                        device=device,
+                    )
+                    torch_symm_mem.rendezvous(tensor, group=first_block.ep_pg)
+                self._ep_no_sync_dummy_symm_tensors.append(tensor)
+
+    # NOTE: shadowed by the real `apply_ep` defined below; kept commented for reference.
+    # def apply_ep(self, ep_mesh: DeviceMesh, **kwargs):
+    #     raise OLMoConfigurationError("Do not use `apply_ep`, use `apply_epdp` instead.")
+
+    def apply_compile(self):
+        super().apply_compile()
+        self._tbo_last_step = torch.compile(self._tbo_last_step)  # type: ignore[method-assign]
+        self.forward_embed = torch.compile(self.forward_embed)  # type: ignore[method-assign]
+        # self._forward_blocks = torch.compile(self._forward_blocks)
+
+    def apply_ddp(
+        self,
+        dp_mesh: Optional[DeviceMesh] = None,
+        param_dtype: Optional[torch.dtype] = None,
+        compile_enabled: bool = False,
+        autograd_compile_enabled: bool = False,
+    ):
+        assert False, "apply_ddp is deprecated"
+        """
+        Apply DDP to the model.
+        """
+
+        # Cast model explicitly to the specified dtype before applying DDP
+        target_dtype = param_dtype or self.dtype
+        if target_dtype != self.dtype:
+            self.to(dtype=target_dtype)
+
+        # TODO: check if this is needed
+        # Adapted from
+        # https://github.com/pytorch/torchtitan/blob/90c889e972b56b9faadebbb78fc985dedc537ed9/torchtitan/parallelisms/parallelize_llama.py#L328
+        # if compile_enabled:
+        #     if autograd_compile_enabled:
+        #         torch._dynamo.config.optimize_ddp = "python_reducer_without_compiled_forward"  # type: ignore
+        #     else:
+        #         torch._dynamo.config.optimize_ddp = "ddp_optimizer"  # type: ignore
+
+        self.to(torch.bfloat16)  # HACK, need fix
+
+        replicate(
+            self,
+            device_mesh=dp_mesh,
+            bucket_cap_mb=100,
+            gradient_as_bucket_view=True,
+            #   mixed_precision=
+        )
+        # Some inputs need to be on CPU initially, but DDP will move everything to model's
+        # device if we don't hide it.
+        self.register_forward_pre_hook(_hide_cpu_inputs_from_torch, prepend=True, with_kwargs=True)
+        self.register_forward_pre_hook(
+            _unhide_cpu_inputs_from_torch, prepend=False, with_kwargs=True
+        )
+
+    def apply_ep(
+        self,
+        dp_mesh: DeviceMesh,
+        ep_mesh: DeviceMesh,
+        ep_mp_group: Optional[dist.ProcessGroup] = None,
+        param_dtype: Optional[torch.dtype] = None,
+        compile_enabled: bool = False,
+        autograd_compile_enabled: bool = False,
+        ep_no_sync_shared_pool: Optional["_NoSyncSymmSharedPool"] = None,
+    ) -> Optional["_NoSyncSymmSharedPool"]:
+        """
+        Apply EP to the model.
+        """
+        from .ep_no_sync_buffers import _NoSyncSymmSharedPool
+
+        shared_pool_to_return = ep_no_sync_shared_pool
+        ep_no_sync_blocks: List[MoEFusedV2TransformerBlock] = []
+        for block in self.blocks.values():
+            if not block.is_moe:
+                continue
+            block = cast(MoEFusedV2TransformerBlock, block)
+            # ep_mp_group is the optional high-priority NCCL group for
+            # synchronized EP collectives that should start promptly while shared
+            # experts run. It is intentionally not used by no-sync blocks.
+            # NVSHMEM symmetric-memory allocation bootstraps from c10d group
+            # metadata. The high-priority NCCL EP group works for small count
+            # collectives, but can hang inside symm_mem.empty() before the
+            # explicit EP rendezvous runs. Use the regular DeviceMesh EP group
+            # for no-sync blocks.
+            block.apply_ep(ep_mesh, ep_pg=None if block.ep_no_sync else ep_mp_group)
+            if block.ep_no_sync:
+                ep_no_sync_blocks.append(block)
+
+        if ep_no_sync_blocks:
+            slot_counts = {block.ep_no_sync_shared_slots for block in ep_no_sync_blocks}
+            if len(slot_counts) != 1:
+                raise OLMoConfigurationError(
+                    "All EP no-sync blocks must use the same ep_no_sync_shared_slots "
+                    f"value, got {sorted(slot_counts)}"
+                )
+            shared_slots = next(iter(slot_counts))
+            first_pg = ep_no_sync_blocks[0].ep_pg
+            if first_pg is None:
+                raise RuntimeError("EP no-sync block is missing ep_pg after apply_ep()")
+            shared_pool = shared_pool_to_return
+            if shared_pool is None:
+                shared_pool = _NoSyncSymmSharedPool(
+                    num_slots=shared_slots,
+                    group=first_pg,
+                )
+            else:
+                if shared_pool.num_slots != shared_slots:
+                    raise RuntimeError(
+                        "Cannot share EP no-sync symmetric scratch pool across model parts "
+                        f"with different slot counts: pool={shared_pool.num_slots}, "
+                        f"model_part={shared_slots}"
+                    )
+                if shared_pool.group is not first_pg:
+                    raise RuntimeError(
+                        "Cannot share EP no-sync symmetric scratch pool across model parts "
+                        "with different EP process groups"
+                    )
+            shared_pool_to_return = shared_pool
+            for block in ep_no_sync_blocks:
+                if block.ep_pg is not first_pg:
+                    raise RuntimeError(
+                        "All EP no-sync blocks in a model part must share the same ep_pg "
+                        f"(block={block.block_idx})"
+                    )
+                # Shared slots are transient scratch shared by model blocks.
+                # Payloads saved for backward must use lifetime leases unless
+                # checkpointing/recompute forces the rowwise path into scratch mode.
+                block._ep_no_sync_shared_pool = shared_pool
+                block._ep_no_sync_shared_slot = block.block_idx % shared_slots
+
+        self.ep_enabled = True
+        return shared_pool_to_return
+
+    def apply_dp(
+        self,
+        dp_mesh: DeviceMesh,
+        ep_mesh: Optional[DeviceMesh],
+        accumulate_grads_in_fp32: bool = True,
+        reduce_grads_in_fp32: bool = True,
+        bucket_cap_mb: Optional[int] = None,
+    ):
+        from olmo_core.nn.parallel.distributed import MultiGroupDistributedDataParallel
+
+        self._ep_modules = [
+            m for m in self.modules() if getattr(m, "_ep_sharded", False)
+        ]  # collect the ep sharded part based on `_ep_sharded` field (will be set to True in `apply_ep`)
+        ep_sharded_params = set()
+        for m in self._ep_modules:
+            for n, p in m.named_parameters():
+                ep_sharded_params.add(p)
+
+        # TODO(dtype): broad bf16 casting is a current MoE V2 shortcut. Replace
+        # this with explicit dtype ownership so FP8 state, optimizer main params,
+        # and normal model params are not coupled to a blanket module cast.
+        self.to(torch.bfloat16)
+        self.disable_mxfp8_expert_anchor_grads()
+
+        dp_group = dp_mesh.get_group()
+
+        if ep_mesh is None:
+            epdp_group = dp_group
+        else:
+            epdp_group = ep_mesh["ep_dp"].get_group()
+
+        def param_process_group_fn(name: str, param: torch.nn.Parameter):
+            # MoE params → EP_DP group
+            if param in ep_sharded_params:
+                return epdp_group
+
+            # Dense params → DP group
+            return dp_group
+
+        ddp_model = MultiGroupDistributedDataParallel(
+            module=self,
+            dim=0,  # for scatter/gather
+            init_sync=True,  # meta device
+            process_group=dp_mesh.get_group(),
+            param_process_group_fn=param_process_group_fn,
+            accumulate_grads_in_fp32=accumulate_grads_in_fp32,
+            reduce_grads_in_fp32=reduce_grads_in_fp32,
+            bucket_cap_mb=bucket_cap_mb,
+        )
+
+        from ...transformer.model import (
+            _hide_cpu_inputs_from_torch,
+            _unhide_cpu_inputs_from_torch,
+        )
+
+        ddp_model.register_forward_pre_hook(
+            _hide_cpu_inputs_from_torch, prepend=True, with_kwargs=True
+        )
+        ddp_model.register_forward_pre_hook(
+            _unhide_cpu_inputs_from_torch, prepend=False, with_kwargs=True
+        )
+
+        return ddp_model
+
+    def prepare_experts_for_fsdp(
+        self,
+        *args: Any,
+        **kwargs: Any,
+    ):
+        raise OLMoConfigurationError(
+            "prepare_experts_for_fsdp is not supported for MoEFusedV2Transformer. "
+            "Use prepare_experts_for_ddp instead."
+        )
+
+    def prepare_experts_for_ddp(self, world_mesh: DeviceMesh):
+        for block in self.blocks.values():
+            if not block.is_moe:
+                continue
+            pass  # TODO: Anything to do here?
+
+    def post_batch(self, dry_run: bool = False):
+        for block in self.blocks.values():
+            if not block.is_moe:
+                continue
+            block = cast(MoEFusedV2TransformerBlock, block)
+            block.post_batch(dry_run=dry_run)
+
+    @torch.no_grad()
+    def init_weights(
+        self,
+        *,
+        max_seq_len: Optional[int] = None,
+        max_local_microbatch_size: Optional[int] = None,
+        device: Optional[torch.device] = None,
+        world_mesh: Dict[str, Optional[DeviceMesh]],
+        model_part_idx: int = 0,
+    ) -> torch.Generator:
+        from olmo_core.nn.attention import Attention, FusedAttention
+
+        from .block import MoEFusedV2TransformerBlock
+
+        """
+        Initialize the model weights.
+
+        :param max_seq_len: The maximum sequence length expected. This is used
+            to warm up the RoPE cache.
+        :param max_local_microbatch_size: The maximum local (rank) micro-batch size (in tokens)
+            expected. This is used to warm-up some MoE cache.
+        :param device: The device the local copy of the model will be trained on.
+        """
+        device = device or self.device
+        # params = list(self.parameters())
+        # TODO(dtype): materialization currently relies on the same broad bf16
+        # cast as apply_dp(); replace with an explicit precision policy.
+        self.to(torch.bfloat16)
+        self.to_empty(device=device)
+        # new_params = list(self.parameters())
+        for name, module in self.named_modules():
+            if hasattr(module, "reset_parameters"):  # TODO: what's the point of this
+                module.reset_parameters()  # type: ignore
+                # log.info(f"'{name}' called reset_parameters()")
+
+        seed = self.init_seed
+
+        # adjust seed for PP, including
+        # 1. PP stage
+        # 2. model part within the PP stage (eg, interleaved 1F1B)
+        if self.pp_enabled:
+            assert world_mesh["dense"] is not None
+            seed += get_pp_mesh(world_mesh["dense"]).get_local_rank()
+            seed += model_part_idx * 997  # random prime
+
+        # adjust seed for EP_MP, different EP shards should have different init values
+        # but within the same EP_DP group, they should share the same init value
+        ep_generator = None
+        if self.ep_enabled:
+            assert world_mesh["moe"]
+            ep_mp_rank = world_mesh["moe"]["ep_mp"].get_local_rank()
+            ep_seed = (
+                seed + (1 + ep_mp_rank) * 653
+            )  # random prime; +1 so that it will never be the same as the base seed
+            ep_generator = torch.Generator(device).manual_seed(ep_seed)
+
+        generator = torch.Generator(device).manual_seed(seed)
+
+        if self.embeddings is not None:
+            self.init_method.init_embeddings(
+                self.embeddings,
+                d_model=self.d_model,
+                embed_scale=self.embed_scale,
+                std=self.embedding_init_std
+                if self.embedding_init_std is not None
+                else self.init_std,
+                generator=generator,
+            )
+
+        for block in self.blocks.values():
+            # This might fail if it's wrapped.
+            if isinstance(block, MoEFusedV2TransformerBlock):
+                block = cast(MoEFusedV2TransformerBlock, block)
+
+                # v2 MoE blocks.
+                att = cast(Union[Attention, FusedAttention], block.attention)
+
+                # Attention weights.
+                self.init_method.init_attention(
+                    att,
+                    d_model=self.d_model,
+                    block_idx=block.block_idx,
+                    num_blocks=self.n_layers,
+                    std=self.init_std,
+                    generator=generator,
+                )
+                # MoE weights.
+                self.init_method.init_moe_v2(
+                    block,
+                    d_model=self.d_model,
+                    block_idx=block.block_idx,
+                    num_blocks=self.n_layers,
+                    std=self.init_std,
+                    generator=generator,
+                    ep_generator=ep_generator,
+                )
+
+            else:
+                # usually this is for the first dense layer
+                from ...transformer.block import TransformerBlock
+
+                block = cast(TransformerBlock, block)
+                att = cast(Union[Attention, FusedAttention], block.attention)
+
+                # Attention weights.
+                self.init_method.init_attention(
+                    att,
+                    d_model=self.d_model,
+                    block_idx=block.block_idx,
+                    num_blocks=self.n_layers,
+                    std=self.init_std,
+                    generator=generator,
+                )
+
+                # Feed-forward weights.
+                if hasattr(block, "feed_forward"):
+                    self.init_method.init_feed_forward(
+                        block.feed_forward,
+                        d_model=self.d_model,
+                        block_idx=block.block_idx,
+                        num_blocks=self.n_layers,
+                        std=self.init_std,
+                        generator=generator,
+                    )
+
+                # MoE weights.
+                if hasattr(block, "feed_forward_moe"):
+                    raise OLMoConfigurationError("Do not use the old MoE block")
+
+            # Warm up RoPE cache for attention-like sequence mixers. Recurrent
+            # mixers such as GDN do not have RoPE.
+            rope = getattr(att, "rope", None)
+            if max_seq_len is not None and rope is not None:
+                rope.warmup_cache(max_seq_len, device)
+
+        if self.lm_head is not None:
+            self.init_method.init_final_w_out(
+                self.lm_head.w_out, d_model=self.d_model, std=self.init_std, generator=generator
+            )
+        # get one next int from the generator
+        # if everything goes right, all ranks should have the same next int
+        # valid_test = (
+        #     torch.randint(0, 1000000, (1,), generator=generator, device=device).cpu().item()
+        # )  # attach debugger to check
+
+        # call lazy_init to make sure params has the _mp_param and _fp_param fields
+        # replicate.state(self).lazy_init()
+        # for ep_module in self._ep_modules:
+        #     replicate.state(ep_module).lazy_init()
+
+        return generator
+
+    def attach_fp32_accum(self):
+        self.has_grad_accum_fp32_buffer = True
+        for p in self.parameters():
+            if not p.requires_grad:
+                continue
+            # persistent FP32 master grad on the same device
+            p._main_grad_fp32 = None  # type: ignore[attr-defined]
+
+            p.register_post_accumulate_grad_hook(_fp32_post_grad_acc_hook)
+
+    def set_main_grads_to_none(self):
+        for p in self.parameters():
+            if not p.requires_grad:
+                continue
+            if hasattr(p, "_main_grad_fp32"):
+                p._main_grad_fp32 = None  # type: ignore[attr-defined]
+        for _, weight in self.named_fp8_weight_stores():
+            weight.set_main_grad_to_none()
+
+    def forward_tbo(
+        self,
+        input_ids: torch.Tensor,
+        *,
+        labels: Optional[torch.Tensor] = None,
+        ignore_index: int = -100,
+        loss_reduction: Literal["mean", "sum", "none"] = "mean",
+        z_loss_multiplier: Optional[float] = None,
+        loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
+        return_logits: Optional[bool] = None,
+        **kwargs,
+    ) -> Union[torch.Tensor, LMOutputWithLoss]:
+        assert self.ep_enabled, "TBO requires EP to be enabled."
+
+        (
+            input_ids,
+            labels,
+            all_block_kwargs,
+            per_block_kwargs,
+            lm_head_kwargs,
+        ) = self._prepare_inputs(
+            input_ids,
+            labels,
+            ignore_index=ignore_index,
+            loss_reduction=loss_reduction,
+            z_loss_multiplier=z_loss_multiplier,
+            loss_div_factor=loss_div_factor,
+            return_logits=return_logits,
+            **kwargs,
+        )
+        assert input_ids.size(0) % 2 == 0, "When TBO is enabled, the batch size must be even."
+
+        # Get embeddings but pass-through for non-existent layers to allow easy
+        # pipeline parallel configuration.
+        h = self.embeddings(input_ids) if self.embeddings is not None else input_ids
+        if self.embeddings is not None and self.embed_scale is not None:
+            h = h * self.embed_scale
+        if self.embedding_norm is not None:
+            h = self.embedding_norm(h)
+
+        # can only check this in every forward.
+        # We cannot put this in __init__ because of PP might change model layers.
+        first_moe_idx = self._check_tbo_requirements()
+
+        # forward dense blocks
+        for block_idx, (block_key, block) in enumerate(self.blocks.items()):
+            if block.is_moe:
+                assert (
+                    first_moe_idx == block_idx
+                ), f"first_moe_idx {first_moe_idx}, block_idx {block_idx}, block.block_idx {block.block_idx}"
+                break
+            # Mark sizes as dynamic for torch.compile().
+            if self.compile_enabled:
+                mark_dynamic(h, (0, 1), strict=False)
+            with nvtx.annotate(f"fwd_block_{block_idx}", color="blue"):
+                # with self.offload_context:
+                one_block_kwargs = per_block_kwargs.get(block_key, {})
+                if self.checkpoint_tbo_dense_layers:
+                    h = checkpoint(
+                        block,
+                        h,
+                        use_reentrant=False,
+                        **one_block_kwargs,
+                    )
+                    h = cast(torch.Tensor, h)
+                else:
+                    h = block(h, **all_block_kwargs, **one_block_kwargs)
+
+            # commit cpu offload
+            # if torch.is_grad_enabled() and self.offload_sync_func is not None:
+            #     h = self.offload_sync_func(h)
+            #     h = cast(torch.Tensor, h)
+
+        # forward moe blocks with TBO
+        x0, x1 = h.chunk(2, dim=0)  # assume even batch size
+        labels0, labels1 = None, None
+        if labels is not None:
+            labels0, labels1 = labels.chunk(2, dim=0)
+            del labels
+        del h
+        # Mark sizes as dynamic for torch.compile().
+        if self.compile_enabled:
+            mark_dynamic(x0, (0, 1), strict=False)
+            mark_dynamic(x1, (0, 1), strict=False)
+        x1_is_fresh = True  # x1 is always fresh in the beginning
+        x1_ctx: object = {
+            "x1": x1,
+        }
+        for block_idx, block in enumerate(self.blocks.values()):
+            # skip dense blocks
+            if not block.is_moe:
+                continue
+
+            with nvtx.annotate(f"fwd_block_{block_idx}", color="blue"):
+                block = cast(MoEFusedV2TransformerBlock, block)
+                # with self.offload_context:
+                # x0, x1_ctx = block.checkpointed_combined_forward_ep_tbo(x0, x1_ctx, x1_is_fresh, **block_kwargs)
+                x0, x1_ctx = block.combined_forward_ep_tbo(
+                    x0, x1_ctx, x1_is_fresh, **all_block_kwargs
+                )
+                x1_is_fresh = False  # after the first TBO block, x1 is no longer fresh
+
+            # if torch.is_grad_enabled() and self.offload_sync_func is not None:
+            #     x0 = self.offload_sync_func(x0)
+            #     x0 = cast(torch.Tensor, x0)
+
+        # finish x1 last steps
+        h0, h1 = self._tbo_last_step(x0, x1_ctx, lm_head_kwargs, labels0, labels1)
+
+        return self._merge_tbo_outputs(h0, h1, loss_reduction=loss_reduction)
+
+    # @torch.compile
+    def _tbo_last_step(
+        self,
+        x0,
+        x1_ctx: object,
+        lm_head_kwargs: Dict[str, Any],
+        labels0: Optional[torch.Tensor],
+        labels1: Optional[torch.Tensor],
+    ):
+        from .ep_no_sync_tbo_1d import (
+            _NoSyncTboPendingContext,
+            ep_no_sync_stage_c_launch,
+            ep_no_sync_stage_tail,
+        )
+        from .ep_no_sync_tbo_rowwise import (
+            _NoSyncRowwiseTboPendingContext,
+            ep_no_sync_rowwise_tbo_stage_c_launch,
+            ep_no_sync_rowwise_tbo_stage_tail,
+        )
+
+        if isinstance(x1_ctx, _NoSyncRowwiseTboPendingContext):
+            with nvtx.annotate("TBO-1", color="orange"):
+                pending_ctx = ep_no_sync_rowwise_tbo_stage_c_launch(x1_ctx.block, x1_ctx)
+
+            h0 = self.maybe_forward_lm_head(x0, lm_head_kwargs, labels=labels0)
+
+            with nvtx.annotate("TBO-1", color="orange"):
+                x1 = ep_no_sync_rowwise_tbo_stage_tail(x1_ctx.block, pending_ctx)
+
+            h1 = self.maybe_forward_lm_head(x1, lm_head_kwargs, labels=labels1)
+            return h0, h1
+
+        if isinstance(x1_ctx, _NoSyncTboPendingContext):
+            with nvtx.annotate("TBO-1", color="orange"):
+                pending_ctx_1d = ep_no_sync_stage_c_launch(x1_ctx.block, x1_ctx)
+
+            h0 = self.maybe_forward_lm_head(x0, lm_head_kwargs, labels=labels0)
+
+            with nvtx.annotate("TBO-1", color="orange"):
+                x1 = ep_no_sync_stage_tail(x1_ctx.block, pending_ctx_1d)
+
+            h1 = self.maybe_forward_lm_head(x1, lm_head_kwargs, labels=labels1)
+            return h0, h1
+
+        if not isinstance(x1_ctx, SyncedTboPendingContext):
+            raise RuntimeError(
+                "Expected synced TBO context for the final TBO step, " f"got type={type(x1_ctx)}"
+            )
+        with nvtx.annotate("TBO-1", color="orange"):
+            global_x1 = x1_ctx.global_x
+            send_counts1 = x1_ctx.send_counts
+            recv_counts1 = x1_ctx.recv_counts
+            last_block = x1_ctx.last_block
+
+            assert last_block.routed_experts_router is not None
+            # finish reverse all2all and other ops for x1
+            with nvtx.annotate("reverse_all_to_all", color="green"):
+                global_x1 = cast(torch.Tensor, global_x1)
+                # Async all-to-all disabled; use the equivalent synchronous all-to-all.
+                # global_x1, local_x1, local_x_handle1 = ops.all_to_all_async(
+                #     global_x1,
+                #     send_counts1,
+                #     recv_counts1,
+                #     group=last_block.ep_pg,
+                # )
+                local_x1, _ = ops.all_to_all(
+                    global_x1,
+                    send_counts1,
+                    recv_counts1,
+                    group=last_block.ep_pg,
+                )
+
+            reversed_local_x_permutation_mapping1 = x1_ctx.reversed_local_x_permutation_mapping
+            local_x_global_routed_expert_weights1 = x1_ctx.local_x_global_routed_expert_weights
+            hidden_shape_before_permute1 = x1_ctx.hidden_shape_before_permute
+            in_shape1 = x1_ctx.in_shape
+            mixed_shared_out1 = x1_ctx.mixed_shared_out
+            attn_res_out1 = x1_ctx.attn_res_out
+
+            assert last_block is not None
+            assert last_block.routed_experts_router is not None
+
+        # x0 lm head
+        h0 = self.maybe_forward_lm_head(x0, lm_head_kwargs, labels=labels0)
+
+        with nvtx.annotate("TBO-1", color="orange"):
+            # local_x1 = ops.all_to_all_wait(global_x1, local_x1, local_x_handle1)
+
+            ## 9. Unpermute the (local) tokens returned by all-to-all communication ##
+            with nvtx.annotate("Unpermute-Merge local tokens", color="green"):
+                local_x1 = moe_unpermute_no_compile(
+                    inp=local_x1,
+                    row_id_map=reversed_local_x_permutation_mapping1,
+                    merging_probs=local_x_global_routed_expert_weights1.view(
+                        -1, last_block.routed_experts_router.top_k
+                    ),
+                    restore_shape=hidden_shape_before_permute1,
+                    map_type="index",
+                )
+            ## end
+
+            local_x1 = local_x1.view(in_shape1)
+
+            mlp_out1 = last_block._merge_routed_and_shared(local_x1, mixed_shared_out1)
+
+            x1 = attn_res_out1 + last_block.feed_forward_norm(mlp_out1)
+
+        # Get final logits but again pass-through in case of pipeline parallelism.
+        h1 = self.maybe_forward_lm_head(x1, lm_head_kwargs, labels=labels1)
+
+        return h0, h1
+
+    def _merge_tbo_outputs(
+        self,
+        h0: Union[torch.Tensor, LMOutputWithLoss],
+        h1: Union[torch.Tensor, LMOutputWithLoss],
+        *,
+        loss_reduction: Literal["mean", "sum", "none"],
+    ) -> Union[torch.Tensor, LMOutputWithLoss]:
+        if isinstance(h0, torch.Tensor):
+            if not isinstance(h1, torch.Tensor):
+                raise RuntimeError(f"TBO output type mismatch: {type(h0)} vs {type(h1)}")
+            return torch.cat([h0, h1], dim=0)
+
+        if not isinstance(h1, LMOutputWithLoss):
+            raise RuntimeError(f"TBO output type mismatch: {type(h0)} vs {type(h1)}")
+
+        logits: Optional[torch.Tensor]
+        if h0.logits is None:
+            logits = None
+        else:
+            if h1.logits is None:
+                raise RuntimeError(
+                    "TBO output type mismatch: first half has logits, second half does not"
+                )
+            logits = torch.cat([h0.logits, h1.logits], dim=0)
+
+        def merge_loss(
+            lhs: Optional[torch.Tensor],
+            rhs: Optional[torch.Tensor],
+        ) -> Optional[torch.Tensor]:
+            if lhs is None:
+                if rhs is not None:
+                    raise RuntimeError(
+                        "TBO output type mismatch: first half loss is None, second half is not"
+                    )
+                return None
+            if rhs is None:
+                raise RuntimeError(
+                    "TBO output type mismatch: first half loss is set, second half is None"
+                )
+            if loss_reduction == "none":
+                return torch.cat([lhs, rhs], dim=0)
+            if loss_reduction == "mean":
+                return (lhs + rhs) * 0.5
+            if loss_reduction == "sum":
+                return lhs + rhs
+            raise NotImplementedError(loss_reduction)
+
+        loss = merge_loss(h0.loss, h1.loss)
+        ce_loss = merge_loss(h0.ce_loss, h1.ce_loss)
+        z_loss = merge_loss(h0.z_loss, h1.z_loss)
+        assert loss is not None
+        assert ce_loss is not None
+        return LMOutputWithLoss(
+            logits=logits,
+            loss=loss,
+            ce_loss=ce_loss,
+            z_loss=z_loss,
+        )
+
+    def maybe_forward_lm_head(
+        self,
+        x: torch.Tensor,
+        lm_head_kwargs: Dict[str, Any],
+        labels: Optional[torch.Tensor] = None,
+    ):
+        if self.lm_head is not None:
+            if self.compile_enabled:
+                mark_dynamic(x, (0, 1), strict=False)
+                if labels is not None:
+                    mark_dynamic(labels, (0, 1), strict=False)
+            # NOTE: When TP is active we can't pass 'labels=None' or the hook from 'PrepareModuleInput'
+            # will throw an exception.
+            if labels is not None:
+                lm_head_kwargs["labels"] = labels
+            h0 = self.lm_head(x, **lm_head_kwargs)
+        else:
+            h0 = x
+        return h0
+
+    def _forward_blocks(
+        self, h, all_block_kwargs: Dict[str, Any], per_block_kwargs: Dict[Any, Dict[str, Any]]
+    ) -> torch.Tensor:
+        # Run each block.
+        for block_idx, (block_key, block) in enumerate(self.blocks.items()):
+            # Mark sizes as dynamic for torch.compile().
+            if self.compile_enabled:
+                mark_dynamic(h, (0, 1), strict=False)
+            with nvtx.annotate(f"fwd_block_{block_key}", color="blue"):
+                block_kwargs = per_block_kwargs.get(block_key, {})
+                combined_kwargs = {**all_block_kwargs, **block_kwargs}
+                do_not_recompute: List[int] = []  # HACK
+                if (self.recompute_each_block and (block_idx not in do_not_recompute)) or (
+                    self.recompute_block_keys and block_key in self.recompute_block_keys
+                ):
+                    h = checkpoint(
+                        self._forwrad_one_block,
+                        h,
+                        block_key,
+                        combined_kwargs,
+                        use_reentrant=False,
+                        context_fn=(
+                            noop_context_fn if self.compile_enabled else recompute_context_fn
+                        ),
+                        # determinism_check='none',
+                    )
+                    h = cast(torch.Tensor, h)
+                else:
+                    h = self._forwrad_one_block(h, block_key, combined_kwargs)
+
+        return h
+
+    def _forwrad_one_block(self, h, block_key: str, block_kwargs: Dict[str, Any]) -> torch.Tensor:
+        block = self.blocks[block_key]
+        h = block(h, **block_kwargs)
+        return h
+
+    def forward_embed(self, input_ids: torch.Tensor) -> torch.Tensor:
+        # Get embeddings but pass-through for non-existent layers to allow easy
+        # pipeline parallel configuration.
+        h = self.embeddings(input_ids) if self.embeddings is not None else input_ids
+        if self.embeddings is not None and self.embed_scale is not None:
+            h = h * self.embed_scale
+        if self.embedding_norm is not None:
+            assert (
+                self.embeddings is not None
+            )  # PP does not have embedding, should not have embedding norm either
+            h = self.embedding_norm(h)
+        return h
+
+    def forward(
+        self,
+        input_ids: torch.Tensor,
+        *,
+        labels: Optional[torch.Tensor] = None,
+        ignore_index: int = -100,
+        loss_reduction: Literal["mean", "sum", "none"] = "mean",
+        z_loss_multiplier: Optional[float] = None,
+        loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
+        return_logits: Optional[bool] = None,
+        **kwargs,
+    ) -> Union[torch.Tensor, LMOutputWithLoss]:
+        """
+        Run the transformer on the token input IDs.
+
+        :param input_ids: The token input IDs, shape ``(batch_size, seq_len)``.
+
+        :returns: The logits if ``labels`` is ``None`` or the losses if ``labels`` is not ``None``.
+        """
+        if self.tbo:
+            return self.forward_tbo(
+                input_ids,
+                labels=labels,
+                ignore_index=ignore_index,
+                loss_reduction=loss_reduction,
+                z_loss_multiplier=z_loss_multiplier,
+                loss_div_factor=loss_div_factor,
+                return_logits=return_logits,
+                **kwargs,
+            )
+
+        (
+            input_ids,
+            labels,
+            all_block_kwargs,
+            per_block_kwargs,
+            lm_head_kwargs,
+        ) = self._prepare_inputs(
+            input_ids,
+            labels,
+            ignore_index=ignore_index,
+            loss_reduction=loss_reduction,
+            z_loss_multiplier=z_loss_multiplier,
+            loss_div_factor=loss_div_factor,
+            return_logits=return_logits,
+            **kwargs,
+        )
+
+        h = self.forward_embed(input_ids)
+
+        if self.recompute_all_blocks_by_chunk:
+            h = checkpoint(
+                self._forward_blocks,
+                h,
+                all_block_kwargs,
+                per_block_kwargs,
+                use_reentrant=False,
+                context_fn=(noop_context_fn if self.compile_enabled else recompute_context_fn),
+            )
+            h = cast(torch.Tensor, h)
+        else:
+            h = self._forward_blocks(h, all_block_kwargs, per_block_kwargs)
+
+        # Get final logits but again pass-through in case of pipeline parallelism.
+        if self.lm_head is not None:
+            if self.compile_enabled:
+                mark_dynamic(h, (0, 1), strict=False)
+                if labels is not None:
+                    mark_dynamic(labels, (0, 1), strict=False)
+            # NOTE: When TP is active we can't pass 'labels=None' or the hook from 'PrepareModuleInput'
+            # will throw an exception.
+            if labels is not None:
+                lm_head_kwargs["labels"] = labels
+
+            with nvtx.annotate("lm_head", color="purple"):
+                out = self.lm_head(h, **lm_head_kwargs)
+
+            # check for nan
+            # if torch.isnan(out.loss).any():
+            #     print('nan')
+
+        else:
+            out = h
+        return out
+
+
+def _hide_cpu_inputs_from_torch(m, args, kwargs) -> Optional[Tuple[Any, Dict[str, Any]]]:
+    del m
+    # Keep CPU-only metadata out of wrappers/hooks that assume every tensor kwarg
+    # belongs on the module device. This came from composable-DDP/FSDP-era
+    # behavior; revalidate under MultiGroupDDP before removing it.
+    if (doc_lens := kwargs.get("doc_lens")) is not None:
+        kwargs["doc_lens"] = hide_from_torch(doc_lens)
+    return (args, kwargs)
+
+
+def _unhide_cpu_inputs_from_torch(m, args, kwargs) -> Optional[Tuple[Any, Dict[str, Any]]]:
+    del m
+    if (doc_lens := kwargs.get("doc_lens")) is not None:
+        kwargs["doc_lens"] = unhide_from_torch(doc_lens)
+    return (args, kwargs)
