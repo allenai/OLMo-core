@@ -79,6 +79,7 @@ def _get_transformer_config(
         "llama3_8b": TransformerConfig.llama3_8B,
         "llama3_70b": TransformerConfig.llama3_70B,
         "llama3_405b": TransformerConfig.llama3_405B,
+        "qwen3_0_6b": TransformerConfig.qwen3_0_6B,
         "qwen3_4b": TransformerConfig.qwen3_4B,
     }
 
