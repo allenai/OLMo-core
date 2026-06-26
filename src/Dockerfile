@@ -4,6 +4,8 @@ ARG CUDA_VERSION=12.8.1
 ARG CUDA_VERSION_PATH=cu128
 ARG PYTHON_VERSION=3.12
 ARG TORCH_CUDA_ARCH_LIST="8.0 9.0 10.0"
+ARG NVIDIA_NCCL_CU13_VERSION=2.30.7
+ARG NVIDIA_NVSHMEM_CU13_VERSION=3.7.0
 ARG BASE_IMAGE=ubuntu:${UBUNTU_VERSION}
 ARG DEVEL_BASE_IMAGE=nvidia/cuda:${CUDA_VERSION}-cudnn-devel-ubuntu${UBUNTU_VERSION}
 
@@ -50,6 +52,10 @@ ARG TORCHAUDIO_VERSION=2.11.0
 # Optional cuBLAS override for package mismatches. For example, TE cu13 wheels
 # reference cublasLtGroupedMatrixLayoutInit_internal, which is not in cuBLAS 13.1.
 ARG NVIDIA_CUBLAS_VERSION=""
+# DeepEP V2's Gin backend needs NCCL >= 2.30.4 headers/runtime. Keep these
+# as package-level overrides only; the DeepEP source itself is not baked in.
+ARG NVIDIA_NCCL_CU13_VERSION
+ARG NVIDIA_NVSHMEM_CU13_VERSION
 ARG INSTALL_CHANNEL=whl
 RUN set -eux; \
     torch_packages="torch==${TORCH_VERSION} torchvision==${TORCHVISION_VERSION}"; \
@@ -59,6 +65,12 @@ RUN set -eux; \
     pip install --no-cache-dir --index-url "https://download.pytorch.org/${INSTALL_CHANNEL}/${CUDA_VERSION_PATH}/" ${torch_packages}; \
     if [ -n "${NVIDIA_CUBLAS_VERSION}" ]; then \
         pip install --no-cache-dir --no-deps --upgrade "nvidia-cublas==${NVIDIA_CUBLAS_VERSION}"; \
+    fi; \
+    if [ -n "${NVIDIA_NCCL_CU13_VERSION}" ]; then \
+        pip install --no-cache-dir --no-deps --upgrade "nvidia-nccl-cu13==${NVIDIA_NCCL_CU13_VERSION}"; \
+    fi; \
+    if [ -n "${NVIDIA_NVSHMEM_CU13_VERSION}" ]; then \
+        pip install --no-cache-dir --no-deps --upgrade "nvidia-nvshmem-cu13==${NVIDIA_NVSHMEM_CU13_VERSION}"; \
     fi
 
 ARG TORCH_CUDA_ARCH_LIST
@@ -168,6 +180,14 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
         libxml2-dev \
         libjpeg-dev \
         libpng-dev \
+        rdma-core \
+        libibverbs1 \
+        libibverbs-dev \
+        ibverbs-providers \
+        ibverbs-utils \
+        librdmacm1 \
+        librdmacm-dev \
+        perftest \
         gnupg \
         jq \
         gcc \
@@ -218,8 +238,10 @@ RUN set -eux; \
         DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
           rdma-core=${DOCA_RDMA_CORE_VERSION} \
           libibverbs1=${DOCA_RDMA_CORE_VERSION} \
+          libibverbs-dev=${DOCA_RDMA_CORE_VERSION} \
           ibverbs-providers=${DOCA_RDMA_CORE_VERSION} \
           librdmacm1=${DOCA_RDMA_CORE_VERSION} \
+          librdmacm-dev=${DOCA_RDMA_CORE_VERSION} \
           ibverbs-utils=${DOCA_RDMA_CORE_VERSION} \
           perftest=${DOCA_PERFTEST_VERSION}; \
         rm -rf /var/lib/apt/lists/*; \
@@ -235,7 +257,9 @@ ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
 # Prefer CUDA libraries bundled with PyTorch wheels over the base image's
 # /usr/local/cuda libraries so extension wheels resolve against matching libs.
 ENV PYTORCH_NVIDIA_LIB=/opt/conda/lib/python${PYTHON_VERSION}/site-packages/nvidia
-ENV LD_LIBRARY_PATH=${PYTORCH_NVIDIA_LIB}/cu13/lib:${PYTORCH_NVIDIA_LIB}/cublas/lib:/usr/local/nvidia/lib:/usr/local/nvidia/lib64:${LD_LIBRARY_PATH}
+ENV EP_NCCL_ROOT_DIR=${PYTORCH_NVIDIA_LIB}/nccl
+ENV EP_NVSHMEM_ROOT_DIR=${PYTORCH_NVIDIA_LIB}/nvshmem
+ENV LD_LIBRARY_PATH=${PYTORCH_NVIDIA_LIB}/nccl/lib:${PYTORCH_NVIDIA_LIB}/nvshmem/lib:${PYTORCH_NVIDIA_LIB}/cu13/lib:${PYTORCH_NVIDIA_LIB}/cublas/lib:/usr/local/nvidia/lib:/usr/local/nvidia/lib64:${LD_LIBRARY_PATH}
 ENV UV_SYSTEM_PYTHON=1
 ENV UV_BREAK_SYSTEM_PACKAGES=1
 ENV PATH=/usr/local/nvidia/bin:/usr/local/cuda/bin:/root/.local/bin:/root/.cargo/bin:/opt/conda/bin:$PATH
@@ -246,7 +270,9 @@ RUN set -eux; \
 # Container-wide env for login shells (SSH, su -) and (via bash.bashrc below) interactive shells.
 export PATH=/usr/local/nvidia/bin:/usr/local/cuda/bin:/root/.local/bin:/root/.cargo/bin:/opt/conda/bin:\${PATH}
 export PYTORCH_NVIDIA_LIB=/opt/conda/lib/python${PYTHON_VERSION}/site-packages/nvidia
-export LD_LIBRARY_PATH=\${PYTORCH_NVIDIA_LIB}/cu13/lib:\${PYTORCH_NVIDIA_LIB}/cublas/lib:/usr/local/nvidia/lib:/usr/local/nvidia/lib64:\${LD_LIBRARY_PATH}
+export EP_NCCL_ROOT_DIR=\${PYTORCH_NVIDIA_LIB}/nccl
+export EP_NVSHMEM_ROOT_DIR=\${PYTORCH_NVIDIA_LIB}/nvshmem
+export LD_LIBRARY_PATH=\${PYTORCH_NVIDIA_LIB}/nccl/lib:\${PYTORCH_NVIDIA_LIB}/nvshmem/lib:\${PYTORCH_NVIDIA_LIB}/cu13/lib:\${PYTORCH_NVIDIA_LIB}/cublas/lib:/usr/local/nvidia/lib:/usr/local/nvidia/lib64:\${LD_LIBRARY_PATH}
 export UV_SYSTEM_PYTHON=1
 export UV_BREAK_SYSTEM_PACKAGES=1
 EOF
@@ -280,9 +306,16 @@ RUN wget https://beaker.org/install -O /tmp/install-beaker.sh && \
     rm /tmp/install-beaker.sh
 
 # Keep this after all release-stage Python installs. PyTorch's cu13 wheel
-# currently constrains nvidia-cublas to 13.1.x, but TE cu13 needs a symbol
-# from newer cuBLAS.
+# currently constrains some NVIDIA packages below what DeepEP V2 / TE need.
+ARG NVIDIA_NCCL_CU13_VERSION
+ARG NVIDIA_NVSHMEM_CU13_VERSION
 RUN set -eux; \
     if [ -n "${NVIDIA_CUBLAS_VERSION}" ]; then \
         pip install --no-cache-dir --no-deps --upgrade "nvidia-cublas==${NVIDIA_CUBLAS_VERSION}"; \
+    fi; \
+    if [ -n "${NVIDIA_NCCL_CU13_VERSION}" ]; then \
+        pip install --no-cache-dir --no-deps --upgrade "nvidia-nccl-cu13==${NVIDIA_NCCL_CU13_VERSION}"; \
+    fi; \
+    if [ -n "${NVIDIA_NVSHMEM_CU13_VERSION}" ]; then \
+        pip install --no-cache-dir --no-deps --upgrade "nvidia-nvshmem-cu13==${NVIDIA_NVSHMEM_CU13_VERSION}"; \
     fi
