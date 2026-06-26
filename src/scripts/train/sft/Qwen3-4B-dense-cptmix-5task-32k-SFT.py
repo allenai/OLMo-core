@@ -32,7 +32,7 @@ Data lives on weka under ``prasanns/cptmix_data/`` (uploaded from the local /scr
   * oolong_qwen               ("")
   * rerank_qwen               ("")
   * outlier_qwen              ("")
-  * dolma3_longmino_qwen3_sample (part-*.npy + all-True mask-*.npy -> full CPT loss)
+  * dolma3_longmino_mix_sample15B_qwen (part-*.npy + all-True mask-*.npy -> full CPT loss)
 
 The mixing fractions / max_repetition_factor logic mirror the local launcher exactly. Internal
 script pattern (build_experiment_config + main, commands launch/train/dry_run)::
@@ -106,8 +106,8 @@ OOLONG_DATA_ROOT = f"{DATA_ROOT}/oolong"
 RERANK_DATA_ROOT = f"{DATA_ROOT}/rerank"
 OUTLIER_DATA_ROOT = f"{DATA_ROOT}/outlier"
 CPT_DATA_ROOT = (
-    "/weka/oe-training-default/ai2-llm/checkpoints/prasanns/cptmix_data/"
-    "dolma3_longmino_qwen3_sample"
+    "/weka/oe-training-default/ai2-llm/checkpoints/amandab/"
+    "dolma3_longmino_mix_sample15B_qwen"
 )
 
 # Dense CPT base (model+optim) on weka -- the dolma3longmino CPT of Qwen3-4B-Base. Loaded
@@ -142,7 +142,7 @@ LR = 1e-5  # the winning-recipe LR (cpt0.85 needs the lower 1e-5 to preserve RUL
 # batch the 8k recipe used); size the token budget to TARGET_STEPS. The earlier 16x-larger batch
 # gave only ~122 steps and the SFT tasks never learned (dense-32k v1 contra f1 0.04 vs recipe 0.76).
 TARGET_STEPS = 1465
-GLOBAL_BATCH_SIZE = SEQUENCE_LENGTH  # one instance/optimizer step (grad-accum 1 on the CP=8 replica)
+GLOBAL_BATCH_SIZE = 2 * SEQUENCE_LENGTH  # one instance/optimizer step (grad-accum 1 on the CP=8 replica)
 TARGET_TOKENS = GLOBAL_BATCH_SIZE * TARGET_STEPS  # 32k -> 48.0M tokens
 MAX_STEPS = max(1, round(TARGET_TOKENS / GLOBAL_BATCH_SIZE))  # = TARGET_STEPS = 1465
 
@@ -226,7 +226,6 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     cpt_doc_source = NumpyDocumentSourceConfig(
         source_paths=[f"{cpt}/part-*.npy"],
         tokenizer=doc_tokenizer_config,
-        label_mask_paths=[f"{cpt}/mask-*.npy"],  # explicit all-True => full-sequence CPT loss
         expand_glob=True,
     )
 
