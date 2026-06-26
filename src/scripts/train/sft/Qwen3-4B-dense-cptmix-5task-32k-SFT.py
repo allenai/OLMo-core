@@ -83,7 +83,11 @@ from olmo_core.train.train_module import (
 # ---------------------------------------------------------------------------
 # Geometry
 # ---------------------------------------------------------------------------
-SEQUENCE_LENGTH = 32768  # 32k context; YaRN (factor 2) keeps the model evaluable out to 64k.
+SEQUENCE_LENGTH = 40960  # "32k + a bit": wide enough to fit every 32k-rung SFT example (32k context
+# + chat template + answer) WITHOUT chunking, while the 64k rung is dropped at tokenization (out of
+# scope for this shorter-context run). YaRN (factor 2, old_context_len 32768) keeps this < the 65536
+# native ceiling. A window >= the longest packed doc is what avoids the prompt-only-window NaN that
+# a 32k window hit on the 64k ladder data; the dense-64k run is the analogous full-length run.
 
 # Context parallel (Ulysses) degree. Qwen3-4B: n_heads=32, n_kv_heads=8 -> head_stride=4, so an
 # all-to-all CP degree of 8 splits both the 32 query heads and (with stride) the 8 kv heads cleanly.
@@ -99,7 +103,7 @@ NUM_NODES = 2
 # LENGTH-LADDER (to-64k) SFT data: real long-context examples (ctx up to 64k) replacing the old
 # <=8k packed shards. Tokenized with max_seq_len 65536, EOS 151643. CPT text is unchanged and stays
 # in the original cptmix_data dir (reused, not re-uploaded).
-DATA_ROOT = "/weka/oe-training-default/ai2-llm/checkpoints/prasanns/cptmix_data_ladder64k"
+DATA_ROOT = "/weka/oe-training-default/ai2-llm/checkpoints/prasanns/cptmix_data_ladder40k"
 CONTRA_DATA_ROOT = f"{DATA_ROOT}/contradiction"
 NQ_DATA_ROOT = f"{DATA_ROOT}/nq"
 OOLONG_DATA_ROOT = f"{DATA_ROOT}/oolong"
@@ -142,8 +146,11 @@ LR = 1e-5  # the winning-recipe LR (cpt0.85 needs the lower 1e-5 to preserve RUL
 # batch the 8k recipe used); size the token budget to TARGET_STEPS. The earlier 16x-larger batch
 # gave only ~122 steps and the SFT tasks never learned (dense-32k v1 contra f1 0.04 vs recipe 0.76).
 TARGET_STEPS = 1465
-GLOBAL_BATCH_SIZE = 2 * SEQUENCE_LENGTH  # one instance/optimizer step (grad-accum 1 on the CP=8 replica)
-TARGET_TOKENS = GLOBAL_BATCH_SIZE * TARGET_STEPS  # 32k -> 48.0M tokens
+GLOBAL_BATCH_SIZE = SEQUENCE_LENGTH  # ONE instance/optimizer step (the proven dense-64k shape). A
+# 2-instance batch trips split_batch on the varlen doc-length metadata (IndexError); 1 instance hits
+# the early-return path. The earlier NaN that motivated the 2-seq hack came from chunking >window docs
+# into prompt-only windows -- now avoided by the 40k window + 40k-capped data, so 1 instance is safe.
+TARGET_TOKENS = GLOBAL_BATCH_SIZE * TARGET_STEPS  # 40960 * 1465 = 60.0M tokens
 MAX_STEPS = max(1, round(TARGET_TOKENS / GLOBAL_BATCH_SIZE))  # = TARGET_STEPS = 1465
 
 
