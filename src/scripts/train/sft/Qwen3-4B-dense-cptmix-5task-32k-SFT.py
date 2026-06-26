@@ -114,11 +114,14 @@ CPT_DATA_ROOT = (
     "dolma3_longmino_mix_sample15B_qwen"
 )
 
-# Dense CPT base (model+optim) on weka -- the dolma3longmino CPT of Qwen3-4B-Base. Loaded
-# weights-only (load_optim_state=False), so only the model tensors are read from model_and_optim.
+# Dense CPT base (model-only) on weka -- the dolma3longmino CPT of Qwen3-4B-Base. Loaded
+# weights-only (load_optim_state=False), so model-only distcp is sufficient. Re-hosted under
+# prasanns/ (from the local /scratch model-only copy) because the original shared path
+# `q4b-dense-dolma3longmino/step2385` became unavailable mid-day (FileNotFound on afternoon nodes,
+# though dense-64k loaded it in the morning) -- this prasanns/ copy is one I control and persists.
 BASE_CHECKPOINT = (
     "/weka/oe-training-default/ai2-llm/checkpoints/"
-    "q4b-dense-dolma3longmino/step2385/model_and_optim"
+    "prasanns/q4b-dense-base-step2385-modelonly/model_and_optim"
 )
 
 # ---------------------------------------------------------------------------
