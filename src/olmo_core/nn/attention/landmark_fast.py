@@ -371,7 +371,7 @@ class _FusedLandmarkAttentionFast(FusedLandmarkAttention):
     """
 
     @staticmethod
-    def forward(ctx, q, k, v, n_prefix_q, sm_scale, block_size, doc_id=None):
+    def forward(ctx, q, k, v, n_prefix_q, sm_scale, block_size, doc_id=None, chunk_ids=None):
         if triton is None:
             raise RuntimeError("Landmark attention requires 'triton' (and a CUDA device).")
         q = q.contiguous()
@@ -387,6 +387,15 @@ class _FusedLandmarkAttentionFast(FusedLandmarkAttention):
             assert doc_id.shape == (batch, n_blocks), (doc_id.shape, (batch, n_blocks))
             doc_id = doc_id.to(device=q.device, dtype=torch.int32).contiguous()
         doc_id_arg = doc_id if doc_mask else torch.empty(1, dtype=torch.int32, device=q.device)
+        # Per-token document-chunked masking (mutually exclusive with the per-block doc_id packing).
+        chunk_mask = chunk_ids is not None
+        if chunk_mask:
+            assert not doc_mask, "chunk_ids and doc_id (packing) are mutually exclusive"
+            assert chunk_ids.shape == (batch, k.shape[2]), (chunk_ids.shape, (batch, k.shape[2]))
+            chunk_ids = chunk_ids.to(device=q.device, dtype=torch.int32).contiguous()
+        chunk_ids_arg = (
+            chunk_ids if chunk_mask else torch.empty(1, dtype=torch.int32, device=q.device)
+        )
 
         o = torch.empty_like(q)
         grid = (triton.cdiv(q.shape[2], BLOCK), q.shape[0] * q.shape[1], 1)
@@ -428,6 +437,7 @@ class _FusedLandmarkAttentionFast(FusedLandmarkAttention):
             L,
             m,
             doc_id_arg,
+            chunk_ids_arg,
             q.shape[0],
             q.shape[1],
             q.shape[2],
@@ -437,11 +447,13 @@ class _FusedLandmarkAttentionFast(FusedLandmarkAttention):
             BLOCK_DMODEL=d,
             N_PREFIX_Q=n_prefix_q,
             DOC_MASK=doc_mask,
+            CHUNK_MASK=chunk_mask,
             num_warps=num_warps,
             num_stages=num_stages,
         )
         ctx.save_for_backward(q, k, v, o, L, m)
         ctx.doc_id = doc_id  # None when not packing
+        ctx.chunk_ids = chunk_ids  # None unless per-token chunked masking
         ctx.grid = grid
         ctx.sm_scale = sm_scale
         ctx.BLOCK_DMODEL = d
@@ -451,9 +463,15 @@ class _FusedLandmarkAttentionFast(FusedLandmarkAttention):
 
     @staticmethod
     def backward(ctx, do):
+        # The backward kernels are not yet chunk-mask-aware; refuse rather than return wrong grads.
+        if getattr(ctx, "chunk_ids", None) is not None:
+            raise NotImplementedError(
+                "DocumentLandmark fused-kernel backward (per-token chunk mask) is not implemented "
+                "yet; use the eager path for training."
+            )
         # Fast path only supports no history KV; defer to the original backward otherwise.
         if ctx.N_PREFIX_Q != 0:
-            return FusedLandmarkAttention.backward(ctx, do)
+            return FusedLandmarkAttention.backward(ctx, do) + (None,)
 
         BLOCK = ctx.BLOCK
         q, k, v, o, lse, m = ctx.saved_tensors
@@ -538,7 +556,7 @@ class _FusedLandmarkAttentionFast(FusedLandmarkAttention):
         _bwd_q_kernel[(ctx.grid[1], ctx.grid[0])](
             *args, **const, num_warps=warps, num_stages=stages
         )
-        return dq, dk, dv, None, None, None, None
+        return dq, dk, dv, None, None, None, None, None
 
 
 def fused_landmark_attention_fast(
@@ -549,6 +567,7 @@ def fused_landmark_attention_fast(
     sm_scale: float = None,  # type: ignore[assignment]
     block_size: int = 64,
     doc_id: Optional[torch.Tensor] = None,
+    chunk_ids: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
     """Drop-in for ``landmark_kernel.fused_landmark_attention`` with the fast (FA2-style) backward.
 
@@ -566,7 +585,7 @@ def fused_landmark_attention_fast(
     if sm_scale is None:
         sm_scale = 1.0 / math.sqrt(q.size(-1))
     return _FusedLandmarkAttentionFast.apply(
-        q, k, v, n_history_blocks, sm_scale, block_size, doc_id
+        q, k, v, n_history_blocks, sm_scale, block_size, doc_id, chunk_ids
     )
 
 
