@@ -137,13 +137,14 @@ CONTRA_FRAC = max(0.0, 1.0 - CPT_FRAC - (NQ_FRAC + OOLONG_FRAC + RERANK_FRAC + O
 # ---------------------------------------------------------------------------
 LR = 1e-5  # the winning-recipe LR (cpt0.85 needs the lower 1e-5 to preserve RULER).
 
-# Global batch in *tokens*. One CP=8 replica processes one 32k instance per micro-step, so a
-# 512k-token global batch = 8 grad-accum micro-steps per DP replica (matches the base32k script).
-GLOBAL_BATCH_SIZE = SEQUENCE_LENGTH * 16  # 524288 tokens
-
-# Training token budget (~48-96M). 64M tokens / 512k = 125 optimizer steps.
-TARGET_TOKENS = 64_000_000
-MAX_STEPS = max(1, round(TARGET_TOKENS / GLOBAL_BATCH_SIZE))
+# Match the validated 8k recipe's optimizer dynamics (~1465 steps at lr1e-5). The smallest valid
+# global batch here is ONE sequence/optimizer step (= SEQUENCE_LENGTH tokens -- the same 32768-token
+# batch the 8k recipe used); size the token budget to TARGET_STEPS. The earlier 16x-larger batch
+# gave only ~122 steps and the SFT tasks never learned (dense-32k v1 contra f1 0.04 vs recipe 0.76).
+TARGET_STEPS = 1465
+GLOBAL_BATCH_SIZE = SEQUENCE_LENGTH  # one instance/optimizer step (grad-accum 1 on the CP=8 replica)
+TARGET_TOKENS = GLOBAL_BATCH_SIZE * TARGET_STEPS  # 32k -> 48.0M tokens
+MAX_STEPS = max(1, round(TARGET_TOKENS / GLOBAL_BATCH_SIZE))  # = TARGET_STEPS = 1465
 
 
 def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:

@@ -129,9 +129,13 @@ CONTRA_FRAC = max(0.0, 1.0 - CPT_FRAC - (NQ_FRAC + OOLONG_FRAC + RERANK_FRAC + O
 # Optimization / budget
 # ---------------------------------------------------------------------------
 LR = 1e-5
-GLOBAL_BATCH_SIZE = SEQUENCE_LENGTH * 16  # 524288 tokens (16 grad-accum micro-steps on 1 CP replica)
-TARGET_TOKENS = 64_000_000
-MAX_STEPS = max(1, round(TARGET_TOKENS / GLOBAL_BATCH_SIZE))
+# Match the validated 8k recipe's optimizer dynamics (~1465 steps at lr1e-5): smallest valid global
+# batch = ONE sequence/optimizer step (= SEQUENCE_LENGTH tokens), token budget sized to TARGET_STEPS.
+# The earlier 16x-larger batch gave only ~122 steps and the SFT tasks never learned.
+TARGET_STEPS = 1465
+GLOBAL_BATCH_SIZE = SEQUENCE_LENGTH  # one packed window/optimizer step (grad-accum 1 on the CP=8 replica)
+TARGET_TOKENS = GLOBAL_BATCH_SIZE * TARGET_STEPS  # 32k -> 48.0M tokens
+MAX_STEPS = max(1, round(TARGET_TOKENS / GLOBAL_BATCH_SIZE))  # = TARGET_STEPS = 1465
 
 
 def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
