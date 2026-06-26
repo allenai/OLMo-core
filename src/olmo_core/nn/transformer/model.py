@@ -43,6 +43,7 @@ from ..attention import (
     RingAttentionLoadBalancer,
     SequenceMixer,
 )
+from ..attention.chunked_mask import build_chunk_ids_from_tokens
 from ..buffer_cache import BufferCache
 from ..functional import l2_normalize
 from ..layer_norm import LayerNormConfig
@@ -127,6 +128,10 @@ class Transformer(nn.Module):
         self.n_layers = n_layers
         self.dtype = dtype
         self.embed_scale = embed_scale
+        # Optional document-chunked-attention config (see ``enable_document_chunk_attention``). When
+        # set, ``_prepare_inputs`` reconstructs per-token ``chunk_ids`` from the boundary tokens and
+        # forwards them to every block (for :class:`DocumentLandmarkAttention`).
+        self._document_chunk_attention: Optional[Dict[str, Any]] = None
 
         self.embeddings = nn.Embedding(vocab_size, d_model, dtype=dtype, device=init_device)
         self.embedding_norm = (
@@ -185,6 +190,39 @@ class Transformer(nn.Module):
 
     def _validate_block(self, block: TransformerBlockBase) -> TransformerBlockBase:
         return block
+
+    def enable_document_chunk_attention(
+        self,
+        doc_start_id: int,
+        doc_end_id: int,
+        eos_id: int,
+        mode: str = "chunked",
+        pad_id: Optional[int] = None,
+    ) -> None:
+        """
+        Enable runtime ``chunk_ids`` reconstruction for document-chunked landmark attention.
+
+        When enabled, :meth:`forward` reconstructs a per-token ``chunk_id`` role tensor from the
+        ``<|doc_start|>`` / ``<|doc_end|>`` boundary tokens (and the EOS pad terminator) on every
+        step and forwards it to each block, so :class:`~olmo_core.nn.attention.DocumentLandmarkAttention`
+        can build its chunked mask. All attention layers must accept a ``chunk_ids`` keyword (i.e. the
+        model is uniformly ``document_landmark``); mixing with other attention types via this path is
+        not supported. Context parallelism with chunked attention is not yet supported.
+
+        :param doc_start_id: The ``<|doc_start|>`` token id.
+        :param doc_end_id: The ``<|doc_end|>`` token id.
+        :param eos_id: The EOS / document terminator (everything after the first one is padding).
+        :param mode: ``"chunked"`` (no SINK) or ``"modified_swa"`` (mark the instruction prefix SINK).
+        :param pad_id: Optional dedicated interior-padding id (window fill for the landmark variant);
+            when set, those positions reconstruct to ``PAD`` (non-attendable) rather than ``FREE``.
+        """
+        self._document_chunk_attention = {
+            "doc_start_id": int(doc_start_id),
+            "doc_end_id": int(doc_end_id),
+            "eos_id": int(eos_id),
+            "mode": mode,
+            "pad_id": None if pad_id is None else int(pad_id),
+        }
 
     def compute_auxiliary_metrics(
         self, reset: bool = True
@@ -405,6 +443,12 @@ class Transformer(nn.Module):
             max_doc_len = max(max_doc_lens)
             cu_doc_lens = get_cumulative_document_lengths(doc_lens)
 
+        if self._document_chunk_attention is not None and self._cp_load_balancer is not None:
+            raise NotImplementedError(
+                "Document-chunked landmark attention (enable_document_chunk_attention) is not yet "
+                "supported together with context parallelism (chunk_ids are not sequence-sharded)."
+            )
+
         # Shard inputs and RoPE buffers on sequence dimension if using context parallelism.
         if (cp_load_balancer := self._cp_load_balancer) is not None:
             inputs = [input_ids]
@@ -490,6 +534,20 @@ class Transformer(nn.Module):
                 all_block_kwargs["cu_doc_lens"] = move_to_device(cu_doc_lens, self.device)
             if cache_leftpad is not None:
                 all_block_kwargs["cache_leftpad"] = move_to_device(cache_leftpad, self.device)
+
+            # Document-chunked landmark attention: reconstruct per-token chunk_ids from the boundary
+            # tokens and forward them to every block (see ``enable_document_chunk_attention``).
+            if self._document_chunk_attention is not None:
+                cfg = self._document_chunk_attention
+                chunk_ids = build_chunk_ids_from_tokens(
+                    input_ids,
+                    doc_start_id=cfg["doc_start_id"],
+                    doc_end_id=cfg["doc_end_id"],
+                    eos_id=cfg["eos_id"],
+                    mode=cfg["mode"],
+                    pad_id=cfg.get("pad_id"),
+                )
+                all_block_kwargs["chunk_ids"] = move_to_device(chunk_ids, self.device)
 
         if "cu_doc_lens" in all_block_kwargs:
             mark_dynamic(all_block_kwargs["cu_doc_lens"], 0, strict=False)  # type: ignore[arg-type]

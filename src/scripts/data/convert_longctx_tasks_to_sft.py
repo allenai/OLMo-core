@@ -258,15 +258,18 @@ def iter_examples(jsonl_patterns: List[str], limit: int, limit_per_file: int = 0
 # ---------------------------------------------------------------------------
 
 
-def render_chat(tok, messages: List[dict], add_generation_prompt: bool) -> str:
-    """Render a chat to a string with the Qwen3 template (``enable_thinking`` left at its default)."""
+def render_chat(tok, messages: List[dict], add_generation_prompt: bool,
+                enable_thinking: Optional[bool] = None) -> str:
+    """Render a chat to a string with the Qwen3 template. ``enable_thinking=False`` suppresses the
+    empty ``<think></think>`` block the Qwen3 template otherwise injects into the assistant turn."""
+    kw = {} if enable_thinking is None else {"enable_thinking": enable_thinking}
     return tok.apply_chat_template(
-        messages, tokenize=False, add_generation_prompt=add_generation_prompt
+        messages, tokenize=False, add_generation_prompt=add_generation_prompt, **kw
     )
 
 
 def tokenize_instance(
-    tok, user_content: str, answer: str
+    tok, user_content: str, answer: str, enable_thinking: Optional[bool] = None
 ) -> Optional[Tuple[np.ndarray, np.ndarray]]:
     """
     Tokenize one (user, assistant) chat instance and build its (token_ids, labels_mask) arrays,
@@ -280,9 +283,11 @@ def tokenize_instance(
     ``<|im_end|>``.
     """
     messages = [{"role": "user", "content": user_content}]
-    prompt_str = render_chat(tok, messages, add_generation_prompt=True)
+    prompt_str = render_chat(tok, messages, add_generation_prompt=True,
+                             enable_thinking=enable_thinking)
     full_str = render_chat(
-        tok, messages + [{"role": "assistant", "content": answer}], add_generation_prompt=False
+        tok, messages + [{"role": "assistant", "content": answer}], add_generation_prompt=False,
+        enable_thinking=enable_thinking,
     )
 
     if not full_str.startswith(prompt_str):
@@ -395,6 +400,9 @@ def main() -> None:
         "it). Default 64512 = the landmark CONTENT_SEQUENCE_LENGTH; safe for the dense run too.",
     )
     parser.add_argument("--tokenizer", default=DEFAULT_TOKENIZER)
+    parser.add_argument("--no-think", action="store_true",
+                        help="render with enable_thinking=False (suppress the empty <think></think> "
+                             "block) so the SFT model emits plain answers — less behavior-shifting.")
     parser.add_argument(
         "--query-position",
         default="both",
@@ -461,7 +469,10 @@ def main() -> None:
             n_skipped_too_long += 1
             continue
 
-        result = tokenize_instance(tok, user_content, answer)
+        result = tokenize_instance(
+            tok, user_content, answer,
+            enable_thinking=(False if args.no_think else None),
+        )
         if result is None:
             n_skipped_bad += 1
             continue

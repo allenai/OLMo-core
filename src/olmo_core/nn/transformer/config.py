@@ -4,7 +4,7 @@ from collections.abc import Callable
 from dataclasses import InitVar, dataclass, field
 from fnmatch import fnmatch
 from itertools import cycle, islice
-from typing import TYPE_CHECKING, Dict, List, Optional, cast
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, cast
 
 from olmo_core.config import UNSET, DType, StrEnum
 from olmo_core.doc_utils import beta_feature
@@ -329,6 +329,15 @@ class TransformerConfig(ModelConfig):
     embedding_init_std: Optional[float] = None
     freeze_params: Optional[List[str]] = None
     block_pattern: Optional[List[str]] = None
+    document_chunk_attention: Optional[Dict[str, Any]] = None
+    """
+    Enable runtime ``chunk_id`` reconstruction for document-chunked attention -- either
+    :class:`~olmo_core.nn.attention.DocumentLandmarkAttention` (landmark) or
+    :class:`~olmo_core.nn.attention.DocumentChunkedAttention` (dense). A dict of
+    ``{"doc_start_id", "doc_end_id", "eos_id", "mode"?}`` passed to
+    :meth:`~olmo_core.nn.transformer.Transformer.enable_document_chunk_attention` after the model is
+    built. Requires the model be uniformly a document-chunked variant and rules out context parallelism.
+    """
     block_overrides: Optional[Dict[int, TransformerBlockConfig]] = None
     embed_scale: Optional[float] = None
 
@@ -430,6 +439,9 @@ class TransformerConfig(ModelConfig):
                         break
                 else:
                     log.info(f"Param '{name}' will be trainable")
+
+        if self.document_chunk_attention is not None:
+            model.enable_document_chunk_attention(**self.document_chunk_attention)
 
         log.info("%s", model)
         log.info(
@@ -1643,6 +1655,9 @@ class TransformerConfig(ModelConfig):
         nonselected_landmark_mass: Optional[float] = None,
         sparse_landmark: bool = False,
         num_landmarks: Optional[int] = None,
+        document_landmark: bool = False,
+        document_chunked: bool = False,
+        cross_doc_mode: Optional[str] = None,
         layer_types: Optional[AttentionTypePatternConfig] = None,
         block_name: TransformerBlockType = TransformerBlockType.default,
         block_mods: Optional[
@@ -1694,18 +1709,32 @@ class TransformerConfig(ModelConfig):
                 att_type = AttentionType.fused
                 rope_type = RoPEType.fused
 
-        if sum([landmark, fast_landmark, fast_compressive_landmark, sparse_landmark]) > 1:
+        if (
+            sum([landmark, fast_landmark, fast_compressive_landmark, sparse_landmark, document_landmark])
+            > 1
+        ):
             raise OLMoConfigurationError(
                 "Only one of 'landmark', 'fast_landmark', 'fast_compressive_landmark', "
-                "'sparse_landmark' may be set."
+                "'sparse_landmark', 'document_landmark' may be set."
             )
 
         uses_uniform_landmark = (
-            landmark or fast_landmark or fast_compressive_landmark or sparse_landmark
+            landmark
+            or fast_landmark
+            or fast_compressive_landmark
+            or sparse_landmark
+            or document_landmark
         )
+        if document_chunked and (uses_uniform_landmark or layer_types is not None):
+            raise OLMoConfigurationError(
+                "'document_chunked' (dense chunked attention) cannot be combined with a landmark "
+                "variant or 'layer_types'."
+            )
+
         pattern_landmark_types = layer_types.landmark_types() if layer_types is not None else set()
         pattern_has_plain_landmark = AttentionType.landmark in pattern_landmark_types
         pattern_has_sparse_landmark = AttentionType.sparse_landmark in pattern_landmark_types
+        pattern_has_document_landmark = AttentionType.document_landmark in pattern_landmark_types
         pattern_has_compressive_landmark = (
             AttentionType.fast_compressive_landmark in pattern_landmark_types
         )
@@ -1738,6 +1767,10 @@ class TransformerConfig(ModelConfig):
                 raise OLMoConfigurationError(
                     "'num_landmarks' is only valid when 'layer_types' includes 'sparse_landmark'."
                 )
+            if cross_doc_mode is not None and not pattern_has_document_landmark:
+                raise OLMoConfigurationError(
+                    "'cross_doc_mode' is only valid when 'layer_types' includes 'document_landmark'."
+                )
         elif uses_uniform_landmark:
             if mem_freq is None:
                 raise OLMoConfigurationError(
@@ -1755,20 +1788,33 @@ class TransformerConfig(ModelConfig):
                 else AttentionType.fast_compressive_landmark
                 if fast_compressive_landmark
                 else AttentionType.sparse_landmark
+                if sparse_landmark
+                else AttentionType.document_landmark
             )
             if num_landmarks is not None and not sparse_landmark:
                 raise OLMoConfigurationError(
                     "'num_landmarks' is only valid when 'sparse_landmark=True'."
                 )
+            if cross_doc_mode is not None and not document_landmark:
+                raise OLMoConfigurationError(
+                    "'cross_doc_mode' is only valid when 'document_landmark=True'."
+                )
         else:
             if mem_freq is not None:
                 raise OLMoConfigurationError(
                     "'mem_freq' is only valid with a landmark attention variant "
-                    "(landmark / fast_landmark / sparse_landmark)."
+                    "(landmark / fast_landmark / sparse_landmark / document_landmark)."
                 )
             if num_landmarks is not None:
                 raise OLMoConfigurationError(
                     "'num_landmarks' is only valid when 'sparse_landmark=True'."
+                )
+            if document_chunked:
+                att_type = AttentionType.document_chunked
+            elif cross_doc_mode is not None:
+                raise OLMoConfigurationError(
+                    "'cross_doc_mode' is only valid when 'document_landmark=True' or "
+                    "'document_chunked=True'."
                 )
 
         # Feed-forward.
@@ -1807,6 +1853,11 @@ class TransformerConfig(ModelConfig):
                 ),
                 nonselected_landmark_mass=(
                     nonselected_landmark_mass if uses_compressive_landmark else None
+                ),
+                cross_doc_mode=(
+                    cross_doc_mode
+                    if (document_landmark or document_chunked or pattern_has_document_landmark)
+                    else None
                 ),
                 dtype=dtype,
             ),

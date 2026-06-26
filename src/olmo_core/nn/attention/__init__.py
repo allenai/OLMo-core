@@ -86,6 +86,11 @@ __all__ = [
     "FastLandmarkAttention",
     "FastCompressiveLandmarkAttention",
     "SparseLandmarkAttention",
+    "DocumentLandmarkAttention",
+    "MultiLandmarkAttention",
+    "DocumentMultiLandmarkAttention",
+    "DocumentChunkedAttention",
+    "AttentionPattern",
     "RingAttentionLoadBalancerType",
     "RingAttentionLoadBalancer",
     "RingAttentionZigZagLoadBalancer",
@@ -211,6 +216,30 @@ class AttentionType(StrEnum):
     ➡️ :class:`SparseLandmarkAttention` (sparse landmark-only-across-chunks attention)
     """
 
+    document_landmark = "document_landmark"
+    """
+    ➡️ :class:`DocumentLandmarkAttention` (landmark version of document-chunked attention: normal
+    landmark grouped softmax within a document, plus a landmark bridge across documents)
+    """
+
+    multi_landmark = "multi_landmark"
+    """
+    ➡️ :class:`MultiLandmarkAttention` (landmark grouped softmax with multiple landmark tokens per
+    block, pooled into each block's gate via ``landmark_pool``)
+    """
+
+    document_multi_landmark = "document_multi_landmark"
+    """
+    ➡️ :class:`DocumentMultiLandmarkAttention` (document-chunked multi-landmark attention)
+    """
+
+    document_chunked = "document_chunked"
+    """
+    ➡️ :class:`DocumentChunkedAttention` (dense full attention restricted by the chunked-document
+    mask: context chunks isolated, FREE query/answer bridges across them -- the non-landmark dense
+    analogue of ``document_landmark``)
+    """
+
 
 @dataclass
 class AttentionTypePatternConfig(Config):
@@ -271,6 +300,21 @@ _LANDMARK_ATTENTION_TYPES = (
     AttentionType.fast_landmark,
     AttentionType.fast_compressive_landmark,
     AttentionType.sparse_landmark,
+    AttentionType.document_landmark,
+    AttentionType.multi_landmark,
+    AttentionType.document_multi_landmark,
+)
+
+# Landmark variants that accept the ``num_landmarks`` (and, for the multi-landmark ones,
+# ``landmark_pool``) config fields.
+_NUM_LANDMARKS_TYPES = (
+    AttentionType.sparse_landmark,
+    AttentionType.multi_landmark,
+    AttentionType.document_multi_landmark,
+)
+_MULTI_LANDMARK_TYPES = (
+    AttentionType.multi_landmark,
+    AttentionType.document_multi_landmark,
 )
 
 
@@ -320,14 +364,28 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
     """
     num_landmarks: Optional[int] = None
     """
-    For :class:`SparseLandmarkAttention` (``name="sparse_landmark"``) only: number of landmark
-    tokens per chunk (the last ``num_landmarks`` tokens of each chunk). Defaults to 1.
+    Number of landmark tokens per block/chunk (the last ``num_landmarks`` tokens). Supported by
+    :class:`SparseLandmarkAttention` (``name="sparse_landmark"``), :class:`MultiLandmarkAttention`
+    (``name="multi_landmark"``), and :class:`DocumentMultiLandmarkAttention`
+    (``name="document_multi_landmark"``). Defaults to 1.
+    """
+    landmark_pool: Optional[str] = None
+    """
+    For the multi-landmark variants (``name="multi_landmark"`` / ``"document_multi_landmark"``) only:
+    how to pool a block's landmark probabilities into its gate -- ``"sum"`` (marginal mass, the
+    default) or ``"max"`` (best-matching landmark). See :class:`MultiLandmarkAttention`.
     """
     nonselected_landmark_mass: Optional[float] = None
     """
     For :class:`FastCompressiveLandmarkAttention` (``name="fast_compressive_landmark"``) only: the
     fraction of attention mass reserved at top-k decode time for the landmark tokens of the
     non-selected blocks. Defaults to 0.1. See :class:`FastCompressiveLandmarkAttention`.
+    """
+    cross_doc_mode: Optional[str] = None
+    """
+    For :class:`DocumentLandmarkAttention` (``name="document_landmark"``) only: which
+    :class:`CrossDocumentMaskType` policy governs cross-document attention. Defaults to
+    ``"document_chunked"`` (the landmark bridge across documents).
     """
 
     def num_params(self, d_model: int) -> int:
@@ -452,7 +510,9 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
         mem_freq = kwargs.pop("mem_freq", None)
         landmark_use_kernel = kwargs.pop("landmark_use_kernel", None)
         num_landmarks = kwargs.pop("num_landmarks", None)
+        landmark_pool = kwargs.pop("landmark_pool", None)
         nonselected_landmark_mass = kwargs.pop("nonselected_landmark_mass", None)
+        cross_doc_mode = kwargs.pop("cross_doc_mode", None)
         if mem_freq is not None and not (possible_types & set(_LANDMARK_ATTENTION_TYPES)):
             raise OLMoConfigurationError(
                 "'mem_freq' is only supported with landmark attention variants "
@@ -463,10 +523,27 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
                 "'landmark_use_kernel' is only supported with landmark attention "
                 f"(got name='{self.name}')"
             )
-        if num_landmarks is not None and AttentionType.sparse_landmark not in possible_types:
+        if num_landmarks is not None and not (possible_types & set(_NUM_LANDMARKS_TYPES)):
             raise OLMoConfigurationError(
-                "'num_landmarks' is only supported with sparse_landmark attention "
-                f"(got name='{self.name}')"
+                "'num_landmarks' is only supported with sparse_landmark, multi_landmark, or "
+                f"document_multi_landmark attention (got name='{self.name}')"
+            )
+        if landmark_pool is not None and not (possible_types & set(_MULTI_LANDMARK_TYPES)):
+            raise OLMoConfigurationError(
+                "'landmark_pool' is only supported with multi_landmark or document_multi_landmark "
+                f"attention (got name='{self.name}')"
+            )
+        if cross_doc_mode is not None and not (
+            possible_types
+            & {
+                AttentionType.document_landmark,
+                AttentionType.document_multi_landmark,
+                AttentionType.document_chunked,
+            }
+        ):
+            raise OLMoConfigurationError(
+                "'cross_doc_mode' is only supported with document_landmark, "
+                f"document_multi_landmark, or document_chunked attention (got name='{self.name}')"
             )
         if (
             nonselected_landmark_mass is not None
@@ -521,6 +598,41 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
                 if num_landmarks is not None:
                     kwargs["num_landmarks"] = num_landmarks
                 return SparseLandmarkAttention(mem_freq=mem_freq, **kwargs)
+            elif effective_name == "document_landmark":
+                if mem_freq is None:
+                    raise OLMoConfigurationError(
+                        "document_landmark attention requires 'mem_freq' to be set"
+                    )
+                if cross_doc_mode is not None:
+                    kwargs["cross_doc_mode"] = cross_doc_mode
+                return DocumentLandmarkAttention(mem_freq=mem_freq, **kwargs)
+            elif effective_name == "multi_landmark":
+                if mem_freq is None:
+                    raise OLMoConfigurationError(
+                        "multi_landmark attention requires 'mem_freq' to be set"
+                    )
+                if num_landmarks is not None:
+                    kwargs["num_landmarks"] = num_landmarks
+                if landmark_pool is not None:
+                    kwargs["landmark_pool"] = landmark_pool
+                return MultiLandmarkAttention(mem_freq=mem_freq, **kwargs)
+            elif effective_name == "document_multi_landmark":
+                if mem_freq is None:
+                    raise OLMoConfigurationError(
+                        "document_multi_landmark attention requires 'mem_freq' to be set"
+                    )
+                if num_landmarks is not None:
+                    kwargs["num_landmarks"] = num_landmarks
+                if landmark_pool is not None:
+                    kwargs["landmark_pool"] = landmark_pool
+                if cross_doc_mode is not None:
+                    kwargs["cross_doc_mode"] = cross_doc_mode
+                return DocumentMultiLandmarkAttention(mem_freq=mem_freq, **kwargs)
+            elif effective_name == "document_chunked":
+                # Dense (non-landmark) chunked attention -- no mem_freq.
+                if cross_doc_mode is not None:
+                    kwargs["cross_doc_mode"] = cross_doc_mode
+                return DocumentChunkedAttention(**kwargs)
             else:
                 raise NotImplementedError(effective_name)
         except TypeError as e:
@@ -1832,6 +1944,13 @@ class FusedAttention(SequenceMixer):
 # New landmark-attention sequence mixers. These live in their own modules and subclass ``Attention``
 # (defined above), so they are imported at the end of this package to avoid a circular import; the
 # ``AttentionConfig.build`` branches above reference them by name at call time.
+from .chunked_mask import AttentionPattern  # noqa: E402
+from .document_chunked import DocumentChunkedAttention  # noqa: E402
 from .landmark_compressive import FastCompressiveLandmarkAttention  # noqa: E402
+from .landmark_document import DocumentLandmarkAttention  # noqa: E402
 from .landmark_fast import FastLandmarkAttention  # noqa: E402
+from .landmark_multi import (  # noqa: E402
+    DocumentMultiLandmarkAttention,
+    MultiLandmarkAttention,
+)
 from .landmark_sparse import SparseLandmarkAttention  # noqa: E402
