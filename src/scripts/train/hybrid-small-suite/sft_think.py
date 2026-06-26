@@ -30,6 +30,11 @@ SFT_THINK_CONFIGS = {
         global_batch_size=64 * SEQUENCE_LENGTH,
         load_path="/weka/oe-training-default/ai2-llm/checkpoints/yashasbls/hybrid-small-long-context-v2-275m/step47684/",
     ),
+    "450m": dict(
+        lr=4e-4,
+        global_batch_size=64 * SEQUENCE_LENGTH,
+        load_path="/weka/oe-training-default/ai2-llm/checkpoints/yashasbls/hybrid-small-lc-v2-450m/step47684/",
+    ),
     "810m": dict(
         lr=1e-4,
         global_batch_size=64 * SEQUENCE_LENGTH,
