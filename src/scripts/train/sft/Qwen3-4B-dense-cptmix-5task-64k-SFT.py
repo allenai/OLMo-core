@@ -1,41 +1,46 @@
 """
-32k-context, context-parallel (Ulysses degree 8) Beaker/gantry SFT of the Qwen3-4B **FAST-LANDMARK**
-CPT model on a MIX of 5 long-context tasks (contradiction, nq, oolong, rerank, outlier) + raw
-continued-pretraining (CPT) text.
+32k-context, context-parallel (Ulysses degree 8), multi-node Beaker/gantry SFT of the Qwen3-4B
+DENSE CPT model on a MIX of 5 long-context tasks (contradiction, nq, oolong, rerank, outlier) +
+raw continued-pretraining (CPT) text.
 
-This is the LANDMARK counterpart of ``Qwen3-4B-dense-cptmix-5task-32k-SFT.py`` (which scaled the
-local 8k dense recipe to 32k on weka/Beaker). It keeps that script's mixing weights / gantry / CP /
-budget skeleton and swaps in landmark attention exactly as the LOCAL landmark launcher
-(``Qwen3-4B-fast-landmark-cptmix-5task-local.py``, validated at 8k -> RULER 0.749 / contra 0.896 /
-nq 0.98 / rerank 0.556 / oolong 0.533 / outlier 0.267) and the landmark base32k script do:
+This is the weka/Beaker scale-up of the recipe validated LOCALLY at 8k by
+``Qwen3-4B-dense-cptmix-contra-local.py``: cpt0.85 + a weighted 5-task SFT budget at lr1e-5, which
+preserved RULER (~0.799) while all 5 tasks learned. It reuses the 32k / CP / multinode / gantry
+skeleton of ``Qwen3-4B-dense-longctx-base32k-SFT.py`` but swaps the SINGLE-task PadToLength data
+pipeline for the local launcher's N-way ``MixingDocumentSource`` + ``ConcatAndChunk`` (packing)
+pipeline.
 
-  1. Model: ``fast_landmark=True, mem_freq=63`` (block 64). NO YaRN -- the landmark memory mechanism
-     extends usable context, so RoPE is left native (matches the fast-landmark CPT + the base32k /
-     packed landmark SFT scripts).
-  2. Init from the FAST-LANDMARK CPT base on weka (q4b-fast-landmark-dolma3longmino/step2385), NOT
-     the dense base -- the landmark-token (151860) embedding + grouped-softmax attention were trained
-     during landmark CPT. Loaded weights-only (load_optim_state=False).
-  3. Data: ``MixingDocumentSource -> LandmarkPackingInstanceSource`` (NOT ConcatAndChunk). Landmark
-     packing inserts a landmark token per document every ``mem_freq`` tokens, packs whole documents
-     into 32k (landmark-space) windows, and emits block-aligned ``doc_lens`` -> block-diagonal
-     masking (the landmark analogue of the dense recipe's ``generate_doc_lengths=True``). So SFT
-     examples are isolated (no cross-document attention), matching eval-time single-example windows.
-     ``generate_doc_lengths=False`` (boundaries come from the packing source; EOS-derived ones are
-     not block-aligned and the landmark attention rejects them).
+Mixing (token fractions of the global budget). The SFT budget is ``1 - cpt_frac`` (default 0.15);
+within it the tasks are weighted contradiction 2x, rerank/outlier 1.5x, nq/oolong 1x (sum of
+weights = 7), and CPT takes ``cpt_frac`` (default 0.85)::
 
-NO data re-tokenization is needed: LandmarkPacking consumes the SAME EOS-delimited weka shards the
-dense 32k run used (``prasanns/cptmix_data/``) and packs them into 32k windows at load time. The
-5 SFT tasks (docs <= 8k) are never dropped; only CPT docs longer than one 32k window are dropped
-(fewer than at 8k, so the realised CPT fraction is closer to the nominal 0.85 than the local 8k run).
+    cpt          = 0.85
+    contradiction= 0.15 * 2.0/7 = 0.042857   (assigned as the leftover: 1 - cpt - others)
+    rerank       = 0.15 * 1.5/7 = 0.032143
+    outlier      = 0.15 * 1.5/7 = 0.032143
+    nq           = 0.15 * 1.0/7 = 0.021429
+    oolong       = 0.15 * 1.0/7 = 0.021429
 
-CP=8 + landmark packing + fast_landmark is the combo validated by ``Qwen3-4B-fast-landmark-packed-SFT.py``
-(per-document RoPE applied per CP shard before the all-to-all gather; doc mask built on the gathered
-sequence). 1 NODE x 8 GPUs -> exactly one CP=8 replica (no DP).
+Each SFT task is completion-masked (loss only on assistant tokens); the CPT source carries an
+explicit all-True mask (full-sequence loss). Documents are ConcatAndChunk-packed into 32k windows
+with ``generate_doc_lengths=True`` so flash-attn varlen applies block-diagonal masking at EOS
+document boundaries (no cross-document attention within a packed window).
 
-    PYTHONPATH=src python src/scripts/train/sft/Qwen3-4B-fast-landmark-cptmix-5task-32k-SFT.py \\
-        dry_run q4b-lm-cptmix-5task-32k ai2/jupiter-cirrascale-2
-    PYTHONPATH=src python src/scripts/train/sft/Qwen3-4B-fast-landmark-cptmix-5task-32k-SFT.py \\
-        launch  q4b-lm-cptmix-5task-32k ai2/jupiter-cirrascale-2 --launch.allow_dirty=true --launch.num_nodes=1
+Data lives on weka under ``prasanns/cptmix_data/`` (uploaded from the local /scratch data):
+  * contradiction_8k          (token_ids_part_*.npy + labels_mask_*.npy)
+  * nq_aligned_k20_qwen       ("")
+  * oolong_qwen               ("")
+  * rerank_qwen               ("")
+  * outlier_qwen              ("")
+  * dolma3_longmino_qwen3_sample (part-*.npy + all-True mask-*.npy -> full CPT loss)
+
+The mixing fractions / max_repetition_factor logic mirror the local launcher exactly. Internal
+script pattern (build_experiment_config + main, commands launch/train/dry_run)::
+
+    PYTHONPATH=src python src/scripts/train/sft/Qwen3-4B-dense-cptmix-5task-64k-SFT.py \\
+        dry_run q4b-cptmix-5task-64k ai2/jupiter-cirrascale-2
+    PYTHONPATH=src python src/scripts/train/sft/Qwen3-4B-dense-cptmix-5task-64k-SFT.py \\
+        launch q4b-cptmix-5task-64k ai2/jupiter-cirrascale-2
 """
 
 from dataclasses import replace
@@ -46,7 +51,7 @@ from olmo_core.config import DType
 from olmo_core.data import TokenizerConfig
 from olmo_core.data.composable import (
     ComposableDataLoaderConfig,
-    LandmarkPackingInstanceSourceConfig,
+    ConcatAndChunkInstanceSourceConfig,
     MixingDocumentSourceConfig,
     MixingDocumentSourceSpecConfig,
     NumpyDocumentSourceConfig,
@@ -56,6 +61,8 @@ from olmo_core.float8 import Float8Config
 from olmo_core.internal.common import build_launch_config, get_root_dir, get_work_dir
 from olmo_core.internal.experiment import CliContext, ExperimentConfig, main
 from olmo_core.launch.beaker import BeakerLaunchConfig, OLMoCoreBeakerImage
+from olmo_core.nn.attention import AttentionBackendName
+from olmo_core.nn.rope import YaRNRoPEScalingConfig
 from olmo_core.nn.transformer import TransformerActivationCheckpointingMode, TransformerConfig
 from olmo_core.optim import LinearWithWarmup, OptimGroupOverride, SkipStepAdamWConfig
 from olmo_core.train import Duration, LoadStrategy, TrainerConfig
@@ -74,21 +81,20 @@ from olmo_core.train.train_module import (
 )
 
 # ---------------------------------------------------------------------------
-# Landmark geometry
+# Geometry
 # ---------------------------------------------------------------------------
-MEM_FREQ = 63
-BLOCK_SIZE = MEM_FREQ + 1  # 64
-SEQUENCE_LENGTH = 32768  # landmark-token-space window length; must be divisible by BLOCK_SIZE
-LANDMARK_TOKEN_ID = 151860  # Qwen3 reserved token used as the landmark (memory) token
+SEQUENCE_LENGTH = 65536  # 64k context (full ladder length); YaRN (factor 2, old 32k) extends to 64k.
 
-# Context parallel (Ulysses) degree. Qwen3-4B: n_heads=32, n_kv_heads=8 -> CP=8 splits both cleanly.
+# Context parallel (Ulysses) degree. Qwen3-4B: n_heads=32, n_kv_heads=8 -> head_stride=4, so an
+# all-to-all CP degree of 8 splits both the 32 query heads and (with stride) the 8 kv heads cleanly.
 CP_DEGREE = 8
-# 1 node x 8 GPUs = exactly one CP=8 replica (no DP). Saturated clusters can't schedule 2 nodes, so
-# default 1 (override with --launch.num_nodes for DP replicas if capacity frees up).
-NUM_NODES = 1
+
+# 1 node x 8 GPUs gives exactly one CP=8 replica (no DP). Set >1 to add data-parallel replicas
+# (CP stays within a node; DP across nodes). Default 2 nodes -> 2 DP replicas x CP=8.
+NUM_NODES = 2
 
 # ---------------------------------------------------------------------------
-# Data (weka) -- the SAME shards the dense 32k run used (no re-tokenization for landmark packing).
+# Data (weka). Uploaded from the local /scratch data that the winning 8k recipe used.
 # ---------------------------------------------------------------------------
 # LENGTH-LADDER (to-64k) SFT data: real long-context examples (ctx up to 64k) replacing the old
 # <=8k packed shards. Tokenized with max_seq_len 65536, EOS 151643. CPT text is unchanged and stays
@@ -104,16 +110,16 @@ CPT_DATA_ROOT = (
     "dolma3_longmino_qwen3_sample"
 )
 
-# Fast-landmark CPT base (model+optim) on weka -- the dolma3longmino CPT of Qwen3-4B-Base with
-# fast-landmark attention. Loaded weights-only (load_optim_state=False).
+# Dense CPT base (model+optim) on weka -- the dolma3longmino CPT of Qwen3-4B-Base. Loaded
+# weights-only (load_optim_state=False), so only the model tensors are read from model_and_optim.
 BASE_CHECKPOINT = (
     "/weka/oe-training-default/ai2-llm/checkpoints/"
-    "q4b-fast-landmark-dolma3longmino/step2385/model_and_optim"
+    "q4b-dense-dolma3longmino/step2385/model_and_optim"
 )
 
 # ---------------------------------------------------------------------------
-# Mixing fractions (identical to the dense 32k / local 8k recipe). CPT = 85%; the 15% SFT budget is
-# split contradiction 2x / rerank 1.5x / outlier 1.5x / nq 1x / oolong 1x (sum 7).
+# Mixing fractions (mirror the local launcher's weighting). CPT = 85% of tokens; the 15% SFT
+# budget is split contradiction 2x / rerank 1.5x / outlier 1.5x / nq 1x / oolong 1x (sum 7).
 # ---------------------------------------------------------------------------
 CPT_FRAC = 0.85
 SFT_BUDGET = 1.0 - CPT_FRAC  # 0.15
@@ -123,13 +129,19 @@ NQ_FRAC = SFT_BUDGET * _W["nq"] / _WSUM
 OOLONG_FRAC = SFT_BUDGET * _W["oolong"] / _WSUM
 RERANK_FRAC = SFT_BUDGET * _W["rerank"] / _WSUM
 OUTLIER_FRAC = SFT_BUDGET * _W["outlier"] / _WSUM
+# contradiction takes the leftover (== SFT_BUDGET * 2/7), matching the local launcher's remainder.
 CONTRA_FRAC = max(0.0, 1.0 - CPT_FRAC - (NQ_FRAC + OOLONG_FRAC + RERANK_FRAC + OUTLIER_FRAC))
 
 # ---------------------------------------------------------------------------
 # Optimization / budget
 # ---------------------------------------------------------------------------
-LR = 1e-5
-GLOBAL_BATCH_SIZE = SEQUENCE_LENGTH * 16  # 524288 tokens (16 grad-accum micro-steps on 1 CP replica)
+LR = 1e-5  # the winning-recipe LR (cpt0.85 needs the lower 1e-5 to preserve RULER).
+
+# Global batch in *tokens*. One CP=8 replica processes one 32k instance per micro-step, so a
+# 512k-token global batch = 8 grad-accum micro-steps per DP replica (matches the base32k script).
+GLOBAL_BATCH_SIZE = SEQUENCE_LENGTH * 16  # 524288 tokens
+
+# Training token budget (~48-96M). 64M tokens / 512k = 125 optimizer steps.
 TARGET_TOKENS = 64_000_000
 MAX_STEPS = max(1, round(TARGET_TOKENS / GLOBAL_BATCH_SIZE))
 
@@ -160,15 +172,16 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     # document splitter treats each EOS as a doc boundary (not a doubled eos+bos).
     doc_tokenizer_config = replace(tokenizer_config, bos_token_id=None)
 
-    # Qwen3-4B with FAST LANDMARK attention (no YaRN: the landmark memory mechanism extends context).
+    # Qwen3-4B with YaRN context extension (native 32k -> 64k), full flash-attn 2 attention.
     model_config = TransformerConfig.qwen3_4B(
         vocab_size=tokenizer_config.padded_vocab_size(),
-        fast_landmark=True,
-        mem_freq=MEM_FREQ,
+        attn_backend=AttentionBackendName.flash_2,
+    ).with_rope_scaling(
+        YaRNRoPEScalingConfig(factor=2, beta_fast=32, beta_slow=1, old_context_len=32768)
     )
 
     train_module_config = TransformerTrainModuleConfig(
-        rank_microbatch_size=SEQUENCE_LENGTH,  # one packed 32k window per CP replica per micro-step
+        rank_microbatch_size=SEQUENCE_LENGTH,  # 1 instance per CP replica per micro-step
         max_sequence_length=SEQUENCE_LENGTH,
         optim=SkipStepAdamWConfig(
             lr=LR,
@@ -187,9 +200,6 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
             wrapping_strategy=TransformerDataParallelWrappingStrategy.full,
             shard_degree=1,
         ),
-        # Ulysses CP: the fast-landmark mixer gathers the full sequence per rank before the grouped
-        # softmax. Packing is supported under CP (per-document RoPE per shard, mask on the gathered
-        # sequence). See Qwen3-4B-fast-landmark-packed-SFT.py.
         cp_config=TransformerContextParallelConfig.ulysses(degree=CP_DEGREE),
         ac_config=TransformerActivationCheckpointingConfig(
             mode=TransformerActivationCheckpointingMode.budget,
@@ -200,7 +210,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         max_grad_norm=1.0,
     )
 
-    # ---- N-way mixed document source: 5 SFT tasks + CPT (identical weights to the dense 32k run) ----
+    # ---- N-way mixed document source: 5 SFT tasks + CPT (mirrors the local launcher) ----
     def _sft_source(root: str) -> NumpyDocumentSourceConfig:
         """Completion-only masked SFT shards (loss only on assistant tokens)."""
         r = root.rstrip("/")
@@ -219,6 +229,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         expand_glob=True,
     )
 
+    # (label, source, ratio, max_repetition_factor); rep factors mirror the local launcher.
     specs = [
         MixingDocumentSourceSpecConfig(
             source=_sft_source(CONTRA_DATA_ROOT), ratio=CONTRA_FRAC,
@@ -240,19 +251,17 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
             source=_sft_source(OUTLIER_DATA_ROOT), ratio=OUTLIER_FRAC,
             max_repetition_factor=8.0, label="outlier",
         ),
+        # Allow up to 3 passes of the ~40M-token CPT sample so a high CPT ratio still holds when the
+        # token budget is scaled up (0.85 * 64M = 54.4M > 40M).
         MixingDocumentSourceSpecConfig(
             source=cpt_doc_source, ratio=CPT_FRAC,
             max_repetition_factor=3.0, label="cpt_longmino",
         ),
     ]
 
-    # Per-document landmark insertion + greedy packing into 32k windows + block-aligned doc_lens.
-    instance_source_config = LandmarkPackingInstanceSourceConfig(
-        source=MixingDocumentSourceConfig(source_specs=specs),
+    instance_source_config = ConcatAndChunkInstanceSourceConfig(
+        sources=[MixingDocumentSourceConfig(source_specs=specs)],
         sequence_length=SEQUENCE_LENGTH,
-        mem_freq=MEM_FREQ,
-        mem_id=LANDMARK_TOKEN_ID,
-        pad_id=tokenizer_config.pad_token_id,
     )
 
     data_loader_config = ComposableDataLoaderConfig(
@@ -261,9 +270,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         global_batch_size=GLOBAL_BATCH_SIZE,
         seed=34521,
         num_workers=4,
-        # Document boundaries come from LandmarkPackingInstanceSource (block-aligned doc_lens);
-        # EOS-derived boundaries would NOT be block-aligned and the landmark attention rejects them.
-        generate_doc_lengths=False,
+        generate_doc_lengths=True,  # block-diagonal (varlen) masking at EOS doc boundaries
     )
 
     trainer_config = (
@@ -320,12 +327,12 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
 
 if __name__ == "__main__":
     """
-    cpt0.85 + weighted 5-task SFT (contradiction/nq/oolong/rerank/outlier) of the Qwen3-4B
-    FAST-LANDMARK CPT model at 32k context with Ulysses CP degree 8.
+    cpt0.85 + weighted 5-task SFT (contradiction/nq/oolong/rerank/outlier) of the Qwen3-4B dense
+    CPT model at 32k context with Ulysses CP degree 8, multi-node.
 
-        python src/scripts/train/sft/Qwen3-4B-fast-landmark-cptmix-5task-32k-SFT.py \\
-            dry_run q4b-lm-cptmix-5task-32k ai2/jupiter-cirrascale-2
-        python src/scripts/train/sft/Qwen3-4B-fast-landmark-cptmix-5task-32k-SFT.py \\
-            launch  q4b-lm-cptmix-5task-32k ai2/jupiter-cirrascale-2 --launch.allow_dirty=true --launch.num_nodes=1
+        python src/scripts/train/sft/Qwen3-4B-dense-cptmix-5task-64k-SFT.py \\
+            dry_run  q4b-cptmix-5task-64k ai2/jupiter-cirrascale-2
+        python src/scripts/train/sft/Qwen3-4B-dense-cptmix-5task-64k-SFT.py \\
+            launch   q4b-cptmix-5task-64k ai2/jupiter-cirrascale-2
     """
     main(config_builder=build_experiment_config)

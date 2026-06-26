@@ -3,7 +3,7 @@
 CPT model on a MIX of 5 long-context tasks (contradiction, nq, oolong, rerank, outlier) + raw
 continued-pretraining (CPT) text.
 
-This is the LANDMARK counterpart of ``Qwen3-4B-dense-cptmix-5task-32k-SFT.py`` (which scaled the
+This is the LANDMARK counterpart of ``Qwen3-4B-dense-cptmix-5task-64k-SFT.py`` (which scaled the
 local 8k dense recipe to 32k on weka/Beaker). It keeps that script's mixing weights / gantry / CP /
 budget skeleton and swaps in landmark attention exactly as the LOCAL landmark launcher
 (``Qwen3-4B-fast-landmark-cptmix-5task-local.py``, validated at 8k -> RULER 0.749 / contra 0.896 /
@@ -32,10 +32,10 @@ CP=8 + landmark packing + fast_landmark is the combo validated by ``Qwen3-4B-fas
 (per-document RoPE applied per CP shard before the all-to-all gather; doc mask built on the gathered
 sequence). 1 NODE x 8 GPUs -> exactly one CP=8 replica (no DP).
 
-    PYTHONPATH=src python src/scripts/train/sft/Qwen3-4B-fast-landmark-cptmix-5task-32k-SFT.py \\
-        dry_run q4b-lm-cptmix-5task-32k ai2/jupiter-cirrascale-2
-    PYTHONPATH=src python src/scripts/train/sft/Qwen3-4B-fast-landmark-cptmix-5task-32k-SFT.py \\
-        launch  q4b-lm-cptmix-5task-32k ai2/jupiter-cirrascale-2 --launch.allow_dirty=true --launch.num_nodes=1
+    PYTHONPATH=src python src/scripts/train/sft/Qwen3-4B-fast-landmark-cptmix-5task-64k-SFT.py \\
+        dry_run q4b-lm-cptmix-5task-64k ai2/jupiter-cirrascale-2
+    PYTHONPATH=src python src/scripts/train/sft/Qwen3-4B-fast-landmark-cptmix-5task-64k-SFT.py \\
+        launch  q4b-lm-cptmix-5task-64k ai2/jupiter-cirrascale-2 --launch.allow_dirty=true --launch.num_nodes=1
 """
 
 from dataclasses import replace
@@ -78,7 +78,7 @@ from olmo_core.train.train_module import (
 # ---------------------------------------------------------------------------
 MEM_FREQ = 63
 BLOCK_SIZE = MEM_FREQ + 1  # 64
-SEQUENCE_LENGTH = 32768  # landmark-token-space window length; must be divisible by BLOCK_SIZE
+SEQUENCE_LENGTH = 65536  # 64k landmark-token-space window (full ladder length); divisible by BLOCK_SIZE
 LANDMARK_TOKEN_ID = 151860  # Qwen3 reserved token used as the landmark (memory) token
 
 # Context parallel (Ulysses) degree. Qwen3-4B: n_heads=32, n_kv_heads=8 -> CP=8 splits both cleanly.
@@ -323,9 +323,9 @@ if __name__ == "__main__":
     cpt0.85 + weighted 5-task SFT (contradiction/nq/oolong/rerank/outlier) of the Qwen3-4B
     FAST-LANDMARK CPT model at 32k context with Ulysses CP degree 8.
 
-        python src/scripts/train/sft/Qwen3-4B-fast-landmark-cptmix-5task-32k-SFT.py \\
-            dry_run q4b-lm-cptmix-5task-32k ai2/jupiter-cirrascale-2
-        python src/scripts/train/sft/Qwen3-4B-fast-landmark-cptmix-5task-32k-SFT.py \\
-            launch  q4b-lm-cptmix-5task-32k ai2/jupiter-cirrascale-2 --launch.allow_dirty=true --launch.num_nodes=1
+        python src/scripts/train/sft/Qwen3-4B-fast-landmark-cptmix-5task-64k-SFT.py \\
+            dry_run q4b-lm-cptmix-5task-64k ai2/jupiter-cirrascale-2
+        python src/scripts/train/sft/Qwen3-4B-fast-landmark-cptmix-5task-64k-SFT.py \\
+            launch  q4b-lm-cptmix-5task-64k ai2/jupiter-cirrascale-2 --launch.allow_dirty=true --launch.num_nodes=1
     """
     main(config_builder=build_experiment_config)

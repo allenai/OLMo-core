@@ -96,13 +96,19 @@ NUM_NODES = 2
 # ---------------------------------------------------------------------------
 # Data (weka). Uploaded from the local /scratch data that the winning 8k recipe used.
 # ---------------------------------------------------------------------------
-DATA_ROOT = "/weka/oe-training-default/ai2-llm/checkpoints/prasanns/cptmix_data"
-CONTRA_DATA_ROOT = f"{DATA_ROOT}/contradiction_8k"
-NQ_DATA_ROOT = f"{DATA_ROOT}/nq_aligned_k20_qwen"
-OOLONG_DATA_ROOT = f"{DATA_ROOT}/oolong_qwen"
-RERANK_DATA_ROOT = f"{DATA_ROOT}/rerank_qwen"
-OUTLIER_DATA_ROOT = f"{DATA_ROOT}/outlier_qwen"
-CPT_DATA_ROOT = f"{DATA_ROOT}/dolma3_longmino_qwen3_sample"
+# LENGTH-LADDER (to-64k) SFT data: real long-context examples (ctx up to 64k) replacing the old
+# <=8k packed shards. Tokenized with max_seq_len 65536, EOS 151643. CPT text is unchanged and stays
+# in the original cptmix_data dir (reused, not re-uploaded).
+DATA_ROOT = "/weka/oe-training-default/ai2-llm/checkpoints/prasanns/cptmix_data_ladder64k"
+CONTRA_DATA_ROOT = f"{DATA_ROOT}/contradiction"
+NQ_DATA_ROOT = f"{DATA_ROOT}/nq"
+OOLONG_DATA_ROOT = f"{DATA_ROOT}/oolong"
+RERANK_DATA_ROOT = f"{DATA_ROOT}/rerank"
+OUTLIER_DATA_ROOT = f"{DATA_ROOT}/outlier"
+CPT_DATA_ROOT = (
+    "/weka/oe-training-default/ai2-llm/checkpoints/prasanns/cptmix_data/"
+    "dolma3_longmino_qwen3_sample"
+)
 
 # Dense CPT base (model+optim) on weka -- the dolma3longmino CPT of Qwen3-4B-Base. Loaded
 # weights-only (load_optim_state=False), so only the model tensors are read from model_and_optim.
