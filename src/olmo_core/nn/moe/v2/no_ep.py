@@ -110,7 +110,10 @@ def combined_forward_no_ep(
             map_type="index",
         )
 
-    torch._dynamo.mark_dynamic(permutated_input_tokens, 0)
+    # The row count is always B * S * top_k for no-EP routing. Marking it
+    # dynamic makes downstream shape-specialized kernels harder to compile and
+    # can trigger Dynamo constraint violations.
+    # torch._dynamo.mark_dynamic(permutated_input_tokens, 0)
 
     if requires_host_side_split_sizes():
         assert dtoh_event is not None
