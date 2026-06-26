@@ -151,6 +151,9 @@ def build_and_fit(opts: argparse.Namespace) -> None:
             vocab_size=tokenizer_config.padded_vocab_size(),
             document_landmark=True,
             mem_freq=MEM_FREQ,
+            # Fused Triton kernel for the chunked grouped softmax (~5x faster training, GPU grad-parity
+            # validated vs eager). Eval still uses the eager path (top-k / CPU fall back automatically).
+            landmark_use_kernel=True,
         )
         model_config.document_chunk_attention = {
             "doc_start_id": DOC_START_ID,
