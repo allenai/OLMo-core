@@ -34,6 +34,7 @@ __all__ = [
     "CHUNKED_ATTENTION_PATTERNS",
     "AttentionPattern",
     "build_chunked_allowed_mask",
+    "build_chunked_mask_mod",
     "build_chunk_ids_from_tokens",
     "build_is_anchor",
 ]
@@ -248,3 +249,67 @@ def build_chunked_allowed_mask(
     # term in corpus-reasoning's modified_swa mask_mod.)
     diag = torch.eye(S, dtype=torch.bool, device=device).unsqueeze(0)
     return allowed | diag
+
+
+def build_chunked_mask_mod(pattern: AttentionPattern, chunk_ids: torch.Tensor):
+    """
+    Build a FlexAttention ``mask_mod`` closure for ``pattern`` over per-token ``chunk_ids`` ``(B, S)``,
+    or return ``None`` if the pattern needs extra per-edge tensors not expressible as a pure
+    ``mask_mod`` (``last_token_anchor`` / ``token_window`` / ``random_token`` -- callers fall back to
+    the dense :func:`build_chunked_allowed_mask`).
+
+    The returned ``mask_mod(b, h, q_idx, kv_idx) -> bool`` is element-equivalent to
+    :func:`build_chunked_allowed_mask` (same ``causal & not_pad & (context_ok | q_free | kv_free)``
+    rule plus the self-diagonal NaN guard), so a block-sparse FlexAttention kernel computes exactly the
+    same masked softmax as the dense path -- but skips fully-masked blocks. See
+    :class:`~olmo_core.nn.attention.document_chunked.DocumentChunkedAttention`.
+
+    :param pattern: The :class:`AttentionPattern` (``chunked`` / ``standard`` / ``doc_window``).
+    :param chunk_ids: Per-token role ids ``(B, S)`` on the target device.
+    """
+    if chunk_ids.dim() == 1:
+        chunk_ids = chunk_ids.unsqueeze(0)
+    cids = chunk_ids
+    name = pattern.name
+
+    if name == "standard":
+        # NB: build_chunked_allowed_mask returns "standard" WITHOUT the diagonal guard (plain causal,
+        # padding-aware), so neither does this mask_mod -- they must stay element-identical.
+        def mask_mod(b, h, q_idx, kv_idx):
+            qc = cids[b, q_idx]
+            kc = cids[b, kv_idx]
+            return (q_idx >= kv_idx) & (qc != PAD_CHUNK_ID) & (kc != PAD_CHUNK_ID)
+
+        return mask_mod
+
+    if name == "chunked":
+
+        def mask_mod(b, h, q_idx, kv_idx):
+            qc = cids[b, q_idx]
+            kc = cids[b, kv_idx]
+            q_np = qc != PAD_CHUNK_ID
+            kv_np = kc != PAD_CHUNK_ID
+            same = (qc == kc) & (qc >= 0)
+            q_free = (qc < 0) & q_np
+            kv_free = (kc < 0) & kv_np
+            return ((q_idx >= kv_idx) & q_np & kv_np & (same | q_free | kv_free)) | (q_idx == kv_idx)
+
+        return mask_mod
+
+    if name == "doc_window":
+        k_win = pattern.doc_window_k
+
+        def mask_mod(b, h, q_idx, kv_idx):
+            qc = cids[b, q_idx]
+            kc = cids[b, kv_idx]
+            q_np = qc != PAD_CHUNK_ID
+            kv_np = kc != PAD_CHUNK_ID
+            diff = qc - kc
+            ctx_ok = (diff >= 0) & (diff <= k_win) & (qc >= 0) & (kc >= 0)
+            q_free = (qc < 0) & q_np
+            kv_free = (kc < 0) & kv_np
+            return ((q_idx >= kv_idx) & q_np & kv_np & (ctx_ok | q_free | kv_free)) | (q_idx == kv_idx)
+
+        return mask_mod
+
+    return None  # unsupported pattern -> caller uses the dense materialized mask

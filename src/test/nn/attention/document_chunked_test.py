@@ -104,3 +104,65 @@ def test_document_chunked_eager_training_backward():
     x = torch.randn(1, 12, 64, requires_grad=True)
     attn(x, chunk_ids=CHUNK_IDS).sum().backward()
     assert x.grad is not None and torch.isfinite(x.grad).all()
+
+
+# ---------------------------------------------------------------------------
+# FlexAttention regression: the flex mask_mod must be bit-identical to the dense allowed-mask, and
+# (GPU) the flex forward must match the materialized-mask forward.
+# ---------------------------------------------------------------------------
+
+from olmo_core.nn.attention.chunked_mask import (  # noqa: E402
+    AttentionPattern,
+    build_chunked_allowed_mask,
+    build_chunked_mask_mod,
+)
+
+
+@pytest.mark.parametrize(
+    "pattern",
+    [
+        AttentionPattern(name="chunked"),
+        AttentionPattern(name="standard"),
+        AttentionPattern(name="doc_window", doc_window_k=1),
+    ],
+)
+def test_flex_mask_mod_matches_dense_allowed_mask(pattern):
+    # The flex mask_mod (point predicate) must materialize to EXACTLY the dense allowed-mask, so the
+    # block-sparse FlexAttention kernel computes the same masked softmax as the fallback path.
+    chunk_ids = torch.tensor([[0, 0, 0, 1, 1, 2, 2, -1, -1, -2, -2, -1]])
+    T = chunk_ids.shape[1]
+    mask_mod = build_chunked_mask_mod(pattern, chunk_ids)
+    q_idx = torch.arange(T).view(T, 1)
+    kv_idx = torch.arange(T).view(1, T)
+    got = mask_mod(0, 0, q_idx, kv_idx)  # (T, T) bool, broadcast over the index grid
+    expected = build_chunked_allowed_mask(pattern, chunk_ids)[0]
+    assert torch.equal(got, expected)
+
+
+@pytest.mark.gpu
+def test_flex_matches_materialized_forward_on_gpu():
+    # On CUDA the default path uses FlexAttention; forcing the dense materialized mask must give the
+    # same output (numerical parity), and both must differ from full causal attention.
+    if not torch.cuda.is_available():
+        pytest.skip("requires a GPU")
+    import olmo_core.nn.attention.document_chunked as dcm
+
+    if not dcm._HAS_FLEX:
+        pytest.skip("FlexAttention unavailable")
+    torch.manual_seed(0)
+    attn = _doc_chunked_attention().to("cuda").to(torch.bfloat16)
+    attn.eval()
+    dcm._FLEX_MIN_SEQ_LEN = 0  # force the flex path at this tiny T (it is normally gated to long ctx)
+    B, T, d = 2, 16, 64
+    x = torch.randn(B, T, d, device="cuda", dtype=torch.bfloat16)
+    chunk_ids = torch.tensor(
+        [[0, 0, 0, 0, 1, 1, 1, 1, -1, -1, -1, -1, -1, -1, -1, -1]], device="cuda"
+    ).expand(B, T)
+    with torch.no_grad():
+        attn._force_eager_mask = False
+        flex_out = attn(x, chunk_ids=chunk_ids)
+        attn._force_eager_mask = True
+        dense_out = attn(x, chunk_ids=chunk_ids)
+        causal_out = attn(x)  # no chunk_ids -> plain causal
+    assert torch.allclose(flex_out, dense_out, atol=2e-2, rtol=0)
+    assert not torch.allclose(flex_out, causal_out, atol=1e-2)

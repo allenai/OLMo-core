@@ -24,6 +24,7 @@ Eager-only (the chunked mask is materialized as a dense ``(B, 1, T, T)`` additiv
 intra-document packing (``cu_doc_lens``), or Ulysses CP while ``chunk_ids`` is active.
 """
 
+import logging
 from typing import Optional
 
 import torch
@@ -37,7 +38,27 @@ from .chunked_mask import (
     CHUNKED_ATTENTION_PATTERNS,
     AttentionPattern,
     build_chunked_allowed_mask,
+    build_chunked_mask_mod,
 )
+
+log = logging.getLogger(__name__)
+
+# FlexAttention path (block-sparse, fused, torch.compile-friendly). Because the chunked mask is
+# sparse (documents isolated), a block-sparse kernel skips fully-masked blocks -> faster than dense
+# attention at long context. Only used on CUDA; CPU (incl. tests) falls back to the materialized mask.
+try:
+    from torch.nn.attention.flex_attention import create_block_mask, flex_attention
+
+    _flex_attention = torch.compile(flex_attention)
+    _HAS_FLEX = True
+except Exception:  # pragma: no cover - flex unavailable on old torch
+    _HAS_FLEX = False
+
+# FlexAttention only wins at long context: its block-sparse kernel + create_block_mask overhead make
+# it ~1.3x SLOWER than the materialized (B,1,T,T) mask at T=4096, but 3-5x FASTER at T>=16k (where the
+# materialized O(T^2) mask is also a memory problem). Below this length, use the materialized path.
+# (Measured on H200, qwen3-4B attn dims: crossover between 4k and 16k.)
+_FLEX_MIN_SEQ_LEN = 8192
 
 
 class DocumentChunkedAttention(Attention):
@@ -90,6 +111,9 @@ class DocumentChunkedAttention(Attention):
         self.softmax_scale = softmax_scale if softmax_scale is not None else self.head_dim**-0.5
         # Transient per-forward chunk roles, stashed by ``forward`` for ``sdpa`` to read.
         self._chunk_ids: Optional[torch.Tensor] = None
+        # Sticky fallback: set if FlexAttention errors at runtime (then use the dense mask). Also
+        # settable by tests to force the materialized path for flex-vs-dense parity checks.
+        self._force_eager_mask: bool = False
 
     def forward(
         self,
@@ -124,17 +148,9 @@ class DocumentChunkedAttention(Attention):
         next_diff[:, :-1] = chunk_ids[:, 1:] != chunk_ids[:, :-1]
         return is_ctx & next_diff
 
-    def _build_additive_mask(
-        self,
-        chunk_ids: torch.Tensor,
-        *,
-        T: int,
-        device: torch.device,
-        dtype: torch.dtype,
-        batch_size: int,
-    ) -> torch.Tensor:
-        """Materialize the chunked allowed-mask as a ``(B, 1, T, T)`` additive bias (0 / finfo.min)."""
-        chunk_ids = chunk_ids.to(device=device)
+    def _prep_chunk_ids(self, T: int, device: torch.device, batch_size: int) -> torch.Tensor:
+        """Per-token roles as ``(B, T)`` on ``device`` (validated, batch-expanded)."""
+        chunk_ids = self._chunk_ids.to(device=device)
         if chunk_ids.dim() == 1:
             chunk_ids = chunk_ids.unsqueeze(0)
         if chunk_ids.shape[-1] != T:
@@ -143,7 +159,11 @@ class DocumentChunkedAttention(Attention):
             )
         if chunk_ids.shape[0] == 1 and batch_size > 1:
             chunk_ids = chunk_ids.expand(batch_size, T)
+        return chunk_ids
 
+    def _build_additive_mask(self, chunk_ids: torch.Tensor, *, dtype: torch.dtype) -> torch.Tensor:
+        """Materialize the chunked allowed-mask as a ``(B, 1, T, T)`` additive bias (0 / finfo.min)."""
+        device = chunk_ids.device
         is_anchor = self._build_is_anchor(chunk_ids) if self._pattern.needs_anchor() else None
         # (B, T, T) boolean: True where the query may attend the key (causal + roles + pattern).
         allowed = build_chunked_allowed_mask(self._pattern, chunk_ids, is_anchor=is_anchor)
@@ -189,20 +209,42 @@ class DocumentChunkedAttention(Attention):
         k = k.transpose(1, 2)
         v = v.transpose(1, 2)
 
-        attn_mask = None
-        if self._chunk_ids is not None:
-            # The chunked mask already encodes causality, so we pass is_causal=False below.
-            attn_mask = self._build_additive_mask(
-                self._chunk_ids, T=T, device=q.device, dtype=q.dtype, batch_size=B
+        if self._chunk_ids is None:
+            # No roles -> plain causal attention.
+            out = F.scaled_dot_product_attention(
+                q, k, v, dropout_p=self._dropout_p if self.training else 0.0,
+                is_causal=True, scale=self.softmax_scale,
             )
+            return out.transpose(1, 2).contiguous()
 
+        chunk_ids = self._prep_chunk_ids(T, q.device, B)
+
+        # Fast path: block-sparse FlexAttention on CUDA at long context (skips fully-masked blocks ->
+        # 3-5x faster than the dense (B,1,T,T) materialization at T>=16k, and far less memory). At
+        # short context the materialized path is faster, so it is gated by _FLEX_MIN_SEQ_LEN.
+        if _HAS_FLEX and q.is_cuda and T >= _FLEX_MIN_SEQ_LEN and not self._force_eager_mask:
+            mask_mod = build_chunked_mask_mod(self._pattern, chunk_ids)
+            if mask_mod is not None:
+                try:
+                    block_mask = create_block_mask(mask_mod, B, None, T, T, device=q.device)
+                    out = _flex_attention(
+                        q.contiguous(), k.contiguous(), v.contiguous(),
+                        block_mask=block_mask, scale=self.softmax_scale,
+                    )
+                    return out.transpose(1, 2).contiguous()
+                except Exception as e:  # pragma: no cover - fall back if flex fails at runtime
+                    self._force_eager_mask = True
+                    log.warning(
+                        f"FlexAttention failed ({e}); falling back to the dense chunked mask "
+                        "for this DocumentChunkedAttention layer."
+                    )
+
+        # Fallback: dense materialized additive mask (CPU/tests, unsupported pattern, or flex error).
+        attn_mask = self._build_additive_mask(chunk_ids, dtype=q.dtype)
         out = F.scaled_dot_product_attention(
-            q,
-            k,
-            v,
-            attn_mask=attn_mask,
+            q, k, v, attn_mask=attn_mask,
             dropout_p=self._dropout_p if self.training else 0.0,
-            is_causal=attn_mask is None,
+            is_causal=False,  # the chunked mask already encodes causality
             scale=self.softmax_scale,
         )
         return out.transpose(1, 2).contiguous()

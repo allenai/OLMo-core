@@ -1276,6 +1276,10 @@ class LandmarkAttention(Attention):
         self.block_size = mem_freq + 1
         self.use_kernel = use_kernel
         self.softmax_scale = softmax_scale if softmax_scale is not None else self.head_dim**-0.5
+        # Inference-only hard top-k landmark retrieval (None = exact: attend all allowed blocks).
+        # When set, the eager grouped-softmax keeps only the ``_eval_top_k`` highest-scoring landmark
+        # blocks per query and gives every other past block zero weight (the landmark paper's decode).
+        self._eval_top_k: Optional[int] = None
         # Ulysses context-parallel state, populated by ``apply_cp``. Unlike the base ``Attention``,
         # landmark attention has its own forward and does not route through ``self.backend``, so it
         # performs the Ulysses all-to-all itself (see ``forward``).
@@ -1495,6 +1499,11 @@ class LandmarkAttention(Attention):
             attn, torch.tensor(torch.finfo(attn.dtype).min, device=attn.device, dtype=attn.dtype)
         )
 
+        # Inference top-k landmark retrieval: keep only the top-k landmark (block-gate) columns per
+        # query; the grouped softmax then zeroes every non-selected block's content.
+        if self._eval_top_k is not None:
+            attn = self._apply_topk_landmark_retrieval(attn, T)
+
         probs = landmark_grouped_softmax(
             attn,
             dim=-1,
@@ -1504,6 +1513,39 @@ class LandmarkAttention(Attention):
 
         # shape: (B, n_heads, T, head_dim)
         return torch.matmul(probs, v)
+
+    def set_eval_top_k(self, top_k: Optional[int]) -> None:
+        """
+        Enable (or clear, with ``None``) inference-only hard top-k landmark retrieval. At each forward,
+        every query keeps only the ``top_k`` highest-scoring landmark blocks and gives all other past
+        blocks zero attention weight. Training is unaffected (callers only set this at eval time).
+        """
+        if top_k is not None and top_k < 1:
+            raise OLMoConfigurationError(f"top_k must be >= 1 or None (got {top_k})")
+        self._eval_top_k = top_k
+
+    def _apply_topk_landmark_retrieval(self, attn: torch.Tensor, T: int) -> torch.Tensor:
+        """
+        Mask all but the ``self._eval_top_k`` highest-scoring landmark columns (block gates) per query
+        to ``finfo.min``. Landmark columns are the block-end positions; already-masked landmarks
+        (``finfo.min`` from the additive mask -- the query's own block or out-of-document blocks under
+        chunked masking) rank lowest and are never selected.
+
+        :param attn: Masked attention logits ``(B, n_heads, T, T)``.
+        :param T: Sequence length.
+        """
+        top_k = self._eval_top_k
+        assert top_k is not None
+        lm_cols = torch.arange(self.block_size - 1, T, self.block_size, device=attn.device)
+        if lm_cols.numel() <= top_k:
+            return attn
+        lm_scores = attn[..., lm_cols]  # (B, n_heads, T, n_landmarks)
+        keep = torch.zeros_like(lm_scores, dtype=torch.bool)
+        keep.scatter_(-1, lm_scores.topk(top_k, dim=-1).indices, True)
+        finfo_min = torch.finfo(attn.dtype).min
+        attn = attn.clone()
+        attn[..., lm_cols] = lm_scores.masked_fill(~keep, finfo_min)
+        return attn
 
     def _landmark_masks(
         self,

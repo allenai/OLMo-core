@@ -260,3 +260,60 @@ def test_chunk_mask_changes_inference_output_dense_and_landmark():
             off = model(ids)
         assert torch.isfinite(on).all() and torch.isfinite(off).all()
         assert not torch.allclose(on, off, atol=1e-4), f"{variant}: mask had no effect at inference"
+
+
+# ---------------------------------------------------------------------------
+# Top-k landmark retrieval at inference (DocumentLandmarkAttention / eager LandmarkAttention).
+# ---------------------------------------------------------------------------
+
+
+def test_topk_landmark_retrieval_masks_all_but_best():
+    # Deterministic: with top_k=1 only the highest-scoring landmark COLUMN survives per query; the
+    # others are set to finfo.min (so the grouped softmax zeroes their blocks).
+    from olmo_core.nn.attention import AttentionConfig, AttentionType, DocumentLandmarkAttention
+    from olmo_core.nn.rope import RoPEConfig, RoPEType
+
+    cfg = AttentionConfig(
+        name=AttentionType.document_landmark, n_heads=2, n_kv_heads=1, head_dim=8, bias=False,
+        mem_freq=3, cross_doc_mode="chunked", rope=RoPEConfig(name=RoPEType.default, theta=10_000),
+    )
+    attn = cfg.build(16, layer_idx=0, n_layers=1)
+    assert isinstance(attn, DocumentLandmarkAttention)
+    attn.set_eval_top_k(1)
+    T = 12  # block_size 4 -> landmark columns at 3, 7, 11
+    a = torch.zeros(1, 2, T, T)
+    a[..., 3] = 1.0
+    a[..., 7] = 5.0  # highest -> kept
+    a[..., 11] = 2.0
+    out = attn._apply_topk_landmark_retrieval(a.clone(), T)
+    fmin = torch.finfo(out.dtype).min
+    assert (out[..., 7] == 5.0).all()  # best landmark kept
+    assert (out[..., 3] == fmin).all() and (out[..., 11] == fmin).all()  # others masked
+    # content columns are untouched (the grouped softmax gates them via the landmarks)
+    assert (out[..., 0] == 0.0).all()
+
+
+def test_landmark_topk_noop_when_k_ge_blocks_and_changes_when_small():
+    # k >= num_landmarks is exactly the exact path; k=1 changes the inference output. Train unaffected.
+    seq, _ = emit_document_chunk_landmark(
+        [ChunkSegment([5], [False], False)]
+        + [ChunkSegment([DS, 10 + i, DE], [False] * 3, True) for i in range(4)]
+        + [ChunkSegment([6], [False], False)],
+        mem_freq=3,
+        mem_id=MID,
+        pad_id=PAD,
+    )
+    ids = torch.tensor([seq])
+    model = _doc_model("landmark")
+    with torch.no_grad():
+        exact = model(ids)
+        assert model.set_landmark_eval_top_k(1000) >= 1  # k huge -> no-op
+        big = model(ids)
+        model.set_landmark_eval_top_k(1)
+        one = model(ids)
+        model.set_landmark_eval_top_k(None)
+        restored = model(ids)
+    assert torch.allclose(exact, big, atol=1e-5)  # k >= n_blocks == exact
+    assert torch.allclose(exact, restored, atol=1e-5)  # None restores exact
+    assert torch.isfinite(one).all()
+    assert not torch.allclose(exact, one, atol=1e-4)  # k=1 genuinely changes the output

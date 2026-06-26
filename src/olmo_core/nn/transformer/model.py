@@ -224,6 +224,22 @@ class Transformer(nn.Module):
             "pad_id": None if pad_id is None else int(pad_id),
         }
 
+    def set_landmark_eval_top_k(self, top_k: Optional[int]) -> int:
+        """
+        Enable inference-only hard top-k landmark retrieval on every eager landmark attention layer
+        (e.g. :class:`~olmo_core.nn.attention.DocumentLandmarkAttention`): each query attends only the
+        ``top_k`` highest-scoring landmark blocks. ``None`` restores exact (all-block) attention.
+        Training is unaffected. Returns the number of layers updated.
+
+        :param top_k: Number of landmark blocks to keep per query, or ``None`` for exact.
+        """
+        n = 0
+        for module in self.modules():
+            if hasattr(module, "set_eval_top_k") and callable(module.set_eval_top_k):
+                module.set_eval_top_k(top_k)
+                n += 1
+        return n
+
     def compute_auxiliary_metrics(
         self, reset: bool = True
     ) -> Dict[str, Tuple[torch.Tensor, Optional["ReduceType"]]]:
