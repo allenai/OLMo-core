@@ -52,6 +52,9 @@ MODEL_CONFIGS: Dict[str, dict] = {
         n_heads=8,
         n_kv_heads=8,
         head_dim=128,
+        num_nodes=4,
+        global_batch_size=2_621_440,
+        rank_microbatch_size=5 * SEQUENCE_LENGTH,
     ),
     "810m": dict(
         # 810,354,816 total / 707,594,368 non-embedding params
