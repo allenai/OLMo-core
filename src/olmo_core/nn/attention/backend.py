@@ -511,6 +511,15 @@ def _get_flex_attention(device: torch.device):
     return _compiled_flex_attention
 
 
+# Single-entry cache for the FlexAttention BlockMask. Every transformer layer in a forward
+# pass — and the activation-checkpointing recompute in backward — receives the SAME
+# ``or_mask`` / ``and_mask`` tensor objects, so the data-dependent BlockMask can be built
+# once and reused instead of re-tracing ``create_block_mask`` ~n_layers times per forward
+# (and ~2×n_layers with activation checkpointing). Keyed by the mask objects' identity (the
+# cached refs are held, so their ids can't be recycled) plus batch/seq/window/device.
+_flex_block_mask_cache: dict = {"key": None, "refs": (None, None), "block_mask": None}
+
+
 class FlexAttentionBackend(AttentionBackend):
     """`FlexAttention <https://pytorch.org/blog/flexattention/>`_ backend.
 
@@ -675,16 +684,36 @@ class FlexAttentionBackend(AttentionBackend):
 
         B, _, S_q, _ = q.shape
         S_kv = k.shape[2]
-        om = or_mask.to(device=q.device, dtype=torch.bool) if or_mask is not None else None
-        am = and_mask.to(device=q.device, dtype=torch.bool) if and_mask is not None else None
-        is_image, seg_code, example_id = self._per_token_from_masks(om, am)
-        mask_mod = self._build_mask_mod(is_image, seg_code, example_id)
-        # `B`/`H=None` so the mask may depend on the batch index (image / subsegment ids are
-        # per-example) but broadcasts over heads. Rebuilt each step since the masks are data
-        # dependent; block-sparsity makes this cheap.
-        block_mask = create_block_mask(
-            mask_mod, B=B, H=None, Q_LEN=S_q, KV_LEN=S_kv, device=q.device
+        # Reuse the BlockMask across layers + the AC recompute (see `_flex_block_mask_cache`).
+        cache = _flex_block_mask_cache
+        key = (
+            id(or_mask) if or_mask is not None else None,
+            id(and_mask) if and_mask is not None else None,
+            B,
+            S_q,
+            S_kv,
+            self.window_size,
+            q.device.type,
+            q.device.index,
         )
+        if (
+            cache["block_mask"] is not None
+            and cache["key"] == key
+            and cache["refs"][0] is or_mask
+            and cache["refs"][1] is and_mask
+        ):
+            block_mask = cache["block_mask"]
+        else:
+            om = or_mask.to(device=q.device, dtype=torch.bool) if or_mask is not None else None
+            am = and_mask.to(device=q.device, dtype=torch.bool) if and_mask is not None else None
+            is_image, seg_code, example_id = self._per_token_from_masks(om, am)
+            mask_mod = self._build_mask_mod(is_image, seg_code, example_id)
+            # `B`/`H=None` so the mask may depend on the batch index (image / subsegment ids
+            # are per-example) but broadcasts over heads.
+            block_mask = create_block_mask(
+                mask_mod, B=B, H=None, Q_LEN=S_q, KV_LEN=S_kv, device=q.device
+            )
+            cache.update(key=key, refs=(or_mask, and_mask), block_mask=block_mask)
         flex = _get_flex_attention(q.device)
         att = flex(q, k, v, block_mask=block_mask, scale=self.scale)
 
