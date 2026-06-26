@@ -518,10 +518,12 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
                 "'mem_freq' is only supported with landmark attention variants "
                 f"(no landmark layer is configured; got name='{self.name}')"
             )
-        if landmark_use_kernel is not None and AttentionType.landmark not in possible_types:
+        if landmark_use_kernel is not None and not (
+            possible_types & {AttentionType.landmark, AttentionType.document_landmark}
+        ):
             raise OLMoConfigurationError(
-                "'landmark_use_kernel' is only supported with landmark attention "
-                f"(got name='{self.name}')"
+                "'landmark_use_kernel' is only supported with landmark or document_landmark "
+                f"attention (got name='{self.name}')"
             )
         if num_landmarks is not None and not (possible_types & set(_NUM_LANDMARKS_TYPES)):
             raise OLMoConfigurationError(
@@ -605,6 +607,8 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
                     )
                 if cross_doc_mode is not None:
                     kwargs["cross_doc_mode"] = cross_doc_mode
+                if landmark_use_kernel is not None:
+                    kwargs["use_kernel"] = landmark_use_kernel
                 return DocumentLandmarkAttention(mem_freq=mem_freq, **kwargs)
             elif effective_name == "multi_landmark":
                 if mem_freq is None:

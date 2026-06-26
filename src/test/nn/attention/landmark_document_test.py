@@ -129,9 +129,11 @@ def test_document_landmark_config_builds():
     assert attn.cross_doc_mode == "chunked"
 
 
-def test_document_landmark_kernel_rejected():
-    with pytest.raises(OLMoConfigurationError):
-        DocumentLandmarkAttention(mem_freq=3, n_heads=8, head_dim=8, d_model=64, use_kernel=True)
+def test_document_landmark_kernel_opt_in_accepted():
+    # use_kernel is now supported (routes to the fast fused kernel with the per-token chunk mask at
+    # train time; falls back to eager on CPU / without chunk_ids / during top-k eval).
+    attn = DocumentLandmarkAttention(mem_freq=3, n_heads=8, head_dim=8, d_model=64, use_kernel=True)
+    assert attn._use_chunk_kernel is True
 
 
 def test_document_landmark_unknown_mode_rejected():

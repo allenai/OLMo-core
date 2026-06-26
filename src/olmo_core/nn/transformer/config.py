@@ -1846,7 +1846,9 @@ class TransformerConfig(ModelConfig):
                 layer_types=layer_types,
                 mem_freq=mem_freq,
                 landmark_use_kernel=(
-                    landmark_use_kernel if (landmark or pattern_has_plain_landmark) else None
+                    landmark_use_kernel
+                    if (landmark or document_landmark or pattern_has_plain_landmark)
+                    else None
                 ),
                 num_landmarks=(
                     num_landmarks if (sparse_landmark or pattern_has_sparse_landmark) else None

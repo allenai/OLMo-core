@@ -35,6 +35,7 @@ from olmo_core.exceptions import OLMoConfigurationError
 
 from . import LandmarkAttention
 from .chunked_mask import CHUNKED_ATTENTION_PATTERNS, AttentionPattern, build_chunked_allowed_mask
+from .landmark_kernel import has_landmark_kernel
 
 
 class DocumentLandmarkAttention(LandmarkAttention):
@@ -67,25 +68,59 @@ class DocumentLandmarkAttention(LandmarkAttention):
         softmax_scale: Optional[float] = None,
         **kwargs,
     ):
-        if use_kernel:
-            raise OLMoConfigurationError(
-                "DocumentLandmarkAttention does not support the fused landmark kernel yet (the "
-                "chunked mask is built eagerly); use the eager path."
-            )
         if cross_doc_mode not in CHUNKED_ATTENTION_PATTERNS:
             raise OLMoConfigurationError(
                 f"Unknown cross_doc_mode {cross_doc_mode!r}; expected one of "
                 f"{CHUNKED_ATTENTION_PATTERNS}"
             )
+        # The base stays on the eager DISPATCH (use_kernel=False); when ``use_kernel`` is requested we
+        # route to the FAST fused kernel with the per-token chunk mask from our ``_eager_forward``
+        # override (validated numerically identical to the eager grouped softmax incl. gradients).
         super().__init__(
             mem_freq=mem_freq, use_kernel=False, softmax_scale=softmax_scale, **kwargs
         )
+        self._use_chunk_kernel = bool(use_kernel)
         self.cross_doc_mode = cross_doc_mode
         self._pattern = AttentionPattern(
             name=cross_doc_mode, doc_window_k=doc_window_k, token_window_w=token_window_w
         )
         # Transient per-forward chunk roles, stashed by ``forward`` for ``_landmark_masks`` to read.
         self._chunk_ids: Optional[torch.Tensor] = None
+
+    def _eager_forward(
+        self,
+        q: torch.Tensor,
+        k: torch.Tensor,
+        v: torch.Tensor,
+        cu_doc_lens: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        """
+        Route to the fast fused landmark kernel (per-token chunk mask) when enabled, else the eager
+        grouped softmax. The kernel is numerically identical (fwd + grad) to the eager path and ~5x
+        faster to train; it falls back to eager on CPU, without ``chunk_ids``, during top-k eval, or
+        for ``block_size < 16`` (the kernel's ``tl.dot`` tile constraint).
+        """
+        if (
+            self._use_chunk_kernel
+            and self._chunk_ids is not None
+            and self._eval_top_k is None
+            and q.is_cuda
+            and self.block_size >= 16
+            and has_landmark_kernel()
+        ):
+            from .landmark_fast import fused_landmark_attention_fast
+
+            T = q.shape[2]
+            is_mem = (torch.arange(T, device=q.device) % self.block_size) == (self.block_size - 1)
+            chunk_ids = self._chunk_ids
+            if chunk_ids.dim() == 1:
+                chunk_ids = chunk_ids.unsqueeze(0)
+            if chunk_ids.shape[0] == 1 and q.shape[0] > 1:
+                chunk_ids = chunk_ids.expand(q.shape[0], T)
+            return fused_landmark_attention_fast(
+                q, k, v, is_mem, self.softmax_scale, self.block_size, chunk_ids=chunk_ids
+            )
+        return super()._eager_forward(q, k, v, cu_doc_lens=cu_doc_lens)
 
     def forward(
         self,

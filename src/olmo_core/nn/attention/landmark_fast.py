@@ -98,6 +98,7 @@ if triton is not None:
         svn,
         svd,
         DocId,  # int32 (Z, N_BLOCKS) per-block document id, or dummy when DOC_MASK is False
+        ChunkIds,  # int32 (Z, N_CTX_KV) per-token chunk role, or dummy when CHUNK_MASK is False
         Z,
         H,
         N_CTX_Q,
@@ -107,6 +108,7 @@ if triton is not None:
         BLOCK_DMODEL: tl.constexpr,
         N_PREFIX_Q: tl.constexpr,
         DOC_MASK: tl.constexpr,
+        CHUNK_MASK: tl.constexpr,
     ):
         # dk/dv only, one program per (key-block, head); atomic-free. dk/dv accumulation order is
         # the same as the original kernel -> bit-identical.
@@ -139,6 +141,10 @@ if triton is not None:
         # diagonal (own-block) contribution below is always same-document.
         if DOC_MASK:
             k_doc = tl.load(DocId + off_z * N_BLOCKS + (start_n // BLOCK_N))
+        if CHUNK_MASK:
+            k_chunk = tl.load(
+                ChunkIds + off_z * N_CTX_KV + offs_n, mask=offs_n < N_CTX_KV, other=-2
+            )
 
         dv = tl.zeros([BLOCK_N, BLOCK_DMODEL], dtype=tl.float32)
         dk = tl.zeros([BLOCK_N, BLOCK_DMODEL], dtype=tl.float32)
@@ -163,6 +169,20 @@ if triton is not None:
             q = tl.load(q_ptrs)
             qk = tl.dot(q, tl.trans(k), allow_tf32=False)
             qk = tl.where(offs_m_real[:, None] >= (offs_n[None, :]), qk, float("-inf"))
+            if CHUNK_MASK:
+                q_chunk = tl.load(
+                    ChunkIds + off_z * N_CTX_KV + offs_m, mask=offs_m < N_CTX_Q, other=-2
+                )
+                _qnp = q_chunk[:, None] != -2
+                _knp = k_chunk[None, :] != -2
+                _same = (q_chunk[:, None] == k_chunk[None, :]) & (q_chunk[:, None] >= 0)
+                _al = (
+                    _qnp
+                    & _knp
+                    & (_same | ((q_chunk[:, None] < 0) & _qnp) | ((k_chunk[None, :] < 0) & _knp))
+                )
+                _al = _al | (offs_m_real[:, None] == offs_n[None, :])
+                qk = tl.where(_al, qk, -1e30)
 
             m = tl.load(m_ptrs + offs_m)
             last_p = tl.exp(qk * sm_scale - m[:, None])
@@ -198,6 +218,20 @@ if triton is not None:
             q = tl.load(q_ptrs)
             qk = tl.dot(q, tl.trans(k), allow_tf32=False)
             qk *= sm_scale
+            if CHUNK_MASK:
+                # Strictly cross-block here -> no self-diagonal term (it only matters in the own block).
+                q_chunk = tl.load(
+                    ChunkIds + off_z * N_CTX_KV + offs_m, mask=offs_m < N_CTX_Q, other=-2
+                )
+                _qnp = q_chunk[:, None] != -2
+                _knp = k_chunk[None, :] != -2
+                _same = (q_chunk[:, None] == k_chunk[None, :]) & (q_chunk[:, None] >= 0)
+                _al = (
+                    _qnp
+                    & _knp
+                    & (_same | ((q_chunk[:, None] < 0) & _qnp) | ((k_chunk[None, :] < 0) & _knp))
+                )
+                qk = tl.where(_al, qk, -1e30)
 
             landmark_qk = tl.max(
                 tl.where(tl.arange(0, BLOCK_N)[None, :] == BLOCK_N - 1, qk, float("-inf")), 1
@@ -267,6 +301,7 @@ if triton is not None:
         svn,
         svd,
         DocId,  # int32 (Z, N_BLOCKS) per-block document id, or dummy when DOC_MASK is False
+        ChunkIds,  # int32 (Z, N_CTX_KV) per-token chunk role, or dummy when CHUNK_MASK is False
         Z,
         H,
         N_CTX_Q,
@@ -276,6 +311,7 @@ if triton is not None:
         BLOCK_DMODEL: tl.constexpr,
         N_PREFIX_Q: tl.constexpr,
         DOC_MASK: tl.constexpr,
+        CHUNK_MASK: tl.constexpr,
     ):
         # dq only, one program per (query-block, head). Causal-only key-block loop via a runtime
         # *upper* bound, atomic-free. dq accumulates ascending -> bit-identical to the original.
@@ -308,6 +344,10 @@ if triton is not None:
 
         if DOC_MASK:
             q_doc = tl.load(DocId + off_z * N_BLOCKS + (start_m // BLOCK_M))
+        if CHUNK_MASK:
+            q_chunk = tl.load(
+                ChunkIds + off_z * N_CTX_KV + offs_m, mask=offs_m < N_CTX_Q, other=-2
+            )
 
         dq = tl.zeros([BLOCK_M, BLOCK_DMODEL], dtype=tl.float32)
 
@@ -325,6 +365,20 @@ if triton is not None:
 
             qk = tl.dot(q, tl.trans(k), allow_tf32=False)
             qk *= sm_scale
+            if CHUNK_MASK:
+                # Strictly cross-block prior key blocks -> no self-diagonal term here.
+                k_chunk = tl.load(
+                    ChunkIds + off_z * N_CTX_KV + offs_n, mask=offs_n < N_CTX_KV, other=-2
+                )
+                _qnp = q_chunk[:, None] != -2
+                _knp = k_chunk[None, :] != -2
+                _same = (q_chunk[:, None] == k_chunk[None, :]) & (q_chunk[:, None] >= 0)
+                _al = (
+                    _qnp
+                    & _knp
+                    & (_same | ((q_chunk[:, None] < 0) & _qnp) | ((k_chunk[None, :] < 0) & _knp))
+                )
+                qk = tl.where(_al, qk, -1e30)
             landmark_qk = tl.max(
                 tl.where(tl.arange(0, BLOCK_N)[None, :] == BLOCK_N - 1, qk, float("-inf")), 1
             )
@@ -354,6 +408,20 @@ if triton is not None:
         offs_m_real = offs_m + tl.where(tl.arange(0, BLOCK_M) == BLOCK_M - 1, -1, 0)
         qk = tl.dot(q, tl.trans(k), allow_tf32=False)
         qk = tl.where(offs_m_real[:, None] >= (offs_n[None, :]), qk, float("-inf"))
+        if CHUNK_MASK:
+            k_chunk = tl.load(
+                ChunkIds + off_z * N_CTX_KV + offs_n, mask=offs_n < N_CTX_KV, other=-2
+            )
+            _qnp = q_chunk[:, None] != -2
+            _knp = k_chunk[None, :] != -2
+            _same = (q_chunk[:, None] == k_chunk[None, :]) & (q_chunk[:, None] >= 0)
+            _al = (
+                _qnp
+                & _knp
+                & (_same | ((q_chunk[:, None] < 0) & _qnp) | ((k_chunk[None, :] < 0) & _knp))
+            )
+            _al = _al | (offs_m_real[:, None] == offs_n[None, :])
+            qk = tl.where(_al, qk, -1e30)
         last_p = tl.exp(qk * sm_scale - m[:, None])
         last_dp = tl.zeros([BLOCK_M, BLOCK_N], dtype=tl.float32) - Di[:, None]
         last_dp += tl.dot(do, tl.trans(v), allow_tf32=False)
@@ -463,22 +531,24 @@ class _FusedLandmarkAttentionFast(FusedLandmarkAttention):
 
     @staticmethod
     def backward(ctx, do):
-        # The backward kernels are not yet chunk-mask-aware; refuse rather than return wrong grads.
-        if getattr(ctx, "chunk_ids", None) is not None:
-            raise NotImplementedError(
-                "DocumentLandmark fused-kernel backward (per-token chunk mask) is not implemented "
-                "yet; use the eager path for training."
-            )
-        # Fast path only supports no history KV; defer to the original backward otherwise.
+        # Fast path only supports no history KV; defer to the original backward otherwise. The history
+        # (generation) path does not carry the per-token chunk mask through the original backward.
         if ctx.N_PREFIX_Q != 0:
+            if getattr(ctx, "chunk_ids", None) is not None:
+                raise NotImplementedError("chunk_ids backward with history KV is unsupported.")
             return FusedLandmarkAttention.backward(ctx, do) + (None,)
 
         BLOCK = ctx.BLOCK
         q, k, v, o, lse, m = ctx.saved_tensors
         doc_id = ctx.doc_id
         doc_mask = doc_id is not None
+        chunk_ids = ctx.chunk_ids
+        chunk_mask = chunk_ids is not None
         n_blocks = k.shape[2] // BLOCK
         doc_id_arg = doc_id if doc_mask else torch.empty(1, dtype=torch.int32, device=q.device)
+        chunk_ids_arg = (
+            chunk_ids if chunk_mask else torch.empty(1, dtype=torch.int32, device=q.device)
+        )
         do = do.contiguous()
         dq = torch.zeros_like(q, dtype=torch.float32)
         dk = torch.empty_like(k)
@@ -527,6 +597,7 @@ class _FusedLandmarkAttentionFast(FusedLandmarkAttention):
             v.stride(2),
             v.stride(3),
             doc_id_arg,
+            chunk_ids_arg,
             q.shape[0],
             q.shape[1],
             q.shape[2],
@@ -538,6 +609,7 @@ class _FusedLandmarkAttentionFast(FusedLandmarkAttention):
             BLOCK_DMODEL=ctx.BLOCK_DMODEL,
             N_PREFIX_Q=ctx.N_PREFIX_Q,
             DOC_MASK=doc_mask,
+            CHUNK_MASK=chunk_mask,
         )
         # head_dim > 128 needs 8 warps: the dk/dv (and dq) fp32 accumulators are (BLOCK, 256), and
         # at 4 warps they alone exceed the per-thread register budget. It also needs num_stages=1:

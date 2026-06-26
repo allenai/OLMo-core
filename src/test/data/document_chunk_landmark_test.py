@@ -317,3 +317,54 @@ def test_landmark_topk_noop_when_k_ge_blocks_and_changes_when_small():
     assert torch.allclose(exact, restored, atol=1e-5)  # None restores exact
     assert torch.isfinite(one).all()
     assert not torch.allclose(exact, one, atol=1e-4)  # k=1 genuinely changes the output
+
+
+@__import__("pytest").mark.gpu
+def test_document_landmark_fused_kernel_matches_eager_fwd_and_grad():
+    # The fused kernel path (use_kernel=True) must match the eager grouped-softmax + chunked-mask path
+    # for BOTH the forward and the input gradients (the regression that gates enabling the kernel).
+    import pytest
+
+    if not torch.cuda.is_available():
+        pytest.skip("requires a GPU")
+    from olmo_core.nn.attention.landmark import landmark_grouped_softmax
+    from olmo_core.nn.attention.landmark_fast import fused_landmark_attention_fast, has_landmark_kernel
+
+    if not has_landmark_kernel():
+        pytest.skip("fused landmark kernel unavailable")
+    from olmo_core.nn.attention import AttentionConfig, AttentionType
+    from olmo_core.nn.rope import RoPEConfig, RoPEType
+
+    torch.manual_seed(0)
+    dev = "cuda"
+    B, Hh, Dd, mem_freq = 1, 4, 32, 15  # head_dim>=16 and block_size>=16 (kernel tl.dot constraint)
+    bs = mem_freq + 1
+    T = bs * 6
+    q0, k0, v0 = (torch.randn(B, Hh, T, Dd, device=dev) * 0.5 for _ in range(3))
+    scale = Dd**-0.5
+    is_mem = torch.arange(T, device=dev) % bs == bs - 1
+    cids = torch.full((B, T), -1, dtype=torch.long, device=dev)
+    cids[0, 0:32] = 0
+    cids[0, 32:64] = 1
+    go = torch.randn(B, Hh, T, Dd, device=dev)
+
+    qk, kk, vk = (x.clone().requires_grad_() for x in (q0, k0, v0))
+    ok = fused_landmark_attention_fast(qk, kk, vk, is_mem, scale, bs, chunk_ids=cids)
+    (ok * go).sum().backward()
+
+    qe, ke, ve = (x.clone().requires_grad_() for x in (q0, k0, v0))
+    cfg = AttentionConfig(
+        name=AttentionType.document_landmark, n_heads=Hh, n_kv_heads=Hh, head_dim=Dd, bias=False,
+        mem_freq=mem_freq, cross_doc_mode="chunked", rope=RoPEConfig(name=RoPEType.default, theta=10000),
+    )
+    mod = cfg.build(Hh * Dd, layer_idx=0, n_layers=1).to(dev)
+    mod._chunk_ids = cids
+    am, ism, lsm = mod._landmark_masks(T, torch.device(dev), torch.float32, batch_size=B)
+    attn = (qe @ ke.transpose(-1, -2)) * scale + am
+    attn = torch.maximum(attn, torch.tensor(torch.finfo(attn.dtype).min, device=dev))
+    oe = landmark_grouped_softmax(attn, -1, ism.expand(B, Hh, T, T), lsm.expand(B, 1, T, T)) @ ve
+    (oe * go).sum().backward()
+
+    assert torch.allclose(ok, oe, atol=1e-4), (ok - oe).abs().max()
+    for gk, ge in ((qk.grad, qe.grad), (kk.grad, ke.grad), (vk.grad, ve.grad)):
+        assert torch.allclose(gk, ge, atol=1e-3, rtol=1e-2), (gk - ge).abs().max()
