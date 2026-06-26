@@ -73,14 +73,18 @@ PAD_TOKEN_ID = 151863  # interior window-fill padding (landmark only)
 MEM_FREQ = 63  # landmark block size = 64
 
 # ---- LOCAL paths (shared NFS, readable from any Berkeley GPU node) ----
+# "full" = full-attention baseline: standard causal attention on the SAME document-chunked data
+# (box markers present but NOT masked), to isolate the effect of the chunked mask.
 DATA_ROOTS = {
     "dense": "/scratch/users/prasann/longctx_sft_qwen/oolong_ctx2048_docdense",
     "landmark": "/scratch/users/prasann/longctx_sft_qwen/oolong_ctx2048_doclandmark",
+    "full": "/scratch/users/prasann/longctx_sft_qwen/oolong_ctx2048_docdense",
 }
 # Matched CPT bases (model-only olmo-native distcp; point at the model_and_optim SUBDIR).
 BASE_CKPTS = {
     "dense": "/scratch/users/prasann/cpt_mix_ckpts/q4b-dense-cpt-step2385-modelonly/model_and_optim",
     "landmark": "/scratch/users/prasann/cpt_mix_ckpts/q4b-fast-landmark-step2385/model_and_optim",
+    "full": "/scratch/users/prasann/cpt_mix_ckpts/q4b-dense-cpt-step2385-modelonly/model_and_optim",
 }
 SAVE_ROOT = "/data/prasann/doc_oolong_runs"  # node-local ZFS (fast distcp; eval runs on same node)
 WORK_DIR = "/scratch/users/prasann/longctx_sft_qwen/dataset-cache-docchunk"
@@ -123,8 +127,14 @@ def build_and_fit(opts: argparse.Namespace) -> None:
     # Instances are EOS-separated; qwen3 ties bos==eos, so drop BOS for document-boundary detection.
     doc_tokenizer_config = replace(tokenizer_config, bos_token_id=None)
 
-    # ---- Model: document-chunked attention (dense or landmark) ----
-    if variant == "dense":
+    # ---- Model: document-chunked attention (dense or landmark), or the full-attention baseline ----
+    if variant == "full":
+        # Standard causal attention (no chunked mask) on the same document-chunked data -> baseline.
+        model_config = TransformerConfig.qwen3_4B(
+            vocab_size=tokenizer_config.padded_vocab_size(),
+        )
+        # NB: no document_chunk_attention -> chunk_ids are never reconstructed; full attention.
+    elif variant == "dense":
         model_config = TransformerConfig.qwen3_4B(
             vocab_size=tokenizer_config.padded_vocab_size(),
             document_chunked=True,
@@ -274,7 +284,7 @@ def main() -> None:
     faulthandler.dump_traceback_later(600, repeat=True)
 
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--variant", required=True, choices=["dense", "landmark"])
+    ap.add_argument("--variant", required=True, choices=["dense", "landmark", "full"])
     ap.add_argument("--run-name", required=True)
     ap.add_argument("--save-folder", default=None, help=f"default {SAVE_ROOT}/<run-name>")
     ap.add_argument(

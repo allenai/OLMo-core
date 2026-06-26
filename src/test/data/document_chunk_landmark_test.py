@@ -177,3 +177,86 @@ def test_full_pipeline_dense_trains_without_nan():
     loss.sum().backward()
     grads = [p.grad for p in model.parameters() if p.grad is not None]
     assert grads and all(torch.isfinite(g).all() for g in grads)
+
+
+# ---------------------------------------------------------------------------
+# Test-time (inference) mask application: the chunked mask is reconstructed from the boundary tokens
+# and applied on every forward() -- the exact path the native eval harness uses (gm.model(input_ids)),
+# not just during training.
+# ---------------------------------------------------------------------------
+
+DSx, DEx, EOSx = 301, 302, 304  # box_start / box_end / eos ids for the inference tests
+
+
+def _doc_model(variant, vocab=320, mem_freq=3, enable=True):
+    from olmo_core.nn.transformer import TransformerConfig
+
+    kw = dict(d_model=32, vocab_size=vocab, n_layers=2, n_heads=4, n_kv_heads=2)
+    if variant == "dense":
+        cfg = TransformerConfig.llama_like(document_chunked=True, cross_doc_mode="chunked", **kw)
+    elif variant == "landmark":
+        cfg = TransformerConfig.llama_like(document_landmark=True, mem_freq=mem_freq, **kw)
+    else:  # full (standard attention baseline)
+        cfg = TransformerConfig.llama_like(**kw)
+    model = cfg.build(init_device="cpu")
+    if enable and variant != "full":
+        model.enable_document_chunk_attention(
+            doc_start_id=DSx, doc_end_id=DEx, eos_id=EOSx, pad_id=(PAD if variant == "landmark" else None)
+        )
+    model.eval()
+    return model
+
+
+def test_dense_mask_isolation_at_inference():
+    # In eval()/no_grad (the native-eval forward path), editing a token of document A must NOT change a
+    # token of document B (chunks isolated), but MUST change the trailing FREE token (bridge).
+    # Layout: [free, <s>,docA,<e>, <s>,docB,<e>, free] -> pos 5 is docB content, pos 7 is FREE.
+    seq = [5, DSx, 10, DEx, DSx, 20, DEx, 6]
+    model = _doc_model("dense")
+    with torch.no_grad():
+        base = model(torch.tensor([seq]))
+        alt = seq.copy()
+        alt[2] = 11  # edit document A's content token
+        edited = model(torch.tensor([alt]))
+    assert torch.allclose(base[0, 5], edited[0, 5], atol=1e-5)  # docB isolated from docA
+    assert not torch.allclose(base[0, 7], edited[0, 7], atol=1e-4)  # FREE query bridges
+
+
+def test_full_attention_baseline_is_not_isolated():
+    # The control: with standard attention (no chunked mask) the same docA edit DOES reach docB.
+    seq = [5, DSx, 10, DEx, DSx, 20, DEx, 6]
+    model = _doc_model("full")
+    with torch.no_grad():
+        base = model(torch.tensor([seq]))
+        alt = seq.copy()
+        alt[2] = 11
+        edited = model(torch.tensor([alt]))
+    assert not torch.allclose(base[0, 5], edited[0, 5], atol=1e-4)  # full attention: docB sees docA
+
+
+def test_chunk_mask_changes_inference_output_dense_and_landmark():
+    # Enabling the document-chunk mask changes the model's inference output vs the same weights with the
+    # mask OFF -- i.e. the mask is genuinely applied at test time (for both variants).
+    for variant in ("dense", "landmark"):
+        model = _doc_model(variant)
+        if variant == "dense":
+            seq = [5, DSx, 10, DEx, DSx, 20, DEx, 6]
+        else:  # landmark: build the real block-aligned packed layout
+            seq, _ = emit_document_chunk_landmark(
+                [
+                    ChunkSegment([5], [False], False),
+                    ChunkSegment([DSx, 10, DEx], [False] * 3, True),
+                    ChunkSegment([DSx, 20, DEx], [False] * 3, True),
+                    ChunkSegment([6], [False], False),
+                ],
+                mem_freq=3,
+                mem_id=MID,
+                pad_id=PAD,
+            )
+        ids = torch.tensor([seq])
+        with torch.no_grad():
+            on = model(ids)
+            model._document_chunk_attention = None  # mask OFF: chunk_ids no longer reconstructed
+            off = model(ids)
+        assert torch.isfinite(on).all() and torch.isfinite(off).all()
+        assert not torch.allclose(on, off, atol=1e-4), f"{variant}: mask had no effect at inference"
