@@ -796,7 +796,10 @@ class FastLandmarkAttention(Attention):
             keep.scatter_(-1, lm_scores.topk(top_k, dim=-1).indices, True)
         if recording:
             gate_log.record_layer(
-                getattr(self, "_gate_log_layer_idx", None), keep, lm_idx // self.block_size
+                getattr(self, "_gate_log_layer_idx", None),
+                keep,
+                lm_idx // self.block_size,
+                lm_scores,
             )
         if n_lm <= top_k:
             return scores

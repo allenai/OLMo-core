@@ -715,7 +715,7 @@ class FastCompressiveLandmarkAttention(FastLandmarkAttention):
             alpha = float(self.nonselected_landmark_mass)
             if recording:
                 gate_log.record_layer(
-                    getattr(self, "_gate_log_layer_idx", None), keep, lm_idx // Lb
+                    getattr(self, "_gate_log_layer_idx", None), keep, lm_idx // Lb, lm_scores
                 )
         else:
             selected = is_mem_b.expand(B, H, 1, total)
@@ -725,7 +725,10 @@ class FastCompressiveLandmarkAttention(FastLandmarkAttention):
                 # n_lm <= top_k: every past block's gate is open this step.
                 keep_all = torch.ones(B, H, 1, n_lm, dtype=torch.bool, device=device)
                 gate_log.record_layer(
-                    getattr(self, "_gate_log_layer_idx", None), keep_all, lm_idx // Lb
+                    getattr(self, "_gate_log_layer_idx", None),
+                    keep_all,
+                    lm_idx // Lb,
+                    scores[..., lm_idx],
                 )
 
         # Gate (cross-block) softmax over the selected landmarks + the local section.

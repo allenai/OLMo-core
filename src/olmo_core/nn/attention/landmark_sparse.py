@@ -434,11 +434,13 @@ class SparseLandmarkAttention(Attention):
             keep_chunks.scatter_(-1, chunk_scores.topk(top_k, dim=-1).indices, True)
             keep_chunks &= present
         if recording:
-            # Per chunk one gate; block_ids are the chunk ordinals 0..n_chunks-1.
+            # Per chunk one gate; block_ids are the chunk ordinals 0..n_chunks-1, ordered by each
+            # chunk's (max-over-landmarks) retrieval score.
             gate_log.record_layer(
                 getattr(self, "_gate_log_layer_idx", None),
                 keep_chunks,
                 torch.arange(n_chunks, device=scores.device),
+                chunk_scores,
             )
         if n_chunks <= top_k:
             return scores

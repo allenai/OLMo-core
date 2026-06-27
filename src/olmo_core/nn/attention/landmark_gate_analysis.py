@@ -20,7 +20,8 @@ the output file (JSONL — load with ``pandas.read_json(path, lines=True)``)::
 
 ``decoded_token_num`` starts at 1 for the first generated token of an example. The ints under each
 head are 0-based landmark-**block** ordinals (block ``b`` is the ``b``-th ``mem_freq + 1``-token
-block; its landmark sits at the block's last position).
+block; its landmark sits at the block's last position), listed in descending retrieval-score order
+(the highest-scoring kept block first, the lowest-scoring kept block last).
 
 Per-example metadata is read from the environment (the harness sets these per eval process)::
 
@@ -135,26 +136,47 @@ def start_example(content_prompt_len: int) -> None:
     _current_layers = {}
 
 
-def record_layer(layer_idx: Optional[int], keep: torch.Tensor, block_ids: torch.Tensor) -> None:
+def record_layer(
+    layer_idx: Optional[int],
+    keep: torch.Tensor,
+    block_ids: torch.Tensor,
+    scores: torch.Tensor,
+) -> None:
     """Record the open landmark gates for one layer at the current decode step.
+
+    The kept blocks are listed per head in descending retrieval-score order (the highest-scoring
+    block first, the lowest-scoring kept block last).
 
     :param layer_idx: The model layer index (used as the ``"layer{idx}"`` key).
     :param keep: Boolean tensor of shape ``(B, H, 1, M)`` where ``keep[0, h, 0, m]`` is ``True`` iff
         gate slot ``m`` is kept open for head ``h``. ``B`` must be 1.
     :param block_ids: Long tensor of shape ``(M,)`` mapping each gate slot to its landmark-block
         ordinal (so multiple slots may share a block ordinal, e.g. sparse-landmark chunks).
+    :param scores: Float tensor broadcastable to ``(B, H, 1, M)`` giving each gate slot's retrieval
+        score (the landmark logit the top-k selection ranked on), used to order the kept blocks.
     """
     if not _enabled:
         return
-    keep_c = keep.detach().to("cpu", non_blocking=False).reshape(keep.shape[0], keep.shape[1], -1)
-    keep_c = keep_c.bool()
-    block_ids_c = block_ids.detach().to("cpu").reshape(-1)
-    B, H = keep_c.shape[0], keep_c.shape[1]
+    B, H = keep.shape[0], keep.shape[1]
     assert B == 1, "landmark gate logging assumes batch_size == 1"
+    keep_c = keep.detach().to("cpu").reshape(B, H, -1).bool()
+    block_ids_c = block_ids.detach().to("cpu").reshape(-1)
+    scores_c = scores.detach().float().to("cpu").reshape(B, H, -1)
     heads: Dict[str, List[int]] = {}
     for h in range(H):
-        sel = block_ids_c[keep_c[0, h]]
-        heads[f"head{h}"] = sorted({int(b) for b in sel.tolist()})
+        mask = keep_c[0, h]
+        kept_blocks = block_ids_c[mask]
+        kept_scores = scores_c[0, h][mask]
+        # Highest-scoring kept block first; dedupe block ordinals keeping their first (best) slot.
+        order = torch.argsort(kept_scores, descending=True)
+        seen: set = set()
+        ordered: List[int] = []
+        for b in kept_blocks[order].tolist():
+            b = int(b)
+            if b not in seen:
+                seen.add(b)
+                ordered.append(b)
+        heads[f"head{h}"] = ordered
     _current_layers[f"layer{layer_idx}"] = heads
 
 
