@@ -237,14 +237,15 @@ if [ "${SKIP_RULER:-0}" != "1" ]; then
       model_args="${model_args},chat_model=true,chat_template=${RULER_CHAT_TEMPLATE}"
     fi
     # Landmark-gate logging: pass the per-length output path + metadata into the container as env
-    # vars. Each is a distinct gantry arg whose key starts with "env" (oe-eval's make_beaker_spec
-    # turns every such key into one envVar), appended to the gantry-args string. The bare "env" key
-    # is left alone so the cookbook's default VLLM_USE_V1 env var is preserved.
+    # vars. oe-eval builds the launch as `gantry run`, where each gantry-arg key becomes a `--key`
+    # flag; gantry's env flag is `--env NAME=VALUE`, repeated. oe-eval allows repeating a flag via
+    # the `key##N` convention (it strips `##\d+` before running), so env##1/2/3 all render as `--env`
+    # -- and the bare `env` key (the cookbook's default VLLM_USE_V1) is left untouched.
     gate_log_gantry_args=""
     if [ -n "${OLMO_CORE_GATE_LOG}" ]; then
-      gate_log_gantry_args=",env-gate-log=OLMO_LANDMARK_GATE_LOG=${OLMO_CORE_GATE_LOG}.${task//:/}"
-      gate_log_gantry_args="${gate_log_gantry_args},env-gate-dataset=OLMO_GATE_DATASET=${OLMO_GATE_DATASET}"
-      gate_log_gantry_args="${gate_log_gantry_args},env-gate-ctxlen=OLMO_GATE_CONTEXT_LEN=${max_length}"
+      gate_log_gantry_args=",env##1=OLMO_LANDMARK_GATE_LOG=${OLMO_CORE_GATE_LOG}.${task//:/}"
+      gate_log_gantry_args="${gate_log_gantry_args},env##2=OLMO_GATE_DATASET=${OLMO_GATE_DATASET}"
+      gate_log_gantry_args="${gate_log_gantry_args},env##3=OLMO_GATE_CONTEXT_LEN=${max_length}"
     fi
     echo "==> Launching RULER ${task} (max_length=${max_length}) for ${MODEL_PATH}"
     attempt=1
