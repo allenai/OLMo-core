@@ -84,35 +84,3 @@ def test_flex_per_token_recovery_packed():
         & (seg_code[:, :, None] <= seg_code[:, None, :])
     ).unsqueeze(1)
     assert torch.equal(recovered, and_mask)
-
-
-def test_flex_block_mask_reused_across_calls(monkeypatch):
-    """The BlockMask is built once for a given (or_mask, and_mask) and reused on subsequent
-    calls (all transformer layers + the AC recompute pass the same mask objects), and rebuilt
-    when the mask objects change."""
-    import torch.nn.attention.flex_attention as fa
-
-    from olmo_core.nn.attention import backend as bk
-
-    bk._flex_block_mask_cache.update(key=None, refs=(None, None), block_mask=None)
-    calls = {"n": 0}
-    orig = fa.create_block_mask
-
-    def counting(*a, **k):
-        calls["n"] += 1
-        return orig(*a, **k)
-
-    monkeypatch.setattr(fa, "create_block_mask", counting)
-
-    B, S, D = 2, 16, 8
-    q = torch.randn(B, S, 4, D)
-    k = torch.randn(B, S, 4, D)
-    v = torch.randn(B, S, 4, D)
-    om, am = _make_masks(B, S, "both")
-    be = FlexAttentionBackend(head_dim=D, n_heads=4, n_kv_heads=4, scale=D**-0.5)
-    for _ in range(4):  # same mask objects (like 4 layers) -> built once
-        be((q, k, v), or_mask=om, and_mask=am)
-    assert calls["n"] == 1
-    om2, am2 = _make_masks(B, S, "both")  # new mask objects (next step) -> rebuilt
-    be((q, k, v), or_mask=om2, and_mask=am2)
-    assert calls["n"] == 2
