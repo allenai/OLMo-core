@@ -193,13 +193,36 @@ class DocumentChunkedAttention(Attention):
         arrive as ``(B, T, H, D)`` / ``(B, T, H_kv, D)`` from :meth:`Attention._prepare_qkv`; the
         result is ``(B, T, H, D)`` (the layout :meth:`Attention.forward` expects).
         """
-        if self.kv_cache_manager is not None or cache_leftpad is not None:
-            raise NotImplementedError("DocumentChunkedAttention does not support KV-caching.")
         if any(o is not None for o in (cu_doc_lens, cu_doc_lens_q, cu_doc_lens_k, local_k_slice)):
             raise NotImplementedError(
                 "DocumentChunkedAttention does not support intra-document packing (cu_doc_lens)."
             )
 
+        kvm = self.kv_cache_manager
+        if kvm is None:
+            # Training / eager eval: masked attention over the full sequence (no cache).
+            return self._sdpa_masked(q, k, v)
+
+        # ---- KV-cache inference (fast eval) ----
+        # Every generated token is FREE and attends ALL cached keys causally, so the chunked mask is a
+        # no-op at decode: PREFILL applies the mask + populates the cache; DECODE is plain causal over
+        # the cache (delegated to the base flash path). Output is identical to the no-cache path, but
+        # O(gen*n^2) -> O(n^2 + gen*n).
+        if q.shape[1] == 1:  # decode: single FREE query over the cache
+            return Attention.sdpa(self, q, k, v, cache_leftpad=cache_leftpad)
+        # Prefill: cache the prompt's (pre-GQA-expand) K,V, then compute the masked attention.
+        kvm.record_leftpad(cache_leftpad)
+        pos = int(kvm.current_position())
+        T_q = q.shape[1]
+        kvm.k_cache[:, pos : pos + T_q].copy_(k)
+        kvm.v_cache[:, pos : pos + T_q].copy_(v)
+        out = self._sdpa_masked(q, k, v)
+        kvm.update_seqlen(T_q)
+        return out
+
+    def _sdpa_masked(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor) -> torch.Tensor:
+        """Masked attention over the full ``(B, T, H, D)`` q/k/v (no cache): plain causal when there
+        are no roles, else the chunked mask via FlexAttention (long ctx) or the dense materialization."""
         B, T, n_heads, _ = q.shape
         n_rep = n_heads // k.shape[2]
         # Expand GQA kv heads, mirroring TorchAttentionBackend, then go to (B, H, T, D) for SDPA.
