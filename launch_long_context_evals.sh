@@ -243,7 +243,16 @@ if [ "${SKIP_RULER:-0}" != "1" ]; then
     # -- and the bare `env` key (the cookbook's default VLLM_USE_V1) is left untouched.
     gate_log_gantry_args=""
     if [ -n "${OLMO_CORE_GATE_LOG}" ]; then
-      gate_log_gantry_args=",env##1=OLMO_LANDMARK_GATE_LOG=${OLMO_CORE_GATE_LOG}.${task//:/}"
+      # Inside the eval container weka buckets are mounted at /weka-mount/<bucket>, not /weka/<bucket>
+      # (only the model path gets the weka:// -> /weka-mount translation). Rewrite a leading /weka/
+      # so the log actually lands on weka; the user still reads it back at the original /weka/... path
+      # (same bucket). A non-/weka path is left unchanged.
+      if [[ "${OLMO_CORE_GATE_LOG}" == /weka/* ]]; then
+        gate_log_incontainer="/weka-mount/${OLMO_CORE_GATE_LOG#/weka/}"
+      else
+        gate_log_incontainer="${OLMO_CORE_GATE_LOG}"
+      fi
+      gate_log_gantry_args=",env##1=OLMO_LANDMARK_GATE_LOG=${gate_log_incontainer}.${task//:/}"
       gate_log_gantry_args="${gate_log_gantry_args},env##2=OLMO_GATE_DATASET=${OLMO_GATE_DATASET}"
       gate_log_gantry_args="${gate_log_gantry_args},env##3=OLMO_GATE_CONTEXT_LEN=${max_length}"
     fi
