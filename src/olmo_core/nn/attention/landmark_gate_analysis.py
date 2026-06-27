@@ -30,9 +30,9 @@ Per-example metadata is read from the environment (the harness sets these per ev
     OLMO_GATE_CONTEXT_LEN    "context_len" field (default: the content prompt length)
 
 ``example_num`` is a per-process counter (0-based) bumped on each :func:`start_example`. Under
-multi-GPU data-parallel eval the output path is suffixed with ``.rank{RANK}`` so ranks never clobber
-each other's file; each rank's ``example_num`` is then local to its file. The hook assumes
-``batch_size == 1`` (which landmark generation already requires).
+multi-GPU eval the output path is suffixed per worker (``.rank{RANK}`` under torchrun, else
+``.pid{PID}``) so workers never clobber each other's file; each worker's ``example_num`` is then
+local to its file. The hook assumes ``batch_size == 1`` (which landmark generation already requires).
 """
 
 import json
@@ -78,10 +78,12 @@ def _init() -> None:
         if not path:
             _enabled = False
             return
-        # Per-rank output so data-parallel eval workers never clobber the same file.
+        # Per-worker output so parallel eval workers never clobber the same file. Use the torchrun
+        # rank when present, else the pid (oe-eval spawns one model process per GPU without setting
+        # RANK, so the pid is what guarantees uniqueness there).
         rank = os.environ.get("RANK") or os.environ.get("LOCAL_RANK")
-        if rank:
-            path = f"{path}.rank{rank}"
+        suffix = f"rank{rank}" if rank else f"pid{os.getpid()}"
+        path = f"{path}.{suffix}"
         directory = os.path.dirname(os.path.abspath(path))
         os.makedirs(directory, exist_ok=True)
         _file = open(path, "w", buffering=1)  # line-buffered so a killed job keeps finished rows
