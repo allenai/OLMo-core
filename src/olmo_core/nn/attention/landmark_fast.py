@@ -41,6 +41,7 @@ from olmo_core.distributed.parallel.context_parallel import (
 from olmo_core.exceptions import OLMoConfigurationError
 
 from . import Attention  # base mixer (defined before the end-of-module import in __init__)
+from . import landmark_gate_analysis as gate_log
 from .kv_cache import KVCacheManager
 from .landmark import landmark_grouped_softmax, repeat_kv
 from .landmark_kernel import (
@@ -780,11 +781,25 @@ class FastLandmarkAttention(Attention):
         if top_k is None:
             return scores
         lm_idx = is_mem.view(-1).nonzero(as_tuple=True)[0]  # (n_lm,)
-        if lm_idx.numel() <= top_k:
+        n_lm = lm_idx.numel()
+        if n_lm == 0:
+            return scores
+        recording = gate_log.is_enabled()
+        if n_lm <= top_k and not recording:
+            # All landmark blocks are kept (nothing to mask); skip the work unless logging gates.
             return scores
         lm_scores = scores[..., lm_idx]  # (B, H, 1, n_lm)
-        keep = torch.zeros_like(lm_scores, dtype=torch.bool)
-        keep.scatter_(-1, lm_scores.topk(top_k, dim=-1).indices, True)
+        if n_lm <= top_k:
+            keep = torch.ones_like(lm_scores, dtype=torch.bool)
+        else:
+            keep = torch.zeros_like(lm_scores, dtype=torch.bool)
+            keep.scatter_(-1, lm_scores.topk(top_k, dim=-1).indices, True)
+        if recording:
+            gate_log.record_layer(
+                getattr(self, "_gate_log_layer_idx", None), keep, lm_idx // self.block_size
+            )
+        if n_lm <= top_k:
+            return scores
         scores = scores.clone()
         scores[..., lm_idx] = lm_scores.masked_fill(~keep, float("-inf"))
         return scores

@@ -44,6 +44,7 @@ import torch
 
 from olmo_core.exceptions import OLMoConfigurationError
 
+from . import landmark_gate_analysis as gate_log
 from .landmark_fast import FastLandmarkAttention, _env_int
 from .landmark_kernel import _bwd_preprocess, has_landmark_kernel
 
@@ -703,6 +704,7 @@ class FastCompressiveLandmarkAttention(FastLandmarkAttention):
         n_lm = int(lm_idx.numel())
 
         top_k = self._eval_top_k
+        recording = gate_log.is_enabled()
         if top_k is not None and n_lm > top_k:
             lm_scores = scores[..., lm_idx]  # (B, H, 1, n_lm)
             keep = torch.zeros_like(lm_scores, dtype=torch.bool)
@@ -711,10 +713,20 @@ class FastCompressiveLandmarkAttention(FastLandmarkAttention):
             selected[..., lm_idx] = keep
             has_nonselected = True
             alpha = float(self.nonselected_landmark_mass)
+            if recording:
+                gate_log.record_layer(
+                    getattr(self, "_gate_log_layer_idx", None), keep, lm_idx // Lb
+                )
         else:
             selected = is_mem_b.expand(B, H, 1, total)
             has_nonselected = False
             alpha = 0.0
+            if recording and top_k is not None and n_lm > 0:
+                # n_lm <= top_k: every past block's gate is open this step.
+                keep_all = torch.ones(B, H, 1, n_lm, dtype=torch.bool, device=device)
+                gate_log.record_layer(
+                    getattr(self, "_gate_log_layer_idx", None), keep_all, lm_idx // Lb
+                )
 
         # Gate (cross-block) softmax over the selected landmarks + the local section.
         gate_set = selected | last_section_b

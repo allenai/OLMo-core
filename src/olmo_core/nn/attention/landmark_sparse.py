@@ -31,6 +31,7 @@ import torch.nn.functional as F
 from olmo_core.exceptions import OLMoConfigurationError
 
 from . import Attention
+from . import landmark_gate_analysis as gate_log
 from .kv_cache import KVCacheManager
 from .landmark import repeat_kv
 from .landmark_sparse_kernel import (
@@ -417,14 +418,30 @@ class SparseLandmarkAttention(Attention):
             return scores
         chunk_ids = (lm_idx // self.block_size).view(1, 1, 1, -1)
         n_chunks = int(chunk_ids.max().item()) + 1
-        if n_chunks <= top_k:
+        recording = gate_log.is_enabled()
+        if n_chunks <= top_k and not recording:
+            # All past chunks are kept (nothing to mask); skip the work unless logging gates.
             return scores
         lm_scores = scores[..., lm_idx]  # (B, H, 1, n_lm)
         chunk_ids = chunk_ids.expand_as(lm_scores)
         chunk_scores = lm_scores.new_full((*lm_scores.shape[:-1], n_chunks), float("-inf"))
         chunk_scores.scatter_reduce_(-1, chunk_ids, lm_scores, reduce="amax", include_self=True)
-        keep_chunks = torch.zeros_like(chunk_scores, dtype=torch.bool)
-        keep_chunks.scatter_(-1, chunk_scores.topk(top_k, dim=-1).indices, True)
+        present = torch.isfinite(chunk_scores)  # chunk ordinals actually reachable this step
+        if n_chunks <= top_k:
+            keep_chunks = present
+        else:
+            keep_chunks = torch.zeros_like(chunk_scores, dtype=torch.bool)
+            keep_chunks.scatter_(-1, chunk_scores.topk(top_k, dim=-1).indices, True)
+            keep_chunks &= present
+        if recording:
+            # Per chunk one gate; block_ids are the chunk ordinals 0..n_chunks-1.
+            gate_log.record_layer(
+                getattr(self, "_gate_log_layer_idx", None),
+                keep_chunks,
+                torch.arange(n_chunks, device=scores.device),
+            )
+        if n_chunks <= top_k:
+            return scores
         keep = keep_chunks.gather(-1, chunk_ids)
         scores = scores.clone()
         scores[..., lm_idx] = lm_scores.masked_fill(~keep, float("-inf"))

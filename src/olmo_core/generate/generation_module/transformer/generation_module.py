@@ -38,6 +38,7 @@ from olmo_core.nn.attention import (
     FastCompressiveLandmarkAttention,
     FastLandmarkAttention,
     SparseLandmarkAttention,
+    landmark_gate_analysis,
 )
 from olmo_core.nn.transformer import Transformer, TransformerConfig
 from olmo_core.train.train_module.transformer.common import parallelize_model
@@ -350,6 +351,15 @@ class TransformerGenerationModule(GenerationModule):
                 top_k=generation_config.landmark_top_k_blocks,
                 nonselected_landmark_mass=generation_config.landmark_nonselected_mass,
             )
+            # Optional landmark-gate analysis hook (off unless OLMO_LANDMARK_GATE_LOG is set). Tag
+            # each landmark layer with its block index so the recorder can key gates by layer, then
+            # open a fresh per-example record (context_len defaults to the content prompt length).
+            if landmark_gate_analysis.is_enabled():
+                for block_idx, block in self.model.blocks.items():
+                    attn = block.attention
+                    if isinstance(attn, _LANDMARK_ATTENTION_TYPES):
+                        attn._gate_log_layer_idx = int(block_idx)  # type: ignore[attr-defined]
+                landmark_gate_analysis.start_example(orig_input_ids.shape[1])
         finished = torch.zeros(batch_size, dtype=torch.bool, device=self.device)
         stop_tokens = (
             torch.tensor(generation_config.stop_token_ids, device=self.device, dtype=torch.int32)
@@ -447,6 +457,11 @@ class TransformerGenerationModule(GenerationModule):
                 cache_leftpad=cache_leftpad if generation_config.use_cache else None,
             )
 
+            # Landmark-gate analysis: flush this decode step's opened gates as one record (no-op on
+            # the prefill forward, which records nothing).
+            if landmark_active and landmark_gate_analysis.is_enabled():
+                landmark_gate_analysis.finalize_token()
+
             next_tokens = select_next_token(
                 next_token_logits.squeeze(1),
                 do_sample=generation_config.do_sample,
@@ -527,6 +542,8 @@ class TransformerGenerationModule(GenerationModule):
             # ``generated`` holds the landmark-inserted prompt followed by plain content tokens; the
             # caller never asked for landmarks, so report the prompt in its original content space.
             self._clear_landmark_eval_decode()
+            if landmark_gate_analysis.is_enabled():
+                landmark_gate_analysis.end_example()
             completion = generated[:, prompt_len:]
             generated = (
                 completion if completions_only else torch.cat([orig_input_ids, completion], dim=1)
