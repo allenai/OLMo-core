@@ -14,7 +14,7 @@ path; when off, :func:`is_enabled` is the only thing the attention modules ever 
 boolean), so the hot path is unaffected. When on, one JSON object per decoded token is appended to
 the output file (JSONL — load with ``pandas.read_json(path, lines=True)``)::
 
-    {"dataset": "ruler", "example_num": 0, "context_len": 4096, "subtask": "niah_single_1",
+    {"dataset": "ruler", "doc_id": 0, "context_len": 4096, "subtask": "niah_single_1",
      "decoded_token_num": 1,
      "layers": {"layer0": {"head0": [3, 17, 42], "head1": [...]}, "layer1": {...}, ...}}
 
@@ -28,11 +28,14 @@ Per-example metadata is read from the environment (the harness sets these per ev
     OLMO_GATE_DATASET        "dataset" field (default "ruler")
     OLMO_GATE_SUBTASK        "subtask" field (default "")
     OLMO_GATE_CONTEXT_LEN    "context_len" field (default: the content prompt length)
+    OLMO_GATE_DOC_ID         "doc_id" field -- the eval harness's document id for the example
+                             (default: a per-process 0-based counter when unset)
 
-``example_num`` is a per-process counter (0-based) bumped on each :func:`start_example`. Under
-multi-GPU eval the output path is suffixed per worker (``.rank{RANK}`` under torchrun, else
-``.pid{PID}``) so workers never clobber each other's file; each worker's ``example_num`` is then
-local to its file. The hook assumes ``batch_size == 1`` (which landmark generation already requires).
+``doc_id`` identifies the example: the eval harness sets ``OLMO_GATE_DOC_ID`` per example (oe-eval
+passes each request's ``doc_id``); when unset it falls back to a per-process 0-based counter bumped on
+each :func:`start_example`. Under multi-GPU eval the output path is suffixed per worker
+(``.rank{RANK}`` under torchrun, else ``.pid{PID}``) so workers never clobber each other's file. The
+hook assumes ``batch_size == 1`` (which landmark generation already requires).
 """
 
 import json
@@ -60,8 +63,10 @@ _file = None
 _dataset = "ruler"
 _subtask = ""
 _context_len_env: Optional[int] = None
+_doc_id_env: Optional[str] = None
 
-_example_num = -1
+_doc_counter = -1
+_doc_id: object = 0
 _context_len = 0
 _decoded_token_num = 0
 _current_layers: Dict[str, Dict[str, List[int]]] = {}
@@ -100,24 +105,31 @@ def is_enabled() -> bool:
 
 def _read_env_metadata() -> None:
     """Refresh the per-example metadata from the environment (cheap; allows per-example updates)."""
-    global _dataset, _subtask, _context_len_env
+    global _dataset, _subtask, _context_len_env, _doc_id_env
     _dataset = os.environ.get("OLMO_GATE_DATASET", "ruler")
     _subtask = os.environ.get("OLMO_GATE_SUBTASK", "")
     cl = os.environ.get("OLMO_GATE_CONTEXT_LEN")
     _context_len_env = int(cl) if cl else None
+    did = os.environ.get("OLMO_GATE_DOC_ID")
+    _doc_id_env = did if did else None
 
 
 def start_example(content_prompt_len: int) -> None:
-    """Begin a new example: bump ``example_num``, reset ``decoded_token_num``, refresh metadata.
+    """Begin a new example: resolve ``doc_id``, reset ``decoded_token_num``, refresh metadata.
 
     :param content_prompt_len: Length of the content (non-landmark) prompt, used as ``context_len``
         unless ``OLMO_GATE_CONTEXT_LEN`` overrides it.
     """
-    global _example_num, _decoded_token_num, _context_len, _current_layers
+    global _doc_counter, _doc_id, _decoded_token_num, _context_len, _current_layers
     if not is_enabled():
         return
     _read_env_metadata()
-    _example_num += 1
+    _doc_counter += 1
+    if _doc_id_env is None:
+        _doc_id = _doc_counter
+    else:
+        # The harness doc_id is an int; keep it as one for clean JSON, else fall back to the string.
+        _doc_id = int(_doc_id_env) if _doc_id_env.lstrip("-").isdigit() else _doc_id_env
     _decoded_token_num = 0
     _context_len = _context_len_env if _context_len_env is not None else int(content_prompt_len)
     _current_layers = {}
@@ -165,7 +177,7 @@ def finalize_token() -> None:
     _decoded_token_num += 1
     record = {
         "dataset": _dataset,
-        "example_num": _example_num,
+        "doc_id": _doc_id,
         "context_len": _context_len,
         "subtask": _subtask,
         "decoded_token_num": _decoded_token_num,
