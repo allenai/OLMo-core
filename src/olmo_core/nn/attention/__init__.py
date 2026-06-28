@@ -498,6 +498,7 @@ class Attention(SequenceMixer):
         local_k_slice: Optional[slice] = None,
         cache_leftpad: Optional[torch.Tensor] = None,
         or_mask: Optional[torch.Tensor] = None,
+        and_mask: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         if self.kv_cache_manager is not None:
             self.kv_cache_manager.record_leftpad(cache_leftpad)
@@ -505,6 +506,11 @@ class Attention(SequenceMixer):
             raise NotImplementedError(
                 f"'{type(self.backend).__name__}' does not support `or_mask` "
                 "(e.g. bidirectional image-token attention); use the 'torch' attention backend."
+            )
+        if and_mask is not None and not self.backend.SUPPORTS_AND_MASK:
+            raise NotImplementedError(
+                f"'{type(self.backend).__name__}' does not support `and_mask` "
+                "(e.g. subsegment / branch isolation); use the 'torch' attention backend."
             )
         # shape: (batch_size, seq_len, n_heads, head_dim)
         att = self.backend(
@@ -518,6 +524,7 @@ class Attention(SequenceMixer):
             local_k_slice=local_k_slice,
             kv_cache_manager=self.kv_cache_manager,
             or_mask=or_mask,
+            and_mask=and_mask,
         )
         if self.kv_cache_manager is not None:
             self.kv_cache_manager.update_seqlen(q.shape[1])
@@ -532,6 +539,7 @@ class Attention(SequenceMixer):
         pos_cos: Optional[torch.Tensor],
         freqs_cis: Optional[torch.Tensor],
         cu_doc_lens: Optional[torch.Tensor],
+        position_ids: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         assert self.rope is not None
         rope_kwargs = {}
@@ -542,6 +550,13 @@ class Attention(SequenceMixer):
                     f"got {type(self.rope).__name__}"
                 )
             rope_kwargs["cu_doc_lens"] = cu_doc_lens
+        if position_ids is not None:
+            if not isinstance(self.rope, RotaryEmbedding):
+                raise NotImplementedError(
+                    "Explicit `position_ids` RoPE is only supported by RotaryEmbedding; "
+                    f"got {type(self.rope).__name__}"
+                )
+            rope_kwargs["position_ids"] = position_ids
         return self.rope(
             q,
             k,
@@ -568,6 +583,8 @@ class Attention(SequenceMixer):
         freqs_cis: Optional[torch.Tensor] = None,
         cache_leftpad: Optional[torch.Tensor] = None,
         or_mask: Optional[torch.Tensor] = None,
+        and_mask: Optional[torch.Tensor] = None,
+        position_ids: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """
         Apply attention to the input.
@@ -624,7 +641,9 @@ class Attention(SequenceMixer):
                 )
 
             start_pos = self.kv_cache_manager.current_position() if self.kv_cache_manager else None
-            q, k = self._apply_rope(q, k, start_pos, pos_sin, pos_cos, freqs_cis, cu_doc_lens)
+            q, k = self._apply_rope(
+                q, k, start_pos, pos_sin, pos_cos, freqs_cis, cu_doc_lens, position_ids
+            )
 
         # shape: (batch_size, seq_len, n_heads, head_dim)
         att = self.sdpa(
@@ -640,6 +659,7 @@ class Attention(SequenceMixer):
             local_k_slice=local_k_slice,
             cache_leftpad=cache_leftpad,
             or_mask=or_mask,
+            and_mask=and_mask,
         )
 
         if self.gate is not None:
@@ -889,6 +909,8 @@ class NormalizedAttention(Attention):
         freqs_cis: Optional[torch.Tensor] = None,
         cache_leftpad: Optional[torch.Tensor] = None,
         or_mask: Optional[torch.Tensor] = None,
+        and_mask: Optional[torch.Tensor] = None,
+        position_ids: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         if cache_leftpad:
             raise NotImplementedError(
@@ -927,7 +949,9 @@ class NormalizedAttention(Attention):
                 )
 
             start_pos = self.kv_cache_manager.current_position() if self.kv_cache_manager else None
-            q, k = self._apply_rope(q, k, start_pos, pos_sin, pos_cos, freqs_cis, cu_doc_lens)
+            q, k = self._apply_rope(
+                q, k, start_pos, pos_sin, pos_cos, freqs_cis, cu_doc_lens, position_ids
+            )
 
         # shape: (batch_size, seq_len, n_heads, head_dim)
         att = self.sdpa(
@@ -943,6 +967,7 @@ class NormalizedAttention(Attention):
             local_k_slice=local_k_slice,
             cache_leftpad=cache_leftpad,
             or_mask=or_mask,
+            and_mask=and_mask,
         )
 
         # shape: (batch_size, seq_len, d_model)
@@ -1057,6 +1082,8 @@ class FusedAttention(SequenceMixer):
         freqs_cis: Optional[torch.Tensor] = None,
         cache_leftpad: Optional[torch.Tensor] = None,
         or_mask: Optional[torch.Tensor] = None,
+        and_mask: Optional[torch.Tensor] = None,
+        position_ids: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """
         Apply attention to the input.
@@ -1084,6 +1111,16 @@ class FusedAttention(SequenceMixer):
             raise NotImplementedError(
                 "FusedAttention (flash-attn) does not support `or_mask` "
                 "(e.g. bidirectional image-token attention); use the 'torch' attention backend."
+            )
+        if and_mask is not None:
+            raise NotImplementedError(
+                "FusedAttention (flash-attn) does not support `and_mask` "
+                "(e.g. subsegment / branch isolation); use the 'torch' attention backend."
+            )
+        if position_ids is not None:
+            raise NotImplementedError(
+                "FusedAttention (flash-attn) does not support explicit `position_ids`; "
+                "use the 'torch' attention backend."
             )
 
         B, T, _ = x.shape
