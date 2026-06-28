@@ -14,6 +14,18 @@ import torch.nn.functional as F
 if TYPE_CHECKING:
     from PIL import Image as PILImage
 
+# Tolerate truncated/corrupt images (PIL otherwise raises ``OSError: image file is truncated``
+# from ``.load()``, which kills the data-worker thread and — under distributed packing — hangs
+# the other ranks' collective into a NCCL watchdog abort). The PixMo image sets contain a few
+# truncated files; mm_olmo sets the same flag. This is a process-global PIL setting, so importing
+# this module (done by every dataset's image path) enables it for all in-process worker threads.
+try:
+    from PIL import ImageFile
+
+    ImageFile.LOAD_TRUNCATED_IMAGES = True
+except ImportError:  # PIL is an optional dep; image datasets won't load without it anyway
+    pass
+
 # SigLIP / IMAGENET_STANDARD mean and std (same as transformers.image_utils.IMAGENET_STANDARD_*)
 _IMAGE_MEAN = [0.5, 0.5, 0.5]
 _IMAGE_STD = [0.5, 0.5, 0.5]

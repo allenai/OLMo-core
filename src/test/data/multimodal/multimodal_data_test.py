@@ -324,3 +324,27 @@ def test_pixmo_cap_conditioning_off():
     _ = ds[0]
     # prompt is sampled from the pool verbatim, with no "long_caption ...:" prefix
     assert all(not p.startswith("long_caption") for p in ds.tokenizer.prompts)
+
+
+# ---------------------------------------------------------------------------
+# Truncated/corrupt image tolerance (multi-node run robustness)
+# ---------------------------------------------------------------------------
+
+
+def test_truncated_image_preprocesses_without_raising():
+    """A truncated PixMo image must not raise (PIL OSError) — it would crash a data-worker
+    thread and, under distributed packing, hang the other ranks into a NCCL watchdog abort."""
+    import io
+
+    import torch
+    from PIL import Image
+
+    from olmo_core.nn.vision.molmo2_image_processor import preprocess_image_molmo2
+
+    buf = io.BytesIO()
+    Image.fromarray((np.random.rand(64, 96, 3) * 255).astype("uint8")).save(buf, format="JPEG")
+    truncated = Image.open(io.BytesIO(buf.getvalue()[:-200]))  # drop trailing bytes
+    crops, pooled, grid = preprocess_image_molmo2(
+        truncated, dtype=torch.float32, device=torch.device("cpu"), max_crops=8
+    )
+    assert crops.shape[0] == 1 and grid.shape == (4,)
