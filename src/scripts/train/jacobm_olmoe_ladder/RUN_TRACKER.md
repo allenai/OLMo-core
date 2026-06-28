@@ -1,6 +1,6 @@
 # Ladder Run Tracker
 
-Last updated: 2026-06-25 18:45 UTC.
+Last updated: 2026-06-28 07:55 UTC.
 
 This table is a scan-friendly status matrix for planned ladder cells. It is separate from `RUNS.md` (chronological launch/status log) and `PLOTTED_RESULTS.md` (finished-only plotted rows and losses).
 
@@ -13,9 +13,9 @@ Legend: `done` = at least one finished/plotted run exists; `run` = currently run
 | Experiment | Remaining not-yet-queued / not-started cells | Notes |
 | --- | --- | --- |
 | Total sparsity | 1.2B Cx1/2/4/8 for high total 96E/top4 and huge total 192E/top4 | 275M, 480M, and 810M are done. |
-| Dense schedule | None beyond queued/running 810M/1.2B promotions | 480M promoted grid is done. 810M is mostly done with Cx8 tails still running; 1.2B dense0 has started and dense2/dense4 are partly queued. |
+| Dense schedule | None beyond running 1.2B tail jobs | 480M done. 810M jobs are Beaker-finished, but Cx8 histories are not plotted yet because W&B history fetch is hanging. 1.2B is partly done/running. |
 | Shared expert | 1.2B Cx8 queued/created | 480M, 810M, and 1.2B Cx1/2/4 are Beaker-finalized with exit code 0. The 2026-06-23 duplicate 480M relaunches were eval-only resumes; duplicate Cx8 was stopped before start. |
-| Qwen-like | None beyond currently running 1.2B tail jobs | 810M is done. Active-matched 1.2B Cx1/Cx2/Cx4 are done; remaining 1.2B Cx8 and true-3D tail jobs are running. |
+| Qwen-like | None beyond currently running 1.2B Cx8 tail jobs | 810M done. 1.2B Cx1/2/4 are done for both variants; Cx8 runs remain running. |
 | Expert granularity | None for main coarse/fine grid | Diagnostic 192E/384E remains intentionally limited to 275M Cx1. |
 | Baseline | None for Cx1/2/4/8 main grid | Current grid complete. |
 
@@ -30,35 +30,37 @@ Legend: `done` = at least one finished/plotted run exists; `run` = currently run
 | Total sparsity | high total 96E/top4 | done Cx1/2/4/8 | done Cx1/2/4/8 | done Cx1/2/4/8 | todo Cx1/2/4/8 | 810M promoted wave complete. |
 | Total sparsity | huge total 192E/top4 | done Cx1/2/4/8 | done Cx1/2/4/8 | done Cx1/2/4/8 | todo Cx1/2/4/8 | 810M Cx4/Cx8 replacements finished since last status. |
 | Shared expert | no shared, routed 9/8 d | done Cx1/2/4/8 | done Cx1/2/4/8 | done Cx1/2/4/8 | done Cx1/2/4, queued Cx8 | 480M/810M/1.2B Cx1-4 finalized cleanly; 1.2B Cx8 remains queued. Shared plotter 480M name parsing was fixed 2026-06-24 after the status audit. |
-| Dense schedule | dense0 + shared | done Cx1/2/4/8 | done Cx1/2/4/8 | done Cx1/2/4, run Cx8 | done Cx1, run Cx2/4/8 | 810M Cx4 and 1.2B Cx1 finished since the previous tracker update. |
-| Dense schedule | dense2 + shared | done Cx1/2/4/8 | done Cx1/2/4/8 | done Cx1/2/4, run Cx8 | run Cx1/2, queued Cx4/8 | 810M Cx2/Cx4 finished since the previous tracker update. |
-| Dense schedule | dense4 + shared | done Cx1/2/4/8 | done Cx1/2/4/8 | done Cx1/2/4, run Cx8 | queued Cx1/2/4/8 | 810M Cx1/Cx2/Cx4 finished since the previous tracker update. |
-| Qwen3-like | active matched 4.5d | done Cx1/2/4/8 | done Cx1/2/4/8 | done Cx1/2/4/8 | done Cx1/2/4, run Cx8 | 1.2B Cx4 finished and is now plotted. |
-| Qwen3-like | true 3.0d + depth | done Cx1/2/4/8 | done Cx1/2/4/8 | done Cx1/2/4/8 | done Cx1, run Cx2/4/8 | 1.2B Cx2 latest attempt is running after requeue; Cx4/Cx8 also running. |
+| Dense schedule | dense0 + shared | done Cx1/2/4/8 | done Cx1/2/4/8 | done Cx1/2/4, finished-unplotted Cx8 | done Cx1/2, finished-unplotted Cx4, run Cx8 | 810M Cx8 and 1.2B Cx4 are Beaker-finished but skipped by plots because W&B history fetch hangs before returning rows. |
+| Dense schedule | dense2 + shared | done Cx1/2/4/8 | done Cx1/2/4/8 | done Cx1/2/4, finished-unplotted Cx8 | done Cx1/2, run Cx4/8 | 1.2B Cx1/Cx2 now plotted; 810M Cx8 history fetch is currently blocked. |
+| Dense schedule | dense4 + shared | done Cx1/2/4/8 | done Cx1/2/4/8 | done Cx1/2/4, finished-unplotted Cx8 | done Cx1, run Cx2/4/8 | 1.2B Cx1 now plotted; 810M Cx8 history fetch is currently blocked. |
+| Qwen3-like | active matched 4.5d | done Cx1/2/4/8 | done Cx1/2/4/8 | done Cx1/2/4/8 | done Cx1/2/4, run Cx8 | Cx8 still running. |
+| Qwen3-like | true 3.0d + depth | done Cx1/2/4/8 | done Cx1/2/4/8 | done Cx1/2/4/8 | done Cx1/2/4, run Cx8 | Cx2 and Cx4 finished and are now plotted; Cx8 still running. |
 
 ## Active / Queued Beaker Surface
 
-Bounded status pass on 2026-06-25 18:45 UTC checked only runs that were previously running, queued, or created in this table / `RUNS.md`; it did not scan the full historical W&B/Beaker surface.
+Bounded status pass on 2026-06-28 07:55 UTC checked only runs that were previously running, queued, or created in this table / `RUNS.md`; it did not scan the full historical W&B/Beaker surface.
 
 | Run(s) | State | Latest timestamp UTC | Beaker | Notes |
 | --- | --- | --- | --- | --- |
-| `q3-1p2b-cx4-q3am128e8k-lr3e-4-r1` | done | finalized 2026-06-25 18:23 | https://beaker.org/ex/01KVJ32TJEXX4XR9FY0QN8PA0T | Active-matched 1.2B Cx4 finished cleanly and is now plotted. |
-| `q3-1p2b-cx2-q3td128e8k-lr6e-4-r1` | run | latest attempt started 2026-06-25 13:12 | https://beaker.org/ex/01KVJ33YG7A5DKD5EPZDTSFRPR | Requeued true-3D 1.2B Cx2; not plotted yet. |
-| `q3-1p2b-cx4-q3td128e8k-lr3e-4-r1` | run | started 2026-06-24 19:40 | https://beaker.org/ex/01KVJ34BFBN49YH2AKVSHS0GW5 | True-3D 1.2B Cx4. |
-| `q3-1p2b-cx8-q3am128e8k-lr4e-4-r1` | run | started 2026-06-24 04:05 | https://beaker.org/ex/01KVJ4GXHKR0DP3PXHPR5ZZ6GB | Corrected active-matched 1.2B Cx8 4e-4 job. |
-| `q3-1p2b-cx8-q3td128e8k-lr4e-4-r1` | run | latest attempt started 2026-06-25 18:25 | https://beaker.org/ex/01KVJ4H8PTJDJCGHHFRB8CD3GP | Corrected true-3D 1.2B Cx8 4e-4 job. |
-| `ds-810m-cx4-ds0-sh-lr4e-4-r1` | done | finalized 2026-06-25 05:14 | https://beaker.org/ex/01KVV1WC9YCBY0PFA78QM1E12P | Plotted. |
-| `ds-810m-cx2-ds2-sh-lr5.6e-4-r1` | done | finalized 2026-06-24 22:57 | https://beaker.org/ex/01KVV1Z3EJ66SEPY2BB4A3ZH59 | Plotted. |
-| `ds-810m-cx4-ds2-sh-lr4e-4-r1` | done | finalized 2026-06-25 07:15 | https://beaker.org/ex/01KVV1ZW8RSN4EGZEN54MA18VN | Plotted. |
-| `ds-810m-cx1-ds4-sh-lr6e-4-r1` | done | finalized 2026-06-24 21:23 | https://beaker.org/ex/01KVV21W5MQFCX9R6NWC7FCARD | Plotted. |
-| `ds-810m-cx2-ds4-sh-lr5.6e-4-r1` | done | finalized 2026-06-25 04:39 | https://beaker.org/ex/01KVV22W9JRH1FFKVVQAYRZV8F | Plotted. |
-| `ds-810m-cx4-ds4-sh-lr4e-4-r1` | done | finalized 2026-06-25 17:35 | https://beaker.org/ex/01KVV23RDA44XBKW3D59DBYYEX | Plotted. |
-| `ds-810m-cx8-ds{0,2,4}-sh-lr4e-4-r1` | run | started 2026-06-24 08:34 through 21:24 | see `RUNS.md` 2026-06-23 dense launch section | Remaining 810M dense-schedule tail. |
-| `ds-1p2b-cx1-ds0-sh-lr4e-4-r1` | done | finalized 2026-06-25 15:12 | https://beaker.org/ex/01KVV26CWEGWR09P5JBVR1QX24 | Plotted. |
-| `ds-1p2b-cx{2,4,8}-ds0-sh-*` | run | started 2026-06-25 04:39 through 07:16 | see `RUNS.md` 2026-06-23 dense launch section | dense0 1.2B tail running. |
-| `ds-1p2b-cx{1,2}-ds2-sh-*` | run | started 2026-06-25 16:51 through 17:36 | see `RUNS.md` 2026-06-23 dense launch section | dense2 Cx1/Cx2 running. |
-| `ds-1p2b-cx{4,8}-ds2-sh-*`, `ds-1p2b-cx{1,2,4,8}-ds4-sh-*` | queued | created 2026-06-23 20:20 through 20:24 | see `RUNS.md` 2026-06-23 dense launch section | Waiting for Titan capacity. |
-| `se-1p2b-cx8-se0m9-lr4e-4-r1` | queued | created 2026-06-23 20:24 | https://beaker.org/ex/01KVV2FTHMVKP4ARF5B2A86DN5 | Remaining shared-expert 1.2B Cx8 on Titan urgent, compile-on. |
+| `q3-1p2b-cx2-q3td128e8k-lr6e-4-r1` | done | finalized 2026-06-26 10:16 | https://beaker.org/ex/01KVJ33YG7A5DKD5EPZDTSFRPR | True-3D 1.2B Cx2 finished cleanly and is now plotted. |
+| `q3-1p2b-cx4-q3td128e8k-lr3e-4-r1` | done | finalized 2026-06-27 03:23 | https://beaker.org/ex/01KVJ34BFBN49YH2AKVSHS0GW5 | True-3D 1.2B Cx4 finished cleanly and is now plotted. |
+| `q3-1p2b-cx8-q3am128e8k-lr4e-4-r1` | run | latest attempt started 2026-06-27 09:23 | https://beaker.org/ex/01KVJ4GXHKR0DP3PXHPR5ZZ6GB | Active-matched 1.2B Cx8. |
+| `q3-1p2b-cx8-q3td128e8k-lr4e-4-r1` | run | latest attempt started 2026-06-27 09:24 | https://beaker.org/ex/01KVJ4H8PTJDJCGHHFRB8CD3GP | True-3D 1.2B Cx8. |
+| `ds-810m-cx8-ds0-sh-lr4e-4-r1` | finished-unplotted | finalized 2026-06-25 22:54 | https://beaker.org/ex/01KVV1X7T3RPAX3B0SAK4HTKT8 | W&B history fetch hangs before returning rows for run `5x1zju17`; skipped in cache-safe plot refresh. |
+| `ds-810m-cx8-ds2-sh-lr4e-4-r1` | finished-unplotted | finalized 2026-06-26 04:28 | https://beaker.org/ex/01KVV20XZKCAXGRMTB9MDVFAWN | W&B history fetch not attempted after ds0 Cx8 blocked; still needs cache backfill. |
+| `ds-810m-cx8-ds4-sh-lr4e-4-r1` | finished-unplotted | finalized 2026-06-26 10:04 | https://beaker.org/ex/01KVV24VVNWDCGF6JSFKXYJ024 | W&B history fetch not attempted after ds0 Cx8 blocked; still needs cache backfill. |
+| `ds-1p2b-cx2-ds0-sh-lr6e-4-r1` | done | finalized 2026-06-26 08:39 | https://beaker.org/ex/01KVV27GXZ5DRQMRKWHN5G5BYA | Plotted. |
+| `ds-1p2b-cx4-ds0-sh-lr3e-4-r1` | finished-unplotted | finalized 2026-06-27 08:05 | https://beaker.org/ex/01KVV28EST9EFM4ZF43BP2FN15 | W&B history fetch hangs before returning rows for run `4x0anaih`; skipped in cache-safe plot refresh. |
+| `ds-1p2b-cx8-ds0-sh-lr4e-4-r1` | run | started 2026-06-25 07:16 | https://beaker.org/ex/01KVV29F7ZM9RW8DWF073QYYGF | dense0 1.2B Cx8. |
+| `ds-1p2b-cx1-ds2-sh-lr4e-4-r1` | done | finalized 2026-06-26 08:39 | https://beaker.org/ex/01KVV2AGRGJBFMPVKVN64G5754 | Plotted. |
+| `ds-1p2b-cx2-ds2-sh-lr6e-4-r1` | done | finalized 2026-06-26 21:14 | https://beaker.org/ex/01KVV2BE87YJBG7E68XCKRMTH4 | Plotted. |
+| `ds-1p2b-cx4-ds2-sh-lr3e-4-r1` | run | started 2026-06-25 22:55 | https://beaker.org/ex/01KVV2CCDP7P9C9HM6RYAMM2M8 | dense2 1.2B Cx4. |
+| `ds-1p2b-cx8-ds2-sh-lr4e-4-r1` | run | started 2026-06-26 04:29 | https://beaker.org/ex/01KVV2CVAH6ZYWMRYC8TRDS4DJ | dense2 1.2B Cx8. |
+| `ds-1p2b-cx1-ds4-sh-lr4e-4-r1` | done | finalized 2026-06-26 23:54 | https://beaker.org/ex/01KVV2DBHBF9BPT3SS3VH5K71W | Plotted. |
+| `ds-1p2b-cx2-ds4-sh-lr6e-4-r1` | run | started 2026-06-26 08:40 | https://beaker.org/ex/01KVV2DYRCB5ZDNTZHBD0MXGNX | dense4 1.2B Cx2. |
+| `ds-1p2b-cx4-ds4-sh-lr3e-4-r1` | run | started 2026-06-26 10:04 | https://beaker.org/ex/01KVV2EE8YK7B0MF0EFJ3P9YCZ | dense4 1.2B Cx4. |
+| `ds-1p2b-cx8-ds4-sh-lr4e-4-r1` | run | started 2026-06-26 21:15 | https://beaker.org/ex/01KVV2F1R6M48R02BKM9RVJZH0 | dense4 1.2B Cx8. |
+| `se-1p2b-cx8-se0m9-lr4e-4-r1` | run | started 2026-06-26 23:55 | https://beaker.org/ex/01KVV2FTHMVKP4ARF5B2A86DN5 | Shared-expert 1.2B Cx8 on Titan urgent, compile-on. |
 
 ## Tracking Hygiene
 

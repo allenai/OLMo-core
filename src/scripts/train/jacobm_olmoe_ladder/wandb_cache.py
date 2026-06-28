@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -144,6 +145,9 @@ def scan_history_cached(
         )
         if cached is not None:
             return cached
+
+    if run.state == "finished" and os.environ.get("SKIP_UNCACHED_FINISHED_HISTORY") == "1":
+        return []
 
     history = [dict(row) for row in run.scan_history(keys=keys, page_size=page_size)]
     if run.state == "finished":
