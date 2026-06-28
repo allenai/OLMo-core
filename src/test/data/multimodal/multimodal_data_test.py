@@ -13,7 +13,11 @@ from olmo_core.data.multimodal.grounding import (
     normalize_points,
     pointing_answer,
 )
-from olmo_core.data.multimodal.packing import greedy_pack_indices, iter_packs, pack_examples
+from olmo_core.data.multimodal.packing import (
+    greedy_pack_indices,
+    iter_packs,
+    pack_examples,
+)
 from olmo_core.data.multimodal.prefetch import prefetch_map
 
 _SEQ = 8
@@ -237,3 +241,86 @@ def test_mixture_data_loader_normalizes_weights(tmp_path):
         ds, [3.0, 1.0], coll, work_dir=str(tmp_path), global_batch_size=2 * _SEQ, seed=0
     )
     np.testing.assert_allclose(dl.weights, [0.75, 0.25])
+
+
+# ---------------------------------------------------------------------------
+# PixMoCap style_and_length_v2 conditioning (Gap 1 vs mm_olmo)
+# ---------------------------------------------------------------------------
+
+
+class _FakeTok:
+    """Minimal tokenizer for CPU tests: records the prompts it templates."""
+
+    eos_token_id = 1
+    bos_token_id = 0
+
+    def __init__(self):
+        self.prompts = []
+
+    def apply_chat_template(self, messages, tokenize=False, add_generation_prompt=True):
+        prompt = messages[0]["content"]
+        self.prompts.append(prompt)
+        return f"<|user|>{prompt}<|assistant|>"
+
+    def encode(self, text, add_special_tokens=False):
+        return [(ord(c) % 90) + 10 for c in text]
+
+
+def _pixmo_cap(mode, **kw):
+    from olmo_core.data.multimodal.pixmo_cap import PixMoCapDatasetConfig
+
+    cfg = PixMoCapDatasetConfig(
+        dataset_path="synthetic", mode=mode, max_sequence_length=4096, seed=0, **kw
+    )
+    return cfg.build(_FakeTok())
+
+
+def test_pixmo_cap_style_length_prefix_format():
+    ds = _pixmo_cap("caption")
+    rng = np.random.RandomState(0)
+    text = "x" * 300  # 300 chars -> bucket ~ 300//15 = 20
+    with_num = 0
+    for _ in range(400):
+        p = ds._style_length_prefix("long_caption", text, rng)
+        assert p.startswith("long_caption") and p.endswith(":")
+        rest = p[len("long_caption") : -1]
+        if rest:  # " <n>"
+            with_num += 1
+            assert -10 <= int(rest) <= 50  # ~20 +/- noise/15
+    assert 0.80 < with_num / 400 < 0.97  # ~90% include the length bucket
+
+
+def test_pixmo_cap_select_branches_styles():
+    from olmo_core.data.multimodal.pixmo_cap import CAPTION_STYLE, TRANSCRIPT_STYLE
+
+    row = {"caption": "a cat", "transcripts": ["spoken one", "spoken two"]}
+    rng = np.random.RandomState(0)
+    assert [s for s, _ in _pixmo_cap("caption")._select_branches(row, rng)] == [CAPTION_STYLE]
+    assert [s for s, _ in _pixmo_cap("transcript")._select_branches(row, rng)] == [TRANSCRIPT_STYLE]
+    both = _pixmo_cap("transcript_and_caption")._select_branches(row, rng)
+    assert [s for s, _ in both] == [CAPTION_STYLE, TRANSCRIPT_STYLE]
+
+
+def test_pixmo_cap_conditioning_injects_per_branch_prefix():
+    ds = _pixmo_cap("transcript_and_caption", style_length_conditioning=True)
+    seq = ds[0]
+    # two branches -> subsegment ids present, two distinct annotations
+    assert "subsegment_ids" in seq
+    assert len(set(seq["subsegment_ids"].tolist())) == 3  # prefix + 2 branches
+    # the two user turns were templated with the long_caption / transcript style prefixes
+    prompts = ds.tokenizer.prompts
+    assert any(p.startswith("long_caption") and ":" in p for p in prompts)
+    assert any(p.startswith("transcript") and ":" in p for p in prompts)
+
+
+def test_pixmo_cap_fixed_prompt_disables_conditioning():
+    ds = _pixmo_cap("caption", fixed_prompt="Describe this image.")
+    _ = ds[0]
+    assert ds.tokenizer.prompts == ["Describe this image."]  # verbatim, no style prefix
+
+
+def test_pixmo_cap_conditioning_off():
+    ds = _pixmo_cap("caption", style_length_conditioning=False)
+    _ = ds[0]
+    # prompt is sampled from the pool verbatim, with no "long_caption ...:" prefix
+    assert all(not p.startswith("long_caption") for p in ds.tokenizer.prompts)

@@ -2,10 +2,13 @@
 
 A dependency-free (no ``mm_olmo``) map-style :class:`torch.utils.data.Dataset` that
 turns PixMoCap image-caption examples into packed Molmo2 training sequences. Each
-example produces a shared prefix (BOS + image block + user prompt + assistant
-header) that branches into one or more assistant responses (a long caption and/or a
-spoken transcript), assembled by
-:func:`~olmo_core.data.multimodal.sequence_builder.build_packed_sequence`.
+example produces a shared prefix (BOS + image block) that branches into one or more
+``(user turn, assistant response)`` annotations (a long caption and/or a spoken
+transcript), assembled by
+:func:`~olmo_core.data.multimodal.sequence_builder.build_branched_sequence`. Following
+mm_olmo's ``style_and_length_v2`` system prompt, each branch's user turn is prefixed with
+a ``"<style>[ <length-bucket>]:"`` tag derived from that branch's response length, so the
+model learns to condition output length on the prompt (see :data:`CAPTION_STYLE`).
 
 Three data sources are supported via ``dataset_path``:
 
@@ -19,13 +22,13 @@ Three data sources are supported via ``dataset_path``:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
 from olmo_core.config import Config
 
-from .sequence_builder import build_packed_sequence
+from .sequence_builder import build_branched_sequence
 
 __all__ = ["PixMoCapDataset", "PixMoCapDatasetConfig", "CAPTION_PROMPTS", "TRANSCRIPT_PROMPTS"]
 
@@ -50,6 +53,18 @@ TRANSCRIPT_PROMPTS = (
 
 _MODES = ("caption", "transcript", "transcript_and_caption")
 
+# mm_olmo's ``system_prompt='style_and_length_v2'`` (data_formatter.py): every response
+# branch is preceded, in its user turn, by a ``"<style>[ <bucket>]:"`` length-conditioning
+# prefix so the model learns to control output length from the prompt. ``<style>`` names
+# match mm_olmo (the caption branch is ``long_caption``, the spoken-transcript branch is
+# ``transcript``); the bucket is the response's character length // 15 plus N(0, 25) noise,
+# included 90% of the time (10% of the time only the bare ``"<style>:"`` is shown).
+CAPTION_STYLE = "long_caption"
+TRANSCRIPT_STYLE = "transcript"
+_LENGTH_BUCKET = 15
+_LENGTH_NOISE_STD = 25.0
+_LENGTH_KEEP_PROB = 0.90
+
 
 @dataclass
 class PixMoCapDatasetConfig(Config):
@@ -70,7 +85,11 @@ class PixMoCapDatasetConfig(Config):
     loss_token_weighting: str = "root_subsegments"
     fixed_prompt: Optional[str] = None
     """If set, always use this user prompt instead of sampling from the pools.
-    Useful for deterministic parity tests."""
+    Useful for deterministic parity tests. Disables ``style_length_conditioning``."""
+
+    style_length_conditioning: bool = True
+    """Prepend mm_olmo's ``style_and_length_v2`` ``"<style>[ <bucket>]:"`` prefix to each
+    branch's user turn (see :data:`CAPTION_STYLE`). Ignored when ``fixed_prompt`` is set."""
 
     seed: int = 0
     synthetic_size: int = 64
@@ -156,37 +175,60 @@ class PixMoCapDataset:
 
     # -- core -------------------------------------------------------------------
 
-    def _select_responses(self, row: Dict[str, Any], rng: np.random.RandomState) -> List[str]:
-        """Pick the response branch text(s) for this example per ``mode``."""
+    def _select_branches(
+        self, row: Dict[str, Any], rng: np.random.RandomState
+    ) -> List[Tuple[str, str]]:
+        """Pick the ``(style, response_text)`` branch(es) for this example per ``mode``.
+
+        Mirrors mm_olmo ``PixMoCapConfig.format_example``: the caption branch carries
+        :data:`CAPTION_STYLE` and the spoken-transcript branch :data:`TRANSCRIPT_STYLE`.
+        """
         caption = row.get("caption", "")
         transcripts = row.get("transcripts") or []
         mode = self.config.mode
         if mode == "caption":
-            return [caption]
+            return [(CAPTION_STYLE, caption)]
         if mode == "transcript":
             if not transcripts:
-                return [caption]
-            return [transcripts[rng.randint(len(transcripts))]]
+                return [(CAPTION_STYLE, caption)]
+            return [(TRANSCRIPT_STYLE, transcripts[rng.randint(len(transcripts))])]
         # transcript_and_caption: caption first, then a random transcript (if any).
-        responses = [caption]
+        branches = [(CAPTION_STYLE, caption)]
         if transcripts:
-            responses.append(transcripts[rng.randint(len(transcripts))])
-        return responses
+            branches.append((TRANSCRIPT_STYLE, transcripts[rng.randint(len(transcripts))]))
+        return branches
 
-    def _build_prefix_ids(self, prompt: str, image_grid: Optional[np.ndarray]) -> List[int]:
-        """BOS + image block + user turn + assistant header (native Molmo2 layout)."""
+    def _style_length_prefix(self, style: str, text: str, rng: np.random.RandomState) -> str:
+        """mm_olmo ``style_and_length_v2`` prefix: ``"<style> <bucket>:"`` (90%) or
+        ``"<style>:"`` (10%), where ``bucket = (len(text) + N(0, 25)) // 15``."""
+        if rng.rand() < _LENGTH_KEEP_PROB:
+            n = len(text) + int(rng.normal(scale=_LENGTH_NOISE_STD))
+            n = n // _LENGTH_BUCKET
+            return f"{style} {n}:"
+        return f"{style}:"
+
+    def _sample_prompt(self, style: str, rng: np.random.RandomState) -> str:
+        pool = TRANSCRIPT_PROMPTS if style == TRANSCRIPT_STYLE else CAPTION_PROMPTS
+        return pool[rng.randint(len(pool))]
+
+    def _image_prefix_ids(self, image_grid: Optional[np.ndarray]) -> List[int]:
+        """The shared prefix every branch attends: BOS + image block (no user turn)."""
         from olmo_core.nn.vision.molmo2_tokens import build_image_token_ids
 
+        ids: List[int] = [self._bos_id]
+        if image_grid is not None:
+            resized_h, resized_w, h, w = (int(image_grid[i]) for i in range(4))
+            ids = ids + build_image_token_ids(resized_h, resized_w, h, w)
+        return ids
+
+    def _user_turn_ids(self, prompt: str) -> List[int]:
+        """A branch's own user turn + assistant header (``<|im_start|>user … assistant\\n``)."""
         text = self.tokenizer.apply_chat_template(
             [{"role": "user", "content": prompt}],
             tokenize=False,
             add_generation_prompt=True,
         )
-        ids: List[int] = self.tokenizer.encode(text, add_special_tokens=False)
-        if image_grid is not None:
-            resized_h, resized_w, h, w = (int(image_grid[i]) for i in range(4))
-            ids = build_image_token_ids(resized_h, resized_w, h, w) + ids
-        return [self._bos_id] + ids
+        return self.tokenizer.encode(text, add_special_tokens=False)
 
     def __getitem__(self, index: int) -> Dict[str, np.ndarray]:
         from olmo_core.nn.vision.molmo2_image_processor import preprocess_image_molmo2
@@ -215,19 +257,27 @@ class PixMoCapDataset:
         images = images_t[0].numpy()  # (n_crops, n_patches, patch_dim)
         pooled = pooling_t[0].numpy()  # (n_pool, pool_size)
 
-        if cfg.fixed_prompt is not None:
-            prompt = cfg.fixed_prompt
-        else:
-            pool = TRANSCRIPT_PROMPTS if cfg.mode == "transcript" else CAPTION_PROMPTS
-            prompt = pool[rng.randint(len(pool))]
+        # Shared prefix = BOS + image block; each (caption / transcript) branch carries its
+        # OWN user turn (mm_olmo branches right after the image), prefixed with the
+        # style_and_length_v2 length tag so each branch conditions on its own response length.
+        prefix_ids = self._image_prefix_ids(image_grid)
+        branch_pairs: List[Tuple[List[int], List[int]]] = []
+        for style, text in self._select_branches(row, rng):
+            if cfg.fixed_prompt is not None:
+                prompt = cfg.fixed_prompt
+            else:
+                base_prompt = self._sample_prompt(style, rng)
+                if cfg.style_length_conditioning:
+                    prompt = f"{self._style_length_prefix(style, text, rng)} {base_prompt}"
+                else:
+                    prompt = base_prompt
+            context_ids = self._user_turn_ids(prompt)
+            response_ids = self.tokenizer.encode(text, add_special_tokens=False)
+            branch_pairs.append((context_ids, response_ids))
 
-        prefix_ids = self._build_prefix_ids(prompt, image_grid)
-        responses = self._select_responses(row, rng)
-        response_ids = [self.tokenizer.encode(r, add_special_tokens=False) for r in responses]
-
-        seq = build_packed_sequence(
+        seq = build_branched_sequence(
             prefix_ids,
-            response_ids,
+            branch_pairs,
             eos_id=self._eos_id,
             loss_token_weighting=cfg.loss_token_weighting,
         )

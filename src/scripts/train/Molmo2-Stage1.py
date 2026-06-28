@@ -78,6 +78,16 @@ COMPILE_MODEL = True  # torch.compile the LM (fuses pointwise ops; one-time comp
 DATA_PREFETCH_WORKERS = 4  # background threads preprocessing examples (0 = synchronous)
 MAX_CROPS = 8
 
+# KNOWN DELTA vs mm_olmo stage-1 captioner: `response_residual_dropout=0.1`.
+# mm_olmo applies 0.1 dropout to the residual stream of RESPONSE tokens only (input/image
+# tokens get 0.0), via a per-token drop mask in its LM block (olmo/nn/llm.py: `Dropout`
+# with `mask_p`). OLMo-core's `TransformerBlock` has a single uniform `nn.Dropout` (default
+# 0.0) with no per-token/response path, so this regularizer is intentionally NOT applied
+# here — adding it would require threading a response drop-mask through the core transformer
+# block. Low impact for the short benchmark runs; revisit for a full-fidelity stage-1
+# reproduction. (The other mm_olmo delta, the `style_and_length_v2` length-conditioning
+# system prompt, IS implemented — see PixMoCapDataset.style_length_conditioning.)
+
 # Instance-based batching (mm_olmo: global 8, device microbatch 1), expressed in tokens.
 GLOBAL_BATCH_INSTANCES = 8
 RANK_MICROBATCH_INSTANCES = 1
