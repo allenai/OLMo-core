@@ -498,7 +498,22 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
                 f"invalid options for '{self.name}' {self.__class__.__name__}, {e}"
             ) from e
 
-    def flops_per_seq(self, d_model: int, seq_length: int) -> int:
+    @staticmethod
+    def _causal_attention_positions(seq_length: int, window_size: Optional[int] = None) -> int:
+        if window_size is None or window_size >= seq_length:
+            return seq_length * (seq_length + 1) // 2
+
+        # Each query attends to itself and up to ``window_size - 1`` earlier tokens.
+        return window_size * (window_size + 1) // 2 + (seq_length - window_size) * window_size
+
+    def flops_per_seq(
+        self,
+        d_model: int,
+        seq_length: int,
+        *,
+        layer_idx: Optional[int] = None,
+        n_layers: Optional[int] = None,
+    ) -> int:
         """
         Estimate the number of FLOPs for a single forward + backward pass through attention
         for a sequence of the given length.
@@ -510,7 +525,16 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
         n_kv_heads = self.n_kv_heads or n_heads
         d_attn = self.d_attn if self.d_attn is not None else d_model
 
-        head_dim = d_attn // n_heads
+        head_dim = self.head_dim if self.head_dim is not None else d_attn // n_heads
+        window_size: Optional[int] = None
+        if (
+            self.sliding_window is not None
+            and layer_idx is not None
+            and n_layers is not None
+            and self.sliding_window.should_use_swa(layer_idx, n_layers)
+        ):
+            window_size = self.sliding_window.get_window_size(layer_idx, n_layers)
+        attention_positions = self._causal_attention_positions(seq_length, window_size)
 
         # 2x: A GEMM of a m*n tensor with a n*k tensor requires 2mnk floating-point operations.
         # - 3x: Each GEMM in the model needs to be performed 3 times (forward pass,
@@ -526,16 +550,11 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
         flops += flops_factor * (d_model * n_kv_heads * head_dim * seq_length) * 2
 
 
-        # QK^T scores:
-        # Treat as n_heads independent GEMMs:
-        # (seq_length, head_dim) x (head_dim, seq_length) for each head.
-        # mnk = seq_length * seq_length * head_dim, repeated n_heads times.
-        flops += flops_factor * (n_heads * seq_length * seq_length * head_dim) / 2 # divide by 2 for causal attention
+        # QK^T scores, accounting for causal and sliding-window masking.
+        flops += flops_factor * (n_heads * attention_positions * head_dim)
 
-        # Attention @ V:
-        # Again n_heads independent GEMMs:
-        # (seq_length, seq_length) x (seq_length, head_dim) for each head.
-        flops += flops_factor * (n_heads * seq_length * seq_length * head_dim) / 2 # divide by 2 for causal attention
+        # Attention @ V, with the same attention-position count as QK^T.
+        flops += flops_factor * (n_heads * attention_positions * head_dim)
 
         # Output projection (seq_length, d_attn) x (d_attn, d_model)
         flops += flops_factor * (d_attn * d_model * seq_length)

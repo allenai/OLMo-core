@@ -96,6 +96,7 @@ from olmo_core.nn.transformer.config import (
     TransformerBlockConfig,
     TransformerBlockType,
 )
+from ..attention import AttentionConfig
 
 
 def _shared_up_gate_rhs(weight: torch.Tensor) -> torch.Tensor:
@@ -236,18 +237,32 @@ class OLMoDDPTransformerBlockConfig(TransformerBlockConfig):
 
         return block_params
 
-    def flops_per_seq(self, d_model: int, seqlen: int) -> int:
+    def flops_per_seq(
+        self,
+        d_model: int,
+        seqlen: int,
+        *,
+        layer_idx: Optional[int] = None,
+        n_layers: Optional[int] = None,
+    ) -> int:
 
         flops = 0
 
         # attention
-        if hasattr(self.sequence_mixer, "flops_per_seq"):
+        if isinstance(self.sequence_mixer, AttentionConfig):
+            flops += self.sequence_mixer.flops_per_seq(
+                d_model,
+                seqlen,
+                layer_idx=layer_idx,
+                n_layers=n_layers,
+            )
+        elif hasattr(self.sequence_mixer, "flops_per_seq"):
             flops += self.sequence_mixer.flops_per_seq(d_model, seqlen)  # type: ignore[attr-defined]
         else:
             flops += self.sequence_mixer.build(
                 d_model,
-                layer_idx=0,
-                n_layers=1,
+                layer_idx=layer_idx if layer_idx is not None else 0,
+                n_layers=n_layers if n_layers is not None else 1,
                 init_device="meta",
             ).num_flops_per_token(seqlen) * seqlen
 

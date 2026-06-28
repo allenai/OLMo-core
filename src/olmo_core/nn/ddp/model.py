@@ -1140,28 +1140,28 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
             # Mark sizes as dynamic for torch.compile().
             if self.compile_enabled:
                 mark_dynamic(h, (0, 1), strict=False)
-            with nvtx.annotate(f"fwd_block_{block_key}", color="blue"):
-                block_kwargs = per_block_kwargs.get(int(block_key), {})
-                combined_kwargs = {**all_block_kwargs, **block_kwargs}
-                do_not_recompute = [] # HACK
-                if (self.recompute_each_block and (block_idx not in do_not_recompute)) or (self.recompute_block_keys and block_key in self.recompute_block_keys):
-                    h = checkpoint(
-                        self._forwrad_one_block, 
-                        h, block_key, 
-                        combined_kwargs, 
-                        use_reentrant=False, 
-                        context_fn=(noop_context_fn if self.compile_enabled else recompute_context_fn),
-                        # determinism_check='none',
-                    )
-                    h = cast(torch.Tensor, h)
-                else:
-                    h = self._forwrad_one_block(h, block_key, combined_kwargs)
+            block_kwargs = per_block_kwargs.get(int(block_key), {})
+            combined_kwargs = {**all_block_kwargs, **block_kwargs}
+            do_not_recompute = [] # HACK
+            if (self.recompute_each_block and (block_idx not in do_not_recompute)) or (self.recompute_block_keys and block_key in self.recompute_block_keys):
+                h = checkpoint(
+                    self._forwrad_one_block,
+                    h, block_key,
+                    combined_kwargs,
+                    use_reentrant=False,
+                    context_fn=(noop_context_fn if self.compile_enabled else recompute_context_fn),
+                    # determinism_check='none',
+                )
+                h = cast(torch.Tensor, h)
+            else:
+                h = self._forwrad_one_block(h, block_key, combined_kwargs)
 
         return h
 
     def _forwrad_one_block(self, h, block_key: str, block_kwargs: Dict[str, Any]) -> torch.Tensor:
         block = self.blocks[block_key]
-        h = block(h, **block_kwargs)
+        with nvtx.annotate(f"fwd_block_{block_key}", color="blue"):
+            h = block(h, **block_kwargs)
         return h
 
     def forward_embed(self, input_ids: torch.Tensor) -> torch.Tensor:
