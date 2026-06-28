@@ -41,6 +41,21 @@ class GenerationConfig(Config):
     stop_token_ids: Optional[List[int]] = None
     """Tokens to stop generation at. If provided, the generation will stop when any of these tokens are generated."""
 
+    stop_strings: Optional[List[str]] = None
+    """
+    Substrings that stop generation per-row when they appear in a row's *decoded* completion. Unlike
+    :data:`stop_token_ids` (single-token), these match arbitrary detokenized text, which is much more
+    effective for short-answer eval (e.g. ``["Answer:", "Contradicting pairs:"]``): once a row's answer
+    line is emitted the row is marked finished, so decoding stops near the actual answer length instead
+    of running to ``max_new_tokens``. Requires a tokenizer be passed to
+    :meth:`~olmo_core.generate.generation_module.transformer.TransformerGenerationModule.generate_batch`
+    via ``stop_string_tokenizer`` (used to decode the running completion). ``None`` disables.
+    """
+
+    stop_string_check_interval: int = 1
+    """How often (in decode steps) to run the :data:`stop_strings` / finished-all check. Larger values
+    cut the per-step GPU->CPU sync at the cost of a few extra decode steps before stopping. Default 1."""
+
     landmark_mem_id: Optional[int] = None
     """
     For landmark-attention models only: the token ID used as the landmark ("memory") token. When the

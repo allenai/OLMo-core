@@ -945,7 +945,7 @@ class FastLandmarkAttention(Attention):
         att = self._attn_core(q, k, v)
         return att[:, :, :T]
 
-    def _apply_topk_landmark_retrieval(
+    def _decode_apply_topk_landmark_retrieval(
         self, scores: torch.Tensor, is_mem: torch.Tensor
     ) -> torch.Tensor:
         """Hard top-k landmark block retrieval (the paper's inference procedure, section 3.2).
@@ -1003,7 +1003,7 @@ class FastLandmarkAttention(Attention):
         last_section = ((j // Lb) == (qpos // Lb)).view(1, 1, 1, total)
 
         scores = torch.matmul(q, k.transpose(-1, -2)) * self.softmax_scale  # (B, H, 1, total)
-        scores = self._apply_topk_landmark_retrieval(scores, is_mem)
+        scores = self._decode_apply_topk_landmark_retrieval(scores, is_mem)
         Bsz, Hn = scores.shape[0], scores.shape[1]
         probs = landmark_grouped_softmax(
             scores,
@@ -1037,7 +1037,7 @@ class FastLandmarkAttention(Attention):
         last_section = (j >= section_start).view(1, 1, 1, total)
 
         scores = torch.matmul(q, k.transpose(-1, -2)) * self.softmax_scale  # (B, H, 1, total)
-        scores = self._apply_topk_landmark_retrieval(scores, is_mem)
+        scores = self._decode_apply_topk_landmark_retrieval(scores, is_mem)
         Bsz, Hn = scores.shape[0], scores.shape[1]
         probs = landmark_grouped_softmax(
             scores,

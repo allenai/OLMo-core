@@ -1,54 +1,34 @@
 """
-LOCAL (torchrun, no Beaker/weka) **fast-landmark** Qwen3-4B SFT that mixes 5 long-context SFT tasks
-(contradiction, nq, oolong, rerank, outlier) + Tulu chat + raw continued-pretraining (CPT) text,
-to lift task accuracy WITHOUT degrading RULER long-context retrieval.
+LOCAL (torchrun, no Beaker/weka) dense Qwen3-4B SFT that mixes the contradiction task with raw
+continued-pretraining (CPT) text, to improve contradiction accuracy WITHOUT degrading RULER
+long-context retrieval. This is the local counterpart of
+``Qwen3-4B-dense-noruler-5k-CPTmix-SFT.py`` (Beaker), specialised to a single SFT task
+(contradiction) + CPT mix, runnable on a Berkeley H200 node (mooney/cubbins/sneetches).
 
-This is the LANDMARK counterpart of ``Qwen3-4B-dense-cptmix-contra-local.py``. The recipe, token
-mixing, weighting, hyperparameters and the sbatch train->export->eval wrapper are kept identical so
-the landmark result is directly comparable to the dense baseline (RULER 0.799 / contra 0.76 / nq
-0.98 / oolong 0.62 / rerank 0.40 / outlier 0.41 at cpt0.85, weighted 5-task, lr1e-5, 8k, 48M tok).
+Everything reads/writes LOCAL paths (shared NFS /scratch so any node can read):
+  * SFT data  : contradiction shards (token_ids_part_*.npy + labels_mask_*.npy), completion-masked.
+  * CPT data  : dolma3longmino Qwen3-tokenized sample (part-*.npy + all-True mask-*.npy) -> full loss.
+  * base ckpt : MODEL-ONLY olmo-native distcp of the dense CPT base q4b-dense-dolma3longmino/step2385
+                (load_path points at the ``model_and_optim`` subdir; optim/trainer state not loaded).
 
-Two things differ from the dense launcher, both forced by landmark attention:
-
-  1. **Attention**: ``fast_landmark=True, mem_freq=63`` (block_size = 64). The model is initialised
-     from the **fast-landmark** CPT base (q4b-fast-landmark-dolma3longmino/step2385), NOT the dense
-     CPT base -- the landmark-token (151860) embedding and the grouped-softmax attention were trained
-     during landmark CPT, so loading a dense base would be wrong.
-
-  2. **Data pipeline**: ``MixingDocumentSource -> LandmarkPackingInstanceSource`` instead of
-     ``MixingDocumentSource -> ConcatAndChunkInstanceSource``. ``LandmarkPackingInstanceSource``
-     inserts a landmark token after every ``mem_freq`` content tokens *per document*, so every
-     document occupies a whole number of landmark blocks, then greedily packs whole documents into
-     ``seq_len`` windows and emits block-aligned ``doc_lens``. The model masks attention
-     block-diagonally from those ``doc_lens`` (a query never attends across a document boundary) --
-     the landmark analogue of the dense recipe's ``generate_doc_lengths=True`` EOS masking. So SFT
-     examples are isolated exactly as in the dense run.
-
-     ``generate_doc_lengths`` is left False: document boundaries come from the packing source, not
-     from EOS (EOS-derived boundaries are not block-aligned and the landmark attention rejects them).
-
-     NOTE: ``LandmarkPackingInstanceSource`` DROPS any document longer than one ``seq_len`` window
-     (in landmark-token space, ~``seq_len * mem_freq / block_size`` content tokens). The 5 SFT tasks
-     have ~0 such documents, but the CPT sample (dolma3longmino) has a few very long documents that
-     hold a non-trivial token mass; those are dropped, so the *realised* CPT fraction is somewhat
-     below the nominal ``--cpt-frac``. The MixingDocumentSource token-count log prints the realised
-     mix; bump ``--cpt-frac`` if you need to match the dense CPT mass exactly.
+Mix: a ``--cpt-frac`` token-fraction MixingDocumentSource (CPT all-True loss + SFT completion-only),
+then ConcatAndChunk into ``--seq-len`` windows. Sweep ``--cpt-frac`` up (and ``--lr`` down) until
+RULER stops degrading while contradiction improves.
 
 Build order mirrors ``internal/experiment.py::train`` for the composable path::
 
     model        = model_config.build(init_device="meta")
     train_module = train_module_config.build(model)
-    source       = instance_source_config.build(work_dir)
-    data_loader  = data_loader_config.build(source, dp_process_group=train_module.dp_process_group)
+    sources      = [src.build(work_dir) for src in dataset]
+    data_loader  = data_loader_config.build(*sources, dp_process_group=train_module.dp_process_group)
     trainer      = trainer_config.build(train_module, data_loader)
     trainer.fit()
 
-Run (8x H200, full FSDP shard, no CP -- 8k fits)::
+Run (8x H200, full FSDP shard)::
 
     PYTHONPATH=<repo>/src torchrun --nproc_per_node=8 \\
-      src/scripts/train/sft/Qwen3-4B-fast-landmark-cptmix-5task-local.py \\
-      --run-name q4b-lm-5task-c85 --cpt-frac 0.85 --nq-frac 0.0375 --oolong-frac 0.0375 \\
-      --rerank-frac 0.0225 --outlier-frac 0.0225 --lr 1e-5 --target-tokens 48000000
+      src/scripts/train/sft/Qwen3-4B-dense-cptmix-contra-local.py \\
+      --run-name q4b-cptmix-contra-f70-lr5e5 --cpt-frac 0.70 --lr 5e-5 --max-steps 150
 """
 
 import argparse
@@ -60,15 +40,14 @@ from olmo_core.config import DType
 from olmo_core.data import TokenizerConfig
 from olmo_core.data.composable import (
     ComposableDataLoaderConfig,
-    LandmarkInstanceSourceConfig,
-    LandmarkPackingInstanceSourceConfig,
+    ConcatAndChunkInstanceSourceConfig,
     MixingDocumentSourceConfig,
     MixingDocumentSourceSpecConfig,
     NumpyDocumentSourceConfig,
-    PadToLengthInstanceSourceConfig,
 )
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.float8 import Float8Config
+from olmo_core.nn.attention import AttentionBackendName
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import LinearWithWarmup, OptimGroupOverride, SkipStepAdamWConfig
 from olmo_core.train import (
@@ -85,40 +64,38 @@ from olmo_core.train.callbacks import (
     WandBCallback,
 )
 from olmo_core.train.train_module import (
-    TransformerActivationCheckpointingConfig,
-    TransformerActivationCheckpointingMode,
     TransformerDataParallelConfig,
     TransformerDataParallelWrappingStrategy,
     TransformerTrainModuleConfig,
 )
 from olmo_core.utils import seed_all
 
-# ---- landmark geometry ----
-# mem_freq = landmark spacing; block_size = mem_freq + 1 (mem_freq content toks + 1 landmark).
-# seq_len (landmark-token space) must be divisible by block_size.
-DEFAULT_MEM_FREQ = 63
-LANDMARK_TOKEN_ID = 151860  # Qwen3 reserved token used as the landmark (memory) token
-
 # ---- LOCAL paths (shared NFS, readable from any Berkeley GPU node) ----
 SFT_DATA_ROOT = "/scratch/users/prasann/longctx_sft_qwen/contradiction_8k"
 CPT_DATA_ROOT = "/scratch/users/prasann/cpt_data/dolma3_longmino_qwen3_sample"
-# Model-only olmo-native distcp of the FAST-LANDMARK CPT base (point at the model_and_optim SUBDIR).
-# Fetched from weka (q4b-fast-landmark-dolma3longmino/step2385) via s3 -- see landmark_base_sync.yaml
-# / [[weka-s3-checkpoint-transfer]]. On real /scratch (oz NFS), readable from every node.
+# Model-only olmo-native distcp of the dense CPT base (point at the model_and_optim SUBDIR).
+# NOTE: must be on REAL shared NFS, NOT /scratch/users/prasann/olmo_ckpts which is a SYMLINK to
+# node-local /data (invisible to other nodes). cpt_mix_ckpts is a real /scratch (oz NFS) dir.
+# Base CPT checkpoints by model size (model-only olmo-native distcp, model_and_optim subdir).
+# Both on real /scratch (oz NFS), readable from every node.
 BASE_CKPTS = {
-    "qwen3_4B": "/scratch/users/prasann/cpt_mix_ckpts/q4b-fast-landmark-step2385/model_and_optim",
+    "qwen3_4B": "/scratch/users/prasann/cpt_mix_ckpts/q4b-dense-cpt-step2385-modelonly/model_and_optim",
+    "qwen3_0_6B": "/scratch/users/prasann/cpt_mix_ckpts/q06b-dense-cpt-modelonly/model_and_optim",
 }
 TULU_DATA_ROOT = "/scratch/users/prasann/cpt_data/tulu3_sft_qwen"  # diverse chat SFT (25M tok)
 NQ_DATA_ROOT = "/scratch/users/prasann/cpt_data/nq_aligned_k20_qwen"  # fixed (aligned) NQ retrieval k20
 OOLONG_DATA_ROOT = "/scratch/users/prasann/cpt_data/oolong_qwen"
 RERANK_DATA_ROOT = "/scratch/users/prasann/cpt_data/rerank_qwen"
 OUTLIER_DATA_ROOT = "/scratch/users/prasann/cpt_data/outlier_qwen"
+# Save trained checkpoints (model+optim) to node-local /data (fast ZFS): writing distcp to
+# /scratch NFS is slow and intermittently flaky. The combined sweep job exports->evals on the same
+# node, so node-local is fine; only the small eval-summary JSON is written to shared NFS.
 SAVE_ROOT = "/data/prasann/cpt_mix_runs"
-WORK_DIR = "/scratch/users/prasann/longctx_sft_qwen/dataset-cache-lmcptmix"
+WORK_DIR = "/scratch/users/prasann/longctx_sft_qwen/dataset-cache-cptmix"
 
 DEFAULT_SEQ_LEN = 8192
-DEFAULT_CPT_FRAC = 0.85
-DEFAULT_LR = 1e-5
+DEFAULT_CPT_FRAC = 0.70
+DEFAULT_LR = 5e-5
 DEFAULT_MAX_STEPS = 150
 
 
@@ -130,21 +107,14 @@ def build_and_fit(opts: argparse.Namespace) -> None:
     cpt_frac = opts.cpt_frac
     sft_data_root = opts.sft_data_root or SFT_DATA_ROOT
 
-    mem_freq = opts.mem_freq
-    block_size = mem_freq + 1
-    if seq_len % block_size != 0:
-        raise SystemExit(
-            f"--seq-len {seq_len} not divisible by block_size={block_size} (mem_freq+1); "
-            f"pick a seq_len that is a multiple of {block_size}."
-        )
-    content_cap = seq_len // block_size * mem_freq
-    print(f"[geometry] mem_freq={mem_freq} block_size={block_size} seq_len={seq_len} "
-          f"content_cap_per_doc={content_cap}", flush=True)
-
     # Full FSDP shard across all ranks (4B + AdamW does NOT fit replicated on one GPU).
     world_size = int(os.environ.get("WORLD_SIZE", "8"))
     shard_degree = opts.shard_degree or world_size
+    # Global batch in *tokens*. Default = one rank_microbatch (= seq_len) per rank per step (no
+    # accumulation). The CPT base trained with a MUCH larger batch (~4.2M tokens); --batch-tokens
+    # lets us match that scale via gradient accumulation (fewer, more stable steps -> less forgetting).
     global_batch_size = opts.batch_tokens or (seq_len * world_size)
+    # Must be a whole number of per-rank microbatches.
     per_step = seq_len * world_size
     if global_batch_size % per_step != 0:
         global_batch_size = max(per_step, (global_batch_size // per_step) * per_step)
@@ -152,6 +122,8 @@ def build_and_fit(opts: argparse.Namespace) -> None:
         print(f"[cfg] grad-accum: global_batch={global_batch_size} tok "
               f"({global_batch_size // per_step} microbatch-steps/rank)", flush=True)
 
+    # Optionally derive max_steps from a token budget so runs are comparable across GPU counts
+    # (different world_size => different tokens/step). The mixed dataset is ~47.9M tokens/epoch.
     if opts.target_tokens > 0:
         opts.max_steps = max(1, round(opts.target_tokens / global_batch_size))
         print(f"[cfg] target_tokens={opts.target_tokens} -> max_steps={opts.max_steps}", flush=True)
@@ -169,25 +141,17 @@ def build_and_fit(opts: argparse.Namespace) -> None:
     base_checkpoint = opts.base_ckpt or BASE_CKPTS[opts.model]
     model_factory = {
         "qwen3_4B": TransformerConfig.qwen3_4B,
+        "qwen3_0_6B": TransformerConfig.qwen3_0_6B,
     }[opts.model]
-    attn_kwargs = (
-        {"fast_compressive_landmark": True} if opts.compressive else {"fast_landmark": True}
-    )
     model_config = model_factory(
         vocab_size=tokenizer_config.padded_vocab_size(),
-        mem_freq=mem_freq,
-        **attn_kwargs,
+        attn_backend=AttentionBackendName.flash_2,
     )
     _used = opts.tulu_frac + opts.nq_frac + opts.oolong_frac + opts.rerank_frac + opts.outlier_frac
     print(f"[cfg] model={opts.model} base={base_checkpoint} tulu={opts.tulu_frac} nq={opts.nq_frac} "
           f"oolong={opts.oolong_frac} rerank={opts.rerank_frac} outlier={opts.outlier_frac} "
           f"contra={max(0.0, 1.0-cpt_frac-_used):.3f}", flush=True)
 
-    # Full activation checkpointing: the landmark (grouped-softmax) attention is far less
-    # memory-efficient than dense flash at long context, so at seq_len>=16k it OOMs a 4B model on an
-    # H200 without recomputation. Recompute each block in backward (~30% slower, fits comfortably).
-    ac_config = None if opts.no_ac else TransformerActivationCheckpointingConfig(
-        mode=TransformerActivationCheckpointingMode.full)
     train_module_config = TransformerTrainModuleConfig(
         rank_microbatch_size=seq_len,
         max_sequence_length=seq_len,
@@ -200,7 +164,6 @@ def build_and_fit(opts: argparse.Namespace) -> None:
             ],
         ),
         scheduler=LinearWithWarmup(warmup_fraction=0.03, alpha_f=0.0),
-        ac_config=ac_config,
         compile_model=opts.compile,
         dp_config=TransformerDataParallelConfig(
             name=DataParallelType.fsdp,
@@ -214,7 +177,8 @@ def build_and_fit(opts: argparse.Namespace) -> None:
         max_grad_norm=1.0,
     )
 
-    # ---- N-way mixed document source: up to 5 SFT tasks + Tulu chat + CPT (identical to dense) ----
+    # ---- N-way mixed document source: up to 5 SFT tasks + Tulu chat + CPT ----
+    # token fractions for each named SFT task come from --<task>-frac; contradiction = remainder.
     cpt = CPT_DATA_ROOT.rstrip("/")
 
     def _sft_source(root):  # completion-only masked SFT shards
@@ -232,6 +196,7 @@ def build_and_fit(opts: argparse.Namespace) -> None:
         expand_glob=True,
     )
 
+    # (label, data_root, frac, max_repetition_factor); contradiction gets the leftover fraction.
     task_specs = [
         ("tulu3_chat", TULU_DATA_ROOT, opts.tulu_frac, 4.0),
         ("nq_retrieval", NQ_DATA_ROOT, opts.nq_frac, 8.0),
@@ -252,39 +217,17 @@ def build_and_fit(opts: argparse.Namespace) -> None:
             specs.append(MixingDocumentSourceSpecConfig(
                 source=_sft_source(root), ratio=frac, max_repetition_factor=rep, label=label))
     if cpt_frac > 1e-6:
+        # allow up to 3 passes of the 40M-token CPT sample so a high CPT ratio still holds when the
+        # total token budget is scaled up (e.g. 85% of 96M = 81.6M > 2x40M).
         specs.append(MixingDocumentSourceSpecConfig(
             source=cpt_doc_source, ratio=cpt_frac, max_repetition_factor=3.0, label="cpt_longmino"))
 
     if len(specs) == 1:
-        mixed_doc_source: object = specs[0].source
+        instance_source_config = ConcatAndChunkInstanceSourceConfig(
+            sources=[specs[0].source], sequence_length=seq_len)
     else:
-        mixed_doc_source = MixingDocumentSourceConfig(source_specs=specs)
-
-    if opts.no_pack:
-        # NO packing: one document per sequence (PadToLength) -> landmark insertion. Emits NO
-        # cu_doc_lens, so attention variants whose fused kernel lacks intra-doc masking (e.g.
-        # FastCompressiveLandmarkAttention) can train. content_len is a multiple of mem_freq; after
-        # landmark insertion the instance length is exactly seq_len.
-        content_len = seq_len // (mem_freq + 1) * mem_freq
-        content_source_config = PadToLengthInstanceSourceConfig(
-            sources=[mixed_doc_source],
-            sequence_length=content_len,
-            tokenizer=tokenizer_config,
-        )
-        instance_source_config: object = LandmarkInstanceSourceConfig(
-            source=content_source_config,
-            mem_freq=mem_freq,
-            mem_id=LANDMARK_TOKEN_ID,
-        )
-    else:
-        # Per-document landmark insertion + greedy packing into seq_len windows + block-aligned doc_lens.
-        instance_source_config = LandmarkPackingInstanceSourceConfig(
-            source=mixed_doc_source,
-            sequence_length=seq_len,
-            mem_freq=mem_freq,
-            mem_id=LANDMARK_TOKEN_ID,
-            pad_id=tokenizer_config.pad_token_id,
-        )
+        instance_source_config = ConcatAndChunkInstanceSourceConfig(
+            sources=[MixingDocumentSourceConfig(source_specs=specs)], sequence_length=seq_len)
 
     data_loader_config = ComposableDataLoaderConfig(
         tokenizer=tokenizer_config,
@@ -292,9 +235,7 @@ def build_and_fit(opts: argparse.Namespace) -> None:
         global_batch_size=global_batch_size,
         seed=34521,
         num_workers=4,
-        # Document boundaries come from LandmarkPackingInstanceSource (block-aligned doc_lens);
-        # EOS-derived boundaries would NOT be block-aligned and the landmark attention rejects them.
-        generate_doc_lengths=False,
+        generate_doc_lengths=True,  # block-diagonal masking at EOS doc boundaries (flash varlen)
     )
 
     trainer_config = (
@@ -308,7 +249,8 @@ def build_and_fit(opts: argparse.Namespace) -> None:
             metrics_collect_interval=10,
             cancel_check_interval=10,
             max_duration=Duration.steps(opts.max_steps),
-            # async-bookkeeping's 2nd NCCL process group hangs on these jsteinhardt nodes.
+            # The async-bookkeeping CPU process group (dist.new_group()) hangs on these jsteinhardt
+            # nodes (a 2nd NCCL communicator never establishes); use synchronous bookkeeping.
             async_bookkeeping=False,
         )
         .with_callback(
@@ -328,7 +270,7 @@ def build_and_fit(opts: argparse.Namespace) -> None:
             "wandb",
             WandBCallback(
                 name=run_name_with_ts,
-                group=opts.wandb_group or "q4b-lm-cptmix-5task",
+                group=opts.wandb_group or "q4b-cptmix-contra",
                 entity=opts.wandb_entity,
                 project="memory-networks",
                 enabled=True,
@@ -341,16 +283,15 @@ def build_and_fit(opts: argparse.Namespace) -> None:
     model = model_config.build(init_device="meta")
     print("[stage] building train_module (FSDP+optim)...", flush=True)
     train_module = train_module_config.build(model)
-    print("[stage] building instance source (landmark packing over mixed docs)...", flush=True)
+    print("[stage] building instance source...", flush=True)
     source = instance_source_config.build(data_loader_config.work_dir)
     print("[stage] building data loader...", flush=True)
     data_loader = data_loader_config.build(source, dp_process_group=train_module.dp_process_group)
     print("[stage] building trainer...", flush=True)
     trainer = trainer_config.build(train_module, data_loader)
-    # Write a self-describing config.json into every saved step dir so the NATIVE landmark eval
-    # (TransformerGenerationModule.build(checkpoint_dir)) can reconstruct the model + tokenizer.
-    # The standalone launcher does not go through internal/experiment (which normally sets this), so
-    # without it ConfigSaverCallback warns "Config not set ... doing nothing" and writes no config.json.
+    # Write a self-describing config.json into every saved step dir so the NATIVE eval
+    # (TransformerGenerationModule.build(checkpoint_dir)) can reconstruct the model + tokenizer
+    # without an olmo->HF export. Mirrors the fast-landmark launcher.
     config_saver = trainer.callbacks.get("config_saver")
     if config_saver is not None:
         config_saver.config = {
@@ -362,46 +303,39 @@ def build_and_fit(opts: argparse.Namespace) -> None:
 
 
 def main() -> None:
+    # Dump all-thread stacks every 10min if still alive, so a real hang shows exactly where
+    # (long interval keeps normal logs clean).
     import faulthandler
     faulthandler.dump_traceback_later(600, repeat=True)
 
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--run-name", required=True)
     ap.add_argument("--save-folder", default=None, help=f"default {SAVE_ROOT}/<run-name>")
-    ap.add_argument("--model", default="qwen3_4B", choices=["qwen3_4B"],
-                    help="model size (also selects the default fast-landmark CPT base checkpoint)")
+    ap.add_argument("--model", default="qwen3_4B", choices=["qwen3_4B", "qwen3_0_6B"],
+                    help="model size (also selects the default CPT base checkpoint)")
     ap.add_argument("--base-ckpt", default=None, help="override base CPT checkpoint model_and_optim dir")
-    ap.add_argument("--compressive", action="store_true",
-                    help="use fast_compressive_landmark attention (landmark token contributes its "
-                         "value as a compressed block summary) instead of plain fast_landmark")
-    ap.add_argument("--no-pack", action="store_true",
-                    help="one document per sequence (PadToLength + landmark insertion) instead of "
-                         "greedy packing -> emits NO cu_doc_lens, required for fast_compressive_landmark "
-                         "whose kernel lacks intra-doc masking")
     ap.add_argument("--sft-data-root", default=None,
                     help=f"override contradiction SFT shard dir (default {SFT_DATA_ROOT})")
-    ap.add_argument("--tulu-frac", type=float, default=0.0)
-    ap.add_argument("--nq-frac", type=float, default=0.0)
-    ap.add_argument("--oolong-frac", type=float, default=0.0)
-    ap.add_argument("--rerank-frac", type=float, default=0.0)
-    ap.add_argument("--outlier-frac", type=float, default=0.0)
+    ap.add_argument("--tulu-frac", type=float, default=0.0,
+                    help="token fraction of Tulu3 diverse chat SFT in the mix")
+    ap.add_argument("--nq-frac", type=float, default=0.0,
+                    help="token fraction of (fixed/aligned) NQ retrieval in the mix")
+    ap.add_argument("--oolong-frac", type=float, default=0.0, help="token fraction of OOLONG")
+    ap.add_argument("--rerank-frac", type=float, default=0.0, help="token fraction of msmarco rerank")
+    ap.add_argument("--outlier-frac", type=float, default=0.0, help="token fraction of outlier")
     ap.add_argument("--cpt-frac", type=float, default=DEFAULT_CPT_FRAC,
-                    help="token fraction of CPT data in the mix (contradiction = remainder)")
-    ap.add_argument("--mem-freq", type=int, default=DEFAULT_MEM_FREQ,
-                    help="landmark spacing; block_size = mem_freq+1 (63->64). seq_len must be a "
-                         "multiple of block_size.")
+                    help="token fraction of CPT data in the mix (0.70 = 70%% CPT / 30%% contradiction)")
     ap.add_argument("--lr", type=float, default=DEFAULT_LR)
     ap.add_argument("--seq-len", type=int, default=DEFAULT_SEQ_LEN)
     ap.add_argument("--max-steps", type=int, default=DEFAULT_MAX_STEPS)
     ap.add_argument("--target-tokens", type=int, default=0,
-                    help="if >0, overrides --max-steps to hit this many training tokens")
+                    help="if >0, overrides --max-steps to hit this many training tokens "
+                         "(comparable across GPU counts); dataset is ~47.9M tok/epoch")
     ap.add_argument("--batch-tokens", type=int, default=0,
-                    help="global batch size in tokens (grad-accum); 0 = seq_len*world_size")
+                    help="global batch size in tokens (grad-accum to match CPT-scale batches); "
+                         "0 = seq_len*world_size (1 microbatch/rank, current default)")
     ap.add_argument("--shard-degree", type=int, default=0, help="0 = full shard across WORLD_SIZE")
     ap.add_argument("--compile", action="store_true", help="enable torch.compile (slower startup)")
-    ap.add_argument("--no-ac", action="store_true",
-                    help="disable full activation checkpointing (default ON; needed at seq>=16k to "
-                         "fit the memory-heavy landmark attention)")
     ap.add_argument("--no-wandb", dest="wandb", action="store_false")
     ap.add_argument("--wandb-group", default=None)
     ap.add_argument("--wandb-entity", default=None)

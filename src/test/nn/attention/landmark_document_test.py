@@ -207,3 +207,44 @@ def test_document_landmark_eager_training_backward():
     chunk_ids = torch.tensor([[0, 0, 0, 0, 1, 1, 1, 1, -1, -1, -1, -1]])
     attn(x, chunk_ids=chunk_ids).sum().backward()
     assert x.grad is not None and torch.isfinite(x.grad).all()
+
+
+@pytest.mark.parametrize("top_k", [None, 1, 2])
+def test_document_landmark_cached_decode_matches_eager(top_k):
+    """The cached generation path (chunked-masked prefill + plain landmark decode) must produce the
+    same attention outputs as re-feeding the whole growing sequence through the eager forward -- the
+    property that makes the KV-cached eval (O(T^2 + gen*T)) a drop-in for the eager loop (O(gen*T^2)).
+    Validated with and without hard top-k landmark retrieval."""
+    torch.manual_seed(0)
+    attn = _doc_landmark_attention(mem_freq=3)  # block_size = 4
+    attn.eval()
+    Lb = attn.block_size
+    d_model = 64
+    P, T = 12, 20  # prompt 0..11 (two context chunks + a FREE block); 12..19 are generated FREE tokens
+    x = torch.randn(1, T, d_model)
+    full_chunks = torch.tensor([[0, 0, 0, 0, 1, 1, 1, 1, -1, -1, -1, -1] + [-1] * (T - P)])
+
+    if top_k is not None:
+        attn.set_eval_top_k(top_k)
+
+    # Eager reference: forward over the growing sequence (right-padded to a block multiple, as the eager
+    # eval loop does), reading the next-token row at the last real position.
+    ref = []
+    with torch.no_grad():
+        for p in range(P - 1, T):
+            L = p + 1
+            pad_to = ((L + Lb - 1) // Lb) * Lb
+            xp = torch.cat([x[:, :L], torch.zeros(1, pad_to - L, d_model)], dim=1)
+            cp = torch.cat([full_chunks[:, :L], torch.full((1, pad_to - L), -2)], dim=1)
+            ref.append(attn(xp, chunk_ids=cp)[:, L - 1])
+
+    # Cached path: single-shot prefill of the prompt, then incremental single-token decode.
+    attn.init_kv_cache_manager(batch_size=1, max_seq_len=T)
+    got = []
+    with torch.no_grad():
+        got.append(attn(x[:, :P], chunk_ids=full_chunks[:, :P])[:, -1])  # prefill -> row P-1
+        for p in range(P, T):
+            got.append(attn(x[:, p : p + 1], chunk_ids=full_chunks[:, p : p + 1])[:, -1])
+    attn.kv_cache_manager = None
+
+    assert torch.allclose(torch.stack(ref), torch.stack(got), atol=1e-5)

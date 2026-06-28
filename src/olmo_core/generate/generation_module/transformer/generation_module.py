@@ -36,6 +36,7 @@ from olmo_core.io import is_url, join_path, normalize_path
 from olmo_core.nn.attention import (
     Attention,
     AttentionBackendName,
+    DocumentLandmarkAttention,
     FastCompressiveLandmarkAttention,
     FastLandmarkAttention,
     SparseLandmarkAttention,
@@ -51,7 +52,11 @@ log = logging.getLogger(__name__)
 
 # Landmark attention variants that need prompt-side landmark insertion + "one long local block"
 # decoding during generation.
-_LANDMARK_ATTENTION_TYPES = (FastLandmarkAttention, SparseLandmarkAttention)
+_LANDMARK_ATTENTION_TYPES = (
+    FastLandmarkAttention,
+    SparseLandmarkAttention,
+    DocumentLandmarkAttention,
+)
 
 
 def _insert_landmark_tokens(input_ids: torch.Tensor, mem_freq: int, mem_id: int) -> torch.Tensor:
@@ -261,6 +266,7 @@ class TransformerGenerationModule(GenerationModule):
         return_logprobs: bool = False,
         completions_only: bool = False,
         log_timing: bool = True,
+        stop_string_tokenizer: Optional[Any] = None,
         **generation_kwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor]]:
         """
@@ -420,6 +426,18 @@ class TransformerGenerationModule(GenerationModule):
         if landmark_decode_first_token:
             self.model(input_ids[:, :-1], logits_to_keep=1, cache_leftpad=prefill_cache_leftpad)
 
+        # Per-row string-level early-stop (much more effective than single-token stop_token_ids for
+        # short-answer eval) + reduced finished-all sync. A row is marked finished once its decoded
+        # completion contains a stop_string FOLLOWED BY a newline -- i.e. the answer line has closed
+        # (so the answer itself is captured). Both the (host-side) decode and the finished.all() sync
+        # run only every ``stop_string_check_interval`` steps to keep the decode loop GPU-bound.
+        stop_strings_lc = [s.lower() for s in (generation_config.stop_strings or [])]
+        do_string_stop = bool(stop_strings_lc) and stop_string_tokenizer is not None
+        check_interval = max(1, generation_config.stop_string_check_interval)
+        _STOP_DECODE_WINDOW = 256  # completion-tail tokens scanned for a freshly-closed anchor line
+        step_idx = 0
+        all_finished = False
+
         pbar = tqdm(
             desc="Generating tokens",
             unit="tokens",
@@ -428,7 +446,7 @@ class TransformerGenerationModule(GenerationModule):
             miniters=10,
             colour="blue",
         )
-        while not ((max_length is not None and generated.shape[1] >= max_length) or finished.all()):
+        while not ((max_length is not None and generated.shape[1] >= max_length) or all_finished):
             # Determine model inputs based on if we are prefilling or decoding
             if landmark_decode_first_token:
                 # Prompt[:-1] is already cached above; every step is a single-token decode, starting
@@ -482,6 +500,24 @@ class TransformerGenerationModule(GenerationModule):
 
             # Append next tokens
             generated = torch.cat([generated, next_tokens.unsqueeze(-1)], dim=1)
+
+            # Periodic string-level early-stop + finished-all sync (every check_interval steps).
+            step_idx += 1
+            if step_idx % check_interval == 0:
+                if do_string_stop and not bool(finished.all().item()):
+                    comp_tail = generated[:, prompt_len:][:, -_STOP_DECODE_WINDOW:].tolist()
+                    for i in range(batch_size):
+                        if finished[i]:
+                            continue
+                        text = stop_string_tokenizer.decode(
+                            comp_tail[i], skip_special_tokens=True
+                        ).lower()
+                        for s in stop_strings_lc:
+                            j = text.find(s)
+                            if j >= 0 and text.find("\n", j + len(s)) >= 0:
+                                finished[i] = True
+                                break
+                all_finished = bool(finished.all().item())
 
             if log_timing and tokens_generated == 0:
                 torch.cuda.synchronize()
