@@ -200,6 +200,7 @@ class Checkpointer:
         *,
         load_trainer_state: Optional[bool] = None,
         load_optim_state: Optional[bool] = None,
+        reset_optimizer_states_on_load: Optional[bool] = None,
     ) -> Optional[Dict[str, Any]]:
         """
         Load model, optim, and other training state from a local or remote checkpoint directory
@@ -251,6 +252,7 @@ class Checkpointer:
                 work_dir=self.work_dir,
                 thread_count=self.load_thread_count,
                 load_optim_state=load_optim_state,
+                reset_optimizer_states_on_load=reset_optimizer_states_on_load,
             )
         else:
             state_dict = train_module.state_dict_to_load(metadata, optim=load_optim_state)
@@ -620,11 +622,15 @@ class CompactablityCheckpointer(Checkpointer):
         train_module: TrainModule,
         *,
         load_trainer_state: Optional[bool] = None,
+        load_optim_state: Optional[bool] = None,
+        reset_optimizer_states_on_load: Optional[bool] = None,
     ) -> Optional[Dict[str, Any]]:
         """
         Load model, optim, and other training state from a local or remote checkpoint directory
         created via :meth:`save()` or :meth:`save_async()`.
         """
+        del load_optim_state, reset_optimizer_states_on_load
+
         dir = normalize_path(dir)
 
         # Maybe load trainer state.

@@ -160,6 +160,7 @@ class OLMoDDPTrainModule(TrainModule):
         state_dict_load_opts: Optional[dist_cp_sd.StateDictOptions] = None,
         load_key_mapping: Optional[Dict[str, str]] = None,
         reset_optimizer_states_on_load: bool = False,
+        reset_optimizer_states_on_resume: bool = False,
         label_ignore_index: int = -100,
         reduce_scatter_grads: bool = False,
         eval_only: bool = False,
@@ -306,6 +307,7 @@ class OLMoDDPTrainModule(TrainModule):
         )
         self.load_key_mapping = load_key_mapping
         self.reset_optimizer_states_on_load = reset_optimizer_states_on_load
+        self.reset_optimizer_states_on_resume = reset_optimizer_states_on_resume
 
         self.optim = None
         if not self.eval_only:
@@ -1117,6 +1119,7 @@ class OLMoDDPTrainModule(TrainModule):
         work_dir: Optional[PathOrStr] = None,
         thread_count: Optional[int] = None,
         load_optim_state: Optional[bool] = True,
+        reset_optimizer_states_on_load: Optional[bool] = None,
     ):
         from olmo_core.io import normalize_path
 
@@ -1149,7 +1152,8 @@ class OLMoDDPTrainModule(TrainModule):
             has_model_params = any(key.startswith("model.") for key in checkpoint_keys)
             if load_optim_state is None:
                 load_optim_state = has_optimizer_moments
-            reset_optimizer_states_on_load = self.reset_optimizer_states_on_load
+            if reset_optimizer_states_on_load is None:
+                reset_optimizer_states_on_load = self.reset_optimizer_states_on_load
             reset_optimizer_moments_on_load = getattr(
                 optim, "reset_optimizer_moments_on_load", False
             )

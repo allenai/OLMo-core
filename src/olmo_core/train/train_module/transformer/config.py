@@ -456,6 +456,7 @@ class OLMoDDPTrainModuleConfig(TrainModuleConfig):
     state_dict_load_opts: Optional[Dict[str, Any]] = None
     load_key_mapping: Optional[Dict[str, str]] = None
     reset_optimizer_states_on_load: bool = False
+    reset_optimizer_states_on_resume: bool = False
 
     # Other train settings.
 
