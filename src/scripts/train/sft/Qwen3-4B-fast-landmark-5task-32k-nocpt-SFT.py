@@ -13,7 +13,7 @@ them). LandmarkPacking drops only docs whose content exceeds 40320 tokens (a han
     PYTHONPATH=src python src/scripts/train/sft/Qwen3-4B-fast-landmark-5task-32k-nocpt-SFT.py \\
         dry_run q4b-lm-5task-32k-nocpt ai2/jupiter
     PYTHONPATH=src python src/scripts/train/sft/Qwen3-4B-fast-landmark-5task-32k-nocpt-SFT.py \\
-        launch  q4b-lm-5task-32k-nocpt ai2/neptune --launch.num_nodes=1
+        launch  q4b-lm-5task-32k-nocpt ai2/neptune --launch.num_nodes=2
 """
 
 from dataclasses import replace
@@ -60,7 +60,7 @@ SEQUENCE_LENGTH = 40960  # landmark-token-space window; divisible by BLOCK_SIZE
 LANDMARK_TOKEN_ID = 151860
 
 CP_DEGREE = 8
-NUM_NODES = 1
+NUM_NODES = 2  # 2 nodes x 8 GPUs = 16 GPUs; cp_degree=8 -> NUM_NODES DP replicas
 
 # ---------------------------------------------------------------------------
 # Data (weka) -- ladder40k (rungs up to 32k context; max doc ~40k tokens).
@@ -97,7 +97,7 @@ CONTRA_FRAC = max(0.0, SFT_BUDGET - (NQ_FRAC + OOLONG_FRAC + RERANK_FRAC + OUTLI
 # ---------------------------------------------------------------------------
 LR = 1e-5
 TARGET_STEPS = 1465
-GLOBAL_BATCH_SIZE = SEQUENCE_LENGTH
+GLOBAL_BATCH_SIZE = NUM_NODES * SEQUENCE_LENGTH  # one window per CP=8 DP replica/step (grad-accum 1)
 TARGET_TOKENS = GLOBAL_BATCH_SIZE * TARGET_STEPS
 MAX_STEPS = max(1, round(TARGET_TOKENS / GLOBAL_BATCH_SIZE))
 

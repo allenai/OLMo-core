@@ -39,7 +39,7 @@ is >= the max ladder40k doc length, so no 32k example is lost to the window. con
     PYTHONPATH=src python src/scripts/train/sft/Qwen3-4B-compressive-cptmix-5task-32k-SFT.py \\
         dry_run q4b-comp-cptmix-5task-32k ai2/jupiter
     PYTHONPATH=src python src/scripts/train/sft/Qwen3-4B-compressive-cptmix-5task-32k-SFT.py \\
-        launch  q4b-comp-cptmix-5task-32k ai2/neptune --launch.num_nodes=1
+        launch  q4b-comp-cptmix-5task-32k ai2/neptune --launch.num_nodes=2
 """
 
 from dataclasses import replace
@@ -90,7 +90,7 @@ NONSELECTED_LANDMARK_MASS = 0.1  # alpha for compressive attention
 
 # Context parallel (Ulysses) degree. Qwen3-4B: n_heads=32, n_kv_heads=8 -> CP=8 splits both cleanly.
 CP_DEGREE = 8
-NUM_NODES = 1
+NUM_NODES = 2  # 2 nodes x 8 GPUs = 16 GPUs; cp_degree=8 -> NUM_NODES DP replicas
 
 # ---------------------------------------------------------------------------
 # Data (weka) -- ladder40k (rungs up to 32k context; max doc ~40k tokens).
@@ -131,7 +131,7 @@ CONTRA_FRAC = max(0.0, 1.0 - CPT_FRAC - (NQ_FRAC + OOLONG_FRAC + RERANK_FRAC + O
 # ---------------------------------------------------------------------------
 LR = 1e-5
 TARGET_STEPS = 1465
-GLOBAL_BATCH_SIZE = SEQUENCE_LENGTH  # one window/optimizer step (grad-accum 1 on the CP=8 replica)
+GLOBAL_BATCH_SIZE = NUM_NODES * SEQUENCE_LENGTH  # one window per CP=8 DP replica/step (grad-accum 1)
 TARGET_TOKENS = GLOBAL_BATCH_SIZE * TARGET_STEPS
 MAX_STEPS = max(1, round(TARGET_TOKENS / GLOBAL_BATCH_SIZE))
 
