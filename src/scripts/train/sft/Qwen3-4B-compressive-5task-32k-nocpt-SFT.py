@@ -50,11 +50,10 @@ from olmo_core.config import DType
 from olmo_core.data import TokenizerConfig
 from olmo_core.data.composable import (
     ComposableDataLoaderConfig,
-    LandmarkInstanceSourceConfig,
+    LandmarkPackingInstanceSourceConfig,
     MixingDocumentSourceConfig,
     MixingDocumentSourceSpecConfig,
     NumpyDocumentSourceConfig,
-    PadToLengthInstanceSourceConfig,
 )
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.float8 import Float8Config
@@ -245,16 +244,16 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
             )
         )
 
-    # NO-PACK: one doc/sequence, right-padded to CONTENT_LEN, then positional landmark insertion.
-    content_source_config = PadToLengthInstanceSourceConfig(
-        sources=[MixingDocumentSourceConfig(source_specs=specs)],
-        sequence_length=CONTENT_LEN,
-        tokenizer=tokenizer_config,
-    )
-    instance_source_config = LandmarkInstanceSourceConfig(
-        source=content_source_config,
+    # PACKED with intra-document masking: block-aligned greedy packing + per-doc landmarks. The
+    # compressive fused kernel now supports cu_doc_lens (DOC_MASK, commit ffb2c461), so compressive
+    # uses the SAME data path as plain fast-landmark -- efficient packing AND proper intra-doc masking
+    # (docs don't attend across each other). Makes compressive-vs-landmark apples-to-apples.
+    instance_source_config = LandmarkPackingInstanceSourceConfig(
+        source=MixingDocumentSourceConfig(source_specs=specs),
+        sequence_length=SEQUENCE_LENGTH,
         mem_freq=MEM_FREQ,
         mem_id=LANDMARK_TOKEN_ID,
+        pad_id=tokenizer_config.pad_token_id,
     )
 
     data_loader_config = ComposableDataLoaderConfig(
@@ -263,7 +262,8 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         global_batch_size=GLOBAL_BATCH_SIZE,
         seed=34521,
         num_workers=4,
-        generate_doc_lengths=False,  # no cu_doc_lens (compressive kernel can't take them)
+        # Block-aligned doc boundaries from LandmarkPackingInstanceSource (-> cu_doc_lens -> DOC_MASK).
+        generate_doc_lengths=False,
     )
 
     trainer_config = (
