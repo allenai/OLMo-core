@@ -62,6 +62,22 @@ Bounded status pass on 2026-06-28 07:55 UTC checked only runs that were previous
 | `ds-1p2b-cx8-ds4-sh-lr4e-4-r1` | run | started 2026-06-26 21:15 | https://beaker.org/ex/01KVV2F1R6M48R02BKM9RVJZH0 | dense4 1.2B Cx8. |
 | `se-1p2b-cx8-se0m9-lr4e-4-r1` | run | started 2026-06-26 23:55 | https://beaker.org/ex/01KVV2FTHMVKP4ARF5B2A86DN5 | Shared-expert 1.2B Cx8 on Titan urgent, compile-on. |
 
+
+## Known Plotting Issues
+
+### Dense Schedule W&B History Fetches
+
+On 2026-06-28, full W&B `scan_history` still hung before returning rows for some Beaker-finished dense-schedule runs, so they remain marked `finished-unplotted` rather than being added to canonical plots. Do not mix sampled fallback values into the main plots unless we explicitly decide to change plotting policy; current canonical plots use full-history final-window averages.
+
+Sampled `run.history()` did return rough fallback values, useful only as diagnostics until full histories can be cached:
+
+| Run ID | Cell | sampled avg250M | Note |
+| --- | --- | ---: | --- |
+| `5x1zju17` | 810M Cx8 dense0 | 2.1860 | Full `scan_history` hangs; retry later. |
+| `abbmdfx0` | 810M Cx8 dense2 | 2.1889 | Full `scan_history` hangs; retry later. |
+| `13sr2oht` | 810M Cx8 dense4 | 2.1918 | Sampled fallback works; full cache still needed. |
+| `4x0anaih` | 1.2B Cx4 dense0 | 2.1510 | Full `scan_history` hangs; retry later. |
+
 ## Tracking Hygiene
 
 Before launching any promoted run, check all three evidence sources for the exact semantic run name and checkpoint save folder:
