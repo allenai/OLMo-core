@@ -82,13 +82,16 @@ if triton is not None:
         sod,
         L,
         M,
+        DocId,  # int32 (Z, N_BLOCKS) per-block document id, or dummy when DOC_MASK is False
         Z,
         H,
         N_CTX_Q,
         N_CTX_KV,
+        N_BLOCKS,  # number of landmark blocks in the key sequence (= N_CTX_KV / BLOCK)
         BLOCK: tl.constexpr,
         BLOCK_DMODEL: tl.constexpr,
         N_PREFIX_Q: tl.constexpr,
+        DOC_MASK: tl.constexpr,  # whether to apply intra-document (packing) masking
     ):
         # Compressive landmark forward. Identical to landmark_kernel._fwd_kernel except that the
         # value contribution of a fully-past block uses the *full-block* within softmax (over all
@@ -100,6 +103,15 @@ if triton is not None:
 
         BLOCK_M: tl.constexpr = BLOCK
         BLOCK_N: tl.constexpr = BLOCK
+
+        # Intra-document masking (sequence packing): each landmark block belongs to exactly one
+        # document (boundaries are block-aligned), so cross-document key blocks are floored to a
+        # finite large-negative value (see landmark_kernel._fwd_kernel for why the floor is finite,
+        # not -inf). Only the grouping loop over strictly-past key blocks needs the gate; the
+        # diagonal (own) block below is always same-document.
+        if DOC_MASK:
+            batch_idx = off_hz // H
+            q_doc = tl.load(DocId + batch_idx * N_BLOCKS + (start_m + N_PREFIX_Q))
 
         offs_m = start_m * BLOCK_M + tl.arange(0, BLOCK_M)
         offs_m_real = (start_m + N_PREFIX_Q) * BLOCK_M + tl.arange(0, BLOCK_M)
@@ -124,6 +136,9 @@ if triton is not None:
             qk += tl.dot(q_vals, k_vals, allow_tf32=False)
             qk *= sm_scale
             qk = tl.where(offs_m_real[:, None] >= offs_n[None, :], qk, float("-inf"))
+            if DOC_MASK:
+                k_doc = tl.load(DocId + batch_idx * N_BLOCKS + start_n)
+                qk = tl.where(q_doc == k_doc, qk, -1e30)
 
             landmark_qk = tl.max(
                 tl.where(tl.arange(0, BLOCK_N)[None, :] == BLOCK_N - 1, qk, float("-inf")), 1
@@ -211,13 +226,16 @@ if triton is not None:
         svh,
         svn,
         svd,
+        DocId,  # int32 (Z, N_BLOCKS) per-block document id, or dummy when DOC_MASK is False
         Z,
         H,
         N_CTX_Q,
         N_CTX_KV,
+        N_BLOCKS,
         BLOCK: tl.constexpr,
         BLOCK_DMODEL: tl.constexpr,
         N_PREFIX_Q: tl.constexpr,
+        DOC_MASK: tl.constexpr,
     ):
         # dk/dv, one program per (key-block, head); atomic-free. Mirrors landmark_fast._bwd_kv_kernel
         # but with the compressive within-block softmax: every block token (incl. the landmark) gets
@@ -245,6 +263,12 @@ if triton is not None:
         offs_n = start_n + tl.arange(0, BLOCK_N)
         k_ptrs = K + (offs_n[:, None] * skn + offs_d[None, :] * skd)
         v_ptrs = V + (offs_n[:, None] * svn + offs_d[None, :] * svd)
+
+        # Document id of this key block (for intra-document / packing masking). Only the landmark-
+        # grouping loop over strictly-future query blocks needs the cross-document gate; the
+        # diagonal (own-block) contribution below is always same-document.
+        if DOC_MASK:
+            k_doc = tl.load(DocId + off_z * N_BLOCKS + (start_n // BLOCK_N))
 
         dv = tl.zeros([BLOCK_N, BLOCK_DMODEL], dtype=tl.float32)
         dk = tl.zeros([BLOCK_N, BLOCK_DMODEL], dtype=tl.float32)
@@ -290,6 +314,13 @@ if triton is not None:
             start_m = tl.multiple_of(start_m, BLOCK_M)
             offs_m = start_m + tl.arange(0, BLOCK_M)
 
+            # Cross-document query blocks received zero weight on this key block in the forward, so
+            # they get zero gradient here. ``doc_keep`` is 1.0 for same-document, 0.0 otherwise.
+            doc_keep = 1.0
+            if DOC_MASK:
+                q_doc = tl.load(DocId + off_z * N_BLOCKS + (start_m // BLOCK_M))
+                doc_keep = (q_doc == k_doc).to(tl.float32)
+
             q_ptrs = Q + (offs_m[:, None] * sqm + offs_d[None, :] * sqd)
             do_ptrs = DO + (offs_m[:, None] * sqm + offs_d[None, :] * sqd)
 
@@ -310,9 +341,10 @@ if triton is not None:
 
             do = tl.load(do_ptrs)
 
-            # dv: every token (incl. landmark) gets within-block weight p * full_dist.
+            # dv: every token (incl. landmark) gets within-block weight p * full_dist. Cross-document
+            # query blocks are zeroed via ``doc_keep`` (they contributed nothing in the forward).
             dv += tl.dot(
-                tl.trans((p[:, None] * full_dist).to(Q.dtype.element_ty)),
+                tl.trans((doc_keep * p[:, None] * full_dist).to(Q.dtype.element_ty)),
                 do,
                 allow_tf32=False,
             )
@@ -328,7 +360,7 @@ if triton is not None:
             ds = within_ds + tl.where(
                 tl.arange(0, BLOCK_N)[None, :] == BLOCK_N - 1, gate_ds[:, None], 0.0
             )
-            ds *= sm_scale
+            ds *= sm_scale * doc_keep
             dk += tl.dot(tl.trans(ds.to(Q.dtype.element_ty)), q, allow_tf32=False)
 
         dv_ptrs = DV + (offs_n[:, None] * svn + offs_d[None, :] * svd)
@@ -362,13 +394,16 @@ if triton is not None:
         svh,
         svn,
         svd,
+        DocId,  # int32 (Z, N_BLOCKS) per-block document id, or dummy when DOC_MASK is False
         Z,
         H,
         N_CTX_Q,
         N_CTX_KV,
+        N_BLOCKS,
         BLOCK: tl.constexpr,
         BLOCK_DMODEL: tl.constexpr,
         N_PREFIX_Q: tl.constexpr,
+        DOC_MASK: tl.constexpr,
     ):
         # dq, one program per (query-block, head). Causal-only key-block loop, atomic-free. Only
         # implemented for N_PREFIX_Q == 0 (the caller guards this).
@@ -398,6 +433,9 @@ if triton is not None:
         m = tl.load(m_ptrs + offs_m)
         Di = tl.load(D_ptrs + offs_m)
 
+        if DOC_MASK:
+            q_doc = tl.load(DocId + off_z * N_BLOCKS + (start_m // BLOCK_M))
+
         dq = tl.zeros([BLOCK_M, BLOCK_DMODEL], dtype=tl.float32)
 
         for start_n in range(0, start_m, BLOCK_N):
@@ -405,6 +443,12 @@ if triton is not None:
             offs_n = start_n + tl.arange(0, BLOCK_N)
             k = tl.load(K + (offs_n[:, None] * skn + offs_d[None, :] * skd))
             v = tl.load(V + (offs_n[:, None] * svn + offs_d[None, :] * svd))
+
+            # Cross-document prior key blocks contributed nothing in the forward -> zero gradient.
+            doc_keep = 1.0
+            if DOC_MASK:
+                k_doc = tl.load(DocId + off_z * N_BLOCKS + (start_n // BLOCK_N))
+                doc_keep = (q_doc == k_doc).to(tl.float32)
 
             qk = tl.dot(q, tl.trans(k), allow_tf32=False)
             qk *= sm_scale
@@ -423,7 +467,7 @@ if triton is not None:
             ds = within_ds + tl.where(
                 tl.arange(0, BLOCK_N)[None, :] == BLOCK_N - 1, gate_ds[:, None], 0.0
             )
-            ds *= sm_scale
+            ds *= sm_scale * doc_keep
             dq += tl.dot(ds.to(Q.dtype.element_ty), k, allow_tf32=False)
 
         # diagonal key block: within-block causal attention (identical to normal landmark).
@@ -449,7 +493,7 @@ class _FusedCompressiveLandmarkAttention(torch.autograd.Function):
     kernel; only the value accumulation and its gradient differ."""
 
     @staticmethod
-    def forward(ctx, q, k, v, n_prefix_q, sm_scale, block_size):
+    def forward(ctx, q, k, v, n_prefix_q, sm_scale, block_size, doc_id=None):
         if triton is None:
             raise RuntimeError("Landmark attention requires 'triton' (and a CUDA device).")
         q = q.contiguous()
@@ -459,6 +503,15 @@ class _FusedCompressiveLandmarkAttention(torch.autograd.Function):
         assert d <= 256 and q.dtype == k.dtype == v.dtype and q.is_cuda
 
         BLOCK = block_size
+        n_blocks = k.shape[2] // BLOCK
+        # ``doc_id`` is an int32 (batch, n_blocks) tensor of per-block document ids for sequence
+        # packing, or None for the single-document path. Triton still needs a real pointer argument
+        # when masking is off, so we pass a 1-element dummy.
+        doc_mask = doc_id is not None
+        if doc_mask:
+            assert doc_id.shape == (batch, n_blocks), (doc_id.shape, (batch, n_blocks))
+            doc_id = doc_id.to(device=q.device, dtype=torch.int32).contiguous()
+        doc_id_arg = doc_id if doc_mask else torch.empty(1, dtype=torch.int32, device=q.device)
         o = torch.empty_like(q)
         grid = (triton.cdiv(q.shape[2], BLOCK), q.shape[0] * q.shape[1], 1)
         L = torch.empty((q.shape[0] * q.shape[1], q.shape[2]), device=q.device, dtype=torch.float32)
@@ -493,17 +546,21 @@ class _FusedCompressiveLandmarkAttention(torch.autograd.Function):
             o.stride(3),
             L,
             m,
+            doc_id_arg,
             q.shape[0],
             q.shape[1],
             q.shape[2],
             k.shape[2],
+            n_blocks,
             BLOCK=BLOCK,
             BLOCK_DMODEL=d,
             N_PREFIX_Q=n_prefix_q,
+            DOC_MASK=doc_mask,
             num_warps=num_warps,
             num_stages=num_stages,
         )
         ctx.save_for_backward(q, k, v, o, L, m)
+        ctx.doc_id = doc_id  # None when not packing
         ctx.grid = grid
         ctx.sm_scale = sm_scale
         ctx.BLOCK_DMODEL = d
@@ -521,6 +578,10 @@ class _FusedCompressiveLandmarkAttention(torch.autograd.Function):
 
         BLOCK = ctx.BLOCK
         q, k, v, o, lse, m = ctx.saved_tensors
+        doc_id = ctx.doc_id
+        doc_mask = doc_id is not None
+        n_blocks = k.shape[2] // BLOCK
+        doc_id_arg = doc_id if doc_mask else torch.empty(1, dtype=torch.int32, device=q.device)
         do = do.contiguous()
         dq = torch.zeros_like(q, dtype=torch.float32)
         dk = torch.empty_like(k)
@@ -568,12 +629,19 @@ class _FusedCompressiveLandmarkAttention(torch.autograd.Function):
             v.stride(1),
             v.stride(2),
             v.stride(3),
+            doc_id_arg,
             q.shape[0],
             q.shape[1],
             q.shape[2],
             k.shape[2],
+            n_blocks,
         )
-        const = dict(BLOCK=BLOCK, BLOCK_DMODEL=ctx.BLOCK_DMODEL, N_PREFIX_Q=ctx.N_PREFIX_Q)
+        const = dict(
+            BLOCK=BLOCK,
+            BLOCK_DMODEL=ctx.BLOCK_DMODEL,
+            N_PREFIX_Q=ctx.N_PREFIX_Q,
+            DOC_MASK=doc_mask,
+        )
         if ctx.BLOCK_DMODEL > 128:
             warps = _env_int("LM_FAST_WARPS", 8)
             stages = _env_int("LM_FAST_STAGES", 1)
@@ -587,7 +655,7 @@ class _FusedCompressiveLandmarkAttention(torch.autograd.Function):
         _bwd_q_kernel_compressive[(ctx.grid[1], ctx.grid[0])](
             *args, **const, num_warps=warps, num_stages=stages
         )
-        return dq, dk, dv, None, None, None
+        return dq, dk, dv, None, None, None, None
 
 
 def fused_compressive_landmark_attention(
@@ -597,8 +665,14 @@ def fused_compressive_landmark_attention(
     is_mem: torch.Tensor,
     sm_scale: float = None,  # type: ignore[assignment]
     block_size: int = 64,
+    doc_id: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
-    """Compressive-landmark counterpart of :func:`landmark_fast.fused_landmark_attention_fast`."""
+    """Compressive-landmark counterpart of :func:`landmark_fast.fused_landmark_attention_fast`.
+
+    ``doc_id`` is an optional int32 ``(batch, seq_len_k // block_size)`` per-block document id for
+    sequence packing (see :func:`~olmo_core.nn.attention.landmark.build_block_doc_id`); when given,
+    cross-document key blocks are masked out so a query never attends across a document boundary.
+    """
     expected_is_mem = torch.arange(0, is_mem.shape[-1], device=is_mem.device) % block_size == (
         block_size - 1
     )
@@ -608,7 +682,9 @@ def fused_compressive_landmark_attention(
     n_history_blocks = n_history_kv // block_size
     if sm_scale is None:
         sm_scale = 1.0 / math.sqrt(q.size(-1))
-    return _FusedCompressiveLandmarkAttention.apply(q, k, v, n_history_blocks, sm_scale, block_size)
+    return _FusedCompressiveLandmarkAttention.apply(
+        q, k, v, n_history_blocks, sm_scale, block_size, doc_id
+    )
 
 
 class FastCompressiveLandmarkAttention(FastLandmarkAttention):
@@ -673,15 +749,10 @@ class FastCompressiveLandmarkAttention(FastLandmarkAttention):
                 "FastCompressiveLandmarkAttention requires the fused Triton kernel "
                 "(install 'triton', run on CUDA)."
             )
-        if doc_id is not None:
-            raise NotImplementedError(
-                "Intra-document packing (cu_doc_lens) is not yet supported by "
-                "FastCompressiveLandmarkAttention's fused kernel."
-            )
         T = q.shape[2]
         is_mem = (torch.arange(T, device=q.device) % self.block_size) == (self.block_size - 1)
         return fused_compressive_landmark_attention(
-            q, k, v, is_mem, sm_scale=self.softmax_scale, block_size=self.block_size
+            q, k, v, is_mem, sm_scale=self.softmax_scale, block_size=self.block_size, doc_id=doc_id
         )
 
     def _compressive_decode_probs(
