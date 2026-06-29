@@ -150,6 +150,16 @@ class MoEFusedV2TransformerBlockConfig(TransformerBlockConfig):
     # Expert-parallel knobs. These configure the expert-parallel dispatch families, which are
     # imported lazily and land in follow-up changes; they have no effect on the no-expert-parallel
     # path and are documented when those families land.
+    #
+    # TODO(ep-config): revisit and potentially refactor these into per-mode configs. Right now this
+    # is a flat bag of `ep_no_sync_*` flags that conflates *mode selection* (the family is chosen by
+    # the `(ep_no_sync, ep_no_sync_use_rowwise_all_to_all)` pair) with *per-mode tuning* (capacity,
+    # alignment, symm-mem slots) and *rowwise-only* options (`ep_no_sync_rowwise_*`), so many
+    # combinations are meaningless and one flag (`ep_no_sync_use_2d_all_to_all`) is already dead.
+    # The rest of the codebase models this kind of polymorphism with a Registrable base config that
+    # resolves to a per-variant subclass (see e.g. the attention/optimizer/scheduler configs); an
+    # EP-mode config (sync / no-sync VDev / no-sync rowwise) holding only its own fields would be
+    # clearer and self-validating. Do this when the EP families land (PR-M2/M3).
     ep_no_sync: bool = False
     ep_no_sync_use_2d_all_to_all: bool = False
     ep_no_sync_use_rowwise_all_to_all: bool = False
