@@ -85,19 +85,71 @@ _SHARED_DOWN_FP8_CACHE_SPECS = (
 
 @dataclass
 class MoEFusedV2TransformerBlockConfig(TransformerBlockConfig):
+    """
+    Configuration for a :class:`MoEFusedV2TransformerBlock`.
+
+    Unlike :class:`~olmo_core.nn.transformer.config.TransformerBlockConfig`, this block does not
+    use the ``feed_forward`` / ``feed_forward_moe`` fields; the feed-forward sublayer is described
+    by :data:`routed_experts` (+ :data:`routed_experts_router`) and the optional
+    :data:`shared_experts` (+ :data:`shared_experts_router`). The inherited ``layer_norm`` field is
+    used for both the attention and feed-forward norms.
+    """
+
     shared_experts: Optional[SharedExpertsConfig] = None
+    """
+    The optional shared (always-on) experts applied to every token.
+    """
 
     routed_experts: Optional[RoutedExpertsConfig] = None
+    """
+    The routed experts that each token is dispatched to via :data:`routed_experts_router`.
+    """
 
     shared_experts_router: Optional[MoERouterConfigV2] = None
+    """
+    The router that produces the (gated) combine weights for the shared experts. Only needed when
+    there is more than one shared expert.
+    """
 
     routed_experts_router: Optional[MoERouterConfigV2] = None
+    """
+    The router that selects the top-k routed experts for each token and produces their combine
+    weights.
+    """
 
     use_peri_norm: bool = False
+    """
+    Apply a "peri-norm" — an additional input norm on the attention and feed-forward sublayers.
+    """
+
     checkpoint_attn: bool = False
+    """
+    Activation-checkpoint the attention sublayer.
+    """
+
     checkpoint_permute_moe_unpermute: bool = False
+    """
+    Activation-checkpoint the permute → experts → unpermute region of the MoE sublayer.
+    """
+
     checkpoint_combined_ep_tbo: bool = False
+    """
+    Activation-checkpoint the combined expert-parallel two-batch-overlap forward.
+    """
+
     checkpoint_second_unpermute: bool = False
+    """
+    Activation-checkpoint the second (combine) unpermute.
+    """
+
+    rowwise_fp8: Optional[MoERowwiseFP8Config] = None
+    """
+    Optional rowwise-FP8 configuration for the shared experts (beta).
+    """
+
+    # Expert-parallel knobs. These configure the expert-parallel dispatch families, which are
+    # imported lazily and land in follow-up changes; they have no effect on the no-expert-parallel
+    # path and are documented when those families land.
     ep_no_sync: bool = False
     ep_no_sync_use_2d_all_to_all: bool = False
     ep_no_sync_use_rowwise_all_to_all: bool = False
@@ -111,7 +163,6 @@ class MoEFusedV2TransformerBlockConfig(TransformerBlockConfig):
     ep_no_sync_rowwise_symm_dispatch_in: Optional[bool] = None
     ep_no_sync_rowwise_symm_combine_out: Optional[bool] = None
     ep_no_sync_rowwise_symm_combine_gather: Optional[bool] = None
-    rowwise_fp8: Optional[MoERowwiseFP8Config] = None
 
     def build(
         self,
@@ -275,6 +326,16 @@ if TYPE_CHECKING:
 
 
 class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlockBase):
+    """
+    A fused Mixture-of-Experts transformer block: it owns both the attention sublayer and the MoE
+    feed-forward sublayer (routed experts + optional shared experts) so their compute and
+    communication can be overlapped. Built from a :class:`MoEFusedV2TransformerBlockConfig`.
+
+    The forward path is selected at runtime from the block's expert-parallel configuration; this
+    drop ships the no-expert-parallel path (:func:`~olmo_core.nn.moe.v2.no_ep.combined_forward_no_ep`),
+    with the expert-parallel dispatch families imported lazily and landing in follow-up changes.
+    """
+
     def __init__(
         self,
         *,

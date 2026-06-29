@@ -11,6 +11,12 @@ if TYPE_CHECKING:
 
 @dataclass
 class SyncedTboPendingContext:
+    """
+    Carries the in-flight state between the two stages of the synchronous expert-parallel
+    two-batch-overlap forward, so the second micro-batch's all-to-all can be launched while the
+    first micro-batch's tail (unpermute + combine) is still being computed.
+    """
+
     global_x: torch.Tensor
     send_counts: List[int]
     recv_counts: List[int]

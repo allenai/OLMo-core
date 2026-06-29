@@ -106,8 +106,10 @@ def _fp32_post_grad_acc_hook(param: torch.Tensor):
 
 class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
     """
-    An MoE transformer implementation, to be used with one of the
-    :class:`MoETransformerBlock` block types.
+    A fused Mixture-of-Experts transformer, composed of
+    :class:`~olmo_core.nn.moe.v2.block.MoEFusedV2TransformerBlock` blocks (optionally preceded by
+    dense blocks). Built from a
+    :class:`~olmo_core.nn.transformer.config.MoEFusedV2TransformerConfig`.
     """
 
     def __init__(self, *args, **kwargs):
@@ -726,10 +728,6 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
         world_mesh: Optional[Dict[str, Optional[DeviceMesh]]] = None,
         model_part_idx: int = 0,
     ) -> torch.Generator:
-        from olmo_core.nn.attention import Attention, FusedAttention
-
-        from .block import MoEFusedV2TransformerBlock
-
         """
         Initialize the model weights.
 
@@ -739,6 +737,10 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
             expected. This is used to warm-up some MoE cache.
         :param device: The device the local copy of the model will be trained on.
         """
+        from olmo_core.nn.attention import Attention, FusedAttention
+
+        from .block import MoEFusedV2TransformerBlock
+
         device = device or self.device
         # params = list(self.parameters())
         # TODO(dtype): materialization currently relies on the same broad bf16
