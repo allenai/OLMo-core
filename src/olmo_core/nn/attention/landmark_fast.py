@@ -670,6 +670,10 @@ class FastLandmarkAttention(Attention):
     :class:`Attention` (``att * sigmoid(w_g(x))``), so it drops into gated models like Qwen3.5.
     """
 
+    # Right-padded cross-length batched decode (``_decode_ragged``) is supported by this exact
+    # variant. Subclasses with different decode semantics (e.g. compressive) leave this False.
+    _supports_ragged_decode: bool = True
+
     def __init__(self, *, mem_freq: int, softmax_scale: Optional[float] = None, **kwargs):
         if kwargs.get("window_size") is not None:
             raise OLMoConfigurationError(
@@ -693,6 +697,43 @@ class FastLandmarkAttention(Attention):
         self._eval_prompt_len: Optional[int] = None
         self._eval_decode_mode: str = "extend_last_block"
         self._eval_top_k: Optional[int] = None
+        # Ragged (cross-length, right-padded) batched-decode state. When ``_ragged_qpos`` is not None
+        # the decode step is batched but each row carries its OWN absolute query position, prompt
+        # length, and top-k -- enabling right-padded cross-length batching of landmark generation
+        # (content keeps absolute positions 0..L_i, the pad TAIL is masked per row; see
+        # :meth:`TransformerGenerationModule.generate_landmark_batch`). All-None == the legacy
+        # bs=1 / exact-length path (unchanged).
+        self._ragged_qpos: Optional[torch.Tensor] = None  # (B,) current per-row query/write position
+        self._ragged_prompt_lens: Optional[torch.Tensor] = None  # (B,) per-row landmark-prompt length
+        self._ragged_top_k: Optional[torch.Tensor] = None  # (B,) per-row top-k, or None for dense
+
+    def set_landmark_ragged_decode(
+        self,
+        prompt_lens: torch.Tensor,
+        mode: str = "extend_last_block",
+        top_k: Optional[torch.Tensor] = None,
+    ) -> None:
+        """Enable ragged (per-row) "one long local block" decoding for right-padded cross-length
+        batches. ``prompt_lens`` / ``top_k`` are ``(B,)`` per-row tensors. ``_ragged_qpos`` must be
+        set (per step) before each decode forward; see :meth:`set_ragged_qpos`."""
+        if mode not in ("extend_last_block", "generation_only"):
+            raise OLMoConfigurationError(
+                f"Unknown landmark decode mode {mode!r} "
+                "(expected 'extend_last_block' or 'generation_only')."
+            )
+        self._eval_decode_mode = mode
+        self._ragged_prompt_lens = prompt_lens
+        self._ragged_top_k = top_k
+        self._ragged_qpos = prompt_lens.new_zeros(prompt_lens.shape)  # placeholder until first step
+
+    def set_ragged_qpos(self, qpos: torch.Tensor) -> None:
+        """Set the current per-row absolute query/write position ``(B,)`` for the next decode step."""
+        self._ragged_qpos = qpos
+
+    def clear_ragged_decode(self) -> None:
+        self._ragged_qpos = None
+        self._ragged_prompt_lens = None
+        self._ragged_top_k = None
 
     def set_landmark_eval_decode(
         self, prompt_len: int, mode: str = "extend_last_block", top_k: Optional[int] = None
@@ -894,6 +935,9 @@ class FastLandmarkAttention(Attention):
         """
         kvm = self.kv_cache_manager
         assert kvm is not None
+        # Ragged (right-padded cross-length) decode: each row decodes at its OWN absolute position.
+        if self._ragged_qpos is not None and x.shape[1] == 1:
+            return self._forward_generate_ragged(x, pos_sin, pos_cos, freqs_cis)
         if cache_leftpad is not None and bool(cache_leftpad.ne(0).any()):
             raise NotImplementedError(
                 "Landmark generation requires batch_size=1 / no left-padding "
@@ -1046,3 +1090,114 @@ class FastLandmarkAttention(Attention):
             last_section_mask=last_section.expand(Bsz, Hn, 1, total),
         )
         return torch.matmul(probs.to(v.dtype), v)
+
+    # ---- Ragged (right-padded, cross-length) batched decode --------------------------------------
+    def _forward_generate_ragged(
+        self,
+        x: torch.Tensor,
+        pos_sin: Optional[torch.Tensor],
+        pos_cos: Optional[torch.Tensor],
+        freqs_cis: Optional[torch.Tensor],
+    ) -> torch.Tensor:
+        """Single-token decode where each row sits at its OWN absolute position ``self._ragged_qpos``
+        (right-padded cross-length batch). RoPE is applied per row via ``position_ids``; the row's
+        K/V is scattered into the cache at its position; the grouped-softmax decode uses per-row
+        ``qpos`` / ``prompt_len`` / ``top_k``. Numerically identical, row-for-row, to running each
+        prompt alone through the legacy bs=1 decode."""
+        kvm = self.kv_cache_manager
+        assert kvm is not None
+        qpos = self._ragged_qpos
+        assert qpos is not None
+        B = x.shape[0]
+        q, k, v = self._prepare_qkv(
+            x,
+            pos_sin=pos_sin,
+            pos_cos=pos_cos,
+            freqs_cis=freqs_cis,
+            cu_doc_lens=None,
+            position_ids=qpos.view(B, 1),
+        )
+        bidx = torch.arange(B, device=x.device)
+        kvm.k_cache[bidx, qpos] = k[:, 0]
+        kvm.v_cache[bidx, qpos] = v[:, 0]
+        total = int(qpos.max().item()) + 1
+
+        n_rep = q.shape[2] // k.shape[2]
+        qh = q.transpose(1, 2)  # (B, H, 1, D)
+        kh = repeat_kv(kvm.k_cache[:, :total].transpose(1, 2), n_rep)
+        vh = repeat_kv(kvm.v_cache[:, :total].transpose(1, 2), n_rep)
+        att = self._decode_ragged(qh, kh, vh)
+        att = att.transpose(1, 2).contiguous().view(B, 1, -1)
+        att = self._apply_gate(att, x)
+        return self.w_out(att)
+
+    def _decode_ragged(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor) -> torch.Tensor:
+        """Per-row grouped-softmax decode. ``q``: ``(B,H,1,D)``; ``k``/``v``: ``(B,H,total,D)``.
+        Each row ``b`` queries at absolute position ``qpos[b]`` with its own ``prompt_len[b]`` and
+        ``top_k[b]``; reproduces :meth:`_decode_one` / :meth:`_decode_one_eval` row-by-row."""
+        Lb = self.block_size
+        B, total = q.shape[0], k.shape[2]
+        dev = q.device
+        qpos = self._ragged_qpos.to(dev).long()  # (B,)
+        plen = self._ragged_prompt_lens.to(dev).long()  # (B,)
+        j = torch.arange(total, device=dev)[None, :]  # (1,total)
+        qpos_ = qpos[:, None]  # (B,1)
+        plen_ = plen[:, None]  # (B,1)
+
+        eval_row = qpos_ >= plen_  # (B,1): one-long-local-block (generated) vs prompt position
+        if self._eval_decode_mode == "extend_last_block":
+            sec = (plen_ // Lb) * Lb
+        else:
+            sec = plen_
+        landmark_pos = (j % Lb) == (Lb - 1)  # (1,total)
+        q_is_landmark = (qpos_ % Lb) == (Lb - 1)  # (B,1)
+
+        # Per-row causal visibility. A non-eval landmark query does not attend to itself (matches the
+        # kernel's last-row causal bound).
+        causal = j <= qpos_  # (B,total)
+        causal = causal & ~((~eval_row) & q_is_landmark & (j == qpos_))
+
+        is_mem_eval = landmark_pos & (j < sec)
+        last_eval = j >= sec
+        is_mem_non = landmark_pos.expand(B, total)
+        last_non = (j // Lb) == (qpos_ // Lb)
+        is_mem = torch.where(eval_row, is_mem_eval, is_mem_non) & causal  # (B,total)
+        # Non-attended (right-pad tail + the dropped self-landmark key) keys are routed into the
+        # query's own ("last") section bucket so they never form an isolated all-(-inf) softmax
+        # bucket (which would NaN). Their scores are -inf below, so they carry exactly zero weight --
+        # identical to the legacy bs=1 decode that simply never sees them.
+        last_section = (torch.where(eval_row, last_eval, last_non) & causal) | (~causal)  # (B,total)
+
+        scores = torch.matmul(q, k.transpose(-1, -2)) * self.softmax_scale  # (B,H,1,total)
+        scores = scores.masked_fill(~causal[:, None, None, :], float("-inf"))
+        scores = self._decode_topk_ragged(scores, is_mem)
+        Bsz, Hn = scores.shape[0], scores.shape[1]
+        probs = landmark_grouped_softmax(
+            scores,
+            dim=-1,
+            is_mem=is_mem[:, None, None, :].expand(Bsz, Hn, 1, total),
+            last_section_mask=last_section[:, None, None, :].expand(Bsz, Hn, 1, total),
+        )
+        return torch.matmul(probs.to(v.dtype), v)
+
+    def _decode_topk_ragged(self, scores: torch.Tensor, is_mem: torch.Tensor) -> torch.Tensor:
+        """Per-row hard top-k landmark retrieval (ragged analogue of
+        :meth:`_decode_apply_topk_landmark_retrieval`). ``scores``: ``(B,H,1,total)``; ``is_mem``:
+        ``(B,total)``. Keeps each row's ``top_k[b]`` highest-scoring landmark keys (per head); rows
+        with ``<= top_k`` landmarks are left untouched."""
+        top_k = self._ragged_top_k
+        if top_k is None:
+            return scores
+        B, _, _, total = scores.shape
+        dev = scores.device
+        top_k = top_k.to(dev).long()  # (B,)
+        is_mem_b = is_mem[:, None, None, :]  # (B,1,1,total)
+        neg = torch.finfo(scores.dtype).min
+        lm_scores = torch.where(is_mem_b, scores, scores.new_full((), neg))  # (B,H,1,total)
+        order = lm_scores.argsort(dim=-1, descending=True)
+        ranks = torch.empty_like(order)
+        ranks.scatter_(-1, order, torch.arange(total, device=dev).expand_as(order))
+        tk = top_k.view(B, 1, 1, 1)
+        n_lm = is_mem.sum(-1).view(B, 1, 1, 1)
+        drop = is_mem_b & (ranks >= tk) & (n_lm > tk)
+        return scores.masked_fill(drop, float("-inf"))

@@ -702,6 +702,10 @@ class FastCompressiveLandmarkAttention(FastLandmarkAttention):
         retrieval is disabled.
     """
 
+    # Compressive decode has different grouped-softmax semantics than the base, so it opts out of the
+    # base ragged batched-decode path (which would silently use the non-compressive math).
+    _supports_ragged_decode: bool = False
+
     def __init__(
         self,
         *,
