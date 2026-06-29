@@ -18,6 +18,7 @@ import torch
 __all__ = [
     "repeat_kv",
     "landmark_grouped_softmax",
+    "compressive_landmark_grouped_softmax",
     "LandmarkGroupedSoftmaxFunction",
     "build_block_doc_id",
     "build_local_packed_position_ids",
@@ -238,4 +239,88 @@ def landmark_grouped_softmax(
         )
     )
 
+    return probs
+
+
+def compressive_landmark_grouped_softmax(
+    x: torch.Tensor,
+    dim: int,
+    is_mem: torch.Tensor,
+    last_section_mask: torch.Tensor,
+) -> torch.Tensor:
+    """
+    The eager (dense) *compressive* grouped softmax used by compressive landmark attention.
+
+    Identical to :func:`landmark_grouped_softmax` for the cross-block (gate) softmax -- a query
+    attends its own ("last") section fully and each earlier block gated by that block's landmark
+    score -- but the gate weight of a past block is now distributed by a within-block softmax over
+    **all** of the block's tokens (its content tokens *and* its landmark) instead of over the content
+    tokens only. The landmark token therefore contributes its value to the output, acting as a
+    learned, compressed summary of its block. This mirrors the math of the fused
+    :func:`~olmo_core.nn.attention.landmark_compressive.fused_compressive_landmark_attention` kernel
+    (and the eager reference in its tests), while folding in an arbitrary additive mask (e.g. the
+    chunked-document mask) exactly as :func:`landmark_grouped_softmax` does.
+
+    Concretely, for a query with cross-block gate weights ``G_b`` over the visible past blocks and a
+    within-block softmax ``f_n`` over block ``b``'s ``block_size`` tokens (content + landmark):
+
+    * own-section keys keep their gate weight directly (plain causal softmax, never the own landmark);
+    * every past-block key ``n`` (content or landmark) gets ``G_b * f_n``.
+
+    Implemented as two reuses of :class:`LandmarkGroupedSoftmaxFunction`: one bucketing that produces
+    the gate softmax (landmarks + own section in the top bucket, identical to the non-compressive
+    path) and one bucketing where each block's landmark joins its own block's within-block softmax.
+    Fully-masked buckets return a finite uniform distribution (via the max-subtract trick inside
+    :class:`LandmarkGroupedSoftmaxFunction`) which is then multiplied by a zero block gate, so masked
+    / out-of-document keys contribute nothing without producing NaNs.
+
+    :param x: The attention logits, e.g. of shape ``(B, n_heads, T, T)`` with disallowed positions
+        already set to ``finfo.min`` (so they receive ~0 weight).
+    :param dim: The dimension to normalize over (the key dimension).
+    :param is_mem: Boolean mask (broadcastable to ``x``) marking landmark key positions.
+    :param last_section_mask: Boolean mask (broadcastable to ``x``) marking, for each query, the keys
+        that belong to the query's own ("last") section.
+    """
+    is_mem_i = is_mem.to(torch.long)
+    max_mem_cnt = int(is_mem.sum(dim=dim).max().item()) + 1
+    gate_bucket = max_mem_cnt - 1
+    mem_group_idx = torch.cumsum(is_mem_i, dim=dim)
+
+    # (1) Cross-block GATE softmax: landmarks + the query's own section compete in the top bucket,
+    #     exactly as in landmark_grouped_softmax. (Content keys land in their own block bucket here,
+    #     but those values are unused -- only the gate keys and ``group_prob`` below are read.)
+    resp_gate = torch.where(
+        last_section_mask,
+        torch.full_like(mem_group_idx, gate_bucket),
+        torch.where(is_mem, torch.full_like(mem_group_idx, gate_bucket), mem_group_idx),
+    )
+    gate_probs = LandmarkGroupedSoftmaxFunction.apply(x, dim, max_mem_cnt, resp_gate)
+    # group_prob[..., b] = the gate weight assigned to block b's landmark.
+    new_shape = list(x.shape)
+    new_shape[dim] = max_mem_cnt
+    group_prob = gate_probs.new_zeros((*new_shape,))
+    group_prob.scatter_(
+        dim,
+        torch.where(is_mem, mem_group_idx - 1, torch.full_like(mem_group_idx, gate_bucket)),
+        gate_probs,
+    )
+
+    # (2) Within-block softmax over each past block's content + landmark. The landmark joins its own
+    #     block's bucket (content of block b and landmark of block b share bucket b); the query's own
+    #     section keys are parked in the gate bucket and their within-block values discarded below.
+    within_bucket = torch.where(
+        last_section_mask,
+        torch.full_like(mem_group_idx, gate_bucket),
+        mem_group_idx - is_mem_i,
+    )
+    within_probs = LandmarkGroupedSoftmaxFunction.apply(x, dim, max_mem_cnt, within_bucket)
+
+    # Combine: own-section keys keep their gate weight; every past-block key (content or landmark)
+    # gets ``G_block * within_full``. Masked / own-landmark keys multiply a finite within value by a
+    # zero block gate, so they contribute nothing.
+    probs = torch.where(
+        last_section_mask,
+        gate_probs,
+        within_probs * torch.gather(group_prob, dim, within_bucket),
+    )
     return probs

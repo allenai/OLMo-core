@@ -87,6 +87,7 @@ __all__ = [
     "FastCompressiveLandmarkAttention",
     "SparseLandmarkAttention",
     "DocumentLandmarkAttention",
+    "DocumentCompressiveLandmarkAttention",
     "MultiLandmarkAttention",
     "DocumentMultiLandmarkAttention",
     "DocumentChunkedAttention",
@@ -233,6 +234,13 @@ class AttentionType(StrEnum):
     ➡️ :class:`DocumentMultiLandmarkAttention` (document-chunked multi-landmark attention)
     """
 
+    document_compressive_landmark = "document_compressive_landmark"
+    """
+    ➡️ :class:`DocumentCompressiveLandmarkAttention` (compressive version of document-chunked
+    attention: the compressive landmark grouped softmax -- each past block's landmark token also
+    contributes its value as a compressed summary -- plus the chunked-document mask)
+    """
+
     document_chunked = "document_chunked"
     """
     ➡️ :class:`DocumentChunkedAttention` (dense full attention restricted by the chunked-document
@@ -301,6 +309,7 @@ _LANDMARK_ATTENTION_TYPES = (
     AttentionType.fast_compressive_landmark,
     AttentionType.sparse_landmark,
     AttentionType.document_landmark,
+    AttentionType.document_compressive_landmark,
     AttentionType.multi_landmark,
     AttentionType.document_multi_landmark,
 )
@@ -560,28 +569,42 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
             possible_types
             & {
                 AttentionType.document_landmark,
+                AttentionType.document_compressive_landmark,
                 AttentionType.document_multi_landmark,
                 AttentionType.document_chunked,
             }
         ):
             raise OLMoConfigurationError(
                 "'cross_doc_mode' is only supported with document_landmark, "
-                f"document_multi_landmark, or document_chunked attention (got name='{self.name}')"
+                "document_compressive_landmark, document_multi_landmark, or document_chunked "
+                f"attention (got name='{self.name}')"
             )
+        # ``hierarchical_dilated`` is a cross-document visibility policy that is orthogonal to the
+        # attention mechanism, so the dilation knobs apply to every document-chunked family (dense /
+        # landmark / compressive).
+        _DOC_CHUNKED_TYPES = {
+            AttentionType.document_chunked,
+            AttentionType.document_landmark,
+            AttentionType.document_compressive_landmark,
+        }
         if (
             dilation_n is not None or dilation_m is not None or dilation_max_docs is not None
-        ) and AttentionType.document_chunked not in possible_types:
+        ) and not (possible_types & _DOC_CHUNKED_TYPES):
             raise OLMoConfigurationError(
                 "'dilation_n' / 'dilation_m' / 'dilation_max_docs' are only supported with "
-                f"document_chunked attention (got name='{self.name}')"
+                "document_chunked, document_landmark, or document_compressive_landmark attention "
+                f"(got name='{self.name}')"
             )
-        if (
-            nonselected_landmark_mass is not None
-            and AttentionType.fast_compressive_landmark not in possible_types
+        if nonselected_landmark_mass is not None and not (
+            possible_types
+            & {
+                AttentionType.fast_compressive_landmark,
+                AttentionType.document_compressive_landmark,
+            }
         ):
             raise OLMoConfigurationError(
-                "'nonselected_landmark_mass' is only supported with fast_compressive_landmark "
-                f"attention (got name='{self.name}')"
+                "'nonselected_landmark_mass' is only supported with fast_compressive_landmark or "
+                f"document_compressive_landmark attention (got name='{self.name}')"
             )
 
         try:
@@ -637,7 +660,35 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
                     kwargs["cross_doc_mode"] = cross_doc_mode
                 if landmark_use_kernel is not None:
                     kwargs["use_kernel"] = landmark_use_kernel
+                # Per-layer dilation stride for the "hierarchical_dilated" cross_doc_mode.
+                if dilation_n is not None:
+                    kwargs["dilation_n"] = dilation_n
+                if dilation_m is not None:
+                    kwargs["dilation_m"] = dilation_m
+                if dilation_max_docs is not None:
+                    kwargs["dilation_max_docs"] = dilation_max_docs
+                kwargs["layer_idx"] = layer_idx
+                kwargs["n_layers"] = n_layers
                 return DocumentLandmarkAttention(mem_freq=mem_freq, **kwargs)
+            elif effective_name == "document_compressive_landmark":
+                if mem_freq is None:
+                    raise OLMoConfigurationError(
+                        "document_compressive_landmark attention requires 'mem_freq' to be set"
+                    )
+                if cross_doc_mode is not None:
+                    kwargs["cross_doc_mode"] = cross_doc_mode
+                if nonselected_landmark_mass is not None:
+                    kwargs["nonselected_landmark_mass"] = nonselected_landmark_mass
+                # Per-layer dilation stride for the "hierarchical_dilated" cross_doc_mode.
+                if dilation_n is not None:
+                    kwargs["dilation_n"] = dilation_n
+                if dilation_m is not None:
+                    kwargs["dilation_m"] = dilation_m
+                if dilation_max_docs is not None:
+                    kwargs["dilation_max_docs"] = dilation_max_docs
+                kwargs["layer_idx"] = layer_idx
+                kwargs["n_layers"] = n_layers
+                return DocumentCompressiveLandmarkAttention(mem_freq=mem_freq, **kwargs)
             elif effective_name == "multi_landmark":
                 if mem_freq is None:
                     raise OLMoConfigurationError(
@@ -997,7 +1048,14 @@ class Attention(SequenceMixer):
                 )
                 rope_cu_doc_lens = None
 
-            start_pos = self.kv_cache_manager.current_position() if self.kv_cache_manager else None
+            # Explicit per-token ``position_ids`` (e.g. ragged right-padded landmark decode, where each
+            # row's single token sits at a different absolute position) override the scalar KV-cache
+            # ``start_pos``; the two are mutually exclusive in RoPE.
+            start_pos = (
+                None
+                if position_ids is not None
+                else (self.kv_cache_manager.current_position() if self.kv_cache_manager else None)
+            )
             q, k = self._apply_rope(
                 q, k, start_pos, pos_sin, pos_cos, freqs_cis, rope_cu_doc_lens, position_ids
             )
@@ -2031,6 +2089,9 @@ from .chunked_mask import AttentionPattern  # noqa: E402
 from .document_chunked import DocumentChunkedAttention  # noqa: E402
 from .landmark_compressive import FastCompressiveLandmarkAttention  # noqa: E402
 from .landmark_document import DocumentLandmarkAttention  # noqa: E402
+from .landmark_document_compressive import (  # noqa: E402
+    DocumentCompressiveLandmarkAttention,
+)
 from .landmark_fast import FastLandmarkAttention  # noqa: E402
 from .landmark_multi import (  # noqa: E402
     DocumentMultiLandmarkAttention,

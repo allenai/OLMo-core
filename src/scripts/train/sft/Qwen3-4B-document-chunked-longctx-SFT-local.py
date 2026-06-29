@@ -5,6 +5,10 @@ LOCAL (torchrun, no Beaker/weka) document-chunked OOLONG SFT for Qwen3-4B, in tw
                               chunked-document mask), initialized from the dense CPT base.
   * ``--variant landmark`` -> :class:`DocumentLandmarkAttention` (grouped-softmax landmark + chunked
                               mask), initialized from the fast-landmark CPT base.
+  * ``--variant compressive`` -> :class:`DocumentCompressiveLandmarkAttention` (compressive
+                              grouped-softmax landmark -- each past block's landmark token also folds
+                              its value into the output as a compressed summary -- + chunked mask),
+                              initialized from the fast-compressive-landmark CPT base. Eager-only.
 
 Both reconstruct per-token ``chunk_ids`` at runtime from the ``<|box_start|>`` / ``<|box_end|>``
 special tokens (151648 / 151649) in the data (built by
@@ -78,12 +82,18 @@ MEM_FREQ = 63  # landmark block size = 64
 DATA_ROOTS = {
     "dense": "/scratch/users/prasann/longctx_sft_qwen/oolong_ctx2048_docdense",
     "landmark": "/scratch/users/prasann/longctx_sft_qwen/oolong_ctx2048_doclandmark",
+    # compressive uses the SAME landmark-format data (landmark tokens inserted per chunk); the only
+    # difference from "landmark" is the attention mechanism (landmark value folded into the output).
+    "compressive": "/scratch/users/prasann/longctx_sft_qwen/oolong_ctx2048_doclandmark",
     "full": "/scratch/users/prasann/longctx_sft_qwen/oolong_ctx2048_docdense",
 }
 # Matched CPT bases (model-only olmo-native distcp; point at the model_and_optim SUBDIR).
 BASE_CKPTS = {
     "dense": "/scratch/users/prasann/cpt_mix_ckpts/q4b-dense-cpt-step2385-modelonly/model_and_optim",
     "landmark": "/scratch/users/prasann/cpt_mix_ckpts/q4b-fast-landmark-step2385/model_and_optim",
+    # Pull model-only from weka amandab/q4b-base-fast-compressive-landmark-8node/step2385 into
+    # /scratch/users/prasann/stable_bases (same flow as the other bases) if not already local.
+    "compressive": "/scratch/users/prasann/stable_bases/q4b-fast-compressive-landmark-step2385/model_and_optim",
     "full": "/scratch/users/prasann/cpt_mix_ckpts/q4b-dense-cpt-step2385-modelonly/model_and_optim",
 }
 SAVE_ROOT = "/data/prasann/doc_oolong_runs"  # node-local ZFS (fast distcp; eval runs on same node)
@@ -102,9 +112,9 @@ def build_and_fit(opts: argparse.Namespace) -> None:
     seq_len = opts.seq_len
     variant = opts.variant
 
-    if variant == "landmark" and seq_len % (MEM_FREQ + 1) != 0:
+    if variant in ("landmark", "compressive") and seq_len % (MEM_FREQ + 1) != 0:
         raise SystemExit(
-            f"--seq-len must be a multiple of {MEM_FREQ + 1} for the landmark variant."
+            f"--seq-len must be a multiple of {MEM_FREQ + 1} for the {variant} variant."
         )
 
     world_size = int(os.environ.get("WORLD_SIZE", "8"))
@@ -135,10 +145,16 @@ def build_and_fit(opts: argparse.Namespace) -> None:
         )
         # NB: no document_chunk_attention -> chunk_ids are never reconstructed; full attention.
     elif variant == "dense":
+        # cross_doc_mode selects the chunked-attention pattern (default "chunked"). For
+        # "hierarchical_dilated" the per-layer dilation stride is m**layer_idx over n docs.
+        chunked_kwargs = dict(cross_doc_mode=opts.cross_doc_mode)
+        if opts.cross_doc_mode == "hierarchical_dilated":
+            chunked_kwargs["dilation_n"] = opts.dilation_n
+            chunked_kwargs["dilation_m"] = opts.dilation_m
         model_config = TransformerConfig.qwen3_4B(
             vocab_size=tokenizer_config.padded_vocab_size(),
             document_chunked=True,
-            cross_doc_mode="chunked",
+            **chunked_kwargs,
         )
         model_config.document_chunk_attention = {
             "doc_start_id": DOC_START_ID,
@@ -146,14 +162,36 @@ def build_and_fit(opts: argparse.Namespace) -> None:
             "eos_id": EOS_TOKEN_ID,
             "mode": "chunked",
         }
+    elif variant == "compressive":
+        # Compressive document-chunked landmark: same chunked mask + grouped softmax as "landmark",
+        # but each past block's landmark token also contributes its VALUE (a compressed block summary)
+        # to the output. Eager-only (the fused compressive kernel has no chunk-mask path, and the
+        # PadToLength pad tail breaks its positional is_mem assumption). Initialized from the
+        # compressive CPT base.
+        model_config = TransformerConfig.qwen3_4B(
+            vocab_size=tokenizer_config.padded_vocab_size(),
+            document_compressive=True,
+            mem_freq=MEM_FREQ,
+            nonselected_landmark_mass=0.1,
+        )
+        model_config.document_chunk_attention = {
+            "doc_start_id": DOC_START_ID,
+            "doc_end_id": DOC_END_ID,
+            "eos_id": EOS_TOKEN_ID,
+            "mode": "chunked",
+            "pad_id": PAD_TOKEN_ID,
+        }
     else:  # landmark
         model_config = TransformerConfig.qwen3_4B(
             vocab_size=tokenizer_config.padded_vocab_size(),
             document_landmark=True,
             mem_freq=MEM_FREQ,
-            # Fused Triton kernel for the chunked grouped softmax (~5x faster training, GPU grad-parity
-            # validated vs eager). Eval still uses the eager path (top-k / CPU fall back automatically).
-            landmark_use_kernel=True,
+            # Fused Triton kernel for the chunked grouped softmax (~5x faster). It asserts is_mem is
+            # positional through the whole seq, which FAILS when PadToLength right-pads a variable-length
+            # doc-landmark instance (the pad tail has no landmarks) -- e.g. the contradiction shards. So
+            # default to the EAGER grouped-softmax path (no assert; tolerates the pad tail). Pass
+            # --landmark-kernel only for fixed-length data where every seq exactly fills the window.
+            landmark_use_kernel=opts.landmark_kernel,
         )
         model_config.document_chunk_attention = {
             "doc_start_id": DOC_START_ID,
@@ -287,7 +325,15 @@ def main() -> None:
     faulthandler.dump_traceback_later(600, repeat=True)
 
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--variant", required=True, choices=["dense", "landmark", "full"])
+    ap.add_argument(
+        "--variant", required=True, choices=["dense", "landmark", "compressive", "full"]
+    )
+    ap.add_argument(
+        "--landmark-kernel",
+        action="store_true",
+        help="use the fused landmark kernel (requires every seq to exactly fill the window "
+        "with positional landmarks; default eager, which tolerates PadToLength pad tails)",
+    )
     ap.add_argument("--run-name", required=True)
     ap.add_argument("--save-folder", default=None, help=f"default {SAVE_ROOT}/<run-name>")
     ap.add_argument(
@@ -296,6 +342,15 @@ def main() -> None:
     ap.add_argument(
         "--data-root", default=None, help="override the OOLONG document-chunked shard dir"
     )
+    ap.add_argument(
+        "--cross-doc-mode",
+        default="chunked",
+        help="dense-variant chunked-attention pattern (e.g. 'chunked', 'hierarchical_dilated')",
+    )
+    ap.add_argument(
+        "--dilation-n", type=int, default=4, help="hierarchical_dilated: docs per layer"
+    )
+    ap.add_argument("--dilation-m", type=int, default=2, help="hierarchical_dilated: dilation base")
     ap.add_argument("--lr", type=float, default=DEFAULT_LR)
     ap.add_argument("--seq-len", type=int, default=DEFAULT_SEQ_LEN)
     ap.add_argument("--epochs", type=int, default=DEFAULT_EPOCHS)

@@ -34,7 +34,11 @@ import torch
 from olmo_core.exceptions import OLMoConfigurationError
 
 from . import LandmarkAttention
-from .chunked_mask import CHUNKED_ATTENTION_PATTERNS, AttentionPattern, build_chunked_allowed_mask
+from .chunked_mask import (
+    CHUNKED_ATTENTION_PATTERNS,
+    AttentionPattern,
+    build_chunked_allowed_mask,
+)
 from .landmark import repeat_kv
 from .landmark_fast import FastLandmarkAttention
 from .landmark_kernel import has_landmark_kernel
@@ -52,9 +56,20 @@ class DocumentLandmarkAttention(LandmarkAttention):
 
     :param cross_doc_mode: The chunked attention pattern name (see
         :data:`~olmo_core.nn.attention.chunked_mask.CHUNKED_ATTENTION_PATTERNS`); the pluggable
-        cross-document policy. Defaults to ``"chunked"``.
+        cross-document policy. Defaults to ``"chunked"``. ``cross_doc_mode`` is purely a cross-document
+        *visibility* policy and is orthogonal to the landmark mechanism, so any pattern works --
+        including the layer-dependent ``"hierarchical_dilated"`` (its dilated allowed-mask simply feeds
+        the landmark grouped softmax instead of dense SDPA).
     :param doc_window_k: Window size for the ``"doc_window"`` pattern.
     :param token_window_w: Window width for the ``"token_window"`` pattern.
+    :param dilation_n: Documents attended per layer for the ``"hierarchical_dilated"`` pattern.
+    :param dilation_m: Dilation base for the ``"hierarchical_dilated"`` pattern (stride
+        ``m**layer_idx``, saturated once the span covers all history).
+    :param dilation_max_docs: Optional fixed saturation reference for ``"hierarchical_dilated"``
+        (``None`` -> compute the cap per sequence from the actual chunk count).
+    :param layer_idx: The transformer layer index this module lives at (0-based). The
+        ``"hierarchical_dilated"`` pattern reads it to pick the per-layer dilation stride; other
+        patterns ignore it.
 
     See :class:`LandmarkAttention` / :class:`Attention` for the remaining parameters.
 
@@ -90,6 +105,11 @@ class DocumentLandmarkAttention(LandmarkAttention):
         cross_doc_mode: str = "chunked",
         doc_window_k: int = 0,
         token_window_w: int = 0,
+        dilation_n: int = 2,
+        dilation_m: int = 2,
+        dilation_max_docs: Optional[int] = None,
+        layer_idx: int = 0,
+        n_layers: int = 1,
         use_kernel: bool = False,
         softmax_scale: Optional[float] = None,
         **kwargs,
@@ -102,13 +122,20 @@ class DocumentLandmarkAttention(LandmarkAttention):
         # The base stays on the eager DISPATCH (use_kernel=False); when ``use_kernel`` is requested we
         # route to the FAST fused kernel with the per-token chunk mask from our ``_eager_forward``
         # override (validated numerically identical to the eager grouped softmax incl. gradients).
-        super().__init__(
-            mem_freq=mem_freq, use_kernel=False, softmax_scale=softmax_scale, **kwargs
-        )
+        super().__init__(mem_freq=mem_freq, use_kernel=False, softmax_scale=softmax_scale, **kwargs)
         self._use_chunk_kernel = bool(use_kernel)
         self.cross_doc_mode = cross_doc_mode
+        # The layer index drives the per-layer dilation stride for the "hierarchical_dilated" pattern;
+        # all other patterns ignore it (so the default "chunked" behaviour is unchanged).
+        self.layer_idx = layer_idx
+        self.n_layers = n_layers
         self._pattern = AttentionPattern(
-            name=cross_doc_mode, doc_window_k=doc_window_k, token_window_w=token_window_w
+            name=cross_doc_mode,
+            doc_window_k=doc_window_k,
+            token_window_w=token_window_w,
+            dilation_n=dilation_n,
+            dilation_m=dilation_m,
+            dilation_max_docs=dilation_max_docs,
         )
         # Transient per-forward chunk roles, stashed by ``forward`` for ``_landmark_masks`` to read.
         self._chunk_ids: Optional[torch.Tensor] = None
@@ -135,6 +162,7 @@ class DocumentLandmarkAttention(LandmarkAttention):
         if (
             self._use_chunk_kernel
             and self._chunk_ids is not None
+            and self.cross_doc_mode == "chunked"
             and self._eval_top_k is None
             and q.is_cuda
             and self.block_size >= 16
@@ -305,8 +333,11 @@ class DocumentLandmarkAttention(LandmarkAttention):
             chunk_ids = chunk_ids.expand(batch_size, T)
 
         is_anchor = self._build_is_anchor(chunk_ids) if self._pattern.needs_anchor() else None
-        # (B, T, T) boolean: True where the query may attend the key (causal + roles + pattern).
-        allowed = build_chunked_allowed_mask(self._pattern, chunk_ids, is_anchor=is_anchor)
+        # (B, T, T) boolean: True where the query may attend the key (causal + roles + pattern). The
+        # layer index drives the per-layer dilation stride for the "hierarchical_dilated" pattern.
+        allowed = build_chunked_allowed_mask(
+            self._pattern, chunk_ids, is_anchor=is_anchor, layer_idx=self.layer_idx
+        )
         # Additive mask (B, 1, T, T): 0 where allowed, -inf where masked.
         attn_mask = torch.where(
             allowed.unsqueeze(1),
