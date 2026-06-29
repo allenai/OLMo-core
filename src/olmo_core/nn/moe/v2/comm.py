@@ -21,6 +21,40 @@ from olmo_core.kernels.scaled_grouped_mm import (
 )
 
 
+def _check_input_grads(grads: tuple, needs_input_grad: tuple) -> tuple:
+    """
+    Validate the gradient tuple a :class:`torch.autograd.Function` ``backward`` returns.
+
+    ``backward`` must return one gradient per positional ``forward`` input, in order, with
+    ``None`` for inputs that don't take a gradient. With long input lists this positional
+    contract is easy to get wrong — a shifted or extra ``None`` silently corrupts (or
+    mis-counts) gradients. This guard catches both failure modes: it asserts the tuple has one
+    entry per input, and that a non-``None`` gradient only appears where the input actually
+    requires one.
+
+    Each call site lists the inputs by name as trailing comments on the tuple, so the slots are
+    reviewable; this checks the contract at runtime.
+
+    TODO(autograd-grads): the per-slot comments + this check are a stopgap. The cleaner fixes are
+    (2) a name-keyed builder that maps named gradients onto positions (so callers never write the
+    ``None`` padding by hand), and (3) collapsing the many non-differentiable ``forward`` config
+    args (group handles, leases, flags, block sizes) into a single config object so the gradient
+    tuple is mostly real gradients. Do this when the EP families are consolidated in M2/M3.
+    """
+    if len(grads) != len(needs_input_grad):
+        raise RuntimeError(
+            f"backward returned {len(grads)} gradients but forward took "
+            f"{len(needs_input_grad)} inputs — the gradient tuple is misaligned"
+        )
+    for i, g in enumerate(grads):
+        if g is not None and not needs_input_grad[i]:
+            raise RuntimeError(
+                f"backward returned a gradient for input #{i}, which does not require grad — "
+                "the gradient tuple is likely misaligned with forward()'s arguments"
+            )
+    return grads
+
+
 def _rowwise_debug_enabled() -> bool:
     if os.getenv("OLMO_ROWWISE_DEBUG_PRINT", "0").strip().lower() not in {
         "1",
@@ -674,36 +708,37 @@ class _RowwiseFP8DispatchExpertsCombineAutograd(torch.autograd.Function):
             ctx.dispatch_out_lease.release()
         ctx.dispatch_out_lease = None
         ctx.group = None
-        return (
-            grad_source,
-            None,
-            None,
-            None,
-            grad_probs,
-            None,
-            None,
-            None,
-            None,
-            grad_up_anchor,
-            grad_down_anchor,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
+        grads = (
+            grad_source,  # source_input
+            None,  # dst_ranks
+            None,  # dst_rows
+            None,  # offs
+            grad_probs,  # probs
+            None,  # dispatch_out_q
+            None,  # dispatch_out_scales
+            None,  # combine_in_q
+            None,  # combine_in_scales
+            grad_up_anchor,  # up_gate_anchor
+            grad_down_anchor,  # down_anchor
+            None,  # up_gate_prequant
+            None,  # up_gate_prequant_t
+            None,  # down_prequant
+            None,  # down_prequant_t
+            None,  # dispatch_out_lease
+            None,  # block_size
+            None,  # use_fast_accum
+            None,  # recompute_swiglu
+            None,  # group_name
+            None,  # group
+            None,  # nblocks
+            None,  # up_wgrad_sink
+            None,  # up_wgrad_sink_transpose_last2
+            None,  # up_wgrad_sink_squeeze_first_dim
+            None,  # down_wgrad_sink
+            None,  # down_wgrad_sink_transpose_last2
+            None,  # down_wgrad_sink_squeeze_first_dim
         )
+        return _check_input_grads(grads, ctx.needs_input_grad)
 
 
 class _RowwiseCombineWeightedAutograd(torch.autograd.Function):
@@ -999,23 +1034,24 @@ class _RowwiseCombineWeightedAutograd(torch.autograd.Function):
             ctx.symm_gathered_routes_lease.release()
         ctx.symm_gathered_routes_lease = None
         ctx.group = None
-        return (
-            grad_expert_out,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            grad_probs,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
+        grads = (
+            grad_expert_out,  # expert_out
+            None,  # symm_expert_out
+            None,  # symm_combine_out
+            None,  # symm_combine_out_lease
+            None,  # symm_gathered_routes
+            None,  # symm_gathered_routes_lease
+            None,  # src_ranks
+            None,  # src_rows
+            grad_probs,  # probs
+            None,  # group_name
+            None,  # group
+            None,  # nblocks
+            None,  # expert_out_aliases_symm_expert_out
+            None,  # pre_barrier
+            None,  # post_barrier
         )
+        return _check_input_grads(grads, ctx.needs_input_grad)
 
 
 class _DispatchRowwiseAutograd(torch.autograd.Function):
@@ -1194,7 +1230,22 @@ class _DispatchRowwiseAutograd(torch.autograd.Function):
             ctx.symm_out_lease.release()
         ctx.symm_out_lease = None
         ctx.group = None
-        return grad_input, None, None, None, None, None, None, None, None, None, None, None, None
+        grads = (
+            grad_input,  # source_input
+            None,  # symm_input
+            None,  # dst_ranks
+            None,  # dst_rows
+            None,  # symm_out
+            None,  # symm_out_lease
+            None,  # group_name
+            None,  # group
+            None,  # nblocks
+            None,  # source_input_aliases_symm_input
+            None,  # grad_out_aliases_symm_out
+            None,  # get_pre_barrier
+            None,  # get_post_barrier
+        )
+        return _check_input_grads(grads, ctx.needs_input_grad)
 
 
 class _DispatchRowwiseFP8Autograd(torch.autograd.Function):
@@ -1364,7 +1415,19 @@ class _DispatchRowwiseFP8Autograd(torch.autograd.Function):
             ctx.symm_out_lease.release()
         ctx.symm_out_lease = None
         ctx.group = None
-        return grad_input, None, None, None, None, None, None, None, None, None
+        grads = (
+            grad_input,  # source_input
+            None,  # dst_ranks
+            None,  # dst_rows
+            None,  # symm_out_q
+            None,  # symm_out_scales
+            None,  # symm_out_lease
+            None,  # block_size
+            None,  # group_name
+            None,  # group
+            None,  # nblocks
+        )
+        return _check_input_grads(grads, ctx.needs_input_grad)
 
 
 class _RowwiseCombineWeightedFP8Autograd(torch.autograd.Function):
@@ -1614,7 +1677,19 @@ class _RowwiseCombineWeightedFP8Autograd(torch.autograd.Function):
                 orig_dtype=ctx.expert_out_dtype,
             )
 
-        return grad_expert_out, None, None, grad_probs, None, None, None, None, None, None
+        grads = (
+            grad_expert_out,  # expert_out
+            None,  # src_ranks
+            None,  # src_rows
+            grad_probs,  # probs
+            None,  # symm_expert_out_q
+            None,  # symm_expert_out_scales
+            None,  # block_size
+            None,  # group_name
+            None,  # group
+            None,  # nblocks
+        )
+        return _check_input_grads(grads, ctx.needs_input_grad)
 
 
 class _DispatchVDevAutograd(torch.autograd.Function):
@@ -1737,7 +1812,18 @@ class _DispatchVDevAutograd(torch.autograd.Function):
             )
         # grad_source_input = grad_symm_input.clone() # no need to copy
         grad_source_input = grad_symm_input
-        return grad_source_input, None, None, None, None, None, None, None, None
+        grads = (
+            grad_source_input,  # source_input
+            None,  # in_rank_splits
+            None,  # symm_input
+            None,  # symm_in_rank_splits
+            None,  # symm_out
+            None,  # symm_out_rank_splits_offsets
+            None,  # symm_tmp_rank_splits_offsets
+            None,  # group_name
+            None,  # group
+        )
+        return _check_input_grads(grads, ctx.needs_input_grad)
 
 
 class _CombineVDevAutograd(torch.autograd.Function):
@@ -1864,4 +1950,15 @@ class _CombineVDevAutograd(torch.autograd.Function):
         grad_input = symm_grad_input
         # grad_input = torch.empty_like(symm_grad_input)
         # grad_input.copy_(symm_grad_input)
-        return grad_input, None, None, None, None, None, None, None, None, None
+        grads = (
+            grad_input,  # input
+            None,  # in_rank_splits
+            None,  # symm_input
+            None,  # symm_in_rank_splits
+            None,  # symm_out
+            None,  # symm_out_rank_splits_offsets
+            None,  # symm_tmp_rank_splits_offsets
+            None,  # group_name
+            None,  # group
+        )
+        return _check_input_grads(grads, ctx.needs_input_grad)
