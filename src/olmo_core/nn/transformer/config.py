@@ -1658,6 +1658,9 @@ class TransformerConfig(ModelConfig):
         document_landmark: bool = False,
         document_chunked: bool = False,
         cross_doc_mode: Optional[str] = None,
+        dilation_n: Optional[int] = None,
+        dilation_m: Optional[int] = None,
+        dilation_max_docs: Optional[int] = None,
         layer_types: Optional[AttentionTypePatternConfig] = None,
         block_name: TransformerBlockType = TransformerBlockType.default,
         block_mods: Optional[
@@ -1710,7 +1713,15 @@ class TransformerConfig(ModelConfig):
                 rope_type = RoPEType.fused
 
         if (
-            sum([landmark, fast_landmark, fast_compressive_landmark, sparse_landmark, document_landmark])
+            sum(
+                [
+                    landmark,
+                    fast_landmark,
+                    fast_compressive_landmark,
+                    sparse_landmark,
+                    document_landmark,
+                ]
+            )
             > 1
         ):
             raise OLMoConfigurationError(
@@ -1729,6 +1740,13 @@ class TransformerConfig(ModelConfig):
             raise OLMoConfigurationError(
                 "'document_chunked' (dense chunked attention) cannot be combined with a landmark "
                 "variant or 'layer_types'."
+            )
+        if (
+            dilation_n is not None or dilation_m is not None or dilation_max_docs is not None
+        ) and not document_chunked:
+            raise OLMoConfigurationError(
+                "'dilation_n' / 'dilation_m' / 'dilation_max_docs' are only valid when "
+                "'document_chunked=True' (with cross_doc_mode='hierarchical_dilated')."
             )
 
         pattern_landmark_types = layer_types.landmark_types() if layer_types is not None else set()
@@ -1783,13 +1801,19 @@ class TransformerConfig(ModelConfig):
             att_type = (
                 AttentionType.landmark
                 if landmark
-                else AttentionType.fast_landmark
-                if fast_landmark
-                else AttentionType.fast_compressive_landmark
-                if fast_compressive_landmark
-                else AttentionType.sparse_landmark
-                if sparse_landmark
-                else AttentionType.document_landmark
+                else (
+                    AttentionType.fast_landmark
+                    if fast_landmark
+                    else (
+                        AttentionType.fast_compressive_landmark
+                        if fast_compressive_landmark
+                        else (
+                            AttentionType.sparse_landmark
+                            if sparse_landmark
+                            else AttentionType.document_landmark
+                        )
+                    )
+                )
             )
             if num_landmarks is not None and not sparse_landmark:
                 raise OLMoConfigurationError(
@@ -1861,6 +1885,9 @@ class TransformerConfig(ModelConfig):
                     if (document_landmark or document_chunked or pattern_has_document_landmark)
                     else None
                 ),
+                dilation_n=dilation_n if document_chunked else None,
+                dilation_m=dilation_m if document_chunked else None,
+                dilation_max_docs=dilation_max_docs if document_chunked else None,
                 dtype=dtype,
             ),
             feed_forward=feed_forward,
@@ -1932,9 +1959,11 @@ class TransformerConfig(ModelConfig):
                 hidden_size=expert_hidden_size,
                 capacity_factor=capacity_factor,
                 router=MoERouterConfig(top_k=top_k),
-                shared_mlp=None
-                if shared_expert_hidden_size is None
-                else FeedForwardConfig(hidden_size=shared_expert_hidden_size, bias=False),
+                shared_mlp=(
+                    None
+                    if shared_expert_hidden_size is None
+                    else FeedForwardConfig(hidden_size=shared_expert_hidden_size, bias=False)
+                ),
                 lb_loss_weight=lb_loss_weight,
                 z_loss_weight=z_loss_weight,
             ),

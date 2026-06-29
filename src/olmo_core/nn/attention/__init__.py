@@ -387,6 +387,24 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
     :class:`CrossDocumentMaskType` policy governs cross-document attention. Defaults to
     ``"document_chunked"`` (the landmark bridge across documents).
     """
+    dilation_n: Optional[int] = None
+    """
+    For :class:`DocumentChunkedAttention` with ``cross_doc_mode="hierarchical_dilated"`` only: the
+    number of documents a context query attends per layer (itself + ``n-1`` strided predecessors).
+    Defaults to 2.
+    """
+    dilation_m: Optional[int] = None
+    """
+    For :class:`DocumentChunkedAttention` with ``cross_doc_mode="hierarchical_dilated"`` only: the
+    dilation base ``m >= 1``. At transformer layer ``ell`` the stride is ``m**ell`` (saturated once it
+    spans all history), so the receptive span is ``(n-1)*m**ell`` documents. Defaults to 2.
+    """
+    dilation_max_docs: Optional[int] = None
+    """
+    For :class:`DocumentChunkedAttention` with ``cross_doc_mode="hierarchical_dilated"`` only: an
+    optional fixed document count for the saturation cap. ``None`` (default) computes the cap per
+    sequence from the actual number of context chunks.
+    """
 
     def num_params(self, d_model: int) -> int:
         """
@@ -513,6 +531,9 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
         landmark_pool = kwargs.pop("landmark_pool", None)
         nonselected_landmark_mass = kwargs.pop("nonselected_landmark_mass", None)
         cross_doc_mode = kwargs.pop("cross_doc_mode", None)
+        dilation_n = kwargs.pop("dilation_n", None)
+        dilation_m = kwargs.pop("dilation_m", None)
+        dilation_max_docs = kwargs.pop("dilation_max_docs", None)
         if mem_freq is not None and not (possible_types & set(_LANDMARK_ATTENTION_TYPES)):
             raise OLMoConfigurationError(
                 "'mem_freq' is only supported with landmark attention variants "
@@ -546,6 +567,13 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
             raise OLMoConfigurationError(
                 "'cross_doc_mode' is only supported with document_landmark, "
                 f"document_multi_landmark, or document_chunked attention (got name='{self.name}')"
+            )
+        if (
+            dilation_n is not None or dilation_m is not None or dilation_max_docs is not None
+        ) and AttentionType.document_chunked not in possible_types:
+            raise OLMoConfigurationError(
+                "'dilation_n' / 'dilation_m' / 'dilation_max_docs' are only supported with "
+                f"document_chunked attention (got name='{self.name}')"
             )
         if (
             nonselected_landmark_mass is not None
@@ -636,6 +664,15 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
                 # Dense (non-landmark) chunked attention -- no mem_freq.
                 if cross_doc_mode is not None:
                     kwargs["cross_doc_mode"] = cross_doc_mode
+                if dilation_n is not None:
+                    kwargs["dilation_n"] = dilation_n
+                if dilation_m is not None:
+                    kwargs["dilation_m"] = dilation_m
+                if dilation_max_docs is not None:
+                    kwargs["dilation_max_docs"] = dilation_max_docs
+                # The hierarchical-dilated pattern picks its stride from the layer index.
+                kwargs["layer_idx"] = layer_idx
+                kwargs["n_layers"] = n_layers
                 return DocumentChunkedAttention(**kwargs)
             else:
                 raise NotImplementedError(effective_name)

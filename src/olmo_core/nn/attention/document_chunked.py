@@ -75,6 +75,14 @@ class DocumentChunkedAttention(Attention):
         cross-document policy. Defaults to ``"chunked"``.
     :param doc_window_k: Window size for the ``"doc_window"`` pattern.
     :param token_window_w: Window width for the ``"token_window"`` pattern.
+    :param dilation_n: Documents attended per layer for the ``"hierarchical_dilated"`` pattern.
+    :param dilation_m: Dilation base for the ``"hierarchical_dilated"`` pattern. At this layer the
+        stride is ``m**layer_idx`` (saturated once the span covers all history).
+    :param dilation_max_docs: Optional fixed saturation reference for ``"hierarchical_dilated"``
+        (``None`` -> compute the cap per sequence from the actual chunk count).
+    :param layer_idx: The transformer layer index this module lives at (0-based). The
+        ``"hierarchical_dilated"`` pattern reads it to pick the per-layer dilation stride; other
+        patterns ignore it.
 
     See :class:`Attention` for the remaining parameters.
     """
@@ -85,6 +93,11 @@ class DocumentChunkedAttention(Attention):
         cross_doc_mode: str = "chunked",
         doc_window_k: int = 0,
         token_window_w: int = 0,
+        dilation_n: int = 2,
+        dilation_m: int = 2,
+        dilation_max_docs: Optional[int] = None,
+        layer_idx: int = 0,
+        n_layers: int = 1,
         softmax_scale: Optional[float] = None,
         **kwargs,
     ):
@@ -103,8 +116,15 @@ class DocumentChunkedAttention(Attention):
         self._dropout_p = float(kwargs.get("dropout") or 0.0)
         super().__init__(softmax_scale=softmax_scale, **kwargs)
         self.cross_doc_mode = cross_doc_mode
+        self.layer_idx = layer_idx
+        self.n_layers = n_layers
         self._pattern = AttentionPattern(
-            name=cross_doc_mode, doc_window_k=doc_window_k, token_window_w=token_window_w
+            name=cross_doc_mode,
+            doc_window_k=doc_window_k,
+            token_window_w=token_window_w,
+            dilation_n=dilation_n,
+            dilation_m=dilation_m,
+            dilation_max_docs=dilation_max_docs,
         )
         # The base ``Attention`` only forwards ``softmax_scale`` to the backend; store it for our own
         # SDPA call (mirrors :class:`LandmarkAttention`).
@@ -165,8 +185,11 @@ class DocumentChunkedAttention(Attention):
         """Materialize the chunked allowed-mask as a ``(B, 1, T, T)`` additive bias (0 / finfo.min)."""
         device = chunk_ids.device
         is_anchor = self._build_is_anchor(chunk_ids) if self._pattern.needs_anchor() else None
-        # (B, T, T) boolean: True where the query may attend the key (causal + roles + pattern).
-        allowed = build_chunked_allowed_mask(self._pattern, chunk_ids, is_anchor=is_anchor)
+        # (B, T, T) boolean: True where the query may attend the key (causal + roles + pattern). The
+        # layer index drives the per-layer dilation stride for the "hierarchical_dilated" pattern.
+        allowed = build_chunked_allowed_mask(
+            self._pattern, chunk_ids, is_anchor=is_anchor, layer_idx=self.layer_idx
+        )
         finfo_min = torch.finfo(dtype).min
         return torch.where(
             allowed.unsqueeze(1),
@@ -222,7 +245,8 @@ class DocumentChunkedAttention(Attention):
 
     def _sdpa_masked(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor) -> torch.Tensor:
         """Masked attention over the full ``(B, T, H, D)`` q/k/v (no cache): plain causal when there
-        are no roles, else the chunked mask via FlexAttention (long ctx) or the dense materialization."""
+        are no roles, else the chunked mask via FlexAttention (long ctx) or the dense materialization.
+        """
         B, T, n_heads, _ = q.shape
         n_rep = n_heads // k.shape[2]
         # Expand GQA kv heads, mirroring TorchAttentionBackend, then go to (B, H, T, D) for SDPA.
@@ -235,8 +259,12 @@ class DocumentChunkedAttention(Attention):
         if self._chunk_ids is None:
             # No roles -> plain causal attention.
             out = F.scaled_dot_product_attention(
-                q, k, v, dropout_p=self._dropout_p if self.training else 0.0,
-                is_causal=True, scale=self.softmax_scale,
+                q,
+                k,
+                v,
+                dropout_p=self._dropout_p if self.training else 0.0,
+                is_causal=True,
+                scale=self.softmax_scale,
             )
             return out.transpose(1, 2).contiguous()
 
@@ -251,8 +279,11 @@ class DocumentChunkedAttention(Attention):
                 try:
                     block_mask = create_block_mask(mask_mod, B, None, T, T, device=q.device)
                     out = _flex_attention(
-                        q.contiguous(), k.contiguous(), v.contiguous(),
-                        block_mask=block_mask, scale=self.softmax_scale,
+                        q.contiguous(),
+                        k.contiguous(),
+                        v.contiguous(),
+                        block_mask=block_mask,
+                        scale=self.softmax_scale,
                     )
                     return out.transpose(1, 2).contiguous()
                 except Exception as e:  # pragma: no cover - fall back if flex fails at runtime
@@ -265,7 +296,10 @@ class DocumentChunkedAttention(Attention):
         # Fallback: dense materialized additive mask (CPU/tests, unsupported pattern, or flex error).
         attn_mask = self._build_additive_mask(chunk_ids, dtype=q.dtype)
         out = F.scaled_dot_product_attention(
-            q, k, v, attn_mask=attn_mask,
+            q,
+            k,
+            v,
+            attn_mask=attn_mask,
             dropout_p=self._dropout_p if self.training else 0.0,
             is_causal=False,  # the chunked mask already encodes causality
             scale=self.softmax_scale,

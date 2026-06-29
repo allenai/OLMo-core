@@ -33,6 +33,7 @@ __all__ = [
     "SINK_CHUNK_ID",
     "CHUNKED_ATTENTION_PATTERNS",
     "AttentionPattern",
+    "hierarchical_effective_layer",
     "build_chunked_allowed_mask",
     "build_chunked_mask_mod",
     "build_chunk_ids_from_tokens",
@@ -51,6 +52,7 @@ CHUNKED_ATTENTION_PATTERNS = (
     "last_token_anchor",
     "token_window",
     "random_token",
+    "hierarchical_dilated",
 )
 
 
@@ -69,6 +71,16 @@ class AttentionPattern:
         ``(q_tok, k_tok)`` edge. ``0.0`` collapses to ``"chunked"``; ``1.0`` to ``"standard"``.
     :param random_seed: Seed for the ``"random_token"`` Bernoulli sample (combine with an example
         index upstream for per-example determinism).
+    :param dilation_n: ``"hierarchical_dilated"``: number of documents a context query attends per
+        layer (itself + the ``n-1`` strided predecessors). ``n == 1`` collapses to ``"chunked"``.
+    :param dilation_m: ``"hierarchical_dilated"``: dilation base ``m >= 1``. At transformer layer
+        ``ell`` the stride is ``s = m**ell`` (saturated, see :func:`build_chunked_allowed_mask`), so
+        the receptive span is ``(n-1)*m**ell`` documents. ``m == 1`` collapses to a fixed
+        ``"doc_window"`` of width ``n-1`` at every layer.
+    :param dilation_max_docs: ``"hierarchical_dilated"``: optional fixed reference document count for
+        the saturation cap. When ``None`` (default) the cap is computed **per sequence** from the
+        actual maximum context-chunk index; when set, this fixed value is used instead (so every
+        sequence saturates at the same layer).
     """
 
     name: str = "chunked"
@@ -76,6 +88,9 @@ class AttentionPattern:
     token_window_w: int = 0
     keep_prob: float = 1.0
     random_seed: int = 42
+    dilation_n: int = 2
+    dilation_m: int = 2
+    dilation_max_docs: Optional[int] = None
 
     def __post_init__(self) -> None:
         if self.name not in CHUNKED_ATTENTION_PATTERNS:
@@ -83,6 +98,15 @@ class AttentionPattern:
                 f"Unknown chunked attention pattern {self.name!r}; expected one of "
                 f"{CHUNKED_ATTENTION_PATTERNS}"
             )
+        if self.name == "hierarchical_dilated":
+            if self.dilation_n < 1:
+                raise ValueError(
+                    f"hierarchical_dilated requires dilation_n >= 1 (got {self.dilation_n})"
+                )
+            if self.dilation_m < 1:
+                raise ValueError(
+                    f"hierarchical_dilated requires dilation_m >= 1 (got {self.dilation_m})"
+                )
 
     def needs_anchor(self) -> bool:
         return self.name == "last_token_anchor"
@@ -172,11 +196,49 @@ def build_chunk_ids_from_tokens(
     return chunk_ids.to(torch.int32)
 
 
+def hierarchical_effective_layer(
+    layer_idx: int, n: int, m: int, max_chunk: torch.Tensor
+) -> torch.Tensor:
+    """
+    Per-sequence *saturated* (effective) layer index for the ``"hierarchical_dilated"`` pattern.
+
+    The dilation stride at transformer layer ``ell`` is ``m**ell`` and the receptive span of a layer
+    is ``(n-1)*m**ell`` documents. Once that span already covers all of a sequence's history there is
+    nothing left to dilate into, so deeper layers reuse the widest pattern instead of expanding past
+    the end of the document list. Concretely, ``L* = min{ ell : (n-1)*m**ell >= max_chunk }`` and the
+    effective layer is ``min(layer_idx, L*)``.
+
+    :param layer_idx: The transformer layer index (0-based).
+    :param n: Documents attended per layer (``dilation_n``).
+    :param m: Dilation base (``dilation_m``).
+    :param max_chunk: Per-sequence maximum context-chunk index, shape ``(B,)``.
+
+    :returns: An integer tensor ``(B,)`` of effective layer indices in ``[0, layer_idx]``.
+    """
+    cap = torch.full_like(max_chunk, layer_idx)
+    # For ``m == 1`` the stride is constant (``1**ell == 1``) and for ``n == 1`` only the own document
+    # is ever in range, so saturation is a no-op -- the stride ``m**layer_idx`` already behaves
+    # correctly and we keep ``cap = layer_idx``.
+    if n > 1 and m > 1:
+        found = torch.zeros_like(max_chunk, dtype=torch.bool)
+        span = n - 1
+        for ell in range(layer_idx + 1):
+            cover = max_chunk <= span
+            newly = cover & ~found
+            cap = torch.where(newly, torch.full_like(cap, ell), cap)
+            found = found | cover
+            if bool(found.all()):
+                break
+            span *= m
+    return cap
+
+
 def build_chunked_allowed_mask(
     pattern: AttentionPattern,
     chunk_ids: torch.Tensor,
     is_anchor: Optional[torch.Tensor] = None,
     random_keep: Optional[torch.Tensor] = None,
+    layer_idx: int = 0,
 ) -> torch.Tensor:
     """
     Materialize a chunked-attention pattern as a dense boolean ``(B, S, S)`` mask (``True`` = attend).
@@ -188,6 +250,9 @@ def build_chunked_allowed_mask(
     :param chunk_ids: Per-token role ids, shape ``(B, S)`` or ``(S,)``. See module docstring.
     :param is_anchor: ``(B, S)`` / ``(S,)`` bool, required for ``"last_token_anchor"``.
     :param random_keep: ``(B, S, S)`` / ``(S, S)`` bool, required for ``"random_token"``.
+    :param layer_idx: The transformer layer index; only used by the layer-dependent
+        ``"hierarchical_dilated"`` pattern (the stride is ``m**layer_idx``, saturated). Ignored by all
+        other patterns.
 
     :returns: A boolean ``(B, S, S)`` tensor; ``True`` where the query (dim 1) may attend the key
         (dim 2).
@@ -240,6 +305,25 @@ def build_chunked_allowed_mask(
             random_keep = random_keep.unsqueeze(0)
         cross_doc = (qc != kc) & (qc >= 0) & (kc >= 0)
         context_ok = same_chunk | (cross_doc & random_keep)
+    elif name == "hierarchical_dilated":
+        n = pattern.dilation_n
+        m = pattern.dilation_m
+        # Per-sequence max context-chunk index (rows with no context chunks fall back to 0).
+        is_ctx = chunk_ids >= 0  # (B, S)
+        max_chunk = torch.where(is_ctx, chunk_ids, torch.zeros_like(chunk_ids)).amax(dim=1)  # (B,)
+        if pattern.dilation_max_docs is not None:
+            max_chunk = torch.full_like(max_chunk, pattern.dilation_max_docs)
+        eff_l = hierarchical_effective_layer(layer_idx, n, m, max_chunk)  # (B,)
+        # Stride s = m**eff_l per sequence (>= 1). eff_l is capped at layer_idx so this never overflows
+        # for any sane depth.
+        stride = (torch.full_like(eff_l, m) ** eff_l).clamp(min=1).view(B, 1, 1)  # (B, 1, 1)
+        diff = qc - kc  # (B, S, S): chunk-index gap (query chunk - key chunk)
+        # Attend the n documents at stride s behind (and including) the query's own document: the gap
+        # must be a non-negative multiple of s and within the first n strided steps.
+        stride_ok = (
+            (diff >= 0) & (qc >= 0) & (kc >= 0) & ((diff % stride) == 0) & ((diff // stride) < n)
+        )
+        context_ok = same_chunk | stride_ok
     else:  # pragma: no cover - guarded by AttentionPattern.__post_init__
         raise ValueError(f"Unknown chunked attention pattern: {name}")
 
@@ -292,7 +376,9 @@ def build_chunked_mask_mod(pattern: AttentionPattern, chunk_ids: torch.Tensor):
             same = (qc == kc) & (qc >= 0)
             q_free = (qc < 0) & q_np
             kv_free = (kc < 0) & kv_np
-            return ((q_idx >= kv_idx) & q_np & kv_np & (same | q_free | kv_free)) | (q_idx == kv_idx)
+            return ((q_idx >= kv_idx) & q_np & kv_np & (same | q_free | kv_free)) | (
+                q_idx == kv_idx
+            )
 
         return mask_mod
 
@@ -308,7 +394,9 @@ def build_chunked_mask_mod(pattern: AttentionPattern, chunk_ids: torch.Tensor):
             ctx_ok = (diff >= 0) & (diff <= k_win) & (qc >= 0) & (kc >= 0)
             q_free = (qc < 0) & q_np
             kv_free = (kc < 0) & kv_np
-            return ((q_idx >= kv_idx) & q_np & kv_np & (ctx_ok | q_free | kv_free)) | (q_idx == kv_idx)
+            return ((q_idx >= kv_idx) & q_np & kv_np & (ctx_ok | q_free | kv_free)) | (
+                q_idx == kv_idx
+            )
 
         return mask_mod
 
