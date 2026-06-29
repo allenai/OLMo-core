@@ -55,68 +55,6 @@ def _check_input_grads(grads: tuple, needs_input_grad: tuple) -> tuple:
     return grads
 
 
-def _rowwise_debug_enabled() -> bool:
-    if os.getenv("OLMO_ROWWISE_DEBUG_PRINT", "0").strip().lower() not in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }:
-        return False
-    ranks = os.getenv("OLMO_ROWWISE_DEBUG_RANKS") or os.getenv("OLMO_TBO_DEBUG_RANKS")
-    if not ranks or not dist.is_available() or not dist.is_initialized():
-        return True
-    rank = str(dist.get_rank())
-    return rank in {part.strip() for part in ranks.split(",") if part.strip()}
-
-
-def _rowwise_debug_sync_enabled() -> bool:
-    return os.getenv("OLMO_ROWWISE_DEBUG_SYNC", "0").strip().lower() in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }
-
-
-def _rowwise_rank_tag() -> str:
-    if not dist.is_available() or not dist.is_initialized():
-        return "rank=? local_rank=?"
-    return f"rank={dist.get_rank()} local_rank={os.getenv('LOCAL_RANK', '?')}"
-
-
-def _rowwise_tensor_desc(name: str, tensor: Optional[torch.Tensor]) -> str:
-    if tensor is None:
-        return f"{name}=None"
-    return f"{name}=tensor"
-
-
-def _rowwise_debug_print(
-    label: str, phase: str, group_name: str, **tensors: Optional[torch.Tensor]
-) -> None:
-    if not _rowwise_debug_enabled():
-        return
-    parts = [
-        "[OLMO_ROWWISE_DEBUG]",
-        _rowwise_rank_tag(),
-        f"{phase} {label}",
-        f"group={group_name}",
-    ]
-    parts.extend(_rowwise_tensor_desc(name, tensor) for name, tensor in tensors.items())
-    print(" | ".join(str(part) for part in parts), flush=True)
-
-
-def _rowwise_debug_sync(label: str, device: torch.device) -> None:
-    if not _rowwise_debug_sync_enabled():
-        return
-    if _rowwise_debug_enabled():
-        print(
-            f"[OLMO_ROWWISE_DEBUG] {_rowwise_rank_tag()} sync {label} device={device}",
-            flush=True,
-        )
-    torch.cuda.synchronize(device)
-
-
 def _logical_rank2_tensor(
     shape: tuple[int, ...], *, dtype: torch.dtype, device: torch.device
 ) -> torch.Tensor:
@@ -198,15 +136,6 @@ def _rowwise_fp8_swiglu_forward(up_gate: torch.Tensor) -> torch.Tensor:
     if up_gate.is_cuda:
         return _rowwise_fp8_swiglu_forward_compiled(up_gate)
     return _rowwise_fp8_swiglu_forward_impl(up_gate)
-
-
-def _rowwise_fp8_debug_up_gate_q_enabled() -> bool:
-    return os.getenv("OLMO_ROWWISE_FP8_DEBUG_UP_GATE_Q", "0").strip().lower() in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }
 
 
 def _rowwise_fp8_accumulate_wgrad_sink(
@@ -363,30 +292,10 @@ class _RowwiseFP8DispatchExpertsCombineAutograd(torch.autograd.Function):
             # This keeps the optional activation-memory trade close to the
             # producer; doing it after down/combine made the large read of
             # up_gate much less cache-friendly in profiles.
-            # debug_up_gate_q = _rowwise_fp8_debug_up_gate_q_enabled()
-            # if debug_up_gate_q:
-            #     print(
-            #         "[OLMO_ROWWISE_FP8_DEBUG_UP_GATE_Q]",
-            #         _rowwise_rank_tag(),
-            #         f"shape={tuple(up_gate.shape)}",
-            #         f"stride={up_gate.stride()}",
-            #         f"contiguous={up_gate.is_contiguous()}",
-            #         f"dtype={up_gate.dtype}",
-            #         f"device={up_gate.device}",
-            #         flush=True,
-            #     )
             up_gate_saved, up_gate_scales_saved = quantize_row_halves_to_mxfp8(
                 up_gate,
                 block_size=int(block_size),
             )
-            # if debug_up_gate_q:
-            #     print(
-            #         "[OLMO_ROWWISE_FP8_DEBUG_UP_GATE_Q]",
-            #         _rowwise_rank_tag(),
-            #         f"q_shape={tuple(up_gate_saved.shape)}",
-            #         f"scales_shape={tuple(up_gate_scales_saved.shape)}",
-            #         flush=True,
-            #     )
         else:
             up_gate_saved = up_gate
             up_gate_scales_saved = torch.empty(
@@ -872,17 +781,14 @@ class _RowwiseCombineWeightedAutograd(torch.autograd.Function):
                 dtype=symm_expert_out.dtype,
             )
 
-        # _rowwise_debug_print(
-        #     "rowwise_combine_forward_get",
-        #     "enter",
-        #     group_name,
-        #     expert_out=symm_expert_out,
-        #     out=combine_out,
-        #     src_ranks=src_ranks_i64,
-        #     src_rows=src_rows_i64,
-        #     probs=probs_f32,
-        #     gathered_out=gathered_routes_for_kernel,
-        # )
+        # DEBUG HOOK: this symmetric-memory all-to-all is one-sided RMA (put/get), so faults are
+        # asynchronous and correctness hinges on the routing map (src_ranks/src_rows/probs) and the
+        # pre/post barriers. To trace it, set OLMO_ROWWISE_DEBUG_PRINT=1 (optionally scope with
+        # OLMO_ROWWISE_DEBUG_RANKS=0,1) and drop a hook like this around any dispatch_put/combine_get:
+        #   if os.getenv("OLMO_ROWWISE_DEBUG_PRINT") == "1":
+        #       print(f"[rowwise] rank={dist.get_rank()} combine_get group={group_name} "
+        #             f"src_ranks={tuple(src_ranks_i64.shape)} probs={tuple(probs_f32.shape)}", flush=True)
+        #       torch.cuda.synchronize(symm_expert_out.device)  # localize the async RMA fault here
         symm_mem_vdev2d_kernels.rowwise_combine_get(
             symm_expert_out,
             combine_out,
@@ -895,15 +801,6 @@ class _RowwiseCombineWeightedAutograd(torch.autograd.Function):
             pre_barrier=pre_barrier,
             post_barrier=post_barrier,
         )
-        # _rowwise_debug_sync("rowwise_combine_forward_get", symm_expert_out.device)
-        # _rowwise_debug_print(
-        #     "rowwise_combine_forward_get",
-        #     "exit",
-        #     group_name,
-        #     expert_out=symm_expert_out,
-        #     out=combine_out,
-        #     gathered_out=gathered_routes_for_kernel,
-        # )
         ctx.group = group
         ctx.group_name = group_name
         ctx.nblocks = int(nblocks)
@@ -970,15 +867,6 @@ class _RowwiseCombineWeightedAutograd(torch.autograd.Function):
                 flat_ranks = src_ranks.reshape(-1, 1).contiguous()
                 flat_rows = src_rows.reshape(-1, 1).contiguous()
 
-                # _rowwise_debug_print(
-                #     "rowwise_combine_backward_dispatch_put_unweighted",
-                #     "enter",
-                #     ctx.group_name,
-                #     input=dispatch_source,
-                #     out=symm_grad_expert_out,
-                #     dst_ranks=flat_ranks,
-                #     dst_rows=flat_rows,
-                # )
                 symm_mem_vdev2d_kernels.rowwise_dispatch_put(
                     dispatch_source,
                     symm_grad_expert_out,
@@ -987,25 +875,7 @@ class _RowwiseCombineWeightedAutograd(torch.autograd.Function):
                     ctx.group_name,
                     nblocks=ctx.nblocks,
                 )
-                # _rowwise_debug_sync("rowwise_combine_backward_dispatch_put_unweighted", symm_grad_expert_out.device)
-                # _rowwise_debug_print(
-                #     "rowwise_combine_backward_dispatch_put_unweighted",
-                #     "exit",
-                #     ctx.group_name,
-                #     input=dispatch_source,
-                #     out=symm_grad_expert_out,
-                # )
             else:
-                # _rowwise_debug_print(
-                #     "rowwise_combine_backward_dispatch_put",
-                #     "enter",
-                #     ctx.group_name,
-                #     input=dispatch_source,
-                #     out=symm_grad_expert_out,
-                #     dst_ranks=src_ranks,
-                #     dst_rows=src_rows,
-                #     probs=probs,
-                # )
                 symm_mem_vdev2d_kernels.rowwise_dispatch_put(
                     dispatch_source,
                     symm_grad_expert_out,
@@ -1015,14 +885,6 @@ class _RowwiseCombineWeightedAutograd(torch.autograd.Function):
                     probs=probs,
                     nblocks=ctx.nblocks,
                 )
-                # _rowwise_debug_sync("rowwise_combine_backward_dispatch_put", symm_grad_expert_out.device)
-                # _rowwise_debug_print(
-                #     "rowwise_combine_backward_dispatch_put",
-                #     "exit",
-                #     ctx.group_name,
-                #     input=dispatch_source,
-                #     out=symm_grad_expert_out,
-                # )
             grad_expert_out = symm_grad_expert_out
 
         ctx.symm_expert_out = None
@@ -1123,15 +985,6 @@ class _DispatchRowwiseAutograd(torch.autograd.Function):
                 symm_input_view.copy_(source_input_contig)
             dispatch_source = symm_input_view
 
-        # _rowwise_debug_print(
-        #     "rowwise_dispatch_forward_put",
-        #     "enter",
-        #     group_name,
-        #     input=dispatch_source,
-        #     out=symm_out,
-        #     dst_ranks=dst_ranks_i64,
-        #     dst_rows=dst_rows_i64,
-        # )
         symm_mem_vdev2d_kernels.rowwise_dispatch_put(
             dispatch_source,
             symm_out,
@@ -1140,14 +993,6 @@ class _DispatchRowwiseAutograd(torch.autograd.Function):
             group_name,
             nblocks=nblocks,
         )
-        # _rowwise_debug_sync("rowwise_dispatch_forward_put", symm_out.device)
-        # _rowwise_debug_print(
-        #     "rowwise_dispatch_forward_put",
-        #     "exit",
-        #     group_name,
-        #     input=dispatch_source,
-        #     out=symm_out,
-        # )
 
         ctx.group_name = group_name
         ctx.group = group
@@ -1194,16 +1039,6 @@ class _DispatchRowwiseAutograd(torch.autograd.Function):
             )
             if not gathered_grad_out.is_contiguous():
                 raise RuntimeError("dispatch backward gather scratch must be contiguous")
-        # _rowwise_debug_print(
-        #     "rowwise_dispatch_backward_combine_get",
-        #     "enter",
-        #     ctx.group_name,
-        #     expert_out=symm_grad_out,
-        #     out=grad_input,
-        #     src_ranks=dst_ranks,
-        #     src_rows=dst_rows,
-        #     gathered_out=gathered_grad_out,
-        # )
         symm_mem_vdev2d_kernels.rowwise_combine_get(
             symm_grad_out,
             grad_input,
@@ -1215,15 +1050,6 @@ class _DispatchRowwiseAutograd(torch.autograd.Function):
             pre_barrier=ctx.get_pre_barrier,
             post_barrier=ctx.get_post_barrier,
         )
-        # _rowwise_debug_sync("rowwise_dispatch_backward_combine_get", symm_grad_out.device)
-        # _rowwise_debug_print(
-        #     "rowwise_dispatch_backward_combine_get",
-        #     "exit",
-        #     ctx.group_name,
-        #     expert_out=symm_grad_out,
-        #     out=grad_input,
-        #     gathered_out=gathered_grad_out,
-        # )
         ctx.symm_input = None
         ctx.symm_out = None
         if ctx.symm_out_lease is not None:
@@ -1313,16 +1139,6 @@ class _DispatchRowwiseFP8Autograd(torch.autograd.Function):
         if not dst_rows_i64.is_contiguous():
             dst_rows_i64 = dst_rows_i64.contiguous()
 
-        # _rowwise_debug_print(
-        #     "rowwise_fp8_dispatch_forward_put_scaled",
-        #     "enter",
-        #     group_name,
-        #     input=source_input_contig,
-        #     out_q=symm_out_q,
-        #     out_scales=symm_out_scales,
-        #     dst_ranks=dst_ranks_i64,
-        #     dst_rows=dst_rows_i64,
-        # )
         symm_mem_vdev2d_kernels.rowwise_dispatch_put_scaled(
             source_input_contig,
             symm_out_q,
@@ -1333,15 +1149,6 @@ class _DispatchRowwiseFP8Autograd(torch.autograd.Function):
             block_size=int(block_size),
             nblocks=nblocks,
         )
-        # _rowwise_debug_sync("rowwise_fp8_dispatch_forward_put_scaled", symm_out_q.device)
-        # _rowwise_debug_print(
-        #     "rowwise_fp8_dispatch_forward_put_scaled",
-        #     "exit",
-        #     group_name,
-        #     input=source_input_contig,
-        #     out_q=symm_out_q,
-        #     out_scales=symm_out_scales,
-        # )
         # Keep dispatch payload fully FP8 through expert compute.
 
         ctx.group_name = group_name
@@ -1382,16 +1189,6 @@ class _DispatchRowwiseFP8Autograd(torch.autograd.Function):
             device=grad_out_hp.device,
             dtype=ctx.logical_out_dtype,
         )
-        # _rowwise_debug_print(
-        #     "rowwise_fp8_dispatch_backward_combine_get_scaled",
-        #     "enter",
-        #     ctx.group_name,
-        #     expert_out_q=ctx.symm_out_q,
-        #     expert_out_scales=ctx.symm_out_scales,
-        #     out=grad_input,
-        #     src_ranks=dst_ranks,
-        #     src_rows=dst_rows,
-        # )
         symm_mem_vdev2d_kernels.rowwise_combine_get_scaled(
             ctx.symm_out_q,
             ctx.symm_out_scales,
@@ -1402,15 +1199,6 @@ class _DispatchRowwiseFP8Autograd(torch.autograd.Function):
             block_size=ctx.block_size,
             nblocks=ctx.nblocks,
         )
-        # _rowwise_debug_sync("rowwise_fp8_dispatch_backward_combine_get_scaled", ctx.symm_out_q.device)
-        # _rowwise_debug_print(
-        #     "rowwise_fp8_dispatch_backward_combine_get_scaled",
-        #     "exit",
-        #     ctx.group_name,
-        #     expert_out_q=ctx.symm_out_q,
-        #     expert_out_scales=ctx.symm_out_scales,
-        #     out=grad_input,
-        # )
         if ctx.symm_out_lease is not None:
             ctx.symm_out_lease.release()
         ctx.symm_out_lease = None
@@ -1552,19 +1340,6 @@ class _RowwiseCombineWeightedFP8Autograd(torch.autograd.Function):
                 dtype=symm_expert_out_scales.dtype,
             )
 
-        # _rowwise_debug_print(
-        #     "rowwise_fp8_combine_forward_get_scaled",
-        #     "enter",
-        #     group_name,
-        #     expert_out_q=symm_expert_out_q,
-        #     expert_out_scales=symm_expert_out_scales,
-        #     out=combine_out,
-        #     src_ranks=src_ranks_i64,
-        #     src_rows=src_rows_i64,
-        #     probs=probs_f32,
-        #     gathered_q_out=(gathered_q_saved if need_grad_probs else None),
-        #     gathered_scales_out=(gathered_scales_saved if need_grad_probs else None),
-        # )
         symm_mem_vdev2d_kernels.rowwise_combine_get_scaled(
             symm_expert_out_q,
             symm_expert_out_scales,
@@ -1578,15 +1353,6 @@ class _RowwiseCombineWeightedFP8Autograd(torch.autograd.Function):
             gathered_q_out=(gathered_q_saved if need_grad_probs else None),
             gathered_scales_out=(gathered_scales_saved if need_grad_probs else None),
         )
-        # _rowwise_debug_sync("rowwise_fp8_combine_forward_get_scaled", symm_expert_out_q.device)
-        # _rowwise_debug_print(
-        #     "rowwise_fp8_combine_forward_get_scaled",
-        #     "exit",
-        #     group_name,
-        #     expert_out_q=symm_expert_out_q,
-        #     expert_out_scales=symm_expert_out_scales,
-        #     out=combine_out,
-        # )
 
         ctx.group = group
         ctx.group_name = group_name
@@ -1641,16 +1407,6 @@ class _RowwiseCombineWeightedFP8Autograd(torch.autograd.Function):
 
             flat_ranks = src_ranks.reshape(-1, 1).contiguous()
             flat_rows = src_rows.reshape(-1, 1).contiguous()
-            # _rowwise_debug_print(
-            #     "rowwise_fp8_combine_backward_dispatch_put_scaled",
-            #     "enter",
-            #     ctx.group_name,
-            #     input=weighted_flat,
-            #     out_q=ctx.symm_expert_out_q,
-            #     out_scales=ctx.symm_expert_out_scales,
-            #     dst_ranks=flat_ranks,
-            #     dst_rows=flat_rows,
-            # )
             symm_mem_vdev2d_kernels.rowwise_dispatch_put_scaled(
                 weighted_flat,
                 ctx.symm_expert_out_q,
@@ -1661,15 +1417,6 @@ class _RowwiseCombineWeightedFP8Autograd(torch.autograd.Function):
                 block_size=ctx.block_size,
                 nblocks=ctx.nblocks,
             )
-            # _rowwise_debug_sync("rowwise_fp8_combine_backward_dispatch_put_scaled", ctx.symm_expert_out_q.device)
-            # _rowwise_debug_print(
-            #     "rowwise_fp8_combine_backward_dispatch_put_scaled",
-            #     "exit",
-            #     ctx.group_name,
-            #     input=weighted_flat,
-            #     out_q=ctx.symm_expert_out_q,
-            #     out_scales=ctx.symm_expert_out_scales,
-            # )
             grad_expert_out = OlmoMXFP8Tensor.from_qdata_scales(
                 ctx.symm_expert_out_q,
                 ctx.symm_expert_out_scales,
