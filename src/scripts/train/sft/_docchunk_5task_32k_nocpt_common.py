@@ -242,8 +242,13 @@ def build_docchunk_experiment(cli_context: CliContext, variant: str) -> Experime
             wrapping_strategy=TransformerDataParallelWrappingStrategy.full,
             shard_degree=WORLD_SIZE,
         ),
+        # Checkpoint ONLY the FFN (largest activations), NOT the attention: full-block AC recomputes
+        # the doc-chunked attention, whose FlexAttention block-mask / eager chunked-mask build does not
+        # save a recompute-stable number of tensors (-> CheckpointError on torch 2.9). FFN-only AC
+        # keeps attention out of the recompute and still fits 40960 on H200.
         ac_config=TransformerActivationCheckpointingConfig(
-            mode=TransformerActivationCheckpointingMode.full,
+            mode=TransformerActivationCheckpointingMode.selected_modules,
+            modules=["blocks.*.feed_forward"],
         ),
         float8_config=Float8Config(enabled=False),
         z_loss_multiplier=None,
