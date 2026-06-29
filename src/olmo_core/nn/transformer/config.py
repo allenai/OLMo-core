@@ -2091,6 +2091,7 @@ class MoEFusedV2TransformerConfig(TransformerConfig):
                 embedding_init_std=self.embedding_init_std,
                 embed_scale=self.embed_scale,
                 block_pattern=self.block_pattern,
+                tie_word_embeddings=self.tie_word_embeddings,
             )
         else:
             raise NotImplementedError(self.name)

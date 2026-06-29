@@ -2,8 +2,12 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Optional, Union, cast
 
-import nvtx
 import torch
+
+try:
+    import nvtx
+except ImportError:
+    from olmo_core._nvtx import nvtx
 
 from ...moe.utils import async_copy_to_cpu, wait_stream_no_compile
 from ..utils import moe_permute_no_compile, moe_unpermute_no_compile

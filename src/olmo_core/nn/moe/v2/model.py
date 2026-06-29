@@ -12,7 +12,11 @@ from typing import (
     cast,
 )
 
-import nvtx
+try:
+    import nvtx
+except ImportError:
+    from olmo_core._nvtx import nvtx
+
 import torch
 import torch.distributed as dist
 from torch.distributed._composable.replicate import replicate
@@ -719,7 +723,7 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
         max_seq_len: Optional[int] = None,
         max_local_microbatch_size: Optional[int] = None,
         device: Optional[torch.device] = None,
-        world_mesh: Dict[str, Optional[DeviceMesh]],
+        world_mesh: Optional[Dict[str, Optional[DeviceMesh]]] = None,
         model_part_idx: int = 0,
     ) -> torch.Generator:
         from olmo_core.nn.attention import Attention, FusedAttention
@@ -753,7 +757,7 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
         # 1. PP stage
         # 2. model part within the PP stage (eg, interleaved 1F1B)
         if self.pp_enabled:
-            assert world_mesh["dense"] is not None
+            assert world_mesh is not None and world_mesh["dense"] is not None
             seed += get_pp_mesh(world_mesh["dense"]).get_local_rank()
             seed += model_part_idx * 997  # random prime
 
@@ -761,7 +765,7 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
         # but within the same EP_DP group, they should share the same init value
         ep_generator = None
         if self.ep_enabled:
-            assert world_mesh["moe"]
+            assert world_mesh is not None and world_mesh["moe"] is not None
             ep_mp_rank = world_mesh["moe"]["ep_mp"].get_local_rank()
             ep_seed = (
                 seed + (1 + ep_mp_rank) * 653
@@ -847,10 +851,15 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
             if max_seq_len is not None and rope is not None:
                 rope.warmup_cache(max_seq_len, device)
 
-        if self.lm_head is not None:
+        if self.lm_head is not None and not self.tie_word_embeddings:
             self.init_method.init_final_w_out(
                 self.lm_head.w_out, d_model=self.d_model, std=self.init_std, generator=generator
             )
+
+        # ``to_empty()`` above gives the embedding and LM-head weights fresh, independent storage,
+        # so re-establish weight tying by re-pointing the LM head at the embedding weight.
+        if self.tie_word_embeddings:
+            self._tie_weights()
         # get one next int from the generator
         # if everything goes right, all ranks should have the same next int
         # valid_test = (
@@ -939,7 +948,7 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
                 mark_dynamic(h, (0, 1), strict=False)
             with nvtx.annotate(f"fwd_block_{block_idx}", color="blue"):
                 # with self.offload_context:
-                one_block_kwargs = per_block_kwargs.get(block_key, {})
+                one_block_kwargs = per_block_kwargs.get(int(block_key), {})
                 if self.checkpoint_tbo_dense_layers:
                     h = checkpoint(
                         block,
@@ -1194,7 +1203,7 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
             if self.compile_enabled:
                 mark_dynamic(h, (0, 1), strict=False)
             with nvtx.annotate(f"fwd_block_{block_key}", color="blue"):
-                block_kwargs = per_block_kwargs.get(block_key, {})
+                block_kwargs = per_block_kwargs.get(int(block_key), {})
                 combined_kwargs = {**all_block_kwargs, **block_kwargs}
                 do_not_recompute: List[int] = []  # HACK
                 if (self.recompute_each_block and (block_idx not in do_not_recompute)) or (

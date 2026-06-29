@@ -693,20 +693,20 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
             metrics_routed = {}
         out = dict(metrics_routed)
 
-        from .ep_no_sync_rowwise_helpers import (
-            add_ep_no_sync_rowwise_metrics,
-            reset_ep_no_sync_rowwise_metrics,
-        )
+        # Row-wise EP metrics are only produced by the no-sync rowwise all-to-all path; that
+        # helper module is not present unless the rowwise dispatch family is installed, so only
+        # import it when the rowwise path is actually configured.
+        if self.ep_no_sync_use_rowwise_all_to_all:
+            from .ep_no_sync_rowwise_helpers import (
+                add_ep_no_sync_rowwise_metrics,
+                reset_ep_no_sync_rowwise_metrics,
+            )
 
-        add_ep_no_sync_rowwise_metrics(self, out, ReduceType)
+            add_ep_no_sync_rowwise_metrics(self, out, ReduceType)
 
-        if reset:
-            reset_ep_no_sync_rowwise_metrics(self)
+            if reset:
+                reset_ep_no_sync_rowwise_metrics(self)
 
-        # metrics = {
-        #     "shared": metrics_shared,
-        #     "routed": metrics_routed,
-        # }
         return out
 
     def reset_metrics(self):
@@ -714,9 +714,10 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         #     self.shared_experts_router.reset_metrics()
         if self.routed_experts_router:
             self.routed_experts_router.reset_metrics()
-        from .ep_no_sync_rowwise_helpers import reset_ep_no_sync_rowwise_metrics
+        if self.ep_no_sync_use_rowwise_all_to_all:
+            from .ep_no_sync_rowwise_helpers import reset_ep_no_sync_rowwise_metrics
 
-        reset_ep_no_sync_rowwise_metrics(self)
+            reset_ep_no_sync_rowwise_metrics(self)
 
     def num_flops_per_token(self, seq_len: int) -> int:
         """
