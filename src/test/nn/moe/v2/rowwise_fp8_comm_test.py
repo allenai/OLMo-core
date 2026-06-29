@@ -1,3 +1,23 @@
+"""
+Unit tests for the rowwise expert-parallel comm autograd functions.
+
+The rowwise all-to-all has four characteristic failure modes; these cover the ones that are
+exercisable in a single process (the symmetric-memory kernels are monkeypatched or the guards run
+before them):
+
+- **buffer lifetime / lease** — symmetric buffers must be released exactly once after use
+  (``test_rowwise_bf16_combine_releases_lifetime_leases_and_grads_probs``).
+- **routing-map correctness** — malformed routing maps (``src_ranks`` / ``src_rows`` / ``probs``
+  shapes) must be rejected, not silently mis-scattered
+  (``test_rowwise_combine_rejects_*``).
+- **on-the-wire FP8 / SwiGLU math** — the hand-written rowwise SwiGLU forward/backward must match
+  a reference / autograd (``test_rowwise_fp8_swiglu_*``).
+
+The fourth mode — cross-rank barrier / race correctness — is inherently multi-process and is
+covered end-to-end by the no-EP-vs-EP parity test that lands with the expert-parallel forward.
+"""
+
+import pytest
 import torch
 
 from olmo_core.nn.moe.v2 import comm
@@ -163,3 +183,75 @@ def test_rowwise_fp8_combine_backward_returns_grad_probs(monkeypatch):
 
     assert probs.grad is not None
     torch.testing.assert_close(probs.grad, torch.full_like(probs, 3.0))
+
+
+# --- routing-map correctness: malformed maps must be rejected before the kernel ---
+
+
+def test_rowwise_combine_rejects_mismatched_probs():
+    expert_out = torch.zeros(4, 8)
+    src = torch.zeros(2, 2, dtype=torch.long)
+    probs = torch.ones(2, 3)  # shape disagrees with src_ranks/src_rows
+    with pytest.raises(RuntimeError, match="probs shape mismatch"):
+        comm._RowwiseCombineWeightedAutograd.apply(
+            expert_out,
+            expert_out.clone(),
+            None,  # symm_combine_out
+            None,  # symm_combine_out_lease
+            None,  # symm_gathered_routes
+            None,  # symm_gathered_routes_lease
+            src,
+            src.clone(),
+            probs,
+            "g",  # group_name
+            None,  # group
+            1,  # nblocks
+            False,  # expert_out_aliases_symm_expert_out
+            False,  # pre_barrier
+            False,  # post_barrier
+        )
+
+
+def test_rowwise_combine_rejects_negative_nblocks():
+    expert_out = torch.zeros(4, 8)
+    src = torch.zeros(2, 2, dtype=torch.long)
+    probs = torch.ones(2, 2)
+    with pytest.raises(RuntimeError, match="nblocks must be >= 0"):
+        comm._RowwiseCombineWeightedAutograd.apply(
+            expert_out,
+            expert_out.clone(),
+            None,
+            None,
+            None,
+            None,
+            src,
+            src.clone(),
+            probs,
+            "g",
+            None,
+            -1,  # nblocks
+            False,
+            False,
+            False,
+        )
+
+
+# --- on-the-wire FP8 / SwiGLU math ---
+
+
+def test_rowwise_fp8_swiglu_forward_matches_reference():
+    torch.manual_seed(0)
+    up_gate = torch.randn(6, 16)
+    hidden = up_gate.shape[-1] // 2
+    up, gate = up_gate[:, :hidden], up_gate[:, hidden:]
+    expected = up * (gate * torch.sigmoid(gate))
+    torch.testing.assert_close(comm._rowwise_fp8_swiglu_forward_impl(up_gate), expected)
+
+
+def test_rowwise_fp8_swiglu_backward_matches_autograd():
+    torch.manual_seed(0)
+    up_gate = torch.randn(6, 16, dtype=torch.float64, requires_grad=True)
+    grad_h = torch.randn(6, 8, dtype=torch.float64)
+    comm._rowwise_fp8_swiglu_forward_impl(up_gate).backward(grad_h)
+    manual = comm._rowwise_fp8_swiglu_backward_impl(up_gate.detach(), grad_h)
+    torch.testing.assert_close(up_gate.grad, manual)
