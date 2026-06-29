@@ -1,6 +1,6 @@
 # Ladder Run Tracker
 
-Last updated: 2026-06-29 03:05 UTC.
+Last updated: 2026-06-29 03:35 UTC.
 
 This table is a scan-friendly status matrix for planned ladder cells. It is separate from `RUNS.md` (chronological launch/status log) and `PLOTTED_RESULTS.md` (finished-only plotted rows and losses).
 
@@ -15,7 +15,7 @@ Legend: `done` = at least one finished/plotted run exists; `run` = currently run
 | Total sparsity | 1.2B Cx1/2/4/8 for high total 96E/top4 and huge total 192E/top4 | 275M, 480M, and 810M are done. |
 | Dense schedule | None beyond running/finished-unplotted 1.2B tail jobs | 480M and 810M are plotted. Several 1.2B dense jobs finished; three new dense histories are currently blocked by W&B `CommError`. |
 | Shared expert | 1.2B Cx8 queued/created | 480M, 810M, and 1.2B Cx1/2/4 are Beaker-finalized with exit code 0. The 2026-06-23 duplicate 480M relaunches were eval-only resumes; duplicate Cx8 was stopped before start. |
-| Qwen-like | True-3D 1.2B Cx8 needs attention after exit-1 finalization | Active-matched 1.2B Cx8 finished and is plotted. True-3D 1.2B Cx8 finalized with exit code 1 and is not plotted. |
+| Qwen-like | None beyond restarted true-3D 1.2B Cx8 retry | Active-matched 1.2B Cx8 finished and is plotted. True-3D 1.2B Cx8 was restarted after an exit-1/cancelled attempt and is currently created/queued. |
 | Expert granularity | None for main coarse/fine grid | Diagnostic 192E/384E remains intentionally limited to 275M Cx1. |
 | Baseline | None for Cx1/2/4/8 main grid | Current grid complete. |
 
@@ -34,7 +34,7 @@ Legend: `done` = at least one finished/plotted run exists; `run` = currently run
 | Dense schedule | dense2 + shared | done Cx1/2/4/8 | done Cx1/2/4/8 | done Cx1/2/4/8 | done Cx1/2, finished-unplotted Cx4, run Cx8 | 810M Cx8 is now plotted. 1.2B Cx4 dense2 is blocked by W&B `CommError`. |
 | Dense schedule | dense4 + shared | done Cx1/2/4/8 | done Cx1/2/4/8 | done Cx1/2/4/8 | done Cx1/2, run Cx4/8 | 1.2B Cx2 dense4 is now plotted; Cx4 has an older finished-unplotted W&B run plus a later running Beaker attempt. |
 | Qwen3-like | active matched 4.5d | done Cx1/2/4/8 | done Cx1/2/4/8 | done Cx1/2/4/8 | done Cx1/2/4/8 | Main active-matched Qwen-like ladder is plotted through Cx8. |
-| Qwen3-like | true 3.0d + depth | done Cx1/2/4/8 | done Cx1/2/4/8 | done Cx1/2/4/8 | done Cx1/2/4, failed Cx8 | Cx8 Beaker experiment finalized with exit code 1 on 2026-06-28 and is not plotted. |
+| Qwen3-like | true 3.0d + depth | done Cx1/2/4/8 | done Cx1/2/4/8 | done Cx1/2/4/8 | done Cx1/2/4, queued Cx8 retry | Cx8 Beaker experiment has a restarted created/queued attempt after an exit-1/cancelled attempt. |
 
 ## Active / Queued Beaker Surface
 
@@ -43,13 +43,13 @@ Bounded status pass on 2026-06-29 03:05 UTC checked only runs that were previous
 | Run(s) | State | Latest timestamp UTC | Beaker | Notes |
 | --- | --- | --- | --- | --- |
 | `q3-1p2b-cx8-q3am128e8k-lr4e-4-r1` | done | finalized 2026-06-28 00:43 | https://beaker.org/ex/01KVJ4GXHKR0DP3PXHPR5ZZ6GB | Active-matched 1.2B Cx8 finished cleanly and is now plotted. |
-| `q3-1p2b-cx8-q3td128e8k-lr4e-4-r1` | failed | finalized 2026-06-28 00:57 | https://beaker.org/ex/01KVJ4H8PTJDJCGHHFRB8CD3GP | True-3D 1.2B Cx8 finalized with exit code 1; not plotted. |
+| `q3-1p2b-cx8-q3td128e8k-lr4e-4-r1` | queued | latest attempt created after restart; prior attempt finalized 2026-06-28 00:57 with exit code 1 | https://beaker.org/ex/01KVJ4H8PTJDJCGHHFRB8CD3GP | Restarted in-place; not plotted yet. |
 | `ds-810m-cx8-ds0-sh-lr4e-4-r1` | done | finalized 2026-06-25 22:54 | https://beaker.org/ex/01KVV1X7T3RPAX3B0SAK4HTKT8 | Full W&B history now cached; plotted. |
 | `ds-810m-cx8-ds2-sh-lr4e-4-r1` | done | finalized 2026-06-26 04:28 | https://beaker.org/ex/01KVV20XZKCAXGRMTB9MDVFAWN | Full W&B history now cached; plotted. |
 | `ds-810m-cx8-ds4-sh-lr4e-4-r1` | done | finalized 2026-06-26 10:04 | https://beaker.org/ex/01KVV24VVNWDCGF6JSFKXYJ024 | Full W&B history now cached; plotted. |
 | `ds-1p2b-cx4-ds0-sh-lr3e-4-r1` | done | finalized 2026-06-27 08:05 | https://beaker.org/ex/01KVV28EST9EFM4ZF43BP2FN15 | Full W&B history now cached; plotted. |
-| `ds-1p2b-cx8-ds0-sh-lr4e-4-r1` | finished-unplotted | finalized 2026-06-28 17:45 | https://beaker.org/ex/01KVV29F7ZM9RW8DWF073QYYGF | W&B full-history fetch currently returns `CommError`; retry cache later. |
-| `ds-1p2b-cx4-ds2-sh-lr3e-4-r1` | finished-unplotted | finalized 2026-06-28 01:44 | https://beaker.org/ex/01KVV2CCDP7P9C9HM6RYAMM2M8 | W&B full-history fetch currently returns `CommError`; retry cache later. |
+| `ds-1p2b-cx8-ds0-sh-lr4e-4-r1` | finished-unplotted | finalized 2026-06-28 17:45 | https://beaker.org/ex/01KVV29F7ZM9RW8DWF073QYYGF | W&B full-history fetch still returns `CommError` as of 2026-06-29 03:35; retry cache later. |
+| `ds-1p2b-cx4-ds2-sh-lr3e-4-r1` | finished-unplotted | finalized 2026-06-28 01:44 | https://beaker.org/ex/01KVV2CCDP7P9C9HM6RYAMM2M8 | W&B full-history fetch still returns `CommError` as of 2026-06-29 03:35; retry cache later. |
 | `ds-1p2b-cx8-ds2-sh-lr4e-4-r1` | run | started 2026-06-26 04:29 | https://beaker.org/ex/01KVV2CVAH6ZYWMRYC8TRDS4DJ | dense2 1.2B Cx8. |
 | `ds-1p2b-cx2-ds4-sh-lr6e-4-r1` | done | finalized 2026-06-27 10:53 | https://beaker.org/ex/01KVV2DYRCB5ZDNTZHBD0MXGNX | Full W&B history cached; plotted. |
 | `ds-1p2b-cx4-ds4-sh-lr3e-4-r1` | run | started 2026-06-26 10:04 | https://beaker.org/ex/01KVV2EE8YK7B0MF0EFJ3P9YCZ | dense4 1.2B Cx4. |
@@ -66,9 +66,9 @@ Current unresolved dense-schedule history fetches:
 
 | Run ID | Cell | Beaker state | Issue | Note |
 | --- | --- | --- | --- | --- |
-| `qpp6fidz` | 1.2B Cx8 dense0 | finished | W&B `CommError` during full-history fetch | Retry cache later. |
-| `rn5yr28o` | 1.2B Cx4 dense2 | finished | W&B `CommError` during full-history fetch | Retry cache later. |
-| `2i9wpg3j` | 1.2B Cx4 dense4 | finished W&B run from earlier attempt; Beaker experiment has a later running attempt | W&B `CommError` during full-history fetch | Retry cache later; do not plot until exact history is cached. |
+| `qpp6fidz` | 1.2B Cx8 dense0 | finished | W&B `CommError` during full-history fetch | Retried 2026-06-29 03:35; still failing. |
+| `rn5yr28o` | 1.2B Cx4 dense2 | finished | W&B `CommError` during full-history fetch | Retried 2026-06-29 03:35; still failing. |
+| `2i9wpg3j` | 1.2B Cx4 dense4 | finished W&B run from earlier attempt; Beaker experiment has a later running attempt | W&B `CommError` during full-history fetch | Retried 2026-06-29 03:35; still failing; do not plot until exact history is cached. |
 
 Resolved sampled diagnostics from 2026-06-28:
 
