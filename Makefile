@@ -73,6 +73,7 @@ FLASH_ATTN_4_EXTRAS =
 # QUACK_VERSION = 0.2.4
 QUACK_VERSION = ""
 INSTALL_DOCA_RDMA = 0
+INSTALL_PODMAN = 0
 DOCA_VERSION = 3.3.0
 DOCA_RDMA_CORE_VERSION = 2601.0.7-1
 DOCA_PERFTEST_VERSION = 26.01.5-1
@@ -116,6 +117,7 @@ docker-image :
 		--build-arg DOCA_VERSION=$(DOCA_VERSION) \
 		--build-arg DOCA_RDMA_CORE_VERSION=$(DOCA_RDMA_CORE_VERSION) \
 		--build-arg DOCA_PERFTEST_VERSION=$(DOCA_PERFTEST_VERSION) \
+		--build-arg INSTALL_PODMAN=$(INSTALL_PODMAN) \
 		--target release \
 		-t olmo-core:$(IMAGE_TAG) .
 	@docker run --rm olmo-core:$(IMAGE_TAG) python -c \
@@ -142,7 +144,8 @@ b300-image :
 		FLASH_ATTN_4_EXTRAS="[cu13]" \
 		TE_VERSION=2.16.0 \
 		LIGER_KERNEL_VERSION=0.8.0 \
-		INSTALL_DOCA_RDMA=1
+		INSTALL_DOCA_RDMA=1 \
+		INSTALL_PODMAN=1
 
 .PHONY : ghcr-image
 ghcr-image : docker-image

@@ -222,6 +222,40 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
     # uv \
     && curl -LsSf https://astral.sh/uv/install.sh | sh
 
+# Optional Podman-in-Docker support for Beaker subcontainers. This expects the
+# Beaker job to be launched with BEAKER_ALLOW_SUBCONTAINERS=1 and
+# BEAKER_SKIP_DOCKER_SOCKET=1. The containers.conf profile mirrors Ai2's
+# cuda custom-podman image and avoids nested networking/cgroup/proc mount
+# failures inside Beaker.
+ARG INSTALL_PODMAN=0
+COPY src/podman/ /tmp/olmo-core-podman/
+RUN set -eux; \
+    if [ "${INSTALL_PODMAN}" = "1" ]; then \
+        apt-get update; \
+        DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+          podman \
+          buildah \
+          uidmap \
+          conmon \
+          netavark \
+          passt \
+          fuse-overlayfs \
+          slirp4netns \
+          iptables; \
+        mkdir -p /etc/containers/registries.conf.d; \
+        cp /tmp/olmo-core-podman/containers.conf /etc/containers/containers.conf; \
+        cp /tmp/olmo-core-podman/policy.json /etc/containers/policy.json; \
+        cp /tmp/olmo-core-podman/10-unqualified-search-registries.conf /etc/containers/registries.conf.d/10-unqualified-search-registries.conf; \
+        cp /tmp/olmo-core-podman/setup_dockerio_mirror /usr/local/bin/setup_dockerio_mirror; \
+        chmod +x /usr/local/bin/setup_dockerio_mirror; \
+        ln -sf "$(command -v podman)" /usr/local/bin/docker; \
+        grep -q '^root:10000:11165536$' /etc/subuid || echo 'root:10000:11165536' >> /etc/subuid; \
+        grep -q '^root:10000:11165536$' /etc/subgid || echo 'root:10000:11165536' >> /etc/subgid; \
+        rm -rf /var/lib/apt/lists/* /tmp/olmo-core-podman; \
+    else \
+        rm -rf /tmp/olmo-core-podman; \
+    fi
+
 # Minimal DOCA RDMA user-space for NCCL IB/GDRDMA.
 # Keep this narrower than doca-ofed/doca-ofed-userspace: kernel drivers and DKMS
 # belong to the host, while the container only needs verbs libraries and providers.
