@@ -82,6 +82,12 @@ LANDMARK_BASE = (
     "/weka/oe-training-default/ai2-llm/checkpoints/amandab/"
     "q4b-fast-landmark-dolma3longmino/step2385/model_and_optim"
 )
+# Compressive CPT base (the landmark-token embedding + compressive grouped-softmax were trained here).
+COMPRESSIVE_BASE = (
+    "/weka/oe-training-default/ai2-llm/checkpoints/amandab/"
+    "q4b-base-fast-compressive-landmark-8node/step2385/model_and_optim"
+)
+NONSELECTED_LANDMARK_MASS = 0.1  # alpha for compressive attention
 
 # ---------------------------------------------------------------------------
 # Mix weights -- IDENTICAL to the packed 32k no-CPT rows (sum 7).
@@ -111,9 +117,15 @@ def _task_source(emit: str, name: str, doc_tok) -> NumpyDocumentSourceConfig:
 
 
 def build_docchunk_experiment(cli_context: CliContext, variant: str) -> ExperimentConfig:
-    assert variant in ("dense", "hierarchical", "landmark")
-    emit = "landmark" if variant == "landmark" else "dense"
-    base_checkpoint = LANDMARK_BASE if variant == "landmark" else DENSE_BASE
+    assert variant in ("dense", "hierarchical", "landmark", "compressive")
+    # compressive consumes the SAME landmark-format doc-chunked data (block-aligned + landmark tokens).
+    emit = "landmark" if variant in ("landmark", "compressive") else "dense"
+    base_checkpoint = {
+        "dense": DENSE_BASE,
+        "hierarchical": DENSE_BASE,
+        "landmark": LANDMARK_BASE,
+        "compressive": COMPRESSIVE_BASE,
+    }[variant]
 
     run_name_with_ts = (
         f"{cli_context.run_name}-{datetime.now().astimezone().strftime('%Y%m%dT%H%M%S%z')}"
@@ -149,6 +161,22 @@ def build_docchunk_experiment(cli_context: CliContext, variant: str) -> Experime
             # doc-landmark instances, whose pad tail has no landmarks -> the kernel's positional
             # is_mem assert would fail. Eager tolerates the pad tail.
             landmark_use_kernel=False,
+        )
+        model_config.document_chunk_attention = {
+            "doc_start_id": DOC_START_ID,
+            "doc_end_id": DOC_END_ID,
+            "eos_id": EOS_TOKEN_ID,
+            "mode": "chunked",
+            "pad_id": PAD_TOKEN_ID,
+        }
+    elif variant == "compressive":
+        # Same chunked mask + grouped softmax as landmark, but each past block's landmark token also
+        # contributes its VALUE (a compressed block summary). Eager-only; compressive CPT base.
+        model_config = TransformerConfig.qwen3_4B(
+            vocab_size=tokenizer_config.padded_vocab_size(),
+            document_compressive=True,
+            mem_freq=MEM_FREQ,
+            nonselected_landmark_mass=NONSELECTED_LANDMARK_MASS,
         )
         model_config.document_chunk_attention = {
             "doc_start_id": DOC_START_ID,
