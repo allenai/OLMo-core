@@ -87,6 +87,7 @@ def history_loss(
         refresh_cache=refresh_cache,
         refresh_stale_cache=refresh_stale_cache,
         page_size=10000,
+        tail_window_tokens=window_m * 1_000_000,
     ):
         tokens = row.get(TOKENS_KEY)
         loss = row.get(LOSS_KEY)
