@@ -228,30 +228,64 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
 # cuda custom-podman image and avoids nested networking/cgroup/proc mount
 # failures inside Beaker.
 ARG INSTALL_PODMAN=0
+ARG PODMAN_VERSION=5.6.2
+ARG CRUN_VERSION=1.14.3
 COPY src/podman/ /tmp/olmo-core-podman/
 RUN set -eux; \
     if [ "${INSTALL_PODMAN}" = "1" ]; then \
         apt-get update; \
         DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-          podman \
-          buildah \
-          uidmap \
+          autoconf \
+          automake \
           conmon \
+          gcc \
+          go-md2man \
+          golang-go \
+          iptables \
+          libassuan-dev \
+          libbtrfs-dev \
+          libc6-dev \
+          libcap-dev \
+          libdevmapper-dev \
+          libglib2.0-dev \
+          libgpg-error-dev \
+          libgpgme-dev \
+          libprotobuf-c-dev \
+          libprotobuf-dev \
+          libseccomp-dev \
+          libselinux1-dev \
+          libsystemd-dev \
+          libtool \
+          libyajl-dev \
           netavark \
           passt \
-          fuse-overlayfs \
-          slirp4netns \
-          iptables; \
+          pkg-config \
+          python3-sphinx \
+          systemd \
+          uidmap; \
         mkdir -p /etc/containers/registries.conf.d; \
         cp /tmp/olmo-core-podman/containers.conf /etc/containers/containers.conf; \
         cp /tmp/olmo-core-podman/policy.json /etc/containers/policy.json; \
         cp /tmp/olmo-core-podman/10-unqualified-search-registries.conf /etc/containers/registries.conf.d/10-unqualified-search-registries.conf; \
+        curl -fsSL "https://github.com/containers/podman/archive/refs/tags/v${PODMAN_VERSION}.tar.gz" \
+          | tar xz -C /tmp; \
+        make -C "/tmp/podman-${PODMAN_VERSION}" BUILDTAGS="selinux seccomp" PREFIX=/usr; \
+        make -C "/tmp/podman-${PODMAN_VERSION}" install PREFIX=/usr; \
+        git clone --depth 1 -b "${CRUN_VERSION}" https://github.com/containers/crun.git /tmp/crun; \
+        cd /tmp/crun; \
+        ./autogen.sh; \
+        ./configure --prefix=/usr --sysconfdir=/etc; \
+        make; \
+        make install; \
+        cd /; \
         cp /tmp/olmo-core-podman/setup_dockerio_mirror /usr/local/bin/setup_dockerio_mirror; \
         chmod +x /usr/local/bin/setup_dockerio_mirror; \
         ln -sf "$(command -v podman)" /usr/local/bin/docker; \
         grep -q '^root:10000:11165536$' /etc/subuid || echo 'root:10000:11165536' >> /etc/subuid; \
         grep -q '^root:10000:11165536$' /etc/subgid || echo 'root:10000:11165536' >> /etc/subgid; \
-        rm -rf /var/lib/apt/lists/* /tmp/olmo-core-podman; \
+        mkdir -p /run/user/0/libpod/tmp /run/podman; \
+        chmod 700 /run/user/0; \
+        rm -rf /var/lib/apt/lists/* /tmp/olmo-core-podman "/tmp/podman-${PODMAN_VERSION}" /tmp/crun; \
     else \
         rm -rf /tmp/olmo-core-podman; \
     fi
