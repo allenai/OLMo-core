@@ -36,7 +36,7 @@ from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.float8 import Float8Config
 from olmo_core.internal.common import build_launch_config, get_root_dir, get_work_dir
 from olmo_core.internal.experiment import CliContext, ExperimentConfig
-from olmo_core.launch.beaker import BeakerLaunchConfig, OLMoCoreBeakerImage
+from olmo_core.launch.beaker import BeakerEnvVar, BeakerLaunchConfig, OLMoCoreBeakerImage
 from olmo_core.nn.lm_head import LMLossImplementation
 from olmo_core.nn.rope import YaRNRoPEScalingConfig
 from olmo_core.nn.transformer import TransformerActivationCheckpointingMode, TransformerConfig
@@ -150,6 +150,13 @@ def build_docchunk_experiment(cli_context: CliContext, variant: str) -> Experime
         # concurrent jobs, so it's never clean. gantry clones the committed HEAD regardless, which is
         # what we want (all four variants' code is committed + pushed), so bypass the clean-tree guard.
         beaker_launch_config.allow_dirty = True
+        # Doc-chunked attention cannot use CP, so the full 40960-token activation set lives on ONE GPU
+        # and FlexAttention needs ~12 GiB of working memory on top. PyTorch's default caching allocator
+        # stranded ~16 GiB as reserved-but-unallocated (fragmentation) -> OOM. expandable_segments
+        # reclaims that. Requires an 80 GiB+ GPU cluster (e.g. jupiter H100); 44 GiB nodes are too small.
+        beaker_launch_config.env_vars.append(
+            BeakerEnvVar(name="PYTORCH_CUDA_ALLOC_CONF", value="expandable_segments:True")
+        )
 
     tokenizer_config = TokenizerConfig.qwen3()
     # EOS-separated instances; qwen3 ties bos==eos, so drop BOS for document-boundary detection.
