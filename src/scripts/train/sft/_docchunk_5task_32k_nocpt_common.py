@@ -146,6 +146,10 @@ def build_docchunk_experiment(cli_context: CliContext, variant: str) -> Experime
     )
     if beaker_launch_config is not None:
         beaker_launch_config.priority = "urgent"
+        # The OLMo-core working tree on this host is a shared checkout actively modified by other
+        # concurrent jobs, so it's never clean. gantry clones the committed HEAD regardless, which is
+        # what we want (all four variants' code is committed + pushed), so bypass the clean-tree guard.
+        beaker_launch_config.allow_dirty = True
 
     tokenizer_config = TokenizerConfig.qwen3()
     # EOS-separated instances; qwen3 ties bos==eos, so drop BOS for document-boundary detection.
