@@ -252,3 +252,98 @@ class InitMethod(StrEnum):
             b=3 * std,
             generator=generator,
         )
+
+    def init_moe_v2(
+        self,
+        b,
+        *,
+        d_model: int,
+        block_idx: int,
+        num_blocks: int,
+        std: float = 0.02,
+        generator: Optional[torch.Generator] = None,
+        ep_generator: Optional[torch.Generator] = None,
+    ):
+        """
+        Initialize the weights of a :class:`~olmo_core.nn.moe.v2.block.MoEFusedV2TransformerBlock`.
+
+        :param ep_generator: An optional separate generator for expert-parallel-sharded weights
+            (the routed expert weights). Falls back to ``generator`` when expert parallelism is
+            not enabled.
+        """
+        from ..moe.v2.block import MoEFusedV2TransformerBlock
+
+        b = cast(MoEFusedV2TransformerBlock, b)
+        if self == InitMethod.llama:
+            std = std / (2 * num_blocks) ** 0.5
+        elif self == InitMethod.llama_depth:
+            std = std / (2 * (block_idx + 1)) ** 0.5
+
+        if ep_generator is None:
+            assert b.ep_enabled is False, "ep_generator should be provided when ep_enabled is True"
+            # Expert parallelism is not in use, so the routed expert weights are not sharded and
+            # can share the default generator.
+            ep_generator = generator
+
+        if b.shared_experts_router:
+            _apply_init(
+                nn.init.trunc_normal_,
+                b.shared_experts_router.weight,
+                mean=0.0,
+                std=std,
+                a=-3 * std,
+                b=3 * std,
+                generator=generator,
+            )
+        if b.routed_experts_router:
+            _apply_init(
+                nn.init.trunc_normal_,
+                b.routed_experts_router.weight,
+                mean=0.0,
+                std=std,
+                a=-3 * std,
+                b=3 * std,
+                generator=generator,
+            )
+
+        if b.routed_experts:
+            # The routed expert weights may be sharded across the expert-parallel mesh, so use the
+            # EP generator to keep initialization consistent across shards.
+            _apply_init(
+                nn.init.trunc_normal_,
+                b.routed_experts.w_up_gate,
+                mean=0.0,
+                std=std,
+                a=-3 * std,
+                b=3 * std,
+                generator=ep_generator,
+            )
+            _apply_init(
+                nn.init.trunc_normal_,
+                b.routed_experts.w_down,
+                mean=0.0,
+                std=std,
+                a=-3 * std,
+                b=3 * std,
+                generator=ep_generator,
+            )
+
+        if b.shared_experts:
+            _apply_init(
+                nn.init.trunc_normal_,
+                b.shared_experts.w_up_gate,
+                mean=0.0,
+                std=std,
+                a=-3 * std,
+                b=3 * std,
+                generator=generator,
+            )
+            _apply_init(
+                nn.init.trunc_normal_,
+                b.shared_experts.w_down,
+                mean=0.0,
+                std=std,
+                a=-3 * std,
+                b=3 * std,
+                generator=generator,
+            )

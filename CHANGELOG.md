@@ -29,6 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added `olmo_core.nn.fp8_weight.FP8WeightStore` (beta), a logical weight store for fp32-main / FP8-model training that caches prequantized MXFP8 expert weights and presents a tensor-like surface to the fused optimizer.
 - Added MoE token permute/reorder kernels (`olmo_core.kernels.moe_chunk_reorder`, `moe_permute_drop`, `moe_unpermute_bwd`) for routing tokens to experts (with capacity dropping) and combining the expert outputs.
 - Added symmetric-memory and NCCL-RMA point-to-point communication kernels (`olmo_core.kernels.symm_mem_vdev2d`, `olmo_symm_mem`, `nccl_rma_p2p`) for expert-parallel all-to-all and one-sided RMA transport.
+- Added a fused Mixture-of-Experts transformer block and model (`MoEFusedV2TransformerBlock` / `MoEFusedV2Transformer`, configured via `MoEFusedV2TransformerConfig` and `MoEFusedV2TransformerBlockConfig`), wired into the transformer build dispatch (`TransformerType.moe_fused_v2` / `TransformerBlockType.moe_fused_v2`) and weight initialization (`InitMethod.init_moe_v2`). This first drop runs the single-process (no expert-parallel) forward path; the expert-parallel dispatch families are imported lazily and land in follow-up changes.
 
 
 ### Fixed
