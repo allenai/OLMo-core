@@ -134,7 +134,8 @@ class SharedExperts(nn.Module):
         #    Shapes: (BS, E, 2, H) -> (E, BS, 2, H)
         if self.activation == ExpertActivation.swiglu:
             up_gate = up_gate.view(BS, E, 2, H).permute(1, 0, 2, 3)
-            up, gate = up_gate.unbind(dim=2)                   # each (E, BS, H) views
+            up = up_gate.select(2, 0)                          # each (E, BS, H) views
+            gate = up_gate.select(2, 1)
             hidden = _swiglu(up, gate)                         # (E, BS, H)
         elif self.activation == ExpertActivation.relu2:
             up = up_gate.view(BS, E, H).permute(1, 0, 2)
@@ -166,7 +167,8 @@ class SharedExperts(nn.Module):
         #    Shapes: (BS, E, 2, H) -> (E, BS, 2, H)
         if self.activation == ExpertActivation.swiglu:
             up_gate = up_gate.view(BS, E, 2, H).permute(1, 0, 2, 3)
-            up, gate = up_gate.unbind(dim=2)                   # each (E, BS, H) views
+            up = up_gate.select(2, 0)                          # each (E, BS, H) views
+            gate = up_gate.select(2, 1)
             return up, gate
         if self.activation == ExpertActivation.relu2:
             up = up_gate.view(BS, E, H).permute(1, 0, 2)
