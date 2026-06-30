@@ -79,7 +79,7 @@ LANDMARK_TOKEN_ID = 151860
 NONSELECTED_LANDMARK_MASS = 0.1
 CP_DEGREE = 8
 NUM_NODES = 1
-EPOCHS = 2
+EPOCHS = 1
 
 # ---- 50% subsample: whole-document seeded sampling down to this fraction of source tokens ----
 SUBSAMPLE_FACTOR = 0.5
@@ -101,7 +101,11 @@ _TASK_LABEL = {"contra": "contradiction", "nq": "nq_retrieval", "oolong": "oolon
 _VARIANTS = ("dense", "landmark", "compressive")
 
 LR = 2e-5  # overnight 10k matrix: bumped from 1e-5 (coordinator request 2026-06-30).
-GLOBAL_BATCH_SIZE = NUM_NODES * SEQUENCE_LENGTH
+# Global batch = 8 sequence-windows per optimizer step. With CP=8 (DP=1) this is pure GRADIENT
+# ACCUMULATION: rank_microbatch_size stays = SEQUENCE_LENGTH (one window, no extra memory), and the
+# trainer runs GLOBAL_BATCH_SIZE/(rank_microbatch*dp)=8 accumulation microbatches per step.
+GLOBAL_BATCH_WINDOWS = 8
+GLOBAL_BATCH_SIZE = NUM_NODES * SEQUENCE_LENGTH * GLOBAL_BATCH_WINDOWS
 
 
 def _task_from_run_name(run_name: str) -> str:
