@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.23)
-project(symm_mem_vdev2d_ext LANGUAGES CXX CUDA)
+project(olmo_symm_mem_ext LANGUAGES CXX CUDA)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -23,6 +23,9 @@ endif()
 find_package(Python3 REQUIRED COMPONENTS Development.Module)
 find_package(Torch REQUIRED)
 
+# Keep the Python extension module name stable for existing imports. The source
+# files use OLMo symmetric-memory names now that this target owns more than the
+# original vdev2d all-to-all experiment.
 set(TARGET_NAME _symm_mem_vdev2d_ext_gpu)
 
 find_library(
@@ -67,8 +70,8 @@ endif()
 add_library(
   ${TARGET_NAME}
   MODULE
-  symm_mem_vdev2d.cpp
-  symm_mem_vdev2d_kernel.cu)
+  olmo_symm_mem_bindings.cpp
+  olmo_symm_mem_kernels.cu)
 
 target_compile_definitions(
   ${TARGET_NAME}

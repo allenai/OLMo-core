@@ -22,8 +22,8 @@ def _build_extension_setuptools(*, inplace: bool, verbose: bool, force: bool) ->
     this_dir = Path(__file__).resolve().parent
     repo_root = this_dir.parents[2]
     cuda_dir = this_dir / "cuda"
-    cpp_src = cuda_dir / "symm_mem_vdev2d.cpp"
-    cu_src = cuda_dir / "symm_mem_vdev2d_kernel.cu"
+    cpp_src = cuda_dir / "olmo_symm_mem_bindings.cpp"
+    cu_src = cuda_dir / "olmo_symm_mem_kernels.cu"
 
     include_dir, lib_dir, host_so, device_a = _find_nvshmem_paths()
 
@@ -69,7 +69,7 @@ def _build_extension_setuptools(*, inplace: bool, verbose: bool, force: bool) ->
     os.chdir(repo_root)
     try:
         setup(
-            name="olmo-symm-mem-vdev2d-ext",
+            name="olmo-symm-mem-ext",
             ext_modules=[ext],
             cmdclass={"build_ext": BuildExtension.with_options(use_ninja=True)},
             script_args=script_args,
@@ -84,7 +84,7 @@ def _build_extension_cmake(*, inplace: bool, verbose: bool, force: bool) -> None
     this_dir = Path(__file__).resolve().parent
     repo_root = this_dir.parents[2]
     cuda_dir = this_dir / "cuda"
-    build_dir = repo_root / "build" / "symm_mem_vdev2d_cmake"
+    build_dir = repo_root / "build" / "olmo_symm_mem_cmake"
     output_dir = this_dir if inplace else (repo_root / "build")
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -171,7 +171,7 @@ def build_extension(
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Build GPU-side NVSHMEM 2D all_to_all extension with CUDA device-link."
+        description="Build the GPU-side OLMo NVSHMEM symmetric-memory extension with CUDA device-link."
     )
     parser.add_argument("--inplace", action="store_true", help="Build extension in-place.")
     parser.add_argument("--verbose", action="store_true", help="Verbose build output.")
