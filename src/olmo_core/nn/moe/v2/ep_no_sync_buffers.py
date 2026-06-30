@@ -1,8 +1,18 @@
+"""
+Symmetric-memory buffer machinery for the no-sync expert-parallel forward paths.
+
+Provides the symmetric-memory tensor allocation/caching, the lease pool that hands out and recycles
+those buffers across forward passes (so the no-sync all-to-all can write/read peer memory without
+reallocating each step), and the per-block shared pool plus the stage/pending-context state the
+two-batch-overlap path threads between micro-batches. Consumed by the ``ep_no_sync_*`` forward
+modules; not used on the no-expert-parallel path.
+"""
+
 import math
 import os
 import warnings
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Dict, Iterator, List, Optional, Tuple
+from typing import TYPE_CHECKING, Dict, Iterator, List, Optional
 
 import torch
 import torch.distributed as dist
@@ -19,38 +29,9 @@ except ImportError:
     _symm_mem = None  # type: ignore[assignment]
 
 
-def _tbo_buffer_debug_enabled() -> bool:
-    if os.getenv("OLMO_TBO_VERBOSE_DEBUG_PRINT", "0").strip().lower() not in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }:
-        return False
-    ranks = os.getenv("OLMO_TBO_DEBUG_RANKS")
-    if not ranks or not dist.is_available() or not dist.is_initialized():
-        return True
-    rank = str(dist.get_rank())
-    return rank in {part.strip() for part in ranks.split(",") if part.strip()}
-
-
-def _tbo_buffer_debug_print(message: str) -> None:
-    if not _tbo_buffer_debug_enabled():
-        return
-    rank = dist.get_rank() if dist.is_available() and dist.is_initialized() else "?"
-    print(
-        (
-            "[OLMO_TBO_DEBUG] "
-            f"rank={rank} local_rank={os.getenv('LOCAL_RANK', '?')} "
-            f"{message}"
-        ),
-        flush=True,
-    )
-
-
 def _cached_symm_tensor_covers(
     cached: torch.Tensor,
-    shape: Tuple[int, ...],
+    shape: tuple[int, ...],
     dtype: torch.dtype,
     device: torch.device,
 ) -> bool:
@@ -64,7 +45,7 @@ def _cached_symm_tensor_covers(
     )
 
 
-def _view_cached_symm_tensor(cached: torch.Tensor, shape: Tuple[int, ...]) -> torch.Tensor:
+def _view_cached_symm_tensor(cached: torch.Tensor, shape: tuple[int, ...]) -> torch.Tensor:
     if tuple(cached.shape) == shape:
         return cached
     view = cached.narrow(0, 0, shape[0])
@@ -78,23 +59,22 @@ def _view_cached_symm_tensor(cached: torch.Tensor, shape: Tuple[int, ...]) -> to
 
 def _alloc_ep_symm_tensor(
     *,
-    shape: Tuple[int, ...],
+    shape: tuple[int, ...],
     dtype: torch.dtype,
     device: torch.device,
     group: dist.ProcessGroup,
 ) -> torch.Tensor:
-    # _tbo_buffer_debug_print(f"symm_alloc:enter shape={shape} dtype={dtype} device={device}")
+    # To trace symmetric-buffer allocation/lease lifecycle, set OLMO_TBO_VERBOSE_DEBUG_PRINT=1
+    # (optionally scope with OLMO_TBO_DEBUG_RANKS=0,1) and add print()s around these calls.
     if olmo_symm_mem.is_enabled():
         symm_tensor = olmo_symm_mem.empty(shape, dtype=dtype, device=device, group=group)
         olmo_symm_mem.rendezvous(symm_tensor, group=group)
-        # _tbo_buffer_debug_print(f"symm_alloc:exit shape={shape} dtype={dtype} device={device}")
         return symm_tensor
 
     if _symm_mem is None:
         raise RuntimeError("EP no-sync requires torch.distributed._symmetric_memory")
     symm_tensor = _symm_mem.empty(shape, dtype=dtype, device=device)
     _symm_mem.rendezvous(symm_tensor, group=group)
-    # _tbo_buffer_debug_print(f"symm_alloc:exit shape={shape} dtype={dtype} device={device}")
     return symm_tensor
 
 
@@ -137,7 +117,7 @@ class _NoSyncRowwiseLifetimeLeases:
 @dataclass(frozen=True)
 class _NoSyncSymmLeaseTensorSpec:
     name: str
-    shape: Tuple[int, ...]
+    shape: tuple[int, ...]
     dtype: torch.dtype
     device: torch.device
 
@@ -178,35 +158,8 @@ class _NoSyncSymmLeasePool:
         self.high_water: int = 0
         self.frozen: bool = False
 
-    def _debug_enabled(self) -> bool:
-        if os.getenv("OLMO_MOE_SYMM_LEASE_DEBUG", "0").strip().lower() not in {
-            "1",
-            "true",
-            "yes",
-            "on",
-        }:
-            return False
-        ranks = os.getenv("OLMO_MOE_SYMM_LEASE_DEBUG_RANKS") or os.getenv("OLMO_TBO_DEBUG_RANKS")
-        if not ranks or not dist.is_available() or not dist.is_initialized():
-            return True
-        rank = str(dist.get_rank())
-        return rank in {part.strip() for part in ranks.split(",") if part.strip()}
-
-    def _debug_print(self, message: str) -> None:
-        if not self._debug_enabled():
-            return
-        rank = dist.get_rank() if dist.is_available() and dist.is_initialized() else "?"
-        print(
-            (
-                "[OLMO_MOE_SYMM_LEASE] "
-                f"rank={rank} local_rank={os.getenv('LOCAL_RANK', '?')} "
-                f"pool={self.name} {message}"
-            ),
-            flush=True,
-        )
-
     @staticmethod
-    def _spec_numel(shape: Tuple[int, ...]) -> int:
+    def _spec_numel(shape: tuple[int, ...]) -> int:
         numel = 1
         for dim in shape:
             numel *= int(dim)
@@ -217,14 +170,14 @@ class _NoSyncSymmLeasePool:
         return cls._spec_numel(spec.shape) * torch.empty((), dtype=spec.dtype).element_size()
 
     @classmethod
-    def _format_specs(cls, specs: Tuple[_NoSyncSymmLeaseTensorSpec, ...]) -> str:
+    def _format_specs(cls, specs: tuple[_NoSyncSymmLeaseTensorSpec, ...]) -> str:
         return ", ".join(
             (f"{spec.name}:shape={spec.shape}:dtype={spec.dtype}:" f"bytes={cls._spec_bytes(spec)}")
             for spec in specs
         )
 
     @classmethod
-    def _specs_bytes(cls, specs: Tuple[_NoSyncSymmLeaseTensorSpec, ...]) -> int:
+    def _specs_bytes(cls, specs: tuple[_NoSyncSymmLeaseTensorSpec, ...]) -> int:
         return sum(cls._spec_bytes(spec) for spec in specs)
 
     def _dry_run_done(self) -> bool:
@@ -238,14 +191,11 @@ class _NoSyncSymmLeasePool:
     def _maybe_freeze_after_dry_run(self) -> None:
         if not self.frozen and self._dry_run_done():
             self.frozen = True
-            # self._debug_print(
-            #     f"freeze slots={len(self._slots)} high_water={self.high_water}"
-            # )
 
     def _slot_covers(
         self,
         slot_idx: int,
-        specs: Tuple[_NoSyncSymmLeaseTensorSpec, ...],
+        specs: tuple[_NoSyncSymmLeaseTensorSpec, ...],
     ) -> bool:
         slot = self._slots[slot_idx]
         for spec in specs:
@@ -262,7 +212,7 @@ class _NoSyncSymmLeasePool:
     def _ensure_slot(
         self,
         slot_idx: int,
-        specs: Tuple[_NoSyncSymmLeaseTensorSpec, ...],
+        specs: tuple[_NoSyncSymmLeaseTensorSpec, ...],
     ) -> None:
         slot = self._slots[slot_idx]
         for spec in specs:
@@ -281,23 +231,14 @@ class _NoSyncSymmLeasePool:
                     f"does not cover tensor '{spec.name}' with shape={spec.shape}, "
                     f"dtype={spec.dtype}, device={spec.device}"
                 )
-            # self._debug_print(
-            #     f"alloc_begin slot={slot_idx} tensor={spec.name} "
-            #     f"shape={spec.shape} dtype={spec.dtype} device={spec.device} "
-            #     f"bytes={self._spec_bytes(spec)}"
-            # )
             slot[spec.name] = _alloc_ep_symm_tensor(
                 shape=spec.shape,
                 dtype=spec.dtype,
                 device=spec.device,
                 group=self.group,
             )
-            # self._debug_print(
-            #     f"alloc_done slot={slot_idx} tensor={spec.name} "
-            #     f"shape={spec.shape} dtype={spec.dtype} device={spec.device}"
-            # )
 
-    def _append_slot(self, specs: Tuple[_NoSyncSymmLeaseTensorSpec, ...]) -> int:
+    def _append_slot(self, specs: tuple[_NoSyncSymmLeaseTensorSpec, ...]) -> int:
         slot_idx = len(self._slots)
         self._slots.append({})
         self._ensure_slot(slot_idx, specs)
@@ -308,7 +249,7 @@ class _NoSyncSymmLeasePool:
         self,
         *,
         num_slots: int,
-        specs: Tuple[_NoSyncSymmLeaseTensorSpec, ...],
+        specs: tuple[_NoSyncSymmLeaseTensorSpec, ...],
     ) -> None:
         if num_slots < 0:
             raise ValueError(f"num_slots must be >= 0 (got {num_slots})")
@@ -320,18 +261,11 @@ class _NoSyncSymmLeasePool:
                 continue
             self._ensure_slot(slot_idx, specs)
         # bytes_per_slot = self._specs_bytes(specs)
-        # self._debug_print(
-        #     f"prewarm requested_slots={num_slots} slots={len(self._slots)} "
-        #     f"free={len(self._free_slots)} in_use={len(self._in_use_slots)} "
-        #     f"high_water={self.high_water} bytes_per_slot={bytes_per_slot} "
-        #     f"total_bytes={bytes_per_slot * len(self._slots)} "
-        #     f"specs=[{self._format_specs(specs)}]"
-        # )
 
     def acquire(
         self,
         *,
-        specs: Tuple[_NoSyncSymmLeaseTensorSpec, ...],
+        specs: tuple[_NoSyncSymmLeaseTensorSpec, ...],
         owner: str,
     ) -> _NoSyncSymmLease:
         self._maybe_freeze_after_dry_run()
@@ -358,11 +292,6 @@ class _NoSyncSymmLeasePool:
         self._ensure_slot(slot_idx, specs)
         self._in_use_slots.add(slot_idx)
         self.high_water = max(self.high_water, len(self._in_use_slots))
-        # self._debug_print(
-        #     f"acquire owner={owner} slot={slot_idx} "
-        #     f"in_use={len(self._in_use_slots)} high_water={self.high_water} "
-        #     f"slots={len(self._slots)} free={len(self._free_slots)}"
-        # )
         slot = self._slots[slot_idx]
         tensors = {
             spec.name: _view_cached_symm_tensor(slot[spec.name], spec.shape) for spec in specs
@@ -377,11 +306,6 @@ class _NoSyncSymmLeasePool:
             )
         self._in_use_slots.remove(slot_idx)
         self._free_slots.append(slot_idx)
-        # self._debug_print(
-        #     f"release slot={slot_idx} in_use={len(self._in_use_slots)} "
-        #     f"high_water={self.high_water} slots={len(self._slots)} "
-        #     f"free={len(self._free_slots)}"
-        # )
 
     def iter_tensors(self) -> Iterator[torch.Tensor]:
         for slot in self._slots:
@@ -417,7 +341,7 @@ class _NoSyncStageAState:
     mixed_shared_out: Optional[torch.Tensor]
     shared_done_event: Optional[torch.cuda.Event]
     local_x_global_routed_expert_weights: torch.Tensor
-    routed_expert_router_aux_loss_info: Optional[Tuple[object, ...]]
+    routed_expert_router_aux_loss_info: Optional[tuple[object, ...]]
     requested_splits: torch.Tensor
     allowed_splits: torch.Tensor
     recv_splits_by_src_local: torch.Tensor
@@ -464,7 +388,7 @@ class _NoSyncSymmSharedPool:
         *,
         slot_idx: int,
         name: str,
-        shape: Tuple[int, ...],
+        shape: tuple[int, ...],
         dtype: torch.dtype,
         device: torch.device,
     ) -> torch.Tensor:
@@ -477,10 +401,6 @@ class _NoSyncSymmSharedPool:
             cached, shape, dtype, device
         )
         # cache_state = "alloc" if needs_realloc else "cached"
-        # _tbo_buffer_debug_print(
-        #     f"shared_slot:{cache_state}:enter slot={slot_idx} name={name} "
-        #     f"shape={shape} dtype={dtype} device={device}"
-        # )
         if needs_realloc:
             symm_tensor = _alloc_ep_symm_tensor(
                 shape=shape,
@@ -489,10 +409,6 @@ class _NoSyncSymmSharedPool:
                 group=self.group,
             )
             slot_cache[name] = symm_tensor
-        # _tbo_buffer_debug_print(
-        #     f"shared_slot:{cache_state}:exit slot={slot_idx} name={name} "
-        #     f"cached_shape={tuple(slot_cache[name].shape)} return_shape={shape}"
-        # )
         return _view_cached_symm_tensor(slot_cache[name], shape)
 
     def get_slot(
@@ -631,7 +547,7 @@ class _NoSyncSymmSharedPool:
         d_model: int,
         block_size: int,
         device: torch.device,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         if slot_idx < 0 or slot_idx >= self.num_slots:
             raise ValueError(f"slot_idx must be in [0, {self.num_slots - 1}] (got {slot_idx})")
         if d_model % block_size != 0:
@@ -663,7 +579,7 @@ class _NoSyncSymmSharedPool:
         d_model: int,
         block_size: int,
         device: torch.device,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         if slot_idx < 0 or slot_idx >= self.num_slots:
             raise ValueError(f"slot_idx must be in [0, {self.num_slots - 1}] (got {slot_idx})")
         if d_model % block_size != 0:
@@ -725,7 +641,7 @@ def get_or_init_ep_no_sync_symm_tensor(
     block: "MoEFusedV2TransformerBlock",
     *,
     name: str,
-    shape: Tuple[int, ...],
+    shape: tuple[int, ...],
     dtype: torch.dtype,
     device: torch.device,
 ) -> torch.Tensor:
@@ -737,10 +653,6 @@ def get_or_init_ep_no_sync_symm_tensor(
     cached = block._ep_no_sync_symm_cache.get(name)
     needs_realloc = cached is None or not _cached_symm_tensor_covers(cached, shape, dtype, device)
     # cache_state = "alloc" if needs_realloc else "cached"
-    # _tbo_buffer_debug_print(
-    #     f"block_cache:{cache_state}:enter block={block.block_idx} name={name} "
-    #     f"shape={shape} dtype={dtype} device={device}"
-    # )
     if needs_realloc:
         try:
             symm_tensor = _alloc_ep_symm_tensor(
@@ -756,10 +668,6 @@ def get_or_init_ep_no_sync_symm_tensor(
             ) from e
         block._ep_no_sync_symm_cache[name] = symm_tensor
 
-    # _tbo_buffer_debug_print(
-    #     f"block_cache:{cache_state}:exit block={block.block_idx} name={name} "
-    #     f"cached_shape={tuple(block._ep_no_sync_symm_cache[name].shape)} return_shape={shape}"
-    # )
     return _view_cached_symm_tensor(block._ep_no_sync_symm_cache[name], shape)
 
 
@@ -804,7 +712,7 @@ def _bf16_dispatch_out_specs(
     d_model: int,
     dtype: torch.dtype,
     device: torch.device,
-) -> Tuple[_NoSyncSymmLeaseTensorSpec, ...]:
+) -> tuple[_NoSyncSymmLeaseTensorSpec, ...]:
     return (
         _NoSyncSymmLeaseTensorSpec(
             name="dispatch_out",
@@ -821,7 +729,7 @@ def _bf16_combine_out_specs(
     d_model: int,
     dtype: torch.dtype,
     device: torch.device,
-) -> Tuple[_NoSyncSymmLeaseTensorSpec, ...]:
+) -> tuple[_NoSyncSymmLeaseTensorSpec, ...]:
     return (
         _NoSyncSymmLeaseTensorSpec(
             name="combine_out",
@@ -839,7 +747,7 @@ def _bf16_combine_gather_specs(
     d_model: int,
     dtype: torch.dtype,
     device: torch.device,
-) -> Tuple[_NoSyncSymmLeaseTensorSpec, ...]:
+) -> tuple[_NoSyncSymmLeaseTensorSpec, ...]:
     if combine_gather_cap <= 0 or combine_gather_top_k <= 0:
         raise RuntimeError(
             "combine_gather_cap and combine_gather_top_k must be positive "
@@ -861,7 +769,7 @@ def _fp8_dispatch_out_specs(
     d_model: int,
     block_size: int,
     device: torch.device,
-) -> Tuple[_NoSyncSymmLeaseTensorSpec, ...]:
+) -> tuple[_NoSyncSymmLeaseTensorSpec, ...]:
     if d_model % block_size != 0:
         raise RuntimeError(
             "Rowwise FP8 requires hidden dim divisible by block_size: "
@@ -1264,7 +1172,7 @@ def _ep_no_sync_buffers_cache_key(
     need_combine_gather: bool,
     combine_gather_cap: int,
     combine_gather_top_k: int,
-) -> Tuple[object, ...]:
+) -> tuple[object, ...]:
     return (
         int(dispatch_in_cap),
         int(dispatch_out_cap),
@@ -1305,7 +1213,7 @@ def _ep_no_sync_fp8_buffers_cache_key(
     block_size: int,
     device: torch.device,
     need_dispatch_out: bool,
-) -> Tuple[object, ...]:
+) -> tuple[object, ...]:
     return (
         int(dispatch_out_cap),
         int(combine_in_cap),
@@ -1503,14 +1411,6 @@ def get_ep_no_sync_buffers(
     resolved_slot_idx = block._ep_no_sync_shared_slot if slot_idx is None else slot_idx
     name_suffix = f"_slot{resolved_slot_idx}" if slot_idx is not None else ""
     chunk_reorder_backend = resolve_ep_no_sync_chunk_reorder_backend()
-    # _tbo_buffer_debug_print(
-    #     f"get_buffers:enter block={block.block_idx} slot={resolved_slot_idx} "
-    #     f"suffix={name_suffix or '<none>'} shared_pool={block._ep_no_sync_shared_pool is not None} "
-    #     f"need_dispatch_in={need_dispatch_in} need_dispatch_meta={need_dispatch_meta} "
-    #     f"need_dispatch_out={need_dispatch_out} need_combine_in={need_combine_in} "
-    #     f"need_combine_meta={need_combine_meta} need_combine_out={need_combine_out} "
-    #     f"need_combine_gather={need_combine_gather}"
-    # )
     if block._ep_no_sync_shared_pool is not None:
         if chunk_reorder_backend == "te":
             if not block._ep_no_sync_te_backend_warned:
@@ -1522,9 +1422,6 @@ def get_ep_no_sync_buffers(
                 )
                 block._ep_no_sync_te_backend_warned = True
         else:
-            # _tbo_buffer_debug_print(
-            #     f"get_buffers:shared_slot-enter block={block.block_idx} slot={resolved_slot_idx}"
-            # )
             transient_slot = block._ep_no_sync_shared_pool.get_slot(
                 slot_idx=resolved_slot_idx,
                 dispatch_in_cap=dispatch_in_cap,
@@ -1550,9 +1447,6 @@ def get_ep_no_sync_buffers(
                 device=device,
                 ep_world_size=ep_world_size,
             )
-            # _tbo_buffer_debug_print(
-            #     f"get_buffers:shared_slot-exit block={block.block_idx} slot={resolved_slot_idx}"
-            # )
     empty_data = torch.empty((0,), dtype=dtype, device=device)
     empty_i64 = torch.empty((0,), dtype=torch.int64, device=device)
 
@@ -1759,7 +1653,6 @@ def get_ep_no_sync_buffers(
         combine_gather = empty_data
         combine_gather_lease = None
 
-    # _tbo_buffer_debug_print(f"get_buffers:exit block={block.block_idx} slot={resolved_slot_idx}")
     buffers = _NoSyncSymmBuffers(
         dispatch_in=dispatch_in,
         dispatch_in_rank_splits=dispatch_in_rank_splits,
