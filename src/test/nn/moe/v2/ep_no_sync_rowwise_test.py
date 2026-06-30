@@ -9,7 +9,11 @@ from olmo_core.nn.moe import MoERouterGatingFunction
 from olmo_core.nn.moe.v2.block import MoEFusedV2TransformerBlock
 from olmo_core.nn.moe.v2.routed_experts import RoutedExpertsConfig
 from olmo_core.nn.moe.v2.router import MoERouterConfigV2
-from olmo_core.testing import requires_multi_gpu, run_distributed_test
+from olmo_core.testing import (
+    requires_multi_gpu,
+    requires_symm_mem_vdev2d,
+    run_distributed_test,
+)
 
 
 def _build_ep_mesh() -> DeviceMesh:
@@ -164,6 +168,7 @@ def _run_rowwise_ep_dropless_matches_no_ep():
 
 
 @requires_multi_gpu
+@requires_symm_mem_vdev2d
 def test_v2_rowwise_ep_dropless_matches_no_ep():
     run_distributed_test(
         _run_rowwise_ep_dropless_matches_no_ep,
