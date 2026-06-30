@@ -60,7 +60,7 @@ def variant_from_run_name(run_name: str) -> str:
 
 
 def build_eval_launch_config(
-    *, run_name, task, variant, cluster, step, ckpt, max_test, max_length, batch_size, priority
+    *, run_name, task, variant, cluster, step, ckpt, results_dir, max_test, max_length, batch_size, priority
 ):
     root_dir = get_root_dir(cluster)  # e.g. /weka/oe-training-default/ai2-llm (mounts weka bucket)
     bundle = f"{root_dir}/checkpoints/prasanns/_eval_bundle"
@@ -70,6 +70,7 @@ def build_eval_launch_config(
     # can drive its own 8-way `torchrun`. cmd[0]="bash" => not auto-prefixed with `python`.
     inner = (
         f"RUN={run_name} TASK={task} VARIANT={variant} STEP='{step}' CKPT='{ckpt}' "
+        f"EVAL_OUT_DIR='{results_dir}' "
         f"MAX_TEST={max_test} MAX_LENGTH={max_length} BATCH_SIZE={batch_size} NGPU=8 "
         f"WEKA_LLM={root_dir} bash {runner}"
     )
@@ -107,6 +108,9 @@ def main():
                     help="ABSOLUTE weka step dir to eval ANY checkpoint, e.g. "
                          "/weka/oe-training-default/ai2-llm/checkpoints/<you>/<run>/step1234 . "
                          "Overrides run_name globbing (run_name is then just a results label).")
+    ap.add_argument("--results-dir", default="",
+                    help="ABSOLUTE weka dir for the per-task result JSONs "
+                         "(default: checkpoints/prasanns/<run_name>/eval).")
     ap.add_argument("--max-test", type=int, default=600)
     ap.add_argument("--max-length", type=int, default=40960)
     ap.add_argument("--batch-size", type=int, default=8)
@@ -130,7 +134,8 @@ def main():
             continue
         lc = build_eval_launch_config(
             run_name=args.run_name, task=task, variant=variant, cluster=args.cluster,
-            step=args.step, ckpt=args.ckpt, max_test=args.max_test, max_length=args.max_length,
+            step=args.step, ckpt=args.ckpt, results_dir=args.results_dir,
+            max_test=args.max_test, max_length=args.max_length,
             batch_size=args.batch_size, priority=args.priority,
         )
         print(f"\n--- [{task}] {lc.name} ---")

@@ -41,6 +41,7 @@ python src/scripts/train/sft/singletask_ladder/run_q4b_beaker_multirung_eval.py 
 | `ai2/jupiter` (positional) | a **weka-mounting** Beaker cluster with free 8-GPU slots (jupiter, neptune, …) |
 | `--variant` | your architecture. `dense/landmark/compressive` use the standard native eval (model built from the checkpoint's `config.json`); `docchunk` uses the doc-chunked eval (**oolong only**) |
 | `--ckpt` | **absolute weka path to your step dir** — this is what makes it work for any checkpoint |
+| `--results-dir` | absolute weka dir for the result JSONs (default: `checkpoints/prasanns/<my-eval-label>/eval`) — point it anywhere on weka, e.g. next to your checkpoint |
 | `--task` | `all` (one Beaker job per task) or a comma list, e.g. `--task contra,nq` |
 | `--dry-run` | print the jobs without submitting |
 | `--max-test` | examples per rung (default **600**); `--batch-size` (default 8); `--priority` |
@@ -66,8 +67,10 @@ Re-running is safe (idempotent; results overwrite).
 
 ## 3b. Where results land (on weka)
 
-- per task: `checkpoints/prasanns/<my-eval-label>/eval/<task>_multirung.json`
-- central collection: `checkpoints/prasanns/_eval_results/<my-eval-label>_<task>_*.json`
+- per task: `<results-dir>/<task>_multirung.json` — `<results-dir>` defaults to
+  `checkpoints/prasanns/<my-eval-label>/eval`, override with `--results-dir <abs weka dir>`
+  (e.g. point it next to your own checkpoint).
+- central collection (always): `checkpoints/prasanns/_eval_results/<my-eval-label>_<task>_*.json`
 
 Read them on a weka-mounted node, or via `AWS_PROFILE=S3 aws s3 cp s3://ai2-llm/checkpoints/prasanns/_eval_results/...`.
 

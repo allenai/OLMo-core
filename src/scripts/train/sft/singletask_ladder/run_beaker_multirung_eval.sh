@@ -38,11 +38,14 @@ BUNDLE="${BUNDLE:-$PRASANNS/_eval_bundle}"
 EVAL500="${EVAL500:-$PRASANNS/_eval_bundle_eval500}"
 RESULTS="${RESULTS:-$PRASANNS/_eval_results}"
 RUN_DIR="$PRASANNS/$RUN"
+# Where the per-task result JSONs land. Default = the run's own eval/ dir under prasanns/<RUN>.
+# Override via the launcher's --results-dir (forwarded as EVAL_OUT_DIR) to write anywhere on weka.
+EVAL_OUT_DIR="${EVAL_OUT_DIR:-$RUN_DIR/eval}"
 
 export PYTHONPATH="$BUNDLE:${PYTHONPATH:-}"   # so `import scripts.eval...` resolves (olmo_core is pip -e)
 export EVAL500_ROOT="$EVAL500"                # eval_lc_native.py reads the _600/_500 rungs from here
 export TOKENIZERS_PARALLELISM=false PYTHONUNBUFFERED=1
-mkdir -p "$RUN_DIR/eval" "$RESULTS"
+mkdir -p "$EVAL_OUT_DIR" "$RESULTS"
 
 echo "=== BEAKER multirung eval | host=$(hostname) RUN=$RUN TASK=$TASK VARIANT=$VARIANT NGPU=$NGPU START=$(date -u '+%F %T')Z ==="
 echo "    BUNDLE=$BUNDLE"
@@ -84,7 +87,7 @@ if [ "$VARIANT" = "docchunk" ]; then
   for rung in 1024 2048 4096 8192 16384 32768; do
     DF="$BUNDLE/data/oolong_test_synth_ctx${rung}_spliteval.jsonl"
     [ -f "$DF" ] || { echo "[docchunk oolong ctx$rung] MISSING $DF, skipping"; continue; }
-    O="$RUN_DIR/eval/oolong_docchunk_${rung}.json"
+    O="$EVAL_OUT_DIR/oolong_docchunk_${rung}.json"
     echo "=== docchunk oolong ctx$rung -> $O ==="
     torchrun --nproc_per_node="$NGPU" --master_port="$PORT" scripts/eval/eval_lc_native_docchunk.py \
       --variant dense --model-path "$CKPT" --out "$O" --tokenizer "$TOKENIZER" \
@@ -102,7 +105,7 @@ if [ "$TASK" = "rerank" ]; then
               "16k:data/msmarco_trainhn_eval_k100_500.jsonl"; do
     r="${pair%%:*}"; CEF="${pair#*:}"
     [ -f "$BUNDLE/$CEF" ] || { echo "[rerank CE @${r}] MISSING $CEF, skipping"; continue; }
-    O="$RUN_DIR/eval/rerank_ce_${r}.json"
+    O="$EVAL_OUT_DIR/rerank_ce_${r}.json"
     echo "=== rerank CE @${r} ($CEF) -> $O ==="
     $TR --model-path "$CKPT" --out "$O" --tokenizer "$TOKENIZER" --max-length "$MAX_LENGTH" \
         --root "$BUNDLE" --max-test-samples "$MAX_TEST" --batch-size "$BATCH_SIZE" --skip-ruler --skip-gen \
@@ -120,7 +123,7 @@ case "$TASK" in
   oolong)  RUNGS="8k,16k,32k";    LTASK=oolong;        EXTRA="" ;;
   *) echo "ERROR unknown TASK=$TASK"; exit 2 ;;
 esac
-OUT="$RUN_DIR/eval/${TASK}_multirung.json"
+OUT="$EVAL_OUT_DIR/${TASK}_multirung.json"
 echo "=== EVAL $TASK rungs=$RUNGS -> $OUT ($(date -u '+%T')Z) ==="
 $TR --model-path "$CKPT" --out "$OUT" --tokenizer "$TOKENIZER" --max-length "$MAX_LENGTH" \
     --root "$BUNDLE" --max-test-samples "$MAX_TEST" --batch-size "$BATCH_SIZE" --skip-ruler --skip-gen \
