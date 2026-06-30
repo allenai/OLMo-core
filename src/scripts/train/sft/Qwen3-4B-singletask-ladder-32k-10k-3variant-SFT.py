@@ -89,9 +89,9 @@ SUBSAMPLE_SEED = 7411
 DATA_ROOT = "/weka/oe-training-default/ai2-llm/checkpoints/prasanns/single_task_ladders_v2"
 _AMANDAB = "/weka/oe-training-default/ai2-llm/checkpoints/amandab"
 BASE_CHECKPOINTS = {
-    "dense": f"{_AMANDAB}/q4b-dense-dolma3longmino/step2385/model_and_optim",
-    "landmark": f"{_AMANDAB}/q4b-fast-landmark-dolma3longmino/step2385/model_and_optim",
-    "compressive": f"{_AMANDAB}/q4b-base-fast-compressive-landmark-8node/step2385/model_and_optim",
+    "dense": f"{_AMANDAB}/q4b-base-dense-lr1.1e-4/step2385/model_and_optim",
+    "landmark": f"{_AMANDAB}/q4b-base-fast-landmark-lr1p1e-4/step2385/model_and_optim",
+    "compressive": f"{_AMANDAB}/qwen4b-base-compressive-lr1.1e-4/step2385/model_and_optim",
 }
 
 _TASK_DIR = {"contra": "contradiction", "nq": "nq", "oolong": "oolong",
