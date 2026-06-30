@@ -4,10 +4,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-try:
-    import nvtx
-except ImportError:
-    from olmo_core._nvtx import nvtx
+from ._nvtx import annotate
 
 from olmo_core.config import Config, DType
 
@@ -120,7 +117,7 @@ class SharedExperts(nn.Module):
                 "SharedExperts bf16 fallback cannot run after fp8-only anchor storage has been released"
             )
 
-    @nvtx.annotate("SharedExperts.forward", color="pink")
+    @annotate("SharedExperts.forward", "experts")
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         x: (B, S, D) -> out: (E, B, S, D)
@@ -154,7 +151,7 @@ class SharedExperts(nn.Module):
 
         return out.view(E, B, S, D)
 
-    @nvtx.annotate("SharedExperts.forward1", color="purple")
+    @annotate("SharedExperts.forward1", "experts")
     def forward1(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Split the forward pass into two parts for better overlap in EP.
@@ -177,7 +174,7 @@ class SharedExperts(nn.Module):
 
         return up, gate
 
-    @nvtx.annotate("SharedExperts.forward2", color="purple")
+    @annotate("SharedExperts.forward2", "experts")
     def forward2(self, up: torch.Tensor, gate: torch.Tensor, xshape: torch.Size) -> torch.Tensor:
         """
         Split the forward pass into two parts for better overlap in EP.

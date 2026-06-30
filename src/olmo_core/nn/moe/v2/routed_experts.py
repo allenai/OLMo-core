@@ -35,10 +35,7 @@ import weakref
 from dataclasses import dataclass
 from typing import Iterator, Optional, cast
 
-try:
-    import nvtx
-except ImportError:
-    from olmo_core._nvtx import nvtx
+from ._nvtx import annotate
 
 import torch
 import torch.nn as nn
@@ -721,7 +718,7 @@ class RoutedExperts(nn.Module):
         return cast(torch.Tensor, down)
 
     # @torch.compiler.disable(recursive=False)
-    @nvtx.annotate("RoutedExperts.forward", color="blue")
+    @annotate("RoutedExperts.forward", "experts")
     def forward(
         self,
         x: torch.Tensor,

@@ -9,10 +9,7 @@ from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.tensor import Replicate, Shard, distribute_tensor
 from torch.distributed.tensor.parallel import PrepareModuleInput, parallelize_module
 
-try:
-    import nvtx
-except ImportError:
-    from olmo_core._nvtx import nvtx
+from ._nvtx import annotate
 
 import olmo_core.ops.moe as ops
 from olmo_core.config import Config, DType
@@ -345,7 +342,7 @@ class MoERouterV2(nn.Module):
             noise = torch.rand_like(x)
             return x * (low + noise * (high - low))
 
-    @nvtx.annotate("MoERouter.get_top_k", color="blue")
+    @annotate("MoERouter.get_top_k", "routing")
     def get_top_k(self, scores: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         expert_weights: torch.Tensor
         expert_indices: torch.Tensor
@@ -452,7 +449,7 @@ class MoERouterV2(nn.Module):
         logits = torch.round(logits.float() * q) / q
         return logits
 
-    @nvtx.annotate("MoERouter.forward", color="blue")
+    @annotate("MoERouter.forward", "routing")
     def forward(
         self,
         x: torch.Tensor,
@@ -582,7 +579,7 @@ class MoERouterV2(nn.Module):
         )
         return expert_weights, expert_indices, batch_size_per_expert, aux_loss_info
 
-    @nvtx.annotate("MoERouter.compute_aux_loss")
+    @annotate("MoERouter.compute_aux_loss", "routing")
     def compute_aux_loss(
         self,
         scores,

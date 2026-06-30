@@ -5,10 +5,7 @@ from typing import TYPE_CHECKING, Optional, cast
 import torch
 import torch.distributed as dist
 
-try:
-    import nvtx
-except ImportError:
-    from olmo_core._nvtx import nvtx
+from ._nvtx import annotate
 
 from olmo_core.distributed.utils import get_rank
 
@@ -21,7 +18,7 @@ if TYPE_CHECKING:
     from .block import MoEFusedV2TransformerBlock
 
 
-@nvtx.annotate("build_keep_reorder")
+@annotate("build_keep_reorder", "comm")
 def build_keep_reorder(
     requested_splits: torch.Tensor,
     keep_splits: torch.Tensor,
@@ -75,7 +72,7 @@ def build_keep_reorder(
     return reorder_indices, inverse_reorder_indices, packed_keep_mask
 
 
-@nvtx.annotate("SyncTokenCount", color="green")
+@annotate("sync_tail_drop_allowed_splits_single_a2a", "comm")
 def sync_tail_drop_allowed_splits_single_a2a(
     block: MoEFusedV2TransformerBlock,
     requested_splits: torch.Tensor,
@@ -163,7 +160,7 @@ def sync_tail_drop_allowed_splits_single_a2a(
     )
 
 
-@nvtx.annotate("restore_drop_unpermute_1d")
+@annotate("restore_drop_unpermute_1d", "comm")
 def restore_drop_unpermute_1d(
     block: MoEFusedV2TransformerBlock,
     *,
@@ -211,7 +208,7 @@ def restore_drop_unpermute_1d(
         if row_id_map_is_packed:
             restored_local_x = combine_out
         else:
-            with nvtx.annotate("RestoreDrop", color="green"):
+            with annotate("restore_drop", "comm"):
                 restored_local_x = combine_out.index_select(
                     0,
                     local_inverse_reorder_indices,
