@@ -76,24 +76,26 @@ Read them on a weka-mounted node, or via `AWS_PROFILE=S3 aws s3 cp s3://ai2-llm/
 
 ---
 
-## 4. One-time setup: the eval bundle on weka
+## 4. Setup: eval CODE (in-repo) + eval DATA (on weka)
 
-The eval **code + data** live in a bundle on weka:
-`checkpoints/prasanns/_eval_bundle` (corpus-reasoning `scripts/` + `data/`) and
-`_eval_bundle_eval500` (the goal-rung ladder files). The on-node runner
-`run_beaker_multirung_eval.sh` is served from there too.
+**Code** lives in the repo: `src/scripts/ctc_eval/` — a self-contained `ctc_eval` package (ported from
+corpus-reasoning, pyserini/vllm made lazy). The Beaker job clones OLMo-core, so the eval code is
+**version-controlled and always current** — read/modify it directly in the repo; there is no code bundle
+to refresh.
 
-If the bundle is missing or you changed eval code:
+**Data** lives on weka (it changes rarely): the test sets + ladder files under
+`checkpoints/prasanns/_eval_bundle/data`, and the goal-rung files under `_eval_bundle_eval500`. The
+runner reads them via `--root` + `EVAL500_ROOT`.
+
+⚠️ **s3 does not auto-populate the weka filesystem.** If the eval data isn't on weka yet (or you added
+new test sets), push to s3 then stage it onto weka:
 
 ```bash
-bash src/scripts/train/sft/singletask_ladder/upload_lc_eval_bundle.sh    # push code+data+runner to s3
+bash src/scripts/train/sft/singletask_ladder/upload_lc_eval_bundle.sh    # push data to s3
+# then a one-off gantry job: aws s3 sync s3://ai2-llm/checkpoints/prasanns/_eval_bundle{,_eval500}
+#   -> /weka/oe-training-default/ai2-llm/checkpoints/prasanns/_eval_bundle{,_eval500}
+#   (creds from the PRASANNS_AWS_* beaker secrets; see README.md + the weka-s3-checkpoint-transfer note)
 ```
-
-> ⚠️ **Staging gotcha:** that uploads to `s3://ai2-llm`, and **s3 does not auto-populate the weka
-> filesystem**. To make a fresh/updated bundle visible on `/weka`, run a one-off gantry
-> `aws s3 sync s3→/weka` job (creds from the `PRASANNS_AWS_*` beaker secrets — same step we use to
-> stage training data; see `README.md` and the `weka-s3-checkpoint-transfer` note). The existing
-> bundle is already on weka, so you only need this if you refreshed the bundle.
 
 ---
 
@@ -106,10 +108,11 @@ launch_beaker_multirung_eval.sh        # driver: loop over variants×tasks (our 
 run_q4b_beaker_multirung_eval.py       # gantry launcher: 1 Beaker job per (label, task)
         │   mounts weka, 8 GPUs, torchrun=False, image=OLMoCoreBeakerImage.stable
         ▼
-run_beaker_multirung_eval.sh           # on-node runner (lives in the weka bundle)
+run_beaker_multirung_eval.sh           # on-node runner (IN-REPO; gantry clones it)
         │   resolves CKPT (your --ckpt > --step > latest-complete glob)
+        │   PYTHONPATH=repo/src/scripts (ctc_eval) ; DATA via --root=weka bundle + EVAL500_ROOT
         ▼
-torchrun --nproc_per_node=8 scripts/eval/eval_lc_native.py   # native, 8-way DP, per rung
+torchrun --nproc_per_node=8 src/scripts/ctc_eval/eval/eval_lc_native.py   # native, 8-way DP, per rung
 ```
 
 Notes:

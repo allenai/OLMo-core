@@ -42,8 +42,9 @@ RUN_DIR="$PRASANNS/$RUN"
 # Override via the launcher's --results-dir (forwarded as EVAL_OUT_DIR) to write anywhere on weka.
 EVAL_OUT_DIR="${EVAL_OUT_DIR:-$RUN_DIR/eval}"
 
-export PYTHONPATH="$BUNDLE:${PYTHONPATH:-}"   # so `import scripts.eval...` resolves (olmo_core is pip -e)
-export EVAL500_ROOT="$EVAL500"                # eval_lc_native.py reads the _600/_500 rungs from here
+REPO="${REPO:-$PWD}"                          # cloned OLMo-core repo (gantry cwd); eval CODE = in-repo ctc_eval
+export PYTHONPATH="$REPO/src/scripts:$REPO/src:${PYTHONPATH:-}"   # so `import ctc_eval...` resolves (olmo_core also pip -e)
+export EVAL500_ROOT="$EVAL500"                # eval_lc_native.py reads the _600/_500 rungs from here (weka data)
 export TOKENIZERS_PARALLELISM=false PYTHONUNBUFFERED=1
 mkdir -p "$EVAL_OUT_DIR" "$RESULTS"
 
@@ -74,9 +75,9 @@ echo "    CKPT=$CKPT"
 # ---- make sure the rerank/outlier metric deps are importable (lazy scipy/sklearn) ----
 python -c "import scipy, sklearn" 2>/dev/null || pip install --quiet scipy scikit-learn || true
 
-cd "$BUNDLE"
+cd "$REPO"   # CODE is in-repo (ctc_eval); DATA comes from weka via --root "$BUNDLE" + EVAL500_ROOT
 PORT=$(( 20000 + RANDOM % 20000 ))
-TR="torchrun --nproc_per_node=$NGPU --master_port=$PORT scripts/eval/eval_lc_native.py"
+TR="torchrun --nproc_per_node=$NGPU --master_port=$PORT src/scripts/ctc_eval/eval/eval_lc_native.py"
 
 # ---- docchunk: box-marker prefill eval; only OOLONG is wired (eval_lc_native_docchunk.py) ----
 if [ "$VARIANT" = "docchunk" ]; then
@@ -89,7 +90,7 @@ if [ "$VARIANT" = "docchunk" ]; then
     [ -f "$DF" ] || { echo "[docchunk oolong ctx$rung] MISSING $DF, skipping"; continue; }
     O="$EVAL_OUT_DIR/oolong_docchunk_${rung}.json"
     echo "=== docchunk oolong ctx$rung -> $O ==="
-    torchrun --nproc_per_node="$NGPU" --master_port="$PORT" scripts/eval/eval_lc_native_docchunk.py \
+    torchrun --nproc_per_node="$NGPU" --master_port="$PORT" src/scripts/ctc_eval/eval/eval_lc_native_docchunk.py \
       --variant dense --model-path "$CKPT" --out "$O" --tokenizer "$TOKENIZER" \
       --oolong-data "$DF" --max-test-samples "$MAX_TEST" --max-length "$MAX_LENGTH" --mem-freq 63 || rc=$?
     [ -f "$O" ] && cp "$O" "$RESULTS/${RUN}_oolong_docchunk_${rung}.json" 2>/dev/null || true

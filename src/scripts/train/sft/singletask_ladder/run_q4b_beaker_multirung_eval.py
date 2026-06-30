@@ -63,8 +63,9 @@ def build_eval_launch_config(
     *, run_name, task, variant, cluster, step, ckpt, results_dir, max_test, max_length, batch_size, priority
 ):
     root_dir = get_root_dir(cluster)  # e.g. /weka/oe-training-default/ai2-llm (mounts weka bucket)
-    bundle = f"{root_dir}/checkpoints/prasanns/_eval_bundle"
-    runner = f"{bundle}/run_beaker_multirung_eval.sh"
+    # Eval CODE now ships IN the cloned repo (src/scripts/ctc_eval); the runner runs from the repo root
+    # (gantry cwd). DATA still comes from weka (the runner derives BUNDLE/EVAL500 from WEKA_LLM=root_dir).
+    runner = "src/scripts/train/sft/singletask_ladder/run_beaker_multirung_eval.sh"
 
     # The on-node runner reads its inputs from env; gantry torchrun wrapping is disabled so the runner
     # can drive its own 8-way `torchrun`. cmd[0]="bash" => not auto-prefixed with `python`.
