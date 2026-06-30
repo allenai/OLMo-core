@@ -659,7 +659,8 @@ def build_data_components(
         # DataMix.OLMoE_mix_0824_dev,
         tokenizer=common.tokenizer,
         # mix_base_dir=common.root_dir,
-        mix_base_dir="s3://ai2-llm",
+        # mix_base_dir="s3://ai2-llm",  # needs AWS creds; holmes mounts weka instead
+        mix_base_dir="/weka/oe-training-default/ai2-llm",
         # mix_base_dir="/workspace/data/ai2-llm",
         work_dir=common.work_dir,
         sequence_length=common.max_sequence_length,
