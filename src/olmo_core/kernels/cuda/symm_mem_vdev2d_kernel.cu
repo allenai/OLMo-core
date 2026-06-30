@@ -1220,7 +1220,6 @@ int64_t resolve_num_row_blocks_fused(int64_t num_out_rows, int num_blocks) {
   return std::max<int64_t>(row_blocks, 1);
 }
 
-
 struct CollectiveLaunchKey {
   uintptr_t func = 0;
   unsigned int block_x = 0;
@@ -1302,6 +1301,39 @@ int query_collective_launch_max_grid(
   auto [it, inserted] = cache.emplace(key, max_grid);
   (void)inserted;
   return it->second;
+}
+
+void checked_collective_launch(
+    const char* kernel_name,
+    const void* kernel,
+    int requested_blocks,
+    dim3 block_dims,
+    void** args,
+    size_t shared_mem,
+    cudaStream_t stream) {
+  TORCH_CHECK(
+      requested_blocks > 0,
+      "collective launch requested non-positive grid for ",
+      kernel_name,
+      ": ",
+      requested_blocks);
+  int launch_status = nvshmemx_collective_launch(
+      kernel, dim3(requested_blocks), block_dims, args, shared_mem, stream);
+  TORCH_CHECK(
+      launch_status == 0,
+      "nvshmemx_collective_launch failed for ",
+      kernel_name,
+      " with status ",
+      launch_status,
+      " requested_blocks=",
+      requested_blocks,
+      " block=(",
+      block_dims.x,
+      ",",
+      block_dims.y,
+      ",",
+      block_dims.z,
+      ")");
 }
 
 std::string cu_result_string(CUresult result) {
@@ -2119,9 +2151,10 @@ void all_to_all_vdev_2d_nblocks(
       &ne,
       &input_dim0,
       &rank_is_row_in};
-  nvshmemx_collective_launch(
+  checked_collective_launch(
+      "exchangeSplitAndOffset_2d<false>",
       (const void*)exchangeSplitAndOffset_2d<false>,
-      dim3(1),
+      1,
       dim3(THREADS_PER_BLOCK),
       args0,
       0,
@@ -2152,9 +2185,10 @@ void all_to_all_vdev_2d_nblocks(
       &major_align,
       &rank_is_row_out,
       &team};
-  nvshmemx_collective_launch(
+  checked_collective_launch(
+      "allToAllV_2d",
       (const void*)allToAllV_2d,
-      dim3(num_blocks),
+      num_blocks,
       dim3(THREADS_PER_BLOCK),
       args1,
       0,
@@ -2257,9 +2291,10 @@ void all_to_all_vdev_2d_offset_nblocks(
       &ne,
       &input_dim0,
       &rank_is_row_in};
-  nvshmemx_collective_launch(
+  checked_collective_launch(
+      "exchangeSplitAndOffset_2d<true>",
       (const void*)exchangeSplitAndOffset_2d<true>,
-      dim3(1),
+      1,
       dim3(THREADS_PER_BLOCK),
       args0,
       0,
@@ -2290,9 +2325,10 @@ void all_to_all_vdev_2d_offset_nblocks(
       &major_align_val,
       &rank_is_row_out,
       &team};
-  nvshmemx_collective_launch(
+  checked_collective_launch(
+      "allToAllV_2d",
       (const void*)allToAllV_2d,
-      dim3(num_blocks),
+      num_blocks,
       dim3(THREADS_PER_BLOCK),
       args1,
       0,
@@ -2377,7 +2413,7 @@ void rowwise_dispatch_put(
     TORCH_CHECK(probs->scalar_type() == at::kFloat, "probs must be float32");
     probs_ptr = probs->data_ptr<float>();
     maybe_init_nvshmem_cumodule(
-        reinterpret_cast<const void*>(dispatchRowsPutWeighted<float>));
+        reinterpret_cast<const void*>(dispatchRowsPutWeighted<at::BFloat16>));
   } else {
     maybe_init_nvshmem_cumodule(reinterpret_cast<const void*>(dispatchRowsPut));
   }
@@ -2419,20 +2455,19 @@ void rowwise_dispatch_put(
         &team,
         &rank_to_pe_dev,
         &group_size};
-    nvshmemx_collective_launch(
+    checked_collective_launch(
+        "dispatchRowsPut",
         (const void*)dispatchRowsPut,
-        dim3(num_blocks),
+        num_blocks,
         dim3(ROWWISE_THREADS_PER_BLOCK),
         args,
         0,
         stream);
   } else {
-    AT_DISPATCH_FLOATING_TYPES_AND2(
-        at::kHalf,
-        at::kBFloat16,
+    AT_DISPATCH_SWITCH(
         input.scalar_type(),
         "dispatchRowsPutWeighted",
-        [&] {
+        AT_DISPATCH_CASE(at::kHalf, [&] {
           const scalar_t* input_typed = input.data_ptr<scalar_t>();
           scalar_t* out_typed = out.mutable_data_ptr<scalar_t>();
           void* args[] = {
@@ -2450,14 +2485,42 @@ void rowwise_dispatch_put(
               &team,
               &rank_to_pe_dev,
               &group_size};
-          nvshmemx_collective_launch(
+          checked_collective_launch(
+              "dispatchRowsPutWeighted",
               (const void*)dispatchRowsPutWeighted<scalar_t>,
-              dim3(num_blocks),
+              num_blocks,
               dim3(ROWWISE_THREADS_PER_BLOCK),
               args,
               0,
               stream);
-        });
+        })
+        AT_DISPATCH_CASE(at::kBFloat16, [&] {
+          const scalar_t* input_typed = input.data_ptr<scalar_t>();
+          scalar_t* out_typed = out.mutable_data_ptr<scalar_t>();
+          void* args[] = {
+              &input_typed,
+              &out_typed,
+              &dst_ranks_ptr,
+              &dst_rows_ptr,
+              &probs_ptr,
+              &num_input_rows,
+              &top_k,
+              &dim,
+              &input_row_stride,
+              &out_row_stride,
+              &out_capacity_rows,
+              &team,
+              &rank_to_pe_dev,
+              &group_size};
+          checked_collective_launch(
+              "dispatchRowsPutWeighted",
+              (const void*)dispatchRowsPutWeighted<scalar_t>,
+              num_blocks,
+              dim3(ROWWISE_THREADS_PER_BLOCK),
+              args,
+              0,
+              stream);
+        }));
   }
   if (post_barrier) {
     int post_barrier_status = nvshmemx_barrier_on_stream(team, stream.stream());
@@ -2731,9 +2794,10 @@ void rowwise_dispatch_put_compact(
       &team,
       &rank_to_pe_dev,
       &group_size};
-  nvshmemx_collective_launch(
+  checked_collective_launch(
+      "dispatchRowsPutCompact",
       (const void*)dispatchRowsPutCompact,
-      dim3(num_blocks),
+      num_blocks,
       dim3(ROWWISE_THREADS_PER_BLOCK),
       args,
       0,
@@ -2808,7 +2872,7 @@ void rowwise_dispatch_put_compact_weighted(
   const int* rank_to_pe_dev = olmo_group->rank_to_pe_dev;
   int group_size = olmo_group->world_size;
   maybe_init_nvshmem_cumodule(
-      reinterpret_cast<const void*>(dispatchRowsPutCompactWeighted<float>));
+      reinterpret_cast<const void*>(dispatchRowsPutCompactWeighted<at::BFloat16>));
 
   const int64_t* route_records_ptr =
       reinterpret_cast<const int64_t*>(route_records.data_ptr());
@@ -2833,12 +2897,10 @@ void rowwise_dispatch_put_compact_weighted(
         pre_barrier_status);
   }
 
-  AT_DISPATCH_FLOATING_TYPES_AND2(
-      at::kHalf,
-      at::kBFloat16,
+  AT_DISPATCH_SWITCH(
       input.scalar_type(),
       "dispatchRowsPutCompactWeighted",
-      [&] {
+      AT_DISPATCH_CASE(at::kHalf, [&] {
         const scalar_t* input_typed = input.data_ptr<scalar_t>();
         scalar_t* out_typed = out.mutable_data_ptr<scalar_t>();
         void* args[] = {
@@ -2857,14 +2919,43 @@ void rowwise_dispatch_put_compact_weighted(
             &team,
             &rank_to_pe_dev,
             &group_size};
-        nvshmemx_collective_launch(
+        checked_collective_launch(
+            "dispatchRowsPutCompactWeighted",
             (const void*)dispatchRowsPutCompactWeighted<scalar_t>,
-            dim3(num_blocks),
+            num_blocks,
             dim3(ROWWISE_THREADS_PER_BLOCK),
             args,
             0,
             stream);
-      });
+      })
+      AT_DISPATCH_CASE(at::kBFloat16, [&] {
+        const scalar_t* input_typed = input.data_ptr<scalar_t>();
+        scalar_t* out_typed = out.mutable_data_ptr<scalar_t>();
+        void* args[] = {
+            &input_typed,
+            &out_typed,
+            &route_records_ptr,
+            &wave_offsets_ptr,
+            &wave_idx,
+            &probs_ptr,
+            &top_k,
+            &dim,
+            &input_row_stride,
+            &out_row_stride,
+            &num_input_rows,
+            &out_capacity_rows,
+            &team,
+            &rank_to_pe_dev,
+            &group_size};
+        checked_collective_launch(
+            "dispatchRowsPutCompactWeighted",
+            (const void*)dispatchRowsPutCompactWeighted<scalar_t>,
+            num_blocks,
+            dim3(ROWWISE_THREADS_PER_BLOCK),
+            args,
+            0,
+            stream);
+      }));
 
   if (post_barrier) {
     int post_barrier_status = nvshmemx_barrier_on_stream(team, stream.stream());
@@ -2956,9 +3047,10 @@ void rowwise_inverse_route_meta_put_compact(
       &team,
       &rank_to_pe_dev,
       &group_size};
-  nvshmemx_collective_launch(
+  checked_collective_launch(
+      scalar_put ? "inverseRouteMetaPutCompactScalar" : "inverseRouteMetaPutCompact",
       kernel,
-      dim3(num_blocks),
+      num_blocks,
       dim3(ROWWISE_THREADS_PER_BLOCK),
       args,
       0,
@@ -3198,9 +3290,10 @@ void rowwise_combine_get(
       &team,
       &rank_to_pe_dev,
       &group_size};
-  nvshmemx_collective_launch(
+  checked_collective_launch(
+      "gatherRowsGet<true>",
       (const void*)gatherRowsGet<true>,
-      dim3(num_blocks),
+      num_blocks,
       dim3(ROWWISE_THREADS_PER_BLOCK),
       args,
       0,
@@ -3352,9 +3445,10 @@ void rowwise_combine_put(
       &team,
       &rank_to_pe_dev,
       &group_size};
-  nvshmemx_collective_launch(
+  checked_collective_launch(
+      "combineRowsPutRange",
       (const void*)combineRowsPutRange,
-      dim3(num_blocks),
+      num_blocks,
       dim3(ROWWISE_THREADS_PER_BLOCK),
       args,
       0,
@@ -3885,9 +3979,10 @@ void rowwise_gather_get(
       &team,
       &rank_to_pe_dev,
       &group_size};
-  nvshmemx_collective_launch(
+  checked_collective_launch(
+      "gatherRowsGet<false>",
       (const void*)gatherRowsGet<false>,
-      dim3(num_blocks),
+      num_blocks,
       dim3(ROWWISE_THREADS_PER_BLOCK),
       args,
       0,
