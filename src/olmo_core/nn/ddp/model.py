@@ -26,6 +26,7 @@ from olmo_core.distributed.utils import hide_from_torch, unhide_from_torch
 from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.kernels import olmo_symm_mem
+from olmo_core.kernels import symm_mem_vdev2d as symm_mem_vdev2d_kernels
 from olmo_core.utils import get_default_device, mark_dynamic, move_to_device
 from .block import OLMoDDPTransformerBlock, OLMoDDPTransformerBlockConfig
 from ..moe.v2.ep_no_sync_buffers import (
@@ -413,6 +414,10 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
             rank_capacity = compute_ep_no_sync_rank_capacity(block, num_out_tokens)
             max_rank_capacity = max(max_rank_capacity, rank_capacity)
             if block.ep.uses_rowwise_buffers:
+                if block.ep.rowwise_transport == "nvshmem" and device.type == "cuda":
+                    symm_mem_vdev2d_kernels.preflight_rowwise_collective_launches(
+                        block.ep.rowwise_nblocks
+                    )
                 rowwise_fp8_cfg = block.rowwise_fp8
                 use_rowwise_fp8 = (
                     rowwise_fp8_cfg is not None

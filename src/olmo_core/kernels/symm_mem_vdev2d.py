@@ -12,6 +12,7 @@ from .mxfp8_utils import quantize_rows_to_mxfp8, reduce_gathered_rows_from_mxfp8
 _EXTENSION_MODULE_NAME = "olmo_core.kernels._symm_mem_vdev2d_ext_gpu"
 _CUDA_EXTENSION = None
 _CUDA_EXTENSION_ERROR: Optional[Exception] = None
+_PREFLIGHTED_ROWWISE_COLLECTIVE_LAUNCHES: set[tuple[int, int]] = set()
 
 
 def _load_cuda_extension():
@@ -59,6 +60,24 @@ def nvshmem_world_barrier() -> None:
     """Enqueue an NVSHMEM_TEAM_WORLD barrier on the current CUDA stream."""
     ext = _load_cuda_extension()
     ext.olmo_symm_world_barrier()
+
+
+@torch.compiler.disable
+def preflight_rowwise_collective_launches(nblocks: int) -> None:
+    """Validate rowwise NVSHMEM collective launch grids before compiled runtime."""
+    nblocks = int(nblocks)
+    if nblocks <= 0:
+        raise ValueError(
+            "strict NVSHMEM rowwise collective preflight requires rowwise_nblocks > 0 "
+            "(0 means auto and cannot be validated before runtime)"
+        )
+    device_idx = torch.cuda.current_device()
+    key = (device_idx, nblocks)
+    if key in _PREFLIGHTED_ROWWISE_COLLECTIVE_LAUNCHES:
+        return
+    ext = _load_cuda_extension()
+    ext.preflight_rowwise_collective_launches(nblocks)
+    _PREFLIGHTED_ROWWISE_COLLECTIVE_LAUNCHES.add(key)
 
 
 @torch.compiler.disable

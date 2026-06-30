@@ -29,6 +29,7 @@ from olmo_core.kernels import (
     ScaledGroupedMMPrequantizedRHS,
 )
 from olmo_core.kernels import olmo_symm_mem
+from olmo_core.kernels import symm_mem_vdev2d as symm_mem_vdev2d_kernels
 from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.nn.fp8_weight import FP8WeightCacheSpec, FP8WeightStore
@@ -906,6 +907,10 @@ class OLMoDDPTransformerBlock(olmo_core.nn.transformer.block.TransformerBlockBas
             self._ep_symm_group_name = group_name
             if self.ep.uses_rowwise_buffers:
                 resolve_ep_no_sync_rowwise_symm_options(self)
+                if self.ep.rowwise_transport == "nvshmem":
+                    symm_mem_vdev2d_kernels.preflight_rowwise_collective_launches(
+                        self.ep.rowwise_nblocks
+                    )
             self._ep_no_sync_symm_cache.clear()
             self._ep_no_sync_static_buffer_cache.clear()
             self._ep_no_sync_rowwise_fp8_static_buffer_cache.clear()

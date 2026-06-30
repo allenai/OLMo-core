@@ -29,6 +29,8 @@ bool olmo_symm_has_group(const std::string& group_name);
 
 void olmo_symm_world_barrier();
 
+void preflight_rowwise_collective_launches(int64_t nblocks);
+
 void rowwise_signal_peers_on_stream(
     torch::Tensor& signals,
     int64_t signal_row,
@@ -220,6 +222,11 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
       "olmo_symm_world_barrier",
       &olmo_symm_world_barrier,
       "Enqueue an NVSHMEM_TEAM_WORLD barrier on the current CUDA stream for the OLMo NVSHMEM bootstrap world");
+  m.def(
+      "preflight_rowwise_collective_launches",
+      &preflight_rowwise_collective_launches,
+      "Validate OLMo rowwise NVSHMEM collective-launch grids once before runtime",
+      py::arg("nblocks"));
   m.def(
       "rowwise_signal_peers_on_stream",
       &rowwise_signal_peers_on_stream,

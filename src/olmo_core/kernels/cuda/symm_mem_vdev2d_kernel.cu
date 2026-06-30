@@ -14,6 +14,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <functional>
 #include <limits>
 #include <mutex>
 #include <optional>
@@ -1219,6 +1220,90 @@ int64_t resolve_num_row_blocks_fused(int64_t num_out_rows, int num_blocks) {
   return std::max<int64_t>(row_blocks, 1);
 }
 
+
+struct CollectiveLaunchKey {
+  uintptr_t func = 0;
+  unsigned int block_x = 0;
+  unsigned int block_y = 0;
+  unsigned int block_z = 0;
+  size_t shared_mem = 0;
+  int device_idx = -1;
+
+  bool operator==(const CollectiveLaunchKey& other) const {
+    return func == other.func && block_x == other.block_x &&
+        block_y == other.block_y && block_z == other.block_z &&
+        shared_mem == other.shared_mem && device_idx == other.device_idx;
+  }
+};
+
+struct CollectiveLaunchKeyHash {
+  size_t operator()(const CollectiveLaunchKey& key) const {
+    size_t h = std::hash<uintptr_t>{}(key.func);
+    h ^= std::hash<unsigned int>{}(key.block_x) + 0x9e3779b9 + (h << 6) + (h >> 2);
+    h ^= std::hash<unsigned int>{}(key.block_y) + 0x9e3779b9 + (h << 6) + (h >> 2);
+    h ^= std::hash<unsigned int>{}(key.block_z) + 0x9e3779b9 + (h << 6) + (h >> 2);
+    h ^= std::hash<size_t>{}(key.shared_mem) + 0x9e3779b9 + (h << 6) + (h >> 2);
+    h ^= std::hash<int>{}(key.device_idx) + 0x9e3779b9 + (h << 6) + (h >> 2);
+    return h;
+  }
+};
+
+int query_collective_launch_max_grid(
+    const char* kernel_name,
+    const void* kernel,
+    dim3 block_dims,
+    void** args,
+    size_t shared_mem) {
+  int device_idx = -1;
+  AT_CUDA_CHECK(cudaGetDevice(&device_idx));
+  CollectiveLaunchKey key{
+      reinterpret_cast<uintptr_t>(kernel),
+      block_dims.x,
+      block_dims.y,
+      block_dims.z,
+      shared_mem,
+      device_idx};
+
+  static std::mutex cache_mutex;
+  static std::unordered_map<CollectiveLaunchKey, int, CollectiveLaunchKeyHash> cache;
+  {
+    std::lock_guard<std::mutex> lock(cache_mutex);
+    auto it = cache.find(key);
+    if (it != cache.end()) {
+      return it->second;
+    }
+  }
+
+  int max_grid = 0;
+  int query_status = nvshmemx_collective_launch_query_gridsize(
+      kernel, block_dims, args, shared_mem, &max_grid);
+  TORCH_CHECK(
+      query_status == 0,
+      "nvshmemx_collective_launch_query_gridsize failed for ",
+      kernel_name,
+      " with status ",
+      query_status,
+      " block=(",
+      block_dims.x,
+      ",",
+      block_dims.y,
+      ",",
+      block_dims.z,
+      ")");
+  TORCH_CHECK(
+      max_grid > 0,
+      "nvshmemx_collective_launch_query_gridsize returned non-positive grid "
+      "for ",
+      kernel_name,
+      ": ",
+      max_grid);
+
+  std::lock_guard<std::mutex> lock(cache_mutex);
+  auto [it, inserted] = cache.emplace(key, max_grid);
+  (void)inserted;
+  return it->second;
+}
+
 std::string cu_result_string(CUresult result) {
   const char* name = nullptr;
   const char* desc = nullptr;
@@ -1266,6 +1351,317 @@ void maybe_init_nvshmem_cumodule(const void* kernel_symbol) {
 }
 
 } // namespace
+
+void preflight_rowwise_collective_launches(int64_t nblocks) {
+  TORCH_CHECK(
+      nblocks > 0,
+      "strict NVSHMEM rowwise collective preflight requires explicit "
+      "rowwise_nblocks > 0 (0 means auto and cannot be validated before "
+      "runtime)");
+  TORCH_CHECK(
+      nblocks <= std::numeric_limits<int>::max(),
+      "rowwise_nblocks is too large: ",
+      nblocks);
+  int requested_blocks = static_cast<int>(nblocks);
+
+  auto preflight = [requested_blocks](
+                       const char* kernel_name,
+                       const void* kernel,
+                       dim3 block_dims,
+                       void** args,
+                       size_t shared_mem) {
+    maybe_init_nvshmem_cumodule(kernel);
+    int max_grid =
+        query_collective_launch_max_grid(kernel_name, kernel, block_dims, args, shared_mem);
+    TORCH_CHECK(
+        requested_blocks <= max_grid,
+        "NVSHMEM rowwise collective launch preflight failed for ",
+        kernel_name,
+        ": requested rowwise_nblocks=",
+        requested_blocks,
+        " exceeds max_grid=",
+        max_grid,
+        " for block=(",
+        block_dims.x,
+        ",",
+        block_dims.y,
+        ",",
+        block_dims.z,
+        "). Lower ep.rowwise_nblocks / ROWWISE_A2A_NBLOCKS "
+        "(for the OLMoE3 testrun script, set "
+        "OLMOE3_TESTRUN_ROWWISE_NBLOCKS).");
+  };
+
+  const void* const_data_ptr = nullptr;
+  void* data_ptr = nullptr;
+  const int64_t* const_i64_ptr = nullptr;
+  int64_t* i64_ptr = nullptr;
+  const int* rank_to_pe_dev = nullptr;
+  const float* probs_ptr = nullptr;
+  const at::Half* half_input_ptr = nullptr;
+  at::Half* half_out_ptr = nullptr;
+  const at::BFloat16* bf16_input_ptr = nullptr;
+  at::BFloat16* bf16_out_ptr = nullptr;
+  nvshmem_team_t team = NVSHMEM_TEAM_WORLD;
+  size_t row_bytes = 0;
+  int64_t num_input_rows = 0;
+  int64_t num_out_rows = 0;
+  int64_t top_k = 0;
+  int64_t dim = 0;
+  int64_t input_row_stride = 0;
+  int64_t out_row_stride = 0;
+  int64_t out_capacity_rows = 0;
+  int64_t wave_idx = 0;
+  int64_t num_waves = 0;
+  int64_t src_rank = 0;
+  int64_t inverse_capacity_rows = 0;
+  int64_t expert_capacity_rows = 0;
+  int64_t gathered_capacity_rows = 0;
+  int group_size = 0;
+
+  {
+    void* args[] = {
+        &const_data_ptr,
+        &data_ptr,
+        &const_i64_ptr,
+        &const_i64_ptr,
+        &row_bytes,
+        &num_input_rows,
+        &top_k,
+        &out_capacity_rows,
+        &team,
+        &rank_to_pe_dev,
+        &group_size};
+    preflight(
+        "dispatchRowsPut",
+        (const void*)dispatchRowsPut,
+        dim3(ROWWISE_THREADS_PER_BLOCK),
+        args,
+        0);
+  }
+
+  {
+    void* args[] = {
+        &half_input_ptr,
+        &half_out_ptr,
+        &const_i64_ptr,
+        &const_i64_ptr,
+        &probs_ptr,
+        &num_input_rows,
+        &top_k,
+        &dim,
+        &input_row_stride,
+        &out_row_stride,
+        &out_capacity_rows,
+        &team,
+        &rank_to_pe_dev,
+        &group_size};
+    preflight(
+        "dispatchRowsPutWeighted<Half>",
+        (const void*)dispatchRowsPutWeighted<at::Half>,
+        dim3(ROWWISE_THREADS_PER_BLOCK),
+        args,
+        0);
+  }
+
+  {
+    void* args[] = {
+        &bf16_input_ptr,
+        &bf16_out_ptr,
+        &const_i64_ptr,
+        &const_i64_ptr,
+        &probs_ptr,
+        &num_input_rows,
+        &top_k,
+        &dim,
+        &input_row_stride,
+        &out_row_stride,
+        &out_capacity_rows,
+        &team,
+        &rank_to_pe_dev,
+        &group_size};
+    preflight(
+        "dispatchRowsPutWeighted<BFloat16>",
+        (const void*)dispatchRowsPutWeighted<at::BFloat16>,
+        dim3(ROWWISE_THREADS_PER_BLOCK),
+        args,
+        0);
+  }
+
+  {
+    void* args[] = {
+        &const_data_ptr,
+        &data_ptr,
+        &const_i64_ptr,
+        &const_i64_ptr,
+        &wave_idx,
+        &row_bytes,
+        &num_input_rows,
+        &out_capacity_rows,
+        &team,
+        &rank_to_pe_dev,
+        &group_size};
+    preflight(
+        "dispatchRowsPutCompact",
+        (const void*)dispatchRowsPutCompact,
+        dim3(ROWWISE_THREADS_PER_BLOCK),
+        args,
+        0);
+  }
+
+  {
+    void* args[] = {
+        &half_input_ptr,
+        &half_out_ptr,
+        &const_i64_ptr,
+        &const_i64_ptr,
+        &wave_idx,
+        &probs_ptr,
+        &top_k,
+        &dim,
+        &input_row_stride,
+        &out_row_stride,
+        &num_input_rows,
+        &out_capacity_rows,
+        &team,
+        &rank_to_pe_dev,
+        &group_size};
+    preflight(
+        "dispatchRowsPutCompactWeighted<Half>",
+        (const void*)dispatchRowsPutCompactWeighted<at::Half>,
+        dim3(ROWWISE_THREADS_PER_BLOCK),
+        args,
+        0);
+  }
+
+  {
+    void* args[] = {
+        &bf16_input_ptr,
+        &bf16_out_ptr,
+        &const_i64_ptr,
+        &const_i64_ptr,
+        &wave_idx,
+        &probs_ptr,
+        &top_k,
+        &dim,
+        &input_row_stride,
+        &out_row_stride,
+        &num_input_rows,
+        &out_capacity_rows,
+        &team,
+        &rank_to_pe_dev,
+        &group_size};
+    preflight(
+        "dispatchRowsPutCompactWeighted<BFloat16>",
+        (const void*)dispatchRowsPutCompactWeighted<at::BFloat16>,
+        dim3(ROWWISE_THREADS_PER_BLOCK),
+        args,
+        0);
+  }
+
+  {
+    void* args[] = {
+        &i64_ptr,
+        &const_i64_ptr,
+        &const_i64_ptr,
+        &num_waves,
+        &src_rank,
+        &inverse_capacity_rows,
+        &team,
+        &rank_to_pe_dev,
+        &group_size};
+    preflight(
+        "inverseRouteMetaPutCompact",
+        (const void*)inverseRouteMetaPutCompact,
+        dim3(ROWWISE_THREADS_PER_BLOCK),
+        args,
+        0);
+  }
+
+  {
+    void* args[] = {
+        &i64_ptr,
+        &const_i64_ptr,
+        &const_i64_ptr,
+        &num_waves,
+        &src_rank,
+        &inverse_capacity_rows,
+        &team,
+        &rank_to_pe_dev,
+        &group_size};
+    preflight(
+        "inverseRouteMetaPutCompactScalar",
+        (const void*)inverseRouteMetaPutCompactScalar,
+        dim3(ROWWISE_THREADS_PER_BLOCK),
+        args,
+        0);
+  }
+
+  {
+    void* args[] = {
+        &const_data_ptr,
+        &data_ptr,
+        &const_i64_ptr,
+        &const_i64_ptr,
+        &row_bytes,
+        &num_out_rows,
+        &top_k,
+        &expert_capacity_rows,
+        &team,
+        &rank_to_pe_dev,
+        &group_size};
+    preflight(
+        "gatherRowsGet<true>",
+        (const void*)gatherRowsGet<true>,
+        dim3(ROWWISE_THREADS_PER_BLOCK),
+        args,
+        0);
+  }
+
+  {
+    const int64_t* row_start_ptr = nullptr;
+    const int64_t* num_rows_ptr = nullptr;
+    void* args[] = {
+        &const_data_ptr,
+        &data_ptr,
+        &const_i64_ptr,
+        &row_start_ptr,
+        &num_rows_ptr,
+        &row_bytes,
+        &expert_capacity_rows,
+        &gathered_capacity_rows,
+        &team,
+        &rank_to_pe_dev,
+        &group_size};
+    preflight(
+        "combineRowsPutRange",
+        (const void*)combineRowsPutRange,
+        dim3(ROWWISE_THREADS_PER_BLOCK),
+        args,
+        0);
+  }
+
+  {
+    void* args[] = {
+        &const_data_ptr,
+        &data_ptr,
+        &const_i64_ptr,
+        &const_i64_ptr,
+        &row_bytes,
+        &num_out_rows,
+        &top_k,
+        &expert_capacity_rows,
+        &team,
+        &rank_to_pe_dev,
+        &group_size};
+    preflight(
+        "gatherRowsGet<false>",
+        (const void*)gatherRowsGet<false>,
+        dim3(ROWWISE_THREADS_PER_BLOCK),
+        args,
+        0);
+  }
+}
 
 std::vector<uint8_t> olmo_symm_get_unique_id() {
   nvshmemx_uniqueid_t unique_id;
