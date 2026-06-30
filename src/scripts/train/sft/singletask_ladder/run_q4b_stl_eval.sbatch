@@ -9,7 +9,7 @@
 # Inputs via --export (TASK + CKPT required; MAX_TEST optional):
 #   sbatch --job-name=stl-eval-contra \
 #     --export=ALL,TASK=contra,CKPT=/data/prasann/singletask_ladder_runs/q4b-dense-contra-14336val/step400 \
-#     src/scripts/train/sft/run_q4b_stl_eval.sbatch
+#     src/scripts/train/sft/singletask_ladder/run_q4b_stl_eval.sbatch
 #
 #   TASK = contra | nq | rerank | outlier | oolong
 #   CKPT = a STEP DIR (has config.json + model_and_optim/.metadata)

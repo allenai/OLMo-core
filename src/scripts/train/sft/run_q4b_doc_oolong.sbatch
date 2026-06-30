@@ -30,6 +30,10 @@ MAX_STEPS="${MAX_STEPS:-0}"                        # >0 = smoke (overrides epoch
 EVAL="${EVAL:-1}"                                  # 1 = run native OOLONG eval after training
 WANDB="${WANDB:-1}"
 NSAMP="${NSAMP:-100}"
+CROSS_DOC_MODE="${CROSS_DOC_MODE:-chunked}"        # dense variant: chunked | hierarchical_dilated
+DILATION_N="${DILATION_N:-4}"
+DILATION_M="${DILATION_M:-2}"
+BASE_CKPT="${BASE_CKPT:-}"                          # override base CPT model_and_optim dir (else launcher default)
 RUN_NAME="${RUN_NAME:-q4b-doc${VARIANT}-oolong-ctx2048}"
 SAVE_FOLDER=/data/prasann/doc_oolong_runs/$RUN_NAME
 EVAL_DATA="${EVAL_DATA:-$CR/data/oolong_test_synth_ctx2048_spliteval.jsonl}"
@@ -61,6 +65,13 @@ export PYTHONPATH="$REPO/src"
 cd "$REPO"
 DUR="--epochs $EPOCHS"; [ "$MAX_STEPS" -gt 0 ] && DUR="--max-steps $MAX_STEPS"
 WBARG=""; [ "$WANDB" != "1" ] && WBARG="--no-wandb"
+# dense-only chunked-attention pattern (eval rebuilds it from the saved config.json, so no eval arg).
+CDMARG=""
+if [ "$VARIANT" = "dense" ]; then
+  CDMARG="--cross-doc-mode $CROSS_DOC_MODE"
+  [ "$CROSS_DOC_MODE" = "hierarchical_dilated" ] && CDMARG="$CDMARG --dilation-n $DILATION_N --dilation-m $DILATION_M"
+fi
+BASEARG=""; [ -n "$BASE_CKPT" ] && BASEARG="--base-ckpt $BASE_CKPT"
 echo "=== [1/2] TRAIN $(date '+%T') ==="
 trc=1
 for attempt in 1 2 3; do
@@ -69,7 +80,7 @@ for attempt in 1 2 3; do
   torchrun --nproc_per_node="$NGPU" --master_port="$MASTER_PORT" \
     src/scripts/train/sft/Qwen3-4B-document-chunked-longctx-SFT-local.py \
     --variant "$VARIANT" --run-name "$RUN_NAME" --save-folder "$SAVE_FOLDER" \
-    --lr "$LR" --seq-len "$SEQ_LEN" $DUR $WBARG
+    --lr "$LR" --seq-len "$SEQ_LEN" $DUR $WBARG $CDMARG $BASEARG
   trc=$?; echo "train attempt $attempt rc=$trc"
   [ $trc -eq 0 ] && break
   echo "  (retrying after failure)"; sleep 10

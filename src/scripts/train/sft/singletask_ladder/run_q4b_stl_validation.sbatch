@@ -4,7 +4,7 @@
 # Data: /data/prasann/stl_20k/<task> (20k examples/task, continuous lengths <=40960).
 #
 #   sbatch --job-name=val-contra --export=ALL,TASK=contra,SEQ_LEN=14336,MAX_STEPS=1500 \
-#     src/scripts/train/sft/run_q4b_stl_validation.sbatch
+#     src/scripts/train/sft/singletask_ladder/run_q4b_stl_validation.sbatch
 #
 #SBATCH --account=site
 #SBATCH --partition=jsteinhardt
@@ -54,7 +54,7 @@ for attempt in 1 2 3; do
   MASTER_PORT=$(( 20000 + RANDOM % 20000 ))
   echo "--- train attempt $attempt (port $MASTER_PORT) $(date '+%T') ---"
   torchrun --nproc_per_node="$NGPU" --master_port="$MASTER_PORT" \
-    src/scripts/train/sft/Qwen3-4B-singletask-ladder-SFT-local.py \
+    src/scripts/train/sft/singletask_ladder/Qwen3-4B-singletask-ladder-SFT-local.py \
     --variant "$VARIANT" --task "$TASK" --data-root "$DATA_ROOT" \
     --seq-len "$SEQ_LEN" --max-steps "$MAX_STEPS" --lr "$LR" --batch-tokens "$BATCH_TOKENS" --save-interval "$SAVE_INTERVAL" \
     --run-name "$RUN_NAME" --save-folder "$SAVE_FOLDER" --wandb-group "$WBGROUP"

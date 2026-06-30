@@ -12,14 +12,14 @@
 #   * weka CPT bases present under .../checkpoints/amandab/ (dense/landmark/compressive -- see launcher).
 #
 # Usage:
-#   bash src/scripts/train/sft/launch_singletask_10k_3variant.sh                 # submit all 15
+#   bash src/scripts/train/sft/singletask_ladder/launch_singletask_10k_3variant.sh                 # submit all 15
 #   CLUSTER=ai2/jupiter bash .../launch_singletask_10k_3variant.sh               # override cluster
 #   DRY=1 bash .../launch_singletask_10k_3variant.sh                             # dry_run (no submit)
 #   TASKS="contra nq" VARIANTS="dense landmark" bash .../launch_...sh            # subset
 set -uo pipefail
 
 REPO=/accounts/projects/berkeleynlp/prasann/projects/OLMo-core
-SCRIPT=src/scripts/train/sft/Qwen3-4B-singletask-ladder-32k-10k-3variant-SFT.py
+SCRIPT=src/scripts/train/sft/singletask_ladder/Qwen3-4B-singletask-ladder-32k-10k-3variant-SFT.py
 CLUSTER="${CLUSTER:-ai2/neptune}"
 CMD="launch"; [ "${DRY:-0}" = "1" ] && CMD="dry_run"
 TASKS="${TASKS:-contra nq oolong rerank outlier}"

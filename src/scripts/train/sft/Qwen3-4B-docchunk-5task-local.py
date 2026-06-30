@@ -89,8 +89,10 @@ BASE_CKPTS = {
     "landmark": "/scratch/users/prasann/stable_bases/q4b-fast-landmark-step2385-modelonly/model_and_optim",
     "compressive": "/scratch/users/prasann/stable_bases/q4b-fast-compressive-landmark-step2385-modelonly/model_and_optim",
 }
-SAVE_ROOT = "/scratch/users/prasann/docchunk_local_runs"
-WORK_DIR = "/scratch/users/prasann/docchunk_local_runs/dataset-cache"
+# Node-local ZFS on the H200 box (/scratch is quota-full; checkpoints are ~8 GiB each). Eval runs on
+# the same node, so node-local is fine.
+SAVE_ROOT = "/data/prasann/docchunk_runs"
+WORK_DIR = "/data/prasann/docchunk_runs/dataset-cache"
 
 
 def _task_source(data_root, emit, name, doc_tok):
@@ -219,7 +221,8 @@ def build_and_fit(opts: argparse.Namespace) -> None:
             async_bookkeeping=False,
         )
         .with_callback("checkpointer", CheckpointerCallback(
-            save_interval=100000, ephemeral_save_interval=None, max_checkpoints=2, save_async=False))
+            save_interval=opts.save_interval, ephemeral_save_interval=None,
+            max_checkpoints=2, save_async=False))
         .with_callback("gpu_monitor", GPUMemoryMonitorCallback())
         .with_callback("config_saver", ConfigSaverCallback())
     )
@@ -258,6 +261,7 @@ def main() -> None:
     ap.add_argument("--lr", type=float, default=1e-5)
     ap.add_argument("--epochs", type=int, default=1)
     ap.add_argument("--max-steps", type=int, default=0, help=">0 overrides --epochs")
+    ap.add_argument("--save-interval", type=int, default=350, help="persist a checkpoint every N steps")
     ap.add_argument("--batch-tokens", type=int, default=0)
     ap.add_argument("--shard-degree", type=int, default=0)
     ap.add_argument("--no-wandb", dest="wandb", action="store_false")

@@ -12,8 +12,8 @@
 #
 # Idempotent: re-running only re-uploads changed/new objects. Needs AWS creds for s3://ai2-llm.
 #
-#   bash src/scripts/train/sft/upload_lc_eval_bundle.sh            # top-up (fast)
-#   FULL=1 bash src/scripts/train/sft/upload_lc_eval_bundle.sh     # also re-sync full scripts/ + eval500
+#   bash src/scripts/train/sft/singletask_ladder/upload_lc_eval_bundle.sh            # top-up (fast)
+#   FULL=1 bash src/scripts/train/sft/singletask_ladder/upload_lc_eval_bundle.sh     # also re-sync full scripts/ + eval500
 set -euo pipefail
 
 CR="${CR:-/scratch/users/prasann/corpus-reasoning}"
@@ -54,7 +54,7 @@ OUT_N55="$EVAL500_SRC/outlier/outlier_wiki100w_n55_k3_eval_600.jsonl"
 
 # 3. the on-node runner script.
 echo "--- runner script ---"
-aws s3 cp "$REPO/src/scripts/train/sft/run_beaker_multirung_eval.sh" "$BUNDLE/run_beaker_multirung_eval.sh"
+aws s3 cp "$REPO/src/scripts/train/sft/singletask_ladder/run_beaker_multirung_eval.sh" "$BUNDLE/run_beaker_multirung_eval.sh"
 
 # 4. eval500 ladder files (the _600/_500 rungs). Present since 2026-06-28; re-sync only on FULL.
 if [ "${FULL:-0}" = "1" ]; then

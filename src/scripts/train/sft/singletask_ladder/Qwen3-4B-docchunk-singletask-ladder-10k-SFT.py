@@ -28,7 +28,7 @@ existing per-task 5-task doc-chunked root but SHOULD be re-pointed at a freshly-
 box-marker root that matches the LATEST natural data (incl. CE-graded rerank). Confirm the root before
 launch.
 
-    PYTHONPATH=src python src/scripts/train/sft/Qwen3-4B-docchunk-singletask-ladder-10k-SFT.py \\
+    PYTHONPATH=src python src/scripts/train/sft/singletask_ladder/Qwen3-4B-docchunk-singletask-ladder-10k-SFT.py \\
         dry_run q4b-docchunk_dense-contra-ladder32k-10k ai2/neptune
 """
 
@@ -85,11 +85,16 @@ LR = 2e-5  # overnight 10k matrix LR (matches the 3-variant launcher).
 SUBSAMPLE_FACTOR = 0.5
 SUBSAMPLE_SEED = 7411
 
-# Box-marker (doc-chunked) per-task data root. SEE THE DATA REQUIREMENT in the module docstring:
-# override via env DOCCHUNK_DATA_ROOT to a single-task box-marker root matching the LATEST data.
+# Box-marker (doc-chunked) per-task data root. SEE THE DATA REQUIREMENT in the module docstring.
+# Default: the freshly-regenerated single-task box-marker root (``--emit dense``, ``--cot-mode none``,
+# seq-len 40960) matching the LATEST natural data -- contra/nq/oolong/outlier from the 20k ladder
+# sources and rerank from the CE-graded ce_gen source -- built by
+# ``src/scripts/data/convert_docchunk_singletask_v2_local.sbatch`` and uploaded to weka/s3. Each task
+# lives at ``<root>/<task>_dense/`` with balanced ``<|box_start|>``/``<|box_end|>`` markers (verified).
+# Override via env DOCCHUNK_DATA_ROOT if needed.
 DOCCHUNK_DATA_ROOT = os.environ.get(
     "DOCCHUNK_DATA_ROOT",
-    "/weka/oe-training-default/ai2-llm/checkpoints/prasanns/cptmix_docchunk_ladder40k",
+    "/weka/oe-training-default/ai2-llm/checkpoints/prasanns/single_task_docchunk_v2",
 )
 # dense doc-chunked CPT base (same step2385 checkpoint as the packed dense row).
 DENSE_BASE = (

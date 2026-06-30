@@ -26,7 +26,7 @@
 #   * weka CPT bases present under .../checkpoints/amandab/ (see launchers).
 #
 # Usage:
-#   bash src/scripts/train/sft/launch_singletask_10k_overnight.sh                    # submit all 20
+#   bash src/scripts/train/sft/singletask_ladder/launch_singletask_10k_overnight.sh                    # submit all 20
 #   DRY=1 bash .../launch_singletask_10k_overnight.sh                                # dry_run (no submit)
 #   CLUSTER=ai2/jupiter bash .../launch_singletask_10k_overnight.sh                  # override cluster
 #   VARIANTS="dense compressive landmark" bash .../launch_...sh                      # skip docchunk
@@ -35,8 +35,8 @@
 set -uo pipefail
 
 REPO=/accounts/projects/berkeleynlp/prasann/projects/OLMo-core
-SCRIPT_3V=src/scripts/train/sft/Qwen3-4B-singletask-ladder-32k-10k-3variant-SFT.py
-SCRIPT_DC=src/scripts/train/sft/Qwen3-4B-docchunk-singletask-ladder-10k-SFT.py
+SCRIPT_3V=src/scripts/train/sft/singletask_ladder/Qwen3-4B-singletask-ladder-32k-10k-3variant-SFT.py
+SCRIPT_DC=src/scripts/train/sft/singletask_ladder/Qwen3-4B-docchunk-singletask-ladder-10k-SFT.py
 CLUSTER="${CLUSTER:-ai2/jupiter}"
 CMD="launch"; [ "${DRY:-0}" = "1" ] && CMD="dry_run"
 TASKS="${TASKS:-contra nq oolong rerank outlier}"

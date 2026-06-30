@@ -11,14 +11,14 @@
 #   q4b-docchunk_dense-<task>-ladder32k-10k       for docchunk (OOLONG only)
 #
 # Usage:
-#   bash src/scripts/train/sft/launch_beaker_multirung_eval.sh                       # all variants x tasks
+#   bash src/scripts/train/sft/singletask_ladder/launch_beaker_multirung_eval.sh                       # all variants x tasks
 #   DRY=1 bash .../launch_beaker_multirung_eval.sh                                   # build, don't submit
 #   CLUSTER=ai2/jupiter bash .../launch_beaker_multirung_eval.sh                     # override cluster
 #   VARIANTS="dense compressive landmark" TASKS="contra nq" bash .../launch_...sh    # subset
 set -uo pipefail
 
 REPO="${REPO:-/accounts/projects/berkeleynlp/prasann/projects/OLMo-core}"
-LAUNCHER="$REPO/src/scripts/train/sft/run_q4b_beaker_multirung_eval.py"
+LAUNCHER="$REPO/src/scripts/train/sft/singletask_ladder/run_q4b_beaker_multirung_eval.py"
 CLUSTER="${CLUSTER:-ai2/jupiter}"
 TASKS="${TASKS:-contra nq rerank outlier oolong}"
 VARIANTS="${VARIANTS:-dense compressive landmark docchunk}"

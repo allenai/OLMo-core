@@ -24,15 +24,15 @@ Per-task rungs (matching the local driver):
 Usage::
 
     # one (run, task) -> one Beaker job; variant inferred from the run name
-    PYTHONPATH=src python src/scripts/train/sft/run_q4b_beaker_multirung_eval.py \\
+    PYTHONPATH=src python src/scripts/train/sft/singletask_ladder/run_q4b_beaker_multirung_eval.py \\
         q4b-dense-contra-ladder32k-10k ai2/neptune --task contra
 
     # all 5 tasks for a run (5 jobs)
-    PYTHONPATH=src python src/scripts/train/sft/run_q4b_beaker_multirung_eval.py \\
+    PYTHONPATH=src python src/scripts/train/sft/singletask_ladder/run_q4b_beaker_multirung_eval.py \\
         q4b-landmark-nq-ladder32k-10k ai2/neptune --task all
 
     # validate without submitting
-    PYTHONPATH=src python src/scripts/train/sft/run_q4b_beaker_multirung_eval.py \\
+    PYTHONPATH=src python src/scripts/train/sft/singletask_ladder/run_q4b_beaker_multirung_eval.py \\
         q4b-dense-contra-ladder32k-10k ai2/neptune --task contra --dry-run
 """
 

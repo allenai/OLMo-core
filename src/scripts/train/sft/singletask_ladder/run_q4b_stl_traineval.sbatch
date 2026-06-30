@@ -4,8 +4,8 @@
 # checkpoint is written to that node's LOCAL /data; eval runs on the same node; the result JSON is
 # copied back to SHARED /scratch for central collection. Submit across nodes/partitions to parallelize.
 #
-#   sbatch -p jsteinhardt --job-name=te-oolong --export=ALL,TASK=oolong src/scripts/train/sft/run_q4b_stl_traineval.sbatch
-#   sbatch -p berkeleynlp --job-name=te-outlier --export=ALL,TASK=outlier src/scripts/train/sft/run_q4b_stl_traineval.sbatch
+#   sbatch -p jsteinhardt --job-name=te-oolong --export=ALL,TASK=oolong src/scripts/train/sft/singletask_ladder/run_q4b_stl_traineval.sbatch
+#   sbatch -p berkeleynlp --job-name=te-outlier --export=ALL,TASK=outlier src/scripts/train/sft/singletask_ladder/run_q4b_stl_traineval.sbatch
 #
 #SBATCH --account=site
 #SBATCH --partition=jsteinhardt
@@ -54,7 +54,7 @@ trc=1
 for attempt in 1 2 3; do
   MP=$(( 20000 + RANDOM % 20000 )); echo "--- train attempt $attempt (port $MP) $(date '+%T') ---"
   torchrun --nproc_per_node="$NGPU" --master_port="$MP" \
-    src/scripts/train/sft/Qwen3-4B-singletask-ladder-SFT-local.py \
+    src/scripts/train/sft/singletask_ladder/Qwen3-4B-singletask-ladder-SFT-local.py \
     --variant dense --task "$TASK" --data-root "$DATA_ROOT" \
     --seq-len "$SEQ_LEN" --max-steps "$MAX_STEPS" --lr "$LR" --batch-tokens "$BATCH_TOKENS" \
     --save-interval "$SAVE_INTERVAL" --run-name "$RUN_NAME" --save-folder "$SAVE_FOLDER" --wandb-group "$WBGROUP"

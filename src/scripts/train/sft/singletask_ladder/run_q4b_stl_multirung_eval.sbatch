@@ -11,7 +11,7 @@
 #
 #   sbatch --job-name=ev-contra-dense \
 #     --export=ALL,TASK=contra,VARIANT=dense,CKPT=/data/prasann/.../q4b-dense-contra-ladder32k-10k/stepNNN \
-#     src/scripts/train/sft/run_q4b_stl_multirung_eval.sbatch
+#     src/scripts/train/sft/singletask_ladder/run_q4b_stl_multirung_eval.sbatch
 #
 #   TASK    = contra | nq | rerank | outlier | oolong
 #   VARIANT = dense | compressive | landmark | docchunk   (docchunk currently evals OOLONG only)

@@ -26,9 +26,9 @@ Data (weka): per-task ladder shards under
 ``factor=SUBSAMPLE_FACTOR`` (=0.5), which deterministically samples whole documents down to ~50% of
 the source's tokens (~10k of the 20k examples). Edit ``SUBSAMPLE_FACTOR`` below to change the fraction.
 
-    PYTHONPATH=src python src/scripts/train/sft/Qwen3-4B-singletask-ladder-32k-10k-3variant-SFT.py \\
+    PYTHONPATH=src python src/scripts/train/sft/singletask_ladder/Qwen3-4B-singletask-ladder-32k-10k-3variant-SFT.py \\
         dry_run q4b-dense-contra-ladder32k-10k ai2/neptune
-    PYTHONPATH=src python src/scripts/train/sft/Qwen3-4B-singletask-ladder-32k-10k-3variant-SFT.py \\
+    PYTHONPATH=src python src/scripts/train/sft/singletask_ladder/Qwen3-4B-singletask-ladder-32k-10k-3variant-SFT.py \\
         launch  q4b-dense-contra-ladder32k-10k ai2/neptune
 """
 
