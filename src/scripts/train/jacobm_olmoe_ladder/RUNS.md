@@ -1513,8 +1513,8 @@ Both use `ai2/titan`, workspace `ai2/OLMo-3-moe-experiments`, image
 
 | Name | Variant | LR | GBS seq | Nodes | GPUs / node | EP | MB | Beaker | Status |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |
-| `int-smoke-intw256e8k-lr1.6e-3-r1` | `wide_256e8k` | 1.6e-3 | 32 | 1 | 2 | 1 | 8 | https://beaker.org/ex/01KWDC0M1PMH7CQ314SV97VBVA | scheduled/running startup |
-| `int-smoke-intd256e8k-lr1.6e-3-r1` | `deep_256e8k` | 1.6e-3 | 32 | 1 | 2 | 1 | 8 | https://beaker.org/ex/01KWDC0ZQ1TKRWHH6JJCYZJJXV | scheduled/running startup |
+| `int-smoke-intw256e8k-lr1.6e-3-r1` | `wide_256e8k` | 1.6e-3 | 32 | 1 | 2 | 1 | 8 | https://beaker.org/ex/01KWDC0M1PMH7CQ314SV97VBVA | trained 310 steps; ~545-555 TFLOPs/GPU, actual avg ~537T; in eval |
+| `int-smoke-intd256e8k-lr1.6e-3-r1` | `deep_256e8k` | 1.6e-3 | 32 | 1 | 2 | 1 | 8 | https://beaker.org/ex/01KWDC0ZQ1TKRWHH6JJCYZJJXV | training reached >296/303 steps; ~532-542 TFLOPs/GPU; below >600 launch gate |
 
 The previously queued 1.2B total-sparsity smoke experiments were stopped on
 2026-06-30 so the integration smokes can get through the queue first:
@@ -1524,3 +1524,10 @@ The previously queued 1.2B total-sparsity smoke experiments were stopped on
 | `sp-smoke-1p2b-cx4shape-sp192e4k-lr2.25e-4-r1` | https://beaker.org/ex/01KWCN66HYTCCGJFH7HPBVW5HA | stopped 2026-06-30 |
 | `sp-smoke-1p2b-cx2shape-sp192e4k-lr4e-4-r1` | https://beaker.org/ex/01KWCN6R8JYF73JV22WB0RW3YT | stopped 2026-06-30 |
 | `sp-smoke-1p2b-cx8shape-sp96e4k-lr3.5e-4-r1` | https://beaker.org/ex/01KWCN78Z4645GA6P41MQJYQ6T | stopped 2026-06-30 |
+
+
+Full 275M grid launcher prepared at
+`src/scripts/train/jacobm_olmoe_ladder/experiments/integration/launch_275m_grid.sh`,
+but not launched on 2026-06-30 because smoke throughput was below the rough
+`>600 TFLOPs/GPU` gate. The launcher encodes both variants, Cx1/2/4/8, and
+LRs `8e-4`, `1.6e-3`, `3.2e-3` with the usual 275M batch settings.
