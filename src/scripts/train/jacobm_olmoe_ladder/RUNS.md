@@ -1484,3 +1484,19 @@ Duplicate 2026-06-23 Titan relaunch cleanup:
 | `se-480m-cx2-se0m9-lr9e-4-r1` | https://beaker.org/ex/01KVV1QTFGB2JVZMSQZX8JVSW3 | finalized, exit 0 | Duplicate resume/eval-only against already-complete checkpoint. |
 | `se-480m-cx4-se0m9-lr8e-4-r1` | https://beaker.org/ex/01KVV1RQDKHRTTTZNZ7ZWC5V90 | finalized, exit 0 | Duplicate resume/eval-only against already-complete checkpoint. |
 | `se-480m-cx8-se0m9-lr8e-4-r1` | https://beaker.org/ex/01KVV1SHCZDHM17VHV0XWCA1J0 | stopped before start | Stopped on 2026-06-24 after confirming canonical 480M Cx8 completion. |
+
+## 2026-06-30 1.2B Total-Sparsity Smoke Tests
+
+Queued three short 0.02x Chinchilla smoke tests for the 1.2B total-sparsity
+promotion settings. These are smoke-specific names and checkpoint folders, so
+they will not collide with later full Cx1/2/4/8 promoted runs. All use
+`ai2/titan`, workspace `ai2/OLMo-3-moe-experiments`, image
+`tianhuat/olmo-core-torch211-2404-cu128`, compile-on, `EP=1`, Weka
+`oe-training-default`, budget `ai2/oe-other`, priority `urgent`, and
+`--no-pre-train-checkpoint`.
+
+| Name | Variant | Shape | LR | GBS seq | Nodes | GPUs / node | EP | MB | Beaker |
+| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| `sp-smoke-1p2b-cx4shape-sp192e4k-lr2.25e-4-r1` | `huge_total_192e_top4` | Cx4-shaped `b512k` memory smoke | 2.25e-4 | 64 | 4 | 8 | 1 | 1 | https://beaker.org/ex/01KWCN66HYTCCGJFH7HPBVW5HA |
+| `sp-smoke-1p2b-cx2shape-sp192e4k-lr4e-4-r1` | `huge_total_192e_top4` | Cx2-shaped `b384k` divisibility smoke | 4e-4 | 48 | 3 | 8 | 1 | 1 | https://beaker.org/ex/01KWCN6R8JYF73JV22WB0RW3YT |
+| `sp-smoke-1p2b-cx8shape-sp96e4k-lr3.5e-4-r1` | `high_total_96e_top4` | Cx8-shaped `b768k` one-node smoke | 3.5e-4 | 96 | 1 | 8 | 1 | 4 | https://beaker.org/ex/01KWCN78Z4645GA6P41MQJYQ6T |

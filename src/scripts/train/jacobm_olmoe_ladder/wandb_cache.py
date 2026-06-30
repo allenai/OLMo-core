@@ -299,6 +299,9 @@ def scan_history_cached(
             if tail_cached is not None:
                 return tail_cached
 
+            if os.environ.get("SKIP_UNCACHED_FINISHED_HISTORY") == "1":
+                return []
+
     if run.state == "finished" and tail_window_tokens is not None:
         min_step, max_step = _tail_step_range(run, window_tokens=tail_window_tokens)
         history = [
