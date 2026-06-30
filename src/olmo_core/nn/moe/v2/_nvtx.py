@@ -22,8 +22,11 @@ _SUBSYSTEM_COLORS = {
     "tbo": "orange",  # two-batch-overlap orchestration
 }
 
+# Used when a range isn't tied to a known subsystem.
+_DEFAULT_COLOR = "gray"
 
-def annotate(label: str, subsystem: str):
+
+def annotate(label: str, subsystem: str | None = None):
     """
     Create an nvtx range following the shared annotation convention.
 
@@ -33,13 +36,17 @@ def annotate(label: str, subsystem: str):
     :param label: The range label — the qualified ``ClassName.method`` / ``module_function`` name
         for a whole callable, or a ``snake_case`` phase name for an inner block.
     :param subsystem: One of ``"routing"``, ``"experts"``, ``"comm"``, ``"tbo"``; selects the color.
+        Omit it for ranges that don't belong to a subsystem — they get a neutral default color.
 
-    :raises ValueError: If ``subsystem`` is not a known subsystem.
+    :raises ValueError: If ``subsystem`` is given but not a known subsystem.
     """
-    try:
-        color = _SUBSYSTEM_COLORS[subsystem]
-    except KeyError:
-        raise ValueError(
-            f"unknown nvtx subsystem {subsystem!r}; expected one of {sorted(_SUBSYSTEM_COLORS)}"
-        )
+    if subsystem is None:
+        color = _DEFAULT_COLOR
+    else:
+        try:
+            color = _SUBSYSTEM_COLORS[subsystem]
+        except KeyError:
+            raise ValueError(
+                f"unknown nvtx subsystem {subsystem!r}; expected one of {sorted(_SUBSYSTEM_COLORS)}"
+            )
     return _nvtx.annotate(label, color=color)
