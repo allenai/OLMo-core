@@ -7,10 +7,19 @@ import nvtx
 import torch
 import torch.distributed as dist
 
-from olmo_core.distributed.utils import get_rank
+from olmo_core.distributed.utils import get_rank, hide_from_torch, unhide_from_torch
+
+from .checkpointing import is_checkpoint_recomputing
 
 if TYPE_CHECKING:
     from olmo_core.nn.ddp.block import OLMoDDPTransformerBlock
+
+try:
+    _torch_compile_disable = torch.compiler.disable
+except AttributeError:
+
+    def _torch_compile_disable(fn):
+        return fn
 
 
 def _rowwise_route_debug_enabled() -> bool:
@@ -76,19 +85,35 @@ def add_ep_no_sync_rowwise_metrics(
         block._ep_no_sync_rowwise_drop_tokens_sum is not None
         and block._ep_no_sync_rowwise_total_tokens_sum is not None
     ):
+        drop_tokens_sum = unhide_from_torch(block._ep_no_sync_rowwise_drop_tokens_sum)
+        total_tokens_sum = unhide_from_torch(block._ep_no_sync_rowwise_total_tokens_sum)
         drop_ratio = (
-            block._ep_no_sync_rowwise_drop_tokens_sum.to(dtype=torch.float32)
-            / block._ep_no_sync_rowwise_total_tokens_sum.to(dtype=torch.float32).clamp_min(1.0)
+            drop_tokens_sum.to(dtype=torch.float32)
+            / total_tokens_sum.to(dtype=torch.float32).clamp_min(1.0)
         ).clamp(0.0, 1.0)
         out["token drop rate"] = (drop_ratio, reduce_type_cls.mean)
 
     if block._ep_no_sync_rowwise_symm_util_max is not None:
+        symm_util_max = unhide_from_torch(block._ep_no_sync_rowwise_symm_util_max)
         out["symm buffer util"] = (
-            block._ep_no_sync_rowwise_symm_util_max.to(dtype=torch.float32),
+            symm_util_max.to(dtype=torch.float32),
             reduce_type_cls.max,
         )
 
 
+@_torch_compile_disable
+def should_accumulate_ep_no_sync_rowwise_metrics(
+    accumulate_routed_aux_loss_metrics: Optional[bool],
+) -> bool:
+    # True means original checkpoint forward, False means recompute. None asks
+    # us to use the same best-effort dynamic signal as router metric
+    # accumulation for compiled checkpointed rowwise blocks.
+    if accumulate_routed_aux_loss_metrics is None:
+        return not is_checkpoint_recomputing()
+    return accumulate_routed_aux_loss_metrics
+
+
+@_torch_compile_disable
 def accumulate_ep_no_sync_rowwise_metrics(
     block: OLMoDDPTransformerBlock,
     *,
@@ -100,31 +125,30 @@ def accumulate_ep_no_sync_rowwise_metrics(
     if rank_capacity <= 0:
         return
 
-    drop_sum = drop_token_cnt.to(dtype=torch.float32)
+    drop_sum = drop_token_cnt.detach().to(dtype=torch.float32)
     total_sum = torch.empty_like(drop_sum).fill_(num_out_tokens)
-    util = recv_splits_by_src_local.sum(dtype=torch.float32) * (1.0 / rank_capacity)
+    util = (
+        recv_splits_by_src_local.detach().sum(dtype=torch.float32)
+        * (1.0 / rank_capacity)
+    )
 
     if block._ep_no_sync_rowwise_drop_tokens_sum is None:
-        block._ep_no_sync_rowwise_drop_tokens_sum = drop_sum
+        block._ep_no_sync_rowwise_drop_tokens_sum = hide_from_torch(drop_sum)
     else:
-        block._ep_no_sync_rowwise_drop_tokens_sum = (
-            block._ep_no_sync_rowwise_drop_tokens_sum + drop_sum
-        )
+        prev = unhide_from_torch(block._ep_no_sync_rowwise_drop_tokens_sum)
+        block._ep_no_sync_rowwise_drop_tokens_sum = hide_from_torch(prev + drop_sum)
 
     if block._ep_no_sync_rowwise_total_tokens_sum is None:
-        block._ep_no_sync_rowwise_total_tokens_sum = total_sum
+        block._ep_no_sync_rowwise_total_tokens_sum = hide_from_torch(total_sum)
     else:
-        block._ep_no_sync_rowwise_total_tokens_sum = (
-            block._ep_no_sync_rowwise_total_tokens_sum + total_sum
-        )
+        prev = unhide_from_torch(block._ep_no_sync_rowwise_total_tokens_sum)
+        block._ep_no_sync_rowwise_total_tokens_sum = hide_from_torch(prev + total_sum)
 
     if block._ep_no_sync_rowwise_symm_util_max is None:
-        block._ep_no_sync_rowwise_symm_util_max = util
+        block._ep_no_sync_rowwise_symm_util_max = hide_from_torch(util)
     else:
-        block._ep_no_sync_rowwise_symm_util_max = torch.maximum(
-            block._ep_no_sync_rowwise_symm_util_max,
-            util,
-        )
+        prev = unhide_from_torch(block._ep_no_sync_rowwise_symm_util_max)
+        block._ep_no_sync_rowwise_symm_util_max = hide_from_torch(torch.maximum(prev, util))
 
 
 @nvtx.annotate("_build_rowwise_route_maps")
@@ -218,45 +242,6 @@ def build_rowwise_route_maps(
         torch.full_like(safe_experts, invalid_bucket),
     )
     # _rowwise_route_debug_print(self, "bucket-ids-exit", bucket_ids=bucket_ids)
-    # _rowwise_route_debug_print(self, "argsort-enter", bucket_ids=bucket_ids)
-    sort_order = torch.argsort(bucket_ids, stable=True)
-    # _rowwise_route_debug_print(self, "argsort-exit", sort_order=sort_order)
-    # _rowwise_route_debug_print(self, "sorted-buckets-enter", bucket_ids=bucket_ids, sort_order=sort_order)
-    sorted_bucket_ids = bucket_ids.index_select(0, sort_order)
-    # _rowwise_route_debug_print(self, "sorted-buckets-exit", sorted_bucket_ids=sorted_bucket_ids)
-    counts_per_bucket = torch.zeros(
-        (expert_count + 1,),
-        device=routing_map.device,
-        dtype=torch.long,
-    )
-    # _rowwise_route_debug_print(self, "scatter-counts-enter", counts_per_bucket=counts_per_bucket, bucket_ids=bucket_ids)
-    counts_per_bucket.scatter_add_(
-        0,
-        bucket_ids,
-        torch.ones_like(bucket_ids, dtype=torch.long),
-    )
-    # _rowwise_route_debug_print(self, "scatter-counts-exit", counts_per_bucket=counts_per_bucket)
-    # _rowwise_route_debug_print(self, "bucket-cumsum-enter", counts_per_bucket=counts_per_bucket)
-    starts_per_bucket = torch.cumsum(counts_per_bucket, dim=0) - counts_per_bucket
-    # _rowwise_route_debug_print(self, "bucket-cumsum-exit", starts_per_bucket=starts_per_bucket)
-    # _rowwise_route_debug_print(self, "sorted-pos-enter", starts_per_bucket=starts_per_bucket, sorted_bucket_ids=sorted_bucket_ids)
-    sorted_pos = torch.arange(
-        num_routes,
-        device=routing_map.device,
-        dtype=torch.long,
-    ) - starts_per_bucket.index_select(0, sorted_bucket_ids)
-    # _rowwise_route_debug_print(self, "sorted-pos-exit", sorted_pos=sorted_pos)
-
-    pos_in_bucket = torch.empty_like(sorted_pos)
-    # _rowwise_route_debug_print(self, "pos-scatter-enter", pos_in_bucket=pos_in_bucket, sort_order=sort_order, sorted_pos=sorted_pos)
-    pos_in_bucket.scatter_(0, sort_order, sorted_pos)
-    # _rowwise_route_debug_print(self, "pos-scatter-exit", pos_in_bucket=pos_in_bucket)
-
-    # _rowwise_route_debug_print(self, "keep-mask-enter", allowed_splits_i64=allowed_splits_i64, safe_experts=safe_experts, pos_in_bucket=pos_in_bucket)
-    keep_limits = allowed_splits_i64.index_select(0, safe_experts)
-    kept_mask = valid_mask & (pos_in_bucket < keep_limits)
-    # _rowwise_route_debug_print(self, "keep-mask-exit", keep_limits=keep_limits, kept_mask=kept_mask)
-
     # _rowwise_route_debug_print(self, "dst-rank-enter", safe_experts=safe_experts)
     dst_rank = torch.div(
         safe_experts,
@@ -286,6 +271,42 @@ def build_rowwise_route_maps(
     #     local_expert_base_by_dest=local_expert_base_by_dest,
     # )
 
+    base_rows_by_expert = (
+        local_expert_base_by_dest + send_base_by_dest_local
+    ).reshape(-1)
+
+    # Compute stable in-bucket positions without argsort. torch.argsort lowers
+    # through tuple-returning aten.sort, which AOTAutograd cannot partition when
+    # compiled rowwise EP is combined with recompute and stream control deps.
+    #
+    # Keep the lowering 1-D per expert: a single wide [routes, experts] equality
+    # matrix currently trips Inductor Triton codegen in the full rowwise graph.
+    pos_in_bucket = torch.zeros_like(bucket_ids)
+    keep_limits = torch.zeros_like(bucket_ids)
+    base_rows = torch.zeros_like(bucket_ids)
+    for expert_id in range(expert_count):
+        expert_mask = bucket_ids == expert_id
+        expert_pos = torch.cumsum(
+            expert_mask.to(dtype=torch.long),
+            dim=0,
+            dtype=torch.long,
+        ) - 1
+        pos_in_bucket = torch.where(expert_mask, expert_pos, pos_in_bucket)
+        keep_limits = torch.where(
+            expert_mask,
+            allowed_splits_i64[expert_id],
+            keep_limits,
+        )
+        base_rows = torch.where(
+            expert_mask,
+            base_rows_by_expert[expert_id],
+            base_rows,
+        )
+    # _rowwise_route_debug_print(self, "pos-scatter-exit", pos_in_bucket=pos_in_bucket)
+    # _rowwise_route_debug_print(self, "keep-mask-enter", allowed_splits_i64=allowed_splits_i64, safe_experts=safe_experts, pos_in_bucket=pos_in_bucket)
+    kept_mask = valid_mask & (pos_in_bucket < keep_limits)
+    # _rowwise_route_debug_print(self, "keep-mask-exit", keep_limits=keep_limits, kept_mask=kept_mask)
+
     # _rowwise_route_debug_print(
     #     self,
     #     "base-rows-enter",
@@ -295,8 +316,6 @@ def build_rowwise_route_maps(
     #     dst_local_expert=dst_local_expert,
     #     pos_in_bucket=pos_in_bucket,
     # )
-    base_rows = local_expert_base_by_dest[dst_rank, dst_local_expert]
-    base_rows = base_rows + send_base_by_dest_local[dst_rank, dst_local_expert]
     dst_rows_all = base_rows + pos_in_bucket
     # _rowwise_route_debug_print(self, "base-rows-exit", base_rows=base_rows, dst_rows_all=dst_rows_all)
 

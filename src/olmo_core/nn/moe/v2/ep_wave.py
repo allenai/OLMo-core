@@ -542,13 +542,14 @@ def combined_forward_ep_wave(
         dispatch_out_cap = rank_capacity
         combine_in_cap = rank_capacity
         combine_out_cap = num_input_tokens
-        accumulate_ep_no_sync_rowwise_metrics(
-            self,
-            drop_token_cnt=_drop_token_cnt,
-            num_out_tokens=num_out_tokens,
-            recv_splits_by_src_local=recv_splits_by_src_local,
-            rank_capacity=rank_capacity,
-        )
+        if accumulate_routed_aux_loss_metrics:
+            accumulate_ep_no_sync_rowwise_metrics(
+                self,
+                drop_token_cnt=_drop_token_cnt,
+                num_out_tokens=num_out_tokens,
+                recv_splits_by_src_local=recv_splits_by_src_local,
+                rank_capacity=rank_capacity,
+            )
 
     buffers = get_cached_ep_no_sync_buffers(
         self,

@@ -20,6 +20,7 @@ from ...moe.utils import (
     wait_event_no_compile,
     wait_stream_no_compile,
 )
+from .checkpointing import get_rowwise_checkpoint_state
 from .comm import _DispatchRowwiseAutograd, _RowwiseCombineWeightedAutograd
 from .ep_config import ExpertParallelPath
 from .ep_no_sync_buffers import (
@@ -38,6 +39,7 @@ from .ep_no_sync_common import (
 from .ep_no_sync_rowwise_helpers import (
     accumulate_ep_no_sync_rowwise_metrics,
     build_rowwise_route_maps,
+    should_accumulate_ep_no_sync_rowwise_metrics,
 )
 from .routed_experts import (
     ExpertActivation,
@@ -950,6 +952,10 @@ def combined_forward_ep_no_sync_rowwise_wave(
             "combined_forward_ep_no_sync_rowwise_wave currently supports only "
             f"rowwise_wave_mode='expert', got {self.ep.rowwise_wave_mode!r}"
         )
+    if activation_checkpointing is None:
+        activation_checkpointing, accumulate_routed_aux_loss_metrics = (
+            get_rowwise_checkpoint_state()
+        )
     if activation_checkpointing:
         raise NotImplementedError("rowwise_wave does not support activation checkpointing yet")
     if (
@@ -1056,13 +1062,14 @@ def combined_forward_ep_no_sync_rowwise_wave(
             block=self.block_idx,
             rank_capacity=rank_capacity,
         )
-        accumulate_ep_no_sync_rowwise_metrics(
-            self,
-            drop_token_cnt=_drop_token_cnt,
-            num_out_tokens=num_out_tokens,
-            recv_splits_by_src_local=recv_splits_by_src_local,
-            rank_capacity=rank_capacity,
-        )
+        if should_accumulate_ep_no_sync_rowwise_metrics(accumulate_routed_aux_loss_metrics):
+            accumulate_ep_no_sync_rowwise_metrics(
+                self,
+                drop_token_cnt=_drop_token_cnt,
+                num_out_tokens=num_out_tokens,
+                recv_splits_by_src_local=recv_splits_by_src_local,
+                rank_capacity=rank_capacity,
+            )
 
     buffers = None
     if not lease_dispatch_out and not lease_combine_gather:

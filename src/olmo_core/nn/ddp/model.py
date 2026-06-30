@@ -126,6 +126,7 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
         self.recompute_block_keys: Optional[List[str]] = kwargs.pop('recompute_block_keys')
         self.checkpoint_tbo_dense_layers = False
         self.has_grad_accum_fp32_buffer = False # whether the model has grad accum buffer for fp32 master grad, will be set in `attach_fp32_accum`
+        self._compile_requested = False
 
         super().__init__(*args, **kwargs)
         self.ep_enabled = False # default
@@ -446,14 +447,31 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
                     or block.checkpoint_attn
                     or block.checkpoint_permute_moe_unpermute
                 )
-                block._ep_no_sync_rowwise_static_checkpoint_state = (
-                    None if block_uses_checkpointing else (False, True)
-                )
-                # With our checkpoint context, the original checkpointed forward
-                # and its recompute both use scratch buffers; no long-lived lease
-                # is needed. Force the rowwise path into scratch-buffer mode for
-                # checkpointed blocks so compiled checkpoint paths do not depend
-                # on Python-side checkpoint-context detection.
+                if (
+                    self.compile_enabled or self._compile_requested
+                ) and block_is_checkpointed:
+                    # torch.compile() requires checkpoint context_fn entries to
+                    # be TorchDispatchModes, so the compiled model-level
+                    # checkpoint uses noop_context_fn. Give checkpointed rowwise
+                    # blocks a static state instead of relying on Python-side
+                    # context detection inside the compiled region. This keeps
+                    # forward and recompute on the same tensor-producing path
+                    # without installing a TorchDispatchMode in production.
+                    #
+                    # Leave metric accumulation dynamic so the original
+                    # checkpointed forward records metrics while recompute does
+                    # not. The rowwise transport metric helper uses the same
+                    # best-effort recompute signal as the router metrics.
+                    block._ep_no_sync_rowwise_static_checkpoint_state = (True, None)
+                else:
+                    block._ep_no_sync_rowwise_static_checkpoint_state = (
+                        None if block_uses_checkpointing else (False, True)
+                    )
+                # The original checkpointed forward and its recompute both use
+                # scratch buffers; no long-lived lease is needed. Force the
+                # rowwise path into scratch-buffer mode for checkpointed blocks
+                # so compiled checkpoint paths do not depend on Python-side
+                # checkpoint-context detection.
                 block._ep_no_sync_force_scratch_lifetime_buffers = block_is_checkpointed
                 runtime_uses_lifetime_leases = (
                     not block._ep_no_sync_force_scratch_lifetime_buffers
@@ -630,6 +648,7 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
         """
         Apply EP to the model.
         """
+        self._compile_requested = bool(compile_enabled)
 
         shared_pool_to_return = ep_no_sync_shared_pool
         ep_no_sync_blocks: List[OLMoDDPTransformerBlock] = []
@@ -1164,6 +1183,8 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
         return h
 
     def _forwrad_one_block(self, h, block_key: str, block_kwargs: Dict[str, Any]) -> torch.Tensor:
+        if self.compile_enabled:
+            mark_dynamic(h, (0, 1), strict=False)
         block = self.blocks[block_key]
         with nvtx.annotate(f"fwd_block_{block_key}", color="blue"):
             h = block(h, **block_kwargs)

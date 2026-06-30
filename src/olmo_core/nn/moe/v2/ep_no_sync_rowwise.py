@@ -44,6 +44,7 @@ from .fp8 import (
 from .ep_no_sync_rowwise_helpers import (
     accumulate_ep_no_sync_rowwise_metrics,
     build_rowwise_route_maps,
+    should_accumulate_ep_no_sync_rowwise_metrics,
 )
 from .routed_experts import requires_host_side_split_sizes, use_torch_grouped_mm
 
@@ -182,7 +183,7 @@ def combined_forward_ep_no_sync_rowwise(
     num_out_tokens = local_x_global_routed_expert_indices.numel()
     num_input_tokens = moe_inp.shape[0]
     top_k = self.routed_experts_router.top_k
-    if activation_checkpointing is None or accumulate_routed_aux_loss_metrics is None:
+    if activation_checkpointing is None:
         activation_checkpointing, accumulate_routed_aux_loss_metrics = get_rowwise_checkpoint_state()
     use_symm_dispatch_in = (not use_rowwise_fp8) and use_ep_no_sync_rowwise_symm_dispatch_in(self)
     use_symm_combine_out = (
@@ -252,13 +253,14 @@ def combined_forward_ep_no_sync_rowwise(
         dispatch_out_cap = rank_capacity
         combine_in_cap = rank_capacity
         combine_out_cap = num_input_tokens
-        accumulate_ep_no_sync_rowwise_metrics(
-            self,
-            drop_token_cnt=_drop_token_cnt,
-            num_out_tokens=num_out_tokens,
-            recv_splits_by_src_local=recv_splits_by_src_local,
-            rank_capacity=rank_capacity,
-        )
+        if should_accumulate_ep_no_sync_rowwise_metrics(accumulate_routed_aux_loss_metrics):
+            accumulate_ep_no_sync_rowwise_metrics(
+                self,
+                drop_token_cnt=_drop_token_cnt,
+                num_out_tokens=num_out_tokens,
+                recv_splits_by_src_local=recv_splits_by_src_local,
+                rank_capacity=rank_capacity,
+            )
 
     buffers = None
     dispatch_out_q: Optional[torch.Tensor] = None
