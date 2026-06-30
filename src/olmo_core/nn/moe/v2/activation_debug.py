@@ -1,8 +1,16 @@
+"""
+Opt-in activation-memory profiler for the no-sync expert-parallel forward.
+
+When OLMO_EP_NO_SYNC_SAVED_ACTIVATIONS_DEBUG is set, runs the no-sync forward under
+torch.autograd saved-tensor hooks to report (once per block) how much memory autograd retains
+for backward, deduplicated by storage. A no-op passthrough otherwise.
+"""
+
 from __future__ import annotations
 
 import os
 import weakref
-from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Tuple, Union, cast
+from typing import TYPE_CHECKING, Callable, Dict, List, Optional, cast
 
 import torch
 
@@ -40,7 +48,7 @@ def maybe_dump_ep_no_sync_saved_activations(
     block: MoEFusedV2TransformerBlock,
     x: torch.Tensor,
     *,
-    loss_div_factor: Optional[Union[torch.Tensor, float]],
+    loss_div_factor: Optional[torch.Tensor | float],
     forward_kwargs: Dict[str, object],
     no_sync_forward: Callable[..., torch.Tensor],
 ) -> Optional[torch.Tensor]:
@@ -53,7 +61,7 @@ def maybe_dump_ep_no_sync_saved_activations(
     ):
         return None
 
-    saved_activations_by_storage: Dict[Tuple[str, int, int], Dict[str, object]] = {}
+    saved_activations_by_storage: Dict[tuple[str, int, int], Dict[str, object]] = {}
     saved_tensor_weakrefs: List[weakref.ReferenceType[torch.Tensor]] = []
     param_storage_keys = {
         (str(param.device), param.untyped_storage().data_ptr(), param.untyped_storage().nbytes())
@@ -105,7 +113,7 @@ def maybe_dump_ep_no_sync_saved_activations(
 
     # Live view: current storage sizes after forward finishes. This reflects
     # storage-discard checkpointing (e.g., resize_(0)).
-    live_saved_activations_by_storage: Dict[Tuple[str, int, int], Dict[str, object]] = {}
+    live_saved_activations_by_storage: Dict[tuple[str, int, int], Dict[str, object]] = {}
     for tensor_ref in saved_tensor_weakrefs:
         tensor = tensor_ref()
         if tensor is None:
