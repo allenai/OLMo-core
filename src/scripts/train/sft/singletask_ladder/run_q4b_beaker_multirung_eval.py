@@ -60,7 +60,7 @@ def variant_from_run_name(run_name: str) -> str:
 
 
 def build_eval_launch_config(
-    *, run_name, task, variant, cluster, step, ckpt, results_dir, prompt_format, max_test, max_length, batch_size, priority
+    *, run_name, task, variant, cluster, step, ckpt, results_dir, prompt_format, ngpu, max_test, max_length, batch_size, priority
 ):
     root_dir = get_root_dir(cluster)  # e.g. /weka/oe-training-default/ai2-llm (mounts weka bucket)
     # Eval CODE now ships IN the cloned repo (src/scripts/ctc_eval); the runner runs from the repo root
@@ -72,7 +72,7 @@ def build_eval_launch_config(
     inner = (
         f"RUN={run_name} TASK={task} VARIANT={variant} STEP='{step}' CKPT='{ckpt}' "
         f"EVAL_OUT_DIR='{results_dir}' PROMPT_FORMAT='{prompt_format}' "
-        f"MAX_TEST={max_test} MAX_LENGTH={max_length} BATCH_SIZE={batch_size} NGPU=8 "
+        f"MAX_TEST={max_test} MAX_LENGTH={max_length} BATCH_SIZE={batch_size} NGPU={ngpu} "
         f"WEKA_LLM={root_dir} bash {runner}"
     )
     cmd = ["bash", "-lc", inner]
@@ -88,7 +88,7 @@ def build_eval_launch_config(
         workspace="ai2/flex2",
         budget="ai2/oe-other",
         num_nodes=1,
-        num_gpus=8,
+        num_gpus=ngpu,
     )
     launch_config.torchrun = False  # the runner issues its own torchrun(s)
     launch_config.allow_dirty = True  # ship the (uncommitted) launcher via an ephemeral ref
@@ -119,6 +119,9 @@ def main():
     ap.add_argument("--max-test", type=int, default=600)
     ap.add_argument("--max-length", type=int, default=40960)
     ap.add_argument("--batch-size", type=int, default=2)  # 40960-ctx generation on ~48GB neptune GPUs; 8 OOMs
+    ap.add_argument("--ngpu", type=int, default=2,
+                    help="GPUs per eval job (data-parallel over examples). 4B model fits on 1-2 GPUs; "
+                         "2 lets ~4x more evals run concurrently than 8 and fits fragmented free slots.")
     ap.add_argument("--priority", default="normal")
     ap.add_argument("--dry-run", action="store_true", help="build + print the job, do NOT submit.")
     args = ap.parse_args()
@@ -140,7 +143,7 @@ def main():
         lc = build_eval_launch_config(
             run_name=args.run_name, task=task, variant=variant, cluster=args.cluster,
             step=args.step, ckpt=args.ckpt, results_dir=args.results_dir, prompt_format=args.prompt_format,
-            max_test=args.max_test, max_length=args.max_length,
+            ngpu=args.ngpu, max_test=args.max_test, max_length=args.max_length,
             batch_size=args.batch_size, priority=args.priority,
         )
         print(f"\n--- [{task}] {lc.name} ---")
