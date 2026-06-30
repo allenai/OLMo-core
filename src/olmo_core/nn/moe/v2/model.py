@@ -1010,45 +1010,34 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
         labels0: Optional[torch.Tensor],
         labels1: Optional[torch.Tensor],
     ):
-        from .ep_no_sync_tbo_1d import (
-            _NoSyncTboPendingContext,
-            ep_no_sync_stage_c_launch,
-            ep_no_sync_stage_tail,
-        )
-        from .ep_no_sync_tbo_rowwise import (
-            _NoSyncRowwiseTboPendingContext,
-            ep_no_sync_rowwise_tbo_stage_c_launch,
-            ep_no_sync_rowwise_tbo_stage_tail,
-        )
-
-        if isinstance(x1_ctx, _NoSyncRowwiseTboPendingContext):
-            with annotate("tbo_1", "tbo"):
-                pending_ctx = ep_no_sync_rowwise_tbo_stage_c_launch(x1_ctx.block, x1_ctx)
-
-            h0 = self.maybe_forward_lm_head(x0, lm_head_kwargs, labels=labels0)
-
-            with annotate("tbo_1", "tbo"):
-                x1 = ep_no_sync_rowwise_tbo_stage_tail(x1_ctx.block, pending_ctx)
-
-            h1 = self.maybe_forward_lm_head(x1, lm_head_kwargs, labels=labels1)
-            return h0, h1
-
-        if isinstance(x1_ctx, _NoSyncTboPendingContext):
-            with annotate("tbo_1", "tbo"):
-                pending_ctx_1d = ep_no_sync_stage_c_launch(x1_ctx.block, x1_ctx)
-
-            h0 = self.maybe_forward_lm_head(x0, lm_head_kwargs, labels=labels0)
-
-            with annotate("tbo_1", "tbo"):
-                x1 = ep_no_sync_stage_tail(x1_ctx.block, pending_ctx_1d)
-
-            h1 = self.maybe_forward_lm_head(x1, lm_head_kwargs, labels=labels1)
-            return h0, h1
-
         if not isinstance(x1_ctx, SyncedTboPendingContext):
-            raise RuntimeError(
-                "Expected synced TBO context for the final TBO step, " f"got type={type(x1_ctx)}"
-            )
+            # No-sync TBO: the pending context carries its producing block, whose config
+            # selects the family, so only the family in use is imported here.
+            block = cast(MoEFusedV2TransformerBlock, getattr(x1_ctx, "block"))
+            if block.ep_no_sync_use_rowwise_all_to_all:
+                from .ep_no_sync_tbo_rowwise import (
+                    ep_no_sync_rowwise_tbo_stage_c_launch as _stage_c_launch,
+                )
+                from .ep_no_sync_tbo_rowwise import (
+                    ep_no_sync_rowwise_tbo_stage_tail as _stage_tail,
+                )
+            else:
+                from .ep_no_sync_tbo_1d import (
+                    ep_no_sync_stage_c_launch as _stage_c_launch,
+                )
+                from .ep_no_sync_tbo_1d import ep_no_sync_stage_tail as _stage_tail
+
+            with annotate("tbo_1", "tbo"):
+                pending_ctx = _stage_c_launch(block, x1_ctx)
+
+            h0 = self.maybe_forward_lm_head(x0, lm_head_kwargs, labels=labels0)
+
+            with annotate("tbo_1", "tbo"):
+                x1 = _stage_tail(block, pending_ctx)
+
+            h1 = self.maybe_forward_lm_head(x1, lm_head_kwargs, labels=labels1)
+            return h0, h1
+
         with annotate("tbo_1", "tbo"):
             global_x1 = x1_ctx.global_x
             send_counts1 = x1_ctx.send_counts
