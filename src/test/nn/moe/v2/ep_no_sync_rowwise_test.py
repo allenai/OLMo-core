@@ -132,9 +132,11 @@ def _run_rowwise_ep_dropless_matches_no_ep():
     ep_mesh = _build_ep_mesh()
     no_ep_block = _build_block(ep_no_sync=False)
     ep_block = _build_block(ep_no_sync=True)
-    ep_block.apply_ep(ep_mesh)
+    # Select the rowwise path before apply_ep: apply_ep configures the rowwise symmetric-memory
+    # buffers and rejects the non-rowwise (VDev) path under the default OLMo-owned symm-mem backend.
     ep_block.ep_no_sync_use_rowwise_all_to_all = True
     ep_block.ep_no_sync_rowwise_nblocks = 128
+    ep_block.apply_ep(ep_mesh)
 
     _init_block_params(no_ep_block)
     _copy_no_ep_weights_to_ep_shard(no_ep_block, ep_block)
