@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from typing import TYPE_CHECKING, Optional, Tuple, Union, cast
+from typing import TYPE_CHECKING, Optional, cast
 
 import torch
 
@@ -48,7 +48,7 @@ def combined_forward_ep_no_sync_rowwise(
     *,
     activation_checkpointing: Optional[bool] = None,
     accumulate_routed_aux_loss_metrics: Optional[bool] = None,
-    loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
+    loss_div_factor: Optional[torch.Tensor | float] = None,
     **kwargs,
 ) -> torch.Tensor:
     """Forward with EP no-sync using row-wise NVSHMEM dispatch/combine."""
@@ -173,7 +173,7 @@ def combined_forward_ep_no_sync_rowwise(
             _drop_token_cnt,
             keep_from_src_dest_local,
         ) = cast(
-            Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor],
+            tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor],
             sync_tail_drop_allowed_splits_single_a2a(
                 self,
                 requested_splits,
