@@ -93,6 +93,8 @@ def build_eval_launch_config(
     launch_config.torchrun = False  # the runner issues its own torchrun(s)
     launch_config.allow_dirty = True  # ship the (uncommitted) launcher via an ephemeral ref
     launch_config.priority = priority
+    launch_config.step_soft_timeout = None  # we submit with follow=False (don't block on many evals);
+    launch_config.step_timeout = None        # the 10-min default soft timeout forbids follow=False
     return launch_config
 
 
