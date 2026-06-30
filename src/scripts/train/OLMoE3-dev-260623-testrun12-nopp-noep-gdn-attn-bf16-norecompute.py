@@ -123,7 +123,7 @@ def _env_int(name: str, default: int) -> int:
     return default if value is None else int(value)
 
 
-VARIANT_NAME = os.environ.get("OLMOE3_TESTRUN_VARIANT", "testrun12-nopp-noep-gdn-bf16-norecompute")
+VARIANT_NAME = os.environ.get("OLMOE3_TESTRUN_VARIANT", "testrun12-nopp-noep-gdn-attn-bf16-norecompute")
 
 IN_EVAL_MODE = False
 import sys
