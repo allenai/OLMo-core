@@ -29,7 +29,6 @@ from .common import (
     _run_one_iter,
     _setup_debug_print,
 )
-from .deepep_v2 import _bench_deepep_v2_case
 from .expert_probe import (
     _init_probe_routed_expert_weights,
     _resolve_weight_init_value,
@@ -47,6 +46,8 @@ def _bench_case(
     ep_mesh: DeviceMesh,
 ) -> None:
     if case.deepep_v2 or case.deepep_v2_wave:
+        from .deepep_v2 import _bench_deepep_v2_case
+
         _bench_deepep_v2_case(
             args,
             tokens=tokens,

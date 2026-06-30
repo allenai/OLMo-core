@@ -4,6 +4,7 @@ import math
 import os
 import sys
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import TYPE_CHECKING, Optional, Union
 
 import nvtx
@@ -67,8 +68,8 @@ class _DeepEpV2RuntimeKey:
     allow_multiple_reduction: bool
 
 
-@_torch_compile_disable
-def _import_deepep(deepep_path: Optional[str]) -> object:
+@lru_cache(maxsize=None)
+def _import_deepep_cached(deepep_path: Optional[str]) -> object:
     resolved_path = deepep_path or os.getenv("OLMO_DEEPEP_PATH", "/workspace/DeepEP")
     if resolved_path:
         resolved_path = os.path.abspath(resolved_path)
@@ -84,6 +85,19 @@ def _import_deepep(deepep_path: Optional[str]) -> object:
             f"Original error: {type(e).__name__}: {e}"
         ) from e
     return deep_ep
+
+
+@_torch_compile_disable
+def _import_deepep(deepep_path: Optional[str]) -> object:
+    return _import_deepep_cached(deepep_path)
+
+
+def is_deepep_available(deepep_path: Optional[str] = None) -> bool:
+    try:
+        _import_deepep_cached(deepep_path)
+    except RuntimeError:
+        return False
+    return True
 
 
 def _deep_ep_wait(event: object, *, async_with_compute_stream: bool) -> None:

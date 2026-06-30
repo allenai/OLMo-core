@@ -799,6 +799,7 @@ class OLMoDDPTrainModule(TrainModule):
         return max(1, min(full_num_microbatches, requested))
 
     def _pp_dry_run_mode(self) -> str:
+        # TODO: consider using the config system than environment variables for this
         raw_value = os.getenv("OLMO_PP_DRY_RUN_MODE", "independent")
         normalized = raw_value.strip().lower().replace("-", "_")
         if normalized in {"", "independent", "local", "stage", "stage_local", "accelerated", "hybrid"}:
@@ -925,6 +926,7 @@ class OLMoDDPTrainModule(TrainModule):
         batch_num_tokens_for_loss: Union[torch.Tensor, int, float],
         **kwargs,
     ) -> None:
+        # TODO: this function is long. Need to explain the context and what each section does.
         assert self.pp_enabled
         assert self._pp_stages is not None
 
@@ -1722,7 +1724,7 @@ class OLMoDDPTrainModule(TrainModule):
         self, batch: Dict[str, Any], labels: Optional[torch.Tensor] = None
     ) -> Union[torch.Tensor, Optional[LMOutputWithLoss]]:
 
-        # TODO: (epwalsh) Currently all of our evaluators require the full logits locally,
+        # Currently all of our evaluators require the full logits locally,
         # but when we're using CP/TP we usually can't materialize the full logits locally (due to OOMs).
         # However we could at least support in-loop PPL evals with a little work in the evaluator
         # code to handle the sharded logits.
@@ -2456,7 +2458,7 @@ class OLMoDDPTrainModule(TrainModule):
                 f"Applied pipeline parallelism to the model with {get_device_mesh_info(self.pp_mesh)}"
             )
             
-            # TODO: chunk layers into stages
+            # TODO: chunk layers into stages (I don't understand this TODO)
             assert self.world_mesh is not None, "World mesh must be built before applying expert parallelism"
             assert self.world_mesh['dense'] is not None, "Dense mesh must be built before applying expert parallelism"
 
