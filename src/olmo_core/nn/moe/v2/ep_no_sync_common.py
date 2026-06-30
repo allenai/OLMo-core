@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Optional, Tuple, Union, cast
+from typing import TYPE_CHECKING, Optional, cast
 
 import torch
 import torch.distributed as dist
@@ -21,12 +21,12 @@ if TYPE_CHECKING:
     from .block import MoEFusedV2TransformerBlock
 
 
-@nvtx.annotate("_build_keep_reorder")
+@nvtx.annotate("build_keep_reorder")
 def build_keep_reorder(
     requested_splits: torch.Tensor,
     keep_splits: torch.Tensor,
     num_out_tokens: int,
-) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """
     Build the reorder that implements per-expert capacity dropping for the no-sync all-to-all.
 
@@ -82,10 +82,10 @@ def sync_tail_drop_allowed_splits_single_a2a(
     *,
     rank_capacity: int,
     return_keep_matrix: bool = False,
-) -> Union[
-    Tuple[torch.Tensor, torch.Tensor, torch.Tensor],
-    Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor],
-]:
+) -> (
+    tuple[torch.Tensor, torch.Tensor, torch.Tensor]
+    | tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]
+):
     """
     Tail-drop keep-split sync with a single all-gather.
     Each EP rank receives every rank's requested splits, then computes the
@@ -163,7 +163,7 @@ def sync_tail_drop_allowed_splits_single_a2a(
     )
 
 
-@nvtx.annotate("_restore_drop_unpermute_1d")
+@nvtx.annotate("restore_drop_unpermute_1d")
 def restore_drop_unpermute_1d(
     block: MoEFusedV2TransformerBlock,
     *,
