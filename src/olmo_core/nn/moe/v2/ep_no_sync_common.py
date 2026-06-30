@@ -1,11 +1,14 @@
 from __future__ import annotations
 
-import os
 from typing import TYPE_CHECKING, Optional, Tuple, Union, cast
 
-import nvtx
 import torch
 import torch.distributed as dist
+
+try:
+    import nvtx
+except ImportError:
+    from olmo_core._nvtx import nvtx
 
 from olmo_core.distributed.utils import get_rank
 
@@ -18,45 +21,28 @@ if TYPE_CHECKING:
     from .block import MoEFusedV2TransformerBlock
 
 
-def _ep_sync_debug_enabled() -> bool:
-    if os.getenv("OLMO_TBO_VERBOSE_DEBUG_PRINT", "0").strip().lower() not in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }:
-        return False
-    ranks = os.getenv("OLMO_TBO_DEBUG_RANKS")
-    if not ranks or not dist.is_available() or not dist.is_initialized():
-        return True
-    rank = str(dist.get_rank())
-    return rank in {part.strip() for part in ranks.split(",") if part.strip()}
-
-
-def _ep_sync_rank_tag() -> str:
-    if not dist.is_available() or not dist.is_initialized():
-        return "rank=? local_rank=?"
-    return f"rank={dist.get_rank()} local_rank={os.getenv('LOCAL_RANK', '?')}"
-
-
-def _ep_sync_tensor_desc(name: str, tensor: torch.Tensor) -> str:
-    return f"{name}=tensor"
-
-
-def _ep_sync_debug_print(label: str, **tensors: torch.Tensor) -> None:
-    if not _ep_sync_debug_enabled():
-        return
-    parts = ["[OLMO_TBO_DEBUG]", _ep_sync_rank_tag(), label]
-    parts.extend(_ep_sync_tensor_desc(name, tensor) for name, tensor in tensors.items())
-    print(" | ".join(str(part) for part in parts), flush=True)
-
-
 @nvtx.annotate("_build_keep_reorder")
 def build_keep_reorder(
     requested_splits: torch.Tensor,
     keep_splits: torch.Tensor,
     num_out_tokens: int,
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """
+    Build the reorder that implements per-expert capacity dropping for the no-sync all-to-all.
+
+    Given the number of tokens routed to each expert (``requested_splits``) and how many of those
+    each expert is allowed to keep under the rank capacity (``keep_splits``), stably partition the
+    ``num_out_tokens`` rows so the kept rows come first (in original order) and the dropped tail
+    rows come last.
+
+    :param requested_splits: Per-expert routed-token counts, shape ``(num_experts,)``.
+    :param keep_splits: Per-expert kept-token counts (``<= requested_splits``).
+    :param num_out_tokens: Total routed rows (``requested_splits.sum()``).
+
+    :returns: ``(reorder_indices, inverse_reorder_indices, packed_keep_mask)`` — the permutation
+        that packs kept-then-dropped, its inverse, and a boolean mask (in packed order) marking the
+        kept rows.
+    """
     requested = requested_splits.to(dtype=torch.long)
     keep = keep_splits.to(dtype=torch.long)
     token_ids = torch.arange(num_out_tokens, device=keep.device, dtype=torch.long)
@@ -120,25 +106,17 @@ def sync_tail_drop_allowed_splits_single_a2a(
         device=requested.device,
         dtype=requested.dtype,
     )
-    # _ep_sync_debug_print(
-    #     (
-    #         "sync_tail_drop:all_gather-enter "
-    #         f"block={self.block_idx} ep_world_size={self.ep_world_size} "
-    #         f"num_local_experts={self.num_local_routed_experts} rank_capacity={rank_capacity}"
-    #     ),
-    #     requested=requested,
-    #     gathered_payload=gathered_payload,
-    # )
+    # DEBUG HOOK: this all_gather exchanges per-rank requested token counts to agree on a global
+    # tail-drop. To trace it, set OLMO_TBO_VERBOSE_DEBUG_PRINT=1 (optionally scope with
+    # OLMO_TBO_DEBUG_RANKS=0,1) and uncomment:
+    #   if os.getenv("OLMO_TBO_VERBOSE_DEBUG_PRINT") == "1":
+    #       print(f"[tbo] rank={dist.get_rank()} sync_tail_drop block={self.block_idx} "
+    #             f"requested={tuple(requested.shape)} rank_capacity={rank_capacity}", flush=True)
     dist.all_gather_into_tensor(
         gathered_payload,
         requested,
         group=self.ep_pg,
     )
-    # _ep_sync_debug_print(
-    #     f"sync_tail_drop:all_gather-exit block={self.block_idx}",
-    #     requested=requested,
-    #     gathered_payload=gathered_payload,
-    # )
 
     gathered_payload_2d = gathered_payload.view(self.ep_world_size, expected_splits)
     global_requested = gathered_payload_2d.view(
@@ -199,6 +177,13 @@ def restore_drop_unpermute_1d(
     row_id_map_is_packed: bool = False,
     backward_grad_input_buffer: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
+    """
+    Restore capacity-dropped rows and unpermute the combined expert outputs (1D no-sync path).
+
+    Inverts :func:`build_keep_reorder` — scatters the kept expert outputs in ``combine_out`` back
+    to their pre-drop positions (zero-filling the dropped tail), then unpermutes by the original
+    routing map and applies the routed-expert combine weights to reconstruct the per-token output.
+    """
     self = block
     assert self.routed_experts_router is not None
     merging_probs = local_x_global_routed_expert_weights.view(
