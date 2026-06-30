@@ -19,7 +19,7 @@ set -uo pipefail
 
 REPO="${REPO:-/accounts/projects/berkeleynlp/prasann/projects/OLMo-core}"
 LAUNCHER="$REPO/src/scripts/train/sft/run_q4b_beaker_multirung_eval.py"
-CLUSTER="${CLUSTER:-ai2/neptune}"
+CLUSTER="${CLUSTER:-ai2/jupiter}"
 TASKS="${TASKS:-contra nq rerank outlier oolong}"
 VARIANTS="${VARIANTS:-dense compressive landmark docchunk}"
 PRIORITY="${PRIORITY:-normal}"
