@@ -1526,8 +1526,55 @@ The previously queued 1.2B total-sparsity smoke experiments were stopped on
 | `sp-smoke-1p2b-cx8shape-sp96e4k-lr3.5e-4-r1` | https://beaker.org/ex/01KWCN78Z4645GA6P41MQJYQ6T | stopped 2026-06-30 |
 
 
-Full 275M grid launcher prepared at
-`src/scripts/train/jacobm_olmoe_ladder/experiments/integration/launch_275m_grid.sh`,
-but not launched on 2026-06-30 because smoke throughput was below the rough
-`>600 TFLOPs/GPU` gate. The launcher encodes both variants, Cx1/2/4/8, and
-LRs `8e-4`, `1.6e-3`, `3.2e-3` with the usual 275M batch settings.
+
+Additional mb16 smoke tests queued on 2026-06-30 to test whether larger microbatches improve throughput:
+
+| Name | Variant | LR | GBS seq | Nodes | GPUs / node | EP | MB | Beaker | Status |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |
+| `int-smoke-intw256e8k-lr1.6e-3-mb16-r1` | `wide_256e8k` | 1.6e-3 | 32 | 1 | 2 | 1 | 16 | https://beaker.org/ex/01KWDDKJHVYPKEAS490R7Q677X | failed/OOM during backward; tried to allocate 24.50 GiB with ~22.30 GiB free |
+| `int-smoke-intd256e8k-lr1.6e-3-mb16-r1` | `deep_256e8k` | 1.6e-3 | 32 | 1 | 2 | 1 | 16 | https://beaker.org/ex/01KWDDKYDR413XCM9SGXX4A8J4 | failed/OOM during backward; tried to allocate 24.50 GiB with ~15.26 GiB free |
+
+The mb16 smoke tests did not fit, so the full 275M grid was launched with the
+known legal settings in
+`src/scripts/train/jacobm_olmoe_ladder/experiments/integration/launch_275m_grid.sh`.
+This follows the user decision to launch the grid even if the larger-microbatch
+smokes failed or stayed below the rough `>600 TFLOPs/GPU` target.
+
+## 2026-06-30 Integration 275M Grid Launch
+
+Launched the full 275M LR grid for both integration candidates. All jobs use
+`ai2/titan`, workspace `ai2/OLMo-3-moe-experiments`, image
+`tianhuat/olmo-core-torch211-2404-cu128`, compile-on, `EP=1`, Weka
+`oe-training-default`, budget `ai2/oe-other`, priority `urgent`, and
+`--no-pre-train-checkpoint`.
+
+Batch settings are: Cx1 `global_batch_size_seq=32`, 2 GPUs, MB 8; Cx2
+`global_batch_size_seq=48`, 2 GPUs, MB 8; Cx4 `global_batch_size_seq=64`,
+4 GPUs, MB 8; Cx8 `global_batch_size_seq=96`, 8 GPUs, MB 4.
+
+| Name | Variant | Cx | LR | GBS seq | GPUs | MB | Beaker |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | --- |
+| `int-275m-cx1-intw256e8k-lr8e-4-r1` | `wide_256e8k` | 1 | 8e-4 | 32 | 2 | 8 | https://beaker.org/ex/01KWDDW61H689812K3DWHWH97W |
+| `int-275m-cx1-intw256e8k-lr1.6e-3-r1` | `wide_256e8k` | 1 | 1.6e-3 | 32 | 2 | 8 | https://beaker.org/ex/01KWDDWKR6E5ZGKGE0114WM851 |
+| `int-275m-cx1-intw256e8k-lr3.2e-3-r1` | `wide_256e8k` | 1 | 3.2e-3 | 32 | 2 | 8 | https://beaker.org/ex/01KWDDWZ15ET9GRVJB2NT7W6FZ |
+| `int-275m-cx2-intw256e8k-lr8e-4-r1` | `wide_256e8k` | 2 | 8e-4 | 48 | 2 | 8 | https://beaker.org/ex/01KWDDXAREEBFDZZQ4PK00EBTR |
+| `int-275m-cx2-intw256e8k-lr1.6e-3-r1` | `wide_256e8k` | 2 | 1.6e-3 | 48 | 2 | 8 | https://beaker.org/ex/01KWDDXPPS8V7W8ZQADM5YRYFP |
+| `int-275m-cx2-intw256e8k-lr3.2e-3-r1` | `wide_256e8k` | 2 | 3.2e-3 | 48 | 2 | 8 | https://beaker.org/ex/01KWDDY2PTBN2FR8M8D90Q8M7J |
+| `int-275m-cx4-intw256e8k-lr8e-4-r1` | `wide_256e8k` | 4 | 8e-4 | 64 | 4 | 8 | https://beaker.org/ex/01KWDDYE49G1366Q1EQFD3S7P5 |
+| `int-275m-cx4-intw256e8k-lr1.6e-3-r1` | `wide_256e8k` | 4 | 1.6e-3 | 64 | 4 | 8 | https://beaker.org/ex/01KWDDYSVFBA5PC370YP3YF33C |
+| `int-275m-cx4-intw256e8k-lr3.2e-3-r1` | `wide_256e8k` | 4 | 3.2e-3 | 64 | 4 | 8 | https://beaker.org/ex/01KWDDZ61FD5RH3B8XPCTMSKZT |
+| `int-275m-cx8-intw256e8k-lr8e-4-r1` | `wide_256e8k` | 8 | 8e-4 | 96 | 8 | 4 | https://beaker.org/ex/01KWDDZJ4VKPJEK5Z4M3EW5MM8 |
+| `int-275m-cx8-intw256e8k-lr1.6e-3-r1` | `wide_256e8k` | 8 | 1.6e-3 | 96 | 8 | 4 | https://beaker.org/ex/01KWDDZXH0WR1TPS113853WXXS |
+| `int-275m-cx8-intw256e8k-lr3.2e-3-r1` | `wide_256e8k` | 8 | 3.2e-3 | 96 | 8 | 4 | https://beaker.org/ex/01KWDE09EB8M529584J3GY1MK6 |
+| `int-275m-cx1-intd256e8k-lr8e-4-r1` | `deep_256e8k` | 1 | 8e-4 | 32 | 2 | 8 | https://beaker.org/ex/01KWDE0ME50VN6F2YJW0Z3ZVF3 |
+| `int-275m-cx1-intd256e8k-lr1.6e-3-r1` | `deep_256e8k` | 1 | 1.6e-3 | 32 | 2 | 8 | https://beaker.org/ex/01KWDE11612W4MVCKN07XAHYRJ |
+| `int-275m-cx1-intd256e8k-lr3.2e-3-r1` | `deep_256e8k` | 1 | 3.2e-3 | 32 | 2 | 8 | https://beaker.org/ex/01KWDE1CQJCDBMVZJWVXNDNQGQ |
+| `int-275m-cx2-intd256e8k-lr8e-4-r1` | `deep_256e8k` | 2 | 8e-4 | 48 | 2 | 8 | https://beaker.org/ex/01KWDE1RNPPST5WDYR5YB7PWMH |
+| `int-275m-cx2-intd256e8k-lr1.6e-3-r1` | `deep_256e8k` | 2 | 1.6e-3 | 48 | 2 | 8 | https://beaker.org/ex/01KWDE24TJXQ46KZBK8QR2CWNY |
+| `int-275m-cx2-intd256e8k-lr3.2e-3-r1` | `deep_256e8k` | 2 | 3.2e-3 | 48 | 2 | 8 | https://beaker.org/ex/01KWDE2GB96RXRAPZ8QP0CBDDY |
+| `int-275m-cx4-intd256e8k-lr8e-4-r1` | `deep_256e8k` | 4 | 8e-4 | 64 | 4 | 8 | https://beaker.org/ex/01KWDE2W8WT29FVNGBFN5RDY76 |
+| `int-275m-cx4-intd256e8k-lr1.6e-3-r1` | `deep_256e8k` | 4 | 1.6e-3 | 64 | 4 | 8 | https://beaker.org/ex/01KWDE380ZVWYB82Q8HX0T8Q8Y |
+| `int-275m-cx4-intd256e8k-lr3.2e-3-r1` | `deep_256e8k` | 4 | 3.2e-3 | 64 | 4 | 8 | https://beaker.org/ex/01KWDE3M8Y7ZS58WK7MD4KGJEE |
+| `int-275m-cx8-intd256e8k-lr8e-4-r1` | `deep_256e8k` | 8 | 8e-4 | 96 | 8 | 4 | https://beaker.org/ex/01KWDE3ZQP626MZ7M04WS4PFWX |
+| `int-275m-cx8-intd256e8k-lr1.6e-3-r1` | `deep_256e8k` | 8 | 1.6e-3 | 96 | 8 | 4 | https://beaker.org/ex/01KWDE4BWZFRSC1Y818AYE9HWH |
+| `int-275m-cx8-intd256e8k-lr3.2e-3-r1` | `deep_256e8k` | 8 | 3.2e-3 | 96 | 8 | 4 | https://beaker.org/ex/01KWDE4Q0SPJQ8JAXEX1SP03T9 |
