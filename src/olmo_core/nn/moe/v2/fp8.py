@@ -5,8 +5,6 @@ from typing import TYPE_CHECKING, Any, Callable, Mapping, Optional
 
 import torch
 
-from ._nvtx import annotate
-
 from olmo_core.config import Config, StrEnum
 from olmo_core.doc_utils import beta_feature
 from olmo_core.kernels import (
@@ -14,6 +12,8 @@ from olmo_core.kernels import (
     scaled_grouped_mm_q,
     scaled_grouped_mm_q_fp8_weight,
 )
+
+from ._nvtx import annotate
 
 if TYPE_CHECKING:
     from .block import MoEFusedV2TransformerBlock

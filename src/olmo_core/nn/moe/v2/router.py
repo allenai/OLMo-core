@@ -9,8 +9,6 @@ from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.tensor import Replicate, Shard, distribute_tensor
 from torch.distributed.tensor.parallel import PrepareModuleInput, parallelize_module
 
-from ._nvtx import annotate
-
 import olmo_core.ops.moe as ops
 from olmo_core.config import Config, DType
 from olmo_core.distributed.utils import (
@@ -25,6 +23,7 @@ from olmo_core.distributed.utils import (
 from ...output_discard_checkpoint import OutputDiscardCheckpoint
 from ..loss import MoELoadBalancingLossGranularity, load_balancing_loss, router_z_loss
 from ..router import MoERouterGatingFunction, _uniform_expert_assignment
+from ._nvtx import annotate
 
 if TYPE_CHECKING:
     from olmo_core.train.common import ReduceType

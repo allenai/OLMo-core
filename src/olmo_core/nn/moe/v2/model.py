@@ -12,8 +12,6 @@ from typing import (
     cast,
 )
 
-from ._nvtx import annotate
-
 import torch
 import torch.distributed as dist
 from torch.distributed._composable.replicate import replicate
@@ -35,6 +33,7 @@ from olmo_core.utils import mark_dynamic
 
 from ...lm_head import LMOutputWithLoss
 from ..utils import moe_unpermute_no_compile
+from ._nvtx import annotate
 from .block import MoEFusedV2TransformerBlock
 from .checkpointing import checkpoint_recompute_context_fn
 
