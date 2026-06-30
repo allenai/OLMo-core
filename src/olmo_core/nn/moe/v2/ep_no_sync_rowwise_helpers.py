@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-import os
 from typing import TYPE_CHECKING, Dict, Optional, Tuple
 
 import nvtx
 import torch
-import torch.distributed as dist
 
 from olmo_core.distributed.utils import get_rank, hide_from_torch, unhide_from_torch
 
@@ -20,54 +18,6 @@ except AttributeError:
 
     def _torch_compile_disable(fn):
         return fn
-
-
-def _rowwise_route_debug_enabled() -> bool:
-    verbose = (
-        os.getenv("OLMO_ROWWISE_VERBOSE_DEBUG_PRINT")
-        or os.getenv("OLMO_TBO_VERBOSE_DEBUG_PRINT", "0")
-    )
-    if verbose.strip().lower() not in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }:
-        return False
-    ranks = os.getenv("OLMO_ROWWISE_DEBUG_RANKS") or os.getenv("OLMO_TBO_DEBUG_RANKS")
-    if not ranks or not dist.is_available() or not dist.is_initialized():
-        return True
-    rank = str(dist.get_rank())
-    return rank in {part.strip() for part in ranks.split(",") if part.strip()}
-
-
-def _rowwise_route_rank_tag() -> str:
-    if not dist.is_available() or not dist.is_initialized():
-        return "rank=? local_rank=?"
-    return f"rank={dist.get_rank()} local_rank={os.getenv('LOCAL_RANK', '?')}"
-
-
-def _rowwise_route_tensor_desc(name: str, tensor: Optional[torch.Tensor]) -> str:
-    if tensor is None:
-        return f"{name}=None"
-    return f"{name}=tensor"
-
-
-def _rowwise_route_debug_print(
-    block: OLMoDDPTransformerBlock,
-    label: str,
-    **tensors: Optional[torch.Tensor],
-) -> None:
-    if not _rowwise_route_debug_enabled():
-        return
-    parts = [
-        "[OLMO_ROWWISE_ROUTE_DEBUG]",
-        _rowwise_route_rank_tag(),
-        f"block={block.block_idx}",
-        f"route_maps:{label}",
-    ]
-    parts.extend(_rowwise_route_tensor_desc(name, tensor) for name, tensor in tensors.items())
-    print(" | ".join(str(part) for part in parts), flush=True)
 
 
 def reset_ep_no_sync_rowwise_metrics(block: OLMoDDPTransformerBlock) -> None:
@@ -171,13 +121,6 @@ def build_rowwise_route_maps(
             f"routing_map must be rank-2 [N, K], got shape={tuple(routing_map.shape)}"
         )
 
-    # _rowwise_route_debug_print(
-    #     self,
-    #     "enter",
-    #     routing_map=routing_map,
-    #     allowed_splits=allowed_splits,
-    #     keep_from_src_dest_local=keep_from_src_dest_local,
-    # )
     num_tokens, top_k = routing_map.shape
     num_routes = num_tokens * top_k
     expert_count = self.ep_world_size * self.num_local_routed_experts
@@ -218,31 +161,22 @@ def build_rowwise_route_maps(
             dst_rows_flat.view(num_tokens, top_k),
         )
 
-    # _rowwise_route_debug_print(self, "route_experts-enter", routing_map=routing_map)
     route_experts = routing_map.reshape(-1).to(dtype=torch.long)
-    # _rowwise_route_debug_print(self, "route_experts-exit", route_experts=route_experts)
-    # _rowwise_route_debug_print(self, "valid-mask-enter", route_experts=route_experts)
     valid_mask = (route_experts >= 0) & (route_experts < expert_count)
-    # _rowwise_route_debug_print(self, "valid-mask-exit", valid_mask=valid_mask)
-    # _rowwise_route_debug_print(self, "safe-experts-enter", route_experts=route_experts, valid_mask=valid_mask)
     safe_experts = torch.where(
         valid_mask,
         route_experts,
         torch.zeros_like(route_experts),
     )
-    # _rowwise_route_debug_print(self, "safe-experts-exit", safe_experts=safe_experts)
 
     # Compute stable in-expert position for each route without dynamic-shape
     # indexing (avoids host sync from nonzero/item on CUDA tensors).
     invalid_bucket = expert_count
-    # _rowwise_route_debug_print(self, "bucket-ids-enter", valid_mask=valid_mask, safe_experts=safe_experts)
     bucket_ids = torch.where(
         valid_mask,
         safe_experts,
         torch.full_like(safe_experts, invalid_bucket),
     )
-    # _rowwise_route_debug_print(self, "bucket-ids-exit", bucket_ids=bucket_ids)
-    # _rowwise_route_debug_print(self, "dst-rank-enter", safe_experts=safe_experts)
     dst_rank = torch.div(
         safe_experts,
         self.num_local_routed_experts,
@@ -252,9 +186,7 @@ def build_rowwise_route_maps(
         safe_experts,
         self.num_local_routed_experts,
     )
-    # _rowwise_route_debug_print(self, "dst-rank-exit", dst_rank=dst_rank, dst_local_expert=dst_local_expert)
 
-    # _rowwise_route_debug_print(self, "prefix-enter", keep_matrix=keep_matrix)
     prefix_by_source = torch.cumsum(keep_matrix, dim=0) - keep_matrix
     src_rank = get_rank(self.ep_pg)
     send_base_by_dest_local = prefix_by_source[src_rank]
@@ -262,14 +194,6 @@ def build_rowwise_route_maps(
     local_expert_base_by_dest = (
         torch.cumsum(recv_total_by_dest_local, dim=1) - recv_total_by_dest_local
     )
-    # _rowwise_route_debug_print(
-    #     self,
-    #     "prefix-exit",
-    #     prefix_by_source=prefix_by_source,
-    #     send_base_by_dest_local=send_base_by_dest_local,
-    #     recv_total_by_dest_local=recv_total_by_dest_local,
-    #     local_expert_base_by_dest=local_expert_base_by_dest,
-    # )
 
     base_rows_by_expert = (
         local_expert_base_by_dest + send_base_by_dest_local
@@ -284,6 +208,11 @@ def build_rowwise_route_maps(
     pos_in_bucket = torch.zeros_like(bucket_ids)
     keep_limits = torch.zeros_like(bucket_ids)
     base_rows = torch.zeros_like(bucket_ids)
+
+    # Keep this as a static Python loop over experts. A sort/scatter formulation
+    # produces tuple-returning ops that have been fragile under compiled rowwise
+    # EP with recompute, while a wide one-hot [routes, experts] cumsum has
+    # tripped Inductor codegen in the full graph.
     for expert_id in range(expert_count):
         expert_mask = bucket_ids == expert_id
         expert_pos = torch.cumsum(
@@ -302,35 +231,13 @@ def build_rowwise_route_maps(
             base_rows_by_expert[expert_id],
             base_rows,
         )
-    # _rowwise_route_debug_print(self, "pos-scatter-exit", pos_in_bucket=pos_in_bucket)
-    # _rowwise_route_debug_print(self, "keep-mask-enter", allowed_splits_i64=allowed_splits_i64, safe_experts=safe_experts, pos_in_bucket=pos_in_bucket)
     kept_mask = valid_mask & (pos_in_bucket < keep_limits)
-    # _rowwise_route_debug_print(self, "keep-mask-exit", keep_limits=keep_limits, kept_mask=kept_mask)
 
-    # _rowwise_route_debug_print(
-    #     self,
-    #     "base-rows-enter",
-    #     local_expert_base_by_dest=local_expert_base_by_dest,
-    #     send_base_by_dest_local=send_base_by_dest_local,
-    #     dst_rank=dst_rank,
-    #     dst_local_expert=dst_local_expert,
-    #     pos_in_bucket=pos_in_bucket,
-    # )
     dst_rows_all = base_rows + pos_in_bucket
-    # _rowwise_route_debug_print(self, "base-rows-exit", base_rows=base_rows, dst_rows_all=dst_rows_all)
 
     neg_ones = torch.full_like(dst_rank, -1)
-    # _rowwise_route_debug_print(
-    #     self,
-    #     "final-where-enter",
-    #     kept_mask=kept_mask,
-    #     dst_rank=dst_rank,
-    #     dst_rows_all=dst_rows_all,
-    #     neg_ones=neg_ones,
-    # )
     dst_ranks_flat = torch.where(kept_mask, dst_rank, neg_ones)
     dst_rows_flat = torch.where(kept_mask, dst_rows_all, neg_ones)
-    # _rowwise_route_debug_print(self, "exit", dst_ranks_flat=dst_ranks_flat, dst_rows_flat=dst_rows_flat)
     return (
         dst_ranks_flat.view(num_tokens, top_k),
         dst_rows_flat.view(num_tokens, top_k),

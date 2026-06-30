@@ -694,35 +694,36 @@ class OLMoDDPTransformerBlock(olmo_core.nn.transformer.block.TransformerBlockBas
         loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
         **kwargs,
     ) -> torch.Tensor:
-        if self.routed_experts:
-            if self.ep_enabled:
-                if self.ep.no_sync and self.training: # in eval mode, different ranks might get different input token counts, and no-sync can freeze
-                    if self.ep.path == ExpertParallelPath.rowwise_wave:
-                        no_sync_forward = self.combined_forward_ep_no_sync_rowwise_wave
-                    elif self.ep.path == ExpertParallelPath.rowwise_nvshmem:
-                        no_sync_forward = self.combined_forward_ep_no_sync_rowwise
-                    elif self.ep.path == ExpertParallelPath.no_sync_1d:
-                        no_sync_forward = self.combined_forward_ep_no_sync_1d
-                    else:
-                        raise RuntimeError(f"Unsupported EP no-sync path {self.ep.path!r}")
-                    debug_out = maybe_dump_ep_no_sync_saved_activations(
-                        self,
-                        x,
-                        loss_div_factor=loss_div_factor,
-                        forward_kwargs=kwargs,
-                        no_sync_forward=no_sync_forward,
-                    )
-                    if debug_out is not None:
-                        return debug_out
-                    return no_sync_forward(
-                        x, loss_div_factor=loss_div_factor, **kwargs
-                    )
-                return self.combined_forward_ep_1d(x, loss_div_factor=loss_div_factor, **kwargs)
-            else:
-                return self.combined_forward_no_ep(x, loss_div_factor=loss_div_factor, **kwargs)
-        else:
-            # only shared_experts
+        if not self.has_routed_experts:
             return self.combined_forward_shared_only(x, loss_div_factor=loss_div_factor, **kwargs)
+
+        if not self.ep_enabled:
+            return self.combined_forward_no_ep(x, loss_div_factor=loss_div_factor, **kwargs)
+
+        # In eval mode, different ranks might get different input token counts,
+        # and no-sync can freeze. Fall back to the synced EP path there.
+        if not (self.ep.no_sync and self.training):
+            return self.combined_forward_ep_1d(x, loss_div_factor=loss_div_factor, **kwargs)
+
+        if self.ep.path == ExpertParallelPath.rowwise_wave:
+            no_sync_forward = self.combined_forward_ep_no_sync_rowwise_wave
+        elif self.ep.path == ExpertParallelPath.rowwise_nvshmem:
+            no_sync_forward = self.combined_forward_ep_no_sync_rowwise
+        elif self.ep.path == ExpertParallelPath.no_sync_1d:
+            no_sync_forward = self.combined_forward_ep_no_sync_1d
+        else:
+            raise RuntimeError(f"Unsupported EP no-sync path {self.ep.path!r}")
+
+        debug_out = maybe_dump_ep_no_sync_saved_activations(
+            self,
+            x,
+            loss_div_factor=loss_div_factor,
+            forward_kwargs=kwargs,
+            no_sync_forward=no_sync_forward,
+        )
+        if debug_out is not None:
+            return debug_out
+        return no_sync_forward(x, loss_div_factor=loss_div_factor, **kwargs)
 
     def apply_pp(self, pp_mesh: DeviceMesh):
         pass # nothing to do
