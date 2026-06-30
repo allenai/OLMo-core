@@ -2497,7 +2497,11 @@ class OLMoDDPTrainModule(TrainModule):
             expert_param_group = self.expert_param_group
             ep_mp_group_override: Optional[ProcessGroup] = None
 
-            if backend_supports_cuda():
+            use_high_priority_ep_mp_group = os.getenv(
+                "OLMO_EP_MP_HIGH_PRIORITY_GROUP", "1"
+            ).strip().lower() not in {"", "0", "false", "no", "off"}
+
+            if backend_supports_cuda() and use_high_priority_ep_mp_group:
                 ep_mp_dim = ep_mesh.mesh_dim_names.index(MeshDimName.ep_mp)
                 ep_rank_grid = ep_mesh.mesh
                 if ep_mp_dim != ep_rank_grid.ndim - 1:
@@ -2533,6 +2537,11 @@ class OLMoDDPTrainModule(TrainModule):
                         dist.get_rank(),
                     )
                     dist.barrier()
+            elif backend_supports_cuda():
+                log.info(
+                    "Skipping high-priority NCCL EP-MP process-group creation because "
+                    "OLMO_EP_MP_HIGH_PRIORITY_GROUP=0"
+                )
             else:
                 log.warning(
                     "Skipping EP-MP high-priority group creation because backend is '%s'",
