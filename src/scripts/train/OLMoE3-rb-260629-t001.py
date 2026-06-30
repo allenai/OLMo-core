@@ -39,7 +39,13 @@ if not USE_NV_PROFILE:
     os.environ["NVTX_DISABLE"] = "1"
 
 import torch
-import transformer_engine
+try:
+    import transformer_engine  # noqa: F401
+except ImportError:
+    # TE is only needed at model-build time (on the GPU workers, inside the Beaker
+    # image). The launch driver only builds config + submits, so make it optional
+    # to allow launching from a box without TE installed.
+    pass
 from functools import partial
 
 from olmo_core.config import DType
