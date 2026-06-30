@@ -13,7 +13,6 @@ class ExpertParallelPath(StrEnum):
     no_sync_2d_removed = "no_sync_2d_removed"
     rowwise_nvshmem = "rowwise_nvshmem"
     rowwise_wave = "rowwise_wave"
-    wave_mega = "wave_mega"
 
 
 class ExpertParallelSchedule(StrEnum):
@@ -42,7 +41,6 @@ class ExpertParallelConfig(Config):
     rowwise_wave_mode: str = "expert"
     rowwise_wave_recompute_linear1: bool = False
     rowwise_wave_recompute_act: bool = False
-    wave_use_bf16_persistent_mega_forward: bool = False
     checkpoint_tbo: bool = False
 
     def validate(self) -> None:
@@ -91,15 +89,6 @@ class ExpertParallelConfig(Config):
                 f"path={ExpertParallelPath.rowwise_wave!r} "
                 f"(got path={self.path!r})"
             )
-        if (
-            self.wave_use_bf16_persistent_mega_forward
-            and self.path != ExpertParallelPath.wave_mega
-        ):
-            raise OLMoConfigurationError(
-                "EP wave_use_bf16_persistent_mega_forward=True is only valid with "
-                f"path={ExpertParallelPath.wave_mega!r} "
-                f"(got path={self.path!r})"
-            )
         if self.restore_unpermute_backend not in ("te_fused", "te_unfused", "cuda"):
             raise OLMoConfigurationError(
                 "EP restore_unpermute_backend must be one of "
@@ -138,14 +127,8 @@ class ExpertParallelConfig(Config):
         }
 
     @property
-    def is_wave(self) -> bool:
-        return self.path == ExpertParallelPath.wave_mega
-
-    @property
     def uses_rowwise_buffers(self) -> bool:
-        # The current wave/Mega path still reuses rowwise routing and symmetric
-        # scratch plumbing, even though it is not a rowwise transport backend.
-        return self.is_rowwise or self.is_wave
+        return self.is_rowwise
 
     @property
     def rowwise_transport(self) -> Optional[str]:
