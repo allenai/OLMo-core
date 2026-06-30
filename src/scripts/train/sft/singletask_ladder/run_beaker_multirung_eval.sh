@@ -46,6 +46,7 @@ REPO="${REPO:-$PWD}"                          # cloned OLMo-core repo (gantry cw
 export PYTHONPATH="$REPO/src/scripts:$REPO/src:${PYTHONPATH:-}"   # so `import ctc_eval...` resolves (olmo_core also pip -e)
 export EVAL500_ROOT="$EVAL500"                # eval_lc_native.py reads the _600/_500 rungs from here (weka data)
 export TOKENIZERS_PARALLELISM=false PYTHONUNBUFFERED=1
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True   # reduce fragmentation OOM at long ctx on smaller GPUs
 mkdir -p "$EVAL_OUT_DIR" "$RESULTS"
 
 echo "=== BEAKER multirung eval | host=$(hostname) RUN=$RUN TASK=$TASK VARIANT=$VARIANT NGPU=$NGPU START=$(date -u '+%F %T')Z ==="

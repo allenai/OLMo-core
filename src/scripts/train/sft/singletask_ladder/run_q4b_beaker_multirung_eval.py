@@ -116,7 +116,7 @@ def main():
                          "(default: checkpoints/prasanns/<run_name>/eval).")
     ap.add_argument("--max-test", type=int, default=600)
     ap.add_argument("--max-length", type=int, default=40960)
-    ap.add_argument("--batch-size", type=int, default=8)
+    ap.add_argument("--batch-size", type=int, default=2)  # 40960-ctx generation on ~48GB neptune GPUs; 8 OOMs
     ap.add_argument("--priority", default="normal")
     ap.add_argument("--dry-run", action="store_true", help="build + print the job, do NOT submit.")
     args = ap.parse_args()
