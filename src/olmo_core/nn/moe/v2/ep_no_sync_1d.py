@@ -39,6 +39,10 @@ def combined_forward_ep_no_sync_1d(
 
     This path is kept primarily because the current TBO implementation still
     shares its 1D machinery. Row-wise no-sync is the production no-sync path.
+
+    TODO(ep-legacy): this VDev-1d path only runs on the legacy torch symmetric-memory backend
+    (``OLMO_USE_OWN_SYMM_MEM=0``); OLMo-owned symm-mem supports only the rowwise path. Consider
+    removing it once TBO no longer depends on the 1D machinery and rowwise is the sole no-sync path.
     """
     self = block
     assert self.routed_experts is not None

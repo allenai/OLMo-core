@@ -1,3 +1,5 @@
+import os
+
 import pytest
 import torch
 import torch.distributed as dist
@@ -124,6 +126,9 @@ def test_v2_ep_no_sync_2d_all_to_all_rejected():
 
 
 def _run_ep_no_sync_drop_behavior():
+    # The VDev-1d (non-rowwise) no-sync path runs on the legacy torch symmetric-memory backend;
+    # OLMo-owned symm-mem only supports the rowwise path.
+    os.environ["OLMO_USE_OWN_SYMM_MEM"] = "0"
     block = _build_block(
         ep_no_sync=True, ep_no_sync_capacity_factor=0.25, uniform_expert_assignment=False
     )
@@ -147,6 +152,7 @@ def _run_ep_no_sync_drop_behavior():
 
 
 def _run_ep_no_sync_quota_invariants():
+    os.environ["OLMO_USE_OWN_SYMM_MEM"] = "0"  # VDev-1d uses the legacy symm-mem backend
     block = _build_block(
         ep_no_sync=True, ep_no_sync_capacity_factor=0.5, uniform_expert_assignment=False
     )
@@ -168,6 +174,7 @@ def _run_ep_no_sync_quota_invariants():
 def _run_ep_no_sync_hard_fail_setup():
     import olmo_core.nn.moe.v2.block as block_module
 
+    os.environ["OLMO_USE_OWN_SYMM_MEM"] = "0"  # VDev-1d uses the legacy symm-mem backend
     ep_mesh = _build_ep_mesh()
     old_symm = block_module._symm_mem
     block_module._symm_mem = None
