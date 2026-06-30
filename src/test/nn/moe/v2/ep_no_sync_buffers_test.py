@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 import torch
@@ -46,7 +47,8 @@ def test_view_cached_symm_tensor():
 
 
 def test_compute_ep_no_sync_rank_capacity():
-    block = SimpleNamespace(ep_no_sync_capacity_factor=1.25)
+    block: Any = SimpleNamespace(ep_no_sync_capacity_factor=1.25)
     assert compute_ep_no_sync_rank_capacity(block, 10) == 13  # ceil(1.25 * 10)
     assert compute_ep_no_sync_rank_capacity(block, 0) == 1  # floored to at least 1
-    assert compute_ep_no_sync_rank_capacity(SimpleNamespace(ep_no_sync_capacity_factor=2.0), 4) == 8
+    block2: Any = SimpleNamespace(ep_no_sync_capacity_factor=2.0)
+    assert compute_ep_no_sync_rank_capacity(block2, 4) == 8
