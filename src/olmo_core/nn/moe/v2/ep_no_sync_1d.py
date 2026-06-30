@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Optional, Tuple, Union, cast
+from typing import TYPE_CHECKING, Optional, cast
 
-import nvtx
 import torch
 
 from ...moe.utils import wait_stream_no_compile
@@ -11,6 +10,7 @@ from ..utils import (
     moe_chunk_reorder_no_compile,
     moe_permute_1d_fused_drop_no_compile,
 )
+from ._nvtx import annotate
 from .comm import _CombineVDevAutograd, _DispatchVDevAutograd
 from .ep_no_sync_buffers import (
     compute_ep_no_sync_rank_capacity,
@@ -32,7 +32,7 @@ def combined_forward_ep_no_sync_1d(
     block: MoEFusedV2TransformerBlock,
     x: torch.Tensor,
     *,
-    loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
+    loss_div_factor: Optional[torch.Tensor | float] = None,
     **kwargs,
 ) -> torch.Tensor:
     """Legacy 1D EP no-sync forward using symmetric-memory all_to_all_vdev ops.
@@ -104,11 +104,11 @@ def combined_forward_ep_no_sync_1d(
     num_out_tokens = local_x_global_routed_expert_indices.numel()
 
     with torch.no_grad():
-        with nvtx.annotate("ConfigCapacity", color="green"):
+        with annotate("config_capacity", "comm"):
             requested_splits = local_batch_size_per_global_routed_expert.to(dtype=torch.long)
             rank_capacity = compute_ep_no_sync_rank_capacity(self, num_out_tokens)
             allowed_splits, recv_splits_by_src_local, _drop_token_cnt = cast(
-                Tuple[torch.Tensor, torch.Tensor, torch.Tensor],
+                tuple[torch.Tensor, torch.Tensor, torch.Tensor],
                 sync_tail_drop_allowed_splits_single_a2a(
                     self,
                     requested_splits,
@@ -179,7 +179,7 @@ def combined_forward_ep_no_sync_1d(
     assert packed_keep_mask is not None
     assert num_kept is not None
 
-    with nvtx.annotate("Permute local tokens", color="green"):
+    with annotate("permute_local_tokens", "comm"):
         (
             permutated_local_x,
             reversed_local_x_permutation_mapping,
@@ -224,7 +224,7 @@ def combined_forward_ep_no_sync_1d(
 
     dispatch_rank_major = dispatch_out
 
-    with nvtx.annotate("Permute global tokens", color="green"):
+    with annotate("permute_global_tokens", "comm"):
         if self.routed_experts.num_local_experts == 1:
             dispatch_rank_major = dispatch_rank_major.clone()
             global_chunk_row_id_map = None
@@ -246,7 +246,7 @@ def combined_forward_ep_no_sync_1d(
         padded_batch_size_per_local_expert,
     )
 
-    with nvtx.annotate("Unpermute global tokens", color="green"):
+    with annotate("unpermute_global_tokens", "comm"):
         if self.routed_experts.num_local_experts == 1:
             global_x_rank_major = dispatch_rank_major
         else:
@@ -274,7 +274,7 @@ def combined_forward_ep_no_sync_1d(
         self.ep_pg,
     )
 
-    with nvtx.annotate("Unpermute-Merge local tokens", color="green"):
+    with annotate("unpermute_merge_local_tokens", "comm"):
         combine_out_for_unpermute = (
             combine_out.clone() if buffers.combine_out_is_shared else combine_out
         )
