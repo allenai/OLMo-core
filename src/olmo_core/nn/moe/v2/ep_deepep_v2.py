@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import os
 import sys
 from dataclasses import dataclass
@@ -46,6 +47,24 @@ class _DeepEpV2Runtime:
     num_sms: int
     num_qps: int
     async_with_compute_stream: bool
+
+
+@dataclass(frozen=True)
+class _DeepEpV2RuntimeKey:
+    ep_pg_id: int
+    hidden: int
+    num_topk: int
+    num_experts: int
+    num_local_experts: int
+    expert_alignment: int
+    path: Optional[str]
+    num_sms: int
+    num_qps: int
+    num_allocated_qps: int
+    async_mode: bool
+    prefer_overlap_with_compute: bool
+    allow_hybrid_mode: bool
+    allow_multiple_reduction: bool
 
 
 @_torch_compile_disable
@@ -207,13 +226,45 @@ def _validate_deepep_v2_block(
 @_torch_compile_disable
 def _global_num_max_tokens_per_rank(
     block: OLMoDDPTransformerBlock,
-    local_tokens: int,
+    requested_tokens: int,
     device: torch.device,
 ) -> int:
-    requested = local_tokens
-    requested_tensor = torch.tensor([requested], device=device, dtype=torch.long)
+    requested_tensor = torch.tensor([requested_tokens], device=device, dtype=torch.long)
     dist.all_reduce(requested_tensor, op=dist.ReduceOp.MAX, group=block.ep_pg)
     return int(requested_tensor.item())
+
+
+def _requested_num_max_tokens_per_rank(
+    block: OLMoDDPTransformerBlock,
+    local_tokens: int,
+) -> int:
+    max_capacity_factor = float(
+        getattr(block, "_deepep_v2_max_capacity_factor", block.ep.capacity_factor)
+    )
+    return max(local_tokens, int(math.ceil(local_tokens * max_capacity_factor)))
+
+
+def _runtime_key(block: OLMoDDPTransformerBlock, hidden: int, top_k: int) -> _DeepEpV2RuntimeKey:
+    assert block.ep_pg is not None
+    assert block.routed_experts_router is not None
+    assert block.num_local_routed_experts is not None
+    deepep_cfg = block.ep.deepep
+    return _DeepEpV2RuntimeKey(
+        ep_pg_id=id(block.ep_pg),
+        hidden=hidden,
+        num_topk=top_k,
+        num_experts=block.routed_experts_router.num_experts,
+        num_local_experts=block.num_local_routed_experts,
+        expert_alignment=deepep_cfg.expert_alignment,
+        path=deepep_cfg.path,
+        num_sms=deepep_cfg.num_sms,
+        num_qps=deepep_cfg.num_qps,
+        num_allocated_qps=deepep_cfg.num_allocated_qps,
+        async_mode=deepep_cfg.async_mode,
+        prefer_overlap_with_compute=deepep_cfg.prefer_overlap_with_compute,
+        allow_hybrid_mode=deepep_cfg.allow_hybrid_mode,
+        allow_multiple_reduction=deepep_cfg.allow_multiple_reduction,
+    )
 
 
 @_torch_compile_disable
@@ -229,39 +280,29 @@ def _get_deepep_v2_runtime(
     assert block.routed_experts_router is not None
     assert block.num_local_routed_experts is not None
 
+    requested_tokens = _requested_num_max_tokens_per_rank(block, local_tokens)
     num_max_tokens_per_rank = _global_num_max_tokens_per_rank(
         block,
-        local_tokens,
+        requested_tokens,
         device,
     )
-    runtime = getattr(block, "_deepep_v2_runtime", None)
-    if (
-        runtime is not None
-        and runtime.hidden == hidden
-        and runtime.num_topk == top_k
-        and runtime.num_experts == block.routed_experts_router.num_experts
-        and runtime.num_local_experts == block.num_local_routed_experts
-        and runtime.expert_alignment == block.ep.deepep.expert_alignment
-    ):
+    runtime_cache = getattr(block, "_deepep_v2_runtime_cache", None)
+    if runtime_cache is None:
+        runtime_cache = {}
+        block._deepep_v2_runtime_cache = runtime_cache
+    key = _runtime_key(block, hidden, top_k)
+    runtime = runtime_cache.get(key)
+    if runtime is not None:
         if num_max_tokens_per_rank <= runtime.num_max_tokens_per_rank:
+            block._deepep_v2_runtime = runtime
             return runtime
         raise RuntimeError(
-            "deepep_v2 EP saw more tokens than its existing ElasticBuffer "
+            "deepep_v2 EP saw more tokens than its shared ElasticBuffer "
             f"capacity: requested={num_max_tokens_per_rank}, "
             f"capacity={runtime.num_max_tokens_per_rank}. Initialize "
             "deepep_v2 with the largest local token shape first; "
-            "ep.capacity_factor only controls expanded receive tail-drop "
-            "capacity."
-        )
-
-    if runtime is not None:
-        raise RuntimeError(
-            "deepep_v2 EP runtime shape changed after initialization: "
-            f"old=(hidden={runtime.hidden}, top_k={runtime.num_topk}, "
-            f"experts={runtime.num_experts}, local_experts={runtime.num_local_experts}) "
-            f"new=(hidden={hidden}, top_k={top_k}, "
-            f"experts={block.routed_experts_router.num_experts}, "
-            f"local_experts={block.num_local_routed_experts})"
+            "the shared runtime sizes num_max_tokens_per_rank from the "
+            "largest DeepEP capacity_factor seen in apply_ep()."
         )
 
     deepep_cfg = block.ep.deepep
@@ -309,6 +350,7 @@ def _get_deepep_v2_runtime(
         num_qps=num_qps,
         async_with_compute_stream=deepep_cfg.async_mode,
     )
+    runtime_cache[key] = runtime
     block._deepep_v2_runtime = runtime
     return runtime
 

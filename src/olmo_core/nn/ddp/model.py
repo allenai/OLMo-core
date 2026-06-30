@@ -136,6 +136,7 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
         # stages owned different numbers of MoE blocks. Current OLMo-owned EP
         # paths should generally avoid needing these.
         self._ep_no_sync_dummy_symm_tensors: List[torch.Tensor] = []
+        self._deepep_v2_runtime_cache: Dict[object, object] = {}
 
         assert not (self.recompute_all_blocks_by_chunk and self.recompute_each_block), "Only one of recompute_all_blocks_by_chunk and recompute_each_block can be True."
         assert not (self.tbo and self.recompute_each_block), "Cannot use TBO when recompute_each_block is True."
@@ -649,9 +650,11 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
         Apply EP to the model.
         """
         self._compile_requested = bool(compile_enabled)
+        self._deepep_v2_runtime_cache = {}
 
         shared_pool_to_return = ep_no_sync_shared_pool
         ep_no_sync_blocks: List[OLMoDDPTransformerBlock] = []
+        deepep_blocks: List[OLMoDDPTransformerBlock] = []
         for block in self.routed_blocks():
             # ep_mp_group is the optional high-priority NCCL group for
             # synchronized EP collectives that should start promptly while shared
@@ -664,6 +667,8 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
             block.apply_ep(ep_mesh, ep_pg=None if block.ep.no_sync else ep_mp_group)
             if block.ep.uses_olmo_symm:
                 ep_no_sync_blocks.append(block)
+            if block.ep.is_deepep:
+                deepep_blocks.append(block)
 
         if ep_no_sync_blocks:
             slot_counts = {block.ep.shared_slots for block in ep_no_sync_blocks}
@@ -707,6 +712,19 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
                 block._ep_no_sync_shared_pool = shared_pool
                 block._ep_no_sync_shared_slot = block.block_idx % shared_slots
 
+        if deepep_blocks:
+            first_pg = deepep_blocks[0].ep_pg
+            if first_pg is None:
+                raise RuntimeError("DeepEP block is missing ep_pg after apply_ep()")
+            max_capacity_factor = max(block.ep.capacity_factor for block in deepep_blocks)
+            for block in deepep_blocks:
+                if block.ep_pg is not first_pg:
+                    raise RuntimeError(
+                        "All DeepEP blocks in a model part must share the same ep_pg "
+                        f"(block={block.block_idx})"
+                    )
+                block._deepep_v2_runtime_cache = self._deepep_v2_runtime_cache
+                block._deepep_v2_max_capacity_factor = max_capacity_factor
 
         self.ep_enabled = True
         return shared_pool_to_return
