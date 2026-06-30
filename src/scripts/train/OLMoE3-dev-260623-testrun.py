@@ -242,7 +242,7 @@ USE_FP8=_env_bool("OLMOE3_TESTRUN_USE_FP8", True)
 USE_FP8_ATTN_QKV=USE_FP8
 USE_FP8_ATTN_OUT=USE_FP8
 USE_FP8_ATTN_SAVE_QKV=False
-ROWWISE_A2A_NBLOCKS=256 if EP_DIM <=8 else 64 # for intra-node, can use more blocks to increase overlap; for inter-node, the bottleneck is the network, so fewer blocks can reduce overhead.
+ROWWISE_A2A_NBLOCKS=_env_int("OLMOE3_TESTRUN_ROWWISE_NBLOCKS", 128 if EP_DIM <=8 else 64) # keep the intra-node default below NVSHMEM 3.7's collective-launch grid cap; override with OLMOE3_TESTRUN_ROWWISE_NBLOCKS when tuning.
 SEED = 2026
 USE_MUON = False
 USE_PERI_NORM = True
