@@ -60,7 +60,7 @@ def variant_from_run_name(run_name: str) -> str:
 
 
 def build_eval_launch_config(
-    *, run_name, task, variant, cluster, step, ckpt, results_dir, max_test, max_length, batch_size, priority
+    *, run_name, task, variant, cluster, step, ckpt, results_dir, prompt_format, max_test, max_length, batch_size, priority
 ):
     root_dir = get_root_dir(cluster)  # e.g. /weka/oe-training-default/ai2-llm (mounts weka bucket)
     # Eval CODE now ships IN the cloned repo (src/scripts/ctc_eval); the runner runs from the repo root
@@ -71,7 +71,7 @@ def build_eval_launch_config(
     # can drive its own 8-way `torchrun`. cmd[0]="bash" => not auto-prefixed with `python`.
     inner = (
         f"RUN={run_name} TASK={task} VARIANT={variant} STEP='{step}' CKPT='{ckpt}' "
-        f"EVAL_OUT_DIR='{results_dir}' "
+        f"EVAL_OUT_DIR='{results_dir}' PROMPT_FORMAT='{prompt_format}' "
         f"MAX_TEST={max_test} MAX_LENGTH={max_length} BATCH_SIZE={batch_size} NGPU=8 "
         f"WEKA_LLM={root_dir} bash {runner}"
     )
@@ -114,6 +114,8 @@ def main():
     ap.add_argument("--results-dir", default="",
                     help="ABSOLUTE weka dir for the per-task result JSONs "
                          "(default: checkpoints/prasanns/<run_name>/eval).")
+    ap.add_argument("--prompt-format", choices=["chat", "raw", "alpaca"], default="chat",
+                    help="chat=SFT (apply_chat_template, matches training); raw=BASE/CPT models; alpaca=legacy.")
     ap.add_argument("--max-test", type=int, default=600)
     ap.add_argument("--max-length", type=int, default=40960)
     ap.add_argument("--batch-size", type=int, default=2)  # 40960-ctx generation on ~48GB neptune GPUs; 8 OOMs
@@ -137,7 +139,7 @@ def main():
             continue
         lc = build_eval_launch_config(
             run_name=args.run_name, task=task, variant=variant, cluster=args.cluster,
-            step=args.step, ckpt=args.ckpt, results_dir=args.results_dir,
+            step=args.step, ckpt=args.ckpt, results_dir=args.results_dir, prompt_format=args.prompt_format,
             max_test=args.max_test, max_length=args.max_length,
             batch_size=args.batch_size, priority=args.priority,
         )

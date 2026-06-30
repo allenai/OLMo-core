@@ -32,6 +32,7 @@ MAX_LENGTH="${MAX_LENGTH:-40960}"
 BATCH_SIZE="${BATCH_SIZE:-8}"
 NGPU="${NGPU:-8}"
 TOKENIZER="${TOKENIZER:-Qwen/Qwen3-4B}"
+PROMPT_FORMAT="${PROMPT_FORMAT:-chat}"   # chat=SFT (apply_chat_template) | raw=BASE/CPT | alpaca=legacy
 
 PRASANNS="$WEKA_LLM/checkpoints/prasanns"
 BUNDLE="${BUNDLE:-$PRASANNS/_eval_bundle}"
@@ -78,7 +79,7 @@ python -c "import scipy, sklearn" 2>/dev/null || pip install --quiet scipy sciki
 
 cd "$REPO"   # CODE is in-repo (ctc_eval); DATA comes from weka via --root "$BUNDLE" + EVAL500_ROOT
 PORT=$(( 20000 + RANDOM % 20000 ))
-TR="torchrun --nproc_per_node=$NGPU --master_port=$PORT src/scripts/ctc_eval/eval/eval_lc_native.py"
+TR="torchrun --nproc_per_node=$NGPU --master_port=$PORT src/scripts/ctc_eval/eval/eval_lc_native.py --prompt-format $PROMPT_FORMAT"
 
 # ---- docchunk: box-marker prefill eval; only OOLONG is wired (eval_lc_native_docchunk.py) ----
 if [ "$VARIANT" = "docchunk" ]; then

@@ -52,6 +52,10 @@ def main():
     ap.add_argument("--skip-ruler", action="store_true")
     ap.add_argument("--skip-gen", action="store_true",
                     help="skip held-out retrieval generalization probes")
+    ap.add_argument("--prompt-format", choices=["chat", "raw", "alpaca"], default="chat",
+                    help="chat = Qwen3 apply_chat_template (matches SFT training); "
+                         "raw = bare build_prompt, no wrapping (for BASE/CPT models); "
+                         "alpaca = legacy alpaca-instruction wrap.")
     args = ap.parse_args()
     os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
     if args.root:
@@ -97,6 +101,20 @@ def main():
 
     def strip_think(s):
         return s.split("</think>", 1)[1] if "</think>" in s else s
+
+    def _load(path, task, qp="both"):
+        # Build prompts in the format the model expects:
+        #   chat  -> Qwen3 chat template over the raw build_prompt (matches SFT training)
+        #   raw   -> bare build_prompt, fed as a completion (BASE/CPT models)
+        #   alpaca-> legacy alpaca-instruction wrap (build_prompt use_alpaca=True)
+        ex = load_unified_examples(path, args.max_test_samples, task=task,
+                                   query_position=qp, use_alpaca=(args.prompt_format == "alpaca"))
+        if args.prompt_format == "chat":
+            for e in ex:
+                e["prompt"] = tok.apply_chat_template(
+                    [{"role": "user", "content": e["prompt"]}],
+                    tokenize=False, add_generation_prompt=True)
+        return ex
 
     @torch.no_grad()
     def generate(prompts, max_new_tokens, stop_strings=None):
@@ -149,8 +167,7 @@ def main():
                 path = os.path.join(args.data_dir, f"ruler_{sub}_{L}_eval.jsonl")
                 if not os.path.exists(path):
                     continue
-                ex = load_unified_examples(path, args.max_test_samples, task="ruler",
-                                           query_position="after", use_alpaca=True)
+                ex = _load(path, task="ruler", qp="after")
                 resp = generate([e["prompt"] for e in ex], 160)
                 res, _ = _eval_ruler(ex, resp)
                 summary["ruler"][f"{sub}_{L}"] = res
@@ -159,15 +176,13 @@ def main():
         summary["ruler_avg_recall"] = sum(recalls) / len(recalls) if recalls else None
 
     if not args.ladder:
-        ex = load_unified_examples(args.contra_data, args.max_test_samples, task="contradiction",
-                                   query_position="both", use_alpaca=True)
+        ex = _load(args.contra_data, task="contradiction", qp="both")
         res, _ = _eval_contradiction(ex, generate([e["prompt"] for e in ex], args.contra_max_new_tokens, stop_strings=["contradicting pairs:"]))
         summary["contradiction"] = res
         print(f"[contradiction] f1={res['f1']:.3f} (n={len(ex)})", flush=True)
 
     if not args.ladder and os.path.exists(args.nq_data):
-        ex = load_unified_examples(args.nq_data, args.max_test_samples, task="retrieval",
-                                   query_position="both", use_alpaca=True)
+        ex = _load(args.nq_data, task="retrieval", qp="both")
         res, _ = _eval_retrieval(ex, generate([e["prompt"] for e in ex], 64))
         summary["nq"] = res
         print(f"[nq] f1={res.get('f1', 0):.3f} (n={len(ex)})", flush=True)
@@ -226,8 +241,7 @@ def main():
             for label, path in rungs:
                 if not path or not os.path.exists(path):
                     print(f"[ladder:{task}@{label}] MISSING {path}, skipping"); continue
-                ex = load_unified_examples(path, args.max_test_samples, task=loadtask,
-                                           query_position="both", use_alpaca=True)
+                ex = _load(path, task=loadtask, qp="both")
                 res, _ = fn(ex, generate([e["prompt"] for e in ex], maxtok, **gkw))
                 prim = res.get(pkey) if pkey else next(
                     (v for k, v in res.items() if k.startswith("mrr")), None)
