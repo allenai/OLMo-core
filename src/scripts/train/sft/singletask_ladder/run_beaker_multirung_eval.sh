@@ -33,6 +33,9 @@ BATCH_SIZE="${BATCH_SIZE:-8}"
 NGPU="${NGPU:-8}"
 TOKENIZER="${TOKENIZER:-Qwen/Qwen3-4B}"
 PROMPT_FORMAT="${PROMPT_FORMAT:-chat}"   # chat=SFT (apply_chat_template) | raw=BASE/CPT | alpaca=legacy
+# Landmark + compressive attention can't do batched/left-padded generation (blocks tied to absolute
+# position) -> force batch_size=1 for those variants. Dense keeps the configured (larger) batch.
+case "$VARIANT" in landmark|compressive) BATCH_SIZE=1 ;; esac
 
 PRASANNS="$WEKA_LLM/checkpoints/prasanns"
 BUNDLE="${BUNDLE:-$PRASANNS/_eval_bundle}"
