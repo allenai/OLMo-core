@@ -1,4 +1,5 @@
 import logging
+import os
 import time
 from dataclasses import dataclass
 from typing import Any, ClassVar, Dict, Optional
@@ -71,6 +72,7 @@ class SpeedMonitorCallback(Callback):
     _step_seq_len: int = 0
     _step_flops: int = 0
     _parallel_degree: int = 1
+    _batch_load_warn_threshold: Optional[float] = None
     _bps_avg: Optional[float] = None
     _tps_avg: Optional[float] = None
     _mfu_avg: Optional[float] = None
@@ -144,6 +146,32 @@ class SpeedMonitorCallback(Callback):
 
     def pre_step(self, batch: Dict[str, Any]):
         self._batch_load_time = time.perf_counter() - self._batch_load_start
+        if self._batch_load_warn_threshold is None:
+            raw_threshold = os.environ.get("OLMO_BATCH_LOAD_WARN_SECONDS")
+            if raw_threshold:
+                try:
+                    self._batch_load_warn_threshold = float(raw_threshold)
+                except ValueError:
+                    log.warning(
+                        "Ignoring invalid OLMO_BATCH_LOAD_WARN_SECONDS=%r; expected a number",
+                        raw_threshold,
+                    )
+                    self._batch_load_warn_threshold = 0.0
+            else:
+                self._batch_load_warn_threshold = 0.0
+
+        if (
+            self._batch_load_warn_threshold > 0
+            and self._batch_load_time >= self._batch_load_warn_threshold
+        ):
+            log.warning(
+                "Slow batch load: step=%s rank=%s local_rank=%s load_time=%.3fs threshold=%.3fs",
+                self.step,
+                os.environ.get("RANK", "?"),
+                os.environ.get("LOCAL_RANK", "?"),
+                self._batch_load_time,
+                self._batch_load_warn_threshold,
+            )
 
         if self._first_step:
             # We don't record the first batch since the first one tends to take
