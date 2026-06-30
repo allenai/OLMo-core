@@ -1276,6 +1276,15 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
         **kwargs,
     ) -> Tuple[torch.Tensor, object]:
+        # Dispatch no-sync here so the no-sync TBO path never imports the sync module.
+        if self.ep_no_sync:
+            return self.combined_forward_ep_no_sync_tbo(
+                x0,
+                x1_ctx,
+                x1_is_fresh,
+                loss_div_factor=loss_div_factor,
+                **kwargs,
+            )
         from .ep_sync_tbo import combined_forward_ep_tbo as _combined_forward_ep_tbo
 
         return _combined_forward_ep_tbo(
