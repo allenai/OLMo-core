@@ -52,8 +52,8 @@ launch_one() {
   local integration_variant="$1"
   local integration_tag="$2"
   local global_batch_size_seq=32
-  local gpus=2
-  local micro_bsz=8
+  local gpus="${GPUS:-2}"
+  local micro_bsz="${MICRO_BSZ:-8}"
   local batch_tag=b256k
   local denom=$((NUM_NODES * gpus * micro_bsz))
   if (( global_batch_size_seq % denom != 0 )); then
