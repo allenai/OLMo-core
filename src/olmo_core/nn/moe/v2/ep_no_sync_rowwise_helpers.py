@@ -25,6 +25,7 @@ if TYPE_CHECKING:
 
 
 def reset_ep_no_sync_rowwise_metrics(block: MoEFusedV2TransformerBlock) -> None:
+    """Clear the per-block rowwise drop/utilization metric accumulators."""
     block._ep_no_sync_rowwise_drop_tokens_sum = None
     block._ep_no_sync_rowwise_total_tokens_sum = None
     block._ep_no_sync_rowwise_symm_util_max = None
@@ -35,6 +36,7 @@ def add_ep_no_sync_rowwise_metrics(
     out: Dict[str, tuple[torch.Tensor, Optional["ReduceType"]]],
     reduce_type_cls,
 ) -> None:
+    """Emit the accumulated rowwise metrics (token drop rate, symm-buffer utilization) into ``out`` with their reduce types."""
     if (
         block._ep_no_sync_rowwise_drop_tokens_sum is not None
         and block._ep_no_sync_rowwise_total_tokens_sum is not None
@@ -60,6 +62,7 @@ def accumulate_ep_no_sync_rowwise_metrics(
     recv_splits_by_src_local: torch.Tensor,
     rank_capacity: int,
 ) -> None:
+    """Accumulate one forward's drop count, token count, and symm-buffer utilization into the block's running rowwise totals."""
     if rank_capacity <= 0:
         return
 

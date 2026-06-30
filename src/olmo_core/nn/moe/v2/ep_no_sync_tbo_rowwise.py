@@ -106,6 +106,7 @@ def ep_no_sync_rowwise_tbo_stage_a(
     loss_div_factor: Optional[torch.Tensor | float] = None,
     **kwargs,
 ) -> _NoSyncRowwiseStageAState:
+    """TBO stage A: attention + residual, router, and local permute; launches this micro-batch's rowwise dispatch."""
     self = block
     assert self.routed_experts is not None
     assert self.routed_experts_router is not None
@@ -258,6 +259,7 @@ def ep_no_sync_rowwise_tbo_stage_d_launch(
     block: "MoEFusedV2TransformerBlock",
     a_state: _NoSyncRowwiseStageAState,
 ) -> _NoSyncRowwiseStageDState:
+    """Launch the rowwise dispatch all-to-all (scatter tokens to expert-owning ranks) for the pending micro-batch."""
     self = block
     comm_stream = get_or_init_stream(
         id=f"ep_no_sync_rowwise_comm_{a_state.group_name}", priority=-10
@@ -298,6 +300,7 @@ def ep_no_sync_rowwise_tbo_stage_shared_launch(
     block: "MoEFusedV2TransformerBlock",
     a_state: _NoSyncRowwiseStageAState,
 ) -> None:
+    """Launch the shared-expert compute on the dense stream, overlapped with the routed all-to-all."""
     self = block
     if self.shared_experts is None or a_state.shared_done_event is not None:
         return
@@ -350,6 +353,7 @@ def ep_no_sync_rowwise_tbo_stage_e(
     block: "MoEFusedV2TransformerBlock",
     d_state: _NoSyncRowwiseStageDState,
 ) -> _NoSyncRowwiseTboPendingContext:
+    """TBO stage E: run the routed experts on the received tokens."""
     self = block
     assert self.routed_experts is not None
     ep_no_sync_rowwise_tbo_stage_shared_launch(self, d_state.a_state)
@@ -375,6 +379,7 @@ def ep_no_sync_rowwise_tbo_stage_c_launch(
     block: "MoEFusedV2TransformerBlock",
     pending_ctx: _NoSyncRowwiseTboPendingContext,
 ) -> _NoSyncRowwiseTboPendingContext:
+    """Launch the rowwise combine all-to-all (gather expert outputs back) for the pending micro-batch."""
     del block
     block = pending_ctx.block
     assert block.routed_experts_router is not None
@@ -418,6 +423,7 @@ def ep_no_sync_rowwise_tbo_stage_tail(
     block: "MoEFusedV2TransformerBlock",
     pending_ctx: _NoSyncRowwiseTboPendingContext,
 ) -> torch.Tensor:
+    """Finish a micro-batch: complete the combine, unpermute/merge the routed and shared outputs, and apply the feed-forward residual."""
     self = block
     a_state = pending_ctx.a_state
     if pending_ctx.combine_done_event is not None:
@@ -447,6 +453,7 @@ def combined_forward_ep_no_sync_tbo_rowwise(
     loss_div_factor: Optional[torch.Tensor | float] = None,
     **kwargs,
 ) -> tuple[torch.Tensor, _NoSyncRowwiseTboPendingContext]:
+    """Rowwise no-sync two-batch-overlap block forward: advances micro-batch ``x0`` while overlapping the pending micro-batch's rowwise all-to-all, returning ``x0``'s output and the carried context for the next micro-batch."""
     self = block
     if x1_is_fresh:
         pending_prev = None

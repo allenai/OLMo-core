@@ -1,3 +1,11 @@
+"""
+Rowwise no-sync expert-parallel forward (the production no-sync path).
+
+``combined_forward_ep_no_sync_rowwise`` dispatches and combines tokens over the rowwise
+symmetric-memory all-to-all with on-the-wire MXFP8, runs the routed experts, and overlaps the
+shared experts. Runs under the default OLMo-owned symmetric-memory backend.
+"""
+
 from __future__ import annotations
 
 from dataclasses import replace
@@ -387,7 +395,7 @@ def combined_forward_ep_no_sync_rowwise(
         up_wgrad_sink_transpose_last2 = False
         down_wgrad_sink_transpose_last2 = False
         up_gate_anchor = routed_experts.w_up_gate.transpose(1, 2)
-        down_anchor = routed_experts.w_down
+        down_anchor: torch.Tensor = routed_experts.w_down
         if routed_fp8_cfg.fp8_only_params:
             up_wgrad_sink = up_gate_weight
             down_wgrad_sink = down_weight
