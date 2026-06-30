@@ -14,8 +14,7 @@ try:
 except ImportError:
     from olmo_core._nvtx import nvtx as _nvtx
 
-# Range color per subsystem. Pick the subsystem at the call site; the color is fixed here so the
-# scheme stays consistent across all the fused MoE modules.
+# Range color per subsystem.
 _SUBSYSTEM_COLORS = {
     "routing": "blue",  # token routing + per-block forward orchestration
     "experts": "purple",  # expert compute and expert-weight preparation
