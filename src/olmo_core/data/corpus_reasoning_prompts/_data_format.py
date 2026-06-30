@@ -733,9 +733,13 @@ def _rerank_reference_order(example):
         rest = [i for i in range(n) if ce[i] is None]
         order = scored + rest
     else:
-        gold = sorted(example["gold_doc_indices"])
-        gset = set(gold)
-        order = gold + [i for i in range(n) if i not in gset]
+        raise NotImplementedError(
+            "DEPRECATED binary rerank format: example has no `ce_scores`, so the "
+            "reference order would fall back to the old gold-first-then-displayed "
+            "scheme. That format is disabled. Regenerate rerank with "
+            "generate_msmarco_trainhn_data.py (CE-graded) instead of the old "
+            "generate_msmarco_data.py."
+        )
     return [i + 1 for i in order]
 
 
