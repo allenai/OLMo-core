@@ -77,9 +77,6 @@ from ..moe.v2.ep_no_sync_rowwise import (
 from ..moe.v2.ep_no_sync_rowwise_wave import (
     combined_forward_ep_no_sync_rowwise_wave as _combined_forward_ep_no_sync_rowwise_wave,
 )
-from ..moe.v2.ep_no_sync_tma_ibgda import (
-    combined_forward_ep_no_sync_tma_ibgda as _combined_forward_ep_no_sync_tma_ibgda,
-)
 from ..moe.v2.ep_wave import (
     combined_forward_ep_wave as _combined_forward_ep_wave,
 )
@@ -706,8 +703,6 @@ class OLMoDDPTransformerBlock(olmo_core.nn.transformer.block.TransformerBlockBas
                         no_sync_forward = self.combined_forward_ep_wave
                     elif self.ep.path == ExpertParallelPath.rowwise_wave:
                         no_sync_forward = self.combined_forward_ep_no_sync_rowwise_wave
-                    elif self.ep.path == ExpertParallelPath.rowwise_tma_ibgda:
-                        no_sync_forward = self.combined_forward_ep_no_sync_tma_ibgda
                     elif self.ep.path == ExpertParallelPath.rowwise_nvshmem:
                         no_sync_forward = self.combined_forward_ep_no_sync_rowwise
                     elif self.ep.path == ExpertParallelPath.no_sync_1d:
@@ -1104,26 +1099,6 @@ class OLMoDDPTransformerBlock(olmo_core.nn.transformer.block.TransformerBlockBas
             checkpoint_state = get_rowwise_checkpoint_state()
         activation_checkpointing, accumulate_routed_aux_loss_metrics = checkpoint_state
         return _combined_forward_ep_no_sync_rowwise_wave(
-            self,
-            x,
-            activation_checkpointing=activation_checkpointing,
-            accumulate_routed_aux_loss_metrics=accumulate_routed_aux_loss_metrics,
-            loss_div_factor=loss_div_factor,
-            **kwargs,
-        )
-
-    def combined_forward_ep_no_sync_tma_ibgda(
-        self,
-        x: torch.Tensor,
-        *,
-        loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
-        **kwargs,
-    ) -> torch.Tensor:
-        checkpoint_state = self._ep_no_sync_rowwise_static_checkpoint_state
-        if checkpoint_state is None:
-            checkpoint_state = get_rowwise_checkpoint_state()
-        activation_checkpointing, accumulate_routed_aux_loss_metrics = checkpoint_state
-        return _combined_forward_ep_no_sync_tma_ibgda(
             self,
             x,
             activation_checkpointing=activation_checkpointing,

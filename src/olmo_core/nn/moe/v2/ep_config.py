@@ -12,7 +12,6 @@ class ExpertParallelPath(StrEnum):
     no_sync_1d = "no_sync_1d"
     no_sync_2d_removed = "no_sync_2d_removed"
     rowwise_nvshmem = "rowwise_nvshmem"
-    rowwise_tma_ibgda = "rowwise_tma_ibgda"
     rowwise_wave = "rowwise_wave"
     wave_mega = "wave_mega"
 
@@ -39,11 +38,6 @@ class ExpertParallelConfig(Config):
     rowwise_symm_combine_out: Optional[bool] = None
     rowwise_symm_combine_gather: Optional[bool] = None
 
-    tma_ibgda_num_sms: Optional[int] = None
-    tma_ibgda_dispatch_num_sms: Optional[int] = None
-    tma_ibgda_combine_num_sms: Optional[int] = None
-    tma_ibgda_preprocess_num_sms: Optional[int] = None
-    tma_ibgda_symmetric_expert_out: bool = False
     rowwise_wave_num_waves: int = 1
     rowwise_wave_mode: str = "expert"
     rowwise_wave_recompute_linear1: bool = False
@@ -97,34 +91,6 @@ class ExpertParallelConfig(Config):
                 f"path={ExpertParallelPath.rowwise_wave!r} "
                 f"(got path={self.path!r})"
             )
-        tma_ibgda_num_sms_fields = {
-            "tma_ibgda_num_sms": self.tma_ibgda_num_sms,
-            "tma_ibgda_dispatch_num_sms": self.tma_ibgda_dispatch_num_sms,
-            "tma_ibgda_combine_num_sms": self.tma_ibgda_combine_num_sms,
-            "tma_ibgda_preprocess_num_sms": self.tma_ibgda_preprocess_num_sms,
-        }
-        for field_name, value in tma_ibgda_num_sms_fields.items():
-            if value is None:
-                continue
-            if value < 32:
-                raise OLMoConfigurationError(
-                    f"EP {field_name} must be >= 32 when set (got {value})"
-                )
-            if self.path != ExpertParallelPath.rowwise_tma_ibgda:
-                raise OLMoConfigurationError(
-                    f"EP {field_name} is only valid with "
-                    f"path={ExpertParallelPath.rowwise_tma_ibgda!r} "
-                    f"(got path={self.path!r})"
-                )
-        if (
-            self.tma_ibgda_symmetric_expert_out
-            and self.path != ExpertParallelPath.rowwise_tma_ibgda
-        ):
-            raise OLMoConfigurationError(
-                "EP tma_ibgda_symmetric_expert_out=True is only valid with "
-                f"path={ExpertParallelPath.rowwise_tma_ibgda!r} "
-                f"(got path={self.path!r})"
-            )
         if (
             self.wave_use_bf16_persistent_mega_forward
             and self.path != ExpertParallelPath.wave_mega
@@ -168,7 +134,6 @@ class ExpertParallelConfig(Config):
     def is_rowwise(self) -> bool:
         return self.path in {
             ExpertParallelPath.rowwise_nvshmem,
-            ExpertParallelPath.rowwise_tma_ibgda,
             ExpertParallelPath.rowwise_wave,
         }
 
@@ -189,34 +154,4 @@ class ExpertParallelConfig(Config):
             ExpertParallelPath.rowwise_wave,
         }:
             return "nvshmem"
-        if self.path == ExpertParallelPath.rowwise_tma_ibgda:
-            return "tma_ibgda"
         return None
-
-    @property
-    def resolved_tma_ibgda_dispatch_num_sms(self) -> int:
-        return (
-            self.tma_ibgda_dispatch_num_sms
-            if self.tma_ibgda_dispatch_num_sms is not None
-            else self.tma_ibgda_num_sms
-            if self.tma_ibgda_num_sms is not None
-            else self.rowwise_nblocks
-        )
-
-    @property
-    def resolved_tma_ibgda_combine_num_sms(self) -> int:
-        return (
-            self.tma_ibgda_combine_num_sms
-            if self.tma_ibgda_combine_num_sms is not None
-            else self.tma_ibgda_num_sms
-            if self.tma_ibgda_num_sms is not None
-            else self.rowwise_nblocks
-        )
-
-    @property
-    def resolved_tma_ibgda_preprocess_num_sms(self) -> Optional[int]:
-        return (
-            self.tma_ibgda_preprocess_num_sms
-            if self.tma_ibgda_preprocess_num_sms is not None
-            else self.tma_ibgda_num_sms
-        )

@@ -31,11 +31,9 @@ def test_v2_extracted_forward_module_names_importable():
         ep_no_sync_buffers,
         ep_no_sync_rowwise,
         ep_no_sync_rowwise_wave,
-        ep_no_sync_tma_ibgda,
         ep_wave,
         ep_sync_1d,
         no_ep,
-        tma_ibgda,
     )
 
     assert hasattr(activation_debug, "maybe_dump_ep_no_sync_saved_activations")
@@ -47,9 +45,7 @@ def test_v2_extracted_forward_module_names_importable():
     assert hasattr(ep_no_sync_1d, "combined_forward_ep_no_sync_1d")
     assert hasattr(ep_no_sync_rowwise, "combined_forward_ep_no_sync_rowwise")
     assert hasattr(ep_no_sync_rowwise_wave, "combined_forward_ep_no_sync_rowwise_wave")
-    assert hasattr(ep_no_sync_tma_ibgda, "combined_forward_ep_no_sync_tma_ibgda")
     assert hasattr(ep_wave, "combined_forward_ep_wave")
-    assert hasattr(tma_ibgda, "tma_ibgda_rowwise_dispatch_bf16")
 
 
 def _build_ep_mesh() -> DeviceMesh:
@@ -82,14 +78,12 @@ def _build_block(
     ep_no_sync_use_2d_all_to_all: bool = False,
     ep_no_sync_use_rowwise_all_to_all: bool = False,
     ep_no_sync_rowwise_backend: str = "nvshmem",
-    ep_no_sync_tma_ibgda_num_sms: int | None = None,
-    ep_no_sync_tma_ibgda_symmetric_expert_out: bool = False,
 ) -> OLMoDDPTransformerBlock:
     if ep is None:
         rowwise_backend = ep_no_sync_rowwise_backend.lower()
-        if rowwise_backend not in ("nvshmem", "tma_ibgda"):
+        if rowwise_backend != "nvshmem":
             raise OLMoConfigurationError(
-                "ep_no_sync_rowwise_backend must be one of 'nvshmem'|'tma_ibgda'"
+                "ep_no_sync_rowwise_backend must be 'nvshmem'"
             )
         if ep_no_sync_use_2d_all_to_all:
             path = ExpertParallelPath.no_sync_2d_removed
@@ -98,19 +92,13 @@ def _build_block(
         elif ep_no_sync_use_wave:
             path = ExpertParallelPath.wave_mega
         elif ep_no_sync_use_rowwise_all_to_all:
-            path = (
-                ExpertParallelPath.rowwise_tma_ibgda
-                if rowwise_backend == "tma_ibgda"
-                else ExpertParallelPath.rowwise_nvshmem
-            )
+            path = ExpertParallelPath.rowwise_nvshmem
         else:
             path = ExpertParallelPath.no_sync_1d
         ep = ExpertParallelConfig(
             path=path,
             capacity_factor=ep_no_sync_capacity_factor,
             rowwise_nblocks=256,
-            tma_ibgda_num_sms=ep_no_sync_tma_ibgda_num_sms,
-            tma_ibgda_symmetric_expert_out=ep_no_sync_tma_ibgda_symmetric_expert_out,
             wave_use_bf16_persistent_mega_forward=(
                 ep_no_sync_wave_use_bf16_persistent_mega_forward
             ),
@@ -188,22 +176,6 @@ def test_v2_ep_wave_legacy_flag_normalizes_to_wave_path():
     assert block.ep.uses_rowwise_buffers is True
 
 
-def test_v2_ep_config_selects_rowwise_tma_ibgda_path():
-    block = _build_block(
-        ep_no_sync=False,
-        ep=ExpertParallelConfig(
-            path=ExpertParallelPath.rowwise_tma_ibgda,
-            tma_ibgda_num_sms=32,
-        ),
-        init_device="cpu",
-    )
-    assert block.ep.path == ExpertParallelPath.rowwise_tma_ibgda
-    assert block.ep.no_sync is True
-    assert block.ep.uses_rowwise_buffers is True
-    assert block.ep.rowwise_transport == "tma_ibgda"
-    assert block.ep.tma_ibgda_num_sms == 32
-
-
 def test_v2_ep_config_selects_rowwise_wave_path():
     block = _build_block(
         ep_no_sync=False,
@@ -233,7 +205,6 @@ def test_v2_ep_config_tbo_only_allows_rowwise_nvshmem():
     for path in (
         ExpertParallelPath.sync_1d,
         ExpertParallelPath.no_sync_1d,
-        ExpertParallelPath.rowwise_tma_ibgda,
         ExpertParallelPath.rowwise_wave,
         ExpertParallelPath.wave_mega,
     ):
@@ -252,200 +223,6 @@ def test_v2_rowwise_nvshmem_tbo_forward_method_is_available():
     )
     assert block.ep.path == ExpertParallelPath.rowwise_nvshmem
     assert callable(block.combined_forward_rowwise_nvshmem_tbo)
-
-
-def test_v2_tma_ibgda_backend_config_is_stored():
-    block = _build_block(
-        ep_no_sync=True,
-        ep_no_sync_use_rowwise_all_to_all=True,
-        ep_no_sync_rowwise_backend="tma_ibgda",
-        init_device="cpu",
-    )
-    assert block.ep.rowwise_transport == "tma_ibgda"
-    assert callable(block.combined_forward_ep_no_sync_tma_ibgda)
-
-
-def test_v2_tma_ibgda_num_sms_config_is_stored():
-    block = _build_block(
-        ep_no_sync=True,
-        ep_no_sync_use_rowwise_all_to_all=True,
-        ep_no_sync_rowwise_backend="tma_ibgda",
-        ep_no_sync_tma_ibgda_num_sms=32,
-        init_device="cpu",
-    )
-    assert block.ep.tma_ibgda_num_sms == 32
-
-
-def test_v2_tma_ibgda_stage_num_sms_config_is_stored():
-    block = _build_block(
-        ep_no_sync=False,
-        ep=ExpertParallelConfig(
-            path=ExpertParallelPath.rowwise_tma_ibgda,
-            rowwise_nblocks=96,
-            tma_ibgda_num_sms=64,
-            tma_ibgda_dispatch_num_sms=128,
-            tma_ibgda_combine_num_sms=160,
-            tma_ibgda_preprocess_num_sms=192,
-        ),
-        init_device="cpu",
-    )
-    assert block.ep.resolved_tma_ibgda_dispatch_num_sms == 128
-    assert block.ep.resolved_tma_ibgda_combine_num_sms == 160
-    assert block.ep.resolved_tma_ibgda_preprocess_num_sms == 192
-
-
-def test_v2_tma_ibgda_num_sms_is_stage_fallback():
-    block = _build_block(
-        ep_no_sync=False,
-        ep=ExpertParallelConfig(
-            path=ExpertParallelPath.rowwise_tma_ibgda,
-            rowwise_nblocks=96,
-            tma_ibgda_num_sms=64,
-        ),
-        init_device="cpu",
-    )
-    assert block.ep.resolved_tma_ibgda_dispatch_num_sms == 64
-    assert block.ep.resolved_tma_ibgda_combine_num_sms == 64
-    assert block.ep.resolved_tma_ibgda_preprocess_num_sms == 64
-
-
-def test_v2_tma_ibgda_stage_num_sms_default_to_rowwise_nblocks_except_preprocess():
-    block = _build_block(
-        ep_no_sync=False,
-        ep=ExpertParallelConfig(
-            path=ExpertParallelPath.rowwise_tma_ibgda,
-            rowwise_nblocks=96,
-        ),
-        init_device="cpu",
-    )
-    assert block.ep.resolved_tma_ibgda_dispatch_num_sms == 96
-    assert block.ep.resolved_tma_ibgda_combine_num_sms == 96
-    assert block.ep.resolved_tma_ibgda_preprocess_num_sms is None
-
-
-def test_v2_tma_ibgda_symmetric_expert_out_config_is_stored():
-    block = _build_block(
-        ep_no_sync=True,
-        ep_no_sync_use_rowwise_all_to_all=True,
-        ep_no_sync_rowwise_backend="tma_ibgda",
-        ep_no_sync_tma_ibgda_symmetric_expert_out=True,
-        init_device="cpu",
-    )
-    assert block.ep.tma_ibgda_symmetric_expert_out is True
-
-
-def test_v2_tma_ibgda_symmetric_expert_out_flag_detects_direct_buffer():
-    from olmo_core.nn.moe.v2.ep_no_sync_tma_ibgda import (
-        _resolve_symmetric_expert_out_flag,
-    )
-
-    expert_out = torch.empty((4, 8), dtype=torch.bfloat16)
-    assert (
-        _resolve_symmetric_expert_out_flag(
-            requested=True,
-            returned_expert_out=expert_out,
-            symmetric_expert_out=expert_out,
-        )
-        is True
-    )
-
-
-def test_v2_tma_ibgda_symmetric_expert_out_flag_ignores_unrequested_buffer():
-    from olmo_core.nn.moe.v2.ep_no_sync_tma_ibgda import (
-        _resolve_symmetric_expert_out_flag,
-    )
-
-    expert_out = torch.empty((4, 8), dtype=torch.bfloat16)
-    assert (
-        _resolve_symmetric_expert_out_flag(
-            requested=False,
-            returned_expert_out=expert_out,
-            symmetric_expert_out=None,
-        )
-        is False
-    )
-
-
-def test_v2_tma_ibgda_symmetric_expert_out_flag_rejects_missing_buffer():
-    from olmo_core.nn.moe.v2.ep_no_sync_tma_ibgda import (
-        _resolve_symmetric_expert_out_flag,
-    )
-
-    expert_out = torch.empty((4, 8), dtype=torch.bfloat16)
-    with pytest.raises(RuntimeError, match="no symmetric buffer"):
-        _resolve_symmetric_expert_out_flag(
-            requested=True,
-            returned_expert_out=expert_out,
-            symmetric_expert_out=None,
-        )
-
-
-def test_v2_tma_ibgda_symmetric_expert_out_flag_rejects_indirect_output():
-    from olmo_core.nn.moe.v2.ep_no_sync_tma_ibgda import (
-        _resolve_symmetric_expert_out_flag,
-    )
-
-    symmetric_expert_out = torch.empty((4, 8), dtype=torch.bfloat16)
-    returned_expert_out = torch.empty_like(symmetric_expert_out)
-    with pytest.raises(RuntimeError, match="returned a different tensor"):
-        _resolve_symmetric_expert_out_flag(
-            requested=True,
-            returned_expert_out=returned_expert_out,
-            symmetric_expert_out=symmetric_expert_out,
-        )
-
-
-def test_v2_tma_ibgda_num_sms_rejects_currently_unsafe_low_values():
-    with pytest.raises(OLMoConfigurationError, match="tma_ibgda_num_sms"):
-        _build_block(
-            ep_no_sync=True,
-            ep_no_sync_use_rowwise_all_to_all=True,
-            ep_no_sync_rowwise_backend="tma_ibgda",
-            ep_no_sync_tma_ibgda_num_sms=16,
-            init_device="cpu",
-        )
-
-
-def test_v2_tma_ibgda_num_sms_requires_tma_ibgda_path():
-    with pytest.raises(OLMoConfigurationError, match="tma_ibgda_num_sms"):
-        ExpertParallelConfig(
-            path=ExpertParallelPath.rowwise_nvshmem,
-            tma_ibgda_num_sms=32,
-        ).validate()
-
-
-def test_v2_tma_ibgda_stage_num_sms_requires_tma_ibgda_path():
-    for field_name in (
-        "tma_ibgda_dispatch_num_sms",
-        "tma_ibgda_combine_num_sms",
-        "tma_ibgda_preprocess_num_sms",
-    ):
-        with pytest.raises(OLMoConfigurationError, match=field_name):
-            ExpertParallelConfig(
-                path=ExpertParallelPath.rowwise_nvshmem,
-                **{field_name: 32},
-            ).validate()
-
-
-def test_v2_tma_ibgda_stage_num_sms_rejects_currently_unsafe_low_values():
-    for field_name in (
-        "tma_ibgda_dispatch_num_sms",
-        "tma_ibgda_combine_num_sms",
-        "tma_ibgda_preprocess_num_sms",
-    ):
-        with pytest.raises(OLMoConfigurationError, match=field_name):
-            ExpertParallelConfig(
-                path=ExpertParallelPath.rowwise_tma_ibgda,
-                **{field_name: 16},
-            ).validate()
-
-
-def test_v2_tma_ibgda_symmetric_expert_out_requires_tma_ibgda_path():
-    with pytest.raises(OLMoConfigurationError, match="tma_ibgda_symmetric_expert_out"):
-        ExpertParallelConfig(
-            path=ExpertParallelPath.wave_mega,
-            tma_ibgda_symmetric_expert_out=True,
-        ).validate()
 
 
 def test_v2_rowwise_wave_num_waves_requires_rowwise_wave_path():
@@ -470,7 +247,7 @@ def test_v2_rowwise_wave_rejects_invalid_mode_and_num_waves():
         ).validate()
 
 
-def test_v2_tma_ibgda_backend_rejects_unknown_backend():
+def test_v2_rowwise_backend_rejects_unknown_backend():
     with pytest.raises(OLMoConfigurationError, match="ep_no_sync_rowwise_backend"):
         _build_block(
             ep_no_sync=True,
@@ -899,11 +676,10 @@ def test_v2_ep_wave_bf16_route_pack_inputs_device_contract():
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="requires CUDA")
-def test_v2_ep_wave_peer_route_metadata_matches_tma_ibgda_reference():
+def test_v2_ep_wave_peer_route_metadata_matches_reference():
     from olmo_core.kernels.symm_mem_vdev2d import (
         rowwise_bf16_mega_moe_peer_route_metadata_debug,
     )
-    from olmo_core.nn.moe.v2.tma_ibgda import build_tma_ibgda_route_metadata
 
     device = torch.device("cuda", torch.cuda.current_device())
     dst_ranks = torch.tensor(
@@ -950,28 +726,29 @@ def test_v2_ep_wave_peer_route_metadata_matches_tma_ibgda_reference():
             pytest.skip("symm_mem_vdev2d CUDA extension is not built")
         raise
 
-    reference = build_tma_ibgda_route_metadata(
-        dst_ranks,
-        dst_rows,
-        ep_world_size=2,
-        rank_capacity=4,
-        static_route_budget=2,
-    )
-    torch.testing.assert_close(routes_per_rank.cpu(), reference.routes_per_rank.cpu(), rtol=0, atol=0)
-    torch.testing.assert_close(rank_offsets.cpu(), reference.rank_offsets.cpu(), rtol=0, atol=0)
+    flat_ranks = dst_ranks.cpu().reshape(-1)
+    flat_rows = dst_rows.cpu().reshape(-1)
+    flat_probs = probs.cpu().reshape(-1)
+    valid = (flat_ranks >= 0) & (flat_rows >= 0)
+    expected_routes_per_rank = torch.zeros(2, dtype=torch.long)
+    for rank in flat_ranks[valid].tolist():
+        expected_routes_per_rank[int(rank)] += 1
+    expected_rank_offsets = torch.zeros(3, dtype=torch.long)
+    expected_rank_offsets[1:] = torch.cumsum(expected_routes_per_rank, dim=0)
+    expected_overflow_by_rank = expected_routes_per_rank > 2
+
+    torch.testing.assert_close(routes_per_rank.cpu(), expected_routes_per_rank, rtol=0, atol=0)
+    torch.testing.assert_close(rank_offsets.cpu(), expected_rank_offsets, rtol=0, atol=0)
     torch.testing.assert_close(
         overflow_by_rank.cpu().to(dtype=torch.bool),
-        reference.overflow_by_rank.cpu(),
+        expected_overflow_by_rank,
         rtol=0,
         atol=0,
     )
 
     records = route_records_i32.cpu()
     record_probs = route_record_probs.cpu()
-    flat_ranks = dst_ranks.cpu().reshape(-1)
-    flat_rows = dst_rows.cpu().reshape(-1)
-    flat_probs = probs.cpu().reshape(-1)
-    for rank in range(reference.ep_world_size):
+    for rank in range(2):
         start = int(rank_offsets.cpu()[rank].item())
         end = int(rank_offsets.cpu()[rank + 1].item())
         got = sorted(
@@ -988,8 +765,8 @@ def test_v2_ep_wave_peer_route_metadata_matches_tma_ibgda_reference():
         for route_idx, (dst_rank, dst_row) in enumerate(zip(flat_ranks, flat_rows)):
             if int(dst_rank.item()) != rank or int(dst_row.item()) < 0:
                 continue
-            source_row = route_idx // reference.top_k
-            topk_slot = route_idx % reference.top_k
+            source_row = route_idx // dst_ranks.shape[1]
+            topk_slot = route_idx % dst_ranks.shape[1]
             expected.append(
                 (
                     source_row,
@@ -1002,15 +779,57 @@ def test_v2_ep_wave_peer_route_metadata_matches_tma_ibgda_reference():
         assert got == sorted(expected)
 
 
+def _reference_rowwise_dispatch_bf16(
+    source_input: torch.Tensor,
+    dst_ranks: torch.Tensor,
+    dst_rows: torch.Tensor,
+    *,
+    ep_world_size: int,
+    rank_capacity: int,
+) -> torch.Tensor:
+    output = torch.zeros(
+        (ep_world_size, rank_capacity, source_input.shape[1]),
+        dtype=source_input.dtype,
+        device=source_input.device,
+    )
+    for token_idx in range(dst_ranks.shape[0]):
+        for topk_idx in range(dst_ranks.shape[1]):
+            rank = int(dst_ranks[token_idx, topk_idx].item())
+            row = int(dst_rows[token_idx, topk_idx].item())
+            if rank >= 0 and row >= 0:
+                output[rank, row] = source_input[token_idx]
+    return output
+
+
+def _reference_rowwise_combine_bf16(
+    expert_out_by_rank: torch.Tensor,
+    src_ranks: torch.Tensor,
+    src_rows: torch.Tensor,
+    *,
+    probs: torch.Tensor,
+) -> torch.Tensor:
+    output = torch.zeros(
+        (src_ranks.shape[0], expert_out_by_rank.shape[2]),
+        dtype=torch.float32,
+        device=expert_out_by_rank.device,
+    )
+    for token_idx in range(src_ranks.shape[0]):
+        for topk_idx in range(src_ranks.shape[1]):
+            rank = int(src_ranks[token_idx, topk_idx].item())
+            row = int(src_rows[token_idx, topk_idx].item())
+            if rank >= 0 and row >= 0:
+                output[token_idx] += (
+                    expert_out_by_rank[rank, row].float()
+                    * probs[token_idx, topk_idx]
+                )
+    return output.to(dtype=torch.bfloat16)
+
+
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="requires CUDA")
 def test_v2_ep_wave_peer_window_dispatch_combine_matches_reference():
     from olmo_core.kernels.symm_mem_vdev2d import (
         rowwise_bf16_mega_moe_peer_window_combine_debug,
         rowwise_bf16_mega_moe_peer_window_dispatch_debug,
-    )
-    from olmo_core.nn.moe.v2.tma_ibgda import (
-        reference_combine_bf16,
-        reference_dispatch_bf16,
     )
 
     device = torch.device("cuda", torch.cuda.current_device())
@@ -1049,14 +868,14 @@ def test_v2_ep_wave_peer_window_dispatch_combine_matches_reference():
             pytest.skip("symm_mem_vdev2d CUDA extension is not built")
         raise
 
-    expected_dispatch = reference_dispatch_bf16(
+    expected_dispatch = _reference_rowwise_dispatch_bf16(
         source_input,
         dst_ranks,
         dst_rows,
         ep_world_size=2,
         rank_capacity=4,
     )
-    expected_combined = reference_combine_bf16(
+    expected_combined = _reference_rowwise_combine_bf16(
         expected_dispatch,
         dst_ranks,
         dst_rows,
@@ -3324,90 +3143,6 @@ def _run_ep_no_sync_rowwise_wave_matches_rowwise():
     torch.testing.assert_close(y_wave_eval, y_rowwise_eval, atol=2e-2, rtol=2e-2)
 
 
-def _run_ep_no_sync_tma_ibgda_matches_synced_bf16(
-    *,
-    symmetric_expert_out: bool = False,
-    run_backward: bool = True,
-):
-    ep_mesh = _build_ep_mesh()
-
-    block_ep = _build_block(
-        ep_no_sync=False,
-        d_model=128,
-        hidden_size=256,
-        num_experts=8,
-        top_k=2,
-        uniform_expert_assignment=False,
-    )
-    block_tma = _build_block(
-        ep_no_sync=True,
-        ep_no_sync_use_rowwise_all_to_all=True,
-        ep_no_sync_rowwise_backend="tma_ibgda",
-        d_model=128,
-        hidden_size=256,
-        num_experts=8,
-        top_k=2,
-        uniform_expert_assignment=False,
-        ep_no_sync_tma_ibgda_symmetric_expert_out=symmetric_expert_out,
-    )
-    block_ep.apply_ep(ep_mesh)
-    block_tma.apply_ep(ep_mesh)
-
-    _init_block_params(block_ep)
-    block_tma.load_state_dict(block_ep.state_dict())
-    _install_deterministic_topk_router(block_ep)
-    _install_deterministic_topk_router(block_tma)
-
-    block_ep.to(dtype=torch.bfloat16)
-    block_tma.to(dtype=torch.bfloat16)
-    if run_backward:
-        block_ep.train()
-        block_tma.train()
-    else:
-        block_ep.eval()
-        block_tma.eval()
-    block_tma.ep.rowwise_nblocks = 128
-    block_tma.ep.validate()
-
-    x = (0.2 * torch.randn(1, 16, block_ep.d_model, device="cuda")).to(
-        dtype=torch.bfloat16
-    )
-    x_ep = x.detach().clone().requires_grad_(run_backward)
-    x_tma = x.detach().clone().requires_grad_(run_backward)
-
-    with torch.set_grad_enabled(run_backward):
-        y_ep = block_ep(x_ep)
-        y_tma = block_tma(x_tma)
-    assert y_tma.shape == y_ep.shape
-    assert torch.isfinite(y_tma).all()
-    torch.testing.assert_close(y_tma, y_ep, atol=2e-2, rtol=2e-2)
-    if not run_backward:
-        return
-
-    loss_ep = y_ep.float().square().mean() + 0.1 * y_ep.float().sum()
-    loss_tma = y_tma.float().square().mean() + 0.1 * y_tma.float().sum()
-    loss_ep.backward()
-    loss_tma.backward()
-
-    assert x_tma.grad is not None
-    assert x_ep.grad is not None
-    torch.testing.assert_close(x_tma.grad, x_ep.grad, atol=3e-2, rtol=3e-2)
-
-    ep_params = dict(block_ep.named_parameters())
-    tma_params = dict(block_tma.named_parameters())
-    for name, p_ep in ep_params.items():
-        p_tma = tma_params[name]
-        if p_ep.grad is None or p_tma.grad is None:
-            continue
-        torch.testing.assert_close(
-            p_tma.grad,
-            p_ep.grad,
-            atol=5e-2,
-            rtol=5e-2,
-            msg=f"TMA/IBGDA gradient mismatch for {name}",
-        )
-
-
 def _run_ep_wave_forward_matches_rowwise_forward():
     old_allow_fallback = os.environ.get("OLMO_EP_WAVE_ALLOW_ROWWISE_FALLBACK")
     os.environ["OLMO_EP_WAVE_ALLOW_ROWWISE_FALLBACK"] = "1"
@@ -3729,27 +3464,6 @@ def test_v2_ep_no_sync_rowwise_wave_matches_rowwise():
         _run_ep_no_sync_rowwise_wave_matches_rowwise,
         backend="nccl",
         start_method="spawn",
-    )
-
-
-@requires_multi_gpu
-@requires_grouped_gemm
-def test_v2_ep_no_sync_tma_ibgda_matches_synced_bf16():
-    run_distributed_test(
-        _run_ep_no_sync_tma_ibgda_matches_synced_bf16,
-        backend="nccl",
-        start_method="spawn",
-    )
-
-
-@requires_multi_gpu
-@requires_grouped_gemm
-def test_v2_ep_no_sync_tma_ibgda_symmetric_expert_out_matches_synced_bf16():
-    run_distributed_test(
-        _run_ep_no_sync_tma_ibgda_matches_synced_bf16,
-        backend="nccl",
-        start_method="spawn",
-        func_kwargs={"symmetric_expert_out": True, "run_backward": False},
     )
 
 

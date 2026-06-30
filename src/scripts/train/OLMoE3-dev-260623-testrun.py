@@ -237,7 +237,7 @@ GRAD_REDUCE_IN_FP32=True
 UNIFORM_ASSIGN=False
 RANDOM_ASSIGN=False
 USE_ROWWISE_A2A=True
-ROWWISE_BACKEND=_env_choice("OLMOE3_TESTRUN_ROWWISE_BACKEND", "nvshmem", ("nvshmem", "tma_ibgda"))
+ROWWISE_BACKEND=_env_choice("OLMOE3_TESTRUN_ROWWISE_BACKEND", "nvshmem", ("nvshmem",))
 USE_FP8=_env_bool("OLMOE3_TESTRUN_USE_FP8", True)
 USE_FP8_ATTN_QKV=USE_FP8
 USE_FP8_ATTN_OUT=USE_FP8
@@ -286,9 +286,7 @@ def build_model_config(common: CommonComponents) -> OLMoDDPModelConfig:
     )
     use_block_no_sync_ep = USE_NO_SYNC_EP and EP_DIM > 1
     block_ep_path = (
-        ExpertParallelPath.rowwise_tma_ibgda
-        if use_block_no_sync_ep and USE_ROWWISE_A2A and ROWWISE_BACKEND == "tma_ibgda"
-        else ExpertParallelPath.rowwise_nvshmem
+        ExpertParallelPath.rowwise_nvshmem
         if use_block_no_sync_ep and USE_ROWWISE_A2A
         else ExpertParallelPath.no_sync_1d
         if use_block_no_sync_ep
