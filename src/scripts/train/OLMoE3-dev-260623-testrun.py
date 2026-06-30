@@ -125,6 +125,11 @@ def _env_int(name: str, default: int) -> int:
     return default if value is None else int(value)
 
 
+def _env_float(name: str, default: float) -> float:
+    value = os.environ.get(name)
+    return default if value is None else float(value)
+
+
 def _env_choice(name: str, default: str, choices: tuple[str, ...]) -> str:
     value = os.environ.get(name, default).lower()
     if value not in choices:
@@ -236,13 +241,27 @@ GRAD_ACC_IN_FP32=True
 GRAD_REDUCE_IN_FP32=True
 UNIFORM_ASSIGN=False
 RANDOM_ASSIGN=False
-USE_ROWWISE_A2A=True
+EP_BACKEND=_env_choice(
+    "OLMOE3_TESTRUN_EP_BACKEND",
+    "rowwise_nvshmem",
+    ("rowwise_nvshmem", "deepep_v2", "no_sync_1d"),
+)
+USE_ROWWISE_A2A=EP_BACKEND == "rowwise_nvshmem"
 ROWWISE_BACKEND=_env_choice("OLMOE3_TESTRUN_ROWWISE_BACKEND", "nvshmem", ("nvshmem",))
 USE_FP8=_env_bool("OLMOE3_TESTRUN_USE_FP8", True)
 USE_FP8_ATTN_QKV=USE_FP8
 USE_FP8_ATTN_OUT=USE_FP8
 USE_FP8_ATTN_SAVE_QKV=False
 ROWWISE_A2A_NBLOCKS=_env_int("OLMOE3_TESTRUN_ROWWISE_NBLOCKS", 128 if EP_DIM <=8 else 64) # keep the intra-node default below NVSHMEM 3.7's collective-launch grid cap; override with OLMOE3_TESTRUN_ROWWISE_NBLOCKS when tuning.
+EP_CAPACITY_FACTOR=_env_float("OLMOE3_TESTRUN_EP_CAPACITY_FACTOR", 1.5)
+DEEPEP_PATH=os.environ.get("OLMOE3_TESTRUN_DEEPEP_PATH")
+DEEPEP_NUM_SMS=_env_int("OLMOE3_TESTRUN_DEEPEP_NUM_SMS", 0)
+DEEPEP_NUM_QPS=_env_int("OLMOE3_TESTRUN_DEEPEP_NUM_QPS", 0)
+DEEPEP_NUM_ALLOCATED_QPS=_env_int("OLMOE3_TESTRUN_DEEPEP_NUM_ALLOCATED_QPS", 0)
+DEEPEP_ASYNC=_env_bool("OLMOE3_TESTRUN_DEEPEP_ASYNC", False)
+DEEPEP_PREFER_OVERLAP_WITH_COMPUTE=_env_bool("OLMOE3_TESTRUN_DEEPEP_PREFER_OVERLAP_WITH_COMPUTE", True)
+DEEPEP_ALLOW_HYBRID_MODE=_env_bool("OLMOE3_TESTRUN_DEEPEP_ALLOW_HYBRID_MODE", True)
+DEEPEP_ALLOW_MULTIPLE_REDUCTION=_env_bool("OLMOE3_TESTRUN_DEEPEP_ALLOW_MULTIPLE_REDUCTION", True)
 SEED = 2026
 USE_MUON = False
 USE_PERI_NORM = True
@@ -266,6 +285,7 @@ from olmo_core.nn.layer_norm import LayerNormType, LayerNormConfig
 def build_model_config(common: CommonComponents) -> OLMoDDPModelConfig:
     from olmo_core.nn.ddp.block import OLMoDDPTransformerBlockConfig
     from olmo_core.nn.moe.v2.ep_config import (
+        DeepEPConfig,
         ExpertParallelConfig,
         ExpertParallelPath,
         ExpertParallelSchedule,
@@ -285,13 +305,16 @@ def build_model_config(common: CommonComponents) -> OLMoDDPModelConfig:
         dtype=dtype,
     )
     use_block_no_sync_ep = USE_NO_SYNC_EP and EP_DIM > 1
-    block_ep_path = (
-        ExpertParallelPath.rowwise_nvshmem
-        if use_block_no_sync_ep and USE_ROWWISE_A2A
-        else ExpertParallelPath.no_sync_1d
-        if use_block_no_sync_ep
-        else ExpertParallelPath.sync_1d
-    )
+    if not use_block_no_sync_ep:
+        block_ep_path = ExpertParallelPath.sync_1d
+    elif EP_BACKEND == "rowwise_nvshmem":
+        block_ep_path = ExpertParallelPath.rowwise_nvshmem
+    elif EP_BACKEND == "deepep_v2":
+        block_ep_path = ExpertParallelPath.deepep_v2
+    elif EP_BACKEND == "no_sync_1d":
+        block_ep_path = ExpertParallelPath.no_sync_1d
+    else:
+        raise ValueError(f"Unsupported EP backend {EP_BACKEND!r}")
     block_ep_schedule = (
         ExpertParallelSchedule.tbo
         if USE_TBO and block_ep_path == ExpertParallelPath.rowwise_nvshmem
@@ -318,7 +341,17 @@ def build_model_config(common: CommonComponents) -> OLMoDDPModelConfig:
                 share_dispatch_out=PER_LAYER_RECOMPUTE, # if layer-recompute, want to make dispatch_out shared (not per-layer persistent) to save memory; extra copy overhead applies.
                 shared_slots=2 if block_ep_schedule == ExpertParallelSchedule.tbo else 1,
                 rowwise_nblocks=ROWWISE_A2A_NBLOCKS,
-                capacity_factor=1.5,
+                capacity_factor=EP_CAPACITY_FACTOR,
+                deepep=DeepEPConfig(
+                    path=DEEPEP_PATH,
+                    num_sms=DEEPEP_NUM_SMS,
+                    num_qps=DEEPEP_NUM_QPS,
+                    num_allocated_qps=DEEPEP_NUM_ALLOCATED_QPS,
+                    async_mode=DEEPEP_ASYNC,
+                    prefer_overlap_with_compute=DEEPEP_PREFER_OVERLAP_WITH_COMPUTE,
+                    allow_hybrid_mode=DEEPEP_ALLOW_HYBRID_MODE,
+                    allow_multiple_reduction=DEEPEP_ALLOW_MULTIPLE_REDUCTION,
+                ),
                 # capacity_factor=1.125,
                 # capacity_factor=1.1875,
                 # capacity_factor=1.21875,

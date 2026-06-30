@@ -192,7 +192,7 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
 
     def named_ep_no_sync_blocks(self) -> Iterator[tuple[str, OLMoDDPTransformerBlock]]:
         for block_key, block in self.named_routed_blocks():
-            if block.ep.no_sync:
+            if block.ep.uses_olmo_symm:
                 yield block_key, block
 
     def ep_no_sync_blocks(self) -> Iterator[OLMoDDPTransformerBlock]:
@@ -662,7 +662,7 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
             # explicit EP rendezvous runs. Use the regular DeviceMesh EP group
             # for no-sync blocks.
             block.apply_ep(ep_mesh, ep_pg=None if block.ep.no_sync else ep_mp_group)
-            if block.ep.no_sync:
+            if block.ep.uses_olmo_symm:
                 ep_no_sync_blocks.append(block)
 
         if ep_no_sync_blocks:

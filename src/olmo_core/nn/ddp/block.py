@@ -78,6 +78,9 @@ from ..moe.v2.ep_no_sync_rowwise import (
 from ..moe.v2.ep_no_sync_rowwise_wave import (
     combined_forward_ep_no_sync_rowwise_wave as _combined_forward_ep_no_sync_rowwise_wave,
 )
+from ..moe.v2.ep_deepep_v2 import (
+    combined_forward_ep_deepep_v2 as _combined_forward_ep_deepep_v2,
+)
 from ..moe.v2.ep_no_sync_rowwise_helpers import (
     add_ep_no_sync_rowwise_metrics,
     reset_ep_no_sync_rowwise_metrics,
@@ -472,7 +475,8 @@ class OLMoDDPTransformerBlock(olmo_core.nn.transformer.block.TransformerBlockBas
         self._ep_no_sync_shared_pool: Optional[_NoSyncSymmSharedPool] = None
         self._ep_no_sync_shared_slot: int = 0
         self._ep_no_sync_te_backend_warned: bool = False
-        # Row-wise EP no-sync metrics (populated only by combined_forward_ep_no_sync_rowwise()).
+        self._deepep_v2_runtime: Optional[object] = None
+        # EP no-sync tail-drop metrics, populated by rowwise and DeepEP paths.
         self._ep_no_sync_rowwise_drop_tokens_sum: Optional[torch.Tensor] = None
         self._ep_no_sync_rowwise_total_tokens_sum: Optional[torch.Tensor] = None
         self._ep_no_sync_rowwise_symm_util_max: Optional[torch.Tensor] = None
@@ -709,6 +713,8 @@ class OLMoDDPTransformerBlock(olmo_core.nn.transformer.block.TransformerBlockBas
             no_sync_forward = self.combined_forward_ep_no_sync_rowwise_wave
         elif self.ep.path == ExpertParallelPath.rowwise_nvshmem:
             no_sync_forward = self.combined_forward_ep_no_sync_rowwise
+        elif self.ep.path == ExpertParallelPath.deepep_v2:
+            no_sync_forward = self.combined_forward_ep_deepep_v2
         elif self.ep.path == ExpertParallelPath.no_sync_1d:
             no_sync_forward = self.combined_forward_ep_no_sync_1d
         else:
@@ -861,8 +867,9 @@ class OLMoDDPTransformerBlock(olmo_core.nn.transformer.block.TransformerBlockBas
         self.num_local_routed_experts = self.routed_experts.num_local_experts
         self._ep_enabled = True
         self.ep_pg = ep_pg if ep_pg is not None else ep_mp_mesh.get_group()
+        self._deepep_v2_runtime = None
 
-        if self.ep.no_sync:
+        if self.ep.uses_olmo_symm:
             if olmo_symm_mem.is_enabled() and not self.ep.uses_rowwise_buffers:
                 raise RuntimeError(
                     "OLMo-owned symmetric memory currently supports only the rowwise "
@@ -1103,6 +1110,25 @@ class OLMoDDPTransformerBlock(olmo_core.nn.transformer.block.TransformerBlockBas
             self,
             x,
             activation_checkpointing=activation_checkpointing,
+            accumulate_routed_aux_loss_metrics=accumulate_routed_aux_loss_metrics,
+            loss_div_factor=loss_div_factor,
+            **kwargs,
+        )
+
+    def combined_forward_ep_deepep_v2(
+        self,
+        x: torch.Tensor,
+        *,
+        loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
+        **kwargs,
+    ) -> torch.Tensor:
+        checkpoint_state = self._ep_no_sync_rowwise_static_checkpoint_state
+        if checkpoint_state is None:
+            checkpoint_state = get_rowwise_checkpoint_state()
+        _, accumulate_routed_aux_loss_metrics = checkpoint_state
+        return _combined_forward_ep_deepep_v2(
+            self,
+            x,
             accumulate_routed_aux_loss_metrics=accumulate_routed_aux_loss_metrics,
             loss_div_factor=loss_div_factor,
             **kwargs,
