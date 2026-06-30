@@ -86,7 +86,7 @@ SUBSAMPLE_FACTOR = 0.5
 SUBSAMPLE_SEED = 7411
 
 # weka per-task ladder data root + per-variant weka CPT bases (all under amandab/).
-DATA_ROOT = "/weka/oe-training-default/ai2-llm/checkpoints/prasanns/single_task_ladders"
+DATA_ROOT = "/weka/oe-training-default/ai2-llm/checkpoints/prasanns/single_task_ladders_v2"
 _AMANDAB = "/weka/oe-training-default/ai2-llm/checkpoints/amandab"
 BASE_CHECKPOINTS = {
     "dense": f"{_AMANDAB}/q4b-dense-dolma3longmino/step2385/model_and_optim",
@@ -100,7 +100,7 @@ _TASK_LABEL = {"contra": "contradiction", "nq": "nq_retrieval", "oolong": "oolon
                "rerank": "rerank", "outlier": "outlier"}
 _VARIANTS = ("dense", "landmark", "compressive")
 
-LR = 1e-5
+LR = 2e-5  # overnight 10k matrix: bumped from 1e-5 (coordinator request 2026-06-30).
 GLOBAL_BATCH_SIZE = NUM_NODES * SEQUENCE_LENGTH
 
 
