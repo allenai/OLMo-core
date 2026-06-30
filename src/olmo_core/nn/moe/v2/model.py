@@ -12,11 +12,6 @@ from typing import (
     cast,
 )
 
-try:
-    import nvtx
-except ImportError:
-    from olmo_core._nvtx import nvtx
-
 import torch
 import torch.distributed as dist
 from torch.distributed._composable.replicate import replicate
@@ -38,6 +33,7 @@ from olmo_core.utils import mark_dynamic
 
 from ...lm_head import LMOutputWithLoss
 from ..utils import moe_unpermute_no_compile
+from ._nvtx import annotate
 from .block import MoEFusedV2TransformerBlock
 from .checkpointing import checkpoint_recompute_context_fn
 
@@ -948,7 +944,7 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
             # Mark sizes as dynamic for torch.compile().
             if self.compile_enabled:
                 mark_dynamic(h, (0, 1), strict=False)
-            with nvtx.annotate(f"fwd_block_{block_idx}", color="blue"):
+            with annotate(f"fwd_block_{block_idx}", "routing"):
                 # with self.offload_context:
                 one_block_kwargs = per_block_kwargs.get(int(block_key), {})
                 if self.checkpoint_tbo_dense_layers:
@@ -987,7 +983,7 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
             if not block.is_moe:
                 continue
 
-            with nvtx.annotate(f"fwd_block_{block_idx}", color="blue"):
+            with annotate(f"fwd_block_{block_idx}", "routing"):
                 block = cast(MoEFusedV2TransformerBlock, block)
                 # with self.offload_context:
                 # x0, x1_ctx = block.checkpointed_combined_forward_ep_tbo(x0, x1_ctx, x1_is_fresh, **block_kwargs)
@@ -1026,24 +1022,24 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
         )
 
         if isinstance(x1_ctx, _NoSyncRowwiseTboPendingContext):
-            with nvtx.annotate("TBO-1", color="orange"):
+            with annotate("tbo_1", "tbo"):
                 pending_ctx = ep_no_sync_rowwise_tbo_stage_c_launch(x1_ctx.block, x1_ctx)
 
             h0 = self.maybe_forward_lm_head(x0, lm_head_kwargs, labels=labels0)
 
-            with nvtx.annotate("TBO-1", color="orange"):
+            with annotate("tbo_1", "tbo"):
                 x1 = ep_no_sync_rowwise_tbo_stage_tail(x1_ctx.block, pending_ctx)
 
             h1 = self.maybe_forward_lm_head(x1, lm_head_kwargs, labels=labels1)
             return h0, h1
 
         if isinstance(x1_ctx, _NoSyncTboPendingContext):
-            with nvtx.annotate("TBO-1", color="orange"):
+            with annotate("tbo_1", "tbo"):
                 pending_ctx_1d = ep_no_sync_stage_c_launch(x1_ctx.block, x1_ctx)
 
             h0 = self.maybe_forward_lm_head(x0, lm_head_kwargs, labels=labels0)
 
-            with nvtx.annotate("TBO-1", color="orange"):
+            with annotate("tbo_1", "tbo"):
                 x1 = ep_no_sync_stage_tail(x1_ctx.block, pending_ctx_1d)
 
             h1 = self.maybe_forward_lm_head(x1, lm_head_kwargs, labels=labels1)
@@ -1053,7 +1049,7 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
             raise RuntimeError(
                 "Expected synced TBO context for the final TBO step, " f"got type={type(x1_ctx)}"
             )
-        with nvtx.annotate("TBO-1", color="orange"):
+        with annotate("tbo_1", "tbo"):
             global_x1 = x1_ctx.global_x
             send_counts1 = x1_ctx.send_counts
             recv_counts1 = x1_ctx.recv_counts
@@ -1061,7 +1057,7 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
 
             assert last_block.routed_experts_router is not None
             # finish reverse all2all and other ops for x1
-            with nvtx.annotate("reverse_all_to_all", color="green"):
+            with annotate("reverse_all_to_all", "comm"):
                 global_x1 = cast(torch.Tensor, global_x1)
                 # Async all-to-all disabled; use the equivalent synchronous all-to-all.
                 # global_x1, local_x1, local_x_handle1 = ops.all_to_all_async(
@@ -1090,11 +1086,11 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
         # x0 lm head
         h0 = self.maybe_forward_lm_head(x0, lm_head_kwargs, labels=labels0)
 
-        with nvtx.annotate("TBO-1", color="orange"):
+        with annotate("tbo_1", "tbo"):
             # local_x1 = ops.all_to_all_wait(global_x1, local_x1, local_x_handle1)
 
             ## 9. Unpermute the (local) tokens returned by all-to-all communication ##
-            with nvtx.annotate("Unpermute-Merge local tokens", color="green"):
+            with annotate("unpermute_merge_local_tokens", "comm"):
                 local_x1 = moe_unpermute_no_compile(
                     inp=local_x1,
                     row_id_map=reversed_local_x_permutation_mapping1,
@@ -1204,7 +1200,7 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
             # Mark sizes as dynamic for torch.compile().
             if self.compile_enabled:
                 mark_dynamic(h, (0, 1), strict=False)
-            with nvtx.annotate(f"fwd_block_{block_key}", color="blue"):
+            with annotate(f"fwd_block_{block_key}", "routing"):
                 block_kwargs = per_block_kwargs.get(int(block_key), {})
                 combined_kwargs = {**all_block_kwargs, **block_kwargs}
                 do_not_recompute: List[int] = []  # HACK
@@ -1320,7 +1316,7 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
             if labels is not None:
                 lm_head_kwargs["labels"] = labels
 
-            with nvtx.annotate("lm_head", color="purple"):
+            with annotate("lm_head", "experts"):
                 out = self.lm_head(h, **lm_head_kwargs)
 
             # check for nan
