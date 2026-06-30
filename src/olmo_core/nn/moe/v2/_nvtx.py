@@ -14,7 +14,6 @@ try:
 except ImportError:
     from olmo_core._nvtx import nvtx as _nvtx
 
-# Range color per subsystem.
 _SUBSYSTEM_COLORS = {
     "routing": "blue",  # token routing + per-block forward orchestration
     "experts": "purple",  # expert compute and expert-weight preparation
@@ -22,7 +21,6 @@ _SUBSYSTEM_COLORS = {
     "tbo": "orange",  # two-batch-overlap orchestration
 }
 
-# Used when a range isn't tied to a known subsystem.
 _DEFAULT_COLOR = "gray"
 
 
