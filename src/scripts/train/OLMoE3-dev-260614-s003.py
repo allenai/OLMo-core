@@ -131,7 +131,7 @@ def _get_split_points(original_num_layers: int, num_stages: int, minus_last_stag
     return new_num_layers, split_points
 
 
-SEQUENCE_LENGTH = 8192
+SEQUENCE_LENGTH = 4096
 
 torch.set_float32_matmul_precision('high')
 
@@ -145,8 +145,8 @@ EVAL_INTERVAL = 2000
 SAVE_INTERVAL = 500
 
 NUM_EXPERTS = 64
-TOP_K = 4
-ORIGINAL_TOP_K=None
+TOP_K = 8
+ORIGINAL_TOP_K=4
 D_MODEL=2048
 D_ATTN=4 * 1024
 
@@ -165,60 +165,19 @@ DENSE_LAYER_MLP = (TOP_K * MOE_HIDDEN_SIZE + SHARED_MLP_HIDDEN_SIZE * NUM_SHARED
 
 # DP_DIM=2
 EP_DIM=8
-PP_DIM=2
+PP_DIM=1
 
 # ref
-REF_NUM_NODES=64
+REF_NUM_NODES=32
 TAG=f'p1'
 
 LR_ALPHA = 0.53
 
-# stage 1 - xM -
-# MAX_DURATION = int(100e9)
-# MICRO_BSZ = 2
-# GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * 2 * 4
-# LR_REF_BSZ_IN_M=4
-# USE_FP8=False
-
-# stage 2 - xM -
-# MAX_DURATION = int(135e9)
-# MICRO_BSZ = 2
-# GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * 2 * 8
-# LR_REF_BSZ_IN_M=4
-# USE_FP8=False
-
-# stage 3 - xM -
-# MAX_DURATION = int(215e9)
-# MICRO_BSZ = 3
-# GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * 2 * 12
-# LR_REF_BSZ_IN_M=4
-# USE_FP8=False
-
-# stage 4 - xM -
-# MAX_DURATION = int(600e9)
-# MICRO_BSZ = 4
-# GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * 2 * 16
-# LR_REF_BSZ_IN_M=4
-# USE_FP8=False
-
-# stage 5 - xM -
-# MAX_DURATION = int(715e9)
-# MICRO_BSZ = 3
-# GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * 2 * 24
-# LR_REF_BSZ_IN_M=4
-# USE_FP8=False
-
-# stage 6 - xM -
-# MAX_DURATION = int(2000e9)
-# MICRO_BSZ = 3
-# GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * 2 * 48
-# LR_REF_BSZ_IN_M=8
-# USE_FP8=False
 
 # stage 7 - xM -
-MAX_DURATION = int(6000e9)
-MICRO_BSZ = 3
-GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * 2 * 60
+MAX_DURATION = int(12000e9)
+MICRO_BSZ = 4
+GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * 2 * 32
 LR_REF_BSZ_IN_M=8
 USE_FP8=False
 
@@ -240,7 +199,7 @@ SCHED_MID_FRACTION = 1.0
 SCHED_FINAL_FRACTION = 1.0 # WSD
 
 
-LR= 4e-4  # the LR is set for stable stage
+LR= 2.5e-4  # the LR is set for stable stage
 LR= LR / SCHED_MID_FRACTION # transform LR to peak at fast warmup
 
 LR=LR * (GLOBAL_BATCH_SIZE / (LR_REF_BSZ_IN_M * 1024 * 1024))**LR_ALPHA # lr is for X Million token
@@ -640,7 +599,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
     config = (
         TrainerConfig(
             save_folder=f'{WORK_DIR}/checkpoint/{common.run_name}_{D_MODEL}d{D_ATTN}a_{NUM_LAYERS}L{MOE_HIDDEN_SIZE}M{SHARED_MLP_HIDDEN_SIZE}S_{NUM_EXPERTS}E{TOP_K}K{NUM_SHARED_EXPERTS}S_{TAG}',
-            # load_path="/workspace/checkpoint/OLMoE3-dev-260429-t001_2048d2560a_16L2048M1536S_40E4K1S_p1/step83448",
+            load_path="/workspace/checkpoint/OLMoE3-dev-260614-s002-long-context/step11921",
             save_overwrite=True,
             checkpointer=CheckpointerConfig(
                 save_thread_count=3, load_thread_count=2, throttle_uploads=True
