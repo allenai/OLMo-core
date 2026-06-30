@@ -786,6 +786,7 @@ class RoutedExperts(nn.Module):
         *,
         down_proj_out: Optional[torch.Tensor] = None,
         up_proj_input_grad_out: Optional[torch.Tensor] = None,
+        row_weights: Optional[torch.Tensor] = None,
         use_rowwise_fp8: bool = False,
         rowwise_fp8_input_q: Optional[torch.Tensor] = None,
         rowwise_fp8_input_scales: Optional[torch.Tensor] = None,
@@ -813,6 +814,8 @@ class RoutedExperts(nn.Module):
             return x
 
         if self._use_rowwise_fp8(x, enabled=use_rowwise_fp8):
+            if row_weights is not None:
+                raise RuntimeError("row_weights are not supported with rowwise FP8 routed experts yet")
             if self.activation != ExpertActivation.swiglu:
                 raise RuntimeError("rowwise FP8 routed experts currently require swiglu activation")
             return self._forward_rowwise_fp8(
@@ -857,6 +860,15 @@ class RoutedExperts(nn.Module):
 
         num_valid_rows = batch_size_per_expert_tensor.sum()
         h = self.chunk_and_activate(up_gate, num_elements=num_valid_rows) # -> (BS, H)
+        if row_weights is not None:
+            if self.b_down is not None:
+                raise RuntimeError("row_weights require bias-free routed experts")
+            if row_weights.numel() != h.shape[0]:
+                raise RuntimeError(
+                    "row_weights must have one value per routed row: "
+                    f"weights={tuple(row_weights.shape)} rows={h.shape[0]}"
+                )
+            h = h * row_weights.reshape(-1, 1).to(dtype=h.dtype)
         
         # down projection
         down = gmm(

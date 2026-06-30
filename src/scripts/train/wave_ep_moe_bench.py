@@ -44,6 +44,13 @@ import torch
 import torch.distributed as dist
 from torch.distributed.device_mesh import DeviceMesh
 
+try:
+    import triton
+    import triton.language as tl
+except Exception:  # pragma: no cover - Triton may be unavailable in some test envs.
+    triton = None
+    tl = None
+
 from olmo_core.config import DType
 from olmo_core.nn.attention import AttentionConfig, AttentionType
 from olmo_core.nn.ddp.block import OLMoDDPTransformerBlock
@@ -282,6 +289,19 @@ def _parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--deepep-weighting",
+        choices=("post", "post_triton", "swiglu"),
+        default="post",
+        help=(
+            "How standalone DeepEP expanded expert rows are multiplied by router "
+            "weights before combine. 'post' preserves the original PyTorch "
+            "post-Linear2 multiply. 'post_triton' uses a tiled Triton rowwise "
+            "scale kernel after Linear2. 'swiglu' pushes the row weight before "
+            "Linear2 so torch.compile can fuse it into the SwiGLU pointwise "
+            "region; backward then uses the weighted expert output directly."
+        ),
+    )
+    parser.add_argument(
         "--deepep-pre-dispatch-expert-iters",
         type=int,
         default=0,
@@ -425,6 +445,21 @@ def _parse_args() -> argparse.Namespace:
         help="Absolute tolerance for --deepep-validate-wave-forward.",
     )
     parser.add_argument(
+        "--deepep-validate-wave-backward",
+        action="store_true",
+        help=(
+            "For --modes deepep_v2_wave, run one no-wave backward and one wave "
+            "backward before warmup, then compare source-side gradients and "
+            "local routed expert parameter gradients."
+        ),
+    )
+    parser.add_argument(
+        "--deepep-validate-wave-backward-atol",
+        type=float,
+        default=5e-2,
+        help="Absolute tolerance for --deepep-validate-wave-backward.",
+    )
+    parser.add_argument(
         "--deepep-wave-do-cpu-sync",
         action=argparse.BooleanOptionalAction,
         default=None,
@@ -459,6 +494,16 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--warmup", type=int, default=2)
     parser.add_argument("--iters", type=int, default=2)
+    parser.add_argument(
+        "--sync-between-iters",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help=(
+            "Synchronize the full CUDA device after each measured iteration. "
+            "This is a profiling diagnostic for allocator lifetime effects; "
+            "it intentionally changes the host/GPU schedule."
+        ),
+    )
     parser.add_argument(
         "--pass-type",
         choices=("forward", "backward", "forward_backward"),
@@ -530,10 +575,52 @@ def _dtype_config(name: str) -> tuple[DType, torch.dtype]:
 
 def _init_dist() -> tuple[int, int, int]:
     local_rank = int(os.environ.get("LOCAL_RANK", "0"))
+    _setup_debug_print("init_dist:enter", local_rank=local_rank)
     torch.cuda.set_device(local_rank)
     if not dist.is_initialized():
+        _setup_debug_print("init_process_group:enter", local_rank=local_rank)
         dist.init_process_group("nccl")
+        _setup_debug_print("init_process_group:exit", local_rank=local_rank)
+    _setup_debug_print(
+        "init_dist:exit",
+        rank=dist.get_rank(),
+        local_rank=local_rank,
+        world_size=dist.get_world_size(),
+    )
     return dist.get_rank(), local_rank, dist.get_world_size()
+
+
+def _setup_debug_enabled() -> bool:
+    raw = os.getenv("OLMO_BENCH_SETUP_DEBUG", os.getenv("IBGDA_BENCH_DEBUG", "0"))
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _setup_debug_rank_enabled() -> bool:
+    ranks = os.getenv("OLMO_BENCH_SETUP_DEBUG_RANKS")
+    if not ranks:
+        return True
+    if dist.is_available() and dist.is_initialized():
+        rank = dist.get_rank()
+    else:
+        rank = int(os.getenv("RANK", "0") or "0")
+    allowed = {int(part) for part in ranks.replace(",", " ").split() if part}
+    return rank in allowed
+
+
+def _setup_debug_print(label: str, **fields: object) -> None:
+    if not _setup_debug_enabled() or not _setup_debug_rank_enabled():
+        return
+    rank = dist.get_rank() if dist.is_available() and dist.is_initialized() else os.getenv("RANK", "?")
+    local_rank = os.getenv("LOCAL_RANK", "?")
+    parts = [
+        "[BENCH_SETUP]",
+        f"t={time.perf_counter():.6f}",
+        f"rank={rank}",
+        f"local_rank={local_rank}",
+        label,
+    ]
+    parts.extend(f"{key}={value}" for key, value in fields.items())
+    print(" ".join(parts), flush=True)
 
 
 def _build_ep_mesh(world_size: int) -> DeviceMesh:
@@ -565,6 +652,14 @@ def _build_block(
     random_routing: bool,
     config_dtype: DType,
 ) -> OLMoDDPTransformerBlock:
+    _setup_debug_print(
+        "build_block:enter",
+        d_model=d_model,
+        hidden_size=hidden_size,
+        num_experts=num_experts,
+        top_k=top_k,
+        rowwise_wave=rowwise_wave,
+    )
     layer_norm = LayerNormConfig(
         name=LayerNormType.rms,
         eps=1e-6,
@@ -640,6 +735,11 @@ def _build_block(
             ),
         ),
         init_device="cuda",
+    )
+    _setup_debug_print(
+        "build_block:exit",
+        cuda_allocated_gib=f"{torch.cuda.memory_allocated() / 1024**3:.2f}",
+        cuda_reserved_gib=f"{torch.cuda.memory_reserved() / 1024**3:.2f}",
     )
     return block
 
@@ -953,6 +1053,7 @@ class DeepEpV2State:
     num_sms: int
     num_qps: int
     expert_buffer_mode: str
+    weighting_mode: str
     async_with_compute_stream: bool
     do_cpu_sync: bool
     wave_dispatch_stream: torch.cuda.Stream | None = None
@@ -967,7 +1068,10 @@ class DeepEpV2ForwardResult:
     expert_out: torch.Tensor
     combined_x: torch.Tensor
     handle: object
+    expert_out_is_weighted: bool = False
     grad_combined_x: torch.Tensor | None = None
+    static_wave: DeepEpV2WaveInput | None = None
+    static_recv_x_global: torch.Tensor | None = None
 
 
 @dataclass
@@ -975,6 +1079,30 @@ class DeepEpV2WaveForwardResult:
     wave_results: list[DeepEpV2ForwardResult]
     combined_x: torch.Tensor
     grad_combined_x: torch.Tensor | None = None
+
+
+@dataclass
+class DeepEpV2WaveDispatchResult:
+    wave: "DeepEpV2WaveInput"
+    recv_x: torch.Tensor
+    expanded_topk_weights: torch.Tensor | None
+    recv_topk_idx: torch.Tensor | None
+    recv_topk_weights: torch.Tensor | None
+    handle: object
+    event: object
+
+
+@dataclass
+class DeepEpV2WaveComputeResult:
+    wave: "DeepEpV2WaveInput"
+    recv_x_for_experts: torch.Tensor
+    expert_out: torch.Tensor
+    expanded_weights: torch.Tensor
+    expert_out_is_weighted: bool
+    weighted_expert_out: torch.Tensor
+    handle: object
+    recv_x_global: torch.Tensor | None
+    compute_done: torch.cuda.Event
 
 
 @dataclass(frozen=True)
@@ -1099,6 +1227,82 @@ def _reshape_expanded_weights(
     return expanded_topk_weights.reshape(num_rows, 1).to(dtype=dtype)
 
 
+if triton is not None:
+
+    @triton.jit
+    def _deepep_rowwise_scale_kernel(
+        x_ptr,
+        weights_ptr,
+        out_ptr,
+        rows: tl.constexpr,
+        hidden: tl.constexpr,
+        BLOCK_M: tl.constexpr,
+        BLOCK_N: tl.constexpr,
+    ):
+        pid_m = tl.program_id(0)
+        pid_n = tl.program_id(1)
+        row_idx = pid_m * BLOCK_M + tl.arange(0, BLOCK_M)[:, None]
+        col_idx = pid_n * BLOCK_N + tl.arange(0, BLOCK_N)[None, :]
+        mask = (row_idx < rows) & (col_idx < hidden)
+        offsets = row_idx * hidden + col_idx
+        x = tl.load(x_ptr + offsets, mask=mask, other=0.0).to(tl.float32)
+        weights = tl.load(weights_ptr + row_idx, mask=row_idx < rows, other=0.0).to(tl.float32)
+        tl.store(out_ptr + offsets, x * weights, mask=mask)
+
+
+def _deepep_v2_rowwise_scale_triton(
+    x: torch.Tensor,
+    weights: torch.Tensor,
+    *,
+    out: torch.Tensor | None = None,
+    block_m: int = 16,
+    block_n: int = 256,
+) -> torch.Tensor:
+    if triton is None or tl is None:
+        raise RuntimeError("Triton is required for --deepep-weighting post_triton")
+    if x.ndim != 2:
+        raise ValueError(f"expected x rank-2 [rows, hidden], got {tuple(x.shape)}")
+    if weights.numel() != x.shape[0]:
+        raise ValueError(
+            "rowwise scale weights must have one value per row: "
+            f"weights={tuple(weights.shape)} rows={x.shape[0]}"
+        )
+    if not x.is_cuda:
+        raise ValueError("rowwise scale Triton path requires CUDA input")
+    if weights.device != x.device:
+        raise ValueError(f"weights device must match x device: {weights.device} vs {x.device}")
+    if not x.is_contiguous():
+        raise ValueError("rowwise scale Triton path requires contiguous x")
+    weights_flat = weights.reshape(-1)
+    if not weights_flat.is_contiguous():
+        weights_flat = weights_flat.contiguous()
+    if out is None:
+        out = torch.empty_like(x)
+    else:
+        if tuple(out.shape) != tuple(x.shape):
+            raise ValueError(f"out shape mismatch: expected {tuple(x.shape)}, got {tuple(out.shape)}")
+        if out.device != x.device or out.dtype != x.dtype:
+            raise ValueError("out device/dtype must match x")
+        if not out.is_contiguous():
+            raise ValueError("rowwise scale Triton path requires contiguous out")
+    rows, hidden = x.shape
+    if rows == 0 or hidden == 0:
+        return out
+    grid = (triton.cdiv(rows, int(block_m)), triton.cdiv(hidden, int(block_n)))
+    _deepep_rowwise_scale_kernel[grid](
+        x,
+        weights_flat,
+        out,
+        rows,
+        hidden,
+        BLOCK_M=int(block_m),
+        BLOCK_N=int(block_n),
+        num_warps=4,
+        num_stages=4,
+    )
+    return out
+
+
 def _validate_deepep_v2_args(args: argparse.Namespace, *, world_size: int) -> None:
     if args.dtype != "bf16":
         raise RuntimeError("deepep_v2 currently supports --dtype bf16 only")
@@ -1127,6 +1331,8 @@ def _validate_deepep_v2_args(args: argparse.Namespace, *, world_size: int) -> No
         raise RuntimeError("--deepep-expert-alignment must be >= 1")
     if args.deepep_max_tokens_factor < 1.0:
         raise RuntimeError("--deepep-max-tokens-factor must be >= 1.0")
+    if args.deepep_weighting == "post_triton" and triton is None:
+        raise RuntimeError("--deepep-weighting post_triton requires Triton")
 
 
 def _init_probe_routed_expert_weights(
@@ -1253,6 +1459,21 @@ def _build_rowwise_apply_ep_probe_routed_experts(
     return block.routed_experts
 
 
+def _validate_deepep_v2_weighting_module(
+    args: argparse.Namespace,
+    routed_experts: torch.nn.Module,
+) -> None:
+    if args.deepep_weighting != "swiglu":
+        return
+    if getattr(routed_experts, "b_down", None) is not None:
+        raise RuntimeError(
+            "--deepep-weighting swiglu requires bias-free routed experts. "
+            "The pre-down row-weight multiply is only equivalent to post-Linear2 "
+            "weighting when the down projection has no bias. Use bias=False "
+            "when building RoutedExperts, or use --deepep-weighting post/post_triton."
+        )
+
+
 def _build_deepep_v2_state(
     args: argparse.Namespace,
     *,
@@ -1314,6 +1535,7 @@ def _build_deepep_v2_state(
         config_dtype=config_dtype,
         reset_seed=False,
     )
+    _validate_deepep_v2_weighting_module(args, routed_experts)
 
     return DeepEpV2State(
         deep_ep=deep_ep,
@@ -1331,6 +1553,7 @@ def _build_deepep_v2_state(
         num_sms=num_sms,
         num_qps=num_qps,
         expert_buffer_mode=str(args.deepep_expert_buffer_mode),
+        weighting_mode=str(args.deepep_weighting),
         async_with_compute_stream=bool(args.deepep_async),
         do_cpu_sync=bool(args.deepep_do_cpu_sync),
         wave_dispatch_stream=torch.cuda.Stream(),
@@ -1347,6 +1570,7 @@ def _deepep_v2_dispatch(
     label: str,
     async_with_compute_stream: bool,
     do_cpu_sync: bool,
+    wait_for_completion: bool = True,
 ) -> tuple[torch.Tensor, torch.Tensor | None, object, object]:
     torch.cuda.nvtx.range_push(label)
     try:
@@ -1364,7 +1588,8 @@ def _deepep_v2_dispatch(
             do_expand=True,
             use_tma_aligned_col_major_sf=True,
         )
-        _deep_ep_wait(event, async_with_compute_stream=async_with_compute_stream)
+        if wait_for_completion:
+            _deep_ep_wait(event, async_with_compute_stream=async_with_compute_stream)
     finally:
         torch.cuda.nvtx.range_pop()
     return recv_x, expanded_topk_weights, handle, event
@@ -1379,6 +1604,7 @@ def _deepep_v2_dispatch_static_expanded(
     label: str,
     async_with_compute_stream: bool,
     do_cpu_sync: bool,
+    wait_for_completion: bool = True,
 ) -> tuple[torch.Tensor, torch.Tensor, object, object]:
     if not hasattr(state.buffer, "dispatch_expanded_into"):
         raise RuntimeError(
@@ -1406,7 +1632,8 @@ def _deepep_v2_dispatch_static_expanded(
                 do_cpu_sync=do_cpu_sync,
             )
         )
-        _deep_ep_wait(event, async_with_compute_stream=async_with_compute_stream)
+        if wait_for_completion:
+            _deep_ep_wait(event, async_with_compute_stream=async_with_compute_stream)
     finally:
         torch.cuda.nvtx.range_pop()
     return recv_x, expanded_topk_weights, handle, event
@@ -1420,6 +1647,7 @@ def _deepep_v2_dispatch_nonexpanded(
     label: str,
     async_with_compute_stream: bool,
     do_cpu_sync: bool,
+    wait_for_completion: bool = True,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, object, object]:
     torch.cuda.nvtx.range_push(label)
     try:
@@ -1437,7 +1665,8 @@ def _deepep_v2_dispatch_nonexpanded(
             do_expand=False,
             use_tma_aligned_col_major_sf=True,
         )
-        _deep_ep_wait(event, async_with_compute_stream=async_with_compute_stream)
+        if wait_for_completion:
+            _deep_ep_wait(event, async_with_compute_stream=async_with_compute_stream)
     finally:
         torch.cuda.nvtx.range_pop()
     return recv_x, recv_topk_idx, recv_topk_weights, handle, event
@@ -1451,9 +1680,19 @@ def _deepep_v2_compute_experts(
     handle: object,
     label: str,
     track_expert_grad: bool,
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    weight_in_swiglu: bool = False,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, bool]:
     batch_size_per_expert = _expanded_expert_counts(handle, state.expert_alignment)
     recv_x_for_experts = recv_x.detach().requires_grad_(True) if track_expert_grad else recv_x
+    expanded_weights = (
+        _reshape_expanded_weights(
+            expanded_topk_weights,
+            num_rows=recv_x.shape[0],
+            dtype=recv_x.dtype,
+        )
+        if weight_in_swiglu
+        else None
+    )
     down_proj_out = None
     up_proj_input_grad_out = None
     if state.expert_buffer_mode in {"down", "all"}:
@@ -1468,16 +1707,18 @@ def _deepep_v2_compute_experts(
             batch_size_per_expert,
             down_proj_out=down_proj_out,
             up_proj_input_grad_out=up_proj_input_grad_out,
+            row_weights=expanded_weights,
         )
     finally:
         torch.cuda.nvtx.range_pop()
 
-    expanded_weights = _reshape_expanded_weights(
-        expanded_topk_weights,
-        num_rows=expert_out.shape[0],
-        dtype=expert_out.dtype,
-    )
-    return recv_x_for_experts, expert_out, expanded_weights
+    if expanded_weights is None:
+        expanded_weights = _reshape_expanded_weights(
+            expanded_topk_weights,
+            num_rows=expert_out.shape[0],
+            dtype=expert_out.dtype,
+        )
+    return recv_x_for_experts, expert_out, expanded_weights, weight_in_swiglu
 
 
 def _deepep_v2_compute_experts_static_expanded(
@@ -1488,7 +1729,8 @@ def _deepep_v2_compute_experts_static_expanded(
     weighted_expert_out: torch.Tensor,
     wave: DeepEpV2WaveInput,
     label: str,
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    track_expert_grad: bool,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, bool]:
     if state.expert_alignment != 1:
         raise RuntimeError(
             "deepep_v2_wave layout 'expand_static' currently requires "
@@ -1497,12 +1739,23 @@ def _deepep_v2_compute_experts_static_expanded(
             "contain padding between experts."
         )
 
-    recv_x_for_experts = recv_x.narrow(0, wave.wave_base, wave.wave_rows)
+    recv_x_slice = recv_x.narrow(0, wave.wave_base, wave.wave_rows)
+    recv_x_for_experts = (
+        recv_x_slice.detach().requires_grad_(True)
+        if track_expert_grad
+        else recv_x_slice
+    )
     expanded_topk_weights_for_experts = expanded_topk_weights.narrow(
         0,
         wave.wave_base,
         wave.wave_rows,
     )
+    expanded_weights = _reshape_expanded_weights(
+        expanded_topk_weights_for_experts,
+        num_rows=wave.wave_rows,
+        dtype=recv_x_for_experts.dtype,
+    )
+    weight_in_swiglu = state.weighting_mode == "swiglu"
     down_proj_out = None
     if state.expert_buffer_mode in {"down", "all"}:
         down_proj_out = torch.empty_like(recv_x_for_experts)
@@ -1513,19 +1766,20 @@ def _deepep_v2_compute_experts_static_expanded(
             recv_x_for_experts,
             wave.batch_size_per_expert,
             down_proj_out=down_proj_out,
+            row_weights=expanded_weights if weight_in_swiglu else None,
         )
     finally:
         torch.cuda.nvtx.range_pop()
 
-    expanded_weights = _reshape_expanded_weights(
-        expanded_topk_weights_for_experts,
-        num_rows=expert_out.shape[0],
-        dtype=expert_out.dtype,
-    )
-    weighted_slice = _deepep_v2_weight_expert_output(
-        expert_out,
-        expanded_weights,
-        label=label,
+    weighted_slice = (
+        expert_out
+        if weight_in_swiglu
+        else _deepep_v2_weight_expert_output(
+            expert_out,
+            expanded_weights,
+            label=label,
+            mode=state.weighting_mode,
+        )
     )
     torch.cuda.nvtx.range_push(f"{label}/store_global_weighted")
     try:
@@ -1533,7 +1787,7 @@ def _deepep_v2_compute_experts_static_expanded(
     finally:
         torch.cuda.nvtx.range_pop()
 
-    return recv_x_for_experts, expert_out, expanded_weights
+    return recv_x_for_experts, expert_out, expanded_weights, weight_in_swiglu
 
 
 def _deepep_v2_compute_experts_nonexpanded(
@@ -1579,20 +1833,31 @@ def _deepep_v2_compute_experts_nonexpanded(
 
     torch.cuda.nvtx.range_push(label)
     try:
+        route_weights = recv_topk_weights[route_token_idx, route_slot_idx].to(
+            dtype=packed_x.dtype,
+        ).view(-1, 1)
         expert_out = state.routed_experts(
             packed_x,
             batch_size_per_expert,
+            row_weights=route_weights if state.weighting_mode == "swiglu" else None,
         )
     finally:
         torch.cuda.nvtx.range_pop()
 
     torch.cuda.nvtx.range_push(f"{label}/local_reduce")
     try:
-        route_weights = recv_topk_weights[route_token_idx, route_slot_idx].to(
-            dtype=expert_out.dtype,
-        ).view(-1, 1)
+        weighted_route_out = (
+            expert_out
+            if state.weighting_mode == "swiglu"
+            else _deepep_v2_weight_expert_output(
+                expert_out,
+                route_weights.to(dtype=expert_out.dtype),
+                label=f"{label}/local_reduce",
+                mode=state.weighting_mode,
+            )
+        )
         local_accum = torch.zeros_like(recv_x_for_experts)
-        local_accum.index_add_(0, route_token_idx, expert_out * route_weights)
+        local_accum.index_add_(0, route_token_idx, weighted_route_out)
         local_accum_weights = torch.ones(
             (local_accum.shape[0], 1),
             device=local_accum.device,
@@ -1609,13 +1874,48 @@ def _deepep_v2_weight_expert_output(
     expanded_weights: torch.Tensor,
     *,
     label: str,
+    mode: str = "post",
 ) -> torch.Tensor:
-    torch.cuda.nvtx.range_push(f"{label}/weight")
+    torch.cuda.nvtx.range_push(f"{label}/weight_{mode}")
     try:
-        weighted_expert_out = expert_out * expanded_weights
+        if mode == "post_triton":
+            weighted_expert_out = _deepep_v2_rowwise_scale_triton(
+                expert_out,
+                expanded_weights,
+            )
+        elif mode == "post":
+            weighted_expert_out = expert_out * expanded_weights
+        else:
+            raise RuntimeError(f"post-Linear2 weighting does not support mode {mode!r}")
     finally:
         torch.cuda.nvtx.range_pop()
     return weighted_expert_out
+
+
+def _deepep_v2_prepare_expert_grad(
+    state: DeepEpV2State,
+    *,
+    grad_weighted_expert_out: torch.Tensor,
+    expanded_weights: torch.Tensor,
+    expert_out_is_weighted: bool,
+    label: str,
+) -> torch.Tensor:
+    torch.cuda.nvtx.range_push(label)
+    try:
+        if expert_out_is_weighted:
+            return grad_weighted_expert_out
+        if state.weighting_mode == "post_triton":
+            return _deepep_v2_rowwise_scale_triton(
+                grad_weighted_expert_out,
+                expanded_weights,
+            )
+        if state.weighting_mode == "post":
+            return grad_weighted_expert_out * expanded_weights
+        raise RuntimeError(
+            f"--deepep-weighting {state.weighting_mode!r} expected weighted expert outputs"
+        )
+    finally:
+        torch.cuda.nvtx.range_pop()
 
 
 def _deepep_v2_combine(
@@ -1625,6 +1925,7 @@ def _deepep_v2_combine(
     handle: object,
     label: str,
     async_with_compute_stream: bool,
+    wait_for_completion: bool = True,
 ) -> tuple[torch.Tensor, object]:
     torch.cuda.nvtx.range_push(label)
     try:
@@ -1635,7 +1936,8 @@ def _deepep_v2_combine(
             num_qps=state.num_qps,
             async_with_compute_stream=async_with_compute_stream,
         )
-        _deep_ep_wait(event, async_with_compute_stream=async_with_compute_stream)
+        if wait_for_completion:
+            _deep_ep_wait(event, async_with_compute_stream=async_with_compute_stream)
     finally:
         torch.cuda.nvtx.range_pop()
     return combined_x, event
@@ -1659,18 +1961,24 @@ def _deepep_v2_forward_from_topk(
         async_with_compute_stream=async_with_compute_stream,
         do_cpu_sync=do_cpu_sync,
     )
-    recv_x_for_experts, expert_out, expanded_weights = _deepep_v2_compute_experts(
+    recv_x_for_experts, expert_out, expanded_weights, expert_out_is_weighted = _deepep_v2_compute_experts(
         state,
         recv_x=recv_x,
         expanded_topk_weights=expanded_topk_weights,
         handle=handle,
         label=f"{label}/experts",
         track_expert_grad=track_expert_grad,
+        weight_in_swiglu=state.weighting_mode == "swiglu",
     )
-    weighted_expert_out = _deepep_v2_weight_expert_output(
-        expert_out,
-        expanded_weights,
-        label=label,
+    weighted_expert_out = (
+        expert_out
+        if expert_out_is_weighted
+        else _deepep_v2_weight_expert_output(
+            expert_out,
+            expanded_weights,
+            label=label,
+            mode=state.weighting_mode,
+        )
     )
     combined_x, _combine_event = _deepep_v2_combine(
         state,
@@ -1686,6 +1994,7 @@ def _deepep_v2_forward_from_topk(
         expert_out=expert_out,
         combined_x=combined_x,
         handle=handle,
+        expert_out_is_weighted=expert_out_is_weighted,
     )
 
 
@@ -1734,6 +2043,7 @@ def _deepep_v2_forward_from_topk_nonexpanded(
         expert_out=local_accum,
         combined_x=combined_x,
         handle=handle,
+        expert_out_is_weighted=True,
     )
 
 
@@ -1859,11 +2169,6 @@ def _deepep_v2_wave_forward_sequential(
     track_expert_grad: bool,
     do_cpu_sync: bool,
 ) -> DeepEpV2WaveForwardResult:
-    if wave_layout == "expand_static" and track_expert_grad:
-        raise RuntimeError(
-            "deepep_v2_wave layout 'expand_static' is forward-only for now. "
-            "DeepEP cached expanded backward is not implemented in this path yet."
-        )
     wave_results: list[DeepEpV2ForwardResult] = []
     wave_outputs: list[torch.Tensor] = []
     static_buffers = (
@@ -1897,7 +2202,7 @@ def _deepep_v2_wave_forward_sequential(
                     do_cpu_sync=do_cpu_sync,
                 )
             )
-            recv_x_for_experts, expert_out, expanded_weights = (
+            recv_x_for_experts, expert_out, expanded_weights, expert_out_is_weighted = (
                 _deepep_v2_compute_experts_static_expanded(
                     state,
                     recv_x=recv_x,
@@ -1905,6 +2210,7 @@ def _deepep_v2_wave_forward_sequential(
                     weighted_expert_out=weighted_expert_out,
                     wave=wave,
                     label=f"{wave_label}/experts_static",
+                    track_expert_grad=track_expert_grad,
                 )
             )
             combined_x, _combine_event = _deepep_v2_combine(
@@ -1920,6 +2226,9 @@ def _deepep_v2_wave_forward_sequential(
                 expert_out=expert_out,
                 combined_x=combined_x,
                 handle=handle,
+                expert_out_is_weighted=expert_out_is_weighted,
+                static_wave=wave,
+                static_recv_x_global=recv_x,
             )
         elif wave_layout == "nonexpand_pack":
             result = _deepep_v2_forward_from_topk_nonexpanded(
@@ -1957,11 +2266,6 @@ def _deepep_v2_wave_forward_overlapped(
         or state.wave_combine_stream is None
     ):
         raise RuntimeError("DeepEP V2 wave streams were not initialized")
-    if wave_layout == "expand_static" and track_expert_grad:
-        raise RuntimeError(
-            "deepep_v2_wave layout 'expand_static' is forward-only for now. "
-            "DeepEP cached expanded backward is not implemented in this path yet."
-        )
 
     async_mode = True
     static_buffers = (
@@ -1970,17 +2274,7 @@ def _deepep_v2_wave_forward_overlapped(
         else None
     )
 
-    dispatch_records: list[
-        tuple[
-            DeepEpV2WaveInput,
-            torch.Tensor,
-            torch.Tensor | None,
-            torch.Tensor | None,
-            torch.Tensor | None,
-            object,
-            object,
-        ]
-    ] = []
+    dispatch_results: list[DeepEpV2WaveDispatchResult] = []
     for wave in wave_inputs:
         wave_label = f"{label}/wave_{wave.wave_idx}_experts_{wave.expert_start}_{wave.expert_end}"
         with torch.cuda.stream(state.wave_dispatch_stream):
@@ -1992,6 +2286,7 @@ def _deepep_v2_wave_forward_overlapped(
                     label=f"{wave_label}/dispatch",
                     async_with_compute_stream=async_mode,
                     do_cpu_sync=do_cpu_sync,
+                    wait_for_completion=False,
                 )
                 recv_topk_idx = None
                 recv_topk_weights = None
@@ -2007,6 +2302,7 @@ def _deepep_v2_wave_forward_overlapped(
                         label=f"{wave_label}/dispatch_static",
                         async_with_compute_stream=async_mode,
                         do_cpu_sync=do_cpu_sync,
+                        wait_for_completion=False,
                     )
                 )
                 recv_topk_idx = None
@@ -2020,134 +2316,127 @@ def _deepep_v2_wave_forward_overlapped(
                         label=f"{wave_label}/dispatch_nonexpanded",
                         async_with_compute_stream=async_mode,
                         do_cpu_sync=do_cpu_sync,
+                        wait_for_completion=False,
                     )
                 )
                 expanded_topk_weights = None
             else:
                 raise ValueError(wave_layout)
 
-        dispatch_records.append(
-            (
-                wave,
-                recv_x,
-                expanded_topk_weights,
-                recv_topk_idx,
-                recv_topk_weights,
-                handle,
-                dispatch_event,
+        dispatch_results.append(
+            DeepEpV2WaveDispatchResult(
+                wave=wave,
+                recv_x=recv_x,
+                expanded_topk_weights=expanded_topk_weights,
+                recv_topk_idx=recv_topk_idx,
+                recv_topk_weights=recv_topk_weights,
+                handle=handle,
+                event=dispatch_event,
             )
         )
 
-    compute_records: list[
-        tuple[
-            DeepEpV2WaveInput,
-            torch.Tensor,
-            torch.Tensor,
-            torch.Tensor,
-            torch.Tensor,
-            object,
-            torch.cuda.Event,
-        ]
-    ] = []
-    for (
-        wave,
-        recv_x,
-        expanded_topk_weights,
-        recv_topk_idx,
-        recv_topk_weights,
-        handle,
-        dispatch_event,
-    ) in dispatch_records:
+    compute_results: list[DeepEpV2WaveComputeResult] = []
+    for dispatched in dispatch_results:
+        wave = dispatched.wave
         wave_label = f"{label}/wave_{wave.wave_idx}_experts_{wave.expert_start}_{wave.expert_end}"
         with torch.cuda.stream(state.wave_compute_stream):
-            _deep_ep_wait(dispatch_event, async_with_compute_stream=async_mode)
+            _deep_ep_wait(dispatched.event, async_with_compute_stream=async_mode)
             if wave_layout == "expand":
-                recv_x_for_experts, expert_out, expanded_weights = _deepep_v2_compute_experts(
+                assert dispatched.expanded_topk_weights is not None
+                recv_x_for_experts, expert_out, expanded_weights, expert_out_is_weighted = _deepep_v2_compute_experts(
                     state,
-                    recv_x=recv_x,
-                    expanded_topk_weights=expanded_topk_weights,
-                    handle=handle,
+                    recv_x=dispatched.recv_x,
+                    expanded_topk_weights=dispatched.expanded_topk_weights,
+                    handle=dispatched.handle,
                     label=f"{wave_label}/experts",
                     track_expert_grad=track_expert_grad,
+                    weight_in_swiglu=state.weighting_mode == "swiglu",
                 )
-                weighted_expert_out = _deepep_v2_weight_expert_output(
-                    expert_out,
-                    expanded_weights,
-                    label=wave_label,
+                weighted_expert_out = (
+                    expert_out
+                    if expert_out_is_weighted
+                    else _deepep_v2_weight_expert_output(
+                        expert_out,
+                        expanded_weights,
+                        label=wave_label,
+                        mode=state.weighting_mode,
+                    )
                 )
             elif wave_layout == "expand_static":
                 assert static_buffers is not None
                 _recv_x_out, _expanded_topk_weights_out, weighted_expert_out = static_buffers
-                recv_x_for_experts, expert_out, expanded_weights = (
+                assert dispatched.expanded_topk_weights is not None
+                recv_x_for_experts, expert_out, expanded_weights, expert_out_is_weighted = (
                     _deepep_v2_compute_experts_static_expanded(
                         state,
-                        recv_x=recv_x,
-                        expanded_topk_weights=expanded_topk_weights,
+                        recv_x=dispatched.recv_x,
+                        expanded_topk_weights=dispatched.expanded_topk_weights,
                         weighted_expert_out=weighted_expert_out,
                         wave=wave,
                         label=f"{wave_label}/experts_static",
+                        track_expert_grad=track_expert_grad,
                     )
                 )
             else:
-                assert recv_topk_idx is not None
-                assert recv_topk_weights is not None
+                assert dispatched.recv_topk_idx is not None
+                assert dispatched.recv_topk_weights is not None
                 recv_x_for_experts, weighted_expert_out, expanded_weights = (
                     _deepep_v2_compute_experts_nonexpanded(
                         state,
-                        recv_x=recv_x,
-                        recv_topk_idx=recv_topk_idx,
-                        recv_topk_weights=recv_topk_weights,
-                        handle=handle,
+                        recv_x=dispatched.recv_x,
+                        recv_topk_idx=dispatched.recv_topk_idx,
+                        recv_topk_weights=dispatched.recv_topk_weights,
+                        handle=dispatched.handle,
                         label=f"{wave_label}/experts_nonexpanded",
                         track_expert_grad=track_expert_grad,
                     )
                 )
                 expert_out = weighted_expert_out
+                expert_out_is_weighted = True
             compute_done = torch.cuda.Event(enable_timing=False)
             compute_done.record()
 
-        compute_records.append(
-            (
-                wave,
-                recv_x_for_experts,
-                expanded_weights,
-                expert_out,
-                weighted_expert_out,
-                handle,
-                compute_done,
+        compute_results.append(
+            DeepEpV2WaveComputeResult(
+                wave=wave,
+                recv_x_for_experts=recv_x_for_experts,
+                expert_out=expert_out,
+                expanded_weights=expanded_weights,
+                expert_out_is_weighted=expert_out_is_weighted,
+                weighted_expert_out=weighted_expert_out,
+                handle=dispatched.handle,
+                recv_x_global=dispatched.recv_x if wave_layout == "expand_static" else None,
+                compute_done=compute_done,
             )
         )
 
     wave_results: list[DeepEpV2ForwardResult] = []
     wave_outputs: list[torch.Tensor] = []
     combine_events: list[object] = []
-    for (
-        wave,
-        recv_x_for_experts,
-        expanded_weights,
-        expert_out,
-        weighted_expert_out,
-        handle,
-        compute_done,
-    ) in compute_records:
+    for computed in compute_results:
+        wave = computed.wave
         wave_label = f"{label}/wave_{wave.wave_idx}_experts_{wave.expert_start}_{wave.expert_end}"
         with torch.cuda.stream(state.wave_combine_stream):
-            state.wave_combine_stream.wait_event(compute_done)
+            state.wave_combine_stream.wait_event(computed.compute_done)
             combined_x, combine_event = _deepep_v2_combine(
                 state,
-                weighted_expert_out=weighted_expert_out,
-                handle=handle,
+                weighted_expert_out=computed.weighted_expert_out,
+                handle=computed.handle,
                 label=f"{wave_label}/combine",
                 async_with_compute_stream=async_mode,
+                wait_for_completion=False,
             )
 
         wave_results.append(
             DeepEpV2ForwardResult(
-                recv_x=recv_x_for_experts,
-                expanded_topk_weights=expanded_weights,
-                expert_out=expert_out,
+                recv_x=computed.recv_x_for_experts,
+                expanded_topk_weights=computed.expanded_weights,
+                expert_out=computed.expert_out,
                 combined_x=combined_x,
-                handle=handle,
+                handle=computed.handle,
+                expert_out_is_weighted=computed.expert_out_is_weighted,
+                static_wave=wave if wave_layout == "expand_static" else None,
+                static_recv_x_global=computed.recv_x_global,
             )
         )
         wave_outputs.append(combined_x)
@@ -2236,6 +2525,125 @@ def _validate_deepep_v2_wave_forward(
     if max_abs > atol:
         raise RuntimeError(
             "deepep_v2_wave forward validation failed: "
+            f"layout={wave_layout} max_abs={max_abs:.6g} > atol={atol:.6g}"
+        )
+
+
+def _clone_routed_expert_grads(module: torch.nn.Module) -> dict[str, torch.Tensor | None]:
+    return {
+        name: None if param.grad is None else param.grad.detach().clone()
+        for name, param in module.named_parameters()
+        if param.requires_grad
+    }
+
+
+def _max_abs_between_grad_maps(
+    reference: dict[str, torch.Tensor | None],
+    candidate: dict[str, torch.Tensor | None],
+) -> tuple[torch.Tensor, list[str]]:
+    max_abs = torch.zeros((), device="cuda", dtype=torch.float32)
+    mismatched: list[str] = []
+    for name in sorted(set(reference) | set(candidate)):
+        ref_grad = reference.get(name)
+        cand_grad = candidate.get(name)
+        if ref_grad is None and cand_grad is None:
+            continue
+        if (
+            ref_grad is None
+            or cand_grad is None
+            or tuple(ref_grad.shape) != tuple(cand_grad.shape)
+        ):
+            max_abs = torch.full((), float("inf"), device="cuda", dtype=torch.float32)
+            mismatched.append(name)
+            continue
+        if ref_grad.numel() > 0:
+            diff = (ref_grad.float() - cand_grad.float()).abs().max()
+            max_abs = torch.maximum(max_abs, diff)
+    return max_abs, mismatched
+
+
+def _validate_deepep_v2_wave_backward(
+    state: DeepEpV2State,
+    *,
+    wave_inputs: list[DeepEpV2WaveInput],
+    wave_layout: str,
+    overlap: bool,
+    wave_do_cpu_sync: bool,
+    atol: float,
+    rank: int,
+) -> None:
+    state.routed_experts.zero_grad(set_to_none=True)
+    reference = _deepep_v2_forward(
+        state,
+        label="BENCH/deepep_v2_wave/validate_backward/reference_no_wave_forward",
+        track_expert_grad=True,
+    )
+    reference.grad_combined_x = torch.ones_like(reference.combined_x)
+    reference_grad_x = _run_deepep_v2_backward_from_result(
+        state,
+        reference,
+        label="BENCH/deepep_v2_wave/validate_backward/reference_no_wave_backward",
+        zero_expert_grads=False,
+    )
+    reference_param_grads = _clone_routed_expert_grads(state.routed_experts)
+
+    state.routed_experts.zero_grad(set_to_none=True)
+    candidate = _deepep_v2_wave_forward(
+        state,
+        wave_inputs=wave_inputs,
+        wave_layout=wave_layout,
+        label="BENCH/deepep_v2_wave/validate_backward/wave_forward",
+        track_expert_grad=True,
+        overlap=overlap,
+        do_cpu_sync=wave_do_cpu_sync,
+    )
+    candidate.grad_combined_x = torch.ones_like(candidate.combined_x)
+    candidate_grad_x = _run_deepep_v2_wave_backward_from_result(
+        state,
+        candidate,
+        label="BENCH/deepep_v2_wave/validate_backward/wave_backward",
+        zero_expert_grads=False,
+        overlap=overlap,
+    )
+    candidate_param_grads = _clone_routed_expert_grads(state.routed_experts)
+
+    torch.cuda.nvtx.range_push("BENCH/deepep_v2_wave/validate_backward/compare")
+    try:
+        if tuple(reference_grad_x.shape) != tuple(candidate_grad_x.shape):
+            local_input_max_abs = torch.full((), float("inf"), device="cuda", dtype=torch.float32)
+        else:
+            local_input_max_abs = (reference_grad_x.float() - candidate_grad_x.float()).abs().max()
+        input_max_abs = local_input_max_abs.detach().clone()
+        dist.all_reduce(input_max_abs, op=dist.ReduceOp.MAX)
+
+        local_param_max_abs, mismatched_grads = _max_abs_between_grad_maps(
+            reference_param_grads,
+            candidate_param_grads,
+        )
+        param_max_abs = local_param_max_abs.detach().clone()
+        dist.all_reduce(param_max_abs, op=dist.ReduceOp.MAX)
+        max_abs = max(float(input_max_abs.item()), float(param_max_abs.item()))
+    finally:
+        state.routed_experts.zero_grad(set_to_none=True)
+        torch.cuda.nvtx.range_pop()
+
+    if rank == 0:
+        mismatch_suffix = (
+            f" local_mismatched_grads={mismatched_grads}"
+            if mismatched_grads
+            else ""
+        )
+        print(
+            "[bench] deepep_v2_wave backward validation: "
+            f"layout={wave_layout} overlap={overlap} "
+            f"input_max_abs={float(input_max_abs.item()):.6g} "
+            f"param_max_abs={float(param_max_abs.item()):.6g} "
+            f"atol={atol:.6g}{mismatch_suffix}",
+            flush=True,
+        )
+    if max_abs > atol:
+        raise RuntimeError(
+            "deepep_v2_wave backward validation failed: "
             f"layout={wave_layout} max_abs={max_abs:.6g} > atol={atol:.6g}"
         )
 
@@ -2349,28 +2757,43 @@ def _run_deepep_v2_backward_from_result(
     *,
     label: str,
     zero_expert_grads: bool = True,
-) -> None:
+) -> torch.Tensor:
     if result.grad_combined_x is None:
         result.grad_combined_x = torch.ones_like(result.combined_x)
 
     torch.cuda.nvtx.range_push(f"{label}/combine_backward_dispatch")
     try:
-        grad_weighted_expert_out, _grad_topk_idx, _grad_topk_weights, _handle, event = state.buffer.dispatch(
-            result.grad_combined_x,
-            handle=result.handle,
-            num_sms=state.num_sms,
-            num_qps=state.num_qps,
-            async_with_compute_stream=state.async_with_compute_stream,
-        )
+        if getattr(result.handle, "do_expand", False) and hasattr(state.buffer, "dispatch_cached_expanded_into"):
+            grad_weighted_expert_out = torch.empty_like(result.recv_x)
+            _grad_weighted_expert_out, _grad_topk_idx, _grad_topk_weights, _handle, event = (
+                state.buffer.dispatch_cached_expanded_into(
+                    result.grad_combined_x,
+                    handle=result.handle,
+                    recv_x_out=grad_weighted_expert_out,
+                    num_sms=state.num_sms,
+                    num_qps=state.num_qps,
+                    async_with_compute_stream=state.async_with_compute_stream,
+                )
+            )
+        else:
+            grad_weighted_expert_out, _grad_topk_idx, _grad_topk_weights, _handle, event = state.buffer.dispatch(
+                result.grad_combined_x,
+                handle=result.handle,
+                num_sms=state.num_sms,
+                num_qps=state.num_qps,
+                async_with_compute_stream=state.async_with_compute_stream,
+            )
         _deep_ep_wait(event, async_with_compute_stream=state.async_with_compute_stream)
     finally:
         torch.cuda.nvtx.range_pop()
 
-    torch.cuda.nvtx.range_push(f"{label}/unweight")
-    try:
-        grad_expert_out = grad_weighted_expert_out * result.expanded_topk_weights
-    finally:
-        torch.cuda.nvtx.range_pop()
+    grad_expert_out = _deepep_v2_prepare_expert_grad(
+        state,
+        grad_weighted_expert_out=grad_weighted_expert_out,
+        expanded_weights=result.expanded_topk_weights,
+        expert_out_is_weighted=result.expert_out_is_weighted,
+        label=f"{label}/prepare_expert_grad",
+    )
 
     torch.cuda.nvtx.range_push(f"{label}/experts_backward")
     try:
@@ -2383,7 +2806,7 @@ def _run_deepep_v2_backward_from_result(
 
     torch.cuda.nvtx.range_push(f"{label}/dispatch_backward_combine")
     try:
-        _combined_grad_x, _combined_grad_topk_weights, event = state.buffer.combine(
+        combined_grad_x, _combined_grad_topk_weights, event = state.buffer.combine(
             result.recv_x.grad,
             handle=result.handle,
             num_sms=state.num_sms,
@@ -2401,6 +2824,232 @@ def _run_deepep_v2_backward_from_result(
             state.routed_experts.zero_grad(set_to_none=True)
     finally:
         torch.cuda.nvtx.range_pop()
+    return combined_grad_x
+
+
+def _run_deepep_v2_static_wave_backward_from_result(
+    state: DeepEpV2State,
+    result: DeepEpV2ForwardResult,
+    *,
+    label: str,
+) -> torch.Tensor:
+    if result.static_wave is None or result.static_recv_x_global is None:
+        raise RuntimeError("expand_static backward requires static wave metadata")
+    if result.grad_combined_x is None:
+        result.grad_combined_x = torch.ones_like(result.combined_x)
+    if not hasattr(state.buffer, "dispatch_cached_expanded_into"):
+        raise RuntimeError(
+            "deepep_v2_wave layout 'expand_static' backward requires the modified "
+            "DeepEP working copy with ElasticBuffer.dispatch_cached_expanded_into. "
+            "Use --deepep-path /workspace/DeepEP."
+        )
+
+    wave = result.static_wave
+    grad_weighted_expert_out_global = torch.empty_like(result.static_recv_x_global)
+    torch.cuda.nvtx.range_push(f"{label}/combine_backward_dispatch_static")
+    try:
+        _grad_weighted_expert_out, _grad_topk_idx, _grad_topk_weights, _handle, event = (
+            state.buffer.dispatch_cached_expanded_into(
+                result.grad_combined_x,
+                handle=result.handle,
+                recv_x_out=grad_weighted_expert_out_global,
+                num_sms=state.num_sms,
+                num_qps=state.num_qps,
+                async_with_compute_stream=state.async_with_compute_stream,
+            )
+        )
+        _deep_ep_wait(event, async_with_compute_stream=state.async_with_compute_stream)
+    finally:
+        torch.cuda.nvtx.range_pop()
+
+    torch.cuda.nvtx.range_push(f"{label}/slice_expert_grad_static")
+    try:
+        grad_weighted_expert_out = grad_weighted_expert_out_global.narrow(
+            0,
+            wave.wave_base,
+            wave.wave_rows,
+        )
+    finally:
+        torch.cuda.nvtx.range_pop()
+    grad_expert_out = _deepep_v2_prepare_expert_grad(
+        state,
+        grad_weighted_expert_out=grad_weighted_expert_out,
+        expanded_weights=result.expanded_topk_weights,
+        expert_out_is_weighted=result.expert_out_is_weighted,
+        label=f"{label}/prepare_expert_grad_static",
+    )
+
+    torch.cuda.nvtx.range_push(f"{label}/experts_backward_static")
+    try:
+        torch.autograd.backward(result.expert_out, grad_expert_out)
+    finally:
+        torch.cuda.nvtx.range_pop()
+
+    if result.recv_x.grad is None:
+        raise RuntimeError("deepep_v2 static expert backward did not produce grad for recv_x")
+
+    grad_recv_x_global = torch.empty_like(result.static_recv_x_global)
+    torch.cuda.nvtx.range_push(f"{label}/stage_recv_grad_static")
+    try:
+        grad_recv_x_global.narrow(0, wave.wave_base, wave.wave_rows).copy_(result.recv_x.grad)
+    finally:
+        torch.cuda.nvtx.range_pop()
+
+    torch.cuda.nvtx.range_push(f"{label}/dispatch_backward_combine_static")
+    try:
+        combined_grad_x, _combined_grad_topk_weights, event = state.buffer.combine(
+            grad_recv_x_global,
+            handle=result.handle,
+            num_sms=state.num_sms,
+            num_qps=state.num_qps,
+            async_with_compute_stream=state.async_with_compute_stream,
+        )
+        _deep_ep_wait(event, async_with_compute_stream=state.async_with_compute_stream)
+    finally:
+        torch.cuda.nvtx.range_pop()
+
+    torch.cuda.nvtx.range_push(f"{label}/zero_grad_static")
+    try:
+        result.recv_x.grad = None
+    finally:
+        torch.cuda.nvtx.range_pop()
+    return combined_grad_x
+
+
+def _run_deepep_v2_static_wave_backward_overlapped(
+    state: DeepEpV2State,
+    result: DeepEpV2WaveForwardResult,
+    *,
+    label: str,
+    zero_expert_grads: bool = True,
+) -> torch.Tensor:
+    if (
+        state.wave_dispatch_stream is None
+        or state.wave_compute_stream is None
+        or state.wave_combine_stream is None
+    ):
+        raise RuntimeError("DeepEP V2 wave streams were not initialized")
+    if not result.wave_results:
+        raise RuntimeError("DeepEP V2 wave backward produced no wave results")
+    if result.grad_combined_x is None:
+        result.grad_combined_x = torch.ones_like(result.combined_x)
+    if not hasattr(state.buffer, "dispatch_cached_expanded_into"):
+        raise RuntimeError(
+            "deepep_v2_wave layout 'expand_static' backward requires the modified "
+            "DeepEP working copy with ElasticBuffer.dispatch_cached_expanded_into. "
+            "Use --deepep-path /workspace/DeepEP."
+        )
+
+    recv_x_global = result.wave_results[0].static_recv_x_global
+    if recv_x_global is None:
+        raise RuntimeError("overlapped static wave backward requires static receive buffers")
+    grad_weighted_expert_out_global = torch.empty_like(recv_x_global)
+    grad_recv_x_global = torch.empty_like(recv_x_global)
+    async_mode = True
+
+    backward_dispatches: list[tuple[int, DeepEpV2ForwardResult, object]] = []
+    for wave_idx, wave_result in enumerate(result.wave_results):
+        if wave_result.static_wave is None or wave_result.static_recv_x_global is None:
+            raise RuntimeError("overlapped wave backward currently requires expand_static results")
+        wave_result.grad_combined_x = result.grad_combined_x
+        with torch.cuda.stream(state.wave_dispatch_stream):
+            torch.cuda.nvtx.range_push(f"{label}/wave_{wave_idx}/combine_backward_dispatch_static")
+            try:
+                _grad_weighted_expert_out, _grad_topk_idx, _grad_topk_weights, _handle, event = (
+                    state.buffer.dispatch_cached_expanded_into(
+                        wave_result.grad_combined_x,
+                        handle=wave_result.handle,
+                        recv_x_out=grad_weighted_expert_out_global,
+                        num_sms=state.num_sms,
+                        num_qps=state.num_qps,
+                        async_with_compute_stream=async_mode,
+                    )
+                )
+            finally:
+                torch.cuda.nvtx.range_pop()
+        backward_dispatches.append((wave_idx, wave_result, event))
+
+    compute_results: list[tuple[int, DeepEpV2ForwardResult, torch.cuda.Event]] = []
+    staged_recv_grads: list[torch.Tensor] = []
+    for wave_idx, wave_result, dispatch_event in backward_dispatches:
+        wave = wave_result.static_wave
+        assert wave is not None
+        with torch.cuda.stream(state.wave_compute_stream):
+            _deep_ep_wait(dispatch_event, async_with_compute_stream=async_mode)
+
+            torch.cuda.nvtx.range_push(f"{label}/wave_{wave_idx}/slice_expert_grad_static")
+            try:
+                grad_weighted_expert_out = grad_weighted_expert_out_global.narrow(
+                    0,
+                    wave.wave_base,
+                    wave.wave_rows,
+                )
+            finally:
+                torch.cuda.nvtx.range_pop()
+            grad_expert_out = _deepep_v2_prepare_expert_grad(
+                state,
+                grad_weighted_expert_out=grad_weighted_expert_out,
+                expanded_weights=wave_result.expanded_topk_weights,
+                expert_out_is_weighted=wave_result.expert_out_is_weighted,
+                label=f"{label}/wave_{wave_idx}/prepare_expert_grad_static",
+            )
+
+            torch.cuda.nvtx.range_push(f"{label}/wave_{wave_idx}/experts_backward_static")
+            try:
+                torch.autograd.backward(wave_result.expert_out, grad_expert_out)
+            finally:
+                torch.cuda.nvtx.range_pop()
+
+            if wave_result.recv_x.grad is None:
+                raise RuntimeError(
+                    "deepep_v2 static expert backward did not produce grad for recv_x"
+                )
+
+            torch.cuda.nvtx.range_push(f"{label}/wave_{wave_idx}/stage_recv_grad_static")
+            try:
+                recv_grad = wave_result.recv_x.grad
+                staged_recv_grads.append(recv_grad)
+                grad_recv_x_global.narrow(0, wave.wave_base, wave.wave_rows).copy_(recv_grad)
+            finally:
+                torch.cuda.nvtx.range_pop()
+
+            compute_done = torch.cuda.Event(enable_timing=False)
+            compute_done.record()
+            wave_result.recv_x.grad = None
+        compute_results.append((wave_idx, wave_result, compute_done))
+
+    combined_grad_parts: list[torch.Tensor] = []
+    combine_events: list[object] = []
+    for wave_idx, wave_result, compute_done in compute_results:
+        with torch.cuda.stream(state.wave_combine_stream):
+            state.wave_combine_stream.wait_event(compute_done)
+            torch.cuda.nvtx.range_push(f"{label}/wave_{wave_idx}/dispatch_backward_combine_static")
+            try:
+                combined_grad_x, _combined_grad_topk_weights, event = state.buffer.combine(
+                    grad_recv_x_global,
+                    handle=wave_result.handle,
+                    num_sms=state.num_sms,
+                    num_qps=state.num_qps,
+                    async_with_compute_stream=async_mode,
+                )
+            finally:
+                torch.cuda.nvtx.range_pop()
+        combined_grad_parts.append(combined_grad_x)
+        combine_events.append(event)
+
+    for event in combine_events:
+        _deep_ep_wait(event, async_with_compute_stream=async_mode)
+
+    torch.cuda.nvtx.range_push(f"{label}/zero_grad")
+    try:
+        if zero_expert_grads:
+            state.routed_experts.zero_grad(set_to_none=True)
+    finally:
+        torch.cuda.nvtx.range_pop()
+
+    # Keep staged recv grad tensors alive until the final stream waits above.
+    del staged_recv_grads
+    return _sum_deepep_v2_wave_outputs(combined_grad_parts, label=f"{label}/sum_input_grads")
 
 
 def _prepare_deepep_v2_wave_backward(
@@ -2434,28 +3083,52 @@ def _run_deepep_v2_wave_backward_from_result(
     result: DeepEpV2WaveForwardResult,
     *,
     label: str,
-) -> None:
+    zero_expert_grads: bool = True,
+    overlap: bool = False,
+) -> torch.Tensor:
     if result.grad_combined_x is None:
         result.grad_combined_x = torch.ones_like(result.combined_x)
+
+    if overlap and all(wave_result.static_wave is not None for wave_result in result.wave_results):
+        return _run_deepep_v2_static_wave_backward_overlapped(
+            state,
+            result,
+            label=label,
+            zero_expert_grads=zero_expert_grads,
+        )
 
     # First version is waved but intentionally sequential. It preserves the
     # same reverse communication semantics as no-wave DeepEP: combine backward
     # is a dispatch with the forward handle, and dispatch backward is a combine
     # with the forward handle.
+    combined_grad_parts: list[torch.Tensor] = []
     for wave_idx, wave_result in enumerate(result.wave_results):
         wave_result.grad_combined_x = result.grad_combined_x
-        _run_deepep_v2_backward_from_result(
-            state,
-            wave_result,
-            label=f"{label}/wave_{wave_idx}",
-            zero_expert_grads=False,
-        )
+        if wave_result.static_wave is not None:
+            combined_grad_parts.append(
+                _run_deepep_v2_static_wave_backward_from_result(
+                    state,
+                    wave_result,
+                    label=f"{label}/wave_{wave_idx}",
+                )
+            )
+        else:
+            combined_grad_parts.append(
+                _run_deepep_v2_backward_from_result(
+                    state,
+                    wave_result,
+                    label=f"{label}/wave_{wave_idx}",
+                    zero_expert_grads=False,
+                )
+            )
 
     torch.cuda.nvtx.range_push(f"{label}/zero_grad")
     try:
-        state.routed_experts.zero_grad(set_to_none=True)
+        if zero_expert_grads:
+            state.routed_experts.zero_grad(set_to_none=True)
     finally:
         torch.cuda.nvtx.range_pop()
+    return _sum_deepep_v2_wave_outputs(combined_grad_parts, label=f"{label}/sum_input_grads")
 
 
 def _run_one_deepep_v2_iter(
@@ -2521,6 +3194,7 @@ def _run_one_deepep_v2_wave_iter(
         state,
         result,
         label=f"{label}/backward",
+        overlap=overlap,
     )
 
 
@@ -2660,6 +3334,7 @@ def _bench_deepep_v2_case(
                 f"num_max_tokens_per_rank={state.num_max_tokens_per_rank} "
                 f"deepep_max_tokens_factor={args.deepep_max_tokens_factor} "
                 f"expert_buffer_mode={state.expert_buffer_mode} "
+                f"weighting={state.weighting_mode} "
                 f"expert_alignment={state.expert_alignment} "
                 f"async={state.async_with_compute_stream} "
                 f"do_cpu_sync={state.do_cpu_sync} "
@@ -2713,11 +3388,22 @@ def _bench_deepep_v2_case(
                     atol=float(args.deepep_validate_wave_forward_atol),
                     rank=rank,
                 )
+            if args.deepep_validate_wave_backward:
+                _validate_deepep_v2_wave_backward(
+                    state,
+                    wave_inputs=wave_inputs,
+                    wave_layout=str(args.deepep_wave_layout),
+                    overlap=wave_overlap,
+                    wave_do_cpu_sync=wave_do_cpu_sync,
+                    atol=float(args.deepep_validate_wave_backward_atol),
+                    rank=rank,
+                )
 
         profile_started = False
         if args.profile and deepep_probe_iters > 0:
             dist.barrier()
             _cuda_profiler_start()
+            dist.barrier()
             profile_started = True
 
         _run_pre_dispatch_expert_probe(
@@ -2769,6 +3455,7 @@ def _bench_deepep_v2_case(
         if args.profile and not profile_started:
             dist.barrier()
             _cuda_profiler_start()
+            dist.barrier()
 
         host_sync_timing = os.getenv("OLMO_BENCH_HOST_SYNC_TIMING", "0").strip().lower() in {
             "1",
@@ -2818,6 +3505,7 @@ def _bench_deepep_v2_case(
                             state,
                             backward_result,
                             label=label,
+                            overlap=wave_overlap,
                         )
                     else:
                         assert isinstance(backward_result, DeepEpV2ForwardResult)
@@ -2847,6 +3535,8 @@ def _bench_deepep_v2_case(
             finally:
                 torch.cuda.nvtx.range_pop()
             end.record()
+            if args.sync_between_iters:
+                torch.cuda.synchronize()
             events.append((start, end))
             if host_sync_timing:
                 torch.cuda.synchronize()
@@ -2897,6 +3587,7 @@ def _bench_deepep_v2_case(
                 f"wave_overlap={wave_overlap if use_wave else False} "
                 f"wave_layout={args.deepep_wave_layout if use_wave else 'none'} "
                 f"wave_do_cpu_sync={wave_do_cpu_sync if use_wave else False} "
+                f"sync_between_iters={bool(args.sync_between_iters)} "
                 f"ms/iter(max_rank)={max_ms:.3f} "
                 f"{host_timing_part}"
                 f"local_tokens/s={tokens / (throughput_ms / 1000.0):.1f} "
@@ -3564,6 +4255,7 @@ def _bench_case(
 
     torch.cuda.nvtx.range_push(f"BENCH/{case.name}/tokens_{tokens}/build")
     try:
+        _setup_debug_print("case_build:enter", case=case.name, tokens=tokens)
         block = _build_block(
             d_model=args.d_model,
             hidden_size=args.hidden_size,
@@ -3583,10 +4275,26 @@ def _bench_case(
             random_routing=args.random_routing,
             config_dtype=config_dtype,
         )
+        _setup_debug_print("patch_moe_only:enter", case=case.name)
         if not args.full_block:
             _patch_moe_only(block)
+        _setup_debug_print("patch_moe_only:exit", case=case.name)
+        _setup_debug_print(
+            "block_apply_ep:enter",
+            case=case.name,
+            ep_world_size=world_size,
+            cuda_allocated_gib=f"{torch.cuda.memory_allocated() / 1024**3:.2f}",
+            cuda_reserved_gib=f"{torch.cuda.memory_reserved() / 1024**3:.2f}",
+        )
         block.apply_ep(ep_mesh)
+        _setup_debug_print(
+            "block_apply_ep:exit",
+            case=case.name,
+            cuda_allocated_gib=f"{torch.cuda.memory_allocated() / 1024**3:.2f}",
+            cuda_reserved_gib=f"{torch.cuda.memory_reserved() / 1024**3:.2f}",
+        )
         if block.routed_experts is not None:
+            _setup_debug_print("init_probe_weights:enter", case=case.name)
             _init_probe_routed_expert_weights(
                 block.routed_experts,
                 weight_init=_resolve_weight_init_value(
@@ -3594,19 +4302,27 @@ def _bench_case(
                     source_default="empty",
                 ),
             )
+            _setup_debug_print("init_probe_weights:exit", case=case.name)
         if args.balanced_routing == "deepep":
             if args.random_routing:
                 raise RuntimeError("--balanced-routing deepep conflicts with --random-routing")
+            _setup_debug_print("install_deepep_balanced_router:enter", case=case.name)
             _install_deepep_balanced_router(block, world_size=world_size)
+            _setup_debug_print("install_deepep_balanced_router:exit", case=case.name)
         elif case.use_wave and not args.random_routing:
+            _setup_debug_print("install_ep_balanced_router:enter", case=case.name)
             _install_ep_balanced_router(block)
+            _setup_debug_print("install_ep_balanced_router:exit", case=case.name)
         block.train()
         compile_enabled = bool(args.compile and not args.no_compile)
         if compile_enabled:
+            _setup_debug_print("compile:enter", case=case.name, compile_block=args.compile_block)
             if args.compile_block:
                 block = torch.compile(block, fullgraph=False, dynamic=False)
             else:
                 _compile_hot_modules(block)
+            _setup_debug_print("compile:exit", case=case.name)
+        _setup_debug_print("case_build:exit", case=case.name)
     finally:
         torch.cuda.nvtx.range_pop()
 
