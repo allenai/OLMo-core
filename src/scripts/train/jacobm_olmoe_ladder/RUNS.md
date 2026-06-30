@@ -1500,3 +1500,27 @@ they will not collide with later full Cx1/2/4/8 promoted runs. All use
 | `sp-smoke-1p2b-cx4shape-sp192e4k-lr2.25e-4-r1` | `huge_total_192e_top4` | Cx4-shaped `b512k` memory smoke | 2.25e-4 | 64 | 4 | 8 | 1 | 1 | https://beaker.org/ex/01KWCN66HYTCCGJFH7HPBVW5HA |
 | `sp-smoke-1p2b-cx2shape-sp192e4k-lr4e-4-r1` | `huge_total_192e_top4` | Cx2-shaped `b384k` divisibility smoke | 4e-4 | 48 | 3 | 8 | 1 | 1 | https://beaker.org/ex/01KWCN6R8JYF73JV22WB0RW3YT |
 | `sp-smoke-1p2b-cx8shape-sp96e4k-lr3.5e-4-r1` | `high_total_96e_top4` | Cx8-shaped `b768k` one-node smoke | 3.5e-4 | 96 | 1 | 8 | 1 | 4 | https://beaker.org/ex/01KWCN78Z4645GA6P41MQJYQ6T |
+
+
+## 2026-06-30 Integration Smoke Tests
+
+Queued two short 0.02x Chinchilla smoke tests for the integration candidates.
+Both use `ai2/titan`, workspace `ai2/OLMo-3-moe-experiments`, image
+`tianhuat/olmo-core-torch211-2404-cu128`, compile-on, `EP=1`, Weka
+`oe-training-default`, budget `ai2/oe-other`, priority `urgent`, and
+`--no-pre-train-checkpoint`. Batch shape is Cx1-style `b256k` with
+`global_batch_size_seq=32`, 2 GPUs, microbatch 8, and grad accumulation 2.
+
+| Name | Variant | LR | GBS seq | Nodes | GPUs / node | EP | MB | Beaker | Status |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |
+| `int-smoke-intw256e8k-lr1.6e-3-r1` | `wide_256e8k` | 1.6e-3 | 32 | 1 | 2 | 1 | 8 | https://beaker.org/ex/01KWDC0M1PMH7CQ314SV97VBVA | scheduled/running startup |
+| `int-smoke-intd256e8k-lr1.6e-3-r1` | `deep_256e8k` | 1.6e-3 | 32 | 1 | 2 | 1 | 8 | https://beaker.org/ex/01KWDC0ZQ1TKRWHH6JJCYZJJXV | scheduled/running startup |
+
+The previously queued 1.2B total-sparsity smoke experiments were stopped on
+2026-06-30 so the integration smokes can get through the queue first:
+
+| Name | Beaker | Status |
+| --- | --- | --- |
+| `sp-smoke-1p2b-cx4shape-sp192e4k-lr2.25e-4-r1` | https://beaker.org/ex/01KWCN66HYTCCGJFH7HPBVW5HA | stopped 2026-06-30 |
+| `sp-smoke-1p2b-cx2shape-sp192e4k-lr4e-4-r1` | https://beaker.org/ex/01KWCN6R8JYF73JV22WB0RW3YT | stopped 2026-06-30 |
+| `sp-smoke-1p2b-cx8shape-sp96e4k-lr3.5e-4-r1` | https://beaker.org/ex/01KWCN78Z4645GA6P41MQJYQ6T | stopped 2026-06-30 |
