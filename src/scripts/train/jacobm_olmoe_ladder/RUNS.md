@@ -1596,3 +1596,21 @@ the proven-safe 480M total-sparsity 192E/top4 replacements for Cx1/Cx4.
 | `int-480m-cx4-intw256e8k-lr8e-4-r1` | `wide_256e8k` | 4 | 8e-4 | 64 | 4 | 4 | https://beaker.org/ex/01KWE2Y61CJEQEDW57MDJEPRDH |
 | `int-480m-cx8-intw256e8k-lr8e-4-r1` | `wide_256e8k` | 8 | 8e-4 | 96 | 8 | 4 | https://beaker.org/ex/01KWE2YHFRQHAF56KCK95FPK62 |
 
+## 2026-07-01 Integration 480M Deep Baseline-LR Launch
+
+Queued the 480M promoted single-point ladder for the deep integration candidate
+(`deep_256e8k`: 256E/top8 + shared expert + one dense prefix layer + deeper layer schedule).
+These use the same baseline-transfer LRs and canonical Cx batch sizes as the
+480M wide integration launch, on `ai2/titan`, workspace
+`ai2/OLMo-3-moe-experiments`, image `tianhuat/olmo-core-torch211-2404-cu128`,
+compile-on, `EP=1`, Weka `oe-training-default`, budget `ai2/oe-other`,
+priority `urgent`, and `--no-pre-train-checkpoint`. Microbatch settings match
+the sparsity-safe 480M wide integration launch: MB4 throughout.
+
+| Name | Variant | Cx | LR | GBS seq | GPUs | MB | Beaker |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | --- |
+| `int-480m-cx1-intd256e8k-lr1.2e-3-r1` | `deep_256e8k` | 1 | 1.2e-3 | 32 | 4 | 4 | https://beaker.org/ex/01KWF7Z3GFWM8JS31NB0P9M516 |
+| `int-480m-cx2-intd256e8k-lr9e-4-r1` | `deep_256e8k` | 2 | 9e-4 | 48 | 4 | 4 | https://beaker.org/ex/01KWF7ZG3C483QD0KA5G3ZB231 |
+| `int-480m-cx4-intd256e8k-lr8e-4-r1` | `deep_256e8k` | 4 | 8e-4 | 64 | 4 | 4 | https://beaker.org/ex/01KWF804APPWNTTXT0B118G5MB |
+| `int-480m-cx8-intd256e8k-lr8e-4-r1` | `deep_256e8k` | 8 | 8e-4 | 96 | 8 | 4 | https://beaker.org/ex/01KWF80JBYFGSJPDV2QNE8BYQY |
+
