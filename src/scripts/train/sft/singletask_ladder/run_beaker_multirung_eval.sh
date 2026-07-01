@@ -117,6 +117,8 @@ if [ "$TASK" = "rerank" ]; then
         --root "$BUNDLE" --max-test-samples "$MAX_TEST" --batch-size "$BATCH_SIZE" --skip-ruler --skip-gen \
         --ladder --ladder-tasks rerank --ladder-rungs 2k --rerank-data "$CEF" || rc=$?
     [ -f "$O" ] && cp "$O" "$RESULTS/${RUN}_rerank_ce_${r}.json" 2>/dev/null || true
+    GEN="${O%.json}.generations.jsonl"
+    [ -f "$GEN" ] && cp "$GEN" "$RESULTS/${RUN}_rerank_ce_${r}.generations.jsonl" 2>/dev/null || true
   done
   echo "=== DONE rerank-CE rc=$rc $(date -u '+%F %T')Z ==="; exit $rc
 fi
@@ -124,7 +126,7 @@ fi
 # ---- dense / landmark / compressive: standard multi-rung ladder (NDCG/F1/score per rung) ----
 case "$TASK" in
   contra)  RUNGS="2k,8k,16k,32k"; LTASK=contradiction; EXTRA="--contra-data data/contradiction_eval_pubmed_both_n100_k3.jsonl --contra-max-new-tokens 512" ;;
-  nq)      RUNGS="3k,8k,16k,32k"; LTASK=nq;            EXTRA="--nq-data data/n2ified_eval_nq_q50.jsonl" ;;
+  nq)      RUNGS="3k,8k,16k,32k"; LTASK=nq;            EXTRA="--nq-data data/nq_validation_k20_hn19_500_aligned.jsonl" ;;  # @3k: single-query k20 retrieval (matches training + the k50/k100/k200 rungs); NOT the 50-query n2ified file (that graded ~0)
   outlier) RUNGS="3k,8k,16k,32k"; LTASK=outlier;       EXTRA="--outlier-data data/outlier_wiki100w_n55_k3_eval_600.jsonl" ;;
   oolong)  RUNGS="8k,16k,32k";    LTASK=oolong;        EXTRA="" ;;
   *) echo "ERROR unknown TASK=$TASK"; exit 2 ;;
@@ -137,7 +139,10 @@ $TR --model-path "$CKPT" --out "$OUT" --tokenizer "$TOKENIZER" --max-length "$MA
 rc=$?
 if [ -f "$OUT" ]; then
   cp "$OUT" "$RESULTS/${RUN}_${TASK}_multirung.json" 2>/dev/null || true
+  GEN="${OUT%.json}.generations.jsonl"
+  [ -f "$GEN" ] && cp "$GEN" "$RESULTS/${RUN}_${TASK}_multirung.generations.jsonl" 2>/dev/null || true
   echo "--- $OUT ---"; cat "$OUT"
+  [ -f "$GEN" ] && python src/scripts/ctc_eval/eval/print_gen_sample.py "$GEN" "${GEN_SAMPLE_N:-6}" || true
 fi
 echo "=== DONE TASK=$TASK rc=$rc result=$RESULTS/${RUN}_${TASK}_multirung.json $(date -u '+%F %T')Z ==="
 exit $rc

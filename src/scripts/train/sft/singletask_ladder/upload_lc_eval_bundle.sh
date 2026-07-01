@@ -40,6 +40,7 @@ fi
 # 2. per-task BASE-rung + rerank-CE data files the bundle was missing.
 echo "--- data: base-rung + rerank-CE files ---"
 for f in n2ified_eval_nq_q50.jsonl \
+         nq_validation_k20_hn19_500_aligned.jsonl \
          msmarco_trainhn_eval_k20_500.jsonl \
          msmarco_trainhn_eval_k50_500.jsonl \
          msmarco_trainhn_eval_k100_500.jsonl \

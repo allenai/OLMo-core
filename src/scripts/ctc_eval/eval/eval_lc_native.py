@@ -56,6 +56,9 @@ def main():
                     help="chat = Qwen3 apply_chat_template (matches SFT training); "
                          "raw = bare build_prompt, no wrapping (for BASE/CPT models); "
                          "alpaca = legacy alpaca-instruction wrap.")
+    ap.add_argument("--save-generations", action=argparse.BooleanOptionalAction, default=True,
+                    help="dump per-example model generations (+ gold/per-example metrics) to a sidecar "
+                         "<out>.generations.jsonl for error inspection. On by default; --no-save-generations to skip.")
     args = ap.parse_args()
     os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
     if args.root:
@@ -160,6 +163,24 @@ def main():
 
     summary = {"model_path": args.model_path, "ruler": {}, "contradiction": {}, "nq": {}}
 
+    # Per-example generation dump (for error inspection). Each _eval_* returns (metrics, details);
+    # we pair the FULL model generation with its per-example detail (parsed pred, gold, metrics) and
+    # a prompt tail (prompts can be 100k+ chars, so only the trailing question region is kept).
+    gen_dump = []
+
+    def _record_gens(task, label, examples, responses, details):
+        if not args.save_generations:
+            return
+        for i, resp in enumerate(responses):
+            ex_i = examples[i] if i < len(examples) else None
+            prompt = ex_i.get("prompt", "") if isinstance(ex_i, dict) else ""
+            rec = {"task": task, "rung": label, "idx": i,
+                   "generation": resp,
+                   "prompt_tail": prompt[-1200:] if prompt else None}
+            if details is not None and i < len(details):
+                rec["detail"] = details[i]
+            gen_dump.append(rec)
+
     if not args.skip_ruler:
         recalls = []
         for sub in args.ruler_subtasks.split(","):
@@ -169,7 +190,8 @@ def main():
                     continue
                 ex = _load(path, task="ruler", qp="after")
                 resp = generate([e["prompt"] for e in ex], 160)
-                res, _ = _eval_ruler(ex, resp)
+                res, det = _eval_ruler(ex, resp)
+                _record_gens("ruler", f"{sub}_{L}", ex, resp, det)
                 summary["ruler"][f"{sub}_{L}"] = res
                 recalls.append(res["recall"])
                 print(f"[ruler] {sub}_{L}: recall={res['recall']:.3f} (n={len(ex)})", flush=True)
@@ -177,13 +199,17 @@ def main():
 
     if not args.ladder:
         ex = _load(args.contra_data, task="contradiction", qp="both")
-        res, _ = _eval_contradiction(ex, generate([e["prompt"] for e in ex], args.contra_max_new_tokens, stop_strings=["contradicting pairs:"]))
+        resp = generate([e["prompt"] for e in ex], args.contra_max_new_tokens, stop_strings=["contradicting pairs:"])
+        res, det = _eval_contradiction(ex, resp)
+        _record_gens("contradiction", "single", ex, resp, det)
         summary["contradiction"] = res
         print(f"[contradiction] f1={res['f1']:.3f} (n={len(ex)})", flush=True)
 
     if not args.ladder and os.path.exists(args.nq_data):
         ex = _load(args.nq_data, task="retrieval", qp="both")
-        res, _ = _eval_retrieval(ex, generate([e["prompt"] for e in ex], 64))
+        resp = generate([e["prompt"] for e in ex], 64)
+        res, det = _eval_retrieval(ex, resp)
+        _record_gens("nq", "single", ex, resp, det)
         summary["nq"] = res
         print(f"[nq] f1={res.get('f1', 0):.3f} (n={len(ex)})", flush=True)
 
@@ -242,7 +268,9 @@ def main():
                 if not path or not os.path.exists(path):
                     print(f"[ladder:{task}@{label}] MISSING {path}, skipping"); continue
                 ex = _load(path, task=loadtask, qp="both")
-                res, _ = fn(ex, generate([e["prompt"] for e in ex], maxtok, **gkw))
+                resp = generate([e["prompt"] for e in ex], maxtok, **gkw)
+                res, det = fn(ex, resp)
+                _record_gens(task, label, ex, resp, det)
                 prim = res.get(pkey) if pkey else next(
                     (v for k, v in res.items() if k.startswith("mrr")), None)
                 summary[f"{task}_{label}"] = prim
@@ -262,13 +290,21 @@ def main():
                 print(f"[gen:{gname}] MISSING {gpath}, skipping"); continue
             ex = load_unified_examples(gpath, args.max_test_samples, task="retrieval",
                                        query_position="both", use_alpaca=True)
-            res, _ = _eval_retrieval(ex, generate([e["prompt"] for e in ex], gmax))
+            resp = generate([e["prompt"] for e in ex], gmax)
+            res, det = _eval_retrieval(ex, resp)
+            _record_gens(f"gen_{gname}", "probe", ex, resp, det)
             summary[f"gen_{gname}"] = res
             print(f"[gen:{gname}] f1={res.get('f1', 0):.3f} (n={len(ex)})", flush=True)
 
     if is_main:
         os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
         json.dump(summary, open(args.out, "w"), indent=2)
+        if args.save_generations and gen_dump:
+            gen_path = os.path.splitext(args.out)[0] + ".generations.jsonl"
+            with open(gen_path, "w") as gf:
+                for rec in gen_dump:
+                    gf.write(json.dumps(rec) + "\n")
+            print(f"[native] wrote {len(gen_dump)} generations -> {gen_path}", flush=True)
         print(f"\n[native] TOTAL {time.time()-t0:.1f}s | RULER {summary.get('ruler_avg_recall')} "
               f"contra {summary['contradiction'].get('f1')} nq {summary['nq'].get('f1')}\nWROTE {args.out}")
     if world > 1:
