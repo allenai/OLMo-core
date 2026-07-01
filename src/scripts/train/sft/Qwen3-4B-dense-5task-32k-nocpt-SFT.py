@@ -3,11 +3,17 @@
 a MIX of 5 long-context tasks (contradiction, nq, oolong, rerank, outlier). NO-CPT variant: cpt_frac=0
 (pure downstream FT, no continued-pretraining text mixed in).
 
-Mirrors ``Qwen3-4B-dense-cptmix-5task-32k-SFT.py`` (dense, YaRN factor 2, flash-2, ConcatAndChunk
-packing with EOS varlen masking) but: (a) drops the CPT source (CPT_FRAC=0), and (b) corrects the
-base-checkpoint path to its real weka location under ``amandab/``. SEQUENCE_LENGTH=40960 (the dense
-32k template's window): 40960 >= the max ladder40k doc (~40407 tokens) so no document is split across
-a chunk boundary -> no prompt-only (NaN) continuation windows.
+Mirrors ``Qwen3-4B-dense-cptmix-5task-32k-SFT.py`` (dense, YaRN factor 2, flash-2) but: (a) drops the
+CPT source (CPT_FRAC=0), and (b) corrects the base-checkpoint path to its real weka location under
+``amandab/``. SEQUENCE_LENGTH=40960 (the dense 32k template's window): 40960 >= the max ladder40k doc
+(~40407 tokens) so essentially every document fits whole in a window with no truncation.
+
+Packing: unlike the concat-and-chunk variant (which concatenates the whole mix and slices at fixed
+SEQUENCE_LENGTH boundaries, splitting documents across windows and -- because qwen3's
+bos==eos==151643 defeats the EOS+BOS boundary heuristic -- letting documents attend across each
+other), this script uses ``PackingInstanceSource`` (Best-Fit-Decreasing bin-packing of whole
+documents, padded to SEQUENCE_LENGTH) and a loader tokenizer with ``bos_token_id=None`` so the
+EOS-based doc-length detection yields correct block-diagonal (varlen) masking.
 
     PYTHONPATH=src python src/scripts/train/sft/Qwen3-4B-dense-5task-32k-nocpt-SFT.py \\
         dry_run q4b-dense-5task-32k-nocpt ai2/jupiter
@@ -23,10 +29,11 @@ from olmo_core.config import DType
 from olmo_core.data import TokenizerConfig
 from olmo_core.data.composable import (
     ComposableDataLoaderConfig,
-    ConcatAndChunkInstanceSourceConfig,
+    LongDocStrategy,
     MixingDocumentSourceConfig,
     MixingDocumentSourceSpecConfig,
     NumpyDocumentSourceConfig,
+    PackingInstanceSourceConfig,
 )
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.float8 import Float8Config
@@ -55,7 +62,9 @@ from olmo_core.train.train_module import (
 # ---------------------------------------------------------------------------
 # Geometry
 # ---------------------------------------------------------------------------
-SEQUENCE_LENGTH = 40960  # 32k-scale window; >= max ladder40k doc, so no doc is chunk-split (no NaN).
+SEQUENCE_LENGTH = (
+    40960  # 32k-scale window; >= max ladder40k doc, so no doc is chunk-split (no NaN).
+)
 CP_DEGREE = 8
 NUM_NODES = 2  # 2 nodes x 8 GPUs = 16 GPUs; cp_degree=8 -> NUM_NODES DP replicas
 
@@ -94,7 +103,9 @@ CONTRA_FRAC = max(0.0, SFT_BUDGET - (NQ_FRAC + OOLONG_FRAC + RERANK_FRAC + OUTLI
 # ---------------------------------------------------------------------------
 LR = 1e-5
 TARGET_STEPS = 1465
-GLOBAL_BATCH_SIZE = NUM_NODES * SEQUENCE_LENGTH  # one window per CP=8 DP replica/step (grad-accum 1)
+GLOBAL_BATCH_SIZE = (
+    NUM_NODES * SEQUENCE_LENGTH
+)  # one window per CP=8 DP replica/step (grad-accum 1)
 TARGET_TOKENS = GLOBAL_BATCH_SIZE * TARGET_STEPS
 MAX_STEPS = max(1, round(TARGET_TOKENS / GLOBAL_BATCH_SIZE))
 
@@ -173,34 +184,55 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
 
     specs = [
         MixingDocumentSourceSpecConfig(
-            source=_sft_source(CONTRA_DATA_ROOT), ratio=CONTRA_FRAC,
-            max_repetition_factor=8.0, label="contradiction",
+            source=_sft_source(CONTRA_DATA_ROOT),
+            ratio=CONTRA_FRAC,
+            max_repetition_factor=8.0,
+            label="contradiction",
         ),
         MixingDocumentSourceSpecConfig(
-            source=_sft_source(NQ_DATA_ROOT), ratio=NQ_FRAC,
-            max_repetition_factor=8.0, label="nq_retrieval",
+            source=_sft_source(NQ_DATA_ROOT),
+            ratio=NQ_FRAC,
+            max_repetition_factor=8.0,
+            label="nq_retrieval",
         ),
         MixingDocumentSourceSpecConfig(
-            source=_sft_source(OOLONG_DATA_ROOT), ratio=OOLONG_FRAC,
-            max_repetition_factor=8.0, label="oolong",
+            source=_sft_source(OOLONG_DATA_ROOT),
+            ratio=OOLONG_FRAC,
+            max_repetition_factor=8.0,
+            label="oolong",
         ),
         MixingDocumentSourceSpecConfig(
-            source=_sft_source(RERANK_DATA_ROOT), ratio=RERANK_FRAC,
-            max_repetition_factor=8.0, label="rerank",
+            source=_sft_source(RERANK_DATA_ROOT),
+            ratio=RERANK_FRAC,
+            max_repetition_factor=8.0,
+            label="rerank",
         ),
         MixingDocumentSourceSpecConfig(
-            source=_sft_source(OUTLIER_DATA_ROOT), ratio=OUTLIER_FRAC,
-            max_repetition_factor=8.0, label="outlier",
+            source=_sft_source(OUTLIER_DATA_ROOT),
+            ratio=OUTLIER_FRAC,
+            max_repetition_factor=8.0,
+            label="outlier",
         ),
     ]
 
-    instance_source_config = ConcatAndChunkInstanceSourceConfig(
+    # Best-Fit-Decreasing bin-packing of WHOLE documents into each window (no document is sliced
+    # across a window boundary; leftover space is padded). Documents longer than SEQUENCE_LENGTH are
+    # truncated to their first SEQUENCE_LENGTH tokens -- we never train on a fragment whose context
+    # was split off into another window.
+    instance_source_config = PackingInstanceSourceConfig(
         sources=[MixingDocumentSourceConfig(source_specs=specs)],
         sequence_length=SEQUENCE_LENGTH,
+        tokenizer=doc_tokenizer_config,
+        long_doc_strategy=LongDocStrategy.truncate,
     )
 
+    # NOTE: the loader must use ``doc_tokenizer_config`` (bos_token_id=None). qwen3 has
+    # bos_token_id == eos_token_id == 151643, and the EOS-based doc-length detection only marks a
+    # boundary at an EOS *followed by* a BOS -- which never occurs in single-EOS-separated SFT data.
+    # With bos=None it splits on every EOS, giving correct block-diagonal (varlen) masking and
+    # isolating the padding tokens at the tail of each packed window.
     data_loader_config = ComposableDataLoaderConfig(
-        tokenizer=tokenizer_config,
+        tokenizer=doc_tokenizer_config,
         work_dir=str(work_dir),
         global_batch_size=GLOBAL_BATCH_SIZE,
         seed=34521,
