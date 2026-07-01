@@ -5,10 +5,11 @@ a MIX of 5 long-context tasks (contradiction, nq, oolong, rerank, outlier). NO-C
 
 Mirrors ``Qwen3-4B-dense-cptmix-5task-32k-SFT.py`` (dense, YaRN factor 2, flash-2) but: (a) drops the
 CPT source (CPT_FRAC=0), and (b) corrects the base-checkpoint path to its real weka location under
-``amandab/``. SEQUENCE_LENGTH=65536: the smallest power of 2 (required by ``PackingInstanceSource``)
-that is >= the max ladder40k doc (measured 40407 tokens; 0 of 17618 docs exceed 40960), so every
-document is packed whole with NO truncation. 32768 was rejected because ~1% of docs exceed it and
-their (end-of-sequence) answers would be truncated into prompt-only NaN-loss windows.
+``amandab/``. SEQUENCE_LENGTH=32768 (true 32k; power of 2 required by ``PackingInstanceSource``). The
+real-data scan (17618 docs) shows only ~1% exceed 32768, so the vast majority pack whole; the few
+over-length docs are truncated (LongDocStrategy.truncate). NOTE: because these are long-context tasks
+whose answers sit at the end, truncating an over-length doc can drop its answer and leave a
+prompt-only (NaN-loss) window -- run sanity_check_packing.py --seq-len 32768 to see the exposure.
 
 Packing: unlike the concat-and-chunk variant (which concatenates the whole mix and slices at fixed
 SEQUENCE_LENGTH boundaries, splitting documents across windows and -- because qwen3's
@@ -64,10 +65,11 @@ from olmo_core.train.train_module import (
 # ---------------------------------------------------------------------------
 # Geometry
 # ---------------------------------------------------------------------------
-# Packing requires a power-of-2 window (InstancePacker's SegmentTree). 65536 is the smallest that
-# fits the max ladder40k doc (40407) -> 0 docs truncated. (40960 is not a power of 2; 32768 truncates
-# ~1% of docs.) Same window/parallelism as the proven Qwen3-4B-dense-cptmix-5task-64k-SFT.py.
-SEQUENCE_LENGTH = 65536
+# Packing requires a power-of-2 window (InstancePacker's SegmentTree). 32768 (true 32k) fits the vast
+# majority of docs: per the real-data scan only 173/17618 (~1%) exceed it (worst task: outlier 3.2%).
+# Those over-long docs are truncated to their first 32768 tokens (LongDocStrategy.truncate); see the
+# all-masked-window count from sanity_check_packing.py at seq-len 32768 for the NaN-loss exposure.
+SEQUENCE_LENGTH = 32768
 CP_DEGREE = 8
 NUM_NODES = 2  # 2 nodes x 8 GPUs = 16 GPUs; cp_degree=8 -> NUM_NODES DP replicas
 
