@@ -74,9 +74,11 @@ CP_DEGREE = 8
 NUM_NODES = 2  # 2 nodes x 8 GPUs = 16 GPUs; cp_degree=8 -> NUM_NODES DP replicas
 
 # ---------------------------------------------------------------------------
-# Data (weka) -- ladder40k (rungs up to 32k context; max doc ~40k tokens).
+# Data (weka) -- single_task_ladders_v2: the per-task length ladders (more data points than the
+# original cptmix_data_ladder40k). Same 5 task subdirs and file layout
+# (token_ids_part_*.npy + labels_mask_*.npy) as the singletask-ladder launchers.
 # ---------------------------------------------------------------------------
-DATA_ROOT = "/weka/oe-training-default/ai2-llm/checkpoints/prasanns/cptmix_data_ladder40k"
+DATA_ROOT = "/weka/oe-training-default/ai2-llm/checkpoints/prasanns/single_task_ladders_v2"
 CONTRA_DATA_ROOT = f"{DATA_ROOT}/contradiction"
 NQ_DATA_ROOT = f"{DATA_ROOT}/nq"
 OOLONG_DATA_ROOT = f"{DATA_ROOT}/oolong"
