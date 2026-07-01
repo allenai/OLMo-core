@@ -95,13 +95,13 @@ BASE_CHECKPOINT = (
 # Mixing fractions. NO CPT: the SFT budget is the whole mix. Base split is contra 2x / rerank 1.5x /
 # outlier 1.5x / nq 1x / oolong 1x, but contra and oolong are upsampled to offset the docs dropped by
 # LongDocStrategy.exclude at 32768 (single_task_ladders_v2 scan: contradiction ~18.3% of docs and
-# oolong ~12.4% exceed 32768; other tasks lose <1%). Compensation is 1/(1 - doc_loss_fraction):
-# contra 2.0/(1-0.183)=2.45, oolong 1.0/(1-0.124)=1.14. (This offsets DOC-count loss; since dropped
-# docs are the longest, token-level loss is larger, so this is a conservative "slight" upsample.)
+# oolong ~12.4% exceed 32768; other tasks lose <1%). Dropped docs are the LONGEST (32768-40955), so
+# token-level loss is larger than the doc-count loss -- eyeballed at ~31% of contra tokens and ~23%
+# of oolong tokens. Upsample by 1/(1 - token_loss): contra 2.0/~0.69=2.9, oolong 1.0/~0.77=1.3.
 # ---------------------------------------------------------------------------
 CPT_FRAC = 0.0
 SFT_BUDGET = 1.0 - CPT_FRAC
-_W = {"contra": 2.45, "rerank": 1.5, "outlier": 1.5, "nq": 1.0, "oolong": 1.14}
+_W = {"contra": 2.9, "rerank": 1.5, "outlier": 1.5, "nq": 1.0, "oolong": 1.3}
 _WSUM = sum(_W.values())
 NQ_FRAC = SFT_BUDGET * _W["nq"] / _WSUM
 OOLONG_FRAC = SFT_BUDGET * _W["oolong"] / _WSUM
