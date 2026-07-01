@@ -30,6 +30,7 @@ has_grouped_gemm = False
 has_te = False
 has_dion = False
 has_quack = False
+has_symm_mem_vdev2d = False
 
 
 try:
@@ -70,6 +71,15 @@ try:
     has_quack = True
     del quack
 except ImportError:
+    pass
+
+try:
+    # The compiled GPU-side extension for the OLMo-owned symmetric-memory backend (rowwise EP).
+    # Built out-of-tree (cmake/nvcc + NVSHMEM), so it is absent unless explicitly built.
+    import olmo_core.kernels._symm_mem_vdev2d_ext_gpu  # type: ignore # noqa: F401
+
+    has_symm_mem_vdev2d = True
+except Exception:
     pass
 
 
@@ -212,6 +222,25 @@ DION_MARKS = (
 
 def requires_dion(func):
     for mark in DION_MARKS:
+        func = mark(func)
+    return func
+
+
+# TODO: the CI image does not build the symm_mem_vdev2d extension, so tests using the OLMo-owned
+# symm-mem backend (rowwise EP) skip in CI. Rebuild the GPU CI image with the extension prebuilt
+# (it needs NVSHMEM + cmake/nvcc) so these tests actually run.
+SYMM_MEM_VDEV2D_MARKS = (
+    pytest.mark.gpu,
+    pytest.mark.skipif(not has_cuda, reason="Requires a GPU"),
+    pytest.mark.skipif(
+        not has_symm_mem_vdev2d,
+        reason="Requires the compiled symm_mem_vdev2d CUDA extension (OLMo-owned symm-mem backend)",
+    ),
+)
+
+
+def requires_symm_mem_vdev2d(func):
+    for mark in SYMM_MEM_VDEV2D_MARKS:
         func = mark(func)
     return func
 
