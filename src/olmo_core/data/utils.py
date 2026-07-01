@@ -267,8 +267,14 @@ def iter_document_indices_with_max_sequence_length(
     long_doc_strategy: LongDocStrategy = LongDocStrategy.truncate,
 ) -> Generator[Tuple[int, int], None, None]:
     """
-    Like :func:`iter_document_indices` but will either truncate or split documents that are
-    longer than ``max_sequence_length``.
+    Like :func:`iter_document_indices` but handles documents that are longer than
+    ``max_sequence_length`` according to ``long_doc_strategy`` (truncate, fragment, or exclude).
+
+    .. warning::
+        With :data:`~olmo_core.data.types.LongDocStrategy.exclude` the yielded ranges no longer
+        tile the whole source (over-long documents are skipped), so this must only be used by
+        consumers that treat the ranges as an arbitrary set to pack (e.g. the packed datasets),
+        not as a consecutive layout of the token array.
     """
     for start_idx, end_idx in iter_document_indices(
         data_path,
@@ -284,6 +290,8 @@ def iter_document_indices_with_max_sequence_length(
             elif long_doc_strategy == LongDocStrategy.fragment:
                 for new_start_idx in range(start_idx, end_idx, max_sequence_length):
                     yield new_start_idx, min(end_idx, new_start_idx + max_sequence_length)
+            elif long_doc_strategy == LongDocStrategy.exclude:
+                continue
             else:
                 raise NotImplementedError(long_doc_strategy)
         else:
@@ -915,6 +923,7 @@ def pack_documents_into_instances(
         the excess tokens are discarded.
         If set to "fragment" then those documents are split into smaller documents so that no tokens
         are discarded, but you end up with fragmented documents.
+        If set to "exclude" then those documents are dropped entirely.
 
     :returns: A list of instances, where each instance is a list of document IDs, a 2D array
         of the corresponding document start and end indices, with shape ``(num_documents, 2)``,

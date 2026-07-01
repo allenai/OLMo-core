@@ -7,9 +7,9 @@ Mirrors ``Qwen3-4B-dense-cptmix-5task-32k-SFT.py`` (dense, YaRN factor 2, flash-
 CPT source (CPT_FRAC=0), and (b) corrects the base-checkpoint path to its real weka location under
 ``amandab/``. SEQUENCE_LENGTH=32768 (true 32k; power of 2 required by ``PackingInstanceSource``). The
 real-data scan (17618 docs) shows only ~1% exceed 32768, so the vast majority pack whole; the few
-over-length docs are truncated (LongDocStrategy.truncate). NOTE: because these are long-context tasks
-whose answers sit at the end, truncating an over-length doc can drop its answer and leave a
-prompt-only (NaN-loss) window -- run sanity_check_packing.py --seq-len 32768 to see the exposure.
+over-length docs are DROPPED (LongDocStrategy.exclude) rather than truncated -- these are long-context
+tasks whose answers sit at the end, so truncating would drop the answer and leave a prompt-only
+(NaN-loss) window (measured 128 such windows at 32768 under truncate).
 
 Packing: unlike the concat-and-chunk variant (which concatenates the whole mix and slices at fixed
 SEQUENCE_LENGTH boundaries, splitting documents across windows and -- because qwen3's
@@ -221,14 +221,15 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     ]
 
     # Best-Fit-Decreasing bin-packing of WHOLE documents into each window (no document is sliced
-    # across a window boundary; leftover space is padded). Documents longer than SEQUENCE_LENGTH are
-    # truncated to their first SEQUENCE_LENGTH tokens -- we never train on a fragment whose context
-    # was split off into another window.
+    # across a window boundary; leftover space is padded). Documents longer than SEQUENCE_LENGTH
+    # (~1% of docs at 32768) are DROPPED (LongDocStrategy.exclude): truncating them would cut off the
+    # end-of-sequence answer and leave a fully-masked, NaN-loss window (measured 128 such windows at
+    # 32768 under truncate). Fragmenting would train on answer spans with only partial context.
     instance_source_config = PackingInstanceSourceConfig(
         sources=[MixingDocumentSourceConfig(source_specs=specs)],
         sequence_length=SEQUENCE_LENGTH,
         tokenizer=doc_tokenizer_config,
-        long_doc_strategy=LongDocStrategy.truncate,
+        long_doc_strategy=LongDocStrategy.exclude,
     )
 
     # NOTE: the loader must use ``doc_tokenizer_config`` (bos_token_id=None). qwen3 has

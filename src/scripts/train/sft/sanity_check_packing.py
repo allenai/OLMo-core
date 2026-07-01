@@ -117,7 +117,13 @@ def _build_specs(data_root: Path) -> List[MixingDocumentSourceSpecConfig]:
 
 
 def _iter_instances(
-    specs, *, seq_len: int, work_dir: Path, bos_token_id: Optional[int], gbs_instances: int = 4
+    specs,
+    *,
+    seq_len: int,
+    work_dir: Path,
+    bos_token_id: Optional[int],
+    long_doc_strategy: LongDocStrategy = LongDocStrategy.truncate,
+    gbs_instances: int = 4,
 ):
     """Build the real loader and yield (input_ids, label_mask, doc_lens) per instance."""
     loader_tok = replace(TokenizerConfig.qwen3(), bos_token_id=bos_token_id)
@@ -125,7 +131,7 @@ def _iter_instances(
         sources=[MixingDocumentSourceConfig(source_specs=specs)],
         sequence_length=seq_len,
         tokenizer=replace(TokenizerConfig.qwen3(), bos_token_id=None),
-        long_doc_strategy=LongDocStrategy.truncate,
+        long_doc_strategy=long_doc_strategy,
     ).build(work_dir)
 
     # ComposableDataLoaderConfig.build wires the collator + generate_doc_lengths exactly as training.
@@ -214,6 +220,14 @@ def main():
         default=None,
         help="only check the first N packed windows (keeps a real-data run small/fast)",
     )
+    ap.add_argument(
+        "--long-doc-strategy",
+        type=LongDocStrategy,
+        choices=list(LongDocStrategy),
+        default=LongDocStrategy.truncate,
+        help="how over-length docs are handled (truncate/fragment/exclude); pass explicitly to match "
+        "the SFT script's setting",
+    )
     args = ap.parse_args()
 
     tmp = tempfile.TemporaryDirectory()
@@ -235,10 +249,14 @@ def main():
     specs = _build_specs(data_root)
 
     # ---- Fixed path (bos=None): the real training configuration ----
-    print(f"\n=== FIXED (bos=None), seq_len={args.seq_len}, truncate ===")
+    print(f"\n=== FIXED (bos=None), seq_len={args.seq_len}, {args.long_doc_strategy} ===")
     n, total_pad, n_all_masked, n_trunc, real_docs = 0, 0, 0, 0, []
     for input_ids, label_mask, doc_lens in _iter_instances(
-        specs, seq_len=args.seq_len, work_dir=work_dir, bos_token_id=None
+        specs,
+        seq_len=args.seq_len,
+        work_dir=work_dir,
+        bos_token_id=None,
+        long_doc_strategy=args.long_doc_strategy,
     ):
         pad_count, all_masked, n_truncated = _check(input_ids, label_mask, doc_lens, args.seq_len)
         n += 1
@@ -270,7 +288,11 @@ def main():
     work_dir2.mkdir(parents=True, exist_ok=True)
     buggy_real_docs = []
     for input_ids, label_mask, doc_lens in _iter_instances(
-        specs, seq_len=args.seq_len, work_dir=work_dir2, bos_token_id=EOS_ID
+        specs,
+        seq_len=args.seq_len,
+        work_dir=work_dir2,
+        bos_token_id=EOS_ID,
+        long_doc_strategy=args.long_doc_strategy,
     ):
         buggy_real_docs.append(_real_doc_count(input_ids, doc_lens, args.seq_len))
         if args.max_instances is not None and len(buggy_real_docs) >= args.max_instances:

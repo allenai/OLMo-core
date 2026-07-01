@@ -17,6 +17,37 @@ def _write_mmap(path, data, dtype):
     mmap.flush()
 
 
+def test_packing_instance_source_exclude(tmp_path: Path):
+    dtype = np.uint16
+    tokenizer = TokenizerConfig(vocab_size=32_000, eos_token_id=0, pad_token_id=-1)
+
+    path = tmp_path / "mmap.npy"
+    # docs (EOS=0): [1,2,3,0] (len 4), [50..57,0] (len 9 > seq_len 8 -> over-long), [7,8,0] (len 3).
+    data = [1, 2, 3, 0, 50, 51, 52, 53, 54, 55, 56, 57, 0, 7, 8, 0]
+    _write_mmap(path, data, dtype)
+
+    instances = PackingInstanceSource(
+        NumpyDocumentSource(
+            source_paths=[path],
+            dtype=dtype,
+            tokenizer=tokenizer,
+            work_dir=tmp_path,
+        ),
+        sequence_length=8,
+        work_dir=tmp_path,
+        tokenizer=tokenizer,
+        long_doc_strategy=LongDocStrategy.exclude,
+    )
+
+    # The over-long doc is dropped entirely; the two short docs (4 + 3 tokens) pack into one instance.
+    assert len(instances) == 1
+    ids = list(instances[0]["input_ids"])
+    # None of the over-long doc's unique tokens survive.
+    assert not (set(range(50, 58)) & set(ids))
+    # Both short docs are present, followed by padding.
+    assert ids == [1, 2, 3, 0, 7, 8, 0, -1]
+
+
 @pytest.mark.parametrize("long_doc_strategy", [LongDocStrategy.truncate, LongDocStrategy.fragment])
 def test_packing_intance_source(tmp_path: Path, long_doc_strategy: LongDocStrategy):
     dtype = np.uint16

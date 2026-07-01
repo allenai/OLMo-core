@@ -356,6 +356,15 @@ class NumpyDocumentSource(DocumentSource):
             if label_mask_paths is None
             else tuple((io.normalize_path(p) for p in label_mask_paths))
         )
+        if max_document_length is not None and long_doc_strategy == LongDocStrategy.exclude:
+            # get_document_offsets() must tile the entire token array (it asserts consecutive
+            # offsets), so dropping over-long documents here is not representable. Use 'exclude'
+            # at the packing stage (e.g. PackingInstanceSource) instead.
+            raise OLMoConfigurationError(
+                "LongDocStrategy.exclude is not supported with 'max_document_length' on "
+                "NumpyDocumentSource; apply it at the packing instance source instead."
+            )
+
         self._dtype = dtype
         self._tokenizer = tokenizer
         self._max_document_length = max_document_length
