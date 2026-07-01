@@ -278,7 +278,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
             WandBCallback(
                 name=run_name_with_ts,
                 group=cli_context.run_name,
-                entity="prasanns-allen-institute-for-ai",
+                entity="ai2-llm",  # shared AI2 team entity (amandab has write access; prasann's personal entity 403s)
                 project="memory-networks",
                 enabled=True,
                 cancel_check_interval=10,
