@@ -5,8 +5,10 @@ a MIX of 5 long-context tasks (contradiction, nq, oolong, rerank, outlier). NO-C
 
 Mirrors ``Qwen3-4B-dense-cptmix-5task-32k-SFT.py`` (dense, YaRN factor 2, flash-2) but: (a) drops the
 CPT source (CPT_FRAC=0), and (b) corrects the base-checkpoint path to its real weka location under
-``amandab/``. SEQUENCE_LENGTH=40960 (the dense 32k template's window): 40960 >= the max ladder40k doc
-(~40407 tokens) so essentially every document fits whole in a window with no truncation.
+``amandab/``. SEQUENCE_LENGTH=65536: the smallest power of 2 (required by ``PackingInstanceSource``)
+that is >= the max ladder40k doc (measured 40407 tokens; 0 of 17618 docs exceed 40960), so every
+document is packed whole with NO truncation. 32768 was rejected because ~1% of docs exceed it and
+their (end-of-sequence) answers would be truncated into prompt-only NaN-loss windows.
 
 Packing: unlike the concat-and-chunk variant (which concatenates the whole mix and slices at fixed
 SEQUENCE_LENGTH boundaries, splitting documents across windows and -- because qwen3's
@@ -62,9 +64,10 @@ from olmo_core.train.train_module import (
 # ---------------------------------------------------------------------------
 # Geometry
 # ---------------------------------------------------------------------------
-SEQUENCE_LENGTH = (
-    40960  # 32k-scale window; >= max ladder40k doc, so no doc is chunk-split (no NaN).
-)
+# Packing requires a power-of-2 window (InstancePacker's SegmentTree). 65536 is the smallest that
+# fits the max ladder40k doc (40407) -> 0 docs truncated. (40960 is not a power of 2; 32768 truncates
+# ~1% of docs.) Same window/parallelism as the proven Qwen3-4B-dense-cptmix-5task-64k-SFT.py.
+SEQUENCE_LENGTH = 65536
 CP_DEGREE = 8
 NUM_NODES = 2  # 2 nodes x 8 GPUs = 16 GPUs; cp_degree=8 -> NUM_NODES DP replicas
 
