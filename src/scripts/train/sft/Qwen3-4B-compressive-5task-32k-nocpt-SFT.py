@@ -89,7 +89,7 @@ NONSELECTED_LANDMARK_MASS = 0.1  # alpha for compressive attention
 
 # Context parallel (Ulysses) degree. Qwen3-4B: n_heads=32, n_kv_heads=8 -> CP=8 splits both cleanly.
 CP_DEGREE = 8
-NUM_NODES = 1  # 2 nodes x 8 GPUs = 16 GPUs; cp_degree=8 -> NUM_NODES DP replicas
+NUM_NODES = 4  # 2 nodes x 8 GPUs = 16 GPUs; cp_degree=8 -> NUM_NODES DP replicas
 
 # ---------------------------------------------------------------------------
 # Data (weka) -- ladder40k (rungs up to 32k context; max doc ~40k tokens).

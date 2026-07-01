@@ -71,7 +71,7 @@ from olmo_core.train.train_module import (
 # all-masked-window count from sanity_check_packing.py at seq-len 32768 for the NaN-loss exposure.
 SEQUENCE_LENGTH = 32768
 CP_DEGREE = 8
-NUM_NODES = 2  # 2 nodes x 8 GPUs = 16 GPUs; cp_degree=8 -> NUM_NODES DP replicas
+NUM_NODES = 4  # 2 nodes x 8 GPUs = 16 GPUs; cp_degree=8 -> NUM_NODES DP replicas
 
 # ---------------------------------------------------------------------------
 # Data (weka) -- single_task_ladders_v2: the per-task length ladders (more data points than the
