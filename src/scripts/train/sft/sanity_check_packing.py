@@ -34,10 +34,12 @@ Optionally point it at real shards (a directory with the 5 task subdirs)::
 """
 
 import argparse
+import os
+import sys
 import tempfile
 from dataclasses import replace
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import List, Optional
 
 import numpy as np
 import torch
@@ -290,3 +292,9 @@ def main():
 
 if __name__ == "__main__":
     main()
+    # Force a clean exit: torch / the packing ProcessPoolExecutor can raise std::terminate during
+    # interpreter shutdown (SIGABRT / exit 134) *after* the checks pass, which misreports the job as
+    # failed. We've already flushed all results above.
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(0)
