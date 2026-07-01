@@ -35,7 +35,7 @@ def main():
     ap.add_argument("--contra-max-new-tokens", type=int, default=200,
                     help="generation budget for contradiction; enumerate-CoT answers on large-N "
                          "(e.g. n250) need ~2200 to reach the final 'Contradicting pairs:' line.")
-    ap.add_argument("--nq-data", default="data/nq_validation_k20_hn19_500_aligned.jsonl")
+    ap.add_argument("--nq-data", default="data/nq_validation_k20_hn2_600.jsonl")  # p10: 10% hard + CE filter
     ap.add_argument("--rerank-data", default="data/msmarco_dev_rerank_k20_1000.jsonl")
     ap.add_argument("--outlier-data", default="data/outlier_wiki100w_n20_k3_eval_100.jsonl")
     ap.add_argument("--data-dir", default="data")
@@ -224,10 +224,12 @@ def main():
                 ("8k", f"{E5}/contra/contradiction_eval_pubmed_both_n190_k3.jsonl"),
                 ("16k", f"{E5}/contra/contradiction_eval_pubmed_both_n385_k3.jsonl"),
                 ("32k", f"{E5}/contra/contradiction_eval_pubmed_both_n765_k3.jsonl")],
+            # p10 pipeline: 10% hard negs + CE gold-quality filter, all docs from wikipedia-dpr-100w
+            # (matches the training-data negative distribution; the old hn49/hn99/hn199 files were 98% hard).
             "nq": [("3k", args.nq_data),
-                ("8k", f"{E5}/nq/nq_validation_k50_hn49_600.jsonl"),
-                ("16k", f"{E5}/nq/nq_validation_k100_hn99_600.jsonl"),
-                ("32k", f"{E5}/nq/nq_validation_k200_hn199_600.jsonl")],
+                ("8k", f"{E5}/nq/nq_validation_k50_hn5_600.jsonl"),
+                ("16k", f"{E5}/nq/nq_validation_k100_hn10_600.jsonl"),
+                ("32k", f"{E5}/nq/nq_validation_k200_hn20_600.jsonl")],
             "oolong": [("1k", "data/oolong_test_synth_ctx1024_spliteval.jsonl"),
                 ("2k", "data/oolong_test_synth_ctx2048_spliteval.jsonl"),
                 ("4k", "data/oolong_test_synth_ctx4096_spliteval.jsonl"),

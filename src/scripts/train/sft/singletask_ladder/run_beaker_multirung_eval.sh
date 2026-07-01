@@ -126,7 +126,7 @@ fi
 # ---- dense / landmark / compressive: standard multi-rung ladder (NDCG/F1/score per rung) ----
 case "$TASK" in
   contra)  RUNGS="2k,8k,16k,32k"; LTASK=contradiction; EXTRA="--contra-data data/contradiction_eval_pubmed_both_n100_k3.jsonl --contra-max-new-tokens 512" ;;
-  nq)      RUNGS="3k,8k,16k,32k"; LTASK=nq;            EXTRA="--nq-data data/nq_validation_k20_hn19_500_aligned.jsonl" ;;  # @3k: single-query k20 retrieval (matches training + the k50/k100/k200 rungs); NOT the 50-query n2ified file (that graded ~0)
+  nq)      RUNGS="3k,8k,16k,32k"; LTASK=nq;            EXTRA="--nq-data data/nq_validation_k20_hn2_600.jsonl" ;;  # @3k: single-query k20, p10 pipeline (10% hard + CE filter, wikipedia-dpr-100w source) matching training + the k50/k100/k200 rungs
   outlier) RUNGS="3k,8k,16k,32k"; LTASK=outlier;       EXTRA="--outlier-data data/outlier_wiki100w_n55_k3_eval_600.jsonl" ;;
   oolong)  RUNGS="8k,16k,32k";    LTASK=oolong;        EXTRA="" ;;
   *) echo "ERROR unknown TASK=$TASK"; exit 2 ;;

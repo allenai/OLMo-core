@@ -60,10 +60,17 @@ Re-running is safe (idempotent; results overwrite).
 | task | context rungs | metric |
 |---|---|---|
 | `contra` | 2k / 8k / 16k / 32k | F1 |
-| `nq` | 3k / 8k / 16k / 32k | F1 (+ EM) |
+| `nq` | 3k / 8k / 16k / 32k | doc-retrieval F1 (+ EM) |
 | `outlier` | 3k / 8k / 16k / 32k | F1 |
 | `oolong` | 8k / 16k / 32k | composite score |
 | `rerank` | CE pools k20 / k50 / k100 | NDCG@10 + Kendall-τ |
+
+> **NQ is doc-index retrieval** (the model outputs `Relevant Document: [N]`; scored by set-F1 over doc
+> IDs), matching the training task — *not* answer-text QA. The rungs use the **p10 pipeline**:
+> `nq_validation_k{20,50,100,200}_hn{2,5,10,20}_600.jsonl` = **10% hard negatives** (rest random) + a
+> **cross-encoder gold-quality filter** (removes false negatives), all docs from `wikipedia-dpr-100w`.
+> This matches the training-data negative distribution. (The old `hn19/hn49/hn99/hn199` files were 98%
+> hard-neg and much harder — don't mix them in.) No `align` step (redundant: single-source docs).
 
 ## 3b. Where results land (on weka)
 

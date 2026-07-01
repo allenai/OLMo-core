@@ -38,15 +38,21 @@ else
 fi
 
 # 2. per-task BASE-rung + rerank-CE data files the bundle was missing.
+#    NQ @3k uses the p10 k20 file (10% hard + CE filter, wikipedia-dpr-100w source) -- matches training.
 echo "--- data: base-rung + rerank-CE files ---"
-for f in n2ified_eval_nq_q50.jsonl \
-         nq_validation_k20_hn19_500_aligned.jsonl \
+for f in nq_validation_k20_hn2_600.jsonl \
          msmarco_trainhn_eval_k20_500.jsonl \
          msmarco_trainhn_eval_k50_500.jsonl \
          msmarco_trainhn_eval_k100_500.jsonl \
          contradiction_eval_pubmed_both_n100_k3.jsonl; do
   if [ -f "$CR/data/$f" ]; then aws s3 cp "$CR/data/$f" "$BUNDLE/data/$f"
   else echo "WARN missing local $CR/data/$f"; fi
+done
+# NQ @8k/16k/32k p10 eval rungs (10% hard + CE filter) -> eval500/nq (read via EVAL500_ROOT).
+echo "--- data: NQ p10 eval rungs (8k/16k/32k) ---"
+for f in nq_validation_k50_hn5_600.jsonl nq_validation_k100_hn10_600.jsonl nq_validation_k200_hn20_600.jsonl; do
+  if [ -f "$EVAL500_SRC/nq/$f" ]; then aws s3 cp "$EVAL500_SRC/nq/$f" "$EVAL500_S3/nq/$f"
+  else echo "WARN missing $EVAL500_SRC/nq/$f"; fi
 done
 # outlier base rung (3k) reads data/outlier_wiki100w_n55_k3_eval_600.jsonl; same content lives in eval500.
 OUT_N55="$EVAL500_SRC/outlier/outlier_wiki100w_n55_k3_eval_600.jsonl"
