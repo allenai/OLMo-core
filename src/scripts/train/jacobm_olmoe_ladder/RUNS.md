@@ -1578,3 +1578,21 @@ Batch settings are: Cx1 `global_batch_size_seq=32`, 2 GPUs, MB 8; Cx2
 | `int-275m-cx8-intd256e8k-lr8e-4-r1` | `deep_256e8k` | 8 | 8e-4 | 96 | 8 | 4 | https://beaker.org/ex/01KWDE3ZQP626MZ7M04WS4PFWX |
 | `int-275m-cx8-intd256e8k-lr1.6e-3-r1` | `deep_256e8k` | 8 | 1.6e-3 | 96 | 8 | 4 | https://beaker.org/ex/01KWDE4BWZFRSC1Y818AYE9HWH |
 | `int-275m-cx8-intd256e8k-lr3.2e-3-r1` | `deep_256e8k` | 8 | 3.2e-3 | 96 | 8 | 4 | https://beaker.org/ex/01KWDE4Q0SPJQ8JAXEX1SP03T9 |
+
+## 2026-07-01 Integration 480M Wide Baseline-LR Launch
+
+Queued the 480M promoted single-point ladder for the wide integration candidate
+(`wide_256e8k`: 256E/top8 + shared expert + one dense prefix layer). These use
+the baseline-transfer LRs, canonical Cx batch sizes, `ai2/titan`, workspace
+`ai2/OLMo-3-moe-experiments`, image `tianhuat/olmo-core-torch211-2404-cu128`,
+compile-on, `EP=1`, Weka `oe-training-default`, budget `ai2/oe-other`,
+priority `urgent`, and `--no-pre-train-checkpoint`. Microbatch settings follow
+the proven-safe 480M total-sparsity 192E/top4 replacements for Cx1/Cx4.
+
+| Name | Variant | Cx | LR | GBS seq | GPUs | MB | Beaker |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | --- |
+| `int-480m-cx1-intw256e8k-lr1.2e-3-r1` | `wide_256e8k` | 1 | 1.2e-3 | 32 | 4 | 4 | https://beaker.org/ex/01KWE2XDE9NATMWCWKAH9X29JT |
+| `int-480m-cx2-intw256e8k-lr9e-4-r1` | `wide_256e8k` | 2 | 9e-4 | 48 | 4 | 4 | https://beaker.org/ex/01KWE2XSK8ET39TTM3SERZ5MNS |
+| `int-480m-cx4-intw256e8k-lr8e-4-r1` | `wide_256e8k` | 4 | 8e-4 | 64 | 4 | 4 | https://beaker.org/ex/01KWE2Y61CJEQEDW57MDJEPRDH |
+| `int-480m-cx8-intw256e8k-lr8e-4-r1` | `wide_256e8k` | 8 | 8e-4 | 96 | 8 | 4 | https://beaker.org/ex/01KWE2YHFRQHAF56KCK95FPK62 |
+
