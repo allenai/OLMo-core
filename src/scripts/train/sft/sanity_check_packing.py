@@ -206,6 +206,12 @@ def main():
     ap.add_argument("--seq-len", type=int, default=128)
     ap.add_argument("--data-root", type=str, default=None, help="real shards (5 task subdirs)")
     ap.add_argument("--n-docs", type=int, default=60, help="synthetic docs per task")
+    ap.add_argument(
+        "--max-instances",
+        type=int,
+        default=None,
+        help="only check the first N packed windows (keeps a real-data run small/fast)",
+    )
     args = ap.parse_args()
 
     tmp = tempfile.TemporaryDirectory()
@@ -238,6 +244,8 @@ def main():
         n_all_masked += int(all_masked)
         n_trunc += n_truncated
         real_docs.append(_real_doc_count(input_ids, doc_lens, args.seq_len))
+        if args.max_instances is not None and n >= args.max_instances:
+            break
 
     print(f"  instances checked            : {n}")
     print("  doc_lens.sum()==seq_len      : OK (all)")
@@ -263,6 +271,8 @@ def main():
         specs, seq_len=args.seq_len, work_dir=work_dir2, bos_token_id=EOS_ID
     ):
         buggy_real_docs.append(_real_doc_count(input_ids, doc_lens, args.seq_len))
+        if args.max_instances is not None and len(buggy_real_docs) >= args.max_instances:
+            break
     print("\n=== NEGATIVE CONTROL (buggy bos==eos) ===")
     print(
         f"  avg real docs/window         : {np.mean(buggy_real_docs):.2f}"
