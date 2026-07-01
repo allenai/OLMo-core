@@ -19,6 +19,7 @@ LADDER_DIR = Path(__file__).parents[2]
 if str(LADDER_DIR) not in sys.path:
     sys.path.insert(0, str(LADDER_DIR))
 
+from experiment_batch_filters import has_canonical_batch_for_cx
 from experiment_summary_plots import SummaryVariant, plot_observed_best_summary
 from wandb_cache import DEFAULT_CACHE_DIR, scan_history_cached
 
@@ -220,6 +221,8 @@ def load_points(
         cx = cx_from_name(name)
         lr_info = lr_from_name(name)
         if cx not in {1, 2, 4, 8} or lr_info is None:
+            continue
+        if not has_canonical_batch_for_cx(name, cx):
             continue
 
         loss_info = history_loss(
