@@ -3,8 +3,9 @@
 You have a Qwen3-4B checkpoint trained with one of our attention architectures
 (**dense / landmark / compressive / docchunk**). This submits Beaker jobs that evaluate it on the
 **5 tasks** — `contra` · `nq` · `oolong` · `outlier` · `rerank` — at **multiple context lengths**,
-using **native olmo_core generate (no HF / no vLLM)** on **8 GPUs**. Everything (eval code, eval data,
-your checkpoint) is read from **weka**; nothing is copied to the node.
+using **native olmo_core generate (no HF / no vLLM)** on **`--ngpu` GPUs (default 2)** per job — the 4B
+fits on 2, so more evals run concurrently. Everything (eval code, eval data, your checkpoint) is read
+from **weka**; nothing is copied to the node.
 
 ---
 
@@ -38,16 +39,20 @@ python src/scripts/train/sft/singletask_ladder/run_q4b_beaker_multirung_eval.py 
 | arg | meaning |
 |---|---|
 | `my-eval-label` (positional) | a name for this eval — used for the Beaker job name and the results dir |
-| `ai2/jupiter` (positional) | a **weka-mounting** Beaker cluster with free 8-GPU slots (jupiter, neptune, …) |
+| `ai2/jupiter` (positional) | a **weka-mounting** Beaker cluster with free GPU slots — 2 per job (jupiter, neptune, …) |
 | `--variant` | your architecture. `dense/landmark/compressive` use the standard native eval (model built from the checkpoint's `config.json`); `docchunk` uses the doc-chunked eval (**oolong only**) |
 | `--ckpt` | **absolute weka path to your step dir** — this is what makes it work for any checkpoint |
 | `--results-dir` | absolute weka dir for the result JSONs (default: `checkpoints/prasanns/<my-eval-label>/eval`) — point it anywhere on weka, e.g. next to your checkpoint |
 | `--task` | `all` (one Beaker job per task) or a comma list, e.g. `--task contra,nq` |
+| `--ngpu` | GPUs per job (default **2**); each task runs `torchrun --nproc_per_node=$NGPU` |
 | `--dry-run` | print the jobs without submitting |
-| `--max-test` | examples per rung (default **600**); `--batch-size` (default 8); `--priority` |
+| `--max-test` | examples per rung (default **600**); `--batch-size` (default **2**); `--priority` |
 
-Each task becomes **one 8-GPU Beaker job** running `torchrun --nproc_per_node=8 eval_lc_native.py`.
-Re-running is safe (idempotent; results overwrite).
+Each task becomes **one Beaker job** (`--ngpu` GPUs, default 2) running
+`torchrun --nproc_per_node=$NGPU eval_lc_native.py`. Re-running is safe (idempotent; results overwrite).
+
+> **`landmark` / `compressive` force `batch_size=1`** (their native decode can't be batched / left-padded);
+> `dense` / `docchunk` keep the configured `--batch-size`.
 
 > Without `--ckpt`, the launcher instead globs the **latest complete step** under
 > `checkpoints/prasanns/<run_name>/step*` — that's the path we use for our own runs, where `run_name`
@@ -113,17 +118,17 @@ launch_beaker_multirung_eval.sh        # driver: loop over variants×tasks (our 
         │
         ▼
 run_q4b_beaker_multirung_eval.py       # gantry launcher: 1 Beaker job per (label, task)
-        │   mounts weka, 8 GPUs, torchrun=False, image=OLMoCoreBeakerImage.stable
+        │   mounts weka, --ngpu GPUs (default 2), torchrun=False, image=OLMoCoreBeakerImage.stable
         ▼
 run_beaker_multirung_eval.sh           # on-node runner (IN-REPO; gantry clones it)
         │   resolves CKPT (your --ckpt > --step > latest-complete glob)
         │   PYTHONPATH=repo/src/scripts (ctc_eval) ; DATA via --root=weka bundle + EVAL500_ROOT
         ▼
-torchrun --nproc_per_node=8 src/scripts/ctc_eval/eval/eval_lc_native.py   # native, 8-way DP, per rung
+torchrun --nproc_per_node=$NGPU src/scripts/ctc_eval/eval/eval_lc_native.py   # native DP over --ngpu GPUs (default 2), per rung
 ```
 
 Notes:
 - **Native generate (no HF/vLLM)** — required so landmark/compressive decode correctly.
 - The checkpoint must be a **complete** distcp step (`config.json` + `model_and_optim/.metadata`);
   an in-progress step is skipped by the latest-complete glob (and rejected if you point `--ckpt` at it).
-- Pick a cluster with free 8-GPU slots; if Jupiter is saturated, try `ai2/neptune`.
+- Pick a cluster with free GPU slots (2 per job by default); if Jupiter is saturated, try `ai2/neptune`.
