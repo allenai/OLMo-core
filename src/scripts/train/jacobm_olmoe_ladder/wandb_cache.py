@@ -147,19 +147,28 @@ def read_history_from_cache(
         cached = json.load(f)
 
     cached_meta = cached.get("metadata", {})
-    current_meta = run_cache_metadata(run, keys)
     if cached_meta.get("cache_version") != CACHE_VERSION:
         return None
     if keys is not None:
         cached_keys = cached_meta.get("history_keys")
         if cached_keys is None or not set(keys).issubset(set(cached_keys)):
             return None
-    if cached_meta.get("state") != current_meta["state"]:
+
+    history = cached.get("history", [])
+    cached_state = cached_meta.get("state")
+    run_state = getattr(run, "state", None)
+    # Finished runs are immutable for our plotting purposes. When the caller is
+    # not asking for a stale-cache refresh, trust a completed cache entry without
+    # forcing W&B to expand run.summary; that GraphQL path is the flaky/slow one.
+    if allow_stale and cached_state == run_state == "finished":
+        return history
+
+    current_meta = run_cache_metadata(run, keys)
+    if cached_state != current_meta["state"]:
         return None
     if not allow_stale and cached_meta.get("summary_step") != current_meta["summary_step"]:
         return None
 
-    history = cached.get("history", [])
     if require_complete and cached_history_is_short(history, current_meta, tokens_key=tokens_key):
         return None
 
@@ -183,7 +192,6 @@ def read_tail_history_from_cache(
         cached = json.load(f)
 
     cached_meta = cached.get("metadata", {})
-    current_meta = run_cache_metadata(run, keys)
     if cached_meta.get("cache_version") != CACHE_VERSION:
         return None
     if cached_meta.get("cache_kind") != "tail":
@@ -194,12 +202,19 @@ def read_tail_history_from_cache(
         cached_keys = cached_meta.get("history_keys")
         if cached_keys is None or not set(keys).issubset(set(cached_keys)):
             return None
-    if cached_meta.get("state") != current_meta["state"]:
+
+    history = cached.get("history", [])
+    cached_state = cached_meta.get("state")
+    run_state = getattr(run, "state", None)
+    if cached_state == run_state == "finished":
+        return history
+
+    current_meta = run_cache_metadata(run, keys)
+    if cached_state != current_meta["state"]:
         return None
     if cached_meta.get("summary_step") != current_meta["summary_step"]:
         return None
 
-    history = cached.get("history", [])
     if cached_tail_is_short(history, current_meta, window_tokens=window_tokens, tokens_key=tokens_key):
         return None
     return history
