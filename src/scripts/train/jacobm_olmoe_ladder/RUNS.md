@@ -1614,3 +1614,17 @@ the sparsity-safe 480M wide integration launch: MB4 throughout.
 | `int-480m-cx4-intd256e8k-lr8e-4-r1` | `deep_256e8k` | 4 | 8e-4 | 64 | 4 | 4 | https://beaker.org/ex/01KWF804APPWNTTXT0B118G5MB |
 | `int-480m-cx8-intd256e8k-lr8e-4-r1` | `deep_256e8k` | 8 | 8e-4 | 96 | 8 | 4 | https://beaker.org/ex/01KWF80JBYFGSJPDV2QNE8BYQY |
 
+## 2026-07-01 Integration 275M Wide Cold-Side Follow-Ups
+
+Queued cold-side follow-up points for the 275M wide integration candidate because
+Cx4 and Cx8 had their best observed LR at the cold edge of the original
+`8e-4, 1.6e-3, 3.2e-3` grid. Both use `ai2/titan`, workspace
+`ai2/OLMo-3-moe-experiments`, image `tianhuat/olmo-core-torch211-2404-cu128`,
+compile-on, `EP=1`, Weka `oe-training-default`, budget `ai2/oe-other`,
+priority `urgent`, and `--no-pre-train-checkpoint`.
+
+| Name | Variant | Cx | LR | GBS seq | GPUs | MB | Beaker |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | --- |
+| `int-275m-cx4-intw256e8k-lr4e-4-r1` | `wide_256e8k` | 4 | 4e-4 | 64 | 4 | 8 | https://beaker.org/ex/01KWFRX0XC1823E3F0NG4VV9F4 |
+| `int-275m-cx8-intw256e8k-lr4e-4-r1` | `wide_256e8k` | 8 | 4e-4 | 96 | 8 | 4 | https://beaker.org/ex/01KWFRYPK82AC42HWXR0HNRE3G |
+
