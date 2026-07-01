@@ -96,7 +96,7 @@ NUM_NODES = 1  # 2 nodes x 8 GPUs = 16 GPUs; cp_degree=8 -> NUM_NODES DP replica
 # ---------------------------------------------------------------------------
 DATA_ROOT = "/weka/oe-training-default/ai2-llm/checkpoints/prasanns/cptmix_data_ladder40k"
 CONTRA_DATA_ROOT = f"{DATA_ROOT}/contradiction"
-NQ_DATA_ROOT = f"{DATA_ROOT}/nq"
+NQ_DATA_ROOT = "/weka/oe-training-default/ai2-llm/checkpoints/prasanns/single_task_ladders_p10/nq"  # FIXED nq: p10 pipeline (10% hard + CE filter)
 OOLONG_DATA_ROOT = f"{DATA_ROOT}/oolong"
 RERANK_DATA_ROOT = f"{DATA_ROOT}/rerank"
 OUTLIER_DATA_ROOT = f"{DATA_ROOT}/outlier"
