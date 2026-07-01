@@ -15,7 +15,9 @@
 # Overridable: CLUSTER WORKSPACE BUDGET WEKA PRIORITY CPUS NAME S3_PREFIX DEST_REL
 set -euo pipefail
 
-CLUSTER="${CLUSTER:-ai2/jupiter-cirrascale-2}"
+# Default to EAGER CPU clusters -- jupiter is strict-priority and queues CPU jobs for a long time;
+# neptune/ceres/saturn schedule a --gpus 0 sync in seconds.
+CLUSTER="${CLUSTER:-ai2/neptune,ai2/ceres,ai2/saturn}"
 WORKSPACE="${WORKSPACE:-ai2/flex2}"
 BUDGET="${BUDGET:-ai2/oe-other}"
 WEKA="${WEKA:-oe-training-default}"
