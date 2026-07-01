@@ -39,7 +39,16 @@ case "$VARIANT" in landmark|compressive) BATCH_SIZE=1 ;; esac
 
 PRASANNS="$WEKA_LLM/checkpoints/prasanns"
 BUNDLE="${BUNDLE:-$PRASANNS/_eval_bundle}"
-EVAL500="${EVAL500:-$PRASANNS/_eval_bundle_eval500}"
+# LADDER_VERSION=v2 -> cleaned ladders: every rung of a task shares the SAME >=500 questions,
+# only distractors vary; all rungs (incl. base + rerank + oolong) live under the v2 bundle.
+LADDER_VERSION="${LADDER_VERSION:-v1}"
+if [ "$LADDER_VERSION" = "v2" ]; then
+  EVAL500="${EVAL500:-$PRASANNS/_eval_bundle_eval500_v2}"
+  VFLAG="--ladder-version v2"
+else
+  EVAL500="${EVAL500:-$PRASANNS/_eval_bundle_eval500}"
+  VFLAG=""
+fi
 RESULTS="${RESULTS:-$PRASANNS/_eval_results}"
 RUN_DIR="$PRASANNS/$RUN"
 # Where the per-task result JSONs land. Default = the run's own eval/ dir under prasanns/<RUN>.
@@ -104,7 +113,8 @@ if [ "$VARIANT" = "docchunk" ]; then
 fi
 
 # ---- rerank: CE-graded eval files (k20~3k, k50~8k, k100~16k); eval each at the base ladder rung ----
-if [ "$TASK" = "rerank" ]; then
+# (v1 only; v2 rerank is a normal shared-question ladder handled in the standard block below.)
+if [ "$TASK" = "rerank" ] && [ "$LADDER_VERSION" != "v2" ]; then
   rc=0
   for pair in "3k:data/msmarco_trainhn_eval_k20_500.jsonl" \
               "8k:data/msmarco_trainhn_eval_k50_500.jsonl" \
@@ -124,18 +134,31 @@ if [ "$TASK" = "rerank" ]; then
 fi
 
 # ---- dense / landmark / compressive: standard multi-rung ladder (NDCG/F1/score per rung) ----
-case "$TASK" in
-  contra)  RUNGS="2k,8k,16k,32k"; LTASK=contradiction; EXTRA="--contra-data data/contradiction_eval_pubmed_both_n100_k3.jsonl --contra-max-new-tokens 512" ;;
-  nq)      RUNGS="3k,8k,16k,32k"; LTASK=nq;            EXTRA="--nq-data data/nq_validation_k20_hn2_600.jsonl" ;;  # @3k: single-query k20, p10 pipeline (10% hard + CE filter, wikipedia-dpr-100w source) matching training + the k50/k100/k200 rungs
-  outlier) RUNGS="3k,8k,16k,32k"; LTASK=outlier;       EXTRA="--outlier-data data/outlier_wiki100w_n55_k3_eval_600.jsonl" ;;
-  oolong)  RUNGS="8k,16k,32k";    LTASK=oolong;        EXTRA="" ;;
-  *) echo "ERROR unknown TASK=$TASK"; exit 2 ;;
-esac
+if [ "$LADDER_VERSION" = "v2" ]; then
+  # v2: all rungs (incl. base + rerank) come from the v2 bundle via --ladder-version v2;
+  # the per-task base-data (--contra-data/--nq-data/--outlier-data/--rerank-data) args are unused.
+  case "$TASK" in
+    contra)  RUNGS="2k,8k,16k,32k"; LTASK=contradiction; EXTRA="--contra-max-new-tokens 512" ;;
+    nq)      RUNGS="3k,8k,16k,32k"; LTASK=nq;            EXTRA="" ;;
+    outlier) RUNGS="3k,8k,16k,32k"; LTASK=outlier;       EXTRA="" ;;
+    rerank)  RUNGS="3k,8k,16k";     LTASK=rerank;        EXTRA="" ;;  # CE-graded, no 32k pool
+    oolong)  RUNGS="8k,16k,32k";    LTASK=oolong;        EXTRA="" ;;
+    *) echo "ERROR unknown TASK=$TASK"; exit 2 ;;
+  esac
+else
+  case "$TASK" in
+    contra)  RUNGS="2k,8k,16k,32k"; LTASK=contradiction; EXTRA="--contra-data data/contradiction_eval_pubmed_both_n100_k3.jsonl --contra-max-new-tokens 512" ;;
+    nq)      RUNGS="3k,8k,16k,32k"; LTASK=nq;            EXTRA="--nq-data data/nq_validation_k20_hn2_600.jsonl" ;;  # @3k: single-query k20, p10 pipeline (10% hard + CE filter, wikipedia-dpr-100w source) matching training + the k50/k100/k200 rungs
+    outlier) RUNGS="3k,8k,16k,32k"; LTASK=outlier;       EXTRA="--outlier-data data/outlier_wiki100w_n55_k3_eval_600.jsonl" ;;
+    oolong)  RUNGS="8k,16k,32k";    LTASK=oolong;        EXTRA="" ;;
+    *) echo "ERROR unknown TASK=$TASK"; exit 2 ;;
+  esac
+fi
 OUT="$EVAL_OUT_DIR/${TASK}_multirung.json"
-echo "=== EVAL $TASK rungs=$RUNGS -> $OUT ($(date -u '+%T')Z) ==="
+echo "=== EVAL $TASK rungs=$RUNGS ladder=$LADDER_VERSION -> $OUT ($(date -u '+%T')Z) ==="
 $TR --model-path "$CKPT" --out "$OUT" --tokenizer "$TOKENIZER" --max-length "$MAX_LENGTH" \
     --root "$BUNDLE" --max-test-samples "$MAX_TEST" --batch-size "$BATCH_SIZE" --skip-ruler --skip-gen \
-    --ladder --ladder-tasks "$LTASK" --ladder-rungs "$RUNGS" $EXTRA
+    --ladder $VFLAG --ladder-tasks "$LTASK" --ladder-rungs "$RUNGS" $EXTRA
 rc=$?
 if [ -f "$OUT" ]; then
   cp "$OUT" "$RESULTS/${RUN}_${TASK}_multirung.json" 2>/dev/null || true

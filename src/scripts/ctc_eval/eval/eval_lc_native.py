@@ -49,6 +49,11 @@ def main():
                     help="comma list restricting --ladder to a subset of tasks (split into per-task jobs).")
     ap.add_argument("--ladder-rungs", default=None,
                     help="comma list restricting --ladder to a subset of rungs (e.g. 16k,32k).")
+    ap.add_argument("--ladder-version", choices=["v1", "v2"], default="v1",
+                    help="v1 = original per-rung eval files (independently generated per rung). "
+                         "v2 = cleaned ladders where every rung of a task shares the SAME >=500 "
+                         "questions/answers and only the distractor documents vary (read entirely "
+                         "from $EVAL500_ROOT/<task>/, i.e. point EVAL500_ROOT at the v2 bundle).")
     ap.add_argument("--skip-ruler", action="store_true")
     ap.add_argument("--skip-gen", action="store_true",
                     help="skip held-out retrieval generalization probes")
@@ -219,7 +224,36 @@ def main():
         # n>=500 eval at the goal-critical rungs (8k/16k/32k) from cpt_data/eval500; 64k dropped
         # (beyond the 32k goal, saves GPU). 2k/3k base + oolong (capped ~80) keep their files.
         E5 = os.environ.get("EVAL500_ROOT", "/scratch/users/prasann/cpt_data/eval500")
-        LADDERS = {
+        if args.ladder_version == "v2":
+            # v2: every rung of a task shares the SAME >=500 questions/answers; only the
+            # distractor documents differ (built by build_v2_eval_ladders.py). ALL rungs live
+            # under $EVAL500_ROOT/<task>/ (point EVAL500_ROOT at the v2 bundle). oolong rungs are
+            # freshly synthesized so they are DISJOINT from training (the v1 oolong eval overlapped
+            # its own train split) while keeping the same question-type + corpus-type distribution.
+            LADDERS = {
+                "contradiction": [("2k", f"{E5}/contra/contradiction_eval_pubmed_both_n100_k3.jsonl"),
+                    ("8k", f"{E5}/contra/contradiction_eval_pubmed_both_n190_k3.jsonl"),
+                    ("16k", f"{E5}/contra/contradiction_eval_pubmed_both_n385_k3.jsonl"),
+                    ("32k", f"{E5}/contra/contradiction_eval_pubmed_both_n765_k3.jsonl")],
+                "nq": [("3k", f"{E5}/nq/nq_validation_k20_600.jsonl"),
+                    ("8k", f"{E5}/nq/nq_validation_k50_600.jsonl"),
+                    ("16k", f"{E5}/nq/nq_validation_k100_600.jsonl"),
+                    ("32k", f"{E5}/nq/nq_validation_k200_600.jsonl")],
+                "outlier": [("3k", f"{E5}/outlier/outlier_wiki100w_n22_k3_eval_600.jsonl"),
+                    ("8k", f"{E5}/outlier/outlier_wiki100w_n55_k3_eval_600.jsonl"),
+                    ("16k", f"{E5}/outlier/outlier_wiki100w_n110_k3_eval_600.jsonl"),
+                    ("32k", f"{E5}/outlier/outlier_wiki100w_n220_k3_eval_600.jsonl")],
+                # CE-graded (NDCG@10 + Kendall-tau), shared 500 queries; tops out at k100 (~16k) —
+                # no CE-graded pool larger than k100 exists, so rerank has no 32k rung.
+                "rerank": [("3k", f"{E5}/rerank/msmarco_trainhn_eval_k20_500.jsonl"),
+                    ("8k", f"{E5}/rerank/msmarco_trainhn_eval_k50_500.jsonl"),
+                    ("16k", f"{E5}/rerank/msmarco_trainhn_eval_k100_500.jsonl")],
+                "oolong": [("8k", f"{E5}/oolong/oolong_test_synth_ctx8192_spliteval.jsonl"),
+                    ("16k", f"{E5}/oolong/oolong_test_synth_ctx16384_spliteval.jsonl"),
+                    ("32k", f"{E5}/oolong/oolong_test_synth_ctx32768_spliteval.jsonl")],
+            }
+        else:
+          LADDERS = {
             "contradiction": [("2k", args.contra_data),
                 ("8k", f"{E5}/contra/contradiction_eval_pubmed_both_n190_k3.jsonl"),
                 ("16k", f"{E5}/contra/contradiction_eval_pubmed_both_n385_k3.jsonl"),

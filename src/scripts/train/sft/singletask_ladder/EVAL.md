@@ -44,6 +44,7 @@ python src/scripts/train/sft/singletask_ladder/run_q4b_beaker_multirung_eval.py 
 | `--ckpt` | **absolute weka path to your step dir** — this is what makes it work for any checkpoint |
 | `--results-dir` | absolute weka dir for the result JSONs (default: `checkpoints/prasanns/<my-eval-label>/eval`) — point it anywhere on weka, e.g. next to your checkpoint |
 | `--task` | `all` (one Beaker job per task) or a comma list, e.g. `--task contra,nq` |
+| `--ladder-version` | `v1` (default, original per-rung files) or **`v2`** (cleaned ladders — see §3c) |
 | `--ngpu` | GPUs per job (default **2**); each task runs `torchrun --nproc_per_node=$NGPU` |
 | `--dry-run` | print the jobs without submitting |
 | `--max-test` | examples per rung (default **600**); `--batch-size` (default **2**); `--priority` |
@@ -76,6 +77,38 @@ Each task becomes **one Beaker job** (`--ngpu` GPUs, default 2) running
 > **cross-encoder gold-quality filter** (removes false negatives), all docs from `wikipedia-dpr-100w`.
 > This matches the training-data negative distribution. (The old `hn19/hn49/hn99/hn199` files were 98%
 > hard-neg and much harder — don't mix them in.) No `align` step (redundant: single-source docs).
+
+## 3c. v2 evals (`--ladder-version v2`) — comparable rungs, ≥500 examples
+
+The default (`v1`) rung files were each generated **independently**, so a task's questions differ
+from rung to rung — length and question-set are confounded. Pass **`--ladder-version v2`** to use the
+cleaned ladders where, within a task, **every rung shares the SAME ≥500 questions/answers and only the
+distractor documents change** to hit each context length. This isolates length (and makes different
+corpora comparable), which is the point of the ladder.
+
+```bash
+python src/scripts/train/sft/singletask_ladder/run_q4b_beaker_multirung_eval.py \
+    my-eval-label ai2/jupiter --variant landmark --ckpt <weka step dir> \
+    --task all --ladder-version v2
+```
+
+How v2 is built (`corpus-reasoning/scripts/data/build_v2_eval_ladders.py`, verified by
+`verify_v2_eval_ladders.py`): one canonical ≥500-question set per task (the largest rung), with each
+shorter rung a **nested prefix of the shuffled distractor pool** — gold docs / query / answer stay
+byte-identical, indices remapped. contra tops up its 500-question base with offline-harvested PubMed
+fillers; rerank keeps CE `ce_scores` aligned. Rungs:
+
+| task | v2 rungs (docs/ex) | n/rung |
+|---|---|---|
+| `contra` | 2k/8k/16k/32k = n100/190/385/765 | 500 |
+| `nq` | 3k/8k/16k/32k = k20/50/100/200 | 600 |
+| `outlier` | 3k/8k/16k/32k = n22/55/110/220 | 600 |
+| `rerank` | 3k/8k/16k = k20/50/100 (CE-graded; **no 32k** CE pool) | 500 |
+| `oolong` | 8k/16k/32k (freshly synthesized, **disjoint from training**; v1's oolong eval overlapped its own train split) — same question-type + corpus-type distribution across rungs | ≥500 |
+
+Data lives on weka at `_eval_bundle_eval500_v2` (staged by `upload_lc_eval_bundle.sh`). v1 files are
+untouched. Note: rerank's CE passages are short, so its true token lengths (~1.6k/4k/8k) sit under the
+3k/8k/16k labels — kept for continuity with v1.
 
 ## 3b. Where results land (on weka)
 

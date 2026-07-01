@@ -18,10 +18,12 @@ set -euo pipefail
 
 CR="${CR:-/scratch/users/prasann/corpus-reasoning}"
 EVAL500_SRC="${EVAL500_SRC:-/scratch/users/prasann/cpt_data/eval500}"
+EVAL500_V2_SRC="${EVAL500_V2_SRC:-/scratch/users/prasann/cpt_data/eval500_v2}"
 REPO="${REPO:-/accounts/projects/berkeleynlp/prasann/projects/OLMo-core}"
 S3="${S3:-s3://ai2-llm/checkpoints/prasanns}"
 BUNDLE="$S3/_eval_bundle"
 EVAL500_S3="$S3/_eval_bundle_eval500"
+EVAL500_V2_S3="$S3/_eval_bundle_eval500_v2"
 
 echo "=== upload eval bundle: CR=$CR -> $BUNDLE (FULL=${FULL:-0}) ==="
 
@@ -69,8 +71,20 @@ if [ "${FULL:-0}" = "1" ]; then
   aws s3 sync "$EVAL500_SRC/" "$EVAL500_S3/" --exclude '*.log' --size-only
 fi
 
+# 5. v2 ladders: every rung of a task shares the SAME >=500 questions, only distractors vary
+#    (built by corpus-reasoning/scripts/data/build_v2_eval_ladders.py + fresh disjoint oolong).
+#    The runner reads these when LADDER_VERSION=v2 (EVAL500 -> _eval_bundle_eval500_v2).
+#    Always synced (small; changes rarely) so `--ladder-version v2` works out of the box.
+if [ -d "$EVAL500_V2_SRC" ]; then
+  echo "--- sync v2 eval ladders -> $EVAL500_V2_S3 ---"
+  aws s3 sync "$EVAL500_V2_SRC/" "$EVAL500_V2_S3/" --exclude '*.log' --size-only
+else
+  echo "WARN missing $EVAL500_V2_SRC (run build_v2_eval_ladders.py first)"
+fi
+
 echo "=== bundle ready ==="
-echo "  code:    $BUNDLE/scripts/eval/eval_lc_native.py"
-echo "  data:    $BUNDLE/data/"
-echo "  eval500: $EVAL500_S3/"
+echo "  code:      $BUNDLE/scripts/eval/eval_lc_native.py"
+echo "  data:      $BUNDLE/data/"
+echo "  eval500:   $EVAL500_S3/"
+echo "  eval500_v2:$EVAL500_V2_S3/   (use --ladder-version v2)"
 echo "  runner:  $BUNDLE/run_beaker_multirung_eval.sh"

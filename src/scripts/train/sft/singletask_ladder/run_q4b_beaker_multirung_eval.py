@@ -60,7 +60,7 @@ def variant_from_run_name(run_name: str) -> str:
 
 
 def build_eval_launch_config(
-    *, run_name, task, variant, cluster, step, ckpt, results_dir, prompt_format, ngpu, max_test, max_length, batch_size, priority
+    *, run_name, task, variant, cluster, step, ckpt, results_dir, prompt_format, ngpu, max_test, max_length, batch_size, priority, ladder_version
 ):
     root_dir = get_root_dir(cluster)  # e.g. /weka/oe-training-default/ai2-llm (mounts weka bucket)
     # Eval CODE now ships IN the cloned repo (src/scripts/ctc_eval); the runner runs from the repo root
@@ -73,7 +73,7 @@ def build_eval_launch_config(
         f"RUN={run_name} TASK={task} VARIANT={variant} STEP='{step}' CKPT='{ckpt}' "
         f"EVAL_OUT_DIR='{results_dir}' PROMPT_FORMAT='{prompt_format}' "
         f"MAX_TEST={max_test} MAX_LENGTH={max_length} BATCH_SIZE={batch_size} NGPU={ngpu} "
-        f"WEKA_LLM={root_dir} bash {runner}"
+        f"LADDER_VERSION={ladder_version} WEKA_LLM={root_dir} bash {runner}"
     )
     cmd = ["bash", "-lc", inner]
 
@@ -123,6 +123,10 @@ def main():
                     help="GPUs per eval job (data-parallel over examples). 4B model fits on 1-2 GPUs; "
                          "2 lets ~4x more evals run concurrently than 8 and fits fragmented free slots.")
     ap.add_argument("--priority", default="normal")
+    ap.add_argument("--ladder-version", choices=["v1", "v2"], default="v1",
+                    help="v1 = original per-rung eval files. v2 = cleaned ladders where every rung "
+                         "of a task shares the SAME >=500 questions/answers and only distractors "
+                         "vary (reads the _eval_bundle_eval500_v2 weka bundle).")
     ap.add_argument("--dry-run", action="store_true", help="build + print the job, do NOT submit.")
     args = ap.parse_args()
 
@@ -144,7 +148,7 @@ def main():
             run_name=args.run_name, task=task, variant=variant, cluster=args.cluster,
             step=args.step, ckpt=args.ckpt, results_dir=args.results_dir, prompt_format=args.prompt_format,
             ngpu=args.ngpu, max_test=args.max_test, max_length=args.max_length,
-            batch_size=args.batch_size, priority=args.priority,
+            batch_size=args.batch_size, priority=args.priority, ladder_version=args.ladder_version,
         )
         print(f"\n--- [{task}] {lc.name} ---")
         print(f"    cmd: {lc.cmd[-1]}")
