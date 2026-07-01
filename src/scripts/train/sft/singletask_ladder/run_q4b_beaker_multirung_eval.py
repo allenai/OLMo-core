@@ -123,10 +123,11 @@ def main():
                     help="GPUs per eval job (data-parallel over examples). 4B model fits on 1-2 GPUs; "
                          "2 lets ~4x more evals run concurrently than 8 and fits fragmented free slots.")
     ap.add_argument("--priority", default="normal")
-    ap.add_argument("--ladder-version", choices=["v1", "v2"], default="v1",
-                    help="v1 = original per-rung eval files. v2 = cleaned ladders where every rung "
-                         "of a task shares the SAME >=500 questions/answers and only distractors "
-                         "vary (reads the _eval_bundle_eval500_v2 weka bundle).")
+    ap.add_argument("--ladder-version", choices=["v1", "v2"], default="v2",
+                    help="v2 (DEFAULT) = cleaned ladders where every rung of a task shares the SAME "
+                         "500 questions/answers and only distractors vary (reads the "
+                         "_eval_bundle_eval500_v2 weka bundle). Pass --ladder-version v1 for the "
+                         "original independently-generated per-rung files.")
     ap.add_argument("--dry-run", action="store_true", help="build + print the job, do NOT submit.")
     args = ap.parse_args()
 

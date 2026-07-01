@@ -49,11 +49,11 @@ def main():
                     help="comma list restricting --ladder to a subset of tasks (split into per-task jobs).")
     ap.add_argument("--ladder-rungs", default=None,
                     help="comma list restricting --ladder to a subset of rungs (e.g. 16k,32k).")
-    ap.add_argument("--ladder-version", choices=["v1", "v2"], default="v1",
-                    help="v1 = original per-rung eval files (independently generated per rung). "
-                         "v2 = cleaned ladders where every rung of a task shares the SAME >=500 "
-                         "questions/answers and only the distractor documents vary (read entirely "
-                         "from $EVAL500_ROOT/<task>/, i.e. point EVAL500_ROOT at the v2 bundle).")
+    ap.add_argument("--ladder-version", choices=["v1", "v2"], default="v2",
+                    help="v2 (DEFAULT) = cleaned ladders where every rung of a task shares the SAME "
+                         "500 questions/answers and only the distractor documents vary (read entirely "
+                         "from $EVAL500_ROOT/<task>/, i.e. point EVAL500_ROOT at the v2 bundle). "
+                         "v1 = original independently-generated per-rung eval files.")
     ap.add_argument("--skip-ruler", action="store_true")
     ap.add_argument("--skip-gen", action="store_true",
                     help="skip held-out retrieval generalization probes")

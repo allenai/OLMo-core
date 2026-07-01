@@ -44,7 +44,7 @@ python src/scripts/train/sft/singletask_ladder/run_q4b_beaker_multirung_eval.py 
 | `--ckpt` | **absolute weka path to your step dir** — this is what makes it work for any checkpoint |
 | `--results-dir` | absolute weka dir for the result JSONs (default: `checkpoints/prasanns/<my-eval-label>/eval`) — point it anywhere on weka, e.g. next to your checkpoint |
 | `--task` | `all` (one Beaker job per task) or a comma list, e.g. `--task contra,nq` |
-| `--ladder-version` | `v1` (default, original per-rung files) or **`v2`** (cleaned ladders — see §3c) |
+| `--ladder-version` | **`v2`** (default — cleaned ladders, see §3c) or `v1` (original independently-generated per-rung files) |
 | `--ngpu` | GPUs per job (default **2**); each task runs `torchrun --nproc_per_node=$NGPU` |
 | `--dry-run` | print the jobs without submitting |
 | `--max-test` | examples per rung (default **600**); `--batch-size` (default **2**); `--priority` |
@@ -78,18 +78,20 @@ Each task becomes **one Beaker job** (`--ngpu` GPUs, default 2) running
 > This matches the training-data negative distribution. (The old `hn19/hn49/hn99/hn199` files were 98%
 > hard-neg and much harder — don't mix them in.) No `align` step (redundant: single-source docs).
 
-## 3c. v2 evals (`--ladder-version v2`) — comparable rungs, ≥500 examples
+## 3c. v2 evals (DEFAULT) — comparable rungs, exactly 500 examples
 
-The default (`v1`) rung files were each generated **independently**, so a task's questions differ
-from rung to rung — length and question-set are confounded. Pass **`--ladder-version v2`** to use the
-cleaned ladders where, within a task, **every rung shares the SAME ≥500 questions/answers and only the
-distractor documents change** to hit each context length. This isolates length (and makes different
-corpora comparable), which is the point of the ladder.
+**v2 is the default** (`--ladder-version v2`): within a task, **every rung shares the SAME 500
+questions/answers and only the distractor documents change** to hit each context length. This isolates
+length (and makes different corpora comparable), which is the point of the ladder. The quick-start
+command in §2 already uses it — no flag needed.
+
+The old `v1` rung files were each generated **independently**, so a task's questions differ from rung
+to rung (length and question-set confounded). Pass **`--ladder-version v1`** to fall back to them:
 
 ```bash
 python src/scripts/train/sft/singletask_ladder/run_q4b_beaker_multirung_eval.py \
-    my-eval-label ai2/jupiter --variant landmark --ckpt <weka step dir> \
-    --task all --ladder-version v2
+    my-eval-label ai2/neptune --variant landmark --ckpt <weka step dir> \
+    --task all --ladder-version v1   # only if you specifically want the old files
 ```
 
 How v2 is built (`corpus-reasoning/scripts/data/build_v2_eval_ladders.py`, verified by

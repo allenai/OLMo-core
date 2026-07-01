@@ -39,9 +39,10 @@ case "$VARIANT" in landmark|compressive) BATCH_SIZE=1 ;; esac
 
 PRASANNS="$WEKA_LLM/checkpoints/prasanns"
 BUNDLE="${BUNDLE:-$PRASANNS/_eval_bundle}"
-# LADDER_VERSION=v2 -> cleaned ladders: every rung of a task shares the SAME >=500 questions,
+# LADDER_VERSION (default v2) -> cleaned ladders: every rung of a task shares the SAME 500 questions,
 # only distractors vary; all rungs (incl. base + rerank + oolong) live under the v2 bundle.
-LADDER_VERSION="${LADDER_VERSION:-v1}"
+# Set LADDER_VERSION=v1 for the original independently-generated per-rung files.
+LADDER_VERSION="${LADDER_VERSION:-v2}"
 if [ "$LADDER_VERSION" = "v2" ]; then
   EVAL500="${EVAL500:-$PRASANNS/_eval_bundle_eval500_v2}"
   VFLAG="--ladder-version v2"
