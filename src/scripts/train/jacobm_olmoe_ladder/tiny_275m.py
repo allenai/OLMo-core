@@ -107,6 +107,7 @@ from olmo_core.script_utils import get_cli_parser, main
 from olmo_core.train import Duration, TrainerConfig
 from olmo_core.train.callbacks import (
     CheckpointerCallback,
+    ConfigSaverCallback,
     NvidiaProfilerCallback,
     TorchMemoryHistoryCallback,
     WandBCallback,
@@ -914,6 +915,10 @@ def build_trainer_config(
                 save_async=False,
                 pre_train_checkpoint=opts.pre_train_checkpoint,
             ),
+        )
+        .with_callback(
+            "config_saver",
+            ConfigSaverCallback(),
         )
         .with_callback(
             "wandb",
