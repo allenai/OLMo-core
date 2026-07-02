@@ -377,6 +377,96 @@ if triton is not None:
         tl.store(scale_ptr + scale_offsets, scale_tile, mask=scale_mask)
 
 
+    @triton.autotune(
+        configs=_MXFP8_Q_AUTOTUNE_CONFIGS,
+        key=["n_rows", "top_k", "n_cols", "BLOCK_SIZE"],
+    )
+    @triton.jit
+    def _triton_mxfp8_weighted_quantize_dim0(
+        x_ptr,
+        x_stride_0,
+        x_stride_1,
+        weights_ptr,
+        w_stride_0,
+        w_stride_1,
+        q_ptr,
+        q_stride_0,
+        q_stride_1,
+        scale_ptr,
+        s_stride_0,
+        s_stride_1,
+        n_rows,
+        top_k,
+        n_cols,
+        BLOCK_SIZE: tl.constexpr,
+        BLOCK_M: tl.constexpr,
+        BLOCK_N: tl.constexpr,
+    ):
+        # Quantizes logical rows:
+        #   out[n * top_k + k, :] = x[n, :] * bf16(weights[n, k])
+        # to MXFP8. This matches the current bf16 materialized path used by
+        # rowwise MoE backward before quantization.
+        FP32_TINY: tl.constexpr = 1.1754943508222875e-38
+        F8E4M3_MAX: tl.constexpr = 448.0
+        E8M0_EXP_BIAS_INT: tl.constexpr = 127
+        F8E4M3_LARGEST_POW2_INT: tl.constexpr = 8
+        BF16_MBITS: tl.constexpr = 7
+        SCALE_BLOCKS_PER_TILE: tl.constexpr = BLOCK_N // BLOCK_SIZE
+
+        pid_m = tl.program_id(0)
+        pid_n = tl.program_id(1)
+
+        route_row = pid_m * BLOCK_M + tl.arange(0, BLOCK_M)[:, None]
+        source_row = route_row // top_k
+        route_lane = route_row - source_row * top_k
+        col_idx = pid_n * BLOCK_N + tl.arange(0, BLOCK_N)[None, :]
+
+        total_rows = n_rows * top_k
+        q_mask = (route_row < total_rows) & (col_idx < n_cols)
+        x_offsets = source_row * x_stride_0 + col_idx * x_stride_1
+        x = tl.load(x_ptr + x_offsets, mask=q_mask, other=0.0).to(tl.float32)
+
+        weight_offsets = source_row * w_stride_0 + route_lane * w_stride_1
+        weight_mask = route_row < total_rows
+        weight = tl.load(weights_ptr + weight_offsets, mask=weight_mask, other=0.0)
+        weight = weight.to(tl.bfloat16).to(tl.float32)
+        weighted = (x * weight).to(tl.bfloat16)
+
+        x_r = weighted.reshape(BLOCK_M * SCALE_BLOCKS_PER_TILE, BLOCK_SIZE).to(tl.float32)
+        max_abs = tl.max(tl.abs(x_r), axis=1)
+        max_abs = tl.where(max_abs == max_abs, max_abs, 0.0)  # NaN -> 0
+        max_abs = tl.maximum(max_abs, FP32_TINY)
+
+        max_abs_bf16 = max_abs.to(tl.bfloat16)
+        max_abs_i16 = max_abs_bf16.to(tl.int16, bitcast=True)
+        largest_p2 = ((max_abs_i16 >> BF16_MBITS) & 0xFF) - E8M0_EXP_BIAS_INT
+        scale_unbiased = largest_p2 - F8E4M3_LARGEST_POW2_INT
+        scale_unbiased = tl.maximum(scale_unbiased, -E8M0_EXP_BIAS_INT)
+        scale_unbiased = tl.minimum(scale_unbiased, E8M0_EXP_BIAS_INT)
+        scale_biased_i32 = (scale_unbiased + E8M0_EXP_BIAS_INT).to(tl.int32)
+        scale_biased_u8 = scale_biased_i32.to(tl.uint8)
+        inv_exp = 254 - scale_biased_i32
+        inv_bits = inv_exp.to(tl.uint32) << 23
+        inv_bits = tl.where(inv_exp == 0, 0x00400000, inv_bits)
+        inv_scale = inv_bits.to(tl.float32, bitcast=True)
+        q_hp = x_r * inv_scale[:, None]
+
+        q_hp = tl.where(q_hp == q_hp, q_hp, 0.0)
+        q_hp = tl.maximum(q_hp, -F8E4M3_MAX)
+        q_hp = tl.minimum(q_hp, F8E4M3_MAX)
+
+        q_tile = tl.reshape(q_hp, (BLOCK_M, BLOCK_N)).to(tl.float8e4nv)
+        q_offsets = route_row * q_stride_0 + col_idx * q_stride_1
+        tl.store(q_ptr + q_offsets, q_tile, mask=q_mask)
+
+        n_scale_cols = tl.cdiv(n_cols, BLOCK_SIZE)
+        scale_col_idx = pid_n * SCALE_BLOCKS_PER_TILE + tl.arange(0, SCALE_BLOCKS_PER_TILE)[None, :]
+        scale_offsets = route_row * s_stride_0 + scale_col_idx * s_stride_1
+        scale_mask = (route_row < total_rows) & (scale_col_idx < n_scale_cols)
+        scale_tile = tl.reshape(scale_biased_u8, (BLOCK_M, SCALE_BLOCKS_PER_TILE))
+        tl.store(scale_ptr + scale_offsets, scale_tile, mask=scale_mask)
+
+
     # NOTE: Deliberately no @triton.autotune here.
     @triton.jit
     def _triton_mxfp8_quantize_grouped_blocked_tiled_dim0(
@@ -1098,10 +1188,12 @@ def _quantize_to_mxfp8_triton(
     else:
         scales_u8 = torch.empty((rows, cols // block_size), device=x.device, dtype=torch.uint8)
 
-    grid = lambda meta: (
-        triton.cdiv(rows, meta["BLOCK_M"]),
-        triton.cdiv(cols, meta["BLOCK_N"]),
-    )
+    def grid(meta):
+        return (
+            triton.cdiv(rows, meta["BLOCK_M"]),
+            triton.cdiv(cols, meta["BLOCK_N"]),
+        )
+
     _triton_mxfp8_quantize_dim0[grid](
         x,
         x.stride(0),
@@ -1512,6 +1604,168 @@ def quantize_to_mxfp8(
     return qdata, scales
 
 
+def _weighted_quantize_rows_to_mxfp8_torch(
+    x: torch.Tensor,
+    weights: torch.Tensor,
+    *,
+    block_size: int,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    weighted = (
+        x.unsqueeze(1)
+        * weights.to(device=x.device, dtype=x.dtype).unsqueeze(-1)
+    ).reshape(x.shape[0] * weights.shape[1], x.shape[1])
+    if not weighted.is_contiguous():
+        weighted = weighted.contiguous()
+    return quantize_to_mxfp8(weighted, block_size=block_size)
+
+
+def _weighted_quantize_rows_to_mxfp8_triton(
+    x: torch.Tensor,
+    weights: torch.Tensor,
+    *,
+    block_size: int,
+    out: Optional[torch.Tensor],
+    scales_out: Optional[torch.Tensor],
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    if triton is None or tl is None:
+        raise RuntimeError("Triton is not available")
+    if not x.is_cuda or not weights.is_cuda:
+        raise RuntimeError("Triton weighted MXFP8 quantization requires CUDA tensors")
+    if x.dtype != torch.bfloat16:
+        raise ValueError(f"Triton weighted MXFP8 quantization expects bf16 input, got {x.dtype}")
+
+    rows, cols = x.shape
+    top_k = weights.shape[1]
+    output_rows = rows * top_k
+    if out is not None:
+        qdata = out
+    else:
+        qdata = torch.empty((output_rows, cols), device=x.device, dtype=torch.float8_e4m3fn)
+    if scales_out is not None:
+        scales_u8 = scales_out.view(torch.uint8)
+    else:
+        scales_u8 = torch.empty((output_rows, cols // block_size), device=x.device, dtype=torch.uint8)
+
+    def grid(meta):
+        return (
+            triton.cdiv(output_rows, meta["BLOCK_M"]),
+            triton.cdiv(cols, meta["BLOCK_N"]),
+        )
+
+    _triton_mxfp8_weighted_quantize_dim0[grid](
+        x,
+        x.stride(0),
+        x.stride(1),
+        weights,
+        weights.stride(0),
+        weights.stride(1),
+        qdata,
+        qdata.stride(0),
+        qdata.stride(1),
+        scales_u8,
+        scales_u8.stride(0),
+        scales_u8.stride(1),
+        rows,
+        top_k,
+        cols,
+        BLOCK_SIZE=block_size,
+    )
+    if scales_out is not None:
+        return qdata, scales_out
+    return qdata, scales_u8.view(torch.float8_e8m0fnu)
+
+
+@nvtx.annotate("weighted_quantize_rows_to_mxfp8", color="red")
+def weighted_quantize_rows_to_mxfp8(
+    x: torch.Tensor,
+    weights: torch.Tensor,
+    *,
+    block_size: int = 32,
+    out: Optional[torch.Tensor] = None,
+    scales_out: Optional[torch.Tensor] = None,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """
+    Quantize route-weighted rows to MXFP8 without materializing [N, K, H].
+
+    The returned tensors are flattened over routes:
+      qdata: [N * K, H]
+      scales: [N * K, H // block_size]
+
+    For CUDA bf16 input, the Triton path matches:
+      (x[:, None, :] * weights.to(x.dtype)[:, :, None]).reshape(N * K, H)
+      quantize_rows_to_mxfp8(...)
+    """
+    if x.ndim != 2:
+        raise ValueError(f"Expected x rank-2 [N, H], got {tuple(x.shape)}")
+    if weights.ndim != 2:
+        raise ValueError(f"Expected weights rank-2 [N, K], got {tuple(weights.shape)}")
+    if weights.shape[0] != x.shape[0]:
+        raise ValueError(
+            f"weights first dim must match x rows: {tuple(weights.shape)} vs {tuple(x.shape)}"
+        )
+    if block_size != 32:
+        raise ValueError(f"Only block_size=32 is supported (got {block_size})")
+    if x.shape[1] % block_size != 0:
+        raise ValueError(
+            f"x hidden dim must be divisible by {block_size}, got {tuple(x.shape)}"
+        )
+    expected_q_shape = (x.shape[0] * weights.shape[1], x.shape[1])
+    expected_scales_shape = (expected_q_shape[0], x.shape[1] // block_size)
+    if out is not None:
+        if tuple(out.shape) != expected_q_shape:
+            raise ValueError(
+                f"out shape mismatch: expected {expected_q_shape}, got {tuple(out.shape)}"
+            )
+        if out.dtype != torch.float8_e4m3fn:
+            raise ValueError(
+                f"out dtype mismatch: expected {torch.float8_e4m3fn}, got {out.dtype}"
+            )
+        if out.device != x.device:
+            raise ValueError(f"out device mismatch: expected {x.device}, got {out.device}")
+        if not out.is_contiguous():
+            raise ValueError("out must be contiguous")
+    if scales_out is not None:
+        if tuple(scales_out.shape) != expected_scales_shape:
+            raise ValueError(
+                "scales_out shape mismatch: "
+                f"expected {expected_scales_shape}, got {tuple(scales_out.shape)}"
+            )
+        if scales_out.dtype != torch.float8_e8m0fnu:
+            raise ValueError(
+                f"scales_out dtype mismatch: expected {torch.float8_e8m0fnu}, got {scales_out.dtype}"
+            )
+        if scales_out.device != x.device:
+            raise ValueError(
+                f"scales_out device mismatch: expected {x.device}, got {scales_out.device}"
+            )
+        if not scales_out.is_contiguous():
+            raise ValueError("scales_out must be contiguous")
+
+    if x.is_cuda and weights.is_cuda and x.dtype == torch.bfloat16:
+        if triton is None:
+            raise RuntimeError("Triton is required for CUDA weighted MXFP8 quantization")
+        return _weighted_quantize_rows_to_mxfp8_triton(
+            x,
+            weights,
+            block_size=block_size,
+            out=out,
+            scales_out=scales_out,
+        )
+
+    qdata, scales = _weighted_quantize_rows_to_mxfp8_torch(
+        x,
+        weights,
+        block_size=block_size,
+    )
+    if out is not None:
+        out.copy_(qdata)
+        qdata = out
+    if scales_out is not None:
+        scales_out.copy_(scales)
+        scales = scales_out
+    return qdata, scales
+
+
 def _dequantize_from_mxfp8_te(
     qdata: torch.Tensor,
     scales: torch.Tensor,
@@ -1632,10 +1886,12 @@ def dequantize_from_mxfp8(
         scales_contig = scales if scales.is_contiguous() else scales.contiguous()
         scales_u8 = scales_contig.view(torch.uint8)
         out_contig = out_tensor if out_tensor.is_contiguous() else out_tensor.contiguous()
-        grid = lambda meta: (
-            triton.cdiv(m, meta["BLOCK_M"]),
-            triton.cdiv(k, meta["BLOCK_N"]),
-        )
+        def grid(meta):
+            return (
+                triton.cdiv(m, meta["BLOCK_M"]),
+                triton.cdiv(k, meta["BLOCK_N"]),
+            )
+
         _triton_mxfp8_dequantize_dim0[grid](
             q_contig,
             q_contig.stride(0),

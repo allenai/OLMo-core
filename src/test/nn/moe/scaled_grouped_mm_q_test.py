@@ -7,6 +7,7 @@ from olmo_core.kernels.mxfp8_utils import (
     quantize_grouped_2d_to_mxfp8_blocked,
     quantize_grouped_2d_to_mxfp8_blocked_fused,
     quantize_grouped_weight_3d_to_mxfp8_blocked,
+    weighted_quantize_rows_to_mxfp8,
 )
 from olmo_core.kernels.scaled_grouped_mm import scaled_grouped_mm_q, scaled_grouped_mm_q_fp8_weight
 from olmo_core.kernels.scaled_grouped_mm import (
@@ -119,6 +120,56 @@ def test_quantize_rows_to_mxfp8_supports_output_buffers():
     assert scales.untyped_storage().data_ptr() == out_scales.untyped_storage().data_ptr()
     assert qdata.shape == x.shape
     assert scales.shape == (x.shape[0], x.shape[1] // 32)
+
+
+def test_weighted_quantize_rows_to_mxfp8_matches_materialized_cuda():
+    if not torch.cuda.is_available():
+        return
+    torch.manual_seed(1984)
+    rows, top_k, hidden = 37, 4, 512
+    x = (torch.randn(rows, hidden, device="cuda", dtype=torch.bfloat16) * 0.25)
+    weights = torch.randn(rows, top_k, device="cuda", dtype=torch.float32)
+
+    weighted = (
+        x.unsqueeze(1)
+        * weights.to(dtype=x.dtype).unsqueeze(-1)
+    ).reshape(rows * top_k, hidden)
+    q_ref, scales_ref = quantize_rows_to_mxfp8(weighted.contiguous(), block_size=32)
+    q, scales = weighted_quantize_rows_to_mxfp8(x, weights, block_size=32)
+
+    assert q.shape == q_ref.shape
+    assert scales.shape == scales_ref.shape
+    assert torch.equal(q.view(torch.uint8), q_ref.view(torch.uint8))
+    assert torch.equal(scales.view(torch.uint8), scales_ref.view(torch.uint8))
+
+
+def test_weighted_quantize_rows_to_mxfp8_supports_output_buffers_cuda():
+    if not torch.cuda.is_available():
+        return
+    torch.manual_seed(1985)
+    rows, top_k, hidden = 17, 3, 256
+    x = torch.randn(rows, hidden, device="cuda", dtype=torch.bfloat16)
+    weights = torch.rand(rows, top_k, device="cuda", dtype=torch.float32)
+    out_q = torch.empty((rows * top_k, hidden), device="cuda", dtype=torch.float8_e4m3fn)
+    out_scales = torch.empty(
+        (rows * top_k, hidden // 32),
+        device="cuda",
+        dtype=torch.float8_e8m0fnu,
+    )
+
+    q_ref, scales_ref = weighted_quantize_rows_to_mxfp8(x, weights, block_size=32)
+    q, scales = weighted_quantize_rows_to_mxfp8(
+        x,
+        weights,
+        block_size=32,
+        out=out_q,
+        scales_out=out_scales,
+    )
+
+    assert q.untyped_storage().data_ptr() == out_q.untyped_storage().data_ptr()
+    assert scales.untyped_storage().data_ptr() == out_scales.untyped_storage().data_ptr()
+    assert torch.equal(q.view(torch.uint8), q_ref.view(torch.uint8))
+    assert torch.equal(scales.view(torch.uint8), scales_ref.view(torch.uint8))
 
 
 def test_scaled_grouped_mm_q_forward_matches_grouped_mm_reference(monkeypatch):

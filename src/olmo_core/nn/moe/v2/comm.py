@@ -14,6 +14,7 @@ from olmo_core.kernels.mxfp8_utils import (
     quantize_row_halves_to_mxfp8,
     quantize_rows_to_mxfp8,
     swiglu_quantize_rows_to_mxfp8,
+    weighted_quantize_rows_to_mxfp8,
 )
 from olmo_core.kernels.scaled_grouped_mm import (
     ScaledGroupedMMPrequantizedLHS,
@@ -100,6 +101,45 @@ def _rowwise_fp8_prequantized_lhs(
         scale_a=scales,
         mat_a_shape=shape,
         scales_are_blocked=scales_are_blocked,
+    )
+
+
+def _rowwise_dispatch_put_weighted_mxfp8(
+    input_hp: torch.Tensor,
+    probs: torch.Tensor,
+    out_q: torch.Tensor,
+    out_scales: torch.Tensor,
+    dst_ranks: torch.Tensor,
+    dst_rows: torch.Tensor,
+    group_name: str,
+    *,
+    block_size: int,
+    nblocks: int,
+) -> None:
+    qdata, scales = weighted_quantize_rows_to_mxfp8(
+        input_hp,
+        probs,
+        block_size=block_size,
+    )
+    flat_ranks = dst_ranks.reshape(-1, 1).contiguous()
+    flat_rows = dst_rows.reshape(-1, 1).contiguous()
+    symm_mem_vdev2d_kernels.rowwise_dispatch_put(
+        qdata,
+        out_q,
+        flat_ranks,
+        flat_rows,
+        group_name,
+        nblocks=nblocks,
+        post_barrier=False,
+    )
+    symm_mem_vdev2d_kernels.rowwise_dispatch_put(
+        scales,
+        out_scales,
+        flat_ranks,
+        flat_rows,
+        group_name,
+        nblocks=nblocks,
+        pre_barrier=False,
     )
 
 
@@ -510,22 +550,13 @@ class _RowwiseFP8DispatchExpertsCombineAutograd(torch.autograd.Function):
 
         # Combine backward first weights each route by its router probability,
         # then dispatches the weighted token grads into combine_in_q/scales.
-        num_rows, top_k = dst_ranks.shape
-        hidden = grad_out_contig.shape[1]
-        weighted_flat = (
-            grad_out_contig.unsqueeze(1)
-            * probs.to(dtype=grad_out_contig.dtype).unsqueeze(-1)
-        ).reshape(num_rows * top_k, hidden)
-        if not weighted_flat.is_contiguous():
-            weighted_flat = weighted_flat.contiguous()
-        flat_ranks = dst_ranks.reshape(-1, 1).contiguous()
-        flat_rows = dst_rows.reshape(-1, 1).contiguous()
-        symm_mem_vdev2d_kernels.rowwise_dispatch_put_scaled(
-            weighted_flat,
+        _rowwise_dispatch_put_weighted_mxfp8(
+            grad_out_contig,
+            probs,
             ctx.combine_in_q,
             ctx.combine_in_scales,
-            flat_ranks,
-            flat_rows,
+            dst_ranks,
+            dst_rows,
             ctx.group_name,
             block_size=ctx.block_size,
             nblocks=ctx.nblocks,
@@ -1562,33 +1593,23 @@ class _RowwiseCombineWeightedFP8Autograd(torch.autograd.Function):
 
         grad_expert_out = None
         if ctx.needs_input_grad[0]:
-            num_rows, top_k = src_ranks.shape
-            hidden = grad_out_contig.shape[1]
-            weighted_flat = (
-                grad_out_contig.unsqueeze(1)
-                * probs.to(dtype=grad_out_contig.dtype).unsqueeze(-1)
-            ).reshape(num_rows * top_k, hidden)
-            if not weighted_flat.is_contiguous():
-                weighted_flat = weighted_flat.contiguous()
-
-            flat_ranks = src_ranks.reshape(-1, 1).contiguous()
-            flat_rows = src_rows.reshape(-1, 1).contiguous()
             # _rowwise_debug_print(
             #     "rowwise_fp8_combine_backward_dispatch_put_scaled",
             #     "enter",
             #     ctx.group_name,
-            #     input=weighted_flat,
+            #     input=grad_out_contig,
             #     out_q=ctx.symm_expert_out_q,
             #     out_scales=ctx.symm_expert_out_scales,
-            #     dst_ranks=flat_ranks,
-            #     dst_rows=flat_rows,
+            #     dst_ranks=src_ranks,
+            #     dst_rows=src_rows,
             # )
-            symm_mem_vdev2d_kernels.rowwise_dispatch_put_scaled(
-                weighted_flat,
+            _rowwise_dispatch_put_weighted_mxfp8(
+                grad_out_contig,
+                probs,
                 ctx.symm_expert_out_q,
                 ctx.symm_expert_out_scales,
-                flat_ranks,
-                flat_rows,
+                src_ranks,
+                src_rows,
                 ctx.group_name,
                 block_size=ctx.block_size,
                 nblocks=ctx.nblocks,
@@ -1598,7 +1619,7 @@ class _RowwiseCombineWeightedFP8Autograd(torch.autograd.Function):
             #     "rowwise_fp8_combine_backward_dispatch_put_scaled",
             #     "exit",
             #     ctx.group_name,
-            #     input=weighted_flat,
+            #     input=grad_out_contig,
             #     out_q=ctx.symm_expert_out_q,
             #     out_scales=ctx.symm_expert_out_scales,
             # )
