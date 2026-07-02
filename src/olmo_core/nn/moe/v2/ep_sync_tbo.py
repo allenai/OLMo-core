@@ -20,7 +20,7 @@ from olmo_core.ops import moe as ops
 
 from ...moe.utils import async_copy_to_cpu
 from ..utils import moe_permute_no_compile, moe_unpermute_no_compile
-from ._nvtx import annotate
+from ._nvtx import maybe_annotate
 from .ep_sync_1d import checkpointed_permute_routed_experts_unpermute_1d
 from .routed_experts import requires_host_side_split_sizes
 from .tbo_state import SyncedTboPendingContext
@@ -63,7 +63,7 @@ def combined_forward_ep_tbo(
             self.num_local_routed_experts,
         )  # e.g. [0, 1, 2, 3, 0, 1, 2, 3, ...] for 4 local experts
 
-    with annotate("tbo_1", "tbo"):
+    with maybe_annotate("tbo_1", "tbo"):
         if x1_is_fresh:
             local_x1, local_x_handle1 = None, None
             last_block = None
@@ -79,7 +79,7 @@ def combined_forward_ep_tbo(
 
             assert last_block.routed_experts_router is not None
             # finish reverse all2all and other ops for x1
-            with annotate("reverse_all_to_all", "comm"):
+            with maybe_annotate("reverse_all_to_all", "comm"):
                 global_x1 = cast(torch.Tensor, global_x1)
                 global_x1, local_x1, local_x_handle1 = ops.all_to_all_async(
                     global_x1,
@@ -88,7 +88,7 @@ def combined_forward_ep_tbo(
                     group=last_block.ep_pg,
                 )
 
-    with annotate("tbo_0", "tbo"):
+    with maybe_annotate("tbo_0", "tbo"):
         # attention
         # + attention norm
         # + residual connection
@@ -110,7 +110,7 @@ def combined_forward_ep_tbo(
         )
 
         # 1. Communicate the number of tokens that will be sent to each device
-        with annotate("token_count_all_to_all", "comm"):
+        with maybe_annotate("token_count_all_to_all", "comm"):
             with torch.no_grad():
                 # Pass token count information to the device on which the
                 # target expert resides.
@@ -144,7 +144,7 @@ def combined_forward_ep_tbo(
         # forward shared experts
         if self.shared_experts is not None:
             shared_out = self.shared_experts.forward(moe_inp)
-            with annotate("merge_shared", "experts"):
+            with maybe_annotate("merge_shared", "experts"):
                 if self.shared_experts_router:
                     assert local_x_global_shared_expert_weights is not None
                     # weighted sum of the shared experts by router weights
@@ -176,7 +176,7 @@ def combined_forward_ep_tbo(
 
         # Compute the number of tokens that will be received from each
         # device and permute the input data across the devices.
-        with annotate("sync_token_count", "comm"):
+        with maybe_annotate("sync_token_count", "comm"):
             with torch.no_grad():
                 global_batch_size_handle.wait()
 
@@ -209,7 +209,7 @@ def combined_forward_ep_tbo(
 
         # 2. permute local tokens to be ready for all-to-all communication
 
-        with annotate("permute_local_tokens", "comm"):
+        with maybe_annotate("permute_local_tokens", "comm"):
             routing_map = local_x_global_routed_expert_indices.view(
                 -1, self.routed_experts_router.top_k
             ).int()
@@ -231,7 +231,7 @@ def combined_forward_ep_tbo(
             recv_counts = recv_counts_cpu.tolist()  # tensor to list
             tokens_received = sum(recv_counts)
 
-        with annotate("all2all", "comm"):
+        with maybe_annotate("all2all", "comm"):
             permutated_local_x, global_x, global_x_handle = ops.all_to_all_async(
                 permutated_local_x,
                 recv_counts,
@@ -247,7 +247,7 @@ def combined_forward_ep_tbo(
                 output_size=tokens_received,
             )  # e.g. [0, ...,  0, ... , 3, ..., 3, 0, ...] for 4 local experts
 
-    with annotate("tbo_1", "tbo"):
+    with maybe_annotate("tbo_1", "tbo"):
         if x1_is_fresh:
             x1_ctx = cast(dict, x1_ctx)
             x1 = x1_ctx["x1"]
@@ -271,7 +271,7 @@ def combined_forward_ep_tbo(
             local_x1 = ops.all_to_all_wait(global_x1, local_x1, local_x_handle1)
 
             # 9. Unpermute the (local) tokens returned by all-to-all communication
-            with annotate("unpermute_merge_local_tokens", "comm"):
+            with maybe_annotate("unpermute_merge_local_tokens", "comm"):
                 local_x1 = moe_unpermute_no_compile(
                     inp=local_x1,
                     row_id_map=reversed_local_x_permutation_mapping1,
@@ -311,7 +311,7 @@ def combined_forward_ep_tbo(
             routed_expert_router_aux_loss_info1,
         )
 
-        with annotate("token_count_all_to_all", "comm"):
+        with maybe_annotate("token_count_all_to_all", "comm"):
             with torch.no_grad():
                 # Pass token count information to the device on which the
                 # target expert resides.
@@ -345,7 +345,7 @@ def combined_forward_ep_tbo(
         if self.shared_experts is not None:
             shared_out1 = self.shared_experts.forward(moe_inp1)
 
-            with annotate("merge_shared", "experts"):
+            with maybe_annotate("merge_shared", "experts"):
                 if self.shared_experts_router:
                     assert local_x_global_shared_expert_weights1 is not None
                     # weighted sum of the shared experts by router weights
@@ -377,7 +377,7 @@ def combined_forward_ep_tbo(
 
         # Compute the number of tokens that will be received from each
         # device and permute the input data across the devices.
-        with annotate("sync_token_count", "comm"):
+        with maybe_annotate("sync_token_count", "comm"):
             with torch.no_grad():
                 global_batch_size_handle1.wait()
 
@@ -410,7 +410,7 @@ def combined_forward_ep_tbo(
 
         # 2. permute local tokens to be ready for all-to-all communication
 
-        with annotate("permute_local_tokens", "comm"):
+        with maybe_annotate("permute_local_tokens", "comm"):
             routing_map1 = local_x_global_routed_expert_indices1.view(
                 -1, self.routed_experts_router.top_k
             ).int()
@@ -432,11 +432,11 @@ def combined_forward_ep_tbo(
             recv_counts1 = recv_counts_cpu1.tolist()  # tensor to list
             tokens_received1 = sum(recv_counts1)
 
-    with annotate("tbo_0", "tbo"):
+    with maybe_annotate("tbo_0", "tbo"):
         global_x = ops.all_to_all_wait(permutated_local_x, global_x, global_x_handle)
 
-    with annotate("tbo_1", "tbo"):
-        with annotate("all2all", "comm"):
+    with maybe_annotate("tbo_1", "tbo"):
+        with maybe_annotate("all2all", "comm"):
             permutated_local_x1, global_x1, global_x_handle1 = ops.all_to_all_async(
                 permutated_local_x1,
                 recv_counts1,
@@ -452,7 +452,7 @@ def combined_forward_ep_tbo(
                 output_size=tokens_received1,
             )  # e.g. [0, ...,  0, ... , 3, ..., 3, 0, ...] for 4 local experts
 
-    with annotate("tbo_0", "tbo"):
+    with maybe_annotate("tbo_0", "tbo"):
         global_x = checkpointed_permute_routed_experts_unpermute_1d(
             self,
             global_x,
@@ -464,13 +464,13 @@ def combined_forward_ep_tbo(
             ),
         )
 
-    with annotate("tbo_1", "tbo"):
+    with maybe_annotate("tbo_1", "tbo"):
         global_x1 = ops.all_to_all_wait(permutated_local_x1, global_x1, global_x_handle1)
 
-    with annotate("tbo_0", "tbo"):
+    with maybe_annotate("tbo_0", "tbo"):
         # 8. reverse_all_to_all
 
-        with annotate("reverse_all_to_all", "comm"):
+        with maybe_annotate("reverse_all_to_all", "comm"):
             global_x = cast(torch.Tensor, global_x)
             global_x, local_x, local_x_handle = ops.all_to_all_async(
                 global_x,
@@ -479,7 +479,7 @@ def combined_forward_ep_tbo(
                 group=self.ep_pg,
             )
 
-    with annotate("tbo_1", "tbo"):
+    with maybe_annotate("tbo_1", "tbo"):
         global_x1 = checkpointed_permute_routed_experts_unpermute_1d(
             self,
             global_x1,
@@ -491,11 +491,11 @@ def combined_forward_ep_tbo(
             ),
         )
 
-    with annotate("tbo_0", "tbo"):
+    with maybe_annotate("tbo_0", "tbo"):
         local_x = ops.all_to_all_wait(global_x, local_x, local_x_handle)
 
         # 9. Unpermute the (local) tokens returned by all-to-all communication
-        with annotate("unpermute_merge_local_tokens", "comm"):
+        with maybe_annotate("unpermute_merge_local_tokens", "comm"):
             local_x = moe_unpermute_no_compile(
                 inp=local_x,
                 row_id_map=reversed_local_x_permutation_mapping,
@@ -512,7 +512,7 @@ def combined_forward_ep_tbo(
 
         final_out = self._res_norm_mlp(attn_res_out, mlp_out)
 
-    with annotate("tbo_1", "tbo"):
+    with maybe_annotate("tbo_1", "tbo"):
         x1_ctx = SyncedTboPendingContext(
             global_x=global_x1,
             send_counts=send_counts1,

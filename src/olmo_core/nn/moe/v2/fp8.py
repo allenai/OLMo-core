@@ -13,7 +13,7 @@ from olmo_core.kernels import (
     scaled_grouped_mm_q_fp8_weight,
 )
 
-from ._nvtx import annotate
+from ._nvtx import maybe_annotate
 
 if TYPE_CHECKING:
     from .block import MoEFusedV2TransformerBlock
@@ -144,7 +144,7 @@ def refresh_shared_rowwise_fp8_cache(block: MoEFusedV2TransformerBlock) -> None:
         reset_shared_rowwise_fp8_cache(block)
         return
 
-    with annotate("moe_rowwise_fp8_param_refresh_shared_weight_prequant", "experts"):
+    with maybe_annotate("moe_rowwise_fp8_param_refresh_shared_weight_prequant", "experts"):
         if up_weight is not None and down_weight is not None:
             up_weight.refresh_from_logical_weight(
                 block.shared_experts.w_up_gate,
@@ -197,7 +197,7 @@ def refresh_rowwise_fp8_cache(block: MoEFusedV2TransformerBlock) -> None:
 
     if block.routed_experts is not None:
         if routed_enabled:
-            with annotate("moe_rowwise_fp8_param_refresh_routed_weight_prequant", "experts"):
+            with maybe_annotate("moe_rowwise_fp8_param_refresh_routed_weight_prequant", "experts"):
                 block.routed_experts.refresh_rowwise_fp8_cache()
         else:
             block.routed_experts.invalidate_rowwise_fp8_cache()

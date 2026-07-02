@@ -24,12 +24,12 @@ _SUBSYSTEM_COLORS = {
 _DEFAULT_COLOR = "gray"
 
 
-def annotate(label: str, subsystem: str | None = None):
+def maybe_annotate(label: str, subsystem: str | None = None):
     """
     Create an nvtx range following the shared annotation convention.
 
-    Usable as either a decorator (``@annotate("MoERouter.forward", "routing")``) or a context
-    manager (``with annotate("permute", "comm"): ...``), and a no-op when nvtx isn't installed.
+    Usable as either a decorator (``@maybe_annotate("MoERouter.forward", "routing")``) or a context
+    manager (``with maybe_annotate("permute", "comm"): ...``), and a no-op when nvtx isn't installed.
 
     :param label: The range label — the qualified ``ClassName.method`` / ``module_function`` name
         for a whole callable, or a ``snake_case`` phase name for an inner block.

@@ -10,7 +10,7 @@ from ..utils import (
     moe_chunk_reorder_no_compile,
     moe_permute_1d_fused_drop_no_compile,
 )
-from ._nvtx import annotate
+from ._nvtx import maybe_annotate
 from .comm import _CombineVDevAutograd, _DispatchVDevAutograd
 from .ep_no_sync_buffers import (
     compute_ep_no_sync_rank_capacity,
@@ -108,7 +108,7 @@ def combined_forward_ep_no_sync_1d(
     num_out_tokens = local_x_global_routed_expert_indices.numel()
 
     with torch.no_grad():
-        with annotate("config_capacity", "comm"):
+        with maybe_annotate("config_capacity", "comm"):
             requested_splits = local_batch_size_per_global_routed_expert.to(dtype=torch.long)
             rank_capacity = compute_ep_no_sync_rank_capacity(self, num_out_tokens)
             allowed_splits, recv_splits_by_src_local, _drop_token_cnt = cast(
@@ -183,7 +183,7 @@ def combined_forward_ep_no_sync_1d(
     assert packed_keep_mask is not None
     assert num_kept is not None
 
-    with annotate("permute_local_tokens", "comm"):
+    with maybe_annotate("permute_local_tokens", "comm"):
         (
             permutated_local_x,
             reversed_local_x_permutation_mapping,
@@ -228,7 +228,7 @@ def combined_forward_ep_no_sync_1d(
 
     dispatch_rank_major = dispatch_out
 
-    with annotate("permute_global_tokens", "comm"):
+    with maybe_annotate("permute_global_tokens", "comm"):
         if self.routed_experts.num_local_experts == 1:
             dispatch_rank_major = dispatch_rank_major.clone()
             global_chunk_row_id_map = None
@@ -250,7 +250,7 @@ def combined_forward_ep_no_sync_1d(
         padded_batch_size_per_local_expert,
     )
 
-    with annotate("unpermute_global_tokens", "comm"):
+    with maybe_annotate("unpermute_global_tokens", "comm"):
         if self.routed_experts.num_local_experts == 1:
             global_x_rank_major = dispatch_rank_major
         else:
@@ -278,7 +278,7 @@ def combined_forward_ep_no_sync_1d(
         self.ep_pg,
     )
 
-    with annotate("unpermute_merge_local_tokens", "comm"):
+    with maybe_annotate("unpermute_merge_local_tokens", "comm"):
         combine_out_for_unpermute = (
             combine_out.clone() if buffers.combine_out_is_shared else combine_out
         )
