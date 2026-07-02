@@ -21,6 +21,7 @@ __all__ = [
     "YaRNRoPEScalingConfig",
     "RotaryEmbeddingBase",
     "RotaryEmbedding",
+    "BlockLocalRotaryEmbedding",
     "FusedRotaryEmbedding",
     "ComplexRotaryEmbedding",
 ]
@@ -42,6 +43,10 @@ class RoPEType(StrEnum):
     complex = "complex"
     """
     ➡️ :class:`ComplexRotaryEmbedding`
+    """
+    block_local = "block_local"
+    """
+    ➡️ :class:`BlockLocalRotaryEmbedding`
     """
 
 
@@ -322,6 +327,13 @@ class RoPEConfig(ModuleConfig):
     unchanged. Used by Qwen3.5 (default 0.25).
     """
 
+    block_size: Optional[int] = None
+    """
+    Only used when ``name`` is :data:`RoPEType.block_local`. The RoPE position of token ``t`` becomes
+    ``t % block_size`` so positions reset at every ``block_size``-token block (e.g. landmark blocks of
+    ``mem_freq + 1`` tokens). Required for (and only valid with) ``block_local`` RoPE.
+    """
+
     def build(
         self,
         head_size: int,
@@ -332,6 +344,12 @@ class RoPEConfig(ModuleConfig):
 
         :param head_size: The size of the attention heads.
         """
+        if (self.name == RoPEType.block_local) != (self.block_size is not None):
+            raise OLMoConfigurationError(
+                "'block_size' must be set if and only if the RoPE 'name' is 'block_local' "
+                f"(got name={self.name!r}, block_size={self.block_size!r})"
+            )
+
         kwargs = self.as_dict(exclude_none=True, recurse=False)
         kwargs.pop("name")
         kwargs.pop("no_global_rope")
@@ -340,6 +358,8 @@ class RoPEConfig(ModuleConfig):
         try:
             if self.name == "default":
                 return RotaryEmbedding(**kwargs)
+            elif self.name == "block_local":
+                return BlockLocalRotaryEmbedding(**kwargs)
             elif self.name == "fused":
                 return FusedRotaryEmbedding(**kwargs)
             elif self.name == "complex":
@@ -381,6 +401,7 @@ class RotaryEmbeddingBase(nn.Module):
     ):
         super().__init__()
         self.dim = head_size
+        self.partial_rotary_factor = partial_rotary_factor
         self.rotary_dim = int(head_size * partial_rotary_factor)
         self.theta = theta
         self.full_precision = full_precision
@@ -425,6 +446,14 @@ class RotaryEmbedding(RotaryEmbeddingBase):
         pos_sin, pos_cos = self._get_rotary_embedding(max_seq_len, device)
         return RoPEBuffers(pos_sin=pos_sin, pos_cos=pos_cos)
 
+    def _position_ids(self, seq_len: int, device: torch.device) -> torch.Tensor:
+        """
+        The RoPE position assigned to each of the first ``seq_len`` sequence indices. The default is
+        the identity (``[0, 1, ..., seq_len - 1]``); subclasses may override this to remap positions
+        (e.g. :class:`BlockLocalRotaryEmbedding` resets positions per block).
+        """
+        return torch.arange(seq_len, device=device, dtype=torch.float)
+
     def _get_rotary_embedding(
         self, seq_len: int, device: torch.device
     ) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -454,7 +483,7 @@ class RotaryEmbedding(RotaryEmbeddingBase):
                 inv_freq, attention_rescale_factor = self.scaling.compute_scaled_inv_freq(
                     theta=self.theta, dim=self.rotary_dim, device=device
                 )
-            seq = torch.arange(seq_len, device=device, dtype=torch.float)
+            seq = self._position_ids(seq_len, device)
             freqs = torch.einsum("i , j -> i j", seq, inv_freq)
             positions = torch.cat((freqs, freqs), dim=-1)
             pos_sin, pos_cos = positions.sin(), positions.cos()
@@ -576,6 +605,44 @@ class RotaryEmbedding(RotaryEmbeddingBase):
                 k_ = self._apply_rotary_pos_emb(sin_k, cos_k, k_)
 
         return q_.type_as(q), k_.type_as(k)
+
+
+class BlockLocalRotaryEmbedding(RotaryEmbedding):
+    """
+    A :class:`RotaryEmbedding` whose positions reset at every ``block_size``-token block: token ``t``
+    is assigned RoPE position ``t % block_size`` instead of ``t``, so every block reuses the same set
+    of positions ``[0, 1, ..., block_size - 1]``.
+
+    This is intended for landmark attention, where the sequence is partitioned into fixed-size blocks
+    of ``block_size = mem_freq + 1`` tokens (``mem_freq`` content tokens plus one landmark token). It
+    is a drop-in replacement for :class:`RotaryEmbedding`: only the per-index position ids differ, so
+    the cached ``pos_sin``/``pos_cos`` buffers, partial-rotary support, scaling, and the ``forward``
+    that slices those buffers are all inherited unchanged. It composes with the fast landmark kernels,
+    which only ever see Q/K *after* RoPE has been applied.
+
+    .. warning::
+        Because RoPE is relative, resetting positions per block makes the rotation between a query in
+        one block and a key in an *earlier* block depend only on their within-block offsets, not on
+        how many blocks separate them. Absolute inter-block ordering is therefore no longer encoded by
+        RoPE and must be carried by the causal mask / landmark gating.
+
+    :param block_size: The block period; positions reset every ``block_size`` tokens.
+    """
+
+    def __init__(self, *, block_size: int, **kwargs):
+        super().__init__(**kwargs)
+        if block_size < 1:
+            raise OLMoConfigurationError(f"block_size must be >= 1 (got {block_size})")
+        self.block_size = block_size
+        # Own cache namespace so these position-remapped buffers never collide with a plain
+        # RotaryEmbedding (or a different block size) sharing the same BufferCache.
+        self._cache = self._cache.with_namespace(
+            f"BlockLocalRoPE_block={block_size}_theta={self.theta}"
+            f"_partial={self.partial_rotary_factor}_scaling={repr(self.scaling)}"
+        )
+
+    def _position_ids(self, seq_len: int, device: torch.device) -> torch.Tensor:
+        return torch.arange(seq_len, device=device, dtype=torch.float) % self.block_size
 
 
 class FusedRotaryEmbedding(RotaryEmbeddingBase):
