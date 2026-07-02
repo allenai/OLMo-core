@@ -121,6 +121,50 @@ def test_tail_matches_dense_bruteforce():
     torch.testing.assert_close(tail, ref, atol=1e-4, rtol=1e-4)
 
 
+def test_tail_cp_head_slicing_matches_full(monkeypatch):
+    """Under Ulysses CP the tail runs head-parallel: after the cp2hp all-to-all each rank holds only
+    ``n_heads / cp_degree`` heads (global slice ``[rank*H : (rank+1)*H]``), while ``weight_landmark`` /
+    ``base`` stay replicated at full ``n_heads``. The forward must select this rank's parameter slice.
+
+    Compute the tail on each rank's head slice with ``cp_enabled`` and check it (a) does not raise the
+    head-size einsum mismatch the un-sliced params caused and (b) reproduces the matching slice of the
+    full-head (non-CP) tail. The other landmark variants have no such per-head param, so this guards
+    the one class that needed the fix.
+    """
+    import olmo_core.nn.attention.landmark_shared_vector as lsv
+
+    n_heads = 8
+    m = _build(n_heads=n_heads, n_kv_heads=n_heads)
+    with torch.no_grad():
+        m.weight_landmark.normal_(std=0.3)  # non-trivial per-head map
+        m.base.normal_(std=0.3)
+    T = m.block_size * 4
+    q, k, v = _qkv(m, B=2, T=T, dtype=torch.float32)
+
+    # Reference: full-head tail, CP disabled (slice is a no-op).
+    assert not m.cp_enabled
+    full = m._shared_vector_tail(q, k, v)  # (B, n_heads, T, vec)
+
+    cp_degree = 4
+    h_local = n_heads // cp_degree
+    m._cp_pg = object()  # non-None -> cp_enabled; dist.get_rank is monkeypatched per rank below
+    assert m.cp_enabled
+
+    parts = []
+    for rank in range(cp_degree):
+        monkeypatch.setattr(lsv.dist, "get_rank", lambda pg, r=rank: r)
+        h0 = rank * h_local
+        part = m._shared_vector_tail(
+            q[:, h0 : h0 + h_local], k[:, h0 : h0 + h_local], v[:, h0 : h0 + h_local]
+        )  # (B, h_local, T, vec)
+        assert part.shape == (2, h_local, T, m.vec_dim)
+        torch.testing.assert_close(part, full[:, h0 : h0 + h_local], atol=1e-4, rtol=1e-4)
+        parts.append(part)
+
+    # Concatenating the per-rank head slices (what the hp2cp all-to-all gathers) rebuilds the full tail.
+    torch.testing.assert_close(torch.cat(parts, dim=1), full, atol=1e-4, rtol=1e-4)
+
+
 def test_first_block_tail_is_base():
     """Queries in block 0 have no past block, so their entire tail is the learned base vector."""
     m = _build()
