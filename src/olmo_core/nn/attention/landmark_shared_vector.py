@@ -57,6 +57,7 @@ brute-force reference) and shared; only the ``head_dim`` output differs between 
 from typing import Optional
 
 import torch
+import torch.distributed as dist
 import torch.nn as nn
 
 from olmo_core.distributed.parallel.context_parallel import (
@@ -294,11 +295,24 @@ class SharedVectorLandmarkAttention(FastLandmarkAttention):
         scale = self.softmax_scale
         device = q.device
 
+        # Under Ulysses CP the tail runs head-parallel: after the cp2hp all-to-all this rank holds
+        # only H = n_heads / cp_degree heads -- the contiguous global slice [rank*H : (rank+1)*H]
+        # (see all_to_all_single_cp2hp). The per-head parameters are replicated at full n_heads, so
+        # select this rank's slice to match ``v``/``q``. Without CP, H == n_heads and this is a no-op.
+        if self.cp_enabled:
+            assert self._cp_pg is not None
+            h0 = dist.get_rank(self._cp_pg) * H
+            weight_landmark = self.weight_landmark[h0 : h0 + H]
+            base = self.base[h0 : h0 + H]
+        else:
+            weight_landmark = self.weight_landmark
+            base = self.base
+
         # Per-block landmark value vectors and their vec_dim codes e_B.
         mem_pos = torch.arange(Lb - 1, T, Lb, device=device)  # (nb,)
         v_lm = v[:, :, mem_pos, :]  # (B, H, nb, D)
         # e_B = v_landmark_B @ weight_landmark_h  -> (B, H, nb, vec_dim)
-        e = torch.einsum("bhnd,hde->bhne", v_lm.float(), self.weight_landmark.float())
+        e = torch.einsum("bhnd,hde->bhne", v_lm.float(), weight_landmark.float())
 
         # --- gate group 1: scores to each past block's landmark. (B, H, T, nb) ---
         k_lm = k[:, :, mem_pos, :]  # (B, H, nb, D)
@@ -331,7 +345,7 @@ class SharedVectorLandmarkAttention(FastLandmarkAttention):
         local_mass = w[..., nb:].sum(dim=-1)  # (B, H, T)
 
         tail = torch.einsum("bhtn,bhne->bhte", gate, e)  # sum_B gate_B e_B
-        tail = tail + local_mass.unsqueeze(-1) * self.base.float().view(1, H, 1, self.vec_dim)
+        tail = tail + local_mass.unsqueeze(-1) * base.float().view(1, H, 1, self.vec_dim)
         return tail
 
     # ------------------------------------------------------------------ generation
