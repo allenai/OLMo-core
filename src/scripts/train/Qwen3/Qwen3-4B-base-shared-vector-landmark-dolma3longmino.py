@@ -13,7 +13,11 @@ from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.float8 import Float8Config
 from olmo_core.internal.common import build_launch_config, get_root_dir, get_work_dir
 from olmo_core.internal.experiment import CliContext, ExperimentConfig, main
-from olmo_core.launch.beaker import BeakerLaunchConfig, OLMoCoreBeakerImage
+from olmo_core.launch.beaker import (
+    BeakerEnvVar,
+    BeakerLaunchConfig,
+    OLMoCoreBeakerImage,
+)
 from olmo_core.nn.transformer import (
     TransformerActivationCheckpointingMode,
     TransformerConfig,
@@ -89,6 +93,11 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     )
     if beaker_launch_config is not None:
         beaker_launch_config.priority = "urgent"
+        # The shared-vector tail materializes several ~1 GiB fp32 (T, nb) tensors at 64k; reduce
+        # allocator fragmentation so those transient spikes can reuse freed segments.
+        beaker_launch_config.env_vars.append(
+            BeakerEnvVar(name="PYTORCH_CUDA_ALLOC_CONF", value="expandable_segments:True")
+        )
 
     tokenizer_config = TokenizerConfig.qwen3()
 
@@ -129,7 +138,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         cp_config=TransformerContextParallelConfig.ulysses(degree=8),
         ac_config=TransformerActivationCheckpointingConfig(
             mode=TransformerActivationCheckpointingMode.budget,
-            activation_memory_budget=0.7,
+            activation_memory_budget=0.4,  # lowered from 0.7: more recompute to fit the fp32 tail
         ),
         float8_config=Float8Config(enabled=False),
         z_loss_multiplier=1e-5,
