@@ -89,7 +89,7 @@ NONSELECTED_LANDMARK_MASS = 0.1  # alpha for compressive attention
 
 # Context parallel (Ulysses) degree. Qwen3-4B: n_heads=32, n_kv_heads=8 -> CP=8 splits both cleanly.
 CP_DEGREE = 8
-NUM_NODES = 1  # 2 nodes x 8 GPUs = 16 GPUs; cp_degree=8 -> NUM_NODES DP replicas
+NUM_NODES = 2  # 2 nodes x 8 GPUs = 16 GPUs; cp_degree=8 -> NUM_NODES DP replicas (2 windows/step)
 
 # ---------------------------------------------------------------------------
 # Data (weka) -- ladder40k (rungs up to 32k context; max doc ~40k tokens).
@@ -132,8 +132,10 @@ CONTRA_FRAC = max(0.0, 1.0 - CPT_FRAC - (NQ_FRAC + OOLONG_FRAC + RERANK_FRAC + O
 # Optimization / budget
 # ---------------------------------------------------------------------------
 LR = 1e-5
-TARGET_STEPS = 1465
-GLOBAL_BATCH_SIZE = NUM_NODES * SEQUENCE_LENGTH  # one window per CP=8 DP replica/step (grad-accum 1)
+# 733 steps x 2 DP windows/step = 1466 windows (~= the 1465-window budget), in ~half the wall-clock of
+# 1465 steps @ 1 node. Same data seen; matches the dense run's window budget.
+TARGET_STEPS = 733
+GLOBAL_BATCH_SIZE = NUM_NODES * SEQUENCE_LENGTH  # NUM_NODES windows per step (CP=8 DP replicas); grad-accum 1
 TARGET_TOKENS = GLOBAL_BATCH_SIZE * TARGET_STEPS
 MAX_STEPS = max(1, round(TARGET_TOKENS / GLOBAL_BATCH_SIZE))
 

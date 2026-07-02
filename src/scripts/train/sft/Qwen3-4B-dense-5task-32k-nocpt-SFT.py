@@ -115,10 +115,12 @@ CONTRA_FRAC = max(0.0, SFT_BUDGET - (NQ_FRAC + OOLONG_FRAC + RERANK_FRAC + OUTLI
 # Optimization / budget
 # ---------------------------------------------------------------------------
 LR = 1e-5
-TARGET_STEPS = 1465
+# 733 steps x 2 DP windows/step = 1466 windows (~= the 1465-window budget), in ~half the wall-clock of
+# 1465 steps. Matches the compressive run's window budget for a fair comparison.
+TARGET_STEPS = 733
 GLOBAL_BATCH_SIZE = (
     NUM_NODES * SEQUENCE_LENGTH
-)  # one window per CP=8 DP replica/step (grad-accum 1)
+)  # NUM_NODES windows per step (CP=8 DP replicas); grad-accum 1
 TARGET_TOKENS = GLOBAL_BATCH_SIZE * TARGET_STEPS
 MAX_STEPS = max(1, round(TARGET_TOKENS / GLOBAL_BATCH_SIZE))
 
