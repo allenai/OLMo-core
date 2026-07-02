@@ -54,6 +54,12 @@ def main():
                          "500 questions/answers and only the distractor documents vary (read entirely "
                          "from $EVAL500_ROOT/<task>/, i.e. point EVAL500_ROOT at the v2 bundle). "
                          "v1 = original independently-generated per-rung eval files.")
+    ap.add_argument("--xlong", action="store_true",
+                    default=os.environ.get("LADDER_XLONG") == "1",
+                    help="OPT-IN: append the ultra-long 64k/128k/256k rungs (built offline by "
+                         "scripts/data/build_xlong_rungs.py) to each task's v2 ladder. OFF by "
+                         "default; also honors env LADDER_XLONG=1. Auto-raises --max-length to fit "
+                         "the largest selected xlong rung (else long prompts get truncated).")
     ap.add_argument("--skip-ruler", action="store_true")
     ap.add_argument("--skip-gen", action="store_true",
                     help="skip held-out retrieval generalization probes")
@@ -66,6 +72,15 @@ def main():
                          "<out>.generations.jsonl for error inspection. On by default; --no-save-generations to skip.")
     args = ap.parse_args()
     os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+    # xlong opt-in: the runner truncates prompts to (max_length - max_new_tokens), so max_length
+    # MUST cover the largest selected ultra-long rung, and it feeds the gen budget built below.
+    if args.xlong:
+        _XL_TOK = {"64k": 65536, "128k": 131072, "256k": 262144}
+        _sel = set(args.ladder_rungs.split(",")) if args.ladder_rungs else set(_XL_TOK)
+        _need = max((t for r, t in _XL_TOK.items() if r in _sel), default=0)
+        if _need and args.max_length < _need + 1024:
+            print(f"[xlong] raising --max-length {args.max_length} -> {_need + 1024}", flush=True)
+            args.max_length = _need + 1024
     if args.root:
         os.chdir(args.root)
 
@@ -318,6 +333,24 @@ def main():
                 ("16k", f"{E5}/contra/contradiction_eval_fever_plain_n820_k3.jsonl"),
                 ("32k", f"{E5}/contra/contradiction_eval_fever_plain_n1642_k3.jsonl")],
         }
+        # ---- OPT-IN ultra-long rungs (64k/128k/256k), OFF by default (v2 only) ----
+        # Resolved by size-labelled glob so the calibrated doc-count in the filename can drift
+        # (rebuild with a different --count/tokenizer) without editing this file.
+        if args.xlong and args.ladder_version == "v2":
+            import glob as _glob
+            _XL = {
+                "contradiction": ("contra",  "contradiction_eval_pubmed_both_n*_k3_xlong_{s}.jsonl"),
+                "nq":            ("nq",       "nq_validation_k*_xlong_{s}.jsonl"),
+                "outlier":       ("outlier",  "outlier_wiki100w_n*_k3_eval_xlong_{s}.jsonl"),
+            }
+            for _t, (_sub, _pat) in _XL.items():
+                if _t not in LADDERS:
+                    continue
+                for _s in ("64k", "128k", "256k"):
+                    _hits = sorted(_glob.glob(os.path.join(E5, _sub, _pat.format(s=_s))))
+                    if _hits:
+                        LADDERS[_t].append((_s, _hits[0]))
+            print(f"[xlong] appended ultra-long rungs where files exist under {E5}", flush=True)
         LSPEC = {
             "contradiction": ("contradiction", _eval_contradiction, "f1", 200),
             "nq": ("retrieval", _eval_retrieval, "f1", 64),

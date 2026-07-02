@@ -50,6 +50,12 @@ else
   EVAL500="${EVAL500:-$PRASANNS/_eval_bundle_eval500}"
   VFLAG=""
 fi
+# ---- OPT-IN ultra-long rungs (OFF by default). LADDER_XLONG=1 appends 64k/128k/256k for the
+# doc-pool tasks (contra|nq|outlier), forces bs=1, and raises MAX_LENGTH so prompts aren't truncated.
+LADDER_XLONG="${LADDER_XLONG:-0}"
+XLONG_RUNGS="${XLONG_RUNGS:-64k,128k}"   # 256k is huge + needs an 80GB GPU -> opt in explicitly
+XLFLAG=""
+[ "$LADDER_XLONG" = "1" ] && XLFLAG="--xlong"
 RESULTS="${RESULTS:-$PRASANNS/_eval_results}"
 RUN_DIR="$PRASANNS/$RUN"
 # Where the per-task result JSONs land. Default = the run's own eval/ dir under prasanns/<RUN>.
@@ -163,11 +169,24 @@ else
     *) echo "ERROR unknown TASK=$TASK"; exit 2 ;;
   esac
 fi
+if [ "$LADDER_XLONG" = "1" ] && [ "$LADDER_VERSION" = "v2" ]; then
+  case "$TASK" in
+    contra|nq|outlier)
+      RUNGS="$RUNGS,$XLONG_RUNGS"; BATCH_SIZE=1
+      case ",$XLONG_RUNGS," in
+        *,256k,*) MAX_LENGTH=263168 ;;
+        *,128k,*) MAX_LENGTH=132096 ;;
+        *)        MAX_LENGTH=66560  ;;
+      esac
+      echo "    [xlong] RUNGS=$RUNGS MAX_LENGTH=$MAX_LENGTH BATCH_SIZE=$BATCH_SIZE" ;;
+    *) echo "    [xlong] supports contra|nq|outlier only; TASK=$TASK unchanged." ;;
+  esac
+fi
 OUT="$EVAL_OUT_DIR/${TASK}_multirung.json"
 echo "=== EVAL $TASK rungs=$RUNGS ladder=$LADDER_VERSION -> $OUT ($(date -u '+%T')Z) ==="
 $TR --model-path "$CKPT" --out "$OUT" --tokenizer "$TOKENIZER" --max-length "$MAX_LENGTH" \
     --root "$BUNDLE" --max-test-samples "$MAX_TEST" --batch-size "$BATCH_SIZE" --skip-ruler --skip-gen \
-    --ladder $VFLAG --ladder-tasks "$LTASK" --ladder-rungs "$RUNGS" $EXTRA
+    --ladder $VFLAG $XLFLAG --ladder-tasks "$LTASK" --ladder-rungs "$RUNGS" $EXTRA
 rc=$?
 if [ -f "$OUT" ]; then
   cp "$OUT" "$RESULTS/${RUN}_${TASK}_multirung.json" 2>/dev/null || true
