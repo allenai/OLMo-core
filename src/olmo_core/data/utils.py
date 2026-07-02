@@ -1,5 +1,6 @@
 import functools as ft
 import gzip
+import logging
 import math
 import os
 import random
@@ -30,14 +31,20 @@ import torch.nn.functional as F
 from olmo_core.aliases import PathOrStr
 from olmo_core.io import (
     add_cached_path_clients,
+    file_exists,
     get_bytes_range,
     get_file_size,
+    get_parent,
     is_url,
+    join_path,
     resource_path,
 )
 from olmo_core.utils import capped_powers_of_2
 
-from .types import LongDocStrategy
+from .types import DocumentBoundaryMode, LongDocStrategy
+
+
+log = logging.getLogger(__name__)
 
 
 def split_batch(batch: Dict[str, Any], num_microbatch_instances: int) -> List[Dict[str, Any]]:
@@ -167,11 +174,60 @@ def write_document_indices(data_path: Path, *, dtype, eos_token_id: int) -> Path
     return metadata_path
 
 
+def get_document_boundary_metadata_path(data_path: PathOrStr) -> PathOrStr:
+    """
+    Get the sibling ``.csv.gz`` metadata path corresponding to a token ID source file.
+    """
+    metadata_filename = os.path.basename(str(data_path)).replace(".npy", ".csv.gz")
+    return join_path(get_parent(data_path), metadata_filename)
+
+
+def resolve_document_boundary_mode(
+    paths: Sequence[PathOrStr],
+    document_boundaries: DocumentBoundaryMode = DocumentBoundaryMode.auto,
+) -> Tuple[DocumentBoundaryMode, Tuple[PathOrStr, ...]]:
+    """
+    Resolve the effective document-boundary mode for a collection of sources.
+
+    Returns the effective mode together with the corresponding metadata paths.
+    """
+    metadata_paths = tuple(get_document_boundary_metadata_path(path) for path in paths)
+
+    if document_boundaries == DocumentBoundaryMode.tokenizer:
+        return DocumentBoundaryMode.tokenizer, metadata_paths
+
+    metadata_exists = tuple(file_exists(path) for path in metadata_paths)
+
+    if document_boundaries == DocumentBoundaryMode.auto:
+        if all(metadata_exists):
+            return DocumentBoundaryMode.metadata, metadata_paths
+        elif not any(metadata_exists):
+            return DocumentBoundaryMode.tokenizer, metadata_paths
+        else:
+            present = [str(path) for path, exists in zip(metadata_paths, metadata_exists) if exists]
+            missing = [str(path) for path, exists in zip(metadata_paths, metadata_exists) if not exists]
+            raise RuntimeError(
+                "Found document boundary metadata for only some source files while "
+                f"document_boundaries='{DocumentBoundaryMode.auto}'. Present: {present}. Missing: {missing}."
+            )
+
+    if document_boundaries == DocumentBoundaryMode.metadata:
+        missing = [str(path) for path, exists in zip(metadata_paths, metadata_exists) if not exists]
+        if missing:
+            raise RuntimeError(
+                f"document_boundaries='{DocumentBoundaryMode.metadata}' requires metadata for every source, "
+                f"but these files are missing: {missing}"
+            )
+        return DocumentBoundaryMode.metadata, metadata_paths
+    return DocumentBoundaryMode.tokenizer, metadata_paths
+
+
 def iter_document_indices(
     data_path: PathOrStr,
     *,
     local_cache: Optional[PathOrStr] = None,
     use_array_if_local: Optional[bool] = None,
+    document_boundaries: DocumentBoundaryMode = DocumentBoundaryMode.tokenizer,
     eos_token_id: Optional[int] = None,
     bos_token_id: Optional[int] = None,
     dtype=None,
@@ -185,11 +241,54 @@ def iter_document_indices(
     :param use_array_if_local: Use the numpy data array to find the document indices if the array
         is on the local filesystem and ``eos_token_id`` and ``dtype`` are provided.
         This can be a lot faster. Otherwise relies on the metadata file.
+        Ignored when ``document_boundaries='metadata'`` or when ``document_boundaries='auto'``
+        resolves to metadata.
+    :param document_boundaries: How to resolve document boundaries.
     :param eos_token_id: The EOS token ID.
         Required to use the local data array instead of the metadata file.
     :param dtype: The data type of the numpy data array.
         Required to use the local data array instead of the metadata file.
     """
+    document_boundaries, metadata_paths = resolve_document_boundary_mode(
+        (data_path,), document_boundaries=document_boundaries
+    )
+
+    if document_boundaries == DocumentBoundaryMode.metadata:
+        metadata_path = metadata_paths[0]
+        metadata_filename = os.path.basename(str(metadata_path))
+        log.info(
+            "Using document boundary metadata for '%s' from '%s'",
+            data_path,
+            metadata_filename,
+        )
+        metadata_path = resource_path(
+            get_parent(data_path),
+            metadata_filename,
+            local_cache=local_cache,
+        )
+
+        total_tokens: Optional[int] = None
+        if dtype is not None:
+            total_tokens = get_file_size(data_path) // dtype(0).itemsize
+
+        with gzip.open(metadata_path, "rt") as f:
+            for line in f:
+                start_index_str, end_index_str, *_ = line.split(",")
+                start_index, end_index = int(start_index_str), int(end_index_str)
+                if total_tokens is not None:
+                    if start_index >= total_tokens:
+                        raise RuntimeError(
+                            f"Document start index {start_index:,d} from metadata file "
+                            f"for source '{data_path}' with {total_tokens:,d} tokens is out-of-bounds"
+                        )
+                    if end_index > total_tokens:
+                        raise RuntimeError(
+                            f"Document end index {end_index:,d} from metadata file "
+                            f"for source '{data_path}' with {total_tokens:,d} tokens is out-of-bounds"
+                        )
+                yield start_index, end_index
+        return
+
     if use_array_if_local is None:
         if eos_token_id is not None and dtype is not None and not is_url(data_path):
             use_array_if_local = True
@@ -214,10 +313,15 @@ def iter_document_indices(
             yield start_idx, end_idx
             start_idx = end_idx
     else:
-        metadata_filename = os.path.basename(data_path).replace(".npy", ".csv.gz")
+        metadata_filename = os.path.basename(str(get_document_boundary_metadata_path(data_path)))
+        log.info(
+            "Using tokenizer EOS/BOS boundaries for '%s'%s",
+            data_path,
+            " via local array scan" if not is_url(data_path) and use_array_if_local else "",
+        )
         try:
             metadata_path = resource_path(
-                os.path.dirname(data_path),
+                get_parent(data_path),
                 metadata_filename,
                 local_cache=local_cache,
             )
@@ -256,6 +360,7 @@ def iter_document_indices_with_max_sequence_length(
     *,
     local_cache: Optional[PathOrStr] = None,
     use_array_if_local: Optional[bool] = None,
+    document_boundaries: DocumentBoundaryMode = DocumentBoundaryMode.tokenizer,
     eos_token_id: Optional[int] = None,
     bos_token_id: Optional[int] = None,
     dtype=None,
@@ -269,6 +374,7 @@ def iter_document_indices_with_max_sequence_length(
         data_path,
         local_cache=local_cache,
         use_array_if_local=use_array_if_local,
+        document_boundaries=document_boundaries,
         eos_token_id=eos_token_id,
         bos_token_id=bos_token_id,
         dtype=dtype,
@@ -286,12 +392,18 @@ def iter_document_indices_with_max_sequence_length(
 
 
 def get_document_indices(
-    data_path: PathOrStr, local_cache: Optional[PathOrStr] = None
+    data_path: PathOrStr,
+    local_cache: Optional[PathOrStr] = None,
+    document_boundaries: DocumentBoundaryMode = DocumentBoundaryMode.tokenizer,
 ) -> List[Tuple[int, int]]:
     """
     Like :func:`iter_document_indices` but returns a list.
     """
-    return list(iter_document_indices(data_path, local_cache=local_cache))
+    return list(
+        iter_document_indices(
+            data_path, local_cache=local_cache, document_boundaries=document_boundaries
+        )
+    )
 
 
 def load_array_slice(
@@ -543,6 +655,7 @@ def segment_documents_into_instances(
         Type[np.uint8], Type[np.uint16], Type[np.uint32], Type[np.uint64]
     ] = np.uint32,
     bos_token_id: Optional[int] = None,
+    document_boundaries: DocumentBoundaryMode = DocumentBoundaryMode.tokenizer,
     sample: Optional[Tuple[int, int]] = None,
 ) -> Tuple[int, int]:
     """
@@ -557,7 +670,11 @@ def segment_documents_into_instances(
     idx_gen = (
         idx
         for start_idx, end_idx in iter_document_indices(
-            path, eos_token_id=eos_token_id, bos_token_id=bos_token_id, dtype=dtype
+            path,
+            document_boundaries=document_boundaries,
+            eos_token_id=eos_token_id,
+            bos_token_id=bos_token_id,
+            dtype=dtype,
         )
         for idx in (start_idx, start_idx + min(end_idx - start_idx, max_sequence_length))
     )
@@ -888,6 +1005,7 @@ def pack_documents_into_instances(
     eos_token_id: int,
     dtype: Union[Type[np.uint8], Type[np.uint16], Type[np.uint32], Type[np.uint64]],
     bos_token_id: Optional[int] = None,
+    document_boundaries: DocumentBoundaryMode = DocumentBoundaryMode.tokenizer,
     indices_dtype: Union[
         Type[np.uint8], Type[np.uint16], Type[np.uint32], Type[np.uint64]
     ] = np.uint64,
@@ -924,6 +1042,7 @@ def pack_documents_into_instances(
             for start_idx, end_idx in iter_document_indices_with_max_sequence_length(
                 path,
                 max_sequence_length,
+                document_boundaries=document_boundaries,
                 eos_token_id=eos_token_id,
                 bos_token_id=bos_token_id,
                 dtype=dtype,

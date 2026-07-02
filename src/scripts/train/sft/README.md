@@ -63,7 +63,7 @@ uv sync --extra beaker --extra transformers
 
     > NOTE: This script uses GPUs to ensure sufficient CPU resources for large-scale tokenization. The chat template `olmo123` is a placeholder—the chat template is loaded from the tokenizer in the command.
 
-    *Be careful with your choice of chat template!* It is highly recommended to use the `olmo` chat template for tokenization. Olmo-core uses `[eos]` tokens to find document boundaries, and the `olmo` chat template uses a single `eos` token to mark the end of a conversation, enabling document packing to work correctly.
+    *Be careful with your choice of chat template!* When the tokenized dataset includes sibling `.csv.gz` metadata files from the upstream conversion pipeline, Olmo-core will use that metadata to recover conversation boundaries during packing. This means chat templates such as Qwen's, where the tokenizer EOS can appear at message boundaries, no longer require overriding the tokenizer EOS just to preserve conversation boundaries. The `olmo` chat template remains a safe default, but it is no longer required for this reason.
 
     Download the tokenizer to your local filesystem (e.g., Weka at AI2) before launching the tokenization script. This avoids repeated downloads and network latency during processing. The example above demonstrates this pattern with `huggingface-cli download`.
 

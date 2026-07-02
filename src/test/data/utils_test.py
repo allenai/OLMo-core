@@ -1,9 +1,11 @@
+import gzip
 from collections import namedtuple
 
 import numpy as np
 import pytest
 import torch
 
+from olmo_core.data import DocumentBoundaryMode
 from olmo_core.data.utils import (
     InstancePacker,
     SegmentTree,
@@ -63,6 +65,36 @@ def test_iter_document_indices(tmp_path):
     assert list(
         iter_document_indices(data_path, eos_token_id=0, dtype=np.uint16, use_array_if_local=True)
     ) == [(0, 9), (9, len(data))]
+
+
+def test_iter_document_indices_prefers_metadata_over_local_eos_scan(tmp_path):
+    data = [1, 0, 2, 0, 3, 0]
+    data_path = tmp_path / "data.npy"
+    mmap = np.memmap(data_path, mode="w+", dtype=np.uint16, shape=(len(data),))
+    mmap[:] = data
+    mmap.flush()
+
+    with gzip.open(data_path.with_suffix(".csv.gz"), "wt") as f:
+        f.write(f"0,{len(data)}\n")
+
+    assert list(
+        iter_document_indices(
+            data_path,
+            document_boundaries=DocumentBoundaryMode.auto,
+            eos_token_id=0,
+            dtype=np.uint16,
+            use_array_if_local=True,
+        )
+    ) == [(0, len(data))]
+    assert list(
+        iter_document_indices(
+            data_path,
+            document_boundaries=DocumentBoundaryMode.tokenizer,
+            eos_token_id=0,
+            dtype=np.uint16,
+            use_array_if_local=True,
+        )
+    ) == [(0, 2), (2, 4), (4, 6)]
 
 
 @pytest.mark.parametrize("bos_token_id, eos_token_id", [(98, 99), (99, 99)])
