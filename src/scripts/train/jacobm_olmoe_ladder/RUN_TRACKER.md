@@ -1,6 +1,6 @@
 # Ladder Run Tracker
 
-Last updated: 2026-07-02 03:10 UTC.
+Last updated: 2026-07-02 15:50 UTC.
 
 This table is a scan-friendly status matrix for planned ladder cells. It is separate from `RUNS.md` (chronological launch/status log) and `PLOTTED_RESULTS.md` (finished-only plotted rows and losses).
 
@@ -46,7 +46,7 @@ Bounded status pass on 2026-07-01 05:00 UTC checked only runs that were previous
 | Run(s) | State | Latest timestamp UTC | Beaker | Notes |
 | --- | --- | --- | --- | --- |
 | `int-810m-cx{1,2,4,8}-intw256e8k-baseline-LR-r1` | queued/created | created 2026-07-02 06:18-06:19 | https://beaker.org/ex/01KWGQP0NGMXDEN2PBRGAXJZ7R | 810M wide integration promoted single points on Titan urgent, compile-on. Cx1 `6e-4`, Cx2 `5.6e-4`, Cx4/Cx8 `4e-4`; GBS seq 32/48/64/96; GPUs 8/8/8/8; MB 4/2/4/4. Beaker IDs: `01KWGQP0...`, `01KWGQPD...`, `01KWGQPR...`, `01KWGQQ4...`. |
-| `int-810m-cx{1,2,4,8}-intd256e8k-baseline-LR-r1` | queued/created | created 2026-07-02 06:19-06:20 | https://beaker.org/ex/01KWGQQVD0TE5ZY5K5T05GEYAK | 810M deep integration promoted single points on Titan urgent, compile-on. Cx1 `6e-4`, Cx2 `5.6e-4`, Cx4/Cx8 `4e-4`; GBS seq 32/48/64/96; GPUs 8/8/8/8; MB 4/2/4/4. Beaker IDs: `01KWGQQV...`, `01KWGQR7...`, `01KWGQRJ...`, `01KWGQRX...`. |
+| `int-810m-cx{1,2,4,8}-intd256e8k-baseline-LR-r1` | queued/created | Cx2/Cx4/Cx8 requeued 2026-07-02 15:43 | https://beaker.org/ex/01KWGQQVD0TE5ZY5K5T05GEYAK | 810M deep integration promoted single points on Titan urgent, compile-on. Cx1 `6e-4`, Cx2 `5.6e-4`, Cx4/Cx8 `4e-4`; GBS seq 32/48/64/96; GPUs 8/8/8/8; MB 4/2/4/4. Original queued Cx2/Cx4/Cx8 were stopped temporarily to unblock eval smoke testing, then relaunched with the same names/settings. Current Beaker IDs: Cx1 `01KWGQQVD0TE5ZY5K5T05GEYAK`; Cx2 `01KWHQZQZ811104C16PJ4GTWG7`; Cx4 `01KWHR02WQ7S4FCQ77WJNFSA5S`; Cx8 `01KWHR0DANF34FXQ236WKHHGMM`. |
 | `int-480m-cx{1,2,4,8}-intw256e8k-baseline-LR-r1` | queued/created | created 2026-07-01 05:37-05:38 | https://beaker.org/ex/01KWE2XDE9NATMWCWKAH9X29JT | 480M wide integration promoted single points on Titan urgent, compile-on. Cx1 `1.2e-3`, Cx2 `9e-4`, Cx4/Cx8 `8e-4`; GBS seq 32/48/64/96; GPUs 4/4/4/8; MB 4 throughout. Beaker IDs: `01KWE2XDE...`, `01KWE2XSK...`, `01KWE2Y61...`, `01KWE2YHF...`. |
 | `int-275m-cx1-intw256e8k-lr8e-4-r1` | run | restarted attempt started 2026-07-01 02:47 | https://beaker.org/ex/01KWDDW61H689812K3DWHWH97W | Original attempt exited 1 at 2026-06-30 23:51; user restarted in-place and fresh attempt is running. |
 | `int-275m-cx1-intw256e8k-lr1.6e-3-r1` | done | finalized 2026-07-01 02:39 | https://beaker.org/ex/01KWDDWKR6E5ZGKGE0114WM851 | Wide integration Cx1 mid LR finished cleanly and is plotted from tail history. |

@@ -1628,3 +1628,24 @@ priority `urgent`, and `--no-pre-train-checkpoint`.
 | `int-275m-cx4-intw256e8k-lr4e-4-r1` | `wide_256e8k` | 4 | 4e-4 | 64 | 4 | 8 | https://beaker.org/ex/01KWFRX0XC1823E3F0NG4VV9F4 |
 | `int-275m-cx8-intw256e8k-lr4e-4-r1` | `wide_256e8k` | 8 | 4e-4 | 96 | 8 | 4 | https://beaker.org/ex/01KWFRYPK82AC42HWXR0HNRE3G |
 
+
+## 2026-07-02 Eval Smoke Backend Follow-up and 810M Deep Requeue
+
+Tried several OLMoBase smoke-test variants against the converted baseline 275M
+Cx1 HF checkpoint. The checkpoint and HF model code load correctly, but fast
+vLLM eval is currently blocked by the eval image/backend stack: default vLLM hits
+a FlashInfer JIT path that requires missing `nvcc`; the explicit FlashAttention
+path starts quickly but crashes with a `quack`/`cutlass` `ThrMma` attribute error;
+SDPA is not registered; Triton/direct backend smoke attempts hung during provider
+initialization; and HF provider works but is far too slow (~0.5 items/sec). Full
+eval sweeps remain paused until the fast vLLM path is fixed.
+
+To unblock the eval smoke queue, the created-only 810M deep integration Cx2/Cx4/Cx8
+jobs were temporarily stopped. After the eval path was diagnosed, those same cells
+were relaunched on Titan urgent with compile on and the same training settings:
+
+| Name | Cx | LR | GBS seq | GPUs | MB | Beaker |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| `int-810m-cx2-intd256e8k-lr5.6e-4-r1` | 2 | 5.6e-4 | 48 | 8 | 2 | https://beaker.org/ex/01KWHQZQZ811104C16PJ4GTWG7 |
+| `int-810m-cx4-intd256e8k-lr4e-4-r1` | 4 | 4e-4 | 64 | 8 | 4 | https://beaker.org/ex/01KWHR02WQ7S4FCQ77WJNFSA5S |
+| `int-810m-cx8-intd256e8k-lr4e-4-r1` | 8 | 4e-4 | 96 | 8 | 4 | https://beaker.org/ex/01KWHR0DANF34FXQ236WKHHGMM |

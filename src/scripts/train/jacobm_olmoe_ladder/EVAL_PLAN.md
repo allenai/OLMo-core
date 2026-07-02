@@ -230,3 +230,32 @@ Launcher added in the olmo-eval checkout:
   files be the only source of truth?
 - Should converted HF checkpoints include a copy of the exact converter git ref
   or a small `conversion_manifest.json` inside each checkpoint directory?
+
+## 2026-07-02 Eval Throughput / Backend Follow-up
+
+The converted baseline HF checkpoint loads correctly and can run olmo-eval, but
+we should not launch the full eval batch until the fast vLLM backend is fixed in
+the eval image/package stack.
+
+Smoke results:
+
+- Default vLLM failed because FlashInfer JIT tried to call
+  `/usr/local/cuda/bin/nvcc`, which is not present in the image.
+- Setting `VLLM_ATTENTION_BACKEND=FLASH_ATTN` did not affect vLLM 0.19.1 in this
+  image; it still failed through the FlashInfer/nvcc path.
+- Passing `attention_config.backend=FLASH_ATTN` and `enforce_eager=true` got the
+  provider running quickly and started scoring around 280-325 items/sec, but then
+  crashed in `quack.activation` / `vllm_flash_attn` with
+  `AttributeError: module 'cutlass.cute.core' has no attribute 'ThrMma'`.
+- `attention_config.backend=TORCH_SDPA` failed because that backend was not
+  registered in this vLLM build.
+- `attention_config.backend=TRITON_ATTN` and the direct provider kwarg
+  `attention_backend=FLASH_ATTN` both hung during provider initialization/logging
+  rather than producing a usable smoke.
+- HF provider with 2 GPUs worked functionally, but processed only about
+  0.5 items/sec on the OLMoBase suite, so it is too slow for the intended sweep.
+
+Conclusion: conversion/checkpoint correctness is not the blocker; the blocker is
+finding or building an eval image where vLLM can use a fast attention backend on
+B200/B300 without the FlashInfer nvcc requirement or the quack/cutlass mismatch.
+Keep the full 275M eval sweep paused until that path is resolved.
