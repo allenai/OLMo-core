@@ -11,6 +11,7 @@ from .checkpointing import is_checkpoint_recomputing
 
 if TYPE_CHECKING:
     from olmo_core.nn.ddp.block import OLMoDDPTransformerBlock
+    from olmo_core.train.common import ReduceType
 
 try:
     _torch_compile_disable = torch.compiler.disable
@@ -182,11 +183,6 @@ def build_rowwise_route_maps(
         self.num_local_routed_experts,
         rounding_mode="floor",
     )
-    dst_local_expert = torch.remainder(
-        safe_experts,
-        self.num_local_routed_experts,
-    )
-
     prefix_by_source = torch.cumsum(keep_matrix, dim=0) - keep_matrix
     src_rank = get_rank(self.ep_pg)
     send_base_by_dest_local = prefix_by_source[src_rank]
@@ -199,38 +195,28 @@ def build_rowwise_route_maps(
         local_expert_base_by_dest + send_base_by_dest_local
     ).reshape(-1)
 
-    # Compute stable in-bucket positions without argsort. torch.argsort lowers
-    # through tuple-returning aten.sort, which AOTAutograd cannot partition when
-    # compiled rowwise EP is combined with recompute and stream control deps.
-    #
-    # Keep the lowering 1-D per expert: a single wide [routes, experts] equality
-    # matrix currently trips Inductor Triton codegen in the full rowwise graph.
-    pos_in_bucket = torch.zeros_like(bucket_ids)
-    keep_limits = torch.zeros_like(bucket_ids)
-    base_rows = torch.zeros_like(bucket_ids)
+    # Compute stable in-expert route positions without argsort and without a
+    # per-expert Python loop. Scatter each route into a sparse [expert, route]
+    # marker matrix, prefix-sum along route order, then gather each route's
+    # prefix. The extra invalid bucket keeps dropped/invalid routes masked while
+    # preserving dense indexing.
+    route_positions = torch.arange(num_routes, device=routing_map.device, dtype=torch.long)
+    flat_bucket_idx = bucket_ids * num_routes + route_positions
+    bucket_marks = torch.zeros(
+        (expert_count + 1) * num_routes,
+        device=routing_map.device,
+        dtype=torch.long,
+    )
+    bucket_marks.scatter_(0, flat_bucket_idx, 1)
+    bucket_prefix = torch.cumsum(
+        bucket_marks.view(expert_count + 1, num_routes),
+        dim=1,
+        dtype=torch.long,
+    ).reshape(-1)
+    pos_in_bucket = bucket_prefix.index_select(0, flat_bucket_idx) - 1
 
-    # Keep this as a static Python loop over experts. A sort/scatter formulation
-    # produces tuple-returning ops that have been fragile under compiled rowwise
-    # EP with recompute, while a wide one-hot [routes, experts] cumsum has
-    # tripped Inductor codegen in the full graph.
-    for expert_id in range(expert_count):
-        expert_mask = bucket_ids == expert_id
-        expert_pos = torch.cumsum(
-            expert_mask.to(dtype=torch.long),
-            dim=0,
-            dtype=torch.long,
-        ) - 1
-        pos_in_bucket = torch.where(expert_mask, expert_pos, pos_in_bucket)
-        keep_limits = torch.where(
-            expert_mask,
-            allowed_splits_i64[expert_id],
-            keep_limits,
-        )
-        base_rows = torch.where(
-            expert_mask,
-            base_rows_by_expert[expert_id],
-            base_rows,
-        )
+    keep_limits = allowed_splits_i64.index_select(0, safe_experts)
+    base_rows = base_rows_by_expert.index_select(0, safe_experts)
     kept_mask = valid_mask & (pos_in_bucket < keep_limits)
 
     dst_rows_all = base_rows + pos_in_bucket
