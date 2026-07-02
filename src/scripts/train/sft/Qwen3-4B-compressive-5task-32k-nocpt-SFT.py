@@ -132,7 +132,9 @@ CONTRA_FRAC = max(0.0, 1.0 - CPT_FRAC - (NQ_FRAC + OOLONG_FRAC + RERANK_FRAC + O
 # Optimization / budget
 # ---------------------------------------------------------------------------
 LR = 1e-5
-TARGET_STEPS = 1465
+# ~700M training tokens: 8550 steps x 2 DP windows x 40960 = 700M tokens (~39% of the 1.81B SFT mix),
+# ~5.8h on jupiter H100 (~2.45s/step). Token-matched to the dense run.
+TARGET_STEPS = 8550
 GLOBAL_BATCH_SIZE = NUM_NODES * SEQUENCE_LENGTH  # NUM_NODES windows per step (CP=8 DP replicas); grad-accum 1
 TARGET_TOKENS = GLOBAL_BATCH_SIZE * TARGET_STEPS
 MAX_STEPS = max(1, round(TARGET_TOKENS / GLOBAL_BATCH_SIZE))
