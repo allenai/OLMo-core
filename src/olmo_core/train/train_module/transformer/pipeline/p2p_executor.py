@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from collections import defaultdict
-import logging
 import os
 from typing import Any, Iterable, Optional
 
@@ -10,8 +9,6 @@ import torch
 import torch.distributed as dist
 
 from .p2p_transport import NCCLRMAPipelineP2PTransport, P2PKey, rma_group_hostnames
-
-logger = logging.getLogger(__name__)
 
 KeyedP2POp = tuple[P2PKey, str, Any]
 PendingP2PEntry = tuple[Any, Any, str, int]
@@ -260,16 +257,12 @@ def build_p2p_executor(
     if backend in {"nccl_rma", "nccl_rma_ack"}:
         hostnames = rma_group_hostnames(stages[0].p2p_group)
         if len(hostnames) > 1:
-            logger.warning(
-                "p2p_backend=%r requested, but NCCL host-enqueued RMA is not "
+            hosts = sorted(hostnames)
+            raise RuntimeError(
+                f"p2p_backend={backend} requested, but NCCL host-enqueued RMA is not "
                 "supported for inter-node communicators in this environment "
-                "(hosts=%s). Falling back to p2p_backend=\"nccl\".",
-                backend,
-                sorted(hostnames),
+                f"(hosts={hosts})."
             )
-            for stage in stages:
-                stage.p2p_backend = "nccl"
-            return TorchDistP2PExecutor(rank=rank)
         return NCCLRMAP2PExecutor(
             backend=backend,
             rank=rank,
