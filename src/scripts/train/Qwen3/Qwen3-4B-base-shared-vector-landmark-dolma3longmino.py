@@ -130,7 +130,11 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
             param_dtype=DType.bfloat16,
             reduce_dtype=DType.float32,
             wrapping_strategy=TransformerDataParallelWrappingStrategy.full,
-            shard_degree=1,
+            # Shard params + optimizer state across the DP dim (dp=world/cp). With 2 nodes (cp=8)
+            # dp=2 -> shard_degree=2 halves per-GPU param/optim memory (num_replicas becomes 1, i.e.
+            # pure FSDP). Orthogonal to the CP head-parallel tail: FSDP shards on dp_shard, the tail
+            # slices on the cp group, and params are all-gathered to full shape inside forward.
+            shard_degree=2,
         ),
         # Ulysses CP: (shared-vector) landmark attention does its own cp2hp/hp2cp all-to-all so each
         # rank gathers the full sequence (with n_heads/8 heads) before the grouped softmax. Qwen3-4B:
@@ -138,7 +142,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         cp_config=TransformerContextParallelConfig.ulysses(degree=8),
         ac_config=TransformerActivationCheckpointingConfig(
             mode=TransformerActivationCheckpointingMode.budget,
-            activation_memory_budget=0.4,  # lowered from 0.7: more recompute to fit the fp32 tail
+            activation_memory_budget=0.7,
         ),
         float8_config=Float8Config(enabled=False),
         z_loss_multiplier=1e-5,
