@@ -1641,6 +1641,8 @@ class TransformerConfig(ModelConfig):
         fast_landmark: bool = False,
         fast_compressive_landmark: bool = False,
         nonselected_landmark_mass: Optional[float] = None,
+        shared_vector_landmark: bool = False,
+        vec_dim: Optional[int] = None,
         sparse_landmark: bool = False,
         num_landmarks: Optional[int] = None,
         layer_types: Optional[AttentionTypePatternConfig] = None,
@@ -1694,14 +1696,29 @@ class TransformerConfig(ModelConfig):
                 att_type = AttentionType.fused
                 rope_type = RoPEType.fused
 
-        if sum([landmark, fast_landmark, fast_compressive_landmark, sparse_landmark]) > 1:
+        if (
+            sum(
+                [
+                    landmark,
+                    fast_landmark,
+                    fast_compressive_landmark,
+                    shared_vector_landmark,
+                    sparse_landmark,
+                ]
+            )
+            > 1
+        ):
             raise OLMoConfigurationError(
                 "Only one of 'landmark', 'fast_landmark', 'fast_compressive_landmark', "
-                "'sparse_landmark' may be set."
+                "'shared_vector_landmark', 'sparse_landmark' may be set."
             )
 
         uses_uniform_landmark = (
-            landmark or fast_landmark or fast_compressive_landmark or sparse_landmark
+            landmark
+            or fast_landmark
+            or fast_compressive_landmark
+            or shared_vector_landmark
+            or sparse_landmark
         )
         pattern_landmark_types = layer_types.landmark_types() if layer_types is not None else set()
         pattern_has_plain_landmark = AttentionType.landmark in pattern_landmark_types
@@ -1709,10 +1726,18 @@ class TransformerConfig(ModelConfig):
         pattern_has_compressive_landmark = (
             AttentionType.fast_compressive_landmark in pattern_landmark_types
         )
+        pattern_has_shared_vector_landmark = (
+            AttentionType.shared_vector_landmark in pattern_landmark_types
+        )
         uses_compressive_landmark = fast_compressive_landmark or pattern_has_compressive_landmark
+        uses_shared_vector_landmark = shared_vector_landmark or pattern_has_shared_vector_landmark
         if nonselected_landmark_mass is not None and not uses_compressive_landmark:
             raise OLMoConfigurationError(
                 "'nonselected_landmark_mass' is only valid with fast_compressive_landmark attention."
+            )
+        if vec_dim is not None and not uses_shared_vector_landmark:
+            raise OLMoConfigurationError(
+                "'vec_dim' is only valid with shared_vector_landmark attention."
             )
 
         if layer_types is not None:
@@ -1754,6 +1779,8 @@ class TransformerConfig(ModelConfig):
                 if fast_landmark
                 else AttentionType.fast_compressive_landmark
                 if fast_compressive_landmark
+                else AttentionType.shared_vector_landmark
+                if shared_vector_landmark
                 else AttentionType.sparse_landmark
             )
             if num_landmarks is not None and not sparse_landmark:
@@ -1808,6 +1835,7 @@ class TransformerConfig(ModelConfig):
                 nonselected_landmark_mass=(
                     nonselected_landmark_mass if uses_compressive_landmark else None
                 ),
+                vec_dim=(vec_dim if uses_shared_vector_landmark else None),
                 dtype=dtype,
             ),
             feed_forward=feed_forward,

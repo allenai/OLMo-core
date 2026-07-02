@@ -39,7 +39,7 @@ from .backend import (
     TEAttentionBackend,
     TorchAttentionBackend,
 )
-from .landmark import landmark_grouped_softmax, repeat_kv
+from .landmark import build_landmark_masks, landmark_grouped_softmax, repeat_kv
 from .landmark_kernel import fused_landmark_attention, has_landmark_kernel
 from .ring import (
     RingAttentionLlama3LoadBalancer,
@@ -200,6 +200,12 @@ class AttentionType(StrEnum):
     ➡️ :class:`SparseLandmarkAttention` (sparse landmark-only-across-chunks attention)
     """
 
+    shared_vector_landmark = "shared_vector_landmark"
+    """
+    ➡️ :class:`SharedVectorLandmarkAttention` (fast landmark attention that appends a learned,
+    per-block positional vector to every value before the attention aggregation)
+    """
+
 
 @dataclass
 class AttentionTypePatternConfig(Config):
@@ -260,6 +266,7 @@ _LANDMARK_ATTENTION_TYPES = (
     AttentionType.fast_landmark,
     AttentionType.fast_compressive_landmark,
     AttentionType.sparse_landmark,
+    AttentionType.shared_vector_landmark,
 )
 
 
@@ -318,6 +325,12 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
     fraction of attention mass reserved at top-k decode time for the landmark tokens of the
     non-selected blocks. Defaults to 0.1. See :class:`FastCompressiveLandmarkAttention`.
     """
+    vec_dim: Optional[int] = None
+    """
+    For :class:`SharedVectorLandmarkAttention` (``name="shared_vector_landmark"``) only: the length
+    of the learned per-block positional vector appended to every value. Defaults to 32. The per-head
+    attention output becomes ``head_dim + vec_dim`` and ``w_out`` is widened to match.
+    """
 
     def num_params(self, d_model: int) -> int:
         """
@@ -370,6 +383,16 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
         if self.name == AttentionType.normalized:
             params += n_heads * head_dim
             params += n_kv_heads * head_dim
+
+        # Shared-vector landmark: the separate w_out_vec branch (n_heads * vec_dim -> d_model) plus
+        # the per-head weight_landmark map and base vector.
+        if self.name == AttentionType.shared_vector_landmark:
+            vec_dim = self.vec_dim if self.vec_dim is not None else 32
+            params += n_heads * vec_dim * d_model  # w_out_vec
+            if bias:
+                params += d_model  # w_out_vec bias
+            params += n_heads * head_dim * vec_dim  # weight_landmark
+            params += n_heads * vec_dim  # base
 
         return params
 
@@ -442,6 +465,7 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
         landmark_use_kernel = kwargs.pop("landmark_use_kernel", None)
         num_landmarks = kwargs.pop("num_landmarks", None)
         nonselected_landmark_mass = kwargs.pop("nonselected_landmark_mass", None)
+        vec_dim = kwargs.pop("vec_dim", None)
         if mem_freq is not None and not (possible_types & set(_LANDMARK_ATTENTION_TYPES)):
             raise OLMoConfigurationError(
                 "'mem_freq' is only supported with landmark attention variants "
@@ -464,6 +488,11 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
             raise OLMoConfigurationError(
                 "'nonselected_landmark_mass' is only supported with fast_compressive_landmark "
                 f"attention (got name='{self.name}')"
+            )
+        if vec_dim is not None and AttentionType.shared_vector_landmark not in possible_types:
+            raise OLMoConfigurationError(
+                "'vec_dim' is only supported with shared_vector_landmark attention "
+                f"(got name='{self.name}')"
             )
 
         try:
@@ -510,6 +539,14 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
                 if num_landmarks is not None:
                     kwargs["num_landmarks"] = num_landmarks
                 return SparseLandmarkAttention(mem_freq=mem_freq, **kwargs)
+            elif effective_name == "shared_vector_landmark":
+                if mem_freq is None:
+                    raise OLMoConfigurationError(
+                        "shared_vector_landmark attention requires 'mem_freq' to be set"
+                    )
+                if vec_dim is not None:
+                    kwargs["vec_dim"] = vec_dim
+                return SharedVectorLandmarkAttention(mem_freq=mem_freq, **kwargs)
             else:
                 raise NotImplementedError(effective_name)
         except TypeError as e:
@@ -1314,25 +1351,7 @@ class LandmarkAttention(Attention):
         ``last_section_mask`` for the eager grouped-softmax path. All are batch-independent
         (built with a batch dim of 1) and depend only on ``T`` and the landmark block size.
         """
-        block_size = self.block_size
-        finfo_min = torch.finfo(dtype).min
-
-        # additive causal mask, shape (1, 1, T, T): 0 on/below the diagonal, -inf above.
-        causal = torch.full((T, T), finfo_min, dtype=dtype, device=device)
-        attn_mask = torch.triu(causal, diagonal=1)[None, None].clone()
-
-        # shape: (1, 1, 1, T)
-        is_mem = ((torch.arange(T, device=device) % block_size) == (block_size - 1)).view(
-            1, 1, 1, T
-        )
-        mem_ids = torch.where(attn_mask < -1, -1, torch.cumsum(is_mem, -1) - is_mem.int())
-        last_section_mask = torch.amax(mem_ids, -1, keepdim=True) == mem_ids
-        # Mask landmark tokens that fall in the query's own (last) section.
-        attn_mask.masked_fill_(last_section_mask & is_mem, finfo_min)
-        last_section_mask = last_section_mask.logical_and(attn_mask > -1)
-        is_mem = is_mem.logical_and(attn_mask > -1)
-
-        return attn_mask, is_mem, last_section_mask
+        return build_landmark_masks(T, self.block_size, device, dtype)
 
 
 @beta_feature
@@ -1690,4 +1709,5 @@ class FusedAttention(SequenceMixer):
 # ``AttentionConfig.build`` branches above reference them by name at call time.
 from .landmark_compressive import FastCompressiveLandmarkAttention  # noqa: E402
 from .landmark_fast import FastLandmarkAttention  # noqa: E402
+from .landmark_shared_vector import SharedVectorLandmarkAttention  # noqa: E402
 from .landmark_sparse import SparseLandmarkAttention  # noqa: E402
