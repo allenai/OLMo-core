@@ -43,7 +43,7 @@ from olmo_core.internal.common import build_launch_config, get_root_dir
 from olmo_core.launch.beaker import OLMoCoreBeakerImage
 from olmo_core.utils import prepare_cli_environment
 
-ALL_TASKS = ["contra", "nq", "rerank", "outlier", "oolong"]
+ALL_TASKS = ["contra", "nq", "rerank", "outlier", "oolong", "fiqa", "scifact"]
 VARIANTS = ["dense", "landmark", "compressive", "docchunk"]
 
 

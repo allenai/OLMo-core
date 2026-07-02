@@ -144,6 +144,8 @@ if [ "$LADDER_VERSION" = "v2" ]; then
     outlier) RUNGS="3k,8k,16k,32k"; LTASK=outlier;       EXTRA="" ;;
     rerank)  RUNGS="3k,8k,16k";     LTASK=rerank;        EXTRA="" ;;  # CE-graded, no 32k pool
     oolong)  RUNGS="8k,16k,32k";    LTASK=oolong;        EXTRA="" ;;
+    fiqa)    RUNGS="2k,4k,8k,16k";  LTASK=fiqa;          EXTRA="" ;;  # OOD generalization (BEIR)
+    scifact) RUNGS="4k,8k,16k,32k"; LTASK=scifact;       EXTRA="" ;;  # OOD generalization (BEIR)
     *) echo "ERROR unknown TASK=$TASK"; exit 2 ;;
   esac
 else
@@ -152,6 +154,8 @@ else
     nq)      RUNGS="3k,8k,16k,32k"; LTASK=nq;            EXTRA="--nq-data data/nq_validation_k20_hn2_600.jsonl" ;;  # @3k: single-query k20, p10 pipeline (10% hard + CE filter, wikipedia-dpr-100w source) matching training + the k50/k100/k200 rungs
     outlier) RUNGS="3k,8k,16k,32k"; LTASK=outlier;       EXTRA="--outlier-data data/outlier_wiki100w_n55_k3_eval_600.jsonl" ;;
     oolong)  RUNGS="8k,16k,32k";    LTASK=oolong;        EXTRA="" ;;
+    fiqa)    RUNGS="2k,4k,8k,16k";  LTASK=fiqa;          EXTRA="" ;;  # OOD generalization (BEIR)
+    scifact) RUNGS="4k,8k,16k,32k"; LTASK=scifact;       EXTRA="" ;;  # OOD generalization (BEIR)
     *) echo "ERROR unknown TASK=$TASK"; exit 2 ;;
   esac
 fi

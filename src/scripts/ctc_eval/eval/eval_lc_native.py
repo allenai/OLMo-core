@@ -251,6 +251,17 @@ def main():
                 "oolong": [("8k", f"{E5}/oolong/oolong_test_synth_ctx8192_spliteval.jsonl"),
                     ("16k", f"{E5}/oolong/oolong_test_synth_ctx16384_spliteval.jsonl"),
                     ("32k", f"{E5}/oolong/oolong_test_synth_ctx32768_spliteval.jsonl")],
+                # OOD generalization (held-out BEIR retrieval, graded as retrieval f1). Version-agnostic:
+                # rungs are fixed doc-pool sizes subsampled from the k100 CE pools (subsample_beir_ladder.py),
+                # labelled by median prompt length. fiqa docs are short -> tops ~16k; scifact ~32k.
+                "fiqa": [("2k", f"{E5}/beir/beir_fiqa_ce_ladder_k10_648.jsonl"),
+                    ("4k", f"{E5}/beir/beir_fiqa_ce_ladder_k20_648.jsonl"),
+                    ("8k", f"{E5}/beir/beir_fiqa_ce_ladder_k40_648.jsonl"),
+                    ("16k", f"{E5}/beir/beir_fiqa_ce_ladder_k80_648.jsonl")],
+                "scifact": [("4k", f"{E5}/beir/beir_scifact_ladder_k11_299.jsonl"),
+                    ("8k", f"{E5}/beir/beir_scifact_ladder_k22_299.jsonl"),
+                    ("16k", f"{E5}/beir/beir_scifact_ladder_k44_299.jsonl"),
+                    ("32k", f"{E5}/beir/beir_scifact_ladder_k88_299.jsonl")],
             }
         else:
           LADDERS = {
@@ -278,6 +289,15 @@ def main():
                 ("8k", f"{E5}/outlier/outlier_wiki100w_n55_k3_eval_600.jsonl"),
                 ("16k", f"{E5}/outlier/outlier_wiki100w_n110_k3_eval_600.jsonl"),
                 ("32k", f"{E5}/outlier/outlier_wiki100w_n220_k3_eval_600.jsonl")],
+            # OOD generalization (held-out BEIR retrieval, graded as retrieval f1); same files for v1/v2.
+            "fiqa": [("2k", f"{E5}/beir/beir_fiqa_ce_ladder_k10_648.jsonl"),
+                ("4k", f"{E5}/beir/beir_fiqa_ce_ladder_k20_648.jsonl"),
+                ("8k", f"{E5}/beir/beir_fiqa_ce_ladder_k40_648.jsonl"),
+                ("16k", f"{E5}/beir/beir_fiqa_ce_ladder_k80_648.jsonl")],
+            "scifact": [("4k", f"{E5}/beir/beir_scifact_ladder_k11_299.jsonl"),
+                ("8k", f"{E5}/beir/beir_scifact_ladder_k22_299.jsonl"),
+                ("16k", f"{E5}/beir/beir_scifact_ladder_k44_299.jsonl"),
+                ("32k", f"{E5}/beir/beir_scifact_ladder_k88_299.jsonl")],
         }
         LSPEC = {
             "contradiction": ("contradiction", _eval_contradiction, "f1", 200),
@@ -285,6 +305,8 @@ def main():
             "oolong": ("oolong", _eval_oolong, "score", 200),
             "rerank": ("rerank", _eval_rerank, None, 256),
             "outlier": ("outlier", _eval_outlier, "f1", 200),
+            "fiqa": ("retrieval", _eval_retrieval, "f1", 64),
+            "scifact": ("retrieval", _eval_retrieval, "f1", 64),
         }
         task_filter = set(args.ladder_tasks.split(",")) if args.ladder_tasks else None
         rung_filter = set(args.ladder_rungs.split(",")) if args.ladder_rungs else None
