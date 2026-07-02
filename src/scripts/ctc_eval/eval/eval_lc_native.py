@@ -264,14 +264,14 @@ def main():
                     ("32k", f"{E5}/beir/beir_scifact_ladder_k88_299.jsonl")],
                 # OOD generalization for the outlier + contradiction tasks (different passage/sentence
                 # source than the in-distribution wiki100w / pubmed). Graded identically (gold_doc_indices).
-                "outlier_review": [("3k", f"{E5}/outlier/outlier_review_n30_k3_eval_600.jsonl"),
-                    ("8k", f"{E5}/outlier/outlier_review_n80_k3_eval_600.jsonl"),
-                    ("16k", f"{E5}/outlier/outlier_review_n160_k3_eval_600.jsonl"),
-                    ("32k", f"{E5}/outlier/outlier_review_n325_k3_eval_600.jsonl")],
-                "contra_fever": [("2k", f"{E5}/contra/contradiction_eval_fever_n120_k3.jsonl"),
-                    ("8k", f"{E5}/contra/contradiction_eval_fever_n495_k3.jsonl"),
-                    ("16k", f"{E5}/contra/contradiction_eval_fever_n1020_k3.jsonl"),
-                    ("32k", f"{E5}/contra/contradiction_eval_fever_n2150_k3.jsonl")],
+                "outlier_review": [("3k", f"{E5}/outlier/outlier_review_matched_n30_k3_eval_600.jsonl"),
+                    ("8k", f"{E5}/outlier/outlier_review_matched_n75_k3_eval_600.jsonl"),
+                    ("16k", f"{E5}/outlier/outlier_review_matched_n150_k3_eval_600.jsonl"),
+                    ("32k", f"{E5}/outlier/outlier_review_matched_n300_k3_eval_600.jsonl")],
+                "contra_fever": [("2k", f"{E5}/contra/contradiction_eval_fever_plain_n100_k3.jsonl"),
+                    ("8k", f"{E5}/contra/contradiction_eval_fever_plain_n408_k3.jsonl"),
+                    ("16k", f"{E5}/contra/contradiction_eval_fever_plain_n820_k3.jsonl"),
+                    ("32k", f"{E5}/contra/contradiction_eval_fever_plain_n1642_k3.jsonl")],
             }
         else:
           LADDERS = {
@@ -309,14 +309,14 @@ def main():
                 ("16k", f"{E5}/beir/beir_scifact_ladder_k44_299.jsonl"),
                 ("32k", f"{E5}/beir/beir_scifact_ladder_k88_299.jsonl")],
             # OOD generalization for outlier + contradiction (review / FEVER source); same files v1/v2.
-            "outlier_review": [("3k", f"{E5}/outlier/outlier_review_n30_k3_eval_600.jsonl"),
-                ("8k", f"{E5}/outlier/outlier_review_n80_k3_eval_600.jsonl"),
-                ("16k", f"{E5}/outlier/outlier_review_n160_k3_eval_600.jsonl"),
-                ("32k", f"{E5}/outlier/outlier_review_n325_k3_eval_600.jsonl")],
-            "contra_fever": [("2k", f"{E5}/contra/contradiction_eval_fever_n120_k3.jsonl"),
-                ("8k", f"{E5}/contra/contradiction_eval_fever_n495_k3.jsonl"),
-                ("16k", f"{E5}/contra/contradiction_eval_fever_n1020_k3.jsonl"),
-                ("32k", f"{E5}/contra/contradiction_eval_fever_n2150_k3.jsonl")],
+            "outlier_review": [("3k", f"{E5}/outlier/outlier_review_matched_n30_k3_eval_600.jsonl"),
+                ("8k", f"{E5}/outlier/outlier_review_matched_n75_k3_eval_600.jsonl"),
+                ("16k", f"{E5}/outlier/outlier_review_matched_n150_k3_eval_600.jsonl"),
+                ("32k", f"{E5}/outlier/outlier_review_matched_n300_k3_eval_600.jsonl")],
+            "contra_fever": [("2k", f"{E5}/contra/contradiction_eval_fever_plain_n100_k3.jsonl"),
+                ("8k", f"{E5}/contra/contradiction_eval_fever_plain_n408_k3.jsonl"),
+                ("16k", f"{E5}/contra/contradiction_eval_fever_plain_n820_k3.jsonl"),
+                ("32k", f"{E5}/contra/contradiction_eval_fever_plain_n1642_k3.jsonl")],
         }
         LSPEC = {
             "contradiction": ("contradiction", _eval_contradiction, "f1", 200),
