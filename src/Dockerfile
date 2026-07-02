@@ -48,15 +48,24 @@ ARG INSTALL_CHANNEL=whl
 RUN pip install --no-cache-dir --index-url https://download.pytorch.org/${INSTALL_CHANNEL}/${CUDA_VERSION_PATH}/ \
     torch==${TORCH_VERSION} torchvision torchaudio
 
+# Compute capabilities the from-source CUDA extensions (grouped-gemm, transformer-engine) are built
+# for. Include "10.3" (B300 / Blackwell Ultra, sm_103) only when building with CUDA >= 12.9 (see the
+# 'beaker-image-b300' target). Passed inline per-tool rather than as a global ENV so it doesn't reach
+# the flash-attn 3 (hopper) build.
+ARG TORCH_CUDA_ARCH_LIST="9.0 10.0"
+
 # Install grouped-gemm.
 # NOTE: right now we need to build with CUTLASS so we can pass batch sizes on GPU.
 # See https://github.com/tgale96/grouped_gemm/pull/21
 ARG GROUPED_GEMM_SHA="f1429a3c44c98f7912aa4b00125144cdf4e7fdb2"
-RUN TORCH_CUDA_ARCH_LIST="9.0 10.0" GROUPED_GEMM_CUTLASS="1" pip install --no-build-isolation --no-cache-dir "grouped_gemm @ git+https://git@github.com/tgale96/grouped_gemm.git@${GROUPED_GEMM_SHA}"
+RUN TORCH_CUDA_ARCH_LIST="${TORCH_CUDA_ARCH_LIST}" GROUPED_GEMM_CUTLASS="1" pip install --no-build-isolation --no-cache-dir "grouped_gemm @ git+https://git@github.com/tgale96/grouped_gemm.git@${GROUPED_GEMM_SHA}"
 
 # Install flash-attn 2
+# NOTE: flash-attn 2 picks build archs from FLASH_ATTN_CUDA_ARCHS (it does NOT read
+# TORCH_CUDA_ARCH_LIST). Add "103" for B300 (sm_103); requires CUDA >= 12.9.
 ARG FLASH_ATTN_VERSION=2.8.2
-RUN FLASH_ATTN_CUDA_ARCHS="90;100" pip install --no-build-isolation --no-cache-dir flash-attn==${FLASH_ATTN_VERSION}
+ARG FLASH_ATTN_CUDA_ARCHS="90;100"
+RUN FLASH_ATTN_CUDA_ARCHS="${FLASH_ATTN_CUDA_ARCHS}" pip install --no-build-isolation --no-cache-dir flash-attn==${FLASH_ATTN_VERSION}
 
 # Install flash-attn 3.
 ARG FLASH_ATTN_3_SHA="92ca9da8d66f7b34ff50dc080ec0fef9661260d6"
@@ -84,7 +93,7 @@ RUN cd /opt/conda/lib/python${PYTHON_VERSION}/site-packages/ && \
 
 # Install transformer-engine.
 ARG TE_VERSION=2.9
-RUN pip install --no-build-isolation --no-cache-dir transformer-engine[pytorch]==${TE_VERSION}
+RUN TORCH_CUDA_ARCH_LIST="${TORCH_CUDA_ARCH_LIST}" pip install --no-build-isolation --no-cache-dir transformer-engine[pytorch]==${TE_VERSION}
 
 # Install ring-flash-attn.
 ARG RING_FLASH_ATTN_VERSION=0.1.8
@@ -160,6 +169,29 @@ RUN wget --quiet https://content.mellanox.com/ofed/MLNX_OFED-${MOFED_VER}/MLNX_O
 
 # Copy conda environment.
 COPY --from=build /opt/conda /opt/conda
+
+# B300 (sm_103) fixes, baked in when B300=1 (empty for the default image → no-op).
+#  - transformer-engine locates libnvrtc by grepping `ldconfig -p`, but on CUDA 13 nvrtc ships as a
+#    pip wheel under site-packages and isn't in the linker cache, so `import transformer_engine`
+#    fails. Register the wheel's lib dir so it's found.
+#  - Triton's bundled ptxas doesn't know sm_103a. Symlink a CUDA-13 ptxas (torch's bundled one if
+#    present, else the nvidia-cuda-nvcc wheel) to a fixed path and point Triton at it via
+#    TRITON_PTXAS_PATH below. The symlink keeps this working for both torch 2.10 and 2.11 without
+#    hard-coding a version-specific path (torch 2.11 ships torch/bin/ptxas; 2.10 may not).
+ARG B300=
+RUN if [ -n "${B300}" ]; then \
+        NVRTC_DIR=$(find /opt/conda -name "libnvrtc.so*" 2>/dev/null | head -n1 | xargs -r dirname || true); \
+        if [ -n "$NVRTC_DIR" ]; then echo "$NVRTC_DIR" > /etc/ld.so.conf.d/zz-nvrtc.conf && ldconfig; fi; \
+        PTXAS=$(find /opt/conda -path "*/torch/bin/ptxas" 2>/dev/null | head -n1 || true); \
+        if [ -z "$PTXAS" ]; then PTXAS=$(find /opt/conda -path "*cuda_nvcc*/bin/ptxas" 2>/dev/null | head -n1 || true); fi; \
+        if [ -z "$PTXAS" ]; then pip install --no-cache-dir nvidia-cuda-nvcc-cu13 && PTXAS=$(find /opt/conda -path "*cuda_nvcc*/bin/ptxas" 2>/dev/null | head -n1 || true); fi; \
+        if [ -n "$PTXAS" ]; then ln -sf "$PTXAS" /usr/local/bin/triton-ptxas; fi; \
+    fi
+
+# Set to /usr/local/bin/triton-ptxas (the symlink created above) by the B300 targets. Empty for the
+# default image — Triton ignores a nonexistent/empty path and keeps its own bundled ptxas.
+ARG TRITON_PTXAS_PATH=
+ENV TRITON_PTXAS_PATH=${TRITON_PTXAS_PATH}
 
 ENV NVIDIA_VISIBLE_DEVICES=all
 ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility

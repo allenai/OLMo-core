@@ -53,8 +53,13 @@ PYTHON_VERSION = 3.12
 TORCH_VERSION = 2.10.0
 TORCH_VERSION_SHORT = $(shell echo $(TORCH_VERSION) | tr -d .)
 INSTALL_CHANNEL = whl
+# Compute capabilities the from-source CUDA extensions (grouped-gemm, transformer-engine, ...) are
+# built for. The 'beaker-image-b300' target extends these with sm_103 (B300 / Blackwell Ultra).
+TORCH_CUDA_ARCH_LIST = 9.0 10.0
 GROUPED_GEMM_SHA = "f1429a3c44c98f7912aa4b00125144cdf4e7fdb2"
 FLASH_ATTN_VERSION = 2.8.2
+# Archs flash-attn 2 is compiled for (it reads FLASH_ATTN_CUDA_ARCHS, not TORCH_CUDA_ARCH_LIST).
+FLASH_ATTN_CUDA_ARCHS = 90;100
 FLASH_ATTN_3_SHA = "060c9188beec3a8b62b33a3bfa6d5d2d44975fab"
 FA3_MAX_JOBS = 64
 TE_VERSION = 2.9
@@ -63,6 +68,10 @@ LIGER_KERNEL_VERSION = 0.6.4
 # NOTE: Quack currently requires CUDA 12.9 or higher and PyTorch 2.9.1
 # QUACK_VERSION = 0.2.4
 QUACK_VERSION = ""
+# B300 (sm_103) image switches. Empty for the default image; set by the 'beaker-image-b300' target
+# to bake in the B300-only fixes (see that target and the Dockerfile release stage).
+B300 =
+TRITON_PTXAS_PATH =
 
 #--------------#
 # Build naming #
@@ -76,20 +85,25 @@ IMAGE_TAG = tch$(TORCH_VERSION_SHORT)$(CUDA_VERSION_PATH)-$(IMAGE_SUFFIX)
 .PHONY : docker-image
 docker-image :
 	docker build -f src/Dockerfile \
+		--platform=linux/amd64 \
 		--build-arg BUILDKIT_INLINE_CACHE=1 \
 		--build-arg CUDA_VERSION=$(CUDA_VERSION) \
 		--build-arg CUDA_VERSION_PATH=$(CUDA_VERSION_PATH) \
 		--build-arg PYTHON_VERSION=$(PYTHON_VERSION) \
 		--build-arg TORCH_VERSION=$(TORCH_VERSION) \
+		--build-arg TORCH_CUDA_ARCH_LIST="$(TORCH_CUDA_ARCH_LIST)" \
 		--build-arg INSTALL_CHANNEL=$(INSTALL_CHANNEL) \
 		--build-arg GROUPED_GEMM_SHA=$(GROUPED_GEMM_SHA) \
 		--build-arg FLASH_ATTN_VERSION=$(FLASH_ATTN_VERSION) \
+		--build-arg FLASH_ATTN_CUDA_ARCHS="$(FLASH_ATTN_CUDA_ARCHS)" \
 		--build-arg FLASH_ATTN_3_SHA=$(FLASH_ATTN_3_SHA) \
 		--build-arg FA3_MAX_JOBS=$(FA3_MAX_JOBS) \
 		--build-arg TE_VERSION=$(TE_VERSION) \
 		--build-arg RING_FLASH_ATTN_VERSION=$(RING_FLASH_ATTN_VERSION) \
 		--build-arg LIGER_KERNEL_VERSION=$(LIGER_KERNEL_VERSION) \
 		--build-arg QUACK_VERSION=$(QUACK_VERSION) \
+		--build-arg B300="$(B300)" \
+		--build-arg TRITON_PTXAS_PATH="$(TRITON_PTXAS_PATH)" \
 		--target release \
 		-t olmo-core:$(IMAGE_TAG) .
 	@docker run --rm olmo-core:$(IMAGE_TAG) python -c \
@@ -115,6 +129,33 @@ BEAKER_USER = $(shell beaker account whoami --format=json | jq -r '.[0].name')
 beaker-image : docker-image
 	@./src/scripts/beaker/create_beaker_image.sh olmo-core:$(IMAGE_TAG) olmo-core-$(IMAGE_TAG) $(BEAKER_WORKSPACE)
 	@echo "✓ Done"
+
+# Build + register a B300 (Blackwell Ultra, sm_103) image, on CUDA 13.0. Both torch 2.10 and 2.11
+# pin Triton 3.6 (which supports sm_103); the difference is that 2.11 is the config validated on B300
+# hardware while 2.10 tracks the default image's torch. Build whichever you need separately.
+# Shared B300 build args:
+#  - "10.3"/"103" add sm_103 to the arch lists so the from-source extensions target B300.
+#  - B300=1 makes the Dockerfile register torch's bundled nvrtc with ldconfig (so transformer-engine
+#    imports on CUDA 13) and symlink a CUDA-13 ptxas to /usr/local/bin/triton-ptxas.
+#  - TRITON_PTXAS_PATH points Triton at that symlink (Triton's bundled ptxas doesn't know sm_103a).
+# NOTE: the from-source extensions compile against CUDA 13; if flash-attn / transformer-engine /
+# grouped-gemm fail to build, bump their versions to CUDA-13-compatible releases.
+B300_BUILD_ARGS = \
+	CUDA_VERSION=13.0.1 \
+	TORCH_CUDA_ARCH_LIST="9.0 10.0 10.3" \
+	FLASH_ATTN_CUDA_ARCHS="90;100;103" \
+	B300=1 \
+	TRITON_PTXAS_PATH=/usr/local/bin/triton-ptxas
+
+# torch 2.11.0 (validated on B300 hardware). Produces 'olmo-core-tch2110cu130-<date>'.
+.PHONY : beaker-image-b300
+beaker-image-b300 :
+	$(MAKE) beaker-image TORCH_VERSION=2.11.0 $(B300_BUILD_ARGS)
+
+# torch 2.10.0 (matches the default image's torch). Produces 'olmo-core-tch2100cu130-<date>'.
+.PHONY : beaker-image-b300-torch210
+beaker-image-b300-torch210 :
+	$(MAKE) beaker-image TORCH_VERSION=2.10.0 $(B300_BUILD_ARGS)
 
 .PHONY : get-beaker-workspace
 get-beaker-workspace :
