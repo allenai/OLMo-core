@@ -303,9 +303,11 @@ class Transformer(nn.Module):
                 self.embeddings,
                 d_model=self.d_model,
                 embed_scale=self.embed_scale,
-                std=self.embedding_init_std
-                if self.embedding_init_std is not None
-                else self.init_std,
+                std=(
+                    self.embedding_init_std
+                    if self.embedding_init_std is not None
+                    else self.init_std
+                ),
                 generator=generator,
             )
 
@@ -533,6 +535,10 @@ class Transformer(nn.Module):
         return_logits: Optional[bool] = None,
         logits_to_keep: Union[int, torch.Tensor] = 0,
         or_mask: Optional[torch.Tensor] = None,
+        and_mask: Optional[torch.Tensor] = None,
+        position_ids: Optional[torch.Tensor] = None,
+        pos_sin: Optional[torch.Tensor] = None,
+        pos_cos: Optional[torch.Tensor] = None,
         **kwargs,
     ) -> Union[torch.Tensor, LMOutputWithLoss]:
         """
@@ -567,6 +573,16 @@ class Transformer(nn.Module):
                 "`or_mask` is not supported with context parallelism: the full-size "
                 "(seq, seq) mask would misalign with the sequence-sharded hidden states."
             )
+        if and_mask is not None and self._cp_load_balancer is not None:
+            raise RuntimeError(
+                "`and_mask` is not supported with context parallelism: the full-size "
+                "(seq, seq) mask would misalign with the sequence-sharded hidden states."
+            )
+        if position_ids is not None and self._cp_load_balancer is not None:
+            raise RuntimeError(
+                "Explicit `position_ids` are not supported with context parallelism, "
+                "which shards/derives its own RoPE positions."
+            )
 
         (
             input_ids,
@@ -591,6 +607,33 @@ class Transformer(nn.Module):
         # to every block; only the dense SDPA backend honors it.
         if or_mask is not None:
             all_block_kwargs["or_mask"] = move_to_device(or_mask, self.device)
+
+        # Restrictive (AND) attention mask, e.g. subsegment / branch isolation in packed
+        # multi-annotation multimodal data. AND'd onto the (causal | or_mask) base inside
+        # each block's attention; only the dense SDPA backend honors it.
+        if and_mask is not None:
+            all_block_kwargs["and_mask"] = move_to_device(and_mask, self.device)
+
+        # Explicit per-token RoPE positions (e.g. parallel branches that share an
+        # overlapping position range). Passed through to every attention block.
+        if position_ids is not None:
+            all_block_kwargs["position_ids"] = move_to_device(position_ids, self.device)
+
+        # Externally-provided RoPE buffers (e.g. M-RoPE / multimodal 3D rotary). When
+        # supplied, every attention block uses these instead of computing 1D RoPE from
+        # sequential positions. Sequence-mixers that ignore RoPE (e.g. GatedDeltaNet)
+        # simply drop these via ``**kwargs``. Not supported with context parallelism,
+        # which shards/derives its own RoPE buffers.
+        if pos_sin is not None or pos_cos is not None:
+            if self._cp_load_balancer is not None:
+                raise RuntimeError(
+                    "External `pos_sin`/`pos_cos` (e.g. M-RoPE) are not supported with "
+                    "context parallelism."
+                )
+            if pos_sin is not None:
+                all_block_kwargs["pos_sin"] = move_to_device(pos_sin, self.device)
+            if pos_cos is not None:
+                all_block_kwargs["pos_cos"] = move_to_device(pos_cos, self.device)
 
         # Get embeddings but pass-through for non-existent layers to allow easy
         # pipeline parallel configuration.

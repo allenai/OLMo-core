@@ -73,6 +73,14 @@ class AttentionBackendName(StrEnum):
     Transformer Engine attention. Supports Hopper (SM 9.0+) and newer NVIDIA GPUs.
     ➡️ :class:`TEAttentionBackend`.
     """
+    flex = "flex"
+    """
+    PyTorch's `FlexAttention <https://pytorch.org/blog/flexattention/>`_ (a fused, compiled
+    kernel). Like :class:`TorchAttentionBackend` it supports the custom ``or_mask`` /
+    ``and_mask`` (via a ``mask_mod`` + ``BlockMask``) — but as a fused kernel rather than
+    dense SDPA, so it is much faster for the bidirectional-image / subsegment masks used by
+    multimodal training. ➡️ :class:`FlexAttentionBackend`.
+    """
 
     def get_class(self) -> Type["AttentionBackend"]:
         if self == self.torch:
@@ -85,6 +93,8 @@ class AttentionBackendName(StrEnum):
             return FlashAttention4Backend
         elif self == self.te:
             return TEAttentionBackend
+        elif self == self.flex:
+            return FlexAttentionBackend
         else:
             raise NotImplementedError(self)
 
@@ -137,6 +147,12 @@ class AttentionBackend(nn.Module):
     """Whether :meth:`forward` honors the ``or_mask`` argument (a boolean allow-mask
     OR'd onto the causal/sliding base, e.g. for bidirectional image-token attention).
     Only the dense SDPA backend supports it; flash/TE backends do not."""
+
+    SUPPORTS_AND_MASK: bool = False
+    """Whether :meth:`forward` honors the ``and_mask`` argument (a boolean keep-mask
+    AND'd onto the (causal | or_mask) base, e.g. for subsegment / branch isolation in
+    packed multi-annotation multimodal data). Only the dense SDPA backend supports it;
+    flash/TE backends do not."""
 
     def __init__(
         self,
@@ -237,6 +253,7 @@ class AttentionBackend(nn.Module):
         local_k_slice: Optional[slice] = None,
         kv_cache_manager: Optional[KVCacheManager] = None,
         or_mask: Optional[torch.Tensor] = None,
+        and_mask: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """
         Run the attention operation.
@@ -271,6 +288,7 @@ class TorchAttentionBackend(AttentionBackend):
     """
 
     SUPPORTS_OR_MASK = True
+    SUPPORTS_AND_MASK = True
 
     @classmethod
     def assert_supported(cls):
@@ -316,6 +334,7 @@ class TorchAttentionBackend(AttentionBackend):
         local_k_slice: Optional[slice] = None,
         kv_cache_manager: Optional[KVCacheManager] = None,
         or_mask: Optional[torch.Tensor] = None,
+        and_mask: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         del local_k_slice
 
@@ -346,6 +365,17 @@ class TorchAttentionBackend(AttentionBackend):
             if base is None:
                 base = torch.ones(q.shape[1], k.shape[1], device=q.device, dtype=torch.bool).tril()
             attn_mask = base | or_mask.to(device=q.device, dtype=torch.bool)
+
+        if and_mask is not None:
+            # AND a boolean keep-mask onto the (causal | or_mask) base, mirroring
+            # mm_olmo's `attention_mask & subsegment_mask`: a query may only attend
+            # to keys allowed by *both* masks. Used for subsegment / branch isolation
+            # in packed multi-annotation multimodal data. Build an explicit causal
+            # base first when we don't already have one.
+            base = attn_mask
+            if base is None:
+                base = torch.ones(q.shape[1], k.shape[1], device=q.device, dtype=torch.bool).tril()
+            attn_mask = base & and_mask.to(device=q.device, dtype=torch.bool)
 
         if any(
             opt is not None
@@ -464,6 +494,204 @@ class TorchAttentionBackend(AttentionBackend):
         return attn_mask
 
 
+_compiled_flex_attention = None
+
+
+def _get_flex_attention(device: torch.device):
+    """Return ``flex_attention``, compiled on CUDA (where the fused kernel lives) and
+    eager on CPU (compiling FlexAttention on CPU is slow / unnecessary — used only for
+    correctness tests)."""
+    from torch.nn.attention.flex_attention import flex_attention
+
+    if device.type != "cuda":
+        return flex_attention
+    global _compiled_flex_attention
+    if _compiled_flex_attention is None:
+        _compiled_flex_attention = torch.compile(flex_attention)
+    return _compiled_flex_attention
+
+
+class FlexAttentionBackend(AttentionBackend):
+    """`FlexAttention <https://pytorch.org/blog/flexattention/>`_ backend.
+
+    Reproduces the dense :class:`TorchAttentionBackend` masking semantics —
+    ``(causal | or_mask) & and_mask`` plus optional sliding window — but expresses them as
+    a FlexAttention ``mask_mod`` over a :class:`~torch.nn.attention.flex_attention.BlockMask`
+    so attention runs as a single fused, block-sparse kernel instead of materializing the
+    full ``(B, H, S, S)`` scores. This is the only *fast* backend that supports the custom
+    ``or_mask`` / ``and_mask`` used by multimodal training (flash / TE cannot).
+    """
+
+    SUPPORTS_OR_MASK = True
+    SUPPORTS_AND_MASK = True
+
+    @classmethod
+    def assert_supported(cls):
+        try:
+            import torch.nn.attention.flex_attention  # noqa: F401
+        except ImportError as e:
+            raise RuntimeError(
+                "FlexAttention is not available in this PyTorch build (needs torch>=2.5)"
+            ) from e
+
+    @classmethod
+    def assert_supports_swa(cls):
+        pass
+
+    @classmethod
+    def assert_supports_ring_cp(cls):
+        raise RuntimeError(f"'{cls.__name__}' doesn't support ring context parallelism")
+
+    @classmethod
+    def assert_supports_ulysses_cp(cls):
+        raise RuntimeError(f"'{cls.__name__}' doesn't support ulysses context parallelism")
+
+    @classmethod
+    def assert_supports_packed_qkv(cls):
+        raise RuntimeError(f"'{cls.__name__}' doesn't support packed QKV")
+
+    @classmethod
+    def assert_supports_kv_cache(cls):
+        raise RuntimeError(f"'{cls.__name__}' doesn't support KV caching")
+
+    @staticmethod
+    def _per_token_from_masks(
+        or_mask: Optional[torch.Tensor], and_mask: Optional[torch.Tensor]
+    ) -> Tuple[Optional[torch.Tensor], Optional[torch.Tensor], Optional[torch.Tensor]]:
+        """Recover the per-token vectors behind the multimodal masks.
+
+        FlexAttention's ``mask_mod`` must index per-token vectors (``v[b, q_idx]``), not the
+        ``(q, kv)`` matrix (which is not ``vmap``-able). Our masks are structured, so the
+        vectors are recoverable exactly:
+
+        * ``or_mask[b, q, kv] = is_image[q] & is_image[kv]`` (an outer product), so
+          ``is_image`` is its diagonal.
+        * ``and_mask[b, q, kv] = same_example & (seg[q] <= seg[kv])``. ``same_example``
+          (block-diagonal, identity within an example, from sequence packing) is
+          ``and_mask | and_mask.T`` (within an example one of the two preorder directions
+          always holds; across examples both are false). Packed examples are contiguous, so
+          the per-token ``example_id`` is the running count of example boundaries
+          (``¬same_example`` between adjacent tokens). The within-example subsegment rank
+          ``seg_code[q] = #{kv : seg[kv] < seg[q]}`` (``= and_mask[kv,q] & ¬and_mask[q,kv]``,
+          which is automatically example-local) preserves ``seg[q] <= seg[kv]`` exactly.
+
+        For a single unpacked example ``same_example`` is all-true, so ``example_id`` is all
+        zero (a no-op) and ``seg_code`` reduces to the plain subsegment rank.
+        """
+        is_image = None
+        if or_mask is not None:
+            is_image = or_mask[:, 0].diagonal(dim1=-2, dim2=-1).contiguous()  # (B, S) bool
+        seg_code = None
+        example_id = None
+        if and_mask is not None:
+            a = and_mask[:, 0]  # (B, S, S): a[b, q, kv] = same_example & (seg[q] <= seg[kv])
+            strictly_less = a.transpose(-1, -2) & (~a)  # [b, q, kv] = seg[kv] < seg[q]
+            seg_code = strictly_less.sum(dim=-1)  # (B, S) long, example-local rank
+            same = a | a.transpose(-1, -2)  # (B, S, S) equivalence (block-diagonal)
+            B, S = a.shape[0], a.shape[1]
+            example_id = torch.zeros(B, S, dtype=torch.int64, device=a.device)
+            if S > 1:
+                adj_same = same.diagonal(offset=-1, dim1=-2, dim2=-1)  # (B, S-1): same[p, p-1]
+                example_id[:, 1:] = torch.cumsum((~adj_same).to(torch.int64), dim=-1)
+        return is_image, seg_code, example_id
+
+    def _build_mask_mod(
+        self,
+        is_image: Optional[torch.Tensor],
+        seg_code: Optional[torch.Tensor],
+        example_id: Optional[torch.Tensor],
+    ):
+        ws_left, ws_right = self.window_size
+        has_window = self.window_size != (-1, -1)
+
+        def mask_mod(b, h, q_idx, kv_idx):
+            del h
+            # Causal base (+ optional sliding window), matching the dense backend.
+            allow = kv_idx <= q_idx
+            if has_window:
+                if ws_left >= 0:
+                    allow = allow & (q_idx - kv_idx <= ws_left)
+                if ws_right >= 0:
+                    allow = allow & (kv_idx - q_idx <= ws_right)
+            # OR the bidirectional image allow-mask onto the base, then AND the subsegment
+            # keep-mask and the packed-example block-diagonal — exactly
+            # `(causal | or_mask) & and_mask` from TorchAttentionBackend.
+            if is_image is not None:
+                allow = allow | (is_image[b, q_idx] & is_image[b, kv_idx])
+            if seg_code is not None:
+                allow = allow & (seg_code[b, q_idx] <= seg_code[b, kv_idx])
+            if example_id is not None:
+                allow = allow & (example_id[b, q_idx] == example_id[b, kv_idx])
+            return allow
+
+        return mask_mod
+
+    def forward(
+        self,
+        qkv: Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor, torch.Tensor]],
+        cu_doc_lens: Optional[torch.Tensor] = None,
+        cu_doc_lens_q: Optional[torch.Tensor] = None,
+        cu_doc_lens_k: Optional[torch.Tensor] = None,
+        max_doc_len: Optional[int] = None,
+        max_doc_len_q: Optional[int] = None,
+        max_doc_len_k: Optional[int] = None,
+        local_k_slice: Optional[slice] = None,
+        kv_cache_manager: Optional[KVCacheManager] = None,
+        or_mask: Optional[torch.Tensor] = None,
+        and_mask: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        from torch.nn.attention.flex_attention import create_block_mask
+
+        del local_k_slice
+        if isinstance(qkv, torch.Tensor):
+            raise RuntimeError(f"'{self.__class__.__name__}' doesn't support packed QKV")
+        if kv_cache_manager is not None:
+            raise RuntimeError(f"'{self.__class__.__name__}' doesn't support KV caching")
+        if self.dropout_p:
+            raise RuntimeError(f"'{self.__class__.__name__}' doesn't support attention dropout")
+        if self.cp_enabled:
+            raise RuntimeError(f"'{self.__class__.__name__}' doesn't support context parallelism")
+        if any(
+            opt is not None
+            for opt in (
+                cu_doc_lens,
+                cu_doc_lens_q,
+                cu_doc_lens_k,
+                max_doc_len,
+                max_doc_len_q,
+                max_doc_len_k,
+            )
+        ):
+            raise RuntimeError(
+                f"'{self.__class__.__name__}' doesn't support intra-document masking"
+            )
+
+        q, k, v = qkv
+        # PyTorch SDPA-style GQA expansion + (B, S, H, D) -> (B, H, S, D).
+        n_rep = self.n_heads // self.n_kv_heads
+        k = _repeat_kv(k, n_rep)
+        v = _repeat_kv(v, n_rep)
+        q, k, v = q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2)
+
+        B, _, S_q, _ = q.shape
+        S_kv = k.shape[2]
+        om = or_mask.to(device=q.device, dtype=torch.bool) if or_mask is not None else None
+        am = and_mask.to(device=q.device, dtype=torch.bool) if and_mask is not None else None
+        is_image, seg_code, example_id = self._per_token_from_masks(om, am)
+        mask_mod = self._build_mask_mod(is_image, seg_code, example_id)
+        # `B`/`H=None` so the mask may depend on the batch index (image / subsegment ids are
+        # per-example) but broadcasts over heads. Rebuilt each step since the masks are data
+        # dependent; block-sparsity makes this cheap.
+        block_mask = create_block_mask(
+            mask_mod, B=B, H=None, Q_LEN=S_q, KV_LEN=S_kv, device=q.device
+        )
+        flex = _get_flex_attention(q.device)
+        att = flex(q, k, v, block_mask=block_mask, scale=self.scale)
+
+        # (B, H, S, D) -> (B, S, H, D)
+        return att.transpose(1, 2).contiguous()
+
+
 class FlashAttention2Backend(AttentionBackend):
     """
     SDPA from the flash-attn package. Additionally, ring-flash-attn is required for context parallelism.
@@ -511,6 +739,7 @@ class FlashAttention2Backend(AttentionBackend):
         local_k_slice: Optional[slice] = None,
         kv_cache_manager: Optional[KVCacheManager] = None,
         or_mask: Optional[torch.Tensor] = None,
+        and_mask: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         if isinstance(qkv, torch.Tensor):
             if kv_cache_manager is not None:
@@ -736,6 +965,7 @@ class FlashAttention3Backend(AttentionBackend):
         local_k_slice: Optional[slice] = None,
         kv_cache_manager: Optional[KVCacheManager] = None,
         or_mask: Optional[torch.Tensor] = None,
+        and_mask: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         if isinstance(qkv, torch.Tensor):
             if kv_cache_manager is not None:
@@ -933,6 +1163,7 @@ class FlashAttention4Backend(AttentionBackend):
         local_k_slice: Optional[slice] = None,
         kv_cache_manager: Optional[KVCacheManager] = None,
         or_mask: Optional[torch.Tensor] = None,
+        and_mask: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         assert isinstance(qkv, tuple), f"'{self.__class__.__name__}' requires unpacked QKV"
         assert local_k_slice is None, f"'{self.__class__.__name__}' doesn't support local_k_slice"
@@ -1121,6 +1352,7 @@ class TEAttentionBackend(AttentionBackend):
         local_k_slice: Optional[slice] = None,
         kv_cache_manager: Optional[KVCacheManager] = None,
         or_mask: Optional[torch.Tensor] = None,
+        and_mask: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         del local_k_slice
 

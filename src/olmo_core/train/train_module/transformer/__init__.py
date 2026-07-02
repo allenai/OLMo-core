@@ -10,12 +10,18 @@ from .config import (
     TransformerTensorParallelConfig,
     TransformerTrainModuleConfig,
 )
+from .multimodal_train_module import (
+    MultimodalTransformerTrainModule,
+    MultimodalTransformerTrainModuleConfig,
+)
 from .pipeline_train_module import TransformerPipelineTrainModule
 from .train_module import TransformerTrainModule
 
 __all__ = [
     "TransformerTrainModule",
     "TransformerTrainModuleConfig",
+    "MultimodalTransformerTrainModule",
+    "MultimodalTransformerTrainModuleConfig",
     "TransformerPipelineTrainModule",
     "TransformerPipelineTrainModuleConfig",
     "TransformerActivationCheckpointingConfig",
