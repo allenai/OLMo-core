@@ -510,9 +510,6 @@ class _RowwiseFP8DispatchExpertsCombineAutograd(torch.autograd.Function):
 
         # Combine backward first weights each route by its router probability,
         # then dispatches the weighted token grads into combine_in_q/scales.
-        # This materialized weighted_flat is the main remaining eager overhead;
-        # replacing it with a fused weighted rowwise FP8 dispatch kernel is the
-        # next obvious performance cleanup.
         num_rows, top_k = dst_ranks.shape
         hidden = grad_out_contig.shape[1]
         weighted_flat = (
