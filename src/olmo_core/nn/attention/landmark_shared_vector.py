@@ -59,6 +59,7 @@ from typing import Optional
 import torch
 import torch.distributed as dist
 import torch.nn as nn
+from torch.utils.checkpoint import checkpoint
 
 from olmo_core.distributed.parallel.context_parallel import (
     all_to_all_cp2hp,
@@ -91,6 +92,11 @@ class SharedVectorLandmarkAttention(FastLandmarkAttention):
     See :class:`~olmo_core.nn.attention.landmark_fast.FastLandmarkAttention` for the remaining
     parameters.
     """
+
+    #: Number of query positions processed per chunk in :meth:`_shared_vector_tail`, bounding the
+    #: fp32 score/softmax working set to ``O(chunk * n_blocks)`` instead of ``O(seq_len * n_blocks)``.
+    #: Rounded down to a whole number of blocks; a value >= ``seq_len`` reproduces the dense path.
+    _tail_query_chunk: int = 4096
 
     def __init__(
         self,
@@ -294,6 +300,7 @@ class SharedVectorLandmarkAttention(FastLandmarkAttention):
         nb = T // Lb
         scale = self.softmax_scale
         device = q.device
+        neg_inf = torch.finfo(torch.float32).min
 
         # Under Ulysses CP the tail runs head-parallel: after the cp2hp all-to-all this rank holds
         # only H = n_heads / cp_degree heads -- the contiguous global slice [rank*H : (rank+1)*H]
@@ -308,45 +315,81 @@ class SharedVectorLandmarkAttention(FastLandmarkAttention):
             weight_landmark = self.weight_landmark
             base = self.base
 
-        # Per-block landmark value vectors and their vec_dim codes e_B.
+        # Per-block landmark value/key vectors and the block codes e_B -- computed once (all cheap,
+        # O(nb) not O(T)) and shared across query chunks.
         mem_pos = torch.arange(Lb - 1, T, Lb, device=device)  # (nb,)
         v_lm = v[:, :, mem_pos, :]  # (B, H, nb, D)
+        k_lm = k[:, :, mem_pos, :]  # (B, H, nb, D)
         # e_B = v_landmark_B @ weight_landmark_h  -> (B, H, nb, vec_dim)
         e = torch.einsum("bhnd,hde->bhne", v_lm.float(), weight_landmark.float())
+        base_t = base.float().view(1, H, 1, self.vec_dim)
 
-        # --- gate group 1: scores to each past block's landmark. (B, H, T, nb) ---
-        k_lm = k[:, :, mem_pos, :]  # (B, H, nb, D)
-        sl = torch.einsum("bhid,bhnd->bhin", q.float(), k_lm.float()) * scale
-        block_of_query = (torch.arange(T, device=device) // Lb).view(T, 1)  # (T, 1)
-        block_idx = torch.arange(nb, device=device).view(1, nb)  # (1, nb)
-        past_valid = block_idx < block_of_query  # (T, nb): block is strictly before query's block
-        neg_inf = torch.finfo(torch.float32).min
-        sl = sl.masked_fill(~past_valid.view(1, 1, T, nb), neg_inf)
-
-        # --- gate group 2: scores to the query's own-block content (causal, excludes the landmark).
-        qb = q.view(B, H, nb, Lb, D).float()
-        kb = k.view(B, H, nb, Lb, D).float()
-        local = (
-            torch.einsum("bhnad,bhncd->bhnac", qb, kb) * scale
-        )  # (B, H, nb, Lb, Lb): a=query, c=key
         a_idx = torch.arange(Lb, device=device).view(Lb, 1)
         c_idx = torch.arange(Lb, device=device).view(1, Lb)
         local_valid = (c_idx <= a_idx) & (
             c_idx != (Lb - 1)
         )  # causal within block, drop own landmark
-        local = local.masked_fill(~local_valid.view(1, 1, 1, Lb, Lb), neg_inf)
-        local = local.reshape(B, H, T, Lb)  # row i=(n,a) -> its own block's content scores
+        block_idx = torch.arange(nb, device=device).view(1, nb)  # (1, nb)
 
-        # Single softmax over [past landmarks (nb) ++ own-block content (Lb)] per query.
-        logits = torch.cat([sl, local], dim=-1)  # (B, H, T, nb + Lb)
-        logits = logits - logits.amax(dim=-1, keepdim=True)
-        w = torch.softmax(logits, dim=-1)
-        gate = w[..., :nb]  # (B, H, T, nb): mass on each past block
-        local_mass = w[..., nb:].sum(dim=-1)  # (B, H, T)
+        def _tail_chunk(
+            q_c: torch.Tensor,
+            k_c: torch.Tensor,
+            k_lm: torch.Tensor,
+            e: torch.Tensor,
+            base_t: torch.Tensor,
+            nb0: int,
+        ) -> torch.Tensor:
+            """Tail ``(B, H, C, vec)`` for a contiguous, block-aligned span of ``C = mc*Lb`` queries
+            starting at block ``nb0``. Each query's tail is independent, so this equals the matching
+            slice of the dense computation -- we only chunk to bound the ``(C, nb)`` fp32 working set.
+            """
+            Bc, Hc, C, _ = q_c.shape
+            mc = C // Lb
 
-        tail = torch.einsum("bhtn,bhne->bhte", gate, e)  # sum_B gate_B e_B
-        tail = tail + local_mass.unsqueeze(-1) * base.float().view(1, H, 1, self.vec_dim)
-        return tail
+            # gate group 1: scores to each past block's landmark. (B, H, C, nb)
+            sl = torch.einsum("bhid,bhnd->bhin", q_c.float(), k_lm.float()) * scale
+            block_of_query = (nb0 + torch.arange(C, device=device) // Lb).view(C, 1)  # (C, 1)
+            past_valid = block_idx < block_of_query  # (C, nb): block strictly before query's block
+            sl = sl.masked_fill(~past_valid.view(1, 1, C, nb), neg_inf)
+
+            # gate group 2: scores to the query's own-block content (causal, excludes the landmark).
+            qb = q_c.float().reshape(Bc, Hc, mc, Lb, D)
+            kb = k_c.float().reshape(Bc, Hc, mc, Lb, D)
+            local = (
+                torch.einsum("bhnad,bhncd->bhnac", qb, kb) * scale
+            )  # (B, H, mc, Lb, Lb): a=query, c=key
+            local = local.masked_fill(~local_valid.view(1, 1, 1, Lb, Lb), neg_inf)
+            local = local.reshape(Bc, Hc, C, Lb)
+
+            # Single softmax over [past landmarks (nb) ++ own-block content (Lb)] per query.
+            logits = torch.cat([sl, local], dim=-1)  # (B, H, C, nb + Lb)
+            logits = logits - logits.amax(dim=-1, keepdim=True)
+            w = torch.softmax(logits, dim=-1)
+            gate = w[..., :nb]  # (B, H, C, nb): mass on each past block
+            local_mass = w[..., nb:].sum(dim=-1)  # (B, H, C)
+
+            tail = torch.einsum("bhtn,bhne->bhte", gate, e)  # sum_B gate_B e_B
+            return tail + local_mass.unsqueeze(-1) * base_t
+
+        # Chunk over queries so the dense ``(B, H, T, nb)`` fp32 score/softmax tensors are never
+        # materialized (peak drops from O(T*nb) to O(chunk*nb)). Chunks are block-aligned so each
+        # query's own block lies wholly within its chunk. Under autograd, recompute each chunk in
+        # backward (checkpoint) so the intermediates aren't retained across the whole sequence.
+        chunk_blocks = max(1, self._tail_query_chunk // Lb)
+        use_ckpt = torch.is_grad_enabled() and (
+            q.requires_grad or k.requires_grad or v.requires_grad
+        )
+        parts = []
+        for nb0 in range(0, nb, chunk_blocks):
+            nb1 = min(nb0 + chunk_blocks, nb)
+            t0, t1 = nb0 * Lb, nb1 * Lb
+            q_c, k_c = q[:, :, t0:t1], k[:, :, t0:t1]
+            if use_ckpt:
+                part = checkpoint(_tail_chunk, q_c, k_c, k_lm, e, base_t, nb0, use_reentrant=False)
+            else:
+                part = _tail_chunk(q_c, k_c, k_lm, e, base_t, nb0)
+            parts.append(part)
+        return torch.cat(parts, dim=2)
 
     # ------------------------------------------------------------------ generation
 

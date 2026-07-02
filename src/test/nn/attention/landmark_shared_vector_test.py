@@ -121,6 +121,44 @@ def test_tail_matches_dense_bruteforce():
     torch.testing.assert_close(tail, ref, atol=1e-4, rtol=1e-4)
 
 
+def test_tail_chunking_matches_single_chunk_and_grads():
+    """Query-chunking (with per-chunk checkpointing under autograd) must reproduce the single-chunk
+    dense result and its gradients -- each query's tail is independent, so chunking only bounds the
+    fp32 working set. Uses a chunk of 2 blocks over 5 blocks to exercise an uneven final chunk."""
+    m = _build()
+    with torch.no_grad():
+        m.weight_landmark.normal_(std=0.3)
+        m.base.normal_(std=0.3)
+    T = m.block_size * 5
+    q, k, v = _qkv(m, B=2, T=T, dtype=torch.float32)
+
+    # Reference: single chunk (chunk >= T), with grads.
+    m._tail_query_chunk = 10**9
+    q1 = q.clone().requires_grad_(True)
+    ref = m._shared_vector_tail(q1, k, v)
+    ref.sum().backward()
+    ref_q_grad = q1.grad.clone()
+    ref_wl_grad = m.weight_landmark.grad.clone()
+    ref_base_grad = m.base.grad.clone()
+    m.zero_grad(set_to_none=True)
+
+    # Also match the independent dense brute-force reference (chunking didn't just match itself).
+    torch.testing.assert_close(
+        ref, _dense_tail_reference(m, q1.detach(), k, v), atol=1e-4, rtol=1e-4
+    )
+
+    # Multi-chunk (2 blocks/chunk -> chunks of 2,2,1 blocks) with checkpointing (grad enabled).
+    m._tail_query_chunk = 2 * m.block_size
+    q2 = q.clone().requires_grad_(True)
+    out = m._shared_vector_tail(q2, k, v)
+    out.sum().backward()
+
+    torch.testing.assert_close(out, ref, atol=1e-5, rtol=1e-5)
+    torch.testing.assert_close(q2.grad, ref_q_grad, atol=1e-5, rtol=1e-5)
+    torch.testing.assert_close(m.weight_landmark.grad, ref_wl_grad, atol=1e-5, rtol=1e-5)
+    torch.testing.assert_close(m.base.grad, ref_base_grad, atol=1e-5, rtol=1e-5)
+
+
 def test_tail_cp_head_slicing_matches_full(monkeypatch):
     """Under Ulysses CP the tail runs head-parallel: after the cp2hp all-to-all each rank holds only
     ``n_heads / cp_degree`` heads (global slice ``[rank*H : (rank+1)*H]``), while ``weight_landmark`` /
