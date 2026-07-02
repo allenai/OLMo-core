@@ -262,6 +262,16 @@ def main():
                     ("8k", f"{E5}/beir/beir_scifact_ladder_k22_299.jsonl"),
                     ("16k", f"{E5}/beir/beir_scifact_ladder_k44_299.jsonl"),
                     ("32k", f"{E5}/beir/beir_scifact_ladder_k88_299.jsonl")],
+                # OOD generalization for the outlier + contradiction tasks (different passage/sentence
+                # source than the in-distribution wiki100w / pubmed). Graded identically (gold_doc_indices).
+                "outlier_review": [("3k", f"{E5}/outlier/outlier_review_n30_k3_eval_600.jsonl"),
+                    ("8k", f"{E5}/outlier/outlier_review_n80_k3_eval_600.jsonl"),
+                    ("16k", f"{E5}/outlier/outlier_review_n160_k3_eval_600.jsonl"),
+                    ("32k", f"{E5}/outlier/outlier_review_n325_k3_eval_600.jsonl")],
+                "contra_fever": [("2k", f"{E5}/contra/contradiction_eval_fever_n120_k3.jsonl"),
+                    ("8k", f"{E5}/contra/contradiction_eval_fever_n495_k3.jsonl"),
+                    ("16k", f"{E5}/contra/contradiction_eval_fever_n1020_k3.jsonl"),
+                    ("32k", f"{E5}/contra/contradiction_eval_fever_n2150_k3.jsonl")],
             }
         else:
           LADDERS = {
@@ -298,6 +308,15 @@ def main():
                 ("8k", f"{E5}/beir/beir_scifact_ladder_k22_299.jsonl"),
                 ("16k", f"{E5}/beir/beir_scifact_ladder_k44_299.jsonl"),
                 ("32k", f"{E5}/beir/beir_scifact_ladder_k88_299.jsonl")],
+            # OOD generalization for outlier + contradiction (review / FEVER source); same files v1/v2.
+            "outlier_review": [("3k", f"{E5}/outlier/outlier_review_n30_k3_eval_600.jsonl"),
+                ("8k", f"{E5}/outlier/outlier_review_n80_k3_eval_600.jsonl"),
+                ("16k", f"{E5}/outlier/outlier_review_n160_k3_eval_600.jsonl"),
+                ("32k", f"{E5}/outlier/outlier_review_n325_k3_eval_600.jsonl")],
+            "contra_fever": [("2k", f"{E5}/contra/contradiction_eval_fever_n120_k3.jsonl"),
+                ("8k", f"{E5}/contra/contradiction_eval_fever_n495_k3.jsonl"),
+                ("16k", f"{E5}/contra/contradiction_eval_fever_n1020_k3.jsonl"),
+                ("32k", f"{E5}/contra/contradiction_eval_fever_n2150_k3.jsonl")],
         }
         LSPEC = {
             "contradiction": ("contradiction", _eval_contradiction, "f1", 200),
@@ -307,6 +326,8 @@ def main():
             "outlier": ("outlier", _eval_outlier, "f1", 200),
             "fiqa": ("retrieval", _eval_retrieval, "f1", 64),
             "scifact": ("retrieval", _eval_retrieval, "f1", 64),
+            "outlier_review": ("outlier", _eval_outlier, "f1", 200),
+            "contra_fever": ("contradiction", _eval_contradiction, "f1", 200),
         }
         task_filter = set(args.ladder_tasks.split(",")) if args.ladder_tasks else None
         rung_filter = set(args.ladder_rungs.split(",")) if args.ladder_rungs else None
@@ -319,7 +340,7 @@ def main():
             # contradiction = NO-COT direct pairs: short budget + early-stop on the answer line
             # (think-strip already applied in generate(); no newline-stop).
             gkw = {}
-            if task == "contradiction":
+            if loadtask == "contradiction":
                 maxtok = args.contra_max_new_tokens
                 gkw = {"stop_strings": ["contradicting pairs:"]}
             for label, path in rungs:
