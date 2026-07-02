@@ -94,9 +94,12 @@ NUM_NODES = 1  # 2 nodes x 8 GPUs = 16 GPUs; cp_degree=8 -> NUM_NODES DP replica
 # ---------------------------------------------------------------------------
 # Data (weka) -- ladder40k (rungs up to 32k context; max doc ~40k tokens).
 # ---------------------------------------------------------------------------
-DATA_ROOT = "/weka/oe-training-default/ai2-llm/checkpoints/prasanns/cptmix_data_ladder40k"
+# Updated data: single_task_ladders_v2 (same 5-task shards as dense mix), tokenized to 40960 so the
+# landmark-space window is fully fed. (Was cptmix_data_ladder40k.)
+DATA_ROOT = "/weka/oe-training-default/ai2-llm/checkpoints/prasanns/single_task_ladders_v2"
 CONTRA_DATA_ROOT = f"{DATA_ROOT}/contradiction"
-NQ_DATA_ROOT = f"{DATA_ROOT}/nq"
+# nq: p10 pipeline (hard-neg ~10% + CE filter), NOT the 98%-hard v2/nq (standing directive).
+NQ_DATA_ROOT = "/weka/oe-training-default/ai2-llm/checkpoints/prasanns/single_task_ladders_p10/nq"
 OOLONG_DATA_ROOT = f"{DATA_ROOT}/oolong"
 RERANK_DATA_ROOT = f"{DATA_ROOT}/rerank"
 OUTLIER_DATA_ROOT = f"{DATA_ROOT}/outlier"
