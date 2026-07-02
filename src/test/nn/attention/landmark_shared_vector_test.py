@@ -142,7 +142,7 @@ def test_shapes_and_split_projection():
     q, k, v = _qkv(m, B=B, T=T, dtype=torch.float32)
 
     # head_dim output branch is unchanged; the vec branch has its own projection.
-    assert m._main(q, k, v).shape == (B, m.n_heads, T, m.head_dim)
+    assert m._attn_core(q, k, v).shape == (B, m.n_heads, T, m.head_dim)
     assert m._shared_vector_tail(q, k, v).shape == (B, m.n_heads, T, m.vec_dim)
     assert m.w_out.in_features == m.n_heads * m.head_dim  # base shape -> loads from base checkpoint
     assert m.w_out_vec.in_features == m.n_heads * m.vec_dim
@@ -168,6 +168,41 @@ def test_zero_init_tail_reproduces_plain_landmark():
     ref_keys = set(ref.state_dict().keys())
     ref.load_state_dict({k: v for k, v in m.state_dict().items() if k in ref_keys}, strict=False)
     torch.testing.assert_close(out, ref(x), atol=1e-5, rtol=1e-4)
+
+
+def test_decode_matches_training_per_position():
+    """Per-position decode (main + the new tail) reproduces the training forward at each query."""
+    m = _build()
+    with torch.no_grad():
+        m.weight_landmark.normal_(std=0.3)
+    T = m.block_size * 3
+    q, k, v = _qkv(m, B=1, T=T, dtype=torch.float32)
+
+    main_train = m._attn_core(q, k, v)  # (1, H, T, head_dim)
+    tail_train = m._shared_vector_tail(q, k, v)  # (1, H, T, vec)
+
+    for qpos in range(T):
+        probs, v_used, ss = m._decode_probs(
+            q[:, :, qpos : qpos + 1, :], k[:, :, : qpos + 1, :], v[:, :, : qpos + 1, :], qpos
+        )
+        main_dec = torch.matmul(probs.to(v_used.dtype), v_used)  # (1, H, 1, head_dim)
+        tail_dec = m._decode_tail(probs, v_used, ss)  # (1, H, 1, vec)
+        torch.testing.assert_close(main_dec[:, :, 0], main_train[:, :, qpos], atol=1e-4, rtol=1e-4)
+        torch.testing.assert_close(tail_dec[:, :, 0], tail_train[:, :, qpos], atol=1e-4, rtol=1e-4)
+
+
+def test_prefill_generate_matches_training_forward():
+    """The KV-cached prefill path (two-branch projection) equals the plain forward."""
+    m = _build()
+    with torch.no_grad():
+        m.weight_landmark.normal_(std=0.3)
+    T = m.block_size * 3
+    x = torch.randn(1, T, m.d_model)
+
+    out_train = m(x)
+    m.init_kv_cache_manager(batch_size=1, max_seq_len=T)
+    out_prefill = m(x)
+    torch.testing.assert_close(out_train, out_prefill, atol=1e-5, rtol=1e-4)
 
 
 def test_backward_populates_new_param_grads():

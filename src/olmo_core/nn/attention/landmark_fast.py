@@ -28,7 +28,7 @@ original landmark attention does. The fused Triton kernel is required (CUDA + tr
 
 import math
 import os
-from typing import Optional
+from typing import Optional, Tuple
 
 import torch
 import torch.nn.functional as F
@@ -807,12 +807,13 @@ class FastLandmarkAttention(Attention):
         scores[..., lm_idx] = lm_scores.masked_fill(~keep, float("-inf"))
         return scores
 
-    def _decode_one(
+    def _decode_probs(
         self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, qpos: int
-    ) -> torch.Tensor:
-        """Single-query decode using the eager grouped-softmax reference (numerically matched to the
-        training kernel). Query at absolute position ``qpos`` attends to cached keys ``0..total-1``
-        (all <= qpos, so causal masking is implicit).
+    ) -> Tuple[torch.Tensor, torch.Tensor, int]:
+        """Single-query decode grouped-softmax probabilities (the shared core of :meth:`_decode_one`).
+
+        Query at absolute position ``qpos`` attends to cached keys ``0..total-1`` (all <= qpos, so
+        causal masking is implicit).
 
         A landmark-position query (the inserted memory token, ``qpos % block_size == block_size-1``)
         does not attend to itself: the training kernel decrements the causal bound on the last row of
@@ -820,21 +821,35 @@ class FastLandmarkAttention(Attention):
         plus past blocks via landmark gating. Drop the self key to match.
 
         In eval mode only *generated* queries (``qpos >= prompt_len``) use the "one long local block"
-        decode (:meth:`_decode_one_eval`). Prompt-position queries (``qpos < prompt_len``) keep the
-        per-block decode below so they reproduce prefill -- this is the path taken by the final prompt
-        token, which the generation loop decodes first so hard top-k retrieval also gates the first
-        generated token (prefill itself never applies top-k).
+        decode. Prompt-position queries (``qpos < prompt_len``) keep the per-block decode so they
+        reproduce prefill -- this is the path taken by the final prompt token, which the generation
+        loop decodes first so hard top-k retrieval also gates the first generated token (prefill
+        itself never applies top-k).
+
+        :returns: ``(probs, v_used, section_start)`` where ``probs`` is ``(B, H, 1, total)`` over the
+            (possibly self-sliced) cached values ``v_used`` (``(B, H, total, D)``), and
+            ``section_start`` is the start of the query's local section (a multiple of ``block_size``;
+            the past region ``[0, section_start)`` partitions into whole landmark blocks).
         """
         Lb = self.block_size
         if self._eval_prompt_len is not None and qpos >= self._eval_prompt_len:
-            return self._decode_one_eval(q, k, v, qpos)
-        if qpos % Lb == Lb - 1:
-            k = k[:, :, :qpos]  # keys 0..qpos-1 (drop the landmark's own position)
-            v = v[:, :, :qpos]
-        total = k.shape[2]
-        j = torch.arange(total, device=q.device)
-        is_mem = ((j % Lb) == (Lb - 1)).view(1, 1, 1, total)
-        last_section = ((j // Lb) == (qpos // Lb)).view(1, 1, 1, total)
+            # "One long local block": generated tokens (never landmarks) attend directly to every key
+            # in the growing local block and reach earlier prompt blocks only via their landmarks.
+            P = self._eval_prompt_len
+            section_start = (P // Lb) * Lb if self._eval_decode_mode == "extend_last_block" else P
+            total = k.shape[2]
+            j = torch.arange(total, device=q.device)
+            is_mem = (((j % Lb) == (Lb - 1)) & (j < section_start)).view(1, 1, 1, total)
+            last_section = (j >= section_start).view(1, 1, 1, total)
+        else:
+            if qpos % Lb == Lb - 1:
+                k = k[:, :, :qpos]  # keys 0..qpos-1 (drop the landmark's own position)
+                v = v[:, :, :qpos]
+            total = k.shape[2]
+            j = torch.arange(total, device=q.device)
+            is_mem = ((j % Lb) == (Lb - 1)).view(1, 1, 1, total)
+            last_section = ((j // Lb) == (qpos // Lb)).view(1, 1, 1, total)
+            section_start = (qpos // Lb) * Lb
 
         scores = torch.matmul(q, k.transpose(-1, -2)) * self.softmax_scale  # (B, H, 1, total)
         scores = self._apply_topk_landmark_retrieval(scores, is_mem)
@@ -845,38 +860,11 @@ class FastLandmarkAttention(Attention):
             is_mem=is_mem.expand(Bsz, Hn, 1, total),
             last_section_mask=last_section.expand(Bsz, Hn, 1, total),
         )
-        return torch.matmul(probs.to(v.dtype), v)
+        return probs, v, section_start
 
-    def _decode_one_eval(
+    def _decode_one(
         self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, qpos: int
     ) -> torch.Tensor:
-        """Decode a generated token as part of "one long local block" (landmark eval mode).
-
-        Generated tokens (absolute position ``>= prompt_len``) are never landmarks. They attend
-        directly to every key in the growing local block ``[section_start, qpos]`` and reach earlier
-        prompt blocks only through those blocks' landmark tokens. ``section_start`` is the start of
-        the prompt's final block (``extend_last_block``) or the end of the prompt
-        (``generation_only``). See :meth:`set_landmark_eval_decode`.
-        """
-        Lb = self.block_size
-        P = self._eval_prompt_len
-        assert P is not None
-        section_start = (P // Lb) * Lb if self._eval_decode_mode == "extend_last_block" else P
-
-        total = k.shape[2]  # = qpos + 1 (generated query attends to keys 0..qpos)
-        j = torch.arange(total, device=q.device)
-        # Only the prompt's landmarks (below the local block) gate access to past blocks; generated
-        # positions are never landmarks.
-        is_mem = (((j % Lb) == (Lb - 1)) & (j < section_start)).view(1, 1, 1, total)
-        last_section = (j >= section_start).view(1, 1, 1, total)
-
-        scores = torch.matmul(q, k.transpose(-1, -2)) * self.softmax_scale  # (B, H, 1, total)
-        scores = self._apply_topk_landmark_retrieval(scores, is_mem)
-        Bsz, Hn = scores.shape[0], scores.shape[1]
-        probs = landmark_grouped_softmax(
-            scores,
-            dim=-1,
-            is_mem=is_mem.expand(Bsz, Hn, 1, total),
-            last_section_mask=last_section.expand(Bsz, Hn, 1, total),
-        )
-        return torch.matmul(probs.to(v.dtype), v)
+        """Single-query decode output (``probs @ v``). See :meth:`_decode_probs` for the semantics."""
+        probs, v_used, _ = self._decode_probs(q, k, v, qpos)
+        return torch.matmul(probs.to(v_used.dtype), v_used)

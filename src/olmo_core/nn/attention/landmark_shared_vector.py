@@ -171,7 +171,8 @@ class SharedVectorLandmarkAttention(FastLandmarkAttention):
 
         Mirrors :meth:`FastLandmarkAttention.forward` (RoPE/QK-norm via ``_prepare_qkv``, optional
         Ulysses CP), but the ``head_dim`` output and the ``vec_dim`` tail are projected by ``w_out``
-        and ``w_out_vec`` respectively and summed. Generation / KV-caching is not supported.
+        and ``w_out_vec`` respectively and summed. KV-cached generation (prefill + decode) is
+        supported via :meth:`_forward_generate`.
         """
         if any(
             v is not None
@@ -188,9 +189,16 @@ class SharedVectorLandmarkAttention(FastLandmarkAttention):
             raise NotImplementedError(
                 "Intra-document masking (cu_doc_lens) is not supported with landmark attention"
             )
-        if cache_leftpad is not None or self.kv_cache_manager is not None:
+        # Generation path: cached prefill / incremental decode (produces main + tail, both projected).
+        if self.kv_cache_manager is not None:
+            if self.cp_enabled:
+                raise NotImplementedError(
+                    "Context parallelism is not supported with landmark generation"
+                )
+            return self._forward_generate(x, pos_sin, pos_cos, freqs_cis, cache_leftpad)
+        if cache_leftpad is not None:
             raise NotImplementedError(
-                "Generation / KV-caching is not supported with SharedVectorLandmarkAttention"
+                "cache_leftpad is only supported together with a KV cache manager"
             )
 
         B, T_local, _ = x.shape
@@ -215,7 +223,7 @@ class SharedVectorLandmarkAttention(FastLandmarkAttention):
         v = repeat_kv(v.transpose(1, 2), n_rep)
 
         # shape: (B, H, T, head_dim) and (B, H, T, vec_dim)
-        main = self._main(q, k, v)
+        main = self._attn_core(q, k, v)
         tail = self._shared_vector_tail(q, k, v).to(main.dtype)
 
         # Concatenate along the head-dim so a single Ulysses all-to-all scatters the sequence back and
@@ -232,8 +240,9 @@ class SharedVectorLandmarkAttention(FastLandmarkAttention):
         tail_flat = combined[..., self.head_dim :].reshape(B, T_local, -1)
         return self.w_out(main_flat) + self.w_out_vec(tail_flat)
 
-    def _main(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor) -> torch.Tensor:
-        """The plain (non-compressive) landmark ``head_dim`` output ``(B, H, T, head_dim)``."""
+    def _attn_core(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor) -> torch.Tensor:
+        """The plain (non-compressive) landmark ``head_dim`` output ``(B, H, T, head_dim)``. Overrides
+        the (kernel-only) base ``_attn_core`` to add the eager path; also used by ``_prefill``."""
         if self.use_kernel:
             if not has_landmark_kernel():
                 raise RuntimeError(
@@ -323,6 +332,98 @@ class SharedVectorLandmarkAttention(FastLandmarkAttention):
 
         tail = torch.einsum("bhtn,bhne->bhte", gate, e)  # sum_B gate_B e_B
         tail = tail + local_mass.unsqueeze(-1) * self.base.float().view(1, H, 1, self.vec_dim)
+        return tail
+
+    # ------------------------------------------------------------------ generation
+
+    def _forward_generate(
+        self,
+        x: torch.Tensor,
+        pos_sin: Optional[torch.Tensor],
+        pos_cos: Optional[torch.Tensor],
+        freqs_cis: Optional[torch.Tensor],
+        cache_leftpad: Optional[torch.Tensor],
+    ) -> torch.Tensor:
+        """KV-cached generation: single-shot prefill (T>1) or incremental decode (T==1).
+
+        Mirrors :meth:`FastLandmarkAttention._forward_generate` but additionally computes the
+        ``vec_dim`` tail and projects the two branches (``w_out(main) + w_out_vec(tail)``). As in the
+        base, blocks follow absolute position, so generation must be left-pad free (``batch_size==1``).
+        """
+        kvm = self.kv_cache_manager
+        assert kvm is not None
+        if cache_leftpad is not None and bool(cache_leftpad.ne(0).any()):
+            raise NotImplementedError(
+                "Landmark generation requires batch_size=1 / no left-padding "
+                "(blocks are tied to absolute position)."
+            )
+
+        B, T, _ = x.shape
+        start_pos = int(kvm.current_position())
+        q, k, v = self._prepare_qkv(
+            x, pos_sin=pos_sin, pos_cos=pos_cos, freqs_cis=freqs_cis, cu_doc_lens=None
+        )
+        kvm.k_cache[:, start_pos : start_pos + T].copy_(k)
+        kvm.v_cache[:, start_pos : start_pos + T].copy_(v)
+        kvm.update_seqlen(T)
+        total = start_pos + T
+
+        n_rep = q.shape[2] // k.shape[2]
+        qh = q.transpose(1, 2)  # (B, H, T, D)
+
+        if T == 1:
+            kh = repeat_kv(kvm.k_cache[:, :total].transpose(1, 2), n_rep)
+            vh = repeat_kv(kvm.v_cache[:, :total].transpose(1, 2), n_rep)
+            probs, v_used, section_start = self._decode_probs(qh, kh, vh, start_pos)
+            main = torch.matmul(probs.to(v_used.dtype), v_used)  # (B, H, 1, head_dim)
+            tail = self._decode_tail(probs, v_used, section_start)  # (B, H, 1, vec_dim)
+        else:
+            if start_pos != 0:
+                raise NotImplementedError(
+                    "Landmark multi-token forward with a non-empty cache is not supported "
+                    "(only single-shot prefill from position 0)."
+                )
+            kh = repeat_kv(k.transpose(1, 2), n_rep)
+            vh = repeat_kv(v.transpose(1, 2), n_rep)
+            main = self._prefill(qh, kh, vh)  # (B, H, T, head_dim)
+            tail = self._shared_vector_tail(qh, kh, vh)  # (B, H, T, vec_dim)
+
+        main_flat = main.transpose(1, 2).contiguous().view(B, T, -1)
+        tail_flat = tail.to(main.dtype).transpose(1, 2).contiguous().view(B, T, -1)
+        return self.w_out(main_flat) + self.w_out_vec(tail_flat)
+
+    def _decode_tail(
+        self, probs: torch.Tensor, v_used: torch.Tensor, section_start: int
+    ) -> torch.Tensor:
+        """The ``vec_dim`` tail for a single decode query, from its grouped-softmax probabilities.
+
+        ``tail = sum_{past B} mass(B) e_B + local_mass base``, where ``mass(B)`` is the total decode
+        probability on past block ``B`` (its content, summed; the landmark itself carries 0 in the
+        non-compressive softmax) and ``e_B = weight_landmark @ v_landmark_B``. This is the single-query
+        analogue of :meth:`_shared_vector_tail`, reusing the decode probabilities so it tracks the
+        per-block / eval "one long local block" / top-k decode structure exactly.
+
+        :param probs: Decode probabilities ``(B, H, 1, total)`` from :meth:`_decode_probs`.
+        :param v_used: The (possibly self-sliced) cached values ``(B, H, total, D)``.
+        :param section_start: Start of the local section; the past region ``[0, section_start)``
+            partitions into whole landmark blocks.
+        """
+        B, H = probs.shape[0], probs.shape[1]
+        Lb = self.block_size
+        S = section_start
+        vec = self.vec_dim
+        wl = self.weight_landmark.float()
+        if S > 0:
+            nb = S // Lb
+            lm_pos = torch.arange(Lb - 1, S, Lb, device=probs.device)
+            v_lm = v_used[:, :, lm_pos, :].float()  # (B, H, nb, D)
+            e = torch.einsum("bhnd,hde->bhne", v_lm, wl)  # (B, H, nb, vec)
+            block_mass = probs[..., :S].reshape(B, H, 1, nb, Lb).sum(-1).float()  # (B, H, 1, nb)
+            tail = torch.einsum("bhqn,bhne->bhqe", block_mass, e)  # (B, H, 1, vec)
+        else:
+            tail = torch.zeros(B, H, 1, vec, device=probs.device, dtype=torch.float32)
+        local_mass = probs[..., S:].sum(-1).float()  # (B, H, 1)
+        tail = tail + local_mass.unsqueeze(-1) * self.base.float().view(1, H, 1, vec)
         return tail
 
     def extra_repr(self) -> str:  # pragma: no cover - cosmetic
