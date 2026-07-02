@@ -25,9 +25,7 @@ _EP_SYMM_GROUP0_ALIAS_RANKS: Optional[Tuple[int, ...]] = None
 
 from olmo_core.config import DType
 from olmo_core.distributed.utils import barrier, get_fs_local_rank, get_rank, get_world_size
-from olmo_core.kernels import (
-    ScaledGroupedMMPrequantizedRHS,
-)
+from olmo_core.kernels import ScaledMMPrequantizedRHS, prequantize_scaled_mm_rhs
 from olmo_core.kernels import olmo_symm_mem
 from olmo_core.kernels import symm_mem_vdev2d as symm_mem_vdev2d_kernels
 from olmo_core.doc_utils import beta_feature
@@ -98,19 +96,29 @@ from ..attention import AttentionConfig
 
 
 def _shared_up_gate_rhs(weight: torch.Tensor) -> torch.Tensor:
-    return weight.unsqueeze(0)
-
-
-def _shared_up_gate_rhs_for_dgrad(weight: torch.Tensor) -> torch.Tensor:
-    return weight.transpose(0, 1).unsqueeze(0)
-
-
-def _shared_down_rhs(weight: torch.Tensor) -> torch.Tensor:
     return weight
 
 
+def _shared_up_gate_rhs_for_dgrad(weight: torch.Tensor) -> torch.Tensor:
+    return weight.transpose(0, 1)
+
+
+def _shared_down_rhs(weight: torch.Tensor) -> torch.Tensor:
+    if weight.shape[0] != 1:
+        raise RuntimeError(
+            "shared rowwise FP8 dense scaled-mm supports exactly one shared expert; "
+            f"got weight shape={tuple(weight.shape)}"
+        )
+    return weight.squeeze(0)
+
+
 def _shared_down_rhs_for_dgrad(weight: torch.Tensor) -> torch.Tensor:
-    return weight.transpose(1, 2)
+    if weight.shape[0] != 1:
+        raise RuntimeError(
+            "shared rowwise FP8 dense scaled-mm supports exactly one shared expert; "
+            f"got weight shape={tuple(weight.shape)}"
+        )
+    return weight.squeeze(0).transpose(0, 1)
 
 
 _SHARED_UP_GATE_FP8_CACHE_SPECS = (
@@ -338,10 +346,10 @@ class OLMoDDPTransformerBlock(olmo_core.nn.transformer.block.TransformerBlockBas
         self.shared_experts_router: Optional[MoERouterV2]
         self.rowwise_fp8 = normalize_rowwise_fp8_config(rowwise_fp8)
         self._rowwise_fp8_checked = False
-        self._shared_rowwise_fp8_up_prequant: Optional[ScaledGroupedMMPrequantizedRHS] = None
-        self._shared_rowwise_fp8_down_prequant: Optional[ScaledGroupedMMPrequantizedRHS] = None
-        self._shared_rowwise_fp8_up_prequant_t: Optional[ScaledGroupedMMPrequantizedRHS] = None
-        self._shared_rowwise_fp8_down_prequant_t: Optional[ScaledGroupedMMPrequantizedRHS] = None
+        self._shared_rowwise_fp8_up_prequant: Optional[ScaledMMPrequantizedRHS] = None
+        self._shared_rowwise_fp8_down_prequant: Optional[ScaledMMPrequantizedRHS] = None
+        self._shared_rowwise_fp8_up_prequant_t: Optional[ScaledMMPrequantizedRHS] = None
+        self._shared_rowwise_fp8_down_prequant_t: Optional[ScaledMMPrequantizedRHS] = None
         self._shared_rowwise_fp8_weight_versions: Optional[Tuple[int, int]] = None
         self._shared_rowwise_fp8_up_gate_weight: Optional[FP8WeightStore] = None
         self._shared_rowwise_fp8_down_weight: Optional[FP8WeightStore] = None
@@ -388,6 +396,16 @@ class OLMoDDPTransformerBlock(olmo_core.nn.transformer.block.TransformerBlockBas
 
         #### Optional: shared experts ####
         if shared_experts:
+            if self.rowwise_fp8 is not None and self.rowwise_fp8.enabled:
+                if shared_experts.num_experts != 1:
+                    raise OLMoConfigurationError(
+                        "shared rowwise FP8 currently supports exactly one shared expert; "
+                        f"got num_experts={shared_experts.num_experts}"
+                    )
+                if not self.rowwise_fp8.fp8_only_params:
+                    raise OLMoConfigurationError(
+                        "shared rowwise FP8 scaled-mm requires fp8_only_params=True"
+                    )
             # Shared Experts enabled
             self.shared_experts = shared_experts.build(init_device=init_device)
             owner_ref = weakref.ref(self)
@@ -403,6 +421,7 @@ class OLMoDDPTransformerBlock(olmo_core.nn.transformer.block.TransformerBlockBas
                     and self.rowwise_fp8.enabled
                     and self.rowwise_fp8.fp8_only_params
                 ),
+                prequantizer=prequantize_scaled_mm_rhs,
             )
             self._shared_rowwise_fp8_down_weight = FP8WeightStore(
                 logical_name="shared_experts.w_down",
@@ -414,6 +433,7 @@ class OLMoDDPTransformerBlock(olmo_core.nn.transformer.block.TransformerBlockBas
                     and self.rowwise_fp8.enabled
                     and self.rowwise_fp8.fp8_only_params
                 ),
+                prequantizer=prequantize_scaled_mm_rhs,
             )
             # Shared Experts Router
             if shared_experts_router is not None:

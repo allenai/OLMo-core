@@ -4,6 +4,7 @@ import pytest
 import torch
 
 from olmo_core.config import DType
+from olmo_core.kernels.mxfp8_linear import ScaledMMPrequantizedRHS
 from olmo_core.kernels.scaled_grouped_mm import ScaledGroupedMMPrequantizedRHS
 from olmo_core.nn.moe.v2.fp8 import (
     MoERowwiseFP8Config,
@@ -283,6 +284,16 @@ def test_fp8_weight_store_refresh_from_logical_weight_uses_explicit_layout_specs
             mat_b_version=-1,
         )
 
+    def _fake_dense_prequant(mat_b: torch.Tensor, *, check_mat_b_version: bool = True):
+        del check_mat_b_version
+        calls.append(tuple(mat_b.shape))
+        return ScaledMMPrequantizedRHS(
+            mat_b_q=torch.empty_like(mat_b, dtype=torch.float8_e4m3fn),
+            scale_b=torch.empty((1,), dtype=torch.float8_e8m0fnu),
+            mat_b_shape=tuple(mat_b.shape),
+            mat_b_version=-1,
+        )
+
     monkeypatch.setattr(
         "olmo_core.nn.fp8_weight.prequantize_scaled_grouped_mm_rhs",
         _fake_prequant,
@@ -295,6 +306,7 @@ def test_fp8_weight_store_refresh_from_logical_weight_uses_explicit_layout_specs
             FP8WeightCacheSpec("rhs", lambda w: w.transpose(1, 2)),
             FP8WeightCacheSpec("rhs_for_dgrad", lambda w: w),
         ),
+        prequantizer=_fake_prequant,
     )
     up_gate.refresh_from_logical_weight(torch.empty(2, 8, 16))
     down = FP8WeightStore(
@@ -304,15 +316,17 @@ def test_fp8_weight_store_refresh_from_logical_weight_uses_explicit_layout_specs
             FP8WeightCacheSpec("rhs", lambda w: w),
             FP8WeightCacheSpec("rhs_for_dgrad", lambda w: w.transpose(1, 2)),
         ),
+        prequantizer=_fake_prequant,
     )
     down.refresh_from_logical_weight(torch.empty(2, 4, 16))
     shared_up_gate = FP8WeightStore(
         logical_name="shared_experts.w_up_gate",
         logical_shape=(8, 16),
         cache_specs=(
-            FP8WeightCacheSpec("rhs", lambda w: w.unsqueeze(0)),
-            FP8WeightCacheSpec("rhs_for_dgrad", lambda w: w.transpose(0, 1).unsqueeze(0)),
+            FP8WeightCacheSpec("rhs", lambda w: w),
+            FP8WeightCacheSpec("rhs_for_dgrad", lambda w: w.transpose(0, 1)),
         ),
+        prequantizer=_fake_dense_prequant,
     )
     shared_up_gate.refresh_from_logical_weight(torch.empty(8, 16))
 
@@ -321,8 +335,8 @@ def test_fp8_weight_store_refresh_from_logical_weight_uses_explicit_layout_specs
         (2, 8, 16),
         (2, 4, 16),
         (2, 16, 4),
-        (1, 8, 16),
-        (1, 16, 8),
+        (8, 16),
+        (16, 8),
     ]
 
 

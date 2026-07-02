@@ -274,6 +274,44 @@ def _wgrad_weight_mxfp8(
     )
 
 
+def _wgrad_rhs_mxfp8(
+    grad_out: Tensor,
+    prequantized_mat_a_as_rhs: ScaledMMPrequantizedRHS,
+) -> Tensor:
+    mat_a_shape = prequantized_mat_a_as_rhs.mat_b_shape
+    if grad_out.ndim != 2:
+        raise ValueError(
+            "MXFP8 RHS-layout wgrad expects rank-2 operands, "
+            f"got grad_out={tuple(grad_out.shape)}"
+        )
+    if grad_out.shape[0] != mat_a_shape[0]:
+        raise ValueError(
+            "MXFP8 RHS-layout wgrad batch mismatch: "
+            f"mat_a={mat_a_shape} grad_out={tuple(grad_out.shape)}"
+        )
+    if grad_out.shape[0] == 0:
+        return torch.zeros(
+            (mat_a_shape[1], grad_out.shape[1]),
+            device=grad_out.device,
+            dtype=torch.bfloat16,
+        )
+    assert grad_out.shape[0] % 32 == 0, (
+        "MXFP8 RHS-layout wgrad reduction dim must be divisible by 32, "
+        f"got mat_a={mat_a_shape} grad_out={tuple(grad_out.shape)}"
+    )
+
+    grad_out_as_rhs = prequantize_scaled_mm_rhs(
+        grad_out,
+        check_mat_b_version=False,
+    )
+    return _scaled_mm_cuda(
+        prequantized_mat_a_as_rhs.mat_b_q.transpose(0, 1),
+        grad_out_as_rhs.mat_b_q,
+        prequantized_mat_a_as_rhs.scale_b,
+        grad_out_as_rhs.scale_b,
+    )
+
+
 def _wgrad_weight_mxfp8_from_bf16_input(
     grad_out: Tensor,
     mat_a: Tensor,
@@ -295,6 +333,8 @@ class _ScaledMMMXFP8FP8WeightFunction(torch.autograd.Function):
         prequantized_rhs_for_dgrad: ScaledMMPrequantizedRHS,
         wgrad_sink: Optional[Any],
         save_wgrad_input_as_mxfp8: bool,
+        wgrad_is_rhs: bool,
+        wgrad_sink_unsqueeze_first_dim: bool,
     ) -> Tensor:
         assert mat_a.dtype == torch.bfloat16, (
             "MXFP8 linear currently expects bf16 activations, "
@@ -343,6 +383,8 @@ class _ScaledMMMXFP8FP8WeightFunction(torch.autograd.Function):
         ctx.prequantized_rhs_for_dgrad = prequantized_rhs_for_dgrad
         ctx.wgrad_sink = wgrad_sink
         ctx.save_wgrad_input_as_mxfp8 = bool(save_wgrad_input_as_mxfp8)
+        ctx.wgrad_is_rhs = bool(wgrad_is_rhs)
+        ctx.wgrad_sink_unsqueeze_first_dim = bool(wgrad_sink_unsqueeze_first_dim)
         return result
 
     @staticmethod
@@ -373,20 +415,34 @@ class _ScaledMMMXFP8FP8WeightFunction(torch.autograd.Function):
 
         if ctx.wgrad_sink is not None:
             if ctx.save_wgrad_input_as_mxfp8:
-                grad_weight = _wgrad_weight_mxfp8(
-                    grad_out_compute,
-                    ctx.prequantized_mat_a_as_rhs,
-                )
+                if ctx.wgrad_is_rhs:
+                    grad_weight = _wgrad_rhs_mxfp8(
+                        grad_out_compute,
+                        ctx.prequantized_mat_a_as_rhs,
+                    )
+                else:
+                    grad_weight = _wgrad_weight_mxfp8(
+                        grad_out_compute,
+                        ctx.prequantized_mat_a_as_rhs,
+                    )
             else:
                 (mat_a,) = ctx.saved_tensors
-                grad_weight = _wgrad_weight_mxfp8_from_bf16_input(
-                    grad_out_compute,
-                    mat_a,
-                )
+                if ctx.wgrad_is_rhs:
+                    grad_weight = _wgrad_rhs_mxfp8(
+                        grad_out_compute,
+                        prequantize_scaled_mm_rhs(mat_a, check_mat_b_version=False),
+                    )
+                else:
+                    grad_weight = _wgrad_weight_mxfp8_from_bf16_input(
+                        grad_out_compute,
+                        mat_a,
+                    )
             if ctx.wgrad_sink is not None:
+                if ctx.wgrad_sink_unsqueeze_first_dim:
+                    grad_weight = grad_weight.unsqueeze(0)
                 ctx.wgrad_sink.accumulate_wgrad(grad_weight)
 
-        return grad_a, None, None, None, None
+        return grad_a, None, None, None, None, None, None
 
 
 def scaled_mm_mxfp8_fp8_weight(
@@ -396,6 +452,8 @@ def scaled_mm_mxfp8_fp8_weight(
     prequantized_rhs_for_dgrad: ScaledMMPrequantizedRHS,
     wgrad_sink: Optional[Any] = None,
     save_wgrad_input_as_mxfp8: bool = True,
+    wgrad_is_rhs: bool = False,
+    wgrad_sink_unsqueeze_first_dim: bool = False,
 ) -> Tensor:
     """
     Dense MXFP8 mm for a prequantized linear weight.
@@ -409,6 +467,8 @@ def scaled_mm_mxfp8_fp8_weight(
         prequantized_rhs_for_dgrad,
         wgrad_sink,
         save_wgrad_input_as_mxfp8,
+        wgrad_is_rhs,
+        wgrad_sink_unsqueeze_first_dim,
     )
 
 
