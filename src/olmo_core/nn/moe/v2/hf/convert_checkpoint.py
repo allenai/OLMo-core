@@ -5,7 +5,7 @@ import os
 import sys
 from functools import partial
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import torch
 import torch.distributed as dist
@@ -186,35 +186,42 @@ def load_hf_model_from_olmo_checkpoint(hf_model, olmo_state_dict):
                 f"model.layers.{layer_idx}.mlp.router.gate.weight"
             ] = f"module.blocks.{layer_idx}.routed_experts_router.weight.main"
 
-            # shared expert (FIXED)
-            mapping_hf_to_olmo[f"model.layers.{layer_idx}.mlp.shared_expert.gate_proj.weight"] = (
-                f"module.blocks.{layer_idx}.shared_experts.w_up_gate.main",
-                partial(
-                    _extract_shared_expert_up_or_gate_for_hf,
-                    expert_hidden_size=hf_model.config.shared_expert_intermediate_size,
-                    d_model=hf_model.config.hidden_size,
-                    weight_name="gate",
-                ),
-            )
+            # shared expert
+            if hf_model.config.shared_expert_intermediate_size is not None:
+                mapping_hf_to_olmo[
+                    f"model.layers.{layer_idx}.mlp.shared_expert.gate_proj.weight"
+                ] = (
+                    f"module.blocks.{layer_idx}.shared_experts.w_up_gate.main",
+                    partial(
+                        _extract_shared_expert_up_or_gate_for_hf,
+                        expert_hidden_size=hf_model.config.shared_expert_intermediate_size,
+                        d_model=hf_model.config.hidden_size,
+                        weight_name="gate",
+                    ),
+                )
 
-            mapping_hf_to_olmo[f"model.layers.{layer_idx}.mlp.shared_expert.up_proj.weight"] = (
-                f"module.blocks.{layer_idx}.shared_experts.w_up_gate.main",
-                partial(
-                    _extract_shared_expert_up_or_gate_for_hf,
-                    expert_hidden_size=hf_model.config.shared_expert_intermediate_size,
-                    d_model=hf_model.config.hidden_size,
-                    weight_name="up",
-                ),
-            )
+                mapping_hf_to_olmo[
+                    f"model.layers.{layer_idx}.mlp.shared_expert.up_proj.weight"
+                ] = (
+                    f"module.blocks.{layer_idx}.shared_experts.w_up_gate.main",
+                    partial(
+                        _extract_shared_expert_up_or_gate_for_hf,
+                        expert_hidden_size=hf_model.config.shared_expert_intermediate_size,
+                        d_model=hf_model.config.hidden_size,
+                        weight_name="up",
+                    ),
+                )
 
-            mapping_hf_to_olmo[f"model.layers.{layer_idx}.mlp.shared_expert.down_proj.weight"] = (
-                f"module.blocks.{layer_idx}.shared_experts.w_down.main",
-                partial(
-                    _extract_shared_expert_down_for_hf,
-                    expert_hidden_size=hf_model.config.shared_expert_intermediate_size,
-                    d_model=hf_model.config.hidden_size,
-                ),
-            )
+                mapping_hf_to_olmo[
+                    f"model.layers.{layer_idx}.mlp.shared_expert.down_proj.weight"
+                ] = (
+                    f"module.blocks.{layer_idx}.shared_experts.w_down.main",
+                    partial(
+                        _extract_shared_expert_down_for_hf,
+                        expert_hidden_size=hf_model.config.shared_expert_intermediate_size,
+                        d_model=hf_model.config.hidden_size,
+                    ),
+                )
 
             # routed experts
             for expert_idx in range(hf_model.config.n_routed_experts):
@@ -318,6 +325,78 @@ def load_hf_model_from_olmo_checkpoint(hf_model, olmo_state_dict):
     return hf_model
 
 
+
+def _get_attention_config(block_cfg: Dict[str, Any]) -> Dict[str, Any]:
+    if block_cfg.get("attention") is not None:
+        return block_cfg["attention"]
+    if block_cfg.get("sequence_mixer") is not None:
+        return block_cfg["sequence_mixer"]
+    raise KeyError("Expected block config to contain either 'attention' or 'sequence_mixer'")
+
+
+def _get_dense_override_config(layer_cfg: Dict[str, Any]) -> Dict[str, Any]:
+    # Older config dumps wrapped overrides as {"config": ...}; current dumps store
+    # the block config directly under the layer index.
+    if "config" in layer_cfg and isinstance(layer_cfg["config"], dict):
+        return layer_cfg["config"]
+    return layer_cfg
+
+
+def _get_sliding_window(attention_cfg: Dict[str, Any]) -> Optional[int]:
+    sliding_window_cfg = attention_cfg.get("sliding_window")
+    if not sliding_window_cfg:
+        return None
+    pattern = sliding_window_cfg.get("pattern")
+    if not pattern:
+        return None
+    finite_windows = [window for window in pattern if window and window > 0]
+    return finite_windows[0] if finite_windows else None
+
+
+def _get_shared_expert_intermediate_size(block_cfg: Dict[str, Any]) -> Optional[int]:
+    shared_experts_cfg = block_cfg.get("shared_experts")
+    if not shared_experts_cfg:
+        return None
+    if shared_experts_cfg.get("num_experts", 1) == 0:
+        return None
+    return shared_experts_cfg["hidden_size"]
+
+
+def _get_layer_types(
+    olmo_model_cfg: Dict[str, Any],
+    block_attention_cfg: Dict[str, Any],
+    dense_overrides: Dict[int, Dict[str, Any]],
+) -> List[str]:
+    num_layers = olmo_model_cfg["n_layers"]
+    default_sliding_cfg = block_attention_cfg.get("sliding_window")
+    pattern = default_sliding_cfg.get("pattern") if default_sliding_cfg else None
+
+    layer_types: List[str] = []
+    for layer_idx in range(num_layers):
+        attention_cfg = _get_attention_config(dense_overrides.get(layer_idx, olmo_model_cfg["block"]))
+        sliding_cfg = attention_cfg.get("sliding_window")
+        if sliding_cfg and sliding_cfg.get("pattern"):
+            layer_pattern = sliding_cfg["pattern"]
+            window = layer_pattern[layer_idx % len(layer_pattern)]
+            layer_type = "sliding_attention" if window and window > 0 else "full_attention"
+        elif layer_idx in dense_overrides and pattern:
+            # Dense overrides often omit the default sliding-window config. Preserve
+            # the base pattern for attention unless the override explicitly changes it.
+            window = pattern[layer_idx % len(pattern)]
+            layer_type = "sliding_attention" if window and window > 0 else "full_attention"
+        else:
+            layer_type = "full_attention"
+        layer_types.append(layer_type)
+
+    if default_sliding_cfg:
+        if default_sliding_cfg.get("force_full_attention_on_first_layer") and layer_types:
+            layer_types[0] = "full_attention"
+        if default_sliding_cfg.get("force_full_attention_on_last_layer") and layer_types:
+            layer_types[-1] = "full_attention"
+
+    return layer_types
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Convert OLMo checkpoint to HuggingFace format")
     parser.add_argument(
@@ -328,6 +407,12 @@ if __name__ == "__main__":
         type=str,
         required=True,
         help="Path to save the converted HuggingFace model",
+    )
+    parser.add_argument(
+        "--config-path",
+        type=str,
+        default=None,
+        help="Optional path to an OLMo config.json. Defaults to <ckpt-path>/config.json.",
     )
     parser.add_argument(
         "--work-dir",
@@ -341,7 +426,7 @@ if __name__ == "__main__":
     output_path = args.output_path
     work_dir = args.work_dir
 
-    olmo_config_path = os.path.join(CKPT_PATH, "config.json")
+    olmo_config_path = args.config_path or os.path.join(CKPT_PATH, "config.json")
     with open(olmo_config_path, "r") as f:
         olmo_cfg = json.load(f)
 
@@ -351,43 +436,43 @@ if __name__ == "__main__":
 
     olmo_model_cfg = olmo_cfg["model"]
 
-    # config dense_mlp_intermediate_size
-    dense_mlp_intermediate_size = None
-    overrides = olmo_model_cfg["block_overrides"]
-    dense_layers_indices = []
-    # find out which layers are dense layers
-    for layer_idx_str, layer_cfg in overrides.items():
-        if "feed_forward" in layer_cfg:
-            dense_layers_indices.append(int(layer_idx_str))
+    block_cfg = olmo_model_cfg["block"]
+    attention_cfg = _get_attention_config(block_cfg)
+    router_cfg = block_cfg["routed_experts_router"]
 
-    # pick the first dense layer's feed_forward hidden_size as dense_mlp_intermediate_size
-    dense_config = next(iter(overrides.items()))
-    dense_mlp_intermediate_size = dense_config[1]["feed_forward"]["hidden_size"]
+    overrides = olmo_model_cfg.get("block_overrides", {})
+    dense_overrides: Dict[int, Dict[str, Any]] = {}
+    for layer_idx_str, layer_cfg in overrides.items():
+        layer_override_cfg = _get_dense_override_config(layer_cfg)
+        if "feed_forward" in layer_override_cfg:
+            dense_overrides[int(layer_idx_str)] = layer_override_cfg
+
+    dense_layers_indices = sorted(dense_overrides)
+    dense_mlp_intermediate_size = (
+        dense_overrides[dense_layers_indices[0]]["feed_forward"]["hidden_size"]
+        if dense_layers_indices
+        else None
+    )
+    layer_types = _get_layer_types(olmo_model_cfg, attention_cfg, dense_overrides)
+    sliding_window = _get_sliding_window(attention_cfg)
 
     hf_config = Olmo3MoeConfig(
         vocab_size=olmo_model_cfg["vocab_size"],
         hidden_size=olmo_model_cfg["d_model"],
-        attention_hidden_size=olmo_model_cfg["block"]["attention"]["d_attn"],
-        head_dim=(
-            olmo_model_cfg["block"]["attention"]["d_attn"]
-            // olmo_model_cfg["block"]["attention"]["n_heads"]
-        ),
+        attention_hidden_size=attention_cfg["d_attn"],
+        head_dim=(attention_cfg["d_attn"] // attention_cfg["n_heads"]),
         dense_mlp_intermediate_size=dense_mlp_intermediate_size,
-        moe_intermediate_size=olmo_model_cfg["block"]["routed_experts"]["hidden_size"],
-        shared_expert_intermediate_size=olmo_model_cfg["block"]["shared_experts"]["hidden_size"],
-        n_routed_experts=olmo_model_cfg["block"]["routed_experts"]["num_experts"],
-        num_experts_per_tok=olmo_model_cfg["block"]["routed_experts_router"]["top_k"],
+        moe_intermediate_size=block_cfg["routed_experts"]["hidden_size"],
+        shared_expert_intermediate_size=_get_shared_expert_intermediate_size(block_cfg),
+        n_routed_experts=block_cfg["routed_experts"]["num_experts"],
+        num_experts_per_tok=router_cfg["top_k"],
         num_hidden_layers=olmo_model_cfg["n_layers"],
-        num_attention_heads=olmo_model_cfg["block"]["attention"]["n_heads"],
-        num_key_value_heads=olmo_model_cfg["block"]["attention"]["n_kv_heads"],
+        num_attention_heads=attention_cfg["n_heads"],
+        num_key_value_heads=attention_cfg["n_kv_heads"],
         hidden_act="silu",
-        gating_function=olmo_model_cfg["block"]["routed_experts_router"]["gating_function"],
-        normalize_expert_weights=olmo_model_cfg["block"]["routed_experts_router"][
-            "normalize_expert_weights"
-        ],
-        restore_weight_scale=olmo_model_cfg["block"]["routed_experts_router"][
-            "restore_weight_scale"
-        ],
+        gating_function=router_cfg["gating_function"],
+        normalize_expert_weights=router_cfg["normalize_expert_weights"],
+        restore_weight_scale=router_cfg["restore_weight_scale"],
         max_position_embeddings=olmo_cfg["dataset"]["sequence_length"],
         initializer_range=olmo_model_cfg["init_std"],
         use_cache=True,
@@ -395,30 +480,24 @@ if __name__ == "__main__":
         bos_token_id=None,  # no BOS token
         eos_token_id=olmo_cfg["dataset"]["tokenizer"]["eos_token_id"],
         tie_word_embeddings=False,
-        rope_theta=olmo_model_cfg["block"]["attention"]["rope"]["theta"],
+        rope_theta=attention_cfg["rope"]["theta"],
         rope_scaling=None,
-        attention_bias=olmo_model_cfg["block"]["attention"]["bias"],
-        attention_dropout=olmo_model_cfg["block"]["attention"].get("dropout", 0.0),
-        rms_norm_eps=olmo_model_cfg["block"]["attention_norm"][
+        attention_bias=attention_cfg["bias"],
+        attention_dropout=attention_cfg.get("dropout", 0.0),
+        rms_norm_eps=block_cfg["attention_norm"][
             "eps"
         ],  # WARNING: assume all norm layers (attention Q,K, feedforward and lmhead) use the same eps
-        sliding_window=max(olmo_model_cfg["block"]["attention"]["sliding_window"]["pattern"]),
-        use_head_qk_norm=olmo_model_cfg["block"]["attention"]["use_head_qk_norm"],
-        layer_types=None,  # TODO: should read from olmo checkpoint config
+        sliding_window=sliding_window,
+        use_head_qk_norm=attention_cfg["use_head_qk_norm"],
+        layer_types=layer_types,
         dense_layers_indices=dense_layers_indices,
-        original_num_experts_per_tok=olmo_model_cfg["block"]["routed_experts_router"][
-            "original_top_k"
-        ]
-        if "original_top_k" in olmo_model_cfg["block"]["routed_experts_router"]
-        else None,
+        original_num_experts_per_tok=router_cfg.get("original_top_k"),
         # old checkpoints may not have these fields; default to 1.0 and False
-        embed_scale=olmo_model_cfg["embed_scale"] if "embed_scale" in olmo_model_cfg else 1.0,
+        embed_scale=olmo_model_cfg.get("embed_scale", 1.0),
         embed_norm=True
         if ("embedding_norm" in olmo_model_cfg and olmo_model_cfg["embedding_norm"] is not None)
         else False,  # assume embed_norm is the same type as other norms
-        use_peri_ln=olmo_model_cfg["block"]["use_peri_norm"]
-        if "use_peri_norm" in olmo_model_cfg["block"]
-        else False,
+        use_peri_ln=block_cfg.get("use_peri_norm", False),
     )
 
     print("Constructed HF config:")
