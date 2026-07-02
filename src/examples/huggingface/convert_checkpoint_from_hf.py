@@ -48,7 +48,7 @@ log = logging.getLogger(__name__)
 
 
 def _get_transformer_config(
-    model_arch: str, vocab_size: int, max_sequence_length: int
+    model_arch: str, vocab_size: int, max_sequence_length: int, yarn_factor: float | None = None
 ) -> TransformerConfig:
     model_arch = model_arch.lower()
     transformer_configs = {
@@ -79,6 +79,7 @@ def _get_transformer_config(
         "llama3_8b": TransformerConfig.llama3_8B,
         "llama3_70b": TransformerConfig.llama3_70B,
         "llama3_405b": TransformerConfig.llama3_405B,
+        "qwen3_0_6b": TransformerConfig.qwen3_0_6B,
         "qwen3_4b": TransformerConfig.qwen3_4B,
     }
 
@@ -93,6 +94,15 @@ def _get_transformer_config(
     elif model_arch.startswith("olmo2_") and max_sequence_length != 4096:
         raise RuntimeError(
             "If you get here, you have to add code that reflects how you extended RoPE when you did you long context training."
+        )
+    elif model_arch.startswith("qwen3") and yarn_factor is not None:
+        # Qwen3-4B is dense (no sliding-window layers), so scale the base block directly.
+        # old_context_len is Qwen3-4B's native window (32768); factor extends from there.
+        result = result.with_rope_scaling(
+            YaRNRoPEScalingConfig(
+                factor=yarn_factor, beta_fast=32, beta_slow=1, old_context_len=32768
+            ),
+            full_attn_layers_only=False,
         )
 
     return result
@@ -584,6 +594,15 @@ def parse_args():
         help="Deprecated, do not use. Max sequence length supported by the model.",
     )
     parser.add_argument(
+        "--yarn-factor",
+        type=float,
+        default=None,
+        help=(
+            "If set, apply YaRN RoPE scaling with this factor (qwen3 arches only), with "
+            "old_context_len=32768. E.g. 2.0 -> 65536 context. Omit for no RoPE scaling."
+        ),
+    )
+    parser.add_argument(
         "--model-id",
         help="Deprecated, model-specific mappings are now determined by the model architecture, in :mod:`olmo_core.nn.hf.convert`",
     )
@@ -640,6 +659,7 @@ def main():
             args.model_arch,
             tokenizer_config.padded_vocab_size(),
             hf_config_dict["max_position_embeddings"],
+            yarn_factor=args.yarn_factor,
         )
         transformer_config_dict = transformer_config.as_config_dict()
         tokenizer_config_dict = tokenizer_config.as_config_dict()

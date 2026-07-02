@@ -14,7 +14,6 @@ from olmo_core.float8 import Float8Config
 from olmo_core.internal.common import build_launch_config, get_root_dir, get_work_dir
 from olmo_core.internal.experiment import CliContext, ExperimentConfig, main
 from olmo_core.launch.beaker import BeakerLaunchConfig, OLMoCoreBeakerImage
-from olmo_core.nn.lm_head import LMLossImplementation
 from olmo_core.nn.transformer import (
     TransformerActivationCheckpointingMode,
     TransformerConfig,
@@ -29,25 +28,36 @@ from olmo_core.train.callbacks import (
 )
 from olmo_core.train.train_module import (
     TransformerActivationCheckpointingConfig,
+    TransformerContextParallelConfig,
     TransformerDataParallelConfig,
     TransformerDataParallelWrappingStrategy,
     TransformerTrainModuleConfig,
 )
 
-# Qwen3-4B + SPARSE LANDMARK attention at 64k context on the 15B-token dolma3_longmino sample.
-# AttentionType.sparse_landmark: a query attends fully within its own chunk but sees past chunks
-# only through their landmark tokens (sub-quadratic; faster than full/dense landmark at long
-# context). num_landmarks=1 matches LandmarkInstanceSource's 1-landmark-per-chunk data.
-# NOTE: SparseLandmarkAttention does NOT support context parallelism, so (unlike the landmark/fast
-# scripts) there is no Ulysses CP here -- each rank processes the full 64k sequence; the sparse
-# attention keeps that affordable, and FSDP shards params across the 32 GPUs.
-# Pair with Qwen3-4B-{landmark,fast-landmark,dense}-dolma3longmino.py.
+# Qwen3-4B + SHARED-VECTOR LANDMARK attention at 64k context on the 15B-token dolma3_longmino sample.
+# AttentionType.shared_vector_landmark keeps the (non-compressive) fast landmark attention weights
+# exactly as fast_landmark, but appends a learned, per-block positional vector of length VEC_DIM to
+# every value before the aggregation. For a past block the vector is that block's landmark VALUE
+# mapped through a per-head learnable weight_landmark matrix; for the query's own (current) block it
+# is a per-head learnable "base" vector. The head_dim output is projected by the inherited w_out and
+# the VEC_DIM tail by a separate w_out_vec, summed. See
+# olmo_core/nn/attention/landmark_shared_vector.py for the math.
+#
+# WARM START: this loads from the *dense* Qwen3-4B base checkpoint (same as the other landmark
+# scripts), which has w_q/w_k/w_v/w_out and the norms but NOT the shared-vector params
+# (w_out_vec, weight_landmark, base). We therefore load non-strictly
+# (state_dict_load_opts={"strict": False}) so those new keys are skipped and keep their init. Their
+# init is chosen so the tail is a no-op at step 0 (w_out_vec = 0, base = 0), i.e. the model reproduces
+# the plain fast-landmark model exactly at the start and learns the positional read-out from there.
 MEM_FREQ = 63
 BLOCK_SIZE = MEM_FREQ + 1  # 64
 SEQUENCE_LENGTH = 65536  # 64k (must be divisible by BLOCK_SIZE)
 CONTENT_SEQUENCE_LENGTH = SEQUENCE_LENGTH // BLOCK_SIZE * MEM_FREQ  # 64512
 
 LANDMARK_TOKEN_ID = 151860  # Qwen3 reserved token used as the landmark (memory) token
+
+# Length of the learned per-block vector appended to each value (module default 32).
+VEC_DIM = 32
 
 DATA_DIR = (
     "/weka/oe-training-default/ai2-llm/checkpoints/amandab/dolma3_longmino_mix_sample15B_qwen"
@@ -82,20 +92,20 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
 
     tokenizer_config = TokenizerConfig.qwen3()
 
-    # Qwen3-4B with the SPARSE landmark attention mixer (AttentionType.sparse_landmark). No YaRN.
+    # Qwen3-4B with the SHARED-VECTOR landmark mixer (AttentionType.shared_vector_landmark).
     model_config = TransformerConfig.qwen3_4B(
         vocab_size=tokenizer_config.padded_vocab_size(),
-        sparse_landmark=True,
+        shared_vector_landmark=True,
         mem_freq=MEM_FREQ,
-        num_landmarks=1,
+        vec_dim=VEC_DIM,
     )
-    # Fused linear cross-entropy (Liger): never materializes the full 64k x 151936 logits
-    # (~19-39GB), which is the dominant memory cost without sequence parallelism (no CP here).
-    model_config.lm_head.loss_implementation = LMLossImplementation.fused_linear
 
     train_module_config = TransformerTrainModuleConfig(
-        rank_microbatch_size=SEQUENCE_LENGTH,  # full 64k per rank (no CP)
+        rank_microbatch_size=SEQUENCE_LENGTH,  # 1 instance per rank with CP
         max_sequence_length=SEQUENCE_LENGTH,
+        # Load the dense Qwen3-4B base non-strictly: the shared-vector params (w_out_vec,
+        # weight_landmark, base) are absent from the checkpoint and are kept at their (no-op) init.
+        state_dict_load_opts={"strict": False},
         optim=SkipStepAdamWConfig(
             lr=LR,
             weight_decay=0.1,
@@ -111,18 +121,15 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
             param_dtype=DType.bfloat16,
             reduce_dtype=DType.float32,
             wrapping_strategy=TransformerDataParallelWrappingStrategy.full,
-            # Shard params/grads/optim 8-way within each node (replicate across the 4 nodes). Unlike
-            # the CP'd landmark/fast/dense runs, there is no sequence parallelism here, so each rank
-            # holds the full 64k activations -- shard_degree=1 (no sharding) OOMs because the full
-            # 4B params + Adam state (~64GB) leave no room. 8-way sharding frees ~56GB/GPU.
-            shard_degree=8,
+            shard_degree=1,
         ),
-        # No Ulysses CP: SparseLandmarkAttention.apply_cp raises NotImplementedError. Each rank
-        # processes the full 64k sequence, so use FULL activation checkpointing (recompute every
-        # block; only one block's activations are live at peak) rather than budget mode -- budget
-        # mode kept too many full-64k activations resident and OOM'd.
+        # Ulysses CP: (shared-vector) landmark attention does its own cp2hp/hp2cp all-to-all so each
+        # rank gathers the full sequence (with n_heads/8 heads) before the grouped softmax. Qwen3-4B:
+        # n_heads=32, n_kv_heads=8 → 4 q-heads and 1 kv-head per CP rank (both divisible by degree=8).
+        cp_config=TransformerContextParallelConfig.ulysses(degree=8),
         ac_config=TransformerActivationCheckpointingConfig(
-            mode=TransformerActivationCheckpointingMode.full,
+            mode=TransformerActivationCheckpointingMode.budget,
+            activation_memory_budget=0.7,
         ),
         float8_config=Float8Config(enabled=False),
         z_loss_multiplier=1e-5,
@@ -210,11 +217,13 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
 
 if __name__ == "__main__":
     """
-    Qwen3-4B + SPARSE landmark attention at 64k on the 15B dolma3_longmino sample (4 nodes, urgent).
-    Sub-quadratic: queries see past chunks only through their landmark tokens (num_landmarks=1).
-    No context parallelism (SparseLandmarkAttention doesn't support it); each rank runs full 64k.
+    Qwen3-4B + SHARED-VECTOR landmark attention at 64k on the 15B dolma3_longmino sample (4 nodes,
+    urgent). Same setup as Qwen3-4B-base-fast-landmark-dolma3longmino.py but each value is augmented
+    with a learned per-block positional vector (length VEC_DIM). Warm-starts from the dense Qwen3-4B
+    base with a non-strict load (the new w_out_vec / weight_landmark / base params keep their no-op
+    init). dry_run must be run on a GPU node (the fast kernel imports triton).
 
-        python src/scripts/train/Qwen3/Qwen3-4B-base-sparse-landmark-dolma3longmino.py \\
+        python src/scripts/train/Qwen3/Qwen3-4B-base-shared-vector-landmark-dolma3longmino.py \\
             launch my-run ai2/jupiter-cirrascale-2
     """
     main(config_builder=build_experiment_config)

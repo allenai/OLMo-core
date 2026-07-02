@@ -29,19 +29,20 @@ from olmo_core.train.callbacks import (
 )
 from olmo_core.train.train_module import (
     TransformerActivationCheckpointingConfig,
+    TransformerContextParallelConfig,
     TransformerDataParallelConfig,
     TransformerDataParallelWrappingStrategy,
     TransformerTrainModuleConfig,
 )
 
-# Qwen3-4B + SPARSE LANDMARK attention at 64k context on the 15B-token dolma3_longmino sample.
-# AttentionType.sparse_landmark: a query attends fully within its own chunk but sees past chunks
-# only through their landmark tokens (sub-quadratic; faster than full/dense landmark at long
-# context). num_landmarks=1 matches LandmarkInstanceSource's 1-landmark-per-chunk data.
-# NOTE: SparseLandmarkAttention does NOT support context parallelism, so (unlike the landmark/fast
-# scripts) there is no Ulysses CP here -- each rank processes the full 64k sequence; the sparse
-# attention keeps that affordable, and FSDP shards params across the 32 GPUs.
-# Pair with Qwen3-4B-{landmark,fast-landmark,dense}-dolma3longmino.py.
+# Qwen3-0.6B + COMPRESSIVE FAST LANDMARK attention at 64k context on the 15B-token dolma3_longmino
+# sample. AttentionType.fast_compressive_landmark is identical to fast_landmark (same fused FA2-style
+# kernel, same block-gated softmax) except that each past block's landmark ("memory") token is folded
+# into that block's within-block softmax, so it contributes its value to the output -- a learned
+# compressed summary of the block. Training/prefill behaviour is otherwise the same as fast_landmark;
+# the ``nonselected_landmark_mass`` knob below only affects top-k decode at eval time (it has no
+# effect during training). The 0.6B analog of
+# Qwen3-4B-base-fast-compressive-landmark-dolma3longmino.py; pair with the 0.6B fast-landmark script.
 MEM_FREQ = 63
 BLOCK_SIZE = MEM_FREQ + 1  # 64
 SEQUENCE_LENGTH = 65536  # 64k (must be divisible by BLOCK_SIZE)
@@ -49,14 +50,19 @@ CONTENT_SEQUENCE_LENGTH = SEQUENCE_LENGTH // BLOCK_SIZE * MEM_FREQ  # 64512
 
 LANDMARK_TOKEN_ID = 151860  # Qwen3 reserved token used as the landmark (memory) token
 
+# Fraction of attention mass reserved for non-selected blocks' landmarks at top-k decode time. Only
+# used at eval/generation; ignored during training. Default matches the module default (0.1).
+NONSELECTED_LANDMARK_MASS = 0.1
+
 DATA_DIR = (
     "/weka/oe-training-default/ai2-llm/checkpoints/amandab/dolma3_longmino_mix_sample15B_qwen"
 )
 
-GLOBAL_BATCH_SIZE = 65536 * 64  # ~4M tokens
+GLOBAL_BATCH_SIZE = 65536 * 64  # ~4M tokens = 64 instances of 64k
 MAX_TOKENS = 10_000_000_000  # 10B
-# StepFun optimal LR (Li et al. 2025): 1.79 * n^-0.713 * d^0.307 ≈ 3.2e-4 for n≈3.65B, d=10B
-LR = 3.2e-4
+# StepFun optimal LR (Li et al. 2025): 1.79 * n^-0.713 * d^0.307 ≈ 1.4e-3 for n≈0.44B
+# (non-embedding params), d=10B. (cf. 3.2e-4 for the 3.65B-param 4B model.)
+LR = 1.4e-3
 
 
 def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
@@ -75,26 +81,30 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         beaker_image=OLMoCoreBeakerImage.stable,
         workspace="ai2/flex2",
         budget="ai2/oe-other",
-        num_nodes=4,  # 4 nodes × 8 GPUs = 32 GPUs; cp_degree=8 → 4 DP replicas
+        # The compressive fast-landmark kernel's full-64k activations over all 16 heads don't fit
+        # on one GPU, so we split with ulysses CP=2 (8 heads/rank). 4 nodes × 8 GPUs / CP=2 = 16 DP
+        # replicas → 4 grad-accum steps at 64 instances/step.
+        num_nodes=4,
     )
     if beaker_launch_config is not None:
         beaker_launch_config.priority = "urgent"
 
     tokenizer_config = TokenizerConfig.qwen3()
 
-    # Qwen3-4B with the SPARSE landmark attention mixer (AttentionType.sparse_landmark). No YaRN.
-    model_config = TransformerConfig.qwen3_4B(
+    # Qwen3-0.6B with the COMPRESSIVE fast landmark mixer (AttentionType.fast_compressive_landmark).
+    model_config = TransformerConfig.qwen3_0_6B(
         vocab_size=tokenizer_config.padded_vocab_size(),
-        sparse_landmark=True,
+        fast_compressive_landmark=True,
         mem_freq=MEM_FREQ,
-        num_landmarks=1,
+        nonselected_landmark_mass=NONSELECTED_LANDMARK_MASS,
     )
-    # Fused linear cross-entropy (Liger): never materializes the full 64k x 151936 logits
-    # (~19-39GB), which is the dominant memory cost without sequence parallelism (no CP here).
+    # Fuse the LM-head projection with cross-entropy (Liger): never materializes the full
+    # [64k, vocab] logit tensor, which is large at 64k without context parallelism to split
+    # the sequence (the 4B base runs avoided this via CP=8 instead).
     model_config.lm_head.loss_implementation = LMLossImplementation.fused_linear
 
     train_module_config = TransformerTrainModuleConfig(
-        rank_microbatch_size=SEQUENCE_LENGTH,  # full 64k per rank (no CP)
+        rank_microbatch_size=SEQUENCE_LENGTH,  # 1 instance per rank per micro-step
         max_sequence_length=SEQUENCE_LENGTH,
         optim=SkipStepAdamWConfig(
             lr=LR,
@@ -111,18 +121,16 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
             param_dtype=DType.bfloat16,
             reduce_dtype=DType.float32,
             wrapping_strategy=TransformerDataParallelWrappingStrategy.full,
-            # Shard params/grads/optim 8-way within each node (replicate across the 4 nodes). Unlike
-            # the CP'd landmark/fast/dense runs, there is no sequence parallelism here, so each rank
-            # holds the full 64k activations -- shard_degree=1 (no sharding) OOMs because the full
-            # 4B params + Adam state (~64GB) leave no room. 8-way sharding frees ~56GB/GPU.
+            # Shard params/optim within each node (8-way) and replicate across nodes.
             shard_degree=8,
         ),
-        # No Ulysses CP: SparseLandmarkAttention.apply_cp raises NotImplementedError. Each rank
-        # processes the full 64k sequence, so use FULL activation checkpointing (recompute every
-        # block; only one block's activations are live at peak) rather than budget mode -- budget
-        # mode kept too many full-64k activations resident and OOM'd.
+        # Ulysses CP: the (compressive) landmark attention does its own cp2hp/hp2cp all-to-all so
+        # each rank gathers the full sequence with n_heads/2 = 8 q-heads (and 8/2 = 4 kv-heads)
+        # before the grouped softmax. Halves per-rank attention+activation memory vs no CP.
+        cp_config=TransformerContextParallelConfig.ulysses(degree=2),
         ac_config=TransformerActivationCheckpointingConfig(
-            mode=TransformerActivationCheckpointingMode.full,
+            mode=TransformerActivationCheckpointingMode.budget,
+            activation_memory_budget=0.7,
         ),
         float8_config=Float8Config(enabled=False),
         z_loss_multiplier=1e-5,
@@ -161,7 +169,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         TrainerConfig(
             save_folder=save_dir,
             save_overwrite=True,
-            load_path="/weka/oe-training-default/ai2-llm/checkpoints/amandab/Qwen3-4B-Base-olmocore/model_and_optim",
+            load_path="/weka/oe-training-default/ai2-llm/checkpoints/amandab/Qwen3-0.6B-Base-olmocore/model_and_optim",
             load_strategy=LoadStrategy.always,
             load_trainer_state=False,
             metrics_collect_interval=10,
@@ -210,11 +218,11 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
 
 if __name__ == "__main__":
     """
-    Qwen3-4B + SPARSE landmark attention at 64k on the 15B dolma3_longmino sample (4 nodes, urgent).
-    Sub-quadratic: queries see past chunks only through their landmark tokens (num_landmarks=1).
-    No context parallelism (SparseLandmarkAttention doesn't support it); each rank runs full 64k.
+    Qwen3-0.6B + COMPRESSIVE fast landmark attention at 64k on the 15B dolma3_longmino sample
+    (4 nodes, urgent). The 0.6B analog of Qwen3-4B-base-fast-compressive-landmark-dolma3longmino.py.
+    dry_run must be run on a GPU node (the fast kernel imports triton).
 
-        python src/scripts/train/Qwen3/Qwen3-4B-base-sparse-landmark-dolma3longmino.py \\
+        python src/scripts/train/Qwen3/Qwen3-0.6B-base-fast-compressive-landmark-dolma3longmino.py \\
             launch my-run ai2/jupiter-cirrascale-2
     """
     main(config_builder=build_experiment_config)

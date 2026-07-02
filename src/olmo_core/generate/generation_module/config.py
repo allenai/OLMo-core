@@ -72,6 +72,27 @@ class GenerationConfig(Config):
     ``None``, :data:`pad_token_id` is used.
     """
 
+    landmark_top_k_blocks: Optional[int] = None
+    """
+    For landmark-attention models only: enable hard top-k landmark block retrieval at decode time,
+    following the inference procedure of the landmark attention paper (Mohtashami & Jaggi 2023,
+    https://arxiv.org/abs/2305.16300, section 3.2). At each decode step, each attention head scores
+    the query against the cached landmark keys and keeps only the ``landmark_top_k_blocks``
+    highest-scoring blocks; all other past blocks receive exactly zero attention weight, and the
+    attention renormalizes over the local block plus the retrieved blocks. ``None`` (the default)
+    keeps the dense behavior where every past block is soft-gated by its landmark score. Prefill is
+    unaffected (it remains single-shot dense over the full prompt).
+    """
+
+    landmark_nonselected_mass: Optional[float] = None
+    """
+    For :class:`~olmo_core.nn.attention.FastCompressiveLandmarkAttention` models with top-k decode
+    (``landmark_top_k_blocks`` set) only: the fraction of attention mass reserved for the landmark
+    tokens of the non-selected blocks (split among them by a softmax over their landmark scores).
+    ``None`` uses the value baked into the attention module (default 0.1). Ignored by other models
+    and when top-k retrieval is disabled.
+    """
+
     def __post_init__(self):
         self.validate()
 
@@ -99,4 +120,15 @@ class GenerationConfig(Config):
             raise ValueError(
                 "landmark_decode_mode must be 'extend_last_block' or 'generation_only', "
                 f"got {self.landmark_decode_mode!r}"
+            )
+        if self.landmark_top_k_blocks is not None and self.landmark_top_k_blocks < 1:
+            raise ValueError(
+                f"landmark_top_k_blocks must be >= 1 or None, got {self.landmark_top_k_blocks}"
+            )
+        if self.landmark_nonselected_mass is not None and not (
+            0.0 <= self.landmark_nonselected_mass < 1.0
+        ):
+            raise ValueError(
+                "landmark_nonselected_mass must be in [0, 1) or None, "
+                f"got {self.landmark_nonselected_mass}"
             )

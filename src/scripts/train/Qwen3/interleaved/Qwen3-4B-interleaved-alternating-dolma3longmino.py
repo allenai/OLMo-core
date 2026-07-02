@@ -14,11 +14,9 @@ from olmo_core.float8 import Float8Config
 from olmo_core.internal.common import build_launch_config, get_root_dir, get_work_dir
 from olmo_core.internal.experiment import CliContext, ExperimentConfig, main
 from olmo_core.launch.beaker import BeakerLaunchConfig, OLMoCoreBeakerImage
+from olmo_core.nn.attention import AttentionType, AttentionTypePatternConfig
 from olmo_core.nn.lm_head import LMLossImplementation
-from olmo_core.nn.transformer import (
-    TransformerActivationCheckpointingMode,
-    TransformerConfig,
-)
+from olmo_core.nn.transformer import TransformerActivationCheckpointingMode, TransformerConfig
 from olmo_core.optim import LinearWithWarmup, OptimGroupOverride, SkipStepAdamWConfig
 from olmo_core.train import Duration, LoadStrategy, TrainerConfig
 from olmo_core.train.callbacks import (
@@ -34,20 +32,31 @@ from olmo_core.train.train_module import (
     TransformerTrainModuleConfig,
 )
 
-# Qwen3-4B + SPARSE LANDMARK attention at 64k context on the 15B-token dolma3_longmino sample.
-# AttentionType.sparse_landmark: a query attends fully within its own chunk but sees past chunks
-# only through their landmark tokens (sub-quadratic; faster than full/dense landmark at long
-# context). num_landmarks=1 matches LandmarkInstanceSource's 1-landmark-per-chunk data.
-# NOTE: SparseLandmarkAttention does NOT support context parallelism, so (unlike the landmark/fast
-# scripts) there is no Ulysses CP here -- each rank processes the full 64k sequence; the sparse
-# attention keeps that affordable, and FSDP shards params across the 32 GPUs.
-# Pair with Qwen3-4B-{landmark,fast-landmark,dense}-dolma3longmino.py.
+# Qwen3-4B with INTERLEAVED attention at 64k context on the 15B-token dolma3_longmino sample.
+# This variant ALTERNATES sparse-landmark and full (normal) attention layer-by-layer, always
+# ending with a full-attention layer. Pattern [sparse_landmark, default] is cycled across the 36
+# layers (so layers 0,2,4,... are sparse and 1,3,5,... are full), and the final layer is forced to
+# full attention via force_full_attention_on_last_layer.
+#
+# SparseLandmarkAttention: a query attends fully within its own chunk but sees past chunks only
+# through their landmark tokens (sub-quadratic). num_landmarks=1 matches LandmarkInstanceSource's
+# 1-landmark-per-chunk data. The full-attention layers treat the landmark tokens as ordinary tokens.
+#
+# NOTE: SparseLandmarkAttention does NOT support context parallelism, so there is no Ulysses CP
+# here -- each rank processes the full 64k sequence; FSDP shards params across the 32 GPUs.
+# Pair with the other Qwen3-4B-interleaved-* variants (first-half-full / second-half-full).
 MEM_FREQ = 63
 BLOCK_SIZE = MEM_FREQ + 1  # 64
 SEQUENCE_LENGTH = 65536  # 64k (must be divisible by BLOCK_SIZE)
 CONTENT_SEQUENCE_LENGTH = SEQUENCE_LENGTH // BLOCK_SIZE * MEM_FREQ  # 64512
 
 LANDMARK_TOKEN_ID = 151860  # Qwen3 reserved token used as the landmark (memory) token
+
+# Per-layer attention pattern: alternate sparse-landmark / full attention, always ending with full.
+LAYER_TYPES = AttentionTypePatternConfig(
+    pattern=[AttentionType.sparse_landmark, AttentionType.default],
+    force_full_attention_on_last_layer=True,
+)
 
 DATA_DIR = (
     "/weka/oe-training-default/ai2-llm/checkpoints/amandab/dolma3_longmino_mix_sample15B_qwen"
@@ -75,17 +84,17 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         beaker_image=OLMoCoreBeakerImage.stable,
         workspace="ai2/flex2",
         budget="ai2/oe-other",
-        num_nodes=4,  # 4 nodes × 8 GPUs = 32 GPUs; cp_degree=8 → 4 DP replicas
+        num_nodes=4,  # 4 nodes × 8 GPUs = 32 GPUs
     )
     if beaker_launch_config is not None:
         beaker_launch_config.priority = "urgent"
 
     tokenizer_config = TokenizerConfig.qwen3()
 
-    # Qwen3-4B with the SPARSE landmark attention mixer (AttentionType.sparse_landmark). No YaRN.
+    # Qwen3-4B with the INTERLEAVED (alternating sparse-landmark / full) attention mixer. No YaRN.
     model_config = TransformerConfig.qwen3_4B(
         vocab_size=tokenizer_config.padded_vocab_size(),
-        sparse_landmark=True,
+        layer_types=LAYER_TYPES,
         mem_freq=MEM_FREQ,
         num_landmarks=1,
     )
@@ -111,16 +120,14 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
             param_dtype=DType.bfloat16,
             reduce_dtype=DType.float32,
             wrapping_strategy=TransformerDataParallelWrappingStrategy.full,
-            # Shard params/grads/optim 8-way within each node (replicate across the 4 nodes). Unlike
-            # the CP'd landmark/fast/dense runs, there is no sequence parallelism here, so each rank
-            # holds the full 64k activations -- shard_degree=1 (no sharding) OOMs because the full
-            # 4B params + Adam state (~64GB) leave no room. 8-way sharding frees ~56GB/GPU.
+            # Shard params/grads/optim 8-way within each node (replicate across the 4 nodes). There
+            # is no sequence parallelism here (sparse-landmark layers don't support CP), so each rank
+            # holds the full 64k activations -- 8-way sharding frees ~56GB/GPU vs. no sharding.
             shard_degree=8,
         ),
         # No Ulysses CP: SparseLandmarkAttention.apply_cp raises NotImplementedError. Each rank
         # processes the full 64k sequence, so use FULL activation checkpointing (recompute every
-        # block; only one block's activations are live at peak) rather than budget mode -- budget
-        # mode kept too many full-64k activations resident and OOM'd.
+        # block; only one block's activations are live at peak).
         ac_config=TransformerActivationCheckpointingConfig(
             mode=TransformerActivationCheckpointingMode.full,
         ),
@@ -210,11 +217,11 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
 
 if __name__ == "__main__":
     """
-    Qwen3-4B + SPARSE landmark attention at 64k on the 15B dolma3_longmino sample (4 nodes, urgent).
-    Sub-quadratic: queries see past chunks only through their landmark tokens (num_landmarks=1).
-    No context parallelism (SparseLandmarkAttention doesn't support it); each rank runs full 64k.
+    Qwen3-4B + INTERLEAVED (alternating sparse-landmark / full) attention at 64k on the 15B
+    dolma3_longmino sample (4 nodes, urgent). Layers alternate sparse / full and always end with a
+    full-attention layer. No context parallelism (sparse-landmark layers don't support it).
 
-        python src/scripts/train/Qwen3/Qwen3-4B-base-sparse-landmark-dolma3longmino.py \\
+        python src/scripts/train/Qwen3/interleaved/Qwen3-4B-interleaved-alternating-dolma3longmino.py \\
             launch my-run ai2/jupiter-cirrascale-2
     """
     main(config_builder=build_experiment_config)

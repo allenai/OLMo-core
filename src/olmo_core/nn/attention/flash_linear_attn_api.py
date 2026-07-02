@@ -42,6 +42,41 @@ def dispatch_chunk_gated_delta_rule(
     )
 
 
+def dispatch_fused_recurrent_gated_delta_rule(
+    q: torch.Tensor,
+    k: torch.Tensor,
+    v: torch.Tensor,
+    g: torch.Tensor,
+    beta: torch.Tensor,
+    scale: float | None = None,
+    initial_state: torch.Tensor | None = None,
+    output_final_state: bool = False,
+    use_qk_l2norm_in_kernel: bool = False,
+    cu_seqlens: torch.LongTensor | torch.Tensor | None = None,
+) -> tuple[torch.Tensor, torch.Tensor | None]:
+    """
+    Single-step (recurrent) form of the gated delta rule, used for cached decoding. Unlike
+    :func:`dispatch_chunk_gated_delta_rule` (which is efficient for the parallel prefill over a
+    full sequence), this advances the recurrent state one position at a time given an
+    ``initial_state``, and returns ``(output, final_state)``.
+    """
+    assert has_fla()
+    from fla.ops.gated_delta_rule import fused_recurrent_gated_delta_rule
+
+    return fused_recurrent_gated_delta_rule(  # type: ignore[reportCallIssue]
+        q=q,
+        k=k,
+        v=v,
+        g=g,
+        beta=beta,
+        scale=scale,
+        initial_state=initial_state,
+        output_final_state=output_final_state,
+        use_qk_l2norm_in_kernel=use_qk_l2norm_in_kernel,
+        cu_seqlens=cu_seqlens,
+    )
+
+
 def dispatch_causal_conv1d(
     x: torch.Tensor,
     weight: torch.Tensor,

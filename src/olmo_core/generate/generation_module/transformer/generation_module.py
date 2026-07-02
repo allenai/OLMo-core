@@ -3,7 +3,7 @@ import logging
 import tempfile
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Optional, Tuple, cast
+from typing import Any, Dict, List, Literal, Optional, Set, Tuple, cast
 
 import torch
 import torch.distributed as dist
@@ -35,8 +35,10 @@ from olmo_core.io import is_url, join_path, normalize_path
 from olmo_core.nn.attention import (
     Attention,
     AttentionBackendName,
+    FastCompressiveLandmarkAttention,
     FastLandmarkAttention,
     SparseLandmarkAttention,
+    landmark_gate_analysis,
 )
 from olmo_core.nn.transformer import Transformer, TransformerConfig
 from olmo_core.train.train_module.transformer.common import parallelize_model
@@ -165,19 +167,42 @@ class TransformerGenerationModule(GenerationModule):
     def prepare_inference_cache(self, batch_size: int, max_seq_len: int):
         # Note: not all models use key-value caches, which is why this method
         # is called "prepare_inference_cache" rather than "prepare_kv_cache".
-        # For example, Mamba requires cache state but doesn't use a kv-cache.
+        # Attention blocks get a KV cache; recurrent mixers (e.g. GatedDeltaNet) get a
+        # conv+recurrent state cache via init_state_cache.
         for block in self.model.blocks.values():
-            assert isinstance(block.attention, Attention)
-            attn = cast(Attention, block.attention)
-            if attn.kv_cache_manager is None:
-                attn.init_kv_cache_manager(batch_size, max_seq_len)
-            else:
-                attn.kv_cache_manager.reset(batch_size, max_seq_len)
+            mixer = block.attention
+            if isinstance(mixer, Attention):
+                if mixer.kv_cache_manager is None:
+                    mixer.init_kv_cache_manager(batch_size, max_seq_len)
+                else:
+                    mixer.kv_cache_manager.reset(batch_size, max_seq_len)
+            elif hasattr(mixer, "init_state_cache"):
+                mixer.init_state_cache(batch_size, max_seq_len)  # type: ignore[attr-defined]
 
     def free_inference_cache(self):
         for block in self.model.blocks.values():
-            assert isinstance(block.attention, Attention)
-            cast(Attention, block.attention).kv_cache_manager = None
+            mixer = block.attention
+            if isinstance(mixer, Attention):
+                mixer.kv_cache_manager = None
+            elif hasattr(mixer, "state_cache"):
+                mixer.state_cache = None  # type: ignore[attr-defined]
+
+    def _non_kv_cache_mixer_types(self) -> Set[str]:
+        """
+        Return the type names of any sequence mixers in the model that support neither a KV cache
+        (:class:`~olmo_core.nn.attention.Attention`) nor a recurrent state cache (mixers exposing
+        ``init_state_cache``, e.g. :class:`~olmo_core.nn.attention.recurrent.GatedDeltaNet`).
+
+        Such a mixer keeps no decode state, so step-by-step decoding with ``use_cache=True`` would
+        feed it only the latest token while silently dropping all prior context. Used to guard
+        against that wrong code path. Empty for attention and recurrent-with-cache models.
+        """
+        return {
+            type(block.attention).__name__
+            for block in self.model.blocks.values()
+            if not isinstance(block.attention, Attention)
+            and not hasattr(block.attention, "init_state_cache")
+        }
 
     def _landmark_attention_layers(self) -> List[Attention]:
         """Return the model's landmark attention layers (empty if this is not a landmark model)."""
@@ -188,9 +213,23 @@ class TransformerGenerationModule(GenerationModule):
                 layers.append(cast(Attention, attn))
         return layers
 
-    def _set_landmark_eval_decode(self, prompt_len: int, mode: str):
+    def _set_landmark_eval_decode(
+        self,
+        prompt_len: int,
+        mode: str,
+        top_k: Optional[int] = None,
+        nonselected_landmark_mass: Optional[float] = None,
+    ):
         for attn in self._landmark_attention_layers():
-            attn.set_landmark_eval_decode(prompt_len, mode)  # type: ignore[attr-defined]
+            if isinstance(attn, FastCompressiveLandmarkAttention):
+                attn.set_landmark_eval_decode(
+                    prompt_len,
+                    mode,
+                    top_k=top_k,
+                    nonselected_landmark_mass=nonselected_landmark_mass,
+                )
+            else:
+                attn.set_landmark_eval_decode(prompt_len, mode, top_k=top_k)  # type: ignore[attr-defined]
 
     def _clear_landmark_eval_decode(self):
         for attn in self._landmark_attention_layers():
@@ -249,6 +288,21 @@ class TransformerGenerationModule(GenerationModule):
         eos = generation_config.eos_token_id
         pad = generation_config.pad_token_id
 
+        # Guard the no-decode-state wrong path: a sequence mixer that supports neither a KV cache
+        # nor a recurrent state cache carries no per-step state, so cached decoding would feed it
+        # only the latest token and silently drop all prompt context. Attention (KV cache) and
+        # GatedDeltaNet (conv+recurrent state cache) are both fine; this only fires for a mixer that
+        # supports neither. Fail loudly rather than decode garbage.
+        if generation_config.use_cache:
+            non_kv_cache_mixers = self._non_kv_cache_mixer_types()
+            if non_kv_cache_mixers:
+                raise OLMoConfigurationError(
+                    "use_cache=True is not supported for models with sequence mixers "
+                    f"{sorted(non_kv_cache_mixers)} that have no decode-time cache (neither a KV "
+                    "cache nor a recurrent state cache). Set use_cache=False to generate correctly "
+                    "(slower), or add state caching for these layers."
+                )
+
         input_ids = move_to_device(input_ids, self.device)
 
         # Landmark attention: insert landmark tokens into the *prompt* every ``mem_freq`` content
@@ -291,7 +345,21 @@ class TransformerGenerationModule(GenerationModule):
 
         batch_size, prompt_len = input_ids.shape
         if landmark_active:
-            self._set_landmark_eval_decode(prompt_len, generation_config.landmark_decode_mode)
+            self._set_landmark_eval_decode(
+                prompt_len,
+                generation_config.landmark_decode_mode,
+                top_k=generation_config.landmark_top_k_blocks,
+                nonselected_landmark_mass=generation_config.landmark_nonselected_mass,
+            )
+            # Optional landmark-gate analysis hook (off unless OLMO_LANDMARK_GATE_LOG is set). Tag
+            # each landmark layer with its block index so the recorder can key gates by layer, then
+            # open a fresh per-example record (context_len defaults to the content prompt length).
+            if landmark_gate_analysis.is_enabled():
+                for block_idx, block in self.model.blocks.items():
+                    attn = block.attention
+                    if isinstance(attn, _LANDMARK_ATTENTION_TYPES):
+                        attn._gate_log_layer_idx = int(block_idx)  # type: ignore[attr-defined]
+                landmark_gate_analysis.start_example(orig_input_ids.shape[1])
         finished = torch.zeros(batch_size, dtype=torch.bool, device=self.device)
         stop_tokens = (
             torch.tensor(generation_config.stop_token_ids, device=self.device, dtype=torch.int32)
@@ -314,6 +382,14 @@ class TransformerGenerationModule(GenerationModule):
             max_length = prompt_len + generation_config.max_new_tokens
         elif generation_config.max_length is not None:
             max_length = generation_config.max_length
+            # ``max_length`` is an absolute cap on ``generated.shape[1]``. Eval harnesses set it
+            # to ``len(content_prompt) + max_gen_toks``, unaware that landmark generation inserts
+            # memory tokens into the prompt. Those inserted tokens count toward
+            # ``generated.shape[1]``, so without compensation they eat into (and can zero out) the
+            # new-token budget. Extend the cap by the number of inserted landmark tokens so the
+            # content-token budget stays ``max_gen_toks``.
+            if landmark_active:
+                max_length += prompt_len - orig_input_ids.shape[1]
         else:
             max_length = None  # Generate until EOS or stop tokens or OOM...
 
@@ -333,6 +409,18 @@ class TransformerGenerationModule(GenerationModule):
         else:
             self.free_inference_cache()
 
+        # Landmark hard top-k retrieval is applied only on single-query decode steps, never during the
+        # batched prefill. The first generated token's logits come from the *last prompt token's*
+        # query, so if prefill produced it that token would escape top-k entirely. Instead, prefill all
+        # but the final prompt token here and let the decode loop below start from that final token --
+        # then retrieval gates the first generated token too. (Requires a KV cache and >= 2 prompt
+        # tokens; landmark generation already requires use_cache and batch_size=1 / no left-padding.)
+        landmark_decode_first_token = (
+            landmark_active and generation_config.use_cache and prompt_len >= 2
+        )
+        if landmark_decode_first_token:
+            self.model(input_ids[:, :-1], logits_to_keep=1, cache_leftpad=prefill_cache_leftpad)
+
         pbar = tqdm(
             desc="Generating tokens",
             unit="tokens",
@@ -343,15 +431,23 @@ class TransformerGenerationModule(GenerationModule):
         )
         while not ((max_length is not None and generated.shape[1] >= max_length) or finished.all()):
             # Determine model inputs based on if we are prefilling or decoding
-            is_first_forward = generated.shape[1] == prompt_len
-            input_ids_for_model = (
-                generated
-                if (is_first_forward or not generation_config.use_cache)
-                else generated[:, -1:]
-            )
-            cache_leftpad = (
-                prefill_cache_leftpad if is_first_forward and generation_config.use_cache else None
-            )
+            if landmark_decode_first_token:
+                # Prompt[:-1] is already cached above; every step is a single-token decode, starting
+                # from the final prompt token (whose query yields the first generated token).
+                input_ids_for_model = generated[:, -1:]
+                cache_leftpad = None
+            else:
+                is_first_forward = generated.shape[1] == prompt_len
+                input_ids_for_model = (
+                    generated
+                    if (is_first_forward or not generation_config.use_cache)
+                    else generated[:, -1:]
+                )
+                cache_leftpad = (
+                    prefill_cache_leftpad
+                    if is_first_forward and generation_config.use_cache
+                    else None
+                )
 
             # Forward pass - handles both prefill and decode phases
             forward_start_time = time.perf_counter()
@@ -360,6 +456,11 @@ class TransformerGenerationModule(GenerationModule):
                 logits_to_keep=1,
                 cache_leftpad=cache_leftpad if generation_config.use_cache else None,
             )
+
+            # Landmark-gate analysis: flush this decode step's opened gates as one record (no-op on
+            # the prefill forward, which records nothing).
+            if landmark_active and landmark_gate_analysis.is_enabled():
+                landmark_gate_analysis.finalize_token()
 
             next_tokens = select_next_token(
                 next_token_logits.squeeze(1),
@@ -441,6 +542,8 @@ class TransformerGenerationModule(GenerationModule):
             # ``generated`` holds the landmark-inserted prompt followed by plain content tokens; the
             # caller never asked for landmarks, so report the prompt in its original content space.
             self._clear_landmark_eval_decode()
+            if landmark_gate_analysis.is_enabled():
+                landmark_gate_analysis.end_example()
             completion = generated[:, prompt_len:]
             generated = (
                 completion if completions_only else torch.cat([orig_input_ids, completion], dim=1)
@@ -594,8 +697,13 @@ class TransformerGenerationModule(GenerationModule):
         )
 
         # Broadcast config and work_dir to all ranks
-        transformer_config, work_dir, tokenizer_config, checkpoint_landmark_mem_id = (
-            broadcast_object((transformer_config, work_dir, tokenizer_config, checkpoint_landmark_mem_id))
+        (
+            transformer_config,
+            work_dir,
+            tokenizer_config,
+            checkpoint_landmark_mem_id,
+        ) = broadcast_object(
+            (transformer_config, work_dir, tokenizer_config, checkpoint_landmark_mem_id)
         )
 
         if transformer_config is None:
