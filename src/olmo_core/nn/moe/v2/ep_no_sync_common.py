@@ -11,13 +11,13 @@ from ...moe.utils import (
     moe_unpermute_1d_fused_drop_no_compile,
     moe_unpermute_no_compile,
 )
-from ._nvtx import annotate
+from ._nvtx import maybe_annotate
 
 if TYPE_CHECKING:
     from .block import MoEFusedV2TransformerBlock
 
 
-@annotate("build_keep_reorder", "comm")
+@maybe_annotate("build_keep_reorder", "comm")
 def build_keep_reorder(
     requested_splits: torch.Tensor,
     keep_splits: torch.Tensor,
@@ -71,7 +71,7 @@ def build_keep_reorder(
     return reorder_indices, inverse_reorder_indices, packed_keep_mask
 
 
-@annotate("sync_tail_drop_allowed_splits_single_a2a", "comm")
+@maybe_annotate("sync_tail_drop_allowed_splits_single_a2a", "comm")
 def sync_tail_drop_allowed_splits_single_a2a(
     block: MoEFusedV2TransformerBlock,
     requested_splits: torch.Tensor,
@@ -159,7 +159,7 @@ def sync_tail_drop_allowed_splits_single_a2a(
     )
 
 
-@annotate("restore_drop_unpermute_1d", "comm")
+@maybe_annotate("restore_drop_unpermute_1d", "comm")
 def restore_drop_unpermute_1d(
     block: MoEFusedV2TransformerBlock,
     *,
@@ -207,7 +207,7 @@ def restore_drop_unpermute_1d(
         if row_id_map_is_packed:
             restored_local_x = combine_out
         else:
-            with annotate("restore_drop", "comm"):
+            with maybe_annotate("restore_drop", "comm"):
                 restored_local_x = combine_out.index_select(
                     0,
                     local_inverse_reorder_indices,

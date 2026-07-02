@@ -6,7 +6,7 @@ import torch
 
 from ...moe.utils import async_copy_to_cpu, wait_stream_no_compile
 from ..utils import moe_permute_no_compile, moe_unpermute_no_compile
-from ._nvtx import annotate
+from ._nvtx import maybe_annotate
 from .routed_experts import requires_host_side_split_sizes
 
 if TYPE_CHECKING:
@@ -104,7 +104,7 @@ def combined_forward_no_ep(
     num_out_tokens = routing_map.size(0) * self.routed_experts_router.top_k
     hidden_shape_before_permute = moe_inp.shape
 
-    with annotate("permute", "comm"):
+    with maybe_annotate("permute", "comm"):
         permutated_input_tokens, reversed_input_permutation_mapping = moe_permute_no_compile(
             inp=moe_inp,
             routing_map=routing_map,
@@ -126,7 +126,7 @@ def combined_forward_no_ep(
             permutated_input_tokens, local_batch_size_per_global_routed_expert
         )
 
-    with annotate("unpermute", "comm"):
+    with maybe_annotate("unpermute", "comm"):
         unpermutated_x: torch.Tensor = moe_unpermute_no_compile(
             inp=mlp_x,
             row_id_map=reversed_input_permutation_mapping,

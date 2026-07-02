@@ -3,7 +3,12 @@ import pytest
 import torch
 
 from olmo_core.ops import moe as ops
-from olmo_core.testing import DEVICES, requires_gpu
+from olmo_core.testing import (
+    DEVICES,
+    requires_gpu,
+    requires_multi_gpu,
+    run_distributed_test,
+)
 
 
 @requires_gpu
@@ -162,3 +167,41 @@ def test_batched_histc(device: torch.device):
     torch.testing.assert_close(
         hist, torch.tensor([[1, 2, 0, 0, 0], [2, 0, 1, 0, 0]], device=device)
     )
+
+
+def _run_all_to_all_async_matches_sync():
+    import torch.distributed as dist
+
+    from olmo_core.distributed.utils import get_local_rank
+
+    rank = dist.get_rank()
+    local_rank = get_local_rank()
+    torch.cuda.set_device(local_rank)
+    device = torch.device("cuda", local_rank)
+
+    # Distinct input per rank; the async path and the synchronous reference run on the
+    # same values, so output + gradient must match exactly.
+    torch.manual_seed(42 + rank)
+    x = torch.randn(8, 16, device=device, requires_grad=True)
+    x_ref = x.detach().clone().requires_grad_(True)
+
+    # Async path: launch, (a real caller overlaps compute here), then wait. The passthrough
+    # tensor returned first must feed only the wait, so the backward handle survives.
+    x_passthrough, y, handle = ops.all_to_all_async(x)
+    y = ops.all_to_all_wait(x_passthrough, y, handle)
+
+    # Synchronous reference.
+    out_ref, _ = ops.all_to_all(x_ref, async_op=False)
+    torch.testing.assert_close(y, out_ref)
+
+    # Backward parity (the custom autograd does the reverse all-to-all).
+    grad = torch.randn_like(y)
+    y.backward(grad)
+    out_ref.backward(grad)
+    assert x.grad is not None and x_ref.grad is not None
+    torch.testing.assert_close(x.grad, x_ref.grad)
+
+
+@requires_multi_gpu
+def test_all_to_all_async_matches_sync():
+    run_distributed_test(_run_all_to_all_async_matches_sync, world_size=2, backend="nccl")

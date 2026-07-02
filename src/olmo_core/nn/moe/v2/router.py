@@ -23,7 +23,7 @@ from olmo_core.distributed.utils import (
 from ...output_discard_checkpoint import OutputDiscardCheckpoint
 from ..loss import MoELoadBalancingLossGranularity, load_balancing_loss, router_z_loss
 from ..router import MoERouterGatingFunction, _uniform_expert_assignment
-from ._nvtx import annotate
+from ._nvtx import maybe_annotate
 
 if TYPE_CHECKING:
     from olmo_core.train.common import ReduceType
@@ -341,7 +341,7 @@ class MoERouterV2(nn.Module):
             noise = torch.rand_like(x)
             return x * (low + noise * (high - low))
 
-    @annotate("MoERouter.get_top_k", "routing")
+    @maybe_annotate("MoERouter.get_top_k", "routing")
     def get_top_k(self, scores: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         expert_weights: torch.Tensor
         expert_indices: torch.Tensor
@@ -448,7 +448,7 @@ class MoERouterV2(nn.Module):
         logits = torch.round(logits.float() * q) / q
         return logits
 
-    @annotate("MoERouter.forward", "routing")
+    @maybe_annotate("MoERouter.forward", "routing")
     def forward(
         self,
         x: torch.Tensor,
@@ -578,7 +578,7 @@ class MoERouterV2(nn.Module):
         )
         return expert_weights, expert_indices, batch_size_per_expert, aux_loss_info
 
-    @annotate("MoERouter.compute_aux_loss", "routing")
+    @maybe_annotate("MoERouter.compute_aux_loss", "routing")
     def compute_aux_loss(
         self,
         scores,

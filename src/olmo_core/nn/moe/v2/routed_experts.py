@@ -55,7 +55,7 @@ from olmo_core.kernels.mxfp8_utils import (
 )
 from olmo_core.nn.fp8_weight import FP8WeightCacheSpec, FP8WeightStore
 
-from ._nvtx import annotate
+from ._nvtx import maybe_annotate
 from .fp8 import MoERowwiseFP8Config, normalize_rowwise_fp8_config
 
 
@@ -717,7 +717,7 @@ class RoutedExperts(nn.Module):
         return cast(torch.Tensor, down)
 
     # @torch.compiler.disable(recursive=False)
-    @annotate("RoutedExperts.forward", "experts")
+    @maybe_annotate("RoutedExperts.forward", "experts")
     def forward(
         self,
         x: torch.Tensor,
