@@ -47,102 +47,9 @@ log = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from ..train.train_module import TrainModule
-    from ..train.train_module.transformer.moe_train_module import MoEV2TransformerTrainModule
-
-MUON_DEFAULT_NS_COEFFICIENTS = (3.4445, -4.7750, 2.0315)
-MUON_DEFAULT_EPS = 1e-7
-MUON_DEFAULT_NS_STEPS = 5
-
-
-@torch.compile(dynamic=False)
-def _zeropower_via_newtonschulz_2d(
-    grad: torch.Tensor,
-    ns_coefficients: Tuple[float, float, float],
-    ns_steps: int,
-    eps: float,
-) -> torch.Tensor:
-    if ns_steps >= 100:
-        raise ValueError("Muon ns_steps must be less than 100 for computational efficiency")
-    if grad.ndim != 2:
-        raise ValueError(f"Muon 2D kernel requires a 2D tensor, got shape {tuple(grad.shape)}")
-
-    a, b, c = ns_coefficients
-    ortho_grad = grad.bfloat16()
-    if grad.size(0) > grad.size(1):
-        ortho_grad = ortho_grad.T
-
-    ortho_grad.div_(ortho_grad.norm().clamp(min=eps))
-    for _ in range(ns_steps):
-        gram_matrix = ortho_grad @ ortho_grad.T
-        gram_update = torch.addmm(gram_matrix, gram_matrix, gram_matrix, beta=b, alpha=c)
-        ortho_grad = torch.addmm(ortho_grad, gram_update, ortho_grad, beta=a)
-
-    if grad.size(0) > grad.size(1):
-        ortho_grad = ortho_grad.T
-    return ortho_grad
-
-
-def _zeropower_via_newtonschulz_nd(
-    grad: torch.Tensor,
-    ns_coefficients: Tuple[float, float, float],
-    ns_steps: int,
-    eps: float,
-) -> torch.Tensor:
-    if grad.ndim < 3:
-        raise ValueError(
-            f"Muon ND kernel requires a tensor with at least 3 dims, got shape {tuple(grad.shape)}"
-        )
-
-    a, b, c = ns_coefficients
-    ortho_grad = grad.reshape(-1, grad.size(-2), grad.size(-1)).bfloat16()
-
-    if grad.size(-2) > grad.size(-1):
-        ortho_grad = ortho_grad.transpose(1, 2)
-
-    ortho_grad = ortho_grad / ortho_grad.norm(dim=(1, 2), keepdim=True).clamp(min=eps)
-    for _ in range(ns_steps):
-        gram_matrix = torch.bmm(ortho_grad, ortho_grad.transpose(1, 2))
-        gram_update = torch.baddbmm(gram_matrix, gram_matrix, gram_matrix, beta=b, alpha=c)
-        ortho_grad_rhs = (
-            ortho_grad.clone()
-        )  # copy rhs to safely use baddbmm_ which is faster than baddbmm
-        ortho_grad.baddbmm_(gram_update, ortho_grad_rhs, beta=a, alpha=1.0)
-
-    if grad.size(-2) > grad.size(-1):
-        ortho_grad = ortho_grad.transpose(1, 2)
-    return ortho_grad.reshape_as(grad)
-
-
-@maybe_nvtx_annotate("_zeropower_via_newtonschulz")
-def _zeropower_via_newtonschulz(
-    grad: torch.Tensor,
-    ns_coefficients: Tuple[float, float, float],
-    ns_steps: int,
-    eps: float,
-) -> torch.Tensor:
-    if grad.ndim < 2:
-        raise ValueError(
-            f"Muon requires a tensor with at least 2 dims, got shape {tuple(grad.shape)}"
-        )
-    if grad.ndim == 2:
-        return _zeropower_via_newtonschulz_2d(grad, ns_coefficients, ns_steps, eps)
-    return _zeropower_via_newtonschulz_nd(grad, ns_coefficients, ns_steps, eps)
-
-
-def _adjust_muon_lr(
-    lr: Union[float, torch.Tensor],
-    adjust_lr_fn: Optional[str],
-    param_shape: torch.Size,
-) -> Union[float, torch.Tensor]:
-    rows, cols = param_shape[:2]
-    if adjust_lr_fn is None or adjust_lr_fn == "original":
-        adjusted_ratio = math.sqrt(max(1.0, rows / cols))
-    elif adjust_lr_fn == "match_rms_adamw":
-        adjusted_ratio = 0.2 * math.sqrt(max(rows, cols))
-    else:
-        raise ValueError(f"Unsupported Muon lr adjustment function: {adjust_lr_fn}")
-
-    return lr * adjusted_ratio
+    from ..train.train_module.transformer.moe_train_module import (
+        MoEV2TransformerTrainModule,
+    )
 
 
 def _to_local_tensor(tensor: torch.Tensor) -> torch.Tensor:
@@ -201,8 +108,8 @@ class MoEFusedV2OptimizerConfig(Config):
 
     Builds the distributed fused optimizer for the
     :class:`~olmo_core.nn.moe.v2.model.MoEFusedV2Transformer` from AdamW settings
-    (:data:`lr`, :data:`betas`, :data:`eps`, :data:`weight_decay`), Muon settings (the ``muon_*``
-    fields), and skip-step spike-detection settings (:data:`rolling_interval_length`,
+    (:data:`lr`, :data:`betas`, :data:`eps`, :data:`weight_decay`) and skip-step spike-detection
+    settings (:data:`rolling_interval_length`,
     :data:`sigma_factor`, :data:`max_grad_norm`), plus optional per-parameter-group overrides.
     """
 
@@ -238,12 +145,6 @@ class MoEFusedV2OptimizerConfig(Config):
     eps: float = 1e-8
     weight_decay: float = 1e-2
     dtype: Optional[DType] = None
-    muon_momentum: float = 0.95
-    muon_nesterov: bool = True
-    muon_ns_coefficients: Tuple[float, float, float] = MUON_DEFAULT_NS_COEFFICIENTS
-    muon_eps: float = MUON_DEFAULT_EPS
-    muon_ns_steps: int = MUON_DEFAULT_NS_STEPS
-    muon_adjust_lr_fn: Optional[str] = None
 
     rolling_interval_length: int = 128
     """
@@ -500,14 +401,11 @@ class MoEFusedV2OptimizerConfig(Config):
                     f"Group {g_idx}, {len(group['named_params'])} parameter(s):\n - params:\n - {group_param_names}"
                 )
 
-        has_muon_groups = any(bool(group.get("use_muon", False)) for group in optim.param_groups)
-        if self.compile and not has_muon_groups:
+        if self.compile:
             # Compile only the math-heavy update path. Keeping comm/copy-back eager
             # avoids Dynamo/Inductor capturing giant all_gather graphs that can OOM.
             log.info("Compiling optimizer update path (_step_foreach)...")
             optim._step_foreach = torch.compile(optim._step_foreach)
-        elif self.compile and has_muon_groups:
-            log.info("Skipping optimizer step compilation because Muon groups are enabled.")
 
         # Register hook to reset fixed fields after loading a checkpoint.
 
@@ -559,15 +457,14 @@ class MoEFusedV2Optimizer:
 
     Keeps fp32 master copies of the parameters, reduce-scatters gradients and gathers updated
     parameters across the data-parallel and expert-parallel data-parallel process groups (DTensor-
-    and expert-parallel-aware), and applies a fused per-group step supporting **AdamW** and **Muon**
-    with **skip-step** loss-spike detection. Built via :class:`MoEFusedV2OptimizerConfig`.
+    and expert-parallel-aware), and applies a fused per-group **AdamW** step with **skip-step**
+    loss-spike detection. Built via :class:`MoEFusedV2OptimizerConfig`.
     """
 
     LOSSES_STATE_DICT_KEY = "__moe_skip_step_losses"
     GRAD_NORMS_STATE_DICT_KEY = "__moe_skip_step_grad_norms"
     ADAM_MOMENT_STATE_SUFFIXES = ("exp_avg", "exp_avg_sq")
-    MUON_MOMENT_STATE_SUFFIXES = ("muon_momentum",)
-    MOMENT_STATE_SUFFIXES = ADAM_MOMENT_STATE_SUFFIXES + MUON_MOMENT_STATE_SUFFIXES
+    MOMENT_STATE_SUFFIXES = ADAM_MOMENT_STATE_SUFFIXES
 
     def __init__(
         self,
@@ -577,12 +474,6 @@ class MoEFusedV2Optimizer:
         betas: Tuple[float, float] = (0.9, 0.999),
         eps: float = 1e-8,
         weight_decay: float = 1e-2,
-        muon_momentum: float = 0.95,
-        muon_nesterov: bool = True,
-        muon_ns_coefficients: Tuple[float, float, float] = MUON_DEFAULT_NS_COEFFICIENTS,
-        muon_eps: float = MUON_DEFAULT_EPS,
-        muon_ns_steps: int = MUON_DEFAULT_NS_STEPS,
-        muon_adjust_lr_fn: Optional[str] = None,
         rolling_interval_length: int = 128,
         sigma_factor: int = 6,
         max_grad_norm: float = 1.0,
@@ -600,16 +491,7 @@ class MoEFusedV2Optimizer:
     ) -> None:
         assert lr > 0.0
         assert all([0.0 <= beta <= 1.0 for beta in betas])
-        assert muon_momentum >= 0.0
         defaults = dict(lr=lr, betas=betas, eps=eps, weight_decay=weight_decay)
-        defaults.update(
-            muon_momentum=muon_momentum,
-            muon_nesterov=muon_nesterov,
-            muon_ns_coefficients=muon_ns_coefficients,
-            muon_eps=muon_eps,
-            muon_ns_steps=muon_ns_steps,
-            muon_adjust_lr_fn=muon_adjust_lr_fn,
-        )
 
         self.model_has_grad_accum_fp32_buffer = model_has_grad_accum_fp32_buffer
         self.use_distributed = use_distributed
@@ -618,7 +500,6 @@ class MoEFusedV2Optimizer:
         def _add_defaults_to_param_group(pg: Dict[str, Any]) -> Dict[str, Any]:
             for k, v in defaults.items():
                 pg.setdefault(k, v)
-            pg.setdefault("use_muon", False)
             return pg
 
         # add defaults to each param group
@@ -673,7 +554,6 @@ class MoEFusedV2Optimizer:
         self.do_not_shard_tensor_smaller_than = do_not_shard_tensor_smaller_than
         self._use_reduce_scatter_grads = True
         self.main_grad: Dict[str, torch.Tensor] = {}
-        self._param_uses_muon: Dict[str, bool] = {}
         self._flat_model_sync_groups: "OrderedDict[str, _FlatModelParamSyncGroup]" = OrderedDict()
 
         # check
@@ -717,21 +597,6 @@ class MoEFusedV2Optimizer:
 
         self.states: Dict[str, DTensor] = OrderedDict()
 
-        muon_fallback_params: List[str] = []
-        for param_group in param_groups:
-            group_requests_muon = bool(param_group.get("use_muon", False))
-            for name, param in param_group["named_params"].items():
-                use_muon_for_param = group_requests_muon and param.ndim >= 2
-                self._param_uses_muon[name] = use_muon_for_param
-                if group_requests_muon and param.ndim < 2:
-                    muon_fallback_params.append(name)
-
-        if muon_fallback_params:
-            log.warning(
-                "Falling back to AdamW for params with rank < 2 in Muon groups: %s",
-                ", ".join(muon_fallback_params),
-            )
-
         for param_group in param_groups:
             # configure the device mesh to shard the group
             device_mesh = self._get_dp_device_mesh_for_tag(param_group["pg"])
@@ -741,7 +606,6 @@ class MoEFusedV2Optimizer:
             for name, param in param_group["named_params"].items():
                 # flat in fp32
                 num_elements = param.numel()
-                use_muon_for_param = self._param_uses_muon[name]
 
                 # main param
                 if self.should_maintain_fp32_main_param:
@@ -757,24 +621,15 @@ class MoEFusedV2Optimizer:
                         param.data.view(-1), device_mesh=device_mesh, placements=[Replicate()]
                     )
 
-                if use_muon_for_param:
-                    muon_momentum_buffer = torch.zeros(
-                        num_elements, dtype=self.states_dtype, device=device
-                    )
-                    muon_momentum_buffer = self._distribute_tensor(
-                        muon_momentum_buffer, device_mesh
-                    )
-                    self.states[f"{name}.muon_momentum"] = muon_momentum_buffer
-                else:
-                    # exp avg
-                    exp_avg = torch.zeros(num_elements, dtype=self.states_dtype, device=device)
-                    exp_avg = self._distribute_tensor(exp_avg, device_mesh)
-                    self.states[f"{name}.exp_avg"] = exp_avg
+                # exp avg
+                exp_avg = torch.zeros(num_elements, dtype=self.states_dtype, device=device)
+                exp_avg = self._distribute_tensor(exp_avg, device_mesh)
+                self.states[f"{name}.exp_avg"] = exp_avg
 
-                    # exp avg sq
-                    exp_avg_sq = torch.zeros(num_elements, dtype=self.states_dtype, device=device)
-                    exp_avg_sq = self._distribute_tensor(exp_avg_sq, device_mesh)
-                    self.states[f"{name}.exp_avg_sq"] = exp_avg_sq
+                # exp avg sq
+                exp_avg_sq = torch.zeros(num_elements, dtype=self.states_dtype, device=device)
+                exp_avg_sq = self._distribute_tensor(exp_avg_sq, device_mesh)
+                self.states[f"{name}.exp_avg_sq"] = exp_avg_sq
 
                 # step
                 step_tensor = torch.zeros((), dtype=torch.float32, device=device)
@@ -866,7 +721,6 @@ class MoEFusedV2Optimizer:
         main_stat = count_numel("main")
         exp_avg_stat = count_numel("exp_avg")
         exp_avg_sq_stat = count_numel("exp_avg_sq")
-        muon_momentum_stat = count_numel("muon_momentum")
 
         print_str = ""
 
@@ -875,23 +729,17 @@ class MoEFusedV2Optimizer:
             print_str += info_str("Exp avg", exp_avg_stat)
         if exp_avg_sq_stat[0] > 0:
             print_str += info_str("Exp avg sq", exp_avg_sq_stat)
-        if muon_momentum_stat[0] > 0:
-            print_str += info_str("Muon momentum", muon_momentum_stat)
 
         BYTES_IN_GB = 1024**3
 
         total_global_optim_gb = main_stat[0] * self.main_grad_dtype.itemsize / BYTES_IN_GB
         total_global_optim_gb += (
-            (exp_avg_stat[0] + exp_avg_sq_stat[0] + muon_momentum_stat[0])
-            * self.states_dtype.itemsize
-            / BYTES_IN_GB
+            (exp_avg_stat[0] + exp_avg_sq_stat[0]) * self.states_dtype.itemsize / BYTES_IN_GB
         )
 
         total_local_optim_gb = main_stat[1] * self.main_grad_dtype.itemsize / BYTES_IN_GB
         total_local_optim_gb += (
-            (exp_avg_stat[1] + exp_avg_sq_stat[1] + muon_momentum_stat[1])
-            * self.states_dtype.itemsize
-            / BYTES_IN_GB
+            (exp_avg_stat[1] + exp_avg_sq_stat[1]) * self.states_dtype.itemsize / BYTES_IN_GB
         )
 
         normal_model_param_gb = (self._model_param_sz - self._mxfp8_logical_param_sz) / BYTES_IN_GB
@@ -1247,7 +1095,7 @@ class MoEFusedV2Optimizer:
     def step(self, closure: Optional[Callable[[], float]] = None) -> Optional[float]:
         """
         Run one optimizer step: reduce-scatter gradients, copy them to the fp32 master grads, apply
-        the fused AdamW/Muon update with skip-step spike detection, then gather the updated
+        the fused AdamW update with skip-step spike detection, then gather the updated
         parameters back to the model. ``closure`` is accepted for API compatibility.
         """
         if getattr(self, "_use_reduce_scatter_grads", True):
@@ -1299,8 +1147,6 @@ class MoEFusedV2Optimizer:
         return dist.get_world_size(pg), dist.get_rank(pg)
 
     def _state_suffixes_for_param(self, name: str) -> Tuple[str, ...]:
-        if self._param_uses_muon[name]:
-            return ("main", "muon_momentum", "step")
         return ("main", "exp_avg", "exp_avg_sq", "step")
 
     def _gather_sharded_flat_tensor(
@@ -2158,56 +2004,6 @@ class MoEFusedV2Optimizer:
 
             for name, model_p in group["named_params"].items():
                 if not model_p.requires_grad:
-                    continue
-
-                if self._param_uses_muon[name]:
-                    flush_chunk()
-                    maybe_copy_back_16bit_states()
-                    reset_chunk_buffers()
-
-                    main_state = self.states[f"{name}.main"]
-                    momentum_state = self.states[f"{name}.muon_momentum"]
-
-                    main_param_local = main_state.to_local()
-                    grad_local = _to_local_tensor(self.main_grad[name]).float()
-                    momentum_local = momentum_state.to_local()
-                    step = self.states[f"{name}.step"].to_local()
-
-                    momentum_weight = step_factor * (1.0 - group["muon_momentum"])
-                    momentum_local.mul_(1.0 - momentum_weight)
-                    momentum_local.add_(grad_local * momentum_weight)
-
-                    if group["muon_nesterov"]:
-                        local_pre_update = (
-                            grad_local * (1.0 - group["muon_momentum"])
-                            + momentum_local * group["muon_momentum"]
-                        )
-                    else:
-                        local_pre_update = momentum_local
-
-                    full_pre_update = self._gather_sharded_flat_tensor(local_pre_update, main_state)
-                    full_pre_update = full_pre_update.reshape(model_p.shape)
-                    full_ortho_update = _zeropower_via_newtonschulz(
-                        full_pre_update,
-                        group["muon_ns_coefficients"],
-                        group["muon_ns_steps"],
-                        group["muon_eps"],
-                    )
-
-                    local_ortho_update = self.narrow_tensor(
-                        full_ortho_update.reshape(-1),
-                        main_state.device_mesh,
-                        main_state.placements,
-                    )
-                    adjusted_lr = _adjust_muon_lr(
-                        group["lr"], group["muon_adjust_lr_fn"], model_p.shape
-                    )
-
-                    main_param_local.mul_(1.0 - step_factor * group["lr"] * group["weight_decay"])
-                    main_param_local.add_(
-                        local_ortho_update * (adjusted_lr * step_factor), alpha=-1.0
-                    )
-                    step.add_(step_factor)
                     continue
 
                 # in adam step(), make everything local and fp32
