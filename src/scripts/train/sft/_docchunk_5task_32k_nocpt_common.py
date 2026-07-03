@@ -260,13 +260,14 @@ def build_docchunk_experiment(
             wrapping_strategy=TransformerDataParallelWrappingStrategy.full,
             shard_degree=WORLD_SIZE,
         ),
-        # Checkpoint ONLY the FFN (largest activations), NOT the attention: full-block AC recomputes
-        # the doc-chunked attention, whose FlexAttention block-mask / eager chunked-mask build does not
-        # save a recompute-stable number of tensors (-> CheckpointError on torch 2.9). FFN-only AC
-        # keeps attention out of the recompute and still fits 40960 on H200.
+        # FULL-block AC (checkpoint attention + FFN): needed to fit 40960 on 80GB H100 (jupiter);
+        # FFN-only AC leaves the doc-chunked-attention activations resident and OOMs (76+ GiB on H100,
+        # only fit H200's 141GB). The earlier CheckpointError concern (flex block-mask build not
+        # recompute-stable) is resolved by the S2 block-mask cache: on recompute `_get_or_build_block_mask`
+        # returns the SAME cached BlockMask (keyed on chunk_ids identity/version), so the recompute is
+        # deterministic. If a CheckpointError resurfaces, fall back to selected_modules + smaller seq_len.
         ac_config=TransformerActivationCheckpointingConfig(
-            mode=TransformerActivationCheckpointingMode.selected_modules,
-            modules=["blocks.*.feed_forward"],
+            mode=TransformerActivationCheckpointingMode.full,
         ),
         float8_config=Float8Config(enabled=False),
         z_loss_multiplier=None,
