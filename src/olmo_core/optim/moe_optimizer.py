@@ -52,21 +52,6 @@ MUON_DEFAULT_NS_COEFFICIENTS = (3.4445, -4.7750, 2.0315)
 MUON_DEFAULT_EPS = 1e-7
 MUON_DEFAULT_NS_STEPS = 5
 
-# Opt = TypeVar("Opt", bound=torch.optim.Optimizer)
-
-
-### DEBUG PRINT ###
-def _str_paramt(paramt):
-    rets = ""
-    total_numel = 0
-    for i, pgrp in enumerate(paramt):
-        rets += f'{i}: {pgrp["__pg_tag__"]}\n'
-        rets += f'    num params: {len(pgrp["params"])}\n'
-        rets += f'    num ele: {sum(p.numel() for p in pgrp["params"]):,}\n'
-        total_numel += sum(p.numel() for p in pgrp["params"])
-    rets += f"Total num ele: {total_numel:,}\n"
-    return rets
-
 
 @torch.compile(dynamic=False)
 def _zeropower_via_newtonschulz_2d(
