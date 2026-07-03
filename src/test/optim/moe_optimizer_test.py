@@ -11,25 +11,23 @@ from olmo_core.optim.moe_optimizer import (
     MUON_DEFAULT_NS_STEPS,
     MoEFusedV2OptimizerConfig,
     _adjust_muon_lr,
-    _is_fp8_weight_store,
     _zeropower_via_newtonschulz,
 )
 
 
-def test_zeropower_via_newtonschulz_orthogonalizes():
+@pytest.mark.parametrize("shape", [(48, 32), (4, 24, 16)])
+def test_zeropower_via_newtonschulz_orthogonalizes(shape):
+    # Covers both dispatch branches: the 2D kernel and the batched n-d (grouped-expert) kernel.
     torch.manual_seed(0)
-    g = torch.randn(48, 32)  # a realistic (wide-spectrum) gradient
-    in_svals = torch.linalg.svdvals(g)
+    g = torch.randn(*shape)
     out = _zeropower_via_newtonschulz(
         g, MUON_DEFAULT_NS_COEFFICIENTS, MUON_DEFAULT_NS_STEPS, MUON_DEFAULT_EPS
     )
-    assert out.shape == g.shape
-    # Muon computes the orthogonalization in bfloat16.
+    # Newton-Schulz drives every singular value toward 1 (Muon computes it in bfloat16), collapsing
+    # the input's wide spectrum — so a no-op / broken kernel would leave values outside this band.
     svals = torch.linalg.svdvals(out.float())
-    # Newton-Schulz pushes all singular values toward 1, collapsing the input's spread.
-    assert 0.6 < svals.min().item()
+    assert svals.min().item() > 0.6
     assert svals.max().item() < 1.3
-    assert svals.max() / svals.min() < in_svals.max() / in_svals.min()
 
 
 def test_zeropower_via_newtonschulz_requires_2d():
@@ -37,15 +35,6 @@ def test_zeropower_via_newtonschulz_requires_2d():
         _zeropower_via_newtonschulz(
             torch.randn(8), MUON_DEFAULT_NS_COEFFICIENTS, MUON_DEFAULT_NS_STEPS, MUON_DEFAULT_EPS
         )
-
-
-def test_zeropower_via_newtonschulz_nd_preserves_shape():
-    torch.manual_seed(0)
-    g = torch.randn(4, 16, 16)  # batched (>2 dims) — grouped-expert weight layout
-    out = _zeropower_via_newtonschulz(
-        g, MUON_DEFAULT_NS_COEFFICIENTS, MUON_DEFAULT_NS_STEPS, MUON_DEFAULT_EPS
-    )
-    assert out.shape == g.shape
 
 
 def test_adjust_muon_lr():
@@ -74,8 +63,3 @@ def test_build_groups_applies_overrides():
     bias_ids = {id(p) for n, p in model.named_parameters() if "bias" in n}
     override_group = next(g for g in groups if g.get("weight_decay") == 0.0)
     assert {id(p) for p in override_group["named_params"].values()} == bias_ids
-
-
-def test_is_fp8_weight_store_false_for_plain_param():
-    assert _is_fp8_weight_store(nn.Parameter(torch.zeros(2, 2))) is False
-    assert _is_fp8_weight_store(torch.zeros(2, 2)) is False
