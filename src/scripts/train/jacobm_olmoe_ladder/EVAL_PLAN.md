@@ -222,6 +222,56 @@ Launcher added in the olmo-eval checkout:
 /weka/oe-adapt-default/jacobm/olmoe3/olmo-eval/scripts/olmoe/launch_275m_cx1_base_eval_suite.sh
 ```
 
+
+## 2026-07-03 Auto-Image Old-Path Eval Smoke
+
+The working path is the direct/old `python -m oe_eval.run_eval` Beaker spec using
+`oe-eval-beaker/oe_eval_auto` (`01KPEDSKAH465STZBH0QPBC6KV`), not the newer
+`olmo-eval beaker launch` path. The newer launcher failed with this image because
+it tried to run the current `olmo-eval` checkout under Python 3.11 while the
+checkout requires Python >=3.12.
+
+Validated smoke jobs:
+
+- HF backend correctness smoke: https://beaker.org/ex/01KWK6HSQYTXPH21S88Y3H53QE
+  - exit 0
+  - task `arc_easy:mc`, limit 8
+  - primary score `0.375`
+- vLLM backend smoke: https://beaker.org/ex/01KWK6C5F2XNY25N5A8DJXFCVS
+  - exit 0
+  - task `arc_easy:mc`, limit 64
+  - primary score `0.265625`
+  - model loaded via vLLM 0.11.0 V1 with `TransformersForCausalLM` fallback and
+    `enforce_eager=true`.
+
+Two fixes were required:
+
+1. The converted HF model code must pass the current Transformers mask-helper
+   kwargs: `input_embeds` and `cache_position`. This is fixed in
+   `src/olmo_core/nn/moe/v2/hf/modeling_olmo3moe.py`; already-converted HF
+   checkpoints need to be regenerated or patched before eval.
+2. The auto image's `oe_eval` defaults do not include `enforce_eager`, so the
+   direct Beaker command patches `/stage/oe_eval/default_configs.py` inside the
+   container before invoking `oe_eval.run_eval`. This is container-local and does
+   not mutate the image, repo, or checkpoint.
+
+Reusable launcher:
+
+```text
+src/scripts/train/jacobm_olmoe_ladder/launch_oe_eval_auto_vllm_smoke.sh
+```
+
+Important operational details:
+
+- Clear the cached Transformers remote-code module before each run, otherwise
+  `HF_HOME/modules/transformers_modules/<step>` may keep stale copied code.
+- Use the mounted Weka path (`/weka/oe-training-default/...`) for `model_path`.
+- Keep `add_bos_token=false`, matching the tokenizer/config behavior used in the
+  successful smoke.
+- vLLM currently uses the generic Transformers fallback for `Olmo3MoeForCausalLM`;
+  this works with `enforce_eager=true` but is probably not the fastest possible
+  implementation.
+
 ## Open Questions
 
 - Which exact olmo-eval base suite should become `base-eval-core`?
@@ -255,7 +305,107 @@ Smoke results:
 - HF provider with 2 GPUs worked functionally, but processed only about
   0.5 items/sec on the OLMoBase suite, so it is too slow for the intended sweep.
 
-Conclusion: conversion/checkpoint correctness is not the blocker; the blocker is
-finding or building an eval image where vLLM can use a fast attention backend on
-B200/B300 without the FlashInfer nvcc requirement or the quack/cutlass mismatch.
-Keep the full 275M eval sweep paused until that path is resolved.
+Conclusion update: this was true for the earlier new-launcher/provider path, but
+it is no longer the best current plan. As of 2026-07-03, the direct/as-is
+`oe_eval.run_eval` path with `oe_eval_auto` works for vLLM smoke evals when the
+converted HF checkpoint uses the current Transformers mask-helper kwargs and the
+container-local `MODEL_DEFAULTS` is patched to allow `enforce_eager=true`. This
+is still a Transformers fallback path, so speed should be measured on the real
+suite before launching a large eval batch.
+
+## 2026-07-03 oe_eval_auto Image Smoke
+
+Tried the current `olmo-eval beaker launch` path with the older/internal
+`oe-eval-beaker/oe_eval_auto` image, keeping the converted baseline 275M Cx1 HF
+checkpoint and vLLM provider settings:
+
+- experiment: https://beaker.org/ex/01KWK45KVFMTJZ6PZHTKG6TYVT
+- image: `oe-eval-beaker/oe_eval_auto` / Beaker image
+  `01KPEDSKAH465STZBH0QPBC6KV`
+- task suite: `olmobase:mcqa_stem`
+- provider: `vllm`, 1 GPU, TP=1, max model length 4096
+
+This failed before vLLM startup. The image's active Python environment is
+Python 3.11.14 (`/stage/.venv`), while the current `olmo-eval` branch requires
+Python >=3.12. Gantry therefore failed during the overlay install:
+
+```text
+No solution found when resolving dependencies:
+the current Python version (3.11.14) does not satisfy Python>=3.12
+```
+
+So `oe_eval_auto` cannot currently be used with the new launcher overlay as-is.
+The next useful paths are either an image with Python 3.12 plus a compatible
+vLLM/CUDA stack, or a direct/as-is launch against the older eval runtime already
+baked into `oe_eval_auto`.
+
+## 2026-07-03 Eval Backend / Speed Notes
+
+Prompt-matched HF comparison on `arc_easy:mc`, limit 64, completed with the
+same first request as the vLLM smoke but a different primary score:
+
+- HF backend: https://beaker.org/ex/01KWK70FMMTEQSFKBN09SRZ3ZT
+  - primary score `0.296875`
+- vLLM backend: https://beaker.org/ex/01KWK6C5F2XNY25N5A8DJXFCVS
+  - primary score `0.265625`
+
+So the earlier HF/vLLM difference was not only a prompt subset mismatch; the two
+backends need prediction-level comparison before we treat them as numerically
+interchangeable.
+
+The direct/as-is `oe_eval.run_eval` path in `oe_eval_auto` cannot run the new
+`olmobase:*` suite aliases. A compatibility probe failed with
+`ValueError: Task olmobase:mcqa_stem not found in the task registry`, and a
+registry introspection job found old task names like `arc_easy:mc` but no
+`olmobase:*` or `*:olmo3base` tasks. This means full OLMoBase evals should use
+the newer `olmo-eval` suite layer once the Python/image issue is resolved, rather
+than trying to force the old image path to understand new suites.
+
+Proxy vLLM speed test on the old/direct path:
+
+- job: https://beaker.org/ex/01KWK7E4H1G00ZXSKPK0H8GCHG
+- task: `arc_easy:mc`, limit 1024, one GPU
+- vLLM config: `tensor_parallel_size=1`, `enforce_eager=true`,
+  `TransformersForCausalLM` fallback
+- model load: about 4.7 seconds after weight loading begins
+- scoring: 2,281 loglikelihood requests in about 34 seconds, roughly 66.5
+  loglikelihood requests/sec
+
+A 2-GPU proxy comparison was submitted as
+https://beaker.org/ex/01KWK7E5VQ2P8V2B3WG5R723B5 but had not started when these
+notes were written. For these small 275M checkpoints, the expected efficient
+scaling strategy is multiple independent 1-GPU vLLM engines, not one
+tensor-parallel engine. The newer `olmo-eval` path supports this via
+`provider.num_instances=N` with `provider.kwargs.tensor_parallel_size=1`; the old
+direct path does not expose that cleanly.
+
+
+## 2026-07-03 New-Path OLMoBase Full-Suite Speed Attempt
+
+Tried to get a real OLMoBase-suite speed number for the converted baseline 275M
+Cx1 HF checkpoint on the newer `olmo-eval` path with vLLM and one GPU. This is
+separate from the older `oe_eval_auto` direct path, which is fast on proxy tasks
+but does not have the current `olmobase:*` suite aliases.
+
+Attempts and current state:
+
+- `https://beaker.org/ex/01KWKB3VCFYTBWRCEF6FF8J7K3`: fresh HF cache plus
+  `enforce_eager=true`; failed during vLLM dummy forward because the HF shim was
+  passing `input_embeds` into the causal-mask helper instead of
+  `inputs_embeds`.
+- Patched `input_embeds` -> `inputs_embeds` in the repo HF shim and in the
+  converted checkpoint copy for the optimal 275M Cx1 baseline.
+- `oe-eval-beaker/oe_eval_auto` through the new launcher overlay still fails at
+  dependency resolution because the image Python is 3.11 while this `olmo-eval`
+  branch requires Python >=3.12.
+- Python-3.12 image `01KVTNKQXYACY9J3HEE265KJXA` got through package setup, but
+  the full `olmobase:math` alias includes `gsm_symbolic:p1:olmo3base`, which was
+  not registered/preparable in this environment.
+- Relaunching the non-code-exec suite minus only `gsm_symbolic:p1:olmo3base`
+  reached task/dataset generation but exited `139` before vLLM provider init
+  (`https://beaker.org/ex/01KWKCCTM05ERC121H0D9ZMCVY`).
+
+Current conclusion: we still do not have a trustworthy full-suite speed number.
+The next useful debugging path is to split OLMoBase into smaller chunks, or lower
+any task-prep concurrency / isolate the task that segfaults, then re-measure with
+vLLM once provider initialization is reached.

@@ -1649,3 +1649,40 @@ were relaunched on Titan urgent with compile on and the same training settings:
 | `int-810m-cx2-intd256e8k-lr5.6e-4-r1` | 2 | 5.6e-4 | 48 | 8 | 2 | https://beaker.org/ex/01KWHQZQZ811104C16PJ4GTWG7 |
 | `int-810m-cx4-intd256e8k-lr4e-4-r1` | 4 | 4e-4 | 64 | 8 | 4 | https://beaker.org/ex/01KWHR02WQ7S4FCQ77WJNFSA5S |
 | `int-810m-cx8-intd256e8k-lr4e-4-r1` | 8 | 4e-4 | 96 | 8 | 4 | https://beaker.org/ex/01KWHR0DANF34FXQ236WKHHGMM |
+
+
+## 2026-07-03 1.2B Total-Sparsity Smoke Requeue
+
+Requeued the three short 0.02x Chinchilla 1.2B total-sparsity smoke tests that
+were intentionally stopped on 2026-06-30. These use new `-r2` names and
+checkpoint folders so they do not collide with the stopped `-r1` records. Settings
+match the original smoke specs: `ai2/titan`, workspace
+`ai2/OLMo-3-moe-experiments`, image `tianhuat/olmo-core-torch211-2404-cu128`,
+compile-on, Weka `oe-training-default`, budget `ai2/oe-other`, priority
+`urgent`, `EP=1`, ladder fast evals, and `--no-pre-train-checkpoint`.
+
+| Name | Variant | Shape | LR | GBS seq | Nodes | GPUs / node | EP | MB | Beaker |
+| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| `sp-smoke-1p2b-cx4shape-sp192e4k-lr2.25e-4-r2` | `huge_total_192e_top4` | Cx4-shaped `b512k` memory smoke | 2.25e-4 | 64 | 4 | 8 | 1 | 1 | https://beaker.org/ex/01KWKEE4SRKAW61NADPQX7Z78G |
+| `sp-smoke-1p2b-cx2shape-sp192e4k-lr4e-4-r2` | `huge_total_192e_top4` | Cx2-shaped `b384k` divisibility smoke | 4e-4 | 48 | 3 | 8 | 1 | 1 | https://beaker.org/ex/01KWKEEMPQB5WBX0BCWGYJFN9V |
+| `sp-smoke-1p2b-cx8shape-sp96e4k-lr3.5e-4-r2` | `high_total_96e_top4` | Cx8-shaped `b768k` one-node smoke | 3.5e-4 | 96 | 1 | 8 | 1 | 4 | https://beaker.org/ex/01KWKEF30D4JDTPN3VSEMBQ5ND |
+
+## 2026-07-03 1.2B Total-Sparsity Smoke Failure Notes
+
+The requeued 1.2B total-sparsity smoke tests failed with CUDA OOMs, so hold off
+on further 1.2B sparsity promotion until we deliberately revisit systems settings.
+This is not blocking the near-term experiment plan because the lower-scale runs
+already show that increasing total sparsity is strongly beneficial.
+
+Observed failure modes:
+
+| Name | Failure | Suggested next retry |
+| --- | --- | --- |
+| `sp-smoke-1p2b-cx4shape-sp192e4k-lr2.25e-4-r2` | OOM during MoE optimizer/model flattening; tried to allocate another 54.33 GiB with ~1.53 GiB free. Microbatch is not the relevant lever. | If needed later, retry 192E/top4 with higher expert parallelism, starting at `EP=2`, then `EP=4` if optimizer init still OOMs. |
+| `sp-smoke-1p2b-cx2shape-sp192e4k-lr4e-4-r2` | OOM during optimizer tensor distribution; ranks were effectively at full 178 GiB B200 memory. Microbatch is not the relevant lever. | Same as above: retry 192E/top4 with higher EP rather than only lowering microbatch. |
+| `sp-smoke-1p2b-cx8shape-sp96e4k-lr3.5e-4-r2` | OOM during compiled compute at `mb=4`; process used ~178.19 / 178.36 GiB. | If needed later, retry 96E/top4 Cx8-shape with `mb=2`, then `mb=1` if necessary. |
+
+Do not relaunch the same `EP=1`/`mb` settings unchanged. For the 192E/top4
+1.2B tests, prioritize changing expert parallelism/sharding over activation-only
+settings; for the 96E/top4 Cx8-shaped test, reducing microbatch is likely enough.
+

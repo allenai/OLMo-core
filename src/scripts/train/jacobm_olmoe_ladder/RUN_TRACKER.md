@@ -13,7 +13,7 @@ Legend: `done` = at least one finished/plotted run exists; `run` = currently run
 | Experiment | Remaining not-yet-queued / not-started cells | Notes |
 | --- | --- | --- |
 | Total sparsity | 1.2B Cx1/2/4/8 for high total 96E/top4 and huge total 192E/top4 | 275M, 480M, and 810M are done. |
-| Integration candidates | 275M LR grid and 480M wide/deep promotions are plotted; 810M wide/deep promotions are in flight | 275M wide Cx4/Cx8 cold follow-ups are done; 480M wide/deep points beat baseline at the same LR; 810M Cx1/Cx2 early points are now plotted. |
+| Integration candidates | 275M LR grid and 480M wide/deep promotions are plotted; 810M wide/deep promotions are partially plotted and still in flight | 275M wide Cx4/Cx8 cold follow-ups are done; 480M wide/deep points beat baseline at the same LR; 810M wide Cx1/Cx2/Cx4 and deep Cx1/Cx2 are now plotted. |
 | Dense schedule | None | 480M, 810M, and 1.2B dense jobs are now finished/plotted. |
 | Shared expert | None | 480M, 810M, and 1.2B Cx1/2/4/8 are Beaker-finalized and plotted. |
 | Qwen-like | None | Active-matched and true-3D Qwen-like grids are finished/plotted through 1.2B Cx8. |
@@ -36,8 +36,8 @@ Legend: `done` = at least one finished/plotted run exists; `run` = currently run
 | Dense schedule | dense4 + shared | done Cx1/2/4/8 | done Cx1/2/4/8 | done Cx1/2/4/8 | done Cx1/2/4/8 | Promoted ladder complete and plotted; some 1.2B dense4 rows use exact tail history. |
 | Qwen3-like | active matched 4.5d | done Cx1/2/4/8 | done Cx1/2/4/8 | done Cx1/2/4/8 | done Cx1/2/4/8 | Main active-matched Qwen-like ladder is plotted through Cx8. |
 | Qwen3-like | true 3.0d + depth | done Cx1/2/4/8 | done Cx1/2/4/8 | done Cx1/2/4/8 | done Cx1/2/4/8 | Main true-3D Qwen-like ladder is plotted through Cx8 after the in-place restart. |
-| Integration candidates | wide 256E/top8 + shared + dense1 | Cx1/Cx2/Cx4/Cx8 done/plotted and bracketed | Cx1/Cx2/Cx4/Cx8 done/plotted | Cx1/Cx2 done/plotted; Cx4/Cx8 running | todo | 480M wide Cx1/Cx2/Cx4/Cx8 beat same-LR baseline; 810M Cx1/Cx2 also beat same-LR baseline. |
-| Integration candidates | deep 256E/top8 + shared + dense1 | Cx1/2/4/8 done/plotted | Cx1/Cx2/Cx4/Cx8 done/plotted | Cx1 done/plotted; Cx2/Cx4/Cx8 running | todo | 480M deep Cx1/Cx2/Cx4/Cx8 beat wide and baseline at same LR; 810M deep Cx1 is slightly better than 810M wide Cx1 so far. |
+| Integration candidates | wide 256E/top8 + shared + dense1 | Cx1/Cx2/Cx4/Cx8 done/plotted and bracketed | Cx1/Cx2/Cx4/Cx8 done/plotted | Cx1/Cx2/Cx4 done/plotted; Cx8 running | todo | 480M wide Cx1/Cx2/Cx4/Cx8 beat same-LR baseline; 810M Cx1/Cx2/Cx4 are plotted and beat same-LR baseline. |
+| Integration candidates | deep 256E/top8 + shared + dense1 | Cx1/2/4/8 done/plotted | Cx1/Cx2/Cx4/Cx8 done/plotted | Cx1/Cx2 done/plotted; Cx4/Cx8 running | todo | 480M deep Cx1/Cx2/Cx4/Cx8 beat wide and baseline at same LR; 810M deep Cx1 is slightly better than wide Cx1, while deep Cx2 trails wide Cx2 slightly. |
 
 ## Active / Queued Beaker Surface
 
@@ -45,8 +45,8 @@ Bounded status pass on 2026-07-01 05:00 UTC checked only runs that were previous
 
 | Run(s) | State | Latest timestamp UTC | Beaker | Notes |
 | --- | --- | --- | --- | --- |
-| `int-810m-cx{1,2,4,8}-intw256e8k-baseline-LR-r1` | mixed | checked 2026-07-03 00:20 | https://beaker.org/ex/01KWGQP0NGMXDEN2PBRGAXJZ7R | 810M wide integration promoted single points on Titan urgent, compile-on. Cx1/Cx2 succeeded and are plotted (`6e-4` avg250M `2.3732`; `5.6e-4` avg250M `2.2689`); Cx4/Cx8 are still running. GBS seq 32/48/64/96; GPUs 8/8/8/8; MB 4/2/4/4. Beaker IDs: Cx1 `01KWGQP0...`, Cx2 `01KWGQPD...`, Cx4 `01KWGQPR...`, Cx8 `01KWGQQ4...`. |
-| `int-810m-cx{1,2,4,8}-intd256e8k-baseline-LR-r1` | mixed | checked 2026-07-03 00:20 | https://beaker.org/ex/01KWGQQVD0TE5ZY5K5T05GEYAK | 810M deep integration promoted single points on Titan urgent, compile-on. Cx1 succeeded and is plotted (`6e-4` avg250M `2.3713`); Cx2/Cx4/Cx8 are still running. GBS seq 32/48/64/96; GPUs 8/8/8/8; MB 4/2/4/4. Current Beaker IDs: Cx1 `01KWGQQVD0TE5ZY5K5T05GEYAK`; Cx2 `01KWHQZQZ811104C16PJ4GTWG7`; Cx4 `01KWHR02WQ7S4FCQ77WJNFSA5S`; Cx8 `01KWHR0DANF34FXQ236WKHHGMM`. |
+| `int-810m-cx{1,2,4,8}-intw256e8k-baseline-LR-r1` | mixed | plotted 2026-07-03 17:55 | https://beaker.org/ex/01KWGQP0NGMXDEN2PBRGAXJZ7R | 810M wide integration promoted single points on Titan urgent, compile-on. Cx1/Cx2/Cx4 succeeded and are plotted (`6e-4` avg250M `2.3732`; `5.6e-4` avg250M `2.2689`; `4e-4` avg250M `2.1928`); Cx8 is still running. GBS seq 32/48/64/96; GPUs 8/8/8/8; MB 4/2/4/4. |
+| `int-810m-cx{1,2,4,8}-intd256e8k-baseline-LR-r1` | mixed | plotted 2026-07-03 17:55 | https://beaker.org/ex/01KWGQQVD0TE5ZY5K5T05GEYAK | 810M deep integration promoted single points on Titan urgent, compile-on. Cx1/Cx2 succeeded and are plotted (`6e-4` avg250M `2.3713`; `5.6e-4` avg250M `2.2740`); Cx4/Cx8 are still running. GBS seq 32/48/64/96; GPUs 8/8/8/8; MB 4/2/4/4. Current Beaker IDs: Cx1 `01KWGQQVD0TE5ZY5K5T05GEYAK`; Cx2 `01KWHQZQZ811104C16PJ4GTWG7`; Cx4 `01KWHR02WQ7S4FCQ77WJNFSA5S`; Cx8 `01KWHR0DANF34FXQ236WKHHGMM`. |
 | `int-480m-cx{1,2,4,8}-intw256e8k-baseline-LR-r1` | queued/created | created 2026-07-01 05:37-05:38 | https://beaker.org/ex/01KWE2XDE9NATMWCWKAH9X29JT | 480M wide integration promoted single points on Titan urgent, compile-on. Cx1 `1.2e-3`, Cx2 `9e-4`, Cx4/Cx8 `8e-4`; GBS seq 32/48/64/96; GPUs 4/4/4/8; MB 4 throughout. Beaker IDs: `01KWE2XDE...`, `01KWE2XSK...`, `01KWE2Y61...`, `01KWE2YHF...`. |
 | `int-275m-cx1-intw256e8k-lr8e-4-r1` | run | restarted attempt started 2026-07-01 02:47 | https://beaker.org/ex/01KWDDW61H689812K3DWHWH97W | Original attempt exited 1 at 2026-06-30 23:51; user restarted in-place and fresh attempt is running. |
 | `int-275m-cx1-intw256e8k-lr1.6e-3-r1` | done | finalized 2026-07-01 02:39 | https://beaker.org/ex/01KWDDWKR6E5ZGKGE0114WM851 | Wide integration Cx1 mid LR finished cleanly and is plotted from tail history. |
