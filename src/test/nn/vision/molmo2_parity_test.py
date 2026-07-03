@@ -37,27 +37,7 @@ from olmo_core.testing import requires_gpu
 
 transformers = pytest.importorskip("transformers")
 
-MOLMO2_VARIANTS = [
-    "allenai/Molmo2-4B",
-    "allenai/Molmo2-8B",
-    "allenai/Molmo2-O-7B",
-]
-
-
-def _hf_cache_has(model_id: str) -> bool:
-    """Cheap check for whether the HF snapshot lives in any cache root."""
-    suffix = "models--" + model_id.replace("/", "--")
-    candidates = [
-        os.path.expanduser("~/.cache/huggingface/hub"),
-        os.environ.get("HF_HOME", ""),
-    ]
-    hf_home = os.environ.get("HF_HOME")
-    if hf_home:
-        candidates.append(os.path.join(hf_home, "hub"))
-    for root in candidates:
-        if root and os.path.isdir(os.path.join(root, suffix)):
-            return True
-    return False
+from ._molmo2_common import MOLMO2_VARIANTS, _hf_cache_has  # noqa: F401 (re-exported)
 
 
 def _load_hf(model_id: str):
