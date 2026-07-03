@@ -19,6 +19,7 @@ parallelism. Layout is therefore PadToLength (one already-chunked example per 40
 over a MixingDocumentSource, FSDP-sharded on a single 8xH200 node (NUM_NODES=1, no CP).
 """
 
+import os
 from dataclasses import replace
 from datetime import datetime
 from typing import Optional
@@ -68,10 +69,15 @@ DOC_END_ID = 151649     # <|box_end|>
 PAD_TOKEN_ID = 151863   # interior window-fill padding (landmark only)
 
 # ---------------------------------------------------------------------------
-# Doc-chunked data (weka) -- built by convert_docchunk_5task_gantry.sh.
+# Doc-chunked data (weka). NOTE: the original ``cptmix_docchunk_ladder40k`` root is EMPTY on
+# weka/s3 (verified 2026-07) -- the current per-task box-marker (dense-emit) shards live under
+# ``single_task_docchunk_v2/{task}_dense`` (the SAME root the docchunk singletask-ladder launcher
+# reads). Only the DENSE emit exists there; the ``landmark``/``compressive`` variants still need
+# their ``{task}_landmark`` shards built before they can run. Override via env DOCCHUNK_DATA_ROOT.
 # ---------------------------------------------------------------------------
-DOC_DATA_ROOT = (
-    "/weka/oe-training-default/ai2-llm/checkpoints/prasanns/cptmix_docchunk_ladder40k"
+DOC_DATA_ROOT = os.environ.get(
+    "DOCCHUNK_DATA_ROOT",
+    "/weka/oe-training-default/ai2-llm/checkpoints/prasanns/single_task_docchunk_v2",
 )
 # Matched CPT bases on weka (weights-only). dense base also feeds the hierarchical variant.
 DENSE_BASE = (
@@ -116,7 +122,9 @@ def _task_source(emit: str, name: str, doc_tok) -> NumpyDocumentSourceConfig:
     )
 
 
-def build_docchunk_experiment(cli_context: CliContext, variant: str) -> ExperimentConfig:
+def build_docchunk_experiment(
+    cli_context: CliContext, variant: str, flex_block_size: Optional[int] = None
+) -> ExperimentConfig:
     assert variant in ("dense", "hierarchical", "landmark", "compressive")
     # compressive consumes the SAME landmark-format doc-chunked data (block-aligned + landmark tokens).
     emit = "landmark" if variant in ("landmark", "compressive") else "dense"
@@ -217,6 +225,9 @@ def build_docchunk_experiment(cli_context: CliContext, variant: str) -> Experime
             vocab_size=tokenizer_config.padded_vocab_size(),
             document_chunked=True,
             cross_doc_mode="chunked",
+            # FlexAttention block-mask granularity. Default (None -> 128) misses the block-sparsity of
+            # sub-128-token chunks (the mix is dominated by ~100-word docs); 32 recovers ~40-60% of it.
+            flex_block_size=flex_block_size,
         ).with_rope_scaling(
             YaRNRoPEScalingConfig(factor=2, beta_fast=32, beta_slow=1, old_context_len=32768)
         )

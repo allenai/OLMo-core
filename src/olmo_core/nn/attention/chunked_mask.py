@@ -22,6 +22,7 @@ landmark variant folds the resulting boolean mask into its grouped-softmax addit
 :class:`~olmo_core.nn.attention.landmark_document.DocumentLandmarkAttention`).
 """
 
+import random
 from dataclasses import dataclass
 from typing import Optional
 
@@ -38,6 +39,8 @@ __all__ = [
     "build_chunked_mask_mod",
     "build_chunk_ids_from_tokens",
     "build_is_anchor",
+    "mask_mix_standard_prob",
+    "collapse_roles_to_causal",
 ]
 
 # Chunk-id role conventions (shared by data prep, training, and eval).
@@ -194,6 +197,91 @@ def build_chunk_ids_from_tokens(
         chunk_ids = torch.where(sink, torch.full_like(chunk_ids, SINK_CHUNK_ID), chunk_ids)
 
     return chunk_ids.to(torch.int32)
+
+
+# ---------------------------------------------------------------------------
+# Mask mixing (runtime schedule)
+# ---------------------------------------------------------------------------
+#
+# "Mask mixing" collapses a randomly-chosen subset of examples in each forward from the chunked
+# (block-sparse) mask to **plain causal** (full) attention. The collapse is done purely on the
+# per-token roles: setting an example's ``chunk_ids`` to all-FREE (keeping PAD) makes every
+# ``mask_mod`` / ``build_chunked_allowed_mask`` pattern degenerate to ``causal & not_pad`` -- i.e.
+# plain causal -- with NO separate full-mask code path (the same mask machinery neutralizes itself).
+# This mirrors corpus-reasoning ``scripts/lib/olmo_flex_attention.py`` (the ``roles -> FREE`` trick).
+#
+# The per-example collapse probability ``p`` is either **static** (``standard_mix_prob``, constant
+# every forward) or a **linear curriculum** (``mix_start_p -> mix_end_p`` over ``mix_total_forwards``
+# microbatch-forwards) -- start "easy" (mostly full attention) and harden into the sparse mask. It is a
+# RUNTIME schedule driven by a forward counter (not baked at tokenize time). ``p == 0`` (the default)
+# leaves ``chunk_ids`` untouched, so pure-chunked training is bit-identical.
+
+
+def mask_mix_standard_prob(
+    forward_idx: int,
+    *,
+    standard_mix_prob: float = 0.0,
+    mix_start_p: float = 0.0,
+    mix_end_p: float = 0.0,
+    mix_total_forwards: int = 0,
+) -> float:
+    """
+    Per-example probability of collapsing an example to plain causal on this forward.
+
+    :param forward_idx: The 0-based microbatch-forward index (drives the curriculum anneal).
+    :param standard_mix_prob: Static mix probability -- constant on every forward. When ``> 0`` it takes
+        precedence and the curriculum params are ignored.
+    :param mix_start_p: Curriculum start probability (at ``forward_idx == 0``).
+    :param mix_end_p: Curriculum end probability (at ``forward_idx >= mix_total_forwards``).
+    :param mix_total_forwards: Number of forwards over which the curriculum anneals linearly. ``0``
+        disables the curriculum.
+
+    :returns: The collapse probability ``p`` for this forward (``0.0`` when no mixing is configured).
+    """
+    if standard_mix_prob > 0.0:
+        return standard_mix_prob
+    if mix_total_forwards > 0:
+        prog = min(1.0, forward_idx / mix_total_forwards)
+        return mix_start_p + (mix_end_p - mix_start_p) * prog
+    return 0.0
+
+
+def collapse_roles_to_causal(
+    chunk_ids: torch.Tensor,
+    p: float,
+    *,
+    forward_idx: int,
+    mix_seed: int = 0,
+) -> torch.Tensor:
+    """
+    With a seeded per-example probability ``p``, collapse an example's roles to all-FREE (keeping PAD),
+    which makes any chunked ``mask_mod`` / allowed-mask degenerate to **plain causal** for that example.
+
+    The per-``(forward_idx, example)`` coin is seeded by ``mix_seed`` (a string seed, matching
+    corpus-reasoning) so a resumed / rerun job makes identical choices. ``p <= 0`` returns the input
+    tensor unchanged (and no clone) so pure-chunked training stays bit-identical.
+
+    :param chunk_ids: Per-token role ids ``(B, S)`` (or ``(S,)``). See the module docstring.
+    :param p: The collapse probability from :func:`mask_mix_standard_prob`.
+    :param forward_idx: The forward index used in the per-example seed.
+    :param mix_seed: Base seed for the deterministic per-example coin.
+
+    :returns: ``chunk_ids`` (possibly a new, partially-collapsed clone; the input is never mutated).
+    """
+    if p <= 0.0:
+        return chunk_ids
+    if chunk_ids.dim() == 1:
+        chunk_ids = chunk_ids.unsqueeze(0)
+    B = chunk_ids.shape[0]
+    out: Optional[torch.Tensor] = None
+    for b in range(B):
+        # str seed (tuples are not a supported Random seed type); deterministic across runs/platforms.
+        if random.Random(f"{mix_seed}:{forward_idx}:{b}").random() < p:
+            if out is None:
+                out = chunk_ids.clone()
+            rb = out[b]
+            out[b] = torch.where(rb == PAD_CHUNK_ID, rb, torch.full_like(rb, FREE_CHUNK_ID))
+    return chunk_ids if out is None else out
 
 
 def hierarchical_effective_layer(

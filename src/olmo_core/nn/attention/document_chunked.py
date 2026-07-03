@@ -60,6 +60,29 @@ except Exception:  # pragma: no cover - flex unavailable on old torch
 # (Measured on H200, qwen3-4B attn dims: crossover between 4k and 16k.)
 _FLEX_MIN_SEQ_LEN = 8192
 
+# Default FlexAttention block size (the granularity at which fully-masked blocks are skipped). Shrink
+# it via ``flex_block_size`` to let sub-128-token chunks realize their block-sparsity.
+_FLEX_DEFAULT_BLOCK_SIZE = 128
+
+# Single-slot BlockMask cache shared across all attention layers within one forward pass. The chunked
+# block mask depends only on ``chunk_ids`` (the SAME tensor threaded to every block), the sequence
+# length, the pattern, and the flex block size -- all identical across layers -- so it is built once by
+# the first layer and reused by the rest (and by AC recompute, which reuses the same ``chunk_ids``).
+# Keyed on the chunk_ids tensor identity so a new forward (new chunk_ids) rebuilds it.
+_BLOCK_MASK_CACHE: dict = {}
+
+
+def _get_or_build_block_mask(mask_mod, key, *, B, T, device, block_size):
+    """Return a cached :class:`BlockMask` for ``key`` or build (and cache) one. Single-slot cache."""
+    cached = _BLOCK_MASK_CACHE.get("cur")
+    if cached is not None and cached[0] == key:
+        return cached[1]
+    block_mask = create_block_mask(
+        mask_mod, B, None, T, T, device=device, BLOCK_SIZE=(block_size, block_size)
+    )
+    _BLOCK_MASK_CACHE["cur"] = (key, block_mask)
+    return block_mask
+
 
 class DocumentChunkedAttention(Attention):
     """
@@ -96,6 +119,7 @@ class DocumentChunkedAttention(Attention):
         dilation_n: int = 2,
         dilation_m: int = 2,
         dilation_max_docs: Optional[int] = None,
+        flex_block_size: int = _FLEX_DEFAULT_BLOCK_SIZE,
         layer_idx: int = 0,
         n_layers: int = 1,
         softmax_scale: Optional[float] = None,
@@ -118,6 +142,7 @@ class DocumentChunkedAttention(Attention):
         self.cross_doc_mode = cross_doc_mode
         self.layer_idx = layer_idx
         self.n_layers = n_layers
+        self.flex_block_size = int(flex_block_size)
         self._pattern = AttentionPattern(
             name=cross_doc_mode,
             doc_window_k=doc_window_k,
@@ -277,7 +302,28 @@ class DocumentChunkedAttention(Attention):
             mask_mod = build_chunked_mask_mod(self._pattern, chunk_ids)
             if mask_mod is not None:
                 try:
-                    block_mask = create_block_mask(mask_mod, B, None, T, T, device=q.device)
+                    # Build the block mask once per forward and reuse it across all layers (they share
+                    # the same chunk_ids / T / pattern / block size). Key on the stashed chunk_ids
+                    # identity so a new forward rebuilds it.
+                    cids = self._chunk_ids
+                    key = (
+                        id(cids),
+                        cids.data_ptr(),
+                        cids._version,
+                        B,
+                        T,
+                        self.flex_block_size,
+                        self.cross_doc_mode,
+                        str(q.device),
+                    )
+                    block_mask = _get_or_build_block_mask(
+                        mask_mod,
+                        key,
+                        B=B,
+                        T=T,
+                        device=q.device,
+                        block_size=self.flex_block_size,
+                    )
                     out = _flex_attention(
                         q.contiguous(),
                         k.contiguous(),
