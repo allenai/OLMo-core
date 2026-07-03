@@ -68,6 +68,7 @@ def _str_paramt(paramt):
     return rets
 
 
+@torch.compile(dynamic=False)
 def _zeropower_via_newtonschulz_2d(
     grad: torch.Tensor,
     ns_coefficients: Tuple[float, float, float],
@@ -93,12 +94,6 @@ def _zeropower_via_newtonschulz_2d(
     if grad.size(0) > grad.size(1):
         ortho_grad = ortho_grad.T
     return ortho_grad
-
-
-_compiled_zeropower_via_newtonschulz_2d = torch.compile(
-    _zeropower_via_newtonschulz_2d,
-    dynamic=False,
-)
 
 
 def _zeropower_via_newtonschulz_nd(
@@ -132,9 +127,6 @@ def _zeropower_via_newtonschulz_nd(
     return ortho_grad.reshape_as(grad)
 
 
-_compiled_zeropower_via_newtonschulz_nd = _zeropower_via_newtonschulz_nd
-
-
 @maybe_nvtx_annotate("_zeropower_via_newtonschulz")
 def _zeropower_via_newtonschulz(
     grad: torch.Tensor,
@@ -147,8 +139,8 @@ def _zeropower_via_newtonschulz(
             f"Muon requires a tensor with at least 2 dims, got shape {tuple(grad.shape)}"
         )
     if grad.ndim == 2:
-        return _compiled_zeropower_via_newtonschulz_2d(grad, ns_coefficients, ns_steps, eps)
-    return _compiled_zeropower_via_newtonschulz_nd(grad, ns_coefficients, ns_steps, eps)
+        return _zeropower_via_newtonschulz_2d(grad, ns_coefficients, ns_steps, eps)
+    return _zeropower_via_newtonschulz_nd(grad, ns_coefficients, ns_steps, eps)
 
 
 def _adjust_muon_lr(
