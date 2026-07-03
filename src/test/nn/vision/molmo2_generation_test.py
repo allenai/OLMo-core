@@ -35,6 +35,8 @@ from olmo_core.nn.vision.molmo2_loader import (
 )
 from olmo_core.testing import requires_gpu
 
+from ._molmo2_common import _hf_cache_has  # noqa: F401
+
 transformers = pytest.importorskip("transformers")
 
 # Only test the smallest variant to keep peak memory reasonable.
@@ -65,15 +67,6 @@ _IMAGE_PLACEHOLDER_ID = 151941  # <|image|>  (replaced in token sequence)
 
 
 # ────────────────────────────── helpers ─────────────────────────────────────
-
-
-def _hf_cache_has(model_id: str) -> bool:
-    suffix = "models--" + model_id.replace("/", "--")
-    candidates = [os.path.expanduser("~/.cache/huggingface/hub")]
-    hf_home = os.environ.get("HF_HOME")
-    if hf_home:
-        candidates.append(os.path.join(hf_home, "hub"))
-    return any(os.path.isdir(os.path.join(r, suffix)) for r in candidates if r)
 
 
 def _arange_for_pooling(idx_arr: np.ndarray, pool_h: int, pool_w: int) -> np.ndarray:
