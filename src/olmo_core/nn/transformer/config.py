@@ -1662,6 +1662,7 @@ class TransformerConfig(ModelConfig):
         dilation_n: Optional[int] = None,
         dilation_m: Optional[int] = None,
         dilation_max_docs: Optional[int] = None,
+        flex_block_size: Optional[int] = None,
         layer_types: Optional[AttentionTypePatternConfig] = None,
         block_name: TransformerBlockType = TransformerBlockType.default,
         block_mods: Optional[
@@ -1899,6 +1900,10 @@ class TransformerConfig(ModelConfig):
                 dilation_n=dilation_n if uses_document_chunked_family else None,
                 dilation_m=dilation_m if uses_document_chunked_family else None,
                 dilation_max_docs=dilation_max_docs if uses_document_chunked_family else None,
+                # FlexAttention block-mask granularity (dense DocumentChunkedAttention only). Smaller
+                # (e.g. 32) lets sub-128-token chunks realize block-sparsity; ignored by landmark
+                # variants (no flex path).
+                flex_block_size=flex_block_size if document_chunked else None,
                 dtype=dtype,
             ),
             feed_forward=feed_forward,

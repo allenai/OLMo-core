@@ -414,6 +414,13 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
     optional fixed document count for the saturation cap. ``None`` (default) computes the cap per
     sequence from the actual number of context chunks.
     """
+    flex_block_size: Optional[int] = None
+    """
+    For :class:`DocumentChunkedAttention` only: the FlexAttention ``create_block_mask`` block size (the
+    granularity at which fully-masked blocks are skipped). ``None`` (default) uses FlexAttention's
+    default of 128. Shrinking it (e.g. 64 / 32) lets sub-128-token chunks realize their block-sparsity
+    at the cost of higher kernel overhead; profile the crossover per chunk-size distribution.
+    """
 
     def num_params(self, d_model: int) -> int:
         """
@@ -543,6 +550,7 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
         dilation_n = kwargs.pop("dilation_n", None)
         dilation_m = kwargs.pop("dilation_m", None)
         dilation_max_docs = kwargs.pop("dilation_max_docs", None)
+        flex_block_size = kwargs.pop("flex_block_size", None)
         if mem_freq is not None and not (possible_types & set(_LANDMARK_ATTENTION_TYPES)):
             raise OLMoConfigurationError(
                 "'mem_freq' is only supported with landmark attention variants "
@@ -721,6 +729,8 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
                     kwargs["dilation_m"] = dilation_m
                 if dilation_max_docs is not None:
                     kwargs["dilation_max_docs"] = dilation_max_docs
+                if flex_block_size is not None:
+                    kwargs["flex_block_size"] = flex_block_size
                 # The hierarchical-dilated pattern picks its stride from the layer index.
                 kwargs["layer_idx"] = layer_idx
                 kwargs["n_layers"] = n_layers
