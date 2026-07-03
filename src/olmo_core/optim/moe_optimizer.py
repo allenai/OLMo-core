@@ -227,6 +227,11 @@ class MoEFusedV2OptimizerConfig(Config):
     loading optimizer state.
     """
 
+    # TODO(optim-config-dup): the fields below mirror MoEFusedV2Optimizer.__init__ (name + default),
+    # so `build()` can forward them via as_dict()->kwargs. This matches the other optim configs
+    # (e.g. AdamWConfig mirrors torch.optim.AdamW), but here the optimizer is ours, so the two
+    # default lists can drift. Revisit for a single source of truth (the config value always wins in
+    # the build path; the __init__ defaults only apply to direct construction).
     lr: float = 1e-3
     betas: Tuple[float, float] = (0.9, 0.999)
     eps: float = 1e-8
