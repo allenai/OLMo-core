@@ -82,6 +82,10 @@ VERSION_SHORT = $(shell python src/olmo_core/version.py short)
 IMAGE_SUFFIX = $(shell date "+%Y-%m-%d")
 IMAGE_TAG = tch$(TORCH_VERSION_SHORT)$(CUDA_VERSION_PATH)-$(IMAGE_SUFFIX)
 
+# Imports the built image is smoke-tested against. The B300 targets override this to drop
+# flash_attn_3, which isn't built for B300 (see the 'beaker-image-b300' target).
+DOCKER_VALIDATE_IMPORTS = import torch; import transformer_engine.pytorch; import flash_attn; import flash_attn_3.flash_attn_interface
+
 .PHONY : docker-image
 docker-image :
 	docker build -f src/Dockerfile \
@@ -106,8 +110,7 @@ docker-image :
 		--build-arg TRITON_PTXAS_PATH="$(TRITON_PTXAS_PATH)" \
 		--target release \
 		-t olmo-core:$(IMAGE_TAG) .
-	@docker run --rm olmo-core:$(IMAGE_TAG) python -c \
-		'import torch; import transformer_engine.pytorch; import flash_attn; import flash_attn_3.flash_attn_interface'
+	@docker run --rm olmo-core:$(IMAGE_TAG) python -c '$(DOCKER_VALIDATE_IMPORTS)'
 	@echo "✓ Image validated. Python environment:"
 	@echo ""
 	@docker run --rm olmo-core:$(IMAGE_TAG) pip list
@@ -136,8 +139,10 @@ beaker-image : docker-image
 # Shared B300 build args:
 #  - "10.3"/"103" add sm_103 to the arch lists so the from-source extensions target B300.
 #  - B300=1 makes the Dockerfile register torch's bundled nvrtc with ldconfig (so transformer-engine
-#    imports on CUDA 13) and symlink a CUDA-13 ptxas to /usr/local/bin/triton-ptxas.
+#    imports on CUDA 13), symlink a CUDA-13 ptxas to /usr/local/bin/triton-ptxas, and skip the
+#    flash-attn 3 build (FA3 has no sm_103 kernels and its bundled CUTLASS doesn't build on CUDA 13).
 #  - TRITON_PTXAS_PATH points Triton at that symlink (Triton's bundled ptxas doesn't know sm_103a).
+#  - DOCKER_VALIDATE_IMPORTS drops flash_attn_3 from the smoke test since it isn't built for B300.
 # NOTE: the from-source extensions compile against CUDA 13; if flash-attn / transformer-engine /
 # grouped-gemm fail to build, bump their versions to CUDA-13-compatible releases.
 B300_BUILD_ARGS = \
@@ -145,7 +150,8 @@ B300_BUILD_ARGS = \
 	TORCH_CUDA_ARCH_LIST="9.0 10.0 10.3" \
 	FLASH_ATTN_CUDA_ARCHS="90;100;103" \
 	B300=1 \
-	TRITON_PTXAS_PATH=/usr/local/bin/triton-ptxas
+	TRITON_PTXAS_PATH=/usr/local/bin/triton-ptxas \
+	DOCKER_VALIDATE_IMPORTS="import torch; import transformer_engine.pytorch; import flash_attn"
 
 # torch 2.11.0 (validated on B300 hardware). Produces 'olmo-core-tch2110cu130-<date>'.
 .PHONY : beaker-image-b300

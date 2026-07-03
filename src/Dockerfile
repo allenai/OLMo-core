@@ -68,28 +68,35 @@ ARG FLASH_ATTN_CUDA_ARCHS="90;100"
 RUN FLASH_ATTN_CUDA_ARCHS="${FLASH_ATTN_CUDA_ARCHS}" pip install --no-build-isolation --no-cache-dir flash-attn==${FLASH_ATTN_VERSION}
 
 # Install flash-attn 3.
+# Skipped for B300 (B300=1): FA3 only builds sm_90a/sm_100a kernels (no sm_103), so it can't run on
+# B300, and its bundled CUTLASS doesn't compile against CUDA 13. The default image still builds it.
+ARG B300=
 ARG FLASH_ATTN_3_SHA="92ca9da8d66f7b34ff50dc080ec0fef9661260d6"
 ARG FA3_MAX_JOBS=16
-RUN git clone --depth 1 --recurse-submodules --shallow-submodules https://github.com/Dao-AILab/flash-attention.git && \
-    cd flash-attention && \
-    git fetch --depth 1 origin ${FLASH_ATTN_3_SHA} && \
-    git checkout ${FLASH_ATTN_3_SHA} && \
-    git submodule update --init --depth 1 && \
-    cd hopper && \
-    FLASH_ATTENTION_DISABLE_FP16=TRUE FLASH_ATTENTION_DISABLE_SM80=TRUE MAX_JOBS=${FA3_MAX_JOBS} python setup.py install && \
-    cd /app/build && \
-    rm -rf flash-attention
+RUN if [ -z "${B300}" ]; then \
+        git clone --depth 1 --recurse-submodules --shallow-submodules https://github.com/Dao-AILab/flash-attention.git && \
+        cd flash-attention && \
+        git fetch --depth 1 origin ${FLASH_ATTN_3_SHA} && \
+        git checkout ${FLASH_ATTN_3_SHA} && \
+        git submodule update --init --depth 1 && \
+        cd hopper && \
+        FLASH_ATTENTION_DISABLE_FP16=TRUE FLASH_ATTENTION_DISABLE_SM80=TRUE MAX_JOBS=${FA3_MAX_JOBS} python setup.py install && \
+        cd /app/build && \
+        rm -rf flash-attention; \
+    fi
 
 # flash-attn 3 will be installed to '/opt/conda/lib/python3.12/site-packages/flash_attn_3-*.egg/'
 # and will only be importable as 'flash_attn_interface'. However, TE expects to import this
 # as 'flash_attn_3.flash_attn_interface'. So we modify the package directory structure to adhere
-# to that.
-RUN cd /opt/conda/lib/python${PYTHON_VERSION}/site-packages/ && \
-    mkdir -p flash_attn_3 && \
-    mv flash_attn_3-*.egg/flash_attn_3/* flash_attn_3/ && \
-    mv flash_attn_3-*.egg/flash_attn_interface.py flash_attn_3/ && \
-    touch flash_attn_3/__init__.py && \
-    rm -rf flash_attn_3-*
+# to that. Skipped for B300, which doesn't build FA3 (see above).
+RUN if [ -z "${B300}" ]; then \
+        cd /opt/conda/lib/python${PYTHON_VERSION}/site-packages/ && \
+        mkdir -p flash_attn_3 && \
+        mv flash_attn_3-*.egg/flash_attn_3/* flash_attn_3/ && \
+        mv flash_attn_3-*.egg/flash_attn_interface.py flash_attn_3/ && \
+        touch flash_attn_3/__init__.py && \
+        rm -rf flash_attn_3-*; \
+    fi
 
 # Install transformer-engine.
 ARG TE_VERSION=2.9
