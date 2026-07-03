@@ -100,28 +100,15 @@ cd "$REPO"   # CODE is in-repo (ctc_eval); DATA comes from weka via --root "$BUN
 PORT=$(( 20000 + RANDOM % 20000 ))
 TR="torchrun --nproc_per_node=$NGPU --master_port=$PORT src/scripts/ctc_eval/eval/eval_lc_native.py --prompt-format $PROMPT_FORMAT"
 
-# ---- docchunk: box-marker prefill eval; only OOLONG is wired (eval_lc_native_docchunk.py) ----
-if [ "$VARIANT" = "docchunk" ]; then
-  if [ "$TASK" != "oolong" ]; then
-    echo "NOTE: docchunk native eval supports OOLONG only; skipping TASK=$TASK."; exit 0
-  fi
-  rc=0
-  for rung in 1024 2048 4096 8192 16384 32768; do
-    DF="$BUNDLE/data/oolong_test_synth_ctx${rung}_spliteval.jsonl"
-    [ -f "$DF" ] || { echo "[docchunk oolong ctx$rung] MISSING $DF, skipping"; continue; }
-    O="$EVAL_OUT_DIR/oolong_docchunk_${rung}.json"
-    echo "=== docchunk oolong ctx$rung -> $O ==="
-    torchrun --nproc_per_node="$NGPU" --master_port="$PORT" src/scripts/ctc_eval/eval/eval_lc_native_docchunk.py \
-      --variant dense --model-path "$CKPT" --out "$O" --tokenizer "$TOKENIZER" \
-      --oolong-data "$DF" --max-test-samples "$MAX_TEST" --max-length "$MAX_LENGTH" --mem-freq 63 || rc=$?
-    [ -f "$O" ] && cp "$O" "$RESULTS/${RUN}_oolong_docchunk_${rung}.json" 2>/dev/null || true
-  done
-  echo "=== DONE docchunk rc=$rc $(date -u '+%F %T')Z ==="; exit $rc
-fi
+# ---- docchunk: box-marker chunked prefill + bs=1 KV-cached decode over the FULL ladder (all 9 tasks
+# incl. the 4 OOD ladders) via eval_lc_native_docchunk_ladder.py. It shares the TASK->LTASK/RUNGS case
+# blocks below with the dense/landmark/compressive path; only the final torchrun differs (branched at
+# the invocation on VARIANT=docchunk). So we do NOT early-exit here -- just fall through.
 
 # ---- rerank: CE-graded eval files (k20~3k, k50~8k, k100~16k); eval each at the base ladder rung ----
-# (v1 only; v2 rerank is a normal shared-question ladder handled in the standard block below.)
-if [ "$TASK" = "rerank" ] && [ "$LADDER_VERSION" != "v2" ]; then
+# (v1 non-docchunk only; v2 rerank is a normal shared-question ladder; docchunk grades rerank inside
+# the docchunk ladder eval.)
+if [ "$TASK" = "rerank" ] && [ "$LADDER_VERSION" != "v2" ] && [ "$VARIANT" != "docchunk" ]; then
   rc=0
   for pair in "3k:data/msmarco_trainhn_eval_k20_500.jsonl" \
               "8k:data/msmarco_trainhn_eval_k50_500.jsonl" \
@@ -183,11 +170,24 @@ if [ "$LADDER_XLONG" = "1" ] && [ "$LADDER_VERSION" = "v2" ]; then
   esac
 fi
 OUT="$EVAL_OUT_DIR/${TASK}_multirung.json"
-echo "=== EVAL $TASK rungs=$RUNGS ladder=$LADDER_VERSION -> $OUT ($(date -u '+%T')Z) ==="
-$TR --model-path "$CKPT" --out "$OUT" --tokenizer "$TOKENIZER" --max-length "$MAX_LENGTH" \
-    --root "$BUNDLE" --max-test-samples "$MAX_TEST" --batch-size "$BATCH_SIZE" --skip-ruler --skip-gen \
-    --ladder $VFLAG $XLFLAG --ladder-tasks "$LTASK" --ladder-rungs "$RUNGS" $EXTRA
-rc=$?
+echo "=== EVAL $TASK rungs=$RUNGS ladder=$LADDER_VERSION variant=$VARIANT -> $OUT ($(date -u '+%T')Z) ==="
+if [ "$VARIANT" = "docchunk" ]; then
+  # box-marker chunked prefill + bs=1 KV-cached decode; same ladder keys ($LTASK/$RUNGS) as the
+  # dense/landmark path (incl. the 4 OOD ladders). NO-CoT throughout -> contra keeps its short budget
+  # (the CoT --contra-max-new-tokens 512 in $EXTRA is intentionally dropped here). EVAL500_ROOT is
+  # already exported so the {E5}/<sub> ladder files resolve on weka.
+  torchrun --nproc_per_node="$NGPU" --master_port="$PORT" \
+    src/scripts/ctc_eval/eval/eval_lc_native_docchunk_ladder.py \
+    --variant dense --model-path "$CKPT" --out "$OUT" --tokenizer "$TOKENIZER" \
+    --root "$BUNDLE" --max-test-samples "$MAX_TEST" --max-length "$MAX_LENGTH" --mem-freq 63 \
+    --ladder-version "$LADDER_VERSION" --tasks "$LTASK" --rungs "$RUNGS"
+  rc=$?
+else
+  $TR --model-path "$CKPT" --out "$OUT" --tokenizer "$TOKENIZER" --max-length "$MAX_LENGTH" \
+      --root "$BUNDLE" --max-test-samples "$MAX_TEST" --batch-size "$BATCH_SIZE" --skip-ruler --skip-gen \
+      --ladder $VFLAG $XLFLAG --ladder-tasks "$LTASK" --ladder-rungs "$RUNGS" $EXTRA
+  rc=$?
+fi
 if [ -f "$OUT" ]; then
   cp "$OUT" "$RESULTS/${RUN}_${TASK}_multirung.json" 2>/dev/null || true
   GEN="${OUT%.json}.generations.jsonl"

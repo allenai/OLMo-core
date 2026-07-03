@@ -151,9 +151,8 @@ def main():
     print(f"=== Beaker multirung eval | run={args.run_name} variant={variant} "
           f"tasks={tasks} cluster={args.cluster} dry_run={args.dry_run} ===")
     for task in tasks:
-        if variant == "docchunk" and task != "oolong":
-            print(f"--- skip {task}: docchunk native eval supports OOLONG only ---")
-            continue
+        # docchunk now evaluates the FULL ladder (all 9 tasks incl. OOD) via
+        # eval_lc_native_docchunk_ladder.py (box-marker chunked prefill + bs=1 KV-cached decode).
         lc = build_eval_launch_config(
             run_name=args.run_name, task=task, variant=variant, cluster=args.cluster,
             step=args.step, ckpt=args.ckpt, results_dir=args.results_dir, prompt_format=args.prompt_format,
