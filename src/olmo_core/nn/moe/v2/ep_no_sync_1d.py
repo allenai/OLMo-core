@@ -4,13 +4,14 @@ from typing import TYPE_CHECKING, Optional, cast
 
 import torch
 
+from olmo_core._nvtx import maybe_nvtx_annotate
+
 from ...moe.utils import wait_stream_no_compile
 from ..utils import (
     build_chunk_te_routing_map,
     moe_chunk_reorder_no_compile,
     moe_permute_1d_fused_drop_no_compile,
 )
-from olmo_core._nvtx import maybe_nvtx_annotate
 from .comm import _CombineVDevAutograd, _DispatchVDevAutograd
 from .ep_no_sync_buffers import (
     compute_ep_no_sync_rank_capacity,

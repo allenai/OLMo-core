@@ -14,9 +14,8 @@ from typing import TYPE_CHECKING, Dict, Optional
 
 import torch
 
-from olmo_core.distributed.utils import get_rank
-
 from olmo_core._nvtx import maybe_nvtx_annotate
+from olmo_core.distributed.utils import get_rank
 
 if TYPE_CHECKING:
     from olmo_core.train.common import ReduceType

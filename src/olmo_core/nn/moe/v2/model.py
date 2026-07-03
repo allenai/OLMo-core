@@ -24,6 +24,7 @@ from torch.utils.checkpoint import (
 )
 
 import olmo_core.nn.transformer
+from olmo_core._nvtx import maybe_nvtx_annotate
 from olmo_core.distributed.parallel import get_pp_mesh
 from olmo_core.distributed.utils import hide_from_torch, unhide_from_torch
 from olmo_core.exceptions import OLMoConfigurationError
@@ -33,7 +34,6 @@ from olmo_core.utils import mark_dynamic
 
 from ...lm_head import LMOutputWithLoss
 from ..utils import moe_unpermute_no_compile
-from olmo_core._nvtx import maybe_nvtx_annotate
 from .block import MoEFusedV2TransformerBlock
 from .checkpointing import checkpoint_recompute_context_fn
 

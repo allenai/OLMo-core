@@ -16,11 +16,11 @@ from typing import TYPE_CHECKING, Optional, cast
 import torch
 import torch.distributed as dist
 
+from olmo_core._nvtx import maybe_nvtx_annotate
 from olmo_core.ops import moe as ops
 
 from ...moe.utils import async_copy_to_cpu
 from ..utils import moe_permute_no_compile, moe_unpermute_no_compile
-from olmo_core._nvtx import maybe_nvtx_annotate
 from .ep_sync_1d import checkpointed_permute_routed_experts_unpermute_1d
 from .routed_experts import requires_host_side_split_sizes
 from .tbo_state import SyncedTboPendingContext

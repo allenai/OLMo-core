@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING, Dict, Optional, cast
 
 import torch
 
+from olmo_core._nvtx import maybe_nvtx_annotate
 from olmo_core.utils import get_or_init_stream
 
 from ...moe.utils import (
@@ -16,7 +17,6 @@ from ..utils import (
     moe_chunk_reorder_no_compile,
     moe_permute_1d_fused_drop_no_compile,
 )
-from olmo_core._nvtx import maybe_nvtx_annotate
 from .comm import _CombineVDevAutograd, _DispatchVDevAutograd
 from .ep_no_sync_buffers import (
     _NoSyncStageAState,

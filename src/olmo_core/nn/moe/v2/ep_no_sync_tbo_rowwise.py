@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Dict, Optional, cast
 
 import torch
 
+from olmo_core._nvtx import maybe_nvtx_annotate
 from olmo_core.utils import get_or_init_stream
 
 from ...moe.utils import (
@@ -20,7 +21,6 @@ from ...moe.utils import (
     wait_event_no_compile,
     wait_stream_no_compile,
 )
-from olmo_core._nvtx import maybe_nvtx_annotate
 from .checkpointing import is_activation_checkpointing
 from .comm import _DispatchRowwiseAutograd, _RowwiseCombineWeightedAutograd
 from .ep_no_sync_buffers import (

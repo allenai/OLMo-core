@@ -16,12 +16,12 @@ import torch
 import torch.distributed as dist
 from torch.utils.checkpoint import checkpoint
 
+from olmo_core._nvtx import maybe_nvtx_annotate
 from olmo_core.distributed.utils import get_rank
 from olmo_core.ops import moe as ops
 
 from ...moe.utils import async_copy_to_cpu, wait_stream_no_compile
 from ..utils import moe_permute_no_compile, moe_unpermute_no_compile
-from olmo_core._nvtx import maybe_nvtx_annotate
 from .routed_experts import requires_host_side_split_sizes
 
 if TYPE_CHECKING:

@@ -4,9 +4,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from olmo_core.config import Config, DType
-
 from olmo_core._nvtx import maybe_nvtx_annotate
+from olmo_core.config import Config, DType
 
 
 # SwiGLU is intentionally SiLU-gated here, matching the fused fast paths (forward1/forward2)

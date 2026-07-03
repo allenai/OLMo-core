@@ -244,12 +244,6 @@ class MoEFusedV2OptimizerConfig(Config):
     muon_ns_steps: int = MUON_DEFAULT_NS_STEPS
     muon_adjust_lr_fn: Optional[str] = None
 
-    # foreach: bool = True
-    """
-    Whether to use multi-tensor (*foreach*) kernels for the AdamW update.
-    Faster than the non-foreach version.
-    """
-
     rolling_interval_length: int = 128
     """
     The length of the rolling interval to use for computing the mean and standard deviation of the loss.
@@ -597,7 +591,6 @@ class MoEFusedV2Optimizer:
         dtype: Optional[Union[torch.dtype, DType]] = None,
         device: Optional[torch.device] = None,
         model_has_grad_accum_fp32_buffer: bool = False,  # whether the optimizer should expect the model to have fp32 grad accum buffers
-        # foreach: bool = False,
         # --- new args for sharding across multiple PGs ---
         dp_group: Optional[ProcessGroup] = None,
         ep_dp_group: Optional[ProcessGroup] = None,

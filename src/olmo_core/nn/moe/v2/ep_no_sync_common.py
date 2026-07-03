@@ -5,13 +5,13 @@ from typing import TYPE_CHECKING, Optional, cast
 import torch
 import torch.distributed as dist
 
+from olmo_core._nvtx import maybe_nvtx_annotate
 from olmo_core.distributed.utils import get_rank
 
 from ...moe.utils import (
     moe_unpermute_1d_fused_drop_no_compile,
     moe_unpermute_no_compile,
 )
-from olmo_core._nvtx import maybe_nvtx_annotate
 
 if TYPE_CHECKING:
     from .block import MoEFusedV2TransformerBlock

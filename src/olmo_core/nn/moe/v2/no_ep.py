@@ -4,9 +4,10 @@ from typing import TYPE_CHECKING, Optional, Union, cast
 
 import torch
 
+from olmo_core._nvtx import maybe_nvtx_annotate
+
 from ...moe.utils import async_copy_to_cpu, wait_stream_no_compile
 from ..utils import moe_permute_no_compile, moe_unpermute_no_compile
-from olmo_core._nvtx import maybe_nvtx_annotate
 from .routed_experts import requires_host_side_split_sizes
 
 if TYPE_CHECKING:

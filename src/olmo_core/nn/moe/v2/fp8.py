@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Any, Callable, Mapping, Optional
 
 import torch
 
+from olmo_core._nvtx import maybe_nvtx_annotate
 from olmo_core.config import Config, StrEnum
 from olmo_core.doc_utils import beta_feature
 from olmo_core.kernels import (
@@ -12,8 +13,6 @@ from olmo_core.kernels import (
     scaled_grouped_mm_q,
     scaled_grouped_mm_q_fp8_weight,
 )
-
-from olmo_core._nvtx import maybe_nvtx_annotate
 
 if TYPE_CHECKING:
     from .block import MoEFusedV2TransformerBlock
@@ -197,7 +196,9 @@ def refresh_rowwise_fp8_cache(block: MoEFusedV2TransformerBlock) -> None:
 
     if block.routed_experts is not None:
         if routed_enabled:
-            with maybe_nvtx_annotate("moe_rowwise_fp8_param_refresh_routed_weight_prequant", "experts"):
+            with maybe_nvtx_annotate(
+                "moe_rowwise_fp8_param_refresh_routed_weight_prequant", "experts"
+            ):
                 block.routed_experts.refresh_rowwise_fp8_cache()
         else:
             block.routed_experts.invalidate_rowwise_fp8_cache()
