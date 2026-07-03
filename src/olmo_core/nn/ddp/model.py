@@ -435,6 +435,14 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
                 use_symm_combine_gather = (
                     not use_rowwise_fp8
                 ) and use_ep_no_sync_rowwise_symm_combine_gather(block)
+                use_fp8_symm_dispatch_in = (
+                    use_rowwise_fp8
+                    and use_ep_no_sync_rowwise_symm_dispatch_in(block)
+                )
+                use_fp8_symm_combine_gather = (
+                    use_rowwise_fp8
+                    and use_ep_no_sync_rowwise_symm_combine_gather(block)
+                )
                 block_is_checkpointed = (
                     self.recompute_all_blocks_by_chunk
                     or self.recompute_each_block
@@ -482,7 +490,10 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
                     use_symm_combine_gather = False
                 lease_dispatch_out = runtime_uses_lifetime_leases
                 lease_combine_out = use_symm_combine_out and runtime_uses_lifetime_leases
-                lease_combine_gather = use_symm_combine_gather and runtime_uses_lifetime_leases
+                lease_combine_gather = (
+                    (use_symm_combine_gather or use_fp8_symm_combine_gather)
+                    and runtime_uses_lifetime_leases
+                )
                 slot_indices = range(block.ep.shared_slots) if self.tbo else (None,)
                 for slot_idx in slot_indices:
                     get_ep_no_sync_buffers(
@@ -526,12 +537,18 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
                     rowwise_fp8_cfg.assert_runtime_supported()
                     get_ep_no_sync_rowwise_fp8_buffers(
                         block,
+                        dispatch_in_cap=prewarm_local_microbatch_size,
                         dispatch_out_cap=rank_capacity,
                         combine_in_cap=rank_capacity,
+                        combine_gather_cap=prewarm_local_microbatch_size,
+                        combine_gather_top_k=top_k,
                         d_model=d_model,
                         block_size=rowwise_fp8_cfg.block_size,
                         device=device,
+                        lease_combine_gather=False,
+                        need_dispatch_in=use_fp8_symm_dispatch_in,
                         need_dispatch_out=not lease_dispatch_out,
+                        need_combine_gather=not lease_combine_gather,
                     )
             else:
                 get_ep_no_sync_buffers(

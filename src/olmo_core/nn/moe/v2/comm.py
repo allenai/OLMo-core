@@ -82,6 +82,26 @@ def _rowwise_debug_sync(label: str, device: torch.device) -> None:
     torch.cuda.synchronize(device)
 
 
+def _rowwise_debug_op_enter(
+    label: str,
+    group_name: str,
+    device: torch.device,
+    **tensors: Optional[torch.Tensor],
+) -> None:
+    _rowwise_debug_print(label, "enter", group_name, **tensors)
+    _rowwise_debug_sync(f"{label}:enter", device)
+
+
+def _rowwise_debug_op_exit(
+    label: str,
+    group_name: str,
+    device: torch.device,
+    **tensors: Optional[torch.Tensor],
+) -> None:
+    _rowwise_debug_sync(f"{label}:exit", device)
+    _rowwise_debug_print(label, "exit", group_name, **tensors)
+
+
 def _logical_rank2_tensor(shape: Tuple[int, int], *, dtype: torch.dtype, device: torch.device) -> torch.Tensor:
     # FP8 rowwise comm exposes a high-precision-shaped autograd edge, but the
     # actual payload lives in q/scales. Use one scalar of storage instead of a
@@ -115,14 +135,43 @@ def _rowwise_dispatch_put_weighted_mxfp8(
     *,
     block_size: int,
     nblocks: int,
+    input_q: Optional[torch.Tensor] = None,
+    input_scales: Optional[torch.Tensor] = None,
 ) -> None:
+    _rowwise_debug_op_enter(
+        "rowwise_fp8_weighted_dispatch_quantize",
+        group_name,
+        input_hp.device,
+        input=input_hp,
+        probs=probs,
+        input_q=input_q,
+        input_scales=input_scales,
+    )
     qdata, scales = weighted_quantize_rows_to_mxfp8(
         input_hp,
         probs,
         block_size=block_size,
+        out=input_q,
+        scales_out=input_scales,
+    )
+    _rowwise_debug_op_exit(
+        "rowwise_fp8_weighted_dispatch_quantize",
+        group_name,
+        input_hp.device,
+        qdata=qdata,
+        scales=scales,
     )
     flat_ranks = dst_ranks.reshape(-1, 1).contiguous()
     flat_rows = dst_rows.reshape(-1, 1).contiguous()
+    _rowwise_debug_op_enter(
+        "rowwise_fp8_weighted_dispatch_put_q",
+        group_name,
+        out_q.device,
+        qdata=qdata,
+        out_q=out_q,
+        dst_ranks=flat_ranks,
+        dst_rows=flat_rows,
+    )
     symm_mem_vdev2d_kernels.rowwise_dispatch_put(
         qdata,
         out_q,
@@ -132,6 +181,21 @@ def _rowwise_dispatch_put_weighted_mxfp8(
         nblocks=nblocks,
         post_barrier=False,
     )
+    _rowwise_debug_op_exit(
+        "rowwise_fp8_weighted_dispatch_put_q",
+        group_name,
+        out_q.device,
+        out_q=out_q,
+    )
+    _rowwise_debug_op_enter(
+        "rowwise_fp8_weighted_dispatch_put_scales",
+        group_name,
+        out_scales.device,
+        scales=scales,
+        out_scales=out_scales,
+        dst_ranks=flat_ranks,
+        dst_rows=flat_rows,
+    )
     symm_mem_vdev2d_kernels.rowwise_dispatch_put(
         scales,
         out_scales,
@@ -140,6 +204,12 @@ def _rowwise_dispatch_put_weighted_mxfp8(
         group_name,
         nblocks=nblocks,
         pre_barrier=False,
+    )
+    _rowwise_debug_op_exit(
+        "rowwise_fp8_weighted_dispatch_put_scales",
+        group_name,
+        out_scales.device,
+        out_scales=out_scales,
     )
 
 
@@ -276,6 +346,11 @@ class _RowwiseFP8DispatchExpertsCombineAutograd(torch.autograd.Function):
         down_prequant,
         down_prequant_t,
         dispatch_out_lease,
+        combine_gather_lease,
+        dispatch_in_q: Optional[torch.Tensor],
+        dispatch_in_scales: Optional[torch.Tensor],
+        combine_gather_q: Optional[torch.Tensor],
+        combine_gather_scales: Optional[torch.Tensor],
         block_size: int,
         use_fast_accum: bool,
         recompute_swiglu: bool,
@@ -332,6 +407,18 @@ class _RowwiseFP8DispatchExpertsCombineAutograd(torch.autograd.Function):
         # MXFP8 rowwise comm format. The high-precision logical tensor below is
         # only an autograd/API placeholder; grouped mm reads the q/scales via
         # the prequantized_lhs object.
+        _rowwise_debug_op_enter(
+            "rowwise_fp8_fused_forward_dispatch_put_scaled",
+            group_name,
+            source_input_contig.device,
+            input=source_input_contig,
+            dispatch_in_q=dispatch_in_q,
+            dispatch_in_scales=dispatch_in_scales,
+            out_q=dispatch_out_q,
+            out_scales=dispatch_out_scales,
+            dst_ranks=dst_ranks_i64,
+            dst_rows=dst_rows_i64,
+        )
         symm_mem_vdev2d_kernels.rowwise_dispatch_put_scaled(
             source_input_contig,
             dispatch_out_q,
@@ -341,6 +428,15 @@ class _RowwiseFP8DispatchExpertsCombineAutograd(torch.autograd.Function):
             group_name,
             block_size=int(block_size),
             nblocks=int(nblocks),
+            input_q=dispatch_in_q,
+            input_scales=dispatch_in_scales,
+        )
+        _rowwise_debug_op_exit(
+            "rowwise_fp8_fused_forward_dispatch_put_scaled",
+            group_name,
+            dispatch_out_q.device,
+            out_q=dispatch_out_q,
+            out_scales=dispatch_out_scales,
         )
 
         dispatch_shape = tuple(dispatch_out_q.shape)
@@ -354,12 +450,25 @@ class _RowwiseFP8DispatchExpertsCombineAutograd(torch.autograd.Function):
             dispatch_out_scales,
             shape=dispatch_shape,
         )
+        _rowwise_debug_op_enter(
+            "rowwise_fp8_fused_forward_up_gate_gemm",
+            group_name,
+            source_input.device,
+            dispatch_out_q=dispatch_out_q,
+            dispatch_out_scales=dispatch_out_scales,
+        )
         up_gate = _forward_scaled_grouped_mm_mxfp8_prequantized_rhs(
             dispatch_logical,
             up_gate_prequant,
             offs_i32,
             use_fast_accum=bool(use_fast_accum),
             prequantized_lhs=dispatch_prequantized_lhs,
+        )
+        _rowwise_debug_op_exit(
+            "rowwise_fp8_fused_forward_up_gate_gemm",
+            group_name,
+            source_input.device,
+            up_gate=up_gate,
         )
 
         if bool(recompute_swiglu):
@@ -408,6 +517,14 @@ class _RowwiseFP8DispatchExpertsCombineAutograd(torch.autograd.Function):
             h_scales,
             shape=h_shape,
         )
+        _rowwise_debug_op_enter(
+            "rowwise_fp8_fused_forward_down_gemm",
+            group_name,
+            h.device,
+            h=h,
+            h_q=h_q,
+            h_scales=h_scales,
+        )
         expert_out = _forward_scaled_grouped_mm_mxfp8_prequantized_rhs(
             h,
             down_prequant,
@@ -415,13 +532,34 @@ class _RowwiseFP8DispatchExpertsCombineAutograd(torch.autograd.Function):
             use_fast_accum=bool(use_fast_accum),
             prequantized_lhs=h_prequantized_lhs,
         )
+        _rowwise_debug_op_exit(
+            "rowwise_fp8_fused_forward_down_gemm",
+            group_name,
+            expert_out.device,
+            expert_out=expert_out,
+        )
 
         expert_out_contig = expert_out if expert_out.is_contiguous() else expert_out.contiguous()
+        _rowwise_debug_op_enter(
+            "rowwise_fp8_fused_forward_expert_quantize",
+            group_name,
+            expert_out_contig.device,
+            expert_out=expert_out_contig,
+            combine_in_q=combine_in_q,
+            combine_in_scales=combine_in_scales,
+        )
         quantize_rows_to_mxfp8(
             expert_out_contig,
             block_size=int(block_size),
             out=combine_in_q,
             scales_out=combine_in_scales,
+        )
+        _rowwise_debug_op_exit(
+            "rowwise_fp8_fused_forward_expert_quantize",
+            group_name,
+            expert_out_contig.device,
+            combine_in_q=combine_in_q,
+            combine_in_scales=combine_in_scales,
         )
 
         combine_out = torch.empty(
@@ -430,7 +568,43 @@ class _RowwiseFP8DispatchExpertsCombineAutograd(torch.autograd.Function):
             dtype=expert_out.dtype,
         )
         need_grad_probs = ctx.needs_input_grad[4]
-        if need_grad_probs:
+        if combine_gather_q is not None:
+            expected_gather_q_shape = (
+                dst_ranks_i64.shape[0],
+                dst_ranks_i64.shape[1],
+                combine_in_q.shape[1],
+            )
+            if tuple(combine_gather_q.shape) != expected_gather_q_shape:
+                raise RuntimeError(
+                    "combine_gather_q shape mismatch: "
+                    f"expected {expected_gather_q_shape}, got {tuple(combine_gather_q.shape)}"
+                )
+            if combine_gather_q.dtype != combine_in_q.dtype or combine_gather_q.device != combine_in_q.device:
+                raise RuntimeError("combine_gather_q dtype/device must match combine_in_q")
+            if not combine_gather_q.is_contiguous():
+                raise RuntimeError("combine_gather_q must be contiguous")
+        if combine_gather_scales is not None:
+            expected_gather_scales_shape = (
+                dst_ranks_i64.shape[0],
+                dst_ranks_i64.shape[1],
+                combine_in_scales.shape[1],
+            )
+            if tuple(combine_gather_scales.shape) != expected_gather_scales_shape:
+                raise RuntimeError(
+                    "combine_gather_scales shape mismatch: "
+                    f"expected {expected_gather_scales_shape}, got {tuple(combine_gather_scales.shape)}"
+                )
+            if combine_gather_scales.dtype != combine_in_scales.dtype or combine_gather_scales.device != combine_in_scales.device:
+                raise RuntimeError("combine_gather_scales dtype/device must match combine_in_scales")
+            if not combine_gather_scales.is_contiguous():
+                raise RuntimeError("combine_gather_scales must be contiguous")
+        if (combine_gather_q is None) != (combine_gather_scales is None):
+            raise RuntimeError("combine_gather_q and combine_gather_scales must be provided together")
+
+        if need_grad_probs and combine_gather_q is not None:
+            gathered_q_saved = combine_gather_q
+            gathered_scales_saved = combine_gather_scales
+        elif need_grad_probs:
             gathered_q_saved = torch.empty(
                 (dst_ranks_i64.shape[0], dst_ranks_i64.shape[1], combine_in_q.shape[1]),
                 device=combine_in_q.device,
@@ -452,10 +626,30 @@ class _RowwiseFP8DispatchExpertsCombineAutograd(torch.autograd.Function):
                 device=combine_in_scales.device,
                 dtype=combine_in_scales.dtype,
             )
+        gathered_q_for_get = combine_gather_q if combine_gather_q is not None else (
+            gathered_q_saved if need_grad_probs else None
+        )
+        gathered_scales_for_get = (
+            combine_gather_scales
+            if combine_gather_scales is not None
+            else (gathered_scales_saved if need_grad_probs else None)
+        )
 
         # Combine ends the fused node back in bf16. If probs need grad, the
         # kernel also gathers the routed FP8 rows used to form grad_probs in
         # backward; otherwise we avoid saving that large [N, top_k, D] payload.
+        _rowwise_debug_op_enter(
+            "rowwise_fp8_fused_forward_combine_get_scaled",
+            group_name,
+            combine_in_q.device,
+            combine_in_q=combine_in_q,
+            combine_in_scales=combine_in_scales,
+            combine_out=combine_out,
+            dst_ranks=dst_ranks_i64,
+            dst_rows=dst_rows_i64,
+            gathered_q_out=gathered_q_for_get,
+            gathered_scales_out=gathered_scales_for_get,
+        )
         symm_mem_vdev2d_kernels.rowwise_combine_get_scaled(
             combine_in_q,
             combine_in_scales,
@@ -466,8 +660,16 @@ class _RowwiseFP8DispatchExpertsCombineAutograd(torch.autograd.Function):
             probs=probs_f32,
             block_size=int(block_size),
             nblocks=int(nblocks),
-            gathered_q_out=(gathered_q_saved if need_grad_probs else None),
-            gathered_scales_out=(gathered_scales_saved if need_grad_probs else None),
+            gathered_q_out=gathered_q_for_get,
+            gathered_scales_out=gathered_scales_for_get,
+        )
+        _rowwise_debug_op_exit(
+            "rowwise_fp8_fused_forward_combine_get_scaled",
+            group_name,
+            combine_in_q.device,
+            combine_out=combine_out,
+            gathered_q_out=gathered_q_for_get,
+            gathered_scales_out=gathered_scales_for_get,
         )
 
         ctx.group = group
@@ -485,6 +687,9 @@ class _RowwiseFP8DispatchExpertsCombineAutograd(torch.autograd.Function):
         ctx.up_gate_prequant_t = up_gate_prequant_t
         ctx.down_prequant_t = down_prequant_t
         ctx.dispatch_out_lease = dispatch_out_lease
+        ctx.combine_gather_lease = combine_gather_lease
+        ctx.combine_gather_q = combine_gather_q
+        ctx.combine_gather_scales = combine_gather_scales
         ctx.combine_in_q = combine_in_q
         ctx.combine_in_scales = combine_in_scales
         ctx.up_wgrad_sink = up_wgrad_sink
@@ -536,9 +741,23 @@ class _RowwiseFP8DispatchExpertsCombineAutograd(torch.autograd.Function):
         ) = ctx.saved_tensors
         grad_out_contig = grad_out if grad_out.is_contiguous() else grad_out.contiguous()
 
+        _rowwise_debug_op_enter(
+            "rowwise_fp8_fused_backward",
+            ctx.group_name,
+            grad_out_contig.device,
+            grad_out=grad_out_contig,
+        )
         grad_probs = None
         valid_mask = (dst_ranks >= 0) & (dst_rows >= 0) & (dst_rows < ctx.expert_out_shape[0])
         if ctx.needs_input_grad[4]:
+            _rowwise_debug_op_enter(
+                "rowwise_fp8_fused_backward_grad_probs",
+                ctx.group_name,
+                grad_out_contig.device,
+                gathered_q=gathered_q_saved,
+                gathered_scales=gathered_scales_saved,
+                grad_out=grad_out_contig,
+            )
             grad_probs = dot_gathered_rows_mxfp8_with_grad(
                 gathered_q_saved,
                 gathered_scales_saved,
@@ -547,9 +766,25 @@ class _RowwiseFP8DispatchExpertsCombineAutograd(torch.autograd.Function):
                 block_size=ctx.block_size,
                 out_dtype=ctx.probs_input_dtype,
             )
+            _rowwise_debug_op_exit(
+                "rowwise_fp8_fused_backward_grad_probs",
+                ctx.group_name,
+                grad_out_contig.device,
+                grad_probs=grad_probs,
+            )
 
         # Combine backward first weights each route by its router probability,
         # then dispatches the weighted token grads into combine_in_q/scales.
+        _rowwise_debug_op_enter(
+            "rowwise_fp8_fused_backward_weighted_dispatch",
+            ctx.group_name,
+            grad_out_contig.device,
+            grad_out=grad_out_contig,
+            combine_in_q=ctx.combine_in_q,
+            combine_in_scales=ctx.combine_in_scales,
+            combine_gather_q=ctx.combine_gather_q,
+            combine_gather_scales=ctx.combine_gather_scales,
+        )
         _rowwise_dispatch_put_weighted_mxfp8(
             grad_out_contig,
             probs,
@@ -560,6 +795,23 @@ class _RowwiseFP8DispatchExpertsCombineAutograd(torch.autograd.Function):
             ctx.group_name,
             block_size=ctx.block_size,
             nblocks=ctx.nblocks,
+            input_q=(
+                ctx.combine_gather_q.view(-1, ctx.combine_gather_q.shape[-1])
+                if ctx.combine_gather_q is not None
+                else None
+            ),
+            input_scales=(
+                ctx.combine_gather_scales.view(-1, ctx.combine_gather_scales.shape[-1])
+                if ctx.combine_gather_scales is not None
+                else None
+            ),
+        )
+        _rowwise_debug_op_exit(
+            "rowwise_fp8_fused_backward_weighted_dispatch",
+            ctx.group_name,
+            ctx.combine_in_q.device,
+            combine_in_q=ctx.combine_in_q,
+            combine_in_scales=ctx.combine_in_scales,
         )
 
         # Down dgrad consumes the just-written combine_in_q/scales. Do this
@@ -575,12 +827,25 @@ class _RowwiseFP8DispatchExpertsCombineAutograd(torch.autograd.Function):
             ctx.combine_in_scales,
             shape=ctx.expert_out_shape,
         )
+        _rowwise_debug_op_enter(
+            "rowwise_fp8_fused_backward_down_dgrad_gemm",
+            ctx.group_name,
+            grad_out.device,
+            combine_in_q=ctx.combine_in_q,
+            combine_in_scales=ctx.combine_in_scales,
+        )
         grad_h = _forward_scaled_grouped_mm_mxfp8_prequantized_rhs(
             grad_expert_logical,
             ctx.down_prequant_t,
             offs,
             use_fast_accum=True,
             prequantized_lhs=grad_expert_prequantized_lhs,
+        )
+        _rowwise_debug_op_exit(
+            "rowwise_fp8_fused_backward_down_dgrad_gemm",
+            ctx.group_name,
+            grad_h.device,
+            grad_h=grad_h,
         )
 
         # Wgrad paths need bf16 operands. In recompute mode we restore the
@@ -596,19 +861,58 @@ class _RowwiseFP8DispatchExpertsCombineAutograd(torch.autograd.Function):
             h = _rowwise_fp8_swiglu_forward(up_gate)
         else:
             up_gate = up_gate_saved
+            _rowwise_debug_op_enter(
+                "rowwise_fp8_fused_backward_dequant_h",
+                ctx.group_name,
+                h_q.device,
+                h_q=h_q,
+                h_scales=h_scales,
+            )
             h = dequantize_rows_from_mxfp8(
                 h_q,
                 h_scales,
                 block_size=ctx.block_size,
                 out_dtype=grad_h.dtype,
             )
+            _rowwise_debug_op_exit(
+                "rowwise_fp8_fused_backward_dequant_h",
+                ctx.group_name,
+                h.device,
+                h=h,
+            )
+        _rowwise_debug_op_enter(
+            "rowwise_fp8_fused_backward_dequant_grad_expert",
+            ctx.group_name,
+            ctx.combine_in_q.device,
+            combine_in_q=ctx.combine_in_q,
+            combine_in_scales=ctx.combine_in_scales,
+        )
         grad_expert_hp = dequantize_rows_from_mxfp8(
             ctx.combine_in_q,
             ctx.combine_in_scales,
             block_size=ctx.block_size,
             out_dtype=h.dtype,
         )
+        _rowwise_debug_op_exit(
+            "rowwise_fp8_fused_backward_dequant_grad_expert",
+            ctx.group_name,
+            grad_expert_hp.device,
+            grad_expert_hp=grad_expert_hp,
+        )
+        _rowwise_debug_op_enter(
+            "rowwise_fp8_fused_backward_down_wgrad",
+            ctx.group_name,
+            grad_expert_hp.device,
+            grad_expert_hp=grad_expert_hp,
+            h=h,
+        )
         grad_down_anchor = _rowwise_fp8_grouped_wgrad(grad_expert_hp, h, offs)
+        _rowwise_debug_op_exit(
+            "rowwise_fp8_fused_backward_down_wgrad",
+            ctx.group_name,
+            grad_down_anchor.device,
+            grad_down_anchor=grad_down_anchor,
+        )
         _rowwise_fp8_accumulate_wgrad_sink(
             ctx.down_wgrad_sink,
             grad_down_anchor,
@@ -622,12 +926,38 @@ class _RowwiseFP8DispatchExpertsCombineAutograd(torch.autograd.Function):
         # SwiGLU gradient directly. The old split autograd path returned an
         # OlmoMXFP8Tensor here and dequantized it for wgrad; the fused node can
         # avoid that extra Q->DQ round trip.
+        _rowwise_debug_op_enter(
+            "rowwise_fp8_fused_backward_swiglu_backward",
+            ctx.group_name,
+            up_gate.device,
+            up_gate=up_gate,
+            grad_h=grad_h,
+        )
         grad_up_gate = _rowwise_fp8_swiglu_backward(up_gate, grad_h)
+        _rowwise_debug_op_exit(
+            "rowwise_fp8_fused_backward_swiglu_backward",
+            ctx.group_name,
+            grad_up_gate.device,
+            grad_up_gate=grad_up_gate,
+        )
+        _rowwise_debug_op_enter(
+            "rowwise_fp8_fused_backward_quantize_grad_up_gate",
+            ctx.group_name,
+            grad_up_gate.device,
+            grad_up_gate=grad_up_gate,
+        )
         grad_up_gate_q, grad_up_gate_scales_blocked = quantize_grouped_2d_to_mxfp8_blocked_fused(
             grad_up_gate,
             offs,
             block_size=ctx.block_size,
             zero_unwritten_tail=False,
+        )
+        _rowwise_debug_op_exit(
+            "rowwise_fp8_fused_backward_quantize_grad_up_gate",
+            ctx.group_name,
+            grad_up_gate.device,
+            grad_up_gate_q=grad_up_gate_q,
+            grad_up_gate_scales=grad_up_gate_scales_blocked,
         )
         grad_up_gate_logical = _logical_rank2_tensor(
             tuple(grad_up_gate.shape),
@@ -640,6 +970,13 @@ class _RowwiseFP8DispatchExpertsCombineAutograd(torch.autograd.Function):
             shape=tuple(grad_up_gate.shape),
             scales_are_blocked=True,
         )
+        _rowwise_debug_op_enter(
+            "rowwise_fp8_fused_backward_up_dgrad_gemm",
+            ctx.group_name,
+            grad_up_gate.device,
+            grad_up_gate_q=grad_up_gate_q,
+            grad_up_gate_scales=grad_up_gate_scales_blocked,
+        )
         grad_dispatch = _forward_scaled_grouped_mm_mxfp8_prequantized_rhs(
             grad_up_gate_logical,
             ctx.up_gate_prequant_t,
@@ -647,17 +984,49 @@ class _RowwiseFP8DispatchExpertsCombineAutograd(torch.autograd.Function):
             use_fast_accum=True,
             prequantized_lhs=grad_up_gate_prequantized_lhs,
         )
+        _rowwise_debug_op_exit(
+            "rowwise_fp8_fused_backward_up_dgrad_gemm",
+            ctx.group_name,
+            grad_dispatch.device,
+            grad_dispatch=grad_dispatch,
+        )
 
         # Read dispatch_out_q/scales for up/gate wgrad before overwriting them
         # with grad_dispatch below. This is the main buffer-lifetime invariant
         # that motivated fusing the region into one autograd node.
+        _rowwise_debug_op_enter(
+            "rowwise_fp8_fused_backward_dequant_dispatch",
+            ctx.group_name,
+            dispatch_out_q.device,
+            dispatch_out_q=dispatch_out_q,
+            dispatch_out_scales=dispatch_out_scales,
+        )
         dispatch_hp = dequantize_rows_from_mxfp8(
             dispatch_out_q,
             dispatch_out_scales,
             block_size=ctx.block_size,
             out_dtype=grad_up_gate.dtype,
         )
+        _rowwise_debug_op_exit(
+            "rowwise_fp8_fused_backward_dequant_dispatch",
+            ctx.group_name,
+            dispatch_hp.device,
+            dispatch_hp=dispatch_hp,
+        )
+        _rowwise_debug_op_enter(
+            "rowwise_fp8_fused_backward_up_wgrad",
+            ctx.group_name,
+            grad_up_gate.device,
+            grad_up_gate=grad_up_gate,
+            dispatch_hp=dispatch_hp,
+        )
         grad_up_anchor = _rowwise_fp8_grouped_wgrad(grad_up_gate, dispatch_hp, offs)
+        _rowwise_debug_op_exit(
+            "rowwise_fp8_fused_backward_up_wgrad",
+            ctx.group_name,
+            grad_up_anchor.device,
+            grad_up_anchor=grad_up_anchor,
+        )
         _rowwise_fp8_accumulate_wgrad_sink(
             ctx.up_wgrad_sink,
             grad_up_anchor,
@@ -671,16 +1040,43 @@ class _RowwiseFP8DispatchExpertsCombineAutograd(torch.autograd.Function):
         # quantized grad_dispatch payload, then combine-get back to bf16 source
         # grad. The lifetime lease can be released once this is complete.
         grad_dispatch_contig = grad_dispatch if grad_dispatch.is_contiguous() else grad_dispatch.contiguous()
+        _rowwise_debug_op_enter(
+            "rowwise_fp8_fused_backward_quantize_grad_dispatch",
+            ctx.group_name,
+            grad_dispatch_contig.device,
+            grad_dispatch=grad_dispatch_contig,
+            dispatch_out_q=dispatch_out_q,
+            dispatch_out_scales=dispatch_out_scales,
+        )
         quantize_rows_to_mxfp8(
             grad_dispatch_contig,
             block_size=ctx.block_size,
             out=dispatch_out_q,
             scales_out=dispatch_out_scales,
         )
+        _rowwise_debug_op_exit(
+            "rowwise_fp8_fused_backward_quantize_grad_dispatch",
+            ctx.group_name,
+            grad_dispatch_contig.device,
+            dispatch_out_q=dispatch_out_q,
+            dispatch_out_scales=dispatch_out_scales,
+        )
         grad_source = torch.empty(
             ctx.source_input_shape,
             device=grad_out.device,
             dtype=ctx.source_input_dtype,
+        )
+        _rowwise_debug_op_enter(
+            "rowwise_fp8_fused_backward_dispatch_combine_get_scaled",
+            ctx.group_name,
+            dispatch_out_q.device,
+            dispatch_out_q=dispatch_out_q,
+            dispatch_out_scales=dispatch_out_scales,
+            grad_source=grad_source,
+            dst_ranks=dst_ranks,
+            dst_rows=dst_rows,
+            gathered_q_out=ctx.combine_gather_q,
+            gathered_scales_out=ctx.combine_gather_scales,
         )
         symm_mem_vdev2d_kernels.rowwise_combine_get_scaled(
             dispatch_out_q,
@@ -691,41 +1087,67 @@ class _RowwiseFP8DispatchExpertsCombineAutograd(torch.autograd.Function):
             ctx.group_name,
             block_size=ctx.block_size,
             nblocks=ctx.nblocks,
+            gathered_q_out=ctx.combine_gather_q,
+            gathered_scales_out=ctx.combine_gather_scales,
+        )
+        _rowwise_debug_op_exit(
+            "rowwise_fp8_fused_backward_dispatch_combine_get_scaled",
+            ctx.group_name,
+            dispatch_out_q.device,
+            grad_source=grad_source,
+            gathered_q_out=ctx.combine_gather_q,
+            gathered_scales_out=ctx.combine_gather_scales,
         )
 
         if ctx.dispatch_out_lease is not None:
             ctx.dispatch_out_lease.release()
         ctx.dispatch_out_lease = None
+        if ctx.combine_gather_lease is not None:
+            ctx.combine_gather_lease.release()
+        ctx.combine_gather_lease = None
+        ctx.combine_gather_q = None
+        ctx.combine_gather_scales = None
         ctx.group = None
+        _rowwise_debug_op_exit(
+            "rowwise_fp8_fused_backward",
+            ctx.group_name,
+            grad_source.device,
+            grad_source=grad_source,
+        )
         return (
             grad_source,
-            None,
-            None,
-            None,
+            None,  # dst_ranks
+            None,  # dst_rows
+            None,  # offs
             grad_probs,
-            None,
-            None,
-            None,
-            None,
+            None,  # dispatch_out_q
+            None,  # dispatch_out_scales
+            None,  # combine_in_q
+            None,  # combine_in_scales
             grad_up_anchor,
             grad_down_anchor,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
+            None,  # up_gate_prequant
+            None,  # up_gate_prequant_t
+            None,  # down_prequant
+            None,  # down_prequant_t
+            None,  # dispatch_out_lease
+            None,  # combine_gather_lease
+            None,  # dispatch_in_q
+            None,  # dispatch_in_scales
+            None,  # combine_gather_q
+            None,  # combine_gather_scales
+            None,  # block_size
+            None,  # use_fast_accum
+            None,  # recompute_swiglu
+            None,  # group_name
+            None,  # group
+            None,  # nblocks
+            None,  # up_wgrad_sink
+            None,  # up_wgrad_sink_transpose_last2
+            None,  # up_wgrad_sink_squeeze_first_dim
+            None,  # down_wgrad_sink
+            None,  # down_wgrad_sink_transpose_last2
+            None,  # down_wgrad_sink_squeeze_first_dim
         )
 
 
@@ -1236,6 +1658,11 @@ class _DispatchRowwiseFP8Autograd(torch.autograd.Function):
         symm_out_q: torch.Tensor,
         symm_out_scales: torch.Tensor,
         symm_out_lease,
+        dispatch_in_q: Optional[torch.Tensor],
+        dispatch_in_scales: Optional[torch.Tensor],
+        combine_gather_q: Optional[torch.Tensor],
+        combine_gather_scales: Optional[torch.Tensor],
+        combine_gather_lease,
         block_size: int,
         group_name: str,
         group: dist.ProcessGroup,
@@ -1290,17 +1717,78 @@ class _DispatchRowwiseFP8Autograd(torch.autograd.Function):
             dst_ranks_i64 = dst_ranks_i64.contiguous()
         if not dst_rows_i64.is_contiguous():
             dst_rows_i64 = dst_rows_i64.contiguous()
+        if (dispatch_in_q is None) != (dispatch_in_scales is None):
+            raise RuntimeError("dispatch_in_q and dispatch_in_scales must be provided together")
+        if dispatch_in_q is not None:
+            expected_dispatch_in_scales_shape = (
+                source_input.shape[0],
+                source_input.shape[1] // int(block_size),
+            )
+            if tuple(dispatch_in_q.shape) != tuple(source_input.shape):
+                raise RuntimeError(
+                    "dispatch_in_q shape mismatch: "
+                    f"expected {tuple(source_input.shape)}, got {tuple(dispatch_in_q.shape)}"
+                )
+            if tuple(dispatch_in_scales.shape) != expected_dispatch_in_scales_shape:
+                raise RuntimeError(
+                    "dispatch_in_scales shape mismatch: "
+                    f"expected {expected_dispatch_in_scales_shape}, got {tuple(dispatch_in_scales.shape)}"
+                )
+            if dispatch_in_q.dtype != torch.float8_e4m3fn:
+                raise RuntimeError(f"dispatch_in_q must be float8_e4m3fn, got {dispatch_in_q.dtype}")
+            if dispatch_in_scales.dtype != torch.float8_e8m0fnu:
+                raise RuntimeError(
+                    f"dispatch_in_scales must be float8_e8m0fnu, got {dispatch_in_scales.dtype}"
+                )
+            if dispatch_in_q.device != source_input.device or dispatch_in_scales.device != source_input.device:
+                raise RuntimeError("dispatch_in_q/scales device must match source_input")
+            if not dispatch_in_q.is_contiguous() or not dispatch_in_scales.is_contiguous():
+                raise RuntimeError("dispatch_in_q/scales must be contiguous")
+        if (combine_gather_q is None) != (combine_gather_scales is None):
+            raise RuntimeError("combine_gather_q and combine_gather_scales must be provided together")
+        if combine_gather_q is not None:
+            expected_gather_q_shape = (
+                dst_ranks_i64.shape[0],
+                dst_ranks_i64.shape[1],
+                symm_out_q.shape[1],
+            )
+            expected_gather_scales_shape = (
+                dst_ranks_i64.shape[0],
+                dst_ranks_i64.shape[1],
+                symm_out_scales.shape[1],
+            )
+            if tuple(combine_gather_q.shape) != expected_gather_q_shape:
+                raise RuntimeError(
+                    "combine_gather_q shape mismatch: "
+                    f"expected {expected_gather_q_shape}, got {tuple(combine_gather_q.shape)}"
+                )
+            if tuple(combine_gather_scales.shape) != expected_gather_scales_shape:
+                raise RuntimeError(
+                    "combine_gather_scales shape mismatch: "
+                    f"expected {expected_gather_scales_shape}, got {tuple(combine_gather_scales.shape)}"
+                )
+            if combine_gather_q.dtype != symm_out_q.dtype or combine_gather_q.device != symm_out_q.device:
+                raise RuntimeError("combine_gather_q dtype/device must match symm_out_q")
+            if (
+                combine_gather_scales.dtype != symm_out_scales.dtype
+                or combine_gather_scales.device != symm_out_scales.device
+            ):
+                raise RuntimeError("combine_gather_scales dtype/device must match symm_out_scales")
+            if not combine_gather_q.is_contiguous() or not combine_gather_scales.is_contiguous():
+                raise RuntimeError("combine_gather_q/scales must be contiguous")
 
-        # _rowwise_debug_print(
-        #     "rowwise_fp8_dispatch_forward_put_scaled",
-        #     "enter",
-        #     group_name,
-        #     input=source_input_contig,
-        #     out_q=symm_out_q,
-        #     out_scales=symm_out_scales,
-        #     dst_ranks=dst_ranks_i64,
-        #     dst_rows=dst_rows_i64,
-        # )
+        _rowwise_debug_op_enter(
+            "rowwise_fp8_dispatch_forward_put_scaled",
+            group_name,
+            source_input_contig.device,
+            input=source_input_contig,
+            dispatch_in_q=dispatch_in_q,
+            dispatch_in_scales=dispatch_in_scales,
+            out_q=symm_out_q,
+            out_scales=symm_out_scales,
+            dst_ranks=dst_ranks_i64,
+            dst_rows=dst_rows_i64,
+        )
         symm_mem_vdev2d_kernels.rowwise_dispatch_put_scaled(
             source_input_contig,
             symm_out_q,
@@ -1310,16 +1798,16 @@ class _DispatchRowwiseFP8Autograd(torch.autograd.Function):
             group_name,
             block_size=int(block_size),
             nblocks=nblocks,
+            input_q=dispatch_in_q,
+            input_scales=dispatch_in_scales,
         )
-        # _rowwise_debug_sync("rowwise_fp8_dispatch_forward_put_scaled", symm_out_q.device)
-        # _rowwise_debug_print(
-        #     "rowwise_fp8_dispatch_forward_put_scaled",
-        #     "exit",
-        #     group_name,
-        #     input=source_input_contig,
-        #     out_q=symm_out_q,
-        #     out_scales=symm_out_scales,
-        # )
+        _rowwise_debug_op_exit(
+            "rowwise_fp8_dispatch_forward_put_scaled",
+            group_name,
+            symm_out_q.device,
+            out_q=symm_out_q,
+            out_scales=symm_out_scales,
+        )
         # Keep dispatch payload fully FP8 through expert compute.
 
         ctx.group_name = group_name
@@ -1332,6 +1820,9 @@ class _DispatchRowwiseFP8Autograd(torch.autograd.Function):
         ctx.symm_out_q = symm_out_q
         ctx.symm_out_scales = symm_out_scales
         ctx.symm_out_lease = symm_out_lease
+        ctx.combine_gather_q = combine_gather_q
+        ctx.combine_gather_scales = combine_gather_scales
+        ctx.combine_gather_lease = combine_gather_lease
         ctx.save_for_backward(dst_ranks_i64, dst_rows_i64)
         return _logical_rank2_tensor(
             ctx.logical_out_shape,
@@ -1360,16 +1851,18 @@ class _DispatchRowwiseFP8Autograd(torch.autograd.Function):
             device=grad_out_hp.device,
             dtype=ctx.logical_out_dtype,
         )
-        # _rowwise_debug_print(
-        #     "rowwise_fp8_dispatch_backward_combine_get_scaled",
-        #     "enter",
-        #     ctx.group_name,
-        #     expert_out_q=ctx.symm_out_q,
-        #     expert_out_scales=ctx.symm_out_scales,
-        #     out=grad_input,
-        #     src_ranks=dst_ranks,
-        #     src_rows=dst_rows,
-        # )
+        _rowwise_debug_op_enter(
+            "rowwise_fp8_dispatch_backward_combine_get_scaled",
+            ctx.group_name,
+            ctx.symm_out_q.device,
+            expert_out_q=ctx.symm_out_q,
+            expert_out_scales=ctx.symm_out_scales,
+            out=grad_input,
+            src_ranks=dst_ranks,
+            src_rows=dst_rows,
+            gathered_q_out=ctx.combine_gather_q,
+            gathered_scales_out=ctx.combine_gather_scales,
+        )
         symm_mem_vdev2d_kernels.rowwise_combine_get_scaled(
             ctx.symm_out_q,
             ctx.symm_out_scales,
@@ -1379,21 +1872,43 @@ class _DispatchRowwiseFP8Autograd(torch.autograd.Function):
             ctx.group_name,
             block_size=ctx.block_size,
             nblocks=ctx.nblocks,
+            gathered_q_out=ctx.combine_gather_q,
+            gathered_scales_out=ctx.combine_gather_scales,
         )
-        # _rowwise_debug_sync("rowwise_fp8_dispatch_backward_combine_get_scaled", ctx.symm_out_q.device)
-        # _rowwise_debug_print(
-        #     "rowwise_fp8_dispatch_backward_combine_get_scaled",
-        #     "exit",
-        #     ctx.group_name,
-        #     expert_out_q=ctx.symm_out_q,
-        #     expert_out_scales=ctx.symm_out_scales,
-        #     out=grad_input,
-        # )
+        _rowwise_debug_op_exit(
+            "rowwise_fp8_dispatch_backward_combine_get_scaled",
+            ctx.group_name,
+            ctx.symm_out_q.device,
+            out=grad_input,
+            gathered_q_out=ctx.combine_gather_q,
+            gathered_scales_out=ctx.combine_gather_scales,
+        )
         if ctx.symm_out_lease is not None:
             ctx.symm_out_lease.release()
         ctx.symm_out_lease = None
+        if ctx.combine_gather_lease is not None:
+            ctx.combine_gather_lease.release()
+        ctx.combine_gather_lease = None
+        ctx.combine_gather_q = None
+        ctx.combine_gather_scales = None
         ctx.group = None
-        return grad_input, None, None, None, None, None, None, None, None, None
+        return (
+            grad_input,
+            None,  # dst_ranks
+            None,  # dst_rows
+            None,  # symm_out_q
+            None,  # symm_out_scales
+            None,  # symm_out_lease
+            None,  # dispatch_in_q
+            None,  # dispatch_in_scales
+            None,  # combine_gather_q
+            None,  # combine_gather_scales
+            None,  # combine_gather_lease
+            None,  # block_size
+            None,  # group_name
+            None,  # group
+            None,  # nblocks
+        )
 
 
 class _RowwiseCombineWeightedFP8Autograd(torch.autograd.Function):
@@ -1406,6 +1921,8 @@ class _RowwiseCombineWeightedFP8Autograd(torch.autograd.Function):
         probs: torch.Tensor,
         symm_expert_out_q: torch.Tensor,
         symm_expert_out_scales: torch.Tensor,
+        combine_gather_q: Optional[torch.Tensor],
+        combine_gather_scales: Optional[torch.Tensor],
         block_size: int,
         group_name: str,
         group: dist.ProcessGroup,
@@ -1489,7 +2006,42 @@ class _RowwiseCombineWeightedFP8Autograd(torch.autograd.Function):
         )
 
         need_grad_probs = ctx.needs_input_grad[3]
-        if need_grad_probs:
+        if (combine_gather_q is None) != (combine_gather_scales is None):
+            raise RuntimeError("combine_gather_q and combine_gather_scales must be provided together")
+        if combine_gather_q is not None:
+            expected_gather_q_shape = (
+                src_ranks_i64.shape[0],
+                src_ranks_i64.shape[1],
+                symm_expert_out_q.shape[1],
+            )
+            expected_gather_scales_shape = (
+                src_ranks_i64.shape[0],
+                src_ranks_i64.shape[1],
+                symm_expert_out_scales.shape[1],
+            )
+            if tuple(combine_gather_q.shape) != expected_gather_q_shape:
+                raise RuntimeError(
+                    "combine_gather_q shape mismatch: "
+                    f"expected {expected_gather_q_shape}, got {tuple(combine_gather_q.shape)}"
+                )
+            if tuple(combine_gather_scales.shape) != expected_gather_scales_shape:
+                raise RuntimeError(
+                    "combine_gather_scales shape mismatch: "
+                    f"expected {expected_gather_scales_shape}, got {tuple(combine_gather_scales.shape)}"
+                )
+            if combine_gather_q.dtype != symm_expert_out_q.dtype or combine_gather_q.device != symm_expert_out_q.device:
+                raise RuntimeError("combine_gather_q dtype/device must match symm_expert_out_q")
+            if (
+                combine_gather_scales.dtype != symm_expert_out_scales.dtype
+                or combine_gather_scales.device != symm_expert_out_scales.device
+            ):
+                raise RuntimeError("combine_gather_scales dtype/device must match symm_expert_out_scales")
+            if not combine_gather_q.is_contiguous() or not combine_gather_scales.is_contiguous():
+                raise RuntimeError("combine_gather_q/scales must be contiguous")
+        if need_grad_probs and combine_gather_q is not None:
+            gathered_q_saved = combine_gather_q
+            gathered_scales_saved = combine_gather_scales
+        elif need_grad_probs:
             gathered_q_saved = torch.empty(
                 (src_ranks_i64.shape[0], src_ranks_i64.shape[1], symm_expert_out_q.shape[1]),
                 device=symm_expert_out_q.device,
@@ -1516,19 +2068,27 @@ class _RowwiseCombineWeightedFP8Autograd(torch.autograd.Function):
                 dtype=symm_expert_out_scales.dtype,
             )
 
-        # _rowwise_debug_print(
-        #     "rowwise_fp8_combine_forward_get_scaled",
-        #     "enter",
-        #     group_name,
-        #     expert_out_q=symm_expert_out_q,
-        #     expert_out_scales=symm_expert_out_scales,
-        #     out=combine_out,
-        #     src_ranks=src_ranks_i64,
-        #     src_rows=src_rows_i64,
-        #     probs=probs_f32,
-        #     gathered_q_out=(gathered_q_saved if need_grad_probs else None),
-        #     gathered_scales_out=(gathered_scales_saved if need_grad_probs else None),
-        # )
+        _rowwise_debug_op_enter(
+            "rowwise_fp8_combine_forward_get_scaled",
+            group_name,
+            symm_expert_out_q.device,
+            expert_out_q=symm_expert_out_q,
+            expert_out_scales=symm_expert_out_scales,
+            out=combine_out,
+            src_ranks=src_ranks_i64,
+            src_rows=src_rows_i64,
+            probs=probs_f32,
+            gathered_q_out=(
+                combine_gather_q
+                if combine_gather_q is not None
+                else (gathered_q_saved if need_grad_probs else None)
+            ),
+            gathered_scales_out=(
+                combine_gather_scales
+                if combine_gather_scales is not None
+                else (gathered_scales_saved if need_grad_probs else None)
+            ),
+        )
         symm_mem_vdev2d_kernels.rowwise_combine_get_scaled(
             symm_expert_out_q,
             symm_expert_out_scales,
@@ -1539,18 +2099,33 @@ class _RowwiseCombineWeightedFP8Autograd(torch.autograd.Function):
             probs=probs_f32,
             block_size=int(block_size),
             nblocks=nblocks,
-            gathered_q_out=(gathered_q_saved if need_grad_probs else None),
-            gathered_scales_out=(gathered_scales_saved if need_grad_probs else None),
+            gathered_q_out=(
+                combine_gather_q
+                if combine_gather_q is not None
+                else (gathered_q_saved if need_grad_probs else None)
+            ),
+            gathered_scales_out=(
+                combine_gather_scales
+                if combine_gather_scales is not None
+                else (gathered_scales_saved if need_grad_probs else None)
+            ),
         )
-        # _rowwise_debug_sync("rowwise_fp8_combine_forward_get_scaled", symm_expert_out_q.device)
-        # _rowwise_debug_print(
-        #     "rowwise_fp8_combine_forward_get_scaled",
-        #     "exit",
-        #     group_name,
-        #     expert_out_q=symm_expert_out_q,
-        #     expert_out_scales=symm_expert_out_scales,
-        #     out=combine_out,
-        # )
+        _rowwise_debug_op_exit(
+            "rowwise_fp8_combine_forward_get_scaled",
+            group_name,
+            symm_expert_out_q.device,
+            out=combine_out,
+            gathered_q_out=(
+                combine_gather_q
+                if combine_gather_q is not None
+                else (gathered_q_saved if need_grad_probs else None)
+            ),
+            gathered_scales_out=(
+                combine_gather_scales
+                if combine_gather_scales is not None
+                else (gathered_scales_saved if need_grad_probs else None)
+            ),
+        )
 
         ctx.group = group
         ctx.group_name = group_name
@@ -1561,6 +2136,8 @@ class _RowwiseCombineWeightedFP8Autograd(torch.autograd.Function):
         ctx.expert_out_dtype = expert_out.dtype
         ctx.symm_expert_out_q = symm_expert_out_q
         ctx.symm_expert_out_scales = symm_expert_out_scales
+        ctx.combine_gather_q = combine_gather_q
+        ctx.combine_gather_scales = combine_gather_scales
         ctx.save_for_backward(src_ranks_i64, src_rows_i64, probs_f32, gathered_q_saved, gathered_scales_saved)
         return combine_out
 
@@ -1593,16 +2170,18 @@ class _RowwiseCombineWeightedFP8Autograd(torch.autograd.Function):
 
         grad_expert_out = None
         if ctx.needs_input_grad[0]:
-            # _rowwise_debug_print(
-            #     "rowwise_fp8_combine_backward_dispatch_put_scaled",
-            #     "enter",
-            #     ctx.group_name,
-            #     input=grad_out_contig,
-            #     out_q=ctx.symm_expert_out_q,
-            #     out_scales=ctx.symm_expert_out_scales,
-            #     dst_ranks=src_ranks,
-            #     dst_rows=src_rows,
-            # )
+            _rowwise_debug_op_enter(
+                "rowwise_fp8_combine_backward_dispatch_put_scaled",
+                ctx.group_name,
+                grad_out_contig.device,
+                input=grad_out_contig,
+                out_q=ctx.symm_expert_out_q,
+                out_scales=ctx.symm_expert_out_scales,
+                dst_ranks=src_ranks,
+                dst_rows=src_rows,
+                combine_gather_q=ctx.combine_gather_q,
+                combine_gather_scales=ctx.combine_gather_scales,
+            )
             _rowwise_dispatch_put_weighted_mxfp8(
                 grad_out_contig,
                 probs,
@@ -1613,16 +2192,24 @@ class _RowwiseCombineWeightedFP8Autograd(torch.autograd.Function):
                 ctx.group_name,
                 block_size=ctx.block_size,
                 nblocks=ctx.nblocks,
+                input_q=(
+                    ctx.combine_gather_q.view(-1, ctx.combine_gather_q.shape[-1])
+                    if ctx.combine_gather_q is not None
+                    else None
+                ),
+                input_scales=(
+                    ctx.combine_gather_scales.view(-1, ctx.combine_gather_scales.shape[-1])
+                    if ctx.combine_gather_scales is not None
+                    else None
+                ),
             )
-            # _rowwise_debug_sync("rowwise_fp8_combine_backward_dispatch_put_scaled", ctx.symm_expert_out_q.device)
-            # _rowwise_debug_print(
-            #     "rowwise_fp8_combine_backward_dispatch_put_scaled",
-            #     "exit",
-            #     ctx.group_name,
-            #     input=grad_out_contig,
-            #     out_q=ctx.symm_expert_out_q,
-            #     out_scales=ctx.symm_expert_out_scales,
-            # )
+            _rowwise_debug_op_exit(
+                "rowwise_fp8_combine_backward_dispatch_put_scaled",
+                ctx.group_name,
+                ctx.symm_expert_out_q.device,
+                out_q=ctx.symm_expert_out_q,
+                out_scales=ctx.symm_expert_out_scales,
+            )
             grad_expert_out = OlmoMXFP8Tensor.from_qdata_scales(
                 ctx.symm_expert_out_q,
                 ctx.symm_expert_out_scales,
@@ -1630,7 +2217,23 @@ class _RowwiseCombineWeightedFP8Autograd(torch.autograd.Function):
                 orig_dtype=ctx.expert_out_dtype,
             )
 
-        return grad_expert_out, None, None, grad_probs, None, None, None, None, None, None
+        ctx.combine_gather_q = None
+        ctx.combine_gather_scales = None
+        ctx.group = None
+        return (
+            grad_expert_out,
+            None,  # src_ranks
+            None,  # src_rows
+            grad_probs,
+            None,  # symm_expert_out_q
+            None,  # symm_expert_out_scales
+            None,  # combine_gather_q
+            None,  # combine_gather_scales
+            None,  # block_size
+            None,  # group_name
+            None,  # group
+            None,  # nblocks
+        )
 
 
 class _DispatchVDevAutograd(torch.autograd.Function):

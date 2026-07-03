@@ -346,6 +346,8 @@ def rowwise_dispatch_put_scaled(
     pre_barrier: bool = False,
     post_barrier: bool = True,
     zero_unwritten: bool = False,
+    input_q: Optional[torch.Tensor] = None,
+    input_scales: Optional[torch.Tensor] = None,
 ) -> None:
     # The rowwise dispatch kernel only writes rows referenced by valid route
     # maps. Keep an opt-in safety init for diagnostics or callers that knowingly
@@ -354,7 +356,12 @@ def rowwise_dispatch_put_scaled(
         out_q.zero_()
         out_scales.fill_(1.0)
 
-    qdata, scales = quantize_rows_to_mxfp8(input_hp, block_size=block_size)
+    qdata, scales = quantize_rows_to_mxfp8(
+        input_hp,
+        block_size=block_size,
+        out=input_q,
+        scales_out=input_scales,
+    )
     rowwise_dispatch_put(
         qdata,
         out_q,
