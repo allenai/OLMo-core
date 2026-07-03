@@ -329,7 +329,10 @@ def build_docchunk_experiment(
             "checkpointer",
             CheckpointerCallback(
                 save_interval=100000,
-                ephemeral_save_interval=MAX_STEPS,
+                # Intermediate ephemeral saves (every 500 steps, keep last 2) so the UNTESTED docchunk
+                # ladder eval can be smoked on a step-500 checkpoint (~1.4h) with buffer to fix bugs
+                # before the final; also a fallback if the final step is late. save_async -> minimal cost.
+                ephemeral_save_interval=500,
                 max_checkpoints=2,
                 save_async=True,
             ),
