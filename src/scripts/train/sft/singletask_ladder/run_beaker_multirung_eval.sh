@@ -176,11 +176,16 @@ if [ "$VARIANT" = "docchunk" ]; then
   # dense/landmark path (incl. the 4 OOD ladders). NO-CoT throughout -> contra keeps its short budget
   # (the CoT --contra-max-new-tokens 512 in $EXTRA is intentionally dropped here). EVAL500_ROOT is
   # already exported so the {E5}/<sub> ladder files resolve on weka.
+  # COT_MODE (default none) keeps the no-CoT eval byte-identical; COT_MODE=plan builds the OOLONG
+  # prefill WITH the plan CoT (to match a CoT-trained checkpoint) and widens the OOLONG gen budget so
+  # the plan+answer fits before the newline-after-"answer:" early-stop.
+  COT_ARGS="--cot-mode ${COT_MODE:-none}"
+  [ "${COT_MODE:-none}" = plan ] && COT_ARGS="$COT_ARGS --oolong-max-new-tokens 512"
   torchrun --nproc_per_node="$NGPU" --master_port="$PORT" \
     src/scripts/ctc_eval/eval/eval_lc_native_docchunk_ladder.py \
     --variant dense --model-path "$CKPT" --out "$OUT" --tokenizer "$TOKENIZER" \
     --root "$BUNDLE" --max-test-samples "$MAX_TEST" --max-length "$MAX_LENGTH" --mem-freq 63 \
-    --ladder-version "$LADDER_VERSION" --tasks "$LTASK" --rungs "$RUNGS"
+    --ladder-version "$LADDER_VERSION" --tasks "$LTASK" --rungs "$RUNGS" $COT_ARGS
   rc=$?
 else
   $TR --model-path "$CKPT" --out "$OUT" --tokenizer "$TOKENIZER" --max-length "$MAX_LENGTH" \

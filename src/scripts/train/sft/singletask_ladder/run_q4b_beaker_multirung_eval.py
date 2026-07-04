@@ -61,7 +61,7 @@ def variant_from_run_name(run_name: str) -> str:
 
 
 def build_eval_launch_config(
-    *, run_name, task, variant, cluster, step, ckpt, results_dir, prompt_format, ngpu, max_test, max_length, batch_size, priority, ladder_version, xlong, xlong_rungs
+    *, run_name, task, variant, cluster, step, ckpt, results_dir, prompt_format, ngpu, max_test, max_length, batch_size, priority, ladder_version, xlong, xlong_rungs, cot_mode
 ):
     root_dir = get_root_dir(cluster)  # e.g. /weka/oe-training-default/ai2-llm (mounts weka bucket)
     # Eval CODE now ships IN the cloned repo (src/scripts/ctc_eval); the runner runs from the repo root
@@ -74,7 +74,7 @@ def build_eval_launch_config(
         f"RUN={run_name} TASK={task} VARIANT={variant} STEP='{step}' CKPT='{ckpt}' "
         f"EVAL_OUT_DIR='{results_dir}' PROMPT_FORMAT='{prompt_format}' "
         f"MAX_TEST={max_test} MAX_LENGTH={max_length} BATCH_SIZE={batch_size} NGPU={ngpu} "
-        f"LADDER_XLONG={int(xlong)} XLONG_RUNGS='{xlong_rungs}' "
+        f"LADDER_XLONG={int(xlong)} XLONG_RUNGS='{xlong_rungs}' COT_MODE='{cot_mode}' "
         f"LADDER_VERSION={ladder_version} WEKA_LLM={root_dir} bash {runner}"
     )
     cmd = ["bash", "-lc", inner]
@@ -130,6 +130,9 @@ def main():
                          "500 questions/answers and only distractors vary (reads the "
                          "_eval_bundle_eval500_v2 weka bundle). Pass --ladder-version v1 for the "
                          "original independently-generated per-rung files.")
+    ap.add_argument("--cot-mode", choices=["none", "plan"], default="none",
+                    help="docchunk OOLONG only: 'plan' builds the CoT prefill (match a CoT-trained "
+                         "checkpoint); default 'none' keeps the no-CoT eval byte-identical.")
     ap.add_argument("--xlong", action="store_true",
                     help="OPT-IN: also run the ultra-long 64k/128k/256k rungs (contra|nq|outlier). "
                          "Forces bs=1 + raises MAX_LENGTH on-node. Use an 80GB GPU (ai2/jupiter); "
@@ -158,7 +161,7 @@ def main():
             step=args.step, ckpt=args.ckpt, results_dir=args.results_dir, prompt_format=args.prompt_format,
             ngpu=args.ngpu, max_test=args.max_test, max_length=args.max_length,
             batch_size=args.batch_size, priority=args.priority, ladder_version=args.ladder_version,
-            xlong=args.xlong, xlong_rungs=args.xlong_rungs,
+            xlong=args.xlong, xlong_rungs=args.xlong_rungs, cot_mode=args.cot_mode,
         )
         print(f"\n--- [{task}] {lc.name} ---")
         print(f"    cmd: {lc.cmd[-1]}")

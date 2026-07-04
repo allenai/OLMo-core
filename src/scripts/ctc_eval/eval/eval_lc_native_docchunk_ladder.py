@@ -216,6 +216,10 @@ def main():
                     help="chdir here before resolving relative data paths (on-cluster: the weka $BUNDLE, "
                          "so relative data/... base + v1-oolong files resolve).")
     # accepted for launcher parity; docchunk builds its own prefill via segment_prompt_to_chunks.
+    ap.add_argument("--cot-mode", default="none", choices=["none", "plan"],
+                    help="OOLONG CoT mode used to build the prefill prompt. 'none' (default) keeps the "
+                         "no-CoT behavior byte-identical; 'plan' matches a CoT-trained checkpoint so the "
+                         "model can externalize cross-item aggregation into (free/global) generated tokens.")
     ap.add_argument("--prompt-format", default="chat", choices=["chat", "raw", "alpaca"],
                     help="accepted for runner parity; docchunk prefill mirrors the training converter.")
 
@@ -322,7 +326,7 @@ def main():
 
     def build_prefill(raw_example, loadtask, chunk_by, item_regex):
         segs, _ids, _ = segment_prompt_to_chunks(
-            tok, raw_example, loadtask, query_position="both", cot_mode="none",
+            tok, raw_example, loadtask, query_position="both", cot_mode=args.cot_mode,
             chunk_by=chunk_by, item_regex=item_regex, include_answer=False,
             doc_start_id=DOC_START_ID, doc_end_id=DOC_END_ID,
         )
