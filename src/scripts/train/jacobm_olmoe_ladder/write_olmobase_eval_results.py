@@ -26,6 +26,16 @@ DEFAULT_GROUPS = [
     "01KWNAAV94Z28846JBYK29ZH3T",  # normal workspace larger-model eval group
 ]
 CACHE_VERSION = 1
+HIGH_LEVEL_SUITES = [
+    "olmobase:mcqa_stem",
+    "olmobase:mcqa_non_stem",
+    "olmobase:gen",
+    "olmobase:math",
+    "olmobase:easy:qa:rc",
+    "olmobase:easy:qa:bpb",
+    "olmobase:easy:math:bpb",
+    "olmobase:easy:code:bpb",
+]
 
 
 def run_json(cmd: list[str]) -> Any:
@@ -99,6 +109,16 @@ def md_table(headers: list[str], rows: list[list[str]]) -> list[str]:
     lines = ["| " + " | ".join(headers) + " |", "| " + " | ".join(["---"] * len(headers)) + " |"]
     lines.extend("| " + " | ".join(row) + " |" for row in rows)
     return lines
+
+
+def suite_table_rows(suites: list[str], records: list[dict[str, Any]]) -> list[list[str]]:
+    rows = []
+    for suite in suites:
+        metric = next((record["suites"][suite]["metric"] for record in records if suite in record["suites"]), "")
+        if not metric:
+            continue
+        rows.append([suite, metric, direction_for_metric(suite, metric)] + [fmt(record["suites"].get(suite, {}).get("score")) for record in records])
+    return rows
 
 
 def find_result_json(download_dir: Path) -> dict[str, Any] | None:
@@ -257,9 +277,18 @@ def main() -> int:
         "",
         f"Completed result caches live under `{args.cache_dir}`.",
         "",
+    ]
+    high_level_rows = suite_table_rows(HIGH_LEVEL_SUITES, records)
+    if high_level_rows:
+        headers = ["suite", "metric", "direction"] + [record["name"] for record in records]
+        lines.extend(["## High-Level Aggregates", ""])
+        lines.extend(md_table(headers, high_level_rows))
+        lines.append("")
+
+    lines.extend([
         "## Status",
         "",
-    ]
+    ])
     lines.extend(md_table(["model", "status", "workspace", "link", "message"], [[r["name"], r["status"], r["workspace"], f"[beaker]({r['url']})", r.get("message", "")] for r in records]))
     lines.append("")
 
@@ -267,11 +296,7 @@ def main() -> int:
     if suites:
         lines.extend(["## Suite Aggregates", ""])
         headers = ["suite", "metric", "direction"] + [record["name"] for record in records]
-        rows = []
-        for suite in suites:
-            metric = next((record["suites"][suite]["metric"] for record in records if suite in record["suites"]), "")
-            rows.append([suite, metric, direction_for_metric(suite, metric)] + [fmt(record["suites"].get(suite, {}).get("score")) for record in records])
-        lines.extend(md_table(headers, rows))
+        lines.extend(md_table(headers, suite_table_rows(suites, records)))
     else:
         lines.extend(["## Suite Aggregates", "", "No completed OLMoBase result files found yet."])
 

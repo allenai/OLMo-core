@@ -1,10 +1,23 @@
 # OLMoBase Eval Results
 
-Generated: 2026-07-04 04:45 UTC
+Generated: 2026-07-04 04:54 UTC
 
 Values are suite-level aggregates emitted by `olmo-eval`. Higher is better for accuracy/F1/pass-style metrics; lower is better for BPB/loss/perplexity-style metrics. The `direction` column is a heuristic based on suite/metric names, so treat `see metric` rows literally.
 
 Completed result caches live under `/weka/oe-adapt-default/jacobm/olmoe3/OLMo-core/src/scripts/train/jacobm_olmoe_ladder/results/cache/olmobase`.
+
+## High-Level Aggregates
+
+| suite | metric | direction | olmoe3-275m-cx8-baseline-olmobase | olmoe3-275m-cx8-int-deep-olmobase | olmoe3-275m-cx8-int-wide-olmobase | olmoe3-275m-cx8-q3am-olmobase | olmoe3-275m-cx8-q3td-olmobase | olmoe3-480m-cx8-baseline-olmobase | olmoe3-480m-cx8-int-deep-olmobase | olmoe3-480m-cx8-int-wide-olmobase | olmoe3-480m-cx8-q3am-olmobase | olmoe3-480m-cx8-q3td-olmobase | olmoe3-810m-cx8-baseline-olmobase | olmoe3-810m-cx8-q3am-olmobase | olmoe3-810m-cx8-q3td-olmobase | olmoe3-1p2b-cx8-baseline-olmobase | olmoe3-1p2b-cx8-q3am-olmobase | olmoe3-1p2b-cx8-q3td-olmobase |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| olmobase:mcqa_stem | primary_score:average | higher | 0.24197 | 0.25321 |  | 0.25237 | 0.24018 | 0.24855 |  | 0.25207 | 0.25479 |  | 0.25859 | 0.24638 | 0.23549 | 0.25779 | 0.28004 | 0.42065 |
+| olmobase:mcqa_non_stem | primary_score:average | higher | 0.28125 | 0.27677 |  | 0.27217 | 0.27657 | 0.27379 |  | 0.27359 | 0.27550 |  | 0.27120 | 0.27381 | 0.27766 | 0.28528 | 0.29095 | 0.41932 |
+| olmobase:gen | primary_score:average | higher | 0.34705 | 0.37450 |  | 0.34279 | 0.37451 | 0.43339 |  | 0.45025 | 0.41537 |  | 0.50610 | 0.51870 | 0.51889 | 0.55182 | 0.57006 | 0.57200 |
+| olmobase:math | primary_score:average | higher | 0.01417 | 0.01564 |  | 0.01586 | 0.01670 | 0.01997 |  | 0.02120 | 0.02104 |  | 0.02979 | 0.03030 | 0.03169 | 0.04853 | 0.05434 | 0.06234 |
+| olmobase:easy:qa:rc | primary_score:average | higher | 0.48352 | 0.50487 |  | 0.49771 | 0.50462 | 0.53942 |  | 0.55333 | 0.53874 |  | 0.58986 | 0.59611 | 0.60040 | 0.62612 | 0.63658 | 0.64473 |
+| olmobase:easy:qa:bpb | primary_score:average | lower | 1.0800 | 1.0432 |  | 1.0693 | 1.0545 | 0.98870 |  | 0.95864 | 0.97621 |  | 0.92123 | 0.90231 | 0.90398 | 0.87255 | 0.85351 | 0.85149 |
+| olmobase:easy:math:bpb | primary_score:average | lower | 0.78918 | 0.75207 |  | 0.77458 | 0.76818 | 0.70521 |  | 0.67488 | 0.69955 |  | 0.64066 | 0.62896 | 0.62314 | 0.59977 | 0.58820 | 0.58491 |
+| olmobase:easy:code:bpb | primary_score:average | lower | 0.92581 | 0.93082 |  | 0.93744 | 0.93331 | 0.88722 |  | 0.87528 | 0.91262 |  | 0.87301 | 0.89655 | 0.88933 | 0.87110 | 0.89175 | 0.87557 |
 
 ## Status
 
