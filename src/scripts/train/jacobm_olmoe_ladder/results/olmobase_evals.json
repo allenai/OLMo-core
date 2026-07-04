@@ -1,5 +1,5 @@
 {
-  "generated_at_utc": "2026-07-04T04:54:30.844640+00:00",
+  "generated_at_utc": "2026-07-04T05:29:34.622950+00:00",
   "records": [
     {
       "experiment_id": "01KWNC2HEFG1P706WE2MQN26AH",
@@ -6097,9 +6097,9 @@
     },
     {
       "experiment_id": "01KWNC5DAJ9EACPHRME4EFDR4R",
-      "message": "",
+      "message": "finalized; result artifact not cached yet",
       "name": "olmoe3-480m-cx8-int-deep-olmobase",
-      "status": "started",
+      "status": "finalized",
       "suites": {},
       "url": "https://beaker.org/ex/01KWNC5DAJ9EACPHRME4EFDR4R",
       "workspace": "ai2/olmo-instruct"
@@ -8540,9 +8540,9 @@
     },
     {
       "experiment_id": "01KWNC44G1NF1GW32JXYJAEGGH",
-      "message": "",
+      "message": "finalized; result artifact not cached yet",
       "name": "olmoe3-480m-cx8-q3td-olmobase",
-      "status": "started",
+      "status": "finalized",
       "suites": {},
       "url": "https://beaker.org/ex/01KWNC44G1NF1GW32JXYJAEGGH",
       "workspace": "ai2/olmo-instruct"

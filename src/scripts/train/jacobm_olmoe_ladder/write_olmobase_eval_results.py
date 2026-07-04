@@ -27,14 +27,14 @@ DEFAULT_GROUPS = [
 ]
 CACHE_VERSION = 1
 HIGH_LEVEL_SUITES = [
-    "olmobase:mcqa_stem",
-    "olmobase:mcqa_non_stem",
-    "olmobase:gen",
-    "olmobase:math",
-    "olmobase:easy:qa:rc",
-    "olmobase:easy:qa:bpb",
-    "olmobase:easy:math:bpb",
-    "olmobase:easy:code:bpb",
+    ("olmobase:mcqa_stem", "mcqa_stem"),
+    ("olmobase:mcqa_non_stem", "mcqa_non_stem"),
+    ("olmobase:gen", "gen"),
+    ("olmobase:math", "math"),
+    ("olmobase:easy:qa:rc", "easy_qa_rc"),
+    ("olmobase:easy:qa:bpb", "easy_qa_bpb"),
+    ("olmobase:easy:math:bpb", "easy_math_bpb"),
+    ("olmobase:easy:code:bpb", "easy_code_bpb"),
 ]
 
 
@@ -119,6 +119,24 @@ def suite_table_rows(suites: list[str], records: list[dict[str, Any]]) -> list[l
             continue
         rows.append([suite, metric, direction_for_metric(suite, metric)] + [fmt(record["suites"].get(suite, {}).get("score")) for record in records])
     return rows
+
+
+def high_level_table(records: list[dict[str, Any]]) -> tuple[list[str], list[list[str]]]:
+    headers = ["model"]
+    for suite, label in HIGH_LEVEL_SUITES:
+        metric = next((record["suites"][suite]["metric"] for record in records if suite in record["suites"]), "")
+        direction = direction_for_metric(suite, metric) if metric else ""
+        arrow = "down" if direction == "lower" else "up" if direction == "higher" else ""
+        headers.append(f"{label} {arrow}".strip())
+
+    rows = []
+    for record in records:
+        values = []
+        for suite, _label in HIGH_LEVEL_SUITES:
+            values.append(fmt(record["suites"].get(suite, {}).get("score")))
+        if any(values):
+            rows.append([record["name"], *values])
+    return headers, rows
 
 
 def find_result_json(download_dir: Path) -> dict[str, Any] | None:
@@ -278,11 +296,10 @@ def main() -> int:
         f"Completed result caches live under `{args.cache_dir}`.",
         "",
     ]
-    high_level_rows = suite_table_rows(HIGH_LEVEL_SUITES, records)
+    high_level_headers, high_level_rows = high_level_table(records)
     if high_level_rows:
-        headers = ["suite", "metric", "direction"] + [record["name"] for record in records]
         lines.extend(["## High-Level Aggregates", ""])
-        lines.extend(md_table(headers, high_level_rows))
+        lines.extend(md_table(high_level_headers, high_level_rows))
         lines.append("")
 
     lines.extend([
