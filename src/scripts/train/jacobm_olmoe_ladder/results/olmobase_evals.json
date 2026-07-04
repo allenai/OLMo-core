@@ -1,5 +1,5 @@
 {
-  "generated_at_utc": "2026-07-04T05:29:34.622950+00:00",
+  "generated_at_utc": "2026-07-04T05:40:32.400056+00:00",
   "records": [
     {
       "experiment_id": "01KWNC2HEFG1P706WE2MQN26AH",
@@ -2437,9 +2437,9 @@
     },
     {
       "experiment_id": "01KWNC4EY14WA5ATZA2KSWJFVJ",
-      "message": "",
+      "message": "finalized; result artifact not cached yet",
       "name": "olmoe3-275m-cx8-int-wide-olmobase",
-      "status": "started",
+      "status": "finalized",
       "suites": {},
       "url": "https://beaker.org/ex/01KWNC4EY14WA5ATZA2KSWJFVJ",
       "workspace": "ai2/olmo-instruct"

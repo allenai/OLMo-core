@@ -1,6 +1,6 @@
 # OLMoBase Eval Results
 
-Generated: 2026-07-04 05:29 UTC
+Generated: 2026-07-04 05:40 UTC
 
 Values are suite-level aggregates emitted by `olmo-eval`. Higher is better for accuracy/F1/pass-style metrics; lower is better for BPB/loss/perplexity-style metrics. The `direction` column is a heuristic based on suite/metric names, so treat `see metric` rows literally.
 
@@ -8,21 +8,21 @@ Completed result caches live under `/weka/oe-adapt-default/jacobm/olmoe3/OLMo-co
 
 ## High-Level Aggregates
 
-| model | mcqa_stem up | mcqa_non_stem up | gen up | math up | easy_qa_rc up | easy_qa_bpb down | easy_math_bpb down | easy_code_bpb down |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| olmoe3-275m-cx8-baseline-olmobase | 0.24197 | 0.28125 | 0.34705 | 0.01417 | 0.48352 | 1.0800 | 0.78918 | 0.92581 |
-| olmoe3-275m-cx8-int-deep-olmobase | 0.25321 | 0.27677 | 0.37450 | 0.01564 | 0.50487 | 1.0432 | 0.75207 | 0.93082 |
-| olmoe3-275m-cx8-q3am-olmobase | 0.25237 | 0.27217 | 0.34279 | 0.01586 | 0.49771 | 1.0693 | 0.77458 | 0.93744 |
-| olmoe3-275m-cx8-q3td-olmobase | 0.24018 | 0.27657 | 0.37451 | 0.01670 | 0.50462 | 1.0545 | 0.76818 | 0.93331 |
-| olmoe3-480m-cx8-baseline-olmobase | 0.24855 | 0.27379 | 0.43339 | 0.01997 | 0.53942 | 0.98870 | 0.70521 | 0.88722 |
-| olmoe3-480m-cx8-int-wide-olmobase | 0.25207 | 0.27359 | 0.45025 | 0.02120 | 0.55333 | 0.95864 | 0.67488 | 0.87528 |
-| olmoe3-480m-cx8-q3am-olmobase | 0.25479 | 0.27550 | 0.41537 | 0.02104 | 0.53874 | 0.97621 | 0.69955 | 0.91262 |
-| olmoe3-810m-cx8-baseline-olmobase | 0.25859 | 0.27120 | 0.50610 | 0.02979 | 0.58986 | 0.92123 | 0.64066 | 0.87301 |
-| olmoe3-810m-cx8-q3am-olmobase | 0.24638 | 0.27381 | 0.51870 | 0.03030 | 0.59611 | 0.90231 | 0.62896 | 0.89655 |
-| olmoe3-810m-cx8-q3td-olmobase | 0.23549 | 0.27766 | 0.51889 | 0.03169 | 0.60040 | 0.90398 | 0.62314 | 0.88933 |
-| olmoe3-1p2b-cx8-baseline-olmobase | 0.25779 | 0.28528 | 0.55182 | 0.04853 | 0.62612 | 0.87255 | 0.59977 | 0.87110 |
-| olmoe3-1p2b-cx8-q3am-olmobase | 0.28004 | 0.29095 | 0.57006 | 0.05434 | 0.63658 | 0.85351 | 0.58820 | 0.89175 |
-| olmoe3-1p2b-cx8-q3td-olmobase | 0.42065 | 0.41932 | 0.57200 | 0.06234 | 0.64473 | 0.85149 | 0.58491 | 0.87557 |
+| size | intervention | mcqa_stem up | mcqa_non_stem up | gen up | math up | easy_qa_rc up | easy_qa_bpb down | easy_math_bpb down | easy_code_bpb down |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 275M | baseline | 0.24197 | 0.28125 | 0.34705 | 0.01417 | 0.48352 | 1.0800 | 0.78918 | 0.92581 |
+| 275M | integration 1 deep | 0.25321 | 0.27677 | 0.37450 | 0.01564 | 0.50487 | 1.0432 | 0.75207 | 0.93082 |
+| 275M | qwen-like 4.5d | 0.25237 | 0.27217 | 0.34279 | 0.01586 | 0.49771 | 1.0693 | 0.77458 | 0.93744 |
+| 275M | qwen-like 3.0d | 0.24018 | 0.27657 | 0.37451 | 0.01670 | 0.50462 | 1.0545 | 0.76818 | 0.93331 |
+| 480M | baseline | 0.24855 | 0.27379 | 0.43339 | 0.01997 | 0.53942 | 0.98870 | 0.70521 | 0.88722 |
+| 480M | integration 1 wide | 0.25207 | 0.27359 | 0.45025 | 0.02120 | 0.55333 | 0.95864 | 0.67488 | 0.87528 |
+| 480M | qwen-like 4.5d | 0.25479 | 0.27550 | 0.41537 | 0.02104 | 0.53874 | 0.97621 | 0.69955 | 0.91262 |
+| 810M | baseline | 0.25859 | 0.27120 | 0.50610 | 0.02979 | 0.58986 | 0.92123 | 0.64066 | 0.87301 |
+| 810M | qwen-like 4.5d | 0.24638 | 0.27381 | 0.51870 | 0.03030 | 0.59611 | 0.90231 | 0.62896 | 0.89655 |
+| 810M | qwen-like 3.0d | 0.23549 | 0.27766 | 0.51889 | 0.03169 | 0.60040 | 0.90398 | 0.62314 | 0.88933 |
+| 1.2B | baseline | 0.25779 | 0.28528 | 0.55182 | 0.04853 | 0.62612 | 0.87255 | 0.59977 | 0.87110 |
+| 1.2B | qwen-like 4.5d | 0.28004 | 0.29095 | 0.57006 | 0.05434 | 0.63658 | 0.85351 | 0.58820 | 0.89175 |
+| 1.2B | qwen-like 3.0d | 0.42065 | 0.41932 | 0.57200 | 0.06234 | 0.64473 | 0.85149 | 0.58491 | 0.87557 |
 
 ## Status
 
@@ -30,7 +30,7 @@ Completed result caches live under `/weka/oe-adapt-default/jacobm/olmoe3/OLMo-co
 | --- | --- | --- | --- | --- |
 | olmoe3-275m-cx8-baseline-olmobase | finalized | ai2/olmo-instruct | [beaker](https://beaker.org/ex/01KWNC2HEFG1P706WE2MQN26AH) |  |
 | olmoe3-275m-cx8-int-deep-olmobase | finalized | ai2/olmo-instruct | [beaker](https://beaker.org/ex/01KWNC53DAXCRFM4A07J8QFMA4) |  |
-| olmoe3-275m-cx8-int-wide-olmobase | started | ai2/olmo-instruct | [beaker](https://beaker.org/ex/01KWNC4EY14WA5ATZA2KSWJFVJ) |  |
+| olmoe3-275m-cx8-int-wide-olmobase | finalized | ai2/olmo-instruct | [beaker](https://beaker.org/ex/01KWNC4EY14WA5ATZA2KSWJFVJ) | finalized; result artifact not cached yet |
 | olmoe3-275m-cx8-q3am-olmobase | finalized | ai2/olmo-instruct | [beaker](https://beaker.org/ex/01KWNC35WC375QGJ1KDZ0X64ES) |  |
 | olmoe3-275m-cx8-q3td-olmobase | finalized | ai2/olmo-instruct | [beaker](https://beaker.org/ex/01KWNC3SSSR77GFQNZFEYFKFG9) |  |
 | olmoe3-480m-cx8-baseline-olmobase | finalized | ai2/olmo-instruct | [beaker](https://beaker.org/ex/01KWNC2VJ296NADBKAAES8Q052) |  |

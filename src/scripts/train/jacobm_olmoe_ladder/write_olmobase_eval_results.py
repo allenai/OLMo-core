@@ -121,8 +121,43 @@ def suite_table_rows(suites: list[str], records: list[dict[str, Any]]) -> list[l
     return rows
 
 
+def display_size(name: str) -> str:
+    match = re.search(r"(?:^|-)(275m|480m|810m|1p2b)(?:-|$)", name)
+    if not match:
+        return ""
+    return {"275m": "275M", "480m": "480M", "810m": "810M", "1p2b": "1.2B"}[match.group(1)]
+
+
+def display_intervention(name: str) -> str:
+    labels = (
+        ("baseline", "baseline"),
+        ("int-wide", "integration 1 wide"),
+        ("intw256e8k", "integration 1 wide"),
+        ("int-deep", "integration 1 deep"),
+        ("intd256e8k", "integration 1 deep"),
+        ("q3am", "qwen-like 4.5d"),
+        ("q3td", "qwen-like 3.0d"),
+        ("se0m9", "shared expert"),
+        ("sp192e4k", "sparsity 192E/top4"),
+        ("sp96e4k", "sparsity 96E/top4"),
+        ("eg96e8k", "granularity 96E/top8"),
+        ("eg24e2k", "granularity 24E/top2"),
+        ("dense", "dense schedule"),
+    )
+    for token, label in labels:
+        if token in name:
+            return label
+    cleaned = normalize_name(name)
+    cleaned = re.sub(r"^olmoe3-", "", cleaned)
+    cleaned = re.sub(r"-olmobase$", "", cleaned)
+    cleaned = re.sub(r"(?:^|-)(275m|480m|810m|1p2b)(?:-|$)", "-", cleaned)
+    cleaned = re.sub(r"-?cx\d+", "", cleaned)
+    cleaned = cleaned.strip("-")
+    return cleaned or name
+
+
 def high_level_table(records: list[dict[str, Any]]) -> tuple[list[str], list[list[str]]]:
-    headers = ["model"]
+    headers = ["size", "intervention"]
     for suite, label in HIGH_LEVEL_SUITES:
         metric = next((record["suites"][suite]["metric"] for record in records if suite in record["suites"]), "")
         direction = direction_for_metric(suite, metric) if metric else ""
@@ -135,7 +170,7 @@ def high_level_table(records: list[dict[str, Any]]) -> tuple[list[str], list[lis
         for suite, _label in HIGH_LEVEL_SUITES:
             values.append(fmt(record["suites"].get(suite, {}).get("score")))
         if any(values):
-            rows.append([record["name"], *values])
+            rows.append([display_size(record["name"]), display_intervention(record["name"]), *values])
     return headers, rows
 
 
