@@ -1,11 +1,11 @@
 # In-Loop Eval Results
 
-Generated: 2026-07-04 04:27 UTC
+Generated: 2026-07-04 06:06 UTC
 
 Values are the latest W&B summary values for each selected run. Higher is better for accuracy/F1/pass-style metrics; lower is better for BPB/loss/perplexity-style metrics. Values marked `see metric` need manual interpretation.
 
 Selected states: `finished`. Cached finished-run summaries under `/weka/oe-adapt-default/jacobm/olmoe3/OLMo-core/src/scripts/train/jacobm_olmoe_ladder/results/cache/wandb_summaries`.
-Runs with no matching eval metrics skipped: 44.
+Runs with no matching eval metrics skipped: 46.
 
 ## 1p2b Cx1
 
