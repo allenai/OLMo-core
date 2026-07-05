@@ -91,8 +91,15 @@ def main():
     for name, path in ckpts:
         cmd += ["--checkpoint", path, "--name", name]
 
+    # GemmaLike checkpoint configs deserialize model classes from the ladder
+    # module (src/scripts/train/ladder/gemma_like_ladder.py), so it must be importable.
+    ladder_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "train", "ladder"))
+    env = dict(os.environ)
+    env["PYTHONPATH"] = ladder_dir + os.pathsep + env.get("PYTHONPATH", "")
+
     print("[paper_eval] launching:", " ".join(cmd[:6]), "... (+%d checkpoints)" % len(ckpts), flush=True)
-    sys.exit(subprocess.call(cmd))
+    print("[paper_eval] PYTHONPATH+=", ladder_dir, flush=True)
+    sys.exit(subprocess.call(cmd, env=env))
 
 
 if __name__ == "__main__":
