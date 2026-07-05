@@ -85,7 +85,18 @@ GLOBAL_BATCH_SIZE = WORLD_SIZE * SEQUENCE_LENGTH  # 8 * 8192 -> 8 instances/step
 
 
 def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
-    task_root = f"{DOCCHUNK_DATA_ROOT}/oolong_dense"
+    # Pick the OOLONG shard from the RUN NAME (not an env var): the internal-experiment `launch`
+    # RE-BUILDS this config ON THE NODE, where a locally-exported DOCCHUNK_DATA_ROOT is NOT set, so
+    # an env override silently falls back to the default. The run name IS shipped, so key off it.
+    _CR = "/weka/oe-training-default/ai2-llm/checkpoints/prasanns"
+    _rn = cli_context.run_name
+    if "nocotmshard" in _rn:
+        _data_root = f"{_CR}/single_task_docchunk_nocotm"   # matched no-CoT control (same docs, answer-only labels)
+    elif "cotshard" in _rn:
+        _data_root = f"{_CR}/single_task_docchunk_cot"       # CoT (plan) shard
+    else:
+        _data_root = DOCCHUNK_DATA_ROOT
+    task_root = f"{_data_root}/oolong_dense"
     run_name_with_ts = (
         f"{cli_context.run_name}-{datetime.now().astimezone().strftime('%Y%m%dT%H%M%S%z')}"
     )
