@@ -8,7 +8,34 @@ too slow or flaky from an interactive CPU-only session.
 Use a direct Beaker spec with the Weka repo mounted, rather than a Gantry clone,
 so local scripts and generated files are exactly the ones in this workspace.
 
-Current test job:
+Prefer the narrowest plotter that covers the runs that changed. For example, if
+only integration-test runs have finished since the last refresh, run the
+integration plotter directly instead of `plot_all_experiments.sh`. This avoids
+the legacy baseline plotter path, which can still use full-history scans for
+uncached finished baseline runs.
+
+Current successful integration-only tail refresh:
+
+- Experiment: `olmoe3-integration-plot-tail-refresh`
+- Beaker: `https://beaker.org/ex/01KWV2Z8ZNHKJQBJ7K2QYS3CEM`
+- Workspace: `ai2/OLMo-3-moe-experiments`
+- Cluster: `ai2/jupiter`
+- Resources: 1 GPU, urgent priority
+- Repo path: `/weka/oe-adapt-default/jacobm/olmoe3/OLMo-core`
+- Python: image system Python, with plotting deps already available
+
+Command:
+
+```bash
+SKIP_UNCACHED_FINISHED_HISTORY=0 \
+  python src/scripts/train/jacobm_olmoe_ladder/experiments/integration/plot_integration.py
+```
+
+`plot_integration.py` calls `scan_history_cached(..., tail_window_tokens=250M)`,
+so uncached finished runs are fetched through the tail-history path. Existing
+valid caches are still reused.
+
+The previous broad test job was:
 
 - Experiment: `olmoe3-plot-refresh-jupiter-weka-system-python`
 - Beaker: `https://beaker.org/ex/01KWV1CQM54AAHA7HK5QYVS682`
@@ -32,9 +59,9 @@ SKIP_UNCACHED_FINISHED_HISTORY=0 REFRESH_STALE_CACHE=0 INCLUDE_RUNNING=0 \
   src/scripts/train/jacobm_olmoe_ladder/experiments/plot_all_experiments.sh
 ```
 
-The unguarded refresh uses the plotters' tail-history paths for completed runs
-where available, but still allows uncached finished tails to be fetched. This is
-intended for long-running batch refreshes, not quick interactive updates.
+The broad refresh uses the experiment plotters' tail-history paths for completed
+runs where available, but also runs the baseline plotter. Use it only when
+several plot families need to change.
 
 ## HF Conversion
 
