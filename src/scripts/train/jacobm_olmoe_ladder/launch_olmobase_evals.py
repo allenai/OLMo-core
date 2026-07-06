@@ -137,8 +137,10 @@ def main() -> None:
         out = Path(target["hf_checkpoint"])
         if not (out / "config.json").exists():
             raise FileNotFoundError(out / "config.json")
-        if not (out / "model.safetensors").exists():
-            raise FileNotFoundError(out / "model.safetensors")
+        has_single_file = (out / "model.safetensors").exists()
+        has_sharded_index = (out / "model.safetensors.index.json").exists()
+        if not (has_single_file or has_sharded_index):
+            raise FileNotFoundError(f"{out}/model.safetensors or model.safetensors.index.json")
 
         cmd = launch_command(target, dry_run=not args.launch)
         print("+", " ".join(cmd))
