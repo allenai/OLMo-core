@@ -20,6 +20,18 @@ class SimpleModel(nn.Module):
         return self.fc2(torch.relu(self.fc1(x)))
 
 
+class SelectiveModel(nn.Module):
+    """Two independent branches; only one is used per forward (an imbalanced-routing stand-in)."""
+
+    def __init__(self, d: int):
+        super().__init__()
+        self.fc_a = nn.Linear(d, d)
+        self.fc_b = nn.Linear(d, d)
+
+    def forward(self, x: torch.Tensor, use_a: bool = True) -> torch.Tensor:
+        return self.fc_a(x) if use_a else self.fc_b(x)
+
+
 def _device_for_backend() -> torch.device:
     if dist.get_backend() == "nccl":
         device = torch.device(f"cuda:{dist.get_rank()}")
@@ -177,6 +189,36 @@ def _run_fp32_grad_accumulation(d_in: int, d_hidden: int, d_out: int):
         torch.testing.assert_close(main_grad, g_ref.to(torch.float32), rtol=1e-5, atol=1e-6)
 
 
+def _run_no_sync_skipped_param_grad_preserved(d: int):
+    device = _device_for_backend()
+    rank, world_size = dist.get_rank(), dist.get_world_size()
+
+    seed_all(0)
+    model = SelectiveModel(d).to(device)
+    reference = copy.deepcopy(model)
+    ddp = MultiGroupDistributedDataParallel(model, init_sync=False)
+
+    torch.manual_seed(100 + rank)
+    x_a = torch.randn(4, d, device=device)
+    x_b = torch.randn(4, d, device=device)
+
+    # fc_a receives a grad only in the unsynced accumulation micro-batch; fc_b only in the final
+    # synced one. fc_a is therefore never marked ready in the synced pass — its accumulated grad
+    # must survive finalize rather than be zeroed.
+    with ddp.no_sync():
+        ddp(x_a, use_a=True).pow(2).mean().backward()
+    ddp(x_b, use_a=False).pow(2).mean().backward()
+    ddp.finalize_grad_reduce()
+
+    reference(x_a, use_a=True).pow(2).mean().backward()
+    reference(x_b, use_a=False).pow(2).mean().backward()
+    expected = _reference_grads(reference, world_size)
+
+    for (name, p), g_ref in zip(ddp.module.named_parameters(), expected):
+        assert p.grad is not None, f"missing grad for {name}"
+        torch.testing.assert_close(p.grad, g_ref, rtol=1e-5, atol=1e-6)
+
+
 @pytest.mark.parametrize("backend", BACKENDS)
 def test_grad_parity(backend):
     run_distributed_test(
@@ -202,6 +244,15 @@ def test_fp32_grad_accumulation(backend):
         _run_fp32_grad_accumulation,
         backend=backend,
         func_args=(16, 32, 8),
+    )
+
+
+@pytest.mark.parametrize("backend", BACKENDS)
+def test_no_sync_skipped_param_grad_preserved(backend):
+    run_distributed_test(
+        _run_no_sync_skipped_param_grad_preserved,
+        backend=backend,
+        func_args=(16,),
     )
 
 
