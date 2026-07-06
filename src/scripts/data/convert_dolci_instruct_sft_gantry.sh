@@ -20,7 +20,6 @@
 set -euo pipefail
 
 OUT_DIR="/weka/oe-training-default/amandab/dolci-instruct-sft/qwen3"
-EXTRA_ARGS=("$@")
 if [[ "$*" == *"--out-dir"* ]]; then
   OUT_DIR=""  # caller supplied their own --out-dir; don't inject a default
 fi
@@ -54,4 +53,4 @@ gantry run \
   --install "pip install datasets transformers numpy tqdm jinja2 'huggingface_hub>=0.24' hf_transfer" \
   --yes \
   -- python src/scripts/data/convert_dolci_instruct_sft.py \
-  ${OUT_DIR:+--out-dir "$OUT_DIR"} "${EXTRA_ARGS[@]}"
+  ${OUT_DIR:+--out-dir "$OUT_DIR"} "$@"
