@@ -1,5 +1,3 @@
-# mypy: allow-untyped-defs
-
 import logging
 import os
 from collections import OrderedDict
@@ -76,15 +74,15 @@ class MultiGroupDistributedDataParallel(Module):
 
     def __init__(
         self,
-        module,
-        dim=0,
-        init_sync=True,
-        process_group=None,
-        bucket_cap_mb=None,
-        param_process_group_fn=None,
-        accumulate_grads_in_fp32=False,
-        reduce_grads_in_fp32=False,
-    ):
+        module: Module,
+        dim: int = 0,
+        init_sync: bool = True,
+        process_group: Any = None,
+        bucket_cap_mb: Optional[float] = None,
+        param_process_group_fn: Optional[Callable[[str, torch.nn.Parameter], Any]] = None,
+        accumulate_grads_in_fp32: bool = False,
+        reduce_grads_in_fp32: bool = False,
+    ) -> None:
         super().__init__()
 
         if process_group is None:
