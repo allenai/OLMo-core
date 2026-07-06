@@ -24,8 +24,11 @@ Two emitters consume those segments:
   the periodic ``is_mem`` landmark pattern stays valid and chunk boundaries stay block-consistent.
 """
 
+import logging
 import re
 from typing import List, NamedTuple, Optional, Pattern, Tuple
+
+log = logging.getLogger(__name__)
 
 __all__ = [
     "ChunkSegment",
@@ -98,17 +101,36 @@ def _wrap_documents(text: str, documents: List[dict], start_str: str, end_str: s
     (multi-document tasks: absence / retrieval / contradiction / ...)."""
     out = text
     cursor = 0
+    n_docs = 0
+    n_unmatched = 0
     for d in documents:
         body = str(d.get("text", "")).strip()
         if not body:
             continue
+        n_docs += 1
         idx = out.find(body, cursor)
         if idx == -1:
             idx = out.find(body)
         if idx == -1:
-            continue  # formatting altered the text -> stays FREE
+            # Formatting altered the text so it no longer occurs verbatim -> this document stays FREE
+            # (attends everything), silently breaking chunk isolation for it. Surface it so the loss of
+            # isolation is visible rather than silent.
+            n_unmatched += 1
+            log.warning(
+                "document-chunk wrapping: document text not found verbatim in the rendered prompt; "
+                "it stays FREE (unisolated). First 80 chars: %r",
+                body[:80],
+            )
+            continue
         out = out[:idx] + start_str + body + end_str + out[idx + len(body) :]
         cursor = idx + len(start_str) + len(body) + len(end_str)
+    if n_unmatched:
+        log.warning(
+            "document-chunk wrapping: %d/%d documents could not be wrapped (stay FREE / unisolated) "
+            "for this example.",
+            n_unmatched,
+            n_docs,
+        )
     return out
 
 

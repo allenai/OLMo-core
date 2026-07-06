@@ -89,14 +89,17 @@ NONSELECTED_LANDMARK_MASS = 0.1  # alpha for compressive attention
 
 # Context parallel (Ulysses) degree. Qwen3-4B: n_heads=32, n_kv_heads=8 -> CP=8 splits both cleanly.
 CP_DEGREE = 8
-NUM_NODES = 1  # 2 nodes x 8 GPUs = 16 GPUs; cp_degree=8 -> NUM_NODES DP replicas
+NUM_NODES = 2  # 2 nodes x 8 GPUs = 16 GPUs; cp_degree=8 -> NUM_NODES DP replicas (2 windows/step)
 
 # ---------------------------------------------------------------------------
 # Data (weka) -- ladder40k (rungs up to 32k context; max doc ~40k tokens).
 # ---------------------------------------------------------------------------
-DATA_ROOT = "/weka/oe-training-default/ai2-llm/checkpoints/prasanns/cptmix_data_ladder40k"
+# Updated data: single_task_ladders_v2 (same 5-task shards as dense mix), tokenized to 40960 so the
+# landmark-space window is fully fed. (Was cptmix_data_ladder40k.)
+DATA_ROOT = "/weka/oe-training-default/ai2-llm/checkpoints/prasanns/single_task_ladders_v2"
 CONTRA_DATA_ROOT = f"{DATA_ROOT}/contradiction"
-NQ_DATA_ROOT = f"{DATA_ROOT}/nq"
+# nq: p10 pipeline (hard-neg ~10% + CE filter), NOT the 98%-hard v2/nq (standing directive).
+NQ_DATA_ROOT = "/weka/oe-training-default/ai2-llm/checkpoints/prasanns/single_task_ladders_p10/nq"
 OOLONG_DATA_ROOT = f"{DATA_ROOT}/oolong"
 RERANK_DATA_ROOT = f"{DATA_ROOT}/rerank"
 OUTLIER_DATA_ROOT = f"{DATA_ROOT}/outlier"
@@ -129,8 +132,10 @@ CONTRA_FRAC = max(0.0, 1.0 - CPT_FRAC - (NQ_FRAC + OOLONG_FRAC + RERANK_FRAC + O
 # Optimization / budget
 # ---------------------------------------------------------------------------
 LR = 1e-5
-TARGET_STEPS = 1465
-GLOBAL_BATCH_SIZE = NUM_NODES * SEQUENCE_LENGTH  # one window per CP=8 DP replica/step (grad-accum 1)
+# ~700M training tokens: 8550 steps x 2 DP windows x 40960 = 700M tokens (~39% of the 1.81B SFT mix),
+# ~5.8h on jupiter H100 (~2.45s/step). Token-matched to the dense run.
+TARGET_STEPS = 8550
+GLOBAL_BATCH_SIZE = NUM_NODES * SEQUENCE_LENGTH  # NUM_NODES windows per step (CP=8 DP replicas); grad-accum 1
 TARGET_TOKENS = GLOBAL_BATCH_SIZE * TARGET_STEPS
 MAX_STEPS = max(1, round(TARGET_TOKENS / GLOBAL_BATCH_SIZE))
 

@@ -23,6 +23,13 @@ class LongDocStrategy(StrEnum):
     fragmented docs.
     """
 
+    exclude = "exclude"
+    """
+    Long docs are dropped entirely (neither truncated nor fragmented). Useful when a truncated doc
+    would lose the part that carries the training signal (e.g. an SFT answer at the end of the
+    sequence), which would otherwise yield a fully-masked, NaN-loss instance.
+    """
+
 
 class NumpyDatasetDType(StrEnum):
     """
