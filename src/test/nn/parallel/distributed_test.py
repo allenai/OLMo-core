@@ -230,6 +230,10 @@ def test_grad_parity(backend):
 
 @pytest.mark.parametrize("backend", BACKENDS)
 def test_multi_group_grad_parity(backend):
+    # world_size=4 (two subgroups). The gloo variant runs as 4 CPU processes; the NCCL variant needs
+    # 4 GPUs, so skip it when fewer are available (the CI GPU box has 2).
+    if "nccl" in backend and torch.cuda.device_count() < 4:
+        pytest.skip("NCCL multi-group test requires 4 GPUs")
     run_distributed_test(
         _run_multi_group_grad_parity,
         world_size=4,
