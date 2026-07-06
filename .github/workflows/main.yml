@@ -238,19 +238,10 @@ jobs:
           # (src/test/nn/moe/v2) also run here since they need TransformerEngine + the same
           # custom kernels, which the torch 2.9 image lacks.
           - name: Test MoE kernels (GPU, torch 2.10)
-            image: tianhuat/olmo-core-torch210-2404-cu128
+            image: akshitab/olmo-core-tch2100cu130-2026-07-03 #tianhuat/olmo-core-torch210-2404-cu128
             gpus: 2
-            # TEMP: this image's torch is a CUDA-13 build the Beaker CUDA 12.8 driver cannot
-            # initialize, so the kernel tests silently skip. Reinstall the cu128 torch 2.10
-            # build (still provides torch.nn.functional.grouped_mm) to match the driver. The
-            # kernel tests don't import torchvision/torchaudio, so pin only torch and leave
-            # those untouched (avoids an ABI mismatch). Remove once the image ships cu128 torch.
             run: |
-              bash -ec '
-                pip install --force-reinstall --index-url https://download.pytorch.org/whl/cu128 torch==2.10.0
-                python -c "import torch; assert torch.cuda.is_available()"
-                pytest -v --color=yes --durations=3 -m gpu src/test/kernels/ src/test/nn/moe/v2/
-              '
+              pytest -v --color=yes --durations=3 -m gpu src/test/kernels/ src/test/nn/moe/v2/
     steps:
       - uses: actions/checkout@v5
         with:
