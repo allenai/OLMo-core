@@ -675,6 +675,13 @@ class MultiGroupDistributedDataParallel(Module):
                     for param in self._module_parameters:
                         if param.requires_grad:
                             param.grad = None
+            # Ignored params aren't in the reducer buckets; match Module.zero_grad(set_to_none=False)
+            # by zeroing their existing grads (they're trained outside this reducer).
+            if self.parameters_to_ignore:
+                for name, param in self.module.named_parameters():
+                    if name in self.parameters_to_ignore and param.grad is not None:
+                        param.grad.detach_()
+                        param.grad.zero_()
             self._forwards_since_finalize = 0
             self._zero_module_logical_grads(set_to_none=False)
             return
