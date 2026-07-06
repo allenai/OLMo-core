@@ -179,6 +179,15 @@ class MultiGroupDistributedDataParallel(Module):
         # This wrapper reduces parameter *gradients* only; module buffers are left untouched and are
         # not synchronized across ranks (as with torch DDP's broadcast_buffers=False). Non-gradient
         # state such as MoE router score_bias or RoPE caches is therefore fine on a buffered module.
+        #
+        # TODO(revisit): we previously rejected any buffered module outright (guard below). Removed
+        # so MoE models (router score_bias buffer) can be wrapped. Revisit whether any buffer needs
+        # cross-rank consistency; if so, this wrapper should broadcast/handle it rather than ignore.
+        #   named_buffers = list(self.module.named_buffers())
+        #   if len(named_buffers) > 0:
+        #       raise NotImplementedError(
+        #           "DDP with param_process_group_fn does not support buffers yet."
+        #       )
 
         for name, param in self.module.named_parameters():
             if name in self.parameters_to_ignore:
