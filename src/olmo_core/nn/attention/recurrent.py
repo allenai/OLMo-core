@@ -17,6 +17,7 @@ from olmo_core.distributed.parallel.context_parallel import (
 from olmo_core.nn.attention.base import SequenceMixer, SequenceMixerConfig
 from olmo_core.nn.attention.flash_linear_attn_api import (
     dispatch_chunk_gated_delta_rule,
+    dispatch_fused_recurrent_gated_delta_rule,
     has_fla,
 )
 from olmo_core.nn.attention.ring import (
@@ -29,6 +30,83 @@ from olmo_core.nn.feed_forward import ActivationFunction
 
 if TYPE_CHECKING:
     from olmo_core.nn.transformer.init import InitMethod
+
+
+class GatedDeltaNetStateCache(nn.Module):
+    """
+    Inference cache for :class:`GatedDeltaNet` decoding. Unlike attention (which caches keys and
+    values), a linear-RNN mixer caches two things: the short-convolution windows (the last
+    ``conv_size - 1`` inputs of each of the q/k/v convs) and the recurrent delta-rule state.
+
+    The conv states are fixed-shape and pre-allocated; the recurrent state is whatever the fla
+    kernel returns from prefill, so it's stored as a plain attribute rather than a buffer.
+    """
+
+    def __init__(
+        self,
+        batch_size: int,
+        key_dim: int,
+        value_dim: int,
+        conv_width: int,
+        device: torch.device,
+        dtype: torch.dtype = torch.bfloat16,
+    ):
+        super().__init__()
+        self._batch_size = batch_size
+        self.key_dim = key_dim
+        self.value_dim = value_dim
+        self.conv_width = conv_width
+        self._dtype = dtype
+
+        self.conv_state_q: torch.Tensor
+        self.conv_state_k: torch.Tensor
+        self.conv_state_v: torch.Tensor
+        for name, dim in (
+            ("conv_state_q", key_dim),
+            ("conv_state_k", key_dim),
+            ("conv_state_v", value_dim),
+        ):
+            self.register_buffer(
+                name,
+                torch.zeros(batch_size, dim, conv_width, device=device, dtype=dtype),
+                persistent=False,
+            )
+
+        # Set during prefill from the fla kernel's returned final state.
+        self.recurrent_state: Optional[torch.Tensor] = None
+        self.has_state: bool = False
+
+    def zero_cache(self):
+        self.conv_state_q.zero_()
+        self.conv_state_k.zero_()
+        self.conv_state_v.zero_()
+        self.recurrent_state = None
+        self.has_state = False
+
+    def is_reusable(self, batch_size: int) -> bool:
+        return self._batch_size == batch_size
+
+    def reallocate(self, batch_size: int):
+        self._batch_size = batch_size
+        for name, dim in (
+            ("conv_state_q", self.key_dim),
+            ("conv_state_k", self.key_dim),
+            ("conv_state_v", self.value_dim),
+        ):
+            self.register_buffer(
+                name,
+                getattr(self, name).new_zeros(batch_size, dim, self.conv_width),
+                persistent=False,
+            )
+        self.recurrent_state = None
+        self.has_state = False
+
+    def reset(self, batch_size: int):
+        """Reset the cache for new generation; reallocate if the batch size changed."""
+        if self.is_reusable(batch_size):
+            self.zero_cache()
+        else:
+            self.reallocate(batch_size)
 
 
 class GatedDeltaNet(SequenceMixer):
@@ -132,6 +210,29 @@ class GatedDeltaNet(SequenceMixer):
 
         self.cp_enabled = False
 
+        # Inference state cache (conv windows + recurrent state), set by :meth:`init_state_cache`
+        # during cached generation. ``None`` during training and non-cached forward passes.
+        self.state_cache: Optional[GatedDeltaNetStateCache] = None
+
+    def init_state_cache(self, batch_size: int, max_seq_len: int):
+        """
+        Allocate (or reset) the decoding state cache. ``max_seq_len`` is accepted for parity with
+        the attention KV-cache interface but is unused: the recurrent state is constant-size.
+        """
+        del max_seq_len
+        param = self.w_q.weight
+        if self.state_cache is None:
+            self.state_cache = GatedDeltaNetStateCache(
+                batch_size=batch_size,
+                key_dim=self.key_dim,
+                value_dim=self.value_dim,
+                conv_width=self.conv_size - 1,
+                device=param.device,
+                dtype=param.dtype,
+            )
+        else:
+            self.state_cache.reset(batch_size)
+
     def forward(
         self,
         x: torch.Tensor,
@@ -151,6 +252,12 @@ class GatedDeltaNet(SequenceMixer):
         del kwargs  # Ignore any extra kwargs passed from attention interface
         B, T_og, _ = x.shape
 
+        # Cached decoding: once prefill has populated the cache, every subsequent single-token step
+        # advances the recurrent state instead of recomputing over the whole sequence. A multi-token
+        # call (prefill) always takes the parallel chunk path and, if caching, seeds the state.
+        cache = self.state_cache
+        use_precomputed = cache is not None and cache.has_state and T_og == 1
+
         # shape: (batch_size, seq_len, n_heads * head_k_dim),
         #        (batch_size, seq_len, n_heads * head_k_dim),
         #        (batch_size, seq_len, n_v_heads * head_v_dim)
@@ -162,15 +269,29 @@ class GatedDeltaNet(SequenceMixer):
         g = -self.A_log.float().exp() * F.softplus(self.w_a(x).float() + self.dt_bias)
 
         if self.cp_enabled and self.uly is not None:
+            assert (
+                cache is None
+            ), "context parallelism is not supported with inference state caching"
             assert self._cp_group is not None
             # [B, T_local, C] -> [B, T_total, C/CP]
             q, k = all_to_all_cp2hp([q, k], self._cp_group)
             v = all_to_all_single_cp2hp(v, self._cp_group)
             g, beta = all_to_all_cp2hp([g, beta], self._cp_group)
 
-        q = self.q_conv1d(x=q, cu_seqlens=cu_doc_lens)
-        k = self.k_conv1d(x=k, cu_seqlens=cu_doc_lens)
-        v = self.v_conv1d(x=v, cu_seqlens=cu_doc_lens)
+        if use_precomputed:
+            assert cache is not None
+            q = self.q_conv1d.step(q, cache.conv_state_q)
+            k = self.k_conv1d.step(k, cache.conv_state_k)
+            v = self.v_conv1d.step(v, cache.conv_state_v)
+        else:
+            if cache is not None:
+                # Seed the conv windows from the prefill inputs (pre-convolution).
+                cache.conv_state_q.copy_(self.q_conv1d.prefill_state(q))
+                cache.conv_state_k.copy_(self.k_conv1d.prefill_state(k))
+                cache.conv_state_v.copy_(self.v_conv1d.prefill_state(v))
+            q = self.q_conv1d(x=q, cu_seqlens=cu_doc_lens)
+            k = self.k_conv1d(x=k, cu_seqlens=cu_doc_lens)
+            v = self.v_conv1d(x=v, cu_seqlens=cu_doc_lens)
 
         T = q.size(1)
         q = q.view(B, T, -1, self.head_k_dim)
@@ -182,19 +303,43 @@ class GatedDeltaNet(SequenceMixer):
             q = q.repeat_interleave(repeat_factor, dim=-2)
             k = k.repeat_interleave(repeat_factor, dim=-2)
 
-        o, _ = dispatch_chunk_gated_delta_rule(
-            q=q, k=k, v=v, g=g, beta=beta, cu_seqlens=cu_doc_lens, use_qk_l2norm_in_kernel=True
-        )
+        if use_precomputed:
+            assert cache is not None
+            o, new_state = dispatch_fused_recurrent_gated_delta_rule(
+                q=q,
+                k=k,
+                v=v,
+                g=g,
+                beta=beta,
+                initial_state=cache.recurrent_state,
+                output_final_state=True,
+                use_qk_l2norm_in_kernel=True,
+            )
+        else:
+            o, new_state = dispatch_chunk_gated_delta_rule(
+                q=q,
+                k=k,
+                v=v,
+                g=g,
+                beta=beta,
+                cu_seqlens=cu_doc_lens,
+                output_final_state=cache is not None,
+                use_qk_l2norm_in_kernel=True,
+            )
+
+        if cache is not None:
+            cache.recurrent_state = new_state
+            cache.has_state = True
 
         if self.cp_enabled and self.uly is not None:
             assert self._cp_group is not None
             # [B, T, H/CP, D] -> [B, T/CP, H, D]
             o = all_to_all_single_hp2cp(o, self._cp_group)
 
-        g = self.w_g(x).view(B, T, -1, self.head_v_dim)
+        out_gate = self.w_g(x).view(B, T, -1, self.head_v_dim)
 
         # shape: (batch_size, seq_len, d_model)
-        return self.w_out(self.o_norm(o, g).view(B, T_og, -1))
+        return self.w_out(self.o_norm(o, out_gate).view(B, T_og, -1))
 
     def apply_tp(
         self,

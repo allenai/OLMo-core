@@ -65,6 +65,56 @@ def test_gated_delta_net_fwd_bwd():
 
 
 @requires_fla
+@requires_gpu
+@pytest.mark.parametrize(
+    "recurrent_config",
+    [
+        pytest.param(GatedDeltaNetConfig(n_heads=8), id="default"),
+        pytest.param(GatedDeltaNetConfig(n_heads=8, n_v_heads=16), id="GVA"),
+        pytest.param(GatedDeltaNetConfig(n_heads=8, expand_v=1.0), id="expand_v=1.0"),
+        pytest.param(GatedDeltaNetConfig(n_heads=8, conv_size=8, conv_bias=True), id="conv_bias"),
+    ],
+)
+def test_gated_delta_net_cached_decode_matches_full_forward(
+    recurrent_config: GatedDeltaNetConfig,
+):
+    """
+    Cached decoding (chunk prefill -> single-step recurrent decode, with conv + recurrent state
+    caches) must reproduce a single full-sequence forward at the decoded positions.
+    """
+    device = "cuda"
+    dtype = torch.bfloat16
+    d_model, seq_len, batch_size, prefill_len = 256, 24, 2, 16
+
+    module = recurrent_config.build(d_model, layer_idx=0, n_layers=12, init_device=device)
+    seed_all(0)
+    with torch.no_grad():
+        for p in module.parameters():
+            p.normal_(mean=0.0, std=0.02)
+
+    x = torch.randn(batch_size, seq_len, d_model, device=device, dtype=dtype)
+
+    module.eval()
+    with torch.no_grad(), torch.autocast(device_type=device, dtype=dtype):
+        # Reference: one full-sequence forward, no cache.
+        y_full = module(x)
+
+        # Cached: prefill the prompt, then decode the remaining tokens one at a time.
+        module.init_state_cache(batch_size, seq_len)
+        y_prefill = module(x[:, :prefill_len, :])
+        decoded = [module(x[:, t : t + 1, :]) for t in range(prefill_len, seq_len)]
+        y_decoded = torch.cat(decoded, dim=1)
+        module.state_cache = None
+
+    torch.testing.assert_close(
+        y_prefill, y_full[:, :prefill_len, :], atol=BF16_ATOL, rtol=BF16_RTOL
+    )
+    torch.testing.assert_close(
+        y_decoded, y_full[:, prefill_len:, :], atol=BF16_ATOL, rtol=BF16_RTOL
+    )
+
+
+@requires_fla
 def test_gated_delta_net_num_flops_per_token():
     d_model, n_heads, seq_len = 256, 2, 8192
 

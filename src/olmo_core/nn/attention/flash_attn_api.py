@@ -23,7 +23,9 @@ except ImportError:
 
 try:
     import flash_attn.cute as flash_attn_4  # type: ignore
-except ImportError:
+except Exception:
+    # NOTE: not just ImportError -- a broken/mismatched FA4 (quack/cutlass DSL) build can
+    # raise AttributeError et al. at import time, which must not take down the whole process.
     flash_attn_4 = None  # type: ignore
 
 try:
