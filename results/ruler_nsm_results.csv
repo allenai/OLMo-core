@@ -1,0 +1,6 @@
+modelname,4k,8k,16k,32k,64k
+q4b-base-fast-compressive-landmark-8node_step2385_tk64_nsm0p2,92.77,87.91,80.12,67.70,-
+q4b-base-fast-compressive-landmark-8node_step2385_tk64_nsm0p4,92.77,54.39,48.92,39.48,-
+q4b-base-fast-compressive-landmark-8node_step2385_tk64_nsm0p0,92.77,88.83,82.14,68.83,-
+q4b-base-fast-compressive-landmark-8node_step2385_tk64_nsm0p1,92.77,88.24,81.66,69.01,-
+q4b-base-fast-compressive-landmark-8node_step2385_tk64_nsm0p05,92.77,88.48,81.85,68.88,-

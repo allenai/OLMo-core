@@ -1,8 +1,8 @@
 #!/bin/bash
 #
 # Launch long-context evals for an olmo-core checkpoint on weka:
-#   * HELMET  @ 8k-128k  -> via ../ai2-helmet/gantry_eval.sh
-#   * RULER   @ 4k-128k  -> via olmo-cookbook-eval (oe-eval), like ../olmo-cookbook/run_ruler.sh
+#   * HELMET  @ 8k-128k  -> via ../../ai2-helmet/gantry_eval.sh
+#   * RULER   @ 4k-128k  -> via olmo-cookbook-eval (oe-eval), like ../../olmo-cookbook/run_ruler.sh
 #
 # HELMET's configs/single_task/* exist at 8k/16k/32k/64k/128k, so a single
 # gantry_eval.sh run with MAX_LENGTH=131072 IS exactly the 8k-128k suite. (To
@@ -118,8 +118,9 @@ FLASH_ATTN_WHEEL="${FLASH_ATTN_WHEEL:-https://github.com/Dao-AILab/flash-attenti
 # unquoted '>=' would be parsed as a shell redirect and an unconstrained reinstall no-ops (uv
 # "Audited", keeps 0.2.4). An exact '==0.5.0' has no special chars and forces the upgrade.
 
-# Resolve ../ai2-helmet relative to this script's location.
-HELMET_DIR="${HELMET_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../ai2-helmet" && pwd)}"
+# Resolve ../../ai2-helmet relative to this script's location (this script lives in
+# OLMo-core/scripts/, and ai2-helmet is a sibling checkout of OLMo-core).
+HELMET_DIR="${HELMET_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../ai2-helmet" && pwd)}"
 
 # Optional chat-template HELMET run. Set HELMET_USE_CHAT_TEMPLATE=True to evaluate with the chat
 # template; HELMET's --thinking flag is left off, so hybrid models (e.g. Qwen3) run in non-thinking
@@ -161,7 +162,7 @@ fi
 # 2) RULER @ 4k-64k  (olmo-cookbook-eval -> oe-eval, olmo_core backend)
 #    One job per length; each ruler:Nk group runs the full 13-subtask suite.
 #    olmo_core backend reads the tokenizer from the checkpoint config (matches
-#    ../olmo-cookbook/run_ruler.sh, which passes no tokenizer for olmo_core).
+#    ../../olmo-cookbook/run_ruler.sh, which passes no tokenizer for olmo_core).
 # ============================================================================
 # Lengths in K; max_length = K * 1024. Kept as a plain list (no associative
 # arrays) so this runs under macOS's stock bash 3.2.
