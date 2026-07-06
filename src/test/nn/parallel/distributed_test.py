@@ -97,10 +97,109 @@ def _run_no_sync_accumulation(d_in: int, d_hidden: int, d_out: int):
         torch.testing.assert_close(p.grad, g_ref, rtol=1e-5, atol=1e-6)
 
 
+def _run_multi_group_grad_parity(d_in: int, d_hidden: int, d_out: int):
+    device = _device_for_backend()
+    rank, world_size = dist.get_rank(), dist.get_world_size()
+    assert world_size == 4
+
+    # Two data-parallel subgroups: {0, 1} and {2, 3}. fc1 reduces over the full group; fc2 reduces
+    # only over the rank's subgroup (the expert-parallel case: those params replicate over a subset
+    # of ranks). All ranks must create both groups (new_group is collective).
+    g_lower = dist.new_group([0, 1])
+    g_upper = dist.new_group([2, 3])
+    my_subgroup = g_lower if rank < 2 else g_upper
+    subgroup_world_size = 2
+
+    # Identical init across all ranks; distinct per-rank data.
+    seed_all(0)
+    model = SimpleModel(d_in, d_hidden, d_out).to(device)
+    reference = copy.deepcopy(model)
+
+    def param_process_group_fn(name: str, param: torch.nn.Parameter):
+        # None -> the default (full) process group.
+        return None if name.startswith("fc1") else my_subgroup
+
+    ddp = MultiGroupDistributedDataParallel(
+        model, init_sync=False, param_process_group_fn=param_process_group_fn
+    )
+
+    torch.manual_seed(100 + rank)
+    x = torch.randn(4, d_in, device=device)
+    y = torch.randn(4, d_out, device=device)
+    ((ddp(x) - y) ** 2).mean().backward()
+    ddp.finalize_grad_reduce()
+
+    # Reference: fc1 averaged over the world, fc2 averaged only over the rank's subgroup.
+    ((reference(x) - y) ** 2).mean().backward()
+    for name, p in reference.named_parameters():
+        assert p.grad is not None
+        g = p.grad.detach().clone()
+        if name.startswith("fc1"):
+            dist.all_reduce(g, op=dist.ReduceOp.SUM)
+            g /= world_size
+        else:
+            dist.all_reduce(g, op=dist.ReduceOp.SUM, group=my_subgroup)
+            g /= subgroup_world_size
+        p.grad = g
+
+    for (name, p), (_, p_ref) in zip(ddp.module.named_parameters(), reference.named_parameters()):
+        assert p.grad is not None, f"missing grad for {name}"
+        torch.testing.assert_close(p.grad, p_ref.grad, rtol=1e-5, atol=1e-6)
+
+
+def _run_fp32_grad_accumulation(d_in: int, d_hidden: int, d_out: int):
+    device = _device_for_backend()
+    rank, world_size = dist.get_rank(), dist.get_world_size()
+
+    seed_all(0)
+    model = SimpleModel(d_in, d_hidden, d_out).to(device)
+    reference = copy.deepcopy(model)
+    ddp = MultiGroupDistributedDataParallel(
+        model, init_sync=False, accumulate_grads_in_fp32=True, reduce_grads_in_fp32=True
+    )
+
+    torch.manual_seed(100 + rank)
+    x = torch.randn(4, d_in, device=device)
+    y = torch.randn(4, d_out, device=device)
+    ((ddp(x) - y) ** 2).mean().backward()
+    ddp.finalize_grad_reduce()
+
+    ((reference(x) - y) ** 2).mean().backward()
+    expected = _reference_grads(reference, world_size)
+
+    # In fp32-accumulate mode the reduced gradient lives in the fp32 buffer `_main_grad_fp32`, and
+    # `.grad` is consumed/left as None.
+    for (name, p), g_ref in zip(ddp.module.named_parameters(), expected):
+        assert p.grad is None, f"expected .grad to be None in fp32-accum mode for {name}"
+        main_grad = getattr(p, "_main_grad_fp32", None)
+        assert main_grad is not None, f"missing _main_grad_fp32 for {name}"
+        assert main_grad.dtype == torch.float32
+        torch.testing.assert_close(main_grad, g_ref.to(torch.float32), rtol=1e-5, atol=1e-6)
+
+
 @pytest.mark.parametrize("backend", BACKENDS)
 def test_grad_parity(backend):
     run_distributed_test(
         _run_grad_parity,
+        backend=backend,
+        func_args=(16, 32, 8),
+    )
+
+
+@pytest.mark.parametrize("backend", BACKENDS)
+def test_multi_group_grad_parity(backend):
+    run_distributed_test(
+        _run_multi_group_grad_parity,
+        world_size=4,
+        backend=backend,
+        func_args=(16, 32, 8),
+    )
+
+
+@pytest.mark.parametrize("backend", BACKENDS)
+def test_fp32_grad_accumulation(backend):
+    run_distributed_test(
+        _run_fp32_grad_accumulation,
         backend=backend,
         func_args=(16, 32, 8),
     )
