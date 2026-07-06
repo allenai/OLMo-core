@@ -163,6 +163,17 @@ beaker-image-b300 :
 beaker-image-b300-torch210 :
 	$(MAKE) beaker-image TORCH_VERSION=2.10.0 $(B300_BUILD_ARGS)
 
+# Push a B300 image to GHCR instead of Beaker. Same build args as the beaker-image-b300 targets.
+# torch 2.11.0 (validated on B300 hardware). Pushes 'ghcr.io/allenai/olmo-core:tch2110cu130-<date>'.
+.PHONY : ghcr-image-b300
+ghcr-image-b300 :
+	$(MAKE) ghcr-image TORCH_VERSION=2.11.0 $(B300_BUILD_ARGS)
+
+# torch 2.10.0 (matches the default image's torch). Pushes 'ghcr.io/allenai/olmo-core:tch2100cu130-<date>'.
+.PHONY : ghcr-image-b300-torch210
+ghcr-image-b300-torch210 :
+	$(MAKE) ghcr-image TORCH_VERSION=2.10.0 $(B300_BUILD_ARGS)
+
 .PHONY : get-beaker-workspace
 get-beaker-workspace :
 	@echo $(BEAKER_WORKSPACE)
