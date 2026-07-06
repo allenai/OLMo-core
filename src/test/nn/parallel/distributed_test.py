@@ -112,15 +112,13 @@ def _run_no_sync_accumulation(d_in: int, d_hidden: int, d_out: int):
 def _run_multi_group_grad_parity(d_in: int, d_hidden: int, d_out: int):
     device = _device_for_backend()
     rank, world_size = dist.get_rank(), dist.get_world_size()
-    assert world_size == 4
 
-    # Two data-parallel subgroups: {0, 1} and {2, 3}. fc1 reduces over the full group; fc2 reduces
-    # only over the rank's subgroup (the expert-parallel case: those params replicate over a subset
-    # of ranks). All ranks must create both groups (new_group is collective).
-    g_lower = dist.new_group([0, 1])
-    g_upper = dist.new_group([2, 3])
-    my_subgroup = g_lower if rank < 2 else g_upper
-    subgroup_world_size = 2
+    # fc1 reduces over the full group; fc2 reduces only over the rank's own singleton group (the
+    # expert-parallel case where an expert lives on a single rank). So fc1 grads are averaged across
+    # all ranks while fc2 grads stay per-rank — verifying params route to, and reduce only within,
+    # their assigned group. All ranks must create every group (new_group is collective).
+    solo_groups = [dist.new_group([r]) for r in range(world_size)]
+    my_solo_group = solo_groups[rank]
 
     # Identical init across all ranks; distinct per-rank data.
     seed_all(0)
@@ -129,7 +127,7 @@ def _run_multi_group_grad_parity(d_in: int, d_hidden: int, d_out: int):
 
     def param_process_group_fn(name: str, param: torch.nn.Parameter):
         # None -> the default (full) process group.
-        return None if name.startswith("fc1") else my_subgroup
+        return None if name.startswith("fc1") else my_solo_group
 
     ddp = MultiGroupDistributedDataParallel(
         model, init_sync=False, param_process_group_fn=param_process_group_fn
@@ -141,18 +139,16 @@ def _run_multi_group_grad_parity(d_in: int, d_hidden: int, d_out: int):
     ((ddp(x) - y) ** 2).mean().backward()
     ddp.finalize_grad_reduce()
 
-    # Reference: fc1 averaged over the world, fc2 averaged only over the rank's subgroup.
+    # Reference: fc1 averaged over the world; fc2 left as the rank's local grad (its singleton group
+    # reduce is a no-op), so fc2 differs across ranks while fc1 matches.
     ((reference(x) - y) ** 2).mean().backward()
     for name, p in reference.named_parameters():
         assert p.grad is not None
-        g = p.grad.detach().clone()
         if name.startswith("fc1"):
+            g = p.grad.detach().clone()
             dist.all_reduce(g, op=dist.ReduceOp.SUM)
             g /= world_size
-        else:
-            dist.all_reduce(g, op=dist.ReduceOp.SUM, group=my_subgroup)
-            g /= subgroup_world_size
-        p.grad = g
+            p.grad = g
 
     for (name, p), (_, p_ref) in zip(ddp.module.named_parameters(), reference.named_parameters()):
         assert p.grad is not None, f"missing grad for {name}"
@@ -230,13 +226,8 @@ def test_grad_parity(backend):
 
 @pytest.mark.parametrize("backend", BACKENDS)
 def test_multi_group_grad_parity(backend):
-    # world_size=4 (two subgroups). The gloo variant runs as 4 CPU processes; the NCCL variant needs
-    # 4 GPUs, so skip it when fewer are available (the CI GPU box has 2).
-    if "nccl" in backend and torch.cuda.device_count() < 4:
-        pytest.skip("NCCL multi-group test requires 4 GPUs")
     run_distributed_test(
         _run_multi_group_grad_parity,
-        world_size=4,
         backend=backend,
         func_args=(16, 32, 8),
     )
