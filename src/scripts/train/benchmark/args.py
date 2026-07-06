@@ -61,7 +61,15 @@ def _parse_args() -> argparse.Namespace:
             "dispatch/GEMM/combine benchmark."
         ),
     )
-    parser.add_argument("--dtype", choices=("bf16", "fp32"), default="bf16")
+    parser.add_argument(
+        "--dtype",
+        choices=("bf16", "fp32", "mxfp8"),
+        default="bf16",
+        help=(
+            "Logical benchmark dtype. 'mxfp8' currently means BF16 expert "
+            "compute with MXFP8 DeepEP dispatch when supported."
+        ),
+    )
     parser.add_argument("--d-model", type=int, default=4096)
     parser.add_argument("--hidden-size", type=int, default=4096)
     parser.add_argument("--num-experts", type=int, default=32)
@@ -96,6 +104,15 @@ def _parse_args() -> argparse.Namespace:
         help=(
             "DeepEP ElasticBuffer allocated QP count. 0 lets DeepEP choose; "
             "otherwise this should be >= --deepep-num-qps."
+        ),
+    )
+    parser.add_argument(
+        "--deepep-dispatch-dtype",
+        choices=("auto", "bf16", "mxfp8"),
+        default="auto",
+        help=(
+            "Payload dtype for standalone DeepEP dispatch. 'auto' selects "
+            "MXFP8 only when --dtype mxfp8; otherwise it uses BF16."
         ),
     )
     parser.add_argument(
@@ -242,7 +259,7 @@ def _parse_args() -> argparse.Namespace:
         "--deepep-wave-num-waves",
         type=int,
         default=4,
-        help="Number of contiguous local-expert waves for --modes deepep_v2_wave.",
+        help="Number of contiguous source-token waves for --modes deepep_v2_wave.",
     )
     parser.add_argument(
         "--deepep-wave-overlap",
@@ -263,6 +280,16 @@ def _parse_args() -> argparse.Namespace:
             "dispatch_expanded_into API to write each wave into a preallocated "
             "global expanded buffer. 'nonexpand_pack' uses non-expanded DeepEP "
             "dispatch then locally packs valid routes into expert-major grouped-GEMM input."
+        ),
+    )
+    parser.add_argument(
+        "--deepep-wave-reuse-workspace",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help=(
+            "For static DeepEP V2 wave benchmarks, reuse preallocated dispatch, "
+            "combine, and merge tensors across iterations. Requires the local "
+            "DeepEP combine_into extension."
         ),
     )
     parser.add_argument(

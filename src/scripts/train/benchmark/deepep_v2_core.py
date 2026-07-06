@@ -19,6 +19,10 @@ except Exception:  # pragma: no cover - Triton may be unavailable in some test e
     tl = None
 
 from olmo_core.config import DType
+from olmo_core.kernels.mxfp8_utils import (
+    dequantize_rows_from_mxfp8,
+    quantize_rows_to_mxfp8,
+)
 from olmo_core.nn.moe.v2.routed_experts import RoutedExpertsConfig
 
 from .common import (
@@ -90,6 +94,7 @@ class DeepEpV2State:
     num_qps: int
     expert_buffer_mode: str
     weighting_mode: str
+    dispatch_dtype: str
     async_with_compute_stream: bool
     do_cpu_sync: bool
     wave_dispatch_stream: torch.cuda.Stream | None = None
@@ -106,6 +111,7 @@ class DeepEpV2ForwardResult:
     handle: object
     expert_out_is_weighted: bool = False
     grad_combined_x: torch.Tensor | None = None
+    wave_input: DeepEpV2WaveInput | None = None
     static_wave: DeepEpV2WaveInput | None = None
     static_recv_x_global: torch.Tensor | None = None
 
@@ -151,10 +157,107 @@ class DeepEpV2WaveInput:
     batch_size_per_expert: torch.Tensor
     topk_idx: torch.Tensor
     topk_weights: torch.Tensor
+    source_start: int = 0
+    source_end: int = 0
 
     @property
     def wave_rows(self) -> int:
         return self.wave_end - self.wave_base
+
+    @property
+    def source_rows(self) -> int:
+        return self.source_end - self.source_start
+
+
+def _deepep_v2_dispatch_dtype(args: argparse.Namespace) -> str:
+    dispatch_dtype = str(getattr(args, "deepep_dispatch_dtype", "auto"))
+    if dispatch_dtype == "auto":
+        return "mxfp8" if args.dtype == "mxfp8" else "bf16"
+    return dispatch_dtype
+
+
+def _pack_mxfp8_scales_for_deepep(scales: torch.Tensor) -> torch.Tensor:
+    if scales.dtype != torch.float8_e8m0fnu:
+        raise RuntimeError(f"MXFP8 scales must be float8_e8m0fnu, got {scales.dtype}")
+    if scales.ndim != 2:
+        raise RuntimeError(f"MXFP8 scales must be rank-2, got shape={tuple(scales.shape)}")
+    if scales.shape[1] % 4 != 0:
+        raise RuntimeError(
+            "DeepEP packed UE8M0x4 scale dispatch requires scale columns "
+            f"divisible by 4, got {tuple(scales.shape)}"
+        )
+    scales_u8 = scales.contiguous().view(torch.uint8)
+    return scales_u8.view(torch.int32)
+
+
+def _unpack_mxfp8_scales_from_deepep(
+    packed_scales: torch.Tensor,
+    *,
+    hidden: int,
+) -> torch.Tensor:
+    if packed_scales.element_size() != 4:
+        raise RuntimeError(
+            "DeepEP MXFP8 scale payload must have 4-byte elements, "
+            f"got dtype={packed_scales.dtype} element_size={packed_scales.element_size()}"
+        )
+    packed_contig = packed_scales if packed_scales.is_contiguous() else packed_scales.contiguous()
+    scales = packed_contig.view(torch.uint8).view(torch.float8_e8m0fnu)
+    expected = hidden // 32
+    if scales.shape[1] != expected:
+        raise RuntimeError(
+            "DeepEP MXFP8 unpacked scale shape mismatch: "
+            f"hidden={hidden} expected_cols={expected} got={tuple(scales.shape)}"
+        )
+    return scales
+
+
+def _deepep_v2_prepare_dispatch_input(
+    state: DeepEpV2State,
+    x: torch.Tensor,
+    *,
+    label: str,
+) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
+    if state.dispatch_dtype == "bf16":
+        return x
+    if state.dispatch_dtype != "mxfp8":
+        raise RuntimeError(f"Unsupported DeepEP dispatch dtype {state.dispatch_dtype!r}")
+    torch.cuda.nvtx.range_push(f"{label}/quantize_mxfp8")
+    try:
+        qdata, scales = quantize_rows_to_mxfp8(x, block_size=32)
+        return qdata, _pack_mxfp8_scales_for_deepep(scales)
+    finally:
+        torch.cuda.nvtx.range_pop()
+
+
+def _deepep_v2_finish_dispatch_output(
+    state: DeepEpV2State,
+    recv_x: torch.Tensor | tuple[torch.Tensor, torch.Tensor],
+    *,
+    label: str,
+) -> torch.Tensor:
+    if state.dispatch_dtype == "bf16":
+        if isinstance(recv_x, tuple):
+            raise RuntimeError("DeepEP returned FP8 payload while BF16 dispatch was requested")
+        return recv_x
+    if state.dispatch_dtype != "mxfp8":
+        raise RuntimeError(f"Unsupported DeepEP dispatch dtype {state.dispatch_dtype!r}")
+    if not isinstance(recv_x, tuple):
+        raise RuntimeError("DeepEP MXFP8 dispatch did not return an FP8 payload tuple")
+    qdata, packed_scales = recv_x
+    torch.cuda.nvtx.range_push(f"{label}/dequantize_mxfp8")
+    try:
+        scales = _unpack_mxfp8_scales_from_deepep(
+            packed_scales,
+            hidden=qdata.shape[1],
+        )
+        return dequantize_rows_from_mxfp8(
+            qdata,
+            scales,
+            block_size=32,
+            out_dtype=state.source_input.dtype,
+        )
+    finally:
+        torch.cuda.nvtx.range_pop()
 
 
 def _make_balanced_topk_idx(
@@ -317,8 +420,9 @@ def _deepep_v2_rowwise_scale_triton(
 
 
 def _validate_deepep_v2_args(args: argparse.Namespace, *, world_size: int) -> None:
-    if args.dtype != "bf16":
-        raise RuntimeError("deepep_v2 currently supports --dtype bf16 only")
+    dispatch_dtype = _deepep_v2_dispatch_dtype(args)
+    if args.dtype not in {"bf16", "mxfp8"}:
+        raise RuntimeError("deepep_v2 currently supports --dtype bf16 or mxfp8 only")
     if os.getenv("EP_REUSE_NCCL_COMM", "1").strip().lower() not in {
         "0",
         "false",
@@ -335,6 +439,16 @@ def _validate_deepep_v2_args(args: argparse.Namespace, *, world_size: int) -> No
             "deepep_v2 BF16 combine requires --d-model divisible by 256 "
             f"(got {args.d_model})."
         )
+    if dispatch_dtype == "mxfp8":
+        if not hasattr(torch, "float8_e4m3fn") or not hasattr(torch, "float8_e8m0fnu"):
+            raise RuntimeError("deepep_v2 MXFP8 dispatch requires PyTorch FP8 dtypes")
+        if triton is None:
+            raise RuntimeError("deepep_v2 MXFP8 dispatch requires Triton")
+        if args.d_model % 128 != 0:
+            raise RuntimeError(
+                "deepep_v2 MXFP8 dispatch packs four block-32 scales per "
+                f"DeepEP scale slot, so --d-model must be divisible by 128 (got {args.d_model})."
+            )
     if args.num_experts % world_size != 0:
         raise RuntimeError(
             f"deepep_v2 requires --num-experts divisible by ranks "
@@ -452,6 +566,7 @@ def _build_deepep_v2_state(
     input_dtype: torch.dtype,
 ) -> DeepEpV2State:
     _validate_deepep_v2_args(args, world_size=world_size)
+    dispatch_dtype = _deepep_v2_dispatch_dtype(args)
 
     deep_ep = _import_deepep(args.deepep_path)
     num_max_tokens_per_rank = int(math.ceil(tokens * args.deepep_max_tokens_factor))
@@ -522,6 +637,7 @@ def _build_deepep_v2_state(
         num_qps=num_qps,
         expert_buffer_mode=str(args.deepep_expert_buffer_mode),
         weighting_mode=str(args.deepep_weighting),
+        dispatch_dtype=dispatch_dtype,
         async_with_compute_stream=bool(args.deepep_async),
         do_cpu_sync=bool(args.deepep_do_cpu_sync),
         wave_dispatch_stream=torch.cuda.Stream(),
@@ -533,6 +649,7 @@ def _build_deepep_v2_state(
 def _deepep_v2_dispatch(
     state: DeepEpV2State,
     *,
+    source_input: torch.Tensor | None = None,
     topk_idx: torch.Tensor,
     topk_weights: torch.Tensor,
     label: str,
@@ -540,10 +657,21 @@ def _deepep_v2_dispatch(
     do_cpu_sync: bool,
     wait_for_completion: bool = True,
 ) -> tuple[torch.Tensor, torch.Tensor | None, object, object]:
+    if state.dispatch_dtype == "mxfp8" and not wait_for_completion:
+        raise RuntimeError(
+            "deepep_v2 MXFP8 dispatch currently dequantizes immediately after "
+            "dispatch, so it requires wait_for_completion=True."
+        )
     torch.cuda.nvtx.range_push(label)
     try:
+        input_x = state.source_input if source_input is None else source_input
+        dispatch_x = _deepep_v2_prepare_dispatch_input(
+            state,
+            input_x,
+            label=label,
+        )
         recv_x, _recv_topk_idx, expanded_topk_weights, handle, event = state.buffer.dispatch(
-            state.source_input,
+            dispatch_x,
             topk_idx=topk_idx,
             topk_weights=topk_weights,
             num_experts=state.num_experts,
@@ -554,10 +682,15 @@ def _deepep_v2_dispatch(
             async_with_compute_stream=async_with_compute_stream,
             do_cpu_sync=do_cpu_sync,
             do_expand=True,
-            use_tma_aligned_col_major_sf=True,
+            use_tma_aligned_col_major_sf=state.dispatch_dtype != "mxfp8",
         )
         if wait_for_completion:
             _deep_ep_wait(event, async_with_compute_stream=async_with_compute_stream)
+        recv_x = _deepep_v2_finish_dispatch_output(
+            state,
+            recv_x,
+            label=label,
+        )
     finally:
         torch.cuda.nvtx.range_pop()
     return recv_x, expanded_topk_weights, handle, event
@@ -579,13 +712,25 @@ def _deepep_v2_dispatch_static_expanded(
             "deepep_v2_wave layout 'expand_static' requires the modified "
             "DeepEP working copy with ElasticBuffer.dispatch_expanded_into. "
             "Use --deepep-path /workspace/DeepEP."
+    )
+
+    if state.dispatch_dtype == "mxfp8":
+        raise RuntimeError(
+            "deepep_v2_wave layout 'expand_static' uses DeepEP "
+            "dispatch_expanded_into, which currently supports BF16 inputs only. "
+            "Use --deepep-wave-layout expand for MXFP8 dispatch."
         )
 
     torch.cuda.nvtx.range_push(label)
     try:
+        source_input = state.source_input.narrow(
+            0,
+            wave.source_start,
+            wave.source_rows,
+        )
         recv_x, _recv_topk_idx, expanded_topk_weights, handle, event = (
             state.buffer.dispatch_expanded_into(
-                state.source_input,
+                source_input,
                 topk_idx=wave.topk_idx,
                 topk_weights=wave.topk_weights,
                 recv_x_out=recv_x_out,
@@ -610,6 +755,7 @@ def _deepep_v2_dispatch_static_expanded(
 def _deepep_v2_dispatch_nonexpanded(
     state: DeepEpV2State,
     *,
+    source_input: torch.Tensor | None = None,
     topk_idx: torch.Tensor,
     topk_weights: torch.Tensor,
     label: str,
@@ -617,10 +763,21 @@ def _deepep_v2_dispatch_nonexpanded(
     do_cpu_sync: bool,
     wait_for_completion: bool = True,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, object, object]:
+    if state.dispatch_dtype == "mxfp8" and not wait_for_completion:
+        raise RuntimeError(
+            "deepep_v2 MXFP8 dispatch currently dequantizes immediately after "
+            "dispatch, so it requires wait_for_completion=True."
+        )
     torch.cuda.nvtx.range_push(label)
     try:
+        input_x = state.source_input if source_input is None else source_input
+        dispatch_x = _deepep_v2_prepare_dispatch_input(
+            state,
+            input_x,
+            label=label,
+        )
         recv_x, recv_topk_idx, recv_topk_weights, handle, event = state.buffer.dispatch(
-            state.source_input,
+            dispatch_x,
             topk_idx=topk_idx,
             topk_weights=topk_weights,
             num_experts=state.num_experts,
@@ -631,10 +788,15 @@ def _deepep_v2_dispatch_nonexpanded(
             async_with_compute_stream=async_with_compute_stream,
             do_cpu_sync=do_cpu_sync,
             do_expand=False,
-            use_tma_aligned_col_major_sf=True,
+            use_tma_aligned_col_major_sf=state.dispatch_dtype != "mxfp8",
         )
         if wait_for_completion:
             _deep_ep_wait(event, async_with_compute_stream=async_with_compute_stream)
+        recv_x = _deepep_v2_finish_dispatch_output(
+            state,
+            recv_x,
+            label=label,
+        )
     finally:
         torch.cuda.nvtx.range_pop()
     return recv_x, recv_topk_idx, recv_topk_weights, handle, event
@@ -713,6 +875,11 @@ def _deepep_v2_compute_experts_static_expanded(
         if track_expert_grad
         else recv_x_slice
     )
+    if wave.wave_rows == 0:
+        expert_out = recv_x_for_experts * 0
+        expanded_weights = recv_x_for_experts.new_empty((0, 1))
+        return recv_x_for_experts, expert_out, expanded_weights, True
+
     expanded_topk_weights_for_experts = expanded_topk_weights.narrow(
         0,
         wave.wave_base,
@@ -894,16 +1061,34 @@ def _deepep_v2_combine(
     label: str,
     async_with_compute_stream: bool,
     wait_for_completion: bool = True,
+    combined_x_out: torch.Tensor | None = None,
+    combined_row_offset: int = 0,
 ) -> tuple[torch.Tensor, object]:
     torch.cuda.nvtx.range_push(label)
     try:
-        combined_x, _combined_topk_weights, event = state.buffer.combine(
-            weighted_expert_out,
-            handle=handle,
-            num_sms=state.num_sms,
-            num_qps=state.num_qps,
-            async_with_compute_stream=async_with_compute_stream,
-        )
+        if combined_x_out is None:
+            combined_x, _combined_topk_weights, event = state.buffer.combine(
+                weighted_expert_out,
+                handle=handle,
+                num_sms=state.num_sms,
+                num_qps=state.num_qps,
+                async_with_compute_stream=async_with_compute_stream,
+            )
+        else:
+            if not hasattr(state.buffer, "combine_into"):
+                raise RuntimeError(
+                    "DeepEP combine_into is required for caller-owned wave combine output. "
+                    "Rebuild /workspace/DeepEP with the local combine_into patch."
+                )
+            combined_x, _combined_topk_weights, event = state.buffer.combine_into(
+                weighted_expert_out,
+                handle=handle,
+                combined_x_out=combined_x_out,
+                combined_row_offset=combined_row_offset,
+                num_sms=state.num_sms,
+                num_qps=state.num_qps,
+                async_with_compute_stream=async_with_compute_stream,
+            )
         if wait_for_completion:
             _deep_ep_wait(event, async_with_compute_stream=async_with_compute_stream)
     finally:
@@ -914,6 +1099,7 @@ def _deepep_v2_combine(
 def _deepep_v2_forward_from_topk(
     state: DeepEpV2State,
     *,
+    source_input: torch.Tensor | None = None,
     topk_idx: torch.Tensor,
     topk_weights: torch.Tensor,
     label: str,
@@ -923,6 +1109,7 @@ def _deepep_v2_forward_from_topk(
 ) -> DeepEpV2ForwardResult:
     recv_x, expanded_topk_weights, handle, _dispatch_event = _deepep_v2_dispatch(
         state,
+        source_input=source_input,
         topk_idx=topk_idx,
         topk_weights=topk_weights,
         label=f"{label}/dispatch",
@@ -969,6 +1156,7 @@ def _deepep_v2_forward_from_topk(
 def _deepep_v2_forward_from_topk_nonexpanded(
     state: DeepEpV2State,
     *,
+    source_input: torch.Tensor | None = None,
     topk_idx: torch.Tensor,
     topk_weights: torch.Tensor,
     label: str,
@@ -979,6 +1167,7 @@ def _deepep_v2_forward_from_topk_nonexpanded(
     recv_x, recv_topk_idx, recv_topk_weights, handle, _dispatch_event = (
         _deepep_v2_dispatch_nonexpanded(
             state,
+            source_input=source_input,
             topk_idx=topk_idx,
             topk_weights=topk_weights,
             label=f"{label}/dispatch_nonexpanded",
@@ -1062,7 +1251,11 @@ def _run_deepep_v2_backward_from_result(
 
     torch.cuda.nvtx.range_push(f"{label}/combine_backward_dispatch")
     try:
-        if getattr(result.handle, "do_expand", False) and hasattr(state.buffer, "dispatch_cached_expanded_into"):
+        if (
+            state.dispatch_dtype == "bf16"
+            and getattr(result.handle, "do_expand", False)
+            and hasattr(state.buffer, "dispatch_cached_expanded_into")
+        ):
             grad_weighted_expert_out = torch.empty_like(result.recv_x)
             _grad_weighted_expert_out, _grad_topk_idx, _grad_topk_weights, _handle, event = (
                 state.buffer.dispatch_cached_expanded_into(
@@ -1075,14 +1268,25 @@ def _run_deepep_v2_backward_from_result(
                 )
             )
         else:
-            grad_weighted_expert_out, _grad_topk_idx, _grad_topk_weights, _handle, event = state.buffer.dispatch(
+            dispatch_grad_x = _deepep_v2_prepare_dispatch_input(
+                state,
                 result.grad_combined_x,
+                label=f"{label}/combine_backward_dispatch",
+            )
+            grad_weighted_expert_out, _grad_topk_idx, _grad_topk_weights, _handle, event = state.buffer.dispatch(
+                dispatch_grad_x,
                 handle=result.handle,
                 num_sms=state.num_sms,
                 num_qps=state.num_qps,
                 async_with_compute_stream=state.async_with_compute_stream,
+                use_tma_aligned_col_major_sf=state.dispatch_dtype != "mxfp8",
             )
         _deep_ep_wait(event, async_with_compute_stream=state.async_with_compute_stream)
+        grad_weighted_expert_out = _deepep_v2_finish_dispatch_output(
+            state,
+            grad_weighted_expert_out,
+            label=f"{label}/combine_backward_dispatch",
+        )
     finally:
         torch.cuda.nvtx.range_pop()
 

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import torch
 import torch.distributed as dist
 
@@ -11,6 +13,7 @@ from .deepep_v2_core import (
     DeepEpV2WaveForwardResult,
     DeepEpV2WaveInput,
     _deep_ep_wait,
+    _align_int,
     _deepep_v2_combine,
     _deepep_v2_compute_experts,
     _deepep_v2_compute_experts_nonexpanded,
@@ -18,15 +21,22 @@ from .deepep_v2_core import (
     _deepep_v2_dispatch,
     _deepep_v2_dispatch_nonexpanded,
     _deepep_v2_dispatch_static_expanded,
-    _deepep_v2_expanded_offsets,
     _deepep_v2_forward,
     _deepep_v2_forward_from_topk,
     _deepep_v2_forward_from_topk_nonexpanded,
-    _deepep_v2_local_expert_counts,
     _deepep_v2_prepare_expert_grad,
     _deepep_v2_weight_expert_output,
     _run_deepep_v2_backward_from_result,
 )
+
+
+@dataclass
+class DeepEpV2StaticExpandedWorkspace:
+    recv_x: torch.Tensor
+    expanded_topk_weights: torch.Tensor
+    weighted_expert_out: torch.Tensor
+    combined_parts: list[torch.Tensor] | None = None
+    merged_x: torch.Tensor | None = None
 
 
 def _build_deepep_v2_wave_inputs(
@@ -42,51 +52,84 @@ def _build_deepep_v2_wave_inputs(
             f"({num_waves} > {state.num_local_experts})"
         )
 
-    topk_idx_long = state.topk_idx.to(dtype=torch.long)
-    valid = topk_idx_long >= 0
-    local_expert = torch.remainder(topk_idx_long, state.num_local_experts)
-    invalid_idx = torch.full_like(state.topk_idx, -1)
-    zero_weights = torch.zeros_like(state.topk_weights)
-    local_counts = _deepep_v2_local_expert_counts(state)
-    local_offsets = _deepep_v2_expanded_offsets(
-        local_counts,
-        expert_alignment=state.expert_alignment,
-    )
+    tokens = state.source_input.shape[0]
+    if num_waves > tokens:
+        raise RuntimeError(
+            "--deepep-wave-num-waves cannot exceed source tokens "
+            f"({num_waves} > {tokens})"
+        )
 
     wave_inputs: list[DeepEpV2WaveInput] = []
+    wave_base = 0
     for wave_idx in range(num_waves):
-        expert_start = (wave_idx * state.num_local_experts) // num_waves
-        expert_end = ((wave_idx + 1) * state.num_local_experts) // num_waves
-        if expert_start == expert_end:
+        token_start = (wave_idx * tokens) // num_waves
+        token_end = ((wave_idx + 1) * tokens) // num_waves
+        if token_start == token_end:
             raise RuntimeError(
-                f"empty DeepEP wave {wave_idx}: local_experts={state.num_local_experts} "
+                f"empty DeepEP source-token wave {wave_idx}: tokens={tokens} "
                 f"num_waves={num_waves}"
             )
-        wave_mask = valid & (local_expert >= expert_start) & (local_expert < expert_end)
+        topk_idx = state.topk_idx.narrow(
+            0,
+            token_start,
+            token_end - token_start,
+        ).contiguous()
+        topk_weights = state.topk_weights.narrow(
+            0,
+            token_start,
+            token_end - token_start,
+        ).contiguous()
+        valid_idx = topk_idx.to(dtype=torch.long)
+        valid_idx = valid_idx[valid_idx >= 0]
+        global_counts = torch.bincount(valid_idx, minlength=state.num_experts).to(
+            dtype=torch.long,
+        )
+        dist.all_reduce(global_counts, op=dist.ReduceOp.SUM)
+        local_start = state.rank * state.num_local_experts
+        local_end = local_start + state.num_local_experts
+        local_counts = [
+            int(v)
+            for v in global_counts[local_start:local_end].detach().cpu().tolist()
+        ]
+        wave_rows = sum(
+            _align_int(count, state.expert_alignment)
+            for count in local_counts
+        )
         batch_size_per_expert = torch.zeros(
             (state.num_local_experts,),
             device=state.source_input.device,
             dtype=torch.int32,
         )
-        if expert_end > expert_start:
-            batch_size_per_expert[expert_start:expert_end] = torch.tensor(
-                local_counts[expert_start:expert_end],
+        batch_size_per_expert.copy_(
+            torch.tensor(
+                local_counts,
                 device=state.source_input.device,
                 dtype=torch.int32,
             )
+        )
         wave_inputs.append(
             DeepEpV2WaveInput(
                 wave_idx=wave_idx,
-                expert_start=expert_start,
-                expert_end=expert_end,
-                wave_base=local_offsets[expert_start],
-                wave_end=local_offsets[expert_end],
+                expert_start=0,
+                expert_end=state.num_local_experts,
+                wave_base=wave_base,
+                wave_end=wave_base + wave_rows,
                 batch_size_per_expert=batch_size_per_expert,
-                topk_idx=torch.where(wave_mask, state.topk_idx, invalid_idx).contiguous(),
-                topk_weights=torch.where(wave_mask, state.topk_weights, zero_weights).contiguous(),
+                topk_idx=topk_idx,
+                topk_weights=topk_weights,
+                source_start=token_start,
+                source_end=token_end,
             )
         )
+        wave_base += wave_rows
     return wave_inputs
+
+
+def _deepep_v2_wave_label(label: str, wave: DeepEpV2WaveInput) -> str:
+    return (
+        f"{label}/wave_{wave.wave_idx}_tokens_{wave.source_start}_{wave.source_end}"
+        f"_experts_{wave.expert_start}_{wave.expert_end}"
+    )
 
 
 def _sum_deepep_v2_wave_outputs(
@@ -106,10 +149,68 @@ def _sum_deepep_v2_wave_outputs(
     return combined
 
 
+def _merge_deepep_v2_wave_outputs(
+    wave_outputs: list[torch.Tensor],
+    *,
+    wave_inputs: list[DeepEpV2WaveInput],
+    label: str,
+    out: torch.Tensor | None = None,
+) -> torch.Tensor:
+    if not wave_outputs:
+        raise RuntimeError("DeepEP V2 wave produced no wave outputs")
+
+    expected_start = 0
+    source_token_major = len(wave_outputs) == len(wave_inputs)
+    for wave, output in zip(wave_inputs, wave_outputs):
+        if (
+            wave.source_start != expected_start
+            or wave.source_rows <= 0
+            or output.shape[0] != wave.source_rows
+        ):
+            source_token_major = False
+            break
+        expected_start = wave.source_end
+
+    if not source_token_major:
+        return _sum_deepep_v2_wave_outputs(wave_outputs, label=label)
+
+    if len(wave_outputs) == 1 and out is None:
+        return wave_outputs[0]
+
+    torch.cuda.nvtx.range_push(label)
+    try:
+        if out is not None:
+            for wave, partial in zip(wave_inputs, wave_outputs):
+                out.narrow(0, wave.source_start, wave.source_rows).copy_(partial)
+            return out
+        return torch.cat(wave_outputs, dim=0)
+    finally:
+        torch.cuda.nvtx.range_pop()
+
+
+def _deepep_v2_wave_grad_combined_x(
+    result: DeepEpV2WaveForwardResult,
+    wave_result: DeepEpV2ForwardResult,
+) -> torch.Tensor:
+    if result.grad_combined_x is None:
+        result.grad_combined_x = torch.ones_like(result.combined_x)
+    grad_combined_x = result.grad_combined_x
+    wave = wave_result.wave_input
+    if (
+        wave is not None
+        and grad_combined_x.shape[0] != wave_result.combined_x.shape[0]
+        and wave_result.combined_x.shape[0] == wave.source_rows
+    ):
+        return grad_combined_x.narrow(0, wave.source_start, wave.source_rows)
+    return grad_combined_x
+
+
 def _deepep_v2_static_expanded_buffers(
     state: DeepEpV2State,
     wave_inputs: list[DeepEpV2WaveInput],
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    *,
+    preallocate_combine: bool = False,
+) -> DeepEpV2StaticExpandedWorkspace:
     expanded_rows = max((wave.wave_end for wave in wave_inputs), default=0)
     recv_x = torch.empty(
         (expanded_rows, state.source_input.shape[1]),
@@ -122,7 +223,34 @@ def _deepep_v2_static_expanded_buffers(
         dtype=state.topk_weights.dtype,
     )
     weighted_expert_out = torch.empty_like(recv_x)
-    return recv_x, expanded_topk_weights, weighted_expert_out
+    combined_parts = None
+    merged_x = None
+    if preallocate_combine:
+        combined_parts = [
+            torch.empty(
+                (wave.source_rows, state.source_input.shape[1]),
+                device=state.source_input.device,
+                dtype=state.source_input.dtype,
+            )
+            for wave in wave_inputs
+        ]
+        merged_x = torch.empty_like(state.source_input)
+    return DeepEpV2StaticExpandedWorkspace(
+        recv_x=recv_x,
+        expanded_topk_weights=expanded_topk_weights,
+        weighted_expert_out=weighted_expert_out,
+        combined_parts=combined_parts,
+        merged_x=merged_x,
+    )
+
+
+def _deepep_v2_wave_combine_out(
+    workspace: DeepEpV2StaticExpandedWorkspace | None,
+    wave: DeepEpV2WaveInput,
+) -> torch.Tensor | None:
+    if workspace is None or workspace.combined_parts is None:
+        return None
+    return workspace.combined_parts[wave.wave_idx]
 
 
 def _deepep_v2_wave_forward_sequential(
@@ -133,19 +261,28 @@ def _deepep_v2_wave_forward_sequential(
     label: str,
     track_expert_grad: bool,
     do_cpu_sync: bool,
+    workspace: DeepEpV2StaticExpandedWorkspace | None = None,
 ) -> DeepEpV2WaveForwardResult:
     wave_results: list[DeepEpV2ForwardResult] = []
     wave_outputs: list[torch.Tensor] = []
-    static_buffers = (
-        _deepep_v2_static_expanded_buffers(state, wave_inputs)
-        if wave_layout == "expand_static"
-        else None
-    )
+    static_buffers = None
+    if wave_layout == "expand_static":
+        static_buffers = (
+            workspace
+            if workspace is not None
+            else _deepep_v2_static_expanded_buffers(state, wave_inputs)
+        )
     for wave in wave_inputs:
-        wave_label = f"{label}/wave_{wave.wave_idx}_experts_{wave.expert_start}_{wave.expert_end}"
+        wave_label = _deepep_v2_wave_label(label, wave)
+        source_input = state.source_input.narrow(
+            0,
+            wave.source_start,
+            wave.source_rows,
+        )
         if wave_layout == "expand":
             result = _deepep_v2_forward_from_topk(
                 state,
+                source_input=source_input,
                 topk_idx=wave.topk_idx,
                 topk_weights=wave.topk_weights,
                 label=wave_label,
@@ -155,13 +292,12 @@ def _deepep_v2_wave_forward_sequential(
             )
         elif wave_layout == "expand_static":
             assert static_buffers is not None
-            recv_x_out, expanded_topk_weights_out, weighted_expert_out = static_buffers
             recv_x, expanded_topk_weights, handle, _dispatch_event = (
                 _deepep_v2_dispatch_static_expanded(
                     state,
                     wave=wave,
-                    recv_x_out=recv_x_out,
-                    recv_topk_weights_out=expanded_topk_weights_out,
+                    recv_x_out=static_buffers.recv_x,
+                    recv_topk_weights_out=static_buffers.expanded_topk_weights,
                     label=f"{wave_label}/dispatch_static",
                     async_with_compute_stream=state.async_with_compute_stream,
                     do_cpu_sync=do_cpu_sync,
@@ -172,7 +308,7 @@ def _deepep_v2_wave_forward_sequential(
                     state,
                     recv_x=recv_x,
                     expanded_topk_weights=expanded_topk_weights,
-                    weighted_expert_out=weighted_expert_out,
+                    weighted_expert_out=static_buffers.weighted_expert_out,
                     wave=wave,
                     label=f"{wave_label}/experts_static",
                     track_expert_grad=track_expert_grad,
@@ -180,10 +316,11 @@ def _deepep_v2_wave_forward_sequential(
             )
             combined_x, _combine_event = _deepep_v2_combine(
                 state,
-                weighted_expert_out=weighted_expert_out,
+                weighted_expert_out=static_buffers.weighted_expert_out,
                 handle=handle,
                 label=f"{wave_label}/combine_static",
                 async_with_compute_stream=state.async_with_compute_stream,
+                combined_x_out=_deepep_v2_wave_combine_out(static_buffers, wave),
             )
             result = DeepEpV2ForwardResult(
                 recv_x=recv_x_for_experts,
@@ -192,12 +329,14 @@ def _deepep_v2_wave_forward_sequential(
                 combined_x=combined_x,
                 handle=handle,
                 expert_out_is_weighted=expert_out_is_weighted,
+                wave_input=wave,
                 static_wave=wave,
                 static_recv_x_global=recv_x,
             )
         elif wave_layout == "nonexpand_pack":
             result = _deepep_v2_forward_from_topk_nonexpanded(
                 state,
+                source_input=source_input,
                 topk_idx=wave.topk_idx,
                 topk_weights=wave.topk_weights,
                 label=wave_label,
@@ -207,12 +346,18 @@ def _deepep_v2_wave_forward_sequential(
             )
         else:
             raise ValueError(wave_layout)
+        result.wave_input = wave
         wave_results.append(result)
         wave_outputs.append(result.combined_x)
 
     return DeepEpV2WaveForwardResult(
         wave_results=wave_results,
-        combined_x=_sum_deepep_v2_wave_outputs(wave_outputs, label=f"{label}/sum_waves"),
+        combined_x=_merge_deepep_v2_wave_outputs(
+            wave_outputs,
+            wave_inputs=wave_inputs,
+            label=f"{label}/merge_waves",
+            out=static_buffers.merged_x if static_buffers is not None else None,
+        ),
     )
 
 
@@ -224,6 +369,7 @@ def _deepep_v2_wave_forward_overlapped(
     label: str,
     track_expert_grad: bool,
     do_cpu_sync: bool,
+    workspace: DeepEpV2StaticExpandedWorkspace | None = None,
 ) -> DeepEpV2WaveForwardResult:
     if (
         state.wave_dispatch_stream is None
@@ -233,19 +379,27 @@ def _deepep_v2_wave_forward_overlapped(
         raise RuntimeError("DeepEP V2 wave streams were not initialized")
 
     async_mode = True
-    static_buffers = (
-        _deepep_v2_static_expanded_buffers(state, wave_inputs)
-        if wave_layout == "expand_static"
-        else None
-    )
+    static_buffers = None
+    if wave_layout == "expand_static":
+        static_buffers = (
+            workspace
+            if workspace is not None
+            else _deepep_v2_static_expanded_buffers(state, wave_inputs)
+        )
 
     dispatch_results: list[DeepEpV2WaveDispatchResult] = []
     for wave in wave_inputs:
-        wave_label = f"{label}/wave_{wave.wave_idx}_experts_{wave.expert_start}_{wave.expert_end}"
+        wave_label = _deepep_v2_wave_label(label, wave)
+        source_input = state.source_input.narrow(
+            0,
+            wave.source_start,
+            wave.source_rows,
+        )
         with torch.cuda.stream(state.wave_dispatch_stream):
             if wave_layout == "expand":
                 recv_x, expanded_topk_weights, handle, dispatch_event = _deepep_v2_dispatch(
                     state,
+                    source_input=source_input,
                     topk_idx=wave.topk_idx,
                     topk_weights=wave.topk_weights,
                     label=f"{wave_label}/dispatch",
@@ -257,13 +411,12 @@ def _deepep_v2_wave_forward_overlapped(
                 recv_topk_weights = None
             elif wave_layout == "expand_static":
                 assert static_buffers is not None
-                recv_x_out, expanded_topk_weights_out, weighted_expert_out = static_buffers
                 recv_x, expanded_topk_weights, handle, dispatch_event = (
                     _deepep_v2_dispatch_static_expanded(
                         state,
                         wave=wave,
-                        recv_x_out=recv_x_out,
-                        recv_topk_weights_out=expanded_topk_weights_out,
+                        recv_x_out=static_buffers.recv_x,
+                        recv_topk_weights_out=static_buffers.expanded_topk_weights,
                         label=f"{wave_label}/dispatch_static",
                         async_with_compute_stream=async_mode,
                         do_cpu_sync=do_cpu_sync,
@@ -276,6 +429,7 @@ def _deepep_v2_wave_forward_overlapped(
                 recv_x, recv_topk_idx, recv_topk_weights, handle, dispatch_event = (
                     _deepep_v2_dispatch_nonexpanded(
                         state,
+                        source_input=source_input,
                         topk_idx=wave.topk_idx,
                         topk_weights=wave.topk_weights,
                         label=f"{wave_label}/dispatch_nonexpanded",
@@ -303,7 +457,7 @@ def _deepep_v2_wave_forward_overlapped(
     compute_results: list[DeepEpV2WaveComputeResult] = []
     for dispatched in dispatch_results:
         wave = dispatched.wave
-        wave_label = f"{label}/wave_{wave.wave_idx}_experts_{wave.expert_start}_{wave.expert_end}"
+        wave_label = _deepep_v2_wave_label(label, wave)
         with torch.cuda.stream(state.wave_compute_stream):
             _deep_ep_wait(dispatched.event, async_with_compute_stream=async_mode)
             if wave_layout == "expand":
@@ -329,8 +483,8 @@ def _deepep_v2_wave_forward_overlapped(
                 )
             elif wave_layout == "expand_static":
                 assert static_buffers is not None
-                _recv_x_out, _expanded_topk_weights_out, weighted_expert_out = static_buffers
                 assert dispatched.expanded_topk_weights is not None
+                weighted_expert_out = static_buffers.weighted_expert_out
                 recv_x_for_experts, expert_out, expanded_weights, expert_out_is_weighted = (
                     _deepep_v2_compute_experts_static_expanded(
                         state,
@@ -380,7 +534,7 @@ def _deepep_v2_wave_forward_overlapped(
     combine_events: list[object] = []
     for computed in compute_results:
         wave = computed.wave
-        wave_label = f"{label}/wave_{wave.wave_idx}_experts_{wave.expert_start}_{wave.expert_end}"
+        wave_label = _deepep_v2_wave_label(label, wave)
         with torch.cuda.stream(state.wave_combine_stream):
             state.wave_combine_stream.wait_event(computed.compute_done)
             combined_x, combine_event = _deepep_v2_combine(
@@ -390,6 +544,7 @@ def _deepep_v2_wave_forward_overlapped(
                 label=f"{wave_label}/combine",
                 async_with_compute_stream=async_mode,
                 wait_for_completion=False,
+                combined_x_out=_deepep_v2_wave_combine_out(static_buffers, wave),
             )
 
         wave_results.append(
@@ -400,6 +555,7 @@ def _deepep_v2_wave_forward_overlapped(
                 combined_x=combined_x,
                 handle=computed.handle,
                 expert_out_is_weighted=computed.expert_out_is_weighted,
+                wave_input=wave,
                 static_wave=wave if wave_layout == "expand_static" else None,
                 static_recv_x_global=computed.recv_x_global,
             )
@@ -412,7 +568,12 @@ def _deepep_v2_wave_forward_overlapped(
 
     return DeepEpV2WaveForwardResult(
         wave_results=wave_results,
-        combined_x=_sum_deepep_v2_wave_outputs(wave_outputs, label=f"{label}/sum_waves"),
+        combined_x=_merge_deepep_v2_wave_outputs(
+            wave_outputs,
+            wave_inputs=wave_inputs,
+            label=f"{label}/merge_waves",
+            out=static_buffers.merged_x if static_buffers is not None else None,
+        ),
     )
 
 
@@ -425,6 +586,7 @@ def _deepep_v2_wave_forward(
     track_expert_grad: bool,
     overlap: bool,
     do_cpu_sync: bool,
+    workspace: DeepEpV2StaticExpandedWorkspace | None = None,
 ) -> DeepEpV2WaveForwardResult:
     if overlap:
         return _deepep_v2_wave_forward_overlapped(
@@ -434,6 +596,7 @@ def _deepep_v2_wave_forward(
             label=label,
             track_expert_grad=track_expert_grad,
             do_cpu_sync=do_cpu_sync,
+            workspace=workspace,
         )
     return _deepep_v2_wave_forward_sequential(
         state,
@@ -442,6 +605,7 @@ def _deepep_v2_wave_forward(
         label=label,
         track_expert_grad=track_expert_grad,
         do_cpu_sync=do_cpu_sync,
+        workspace=workspace,
     )
 
 
@@ -737,7 +901,7 @@ def _run_deepep_v2_static_wave_backward_overlapped(
     for wave_idx, wave_result in enumerate(result.wave_results):
         if wave_result.static_wave is None or wave_result.static_recv_x_global is None:
             raise RuntimeError("overlapped wave backward currently requires expand_static results")
-        wave_result.grad_combined_x = result.grad_combined_x
+        wave_result.grad_combined_x = _deepep_v2_wave_grad_combined_x(result, wave_result)
         with torch.cuda.stream(state.wave_dispatch_stream):
             torch.cuda.nvtx.range_push(f"{label}/wave_{wave_idx}/combine_backward_dispatch_static")
             try:
@@ -835,6 +999,17 @@ def _run_deepep_v2_static_wave_backward_overlapped(
 
     # Keep staged recv grad tensors alive until the final stream waits above.
     del staged_recv_grads
+    wave_inputs = [
+        wave_result.wave_input
+        for wave_result in result.wave_results
+        if wave_result.wave_input is not None
+    ]
+    if len(wave_inputs) == len(result.wave_results):
+        return _merge_deepep_v2_wave_outputs(
+            combined_grad_parts,
+            wave_inputs=wave_inputs,
+            label=f"{label}/merge_input_grads",
+        )
     return _sum_deepep_v2_wave_outputs(combined_grad_parts, label=f"{label}/sum_input_grads")
 
 
@@ -846,6 +1021,7 @@ def _prepare_deepep_v2_wave_backward(
     label: str,
     overlap: bool,
     do_cpu_sync: bool,
+    workspace: DeepEpV2StaticExpandedWorkspace | None = None,
 ) -> DeepEpV2WaveForwardResult:
     result = _deepep_v2_wave_forward(
         state,
@@ -855,6 +1031,7 @@ def _prepare_deepep_v2_wave_backward(
         track_expert_grad=True,
         overlap=overlap,
         do_cpu_sync=do_cpu_sync,
+        workspace=workspace,
     )
     torch.cuda.nvtx.range_push(f"{label}/grad_prep")
     try:
@@ -889,7 +1066,7 @@ def _run_deepep_v2_wave_backward_from_result(
     # with the forward handle.
     combined_grad_parts: list[torch.Tensor] = []
     for wave_idx, wave_result in enumerate(result.wave_results):
-        wave_result.grad_combined_x = result.grad_combined_x
+        wave_result.grad_combined_x = _deepep_v2_wave_grad_combined_x(result, wave_result)
         if wave_result.static_wave is not None:
             combined_grad_parts.append(
                 _run_deepep_v2_static_wave_backward_from_result(
@@ -914,6 +1091,17 @@ def _run_deepep_v2_wave_backward_from_result(
             state.routed_experts.zero_grad(set_to_none=True)
     finally:
         torch.cuda.nvtx.range_pop()
+    wave_inputs = [
+        wave_result.wave_input
+        for wave_result in result.wave_results
+        if wave_result.wave_input is not None
+    ]
+    if len(wave_inputs) == len(result.wave_results):
+        return _merge_deepep_v2_wave_outputs(
+            combined_grad_parts,
+            wave_inputs=wave_inputs,
+            label=f"{label}/merge_input_grads",
+        )
     return _sum_deepep_v2_wave_outputs(combined_grad_parts, label=f"{label}/sum_input_grads")
 
 
@@ -926,6 +1114,7 @@ def _run_one_deepep_v2_wave_iter(
     pass_type: str,
     overlap: bool,
     do_cpu_sync: bool,
+    workspace: DeepEpV2StaticExpandedWorkspace | None = None,
 ) -> None:
     if pass_type == "forward":
         with torch.no_grad():
@@ -937,6 +1126,7 @@ def _run_one_deepep_v2_wave_iter(
                 track_expert_grad=False,
                 overlap=overlap,
                 do_cpu_sync=do_cpu_sync,
+                workspace=workspace,
             )
         return
 
@@ -948,6 +1138,7 @@ def _run_one_deepep_v2_wave_iter(
         track_expert_grad=True,
         overlap=overlap,
         do_cpu_sync=do_cpu_sync,
+        workspace=workspace,
     )
     _run_deepep_v2_wave_backward_from_result(
         state,

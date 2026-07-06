@@ -23,6 +23,8 @@ from olmo_core.nn.moe.v2.shared_experts import SharedExpertsConfig
 def _dtype_config(name: str) -> tuple[DType, torch.dtype]:
     if name == "bf16":
         return DType.bfloat16, torch.bfloat16
+    if name == "mxfp8":
+        return DType.bfloat16, torch.bfloat16
     if name == "fp32":
         return DType.float32, torch.float32
     raise ValueError(name)

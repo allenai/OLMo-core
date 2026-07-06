@@ -30,6 +30,7 @@ from .deepep_v2_core import (
 from .deepep_v2_wave import (
     DeepEpV2WaveForwardResult,
     _build_deepep_v2_wave_inputs,
+    _deepep_v2_static_expanded_buffers,
     _prepare_deepep_v2_wave_backward,
     _run_deepep_v2_wave_backward_from_result,
     _run_one_deepep_v2_wave_iter,
@@ -165,12 +166,20 @@ def _bench_deepep_v2_case(
         torch.cuda.nvtx.range_pop()
 
     try:
+        static_deepep = True
+        effective_wave_layout = str(args.deepep_wave_layout) if use_wave else "expand_static"
+        effective_num_waves = int(args.deepep_wave_num_waves) if use_wave else 1
+        wave_inputs: list[DeepEpV2WaveInput] | None = None
+        wave_workspace = None
+        wave_overlap = bool(args.deepep_wave_overlap) if use_wave else False
+        reuse_wave_workspace = bool(args.deepep_wave_reuse_workspace)
+        wave_do_cpu_sync = (
+            bool(args.deepep_wave_do_cpu_sync)
+            if args.deepep_wave_do_cpu_sync is not None
+            else state.do_cpu_sync
+        )
+
         if rank == 0:
-            wave_do_cpu_sync = (
-                bool(args.deepep_wave_do_cpu_sync)
-                if args.deepep_wave_do_cpu_sync is not None
-                else state.do_cpu_sync
-            )
             print(
                 f"[bench] {mode_name} config: num_sms={state.num_sms} "
                 f"num_qps={state.num_qps} allocated_qps={state.buffer.num_allocated_qps} "
@@ -179,13 +188,16 @@ def _bench_deepep_v2_case(
                 f"deepep_max_tokens_factor={args.deepep_max_tokens_factor} "
                 f"expert_buffer_mode={state.expert_buffer_mode} "
                 f"weighting={state.weighting_mode} "
+                f"dispatch_dtype={state.dispatch_dtype} "
                 f"expert_alignment={state.expert_alignment} "
                 f"async={state.async_with_compute_stream} "
                 f"do_cpu_sync={state.do_cpu_sync} "
-                f"wave_num_waves={args.deepep_wave_num_waves if use_wave else 0} "
-                f"wave_overlap={bool(args.deepep_wave_overlap) if use_wave else False} "
-                f"wave_layout={args.deepep_wave_layout if use_wave else 'none'} "
-                f"wave_do_cpu_sync={wave_do_cpu_sync if use_wave else False}",
+                f"static_shape={static_deepep} "
+                f"wave_num_waves={effective_num_waves if static_deepep else 0} "
+                f"wave_overlap={wave_overlap if static_deepep else False} "
+                f"wave_layout={effective_wave_layout if static_deepep else 'none'} "
+                f"wave_do_cpu_sync={wave_do_cpu_sync if static_deepep else False} "
+                f"reuse_wave_workspace={reuse_wave_workspace if static_deepep else False}",
                 flush=True,
             )
             if use_wave and args.deepep_wave_overlap and wave_do_cpu_sync:
@@ -197,36 +209,61 @@ def _bench_deepep_v2_case(
                     flush=True,
                 )
 
-        wave_inputs: list[DeepEpV2WaveInput] | None = None
-        wave_overlap = bool(args.deepep_wave_overlap)
-        wave_do_cpu_sync = (
-            bool(args.deepep_wave_do_cpu_sync)
-            if args.deepep_wave_do_cpu_sync is not None
-            else state.do_cpu_sync
-        )
-        if use_wave:
+        if static_deepep:
+            if state.dispatch_dtype == "mxfp8" and effective_wave_layout == "expand_static":
+                raise RuntimeError(
+                    "DeepEP static layout 'expand_static' uses DeepEP "
+                    "dispatch_expanded_into, which currently supports BF16 inputs only. "
+                    "Use BF16 dispatch for static-shape DeepEP benchmarks."
+                )
+            if state.dispatch_dtype == "mxfp8" and wave_overlap:
+                raise RuntimeError(
+                    "deepep_v2_wave MXFP8 dispatch currently requires "
+                    "--no-deepep-wave-overlap because dequantization happens "
+                    "after each dispatch."
+                )
             torch.cuda.nvtx.range_push(f"BENCH/{mode_name}/tokens_{tokens}/build_wave_inputs")
             try:
                 wave_inputs = _build_deepep_v2_wave_inputs(
                     state,
-                    num_waves=int(args.deepep_wave_num_waves),
+                    num_waves=effective_num_waves,
                 )
             finally:
                 torch.cuda.nvtx.range_pop()
             if rank == 0:
                 wave_ranges = [
-                    f"{w.expert_start}:{w.expert_end}@rows{w.wave_base}:{w.wave_end}"
+                    (
+                        f"tokens{w.source_start}:{w.source_end}"
+                        f"/experts{w.expert_start}:{w.expert_end}"
+                        f"@rows{w.wave_base}:{w.wave_end}"
+                    )
                     for w in wave_inputs
                 ]
                 print(
-                    f"[bench] deepep_v2_wave local expert/row ranges={wave_ranges}",
+                    f"[bench] {mode_name} source-token-major static wave ranges={wave_ranges}",
                     flush=True,
+                )
+            if reuse_wave_workspace:
+                if effective_wave_layout != "expand_static":
+                    raise RuntimeError(
+                        "--deepep-wave-reuse-workspace currently requires "
+                        "--deepep-wave-layout expand_static"
+                    )
+                if not hasattr(state.buffer, "combine_into"):
+                    raise RuntimeError(
+                        "--deepep-wave-reuse-workspace requires the local DeepEP "
+                        "combine_into extension. Rebuild /workspace/DeepEP."
+                    )
+                wave_workspace = _deepep_v2_static_expanded_buffers(
+                    state,
+                    wave_inputs,
+                    preallocate_combine=True,
                 )
             if args.deepep_validate_wave_forward:
                 _validate_deepep_v2_wave_forward(
                     state,
                     wave_inputs=wave_inputs,
-                    wave_layout=str(args.deepep_wave_layout),
+                    wave_layout=effective_wave_layout,
                     overlap=wave_overlap,
                     wave_do_cpu_sync=wave_do_cpu_sync,
                     atol=float(args.deepep_validate_wave_forward_atol),
@@ -236,7 +273,7 @@ def _bench_deepep_v2_case(
                 _validate_deepep_v2_wave_backward(
                     state,
                     wave_inputs=wave_inputs,
-                    wave_layout=str(args.deepep_wave_layout),
+                    wave_layout=effective_wave_layout,
                     overlap=wave_overlap,
                     wave_do_cpu_sync=wave_do_cpu_sync,
                     atol=float(args.deepep_validate_wave_backward_atol),
@@ -272,16 +309,17 @@ def _bench_deepep_v2_case(
                     if args.pass_type == "backward"
                     else args.pass_type
                 )
-                if use_wave:
+                if static_deepep:
                     assert wave_inputs is not None
                     _run_one_deepep_v2_wave_iter(
                         state,
                         wave_inputs=wave_inputs,
-                        wave_layout=str(args.deepep_wave_layout),
+                        wave_layout=effective_wave_layout,
                         label=label,
                         pass_type=warmup_pass_type,
                         overlap=wave_overlap,
                         do_cpu_sync=wave_do_cpu_sync,
+                        workspace=wave_workspace,
                     )
                 else:
                     _run_one_deepep_v2_iter(
@@ -315,15 +353,16 @@ def _bench_deepep_v2_case(
             if args.pass_type == "backward":
                 torch.cuda.nvtx.range_push(f"{label}/prep")
                 try:
-                    if use_wave:
+                    if static_deepep:
                         assert wave_inputs is not None
                         backward_result = _prepare_deepep_v2_wave_backward(
                             state,
                             wave_inputs=wave_inputs,
-                            wave_layout=str(args.deepep_wave_layout),
+                            wave_layout=effective_wave_layout,
                             label=label,
                             overlap=wave_overlap,
                             do_cpu_sync=wave_do_cpu_sync,
+                            workspace=wave_workspace,
                         )
                     else:
                         backward_result = _prepare_deepep_v2_backward(
@@ -343,7 +382,7 @@ def _bench_deepep_v2_case(
             try:
                 if args.pass_type == "backward":
                     assert backward_result is not None
-                    if use_wave:
+                    if static_deepep:
                         assert isinstance(backward_result, DeepEpV2WaveForwardResult)
                         _run_deepep_v2_wave_backward_from_result(
                             state,
@@ -359,16 +398,17 @@ def _bench_deepep_v2_case(
                             label=label,
                         )
                 else:
-                    if use_wave:
+                    if static_deepep:
                         assert wave_inputs is not None
                         _run_one_deepep_v2_wave_iter(
                             state,
                             wave_inputs=wave_inputs,
-                            wave_layout=str(args.deepep_wave_layout),
+                            wave_layout=effective_wave_layout,
                             label=label,
                             pass_type=args.pass_type,
                             overlap=wave_overlap,
                             do_cpu_sync=wave_do_cpu_sync,
+                            workspace=wave_workspace,
                         )
                     else:
                         _run_one_deepep_v2_iter(
@@ -416,6 +456,7 @@ def _bench_deepep_v2_case(
                 f"{mode_name}: ranks={world_size} tokens/rank={tokens} "
                 f"pass={args.pass_type} standalone=True moe_only=True shared=False "
                 f"dtype={args.dtype} "
+                f"dispatch_dtype={state.dispatch_dtype} "
                 f"compile={'experts' if args.compile and not args.no_compile else 'none'} "
                 f"d={args.d_model} hidden={args.hidden_size} experts={args.num_experts} "
                 f"local_experts={state.num_local_experts} top_k={args.top_k} "
@@ -427,10 +468,11 @@ def _bench_deepep_v2_case(
                 f"expert_alignment={state.expert_alignment} "
                 f"async={state.async_with_compute_stream} "
                 f"do_cpu_sync={state.do_cpu_sync} "
-                f"wave_num_waves={args.deepep_wave_num_waves if use_wave else 0} "
-                f"wave_overlap={wave_overlap if use_wave else False} "
-                f"wave_layout={args.deepep_wave_layout if use_wave else 'none'} "
-                f"wave_do_cpu_sync={wave_do_cpu_sync if use_wave else False} "
+                f"static_shape={static_deepep} "
+                f"wave_num_waves={effective_num_waves if static_deepep else 0} "
+                f"wave_overlap={wave_overlap if static_deepep else False} "
+                f"wave_layout={effective_wave_layout if static_deepep else 'none'} "
+                f"wave_do_cpu_sync={wave_do_cpu_sync if static_deepep else False} "
                 f"sync_between_iters={bool(args.sync_between_iters)} "
                 f"ms/iter(max_rank)={max_ms:.3f} "
                 f"{host_timing_part}"
