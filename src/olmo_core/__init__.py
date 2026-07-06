@@ -4,6 +4,10 @@ import os
 import socket
 from pathlib import Path
 
+from . import mxfp8_config as _mxfp8_config
+
+_mxfp8_config.get_mxfp8_default_scale_mode()  # Resolves OLMO_MXFP8_SCALE_MODE once.
+
 
 def _default_triton_cache_dir() -> None:
     """
