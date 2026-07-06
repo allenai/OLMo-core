@@ -92,7 +92,7 @@ class BatchSizeConfig:
 
         # Determine max tokens per rank based on GPU type
         max_tokens_per_rank = MAX_RANK_MICROBATCH_SIZE_TOKENS
-        if "B200" in self.gpu_type:
+        if "B200" in self.gpu_type or "B300" in self.gpu_type:
             max_tokens_per_rank *= 2
 
         # Check if we need context parallelism based on sequence length
@@ -270,7 +270,8 @@ class SFTConfig(Config):
             sequence_length=seq_len,
             dataset_path=dataset_path,
         )
-        gpu_type = CLUSTER_TO_GPU_TYPE[cluster]
+        from olmo_core.internal.common import get_gpu_type
+        gpu_type = get_gpu_type(cluster)
 
         bs_config = BatchSizeConfig(
             sequence_length=seq_len,
