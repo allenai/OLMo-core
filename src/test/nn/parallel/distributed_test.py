@@ -5,6 +5,7 @@ import torch
 import torch.distributed as dist
 import torch.nn as nn
 
+from olmo_core.distributed.utils import backend_supports_cuda
 from olmo_core.nn.parallel import MultiGroupDistributedDataParallel
 from olmo_core.testing import BACKENDS, run_distributed_test
 from olmo_core.utils import seed_all
@@ -32,8 +33,22 @@ class SelectiveModel(nn.Module):
         return self.fc_a(x) if use_a else self.fc_b(x)
 
 
+class BufferedModel(nn.Module):
+    """A model with a (non-gradient) buffer, e.g. MoE router score_bias / RoPE caches."""
+
+    def __init__(self, d: int):
+        super().__init__()
+        self.fc = nn.Linear(d, d)
+        self.register_buffer("running_bias", torch.zeros(d))
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.fc(x) + self.running_bias
+
+
 def _device_for_backend() -> torch.device:
-    if dist.get_backend() == "nccl":
+    # BACKENDS passes the multi-backend string "cuda:nccl,cpu:gloo" for the NCCL case, so an
+    # equality check against "nccl" would fall through to CPU; use the substring-aware helper.
+    if backend_supports_cuda():
         device = torch.device(f"cuda:{dist.get_rank()}")
         torch.cuda.set_device(device)
         return device
@@ -215,6 +230,29 @@ def _run_no_sync_skipped_param_grad_preserved(d: int):
         torch.testing.assert_close(p.grad, g_ref, rtol=1e-5, atol=1e-6)
 
 
+def _run_buffered_module_grad_parity(d: int):
+    device = _device_for_backend()
+    rank, world_size = dist.get_rank(), dist.get_world_size()
+
+    seed_all(0)
+    model = BufferedModel(d).to(device)
+    reference = copy.deepcopy(model)
+    # Would raise NotImplementedError before the buffers-allowed fix.
+    ddp = MultiGroupDistributedDataParallel(model, init_sync=False)
+
+    torch.manual_seed(100 + rank)
+    x = torch.randn(4, d, device=device)
+    y = torch.randn(4, d, device=device)
+    ((ddp(x) - y) ** 2).mean().backward()
+    ddp.finalize_grad_reduce()
+
+    ((reference(x) - y) ** 2).mean().backward()
+    expected = _reference_grads(reference, world_size)
+    for (name, p), g_ref in zip(ddp.module.named_parameters(), expected):
+        assert p.grad is not None, f"missing grad for {name}"
+        torch.testing.assert_close(p.grad, g_ref, rtol=1e-5, atol=1e-6)
+
+
 @pytest.mark.parametrize("backend", BACKENDS)
 def test_grad_parity(backend):
     run_distributed_test(
@@ -246,6 +284,15 @@ def test_fp32_grad_accumulation(backend):
 def test_no_sync_skipped_param_grad_preserved(backend):
     run_distributed_test(
         _run_no_sync_skipped_param_grad_preserved,
+        backend=backend,
+        func_args=(16,),
+    )
+
+
+@pytest.mark.parametrize("backend", BACKENDS)
+def test_buffered_module_grad_parity(backend):
+    run_distributed_test(
+        _run_buffered_module_grad_parity,
         backend=backend,
         func_args=(16,),
     )

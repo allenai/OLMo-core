@@ -176,11 +176,9 @@ class MultiGroupDistributedDataParallel(Module):
         self.process_group_to_params: Dict[Any, List[torch.nn.Parameter]] = {}
         self.param_to_process_group: Dict[torch.nn.Parameter, Any] = {}
 
-        named_buffers = list(self.module.named_buffers())
-        if len(named_buffers) > 0:
-            raise NotImplementedError(
-                "DDP with param_process_group_fn does not support buffers yet."
-            )
+        # This wrapper reduces parameter *gradients* only; module buffers are left untouched and are
+        # not synchronized across ranks (as with torch DDP's broadcast_buffers=False). Non-gradient
+        # state such as MoE router score_bias or RoPE caches is therefore fine on a buffered module.
 
         for name, param in self.module.named_parameters():
             if name in self.parameters_to_ignore:
