@@ -44,7 +44,7 @@ def cx_slug(target: dict) -> str:
     return str(target["cx"]).lower()
 
 
-def launch_command(target: dict, *, dry_run: bool) -> list[str]:
+def launch_command(target: dict, *, dry_run: bool, num_instances: int, gpus: int) -> list[str]:
     size = target["model_size"]
     slug = VARIANT_SLUGS[target["variant"]]
     name = f"olmoe3-{size}-{cx_slug(target)}-{slug}-olmobase"
@@ -71,7 +71,7 @@ def launch_command(target: dict, *, dry_run: bool) -> list[str]:
         "--harness",
         "default",
         "--override",
-        "provider.num_instances=8",
+        f"provider.num_instances={num_instances}",
         "--override",
         "provider.kind=vllm",
         "--override",
@@ -96,7 +96,7 @@ def launch_command(target: dict, *, dry_run: bool) -> list[str]:
         "urgent",
         "--preemptible" if size in {"275m", "480m"} else "--no-preemptible",
         "--gpus",
-        "8",
+        str(gpus),
         "--timeout",
         "24h",
         "--group",
@@ -120,6 +120,8 @@ def main() -> None:
     parser.add_argument("--launch", action="store_true")
     parser.add_argument("--only", action="append", default=[])
     parser.add_argument("--size", action="append", default=[])
+    parser.add_argument("--num-instances", type=int, default=8)
+    parser.add_argument("--gpus", type=int, default=8)
     args = parser.parse_args()
 
     targets = load_targets(args.manifest)
@@ -142,7 +144,12 @@ def main() -> None:
         if not (has_single_file or has_sharded_index):
             raise FileNotFoundError(f"{out}/model.safetensors or model.safetensors.index.json")
 
-        cmd = launch_command(target, dry_run=not args.launch)
+        cmd = launch_command(
+            target,
+            dry_run=not args.launch,
+            num_instances=args.num_instances,
+            gpus=args.gpus,
+        )
         print("+", " ".join(cmd))
         if args.launch:
             result = subprocess.run(
