@@ -24,8 +24,9 @@ except ImportError:
 try:
     import flash_attn.cute as flash_attn_4  # type: ignore
 except Exception:
-    # NOTE: not just ImportError -- a broken/mismatched FA4 (quack/cutlass DSL) build can
-    # raise AttributeError et al. at import time, which must not take down the whole process.
+    # Not just ImportError: a version-mismatched flash_attn.cute build can raise AttributeError
+    # (e.g. cutlass-dsl dropping an attr quack relies on). Degrade gracefully to None instead of
+    # crashing module import; flash_attn.cute is Blackwell-only and optional anyway.
     flash_attn_4 = None  # type: ignore
 
 try:

@@ -41,6 +41,21 @@ class GenerationConfig(Config):
     stop_token_ids: Optional[List[int]] = None
     """Tokens to stop generation at. If provided, the generation will stop when any of these tokens are generated."""
 
+    stop_strings: Optional[List[str]] = None
+    """
+    Substrings that stop generation per-row when they appear in a row's *decoded* completion. Unlike
+    :data:`stop_token_ids` (single-token), these match arbitrary detokenized text, which is much more
+    effective for short-answer eval (e.g. ``["Answer:", "Contradicting pairs:"]``): once a row's answer
+    line is emitted the row is marked finished, so decoding stops near the actual answer length instead
+    of running to ``max_new_tokens``. Requires a tokenizer be passed to
+    :meth:`~olmo_core.generate.generation_module.transformer.TransformerGenerationModule.generate_batch`
+    via ``stop_string_tokenizer`` (used to decode the running completion). ``None`` disables.
+    """
+
+    stop_string_check_interval: int = 1
+    """How often (in decode steps) to run the :data:`stop_strings` / finished-all check. Larger values
+    cut the per-step GPU->CPU sync at the cost of a few extra decode steps before stopping. Default 1."""
+
     landmark_mem_id: Optional[int] = None
     """
     For landmark-attention models only: the token ID used as the landmark ("memory") token. When the
@@ -80,8 +95,18 @@ class GenerationConfig(Config):
     the query against the cached landmark keys and keeps only the ``landmark_top_k_blocks``
     highest-scoring blocks; all other past blocks receive exactly zero attention weight, and the
     attention renormalizes over the local block plus the retrieved blocks. ``None`` (the default)
-    keeps the dense behavior where every past block is soft-gated by its landmark score. Prefill is
+    defers to :data:`landmark_top_k_fraction`; an explicit value here takes precedence. Prefill is
     unaffected (it remains single-shot dense over the full prompt).
+    """
+
+    landmark_top_k_fraction: Optional[float] = 0.1
+    """
+    For landmark-attention models only: when :data:`landmark_top_k_blocks` is not set, enable hard
+    top-k decode retrieval with ``k = ceil(landmark_top_k_fraction * num_prompt_blocks)`` -- keep the
+    top fraction of past landmark blocks at each decode step. **Defaults to 0.1 (top 10%), so
+    landmark eval uses top-k retrieval by default** (the paper's inference; far fewer attended blocks
+    at long context than dense soft-gating). Set to ``None`` to disable top-k and fall back to dense
+    soft-gating over all past blocks.
     """
 
     landmark_nonselected_mass: Optional[float] = None

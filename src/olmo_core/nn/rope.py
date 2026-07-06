@@ -522,6 +522,7 @@ class RotaryEmbedding(RotaryEmbeddingBase):
         pos_cos: Optional[torch.Tensor] = None,
         freqs_cis: Optional[torch.Tensor] = None,
         cu_doc_lens: Optional[torch.Tensor] = None,
+        position_ids: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Apply RoPE to query (``q``) and key (``k``) matrices.
@@ -537,6 +538,15 @@ class RotaryEmbedding(RotaryEmbeddingBase):
         :param cu_doc_lens: Cumulative document lengths for intra-document RoPE in packed
             inputs. When supplied, each document's tokens receive positions starting from 0
             (matching per-document forwards). Mutually exclusive with ``start_pos``.
+        :param position_ids: Explicit per-token absolute positions of shape ``(batch_size, seq_len)``.
+            When supplied, each token receives the RoPE angle for its given position (gathered from a
+            freshly derived absolute-position buffer; any passed ``pos_sin``/``pos_cos`` is ignored
+            because under context parallelism it has been sharded to this rank's sequence slice rather
+            than indexed by absolute position). This is how landmark attention applies per-document
+            RoPE on a Ulysses CP shard, where the local shard does not start at position 0 and a
+            document may straddle a rank boundary (see
+            :func:`~olmo_core.nn.attention.landmark.build_local_packed_position_ids`). Mutually
+            exclusive with ``start_pos`` and ``cu_doc_lens``.
 
         :returns: The query and key matrices after RoPE has been applied.
         """
@@ -545,6 +555,11 @@ class RotaryEmbedding(RotaryEmbeddingBase):
 
         if cu_doc_lens is not None and start_pos is not None:
             raise RuntimeError("'cu_doc_lens' and 'start_pos' are mutually exclusive")
+
+        if position_ids is not None and (start_pos is not None or cu_doc_lens is not None):
+            raise RuntimeError(
+                "'position_ids' is mutually exclusive with 'start_pos' and 'cu_doc_lens'"
+            )
 
         if head_first:
             q_len = q.size(2)
@@ -559,6 +574,41 @@ class RotaryEmbedding(RotaryEmbeddingBase):
             q_, k_ = q, k
 
         with torch.autocast(q.device.type, enabled=False):
+            if position_ids is not None:
+                if q_len != k_len:
+                    raise RuntimeError("'position_ids' requires q_len == k_len")
+                B = q_.size(0)
+                pos_idx = position_ids.to(device=q_.device, dtype=torch.long)
+                if pos_idx.shape != (B, k_len):
+                    raise RuntimeError(
+                        f"'position_ids' must have shape {(B, k_len)}, got {tuple(pos_idx.shape)}"
+                    )
+                # Index an absolute-position sin/cos buffer by ``position_ids``: the passed
+                # pos_sin/pos_cos has been CP-sharded so its rows are this rank's sequence slice, not
+                # absolute positions. Reuse the pre-warmed buffer (covering every position up to the
+                # model's max sequence length, with any RoPE scaling already applied) sized from the
+                # cache rather than from the data-dependent ``pos_idx.max()`` -- the latter forces a
+                # host sync / dynamic shape that breaks torch.compile (InductorError: SliceView).
+                cached_sin = self._cache.get("rope_pos_sin")
+                if cached_sin is not None:
+                    pos_sin, pos_cos = self._get_rotary_embedding(cached_sin.shape[-2], q_.device)
+                else:
+                    pos_sin, pos_cos = self._get_rotary_embedding(
+                        int(pos_idx.max().item()) + 1, q_.device
+                    )
+                pos_sin, pos_cos = pos_sin.type_as(q_), pos_cos.type_as(q_)
+                sin_sel = pos_sin.index_select(0, pos_idx.reshape(-1)).view(B, k_len, -1)
+                cos_sel = pos_cos.index_select(0, pos_idx.reshape(-1)).view(B, k_len, -1)
+                if head_first:
+                    sin_qk = sin_sel.unsqueeze(1)
+                    cos_qk = cos_sel.unsqueeze(1)
+                else:
+                    sin_qk = sin_sel.unsqueeze(2)
+                    cos_qk = cos_sel.unsqueeze(2)
+                q_ = self._apply_rotary_pos_emb(sin_qk, cos_qk, q_)
+                k_ = self._apply_rotary_pos_emb(sin_qk, cos_qk, k_)
+                return q_.type_as(q), k_.type_as(k)
+
             seq_len_needed = (start_pos + k_len) if start_pos is not None else k_len
             if pos_sin is None or pos_cos is None:
                 pos_sin, pos_cos = self._get_rotary_embedding(seq_len_needed, q_.device)

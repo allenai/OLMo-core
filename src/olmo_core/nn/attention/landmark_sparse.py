@@ -28,16 +28,23 @@ from typing import Optional
 import torch
 import torch.nn.functional as F
 
+from olmo_core.distributed.parallel.context_parallel import (
+    all_to_all_cp2hp,
+    all_to_all_single_cp2hp,
+    all_to_all_single_hp2cp,
+)
+from olmo_core.distributed.utils import get_rank
 from olmo_core.exceptions import OLMoConfigurationError
 
 from . import Attention
 from . import landmark_gate_analysis as gate_log
 from .kv_cache import KVCacheManager
-from .landmark import repeat_kv
+from .landmark import build_block_doc_id, build_local_packed_position_ids, repeat_kv
 from .landmark_sparse_kernel import (
     has_sparse_kernel,
     sparse_landmark_attention_triton_train,
 )
+from .ring import RingContextParallelStyle, UlyssesContextParallelStyle
 
 
 def sparse_landmark_attention_ref(
@@ -47,12 +54,16 @@ def sparse_landmark_attention_ref(
     block_size: int,
     num_landmarks: int = 1,
     scale: Optional[float] = None,
+    doc_id: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
     """
     Dense O(T^2) reference. ``q,k,v``: ``(B, H, T, D)``; ``T`` a multiple of ``block_size``.
     A query at position i (chunk ``c = i // L``) attends to key j iff:
       - same chunk and causal: ``j // L == c`` and ``j <= i``, OR
       - j is a landmark of a strictly-past chunk: ``(j % L) >= L - G`` and ``j // L < c``.
+
+    ``doc_id`` is an optional int32 ``(B, C)`` per-chunk document id for sequence packing; when given,
+    the past-landmark term additionally requires the query and key chunks to share a document.
     """
     B, H, T, D = q.shape
     L, G = block_size, num_landmarks
@@ -66,10 +77,14 @@ def sparse_landmark_attention_ref(
 
     same_chunk_causal = (chunk[:, None] == chunk[None, :]) & (pos[None, :] <= pos[:, None])
     past_landmark = is_lm[None, :] & (chunk[None, :] < chunk[:, None])
-    allowed = same_chunk_causal | past_landmark
+    allowed = (same_chunk_causal | past_landmark).expand(B, T, T).clone()  # (B, T, T)
+    if doc_id is not None:
+        # Per-token document id from per-chunk ids, then require same document.
+        doc_tok = doc_id[:, chunk]  # (B, T)
+        allowed = allowed & (doc_tok[:, :, None] == doc_tok[:, None, :])
 
     att = torch.matmul(q, k.transpose(-1, -2)) * scale
-    att = att.masked_fill(~allowed[None, None], float("-inf"))
+    att = att.masked_fill(~allowed[:, None], float("-inf"))
     return torch.matmul(torch.softmax(att, dim=-1), v)
 
 
@@ -80,6 +95,7 @@ def sparse_landmark_attention(
     block_size: int,
     num_landmarks: int = 1,
     scale: Optional[float] = None,
+    doc_id: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
     """
     Efficient chunked form, numerically equal to :func:`sparse_landmark_attention_ref`.
@@ -87,6 +103,10 @@ def sparse_landmark_attention(
 
     Own-chunk scores are ``(B,H,C,L,L)`` and landmark scores are ``(B,H,C,L,C,G)`` (``C=T/L``), so
     compute/peak-memory is ``O(B*H*T*(L + G*T/L))`` instead of ``O(B*H*T^2)``.
+
+    ``doc_id`` is an optional int32 ``(B, C)`` per-chunk document id for sequence packing; when given,
+    a query only attends to past chunks' landmarks within its own document (own-chunk attention is
+    unaffected, since each chunk lies in a single document).
     """
     B, H, T, D = q.shape
     L, G = block_size, num_landmarks
@@ -109,8 +129,12 @@ def sparse_landmark_attention(
 
     s_lm = torch.einsum("bhcld,bhkgd->bhclkg", qc, k_lm) * scale
     cidx = torch.arange(C, device=dev)
-    past = cidx[None, :] < cidx[:, None]
-    s_lm = s_lm.masked_fill(~past[None, None, :, None, :, None], neg_inf)
+    past = (cidx[None, :] < cidx[:, None]).expand(B, C, C).clone()  # (B, query-chunk, key-chunk)
+    if doc_id is not None:
+        # Restrict to past chunks in the same document as the query chunk.
+        past = past & (doc_id[:, :, None] == doc_id[:, None, :])
+    # (B, 1, query-chunk, 1, key-chunk, 1) broadcast over the (B,H,C,L,C,G) scores.
+    s_lm = s_lm.masked_fill(~past[:, None, :, None, :, None], neg_inf)
     s_lm = s_lm.reshape(B, H, C, L, C * G)
 
     s = torch.cat([s_own, s_lm], dim=-1)
@@ -134,7 +158,9 @@ class SparseLandmarkAttention(Attention):
     Sparse landmark-only-across-chunks attention as a drop-in :class:`Attention` variant
     (``AttentionType.sparse_landmark``). Each chunk is ``block_size = mem_freq + num_landmarks``
     tokens, the last ``num_landmarks`` of which are landmarks. Pure-torch (autograd) -- works on
-    CPU/GPU; context parallelism is not yet supported. Supports the optional output gate inherited
+    CPU/GPU. Supports Ulysses context parallelism (the cp2hp/hp2cp all-to-all is performed in
+    :meth:`forward`, exactly as the other landmark variants), including in combination with
+    intra-document sequence packing (``cu_doc_lens``). Supports the optional output gate inherited
     from :class:`Attention` (``att * sigmoid(w_g(x))``), so it drops into gated models like Qwen3.5.
     """
 
@@ -161,6 +187,11 @@ class SparseLandmarkAttention(Attention):
         self.num_landmarks = num_landmarks
         self.block_size = mem_freq + num_landmarks
         self.softmax_scale = softmax_scale if softmax_scale is not None else self.head_dim**-0.5
+        # Ulysses context-parallel state, populated by ``apply_cp`` (see :meth:`apply_cp`). Like the
+        # other landmark variants, sparse landmark attention has its own forward and does not route
+        # through ``self.backend``, so it performs the Ulysses all-to-all itself in ``forward``.
+        self._cp_pg: Optional[torch.distributed.ProcessGroup] = None
+        self._cp_world_size: int = 1
         # Eval-decode state (set by the generation module for landmark HELMET/RULER-style eval). When
         # ``_eval_prompt_len`` is not None, the decode step treats all post-prompt positions as one
         # growing local block instead of continuing the fixed per-block structure. See
@@ -210,10 +241,46 @@ class SparseLandmarkAttention(Attention):
             dtype=self.w_k.weight.dtype,  # eager decode matmuls q against the cache directly
         )
 
-    def apply_cp(self, *args, **kwargs):
-        raise NotImplementedError(
-            "Context parallelism is not yet supported for SparseLandmarkAttention"
-        )
+    def apply_cp(
+        self,
+        cp_mesh,
+        ring: Optional[RingContextParallelStyle] = None,
+        uly: Optional[UlyssesContextParallelStyle] = None,
+    ):
+        """Prepare sparse landmark attention for Ulysses context parallelism.
+
+        Ring/zigzag CP splits the sequence into per-rank chunks, which breaks the sparse landmark
+        attention (a query must see the landmark tokens of *all* preceding chunks). Ulysses CP instead
+        splits the heads: each rank gathers the full sequence (with ``n_heads / cp_degree`` heads) via
+        an all-to-all, so the sparse chunked attention sees the complete sequence. We therefore only
+        support Ulysses, performing the all-to-all in :meth:`forward`.
+
+        :param cp_mesh: The context parallel device sub-mesh.
+        :param ring: Must be ``None``; ring CP is not supported.
+        :param uly: The Ulysses context parallel style.
+
+        :raises OLMoConfigurationError: If ring CP is requested, or if the (KV) head count is not
+            divisible by the CP degree.
+        """
+        if ring is not None:
+            raise OLMoConfigurationError(
+                "SparseLandmarkAttention only supports Ulysses context parallelism, not ring/zigzag "
+                "CP (which splits the sequence and breaks the sparse landmark attention)."
+            )
+        if uly is None:
+            raise ValueError("One of 'ring' or 'uly' must be specified")
+        cp_size = cp_mesh.size()
+        if self.n_heads % cp_size != 0 or self.n_kv_heads % cp_size != 0:
+            raise OLMoConfigurationError(
+                f"Ulysses CP degree ({cp_size}) must divide n_heads ({self.n_heads}) and "
+                f"n_kv_heads ({self.n_kv_heads})"
+            )
+        self._cp_pg = cp_mesh.get_group()
+        self._cp_world_size = cp_size
+
+    @property
+    def cp_enabled(self) -> bool:
+        return self._cp_pg is not None
 
     @torch.compiler.disable
     def forward(
@@ -234,30 +301,61 @@ class SparseLandmarkAttention(Attention):
         if any(
             v is not None
             for v in (
-                cu_doc_lens,
                 cu_doc_lens_q,
                 cu_doc_lens_k,
-                max_doc_len,
                 max_doc_len_q,
                 max_doc_len_k,
                 local_k_slice,
             )
         ):
             raise NotImplementedError(
-                "Intra-document masking (cu_doc_lens) is not supported with sparse landmark attention"
+                "SparseLandmarkAttention supports symmetric intra-document masking via 'cu_doc_lens' "
+                "only; the cross-attention variants are not supported"
             )
         # Generation path: incremental decode / prefill with a KV cache.
         if self.kv_cache_manager is not None:
+            if self.cp_enabled:
+                raise NotImplementedError(
+                    "Context parallelism is not supported with sparse landmark generation"
+                )
             return self._forward_generate(x, pos_sin, pos_cos, freqs_cis, cache_leftpad)
         if cache_leftpad is not None:
             raise NotImplementedError(
                 "cache_leftpad is only supported together with a KV cache manager"
             )
 
-        B, T, _ = x.shape
+        # ``T_local`` is the per-rank sequence length: the full sequence without CP, or the CP shard
+        # (``T / cp_degree``) under Ulysses CP. Per-document RoPE for sequence packing: without CP the
+        # local shard *is* the full sequence, so the standard ``cu_doc_lens`` RoPE path (positions
+        # reset to 0 per document) applies. Under Ulysses CP the shard is a contiguous slice of the
+        # full sequence while ``cu_doc_lens`` still describes the full sequence, and RoPE runs on the
+        # slice *before* the all-to-all gather; so we pass explicit per-document positions for this
+        # rank's slice -- correct even for documents straddling a rank boundary.
+        B, T_local, _ = x.shape
+        rope_cu_doc_lens, position_ids = cu_doc_lens, None
+        if cu_doc_lens is not None and self.cp_enabled:
+            assert self._cp_pg is not None
+            position_ids = build_local_packed_position_ids(
+                cu_doc_lens, B, T_local, get_rank(self._cp_pg), self._cp_world_size
+            )
+            rope_cu_doc_lens = None
         q, k, v = self._prepare_qkv(
-            x, pos_sin=pos_sin, pos_cos=pos_cos, freqs_cis=freqs_cis, cu_doc_lens=None
+            x,
+            pos_sin=pos_sin,
+            pos_cos=pos_cos,
+            freqs_cis=freqs_cis,
+            cu_doc_lens=rope_cu_doc_lens,
+            position_ids=position_ids,
         )
+        if self.cp_enabled:
+            assert self._cp_pg is not None
+            # Ulysses: gather the full sequence and scatter the heads across CP ranks.
+            # (B, T/CP, H, D) -> (B, T, H/CP, D); likewise for the KV heads.
+            q = all_to_all_single_cp2hp(q, self._cp_pg)
+            k, v = all_to_all_cp2hp([k, v], self._cp_pg)
+
+        # Each rank now holds the full sequence ``T`` (= ``T_local`` without CP).
+        T = q.shape[1]
         if T % self.block_size != 0:
             raise OLMoConfigurationError(
                 f"Sequence length ({T}) must be a multiple of block_size "
@@ -268,23 +366,55 @@ class SparseLandmarkAttention(Attention):
         k = repeat_kv(k.transpose(1, 2), n_rep)
         v = repeat_kv(v.transpose(1, 2), n_rep)
 
-        att = self._attn_core(q, k, v)
-        att = att.transpose(1, 2).contiguous().view(B, T, -1)
+        # Per-chunk document ids for sequence packing (None for the single-document path). The sparse
+        # "chunk" is exactly the landmark block, so ``build_block_doc_id`` gives one id per chunk. Under
+        # CP this is built on the full gathered sequence, so the document boundaries line up.
+        doc_id = (
+            build_block_doc_id(cu_doc_lens, B, T, self.block_size)
+            if cu_doc_lens is not None
+            else None
+        )
+        att = self._attn_core(q, k, v, doc_id=doc_id)
+        # shape: (B, T, n_heads (local), head_dim)
+        att = att.transpose(1, 2)
+        if self.cp_enabled:
+            assert self._cp_pg is not None
+            # Ulysses: scatter the sequence back and gather the heads. (B, T, H/CP, D) -> (B, T/CP, H, D)
+            att = all_to_all_single_hp2cp(att.contiguous(), self._cp_pg)
+        att = att.contiguous().view(B, T_local, -1)
         att = self._apply_gate(att, x)
         return self.w_out(att)
 
-    def _attn_core(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor) -> torch.Tensor:
+    def _attn_core(
+        self,
+        q: torch.Tensor,
+        k: torch.Tensor,
+        v: torch.Tensor,
+        doc_id: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
         """Sparse landmark self-attention on ``(B, H, T, D)`` with ``T`` a multiple of block_size.
 
         Fused Triton fwd+bwd kernel when available (much faster); eager torch fallback otherwise.
-        Disable the kernel with ``LM_SPARSE_KERNEL=0``.
+        Disable the kernel with ``LM_SPARSE_KERNEL=0``. ``doc_id`` enables packing masking.
         """
         if q.is_cuda and has_sparse_kernel() and os.environ.get("LM_SPARSE_KERNEL", "1") != "0":
             return sparse_landmark_attention_triton_train(
-                q, k, v, self.block_size, num_landmarks=self.num_landmarks, scale=self.softmax_scale
+                q,
+                k,
+                v,
+                self.block_size,
+                num_landmarks=self.num_landmarks,
+                scale=self.softmax_scale,
+                doc_id=doc_id,
             )
         return sparse_landmark_attention(
-            q, k, v, self.block_size, num_landmarks=self.num_landmarks, scale=self.softmax_scale
+            q,
+            k,
+            v,
+            self.block_size,
+            num_landmarks=self.num_landmarks,
+            scale=self.softmax_scale,
+            doc_id=doc_id,
         )
 
     def _forward_generate(

@@ -17,6 +17,7 @@ from olmo_core.distributed.parallel.context_parallel import (
     all_to_all_single_hp2cp,
 )
 from olmo_core.distributed.parallel.tensor_parallel import SequenceParallel
+from olmo_core.distributed.utils import get_rank, get_world_size
 from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.nn.attention.base import SequenceMixer, SequenceMixerConfig
@@ -27,7 +28,12 @@ from ..buffer_cache import BufferCache
 from ..config import ModuleConfig
 from ..functional import l2_normalize
 from ..layer_norm import LayerNorm, LayerNormConfig
-from ..rope import ComplexRotaryEmbedding, FusedRotaryEmbedding, RoPEConfig, RotaryEmbedding
+from ..rope import (
+    ComplexRotaryEmbedding,
+    FusedRotaryEmbedding,
+    RoPEConfig,
+    RotaryEmbedding,
+)
 from ..utils import get_tp_wrappers
 from . import flash_attn_api
 from .backend import (
@@ -39,7 +45,12 @@ from .backend import (
     TEAttentionBackend,
     TorchAttentionBackend,
 )
-from .landmark import build_landmark_masks, landmark_grouped_softmax, repeat_kv
+from .landmark import (
+    build_block_doc_id,
+    build_local_packed_position_ids,
+    landmark_grouped_softmax,
+    repeat_kv,
+)
 from .landmark_kernel import fused_landmark_attention, has_landmark_kernel
 from .ring import (
     RingAttentionLlama3LoadBalancer,
@@ -75,6 +86,12 @@ __all__ = [
     "FastLandmarkAttention",
     "FastCompressiveLandmarkAttention",
     "SparseLandmarkAttention",
+    "DocumentLandmarkAttention",
+    "DocumentCompressiveLandmarkAttention",
+    "MultiLandmarkAttention",
+    "DocumentMultiLandmarkAttention",
+    "DocumentChunkedAttention",
+    "AttentionPattern",
     "RingAttentionLoadBalancerType",
     "RingAttentionLoadBalancer",
     "RingAttentionZigZagLoadBalancer",
@@ -206,6 +223,37 @@ class AttentionType(StrEnum):
     per-block positional vector to every value before the attention aggregation)
     """
 
+    document_landmark = "document_landmark"
+    """
+    ➡️ :class:`DocumentLandmarkAttention` (landmark version of document-chunked attention: normal
+    landmark grouped softmax within a document, plus a landmark bridge across documents)
+    """
+
+    multi_landmark = "multi_landmark"
+    """
+    ➡️ :class:`MultiLandmarkAttention` (landmark grouped softmax with multiple landmark tokens per
+    block, pooled into each block's gate via ``landmark_pool``)
+    """
+
+    document_multi_landmark = "document_multi_landmark"
+    """
+    ➡️ :class:`DocumentMultiLandmarkAttention` (document-chunked multi-landmark attention)
+    """
+
+    document_compressive_landmark = "document_compressive_landmark"
+    """
+    ➡️ :class:`DocumentCompressiveLandmarkAttention` (compressive version of document-chunked
+    attention: the compressive landmark grouped softmax -- each past block's landmark token also
+    contributes its value as a compressed summary -- plus the chunked-document mask)
+    """
+
+    document_chunked = "document_chunked"
+    """
+    ➡️ :class:`DocumentChunkedAttention` (dense full attention restricted by the chunked-document
+    mask: context chunks isolated, FREE query/answer bridges across them -- the non-landmark dense
+    analogue of ``document_landmark``)
+    """
+
 
 @dataclass
 class AttentionTypePatternConfig(Config):
@@ -267,6 +315,22 @@ _LANDMARK_ATTENTION_TYPES = (
     AttentionType.fast_compressive_landmark,
     AttentionType.sparse_landmark,
     AttentionType.shared_vector_landmark,
+    AttentionType.document_landmark,
+    AttentionType.document_compressive_landmark,
+    AttentionType.multi_landmark,
+    AttentionType.document_multi_landmark,
+)
+
+# Landmark variants that accept the ``num_landmarks`` (and, for the multi-landmark ones,
+# ``landmark_pool``) config fields.
+_NUM_LANDMARKS_TYPES = (
+    AttentionType.sparse_landmark,
+    AttentionType.multi_landmark,
+    AttentionType.document_multi_landmark,
+)
+_MULTI_LANDMARK_TYPES = (
+    AttentionType.multi_landmark,
+    AttentionType.document_multi_landmark,
 )
 
 
@@ -316,8 +380,16 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
     """
     num_landmarks: Optional[int] = None
     """
-    For :class:`SparseLandmarkAttention` (``name="sparse_landmark"``) only: number of landmark
-    tokens per chunk (the last ``num_landmarks`` tokens of each chunk). Defaults to 1.
+    Number of landmark tokens per block/chunk (the last ``num_landmarks`` tokens). Supported by
+    :class:`SparseLandmarkAttention` (``name="sparse_landmark"``), :class:`MultiLandmarkAttention`
+    (``name="multi_landmark"``), and :class:`DocumentMultiLandmarkAttention`
+    (``name="document_multi_landmark"``). Defaults to 1.
+    """
+    landmark_pool: Optional[str] = None
+    """
+    For the multi-landmark variants (``name="multi_landmark"`` / ``"document_multi_landmark"``) only:
+    how to pool a block's landmark probabilities into its gate -- ``"sum"`` (marginal mass, the
+    default) or ``"max"`` (best-matching landmark). See :class:`MultiLandmarkAttention`.
     """
     nonselected_landmark_mass: Optional[float] = None
     """
@@ -330,6 +402,37 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
     For :class:`SharedVectorLandmarkAttention` (``name="shared_vector_landmark"``) only: the length
     of the learned per-block positional vector appended to every value. Defaults to 32. The per-head
     attention output becomes ``head_dim + vec_dim`` and ``w_out`` is widened to match.
+    """
+    cross_doc_mode: Optional[str] = None
+    """
+    For :class:`DocumentLandmarkAttention` (``name="document_landmark"``) only: which
+    :class:`CrossDocumentMaskType` policy governs cross-document attention. Defaults to
+    ``"document_chunked"`` (the landmark bridge across documents).
+    """
+    dilation_n: Optional[int] = None
+    """
+    For :class:`DocumentChunkedAttention` with ``cross_doc_mode="hierarchical_dilated"`` only: the
+    number of documents a context query attends per layer (itself + ``n-1`` strided predecessors).
+    Defaults to 2.
+    """
+    dilation_m: Optional[int] = None
+    """
+    For :class:`DocumentChunkedAttention` with ``cross_doc_mode="hierarchical_dilated"`` only: the
+    dilation base ``m >= 1``. At transformer layer ``ell`` the stride is ``m**ell`` (saturated once it
+    spans all history), so the receptive span is ``(n-1)*m**ell`` documents. Defaults to 2.
+    """
+    dilation_max_docs: Optional[int] = None
+    """
+    For :class:`DocumentChunkedAttention` with ``cross_doc_mode="hierarchical_dilated"`` only: an
+    optional fixed document count for the saturation cap. ``None`` (default) computes the cap per
+    sequence from the actual number of context chunks.
+    """
+    flex_block_size: Optional[int] = None
+    """
+    For :class:`DocumentChunkedAttention` only: the FlexAttention ``create_block_mask`` block size (the
+    granularity at which fully-masked blocks are skipped). ``None`` (default) uses FlexAttention's
+    default of 128. Shrinking it (e.g. 64 / 32) lets sub-128-token chunks realize their block-sparsity
+    at the cost of higher kernel overhead; profile the crossover per chunk-size distribution.
     """
 
     def num_params(self, d_model: int) -> int:
@@ -464,35 +567,81 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
         mem_freq = kwargs.pop("mem_freq", None)
         landmark_use_kernel = kwargs.pop("landmark_use_kernel", None)
         num_landmarks = kwargs.pop("num_landmarks", None)
+        landmark_pool = kwargs.pop("landmark_pool", None)
         nonselected_landmark_mass = kwargs.pop("nonselected_landmark_mass", None)
         vec_dim = kwargs.pop("vec_dim", None)
+        cross_doc_mode = kwargs.pop("cross_doc_mode", None)
+        dilation_n = kwargs.pop("dilation_n", None)
+        dilation_m = kwargs.pop("dilation_m", None)
+        dilation_max_docs = kwargs.pop("dilation_max_docs", None)
+        flex_block_size = kwargs.pop("flex_block_size", None)
         if mem_freq is not None and not (possible_types & set(_LANDMARK_ATTENTION_TYPES)):
             raise OLMoConfigurationError(
                 "'mem_freq' is only supported with landmark attention variants "
                 f"(no landmark layer is configured; got name='{self.name}')"
             )
-        if landmark_use_kernel is not None and AttentionType.landmark not in possible_types:
-            raise OLMoConfigurationError(
-                "'landmark_use_kernel' is only supported with landmark attention "
-                f"(got name='{self.name}')"
-            )
-        if num_landmarks is not None and AttentionType.sparse_landmark not in possible_types:
-            raise OLMoConfigurationError(
-                "'num_landmarks' is only supported with sparse_landmark attention "
-                f"(got name='{self.name}')"
-            )
-        if (
-            nonselected_landmark_mass is not None
-            and AttentionType.fast_compressive_landmark not in possible_types
+        if landmark_use_kernel is not None and not (
+            possible_types & {AttentionType.landmark, AttentionType.document_landmark}
         ):
             raise OLMoConfigurationError(
-                "'nonselected_landmark_mass' is only supported with fast_compressive_landmark "
+                "'landmark_use_kernel' is only supported with landmark or document_landmark "
                 f"attention (got name='{self.name}')"
             )
         if vec_dim is not None and AttentionType.shared_vector_landmark not in possible_types:
             raise OLMoConfigurationError(
                 "'vec_dim' is only supported with shared_vector_landmark attention "
                 f"(got name='{self.name}')"
+            )
+        if num_landmarks is not None and not (possible_types & set(_NUM_LANDMARKS_TYPES)):
+            raise OLMoConfigurationError(
+                "'num_landmarks' is only supported with sparse_landmark, multi_landmark, or "
+                f"document_multi_landmark attention (got name='{self.name}')"
+            )
+        if landmark_pool is not None and not (possible_types & set(_MULTI_LANDMARK_TYPES)):
+            raise OLMoConfigurationError(
+                "'landmark_pool' is only supported with multi_landmark or document_multi_landmark "
+                f"attention (got name='{self.name}')"
+            )
+        if cross_doc_mode is not None and not (
+            possible_types
+            & {
+                AttentionType.document_landmark,
+                AttentionType.document_compressive_landmark,
+                AttentionType.document_multi_landmark,
+                AttentionType.document_chunked,
+            }
+        ):
+            raise OLMoConfigurationError(
+                "'cross_doc_mode' is only supported with document_landmark, "
+                "document_compressive_landmark, document_multi_landmark, or document_chunked "
+                f"attention (got name='{self.name}')"
+            )
+        # ``hierarchical_dilated`` is a cross-document visibility policy that is orthogonal to the
+        # attention mechanism, so the dilation knobs apply to every document-chunked family (dense /
+        # landmark / compressive).
+        _DOC_CHUNKED_TYPES = {
+            AttentionType.document_chunked,
+            AttentionType.document_landmark,
+            AttentionType.document_compressive_landmark,
+        }
+        if (
+            dilation_n is not None or dilation_m is not None or dilation_max_docs is not None
+        ) and not (possible_types & _DOC_CHUNKED_TYPES):
+            raise OLMoConfigurationError(
+                "'dilation_n' / 'dilation_m' / 'dilation_max_docs' are only supported with "
+                "document_chunked, document_landmark, or document_compressive_landmark attention "
+                f"(got name='{self.name}')"
+            )
+        if nonselected_landmark_mass is not None and not (
+            possible_types
+            & {
+                AttentionType.fast_compressive_landmark,
+                AttentionType.document_compressive_landmark,
+            }
+        ):
+            raise OLMoConfigurationError(
+                "'nonselected_landmark_mass' is only supported with fast_compressive_landmark or "
+                f"document_compressive_landmark attention (got name='{self.name}')"
             )
 
         try:
@@ -547,6 +696,82 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
                 if vec_dim is not None:
                     kwargs["vec_dim"] = vec_dim
                 return SharedVectorLandmarkAttention(mem_freq=mem_freq, **kwargs)
+            elif effective_name == "document_landmark":
+                if mem_freq is None:
+                    raise OLMoConfigurationError(
+                        "document_landmark attention requires 'mem_freq' to be set"
+                    )
+                if cross_doc_mode is not None:
+                    kwargs["cross_doc_mode"] = cross_doc_mode
+                if landmark_use_kernel is not None:
+                    kwargs["use_kernel"] = landmark_use_kernel
+                # Per-layer dilation stride for the "hierarchical_dilated" cross_doc_mode.
+                if dilation_n is not None:
+                    kwargs["dilation_n"] = dilation_n
+                if dilation_m is not None:
+                    kwargs["dilation_m"] = dilation_m
+                if dilation_max_docs is not None:
+                    kwargs["dilation_max_docs"] = dilation_max_docs
+                kwargs["layer_idx"] = layer_idx
+                kwargs["n_layers"] = n_layers
+                return DocumentLandmarkAttention(mem_freq=mem_freq, **kwargs)
+            elif effective_name == "document_compressive_landmark":
+                if mem_freq is None:
+                    raise OLMoConfigurationError(
+                        "document_compressive_landmark attention requires 'mem_freq' to be set"
+                    )
+                if cross_doc_mode is not None:
+                    kwargs["cross_doc_mode"] = cross_doc_mode
+                if nonselected_landmark_mass is not None:
+                    kwargs["nonselected_landmark_mass"] = nonselected_landmark_mass
+                # Per-layer dilation stride for the "hierarchical_dilated" cross_doc_mode.
+                if dilation_n is not None:
+                    kwargs["dilation_n"] = dilation_n
+                if dilation_m is not None:
+                    kwargs["dilation_m"] = dilation_m
+                if dilation_max_docs is not None:
+                    kwargs["dilation_max_docs"] = dilation_max_docs
+                kwargs["layer_idx"] = layer_idx
+                kwargs["n_layers"] = n_layers
+                return DocumentCompressiveLandmarkAttention(mem_freq=mem_freq, **kwargs)
+            elif effective_name == "multi_landmark":
+                if mem_freq is None:
+                    raise OLMoConfigurationError(
+                        "multi_landmark attention requires 'mem_freq' to be set"
+                    )
+                if num_landmarks is not None:
+                    kwargs["num_landmarks"] = num_landmarks
+                if landmark_pool is not None:
+                    kwargs["landmark_pool"] = landmark_pool
+                return MultiLandmarkAttention(mem_freq=mem_freq, **kwargs)
+            elif effective_name == "document_multi_landmark":
+                if mem_freq is None:
+                    raise OLMoConfigurationError(
+                        "document_multi_landmark attention requires 'mem_freq' to be set"
+                    )
+                if num_landmarks is not None:
+                    kwargs["num_landmarks"] = num_landmarks
+                if landmark_pool is not None:
+                    kwargs["landmark_pool"] = landmark_pool
+                if cross_doc_mode is not None:
+                    kwargs["cross_doc_mode"] = cross_doc_mode
+                return DocumentMultiLandmarkAttention(mem_freq=mem_freq, **kwargs)
+            elif effective_name == "document_chunked":
+                # Dense (non-landmark) chunked attention -- no mem_freq.
+                if cross_doc_mode is not None:
+                    kwargs["cross_doc_mode"] = cross_doc_mode
+                if dilation_n is not None:
+                    kwargs["dilation_n"] = dilation_n
+                if dilation_m is not None:
+                    kwargs["dilation_m"] = dilation_m
+                if dilation_max_docs is not None:
+                    kwargs["dilation_max_docs"] = dilation_max_docs
+                if flex_block_size is not None:
+                    kwargs["flex_block_size"] = flex_block_size
+                # The hierarchical-dilated pattern picks its stride from the layer index.
+                kwargs["layer_idx"] = layer_idx
+                kwargs["n_layers"] = n_layers
+                return DocumentChunkedAttention(**kwargs)
             else:
                 raise NotImplementedError(effective_name)
         except TypeError as e:
@@ -763,16 +988,20 @@ class Attention(SequenceMixer):
         pos_cos: Optional[torch.Tensor],
         freqs_cis: Optional[torch.Tensor],
         cu_doc_lens: Optional[torch.Tensor],
+        position_ids: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         assert self.rope is not None
         rope_kwargs = {}
-        if cu_doc_lens is not None:
+        if cu_doc_lens is not None or position_ids is not None:
             if not isinstance(self.rope, RotaryEmbedding):
                 raise NotImplementedError(
-                    "Intra-document RoPE (cu_doc_lens) is only supported by RotaryEmbedding; "
-                    f"got {type(self.rope).__name__}"
+                    "Intra-document RoPE (cu_doc_lens / position_ids) is only supported by "
+                    f"RotaryEmbedding; got {type(self.rope).__name__}"
                 )
-            rope_kwargs["cu_doc_lens"] = cu_doc_lens
+            if cu_doc_lens is not None:
+                rope_kwargs["cu_doc_lens"] = cu_doc_lens
+            if position_ids is not None:
+                rope_kwargs["position_ids"] = position_ids
         return self.rope(
             q,
             k,
@@ -792,6 +1021,7 @@ class Attention(SequenceMixer):
         pos_cos: Optional[torch.Tensor] = None,
         freqs_cis: Optional[torch.Tensor] = None,
         cu_doc_lens: Optional[torch.Tensor] = None,
+        position_ids: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Compute the query, key, and value tensors from the input, applying QKV clipping,
@@ -843,8 +1073,39 @@ class Attention(SequenceMixer):
                     "sharded by the context parallel load balancer"
                 )
 
-            start_pos = self.kv_cache_manager.current_position() if self.kv_cache_manager else None
-            q, k = self._apply_rope(q, k, start_pos, pos_sin, pos_cos, freqs_cis, cu_doc_lens)
+            # Under Ulysses CP with sequence packing, RoPE is applied on this rank's contiguous
+            # shard (length ``T``) *before* the all-to-all gathers the full sequence, while
+            # ``cu_doc_lens`` still describes the full (un-sharded) sequence. Feeding that full
+            # ``cu_doc_lens`` to RoPE's per-document branch indexes a shard-sized position table with
+            # full-sequence offsets, which overflows (e.g. an out-of-bounds CUDA gather). Convert to
+            # explicit per-document positions for the local shard instead -- correct even for
+            # documents that straddle a rank boundary -- mirroring :class:`LandmarkAttention`. The
+            # full ``cu_doc_lens`` is still used for masking inside the backend, after the gather.
+            rope_cu_doc_lens = cu_doc_lens
+            if (
+                cu_doc_lens is not None
+                and position_ids is None
+                and self.cp_enabled
+                and self.backend.uly is not None
+            ):
+                cp_pg = self.backend.cp_pg
+                assert cp_pg is not None
+                position_ids = build_local_packed_position_ids(
+                    cu_doc_lens, B, T, get_rank(cp_pg), get_world_size(cp_pg)
+                )
+                rope_cu_doc_lens = None
+
+            # Explicit per-token ``position_ids`` (e.g. ragged right-padded landmark decode, where each
+            # row's single token sits at a different absolute position) override the scalar KV-cache
+            # ``start_pos``; the two are mutually exclusive in RoPE.
+            start_pos = (
+                None
+                if position_ids is not None
+                else (self.kv_cache_manager.current_position() if self.kv_cache_manager else None)
+            )
+            q, k = self._apply_rope(
+                q, k, start_pos, pos_sin, pos_cos, freqs_cis, rope_cu_doc_lens, position_ids
+            )
 
         return q, k, v
 
@@ -1122,8 +1383,16 @@ class LandmarkAttention(Attention):
       path for long-context training; it is CUDA + triton only.
 
     .. note::
-        Generation / KV-caching, context parallelism, intra-document masking, and long-context
-        landmark retrieval are not yet supported.
+        Intra-document masking for sequence packing (``cu_doc_lens``) is supported on both the
+        **eager** and **fused-kernel** paths: documents are masked block-diagonally so a query never
+        attends across a document boundary, and RoPE positions reset per document. This requires every
+        packed document length to be a multiple of the landmark ``block_size`` (so the periodic
+        ``is_mem`` pattern stays valid). Packing also composes with **Ulysses context parallelism**:
+        each rank applies per-document RoPE to its sequence slice (documents straddling a rank
+        boundary stay positionally continuous; see
+        :func:`~olmo_core.nn.attention.landmark.build_local_packed_position_ids`) before the
+        all-to-all gathers the full sequence, on which the block-diagonal document mask is built.
+        Generation / KV-caching and long-context landmark retrieval are not yet supported.
 
     :param mem_freq: The number of regular tokens between landmark tokens. The landmark block size
         is ``mem_freq + 1``.
@@ -1153,6 +1422,10 @@ class LandmarkAttention(Attention):
         self.block_size = mem_freq + 1
         self.use_kernel = use_kernel
         self.softmax_scale = softmax_scale if softmax_scale is not None else self.head_dim**-0.5
+        # Inference-only hard top-k landmark retrieval (None = exact: attend all allowed blocks).
+        # When set, the eager grouped-softmax keeps only the ``_eval_top_k`` highest-scoring landmark
+        # blocks per query and gives every other past block zero weight (the landmark paper's decode).
+        self._eval_top_k: Optional[int] = None
         # Ulysses context-parallel state, populated by ``apply_cp``. Unlike the base ``Attention``,
         # landmark attention has its own forward and does not route through ``self.backend``, so it
         # performs the Ulysses all-to-all itself (see ``forward``).
@@ -1231,17 +1504,17 @@ class LandmarkAttention(Attention):
         if any(
             v is not None
             for v in (
-                cu_doc_lens,
                 cu_doc_lens_q,
                 cu_doc_lens_k,
-                max_doc_len,
                 max_doc_len_q,
                 max_doc_len_k,
                 local_k_slice,
             )
         ):
             raise NotImplementedError(
-                "Intra-document masking (cu_doc_lens) is not supported with landmark attention"
+                "Landmark attention supports symmetric intra-document masking via 'cu_doc_lens' "
+                "only; the cross-attention variants (cu_doc_lens_q/k, max_doc_len_q/k, "
+                "local_k_slice) are not supported"
             )
         if cache_leftpad is not None or self.kv_cache_manager is not None:
             raise NotImplementedError(
@@ -1254,9 +1527,28 @@ class LandmarkAttention(Attention):
         # before the Ulysses all-to-all gathers the full sequence.
         B, T_local, _ = x.shape
 
+        # Per-document RoPE for sequence packing. Without CP the local shard *is* the full sequence,
+        # so the standard ``cu_doc_lens`` RoPE path (positions reset to 0 per document) applies. Under
+        # Ulysses CP the shard is a contiguous slice of the full sequence while ``cu_doc_lens`` still
+        # describes the full sequence, and RoPE runs on the slice *before* the all-to-all gather; so
+        # we pass explicit per-document positions for this rank's slice -- correct even for documents
+        # that straddle a rank boundary (their positions stay continuous across the boundary).
+        rope_cu_doc_lens, position_ids = cu_doc_lens, None
+        if cu_doc_lens is not None and self.cp_enabled:
+            assert self._cp_pg is not None
+            position_ids = build_local_packed_position_ids(
+                cu_doc_lens, B, T_local, get_rank(self._cp_pg), self._cp_world_size
+            )
+            rope_cu_doc_lens = None
+
         # shape: (B, T_local, n_heads, head_dim), (B, T_local, n_kv_heads, head_dim) x2
         q, k, v = self._prepare_qkv(
-            x, pos_sin=pos_sin, pos_cos=pos_cos, freqs_cis=freqs_cis, cu_doc_lens=None
+            x,
+            pos_sin=pos_sin,
+            pos_cos=pos_cos,
+            freqs_cis=freqs_cis,
+            cu_doc_lens=rope_cu_doc_lens,
+            position_ids=position_ids,
         )
 
         if self.cp_enabled:
@@ -1295,15 +1587,27 @@ class LandmarkAttention(Attention):
                     f"{self.block_size} < 16); tl.dot needs tile dimensions of at least 16."
                 )
             is_mem = (torch.arange(T, device=q.device) % self.block_size) == (self.block_size - 1)
+            # Per-block document ids for sequence packing (None for the single-document path).
+            doc_id = (
+                build_block_doc_id(cu_doc_lens, B, T, self.block_size)
+                if cu_doc_lens is not None
+                else None
+            )
             # shape: (B, n_heads, T, head_dim)
             att = fused_landmark_attention(
-                q, k, v, is_mem, sm_scale=self.softmax_scale, block_size=self.block_size
+                q,
+                k,
+                v,
+                is_mem,
+                sm_scale=self.softmax_scale,
+                block_size=self.block_size,
+                doc_id=doc_id,
             )
         else:
             # Eager grouped-softmax path: works on CPU/GPU and is fully autograd-differentiable,
             # so it provides a working training backward without the fused kernel.
             # shape: (B, n_heads, T, head_dim)
-            att = self._eager_forward(q, k, v)
+            att = self._eager_forward(q, k, v, cu_doc_lens=cu_doc_lens)
 
         # shape: (B, T, n_heads (local), head_dim)
         att = att.transpose(1, 2)
@@ -1323,15 +1627,28 @@ class LandmarkAttention(Attention):
         # shape: (B, T_local, d_model)
         return self.w_out(att)
 
-    def _eager_forward(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor) -> torch.Tensor:
+    def _eager_forward(
+        self,
+        q: torch.Tensor,
+        k: torch.Tensor,
+        v: torch.Tensor,
+        cu_doc_lens: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
         B, n_heads, T, _ = q.shape
-        attn_mask, is_mem, last_section_mask = self._landmark_masks(T, q.device, q.dtype)
+        attn_mask, is_mem, last_section_mask = self._landmark_masks(
+            T, q.device, q.dtype, cu_doc_lens=cu_doc_lens, batch_size=B
+        )
 
         attn = torch.matmul(q, k.transpose(-1, -2)) * self.softmax_scale
         attn = attn + attn_mask
         attn = torch.maximum(
             attn, torch.tensor(torch.finfo(attn.dtype).min, device=attn.device, dtype=attn.dtype)
         )
+
+        # Inference top-k landmark retrieval: keep only the top-k landmark (block-gate) columns per
+        # query; the grouped softmax then zeroes every non-selected block's content.
+        if self._eval_top_k is not None:
+            attn = self._apply_topk_landmark_retrieval(attn, T)
 
         probs = landmark_grouped_softmax(
             attn,
@@ -1343,15 +1660,123 @@ class LandmarkAttention(Attention):
         # shape: (B, n_heads, T, head_dim)
         return torch.matmul(probs, v)
 
+    def set_eval_top_k(self, top_k: Optional[int]) -> None:
+        """
+        Enable (or clear, with ``None``) inference-only hard top-k landmark retrieval. At each forward,
+        every query keeps only the ``top_k`` highest-scoring landmark blocks and gives all other past
+        blocks zero attention weight. Training is unaffected (callers only set this at eval time).
+        """
+        if top_k is not None and top_k < 1:
+            raise OLMoConfigurationError(f"top_k must be >= 1 or None (got {top_k})")
+        self._eval_top_k = top_k
+
+    def _apply_topk_landmark_retrieval(self, attn: torch.Tensor, T: int) -> torch.Tensor:
+        """
+        Mask all but the ``self._eval_top_k`` highest-scoring landmark columns (block gates) per query
+        to ``finfo.min``. Landmark columns are the block-end positions; already-masked landmarks
+        (``finfo.min`` from the additive mask -- the query's own block or out-of-document blocks under
+        chunked masking) rank lowest and are never selected.
+
+        :param attn: Masked attention logits ``(B, n_heads, T, T)``.
+        :param T: Sequence length.
+        """
+        top_k = self._eval_top_k
+        assert top_k is not None
+        lm_cols = torch.arange(self.block_size - 1, T, self.block_size, device=attn.device)
+        if lm_cols.numel() <= top_k:
+            return attn
+        lm_scores = attn[..., lm_cols]  # (B, n_heads, T, n_landmarks)
+        keep = torch.zeros_like(lm_scores, dtype=torch.bool)
+        keep.scatter_(-1, lm_scores.topk(top_k, dim=-1).indices, True)
+        finfo_min = torch.finfo(attn.dtype).min
+        attn = attn.clone()
+        attn[..., lm_cols] = lm_scores.masked_fill(~keep, finfo_min)
+        return attn
+
     def _landmark_masks(
-        self, T: int, device: torch.device, dtype: torch.dtype
+        self,
+        T: int,
+        device: torch.device,
+        dtype: torch.dtype,
+        cu_doc_lens: Optional[torch.Tensor] = None,
+        batch_size: int = 1,
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Build the additive causal attention mask, the landmark mask (``is_mem``), and the
-        ``last_section_mask`` for the eager grouped-softmax path. All are batch-independent
-        (built with a batch dim of 1) and depend only on ``T`` and the landmark block size.
+        ``last_section_mask`` for the eager grouped-softmax path. Without ``cu_doc_lens`` these are
+        batch-independent (leading dim 1) and depend only on ``T`` and the landmark block size; with
+        ``cu_doc_lens`` the additive mask gains a batch dimension because each batch element can have
+        its own document layout.
+
+        :param cu_doc_lens: Optional 1D tensor of cumulative document lengths for sequence packing.
+            This follows the same *flattened-over-batch* convention as the flash-attention backend
+            (see :func:`olmo_core.data.utils.get_cumulative_document_lengths`): it is the cumulative
+            sum of every document length across the whole ``(batch_size, T)`` micro-batch, i.e.
+            ``[0, ..., batch_size * T]``, with an implicit boundary at every multiple of ``T`` (since
+            each instance is exactly ``T`` tokens). An additive block-diagonal document mask is
+            folded into the causal mask so a query never attends across a document boundary (nor to
+            another document's landmark tokens). Because the landmark ``is_mem`` pattern is the
+            *global* periodic one, every document boundary must fall on a landmark block boundary,
+            i.e. each cumulative length must be a multiple of ``block_size``.
+        :param batch_size: The number of sequences in the micro-batch. Used to reshape the flattened
+            ``cu_doc_lens`` into per-sequence document ids.
+
+        :raises OLMoConfigurationError: If a document boundary is not a multiple of ``block_size``,
+            or ``cu_doc_lens`` does not describe exactly ``batch_size * T`` tokens.
         """
-        return build_landmark_masks(T, self.block_size, device, dtype)
+        block_size = self.block_size
+        finfo_min = torch.finfo(dtype).min
+
+        # additive causal mask, shape (1, 1, T, T): 0 on/below the diagonal, -inf above.
+        causal = torch.full((T, T), finfo_min, dtype=dtype, device=device)
+        attn_mask = torch.triu(causal, diagonal=1)[None, None].clone()
+
+        if cu_doc_lens is not None:
+            # Fold in a block-diagonal document mask: keys in a different document than the query
+            # are set to -inf. The periodic ``is_mem`` pattern (below) is computed over global
+            # positions, so each document boundary must coincide with a block boundary or the
+            # landmark tokens of one document would be mis-grouped with another's.
+            boundaries = cu_doc_lens.to(device=device, dtype=torch.long)
+            if bool((boundaries % block_size != 0).any().item()):
+                raise OLMoConfigurationError(
+                    f"Landmark packing requires every document boundary to be a multiple of the "
+                    f"landmark block size (mem_freq + 1 = {block_size}), but got "
+                    f"cu_doc_lens={cu_doc_lens.tolist()}. This almost always means the document "
+                    f"lengths came from the wrong source: EOS-derived 'generate_doc_lengths' or a "
+                    f"generic token packer (PackingInstanceSource / ConcatAndChunk) do NOT produce "
+                    f"block-aligned landmark documents. Build packed landmark SFT data with "
+                    f"LandmarkPackingInstanceSource (it inserts landmarks per document and emits "
+                    f"block-aligned doc_lens) and set generate_doc_lengths=False."
+                )
+            total = batch_size * T
+            if int(boundaries[-1].item()) != total:
+                raise OLMoConfigurationError(
+                    f"cu_doc_lens must describe exactly batch_size * T = {total} tokens "
+                    f"(flattened over the batch), but its last entry is {int(boundaries[-1].item())}."
+                )
+            # Per-token document id over the flattened batch, shape (batch_size * T,): document 0,
+            # then 1, etc. ``searchsorted`` maps each flat position to the count of boundaries at or
+            # below it. Reshape to (batch_size, T): the implicit boundary at every multiple of T (each
+            # instance is exactly T tokens) means a document never straddles two batch elements.
+            interior = boundaries[(boundaries > 0) & (boundaries < total)]
+            positions = torch.arange(total, device=device)
+            doc_id = torch.searchsorted(interior, positions, right=True).view(batch_size, T)
+            # (B, 1, T, T): True where a query and key are in different documents.
+            cross_doc = doc_id[:, None, :, None] != doc_id[:, None, None, :]
+            attn_mask = attn_mask.masked_fill(cross_doc, finfo_min)
+
+        # shape: (1, 1, 1, T)
+        is_mem = ((torch.arange(T, device=device) % block_size) == (block_size - 1)).view(
+            1, 1, 1, T
+        )
+        mem_ids = torch.where(attn_mask < -1, -1, torch.cumsum(is_mem, -1) - is_mem.int())
+        last_section_mask = torch.amax(mem_ids, -1, keepdim=True) == mem_ids
+        # Mask landmark tokens that fall in the query's own (last) section.
+        attn_mask.masked_fill_(last_section_mask & is_mem, finfo_min)
+        last_section_mask = last_section_mask.logical_and(attn_mask > -1)
+        is_mem = is_mem.logical_and(attn_mask > -1)
+
+        return attn_mask, is_mem, last_section_mask
 
 
 @beta_feature
@@ -1707,7 +2132,17 @@ class FusedAttention(SequenceMixer):
 # New landmark-attention sequence mixers. These live in their own modules and subclass ``Attention``
 # (defined above), so they are imported at the end of this package to avoid a circular import; the
 # ``AttentionConfig.build`` branches above reference them by name at call time.
+from .chunked_mask import AttentionPattern  # noqa: E402
+from .document_chunked import DocumentChunkedAttention  # noqa: E402
 from .landmark_compressive import FastCompressiveLandmarkAttention  # noqa: E402
+from .landmark_document import DocumentLandmarkAttention  # noqa: E402
+from .landmark_document_compressive import (  # noqa: E402
+    DocumentCompressiveLandmarkAttention,
+)
 from .landmark_fast import FastLandmarkAttention  # noqa: E402
+from .landmark_multi import (  # noqa: E402
+    DocumentMultiLandmarkAttention,
+    MultiLandmarkAttention,
+)
 from .landmark_shared_vector import SharedVectorLandmarkAttention  # noqa: E402
 from .landmark_sparse import SparseLandmarkAttention  # noqa: E402

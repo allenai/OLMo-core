@@ -60,3 +60,13 @@ site/
 /scratch/
 core
 /dataset-cache/
+
+# local-only artifacts (never commit): preserved eval-score dumps + scratch configs
+/eval_results_kept/
+/configfile.txt
+
+# Claude Code session/memory dir
+.claude/
+
+# corpus-reasoning kept as a standalone clone (was a submodule; removed so gantry launches work)
+/corpus-reasoning/

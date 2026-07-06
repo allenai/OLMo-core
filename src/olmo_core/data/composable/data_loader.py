@@ -486,7 +486,11 @@ class ComposableDataLoader(TextDataLoaderBase):
                 if (label_mask := instance.get("label_mask")) is not None:
                     out["label_mask"] = as_tensor(label_mask)
 
-                if self.generate_doc_lengths:
+                # A source may emit explicit document lengths (e.g. block-aligned landmark packing);
+                # those take precedence over EOS-derived boundaries.
+                if (doc_lens := instance.get("doc_lens")) is not None:
+                    out["doc_lens"] = as_tensor(doc_lens)
+                elif self.generate_doc_lengths:
                     out["doc_lens"] = get_document_lengths(
                         input_ids,
                         self.tokenizer.eos_token_id,
