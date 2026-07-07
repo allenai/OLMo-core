@@ -16,6 +16,7 @@ from olmo_core.distributed.parallel import (
     ExpertParallelConfig,
     PipelineP2PBackend,
     PipelineParallelConfig,
+    PipelineScheduleType,
     TensorParallelConfig,
 )
 from olmo_core.doc_utils import beta_feature
@@ -112,6 +113,18 @@ class TransformerPipelineParallelConfig(PipelineParallelConfig):
         if self.p2p_backend != PipelineP2PBackend.nccl and not self.use_custom_stage_implementation:
             raise OLMoConfigurationError(
                 f"p2p_backend={self.p2p_backend.value!r} requires use_custom_stage_implementation=True"
+            )
+
+        custom_schedules = {
+            PipelineScheduleType.custom_1F1B,
+            PipelineScheduleType.custom_interleaved_1F1B,
+            PipelineScheduleType.custom_1F1B_V,
+        }
+        if self.schedule in custom_schedules and not self.use_custom_stage_implementation:
+            # The custom schedule driver expects CustomPipelineStage (e.g. `group_size`,
+            # `get_fwd_send_ops`); pairing it with torch's PipelineStage fails in pre_train / step.
+            raise OLMoConfigurationError(
+                f"pipeline schedule {self.schedule.value!r} requires use_custom_stage_implementation=True"
             )
 
         split_points = self.get_split_points(model.n_layers)

@@ -209,6 +209,10 @@ class CustomPipelineStage:
             # Receive activations for this chunk
             # Activations only come in args form
             stage_input = self._retrieve_recv_activations(fwd_chunk_id)
+            # TODO(pp-rma-stale-slot-grad): under p2p_backend='nccl_rma', stage_input is the
+            # persistent RMA window slot reused across batches; requires_grad_(True) here leaves a
+            # populated `.grad` after backward, so the next batch accumulates into a stale grad.
+            # Zero/detach the slot's grad on reuse. Flagged for Tianhua; RMA path, GPU-only. (Codex)
             stage_input.requires_grad_(True)
             composite_args = (stage_input,)  # make it a tuple
 
@@ -618,6 +622,12 @@ class CustomPipelineStage:
                     result = perform_backward(backward_type)()
         elif isinstance(self.submod, MultiGroupDistributedDataParallel):
             if last_backward:
+                # TODO(pp-multigroup-finalize-grad-reduce): MultiGroupDistributedDataParallel
+                # launches async bucket all-reduces from its grad hooks and requires
+                # finalize_grad_reduce() afterward; without it fp32 comm buckets aren't copied back
+                # and reductions may still be in flight at optimizer.step(). Call it here on the
+                # synced last backward. Flagged for Tianhua; exercisable once the train module wraps
+                # PP stages in MultiGroupDDP. (Codex)
                 result = perform_backward(backward_type)()
             else:
                 with self.submod.no_sync():  # type: ignore[operator]

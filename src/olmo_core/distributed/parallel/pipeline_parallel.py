@@ -812,9 +812,11 @@ class PipelineSchedule:
             ),
         )
 
+        # Opt-in (default off): the plot imports matplotlib, which is only in the `dev` extra, so
+        # enabling it by default would break normal installs with ModuleNotFoundError.
         if torch.distributed.get_rank() == 0 and os.environ.get(
-            "OLMO_PP_SCHEDULE_PLOT", "1"
-        ).lower() not in {"0", "false", "no"}:
+            "OLMO_PP_SCHEDULE_PLOT", "0"
+        ).lower() in {"1", "true", "yes"}:
             plot_dir = os.environ.get("OLMO_PP_SCHEDULE_PLOT_DIR", _default_pp_schedule_plot_dir())
             source = getattr(schedule_impl, "pipeline_order_source", "unknown")
             stem = "_".join(
