@@ -201,7 +201,10 @@ def _doc_model(variant, vocab=320, mem_freq=3, enable=True):
     model = cfg.build(init_device="cpu")
     if enable and variant != "full":
         model.enable_document_chunk_attention(
-            doc_start_id=DSx, doc_end_id=DEx, eos_id=EOSx, pad_id=(PAD if variant == "landmark" else None)
+            doc_start_id=DSx,
+            doc_end_id=DEx,
+            eos_id=EOSx,
+            pad_id=(PAD if variant == "landmark" else None),
         )
     model.eval()
     return model
@@ -270,12 +273,22 @@ def test_chunk_mask_changes_inference_output_dense_and_landmark():
 def test_topk_landmark_retrieval_masks_all_but_best():
     # Deterministic: with top_k=1 only the highest-scoring landmark COLUMN survives per query; the
     # others are set to finfo.min (so the grouped softmax zeroes their blocks).
-    from olmo_core.nn.attention import AttentionConfig, AttentionType, DocumentLandmarkAttention
+    from olmo_core.nn.attention import (
+        AttentionConfig,
+        AttentionType,
+        DocumentLandmarkAttention,
+    )
     from olmo_core.nn.rope import RoPEConfig, RoPEType
 
     cfg = AttentionConfig(
-        name=AttentionType.document_landmark, n_heads=2, n_kv_heads=1, head_dim=8, bias=False,
-        mem_freq=3, cross_doc_mode="chunked", rope=RoPEConfig(name=RoPEType.default, theta=10_000),
+        name=AttentionType.document_landmark,
+        n_heads=2,
+        n_kv_heads=1,
+        head_dim=8,
+        bias=False,
+        mem_freq=3,
+        cross_doc_mode="chunked",
+        rope=RoPEConfig(name=RoPEType.default, theta=10_000),
     )
     attn = cfg.build(16, layer_idx=0, n_layers=1)
     assert isinstance(attn, DocumentLandmarkAttention)
@@ -328,7 +341,10 @@ def test_document_landmark_fused_kernel_matches_eager_fwd_and_grad():
     if not torch.cuda.is_available():
         pytest.skip("requires a GPU")
     from olmo_core.nn.attention.landmark import landmark_grouped_softmax
-    from olmo_core.nn.attention.landmark_fast import fused_landmark_attention_fast, has_landmark_kernel
+    from olmo_core.nn.attention.landmark_fast import (
+        fused_landmark_attention_fast,
+        has_landmark_kernel,
+    )
 
     if not has_landmark_kernel():
         pytest.skip("fused landmark kernel unavailable")
@@ -354,8 +370,14 @@ def test_document_landmark_fused_kernel_matches_eager_fwd_and_grad():
 
     qe, ke, ve = (x.clone().requires_grad_() for x in (q0, k0, v0))
     cfg = AttentionConfig(
-        name=AttentionType.document_landmark, n_heads=Hh, n_kv_heads=Hh, head_dim=Dd, bias=False,
-        mem_freq=mem_freq, cross_doc_mode="chunked", rope=RoPEConfig(name=RoPEType.default, theta=10000),
+        name=AttentionType.document_landmark,
+        n_heads=Hh,
+        n_kv_heads=Hh,
+        head_dim=Dd,
+        bias=False,
+        mem_freq=mem_freq,
+        cross_doc_mode="chunked",
+        rope=RoPEConfig(name=RoPEType.default, theta=10000),
     )
     mod = cfg.build(Hh * Dd, layer_idx=0, n_layers=1).to(dev)
     mod._chunk_ids = cids
@@ -368,3 +390,114 @@ def test_document_landmark_fused_kernel_matches_eager_fwd_and_grad():
     assert torch.allclose(ok, oe, atol=1e-4), (ok - oe).abs().max()
     for gk, ge in ((qk.grad, qe.grad), (kk.grad, ke.grad), (vk.grad, ve.grad)):
         assert torch.allclose(gk, ge, atol=1e-3, rtol=1e-2), (gk - ge).abs().max()
+
+
+def _build_padtail_chunk_ids(mem_freq, n_pad_blocks, dev):
+    """Realistic block-aligned landmark instance (single-window docs -> FREE landmarks, plus interior
+    window-fill PAD) + an EOS terminator + a PadToLength pad tail (full pad blocks whose block-end
+    landmark position is a pad token, NOT a real landmark). Returns (chunk_ids (1,T), T)."""
+    DSx, DEx, MIDx, PADx, EOSx = 301, 302, 300, 303, 304
+    bs = mem_freq + 1
+    segs = [
+        ChunkSegment([1, 2, 3], [False] * 3, False),
+        ChunkSegment([DSx, 10, 11, 12, 13, DEx], [False] * 6, True),
+        ChunkSegment([DSx, 20, 21, DEx], [False] * 4, True),
+        ChunkSegment([DSx, 40, 41, 42, DEx], [False] * 5, True),
+        ChunkSegment([DSx, 50, 51, 52, 53, 54, DEx], [False] * 7, True),
+        ChunkSegment([60, 61, 62, 63, 64], [True] * 5, False),
+    ]
+    ids, _ = emit_document_chunk_landmark(segs, mem_freq=mem_freq, mem_id=MIDx, pad_id=PADx)
+    ids = ids + [EOSx]
+    while len(ids) % bs != 0:
+        ids.append(PADx)
+    ids = ids + [PADx] * (bs * n_pad_blocks)
+    chunk_ids = build_chunk_ids_from_tokens(torch.tensor([ids]), DSx, DEx, EOSx, pad_id=PADx).to(
+        dev
+    )
+    return chunk_ids, len(ids)
+
+
+def _run_padtail_parity(attn_type, eager_grouped_softmax):
+    """Shared GPU parity harness: fused kernel (chunk_ids, use_kernel path) vs the eager grouped
+    softmax on a doc-landmark input WITH a PadToLength pad tail. Upstream grad is zeroed on pad
+    positions (loss mask); asserts fwd + grads match eager on the non-pad (loss-relevant) positions
+    and that everything is finite (the pad tail must not NaN)."""
+    import pytest
+
+    if not torch.cuda.is_available():
+        pytest.skip("requires a GPU")
+    from olmo_core.nn.attention import AttentionConfig
+    from olmo_core.nn.attention.landmark_fast import has_landmark_kernel
+    from olmo_core.nn.rope import RoPEConfig, RoPEType
+
+    if not has_landmark_kernel():
+        pytest.skip("fused landmark kernel unavailable")
+
+    torch.manual_seed(0)
+    dev = "cuda"
+    B, Hh, Dd, mem_freq = 1, 4, 32, 15
+    chunk_ids, T = _build_padtail_chunk_ids(mem_freq, 3, dev)
+    nonpad = chunk_ids[0] != PAD_CHUNK_ID
+    q0, k0, v0 = (torch.randn(B, Hh, T, Dd, device=dev) * 0.5 for _ in range(3))
+    scale = Dd**-0.5
+    go = torch.randn(B, Hh, T, Dd, device=dev) * nonpad.view(1, 1, T, 1)  # loss mask: 0 on pad
+
+    cfg = AttentionConfig(
+        name=attn_type,
+        n_heads=Hh,
+        n_kv_heads=Hh,
+        head_dim=Dd,
+        bias=False,
+        mem_freq=mem_freq,
+        cross_doc_mode="chunked",
+        rope=RoPEConfig(name=RoPEType.default, theta=10000),
+    )
+    mod = cfg.build(Hh * Dd, layer_idx=0, n_layers=1).to(dev)
+
+    # Fused kernel path (via the module's _eager_forward routing when use_kernel is on).
+    qk, kk, vk = (x.clone().requires_grad_() for x in (q0, k0, v0))
+    mod._use_chunk_kernel = True
+    mod._chunk_ids = chunk_ids
+    ok = mod._eager_forward(qk, kk, vk)
+    (ok * go).sum().backward()
+
+    # Eager reference (materialized grouped softmax).
+    qe, ke, ve = (x.clone().requires_grad_() for x in (q0, k0, v0))
+    mod._chunk_ids = chunk_ids
+    am, ism, lsm = mod._landmark_masks(T, torch.device(dev), torch.float32, batch_size=B)
+    attn = (qe @ ke.transpose(-1, -2)) * scale + am
+    attn = torch.maximum(attn, torch.tensor(torch.finfo(attn.dtype).min, device=dev))
+    oe = eager_grouped_softmax(attn, -1, ism.expand(B, Hh, T, T), lsm.expand(B, 1, T, T)) @ ve
+    (oe * go).sum().backward()
+
+    np4 = nonpad.view(1, 1, T, 1)
+    assert torch.isfinite(ok).all() and all(
+        torch.isfinite(g).all() for g in (qk.grad, kk.grad, vk.grad)
+    )
+    fdiff = (torch.where(np4, ok, ok * 0) - torch.where(np4, oe, oe * 0)).abs().max()
+    assert fdiff < 1e-4, fdiff
+    for gk, ge in ((qk.grad, qe.grad), (kk.grad, ke.grad), (vk.grad, ve.grad)):
+        assert torch.allclose(gk, ge, atol=1e-3, rtol=1e-2), (gk - ge).abs().max()
+
+
+@__import__("pytest").mark.gpu
+def test_document_landmark_fused_kernel_matches_eager_with_pad_tail():
+    # The fused landmark kernel (CHUNK_MASK path) must match eager fwd+grad on a doc-landmark input
+    # WITH a PadToLength pad tail (blocks whose landmark position is a pad token). Regression for the
+    # self-diagonal-guard (offs_m vs offs_m_real) + post-scale-floor pad-query NaN fixes.
+    from olmo_core.nn.attention import AttentionType
+    from olmo_core.nn.attention.landmark import landmark_grouped_softmax
+
+    _run_padtail_parity(AttentionType.document_landmark, landmark_grouped_softmax)
+
+
+@__import__("pytest").mark.gpu
+def test_document_compressive_fused_kernel_matches_eager_with_pad_tail():
+    # The fused COMPRESSIVE landmark kernel (newly-ported CHUNK_MASK path) must match the eager
+    # compressive grouped softmax fwd+grad on a doc-landmark input WITH a pad tail.
+    from olmo_core.nn.attention import AttentionType
+    from olmo_core.nn.attention.landmark import compressive_landmark_grouped_softmax
+
+    _run_padtail_parity(
+        AttentionType.document_compressive_landmark, compressive_landmark_grouped_softmax
+    )

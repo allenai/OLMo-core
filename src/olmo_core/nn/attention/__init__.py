@@ -557,11 +557,16 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
                 f"(no landmark layer is configured; got name='{self.name}')"
             )
         if landmark_use_kernel is not None and not (
-            possible_types & {AttentionType.landmark, AttentionType.document_landmark}
+            possible_types
+            & {
+                AttentionType.landmark,
+                AttentionType.document_landmark,
+                AttentionType.document_compressive_landmark,
+            }
         ):
             raise OLMoConfigurationError(
-                "'landmark_use_kernel' is only supported with landmark or document_landmark "
-                f"attention (got name='{self.name}')"
+                "'landmark_use_kernel' is only supported with landmark, document_landmark, or "
+                f"document_compressive_landmark attention (got name='{self.name}')"
             )
         if num_landmarks is not None and not (possible_types & set(_NUM_LANDMARKS_TYPES)):
             raise OLMoConfigurationError(
@@ -687,6 +692,8 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
                     kwargs["cross_doc_mode"] = cross_doc_mode
                 if nonselected_landmark_mass is not None:
                     kwargs["nonselected_landmark_mass"] = nonselected_landmark_mass
+                if landmark_use_kernel is not None:
+                    kwargs["use_kernel"] = landmark_use_kernel
                 # Per-layer dilation stride for the "hierarchical_dilated" cross_doc_mode.
                 if dilation_n is not None:
                     kwargs["dilation_n"] = dilation_n

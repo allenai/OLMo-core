@@ -83,6 +83,7 @@ if triton is not None:
         L,
         M,
         DocId,  # int32 (Z, N_BLOCKS) per-block document id, or dummy when DOC_MASK is False
+        ChunkIds,  # int32 (Z, N_CTX_KV) per-TOKEN chunk role, or dummy when CHUNK_MASK is False
         Z,
         H,
         N_CTX_Q,
@@ -92,6 +93,7 @@ if triton is not None:
         BLOCK_DMODEL: tl.constexpr,
         N_PREFIX_Q: tl.constexpr,
         DOC_MASK: tl.constexpr,  # whether to apply intra-document (packing) masking
+        CHUNK_MASK: tl.constexpr,  # whether to apply per-token document-chunked masking
     ):
         # Compressive landmark forward. Identical to landmark_kernel._fwd_kernel except that the
         # value contribution of a fully-past block uses the *full-block* within softmax (over all
@@ -116,6 +118,13 @@ if triton is not None:
         offs_m = start_m * BLOCK_M + tl.arange(0, BLOCK_M)
         offs_m_real = (start_m + N_PREFIX_Q) * BLOCK_M + tl.arange(0, BLOCK_M)
         offs_m_real += tl.where(tl.arange(0, BLOCK_M) == BLOCK_M - 1, -1, 0)
+        # Per-token document-chunked masking: load this query block's chunk roles once. ChunkIds is
+        # (Z, N_CTX_KV) int32; roles are >=0 context-chunk id, -1 FREE, -2 PAD.
+        if CHUNK_MASK:
+            cm_batch = off_hz // H
+            q_chunk = tl.load(
+                ChunkIds + cm_batch * N_CTX_KV + offs_m, mask=offs_m < N_CTX_Q, other=-2
+            )
         offs_n = tl.arange(0, BLOCK_N)
         offs_d = tl.arange(0, BLOCK_DMODEL)
 
@@ -139,6 +148,21 @@ if triton is not None:
             if DOC_MASK:
                 k_doc = tl.load(DocId + batch_idx * N_BLOCKS + start_n)
                 qk = tl.where(q_doc == k_doc, qk, -1e30)
+            if CHUNK_MASK:
+                # Per-token chunked mask = causal (already applied) & not_pad & (same_chunk | q_free
+                # | kv_free), with a self-diagonal guard. Disallowed -> finite -1e30 floor (post-scale,
+                # like DOC_MASK) so the within-block / gate softmaxes never hit 0/0.
+                k_chunk = tl.load(
+                    ChunkIds + cm_batch * N_CTX_KV + offs_n, mask=offs_n < N_CTX_KV, other=-2
+                )
+                q_np = q_chunk[:, None] != -2
+                kv_np = k_chunk[None, :] != -2
+                same = (q_chunk[:, None] == k_chunk[None, :]) & (q_chunk[:, None] >= 0)
+                q_fr = (q_chunk[:, None] < 0) & q_np
+                kv_fr = (k_chunk[None, :] < 0) & kv_np
+                allowed = q_np & kv_np & (same | q_fr | kv_fr)
+                allowed = allowed | (offs_m[:, None] == offs_n[None, :])
+                qk = tl.where(allowed, qk, -1e30)
 
             landmark_qk = tl.max(
                 tl.where(tl.arange(0, BLOCK_N)[None, :] == BLOCK_N - 1, qk, float("-inf")), 1
@@ -177,6 +201,20 @@ if triton is not None:
         qk += tl.dot(q_vals, k_vals, allow_tf32=False)
         qk *= sm_scale
         qk = tl.where(offs_m_real[:, None] >= offs_n[None, :], qk, float("-inf"))
+        if CHUNK_MASK:
+            # Own (last) block: isolate by chunk too (packed blocks may mix documents/FREE), keeping
+            # the self-diagonal so a query is never fully masked.
+            k_chunk = tl.load(
+                ChunkIds + cm_batch * N_CTX_KV + offs_n, mask=offs_n < N_CTX_KV, other=-2
+            )
+            q_np = q_chunk[:, None] != -2
+            kv_np = k_chunk[None, :] != -2
+            same = (q_chunk[:, None] == k_chunk[None, :]) & (q_chunk[:, None] >= 0)
+            q_fr = (q_chunk[:, None] < 0) & q_np
+            kv_fr = (k_chunk[None, :] < 0) & kv_np
+            allowed = q_np & kv_np & (same | q_fr | kv_fr)
+            allowed = allowed | (offs_m[:, None] == offs_n[None, :])
+            qk = tl.where(allowed, qk, -1e30)
 
         m_curr = tl.maximum(tl.max(qk, 1), m_prev)
         m_curr_ = m_curr
@@ -227,6 +265,7 @@ if triton is not None:
         svn,
         svd,
         DocId,  # int32 (Z, N_BLOCKS) per-block document id, or dummy when DOC_MASK is False
+        ChunkIds,  # int32 (Z, N_CTX_KV) per-token chunk role, or dummy when CHUNK_MASK is False
         Z,
         H,
         N_CTX_Q,
@@ -236,6 +275,7 @@ if triton is not None:
         BLOCK_DMODEL: tl.constexpr,
         N_PREFIX_Q: tl.constexpr,
         DOC_MASK: tl.constexpr,
+        CHUNK_MASK: tl.constexpr,
     ):
         # dk/dv, one program per (key-block, head); atomic-free. Mirrors landmark_fast._bwd_kv_kernel
         # but with the compressive within-block softmax: every block token (incl. the landmark) gets
@@ -269,6 +309,10 @@ if triton is not None:
         # diagonal (own-block) contribution below is always same-document.
         if DOC_MASK:
             k_doc = tl.load(DocId + off_z * N_BLOCKS + (start_n // BLOCK_N))
+        if CHUNK_MASK:
+            k_chunk = tl.load(
+                ChunkIds + off_z * N_CTX_KV + offs_n, mask=offs_n < N_CTX_KV, other=-2
+            )
 
         dv = tl.zeros([BLOCK_N, BLOCK_DMODEL], dtype=tl.float32)
         dk = tl.zeros([BLOCK_N, BLOCK_DMODEL], dtype=tl.float32)
@@ -292,11 +336,28 @@ if triton is not None:
             do_ptrs = DO + (offs_m[:, None] * sqm + offs_d[None, :] * sqd)
 
             q = tl.load(q_ptrs)
-            qk = tl.dot(q, tl.trans(k), allow_tf32=False)
+            # Scale BEFORE the causal / chunk floor so the -1e30 floor matches the forward (which floors
+            # the already-scaled qk); otherwise a fully-masked (pad) query's M ~ -1e30 makes
+            # exp(qk*sm_scale - M) overflow to +inf, and inf*0 (do=0 for a loss-masked pad row) -> NaN.
+            qk = tl.dot(q, tl.trans(k), allow_tf32=False) * sm_scale
             qk = tl.where(offs_m_real[:, None] >= (offs_n[None, :]), qk, float("-inf"))
+            if CHUNK_MASK:
+                q_chunk = tl.load(
+                    ChunkIds + off_z * N_CTX_KV + offs_m, mask=offs_m < N_CTX_Q, other=-2
+                )
+                _qnp = q_chunk[:, None] != -2
+                _knp = k_chunk[None, :] != -2
+                _same = (q_chunk[:, None] == k_chunk[None, :]) & (q_chunk[:, None] >= 0)
+                _al = (
+                    _qnp
+                    & _knp
+                    & (_same | ((q_chunk[:, None] < 0) & _qnp) | ((k_chunk[None, :] < 0) & _knp))
+                )
+                _al = _al | (offs_m[:, None] == offs_n[None, :])
+                qk = tl.where(_al, qk, -1e30)
 
             m = tl.load(m_ptrs + offs_m)
-            last_p = tl.exp(qk * sm_scale - m[:, None])
+            last_p = tl.exp(qk - m[:, None])
 
             do = tl.load(do_ptrs)
             dv += tl.dot(tl.trans(last_p.to(Q.dtype.element_ty)), do, allow_tf32=False)
@@ -327,6 +388,20 @@ if triton is not None:
             q = tl.load(q_ptrs)
             qk = tl.dot(q, tl.trans(k), allow_tf32=False)
             qk *= sm_scale
+            if CHUNK_MASK:
+                # Strictly cross-block here -> no self-diagonal term (it only matters in the own block).
+                q_chunk = tl.load(
+                    ChunkIds + off_z * N_CTX_KV + offs_m, mask=offs_m < N_CTX_Q, other=-2
+                )
+                _qnp = q_chunk[:, None] != -2
+                _knp = k_chunk[None, :] != -2
+                _same = (q_chunk[:, None] == k_chunk[None, :]) & (q_chunk[:, None] >= 0)
+                _al = (
+                    _qnp
+                    & _knp
+                    & (_same | ((q_chunk[:, None] < 0) & _qnp) | ((k_chunk[None, :] < 0) & _knp))
+                )
+                qk = tl.where(_al, qk, -1e30)
 
             landmark_qk = tl.max(
                 tl.where(tl.arange(0, BLOCK_N)[None, :] == BLOCK_N - 1, qk, float("-inf")), 1
@@ -395,6 +470,7 @@ if triton is not None:
         svn,
         svd,
         DocId,  # int32 (Z, N_BLOCKS) per-block document id, or dummy when DOC_MASK is False
+        ChunkIds,  # int32 (Z, N_CTX_KV) per-token chunk role, or dummy when CHUNK_MASK is False
         Z,
         H,
         N_CTX_Q,
@@ -404,6 +480,7 @@ if triton is not None:
         BLOCK_DMODEL: tl.constexpr,
         N_PREFIX_Q: tl.constexpr,
         DOC_MASK: tl.constexpr,
+        CHUNK_MASK: tl.constexpr,
     ):
         # dq, one program per (query-block, head). Causal-only key-block loop, atomic-free. Only
         # implemented for N_PREFIX_Q == 0 (the caller guards this).
@@ -435,6 +512,8 @@ if triton is not None:
 
         if DOC_MASK:
             q_doc = tl.load(DocId + off_z * N_BLOCKS + (start_m // BLOCK_M))
+        if CHUNK_MASK:
+            q_chunk = tl.load(ChunkIds + off_z * N_CTX_KV + offs_m, mask=offs_m < N_CTX_Q, other=-2)
 
         dq = tl.zeros([BLOCK_M, BLOCK_DMODEL], dtype=tl.float32)
 
@@ -452,6 +531,20 @@ if triton is not None:
 
             qk = tl.dot(q, tl.trans(k), allow_tf32=False)
             qk *= sm_scale
+            if CHUNK_MASK:
+                # Strictly cross-block prior key blocks -> no self-diagonal term here.
+                k_chunk = tl.load(
+                    ChunkIds + off_z * N_CTX_KV + offs_n, mask=offs_n < N_CTX_KV, other=-2
+                )
+                _qnp = q_chunk[:, None] != -2
+                _knp = k_chunk[None, :] != -2
+                _same = (q_chunk[:, None] == k_chunk[None, :]) & (q_chunk[:, None] >= 0)
+                _al = (
+                    _qnp
+                    & _knp
+                    & (_same | ((q_chunk[:, None] < 0) & _qnp) | ((k_chunk[None, :] < 0) & _knp))
+                )
+                qk = tl.where(_al, qk, -1e30)
             landmark_qk = tl.max(
                 tl.where(tl.arange(0, BLOCK_N)[None, :] == BLOCK_N - 1, qk, float("-inf")), 1
             )
@@ -475,9 +568,25 @@ if triton is not None:
         k = tl.load(K + (offs_n[:, None] * skn + offs_d[None, :] * skd))
         v = tl.load(V + (offs_n[:, None] * svn + offs_d[None, :] * svd))
         offs_m_real = offs_m + tl.where(tl.arange(0, BLOCK_M) == BLOCK_M - 1, -1, 0)
-        qk = tl.dot(q, tl.trans(k), allow_tf32=False)
+        # Scale BEFORE the causal / chunk floor (see the _bwd_kv diagonal block): keeps the -1e30 floor
+        # consistent with the forward so a fully-masked pad query (M ~ -1e30) doesn't overflow exp -> NaN.
+        qk = tl.dot(q, tl.trans(k), allow_tf32=False) * sm_scale
         qk = tl.where(offs_m_real[:, None] >= (offs_n[None, :]), qk, float("-inf"))
-        last_p = tl.exp(qk * sm_scale - m[:, None])
+        if CHUNK_MASK:
+            k_chunk = tl.load(
+                ChunkIds + off_z * N_CTX_KV + offs_n, mask=offs_n < N_CTX_KV, other=-2
+            )
+            _qnp = q_chunk[:, None] != -2
+            _knp = k_chunk[None, :] != -2
+            _same = (q_chunk[:, None] == k_chunk[None, :]) & (q_chunk[:, None] >= 0)
+            _al = (
+                _qnp
+                & _knp
+                & (_same | ((q_chunk[:, None] < 0) & _qnp) | ((k_chunk[None, :] < 0) & _knp))
+            )
+            _al = _al | (offs_m[:, None] == offs_n[None, :])
+            qk = tl.where(_al, qk, -1e30)
+        last_p = tl.exp(qk - m[:, None])
         last_dp = tl.zeros([BLOCK_M, BLOCK_N], dtype=tl.float32) - Di[:, None]
         last_dp += tl.dot(do, tl.trans(v), allow_tf32=False)
         ds = last_p * last_dp * sm_scale
@@ -493,7 +602,7 @@ class _FusedCompressiveLandmarkAttention(torch.autograd.Function):
     kernel; only the value accumulation and its gradient differ."""
 
     @staticmethod
-    def forward(ctx, q, k, v, n_prefix_q, sm_scale, block_size, doc_id=None):
+    def forward(ctx, q, k, v, n_prefix_q, sm_scale, block_size, doc_id=None, chunk_ids=None):
         if triton is None:
             raise RuntimeError("Landmark attention requires 'triton' (and a CUDA device).")
         q = q.contiguous()
@@ -512,6 +621,15 @@ class _FusedCompressiveLandmarkAttention(torch.autograd.Function):
             assert doc_id.shape == (batch, n_blocks), (doc_id.shape, (batch, n_blocks))
             doc_id = doc_id.to(device=q.device, dtype=torch.int32).contiguous()
         doc_id_arg = doc_id if doc_mask else torch.empty(1, dtype=torch.int32, device=q.device)
+        # Per-token document-chunked masking (mutually exclusive with the per-block doc_id packing).
+        chunk_mask = chunk_ids is not None
+        if chunk_mask:
+            assert not doc_mask, "chunk_ids and doc_id (packing) are mutually exclusive"
+            assert chunk_ids.shape == (batch, k.shape[2]), (chunk_ids.shape, (batch, k.shape[2]))
+            chunk_ids = chunk_ids.to(device=q.device, dtype=torch.int32).contiguous()
+        chunk_ids_arg = (
+            chunk_ids if chunk_mask else torch.empty(1, dtype=torch.int32, device=q.device)
+        )
         o = torch.empty_like(q)
         grid = (triton.cdiv(q.shape[2], BLOCK), q.shape[0] * q.shape[1], 1)
         L = torch.empty((q.shape[0] * q.shape[1], q.shape[2]), device=q.device, dtype=torch.float32)
@@ -547,6 +665,7 @@ class _FusedCompressiveLandmarkAttention(torch.autograd.Function):
             L,
             m,
             doc_id_arg,
+            chunk_ids_arg,
             q.shape[0],
             q.shape[1],
             q.shape[2],
@@ -556,11 +675,13 @@ class _FusedCompressiveLandmarkAttention(torch.autograd.Function):
             BLOCK_DMODEL=d,
             N_PREFIX_Q=n_prefix_q,
             DOC_MASK=doc_mask,
+            CHUNK_MASK=chunk_mask,
             num_warps=num_warps,
             num_stages=num_stages,
         )
         ctx.save_for_backward(q, k, v, o, L, m)
         ctx.doc_id = doc_id  # None when not packing
+        ctx.chunk_ids = chunk_ids  # None unless per-token chunked masking
         ctx.grid = grid
         ctx.sm_scale = sm_scale
         ctx.BLOCK_DMODEL = d
@@ -580,8 +701,13 @@ class _FusedCompressiveLandmarkAttention(torch.autograd.Function):
         q, k, v, o, lse, m = ctx.saved_tensors
         doc_id = ctx.doc_id
         doc_mask = doc_id is not None
+        chunk_ids = ctx.chunk_ids
+        chunk_mask = chunk_ids is not None
         n_blocks = k.shape[2] // BLOCK
         doc_id_arg = doc_id if doc_mask else torch.empty(1, dtype=torch.int32, device=q.device)
+        chunk_ids_arg = (
+            chunk_ids if chunk_mask else torch.empty(1, dtype=torch.int32, device=q.device)
+        )
         do = do.contiguous()
         dq = torch.zeros_like(q, dtype=torch.float32)
         dk = torch.empty_like(k)
@@ -630,6 +756,7 @@ class _FusedCompressiveLandmarkAttention(torch.autograd.Function):
             v.stride(2),
             v.stride(3),
             doc_id_arg,
+            chunk_ids_arg,
             q.shape[0],
             q.shape[1],
             q.shape[2],
@@ -641,6 +768,7 @@ class _FusedCompressiveLandmarkAttention(torch.autograd.Function):
             BLOCK_DMODEL=ctx.BLOCK_DMODEL,
             N_PREFIX_Q=ctx.N_PREFIX_Q,
             DOC_MASK=doc_mask,
+            CHUNK_MASK=chunk_mask,
         )
         if ctx.BLOCK_DMODEL > 128:
             warps = _env_int("LM_FAST_WARPS", 8)
@@ -655,7 +783,7 @@ class _FusedCompressiveLandmarkAttention(torch.autograd.Function):
         _bwd_q_kernel_compressive[(ctx.grid[1], ctx.grid[0])](
             *args, **const, num_warps=warps, num_stages=stages
         )
-        return dq, dk, dv, None, None, None, None
+        return dq, dk, dv, None, None, None, None, None
 
 
 def fused_compressive_landmark_attention(
@@ -666,12 +794,17 @@ def fused_compressive_landmark_attention(
     sm_scale: float = None,  # type: ignore[assignment]
     block_size: int = 64,
     doc_id: Optional[torch.Tensor] = None,
+    chunk_ids: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
     """Compressive-landmark counterpart of :func:`landmark_fast.fused_landmark_attention_fast`.
 
     ``doc_id`` is an optional int32 ``(batch, seq_len_k // block_size)`` per-block document id for
     sequence packing (see :func:`~olmo_core.nn.attention.landmark.build_block_doc_id`); when given,
     cross-document key blocks are masked out so a query never attends across a document boundary.
+    ``chunk_ids`` is an optional int32 ``(batch, seq_len_k)`` per-TOKEN document-chunk role tensor
+    (>=0 context-chunk id, -1 FREE, -2 PAD; mutually exclusive with ``doc_id``) that applies the
+    document-chunked mask (``causal & not_pad & (same_chunk | q_free | kv_free)``) inside the kernel,
+    tolerating a PadToLength pad tail (blocks whose landmark position is a pad token).
     """
     expected_is_mem = torch.arange(0, is_mem.shape[-1], device=is_mem.device) % block_size == (
         block_size - 1
@@ -683,7 +816,7 @@ def fused_compressive_landmark_attention(
     if sm_scale is None:
         sm_scale = 1.0 / math.sqrt(q.size(-1))
     return _FusedCompressiveLandmarkAttention.apply(
-        q, k, v, n_history_blocks, sm_scale, block_size, doc_id
+        q, k, v, n_history_blocks, sm_scale, block_size, doc_id, chunk_ids
     )
 
 

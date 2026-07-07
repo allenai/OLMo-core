@@ -37,10 +37,17 @@ from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.float8 import Float8Config
 from olmo_core.internal.common import build_launch_config, get_root_dir, get_work_dir
 from olmo_core.internal.experiment import CliContext, ExperimentConfig
-from olmo_core.launch.beaker import BeakerEnvVar, BeakerLaunchConfig, OLMoCoreBeakerImage
+from olmo_core.launch.beaker import (
+    BeakerEnvVar,
+    BeakerLaunchConfig,
+    OLMoCoreBeakerImage,
+)
 from olmo_core.nn.lm_head import LMLossImplementation
 from olmo_core.nn.rope import YaRNRoPEScalingConfig
-from olmo_core.nn.transformer import TransformerActivationCheckpointingMode, TransformerConfig
+from olmo_core.nn.transformer import (
+    TransformerActivationCheckpointingMode,
+    TransformerConfig,
+)
 from olmo_core.optim import LinearWithWarmup, OptimGroupOverride, SkipStepAdamWConfig
 from olmo_core.train import Duration, LoadStrategy, TrainerConfig
 from olmo_core.train.callbacks import (
@@ -60,13 +67,13 @@ from olmo_core.train.train_module import (
 # Geometry / reserved ids (match the converter + olmo_core.data.document_chunk_landmark defaults).
 # ---------------------------------------------------------------------------
 SEQUENCE_LENGTH = 40960  # 32k-scale window (matrix-comparable); landmark: 40960 / 64 = 640 blocks.
-MEM_FREQ = 63           # landmark block size = 64
-NUM_NODES = 2           # 2x8=16 H200 data-parallel (docchunk has no CP; DP only). 16 inst/step.
+MEM_FREQ = 63  # landmark block size = 64
+NUM_NODES = 2  # 2x8=16 H200 data-parallel (docchunk has no CP; DP only). 16 inst/step.
 EOS_TOKEN_ID = 151643
 LANDMARK_TOKEN_ID = 151860
-DOC_START_ID = 151648   # <|box_start|>
-DOC_END_ID = 151649     # <|box_end|>
-PAD_TOKEN_ID = 151863   # interior window-fill padding (landmark only)
+DOC_START_ID = 151648  # <|box_start|>
+DOC_END_ID = 151649  # <|box_end|>
+PAD_TOKEN_ID = 151863  # interior window-fill padding (landmark only)
 
 # ---------------------------------------------------------------------------
 # Doc-chunked data (weka). NOTE: the original ``cptmix_docchunk_ladder40k`` root is EMPTY on
@@ -112,7 +119,7 @@ _WSUM = sum(_W.values())
 LR = 1e-5
 WORLD_SIZE = NUM_NODES * 8
 GLOBAL_BATCH_SIZE = WORLD_SIZE * SEQUENCE_LENGTH  # tokens; 8 * 40960 = 327680 -> 8 instances/step
-MAX_STEPS = 2200        # ~700M content tokens @ 16 inst/step (match landmark-ref budget)
+MAX_STEPS = 2200  # ~700M content tokens @ 16 inst/step (match landmark-ref budget)
 
 
 def _task_source(emit: str, name: str, doc_tok) -> NumpyDocumentSourceConfig:
@@ -179,10 +186,13 @@ def build_docchunk_experiment(
             vocab_size=tokenizer_config.padded_vocab_size(),
             document_landmark=True,
             mem_freq=MEM_FREQ,
-            # EAGER grouped-softmax (no fused kernel): PadToLength right-pads variable-length
-            # doc-landmark instances, whose pad tail has no landmarks -> the kernel's positional
-            # is_mem assert would fail. Eager tolerates the pad tail.
-            landmark_use_kernel=False,
+            # FUSED block-sparse Triton kernel (CHUNK_MASK path): avoids materializing the (B,H,T,T)
+            # scores (~100 GiB at T=40960 -> OOM in eager). The kernel now TOLERATES the PadToLength
+            # pad tail: pad positions never attend / are attended / are treated as landmarks, and the
+            # self-diagonal guard uses the query's actual position (not the landmark-decremented one)
+            # so interior window-fill pad@p-1 is never force-attended. Validated fwd+grad identical to
+            # eager WITH a pad tail (fp32 fwd 1.2e-7 / dv 4.8e-7; bf16 fwd 7.8e-3 / dv 1.6e-2).
+            landmark_use_kernel=True,
         )
         model_config.document_chunk_attention = {
             "doc_start_id": DOC_START_ID,
@@ -193,12 +203,17 @@ def build_docchunk_experiment(
         }
     elif variant == "compressive":
         # Same chunked mask + grouped softmax as landmark, but each past block's landmark token also
-        # contributes its VALUE (a compressed block summary). Eager-only; compressive CPT base.
+        # contributes its VALUE (a compressed block summary). Compressive CPT base. Uses the FUSED
+        # compressive Triton kernel (CHUNK_MASK path ported from plain landmark, pad-tail tolerant) so
+        # it fits memory at 40960 -- eager materializes the (B,H,T,T) scores (~100 GiB) and OOMs.
+        # Validated fwd+grad identical to eager compressive WITH a pad tail (fp32 fwd 1.2e-7 / dv
+        # 4.8e-7; bf16 fwd 3.9e-3 / dv 1.6e-2).
         model_config = TransformerConfig.qwen3_4B(
             vocab_size=tokenizer_config.padded_vocab_size(),
             document_compressive=True,
             mem_freq=MEM_FREQ,
             nonselected_landmark_mass=NONSELECTED_LANDMARK_MASS,
+            landmark_use_kernel=True,
         )
         model_config.document_chunk_attention = {
             "doc_start_id": DOC_START_ID,
@@ -281,23 +296,33 @@ def build_docchunk_experiment(
     specs = [
         MixingDocumentSourceSpecConfig(
             source=_task_source(emit, "contra", doc_tokenizer_config),
-            ratio=_W["contra"] / _WSUM, max_repetition_factor=8.0, label="contradiction",
+            ratio=_W["contra"] / _WSUM,
+            max_repetition_factor=8.0,
+            label="contradiction",
         ),
         MixingDocumentSourceSpecConfig(
             source=_task_source(emit, "nq", doc_tokenizer_config),
-            ratio=_W["nq"] / _WSUM, max_repetition_factor=8.0, label="nq_retrieval",
+            ratio=_W["nq"] / _WSUM,
+            max_repetition_factor=8.0,
+            label="nq_retrieval",
         ),
         MixingDocumentSourceSpecConfig(
             source=_task_source(emit, "oolong", doc_tokenizer_config),
-            ratio=_W["oolong"] / _WSUM, max_repetition_factor=8.0, label="oolong",
+            ratio=_W["oolong"] / _WSUM,
+            max_repetition_factor=8.0,
+            label="oolong",
         ),
         MixingDocumentSourceSpecConfig(
             source=_task_source(emit, "rerank", doc_tokenizer_config),
-            ratio=_W["rerank"] / _WSUM, max_repetition_factor=8.0, label="rerank",
+            ratio=_W["rerank"] / _WSUM,
+            max_repetition_factor=8.0,
+            label="rerank",
         ),
         MixingDocumentSourceSpecConfig(
             source=_task_source(emit, "outlier", doc_tokenizer_config),
-            ratio=_W["outlier"] / _WSUM, max_repetition_factor=8.0, label="outlier",
+            ratio=_W["outlier"] / _WSUM,
+            max_repetition_factor=8.0,
+            label="outlier",
         ),
     ]
 
