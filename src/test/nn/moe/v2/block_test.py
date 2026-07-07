@@ -1,10 +1,4 @@
-"""
-CPU tests for MoEFusedV2TransformerBlock config accounting + construction.
-
-The block's forward path is GPU-only, but its parameter/FLOP accounting is pure arithmetic over the
-config dims, and (since the comm-overlap CUDA events are only allocated when CUDA is available) the
-block can now be *built* on CPU. That lets us check the accounting against a real built block.
-"""
+"""Tests for ``MoEFusedV2TransformerBlock`` config accounting and construction."""
 
 import pytest
 
