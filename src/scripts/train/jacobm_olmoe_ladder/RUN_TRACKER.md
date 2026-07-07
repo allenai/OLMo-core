@@ -1,10 +1,10 @@
 # Ladder Run Tracker
 
-Last updated: 2026-07-03 00:20 UTC.
+Last updated: 2026-07-07 17:41 UTC.
 
 This table is a scan-friendly status matrix for planned ladder cells. It is separate from `RUNS.md` (chronological launch/status log) and `PLOTTED_RESULTS.md` (finished-only plotted rows and losses).
 
-Main experiment categories: baseline, dense schedule, expert granularity, integration candidates, Qwen-like, shared expert, and total sparsity. Rows marked diagnostic are tracked for context but are not part of the main full-grid completion target.
+Main experiment categories: baseline, dense schedule, expert granularity, integration candidates, midtraining, Qwen-like, shared expert, and total sparsity. Rows marked diagnostic are tracked for context but are not part of the main full-grid completion target.
 
 Legend: `done` = at least one finished/plotted run exists; `run` = currently running in Beaker; `queued` = created/scheduled but not started; `todo` = planned/not started; `hold` = intentionally not prioritized yet.
 
@@ -38,6 +38,24 @@ Legend: `done` = at least one finished/plotted run exists; `run` = currently run
 | Qwen3-like | true 3.0d + depth | done Cx1/2/4/8 | done Cx1/2/4/8 | done Cx1/2/4/8 | done Cx1/2/4/8 | Main true-3D Qwen-like ladder is plotted through Cx8 after the in-place restart. |
 | Integration candidates | wide 256E/top8 + shared + dense1 | Cx1/Cx2/Cx4/Cx8 done/plotted and bracketed | Cx1/Cx2/Cx4/Cx8 done/plotted | Cx1/Cx2/Cx4 done/plotted; Cx8 running | todo | 480M wide Cx1/Cx2/Cx4/Cx8 beat same-LR baseline; 810M Cx1/Cx2/Cx4 are plotted and beat same-LR baseline. |
 | Integration candidates | deep 256E/top8 + shared + dense1 | Cx1/2/4/8 done/plotted | Cx1/Cx2/Cx4/Cx8 done/plotted | Cx1/Cx2 done/plotted; Cx4/Cx8 running | todo | 480M deep Cx1/Cx2/Cx4/Cx8 beat wide and baseline at same LR; 810M deep Cx1 is slightly better than wide Cx1, while deep Cx2 trails wide Cx2 slightly. |
+
+## Midtraining Tracker
+
+Midtraining uses semantic run names that omit GPU count, node count, microbatch,
+and batch size. Systems settings live here and in W&B tags so runs can resume
+cleanly if we adjust hardware later.
+
+Default 275M midtraining settings for the first full grid: 100B tokens, sequence
+length 8192, global batch seq 128 (1,048,576 tokens), 1 node, 4 GPUs, EP1,
+microbatch 8, fresh optimizer state, 2000-step warmup then constant LR.
+
+| Source | Source checkpoint | LR grid | State | Beaker | Notes |
+| --- | --- | --- | --- | --- | --- |
+| 275M baseline Cx1 | `olmoe3-tiny-275m-cx1-b256k-gpu2-ep1mb16-lr2e-3-r2/step15365` | `2e-4`, `4e-4`, `8e-4`, `1.6e-3` | mixed: 3 done, 1 running | [2e-4](https://beaker.org/ex/01KWWM1043JEC9MC3PV7PXQ745), [4e-4](https://beaker.org/ex/01KWWM1AVQXMJ3JBJQ1W2G8YAV), [8e-4](https://beaker.org/ex/01KWWM1N0EQDMCFER90NVP9QW0), [1.6e-3](https://beaker.org/ex/01KWWM1ZXN5R5XWK00GH0WA36G) | `2e-4`, `4e-4`, and `8e-4` finished; `1.6e-3` is still running. Tests midtraining LR transfer from the low-data optimal baseline checkpoint. |
+| 275M baseline Cx8 | `olmoe3-tiny-275m-cx8-b768k-gpu4-ep1mb8-lr1.6e-3-r2/step40971` | `2e-4`, `4e-4`, `8e-4`, `1.6e-3` | mixed: 3 done, 1 running | [2e-4](https://beaker.org/ex/01KWWM10ANMMW2YTNN6RKJBGE7), [4e-4](https://beaker.org/ex/01KWWM1AK89SKDA1KGCX5D8SMM), [8e-4](https://beaker.org/ex/01KWWM1P9TXRSMDV5DH9EF4KXM), [1.6e-3](https://beaker.org/ex/01KWWM213KMG47KADPK5Q67GJP) | `2e-4`, `4e-4`, and `8e-4` finished; `1.6e-3` is still running. Tests midtraining LR transfer from the high-data optimal baseline checkpoint. |
+
+Tentative larger-model midtraining batch targets: 480M uses global batch seq 192,
+810M uses 256, and 1.2B uses 384. These require smoke tests before promotion.
 
 ## Active / Queued Beaker Surface
 
