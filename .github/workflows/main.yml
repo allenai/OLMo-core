@@ -288,7 +288,7 @@ jobs:
             --priority low \
             --preemptible \
             --gpus ${{ matrix.task.gpus }} \
-            --task-timeout 10m \
+            --task-timeout 15m \
             --host-networking \
             --gpu-type h100 \
             --gpu-type a100 \
