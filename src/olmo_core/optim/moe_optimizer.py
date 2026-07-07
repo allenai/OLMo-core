@@ -346,12 +346,12 @@ class MoEFusedV2OptimizerConfig(Config):
             has_grad_accum_fp32_buffer = model_parts[0]._accumulate_grads_in_fp32
 
         else:
-            has_grad_accum_fp32_buffer = [part.has_grad_accum_fp32_buffer for part in model_parts]
-            # shuold all have the same value
-            if not all(x == has_grad_accum_fp32_buffer[0] for x in has_grad_accum_fp32_buffer):
+            per_part = [part.has_grad_accum_fp32_buffer for part in model_parts]
+            # should all have the same value
+            if not all(x == per_part[0] for x in per_part):
                 raise ValueError("Inconsistent `has_grad_accum_fp32_buffer` among model parts")
 
-            has_grad_accum_fp32_buffer = has_grad_accum_fp32_buffer[0]
+            has_grad_accum_fp32_buffer = per_part[0]
 
         optim = self.optimizer()(
             all_groups,
