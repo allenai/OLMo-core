@@ -234,11 +234,8 @@ def build_config(opts: argparse.Namespace, overrides: List[str]) -> base.Experim
     trainer_config.load_trainer_state = False
     trainer_config.load_optim_state = opts.midtrain_load_optim_state
     trainer_config.max_duration = Duration.tokens(max_duration_tokens)
-    if in_eval_mode or opts.ladder_evals:
-        trainer_config = base.add_ladder_evals(
-            trainer_config, opts, tokenizer_config, sequence_length
-        )
-
+    # base.build_trainer_config() attaches ladder eval callbacks when
+    # in_eval_mode=True or opts.ladder_evals=True.
     wandb_cb = trainer_config.callbacks.get("wandb")
     if wandb_cb is not None:
         wandb_cb.tags = [*getattr(wandb_cb, "tags", []), "midtraining"]
