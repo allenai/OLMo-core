@@ -22,6 +22,14 @@ class BackfillSpec:
 
 
 BACKFILLS = [
+    BackfillSpec("mt-eval-275m-baseline-cx1-lr2e-4-r1", "mt-275m-baseline-cx1-lr2e-4-r1"),
+    BackfillSpec("mt-eval-275m-baseline-cx1-lr4e-4-r1", "mt-275m-baseline-cx1-lr4e-4-r1"),
+    BackfillSpec("mt-eval-275m-baseline-cx1-lr8e-4-r1", "mt-275m-baseline-cx1-lr8e-4-r1"),
+    BackfillSpec("mt-eval-275m-baseline-cx1-lr1.6e-3-r1", "mt-275m-baseline-cx1-lr1.6e-3-r1"),
+    BackfillSpec("mt-eval-275m-baseline-cx8-lr2e-4-r1", "mt-275m-baseline-cx8-lr2e-4-r1"),
+    BackfillSpec("mt-eval-275m-baseline-cx8-lr4e-4-r1", "mt-275m-baseline-cx8-lr4e-4-r1"),
+    BackfillSpec("mt-eval-275m-baseline-cx8-lr8e-4-r1", "mt-275m-baseline-cx8-lr8e-4-r1"),
+    BackfillSpec("mt-eval-275m-baseline-cx8-lr1.6e-3-r1", "mt-275m-baseline-cx8-lr1.6e-3-r1"),
     BackfillSpec("eval-275m-275-01", "olmoe3-tiny-275m-cx1-b256k-gpu2-ep1mb16-lr1.2e-3-r2"),
     BackfillSpec("eval-275m-275-02", "olmoe3-tiny-275m-cx1-b256k-gpu2-ep1mb16-lr1.5e-3-r2"),
     BackfillSpec("eval-275m-275-03", "olmoe3-tiny-275m-cx1-b256k-gpu2-ep1mb16-lr1e-3-r2"),

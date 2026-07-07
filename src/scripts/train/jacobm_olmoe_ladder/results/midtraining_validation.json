@@ -1,5 +1,5 @@
 {
-  "generated_at_utc": "2026-07-07T17:41:35.729324+00:00",
+  "generated_at_utc": "2026-07-07T17:51:48.690756+00:00",
   "records": [
     {
       "beaker_id": "01KWWM1043JEC9MC3PV7PXQ745",
@@ -71,23 +71,23 @@
       "beaker_id": "01KWWM1ZXN5R5XWK00GH0WA36G",
       "checkpoint": "olmoe3-tiny-275m-cx1-b256k-gpu2-ep1mb16-lr2e-3-r2/step15365",
       "eval_metrics": {},
-      "load_balancing_loss": 0.11058409512042999,
+      "load_balancing_loss": 0.11051458865404129,
       "lr": "1.6e-3",
-      "mfu": 28.74534425642935,
-      "router_z_loss": 0.0003752774209715426,
+      "mfu": 28.667626179615606,
+      "router_z_loss": 0.0003664765681605786,
       "semantic_name": "mt-275m-baseline-cx1-lr1.6e-3-r1",
       "source": "275M baseline Cx1",
       "source_cx": "Cx1",
       "state": "running",
-      "step": 87045,
-      "tokens": 91273297920,
-      "tps": 356934.64990666177,
-      "train_ce_loss": 1.790317177772522,
-      "train_ppl": 5.99135248888155,
+      "step": 87873,
+      "tokens": 92141518848,
+      "tps": 355969.6145154879,
+      "train_ce_loss": 1.8111170530319214,
+      "train_ppl": 6.117276939812095,
       "wandb_id": "w3vof8b9",
       "wandb_name": "mt-275m-baseline-cx1-lr1.6e-3-r1_0.28@1.13B_275m_eg48e4k_12L4K48N1S_midtrain-baseline-cx1-lr1.6e-3-r1",
       "wandb_url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/w3vof8b9",
-      "z_loss": 0.001202160376124084
+      "z_loss": 0.0012172684073448181
     },
     {
       "beaker_id": "01KWWM10ANMMW2YTNN6RKJBGE7",
@@ -159,23 +159,23 @@
       "beaker_id": "01KWWM213KMG47KADPK5Q67GJP",
       "checkpoint": "olmoe3-tiny-275m-cx8-b768k-gpu4-ep1mb8-lr1.6e-3-r2/step40971",
       "eval_metrics": {},
-      "load_balancing_loss": 0.11068373918533325,
+      "load_balancing_loss": 0.11073032021522522,
       "lr": "1.6e-3",
-      "mfu": 28.950948817063637,
-      "router_z_loss": 0.0003672389138955623,
+      "mfu": 28.910621084988378,
+      "router_z_loss": 0.000377201329683885,
       "semantic_name": "mt-275m-baseline-cx8-lr1.6e-3-r1",
       "source": "275M baseline Cx8",
       "source_cx": "Cx8",
       "state": "running",
-      "step": 86457,
-      "tokens": 90656735232,
-      "tps": 359487.6682742467,
-      "train_ce_loss": 1.7400195598602295,
-      "train_ppl": 5.697454863002893,
+      "step": 87271,
+      "tokens": 91510276096,
+      "tps": 358986.9136198092,
+      "train_ce_loss": 1.7675799131393433,
+      "train_ppl": 5.856662564708242,
       "wandb_id": "edljug2e",
       "wandb_name": "mt-275m-baseline-cx8-lr1.6e-3-r1_0.28@1.13B_275m_eg48e4k_12L4K48N1S_midtrain-baseline-cx8-lr1.6e-3-r1",
       "wandb_url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/edljug2e",
-      "z_loss": 0.0012244293466210365
+      "z_loss": 0.0012227214174345136
     }
   ]
 }

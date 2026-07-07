@@ -269,12 +269,16 @@ def main() -> int:
         ),
         "",
         (
-            "Note: the current 275M midtraining grid was launched with "
-            "`--eval-task-set=fast`, but `midtraining_ladder.py` sets "
-            "`ladder_evals=False`, so no `eval/*` validation metrics are present "
-            "in W&B for these runs yet. The tables below therefore show final or "
-            "latest training/progress metrics and will include validation metrics "
-            "automatically once future midtraining runs log them."
+            "Selection rule: use only `eval/*` validation metrics for midtraining "
+            "checkpoint/LR selection. Training loss on the midtraining mixture is "
+            "shown only as run-health metadata and must not be used to choose LRs."
+        ),
+        "",
+        (
+            "Backfill note: the first 275M grid did not run in-loop evals during "
+            "training, so final-checkpoint eval-only backfills are required. Once "
+            "those eval jobs finish and `copy_eval_backfills_to_wandb.py` copies "
+            "their metrics back, this table will populate the `eval/*` section."
         ),
         "",
         "Settings: 100B midtraining tokens, sequence length 8192, global batch seq 128 "
@@ -287,22 +291,17 @@ def main() -> int:
     for source_cx in ("Cx1", "Cx8"):
         group = [record for record in records if record["source_cx"] == source_cx]
         finished = [record for record in group if record["state"] == "finished"]
-        best = min(
-            (record for record in finished if record["train_ce_loss"] is not None),
-            key=lambda record: float(record["train_ce_loss"]),
-            default=None,
-        )
+        with_eval = [record for record in group if record["eval_metrics"]]
         summary_rows.append(
             [
                 source_cx,
                 f"{len(finished)}/{len(group)}",
-                best["lr"] if best else "",
-                fmt(best["train_ce_loss"] if best else None),
-                fmt(best["train_ppl"] if best else None),
+                f"{len(with_eval)}/{len(group)}",
+                ", ".join(record["lr"] for record in group if record["eval_metrics"]) or "",
                 ", ".join(record["lr"] for record in group if record["state"] != "finished") or "",
             ]
         )
-    lines.extend(md_table(["source", "finished", "best finished LR", "best CE", "best PPL", "still running"], summary_rows))
+    lines.extend(md_table(["source", "training finished", "eval metrics present", "LRs with evals", "still running"], summary_rows))
     lines.append("")
 
     for source_cx in ("Cx1", "Cx8"):
@@ -349,7 +348,7 @@ def main() -> int:
 
     lines.extend(["## Validation Metrics", ""])
     if not eval_metric_names:
-        lines.append("No `eval/*` validation metrics were found for this midtraining grid.")
+        lines.append("No `eval/*` validation metrics have been copied onto these midtraining runs yet.")
         lines.append("")
     else:
         headers = ["metric", "direction"] + [f"{record['source_cx']} {record['lr']}" for record in records]

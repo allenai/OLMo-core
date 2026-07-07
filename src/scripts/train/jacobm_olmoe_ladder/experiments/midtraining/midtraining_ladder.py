@@ -172,7 +172,8 @@ def build_midtraining_dataset_config(
 
 
 def build_config(opts: argparse.Namespace, overrides: List[str]) -> base.ExperimentConfig:
-    if not opts.load_path:
+    in_eval_mode = bool(getattr(opts, "eval_checkpoints", None))
+    if not opts.load_path and not in_eval_mode:
         raise ValueError("midtraining_ladder.py requires --load-path=<pretrained checkpoint>")
     if opts.midtrain_max_tokens <= 0:
         raise ValueError("--midtrain-max-tokens must be > 0")
@@ -183,16 +184,21 @@ def build_config(opts: argparse.Namespace, overrides: List[str]) -> base.Experim
     overrides = base.consume_script_overrides(opts, overrides)
     sequence_length = opts.sequence_length or DEFAULT_MIDTRAIN_SEQUENCE_LENGTH
     tokenizer_config = TokenizerConfig.dolma2()
-    in_eval_mode = bool(getattr(opts, "eval_checkpoints", None))
-    if in_eval_mode:
-        raise ValueError("midtraining_ladder.py does not support --eval-checkpoints")
 
     base.configure_model_size(opts)
     model_config = base.build_model_config(tokenizer_config)
     max_duration_tokens = opts.midtrain_max_tokens
     base.configure_sweep_hparams(opts, sequence_length, max_duration_tokens)
 
-    dataset_config = build_midtraining_dataset_config(opts, tokenizer_config, sequence_length)
+    # Eval-only backfills never consume the training dataloader, but script_utils
+    # still builds one before Trainer.eval_checkpoints(). Use the cheaper
+    # baseline data config in eval mode instead of materializing a 100B-token
+    # midtraining source mixture just to satisfy the trainer constructor.
+    dataset_config = (
+        base.build_dataset_config(opts, tokenizer_config, sequence_length)
+        if in_eval_mode
+        else build_midtraining_dataset_config(opts, tokenizer_config, sequence_length)
+    )
     data_loader_config = NumpyDataLoaderConfig(
         global_batch_size=base.GLOBAL_BATCH_SIZE,
         seed=base.SEED,
@@ -201,7 +207,7 @@ def build_config(opts: argparse.Namespace, overrides: List[str]) -> base.Experim
     train_module_config = base.build_train_module_config(
         sequence_length,
         max_duration_tokens=max_duration_tokens,
-        in_eval_mode=False,
+        in_eval_mode=in_eval_mode,
     )
     train_module_config.scheduler = ComposableScheduler(
         units=SchedulerUnits.steps,
@@ -220,13 +226,18 @@ def build_config(opts: argparse.Namespace, overrides: List[str]) -> base.Experim
         tokenizer_config,
         sequence_length,
         max_duration_tokens=max_duration_tokens,
-        in_eval_mode=False,
+        in_eval_mode=in_eval_mode,
     )
-    trainer_config.load_path = opts.load_path
-    trainer_config.load_strategy = LoadStrategy.always
+    if opts.load_path:
+        trainer_config.load_path = opts.load_path
+        trainer_config.load_strategy = LoadStrategy.always
     trainer_config.load_trainer_state = False
     trainer_config.load_optim_state = opts.midtrain_load_optim_state
     trainer_config.max_duration = Duration.tokens(max_duration_tokens)
+    if in_eval_mode or opts.ladder_evals:
+        trainer_config = base.add_ladder_evals(
+            trainer_config, opts, tokenizer_config, sequence_length
+        )
 
     wandb_cb = trainer_config.callbacks.get("wandb")
     if wandb_cb is not None:
