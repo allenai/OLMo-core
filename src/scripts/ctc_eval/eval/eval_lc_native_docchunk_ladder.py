@@ -56,6 +56,12 @@ import torch
 
 # Reserved ids (match the converter + olmo_core.data.document_chunk_landmark defaults).
 EOS_TOKEN_ID = 151643
+# The SFT model ends its assistant turn with <|im_end|> (chat template), and 151643 is appended by the
+# converter UNSUPERVISED (not in the loss mask) -- so the model reliably emits 151645 but often never
+# emits 151643. Stopping ONLY on 151643 made the (stopkind=None) tasks (outlier/nq/...) decode the full
+# max_new budget every example (huge slowdown; outlier@3k ~40min). Stop on 151645 too -> stops at the
+# real answer end (answer is fully emitted before <|im_end|>), ~10x faster, results unchanged.
+IM_END_ID = 151645  # <|im_end|>
 LANDMARK_TOKEN_ID = 151860
 DOC_START_ID = 151648  # <|box_start|>
 DOC_END_ID = 151649  # <|box_end|>
@@ -368,7 +374,7 @@ def main():
             nxt = int(logits[0, -1].argmax().item())
             new_content = []
             for _ in range(max_new_tokens):
-                if nxt == EOS_TOKEN_ID:
+                if nxt == EOS_TOKEN_ID or nxt == IM_END_ID:
                     break
                 new_content.append(nxt)
                 if nxt == NEWLINE_ID and answer_complete is not None and answer_complete(new_content):
@@ -388,7 +394,7 @@ def main():
         new_content = []
         since_landmark = 0
         for _ in range(max_new_tokens):
-            if nxt == EOS_TOKEN_ID:
+            if nxt == EOS_TOKEN_ID or nxt == IM_END_ID:
                 break
             new_content.append(nxt)
             logits = gm.model(torch.tensor([[nxt]], device=device), logits_to_keep=1)
