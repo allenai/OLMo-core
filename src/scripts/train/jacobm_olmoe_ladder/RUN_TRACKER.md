@@ -51,19 +51,21 @@ microbatch 8, fresh optimizer state, 2000-step warmup then constant LR.
 
 | Source | Source checkpoint | LR grid | State | Beaker | Notes |
 | --- | --- | --- | --- | --- | --- |
-| 275M baseline Cx1 | `olmoe3-tiny-275m-cx1-b256k-gpu2-ep1mb16-lr2e-3-r2/step15365` | `2e-4`, `4e-4`, `8e-4`, `1.6e-3` | mixed: 3 done, 1 running | [2e-4](https://beaker.org/ex/01KWWM1043JEC9MC3PV7PXQ745), [4e-4](https://beaker.org/ex/01KWWM1AVQXMJ3JBJQ1W2G8YAV), [8e-4](https://beaker.org/ex/01KWWM1N0EQDMCFER90NVP9QW0), [1.6e-3](https://beaker.org/ex/01KWWM1ZXN5R5XWK00GH0WA36G) | `2e-4`, `4e-4`, and `8e-4` finished; `1.6e-3` is still running. Tests midtraining LR transfer from the low-data optimal baseline checkpoint. |
-| 275M baseline Cx8 | `olmoe3-tiny-275m-cx8-b768k-gpu4-ep1mb8-lr1.6e-3-r2/step40971` | `2e-4`, `4e-4`, `8e-4`, `1.6e-3` | mixed: 3 done, 1 running | [2e-4](https://beaker.org/ex/01KWWM10ANMMW2YTNN6RKJBGE7), [4e-4](https://beaker.org/ex/01KWWM1AK89SKDA1KGCX5D8SMM), [8e-4](https://beaker.org/ex/01KWWM1P9TXRSMDV5DH9EF4KXM), [1.6e-3](https://beaker.org/ex/01KWWM213KMG47KADPK5Q67GJP) | `2e-4`, `4e-4`, and `8e-4` finished; `1.6e-3` is still running. Tests midtraining LR transfer from the high-data optimal baseline checkpoint. |
+| 275M baseline Cx1 | `olmoe3-tiny-275m-cx1-b256k-gpu2-ep1mb16-lr2e-3-r2/step15365` | `2e-4`, `4e-4`, `8e-4`, `1.6e-3` | done | [2e-4](https://beaker.org/ex/01KWWM1043JEC9MC3PV7PXQ745), [4e-4](https://beaker.org/ex/01KWWM1AVQXMJ3JBJQ1W2G8YAV), [8e-4](https://beaker.org/ex/01KWWM1N0EQDMCFER90NVP9QW0), [1.6e-3](https://beaker.org/ex/01KWWM1ZXN5R5XWK00GH0WA36G) | All four training jobs finished. Tests midtraining LR transfer from the low-data optimal baseline checkpoint. |
+| 275M baseline Cx8 | `olmoe3-tiny-275m-cx8-b768k-gpu4-ep1mb8-lr1.6e-3-r2/step40971` | `2e-4`, `4e-4`, `8e-4`, `1.6e-3` | done | [2e-4](https://beaker.org/ex/01KWWM10ANMMW2YTNN6RKJBGE7), [4e-4](https://beaker.org/ex/01KWWM1AK89SKDA1KGCX5D8SMM), [8e-4](https://beaker.org/ex/01KWWM1P9TXRSMDV5DH9EF4KXM), [1.6e-3](https://beaker.org/ex/01KWWM213KMG47KADPK5Q67GJP) | All four training jobs finished. Tests midtraining LR transfer from the high-data optimal baseline checkpoint. |
 
-Final-checkpoint eval backfills for the six finished runs are eval-only jobs over `step95368`; after they finish, run `copy_eval_backfills_to_wandb.py --only mt-eval` to copy their `eval/*` summary metrics back onto the source midtraining W&B runs. Earlier attempts from commits `430f233c`, `571c0984`, and `ac32eb76` failed before eval due to duplicate evaluator callbacks or dataloader restore mismatches and should be ignored. The current relaunch uses commit `d47e3735`, which builds the real midtraining source-mixture dataloader for eval backfills.
+Final-checkpoint eval backfills are eval-only jobs over `step95368`. Earlier attempts from commits `430f233c`, `571c0984`, and `ac32eb76` failed before eval due to duplicate evaluator callbacks or dataloader restore mismatches and should be ignored. The fixed backfills build the real midtraining source-mixture dataloader for eval. On 2026-07-07, `copy_eval_backfills_to_wandb.py --only mt-eval` copied all eight backfills to their source W&B runs; verification reported `180 eval metrics already present` for each source run after upload.
 
 | Source | LR | Eval backfill | State | Notes |
 | --- | --- | --- | --- | --- |
-| Cx1 | `2e-4` | [01KWYWXRZQJB7RGNAHEE0NCR65](https://beaker.org/ex/01KWYWXRZQJB7RGNAHEE0NCR65) | running | Current `d47e3735` relaunch; materializing the real midtraining source mixture. |
-| Cx1 | `4e-4` | [01KWYWY36BF88883A6EP91T6YQ](https://beaker.org/ex/01KWYWY36BF88883A6EP91T6YQ) | running | Current `d47e3735` relaunch. |
-| Cx1 | `8e-4` | [01KWYWYE8N65R781R8H59P6EM2](https://beaker.org/ex/01KWYWYE8N65R781R8H59P6EM2) | running | Current `d47e3735` relaunch. |
-| Cx8 | `2e-4` | [01KWYWYT764G3SD3A6G7V93MFY](https://beaker.org/ex/01KWYWYT764G3SD3A6G7V93MFY) | running | Current `d47e3735` relaunch. |
-| Cx8 | `4e-4` | [01KWYWZ574B2TG9183DVDPPVQC](https://beaker.org/ex/01KWYWZ574B2TG9183DVDPPVQC) | running | Current `d47e3735` relaunch. |
-| Cx8 | `8e-4` | [01KWYWZGNQ3KK63CDQPB4RFYAT](https://beaker.org/ex/01KWYWZGNQ3KK63CDQPB4RFYAT) | running | Current `d47e3735` relaunch. |
+| Cx1 | `2e-4` | [01KWYWXRZQJB7RGNAHEE0NCR65](https://beaker.org/ex/01KWYWXRZQJB7RGNAHEE0NCR65) | uploaded | Eval metrics copied to source run. |
+| Cx1 | `4e-4` | [01KWYWY36BF88883A6EP91T6YQ](https://beaker.org/ex/01KWYWY36BF88883A6EP91T6YQ) | uploaded | Eval metrics copied to source run. |
+| Cx1 | `8e-4` | [01KWYWYE8N65R781R8H59P6EM2](https://beaker.org/ex/01KWYWYE8N65R781R8H59P6EM2) | uploaded | Eval metrics copied to source run. |
+| Cx1 | `1.6e-3` | [01KWZ31W7SGHQFY1SKCE0M6APR](https://beaker.org/ex/01KWZ31W7SGHQFY1SKCE0M6APR) | uploaded | Eval metrics copied to source run. |
+| Cx8 | `2e-4` | [01KWYWYT764G3SD3A6G7V93MFY](https://beaker.org/ex/01KWYWYT764G3SD3A6G7V93MFY) | uploaded | Eval metrics copied to source run. |
+| Cx8 | `4e-4` | [01KWYWZ574B2TG9183DVDPPVQC](https://beaker.org/ex/01KWYWZ574B2TG9183DVDPPVQC) | uploaded | Eval metrics copied to source run. |
+| Cx8 | `8e-4` | [01KWYWZGNQ3KK63CDQPB4RFYAT](https://beaker.org/ex/01KWYWZGNQ3KK63CDQPB4RFYAT) | uploaded | Eval metrics copied to source run. |
+| Cx8 | `1.6e-3` | [01KWZ3287FMKN570V86JD3XANK](https://beaker.org/ex/01KWZ3287FMKN570V86JD3XANK) | uploaded | Eval metrics copied to source run. |
 
 Tentative larger-model midtraining batch targets: 480M uses global batch seq 192,
 810M uses 256, and 1.2B uses 384. These require smoke tests before promotion.

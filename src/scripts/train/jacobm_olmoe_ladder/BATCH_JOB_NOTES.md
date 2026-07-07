@@ -14,10 +14,11 @@ integration plotter directly instead of `plot_all_experiments.sh`. This avoids
 the legacy baseline plotter path, which can still use full-history scans for
 uncached finished baseline runs.
 
-Current successful integration-only tail refresh:
+Current integration-only tail refreshes:
 
-- Experiment: `olmoe3-integration-plot-tail-refresh`
-- Beaker: `https://beaker.org/ex/01KWV2Z8ZNHKJQBJ7K2QYS3CEM`
+- `2026-07-07`: `olmoe3-integration-plot-tail-refresh-20260707-saturn`, Beaker `https://beaker.org/ex/01KWZ6T1AG0R0JHC99F3JBT0JG` (Saturn requeue; old Jupiter copy `01KWZ37HQ4NHRTYZAS5PVGFP9C` was stopped)
+- `2026-07-07`: `olmoe3-integration-plot-tail-refresh-20260707b`, Beaker `https://beaker.org/ex/01KWZ37HQ4NHRTYZAS5PVGFP9C` (stopped while queued on Jupiter)
+- `2026-07-06`: `olmoe3-integration-plot-tail-refresh`, Beaker `https://beaker.org/ex/01KWV2Z8ZNHKJQBJ7K2QYS3CEM`
 - Workspace: `ai2/OLMo-3-moe-experiments`
 - Cluster: `ai2/jupiter`
 - Resources: 1 GPU, urgent priority

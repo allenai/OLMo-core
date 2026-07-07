@@ -25,7 +25,7 @@ LADDER_DIR = Path(__file__).parent
 RESULTS_DIR = LADDER_DIR / "results"
 DEFAULT_CACHE_DIR = RESULTS_DIR / "cache" / "wandb_summaries"
 DEFAULT_PROJECT = "ai2-llm/jacobm-olmoe-ladder"
-DEFAULT_NAME_REGEX = r"olmoe3|q3-|int-|sp-|eg-|dense|se0m9|shared"
+DEFAULT_NAME_REGEX = r"olmoe3|q3-|int-|sp-|eg-|dense|se0m9|shared|mt-"
 DEFAULT_METRIC_REGEX = r"^eval/|^throughput/in-loop eval"
 CACHE_VERSION = 1
 
