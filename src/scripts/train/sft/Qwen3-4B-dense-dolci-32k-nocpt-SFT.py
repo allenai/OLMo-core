@@ -220,7 +220,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
             WandBCallback(
                 name=run_name_with_ts,
                 group=cli_context.run_name,
-                entity="prasanns-allen-institute-for-ai",  # prasann's entity (this run uses PRASANNS_WANDB_API_KEY); ai2-llm 404s the project for this key
+                entity="ai2-llm",  # prasanns-allen-institute-for-ai 403s (amandab's Beaker-injected WANDB_API_KEY lacks write access there)
                 project="memory-networks",
                 enabled=True,
                 cancel_check_interval=10,
