@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Optional, cast
 import torch
 
 from olmo_core._nvtx import maybe_nvtx_annotate
+from olmo_core.nn.moe.v2._nvtx_colors import COMM_COLOR
 
 from ...moe.utils import wait_stream_no_compile
 from ..utils import (
@@ -109,7 +110,7 @@ def combined_forward_ep_no_sync_1d(
     num_out_tokens = local_x_global_routed_expert_indices.numel()
 
     with torch.no_grad():
-        with maybe_nvtx_annotate("config_capacity", "comm"):
+        with maybe_nvtx_annotate("config_capacity", COMM_COLOR):
             requested_splits = local_batch_size_per_global_routed_expert.to(dtype=torch.long)
             rank_capacity = compute_ep_no_sync_rank_capacity(self, num_out_tokens)
             allowed_splits, recv_splits_by_src_local, _drop_token_cnt = cast(
@@ -184,7 +185,7 @@ def combined_forward_ep_no_sync_1d(
     assert packed_keep_mask is not None
     assert num_kept is not None
 
-    with maybe_nvtx_annotate("permute_local_tokens", "comm"):
+    with maybe_nvtx_annotate("permute_local_tokens", COMM_COLOR):
         (
             permutated_local_x,
             reversed_local_x_permutation_mapping,
@@ -229,7 +230,7 @@ def combined_forward_ep_no_sync_1d(
 
     dispatch_rank_major = dispatch_out
 
-    with maybe_nvtx_annotate("permute_global_tokens", "comm"):
+    with maybe_nvtx_annotate("permute_global_tokens", COMM_COLOR):
         if self.routed_experts.num_local_experts == 1:
             dispatch_rank_major = dispatch_rank_major.clone()
             global_chunk_row_id_map = None
@@ -251,7 +252,7 @@ def combined_forward_ep_no_sync_1d(
         padded_batch_size_per_local_expert,
     )
 
-    with maybe_nvtx_annotate("unpermute_global_tokens", "comm"):
+    with maybe_nvtx_annotate("unpermute_global_tokens", COMM_COLOR):
         if self.routed_experts.num_local_experts == 1:
             global_x_rank_major = dispatch_rank_major
         else:
@@ -279,7 +280,7 @@ def combined_forward_ep_no_sync_1d(
         self.ep_pg,
     )
 
-    with maybe_nvtx_annotate("unpermute_merge_local_tokens", "comm"):
+    with maybe_nvtx_annotate("unpermute_merge_local_tokens", COMM_COLOR):
         combine_out_for_unpermute = (
             combine_out.clone() if buffers.combine_out_is_shared else combine_out
         )

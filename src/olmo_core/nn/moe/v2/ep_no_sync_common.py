@@ -7,6 +7,7 @@ import torch.distributed as dist
 
 from olmo_core._nvtx import maybe_nvtx_annotate
 from olmo_core.distributed.utils import get_rank
+from olmo_core.nn.moe.v2._nvtx_colors import COMM_COLOR
 
 from ...moe.utils import (
     moe_unpermute_1d_fused_drop_no_compile,
@@ -17,7 +18,7 @@ if TYPE_CHECKING:
     from .block import MoEFusedV2TransformerBlock
 
 
-@maybe_nvtx_annotate("build_keep_reorder", "comm")
+@maybe_nvtx_annotate("build_keep_reorder", COMM_COLOR)
 def build_keep_reorder(
     requested_splits: torch.Tensor,
     keep_splits: torch.Tensor,
@@ -71,7 +72,7 @@ def build_keep_reorder(
     return reorder_indices, inverse_reorder_indices, packed_keep_mask
 
 
-@maybe_nvtx_annotate("sync_tail_drop_allowed_splits_single_a2a", "comm")
+@maybe_nvtx_annotate("sync_tail_drop_allowed_splits_single_a2a", COMM_COLOR)
 def sync_tail_drop_allowed_splits_single_a2a(
     block: MoEFusedV2TransformerBlock,
     requested_splits: torch.Tensor,
@@ -159,7 +160,7 @@ def sync_tail_drop_allowed_splits_single_a2a(
     )
 
 
-@maybe_nvtx_annotate("restore_drop_unpermute_1d", "comm")
+@maybe_nvtx_annotate("restore_drop_unpermute_1d", COMM_COLOR)
 def restore_drop_unpermute_1d(
     block: MoEFusedV2TransformerBlock,
     *,
@@ -207,7 +208,7 @@ def restore_drop_unpermute_1d(
         if row_id_map_is_packed:
             restored_local_x = combine_out
         else:
-            with maybe_nvtx_annotate("restore_drop", "comm"):
+            with maybe_nvtx_annotate("restore_drop", COMM_COLOR):
                 restored_local_x = combine_out.index_select(
                     0,
                     local_inverse_reorder_indices,

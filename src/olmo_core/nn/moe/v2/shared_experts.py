@@ -6,6 +6,7 @@ import torch.nn.functional as F
 
 from olmo_core._nvtx import maybe_nvtx_annotate
 from olmo_core.config import Config, DType
+from olmo_core.nn.moe.v2._nvtx_colors import EXPERTS_COLOR
 
 
 # SwiGLU is intentionally SiLU-gated here, matching the fused fast paths (forward1/forward2)
@@ -116,7 +117,7 @@ class SharedExperts(nn.Module):
                 "SharedExperts bf16 fallback cannot run after fp8-only anchor storage has been released"
             )
 
-    @maybe_nvtx_annotate("SharedExperts.forward", "experts")
+    @maybe_nvtx_annotate("SharedExperts.forward", EXPERTS_COLOR)
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         x: (B, S, D) -> out: (E, B, S, D)
@@ -150,7 +151,7 @@ class SharedExperts(nn.Module):
 
         return out.view(E, B, S, D)
 
-    @maybe_nvtx_annotate("SharedExperts.forward1", "experts")
+    @maybe_nvtx_annotate("SharedExperts.forward1", EXPERTS_COLOR)
     def forward1(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Split the forward pass into two parts for better overlap in EP.
@@ -173,7 +174,7 @@ class SharedExperts(nn.Module):
 
         return up, gate
 
-    @maybe_nvtx_annotate("SharedExperts.forward2", "experts")
+    @maybe_nvtx_annotate("SharedExperts.forward2", EXPERTS_COLOR)
     def forward2(self, up: torch.Tensor, gate: torch.Tensor, xshape: torch.Size) -> torch.Tensor:
         """
         Split the forward pass into two parts for better overlap in EP.

@@ -13,6 +13,7 @@ from olmo_core.kernels import (
     scaled_grouped_mm_q,
     scaled_grouped_mm_q_fp8_weight,
 )
+from olmo_core.nn.moe.v2._nvtx_colors import EXPERTS_COLOR
 
 if TYPE_CHECKING:
     from .block import MoEFusedV2TransformerBlock
@@ -143,7 +144,7 @@ def refresh_shared_rowwise_fp8_cache(block: MoEFusedV2TransformerBlock) -> None:
         reset_shared_rowwise_fp8_cache(block)
         return
 
-    with maybe_nvtx_annotate("moe_rowwise_fp8_param_refresh_shared_weight_prequant", "experts"):
+    with maybe_nvtx_annotate("moe_rowwise_fp8_param_refresh_shared_weight_prequant", EXPERTS_COLOR):
         if up_weight is not None and down_weight is not None:
             up_weight.refresh_from_logical_weight(
                 block.shared_experts.w_up_gate,
@@ -197,7 +198,7 @@ def refresh_rowwise_fp8_cache(block: MoEFusedV2TransformerBlock) -> None:
     if block.routed_experts is not None:
         if routed_enabled:
             with maybe_nvtx_annotate(
-                "moe_rowwise_fp8_param_refresh_routed_weight_prequant", "experts"
+                "moe_rowwise_fp8_param_refresh_routed_weight_prequant", EXPERTS_COLOR
             ):
                 block.routed_experts.refresh_rowwise_fp8_cache()
         else:
