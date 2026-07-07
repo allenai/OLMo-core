@@ -110,9 +110,6 @@ class PipelineAction(NamedTuple):
 
         if self.need_reload:
             repr = "↘" + repr
-        else:
-            # repr = " " + repr
-            pass
 
         return repr
 
@@ -213,27 +210,11 @@ class CustomScheduleInterleaved1F1B:
         for stage in self._stages:
             stage.stage_index_to_group_rank = self.stage_index_to_group_rank
 
-        # Set the same has_backward flag for stage object
-        # for stage in self._stages:
-        #     stage.has_backward = self._has_backward
-
         self._stages_initialized = False
-
-        # avoid putting a reference to 'self' inside the lambda, it creates a ref cycle
-        # has_loss: bool = self._loss_fn is not None
-        # self._should_compute_loss = lambda stage: stage.is_last and has_loss
 
         self.n_local_stages = 2
         assert len(stages) == 2, "Interleaved 1F1B requires exactly 2 stages per rank."
         self.rank = stages[0].group_rank
-        # self.number_of_rounds = max(1, n_microbatches // self.pp_group_size)
-        # self.microbatches_per_round = n_microbatches // self.number_of_rounds
-        # if n_microbatches % self.number_of_rounds != 0:
-        #     raise ValueError(
-        #         "Interleaved 1F1B requires the number of microbatches to be a "
-        #         f"multiple of the number of rounds ({self.number_of_rounds}), "
-        #         f"but got {n_microbatches}."
-        #     )
 
         self.reset_n_microbatches(n_microbatches)
 
@@ -592,7 +573,6 @@ class CustomScheduleInterleaved1F1B:
 
         # reload_event: Optional[torch.cuda.Event] = None
         for time_step, action in enumerate(self.pipeline_order[self.rank]):
-            # print(f'{action}-Start')
             prune_completed_p2p()
 
             # do a 1-step lookahead prefetch if needed
@@ -607,11 +587,9 @@ class CustomScheduleInterleaved1F1B:
                 and next_action.need_reload
                 and self.use_gpu_activation_offload
             ):
-                # debug_mem_before_reload = torch.cuda.memory_allocated() / (1024**3)
                 _ = self.gpu_activation_offloader.async_reload(
                     f"{next_action.stage_index}F{next_action.microbatch_index}"
                 )  # in saving, using "F" group for both F and B
-                # debug_mem_after_reload = torch.cuda.memory_allocated() / (1024**3)
 
             keyed_ops: list[tuple[tuple[str, int, int, int], str, Any]] = []
             if action is not None:
@@ -642,10 +620,7 @@ class CustomScheduleInterleaved1F1B:
                             )
                         # start D2D transfer
                         if self.use_gpu_activation_offload:
-                            # debug_mem_before_offload = torch.cuda.memory_allocated() / (1024**3)
                             _ = self.gpu_activation_offloader.async_offload(offload_group)
-                            # debug_mem_after_offload = torch.cuda.memory_allocated() / (1024**3)
-                    # self._maybe_compute_loss(stage, output, target_mbs, mb_index)
                     self._maybe_local_forward_handoff(stage, mb_index, stage_index_to_stage)
                     keyed_ops.extend(
                         (
@@ -673,9 +648,6 @@ class CustomScheduleInterleaved1F1B:
 
                         backward_counter[stage_index] += 1
                         last_backward = backward_counter[stage_index] == self._n_microbatches
-                        # grad_scale_factor = (
-                        #     self._n_microbatches if self.scale_grads else 1
-                        # )
                         with maybe_nvtx_annotate(
                             f"{action.stage_index}B{mb_index}", _PP_BACKWARD_COLOR
                         ):
@@ -684,15 +656,11 @@ class CustomScheduleInterleaved1F1B:
                                 loss=None,  # loss is retrieved inside the stage
                                 last_backward=last_backward,
                             )
-                        # if last_backward:
-                        #     stage.scale_grads(grad_scale_factor)
 
                         if action.need_reload and self.use_gpu_activation_offload:
-                            # debug_mem_before_release = torch.cuda.memory_allocated() / (1024**3)
                             self.gpu_activation_offloader.manual_release_group(
                                 f"{action.stage_index}F{action.microbatch_index}"
                             )
-                            # debug_mem_after_release = torch.cuda.memory_allocated() / (1024**3)
                         self._maybe_local_backward_handoff(stage, mb_index, stage_index_to_stage)
                         keyed_ops.extend(
                             (
@@ -778,9 +746,6 @@ class CustomScheduleInterleaved1F1B:
                         pass
                     elif computation_type == FULL_BACKWARD_CONT:
                         # If not the first stage, then receive bwd gradients
-                        # if stage_index - 1 in stage_index_to_stage:
-                        #     stage = stage_index_to_stage[stage_index - 1]
-                        #     ops.extend(stage.get_bwd_recv_ops(mb_index))
                         pass
                     elif computation_type == FULL_BACKWARD:
                         if forward_only:
@@ -825,8 +790,6 @@ class CustomScheduleInterleaved1F1B:
                             completed_p2p_overlap_compute_steps - self.max_p2p_overlap_steps
                         )
 
-            # print(f'{action}-Done')
-
             pass  # time step done
 
         wait_all_p2p()
@@ -855,9 +818,6 @@ class CustomScheduleInterleaved1F1B:
         fwd_bwd_ops = microbatch_ops - warmup_ops
         # cooldown_ops should encompass the remaining backwards
         cooldown_ops = microbatch_ops - fwd_bwd_ops
-        # total ops encompass both forward and backward ops
-        # total_ops = warmup_ops + fwd_bwd_ops + cooldown_ops
-        # warmup_ops + fwd_bwd_ops * 2 + cooldown_ops == microbatch_ops * 2
 
         # Calculates the stage index based on step and pp_group_size
         def forward_stage_index(step):
@@ -1030,7 +990,6 @@ class CustomSchedule1F1BV(CustomScheduleInterleaved1F1B):
         # reload_event: Optional[torch.cuda.Event] = None
         for time_step, action in enumerate(self.pipeline_order[self.rank]):
             debug(f"time_step={time_step} action={action}")
-            # print(f'{action}-Start')
             prune_completed_p2p()
 
             # do a 1-step lookahead prefetch if needed
@@ -1045,11 +1004,9 @@ class CustomSchedule1F1BV(CustomScheduleInterleaved1F1B):
                 and next_action.need_reload
                 and self.use_gpu_activation_offload
             ):
-                # debug_mem_before_reload = torch.cuda.memory_allocated() / (1024**3)
                 _ = self.gpu_activation_offloader.async_reload(
                     f"{next_action.stage_index}F{next_action.microbatch_index}"
                 )  # in saving, using "F" group for both F and B
-                # debug_mem_after_reload = torch.cuda.memory_allocated() / (1024**3)
 
             keyed_ops: list[tuple[tuple[str, int, int, int], str, Any]] = []
             if action is not None:
@@ -1080,10 +1037,7 @@ class CustomSchedule1F1BV(CustomScheduleInterleaved1F1B):
                             )
                         # start D2D transfer
                         if self.use_gpu_activation_offload:
-                            # debug_mem_before_offload = torch.cuda.memory_allocated() / (1024**3)
                             _ = self.gpu_activation_offloader.async_offload(offload_group)
-                            # debug_mem_after_offload = torch.cuda.memory_allocated() / (1024**3)
-                    # self._maybe_compute_loss(stage, output, target_mbs, mb_index)
                     self._maybe_local_forward_handoff(stage, mb_index, stage_index_to_stage)
                     keyed_ops.extend(
                         (
@@ -1111,9 +1065,6 @@ class CustomSchedule1F1BV(CustomScheduleInterleaved1F1B):
 
                         backward_counter[stage_index] += 1
                         last_backward = backward_counter[stage_index] == self._n_microbatches
-                        # grad_scale_factor = (
-                        #     self._n_microbatches if self.scale_grads else 1
-                        # )
                         with maybe_nvtx_annotate(
                             f"{action.stage_index}B{mb_index}", _PP_BACKWARD_COLOR
                         ):
@@ -1122,15 +1073,11 @@ class CustomSchedule1F1BV(CustomScheduleInterleaved1F1B):
                                 loss=None,  # loss is retrieved inside the stage
                                 last_backward=last_backward,
                             )
-                        # if last_backward:
-                        #     stage.scale_grads(grad_scale_factor)
 
                         if action.need_reload and self.use_gpu_activation_offload:
-                            # debug_mem_before_release = torch.cuda.memory_allocated() / (1024**3)
                             self.gpu_activation_offloader.manual_release_group(
                                 f"{action.stage_index}F{action.microbatch_index}"
                             )
-                            # debug_mem_after_release = torch.cuda.memory_allocated() / (1024**3)
                         self._maybe_local_backward_handoff(stage, mb_index, stage_index_to_stage)
                         keyed_ops.extend(
                             (
@@ -1216,9 +1163,6 @@ class CustomSchedule1F1BV(CustomScheduleInterleaved1F1B):
                         pass
                     elif computation_type == FULL_BACKWARD_CONT:
                         # If not the first stage, then receive bwd gradients
-                        # if stage_index - 1 in stage_index_to_stage:
-                        #     stage = stage_index_to_stage[stage_index - 1]
-                        #     ops.extend(stage.get_bwd_recv_ops(mb_index))
                         pass
                     elif computation_type == FULL_BACKWARD:
                         if forward_only:
@@ -1372,8 +1316,6 @@ class CustomSchedule1F1BV(CustomScheduleInterleaved1F1B):
                         wait_p2p_launched_at_or_before(
                             completed_p2p_overlap_compute_steps - self.max_p2p_overlap_steps
                         )
-
-            # print(f'{action}-Done')
 
             pass  # time step done
 
