@@ -258,6 +258,7 @@ def test_grad_parity(backend):
     run_distributed_test(
         _run_grad_parity,
         backend=backend,
+        start_method="spawn",
         func_args=(16, 32, 8),
     )
 
@@ -267,6 +268,7 @@ def test_multi_group_grad_parity(backend):
     run_distributed_test(
         _run_multi_group_grad_parity,
         backend=backend,
+        start_method="spawn",
         func_args=(16, 32, 8),
     )
 
@@ -276,6 +278,7 @@ def test_fp32_grad_accumulation(backend):
     run_distributed_test(
         _run_fp32_grad_accumulation,
         backend=backend,
+        start_method="spawn",
         func_args=(16, 32, 8),
     )
 
@@ -285,6 +288,7 @@ def test_no_sync_skipped_param_grad_preserved(backend):
     run_distributed_test(
         _run_no_sync_skipped_param_grad_preserved,
         backend=backend,
+        start_method="spawn",
         func_args=(16,),
     )
 
@@ -294,6 +298,7 @@ def test_buffered_module_grad_parity(backend):
     run_distributed_test(
         _run_buffered_module_grad_parity,
         backend=backend,
+        start_method="spawn",
         func_args=(16,),
     )
 
@@ -303,5 +308,6 @@ def test_no_sync_accumulation(backend):
     run_distributed_test(
         _run_no_sync_accumulation,
         backend=backend,
+        start_method="spawn",
         func_args=(16, 32, 8),
     )
