@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Dict, Optional, cast
 
 import torch
 
+from olmo_core._nvtx import maybe_nvtx_annotate
 from olmo_core.utils import get_or_init_stream
 
 from ...moe.utils import (
@@ -20,7 +21,6 @@ from ...moe.utils import (
     wait_event_no_compile,
     wait_stream_no_compile,
 )
-from ._nvtx import maybe_annotate
 from .checkpointing import is_activation_checkpointing
 from .comm import _DispatchRowwiseAutograd, _RowwiseCombineWeightedAutograd
 from .ep_no_sync_buffers import (
@@ -129,7 +129,7 @@ def ep_no_sync_rowwise_tbo_stage_a(
     block_inp = x
     del x
 
-    with maybe_annotate("rowwise_tbo_a_attn_router", "routing"):
+    with maybe_nvtx_annotate("rowwise_tbo_a_attn_router", "routing"):
         attn_res_out = self._checkpointed_res_norm_attn(block_inp, **kwargs)
         moe_inp_3d = self._prepare_moe_input(attn_res_out)
         (
@@ -163,7 +163,7 @@ def ep_no_sync_rowwise_tbo_stage_a(
     ) and use_ep_no_sync_rowwise_symm_combine_gather(self)
     lease_lifetime_buffers = torch.is_grad_enabled() and not activation_checkpointing
     with torch.no_grad():
-        with maybe_annotate("rowwise_tbo_a_config_capacity", "comm"):
+        with maybe_nvtx_annotate("rowwise_tbo_a_config_capacity", "comm"):
             requested_splits = local_batch_size_per_global_routed_expert.to(dtype=torch.long)
             rank_capacity = compute_ep_no_sync_rank_capacity(self, num_out_tokens)
             (
@@ -465,13 +465,13 @@ def combined_forward_ep_no_sync_tbo_rowwise(
             )
         pending_prev = x1_ctx
 
-    with maybe_annotate("rowwise_tbo_1", "tbo"):
+    with maybe_nvtx_annotate("rowwise_tbo_1", "tbo"):
         if pending_prev is not None:
             pending_prev = ep_no_sync_rowwise_tbo_stage_c_launch(
                 pending_prev.block,
                 pending_prev,
             )
-    with maybe_annotate("rowwise_tbo_0", "tbo"):
+    with maybe_nvtx_annotate("rowwise_tbo_0", "tbo"):
         a0 = ep_no_sync_rowwise_tbo_stage_a(
             self,
             x0,
@@ -480,7 +480,7 @@ def combined_forward_ep_no_sync_tbo_rowwise(
             **kwargs,
         )
 
-    with maybe_annotate("rowwise_tbo_1", "tbo"):
+    with maybe_nvtx_annotate("rowwise_tbo_1", "tbo"):
         if x1_is_fresh:
             fresh_ctx = cast(Dict[str, torch.Tensor], x1_ctx)
             block_inp1 = fresh_ctx["x1"]
@@ -491,9 +491,9 @@ def combined_forward_ep_no_sync_tbo_rowwise(
                 pending_prev,
             )
 
-    with maybe_annotate("rowwise_tbo_0", "tbo"):
+    with maybe_nvtx_annotate("rowwise_tbo_0", "tbo"):
         d0 = ep_no_sync_rowwise_tbo_stage_d_launch(self, a0)
-    with maybe_annotate("rowwise_tbo_1", "tbo"):
+    with maybe_nvtx_annotate("rowwise_tbo_1", "tbo"):
         a1 = ep_no_sync_rowwise_tbo_stage_a(
             self,
             block_inp1,
@@ -502,17 +502,17 @@ def combined_forward_ep_no_sync_tbo_rowwise(
             **kwargs,
         )
 
-    with maybe_annotate("rowwise_tbo_1", "tbo"):
+    with maybe_nvtx_annotate("rowwise_tbo_1", "tbo"):
         d1 = ep_no_sync_rowwise_tbo_stage_d_launch(self, a1)
-    with maybe_annotate("rowwise_tbo_0", "tbo"):
+    with maybe_nvtx_annotate("rowwise_tbo_0", "tbo"):
         pending0_pre_c = ep_no_sync_rowwise_tbo_stage_e(self, d0)
 
-    with maybe_annotate("rowwise_tbo_0", "tbo"):
+    with maybe_nvtx_annotate("rowwise_tbo_0", "tbo"):
         pending0_post_c = ep_no_sync_rowwise_tbo_stage_c_launch(self, pending0_pre_c)
-    with maybe_annotate("rowwise_tbo_1", "tbo"):
+    with maybe_nvtx_annotate("rowwise_tbo_1", "tbo"):
         pending1_pre_c = ep_no_sync_rowwise_tbo_stage_e(self, d1)
 
-    with maybe_annotate("rowwise_tbo_0", "tbo"):
+    with maybe_nvtx_annotate("rowwise_tbo_0", "tbo"):
         final_out = ep_no_sync_rowwise_tbo_stage_tail(self, pending0_post_c)
 
     return final_out, pending1_pre_c
