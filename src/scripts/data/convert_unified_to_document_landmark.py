@@ -79,6 +79,7 @@ def tokenize_example(
     seq_len: int,
     chunk_by: str,
     item_regex: str,
+    use_titles: bool,
 ) -> Optional[Tuple[np.ndarray, np.ndarray]]:
     """Tokenize one unified example into a document-chunked instance, or ``None`` to skip."""
     segments, ids, _mask = segment_prompt_to_chunks(
@@ -90,6 +91,7 @@ def tokenize_example(
         chunk_by=chunk_by,
         item_regex=item_regex,
         include_answer=True,
+        use_titles=use_titles,
         doc_start_id=DOC_START_ID,
         doc_end_id=DOC_END_ID,
     )
@@ -173,6 +175,13 @@ def main() -> None:
         help="In --chunk-by=line mode, a line is a document iff this regex matches it (default "
         "matches OOLONG's 'Date: ... || ...' items).",
     )
+    p.add_argument(
+        "--use-titles",
+        action="store_true",
+        help="Render document titles (Document [N] (Title: ...): ...). Off by default so a "
+        "per-document title can't shortcut the task (e.g. review-outlier titles that name the "
+        "product category). MUST match the eval (eval_lc_native_docchunk.py --use-titles).",
+    )
     p.add_argument("--tokenizer", default=DEFAULT_TOKENIZER)
     p.add_argument("--limit", type=int, default=0)
     p.add_argument("--shard-tokens", type=int, default=20_000_000)
@@ -222,6 +231,7 @@ def main() -> None:
             seq_len=args.seq_len,
             chunk_by=args.chunk_by,
             item_regex=args.item_regex,
+            use_titles=args.use_titles,
         )
         if res is None:
             dropped += 1

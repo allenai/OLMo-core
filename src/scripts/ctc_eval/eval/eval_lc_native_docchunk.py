@@ -94,6 +94,12 @@ def main():
     ap.add_argument("--mem-freq", type=int, default=63)
     ap.add_argument("--cot-mode", default=None, help="override the per-task default prompt CoT mode.")
     ap.add_argument(
+        "--use-titles",
+        action="store_true",
+        help="Render document titles in the prefill. Off by default -- MUST match the training "
+        "converter (convert_unified_to_document_landmark.py --use-titles).",
+    )
+    ap.add_argument(
         "--landmark-top-k-blocks",
         type=int,
         default=None,
@@ -225,6 +231,7 @@ def main():
         segs, ids, _ = segment_prompt_to_chunks(
             tok, raw_example, seg_task, query_position="both", cot_mode=cot_mode,
             chunk_by=chunk_by, item_regex=r"\|\|", include_answer=False,
+            use_titles=args.use_titles,
             doc_start_id=DOC_START_ID, doc_end_id=DOC_END_ID,
         )
         if args.variant in ("dense", "full"):

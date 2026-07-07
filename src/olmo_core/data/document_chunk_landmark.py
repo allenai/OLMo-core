@@ -86,20 +86,44 @@ def find_chunk_spans(
 
 def _wrap_item_lines(text: str, item_re: Pattern, start_str: str, end_str: str) -> str:
     """Wrap each line matching ``item_re`` (e.g. OOLONG ``Date: ... || ...`` items) with the boundary
-    strings; non-matching lines (intro / instruction / question) stay FREE."""
-    out_lines = []
-    for line in text.split("\n"):
-        if line.strip() and item_re.search(line):
-            out_lines.append(f"{start_str}{line}{end_str}")
+    strings; non-matching lines (intro / instruction / question) stay FREE.
+
+    Consecutive item lines are made **contiguous**: the ``\\n`` separating two item lines is folded
+    into the following item's chunk so it is not FREE (matching the document path -- no id / label /
+    separator between items leaks as a globally-visible FREE token). Only the ``\\n`` at the boundary
+    between a free (non-item) line and an item run stays FREE.
+    """
+    lines = text.split("\n")
+    is_item = [bool(line.strip() and item_re.search(line)) for line in lines]
+    out: List[str] = []
+    for i, line in enumerate(lines):
+        lead = "" if i == 0 else "\n"
+        if is_item[i] and i > 0 and is_item[i - 1]:
+            # Contiguous item: fold the separating newline INTO this chunk (not FREE).
+            out.append(f"{start_str}{lead}{line}{end_str}")
+        elif is_item[i]:
+            # First item of a run: the leading newline borders free text, so it stays FREE.
+            out.append(f"{lead}{start_str}{line}{end_str}")
         else:
-            out_lines.append(line)
-    return "\n".join(out_lines)
+            out.append(f"{lead}{line}")
+    return "".join(out)
 
 
 def _wrap_documents(text: str, documents: List[dict], start_str: str, end_str: str) -> str:
-    """Wrap the first verbatim occurrence of each ``documents[i]["text"]`` with the boundary strings
-    (multi-document tasks: absence / retrieval / contradiction / ...)."""
-    out = text
+    """Wrap the document block with boundary strings so **nothing between the first and last document
+    is FREE** -- every id / title / label AND the inter-document ``\\n\\n`` separators are inside a
+    chunk. Only the leading instruction / question prefix and the trailing positioned query / answer
+    stay FREE (multi-document tasks: absence / retrieval / contradiction / ...).
+
+    The chunks are made **contiguous**: each document's chunk starts where the previous one ended (so
+    the separator + ``Document [N] (Title: ...):`` label that precede its body are absorbed into it),
+    the first document's chunk starts at the blank line that ends the free prefix, and the last
+    document's chunk extends over any trailing whitespace so the document -> suffix separator is not
+    FREE either. This is stricter than corpus-reasoning's paragraph wrap (which leaves the ``\\n\\n``
+    joins free); here the only FREE tokens are the instruction/question and the query/answer.
+    """
+    # Locate each document body in order (spans in ORIGINAL-text coordinates; markers inserted after).
+    body_spans: List[Tuple[int, int]] = []
     cursor = 0
     n_docs = 0
     n_unmatched = 0
@@ -108,9 +132,9 @@ def _wrap_documents(text: str, documents: List[dict], start_str: str, end_str: s
         if not body:
             continue
         n_docs += 1
-        idx = out.find(body, cursor)
+        idx = text.find(body, cursor)
         if idx == -1:
-            idx = out.find(body)
+            idx = text.find(body)
         if idx == -1:
             # Formatting altered the text so it no longer occurs verbatim -> this document stays FREE
             # (attends everything), silently breaking chunk isolation for it. Surface it so the loss of
@@ -122,8 +146,8 @@ def _wrap_documents(text: str, documents: List[dict], start_str: str, end_str: s
                 body[:80],
             )
             continue
-        out = out[:idx] + start_str + body + end_str + out[idx + len(body) :]
-        cursor = idx + len(start_str) + len(body) + len(end_str)
+        body_spans.append((idx, idx + len(body)))
+        cursor = idx + len(body)
     if n_unmatched:
         log.warning(
             "document-chunk wrapping: %d/%d documents could not be wrapped (stay FREE / unisolated) "
@@ -131,6 +155,29 @@ def _wrap_documents(text: str, documents: List[dict], start_str: str, end_str: s
             n_unmatched,
             n_docs,
         )
+    if not body_spans:
+        return text
+
+    # Build CONTIGUOUS chunk spans covering the whole document block with no FREE gaps.
+    chunk_spans: List[Tuple[int, int]] = []
+    for i, (bstart, bend) in enumerate(body_spans):
+        if i == 0:
+            # Start at the blank line ending the free prefix (include the "\n\n" so it isn't FREE).
+            para = text.rfind("\n\n", 0, bstart)
+            cstart = 0 if para == -1 else para
+        else:
+            cstart = chunk_spans[i - 1][1]  # contiguous: absorb the separator + this doc's label
+        if i == len(body_spans) - 1:
+            cend = bend  # last doc: swallow trailing whitespace so the doc->suffix "\n\n" isn't FREE
+            while cend < len(text) and text[cend] in "\n\r\t ":
+                cend += 1
+        else:
+            cend = bend
+        chunk_spans.append((cstart, cend))
+
+    out = text
+    for cstart, cend in reversed(chunk_spans):  # right-to-left keeps earlier indices valid
+        out = out[:cstart] + start_str + out[cstart:cend] + end_str + out[cend:]
     return out
 
 
@@ -144,6 +191,7 @@ def segment_prompt_to_chunks(
     chunk_by: str = "line",
     item_regex: str = r"\|\|",
     include_answer: bool = True,
+    use_titles: bool = False,
     doc_start_id: int = DOC_START_ID,
     doc_end_id: int = DOC_END_ID,
     doc_start_str: str = DOC_START_STR,
@@ -162,6 +210,10 @@ def segment_prompt_to_chunks(
         ``"document"`` (each ``documents[i]`` is a document).
     :param include_answer: Append the assistant answer (training) or stop at the generation prompt
         (eval prefill).
+    :param use_titles: Render document titles (``Document [N] (Title: ...): ...``). Defaults to
+        ``False`` -- titles are dropped so a per-document title can't hand the model a shortcut (e.g.
+        review-outlier titles that name the product category = the outlier attribute). Must match
+        between training and eval (both call this with the same value).
 
     :returns: ``(segments, ids, mask)`` -- the segment list (for the landmark emitter), the flat token
         ids (markers included; for the dense emitter), and the per-token loss mask.
@@ -172,7 +224,12 @@ def segment_prompt_to_chunks(
         raise RuntimeError("A fast tokenizer is required for offset-based loss masking.")
 
     prompt, answer = build_prompt(
-        example, task=task, query_position=query_position, use_alpaca=False, cot_mode=cot_mode
+        example,
+        task=task,
+        query_position=query_position,
+        use_alpaca=False,
+        cot_mode=cot_mode,
+        use_titles=use_titles,
     )
     if chunk_by == "line":
         prompt = _wrap_item_lines(prompt, re.compile(item_regex), doc_start_str, doc_end_str)
