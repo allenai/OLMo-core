@@ -54,6 +54,17 @@ microbatch 8, fresh optimizer state, 2000-step warmup then constant LR.
 | 275M baseline Cx1 | `olmoe3-tiny-275m-cx1-b256k-gpu2-ep1mb16-lr2e-3-r2/step15365` | `2e-4`, `4e-4`, `8e-4`, `1.6e-3` | mixed: 3 done, 1 running | [2e-4](https://beaker.org/ex/01KWWM1043JEC9MC3PV7PXQ745), [4e-4](https://beaker.org/ex/01KWWM1AVQXMJ3JBJQ1W2G8YAV), [8e-4](https://beaker.org/ex/01KWWM1N0EQDMCFER90NVP9QW0), [1.6e-3](https://beaker.org/ex/01KWWM1ZXN5R5XWK00GH0WA36G) | `2e-4`, `4e-4`, and `8e-4` finished; `1.6e-3` is still running. Tests midtraining LR transfer from the low-data optimal baseline checkpoint. |
 | 275M baseline Cx8 | `olmoe3-tiny-275m-cx8-b768k-gpu4-ep1mb8-lr1.6e-3-r2/step40971` | `2e-4`, `4e-4`, `8e-4`, `1.6e-3` | mixed: 3 done, 1 running | [2e-4](https://beaker.org/ex/01KWWM10ANMMW2YTNN6RKJBGE7), [4e-4](https://beaker.org/ex/01KWWM1AK89SKDA1KGCX5D8SMM), [8e-4](https://beaker.org/ex/01KWWM1P9TXRSMDV5DH9EF4KXM), [1.6e-3](https://beaker.org/ex/01KWWM213KMG47KADPK5Q67GJP) | `2e-4`, `4e-4`, and `8e-4` finished; `1.6e-3` is still running. Tests midtraining LR transfer from the high-data optimal baseline checkpoint. |
 
+Final-checkpoint eval backfills for the six finished runs were launched on 2026-07-07 from commit `571c0984`. These are eval-only jobs over `step95368`; after they finish, run `copy_eval_backfills_to_wandb.py --only mt-eval` to copy their `eval/*` summary metrics back onto the source midtraining W&B runs. The first attempt from commit `430f233c` failed before eval due to duplicate evaluator callbacks and should be ignored.
+
+| Source | LR | Eval backfill | State | Notes |
+| --- | --- | --- | --- | --- |
+| Cx1 | `2e-4` | [01KWYVP2XXKC14RVJ7REY5ZA9N](https://beaker.org/ex/01KWYVP2XXKC14RVJ7REY5ZA9N) | run | Corrected relaunch; config passed and eval task datasets are building/running. |
+| Cx1 | `4e-4` | [01KWYVPEYR1XDF87A9FRYMQRGC](https://beaker.org/ex/01KWYVPEYR1XDF87A9FRYMQRGC) | queued/run | Corrected relaunch. |
+| Cx1 | `8e-4` | [01KWYVPSXBG2Z6RNA0W426QY5T](https://beaker.org/ex/01KWYVPSXBG2Z6RNA0W426QY5T) | queued/run | Corrected relaunch. |
+| Cx8 | `2e-4` | [01KWYVQ3499QC6D6EXB9X22G1F](https://beaker.org/ex/01KWYVQ3499QC6D6EXB9X22G1F) | queued/run | Corrected relaunch. |
+| Cx8 | `4e-4` | [01KWYVQEX0VJ5J2HV1QMY3JK9Z](https://beaker.org/ex/01KWYVQEX0VJ5J2HV1QMY3JK9Z) | queued/run | Corrected relaunch. |
+| Cx8 | `8e-4` | [01KWYVQTDFZ769MRM1D189JV5G](https://beaker.org/ex/01KWYVQTDFZ769MRM1D189JV5G) | queued/run | Corrected relaunch. |
+
 Tentative larger-model midtraining batch targets: 480M uses global batch seq 192,
 810M uses 256, and 1.2B uses 384. These require smoke tests before promotion.
 
