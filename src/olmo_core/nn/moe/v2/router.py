@@ -20,6 +20,7 @@ from olmo_core.distributed.utils import (
     is_distributed,
     unhide_from_torch,
 )
+from olmo_core.nn.moe.v2._nvtx_colors import ROUTING_COLOR
 
 from ...output_discard_checkpoint import OutputDiscardCheckpoint
 from ..loss import MoELoadBalancingLossGranularity, load_balancing_loss, router_z_loss
@@ -341,7 +342,7 @@ class MoERouterV2(nn.Module):
             noise = torch.rand_like(x)
             return x * (low + noise * (high - low))
 
-    @maybe_nvtx_annotate("MoERouter.get_top_k", "routing")
+    @maybe_nvtx_annotate("MoERouter.get_top_k", ROUTING_COLOR)
     def get_top_k(self, scores: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         expert_weights: torch.Tensor
         expert_indices: torch.Tensor
@@ -448,7 +449,7 @@ class MoERouterV2(nn.Module):
         logits = torch.round(logits.float() * q) / q
         return logits
 
-    @maybe_nvtx_annotate("MoERouter.forward", "routing")
+    @maybe_nvtx_annotate("MoERouter.forward", ROUTING_COLOR)
     def forward(
         self,
         x: torch.Tensor,
@@ -578,7 +579,7 @@ class MoERouterV2(nn.Module):
         )
         return expert_weights, expert_indices, batch_size_per_expert, aux_loss_info
 
-    @maybe_nvtx_annotate("MoERouter.compute_aux_loss", "routing")
+    @maybe_nvtx_annotate("MoERouter.compute_aux_loss", ROUTING_COLOR)
     def compute_aux_loss(
         self,
         scores,

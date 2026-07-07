@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Optional, Union, cast
 import torch
 
 from olmo_core._nvtx import maybe_nvtx_annotate
+from olmo_core.nn.moe.v2._nvtx_colors import COMM_COLOR
 
 from ...moe.utils import async_copy_to_cpu, wait_stream_no_compile
 from ..utils import moe_permute_no_compile, moe_unpermute_no_compile
@@ -105,7 +106,7 @@ def combined_forward_no_ep(
     num_out_tokens = routing_map.size(0) * self.routed_experts_router.top_k
     hidden_shape_before_permute = moe_inp.shape
 
-    with maybe_nvtx_annotate("permute", "comm"):
+    with maybe_nvtx_annotate("permute", COMM_COLOR):
         permutated_input_tokens, reversed_input_permutation_mapping = moe_permute_no_compile(
             inp=moe_inp,
             routing_map=routing_map,
@@ -127,7 +128,7 @@ def combined_forward_no_ep(
             permutated_input_tokens, local_batch_size_per_global_routed_expert
         )
 
-    with maybe_nvtx_annotate("unpermute", "comm"):
+    with maybe_nvtx_annotate("unpermute", COMM_COLOR):
         unpermutated_x: torch.Tensor = moe_unpermute_no_compile(
             inp=mlp_x,
             row_id_map=reversed_input_permutation_mapping,

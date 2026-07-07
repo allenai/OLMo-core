@@ -55,6 +55,7 @@ from olmo_core.kernels.mxfp8_utils import (
     swiglu_quantize_rows_to_mxfp8,
 )
 from olmo_core.nn.fp8_weight import FP8WeightCacheSpec, FP8WeightStore
+from olmo_core.nn.moe.v2._nvtx_colors import EXPERTS_COLOR
 
 from .fp8 import MoERowwiseFP8Config, normalize_rowwise_fp8_config
 
@@ -717,7 +718,7 @@ class RoutedExperts(nn.Module):
         return cast(torch.Tensor, down)
 
     # @torch.compiler.disable(recursive=False)
-    @maybe_nvtx_annotate("RoutedExperts.forward", "experts")
+    @maybe_nvtx_annotate("RoutedExperts.forward", EXPERTS_COLOR)
     def forward(
         self,
         x: torch.Tensor,

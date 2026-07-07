@@ -16,6 +16,7 @@ import torch
 
 from olmo_core._nvtx import maybe_nvtx_annotate
 from olmo_core.distributed.utils import get_rank
+from olmo_core.nn.moe.v2._nvtx_colors import COMM_COLOR
 
 if TYPE_CHECKING:
     from olmo_core.train.common import ReduceType
@@ -92,7 +93,7 @@ def accumulate_ep_no_sync_rowwise_metrics(
         )
 
 
-@maybe_nvtx_annotate("build_rowwise_route_maps", "comm")
+@maybe_nvtx_annotate("build_rowwise_route_maps", COMM_COLOR)
 def build_rowwise_route_maps(
     block: MoEFusedV2TransformerBlock,
     *,
