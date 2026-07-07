@@ -175,10 +175,23 @@ def _wrap_documents(text: str, documents: List[dict], start_str: str, end_str: s
             cend = bend
         chunk_spans.append((cstart, cend))
 
-    out = text
-    for cstart, cend in reversed(chunk_spans):  # right-to-left keeps earlier indices valid
-        out = out[:cstart] + start_str + out[cstart:cend] + end_str + out[cend:]
-    return out
+    # Single linear pass: walk the text once emitting (free-gap, start, chunk, end) pieces and join.
+    # (Repeated ``out = out[:i] + ... + out[i:]`` insertion is O(docs x len) -- quadratic for
+    # many-document examples like contradiction with ~950 claims; this is O(len).) chunk_spans are
+    # increasing and contiguous (each cstart == the previous cend for i>0), so ``pos`` only moves
+    # forward and a free gap appears only before the first chunk (the prefix).
+    pieces: List[str] = []
+    pos = 0
+    for cstart, cend in chunk_spans:
+        if cstart > pos:
+            pieces.append(text[pos:cstart])
+        pieces.append(start_str)
+        pieces.append(text[cstart:cend])
+        pieces.append(end_str)
+        pos = cend
+    if pos < len(text):
+        pieces.append(text[pos:])
+    return "".join(pieces)
 
 
 def segment_prompt_to_chunks(
