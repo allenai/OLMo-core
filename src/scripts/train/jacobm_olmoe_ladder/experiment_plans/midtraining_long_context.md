@@ -177,22 +177,22 @@ pretraining Cx multiple.
 | Model size | Planned global batch seq | Tokens / optimizer step | Initial systems target | Smoke status | Notes |
 | --- | ---: | ---: | --- | --- | --- |
 | 275M | `128` | `1,048,576` | 4 GPUs, EP1, MB8 | passed | Cx1/Cx8 grid complete, Cx2/Cx4 single points queued. |
-| 480M | `192` | `1,572,864` | 4 GPUs, EP1, MB8 | [scheduled](https://beaker.org/ex/01KWZ9B2HS4RVK6ZFC5V80YGNT) | Cx8 smoke at `8e-5` for `2B` tokens; fallback is 8 GPUs, MB4. |
-| 810M | `256` | `2,097,152` | 8 GPUs, EP1, MB4 | [scheduled](https://beaker.org/ex/01KWZ9B9KHRJTW139P8PMV6A4F) | Cx8 smoke at `4e-5` for `2B` tokens. |
-| 1.2B | `384` | `3,145,728` | 8 GPUs, EP1, MB4 | [scheduled](https://beaker.org/ex/01KWZ9B4C3P04P6R5K63W8TMDF) | Cx8 smoke at `4e-5` for `2B` tokens; fallback is MB2. |
+| 480M | `192` | `1,572,864` | 4 GPUs, EP1, MB8 | [passed, stopped](https://beaker.org/ex/01KWZ9B2HS4RVK6ZFC5V80YGNT) | Cx8 smoke at `8e-5` for `2B` tokens stepped successfully. |
+| 810M | `256` | `2,097,152` | 8 GPUs, EP1, MB4 | [passed, stopped](https://beaker.org/ex/01KWZ9B9KHRJTW139P8PMV6A4F) | Cx8 smoke at `4e-5` for `2B` tokens stepped successfully. |
+| 1.2B | `384` | `3,145,728` | 8 GPUs, EP1, MB4 | [passed, stopped](https://beaker.org/ex/01KWZ9B4C3P04P6R5K63W8TMDF) | Cx8 smoke at `4e-5` for `2B` tokens stepped successfully. |
 
 Full one-LR larger-model grid after smoke validation:
 
-| Model size | Cx1 LR | Cx2 LR | Cx4 LR | Cx8 LR | GPUs / job | Concurrent GPUs for 4 Cx jobs |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| 480M | `1.2e-4` | `9e-5` | `8e-5` | `8e-5` | 4 | 16 |
-| 810M | `6e-5` | `5.6e-5` | `4e-5` | `4e-5` | 8 | 32 |
-| 1.2B | `4e-5` | `6e-5` | `3e-5` | `4e-5` | 8 | 32 |
+| Model size | Cx1 LR | Cx2 LR | Cx4 LR | Cx8 LR | GPUs / job | Concurrent GPUs for 4 Cx jobs | Launch state |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| 480M | `1.2e-4` | `9e-5` | `8e-5` | `8e-5` | 4 | 16 | launched 2026-07-07 |
+| 810M | `6e-5` | `5.6e-5` | `4e-5` | `4e-5` | 8 | 32 | launched 2026-07-07 |
+| 1.2B | `4e-5` | `6e-5` | `3e-5` | `4e-5` | 8 | 32 | launched 2026-07-07 |
 
-If all larger-model smoke tests pass with the planned settings, the 12 larger
-midtraining jobs require `80` concurrent GPUs. Including the two 275M Cx2/Cx4
-follow-ups already queued would make `88` concurrent GPUs, but those are likely
-to finish earlier.
+The 12 larger midtraining jobs require `80` concurrent GPUs if all run at once.
+Including the two 275M Cx2/Cx4 follow-ups would make `88` concurrent GPUs, but
+those were already running before this sweep launch. Individual Beaker links are
+recorded in `RUN_TRACKER.md` and `RUNS.md`.
 
 Open decisions after the initial baseline grid:
 

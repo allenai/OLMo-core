@@ -1686,3 +1686,28 @@ Do not relaunch the same `EP=1`/`mb` settings unchanged. For the 192E/top4
 1.2B tests, prioritize changing expert parallelism/sharding over activation-only
 settings; for the 96E/top4 Cx8-shaped test, reducing microbatch is likely enough.
 
+## 2026-07-07 Larger-Model Baseline Midtraining Sweep
+
+The 480M/810M/1.2B Cx8 smoke tests stepped successfully with compile on, so they
+were stopped and replaced by the full 100B-token one-LR midtraining sweep. All
+runs use `midtraining_ladder.py`, Titan urgent, Weka `oe-training-default`,
+workspace `ai2/OLMo-3-moe-experiments`, budget `ai2/oe-other`, image
+`tianhuat/olmo-core-torch211-2404-cu128`, sequence length 8192, fresh optimizer
+state, weight-only load, fast in-loop evals every 2000 steps, and semantic run
+names that omit systems settings.
+
+| Name | Source checkpoint | LR | GBS seq | GPUs | EP | MB | Beaker |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | --- |
+| `mt-480m-baseline-cx1-lr1p2e-4-r1` | `m480-cx1-b256k-gpu4-ep1mb8-lr1.2e-3-r1/step29022` | 1.2e-4 | 192 | 4 | 1 | 8 | https://beaker.org/ex/01KWZARWH7XAS4MD2238VRKP0Y |
+| `mt-480m-baseline-cx2-lr9e-5-r1` | `m480-cx2-b384k-gpu4-ep1mb4-lr9e-4-r1/step38696` | 9e-5 | 192 | 4 | 1 | 8 | https://beaker.org/ex/01KWZARZ2XT6HP3HZ4AK0F5EKT |
+| `mt-480m-baseline-cx4-lr8e-5-r1` | `m480-cx4-b512k-gpu4-ep1mb8-lr8e-4-r1/step58044` | 8e-5 | 192 | 4 | 1 | 8 | https://beaker.org/ex/01KWZARWY3JYNCT8HAMYAD17J7 |
+| `mt-480m-baseline-cx8-lr8e-5-r1` | `m480-cx8-b768k-gpu8-ep1mb4-lr8e-4-r1/step77392` | 8e-5 | 192 | 4 | 1 | 8 | https://beaker.org/ex/01KWZARZ2T7FZDH42Q2VS92WXN |
+| `mt-810m-baseline-cx1-lr6e-5-r1` | `olmoe3-moe-a0-810m-cx1-b256k-gpu4-ep1mb4-lr6e-4-r1/step52648` | 6e-5 | 256 | 8 | 1 | 4 | https://beaker.org/ex/01KWZAT4PF87PYA96JT7ZXSQKX |
+| `mt-810m-baseline-cx2-lr5p6e-5-r1` | `olmoe3-moe-a0-810m-cx2-b384k-gpu8-ep1mb2-lr5.6e-4-r3/step70197` | 5.6e-5 | 256 | 8 | 1 | 4 | https://beaker.org/ex/01KWZAT5N7AJ6C1HTTRMDD8WMT |
+| `mt-810m-baseline-cx4-lr4e-5-r1` | `olmoe3-moe-a0-810m-cx4-b512k-gpu8-ep1mb4-lr4e-4-r1/step105295` | 4e-5 | 256 | 8 | 1 | 4 | https://beaker.org/ex/01KWZAT4PE90E0X0N6Z126Q8SR |
+| `mt-810m-baseline-cx8-lr4e-5-r1` | `olmoe3-moe-a0-810m-cx8-b768k-gpu8-ep1mb4-lr4e-4-r1/step140394` | 4e-5 | 256 | 8 | 1 | 4 | https://beaker.org/ex/01KWZAT4PQ0NWD20VS0XT12ZF5 |
+| `mt-1p2b-baseline-cx1-lr4e-5-r1` | `olmoe3-moe-a0-1p2b-cx1-b256k-gpu8-ep1mb2-lr4e-4-r1/step81190` | 4e-5 | 384 | 8 | 1 | 4 | https://beaker.org/ex/01KWZAVZFS1FMR59ASRVH7VD4X |
+| `mt-1p2b-baseline-cx2-lr6e-5-r1` | `olmoe3-moe-a0-1p2b-cx2-b384k-lr6e-4-r1/step108253` | 6e-5 | 384 | 8 | 1 | 4 | https://beaker.org/ex/01KWZAV9B2740S4NZDAZJW5A0R |
+| `mt-1p2b-baseline-cx4-lr3e-5-r1` | `olmoe3-moe-a0-1p2b-cx4-b512k-gpu8-ep1mb2-lr3e-4-r1/step162379` | 3e-5 | 384 | 8 | 1 | 4 | https://beaker.org/ex/01KWZAVC810DHNY5VE958S6DTG |
+| `mt-1p2b-baseline-cx8-lr4e-5-r1` | `olmoe3-moe-a0-1p2b-cx8-b768k-gpu32-ep1mb1-lr4e-4-r1/step216505` | 4e-5 | 384 | 8 | 1 | 4 | https://beaker.org/ex/01KWZAV9AGDSD3PTS5RAM7G5N2 |
+

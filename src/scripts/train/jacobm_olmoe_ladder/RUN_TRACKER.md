@@ -76,9 +76,29 @@ LR at the matching `(model size, Cx)` point.
 
 | Model size | Smoke source | Smoke LR | Max tokens | Global batch seq | GPUs | EP / MB | State | Beaker | Notes |
 | --- | --- | ---: | ---: | ---: | ---: | --- | --- | --- | --- |
-| 480M | baseline Cx8 best checkpoint | `8e-5` | `2B` | `192` | 4 | EP1 / MB8 | scheduled | [01KWZ9B2HS4RVK6ZFC5V80YGNT](https://beaker.org/ex/01KWZ9B2HS4RVK6ZFC5V80YGNT) | First try; fallback is 8 GPUs, MB4 if memory or throughput is poor. |
-| 810M | baseline Cx8 best checkpoint | `4e-5` | `2B` | `256` | 8 | EP1 / MB4 | scheduled | [01KWZ9B9KHRJTW139P8PMV6A4F](https://beaker.org/ex/01KWZ9B9KHRJTW139P8PMV6A4F) | Matches current pretraining memory posture closely while using larger MT batch. |
-| 1.2B | baseline Cx8 best checkpoint | `4e-5` | `2B` | `384` | 8 | EP1 / MB4 | scheduled | [01KWZ9B4C3P04P6R5K63W8TMDF](https://beaker.org/ex/01KWZ9B4C3P04P6R5K63W8TMDF) | First try; fallback is MB2 if memory is too tight. |
+| 480M | baseline Cx8 best checkpoint | `8e-5` | `2B` | `192` | 4 | EP1 / MB8 | passed, stopped | [01KWZ9B2HS4RVK6ZFC5V80YGNT](https://beaker.org/ex/01KWZ9B2HS4RVK6ZFC5V80YGNT) | Started stepping with compile-on; stopped after smoke success before full sweep. |
+| 810M | baseline Cx8 best checkpoint | `4e-5` | `2B` | `256` | 8 | EP1 / MB4 | passed, stopped | [01KWZ9B9KHRJTW139P8PMV6A4F](https://beaker.org/ex/01KWZ9B9KHRJTW139P8PMV6A4F) | Started stepping with compile-on; stopped after smoke success before full sweep. |
+| 1.2B | baseline Cx8 best checkpoint | `4e-5` | `2B` | `384` | 8 | EP1 / MB4 | passed, stopped | [01KWZ9B4C3P04P6R5K63W8TMDF](https://beaker.org/ex/01KWZ9B4C3P04P6R5K63W8TMDF) | Started stepping with compile-on; stopped after smoke success before full sweep. |
+
+Full larger-model midtraining sweep launched on 2026-07-07. All runs use 100B
+midtraining tokens, sequence length 8192, Titan urgent, compile-on, fresh
+optimizer state, weight-only load from the canonical baseline checkpoint, 2000
+step warmup then constant LR, and the 10% baseline pretraining LR rule.
+
+| Source | Source checkpoint | LR | Global batch seq | GPUs | EP / MB | State | Beaker |
+| --- | --- | ---: | ---: | ---: | --- | --- | --- |
+| 480M baseline Cx1 | `m480-cx1-b256k-gpu4-ep1mb8-lr1.2e-3-r1/step29022` | `1.2e-4` | `192` | 4 | EP1 / MB8 | queued | [01KWZARWH7XAS4MD2238VRKP0Y](https://beaker.org/ex/01KWZARWH7XAS4MD2238VRKP0Y) |
+| 480M baseline Cx2 | `m480-cx2-b384k-gpu4-ep1mb4-lr9e-4-r1/step38696` | `9e-5` | `192` | 4 | EP1 / MB8 | queued | [01KWZARZ2XT6HP3HZ4AK0F5EKT](https://beaker.org/ex/01KWZARZ2XT6HP3HZ4AK0F5EKT) |
+| 480M baseline Cx4 | `m480-cx4-b512k-gpu4-ep1mb8-lr8e-4-r1/step58044` | `8e-5` | `192` | 4 | EP1 / MB8 | queued | [01KWZARWY3JYNCT8HAMYAD17J7](https://beaker.org/ex/01KWZARWY3JYNCT8HAMYAD17J7) |
+| 480M baseline Cx8 | `m480-cx8-b768k-gpu8-ep1mb4-lr8e-4-r1/step77392` | `8e-5` | `192` | 4 | EP1 / MB8 | queued | [01KWZARZ2T7FZDH42Q2VS92WXN](https://beaker.org/ex/01KWZARZ2T7FZDH42Q2VS92WXN) |
+| 810M baseline Cx1 | `olmoe3-moe-a0-810m-cx1-b256k-gpu4-ep1mb4-lr6e-4-r1/step52648` | `6e-5` | `256` | 8 | EP1 / MB4 | queued | [01KWZAT4PF87PYA96JT7ZXSQKX](https://beaker.org/ex/01KWZAT4PF87PYA96JT7ZXSQKX) |
+| 810M baseline Cx2 | `olmoe3-moe-a0-810m-cx2-b384k-gpu8-ep1mb2-lr5.6e-4-r3/step70197` | `5.6e-5` | `256` | 8 | EP1 / MB4 | queued | [01KWZAT5N7AJ6C1HTTRMDD8WMT](https://beaker.org/ex/01KWZAT5N7AJ6C1HTTRMDD8WMT) |
+| 810M baseline Cx4 | `olmoe3-moe-a0-810m-cx4-b512k-gpu8-ep1mb4-lr4e-4-r1/step105295` | `4e-5` | `256` | 8 | EP1 / MB4 | queued | [01KWZAT4PE90E0X0N6Z126Q8SR](https://beaker.org/ex/01KWZAT4PE90E0X0N6Z126Q8SR) |
+| 810M baseline Cx8 | `olmoe3-moe-a0-810m-cx8-b768k-gpu8-ep1mb4-lr4e-4-r1/step140394` | `4e-5` | `256` | 8 | EP1 / MB4 | queued | [01KWZAT4PQ0NWD20VS0XT12ZF5](https://beaker.org/ex/01KWZAT4PQ0NWD20VS0XT12ZF5) |
+| 1.2B baseline Cx1 | `olmoe3-moe-a0-1p2b-cx1-b256k-gpu8-ep1mb2-lr4e-4-r1/step81190` | `4e-5` | `384` | 8 | EP1 / MB4 | queued | [01KWZAVZFS1FMR59ASRVH7VD4X](https://beaker.org/ex/01KWZAVZFS1FMR59ASRVH7VD4X) |
+| 1.2B baseline Cx2 | `olmoe3-moe-a0-1p2b-cx2-b384k-lr6e-4-r1/step108253` | `6e-5` | `384` | 8 | EP1 / MB4 | queued | [01KWZAV9B2740S4NZDAZJW5A0R](https://beaker.org/ex/01KWZAV9B2740S4NZDAZJW5A0R) |
+| 1.2B baseline Cx4 | `olmoe3-moe-a0-1p2b-cx4-b512k-gpu8-ep1mb2-lr3e-4-r1/step162379` | `3e-5` | `384` | 8 | EP1 / MB4 | queued | [01KWZAVC810DHNY5VE958S6DTG](https://beaker.org/ex/01KWZAVC810DHNY5VE958S6DTG) |
+| 1.2B baseline Cx8 | `olmoe3-moe-a0-1p2b-cx8-b768k-gpu32-ep1mb1-lr4e-4-r1/step216505` | `4e-5` | `384` | 8 | EP1 / MB4 | queued | [01KWZAV9AGDSD3PTS5RAM7G5N2](https://beaker.org/ex/01KWZAV9AGDSD3PTS5RAM7G5N2) |
 
 ## Active / Queued Beaker Surface
 
