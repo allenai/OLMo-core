@@ -104,7 +104,7 @@ Defaults:
 | LRs | `2e-4 4e-4 8e-4 1.6e-3` | Broad first pass between the MoE pretraining-ratio prior and dense absolute prior. |
 | Max tokens | `100B` | Override `MIDTRAIN_MAX_TOKENS` for smoke tests. |
 | Global batch seq | `128` | `1,048,576` tokens; larger than our pretraining batches without jumping to dense-ladder batch sizes. |
-| GPUs | `8` | One Titan node by default; smoke 2 and 4 GPUs first. |
+| GPUs | `4` for the first real 275M grid | The 4-GPU smoke scaled well enough to use for the first Cx1/Cx8 LR transfer check. |
 | Microbatch | `8` | Legal with global batch 128 for 2, 4, or 8 GPU smoke/full launches. |
 | EP | `1` | Keep the first midtraining path simple and comparable. |
 | Scheduler | warmup 2000 steps, then constant | Implemented with the MoE-compatible composable scheduler. |
@@ -120,13 +120,81 @@ LRS=8e-4 \
   src/scripts/train/jacobm_olmoe_ladder/experiments/midtraining/launch_275m_lr_search.sh
 ```
 
-Open decisions before a real sweep:
+## Initial 275M Baseline LR-Transfer Grid
 
-- Which source checkpoints are the first targets: baseline only, Qwen-like, or
-  integration candidates?
-- What token budget defines a useful midtraining LR search: full 100B, a shorter
-  pilot, or a fixed number of optimizer steps?
-- Whether to run in-loop evals during midtraining or keep the first sweep loss
-  only.
-- Whether midtraining LR should be centered on the pretraining best observed LR
-  for the checkpoint family, or on the dense midtraining LR scale.
+The first full midtraining data points continue from the optimal observed
+pretraining baseline checkpoints at the two data-scale extremes, Cx1 and Cx8.
+This tests whether the same midtraining LR bracket works when the source model
+has seen much less or much more pretraining data.
+
+Shared settings:
+
+| Setting | Value |
+| --- | --- |
+| Script | `src/scripts/train/jacobm_olmoe_ladder/experiments/midtraining/midtraining_ladder.py` |
+| Run prefix | `mt-275m` |
+| Data | `OLMo3-32B-midtraining-modelnamefilter.yaml` |
+| Sequence length | `8192` |
+| Max tokens | `100B` |
+| Global batch seq | `128` (`1,048,576` tokens) |
+| GPUs | `4` |
+| Nodes | `1` |
+| EP | `1` |
+| Microbatch | `8` |
+| Scheduler | 2000-step warmup, then constant LR |
+| Optimizer state | fresh; load model weights only |
+| Cluster / workspace | `ai2/titan`, `ai2/OLMo-3-moe-experiments` |
+| Priority | urgent |
+| Checkpoint root | `/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/midtraining` |
+
+Source checkpoints:
+
+| Source tag | Pretraining best observed LR | 10% MT LR | Source checkpoint |
+| --- | ---: | ---: | --- |
+| `baseline-cx1` | `2e-3` | `2e-4` | `/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/olmoe3-tiny-275m-cx1-b256k-gpu2-ep1mb16-lr2e-3-r2/step15365` |
+| `baseline-cx2` | `1.8e-3` | `1.8e-4` | `/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/olmoe3-tiny-275m-cx2-b384k-gpu2-ep1mb8-lr1.8e-3-r3/step20486` |
+| `baseline-cx4` | `1.5e-3` | `1.5e-4` | `/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/olmoe3-tiny-275m-cx4-b512k-gpu4-ep1mb16-lr1.5e-3/step30729` |
+| `baseline-cx8` | `1.6e-3` | `1.6e-4` | `/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/olmoe3-tiny-275m-cx8-b768k-gpu4-ep1mb8-lr1.6e-3-r2/step40971` |
+
+Initial Cx1/Cx8 LR grid for each source: `2e-4`, `4e-4`, `8e-4`, `1.6e-3`.
+After the 2026-07-07 eval backfill summary, use `10%` of the canonical baseline
+best observed pretraining LR as the first single-point transfer rule. The first
+queued single-point follow-ups are Cx2 at `1.8e-4` and Cx4 at `1.5e-4`.
+
+Run names intentionally omit systems settings so future restarts can adjust
+GPU count or microbatch without changing the semantic run identity:
+
+- `mt-275m-baseline-cx1-lr{2e-4,4e-4,8e-4,1.6e-3}-r1`
+- `mt-275m-baseline-cx8-lr{2e-4,4e-4,8e-4,1.6e-3}-r1`
+
+## Tentative Larger-Model Midtraining Batch Plan
+
+These are planning targets, not yet smoke-tested settings. Keep batch choices in
+this document and W&B tags rather than in run names. The larger-model LR rule is
+`0.1 * canonical baseline best observed PT LR` for the matching model size and
+pretraining Cx multiple.
+
+| Model size | Planned global batch seq | Tokens / optimizer step | Initial systems target | Notes |
+| --- | ---: | ---: | --- | --- |
+| 275M | `128` | `1,048,576` | 4 GPUs, EP1, MB8 | Smoke-tested; Cx1/Cx8 grid complete, Cx2/Cx4 single points queued. |
+| 480M | `192` | `1,572,864` | 4 GPUs, EP1, MB8 | Smoke first on Cx8 at `8e-5`; fallback is 8 GPUs, MB4. |
+| 810M | `256` | `2,097,152` | 8 GPUs, EP1, MB4 | Smoke first on Cx8 at `4e-5`. |
+| 1.2B | `384` | `3,145,728` | 8 GPUs, EP1, MB4 | Smoke first on Cx8 at `4e-5`; fallback is MB2. |
+
+Full one-LR larger-model grid after smoke validation:
+
+| Model size | Cx1 LR | Cx2 LR | Cx4 LR | Cx8 LR | GPUs / job | Concurrent GPUs for 4 Cx jobs |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 480M | `1.2e-4` | `9e-5` | `8e-5` | `8e-5` | 4 | 16 |
+| 810M | `6e-5` | `5.6e-5` | `4e-5` | `4e-5` | 8 | 32 |
+| 1.2B | `4e-5` | `6e-5` | `3e-5` | `4e-5` | 8 | 32 |
+
+If all larger-model smoke tests pass with the planned settings, the 12 larger
+midtraining jobs require `80` concurrent GPUs. Including the two 275M Cx2/Cx4
+follow-ups already queued would make `88` concurrent GPUs, but those are likely
+to finish earlier.
+
+Open decisions after the initial baseline grid:
+
+- Confirm the larger-model smoke tests are stable and fast enough with the planned global batch settings.
+- Whether to add Qwen-like or integration-candidate source checkpoints after the baseline transfer check.

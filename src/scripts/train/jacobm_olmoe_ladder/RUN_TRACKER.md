@@ -52,6 +52,8 @@ microbatch 8, fresh optimizer state, 2000-step warmup then constant LR.
 | Source | Source checkpoint | LR grid | State | Beaker | Notes |
 | --- | --- | --- | --- | --- | --- |
 | 275M baseline Cx1 | `olmoe3-tiny-275m-cx1-b256k-gpu2-ep1mb16-lr2e-3-r2/step15365` | `2e-4`, `4e-4`, `8e-4`, `1.6e-3` | done | [2e-4](https://beaker.org/ex/01KWWM1043JEC9MC3PV7PXQ745), [4e-4](https://beaker.org/ex/01KWWM1AVQXMJ3JBJQ1W2G8YAV), [8e-4](https://beaker.org/ex/01KWWM1N0EQDMCFER90NVP9QW0), [1.6e-3](https://beaker.org/ex/01KWWM1ZXN5R5XWK00GH0WA36G) | All four training jobs finished. Tests midtraining LR transfer from the low-data optimal baseline checkpoint. |
+| 275M baseline Cx2 | `olmoe3-tiny-275m-cx2-b384k-gpu2-ep1mb8-lr1.8e-3-r3/step20486` | `1.8e-4` | queued | [1.8e-4](https://beaker.org/ex/01KWZ8T9BZ3B869VZ878FNNQ8T) | Single-point 10% PT-LR run queued on 2026-07-07 after the Cx1/Cx8 validation sweep. |
+| 275M baseline Cx4 | `olmoe3-tiny-275m-cx4-b512k-gpu4-ep1mb16-lr1.5e-3/step30729` | `1.5e-4` | queued | [1.5e-4](https://beaker.org/ex/01KWZ8T9DZN8Y4VD63AP1AN387) | Single-point 10% PT-LR run queued on 2026-07-07 after the Cx1/Cx8 validation sweep. |
 | 275M baseline Cx8 | `olmoe3-tiny-275m-cx8-b768k-gpu4-ep1mb8-lr1.6e-3-r2/step40971` | `2e-4`, `4e-4`, `8e-4`, `1.6e-3` | done | [2e-4](https://beaker.org/ex/01KWWM10ANMMW2YTNN6RKJBGE7), [4e-4](https://beaker.org/ex/01KWWM1AK89SKDA1KGCX5D8SMM), [8e-4](https://beaker.org/ex/01KWWM1P9TXRSMDV5DH9EF4KXM), [1.6e-3](https://beaker.org/ex/01KWWM213KMG47KADPK5Q67GJP) | All four training jobs finished. Tests midtraining LR transfer from the high-data optimal baseline checkpoint. |
 
 Final-checkpoint eval backfills are eval-only jobs over `step95368`. Earlier attempts from commits `430f233c`, `571c0984`, and `ac32eb76` failed before eval due to duplicate evaluator callbacks or dataloader restore mismatches and should be ignored. The fixed backfills build the real midtraining source-mixture dataloader for eval. On 2026-07-07, `copy_eval_backfills_to_wandb.py --only mt-eval` copied all eight backfills to their source W&B runs; verification reported `180 eval metrics already present` for each source run after upload.
@@ -69,6 +71,14 @@ Final-checkpoint eval backfills are eval-only jobs over `step95368`. Earlier att
 
 Tentative larger-model midtraining batch targets: 480M uses global batch seq 192,
 810M uses 256, and 1.2B uses 384. These require smoke tests before promotion.
+The working LR rule is 10% of the canonical baseline best observed pretraining
+LR at the matching `(model size, Cx)` point.
+
+| Model size | Smoke source | Smoke LR | Global batch seq | GPUs | EP / MB | Notes |
+| --- | --- | ---: | ---: | ---: | --- | --- |
+| 480M | baseline Cx8 best checkpoint | `8e-5` | `192` | 4 | EP1 / MB8 | First try; fallback is 8 GPUs, MB4 if memory or throughput is poor. |
+| 810M | baseline Cx8 best checkpoint | `4e-5` | `256` | 8 | EP1 / MB4 | Matches current pretraining memory posture closely while using larger MT batch. |
+| 1.2B | baseline Cx8 best checkpoint | `4e-5` | `384` | 8 | EP1 / MB4 | First try; fallback is MB2 if memory is too tight. |
 
 ## Active / Queued Beaker Surface
 
