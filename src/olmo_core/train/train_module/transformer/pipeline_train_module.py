@@ -250,8 +250,8 @@ class TransformerPipelineTrainModule(TrainModule):
             ``model_parts[0]`` would only expose stage 0's weights/modules, which is silently
             wrong for callers that read state-dicts, named parameters, or do full-model export.
 
-        .. todo::
-            Update the callers above to iterate ``model_parts`` (or otherwise stitch stages
+        .. note::
+            TODO: update the callers above to iterate ``model_parts`` (or otherwise stitch stages
             together) so this property can return a coherent view when ``len(model_parts) > 1``.
             Until then, the explicit error here is preferable to silently returning a partial model.
         """
