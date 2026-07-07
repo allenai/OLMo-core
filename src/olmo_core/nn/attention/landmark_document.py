@@ -352,8 +352,23 @@ class DocumentLandmarkAttention(LandmarkAttention):
         mem_ids = torch.where(attn_mask < -1, -1, torch.cumsum(is_mem, -1) - is_mem.int())
         last_section_mask = torch.amax(mem_ids, -1, keepdim=True) == mem_ids
         # Mask landmark tokens that fall in the query's own (last) section.
-        attn_mask.masked_fill_(last_section_mask & is_mem, finfo_min)
+        own_landmark = last_section_mask & is_mem
+        attn_mask.masked_fill_(own_landmark, finfo_min)
         last_section_mask = last_section_mask.logical_and(attn_mask > -1)
-        is_mem = is_mem.logical_and(attn_mask > -1)
+        # RIGID landmark blocks (match the fused Triton kernel). Keep every landmark POSITIONAL --
+        # even one that is cross-document-masked for this query -- so its block is gated ONLY by its
+        # own landmark (whose floored score gives it ~0 gate weight) and never MERGES into the next
+        # visible landmark's section.
+        #
+        # The previous ``is_mem = is_mem & (attn_mask > -1)`` DEMOTED any masked landmark to a regular
+        # token, which for a **multi-window document** (a context doc longer than one landmark window,
+        # so its interior block-end landmarks sit INSIDE the box span and carry the doc's chunk-id)
+        # merged that block's content into the section of the next FREE/visible landmark -- letting one
+        # block's content be gated by a DIFFERENT block's landmark. That is a leak the fused kernel
+        # (rigid blocks) never had, and it is semantically wrong: a landmark summarises its OWN block,
+        # and the model is trained with per-block gating. So this made the eager EVAL path disagree
+        # with the fused-kernel TRAINING path on multi-window docs. Demote only the own-section
+        # landmark (already floored just above); everything else stays positional -> eager == kernel.
+        is_mem = is_mem & ~own_landmark
 
         return attn_mask, is_mem, last_section_mask

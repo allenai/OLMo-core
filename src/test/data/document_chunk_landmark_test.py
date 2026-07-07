@@ -392,36 +392,55 @@ def test_document_landmark_fused_kernel_matches_eager_fwd_and_grad():
         assert torch.allclose(gk, ge, atol=1e-3, rtol=1e-2), (gk - ge).abs().max()
 
 
-def _build_padtail_chunk_ids(mem_freq, n_pad_blocks, dev):
-    """Realistic block-aligned landmark instance (single-window docs -> FREE landmarks, plus interior
-    window-fill PAD) + an EOS terminator + a PadToLength pad tail (full pad blocks whose block-end
-    landmark position is a pad token, NOT a real landmark). Returns (chunk_ids (1,T), T)."""
-    DSx, DEx, MIDx, PADx, EOSx = 301, 302, 300, 303, 304
+# Single-window docs (<= mem_freq tokens -> FREE landmarks) + interior window-fill PAD.
+_SINGLE_WINDOW_SEGS = [
+    ChunkSegment([1, 2, 3], [False] * 3, False),
+    ChunkSegment([301, 10, 11, 12, 13, 302], [False] * 6, True),
+    ChunkSegment([301, 20, 21, 302], [False] * 4, True),
+    ChunkSegment([301, 40, 41, 42, 302], [False] * 5, True),
+    ChunkSegment([301, 50, 51, 52, 53, 54, 302], [False] * 7, True),
+    ChunkSegment([60, 61, 62, 63, 64], [True] * 5, False),
+]
+# A context doc that SPANS MULTIPLE landmark windows (22 tokens > mem_freq=15): its interior block-end
+# landmarks sit INSIDE the box span and carry the doc's chunk-id -> cross-doc-masked for other queries.
+# This is the layout that exposed the eager section-MERGE vs kernel rigid-block divergence.
+_MULTI_WINDOW_SEGS = [
+    ChunkSegment([1, 2, 3], [False] * 3, False),
+    ChunkSegment([301] + list(range(10, 30)) + [302], [False] * 22, True),  # multi-window doc
+    ChunkSegment([301, 40, 41, 42, 302], [False] * 5, True),
+    ChunkSegment([301, 50, 51, 302], [False] * 4, True),
+    ChunkSegment([60, 61, 62, 63, 64], [True] * 5, False),
+]
+
+
+def _build_padtail_chunk_ids(mem_freq, n_pad_blocks, dev, segs):
+    """Emit a block-aligned landmark instance from ``segs`` + an EOS terminator + a PadToLength pad
+    tail (full pad blocks whose block-end landmark position is a pad token). Returns
+    ``(chunk_ids (1,T), T, supervised_mask (T,))`` where supervised_mask marks the answer tokens
+    (the only positions with a loss, i.e. nonzero upstream gradient in training)."""
+    DEx, EOSx, PADx = 302, 304, 303
     bs = mem_freq + 1
-    segs = [
-        ChunkSegment([1, 2, 3], [False] * 3, False),
-        ChunkSegment([DSx, 10, 11, 12, 13, DEx], [False] * 6, True),
-        ChunkSegment([DSx, 20, 21, DEx], [False] * 4, True),
-        ChunkSegment([DSx, 40, 41, 42, DEx], [False] * 5, True),
-        ChunkSegment([DSx, 50, 51, 52, 53, 54, DEx], [False] * 7, True),
-        ChunkSegment([60, 61, 62, 63, 64], [True] * 5, False),
-    ]
-    ids, _ = emit_document_chunk_landmark(segs, mem_freq=mem_freq, mem_id=MIDx, pad_id=PADx)
+    ids, lmask = emit_document_chunk_landmark(segs, mem_freq=mem_freq, mem_id=300, pad_id=PADx)
+    sup = list(lmask) + [False]  # EOS not supervised
     ids = ids + [EOSx]
     while len(ids) % bs != 0:
         ids.append(PADx)
+        sup.append(False)
     ids = ids + [PADx] * (bs * n_pad_blocks)
-    chunk_ids = build_chunk_ids_from_tokens(torch.tensor([ids]), DSx, DEx, EOSx, pad_id=PADx).to(
+    sup = sup + [False] * (bs * n_pad_blocks)
+    chunk_ids = build_chunk_ids_from_tokens(torch.tensor([ids]), 301, DEx, EOSx, pad_id=PADx).to(
         dev
     )
-    return chunk_ids, len(ids)
+    supervised = torch.tensor(sup, device=dev)
+    return chunk_ids, len(ids), supervised
 
 
-def _run_padtail_parity(attn_type, eager_grouped_softmax):
-    """Shared GPU parity harness: fused kernel (chunk_ids, use_kernel path) vs the eager grouped
-    softmax on a doc-landmark input WITH a PadToLength pad tail. Upstream grad is zeroed on pad
-    positions (loss mask); asserts fwd + grads match eager on the non-pad (loss-relevant) positions
-    and that everything is finite (the pad tail must not NaN)."""
+def _run_padtail_parity(attn_type, eager_grouped_softmax, segs):
+    """Shared GPU parity harness: fused kernel (chunk_ids / use_kernel path) vs the eager grouped
+    softmax on a doc-landmark input WITH a PadToLength pad tail. The upstream gradient is placed only
+    on the SUPERVISED answer tokens -- exactly the training loss mask (context / landmark / pad tokens
+    carry no loss). Asserts the forward matches on ALL non-pad positions and the q/k/v gradients match
+    everywhere, and that nothing NaNs."""
     import pytest
 
     if not torch.cuda.is_available():
@@ -436,11 +455,12 @@ def _run_padtail_parity(attn_type, eager_grouped_softmax):
     torch.manual_seed(0)
     dev = "cuda"
     B, Hh, Dd, mem_freq = 1, 4, 32, 15
-    chunk_ids, T = _build_padtail_chunk_ids(mem_freq, 3, dev)
+    chunk_ids, T, supervised = _build_padtail_chunk_ids(mem_freq, 3, dev, segs)
     nonpad = chunk_ids[0] != PAD_CHUNK_ID
     q0, k0, v0 = (torch.randn(B, Hh, T, Dd, device=dev) * 0.5 for _ in range(3))
     scale = Dd**-0.5
-    go = torch.randn(B, Hh, T, Dd, device=dev) * nonpad.view(1, 1, T, 1)  # loss mask: 0 on pad
+    # Training loss mask: nonzero upstream grad only on the supervised answer tokens.
+    go = torch.randn(B, Hh, T, Dd, device=dev) * supervised.view(1, 1, T, 1)
 
     cfg = AttentionConfig(
         name=attn_type,
@@ -488,7 +508,9 @@ def test_document_landmark_fused_kernel_matches_eager_with_pad_tail():
     from olmo_core.nn.attention import AttentionType
     from olmo_core.nn.attention.landmark import landmark_grouped_softmax
 
-    _run_padtail_parity(AttentionType.document_landmark, landmark_grouped_softmax)
+    _run_padtail_parity(
+        AttentionType.document_landmark, landmark_grouped_softmax, _SINGLE_WINDOW_SEGS
+    )
 
 
 @__import__("pytest").mark.gpu
@@ -499,5 +521,34 @@ def test_document_compressive_fused_kernel_matches_eager_with_pad_tail():
     from olmo_core.nn.attention.landmark import compressive_landmark_grouped_softmax
 
     _run_padtail_parity(
-        AttentionType.document_compressive_landmark, compressive_landmark_grouped_softmax
+        AttentionType.document_compressive_landmark,
+        compressive_landmark_grouped_softmax,
+        _SINGLE_WINDOW_SEGS,
+    )
+
+
+@__import__("pytest").mark.gpu
+def test_document_landmark_fused_kernel_matches_eager_multi_window_doc():
+    # Multi-window context doc (interior landmarks carry the doc's chunk-id). Regression for the eager
+    # rigid-block fix in DocumentLandmarkAttention._landmark_masks: eager must NOT merge a cross-doc-
+    # masked landmark's block into the next visible landmark's section (which the rigid fused kernel
+    # never did), so train (kernel) == eval (eager).
+    from olmo_core.nn.attention import AttentionType
+    from olmo_core.nn.attention.landmark import landmark_grouped_softmax
+
+    _run_padtail_parity(
+        AttentionType.document_landmark, landmark_grouped_softmax, _MULTI_WINDOW_SEGS
+    )
+
+
+@__import__("pytest").mark.gpu
+def test_document_compressive_fused_kernel_matches_eager_multi_window_doc():
+    # Multi-window context doc, compressive variant (shares the rigid-block _landmark_masks fix).
+    from olmo_core.nn.attention import AttentionType
+    from olmo_core.nn.attention.landmark import compressive_landmark_grouped_softmax
+
+    _run_padtail_parity(
+        AttentionType.document_compressive_landmark,
+        compressive_landmark_grouped_softmax,
+        _MULTI_WINDOW_SEGS,
     )
