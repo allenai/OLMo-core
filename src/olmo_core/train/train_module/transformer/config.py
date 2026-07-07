@@ -33,12 +33,14 @@ from olmo_core.nn.transformer import (
     TransformerDataParallelWrappingStrategy,
 )
 from olmo_core.optim import OptimConfig
+from olmo_core.optim.moe_optimizer import MoEFusedV2OptimizerConfig
 from olmo_core.optim.scheduler import Scheduler
 from olmo_core.train.train_module.config import TrainModuleConfig
 
 from .pipeline.pipeline_schedule import CustomPipelineStage
 
 if TYPE_CHECKING:
+    from .moe_train_module import MoEV2TransformerTrainModule
     from .pipeline_train_module import TransformerPipelineTrainModule
     from .train_module import TransformerTrainModule
 
@@ -236,6 +238,22 @@ class TransformerDataParallelConfig(DataParallelConfig):
     """
 
     prefetch_factor: int = 0
+
+    only_allreduce_last_microbatch: bool = True
+    """
+    Only all-reduce gradients on the last micro-batch of a gradient-accumulation step (skip the
+    reduction on intermediate micro-batches). Used by :class:`MoEV2TransformerTrainModule` with
+    :class:`~olmo_core.nn.parallel.MultiGroupDistributedDataParallel`.
+    """
+
+    reduce_grads_in_fp32: bool = True
+    """Reduce gradients in fp32 (see :class:`~olmo_core.nn.parallel.MultiGroupDistributedDataParallel`)."""
+
+    accumulate_grads_in_fp32: bool = True
+    """Accumulate gradients in fp32 (see :class:`~olmo_core.nn.parallel.MultiGroupDistributedDataParallel`)."""
+
+    bucket_cap_mb: Optional[int] = None
+    """Gradient all-reduce bucket size cap in MiB (``None`` = backend default)."""
 
 
 @dataclass
@@ -445,3 +463,82 @@ class TransformerPipelineTrainModuleConfig(TransformerTrainModuleConfig):
     def __post_init__(self):
         if self.pp_config is None:
             raise OLMoConfigurationError("'pp_config' is required")
+
+
+@beta_feature
+@dataclass
+class MoEV2TransformerTrainModuleConfig(TrainModuleConfig):
+    """
+    Configuration for :class:`~olmo_core.train.train_module.transformer.moe_train_module.MoEV2TransformerTrainModule`,
+    the train module for the fused MoE-v2 transformer (built with the fused MoE distributed
+    optimizer, :class:`~olmo_core.optim.MoEFusedV2OptimizerConfig`).
+    """
+
+    rank_microbatch_size: int
+    max_sequence_length: int
+
+    # Optimizer settings.
+
+    optim: MoEFusedV2OptimizerConfig
+    max_grad_norm: Optional[float] = None
+    scheduler: Optional[Scheduler] = None
+
+    # Model settings.
+
+    compile_model: bool = False
+    float8_config: Optional[Float8Config] = None
+    pp_config: Optional[TransformerPipelineParallelConfig] = None
+    dp_config: Optional[TransformerDataParallelConfig] = None
+    tp_config: Optional[TransformerTensorParallelConfig] = None
+    cp_config: Optional[TransformerContextParallelConfig] = None
+    ep_config: Optional[TransformerExpertParallelConfig] = None
+    ac_config: Optional[TransformerActivationCheckpointingConfig] = None
+
+    grad_accum_in_fp32: Optional[bool] = None
+
+    # Loss function settings.
+
+    z_loss_multiplier: Optional[float] = None
+
+    # Checkpoint settings.
+
+    state_dict_save_opts: Optional[Dict[str, Any]] = None
+    state_dict_load_opts: Optional[Dict[str, Any]] = None
+    load_key_mapping: Optional[Dict[str, str]] = None
+    reset_optimizer_states_on_load: bool = False
+
+    # Other train settings.
+
+    label_ignore_index: int = -100
+
+    def build(
+        self,
+        model: Transformer,
+        device: Optional[torch.device] = None,
+        eval_only: bool = False,
+    ) -> "MoEV2TransformerTrainModule":
+        """
+        Build the corresponding :class:`MoEV2TransformerTrainModule`.
+
+        :param model: The :class:`~olmo_core.nn.transformer.Transformer` model to train.
+        :param device: The device to train on.
+        :param eval_only: If ``True``, build the train module without an optimizer (eval-only).
+        """
+        from .moe_train_module import MoEV2TransformerTrainModule
+
+        kwargs = self.as_dict(exclude_none=True, recurse=False)
+
+        if (state_dict_save_opts := kwargs.pop("state_dict_save_opts", None)) is not None:
+            kwargs["state_dict_save_opts"] = dist_cp_sd.StateDictOptions(**state_dict_save_opts)
+        if (state_dict_load_opts := kwargs.pop("state_dict_load_opts", None)) is not None:
+            kwargs["state_dict_load_opts"] = dist_cp_sd.StateDictOptions(**state_dict_load_opts)
+
+        # `grad_accum_in_fp32` is superseded by the DP config's `accumulate_grads_in_fp32`.
+        kwargs.pop("grad_accum_in_fp32", None)
+
+        return MoEV2TransformerTrainModule(
+            model=model,
+            device=device,
+            eval_only=eval_only,
+            **kwargs,
+        )
