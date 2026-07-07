@@ -110,7 +110,10 @@ class CustomPipelineStage:
         assert isinstance(d_model, int), "submodule must have d_model (int) attribute"
         self.d_model: int = d_model
 
-        # dtype for receive/send buffers
+        # dtype for receive/send buffers.
+        # NOTE: hard-coded to bf16, which assumes bf16 stage activations. Non-bf16 runs (fp32/fp16)
+        # would allocate mismatched receive buffers; derive this from the stage outputs before using
+        # the custom stage with a non-bf16 dtype. Tracked with the MoE train module integration.
         self.p2p_dtype: torch.dtype = torch.bfloat16
 
         # `group_rank` is rank in process group `group`.

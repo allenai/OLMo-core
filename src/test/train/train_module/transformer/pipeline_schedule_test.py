@@ -5,9 +5,12 @@ from typing import Any, Dict
 import pytest
 
 from olmo_core.distributed.parallel.pipeline_parallel import (
+    PipelineSchedule,
+    PipelineScheduleType,
     get_pipeline_activation_stats,
     get_pipeline_tick_exchange_stats,
 )
+from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.train.train_module.transformer.pipeline.helpers import (
     generate_stage_to_rank_mapping,
 )
@@ -331,3 +334,23 @@ def test_local_middle_boundary_skips_p2p_without_touching_buffers():
     assert stage_3.has_local_backward_src()
     assert stage_3.get_bwd_recv_ops(0) == []
     assert stage_3.received_grads == {"keep": "value"}
+
+
+@pytest.mark.parametrize(
+    "schedule_name",
+    [
+        PipelineScheduleType.single_1F1B,
+        PipelineScheduleType.interleaved_1F1B,
+        PipelineScheduleType.gpipe,
+    ],
+)
+def test_pipeline_schedule_rejects_standard_schedules(schedule_name: PipelineScheduleType):
+    # This train module only wires up the custom schedules; selecting a standard PyTorch schedule
+    # should fail fast with a clear configuration error (the check runs before any mesh is used).
+    with pytest.raises(OLMoConfigurationError):
+        PipelineSchedule(
+            model_parts=[],
+            stages=[],
+            pp_mesh=None,  # type: ignore[arg-type]
+            schedule_name=schedule_name,
+        )

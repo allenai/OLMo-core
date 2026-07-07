@@ -745,13 +745,17 @@ def debug_save_pp_schedule(
 
 class PipelineSchedule:
     """
-    TODO: Do not need this class anymore. Consider move everything to base_schedule directly.
+    Driver for the custom pipeline schedules
+    (:class:`~olmo_core.train.train_module.transformer.pipeline.pipeline_schedule.CustomScheduleInterleaved1F1B`
+    and :class:`~olmo_core.train.train_module.transformer.pipeline.pipeline_schedule.CustomSchedule1F1BV`).
 
-    A thin wrapper around PyTorch pipeline schedule classes.
+    .. note::
+        The standard PyTorch pipeline schedules (``1F1B``, ``Interleaved1F1B``, ``GPipe``, ...) are
+        not currently wired up for this train module — only the ``custom_*`` schedules are supported.
 
-    :param n_microbatches: How many microbatches to split the global training batch into.
-        If global training batch size must be evenly divisible by this.
-        If not specified, the default will be the number of pipeline stages.
+    :param num_microbatches: How many microbatches to split the global training batch into. The
+        global training batch size must be evenly divisible by this. If not specified, the default
+        will be the number of pipeline stages.
     """
 
     def __init__(
@@ -771,11 +775,6 @@ class PipelineSchedule:
         self.loss_fn = loss_fn
 
         if schedule_name == PipelineScheduleType.custom_1F1B:
-            # Custom 1F1B schedule
-            # from olmo_core.train.train_module.transformer.pipeline_schedule import (
-            #     CustomSchedule1F1B,
-            # )
-            # schedule_class = CustomSchedule1F1B
             raise NotImplementedError("Custom 1F1B schedule is not implemented yet.")
         elif schedule_name == PipelineScheduleType.custom_interleaved_1F1B:
             # Custom interleaved 1F1B schedule
@@ -792,7 +791,13 @@ class PipelineSchedule:
 
             schedule_class = CustomSchedule1F1BV
         else:
-            raise RuntimeError(f"Unsupported schedule_name: {schedule_name}")
+            raise OLMoConfigurationError(
+                f"pipeline schedule {schedule_name.value!r} is not supported by this train module. "
+                f"Only the custom schedules are wired up: "
+                f"{PipelineScheduleType.custom_interleaved_1F1B.value!r} and "
+                f"{PipelineScheduleType.custom_1F1B_V.value!r}. Standard PyTorch schedules "
+                "(1F1B, Interleaved1F1B, GPipe, ...) are not currently supported here."
+            )
 
         if num_microbatches is None:
             num_microbatches = pp_mesh.size()
@@ -800,7 +805,6 @@ class PipelineSchedule:
         schedule_impl = schedule_class(
             stages,  # type: ignore[arg-type]
             n_microbatches=num_microbatches,
-            # loss_fn=self.loss_fn,
             forward_pull_ahead_extra_activations=(
                 0
                 if forward_pull_ahead_extra_activations is None
@@ -828,14 +832,12 @@ class PipelineSchedule:
                 filename=plot_filename,
                 text_filename=text_filename,
             )
-            print(
-                "[PipelineSchedule] Saved pipeline schedule artifacts to "
-                f"{plot_filename} and {text_filename}"
+            logger.info(
+                "Saved pipeline schedule artifacts to %s and %s", plot_filename, text_filename
             )
 
-        print(
-            f"[PipelineSchedule] Using {schedule_name} with {num_microbatches} microbatches"
-        )  # TODO: no need to print on every rank
+        if torch.distributed.get_rank() == 0:
+            logger.info("Using %s with %d microbatches", schedule_name, num_microbatches)
 
         self.schedule_impl = schedule_impl
         self.num_microbatches = num_microbatches
