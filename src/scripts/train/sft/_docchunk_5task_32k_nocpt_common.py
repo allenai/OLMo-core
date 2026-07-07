@@ -104,6 +104,10 @@ COMPRESSIVE_BASE = (
     "q4b-base-fast-compressive-landmark-8node/step2385/model_and_optim"
 )
 NONSELECTED_LANDMARK_MASS = 0.1  # alpha for compressive attention
+# random_doc variant: each doc attends itself + a seeded-random ~this-fraction of EARLIER docs.
+# Overridable per launch via env for a sweep (encode it in the run name).
+DOC_KEEP_PROB = float(os.environ.get("DOCCHUNK_RANDOM_DOC_KEEP_PROB", "0.1"))
+RANDOM_DOC_SEED = int(os.environ.get("DOCCHUNK_RANDOM_DOC_SEED", "42"))
 
 # ---------------------------------------------------------------------------
 # Mix weights -- IDENTICAL to the packed 32k no-CPT rows (sum 7).
@@ -135,12 +139,13 @@ def _task_source(emit: str, name: str, doc_tok) -> NumpyDocumentSourceConfig:
 def build_docchunk_experiment(
     cli_context: CliContext, variant: str, flex_block_size: Optional[int] = None
 ) -> ExperimentConfig:
-    assert variant in ("dense", "hierarchical", "landmark", "compressive")
+    assert variant in ("dense", "hierarchical", "random_doc", "landmark", "compressive")
     # compressive consumes the SAME landmark-format doc-chunked data (block-aligned + landmark tokens).
     emit = "landmark" if variant in ("landmark", "compressive") else "dense"
     base_checkpoint = {
         "dense": DENSE_BASE,
         "hierarchical": DENSE_BASE,
+        "random_doc": DENSE_BASE,  # dense DocumentChunkedAttention (random cross-doc mask), dense base.
         "landmark": LANDMARK_BASE,
         "compressive": COMPRESSIVE_BASE,
     }[variant]
@@ -229,6 +234,25 @@ def build_docchunk_experiment(
             cross_doc_mode="hierarchical_dilated",
             dilation_n=4,
             dilation_m=2,
+        ).with_rope_scaling(
+            YaRNRoPEScalingConfig(factor=2, beta_fast=32, beta_slow=1, old_context_len=32768)
+        )
+        model_config.document_chunk_attention = {
+            "doc_start_id": DOC_START_ID,
+            "doc_end_id": DOC_END_ID,
+            "eos_id": EOS_TOKEN_ID,
+            "mode": "chunked",
+        }
+    elif variant == "random_doc":
+        # Dense DocumentChunkedAttention, but each context doc attends itself + a seeded-random
+        # ~DOC_KEEP_PROB subset of EARLIER docs (free query/answer stay global). FlexAttention path.
+        model_config = TransformerConfig.qwen3_4B(
+            vocab_size=tokenizer_config.padded_vocab_size(),
+            document_chunked=True,
+            cross_doc_mode="random_doc",
+            doc_keep_prob=DOC_KEEP_PROB,
+            random_doc_seed=RANDOM_DOC_SEED,
+            flex_block_size=flex_block_size,
         ).with_rope_scaling(
             YaRNRoPEScalingConfig(factor=2, beta_fast=32, beta_slow=1, old_context_len=32768)
         )
