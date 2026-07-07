@@ -181,6 +181,103 @@ def metric_direction(metric: str) -> str:
     return "see metric"
 
 
+def metric_task_and_measure(metric: str) -> tuple[str, str]:
+    downstream = re.match(r"^eval/downstream/(.*?) \((.*?)\)$", metric)
+    if downstream:
+        return downstream.group(1), downstream.group(2)
+    if metric.startswith("eval/lm/"):
+        rest = metric.removeprefix("eval/lm/")
+        if "/" in rest:
+            task, measure = rest.rsplit("/", 1)
+            return f"lm/{task}", measure
+    return metric, metric
+
+
+def metric_category(metric: str) -> str:
+    if metric.startswith("eval/lm/"):
+        return "lm"
+    task, _ = metric_task_and_measure(metric)
+    if task.startswith("arc_"):
+        return "arc"
+    if task.startswith("basic_skills_"):
+        return "basic_skills"
+    if task.startswith("mmlu_"):
+        return "mmlu"
+    return task.split("_")[0]
+
+
+def normalized_measure(measure: str) -> str:
+    return re.sub(r" v2$", "", measure)
+
+
+def deduplicated_metrics(metrics: list[str]) -> list[str]:
+    """Collapse v2/non-v2 repeats for the same task and score family.
+
+    When both variants are present, keep v2 because it is the newer metric name
+    and avoids counting the same score family twice in summary win counts.
+    """
+    chosen: dict[tuple[str, str], str] = {}
+    for metric in sorted(metrics):
+        task, measure = metric_task_and_measure(metric)
+        key = (task, normalized_measure(measure))
+        previous = chosen.get(key)
+        if previous is None or measure.endswith(" v2"):
+            chosen[key] = metric
+    return sorted(chosen.values(), key=lambda metric: (*metric_task_and_measure(metric), metric))
+
+
+def record_key(record: dict[str, Any]) -> str:
+    return f"{record['source_cx']}:{record['lr']}"
+
+
+def metric_winners(records: list[dict[str, Any]], metric: str) -> set[str]:
+    values: list[tuple[dict[str, Any], float]] = []
+    for record in records:
+        value = record["eval_metrics"].get(metric)
+        if isinstance(value, (int, float)) and not math.isnan(float(value)):
+            values.append((record, float(value)))
+    if not values:
+        return set()
+    direction = metric_direction(metric)
+    if direction == "higher":
+        best = max(value for _, value in values)
+    elif direction == "lower":
+        best = min(value for _, value in values)
+    else:
+        return set()
+    return {record_key(record) for record, value in values if math.isclose(value, best, rel_tol=1e-12, abs_tol=1e-12)}
+
+
+def fmt_eval_cell(record: dict[str, Any], metric: str, winners: set[str]) -> str:
+    value = fmt(record["eval_metrics"].get(metric))
+    if value and record_key(record) in winners:
+        return f"**{value}**"
+    return value
+
+
+def win_count_tables(records: list[dict[str, Any]], metrics: list[str]) -> tuple[list[list[str]], list[list[str]]]:
+    by_lr = {record["lr"]: 0 for record in records}
+    by_category: dict[str, dict[str, int]] = {}
+    category_totals: dict[str, int] = {}
+    for metric in metrics:
+        winners = metric_winners(records, metric)
+        category = metric_category(metric)
+        category_totals[category] = category_totals.get(category, 0) + 1
+        by_category.setdefault(category, {record["lr"]: 0 for record in records})
+        for record in records:
+            if record_key(record) in winners:
+                by_lr[record["lr"]] += 1
+                by_category[category][record["lr"]] += 1
+    total = len(metrics)
+    count_rows = [[lr, f"{by_lr[lr]}/{total}"] for lr in sorted(by_lr, key=lr_sort_key)]
+    category_rows = []
+    for category in sorted(by_category):
+        row = [category, str(category_totals[category])]
+        row.extend(str(by_category[category][record["lr"]]) for record in sorted(records, key=lambda r: lr_sort_key(r["lr"])))
+        category_rows.append(row)
+    return count_rows, category_rows
+
+
 def md_table(headers: list[str], rows: list[list[str]]) -> list[str]:
     lines = ["| " + " | ".join(headers) + " |", "| " + " | ".join(["---"] * len(headers)) + " |"]
     lines.extend("| " + " | ".join(row) + " |" for row in rows)
@@ -304,6 +401,33 @@ def main() -> int:
     lines.extend(md_table(["source", "training finished", "eval metrics present", "LRs with evals", "still running"], summary_rows))
     lines.append("")
 
+    if eval_metric_names:
+        raw_metric_names = eval_metric_names
+        dedup_metric_names = deduplicated_metrics(eval_metric_names)
+        lines.extend([
+            "## Eval Win Summary",
+            "",
+            (
+                "Wins are computed separately within each source checkpoint group. "
+                "Raw counts include every logged eval metric. De-duplicated counts "
+                "collapse `v2`/non-`v2` repeats for the same task and score family, "
+                "preferring `v2` when both are present. Ties, if any, count for every tied LR."
+            ),
+            "",
+        ])
+        for source_cx in ("Cx1", "Cx8"):
+            group = [record for record in records if record["source_cx"] == source_cx]
+            raw_rows, _ = win_count_tables(group, raw_metric_names)
+            dedup_rows, category_rows = win_count_tables(group, dedup_metric_names)
+            dedup_by_lr = {row[0]: row[1] for row in dedup_rows}
+            combined_rows = [[lr, raw_count, dedup_by_lr.get(lr, "")] for lr, raw_count in raw_rows]
+            lines.extend([f"### {source_cx} Win Counts", ""])
+            lines.extend(md_table(["LR", f"raw wins / {len(raw_metric_names)}", f"dedup wins / {len(dedup_metric_names)}"], combined_rows))
+            lines.append("")
+            category_headers = ["category", "dedup metrics"] + [record["lr"] for record in sorted(group, key=lambda r: lr_sort_key(r["lr"]))]
+            lines.extend(md_table(category_headers, category_rows))
+            lines.append("")
+
     for source_cx in ("Cx1", "Cx8"):
         lines.extend([f"## {source_cx} Source", ""])
         group = [record for record in records if record["source_cx"] == source_cx]
@@ -353,10 +477,14 @@ def main() -> int:
     else:
         headers = ["metric", "direction"] + [f"{record['source_cx']} {record['lr']}" for record in records]
         rows = []
+        records_by_cx = {source_cx: [record for record in records if record["source_cx"] == source_cx] for source_cx in ("Cx1", "Cx8")}
         for metric in eval_metric_names:
+            winners = set()
+            for group in records_by_cx.values():
+                winners.update(metric_winners(group, metric))
             rows.append(
                 [metric.replace("|", "\\|"), metric_direction(metric)]
-                + [fmt(record["eval_metrics"].get(metric)) for record in records]
+                + [fmt_eval_cell(record, metric, winners) for record in records]
             )
         lines.extend(md_table(headers, rows))
         lines.append("")
