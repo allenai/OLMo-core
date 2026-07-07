@@ -1662,6 +1662,8 @@ class TransformerConfig(ModelConfig):
         dilation_n: Optional[int] = None,
         dilation_m: Optional[int] = None,
         dilation_max_docs: Optional[int] = None,
+        doc_keep_prob: Optional[float] = None,
+        random_doc_seed: Optional[int] = None,
         flex_block_size: Optional[int] = None,
         layer_types: Optional[AttentionTypePatternConfig] = None,
         block_name: TransformerBlockType = TransformerBlockType.default,
@@ -1905,6 +1907,10 @@ class TransformerConfig(ModelConfig):
                 dilation_n=dilation_n if uses_document_chunked_family else None,
                 dilation_m=dilation_m if uses_document_chunked_family else None,
                 dilation_max_docs=dilation_max_docs if uses_document_chunked_family else None,
+                # random_doc (dense DocumentChunkedAttention with cross_doc_mode="random_doc"): each doc
+                # attends itself + a seeded-random ~doc_keep_prob subset of earlier docs.
+                doc_keep_prob=doc_keep_prob if document_chunked else None,
+                random_doc_seed=random_doc_seed if document_chunked else None,
                 # FlexAttention block-mask granularity (dense DocumentChunkedAttention only). Smaller
                 # (e.g. 32) lets sub-128-token chunks realize block-sparsity; ignored by landmark
                 # variants (no flex path).

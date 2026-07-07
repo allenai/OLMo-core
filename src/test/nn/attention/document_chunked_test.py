@@ -152,7 +152,9 @@ def test_flex_matches_materialized_forward_on_gpu():
     torch.manual_seed(0)
     attn = _doc_chunked_attention().to("cuda").to(torch.bfloat16)
     attn.eval()
-    dcm._FLEX_MIN_SEQ_LEN = 0  # force the flex path at this tiny T (it is normally gated to long ctx)
+    dcm._FLEX_MIN_SEQ_LEN = (
+        0  # force the flex path at this tiny T (it is normally gated to long ctx)
+    )
     B, T, d = 2, 16, 64
     x = torch.randn(B, T, d, device="cuda", dtype=torch.bfloat16)
     chunk_ids = torch.tensor(
@@ -166,3 +168,57 @@ def test_flex_matches_materialized_forward_on_gpu():
         causal_out = attn(x)  # no chunk_ids -> plain causal
     assert torch.allclose(flex_out, dense_out, atol=2e-2, rtol=0)
     assert not torch.allclose(flex_out, causal_out, atol=1e-2)
+
+
+def test_random_doc_pattern_dense_flex_parity_and_semantics():
+    """random_doc: each context doc attends itself + a seeded-random subset of EARLIER docs; free
+    tokens stay global; dense mask == flex mask_mod; doc_keep_prob=0 collapses to isolated 'chunked'.
+    """
+    import torch
+
+    from olmo_core.nn.attention.chunked_mask import (
+        FREE_CHUNK_ID,
+        AttentionPattern,
+        build_chunked_allowed_mask,
+        build_chunked_mask_mod,
+    )
+
+    S_pre, ndocs, dlen, S_post = 3, 20, 5, 2
+    ids = [FREE_CHUNK_ID] * S_pre
+    for d in range(ndocs):
+        ids += [d] * dlen
+    ids += [FREE_CHUNK_ID] * S_post
+    cids = torch.tensor(ids).unsqueeze(0)
+    S = cids.shape[1]
+
+    pat = AttentionPattern(name="random_doc", doc_keep_prob=0.1, random_seed=42)
+    M = build_chunked_allowed_mask(pat, cids)[0]
+
+    # dense == flex mask_mod, elementwise
+    mm = build_chunked_mask_mod(pat, cids)
+    for q in range(S):
+        for k in range(S):
+            v = bool(mm(torch.tensor(0), torch.tensor(0), torch.tensor(q), torch.tensor(k)))
+            assert v == bool(M[q, k]), (q, k)
+
+    # no future-doc attention; own doc always attended; kept-earlier fraction is in [0, 1)
+    for i in range(ndocs):
+        ti = S_pre + i * dlen
+        assert bool(M[ti, ti])  # self
+        for j in range(i + 1, ndocs):  # future docs never attended
+            assert not bool(M[ti, S_pre + j * dlen])
+
+    # seed changes the graph; deterministic for a fixed seed
+    M2 = build_chunked_allowed_mask(
+        AttentionPattern(name="random_doc", doc_keep_prob=0.1, random_seed=7), cids
+    )[0]
+    assert not bool((M == M2).all())
+    M2b = build_chunked_allowed_mask(
+        AttentionPattern(name="random_doc", doc_keep_prob=0.1, random_seed=7), cids
+    )[0]
+    assert bool((M2 == M2b).all())
+
+    # doc_keep_prob=0 == isolated 'chunked'
+    M0 = build_chunked_allowed_mask(AttentionPattern(name="random_doc", doc_keep_prob=0.0), cids)[0]
+    Mc = build_chunked_allowed_mask(AttentionPattern(name="chunked"), cids)[0]
+    assert bool((M0 == Mc).all())

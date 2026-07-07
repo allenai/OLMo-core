@@ -414,6 +414,19 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
     optional fixed document count for the saturation cap. ``None`` (default) computes the cap per
     sequence from the actual number of context chunks.
     """
+    doc_keep_prob: Optional[float] = None
+    """
+    For :class:`DocumentChunkedAttention` with ``cross_doc_mode="random_doc"`` only: each context
+    document attends to itself + a random subset of the strictly-earlier documents, each kept with this
+    Bernoulli probability (~this fraction of previous docs on average). Defaults to 0.1. The keep set is
+    a deterministic seeded hash of the ``(query_doc, key_doc)`` pair (fixed random sparsity graph over
+    document indices; vary :attr:`random_doc_seed`).
+    """
+    random_doc_seed: Optional[int] = None
+    """
+    For :class:`DocumentChunkedAttention` with ``cross_doc_mode="random_doc"`` only: seed for the
+    per-document-pair keep hash. Defaults to 42.
+    """
     flex_block_size: Optional[int] = None
     """
     For :class:`DocumentChunkedAttention` only: the FlexAttention ``create_block_mask`` block size (the
@@ -550,6 +563,8 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
         dilation_n = kwargs.pop("dilation_n", None)
         dilation_m = kwargs.pop("dilation_m", None)
         dilation_max_docs = kwargs.pop("dilation_max_docs", None)
+        doc_keep_prob = kwargs.pop("doc_keep_prob", None)
+        random_doc_seed = kwargs.pop("random_doc_seed", None)
         flex_block_size = kwargs.pop("flex_block_size", None)
         if mem_freq is not None and not (possible_types & set(_LANDMARK_ATTENTION_TYPES)):
             raise OLMoConfigurationError(
@@ -736,6 +751,10 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
                     kwargs["dilation_m"] = dilation_m
                 if dilation_max_docs is not None:
                     kwargs["dilation_max_docs"] = dilation_max_docs
+                if doc_keep_prob is not None:
+                    kwargs["doc_keep_prob"] = doc_keep_prob
+                if random_doc_seed is not None:
+                    kwargs["random_seed"] = random_doc_seed
                 if flex_block_size is not None:
                     kwargs["flex_block_size"] = flex_block_size
                 # The hierarchical-dilated pattern picks its stride from the layer index.

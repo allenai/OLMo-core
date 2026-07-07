@@ -55,6 +55,7 @@ CHUNKED_ATTENTION_PATTERNS = (
     "last_token_anchor",
     "token_window",
     "random_token",
+    "random_doc",
     "hierarchical_dilated",
 )
 
@@ -72,8 +73,14 @@ class AttentionPattern:
         boundaries).
     :param keep_prob: ``"random_token"``: Bernoulli keep-probability for each cross-chunk
         ``(q_tok, k_tok)`` edge. ``0.0`` collapses to ``"chunked"``; ``1.0`` to ``"standard"``.
-    :param random_seed: Seed for the ``"random_token"`` Bernoulli sample (combine with an example
-        index upstream for per-example determinism).
+    :param random_seed: Seed for the ``"random_token"`` / ``"random_doc"`` pseudo-random sample.
+    :param doc_keep_prob: ``"random_doc"``: each context document attends to itself + a random subset
+        of the **strictly-earlier** documents, where each earlier document is kept independently with
+        this Bernoulli probability (so ~``doc_keep_prob`` of previous docs on average). The keep set is
+        a deterministic seeded hash of the ordered ``(query_doc, key_doc)`` pair (fixed random sparsity
+        graph over document indices, à la BigBird's random attention; vary ``random_seed`` for a
+        different graph), so it is identical across layers and reproducible. ``0.0`` collapses to
+        ``"chunked"`` (isolated docs); ``1.0`` to full causal cross-document attention.
     :param dilation_n: ``"hierarchical_dilated"``: number of documents a context query attends per
         layer (itself + the ``n-1`` strided predecessors). ``n == 1`` collapses to ``"chunked"``.
     :param dilation_m: ``"hierarchical_dilated"``: dilation base ``m >= 1``. At transformer layer
@@ -90,6 +97,7 @@ class AttentionPattern:
     doc_window_k: int = 0
     token_window_w: int = 0
     keep_prob: float = 1.0
+    doc_keep_prob: float = 0.1
     random_seed: int = 42
     dilation_n: int = 2
     dilation_m: int = 2
@@ -110,6 +118,10 @@ class AttentionPattern:
                 raise ValueError(
                     f"hierarchical_dilated requires dilation_m >= 1 (got {self.dilation_m})"
                 )
+        if self.name == "random_doc" and not (0.0 <= self.doc_keep_prob <= 1.0):
+            raise ValueError(
+                f"random_doc requires 0 <= doc_keep_prob <= 1 (got {self.doc_keep_prob})"
+            )
 
     def needs_anchor(self) -> bool:
         return self.name == "last_token_anchor"
@@ -321,6 +333,35 @@ def hierarchical_effective_layer(
     return cap
 
 
+# Multiplicative-hash constants for the ``"random_doc"`` per-document-pair keep (spatial-hash style).
+# Kept module-level so the dense mask and the FlexAttention ``mask_mod`` compute the SAME pseudo-random
+# value for a given ``(query_doc, key_doc, seed)`` -> identical masks on both paths.
+_RD_A = 73856093
+_RD_B = 19349663
+_RD_C = 83492791
+_RD_MIX = 2654435761
+_RD_MASK = 0x7FFFFFFF  # 2**31 - 1
+
+
+def _random_doc_keep(
+    qc: torch.Tensor, kc: torch.Tensor, keep_prob: float, seed: int
+) -> torch.Tensor:
+    """Deterministic Bernoulli keep for the ``"random_doc"`` pattern: ``True`` iff the ordered
+    document pair ``(query_doc=qc, key_doc=kc)`` is kept, with per-pair probability ``keep_prob``.
+
+    The keep is a seeded multiplicative hash of ``(qc, kc, seed)`` (no batch/layer term), so it is a
+    fixed random sparsity graph over document indices -- identical across layers and reproducible. ``qc``
+    / ``kc`` broadcast (e.g. ``(B, S, 1)`` and ``(B, 1, S)`` -> ``(B, S, S)``). Element-equivalent to the
+    ``random_doc`` branch of :func:`build_chunked_mask_mod`.
+    """
+    a = qc.to(torch.int64)
+    b = kc.to(torch.int64)
+    h = (a * _RD_A) ^ (b * _RD_B) ^ (int(seed) * _RD_C)
+    h = (h * _RD_MIX) & _RD_MASK
+    u = h.to(torch.float32) * (1.0 / float(_RD_MASK))
+    return u < keep_prob
+
+
 def build_chunked_allowed_mask(
     pattern: AttentionPattern,
     chunk_ids: torch.Tensor,
@@ -393,6 +434,13 @@ def build_chunked_allowed_mask(
             random_keep = random_keep.unsqueeze(0)
         cross_doc = (qc != kc) & (qc >= 0) & (kc >= 0)
         context_ok = same_chunk | (cross_doc & random_keep)
+    elif name == "random_doc":
+        # Own document + a seeded-random ~doc_keep_prob subset of STRICTLY EARLIER documents. The keep
+        # is a deterministic hash of the ordered (query_doc, key_doc) pair -> a fixed random sparsity
+        # graph over document indices, identical across layers (chunk_ids is shared per forward).
+        cross_doc = (qc > kc) & (qc >= 0) & (kc >= 0)
+        keep = _random_doc_keep(qc, kc, pattern.doc_keep_prob, pattern.random_seed)
+        context_ok = same_chunk | (cross_doc & keep)
     elif name == "hierarchical_dilated":
         n = pattern.dilation_n
         m = pattern.dilation_m
@@ -485,6 +533,30 @@ def build_chunked_mask_mod(pattern: AttentionPattern, chunk_ids: torch.Tensor):
             return ((q_idx >= kv_idx) & q_np & kv_np & (ctx_ok | q_free | kv_free)) | (
                 q_idx == kv_idx
             )
+
+        return mask_mod
+
+    if name == "random_doc":
+        keep_prob = pattern.doc_keep_prob
+        seed_c = int(pattern.random_seed) * _RD_C
+
+        def mask_mod(b, h, q_idx, kv_idx):
+            qc = cids[b, q_idx]
+            kc = cids[b, kv_idx]
+            q_np = qc != PAD_CHUNK_ID
+            kv_np = kc != PAD_CHUNK_ID
+            same = (qc == kc) & (qc >= 0)
+            cross = (qc > kc) & (qc >= 0) & (kc >= 0)
+            # Same multiplicative hash as _random_doc_keep (int64 wraps mod 2**64 on both torch and
+            # Triton; only the low 31 bits are used, so wrapping is well-defined and identical).
+            hh = (qc.to(torch.int64) * _RD_A) ^ (kc.to(torch.int64) * _RD_B) ^ seed_c
+            hh = (hh * _RD_MIX) & _RD_MASK
+            keep = (hh.to(torch.float32) * (1.0 / float(_RD_MASK))) < keep_prob
+            q_free = (qc < 0) & q_np
+            kv_free = (kc < 0) & kv_np
+            return (
+                (q_idx >= kv_idx) & q_np & kv_np & (same | (cross & keep) | q_free | kv_free)
+            ) | (q_idx == kv_idx)
 
         return mask_mod
 
