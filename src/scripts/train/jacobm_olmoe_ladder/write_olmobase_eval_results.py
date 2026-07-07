@@ -24,6 +24,7 @@ RESULTS_DIR = LADDER_DIR / "results"
 DEFAULT_GROUPS = [
     "01KWNA4QFKYY6K87BBJXNRDAMK",  # ai2/olmo-instruct small-model eval group
     "01KWNAAV94Z28846JBYK29ZH3T",  # normal workspace larger-model eval group
+    "01KWV53TWPXFD7KSM9BFVEFK19",  # 1.2B integration Cx1/Cx2 eval group
 ]
 CACHE_VERSION = 1
 HIGH_LEVEL_SUITES = [
@@ -69,6 +70,10 @@ def model_sort_key(name: str) -> tuple[int, str]:
         if marker in name:
             return idx, name
     return 99, name
+
+
+def size_sort_key(size: str) -> int:
+    return {"275M": 0, "480M": 1, "810M": 2, "1.2B": 3}.get(size, 99)
 
 
 def direction_for_metric(suite: str, metric: str) -> str:
@@ -128,6 +133,11 @@ def display_size(name: str) -> str:
     return {"275m": "275M", "480m": "480M", "810m": "810M", "1p2b": "1.2B"}[match.group(1)]
 
 
+def display_cx(name: str) -> str:
+    match = re.search(r"(?:^|-)(cx\d+)(?:-|$)", name)
+    return match.group(1).replace("cx", "Cx") if match else ""
+
+
 def display_intervention(name: str) -> str:
     labels = (
         ("baseline", "baseline"),
@@ -157,20 +167,63 @@ def display_intervention(name: str) -> str:
 
 
 def high_level_table(records: list[dict[str, Any]]) -> tuple[list[str], list[list[str]]]:
-    headers = ["size", "intervention"]
+    headers = ["size", "Cx", "intervention"]
+    suite_directions: list[str] = []
     for suite, label in HIGH_LEVEL_SUITES:
         metric = next((record["suites"][suite]["metric"] for record in records if suite in record["suites"]), "")
         direction = direction_for_metric(suite, metric) if metric else ""
+        suite_directions.append(direction)
         arrow = "down" if direction == "lower" else "up" if direction == "higher" else ""
         headers.append(f"{label} {arrow}".strip())
 
-    rows = []
+    row_records = []
     for record in records:
-        values = []
+        values: list[float | None] = []
         for suite, _label in HIGH_LEVEL_SUITES:
-            values.append(fmt(record["suites"].get(suite, {}).get("score")))
-        if any(values):
-            rows.append([display_size(record["name"]), display_intervention(record["name"]), *values])
+            score = record["suites"].get(suite, {}).get("score")
+            try:
+                values.append(float(score))
+            except (TypeError, ValueError):
+                values.append(None)
+        if any(value is not None for value in values):
+            row_records.append(
+                {
+                    "size": display_size(record["name"]),
+                    "cx": display_cx(record["name"]),
+                    "intervention": display_intervention(record["name"]),
+                    "values": values,
+                }
+            )
+    row_records.sort(key=lambda row: (size_sort_key(row["size"]), row["cx"], row["intervention"]))
+
+    best_by_size: dict[str, list[float | None]] = defaultdict(lambda: [None] * len(HIGH_LEVEL_SUITES))
+    for row in row_records:
+        for idx, value in enumerate(row["values"]):
+            if value is None:
+                continue
+            current = best_by_size[row["size"]][idx]
+            direction = suite_directions[idx]
+            if current is None:
+                best_by_size[row["size"]][idx] = value
+            elif direction == "lower" and value < current:
+                best_by_size[row["size"]][idx] = value
+            elif direction != "lower" and value > current:
+                best_by_size[row["size"]][idx] = value
+
+    rows = []
+    previous_size = None
+    for row in row_records:
+        if previous_size is not None and row["size"] != previous_size:
+            rows.append([""] * len(headers))
+        previous_size = row["size"]
+        values = []
+        for idx, value in enumerate(row["values"]):
+            formatted = fmt(value)
+            best = best_by_size[row["size"]][idx]
+            if value is not None and best is not None and math.isclose(value, best, rel_tol=1e-12, abs_tol=1e-12):
+                formatted = f"**{formatted}**"
+            values.append(formatted)
+        rows.append([row["size"], row["cx"], row["intervention"], *values])
     return headers, rows
 
 
@@ -213,7 +266,7 @@ def load_or_download_result(experiment: dict[str, Any], *, cache_dir: Path, refr
     if work_dir.exists():
         shutil.rmtree(work_dir)
     work_dir.mkdir(parents=True, exist_ok=True)
-    subprocess.run(["beaker", "experiment", "results", experiment_id, "--output", str(work_dir)], check=True)
+    subprocess.run(["beaker", "experiment", "results", experiment_id, "--prefix", "metrics.json", "--output", str(work_dir)], check=True)
     result = find_result_json(work_dir)
     if result is None:
         return None
