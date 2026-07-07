@@ -335,6 +335,10 @@ class CustomScheduleInterleaved1F1B:
                 args_split = [()] * self._n_microbatches
             kwargs_split: List[dict] = [{} for _ in range(self._n_microbatches)]
 
+            # TODO(pp-split-doc-lens): intra-document masking passes `doc_lens`/`max_doc_lens` (set by
+            # the train module's _prepare_batch), which aren't in supported_keys, so this splitter
+            # raises before the model forward for a valid training mode. Accept and split them (per
+            # microbatch). Flagged for Tianhua; exercisable once the train module drives PP. (Codex)
             supported_keys = {
                 "loss_div_factor",
                 "labels",

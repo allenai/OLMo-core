@@ -111,9 +111,9 @@ class CustomPipelineStage:
         self.d_model: int = d_model
 
         # dtype for receive/send buffers.
-        # NOTE: hard-coded to bf16, which assumes bf16 stage activations. Non-bf16 runs (fp32/fp16)
-        # would allocate mismatched receive buffers; derive this from the stage outputs before using
-        # the custom stage with a non-bf16 dtype. Tracked with the MoE train module integration.
+        # TODO(pp-p2p-dtype): hard-coded to bf16, which assumes bf16 stage activations. Non-bf16 runs
+        # (fp32/fp16) would allocate mismatched receive buffers; derive this from the stage outputs
+        # instead. Flagged for Tianhua; resolve with the MoE train module integration. (Codex)
         self.p2p_dtype: torch.dtype = torch.bfloat16
 
         # `group_rank` is rank in process group `group`.
@@ -220,6 +220,12 @@ class CustomPipelineStage:
         )
 
         if self.is_last:
+            # TODO(pp-capture-losses-hook): when driven by the MoE train module, the `capture_losses`
+            # forward hook is registered on all model parts and, on the last stage, returns
+            # `loss.unsqueeze(0)` — replacing the model's LMOutputWithLoss and tripping this assert on
+            # the first last-stage forward. Reconcile the hook with the custom stage (skip it on PP
+            # stages, or accept the hook's output shape here). Flagged for Tianhua; exercisable once
+            # the train module drives the custom schedule. (Codex)
             assert isinstance(
                 output, LMOutputWithLoss
             ), "Last stage output must be LMOutputWithLoss"

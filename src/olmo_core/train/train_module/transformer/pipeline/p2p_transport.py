@@ -291,6 +291,10 @@ class NCCLRMAPipelineP2PTransport:
         # NCCL 2.29.7 exposes only signal index/context 0, so waits consume one
         # signal from the peer-wide signal queue. Correctness depends on keeping
         # per-peer send order and wait order consistent in the pipeline schedule.
+        # TODO(pp-rma-signal-count): confirm the wait semantics are consume-one (as assumed here)
+        # rather than cumulative-per-peer — Codex flagged that a fixed expected_signal_count=1 could
+        # let a later same-peer receive (num_microbatches > 1) read its slot before the matching put
+        # completes. Validate against the nccl_rma_p2p kernel on 2 GPUs. Flagged for Tianhua. (Codex)
         _debug("make recv " f"key={key} peer={peer} slot={slot_index} " "op_count=1")
         return RMARecvOp(
             transport=self,

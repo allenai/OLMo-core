@@ -325,6 +325,11 @@ class MoEFusedV2OptimizerConfig(Config):
         ep_param_ids = self._collect_ep_param_ids(model_parts)
 
         # Build param groups for the two PGs by filtering.
+        # TODO(moe-optim-group-overrides-strict): each build_groups() call sees only one partition
+        # (dense vs. EP), so with strict=True a `group_overrides` pattern that matches only EP params
+        # (or only dense params) raises in the other partition's pass even though it does match
+        # globally. Collect matches across both partitions before enforcing strict. Flagged for
+        # Tianhua; exercisable once the MoE train module drives build(). (Codex #431)
         dp_groups = self.build_groups(
             model_parts, strict=strict, param_filter=lambda p: id(p) not in ep_param_ids
         )
@@ -2111,6 +2116,12 @@ class MoEFusedV2Optimizer:
                             ckpt_local = sd[state_key].to_local()
                             if not self._shares_tensor_storage(ckpt_local, state_local):
                                 # Free the local shard storage while keeping DTensor metadata.
+                                # TODO(moe-optim-state-dict-drops-live-state): when the checkpoint
+                                # view doesn't share storage with the live shard, this drops the
+                                # live optimizer state (only restored on load), so continuing to
+                                # train after a checkpoint save sees empty shards. Keep the live
+                                # state (e.g. copy instead of swap). Flagged for Tianhua; exercisable
+                                # once the train module checkpoints mid-run. (Codex :2117)
                                 empty_local = torch.empty(
                                     0, dtype=state_local.dtype, device=state_local.device
                                 )
