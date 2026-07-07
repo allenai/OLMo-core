@@ -517,23 +517,21 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         self.tp_pg = None
         self._tp_enabled = False
 
-        # reuse the same event so that torch.compile can see the same object id and will not break the guard.
-        self._dtoh_event: torch.cuda.Event = cast(
-            torch.cuda.Event, torch.cuda.Event()
-        )  # cast to make pylance happy
-        self._dtoh_event_send: torch.cuda.Event = cast(torch.cuda.Event, torch.cuda.Event())
-        self._dtoh_event_recv: torch.cuda.Event = cast(torch.cuda.Event, torch.cuda.Event())
-        self._before_rev_all2all_event: torch.cuda.Event = cast(
-            torch.cuda.Event, torch.cuda.Event()
-        )
+        # CUDA events for the EP/TBO device<->host comm overlap. Allocated lazily in
+        # install_cuda_events() (invoked from apply_ep()) rather than here, so the block can be
+        # *constructed* on CPU — torch.cuda.Event() requires CUDA, and the events are only used on
+        # the GPU expert-parallel forward path. install_cuda_events() reuses one object per event
+        # (installed once) so torch.compile guards stay stable.
+        self._dtoh_event: torch.cuda.Event = None  # type: ignore[assignment]
+        self._dtoh_event_send: torch.cuda.Event = None  # type: ignore[assignment]
+        self._dtoh_event_recv: torch.cuda.Event = None  # type: ignore[assignment]
+        self._before_rev_all2all_event: torch.cuda.Event = None  # type: ignore[assignment]
 
         # same for tbo1
-        self._dtoh_event1: torch.cuda.Event = cast(torch.cuda.Event, torch.cuda.Event())
-        self._dtoh_event_send1: torch.cuda.Event = cast(torch.cuda.Event, torch.cuda.Event())
-        self._dtoh_event_recv1: torch.cuda.Event = cast(torch.cuda.Event, torch.cuda.Event())
-        self._before_rev_all2all_event1: torch.cuda.Event = cast(
-            torch.cuda.Event, torch.cuda.Event()
-        )
+        self._dtoh_event1: torch.cuda.Event = None  # type: ignore[assignment]
+        self._dtoh_event_send1: torch.cuda.Event = None  # type: ignore[assignment]
+        self._dtoh_event_recv1: torch.cuda.Event = None  # type: ignore[assignment]
+        self._before_rev_all2all_event1: torch.cuda.Event = None  # type: ignore[assignment]
 
         self.num_local_routed_experts: Optional[int] = (
             self.routed_experts.num_experts if self.routed_experts else None
@@ -741,6 +739,11 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         self._before_rev_all2all_event1 = None  # type: ignore[assignment]
 
     def install_cuda_events(self):
+        # Idempotent: allocate the events once (keeping stable object ids for torch.compile), so
+        # repeated calls — apply_ep(), the model-level fan-out, and reinstall-after-deepcopy — are
+        # safe. A prior purge_cuda_events() resets them to None so this reinstalls.
+        if self._dtoh_event is not None:
+            return
         self._dtoh_event = cast(torch.cuda.Event, torch.cuda.Event())
         self._dtoh_event_send = cast(torch.cuda.Event, torch.cuda.Event())
         self._dtoh_event_recv = cast(torch.cuda.Event, torch.cuda.Event())
@@ -1084,6 +1087,11 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
             self._ep_no_sync_shared_pool = None
             self._ep_no_sync_shared_slot = 0
             self._ep_no_sync_te_backend_warned = False
+
+        # EP is enabled on this block now, and only the EP forward path uses the device<->host
+        # comm-overlap CUDA events, so allocate them here (idempotent). Deferred from __init__ so
+        # the block can be constructed on CPU (this runs on the GPU EP-setup path).
+        self.install_cuda_events()
 
     def apply_tp(
         self, tp_mesh: DeviceMesh, *, input_layout: Placement, float8_enabled: bool = False
