@@ -180,6 +180,15 @@ def build_docchunk_experiment(
         beaker_launch_config.env_vars.append(
             BeakerEnvVar(name="PYTORCH_CUDA_ALLOC_CONF", value="expandable_segments:True")
         )
+        # The Beaker job RE-BUILDS this config on the node, so propagate the random_doc hyperparameters
+        # (resolved from the launch-host env here) or the on-node rebuild would silently fall back to the
+        # module defaults (0.1 / 42). Harmless for the non-random_doc variants.
+        beaker_launch_config.env_vars.append(
+            BeakerEnvVar(name="DOCCHUNK_RANDOM_DOC_KEEP_PROB", value=repr(DOC_KEEP_PROB))
+        )
+        beaker_launch_config.env_vars.append(
+            BeakerEnvVar(name="DOCCHUNK_RANDOM_DOC_SEED", value=str(RANDOM_DOC_SEED))
+        )
 
     tokenizer_config = TokenizerConfig.qwen3()
     # EOS-separated instances; qwen3 ties bos==eos, so drop BOS for document-boundary detection.
