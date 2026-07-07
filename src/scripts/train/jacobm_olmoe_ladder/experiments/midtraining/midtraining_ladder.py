@@ -190,23 +190,19 @@ def build_config(opts: argparse.Namespace, overrides: List[str]) -> base.Experim
     max_duration_tokens = opts.midtrain_max_tokens
     base.configure_sweep_hparams(opts, sequence_length, max_duration_tokens)
 
-    # Eval-only backfills never consume the training dataloader, but script_utils
-    # still builds one before Trainer.eval_checkpoints(). Use the cheaper
-    # baseline data config in eval mode instead of materializing a 100B-token
-    # midtraining source mixture just to satisfy the trainer constructor.
-    dataset_config = (
-        base.build_dataset_config(opts, tokenizer_config, sequence_length)
-        if in_eval_mode
-        else build_midtraining_dataset_config(opts, tokenizer_config, sequence_length)
-    )
+    # Trainer.eval_checkpoints() restores trainer state before running evals,
+    # which includes restoring the training dataloader state. Keep the eval
+    # backfill dataloader structurally identical to the midtraining dataloader
+    # so restore-time invariants like max_target_sequence_length still match.
+    dataset_config = build_midtraining_dataset_config(opts, tokenizer_config, sequence_length)
     data_loader_config = NumpyDataLoaderConfig(
         global_batch_size=base.GLOBAL_BATCH_SIZE,
         seed=base.SEED,
         num_workers=8,
         # Eval-only backfills restore trainer state only to recover step/token
         # counters before running evaluator callbacks. The training dataloader
-        # order is irrelevant for checkpoint evals, and in eval mode we build a
-        # cheap placeholder dataset instead of the original midtraining mixture.
+        # order is irrelevant for checkpoint evals, but restore still checks the
+        # saved fingerprint before the checkpoint evaluator runs.
         ignore_fingerprint_mismatch=in_eval_mode,
     )
     train_module_config = base.build_train_module_config(
