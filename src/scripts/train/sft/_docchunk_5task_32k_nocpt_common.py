@@ -61,7 +61,7 @@ from olmo_core.train.train_module import (
 # ---------------------------------------------------------------------------
 SEQUENCE_LENGTH = 40960  # 32k-scale window (matrix-comparable); landmark: 40960 / 64 = 640 blocks.
 MEM_FREQ = 63           # landmark block size = 64
-NUM_NODES = 1           # single 8xH200 node; doc-chunked attn has no CP support.
+NUM_NODES = 2           # 2x8=16 H200 data-parallel (docchunk has no CP; DP only). 16 inst/step.
 EOS_TOKEN_ID = 151643
 LANDMARK_TOKEN_ID = 151860
 DOC_START_ID = 151648   # <|box_start|>
@@ -77,7 +77,10 @@ PAD_TOKEN_ID = 151863   # interior window-fill padding (landmark only)
 # ---------------------------------------------------------------------------
 DOC_DATA_ROOT = os.environ.get(
     "DOCCHUNK_DATA_ROOT",
-    "/weka/oe-training-default/ai2-llm/checkpoints/prasanns/single_task_docchunk_v2",
+    # FIXED tokenization (leak fix + titles off), full 20k/task, built 2026-07-07. Hardcoded as the
+    # default so the on-node config rebuild (Beaker) uses it WITHOUT relying on an env var (which is
+    # NOT propagated to the job -> would silently fall back to the old buggy shards).
+    "/weka/oe-training-default/ai2-llm/checkpoints/prasanns/docchunk_5task_fixed40k",
 )
 # Matched CPT bases on weka (weights-only). dense base also feeds the hierarchical variant.
 DENSE_BASE = (
@@ -109,7 +112,7 @@ _WSUM = sum(_W.values())
 LR = 1e-5
 WORLD_SIZE = NUM_NODES * 8
 GLOBAL_BATCH_SIZE = WORLD_SIZE * SEQUENCE_LENGTH  # tokens; 8 * 40960 = 327680 -> 8 instances/step
-MAX_STEPS = 2000
+MAX_STEPS = 2200        # ~700M content tokens @ 16 inst/step (match landmark-ref budget)
 
 
 def _task_source(emit: str, name: str, doc_tok) -> NumpyDocumentSourceConfig:
