@@ -81,7 +81,7 @@ def build_ladders(args):
     if args.ladder_version == "v2":
         # v2: every rung of a task shares the SAME >=500 questions; only distractor docs differ. ALL
         # rungs live under $EVAL500_ROOT/<task>/ (point EVAL500_ROOT at the v2 bundle).
-        return {
+        ladders_v2 = {
             "contradiction": [("2k", f"{E5}/contra/contradiction_eval_pubmed_both_n100_k3.jsonl"),
                 ("8k", f"{E5}/contra/contradiction_eval_pubmed_both_n190_k3.jsonl"),
                 ("16k", f"{E5}/contra/contradiction_eval_pubmed_both_n385_k3.jsonl"),
@@ -119,6 +119,25 @@ def build_ladders(args):
                 ("16k", f"{E5}/contra/contradiction_eval_fever_plain_n820_k3.jsonl"),
                 ("32k", f"{E5}/contra/contradiction_eval_fever_plain_n1642_k3.jsonl")],
         }
+        # ---- OPT-IN ultra-long rungs (64k/128k/256k), OFF by default (v2 only) ----
+        # KEEP IN SYNC with eval_lc_native.py: size-labelled glob so the calibrated doc-count in the
+        # filename can drift without editing this file. Files staged on weka under EVAL500_ROOT/<sub>/
+        # (NB contra subdir is "contra"). contra|nq|outlier only. Runner forces bs=1 + raises max_length.
+        if getattr(args, "xlong", False):
+            import glob as _glob
+
+            _XL = {
+                "contradiction": ("contra", "contradiction_eval_pubmed_both_n*_k3_xlong_{s}.jsonl"),
+                "nq": ("nq", "nq_validation_k*_xlong_{s}.jsonl"),
+                "outlier": ("outlier", "outlier_wiki100w_n*_k3_eval_xlong_{s}.jsonl"),
+            }
+            for _t, (_sub, _pat) in _XL.items():
+                for _s in ("64k", "128k", "256k"):
+                    _hits = sorted(_glob.glob(os.path.join(E5, _sub, _pat.format(s=_s))))
+                    if _hits:
+                        ladders_v2[_t].append((_s, _hits[0]))
+            print(f"[xlong] appended ultra-long rungs where files exist under {E5}", flush=True)
+        return ladders_v2
     return {
         "contradiction": [("2k", args.contra_data),
             ("8k", f"{E5}/contra/contradiction_eval_pubmed_both_n190_k3.jsonl"),
@@ -204,6 +223,11 @@ def main():
                     help="comma list restricting which of the 9 tasks to run.")
     ap.add_argument("--rungs", default=None,
                     help="comma list restricting rungs (e.g. '16k,32k'); applied across tasks.")
+    ap.add_argument("--xlong", action="store_true",
+                    default=os.environ.get("LADDER_XLONG") == "1",
+                    help="OPT-IN (v2 only): append the ultra-long 64k/128k/256k rungs (contra|nq|outlier) "
+                         "by size-labelled glob under EVAL500_ROOT. Combine with --rungs 64k,128k to pick "
+                         "which; the runner forces bs=1 and raises --max-length. Honors env LADDER_XLONG=1.")
 
     # ---- per-task max-new-tokens knobs ----
     ap.add_argument("--contra-max-new-tokens", type=int, default=96,
@@ -239,22 +263,6 @@ def main():
     if args.root:
         os.chdir(args.root)
 
-    from transformers import AutoTokenizer
-
-    from olmo_core.config import DType
-    from olmo_core.data.document_chunk_landmark import (
-        DOC_END_ID as _DE,
-    )
-    from olmo_core.data.document_chunk_landmark import (
-        DOC_START_ID as _DS,
-    )
-    from olmo_core.data.document_chunk_landmark import (
-        emit_document_chunk_dense,
-        emit_document_chunk_landmark,
-        segment_prompt_to_chunks,
-    )
-    from olmo_core.generate.generation_module.config import GenerationConfig
-    from olmo_core.generate.generation_module.transformer import TransformerGenerationModuleConfig
     from ctc_eval.eval.evaluate import (
         _eval_contradiction,
         _eval_oolong,
@@ -262,6 +270,20 @@ def main():
         _eval_rerank,
         _eval_retrieval,
         load_unified_examples,
+    )
+    from transformers import AutoTokenizer
+
+    from olmo_core.config import DType
+    from olmo_core.data.document_chunk_landmark import DOC_END_ID as _DE
+    from olmo_core.data.document_chunk_landmark import DOC_START_ID as _DS
+    from olmo_core.data.document_chunk_landmark import (
+        emit_document_chunk_dense,
+        emit_document_chunk_landmark,
+        segment_prompt_to_chunks,
+    )
+    from olmo_core.generate.generation_module.config import GenerationConfig
+    from olmo_core.generate.generation_module.transformer import (
+        TransformerGenerationModuleConfig,
     )
 
     assert (_DS, _DE) == (DOC_START_ID, DOC_END_ID)
