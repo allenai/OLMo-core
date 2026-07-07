@@ -82,6 +82,23 @@ try:
 except Exception:
     pass
 
+has_nccl_rma = False
+try:
+    # The pipeline NCCL-RMA transport JIT-builds a CUDA extension against NCCL's one-sided RMA
+    # "window" API, which only exists in recent NCCL (~2.28+). Check cheaply (locate NCCL dev
+    # headers + confirm the RMA symbols) without triggering a build.
+    from olmo_core.kernels.nccl_rma_p2p import (
+        _check_nccl_supports_rma,
+        _find_nccl_paths,
+    )
+
+    _rma_include_dir, _ = _find_nccl_paths()
+    _check_nccl_supports_rma(_rma_include_dir)
+    has_nccl_rma = True
+    del _rma_include_dir
+except Exception:
+    pass
+
 
 GPU_MARKS = (pytest.mark.gpu, pytest.mark.skipif(not has_cuda, reason="Requires a GPU"))
 
@@ -241,6 +258,24 @@ SYMM_MEM_VDEV2D_MARKS = (
 
 def requires_symm_mem_vdev2d(func):
     for mark in SYMM_MEM_VDEV2D_MARKS:
+        func = mark(func)
+    return func
+
+
+# The pipeline NCCL-RMA transport needs multiple GPUs plus a recent, RMA-capable NCCL (and its dev
+# headers, to JIT-build the extension). Absent RMA support these skip — e.g. in CI.
+NCCL_RMA_MARKS = (
+    pytest.mark.gpu,
+    pytest.mark.skipif(not has_multiple_gpus, reason="Requires multiple GPUs"),
+    pytest.mark.skipif(
+        not has_nccl_rma,
+        reason="Requires an RMA-capable NCCL (~2.28+) with dev headers for the NCCL-RMA extension",
+    ),
+)
+
+
+def requires_nccl_rma(func):
+    for mark in NCCL_RMA_MARKS:
         func = mark(func)
     return func
 

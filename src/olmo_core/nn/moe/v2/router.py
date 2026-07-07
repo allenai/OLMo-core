@@ -535,6 +535,8 @@ class MoERouterV2(nn.Module):
         # strict first-forward-then-recompute ordering, so it is incompatible with pipeline
         # parallelism, where interleaved microbatch forwards/recomputes would corrupt the
         # single cache slot.
+        # TODO(pp-router-recompute-cache): when wiring PP for MoE-v2, either key the cache per
+        # microbatch or disable use_recompute_cache while PP is active. Flagged for Tianhua.
         if self.use_recompute_cache:
             if self._recompute_cache is None:  # first forward
                 if torch.is_grad_enabled():

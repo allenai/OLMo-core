@@ -1,3 +1,4 @@
+import pytest
 import torch
 
 from olmo_core.distributed.parallel import (
@@ -5,6 +6,7 @@ from olmo_core.distributed.parallel import (
     PipelineScheduleType,
     PipelineSplitStyle,
 )
+from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.nn.feed_forward import FeedForwardConfig
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import AdamWConfig
@@ -31,6 +33,23 @@ def test_generate_pipeline_split_points():
         degree=2, schedule=PipelineScheduleType.interleaved_1F1B, style=PipelineSplitStyle.loop
     )
     assert pp_config.get_split_points(4) == [1, 2, 3]
+
+
+@pytest.mark.parametrize(
+    "schedule",
+    [
+        PipelineScheduleType.custom_interleaved_1F1B,
+        PipelineScheduleType.custom_1F1B_V,
+    ],
+)
+def test_custom_schedule_requires_custom_stage(schedule: PipelineScheduleType):
+    # A custom schedule paired with torch's PipelineStage would fail during pre_train/step; the
+    # config should reject it up front (the check runs before the model/mesh are touched).
+    pp_config = TransformerPipelineParallelConfig(
+        degree=2, schedule=schedule, use_custom_stage_implementation=False
+    )
+    with pytest.raises(OLMoConfigurationError):
+        pp_config.split_model(None, pp_mesh=None, device=torch.device("cpu"))  # type: ignore[arg-type]
 
 
 def _run_pp_num_flops_per_token():

@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added a custom pipeline-parallel layer (`olmo_core.train.train_module.transformer.pipeline`) with `CustomPipelineStage` and the `CustomSchedule1F1BV` / `CustomScheduleInterleaved1F1B` schedules, which re-use point-to-point receive buffers across micro-batches over a NCCL-RMA transport. Enabled via `TransformerPipelineParallelConfig.use_custom_stage_implementation` and `PipelineP2PBackend`.
 - Added `MultiGroupDistributedDataParallel` (`olmo_core.nn.parallel`), a data-parallel wrapper that accumulates gradients into flat bucket views and supports per-parameter process groups (`param_process_group_fn`), overlapped bucketed all-reduce (finalized via `finalize_grad_reduce()`), and optional fp32 gradient accumulation/reduction.
 - Added `max_checkpoints` parameter to `CheckpointerCallback` (default: 3) to limit the number of permanent checkpoints retained. Oldest checkpoints are removed automatically when the limit is exceeded. Set to `None` to keep all (previous behavior).
 - Added `OutputDiscardCheckpoint`, an activation-recompute primitive for cases where the output of a checkpointed region dominates memory rather than its intermediates (e.g. precision casts, FFN up-projections). Forward runs under `no_grad`, the output's storage can be freed after downstream consumption, and a backward hook recomputes and rebinds the freed storage in place via a C++ `share_storage` extension (with a Python fallback for environments without a C++ toolchain).

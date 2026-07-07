@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union, cast
 
 import torch
+import torch.distributed as dist
 import torch.distributed.checkpoint.state_dict as dist_cp_sd
 from torch.distributed import DeviceMesh
 from torch.distributed.pipelining import PipelineStage
@@ -13,7 +14,9 @@ from olmo_core.distributed.parallel import (
     ContextParallelConfig,
     DataParallelConfig,
     ExpertParallelConfig,
+    PipelineP2PBackend,
     PipelineParallelConfig,
+    PipelineScheduleType,
     TensorParallelConfig,
 )
 from olmo_core.doc_utils import beta_feature
@@ -33,6 +36,8 @@ from olmo_core.optim import OptimConfig
 from olmo_core.optim.scheduler import Scheduler
 from olmo_core.train.train_module.config import TrainModuleConfig
 
+from .pipeline.pipeline_schedule import CustomPipelineStage
+
 if TYPE_CHECKING:
     from .pipeline_train_module import TransformerPipelineTrainModule
     from .train_module import TransformerTrainModule
@@ -45,6 +50,25 @@ log = logging.getLogger(__name__)
 class TransformerPipelineParallelConfig(PipelineParallelConfig):
     """
     Transformer-specific pipeline parallel config.
+    """
+
+    use_custom_stage_implementation: bool = False
+    """
+    False -> use PyTorch's ``PipelineStage`` implementation.
+    True -> use :class:`~olmo_core.train.train_module.transformer.pipeline.pipeline_schedule.CustomPipelineStage`,
+    which re-uses receive buffers across micro-batches.
+    """
+
+    save_schedule_plot: bool = False
+    """
+    If ``True``, rank 0 saves a diagnostic plot (and text dump) of the pipeline schedule when it is
+    built. Requires ``matplotlib`` (the ``dev`` extra), so it is off by default.
+    """
+
+    schedule_plot_dir: Optional[str] = None
+    """
+    Directory for the schedule plot when :data:`save_schedule_plot` is set. Defaults to a temporary
+    directory.
     """
 
     split_points: Optional[List[int]] = None
@@ -90,8 +114,31 @@ class TransformerPipelineParallelConfig(PipelineParallelConfig):
         return splits
 
     def split_model(
-        self, model: Transformer, *, pp_mesh: DeviceMesh, device: torch.device
+        self,
+        model: Transformer,
+        *,
+        pp_mesh: DeviceMesh,
+        device: torch.device,
+        use_ddp: bool = False,
+        p2p_group: Optional[dist.ProcessGroup] = None,
     ) -> Tuple[List[PipelineStage], List[Transformer]]:
+        if self.p2p_backend != PipelineP2PBackend.nccl and not self.use_custom_stage_implementation:
+            raise OLMoConfigurationError(
+                f"p2p_backend={self.p2p_backend.value!r} requires use_custom_stage_implementation=True"
+            )
+
+        custom_schedules = {
+            PipelineScheduleType.custom_1F1B,
+            PipelineScheduleType.custom_interleaved_1F1B,
+            PipelineScheduleType.custom_1F1B_V,
+        }
+        if self.schedule in custom_schedules and not self.use_custom_stage_implementation:
+            # The custom schedule driver expects CustomPipelineStage (e.g. `group_size`,
+            # `get_fwd_send_ops`); pairing it with torch's PipelineStage fails in pre_train / step.
+            raise OLMoConfigurationError(
+                f"pipeline schedule {self.schedule.value!r} requires use_custom_stage_implementation=True"
+            )
+
         split_points = self.get_split_points(model.n_layers)
         num_stages = len(split_points) + 1
 
@@ -114,6 +161,7 @@ class TransformerPipelineParallelConfig(PipelineParallelConfig):
             model_chunk = copy.deepcopy(model)
             if not is_first:
                 model_chunk.embeddings = None  # type: ignore
+                model_chunk.embedding_norm = None  # type: ignore
 
             drop_layers = start_layer is not None
             for block_idx in range(model.n_layers):
@@ -128,13 +176,26 @@ class TransformerPipelineParallelConfig(PipelineParallelConfig):
             if not is_last:
                 model_chunk.lm_head = None  # type: ignore
 
-            stage = PipelineStage(
-                model_chunk,
-                stage_idx,
-                num_stages,
-                device,
-                group=pp_mesh.get_group("pp"),
-            )
+            if self.use_custom_stage_implementation:
+                # Custom stage implementation re-uses receive buffers across micro-batches.
+                stage = CustomPipelineStage(
+                    model_chunk,
+                    stage_idx,
+                    num_stages,
+                    device,
+                    is_rddp=use_ddp,
+                    group=pp_mesh.get_group("pp"),
+                    p2p_group=p2p_group,
+                    p2p_backend=self.p2p_backend.value,
+                )
+            else:
+                stage = PipelineStage(
+                    model_chunk,
+                    stage_idx,
+                    num_stages,
+                    device,
+                    group=pp_mesh.get_group("pp"),
+                )
             return stage, model_chunk
 
         stage_idx = pp_rank

@@ -27,6 +27,7 @@ from .utils import (
     requires_gpu,
     requires_grouped_gemm,
     requires_multi_gpu,
+    requires_nccl_rma,
     requires_quack,
     requires_symm_mem_vdev2d,
     requires_te,
@@ -66,6 +67,7 @@ __all__ = [
     "requires_triton",
     "requires_quack",
     "requires_symm_mem_vdev2d",
+    "requires_nccl_rma",
     "requires_multi_gpu",
     "run_distributed_test",
 ]
