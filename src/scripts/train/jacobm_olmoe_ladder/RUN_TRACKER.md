@@ -1,6 +1,6 @@
 # Ladder Run Tracker
 
-Last updated: 2026-07-07 17:41 UTC.
+Last updated: 2026-07-07 22:35 UTC.
 
 This table is a scan-friendly status matrix for planned ladder cells. It is separate from `RUNS.md` (chronological launch/status log) and `PLOTTED_RESULTS.md` (finished-only plotted rows and losses).
 
@@ -55,6 +55,14 @@ microbatch 8, fresh optimizer state, 2000-step warmup then constant LR.
 | 275M baseline Cx2 | `olmoe3-tiny-275m-cx2-b384k-gpu2-ep1mb8-lr1.8e-3-r3/step20486` | `1.8e-4` | queued | [1.8e-4](https://beaker.org/ex/01KWZ8T9BZ3B869VZ878FNNQ8T) | Single-point 10% PT-LR run queued on 2026-07-07 after the Cx1/Cx8 validation sweep. |
 | 275M baseline Cx4 | `olmoe3-tiny-275m-cx4-b512k-gpu4-ep1mb16-lr1.5e-3/step30729` | `1.5e-4` | queued | [1.5e-4](https://beaker.org/ex/01KWZ8T9DZN8Y4VD63AP1AN387) | Single-point 10% PT-LR run queued on 2026-07-07 after the Cx1/Cx8 validation sweep. |
 | 275M baseline Cx8 | `olmoe3-tiny-275m-cx8-b768k-gpu4-ep1mb8-lr1.6e-3-r2/step40971` | `2e-4`, `4e-4`, `8e-4`, `1.6e-3` | done | [2e-4](https://beaker.org/ex/01KWWM10ANMMW2YTNN6RKJBGE7), [4e-4](https://beaker.org/ex/01KWWM1AK89SKDA1KGCX5D8SMM), [8e-4](https://beaker.org/ex/01KWWM1P9TXRSMDV5DH9EF4KXM), [1.6e-3](https://beaker.org/ex/01KWWM213KMG47KADPK5Q67GJP) | All four training jobs finished. Tests midtraining LR transfer from the high-data optimal baseline checkpoint. |
+| 275M integration wide Cx1 | `integration/int-275m-cx1-intw256e8k-lr1.6e-3-r1/step15499` | `2e-4` | queued | [2e-4](https://beaker.org/ex/01KWZB3VB8H7HJTZQXCDKXAYHN) | Single-point midtraining transfer from the wide integration source, using the matching 275M baseline 10% PT-LR rule. |
+| 275M integration wide Cx2 | `integration/int-275m-cx2-intw256e8k-lr1.6e-3-r1/step20665` | `1.8e-4` | queued | [1.8e-4](https://beaker.org/ex/01KWZB3WH75S6M876M642273WE) | Single-point midtraining transfer from the wide integration source, using the matching 275M baseline 10% PT-LR rule. |
+| 275M integration wide Cx4 | `integration/int-275m-cx4-intw256e8k-lr8e-4-r1/step30997` | `1.5e-4` | queued | [1.5e-4](https://beaker.org/ex/01KWZB3VCP4J8D3Y42GYZVV0CD) | Single-point midtraining transfer from the wide integration source, using the matching 275M baseline 10% PT-LR rule. |
+| 275M integration wide Cx8 | `integration/int-275m-cx8-intw256e8k-lr8e-4-r1/step41329` | `1.6e-4` | queued | [1.6e-4](https://beaker.org/ex/01KWZB3VQM01HJ9N40K22KPS0Z) | Single-point midtraining transfer from the wide integration source, using the matching 275M baseline 10% PT-LR rule. |
+| 275M integration deep Cx1 | `integration/int-275m-cx1-intd256e8k-lr1.6e-3-r1/step15130` | `2e-4` | queued | [2e-4](https://beaker.org/ex/01KWZB6GXRPVHQ2WF1MNHP5YJY) | Single-point midtraining transfer from the deep integration source, using the matching 275M baseline 10% PT-LR rule. |
+| 275M integration deep Cx2 | `integration/int-275m-cx2-intd256e8k-lr1.6e-3-r1/step20173` | `1.8e-4` | queued | [1.8e-4](https://beaker.org/ex/01KWZB7BGDRM0PHYP5DH81ZXTX) | Single-point midtraining transfer from the deep integration source, using the matching 275M baseline 10% PT-LR rule. |
+| 275M integration deep Cx4 | `integration/int-275m-cx4-intd256e8k-lr1.6e-3-r1/step30259` | `1.5e-4` | queued | [1.5e-4](https://beaker.org/ex/01KWZB85A7ANH2EEY3CRJQQKRC) | Single-point midtraining transfer from the deep integration source, using the matching 275M baseline 10% PT-LR rule. |
+| 275M integration deep Cx8 | `integration/int-275m-cx8-intd256e8k-lr1.6e-3-r1/step40345` | `1.6e-4` | queued | [1.6e-4](https://beaker.org/ex/01KWZB8XM9X3RHMBTGXWABFKGZ) | Single-point midtraining transfer from the deep integration source, using the matching 275M baseline 10% PT-LR rule. |
 
 Final-checkpoint eval backfills are eval-only jobs over `step95368`. Earlier attempts from commits `430f233c`, `571c0984`, and `ac32eb76` failed before eval due to duplicate evaluator callbacks or dataloader restore mismatches and should be ignored. The fixed backfills build the real midtraining source-mixture dataloader for eval. On 2026-07-07, `copy_eval_backfills_to_wandb.py --only mt-eval` copied all eight backfills to their source W&B runs; verification reported `180 eval metrics already present` for each source run after upload.
 

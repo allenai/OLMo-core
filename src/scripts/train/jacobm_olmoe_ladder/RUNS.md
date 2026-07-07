@@ -1711,3 +1711,26 @@ names that omit systems settings.
 | `mt-1p2b-baseline-cx4-lr3e-5-r1` | `olmoe3-moe-a0-1p2b-cx4-b512k-gpu8-ep1mb2-lr3e-4-r1/step162379` | 3e-5 | 384 | 8 | 1 | 4 | https://beaker.org/ex/01KWZAVC810DHNY5VE958S6DTG |
 | `mt-1p2b-baseline-cx8-lr4e-5-r1` | `olmoe3-moe-a0-1p2b-cx8-b768k-gpu32-ep1mb1-lr4e-4-r1/step216505` | 4e-5 | 384 | 8 | 1 | 4 | https://beaker.org/ex/01KWZAV9AGDSD3PTS5RAM7G5N2 |
 
+## 2026-07-07 275M Integration Midtraining Single Points
+
+These runs midtrain the best observed 275M wide/deep integration checkpoints for
+Cx1/2/4/8. They use the same midtraining LR transfer rule as the baseline
+single points: `0.1 * canonical 275M baseline best observed pretraining LR` for
+the matching Cx multiple. All runs use `midtraining_ladder.py`, 100B tokens,
+sequence length 8192, global batch seq 128, 1 node x 4 GPUs, EP1, microbatch 8,
+Titan urgent, Weka `oe-training-default`, workspace
+`ai2/OLMo-3-moe-experiments`, budget `ai2/oe-other`, image
+`tianhuat/olmo-core-torch211-2404-cu128`, compile on, fresh optimizer state,
+weight-only load, and fast in-loop evals every 2000 steps.
+
+| Name | Source checkpoint | LR | Beaker |
+| --- | --- | ---: | --- |
+| `mt-275m-intw256e8k-cx1-lr2e-4-r1` | `integration/int-275m-cx1-intw256e8k-lr1.6e-3-r1/step15499` | 2e-4 | https://beaker.org/ex/01KWZB3VB8H7HJTZQXCDKXAYHN |
+| `mt-275m-intw256e8k-cx2-lr1p8e-4-r1` | `integration/int-275m-cx2-intw256e8k-lr1.6e-3-r1/step20665` | 1.8e-4 | https://beaker.org/ex/01KWZB3WH75S6M876M642273WE |
+| `mt-275m-intw256e8k-cx4-lr1p5e-4-r1` | `integration/int-275m-cx4-intw256e8k-lr8e-4-r1/step30997` | 1.5e-4 | https://beaker.org/ex/01KWZB3VCP4J8D3Y42GYZVV0CD |
+| `mt-275m-intw256e8k-cx8-lr1p6e-4-r1` | `integration/int-275m-cx8-intw256e8k-lr8e-4-r1/step41329` | 1.6e-4 | https://beaker.org/ex/01KWZB3VQM01HJ9N40K22KPS0Z |
+| `mt-275m-intd256e8k-cx1-lr2e-4-r1` | `integration/int-275m-cx1-intd256e8k-lr1.6e-3-r1/step15130` | 2e-4 | https://beaker.org/ex/01KWZB6GXRPVHQ2WF1MNHP5YJY |
+| `mt-275m-intd256e8k-cx2-lr1p8e-4-r1` | `integration/int-275m-cx2-intd256e8k-lr1.6e-3-r1/step20173` | 1.8e-4 | https://beaker.org/ex/01KWZB7BGDRM0PHYP5DH81ZXTX |
+| `mt-275m-intd256e8k-cx4-lr1p5e-4-r1` | `integration/int-275m-cx4-intd256e8k-lr1.6e-3-r1/step30259` | 1.5e-4 | https://beaker.org/ex/01KWZB85A7ANH2EEY3CRJQQKRC |
+| `mt-275m-intd256e8k-cx8-lr1p6e-4-r1` | `integration/int-275m-cx8-intd256e8k-lr1.6e-3-r1/step40345` | 1.6e-4 | https://beaker.org/ex/01KWZB8XM9X3RHMBTGXWABFKGZ |
+

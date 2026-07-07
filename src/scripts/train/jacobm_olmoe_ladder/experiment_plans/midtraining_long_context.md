@@ -167,6 +167,31 @@ GPU count or microbatch without changing the semantic run identity:
 - `mt-275m-baseline-cx1-lr{2e-4,4e-4,8e-4,1.6e-3}-r1`
 - `mt-275m-baseline-cx8-lr{2e-4,4e-4,8e-4,1.6e-3}-r1`
 
+
+## 275M Integration Candidate Midtraining Single Points
+
+After the baseline Cx1/Cx8 midtraining LR grid and eval backfills, we promoted a
+simple transfer rule for source checkpoints we already trust: use `10%` of the
+matching 275M baseline best observed pretraining LR. For integration candidates,
+this intentionally reuses the baseline-derived midtraining LR rather than the
+integration pretraining LR, so the downstream validation comparison is aligned
+with the baseline midtraining sweep.
+
+Shared settings are the same as the initial 275M baseline grid: 100B tokens,
+sequence length 8192, global batch seq 128, 1 node x 4 GPUs, EP1, microbatch 8,
+compile on, fresh optimizer state, and weight-only load.
+
+| Source | Pretraining checkpoint selected | Baseline PT LR reference | MT LR | Launch state |
+| --- | --- | ---: | ---: | --- |
+| wide Cx1 | `integration/int-275m-cx1-intw256e8k-lr1.6e-3-r1/step15499` | `2e-3` | `2e-4` | launched 2026-07-07 |
+| wide Cx2 | `integration/int-275m-cx2-intw256e8k-lr1.6e-3-r1/step20665` | `1.8e-3` | `1.8e-4` | launched 2026-07-07 |
+| wide Cx4 | `integration/int-275m-cx4-intw256e8k-lr8e-4-r1/step30997` | `1.5e-3` | `1.5e-4` | launched 2026-07-07 |
+| wide Cx8 | `integration/int-275m-cx8-intw256e8k-lr8e-4-r1/step41329` | `1.6e-3` | `1.6e-4` | launched 2026-07-07 |
+| deep Cx1 | `integration/int-275m-cx1-intd256e8k-lr1.6e-3-r1/step15130` | `2e-3` | `2e-4` | launched 2026-07-07 |
+| deep Cx2 | `integration/int-275m-cx2-intd256e8k-lr1.6e-3-r1/step20173` | `1.8e-3` | `1.8e-4` | launched 2026-07-07 |
+| deep Cx4 | `integration/int-275m-cx4-intd256e8k-lr1.6e-3-r1/step30259` | `1.5e-3` | `1.5e-4` | launched 2026-07-07 |
+| deep Cx8 | `integration/int-275m-cx8-intd256e8k-lr1.6e-3-r1/step40345` | `1.6e-3` | `1.6e-4` | launched 2026-07-07 |
+
 ## Tentative Larger-Model Midtraining Batch Plan
 
 These are planning targets, not yet smoke-tested settings. Keep batch choices in
@@ -197,4 +222,4 @@ recorded in `RUN_TRACKER.md` and `RUNS.md`.
 Open decisions after the initial baseline grid:
 
 - Confirm the larger-model smoke tests are stable and fast enough with the planned global batch settings.
-- Whether to add Qwen-like or integration-candidate source checkpoints after the baseline transfer check.
+- Whether to add Qwen-like source checkpoints after the baseline and integration-candidate transfer checks.
