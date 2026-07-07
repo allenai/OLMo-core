@@ -522,6 +522,11 @@ class CustomPipelineStage:
         assert self._step_micro_batch_size is not None, "Need to call prepare_step"
         assert self._step_seqlen is not None, "Need to call prepare_step"
         assert self.submod.d_model is not None
+        # TODO(pp-cp-seqlen-shape): _step_seqlen is the full (unsharded) sequence length, but with
+        # context parallelism the actual activations are sharded to local_cp_seq, so the P2P meta
+        # shape mismatches and trips the size assert in get_fwd_send_ops(). Derive the P2P shape
+        # after CP sharding (or reject CP + custom PP). Flagged for Tianhua; GPU-only, CP-coupled.
+        # (Codex)
         example_p2p_tensor = torch.empty(
             (self._step_micro_batch_size, self._step_seqlen, self.d_model),
             device="meta",
