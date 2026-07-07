@@ -7,6 +7,8 @@ which only runs on the GPU EP path) rather than in ``__init__``. This lets confi
 inspected, and FLOP-accounted without a GPU.
 """
 
+import torch
+
 from olmo_core.config import DType
 from olmo_core.nn.attention import AttentionConfig, AttentionType
 from olmo_core.nn.layer_norm import LayerNormConfig, LayerNormType
@@ -58,10 +60,12 @@ def test_moe_v2_model_constructs_on_cpu():
     assert len(model.blocks) == 2
     assert any(p.numel() > 0 for p in model.parameters())
 
-    # CUDA events are deferred (they'd raise on a CUDA-less machine if allocated at construction).
-    for block in model.blocks.values():
-        assert isinstance(block, MoEFusedV2TransformerBlock)
-        assert block._dtoh_event is None
+    # On a CUDA-less machine the comm-overlap events stay None (allocating torch.cuda.Event() would
+    # raise) — this is what lets construction work on CPU. On a GPU host they're allocated up front.
+    if not torch.cuda.is_available():
+        for block in model.blocks.values():
+            assert isinstance(block, MoEFusedV2TransformerBlock)
+            assert block._dtoh_event is None
 
     # Model-level FLOP accounting works without a GPU / without building the optimizer.
     assert model.num_flops_per_token(seq_len=512) > 0
