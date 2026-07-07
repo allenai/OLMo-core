@@ -203,6 +203,11 @@ def build_config(opts: argparse.Namespace, overrides: List[str]) -> base.Experim
         global_batch_size=base.GLOBAL_BATCH_SIZE,
         seed=base.SEED,
         num_workers=8,
+        # Eval-only backfills restore trainer state only to recover step/token
+        # counters before running evaluator callbacks. The training dataloader
+        # order is irrelevant for checkpoint evals, and in eval mode we build a
+        # cheap placeholder dataset instead of the original midtraining mixture.
+        ignore_fingerprint_mismatch=in_eval_mode,
     )
     train_module_config = base.build_train_module_config(
         sequence_length,
