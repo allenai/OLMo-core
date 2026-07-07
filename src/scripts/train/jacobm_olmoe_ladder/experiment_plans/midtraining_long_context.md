@@ -174,12 +174,12 @@ this document and W&B tags rather than in run names. The larger-model LR rule is
 `0.1 * canonical baseline best observed PT LR` for the matching model size and
 pretraining Cx multiple.
 
-| Model size | Planned global batch seq | Tokens / optimizer step | Initial systems target | Notes |
-| --- | ---: | ---: | --- | --- |
-| 275M | `128` | `1,048,576` | 4 GPUs, EP1, MB8 | Smoke-tested; Cx1/Cx8 grid complete, Cx2/Cx4 single points queued. |
-| 480M | `192` | `1,572,864` | 4 GPUs, EP1, MB8 | Smoke first on Cx8 at `8e-5`; fallback is 8 GPUs, MB4. |
-| 810M | `256` | `2,097,152` | 8 GPUs, EP1, MB4 | Smoke first on Cx8 at `4e-5`. |
-| 1.2B | `384` | `3,145,728` | 8 GPUs, EP1, MB4 | Smoke first on Cx8 at `4e-5`; fallback is MB2. |
+| Model size | Planned global batch seq | Tokens / optimizer step | Initial systems target | Smoke status | Notes |
+| --- | ---: | ---: | --- | --- | --- |
+| 275M | `128` | `1,048,576` | 4 GPUs, EP1, MB8 | passed | Cx1/Cx8 grid complete, Cx2/Cx4 single points queued. |
+| 480M | `192` | `1,572,864` | 4 GPUs, EP1, MB8 | [scheduled](https://beaker.org/ex/01KWZ9B2HS4RVK6ZFC5V80YGNT) | Cx8 smoke at `8e-5` for `2B` tokens; fallback is 8 GPUs, MB4. |
+| 810M | `256` | `2,097,152` | 8 GPUs, EP1, MB4 | [scheduled](https://beaker.org/ex/01KWZ9B9KHRJTW139P8PMV6A4F) | Cx8 smoke at `4e-5` for `2B` tokens. |
+| 1.2B | `384` | `3,145,728` | 8 GPUs, EP1, MB4 | [scheduled](https://beaker.org/ex/01KWZ9B4C3P04P6R5K63W8TMDF) | Cx8 smoke at `4e-5` for `2B` tokens; fallback is MB2. |
 
 Full one-LR larger-model grid after smoke validation:
 

@@ -74,11 +74,11 @@ Tentative larger-model midtraining batch targets: 480M uses global batch seq 192
 The working LR rule is 10% of the canonical baseline best observed pretraining
 LR at the matching `(model size, Cx)` point.
 
-| Model size | Smoke source | Smoke LR | Global batch seq | GPUs | EP / MB | Notes |
-| --- | --- | ---: | ---: | ---: | --- | --- |
-| 480M | baseline Cx8 best checkpoint | `8e-5` | `192` | 4 | EP1 / MB8 | First try; fallback is 8 GPUs, MB4 if memory or throughput is poor. |
-| 810M | baseline Cx8 best checkpoint | `4e-5` | `256` | 8 | EP1 / MB4 | Matches current pretraining memory posture closely while using larger MT batch. |
-| 1.2B | baseline Cx8 best checkpoint | `4e-5` | `384` | 8 | EP1 / MB4 | First try; fallback is MB2 if memory is too tight. |
+| Model size | Smoke source | Smoke LR | Max tokens | Global batch seq | GPUs | EP / MB | State | Beaker | Notes |
+| --- | --- | ---: | ---: | ---: | ---: | --- | --- | --- | --- |
+| 480M | baseline Cx8 best checkpoint | `8e-5` | `2B` | `192` | 4 | EP1 / MB8 | scheduled | [01KWZ9B2HS4RVK6ZFC5V80YGNT](https://beaker.org/ex/01KWZ9B2HS4RVK6ZFC5V80YGNT) | First try; fallback is 8 GPUs, MB4 if memory or throughput is poor. |
+| 810M | baseline Cx8 best checkpoint | `4e-5` | `2B` | `256` | 8 | EP1 / MB4 | scheduled | [01KWZ9B9KHRJTW139P8PMV6A4F](https://beaker.org/ex/01KWZ9B9KHRJTW139P8PMV6A4F) | Matches current pretraining memory posture closely while using larger MT batch. |
+| 1.2B | baseline Cx8 best checkpoint | `4e-5` | `2B` | `384` | 8 | EP1 / MB4 | scheduled | [01KWZ9B4C3P04P6R5K63W8TMDF](https://beaker.org/ex/01KWZ9B4C3P04P6R5K63W8TMDF) | First try; fallback is MB2 if memory is too tight. |
 
 ## Active / Queued Beaker Surface
 
