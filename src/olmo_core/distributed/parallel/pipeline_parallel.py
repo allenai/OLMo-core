@@ -768,6 +768,8 @@ class PipelineSchedule:
         loss_fn: Optional[Callable[[Any, torch.Tensor], torch.Tensor]] = None,
         num_microbatches: Optional[int] = None,
         forward_pull_ahead_extra_activations: Optional[List[int]] = None,
+        save_plot: bool = False,
+        plot_dir: Optional[str] = None,
     ):
         self.model_parts = model_parts
         self.stages = stages
@@ -814,10 +816,8 @@ class PipelineSchedule:
 
         # Opt-in (default off): the plot imports matplotlib, which is only in the `dev` extra, so
         # enabling it by default would break normal installs with ModuleNotFoundError.
-        if torch.distributed.get_rank() == 0 and os.environ.get(
-            "OLMO_PP_SCHEDULE_PLOT", "0"
-        ).lower() in {"1", "true", "yes"}:
-            plot_dir = os.environ.get("OLMO_PP_SCHEDULE_PLOT_DIR", _default_pp_schedule_plot_dir())
+        if torch.distributed.get_rank() == 0 and save_plot:
+            plot_dir = plot_dir or _default_pp_schedule_plot_dir()
             source = getattr(schedule_impl, "pipeline_order_source", "unknown")
             stem = "_".join(
                 [

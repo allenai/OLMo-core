@@ -330,6 +330,8 @@ class TransformerPipelineTrainModule(TrainModule):
             schedule_name=self._pp_config.schedule,
             num_microbatches=num_microbatches,
             forward_pull_ahead_extra_activations=self._pp_config.forward_pull_ahead_extra_activations,
+            save_plot=self._pp_config.save_schedule_plot,
+            plot_dir=self._pp_config.schedule_plot_dir,
         )
 
     def state_dict(self, *, optim: Optional[bool] = None) -> Dict[str, Any]:

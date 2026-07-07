@@ -59,6 +59,18 @@ class TransformerPipelineParallelConfig(PipelineParallelConfig):
     which re-uses receive buffers across micro-batches.
     """
 
+    save_schedule_plot: bool = False
+    """
+    If ``True``, rank 0 saves a diagnostic plot (and text dump) of the pipeline schedule when it is
+    built. Requires ``matplotlib`` (the ``dev`` extra), so it is off by default.
+    """
+
+    schedule_plot_dir: Optional[str] = None
+    """
+    Directory for the schedule plot when :data:`save_schedule_plot` is set. Defaults to a temporary
+    directory.
+    """
+
     split_points: Optional[List[int]] = None
     """
     A list of unique, increasing block indices that define how to split the model into stages.
