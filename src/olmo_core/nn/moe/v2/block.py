@@ -517,21 +517,24 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         self.tp_pg = None
         self._tp_enabled = False
 
-        # CUDA events for the EP/TBO device<->host comm overlap. Allocated lazily in
+        # CUDA events for the EP device<->host comm overlap. Allocated lazily in
         # install_cuda_events() (invoked from apply_ep()) rather than here, so the block can be
         # *constructed* on CPU — torch.cuda.Event() requires CUDA, and the events are only used on
         # the GPU expert-parallel forward path. install_cuda_events() reuses one object per event
         # (installed once) so torch.compile guards stay stable.
+        #
+        # This first set serves the single-batch paths (ep_sync_1d / no_ep) and the first batch of
+        # two-batch overlap (TBO); the ``_tbo1`` set below is the second overlapped TBO batch.
         self._dtoh_event: torch.cuda.Event = None  # type: ignore[assignment]
         self._dtoh_event_send: torch.cuda.Event = None  # type: ignore[assignment]
         self._dtoh_event_recv: torch.cuda.Event = None  # type: ignore[assignment]
         self._before_rev_all2all_event: torch.cuda.Event = None  # type: ignore[assignment]
 
-        # same for tbo1
-        self._dtoh_event1: torch.cuda.Event = None  # type: ignore[assignment]
-        self._dtoh_event_send1: torch.cuda.Event = None  # type: ignore[assignment]
-        self._dtoh_event_recv1: torch.cuda.Event = None  # type: ignore[assignment]
-        self._before_rev_all2all_event1: torch.cuda.Event = None  # type: ignore[assignment]
+        # Second TBO batch (see above).
+        self._dtoh_event_tbo1: torch.cuda.Event = None  # type: ignore[assignment]
+        self._dtoh_event_send_tbo1: torch.cuda.Event = None  # type: ignore[assignment]
+        self._dtoh_event_recv_tbo1: torch.cuda.Event = None  # type: ignore[assignment]
+        self._before_rev_all2all_event_tbo1: torch.cuda.Event = None  # type: ignore[assignment]
 
         self.num_local_routed_experts: Optional[int] = (
             self.routed_experts.num_experts if self.routed_experts else None
@@ -733,10 +736,10 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         self._dtoh_event_recv = None  # type: ignore[assignment]
         self._before_rev_all2all_event = None  # type: ignore[assignment]
 
-        self._dtoh_event1 = None  # type: ignore[assignment]
-        self._dtoh_event_send1 = None  # type: ignore[assignment]
-        self._dtoh_event_recv1 = None  # type: ignore[assignment]
-        self._before_rev_all2all_event1 = None  # type: ignore[assignment]
+        self._dtoh_event_tbo1 = None  # type: ignore[assignment]
+        self._dtoh_event_send_tbo1 = None  # type: ignore[assignment]
+        self._dtoh_event_recv_tbo1 = None  # type: ignore[assignment]
+        self._before_rev_all2all_event_tbo1 = None  # type: ignore[assignment]
 
     def install_cuda_events(self):
         # Idempotent: allocate the events once (keeping stable object ids for torch.compile), so
@@ -749,10 +752,10 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         self._dtoh_event_recv = cast(torch.cuda.Event, torch.cuda.Event())
         self._before_rev_all2all_event = cast(torch.cuda.Event, torch.cuda.Event())
 
-        self._dtoh_event1 = cast(torch.cuda.Event, torch.cuda.Event())
-        self._dtoh_event_send1 = cast(torch.cuda.Event, torch.cuda.Event())
-        self._dtoh_event_recv1 = cast(torch.cuda.Event, torch.cuda.Event())
-        self._before_rev_all2all_event1 = cast(torch.cuda.Event, torch.cuda.Event())
+        self._dtoh_event_tbo1 = cast(torch.cuda.Event, torch.cuda.Event())
+        self._dtoh_event_send_tbo1 = cast(torch.cuda.Event, torch.cuda.Event())
+        self._dtoh_event_recv_tbo1 = cast(torch.cuda.Event, torch.cuda.Event())
+        self._before_rev_all2all_event_tbo1 = cast(torch.cuda.Event, torch.cuda.Event())
 
     def compute_metrics(
         self, reset: bool = True
