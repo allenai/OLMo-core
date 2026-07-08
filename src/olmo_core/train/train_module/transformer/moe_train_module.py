@@ -151,7 +151,7 @@ class MoEV2TransformerTrainModule(TrainModule):
         #         "attach the global config before constructing the train module."
         #     )
 
-        ######################### Validate arguments. [BEGIN] #########################
+        # Validate arguments.
         if rank_microbatch_size % max_sequence_length != 0:
             raise OLMoConfigurationError(
                 f"'rank_microbatch_size' ({rank_microbatch_size:,d} tokens) must be divisible by "
@@ -205,8 +205,6 @@ class MoEV2TransformerTrainModule(TrainModule):
                 cp_config.degree > 1
             ), "Context parallelism requires a degree > 1, otherwise use None"
             raise NotImplementedError("Context parallelism is not implemented")
-        # if ac_config is not None:
-        #     raise OLMoConfigurationError("In MoEV2TransformerTrainModule, activation checkpointing is controlled by the model, not the train module.")
         if float8_config is not None:
             raise NotImplementedError("Float8 quantization is not implemented")
 
@@ -214,8 +212,6 @@ class MoEV2TransformerTrainModule(TrainModule):
             dp_config is not None
         ), "Data parallel config is required for MoEV2TransformerTrainModule"
         assert dp_config.name == "ddp", "Data parallel config must be 'ddp'"
-
-        ########################## Validate arguments. [END] ##########################
 
         if is_distributed():
             self._build_world_mesh(
@@ -401,9 +397,6 @@ class MoEV2TransformerTrainModule(TrainModule):
         device_type = device_type or get_default_device().type
         dp_world_size = get_world_size()
 
-        # no config, Pure DP
-        # if pp is None and tp is None and cp is None and dp is None and ep is None:
-        #     self.world_mesh = init_device_mesh(device_type, (dp_world_size,), mesh_dim_names=(MeshDimName.dp,))
         #     return
 
         if dp is None:
@@ -473,7 +466,6 @@ class MoEV2TransformerTrainModule(TrainModule):
             mesh=mesh,
             mesh_dim_names=tuple(names),
         )
-        # self.dense_mesh = init_device_mesh(device_type, tuple(dims), mesh_dim_names=tuple(names))
         log.info(f"Built dense_mesh {get_device_mesh_info(self.dense_mesh)}")
 
         if ep is None:  # EP not used
@@ -527,7 +519,6 @@ class MoEV2TransformerTrainModule(TrainModule):
                 mesh_dim_names=tuple(names),
             )
             self.moe_mesh = device_mesh
-            # self.moe_mesh = init_device_mesh(device_type, tuple(dims), mesh_dim_names=tuple(names))
 
             log.info(f"Built moe_mesh{get_device_mesh_info(self.moe_mesh)}")
 
@@ -560,7 +551,6 @@ class MoEV2TransformerTrainModule(TrainModule):
             # max(self.rank_microbatch_size // 2, 1 * self.max_sequence_length),
             # 1 * self.max_sequence_length,
             max_sequence_length=self.max_sequence_length,
-            #  fixed_sequence_length=self.tp_enabled,
         )
 
     @property
@@ -601,11 +591,11 @@ class MoEV2TransformerTrainModule(TrainModule):
         # Validate batch size.
         dp_ws = get_world_size(self.trainer.dp_process_group)
         if self.trainer.global_batch_size % (self.rank_microbatch_size * dp_ws) != 0:
-            # raise OLMoConfigurationError(
-            #     f"global batch size ({self.trainer.global_batch_size:,d}) must be divisible by "
-            #     f"micro-batch size ({self.rank_microbatch_size:,d}) x DP world size ({dp_ws})"
-            # )
-            pass  # BUG: when batch size warmup + load checkpoint
+            # TODO(moe-train-module-bsz-divisibility): this should raise when the global batch size
+            # isn't divisible by rank_microbatch_size * dp_world_size, but the check was disabled
+            # because it tripped on batch-size warmup + checkpoint load. Restore a correct check
+            # (accounting for warmup) instead of silently accepting it. Flagged for Tianhua.
+            pass
 
         if self.pp_enabled:
             # Initialize pipeline schedule.
@@ -698,6 +688,16 @@ class MoEV2TransformerTrainModule(TrainModule):
         )
         return slots_by_part
 
+    # TODO(moe-train-module-checkpoint): this custom "direct" checkpoint path is incomplete and
+    # flagged for Tianhua (exercisable only in a real MoEV2 run with checkpointing, so deferred):
+    #   (a) it doesn't integrate with the standard Checkpointer — `Checkpointer.save()/load()` call
+    #       `state_dict_to_save()`/`state_dict_to_load()`/`state_dict()`, which raise here, so a run
+    #       using the normal checkpoint callback fails on the first save/resume. (Codex)
+    #   (b) `save_state_dict_direct` serializes only `optim.state_dict()`, so router `score_bias`
+    #       buffers (bias_gamma load-balancing) aren't saved → reset to zeros on resume. (Codex)
+    #   (c) `eval_only` loads don't refresh the rowwise-FP8 prequantized caches → stale FP8 on the
+    #       first forwards after load. (Codex)
+    #   (d) `eval_only` loads silently skip a missing param key despite `strict=True`. (Codex)
     def load_state_dict(self, state_dict: Dict[str, Any]) -> None:
         raise NotImplementedError("Use load_state_dict_direct instead")
 
@@ -726,11 +726,6 @@ class MoEV2TransformerTrainModule(TrainModule):
         for key, value in state_dict.items():
             if key.endswith(".main"):
                 main_param_sz += value.numel()
-
-        # this is the theretical model param size calculated from config before PP split
-        # model_param_sz = self.model_parts[0].num_params
-
-        # assert main_param_sz == model_param_sz, f"Main param size {main_param_sz} != model param size {model_param_sz}"
 
         dir = _prepare_env_for_save(dir, process_group=process_group, save_overwrite=save_overwrite)
         planner = FlatSavePlanner(dedup_save_to_lowest_rank=True)
@@ -819,7 +814,6 @@ class MoEV2TransformerTrainModule(TrainModule):
                 checkpoint_id=dir,
                 storage_reader=reader,
                 process_group=process_group,
-                # planner=FlatLoadPlanner(),
             )
 
             optim.load_state_dict(sd_to_load)
@@ -920,11 +914,11 @@ class MoEV2TransformerTrainModule(TrainModule):
             )
 
             if (~instance_mask).all():
-                print(
-                    f"[Warning] rank {dist.get_rank()} All instances ({instance_mask.shape}) in the micro-batch are masked out"
+                log.warning(
+                    "rank %s: all instances (%s) in the micro-batch are masked out",
+                    dist.get_rank(),
+                    instance_mask.shape,
                 )
-
-        #############################
 
         if not self.pp_enabled:
             # Calculate how many tokens are going to be used in the loss.
@@ -941,7 +935,7 @@ class MoEV2TransformerTrainModule(TrainModule):
                 )  # shifted labels does not count last token
 
             if batch_num_tokens_for_loss.item() == 0:
-                print(f"[Warning] rank {dist.get_rank()} batch_num_tokens_for_loss == 0")
+                log.warning("rank %s: batch_num_tokens_for_loss == 0", dist.get_rank())
 
             batch_num_tokens_for_loss = move_to_device(batch_num_tokens_for_loss, self.device)
 
@@ -1008,7 +1002,7 @@ class MoEV2TransformerTrainModule(TrainModule):
                 )  # shifted labels does not count last token
 
             if batch_num_tokens_for_loss == 0:
-                print(f"[Warning] rank {dist.get_rank()} batch_num_tokens_for_loss == 0")
+                log.warning("rank %s: batch_num_tokens_for_loss == 0", dist.get_rank())
 
             # Run pipeline schedule.
             input_ids, labels, model_kwargs = self._prepare_batch(batch, batch["labels"])
@@ -1052,8 +1046,6 @@ class MoEV2TransformerTrainModule(TrainModule):
             for idx, model in enumerate(self.model_parts):
                 model.finalize_grad_reduce()
 
-        #############################
-
         for model in self.model_parts:
             model.post_batch(dry_run=dry_run)
 
@@ -1072,8 +1064,6 @@ class MoEV2TransformerTrainModule(TrainModule):
         with maybe_nvtx_annotate("record_metrics"):
             if self.pp_enabled:
                 ce_batch_loss = self.reduce_send_recv(ce_batch_loss)
-                # if ce_batch_loss > 20 or ce_batch_loss < 0.05:
-                #     log.warning(f"Irregular CE loss detected: {ce_batch_loss.item()}")
                 self.record_ce_loss(ce_batch_loss)
                 optim.latest_loss = ce_batch_loss
             else:
@@ -1121,8 +1111,6 @@ class MoEV2TransformerTrainModule(TrainModule):
                     )
 
         # dist.barrier()
-        # if dist.get_rank() == 0:
-        #     print("-------train batch end--------")
 
     def eval_batch(
         self, batch: Dict[str, Any], labels: Optional[torch.Tensor] = None
@@ -1225,6 +1213,19 @@ class MoEV2TransformerTrainModule(TrainModule):
 
                 return final_lm_output
 
+    # TODO(moe-train-module-pp-eval): the pipeline-parallel eval path has several gaps, flagged for
+    # Tianhua (needs a real PP eval run to exercise, so deferred):
+    #   (a) non-final-stage ranks produce no last-stage output, so eval_batch() returns None there,
+    #       but EvaluatorCallback asserts an LMOutputWithLoss on every rank → fails off the last
+    #       stage instead of skipping / propagating the final-stage losses. (Codex)
+    #   (b) this reuses `train_pp_schedule`, whose `_n_microbatches` came from the training global
+    #       batch; PipelineSchedule.step() raises if the eval batch has fewer rows → use an
+    #       eval-specific microbatch count. (Codex)
+    #   (c) padding to the PP degree repeats the last example; slicing `schedule_outputs[stage]` (a
+    #       list of microbatch outputs) by original_batch_size doesn't trim the duplicated rows
+    #       inside each loss tensor → evaluators count padded samples as real. (Codex)
+    #   (d) intra-doc-masking kwargs (doc_lens/max_doc_lens) forwarded here are rejected by
+    #       PipelineSchedule._split_inputs (see TODO(pp-split-doc-lens) in pipeline_schedule.py). (Codex)
     def run_pipeline_eval(
         self,
         input_ids: torch.Tensor,
@@ -1258,7 +1259,6 @@ class MoEV2TransformerTrainModule(TrainModule):
                 target=padded_labels,
                 forward_only=True,  # <<<--- eval mode
                 # kwargs from now ---
-                # loss_div_factor=batch_num_tokens_for_loss,
                 labels=padded_labels,
                 **kwargs,
             )
@@ -1292,7 +1292,6 @@ class MoEV2TransformerTrainModule(TrainModule):
                     continue
                 _alloc_storage(param._mp_param, param.size())
                 with torch.no_grad():
-                    # assert param.data == param._fp_param, "param.data should point to param._fp_param before copy"
                     assert (
                         param.data.dtype == torch.float32
                     ), "param.data should be float32 before copy"
@@ -1327,8 +1326,6 @@ class MoEV2TransformerTrainModule(TrainModule):
         optim = self._require_optimizer()
 
         # dist.barrier()
-        # if dist.get_rank() == 0:
-        #     print("-------optim_step start--------")
 
         if self.reduce_scatter_grads:
             pass
@@ -1351,8 +1348,6 @@ class MoEV2TransformerTrainModule(TrainModule):
                 model.refresh_rowwise_fp8_cache()
 
         # dist.barrier()
-        # if dist.get_rank() == 0:
-        #     print("-------optim step done--------")
 
         # self._copy_full_precision_to_low_precision_params()
 
@@ -1665,7 +1660,6 @@ class MoEV2TransformerTrainModule(TrainModule):
             assert (
                 self.world_mesh["dense"] is not None
             ), "Dense mesh must be built before applying expert parallelism"
-            # param_dtype = dp_config.param_dtype.as_pt() if dp_config.param_dtype is not None else None
             dp_mesh = self.world_mesh["dense"]["dp"]
             ep_mesh = None
             # for m in model_parts:
@@ -1683,7 +1677,6 @@ class MoEV2TransformerTrainModule(TrainModule):
                 )
             log.info(f"Applied '{ac_config.mode}' activation checkpointing to the model")
 
-        # ac_budget = 0.05
         # torch._functorch.config.activation_memory_budget = ac_budget
 
         self.init_model_weights(
@@ -1750,7 +1743,6 @@ class MoEV2TransformerTrainModule(TrainModule):
                 model_part_idx=model_part_idx,
             )
             # for n, p in m.named_parameters():
-            #     print(f'{n} {p.shape}: mean={p.data.mean().item()}, std={p.data.std().item()}')
 
         self._prewarm_ep_no_sync_symm_buffers(
             model_parts=model_parts,
@@ -1830,24 +1822,6 @@ class MoEV2TransformerTrainModule(TrainModule):
             log.warning("Skipping model compilation since CUDA is not available")
 
     def reduce_send_recv(self, x: Optional[torch.Tensor] = None) -> torch.Tensor:
-        # assert self.pp_enabled and self._pp_config is not None
-
-        # if self.pp_group_rank == self.pp_final_stage_rank:
-        #     assert x is not None
-        #     # DP reduce (mean)
-        #     x = x / self._reduce_divide_factor
-        #     dist.all_reduce(x, group=self.dp_process_group)
-        #     x = x / self.dp_world_size * self._reduce_divide_factor
-        # else:
-        #     assert x is None
-        #     x = torch.empty([], device=self.device, dtype=torch.float32)
-
-        # # Broadcast from final stage to all PP ranks.
-        # handle = dist.broadcast(x, src=get_global_rank(self.pp_final_stage_rank, group=self.pp_group), group=self.pp_group, async_op=True)
-        # handle.wait()
-        # # print(f'{get_rank()} (pp group rank {self.pp_group_rank}) got {x.item()}')
-        # return x
-
         assert (
             self.pp_enabled and self._pp_config is not None
         ), "reduce_send_recv is only valid when PP is enabled"
@@ -1874,16 +1848,8 @@ class MoEV2TransformerTrainModule(TrainModule):
         send_ops: List[dist.P2POp] = []
         recv_ops: List[dist.P2POp] = []
         if src_rank is not None:
-            # print(
-            #     f"Rank {get_rank()} (pp group rank {self.pp_group_rank}) receiving from rank "
-            #     f"{get_global_rank(src_rank, group=self.pp_group)} (pp group rank {src_rank})"
-            # )
             recv_ops.append(dist.P2POp(dist.irecv, x, group=self.pp_group, group_peer=src_rank))
         if dst_rank is not None:
-            # print(
-            #     f"Rank {get_rank()} (pp group rank {self.pp_group_rank}) sending to rank "
-            #     f"{get_global_rank(dst_rank, group=self.pp_group)} (pp group rank {dst_rank})"
-            # )
             send_ops.append(dist.P2POp(dist.isend, x, group=self.pp_group, group_peer=dst_rank))
 
         if len(recv_ops) > 0:
@@ -1896,5 +1862,4 @@ class MoEV2TransformerTrainModule(TrainModule):
             for req in send_reqs:
                 req.wait()
 
-        # print(f'{get_rank()} (pp group rank {self.pp_group_rank}) got {x.item()}')
         return x
