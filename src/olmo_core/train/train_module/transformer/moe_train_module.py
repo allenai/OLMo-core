@@ -698,6 +698,10 @@ class MoEV2TransformerTrainModule(TrainModule):
     #   (c) `eval_only` loads don't refresh the rowwise-FP8 prequantized caches → stale FP8 on the
     #       first forwards after load. (Codex)
     #   (d) `eval_only` loads silently skip a missing param key despite `strict=True`. (Codex)
+    #   (e) `eval_only` loads ignore `config.load_key_mapping`: `_resolve_model_checkpoint_key` only
+    #       probes the current param name (and its `module.` prefix), so a checkpoint saved before a
+    #       parameter rename can't be loaded even though the standard transformer train modules honor
+    #       the mapping. (Codex)
     def load_state_dict(self, state_dict: Dict[str, Any]) -> None:
         raise NotImplementedError("Use load_state_dict_direct instead")
 
@@ -1674,6 +1678,7 @@ class MoEV2TransformerTrainModule(TrainModule):
                     block_interval=ac_config.block_interval,
                     modules=ac_config.modules,
                     activation_memory_budget=ac_config.activation_memory_budget,
+                    determinism_check=ac_config.determinism_check,
                 )
             log.info(f"Applied '{ac_config.mode}' activation checkpointing to the model")
 
