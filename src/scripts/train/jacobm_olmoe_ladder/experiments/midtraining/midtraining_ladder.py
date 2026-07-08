@@ -210,6 +210,7 @@ def build_config(opts: argparse.Namespace, overrides: List[str]) -> base.Experim
         max_duration_tokens=max_duration_tokens,
         in_eval_mode=in_eval_mode,
     )
+    train_module_config.reset_optimizer_states_on_load = not opts.midtrain_load_optim_state
     train_module_config.scheduler = ComposableScheduler(
         units=SchedulerUnits.steps,
         stages=[
@@ -252,6 +253,7 @@ def build_config(opts: argparse.Namespace, overrides: List[str]) -> base.Experim
 
     finalize_midtraining_config(config, opts, max_duration_tokens)
     log.info("Fresh optimizer: %s", not opts.midtrain_load_optim_state)
+    log.info("Reset optimizer states on load: %s", train_module_config.reset_optimizer_states_on_load)
     return config
 
 
