@@ -239,7 +239,7 @@ jobs:
           # (src/test/nn/moe/v2) also run here since they need TransformerEngine + the same
           # custom kernels, which the torch 2.9 image lacks.
           - name: Test MoE kernels (GPU, torch 2.10)
-            image: akshitab/olmo-core-tch2100cu130-2026-07-03 #tianhuat/olmo-core-torch210-2404-cu128
+            image: tianhuat/olmo-core-torch210-2404-cu128 #akshitab/olmo-core-tch2100cu130-2026-07-03
             gpus: 2
             run: |
               pytest -v --color=yes --durations=3 -m gpu \
