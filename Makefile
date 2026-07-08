@@ -111,6 +111,23 @@ docker-image :
 		-t olmo-core:$(IMAGE_TAG) .
 	@docker run --rm olmo-core:$(IMAGE_TAG) python -c \
 		'import torch; import transformer_engine.pytorch; import flash_attn; import flash_attn_3.flash_attn_interface'
+	@if [ -n "$(NVSHMEM_PIP_SPEC)" ]; then \
+		echo ""; echo "── NVSHMEM diagnostic (symm_mem_vdev2d build prereqs) ──"; \
+		docker run --rm olmo-core:$(IMAGE_TAG) bash -c '\
+			hdr=$$(find /opt/conda -path "*nvidia/nvshmem/include/nvshmem.h" 2>/dev/null | head -1); \
+			dev=$$(find /opt/conda -path "*nvidia/nvshmem*/libnvshmem_device.a" 2>/dev/null | head -1); \
+			host=$$(find /opt/conda -path "*nvidia/nvshmem*/libnvshmem_host.so*" 2>/dev/null | head -1); \
+			echo "nvshmem.h            : $${hdr:-MISSING}"; \
+			echo "libnvshmem_device.a  : $${dev:-MISSING}"; \
+			echo "libnvshmem_host.so.* : $${host:-MISSING}"; \
+			if [ -n "$$hdr" ] && [ -n "$$dev" ] && [ -n "$$host" ]; then \
+				echo "OK: NVSHMEM build prereqs present (pip wheel is sufficient for symm_mem_vdev2d)."; \
+			else \
+				echo "WARNING: NVSHMEM incomplete (see MISSING above). The symm_mem_vdev2d build will fail;"; \
+				echo "         install the full NVSHMEM SDK and set NVSHMEM_HOME instead of the pip wheel."; \
+			fi'; \
+		echo ""; \
+	fi
 	@echo "✓ Image validated. Python environment:"
 	@echo ""
 	@docker run --rm olmo-core:$(IMAGE_TAG) pip list
