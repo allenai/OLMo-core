@@ -16,10 +16,11 @@ from olmo_core.nn.transformer import (
     TransformerType,
 )
 from olmo_core.optim import MoEFusedV2OptimizerConfig
-from olmo_core.testing import run_distributed_test
+from olmo_core.testing import requires_multi_gpu, run_distributed_test
 from olmo_core.train.train_module import MoEV2TransformerTrainModuleConfig
 from olmo_core.train.train_module.transformer import (
     TransformerDataParallelConfig,
+    TransformerExpertParallelConfig,
     TransformerPipelineParallelConfig,
 )
 
@@ -102,5 +103,34 @@ def test_moe_v2_train_module_construction_no_ep():
         _run_construct_no_ep,
         world_size=2,
         backend="gloo",
+        start_method="spawn",
+    )
+
+
+def _run_construct_ep():
+    model = _tiny_model_config().build(init_device="cuda")
+    config = MoEV2TransformerTrainModuleConfig(
+        rank_microbatch_size=512,
+        max_sequence_length=512,
+        optim=MoEFusedV2OptimizerConfig(lr=1e-3),
+        dp_config=TransformerDataParallelConfig(name=DataParallelType.ddp),
+        ep_config=TransformerExpertParallelConfig(degree=2),
+    )
+    # eval_only=True skips the optimizer build; this covers wiring expert parallelism through the
+    # train module (moe mesh + apply_ep sharding the experts across the two ranks + DP wrapping).
+    train_module = config.build(model, device=torch.device("cuda"), eval_only=True)
+
+    assert len(train_module.model_parts) == 1  # no pipeline parallelism
+    assert train_module.moe_mesh is not None
+    assert train_module.ep_mp_group is not None
+    assert train_module.num_flops_per_token(seq_len=512) > 0
+
+
+@requires_multi_gpu
+def test_moe_v2_train_module_construction_ep():
+    run_distributed_test(
+        _run_construct_ep,
+        world_size=2,
+        backend="nccl",
         start_method="spawn",
     )
