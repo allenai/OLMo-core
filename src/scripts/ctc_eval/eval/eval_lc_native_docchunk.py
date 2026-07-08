@@ -246,7 +246,14 @@ def main():
 
     @torch.no_grad()
     def generate_one(prefill):
-        gm.prepare_inference_cache(1, args.max_length)  # (re)set the cache cursor to 0 per example
+        # Size the KV cache to THIS example's actual need (prefill + decode budget), not the full
+        # --max-length: at long context a full-max_length cache wastes GPU memory and starves the
+        # FlexAttention prefill kernel. The landmark decode inserts a landmark token every mem_freq
+        # generated tokens, so budget for those extra slots. The cache manager only reallocates to GROW
+        # (is_reusable keeps a larger buffer), so this never shrinks mid-run. Capped at --max-length.
+        lm_overhead = (max_new_tokens // args.mem_freq + 2) if args.variant == "landmark" else 0
+        cache_len = min(len(prefill) + max_new_tokens + lm_overhead + 1, args.max_length)
+        gm.prepare_inference_cache(1, cache_len)  # (re)set the cache cursor to 0 per example
         leftpad = torch.zeros(1, dtype=torch.int32, device=device)
         if args.variant in ("dense", "full"):
             # Dense / full: prefill once (chunked mask applied + K,V cached), then single-token greedy

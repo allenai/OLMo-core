@@ -64,6 +64,14 @@ _FLEX_MIN_SEQ_LEN = 8192
 # it via ``flex_block_size`` to let sub-128-token chunks realize their block-sparsity.
 _FLEX_DEFAULT_BLOCK_SIZE = 128
 
+# Above this sequence length the dense materialized ``(B, 1, T, T)`` additive mask is too big to be a
+# safe fallback: it needs ~``2 * B * T**2`` bytes (bf16) -- ~44 GiB at T=64k, ~176 GiB at T=128k -- so
+# if FlexAttention itself OOMs at long context, materializing the dense mask would just OOM again
+# (fatally). At/below this length the dense mask is small enough (<= ~2 GiB) to be a real fallback, so
+# the historical <=32k behavior is preserved exactly; beyond it we raise a clear, actionable error
+# instead of allocating the T x T tensor. See :meth:`DocumentChunkedAttention._sdpa_masked`.
+_DENSE_MASK_MAX_SEQ_LEN = 32768
+
 # Single-slot BlockMask cache shared across all attention layers within one forward pass. The chunked
 # block mask depends only on ``chunk_ids`` (the SAME tensor threaded to every block), the sequence
 # length, the pattern, and the flex block size -- all identical across layers -- so it is built once by
@@ -226,6 +234,76 @@ class DocumentChunkedAttention(Attention):
             torch.full((), finfo_min, dtype=dtype, device=device),
         )
 
+    def _run_flex_attention(
+        self,
+        q: torch.Tensor,
+        k: torch.Tensor,
+        v: torch.Tensor,
+        chunk_ids: torch.Tensor,
+        mask_mod,
+        *,
+        B: int,
+        T: int,
+    ) -> Optional[torch.Tensor]:
+        """
+        Run the block-sparse FlexAttention path once (building/reusing the shared BlockMask).
+
+        On a CUDA OOM the failed BlockMask and any fragmentation are released
+        (:func:`torch.cuda.empty_cache`) and the kernel is retried **once** -- long-context evals often
+        OOM only because a slightly-too-large transient could not be carved out, and freeing the cached
+        block mask recovers enough headroom to succeed. If it still OOMs, or a non-OOM flex error is
+        raised, this returns ``None`` (the sticky ``_force_eager_mask`` flag is set so the rest of the
+        forward skips flex) and the caller decides the fallback. Never materializes a dense mask itself.
+
+        :returns: The attention output as ``(B, T, H, D)``, or ``None`` if flex could not run.
+        """
+        # Build the block mask once per forward and reuse it across all layers (they share the same
+        # chunk_ids / T / pattern / block size). Key on the stashed chunk_ids identity so a new forward
+        # rebuilds it.
+        cids = self._chunk_ids
+        key = (
+            id(cids),
+            cids.data_ptr(),
+            cids._version,
+            B,
+            T,
+            self.flex_block_size,
+            self.cross_doc_mode,
+            str(q.device),
+        )
+        for attempt in range(2):
+            try:
+                block_mask = _get_or_build_block_mask(
+                    mask_mod, key, B=B, T=T, device=q.device, block_size=self.flex_block_size
+                )
+                out = _flex_attention(
+                    q.contiguous(),
+                    k.contiguous(),
+                    v.contiguous(),
+                    block_mask=block_mask,
+                    scale=self.softmax_scale,
+                )
+                return out.transpose(1, 2).contiguous()
+            except torch.cuda.OutOfMemoryError:  # pragma: no cover - CUDA-only long-context path
+                # Drop the (possibly half-built) cached block mask and free fragments, then retry once.
+                _BLOCK_MASK_CACHE.pop("cur", None)
+                torch.cuda.empty_cache()
+                if attempt == 1:
+                    self._force_eager_mask = True
+                    log.warning(
+                        f"FlexAttention OOM at seq_len={T} even after empty_cache; giving up on the "
+                        "block-sparse path for this DocumentChunkedAttention forward."
+                    )
+                    return None
+            except Exception as e:  # pragma: no cover - fall back if flex fails at runtime
+                self._force_eager_mask = True
+                log.warning(
+                    f"FlexAttention failed ({e}); falling back to the dense chunked mask "
+                    "for this DocumentChunkedAttention layer."
+                )
+                return None
+        return None
+
     def sdpa(
         self,
         q: torch.Tensor,
@@ -305,45 +383,25 @@ class DocumentChunkedAttention(Attention):
         if _HAS_FLEX and q.is_cuda and T >= _FLEX_MIN_SEQ_LEN and not self._force_eager_mask:
             mask_mod = build_chunked_mask_mod(self._pattern, chunk_ids)
             if mask_mod is not None:
-                try:
-                    # Build the block mask once per forward and reuse it across all layers (they share
-                    # the same chunk_ids / T / pattern / block size). Key on the stashed chunk_ids
-                    # identity so a new forward rebuilds it.
-                    cids = self._chunk_ids
-                    key = (
-                        id(cids),
-                        cids.data_ptr(),
-                        cids._version,
-                        B,
-                        T,
-                        self.flex_block_size,
-                        self.cross_doc_mode,
-                        str(q.device),
-                    )
-                    block_mask = _get_or_build_block_mask(
-                        mask_mod,
-                        key,
-                        B=B,
-                        T=T,
-                        device=q.device,
-                        block_size=self.flex_block_size,
-                    )
-                    out = _flex_attention(
-                        q.contiguous(),
-                        k.contiguous(),
-                        v.contiguous(),
-                        block_mask=block_mask,
-                        scale=self.softmax_scale,
-                    )
-                    return out.transpose(1, 2).contiguous()
-                except Exception as e:  # pragma: no cover - fall back if flex fails at runtime
-                    self._force_eager_mask = True
-                    log.warning(
-                        f"FlexAttention failed ({e}); falling back to the dense chunked mask "
-                        "for this DocumentChunkedAttention layer."
+                out = self._run_flex_attention(q, k, v, chunk_ids, mask_mod, B=B, T=T)
+                if out is not None:
+                    return out
+                # FlexAttention gave up (OOM even after a cache-clearing retry, or a non-OOM error).
+                # At long context the dense (B,1,T,T) materialization below would allocate ~2*B*T**2
+                # bytes and just OOM again fatally, so fail loudly with an actionable message instead
+                # of the cryptic allocator OOM. At/below _DENSE_MASK_MAX_SEQ_LEN the dense mask is small
+                # enough to be a genuine fallback (preserving the historical <=32k behavior).
+                if T > _DENSE_MASK_MAX_SEQ_LEN:
+                    gib = 2 * B * T * T / 2**30
+                    raise RuntimeError(
+                        f"DocumentChunkedAttention: FlexAttention could not run at seq_len={T} and "
+                        f"the dense fallback mask would need ~{gib:.0f} GiB (B={B}). Reduce the eval "
+                        f"max_length / KV-cache size to free GPU memory (the dense T x T fallback is "
+                        f"only viable at seq_len <= {_DENSE_MASK_MAX_SEQ_LEN})."
                     )
 
-        # Fallback: dense materialized additive mask (CPU/tests, unsupported pattern, or flex error).
+        # Fallback: dense materialized additive mask (CPU/tests, unsupported pattern, or flex error at
+        # short context). Guarded above so it is never reached with a fatally large T x T mask.
         attn_mask = self._build_additive_mask(chunk_ids, dtype=q.dtype)
         out = F.scaled_dot_product_attention(
             q,

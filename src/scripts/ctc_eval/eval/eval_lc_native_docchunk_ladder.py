@@ -385,7 +385,16 @@ def main():
 
     @torch.no_grad()
     def generate_one(prefill, max_new_tokens, answer_complete):
-        gm.prepare_inference_cache(1, args.max_length)  # (re)set the cache cursor to 0 per example
+        # Size the KV cache to THIS example's actual need (prefill + decode budget), not the raised
+        # --max-length. At the xlong 64k/128k rungs the runner raises --max-length to cover the longest
+        # rung, so a full-max_length cache wastes ~10 GiB at the 64k rung and starves the FlexAttention
+        # prefill kernel (the OOM that killed the docchunk xlong jobs). The landmark decode also inserts
+        # a landmark token every mem_freq generated tokens, so budget for those extra cache slots. The
+        # cache manager only reallocates when it needs to GROW (is_reusable keeps a larger buffer), so
+        # this never shrinks a cache mid-rung. Capped at args.max_length as a hard ceiling.
+        lm_overhead = (max_new_tokens // args.mem_freq + 2) if is_landmark else 0
+        cache_len = min(len(prefill) + max_new_tokens + lm_overhead + 1, args.max_length)
+        gm.prepare_inference_cache(1, cache_len)  # (re)set the cache cursor to 0 per example
         leftpad = torch.zeros(1, dtype=torch.int32, device=device)
         if not is_landmark:
             # Dense / hierarchical / full: prefill once (chunked mask applied + K,V cached for the
