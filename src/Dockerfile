@@ -58,6 +58,16 @@ ARG NCCL_PIP_SPEC=""
 RUN if [ -n "${NCCL_PIP_SPEC}" ]; then \
         pip install --no-cache-dir --no-deps --force-reinstall "${NCCL_PIP_SPEC}"; fi
 
+# Optionally install NVSHMEM. The symm_mem_vdev2d rowwise-EP extension links NVSHMEM's host + device
+# libs (libnvshmem_host.so.3 + libnvshmem_device.a) and headers; the RMA image targets install it so
+# `python -m olmo_core.kernels.build_symm_mem_vdev2d_ext` can compile the extension at runtime (the
+# package source is cloned at launch, so the ext can't be prebuilt into the image). '_find_nvshmem_paths'
+# discovers it under the conda site-packages (nvidia/nvshmem) automatically. '--no-deps' keeps pip from
+# touching torch's pinned CUDA stack. Empty by default.
+ARG NVSHMEM_PIP_SPEC=""
+RUN if [ -n "${NVSHMEM_PIP_SPEC}" ]; then \
+        pip install --no-cache-dir --no-deps "${NVSHMEM_PIP_SPEC}"; fi
+
 # Install grouped-gemm.
 # NOTE: right now we need to build with CUTLASS so we can pass batch sizes on GPU.
 # See https://github.com/tgale96/grouped_gemm/pull/21

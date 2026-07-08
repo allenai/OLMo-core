@@ -64,6 +64,9 @@ NCCL_PIP_SPEC =
 # NCCL version exposing the RMA one-sided window signal API (ncclPutSignal / ncclWaitSignal) that
 # nccl_rma_p2p requires. Used by the RMA image targets below.
 NCCL_RMA_VERSION = 2.29.7
+# NVSHMEM install spec passed to the Dockerfile (see NVSHMEM_PIP_SPEC there). Empty means "don't
+# install NVSHMEM". The RMA image targets set this so the symm_mem_vdev2d ext can be built at runtime.
+NVSHMEM_PIP_SPEC =
 GROUPED_GEMM_SHA = "f1429a3c44c98f7912aa4b00125144cdf4e7fdb2"
 FLASH_ATTN_VERSION = 2.8.2
 FLASH_ATTN_3_SHA = "060c9188beec3a8b62b33a3bfa6d5d2d44975fab"
@@ -95,6 +98,7 @@ docker-image :
 		--build-arg TORCH_VERSION=$(TORCH_VERSION) \
 		--build-arg INSTALL_CHANNEL=$(INSTALL_CHANNEL) \
 		--build-arg NCCL_PIP_SPEC=$(NCCL_PIP_SPEC) \
+		--build-arg NVSHMEM_PIP_SPEC=$(NVSHMEM_PIP_SPEC) \
 		--build-arg GROUPED_GEMM_SHA=$(GROUPED_GEMM_SHA) \
 		--build-arg FLASH_ATTN_VERSION=$(FLASH_ATTN_VERSION) \
 		--build-arg FLASH_ATTN_3_SHA=$(FLASH_ATTN_3_SHA) \
@@ -129,13 +133,18 @@ beaker-image : docker-image
 	@./src/scripts/beaker/create_beaker_image.sh olmo-core:$(IMAGE_TAG) olmo-core-$(IMAGE_TAG) $(BEAKER_WORKSPACE)
 	@echo "✓ Done"
 
-# Build + register beaker images with reliable NCCL RMA support for the custom pipeline-parallel
-# transport (nccl_rma_p2p). Relative to the default image these make two changes:
-#   1. Release base = CUDA 'devel' image, so the runtime ships nvcc + CUDA headers. nccl_rma_p2p is
-#      a LazyCudaExtension that JIT-compiles on first use; the default plain-Ubuntu release image
-#      has no nvcc, so that build would fail at runtime.
+# Build + register beaker images with reliable support for the MoE-v2 GPU comm kernels — the custom
+# pipeline-parallel transport (nccl_rma_p2p) and the rowwise-EP symmetric-memory backend
+# (symm_mem_vdev2d). Relative to the default image these make three changes:
+#   1. Release base = CUDA 'devel' image, so the runtime ships nvcc + CUDA headers. Both extensions
+#      compile at runtime (nccl_rma_p2p JIT-builds on first use; symm_mem_vdev2d is built via
+#      `python -m olmo_core.kernels.build_symm_mem_vdev2d_ext`), and the default plain-Ubuntu release
+#      image has no nvcc, so those builds would fail.
 #   2. NCCL is pinned to $(NCCL_RMA_VERSION), which exposes the one-sided window signal API the
 #      transport compiles against. '_find_nccl_paths' then discovers it under conda site-packages.
+#   3. NVSHMEM is installed so symm_mem_vdev2d can link it; '_find_nvshmem_paths' discovers it under
+#      conda site-packages. (The package source is cloned at launch, so the ext itself can't be
+#      prebuilt into the image — the image only carries the build prerequisites.)
 # Both use torch 2.10 (the default TORCH_VERSION); they differ only in CUDA version. Images are
 # tagged with an 'rma' suffix (e.g. olmo-core-tch2100cu128-rma-<date>) to distinguish them.
 
@@ -145,6 +154,7 @@ beaker-image-rma-cu128 :
 		CUDA_VERSION=12.8.1 \
 		BASE_IMAGE=nvidia/cuda:12.8.1-cudnn-devel-ubuntu$(UBUNTU_VERSION) \
 		NCCL_PIP_SPEC=nvidia-nccl-cu12==$(NCCL_RMA_VERSION) \
+		NVSHMEM_PIP_SPEC=nvidia-nvshmem-cu12 \
 		IMAGE_SUFFIX=rma-$(IMAGE_SUFFIX)
 
 .PHONY : beaker-image-rma-cu13
@@ -153,6 +163,7 @@ beaker-image-rma-cu13 :
 		CUDA_VERSION=13.0.1 \
 		BASE_IMAGE=nvidia/cuda:13.0.1-cudnn-devel-ubuntu$(UBUNTU_VERSION) \
 		NCCL_PIP_SPEC=nvidia-nccl-cu13==$(NCCL_RMA_VERSION) \
+		NVSHMEM_PIP_SPEC=nvidia-nvshmem-cu13 \
 		IMAGE_SUFFIX=rma-$(IMAGE_SUFFIX)
 
 .PHONY : get-beaker-workspace
