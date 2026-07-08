@@ -28,6 +28,7 @@ TASKS = [
 
 VARIANT_SLUGS = {
     "baseline 48E/top4": "baseline",
+    "baseline 48E/top4 midtraining": "mt-baseline",
     "Qwen-like active matched 4.5d": "q3am",
     "Qwen-like true 3.0d + depth": "q3td",
     "integration wide 256E/top8": "int-wide",

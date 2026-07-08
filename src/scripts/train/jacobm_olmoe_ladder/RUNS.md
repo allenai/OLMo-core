@@ -1734,3 +1734,31 @@ weight-only load, and fast in-loop evals every 2000 steps.
 | `mt-275m-intd256e8k-cx4-lr1p5e-4-r1` | `integration/int-275m-cx4-intd256e8k-lr1.6e-3-r1/step30259` | 1.5e-4 | https://beaker.org/ex/01KWZB85A7ANH2EEY3CRJQQKRC |
 | `mt-275m-intd256e8k-cx8-lr1p6e-4-r1` | `integration/int-275m-cx8-intd256e8k-lr1.6e-3-r1/step40345` | 1.6e-4 | https://beaker.org/ex/01KWZB8XM9X3RHMBTGXWABFKGZ |
 
+## 2026-07-08 Midtraining Hold And 275M OLMoBase Eval Launch
+
+Stopped the larger-model baseline midtraining Cx2/Cx4 jobs so we can wait for
+useful 275M midtraining signal before spending compute at larger scales. Cx1 and
+Cx8 larger-model jobs remain active, and all 275M midtraining jobs are left to
+finish.
+
+Stopped experiments:
+
+| Run | Beaker |
+| --- | --- |
+| `mt-480m-baseline-cx2-lr9e-5-r1` | https://beaker.org/ex/01KWZARZ2XT6HP3HZ4AK0F5EKT |
+| `mt-480m-baseline-cx4-lr8e-5-r1` | https://beaker.org/ex/01KWZARWY3JYNCT8HAMYAD17J7 |
+| `mt-810m-baseline-cx2-lr5p6e-5-r1` | https://beaker.org/ex/01KWZAT5N7AJ6C1HTTRMDD8WMT |
+| `mt-810m-baseline-cx4-lr4e-5-r1` | https://beaker.org/ex/01KWZAT4PE90E0X0N6Z126Q8SR |
+| `mt-1p2b-baseline-cx2-lr6e-5-r1` | https://beaker.org/ex/01KWZAV9B2740S4NZDAZJW5A0R |
+| `mt-1p2b-baseline-cx4-lr3e-5-r1` | https://beaker.org/ex/01KWZAVC810DHNY5VE958S6DTG |
+
+Converted and launched OLMoBase evals for the selected optimal 275M midtraining
+checkpoints, using `2e-4` for both Cx1 and Cx8 based on the validation win
+summary. Conversion jobs used one Jupiter GPU each; eval jobs use the standard
+8-engine Jupiter OLMoBase launcher in `ai2/olmo-instruct`.
+
+| Source checkpoint | HF checkpoint | Conversion | OLMoBase eval |
+| --- | --- | --- | --- |
+| `midtraining/mt-275m-baseline-cx1-lr2e-4-r1/step95368` | `hf-checkpoints/midtraining/mt-275m-baseline-cx1-lr2e-4-r1/step95368` | https://beaker.org/ex/01KX02AE8YRXS7Q8SGV0TAMEN7 | https://beaker.org/ex/01KX02MYSA36TFKBT99XAE0XZ6 |
+| `midtraining/mt-275m-baseline-cx8-lr2e-4-r1/step95368` | `hf-checkpoints/midtraining/mt-275m-baseline-cx8-lr2e-4-r1/step95368` | https://beaker.org/ex/01KX02AFMHGPSH4ZQMS0A5BEF7 | https://beaker.org/ex/01KX02N80T6NXX8TZEJM8TC0Z5 |
+
