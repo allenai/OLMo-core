@@ -36,6 +36,13 @@ PROMPT_FORMAT="${PROMPT_FORMAT:-chat}"   # chat=SFT (apply_chat_template) | raw=
 # Landmark + compressive attention can't do batched/left-padded generation (blocks tied to absolute
 # position) -> force batch_size=1 for those variants. Dense keeps the configured (larger) batch.
 case "$VARIANT" in landmark|compressive) BATCH_SIZE=1 ;; esac
+# landmark/compressive decode-time knobs (unset -> eval_lc_native.py defaults: 10%-of-prompt top-k,
+# checkpoint's trained nonselected_landmark_mass). No effect on dense; docchunk uses its own script.
+LANDMARK_TOP_K_BLOCKS="${LANDMARK_TOP_K_BLOCKS:-}"
+LANDMARK_NONSELECTED_MASS="${LANDMARK_NONSELECTED_MASS:-}"
+LANDMARK_FLAGS=""
+[ -n "$LANDMARK_TOP_K_BLOCKS" ] && LANDMARK_FLAGS="$LANDMARK_FLAGS --landmark-top-k-blocks $LANDMARK_TOP_K_BLOCKS"
+[ -n "$LANDMARK_NONSELECTED_MASS" ] && LANDMARK_FLAGS="$LANDMARK_FLAGS --landmark-nonselected-mass $LANDMARK_NONSELECTED_MASS"
 
 PRASANNS="$WEKA_LLM/checkpoints/prasanns"
 BUNDLE="${BUNDLE:-$PRASANNS/_eval_bundle}"
@@ -119,7 +126,7 @@ if [ "$TASK" = "rerank" ] && [ "$LADDER_VERSION" != "v2" ] && [ "$VARIANT" != "d
     echo "=== rerank CE @${r} ($CEF) -> $O ==="
     $TR --model-path "$CKPT" --out "$O" --tokenizer "$TOKENIZER" --max-length "$MAX_LENGTH" \
         --root "$BUNDLE" --max-test-samples "$MAX_TEST" --batch-size "$BATCH_SIZE" --skip-ruler --skip-gen \
-        --ladder --ladder-tasks rerank --ladder-rungs 2k --rerank-data "$CEF" || rc=$?
+        --ladder --ladder-tasks rerank --ladder-rungs 2k --rerank-data "$CEF" $LANDMARK_FLAGS || rc=$?
     [ -f "$O" ] && cp "$O" "$RESULTS/${RUN}_rerank_ce_${r}.json" 2>/dev/null || true
     GEN="${O%.json}.generations.jsonl"
     [ -f "$GEN" ] && cp "$GEN" "$RESULTS/${RUN}_rerank_ce_${r}.generations.jsonl" 2>/dev/null || true
@@ -190,7 +197,7 @@ if [ "$VARIANT" = "docchunk" ]; then
 else
   $TR --model-path "$CKPT" --out "$OUT" --tokenizer "$TOKENIZER" --max-length "$MAX_LENGTH" \
       --root "$BUNDLE" --max-test-samples "$MAX_TEST" --batch-size "$BATCH_SIZE" --skip-ruler --skip-gen \
-      --ladder $VFLAG $XLFLAG --ladder-tasks "$LTASK" --ladder-rungs "$RUNGS" $EXTRA
+      --ladder $VFLAG $XLFLAG --ladder-tasks "$LTASK" --ladder-rungs "$RUNGS" $EXTRA $LANDMARK_FLAGS
   rc=$?
 fi
 if [ -f "$OUT" ]; then

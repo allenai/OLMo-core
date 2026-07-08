@@ -61,7 +61,7 @@ def variant_from_run_name(run_name: str) -> str:
 
 
 def build_eval_launch_config(
-    *, run_name, task, variant, cluster, step, ckpt, results_dir, prompt_format, ngpu, max_test, max_length, batch_size, priority, ladder_version, xlong, xlong_rungs, cot_mode
+    *, run_name, task, variant, cluster, step, ckpt, results_dir, prompt_format, ngpu, max_test, max_length, batch_size, priority, ladder_version, xlong, xlong_rungs, cot_mode, landmark_top_k_blocks, landmark_nonselected_mass
 ):
     root_dir = get_root_dir(cluster)  # e.g. /weka/oe-training-default/ai2-llm (mounts weka bucket)
     # Eval CODE now ships IN the cloned repo (src/scripts/ctc_eval); the runner runs from the repo root
@@ -70,12 +70,17 @@ def build_eval_launch_config(
 
     # The on-node runner reads its inputs from env; gantry torchrun wrapping is disabled so the runner
     # can drive its own 8-way `torchrun`. cmd[0]="bash" => not auto-prefixed with `python`.
+    landmark_env = ""
+    if landmark_top_k_blocks is not None:
+        landmark_env += f"LANDMARK_TOP_K_BLOCKS={landmark_top_k_blocks} "
+    if landmark_nonselected_mass is not None:
+        landmark_env += f"LANDMARK_NONSELECTED_MASS={landmark_nonselected_mass} "
     inner = (
         f"RUN={run_name} TASK={task} VARIANT={variant} STEP='{step}' CKPT='{ckpt}' "
         f"EVAL_OUT_DIR='{results_dir}' PROMPT_FORMAT='{prompt_format}' "
         f"MAX_TEST={max_test} MAX_LENGTH={max_length} BATCH_SIZE={batch_size} NGPU={ngpu} "
         f"LADDER_XLONG={int(xlong)} XLONG_RUNGS='{xlong_rungs}' COT_MODE='{cot_mode}' "
-        f"LADDER_VERSION={ladder_version} WEKA_LLM={root_dir} bash {runner}"
+        f"LADDER_VERSION={ladder_version} {landmark_env}WEKA_LLM={root_dir} bash {runner}"
     )
     cmd = ["bash", "-lc", inner]
 
@@ -140,6 +145,15 @@ def main():
                          "and uploaded to the v2 eval bundle.")
     ap.add_argument("--xlong-rungs", default="64k,128k",
                     help="which xlong sizes to add when --xlong (add 256k explicitly; it is huge).")
+    ap.add_argument("--landmark-top-k-blocks", type=int, default=None,
+                    help="landmark/compressive variant: fixed number of landmark BLOCKS to keep per "
+                         "query at decode (overrides the default 10%%-of-prompt fraction). "
+                         "No effect on dense/docchunk.")
+    ap.add_argument("--landmark-nonselected-mass", type=float, default=None,
+                    help="compressive-landmark variant only, and only applied when "
+                         "--landmark-top-k-blocks is also set: attention mass reserved for "
+                         "non-selected landmark blocks, in [0, 1). Unset keeps the checkpoint's "
+                         "trained value.")
     ap.add_argument("--dry-run", action="store_true", help="build + print the job, do NOT submit.")
     args = ap.parse_args()
 
@@ -162,6 +176,8 @@ def main():
             ngpu=args.ngpu, max_test=args.max_test, max_length=args.max_length,
             batch_size=args.batch_size, priority=args.priority, ladder_version=args.ladder_version,
             xlong=args.xlong, xlong_rungs=args.xlong_rungs, cot_mode=args.cot_mode,
+            landmark_top_k_blocks=args.landmark_top_k_blocks,
+            landmark_nonselected_mass=args.landmark_nonselected_mass,
         )
         print(f"\n--- [{task}] {lc.name} ---")
         print(f"    cmd: {lc.cmd[-1]}")

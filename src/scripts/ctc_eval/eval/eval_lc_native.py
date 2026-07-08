@@ -70,6 +70,15 @@ def main():
     ap.add_argument("--save-generations", action=argparse.BooleanOptionalAction, default=True,
                     help="dump per-example model generations (+ gold/per-example metrics) to a sidecar "
                          "<out>.generations.jsonl for error inspection. On by default; --no-save-generations to skip.")
+    ap.add_argument("--landmark-top-k-blocks", type=int, default=None,
+                    help="landmark/compressive variant: fixed number of landmark BLOCKS to keep per "
+                         "query at decode (overrides GenerationConfig's default 10%%-of-prompt "
+                         "fraction). Unset -> the default landmark_top_k_fraction=0.1 behavior.")
+    ap.add_argument("--landmark-nonselected-mass", type=float, default=None,
+                    help="compressive-landmark variant only, and only applied when "
+                         "--landmark-top-k-blocks is also set: attention mass reserved for "
+                         "non-selected (non-top-k) landmark blocks, in [0, 1). Unset -> keep the "
+                         "checkpoint's trained value.")
     args = ap.parse_args()
     os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
     # xlong opt-in: the runner truncates prompts to (max_length - max_new_tokens), so max_length
@@ -116,7 +125,9 @@ def main():
 
     t0 = time.time()
     gen_cfg = GenerationConfig(eos_token_id=tok.eos_token_id, pad_token_id=tok.pad_token_id,
-                               max_length=args.max_length, use_cache=True)
+                               max_length=args.max_length, use_cache=True,
+                               landmark_top_k_blocks=args.landmark_top_k_blocks,
+                               landmark_nonselected_mass=args.landmark_nonselected_mass)
     gm = TransformerGenerationModuleConfig(
         gen_cfg, float8_config=None, dtype=DType("bfloat16"), compile_model=False,
     ).build(checkpoint_dir=args.model_path, device=device)
