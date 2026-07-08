@@ -48,16 +48,6 @@ ARG INSTALL_CHANNEL=whl
 RUN pip install --no-cache-dir --index-url https://download.pytorch.org/${INSTALL_CHANNEL}/${CUDA_VERSION_PATH}/ \
     torch==${TORCH_VERSION} torchvision torchaudio
 
-# Optionally pin NCCL to a specific build. torch ships a fixed NCCL with its wheels; the RMA image
-# targets in the Makefile use this to force-reinstall an RMA-capable NCCL (>= 2.29.7), which exposes
-# the one-sided window signal API (ncclPutSignal / ncclWaitSignal) that the nccl_rma_p2p pipeline
-# transport JIT-compiles against. '_find_nccl_paths' then discovers this NCCL (header + lib) under
-# the conda site-packages automatically. '--no-deps' keeps pip from touching torch itself. Empty by
-# default, so standard images keep torch's bundled NCCL.
-ARG NCCL_PIP_SPEC=""
-RUN if [ -n "${NCCL_PIP_SPEC}" ]; then \
-        pip install --no-cache-dir --no-deps --force-reinstall "${NCCL_PIP_SPEC}"; fi
-
 # Optionally install NVSHMEM. The symm_mem_vdev2d rowwise-EP extension links NVSHMEM's host + device
 # libs (libnvshmem_host.so.3 + libnvshmem_device.a) and headers; the RMA image targets install it so
 # `python -m olmo_core.kernels.build_symm_mem_vdev2d_ext` can compile the extension at runtime (the
@@ -126,6 +116,16 @@ COPY src/olmo_core/version.py src/olmo_core/version.py
 RUN pip install --no-cache-dir '.[all]' && \
     pip uninstall -y ai2-olmo-core && \
     rm -rf *
+
+# Pin NCCL to an RMA-capable build (>= 2.29.7) exposing the one-sided window signal API
+# (ncclPutSignal / ncclWaitSignal) that the nccl_rma_p2p transport compiles against.
+# MUST be the last install: torch's wheels and NVSHMEM both depend on nvidia-nccl-cu*, so any
+# earlier pin gets re-resolved back down (dropping the RMA symbols) by later `pip install` steps —
+# most recently by NVSHMEM's own NCCL cap. '_find_nccl_paths' discovers it under conda site-packages.
+# Empty by default, so standard images keep torch's bundled NCCL.
+ARG NCCL_PIP_SPEC=""
+RUN if [ -n "${NCCL_PIP_SPEC}" ]; then \
+        pip install --no-cache-dir --no-deps --force-reinstall "${NCCL_PIP_SPEC}"; fi
 
 #########################################################################
 # Release image
