@@ -241,16 +241,11 @@ jobs:
           - name: Test MoE kernels (GPU, torch 2.10)
             image: akshitab/olmo-core-tch2100cu128-rma-2026-07-08 #akshitab/olmo-core-tch2100cu130-2026-07-03  #petew/olmo-core-tch2100cu128-2026-01-23
             gpus: 2
+            # Build the NVSHMEM symm_mem_vdev2d ext (compiled out-of-tree; needs an image with
+            # NVSHMEM + CUDA toolkit) before pytest, so the rowwise-EP tests that import the built
+            # module at collection time can run. One `bash -c` so both run inside the gantry container.
             run: |
-              # Build the NVSHMEM symm_mem_vdev2d extension ahead of pytest. It's a compiled
-              # out-of-tree ext (cmake + nvcc, links NVSHMEM), and `requires_symm_mem_vdev2d`
-              # imports the built module directly at collection time, so it must exist before
-              # the run or the rowwise-EP tests skip. Needs an image with NVSHMEM + CUDA toolkit.
-              python -m olmo_core.kernels.build_symm_mem_vdev2d_ext --inplace
-              pytest -v --color=yes --durations=3 -m gpu \
-                src/test/kernels/ \
-                src/test/nn/moe/v2/ \
-                src/test/train/train_module/transformer/moe_train_module_test.py
+              bash -c 'python -m olmo_core.kernels.build_symm_mem_vdev2d_ext --inplace && pytest -v --color=yes --durations=3 -m gpu src/test/kernels/ src/test/nn/moe/v2/ src/test/train/train_module/transformer/moe_train_module_test.py'
     steps:
       - uses: actions/checkout@v5
         with:
