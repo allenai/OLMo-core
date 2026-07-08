@@ -400,13 +400,13 @@ def combined_forward_ep_tbo(
                 send_counts_gpu1 = local_batch_size_per_global_routed_expert1.sum(dim=-1)
                 recv_counts_gpu1 = global_batch_size_per_local_expert1.sum(dim=-1)
                 send_counts_cpu1, _, dtoh_event_send1 = async_copy_to_cpu(
-                    send_counts_gpu1, event=self._dtoh_event_send1
+                    send_counts_gpu1, event=self._dtoh_event_send_tbo1
                 )
                 recv_counts_cpu1, _, dtoh_event_recv1 = async_copy_to_cpu(
-                    recv_counts_gpu1, event=self._dtoh_event_recv1
+                    recv_counts_gpu1, event=self._dtoh_event_recv_tbo1
                 )
                 parallel_batch_size_per_local_expert_cpu1, _, dtoh_event1 = async_copy_to_cpu(
-                    parallel_batch_size_per_local_expert1, event=self._dtoh_event1
+                    parallel_batch_size_per_local_expert1, event=self._dtoh_event_tbo1
                 )
 
         # 2. permute local tokens to be ready for all-to-all communication
