@@ -163,13 +163,16 @@ if [ "$LADDER_XLONG" = "1" ] && [ "$LADDER_VERSION" = "v2" ]; then
       case ",$XLONG_RUNGS," in
         *,256k,*) MAX_LENGTH=263168 ;;
         *,128k,*) MAX_LENGTH=132096 ;;
-        # 64k-only: 81920 (not 65536+1024) so the skip cap clears the LONGEST real 64k prompt.
-        # Measured max real prefill (segment+box-emit, Qwen3-4B tok): contra 74107, nq 67679,
-        # outlier 67986 -> cap=81824 gives skipped_too_long=0 with margin. The docchunk eval's KV
-        # cache is sized to the ACTUAL prompt length (not MAX_LENGTH) since the Tier-1 OOM fix, so
-        # this larger budget only raises the skip threshold -- it does NOT grow GPU memory (per-
-        # example memory tracks the true ~74k length, ~11% over the ~66k already run at bs=1/80GB).
-        *)        MAX_LENGTH=81920  ;;
+        # 64k-only: 68608 (cap 68512) -> nq (max real prefill 67679) and outlier (67986) run
+        # skipped_too_long=0. NOTE the empirical single-80GB-H100 ceiling for the docchunk
+        # FlexAttention eval path: seq_len ~66k fits, ~77k OOMs (measured -- contra's long tail
+        # OOMed at seq_len=77167 even after the Tier-1 empty_cache retry). contra's 64k/32k files
+        # have a heavy >66k tail (query-dominated), so a cap high enough to clear it (e.g. 81920)
+        # makes those examples OOM, while a memory-safe cap skips ~half of them -- i.e. contra 64k
+        # is NOT cleanly measurable on one 80GB GPU and needs Tier-2 tensor/context-parallel (same
+        # class as 128k). This 68608 keeps nq/outlier exact and stays just above the proven-safe
+        # ~66k so contra completes (its extreme tail skipped) rather than OOM-crashing the job.
+        *)        MAX_LENGTH=68608  ;;
       esac
       echo "    [xlong] RUNGS=$RUNGS MAX_LENGTH=$MAX_LENGTH BATCH_SIZE=$BATCH_SIZE" ;;
     *) echo "    [xlong] supports contra|nq|outlier only; TASK=$TASK unchanged." ;;
