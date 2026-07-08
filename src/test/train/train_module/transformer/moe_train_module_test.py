@@ -52,8 +52,9 @@ def test_moe_v2_train_module_config_roundtrips_with_parallelism():
     assert restored.pp_config is not None and restored.pp_config.degree == 2
 
 
-def _tiny_model_config(*, d_model: int = 64, n_layers: int = 2) -> MoEFusedV2TransformerConfig:
-    dtype = DType.float32
+def _tiny_model_config(
+    *, d_model: int = 64, n_layers: int = 2, dtype: DType = DType.float32
+) -> MoEFusedV2TransformerConfig:
     layer_norm = LayerNormConfig(name=LayerNormType.rms, eps=1e-6, bias=False, dtype=dtype)
     return MoEFusedV2TransformerConfig(
         init_seed=0,
@@ -108,7 +109,9 @@ def test_moe_v2_train_module_construction_no_ep():
 
 
 def _run_construct_ep():
-    model = _tiny_model_config().build(init_device="cuda")
+    # bf16 params → the fused optimizer maintains fp32 master params (its realistic config); a pure
+    # fp32 model instead takes the optimizer's "expect fp32 param" branch.
+    model = _tiny_model_config(dtype=DType.bfloat16).build(init_device="cuda")
     config = MoEV2TransformerTrainModuleConfig(
         rank_microbatch_size=512,
         max_sequence_length=512,
@@ -116,13 +119,14 @@ def _run_construct_ep():
         dp_config=TransformerDataParallelConfig(name=DataParallelType.ddp),
         ep_config=TransformerExpertParallelConfig(degree=2),
     )
-    # eval_only=True skips the optimizer build; this covers wiring expert parallelism through the
-    # train module (moe mesh + apply_ep sharding the experts across the two ranks + DP wrapping).
-    train_module = config.build(model, device=torch.device("cuda"), eval_only=True)
+    # Full build (eval_only=False): wires expert parallelism through the train module (moe mesh +
+    # apply_ep sharding the experts across the two ranks + DP wrapping) and builds the optimizer.
+    train_module = config.build(model, device=torch.device("cuda"), eval_only=False)
 
     assert len(train_module.model_parts) == 1  # no pipeline parallelism
     assert train_module.moe_mesh is not None
     assert train_module.ep_mp_group is not None
+    assert train_module.optim is not None
     assert train_module.num_flops_per_token(seq_len=512) > 0
 
 

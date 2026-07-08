@@ -184,6 +184,7 @@ jobs:
                 --ignore-glob='src/test/nn/moe*' \
                 --ignore-glob='src/test/optim*' \
                 --ignore-glob='src/test/kernels*' \
+                --ignore-glob='src/test/train/train_module/transformer/moe_train_module*' \
                 src/test/
 
           - name: Test checkpoint (GPU)
@@ -241,7 +242,10 @@ jobs:
             image: akshitab/olmo-core-tch2100cu130-2026-07-03 #tianhuat/olmo-core-torch210-2404-cu128
             gpus: 2
             run: |
-              pytest -v --color=yes --durations=3 -m gpu src/test/kernels/ src/test/nn/moe/v2/
+              pytest -v --color=yes --durations=3 -m gpu \
+                src/test/kernels/ \
+                src/test/nn/moe/v2/ \
+                src/test/train/train_module/transformer/moe_train_module_test.py
     steps:
       - uses: actions/checkout@v5
         with:
