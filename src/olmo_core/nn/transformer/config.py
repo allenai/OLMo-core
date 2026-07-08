@@ -1665,6 +1665,10 @@ class TransformerConfig(ModelConfig):
         doc_keep_prob: Optional[float] = None,
         random_doc_seed: Optional[int] = None,
         flex_block_size: Optional[int] = None,
+        dilated_sliding_window: bool = False,
+        dilated_window_k: Optional[int] = None,
+        dilated_window_num_configs: Optional[int] = None,
+        dilated_window_base: Optional[int] = None,
         layer_types: Optional[AttentionTypePatternConfig] = None,
         block_name: TransformerBlockType = TransformerBlockType.default,
         block_mods: Optional[
@@ -1746,6 +1750,27 @@ class TransformerConfig(ModelConfig):
             raise OLMoConfigurationError(
                 "'document_chunked' (dense chunked attention) cannot be combined with a landmark "
                 "variant or 'layer_types'."
+            )
+        if dilated_sliding_window and (
+            uses_uniform_landmark or document_chunked or layer_types is not None
+        ):
+            raise OLMoConfigurationError(
+                "'dilated_sliding_window' cannot be combined with a landmark variant, "
+                "'document_chunked', or 'layer_types'."
+            )
+        if dilated_sliding_window and sliding_window is not None:
+            raise OLMoConfigurationError(
+                "'dilated_sliding_window' has its own dilated-window mask and cannot be combined "
+                "with 'sliding_window'."
+            )
+        if (
+            dilated_window_k is not None
+            or dilated_window_num_configs is not None
+            or dilated_window_base is not None
+        ) and not dilated_sliding_window:
+            raise OLMoConfigurationError(
+                "'dilated_window_k' / 'dilated_window_num_configs' / 'dilated_window_base' are only "
+                "valid with 'dilated_sliding_window=True'."
             )
         # ``hierarchical_dilated`` is a cross-document visibility policy orthogonal to the attention
         # mechanism, so the dilation knobs apply to every document-chunked family.
@@ -1844,6 +1869,8 @@ class TransformerConfig(ModelConfig):
                 )
             if document_chunked:
                 att_type = AttentionType.document_chunked
+            elif dilated_sliding_window:
+                att_type = AttentionType.dilated_sliding_window
             elif cross_doc_mode is not None:
                 raise OLMoConfigurationError(
                     "'cross_doc_mode' is only valid when 'document_landmark=True' or "
@@ -1915,6 +1942,12 @@ class TransformerConfig(ModelConfig):
                 # (e.g. 32) lets sub-128-token chunks realize block-sparsity; ignored by landmark
                 # variants (no flex path).
                 flex_block_size=flex_block_size if document_chunked else None,
+                # Dilated causal sliding window with per-layer rotating dilation ("Hierarchical K").
+                dilated_window_k=dilated_window_k if dilated_sliding_window else None,
+                dilated_window_num_configs=(
+                    dilated_window_num_configs if dilated_sliding_window else None
+                ),
+                dilated_window_base=dilated_window_base if dilated_sliding_window else None,
                 dtype=dtype,
             ),
             feed_forward=feed_forward,

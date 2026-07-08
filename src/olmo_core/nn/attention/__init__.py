@@ -91,6 +91,7 @@ __all__ = [
     "MultiLandmarkAttention",
     "DocumentMultiLandmarkAttention",
     "DocumentChunkedAttention",
+    "DilatedSlidingWindowAttention",
     "AttentionPattern",
     "RingAttentionLoadBalancerType",
     "RingAttentionLoadBalancer",
@@ -246,6 +247,14 @@ class AttentionType(StrEnum):
     ➡️ :class:`DocumentChunkedAttention` (dense full attention restricted by the chunked-document
     mask: context chunks isolated, FREE query/answer bridges across them -- the non-landmark dense
     analogue of ``document_landmark``)
+    """
+
+    dilated_sliding_window = "dilated_sliding_window"
+    """
+    ➡️ :class:`DilatedSlidingWindowAttention` (dilated causal sliding window whose dilation stride
+    rotates with transformer depth -- "Hierarchical K": each layer attends only ``K`` keys spaced
+    ``base**(layer_idx % num_configs)`` apart, so attention stays O(N*K) while the receptive field of a
+    stack of layers grows geometrically)
     """
 
 
@@ -434,6 +443,23 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
     default of 128. Shrinking it (e.g. 64 / 32) lets sub-128-token chunks realize their block-sparsity
     at the cost of higher kernel overhead; profile the crossover per chunk-size distribution.
     """
+    dilated_window_k: Optional[int] = None
+    """
+    For :class:`DilatedSlidingWindowAttention` (``name="dilated_sliding_window"``) only: the number of
+    keys ``K`` each query attends per layer (its own position + ``K-1`` strided predecessors). Defaults
+    to 3.
+    """
+    dilated_window_num_configs: Optional[int] = None
+    """
+    For :class:`DilatedSlidingWindowAttention` only: the rotation cycle length ``L`` (number of
+    distinct dilation configs before the rotation resets). Defaults to 3.
+    """
+    dilated_window_base: Optional[int] = None
+    """
+    For :class:`DilatedSlidingWindowAttention` only: the dilation base ``m``. At transformer layer
+    ``ell`` the dilation stride is ``m ** (ell % L)``, so successive layers attend keys spaced
+    ``1, m, m**2, ...`` apart. Defaults to 2.
+    """
 
     def num_params(self, d_model: int) -> int:
         """
@@ -566,6 +592,9 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
         doc_keep_prob = kwargs.pop("doc_keep_prob", None)
         random_doc_seed = kwargs.pop("random_doc_seed", None)
         flex_block_size = kwargs.pop("flex_block_size", None)
+        dilated_window_k = kwargs.pop("dilated_window_k", None)
+        dilated_window_num_configs = kwargs.pop("dilated_window_num_configs", None)
+        dilated_window_base = kwargs.pop("dilated_window_base", None)
         if mem_freq is not None and not (possible_types & set(_LANDMARK_ATTENTION_TYPES)):
             raise OLMoConfigurationError(
                 "'mem_freq' is only supported with landmark attention variants "
@@ -633,6 +662,15 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
             raise OLMoConfigurationError(
                 "'nonselected_landmark_mass' is only supported with fast_compressive_landmark or "
                 f"document_compressive_landmark attention (got name='{self.name}')"
+            )
+        if (
+            dilated_window_k is not None
+            or dilated_window_num_configs is not None
+            or dilated_window_base is not None
+        ) and AttentionType.dilated_sliding_window not in possible_types:
+            raise OLMoConfigurationError(
+                "'dilated_window_k' / 'dilated_window_num_configs' / 'dilated_window_base' are only "
+                f"supported with dilated_sliding_window attention (got name='{self.name}')"
             )
 
         try:
@@ -761,6 +799,20 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
                 kwargs["layer_idx"] = layer_idx
                 kwargs["n_layers"] = n_layers
                 return DocumentChunkedAttention(**kwargs)
+            elif effective_name == "dilated_sliding_window":
+                # Dilated causal sliding window with a per-layer rotating dilation stride.
+                if dilated_window_k is not None:
+                    kwargs["window"] = dilated_window_k
+                if dilated_window_num_configs is not None:
+                    kwargs["num_configs"] = dilated_window_num_configs
+                if dilated_window_base is not None:
+                    kwargs["base"] = dilated_window_base
+                if flex_block_size is not None:
+                    kwargs["flex_block_size"] = flex_block_size
+                # The dilation stride is picked from the layer index.
+                kwargs["layer_idx"] = layer_idx
+                kwargs["n_layers"] = n_layers
+                return DilatedSlidingWindowAttention(**kwargs)
             else:
                 raise NotImplementedError(effective_name)
         except TypeError as e:
@@ -2122,6 +2174,7 @@ class FusedAttention(SequenceMixer):
 # (defined above), so they are imported at the end of this package to avoid a circular import; the
 # ``AttentionConfig.build`` branches above reference them by name at call time.
 from .chunked_mask import AttentionPattern  # noqa: E402
+from .dilated_window import DilatedSlidingWindowAttention  # noqa: E402
 from .document_chunked import DocumentChunkedAttention  # noqa: E402
 from .landmark_compressive import FastCompressiveLandmarkAttention  # noqa: E402
 from .landmark_document import DocumentLandmarkAttention  # noqa: E402
