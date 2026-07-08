@@ -1734,6 +1734,34 @@ weight-only load, and fast in-loop evals every 2000 steps.
 | `mt-275m-intd256e8k-cx4-lr1p5e-4-r1` | `integration/int-275m-cx4-intd256e8k-lr1.6e-3-r1/step30259` | 1.5e-4 | https://beaker.org/ex/01KWZB85A7ANH2EEY3CRJQQKRC |
 | `mt-275m-intd256e8k-cx8-lr1p6e-4-r1` | `integration/int-275m-cx8-intd256e8k-lr1.6e-3-r1/step40345` | 1.6e-4 | https://beaker.org/ex/01KWZB8XM9X3RHMBTGXWABFKGZ |
 
+Status update 2026-07-08: all eight `r1` integration midtraining jobs failed before training because they used the baseline `midtraining_ladder.py` architecture while loading wide/deep integration checkpoints. The fixed relaunch path is `experiments/midtraining/launch_275m_integration_lr_transfer.sh`, which uses `integration_midtraining_ladder.py` and forces fresh MoE optimizer state on load. Use `SWEEP_SUFFIX=r2` or later for replacements.
+
+False-start `r2` replacements were launched on 2026-07-08 before the new launcher was pushed. They used git ref `f8af705`, failed immediately with `integration_midtraining_ladder.py` missing, and should be ignored.
+
+| Name | Source checkpoint | LR | Beaker |
+| --- | --- | ---: | --- |
+| `mt-275m-intw256e8k-cx1-lr2e-4-r2` | `integration/int-275m-cx1-intw256e8k-lr1.6e-3-r1/step15499` | 2e-4 | https://beaker.org/ex/01KX1WP2HT8KHBZCPB3M8345QK |
+| `mt-275m-intw256e8k-cx2-lr1p8e-4-r2` | `integration/int-275m-cx2-intw256e8k-lr1.6e-3-r1/step20665` | 1.8e-4 | https://beaker.org/ex/01KX1WPFC3RWQ5K3X4403NCHDH |
+| `mt-275m-intw256e8k-cx4-lr1p5e-4-r2` | `integration/int-275m-cx4-intw256e8k-lr8e-4-r1/step30997` | 1.5e-4 | https://beaker.org/ex/01KX1WPW0TYH0YPRZ8A4JJN0DP |
+| `mt-275m-intw256e8k-cx8-lr1p6e-4-r2` | `integration/int-275m-cx8-intw256e8k-lr8e-4-r1/step41329` | 1.6e-4 | https://beaker.org/ex/01KX1WQ8AFG7149YMBAB44QEZH |
+| `mt-275m-intd256e8k-cx1-lr2e-4-r2` | `integration/int-275m-cx1-intd256e8k-lr1.6e-3-r1/step15130` | 2e-4 | https://beaker.org/ex/01KX1WQKR9KRQHDX0AM2FMMAQP |
+| `mt-275m-intd256e8k-cx2-lr1p8e-4-r2` | `integration/int-275m-cx2-intd256e8k-lr1.6e-3-r1/step20173` | 1.8e-4 | https://beaker.org/ex/01KX1WQZ765V617HSDVD1CEVPF |
+| `mt-275m-intd256e8k-cx4-lr1p5e-4-r2` | `integration/int-275m-cx4-intd256e8k-lr1.6e-3-r1/step30259` | 1.5e-4 | https://beaker.org/ex/01KX1WRB9PS47NC4ETSMB0BJ5N |
+| `mt-275m-intd256e8k-cx8-lr1p6e-4-r2` | `integration/int-275m-cx8-intd256e8k-lr1.6e-3-r1/step40345` | 1.6e-4 | https://beaker.org/ex/01KX1WRQBQS37V8PC2VNFYJNKK |
+
+Canonical `r3` replacements launched on 2026-07-08 from pushed commit `34f5d5a`. These use 100B midtraining tokens, sequence length 8192, global batch seq 128, 1 node x 4 GPUs, EP1, microbatch 8, Titan urgent, compile on, and fresh optimizer-state loading via `integration_midtraining_ladder.py`.
+
+| Name | Source checkpoint | LR | Beaker |
+| --- | --- | ---: | --- |
+| `mt-275m-intw256e8k-cx1-lr2e-4-r3` | `integration/int-275m-cx1-intw256e8k-lr1.6e-3-r1/step15499` | 2e-4 | https://beaker.org/ex/01KX1WZ551YCZYTHXRQEDX1WK1 |
+| `mt-275m-intw256e8k-cx2-lr1p8e-4-r3` | `integration/int-275m-cx2-intw256e8k-lr1.6e-3-r1/step20665` | 1.8e-4 | https://beaker.org/ex/01KX1WZGKE5K5GF4SZ98G7SVJD |
+| `mt-275m-intw256e8k-cx4-lr1p5e-4-r3` | `integration/int-275m-cx4-intw256e8k-lr8e-4-r1/step30997` | 1.5e-4 | https://beaker.org/ex/01KX1WZXCBX8VFNFFZK2DT50JB |
+| `mt-275m-intw256e8k-cx8-lr1p6e-4-r3` | `integration/int-275m-cx8-intw256e8k-lr8e-4-r1/step41329` | 1.6e-4 | https://beaker.org/ex/01KX1X0AJAMCEE5MSXBP33PHNG |
+| `mt-275m-intd256e8k-cx1-lr2e-4-r3` | `integration/int-275m-cx1-intd256e8k-lr1.6e-3-r1/step15130` | 2e-4 | https://beaker.org/ex/01KX1X0QVHZ7X0HSF0YNJWEBBH |
+| `mt-275m-intd256e8k-cx2-lr1p8e-4-r3` | `integration/int-275m-cx2-intd256e8k-lr1.6e-3-r1/step20173` | 1.8e-4 | https://beaker.org/ex/01KX1X14K49GJN4KS9QQ3JEQ1E |
+| `mt-275m-intd256e8k-cx4-lr1p5e-4-r3` | `integration/int-275m-cx4-intd256e8k-lr1.6e-3-r1/step30259` | 1.5e-4 | https://beaker.org/ex/01KX1X1GPC3N51C7E8AW2YXN63 |
+| `mt-275m-intd256e8k-cx8-lr1p6e-4-r3` | `integration/int-275m-cx8-intd256e8k-lr1.6e-3-r1/step40345` | 1.6e-4 | https://beaker.org/ex/01KX1X203AABJ29GHKST48J5E9 |
+
 ## 2026-07-08 Midtraining Hold And 275M OLMoBase Eval Launch
 
 Stopped the larger-model baseline midtraining Cx2/Cx4 jobs so we can wait for
