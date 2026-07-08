@@ -55,7 +55,7 @@ def _build_tbo_model(*, two_batch_overlap: bool, ep_no_sync: bool = False):
                 use_flash=False,
                 dtype=DType.float32,
             ),
-            attention_norm=layer_norm,
+            layer_norm=layer_norm,
             routed_experts_router=MoERouterConfigV2(
                 d_model=512,
                 num_experts=8,
@@ -75,7 +75,6 @@ def _build_tbo_model(*, two_batch_overlap: bool, ep_no_sync: bool = False):
                 bias=False,
                 dtype=DType.float32,
             ),
-            feed_forward_norm=layer_norm,
             ep_no_sync=ep_no_sync,
             ep_no_sync_capacity_factor=8.0,
             ep_no_sync_major_align=1,

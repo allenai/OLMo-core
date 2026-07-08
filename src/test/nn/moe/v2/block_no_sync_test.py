@@ -14,6 +14,7 @@ from olmo_core.testing import (
     requires_gpu,
     requires_grouped_gemm,
     requires_multi_gpu,
+    requires_symm_mem_vdev2d,
     run_distributed_test,
 )
 
@@ -489,6 +490,7 @@ def test_v2_ep_no_sync_hard_fail_setup():
 
 
 @requires_multi_gpu
+@requires_symm_mem_vdev2d
 def test_v2_ep_no_sync_rowwise_matches_synced():
     run_distributed_test(
         _run_ep_no_sync_rowwise_matches_synced, backend="nccl", start_method="spawn"
@@ -505,6 +507,7 @@ def test_v2_ep_no_sync_2d_all_to_all_rejected():
 
 
 @requires_multi_gpu
+@requires_symm_mem_vdev2d
 def test_v2_ep_no_sync_rowwise_drop_matches_independent_rowwise_block():
     run_distributed_test(
         _run_ep_no_sync_rowwise_drop_matches_independent_rowwise_block,
