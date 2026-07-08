@@ -1,3 +1,5 @@
+import os
+
 import torch
 import torch.distributed as dist
 from torch.distributed.device_mesh import DeviceMesh
@@ -155,6 +157,9 @@ def _run_synced_ep_tbo_matches_standard_forward():
 
 
 def _run_no_sync_ep_tbo_matches_standard_forward():
+    # VDev-1d no-sync EP uses the legacy torch symm-mem backend; OLMo-owned symm-mem
+    # (default on) supports only the rowwise no-sync path.
+    os.environ["OLMO_USE_OWN_SYMM_MEM"] = "0"
     ref_model = _build_tbo_model(two_batch_overlap=False, ep_no_sync=True)
     tbo_model = _build_tbo_model(two_batch_overlap=True, ep_no_sync=True)
     _apply_synced_ep(ref_model)

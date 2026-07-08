@@ -1,3 +1,5 @@
+import os
+
 import pytest
 import torch
 import torch.distributed as dist
@@ -242,6 +244,9 @@ def test_v2_no_ep_apply_compile_forward_smoke():
 
 
 def _run_ep_no_sync_matches_synced():
+    # VDev-1d no-sync EP uses the legacy torch symm-mem backend; OLMo-owned symm-mem
+    # (default on) supports only the rowwise no-sync path.
+    os.environ["OLMO_USE_OWN_SYMM_MEM"] = "0"
     ep_mesh = _build_ep_mesh()
 
     block_ep = _build_block(ep_no_sync=False, uniform_expert_assignment=True)
@@ -275,6 +280,7 @@ def _run_ep_no_sync_matches_synced():
 
 
 def _run_ep_no_sync_drop_behavior():
+    os.environ["OLMO_USE_OWN_SYMM_MEM"] = "0"  # non-rowwise EP → legacy symm-mem backend
     ep_mesh = _build_ep_mesh()
 
     block_no_sync = _build_block(
@@ -304,6 +310,7 @@ def _run_ep_no_sync_drop_behavior():
 
 
 def _run_ep_no_sync_quota_invariants():
+    os.environ["OLMO_USE_OWN_SYMM_MEM"] = "0"  # non-rowwise EP → legacy symm-mem backend
     ep_mesh = _build_ep_mesh()
 
     block_no_sync = _build_block(
@@ -329,6 +336,7 @@ def _run_ep_no_sync_quota_invariants():
 
 
 def _run_ep_no_sync_hard_fail_setup():
+    os.environ["OLMO_USE_OWN_SYMM_MEM"] = "0"  # non-rowwise EP → legacy symm-mem backend
     import olmo_core.nn.moe.v2.block as block_module
 
     ep_mesh = _build_ep_mesh()
