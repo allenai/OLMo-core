@@ -68,7 +68,9 @@ from olmo_core.train.train_module import (
 # ---------------------------------------------------------------------------
 SEQUENCE_LENGTH = 40960  # 32k-scale window (matrix-comparable); landmark: 40960 / 64 = 640 blocks.
 MEM_FREQ = 63  # landmark block size = 64
-NUM_NODES = 2  # 2x8=16 H200 data-parallel (docchunk has no CP; DP only). 16 inst/step.
+NUM_NODES = 4  # 4x8=32 H200 data-parallel (docchunk has no CP; DP only). 32 inst/step. Raised from
+# 2->4 for the hierarchical run to halve wall-clock under a fixed token budget (MAX_STEPS halved to
+# match), so train+eval fits a tight deadline. Same ~700M content tokens as the 2-node/2200-step runs.
 EOS_TOKEN_ID = 151643
 LANDMARK_TOKEN_ID = 151860
 DOC_START_ID = 151648  # <|box_start|>
@@ -123,7 +125,7 @@ _WSUM = sum(_W.values())
 LR = 1e-5
 WORLD_SIZE = NUM_NODES * 8
 GLOBAL_BATCH_SIZE = WORLD_SIZE * SEQUENCE_LENGTH  # tokens; 8 * 40960 = 327680 -> 8 instances/step
-MAX_STEPS = 2200  # ~700M content tokens @ 16 inst/step (match landmark-ref budget)
+MAX_STEPS = 1100  # ~700M content tokens @ 32 inst/step (4 nodes) = same budget as 2200@16 inst (2 nodes)
 
 
 def _task_source(emit: str, name: str, doc_tok) -> NumpyDocumentSourceConfig:
