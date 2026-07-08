@@ -190,9 +190,14 @@ if [ "$VARIANT" = "docchunk" ]; then
   # the plan+answer fits before the newline-after-"answer:" early-stop.
   COT_ARGS="--cot-mode ${COT_MODE:-none}"
   [ "${COT_MODE:-none}" = plan ] && COT_ARGS="$COT_ARGS --oolong-max-new-tokens 512"
+  # Emitter MUST match how the model was TRAINED (_docchunk_5task_32k_nocpt_common.py:
+  # emit="landmark" if variant in {landmark,compressive} else "dense"). dense/random_doc use the dense
+  # box-marker emitter; landmark/compressive use landmark tokens. Feeding the wrong emitter = garbage.
+  DC_EMIT=dense; case "$RUN" in *compressive*|*landmark*) DC_EMIT=landmark ;; esac
+  echo "[docchunk] emitter variant = $DC_EMIT (run=$RUN)"
   torchrun --nproc_per_node="$NGPU" --master_port="$PORT" \
     src/scripts/ctc_eval/eval/eval_lc_native_docchunk_ladder.py \
-    --variant dense --model-path "$CKPT" --out "$OUT" --tokenizer "$TOKENIZER" \
+    --variant "$DC_EMIT" --model-path "$CKPT" --out "$OUT" --tokenizer "$TOKENIZER" \
     --root "$BUNDLE" --max-test-samples "$MAX_TEST" --max-length "$MAX_LENGTH" --mem-freq 63 \
     --ladder-version "$LADDER_VERSION" --tasks "$LTASK" --rungs "$RUNGS" $COT_ARGS
   rc=$?
