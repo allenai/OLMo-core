@@ -48,6 +48,16 @@ ARG INSTALL_CHANNEL=whl
 RUN pip install --no-cache-dir --index-url https://download.pytorch.org/${INSTALL_CHANNEL}/${CUDA_VERSION_PATH}/ \
     torch==${TORCH_VERSION} torchvision torchaudio
 
+# Optionally pin NCCL to a specific build. torch ships a fixed NCCL with its wheels; the RMA image
+# targets in the Makefile use this to force-reinstall an RMA-capable NCCL (>= 2.29.7), which exposes
+# the one-sided window signal API (ncclPutSignal / ncclWaitSignal) that the nccl_rma_p2p pipeline
+# transport JIT-compiles against. '_find_nccl_paths' then discovers this NCCL (header + lib) under
+# the conda site-packages automatically. '--no-deps' keeps pip from touching torch itself. Empty by
+# default, so standard images keep torch's bundled NCCL.
+ARG NCCL_PIP_SPEC=""
+RUN if [ -n "${NCCL_PIP_SPEC}" ]; then \
+        pip install --no-cache-dir --no-deps --force-reinstall "${NCCL_PIP_SPEC}"; fi
+
 # Install grouped-gemm.
 # NOTE: right now we need to build with CUTLASS so we can pass batch sizes on GPU.
 # See https://github.com/tgale96/grouped_gemm/pull/21

@@ -53,6 +53,17 @@ PYTHON_VERSION = 3.12
 TORCH_VERSION = 2.10.0
 TORCH_VERSION_SHORT = $(shell echo $(TORCH_VERSION) | tr -d .)
 INSTALL_CHANNEL = whl
+UBUNTU_VERSION = 22.04
+# Release-stage base image. Defaults to a plain Ubuntu image (matching the Dockerfile default). The
+# RMA image targets override this with the CUDA 'devel' base so the release image ships nvcc + CUDA
+# headers, which the nccl_rma_p2p LazyCudaExtension needs to JIT-compile at runtime.
+BASE_IMAGE = ubuntu:$(UBUNTU_VERSION)
+# NCCL override spec passed to the Dockerfile (see NCCL_PIP_SPEC there). Empty means "use torch's
+# bundled NCCL". The RMA image targets set this to an RMA-capable NCCL wheel.
+NCCL_PIP_SPEC =
+# NCCL version exposing the RMA one-sided window signal API (ncclPutSignal / ncclWaitSignal) that
+# nccl_rma_p2p requires. Used by the RMA image targets below.
+NCCL_RMA_VERSION = 2.29.7
 GROUPED_GEMM_SHA = "f1429a3c44c98f7912aa4b00125144cdf4e7fdb2"
 FLASH_ATTN_VERSION = 2.8.2
 FLASH_ATTN_3_SHA = "060c9188beec3a8b62b33a3bfa6d5d2d44975fab"
@@ -80,8 +91,10 @@ docker-image :
 		--build-arg CUDA_VERSION=$(CUDA_VERSION) \
 		--build-arg CUDA_VERSION_PATH=$(CUDA_VERSION_PATH) \
 		--build-arg PYTHON_VERSION=$(PYTHON_VERSION) \
+		--build-arg BASE_IMAGE=$(BASE_IMAGE) \
 		--build-arg TORCH_VERSION=$(TORCH_VERSION) \
 		--build-arg INSTALL_CHANNEL=$(INSTALL_CHANNEL) \
+		--build-arg NCCL_PIP_SPEC=$(NCCL_PIP_SPEC) \
 		--build-arg GROUPED_GEMM_SHA=$(GROUPED_GEMM_SHA) \
 		--build-arg FLASH_ATTN_VERSION=$(FLASH_ATTN_VERSION) \
 		--build-arg FLASH_ATTN_3_SHA=$(FLASH_ATTN_3_SHA) \
@@ -115,6 +128,32 @@ BEAKER_USER = $(shell beaker account whoami --format=json | jq -r '.[0].name')
 beaker-image : docker-image
 	@./src/scripts/beaker/create_beaker_image.sh olmo-core:$(IMAGE_TAG) olmo-core-$(IMAGE_TAG) $(BEAKER_WORKSPACE)
 	@echo "✓ Done"
+
+# Build + register beaker images with reliable NCCL RMA support for the custom pipeline-parallel
+# transport (nccl_rma_p2p). Relative to the default image these make two changes:
+#   1. Release base = CUDA 'devel' image, so the runtime ships nvcc + CUDA headers. nccl_rma_p2p is
+#      a LazyCudaExtension that JIT-compiles on first use; the default plain-Ubuntu release image
+#      has no nvcc, so that build would fail at runtime.
+#   2. NCCL is pinned to $(NCCL_RMA_VERSION), which exposes the one-sided window signal API the
+#      transport compiles against. '_find_nccl_paths' then discovers it under conda site-packages.
+# Both use torch 2.10 (the default TORCH_VERSION); they differ only in CUDA version. Images are
+# tagged with an 'rma' suffix (e.g. olmo-core-tch2100cu128-rma-<date>) to distinguish them.
+
+.PHONY : beaker-image-rma-cu128
+beaker-image-rma-cu128 :
+	$(MAKE) beaker-image \
+		CUDA_VERSION=12.8.1 \
+		BASE_IMAGE=nvidia/cuda:12.8.1-cudnn-devel-ubuntu$(UBUNTU_VERSION) \
+		NCCL_PIP_SPEC=nvidia-nccl-cu12==$(NCCL_RMA_VERSION) \
+		IMAGE_SUFFIX=rma-$(IMAGE_SUFFIX)
+
+.PHONY : beaker-image-rma-cu13
+beaker-image-rma-cu13 :
+	$(MAKE) beaker-image \
+		CUDA_VERSION=13.0.1 \
+		BASE_IMAGE=nvidia/cuda:13.0.1-cudnn-devel-ubuntu$(UBUNTU_VERSION) \
+		NCCL_PIP_SPEC=nvidia-nccl-cu13==$(NCCL_RMA_VERSION) \
+		IMAGE_SUFFIX=rma-$(IMAGE_SUFFIX)
 
 .PHONY : get-beaker-workspace
 get-beaker-workspace :
