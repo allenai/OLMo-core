@@ -64,7 +64,7 @@ from olmo_core.float8 import Float8Config
 from olmo_core.nn.lm_head import LMOutputWithLoss
 from olmo_core.nn.moe.v2.model import MoEFusedV2Transformer
 from olmo_core.nn.parallel.distributed import MultiGroupDistributedDataParallel
-from olmo_core.nn.transformer import MoEFusedV2TransformerConfig, Transformer
+from olmo_core.nn.transformer import Transformer
 from olmo_core.optim import MoEFusedV2OptimizerConfig
 from olmo_core.optim.scheduler import Scheduler
 from olmo_core.utils import get_default_device, log_once, move_to_device
@@ -138,12 +138,18 @@ class MoEV2TransformerTrainModule(TrainModule):
         assert isinstance(
             model, MoEFusedV2Transformer
         ), "MoEV2TransformerTrainModule only supports MoEFusedV2Transformer model"
-        if not isinstance(model.config, MoEFusedV2TransformerConfig):
-            raise OLMoConfigurationError(
-                "MoEV2TransformerTrainModule requires a global MoEFusedV2TransformerConfig "
-                "on model.config for FLOP accounting. Build the model from its config, or "
-                "attach the global config before constructing the train module."
-            )
+        # TODO(moe-train-module-model-config): this guard required a global config on `model.config`
+        # for the config-level FLOP accounting, but that was dropped in favor of model-level
+        # accounting (`model.num_flops_per_token`, captured below), and `model.config` isn't set by
+        # `MoEFusedV2TransformerConfig.build()` on core. Left commented out (not deleted) in case the
+        # config-level FLOP path is reinstated. To re-enable: re-add the MoEFusedV2TransformerConfig
+        # import and set `model.config`.
+        # if not isinstance(model.config, MoEFusedV2TransformerConfig):
+        #     raise OLMoConfigurationError(
+        #         "MoEV2TransformerTrainModule requires a global MoEFusedV2TransformerConfig "
+        #         "on model.config for FLOP accounting. Build the model from its config, or "
+        #         "attach the global config before constructing the train module."
+        #     )
 
         ######################### Validate arguments. [BEGIN] #########################
         if rank_microbatch_size % max_sequence_length != 0:
