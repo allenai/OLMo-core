@@ -73,6 +73,7 @@ from ...common import MetricMergeStrategy, ReduceType
 from ..train_module import EvalBatchSpec, TrainModule
 from .config import (
     TransformerActivationCheckpointingConfig,
+    TransformerActivationCheckpointingMode,
     TransformerContextParallelConfig,
     TransformerDataParallelConfig,
     TransformerExpertParallelConfig,
@@ -205,8 +206,17 @@ class MoEV2TransformerTrainModule(TrainModule):
                 cp_config.degree > 1
             ), "Context parallelism requires a degree > 1, otherwise use None"
             raise NotImplementedError("Context parallelism is not implemented")
-        if float8_config is not None:
+        if float8_config is not None and float8_config.enabled:
             raise NotImplementedError("Float8 quantization is not implemented")
+
+        if (
+            ac_config is not None
+            and ac_config.mode == TransformerActivationCheckpointingMode.budget
+            and not compile_model
+        ):
+            raise OLMoConfigurationError(
+                "Activation checkpointing with 'budget' mode requires compilation to be enabled"
+            )
 
         assert (
             dp_config is not None
@@ -594,7 +604,13 @@ class MoEV2TransformerTrainModule(TrainModule):
             # TODO(moe-train-module-bsz-divisibility): this should raise when the global batch size
             # isn't divisible by rank_microbatch_size * dp_world_size, but the check was disabled
             # because it tripped on batch-size warmup + checkpoint load. Restore a correct check
-            # (accounting for warmup) instead of silently accepting it. Flagged for Tianhua.
+            # (accounting for warmup) instead of silently accepting it. A correct check should also
+            # reject the batch shapes the standard train modules reject, which currently only fail
+            # later at forward time (Codex): (a) with PP, batches not divisible by
+            # rank_microbatch_size * dp_ws (or < one microbatch) floor to uneven/0 microbatches that
+            # break the fixed-size P2P schedule; (b) with two_batch_overlap, odd microbatch counts
+            # (e.g. rank_microbatch_size == max_sequence_length) fail forward_tbo's even-batch
+            # requirement (model.py forward_tbo).
             pass
 
         if self.pp_enabled:
@@ -1345,15 +1361,17 @@ class MoEV2TransformerTrainModule(TrainModule):
 
         # Step optimizer.
         optim.step()
-        with maybe_nvtx_annotate(
-            "MoEV2TransformerTrainModule.refresh_rowwise_fp8_cache_after_optim", _BWD_COLOR
-        ):
-            for model in self.model_parts:
-                model.refresh_rowwise_fp8_cache()
-
-        # dist.barrier()
-
-        # self._copy_full_precision_to_low_precision_params()
+        # TODO(moe-train-module-rowwise-cache-refresh): this per-step refresh looks redundant —
+        # optim.step() already copies the updated main params back to the model params and refreshes
+        # the rowwise-FP8 caches via MoEFusedV2Optimizer._copy_main_params_to_model_params(), with no
+        # intervening weight change, so this rebuilds every cache a second time each step (Codex).
+        # Left commented pending confirmation on a real rowwise-FP8 run (incl. skip-step behavior)
+        # before removing outright.
+        # with maybe_nvtx_annotate(
+        #     "MoEV2TransformerTrainModule.refresh_rowwise_fp8_cache_after_optim", _BWD_COLOR
+        # ):
+        #     for model in self.model_parts:
+        #         model.refresh_rowwise_fp8_cache()
 
         total_grad_norm = optim.latest_grad_norm
 
