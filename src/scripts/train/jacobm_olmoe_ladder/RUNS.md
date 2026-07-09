@@ -1790,3 +1790,22 @@ summary. Conversion jobs used one Jupiter GPU each; eval jobs use the standard
 | `midtraining/mt-275m-baseline-cx1-lr2e-4-r1/step95368` | `hf-checkpoints/midtraining/mt-275m-baseline-cx1-lr2e-4-r1/step95368` | https://beaker.org/ex/01KX02AE8YRXS7Q8SGV0TAMEN7 | https://beaker.org/ex/01KX02MYSA36TFKBT99XAE0XZ6 |
 | `midtraining/mt-275m-baseline-cx8-lr2e-4-r1/step95368` | `hf-checkpoints/midtraining/mt-275m-baseline-cx8-lr2e-4-r1/step95368` | https://beaker.org/ex/01KX02AFMHGPSH4ZQMS0A5BEF7 | https://beaker.org/ex/01KX02N80T6NXX8TZEJM8TC0Z5 |
 
+## 2026-07-09 Midtraining Eval Backfills
+
+Launched final-checkpoint fast eval backfills for finished midtraining runs that
+were missing `eval/*` metrics on their source W&B runs. These use
+`experiments/midtraining/launch_eval_backfills.sh`, Titan urgent, 1 node x 2
+GPUs, image `tianhuat/olmo-core-torch211-2404-cu128`, workspace
+`ai2/OLMo-3-moe-experiments`, and budget `ai2/oe-other`. After they finish, run
+`copy_eval_backfills_to_wandb.py --only mt-eval` so the metrics land on the
+source training runs.
+
+| Source run | Checkpoint | Model size | Eval backfill | Beaker | Initial state |
+| --- | --- | --- | --- | --- | --- |
+| `mt-275m-baseline-cx2-lr1p8e-4-r1` | `step95368` | 275M | `mt-eval-275m-baseline-cx2-lr1p8e-4-r1` | https://beaker.org/ex/01KX40CX1CHF7CFFQSDZK4Z4RE | running |
+| `mt-275m-baseline-cx4-lr1p5e-4-r1` | `step95368` | 275M | `mt-eval-275m-baseline-cx4-lr1p5e-4-r1` | https://beaker.org/ex/01KX40D8PFC9Z920Q3T70TGMSQ | created |
+| `mt-480m-baseline-cx1-lr1p2e-4-r1` | `step63579` | 480M | `mt-eval-480m-baseline-cx1-lr1p2e-4-r1` | https://beaker.org/ex/01KX40CX2BCWQZ6N1AAAQ42J0A | running |
+| `mt-480m-baseline-cx8-lr8e-5-r1` | `step63579` | 480M | `mt-eval-480m-baseline-cx8-lr8e-5-r1` | https://beaker.org/ex/01KX40D8N8FWQKGJXQ5716CKHG | created |
+| `mt-810m-baseline-cx1-lr6e-5-r1` | `step47684` | 810M | `mt-eval-810m-baseline-cx1-lr6e-5-r1` | https://beaker.org/ex/01KX40CX1TDFGF4115E01P6Y3Q | running |
+| `mt-810m-baseline-cx8-lr4e-5-r1` | `step47684` | 810M | `mt-eval-810m-baseline-cx8-lr4e-5-r1` | https://beaker.org/ex/01KX40D8K5SZJG3G4HNP8VDX67 | running |
+

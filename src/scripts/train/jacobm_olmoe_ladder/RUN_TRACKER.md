@@ -1,6 +1,6 @@
 # Ladder Run Tracker
 
-Last updated: 2026-07-09 17:55 UTC.
+Last updated: 2026-07-09 18:05 UTC.
 
 This table is a scan-friendly status matrix for planned ladder cells. It is separate from `RUNS.md` (chronological launch/status log) and `PLOTTED_RESULTS.md` (finished-only plotted rows and losses).
 
@@ -76,6 +76,12 @@ Final-checkpoint eval backfills are eval-only jobs over `step95368`. Earlier att
 | Cx8 | `4e-4` | [01KWYWZ574B2TG9183DVDPPVQC](https://beaker.org/ex/01KWYWZ574B2TG9183DVDPPVQC) | uploaded | Eval metrics copied to source run. |
 | Cx8 | `8e-4` | [01KWYWZGNQ3KK63CDQPB4RFYAT](https://beaker.org/ex/01KWYWZGNQ3KK63CDQPB4RFYAT) | uploaded | Eval metrics copied to source run. |
 | Cx8 | `1.6e-3` | [01KWZ3287FMKN570V86JD3XANK](https://beaker.org/ex/01KWZ3287FMKN570V86JD3XANK) | uploaded | Eval metrics copied to source run. |
+| 275M Cx2 | `1.8e-4` | [01KX40CX1CHF7CFFQSDZK4Z4RE](https://beaker.org/ex/01KX40CX1CHF7CFFQSDZK4Z4RE) | running | Final-checkpoint eval backfill launched 2026-07-09; copy metrics to source W&B run after it finishes. |
+| 275M Cx4 | `1.5e-4` | [01KX40D8PFC9Z920Q3T70TGMSQ](https://beaker.org/ex/01KX40D8PFC9Z920Q3T70TGMSQ) | created | Final-checkpoint eval backfill launched 2026-07-09; copy metrics to source W&B run after it finishes. |
+| 480M Cx1 | `1.2e-4` | [01KX40CX2BCWQZ6N1AAAQ42J0A](https://beaker.org/ex/01KX40CX2BCWQZ6N1AAAQ42J0A) | running | Final-checkpoint eval backfill launched 2026-07-09; copy metrics to source W&B run after it finishes. |
+| 480M Cx8 | `8e-5` | [01KX40D8N8FWQKGJXQ5716CKHG](https://beaker.org/ex/01KX40D8N8FWQKGJXQ5716CKHG) | created | Final-checkpoint eval backfill launched 2026-07-09; copy metrics to source W&B run after it finishes. |
+| 810M Cx1 | `6e-5` | [01KX40CX1TDFGF4115E01P6Y3Q](https://beaker.org/ex/01KX40CX1TDFGF4115E01P6Y3Q) | running | Final-checkpoint eval backfill launched 2026-07-09; copy metrics to source W&B run after it finishes. |
+| 810M Cx8 | `4e-5` | [01KX40D8K5SZJG3G4HNP8VDX67](https://beaker.org/ex/01KX40D8K5SZJG3G4HNP8VDX67) | running | Final-checkpoint eval backfill launched 2026-07-09; copy metrics to source W&B run after it finishes. |
 
 Tentative larger-model midtraining batch targets: 480M uses global batch seq 192,
 810M uses 256, and 1.2B uses 384. These require smoke tests before promotion.
@@ -119,7 +125,7 @@ Initial OLMoBase eval target set uses the selected 275M baseline midtraining LR,
 
 ## Active / Queued Beaker Surface
 
-Bounded status pass on 2026-07-09 17:38 UTC checked only runs that were previously running, queued, created, or finished-unplotted in this table / `RUNS.md`; it did not scan the full historical W&B/Beaker surface.
+Bounded status pass on 2026-07-09 18:02 UTC checked only runs that were previously running, queued, created, or finished-unplotted in this table / `RUNS.md`; it did not scan the full historical W&B/Beaker surface.
 
 | Run(s) | State | Latest timestamp UTC | Beaker | Notes |
 | --- | --- | --- | --- | --- |
