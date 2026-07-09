@@ -434,7 +434,9 @@ class MoEV2TransformerTrainModule(TrainModule):
                 )
             dp_world_size //= tp.degree
         if ep is not None:
-            if ep.degree <= 1 or dp_world_size % ep.degree != 0:
+            # -1 is the "use all remaining ranks" shorthand also accepted by the EP mesh helpers.
+            ep_degree = dp_world_size if ep.degree == -1 else ep.degree
+            if ep_degree <= 1 or dp_world_size % ep_degree != 0:
                 raise OLMoConfigurationError(
                     f"{ep.__class__.__name__}.degree must be at least 1 and divide into the world size"
                 )
@@ -496,12 +498,12 @@ class MoEV2TransformerTrainModule(TrainModule):
                     dims.append(pp.degree)
 
             # Then EP data parallel.
-            ep_dp_world_size = dp_world_size // ep.degree
+            ep_dp_world_size = dp_world_size // ep_degree
             names.append(MeshDimName.ep_dp)
             dims.append(ep_dp_world_size)
 
             # Then EP model parallel.
-            ep_mp_world_size = ep.degree
+            ep_mp_world_size = ep_degree
             names.append(MeshDimName.ep_mp)
             dims.append(ep_mp_world_size)
 
@@ -718,6 +720,10 @@ class MoEV2TransformerTrainModule(TrainModule):
     #       probes the current param name (and its `module.` prefix), so a checkpoint saved before a
     #       parameter rename can't be loaded even though the standard transformer train modules honor
     #       the mapping. (Codex)
+    #   (f) with `freeze_params`, `save_state_dict_direct` serializes only `optim.state_dict()`, which
+    #       skips `requires_grad=False` params, so frozen embeddings/blocks are absent from the
+    #       checkpoint and left at fresh init on resume/eval. Serialize model state (or frozen params)
+    #       separately. (Codex)
     def load_state_dict(self, state_dict: Dict[str, Any]) -> None:
         raise NotImplementedError("Use load_state_dict_direct instead")
 

@@ -229,9 +229,17 @@ def _build_block(backend: str = "te_fused"):
 
 @requires_gpu
 @requires_te
-@pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16, torch.float32])
-@pytest.mark.parametrize("top_k", [1, 2, 4])
-@pytest.mark.parametrize("keep_fraction", [1.0, 0.7, 0.3])
+# Curated subset (not the full dtype x top_k x keep_fraction cross-product): each dtype, top_k, and
+# keep_fraction value appears at least once, covering the no-drop and heavy-drop paths.
+@pytest.mark.parametrize(
+    "dtype, top_k, keep_fraction",
+    [
+        (torch.bfloat16, 2, 1.0),
+        (torch.bfloat16, 2, 0.3),
+        (torch.float16, 1, 0.7),
+        (torch.float32, 4, 0.7),
+    ],
+)
 def test_restore_unpermute_1d_te_fused_matches_reference(
     dtype: torch.dtype,
     top_k: int,

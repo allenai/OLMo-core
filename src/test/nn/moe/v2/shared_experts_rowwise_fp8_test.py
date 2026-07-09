@@ -1,5 +1,6 @@
 import types
 
+import pytest
 import torch
 import torch.nn.functional as F
 
@@ -11,6 +12,13 @@ from olmo_core.nn.moe.v2.fp8 import (
     shared_experts_forward2_rowwise_fp8,
 )
 from olmo_core.nn.moe.v2.shared_experts import SharedExperts
+from olmo_core.testing import has_torch_grouped_mm
+
+# The stubs below drive the real torch.nn.functional.grouped_mm (torch >= 2.10); skip on older
+# torch so CPU-only runs don't error instead of skipping.
+pytestmark = pytest.mark.skipif(
+    not has_torch_grouped_mm, reason="requires torch.nn.functional.grouped_mm (torch>=2.10)"
+)
 
 
 def _stub_scaled_grouped_mm_q(
