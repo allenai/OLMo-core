@@ -13,12 +13,18 @@ from olmo_core.nn.transformer.block import (
     ReorderedNormTransformerBlock,
     TransformerBlock,
 )
-from olmo_core.nn.transformer.model import MoETransformer, NormalizedTransformer, Transformer
+from olmo_core.nn.transformer.model import (
+    MoETransformer,
+    NormalizedTransformer,
+    Transformer,
+)
 
 log = logging.getLogger(__name__)
 
 try:
-    from olmo_core.nn.moe.v2.hf.configuration_olmo3moe import Olmo3MoeConfig  # type: ignore
+    from olmo_core.nn.moe.v2.hf.configuration_olmo3moe import (
+        Olmo3MoeConfig,  # type: ignore
+    )
     from olmo_core.nn.moe.v2.model import MoEFusedV2Transformer  # type: ignore
 except ImportError:
     Olmo3MoeConfig = None  # type: ignore[assignment,misc]
@@ -86,6 +92,28 @@ def _get_flex_olmo_config(model: MoETransformer) -> PretrainedConfig:
     )
 
 
+def _register_olmo3moe_auto_classes() -> None:
+    """
+    Register the standalone ``olmo3moe`` config/model with transformers' ``Auto*`` mappings.
+
+    transformers ships no ``olmo3moe`` architecture, so ``AutoModelForCausalLM.from_config`` (used
+    when exporting a checkpoint to HF) can't resolve it until the custom classes are registered.
+    Registration is idempotent — transformers raises :class:`ValueError` on a duplicate.
+    """
+    from transformers import AutoConfig, AutoModelForCausalLM
+
+    from olmo_core.nn.moe.v2.hf.modeling_olmo3moe import Olmo3MoeForCausalLM
+
+    try:
+        AutoConfig.register("olmo3moe", Olmo3MoeConfig)
+    except ValueError:
+        pass  # already registered
+    try:
+        AutoModelForCausalLM.register(Olmo3MoeConfig, Olmo3MoeForCausalLM)
+    except ValueError:
+        pass  # already registered
+
+
 def _get_olmo3moe_config(model: "MoEFusedV2Transformer") -> PretrainedConfig:
     from olmo_core.nn.moe.v2.block import MoEFusedV2TransformerBlock
 
@@ -94,6 +122,8 @@ def _get_olmo3moe_config(model: "MoEFusedV2Transformer") -> PretrainedConfig:
             "Building an Olmo3MoeConfig requires the olmo3moe HF model files "
             "(olmo_core.nn.moe.v2.hf)."
         )
+
+    _register_olmo3moe_auto_classes()
 
     blocks = list(model.blocks.values())
 

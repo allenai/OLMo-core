@@ -739,7 +739,10 @@ def convert_olmo3moe_state_from_hf(
 
     olmo_state["embeddings.weight"] = hf_state["model.embed_tokens.weight"]
     olmo_state["lm_head.norm.weight"] = hf_state["model.norm.weight"]
-    olmo_state["lm_head.w_out.weight"] = hf_state["lm_head.weight"]
+    # With tied embeddings transformers omits ``lm_head.weight``; fall back to the input embeddings.
+    olmo_state["lm_head.w_out.weight"] = hf_state.get(
+        "lm_head.weight", hf_state["model.embed_tokens.weight"]
+    )
     if getattr(config, "embed_norm", False):
         olmo_state["embedding_norm.weight"] = hf_state["model.embed_norm.weight"]
 
