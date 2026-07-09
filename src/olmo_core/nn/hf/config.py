@@ -96,9 +96,12 @@ def _register_olmo3moe_auto_classes() -> None:
     """
     Register the standalone ``olmo3moe`` config/model with transformers' ``Auto*`` mappings.
 
-    transformers ships no ``olmo3moe`` architecture, so ``AutoModelForCausalLM.from_config`` (used
-    when exporting a checkpoint to HF) can't resolve it until the custom classes are registered.
-    Registration is idempotent — transformers raises :class:`ValueError` on a duplicate.
+    transformers ships no ``olmo3moe`` architecture. The in-memory ``Auto*.register`` calls let
+    ``AutoModelForCausalLM.from_config`` resolve it while exporting a checkpoint. The
+    ``register_for_auto_class`` calls additionally persist an ``auto_map`` into the exported
+    ``config.json`` and bundle the model code alongside it, so a fresh process can reload the
+    checkpoint with ``trust_remote_code=True``. In-memory registration is idempotent —
+    transformers raises :class:`ValueError` on a duplicate.
     """
     from transformers import AutoConfig, AutoModelForCausalLM
 
@@ -112,6 +115,9 @@ def _register_olmo3moe_auto_classes() -> None:
         AutoModelForCausalLM.register(Olmo3MoeConfig, Olmo3MoeForCausalLM)
     except ValueError:
         pass  # already registered
+
+    Olmo3MoeConfig.register_for_auto_class("AutoConfig")
+    Olmo3MoeForCausalLM.register_for_auto_class("AutoModelForCausalLM")
 
 
 def _get_olmo3moe_config(model: "MoEFusedV2Transformer") -> PretrainedConfig:
@@ -136,6 +142,13 @@ def _get_olmo3moe_config(model: "MoEFusedV2Transformer") -> PretrainedConfig:
             if moe_block is None:
                 moe_block = block
         else:
+            # olmo3moe places the layernorms after attention/MLP (reordered norm); a standard
+            # pre-norm dense block would export with its norms in the wrong position.
+            if not isinstance(block, ReorderedNormTransformerBlock):
+                raise NotImplementedError(
+                    f"Exporting olmo3moe requires reordered-norm dense blocks, got "
+                    f"{type(block).__name__}."
+                )
             dense_layers_indices.append(idx)
             if dense_block is None:
                 dense_block = block
