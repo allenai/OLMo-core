@@ -40,6 +40,7 @@ NGPU="${NGPU:-8}"
 MAX_STEPS="${MAX_STEPS:-0}"
 VARIANT="${VARIANT:?set VARIANT=full|chunked|hier}"
 NDOCS="${NDOCS:-100}"
+MODEL_SIZE="${MODEL_SIZE:-0.6B}"
 SEQ_LEN="${SEQ_LEN:-6144}"
 EPOCHS="${EPOCHS:-3}"
 DIL_N="${DIL_N:-3}"
@@ -47,7 +48,7 @@ DIL_M="${DIL_M:-2}"
 RUN="${RUN:-q06b-${VARIANT}-c${NDOCS}}"
 # Shared dense CPT base (on /scratch) -> stage to node-local /data once; all variants share it.
 BASE_SRC="${BASE_SRC:-/scratch/users/prasann/cpt_mix_ckpts/q06b-dense-cpt-modelonly}"
-echo "=== HOST=$(hostname) VARIANT=$VARIANT NDOCS=$NDOCS SEQ_LEN=$SEQ_LEN DIL_N=$DIL_N DIL_M=$DIL_M RUN=$RUN START=$(date '+%F %T') ==="
+echo "=== HOST=$(hostname) MODEL_SIZE=$MODEL_SIZE VARIANT=$VARIANT NDOCS=$NDOCS SEQ_LEN=$SEQ_LEN DIL_N=$DIL_N DIL_M=$DIL_M RUN=$RUN START=$(date '+%F %T') ==="
 
 ENV=/data/prasann/conda/envs/corpus-reasoning-olmo
 [ -d "$ENV" ] || ENV=/scratch/users/prasann/conda/envs/corpus-reasoning-olmo
@@ -99,7 +100,7 @@ if [ "$VARIANT" = "full" ]; then
     src/scripts/train/sft/Qwen3-0.6B-dense-contradiction-n20-SFT-local.py \
     --run-name "$RUN" --base-checkpoint "$BASE_CKPT" \
     --data-path "$DATA_LOCAL" --work-dir "$WORK_LOCAL" --save-folder "$SAVE_LOCAL" \
-    --seq-len "$SEQ_LEN" --epochs "$EPOCHS" --num-workers 0 --save-checkpoint \
+    --model-size "$MODEL_SIZE" --seq-len "$SEQ_LEN" --epochs "$EPOCHS" --num-workers 0 --save-checkpoint \
     $MAXARG $WANDB_FLAG
 else
   CDM="chunked"; DILARGS=""
@@ -110,7 +111,7 @@ else
     src/scripts/train/sft/Qwen3-0.6B-docchunk-mask-mix-contradiction-SFT-local.py \
     --run-name "$RUN" --base-checkpoint "$BASE_CKPT" \
     --data-dir "$DATA_LOCAL" --work-dir "$WORK_LOCAL" --save-folder "$SAVE_LOCAL" \
-    --seq-len "$SEQ_LEN" --epochs "$EPOCHS" --grad-accum 8 --mix-mode none \
+    --model-size "$MODEL_SIZE" --seq-len "$SEQ_LEN" --epochs "$EPOCHS" --grad-accum 8 --mix-mode none \
     --cross-doc-mode "$CDM" $DILARGS --save-checkpoint --no-compile \
     $MAXARG
 fi

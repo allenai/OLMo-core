@@ -140,7 +140,11 @@ def build_and_fit(opts: argparse.Namespace) -> None:
           f"dilation_m={opts.dilation_m if opts.cross_doc_mode=='hierarchical_dilated' else None} "
           f"doc_keep_prob={opts.doc_keep_prob if opts.cross_doc_mode=='random_doc' else None}",
           flush=True)
-    model_config = TransformerConfig.qwen3_0_6B(**qwen_kwargs)
+    model_factory = {
+        "0.6B": TransformerConfig.qwen3_0_6B,
+        "4B": TransformerConfig.qwen3_4B,
+    }[opts.model_size]
+    model_config = model_factory(**qwen_kwargs)
     model_config.document_chunk_attention = {
         "doc_start_id": DOC_START_ID,
         "doc_end_id": DOC_END_ID,
@@ -245,6 +249,8 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--data-dir", required=True, help="docdense shard dir (token_ids_part_*.npy + metadata.json)")
     ap.add_argument("--run-name", default="q06b-docchunk-mix-smoke")
+    ap.add_argument("--model-size", choices=["0.6B", "4B"], default="0.6B",
+                    help="qwen3_0_6B vs qwen3_4B factory (docchunk kwargs thread through identically)")
     ap.add_argument("--save-folder", default=None)
     ap.add_argument("--base-checkpoint", default=None,
                     help=f"model_and_optim distcp subdir (default {BASE_CHECKPOINT})")
