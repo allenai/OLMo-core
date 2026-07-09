@@ -162,21 +162,57 @@ def _get_olmo3moe_config(model: "MoEFusedV2Transformer") -> PretrainedConfig:
             f"Attention does not use rope, unable to build HF config for "
             f"{model.__class__.__name__}"
         )
+    # The olmo3moe converter only round-trips head-wise QK-norm, unscaled RoPE, and bias-free
+    # attention; reject anything else rather than silently exporting a divergent model.
+    if attention.rope.scaling is not None:
+        raise NotImplementedError("Exporting olmo3moe with scaled RoPE is not supported.")
+    if any(
+        proj.bias is not None
+        for proj in (attention.w_q, attention.w_k, attention.w_v, attention.w_out)
+    ):
+        raise NotImplementedError("Exporting olmo3moe with attention biases is not supported.")
+    if not attention.use_head_qk_norm or attention.q_norm is None:
+        raise NotImplementedError(
+            "Exporting olmo3moe requires head-wise QK-norm (use_head_qk_norm=True); other "
+            "QK-norm configurations are not supported."
+        )
 
     if moe_block.routed_experts is None or moe_block.routed_experts_router is None:
         raise NotImplementedError("MoE block is missing routed experts or its router.")
 
     routed_experts = moe_block.routed_experts
     router = moe_block.routed_experts_router
+    # Selection modifiers change which experts a token routes to at inference; the HF router has no
+    # equivalent state, so exporting them would silently diverge.
+    if router.bias_gamma is not None or router.use_quant_scores:
+        raise NotImplementedError(
+            "Exporting olmo3moe with router selection modifiers (bias_gamma / use_quant_scores) "
+            "is not supported."
+        )
 
     # Dense MLP intermediate size, if there are any dense layers.
     dense_mlp_intermediate_size: Optional[int] = None
     if dense_block is not None:
+        if any(
+            proj.bias is not None
+            for proj in (
+                dense_block.feed_forward.w1,
+                dense_block.feed_forward.w2,
+                dense_block.feed_forward.w3,
+            )
+        ):
+            raise NotImplementedError(
+                "Exporting olmo3moe with biased dense feed-forward layers is not supported."
+            )
         dense_mlp_intermediate_size = dense_block.feed_forward.hidden_size
 
-    # Shared experts (optional).
+    # Shared experts (optional). The HF model has a single shared expert.
     shared_expert_intermediate_size: Optional[int] = None
     if moe_block.shared_experts is not None:
+        if moe_block.shared_experts.num_experts > 1:
+            raise NotImplementedError(
+                "Exporting olmo3moe with more than one shared expert is not supported."
+            )
         shared_expert_intermediate_size = moe_block.shared_experts.hidden_size
 
     # Sliding window: OLMo-core stores a per-layer window on the attention backend; a value of
