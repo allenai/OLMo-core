@@ -833,9 +833,10 @@ class Trainer:
                     f"Evaluating checkpoint {checkpoint_num:,d}/{len(checkpoint_paths):,d} "
                     f"from '{checkpoint_path}'..."
                 )
-                self.load_checkpoint(
-                    checkpoint_path, load_trainer_state=True, load_optim_state=True
-                )
+                # Offline eval only needs model weights: skip optimizer state (never needed, and
+                # eval-only/weights-only checkpoints have none), and leave trainer state at the
+                # trainer's default (load-if-present) so it isn't required either.
+                self.load_checkpoint(checkpoint_path, load_optim_state=False)
 
                 self.record_metric("throughput/total tokens", self.global_train_tokens_seen)
                 # Duck-typed so this stays train-module-agnostic (transformer train modules expose
