@@ -35,7 +35,7 @@ _mirror_log() { cp -f "$_SRC_LOG" "$_DST_LOG" 2>/dev/null || true; }
 ( while true; do _mirror_log; sleep 30; done ) &
 _MIRROR_PID=$!
 trap '_mirror_log; kill $_MIRROR_PID 2>/dev/null' EXIT
-REPO=/accounts/projects/berkeleynlp/prasann/projects/OLMo-core/.claude/worktrees/agent-a7975a8007a7458c7
+REPO="${REPO:-/accounts/projects/berkeleynlp/prasann/projects/OLMo-core}"
 NGPU="${NGPU:-8}"
 MAX_STEPS="${MAX_STEPS:-0}"
 VARIANT="${VARIANT:?set VARIANT=full|chunked|hier}"
