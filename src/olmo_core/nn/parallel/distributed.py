@@ -205,7 +205,9 @@ class MultiGroupDistributedDataParallel(Module):
 
         self._fp32_acc_hooks = []
         if self._accumulate_grads_in_fp32:
-            for p in module.parameters():
+            # Only non-ignored params have bucket views; installing the fp32 hook on an
+            # ignored param would index a missing _param_to_bucket_view entry during backward.
+            for p in self._module_parameters:
                 if not p.requires_grad:
                     continue
                 self._fp32_acc_hooks.append(
@@ -525,17 +527,19 @@ class MultiGroupDistributedDataParallel(Module):
         # we cannot safely rebind without risking silent corruption.
         self._ensure_grad_views_bound(allow_none_rebind=False, where="finalize_grad_reduce")
 
-        # in some cases (eg, imbalance moe routing), some params may not have grads, and their
-        # post_accumulate_grad_hook is never called, so their grad_ready is never set to True.
+        # In some cases (e.g. imbalanced MoE routing) a param's post-accumulate hook is
+        # never called this step, so its grad_ready is never set. Mark those ready so
+        # their bucket can reduce.
+        #
+        # Do not zero the bucket view here: it already holds the correct value, either
+        # zero from the start of the accumulation window or a grad from an earlier
+        # no_sync() micro-batch.
         if self._next_reduce_bucket_idx < len(self._grad_buckets):
             for param in self._param_grad_ready.keys():
                 if not self._param_grad_ready[param]:
                     self._param_grad_ready[param] = True
                     bucket_idx = self._param_to_bucket_idx[param]
                     self._bucket_ready_count[bucket_idx] += 1
-
-                    # Keep missing grads explicitly zero in the bucket view.
-                    self._param_to_bucket_view[param].zero_()
 
             self._maybe_kick_start_all_reduce()
 
