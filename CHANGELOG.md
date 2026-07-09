@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added `Trainer.eval_checkpoints()` (and the `checkpoints_to_eval` config/trainer field): evaluate a list of checkpoint paths/globs with the configured `EvaluatorCallback`s without training. `TrainerConfig.build()` gained an `eval_only` pass-through for a uniform calling convention with the train-module config's `build()`.
 - Added `MoEV2TransformerTrainModule` (and `MoEV2TransformerTrainModuleConfig`), the train module for the fused MoE-v2 transformer. It builds the fused MoE distributed optimizer (`MoEFusedV2OptimizerConfig`), wraps model parts in `MultiGroupDistributedDataParallel`, and supports DP/EP/TP/CP/PP parallelism.
 - Added a custom pipeline-parallel layer (`olmo_core.train.train_module.transformer.pipeline`) with `CustomPipelineStage` and the `CustomSchedule1F1BV` / `CustomScheduleInterleaved1F1B` schedules, which re-use point-to-point receive buffers across micro-batches over a NCCL-RMA transport. Enabled via `TransformerPipelineParallelConfig.use_custom_stage_implementation` and `PipelineP2PBackend`.
 - Added `MultiGroupDistributedDataParallel` (`olmo_core.nn.parallel`), a data-parallel wrapper that accumulates gradients into flat bucket views and supports per-parameter process groups (`param_process_group_fn`), overlapped bucketed all-reduce (finalized via `finalize_grad_reduce()`), and optional fp32 gradient accumulation/reduction.
