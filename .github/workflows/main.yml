@@ -173,64 +173,64 @@ jobs:
       fail-fast: false
       matrix:
         task:
-          # - name: Test (GPU)
-          #   image: &gpu_test_image tylerr/olmo-core-tch291cu128-2025-11-25
-          #   gpus: 2
-          #   run: |
-          #     pytest -v --color=yes --durations=3 -m gpu \
-          #       --ignore-glob='src/test/distributed/checkpoint*' \
-          #       --ignore-glob='src/test/nn/transformer*' \
-          #       --ignore-glob='src/test/nn/attention*' \
-          #       --ignore-glob='src/test/nn/moe*' \
-          #       --ignore-glob='src/test/optim*' \
-          #       --ignore-glob='src/test/kernels*' \
-          #       --ignore-glob='src/test/train/train_module/transformer/moe_train_module*' \
-          #       src/test/
+          - name: Test (GPU)
+            image: &gpu_test_image tylerr/olmo-core-tch291cu128-2025-11-25
+            gpus: 2
+            run: |
+              pytest -v --color=yes --durations=3 -m gpu \
+                --ignore-glob='src/test/distributed/checkpoint*' \
+                --ignore-glob='src/test/nn/transformer*' \
+                --ignore-glob='src/test/nn/attention*' \
+                --ignore-glob='src/test/nn/moe*' \
+                --ignore-glob='src/test/optim*' \
+                --ignore-glob='src/test/kernels*' \
+                --ignore-glob='src/test/train/train_module/transformer/moe_train_module*' \
+                src/test/
 
-          # - name: Test checkpoint (GPU)
-          #   image: *gpu_test_image
-          #   gpus: 2
-          #   run: |
-          #     pytest -v --color=yes --durations=3 -m gpu \
-          #       src/test/distributed/checkpoint*
+          - name: Test checkpoint (GPU)
+            image: *gpu_test_image
+            gpus: 2
+            run: |
+              pytest -v --color=yes --durations=3 -m gpu \
+                src/test/distributed/checkpoint*
 
-          # - name: Test transformer (GPU)
-          #   image: *gpu_test_image
-          #   gpus: 2
-          #   run: |
-          #     pytest -v --color=yes --durations=3 -m gpu \
-          #       src/test/nn/transformer*
+          - name: Test transformer (GPU)
+            image: *gpu_test_image
+            gpus: 2
+            run: |
+              pytest -v --color=yes --durations=3 -m gpu \
+                src/test/nn/transformer*
 
-          # - name: Test attention (GPU)
-          #   image: *gpu_test_image
-          #   gpus: 2
-          #   run: |
-          #     pytest -v --color=yes --durations=3 -m gpu \
-          #       src/test/nn/attention*
+          - name: Test attention (GPU)
+            image: *gpu_test_image
+            gpus: 2
+            run: |
+              pytest -v --color=yes --durations=3 -m gpu \
+                src/test/nn/attention*
 
-          # - name: Test MoE (GPU)
-          #   image: *gpu_test_image
-          #   gpus: 2
-          #   # The v2 MoE GPU tests need TransformerEngine + torch 2.10, which this image
-          #   # lacks, so they run in the "Test MoE kernels" job below; exclude them here.
-          #   run: |
-          #     pytest -v --color=yes --durations=3 -m gpu \
-          #       --ignore-glob='src/test/nn/moe/v2*' \
-          #       src/test/nn/moe*
+          - name: Test MoE (GPU)
+            image: *gpu_test_image
+            gpus: 2
+            # The v2 MoE GPU tests need TransformerEngine + torch 2.10, which this image
+            # lacks, so they run in the "Test MoE kernels" job below; exclude them here.
+            run: |
+              pytest -v --color=yes --durations=3 -m gpu \
+                --ignore-glob='src/test/nn/moe/v2*' \
+                src/test/nn/moe*
 
-          # - name: Test optim (GPU)
-          #   image: *gpu_test_image
-          #   gpus: 2
-          #   run: |
-          #     pytest -v --color=yes --durations=3 -m gpu \
-          #       src/test/optim*
+          - name: Test optim (GPU)
+            image: *gpu_test_image
+            gpus: 2
+            run: |
+              pytest -v --color=yes --durations=3 -m gpu \
+                src/test/optim*
 
-          # - name: Integration tests (GPU)
-          #   image: *gpu_test_image
-          #   gpus: 2
-          #   run: |
-          #     pytest -v --color=yes -m gpu \
-          #       src/integration_tests/
+          - name: Integration tests (GPU)
+            image: *gpu_test_image
+            gpus: 2
+            run: |
+              pytest -v --color=yes -m gpu \
+                src/integration_tests/
 
           # The MoE kernels require torch >= 2.10 (torch.nn.functional.grouped_mm,
           # F.ScalingType/F.SwizzleType) and JIT-build .cu extensions, so they need an
