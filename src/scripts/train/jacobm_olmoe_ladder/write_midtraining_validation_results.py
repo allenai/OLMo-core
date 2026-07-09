@@ -27,6 +27,7 @@ DEFAULT_CACHE_DIR = RESULTS_DIR / "cache" / "midtraining_wandb_summaries"
 DEFAULT_PROJECT = "ai2-llm/jacobm-olmoe-ladder"
 CACHE_VERSION = 1
 SOURCE_CX_ORDER = ("Cx1", "Cx2", "Cx4", "Cx8")
+MODEL_ORDER = ("275M", "480M", "810M", "1.2B")
 
 
 @dataclass(frozen=True)
@@ -36,10 +37,15 @@ class MidtrainTarget:
     lr: str
     beaker_id: str
     checkpoint: str
+    run_name: str | None = None
 
     @property
     def semantic_name(self) -> str:
-        return f"mt-275m-baseline-{self.source_cx.lower()}-lr{self.lr}-r1"
+        return self.run_name or f"mt-275m-baseline-{self.source_cx.lower()}-lr{self.lr}-r1"
+
+    @property
+    def model_size(self) -> str:
+        return self.source.split()[0]
 
 
 TARGETS = [
@@ -112,6 +118,54 @@ TARGETS = [
         lr="1.6e-3",
         beaker_id="01KWWM213KMG47KADPK5Q67GJP",
         checkpoint="olmoe3-tiny-275m-cx8-b768k-gpu4-ep1mb8-lr1.6e-3-r2/step40971",
+    ),
+    MidtrainTarget(
+        source="480M baseline Cx1",
+        source_cx="Cx1",
+        lr="1.2e-4",
+        beaker_id="01KWZARWH7XAS4MD2238VRKP0Y",
+        checkpoint="m480-cx1-b256k-gpu4-ep1mb8-lr1.2e-3-r1/step29022",
+        run_name="mt-480m-baseline-cx1-lr1.2e-4-r1",
+    ),
+    MidtrainTarget(
+        source="480M baseline Cx8",
+        source_cx="Cx8",
+        lr="8e-5",
+        beaker_id="01KWZARZ2T7FZDH42Q2VS92WXN",
+        checkpoint="m480-cx8-b768k-gpu8-ep1mb4-lr8e-4-r1/step77392",
+        run_name="mt-480m-baseline-cx8-lr8e-5-r1",
+    ),
+    MidtrainTarget(
+        source="810M baseline Cx1",
+        source_cx="Cx1",
+        lr="6e-5",
+        beaker_id="01KWZAT4PF87PYA96JT7ZXSQKX",
+        checkpoint="olmoe3-moe-a0-810m-cx1-b256k-gpu4-ep1mb4-lr6e-4-r1/step52648",
+        run_name="mt-810m-baseline-cx1-lr6e-5-r1",
+    ),
+    MidtrainTarget(
+        source="810M baseline Cx8",
+        source_cx="Cx8",
+        lr="4e-5",
+        beaker_id="01KWZAT4PQ0NWD20VS0XT12ZF5",
+        checkpoint="olmoe3-moe-a0-810m-cx8-b768k-gpu8-ep1mb4-lr4e-4-r1/step140394",
+        run_name="mt-810m-baseline-cx8-lr4e-5-r1",
+    ),
+    MidtrainTarget(
+        source="1.2B baseline Cx1",
+        source_cx="Cx1",
+        lr="4e-5",
+        beaker_id="01KWZAVZFS1FMR59ASRVH7VD4X",
+        checkpoint="olmoe3-moe-a0-1p2b-cx1-b256k-gpu8-ep1mb2-lr4e-4-r1/step81190",
+        run_name="mt-1p2b-baseline-cx1-lr4e-5-r1",
+    ),
+    MidtrainTarget(
+        source="1.2B baseline Cx8",
+        source_cx="Cx8",
+        lr="4e-5",
+        beaker_id="01KWZAV9AGDSD3PTS5RAM7G5N2",
+        checkpoint="olmoe3-moe-a0-1p2b-cx8-b768k-gpu32-ep1mb1-lr4e-4-r1/step216505",
+        run_name="mt-1p2b-baseline-cx8-lr4e-5-r1",
     ),
 ]
 
@@ -242,7 +296,28 @@ def deduplicated_metrics(metrics: list[str]) -> list[str]:
 
 
 def record_key(record: dict[str, Any]) -> str:
-    return f"{record['source_cx']}:{record['lr']}"
+    return f"{record['source']}:{record['lr']}"
+
+
+def source_sort_key(source: str) -> tuple[int, int, str]:
+    parts = source.split()
+    model = parts[0] if parts else source
+    cx = parts[-1] if parts else ""
+    model_idx = MODEL_ORDER.index(model) if model in MODEL_ORDER else len(MODEL_ORDER)
+    cx_idx = SOURCE_CX_ORDER.index(cx) if cx in SOURCE_CX_ORDER else len(SOURCE_CX_ORDER)
+    return (model_idx, cx_idx, source)
+
+
+def normalize_run_name(name: str) -> str:
+    base = re.sub(r"_.*$", "", name)
+    for old, new in (
+        ("lr1p2e-4", "lr1.2e-4"),
+        ("lr1p5e-4", "lr1.5e-4"),
+        ("lr1p6e-4", "lr1.6e-4"),
+        ("lr1p8e-4", "lr1.8e-4"),
+    ):
+        base = base.replace(old, new)
+    return base
 
 
 def metric_winners(records: list[dict[str, Any]], metric: str) -> set[str]:
@@ -344,11 +419,11 @@ def main() -> int:
     args = parser.parse_args()
 
     api = wandb.Api(timeout=90)
-    name_regex = r"^mt-275m-baseline-cx(1|2|4|8)-lr(1(?:\.5|p5)e-4|1(?:\.8|p8)e-4|2e-4|4e-4|8e-4|1\.6e-3)-r1_"
+    target_names = {target.semantic_name for target in TARGETS}
     runs = {
-        re.sub(r"_.*$", "", run.display_name).replace("lr1p5e-4", "lr1.5e-4").replace("lr1p8e-4", "lr1.8e-4"): run
+        normalized_name: run
         for run in api.runs(args.project, filters={"tags": {"$in": ["exp_midtraining"]}})
-        if re.search(name_regex, run.display_name)
+        if (normalized_name := normalize_run_name(run.display_name)) in target_names
     }
 
     records: list[dict[str, Any]] = []
@@ -361,7 +436,7 @@ def main() -> int:
         )
         records.append(parse_record(target, run, payload))
 
-    records.sort(key=lambda r: (r["source_cx"], lr_sort_key(r["lr"])))
+    records.sort(key=lambda r: (*source_sort_key(r["source"]), lr_sort_key(r["lr"])))
     generated_at = datetime.now(UTC)
     payload = {"generated_at_utc": generated_at.isoformat(), "records": records}
     args.json_output.parent.mkdir(parents=True, exist_ok=True)
@@ -400,15 +475,15 @@ def main() -> int:
     ]
 
     summary_rows = []
-    present_source_cxs = [source_cx for source_cx in SOURCE_CX_ORDER if any(record["source_cx"] == source_cx for record in records)]
+    present_sources = sorted({record["source"] for record in records}, key=source_sort_key)
 
-    for source_cx in present_source_cxs:
-        group = [record for record in records if record["source_cx"] == source_cx]
+    for source in present_sources:
+        group = [record for record in records if record["source"] == source]
         finished = [record for record in group if record["state"] == "finished"]
         with_eval = [record for record in group if record["eval_metrics"]]
         summary_rows.append(
             [
-                source_cx,
+                source,
                 f"{len(finished)}/{len(group)}",
                 f"{len(with_eval)}/{len(group)}",
                 ", ".join(record["lr"] for record in group if record["eval_metrics"]) or "",
@@ -432,10 +507,10 @@ def main() -> int:
             ),
             "",
         ])
-        for source_cx in present_source_cxs:
-            group = [record for record in records if record["source_cx"] == source_cx]
+        for source in present_sources:
+            group = [record for record in records if record["source"] == source]
             group_metric_names = sorted({metric for record in group for metric in record["eval_metrics"]})
-            lines.extend([f"### {source_cx} Win Counts", ""])
+            lines.extend([f"### {source} Win Counts", ""])
             if not group_metric_names:
                 lines.extend(["No `eval/*` validation metrics are present for this source group yet.", ""])
                 continue
@@ -450,9 +525,9 @@ def main() -> int:
             lines.extend(md_table(category_headers, category_rows))
             lines.append("")
 
-    for source_cx in present_source_cxs:
-        lines.extend([f"## {source_cx} Source", ""])
-        group = [record for record in records if record["source_cx"] == source_cx]
+    for source in present_sources:
+        lines.extend([f"## {source} Source", ""])
+        group = [record for record in records if record["source"] == source]
         rows = []
         for record in group:
             link = f"[W&B]({record['wandb_url']})" if record["wandb_url"] else ""
@@ -497,12 +572,12 @@ def main() -> int:
         lines.append("No `eval/*` validation metrics have been copied onto these midtraining runs yet.")
         lines.append("")
     else:
-        headers = ["metric", "direction"] + [f"{record['source_cx']} {record['lr']}" for record in records]
+        headers = ["metric", "direction"] + [f"{record['source']} {record['lr']}" for record in records]
         rows = []
-        records_by_cx = {source_cx: [record for record in records if record["source_cx"] == source_cx] for source_cx in present_source_cxs}
+        records_by_source = {source: [record for record in records if record["source"] == source] for source in present_sources}
         for metric in eval_metric_names:
             winners = set()
-            for group in records_by_cx.values():
+            for group in records_by_source.values():
                 winners.update(metric_winners(group, metric))
             rows.append(
                 [metric.replace("|", "\\|"), metric_direction(metric)]

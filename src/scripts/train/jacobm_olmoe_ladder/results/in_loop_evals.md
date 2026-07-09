@@ -1,11 +1,11 @@
 # In-Loop Eval Results
 
-Generated: 2026-07-07 21:16 UTC
+Generated: 2026-07-09 17:46 UTC
 
 Values are the latest W&B summary values for each selected run. Higher is better for accuracy/F1/pass-style metrics; lower is better for BPB/loss/perplexity-style metrics. Values marked `see metric` need manual interpretation.
 
 Selected states: `finished`. Cached finished-run summaries under `/weka/oe-adapt-default/jacobm/olmoe3/OLMo-core/src/scripts/train/jacobm_olmoe_ladder/results/cache/wandb_summaries`.
-Runs with no matching eval metrics skipped: 48.
+Runs with no matching eval metrics skipped: 54.
 
 ## 1p2b Cx1
 
@@ -606,193 +606,194 @@ Runs with no matching eval metrics skipped: 48.
 
 ## 1p2b Cx8
 
-| metric | direction | eg-1p2b-cx8-eg24e2k-lr4e-4-r1<br>`ic0ud1xz` | eg-1p2b-cx8-eg96e8k-lr4e-4-r1<br>`mqp8xl8h` | 1p2b-cx8-b768k-lr4e-4-r1<br>`gbt7khqj` | 1p2b-cx8-b768k-lr2e-4-r2<br>`jdrvfvfn` | 1p2b-cx8-b768k-lr8e-4-r2<br>`ja7yu1c3` | q3-1p2b-cx8-q3am128e8k-lr4e-4-r1<br>`0n34n3oj` | q3-1p2b-cx8-q3td128e8k-lr4e-4-r1<br>`r96ox1ij` | se-1p2b-cx8-se0m9-lr4e-4-r1<br>`blw5bd39` |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| eval/downstream/arc_challenge_test_bpb_5shot (BPB v2) | lower | 0.77581 | 0.76166 | 0.77609 | 0.78557 | 0.76369 | 0.76106 | 0.75249 | 0.77206 |
-| eval/downstream/arc_challenge_test_bpb_5shot (BPB) | lower | 0.84541 | 0.83393 | 0.84790 | 0.86017 | 0.83334 | 0.83074 | 0.82258 | 0.84385 |
-| eval/downstream/arc_challenge_test_mc_5shot_fast (BPB v2) | lower | 0.98752 | 0.99924 | 1.0008 | 1.0008 | 1.0003 | 1.0022 | 0.91661 | 1.0023 |
-| eval/downstream/arc_challenge_test_mc_5shot_fast (BPB) | lower | 1.9750 | 1.9985 | 2.0015 | 2.0016 | 2.0006 | 2.0044 | 1.8332 | 2.0047 |
-| eval/downstream/arc_challenge_test_mc_5shot_fast (CE loss v2) | lower | 0.68446 | 0.69272 | 0.69382 | 0.69385 | 0.69352 | 0.69475 | 0.63534 | 0.69482 |
-| eval/downstream/arc_challenge_test_mc_5shot_fast (CE loss) | lower | 1.3689 | 1.3854 | 1.3876 | 1.3877 | 1.3870 | 1.3895 | 1.2707 | 1.3896 |
-| eval/downstream/arc_challenge_test_mc_5shot_fast (accuracy v2) | higher | 0.31570 | 0.26706 | 0.26621 | 0.25683 | 0.25341 | 0.25768 | 0.43601 | 0.27218 |
-| eval/downstream/arc_challenge_test_mc_5shot_fast (accuracy) | higher | 0.31570 | 0.26706 | 0.26621 | 0.25683 | 0.25341 | 0.25768 | 0.43601 | 0.27218 |
-| eval/downstream/arc_challenge_test_mc_5shot_fast (log soft loss v2) | lower | -1.3666 | -1.3832 | -1.3851 | -1.3856 | -1.3841 | -1.3878 | -1.2691 | -1.3875 |
-| eval/downstream/arc_challenge_test_mc_5shot_fast (log soft loss) | lower | -1.3666 | -1.3832 | -1.3851 | -1.3856 | -1.3841 | -1.3878 | -1.2691 | -1.3875 |
-| eval/downstream/arc_challenge_test_mc_5shot_fast (soft loss v2) | lower | 0.26566 | 0.25320 | 0.25163 | 0.25159 | 0.25185 | 0.25270 | 0.32077 | 0.25165 |
-| eval/downstream/arc_challenge_test_mc_5shot_fast (soft loss) | lower | 0.26566 | 0.25320 | 0.25163 | 0.25159 | 0.25185 | 0.25270 | 0.32077 | 0.25165 |
-| eval/downstream/arc_easy_test_bpb_5shot (BPB v2) | lower | 0.57417 | 0.55788 | 0.58481 | 0.58099 | 0.57280 | 0.56353 | 0.56266 | 0.57727 |
-| eval/downstream/arc_easy_test_bpb_5shot (BPB) | lower | 0.62335 | 0.60558 | 0.63506 | 0.63094 | 0.62169 | 0.61172 | 0.61163 | 0.62692 |
-| eval/downstream/arc_easy_test_mc_5shot_fast (BPB v2) | lower | 0.95295 | 0.99747 | 1.0006 | 0.99554 | 1.0046 | 1.0057 | 0.77360 | 1.0011 |
-| eval/downstream/arc_easy_test_mc_5shot_fast (BPB) | lower | 1.9059 | 1.9949 | 2.0012 | 1.9911 | 2.0092 | 2.0114 | 1.5472 | 2.0023 |
-| eval/downstream/arc_easy_test_mc_5shot_fast (CE loss v2) | lower | 0.66055 | 0.69155 | 0.69372 | 0.69023 | 0.69648 | 0.69717 | 0.53625 | 0.69412 |
-| eval/downstream/arc_easy_test_mc_5shot_fast (CE loss) | lower | 1.3211 | 1.3831 | 1.3874 | 1.3805 | 1.3930 | 1.3943 | 1.0725 | 1.3882 |
-| eval/downstream/arc_easy_test_mc_5shot_fast (accuracy v2) | higher | 0.38258 | 0.28072 | 0.27652 | 0.29419 | 0.25084 | 0.26094 | 0.58796 | 0.26263 |
-| eval/downstream/arc_easy_test_mc_5shot_fast (accuracy) | higher | 0.38258 | 0.28072 | 0.27652 | 0.29419 | 0.25084 | 0.26094 | 0.58796 | 0.26263 |
-| eval/downstream/arc_easy_test_mc_5shot_fast (log soft loss v2) | lower | -1.3190 | -1.3809 | -1.3847 | -1.3790 | -1.3899 | -1.3926 | -1.0709 | -1.3862 |
-| eval/downstream/arc_easy_test_mc_5shot_fast (log soft loss) | lower | -1.3190 | -1.3809 | -1.3847 | -1.3790 | -1.3899 | -1.3926 | -1.0709 | -1.3862 |
-| eval/downstream/arc_easy_test_mc_5shot_fast (soft loss v2) | lower | 0.28402 | 0.25296 | 0.25186 | 0.25341 | 0.25086 | 0.25159 | 0.38951 | 0.25121 |
-| eval/downstream/arc_easy_test_mc_5shot_fast (soft loss) | lower | 0.28402 | 0.25296 | 0.25186 | 0.25341 | 0.25086 | 0.25159 | 0.38951 | 0.25121 |
-| eval/downstream/basic_skills_arithmetic_rc_5shot (BPB v2) | lower | 0.82653 | 0.95168 | 0.89027 | 0.85197 | 0.91263 | 0.78627 | 0.83965 | 0.86706 |
-| eval/downstream/basic_skills_arithmetic_rc_5shot (BPB) | lower | 1.3459 | 1.5651 | 1.4505 | 1.3954 | 1.4854 | 1.2640 | 1.3502 | 1.4146 |
-| eval/downstream/basic_skills_arithmetic_rc_5shot (CE loss v2) | lower | 0.57288 | 0.65955 | 0.61711 | 0.59059 | 0.63257 | 0.54496 | 0.58198 | 0.60104 |
-| eval/downstream/basic_skills_arithmetic_rc_5shot (CE loss) | lower | 0.93292 | 1.0847 | 1.0052 | 0.96730 | 1.0295 | 0.87620 | 0.93610 | 0.98060 |
-| eval/downstream/basic_skills_arithmetic_rc_5shot (accuracy v2) | higher | 0.63324 | 0.60745 | 0.63515 | 0.62560 | 0.60554 | 0.65521 | 0.61891 | 0.61700 |
-| eval/downstream/basic_skills_arithmetic_rc_5shot (accuracy) | higher | 0.63324 | 0.60745 | 0.63515 | 0.62560 | 0.60554 | 0.65521 | 0.61891 | 0.61700 |
-| eval/downstream/basic_skills_arithmetic_rc_5shot (log soft loss v2) | lower | -1.0264 | -1.2151 | -1.1319 | -1.0769 | -1.1480 | -1.0217 | -1.1129 | -1.1022 |
-| eval/downstream/basic_skills_arithmetic_rc_5shot (log soft loss) | lower | -1.0264 | -1.2151 | -1.1319 | -1.0769 | -1.1480 | -1.0217 | -1.1129 | -1.1022 |
-| eval/downstream/basic_skills_arithmetic_rc_5shot (soft loss v2) | lower | 0.58277 | 0.56544 | 0.57764 | 0.57126 | 0.57281 | 0.59452 | 0.58364 | 0.57287 |
-| eval/downstream/basic_skills_arithmetic_rc_5shot (soft loss) | lower | 0.58277 | 0.56544 | 0.57764 | 0.57126 | 0.57281 | 0.59452 | 0.58364 | 0.57287 |
-| eval/downstream/basic_skills_coding_rc_5shot (BPB v2) | lower | 0.27326 | 0.30796 | 0.31068 | 0.32633 | 0.33752 | 0.27713 | 0.32820 | 0.32031 |
-| eval/downstream/basic_skills_coding_rc_5shot (BPB) | lower | 0.29775 | 0.33664 | 0.33856 | 0.35631 | 0.36809 | 0.30213 | 0.35803 | 0.34974 |
-| eval/downstream/basic_skills_coding_rc_5shot (CE loss v2) | lower | 0.18941 | 0.21348 | 0.21535 | 0.22620 | 0.23397 | 0.19207 | 0.22751 | 0.22202 |
-| eval/downstream/basic_skills_coding_rc_5shot (CE loss) | lower | 0.20638 | 0.23334 | 0.23463 | 0.24698 | 0.25517 | 0.20942 | 0.24820 | 0.24245 |
-| eval/downstream/basic_skills_coding_rc_5shot (accuracy v2) | higher | 0.71640 | 0.71937 | 0.71047 | 0.71838 | 0.68478 | 0.76779 | 0.75198 | 0.70356 |
-| eval/downstream/basic_skills_coding_rc_5shot (accuracy) | higher | 0.71640 | 0.71937 | 0.71047 | 0.71838 | 0.68478 | 0.76779 | 0.75198 | 0.70356 |
-| eval/downstream/basic_skills_coding_rc_5shot (log soft loss v2) | lower | -0.99098 | -1.0202 | -1.0264 | -1.0517 | -1.1401 | -0.85000 | -0.92258 | -1.1300 |
-| eval/downstream/basic_skills_coding_rc_5shot (log soft loss) | lower | -0.99098 | -1.0202 | -1.0264 | -1.0517 | -1.1401 | -0.85000 | -0.92258 | -1.1300 |
-| eval/downstream/basic_skills_coding_rc_5shot (soft loss v2) | lower | 0.70062 | 0.69494 | 0.69058 | 0.69456 | 0.66624 | 0.74511 | 0.71641 | 0.67574 |
-| eval/downstream/basic_skills_coding_rc_5shot (soft loss) | lower | 0.70062 | 0.69494 | 0.69058 | 0.69456 | 0.66624 | 0.74511 | 0.71641 | 0.67574 |
-| eval/downstream/basic_skills_common_knowledge_rc_5shot (BPB v2) | lower | 0.24039 | 0.24821 | 0.22690 | 0.24700 | 0.24043 | 0.22604 | 0.19908 | 0.26702 |
-| eval/downstream/basic_skills_common_knowledge_rc_5shot (BPB) | lower | 0.28825 | 0.29810 | 0.27187 | 0.29668 | 0.28843 | 0.27149 | 0.23860 | 0.32151 |
-| eval/downstream/basic_skills_common_knowledge_rc_5shot (CE loss v2) | lower | 0.16678 | 0.17223 | 0.15742 | 0.17135 | 0.16683 | 0.15678 | 0.13814 | 0.18523 |
-| eval/downstream/basic_skills_common_knowledge_rc_5shot (CE loss) | lower | 0.20000 | 0.20689 | 0.18866 | 0.20583 | 0.20016 | 0.18832 | 0.16555 | 0.22299 |
-| eval/downstream/basic_skills_common_knowledge_rc_5shot (accuracy v2) | higher | 0.95564 | 0.94407 | 0.95371 | 0.93346 | 0.95468 | 0.95371 | 0.96528 | 0.94503 |
-| eval/downstream/basic_skills_common_knowledge_rc_5shot (accuracy) | higher | 0.95564 | 0.94407 | 0.95371 | 0.93346 | 0.95468 | 0.95371 | 0.96528 | 0.94503 |
-| eval/downstream/basic_skills_common_knowledge_rc_5shot (log soft loss v2) | lower | -0.17073 | -0.20021 | -0.17356 | -0.20769 | -0.17631 | -0.16368 | -0.14194 | -0.18259 |
-| eval/downstream/basic_skills_common_knowledge_rc_5shot (log soft loss) | lower | -0.17073 | -0.20021 | -0.17356 | -0.20769 | -0.17631 | -0.16368 | -0.14194 | -0.18259 |
-| eval/downstream/basic_skills_common_knowledge_rc_5shot (soft loss v2) | lower | 0.88090 | 0.86594 | 0.88723 | 0.86304 | 0.88343 | 0.88643 | 0.90169 | 0.87721 |
-| eval/downstream/basic_skills_common_knowledge_rc_5shot (soft loss) | lower | 0.88090 | 0.86594 | 0.88723 | 0.86304 | 0.88343 | 0.88643 | 0.90169 | 0.87721 |
-| eval/downstream/basic_skills_logical_reasoning_rc_5shot (BPB v2) | lower | 0.25892 | 0.29573 | 0.27900 | 0.25564 | 0.27562 | 0.26005 | 0.25557 | 0.28354 |
-| eval/downstream/basic_skills_logical_reasoning_rc_5shot (BPB) | lower | 0.26766 | 0.30572 | 0.28839 | 0.26431 | 0.28498 | 0.26886 | 0.26426 | 0.29323 |
-| eval/downstream/basic_skills_logical_reasoning_rc_5shot (CE loss v2) | lower | 0.17950 | 0.20500 | 0.19342 | 0.17722 | 0.19107 | 0.18026 | 0.17717 | 0.19655 |
-| eval/downstream/basic_skills_logical_reasoning_rc_5shot (CE loss) | lower | 0.18555 | 0.21194 | 0.19991 | 0.18321 | 0.19755 | 0.18638 | 0.18317 | 0.20328 |
-| eval/downstream/basic_skills_logical_reasoning_rc_5shot (accuracy v2) | higher | 0.85599 | 0.93918 | 0.93381 | 0.94365 | 0.89267 | 0.95886 | 0.92755 | 0.94544 |
-| eval/downstream/basic_skills_logical_reasoning_rc_5shot (accuracy) | higher | 0.85599 | 0.93918 | 0.93381 | 0.94365 | 0.89267 | 0.95886 | 0.92755 | 0.94544 |
-| eval/downstream/basic_skills_logical_reasoning_rc_5shot (log soft loss v2) | lower | -0.31511 | -0.18625 | -0.18809 | -0.16457 | -0.26513 | -0.15412 | -0.17836 | -0.18056 |
-| eval/downstream/basic_skills_logical_reasoning_rc_5shot (log soft loss) | lower | -0.31511 | -0.18625 | -0.18809 | -0.16457 | -0.26513 | -0.15412 | -0.17836 | -0.18056 |
-| eval/downstream/basic_skills_logical_reasoning_rc_5shot (soft loss v2) | lower | 0.86087 | 0.90168 | 0.91596 | 0.91875 | 0.88319 | 0.93093 | 0.90968 | 0.93061 |
-| eval/downstream/basic_skills_logical_reasoning_rc_5shot (soft loss) | lower | 0.86087 | 0.90168 | 0.91596 | 0.91875 | 0.88319 | 0.93093 | 0.90968 | 0.93061 |
-| eval/downstream/basic_skills_pattern_rc_5shot (BPB v2) | lower | 0.77969 | 0.72942 | 0.65693 | 0.73518 | 0.67788 | 0.66448 | 0.77093 | 0.71052 |
-| eval/downstream/basic_skills_pattern_rc_5shot (BPB) | lower | 1.2888 | 1.2261 | 1.1067 | 1.2212 | 1.1306 | 1.1048 | 1.2838 | 1.1801 |
-| eval/downstream/basic_skills_pattern_rc_5shot (CE loss v2) | lower | 0.56751 | 0.53202 | 0.48586 | 0.53661 | 0.49608 | 0.48505 | 0.56245 | 0.52438 |
-| eval/downstream/basic_skills_pattern_rc_5shot (CE loss) | lower | 0.96227 | 0.91762 | 0.84510 | 0.91394 | 0.85007 | 0.82845 | 0.96147 | 0.89880 |
-| eval/downstream/basic_skills_pattern_rc_5shot (accuracy v2) | higher | 0.77528 | 0.80899 | 0.79401 | 0.80337 | 0.79401 | 0.80712 | 0.77154 | 0.77528 |
-| eval/downstream/basic_skills_pattern_rc_5shot (accuracy) | higher | 0.77528 | 0.80899 | 0.79401 | 0.80337 | 0.79401 | 0.80712 | 0.77154 | 0.77528 |
-| eval/downstream/basic_skills_pattern_rc_5shot (log soft loss v2) | lower | -0.60697 | -0.51476 | -0.53398 | -0.57274 | -0.51153 | -0.53046 | -0.58161 | -0.55636 |
-| eval/downstream/basic_skills_pattern_rc_5shot (log soft loss) | lower | -0.60697 | -0.51476 | -0.53398 | -0.57274 | -0.51153 | -0.53046 | -0.58161 | -0.55636 |
-| eval/downstream/basic_skills_pattern_rc_5shot (soft loss v2) | lower | 0.69393 | 0.72331 | 0.71499 | 0.71312 | 0.72612 | 0.71440 | 0.69505 | 0.70851 |
-| eval/downstream/basic_skills_pattern_rc_5shot (soft loss) | lower | 0.69393 | 0.72331 | 0.71499 | 0.71312 | 0.72612 | 0.71440 | 0.69505 | 0.70851 |
-| eval/downstream/basic_skills_string_operations_rc_5shot (BPB v2) | lower | 1.1565 | 1.0708 | 1.0747 | 1.2688 | 1.1611 | 1.1154 | 1.0894 | 1.1753 |
-| eval/downstream/basic_skills_string_operations_rc_5shot (BPB) | lower | 1.6149 | 1.5119 | 1.5207 | 1.7895 | 1.6250 | 1.5663 | 1.5354 | 1.6572 |
-| eval/downstream/basic_skills_string_operations_rc_5shot (CE loss v2) | lower | 0.80156 | 0.74213 | 0.74489 | 0.87953 | 0.80483 | 0.77308 | 0.75520 | 0.81458 |
-| eval/downstream/basic_skills_string_operations_rc_5shot (CE loss) | lower | 1.1194 | 1.0479 | 1.0541 | 1.2404 | 1.1264 | 1.0857 | 1.0642 | 1.1486 |
-| eval/downstream/basic_skills_string_operations_rc_5shot (accuracy v2) | higher | 0.38474 | 0.41181 | 0.39541 | 0.39459 | 0.41838 | 0.45119 | 0.45775 | 0.40361 |
-| eval/downstream/basic_skills_string_operations_rc_5shot (accuracy) | higher | 0.38474 | 0.41181 | 0.39541 | 0.39459 | 0.41838 | 0.45119 | 0.45775 | 0.40361 |
-| eval/downstream/basic_skills_string_operations_rc_5shot (log soft loss v2) | lower | -2.4840 | -2.2510 | -2.4005 | -2.4206 | -2.1474 | -2.1446 | -2.1312 | -2.2571 |
-| eval/downstream/basic_skills_string_operations_rc_5shot (log soft loss) | lower | -2.4840 | -2.2510 | -2.4005 | -2.4206 | -2.1474 | -2.1446 | -2.1312 | -2.2571 |
-| eval/downstream/basic_skills_string_operations_rc_5shot (soft loss v2) | lower | 0.39618 | 0.43292 | 0.40550 | 0.39877 | 0.42093 | 0.45782 | 0.47060 | 0.41885 |
-| eval/downstream/basic_skills_string_operations_rc_5shot (soft loss) | lower | 0.39618 | 0.43292 | 0.40550 | 0.39877 | 0.42093 | 0.45782 | 0.47060 | 0.41885 |
-| eval/downstream/codex_humaneval_gold_bpb_3shot (BPB v2) | lower | 0.36564 | 0.34347 | 0.36076 | 0.36166 | 0.35784 | 0.35293 | 0.36078 | 0.34669 |
-| eval/downstream/codex_humaneval_gold_bpb_3shot (BPB) | lower | 0.37051 | 0.34796 | 0.36557 | 0.36651 | 0.36261 | 0.35775 | 0.36568 | 0.35115 |
-| eval/downstream/codex_mbpp_gold_bpb_3shot (BPB v2) | lower | 0.55630 | 0.54300 | 0.54420 | 0.55420 | 0.54874 | 0.54425 | 0.54194 | 0.55116 |
-| eval/downstream/codex_mbpp_gold_bpb_3shot (BPB) | lower | 0.56119 | 0.54779 | 0.54881 | 0.55887 | 0.55339 | 0.54886 | 0.54678 | 0.55613 |
-| eval/downstream/copycolors_10way_fast (BPB v2) | lower | 1.9710 | 1.9887 | 2.0184 | 1.8868 | 1.8776 | 1.7918 | 1.4030 | 1.9604 |
-| eval/downstream/copycolors_10way_fast (BPB) | lower | 3.9420 | 3.9775 | 4.0369 | 3.7736 | 3.7552 | 3.5837 | 2.8061 | 3.9208 |
-| eval/downstream/copycolors_10way_fast (CE loss v2) | lower | 1.3664 | 1.3786 | 1.3989 | 1.3076 | 1.3015 | 1.2418 | 0.97248 | 1.3586 |
-| eval/downstream/copycolors_10way_fast (CE loss) | lower | 2.7328 | 2.7571 | 2.7978 | 2.6152 | 2.6030 | 2.4837 | 1.9450 | 2.7173 |
-| eval/downstream/copycolors_10way_fast (accuracy v2) | higher | 0.19000 | 0.06000 | 0.11000 | 0.13000 | 0.12000 | 0.18000 | 0.51000 | 0.07000 |
-| eval/downstream/copycolors_10way_fast (accuracy) | higher | 0.19000 | 0.06000 | 0.11000 | 0.13000 | 0.12000 | 0.18000 | 0.51000 | 0.07000 |
-| eval/downstream/copycolors_10way_fast (log soft loss v2) | lower | -2.7276 | -2.7508 | -2.7914 | -2.6097 | -2.5940 | -2.4792 | -1.9364 | -2.7100 |
-| eval/downstream/copycolors_10way_fast (log soft loss) | lower | -2.7276 | -2.7508 | -2.7914 | -2.6097 | -2.5940 | -2.4792 | -1.9364 | -2.7100 |
-| eval/downstream/copycolors_10way_fast (soft loss v2) | lower | 0.10780 | 0.09927 | 0.10154 | 0.10732 | 0.10143 | 0.10869 | 0.19619 | 0.09994 |
-| eval/downstream/copycolors_10way_fast (soft loss) | lower | 0.10780 | 0.09927 | 0.10154 | 0.10732 | 0.10143 | 0.10869 | 0.19619 | 0.09994 |
-| eval/downstream/hellaswag_bpb_5shot (BPB v2) | lower | 0.73968 | 0.73474 | 0.73738 | 0.73885 | 0.73826 | 0.73043 | 0.73111 | 0.73635 |
-| eval/downstream/hellaswag_bpb_5shot (BPB) | lower | 0.74792 | 0.74290 | 0.74554 | 0.74719 | 0.74651 | 0.73857 | 0.73915 | 0.74450 |
-| eval/downstream/minerva_math_500_gold_bpb_0shot (BPB v2) | lower | 0.55064 | 0.53900 | 0.54372 | 0.55193 | 0.54236 | 0.53399 | 0.52986 | 0.54696 |
-| eval/downstream/minerva_math_500_gold_bpb_0shot (BPB) | lower | 0.55233 | 0.54075 | 0.54553 | 0.55367 | 0.54421 | 0.53581 | 0.53157 | 0.54860 |
-| eval/downstream/mmlu_humanities_test_bpb_5shot (BPB v2) | lower | 0.61051 | 0.60336 | 0.61506 | 0.61785 | 0.60809 | 0.59472 | 0.59534 | 0.61447 |
-| eval/downstream/mmlu_humanities_test_bpb_5shot (BPB) | lower | 0.63983 | 0.63253 | 0.64466 | 0.64767 | 0.63698 | 0.62292 | 0.62347 | 0.64437 |
-| eval/downstream/mmlu_humanities_test_mc_5shot_fast (BPB v2) | lower | 0.99461 | 1.0049 | 1.0037 | 0.99763 | 1.0046 | 1.0046 | 0.96460 | 1.0022 |
-| eval/downstream/mmlu_humanities_test_mc_5shot_fast (BPB) | lower | 1.9892 | 2.0097 | 2.0073 | 1.9953 | 2.0092 | 2.0092 | 1.9292 | 2.0044 |
-| eval/downstream/mmlu_humanities_test_mc_5shot_fast (CE loss v2) | lower | 0.68948 | 0.69659 | 0.69580 | 0.69166 | 0.69644 | 0.69645 | 0.66866 | 0.69476 |
-| eval/downstream/mmlu_humanities_test_mc_5shot_fast (CE loss) | lower | 1.3790 | 1.3932 | 1.3916 | 1.3833 | 1.3929 | 1.3929 | 1.3373 | 1.3895 |
-| eval/downstream/mmlu_humanities_test_mc_5shot_fast (length-normalized accuracy v2) | higher | 0.30733 | 0.28098 | 0.26844 | 0.27949 | 0.25930 | 0.25526 | 0.36302 | 0.27460 |
-| eval/downstream/mmlu_humanities_test_mc_5shot_fast (length-normalized accuracy) | higher | 0.30733 | 0.28098 | 0.26844 | 0.27949 | 0.25930 | 0.25526 | 0.36302 | 0.27460 |
-| eval/downstream/mmlu_humanities_test_mc_5shot_fast (log soft loss v2) | lower | -1.3694 | -1.3821 | -1.3818 | -1.3800 | -1.3822 | -1.3822 | -1.3383 | -1.3816 |
-| eval/downstream/mmlu_humanities_test_mc_5shot_fast (log soft loss) | lower | -1.3770 | -1.3904 | -1.3886 | -1.3805 | -1.3900 | -1.3912 | -1.3352 | -1.3870 |
-| eval/downstream/mmlu_humanities_test_mc_5shot_fast (soft loss v2) | lower | 0.25799 | 0.25286 | 0.25282 | 0.25260 | 0.25290 | 0.25305 | 0.26956 | 0.25249 |
-| eval/downstream/mmlu_humanities_test_mc_5shot_fast (soft loss) | lower | 0.26591 | 0.25568 | 0.25553 | 0.25517 | 0.25546 | 0.25548 | 0.28879 | 0.25508 |
-| eval/downstream/mmlu_other_test_bpb_5shot (BPB v2) | lower | 0.85557 | 0.83602 | 0.84571 | 0.86418 | 0.85949 | 0.82529 | 0.83782 | 0.86037 |
-| eval/downstream/mmlu_other_test_bpb_5shot (BPB) | lower | 0.95454 | 0.93174 | 0.94269 | 0.96294 | 0.95852 | 0.92047 | 0.93499 | 0.95941 |
-| eval/downstream/mmlu_other_test_mc_5shot_fast (BPB v2) | lower | 0.96290 | 0.98826 | 0.99194 | 0.99200 | 0.98939 | 0.98975 | 0.90355 | 0.99655 |
-| eval/downstream/mmlu_other_test_mc_5shot_fast (BPB) | lower | 1.9258 | 1.9765 | 1.9839 | 1.9840 | 1.9788 | 1.9795 | 1.8071 | 1.9931 |
-| eval/downstream/mmlu_other_test_mc_5shot_fast (CE loss v2) | lower | 0.66740 | 0.68511 | 0.68767 | 0.68772 | 0.68590 | 0.68615 | 0.62629 | 0.69084 |
-| eval/downstream/mmlu_other_test_mc_5shot_fast (CE loss) | lower | 1.3348 | 1.3702 | 1.3753 | 1.3754 | 1.3718 | 1.3723 | 1.2526 | 1.3817 |
-| eval/downstream/mmlu_other_test_mc_5shot_fast (length-normalized accuracy v2) | higher | 0.37199 | 0.29642 | 0.27360 | 0.28007 | 0.30290 | 0.27391 | 0.43492 | 0.26157 |
-| eval/downstream/mmlu_other_test_mc_5shot_fast (length-normalized accuracy) | higher | 0.37199 | 0.29642 | 0.27360 | 0.28007 | 0.30290 | 0.27391 | 0.43492 | 0.26157 |
-| eval/downstream/mmlu_other_test_mc_5shot_fast (log soft loss v2) | lower | -1.3450 | -1.3721 | -1.3752 | -1.3751 | -1.3719 | -1.3706 | -1.2755 | -1.3791 |
-| eval/downstream/mmlu_other_test_mc_5shot_fast (log soft loss) | lower | -1.3325 | -1.3670 | -1.3721 | -1.3720 | -1.3679 | -1.3700 | -1.2500 | -1.3790 |
-| eval/downstream/mmlu_other_test_mc_5shot_fast (soft loss v2) | lower | 0.26535 | 0.25514 | 0.25424 | 0.25416 | 0.25540 | 0.25677 | 0.29401 | 0.25284 |
-| eval/downstream/mmlu_other_test_mc_5shot_fast (soft loss) | lower | 0.28040 | 0.26004 | 0.25829 | 0.25835 | 0.26047 | 0.26181 | 0.33486 | 0.25578 |
-| eval/downstream/mmlu_social_sciences_test_bpb_5shot (BPB v2) | lower | 0.73293 | 0.71424 | 0.72656 | 0.73950 | 0.72969 | 0.71386 | 0.70541 | 0.73070 |
-| eval/downstream/mmlu_social_sciences_test_bpb_5shot (BPB) | lower | 0.78223 | 0.76138 | 0.77483 | 0.78920 | 0.77849 | 0.76156 | 0.75214 | 0.77978 |
-| eval/downstream/mmlu_social_sciences_test_mc_5shot_fast (BPB v2) | lower | 0.97571 | 0.98904 | 0.98654 | 0.99114 | 0.99232 | 0.98816 | 0.91523 | 0.99246 |
-| eval/downstream/mmlu_social_sciences_test_mc_5shot_fast (BPB) | lower | 1.9514 | 1.9781 | 1.9731 | 1.9823 | 1.9846 | 1.9763 | 1.8305 | 1.9849 |
-| eval/downstream/mmlu_social_sciences_test_mc_5shot_fast (CE loss v2) | lower | 0.67636 | 0.68565 | 0.68399 | 0.68710 | 0.68793 | 0.68505 | 0.63444 | 0.68798 |
-| eval/downstream/mmlu_social_sciences_test_mc_5shot_fast (CE loss) | lower | 1.3527 | 1.3713 | 1.3680 | 1.3742 | 1.3759 | 1.3701 | 1.2689 | 1.3760 |
-| eval/downstream/mmlu_social_sciences_test_mc_5shot_fast (length-normalized accuracy v2) | higher | 0.33702 | 0.28339 | 0.29347 | 0.28794 | 0.28047 | 0.28079 | 0.43029 | 0.28632 |
-| eval/downstream/mmlu_social_sciences_test_mc_5shot_fast (length-normalized accuracy) | higher | 0.33702 | 0.28339 | 0.29347 | 0.28794 | 0.28047 | 0.28079 | 0.43029 | 0.28632 |
-| eval/downstream/mmlu_social_sciences_test_mc_5shot_fast (log soft loss v2) | lower | -1.3522 | -1.3718 | -1.3708 | -1.3747 | -1.3735 | -1.3710 | -1.2951 | -1.3770 |
-| eval/downstream/mmlu_social_sciences_test_mc_5shot_fast (log soft loss) | lower | -1.3507 | -1.3682 | -1.3644 | -1.3713 | -1.3723 | -1.3681 | -1.2665 | -1.3739 |
-| eval/downstream/mmlu_social_sciences_test_mc_5shot_fast (soft loss v2) | lower | 0.26388 | 0.25554 | 0.25555 | 0.25427 | 0.25527 | 0.25614 | 0.28379 | 0.25328 |
-| eval/downstream/mmlu_social_sciences_test_mc_5shot_fast (soft loss) | lower | 0.27775 | 0.26114 | 0.26124 | 0.25863 | 0.26047 | 0.26179 | 0.31680 | 0.25673 |
-| eval/downstream/mmlu_stem_test_bpb_5shot (BPB v2) | lower | 1.0993 | 1.0738 | 1.0793 | 1.1184 | 1.0952 | 1.0593 | 1.0612 | 1.0943 |
-| eval/downstream/mmlu_stem_test_bpb_5shot (BPB) | lower | 1.3704 | 1.3387 | 1.3428 | 1.3939 | 1.3613 | 1.3222 | 1.3212 | 1.3631 |
-| eval/downstream/mmlu_stem_test_mc_5shot_fast (BPB v2) | lower | 0.99856 | 1.0052 | 1.0018 | 1.0041 | 0.99912 | 1.0072 | 0.96493 | 0.99464 |
-| eval/downstream/mmlu_stem_test_mc_5shot_fast (BPB) | lower | 1.9971 | 2.0104 | 2.0037 | 2.0081 | 1.9982 | 2.0145 | 1.9299 | 1.9893 |
-| eval/downstream/mmlu_stem_test_mc_5shot_fast (CE loss v2) | lower | 0.69220 | 0.69680 | 0.69453 | 0.69602 | 0.69264 | 0.69825 | 0.66890 | 0.68952 |
-| eval/downstream/mmlu_stem_test_mc_5shot_fast (CE loss) | lower | 1.3844 | 1.3936 | 1.3891 | 1.3920 | 1.3853 | 1.3965 | 1.3378 | 1.3790 |
-| eval/downstream/mmlu_stem_test_mc_5shot_fast (length-normalized accuracy v2) | higher | 0.30683 | 0.27899 | 0.27203 | 0.29490 | 0.28694 | 0.25779 | 0.35653 | 0.28396 |
-| eval/downstream/mmlu_stem_test_mc_5shot_fast (length-normalized accuracy) | higher | 0.30683 | 0.27899 | 0.27203 | 0.29490 | 0.28694 | 0.25779 | 0.35653 | 0.28396 |
-| eval/downstream/mmlu_stem_test_mc_5shot_fast (log soft loss v2) | lower | -1.3730 | -1.3820 | -1.3812 | -1.3814 | -1.3779 | -1.3838 | -1.3408 | -1.3779 |
-| eval/downstream/mmlu_stem_test_mc_5shot_fast (log soft loss) | lower | -1.3822 | -1.3901 | -1.3861 | -1.3887 | -1.3815 | -1.3941 | -1.3354 | -1.3764 |
-| eval/downstream/mmlu_stem_test_mc_5shot_fast (soft loss v2) | lower | 0.25669 | 0.25281 | 0.25287 | 0.25303 | 0.25384 | 0.25260 | 0.26802 | 0.25306 |
-| eval/downstream/mmlu_stem_test_mc_5shot_fast (soft loss) | lower | 0.26347 | 0.25567 | 0.25575 | 0.25630 | 0.25778 | 0.25518 | 0.28601 | 0.25622 |
-| eval/downstream/mt_mbpp_cpp_gold_bpb_3shot (BPB v2) | lower | 0.35945 | 0.36947 | 0.35399 | 0.37091 | 0.36844 | 0.36425 | 0.34291 | 0.35856 |
-| eval/downstream/mt_mbpp_cpp_gold_bpb_3shot (BPB) | lower | 0.36155 | 0.37164 | 0.35603 | 0.37320 | 0.37053 | 0.36641 | 0.34487 | 0.36071 |
-| eval/downstream/mt_mbpp_java_gold_bpb_3shot (BPB v2) | lower | 0.27320 | 0.28452 | 0.27327 | 0.28688 | 0.28339 | 0.28432 | 0.26756 | 0.26265 |
-| eval/downstream/mt_mbpp_java_gold_bpb_3shot (BPB) | lower | 0.27421 | 0.28565 | 0.27426 | 0.28797 | 0.28448 | 0.28543 | 0.26861 | 0.26371 |
-| eval/downstream/mt_mbpp_rust_gold_bpb_3shot (BPB v2) | lower | 0.48303 | 0.46589 | 0.47450 | 0.48039 | 0.49244 | 0.46373 | 0.42227 | 0.44002 |
-| eval/downstream/mt_mbpp_rust_gold_bpb_3shot (BPB) | lower | 0.48646 | 0.46926 | 0.47783 | 0.48373 | 0.49585 | 0.46709 | 0.42524 | 0.44311 |
-| eval/lm/c4_en-validation/CE loss | lower | 2.7077 | 2.6848 | 2.6988 | 2.7104 | 2.7080 | 2.6750 | 2.6633 | 2.7089 |
-| eval/lm/c4_en-validation/PPL | lower | 14.99 | 14.65 | 14.86 | 15.04 | 15.00 | 14.51 | 14.34 | 15.01 |
-| eval/lm/dolma_books-validation/CE loss | lower | 2.5542 | 2.5180 | 2.5353 | 2.5557 | 2.5474 | 2.5091 | 2.5016 | 2.5554 |
-| eval/lm/dolma_books-validation/PPL | lower | 12.86 | 12.40 | 12.62 | 12.88 | 12.77 | 12.29 | 12.20 | 12.88 |
-| eval/lm/dolma_common-crawl-validation/CE loss | lower | 2.8442 | 2.8231 | 2.8358 | 2.8497 | 2.8452 | 2.8130 | 2.8012 | 2.8446 |
-| eval/lm/dolma_common-crawl-validation/PPL | lower | 17.19 | 16.83 | 17.04 | 17.28 | 17.20 | 16.66 | 16.46 | 17.19 |
-| eval/lm/dolma_pes2o-validation/CE loss | lower | 1.9470 | 1.9286 | 1.9389 | 1.9486 | 1.9437 | 1.9232 | 1.9148 | 1.9450 |
-| eval/lm/dolma_pes2o-validation/PPL | lower | 7.0076 | 6.8797 | 6.9514 | 7.0188 | 6.9843 | 6.8429 | 6.7855 | 6.9938 |
-| eval/lm/dolma_reddit-validation/CE loss | lower | 3.0449 | 3.0214 | 3.0361 | 3.0490 | 3.0400 | 3.0139 | 3.0055 | 3.0417 |
-| eval/lm/dolma_reddit-validation/PPL | lower | 21.01 | 20.52 | 20.82 | 21.09 | 20.91 | 20.37 | 20.20 | 20.94 |
-| eval/lm/dolma_stack-validation/CE loss | lower | 1.1505 | 1.1344 | 1.1417 | 1.1495 | 1.1488 | 1.1295 | 1.1205 | 1.1485 |
-| eval/lm/dolma_stack-validation/PPL | lower | 3.1597 | 3.1092 | 3.1320 | 3.1565 | 3.1543 | 3.0940 | 3.0663 | 3.1535 |
-| eval/lm/dolma_wiki-validation/CE loss | lower | 2.3351 | 2.3143 | 2.3277 | 2.3371 | 2.3391 | 2.3006 | 2.2954 | 2.3331 |
-| eval/lm/dolma_wiki-validation/PPL | lower | 10.33 | 10.12 | 10.25 | 10.35 | 10.37 | 9.9800 | 9.9286 | 10.31 |
-| eval/lm/ice-validation/CE loss | lower | 2.7638 | 2.7404 | 2.7581 | 2.7772 | 2.7605 | 2.7426 | 2.7313 | 2.7673 |
-| eval/lm/ice-validation/PPL | lower | 15.86 | 15.49 | 15.77 | 16.07 | 15.81 | 15.53 | 15.35 | 15.92 |
-| eval/lm/m2d2_s2orc-validation/CE loss | lower | 2.8535 | 2.8292 | 2.8542 | 2.8584 | 2.8610 | 2.8235 | 2.8221 | 2.8725 |
-| eval/lm/m2d2_s2orc-validation/PPL | lower | 17.35 | 16.93 | 17.36 | 17.43 | 17.48 | 16.83 | 16.81 | 17.68 |
-| eval/lm/pile-validation/CE loss | lower | 1.9984 | 1.9773 | 1.9901 | 1.9980 | 1.9988 | 1.9699 | 1.9622 | 1.9976 |
-| eval/lm/pile-validation/PPL | lower | 7.3769 | 7.2234 | 7.3161 | 7.3742 | 7.3800 | 7.1701 | 7.1150 | 7.3716 |
-| eval/lm/wikitext_103-validation/CE loss | lower | 2.2327 | 2.2021 | 2.2206 | 2.2372 | 2.2263 | 2.1936 | 2.1835 | 2.2314 |
-| eval/lm/wikitext_103-validation/PPL | lower | 9.3251 | 9.0441 | 9.2127 | 9.3674 | 9.2656 | 8.9676 | 8.8776 | 9.3124 |
-| throughput/in-loop eval batches | see metric | 828.0 | 828.0 | 870.0 | 828.0 | 828.0 | 828.0 | 828.0 | 828.0 |
-| throughput/in-loop eval time (s) | see metric | 93.61 | 113.8 | 73.70 | 96.68 | 94.74 | 149.5 | 119.6 | 94.07 |
+| metric | direction | eg-1p2b-cx8-eg24e2k-lr4e-4-r1<br>`ic0ud1xz` | eg-1p2b-cx8-eg96e8k-lr4e-4-r1<br>`mqp8xl8h` | int-1p2b-cx8-intw256e8k-lr4e-4-r2<br>`bqjzmiqi` | 1p2b-cx8-b768k-lr4e-4-r1<br>`gbt7khqj` | 1p2b-cx8-b768k-lr2e-4-r2<br>`jdrvfvfn` | 1p2b-cx8-b768k-lr8e-4-r2<br>`ja7yu1c3` | q3-1p2b-cx8-q3am128e8k-lr4e-4-r1<br>`0n34n3oj` | q3-1p2b-cx8-q3td128e8k-lr4e-4-r1<br>`r96ox1ij` | se-1p2b-cx8-se0m9-lr4e-4-r1<br>`blw5bd39` |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| eval/downstream/arc_challenge_test_bpb_5shot (BPB v2) | lower | 0.77581 | 0.76166 | 0.73408 | 0.77609 | 0.78557 | 0.76369 | 0.76106 | 0.75249 | 0.77206 |
+| eval/downstream/arc_challenge_test_bpb_5shot (BPB) | lower | 0.84541 | 0.83393 | 0.80200 | 0.84790 | 0.86017 | 0.83334 | 0.83074 | 0.82258 | 0.84385 |
+| eval/downstream/arc_challenge_test_mc_5shot_fast (BPB v2) | lower | 0.98752 | 0.99924 | 0.90644 | 1.0008 | 1.0008 | 1.0003 | 1.0022 | 0.91661 | 1.0023 |
+| eval/downstream/arc_challenge_test_mc_5shot_fast (BPB) | lower | 1.9750 | 1.9985 | 1.8129 | 2.0015 | 2.0016 | 2.0006 | 2.0044 | 1.8332 | 2.0047 |
+| eval/downstream/arc_challenge_test_mc_5shot_fast (CE loss v2) | lower | 0.68446 | 0.69272 | 0.62831 | 0.69382 | 0.69385 | 0.69352 | 0.69475 | 0.63534 | 0.69482 |
+| eval/downstream/arc_challenge_test_mc_5shot_fast (CE loss) | lower | 1.3689 | 1.3854 | 1.2566 | 1.3876 | 1.3877 | 1.3870 | 1.3895 | 1.2707 | 1.3896 |
+| eval/downstream/arc_challenge_test_mc_5shot_fast (accuracy v2) | higher | 0.31570 | 0.26706 | 0.43942 | 0.26621 | 0.25683 | 0.25341 | 0.25768 | 0.43601 | 0.27218 |
+| eval/downstream/arc_challenge_test_mc_5shot_fast (accuracy) | higher | 0.31570 | 0.26706 | 0.43942 | 0.26621 | 0.25683 | 0.25341 | 0.25768 | 0.43601 | 0.27218 |
+| eval/downstream/arc_challenge_test_mc_5shot_fast (log soft loss v2) | lower | -1.3666 | -1.3832 | -1.2545 | -1.3851 | -1.3856 | -1.3841 | -1.3878 | -1.2691 | -1.3875 |
+| eval/downstream/arc_challenge_test_mc_5shot_fast (log soft loss) | lower | -1.3666 | -1.3832 | -1.2545 | -1.3851 | -1.3856 | -1.3841 | -1.3878 | -1.2691 | -1.3875 |
+| eval/downstream/arc_challenge_test_mc_5shot_fast (soft loss v2) | lower | 0.26566 | 0.25320 | 0.32417 | 0.25163 | 0.25159 | 0.25185 | 0.25270 | 0.32077 | 0.25165 |
+| eval/downstream/arc_challenge_test_mc_5shot_fast (soft loss) | lower | 0.26566 | 0.25320 | 0.32417 | 0.25163 | 0.25159 | 0.25185 | 0.25270 | 0.32077 | 0.25165 |
+| eval/downstream/arc_easy_test_bpb_5shot (BPB v2) | lower | 0.57417 | 0.55788 | 0.54985 | 0.58481 | 0.58099 | 0.57280 | 0.56353 | 0.56266 | 0.57727 |
+| eval/downstream/arc_easy_test_bpb_5shot (BPB) | lower | 0.62335 | 0.60558 | 0.59691 | 0.63506 | 0.63094 | 0.62169 | 0.61172 | 0.61163 | 0.62692 |
+| eval/downstream/arc_easy_test_mc_5shot_fast (BPB v2) | lower | 0.95295 | 0.99747 | 0.73712 | 1.0006 | 0.99554 | 1.0046 | 1.0057 | 0.77360 | 1.0011 |
+| eval/downstream/arc_easy_test_mc_5shot_fast (BPB) | lower | 1.9059 | 1.9949 | 1.4742 | 2.0012 | 1.9911 | 2.0092 | 2.0114 | 1.5472 | 2.0023 |
+| eval/downstream/arc_easy_test_mc_5shot_fast (CE loss v2) | lower | 0.66055 | 0.69155 | 0.51096 | 0.69372 | 0.69023 | 0.69648 | 0.69717 | 0.53625 | 0.69412 |
+| eval/downstream/arc_easy_test_mc_5shot_fast (CE loss) | lower | 1.3211 | 1.3831 | 1.0219 | 1.3874 | 1.3805 | 1.3930 | 1.3943 | 1.0725 | 1.3882 |
+| eval/downstream/arc_easy_test_mc_5shot_fast (accuracy v2) | higher | 0.38258 | 0.28072 | 0.58838 | 0.27652 | 0.29419 | 0.25084 | 0.26094 | 0.58796 | 0.26263 |
+| eval/downstream/arc_easy_test_mc_5shot_fast (accuracy) | higher | 0.38258 | 0.28072 | 0.58838 | 0.27652 | 0.29419 | 0.25084 | 0.26094 | 0.58796 | 0.26263 |
+| eval/downstream/arc_easy_test_mc_5shot_fast (log soft loss v2) | lower | -1.3190 | -1.3809 | -1.0194 | -1.3847 | -1.3790 | -1.3899 | -1.3926 | -1.0709 | -1.3862 |
+| eval/downstream/arc_easy_test_mc_5shot_fast (log soft loss) | lower | -1.3190 | -1.3809 | -1.0194 | -1.3847 | -1.3790 | -1.3899 | -1.3926 | -1.0709 | -1.3862 |
+| eval/downstream/arc_easy_test_mc_5shot_fast (soft loss v2) | lower | 0.28402 | 0.25296 | 0.42092 | 0.25186 | 0.25341 | 0.25086 | 0.25159 | 0.38951 | 0.25121 |
+| eval/downstream/arc_easy_test_mc_5shot_fast (soft loss) | lower | 0.28402 | 0.25296 | 0.42092 | 0.25186 | 0.25341 | 0.25086 | 0.25159 | 0.38951 | 0.25121 |
+| eval/downstream/basic_skills_arithmetic_rc_5shot (BPB v2) | lower | 0.82653 | 0.95168 | 0.76685 | 0.89027 | 0.85197 | 0.91263 | 0.78627 | 0.83965 | 0.86706 |
+| eval/downstream/basic_skills_arithmetic_rc_5shot (BPB) | lower | 1.3459 | 1.5651 | 1.2339 | 1.4505 | 1.3954 | 1.4854 | 1.2640 | 1.3502 | 1.4146 |
+| eval/downstream/basic_skills_arithmetic_rc_5shot (CE loss v2) | lower | 0.57288 | 0.65955 | 0.53151 | 0.61711 | 0.59059 | 0.63257 | 0.54496 | 0.58198 | 0.60104 |
+| eval/downstream/basic_skills_arithmetic_rc_5shot (CE loss) | lower | 0.93292 | 1.0847 | 0.85529 | 1.0052 | 0.96730 | 1.0295 | 0.87620 | 0.93610 | 0.98060 |
+| eval/downstream/basic_skills_arithmetic_rc_5shot (accuracy v2) | higher | 0.63324 | 0.60745 | 0.67526 | 0.63515 | 0.62560 | 0.60554 | 0.65521 | 0.61891 | 0.61700 |
+| eval/downstream/basic_skills_arithmetic_rc_5shot (accuracy) | higher | 0.63324 | 0.60745 | 0.67526 | 0.63515 | 0.62560 | 0.60554 | 0.65521 | 0.61891 | 0.61700 |
+| eval/downstream/basic_skills_arithmetic_rc_5shot (log soft loss v2) | lower | -1.0264 | -1.2151 | -0.94952 | -1.1319 | -1.0769 | -1.1480 | -1.0217 | -1.1129 | -1.1022 |
+| eval/downstream/basic_skills_arithmetic_rc_5shot (log soft loss) | lower | -1.0264 | -1.2151 | -0.94952 | -1.1319 | -1.0769 | -1.1480 | -1.0217 | -1.1129 | -1.1022 |
+| eval/downstream/basic_skills_arithmetic_rc_5shot (soft loss v2) | lower | 0.58277 | 0.56544 | 0.61189 | 0.57764 | 0.57126 | 0.57281 | 0.59452 | 0.58364 | 0.57287 |
+| eval/downstream/basic_skills_arithmetic_rc_5shot (soft loss) | lower | 0.58277 | 0.56544 | 0.61189 | 0.57764 | 0.57126 | 0.57281 | 0.59452 | 0.58364 | 0.57287 |
+| eval/downstream/basic_skills_coding_rc_5shot (BPB v2) | lower | 0.27326 | 0.30796 | 0.31079 | 0.31068 | 0.32633 | 0.33752 | 0.27713 | 0.32820 | 0.32031 |
+| eval/downstream/basic_skills_coding_rc_5shot (BPB) | lower | 0.29775 | 0.33664 | 0.33855 | 0.33856 | 0.35631 | 0.36809 | 0.30213 | 0.35803 | 0.34974 |
+| eval/downstream/basic_skills_coding_rc_5shot (CE loss v2) | lower | 0.18941 | 0.21348 | 0.21540 | 0.21535 | 0.22620 | 0.23397 | 0.19207 | 0.22751 | 0.22202 |
+| eval/downstream/basic_skills_coding_rc_5shot (CE loss) | lower | 0.20638 | 0.23334 | 0.23465 | 0.23463 | 0.24698 | 0.25517 | 0.20942 | 0.24820 | 0.24245 |
+| eval/downstream/basic_skills_coding_rc_5shot (accuracy v2) | higher | 0.71640 | 0.71937 | 0.73419 | 0.71047 | 0.71838 | 0.68478 | 0.76779 | 0.75198 | 0.70356 |
+| eval/downstream/basic_skills_coding_rc_5shot (accuracy) | higher | 0.71640 | 0.71937 | 0.73419 | 0.71047 | 0.71838 | 0.68478 | 0.76779 | 0.75198 | 0.70356 |
+| eval/downstream/basic_skills_coding_rc_5shot (log soft loss v2) | lower | -0.99098 | -1.0202 | -0.98015 | -1.0264 | -1.0517 | -1.1401 | -0.85000 | -0.92258 | -1.1300 |
+| eval/downstream/basic_skills_coding_rc_5shot (log soft loss) | lower | -0.99098 | -1.0202 | -0.98015 | -1.0264 | -1.0517 | -1.1401 | -0.85000 | -0.92258 | -1.1300 |
+| eval/downstream/basic_skills_coding_rc_5shot (soft loss v2) | lower | 0.70062 | 0.69494 | 0.70132 | 0.69058 | 0.69456 | 0.66624 | 0.74511 | 0.71641 | 0.67574 |
+| eval/downstream/basic_skills_coding_rc_5shot (soft loss) | lower | 0.70062 | 0.69494 | 0.70132 | 0.69058 | 0.69456 | 0.66624 | 0.74511 | 0.71641 | 0.67574 |
+| eval/downstream/basic_skills_common_knowledge_rc_5shot (BPB v2) | lower | 0.24039 | 0.24821 | 0.22905 | 0.22690 | 0.24700 | 0.24043 | 0.22604 | 0.19908 | 0.26702 |
+| eval/downstream/basic_skills_common_knowledge_rc_5shot (BPB) | lower | 0.28825 | 0.29810 | 0.27510 | 0.27187 | 0.29668 | 0.28843 | 0.27149 | 0.23860 | 0.32151 |
+| eval/downstream/basic_skills_common_knowledge_rc_5shot (CE loss v2) | lower | 0.16678 | 0.17223 | 0.15889 | 0.15742 | 0.17135 | 0.16683 | 0.15678 | 0.13814 | 0.18523 |
+| eval/downstream/basic_skills_common_knowledge_rc_5shot (CE loss) | lower | 0.20000 | 0.20689 | 0.19087 | 0.18866 | 0.20583 | 0.20016 | 0.18832 | 0.16555 | 0.22299 |
+| eval/downstream/basic_skills_common_knowledge_rc_5shot (accuracy v2) | higher | 0.95564 | 0.94407 | 0.95371 | 0.95371 | 0.93346 | 0.95468 | 0.95371 | 0.96528 | 0.94503 |
+| eval/downstream/basic_skills_common_knowledge_rc_5shot (accuracy) | higher | 0.95564 | 0.94407 | 0.95371 | 0.95371 | 0.93346 | 0.95468 | 0.95371 | 0.96528 | 0.94503 |
+| eval/downstream/basic_skills_common_knowledge_rc_5shot (log soft loss v2) | lower | -0.17073 | -0.20021 | -0.14480 | -0.17356 | -0.20769 | -0.17631 | -0.16368 | -0.14194 | -0.18259 |
+| eval/downstream/basic_skills_common_knowledge_rc_5shot (log soft loss) | lower | -0.17073 | -0.20021 | -0.14480 | -0.17356 | -0.20769 | -0.17631 | -0.16368 | -0.14194 | -0.18259 |
+| eval/downstream/basic_skills_common_knowledge_rc_5shot (soft loss v2) | lower | 0.88090 | 0.86594 | 0.90495 | 0.88723 | 0.86304 | 0.88343 | 0.88643 | 0.90169 | 0.87721 |
+| eval/downstream/basic_skills_common_knowledge_rc_5shot (soft loss) | lower | 0.88090 | 0.86594 | 0.90495 | 0.88723 | 0.86304 | 0.88343 | 0.88643 | 0.90169 | 0.87721 |
+| eval/downstream/basic_skills_logical_reasoning_rc_5shot (BPB v2) | lower | 0.25892 | 0.29573 | 0.27562 | 0.27900 | 0.25564 | 0.27562 | 0.26005 | 0.25557 | 0.28354 |
+| eval/downstream/basic_skills_logical_reasoning_rc_5shot (BPB) | lower | 0.26766 | 0.30572 | 0.28499 | 0.28839 | 0.26431 | 0.28498 | 0.26886 | 0.26426 | 0.29323 |
+| eval/downstream/basic_skills_logical_reasoning_rc_5shot (CE loss v2) | lower | 0.17950 | 0.20500 | 0.19105 | 0.19342 | 0.17722 | 0.19107 | 0.18026 | 0.17717 | 0.19655 |
+| eval/downstream/basic_skills_logical_reasoning_rc_5shot (CE loss) | lower | 0.18555 | 0.21194 | 0.19755 | 0.19991 | 0.18321 | 0.19755 | 0.18638 | 0.18317 | 0.20328 |
+| eval/downstream/basic_skills_logical_reasoning_rc_5shot (accuracy v2) | higher | 0.85599 | 0.93918 | 0.95528 | 0.93381 | 0.94365 | 0.89267 | 0.95886 | 0.92755 | 0.94544 |
+| eval/downstream/basic_skills_logical_reasoning_rc_5shot (accuracy) | higher | 0.85599 | 0.93918 | 0.95528 | 0.93381 | 0.94365 | 0.89267 | 0.95886 | 0.92755 | 0.94544 |
+| eval/downstream/basic_skills_logical_reasoning_rc_5shot (log soft loss v2) | lower | -0.31511 | -0.18625 | -0.14402 | -0.18809 | -0.16457 | -0.26513 | -0.15412 | -0.17836 | -0.18056 |
+| eval/downstream/basic_skills_logical_reasoning_rc_5shot (log soft loss) | lower | -0.31511 | -0.18625 | -0.14402 | -0.18809 | -0.16457 | -0.26513 | -0.15412 | -0.17836 | -0.18056 |
+| eval/downstream/basic_skills_logical_reasoning_rc_5shot (soft loss v2) | lower | 0.86087 | 0.90168 | 0.92906 | 0.91596 | 0.91875 | 0.88319 | 0.93093 | 0.90968 | 0.93061 |
+| eval/downstream/basic_skills_logical_reasoning_rc_5shot (soft loss) | lower | 0.86087 | 0.90168 | 0.92906 | 0.91596 | 0.91875 | 0.88319 | 0.93093 | 0.90968 | 0.93061 |
+| eval/downstream/basic_skills_pattern_rc_5shot (BPB v2) | lower | 0.77969 | 0.72942 | 0.72312 | 0.65693 | 0.73518 | 0.67788 | 0.66448 | 0.77093 | 0.71052 |
+| eval/downstream/basic_skills_pattern_rc_5shot (BPB) | lower | 1.2888 | 1.2261 | 1.1969 | 1.1067 | 1.2212 | 1.1306 | 1.1048 | 1.2838 | 1.1801 |
+| eval/downstream/basic_skills_pattern_rc_5shot (CE loss v2) | lower | 0.56751 | 0.53202 | 0.52787 | 0.48586 | 0.53661 | 0.49608 | 0.48505 | 0.56245 | 0.52438 |
+| eval/downstream/basic_skills_pattern_rc_5shot (CE loss) | lower | 0.96227 | 0.91762 | 0.89750 | 0.84510 | 0.91394 | 0.85007 | 0.82845 | 0.96147 | 0.89880 |
+| eval/downstream/basic_skills_pattern_rc_5shot (accuracy v2) | higher | 0.77528 | 0.80899 | 0.76966 | 0.79401 | 0.80337 | 0.79401 | 0.80712 | 0.77154 | 0.77528 |
+| eval/downstream/basic_skills_pattern_rc_5shot (accuracy) | higher | 0.77528 | 0.80899 | 0.76966 | 0.79401 | 0.80337 | 0.79401 | 0.80712 | 0.77154 | 0.77528 |
+| eval/downstream/basic_skills_pattern_rc_5shot (log soft loss v2) | lower | -0.60697 | -0.51476 | -0.57207 | -0.53398 | -0.57274 | -0.51153 | -0.53046 | -0.58161 | -0.55636 |
+| eval/downstream/basic_skills_pattern_rc_5shot (log soft loss) | lower | -0.60697 | -0.51476 | -0.57207 | -0.53398 | -0.57274 | -0.51153 | -0.53046 | -0.58161 | -0.55636 |
+| eval/downstream/basic_skills_pattern_rc_5shot (soft loss v2) | lower | 0.69393 | 0.72331 | 0.69776 | 0.71499 | 0.71312 | 0.72612 | 0.71440 | 0.69505 | 0.70851 |
+| eval/downstream/basic_skills_pattern_rc_5shot (soft loss) | lower | 0.69393 | 0.72331 | 0.69776 | 0.71499 | 0.71312 | 0.72612 | 0.71440 | 0.69505 | 0.70851 |
+| eval/downstream/basic_skills_string_operations_rc_5shot (BPB v2) | lower | 1.1565 | 1.0708 | 0.92691 | 1.0747 | 1.2688 | 1.1611 | 1.1154 | 1.0894 | 1.1753 |
+| eval/downstream/basic_skills_string_operations_rc_5shot (BPB) | lower | 1.6149 | 1.5119 | 1.3461 | 1.5207 | 1.7895 | 1.6250 | 1.5663 | 1.5354 | 1.6572 |
+| eval/downstream/basic_skills_string_operations_rc_5shot (CE loss v2) | lower | 0.80156 | 0.74213 | 0.64254 | 0.74489 | 0.87953 | 0.80483 | 0.77308 | 0.75520 | 0.81458 |
+| eval/downstream/basic_skills_string_operations_rc_5shot (CE loss) | lower | 1.1194 | 1.0479 | 0.93311 | 1.0541 | 1.2404 | 1.1264 | 1.0857 | 1.0642 | 1.1486 |
+| eval/downstream/basic_skills_string_operations_rc_5shot (accuracy v2) | higher | 0.38474 | 0.41181 | 0.44217 | 0.39541 | 0.39459 | 0.41838 | 0.45119 | 0.45775 | 0.40361 |
+| eval/downstream/basic_skills_string_operations_rc_5shot (accuracy) | higher | 0.38474 | 0.41181 | 0.44217 | 0.39541 | 0.39459 | 0.41838 | 0.45119 | 0.45775 | 0.40361 |
+| eval/downstream/basic_skills_string_operations_rc_5shot (log soft loss v2) | lower | -2.4840 | -2.2510 | -1.9191 | -2.4005 | -2.4206 | -2.1474 | -2.1446 | -2.1312 | -2.2571 |
+| eval/downstream/basic_skills_string_operations_rc_5shot (log soft loss) | lower | -2.4840 | -2.2510 | -1.9191 | -2.4005 | -2.4206 | -2.1474 | -2.1446 | -2.1312 | -2.2571 |
+| eval/downstream/basic_skills_string_operations_rc_5shot (soft loss v2) | lower | 0.39618 | 0.43292 | 0.46139 | 0.40550 | 0.39877 | 0.42093 | 0.45782 | 0.47060 | 0.41885 |
+| eval/downstream/basic_skills_string_operations_rc_5shot (soft loss) | lower | 0.39618 | 0.43292 | 0.46139 | 0.40550 | 0.39877 | 0.42093 | 0.45782 | 0.47060 | 0.41885 |
+| eval/downstream/codex_humaneval_gold_bpb_3shot (BPB v2) | lower | 0.36564 | 0.34347 | 0.35027 | 0.36076 | 0.36166 | 0.35784 | 0.35293 | 0.36078 | 0.34669 |
+| eval/downstream/codex_humaneval_gold_bpb_3shot (BPB) | lower | 0.37051 | 0.34796 | 0.35497 | 0.36557 | 0.36651 | 0.36261 | 0.35775 | 0.36568 | 0.35115 |
+| eval/downstream/codex_mbpp_gold_bpb_3shot (BPB v2) | lower | 0.55630 | 0.54300 | 0.52876 | 0.54420 | 0.55420 | 0.54874 | 0.54425 | 0.54194 | 0.55116 |
+| eval/downstream/codex_mbpp_gold_bpb_3shot (BPB) | lower | 0.56119 | 0.54779 | 0.53323 | 0.54881 | 0.55887 | 0.55339 | 0.54886 | 0.54678 | 0.55613 |
+| eval/downstream/copycolors_10way_fast (BPB v2) | lower | 1.9710 | 1.9887 | 2.1073 | 2.0184 | 1.8868 | 1.8776 | 1.7918 | 1.4030 | 1.9604 |
+| eval/downstream/copycolors_10way_fast (BPB) | lower | 3.9420 | 3.9775 | 4.2146 | 4.0369 | 3.7736 | 3.7552 | 3.5837 | 2.8061 | 3.9208 |
+| eval/downstream/copycolors_10way_fast (CE loss v2) | lower | 1.3664 | 1.3786 | 1.4610 | 1.3989 | 1.3076 | 1.3015 | 1.2418 | 0.97248 | 1.3586 |
+| eval/downstream/copycolors_10way_fast (CE loss) | lower | 2.7328 | 2.7571 | 2.9220 | 2.7978 | 2.6152 | 2.6030 | 2.4837 | 1.9450 | 2.7173 |
+| eval/downstream/copycolors_10way_fast (accuracy v2) | higher | 0.19000 | 0.06000 | 0.19000 | 0.11000 | 0.13000 | 0.12000 | 0.18000 | 0.51000 | 0.07000 |
+| eval/downstream/copycolors_10way_fast (accuracy) | higher | 0.19000 | 0.06000 | 0.19000 | 0.11000 | 0.13000 | 0.12000 | 0.18000 | 0.51000 | 0.07000 |
+| eval/downstream/copycolors_10way_fast (log soft loss v2) | lower | -2.7276 | -2.7508 | -2.9195 | -2.7914 | -2.6097 | -2.5940 | -2.4792 | -1.9364 | -2.7100 |
+| eval/downstream/copycolors_10way_fast (log soft loss) | lower | -2.7276 | -2.7508 | -2.9195 | -2.7914 | -2.6097 | -2.5940 | -2.4792 | -1.9364 | -2.7100 |
+| eval/downstream/copycolors_10way_fast (soft loss v2) | lower | 0.10780 | 0.09927 | 0.15178 | 0.10154 | 0.10732 | 0.10143 | 0.10869 | 0.19619 | 0.09994 |
+| eval/downstream/copycolors_10way_fast (soft loss) | lower | 0.10780 | 0.09927 | 0.15178 | 0.10154 | 0.10732 | 0.10143 | 0.10869 | 0.19619 | 0.09994 |
+| eval/downstream/hellaswag_bpb_5shot (BPB v2) | lower | 0.73968 | 0.73474 | 0.72245 | 0.73738 | 0.73885 | 0.73826 | 0.73043 | 0.73111 | 0.73635 |
+| eval/downstream/hellaswag_bpb_5shot (BPB) | lower | 0.74792 | 0.74290 | 0.73043 | 0.74554 | 0.74719 | 0.74651 | 0.73857 | 0.73915 | 0.74450 |
+| eval/downstream/minerva_math_500_gold_bpb_0shot (BPB v2) | lower | 0.55064 | 0.53900 | 0.51550 | 0.54372 | 0.55193 | 0.54236 | 0.53399 | 0.52986 | 0.54696 |
+| eval/downstream/minerva_math_500_gold_bpb_0shot (BPB) | lower | 0.55233 | 0.54075 | 0.51713 | 0.54553 | 0.55367 | 0.54421 | 0.53581 | 0.53157 | 0.54860 |
+| eval/downstream/mmlu_humanities_test_bpb_5shot (BPB v2) | lower | 0.61051 | 0.60336 | 0.58367 | 0.61506 | 0.61785 | 0.60809 | 0.59472 | 0.59534 | 0.61447 |
+| eval/downstream/mmlu_humanities_test_bpb_5shot (BPB) | lower | 0.63983 | 0.63253 | 0.61074 | 0.64466 | 0.64767 | 0.63698 | 0.62292 | 0.62347 | 0.64437 |
+| eval/downstream/mmlu_humanities_test_mc_5shot_fast (BPB v2) | lower | 0.99461 | 1.0049 | 0.96737 | 1.0037 | 0.99763 | 1.0046 | 1.0046 | 0.96460 | 1.0022 |
+| eval/downstream/mmlu_humanities_test_mc_5shot_fast (BPB) | lower | 1.9892 | 2.0097 | 1.9347 | 2.0073 | 1.9953 | 2.0092 | 2.0092 | 1.9292 | 2.0044 |
+| eval/downstream/mmlu_humanities_test_mc_5shot_fast (CE loss v2) | lower | 0.68948 | 0.69659 | 0.67057 | 0.69580 | 0.69166 | 0.69644 | 0.69645 | 0.66866 | 0.69476 |
+| eval/downstream/mmlu_humanities_test_mc_5shot_fast (CE loss) | lower | 1.3790 | 1.3932 | 1.3411 | 1.3916 | 1.3833 | 1.3929 | 1.3929 | 1.3373 | 1.3895 |
+| eval/downstream/mmlu_humanities_test_mc_5shot_fast (length-normalized accuracy v2) | higher | 0.30733 | 0.28098 | 0.34601 | 0.26844 | 0.27949 | 0.25930 | 0.25526 | 0.36302 | 0.27460 |
+| eval/downstream/mmlu_humanities_test_mc_5shot_fast (length-normalized accuracy) | higher | 0.30733 | 0.28098 | 0.34601 | 0.26844 | 0.27949 | 0.25930 | 0.25526 | 0.36302 | 0.27460 |
+| eval/downstream/mmlu_humanities_test_mc_5shot_fast (log soft loss v2) | lower | -1.3694 | -1.3821 | -1.3415 | -1.3818 | -1.3800 | -1.3822 | -1.3822 | -1.3383 | -1.3816 |
+| eval/downstream/mmlu_humanities_test_mc_5shot_fast (log soft loss) | lower | -1.3770 | -1.3904 | -1.3380 | -1.3886 | -1.3805 | -1.3900 | -1.3912 | -1.3352 | -1.3870 |
+| eval/downstream/mmlu_humanities_test_mc_5shot_fast (soft loss v2) | lower | 0.25799 | 0.25286 | 0.26805 | 0.25282 | 0.25260 | 0.25290 | 0.25305 | 0.26956 | 0.25249 |
+| eval/downstream/mmlu_humanities_test_mc_5shot_fast (soft loss) | lower | 0.26591 | 0.25568 | 0.28563 | 0.25553 | 0.25517 | 0.25546 | 0.25548 | 0.28879 | 0.25508 |
+| eval/downstream/mmlu_other_test_bpb_5shot (BPB v2) | lower | 0.85557 | 0.83602 | 0.81259 | 0.84571 | 0.86418 | 0.85949 | 0.82529 | 0.83782 | 0.86037 |
+| eval/downstream/mmlu_other_test_bpb_5shot (BPB) | lower | 0.95454 | 0.93174 | 0.90682 | 0.94269 | 0.96294 | 0.95852 | 0.92047 | 0.93499 | 0.95941 |
+| eval/downstream/mmlu_other_test_mc_5shot_fast (BPB v2) | lower | 0.96290 | 0.98826 | 0.88695 | 0.99194 | 0.99200 | 0.98939 | 0.98975 | 0.90355 | 0.99655 |
+| eval/downstream/mmlu_other_test_mc_5shot_fast (BPB) | lower | 1.9258 | 1.9765 | 1.7739 | 1.9839 | 1.9840 | 1.9788 | 1.9795 | 1.8071 | 1.9931 |
+| eval/downstream/mmlu_other_test_mc_5shot_fast (CE loss v2) | lower | 0.66740 | 0.68511 | 0.61479 | 0.68767 | 0.68772 | 0.68590 | 0.68615 | 0.62629 | 0.69084 |
+| eval/downstream/mmlu_other_test_mc_5shot_fast (CE loss) | lower | 1.3348 | 1.3702 | 1.2296 | 1.3753 | 1.3754 | 1.3718 | 1.3723 | 1.2526 | 1.3817 |
+| eval/downstream/mmlu_other_test_mc_5shot_fast (length-normalized accuracy v2) | higher | 0.37199 | 0.29642 | 0.42967 | 0.27360 | 0.28007 | 0.30290 | 0.27391 | 0.43492 | 0.26157 |
+| eval/downstream/mmlu_other_test_mc_5shot_fast (length-normalized accuracy) | higher | 0.37199 | 0.29642 | 0.42967 | 0.27360 | 0.28007 | 0.30290 | 0.27391 | 0.43492 | 0.26157 |
+| eval/downstream/mmlu_other_test_mc_5shot_fast (log soft loss v2) | lower | -1.3450 | -1.3721 | -1.2658 | -1.3752 | -1.3751 | -1.3719 | -1.3706 | -1.2755 | -1.3791 |
+| eval/downstream/mmlu_other_test_mc_5shot_fast (log soft loss) | lower | -1.3325 | -1.3670 | -1.2257 | -1.3721 | -1.3720 | -1.3679 | -1.3700 | -1.2500 | -1.3790 |
+| eval/downstream/mmlu_other_test_mc_5shot_fast (soft loss v2) | lower | 0.26535 | 0.25514 | 0.29551 | 0.25424 | 0.25416 | 0.25540 | 0.25677 | 0.29401 | 0.25284 |
+| eval/downstream/mmlu_other_test_mc_5shot_fast (soft loss) | lower | 0.28040 | 0.26004 | 0.33656 | 0.25829 | 0.25835 | 0.26047 | 0.26181 | 0.33486 | 0.25578 |
+| eval/downstream/mmlu_social_sciences_test_bpb_5shot (BPB v2) | lower | 0.73293 | 0.71424 | 0.68706 | 0.72656 | 0.73950 | 0.72969 | 0.71386 | 0.70541 | 0.73070 |
+| eval/downstream/mmlu_social_sciences_test_bpb_5shot (BPB) | lower | 0.78223 | 0.76138 | 0.73264 | 0.77483 | 0.78920 | 0.77849 | 0.76156 | 0.75214 | 0.77978 |
+| eval/downstream/mmlu_social_sciences_test_mc_5shot_fast (BPB v2) | lower | 0.97571 | 0.98904 | 0.90561 | 0.98654 | 0.99114 | 0.99232 | 0.98816 | 0.91523 | 0.99246 |
+| eval/downstream/mmlu_social_sciences_test_mc_5shot_fast (BPB) | lower | 1.9514 | 1.9781 | 1.8112 | 1.9731 | 1.9823 | 1.9846 | 1.9763 | 1.8305 | 1.9849 |
+| eval/downstream/mmlu_social_sciences_test_mc_5shot_fast (CE loss v2) | lower | 0.67636 | 0.68565 | 0.62772 | 0.68399 | 0.68710 | 0.68793 | 0.68505 | 0.63444 | 0.68798 |
+| eval/downstream/mmlu_social_sciences_test_mc_5shot_fast (CE loss) | lower | 1.3527 | 1.3713 | 1.2554 | 1.3680 | 1.3742 | 1.3759 | 1.3701 | 1.2689 | 1.3760 |
+| eval/downstream/mmlu_social_sciences_test_mc_5shot_fast (length-normalized accuracy v2) | higher | 0.33702 | 0.28339 | 0.41436 | 0.29347 | 0.28794 | 0.28047 | 0.28079 | 0.43029 | 0.28632 |
+| eval/downstream/mmlu_social_sciences_test_mc_5shot_fast (length-normalized accuracy) | higher | 0.33702 | 0.28339 | 0.41436 | 0.29347 | 0.28794 | 0.28047 | 0.28079 | 0.43029 | 0.28632 |
+| eval/downstream/mmlu_social_sciences_test_mc_5shot_fast (log soft loss v2) | lower | -1.3522 | -1.3718 | -1.2869 | -1.3708 | -1.3747 | -1.3735 | -1.3710 | -1.2951 | -1.3770 |
+| eval/downstream/mmlu_social_sciences_test_mc_5shot_fast (log soft loss) | lower | -1.3507 | -1.3682 | -1.2523 | -1.3644 | -1.3713 | -1.3723 | -1.3681 | -1.2665 | -1.3739 |
+| eval/downstream/mmlu_social_sciences_test_mc_5shot_fast (soft loss v2) | lower | 0.26388 | 0.25554 | 0.28613 | 0.25555 | 0.25427 | 0.25527 | 0.25614 | 0.28379 | 0.25328 |
+| eval/downstream/mmlu_social_sciences_test_mc_5shot_fast (soft loss) | lower | 0.27775 | 0.26114 | 0.32010 | 0.26124 | 0.25863 | 0.26047 | 0.26179 | 0.31680 | 0.25673 |
+| eval/downstream/mmlu_stem_test_bpb_5shot (BPB v2) | lower | 1.0993 | 1.0738 | 1.0399 | 1.0793 | 1.1184 | 1.0952 | 1.0593 | 1.0612 | 1.0943 |
+| eval/downstream/mmlu_stem_test_bpb_5shot (BPB) | lower | 1.3704 | 1.3387 | 1.2952 | 1.3428 | 1.3939 | 1.3613 | 1.3222 | 1.3212 | 1.3631 |
+| eval/downstream/mmlu_stem_test_mc_5shot_fast (BPB v2) | lower | 0.99856 | 1.0052 | 0.95365 | 1.0018 | 1.0041 | 0.99912 | 1.0072 | 0.96493 | 0.99464 |
+| eval/downstream/mmlu_stem_test_mc_5shot_fast (BPB) | lower | 1.9971 | 2.0104 | 1.9073 | 2.0037 | 2.0081 | 1.9982 | 2.0145 | 1.9299 | 1.9893 |
+| eval/downstream/mmlu_stem_test_mc_5shot_fast (CE loss v2) | lower | 0.69220 | 0.69680 | 0.66106 | 0.69453 | 0.69602 | 0.69264 | 0.69825 | 0.66890 | 0.68952 |
+| eval/downstream/mmlu_stem_test_mc_5shot_fast (CE loss) | lower | 1.3844 | 1.3936 | 1.3221 | 1.3891 | 1.3920 | 1.3853 | 1.3965 | 1.3378 | 1.3790 |
+| eval/downstream/mmlu_stem_test_mc_5shot_fast (length-normalized accuracy v2) | higher | 0.30683 | 0.27899 | 0.35288 | 0.27203 | 0.29490 | 0.28694 | 0.25779 | 0.35653 | 0.28396 |
+| eval/downstream/mmlu_stem_test_mc_5shot_fast (length-normalized accuracy) | higher | 0.30683 | 0.27899 | 0.35288 | 0.27203 | 0.29490 | 0.28694 | 0.25779 | 0.35653 | 0.28396 |
+| eval/downstream/mmlu_stem_test_mc_5shot_fast (log soft loss v2) | lower | -1.3730 | -1.3820 | -1.3324 | -1.3812 | -1.3814 | -1.3779 | -1.3838 | -1.3408 | -1.3779 |
+| eval/downstream/mmlu_stem_test_mc_5shot_fast (log soft loss) | lower | -1.3822 | -1.3901 | -1.3188 | -1.3861 | -1.3887 | -1.3815 | -1.3941 | -1.3354 | -1.3764 |
+| eval/downstream/mmlu_stem_test_mc_5shot_fast (soft loss v2) | lower | 0.25669 | 0.25281 | 0.27013 | 0.25287 | 0.25303 | 0.25384 | 0.25260 | 0.26802 | 0.25306 |
+| eval/downstream/mmlu_stem_test_mc_5shot_fast (soft loss) | lower | 0.26347 | 0.25567 | 0.28912 | 0.25575 | 0.25630 | 0.25778 | 0.25518 | 0.28601 | 0.25622 |
+| eval/downstream/mt_mbpp_cpp_gold_bpb_3shot (BPB v2) | lower | 0.35945 | 0.36947 | 0.35622 | 0.35399 | 0.37091 | 0.36844 | 0.36425 | 0.34291 | 0.35856 |
+| eval/downstream/mt_mbpp_cpp_gold_bpb_3shot (BPB) | lower | 0.36155 | 0.37164 | 0.35830 | 0.35603 | 0.37320 | 0.37053 | 0.36641 | 0.34487 | 0.36071 |
+| eval/downstream/mt_mbpp_java_gold_bpb_3shot (BPB v2) | lower | 0.27320 | 0.28452 | 0.26499 | 0.27327 | 0.28688 | 0.28339 | 0.28432 | 0.26756 | 0.26265 |
+| eval/downstream/mt_mbpp_java_gold_bpb_3shot (BPB) | lower | 0.27421 | 0.28565 | 0.26602 | 0.27426 | 0.28797 | 0.28448 | 0.28543 | 0.26861 | 0.26371 |
+| eval/downstream/mt_mbpp_rust_gold_bpb_3shot (BPB v2) | lower | 0.48303 | 0.46589 | 0.45382 | 0.47450 | 0.48039 | 0.49244 | 0.46373 | 0.42227 | 0.44002 |
+| eval/downstream/mt_mbpp_rust_gold_bpb_3shot (BPB) | lower | 0.48646 | 0.46926 | 0.45696 | 0.47783 | 0.48373 | 0.49585 | 0.46709 | 0.42524 | 0.44311 |
+| eval/lm/c4_en-validation/CE loss | lower | 2.7077 | 2.6848 | 2.6376 | 2.6988 | 2.7104 | 2.7080 | 2.6750 | 2.6633 | 2.7089 |
+| eval/lm/c4_en-validation/PPL | lower | 14.99 | 14.65 | 13.98 | 14.86 | 15.04 | 15.00 | 14.51 | 14.34 | 15.01 |
+| eval/lm/dolma_books-validation/CE loss | lower | 2.5542 | 2.5180 | 2.4726 | 2.5353 | 2.5557 | 2.5474 | 2.5091 | 2.5016 | 2.5554 |
+| eval/lm/dolma_books-validation/PPL | lower | 12.86 | 12.40 | 11.85 | 12.62 | 12.88 | 12.77 | 12.29 | 12.20 | 12.88 |
+| eval/lm/dolma_common-crawl-validation/CE loss | lower | 2.8442 | 2.8231 | 2.7742 | 2.8358 | 2.8497 | 2.8452 | 2.8130 | 2.8012 | 2.8446 |
+| eval/lm/dolma_common-crawl-validation/PPL | lower | 17.19 | 16.83 | 16.03 | 17.04 | 17.28 | 17.20 | 16.66 | 16.46 | 17.19 |
+| eval/lm/dolma_pes2o-validation/CE loss | lower | 1.9470 | 1.9286 | 1.8993 | 1.9389 | 1.9486 | 1.9437 | 1.9232 | 1.9148 | 1.9450 |
+| eval/lm/dolma_pes2o-validation/PPL | lower | 7.0076 | 6.8797 | 6.6810 | 6.9514 | 7.0188 | 6.9843 | 6.8429 | 6.7855 | 6.9938 |
+| eval/lm/dolma_reddit-validation/CE loss | lower | 3.0449 | 3.0214 | 2.9845 | 3.0361 | 3.0490 | 3.0400 | 3.0139 | 3.0055 | 3.0417 |
+| eval/lm/dolma_reddit-validation/PPL | lower | 21.01 | 20.52 | 19.78 | 20.82 | 21.09 | 20.91 | 20.37 | 20.20 | 20.94 |
+| eval/lm/dolma_stack-validation/CE loss | lower | 1.1505 | 1.1344 | 1.1035 | 1.1417 | 1.1495 | 1.1488 | 1.1295 | 1.1205 | 1.1485 |
+| eval/lm/dolma_stack-validation/PPL | lower | 3.1597 | 3.1092 | 3.0146 | 3.1320 | 3.1565 | 3.1543 | 3.0940 | 3.0663 | 3.1535 |
+| eval/lm/dolma_wiki-validation/CE loss | lower | 2.3351 | 2.3143 | 2.2622 | 2.3277 | 2.3371 | 2.3391 | 2.3006 | 2.2954 | 2.3331 |
+| eval/lm/dolma_wiki-validation/PPL | lower | 10.33 | 10.12 | 9.6046 | 10.25 | 10.35 | 10.37 | 9.9800 | 9.9286 | 10.31 |
+| eval/lm/ice-validation/CE loss | lower | 2.7638 | 2.7404 | 2.7204 | 2.7581 | 2.7772 | 2.7605 | 2.7426 | 2.7313 | 2.7673 |
+| eval/lm/ice-validation/PPL | lower | 15.86 | 15.49 | 15.19 | 15.77 | 16.07 | 15.81 | 15.53 | 15.35 | 15.92 |
+| eval/lm/m2d2_s2orc-validation/CE loss | lower | 2.8535 | 2.8292 | 2.7898 | 2.8542 | 2.8584 | 2.8610 | 2.8235 | 2.8221 | 2.8725 |
+| eval/lm/m2d2_s2orc-validation/PPL | lower | 17.35 | 16.93 | 16.28 | 17.36 | 17.43 | 17.48 | 16.83 | 16.81 | 17.68 |
+| eval/lm/pile-validation/CE loss | lower | 1.9984 | 1.9773 | 1.9349 | 1.9901 | 1.9980 | 1.9988 | 1.9699 | 1.9622 | 1.9976 |
+| eval/lm/pile-validation/PPL | lower | 7.3769 | 7.2234 | 6.9230 | 7.3161 | 7.3742 | 7.3800 | 7.1701 | 7.1150 | 7.3716 |
+| eval/lm/wikitext_103-validation/CE loss | lower | 2.2327 | 2.2021 | 2.1519 | 2.2206 | 2.2372 | 2.2263 | 2.1936 | 2.1835 | 2.2314 |
+| eval/lm/wikitext_103-validation/PPL | lower | 9.3251 | 9.0441 | 8.6011 | 9.2127 | 9.3674 | 9.2656 | 8.9676 | 8.8776 | 9.3124 |
+| throughput/in-loop eval batches | see metric | 828.0 | 828.0 | 1111.0 | 870.0 | 828.0 | 828.0 | 828.0 | 828.0 | 828.0 |
+| throughput/in-loop eval time (s) | see metric | 93.61 | 113.8 | 244.4 | 73.70 | 96.68 | 94.74 | 149.5 | 119.6 | 94.07 |
 
 | run | state | family | tokens | step | link |
 | --- | --- | --- | --- | --- | --- |
 | eg-1p2b-cx8-eg24e2k-lr4e-4-r1<br>`ic0ud1xz` | finished | original | 170142203904.0 | 216347 | [W&B](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/ic0ud1xz) |
 | eg-1p2b-cx8-eg96e8k-lr4e-4-r1<br>`mqp8xl8h` | finished | original | 170514186240.0 | 216820 | [W&B](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/mqp8xl8h) |
+| int-1p2b-cx8-intw256e8k-lr4e-4-r2<br>`bqjzmiqi` | finished | original | 171339939840.0 | 217870 | [W&B](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/bqjzmiqi) |
 | 1p2b-cx8-b768k-lr4e-4-r1<br>`gbt7khqj` | finished | gpu32-ep1mb1 | 170266460160.0 | 216505 | [W&B](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/gbt7khqj) |
 | 1p2b-cx8-b768k-lr2e-4-r2<br>`jdrvfvfn` | finished | gpu8-ep1mb4 | 170266460160.0 | 216505 | [W&B](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/jdrvfvfn) |
 | 1p2b-cx8-b768k-lr8e-4-r2<br>`ja7yu1c3` | finished | gpu8-ep1mb4 | 170266460160.0 | 216505 | [W&B](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/ja7yu1c3) |
