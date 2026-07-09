@@ -173,12 +173,7 @@ def combined_forward_ep_no_sync_rowwise(
         and moe_inp.device.type == "cuda"
         and self.ep.uses_rowwise_buffers
     )
-    if use_rowwise_fp8:
-        assert rowwise_fp8_cfg is not None
-        if not self._rowwise_fp8_checked:
-            rowwise_fp8_cfg.assert_runtime_supported()
-            self._rowwise_fp8_checked = True
-    else:
+    if not use_rowwise_fp8:
         rowwise_fp8_cfg = None
 
     num_out_tokens = local_x_global_routed_expert_indices.numel()
