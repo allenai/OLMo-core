@@ -32,6 +32,7 @@ the source's tokens (~10k of the 20k examples). Edit ``SUBSAMPLE_FACTOR`` below 
         launch  q4b-dense-contra-ladder32k-10k ai2/neptune
 """
 
+import os
 from dataclasses import replace
 from datetime import datetime
 from typing import Optional
@@ -51,7 +52,7 @@ from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.float8 import Float8Config
 from olmo_core.internal.common import build_launch_config, get_root_dir, get_work_dir
 from olmo_core.internal.experiment import CliContext, ExperimentConfig, main
-from olmo_core.launch.beaker import BeakerLaunchConfig, OLMoCoreBeakerImage
+from olmo_core.launch.beaker import BeakerEnvVar, BeakerLaunchConfig, OLMoCoreBeakerImage
 from olmo_core.nn.attention import AttentionBackendName
 from olmo_core.nn.rope import YaRNRoPEScalingConfig
 from olmo_core.nn.transformer import TransformerActivationCheckpointingMode, TransformerConfig
@@ -82,7 +83,7 @@ NUM_NODES = 1
 EPOCHS = 1
 
 # ---- 50% subsample: whole-document seeded sampling down to this fraction of source tokens ----
-SUBSAMPLE_FACTOR = 0.5
+SUBSAMPLE_FACTOR = float(os.environ.get("STL_SUBSAMPLE", "0.5"))
 SUBSAMPLE_SEED = 7411
 
 # weka per-task ladder data root + per-variant weka CPT bases (all under amandab/).
@@ -153,6 +154,13 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         beaker_launch_config.priority = "urgent"
         # Ship the (uncommitted) launcher via an ephemeral ref -- no permanent commit needed.
         beaker_launch_config.allow_dirty = True
+        # The Beaker job RE-BUILDS this config on the node, so propagate the subsample fraction
+        # (resolved from the launch-host env here) or the on-node rebuild would silently fall back to
+        # the module default (0.5) -- breaking the data-scaling sweep. Follows the DOCCHUNK_* pattern
+        # in _docchunk_5task_32k_nocpt_common.py.
+        beaker_launch_config.env_vars.append(
+            BeakerEnvVar(name="STL_SUBSAMPLE", value=repr(SUBSAMPLE_FACTOR))
+        )
 
     tokenizer_config = TokenizerConfig.qwen3()
     doc_tokenizer_config = replace(tokenizer_config, bos_token_id=None)
