@@ -13,13 +13,16 @@ from olmo_core.nn.transformer.block import (
     ReorderedNormTransformerBlock,
     TransformerBlock,
 )
-from olmo_core.nn.transformer.model import (
-    MoETransformer,
-    NormalizedTransformer,
-    Transformer,
-)
+from olmo_core.nn.transformer.model import MoETransformer, NormalizedTransformer, Transformer
 
 log = logging.getLogger(__name__)
+
+try:
+    from olmo_core.nn.moe.v2.hf.configuration_olmo3moe import Olmo3MoeConfig  # type: ignore
+    from olmo_core.nn.moe.v2.model import MoEFusedV2Transformer  # type: ignore
+except ImportError:
+    Olmo3MoeConfig = None  # type: ignore[assignment,misc]
+    MoEFusedV2Transformer = None  # type: ignore[assignment,misc]
 
 try:
     from transformers import FlexOlmoConfig  # type: ignore
@@ -83,8 +86,133 @@ def _get_flex_olmo_config(model: MoETransformer) -> PretrainedConfig:
     )
 
 
+def _get_olmo3moe_config(model: "MoEFusedV2Transformer") -> PretrainedConfig:
+    from olmo_core.nn.moe.v2.block import MoEFusedV2TransformerBlock
+
+    if Olmo3MoeConfig is None:
+        raise RuntimeError(
+            "Building an Olmo3MoeConfig requires the olmo3moe HF model files "
+            "(olmo_core.nn.moe.v2.hf)."
+        )
+
+    blocks = list(model.blocks.values())
+
+    # Identify the dense (non-MoE) layers and pick a representative MoE and dense block.
+    dense_layers_indices: List[int] = []
+    moe_block: Optional[MoEFusedV2TransformerBlock] = None
+    dense_block: Optional[TransformerBlock] = None
+    for idx, block in enumerate(blocks):
+        if isinstance(block, MoEFusedV2TransformerBlock):
+            if moe_block is None:
+                moe_block = block
+        else:
+            dense_layers_indices.append(idx)
+            if dense_block is None:
+                dense_block = block
+
+    if moe_block is None:
+        raise NotImplementedError(
+            f"No {MoEFusedV2TransformerBlock.__name__} found, unable to build HF config for "
+            f"{model.__class__.__name__}"
+        )
+
+    if moe_block.use_peri_norm:
+        raise NotImplementedError(
+            "Building an Olmo3MoeConfig is not supported for peri-LN (use_peri_norm=True) models."
+        )
+
+    attention = moe_block.attention
+    if not isinstance(attention, Attention):
+        raise NotImplementedError(
+            f"Attention is not a {Attention.__name__}, unable to build HF config for "
+            f"{model.__class__.__name__}"
+        )
+    if attention.rope is None:
+        raise NotImplementedError(
+            f"Attention does not use rope, unable to build HF config for "
+            f"{model.__class__.__name__}"
+        )
+
+    if moe_block.routed_experts is None or moe_block.routed_experts_router is None:
+        raise NotImplementedError("MoE block is missing routed experts or its router.")
+
+    routed_experts = moe_block.routed_experts
+    router = moe_block.routed_experts_router
+
+    # Dense MLP intermediate size, if there are any dense layers.
+    dense_mlp_intermediate_size: Optional[int] = None
+    if dense_block is not None:
+        dense_mlp_intermediate_size = dense_block.feed_forward.hidden_size
+
+    # Shared experts (optional).
+    shared_expert_intermediate_size: Optional[int] = None
+    if moe_block.shared_experts is not None:
+        shared_expert_intermediate_size = moe_block.shared_experts.hidden_size
+
+    # Sliding window: OLMo-core stores a per-layer window on the attention backend; a value of
+    # (-1, -1) means full attention. HF expects a value one larger than the flash-attention window
+    # (which excludes the current position); see the OLMo 3 handling in `get_hf_config`.
+    layer_types: List[str] = []
+    window_sizes = set()
+    for block in blocks:
+        window = block.attention.backend.window_size
+        if window != (-1, -1):
+            layer_types.append("sliding_attention")
+            window_sizes.add(window[0])
+        else:
+            layer_types.append("full_attention")
+
+    if len(window_sizes) > 1:
+        raise ValueError(
+            "All sliding window attention layers must have the same window size for "
+            f"Olmo3MoeConfig. Found different window sizes: {window_sizes}."
+        )
+    sliding_window = (window_sizes.pop() + 1) if window_sizes else attention.head_dim
+
+    attention_hidden_size = attention.n_heads * attention.head_dim
+
+    return Olmo3MoeConfig(
+        vocab_size=model.vocab_size,
+        hidden_size=model.d_model,
+        attention_hidden_size=attention_hidden_size,
+        head_dim=attention.head_dim,
+        dense_mlp_intermediate_size=dense_mlp_intermediate_size,
+        moe_intermediate_size=routed_experts.hidden_size,
+        shared_expert_intermediate_size=shared_expert_intermediate_size,
+        n_routed_experts=routed_experts.num_experts,
+        num_experts_per_tok=router.top_k,
+        original_num_experts_per_tok=router.original_top_k,
+        num_hidden_layers=model.n_layers,
+        num_attention_heads=attention.n_heads,
+        num_key_value_heads=attention.n_kv_heads,
+        hidden_act="silu",
+        gating_function=str(router.gating_function),
+        normalize_expert_weights=router.normalize_expert_weights,
+        restore_weight_scale=router.restore_weight_scale,
+        max_position_embeddings=-1,
+        attention_bias=attention.w_out.bias is not None,
+        rope_theta=attention.rope.theta,
+        rope_scaling=None,
+        rms_norm_eps=moe_block.feed_forward_norm.eps,
+        use_head_qk_norm=attention.use_head_qk_norm,
+        sliding_window=sliding_window,
+        layer_types=layer_types,
+        dense_layers_indices=dense_layers_indices,
+        embed_scale=model.embed_scale if model.embed_scale is not None else 1.0,
+        embed_norm=model.embedding_norm is not None,
+        use_peri_ln=False,
+        pad_token_id=None,  # type: ignore
+        bos_token_id=None,
+        eos_token_id=None,  # type: ignore
+        tie_word_embeddings=model.tie_word_embeddings,
+    )
+
+
 @beta_feature
 def get_hf_config(model: Transformer) -> PretrainedConfig:
+    if MoEFusedV2Transformer is not None and isinstance(model, MoEFusedV2Transformer):
+        return _get_olmo3moe_config(model)
+
     if isinstance(model, NormalizedTransformer):
         raise NotImplementedError(
             f"Building HF config not implemented for {model.__class__.__name__}"
