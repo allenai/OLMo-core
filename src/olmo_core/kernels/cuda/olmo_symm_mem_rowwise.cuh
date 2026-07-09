@@ -187,6 +187,135 @@ void rowwise_dispatch_put(
   }
 }
 
+void rowwise_dispatch_put_pair(
+    at::Tensor& input_q,
+    at::Tensor& input_scales,
+    at::Tensor& out_q,
+    at::Tensor& out_scales,
+    at::Tensor& dst_ranks,
+    at::Tensor& dst_rows,
+    const std::string& group_name,
+    int64_t nblocks,
+    bool pre_barrier,
+    bool post_barrier) {
+  auto* olmo_group = olmo_symm_find_group(group_name);
+  TORCH_CHECK(
+      olmo_group != nullptr,
+      "OLMo paired rowwise dispatch requires registered OLMo symmetric-memory group ",
+      group_name);
+
+  TORCH_CHECK(
+      nblocks >= 0, "nblocks must be non-negative (0 means auto), got ", nblocks);
+  TORCH_CHECK(input_q.dim() == 2, "input_q must be rank-2 [N, D]");
+  TORCH_CHECK(input_scales.dim() == 2, "input_scales must be rank-2 [N, S]");
+  TORCH_CHECK(out_q.dim() == 2, "out_q must be rank-2 [C, D]");
+  TORCH_CHECK(out_scales.dim() == 2, "out_scales must be rank-2 [C, S]");
+  TORCH_CHECK(
+      dst_ranks.dim() == 2 && dst_rows.dim() == 2,
+      "dst_ranks and dst_rows must be rank-2 [N, K]");
+  TORCH_CHECK(
+      dst_ranks.sizes() == dst_rows.sizes(),
+      "dst_ranks and dst_rows must have identical shapes");
+  TORCH_CHECK(
+      dst_ranks.size(0) == input_q.size(0) &&
+          dst_ranks.size(0) == input_scales.size(0),
+      "dst_ranks/dst_rows first dim (N) must match input_q/input_scales rows");
+  TORCH_CHECK(
+      input_q.size(1) == out_q.size(1),
+      "input_q and out_q must have the same hidden dim (D)");
+  TORCH_CHECK(
+      input_scales.size(1) == out_scales.size(1),
+      "input_scales and out_scales must have the same scale dim (S)");
+  TORCH_CHECK(
+      out_q.size(0) == out_scales.size(0),
+      "out_q and out_scales must have the same capacity rows");
+
+  TORCH_CHECK(
+      input_q.is_contiguous() && input_scales.is_contiguous() &&
+          out_q.is_contiguous() && out_scales.is_contiguous() &&
+          dst_ranks.is_contiguous() && dst_rows.is_contiguous(),
+      "input_q, input_scales, out_q, out_scales, dst_ranks, and dst_rows must be contiguous");
+  TORCH_CHECK(input_q.dtype() == out_q.dtype(), "input_q and out_q dtype mismatch");
+  TORCH_CHECK(
+      input_scales.dtype() == out_scales.dtype(),
+      "input_scales and out_scales dtype mismatch");
+  TORCH_CHECK(
+      dst_ranks.scalar_type() == at::kLong && dst_rows.scalar_type() == at::kLong,
+      "dst_ranks and dst_rows must be int64");
+
+  auto device = input_q.device();
+  TORCH_CHECK(
+      device.type() == at::DeviceType::CUDA && input_scales.device() == device &&
+          out_q.device() == device && out_scales.device() == device &&
+          dst_ranks.device() == device && dst_rows.device() == device,
+      "all tensor arguments must be on the same CUDA device");
+  c10::cuda::CUDAGuard guard(device);
+
+  auto stream = at::cuda::getCurrentCUDAStream();
+  nvshmem_team_t team = NVSHMEM_TEAM_WORLD;
+  const int* rank_to_pe_dev = olmo_group->rank_to_pe_dev;
+  int group_size = olmo_group->world_size;
+  bool world_within_direct_access = true;
+  maybe_init_nvshmem_cumodule(reinterpret_cast<const void*>(dispatchRowsPutPair));
+
+  const void* input_q_ptr = input_q.data_ptr();
+  const void* input_scales_ptr = input_scales.data_ptr();
+  void* out_q_ptr = out_q.mutable_data_ptr();
+  void* out_scales_ptr = out_scales.mutable_data_ptr();
+  const int64_t* dst_ranks_ptr = reinterpret_cast<const int64_t*>(dst_ranks.data_ptr());
+  const int64_t* dst_rows_ptr = reinterpret_cast<const int64_t*>(dst_rows.data_ptr());
+
+  int64_t num_input_rows = input_q.size(0);
+  int64_t top_k = dst_ranks.size(1);
+  int64_t out_capacity_rows = out_q.size(0);
+  size_t q_row_bytes = static_cast<size_t>(input_q.stride(0)) * input_q.element_size();
+  size_t scales_row_bytes =
+      static_cast<size_t>(input_scales.stride(0)) * input_scales.element_size();
+  int num_blocks = resolve_num_blocks_rowwise(
+      num_input_rows * top_k, nblocks, world_within_direct_access);
+  TORCH_CHECK(num_blocks > 0, "resolved nblocks must be > 0");
+
+  if (pre_barrier) {
+    int pre_barrier_status = nvshmemx_barrier_on_stream(team, stream.stream());
+    TORCH_CHECK(
+        pre_barrier_status == 0,
+        "nvshmemx_barrier_on_stream (pre) failed with status ",
+        pre_barrier_status);
+  }
+
+  void* args[] = {
+      &input_q_ptr,
+      &input_scales_ptr,
+      &out_q_ptr,
+      &out_scales_ptr,
+      &dst_ranks_ptr,
+      &dst_rows_ptr,
+      &q_row_bytes,
+      &scales_row_bytes,
+      &num_input_rows,
+      &top_k,
+      &out_capacity_rows,
+      &team,
+      &rank_to_pe_dev,
+      &group_size};
+  checked_collective_launch(
+      "dispatchRowsPutPair",
+      (const void*)dispatchRowsPutPair,
+      num_blocks,
+      dim3(ROWWISE_THREADS_PER_BLOCK),
+      args,
+      0,
+      stream);
+
+  if (post_barrier) {
+    int post_barrier_status = nvshmemx_barrier_on_stream(team, stream.stream());
+    TORCH_CHECK(
+        post_barrier_status == 0,
+        "nvshmemx_barrier_on_stream (post) failed with status ",
+        post_barrier_status);
+  }
+}
+
 // Experimental only; see the Python wrapper comment in symm_mem_vdev2d.py.
 // Production MoE backward intentionally uses the materialized weighted_flat
 // route-expanded path because this direct kernel did not improve the B300
@@ -1861,6 +1990,141 @@ void rowwise_gather_get(
       args,
       0,
       stream);
+  if (post_barrier) {
+    int post_barrier_status = nvshmemx_barrier_on_stream(team, stream.stream());
+    TORCH_CHECK(
+        post_barrier_status == 0,
+        "nvshmemx_barrier_on_stream (post) failed with status ",
+        post_barrier_status);
+  }
+}
+
+void rowwise_gather_get_pair(
+    at::Tensor& expert_q,
+    at::Tensor& expert_scales,
+    at::Tensor& gathered_q,
+    at::Tensor& gathered_scales,
+    at::Tensor& src_ranks,
+    at::Tensor& src_rows,
+    const std::string& group_name,
+    int64_t nblocks,
+    bool pre_barrier,
+    bool post_barrier) {
+  auto* olmo_group = olmo_symm_find_group(group_name);
+  TORCH_CHECK(
+      olmo_group != nullptr,
+      "OLMo paired rowwise gather requires registered OLMo symmetric-memory group ",
+      group_name);
+
+  TORCH_CHECK(
+      nblocks >= 0, "nblocks must be non-negative (0 means auto), got ", nblocks);
+  TORCH_CHECK(expert_q.dim() == 2, "expert_q must be rank-2 [C, D]");
+  TORCH_CHECK(expert_scales.dim() == 2, "expert_scales must be rank-2 [C, S]");
+  TORCH_CHECK(gathered_q.dim() == 2, "gathered_q must be rank-2 [R, D]");
+  TORCH_CHECK(gathered_scales.dim() == 2, "gathered_scales must be rank-2 [R, S]");
+  TORCH_CHECK(
+      src_ranks.dim() == 2 && src_rows.dim() == 2,
+      "src_ranks and src_rows must be rank-2 [R, 1]");
+  TORCH_CHECK(
+      src_ranks.sizes() == src_rows.sizes(),
+      "src_ranks and src_rows must have identical shapes");
+  TORCH_CHECK(
+      src_ranks.size(1) == 1,
+      "rowwise_gather_get_pair expects src_ranks/src_rows shape [R, 1]");
+  TORCH_CHECK(
+      src_ranks.size(0) == gathered_q.size(0) &&
+          src_ranks.size(0) == gathered_scales.size(0),
+      "src_ranks/src_rows first dim (R) must match gathered_q/gathered_scales rows");
+  TORCH_CHECK(
+      expert_q.size(1) == gathered_q.size(1),
+      "expert_q and gathered_q must have the same hidden dim (D)");
+  TORCH_CHECK(
+      expert_scales.size(1) == gathered_scales.size(1),
+      "expert_scales and gathered_scales must have the same scale dim (S)");
+  TORCH_CHECK(
+      expert_q.size(0) == expert_scales.size(0),
+      "expert_q and expert_scales must have the same capacity rows");
+
+  TORCH_CHECK(
+      expert_q.is_contiguous() && expert_scales.is_contiguous() &&
+          gathered_q.is_contiguous() && gathered_scales.is_contiguous() &&
+          src_ranks.is_contiguous() && src_rows.is_contiguous(),
+      "expert_q, expert_scales, gathered_q, gathered_scales, src_ranks, and src_rows must be contiguous");
+  TORCH_CHECK(expert_q.dtype() == gathered_q.dtype(), "expert_q and gathered_q dtype mismatch");
+  TORCH_CHECK(
+      expert_scales.dtype() == gathered_scales.dtype(),
+      "expert_scales and gathered_scales dtype mismatch");
+  TORCH_CHECK(
+      src_ranks.scalar_type() == at::kLong && src_rows.scalar_type() == at::kLong,
+      "src_ranks and src_rows must be int64");
+
+  auto device = expert_q.device();
+  TORCH_CHECK(
+      device.type() == at::DeviceType::CUDA && expert_scales.device() == device &&
+          gathered_q.device() == device && gathered_scales.device() == device &&
+          src_ranks.device() == device && src_rows.device() == device,
+      "all tensor arguments must be on the same CUDA device");
+  c10::cuda::CUDAGuard guard(device);
+
+  auto stream = at::cuda::getCurrentCUDAStream();
+  nvshmem_team_t team = NVSHMEM_TEAM_WORLD;
+  const int* rank_to_pe_dev = olmo_group->rank_to_pe_dev;
+  int group_size = olmo_group->world_size;
+  bool world_within_direct_access = true;
+  maybe_init_nvshmem_cumodule(reinterpret_cast<const void*>(gatherRowsGetPair<false>));
+
+  const void* expert_q_ptr = expert_q.data_ptr();
+  const void* expert_scales_ptr = expert_scales.data_ptr();
+  void* gathered_q_ptr = gathered_q.mutable_data_ptr();
+  void* gathered_scales_ptr = gathered_scales.mutable_data_ptr();
+  const int64_t* src_ranks_ptr =
+      reinterpret_cast<const int64_t*>(src_ranks.data_ptr());
+  const int64_t* src_rows_ptr =
+      reinterpret_cast<const int64_t*>(src_rows.data_ptr());
+
+  int64_t num_out_rows = gathered_q.size(0);
+  int64_t top_k = 1;
+  int64_t expert_capacity_rows = expert_q.size(0);
+  size_t q_row_bytes =
+      static_cast<size_t>(expert_q.stride(0)) * expert_q.element_size();
+  size_t scales_row_bytes =
+      static_cast<size_t>(expert_scales.stride(0)) * expert_scales.element_size();
+  int num_blocks = resolve_num_blocks_rowwise(
+      num_out_rows, nblocks, world_within_direct_access);
+  TORCH_CHECK(num_blocks > 0, "resolved nblocks must be > 0");
+
+  if (pre_barrier) {
+    int pre_barrier_status = nvshmemx_barrier_on_stream(team, stream.stream());
+    TORCH_CHECK(
+        pre_barrier_status == 0,
+        "nvshmemx_barrier_on_stream (pre) failed with status ",
+        pre_barrier_status);
+  }
+
+  void* args[] = {
+      &expert_q_ptr,
+      &expert_scales_ptr,
+      &gathered_q_ptr,
+      &gathered_scales_ptr,
+      &src_ranks_ptr,
+      &src_rows_ptr,
+      &q_row_bytes,
+      &scales_row_bytes,
+      &num_out_rows,
+      &top_k,
+      &expert_capacity_rows,
+      &team,
+      &rank_to_pe_dev,
+      &group_size};
+  checked_collective_launch(
+      "gatherRowsGetPair<false>",
+      (const void*)gatherRowsGetPair<false>,
+      num_blocks,
+      dim3(ROWWISE_THREADS_PER_BLOCK),
+      args,
+      0,
+      stream);
+
   if (post_barrier) {
     int post_barrier_status = nvshmemx_barrier_on_stream(team, stream.stream());
     TORCH_CHECK(

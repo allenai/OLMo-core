@@ -97,6 +97,60 @@ __global__ void dispatchRowsPut(
 #endif
 }
 
+__global__ void dispatchRowsPutPair(
+    const void* input_q_data,
+    const void* input_scales_data,
+    void* out_q_data,
+    void* out_scales_data,
+    const int64_t* dst_ranks,
+    const int64_t* dst_rows,
+    size_t q_row_bytes,
+    size_t scales_row_bytes,
+    int64_t num_input_rows,
+    int64_t top_k,
+    int64_t out_capacity_rows,
+    nvshmem_team_t team,
+    const int* rank_to_pe,
+    int group_size) {
+#ifndef _NVSHMEM_DEVICELIB_SUPPORTED
+  CUDA_KERNEL_ASSERT_MSG(false, "SM arch unsupported for NVSHMEM");
+#else
+  CUDA_KERNEL_ASSERT(team != NVSHMEM_TEAM_INVALID);
+  int npes = olmo_route_npes(team, rank_to_pe, group_size);
+  int64_t num_routes = num_input_rows * top_k;
+  int warp_id = threadIdx.x / WARP_SIZE;
+
+  int64_t route_id =
+      static_cast<int64_t>(blockIdx.x) * ROWWISE_WARPS_PER_BLOCK + warp_id;
+  int64_t route_stride =
+      static_cast<int64_t>(gridDim.x) * ROWWISE_WARPS_PER_BLOCK;
+  for (; route_id < num_routes; route_id += route_stride) {
+    int64_t peer = dst_ranks[route_id];
+    int64_t dst_row = dst_rows[route_id];
+    if (peer < 0 || dst_row < 0) {
+      continue;
+    }
+
+    CUDA_KERNEL_ASSERT(peer < npes);
+    CUDA_KERNEL_ASSERT(dst_row < out_capacity_rows);
+
+    int64_t src_row = route_id / top_k;
+    auto peer_global = olmo_route_peer_global(team, rank_to_pe, static_cast<int>(peer));
+    nvshmemx_putmem_warp(
+        (char*)out_q_data + static_cast<size_t>(dst_row) * q_row_bytes,
+        (const char*)input_q_data + static_cast<size_t>(src_row) * q_row_bytes,
+        q_row_bytes,
+        peer_global);
+    __syncwarp();
+    nvshmemx_putmem_warp(
+        (char*)out_scales_data + static_cast<size_t>(dst_row) * scales_row_bytes,
+        (const char*)input_scales_data + static_cast<size_t>(src_row) * scales_row_bytes,
+        scales_row_bytes,
+        peer_global);
+  }
+#endif
+}
+
 template <typename route_expert_t>
 __global__ void countCompactRowwiseRoutes(
     const int64_t* dst_ranks,
@@ -722,6 +776,71 @@ __global__ void gatherRowsGet(
         dst_ptr,
         (const char*)expert_out_data + static_cast<size_t>(src_row) * row_bytes,
         row_bytes,
+        peer_global);
+  }
+#endif
+}
+
+template <bool ZERO_INVALID_ROWS>
+__global__ void gatherRowsGetPair(
+    const void* expert_q_data,
+    const void* expert_scales_data,
+    void* gathered_q_data,
+    void* gathered_scales_data,
+    const int64_t* src_ranks,
+    const int64_t* src_rows,
+    size_t q_row_bytes,
+    size_t scales_row_bytes,
+    int64_t num_out_rows,
+    int64_t top_k,
+    int64_t expert_capacity_rows,
+    nvshmem_team_t team,
+    const int* rank_to_pe,
+    int group_size) {
+#ifndef _NVSHMEM_DEVICELIB_SUPPORTED
+  CUDA_KERNEL_ASSERT_MSG(false, "SM arch unsupported for NVSHMEM");
+#else
+  CUDA_KERNEL_ASSERT(team != NVSHMEM_TEAM_INVALID);
+  int npes = olmo_route_npes(team, rank_to_pe, group_size);
+  int64_t num_routes = num_out_rows * top_k;
+  int warp_id = threadIdx.x / WARP_SIZE;
+  int lane_id = threadIdx.x % WARP_SIZE;
+
+  int64_t route_id =
+      static_cast<int64_t>(blockIdx.x) * ROWWISE_WARPS_PER_BLOCK + warp_id;
+  int64_t route_stride =
+      static_cast<int64_t>(gridDim.x) * ROWWISE_WARPS_PER_BLOCK;
+  for (; route_id < num_routes; route_id += route_stride) {
+    int64_t peer = src_ranks[route_id];
+    int64_t src_row = src_rows[route_id];
+    char* q_dst_ptr = (char*)gathered_q_data + static_cast<size_t>(route_id) * q_row_bytes;
+    char* scales_dst_ptr =
+        (char*)gathered_scales_data + static_cast<size_t>(route_id) * scales_row_bytes;
+    if (peer < 0 || src_row < 0) {
+      if constexpr (ZERO_INVALID_ROWS) {
+        for (size_t i = static_cast<size_t>(lane_id); i < q_row_bytes; i += WARP_SIZE) {
+          q_dst_ptr[i] = 0;
+        }
+        for (size_t i = static_cast<size_t>(lane_id); i < scales_row_bytes; i += WARP_SIZE) {
+          scales_dst_ptr[i] = 0;
+        }
+      }
+      continue;
+    }
+
+    CUDA_KERNEL_ASSERT(peer < npes);
+    CUDA_KERNEL_ASSERT(src_row < expert_capacity_rows);
+    auto peer_global = olmo_route_peer_global(team, rank_to_pe, static_cast<int>(peer));
+    nvshmemx_getmem_warp(
+        q_dst_ptr,
+        (const char*)expert_q_data + static_cast<size_t>(src_row) * q_row_bytes,
+        q_row_bytes,
+        peer_global);
+    __syncwarp();
+    nvshmemx_getmem_warp(
+        scales_dst_ptr,
+        (const char*)expert_scales_data + static_cast<size_t>(src_row) * scales_row_bytes,
+        scales_row_bytes,
         peer_global);
   }
 #endif
