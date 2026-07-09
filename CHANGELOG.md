@@ -37,6 +37,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `EvaluatorCallback` and `BatchSizeSchedulerCallback` now recognize `MoEV2TransformerTrainModule` (previously they only accepted `TransformerTrainModule`/`TransformerPipelineTrainModule`, so in-loop eval and batch-size scheduling aborted with a MoE-v2 run). `BatchSizeSchedulerCallback` also accepts the `MoEFusedV2Optimizer` for its learning-rate adjustment.
 - The CPU `Test` CI job now caches `HF_HOME` across runs so the HuggingFace roundtrip tests (Qwen3-0.6B, Gemma-3-270m) don't re-download their checkpoints every run.
 - Excluded `mark_dynamic` from `torch.compile` tracing (`@torch.compiler.disable`).
 - Clearer error messages (now include the offending values) when a rank batch size isn't divisible by the sequence length, or `max_target_sequence_length` isn't a multiple of `sequence_length`.
