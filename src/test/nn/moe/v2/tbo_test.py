@@ -24,10 +24,10 @@ def _build_ep_mesh() -> DeviceMesh:
 
 def _build_tbo_model(*, two_batch_overlap: bool, ep_no_sync: bool = False):
     from olmo_core.nn.attention import AttentionConfig, AttentionType
+    from olmo_core.nn.ddp.block import OLMoDDPTransformerBlockConfig
     from olmo_core.nn.lm_head import LMHeadConfig
-    from olmo_core.nn.moe.v2.block import MoEFusedV2TransformerBlockConfig
     from olmo_core.nn.transformer import (
-        MoEFusedV2TransformerConfig,
+        OLMoDDPModelConfig,
         TransformerBlockType,
         TransformerType,
     )
@@ -38,7 +38,7 @@ def _build_tbo_model(*, two_batch_overlap: bool, ep_no_sync: bool = False):
         bias=False,
         dtype=DType.float32,
     )
-    config = MoEFusedV2TransformerConfig(
+    config = OLMoDDPModelConfig(
         name=TransformerType.moe_fused_v2,
         d_model=512,
         vocab_size=128,
@@ -47,7 +47,7 @@ def _build_tbo_model(*, two_batch_overlap: bool, ep_no_sync: bool = False):
         recompute_each_block=False,
         recompute_all_blocks_by_chunk=False,
         lm_head=LMHeadConfig(bias=False, dtype=DType.float32),
-        block=MoEFusedV2TransformerBlockConfig(
+        block=OLMoDDPTransformerBlockConfig(
             name=TransformerBlockType.moe_fused_v2,
             sequence_mixer=AttentionConfig(
                 name=AttentionType.default,

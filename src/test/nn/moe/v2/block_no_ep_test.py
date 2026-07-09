@@ -2,17 +2,17 @@ import torch
 
 from olmo_core.config import DType
 from olmo_core.nn.attention import AttentionConfig, AttentionType
+from olmo_core.nn.ddp.block import (
+    OLMoDDPTransformerBlock,
+    OLMoDDPTransformerBlockConfig,
+)
 from olmo_core.nn.layer_norm import LayerNormConfig, LayerNormType
 from olmo_core.nn.lm_head import LMHeadConfig
 from olmo_core.nn.moe import MoERouterGatingFunction
-from olmo_core.nn.moe.v2.block import (
-    MoEFusedV2TransformerBlock,
-    MoEFusedV2TransformerBlockConfig,
-)
 from olmo_core.nn.moe.v2.routed_experts import RoutedExpertsConfig
 from olmo_core.nn.moe.v2.router import MoERouterConfigV2
 from olmo_core.nn.transformer import (
-    MoEFusedV2TransformerConfig,
+    OLMoDDPModelConfig,
     TransformerBlockType,
     TransformerType,
 )
@@ -36,14 +36,14 @@ def _build_block(
     top_k: int = 1,
     uniform_expert_assignment: bool = True,
     init_device: str = "cuda",
-) -> MoEFusedV2TransformerBlock:
+) -> OLMoDDPTransformerBlock:
     layer_norm = LayerNormConfig(
         name=LayerNormType.rms,
         eps=1e-6,
         bias=False,
         dtype=DType.float32,
     )
-    return MoEFusedV2TransformerBlock(
+    return OLMoDDPTransformerBlock(
         d_model=d_model,
         block_idx=0,
         n_layers=1,
@@ -82,7 +82,7 @@ def _build_block(
     )
 
 
-def _init_block_params(block: MoEFusedV2TransformerBlock):
+def _init_block_params(block: OLMoDDPTransformerBlock):
     torch.manual_seed(1234)
     with torch.no_grad():
         for p in block.parameters():
@@ -90,7 +90,7 @@ def _init_block_params(block: MoEFusedV2TransformerBlock):
                 p.normal_(mean=0.0, std=0.02)
 
 
-def _install_forced_router(block: MoEFusedV2TransformerBlock):
+def _install_forced_router(block: OLMoDDPTransformerBlock):
     """Force all tokens to expert 0 so the forward is deterministic and doesn't depend on routing."""
 
     def _make_forced_forward(router):
@@ -173,17 +173,17 @@ def test_v2_no_ep_apply_compile_forward_smoke():
     assert torch.isfinite(y).all()
 
 
-def _build_model_config(*, d_model: int = 128, n_layers: int = 2) -> MoEFusedV2TransformerConfig:
+def _build_model_config(*, d_model: int = 128, n_layers: int = 2) -> OLMoDDPModelConfig:
     dtype = DType.float32
     layer_norm = LayerNormConfig(name=LayerNormType.rms, eps=1e-6, bias=False, dtype=dtype)
-    return MoEFusedV2TransformerConfig(
+    return OLMoDDPModelConfig(
         init_seed=0,
         d_model=d_model,
         recompute_each_block=False,
         vocab_size=128,
         n_layers=n_layers,
         name=TransformerType.moe_fused_v2,
-        block=MoEFusedV2TransformerBlockConfig(
+        block=OLMoDDPTransformerBlockConfig(
             name=TransformerBlockType.moe_fused_v2,
             attention=AttentionConfig(
                 name=AttentionType.default,
@@ -211,7 +211,7 @@ def test_v2_transformer_config_builds_and_initializes():
     """End-to-end check of the transformer integration: config dispatch + ``init_moe_v2``."""
     config = _build_model_config()
     model = config.build(init_device="cuda")
-    assert type(model).__name__ == "MoEFusedV2Transformer"
+    assert type(model).__name__ == "OLMoDDPModel"
 
     model.init_weights(device=torch.device("cuda"))
     for p in model.parameters():
