@@ -1430,6 +1430,13 @@ class MoEV2TransformerTrainModule(TrainModule):
             elif isinstance(self.model_parts[0], DDP):
                 raise OLMoConfigurationError("torch DDP not supported. Use replicate()")
             elif isinstance(self.model_parts[0], MultiGroupDistributedDataParallel):
+                # TODO(moe-train-module-ddp-per-microbatch-reduce): with only_allreduce_last_microbatch
+                # =False (non-default) this lets MultiGroupDDP launch a reduce on the first backward,
+                # but train_batch() only calls finalize_grad_reduce() after the whole loop, so later
+                # microbatches don't launch their own all-reduces and can accumulate into in-flight
+                # buckets — leaving grads unreduced/corrupted. Finalize after each synced microbatch
+                # (or keep no_sync() on all non-final microbatches). Only the default True path is
+                # exercised today. (Codex)
                 if not is_last_mb and self.dp_config.only_allreduce_last_microbatch:
                     stack.enter_context(self.model_parts[0].no_sync())
             elif self.dp_config.name == DataParallelType.ddp:  # temp fix

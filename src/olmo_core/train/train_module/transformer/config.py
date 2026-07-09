@@ -1,6 +1,6 @@
 import copy
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union, cast
 
 import torch
@@ -533,8 +533,11 @@ class MoEV2TransformerTrainModuleConfig(TrainModuleConfig):
         if (state_dict_load_opts := kwargs.pop("state_dict_load_opts", None)) is not None:
             kwargs["state_dict_load_opts"] = dist_cp_sd.StateDictOptions(**state_dict_load_opts)
 
-        # `grad_accum_in_fp32` is superseded by the DP config's `accumulate_grads_in_fp32`.
-        kwargs.pop("grad_accum_in_fp32", None)
+        # `grad_accum_in_fp32` is superseded by the DP config's `accumulate_grads_in_fp32`; map the
+        # legacy field onto the DP config so migrated configs that set it aren't silently ignored.
+        grad_accum_in_fp32 = kwargs.pop("grad_accum_in_fp32", None)
+        if grad_accum_in_fp32 is not None and (dp_config := kwargs.get("dp_config")) is not None:
+            kwargs["dp_config"] = replace(dp_config, accumulate_grads_in_fp32=grad_accum_in_fp32)
 
         return MoEV2TransformerTrainModule(
             model=model,
