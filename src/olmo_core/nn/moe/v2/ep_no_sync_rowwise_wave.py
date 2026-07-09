@@ -21,7 +21,11 @@ from ...moe.utils import (
     wait_stream_no_compile,
 )
 from .checkpointing import get_rowwise_checkpoint_state
-from .comm import _DispatchRowwiseAutograd, _RowwiseCombineWeightedAutograd
+from .comm import (
+    _DispatchRowwiseAutograd,
+    _RowwiseCombineWeightedAutograd,
+    _rowwise_ibgda_enabled,
+)
 from .ep_config import ExpertParallelPath
 from .ep_no_sync_buffers import (
     compute_ep_no_sync_rank_capacity,
@@ -326,6 +330,19 @@ class _RowwiseWaveDispatchExpertsCombineAutograd(torch.autograd.Function):
 
         source_input_contig = source_input if source_input.is_contiguous() else source_input.contiguous()
         dispatch_input_contig = dispatch_input if dispatch_input.is_contiguous() else dispatch_input.contiguous()
+        dispatch_input_aliases_source = (
+            dispatch_input.untyped_storage().data_ptr()
+            == source_input.untyped_storage().data_ptr()
+            and dispatch_input.storage_offset() == source_input.storage_offset()
+            and tuple(dispatch_input.shape) == tuple(source_input.shape)
+            and tuple(dispatch_input.stride()) == tuple(source_input.stride())
+        )
+        if _rowwise_ibgda_enabled() and dispatch_input_aliases_source:
+            raise RuntimeError(
+                "rowwise_wave NVSHMEM/IBGDA dispatch requires a symmetric "
+                "source staging buffer. Enable OLMO_MOE_ROWWISE_SYMM_DISPATCH_IN=1 "
+                "or leave it on auto for inter-node EP."
+            )
         probs_f32 = probs if probs.dtype == torch.float32 else probs.to(dtype=torch.float32)
         if not probs_f32.is_contiguous():
             probs_f32 = probs_f32.contiguous()

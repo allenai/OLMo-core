@@ -151,6 +151,38 @@ class _NoSyncSymmLeaseTensorSpec:
     device: torch.device
 
 
+@dataclass(frozen=True)
+class EpNoSyncSymmTensorInfo:
+    owner: str
+    name: str
+    shape: Tuple[int, ...]
+    dtype: torch.dtype
+    device: torch.device
+    nbytes: int
+    data_ptr: int
+
+
+def _symm_tensor_info(
+    *,
+    owner: str,
+    name: str,
+    tensor: torch.Tensor,
+) -> EpNoSyncSymmTensorInfo:
+    nbytes = int(tensor.numel() * tensor.element_size())
+    data_ptr = 0
+    if nbytes > 0:
+        data_ptr = int(tensor.untyped_storage().data_ptr())
+    return EpNoSyncSymmTensorInfo(
+        owner=owner,
+        name=name,
+        shape=tuple(int(dim) for dim in tensor.shape),
+        dtype=tensor.dtype,
+        device=tensor.device,
+        nbytes=nbytes,
+        data_ptr=data_ptr,
+    )
+
+
 class _NoSyncSymmLease:
     def __init__(
         self,
@@ -400,6 +432,15 @@ class _NoSyncSymmLeasePool:
         for slot in self._slots:
             for tensor in slot.values():
                 yield tensor
+
+    def iter_tensor_infos(self, *, owner: str) -> Iterator[EpNoSyncSymmTensorInfo]:
+        for slot_idx, slot in enumerate(self._slots):
+            for name, tensor in slot.items():
+                yield _symm_tensor_info(
+                    owner=owner,
+                    name=f"slot{slot_idx}.{name}",
+                    tensor=tensor,
+                )
 
 
 @dataclass
@@ -778,10 +819,19 @@ class _NoSyncSymmSharedPool:
         )
         return combine_gather_q, combine_gather_scales
 
-    def iter_tensors(self):
+    def iter_tensors(self) -> Iterator[torch.Tensor]:
         for slot_cache in self._slot_caches:
             for tensor in slot_cache.values():
                 yield tensor
+
+    def iter_tensor_infos(self, *, owner: str) -> Iterator[EpNoSyncSymmTensorInfo]:
+        for slot_idx, slot_cache in enumerate(self._slot_caches):
+            for name, tensor in slot_cache.items():
+                yield _symm_tensor_info(
+                    owner=owner,
+                    name=f"slot{slot_idx}.{name}",
+                    tensor=tensor,
+                )
 
 
 def get_ep_no_sync_group_name(block: "OLMoDDPTransformerBlock") -> str:
@@ -1458,6 +1508,16 @@ def _parse_bool_env(value: str, *, env_name: str) -> Optional[bool]:
     )
 
 
+def _rowwise_ibgda_enabled() -> bool:
+    disabled = os.getenv("NVSHMEM_DISABLE_IBGDA")
+    if disabled is not None and _parse_bool_env(disabled, env_name="NVSHMEM_DISABLE_IBGDA"):
+        return False
+    enabled = os.getenv("NVSHMEM_IB_ENABLE_IBGDA")
+    if enabled is None:
+        return False
+    return bool(_parse_bool_env(enabled, env_name="NVSHMEM_IB_ENABLE_IBGDA"))
+
+
 def _rowwise_symm_auto_enabled(block: "OLMoDDPTransformerBlock") -> bool:
     local_world_size = 0
     try:
@@ -1682,6 +1742,8 @@ def get_cached_ep_no_sync_rowwise_fp8_buffers(
 
 
 def use_ep_no_sync_rowwise_symm_dispatch_in(block: "OLMoDDPTransformerBlock") -> bool:
+    if _rowwise_ibgda_enabled():
+        return True
     return _resolve_rowwise_symm_option(
         block,
         attr_name="ep.rowwise_symm_dispatch_in",
@@ -2085,6 +2147,25 @@ def iter_ep_no_sync_symm_tensors(block: "OLMoDDPTransformerBlock") -> Iterator[t
             yield from pool.iter_tensors()
     if block._ep_no_sync_shared_pool is not None:
         yield from block._ep_no_sync_shared_pool.iter_tensors()
+
+
+def iter_ep_no_sync_symm_tensor_infos(
+    block: "OLMoDDPTransformerBlock",
+) -> Iterator[EpNoSyncSymmTensorInfo]:
+    for name, tensor in block._ep_no_sync_symm_cache.items():
+        if isinstance(tensor, torch.Tensor):
+            yield _symm_tensor_info(
+                owner=f"block{block.block_idx}:cache",
+                name=name,
+                tensor=tensor,
+            )
+    for pool_name, pool in getattr(block, "_ep_no_sync_symm_lease_pools", {}).items():
+        if isinstance(pool, _NoSyncSymmLeasePool):
+            yield from pool.iter_tensor_infos(
+                owner=f"block{block.block_idx}:lease_pool:{pool_name}"
+            )
+    if block._ep_no_sync_shared_pool is not None:
+        yield from block._ep_no_sync_shared_pool.iter_tensor_infos(owner="shared_pool")
 
 
 def compute_ep_no_sync_rank_capacity(block: "OLMoDDPTransformerBlock", num_out_tokens: int) -> int:

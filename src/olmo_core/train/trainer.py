@@ -1821,6 +1821,16 @@ class Trainer:
         dbg_mem_after_dry_run = torch.cuda.memory_allocated()/1024**3 # model param 2x + main param 4x + model grad 2x
 
         log.info("Dry-run complete")
+        self._log_ep_no_sync_symm_buffer_summary(context="after dry-run")
+
+    def _log_ep_no_sync_symm_buffer_summary(self, *, context: str) -> None:
+        log_summary = getattr(
+            self.train_module,
+            "log_ep_no_sync_symm_buffer_summary",
+            None,
+        )
+        if callable(log_summary):
+            log_summary(context=context)
 
     def _fit_epoch(self):
         self.data_loader.reshuffle(self.epoch)
@@ -1860,12 +1870,20 @@ class Trainer:
                 log.warning(f"Skipping training on step {self.global_step:,d} intentionally...")
             else:
                 self.train_module.train_batch(batch)
+                if self.global_step == 1:
+                    self._log_ep_no_sync_symm_buffer_summary(
+                        context="after train step 1 backward before optim"
+                    )
 
                 for callback in self._iter_callbacks():
                     callback.pre_optim_step()
 
                 self.train_module.optim_step()
                 self.train_module.zero_grads()
+                if self.global_step == 1:
+                    self._log_ep_no_sync_symm_buffer_summary(
+                        context="after train step 1 optim+zero_grad before callbacks"
+                    )
 
             for callback in self._iter_callbacks():
                 callback.post_train_batch()

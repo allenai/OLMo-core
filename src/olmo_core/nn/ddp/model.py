@@ -30,10 +30,12 @@ from olmo_core.kernels import symm_mem_vdev2d as symm_mem_vdev2d_kernels
 from olmo_core.utils import get_default_device, mark_dynamic, move_to_device
 from .block import OLMoDDPTransformerBlock, OLMoDDPTransformerBlockConfig
 from ..moe.v2.ep_no_sync_buffers import (
+    EpNoSyncSymmTensorInfo,
     _NoSyncSymmSharedPool,
     compute_ep_no_sync_rank_capacity,
     get_ep_no_sync_buffers,
     get_ep_no_sync_rowwise_fp8_buffers,
+    iter_ep_no_sync_symm_tensor_infos,
     prewarm_ep_no_sync_rowwise_lifetime_leases,
     use_ep_no_sync_rowwise_symm_combine_gather,
     use_ep_no_sync_rowwise_symm_combine_out,
@@ -309,6 +311,10 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
 
     def count_ep_no_sync_blocks(self) -> int:
         return sum(1 for _ in self.ep_no_sync_blocks())
+
+    def iter_ep_no_sync_symm_tensor_infos(self) -> Iterator[EpNoSyncSymmTensorInfo]:
+        for block in self.ep_no_sync_blocks():
+            yield from iter_ep_no_sync_symm_tensor_infos(block)
 
     def count_non_rowwise_ep_no_sync_blocks(self) -> int:
         return sum(
