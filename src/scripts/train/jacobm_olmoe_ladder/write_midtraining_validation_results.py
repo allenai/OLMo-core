@@ -26,6 +26,7 @@ RESULTS_DIR = LADDER_DIR / "results"
 DEFAULT_CACHE_DIR = RESULTS_DIR / "cache" / "midtraining_wandb_summaries"
 DEFAULT_PROJECT = "ai2-llm/jacobm-olmoe-ladder"
 CACHE_VERSION = 1
+SOURCE_CX_ORDER = ("Cx1", "Cx2", "Cx4", "Cx8")
 
 
 @dataclass(frozen=True)
@@ -69,6 +70,20 @@ TARGETS = [
         lr="1.6e-3",
         beaker_id="01KWWM1ZXN5R5XWK00GH0WA36G",
         checkpoint="olmoe3-tiny-275m-cx1-b256k-gpu2-ep1mb16-lr2e-3-r2/step15365",
+    ),
+    MidtrainTarget(
+        source="275M baseline Cx2",
+        source_cx="Cx2",
+        lr="1.8e-4",
+        beaker_id="01KWZ8T9BZ3B869VZ878FNNQ8T",
+        checkpoint="olmoe3-tiny-275m-cx2-b384k-gpu2-ep1mb8-lr1.8e-3-r3/step20486",
+    ),
+    MidtrainTarget(
+        source="275M baseline Cx4",
+        source_cx="Cx4",
+        lr="1.5e-4",
+        beaker_id="01KWZ8T9DZN8Y4VD63AP1AN387",
+        checkpoint="olmoe3-tiny-275m-cx4-b512k-gpu4-ep1mb16-lr1.5e-3/step30729",
     ),
     MidtrainTarget(
         source="275M baseline Cx8",
@@ -329,9 +344,9 @@ def main() -> int:
     args = parser.parse_args()
 
     api = wandb.Api(timeout=90)
-    name_regex = r"^mt-275m-baseline-cx(1|8)-lr(2e-4|4e-4|8e-4|1\.6e-3)-r1_"
+    name_regex = r"^mt-275m-baseline-cx(1|2|4|8)-lr(1(?:\.5|p5)e-4|1(?:\.8|p8)e-4|2e-4|4e-4|8e-4|1\.6e-3)-r1_"
     runs = {
-        re.sub(r"_.*$", "", run.display_name): run
+        re.sub(r"_.*$", "", run.display_name).replace("lr1p5e-4", "lr1.5e-4").replace("lr1p8e-4", "lr1.8e-4"): run
         for run in api.runs(args.project, filters={"tags": {"$in": ["exp_midtraining"]}})
         if re.search(name_regex, run.display_name)
     }
@@ -385,7 +400,9 @@ def main() -> int:
     ]
 
     summary_rows = []
-    for source_cx in ("Cx1", "Cx8"):
+    present_source_cxs = [source_cx for source_cx in SOURCE_CX_ORDER if any(record["source_cx"] == source_cx for record in records)]
+
+    for source_cx in present_source_cxs:
         group = [record for record in records if record["source_cx"] == source_cx]
         finished = [record for record in group if record["state"] == "finished"]
         with_eval = [record for record in group if record["eval_metrics"]]
@@ -415,20 +432,25 @@ def main() -> int:
             ),
             "",
         ])
-        for source_cx in ("Cx1", "Cx8"):
+        for source_cx in present_source_cxs:
             group = [record for record in records if record["source_cx"] == source_cx]
-            raw_rows, _ = win_count_tables(group, raw_metric_names)
-            dedup_rows, category_rows = win_count_tables(group, dedup_metric_names)
+            group_metric_names = sorted({metric for record in group for metric in record["eval_metrics"]})
+            lines.extend([f"### {source_cx} Win Counts", ""])
+            if not group_metric_names:
+                lines.extend(["No `eval/*` validation metrics are present for this source group yet.", ""])
+                continue
+            group_dedup_metric_names = deduplicated_metrics(group_metric_names)
+            raw_rows, _ = win_count_tables(group, group_metric_names)
+            dedup_rows, category_rows = win_count_tables(group, group_dedup_metric_names)
             dedup_by_lr = {row[0]: row[1] for row in dedup_rows}
             combined_rows = [[lr, raw_count, dedup_by_lr.get(lr, "")] for lr, raw_count in raw_rows]
-            lines.extend([f"### {source_cx} Win Counts", ""])
-            lines.extend(md_table(["LR", f"raw wins / {len(raw_metric_names)}", f"dedup wins / {len(dedup_metric_names)}"], combined_rows))
+            lines.extend(md_table(["LR", f"raw wins / {len(group_metric_names)}", f"dedup wins / {len(group_dedup_metric_names)}"], combined_rows))
             lines.append("")
             category_headers = ["category", "dedup metrics"] + [record["lr"] for record in sorted(group, key=lambda r: lr_sort_key(r["lr"]))]
             lines.extend(md_table(category_headers, category_rows))
             lines.append("")
 
-    for source_cx in ("Cx1", "Cx8"):
+    for source_cx in present_source_cxs:
         lines.extend([f"## {source_cx} Source", ""])
         group = [record for record in records if record["source_cx"] == source_cx]
         rows = []
@@ -477,7 +499,7 @@ def main() -> int:
     else:
         headers = ["metric", "direction"] + [f"{record['source_cx']} {record['lr']}" for record in records]
         rows = []
-        records_by_cx = {source_cx: [record for record in records if record["source_cx"] == source_cx] for source_cx in ("Cx1", "Cx8")}
+        records_by_cx = {source_cx: [record for record in records if record["source_cx"] == source_cx] for source_cx in present_source_cxs}
         for metric in eval_metric_names:
             winners = set()
             for group in records_by_cx.values():

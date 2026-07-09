@@ -1,6 +1,6 @@
 # Ladder Run Tracker
 
-Last updated: 2026-07-08 22:22 UTC.
+Last updated: 2026-07-09 01:50 UTC.
 
 This table is a scan-friendly status matrix for planned ladder cells. It is separate from `RUNS.md` (chronological launch/status log) and `PLOTTED_RESULTS.md` (finished-only plotted rows and losses).
 
@@ -13,7 +13,7 @@ Legend: `done` = at least one finished/plotted run exists; `run` = currently run
 | Experiment | Remaining not-yet-queued / not-started cells | Notes |
 | --- | --- | --- |
 | Total sparsity | 1.2B Cx1/2/4/8 for high total 96E/top4 and huge total 192E/top4 | 275M, 480M, and 810M are done. |
-| Integration candidates | 275M LR grid and 480M wide/deep promotions are plotted; 810M wide/deep promotions are partially plotted and still in flight | 275M wide Cx4/Cx8 cold follow-ups are done; 480M wide/deep points beat baseline at the same LR; 810M wide Cx1/Cx2/Cx4 and deep Cx1/Cx2 are now plotted. |
+| Integration candidates | 1.2B wide/deep promotions have not been run yet | 275M LR grid plus 480M and 810M wide/deep promotions are finished/plotted; 480M/810M points beat same-LR baseline overall, with deep usually strongest. |
 | Dense schedule | None | 480M, 810M, and 1.2B dense jobs are now finished/plotted. |
 | Shared expert | None | 480M, 810M, and 1.2B Cx1/2/4/8 are Beaker-finalized and plotted. |
 | Qwen-like | None | Active-matched and true-3D Qwen-like grids are finished/plotted through 1.2B Cx8. |
@@ -36,8 +36,8 @@ Legend: `done` = at least one finished/plotted run exists; `run` = currently run
 | Dense schedule | dense4 + shared | done Cx1/2/4/8 | done Cx1/2/4/8 | done Cx1/2/4/8 | done Cx1/2/4/8 | Promoted ladder complete and plotted; some 1.2B dense4 rows use exact tail history. |
 | Qwen3-like | active matched 4.5d | done Cx1/2/4/8 | done Cx1/2/4/8 | done Cx1/2/4/8 | done Cx1/2/4/8 | Main active-matched Qwen-like ladder is plotted through Cx8. |
 | Qwen3-like | true 3.0d + depth | done Cx1/2/4/8 | done Cx1/2/4/8 | done Cx1/2/4/8 | done Cx1/2/4/8 | Main true-3D Qwen-like ladder is plotted through Cx8 after the in-place restart. |
-| Integration candidates | wide 256E/top8 + shared + dense1 | Cx1/Cx2/Cx4/Cx8 done/plotted and bracketed | Cx1/Cx2/Cx4/Cx8 done/plotted | Cx1/Cx2/Cx4 done/plotted; Cx8 running | todo | 480M wide Cx1/Cx2/Cx4/Cx8 beat same-LR baseline; 810M Cx1/Cx2/Cx4 are plotted and beat same-LR baseline. |
-| Integration candidates | deep 256E/top8 + shared + dense1 | Cx1/2/4/8 done/plotted | Cx1/Cx2/Cx4/Cx8 done/plotted | Cx1/Cx2 done/plotted; Cx4/Cx8 running | todo | 480M deep Cx1/Cx2/Cx4/Cx8 beat wide and baseline at same LR; 810M deep Cx1 is slightly better than wide Cx1, while deep Cx2 trails wide Cx2 slightly. |
+| Integration candidates | wide 256E/top8 + shared + dense1 | Cx1/Cx2/Cx4/Cx8 done/plotted and bracketed | Cx1/Cx2/Cx4/Cx8 done/plotted | Cx1/Cx2/Cx4/Cx8 done/plotted | todo | 480M and 810M wide promotions beat same-LR baseline. |
+| Integration candidates | deep 256E/top8 + shared + dense1 | Cx1/2/4/8 done/plotted | Cx1/Cx2/Cx4/Cx8 done/plotted | Cx1/Cx2/Cx4/Cx8 done/plotted | todo | 480M deep Cx1/Cx2/Cx4/Cx8 beat wide and baseline at same LR; 810M deep is finished/plotted for all Cx multiples. |
 
 ## Midtraining Tracker
 
@@ -52,11 +52,11 @@ microbatch 8, fresh optimizer state, 2000-step warmup then constant LR.
 | Source | Source checkpoint | LR grid | State | Beaker | Notes |
 | --- | --- | --- | --- | --- | --- |
 | 275M baseline Cx1 | `olmoe3-tiny-275m-cx1-b256k-gpu2-ep1mb16-lr2e-3-r2/step15365` | `2e-4`, `4e-4`, `8e-4`, `1.6e-3` | done | [2e-4](https://beaker.org/ex/01KWWM1043JEC9MC3PV7PXQ745), [4e-4](https://beaker.org/ex/01KWWM1AVQXMJ3JBJQ1W2G8YAV), [8e-4](https://beaker.org/ex/01KWWM1N0EQDMCFER90NVP9QW0), [1.6e-3](https://beaker.org/ex/01KWWM1ZXN5R5XWK00GH0WA36G) | All four training jobs finished. Tests midtraining LR transfer from the low-data optimal baseline checkpoint. |
-| 275M baseline Cx2 | `olmoe3-tiny-275m-cx2-b384k-gpu2-ep1mb8-lr1.8e-3-r3/step20486` | `1.8e-4` | queued | [1.8e-4](https://beaker.org/ex/01KWZ8T9BZ3B869VZ878FNNQ8T) | Single-point 10% PT-LR run queued on 2026-07-07 after the Cx1/Cx8 validation sweep. |
-| 275M baseline Cx4 | `olmoe3-tiny-275m-cx4-b512k-gpu4-ep1mb16-lr1.5e-3/step30729` | `1.5e-4` | queued | [1.5e-4](https://beaker.org/ex/01KWZ8T9DZN8Y4VD63AP1AN387) | Single-point 10% PT-LR run queued on 2026-07-07 after the Cx1/Cx8 validation sweep. |
+| 275M baseline Cx2 | `olmoe3-tiny-275m-cx2-b384k-gpu2-ep1mb8-lr1.8e-3-r3/step20486` | `1.8e-4` | done | [1.8e-4](https://beaker.org/ex/01KWZ8T9BZ3B869VZ878FNNQ8T) | Single-point 10% PT-LR run finished 2026-07-08; final-checkpoint eval backfill has not been launched yet. |
+| 275M baseline Cx4 | `olmoe3-tiny-275m-cx4-b512k-gpu4-ep1mb16-lr1.5e-3/step30729` | `1.5e-4` | done | [1.5e-4](https://beaker.org/ex/01KWZ8T9DZN8Y4VD63AP1AN387) | Single-point 10% PT-LR run finished 2026-07-08; final-checkpoint eval backfill has not been launched yet. |
 | 275M baseline Cx8 | `olmoe3-tiny-275m-cx8-b768k-gpu4-ep1mb8-lr1.6e-3-r2/step40971` | `2e-4`, `4e-4`, `8e-4`, `1.6e-3` | done | [2e-4](https://beaker.org/ex/01KWWM10ANMMW2YTNN6RKJBGE7), [4e-4](https://beaker.org/ex/01KWWM1AK89SKDA1KGCX5D8SMM), [8e-4](https://beaker.org/ex/01KWWM1P9TXRSMDV5DH9EF4KXM), [1.6e-3](https://beaker.org/ex/01KWWM213KMG47KADPK5Q67GJP) | All four training jobs finished. Tests midtraining LR transfer from the high-data optimal baseline checkpoint. |
-| 275M integration wide Cx1 | `integration/int-275m-cx1-intw256e8k-lr1.6e-3-r1/step15499` | `2e-4` | queued | [2e-4 r3](https://beaker.org/ex/01KX1WZ551YCZYTHXRQEDX1WK1) | Canonical replacement for failed r1, launched from pushed commit `34f5d5a` with `integration_midtraining_ladder.py` and fresh optimizer-state loading. Ignore r2 false-starts; they used the pre-push git ref and failed with missing launcher file. |
-| 275M integration wide Cx2 | `integration/int-275m-cx2-intw256e8k-lr1.6e-3-r1/step20665` | `1.8e-4` | queued | [1.8e-4 r3](https://beaker.org/ex/01KX1WZGKE5K5GF4SZ98G7SVJD) | Canonical replacement for failed r1, launched from pushed commit `34f5d5a` with `integration_midtraining_ladder.py` and fresh optimizer-state loading. Ignore r2 false-starts; they used the pre-push git ref and failed with missing launcher file. |
+| 275M integration wide Cx1 | `integration/int-275m-cx1-intw256e8k-lr1.6e-3-r1/step15499` | `2e-4` | running | [2e-4 r3](https://beaker.org/ex/01KX1WZ551YCZYTHXRQEDX1WK1) | Canonical replacement for failed r1, launched from pushed commit `34f5d5a` with `integration_midtraining_ladder.py` and fresh optimizer-state loading. Ignore r2 false-starts; they used the pre-push git ref and failed with missing launcher file. |
+| 275M integration wide Cx2 | `integration/int-275m-cx2-intw256e8k-lr1.6e-3-r1/step20665` | `1.8e-4` | running | [1.8e-4 r3](https://beaker.org/ex/01KX1WZGKE5K5GF4SZ98G7SVJD) | Canonical replacement for failed r1, launched from pushed commit `34f5d5a` with `integration_midtraining_ladder.py` and fresh optimizer-state loading. Ignore r2 false-starts; they used the pre-push git ref and failed with missing launcher file. |
 | 275M integration wide Cx4 | `integration/int-275m-cx4-intw256e8k-lr8e-4-r1/step30997` | `1.5e-4` | queued | [1.5e-4 r3](https://beaker.org/ex/01KX1WZXCBX8VFNFFZK2DT50JB) | Canonical replacement for failed r1, launched from pushed commit `34f5d5a` with `integration_midtraining_ladder.py` and fresh optimizer-state loading. Ignore r2 false-starts; they used the pre-push git ref and failed with missing launcher file. |
 | 275M integration wide Cx8 | `integration/int-275m-cx8-intw256e8k-lr8e-4-r1/step41329` | `1.6e-4` | queued | [1.6e-4 r3](https://beaker.org/ex/01KX1X0AJAMCEE5MSXBP33PHNG) | Canonical replacement for failed r1, launched from pushed commit `34f5d5a` with `integration_midtraining_ladder.py` and fresh optimizer-state loading. Ignore r2 false-starts; they used the pre-push git ref and failed with missing launcher file. |
 | 275M integration deep Cx1 | `integration/int-275m-cx1-intd256e8k-lr1.6e-3-r1/step15130` | `2e-4` | queued | [2e-4 r3](https://beaker.org/ex/01KX1X0QVHZ7X0HSF0YNJWEBBH) | Canonical replacement for failed r1, launched from pushed commit `34f5d5a` with `integration_midtraining_ladder.py` and fresh optimizer-state loading. Ignore r2 false-starts; they used the pre-push git ref and failed with missing launcher file. |
@@ -95,18 +95,18 @@ step warmup then constant LR, and the 10% baseline pretraining LR rule.
 
 | Source | Source checkpoint | LR | Global batch seq | GPUs | EP / MB | State | Beaker |
 | --- | --- | ---: | ---: | ---: | --- | --- | --- |
-| 480M baseline Cx1 | `m480-cx1-b256k-gpu4-ep1mb8-lr1.2e-3-r1/step29022` | `1.2e-4` | `192` | 4 | EP1 / MB8 | queued | [01KWZARWH7XAS4MD2238VRKP0Y](https://beaker.org/ex/01KWZARWH7XAS4MD2238VRKP0Y) |
+| 480M baseline Cx1 | `m480-cx1-b256k-gpu4-ep1mb8-lr1.2e-3-r1/step29022` | `1.2e-4` | `192` | 4 | EP1 / MB8 | running | [01KWZARWH7XAS4MD2238VRKP0Y](https://beaker.org/ex/01KWZARWH7XAS4MD2238VRKP0Y) |
 | 480M baseline Cx2 | `m480-cx2-b384k-gpu4-ep1mb4-lr9e-4-r1/step38696` | `9e-5` | `192` | 4 | EP1 / MB8 | stopped | [01KWZARZ2XT6HP3HZ4AK0F5EKT](https://beaker.org/ex/01KWZARZ2XT6HP3HZ4AK0F5EKT) |
 | 480M baseline Cx4 | `m480-cx4-b512k-gpu4-ep1mb8-lr8e-4-r1/step58044` | `8e-5` | `192` | 4 | EP1 / MB8 | stopped | [01KWZARWY3JYNCT8HAMYAD17J7](https://beaker.org/ex/01KWZARWY3JYNCT8HAMYAD17J7) |
-| 480M baseline Cx8 | `m480-cx8-b768k-gpu8-ep1mb4-lr8e-4-r1/step77392` | `8e-5` | `192` | 4 | EP1 / MB8 | queued | [01KWZARZ2T7FZDH42Q2VS92WXN](https://beaker.org/ex/01KWZARZ2T7FZDH42Q2VS92WXN) |
-| 810M baseline Cx1 | `olmoe3-moe-a0-810m-cx1-b256k-gpu4-ep1mb4-lr6e-4-r1/step52648` | `6e-5` | `256` | 8 | EP1 / MB4 | queued | [01KWZAT4PF87PYA96JT7ZXSQKX](https://beaker.org/ex/01KWZAT4PF87PYA96JT7ZXSQKX) |
+| 480M baseline Cx8 | `m480-cx8-b768k-gpu8-ep1mb4-lr8e-4-r1/step77392` | `8e-5` | `192` | 4 | EP1 / MB8 | running | [01KWZARZ2T7FZDH42Q2VS92WXN](https://beaker.org/ex/01KWZARZ2T7FZDH42Q2VS92WXN) |
+| 810M baseline Cx1 | `olmoe3-moe-a0-810m-cx1-b256k-gpu4-ep1mb4-lr6e-4-r1/step52648` | `6e-5` | `256` | 8 | EP1 / MB4 | running | [01KWZAT4PF87PYA96JT7ZXSQKX](https://beaker.org/ex/01KWZAT4PF87PYA96JT7ZXSQKX) |
 | 810M baseline Cx2 | `olmoe3-moe-a0-810m-cx2-b384k-gpu8-ep1mb2-lr5.6e-4-r3/step70197` | `5.6e-5` | `256` | 8 | EP1 / MB4 | stopped | [01KWZAT5N7AJ6C1HTTRMDD8WMT](https://beaker.org/ex/01KWZAT5N7AJ6C1HTTRMDD8WMT) |
 | 810M baseline Cx4 | `olmoe3-moe-a0-810m-cx4-b512k-gpu8-ep1mb4-lr4e-4-r1/step105295` | `4e-5` | `256` | 8 | EP1 / MB4 | stopped | [01KWZAT4PE90E0X0N6Z126Q8SR](https://beaker.org/ex/01KWZAT4PE90E0X0N6Z126Q8SR) |
-| 810M baseline Cx8 | `olmoe3-moe-a0-810m-cx8-b768k-gpu8-ep1mb4-lr4e-4-r1/step140394` | `4e-5` | `256` | 8 | EP1 / MB4 | queued | [01KWZAT4PQ0NWD20VS0XT12ZF5](https://beaker.org/ex/01KWZAT4PQ0NWD20VS0XT12ZF5) |
-| 1.2B baseline Cx1 | `olmoe3-moe-a0-1p2b-cx1-b256k-gpu8-ep1mb2-lr4e-4-r1/step81190` | `4e-5` | `384` | 8 | EP1 / MB4 | queued | [01KWZAVZFS1FMR59ASRVH7VD4X](https://beaker.org/ex/01KWZAVZFS1FMR59ASRVH7VD4X) |
+| 810M baseline Cx8 | `olmoe3-moe-a0-810m-cx8-b768k-gpu8-ep1mb4-lr4e-4-r1/step140394` | `4e-5` | `256` | 8 | EP1 / MB4 | running | [01KWZAT4PQ0NWD20VS0XT12ZF5](https://beaker.org/ex/01KWZAT4PQ0NWD20VS0XT12ZF5) |
+| 1.2B baseline Cx1 | `olmoe3-moe-a0-1p2b-cx1-b256k-gpu8-ep1mb2-lr4e-4-r1/step81190` | `4e-5` | `384` | 8 | EP1 / MB4 | running | [01KWZAVZFS1FMR59ASRVH7VD4X](https://beaker.org/ex/01KWZAVZFS1FMR59ASRVH7VD4X) |
 | 1.2B baseline Cx2 | `olmoe3-moe-a0-1p2b-cx2-b384k-lr6e-4-r1/step108253` | `6e-5` | `384` | 8 | EP1 / MB4 | stopped | [01KWZAV9B2740S4NZDAZJW5A0R](https://beaker.org/ex/01KWZAV9B2740S4NZDAZJW5A0R) |
 | 1.2B baseline Cx4 | `olmoe3-moe-a0-1p2b-cx4-b512k-gpu8-ep1mb2-lr3e-4-r1/step162379` | `3e-5` | `384` | 8 | EP1 / MB4 | stopped | [01KWZAVC810DHNY5VE958S6DTG](https://beaker.org/ex/01KWZAVC810DHNY5VE958S6DTG) |
-| 1.2B baseline Cx8 | `olmoe3-moe-a0-1p2b-cx8-b768k-gpu32-ep1mb1-lr4e-4-r1/step216505` | `4e-5` | `384` | 8 | EP1 / MB4 | queued | [01KWZAV9AGDSD3PTS5RAM7G5N2](https://beaker.org/ex/01KWZAV9AGDSD3PTS5RAM7G5N2) |
+| 1.2B baseline Cx8 | `olmoe3-moe-a0-1p2b-cx8-b768k-gpu32-ep1mb1-lr4e-4-r1/step216505` | `4e-5` | `384` | 8 | EP1 / MB4 | running | [01KWZAV9AGDSD3PTS5RAM7G5N2](https://beaker.org/ex/01KWZAV9AGDSD3PTS5RAM7G5N2) |
 
 ## Midtraining HF Conversion / OLMoBase Evals
 
@@ -114,17 +114,17 @@ Initial OLMoBase eval target set uses the selected 275M baseline midtraining LR,
 
 | Source | HF conversion | OLMoBase eval | State | Notes |
 | --- | --- | --- | --- | --- |
-| `mt-275m-baseline-cx1-lr2e-4-r1/step95368` | [01KX02AE8YRXS7Q8SGV0TAMEN7](https://beaker.org/ex/01KX02AE8YRXS7Q8SGV0TAMEN7) | [01KX02MYSA36TFKBT99XAE0XZ6](https://beaker.org/ex/01KX02MYSA36TFKBT99XAE0XZ6) | eval launched | Converted HF path: `hf-checkpoints/midtraining/mt-275m-baseline-cx1-lr2e-4-r1/step95368`. |
-| `mt-275m-baseline-cx8-lr2e-4-r1/step95368` | [01KX02AFMHGPSH4ZQMS0A5BEF7](https://beaker.org/ex/01KX02AFMHGPSH4ZQMS0A5BEF7) | [01KX02N80T6NXX8TZEJM8TC0Z5](https://beaker.org/ex/01KX02N80T6NXX8TZEJM8TC0Z5) | eval launched | Converted HF path: `hf-checkpoints/midtraining/mt-275m-baseline-cx8-lr2e-4-r1/step95368`. |
+| `mt-275m-baseline-cx1-lr2e-4-r1/step95368` | [01KX02AE8YRXS7Q8SGV0TAMEN7](https://beaker.org/ex/01KX02AE8YRXS7Q8SGV0TAMEN7) | [01KX02MYSA36TFKBT99XAE0XZ6](https://beaker.org/ex/01KX02MYSA36TFKBT99XAE0XZ6) | done | Converted HF path: `hf-checkpoints/midtraining/mt-275m-baseline-cx1-lr2e-4-r1/step95368`. |
+| `mt-275m-baseline-cx8-lr2e-4-r1/step95368` | [01KX02AFMHGPSH4ZQMS0A5BEF7](https://beaker.org/ex/01KX02AFMHGPSH4ZQMS0A5BEF7) | [01KX02N80T6NXX8TZEJM8TC0Z5](https://beaker.org/ex/01KX02N80T6NXX8TZEJM8TC0Z5) | done | Converted HF path: `hf-checkpoints/midtraining/mt-275m-baseline-cx8-lr2e-4-r1/step95368`. |
 
 ## Active / Queued Beaker Surface
 
-Bounded status pass on 2026-07-01 05:00 UTC checked only runs that were previously running, queued, created, or finished-unplotted in this table / `RUNS.md`; it did not scan the full historical W&B/Beaker surface.
+Bounded status pass on 2026-07-09 01:35 UTC checked only runs that were previously running, queued, created, or finished-unplotted in this table / `RUNS.md`; it did not scan the full historical W&B/Beaker surface.
 
 | Run(s) | State | Latest timestamp UTC | Beaker | Notes |
 | --- | --- | --- | --- | --- |
-| `int-810m-cx{1,2,4,8}-intw256e8k-baseline-LR-r1` | mixed | plotted 2026-07-03 17:55 | https://beaker.org/ex/01KWGQP0NGMXDEN2PBRGAXJZ7R | 810M wide integration promoted single points on Titan urgent, compile-on. Cx1/Cx2/Cx4 succeeded and are plotted (`6e-4` avg250M `2.3732`; `5.6e-4` avg250M `2.2689`; `4e-4` avg250M `2.1928`); Cx8 is still running. GBS seq 32/48/64/96; GPUs 8/8/8/8; MB 4/2/4/4. |
-| `int-810m-cx{1,2,4,8}-intd256e8k-baseline-LR-r1` | mixed | plotted 2026-07-03 17:55 | https://beaker.org/ex/01KWGQQVD0TE5ZY5K5T05GEYAK | 810M deep integration promoted single points on Titan urgent, compile-on. Cx1/Cx2 succeeded and are plotted (`6e-4` avg250M `2.3713`; `5.6e-4` avg250M `2.2740`); Cx4/Cx8 are still running. GBS seq 32/48/64/96; GPUs 8/8/8/8; MB 4/2/4/4. Current Beaker IDs: Cx1 `01KWGQQVD0TE5ZY5K5T05GEYAK`; Cx2 `01KWHQZQZ811104C16PJ4GTWG7`; Cx4 `01KWHR02WQ7S4FCQ77WJNFSA5S`; Cx8 `01KWHR0DANF34FXQ236WKHHGMM`. |
+| `int-810m-cx{1,2,4,8}-intw256e8k-baseline-LR-r1` | done | plotted 2026-07-09 | https://beaker.org/ex/01KWGQP0NGMXDEN2PBRGAXJZ7R | 810M wide integration promoted single points on Titan urgent, compile-on. All four Cx runs succeeded and are plotted after the latest tail-cache refresh. GBS seq 32/48/64/96; GPUs 8/8/8/8; MB 4/2/4/4. |
+| `int-810m-cx{1,2,4,8}-intd256e8k-baseline-LR-r1` | done | plotted 2026-07-09 | https://beaker.org/ex/01KWGQQVD0TE5ZY5K5T05GEYAK | 810M deep integration promoted single points on Titan urgent, compile-on. All four Cx runs succeeded and are plotted after the latest tail-cache refresh. GBS seq 32/48/64/96; GPUs 8/8/8/8; MB 4/2/4/4. Current Beaker IDs: Cx1 `01KWGQQVD0TE5ZY5K5T05GEYAK`; Cx2 `01KWHQZQZ811104C16PJ4GTWG7`; Cx4 `01KWHR02WQ7S4FCQ77WJNFSA5S`; Cx8 `01KWHR0DANF34FXQ236WKHHGMM`. |
 | `int-480m-cx{1,2,4,8}-intw256e8k-baseline-LR-r1` | queued/created | created 2026-07-01 05:37-05:38 | https://beaker.org/ex/01KWE2XDE9NATMWCWKAH9X29JT | 480M wide integration promoted single points on Titan urgent, compile-on. Cx1 `1.2e-3`, Cx2 `9e-4`, Cx4/Cx8 `8e-4`; GBS seq 32/48/64/96; GPUs 4/4/4/8; MB 4 throughout. Beaker IDs: `01KWE2XDE...`, `01KWE2XSK...`, `01KWE2Y61...`, `01KWE2YHF...`. |
 | `int-275m-cx1-intw256e8k-lr8e-4-r1` | run | restarted attempt started 2026-07-01 02:47 | https://beaker.org/ex/01KWDDW61H689812K3DWHWH97W | Original attempt exited 1 at 2026-06-30 23:51; user restarted in-place and fresh attempt is running. |
 | `int-275m-cx1-intw256e8k-lr1.6e-3-r1` | done | finalized 2026-07-01 02:39 | https://beaker.org/ex/01KWDDWKR6E5ZGKGE0114WM851 | Wide integration Cx1 mid LR finished cleanly and is plotted from tail history. |
