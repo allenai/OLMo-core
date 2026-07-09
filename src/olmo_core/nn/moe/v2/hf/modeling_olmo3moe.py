@@ -593,11 +593,12 @@ class Olmo3MoeModel(Olmo3MoePreTrainedModel):
         # It may already have been prepared by e.g. `generate`
         if not isinstance(causal_mask_mapping := attention_mask, dict):
             # Prepare mask arguments
+            # ``cache_position`` was dropped from the mask builders in transformers >5.6 (it was
+            # already unused before that), so we don't pass it.
             mask_kwargs = {
                 "config": self.config,
                 "inputs_embeds": inputs_embeds,
                 "attention_mask": attention_mask,
-                "cache_position": cache_position,
                 "past_key_values": past_key_values,
                 "position_ids": position_ids,
             }
