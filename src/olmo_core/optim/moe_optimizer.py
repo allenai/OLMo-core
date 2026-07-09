@@ -47,9 +47,7 @@ log = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from ..train.train_module import TrainModule
-    from ..train.train_module.transformer.moe_train_module import (
-        MoEV2TransformerTrainModule,
-    )
+    from ..train.train_module.transformer.ddp_train_module import OLMoDDPTrainModule
 
 
 def _to_local_tensor(tensor: torch.Tensor) -> torch.Tensor:
@@ -313,7 +311,7 @@ class MoEFusedV2OptimizerConfig(Config):
 
         assert train_module is not None, "MoEFusedV2OptimizerConfig.build requires a train_module"
         model_parts = cast(List[MoEFusedV2Transformer], model_parts)
-        train_module = cast("MoEV2TransformerTrainModule", train_module)
+        train_module = cast("OLMoDDPTrainModule", train_module)
 
         # not used: train_module (was); now used to pass process groups
         kwargs = self.as_dict()

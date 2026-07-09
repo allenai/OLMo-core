@@ -97,7 +97,7 @@ class MeshDimName(StrEnum):
     dp_ep = "dp_ep"
     dp_cp = "dp_cp"
 
-    # For MoEV2TransformerTrainModule.
+    # For OLMoDDPTrainModule.
     ep_mp = "ep_mp"  # EP for model parallelism (sharding the model's experts).
     ep_dp = "ep_dp"  # EP for data parallelism (gradient reduction).
 

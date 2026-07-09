@@ -40,7 +40,7 @@ from olmo_core.train.train_module.config import TrainModuleConfig
 from .pipeline.pipeline_schedule import CustomPipelineStage
 
 if TYPE_CHECKING:
-    from .moe_train_module import MoEV2TransformerTrainModule
+    from .ddp_train_module import OLMoDDPTrainModule
     from .pipeline_train_module import TransformerPipelineTrainModule
     from .train_module import TransformerTrainModule
 
@@ -242,7 +242,7 @@ class TransformerDataParallelConfig(DataParallelConfig):
     only_allreduce_last_microbatch: bool = True
     """
     Only all-reduce gradients on the last micro-batch of a gradient-accumulation step (skip the
-    reduction on intermediate micro-batches). Used by :class:`MoEV2TransformerTrainModule` with
+    reduction on intermediate micro-batches). Used by :class:`OLMoDDPTrainModule` with
     :class:`~olmo_core.nn.parallel.MultiGroupDistributedDataParallel`.
     """
 
@@ -467,9 +467,9 @@ class TransformerPipelineTrainModuleConfig(TransformerTrainModuleConfig):
 
 @beta_feature
 @dataclass
-class MoEV2TransformerTrainModuleConfig(TrainModuleConfig):
+class OLMoDDPTrainModuleConfig(TrainModuleConfig):
     """
-    Configuration for :class:`~olmo_core.train.train_module.transformer.moe_train_module.MoEV2TransformerTrainModule`,
+    Configuration for :class:`~olmo_core.train.train_module.transformer.ddp_train_module.OLMoDDPTrainModule`,
     the train module for the fused MoE-v2 transformer (built with the fused MoE distributed
     optimizer, :class:`~olmo_core.optim.MoEFusedV2OptimizerConfig`).
     """
@@ -516,15 +516,15 @@ class MoEV2TransformerTrainModuleConfig(TrainModuleConfig):
         model: Transformer,
         device: Optional[torch.device] = None,
         eval_only: bool = False,
-    ) -> "MoEV2TransformerTrainModule":
+    ) -> "OLMoDDPTrainModule":
         """
-        Build the corresponding :class:`MoEV2TransformerTrainModule`.
+        Build the corresponding :class:`OLMoDDPTrainModule`.
 
         :param model: The :class:`~olmo_core.nn.transformer.Transformer` model to train.
         :param device: The device to train on.
         :param eval_only: If ``True``, build the train module without an optimizer (eval-only).
         """
-        from .moe_train_module import MoEV2TransformerTrainModule
+        from .ddp_train_module import OLMoDDPTrainModule
 
         kwargs = self.as_dict(exclude_none=True, recurse=False)
 
@@ -539,7 +539,7 @@ class MoEV2TransformerTrainModuleConfig(TrainModuleConfig):
         if grad_accum_in_fp32 is not None and (dp_config := kwargs.get("dp_config")) is not None:
             kwargs["dp_config"] = replace(dp_config, accumulate_grads_in_fp32=grad_accum_in_fp32)
 
-        return MoEV2TransformerTrainModule(
+        return OLMoDDPTrainModule(
             model=model,
             device=device,
             eval_only=eval_only,

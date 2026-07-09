@@ -98,7 +98,7 @@ class TransformerType(StrEnum):
 
     moe_fused_v2 = "moe_fused_v2"
     """
-    ➡️ :class:`MoEFusedV2Transformer`
+    ➡️ :class:`OLMoDDPModel`
     """
 
 
@@ -154,7 +154,7 @@ class TransformerBlockType(StrEnum):
 
     moe_fused_v2 = "moe_fused_v2"
     """
-    ➡️ :class:`MoEFusedV2TransformerBlock`
+    ➡️ :class:`OLMoDDPTransformerBlock`
     """
 
 
@@ -268,9 +268,9 @@ class TransformerBlockConfig(ModuleConfig):
             elif self.name == TransformerBlockType.moe_hybrid_reordered_norm:
                 return MoEHybridReorderedNormTransformerBlock(**kwargs)
             elif self.name == TransformerBlockType.moe_fused_v2:
-                from ..moe.v2.block import MoEFusedV2TransformerBlock
+                from olmo_core.nn.ddp.block import OLMoDDPTransformerBlock
 
-                return MoEFusedV2TransformerBlock(**kwargs)
+                return OLMoDDPTransformerBlock(**kwargs)
             else:
                 raise NotImplementedError(self.name)
         except TypeError as e:
@@ -439,7 +439,7 @@ class TransformerConfig(ModelConfig):
                 tie_word_embeddings=self.tie_word_embeddings,
             )
         elif self.name == TransformerType.moe_fused_v2:
-            raise RuntimeError("Use MoEFusedV2TransformerConfig")
+            raise RuntimeError("Use OLMoDDPModelConfig")
         else:
             raise NotImplementedError(self.name)
 
@@ -2019,10 +2019,10 @@ class TransformerConfig(ModelConfig):
 
 
 @dataclass
-class MoEFusedV2TransformerConfig(TransformerConfig):
+class OLMoDDPModelConfig(TransformerConfig):
     """
     A :class:`TransformerConfig` for the fused MoE-v2 model
-    (:class:`~olmo_core.nn.moe.v2.model.MoEFusedV2Transformer`).
+    (:class:`~olmo_core.nn.ddp.model.OLMoDDPModel`).
     """
 
     two_batch_overlap: bool = False
@@ -2069,9 +2069,9 @@ class MoEFusedV2TransformerConfig(TransformerConfig):
         )
         model: Transformer
         if self.name == TransformerType.moe_fused_v2:
-            from ..moe.v2.model import MoEFusedV2Transformer
+            from olmo_core.nn.ddp.model import OLMoDDPModel
 
-            model = MoEFusedV2Transformer(
+            model = OLMoDDPModel(
                 d_model=self.d_model,
                 vocab_size=self.vocab_size,
                 n_layers=self.n_layers,
@@ -2173,3 +2173,7 @@ def resolve_block_configs(
 
     assert len(block_configs) == n_layers
     return block_configs
+
+
+# Back-compat alias (canonical name is OLMoDDPModelConfig).
+MoEFusedV2TransformerConfig = OLMoDDPModelConfig

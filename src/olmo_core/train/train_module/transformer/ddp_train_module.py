@@ -105,7 +105,7 @@ class FlatSavePlanner(DefaultSavePlanner):
     pass
 
 
-class MoEV2TransformerTrainModule(TrainModule):
+class OLMoDDPTrainModule(TrainModule):
     def __init__(
         self,
         model: Transformer,
@@ -138,7 +138,7 @@ class MoEV2TransformerTrainModule(TrainModule):
 
         assert isinstance(
             model, MoEFusedV2Transformer
-        ), "MoEV2TransformerTrainModule only supports MoEFusedV2Transformer model"
+        ), "OLMoDDPTrainModule only supports MoEFusedV2Transformer model"
         # TODO(moe-train-module-model-config): this guard required a global config on `model.config`
         # for the config-level FLOP accounting, but that was dropped in favor of model-level
         # accounting (`model.num_flops_per_token`, captured below), and `model.config` isn't set by
@@ -147,7 +147,7 @@ class MoEV2TransformerTrainModule(TrainModule):
         # import and set `model.config`.
         # if not isinstance(model.config, MoEFusedV2TransformerConfig):
         #     raise OLMoConfigurationError(
-        #         "MoEV2TransformerTrainModule requires a global MoEFusedV2TransformerConfig "
+        #         "OLMoDDPTrainModule requires a global MoEFusedV2TransformerConfig "
         #         "on model.config for FLOP accounting. Build the model from its config, or "
         #         "attach the global config before constructing the train module."
         #     )
@@ -174,7 +174,7 @@ class MoEV2TransformerTrainModule(TrainModule):
 
         # compatibility
         if autocast_precision is not None:
-            assert False, "Autocast precision is not supported in MoEV2TransformerTrainModule"
+            assert False, "Autocast precision is not supported in OLMoDDPTrainModule"
         self.autocast_precision = None
 
         # PP related state.
@@ -218,9 +218,7 @@ class MoEV2TransformerTrainModule(TrainModule):
                 "Activation checkpointing with 'budget' mode requires compilation to be enabled"
             )
 
-        assert (
-            dp_config is not None
-        ), "Data parallel config is required for MoEV2TransformerTrainModule"
+        assert dp_config is not None, "Data parallel config is required for OLMoDDPTrainModule"
         assert dp_config.name == "ddp", "Data parallel config must be 'ddp'"
 
         if is_distributed():
@@ -236,9 +234,7 @@ class MoEV2TransformerTrainModule(TrainModule):
             log.info(f"Data parallel world size = {self.dp_world_size:,d}")
             assert self.world_mesh["dense"] is not None
         else:
-            raise OLMoConfigurationError(
-                "Training parallelism is required for MoEV2TransformerTrainModule"
-            )
+            raise OLMoConfigurationError("Training parallelism is required for OLMoDDPTrainModule")
 
         self._dp_config = dp_config
         self._cp_config = cp_config
@@ -1374,7 +1370,7 @@ class MoEV2TransformerTrainModule(TrainModule):
         # Left commented pending confirmation on a real rowwise-FP8 run (incl. skip-step behavior)
         # before removing outright.
         # with maybe_nvtx_annotate(
-        #     "MoEV2TransformerTrainModule.refresh_rowwise_fp8_cache_after_optim", _BWD_COLOR
+        #     "OLMoDDPTrainModule.refresh_rowwise_fp8_cache_after_optim", _BWD_COLOR
         # ):
         #     for model in self.model_parts:
         #         model.refresh_rowwise_fp8_cache()
@@ -1749,7 +1745,7 @@ class MoEV2TransformerTrainModule(TrainModule):
                 self._pp_stages[idx].submod = ddp_m
 
         with maybe_nvtx_annotate(
-            "MoEV2TransformerTrainModule.refresh_rowwise_fp8_cache_before_first_step", _BWD_COLOR
+            "OLMoDDPTrainModule.refresh_rowwise_fp8_cache_before_first_step", _BWD_COLOR
         ):
             for m in ddp_model_parts:
                 m.refresh_rowwise_fp8_cache()

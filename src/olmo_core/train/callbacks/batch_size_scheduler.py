@@ -17,7 +17,7 @@ from olmo_core.optim.scheduler import WSD, ConstantScheduler, Scheduler
 
 from ..common import Duration
 from ..train_module import (
-    MoEV2TransformerTrainModule,
+    OLMoDDPTrainModule,
     TransformerPipelineTrainModule,
     TransformerTrainModule,
 )
@@ -102,7 +102,7 @@ class BatchSizeSchedulerCallback(Callback):
             scheduler = self.trainer.train_module.scheduler
         elif isinstance(self.trainer.train_module, TransformerPipelineTrainModule):
             scheduler = self.trainer.train_module.scheduler
-        elif isinstance(self.trainer.train_module, MoEV2TransformerTrainModule):
+        elif isinstance(self.trainer.train_module, OLMoDDPTrainModule):
             scheduler = self.trainer.train_module.scheduler
 
         # If we have an LR scheduler, we need to make sure that the value it uses for `t_max`
@@ -177,7 +177,7 @@ class BatchSizeSchedulerCallback(Callback):
         elif isinstance(self.trainer.train_module, TransformerPipelineTrainModule):
             optimizers = self.trainer.train_module.optimizers
             scheduler = self.trainer.train_module.scheduler
-        elif isinstance(self.trainer.train_module, MoEV2TransformerTrainModule):
+        elif isinstance(self.trainer.train_module, OLMoDDPTrainModule):
             optimizers = [self.trainer.train_module.optim]
             scheduler = self.trainer.train_module.scheduler
 
