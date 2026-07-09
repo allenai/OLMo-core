@@ -142,20 +142,20 @@ if len(sys.argv) > 1 and sys.argv[1] == "eval_checkpoints":
 
 
 EVAL_INTERVAL = 2000
-SAVE_INTERVAL = 500
+SAVE_INTERVAL = 2000
 
-NUM_EXPERTS = 64
+NUM_EXPERTS = 128
 TOP_K = 4
 ORIGINAL_TOP_K=None
-D_MODEL=2048
+D_MODEL=3 * 1024 + 512
 D_ATTN=4 * 1024
 
 HEAD_DIM=128
 NUM_HEAD = D_ATTN // HEAD_DIM
 NUM_KV_HEAD= NUM_HEAD // 4
-MOE_HIDDEN_SIZE = 2048 + 512
+MOE_HIDDEN_SIZE = 4 * 1024
 NUM_SHARED_EXPERTS = 1  # Number of shared experts in the shared MLP
-SHARED_MLP_HIDDEN_SIZE = 2048 + 512   # Hidden size for shared MLP (or dense branch MLP in arctic) in MoE blocks
+SHARED_MLP_HIDDEN_SIZE = 3 * 1024   # Hidden size for shared MLP (or dense branch MLP in arctic) in MoE blocks
 
 EFFECTIVE_MLP = (MOE_HIDDEN_SIZE * TOP_K + SHARED_MLP_HIDDEN_SIZE * NUM_SHARED_EXPERTS)
 MLP_RATIO = EFFECTIVE_MLP / D_MODEL
@@ -165,62 +165,23 @@ DENSE_LAYER_MLP = (TOP_K * MOE_HIDDEN_SIZE + SHARED_MLP_HIDDEN_SIZE * NUM_SHARED
 
 # DP_DIM=2
 EP_DIM=8
-PP_DIM=2
+PP_DIM=4
 
 # ref
-REF_NUM_NODES=64
-TAG=f'p1'
+REF_NUM_NODES=16
+TAG=f'p2'
 
 LR_ALPHA = 0.53
 
 # stage 1 - xM -
-# MAX_DURATION = int(100e9)
-# MICRO_BSZ = 2
-# GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * 2 * 4
-# LR_REF_BSZ_IN_M=4
-# USE_FP8=False
-
-# stage 2 - xM -
-# MAX_DURATION = int(135e9)
-# MICRO_BSZ = 2
-# GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * 2 * 8
-# LR_REF_BSZ_IN_M=4
-# USE_FP8=False
-
-# stage 3 - xM -
-# MAX_DURATION = int(215e9)
-# MICRO_BSZ = 3
-# GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * 2 * 12
-# LR_REF_BSZ_IN_M=4
-# USE_FP8=False
-
-# stage 4 - xM -
-# MAX_DURATION = int(600e9)
-# MICRO_BSZ = 4
-# GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * 2 * 16
-# LR_REF_BSZ_IN_M=4
-# USE_FP8=False
-
-# stage 5 - xM -
-# MAX_DURATION = int(715e9)
-# MICRO_BSZ = 3
-# GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * 2 * 24
-# LR_REF_BSZ_IN_M=4
-# USE_FP8=False
-
-# stage 6 - xM -
-# MAX_DURATION = int(2000e9)
-# MICRO_BSZ = 3
-# GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * 2 * 48
-# LR_REF_BSZ_IN_M=8
-# USE_FP8=False
-
-# stage 7 - xM -
-MAX_DURATION = int(6000e9)
+MAX_DURATION = int(200e9)
 MICRO_BSZ = 3
-GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * 2 * 60
-LR_REF_BSZ_IN_M=8
-USE_FP8=False
+GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * 2 * 9
+LR= 1.8e-4  # the LR is set for stable stage
+LR_REF_BSZ_IN_M=4
+USE_FP8=True
+
+
 
 
 
@@ -240,7 +201,6 @@ SCHED_MID_FRACTION = 1.0
 SCHED_FINAL_FRACTION = 1.0 # WSD
 
 
-LR= 4e-4  # the LR is set for stable stage
 LR= LR / SCHED_MID_FRACTION # transform LR to peak at fast warmup
 
 LR=LR * (GLOBAL_BATCH_SIZE / (LR_REF_BSZ_IN_M * 1024 * 1024))**LR_ALPHA # lr is for X Million token
@@ -249,11 +209,12 @@ EXPERT_LR = LR
 # EXPERT_LR = LR * math.sqrt(TOP_K / NUM_EXPERTS)  # scale lr for expert params, # 1/4.8989 = 0.204
 # EXPERT_LR = LR * 0.5  # scale lr for expert params, empirical choice
 
-NUM_LAYERS=32
+ORIGINAL_NUM_LAYERS=32
+MINUS_LAST_STAGE=1
+NUM_LAYERS=ORIGINAL_NUM_LAYERS - MINUS_LAST_STAGE
 
 if PP_DIM > 1:
-    MINUS_LAST_STAGE=1
-    NUM_LAYERS, SPLIT_POINTS = _get_split_points(NUM_LAYERS, PP_DIM * 2, minus_last_stage=MINUS_LAST_STAGE)
+    _, SPLIT_POINTS = _get_split_points(ORIGINAL_NUM_LAYERS, PP_DIM * 2, minus_last_stage=MINUS_LAST_STAGE)
 else:
     SPLIT_POINTS = None
 
@@ -263,7 +224,7 @@ if IN_EVAL_MODE:
     EP_DIM=1
     PP_DIM=1
     NUM_LAYERS=31
-    
+
 ############
 
 
@@ -278,15 +239,18 @@ GRAD_REDUCE_IN_FP32=True
 UNIFORM_ASSIGN=False
 RANDOM_ASSIGN=False
 USE_ROWWISE_A2A=True
-USE_FP8_ATTN_QKV=USE_FP8
-USE_FP8_ATTN_OUT=USE_FP8
+# USE_FP8_ATTN_QKV=USE_FP8
+# USE_FP8_ATTN_OUT=USE_FP8
+USE_FP8_ATTN_QKV=False
+USE_FP8_ATTN_OUT=False
 USE_FP8_ATTN_SAVE_QKV=False
+FP8_FUSED_AUTOGRAD_RECOMPUTE_SWIGLU=True
 ROWWISE_A2A_NBLOCKS=128 if EP_DIM <=8 else 64 # for intra-node, can use more blocks to increase overlap; for inter-node, the bottleneck is the network, so fewer blocks can reduce overhead.
 SEED = 2026
 USE_MUON = False
 USE_PERI_NORM = True
 PRODUCTION_RUN = True
-EP_NO_SYNC_CAPACITY_FACTOR = 1.1875
+EP_NO_SYNC_CAPACITY_FACTOR = 1.25
 # save a little bit of memory
 # import torch._functorch.config  # Force initialization by accessing dynamo first
 # torch._functorch.config.activation_memory_budget = 0.1
@@ -320,6 +284,7 @@ def build_model_config(common: CommonComponents) -> OLMoDDPModelConfig:
     use_block_no_sync_ep = USE_NO_SYNC_EP and EP_DIM > 1
     block_ep_path = (
         ExpertParallelPath.rowwise_nvshmem
+        # ExpertParallelPath.deepep_v2
         if use_block_no_sync_ep and USE_ROWWISE_A2A
         else ExpertParallelPath.no_sync_1d
         if use_block_no_sync_ep
@@ -356,7 +321,7 @@ def build_model_config(common: CommonComponents) -> OLMoDDPModelConfig:
             checkpoint_permute_moe_unpermute=False,
             checkpoint_attn=False,
             checkpoint_second_unpermute=False,
-            rowwise_fp8=MoERowwiseFP8Config(enabled=USE_FP8, fused_autograd_recompute_swiglu=False) if USE_ROWWISE_A2A else None,
+            rowwise_fp8=MoERowwiseFP8Config(enabled=USE_FP8, fused_autograd_recompute_swiglu=FP8_FUSED_AUTOGRAD_RECOMPUTE_SWIGLU) if USE_ROWWISE_A2A else None,
             attention=AttentionConfig(
                 name=AttentionType.fused_v2,
                 # name=AttentionType.default,
@@ -390,9 +355,8 @@ def build_model_config(common: CommonComponents) -> OLMoDDPModelConfig:
                 gating_function=MoERouterGatingFunction.softmax,
                 uniform_expert_assignment=UNIFORM_ASSIGN,
                 random_expert_assignment=RANDOM_ASSIGN,
-                lb_loss_weight=0.015,
-                # z_loss_weight=1e-5,
-                z_loss_weight=1e-4,
+                lb_loss_weight=0.01,
+                z_loss_weight=2e-4,
                 lb_loss_granularity=MoELoadBalancingLossGranularity.local_batch,
                 dtype=dtype,
                 normalize_expert_weights=1.0,
@@ -444,7 +408,7 @@ def build_model_config(common: CommonComponents) -> OLMoDDPModelConfig:
     dense_block_config = OLMoDDPTransformerBlockConfig(
         name=TransformerBlockType.moe_fused_v2,
         use_peri_norm=USE_PERI_NORM,
-        rowwise_fp8=MoERowwiseFP8Config(enabled=USE_FP8, fused_autograd_recompute_swiglu=False) if USE_ROWWISE_A2A else None,
+        rowwise_fp8=MoERowwiseFP8Config(enabled=USE_FP8, fused_autograd_recompute_swiglu=FP8_FUSED_AUTOGRAD_RECOMPUTE_SWIGLU) if USE_ROWWISE_A2A else None,
         attention=AttentionConfig(
             name=AttentionType.fused_v2,
             # name=AttentionType.default,
@@ -481,8 +445,7 @@ def build_model_config(common: CommonComponents) -> OLMoDDPModelConfig:
     # First block will be a regular transformer block (no MoE component).
     config.block_overrides = {
         0: deepcopy(dense_block_config),
-        # 1: deepcopy(dense_block_config),
-        # 2: deepcopy(dense_block_config),
+        1: deepcopy(dense_block_config),
 
         # also make last layer dense
         # NUM_LAYERS-1: deepcopy(dense_block_config),
@@ -617,12 +580,12 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
     config = (
         TrainerConfig(
             save_folder=f'{WORK_DIR}/checkpoint/{common.run_name}_{D_MODEL}d{D_ATTN}a_{NUM_LAYERS}L{MOE_HIDDEN_SIZE}M{SHARED_MLP_HIDDEN_SIZE}S_{NUM_EXPERTS}E{TOP_K}K{NUM_SHARED_EXPERTS}S_{TAG}',
-            # load_path="/workspace/checkpoint/OLMoE3-dev-260429-t001_2048d2560a_16L2048M1536S_40E4K1S_p1/step83448",
+            load_path="/workspace/checkpoint/OLMoE3-dev-260614-m002_3584d4096a_31L4096M3072S_128E4K1S_p2/step6000",
             save_overwrite=True,
             checkpointer=CheckpointerConfig(
                 save_thread_count=3, load_thread_count=2, throttle_uploads=True
             ),
-            metrics_collect_interval=20,
+            metrics_collect_interval=10,
             cancel_check_interval=cancel_check_interval,
             max_duration=Duration.tokens(MAX_DURATION),
             # steps_to_skip=[StepSkipRange(start=41312, stop=41329)]
@@ -656,8 +619,8 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             "profiler",
             NvidiaProfilerCallback(enabled=USE_NV_PROFILE,
                                    profile_ranks=list(range(0, 8*8, 8)),
-                                   start=31,
-                                   end=35
+                                   start=121,
+                                   end=125
             )
         )
         .with_callback(

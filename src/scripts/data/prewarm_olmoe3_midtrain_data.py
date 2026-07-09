@@ -1,9 +1,8 @@
 #!/usr/bin/env python
 """Prewarm the OLMoE3 midtraining data cache.
 
-This builds the same source-mixture dataset used by
-``src/scripts/train/OLMoE3-dev-260614-s002-midtrain.py`` without building the
-model or initializing distributed training.
+This builds the same source-mixture dataset used by the OLMoE3 midtrain
+scripts without building the model or initializing distributed training.
 """
 
 from __future__ import annotations
@@ -43,13 +42,10 @@ log = logging.getLogger(__name__)
 DEFAULT_SOURCE_MIX_YAML = (
     SRC_ROOT / "olmo_core/data/source_mixtures/OLMo3-32B-midtraining-modelnamefilter.yaml"
 )
-DEFAULT_LOCAL_WORK_DIR = (
-    "/weka/oe-training-default/ai2-llm/checkpoints/"
-    "OLMoE3-dev-260614-s002-midtraining/dataset-cache"
-)
+DEFAULT_LOCAL_WORK_DIR = "/workspace/dataset-cache"
 DEFAULT_SOURCE_DATA_BASE_DIR = "/weka/oe-training-default/ai2-llm"
 DEFAULT_REQUESTED_TOKENS = 100_000_000_000
-DEFAULT_GLOBAL_BATCH_SIZE = 4 * 1024 * 1024
+DEFAULT_GLOBAL_BATCH_SIZE = 8 * 1024 * 1024
 DEFAULT_SEQUENCE_LENGTH = 8192
 DEFAULT_SEED = 2026
 DEFAULT_SOURCE_MIX_PROCESSES = 16
@@ -166,13 +162,13 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--work-dir",
-        default="./dataset-cache",
+        default=DEFAULT_LOCAL_WORK_DIR,
         help="Dataset cache directory. Use the same value as training.",
     )
     parser.add_argument(
         "--local-work-dir",
         action="store_true",
-        help=f"Use the midtrain script's local Weka work dir: {DEFAULT_LOCAL_WORK_DIR}",
+        help=f"Use the midtrain script's local work dir: {DEFAULT_LOCAL_WORK_DIR}",
     )
     parser.add_argument(
         "--source-data-base-dir",

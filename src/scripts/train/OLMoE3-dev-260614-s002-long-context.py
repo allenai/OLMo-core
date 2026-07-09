@@ -246,9 +246,6 @@ USE_MUON = False
 USE_PERI_NORM = True
 WANDB_ENABLED = True
 EP_NO_SYNC_CAPACITY_FACTOR = 1.3125
-EARLY_MOE_EP_NO_SYNC_CAPACITY_FACTOR = 1.3125
-EARLY_MOE_CAPACITY_BLOCK_INDICES = (1, 2, 3)  # block 0 is dense; these are the first two MoE blocks.
-FIRST_MOE_ROUTER_Z_LOSS_WEIGHT = 2e-6
 ROPE_SCALING = YaRNRoPEScalingConfig(
     factor=8,
     beta_fast=32,
@@ -434,30 +431,10 @@ def build_model_config(common: CommonComponents) -> OLMoDDPModelConfig:
         attention_norm=layer_norm,
         feed_forward_norm=layer_norm,
     )
-    early_moe_block_config = deepcopy(config.block)
-    if not isinstance(early_moe_block_config, OLMoDDPTransformerBlockConfig):
-        raise TypeError(
-            "early MoE capacity override requires OLMoDDPTransformerBlockConfig, "
-            f"got {type(early_moe_block_config).__name__}"
-        )
-    if early_moe_block_config.ep is None:
-        raise RuntimeError("early MoE capacity override requires block.ep to be configured")
-    early_moe_block_config.ep.capacity_factor = EARLY_MOE_EP_NO_SYNC_CAPACITY_FACTOR
-    early_moe_block_config.ep.validate()
-
-    first_moe_block_config = deepcopy(early_moe_block_config)
-    if first_moe_block_config.routed_experts_router is None:
-        raise RuntimeError("first MoE router z-loss override requires routed_experts_router")
-    first_moe_block_config.routed_experts_router.z_loss_weight = FIRST_MOE_ROUTER_Z_LOSS_WEIGHT
 
     # First block will be a regular transformer block (no MoE component).
     config.block_overrides = {
         0: deepcopy(dense_block_config),
-        **{
-            block_idx: deepcopy(early_moe_block_config)
-            for block_idx in EARLY_MOE_CAPACITY_BLOCK_INDICES
-        },
-        1: first_moe_block_config,
         # 1: deepcopy(dense_block_config),
         # 2: deepcopy(dense_block_config),
 

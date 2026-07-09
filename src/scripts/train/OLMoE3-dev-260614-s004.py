@@ -181,9 +181,17 @@ LR_ALPHA = 0.53
 # USE_FP8=False
 
 # stage 2 - xM -
-MAX_DURATION = int(500e9)
+# MAX_DURATION = int(500e9)
+# MICRO_BSZ = 3
+# GLOBAL_BATCH_SIZE_SEQ=(8 * 8 * 2) * 12 # M token batch size
+# LR= 2e-4  # the LR is set for stable stage
+# LR_REF_BSZ_IN_M=4 # LR is set for 4M token batch size
+# USE_FP8=False
+
+# stage 2 - xM -
+MAX_DURATION = int(2000e9)
 MICRO_BSZ = 3
-GLOBAL_BATCH_SIZE_SEQ=(8 * 8 * 2) * 12 # M token batch size
+GLOBAL_BATCH_SIZE_SEQ=(8 * 8 * 2) * 18 # M token batch size
 LR= 2e-4  # the LR is set for stable stage
 LR_REF_BSZ_IN_M=4 # LR is set for 4M token batch size
 USE_FP8=False

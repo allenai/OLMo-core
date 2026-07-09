@@ -161,7 +161,7 @@ EFFECTIVE_MLP = (MOE_HIDDEN_SIZE * TOP_K + SHARED_MLP_HIDDEN_SIZE * NUM_SHARED_E
 MLP_RATIO = EFFECTIVE_MLP / D_MODEL
 
 # the first dense layer MLP
-DENSE_LAYER_MLP = (TOP_K * MOE_HIDDEN_SIZE + SHARED_MLP_HIDDEN_SIZE * NUM_SHARED_EXPERTS)
+DENSE_LAYER_MLP = (ORIGINAL_TOP_K * MOE_HIDDEN_SIZE + SHARED_MLP_HIDDEN_SIZE * NUM_SHARED_EXPERTS)
 
 # DP_DIM=2
 EP_DIM=8
@@ -175,13 +175,18 @@ LR_ALPHA = 0.53
 
 
 # stage 7 - xM -
+# MAX_DURATION = int(12000e9)
+# MICRO_BSZ = 4
+# GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * 2 * 32
+# LR_REF_BSZ_IN_M=8
+# USE_FP8=False
+
+# stage 7 - xM -
 MAX_DURATION = int(12000e9)
 MICRO_BSZ = 4
-GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * 2 * 32
-LR_REF_BSZ_IN_M=8
+GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * 2 * 64 # 32M
+LR_REF_BSZ_IN_M=16
 USE_FP8=False
-
-
 
 GLOBAL_BATCH_SIZE = (
     (GLOBAL_BATCH_SIZE_SEQ) * SEQUENCE_LENGTH
@@ -208,10 +213,10 @@ EXPERT_LR = LR
 # EXPERT_LR = LR * math.sqrt(TOP_K / NUM_EXPERTS)  # scale lr for expert params, # 1/4.8989 = 0.204
 # EXPERT_LR = LR * 0.5  # scale lr for expert params, empirical choice
 
-NUM_LAYERS=32
+NUM_LAYERS=31
 
 if PP_DIM > 1:
-    MINUS_LAST_STAGE=1
+    MINUS_LAST_STAGE=0
     NUM_LAYERS, SPLIT_POINTS = _get_split_points(NUM_LAYERS, PP_DIM * 2, minus_last_stage=MINUS_LAST_STAGE)
 else:
     SPLIT_POINTS = None
@@ -236,19 +241,17 @@ GRAD_ACC_IN_FP32=True
 GRAD_REDUCE_IN_FP32=True
 UNIFORM_ASSIGN=False
 RANDOM_ASSIGN=False
+USE_DEEPEP_V2=False
 USE_ROWWISE_A2A=True
 USE_FP8_ATTN_QKV=USE_FP8
 USE_FP8_ATTN_OUT=USE_FP8
 USE_FP8_ATTN_SAVE_QKV=False
-ROWWISE_A2A_NBLOCKS=256 if EP_DIM <=8 else 64 # for intra-node, can use more blocks to increase overlap; for inter-node, the bottleneck is the network, so fewer blocks can reduce overhead.
+ROWWISE_A2A_NBLOCKS=128 if EP_DIM <=8 else 64 # for intra-node, can use more blocks to increase overlap; for inter-node, the bottleneck is the network, so fewer blocks can reduce overhead.
 SEED = 2026
 USE_MUON = False
 USE_PERI_NORM = True
 PRODUCTION_RUN = True
-EP_NO_SYNC_CAPACITY_FACTOR = 1.1875
-EARLY_MOE_EP_NO_SYNC_CAPACITY_FACTOR = 2.0
-EARLY_MOE_CAPACITY_BLOCK_INDICES = (1, 2, 3)  # block 0 is dense; these are the first two MoE blocks.
-FIRST_MOE_ROUTER_Z_LOSS_WEIGHT = 2e-6
+EP_NO_SYNC_CAPACITY_FACTOR = 1.25
 # save a little bit of memory
 # import torch._functorch.config  # Force initialization by accessing dynamo first
 # torch._functorch.config.activation_memory_budget = 0.1
@@ -280,22 +283,25 @@ def build_model_config(common: CommonComponents) -> OLMoDDPModelConfig:
         dtype=dtype,
     )
     use_block_no_sync_ep = USE_NO_SYNC_EP and EP_DIM > 1
-    block_ep_path = (
-        ExpertParallelPath.rowwise_nvshmem
-        if use_block_no_sync_ep and USE_ROWWISE_A2A
-        else ExpertParallelPath.no_sync_1d
-        if use_block_no_sync_ep
-        else ExpertParallelPath.sync_1d
-    )
+    if not use_block_no_sync_ep:
+        block_ep_path = ExpertParallelPath.sync_1d
+    elif USE_DEEPEP_V2:
+        block_ep_path = ExpertParallelPath.deepep_v2
+    elif USE_ROWWISE_A2A:
+        block_ep_path = ExpertParallelPath.rowwise_nvshmem
+    else:
+        block_ep_path = ExpertParallelPath.no_sync_1d
+    block_uses_rowwise_a2a = block_ep_path == ExpertParallelPath.rowwise_nvshmem
+    block_uses_tbo = USE_TBO and block_uses_rowwise_a2a
     block_ep_schedule = (
         ExpertParallelSchedule.tbo
-        if USE_TBO and block_ep_path == ExpertParallelPath.rowwise_nvshmem
+        if block_uses_tbo
         else ExpertParallelSchedule.normal
     )
     config = OLMoDDPModelConfig(
         init_seed=SEED,
         d_model=d_model,
-        two_batch_overlap=USE_TBO,
+        two_batch_overlap=block_uses_tbo,
         recompute_each_block=PER_LAYER_RECOMPUTE,
         recompute_all_blocks_by_chunk=False,
         # recompute_block_keys=["0", "1", "2"], # recompute dense layer
@@ -311,14 +317,14 @@ def build_model_config(common: CommonComponents) -> OLMoDDPModelConfig:
                 schedule=block_ep_schedule,
                 share_combine_out=PER_LAYER_RECOMPUTE, # if layer-recompute, want to make combine_out shared (not per-layer persistent) to save memory; extra copy overhead applies.
                 share_dispatch_out=PER_LAYER_RECOMPUTE, # if layer-recompute, want to make dispatch_out shared (not per-layer persistent) to save memory; extra copy overhead applies.
-                shared_slots=2 if block_ep_schedule == ExpertParallelSchedule.tbo else 1,
+                shared_slots=2 if block_uses_tbo else 1,
                 rowwise_nblocks=ROWWISE_A2A_NBLOCKS,
                 capacity_factor=EP_NO_SYNC_CAPACITY_FACTOR,
             ),
             checkpoint_permute_moe_unpermute=False,
             checkpoint_attn=False,
             checkpoint_second_unpermute=False,
-            rowwise_fp8=MoERowwiseFP8Config(enabled=USE_FP8, fused_autograd_recompute_swiglu=False) if USE_ROWWISE_A2A else None,
+            rowwise_fp8=MoERowwiseFP8Config(enabled=USE_FP8, fused_autograd_recompute_swiglu=False) if block_uses_rowwise_a2a else None,
             attention=AttentionConfig(
                 name=AttentionType.fused_v2,
                 # name=AttentionType.default,
@@ -406,7 +412,7 @@ def build_model_config(common: CommonComponents) -> OLMoDDPModelConfig:
     dense_block_config = OLMoDDPTransformerBlockConfig(
         name=TransformerBlockType.moe_fused_v2,
         use_peri_norm=USE_PERI_NORM,
-        rowwise_fp8=MoERowwiseFP8Config(enabled=USE_FP8, fused_autograd_recompute_swiglu=False) if USE_ROWWISE_A2A else None,
+        rowwise_fp8=MoERowwiseFP8Config(enabled=USE_FP8, fused_autograd_recompute_swiglu=False) if block_uses_rowwise_a2a else None,
         attention=AttentionConfig(
             name=AttentionType.fused_v2,
             # name=AttentionType.default,
@@ -439,30 +445,10 @@ def build_model_config(common: CommonComponents) -> OLMoDDPModelConfig:
         feed_forward_norm=layer_norm,
     )
     from copy import deepcopy
-    early_moe_block_config = deepcopy(config.block)
-    if not isinstance(early_moe_block_config, OLMoDDPTransformerBlockConfig):
-        raise TypeError(
-            "early MoE capacity override requires OLMoDDPTransformerBlockConfig, "
-            f"got {type(early_moe_block_config).__name__}"
-        )
-    if early_moe_block_config.ep is None:
-        raise RuntimeError("early MoE capacity override requires block.ep to be configured")
-    early_moe_block_config.ep.capacity_factor = EARLY_MOE_EP_NO_SYNC_CAPACITY_FACTOR
-    early_moe_block_config.ep.validate()
-
-    first_moe_block_config = deepcopy(early_moe_block_config)
-    if first_moe_block_config.routed_experts_router is None:
-        raise RuntimeError("first MoE router z-loss override requires routed_experts_router")
-    first_moe_block_config.routed_experts_router.z_loss_weight = FIRST_MOE_ROUTER_Z_LOSS_WEIGHT
 
     # First block will be a regular transformer block (no MoE component).
     config.block_overrides = {
         0: deepcopy(dense_block_config),
-        **{
-            block_idx: deepcopy(early_moe_block_config)
-            for block_idx in EARLY_MOE_CAPACITY_BLOCK_INDICES
-        },
-        1: first_moe_block_config,
         # 1: deepcopy(dense_block_config),
         # 2: deepcopy(dense_block_config),
 
@@ -600,6 +586,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         TrainerConfig(
             save_folder=f'{WORK_DIR}/checkpoint/{common.run_name}_{D_MODEL}d{D_ATTN}a_{NUM_LAYERS}L{MOE_HIDDEN_SIZE}M{SHARED_MLP_HIDDEN_SIZE}S_{NUM_EXPERTS}E{TOP_K}K{NUM_SHARED_EXPERTS}S_{TAG}',
             load_path="/workspace/checkpoint/OLMoE3-dev-260614-s002-long-context/step11921",
+            # load_trainer_state=False,
             save_overwrite=True,
             checkpointer=CheckpointerConfig(
                 save_thread_count=3, load_thread_count=2, throttle_uploads=True
@@ -609,7 +596,8 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             max_duration=Duration.tokens(MAX_DURATION),
             # steps_to_skip=[StepSkipRange(start=41312, stop=41329)]
             checkpoints_to_eval=[
-                # '/workspace/checkpoint/OLMoE3-dev-260614-s002_2048d4096a_31L2560M2560S_64E4K1S_p1/step15*00',
+                '/workspace/checkpoint/OLMoE3-dev-260614-s003_2048d4096a_31L2560M2560S_64E8K1S_p1/step*5000',
+                '/workspace/checkpoint/OLMoE3-dev-260614-s003_2048d4096a_31L2560M2560S_64E8K1S_p1/step*0000',
             ]
         )
         .with_callback(

@@ -34,7 +34,7 @@ _default_triton_cache_dir()
 
 # Keep this before any olmo_core imports: several modules import nvtx at import
 # time, and NVTX_DISABLE only works if it is set before nvtx is imported.
-USE_NV_PROFILE = False
+USE_NV_PROFILE = True
 if not USE_NV_PROFILE:
     os.environ["NVTX_DISABLE"] = "1"
 
@@ -47,7 +47,6 @@ from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.distributed.parallel.pipeline_parallel import PipelineScheduleType
 from olmo_core.float8 import AOFloat8LinearConfig, Float8Config
 from olmo_core.internal.experiment import CommonComponents, main, ExperimentConfig
-from olmo_core.nn.attention import SlidingWindowAttentionConfig
 from olmo_core.nn.lm_head import LMLossImplementation
 from olmo_core.nn.moe import (
     MoEConfig,
@@ -142,20 +141,20 @@ if len(sys.argv) > 1 and sys.argv[1] == "eval_checkpoints":
 
 
 EVAL_INTERVAL = 2000
-SAVE_INTERVAL = 500
+SAVE_INTERVAL = 1000
 
-NUM_EXPERTS = 64
-TOP_K = 4
+NUM_EXPERTS = 32
+TOP_K = 8
 ORIGINAL_TOP_K=None
-D_MODEL=2048
-D_ATTN=4 * 1024
+D_MODEL=2048 - 512
+D_ATTN=2 * 1024
 
 HEAD_DIM=128
 NUM_HEAD = D_ATTN // HEAD_DIM
-NUM_KV_HEAD= NUM_HEAD // 4
-MOE_HIDDEN_SIZE = 2048 + 512
+NUM_KV_HEAD=8
+MOE_HIDDEN_SIZE = 2048 - 512
 NUM_SHARED_EXPERTS = 1  # Number of shared experts in the shared MLP
-SHARED_MLP_HIDDEN_SIZE = 2048 + 512   # Hidden size for shared MLP (or dense branch MLP in arctic) in MoE blocks
+SHARED_MLP_HIDDEN_SIZE = 2048 - 512  # Hidden size for shared MLP (or dense branch MLP in arctic) in MoE blocks
 
 EFFECTIVE_MLP = (MOE_HIDDEN_SIZE * TOP_K + SHARED_MLP_HIDDEN_SIZE * NUM_SHARED_EXPERTS)
 MLP_RATIO = EFFECTIVE_MLP / D_MODEL
@@ -165,63 +164,29 @@ DENSE_LAYER_MLP = (TOP_K * MOE_HIDDEN_SIZE + SHARED_MLP_HIDDEN_SIZE * NUM_SHARED
 
 # DP_DIM=2
 EP_DIM=8
-PP_DIM=2
+PP_DIM=1
 
 # ref
-REF_NUM_NODES=64
-TAG=f'p1'
+REF_NUM_NODES=32
+TAG=f'gdn'
 
 LR_ALPHA = 0.53
 
 # stage 1 - xM -
-# MAX_DURATION = int(100e9)
-# MICRO_BSZ = 2
-# GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * 2 * 4
-# LR_REF_BSZ_IN_M=4
+# MAX_DURATION = int(195e9)
+# MICRO_BSZ = 3
+# GLOBAL_BATCH_SIZE_SEQ=(8 * 8 * 2) * 6 # M token batch size
+# LR= 2e-4  # the LR is set for stable stage
+# LR_REF_BSZ_IN_M=4 # LR is set for 4M token batch size
 # USE_FP8=False
 
 # stage 2 - xM -
-# MAX_DURATION = int(135e9)
-# MICRO_BSZ = 2
-# GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * 2 * 8
-# LR_REF_BSZ_IN_M=4
-# USE_FP8=False
-
-# stage 3 - xM -
-# MAX_DURATION = int(215e9)
-# MICRO_BSZ = 3
-# GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * 2 * 12
-# LR_REF_BSZ_IN_M=4
-# USE_FP8=False
-
-# stage 4 - xM -
-# MAX_DURATION = int(600e9)
-# MICRO_BSZ = 4
-# GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * 2 * 16
-# LR_REF_BSZ_IN_M=4
-# USE_FP8=False
-
-# stage 5 - xM -
-# MAX_DURATION = int(715e9)
-# MICRO_BSZ = 3
-# GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * 2 * 24
-# LR_REF_BSZ_IN_M=4
-# USE_FP8=False
-
-# stage 6 - xM -
-# MAX_DURATION = int(2000e9)
-# MICRO_BSZ = 3
-# GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * 2 * 48
-# LR_REF_BSZ_IN_M=8
-# USE_FP8=False
-
-# stage 7 - xM -
-MAX_DURATION = int(6000e9)
+MAX_DURATION = int(500e9)
 MICRO_BSZ = 3
-GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * 2 * 60
-LR_REF_BSZ_IN_M=8
+GLOBAL_BATCH_SIZE_SEQ=(8 * 8 * 2) * 12 // 16 # M token batch size
+LR= 2e-4  # the LR is set for stable stage
+LR_REF_BSZ_IN_M=4 # LR is set for 4M token batch size
 USE_FP8=False
-
 
 
 GLOBAL_BATCH_SIZE = (
@@ -240,7 +205,6 @@ SCHED_MID_FRACTION = 1.0
 SCHED_FINAL_FRACTION = 1.0 # WSD
 
 
-LR= 4e-4  # the LR is set for stable stage
 LR= LR / SCHED_MID_FRACTION # transform LR to peak at fast warmup
 
 LR=LR * (GLOBAL_BATCH_SIZE / (LR_REF_BSZ_IN_M * 1024 * 1024))**LR_ALPHA # lr is for X Million token
@@ -249,11 +213,12 @@ EXPERT_LR = LR
 # EXPERT_LR = LR * math.sqrt(TOP_K / NUM_EXPERTS)  # scale lr for expert params, # 1/4.8989 = 0.204
 # EXPERT_LR = LR * 0.5  # scale lr for expert params, empirical choice
 
-NUM_LAYERS=32
+ORIGINAL_NUM_LAYERS=8
+MINUS_LAST_STAGE=0
+NUM_LAYERS=ORIGINAL_NUM_LAYERS - MINUS_LAST_STAGE
 
 if PP_DIM > 1:
-    MINUS_LAST_STAGE=1
-    NUM_LAYERS, SPLIT_POINTS = _get_split_points(NUM_LAYERS, PP_DIM * 2, minus_last_stage=MINUS_LAST_STAGE)
+    _, SPLIT_POINTS = _get_split_points(ORIGINAL_NUM_LAYERS, PP_DIM * 2, minus_last_stage=MINUS_LAST_STAGE)
 else:
     SPLIT_POINTS = None
 
@@ -262,8 +227,9 @@ if IN_EVAL_MODE:
     MICRO_BSZ = 4
     EP_DIM=1
     PP_DIM=1
-    NUM_LAYERS=31
-    
+    NUM_LAYERS=ORIGINAL_NUM_LAYERS - MINUS_LAST_STAGE
+    SPLIT_POINTS = None
+
 ############
 
 
@@ -286,7 +252,9 @@ SEED = 2026
 USE_MUON = False
 USE_PERI_NORM = True
 PRODUCTION_RUN = True
-EP_NO_SYNC_CAPACITY_FACTOR = 1.1875
+EP_NO_SYNC_CAPACITY_FACTOR = 1.25
+NUM_DENSE_LAYERS = 2
+GLOBAL_LAYER_INTERVAL = 5
 # save a little bit of memory
 # import torch._functorch.config  # Force initialization by accessing dynamo first
 # torch._functorch.config.activation_memory_budget = 0.1
@@ -294,8 +262,8 @@ EP_NO_SYNC_CAPACITY_FACTOR = 1.1875
 
 
 from olmo_core.nn.lm_head import LMHeadConfig, LMHeadType
-from olmo_core.nn.rope import RoPEConfig, RoPEScalingConfig, RoPEType
-from olmo_core.nn.attention import AttentionConfig, AttentionType
+from olmo_core.nn.attention import AttentionConfig, AttentionType, GateConfig, GateGranularity
+from olmo_core.nn.attention.recurrent import GatedDeltaNetConfig
 from olmo_core.nn.layer_norm import LayerNormType, LayerNormConfig
 
 def build_model_config(common: CommonComponents) -> OLMoDDPModelConfig:
@@ -330,18 +298,45 @@ def build_model_config(common: CommonComponents) -> OLMoDDPModelConfig:
         if USE_TBO and block_ep_path == ExpertParallelPath.rowwise_nvshmem
         else ExpertParallelSchedule.normal
     )
-    config = OLMoDDPModelConfig(
-        init_seed=SEED,
-        d_model=d_model,
-        two_batch_overlap=USE_TBO,
-        recompute_each_block=PER_LAYER_RECOMPUTE,
-        recompute_all_blocks_by_chunk=False,
-        # recompute_block_keys=["0", "1", "2"], # recompute dense layer
-        vocab_size=common.tokenizer.padded_vocab_size(),
-        n_layers=NUM_LAYERS,
-        embed_scale=math.sqrt(d_model),
-        embedding_norm=layer_norm,
-        block=OLMoDDPTransformerBlockConfig(
+    def attn_mixer() -> AttentionConfig:
+        return AttentionConfig(
+            name=AttentionType.fused_v2,
+            # name=AttentionType.default,
+            n_heads=NUM_HEAD,
+            n_kv_heads=NUM_KV_HEAD,
+            head_dim=HEAD_DIM,
+            bias=False,
+            rope=None,
+            gate=GateConfig(granularity=GateGranularity.elementwise, full_precision=True),
+            qk_norm=layer_norm ,
+            backend=AttentionBackendName.flash_4,
+            use_head_qk_norm=True,
+            dtype=dtype,
+            d_attn=D_ATTN,
+            mxfp8_qkv_projection=USE_FP8_ATTN_QKV,
+            mxfp8_out_projection=USE_FP8_ATTN_OUT,
+            mxfp8_save_qkv_for_backward=USE_FP8_ATTN_SAVE_QKV,
+            use_recompute_qkv_prep=False,
+            # use_recompute_qkv_prep=not PER_LAYER_RECOMPUTE, # only enable when not doing per-layer recompute
+        )
+
+    def gdn_mixer() -> GatedDeltaNetConfig:
+        return GatedDeltaNetConfig(
+            n_heads=NUM_HEAD,
+            n_v_heads=NUM_HEAD,
+            head_dim=HEAD_DIM,
+            expand_v=2.0,
+            allow_neg_eigval=True,
+            dtype=dtype,
+        )
+
+    def routed_block(
+        sequence_mixer,
+        *,
+        capacity_factor: float = EP_NO_SYNC_CAPACITY_FACTOR,
+        router_z_loss_weight: float = 1e-4,
+    ) -> OLMoDDPTransformerBlockConfig:
+        return OLMoDDPTransformerBlockConfig(
             name=TransformerBlockType.moe_fused_v2,
             use_peri_norm=USE_PERI_NORM,
             ep=ExpertParallelConfig(
@@ -351,30 +346,13 @@ def build_model_config(common: CommonComponents) -> OLMoDDPModelConfig:
                 share_dispatch_out=PER_LAYER_RECOMPUTE, # if layer-recompute, want to make dispatch_out shared (not per-layer persistent) to save memory; extra copy overhead applies.
                 shared_slots=2 if block_ep_schedule == ExpertParallelSchedule.tbo else 1,
                 rowwise_nblocks=ROWWISE_A2A_NBLOCKS,
-                capacity_factor=EP_NO_SYNC_CAPACITY_FACTOR,
+                capacity_factor=capacity_factor,
             ),
             checkpoint_permute_moe_unpermute=False,
             checkpoint_attn=False,
             checkpoint_second_unpermute=False,
             rowwise_fp8=MoERowwiseFP8Config(enabled=USE_FP8, fused_autograd_recompute_swiglu=False) if USE_ROWWISE_A2A else None,
-            attention=AttentionConfig(
-                name=AttentionType.fused_v2,
-                # name=AttentionType.default,
-                n_heads=NUM_HEAD,
-                n_kv_heads=NUM_KV_HEAD,
-                bias=False,
-                rope=RoPEConfig(name=RoPEType.default, theta=500_000, scaling=None, full_precision=True),
-                qk_norm=layer_norm ,
-                backend=AttentionBackendName.flash_4,
-                use_head_qk_norm=True,
-                dtype=dtype,
-                d_attn=D_ATTN,
-                mxfp8_qkv_projection=USE_FP8_ATTN_QKV,
-                mxfp8_out_projection=USE_FP8_ATTN_OUT,
-                mxfp8_save_qkv_for_backward=USE_FP8_ATTN_SAVE_QKV,
-                use_recompute_qkv_prep=False,
-                # use_recompute_qkv_prep=not PER_LAYER_RECOMPUTE, # only enable when not doing per-layer recompute
-            ),
+            sequence_mixer=sequence_mixer,
             attention_norm=layer_norm,
             routed_experts=RoutedExpertsConfig(
                 d_model=d_model,
@@ -392,7 +370,7 @@ def build_model_config(common: CommonComponents) -> OLMoDDPModelConfig:
                 random_expert_assignment=RANDOM_ASSIGN,
                 lb_loss_weight=0.015,
                 # z_loss_weight=1e-5,
-                z_loss_weight=1e-4,
+                z_loss_weight=router_z_loss_weight,
                 lb_loss_granularity=MoELoadBalancingLossGranularity.local_batch,
                 dtype=dtype,
                 normalize_expert_weights=1.0,
@@ -424,7 +402,64 @@ def build_model_config(common: CommonComponents) -> OLMoDDPModelConfig:
                 use_recompute_fp32_cast=False,
             ) if NUM_SHARED_EXPERTS > 1 else None, # only need router if > 1 expert
             feed_forward_norm=layer_norm,
-        ),
+        )
+
+    def dense_block(sequence_mixer) -> OLMoDDPTransformerBlockConfig:
+        return OLMoDDPTransformerBlockConfig(
+            name=TransformerBlockType.moe_fused_v2,
+            use_peri_norm=USE_PERI_NORM,
+            rowwise_fp8=MoERowwiseFP8Config(enabled=USE_FP8, fused_autograd_recompute_swiglu=False) if USE_ROWWISE_A2A else None,
+            sequence_mixer=sequence_mixer,
+            routed_experts=None,
+            routed_experts_router=None,
+            shared_experts=SharedExpertsConfig(
+                d_model=d_model,
+                hidden_size=DENSE_LAYER_MLP,
+                num_experts=1,
+                bias=False,
+                dtype=dtype,
+            ),
+            shared_experts_router=None,
+            attention_norm=layer_norm,
+            feed_forward_norm=layer_norm,
+        )
+
+    # Matches the mainline ladder GDN cadence: 4 GDN layers followed by 1 full-attention layer.
+    def uses_full_attention(layer_idx: int) -> bool:
+        return (
+            layer_idx == NUM_LAYERS - 1
+            or layer_idx % GLOBAL_LAYER_INTERVAL == (GLOBAL_LAYER_INTERVAL - 1)
+        )
+
+    def block_name_for_layer(layer_idx: int) -> str:
+        mixer_name = "attn" if uses_full_attention(layer_idx) else "gdn"
+        if layer_idx < NUM_DENSE_LAYERS:
+            return f"{mixer_name}_dense"
+        return f"{mixer_name}_moe"
+
+    block_pattern = [block_name_for_layer(layer_idx) for layer_idx in range(NUM_LAYERS)]
+
+    block_options = {
+        "gdn_moe": routed_block(gdn_mixer()),
+        "attn_moe": routed_block(attn_mixer()),
+        "gdn_dense": dense_block(gdn_mixer()),
+        "attn_dense": dense_block(attn_mixer()),
+    }
+    blocks = {name: block_options[name] for name in dict.fromkeys(block_pattern)}
+
+    config = OLMoDDPModelConfig(
+        init_seed=SEED,
+        d_model=d_model,
+        two_batch_overlap=USE_TBO,
+        recompute_each_block=PER_LAYER_RECOMPUTE,
+        recompute_all_blocks_by_chunk=False,
+        # recompute_block_keys=["0", "1", "2"], # recompute dense layer
+        vocab_size=common.tokenizer.padded_vocab_size(),
+        n_layers=NUM_LAYERS,
+        embed_scale=math.sqrt(d_model),
+        embedding_norm=layer_norm,
+        block=blocks,
+        block_pattern=block_pattern,
         lm_head=LMHeadConfig(layer_norm=layer_norm, bias=False, dtype=dtype),
         name=TransformerType.moe_fused_v2,
 
@@ -434,59 +469,18 @@ def build_model_config(common: CommonComponents) -> OLMoDDPModelConfig:
 
     # config.lm_head.loss_implementation = LMLossImplementation.fused_linear
     config.lm_head.loss_implementation = LMLossImplementation.default
-    WINDOW_SIZE=2048
-    config.block.attention.sliding_window = SlidingWindowAttentionConfig(
-        force_full_attention_on_first_layer=False,
-        force_full_attention_on_last_layer=True,
-        pattern=[WINDOW_SIZE, -1]
-    )
 
-    dense_block_config = OLMoDDPTransformerBlockConfig(
-        name=TransformerBlockType.moe_fused_v2,
-        use_peri_norm=USE_PERI_NORM,
-        rowwise_fp8=MoERowwiseFP8Config(enabled=USE_FP8, fused_autograd_recompute_swiglu=False) if USE_ROWWISE_A2A else None,
-        attention=AttentionConfig(
-            name=AttentionType.fused_v2,
-            # name=AttentionType.default,
-            n_heads=NUM_HEAD,
-            n_kv_heads=NUM_KV_HEAD,
-            bias=False,
-            rope=RoPEConfig(name=RoPEType.default, theta=500_000, scaling=None, full_precision=True),
-            qk_norm=layer_norm ,
-            backend=AttentionBackendName.flash_4,
-            use_head_qk_norm=True,
-            dtype=dtype,
-            d_attn=D_ATTN,
-            mxfp8_qkv_projection=USE_FP8_ATTN_QKV,
-            mxfp8_out_projection=USE_FP8_ATTN_OUT,
-            mxfp8_save_qkv_for_backward=USE_FP8_ATTN_SAVE_QKV,
-            use_recompute_qkv_prep=False,
-            # use_recompute_qkv_prep=not PER_LAYER_RECOMPUTE, # only enable when not doing per-layer recompute
-        ),
-        routed_experts=None,
-        routed_experts_router=None,
-        shared_experts=SharedExpertsConfig(
-            d_model=d_model,
-            hidden_size=DENSE_LAYER_MLP,
-            num_experts=1,
-            bias=False,
-            dtype=dtype,
-        ),
-        shared_experts_router=None,
-        attention_norm=layer_norm,
-        feed_forward_norm=layer_norm,
-    )
-    from copy import deepcopy
+    if not all(
+        isinstance(block_config, OLMoDDPTransformerBlockConfig)
+        for block_config in config.block.values()
+    ):
+        raise TypeError("hybrid block config requires OLMoDDPTransformerBlockConfig entries")
 
-    # First block will be a regular transformer block (no MoE component).
-    config.block_overrides = {
-        0: deepcopy(dense_block_config),
-        # 1: deepcopy(dense_block_config),
-        # 2: deepcopy(dense_block_config),
-
-        # also make last layer dense
-        # NUM_LAYERS-1: deepcopy(dense_block_config),
-    }
+    for name, block_config in config.block.items():
+        if "_moe" in name:
+            if block_config.ep is None:
+                raise RuntimeError("MoE block requires block.ep to be configured")
+            block_config.ep.validate()
 
     return config
 
@@ -636,8 +630,8 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 save_interval=SAVE_INTERVAL,
                 ephemeral_save_interval=None,
                 save_async=False,
-                pre_train_checkpoint=PRODUCTION_RUN,
-                # pre_train_checkpoint=False,
+                # pre_train_checkpoint=PRODUCTION_RUN,
+                pre_train_checkpoint=False,
             ),
         )
         .with_callback(
@@ -656,8 +650,8 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             "profiler",
             NvidiaProfilerCallback(enabled=USE_NV_PROFILE,
                                    profile_ranks=list(range(0, 8*8, 8)),
-                                   start=31,
-                                   end=35
+                                   start=21,
+                                   end=24
             )
         )
         .with_callback(
