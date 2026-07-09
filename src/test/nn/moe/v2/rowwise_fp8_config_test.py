@@ -1,15 +1,22 @@
+from types import SimpleNamespace
+
 import pytest
 import torch
 
 from olmo_core.config import DType
 from olmo_core.kernels.scaled_grouped_mm import ScaledGroupedMMPrequantizedRHS
 from olmo_core.nn.fp8_weight import FP8WeightCacheSpec, FP8WeightStore
-from olmo_core.nn.moe.v2.fp8 import MoERowwiseFP8Config, normalize_rowwise_fp8_config
+from olmo_core.nn.moe.v2.fp8 import (
+    MoERowwiseFP8Config,
+    normalize_rowwise_fp8_config,
+    refresh_rowwise_fp8_cache,
+)
 from olmo_core.nn.moe.v2.routed_experts import (
     RoutedExperts,
     _swiglu_backward_grad_up_gate_impl,
     swiglu_backward_grad_up_gate,
 )
+from olmo_core.nn.parallel.distributed import MultiGroupDistributedDataParallel
 from olmo_core.testing import requires_gpu
 
 
@@ -499,3 +506,119 @@ def test_swiglu_backward_grad_up_gate_compiled_helper_matches_eager(monkeypatch)
     expected = _swiglu_backward_grad_up_gate_impl(up_gate, grad_h)
 
     torch.testing.assert_close(actual, expected, rtol=1e-2, atol=1e-2)
+
+
+def test_multigroup_ddp_zeroes_module_logical_grads():
+    calls = []
+
+    class _FakeModule(torch.nn.Module):
+        def zero_mxfp8_expert_weight_grads(self, *, set_to_none: bool) -> None:
+            calls.append(set_to_none)
+
+    ddp = MultiGroupDistributedDataParallel.__new__(MultiGroupDistributedDataParallel)
+    torch.nn.Module.__init__(ddp)
+    ddp.module = _FakeModule()
+
+    ddp._zero_module_logical_grads(set_to_none=False)
+    ddp._zero_module_logical_grads(set_to_none=True)
+
+    assert calls == [False, True]
+
+
+def test_multigroup_ddp_syncs_module_logical_grads():
+    calls = []
+
+    class _FakeModule(torch.nn.Module):
+        def sync_mxfp8_expert_weight_grads_from_anchor(self) -> None:
+            calls.append("sync")
+
+    ddp = MultiGroupDistributedDataParallel.__new__(MultiGroupDistributedDataParallel)
+    torch.nn.Module.__init__(ddp)
+    ddp.module = _FakeModule()
+
+    ddp._sync_module_logical_grads_from_anchor()
+
+    assert calls == ["sync"]
+
+
+def test_block_refresh_rowwise_fp8_cache_honors_routed_config_without_block_config():
+    seen = {"refresh": 0, "invalidate": 0}
+
+    class _FakeRoutedExperts:
+        rowwise_fp8 = MoERowwiseFP8Config(enabled=True)
+
+        def refresh_rowwise_fp8_cache(self) -> None:
+            seen["refresh"] += 1
+
+        def invalidate_rowwise_fp8_cache(self) -> None:
+            seen["invalidate"] += 1
+
+    block = SimpleNamespace(
+        rowwise_fp8=None,
+        routed_experts=_FakeRoutedExperts(),
+        shared_experts=None,
+    )
+
+    refresh_rowwise_fp8_cache(block)
+
+    assert seen == {"refresh": 1, "invalidate": 0}
+    assert block._shared_rowwise_fp8_up_prequant is None
+    assert block._shared_rowwise_fp8_down_prequant is None
+
+
+def test_block_refresh_rowwise_fp8_cache_disabled_invalidates_without_refresh():
+    seen = {"refresh": 0, "invalidate": 0}
+
+    class _FakeRoutedExperts:
+        rowwise_fp8 = MoERowwiseFP8Config(enabled=False)
+
+        def refresh_rowwise_fp8_cache(self) -> None:
+            seen["refresh"] += 1
+
+        def invalidate_rowwise_fp8_cache(self) -> None:
+            seen["invalidate"] += 1
+
+    block = SimpleNamespace(
+        rowwise_fp8=MoERowwiseFP8Config(enabled=False),
+        routed_experts=_FakeRoutedExperts(),
+        shared_experts=None,
+        _shared_rowwise_fp8_up_prequant=object(),
+        _shared_rowwise_fp8_down_prequant=object(),
+        _shared_rowwise_fp8_up_prequant_t=object(),
+        _shared_rowwise_fp8_down_prequant_t=object(),
+        _shared_rowwise_fp8_weight_versions=(1, 2),
+    )
+
+    refresh_rowwise_fp8_cache(block)
+
+    assert seen == {"refresh": 0, "invalidate": 1}
+    assert block._shared_rowwise_fp8_up_prequant is None
+    assert block._shared_rowwise_fp8_down_prequant is None
+    assert block._shared_rowwise_fp8_up_prequant_t is None
+    assert block._shared_rowwise_fp8_down_prequant_t is None
+    assert block._shared_rowwise_fp8_weight_versions is None
+
+
+def test_block_refresh_rowwise_fp8_cache_shared_only_does_not_refresh_routed():
+    seen = {"refresh": 0, "invalidate": 0}
+
+    class _FakeRoutedExperts:
+        rowwise_fp8 = MoERowwiseFP8Config(enabled=False)
+
+        def refresh_rowwise_fp8_cache(self) -> None:
+            seen["refresh"] += 1
+
+        def invalidate_rowwise_fp8_cache(self) -> None:
+            seen["invalidate"] += 1
+
+    block = SimpleNamespace(
+        rowwise_fp8=MoERowwiseFP8Config(enabled=True),
+        routed_experts=_FakeRoutedExperts(),
+        shared_experts=None,
+    )
+
+    refresh_rowwise_fp8_cache(block)
+
+    assert seen == {"refresh": 0, "invalidate": 1}
+    assert block._shared_rowwise_fp8_up_prequant is None
+    assert block._shared_rowwise_fp8_down_prequant is None

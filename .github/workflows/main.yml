@@ -184,6 +184,7 @@ jobs:
                 --ignore-glob='src/test/nn/moe*' \
                 --ignore-glob='src/test/optim*' \
                 --ignore-glob='src/test/kernels*' \
+                --ignore-glob='src/test/train/train_module/transformer/moe_train_module*' \
                 src/test/
 
           - name: Test checkpoint (GPU)
@@ -238,10 +239,13 @@ jobs:
           # (src/test/nn/moe/v2) also run here since they need TransformerEngine + the same
           # custom kernels, which the torch 2.9 image lacks.
           - name: Test MoE kernels (GPU, torch 2.10)
-            image: akshitab/olmo-core-tch2100cu130-2026-07-03 #tianhuat/olmo-core-torch210-2404-cu128
+            image: akshitab/olmo-core-tch2100cu128-rma-2026-07-08 #akshitab/olmo-core-tch2100cu130-2026-07-03  #petew/olmo-core-tch2100cu128-2026-01-23
             gpus: 2
+            # Build the NVSHMEM symm_mem_vdev2d ext (compiled out-of-tree; needs an image with
+            # NVSHMEM + CUDA toolkit) before pytest, so the rowwise-EP tests that import the built
+            # module at collection time can run. One `bash -c` so both run inside the gantry container.
             run: |
-              pytest -v --color=yes --durations=3 -m gpu src/test/kernels/ src/test/nn/moe/v2/
+              bash -c 'python -m olmo_core.kernels.build_symm_mem_vdev2d_ext --inplace && pytest -v --color=yes --durations=3 -m gpu src/test/kernels/ src/test/nn/moe/v2/ src/test/train/train_module/transformer/moe_train_module_test.py'
     steps:
       - uses: actions/checkout@v5
         with:

@@ -87,7 +87,16 @@ environments = [
 include-package-data = true
 
 [tool.setuptools.package-data]
-olmo_core = ["py.typed", "*.txt", "nn/_csrc/*.cpp"]
+olmo_core = [
+    "py.typed",
+    "*.txt",
+    "nn/_csrc/*.cpp",
+    "kernels/cuda/*.cpp",
+    "kernels/cuda/*.cu",
+    "kernels/cuda/*.cuh",
+    "kernels/cuda/*.h",
+    "kernels/cuda/CMakeLists.txt",
+]
 
 [tool.setuptools.dynamic]
 version = { attr = "olmo_core.version.VERSION" }

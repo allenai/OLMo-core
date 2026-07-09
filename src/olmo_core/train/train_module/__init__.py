@@ -6,6 +6,8 @@ from .train_module import (
     TrainModule,
 )
 from .transformer import (
+    MoEV2TransformerTrainModule,
+    MoEV2TransformerTrainModuleConfig,
     TransformerActivationCheckpointingConfig,
     TransformerActivationCheckpointingMode,
     TransformerContextParallelConfig,
@@ -30,6 +32,8 @@ __all__ = [
     "TransformerTrainModuleConfig",
     "TransformerPipelineTrainModule",
     "TransformerPipelineTrainModuleConfig",
+    "MoEV2TransformerTrainModule",
+    "MoEV2TransformerTrainModuleConfig",
     "TransformerActivationCheckpointingConfig",
     "TransformerActivationCheckpointingMode",
     "TransformerDataParallelConfig",
