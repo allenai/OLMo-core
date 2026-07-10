@@ -118,11 +118,6 @@ def ep_no_sync_rowwise_tbo_stage_a(
         not requires_host_side_split_sizes()
     ), "EP no-sync implementation does not support host-side split size communication"
     _check_rowwise_tbo_supported(self)
-    if self.ep_no_sync_use_2d_all_to_all:
-        raise RuntimeError(
-            "ep_no_sync_use_2d_all_to_all=True is no longer supported: "
-            "the 2D all_to_all path was removed due to correctness/performance issues."
-        )
 
     group_name = get_ep_no_sync_group_name(self)
     slot_idx = ep_no_sync_slot_for_lane(self, lane_id)
@@ -228,7 +223,7 @@ def ep_no_sync_rowwise_tbo_stage_a(
             allowed_splits=allowed_splits,
             keep_from_src_dest_local=keep_from_src_dest_local,
         )
-        rowwise_nblocks = self.ep_no_sync_rowwise_nblocks
+        rowwise_nblocks = self.ep.rowwise_nblocks
 
     return _NoSyncRowwiseStageAState(
         lane_id=lane_id,

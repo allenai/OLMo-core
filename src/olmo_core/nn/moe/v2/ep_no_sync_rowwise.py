@@ -69,11 +69,6 @@ def combined_forward_ep_no_sync_rowwise(
     assert (
         not requires_host_side_split_sizes()
     ), "EP no-sync implementation does not support host-side split size communication"
-    if self.ep_no_sync_use_2d_all_to_all:
-        raise RuntimeError(
-            "ep_no_sync_use_2d_all_to_all=True is no longer supported: "
-            "the 2D all_to_all path was removed due to correctness/performance issues."
-        )
 
     group_name = get_ep_no_sync_group_name(self)
     B, S, D = x.shape
@@ -125,7 +120,7 @@ def combined_forward_ep_no_sync_rowwise(
         rowwise_fp8_cfg is not None
         and rowwise_fp8_cfg.enabled
         and moe_inp.device.type == "cuda"
-        and self.ep_no_sync_use_rowwise_all_to_all
+        and self.ep.is_rowwise
     )
     if use_rowwise_fp8:
         assert rowwise_fp8_cfg is not None
@@ -352,7 +347,7 @@ def combined_forward_ep_no_sync_rowwise(
             allowed_splits=allowed_splits,
             keep_from_src_dest_local=keep_from_src_dest_local,
         )
-        rowwise_nblocks = self.ep_no_sync_rowwise_nblocks
+        rowwise_nblocks = self.ep.rowwise_nblocks
 
     if self.shared_experts is not None:
         with torch.cuda.stream(self.get_dense_stream()):
@@ -502,7 +497,7 @@ def combined_forward_ep_no_sync_rowwise(
             rowwise_fp8_cfg.block_size,
             group_name,
             self.ep_pg,
-            self.ep_no_sync_rowwise_nblocks,
+            self.ep.rowwise_nblocks,
         )
     else:
         assert buffers is not None
@@ -519,7 +514,7 @@ def combined_forward_ep_no_sync_rowwise(
             route_probs,
             group_name,
             self.ep_pg,
-            self.ep_no_sync_rowwise_nblocks,
+            self.ep.rowwise_nblocks,
             expert_out_aliases_symm_expert_out,
             True,
             False,

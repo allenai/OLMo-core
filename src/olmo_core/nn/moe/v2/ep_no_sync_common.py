@@ -187,7 +187,7 @@ def restore_drop_unpermute_1d(
         -1,
         self.routed_experts_router.top_k,
     )
-    backend = self.ep_no_sync_restore_unpermute_backend
+    backend = self.ep.restore_unpermute_backend
 
     if backend == "te_fused":
         return cast(
