@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any
 
 import torch
-from huggingface_hub import hf_hub_download, snapshot_download
+from huggingface_hub import HfApi, hf_hub_download, snapshot_download
 from safetensors import safe_open
 from transformers import AutoConfig
 
@@ -40,6 +40,12 @@ def _is_local_dir(path_or_repo: str) -> bool:
 def _load_hf_config_dict(model_name_or_path: str, revision: str) -> dict[str, Any]:
     cfg = AutoConfig.from_pretrained(model_name_or_path, revision=revision, trust_remote_code=False)
     return cfg.to_dict()
+
+
+def _resolve_revision(model_name_or_path: str, revision: str) -> str | None:
+    if _is_local_dir(model_name_or_path):
+        return None
+    return HfApi().model_info(model_name_or_path, revision=revision).sha
 
 
 def _tokenizer_config_from_qwen_hf(hf_model: str, hf_config: Mapping[str, Any]) -> TokenizerConfig:
@@ -460,6 +466,7 @@ def convert_qwen3_moe_hf_to_olmo(
     save_overwrite: bool = False,
 ) -> None:
     hf_config = _load_hf_config_dict(hf_model, revision)
+    resolved_revision = _resolve_revision(hf_model, revision)
     text_config = hf_config.get("text_config", hf_config)
     layer_overrides = _make_config_overrides_for_layer_limit(text_config, max_layers)
     model_config = build_qwen3_moe_config_from_hf_config(
@@ -544,10 +551,13 @@ def convert_qwen3_moe_hf_to_olmo(
         },
         "conversion": {
             "source": hf_model,
-            "revision": revision,
+            "requested_revision": revision,
+            "resolved_revision": resolved_revision,
             "converted": converted,
             "max_layers": max_layers,
             "skipped": skipped,
+            "required_hf_tensors": len(required_hf),
+            "assigned_olmo_tensors": len(assigned_olmo),
         },
     }
     config_path = join_path(output_path, "config.json")
