@@ -54,12 +54,16 @@ def maybe_dump_ep_no_sync_saved_activations(
     forward_kwargs: Dict[str, object],
     no_sync_forward: Callable[..., torch.Tensor],
 ) -> Optional[torch.Tensor]:
+    # Keep the disabled debug path independent of per-block attributes so
+    # torch.compile can reuse one graph across homogeneous MoE blocks.
+    if not _debug_activation_enabled():
+        return None
+
     activation_dump_key = f"ep_no_sync_saved_activations_dumped_block_{block.block_idx}"
     if not (
         _get_train_global_arg("dry_run_done", default=False)
         and block.block_idx == 3
         and not _get_train_global_arg(activation_dump_key, default=False)
-        and _debug_activation_enabled()
     ):
         return None
 

@@ -40,20 +40,19 @@ def test_ep_no_sync_activation_debug_returns_none_when_gate_is_closed(monkeypatc
 
 
 def test_ep_no_sync_activation_debug_is_disabled_by_default(monkeypatch):
-    block = _DebugBlock(block_idx=3)
+    class _DisabledDebugBlock:
+        @property
+        def block_idx(self):
+            raise AssertionError("disabled activation debug should not read block_idx")
+
+    block = _DisabledDebugBlock()
     x = torch.ones(8, 512, requires_grad=True)
-    global_args = {
-        "dry_run_done": True,
-        "ep_no_sync_saved_activations_dumped_block_3": False,
-    }
+
+    def unexpected_forward(*_args, **_kwargs):
+        raise AssertionError("disabled activation debug should not run the forward")
 
     monkeypatch.delenv(
         activation_debug.EP_NO_SYNC_SAVED_ACTIVATIONS_DEBUG_ENV_VAR, raising=False
-    )
-    monkeypatch.setattr(
-        activation_debug,
-        "_get_train_global_arg",
-        lambda key, default=None: global_args.get(key, default),
     )
 
     out = activation_debug.maybe_dump_ep_no_sync_saved_activations(
@@ -61,12 +60,10 @@ def test_ep_no_sync_activation_debug_is_disabled_by_default(monkeypatch):
         x,
         loss_div_factor=None,
         forward_kwargs={},
-        no_sync_forward=block.combined_forward_ep_no_sync_1d,
+        no_sync_forward=unexpected_forward,
     )
 
     assert out is None
-    assert block.calls == 0
-    assert global_args["ep_no_sync_saved_activations_dumped_block_3"] is False
 
 
 def test_ep_no_sync_activation_debug_runs_once_and_sets_global_flag(monkeypatch):
