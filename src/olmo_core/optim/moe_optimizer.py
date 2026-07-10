@@ -1116,6 +1116,17 @@ class OLMoDDPOptimizer:
         non-finite, log the per-parameter local grad norms and the per-component (dp/ep_dp,
         replicated/sharded) local norms to help locate the offending parameter. A no-op unless the
         env var is set, so it adds no work to the normal path.
+
+        TODO(config-gate this diagnostic): the ad-hoc ``OLMO_DDP_DEBUG_*`` env flags are off
+        convention (core gates behavior via Config fields — cf. ``check_nan_inf_grad``). Migrate to
+        a ``debug_nan_inf_grad: bool`` config field and fire on
+        ``check_nan_inf_grad and debug_nan_inf_grad``; drop the rank filter (log all ranks); drop
+        the disk-dump env vars (``OLMO_DEBUG_DUMP_*``) — they belong with the DDP train-module dump
+        subsystem, ported separately. Keep the ``limit`` cap on *both* the non-finite and top lists
+        (see the join blocks below). For the logged step, source the trainer ``global_step`` via a
+        clean setter on the optimizer (mirroring ``latest_loss``), NOT the Adam ``.step`` state: this
+        is a skip-step optimizer, so its ``.step`` counter lags ``global_step`` by the skip count —
+        which grows precisely during the spikes this diagnostic is for.
         """
         if not _env_flag("OLMO_DDP_DEBUG_NONFINITE_GRAD"):
             return
