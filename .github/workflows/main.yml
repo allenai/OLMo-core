@@ -212,6 +212,9 @@ jobs:
           - name: Test MoE (GPU)
             image: *gpu_test_image
             gpus: 2
+            # The v1 dropless MoE tests use the grouped_gemm CUTLASS kernels, which have no
+            # Blackwell (sm_100) build, so keep this job off b200.
+            gpu_type: --gpu-type h100 --gpu-type a100
             # The v2 MoE GPU tests need TransformerEngine + torch 2.10, which this image
             # lacks, so they run in the "Test MoE kernels" job below; exclude them here.
             # (The fused block/model tests moved to src/test/nn/ddp, which this job's
@@ -245,6 +248,10 @@ jobs:
           - name: Test MoE kernels (GPU, torch 2.10)
             image: akshitab/olmo-core-tch2100cu128-rma-2026-07-08 #akshitab/olmo-core-tch2100cu130-2026-07-03  #petew/olmo-core-tch2100cu128-2026-01-23
             gpus: 2
+            # This image's kernels (grouped_gemm, symm_mem_vdev2d, FP8) are built for sm_90 only
+            # (`-gencode arch=compute_90,code=sm_90`), so pin to h100 — on a100/b200 grouped_gemm
+            # fails with "Grouped GEMM execution not possible with HW".
+            gpu_type: --gpu-type h100
             # Build the NVSHMEM symm_mem_vdev2d ext (compiled out-of-tree; needs an image with
             # NVSHMEM + CUDA toolkit) before pytest, so the rowwise-EP tests that import the built
             # module at collection time can run. One `bash -c` so both run inside the gantry container.
@@ -298,9 +305,7 @@ jobs:
             --gpus ${{ matrix.task.gpus }} \
             --task-timeout 15m \
             --host-networking \
-            --gpu-type h100 \
-            --gpu-type a100 \
-            --gpu-type b200 \
+            ${{ matrix.task.gpu_type || '--gpu-type h100 --gpu-type a100 --gpu-type b200' }} \
             --system-python \
             --dataset-secret 'GOOGLE_CREDENTIALS:/.google/credentials.json' \
             --env 'GOOGLE_APPLICATION_CREDENTIALS=/.google/credentials.json' \
