@@ -65,7 +65,7 @@ source_rel_for() {
     1p2b:intw256e8k) echo integration/int-1p2b-cx8-intw256e8k-lr4e-4-r2/step217870 ;;
     480m:intd256e8k) echo integration/int-480m-cx8-intd256e8k-lr8e-4-r1/step78659 ;;
     810m:intd256e8k) echo integration/int-810m-cx8-intd256e8k-lr4e-4-r1/step138619 ;;
-    1p2b:intd256e8k) echo integration/int-1p2b-cx8-intd256e8k-lr4e-4-r2/step210000 ;;
+    1p2b:intd256e8k) echo integration/int-1p2b-cx8-intd256e8k-lr4e-4-r2/step218156 ;;
     *) echo "Unknown Cx8 source checkpoint for ${model_size} ${integration_tag}" >&2; return 1 ;;
   esac
 }

@@ -1865,3 +1865,37 @@ and 10% of the matching baseline Cx8 pretraining LR.
 | `mt-1p2b-intw256e8k-cx8-lr4e-5-r1` | `integration/int-1p2b-cx8-intw256e8k-lr4e-4-r2/step217870` | 4e-5 | 384 | 8 | EP1 / MB4 | https://beaker.org/ex/01KX5AWBA0E2YNCAXPSQWWW9F5 | failed |
 | `mt-480m-intd256e8k-cx8-lr8e-5-r1` | `integration/int-480m-cx8-intd256e8k-lr8e-4-r1/step78659` | 8e-5 | 192 | 4 | EP1 / MB8 | https://beaker.org/ex/01KX5AX3WZZ44PV3D6PEGHRQ8V | scheduled |
 | `mt-810m-intd256e8k-cx8-lr4e-5-r1` | `integration/int-810m-cx8-intd256e8k-lr4e-4-r1/step138619` | 4e-5 | 256 | 8 | EP1 / MB4 | https://beaker.org/ex/01KX5AXRY5713CS0AQPFKF6T0W | scheduled |
+
+Status/storage follow-up: all five initial promoted Cx8 integration MT jobs
+finalized with checkpoint-save failures. The clearest log was
+`OSError: [Errno 28] No space left on device` from distributed checkpoint
+writing on `/weka/oe-training-default`; the other failures showed checkpoint
+barrier/connection-closed teardown consistent with one rank failing during save.
+The 1.2B deep Cx8 pretraining checkpoint is now available at
+`integration/int-1p2b-cx8-intd256e8k-lr4e-4-r2/step218156`.
+
+Storage audit scoped only to
+`/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3`: our folder is
+about 42T. The canonical finished integration pretraining checkpoints account
+for about 6.47 TiB of non-temp storage; final checkpoint optimizer tensors are
+about 2.16 TiB, and older periodic checkpoints for those same runs account for
+about 3.24 TiB. Three stale partial 1.2B wide `r1` integration directories add
+about 0.64 TiB, and the failed MT temp checkpoint
+`midtraining/mt-810m-intw256e8k-cx8-lr4e-5-r1/step11000-tmp` adds about 122 GiB.
+Final checkpoint optimizer tensors are interleaved in `model_and_optim/*.distcp`
+shards, so freeing them safely requires rewriting model-only checkpoints rather
+than deleting individual files. Cleanup is deferred until after this experiment
+wave.
+
+Restart attempt: relaunch the same six semantic promoted Cx8 MT runs after the
+storage audit, including the newly available 1.2B deep Cx8 source. These reuse
+the existing save folders so partial MT checkpoints can resume where possible.
+
+| Name | Beaker | Initial state |
+| --- | --- | --- |
+| `mt-480m-intw256e8k-cx8-lr8e-5-r1` | https://beaker.org/ex/01KX6K2NTZZRVE98HCQWE2DR64 | started |
+| `mt-810m-intw256e8k-cx8-lr4e-5-r1` | https://beaker.org/ex/01KX6K330J3Z5CSDY518BGJ05B | started |
+| `mt-1p2b-intw256e8k-cx8-lr4e-5-r1` | https://beaker.org/ex/01KX6K3KB852TCJYC4KVBXVXVP | started |
+| `mt-480m-intd256e8k-cx8-lr8e-5-r1` | https://beaker.org/ex/01KX6K41XG75V1DQ9NWZB988GQ | started |
+| `mt-810m-intd256e8k-cx8-lr4e-5-r1` | https://beaker.org/ex/01KX6K4GKDHQS05727Q9DH0NF4 | scheduled |
+| `mt-1p2b-intd256e8k-cx8-lr4e-5-r1` | https://beaker.org/ex/01KX6K4YBN8659G8SY8A4WAQA4 | scheduled |
