@@ -4,6 +4,7 @@ import argparse
 import os
 import shutil
 import subprocess
+import sys
 import sysconfig
 from pathlib import Path
 
@@ -110,6 +111,7 @@ def _build_extension_cmake(*, inplace: bool, verbose: bool, force: bool) -> None
         str(build_dir),
         "-DCMAKE_BUILD_TYPE=Release",
         f"-DCMAKE_PREFIX_PATH={torch_cmake_prefix}",
+        f"-DPython3_EXECUTABLE={sys.executable}",
         f"-DNVSHMEM_INCLUDE_DIR={include_dir}",
         f"-DNVSHMEM_LIB_DIR={lib_dir}",
         f"-DNVSHMEM_HOST_SO={host_so}",
