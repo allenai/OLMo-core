@@ -1,6 +1,6 @@
 # In-Loop Eval Results
 
-Generated: 2026-07-10 20:43 UTC
+Generated: 2026-07-10 22:23 UTC
 
 Values are the latest W&B summary values for each selected run. Higher is better for accuracy/F1/pass-style metrics; lower is better for BPB/loss/perplexity-style metrics. Values marked `see metric` need manual interpretation.
 

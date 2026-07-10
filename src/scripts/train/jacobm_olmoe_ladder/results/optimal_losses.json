@@ -1,5 +1,5 @@
 {
-  "generated_at_utc": "2026-07-04T04:26:47.615728+00:00",
+  "generated_at_utc": "2026-07-10T22:22:43.786924+00:00",
   "records": [
     {
       "Cx": "Cx1",
@@ -3100,11 +3100,154 @@
     },
     {
       "Cx": "Cx4",
+      "best avg250M": "2.1853",
+      "best observed LR": "4e-4",
+      "fit LR": "",
+      "fit avg250M": "",
+      "model": "810M",
+      "points": "1",
+      "section": "Integration Candidates",
+      "variant": "integration deep 256E/top8"
+    },
+    {
+      "Cx": "Cx4",
       "best avg250M": "2.1928",
       "best observed LR": "4e-4",
       "fit LR": "",
       "fit avg250M": "",
       "model": "810M",
+      "points": "1",
+      "section": "Integration Candidates",
+      "variant": "integration wide 256E/top8"
+    },
+    {
+      "Cx": "Cx8",
+      "best avg250M": "2.1721",
+      "best observed LR": "4e-4",
+      "fit LR": "0.000467",
+      "fit avg250M": "2.1717",
+      "model": "810M",
+      "points": "3",
+      "section": "Integration Candidates",
+      "variant": "baseline 48E/top4"
+    },
+    {
+      "Cx": "Cx8",
+      "best avg250M": "2.1183",
+      "best observed LR": "4e-4",
+      "fit LR": "",
+      "fit avg250M": "",
+      "model": "810M",
+      "points": "1",
+      "section": "Integration Candidates",
+      "variant": "integration deep 256E/top8"
+    },
+    {
+      "Cx": "Cx8",
+      "best avg250M": "2.1049",
+      "best observed LR": "4e-4",
+      "fit LR": "",
+      "fit avg250M": "",
+      "model": "810M",
+      "points": "1",
+      "section": "Integration Candidates",
+      "variant": "integration wide 256E/top8"
+    },
+    {
+      "Cx": "Cx1",
+      "best avg250M": "2.3108",
+      "best observed LR": "4e-4",
+      "fit LR": "0.000483",
+      "fit avg250M": "2.3101",
+      "model": "1.2B",
+      "points": "4",
+      "section": "Integration Candidates",
+      "variant": "baseline 48E/top4"
+    },
+    {
+      "Cx": "Cx1",
+      "best avg250M": "2.2703",
+      "best observed LR": "4e-4",
+      "fit LR": "",
+      "fit avg250M": "",
+      "model": "1.2B",
+      "points": "1",
+      "section": "Integration Candidates",
+      "variant": "integration deep 256E/top8"
+    },
+    {
+      "Cx": "Cx1",
+      "best avg250M": "2.2731",
+      "best observed LR": "4e-4",
+      "fit LR": "",
+      "fit avg250M": "",
+      "model": "1.2B",
+      "points": "1",
+      "section": "Integration Candidates",
+      "variant": "integration wide 256E/top8"
+    },
+    {
+      "Cx": "Cx2",
+      "best avg250M": "2.2229",
+      "best observed LR": "6e-4",
+      "fit LR": "0.000442",
+      "fit avg250M": "2.2204",
+      "model": "1.2B",
+      "points": "4",
+      "section": "Integration Candidates",
+      "variant": "baseline 48E/top4 (b384k)"
+    },
+    {
+      "Cx": "Cx2",
+      "best avg250M": "2.1788",
+      "best observed LR": "6e-4",
+      "fit LR": "",
+      "fit avg250M": "",
+      "model": "1.2B",
+      "points": "1",
+      "section": "Integration Candidates",
+      "variant": "integration deep 256E/top8"
+    },
+    {
+      "Cx": "Cx2",
+      "best avg250M": "2.1783",
+      "best observed LR": "6e-4",
+      "fit LR": "",
+      "fit avg250M": "",
+      "model": "1.2B",
+      "points": "1",
+      "section": "Integration Candidates",
+      "variant": "integration wide 256E/top8"
+    },
+    {
+      "Cx": "Cx4",
+      "best avg250M": "2.1508",
+      "best observed LR": "3e-4",
+      "fit LR": "0.000366",
+      "fit avg250M": "2.1500",
+      "model": "1.2B",
+      "points": "4",
+      "section": "Integration Candidates",
+      "variant": "baseline 48E/top4"
+    },
+    {
+      "Cx": "Cx4",
+      "best avg250M": "2.0944",
+      "best observed LR": "3e-4",
+      "fit LR": "",
+      "fit avg250M": "",
+      "model": "1.2B",
+      "points": "1",
+      "section": "Integration Candidates",
+      "variant": "integration deep 256E/top8"
+    },
+    {
+      "Cx": "Cx4",
+      "best avg250M": "2.0942",
+      "best observed LR": "3e-4",
+      "fit LR": "",
+      "fit avg250M": "",
+      "model": "1.2B",
       "points": "1",
       "section": "Integration Candidates",
       "variant": "integration wide 256E/top8"
