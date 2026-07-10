@@ -102,6 +102,7 @@ def _build_extension_cmake(*, inplace: bool, verbose: bool, force: bool) -> None
     torch_cmake_prefix = torch.utils.cmake_prefix_path
     glibcxx_abi = int(torch._C._GLIBCXX_USE_CXX11_ABI)
     cuda_architectures = _infer_cmake_cuda_architectures(torch)
+    python_include_dir = sysconfig.get_path("include")
 
     cmake_args = [
         "cmake",
@@ -112,6 +113,7 @@ def _build_extension_cmake(*, inplace: bool, verbose: bool, force: bool) -> None
         "-DCMAKE_BUILD_TYPE=Release",
         f"-DCMAKE_PREFIX_PATH={torch_cmake_prefix}",
         f"-DPython3_EXECUTABLE={sys.executable}",
+        f"-DPython3_INCLUDE_DIR={python_include_dir}",
         f"-DNVSHMEM_INCLUDE_DIR={include_dir}",
         f"-DNVSHMEM_LIB_DIR={lib_dir}",
         f"-DNVSHMEM_HOST_SO={host_so}",
