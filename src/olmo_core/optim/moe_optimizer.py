@@ -37,7 +37,7 @@ from torch.distributed.tensor._utils import (
 
 from olmo_core._nvtx import maybe_nvtx_annotate
 from olmo_core.nn.fp8_weight import FP8WeightStore
-from olmo_core.utils import get_default_device, move_to_device
+from olmo_core.utils import env_bool, get_default_device, move_to_device
 
 from ..config import Config, DType
 from ..exceptions import OLMoConfigurationError
@@ -55,13 +55,6 @@ def _to_local_tensor(tensor: torch.Tensor) -> torch.Tensor:
     if isinstance(tensor, DTensor):
         return tensor.to_local()
     return tensor
-
-
-def _env_flag(name: str, default: bool = False) -> bool:
-    raw = os.getenv(name)
-    if raw is None:
-        return default
-    return raw.strip().lower() in {"1", "true", "yes", "on", "y"}
 
 
 def _rank_matches_filter(rank_filter: str, rank: int) -> bool:
@@ -1128,7 +1121,7 @@ class OLMoDDPOptimizer:
         is a skip-step optimizer, so its ``.step`` counter lags ``global_step`` by the skip count —
         which grows precisely during the spikes this diagnostic is for.
         """
-        if not _env_flag("OLMO_DDP_DEBUG_NONFINITE_GRAD"):
+        if not env_bool("OLMO_DDP_DEBUG_NONFINITE_GRAD"):
             return
 
         rank = dist.get_rank() if dist.is_available() and dist.is_initialized() else 0
@@ -1203,7 +1196,7 @@ class OLMoDDPOptimizer:
 
         dump_root = (
             os.getenv("OLMO_DEBUG_DUMP_DIR")
-            if _env_flag("OLMO_DEBUG_DUMP_OPTIM_GRAD_NORMS")
+            if env_bool("OLMO_DEBUG_DUMP_OPTIM_GRAD_NORMS")
             else None
         )
         if dump_root:
