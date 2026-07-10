@@ -121,6 +121,10 @@ def verify_logits(
     dtype: DType,
     rtol: float,
     atol: float,
+    skip_assert_close: bool = False,
+    max_mean_abs_diff: float | None = None,
+    min_cosine_similarity: float | None = None,
+    min_top1_agreement: float | None = None,
     layerwise: bool = False,
     output_json: Path | None = None,
 ) -> dict[str, Any]:
@@ -246,6 +250,12 @@ def verify_logits(
         "top1_agreement": top1_agreement,
         "rtol": rtol,
         "atol": atol,
+        "acceptance": {
+            "skip_assert_close": skip_assert_close,
+            "max_mean_abs_diff": max_mean_abs_diff,
+            "min_cosine_similarity": min_cosine_similarity,
+            "min_top1_agreement": min_top1_agreement,
+        },
     }
     if layerwise:
         capture_lengths = {
@@ -297,7 +307,20 @@ def verify_logits(
 
     log.info("Logit comparison:\n%s", json.dumps(metrics, indent=2))
     _write_metrics(output_json, metrics)
-    torch.testing.assert_close(olmo_logits, hf_logits, rtol=rtol, atol=atol)
+    if max_mean_abs_diff is not None and logit_metrics["mean_abs_diff"] > max_mean_abs_diff:
+        raise AssertionError(
+            f"Mean absolute logit difference {logit_metrics['mean_abs_diff']} exceeds "
+            f"{max_mean_abs_diff}"
+        )
+    if min_cosine_similarity is not None and logit_metrics["cosine_similarity"] < min_cosine_similarity:
+        raise AssertionError(
+            f"Logit cosine similarity {logit_metrics['cosine_similarity']} is below "
+            f"{min_cosine_similarity}"
+        )
+    if min_top1_agreement is not None and top1_agreement < min_top1_agreement:
+        raise AssertionError(f"Top-1 agreement {top1_agreement} is below {min_top1_agreement}")
+    if not skip_assert_close:
+        torch.testing.assert_close(olmo_logits, hf_logits, rtol=rtol, atol=atol)
     del olmo
     _release_cuda_memory()
     return metrics
@@ -321,6 +344,10 @@ def main() -> None:
     parser.add_argument("--dtype", type=DType, default=DType.bfloat16)
     parser.add_argument("--rtol", type=float, default=2e-2)
     parser.add_argument("--atol", type=float, default=2e-2)
+    parser.add_argument("--skip-assert-close", action="store_true")
+    parser.add_argument("--max-mean-abs-diff", type=float)
+    parser.add_argument("--min-cosine-similarity", type=float)
+    parser.add_argument("--min-top1-agreement", type=float)
     parser.add_argument("--layerwise", action="store_true")
     parser.add_argument("--output-json", type=Path)
     args = parser.parse_args()
@@ -336,6 +363,10 @@ def main() -> None:
         dtype=args.dtype,
         rtol=args.rtol,
         atol=args.atol,
+        skip_assert_close=args.skip_assert_close,
+        max_mean_abs_diff=args.max_mean_abs_diff,
+        min_cosine_similarity=args.min_cosine_similarity,
+        min_top1_agreement=args.min_top1_agreement,
         layerwise=args.layerwise,
         output_json=args.output_json,
     )
