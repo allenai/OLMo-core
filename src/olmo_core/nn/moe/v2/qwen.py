@@ -83,6 +83,9 @@ def get_qwen3_moe_text_config_overrides(hf_config: Mapping[str, Any]) -> dict[st
         "moe_intermediate_size": text_config["moe_intermediate_size"],
         "rms_norm_eps": text_config["rms_norm_eps"],
         "router_aux_loss_weight": text_config.get("router_aux_loss_coef", 0.001),
+        # HF Qwen performs the router linear in the checkpoint dtype, then
+        # computes routing probabilities in fp32.
+        "router_logits_in_fp32": False,
     }
 
     if "linear_num_key_heads" in text_config:
@@ -177,6 +180,7 @@ def _build_shared_expert_configs(
     d_model: int,
     shared_expert_intermediate_size: int | None,
     dtype: DType,
+    router_logits_in_fp32: bool,
 ) -> tuple[SharedExpertsConfig | None, MoERouterConfigV2 | None]:
     if shared_expert_intermediate_size is None:
         return None, None
@@ -195,6 +199,7 @@ def _build_shared_expert_configs(
         lb_loss_weight=None,
         z_loss_weight=None,
         lb_loss_granularity=MoELoadBalancingLossGranularity.instance,
+        router_logits_in_fp32=router_logits_in_fp32,
         dtype=dtype,
     )
     return shared_experts, shared_router
@@ -298,6 +303,7 @@ def build_qwen3_moe_config(
     attention_backend: AttentionBackendName = AttentionBackendName.flash_4,
     router_aux_loss_weight: float | None = 0.001,
     router_z_loss_weight: float | None = None,
+    router_logits_in_fp32: bool = True,
     compile_friendly_recompute: bool = False,
     ep: ExpertParallelConfig | None = None,
     ep_path: ExpertParallelPath | str = ExpertParallelPath.sync_1d,
@@ -322,6 +328,7 @@ def build_qwen3_moe_config(
         d_model=d_model,
         shared_expert_intermediate_size=shared_expert_intermediate_size,
         dtype=dtype,
+        router_logits_in_fp32=router_logits_in_fp32,
     )
 
     routed_router = MoERouterConfigV2(
@@ -333,6 +340,7 @@ def build_qwen3_moe_config(
         lb_loss_weight=router_aux_loss_weight,
         z_loss_weight=router_z_loss_weight,
         lb_loss_granularity=MoELoadBalancingLossGranularity.instance,
+        router_logits_in_fp32=router_logits_in_fp32,
         dtype=dtype,
     )
     common_block_kwargs = dict(

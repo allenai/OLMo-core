@@ -7,6 +7,7 @@ import gc
 import json
 import logging
 from pathlib import Path
+from typing import Any
 
 import torch
 from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
@@ -26,6 +27,52 @@ def _release_cuda_memory() -> None:
         torch.cuda.empty_cache()
 
 
+def _first_tensor(value: Any) -> torch.Tensor:
+    if isinstance(value, torch.Tensor):
+        return value
+    if isinstance(value, (tuple, list)):
+        for item in value:
+            try:
+                return _first_tensor(item)
+            except TypeError:
+                pass
+    raise TypeError(f"Expected a tensor output, got {type(value).__name__}")
+
+
+def _tensor_metrics(reference: torch.Tensor, actual: torch.Tensor) -> dict[str, float]:
+    if reference.shape != actual.shape:
+        raise RuntimeError(
+            f"Tensor shape mismatch: reference {tuple(reference.shape)} != actual {tuple(actual.shape)}"
+        )
+    reference = reference.float()
+    actual = actual.float()
+    diff = (reference - actual).abs()
+    return {
+        "max_abs_diff": diff.max().item(),
+        "mean_abs_diff": diff.mean().item(),
+        "cosine_similarity": torch.nn.functional.cosine_similarity(
+            reference.reshape(1, -1),
+            actual.reshape(1, -1),
+        ).item(),
+    }
+
+
+def _write_metrics(path: Path | None, metrics: dict[str, Any]) -> None:
+    if path is None:
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(metrics, indent=2) + "\n")
+
+
+def _capture_router_output(
+    weights: list[torch.Tensor],
+    indices: list[torch.Tensor],
+    output: tuple[Any, ...],
+) -> None:
+    weights.append(output[0 if len(output) == 4 else 1].detach().float().cpu())
+    indices.append(output[1 if len(output) == 4 else 2].detach().cpu())
+
+
 @torch.no_grad()
 def verify_logits(
     *,
@@ -38,7 +85,9 @@ def verify_logits(
     dtype: DType,
     rtol: float,
     atol: float,
-) -> dict[str, float | int | str]:
+    layerwise: bool = False,
+    output_json: Path | None = None,
+) -> dict[str, Any]:
     tokenizer = AutoTokenizer.from_pretrained(hf_model, revision=revision, trust_remote_code=False)
     input_ids = tokenizer(prompt, return_tensors="pt").input_ids
 
@@ -51,7 +100,42 @@ def verify_logits(
         trust_remote_code=False,
     ).to(hf_device)
     hf.eval()
-    hf_logits = hf(input_ids.to(hf_device), use_cache=False).logits.float().cpu()
+
+    hf_hidden_states: list[torch.Tensor] = []
+    hf_attention_outputs: list[torch.Tensor] = []
+    hf_router_weights: list[torch.Tensor] = []
+    hf_router_indices: list[torch.Tensor] = []
+    handles: list[Any] = []
+    if layerwise:
+        for layer in hf.model.layers:
+            handles.append(
+                layer.register_forward_hook(
+                    lambda _module, _args, output: hf_hidden_states.append(
+                        _first_tensor(output).detach().float().cpu()
+                    )
+                )
+            )
+            handles.append(
+                layer.self_attn.register_forward_hook(
+                    lambda _module, _args, output: hf_attention_outputs.append(
+                        _first_tensor(output).detach().float().cpu()
+                    )
+                )
+            )
+            handles.append(
+                layer.mlp.gate.register_forward_hook(
+                    lambda _module, _args, output: _capture_router_output(
+                        hf_router_weights,
+                        hf_router_indices,
+                        output,
+                    )
+                )
+            )
+    try:
+        hf_logits = hf(input_ids.to(hf_device), use_cache=False).logits.float().cpu()
+    finally:
+        for handle in handles:
+            handle.remove()
     del hf
     _release_cuda_memory()
 
@@ -75,33 +159,112 @@ def verify_logits(
         thread_count=32,
     )
     olmo.eval()
-    olmo_logits = olmo(input_ids.to(device)).float().cpu()
+
+    olmo_hidden_states: list[torch.Tensor] = []
+    olmo_attention_outputs: list[torch.Tensor] = []
+    olmo_router_weights: list[torch.Tensor] = []
+    olmo_router_indices: list[torch.Tensor] = []
+    handles = []
+    if layerwise:
+        for block in olmo.blocks.values():
+            handles.append(
+                block.register_forward_hook(
+                    lambda _module, _args, output: olmo_hidden_states.append(
+                        _first_tensor(output).detach().float().cpu()
+                    )
+                )
+            )
+            handles.append(
+                block.attention.register_forward_hook(
+                    lambda _module, _args, output: olmo_attention_outputs.append(
+                        _first_tensor(output).detach().float().cpu()
+                    )
+                )
+            )
+            assert block.routed_experts_router is not None
+            handles.append(
+                block.routed_experts_router.register_forward_hook(
+                    lambda _module, _args, output: _capture_router_output(
+                        olmo_router_weights,
+                        olmo_router_indices,
+                        output,
+                    )
+                )
+            )
+    try:
+        olmo_logits = olmo(input_ids.to(device)).float().cpu()
+    finally:
+        for handle in handles:
+            handle.remove()
 
     if hf_logits.shape != olmo_logits.shape:
         raise RuntimeError(
             f"Logit shape mismatch: HF {tuple(hf_logits.shape)} != OLMo {tuple(olmo_logits.shape)}"
         )
 
-    diff = (hf_logits - olmo_logits).abs()
+    logit_metrics = _tensor_metrics(hf_logits, olmo_logits)
     top1_agreement = (hf_logits.argmax(-1) == olmo_logits.argmax(-1)).float().mean().item()
-    cosine = torch.nn.functional.cosine_similarity(
-        hf_logits.reshape(1, -1),
-        olmo_logits.reshape(1, -1),
-    ).item()
-    metrics: dict[str, float | int | str] = {
+    metrics: dict[str, Any] = {
         "hf_model": hf_model,
         "revision": revision,
         "hf_device": str(hf_device),
         "olmo_device": str(device),
         "num_input_tokens": input_ids.numel(),
-        "max_abs_diff": diff.max().item(),
-        "mean_abs_diff": diff.mean().item(),
-        "cosine_similarity": cosine,
+        **logit_metrics,
         "top1_agreement": top1_agreement,
         "rtol": rtol,
         "atol": atol,
     }
+    if layerwise:
+        capture_lengths = {
+            "hf_hidden_states": len(hf_hidden_states),
+            "olmo_hidden_states": len(olmo_hidden_states),
+            "hf_attention_outputs": len(hf_attention_outputs),
+            "olmo_attention_outputs": len(olmo_attention_outputs),
+            "hf_router_indices": len(hf_router_indices),
+            "olmo_router_indices": len(olmo_router_indices),
+        }
+        expected_layers = model_config.n_layers
+        if any(length != expected_layers for length in capture_lengths.values()):
+            raise RuntimeError(
+                f"Expected {expected_layers} layer captures, got {capture_lengths}"
+            )
+
+        layers: list[dict[str, Any]] = []
+        for layer_idx in range(expected_layers):
+            router_top_k = hf_router_indices[layer_idx].shape[-1]
+            hf_indices = hf_router_indices[layer_idx].reshape(-1, router_top_k)
+            olmo_indices = olmo_router_indices[layer_idx].reshape(
+                -1, router_top_k
+            )
+            hf_weights = hf_router_weights[layer_idx].reshape(-1, router_top_k)
+            olmo_weights = olmo_router_weights[layer_idx].reshape(-1, router_top_k)
+            hf_sorted = hf_indices.sort(dim=-1).values
+            olmo_sorted = olmo_indices.sort(dim=-1).values
+            layers.append(
+                {
+                    "layer": layer_idx,
+                    "hidden_state": _tensor_metrics(
+                        hf_hidden_states[layer_idx], olmo_hidden_states[layer_idx]
+                    ),
+                    "attention_output": _tensor_metrics(
+                        hf_attention_outputs[layer_idx], olmo_attention_outputs[layer_idx]
+                    ),
+                    "router_weight": _tensor_metrics(
+                        hf_weights, olmo_weights
+                    ),
+                    "router_index_position_agreement": (
+                        hf_indices == olmo_indices
+                    ).float().mean().item(),
+                    "router_expert_set_agreement": (
+                        hf_sorted == olmo_sorted
+                    ).all(dim=-1).float().mean().item(),
+                }
+            )
+        metrics["layers"] = layers
+
     log.info("Logit comparison:\n%s", json.dumps(metrics, indent=2))
+    _write_metrics(output_json, metrics)
     torch.testing.assert_close(olmo_logits, hf_logits, rtol=rtol, atol=atol)
     del olmo
     _release_cuda_memory()
@@ -126,11 +289,12 @@ def main() -> None:
     parser.add_argument("--dtype", type=DType, default=DType.bfloat16)
     parser.add_argument("--rtol", type=float, default=2e-2)
     parser.add_argument("--atol", type=float, default=2e-2)
+    parser.add_argument("--layerwise", action="store_true")
     parser.add_argument("--output-json", type=Path)
     args = parser.parse_args()
 
     prepare_cli_environment()
-    metrics = verify_logits(
+    verify_logits(
         hf_model=args.hf_model,
         checkpoint_path=args.checkpoint_path,
         revision=args.revision,
@@ -140,10 +304,9 @@ def main() -> None:
         dtype=args.dtype,
         rtol=args.rtol,
         atol=args.atol,
+        layerwise=args.layerwise,
+        output_json=args.output_json,
     )
-    if args.output_json is not None:
-        args.output_json.parent.mkdir(parents=True, exist_ok=True)
-        args.output_json.write_text(json.dumps(metrics, indent=2) + "\n")
 
 
 if __name__ == "__main__":
