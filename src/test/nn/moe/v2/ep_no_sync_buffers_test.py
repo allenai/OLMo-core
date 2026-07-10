@@ -4,6 +4,7 @@ from typing import Any
 import pytest
 import torch
 
+from olmo_core.nn.moe.v2.ep_config import ExpertParallelConfig
 from olmo_core.nn.moe.v2.ep_no_sync_buffers import (
     _cached_symm_tensor_covers,
     _parse_bool_env,
@@ -47,8 +48,8 @@ def test_view_cached_symm_tensor():
 
 
 def test_compute_ep_no_sync_rank_capacity():
-    block: Any = SimpleNamespace(ep_no_sync_capacity_factor=1.25)
+    block: Any = SimpleNamespace(ep=ExpertParallelConfig(capacity_factor=1.25))
     assert compute_ep_no_sync_rank_capacity(block, 10) == 13  # ceil(1.25 * 10)
     assert compute_ep_no_sync_rank_capacity(block, 0) == 1  # floored to at least 1
-    block2: Any = SimpleNamespace(ep_no_sync_capacity_factor=2.0)
+    block2: Any = SimpleNamespace(ep=ExpertParallelConfig(capacity_factor=2.0))
     assert compute_ep_no_sync_rank_capacity(block2, 4) == 8
