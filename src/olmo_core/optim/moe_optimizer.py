@@ -178,11 +178,11 @@ class OLMoDDPOptimizerConfig(Config):
     reset them to zero when restoring optimizer state.
     """
 
-    check_nan_inf_grad: bool = False
+    check_nan_inf_grad: bool = True
     """
     When ``True``, device-side assert (without a host sync) that the loss and the total grad norm
-    are finite each step, aborting the run on a non-finite value. Off by default; note this aborts
-    rather than skipping the step, so it interacts with the skip-step spike detection.
+    are finite each step, aborting the run on a non-finite value; note this aborts rather than
+    skipping the step, so it interacts with the skip-step spike detection.
     """
 
     @property
@@ -511,7 +511,7 @@ class OLMoDDPOptimizer:
         broadcast_bucket_mb: int = 32,
         do_not_shard_tensor_smaller_than: int = 4096,
         use_distributed: bool = True,
-        check_nan_inf_grad: bool = False,
+        check_nan_inf_grad: bool = True,
         reset_optimizer_moments_on_load: bool = False,
     ) -> None:
         assert lr > 0.0
