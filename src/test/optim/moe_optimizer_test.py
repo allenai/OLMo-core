@@ -1,12 +1,12 @@
 import torch.nn as nn
 
 from olmo_core.optim.config import OptimGroupOverride
-from olmo_core.optim.moe_optimizer import MoEFusedV2OptimizerConfig
+from olmo_core.optim.moe_optimizer import OLMoDDPOptimizerConfig
 
 
 def test_build_groups_applies_overrides():
     model = nn.Sequential(nn.Linear(4, 4), nn.Linear(4, 4))
-    config = MoEFusedV2OptimizerConfig(
+    config = OLMoDDPOptimizerConfig(
         lr=1e-3,
         group_overrides=[OptimGroupOverride(params=["*bias*"], opts={"weight_decay": 0.0})],
     )

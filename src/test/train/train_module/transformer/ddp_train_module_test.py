@@ -15,7 +15,7 @@ from olmo_core.nn.transformer import (
     TransformerBlockType,
     TransformerType,
 )
-from olmo_core.optim import MoEFusedV2OptimizerConfig
+from olmo_core.optim import OLMoDDPOptimizerConfig
 from olmo_core.testing import requires_multi_gpu, run_distributed_test
 from olmo_core.train.train_module import OLMoDDPTrainModuleConfig
 from olmo_core.train.train_module.transformer import (
@@ -29,7 +29,7 @@ def test_moe_v2_train_module_config_roundtrips():
     config = OLMoDDPTrainModuleConfig(
         rank_microbatch_size=1024,
         max_sequence_length=512,
-        optim=MoEFusedV2OptimizerConfig(lr=1e-3),
+        optim=OLMoDDPOptimizerConfig(lr=1e-3),
     )
     restored = OLMoDDPTrainModuleConfig.from_dict(config.as_dict())
     assert restored == config
@@ -40,7 +40,7 @@ def test_moe_v2_train_module_config_roundtrips_with_parallelism():
     config = OLMoDDPTrainModuleConfig(
         rank_microbatch_size=1024,
         max_sequence_length=512,
-        optim=MoEFusedV2OptimizerConfig(lr=1e-3),
+        optim=OLMoDDPOptimizerConfig(lr=1e-3),
         dp_config=TransformerDataParallelConfig(
             name=DataParallelType.hsdp, reduce_grads_in_fp32=False
         ),
@@ -86,7 +86,7 @@ def _run_construct_no_ep():
     config = OLMoDDPTrainModuleConfig(
         rank_microbatch_size=512,
         max_sequence_length=512,
-        optim=MoEFusedV2OptimizerConfig(lr=1e-3),
+        optim=OLMoDDPOptimizerConfig(lr=1e-3),
         dp_config=TransformerDataParallelConfig(name=DataParallelType.ddp),
     )
     # eval_only=True skips the optimizer build (its fp32-master-param setup is exercised on GPU);
@@ -115,7 +115,7 @@ def _run_construct_ep():
     config = OLMoDDPTrainModuleConfig(
         rank_microbatch_size=512,
         max_sequence_length=512,
-        optim=MoEFusedV2OptimizerConfig(lr=1e-3),
+        optim=OLMoDDPOptimizerConfig(lr=1e-3),
         dp_config=TransformerDataParallelConfig(name=DataParallelType.ddp),
         ep_config=TransformerExpertParallelConfig(degree=2),
     )

@@ -33,7 +33,7 @@ from olmo_core.nn.transformer import (
     TransformerDataParallelWrappingStrategy,
 )
 from olmo_core.optim import OptimConfig
-from olmo_core.optim.moe_optimizer import MoEFusedV2OptimizerConfig
+from olmo_core.optim.moe_optimizer import OLMoDDPOptimizerConfig
 from olmo_core.optim.scheduler import Scheduler
 from olmo_core.train.train_module.config import TrainModuleConfig
 
@@ -471,7 +471,7 @@ class OLMoDDPTrainModuleConfig(TrainModuleConfig):
     """
     Configuration for :class:`~olmo_core.train.train_module.transformer.ddp_train_module.OLMoDDPTrainModule`,
     the train module for the fused MoE-v2 transformer (built with the fused MoE distributed
-    optimizer, :class:`~olmo_core.optim.MoEFusedV2OptimizerConfig`).
+    optimizer, :class:`~olmo_core.optim.OLMoDDPOptimizerConfig`).
     """
 
     rank_microbatch_size: int
@@ -479,7 +479,7 @@ class OLMoDDPTrainModuleConfig(TrainModuleConfig):
 
     # Optimizer settings.
 
-    optim: MoEFusedV2OptimizerConfig
+    optim: OLMoDDPOptimizerConfig
     max_grad_norm: Optional[float] = None
     scheduler: Optional[Scheduler] = None
 

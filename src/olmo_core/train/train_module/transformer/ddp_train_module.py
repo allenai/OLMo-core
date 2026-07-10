@@ -65,7 +65,7 @@ from olmo_core.nn.lm_head import LMOutputWithLoss
 from olmo_core.nn.moe.v2.model import MoEFusedV2Transformer
 from olmo_core.nn.parallel.distributed import MultiGroupDistributedDataParallel
 from olmo_core.nn.transformer import Transformer
-from olmo_core.optim import MoEFusedV2OptimizerConfig
+from olmo_core.optim import OLMoDDPOptimizerConfig
 from olmo_core.optim.scheduler import Scheduler
 from olmo_core.utils import get_default_device, log_once, move_to_device
 
@@ -109,7 +109,7 @@ class OLMoDDPTrainModule(TrainModule):
     def __init__(
         self,
         model: Transformer,
-        optim: MoEFusedV2OptimizerConfig,
+        optim: OLMoDDPOptimizerConfig,
         rank_microbatch_size: int,
         max_sequence_length: int,
         compile_model: bool = False,
@@ -295,10 +295,10 @@ class OLMoDDPTrainModule(TrainModule):
             # Build optimizer(s).
             log.info("Building optimizer...")
 
-            from olmo_core.optim.moe_optimizer import MoEFusedV2OptimizerConfig
+            from olmo_core.optim.moe_optimizer import OLMoDDPOptimizerConfig
 
-            assert isinstance(optim, MoEFusedV2OptimizerConfig)
-            optim = cast(MoEFusedV2OptimizerConfig, optim)
+            assert isinstance(optim, OLMoDDPOptimizerConfig)
+            optim = cast(OLMoDDPOptimizerConfig, optim)
             self.optim = optim.build(
                 self.model_parts,
                 self,
@@ -1343,7 +1343,7 @@ class OLMoDDPTrainModule(TrainModule):
         return schedule_outputs
 
     def optim_step(self):
-        from olmo_core.optim.moe_optimizer import MoEFusedV2Optimizer
+        from olmo_core.optim.moe_optimizer import OLMoDDPOptimizer
 
         optim = self._require_optimizer()
 
@@ -1365,7 +1365,7 @@ class OLMoDDPTrainModule(TrainModule):
         optim.step()
         # TODO(moe-train-module-rowwise-cache-refresh): this per-step refresh looks redundant —
         # optim.step() already copies the updated main params back to the model params and refreshes
-        # the rowwise-FP8 caches via MoEFusedV2Optimizer._copy_main_params_to_model_params(), with no
+        # the rowwise-FP8 caches via OLMoDDPOptimizer._copy_main_params_to_model_params(), with no
         # intervening weight change, so this rebuilds every cache a second time each step (Codex).
         # Left commented pending confirmation on a real rowwise-FP8 run (incl. skip-step behavior)
         # before removing outright.
@@ -1382,7 +1382,7 @@ class OLMoDDPTrainModule(TrainModule):
                 "total grad norm", total_grad_norm, reduce_type=None, namespace="optim"
             )
 
-        if isinstance(optim, MoEFusedV2Optimizer):
+        if isinstance(optim, OLMoDDPOptimizer):
             self.record_metric("step skipped", optim.step_skipped, namespace="optim")
 
         for model in self.model_parts:

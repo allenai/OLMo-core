@@ -100,9 +100,9 @@ def _is_fp8_only_expert_anchor_param(param: Any) -> bool:
 
 
 @dataclass
-class MoEFusedV2OptimizerConfig(Config):
+class OLMoDDPOptimizerConfig(Config):
     """
-    Configuration for :class:`MoEFusedV2Optimizer`.
+    Configuration for :class:`OLMoDDPOptimizer`.
 
     Builds the distributed fused optimizer for the
     :class:`~olmo_core.nn.moe.v2.model.MoEFusedV2Transformer` from AdamW settings
@@ -133,7 +133,7 @@ class MoEFusedV2OptimizerConfig(Config):
     loading optimizer state.
     """
 
-    # TODO(optim-config-dup): the fields below mirror MoEFusedV2Optimizer.__init__ (name + default),
+    # TODO(optim-config-dup): the fields below mirror OLMoDDPOptimizer.__init__ (name + default),
     # so `build()` can forward them via as_dict()->kwargs. This matches the other optim configs
     # (e.g. AdamWConfig mirrors torch.optim.AdamW), but here the optimizer is ours, so the two
     # default lists can drift. Revisit for a single source of truth (the config value always wins in
@@ -270,7 +270,7 @@ class MoEFusedV2OptimizerConfig(Config):
 
     @classmethod
     def optimizer(cls):
-        return MoEFusedV2Optimizer
+        return OLMoDDPOptimizer
 
     def _collect_ep_param_ids(self, model_parts: List[nn.Module]) -> Set[int]:
         """
@@ -300,7 +300,7 @@ class MoEFusedV2OptimizerConfig(Config):
         train_module: Optional["TrainModule"] = None,
         strict: bool = True,
         param_filter=None,
-    ) -> "MoEFusedV2Optimizer":
+    ) -> "OLMoDDPOptimizer":
         """
         Build the optimizer.
 
@@ -309,7 +309,7 @@ class MoEFusedV2OptimizerConfig(Config):
         """
         from ..nn.moe.v2.model import MoEFusedV2Transformer
 
-        assert train_module is not None, "MoEFusedV2OptimizerConfig.build requires a train_module"
+        assert train_module is not None, "OLMoDDPOptimizerConfig.build requires a train_module"
         model_parts = cast(List[MoEFusedV2Transformer], model_parts)
         train_module = cast("OLMoDDPTrainModule", train_module)
 
@@ -453,7 +453,7 @@ class _FlatModelParamSyncGroup:
 # FP8 cache refresh, and checkpoint serialization directly. Revisit the choice
 # if trainer/callback integration starts needing more of the torch optimizer
 # interface.
-class MoEFusedV2Optimizer:
+class OLMoDDPOptimizer:
     """
     Distributed fused optimizer for the
     :class:`~olmo_core.nn.moe.v2.model.MoEFusedV2Transformer`.
@@ -461,7 +461,7 @@ class MoEFusedV2Optimizer:
     Keeps fp32 master copies of the parameters, reduce-scatters gradients and gathers updated
     parameters across the data-parallel and expert-parallel data-parallel process groups (DTensor-
     and expert-parallel-aware), and applies a fused per-group **AdamW** step with **skip-step**
-    loss-spike detection. Built via :class:`MoEFusedV2OptimizerConfig`.
+    loss-spike detection. Built via :class:`OLMoDDPOptimizerConfig`.
     """
 
     LOSSES_STATE_DICT_KEY = "__moe_skip_step_losses"
@@ -581,9 +581,7 @@ class MoEFusedV2Optimizer:
                     has_fp32_param = True
 
         if has_bf16_param and has_fp32_param:
-            raise ValueError(
-                "Mixed bf16 and fp32 parameters are not supported in MoEFusedV2Optimizer"
-            )
+            raise ValueError("Mixed bf16 and fp32 parameters are not supported in OLMoDDPOptimizer")
 
         if has_bf16_param:
             # The model only has bf16 params
@@ -670,7 +668,7 @@ class MoEFusedV2Optimizer:
         for param_group in self.param_groups:
             for name, param in param_group["named_params"].items():
                 total_params += param.numel()
-        log.info(f"[MoEFusedV2Optimizer] Total model params: {total_params:,}")
+        log.info(f"[OLMoDDPOptimizer] Total model params: {total_params:,}")
         self._mxfp8_cache_sz = 0
         seen_mxfp8_weights: Set[int] = set()
         for param_group in self.param_groups:
@@ -716,7 +714,7 @@ class MoEFusedV2Optimizer:
 
         def info_str(tag: str, stat: Tuple[int, int, int, int, int, int]):
             info_str = ""
-            info_str += f"[MoEFusedV2Optimizer] {tag} - Global params: {to_str_N_B_GB(stat[0])}, Local params: {to_str_N_B_GB(stat[1])}\n"
+            info_str += f"[OLMoDDPOptimizer] {tag} - Global params: {to_str_N_B_GB(stat[0])}, Local params: {to_str_N_B_GB(stat[1])}\n"
             info_str += f"    Sharded tensors: {stat[2]}, total local sharded params: {to_str_N_B_GB(stat[4])}\n"
             info_str += f"    Replicated tensors: {stat[3]}, total local replicated params: {to_str_N_B_GB(stat[5])}\n"
             return info_str
@@ -748,7 +746,7 @@ class MoEFusedV2Optimizer:
         normal_model_param_gb = (self._model_param_sz - self._mxfp8_logical_param_sz) / BYTES_IN_GB
         total_model_gb = normal_model_param_gb
         total_mxfp8_cache_gb = self._mxfp8_cache_sz / BYTES_IN_GB
-        print_str += f"[MoEFusedV2Optimizer] Total optimizer states size: {total_global_optim_gb:.4f} GB global, {total_local_optim_gb:.4f} GB local\n"
+        print_str += f"[OLMoDDPOptimizer] Total optimizer states size: {total_global_optim_gb:.4f} GB global, {total_local_optim_gb:.4f} GB local\n"
 
         if self.model_has_grad_accum_fp32_buffer:
             logical_mxfp8_grad_gb = self._mxfp8_logical_param_sz / BYTES_IN_GB
@@ -757,11 +755,11 @@ class MoEFusedV2Optimizer:
             )  # extra fp32 grad buffer for normal params
         else:
             total_model_grad_gb = total_model_gb  # bf16 grad only
-        print_str += f"[MoEFusedV2Optimizer] Model params size (GB): {total_model_gb:.4f} GB, model grads size (GB): {total_model_grad_gb:.4f} GB\n"
+        print_str += f"[OLMoDDPOptimizer] Model params size (GB): {total_model_gb:.4f} GB, model grads size (GB): {total_model_grad_gb:.4f} GB\n"
         if self._mxfp8_logical_param_sz > 0:
             logical_mxfp8_param_gb = self._mxfp8_logical_param_sz / BYTES_IN_GB
             print_str += (
-                f"[MoEFusedV2Optimizer] FP8 logical bf16-equivalent params skipped from model storage: "
+                f"[OLMoDDPOptimizer] FP8 logical bf16-equivalent params skipped from model storage: "
                 f"{logical_mxfp8_param_gb:.4f} GB, FP8 RHS caches: {total_mxfp8_cache_gb:.4f} GB\n"
             )
         total_static = (
@@ -769,7 +767,7 @@ class MoEFusedV2Optimizer:
         )
 
         print_str += (
-            f"[MoEFusedV2Optimizer] Total estimated static memory (GB): {total_static:.4f} GB\n"
+            f"[OLMoDDPOptimizer] Total estimated static memory (GB): {total_static:.4f} GB\n"
         )
 
         log.info(print_str)
@@ -906,7 +904,7 @@ class MoEFusedV2Optimizer:
             else:
                 # small tensor, do not shard
                 placements = [Replicate()]
-                log.info(f"[MoEFusedV2Optimizer] A tensor of size {num_elements} is replicated.")
+                log.info(f"[OLMoDDPOptimizer] A tensor of size {num_elements} is replicated.")
         else:
             # always no shard
             placements = [Replicate()]
@@ -1094,7 +1092,7 @@ class MoEFusedV2Optimizer:
         return norm
 
     @torch.no_grad()
-    @maybe_nvtx_annotate("MoEFusedV2Optimizer.step")
+    @maybe_nvtx_annotate("OLMoDDPOptimizer.step")
     def step(self, closure: Optional[Callable[[], float]] = None) -> Optional[float]:
         """
         Run one optimizer step: reduce-scatter gradients, copy them to the fp32 master grads, apply
@@ -1292,7 +1290,7 @@ class MoEFusedV2Optimizer:
         ), f"Local shape mismatch for {state_key}: {ckpt_local.shape} vs {state_dt.to_local().shape}"
         state_dt.to_local().copy_(ckpt_local)
 
-    @maybe_nvtx_annotate("MoEFusedV2Optimizer._reduce_scatter_model_grads")
+    @maybe_nvtx_annotate("OLMoDDPOptimizer._reduce_scatter_model_grads")
     def _reduce_scatter_model_grads(self) -> None:
         for param_group in self.param_groups:
             for name, param in param_group["named_params"].items():
@@ -1562,7 +1560,7 @@ class MoEFusedV2Optimizer:
         flush_all_reduce_bucket()
         entries.clear()
 
-    @maybe_nvtx_annotate("MoEFusedV2Optimizer._copy_model_grads_to_main_grads")
+    @maybe_nvtx_annotate("OLMoDDPOptimizer._copy_model_grads_to_main_grads")
     def _copy_model_grads_to_main_grads(self):
         for param_group in self.param_groups:
             fp8_entries: List[Tuple[str, FP8WeightStore, torch.Tensor, DTensor]] = []
@@ -1641,7 +1639,7 @@ class MoEFusedV2Optimizer:
         return local_shard
 
     @torch._dynamo.disable()
-    @maybe_nvtx_annotate("MoEFusedV2Optimizer._copy_main_params_to_model_params")
+    @maybe_nvtx_annotate("OLMoDDPOptimizer._copy_main_params_to_model_params")
     def _copy_main_params_to_model_params(self):
         if self._flat_model_sync_groups:
             self._copy_main_params_to_flat_model_buffers()
@@ -1874,7 +1872,7 @@ class MoEFusedV2Optimizer:
                     gathered_matrix[:, entry.local_offset : entry.local_offset + entry.local_numel]
                 )
 
-    @maybe_nvtx_annotate("MoEFusedV2Optimizer._refresh_rowwise_fp8_caches_from_model_params")
+    @maybe_nvtx_annotate("OLMoDDPOptimizer._refresh_rowwise_fp8_caches_from_model_params")
     def _refresh_rowwise_fp8_caches_from_model_params(self) -> None:
         owners: List[Any] = []
         seen: Set[int] = set()
@@ -1929,7 +1927,7 @@ class MoEFusedV2Optimizer:
 
         return step_factor.float()
 
-    @maybe_nvtx_annotate("MoEFusedV2Optimizer._step_foreach")
+    @maybe_nvtx_annotate("OLMoDDPOptimizer._step_foreach")
     def _step_foreach(self, closure=None) -> None:
         """Performs adamw step using foreach impl, limiting chunk size to reduce memory usage."""
 
@@ -2336,3 +2334,8 @@ def coalesced_all_gather(
         gathered_outputs.append(gathered)
 
     return gathered_outputs
+
+
+# Back-compat aliases (canonical names are the OLMoDDP* ones above).
+MoEFusedV2OptimizerConfig = OLMoDDPOptimizerConfig
+MoEFusedV2Optimizer = OLMoDDPOptimizer
