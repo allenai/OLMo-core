@@ -28,33 +28,28 @@ def debug_nan_inf_grad_norm(
     total_grad_norm_local: torch.Tensor,
     *,
     step: int,
-    enabled: bool,
     component_norms: Callable[[], Mapping[str, torch.Tensor]],
     iter_local_grads: Callable[[], Iterable[Tuple[str, str, str, torch.Tensor]]],
     ranks_filter: str = "all",
-    topk: int = 20,
+    max_log_entries: int = 20,
     dump_dir: Optional[str] = None,
     rank: Optional[int] = None,
 ) -> None:
     """
     When ``total_grad_norm_local`` is non-finite, log the per-parameter local grad norms and the
     per-component local norms to help locate the offending parameter, and -- if ``dump_dir`` is set
-    -- ``torch.save`` the same data there. A no-op unless ``enabled`` and the norm is actually
-    non-finite, so the ``component_norms``/``iter_local_grads`` callables are only invoked once
-    we've decided to report.
+    -- ``torch.save`` the same data there. A no-op when the norm is finite, so the
+    ``component_norms``/``iter_local_grads`` callables are only invoked once we've decided to report.
 
     :param total_grad_norm_local: The (already node-local) total grad norm.
     :param step: Training step to label the report with.
-    :param enabled: Master gate; when ``False`` this returns immediately.
     :param component_norms: Returns a mapping of component name -> local norm tensor.
     :param iter_local_grads: Returns an iterable of ``(name, param_group, placements, local_grad)``.
     :param ranks_filter: Which ranks report (see :func:`olmo_core.utils.rank_matches_filter`).
-    :param topk: How many entries to include in the "top local norms" context list.
+    :param max_log_entries: How many entries to include in the "top local norms" context list.
     :param dump_dir: If set, also ``torch.save`` the report under this directory.
     :param rank: Current rank; defaults to the distributed rank (or 0).
     """
-    if not enabled:
-        return
     if rank is None:
         rank = dist.get_rank() if dist.is_available() and dist.is_initialized() else 0
     if not rank_matches_filter(ranks_filter, rank):
@@ -62,7 +57,7 @@ def debug_nan_inf_grad_norm(
     if bool(torch.isfinite(total_grad_norm_local).all().item()):
         return
 
-    topk = max(topk, 0)
+    max_log_entries = max(max_log_entries, 0)
     component_values = {
         name: float(norm.detach().float().item()) for name, norm in component_norms().items()
     }
@@ -94,7 +89,7 @@ def debug_nan_inf_grad_norm(
         reverse=True, key=lambda item: item[0] if math.isfinite(item[0]) else float("inf")
     )
     top_for_dump = [e for _, e in top_entries]
-    top_for_log = top_for_dump[:topk]
+    top_for_log = top_for_dump[:max_log_entries]
 
     if dump_dir:
         os.makedirs(dump_dir, exist_ok=True)
@@ -111,9 +106,9 @@ def debug_nan_inf_grad_norm(
             os.path.join(dump_dir, f"rank{rank:03d}_step{step:06d}_optim_nonfinite_grad_norm.pt"),
         )
 
-    # NOTE: `topk` caps BOTH lists, including the non-finite ones (bad_entries[:topk]) -- so with
-    # more than `topk` non-finite params the culprit list is truncated. Kept intentionally.
-    bad_lines = "\n".join(f"  BAD {_format_entry(e)}" for e in bad_entries[:topk])
+    # NOTE: `max_log_entries` caps BOTH lists, including the non-finite ones (bad_entries[:max_log_entries]) -- so with
+    # more than `max_log_entries` non-finite params the culprit list is truncated. Kept intentionally.
+    bad_lines = "\n".join(f"  BAD {_format_entry(e)}" for e in bad_entries[:max_log_entries])
     top_lines = "\n".join(f"  {i + 1:02d}. {_format_entry(e)}" for i, e in enumerate(top_for_log))
     log.error(
         "Non-finite grad norm diagnostic on rank %s step %s: total=%s components=%s "

@@ -1110,22 +1110,22 @@ class OLMoDDPOptimizer:
         TODO(config-gate this diagnostic): the ad-hoc ``OLMO_DDP_DEBUG_*`` env knobs are off
         convention (core gates behavior via Config fields — cf. ``check_nan_inf_grad``). Migrate to
         a ``debug_nan_inf_grad: bool`` config field (fire on ``check_nan_inf_grad and
-        debug_nan_inf_grad``) and move the rank / topk / dump-dir knobs to config fields too. The
+        debug_nan_inf_grad``) and move the rank / max_log_entries / dump-dir knobs to config fields too. The
         logged step is the trainer ``global_step`` (set on ``_olmo_debug_global_step``, not the Adam
         ``.step`` state, which lags ``global_step`` by the skip count on this skip-step optimizer);
         a clean ``global_step`` setter mirroring ``latest_loss`` would replace the raw attribute.
         """
+        if not env_bool("OLMO_DDP_DEBUG_NONFINITE_GRAD"):
+            return
         try:
-            topk = int(os.getenv("OLMO_DDP_DEBUG_NONFINITE_GRAD_TOPK", "20"))
+            max_log_entries = int(os.getenv("OLMO_DDP_DEBUG_NONFINITE_GRAD_TOPK", "20"))
         except ValueError:
-            topk = 20
+            max_log_entries = 20
         debug_nan_inf_grad_norm(
             _to_local_tensor(total_grad_norm.detach()),
             step=getattr(self, "_olmo_debug_global_step", -1),
-            enabled=env_bool("OLMO_DDP_DEBUG_NONFINITE_GRAD"),
             ranks_filter=os.getenv("OLMO_DDP_DEBUG_NONFINITE_GRAD_RANKS", "all"),
-            topk=topk,
-            # A single knob: dump iff a directory is specified.
+            max_log_entries=max_log_entries,
             dump_dir=os.getenv("OLMO_DEBUG_DUMP_DIR"),
             component_norms=lambda: {
                 "dp_replicated_local": self._local_total_norm(dp_grads_replicated),
