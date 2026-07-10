@@ -8,9 +8,9 @@ from torch.distributed.device_mesh import DeviceMesh
 from olmo_core.config import DType
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.nn.attention import AttentionConfig, AttentionType
+from olmo_core.nn.ddp.block import OLMoDDPTransformerBlock
 from olmo_core.nn.layer_norm import LayerNormConfig, LayerNormType
 from olmo_core.nn.moe import MoERouterGatingFunction
-from olmo_core.nn.moe.v2.block import MoEFusedV2TransformerBlock
 from olmo_core.nn.moe.v2.routed_experts import RoutedExpertsConfig
 from olmo_core.nn.moe.v2.router import MoERouterConfigV2
 from olmo_core.testing import requires_gpu, requires_multi_gpu, run_distributed_test
@@ -33,9 +33,9 @@ def _build_block(
     uniform_expert_assignment: bool = True,
     init_device: str = "cuda",
     ep_no_sync_use_2d_all_to_all: bool = False,
-) -> MoEFusedV2TransformerBlock:
+) -> OLMoDDPTransformerBlock:
     layer_norm = LayerNormConfig(name=LayerNormType.rms, eps=1e-6, bias=False, dtype=DType.float32)
-    return MoEFusedV2TransformerBlock(
+    return OLMoDDPTransformerBlock(
         d_model=d_model,
         block_idx=0,
         n_layers=1,
@@ -76,7 +76,7 @@ def _build_block(
     )
 
 
-def _init_block_params(block: MoEFusedV2TransformerBlock):
+def _init_block_params(block: OLMoDDPTransformerBlock):
     torch.manual_seed(1234)
     with torch.no_grad():
         for p in block.parameters():
@@ -84,7 +84,7 @@ def _init_block_params(block: MoEFusedV2TransformerBlock):
                 p.normal_(mean=0.0, std=0.02)
 
 
-def _install_forced_router(block: MoEFusedV2TransformerBlock):
+def _install_forced_router(block: OLMoDDPTransformerBlock):
     """Force all tokens to expert 0 so dispatch/drop behavior is deterministic."""
 
     def _make_forced_forward(router):
@@ -172,7 +172,7 @@ def _run_ep_no_sync_quota_invariants():
 
 
 def _run_ep_no_sync_hard_fail_setup():
-    import olmo_core.nn.moe.v2.block as block_module
+    import olmo_core.nn.ddp.block as block_module
 
     os.environ["OLMO_USE_OWN_SYMM_MEM"] = "0"  # VDev-1d uses the legacy symm-mem backend
     ep_mesh = _build_ep_mesh()

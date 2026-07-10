@@ -1,30 +1,30 @@
-"""Tests for ``MoEFusedV2Transformer`` construction and FLOP accounting."""
+"""Tests for ``OLMoDDPModel`` construction and FLOP accounting."""
 
 from olmo_core.config import DType
 from olmo_core.nn.attention import AttentionConfig, AttentionType
+from olmo_core.nn.ddp.block import OLMoDDPTransformerBlockConfig
 from olmo_core.nn.layer_norm import LayerNormConfig, LayerNormType
 from olmo_core.nn.lm_head import LMHeadConfig
-from olmo_core.nn.moe.v2.block import MoEFusedV2TransformerBlockConfig
 from olmo_core.nn.moe.v2.routed_experts import RoutedExpertsConfig
 from olmo_core.nn.moe.v2.router import MoERouterConfigV2
 from olmo_core.nn.transformer import (
-    MoEFusedV2TransformerConfig,
+    OLMoDDPModelConfig,
     TransformerBlockType,
     TransformerType,
 )
 
 
-def _build_model_config(*, d_model: int = 64, n_layers: int = 2) -> MoEFusedV2TransformerConfig:
+def _build_model_config(*, d_model: int = 64, n_layers: int = 2) -> OLMoDDPModelConfig:
     dtype = DType.float32
     layer_norm = LayerNormConfig(name=LayerNormType.rms, eps=1e-6, bias=False, dtype=dtype)
-    return MoEFusedV2TransformerConfig(
+    return OLMoDDPModelConfig(
         init_seed=0,
         d_model=d_model,
         recompute_each_block=False,
         vocab_size=128,
         n_layers=n_layers,
         name=TransformerType.moe_fused_v2,
-        block=MoEFusedV2TransformerBlockConfig(
+        block=OLMoDDPTransformerBlockConfig(
             name=TransformerBlockType.moe_fused_v2,
             attention=AttentionConfig(
                 name=AttentionType.default, n_heads=4, bias=False, use_flash=False, dtype=dtype

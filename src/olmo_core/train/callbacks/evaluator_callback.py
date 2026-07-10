@@ -33,7 +33,7 @@ from ..common import Duration, MetricMergeStrategy
 from ..train_module import (
     EvalBatchSizeUnit,
     EvalBatchSpec,
-    MoEV2TransformerTrainModule,
+    OLMoDDPTrainModule,
     TransformerTrainModule,
 )
 from .callback import Callback, CallbackConfig
@@ -96,12 +96,10 @@ class EvaluatorCallback(Callback):
     """
 
     def post_attach(self):
-        if not isinstance(
-            self.trainer.train_module, (TransformerTrainModule, MoEV2TransformerTrainModule)
-        ):
+        if not isinstance(self.trainer.train_module, (TransformerTrainModule, OLMoDDPTrainModule)):
             raise OLMoConfigurationError(
                 f"'{self.__class__.__name__}' only supports transformer train modules "
-                f"('{TransformerTrainModule.__name__}', '{MoEV2TransformerTrainModule.__name__}')"
+                f"('{TransformerTrainModule.__name__}', '{OLMoDDPTrainModule.__name__}')"
             )
 
     def pre_train(self):

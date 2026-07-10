@@ -4,9 +4,9 @@ from torch.distributed.device_mesh import DeviceMesh
 
 from olmo_core.config import DType
 from olmo_core.nn.attention import AttentionConfig, AttentionType
+from olmo_core.nn.ddp.block import OLMoDDPTransformerBlock
 from olmo_core.nn.layer_norm import LayerNormConfig, LayerNormType
 from olmo_core.nn.moe import MoERouterGatingFunction
-from olmo_core.nn.moe.v2.block import MoEFusedV2TransformerBlock
 from olmo_core.nn.moe.v2.routed_experts import RoutedExpertsConfig
 from olmo_core.nn.moe.v2.router import MoERouterConfigV2
 from olmo_core.testing import (
@@ -24,7 +24,7 @@ def _build_ep_mesh() -> DeviceMesh:
 
 def _build_block(*, ep_no_sync: bool, ep_no_sync_capacity_factor: float = 8.0):
     layer_norm = LayerNormConfig(name=LayerNormType.rms, eps=1e-6, bias=False, dtype=DType.float32)
-    return MoEFusedV2TransformerBlock(
+    return OLMoDDPTransformerBlock(
         d_model=512,
         block_idx=0,
         n_layers=1,
@@ -60,7 +60,7 @@ def _build_block(*, ep_no_sync: bool, ep_no_sync_capacity_factor: float = 8.0):
     )
 
 
-def _init_block_params(block: MoEFusedV2TransformerBlock):
+def _init_block_params(block: OLMoDDPTransformerBlock):
     torch.manual_seed(1234)
     with torch.no_grad():
         for p in block.parameters():
@@ -68,7 +68,7 @@ def _init_block_params(block: MoEFusedV2TransformerBlock):
                 p.normal_(mean=0.0, std=0.02)
 
 
-def _install_deterministic_topk_router(block: MoEFusedV2TransformerBlock):
+def _install_deterministic_topk_router(block: OLMoDDPTransformerBlock):
     def _make(router):
         def _forward(local_x, scores_only, loss_div_factor=None):
             del loss_div_factor

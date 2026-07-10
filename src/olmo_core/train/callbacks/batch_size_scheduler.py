@@ -7,17 +7,12 @@ from typing import Any, List, Optional
 import torch
 
 from olmo_core.exceptions import OLMoConfigurationError
-from olmo_core.optim import (
-    INITIAL_LR_FIELD,
-    LR_FIELD,
-    MoEFusedV2Optimizer,
-    SkipStepAdamW,
-)
+from olmo_core.optim import INITIAL_LR_FIELD, LR_FIELD, OLMoDDPOptimizer, SkipStepAdamW
 from olmo_core.optim.scheduler import WSD, ConstantScheduler, Scheduler
 
 from ..common import Duration
 from ..train_module import (
-    MoEV2TransformerTrainModule,
+    OLMoDDPTrainModule,
     TransformerPipelineTrainModule,
     TransformerTrainModule,
 )
@@ -102,7 +97,7 @@ class BatchSizeSchedulerCallback(Callback):
             scheduler = self.trainer.train_module.scheduler
         elif isinstance(self.trainer.train_module, TransformerPipelineTrainModule):
             scheduler = self.trainer.train_module.scheduler
-        elif isinstance(self.trainer.train_module, MoEV2TransformerTrainModule):
+        elif isinstance(self.trainer.train_module, OLMoDDPTrainModule):
             scheduler = self.trainer.train_module.scheduler
 
         # If we have an LR scheduler, we need to make sure that the value it uses for `t_max`
@@ -167,7 +162,7 @@ class BatchSizeSchedulerCallback(Callback):
         lr_adjustment_factor = math.sqrt(ratio)
         self.trainer.data_loader.global_batch_size = batch_size
 
-        # Heterogeneous: MoEFusedV2Optimizer isn't a torch.optim.Optimizer subclass (it exposes the
+        # Heterogeneous: OLMoDDPOptimizer isn't a torch.optim.Optimizer subclass (it exposes the
         # same `param_groups` surface the LR adjustment below relies on).
         optimizers: Optional[List[Any]] = None
         scheduler: Optional[Scheduler] = None
@@ -177,7 +172,7 @@ class BatchSizeSchedulerCallback(Callback):
         elif isinstance(self.trainer.train_module, TransformerPipelineTrainModule):
             optimizers = self.trainer.train_module.optimizers
             scheduler = self.trainer.train_module.scheduler
-        elif isinstance(self.trainer.train_module, MoEV2TransformerTrainModule):
+        elif isinstance(self.trainer.train_module, OLMoDDPTrainModule):
             optimizers = [self.trainer.train_module.optim]
             scheduler = self.trainer.train_module.scheduler
 
@@ -188,7 +183,7 @@ class BatchSizeSchedulerCallback(Callback):
 
         for optim in optimizers:
             if not isinstance(
-                optim, (torch.optim.Adam, torch.optim.AdamW, SkipStepAdamW, MoEFusedV2Optimizer)
+                optim, (torch.optim.Adam, torch.optim.AdamW, SkipStepAdamW, OLMoDDPOptimizer)
             ):
                 raise NotImplementedError(
                     f"Unable to adjust learning rate for {optim.__class__.__name__} optimizer"

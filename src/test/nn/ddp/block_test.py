@@ -1,14 +1,14 @@
-"""Tests for ``MoEFusedV2TransformerBlock`` config accounting and construction."""
+"""Tests for ``OLMoDDPTransformerBlock`` config accounting and construction."""
 
 import pytest
 
 from olmo_core.config import DType
 from olmo_core.nn.attention import AttentionConfig, AttentionType
-from olmo_core.nn.layer_norm import LayerNormConfig, LayerNormType
-from olmo_core.nn.moe.v2.block import (
-    MoEFusedV2TransformerBlock,
-    MoEFusedV2TransformerBlockConfig,
+from olmo_core.nn.ddp.block import (
+    OLMoDDPTransformerBlock,
+    OLMoDDPTransformerBlockConfig,
 )
+from olmo_core.nn.layer_norm import LayerNormConfig, LayerNormType
 from olmo_core.nn.moe.v2.routed_experts import RoutedExpertsConfig
 from olmo_core.nn.moe.v2.router import MoERouterConfigV2
 from olmo_core.nn.transformer import TransformerBlockType
@@ -16,10 +16,10 @@ from olmo_core.nn.transformer import TransformerBlockType
 D_MODEL = 64
 
 
-def _block_config(*, use_peri_norm: bool = False) -> MoEFusedV2TransformerBlockConfig:
+def _block_config(*, use_peri_norm: bool = False) -> OLMoDDPTransformerBlockConfig:
     dtype = DType.float32
     layer_norm = LayerNormConfig(name=LayerNormType.rms, eps=1e-6, bias=False, dtype=dtype)
-    return MoEFusedV2TransformerBlockConfig(
+    return OLMoDDPTransformerBlockConfig(
         name=TransformerBlockType.moe_fused_v2,
         attention=AttentionConfig(
             name=AttentionType.default, n_heads=4, bias=False, use_flash=False, dtype=dtype
@@ -36,9 +36,9 @@ def _block_config(*, use_peri_norm: bool = False) -> MoEFusedV2TransformerBlockC
     )
 
 
-def _build_block(config: MoEFusedV2TransformerBlockConfig) -> MoEFusedV2TransformerBlock:
+def _build_block(config: OLMoDDPTransformerBlockConfig) -> OLMoDDPTransformerBlock:
     block = config.build(d_model=D_MODEL, block_idx=0, n_layers=1, init_device="cpu")
-    assert isinstance(block, MoEFusedV2TransformerBlock)
+    assert isinstance(block, OLMoDDPTransformerBlock)
     return block
 
 

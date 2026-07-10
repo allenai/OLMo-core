@@ -7,10 +7,10 @@ from typing import Any, List
 import pytest
 import torch
 
-from olmo_core.nn.moe.v2 import block as block_mod
+from olmo_core.nn.ddp import block as block_mod
+from olmo_core.nn.ddp import model as model_mod
 from olmo_core.nn.moe.v2 import ep_no_sync_tbo_1d as tbo_1d
 from olmo_core.nn.moe.v2 import ep_no_sync_tbo_rowwise as rowwise_tbo
-from olmo_core.nn.moe.v2 import model as model_mod
 
 
 def test_block_selects_rowwise_no_sync_tbo(monkeypatch):
@@ -28,7 +28,7 @@ def test_block_selects_rowwise_no_sync_tbo(monkeypatch):
     monkeypatch.setattr(tbo_1d, "combined_forward_ep_no_sync_tbo", fake_1d)
 
     fake_block = SimpleNamespace(ep_no_sync_use_rowwise_all_to_all=True)
-    out, ctx = block_mod.MoEFusedV2TransformerBlock.combined_forward_ep_no_sync_tbo(
+    out, ctx = block_mod.OLMoDDPTransformerBlock.combined_forward_ep_no_sync_tbo(
         fake_block,  # type: ignore[arg-type]
         "x0",
         {"x1": "x1"},
@@ -65,7 +65,7 @@ def test_block_keeps_existing_1d_tbo_when_rowwise_disabled(monkeypatch):
     monkeypatch.setattr(tbo_1d, "combined_forward_ep_no_sync_tbo", fake_1d)
 
     fake_block = SimpleNamespace(ep_no_sync_use_rowwise_all_to_all=False)
-    out, ctx = block_mod.MoEFusedV2TransformerBlock.combined_forward_ep_no_sync_tbo(
+    out, ctx = block_mod.OLMoDDPTransformerBlock.combined_forward_ep_no_sync_tbo(
         fake_block,  # type: ignore[arg-type]
         "x0",
         {"x1": "x1"},
@@ -113,7 +113,7 @@ def test_model_finalizes_rowwise_pending_context(monkeypatch):
         global_x_rank_major=torch.ones(1, 2),
     )
 
-    h0, h1 = model_mod.MoEFusedV2Transformer._tbo_last_step(
+    h0, h1 = model_mod.OLMoDDPModel._tbo_last_step(
         FakeModel(),  # type: ignore[arg-type]
         "x0-final",
         pending,
