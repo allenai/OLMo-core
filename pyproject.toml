@@ -26,6 +26,7 @@ dependencies = [
     "importlib_resources",
     "bettermap",
     "pandas",
+    "nvtx",
 ]
 
 [project.urls]
@@ -57,7 +58,6 @@ dev = [
     "sphinx-inline-tabs",
     "twine>=1.11.0",
     "wheel",
-    "nvtx"
 ]
 beaker = ["beaker-py>=2.5.4,<3.0", "beaker-gantry>=3.4.3,<4.0", "GitPython>=3.0,<4.0", "google-cloud-compute"]
 comet = ["comet_ml"]
