@@ -26,6 +26,10 @@ DEFAULT_GROUPS = [
     "01KWNAAV94Z28846JBYK29ZH3T",  # normal workspace larger-model eval group
     "01KWV53TWPXFD7KSM9BFVEFK19",  # 1.2B integration Cx1/Cx2 eval group
 ]
+DEFAULT_EXPERIMENTS = [
+    "01KX02MYSA36TFKBT99XAE0XZ6",  # 275M baseline Cx1 midtrained OLMoBase
+    "01KX02N80T6NXX8TZEJM8TC0Z5",  # 275M baseline Cx8 midtrained OLMoBase
+]
 CACHE_VERSION = 1
 HIGH_LEVEL_SUITES = [
     ("olmobase:mcqa_stem", "mcqa_stem"),
@@ -74,6 +78,24 @@ def model_sort_key(name: str) -> tuple[int, str]:
 
 def size_sort_key(size: str) -> int:
     return {"275M": 0, "480M": 1, "810M": 2, "1.2B": 3}.get(size, 99)
+
+
+def phase_sort_key(name: str) -> int:
+    return 1 if is_midtrained(name) else 0
+
+
+def cx_sort_key(cx: str) -> int:
+    match = re.match(r"Cx(\d+)$", cx)
+    return int(match.group(1)) if match else 999
+
+
+def record_sort_key(name: str) -> tuple[int, int, int, str]:
+    return (
+        size_sort_key(display_size(name)),
+        phase_sort_key(name),
+        cx_sort_key(display_cx(name)),
+        display_intervention(name),
+    )
 
 
 def direction_for_metric(suite: str, metric: str) -> str:
@@ -138,8 +160,13 @@ def display_cx(name: str) -> str:
     return match.group(1).replace("cx", "Cx") if match else ""
 
 
+def is_midtrained(name: str) -> bool:
+    return bool(re.search(r"(?:^|-)mt(?:-|$)", name)) or "midtrain" in name or "midtraining" in name
+
+
 def display_intervention(name: str) -> str:
     labels = (
+        ("mt-baseline", "midtrained baseline"),
         ("baseline", "baseline"),
         ("int-wide", "integration 1 wide"),
         ("intw256e8k", "integration 1 wide"),
@@ -188,13 +215,14 @@ def high_level_table(records: list[dict[str, Any]]) -> tuple[list[str], list[lis
         if any(value is not None for value in values):
             row_records.append(
                 {
+                    "name": record["name"],
                     "size": display_size(record["name"]),
                     "cx": display_cx(record["name"]),
                     "intervention": display_intervention(record["name"]),
                     "values": values,
                 }
             )
-    row_records.sort(key=lambda row: (size_sort_key(row["size"]), row["cx"], row["intervention"]))
+    row_records.sort(key=lambda row: (size_sort_key(row["size"]), phase_sort_key(row["name"]), cx_sort_key(row["cx"]), row["intervention"]))
 
     best_by_size: dict[str, list[float | None]] = defaultdict(lambda: [None] * len(HIGH_LEVEL_SUITES))
     for row in row_records:
@@ -212,10 +240,13 @@ def high_level_table(records: list[dict[str, Any]]) -> tuple[list[str], list[lis
 
     rows = []
     previous_size = None
+    previous_phase = None
     for row in row_records:
-        if previous_size is not None and row["size"] != previous_size:
+        phase = phase_sort_key(row["name"])
+        if previous_size is not None and (row["size"] != previous_size or phase != previous_phase):
             rows.append([""] * len(headers))
         previous_size = row["size"]
+        previous_phase = phase
         values = []
         for idx, value in enumerate(row["values"]):
             formatted = fmt(value)
@@ -320,6 +351,7 @@ def suite_scores(payload: dict[str, Any]) -> dict[str, dict[str, Any]]:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--group", action="append", default=[], help="Beaker group ID/name. Defaults to current Cx8 OLMoBase groups.")
+    parser.add_argument("--experiment", action="append", default=[], help="Individual Beaker experiment ID/name to include.")
     parser.add_argument("--cache-dir", type=Path, default=RESULTS_DIR / "cache" / "olmobase")
     parser.add_argument("--output", type=Path, default=RESULTS_DIR / "olmobase_evals.md")
     parser.add_argument("--json-output", type=Path, default=RESULTS_DIR / "olmobase_evals.json")
@@ -332,6 +364,7 @@ def main() -> int:
     args = parser.parse_args()
 
     groups = args.group or DEFAULT_GROUPS
+    experiments_to_include = args.experiment or DEFAULT_EXPERIMENTS
     by_name: dict[str, dict[str, Any]] = {}
     for group in groups:
         try:
@@ -344,9 +377,22 @@ def main() -> int:
             previous = by_name.get(base)
             if previous is None or experiment.get("created", "") > previous.get("created", ""):
                 by_name[base] = experiment
+    if experiments_to_include:
+        try:
+            experiments = run_json(["beaker", "experiment", "get", *experiments_to_include, "--format", "json"])
+        except subprocess.CalledProcessError as exc:
+            print(f"warning: failed to read experiments {experiments_to_include}: {exc}")
+            experiments = []
+        if isinstance(experiments, dict):
+            experiments = [experiments]
+        for experiment in experiments:
+            base = normalize_name(experiment["name"])
+            previous = by_name.get(base)
+            if previous is None or experiment.get("created", "") > previous.get("created", ""):
+                by_name[base] = experiment
 
     records = []
-    for name, experiment in sorted(by_name.items(), key=lambda item: model_sort_key(item[0])):
+    for name, experiment in sorted(by_name.items(), key=lambda item: record_sort_key(item[0])):
         job = latest_job(experiment)
         status = status_label(job)
         record = {
