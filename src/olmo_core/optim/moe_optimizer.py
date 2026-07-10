@@ -10,6 +10,7 @@ from typing import (
     Callable,
     Dict,
     Iterable,
+    Iterator,
     List,
     Optional,
     Set,
@@ -37,17 +38,13 @@ from torch.distributed.tensor._utils import (
 
 from olmo_core._nvtx import maybe_nvtx_annotate
 from olmo_core.nn.fp8_weight import FP8WeightStore
-from olmo_core.utils import (
-    env_bool,
-    get_default_device,
-    move_to_device,
-    rank_matches_filter,
-)
+from olmo_core.utils import env_bool, get_default_device, move_to_device
 
 from ..config import Config, DType
 from ..exceptions import OLMoConfigurationError
 from .adamw import foreach_adamw_step
 from .config import INITIAL_LR_FIELD, LR_FIELD, OptimGroupOverride
+from .grad_debug import debug_nan_inf_grad_norm
 
 log = logging.getLogger(__name__)
 
@@ -1028,7 +1025,7 @@ class OLMoDDPOptimizer:
             ep_dp_grads_sharded,
         )
 
-        self._maybe_debug_nonfinite_grad_norm(
+        self._maybe_debug_nan_inf_grad_norm(
             total_grad_norm,
             dp_grads_replicated,
             dp_grads_sharded,
@@ -1094,7 +1091,7 @@ class OLMoDDPOptimizer:
             total_grad_norm = self._reduce_norm(total_grad_norm, self.dense_mesh["pp"].get_group())
         return total_grad_norm
 
-    def _maybe_debug_nonfinite_grad_norm(
+    def _maybe_debug_nan_inf_grad_norm(
         self,
         total_grad_norm: torch.Tensor,
         dp_grads_replicated: List[torch.Tensor],
@@ -1104,55 +1101,43 @@ class OLMoDDPOptimizer:
     ) -> None:
         """
         Opt-in diagnostic (gated by ``OLMO_DDP_DEBUG_NONFINITE_GRAD``): when the total grad norm is
-        non-finite, log the per-parameter local grad norms and the per-component (dp/ep_dp,
-        replicated/sharded) local norms to help locate the offending parameter. A no-op unless the
-        env var is set, so it adds no work to the normal path.
+        non-finite, log/dump the per-parameter and per-component local grad norms to locate the
+        offending parameter. This is just the optimizer-specific adapter — it reads the env knobs
+        and extracts the grad data, then delegates to
+        :func:`olmo_core.optim.grad_debug.debug_nan_inf_grad_norm`. A no-op unless the env var is
+        set and the norm is non-finite (the extraction closures only run then).
 
-        TODO(config-gate this diagnostic): the ad-hoc ``OLMO_DDP_DEBUG_*`` env flags are off
+        TODO(config-gate this diagnostic): the ad-hoc ``OLMO_DDP_DEBUG_*`` env knobs are off
         convention (core gates behavior via Config fields — cf. ``check_nan_inf_grad``). Migrate to
-        a ``debug_nan_inf_grad: bool`` config field and fire on
-        ``check_nan_inf_grad and debug_nan_inf_grad``; keep the rank filter but migrate its
-        ``OLMO_DDP_DEBUG_NONFINITE_GRAD_RANKS`` env var to a config field (the matcher itself lives
-        in :func:`olmo_core.utils.rank_matches_filter`); drop the disk-dump env vars
-        (``OLMO_DEBUG_DUMP_*``) — they belong with the DDP train-module dump subsystem, ported
-        separately. Keep the ``limit`` cap on *both* the non-finite and top lists
-        (see the join blocks below). For the logged step, source the trainer ``global_step`` via a
-        clean setter on the optimizer (mirroring ``latest_loss``), NOT the Adam ``.step`` state: this
-        is a skip-step optimizer, so its ``.step`` counter lags ``global_step`` by the skip count —
-        which grows precisely during the spikes this diagnostic is for.
+        a ``debug_nan_inf_grad: bool`` config field (fire on ``check_nan_inf_grad and
+        debug_nan_inf_grad``) and move the rank / topk / dump-dir knobs to config fields too. The
+        logged step is the trainer ``global_step`` (set on ``_olmo_debug_global_step``, not the Adam
+        ``.step`` state, which lags ``global_step`` by the skip count on this skip-step optimizer);
+        a clean ``global_step`` setter mirroring ``latest_loss`` would replace the raw attribute.
         """
-        if not env_bool("OLMO_DDP_DEBUG_NONFINITE_GRAD"):
-            return
-
-        rank = dist.get_rank() if dist.is_available() and dist.is_initialized() else 0
-        rank_filter = os.getenv("OLMO_DDP_DEBUG_NONFINITE_GRAD_RANKS", "all")
-        if not rank_matches_filter(rank_filter, rank):
-            return
-
-        total_local = _to_local_tensor(total_grad_norm.detach())
-        if bool(torch.isfinite(total_local).all().item()):
-            return
-
-        step = getattr(self, "_olmo_debug_global_step", -1)
         try:
-            limit = int(os.getenv("OLMO_DDP_DEBUG_NONFINITE_GRAD_TOPK", "20"))
+            topk = int(os.getenv("OLMO_DDP_DEBUG_NONFINITE_GRAD_TOPK", "20"))
         except ValueError:
-            limit = 20
-        limit = max(limit, 0)
+            topk = 20
+        debug_nan_inf_grad_norm(
+            _to_local_tensor(total_grad_norm.detach()),
+            step=getattr(self, "_olmo_debug_global_step", -1),
+            enabled=env_bool("OLMO_DDP_DEBUG_NONFINITE_GRAD"),
+            ranks_filter=os.getenv("OLMO_DDP_DEBUG_NONFINITE_GRAD_RANKS", "all"),
+            topk=topk,
+            # A single knob: dump iff a directory is specified.
+            dump_dir=os.getenv("OLMO_DEBUG_DUMP_DIR"),
+            component_norms=lambda: {
+                "dp_replicated_local": self._local_total_norm(dp_grads_replicated),
+                "dp_sharded_local": self._local_total_norm(dp_grads_sharded),
+                "ep_dp_replicated_local": self._local_total_norm(ep_dp_grads_replicated),
+                "ep_dp_sharded_local": self._local_total_norm(ep_dp_grads_sharded),
+            },
+            iter_local_grads=self._iter_local_grads,
+        )
 
-        component_tensors: Dict[str, torch.Tensor] = {
-            "dp_replicated_local": self._local_total_norm(dp_grads_replicated),
-            "dp_sharded_local": self._local_total_norm(dp_grads_sharded),
-            "ep_dp_replicated_local": self._local_total_norm(ep_dp_grads_replicated),
-            "ep_dp_sharded_local": self._local_total_norm(ep_dp_grads_sharded),
-        }
-        component_values: Dict[str, float] = {}
-        for name, value in component_tensors.items():
-            local_value = _to_local_tensor(value.detach()).float()
-            component_values[name] = float(local_value.item())
-
-        bad_entries: List[Dict[str, Any]] = []
-        top_entries: List[Tuple[float, Dict[str, Any]]] = []
+    def _iter_local_grads(self) -> Iterator[Tuple[str, str, str, torch.Tensor]]:
+        """Yield ``(name, param_group, placements, local_grad)`` for each param with a local grad."""
         for param_group in self.param_groups:
             for name, param in param_group["named_params"].items():
                 if not param.requires_grad:
@@ -1163,90 +1148,8 @@ class OLMoDDPOptimizer:
                 local_grad = _to_local_tensor(grad.detach())
                 if local_grad.numel() == 0:
                     continue
-                local_grad_float = local_grad.float()
-                local_norm = torch.linalg.vector_norm(local_grad_float, ord=2)
-                local_norm_value = float(local_norm.item())
-                max_abs_value = float(
-                    torch.linalg.vector_norm(local_grad_float, ord=float("inf")).item()
-                )
-                norm_finite = math.isfinite(local_norm_value)
-                max_abs_finite = math.isfinite(max_abs_value)
                 placements = ",".join(str(p) for p in self.states[f"{name}.main"].placements)
-                entry: Dict[str, Any] = {
-                    "name": name,
-                    "param_group": param_group["pg"],
-                    "placements": placements,
-                    "dtype": str(local_grad.dtype),
-                    "shape": tuple(local_grad.shape),
-                    "local_norm": local_norm_value,
-                    "max_abs": max_abs_value,
-                    "norm_finite": norm_finite,
-                    "max_abs_finite": max_abs_finite,
-                }
-                if (not norm_finite) or (not max_abs_finite):
-                    bad_entries.append(entry)
-                top_entries.append((local_norm_value, entry))
-
-        top_entries.sort(
-            reverse=True,
-            key=lambda item: item[0] if math.isfinite(item[0]) else float("inf"),
-        )
-        top_entries_for_dump = [entry for _, entry in top_entries]
-        top_entries_for_log = top_entries_for_dump[:limit]
-
-        dump_root = (
-            os.getenv("OLMO_DEBUG_DUMP_DIR")
-            if env_bool("OLMO_DEBUG_DUMP_OPTIM_GRAD_NORMS")
-            else None
-        )
-        if dump_root:
-            run_id = os.getenv("OLMO_DEBUG_RUN_ID", "run")
-            dump_dir = os.path.join(dump_root, run_id, f"rank{rank:03d}")
-            os.makedirs(dump_dir, exist_ok=True)
-            torch.save(
-                {
-                    "kind": "optim_nonfinite_grad_norm",
-                    "rank": rank,
-                    "step": step,
-                    "total_grad_norm": total_local.float().cpu(),
-                    "components": component_values,
-                    "bad_entries": bad_entries,
-                    "top_entries": top_entries_for_dump,
-                },
-                os.path.join(dump_dir, f"step{step:06d}_optim_nonfinite_grad_norm.pt"),
-            )
-
-        bad_lines = "\n".join(
-            "  BAD "
-            f"norm={entry['local_norm']:.6g} max_abs={entry['max_abs']:.6g} "
-            f"norm_finite={entry['norm_finite']} max_abs_finite={entry['max_abs_finite']} "
-            f"pg={entry['param_group']} "
-            f"placements={entry['placements']} dtype={entry['dtype']} "
-            f"shape={entry['shape']} name={entry['name']}"
-            for entry in bad_entries[:limit]
-        )
-        top_lines = "\n".join(
-            f"  {idx + 1:02d}. "
-            f"norm={entry['local_norm']:.6g} max_abs={entry['max_abs']:.6g} "
-            f"norm_finite={entry['norm_finite']} max_abs_finite={entry['max_abs_finite']} "
-            f"pg={entry['param_group']} "
-            f"placements={entry['placements']} dtype={entry['dtype']} "
-            f"shape={entry['shape']} name={entry['name']}"
-            for idx, entry in enumerate(top_entries_for_log)
-        )
-        log.error(
-            "Non-finite grad norm diagnostic on rank %s step %s: total=%s components=%s "
-            "bad_entries=%s/%s\n%s%s%s",
-            rank,
-            step,
-            total_local.float().cpu(),
-            component_values,
-            len(bad_entries),
-            len(top_entries_for_dump),
-            bad_lines,
-            "\nTop local grad norms:\n" if top_lines else "",
-            top_lines,
-        )
+                yield name, param_group["pg"], placements, local_grad
 
     def _combine_norm(self, n1, n2) -> torch.Tensor:
         return torch.sqrt(n1.square() + n2.square())
