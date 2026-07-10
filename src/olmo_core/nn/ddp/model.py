@@ -167,10 +167,10 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
                 first_moe_idx = idx
             if block.is_moe:
                 moe_block = cast(OLMoDDPTransformerBlock, block)
-                if moe_block.ep_no_sync and moe_block.ep_no_sync_shared_slots < 2:
+                if moe_block.ep.no_sync and moe_block.ep.shared_slots < 2:
                     raise OLMoConfigurationError(
-                        "When TBO and EP no-sync are enabled, ep_no_sync_shared_slots must be >= 2 "
-                        f"(block={moe_block.block_idx}, got {moe_block.ep_no_sync_shared_slots})."
+                        "When TBO and EP no-sync are enabled, ep.shared_slots must be >= 2 "
+                        f"(block={moe_block.block_idx}, got {moe_block.ep.shared_slots})."
                     )
 
         return first_moe_idx
@@ -242,7 +242,7 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
         return sum(
             1
             for block in self.blocks.values()
-            if block.is_moe and isinstance(block, OLMoDDPTransformerBlock) and block.ep_no_sync
+            if block.is_moe and isinstance(block, OLMoDDPTransformerBlock) and block.ep.no_sync
         )
 
     @torch.no_grad()
@@ -321,7 +321,7 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
         ep_blocks = [
             (block_key, cast(OLMoDDPTransformerBlock, block))
             for block_key, block in self.blocks.items()
-            if block.is_moe and isinstance(block, OLMoDDPTransformerBlock) and block.ep_no_sync
+            if block.is_moe and isinstance(block, OLMoDDPTransformerBlock) and block.ep.no_sync
         ]
         if not ep_blocks:
             if pad_to_block_count != 0:
@@ -356,7 +356,7 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
         rank_capacity = compute_ep_no_sync_rank_capacity(first_block, num_out_tokens)
 
         for block_key, block in ep_blocks:
-            if block.ep_no_sync_use_rowwise_all_to_all:
+            if block.ep.is_rowwise:
                 rowwise_fp8_cfg = block.rowwise_fp8
                 use_rowwise_fp8 = (
                     rowwise_fp8_cfg is not None
@@ -401,7 +401,7 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
                 lease_dispatch_out = runtime_uses_lifetime_leases
                 lease_combine_out = use_symm_combine_out and runtime_uses_lifetime_leases
                 lease_combine_gather = use_symm_combine_gather and runtime_uses_lifetime_leases
-                slot_indices = range(block.ep_no_sync_shared_slots) if self.tbo else (None,)
+                slot_indices = range(block.ep.shared_slots) if self.tbo else (None,)
                 for slot_idx in slot_indices:
                     get_ep_no_sync_buffers(
                         block,
@@ -582,15 +582,15 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
             # collectives, but can hang inside symm_mem.empty() before the
             # explicit EP rendezvous runs. Use the regular DeviceMesh EP group
             # for no-sync blocks.
-            block.apply_ep(ep_mesh, ep_pg=None if block.ep_no_sync else ep_mp_group)
-            if block.ep_no_sync:
+            block.apply_ep(ep_mesh, ep_pg=None if block.ep.no_sync else ep_mp_group)
+            if block.ep.no_sync:
                 ep_no_sync_blocks.append(block)
 
         if ep_no_sync_blocks:
-            slot_counts = {block.ep_no_sync_shared_slots for block in ep_no_sync_blocks}
+            slot_counts = {block.ep.shared_slots for block in ep_no_sync_blocks}
             if len(slot_counts) != 1:
                 raise OLMoConfigurationError(
-                    "All EP no-sync blocks must use the same ep_no_sync_shared_slots "
+                    "All EP no-sync blocks must use the same ep.shared_slots "
                     f"value, got {sorted(slot_counts)}"
                 )
             shared_slots = next(iter(slot_counts))
@@ -1021,7 +1021,7 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
             # matches the context, so bind them through Any-typed locals.
             stage_c_launch: Any
             stage_tail: Any
-            if block.ep_no_sync_use_rowwise_all_to_all:
+            if block.ep.is_rowwise:
                 from olmo_core.nn.moe.v2.ep_no_sync_tbo_rowwise import (
                     ep_no_sync_rowwise_tbo_stage_c_launch,
                     ep_no_sync_rowwise_tbo_stage_tail,

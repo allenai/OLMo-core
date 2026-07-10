@@ -90,7 +90,7 @@ class _NoSyncRowwiseTboPendingContext:
 
 
 def _check_rowwise_tbo_supported(block: "MoEFusedV2TransformerBlock") -> None:
-    if not block.ep_no_sync_use_rowwise_all_to_all:
+    if not block.ep.is_rowwise:
         raise RuntimeError("Rowwise no-sync TBO requires ep_no_sync_use_rowwise_all_to_all=True")
     if block.rowwise_fp8 is not None and block.rowwise_fp8.enabled:
         raise NotImplementedError(
