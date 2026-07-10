@@ -1,5 +1,5 @@
 {
-  "generated_at_utc": "2026-07-10T01:43:09.165650+00:00",
+  "generated_at_utc": "2026-07-10T20:43:30.878296+00:00",
   "records": [
     {
       "beaker_id": "01KWWM1043JEC9MC3PV7PXQ745",
@@ -2819,23 +2819,23 @@
       "beaker_id": "01KWZAVZFS1FMR59ASRVH7VD4X",
       "checkpoint": "olmoe3-moe-a0-1p2b-cx1-b256k-gpu8-ep1mb2-lr4e-4-r1/step81190",
       "eval_metrics": {},
-      "load_balancing_loss": 0.2103017270565033,
+      "load_balancing_loss": 0.21038296818733215,
       "lr": "4e-5",
-      "mfu": 34.38770678808068,
-      "router_z_loss": 6.975324504310265e-05,
+      "mfu": 34.408966724126664,
+      "router_z_loss": 6.775493238819763e-05,
       "semantic_name": "mt-1p2b-baseline-cx1-lr4e-5-r1",
       "source": "1.2B baseline Cx1",
       "source_cx": "Cx1",
-      "state": "running",
-      "step": 28053,
-      "tokens": 88247107584,
-      "tps": 89981.4390375765,
-      "train_ce_loss": 1.4945011138916016,
-      "train_ppl": 4.457112406632891,
+      "state": "finished",
+      "step": 31790,
+      "tokens": 100002693120,
+      "tps": 90037.06937230786,
+      "train_ce_loss": 1.3876962661743164,
+      "train_ppl": 4.005611552730722,
       "wandb_id": "5utsk31j",
       "wandb_name": "mt-1p2b-baseline-cx1-lr4e-5-r1_1.22@7.76B_1p2b_eg48e4k_22L4K48N1S_midtrain-baseline-cx1-lr4e-5-r1",
       "wandb_url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/5utsk31j",
-      "z_loss": 0.0008570670615881681
+      "z_loss": 0.000820413522887975
     },
     {
       "beaker_id": "01KWZAV9AGDSD3PTS5RAM7G5N2",

@@ -1,5 +1,5 @@
 {
-  "generated_at_utc": "2026-07-10T01:56:50.103990+00:00",
+  "generated_at_utc": "2026-07-10T20:43:49.059107+00:00",
   "records": [
     {
       "experiment_id": "01KWNC2HEFG1P706WE2MQN26AH",
@@ -7302,6 +7302,1223 @@
       },
       "url": "https://beaker.org/ex/01KX02MYSA36TFKBT99XAE0XZ6",
       "workspace": "ai2/olmo-instruct"
+    },
+    {
+      "experiment_id": "01KX5FF8P4F3GS5RRH5M29AFCW",
+      "name": "olmoe3-275m-cx8-mt-int-deep-olmobase",
+      "status": "finalized",
+      "suites": {
+        "arc:bpb:olmo3base": {
+          "metric": "primary_score:average",
+          "score": 0.5475524586019467
+        },
+        "arc:mc:olmo3base": {
+          "metric": "primary_score:average",
+          "score": 0.3841169091169091
+        },
+        "arc:rc:olmo3base": {
+          "metric": "primary_score:average",
+          "score": 0.5475524586019467
+        },
+        "arc_challenge:bpb:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.4052901023890785
+        },
+        "arc_challenge:mc_olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.3583011583011583
+        },
+        "arc_challenge:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.4052901023890785
+        },
+        "arc_easy:bpb:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.6898148148148148
+        },
+        "arc_easy:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.4099326599326599
+        },
+        "arc_easy:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.6898148148148148
+        },
+        "basic_skills:bpb:olmo3base": {
+          "metric": "primary_score:average",
+          "score": 0.7016706683328913
+        },
+        "basic_skills:rc:olmo3base": {
+          "metric": "primary_score:average",
+          "score": 0.7191049176817542
+        },
+        "basic_skills_arithmetic:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.39530509696995475
+        },
+        "basic_skills_arithmetic:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.8414517669531996
+        },
+        "basic_skills_coding:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 1.01587030164823
+        },
+        "basic_skills_coding:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.6235177865612648
+        },
+        "basic_skills_common_knowledge:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.3509048229865048
+        },
+        "basic_skills_common_knowledge:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.849566055930569
+        },
+        "basic_skills_logical_reasoning:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.13283045085400202
+        },
+        "basic_skills_logical_reasoning:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.8819320214669052
+        },
+        "basic_skills_pattern:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.9800825286542312
+        },
+        "basic_skills_pattern:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.702247191011236
+        },
+        "basic_skills_string_operations:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 1.3350308088844247
+        },
+        "basic_skills_string_operations:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.4159146841673503
+        },
+        "codex_humaneval:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.7805645846779872
+        },
+        "coqa:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.5787214453051925
+        },
+        "coqa:gen:olmo3base": {
+          "metric": "f1:f1",
+          "score": 0.4964812631867829
+        },
+        "coqa:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.38215962441314555
+        },
+        "coqa:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.7300469483568075
+        },
+        "csqa:bpb:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.5749385749385749
+        },
+        "csqa:mc_olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.2134
+        },
+        "csqa:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.5749385749385749
+        },
+        "drop:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 1.2518068815602619
+        },
+        "drop:gen:olmo3base": {
+          "metric": "f1:drop_f1",
+          "score": 0.28201027684563756
+        },
+        "drop:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.26133501259445846
+        },
+        "drop:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.45843828715365237
+        },
+        "gsm8k:olmo3base": {
+          "metric": "pass_at_1:exact_match",
+          "score": 0.25075815011372254
+        },
+        "gsm_symb:olmo3base": {
+          "metric": "primary_score:average",
+          "score": 0.08985
+        },
+        "gsm_symbolic:olmo3base": {
+          "metric": "pass_at_1:exact_match",
+          "score": 0.19755
+        },
+        "gsm_symbolic:p1:olmo3base": {
+          "metric": "pass_at_1:exact_match",
+          "score": 0.0616
+        },
+        "gsm_symbolic:p2:olmo3base": {
+          "metric": "pass_at_1:exact_match",
+          "score": 0.0104
+        },
+        "hellaswag:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.8349678878634966
+        },
+        "hellaswag:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.4951
+        },
+        "jeopardy:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.7665762304977327
+        },
+        "jeopardy:gen:olmo3base": {
+          "metric": "f1:f1",
+          "score": 0.196059647019647
+        },
+        "jeopardy:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.2765855984740105
+        },
+        "jeopardy:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.5159752026704817
+        },
+        "lab_bench_dbqa:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 3.943744943234854
+        },
+        "lab_bench_dbqa:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.25576923076923075
+        },
+        "lab_bench_protocolqa:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 1.301980655576826
+        },
+        "lab_bench_protocolqa:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.24074074074074073
+        },
+        "lambada": {
+          "metric": "greedy_accuracy:logprob",
+          "score": 0.4874830196002329
+        },
+        "lambada:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.5750070122322108
+        },
+        "lambada:olmo3base": {
+          "metric": "greedy_accuracy:logprob",
+          "score": 0.48709489617698426
+        },
+        "mbpp:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 1.191092995111207
+        },
+        "medmcqa:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 1.362002811714081
+        },
+        "medmcqa:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.28735357398995937
+        },
+        "medmcqa:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.2835285680133875
+        },
+        "medqa_en:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.9483452363404455
+        },
+        "medqa_en:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.20188531029065201
+        },
+        "medqa_en:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.23016496465043204
+        },
+        "minerva_math:bpb:olmo3base": {
+          "metric": "primary_score:average",
+          "score": 0.5508310775398123
+        },
+        "minerva_math:olmo3base": {
+          "metric": "primary_score:average",
+          "score": 0.12856345279972434
+        },
+        "minerva_math_algebra:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.5616949210812976
+        },
+        "minerva_math_algebra:olmo3base": {
+          "metric": "pass_at_1:minerva_math_flex",
+          "score": 0.20998315080033697
+        },
+        "minerva_math_counting_and_probability:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.5513688433997497
+        },
+        "minerva_math_counting_and_probability:olmo3base": {
+          "metric": "pass_at_1:minerva_math_flex",
+          "score": 0.125
+        },
+        "minerva_math_geometry:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.5978598938229425
+        },
+        "minerva_math_geometry:olmo3base": {
+          "metric": "pass_at_1:minerva_math_flex",
+          "score": 0.11534446764091857
+        },
+        "minerva_math_intermediate_algebra:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.5740701381113644
+        },
+        "minerva_math_intermediate_algebra:olmo3base": {
+          "metric": "pass_at_1:minerva_math_flex",
+          "score": 0.054540420819490586
+        },
+        "minerva_math_number_theory:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.6100567453221482
+        },
+        "minerva_math_number_theory:olmo3base": {
+          "metric": "pass_at_1:minerva_math_flex",
+          "score": 0.0875
+        },
+        "minerva_math_prealgebra:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.5252992652684224
+        },
+        "minerva_math_prealgebra:olmo3base": {
+          "metric": "pass_at_1:minerva_math_flex",
+          "score": 0.23019517795637198
+        },
+        "minerva_math_precalculus:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.43546773577276127
+        },
+        "minerva_math_precalculus:olmo3base": {
+          "metric": "pass_at_1:minerva_math_flex",
+          "score": 0.07738095238095238
+        },
+        "mmlu:bpb": {
+          "metric": "primary_score:average",
+          "score": 1.001187906063764
+        },
+        "mmlu:humanities:mc:olmo3base": {
+          "metric": "primary_score:average",
+          "score": 0.33998476190376076
+        },
+        "mmlu:other:mc:olmo3base": {
+          "metric": "primary_score:average",
+          "score": 0.352121209512155
+        },
+        "mmlu:rc:olmo3base": {
+          "metric": "primary_score:average",
+          "score": 0.3425972075951025
+        },
+        "mmlu:social_sciences:mc:olmo3base": {
+          "metric": "primary_score:average",
+          "score": 0.3673271024088863
+        },
+        "mmlu:stem:mc:olmo3base": {
+          "metric": "primary_score:average",
+          "score": 0.3405517202778558
+        },
+        "mmlu_abstract_algebra:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.29
+        },
+        "mmlu_abstract_algebra:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.8529161081763077
+        },
+        "mmlu_abstract_algebra:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.3
+        },
+        "mmlu_anatomy:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.37037037037037035
+        },
+        "mmlu_anatomy:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.7433313200470193
+        },
+        "mmlu_anatomy:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.32592592592592595
+        },
+        "mmlu_astronomy:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.3618421052631579
+        },
+        "mmlu_astronomy:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.9488241133648616
+        },
+        "mmlu_astronomy:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.39473684210526316
+        },
+        "mmlu_business_ethics:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.37
+        },
+        "mmlu_business_ethics:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 1.2818143365432564
+        },
+        "mmlu_business_ethics:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.5
+        },
+        "mmlu_clinical_knowledge:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.35471698113207545
+        },
+        "mmlu_clinical_knowledge:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.8995875491847874
+        },
+        "mmlu_clinical_knowledge:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.37735849056603776
+        },
+        "mmlu_college_biology:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.2638888888888889
+        },
+        "mmlu_college_biology:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.7079230771311552
+        },
+        "mmlu_college_biology:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.4236111111111111
+        },
+        "mmlu_college_chemistry:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.24
+        },
+        "mmlu_college_chemistry:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 1.63060966817173
+        },
+        "mmlu_college_chemistry:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.31
+        },
+        "mmlu_college_computer_science:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.35
+        },
+        "mmlu_college_computer_science:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 1.1604399103899123
+        },
+        "mmlu_college_computer_science:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.35
+        },
+        "mmlu_college_mathematics:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.34
+        },
+        "mmlu_college_mathematics:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 1.4157555959688497
+        },
+        "mmlu_college_mathematics:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.18
+        },
+        "mmlu_college_medicine:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.3468208092485549
+        },
+        "mmlu_college_medicine:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.8640737455228533
+        },
+        "mmlu_college_medicine:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.2774566473988439
+        },
+        "mmlu_college_physics:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.27450980392156865
+        },
+        "mmlu_college_physics:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 1.3441007649120893
+        },
+        "mmlu_college_physics:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.20588235294117646
+        },
+        "mmlu_computer_security:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.45
+        },
+        "mmlu_computer_security:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 1.0876319954672429
+        },
+        "mmlu_computer_security:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.48
+        },
+        "mmlu_conceptual_physics:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.2851063829787234
+        },
+        "mmlu_conceptual_physics:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.8294956778411772
+        },
+        "mmlu_conceptual_physics:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.41702127659574467
+        },
+        "mmlu_econometrics:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.2982456140350877
+        },
+        "mmlu_econometrics:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.6977179611659917
+        },
+        "mmlu_econometrics:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.2543859649122807
+        },
+        "mmlu_electrical_engineering:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.4827586206896552
+        },
+        "mmlu_electrical_engineering:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 1.199969368043881
+        },
+        "mmlu_electrical_engineering:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.30344827586206896
+        },
+        "mmlu_elementary_mathematics:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.30423280423280424
+        },
+        "mmlu_elementary_mathematics:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 1.3703091993989225
+        },
+        "mmlu_elementary_mathematics:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.5634920634920635
+        },
+        "mmlu_formal_logic:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.15873015873015872
+        },
+        "mmlu_formal_logic:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 1.217324853481302
+        },
+        "mmlu_formal_logic:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.3492063492063492
+        },
+        "mmlu_global_facts:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.37
+        },
+        "mmlu_global_facts:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 1.5894582243163742
+        },
+        "mmlu_global_facts:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.31
+        },
+        "mmlu_high_school_biology:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.33225806451612905
+        },
+        "mmlu_high_school_biology:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.8077418077536296
+        },
+        "mmlu_high_school_biology:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.3967741935483871
+        },
+        "mmlu_high_school_chemistry:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.3793103448275862
+        },
+        "mmlu_high_school_chemistry:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 1.2565946562956543
+        },
+        "mmlu_high_school_chemistry:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.26108374384236455
+        },
+        "mmlu_high_school_computer_science:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.39
+        },
+        "mmlu_high_school_computer_science:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.9197629044266128
+        },
+        "mmlu_high_school_computer_science:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.4
+        },
+        "mmlu_high_school_european_history:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.41818181818181815
+        },
+        "mmlu_high_school_european_history:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.7491405968493978
+        },
+        "mmlu_high_school_european_history:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.43636363636363634
+        },
+        "mmlu_high_school_geography:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.37373737373737376
+        },
+        "mmlu_high_school_geography:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.958800459684312
+        },
+        "mmlu_high_school_geography:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.3787878787878788
+        },
+        "mmlu_high_school_government_and_politics:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.34196891191709844
+        },
+        "mmlu_high_school_government_and_politics:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.6433152267022592
+        },
+        "mmlu_high_school_government_and_politics:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.35233160621761656
+        },
+        "mmlu_high_school_macroeconomics:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.31794871794871793
+        },
+        "mmlu_high_school_macroeconomics:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.8249121107063012
+        },
+        "mmlu_high_school_macroeconomics:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.3435897435897436
+        },
+        "mmlu_high_school_mathematics:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.29259259259259257
+        },
+        "mmlu_high_school_mathematics:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 2.224142709515862
+        },
+        "mmlu_high_school_mathematics:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.2777777777777778
+        },
+        "mmlu_high_school_microeconomics:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.2773109243697479
+        },
+        "mmlu_high_school_microeconomics:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.8049344643193895
+        },
+        "mmlu_high_school_microeconomics:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.36554621848739494
+        },
+        "mmlu_high_school_physics:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.3841059602649007
+        },
+        "mmlu_high_school_physics:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 1.2144120346193252
+        },
+        "mmlu_high_school_physics:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.304635761589404
+        },
+        "mmlu_high_school_psychology:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.29724770642201837
+        },
+        "mmlu_high_school_psychology:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.7368274781916934
+        },
+        "mmlu_high_school_psychology:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.4990825688073395
+        },
+        "mmlu_high_school_statistics:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.3611111111111111
+        },
+        "mmlu_high_school_statistics:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 1.1083059994601547
+        },
+        "mmlu_high_school_statistics:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.2962962962962963
+        },
+        "mmlu_high_school_us_history:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.29411764705882354
+        },
+        "mmlu_high_school_us_history:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.8420364519030569
+        },
+        "mmlu_high_school_us_history:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.3333333333333333
+        },
+        "mmlu_high_school_world_history:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.3206751054852321
+        },
+        "mmlu_high_school_world_history:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.8310773329933718
+        },
+        "mmlu_high_school_world_history:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.2869198312236287
+        },
+        "mmlu_human_aging:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.32286995515695066
+        },
+        "mmlu_human_aging:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.8850425824790684
+        },
+        "mmlu_human_aging:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.36771300448430494
+        },
+        "mmlu_human_sexuality:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.4122137404580153
+        },
+        "mmlu_human_sexuality:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.9850672227411096
+        },
+        "mmlu_human_sexuality:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.40458015267175573
+        },
+        "mmlu_international_law:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.3884297520661157
+        },
+        "mmlu_international_law:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.7150145962399761
+        },
+        "mmlu_international_law:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.2809917355371901
+        },
+        "mmlu_jurisprudence:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.37962962962962965
+        },
+        "mmlu_jurisprudence:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.9443806846638227
+        },
+        "mmlu_jurisprudence:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.28703703703703703
+        },
+        "mmlu_logical_fallacies:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.3619631901840491
+        },
+        "mmlu_logical_fallacies:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.8854007253475332
+        },
+        "mmlu_logical_fallacies:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.2822085889570552
+        },
+        "mmlu_machine_learning:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.3482142857142857
+        },
+        "mmlu_machine_learning:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 1.400786772372559
+        },
+        "mmlu_machine_learning:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.2767857142857143
+        },
+        "mmlu_management:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.3883495145631068
+        },
+        "mmlu_management:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.9396162086942632
+        },
+        "mmlu_management:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.44660194174757284
+        },
+        "mmlu_marketing:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.4658119658119658
+        },
+        "mmlu_marketing:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.8571297471931993
+        },
+        "mmlu_marketing:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.5128205128205128
+        },
+        "mmlu_medical_genetics:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.35
+        },
+        "mmlu_medical_genetics:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 1.0514433752363659
+        },
+        "mmlu_medical_genetics:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.37
+        },
+        "mmlu_miscellaneous:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.32567049808429116
+        },
+        "mmlu_miscellaneous:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.9855049576338579
+        },
+        "mmlu_miscellaneous:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.48531289910600256
+        },
+        "mmlu_moral_disputes:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.3815028901734104
+        },
+        "mmlu_moral_disputes:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.8671302618616038
+        },
+        "mmlu_moral_disputes:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.2832369942196532
+        },
+        "mmlu_moral_scenarios:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.24804469273743016
+        },
+        "mmlu_moral_scenarios:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.14359705427766487
+        },
+        "mmlu_moral_scenarios:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.24692737430167597
+        },
+        "mmlu_nutrition:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.38562091503267976
+        },
+        "mmlu_nutrition:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.878942435675138
+        },
+        "mmlu_nutrition:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.33986928104575165
+        },
+        "mmlu_philosophy:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.43086816720257237
+        },
+        "mmlu_philosophy:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.9811696903526615
+        },
+        "mmlu_philosophy:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.2990353697749196
+        },
+        "mmlu_prehistory:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.4012345679012346
+        },
+        "mmlu_prehistory:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.9911854364139049
+        },
+        "mmlu_prehistory:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.31790123456790126
+        },
+        "mmlu_professional_accounting:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.30141843971631205
+        },
+        "mmlu_professional_accounting:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 1.2463309852448934
+        },
+        "mmlu_professional_accounting:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.24822695035460993
+        },
+        "mmlu_professional_law:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.29139504563233376
+        },
+        "mmlu_professional_law:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.7343636812273738
+        },
+        "mmlu_professional_law:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.27183833116036504
+        },
+        "mmlu_professional_medicine:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.19852941176470587
+        },
+        "mmlu_professional_medicine:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.8304743414820173
+        },
+        "mmlu_professional_medicine:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.3125
+        },
+        "mmlu_professional_psychology:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.32189542483660133
+        },
+        "mmlu_professional_psychology:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.9127008425921337
+        },
+        "mmlu_professional_psychology:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.32516339869281047
+        },
+        "mmlu_public_relations:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.38181818181818183
+        },
+        "mmlu_public_relations:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 1.2560199379991401
+        },
+        "mmlu_public_relations:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.2818181818181818
+        },
+        "mmlu_security_studies:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.4326530612244898
+        },
+        "mmlu_security_studies:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.9134511720390271
+        },
+        "mmlu_security_studies:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.2612244897959184
+        },
+        "mmlu_sociology:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.4228855721393035
+        },
+        "mmlu_sociology:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.8327492479423187
+        },
+        "mmlu_sociology:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.3283582089552239
+        },
+        "mmlu_us_foreign_policy:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.53
+        },
+        "mmlu_us_foreign_policy:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.7738423201739703
+        },
+        "mmlu_us_foreign_policy:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.35
+        },
+        "mmlu_virology:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.3795180722891566
+        },
+        "mmlu_virology:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.965210453102968
+        },
+        "mmlu_virology:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.29518072289156627
+        },
+        "mmlu_world_religions:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.34502923976608185
+        },
+        "mmlu_world_religions:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 1.3278682100992534
+        },
+        "mmlu_world_religions:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.39766081871345027
+        },
+        "mt_mbpp:bpb:olmo3base": {
+          "metric": "primary_score:average",
+          "score": 0.7354369904595045
+        },
+        "mt_mbpp_bash:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.6925603013110454
+        },
+        "mt_mbpp_c:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.5999129171289648
+        },
+        "mt_mbpp_cpp:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.5846825531292116
+        },
+        "mt_mbpp_csharp:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.4817939772032736
+        },
+        "mt_mbpp_go:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.6248323207325235
+        },
+        "mt_mbpp_haskell:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.7302964909680832
+        },
+        "mt_mbpp_java:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.4322115251136537
+        },
+        "mt_mbpp_javascript:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.6743205611726375
+        },
+        "mt_mbpp_matlab:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.9584480133496913
+        },
+        "mt_mbpp_php:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.5259568432957283
+        },
+        "mt_mbpp_python:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 1.1893306855958174
+        },
+        "mt_mbpp_r:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 1.0623743311504685
+        },
+        "mt_mbpp_ruby:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 1.1688565172431384
+        },
+        "mt_mbpp_rust:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.8119959202615556
+        },
+        "mt_mbpp_scala:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.8436198035174347
+        },
+        "mt_mbpp_swift:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.5408772639675368
+        },
+        "mt_mbpp_typescript:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.5803588126708118
+        },
+        "naturalqs:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 1.3441189414296437
+        },
+        "naturalqs:gen:olmo3base": {
+          "metric": "f1:drop_f1",
+          "score": 0.11014681440443214
+        },
+        "naturalqs:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.3366683341670835
+        },
+        "naturalqs:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.3046523261630815
+        },
+        "olmobase:easy:code:bpb": {
+          "metric": "primary_score:average",
+          "score": 0.9023648567495662
+        },
+        "olmobase:easy:math:bpb": {
+          "metric": "primary_score:average",
+          "score": 0.5508310775398123
+        },
+        "olmobase:easy:qa:bpb": {
+          "metric": "primary_score:average",
+          "score": 0.9791397730027175
+        },
+        "olmobase:easy:qa:rc": {
+          "metric": "primary_score:average",
+          "score": 0.5495448606154301
+        },
+        "olmobase:gen": {
+          "metric": "primary_score:average",
+          "score": 0.43676015463483836
+        },
+        "olmobase:math": {
+          "metric": "primary_score:average",
+          "score": 0.1563905343044823
+        },
+        "olmobase:mcqa_non_stem": {
+          "metric": "primary_score:average",
+          "score": 0.3510552894325328
+        },
+        "olmobase:mcqa_stem": {
+          "metric": "primary_score:average",
+          "score": 0.32118150273507523
+        },
+        "piqa:bpb:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.7029379760609358
+        },
+        "piqa:mc_olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.5213
+        },
+        "piqa:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.7029379760609358
+        },
+        "qasper_yesno:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.29687592404421687
+        },
+        "qasper_yesno:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.6363636363636364
+        },
+        "sciq:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.5757078021571469
+        },
+        "sciq:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.392
+        },
+        "sciq:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.799
+        },
+        "sciriff_yesno:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.3701274186387499
+        },
+        "sciriff_yesno:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.7199747155499368
+        },
+        "socialiqa:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 1.0371052665172715
+        },
+        "socialiqa:mc_olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.4003
+        },
+        "socialiqa:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.48004094165813715
+        },
+        "squad:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.27703806626385824
+        },
+        "squad:gen:olmo3base": {
+          "metric": "f1:f1",
+          "score": 0.5413435763983071
+        },
+        "squad:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.4104265402843602
+        },
+        "squad:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.8099526066350711
+        },
+        "winogrande:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 1.1653199276188222
+        },
+        "winogrande:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.6035
+        }
+      },
+      "url": "https://beaker.org/ex/01KX5FF8P4F3GS5RRH5M29AFCW",
+      "workspace": "ai2/OLMo-3-moe-experiments"
     },
     {
       "experiment_id": "01KX02N80T6NXX8TZEJM8TC0Z5",
@@ -20691,6 +21908,1223 @@
       "workspace": "ai2/OLMo-3-moe-experiments"
     },
     {
+      "experiment_id": "01KX4X1GRMAR78VYH0XZVJX7MX",
+      "name": "olmoe3-810m-cx8-mt-baseline-olmobase",
+      "status": "finalized",
+      "suites": {
+        "arc:bpb:olmo3base": {
+          "metric": "primary_score:average",
+          "score": 0.6047153847921766
+        },
+        "arc:mc:olmo3base": {
+          "metric": "primary_score:average",
+          "score": 0.6345901095901096
+        },
+        "arc:rc:olmo3base": {
+          "metric": "primary_score:average",
+          "score": 0.6047153847921766
+        },
+        "arc_challenge:bpb:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.4564846416382253
+        },
+        "arc_challenge:mc_olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.5393822393822394
+        },
+        "arc_challenge:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.4564846416382253
+        },
+        "arc_easy:bpb:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.7529461279461279
+        },
+        "arc_easy:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.7297979797979798
+        },
+        "arc_easy:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.7529461279461279
+        },
+        "basic_skills:bpb:olmo3base": {
+          "metric": "primary_score:average",
+          "score": 0.6602471919310522
+        },
+        "basic_skills:rc:olmo3base": {
+          "metric": "primary_score:average",
+          "score": 0.7700313393029425
+        },
+        "basic_skills_arithmetic:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.4696830394538904
+        },
+        "basic_skills_arithmetic:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.8156638013371538
+        },
+        "basic_skills_coding:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.9992198919027014
+        },
+        "basic_skills_coding:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.6541501976284585
+        },
+        "basic_skills_common_knowledge:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.24773103933867185
+        },
+        "basic_skills_common_knowledge:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.9373191899710704
+        },
+        "basic_skills_logical_reasoning:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.08200262841263646
+        },
+        "basic_skills_logical_reasoning:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.9525939177101967
+        },
+        "basic_skills_pattern:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.9519911458341087
+        },
+        "basic_skills_pattern:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.7715355805243446
+        },
+        "basic_skills_string_operations:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 1.2108554066443045
+        },
+        "basic_skills_string_operations:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.4889253486464315
+        },
+        "codex_humaneval:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.7331726551523902
+        },
+        "coqa:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.4857289539739456
+        },
+        "coqa:gen:olmo3base": {
+          "metric": "f1:f1",
+          "score": 0.584040909859665
+        },
+        "coqa:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.6140845070422535
+        },
+        "coqa:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.7924882629107981
+        },
+        "csqa:bpb:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.642915642915643
+        },
+        "csqa:mc_olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.4751
+        },
+        "csqa:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.642915642915643
+        },
+        "drop:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.9834434070876407
+        },
+        "drop:gen:olmo3base": {
+          "metric": "f1:drop_f1",
+          "score": 0.3762426593959731
+        },
+        "drop:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.327455919395466
+        },
+        "drop:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.5831234256926953
+        },
+        "gsm8k:olmo3base": {
+          "metric": "pass_at_1:exact_match",
+          "score": 0.3636277482941622
+        },
+        "gsm_symb:olmo3base": {
+          "metric": "primary_score:average",
+          "score": 0.1542666666666667
+        },
+        "gsm_symbolic:olmo3base": {
+          "metric": "pass_at_1:exact_match",
+          "score": 0.307225
+        },
+        "gsm_symbolic:p1:olmo3base": {
+          "metric": "pass_at_1:exact_match",
+          "score": 0.121875
+        },
+        "gsm_symbolic:p2:olmo3base": {
+          "metric": "pass_at_1:exact_match",
+          "score": 0.0337
+        },
+        "hellaswag:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.7578557220200239
+        },
+        "hellaswag:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.6247
+        },
+        "jeopardy:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.5673686004156271
+        },
+        "jeopardy:gen:olmo3base": {
+          "metric": "f1:f1",
+          "score": 0.38759698745698745
+        },
+        "jeopardy:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.6204101096804959
+        },
+        "jeopardy:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.6785884597043396
+        },
+        "lab_bench_dbqa:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 3.5905585923949808
+        },
+        "lab_bench_dbqa:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.27307692307692305
+        },
+        "lab_bench_protocolqa:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 1.2280299345956653
+        },
+        "lab_bench_protocolqa:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.26851851851851855
+        },
+        "lambada": {
+          "metric": "greedy_accuracy:logprob",
+          "score": 0.5876188627983698
+        },
+        "lambada:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.447206526911965
+        },
+        "lambada:olmo3base": {
+          "metric": "greedy_accuracy:logprob",
+          "score": 0.5876188627983698
+        },
+        "mbpp:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 1.1628755593385836
+        },
+        "medmcqa:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 1.1600720047676873
+        },
+        "medmcqa:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.3700693282333254
+        },
+        "medmcqa:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.32201769065264163
+        },
+        "medqa_en:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.804947952312496
+        },
+        "medqa_en:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.24901806755695208
+        },
+        "medqa_en:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.2812254516889238
+        },
+        "minerva_math:bpb:olmo3base": {
+          "metric": "primary_score:average",
+          "score": 0.5074810606870807
+        },
+        "minerva_math:olmo3base": {
+          "metric": "primary_score:average",
+          "score": 0.16564963449090556
+        },
+        "minerva_math_algebra:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.5261494514294223
+        },
+        "minerva_math_algebra:olmo3base": {
+          "metric": "pass_at_1:minerva_math_flex",
+          "score": 0.2476832350463353
+        },
+        "minerva_math_counting_and_probability:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.502412846859209
+        },
+        "minerva_math_counting_and_probability:olmo3base": {
+          "metric": "pass_at_1:minerva_math_flex",
+          "score": 0.1529535864978903
+        },
+        "minerva_math_geometry:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.5588823605044173
+        },
+        "minerva_math_geometry:olmo3base": {
+          "metric": "pass_at_1:minerva_math_flex",
+          "score": 0.15187891440501045
+        },
+        "minerva_math_intermediate_algebra:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.5252213240481207
+        },
+        "minerva_math_intermediate_algebra:olmo3base": {
+          "metric": "pass_at_1:minerva_math_flex",
+          "score": 0.0844407530454042
+        },
+        "minerva_math_number_theory:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.5667916961559147
+        },
+        "minerva_math_number_theory:olmo3base": {
+          "metric": "pass_at_1:minerva_math_flex",
+          "score": 0.10925925925925926
+        },
+        "minerva_math_prealgebra:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.48434919852505814
+        },
+        "minerva_math_prealgebra:olmo3base": {
+          "metric": "pass_at_1:minerva_math_flex",
+          "score": 0.30252583237657865
+        },
+        "minerva_math_precalculus:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.3885605472874225
+        },
+        "minerva_math_precalculus:olmo3base": {
+          "metric": "pass_at_1:minerva_math_flex",
+          "score": 0.1108058608058608
+        },
+        "mmlu:bpb": {
+          "metric": "primary_score:average",
+          "score": 0.8856806307034646
+        },
+        "mmlu:humanities:mc:olmo3base": {
+          "metric": "primary_score:average",
+          "score": 0.4725772301307986
+        },
+        "mmlu:other:mc:olmo3base": {
+          "metric": "primary_score:average",
+          "score": 0.4876103624263886
+        },
+        "mmlu:rc:olmo3base": {
+          "metric": "primary_score:average",
+          "score": 0.38771882589649154
+        },
+        "mmlu:social_sciences:mc:olmo3base": {
+          "metric": "primary_score:average",
+          "score": 0.5211769634503183
+        },
+        "mmlu:stem:mc:olmo3base": {
+          "metric": "primary_score:average",
+          "score": 0.4001239776049505
+        },
+        "mmlu_abstract_algebra:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.32
+        },
+        "mmlu_abstract_algebra:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.7832966749806812
+        },
+        "mmlu_abstract_algebra:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.26
+        },
+        "mmlu_anatomy:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.4888888888888889
+        },
+        "mmlu_anatomy:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.5851613397062635
+        },
+        "mmlu_anatomy:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.42962962962962964
+        },
+        "mmlu_astronomy:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.4868421052631579
+        },
+        "mmlu_astronomy:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.8517853056945779
+        },
+        "mmlu_astronomy:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.42105263157894735
+        },
+        "mmlu_business_ethics:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.55
+        },
+        "mmlu_business_ethics:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 1.1365247532005067
+        },
+        "mmlu_business_ethics:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.56
+        },
+        "mmlu_clinical_knowledge:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.45660377358490567
+        },
+        "mmlu_clinical_knowledge:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.7883557127648909
+        },
+        "mmlu_clinical_knowledge:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.42641509433962266
+        },
+        "mmlu_college_biology:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.4166666666666667
+        },
+        "mmlu_college_biology:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.5825676848149642
+        },
+        "mmlu_college_biology:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.4652777777777778
+        },
+        "mmlu_college_chemistry:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.28
+        },
+        "mmlu_college_chemistry:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 1.4303665382745003
+        },
+        "mmlu_college_chemistry:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.26
+        },
+        "mmlu_college_computer_science:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.49
+        },
+        "mmlu_college_computer_science:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 1.1139859188877417
+        },
+        "mmlu_college_computer_science:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.33
+        },
+        "mmlu_college_mathematics:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.35
+        },
+        "mmlu_college_mathematics:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 1.3132796724194813
+        },
+        "mmlu_college_mathematics:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.22
+        },
+        "mmlu_college_medicine:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.4393063583815029
+        },
+        "mmlu_college_medicine:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.8043452439485991
+        },
+        "mmlu_college_medicine:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.35260115606936415
+        },
+        "mmlu_college_physics:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.24509803921568626
+        },
+        "mmlu_college_physics:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 1.2411555364006481
+        },
+        "mmlu_college_physics:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.2549019607843137
+        },
+        "mmlu_computer_security:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.63
+        },
+        "mmlu_computer_security:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.9613037575858498
+        },
+        "mmlu_computer_security:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.48
+        },
+        "mmlu_conceptual_physics:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.3872340425531915
+        },
+        "mmlu_conceptual_physics:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.752632082437032
+        },
+        "mmlu_conceptual_physics:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.4765957446808511
+        },
+        "mmlu_econometrics:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.30701754385964913
+        },
+        "mmlu_econometrics:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.6015686477670037
+        },
+        "mmlu_econometrics:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.30701754385964913
+        },
+        "mmlu_electrical_engineering:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.5862068965517241
+        },
+        "mmlu_electrical_engineering:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 1.0725816107060644
+        },
+        "mmlu_electrical_engineering:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.3586206896551724
+        },
+        "mmlu_elementary_mathematics:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.328042328042328
+        },
+        "mmlu_elementary_mathematics:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 1.2222740814638315
+        },
+        "mmlu_elementary_mathematics:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.6084656084656085
+        },
+        "mmlu_formal_logic:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.2222222222222222
+        },
+        "mmlu_formal_logic:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.9553098756646651
+        },
+        "mmlu_formal_logic:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.3253968253968254
+        },
+        "mmlu_global_facts:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.35
+        },
+        "mmlu_global_facts:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 1.525160394398666
+        },
+        "mmlu_global_facts:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.36
+        },
+        "mmlu_high_school_biology:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.5129032258064516
+        },
+        "mmlu_high_school_biology:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.6889945239289548
+        },
+        "mmlu_high_school_biology:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.432258064516129
+        },
+        "mmlu_high_school_chemistry:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.3842364532019704
+        },
+        "mmlu_high_school_chemistry:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 1.160887950828419
+        },
+        "mmlu_high_school_chemistry:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.24630541871921183
+        },
+        "mmlu_high_school_computer_science:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.47
+        },
+        "mmlu_high_school_computer_science:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.821625478923701
+        },
+        "mmlu_high_school_computer_science:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.43
+        },
+        "mmlu_high_school_european_history:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.5272727272727272
+        },
+        "mmlu_high_school_european_history:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.6672268281236114
+        },
+        "mmlu_high_school_european_history:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.44242424242424244
+        },
+        "mmlu_high_school_geography:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.5656565656565656
+        },
+        "mmlu_high_school_geography:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.8232758070036936
+        },
+        "mmlu_high_school_geography:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.4595959595959596
+        },
+        "mmlu_high_school_government_and_politics:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.5958549222797928
+        },
+        "mmlu_high_school_government_and_politics:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.5495123962740578
+        },
+        "mmlu_high_school_government_and_politics:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.45595854922279794
+        },
+        "mmlu_high_school_macroeconomics:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.382051282051282
+        },
+        "mmlu_high_school_macroeconomics:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.7213396298924579
+        },
+        "mmlu_high_school_macroeconomics:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.37435897435897436
+        },
+        "mmlu_high_school_mathematics:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.2851851851851852
+        },
+        "mmlu_high_school_mathematics:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 2.1124213055699745
+        },
+        "mmlu_high_school_mathematics:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.2814814814814815
+        },
+        "mmlu_high_school_microeconomics:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.47058823529411764
+        },
+        "mmlu_high_school_microeconomics:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.7041090951856862
+        },
+        "mmlu_high_school_microeconomics:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.4495798319327731
+        },
+        "mmlu_high_school_physics:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.2913907284768212
+        },
+        "mmlu_high_school_physics:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 1.162440902360865
+        },
+        "mmlu_high_school_physics:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.3509933774834437
+        },
+        "mmlu_high_school_psychology:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.5926605504587156
+        },
+        "mmlu_high_school_psychology:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.608718313114834
+        },
+        "mmlu_high_school_psychology:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.5779816513761468
+        },
+        "mmlu_high_school_statistics:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.30092592592592593
+        },
+        "mmlu_high_school_statistics:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 1.0185239242598918
+        },
+        "mmlu_high_school_statistics:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.38425925925925924
+        },
+        "mmlu_high_school_us_history:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.5098039215686274
+        },
+        "mmlu_high_school_us_history:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.7075043895901123
+        },
+        "mmlu_high_school_us_history:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.37254901960784315
+        },
+        "mmlu_high_school_world_history:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.5274261603375527
+        },
+        "mmlu_high_school_world_history:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.7599657913900174
+        },
+        "mmlu_high_school_world_history:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.33755274261603374
+        },
+        "mmlu_human_aging:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.547085201793722
+        },
+        "mmlu_human_aging:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.7418353399399388
+        },
+        "mmlu_human_aging:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.42152466367713004
+        },
+        "mmlu_human_sexuality:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.5190839694656488
+        },
+        "mmlu_human_sexuality:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.8631002497847063
+        },
+        "mmlu_human_sexuality:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.4732824427480916
+        },
+        "mmlu_international_law:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.6776859504132231
+        },
+        "mmlu_international_law:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.6243753895189237
+        },
+        "mmlu_international_law:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.3884297520661157
+        },
+        "mmlu_jurisprudence:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.48148148148148145
+        },
+        "mmlu_jurisprudence:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.8496895991509852
+        },
+        "mmlu_jurisprudence:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.3333333333333333
+        },
+        "mmlu_logical_fallacies:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.50920245398773
+        },
+        "mmlu_logical_fallacies:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.7502304764932873
+        },
+        "mmlu_logical_fallacies:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.4110429447852761
+        },
+        "mmlu_machine_learning:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.4375
+        },
+        "mmlu_machine_learning:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 1.170095826732919
+        },
+        "mmlu_machine_learning:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.24107142857142858
+        },
+        "mmlu_management:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.6310679611650486
+        },
+        "mmlu_management:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.8167164004558826
+        },
+        "mmlu_management:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.5436893203883495
+        },
+        "mmlu_marketing:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.6965811965811965
+        },
+        "mmlu_marketing:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.7132902932892775
+        },
+        "mmlu_marketing:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.5769230769230769
+        },
+        "mmlu_medical_genetics:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.54
+        },
+        "mmlu_medical_genetics:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.9185644436023889
+        },
+        "mmlu_medical_genetics:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.44
+        },
+        "mmlu_miscellaneous:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.6053639846743295
+        },
+        "mmlu_miscellaneous:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.800355081824848
+        },
+        "mmlu_miscellaneous:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.5810983397190294
+        },
+        "mmlu_moral_disputes:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.48265895953757226
+        },
+        "mmlu_moral_disputes:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.7912127602333495
+        },
+        "mmlu_moral_disputes:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.28901734104046245
+        },
+        "mmlu_moral_scenarios:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.25251396648044694
+        },
+        "mmlu_moral_scenarios:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.13317525006518827
+        },
+        "mmlu_moral_scenarios:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.26927374301675977
+        },
+        "mmlu_nutrition:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.477124183006536
+        },
+        "mmlu_nutrition:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.7708160726865896
+        },
+        "mmlu_nutrition:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.3790849673202614
+        },
+        "mmlu_philosophy:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.5273311897106109
+        },
+        "mmlu_philosophy:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.8947357274902706
+        },
+        "mmlu_philosophy:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.33440514469453375
+        },
+        "mmlu_prehistory:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.5092592592592593
+        },
+        "mmlu_prehistory:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.8446735982310639
+        },
+        "mmlu_prehistory:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.4074074074074074
+        },
+        "mmlu_professional_accounting:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.32269503546099293
+        },
+        "mmlu_professional_accounting:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 1.165306183489635
+        },
+        "mmlu_professional_accounting:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.26595744680851063
+        },
+        "mmlu_professional_law:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.3435462842242503
+        },
+        "mmlu_professional_law:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.6243267296788321
+        },
+        "mmlu_professional_law:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.2816166883963494
+        },
+        "mmlu_professional_medicine:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.29411764705882354
+        },
+        "mmlu_professional_medicine:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.6638018694271366
+        },
+        "mmlu_professional_medicine:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.3602941176470588
+        },
+        "mmlu_professional_psychology:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.4215686274509804
+        },
+        "mmlu_professional_psychology:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.7803957973386352
+        },
+        "mmlu_professional_psychology:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.3660130718954248
+        },
+        "mmlu_public_relations:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.5181818181818182
+        },
+        "mmlu_public_relations:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 1.1379472308915357
+        },
+        "mmlu_public_relations:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.34545454545454546
+        },
+        "mmlu_security_studies:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.5346938775510204
+        },
+        "mmlu_security_studies:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.8468973660049436
+        },
+        "mmlu_security_studies:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.2693877551020408
+        },
+        "mmlu_sociology:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.6467661691542289
+        },
+        "mmlu_sociology:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.7568640772047104
+        },
+        "mmlu_sociology:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.3283582089552239
+        },
+        "mmlu_us_foreign_policy:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.7
+        },
+        "mmlu_us_foreign_policy:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.6633892613446448
+        },
+        "mmlu_us_foreign_policy:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.39
+        },
+        "mmlu_virology:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.42771084337349397
+        },
+        "mmlu_virology:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.8680866051590167
+        },
+        "mmlu_virology:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.39156626506024095
+        },
+        "mmlu_world_religions:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.5730994152046783
+        },
+        "mmlu_world_religions:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 1.0657131524965244
+        },
+        "mmlu_world_religions:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.52046783625731
+        },
+        "mt_mbpp:bpb:olmo3base": {
+          "metric": "primary_score:average",
+          "score": 0.691799455491122
+        },
+        "mt_mbpp_bash:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.5972775489745695
+        },
+        "mt_mbpp_c:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.5487448629262884
+        },
+        "mt_mbpp_cpp:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.5679437712672674
+        },
+        "mt_mbpp_csharp:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.45564546281931256
+        },
+        "mt_mbpp_go:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.5978649165031451
+        },
+        "mt_mbpp_haskell:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.608382708591756
+        },
+        "mt_mbpp_java:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.41475138102263853
+        },
+        "mt_mbpp_javascript:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.6555740844134695
+        },
+        "mt_mbpp_matlab:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.9217347417646014
+        },
+        "mt_mbpp_php:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.49436616618466744
+        },
+        "mt_mbpp_python:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 1.174780113279233
+        },
+        "mt_mbpp_r:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 1.0165202368632564
+        },
+        "mt_mbpp_ruby:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 1.1171564982362956
+        },
+        "mt_mbpp_rust:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.7618816767942915
+        },
+        "mt_mbpp_scala:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.7757719984060482
+        },
+        "mt_mbpp_swift:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.4933319392593813
+        },
+        "mt_mbpp_typescript:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.5588626360428517
+        },
+        "naturalqs:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 1.1280718609679523
+        },
+        "naturalqs:gen:olmo3base": {
+          "metric": "f1:drop_f1",
+          "score": 0.20231301939058172
+        },
+        "naturalqs:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.4852426213106553
+        },
+        "naturalqs:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.39619809904952474
+        },
+        "olmobase:easy:code:bpb": {
+          "metric": "primary_score:average",
+          "score": 0.8626158899940318
+        },
+        "olmobase:easy:math:bpb": {
+          "metric": "primary_score:average",
+          "score": 0.5074810606870807
+        },
+        "olmobase:easy:qa:bpb": {
+          "metric": "primary_score:average",
+          "score": 0.8625849915702325
+        },
+        "olmobase:easy:qa:rc": {
+          "metric": "primary_score:average",
+          "score": 0.624918791552623
+        },
+        "olmobase:gen": {
+          "metric": "primary_score:average",
+          "score": 0.5610717954867147
+        },
+        "olmobase:math": {
+          "metric": "primary_score:average",
+          "score": 0.22784801648391148
+        },
+        "olmobase:mcqa_non_stem": {
+          "metric": "primary_score:average",
+          "score": 0.5417465650732768
+        },
+        "olmobase:mcqa_stem": {
+          "metric": "primary_score:average",
+          "score": 0.48876029659706755
+        },
+        "piqa:bpb:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.7486398258977149
+        },
+        "piqa:mc_olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.5773
+        },
+        "piqa:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.7486398258977149
+        },
+        "qasper_yesno:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.2955667491947766
+        },
+        "qasper_yesno:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.6896551724137931
+        },
+        "sciq:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.4295359901408944
+        },
+        "sciq:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.79
+        },
+        "sciq:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.865
+        },
+        "sciriff_yesno:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.21505679546919632
+        },
+        "sciriff_yesno:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.7642225031605563
+        },
+        "socialiqa:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.9608079012020979
+        },
+        "socialiqa:mc_olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.6247
+        },
+        "socialiqa:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.5250767656090072
+        },
+        "squad:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.2296491549521222
+        },
+        "squad:gen:olmo3base": {
+          "metric": "f1:f1",
+          "score": 0.798102381175913
+        },
+        "squad:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.7535545023696683
+        },
+        "squad:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.890521327014218
+        },
+        "winogrande:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 1.06851665167317
+        },
+        "winogrande:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.719
+        }
+      },
+      "url": "https://beaker.org/ex/01KX4X1GRMAR78VYH0XZVJX7MX",
+      "workspace": "ai2/OLMo-3-moe-experiments"
+    },
+    {
       "experiment_id": "01KWW9GTCP804RSRC06PVWRRGJ",
       "name": "olmoe3-1p2b-cx1-int-deep-olmobase",
       "status": "finalized",
@@ -29207,6 +31641,1223 @@
         }
       },
       "url": "https://beaker.org/ex/01KWNADEPKBF1JY939N5JG2GTN",
+      "workspace": "ai2/OLMo-3-moe-experiments"
+    },
+    {
+      "experiment_id": "01KX4X6FYR1DTE1VMY3FEGT5XC",
+      "name": "olmoe3-1p2b-cx8-mt-baseline-olmobase",
+      "status": "finalized",
+      "suites": {
+        "arc:bpb:olmo3base": {
+          "metric": "primary_score:average",
+          "score": 0.6590470978269614
+        },
+        "arc:mc:olmo3base": {
+          "metric": "primary_score:average",
+          "score": 0.7333840333840334
+        },
+        "arc:rc:olmo3base": {
+          "metric": "primary_score:average",
+          "score": 0.6590470978269614
+        },
+        "arc_challenge:bpb:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.5247440273037542
+        },
+        "arc_challenge:mc_olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.6586872586872586
+        },
+        "arc_challenge:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.5247440273037542
+        },
+        "arc_easy:bpb:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.7933501683501684
+        },
+        "arc_easy:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.8080808080808081
+        },
+        "arc_easy:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.7933501683501684
+        },
+        "basic_skills:bpb:olmo3base": {
+          "metric": "primary_score:average",
+          "score": 0.5954341292264859
+        },
+        "basic_skills:rc:olmo3base": {
+          "metric": "primary_score:average",
+          "score": 0.7887210061246344
+        },
+        "basic_skills_arithmetic:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.38799419145577174
+        },
+        "basic_skills_arithmetic:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.8424068767908309
+        },
+        "basic_skills_coding:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 1.0549370975377383
+        },
+        "basic_skills_coding:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.658102766798419
+        },
+        "basic_skills_common_knowledge:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.2276680533111094
+        },
+        "basic_skills_common_knowledge:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.940212150433944
+        },
+        "basic_skills_logical_reasoning:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.06997636480367049
+        },
+        "basic_skills_logical_reasoning:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.9615384615384616
+        },
+        "basic_skills_pattern:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.7328150256456797
+        },
+        "basic_skills_pattern:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.7771535580524345
+        },
+        "basic_skills_string_operations:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 1.099214042604946
+        },
+        "basic_skills_string_operations:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.5529122231337161
+        },
+        "codex_humaneval:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.7326077394525482
+        },
+        "coqa:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.48225032162270604
+        },
+        "coqa:gen:olmo3base": {
+          "metric": "f1:f1",
+          "score": 0.623297419678078
+        },
+        "coqa:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.7511737089201878
+        },
+        "coqa:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.8300469483568075
+        },
+        "csqa:bpb:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.7051597051597052
+        },
+        "csqa:mc_olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.5985
+        },
+        "csqa:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.7051597051597052
+        },
+        "drop:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.8247832517579459
+        },
+        "drop:gen:olmo3base": {
+          "metric": "f1:drop_f1",
+          "score": 0.4632581795302014
+        },
+        "drop:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.42128463476070527
+        },
+        "drop:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.6693954659949622
+        },
+        "gsm8k:olmo3base": {
+          "metric": "pass_at_1:exact_match",
+          "score": 0.4552691432903715
+        },
+        "gsm_symb:olmo3base": {
+          "metric": "primary_score:average",
+          "score": 0.2222666666666667
+        },
+        "gsm_symbolic:olmo3base": {
+          "metric": "pass_at_1:exact_match",
+          "score": 0.41875
+        },
+        "gsm_symbolic:p1:olmo3base": {
+          "metric": "pass_at_1:exact_match",
+          "score": 0.2084
+        },
+        "gsm_symbolic:p2:olmo3base": {
+          "metric": "pass_at_1:exact_match",
+          "score": 0.03965
+        },
+        "hellaswag:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.7347464979927041
+        },
+        "hellaswag:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.6794
+        },
+        "jeopardy:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.47408422027033154
+        },
+        "jeopardy:gen:olmo3base": {
+          "metric": "f1:f1",
+          "score": 0.453271749988
+        },
+        "jeopardy:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.7358130662851693
+        },
+        "jeopardy:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.7505960896518836
+        },
+        "lab_bench_dbqa:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 3.5344751804214543
+        },
+        "lab_bench_dbqa:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.27307692307692305
+        },
+        "lab_bench_protocolqa:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 1.1783268194240368
+        },
+        "lab_bench_protocolqa:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.25925925925925924
+        },
+        "lambada": {
+          "metric": "greedy_accuracy:logprob",
+          "score": 0.6297302542208423
+        },
+        "lambada:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.3947682239367301
+        },
+        "lambada:olmo3base": {
+          "metric": "greedy_accuracy:logprob",
+          "score": 0.6297302542208423
+        },
+        "mbpp:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 1.2324587590487979
+        },
+        "medmcqa:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 1.0860148865945423
+        },
+        "medmcqa:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.4049725077695434
+        },
+        "medmcqa:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.3385130289266077
+        },
+        "medqa_en:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.7586078097258366
+        },
+        "medqa_en:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.32992930086410055
+        },
+        "medqa_en:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.3032207384131972
+        },
+        "minerva_math:bpb:olmo3base": {
+          "metric": "primary_score:average",
+          "score": 0.49024652948305886
+        },
+        "minerva_math:olmo3base": {
+          "metric": "primary_score:average",
+          "score": 0.20515303946341198
+        },
+        "minerva_math_algebra:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.5097140232597297
+        },
+        "minerva_math_algebra:olmo3base": {
+          "metric": "pass_at_1:minerva_math_flex",
+          "score": 0.32919123841617526
+        },
+        "minerva_math_counting_and_probability:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.48473617197771524
+        },
+        "minerva_math_counting_and_probability:olmo3base": {
+          "metric": "pass_at_1:minerva_math_flex",
+          "score": 0.18301687763713081
+        },
+        "minerva_math_geometry:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.5423722887708714
+        },
+        "minerva_math_geometry:olmo3base": {
+          "metric": "pass_at_1:minerva_math_flex",
+          "score": 0.1884133611691023
+        },
+        "minerva_math_intermediate_algebra:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.5103039821932179
+        },
+        "minerva_math_intermediate_algebra:olmo3base": {
+          "metric": "pass_at_1:minerva_math_flex",
+          "score": 0.10022148394241417
+        },
+        "minerva_math_number_theory:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.5420924624593422
+        },
+        "minerva_math_number_theory:olmo3base": {
+          "metric": "pass_at_1:minerva_math_flex",
+          "score": 0.15092592592592594
+        },
+        "minerva_math_prealgebra:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.46249906780488953
+        },
+        "minerva_math_prealgebra:olmo3base": {
+          "metric": "pass_at_1:minerva_math_flex",
+          "score": 0.36021814006888636
+        },
+        "minerva_math_precalculus:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.38000770991564636
+        },
+        "minerva_math_precalculus:olmo3base": {
+          "metric": "pass_at_1:minerva_math_flex",
+          "score": 0.12408424908424909
+        },
+        "mmlu:bpb": {
+          "metric": "primary_score:average",
+          "score": 0.8344141583998147
+        },
+        "mmlu:humanities:mc:olmo3base": {
+          "metric": "primary_score:average",
+          "score": 0.5449205581061691
+        },
+        "mmlu:other:mc:olmo3base": {
+          "metric": "primary_score:average",
+          "score": 0.5459383309473053
+        },
+        "mmlu:rc:olmo3base": {
+          "metric": "primary_score:average",
+          "score": 0.4167801133208206
+        },
+        "mmlu:social_sciences:mc:olmo3base": {
+          "metric": "primary_score:average",
+          "score": 0.594435719646037
+        },
+        "mmlu:stem:mc:olmo3base": {
+          "metric": "primary_score:average",
+          "score": 0.46467161214168
+        },
+        "mmlu_abstract_algebra:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.33
+        },
+        "mmlu_abstract_algebra:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.7091873500998115
+        },
+        "mmlu_abstract_algebra:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.31
+        },
+        "mmlu_anatomy:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.4962962962962963
+        },
+        "mmlu_anatomy:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.5460632292819022
+        },
+        "mmlu_anatomy:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.4444444444444444
+        },
+        "mmlu_astronomy:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.5921052631578947
+        },
+        "mmlu_astronomy:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.7841949734933282
+        },
+        "mmlu_astronomy:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.46710526315789475
+        },
+        "mmlu_business_ethics:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.56
+        },
+        "mmlu_business_ethics:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 1.1403826912224906
+        },
+        "mmlu_business_ethics:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.59
+        },
+        "mmlu_clinical_knowledge:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.5924528301886792
+        },
+        "mmlu_clinical_knowledge:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.7443461224190726
+        },
+        "mmlu_clinical_knowledge:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.4867924528301887
+        },
+        "mmlu_college_biology:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.5833333333333334
+        },
+        "mmlu_college_biology:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.536679296751872
+        },
+        "mmlu_college_biology:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.4444444444444444
+        },
+        "mmlu_college_chemistry:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.37
+        },
+        "mmlu_college_chemistry:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 1.3376349019864213
+        },
+        "mmlu_college_chemistry:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.28
+        },
+        "mmlu_college_computer_science:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.5
+        },
+        "mmlu_college_computer_science:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 1.0620530802014534
+        },
+        "mmlu_college_computer_science:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.34
+        },
+        "mmlu_college_mathematics:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.38
+        },
+        "mmlu_college_mathematics:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 1.2399669623557752
+        },
+        "mmlu_college_mathematics:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.26
+        },
+        "mmlu_college_medicine:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.48554913294797686
+        },
+        "mmlu_college_medicine:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.797609883040412
+        },
+        "mmlu_college_medicine:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.3872832369942196
+        },
+        "mmlu_college_physics:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.3431372549019608
+        },
+        "mmlu_college_physics:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 1.188224582254614
+        },
+        "mmlu_college_physics:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.28431372549019607
+        },
+        "mmlu_computer_security:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.74
+        },
+        "mmlu_computer_security:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.8606684085768795
+        },
+        "mmlu_computer_security:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.54
+        },
+        "mmlu_conceptual_physics:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.4595744680851064
+        },
+        "mmlu_conceptual_physics:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.706530275404909
+        },
+        "mmlu_conceptual_physics:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.548936170212766
+        },
+        "mmlu_econometrics:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.3157894736842105
+        },
+        "mmlu_econometrics:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.568660687406767
+        },
+        "mmlu_econometrics:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.34210526315789475
+        },
+        "mmlu_electrical_engineering:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.5655172413793104
+        },
+        "mmlu_electrical_engineering:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.9928210126794245
+        },
+        "mmlu_electrical_engineering:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.4
+        },
+        "mmlu_elementary_mathematics:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.3783068783068783
+        },
+        "mmlu_elementary_mathematics:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 1.081244277120447
+        },
+        "mmlu_elementary_mathematics:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.6507936507936508
+        },
+        "mmlu_formal_logic:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.35714285714285715
+        },
+        "mmlu_formal_logic:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.7885657097140458
+        },
+        "mmlu_formal_logic:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.3492063492063492
+        },
+        "mmlu_global_facts:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.34
+        },
+        "mmlu_global_facts:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 1.440165299647609
+        },
+        "mmlu_global_facts:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.37
+        },
+        "mmlu_high_school_biology:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.6419354838709678
+        },
+        "mmlu_high_school_biology:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.6452049286846122
+        },
+        "mmlu_high_school_biology:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.5419354838709678
+        },
+        "mmlu_high_school_chemistry:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.43349753694581283
+        },
+        "mmlu_high_school_chemistry:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 1.0794180670780522
+        },
+        "mmlu_high_school_chemistry:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.270935960591133
+        },
+        "mmlu_high_school_computer_science:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.53
+        },
+        "mmlu_high_school_computer_science:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.7703840015674025
+        },
+        "mmlu_high_school_computer_science:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.48
+        },
+        "mmlu_high_school_european_history:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.6121212121212121
+        },
+        "mmlu_high_school_european_history:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.6311547917408828
+        },
+        "mmlu_high_school_european_history:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.43636363636363634
+        },
+        "mmlu_high_school_geography:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.6565656565656566
+        },
+        "mmlu_high_school_geography:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.778459888567349
+        },
+        "mmlu_high_school_geography:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.4393939393939394
+        },
+        "mmlu_high_school_government_and_politics:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.689119170984456
+        },
+        "mmlu_high_school_government_and_politics:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.5272734359319754
+        },
+        "mmlu_high_school_government_and_politics:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.48704663212435234
+        },
+        "mmlu_high_school_macroeconomics:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.4512820512820513
+        },
+        "mmlu_high_school_macroeconomics:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.6747942261346049
+        },
+        "mmlu_high_school_macroeconomics:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.4025641025641026
+        },
+        "mmlu_high_school_mathematics:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.337037037037037
+        },
+        "mmlu_high_school_mathematics:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 1.9905188304092887
+        },
+        "mmlu_high_school_mathematics:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.32222222222222224
+        },
+        "mmlu_high_school_microeconomics:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.5378151260504201
+        },
+        "mmlu_high_school_microeconomics:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.6654651362197066
+        },
+        "mmlu_high_school_microeconomics:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.5
+        },
+        "mmlu_high_school_physics:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.31125827814569534
+        },
+        "mmlu_high_school_physics:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 1.207085003901922
+        },
+        "mmlu_high_school_physics:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.2980132450331126
+        },
+        "mmlu_high_school_psychology:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.728440366972477
+        },
+        "mmlu_high_school_psychology:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.567563298696854
+        },
+        "mmlu_high_school_psychology:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.6201834862385321
+        },
+        "mmlu_high_school_statistics:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.4398148148148148
+        },
+        "mmlu_high_school_statistics:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.9696145489624819
+        },
+        "mmlu_high_school_statistics:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.38425925925925924
+        },
+        "mmlu_high_school_us_history:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.5294117647058824
+        },
+        "mmlu_high_school_us_history:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.693900570689586
+        },
+        "mmlu_high_school_us_history:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.44607843137254904
+        },
+        "mmlu_high_school_world_history:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.6497890295358649
+        },
+        "mmlu_high_school_world_history:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.7264697515645931
+        },
+        "mmlu_high_school_world_history:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.379746835443038
+        },
+        "mmlu_human_aging:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.5739910313901345
+        },
+        "mmlu_human_aging:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.7159705699012998
+        },
+        "mmlu_human_aging:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.49327354260089684
+        },
+        "mmlu_human_sexuality:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.6412213740458015
+        },
+        "mmlu_human_sexuality:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.814409448311789
+        },
+        "mmlu_human_sexuality:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.4580152671755725
+        },
+        "mmlu_international_law:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.7355371900826446
+        },
+        "mmlu_international_law:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.5967266547501014
+        },
+        "mmlu_international_law:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.371900826446281
+        },
+        "mmlu_jurisprudence:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.5925925925925926
+        },
+        "mmlu_jurisprudence:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.7685738998970796
+        },
+        "mmlu_jurisprudence:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.37037037037037035
+        },
+        "mmlu_logical_fallacies:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.5950920245398773
+        },
+        "mmlu_logical_fallacies:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.7197827644413218
+        },
+        "mmlu_logical_fallacies:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.4294478527607362
+        },
+        "mmlu_machine_learning:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.42857142857142855
+        },
+        "mmlu_machine_learning:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 1.062075301577309
+        },
+        "mmlu_machine_learning:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.2767857142857143
+        },
+        "mmlu_management:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.7087378640776699
+        },
+        "mmlu_management:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.780136161812357
+        },
+        "mmlu_management:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.5339805825242718
+        },
+        "mmlu_marketing:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.7777777777777778
+        },
+        "mmlu_marketing:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.6788828585676172
+        },
+        "mmlu_marketing:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.6196581196581197
+        },
+        "mmlu_medical_genetics:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.63
+        },
+        "mmlu_medical_genetics:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.8008109617558875
+        },
+        "mmlu_medical_genetics:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.52
+        },
+        "mmlu_miscellaneous:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.6909323116219668
+        },
+        "mmlu_miscellaneous:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.7362616458720166
+        },
+        "mmlu_miscellaneous:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.6309067688378033
+        },
+        "mmlu_moral_disputes:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.5606936416184971
+        },
+        "mmlu_moral_disputes:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.7620885780098932
+        },
+        "mmlu_moral_disputes:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.34104046242774566
+        },
+        "mmlu_moral_scenarios:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.2424581005586592
+        },
+        "mmlu_moral_scenarios:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.15395566853476286
+        },
+        "mmlu_moral_scenarios:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.2681564245810056
+        },
+        "mmlu_nutrition:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.5555555555555556
+        },
+        "mmlu_nutrition:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.7371315782177166
+        },
+        "mmlu_nutrition:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.39869281045751637
+        },
+        "mmlu_philosophy:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.572347266881029
+        },
+        "mmlu_philosophy:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.8297634504326734
+        },
+        "mmlu_philosophy:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.3729903536977492
+        },
+        "mmlu_prehistory:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.5895061728395061
+        },
+        "mmlu_prehistory:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.8133711951778962
+        },
+        "mmlu_prehistory:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.4382716049382716
+        },
+        "mmlu_professional_accounting:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.3191489361702128
+        },
+        "mmlu_professional_accounting:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 1.1346215062642342
+        },
+        "mmlu_professional_accounting:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.2553191489361702
+        },
+        "mmlu_professional_law:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.3513689700130378
+        },
+        "mmlu_professional_law:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.6011581325007435
+        },
+        "mmlu_professional_law:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.28096479791395046
+        },
+        "mmlu_professional_medicine:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.46691176470588236
+        },
+        "mmlu_professional_medicine:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.6248141992544699
+        },
+        "mmlu_professional_medicine:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.3602941176470588
+        },
+        "mmlu_professional_psychology:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.4820261437908497
+        },
+        "mmlu_professional_psychology:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.7347939056208836
+        },
+        "mmlu_professional_psychology:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.380718954248366
+        },
+        "mmlu_public_relations:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.6090909090909091
+        },
+        "mmlu_public_relations:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 1.113114078551274
+        },
+        "mmlu_public_relations:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.33636363636363636
+        },
+        "mmlu_security_studies:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.5755102040816327
+        },
+        "mmlu_security_studies:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.8011932607784555
+        },
+        "mmlu_security_studies:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.30612244897959184
+        },
+        "mmlu_sociology:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.7263681592039801
+        },
+        "mmlu_sociology:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.7255035298709447
+        },
+        "mmlu_sociology:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.3681592039800995
+        },
+        "mmlu_us_foreign_policy:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.72
+        },
+        "mmlu_us_foreign_policy:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.6327573108663312
+        },
+        "mmlu_us_foreign_policy:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.4
+        },
+        "mmlu_virology:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.4457831325301205
+        },
+        "mmlu_virology:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.8427611438667747
+        },
+        "mmlu_virology:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.39759036144578314
+        },
+        "mmlu_world_religions:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.695906432748538
+        },
+        "mmlu_world_religions:rc:bpb": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.9286440001490595
+        },
+        "mmlu_world_religions:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.6432748538011696
+        },
+        "mt_mbpp:bpb:olmo3base": {
+          "metric": "primary_score:average",
+          "score": 0.7078703683204237
+        },
+        "mt_mbpp_bash:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.5919427676727708
+        },
+        "mt_mbpp_c:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.5972529414425586
+        },
+        "mt_mbpp_cpp:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.5804464092480301
+        },
+        "mt_mbpp_csharp:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.47896094881087914
+        },
+        "mt_mbpp_go:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.6051107631719698
+        },
+        "mt_mbpp_haskell:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.565345448385195
+        },
+        "mt_mbpp_java:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.44125124955563955
+        },
+        "mt_mbpp_javascript:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.662688675524544
+        },
+        "mt_mbpp_matlab:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.927143191498737
+        },
+        "mt_mbpp_php:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.49197790422201326
+        },
+        "mt_mbpp_python:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 1.2271210957305054
+        },
+        "mt_mbpp_r:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 1.0311705177321684
+        },
+        "mt_mbpp_ruby:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 1.187605365363384
+        },
+        "mt_mbpp_rust:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.7966735667414021
+        },
+        "mt_mbpp_scala:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.8012899322052324
+        },
+        "mt_mbpp_swift:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.4794686406940519
+        },
+        "mt_mbpp_typescript:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.5683468434481226
+        },
+        "naturalqs:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 1.0445586819527455
+        },
+        "naturalqs:gen:olmo3base": {
+          "metric": "f1:drop_f1",
+          "score": 0.24259279778393353
+        },
+        "naturalqs:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.542271135567784
+        },
+        "naturalqs:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.48624312156078037
+        },
+        "olmobase:easy:code:bpb": {
+          "metric": "primary_score:average",
+          "score": 0.8909789556072566
+        },
+        "olmobase:easy:math:bpb": {
+          "metric": "primary_score:average",
+          "score": 0.49024652948305886
+        },
+        "olmobase:easy:qa:bpb": {
+          "metric": "primary_score:average",
+          "score": 0.8207958517849029
+        },
+        "olmobase:easy:qa:rc": {
+          "metric": "primary_score:average",
+          "score": 0.6654263274312763
+        },
+        "olmobase:gen": {
+          "metric": "primary_score:average",
+          "score": 0.6065091539669158
+        },
+        "olmobase:math": {
+          "metric": "primary_score:average",
+          "score": 0.2942296164734834
+        },
+        "olmobase:mcqa_non_stem": {
+          "metric": "primary_score:average",
+          "score": 0.6283213440513737
+        },
+        "olmobase:mcqa_stem": {
+          "metric": "primary_score:average",
+          "score": 0.5601914908318715
+        },
+        "piqa:bpb:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.7589771490750816
+        },
+        "piqa:mc_olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.6404
+        },
+        "piqa:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.7589771490750816
+        },
+        "qasper_yesno:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.2695946525725222
+        },
+        "qasper_yesno:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.6489028213166145
+        },
+        "sciq:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.40028722865114913
+        },
+        "sciq:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.868
+        },
+        "sciq:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.891
+        },
+        "sciriff_yesno:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.16231933142712246
+        },
+        "sciriff_yesno:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.861567635903919
+        },
+        "socialiqa:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.9249271940131868
+        },
+        "socialiqa:mc_olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.6913
+        },
+        "socialiqa:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.5562947799385876
+        },
+        "squad:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 0.26235513214444833
+        },
+        "squad:gen:olmo3base": {
+          "metric": "f1:f1",
+          "score": 0.8069109783765528
+        },
+        "squad:mc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.8454976303317535
+        },
+        "squad:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.8981042654028436
+        },
+        "winogrande:bpb:olmo3base": {
+          "metric": "bits_per_byte:bits_per_byte",
+          "score": 1.0359450686622524
+        },
+        "winogrande:rc:olmo3base": {
+          "metric": "accuracy:logprob",
+          "score": 0.7714
+        }
+      },
+      "url": "https://beaker.org/ex/01KX4X6FYR1DTE1VMY3FEGT5XC",
       "workspace": "ai2/OLMo-3-moe-experiments"
     }
   ]

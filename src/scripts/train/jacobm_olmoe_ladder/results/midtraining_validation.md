@@ -1,6 +1,6 @@
 # Midtraining Validation Results
 
-Generated: 2026-07-10 01:43 UTC
+Generated: 2026-07-10 20:43 UTC
 
 Interpretation: lower is better for CE loss, PPL, Z loss, router Z loss, and load-balancing loss; higher is better for MFU/TPS. Accuracy-style validation metrics are higher-is-better when present.
 
@@ -20,7 +20,7 @@ Settings: 100B midtraining tokens, sequence length 8192, global batch seq 128 (1
 | 480M baseline Cx8 | 1/1 | 1/1 | 8e-5 |  |
 | 810M baseline Cx1 | 1/1 | 1/1 | 6e-5 |  |
 | 810M baseline Cx8 | 1/1 | 1/1 | 4e-5 |  |
-| 1.2B baseline Cx1 | 0/1 | 0/1 |  | 4e-5 |
+| 1.2B baseline Cx1 | 1/1 | 0/1 |  |  |
 | 1.2B baseline Cx8 | 1/1 | 0/1 |  |  |
 
 ## Eval Win Summary
@@ -243,7 +243,7 @@ No `eval/*` validation metrics are present for this source group yet.
 
 | LR | state | tokens | train CE | train PPL | Z loss | router Z | load balance | MFU | TPS/GPU | links |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| 4e-5 | running | 88.25B | 1.4945 | 4.4571 | 0.00086 | 0.00007 | 0.21030 | 34.39 | 89981.4 | [W&B](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/5utsk31j) [Beaker](https://beaker.org/ex/01KWZAVZFS1FMR59ASRVH7VD4X) |
+| 4e-5 | finished | 100.00B | 1.3877 | 4.0056 | 0.00082 | 0.00007 | 0.21038 | 34.41 | 90037.1 | [W&B](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/5utsk31j) [Beaker](https://beaker.org/ex/01KWZAVZFS1FMR59ASRVH7VD4X) |
 
 ## 1.2B baseline Cx8 Source
 

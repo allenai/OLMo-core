@@ -1899,3 +1899,15 @@ the existing save folders so partial MT checkpoints can resume where possible.
 | `mt-480m-intd256e8k-cx8-lr8e-5-r1` | https://beaker.org/ex/01KX6K41XG75V1DQ9NWZB988GQ | started |
 | `mt-810m-intd256e8k-cx8-lr4e-5-r1` | https://beaker.org/ex/01KX6K4GKDHQS05727Q9DH0NF4 | scheduled |
 | `mt-1p2b-intd256e8k-cx8-lr4e-5-r1` | https://beaker.org/ex/01KX6K4YBN8659G8SY8A4WAQA4 | scheduled |
+
+Follow-up status: 480M wide/deep and 810M wide/deep are running after relaunch.
+Both 1.2B relaunches finalized with CUDA OOMs rather than storage errors.
+`mt-1p2b-intw256e8k-cx8-lr4e-5-r1` OOMed during checkpoint restore/model-buffer
+sync while trying to allocate 36.61 GiB with 32.35 GiB free. `mt-1p2b-intd256e8k-cx8-lr4e-5-r1`
+OOMed during compiled forward with the GPU nearly full. Retry these with
+lower-memory 1.2B settings instead of EP1/MB4, likely closer to the EP8-style
+settings used by 1.2B integration pretraining.
+
+The four 480M/810M relaunches have started and written new partial checkpoints
+(`step3000`/`step3500`/`step4000` depending on the run), so they are past launch
+and storage-write smoke.
