@@ -33,13 +33,14 @@ def verify_logits(
     checkpoint_path: Path,
     revision: str,
     prompt: str,
+    hf_device: torch.device,
     device: torch.device,
     dtype: DType,
     rtol: float,
     atol: float,
 ) -> dict[str, float | int | str]:
     tokenizer = AutoTokenizer.from_pretrained(hf_model, revision=revision, trust_remote_code=False)
-    input_ids = tokenizer(prompt, return_tensors="pt").input_ids.to(device)
+    input_ids = tokenizer(prompt, return_tensors="pt").input_ids
 
     log.info("Loading Hugging Face reference model %s", hf_model)
     hf = AutoModelForCausalLM.from_pretrained(
@@ -48,9 +49,9 @@ def verify_logits(
         dtype=dtype.as_pt(),
         attn_implementation="eager",
         trust_remote_code=False,
-    ).to(device)
+    ).to(hf_device)
     hf.eval()
-    hf_logits = hf(input_ids, use_cache=False).logits.float().cpu()
+    hf_logits = hf(input_ids.to(hf_device), use_cache=False).logits.float().cpu()
     del hf
     _release_cuda_memory()
 
@@ -74,7 +75,7 @@ def verify_logits(
         thread_count=32,
     )
     olmo.eval()
-    olmo_logits = olmo(input_ids).float().cpu()
+    olmo_logits = olmo(input_ids.to(device)).float().cpu()
 
     if hf_logits.shape != olmo_logits.shape:
         raise RuntimeError(
@@ -90,6 +91,8 @@ def verify_logits(
     metrics: dict[str, float | int | str] = {
         "hf_model": hf_model,
         "revision": revision,
+        "hf_device": str(hf_device),
+        "olmo_device": str(device),
         "num_input_tokens": input_ids.numel(),
         "max_abs_diff": diff.max().item(),
         "mean_abs_diff": diff.mean().item(),
@@ -115,6 +118,11 @@ def main() -> None:
         default="Explain why careful checkpoint conversion matters in one sentence.",
     )
     parser.add_argument("--device", type=torch.device, default=torch.device("cuda"))
+    parser.add_argument(
+        "--hf-device",
+        type=torch.device,
+        help="Device for the Hugging Face reference; defaults to --device.",
+    )
     parser.add_argument("--dtype", type=DType, default=DType.bfloat16)
     parser.add_argument("--rtol", type=float, default=2e-2)
     parser.add_argument("--atol", type=float, default=2e-2)
@@ -127,6 +135,7 @@ def main() -> None:
         checkpoint_path=args.checkpoint_path,
         revision=args.revision,
         prompt=args.prompt,
+        hf_device=args.hf_device or args.device,
         device=args.device,
         dtype=args.dtype,
         rtol=args.rtol,
