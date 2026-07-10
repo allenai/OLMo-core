@@ -8,6 +8,7 @@ from olmo_core.config import DType
 from olmo_core.nn.ddp.block import OLMoDDPTransformerBlock
 from olmo_core.nn.layer_norm import LayerNormConfig, LayerNormType
 from olmo_core.nn.moe import MoERouterGatingFunction
+from olmo_core.nn.moe.v2.ep_config import ExpertParallelConfig, ExpertParallelPath
 from olmo_core.nn.moe.v2.routed_experts import RoutedExpertsConfig
 from olmo_core.nn.moe.v2.router import MoERouterConfigV2
 from olmo_core.testing import requires_multi_gpu, run_distributed_test
@@ -65,10 +66,12 @@ def _build_tbo_model(*, two_batch_overlap: bool, ep_no_sync: bool):
                 d_model=512, hidden_size=1024, num_experts=8, bias=False, dtype=DType.float32
             ),
             layer_norm=layer_norm,
-            ep_no_sync=ep_no_sync,
-            ep_no_sync_capacity_factor=8.0,
-            ep_no_sync_major_align=1,
-            ep_no_sync_shared_slots=2 if two_batch_overlap and ep_no_sync else 1,
+            ep=ExpertParallelConfig(
+                path=ExpertParallelPath.no_sync_1d if ep_no_sync else ExpertParallelPath.sync_1d,
+                capacity_factor=8.0,
+                major_align=1,
+                shared_slots=2 if two_batch_overlap and ep_no_sync else 1,
+            ),
         ),
     )
     return config.build(init_device="cuda")

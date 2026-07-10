@@ -1,19 +1,18 @@
 import os
 
-import pytest
 import torch
 import torch.distributed as dist
 from torch.distributed.device_mesh import DeviceMesh
 
 from olmo_core.config import DType
-from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.nn.attention import AttentionConfig, AttentionType
 from olmo_core.nn.ddp.block import OLMoDDPTransformerBlock
 from olmo_core.nn.layer_norm import LayerNormConfig, LayerNormType
 from olmo_core.nn.moe import MoERouterGatingFunction
+from olmo_core.nn.moe.v2.ep_config import ExpertParallelConfig, ExpertParallelPath
 from olmo_core.nn.moe.v2.routed_experts import RoutedExpertsConfig
 from olmo_core.nn.moe.v2.router import MoERouterConfigV2
-from olmo_core.testing import requires_gpu, requires_multi_gpu, run_distributed_test
+from olmo_core.testing import requires_multi_gpu, run_distributed_test
 
 
 def _build_ep_mesh() -> DeviceMesh:
@@ -32,7 +31,6 @@ def _build_block(
     top_k: int = 1,
     uniform_expert_assignment: bool = True,
     init_device: str = "cuda",
-    ep_no_sync_use_2d_all_to_all: bool = False,
 ) -> OLMoDDPTransformerBlock:
     layer_norm = LayerNormConfig(name=LayerNormType.rms, eps=1e-6, bias=False, dtype=DType.float32)
     return OLMoDDPTransformerBlock(
@@ -68,10 +66,11 @@ def _build_block(
             dtype=DType.float32,
         ),
         feed_forward_norm=layer_norm,
-        ep_no_sync=ep_no_sync,
-        ep_no_sync_use_2d_all_to_all=ep_no_sync_use_2d_all_to_all,
-        ep_no_sync_capacity_factor=ep_no_sync_capacity_factor,
-        ep_no_sync_major_align=1,
+        ep=ExpertParallelConfig(
+            path=ExpertParallelPath.no_sync_1d if ep_no_sync else ExpertParallelPath.sync_1d,
+            capacity_factor=ep_no_sync_capacity_factor,
+            major_align=1,
+        ),
         init_device=init_device,
     )
 
@@ -116,13 +115,6 @@ def _install_forced_router(block: OLMoDDPTransformerBlock):
 
     assert block.routed_experts_router is not None
     block.routed_experts_router.forward = _make_forced_forward(block.routed_experts_router)
-
-
-@requires_gpu
-def test_v2_ep_no_sync_2d_all_to_all_rejected():
-    # @requires_gpu (not CPU): block construction allocates CUDA events before the config check.
-    with pytest.raises(OLMoConfigurationError, match="2D all_to_all path was removed"):
-        _build_block(ep_no_sync=True, init_device="cpu", ep_no_sync_use_2d_all_to_all=True)
 
 
 def _run_ep_no_sync_drop_behavior():
