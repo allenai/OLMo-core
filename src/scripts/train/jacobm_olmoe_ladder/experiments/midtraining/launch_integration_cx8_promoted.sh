@@ -20,7 +20,6 @@ EPHEMERAL_SAVE_INTERVAL="${EPHEMERAL_SAVE_INTERVAL:-500}"
 EVAL_INTERVAL="${EVAL_INTERVAL:-2000}"
 MODEL_SIZES="${MODEL_SIZES:-480m 810m 1p2b}"
 INTEGRATION_VARIANTS="${INTEGRATION_VARIANTS:-wide_256e8k deep_256e8k}"
-EP_DIM="${EP_DIM:-1}"
 
 mkdir -p "${LOG_DIR}"
 
@@ -49,9 +48,9 @@ integration_tag_for() {
 
 settings_for_size() {
   case "$1" in
-    480m) echo "8e-5 lr8e-5 192 4 8" ;;
-    810m) echo "4e-5 lr4e-5 256 8 4" ;;
-    1p2b) echo "4e-5 lr4e-5 384 8 4" ;;
+    480m) echo "8e-5 lr8e-5 192 4 8 1" ;;
+    810m) echo "4e-5 lr4e-5 256 8 4 1" ;;
+    1p2b) echo "4e-5 lr4e-5 96 8 3 8" ;;
     *) echo "Unknown model size: $1" >&2; return 1 ;;
   esac
 }
@@ -75,7 +74,7 @@ launch_one() {
   local integration_variant="$2"
   local integration_tag="$3"
 
-  read -r lr lr_tag global_batch_size_seq gpus micro_bsz < <(settings_for_size "${model_size}")
+  read -r lr lr_tag global_batch_size_seq gpus micro_bsz ep_dim < <(settings_for_size "${model_size}")
   local denom=$((gpus * micro_bsz))
   if (( global_batch_size_seq % denom != 0 )); then
     echo "Invalid batch settings for ${model_size} ${integration_tag}: global_batch_size_seq=${global_batch_size_seq} is not divisible by gpus*micro_bsz=${denom}" >&2
@@ -93,7 +92,7 @@ launch_one() {
   local batch_tag="b$((global_batch_size_seq * 8192 / 1024))k"
   local name="${RUN_PREFIX}-${model_size}-${integration_tag}-cx8-${lr_tag}-${SWEEP_SUFFIX}"
   local log_path="${LOG_DIR}/${name}.log"
-  local systems_tag="${batch_tag}-gpu${gpus}-ep${EP_DIM}mb${micro_bsz}"
+  local systems_tag="${batch_tag}-gpu${gpus}-ep${ep_dim}mb${micro_bsz}"
 
   local cmd=(
     uv run --extra dev --extra beaker python -m olmo_core.launch.beaker
@@ -116,7 +115,7 @@ launch_one() {
     --num-nodes=1
     --gpus-per-node="${gpus}"
     --micro-batch-size="${micro_bsz}"
-    --ep-dim="${EP_DIM}"
+    --ep-dim="${ep_dim}"
     --eval-task-set=fast
     --eval-interval="${EVAL_INTERVAL}"
     --save-interval=999999999

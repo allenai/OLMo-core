@@ -1911,3 +1911,14 @@ settings used by 1.2B integration pretraining.
 The four 480M/810M relaunches have started and written new partial checkpoints
 (`step3000`/`step3500`/`step4000` depending on the run), so they are past launch
 and storage-write smoke.
+
+1.2B PT-settings relaunch: the 1.2B integration pretraining runs that produced
+these checkpoints used sequence length 8192, Cx8 global batch seq 96
+(`b768k`), one node with 8 GPUs, EP8, and microbatch 3. The promoted MT launcher
+now uses those exact systems settings for 1.2B while keeping the MT recipe and
+fresh optimizer state unchanged.
+
+| Name | Beaker | Systems settings | Initial state |
+| --- | --- | --- | --- |
+| `mt-1p2b-intw256e8k-cx8-lr4e-5-r1` | https://beaker.org/ex/01KX7032K1GXDKQR2D9FAA0CBF | GBS seq 96; 1 node x 8 GPUs; EP8 / MB3 | started |
+| `mt-1p2b-intd256e8k-cx8-lr4e-5-r1` | https://beaker.org/ex/01KX703FE8T96HJM4EFG90KHVF | GBS seq 96; 1 node x 8 GPUs; EP8 / MB3 | scheduled |
