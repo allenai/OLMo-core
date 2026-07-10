@@ -34,38 +34,57 @@ class ExpertParallelSchedule(StrEnum):
 
 @dataclass
 class DeepEPConfig(Config):
-    # Optional DeepEP source/build path to add to sys.path before import. If not
-    # set, the backend falls back to OLMO_DEEPEP_PATH or /workspace/DeepEP.
     path: Optional[str] = None
-    # SMs to use for DeepEP dispatch/combine kernels. 0 lets DeepEP estimate a
-    # value from topology, bandwidth, number of experts, and top-k.
+    """
+    Optional DeepEP source/build path to add to ``sys.path`` before import. If not set, the backend
+    falls back to ``OLMO_DEEPEP_PATH`` or ``/workspace/DeepEP``.
+    """
     num_sms: int = 0
-    # RDMA queue pairs to use for DeepEP dispatch/combine. 0 lets DeepEP infer a
-    # value from num_sms and the selected communication mode.
+    """
+    SMs to use for DeepEP dispatch/combine kernels. 0 lets DeepEP estimate a value from topology,
+    bandwidth, number of experts, and top-k.
+    """
     num_qps: int = 0
-    # RDMA queue pairs to pre-allocate in the ElasticBuffer. 0 lets DeepEP choose
-    # its default upper bound; otherwise this must be >= num_qps.
+    """
+    RDMA queue pairs to use for DeepEP dispatch/combine. 0 lets DeepEP infer a value from
+    ``num_sms`` and the selected communication mode.
+    """
     num_allocated_qps: int = 0
-    # Padding alignment for received rows per expert. The current model path
-    # consumes packed rows, so deepep_v2 validates this as 1 for now.
+    """
+    RDMA queue pairs to pre-allocate in the ElasticBuffer. 0 lets DeepEP choose its default upper
+    bound; otherwise this must be >= ``num_qps``.
+    """
     expert_alignment: int = 1
-    # Pass async_with_compute_stream=True to DeepEP. When enabled, DeepEP returns
-    # an event instead of making the current stream wait for comm immediately;
-    # callers must place explicit waits before consuming comm outputs.
+    """
+    Padding alignment for received rows per expert. The current model path consumes packed rows, so
+    ``deepep_v2`` validates this as 1 for now.
+    """
     async_mode: bool = False
-    # Hint DeepEP's auto-tuner to reserve fewer SMs so communication can overlap
-    # with GEMM. If false, DeepEP tends to choose a larger SM count for standalone
-    # communication speed.
+    """
+    Pass ``async_with_compute_stream=True`` to DeepEP. When enabled, DeepEP returns an event instead
+    of making the current stream wait for comm immediately; callers must place explicit waits before
+    consuming comm outputs.
+    """
     prefer_overlap_with_compute: bool = True
-    # Allow DeepEP's hybrid communication mode. This can use more QPs but is the
-    # intended path for mixed NVLink/RDMA topologies.
+    """
+    Hint DeepEP's auto-tuner to reserve fewer SMs so communication can overlap with GEMM. If false,
+    DeepEP tends to choose a larger SM count for standalone communication speed.
+    """
     allow_hybrid_mode: bool = True
-    # Allow DeepEP combine to reduce multiple contributions for a token inside
-    # its communication/reduction path.
+    """
+    Allow DeepEP's hybrid communication mode. This can use more QPs but is the intended path for
+    mixed NVLink/RDMA topologies.
+    """
     allow_multiple_reduction: bool = True
-    # Where to apply top-k weights. "swiglu" fuses the weights into the routed
-    # expert path and currently requires bias-free down projections.
+    """
+    Allow DeepEP combine to reduce multiple contributions for a token inside its
+    communication/reduction path.
+    """
     weighting: str = "swiglu"
+    """
+    Where to apply top-k weights. ``"swiglu"`` fuses the weights into the routed expert path and
+    currently requires bias-free down projections.
+    """
 
     def validate(self) -> None:
         self.weighting = self.weighting.lower()
@@ -84,9 +103,11 @@ class ExpertParallelConfig(Config):
     path: ExpertParallelPath = ExpertParallelPath.sync_1d
     schedule: ExpertParallelSchedule = ExpertParallelSchedule.normal
 
-    # Rowwise and deepep_v2 use this as destination-rank expanded-row capacity
-    # and may tail-drop overflow routes.
     capacity_factor: float = 1.25
+    """
+    Rowwise and ``deepep_v2`` use this as destination-rank expanded-row capacity and may tail-drop
+    overflow routes.
+    """
     shared_slots: int = 1
     major_align: int = 1
 
