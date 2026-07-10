@@ -81,6 +81,7 @@ class MoERouterConfigV2(Config):
     use_recompute_fp32_cast: bool = (
         False  # whether to use an OutputDiscardCheckpoint to save the fp32 cast of the router input for recomputation in backward, which can save memory at the cost of extra compute in backward.
     )
+    router_logits_in_fp32: bool = True
     score_correction_bias: bool = False
     n_group: Optional[int] = None
     topk_group: Optional[int] = None
@@ -158,6 +159,7 @@ class MoERouterV2(nn.Module):
         expert_weight_scale: Optional[float] = None,
         original_top_k: Optional[int] = None,
         use_recompute_fp32_cast=False,
+        router_logits_in_fp32: bool = True,
         score_correction_bias: bool = False,
         n_group: Optional[int] = None,
         topk_group: Optional[int] = None,
@@ -188,6 +190,7 @@ class MoERouterV2(nn.Module):
         self.expert_weight_scale = expert_weight_scale
         self.original_top_k = original_top_k
         self.use_recompute_fp32_cast = use_recompute_fp32_cast
+        self.router_logits_in_fp32 = router_logits_in_fp32
         self.score_correction_bias = score_correction_bias
         self.n_group = n_group
         self.topk_group = topk_group
@@ -506,10 +509,16 @@ class MoERouterV2(nn.Module):
         return expert_weights, expert_indices
 
     def get_expert_logits(self, x: torch.Tensor) -> torch.Tensor:
+        weight = get_local_tensor(self.weight).view(self.num_experts, self.d_model)
+        bias = None if self.bias is None else get_local_tensor(self.bias)
+        if self.router_logits_in_fp32:
+            x = x.float()
+            weight = weight.float()
+            bias = None if bias is None else bias.float()
         return F.linear(
-            x.float(),
-            get_local_tensor(self.weight).view(self.num_experts, self.d_model).float(),
-            None if self.bias is None else get_local_tensor(self.bias).float(),
+            x,
+            weight,
+            bias,
         )
 
     @torch.no_grad()
@@ -612,17 +621,20 @@ class MoERouterV2(nn.Module):
         # shape: (batch_size, seq_len, d_model)
         x = self.jitter(x)
 
-        # Keep activation in bf16/fp16 in forward graph, and only materialize fp32
-        # router input through OutputDiscardCheckpoint so backward can recompute it.
         cast_checkpoint: Optional[OutputDiscardCheckpoint] = None
-        if torch.is_grad_enabled() and x.requires_grad and self.use_recompute_fp32_cast:
-            cast_checkpoint = OutputDiscardCheckpoint()
-            x_fp32 = cast(torch.Tensor, cast_checkpoint.checkpoint(_cast_to_fp32, x))
+        if self.router_logits_in_fp32:
+            # Keep activation in bf16/fp16 in the forward graph, and only materialize
+            # the fp32 router input through a checkpoint when requested.
+            if torch.is_grad_enabled() and x.requires_grad and self.use_recompute_fp32_cast:
+                cast_checkpoint = OutputDiscardCheckpoint()
+                router_input = cast(torch.Tensor, cast_checkpoint.checkpoint(_cast_to_fp32, x))
+            else:
+                router_input = x.float()
         else:
-            x_fp32 = x.float()
+            router_input = x
 
         # shape: (batch_size, seq_len, num_experts)
-        logits = self.get_expert_logits(x_fp32).float()
+        logits = self.get_expert_logits(router_input).float()
         if cast_checkpoint is not None:
             # Recompute fp32 cast before linear backward consumes the saved input.
             cast_checkpoint.discard_output_and_register_recompute(logits)
