@@ -142,7 +142,7 @@ Initial OLMoBase eval target set used the selected 275M baseline midtraining LR,
 | `mt-810m-baseline-cx8-lr4e-5-r1/step47684` | [01KX4WQ5D3C5E2QED9S4NKZXWG](https://beaker.org/ex/01KX4WQ5D3C5E2QED9S4NKZXWG) | [01KX4X1GRMAR78VYH0XZVJX7MX](https://beaker.org/ex/01KX4X1GRMAR78VYH0XZVJX7MX) | running | OLMoBase launched in the MoE workspace. |
 | `mt-1p2b-baseline-cx8-lr4e-5-r1/step31790` | [01KX4WQ6MBG2Z525R1NRN6FHEH](https://beaker.org/ex/01KX4WQ6MBG2Z525R1NRN6FHEH) | [01KX4X6FYR1DTE1VMY3FEGT5XC](https://beaker.org/ex/01KX4X6FYR1DTE1VMY3FEGT5XC) | running | OLMoBase launched in the MoE workspace. |
 | `mt-275m-intw256e8k-cx8-lr1p6e-4-r3/step95368` | [01KX4WQ7T1G1SC89E0PEHW1RRS](https://beaker.org/ex/01KX4WQ7T1G1SC89E0PEHW1RRS) | [01KX4XBGFP5A0XE1JFQT2NWCVM](https://beaker.org/ex/01KX4XBGFP5A0XE1JFQT2NWCVM) | scheduled | OLMoBase launched in `ai2/olmo-instruct`. |
-| `mt-275m-intd256e8k-cx8-lr1p6e-4-r3/step95368` | [01KX5DTZQJKG11EGTERPKWXA0F](https://beaker.org/ex/01KX5DTZQJKG11EGTERPKWXA0F) | pending | converting | Conversion relaunched with zero min runtime in the MoE workspace; launch OLMoBase in the MoE workspace after HF files are written. |
+| `mt-275m-intd256e8k-cx8-lr1p6e-4-r3/step95368` | [01KX5DTZQJKG11EGTERPKWXA0F](https://beaker.org/ex/01KX5DTZQJKG11EGTERPKWXA0F) | [01KX5FF8P4F3GS5RRH5M29AFCW](https://beaker.org/ex/01KX5FF8P4F3GS5RRH5M29AFCW) | scheduled | Conversion finished 2026-07-10; OLMoBase launched in the MoE workspace with group `olmoe3-olmobase-main`. |
 
 ## Active / Queued Beaker Surface
 

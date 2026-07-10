@@ -1844,7 +1844,7 @@ Jupiter vLLM launcher; 275M/480M evals run in `ai2/olmo-instruct`, while
 | `midtraining/mt-810m-baseline-cx8-lr4e-5-r1/step47684` | `hf-checkpoints/midtraining/mt-810m-baseline-cx8-lr4e-5-r1/step47684` | https://beaker.org/ex/01KX4WQ5D3C5E2QED9S4NKZXWG | https://beaker.org/ex/01KX4X1GRMAR78VYH0XZVJX7MX | running |
 | `midtraining/mt-1p2b-baseline-cx8-lr4e-5-r1/step31790` | `hf-checkpoints/midtraining/mt-1p2b-baseline-cx8-lr4e-5-r1/step31790` | https://beaker.org/ex/01KX4WQ6MBG2Z525R1NRN6FHEH | https://beaker.org/ex/01KX4X6FYR1DTE1VMY3FEGT5XC | running |
 | `midtraining/mt-275m-intw256e8k-cx8-lr1p6e-4-r3/step95368` | `hf-checkpoints/midtraining/mt-275m-intw256e8k-cx8-lr1p6e-4-r3/step95368` | https://beaker.org/ex/01KX4WQ7T1G1SC89E0PEHW1RRS | https://beaker.org/ex/01KX4XBGFP5A0XE1JFQT2NWCVM | scheduled |
-| `midtraining/mt-275m-intd256e8k-cx8-lr1p6e-4-r3/step95368` | `hf-checkpoints/midtraining/mt-275m-intd256e8k-cx8-lr1p6e-4-r3/step95368` | https://beaker.org/ex/01KX5DTZQJKG11EGTERPKWXA0F | pending | converting |
+| `midtraining/mt-275m-intd256e8k-cx8-lr1p6e-4-r3/step95368` | `hf-checkpoints/midtraining/mt-275m-intd256e8k-cx8-lr1p6e-4-r3/step95368` | https://beaker.org/ex/01KX5DTZQJKG11EGTERPKWXA0F | https://beaker.org/ex/01KX5FF8P4F3GS5RRH5M29AFCW | scheduled |
 
 ## 2026-07-10 Promoted Integration Cx8 Midtraining
 

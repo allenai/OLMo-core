@@ -57,7 +57,9 @@ def launch_command(target: dict, *, dry_run: bool, num_instances: int, gpus: int
         if size in {"275m", "480m"}
         else "ai2/OLMo-3-moe-experiments"
     )
-    group = GROUP_OLMO_INSTRUCT if size in {"275m", "480m"} else GROUP_NORMAL
+    group = os.environ.get("FORCE_GROUP") or (
+        GROUP_OLMO_INSTRUCT if size in {"275m", "480m"} else GROUP_NORMAL
+    )
 
     cmd = [
         "uv",
