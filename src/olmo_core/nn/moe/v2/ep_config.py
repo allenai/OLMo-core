@@ -8,23 +8,29 @@ from olmo_core.exceptions import OLMoConfigurationError
 
 
 class ExpertParallelPath(StrEnum):
-    # Synchronized all-to-all EP. Does not require symmetric memory.
     sync_1d = "sync_1d"
-    # Legacy no-sync EP over symmetric-memory all_to_all_vdev primitives. It
-    # still pays permute/unpermute overhead, so rowwise_nvshmem is preferred for
-    # no-sync symmetric-memory EP.
+    """Synchronized all-to-all EP. Does not require symmetric memory."""
     no_sync_1d = "no_sync_1d"
-    # Production OLMo-owned rowwise NVSHMEM EP. Uses static rowwise buffers and
-    # device-side dispatch/combine metadata.
+    """
+    Legacy no-sync EP over symmetric-memory ``all_to_all_vdev`` primitives. It still pays
+    permute/unpermute overhead, so ``rowwise_nvshmem`` is preferred for no-sync symmetric-memory EP.
+    """
     rowwise_nvshmem = "rowwise_nvshmem"
-    # Experimental rowwise NVSHMEM waves. This tries to overlap the same batch's
-    # dispatch, expert GEMMs, and combine, but the current NVSHMEM implementation
-    # consumes enough SM resources that overlap has not made this faster. Not
-    # recommended for training.
+    """
+    Production OLMo-owned rowwise NVSHMEM EP. Uses static rowwise buffers and device-side
+    dispatch/combine metadata.
+    """
     rowwise_wave = "rowwise_wave"
-    # DeepEP V2 ElasticBuffer backend. Uses DeepEP's own communication buffers
-    # instead of OLMo symmetric-memory buffers.
+    """
+    Experimental rowwise NVSHMEM waves. This tries to overlap the same batch's dispatch, expert
+    GEMMs, and combine, but the current NVSHMEM implementation consumes enough SM resources that
+    overlap has not made this faster. Not recommended for training.
+    """
     deepep_v2 = "deepep_v2"
+    """
+    DeepEP V2 ElasticBuffer backend. Uses DeepEP's own communication buffers instead of OLMo
+    symmetric-memory buffers.
+    """
 
 
 class ExpertParallelSchedule(StrEnum):
