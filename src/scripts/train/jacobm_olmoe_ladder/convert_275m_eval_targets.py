@@ -179,7 +179,22 @@ def run_convert(target: dict[str, Any], config_path: Path, *, force: bool, work_
     log_path = log_dir / f"{target['train_name']}-step{target['step']}.log"
     print("convert", target["train_name"], target["cx"], target["variant"], "log", log_path)
     with log_path.open("w") as log_file:
-        subprocess.run(cmd, check=True, cwd=str(ROOT), stdout=log_file, stderr=subprocess.STDOUT)
+        process = subprocess.Popen(
+            cmd,
+            cwd=str(ROOT),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+        )
+        assert process.stdout is not None
+        for line in process.stdout:
+            print(line, end="", flush=True)
+            log_file.write(line)
+            log_file.flush()
+        return_code = process.wait()
+        if return_code != 0:
+            raise subprocess.CalledProcessError(return_code, cmd)
 
 
 def append_checkpoint_index(target: dict[str, Any], config_path: Path, status: str, error: str | None) -> None:

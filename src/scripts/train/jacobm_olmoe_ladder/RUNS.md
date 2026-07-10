@@ -1826,6 +1826,11 @@ secrets, so those were copied from `ai2/OLMo-3-moe-experiments` before launch.
 | `mt-275m-intw256e8k-cx4-lr1p5e-4-r3` | `step95368` | 275M | `mt-eval-275m-intw256e8k-cx4-lr1p5e-4-r3` | https://beaker.org/ex/01KX4WKZYZJG8W8DPD3F7M1XXH | created |
 | `mt-275m-intw256e8k-cx8-lr1p6e-4-r3` | `step95368` | 275M | `mt-eval-275m-intw256e8k-cx8-lr1p6e-4-r3` | https://beaker.org/ex/01KX4WME9TKAQHGM8CE3073HHZ | created |
 | `mt-1p2b-baseline-cx8-lr4e-5-r1` | `step31790` | 1.2B | `mt-eval-1p2b-baseline-cx8-lr4e-5-r1` | https://beaker.org/ex/01KX4WN3XFYSZAGH33KWYF62TV | running |
+| `mt-275m-intd256e8k-cx1-lr2e-4-r3` | `step95368` | 275M | `mt-eval-275m-intd256e8k-cx1-lr2e-4-r3` | https://beaker.org/ex/01KX5CM5NCAGRQ97Z51CSCVXR3 | created |
+| `mt-275m-intd256e8k-cx2-lr1p8e-4-r3` | `step95368` | 275M | `mt-eval-275m-intd256e8k-cx2-lr1p8e-4-r3` | https://beaker.org/ex/01KX5CMGM8BKX6JYHXWQ3A1CXJ | created |
+| `mt-275m-intd256e8k-cx4-lr1p5e-4-r3` | `step95368` | 275M | `mt-eval-275m-intd256e8k-cx4-lr1p5e-4-r3` | https://beaker.org/ex/01KX5CMWZR8PJSJEG56DCB9455 | created |
+| `mt-275m-intd256e8k-cx8-lr1p6e-4-r3` | `step95368` | 275M | `mt-eval-275m-intd256e8k-cx8-lr1p6e-4-r3` | https://beaker.org/ex/01KX5CN86SGER9E88YASSS7J06 | created |
+| `mt-1p2b-baseline-cx1-lr4e-5-r1` | `step31790` | 1.2B | `mt-eval-1p2b-baseline-cx1-lr4e-5-r1` | https://beaker.org/ex/01KX5CNTTRBMEXBA1XJ1JNM0ZR | created |
 
 Converted and launched OLMoBase evals for Cx8 midtrained checkpoints that were
 ready as of this pass. Conversion jobs use one Jupiter GPU and write HF outputs
@@ -1839,6 +1844,7 @@ Jupiter vLLM launcher; 275M/480M evals run in `ai2/olmo-instruct`, while
 | `midtraining/mt-810m-baseline-cx8-lr4e-5-r1/step47684` | `hf-checkpoints/midtraining/mt-810m-baseline-cx8-lr4e-5-r1/step47684` | https://beaker.org/ex/01KX4WQ5D3C5E2QED9S4NKZXWG | https://beaker.org/ex/01KX4X1GRMAR78VYH0XZVJX7MX | running |
 | `midtraining/mt-1p2b-baseline-cx8-lr4e-5-r1/step31790` | `hf-checkpoints/midtraining/mt-1p2b-baseline-cx8-lr4e-5-r1/step31790` | https://beaker.org/ex/01KX4WQ6MBG2Z525R1NRN6FHEH | https://beaker.org/ex/01KX4X6FYR1DTE1VMY3FEGT5XC | running |
 | `midtraining/mt-275m-intw256e8k-cx8-lr1p6e-4-r3/step95368` | `hf-checkpoints/midtraining/mt-275m-intw256e8k-cx8-lr1p6e-4-r3/step95368` | https://beaker.org/ex/01KX4WQ7T1G1SC89E0PEHW1RRS | https://beaker.org/ex/01KX4XBGFP5A0XE1JFQT2NWCVM | scheduled |
+| `midtraining/mt-275m-intd256e8k-cx8-lr1p6e-4-r3/step95368` | `hf-checkpoints/midtraining/mt-275m-intd256e8k-cx8-lr1p6e-4-r3/step95368` | https://beaker.org/ex/01KX5DTZQJKG11EGTERPKWXA0F | pending | converting |
 
 ## 2026-07-10 Promoted Integration Cx8 Midtraining
 
@@ -1856,6 +1862,6 @@ and 10% of the matching baseline Cx8 pretraining LR.
 | --- | --- | ---: | ---: | ---: | --- | --- | --- |
 | `mt-480m-intw256e8k-cx8-lr8e-5-r1` | `integration/int-480m-cx8-intw256e8k-lr8e-4-r1/step78042` | 8e-5 | 192 | 4 | EP1 / MB8 | https://beaker.org/ex/01KX5AVB82NXXXP2AWHB5Y003C | running |
 | `mt-810m-intw256e8k-cx8-lr4e-5-r1` | `integration/int-810m-cx8-intw256e8k-lr4e-4-r1/step141423` | 4e-5 | 256 | 8 | EP1 / MB4 | https://beaker.org/ex/01KX5AVR579VFZX7PNPFZ7K6Y9 | running |
-| `mt-1p2b-intw256e8k-cx8-lr4e-5-r1` | `integration/int-1p2b-cx8-intw256e8k-lr4e-4-r2/step217870` | 4e-5 | 384 | 8 | EP1 / MB4 | https://beaker.org/ex/01KX5AWBA0E2YNCAXPSQWWW9F5 | running |
+| `mt-1p2b-intw256e8k-cx8-lr4e-5-r1` | `integration/int-1p2b-cx8-intw256e8k-lr4e-4-r2/step217870` | 4e-5 | 384 | 8 | EP1 / MB4 | https://beaker.org/ex/01KX5AWBA0E2YNCAXPSQWWW9F5 | failed |
 | `mt-480m-intd256e8k-cx8-lr8e-5-r1` | `integration/int-480m-cx8-intd256e8k-lr8e-4-r1/step78659` | 8e-5 | 192 | 4 | EP1 / MB8 | https://beaker.org/ex/01KX5AX3WZZ44PV3D6PEGHRQ8V | scheduled |
 | `mt-810m-intd256e8k-cx8-lr4e-5-r1` | `integration/int-810m-cx8-intd256e8k-lr4e-4-r1/step138619` | 4e-5 | 256 | 8 | EP1 / MB4 | https://beaker.org/ex/01KX5AXRY5713CS0AQPFKF6T0W | scheduled |

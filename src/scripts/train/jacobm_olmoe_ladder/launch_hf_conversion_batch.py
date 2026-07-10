@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import tempfile
 from pathlib import Path
@@ -24,7 +25,8 @@ def load_targets(path: Path) -> list[dict]:
 
 
 def spec_for_target(target: dict, manifest: Path) -> str:
-    name = f"olmoe3-hf-convert-{target['train_name']}-step{target['step']}"
+    name_suffix = os.environ.get("NAME_SUFFIX", "")
+    name = f"olmoe3-hf-convert-{target['train_name']}-step{target['step']}{name_suffix}"
     only = target["train_name"]
     return f"""version: v2
 tasks:
@@ -72,7 +74,6 @@ tasks:
     context:
       priority: urgent
       minRuntime: 0s
-      autoResume: false
     constraints:
       cluster:
         - {CLUSTER}
@@ -93,7 +94,8 @@ def main() -> None:
 
     print(f"targets {len(targets)}")
     for target in targets:
-        name = f"olmoe3-hf-convert-{target['train_name']}-step{target['step']}"
+        name_suffix = os.environ.get("NAME_SUFFIX", "")
+        name = f"olmoe3-hf-convert-{target['train_name']}-step{target['step']}{name_suffix}"
         spec = spec_for_target(target, args.manifest)
         if args.dry_run:
             print(f"--- {name} ---")
@@ -114,8 +116,10 @@ def main() -> None:
             "--name",
             name,
         ]
-        result = subprocess.run(cmd, check=True, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        result = subprocess.run(cmd, check=False, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         print(result.stdout.strip())
+        if result.returncode != 0:
+            raise subprocess.CalledProcessError(result.returncode, cmd, output=result.stdout)
 
 
 if __name__ == "__main__":

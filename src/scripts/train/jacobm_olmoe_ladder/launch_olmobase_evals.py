@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -51,7 +52,7 @@ def launch_command(target: dict, *, dry_run: bool, num_instances: int, gpus: int
     size = target["model_size"]
     slug = VARIANT_SLUGS[target["variant"]]
     name = f"olmoe3-{size}-{cx_slug(target)}-{slug}-olmobase"
-    workspace = (
+    workspace = os.environ.get("FORCE_WORKSPACE") or (
         "ai2/olmo-instruct"
         if size in {"275m", "480m"}
         else "ai2/OLMo-3-moe-experiments"
@@ -108,8 +109,9 @@ def launch_command(target: dict, *, dry_run: bool, num_instances: int, gpus: int
         "--no-follow",
         "--yes",
     ]
-    if size not in {"275m", "480m"}:
-        cmd.extend(["--budget", BUDGET])
+    budget = os.environ.get("FORCE_BUDGET")
+    if budget or size not in {"275m", "480m"}:
+        cmd.extend(["--budget", budget or BUDGET])
     for task in TASKS:
         cmd.extend(["--task", task])
     if dry_run:
