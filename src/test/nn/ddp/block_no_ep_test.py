@@ -9,6 +9,7 @@ from olmo_core.nn.ddp.block import (
 from olmo_core.nn.layer_norm import LayerNormConfig, LayerNormType
 from olmo_core.nn.lm_head import LMHeadConfig
 from olmo_core.nn.moe import MoERouterGatingFunction
+from olmo_core.nn.moe.v2.ep_config import ExpertParallelConfig, ExpertParallelPath
 from olmo_core.nn.moe.v2.routed_experts import RoutedExpertsConfig
 from olmo_core.nn.moe.v2.router import MoERouterConfigV2
 from olmo_core.nn.transformer import (
@@ -76,8 +77,7 @@ def _build_block(
             dtype=DType.float32,
         ),
         feed_forward_norm=layer_norm,
-        ep_no_sync=False,
-        ep_no_sync_major_align=1,
+        ep=ExpertParallelConfig(path=ExpertParallelPath.sync_1d, major_align=1),
         init_device=init_device,
     )
 
