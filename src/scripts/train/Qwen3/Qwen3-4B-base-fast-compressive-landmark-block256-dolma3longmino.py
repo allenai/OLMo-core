@@ -13,7 +13,7 @@ from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.float8 import Float8Config
 from olmo_core.internal.common import build_launch_config, get_root_dir, get_work_dir
 from olmo_core.internal.experiment import CliContext, ExperimentConfig, main
-from olmo_core.launch.beaker import BeakerLaunchConfig, OLMoCoreBeakerImage
+from olmo_core.launch.beaker import BeakerEnvVar, BeakerLaunchConfig, OLMoCoreBeakerImage
 from olmo_core.nn.transformer import (
     TransformerActivationCheckpointingMode,
     TransformerConfig,
@@ -84,6 +84,11 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     )
     if beaker_launch_config is not None:
         beaker_launch_config.priority = "urgent"
+        # block_size=256 overflows H100 shared memory at the default forward num_stages=3
+        # (OutOfResources: ~449KB required vs. ~227KB available); num_stages=1 fits. Verified to
+        # match num_stages=3 numerics at block_size=128 in
+        # landmark_compressive_kernel_test.py::test_compressive_kernel_num_stages_invariant.
+        beaker_launch_config.env_vars.append(BeakerEnvVar(name="LM_FAST_FWD_STAGES", value="1"))
 
     tokenizer_config = TokenizerConfig.qwen3()
 
@@ -211,8 +216,9 @@ if __name__ == "__main__":
     """
     Qwen3-4B + COMPRESSIVE fast landmark attention at 64k on the 15B dolma3_longmino sample
     (2 nodes, urgent). Block-size sweep variant: landmark block size 256 (mem_freq=255). Same setup
-    as Qwen3-4B-base-fast-compressive-landmark-dolma3longmino.py otherwise. dry_run must be run on
-    a GPU node (the fast kernel imports triton).
+    as Qwen3-4B-base-fast-compressive-landmark-dolma3longmino.py otherwise, except the launch sets
+    LM_FAST_FWD_STAGES=1 -- the default forward num_stages=3 overflows H100 shared memory at this
+    block size. dry_run must be run on a GPU node (the fast kernel imports triton).
 
         python src/scripts/train/Qwen3/Qwen3-4B-base-fast-compressive-landmark-block256-dolma3longmino.py \\
             launch my-run ai2/jupiter-cirrascale-2
