@@ -1809,3 +1809,33 @@ source training runs.
 | `mt-810m-baseline-cx1-lr6e-5-r1` | `step47684` | 810M | `mt-eval-810m-baseline-cx1-lr6e-5-r1` | https://beaker.org/ex/01KX40CX1TDFGF4115E01P6Y3Q | running |
 | `mt-810m-baseline-cx8-lr4e-5-r1` | `step47684` | 810M | `mt-eval-810m-baseline-cx8-lr4e-5-r1` | https://beaker.org/ex/01KX40D8K5SZJG3G4HNP8VDX67 | running |
 
+## 2026-07-10 Midtraining Cx8 Eval Expansion
+
+Launched the remaining finished final-checkpoint eval backfills identified after
+the 2026-07-10 MT status pass. The 275M integration-wide backfills run in
+`ai2/olmo-instruct` with no budget and use
+`integration_midtraining_ladder.py --integration-config=wide_256e8k`; the 1.2B
+baseline Cx8 backfill runs in the MoE workspace with 8 GPUs. `ai2/olmo-instruct`
+was missing the canonical `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`
+secrets, so those were copied from `ai2/OLMo-3-moe-experiments` before launch.
+
+| Source run | Checkpoint | Model size | Eval backfill | Beaker | Initial state |
+| --- | --- | --- | --- | --- | --- |
+| `mt-275m-intw256e8k-cx1-lr2e-4-r3` | `step95368` | 275M | `mt-eval-275m-intw256e8k-cx1-lr2e-4-r3` | https://beaker.org/ex/01KX4WK50SP2Z3S81H1597P5Q5 | running |
+| `mt-275m-intw256e8k-cx2-lr1p8e-4-r3` | `step95368` | 275M | `mt-eval-275m-intw256e8k-cx2-lr1p8e-4-r3` | https://beaker.org/ex/01KX4WKJCYDT2XQAYJFCS9PZJD | running |
+| `mt-275m-intw256e8k-cx4-lr1p5e-4-r3` | `step95368` | 275M | `mt-eval-275m-intw256e8k-cx4-lr1p5e-4-r3` | https://beaker.org/ex/01KX4WKZYZJG8W8DPD3F7M1XXH | created |
+| `mt-275m-intw256e8k-cx8-lr1p6e-4-r3` | `step95368` | 275M | `mt-eval-275m-intw256e8k-cx8-lr1p6e-4-r3` | https://beaker.org/ex/01KX4WME9TKAQHGM8CE3073HHZ | created |
+| `mt-1p2b-baseline-cx8-lr4e-5-r1` | `step31790` | 1.2B | `mt-eval-1p2b-baseline-cx8-lr4e-5-r1` | https://beaker.org/ex/01KX4WN3XFYSZAGH33KWYF62TV | running |
+
+Converted and launched OLMoBase evals for Cx8 midtrained checkpoints that were
+ready as of this pass. Conversion jobs use one Jupiter GPU and write HF outputs
+under `hf-checkpoints/midtraining/`. OLMoBase jobs use the standard 8-engine
+Jupiter vLLM launcher; 275M/480M evals run in `ai2/olmo-instruct`, while
+810M/1.2B evals run in `ai2/OLMo-3-moe-experiments`.
+
+| Source checkpoint | HF checkpoint | Conversion | OLMoBase eval | Initial state |
+| --- | --- | --- | --- | --- |
+| `midtraining/mt-480m-baseline-cx8-lr8e-5-r1/step63579` | `hf-checkpoints/midtraining/mt-480m-baseline-cx8-lr8e-5-r1/step63579` | https://beaker.org/ex/01KX4WQ46EHZTA76REXB4DWX8E | https://beaker.org/ex/01KX4X15K8VHV25ES8YSPF0AET | running |
+| `midtraining/mt-810m-baseline-cx8-lr4e-5-r1/step47684` | `hf-checkpoints/midtraining/mt-810m-baseline-cx8-lr4e-5-r1/step47684` | https://beaker.org/ex/01KX4WQ5D3C5E2QED9S4NKZXWG | https://beaker.org/ex/01KX4X1GRMAR78VYH0XZVJX7MX | running |
+| `midtraining/mt-1p2b-baseline-cx8-lr4e-5-r1/step31790` | `hf-checkpoints/midtraining/mt-1p2b-baseline-cx8-lr4e-5-r1/step31790` | https://beaker.org/ex/01KX4WQ6MBG2Z525R1NRN6FHEH | https://beaker.org/ex/01KX4X6FYR1DTE1VMY3FEGT5XC | running |
+| `midtraining/mt-275m-intw256e8k-cx8-lr1p6e-4-r3/step95368` | `hf-checkpoints/midtraining/mt-275m-intw256e8k-cx8-lr1p6e-4-r3/step95368` | https://beaker.org/ex/01KX4WQ7T1G1SC89E0PEHW1RRS | https://beaker.org/ex/01KX4XBGFP5A0XE1JFQT2NWCVM | scheduled |

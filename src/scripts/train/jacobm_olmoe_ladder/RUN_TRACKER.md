@@ -1,6 +1,6 @@
 # Ladder Run Tracker
 
-Last updated: 2026-07-09 18:05 UTC.
+Last updated: 2026-07-10 02:25 UTC.
 
 This table is a scan-friendly status matrix for planned ladder cells. It is separate from `RUNS.md` (chronological launch/status log) and `PLOTTED_RESULTS.md` (finished-only plotted rows and losses).
 
@@ -64,7 +64,7 @@ microbatch 8, fresh optimizer state, 2000-step warmup then constant LR.
 | 275M integration deep Cx4 | `integration/int-275m-cx4-intd256e8k-lr1.6e-3-r1/step30259` | `1.5e-4` | running | [1.5e-4 r3](https://beaker.org/ex/01KX1X1GPC3N51C7E8AW2YXN63) | Canonical replacement for failed r1, launched from pushed commit `34f5d5a` with `integration_midtraining_ladder.py` and fresh optimizer-state loading. Ignore r2 false-starts; they used the pre-push git ref and failed with missing launcher file. |
 | 275M integration deep Cx8 | `integration/int-275m-cx8-intd256e8k-lr1.6e-3-r1/step40345` | `1.6e-4` | running | [1.6e-4 r3](https://beaker.org/ex/01KX1X203AABJ29GHKST48J5E9) | Canonical replacement for failed r1, launched from pushed commit `34f5d5a` with `integration_midtraining_ladder.py` and fresh optimizer-state loading. Ignore r2 false-starts; they used the pre-push git ref and failed with missing launcher file. |
 
-Final-checkpoint eval backfills are eval-only jobs over the final midtraining checkpoint. Earlier attempts from commits `430f233c`, `571c0984`, and `ac32eb76` failed before eval due to duplicate evaluator callbacks or dataloader restore mismatches and should be ignored. The fixed backfills build the real midtraining source-mixture dataloader for eval. On 2026-07-07, `copy_eval_backfills_to_wandb.py --only mt-eval` copied the original eight 275M Cx1/Cx8 backfills to their source W&B runs; on 2026-07-10 it copied the six new Cx2/Cx4/480M/810M backfills as well.
+Final-checkpoint eval backfills are eval-only jobs over the final midtraining checkpoint. Earlier attempts from commits `430f233c`, `571c0984`, and `ac32eb76` failed before eval due to duplicate evaluator callbacks or dataloader restore mismatches and should be ignored. The fixed backfills build the real midtraining source-mixture dataloader for eval. On 2026-07-07, `copy_eval_backfills_to_wandb.py --only mt-eval` copied the original eight 275M Cx1/Cx8 backfills to their source W&B runs; on 2026-07-10 it copied the six new Cx2/Cx4/480M/810M backfills as well. The 2026-07-10 integration-wide and 1.2B baseline backfills are launched but not copied yet.
 
 | Source | LR | Eval backfill | State | Notes |
 | --- | --- | --- | --- | --- |
@@ -82,6 +82,11 @@ Final-checkpoint eval backfills are eval-only jobs over the final midtraining ch
 | 480M Cx8 | `8e-5` | [01KX40D8N8FWQKGJXQ5716CKHG](https://beaker.org/ex/01KX40D8N8FWQKGJXQ5716CKHG) | uploaded | Final-checkpoint eval metrics copied to source W&B run on 2026-07-10. |
 | 810M Cx1 | `6e-5` | [01KX40CX1TDFGF4115E01P6Y3Q](https://beaker.org/ex/01KX40CX1TDFGF4115E01P6Y3Q) | uploaded | Final-checkpoint eval metrics copied to source W&B run on 2026-07-10. |
 | 810M Cx8 | `4e-5` | [01KX40D8K5SZJG3G4HNP8VDX67](https://beaker.org/ex/01KX40D8K5SZJG3G4HNP8VDX67) | uploaded | Final-checkpoint eval metrics copied to source W&B run on 2026-07-10. |
+| 1.2B Cx8 | `4e-5` | [01KX4WN3XFYSZAGH33KWYF62TV](https://beaker.org/ex/01KX4WN3XFYSZAGH33KWYF62TV) | running | Launched 2026-07-10 in the MoE workspace; copy after it finishes. |
+| 275M integration wide Cx1 | `2e-4` | [01KX4WK50SP2Z3S81H1597P5Q5](https://beaker.org/ex/01KX4WK50SP2Z3S81H1597P5Q5) | running | Launched 2026-07-10 in `ai2/olmo-instruct`; copy after it finishes. |
+| 275M integration wide Cx2 | `1.8e-4` | [01KX4WKJCYDT2XQAYJFCS9PZJD](https://beaker.org/ex/01KX4WKJCYDT2XQAYJFCS9PZJD) | running | Launched 2026-07-10 in `ai2/olmo-instruct`; copy after it finishes. |
+| 275M integration wide Cx4 | `1.5e-4` | [01KX4WKZYZJG8W8DPD3F7M1XXH](https://beaker.org/ex/01KX4WKZYZJG8W8DPD3F7M1XXH) | created | Launched 2026-07-10 in `ai2/olmo-instruct`; copy after it finishes. |
+| 275M integration wide Cx8 | `1.6e-4` | [01KX4WME9TKAQHGM8CE3073HHZ](https://beaker.org/ex/01KX4WME9TKAQHGM8CE3073HHZ) | created | Launched 2026-07-10 in `ai2/olmo-instruct`; copy after it finishes. |
 
 Tentative larger-model midtraining batch targets: 480M uses global batch seq 192,
 810M uses 256, and 1.2B uses 384. These require smoke tests before promotion.
@@ -116,12 +121,16 @@ step warmup then constant LR, and the 10% baseline pretraining LR rule.
 
 ## Midtraining HF Conversion / OLMoBase Evals
 
-Initial OLMoBase eval target set uses the selected 275M baseline midtraining LR, `2e-4`, for both Cx1 and Cx8. HF checkpoints are written under `hf-checkpoints/midtraining/`. As of 2026-07-10, these are the only mid-trained checkpoints with OLMoBase evals.
+Initial OLMoBase eval target set used the selected 275M baseline midtraining LR, `2e-4`, for both Cx1 and Cx8. HF checkpoints are written under `hf-checkpoints/midtraining/`. On 2026-07-10, the Cx8 MT set was extended to finished baseline sizes plus the finished 275M integration-wide MT checkpoint.
 
 | Source | HF conversion | OLMoBase eval | State | Notes |
 | --- | --- | --- | --- | --- |
 | `mt-275m-baseline-cx1-lr2e-4-r1/step95368` | [01KX02AE8YRXS7Q8SGV0TAMEN7](https://beaker.org/ex/01KX02AE8YRXS7Q8SGV0TAMEN7) | [01KX02MYSA36TFKBT99XAE0XZ6](https://beaker.org/ex/01KX02MYSA36TFKBT99XAE0XZ6) | done | Converted HF path: `hf-checkpoints/midtraining/mt-275m-baseline-cx1-lr2e-4-r1/step95368`. |
 | `mt-275m-baseline-cx8-lr2e-4-r1/step95368` | [01KX02AFMHGPSH4ZQMS0A5BEF7](https://beaker.org/ex/01KX02AFMHGPSH4ZQMS0A5BEF7) | [01KX02N80T6NXX8TZEJM8TC0Z5](https://beaker.org/ex/01KX02N80T6NXX8TZEJM8TC0Z5) | done | Converted HF path: `hf-checkpoints/midtraining/mt-275m-baseline-cx8-lr2e-4-r1/step95368`. |
+| `mt-480m-baseline-cx8-lr8e-5-r1/step63579` | [01KX4WQ46EHZTA76REXB4DWX8E](https://beaker.org/ex/01KX4WQ46EHZTA76REXB4DWX8E) | [01KX4X15K8VHV25ES8YSPF0AET](https://beaker.org/ex/01KX4X15K8VHV25ES8YSPF0AET) | running | OLMoBase launched in `ai2/olmo-instruct`. |
+| `mt-810m-baseline-cx8-lr4e-5-r1/step47684` | [01KX4WQ5D3C5E2QED9S4NKZXWG](https://beaker.org/ex/01KX4WQ5D3C5E2QED9S4NKZXWG) | [01KX4X1GRMAR78VYH0XZVJX7MX](https://beaker.org/ex/01KX4X1GRMAR78VYH0XZVJX7MX) | running | OLMoBase launched in the MoE workspace. |
+| `mt-1p2b-baseline-cx8-lr4e-5-r1/step31790` | [01KX4WQ6MBG2Z525R1NRN6FHEH](https://beaker.org/ex/01KX4WQ6MBG2Z525R1NRN6FHEH) | [01KX4X6FYR1DTE1VMY3FEGT5XC](https://beaker.org/ex/01KX4X6FYR1DTE1VMY3FEGT5XC) | running | OLMoBase launched in the MoE workspace. |
+| `mt-275m-intw256e8k-cx8-lr1p6e-4-r3/step95368` | [01KX4WQ7T1G1SC89E0PEHW1RRS](https://beaker.org/ex/01KX4WQ7T1G1SC89E0PEHW1RRS) | [01KX4XBGFP5A0XE1JFQT2NWCVM](https://beaker.org/ex/01KX4XBGFP5A0XE1JFQT2NWCVM) | scheduled | OLMoBase launched in `ai2/olmo-instruct`. |
 
 ## Active / Queued Beaker Surface
 

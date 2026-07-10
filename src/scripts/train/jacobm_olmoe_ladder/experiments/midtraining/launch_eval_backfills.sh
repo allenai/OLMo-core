@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT="src/scripts/train/jacobm_olmoe_ladder/experiments/midtraining/midtraining_ladder.py"
+SCRIPT="${SCRIPT:-src/scripts/train/jacobm_olmoe_ladder/experiments/midtraining/midtraining_ladder.py}"
 CHECKPOINT_ROOT="${CHECKPOINT_ROOT:-/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/midtraining}"
 EVAL_ROOT="${EVAL_ROOT:-/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/midtraining/eval-backfills}"
 LOG_DIR="${LOG_DIR:-/tmp/olmoe3-midtraining-eval-backfill-launch-logs}"
@@ -9,7 +9,7 @@ JOB_CREATED_TIMEOUT_SECONDS="${JOB_CREATED_TIMEOUT_SECONDS:-240}"
 CLUSTER="${CLUSTER:-ai2/titan}"
 BEAKER_IMAGE="${BEAKER_IMAGE:-tianhuat/olmo-core-torch211-2404-cu128}"
 WORKSPACE="${WORKSPACE:-ai2/OLMo-3-moe-experiments}"
-BUDGET="${BUDGET:-ai2/oe-other}"
+BUDGET="${BUDGET-ai2/oe-other}"
 PRIORITY="${PRIORITY:-urgent}"
 PREEMPTIBLE="${PREEMPTIBLE:-0}"
 PYTHON_BIN="${PYTHON_BIN:-python}"
@@ -19,6 +19,7 @@ NUM_NODES="${NUM_NODES:-1}"
 DATA_ROOT="${DATA_ROOT:-s3://ai2-llm}"
 EVAL_TASK_SET="${EVAL_TASK_SET:-fast}"
 MIDTRAIN_MAX_TOKENS="${MIDTRAIN_MAX_TOKENS:-100000000000}"
+read -r -a EXTRA_SCRIPT_ARGS <<< "${EXTRA_SCRIPT_ARGS:-}"
 
 # Defaults cover the six currently finished 275M midtraining LR-grid runs.
 # The two 1.6e-3 runs should be added after their final checkpoints exist.
@@ -44,11 +45,13 @@ common_beaker_args=(
   --weka oe-training-default
   --beaker-image "${BEAKER_IMAGE}"
   --workspace "${WORKSPACE}"
-  --budget "${BUDGET}"
   --priority "${PRIORITY}"
   --env OLMO_SYMM_VDEV2D_AUTO_BUILD=1
   --env-secret AWS_ACCESS_KEY_ID=AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY=AWS_SECRET_ACCESS_KEY WANDB_API_KEY=jacobm_WANDB_API_KEY
 )
+if [[ -n "${BUDGET}" ]]; then
+  common_beaker_args+=(--budget "${BUDGET}")
+fi
 if [[ "${PREEMPTIBLE}" == "1" ]]; then
   common_beaker_args+=(--preemptible)
 fi
@@ -81,6 +84,7 @@ launch_one() {
     --save-folder="${save_folder}"
     --name="${eval_name}"
     --data-root="${DATA_ROOT}"
+    "${EXTRA_SCRIPT_ARGS[@]}"
     --eval-checkpoints "${source_checkpoint}"
     --midtrain-max-tokens="${MIDTRAIN_MAX_TOKENS}"
     --eval-task-set="${EVAL_TASK_SET}"
