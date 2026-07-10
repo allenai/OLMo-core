@@ -19,24 +19,13 @@ from typing import Any, Callable, Dict, Optional, Sequence, Union
 
 import torch
 
+from olmo_core.utils import env_bool
+
 log = logging.getLogger(__name__)
 
 __all__ = ["load_cuda_extension", "LazyCudaExtension"]
 
 PathLikeStr = Union[str, os.PathLike[str]]
-
-
-def _env_bool(names: Sequence[str], default: bool = False) -> bool:
-    for name in names:
-        raw = os.getenv(name)
-        if raw is None:
-            continue
-        lowered = raw.strip().lower()
-        if lowered in {"1", "true", "yes", "on"}:
-            return True
-        if lowered in {"0", "false", "no", "off"}:
-            return False
-    return default
 
 
 def _env_float(names: Sequence[str], default: float) -> float:
@@ -235,9 +224,9 @@ def load_cuda_extension(
         _env_float(stale_lock_timeout_env_names, stale_lock_timeout_default_seconds),
         0.0,
     )
-    force_rebuild = _env_bool(force_rebuild_env_names, default=False)
+    force_rebuild = env_bool(force_rebuild_env_names, default=False)
     _force_rebuild_build_directory(build_directory, enabled=force_rebuild)
-    verbose = _env_bool(verbose_env_names, default=False)
+    verbose = env_bool(verbose_env_names, default=False)
     max_retries = max(_env_int(("OLMO_MOE_EXT_LOAD_RETRIES",), 8), 1)
     retry_sleep_s = max(_env_float(("OLMO_MOE_EXT_LOAD_RETRY_SLEEP_SEC",), 0.1), 0.0)
 

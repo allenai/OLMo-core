@@ -1361,6 +1361,10 @@ class OLMoDDPTrainModule(TrainModule):
                 new_lr = self.scheduler.set_lr(group, self.trainer)
                 self.trainer.record_metric(f"LR (group {group_idx})", new_lr, namespace="optim")
 
+        # Give the optimizer the current global step so its non-finite grad-norm diagnostic can
+        # report it (a skip-step optimizer's own step counter lags global_step by the skip count).
+        optim._debug_global_step = self.trainer.global_step
+
         # Step optimizer.
         optim.step()
         # TODO(moe-train-module-rowwise-cache-refresh): this per-step refresh looks redundant —

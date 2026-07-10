@@ -38,6 +38,40 @@ _LOGGING_CONFIGURED: bool = False
 log = logging.getLogger(__name__)
 
 
+def env_bool(name: Union[str, Sequence[str]], default: bool = False) -> bool:
+    """
+    Parse a boolean from an environment variable.
+
+    :param name: An environment variable name, or a sequence of names tried in order — the first
+        one set to a recognized value wins.
+    :param default: Returned when no name is set to a recognized value. Truthy values are
+        ``1/true/yes/on`` and falsy values are ``0/false/no/off`` (case-insensitive).
+    """
+    names = (name,) if isinstance(name, str) else name
+    for n in names:
+        raw = os.getenv(n)
+        if raw is None:
+            continue
+        lowered = raw.strip().lower()
+        if lowered in {"1", "true", "yes", "on"}:
+            return True
+        if lowered in {"0", "false", "no", "off"}:
+            return False
+    return default
+
+
+def rank_matches_filter(rank_filter: str, rank: int) -> bool:
+    """
+    Test a rank against a filter string. ``"all"`` / ``"*"`` matches every rank; otherwise the
+    filter is a comma-separated list of rank numbers (e.g. ``"0,3"``). Useful for gating per-rank
+    debug output.
+    """
+    rank_filter = rank_filter.strip().lower()
+    if rank_filter in {"all", "*"}:
+        return True
+    return str(rank) in {part.strip() for part in rank_filter.split(",")}
+
+
 def generate_uuid() -> str:
     """
     Generate a unique ID.

@@ -1,5 +1,6 @@
 import logging
 import math
+import os
 from collections import OrderedDict
 from dataclasses import dataclass
 from fnmatch import fnmatch
@@ -9,6 +10,7 @@ from typing import (
     Callable,
     Dict,
     Iterable,
+    Iterator,
     List,
     Optional,
     Set,
@@ -36,12 +38,13 @@ from torch.distributed.tensor._utils import (
 
 from olmo_core._nvtx import maybe_nvtx_annotate
 from olmo_core.nn.fp8_weight import FP8WeightStore
-from olmo_core.utils import get_default_device, move_to_device
+from olmo_core.utils import env_bool, get_default_device, move_to_device
 
 from ..config import Config, DType
 from ..exceptions import OLMoConfigurationError
 from .adamw import foreach_adamw_step
 from .config import INITIAL_LR_FIELD, LR_FIELD, OptimGroupOverride
+from .grad_debug import debug_nan_inf_grad_norm
 
 log = logging.getLogger(__name__)
 
@@ -54,6 +57,18 @@ def _to_local_tensor(tensor: torch.Tensor) -> torch.Tensor:
     if isinstance(tensor, DTensor):
         return tensor.to_local()
     return tensor
+
+
+def _assert_finite_async(tensor: torch.Tensor, name: str) -> None:
+    """
+    Device-side assert that ``tensor`` is all-finite, without a host sync (so it's cheap enough to
+    run every step). The process aborts asynchronously if a non-finite value is encountered.
+    """
+    tensor = _to_local_tensor(tensor)
+    torch._assert_async(
+        torch.isfinite(tensor.detach()).all(),
+        f"Non-finite {name} encountered in OLMoDDPOptimizer",
+    )
 
 
 def _is_fp8_weight_store(param: Any) -> bool:
@@ -161,6 +176,13 @@ class OLMoDDPOptimizerConfig(Config):
     """
     When ``True``, ignore checkpointed ``exp_avg`` and ``exp_avg_sq`` values and
     reset them to zero when restoring optimizer state.
+    """
+
+    check_nan_inf_grad: bool = True
+    """
+    When ``True``, device-side assert (without a host sync) that the loss and the total grad norm
+    are finite each step, aborting the run on a non-finite value; note this aborts rather than
+    skipping the step, so it interacts with the skip-step spike detection.
     """
 
     @property
@@ -489,7 +511,7 @@ class OLMoDDPOptimizer:
         broadcast_bucket_mb: int = 32,
         do_not_shard_tensor_smaller_than: int = 4096,
         use_distributed: bool = True,
-        check_nan_inf_grad: bool = False,
+        check_nan_inf_grad: bool = True,
         reset_optimizer_moments_on_load: bool = False,
     ) -> None:
         assert lr > 0.0
@@ -1022,6 +1044,16 @@ class OLMoDDPOptimizer:
             ep_dp_grads_sharded,
         )
 
+        self._maybe_debug_nan_inf_grad_norm(
+            total_grad_norm,
+            dp_grads_replicated,
+            dp_grads_sharded,
+            ep_dp_grads_replicated,
+            ep_dp_grads_sharded,
+        )
+        if self.check_nan_inf_grad:
+            _assert_finite_async(total_grad_norm, "total grad norm")
+
         clip_coef = self.max_grad_norm / (total_grad_norm + 1e-6)
         # Note: multiplying by the clamped coef is redundant when the coef is clamped to 1, but doing so
         # avoids a `if clip_coef < 1:` conditional which can require a CPU <=> device synchronization
@@ -1080,6 +1112,66 @@ class OLMoDDPOptimizer:
             total_grad_norm = self._reduce_norm(total_grad_norm, self.dense_mesh["pp"].get_group())
         return total_grad_norm
 
+    def _maybe_debug_nan_inf_grad_norm(
+        self,
+        total_grad_norm: torch.Tensor,
+        dp_grads_replicated: List[torch.Tensor],
+        dp_grads_sharded: List[torch.Tensor],
+        ep_dp_grads_replicated: List[torch.Tensor],
+        ep_dp_grads_sharded: List[torch.Tensor],
+    ) -> None:
+        """
+        Opt-in diagnostic (gated by ``OLMO_DDP_DEBUG_NONFINITE_GRAD``): when the total grad norm is
+        non-finite, log/dump the per-parameter and per-component local grad norms to locate the
+        offending parameter. This is just the optimizer-specific adapter — it reads the env knobs
+        and extracts the grad data, then delegates to
+        :func:`olmo_core.optim.grad_debug.debug_nan_inf_grad_norm`. A no-op unless the env var is
+        set and the norm is non-finite (the extraction closures only run then).
+
+        TODO(config-gate this diagnostic): the ad-hoc ``OLMO_DDP_DEBUG_*`` env knobs are off
+        convention (core gates behavior via Config fields — cf. ``check_nan_inf_grad``). Migrate to
+        a ``debug_nan_inf_grad: bool`` config field (fire on ``check_nan_inf_grad and
+        debug_nan_inf_grad``) and move the rank / max_log_entries / dump-dir knobs to config fields too. The
+        logged step is the trainer ``global_step`` (set on ``_debug_global_step``, not the Adam
+        ``.step`` state, which lags ``global_step`` by the skip count on this skip-step optimizer);
+        a clean ``global_step`` setter mirroring ``latest_loss`` would replace the raw attribute.
+        """
+        if not env_bool("OLMO_DDP_DEBUG_NONFINITE_GRAD"):
+            return
+        try:
+            max_log_entries = int(os.getenv("OLMO_DDP_DEBUG_NONFINITE_GRAD_TOPK", "20"))
+        except ValueError:
+            max_log_entries = 20
+        debug_nan_inf_grad_norm(
+            _to_local_tensor(total_grad_norm.detach()),
+            step=getattr(self, "_debug_global_step", -1),
+            ranks_filter=os.getenv("OLMO_DDP_DEBUG_NONFINITE_GRAD_RANKS", "all"),
+            max_log_entries=max_log_entries,
+            dump_dir=os.getenv("OLMO_DEBUG_DUMP_DIR"),
+            component_norms=lambda: {
+                "dp_replicated_local": self._local_total_norm(dp_grads_replicated),
+                "dp_sharded_local": self._local_total_norm(dp_grads_sharded),
+                "ep_dp_replicated_local": self._local_total_norm(ep_dp_grads_replicated),
+                "ep_dp_sharded_local": self._local_total_norm(ep_dp_grads_sharded),
+            },
+            iter_local_grads=self._iter_local_grads,
+        )
+
+    def _iter_local_grads(self) -> Iterator[Tuple[str, str, str, torch.Tensor]]:
+        """Yield ``(name, param_group, placements, local_grad)`` for each param with a local grad."""
+        for param_group in self.param_groups:
+            for name, param in param_group["named_params"].items():
+                if not param.requires_grad:
+                    continue
+                grad = self.main_grad.get(name)
+                if grad is None:
+                    continue
+                local_grad = _to_local_tensor(grad.detach())
+                if local_grad.numel() == 0:
+                    continue
+                placements = ",".join(str(p) for p in self.states[f"{name}.main"].placements)
+                yield name, param_group["pg"], placements, local_grad
+
     def _combine_norm(self, n1, n2) -> torch.Tensor:
         return torch.sqrt(n1.square() + n2.square())
 
@@ -1109,12 +1201,11 @@ class OLMoDDPOptimizer:
             # Precondition: DDP model called all-reduce grads, bf16 model grads on dp ranks are the same
             self._copy_model_grads_to_main_grads()
 
-        total_grad_norm = self._clip_grad()
+        if self.check_nan_inf_grad and self.latest_loss is not None:
+            _assert_finite_async(self.latest_loss, "loss")
 
-        if self.check_nan_inf_grad and (total_grad_norm.isnan() or total_grad_norm.isinf()):
-            assert (
-                False
-            ), f"[Error] rank={dist.get_rank()} grad norm is {total_grad_norm}, skipping step"
+        # _clip_grad() also asserts the total grad norm is finite when check_nan_inf_grad is set.
+        total_grad_norm = self._clip_grad()
 
         self.latest_grad_norm = total_grad_norm
 

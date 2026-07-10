@@ -10,6 +10,9 @@ import sysconfig
 from pathlib import Path
 
 
+# Local copy (not olmo_core.utils.env_bool) to keep this build entrypoint stdlib-only: it runs as
+# `python -m olmo_core.kernels.build_symm_mem_vdev2d_ext` at image-build time and must not import
+# olmo_core (and hence torch).
 def _env_bool(name: str, default: bool = False) -> bool:
     raw = os.getenv(name)
     if raw is None:
