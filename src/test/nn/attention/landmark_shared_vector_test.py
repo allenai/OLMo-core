@@ -287,6 +287,29 @@ def test_prefill_generate_matches_training_forward():
     torch.testing.assert_close(out_train, out_prefill, atol=1e-5, rtol=1e-4)
 
 
+def test_prefill_generate_handles_non_block_aligned_length():
+    """A prompt length that isn't a multiple of block_size must not silently truncate the tail's
+    trailing partial block (regression test: previously ``_shared_vector_tail`` computed
+    ``nb = T // block_size`` directly on the unpadded prefill, dropping the last partial block and
+    crashing the final ``.view(B, T, -1)`` reshape, e.g. during long-context eval)."""
+    m = _build()
+    with torch.no_grad():
+        m.weight_landmark.normal_(std=0.3)
+    Lb = m.block_size
+    T = Lb * 3 + 7  # deliberately not a multiple of block_size
+    pad = (-T) % Lb
+    x = torch.randn(1, T, m.d_model)
+    x_padded = torch.nn.functional.pad(x, (0, 0, 0, pad))
+
+    # Training path requires a block-aligned length, so pad, run, and slice back for the reference.
+    out_train_padded = m(x_padded)
+
+    m.init_kv_cache_manager(batch_size=1, max_seq_len=T)
+    out_prefill = m(x)
+    assert out_prefill.shape == (1, T, m.d_model)
+    torch.testing.assert_close(out_prefill, out_train_padded[:, :T], atol=1e-5, rtol=1e-4)
+
+
 def test_backward_populates_new_param_grads():
     m = _build()
     B, T = 1, m.block_size * 3

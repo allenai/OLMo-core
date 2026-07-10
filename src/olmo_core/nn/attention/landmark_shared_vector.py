@@ -59,6 +59,7 @@ from typing import Optional
 import torch
 import torch.distributed as dist
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.utils.checkpoint import checkpoint
 
 from olmo_core.distributed.parallel.context_parallel import (
@@ -443,7 +444,17 @@ class SharedVectorLandmarkAttention(FastLandmarkAttention):
             kh = repeat_kv(k.transpose(1, 2), n_rep)
             vh = repeat_kv(v.transpose(1, 2), n_rep)
             main = self._prefill(qh, kh, vh)  # (B, H, T, head_dim)
-            tail = self._shared_vector_tail(qh, kh, vh)  # (B, H, T, vec_dim)
+            # _shared_vector_tail computes nb = T // block_size and silently drops any partial
+            # trailing block, so an arbitrary-length prompt must be right-padded to a block-aligned
+            # length first (mirroring FastLandmarkAttention._prefill) and sliced back to T after.
+            pad = (-T) % self.block_size
+            if pad:
+                qp = F.pad(qh, (0, 0, 0, pad))
+                kp = F.pad(kh, (0, 0, 0, pad))
+                vp = F.pad(vh, (0, 0, 0, pad))
+            else:
+                qp, kp, vp = qh, kh, vh
+            tail = self._shared_vector_tail(qp, kp, vp)[:, :, :T]  # (B, H, T, vec_dim)
 
         main_flat = main.transpose(1, 2).contiguous().view(B, T, -1)
         tail_flat = tail.to(main.dtype).transpose(1, 2).contiguous().view(B, T, -1)
