@@ -1,10 +1,4 @@
-"""
-Debug helper for locating the parameter behind a non-finite gradient norm.
-
-Decoupled from any specific optimizer: the caller supplies already-node-local tensors and lazy
-callables for the (optimizer-internal) per-parameter and per-component grad data, so the extraction
-only runs once we've decided to report.
-"""
+"""Debug helper for locating the parameter behind a non-finite gradient norm."""
 
 from __future__ import annotations
 
