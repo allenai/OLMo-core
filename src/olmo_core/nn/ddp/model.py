@@ -681,7 +681,7 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
             bucket_cap_mb=bucket_cap_mb,
         )
 
-        from ...transformer.model import (
+        from olmo_core.nn.transformer.model import (
             _hide_cpu_inputs_from_torch,
             _unhide_cpu_inputs_from_torch,
         )
@@ -816,7 +816,7 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
 
             else:
                 # usually this is for the first dense layer
-                from ...transformer.block import TransformerBlock
+                from olmo_core.nn.transformer.block import TransformerBlock
 
                 block = cast(TransformerBlock, block)
                 att = cast(Union[Attention, FusedAttention], block.attention)
