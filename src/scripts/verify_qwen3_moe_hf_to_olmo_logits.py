@@ -10,11 +10,13 @@ from pathlib import Path
 from typing import Any
 
 import torch
+from torch.distributed.checkpoint import FileSystemReader
 from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 
 from olmo_core.config import DType
 from olmo_core.distributed.checkpoint import load_model_and_optim_state
 from olmo_core.nn.attention import AttentionBackendName
+from olmo_core.nn.moe.v2.hf.convert_checkpoint import load_state_dict_direct
 from olmo_core.nn.moe.v2.qwen import build_qwen3_moe_config_from_hf_config
 from olmo_core.utils import prepare_cli_environment
 
@@ -71,6 +73,40 @@ def _capture_router_output(
 ) -> None:
     weights.append(output[0 if len(output) == 4 else 1].detach().float().cpu())
     indices.append(output[1 if len(output) == 4 else 2].detach().cpu())
+
+
+@torch.no_grad()
+def _load_olmo_checkpoint(checkpoint_dir: Path, model: torch.nn.Module) -> None:
+    metadata = FileSystemReader(checkpoint_dir).read_metadata().state_dict_metadata
+    if "module.embeddings.weight.main" not in metadata:
+        load_model_and_optim_state(checkpoint_dir, model, thread_count=32)
+        return
+
+    log.info("Detected OLMo DDP checkpoint layout")
+    checkpoint_state = load_state_dict_direct(
+        checkpoint_dir,
+        process_group=None,
+        pre_download=False,
+        thread_count=32,
+    )
+    remaining = set(checkpoint_state)
+    for model_name, target in model.state_dict().items():
+        checkpoint_name = f"module.{model_name}.main"
+        try:
+            source = checkpoint_state[checkpoint_name]
+        except KeyError as exc:
+            raise KeyError(f"Checkpoint is missing expected tensor {checkpoint_name!r}") from exc
+        if target.numel() != source.numel():
+            raise ValueError(
+                f"{checkpoint_name}: model shape {tuple(target.shape)} does not match "
+                f"checkpoint shape {tuple(source.shape)}"
+            )
+        target.copy_(source.reshape(target.shape).to(device=target.device, dtype=target.dtype))
+        remaining.remove(checkpoint_name)
+
+    if remaining:
+        raise RuntimeError(f"Unconsumed OLMo DDP checkpoint tensors: {sorted(remaining)[:20]}")
+    log.info("Loaded all %d OLMo DDP model tensors", len(checkpoint_state))
 
 
 @torch.no_grad()
@@ -153,11 +189,7 @@ def verify_logits(
     )
     olmo = model_config.build(init_device="meta")
     olmo.to_empty(device=device)
-    load_model_and_optim_state(
-        checkpoint_path / "model_and_optim",
-        olmo,
-        thread_count=32,
-    )
+    _load_olmo_checkpoint(checkpoint_path / "model_and_optim", olmo)
     olmo.eval()
 
     olmo_hidden_states: list[torch.Tensor] = []
