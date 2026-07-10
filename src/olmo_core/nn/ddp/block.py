@@ -42,6 +42,7 @@ from olmo_core.nn.moe.v2.fp8 import normalize_rowwise_fp8_config
 from olmo_core.nn.moe.v2.fp8 import (
     refresh_rowwise_fp8_cache as _refresh_rowwise_fp8_cache,
 )
+from olmo_core.nn.moe.v2.fp8 import shared_experts_forward_rowwise_fp8
 from olmo_core.nn.moe.v2.no_ep import combined_forward_no_ep as _combined_forward_no_ep
 from olmo_core.nn.moe.v2.routed_experts import RoutedExperts, RoutedExpertsConfig
 from olmo_core.nn.moe.v2.router import MoERouterConfigV2, MoERouterV2
@@ -778,6 +779,18 @@ class OLMoDDPTransformerBlock(olmo_core.nn.transformer.block.TransformerBlockBas
         return True
 
     @property
+    def has_routed_experts(self) -> bool:
+        return self.routed_experts is not None
+
+    @property
+    def has_shared_experts(self) -> bool:
+        return self.shared_experts is not None
+
+    @property
+    def is_shared_only(self) -> bool:
+        return self.has_shared_experts and not self.has_routed_experts
+
+    @property
     def ep_enabled(self) -> bool:
         return self._ep_enabled
 
@@ -1097,11 +1110,71 @@ class OLMoDDPTransformerBlock(olmo_core.nn.transformer.block.TransformerBlockBas
         loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
         **kwargs,
     ) -> torch.Tensor:
-        """Reserved for no-routed-experts case (only shared experts), equivalent to a dense model"""
+        """Forward for shared-only blocks, equivalent to a dense DDP-stack MLP."""
         assert self.routed_experts is None
         assert self.routed_experts_router is None
         assert self.shared_experts is not None
-        raise NotImplementedError("combined_forward_shared_only is not implemented")
+
+        attn_res_out = self._res_norm_attn(x, **kwargs)
+        kwargs.pop("max_doc_len", None)
+        kwargs.pop("cu_doc_lens", None)
+        mlp_inp = self._prepare_moe_input(attn_res_out)
+
+        if self.shared_experts_router is not None:
+            shared_expert_weights, _, _, _ = self.shared_experts_router(
+                mlp_inp,
+                True,
+                loss_div_factor=loss_div_factor,
+            )
+        else:
+            shared_expert_weights = None
+
+        rowwise_fp8_cfg = self.rowwise_fp8
+        use_rowwise_fp8 = rowwise_fp8_cfg is not None and rowwise_fp8_cfg.enabled
+        if use_rowwise_fp8 and not self._rowwise_fp8_checked:
+            assert rowwise_fp8_cfg is not None
+            rowwise_fp8_cfg.assert_runtime_supported()
+            self._rowwise_fp8_checked = True
+
+        if use_rowwise_fp8:
+            assert rowwise_fp8_cfg is not None
+            shared_out = shared_experts_forward_rowwise_fp8(
+                self,
+                mlp_inp,
+                use_fast_accum=rowwise_fp8_cfg.use_fast_accum,
+            )
+        else:
+            shared_out = self.shared_experts(mlp_inp)
+
+        mlp_out = self._mix_shared_out(shared_out, shared_expert_weights, attn_res_out.shape)
+        return self._res_norm_mlp(attn_res_out, mlp_out)
+
+    def _mix_shared_out(
+        self,
+        shared_out: torch.Tensor,
+        shared_expert_weights: Optional[torch.Tensor],
+        output_shape: torch.Size,
+    ) -> torch.Tensor:
+        assert self.shared_experts is not None
+        B, S, D = output_shape
+        if self.shared_experts_router is None:
+            if self.shared_experts.num_experts != 1:
+                raise RuntimeError("shared_experts_router is required for multiple shared experts")
+            return shared_out.squeeze(0)
+
+        if shared_expert_weights is None:
+            raise RuntimeError(
+                "shared_experts_router is enabled but shared expert weights are missing"
+            )
+        _, _, E_s = shared_expert_weights.shape
+        return (
+            torch.bmm(
+                shared_expert_weights.to(shared_out.dtype).reshape(B * S, 1, E_s),
+                shared_out.permute(1, 2, 0, 3).contiguous().view(B * S, E_s, D),
+            )
+            .squeeze(1)
+            .view(B, S, D)
+        )
 
     def combined_forward_no_ep(
         self,
