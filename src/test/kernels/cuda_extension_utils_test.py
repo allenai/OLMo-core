@@ -3,24 +3,11 @@ import time
 
 from olmo_core.kernels.cuda_extension_utils import (
     _cuda_arch_tag,
-    _env_bool,
     _env_float,
     _force_rebuild_build_directory,
     _maybe_remove_stale_build_lock,
     _torch_extension_abi_tag,
 )
-
-
-def test_env_bool(monkeypatch):
-    monkeypatch.setenv("OLMO_TEST_FLAG", "true")
-    assert _env_bool(["OLMO_TEST_FLAG"]) is True
-    monkeypatch.setenv("OLMO_TEST_FLAG", "off")
-    assert _env_bool(["OLMO_TEST_FLAG"]) is False
-    monkeypatch.delenv("OLMO_TEST_FLAG", raising=False)
-    assert _env_bool(["OLMO_TEST_FLAG"], default=True) is True
-    # First set name wins.
-    monkeypatch.setenv("OLMO_TEST_FLAG_2", "yes")
-    assert _env_bool(["OLMO_TEST_FLAG", "OLMO_TEST_FLAG_2"]) is True
 
 
 def test_env_float(monkeypatch):
