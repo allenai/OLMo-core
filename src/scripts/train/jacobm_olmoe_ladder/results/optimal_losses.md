@@ -1,6 +1,6 @@
 # Optimal Loss Values
 
-Generated: 2026-07-10 22:22 UTC
+Generated: 2026-07-10 22:44 UTC
 
 Source: `/weka/oe-adapt-default/jacobm/olmoe3/OLMo-core/src/scripts/train/jacobm_olmoe_ladder/PLOTTED_RESULTS.md`. Values mirror the completed-run plotting policy: final-window training CE averaged over the last 250M tokens, running jobs excluded.
 
@@ -332,3 +332,6 @@ Source: `/weka/oe-adapt-default/jacobm/olmoe3/OLMo-core/src/scripts/train/jacobm
 | 1.2B | Cx4 | baseline 48E/top4 | 3e-4 | 2.1508 | 0.000366 | 2.1500 | 4 |
 | 1.2B | Cx4 | integration deep 256E/top8 | 3e-4 | 2.0944 |  |  | 1 |
 | 1.2B | Cx4 | integration wide 256E/top8 | 3e-4 | 2.0942 |  |  | 1 |
+| 1.2B | Cx8 | baseline 48E/top4 | 4e-4 | 2.0835 | 0.000348 | 2.0831 | 3 |
+| 1.2B | Cx8 | integration deep 256E/top8 | 4e-4 | 2.0239 |  |  | 1 |
+| 1.2B | Cx8 | integration wide 256E/top8 | 4e-4 | 2.0226 |  |  | 1 |

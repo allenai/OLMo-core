@@ -1,5 +1,5 @@
 {
-  "generated_at_utc": "2026-07-10T22:22:43.786924+00:00",
+  "generated_at_utc": "2026-07-10T22:44:06.763994+00:00",
   "records": [
     {
       "Cx": "Cx1",
@@ -3245,6 +3245,39 @@
       "Cx": "Cx4",
       "best avg250M": "2.0942",
       "best observed LR": "3e-4",
+      "fit LR": "",
+      "fit avg250M": "",
+      "model": "1.2B",
+      "points": "1",
+      "section": "Integration Candidates",
+      "variant": "integration wide 256E/top8"
+    },
+    {
+      "Cx": "Cx8",
+      "best avg250M": "2.0835",
+      "best observed LR": "4e-4",
+      "fit LR": "0.000348",
+      "fit avg250M": "2.0831",
+      "model": "1.2B",
+      "points": "3",
+      "section": "Integration Candidates",
+      "variant": "baseline 48E/top4"
+    },
+    {
+      "Cx": "Cx8",
+      "best avg250M": "2.0239",
+      "best observed LR": "4e-4",
+      "fit LR": "",
+      "fit avg250M": "",
+      "model": "1.2B",
+      "points": "1",
+      "section": "Integration Candidates",
+      "variant": "integration deep 256E/top8"
+    },
+    {
+      "Cx": "Cx8",
+      "best avg250M": "2.0226",
+      "best observed LR": "4e-4",
       "fit LR": "",
       "fit avg250M": "",
       "model": "1.2B",
