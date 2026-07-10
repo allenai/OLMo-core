@@ -59,6 +59,18 @@ def _to_local_tensor(tensor: torch.Tensor) -> torch.Tensor:
     return tensor
 
 
+def _assert_finite_async(tensor: torch.Tensor, name: str) -> None:
+    """
+    Device-side assert that ``tensor`` is all-finite, without a host sync (so it's cheap enough to
+    run every step). The process aborts asynchronously if a non-finite value is encountered.
+    """
+    tensor = _to_local_tensor(tensor)
+    torch._assert_async(
+        torch.isfinite(tensor.detach()).all(),
+        f"Non-finite {name} encountered in OLMoDDPOptimizer",
+    )
+
+
 def _is_fp8_weight_store(param: Any) -> bool:
     return isinstance(param, FP8WeightStore)
 
@@ -164,6 +176,13 @@ class OLMoDDPOptimizerConfig(Config):
     """
     When ``True``, ignore checkpointed ``exp_avg`` and ``exp_avg_sq`` values and
     reset them to zero when restoring optimizer state.
+    """
+
+    check_nan_inf_grad: bool = False
+    """
+    When ``True``, device-side assert (without a host sync) that the loss and the total grad norm
+    are finite each step, aborting the run on a non-finite value. Off by default; note this aborts
+    rather than skipping the step, so it interacts with the skip-step spike detection.
     """
 
     @property
@@ -1032,6 +1051,8 @@ class OLMoDDPOptimizer:
             ep_dp_grads_replicated,
             ep_dp_grads_sharded,
         )
+        if self.check_nan_inf_grad:
+            _assert_finite_async(total_grad_norm, "total grad norm")
 
         clip_coef = self.max_grad_norm / (total_grad_norm + 1e-6)
         # Note: multiplying by the clamped coef is redundant when the coef is clamped to 1, but doing so
@@ -1180,12 +1201,11 @@ class OLMoDDPOptimizer:
             # Precondition: DDP model called all-reduce grads, bf16 model grads on dp ranks are the same
             self._copy_model_grads_to_main_grads()
 
-        total_grad_norm = self._clip_grad()
+        if self.check_nan_inf_grad and self.latest_loss is not None:
+            _assert_finite_async(self.latest_loss, "loss")
 
-        if self.check_nan_inf_grad and (total_grad_norm.isnan() or total_grad_norm.isinf()):
-            assert (
-                False
-            ), f"[Error] rank={dist.get_rank()} grad norm is {total_grad_norm}, skipping step"
+        # _clip_grad() also asserts the total grad norm is finite when check_nan_inf_grad is set.
+        total_grad_norm = self._clip_grad()
 
         self.latest_grad_norm = total_grad_norm
 
