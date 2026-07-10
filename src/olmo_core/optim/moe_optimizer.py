@@ -37,7 +37,12 @@ from torch.distributed.tensor._utils import (
 
 from olmo_core._nvtx import maybe_nvtx_annotate
 from olmo_core.nn.fp8_weight import FP8WeightStore
-from olmo_core.utils import env_bool, get_default_device, move_to_device
+from olmo_core.utils import (
+    env_bool,
+    get_default_device,
+    move_to_device,
+    rank_matches_filter,
+)
 
 from ..config import Config, DType
 from ..exceptions import OLMoConfigurationError
@@ -55,13 +60,6 @@ def _to_local_tensor(tensor: torch.Tensor) -> torch.Tensor:
     if isinstance(tensor, DTensor):
         return tensor.to_local()
     return tensor
-
-
-def _rank_matches_filter(rank_filter: str, rank: int) -> bool:
-    rank_filter = rank_filter.strip().lower()
-    if rank_filter in {"all", "*"}:
-        return True
-    return str(rank) in {part.strip() for part in rank_filter.split(",")}
 
 
 def _is_fp8_weight_store(param: Any) -> bool:
@@ -1113,9 +1111,11 @@ class OLMoDDPOptimizer:
         TODO(config-gate this diagnostic): the ad-hoc ``OLMO_DDP_DEBUG_*`` env flags are off
         convention (core gates behavior via Config fields — cf. ``check_nan_inf_grad``). Migrate to
         a ``debug_nan_inf_grad: bool`` config field and fire on
-        ``check_nan_inf_grad and debug_nan_inf_grad``; drop the rank filter (log all ranks); drop
-        the disk-dump env vars (``OLMO_DEBUG_DUMP_*``) — they belong with the DDP train-module dump
-        subsystem, ported separately. Keep the ``limit`` cap on *both* the non-finite and top lists
+        ``check_nan_inf_grad and debug_nan_inf_grad``; keep the rank filter but migrate its
+        ``OLMO_DDP_DEBUG_NONFINITE_GRAD_RANKS`` env var to a config field (the matcher itself lives
+        in :func:`olmo_core.utils.rank_matches_filter`); drop the disk-dump env vars
+        (``OLMO_DEBUG_DUMP_*``) — they belong with the DDP train-module dump subsystem, ported
+        separately. Keep the ``limit`` cap on *both* the non-finite and top lists
         (see the join blocks below). For the logged step, source the trainer ``global_step`` via a
         clean setter on the optimizer (mirroring ``latest_loss``), NOT the Adam ``.step`` state: this
         is a skip-step optimizer, so its ``.step`` counter lags ``global_step`` by the skip count —
@@ -1126,7 +1126,7 @@ class OLMoDDPOptimizer:
 
         rank = dist.get_rank() if dist.is_available() and dist.is_initialized() else 0
         rank_filter = os.getenv("OLMO_DDP_DEBUG_NONFINITE_GRAD_RANKS", "all")
-        if not _rank_matches_filter(rank_filter, rank):
+        if not rank_matches_filter(rank_filter, rank):
             return
 
         total_local = _to_local_tensor(total_grad_norm.detach())

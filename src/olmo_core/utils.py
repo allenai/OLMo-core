@@ -60,6 +60,18 @@ def env_bool(name: Union[str, Sequence[str]], default: bool = False) -> bool:
     return default
 
 
+def rank_matches_filter(rank_filter: str, rank: int) -> bool:
+    """
+    Test a rank against a filter string. ``"all"`` / ``"*"`` matches every rank; otherwise the
+    filter is a comma-separated list of rank numbers (e.g. ``"0,3"``). Useful for gating per-rank
+    debug output.
+    """
+    rank_filter = rank_filter.strip().lower()
+    if rank_filter in {"all", "*"}:
+        return True
+    return str(rank) in {part.strip() for part in rank_filter.split(",")}
+
+
 def generate_uuid() -> str:
     """
     Generate a unique ID.
