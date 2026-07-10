@@ -33,6 +33,8 @@ def _copy_tensor(
     remaining_hf: set[str],
     hf_name: str,
     value: torch.Tensor,
+    *,
+    verify_only: bool = False,
 ) -> None:
     if hf_name not in hf_state:
         raise KeyError(f"Hugging Face model is missing expected parameter {hf_name!r}")
@@ -42,17 +44,40 @@ def _copy_tensor(
             f"{hf_name}: target shape {tuple(target.shape)} does not match "
             f"source shape {tuple(value.shape)}"
         )
-    target.copy_(value.reshape(target.shape).to(dtype=target.dtype))
+    expected = value.reshape(target.shape).to(dtype=target.dtype)
+    if verify_only:
+        if not torch.equal(target, expected):
+            diff = (target.float() - expected.float()).abs()
+            raise ValueError(
+                f"{hf_name}: exported tensor differs from OLMo source "
+                f"(mismatched={torch.count_nonzero(diff).item()}, max_abs_diff={diff.max().item()})"
+            )
+    else:
+        target.copy_(expected)
     remaining_hf.remove(hf_name)
 
 
 @torch.no_grad()
-def load_qwen3_moe_from_olmo_state(hf_model: Any, olmo_state: dict[str, torch.Tensor]) -> None:
+def load_qwen3_moe_from_olmo_state(
+    hf_model: Any,
+    olmo_state: dict[str, torch.Tensor],
+    *,
+    verify_only: bool = False,
+) -> None:
     """Load OLMo DDP Qwen3 MoE tensors into a native HF Qwen3 MoE model."""
 
     hf_state = hf_model.state_dict()
     remaining_hf = set(hf_state)
     remaining_olmo = set(olmo_state)
+
+    def assign(hf_name: str, value: torch.Tensor) -> None:
+        _copy_tensor(
+            hf_state,
+            remaining_hf,
+            hf_name,
+            value,
+            verify_only=verify_only,
+        )
 
     def take(name: str) -> torch.Tensor:
         try:
@@ -68,7 +93,7 @@ def load_qwen3_moe_from_olmo_state(hf_model: Any, olmo_state: dict[str, torch.Te
         "lm_head.weight": "module.lm_head.w_out.weight.main",
     }
     for hf_name, olmo_name in direct_mapping.items():
-        _copy_tensor(hf_state, remaining_hf, hf_name, take(olmo_name))
+        assign(hf_name, take(olmo_name))
 
     config = hf_model.config
     num_experts = _num_experts(config)
@@ -92,7 +117,7 @@ def load_qwen3_moe_from_olmo_state(hf_model: Any, olmo_state: dict[str, torch.Te
             f"{hf_prefix}.mlp.gate.weight": f"{olmo_prefix}.routed_experts_router.weight.main",
         }
         for hf_name, olmo_name in layer_mapping.items():
-            _copy_tensor(hf_state, remaining_hf, hf_name, take(olmo_name))
+            assign(hf_name, take(olmo_name))
 
         up_gate_name = f"{olmo_prefix}.routed_experts.w_up_gate.main"
         down_name = f"{olmo_prefix}.routed_experts.w_down.main"
@@ -102,39 +127,29 @@ def load_qwen3_moe_from_olmo_state(hf_model: Any, olmo_state: dict[str, torch.Te
         packed_down_name = f"{hf_prefix}.mlp.experts.down_proj"
         if packed_up_gate_name in hf_state:
             # OLMo stores [up, gate], while native Qwen stores [gate, up].
-            _copy_tensor(
-                hf_state,
-                remaining_hf,
+            assign(
                 packed_up_gate_name,
                 torch.cat(
                     (up_gate[:, expert_hidden_size:], up_gate[:, :expert_hidden_size]),
                     dim=1,
                 ),
             )
-            _copy_tensor(
-                hf_state,
-                remaining_hf,
+            assign(
                 packed_down_name,
                 down.transpose(1, 2),
             )
         else:
             for expert_idx in range(num_experts):
                 expert_prefix = f"{hf_prefix}.mlp.experts.{expert_idx}"
-                _copy_tensor(
-                    hf_state,
-                    remaining_hf,
+                assign(
                     f"{expert_prefix}.up_proj.weight",
                     up_gate[expert_idx, :expert_hidden_size],
                 )
-                _copy_tensor(
-                    hf_state,
-                    remaining_hf,
+                assign(
                     f"{expert_prefix}.gate_proj.weight",
                     up_gate[expert_idx, expert_hidden_size:],
                 )
-                _copy_tensor(
-                    hf_state,
-                    remaining_hf,
+                assign(
                     f"{expert_prefix}.down_proj.weight",
                     down[expert_idx].transpose(0, 1),
                 )
@@ -145,10 +160,44 @@ def load_qwen3_moe_from_olmo_state(hf_model: Any, olmo_state: dict[str, torch.Te
         raise RuntimeError(f"Unconsumed OLMo checkpoint tensors: {sorted(remaining_olmo)[:20]}")
 
     log.info(
-        "Mapped all %d Hugging Face parameters from %d OLMo checkpoint tensors",
+        "%s all %d Hugging Face parameters against %d OLMo checkpoint tensors",
+        "Verified" if verify_only else "Mapped",
         len(hf_state),
         len(olmo_state),
     )
+
+
+def verify_export(
+    *,
+    checkpoint_path: Path,
+    output_path: Path,
+    dtype: torch.dtype,
+) -> None:
+    log.info("Loading exported Hugging Face checkpoint from %s", output_path)
+    hf_model = AutoModelForCausalLM.from_pretrained(
+        output_path,
+        dtype=dtype,
+        trust_remote_code=False,
+    )
+    model_and_optim_path = checkpoint_path / "model_and_optim"
+    log.info("Loading OLMo checkpoint tensors from %s", model_and_optim_path)
+    olmo_state = load_state_dict_direct(
+        model_and_optim_path,
+        process_group=None,
+        pre_download=False,
+        thread_count=32,
+    )
+    load_qwen3_moe_from_olmo_state(hf_model, olmo_state, verify_only=True)
+    result = {
+        "source_checkpoint": str(checkpoint_path),
+        "hf_export": str(output_path),
+        "dtype": str(dtype).removeprefix("torch."),
+        "exact_match": True,
+        "source_tensor_count": len(olmo_state),
+        "hf_parameter_count": len(hf_model.state_dict()),
+    }
+    (output_path / "weight-verification.json").write_text(json.dumps(result, indent=2) + "\n")
+    log.info("Exact weight verification complete")
 
 
 def convert_checkpoint(
@@ -218,9 +267,17 @@ def main() -> None:
     parser.add_argument("--dtype", choices=("bfloat16", "float32"), default="bfloat16")
     parser.add_argument("--max-shard-size", default="5GB")
     parser.add_argument("--save-overwrite", action="store_true")
+    parser.add_argument("--verify-only", action="store_true")
     args = parser.parse_args()
 
     prepare_cli_environment()
+    if args.verify_only:
+        verify_export(
+            checkpoint_path=args.checkpoint_path,
+            output_path=args.output_path,
+            dtype=getattr(torch, args.dtype),
+        )
+        return
     convert_checkpoint(
         checkpoint_path=args.checkpoint_path,
         output_path=args.output_path,
