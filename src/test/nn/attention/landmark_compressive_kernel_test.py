@@ -269,6 +269,45 @@ def test_compressive_kernel_num_stages_invariant(monkeypatch):
 
 @requires_gpu
 @pytest.mark.skipif(not has_landmark_kernel(), reason="requires triton landmark kernel")
+def test_compressive_kernel_block256_reduced_stages_matches_eager(monkeypatch):
+    """The real block256 training config (Qwen3-4B head_dim=128, block_size=256) overflows H100
+    shared memory at the *default* launch config in both directions: forward num_stages=3 needs
+    ~449KB and backward num_stages=2 needs ~514KB against a ~227KB limit. ``LM_FAST_FWD_STAGES=1``
+    (forward) and ``LM_FAST_STAGES=1`` (backward) are the minimum stage counts Triton allows;
+    validate they fit in shared memory *and* still match the eager reference at this exact shape."""
+    monkeypatch.setenv("LM_FAST_FWD_STAGES", "1")
+    monkeypatch.setenv("LM_FAST_STAGES", "1")
+    torch.manual_seed(0)
+    block_size, head_dim = 256, 128
+    B, n_heads = 2, 4
+    T = block_size * 4
+    scale = head_dim**-0.5
+    is_mem = (torch.arange(T, device="cuda") % block_size) == (block_size - 1)
+    base = torch.rand(B, n_heads, T, head_dim, device="cuda", dtype=torch.bfloat16)
+    grad_out = torch.rand_like(base)
+
+    def grads(use_kernel):
+        q, k, v = (base.clone().requires_grad_(True) for _ in range(3))
+        if use_kernel:
+            out = fused_compressive_landmark_attention(
+                q, k, v, is_mem, sm_scale=scale, block_size=block_size
+            )
+        else:
+            out = _eager_compressive_landmark_reference(q, k, v, block_size)
+        out.backward(grad_out)
+        return out, q.grad, k.grad, v.grad
+
+    out_k, dq_k, dk_k, dv_k = grads(True)
+    out_e, dq_e, dk_e, dv_e = grads(False)
+
+    torch.testing.assert_close(out_k, out_e, rtol=1e-2, atol=1e-2)
+    torch.testing.assert_close(dq_k, dq_e, rtol=2e-2, atol=2e-2)
+    torch.testing.assert_close(dk_k, dk_e, rtol=2e-2, atol=2e-2)
+    torch.testing.assert_close(dv_k, dv_e, rtol=2e-2, atol=2e-2)
+
+
+@requires_gpu
+@pytest.mark.skipif(not has_landmark_kernel(), reason="requires triton landmark kernel")
 def test_compressive_differs_from_normal_landmark():
     # Sanity: the compressive kernel must NOT equal the normal fast-landmark kernel (the landmark
     # tokens now contribute their values to the output).
