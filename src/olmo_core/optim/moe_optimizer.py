@@ -1111,7 +1111,7 @@ class OLMoDDPOptimizer:
         convention (core gates behavior via Config fields — cf. ``check_nan_inf_grad``). Migrate to
         a ``debug_nan_inf_grad: bool`` config field (fire on ``check_nan_inf_grad and
         debug_nan_inf_grad``) and move the rank / max_log_entries / dump-dir knobs to config fields too. The
-        logged step is the trainer ``global_step`` (set on ``_olmo_debug_global_step``, not the Adam
+        logged step is the trainer ``global_step`` (set on ``_debug_global_step``, not the Adam
         ``.step`` state, which lags ``global_step`` by the skip count on this skip-step optimizer);
         a clean ``global_step`` setter mirroring ``latest_loss`` would replace the raw attribute.
         """
@@ -1123,7 +1123,7 @@ class OLMoDDPOptimizer:
             max_log_entries = 20
         debug_nan_inf_grad_norm(
             _to_local_tensor(total_grad_norm.detach()),
-            step=getattr(self, "_olmo_debug_global_step", -1),
+            step=getattr(self, "_debug_global_step", -1),
             ranks_filter=os.getenv("OLMO_DDP_DEBUG_NONFINITE_GRAD_RANKS", "all"),
             max_log_entries=max_log_entries,
             dump_dir=os.getenv("OLMO_DEBUG_DUMP_DIR"),
