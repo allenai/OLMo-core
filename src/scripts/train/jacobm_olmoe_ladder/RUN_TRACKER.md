@@ -1,6 +1,6 @@
 # Ladder Run Tracker
 
-Last updated: 2026-07-10 02:25 UTC.
+Last updated: 2026-07-10 06:25 UTC.
 
 This table is a scan-friendly status matrix for planned ladder cells. It is separate from `RUNS.md` (chronological launch/status log) and `PLOTTED_RESULTS.md` (finished-only plotted rows and losses).
 
@@ -13,7 +13,7 @@ Legend: `done` = at least one finished/plotted run exists; `run` = currently run
 | Experiment | Remaining not-yet-queued / not-started cells | Notes |
 | --- | --- | --- |
 | Total sparsity | 1.2B Cx1/2/4/8 for high total 96E/top4 and huge total 192E/top4 | 275M, 480M, and 810M are done. |
-| Integration candidates | 1.2B wide/deep promotions have not been run yet | 275M LR grid plus 480M and 810M wide/deep promotions are finished/plotted; 480M/810M points beat same-LR baseline overall, with deep usually strongest. |
+| Integration candidates | 1.2B deep Cx8 is still running; otherwise the pretraining integration grid is launched/finished | 275M LR grid plus 480M/810M/1.2B wide/deep promotions are launched; 1.2B wide and 1.2B deep Cx1/2/4 are finished. |
 | Dense schedule | None | 480M, 810M, and 1.2B dense jobs are now finished/plotted. |
 | Shared expert | None | 480M, 810M, and 1.2B Cx1/2/4/8 are Beaker-finalized and plotted. |
 | Qwen-like | None | Active-matched and true-3D Qwen-like grids are finished/plotted through 1.2B Cx8. |
@@ -36,8 +36,8 @@ Legend: `done` = at least one finished/plotted run exists; `run` = currently run
 | Dense schedule | dense4 + shared | done Cx1/2/4/8 | done Cx1/2/4/8 | done Cx1/2/4/8 | done Cx1/2/4/8 | Promoted ladder complete and plotted; some 1.2B dense4 rows use exact tail history. |
 | Qwen3-like | active matched 4.5d | done Cx1/2/4/8 | done Cx1/2/4/8 | done Cx1/2/4/8 | done Cx1/2/4/8 | Main active-matched Qwen-like ladder is plotted through Cx8. |
 | Qwen3-like | true 3.0d + depth | done Cx1/2/4/8 | done Cx1/2/4/8 | done Cx1/2/4/8 | done Cx1/2/4/8 | Main true-3D Qwen-like ladder is plotted through Cx8 after the in-place restart. |
-| Integration candidates | wide 256E/top8 + shared + dense1 | Cx1/Cx2/Cx4/Cx8 done/plotted and bracketed | Cx1/Cx2/Cx4/Cx8 done/plotted | Cx1/Cx2/Cx4/Cx8 done/plotted | todo | 480M and 810M wide promotions beat same-LR baseline. |
-| Integration candidates | deep 256E/top8 + shared + dense1 | Cx1/2/4/8 done/plotted | Cx1/Cx2/Cx4/Cx8 done/plotted | Cx1/Cx2/Cx4/Cx8 done/plotted | todo | 480M deep Cx1/Cx2/Cx4/Cx8 beat wide and baseline at same LR; 810M deep is finished/plotted for all Cx multiples. |
+| Integration candidates | wide 256E/top8 + shared + dense1 | Cx1/Cx2/Cx4/Cx8 done/plotted and bracketed | Cx1/Cx2/Cx4/Cx8 done/plotted | Cx1/Cx2/Cx4/Cx8 done/plotted | done Cx1/2/4/8 | 480M and 810M wide promotions beat same-LR baseline; 1.2B wide is finished and ready for MT/evals. |
+| Integration candidates | deep 256E/top8 + shared + dense1 | Cx1/2/4/8 done/plotted | Cx1/Cx2/Cx4/Cx8 done/plotted | Cx1/Cx2/Cx4/Cx8 done/plotted | done Cx1/2/4, run Cx8 | 480M/810M deep beat wide and baseline at same LR; 1.2B deep Cx8 remains the only running pretraining integration cell. |
 
 ## Midtraining Tracker
 
@@ -59,10 +59,16 @@ microbatch 8, fresh optimizer state, 2000-step warmup then constant LR.
 | 275M integration wide Cx2 | `integration/int-275m-cx2-intw256e8k-lr1.6e-3-r1/step20665` | `1.8e-4` | done | [1.8e-4 r3](https://beaker.org/ex/01KX1WZGKE5K5GF4SZ98G7SVJD) | Canonical replacement for failed r1, launched from pushed commit `34f5d5a` with `integration_midtraining_ladder.py` and fresh optimizer-state loading. Finished 2026-07-09. |
 | 275M integration wide Cx4 | `integration/int-275m-cx4-intw256e8k-lr8e-4-r1/step30997` | `1.5e-4` | done | [1.5e-4 r3](https://beaker.org/ex/01KX1WZXCBX8VFNFFZK2DT50JB) | Canonical replacement for failed r1, launched from pushed commit `34f5d5a` with `integration_midtraining_ladder.py` and fresh optimizer-state loading. Finished 2026-07-10. |
 | 275M integration wide Cx8 | `integration/int-275m-cx8-intw256e8k-lr8e-4-r1/step41329` | `1.6e-4` | done | [1.6e-4 r3](https://beaker.org/ex/01KX1X0AJAMCEE5MSXBP33PHNG) | Canonical replacement for failed r1, launched from pushed commit `34f5d5a` with `integration_midtraining_ladder.py` and fresh optimizer-state loading. Finished 2026-07-10. |
-| 275M integration deep Cx1 | `integration/int-275m-cx1-intd256e8k-lr1.6e-3-r1/step15130` | `2e-4` | running | [2e-4 r3](https://beaker.org/ex/01KX1X0QVHZ7X0HSF0YNJWEBBH) | Canonical replacement for failed r1, launched from pushed commit `34f5d5a` with `integration_midtraining_ladder.py` and fresh optimizer-state loading. Ignore r2 false-starts; they used the pre-push git ref and failed with missing launcher file. |
-| 275M integration deep Cx2 | `integration/int-275m-cx2-intd256e8k-lr1.6e-3-r1/step20173` | `1.8e-4` | running | [1.8e-4 r3](https://beaker.org/ex/01KX1X14K49GJN4KS9QQ3JEQ1E) | Canonical replacement for failed r1, launched from pushed commit `34f5d5a` with `integration_midtraining_ladder.py` and fresh optimizer-state loading. Ignore r2 false-starts; they used the pre-push git ref and failed with missing launcher file. |
-| 275M integration deep Cx4 | `integration/int-275m-cx4-intd256e8k-lr1.6e-3-r1/step30259` | `1.5e-4` | running | [1.5e-4 r3](https://beaker.org/ex/01KX1X1GPC3N51C7E8AW2YXN63) | Canonical replacement for failed r1, launched from pushed commit `34f5d5a` with `integration_midtraining_ladder.py` and fresh optimizer-state loading. Ignore r2 false-starts; they used the pre-push git ref and failed with missing launcher file. |
+| 275M integration deep Cx1 | `integration/int-275m-cx1-intd256e8k-lr1.6e-3-r1/step15130` | `2e-4` | done | [2e-4 r3](https://beaker.org/ex/01KX1X0QVHZ7X0HSF0YNJWEBBH) | Canonical replacement for failed r1, launched from pushed commit `34f5d5a` with `integration_midtraining_ladder.py` and fresh optimizer-state loading. Finished 2026-07-10. |
+| 275M integration deep Cx2 | `integration/int-275m-cx2-intd256e8k-lr1.6e-3-r1/step20173` | `1.8e-4` | done | [1.8e-4 r3](https://beaker.org/ex/01KX1X14K49GJN4KS9QQ3JEQ1E) | Canonical replacement for failed r1, launched from pushed commit `34f5d5a` with `integration_midtraining_ladder.py` and fresh optimizer-state loading. Finished 2026-07-10. |
+| 275M integration deep Cx4 | `integration/int-275m-cx4-intd256e8k-lr1.6e-3-r1/step30259` | `1.5e-4` | done | [1.5e-4 r3](https://beaker.org/ex/01KX1X1GPC3N51C7E8AW2YXN63) | Canonical replacement for failed r1, launched from pushed commit `34f5d5a` with `integration_midtraining_ladder.py` and fresh optimizer-state loading. Finished 2026-07-10. |
 | 275M integration deep Cx8 | `integration/int-275m-cx8-intd256e8k-lr1.6e-3-r1/step40345` | `1.6e-4` | running | [1.6e-4 r3](https://beaker.org/ex/01KX1X203AABJ29GHKST48J5E9) | Canonical replacement for failed r1, launched from pushed commit `34f5d5a` with `integration_midtraining_ladder.py` and fresh optimizer-state loading. Ignore r2 false-starts; they used the pre-push git ref and failed with missing launcher file. |
+| 480M integration wide Cx8 | `integration/int-480m-cx8-intw256e8k-lr8e-4-r1/step78042` | `8e-5` | running | [8e-5 r1](https://beaker.org/ex/01KX5AVB82NXXXP2AWHB5Y003C) | Promoted Cx8 integration MT launched 2026-07-10 with 100B tokens, global batch seq 192, 1 node x 4 GPUs, EP1/MB8, compile on, fresh optimizer state. |
+| 810M integration wide Cx8 | `integration/int-810m-cx8-intw256e8k-lr4e-4-r1/step141423` | `4e-5` | running | [4e-5 r1](https://beaker.org/ex/01KX5AVR579VFZX7PNPFZ7K6Y9) | Promoted Cx8 integration MT launched 2026-07-10 with 100B tokens, global batch seq 256, 1 node x 8 GPUs, EP1/MB4, compile on, fresh optimizer state. |
+| 1.2B integration wide Cx8 | `integration/int-1p2b-cx8-intw256e8k-lr4e-4-r2/step217870` | `4e-5` | running | [4e-5 r1](https://beaker.org/ex/01KX5AWBA0E2YNCAXPSQWWW9F5) | Promoted Cx8 integration MT launched 2026-07-10 with 100B tokens, global batch seq 384, 1 node x 8 GPUs, EP1/MB4, compile on, fresh optimizer state. |
+| 480M integration deep Cx8 | `integration/int-480m-cx8-intd256e8k-lr8e-4-r1/step78659` | `8e-5` | scheduled | [8e-5 r1](https://beaker.org/ex/01KX5AX3WZZ44PV3D6PEGHRQ8V) | Promoted Cx8 integration MT launched 2026-07-10 with 100B tokens, global batch seq 192, 1 node x 4 GPUs, EP1/MB8, compile on, fresh optimizer state. |
+| 810M integration deep Cx8 | `integration/int-810m-cx8-intd256e8k-lr4e-4-r1/step138619` | `4e-5` | scheduled | [4e-5 r1](https://beaker.org/ex/01KX5AXRY5713CS0AQPFKF6T0W) | Promoted Cx8 integration MT launched 2026-07-10 with 100B tokens, global batch seq 256, 1 node x 8 GPUs, EP1/MB4, compile on, fresh optimizer state. |
+| 1.2B integration deep Cx8 | `integration/int-1p2b-cx8-intd256e8k-lr4e-4-r2` | `4e-5` | todo | not launched | Waiting for 1.2B deep Cx8 pretraining to finish before launching MT. |
 
 Final-checkpoint eval backfills are eval-only jobs over the final midtraining checkpoint. Earlier attempts from commits `430f233c`, `571c0984`, and `ac32eb76` failed before eval due to duplicate evaluator callbacks or dataloader restore mismatches and should be ignored. The fixed backfills build the real midtraining source-mixture dataloader for eval. On 2026-07-07, `copy_eval_backfills_to_wandb.py --only mt-eval` copied the original eight 275M Cx1/Cx8 backfills to their source W&B runs; on 2026-07-10 it copied the six new Cx2/Cx4/480M/810M backfills as well. The 2026-07-10 integration-wide and 1.2B baseline backfills are launched but not copied yet.
 
