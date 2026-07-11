@@ -7,6 +7,7 @@ from olmo_core.nn.attention import AttentionConfig, AttentionType
 from olmo_core.nn.ddp.block import OLMoDDPTransformerBlock
 from olmo_core.nn.layer_norm import LayerNormConfig, LayerNormType
 from olmo_core.nn.moe import MoERouterGatingFunction
+from olmo_core.nn.moe.v2.ep_config import ExpertParallelConfig, ExpertParallelPath
 from olmo_core.nn.moe.v2.routed_experts import RoutedExpertsConfig
 from olmo_core.nn.moe.v2.router import MoERouterConfigV2
 from olmo_core.testing import (
@@ -53,9 +54,11 @@ def _build_block(*, ep_no_sync: bool, ep_no_sync_capacity_factor: float = 8.0):
             d_model=512, hidden_size=1024, num_experts=8, bias=False, dtype=DType.float32
         ),
         feed_forward_norm=layer_norm,
-        ep_no_sync=ep_no_sync,
-        ep_no_sync_capacity_factor=ep_no_sync_capacity_factor,
-        ep_no_sync_major_align=1,
+        ep=ExpertParallelConfig(
+            path=ExpertParallelPath.no_sync_1d if ep_no_sync else ExpertParallelPath.sync_1d,
+            capacity_factor=ep_no_sync_capacity_factor,
+            major_align=1,
+        ),
         init_device="cuda",
     )
 
@@ -138,8 +141,8 @@ def _run_rowwise_ep_dropless_matches_no_ep():
     ep_block = _build_block(ep_no_sync=True)
     # Select the rowwise path before apply_ep: apply_ep configures the rowwise symmetric-memory
     # buffers and rejects the non-rowwise (VDev) path under the default OLMo-owned symm-mem backend.
-    ep_block.ep_no_sync_use_rowwise_all_to_all = True
-    ep_block.ep_no_sync_rowwise_nblocks = 128
+    ep_block.ep.path = ExpertParallelPath.rowwise_nvshmem
+    ep_block.ep.rowwise_nblocks = 128
     ep_block.apply_ep(ep_mesh)
 
     _init_block_params(no_ep_block)

@@ -11,6 +11,7 @@ from olmo_core.nn.ddp import block as block_mod
 from olmo_core.nn.ddp import model as model_mod
 from olmo_core.nn.moe.v2 import ep_no_sync_tbo_1d as tbo_1d
 from olmo_core.nn.moe.v2 import ep_no_sync_tbo_rowwise as rowwise_tbo
+from olmo_core.nn.moe.v2.ep_config import ExpertParallelConfig, ExpertParallelPath
 
 
 def test_block_selects_rowwise_no_sync_tbo(monkeypatch):
@@ -27,7 +28,7 @@ def test_block_selects_rowwise_no_sync_tbo(monkeypatch):
     monkeypatch.setattr(rowwise_tbo, "combined_forward_ep_no_sync_tbo_rowwise", fake_rowwise)
     monkeypatch.setattr(tbo_1d, "combined_forward_ep_no_sync_tbo", fake_1d)
 
-    fake_block = SimpleNamespace(ep_no_sync_use_rowwise_all_to_all=True)
+    fake_block = SimpleNamespace(ep=ExpertParallelConfig(path=ExpertParallelPath.rowwise_nvshmem))
     out, ctx = block_mod.OLMoDDPTransformerBlock.combined_forward_ep_no_sync_tbo(
         fake_block,  # type: ignore[arg-type]
         "x0",
@@ -64,7 +65,7 @@ def test_block_keeps_existing_1d_tbo_when_rowwise_disabled(monkeypatch):
 
     monkeypatch.setattr(tbo_1d, "combined_forward_ep_no_sync_tbo", fake_1d)
 
-    fake_block = SimpleNamespace(ep_no_sync_use_rowwise_all_to_all=False)
+    fake_block = SimpleNamespace(ep=ExpertParallelConfig(path=ExpertParallelPath.no_sync_1d))
     out, ctx = block_mod.OLMoDDPTransformerBlock.combined_forward_ep_no_sync_tbo(
         fake_block,  # type: ignore[arg-type]
         "x0",
@@ -78,7 +79,7 @@ def test_block_keeps_existing_1d_tbo_when_rowwise_disabled(monkeypatch):
 
 def test_rowwise_tbo_fails_closed_for_fp8():
     block = SimpleNamespace(
-        ep_no_sync_use_rowwise_all_to_all=True,
+        ep=ExpertParallelConfig(path=ExpertParallelPath.rowwise_nvshmem),
         rowwise_fp8=SimpleNamespace(enabled=True),
     )
 
@@ -105,7 +106,7 @@ def test_model_finalizes_rowwise_pending_context(monkeypatch):
             calls.append(("lm_head", x, lm_head_kwargs, labels))
             return f"head:{x}:{labels}"
 
-    fake_block = SimpleNamespace(ep_no_sync_use_rowwise_all_to_all=True)
+    fake_block = SimpleNamespace(ep=ExpertParallelConfig(path=ExpertParallelPath.rowwise_nvshmem))
     pending = rowwise_tbo._NoSyncRowwiseTboPendingContext(
         block=fake_block,  # type: ignore[arg-type]
         lane_id=1,

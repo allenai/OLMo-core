@@ -33,6 +33,7 @@ from olmo_core.nn.moe.v2.checkpointing import (
 # activation-debug helper are imported lazily at their dispatch sites below, so this module
 # imports cleanly without those files present (they ship in later, stacked PRs). See the
 # combined_forward_ep_no_sync_* wrapper methods and the rowwise metric/symm helper sites.
+from olmo_core.nn.moe.v2.ep_config import ExpertParallelConfig
 from olmo_core.nn.moe.v2.fp8 import MoERowwiseFP8Config
 from olmo_core.nn.moe.v2.fp8 import (
     invalidate_rowwise_fp8_cache as _invalidate_rowwise_fp8_cache,
@@ -157,28 +158,7 @@ class OLMoDDPTransformerBlockConfig(TransformerBlockConfig):
     # imported lazily and land in follow-up changes; they have no effect on the no-expert-parallel
     # path and are documented when those families land.
     #
-    # TODO(ep-config): revisit and potentially refactor these into per-mode configs. Right now this
-    # is a flat bag of `ep_no_sync_*` flags that conflates *mode selection* (the family is chosen by
-    # the `(ep_no_sync, ep_no_sync_use_rowwise_all_to_all)` pair) with *per-mode tuning* (capacity,
-    # alignment, symm-mem slots) and *rowwise-only* options (`ep_no_sync_rowwise_*`), so many
-    # combinations are meaningless and one flag (`ep_no_sync_use_2d_all_to_all`) is already dead.
-    # The rest of the codebase models this kind of polymorphism with a Registrable base config that
-    # resolves to a per-variant subclass (see e.g. the attention/optimizer/scheduler configs); an
-    # EP-mode config (sync / no-sync VDev / no-sync rowwise) holding only its own fields would be
-    # clearer and self-validating. Do this when the EP families land (PR-M2/M3).
-    ep_no_sync: bool = False
-    ep_no_sync_use_2d_all_to_all: bool = False
-    ep_no_sync_use_rowwise_all_to_all: bool = False
-    ep_no_sync_rowwise_nblocks: int = 256
-    ep_no_sync_share_dispatch_out: bool = False
-    ep_no_sync_capacity_factor: float = 1.25
-    ep_no_sync_shared_slots: int = 1
-    ep_no_sync_share_combine_out: bool = False
-    ep_no_sync_major_align: int = 1
-    ep_no_sync_restore_unpermute_backend: str = "te_fused"
-    ep_no_sync_rowwise_symm_dispatch_in: Optional[bool] = None
-    ep_no_sync_rowwise_symm_combine_out: Optional[bool] = None
-    ep_no_sync_rowwise_symm_combine_gather: Optional[bool] = None
+    ep: Optional[ExpertParallelConfig] = None
 
     def build(
         self,
@@ -372,19 +352,7 @@ class OLMoDDPTransformerBlock(olmo_core.nn.transformer.block.TransformerBlockBas
         checkpoint_permute_moe_unpermute=False,
         checkpoint_combined_ep_tbo=False,
         checkpoint_second_unpermute=False,
-        ep_no_sync: bool = False,
-        ep_no_sync_use_2d_all_to_all: bool = False,
-        ep_no_sync_use_rowwise_all_to_all: bool = False,
-        ep_no_sync_rowwise_nblocks: int = 256,
-        ep_no_sync_share_dispatch_out: bool = False,
-        ep_no_sync_capacity_factor: float = 1.25,
-        ep_no_sync_shared_slots: int = 1,
-        ep_no_sync_share_combine_out: bool = False,
-        ep_no_sync_major_align: int = 1,
-        ep_no_sync_restore_unpermute_backend: str = "te_fused",
-        ep_no_sync_rowwise_symm_dispatch_in: Optional[bool] = None,
-        ep_no_sync_rowwise_symm_combine_out: Optional[bool] = None,
-        ep_no_sync_rowwise_symm_combine_gather: Optional[bool] = None,
+        ep: Optional[ExpertParallelConfig] = None,
         rowwise_fp8: Optional[MoERowwiseFP8Config] = None,
         init_device: str = "cpu",
         cache: Optional[BufferCache] = None,
@@ -547,24 +515,8 @@ class OLMoDDPTransformerBlock(olmo_core.nn.transformer.block.TransformerBlockBas
         self.checkpoint_permute_moe_unpermute = checkpoint_permute_moe_unpermute
         self.checkpoint_combined_ep_tbo = checkpoint_combined_ep_tbo
         self.checkpoint_second_unpermute = checkpoint_second_unpermute
-        self.ep_no_sync = ep_no_sync
-        self.ep_no_sync_use_2d_all_to_all = ep_no_sync_use_2d_all_to_all
-        self.ep_no_sync_use_rowwise_all_to_all = ep_no_sync_use_rowwise_all_to_all
-        self.ep_no_sync_rowwise_nblocks = int(ep_no_sync_rowwise_nblocks)
-        self.ep_no_sync_share_dispatch_out = ep_no_sync_share_dispatch_out
-        if self.ep_no_sync_use_2d_all_to_all:
-            raise OLMoConfigurationError(
-                "ep_no_sync_use_2d_all_to_all=True is no longer supported: "
-                "the 2D all_to_all path was removed due to correctness/performance issues."
-            )
-        self.ep_no_sync_capacity_factor = ep_no_sync_capacity_factor
-        self.ep_no_sync_shared_slots = ep_no_sync_shared_slots
-        self.ep_no_sync_share_combine_out = ep_no_sync_share_combine_out
-        self.ep_no_sync_major_align = ep_no_sync_major_align
-        self.ep_no_sync_restore_unpermute_backend = ep_no_sync_restore_unpermute_backend.lower()
-        self.ep_no_sync_rowwise_symm_dispatch_in = ep_no_sync_rowwise_symm_dispatch_in
-        self.ep_no_sync_rowwise_symm_combine_out = ep_no_sync_rowwise_symm_combine_out
-        self.ep_no_sync_rowwise_symm_combine_gather = ep_no_sync_rowwise_symm_combine_gather
+        self.ep = ep.copy(deep=True) if ep is not None else ExpertParallelConfig()
+        self.ep.validate()
         self._ep_symm_group_name: Optional[str] = None
         self._ep_no_sync_symm_cache: Dict[str, torch.Tensor] = {}
         self._ep_no_sync_static_buffer_cache: Dict[Tuple[object, ...], object] = {}
@@ -581,29 +533,6 @@ class OLMoDDPTransformerBlock(olmo_core.nn.transformer.block.TransformerBlockBas
         self._ep_no_sync_rowwise_total_tokens_sum: Optional[torch.Tensor] = None
         self._ep_no_sync_rowwise_symm_util_max: Optional[torch.Tensor] = None
         # self._ep_no_sync_forward_call_count: int = 0
-
-        if self.ep_no_sync_capacity_factor <= 0:
-            raise OLMoConfigurationError(
-                f"ep_no_sync_capacity_factor must be > 0 (got {self.ep_no_sync_capacity_factor})"
-            )
-        if self.ep_no_sync_shared_slots < 1:
-            raise OLMoConfigurationError(
-                f"ep_no_sync_shared_slots must be >= 1 (got {self.ep_no_sync_shared_slots})"
-            )
-        if self.ep_no_sync_major_align < 1:
-            raise OLMoConfigurationError(
-                f"ep_no_sync_major_align must be >= 1 (got {self.ep_no_sync_major_align})"
-            )
-        if self.ep_no_sync_rowwise_nblocks < 0:
-            raise OLMoConfigurationError(
-                f"ep_no_sync_rowwise_nblocks must be >= 0 (got {self.ep_no_sync_rowwise_nblocks})"
-            )
-        if self.ep_no_sync_restore_unpermute_backend not in ("te_fused", "te_unfused", "cuda"):
-            raise OLMoConfigurationError(
-                "ep_no_sync_restore_unpermute_backend must be one of "
-                "'te_fused'|'te_unfused'|'cuda' "
-                f"(got {self.ep_no_sync_restore_unpermute_backend!r})"
-            )
 
     def invalidate_rowwise_fp8_cache(self) -> None:
         _invalidate_rowwise_fp8_cache(self)
@@ -777,7 +706,7 @@ class OLMoDDPTransformerBlock(olmo_core.nn.transformer.block.TransformerBlockBas
         # Row-wise EP metrics are only produced by the no-sync rowwise all-to-all path; that
         # helper module is not present unless the rowwise dispatch family is installed, so only
         # import it when the rowwise path is actually configured.
-        if self.ep_no_sync_use_rowwise_all_to_all:
+        if self.ep.is_rowwise:
             from olmo_core.nn.moe.v2.ep_no_sync_rowwise_helpers import (
                 add_ep_no_sync_rowwise_metrics,
                 reset_ep_no_sync_rowwise_metrics,
@@ -795,7 +724,7 @@ class OLMoDDPTransformerBlock(olmo_core.nn.transformer.block.TransformerBlockBas
         #     self.shared_experts_router.reset_metrics()
         if self.routed_experts_router:
             self.routed_experts_router.reset_metrics()
-        if self.ep_no_sync_use_rowwise_all_to_all:
+        if self.ep.is_rowwise:
             from olmo_core.nn.moe.v2.ep_no_sync_rowwise_helpers import (
                 reset_ep_no_sync_rowwise_metrics,
             )
@@ -872,11 +801,11 @@ class OLMoDDPTransformerBlock(olmo_core.nn.transformer.block.TransformerBlockBas
         if self.routed_experts:
             if self.ep_enabled:
                 if (
-                    self.ep_no_sync and self.training
+                    self.ep.no_sync and self.training
                 ):  # in eval mode, different ranks might get different input token counts, and no-sync can freeze
                     no_sync_forward = (
                         self.combined_forward_ep_no_sync_rowwise
-                        if self.ep_no_sync_use_rowwise_all_to_all
+                        if self.ep.is_rowwise
                         else self.combined_forward_ep_no_sync_1d
                     )
                     from olmo_core.nn.moe.v2.activation_debug import (
@@ -1037,8 +966,8 @@ class OLMoDDPTransformerBlock(olmo_core.nn.transformer.block.TransformerBlockBas
         self._ep_enabled = True
         self.ep_pg = ep_pg if ep_pg is not None else ep_mp_mesh.get_group()
 
-        if self.ep_no_sync:
-            if olmo_symm_mem.is_enabled() and not self.ep_no_sync_use_rowwise_all_to_all:
+        if self.ep.no_sync:
+            if olmo_symm_mem.is_enabled() and not self.ep.is_rowwise:
                 raise RuntimeError(
                     "OLMo-owned symmetric memory currently supports only the rowwise "
                     "EP no-sync path. Set OLMO_USE_OWN_SYMM_MEM=0 to use the legacy "
@@ -1085,7 +1014,7 @@ class OLMoDDPTransformerBlock(olmo_core.nn.transformer.block.TransformerBlockBas
                     f"(block={self.block_idx}, rank={get_rank(self.ep_pg)}): {e}"
                 ) from e
             self._ep_symm_group_name = group_name
-            if self.ep_no_sync_use_rowwise_all_to_all:
+            if self.ep.is_rowwise:
                 from olmo_core.nn.moe.v2.ep_no_sync_buffers import (
                     resolve_ep_no_sync_rowwise_symm_options,
                 )
@@ -1239,7 +1168,7 @@ class OLMoDDPTransformerBlock(olmo_core.nn.transformer.block.TransformerBlockBas
         loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
         **kwargs,
     ) -> Tuple[torch.Tensor, object]:
-        if self.ep_no_sync_use_rowwise_all_to_all:
+        if self.ep.is_rowwise:
             from olmo_core.nn.moe.v2.ep_no_sync_tbo_rowwise import (
                 combined_forward_ep_no_sync_tbo_rowwise as _combined_forward_ep_no_sync_tbo_rowwise,
             )
@@ -1293,7 +1222,7 @@ class OLMoDDPTransformerBlock(olmo_core.nn.transformer.block.TransformerBlockBas
         **kwargs,
     ) -> Tuple[torch.Tensor, object]:
         # Dispatch no-sync here so the no-sync TBO path never imports the sync module.
-        if self.ep_no_sync:
+        if self.ep.no_sync:
             return self.combined_forward_ep_no_sync_tbo(
                 x0,
                 x1_ctx,

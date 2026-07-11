@@ -6,6 +6,7 @@ from olmo_core.config import DType
 from olmo_core.nn.ddp.block import OLMoDDPTransformerBlock
 from olmo_core.nn.layer_norm import LayerNormConfig, LayerNormType
 from olmo_core.nn.moe import MoERouterGatingFunction
+from olmo_core.nn.moe.v2.ep_config import ExpertParallelConfig, ExpertParallelPath
 from olmo_core.nn.moe.v2.routed_experts import RoutedExpertsConfig
 from olmo_core.nn.moe.v2.router import MoERouterConfigV2
 from olmo_core.testing import requires_multi_gpu, run_distributed_test
@@ -63,9 +64,9 @@ def _build_tbo_model(*, two_batch_overlap: bool):
                 d_model=512, hidden_size=1024, num_experts=8, bias=False, dtype=DType.float32
             ),
             layer_norm=layer_norm,
-            # Synchronous EP (ep_no_sync=False): the count-synchronized dispatch is dropless,
+            # Synchronous EP (path=sync_1d): the count-synchronized dispatch is dropless,
             # so TBO and non-TBO must agree exactly.
-            ep_no_sync=False,
+            ep=ExpertParallelConfig(path=ExpertParallelPath.sync_1d),
         ),
     )
     return config.build(init_device="cuda")

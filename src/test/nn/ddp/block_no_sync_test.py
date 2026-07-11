@@ -1,15 +1,14 @@
 import os
 
-import pytest
 import torch
 import torch.distributed as dist
 from torch.distributed.device_mesh import DeviceMesh
 
 from olmo_core.config import DType
-from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.nn.ddp.block import OLMoDDPTransformerBlock
 from olmo_core.nn.layer_norm import LayerNormConfig, LayerNormType
 from olmo_core.nn.moe import MoERouterGatingFunction
+from olmo_core.nn.moe.v2.ep_config import ExpertParallelConfig, ExpertParallelPath
 from olmo_core.nn.moe.v2.routed_experts import RoutedExpertsConfig
 from olmo_core.nn.moe.v2.router import MoERouterConfigV2
 from olmo_core.testing import (
@@ -41,7 +40,6 @@ def _build_block(
     top_k: int = 1,
     uniform_expert_assignment: bool = True,
     init_device: str = "cuda",
-    ep_no_sync_use_2d_all_to_all: bool = False,
 ) -> OLMoDDPTransformerBlock:
     layer_norm = LayerNormConfig(
         name=LayerNormType.rms,
@@ -84,10 +82,11 @@ def _build_block(
             dtype=DType.float32,
         ),
         feed_forward_norm=layer_norm,
-        ep_no_sync=ep_no_sync,
-        ep_no_sync_use_2d_all_to_all=ep_no_sync_use_2d_all_to_all,
-        ep_no_sync_capacity_factor=ep_no_sync_capacity_factor,
-        ep_no_sync_major_align=1,
+        ep=ExpertParallelConfig(
+            path=ExpertParallelPath.no_sync_1d if ep_no_sync else ExpertParallelPath.sync_1d,
+            capacity_factor=ep_no_sync_capacity_factor,
+            major_align=1,
+        ),
         init_device=init_device,
     )
 
@@ -381,8 +380,8 @@ def _run_ep_no_sync_rowwise_matches_synced():
     _install_deterministic_topk_router(block_ep)
     _install_deterministic_topk_router(block_rowwise)
 
-    block_rowwise.ep_no_sync_use_rowwise_all_to_all = True
-    block_rowwise.ep_no_sync_rowwise_nblocks = 128
+    block_rowwise.ep.path = ExpertParallelPath.rowwise_nvshmem
+    block_rowwise.ep.rowwise_nblocks = 128
 
     block_ep.train()
     block_rowwise.train()
@@ -439,11 +438,11 @@ def _run_ep_no_sync_rowwise_drop_matches_independent_rowwise_block():
     _install_deterministic_topk_router(block_a)
     _install_deterministic_topk_router(block_b)
 
-    block_a.ep_no_sync_use_rowwise_all_to_all = True
-    block_a.ep_no_sync_rowwise_nblocks = 128
+    block_a.ep.path = ExpertParallelPath.rowwise_nvshmem
+    block_a.ep.rowwise_nblocks = 128
 
-    block_b.ep_no_sync_use_rowwise_all_to_all = True
-    block_b.ep_no_sync_rowwise_nblocks = 128
+    block_b.ep.path = ExpertParallelPath.rowwise_nvshmem
+    block_b.ep.rowwise_nblocks = 128
 
     block_a.train()
     block_b.train()
@@ -503,15 +502,6 @@ def test_v2_ep_no_sync_rowwise_matches_synced():
     run_distributed_test(
         _run_ep_no_sync_rowwise_matches_synced, backend="nccl", start_method="spawn"
     )
-
-
-def test_v2_ep_no_sync_2d_all_to_all_rejected():
-    with pytest.raises(OLMoConfigurationError, match="2D all_to_all path was removed"):
-        _build_block(
-            ep_no_sync=True,
-            init_device="cpu",
-            ep_no_sync_use_2d_all_to_all=True,
-        )
 
 
 @requires_multi_gpu

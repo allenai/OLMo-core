@@ -7,6 +7,7 @@ from olmo_core.nn.attention import AttentionConfig, AttentionType
 from olmo_core.nn.ddp.block import OLMoDDPTransformerBlock
 from olmo_core.nn.layer_norm import LayerNormConfig, LayerNormType
 from olmo_core.nn.moe import MoERouterGatingFunction
+from olmo_core.nn.moe.v2.ep_config import ExpertParallelConfig, ExpertParallelPath
 from olmo_core.nn.moe.v2.routed_experts import RoutedExpertsConfig
 from olmo_core.nn.moe.v2.router import MoERouterConfigV2
 from olmo_core.testing import requires_multi_gpu, run_distributed_test
@@ -49,9 +50,9 @@ def _build_block() -> OLMoDDPTransformerBlock:
             d_model=512, hidden_size=1024, num_experts=8, bias=False, dtype=DType.float32
         ),
         feed_forward_norm=layer_norm,
-        # Synchronous (count-synchronized) EP: ep_no_sync=False. The sync path is dropless,
+        # Synchronous (count-synchronized) EP: path=sync_1d. The sync path is dropless,
         # so it should match the no-EP reference exactly (no capacity / no symmetric memory).
-        ep_no_sync=False,
+        ep=ExpertParallelConfig(path=ExpertParallelPath.sync_1d),
         init_device="cuda",
     )
 
@@ -132,7 +133,7 @@ def _run_sync_ep_matches_no_ep():
     ep_mesh = _build_ep_mesh()
     no_ep_block = _build_block()
     ep_block = _build_block()
-    # apply_ep with ep_no_sync=False selects the synchronous all-to-all path
+    # apply_ep with path=sync_1d selects the synchronous all-to-all path
     # (combined_forward_ep_1d). The no-EP block never calls apply_ep, so it runs
     # combined_forward_no_ep as the reference.
     ep_block.apply_ep(ep_mesh)
