@@ -1115,7 +1115,7 @@ class OLMoDDPTransformerBlock(olmo_core.nn.transformer.block.TransformerBlockBas
         assert self.routed_experts_router is None
         assert self.shared_experts is not None
 
-        attn_res_out = self._res_norm_attn(x, **kwargs)
+        attn_res_out = self._checkpointed_res_norm_attn(x, **kwargs)
         kwargs.pop("max_doc_len", None)
         kwargs.pop("cu_doc_lens", None)
         mlp_inp = self._prepare_moe_input(attn_res_out)

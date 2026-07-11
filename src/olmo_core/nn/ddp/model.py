@@ -574,6 +574,9 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
             if not block.is_moe:
                 continue
             block = cast(OLMoDDPTransformerBlock, block)
+            if block.is_shared_only:
+                # Shared-only (dense) blocks have no routed experts, so there is no EP to apply.
+                continue
             # ep_mp_group is the optional high-priority NCCL group for
             # synchronized EP collectives that should start promptly while shared
             # experts run. It is intentionally not used by no-sync blocks.
