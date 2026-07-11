@@ -140,6 +140,12 @@ class ExpertParallelConfig(Config):
         self.rowwise_wave_mode = self.rowwise_wave_mode.lower()
         self.deepep.validate()
 
+        if self.path in (ExpertParallelPath.rowwise_wave, ExpertParallelPath.deepep_v2):
+            # These backends are declared but not yet wired up: selecting one would silently run a
+            # different path (rowwise_wave -> rowwise_nvshmem) or be rejected downstream (deepep_v2
+            # -> no-sync symm-mem branch). Fail loudly until the backends land.
+            raise OLMoConfigurationError(f"EP path {self.path.value!r} is not yet supported")
+
         if self.capacity_factor <= 0:
             raise OLMoConfigurationError(
                 f"EP capacity_factor must be > 0 (got {self.capacity_factor})"
