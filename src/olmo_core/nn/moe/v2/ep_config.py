@@ -179,15 +179,10 @@ class ExpertParallelConfig(Config):
                 "'te_fused'|'te_unfused'|'cuda' "
                 f"(got {self.restore_unpermute_backend!r})"
             )
-        if (
-            self.schedule == ExpertParallelSchedule.tbo
-            and self.path != ExpertParallelPath.rowwise_nvshmem
-        ):
-            raise OLMoConfigurationError(
-                "EP schedule='tbo' is only supported with "
-                f"path={ExpertParallelPath.rowwise_nvshmem!r} "
-                f"(got path={self.path!r})"
-            )
+        if self.schedule == ExpertParallelSchedule.tbo:
+            # ep.schedule does not drive dispatch yet (TBO is selected by the train module), so a
+            # 'tbo' schedule here would be silently ignored. Reject it until it is wired up.
+            raise OLMoConfigurationError("EP schedule='tbo' is not yet supported")
         if self.checkpoint_tbo and self.path != ExpertParallelPath.rowwise_nvshmem:
             raise OLMoConfigurationError(
                 "EP checkpoint_tbo=True is only supported with "
