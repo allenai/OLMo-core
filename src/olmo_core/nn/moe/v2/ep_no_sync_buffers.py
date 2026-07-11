@@ -1307,7 +1307,7 @@ def get_cached_ep_no_sync_rowwise_fp8_buffers(
 def use_ep_no_sync_rowwise_symm_dispatch_in(block: "MoEFusedV2TransformerBlock") -> bool:
     return _resolve_rowwise_symm_option(
         block,
-        attr_name="ep_no_sync_rowwise_symm_dispatch_in",
+        attr_name="ep.rowwise_symm_dispatch_in",
         env_name="OLMO_MOE_ROWWISE_SYMM_DISPATCH_IN",
     )
 
@@ -1315,7 +1315,7 @@ def use_ep_no_sync_rowwise_symm_dispatch_in(block: "MoEFusedV2TransformerBlock")
 def use_ep_no_sync_rowwise_symm_combine_out(block: "MoEFusedV2TransformerBlock") -> bool:
     return _resolve_rowwise_symm_option(
         block,
-        attr_name="ep_no_sync_rowwise_symm_combine_out",
+        attr_name="ep.rowwise_symm_combine_out",
         env_name="OLMO_MOE_ROWWISE_SYMM_COMBINE_OUT",
         auto_enabled=False,
     )
@@ -1324,7 +1324,7 @@ def use_ep_no_sync_rowwise_symm_combine_out(block: "MoEFusedV2TransformerBlock")
 def use_ep_no_sync_rowwise_symm_combine_gather(block: "MoEFusedV2TransformerBlock") -> bool:
     return _resolve_rowwise_symm_option(
         block,
-        attr_name="ep_no_sync_rowwise_symm_combine_gather",
+        attr_name="ep.rowwise_symm_combine_gather",
         env_name="OLMO_MOE_ROWWISE_SYMM_COMBINE_GATHER",
     )
 
