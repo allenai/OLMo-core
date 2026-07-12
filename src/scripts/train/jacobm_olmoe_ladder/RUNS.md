@@ -1987,3 +1987,24 @@ multiple to the 275M wide Cx8 token count: `32,502,185,984` tokens, which is
 | Name | Beaker | Variant | LR | Duration | Systems settings | Commit |
 | --- | --- | --- | ---: | --- | --- | --- |
 | `int-275m-cx4-intw256e16k-lr8e-4-r1` | https://beaker.org/ex/01KXA424V6TFS1GQ8A85PJEFRT | `wide_256e16k` | `8e-4` | `--chinchilla-multiple=4`, `--max-duration-tokens=32502185984` | 1 node x 8 GPUs; GBS seq 64; EP1 / MB4; compile-on | `9cde532` |
+
+
+## 2026-07-12 810M Integration MT Completion Follow-up
+
+`mt-810m-intw256e8k-cx8-lr4e-5-r1` finished successfully at `step47684` in
+Beaker experiment https://beaker.org/ex/01KX6K330J3Z5CSDY518BGJ05B. The final
+checkpoint is:
+
+`/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/midtraining/mt-810m-intw256e8k-cx8-lr4e-5-r1/step47684`
+
+Follow-up jobs launched:
+
+| Follow-up | Beaker | Status at launch | Notes |
+| --- | --- | --- | --- |
+| Final-checkpoint eval backfill | https://beaker.org/ex/01KXAEK0VQBM0S74A8KZXXHWWM | starting | Uses `integration_midtraining_ladder.py --integration-config=wide_256e8k` so validation metrics match the integration architecture. Copy metrics to the source W&B run after it finishes. |
+| HF conversion for OLMoBase | https://beaker.org/ex/01KXAEMCSE3T436X2K4DGK0FYH | succeeded | One-row manifest: `eval_810m_integration_mt_cx8_targets.jsonl`. HF checkpoint written to `hf-checkpoints/midtraining/mt-810m-intw256e8k-cx8-lr4e-5-r1/step47684`. |
+| OLMoBase eval | https://beaker.org/ex/01KXAFXV1EAX2FC89C3YGZEJ61 | starting | Standard 8-engine Jupiter OLMoBase eval in the MoE workspace, launched from the converted HF checkpoint. |
+
+Plots/result pages were refreshed after detecting this completion. The new eval
+metrics are not expected in the result tables until the eval backfill finishes
+and is copied back to the source W&B run.
