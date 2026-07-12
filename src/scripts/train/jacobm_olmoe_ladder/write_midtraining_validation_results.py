@@ -181,7 +181,7 @@ TARGETS = [
         lr="1.8e-4",
         beaker_id="01KX1WZGKE5K5GF4SZ98G7SVJD",
         checkpoint="integration/int-275m-cx2-intw256e8k-lr1.6e-3-r1/step20665",
-        run_name="mt-275m-intw256e8k-cx2-lr1p8e-4-r3",
+        run_name="mt-275m-intw256e8k-cx2-lr1.8e-4-r3",
     ),
     MidtrainTarget(
         source="275M integration wide Cx4",
@@ -189,7 +189,7 @@ TARGETS = [
         lr="1.5e-4",
         beaker_id="01KX1WZXCBX8VFNFFZK2DT50JB",
         checkpoint="integration/int-275m-cx4-intw256e8k-lr8e-4-r1/step30997",
-        run_name="mt-275m-intw256e8k-cx4-lr1p5e-4-r3",
+        run_name="mt-275m-intw256e8k-cx4-lr1.5e-4-r3",
     ),
     MidtrainTarget(
         source="275M integration wide Cx8",
@@ -197,7 +197,7 @@ TARGETS = [
         lr="1.6e-4",
         beaker_id="01KX1X0AJAMCEE5MSXBP33PHNG",
         checkpoint="integration/int-275m-cx8-intw256e8k-lr8e-4-r1/step41329",
-        run_name="mt-275m-intw256e8k-cx8-lr1p6e-4-r3",
+        run_name="mt-275m-intw256e8k-cx8-lr1.6e-4-r3",
     ),
     MidtrainTarget(
         source="275M integration deep Cx1",
@@ -213,7 +213,7 @@ TARGETS = [
         lr="1.8e-4",
         beaker_id="01KX1X14K49GJN4KS9QQ3JEQ1E",
         checkpoint="integration/int-275m-cx2-intd256e8k-lr1.6e-3-r1/step20173",
-        run_name="mt-275m-intd256e8k-cx2-lr1p8e-4-r3",
+        run_name="mt-275m-intd256e8k-cx2-lr1.8e-4-r3",
     ),
     MidtrainTarget(
         source="275M integration deep Cx4",
@@ -221,7 +221,7 @@ TARGETS = [
         lr="1.5e-4",
         beaker_id="01KX1X1GPC3N51C7E8AW2YXN63",
         checkpoint="integration/int-275m-cx4-intd256e8k-lr1.6e-3-r1/step30259",
-        run_name="mt-275m-intd256e8k-cx4-lr1p5e-4-r3",
+        run_name="mt-275m-intd256e8k-cx4-lr1.5e-4-r3",
     ),
     MidtrainTarget(
         source="275M integration deep Cx8",
@@ -229,7 +229,7 @@ TARGETS = [
         lr="1.6e-4",
         beaker_id="01KX1X203AABJ29GHKST48J5E9",
         checkpoint="integration/int-275m-cx8-intd256e8k-lr1.6e-3-r1/step40345",
-        run_name="mt-275m-intd256e8k-cx8-lr1p6e-4-r3",
+        run_name="mt-275m-intd256e8k-cx8-lr1.6e-4-r3",
     ),
     MidtrainTarget(
         source="480M integration wide Cx8",
