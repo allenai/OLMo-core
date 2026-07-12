@@ -2029,3 +2029,22 @@ Plots/result pages were refreshed after detecting this completion. The new eval
 metrics are not expected in the result tables until the eval backfill finishes
 and is copied back to the source W&B run.
 
+## 2026-07-12 Deep Integration MT Completion Follow-up
+
+Status refresh found two additional promoted integration Cx8 midtraining runs
+finished successfully:
+
+| Name | Beaker | Final checkpoint | Follow-ups |
+| --- | --- | --- | --- |
+| `mt-480m-intd256e8k-cx8-lr8e-5-r1` | https://beaker.org/ex/01KX6K41XG75V1DQ9NWZB988GQ | `step63579` | Eval backfill https://beaker.org/ex/01KXBF8ECAS3EK0TXW6X9B0TKP; HF conversion https://beaker.org/ex/01KXBF94GH2KDH2ZAJYT2E8ZF7. |
+| `mt-810m-intd256e8k-cx8-lr4e-5-r1` | https://beaker.org/ex/01KX6K4GKDHQS05727Q9NWZB988GQ | `step47684` | Eval backfill https://beaker.org/ex/01KXBF8DFXXTRXTW6ZRP4TRGBG; HF conversion https://beaker.org/ex/01KXBF95SYXE13VVMHEXJWNS4H. |
+
+Also finalized since the previous refresh: 480M/810M wide integration MT eval
+backfills and OLMoBase evals, plus the 275M high-active top16 diagnostic. The
+wide integration MT eval metrics were copied back to their source W&B runs after
+adding promoted integration entries to `copy_eval_backfills_to_wandb.py`.
+
+Plots and generated result pages were refreshed. `write_midtraining_validation_results.py`
+now tracks the promoted integration MT runs directly, including the still-running
+1.2B wide/deep Cx8 MT jobs.
+
