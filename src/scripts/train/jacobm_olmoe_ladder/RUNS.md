@@ -2042,8 +2042,8 @@ finished successfully:
 
 | Name | Beaker | Final checkpoint | Follow-ups |
 | --- | --- | --- | --- |
-| `mt-480m-intd256e8k-cx8-lr8e-5-r1` | https://beaker.org/ex/01KX6K41XG75V1DQ9NWZB988GQ | `step63579` | Eval backfill https://beaker.org/ex/01KXBF8ECAS3EK0TXW6X9B0TKP; HF conversion https://beaker.org/ex/01KXBF94GH2KDH2ZAJYT2E8ZF7. |
-| `mt-810m-intd256e8k-cx8-lr4e-5-r1` | https://beaker.org/ex/01KX6K4GKDHQS05727Q9NWZB988GQ | `step47684` | Eval backfill https://beaker.org/ex/01KXBF8DFXXTRXTW6ZRP4TRGBG; HF conversion https://beaker.org/ex/01KXBF95SYXE13VVMHEXJWNS4H. |
+| `mt-480m-intd256e8k-cx8-lr8e-5-r1` | https://beaker.org/ex/01KX6K41XG75V1DQ9NWZB988GQ | `step63579` | Eval backfill https://beaker.org/ex/01KXBF8ECAS3EK0TXW6X9B0TKP; HF conversion https://beaker.org/ex/01KXBF94GH2KDH2ZAJYT2E8ZF7; OLMoBase eval https://beaker.org/ex/01KXBPB8V0724FNM2RK46GVTPD. |
+| `mt-810m-intd256e8k-cx8-lr4e-5-r1` | https://beaker.org/ex/01KX6K4GKDHQS05727Q9NWZB988GQ | `step47684` | Eval backfill https://beaker.org/ex/01KXBF8DFXXTRXTW6ZRP4TRGBG; HF conversion https://beaker.org/ex/01KXBF95SYXE13VVMHEXJWNS4H; OLMoBase eval https://beaker.org/ex/01KXBPBHYMFHPNZ2KAC6WE2J5X. |
 
 Also finalized since the previous refresh: 480M/810M wide integration MT eval
 backfills and OLMoBase evals, plus the 275M high-active top16 diagnostic. The
