@@ -1988,6 +1988,12 @@ multiple to the 275M wide Cx8 token count: `32,502,185,984` tokens, which is
 | --- | --- | --- | ---: | --- | --- | --- |
 | `int-275m-cx4-intw256e16k-lr8e-4-r1` | https://beaker.org/ex/01KXA424V6TFS1GQ8A85PJEFRT | `wide_256e16k` | `8e-4` | `--chinchilla-multiple=4`, `--max-duration-tokens=32502185984` | 1 node x 8 GPUs; GBS seq 64; EP1 / MB4; compile-on | `9cde532` |
 
+Midtraining follow-up:
+
+| Name | Beaker | Source checkpoint | LR | Duration | Systems settings | Commit |
+| --- | --- | --- | ---: | --- | --- | --- |
+| `mt-275m-intw256e16k-cx4-lr8e-5-r1` | https://beaker.org/ex/01KXBH2HBN9W4M46H33CRGHVJS | `integration/int-275m-cx4-intw256e16k-lr8e-4-r1/step61993` | `8e-5` | 100B MT tokens | 1 node x 8 GPUs; GBS seq 128; EP1 / MB4; compile-on; fresh optimizer / weight-only load | `0e1b7bb` |
+
 
 ## 2026-07-12 810M Integration MT Completion Follow-up
 
@@ -2047,4 +2053,3 @@ adding promoted integration entries to `copy_eval_backfills_to_wandb.py`.
 Plots and generated result pages were refreshed. `write_midtraining_validation_results.py`
 now tracks the promoted integration MT runs directly, including the still-running
 1.2B wide/deep Cx8 MT jobs.
-

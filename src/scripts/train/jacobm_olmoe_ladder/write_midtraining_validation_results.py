@@ -279,6 +279,14 @@ TARGETS = [
         checkpoint="integration/int-1p2b-cx8-intd256e8k-lr4e-4-r2/step218156",
         run_name="mt-1p2b-intd256e8k-cx8-lr4e-5-r1",
     ),
+    MidtrainTarget(
+        source="275M integration wide top16 Cx4",
+        source_cx="Cx4",
+        lr="8e-5",
+        beaker_id="01KXBH2HBN9W4M46H33CRGHVJS",
+        checkpoint="integration/int-275m-cx4-intw256e16k-lr8e-4-r1/step61993",
+        run_name="mt-275m-intw256e16k-cx4-lr8e-5-r1",
+    ),
 ]
 
 
@@ -583,6 +591,13 @@ def main() -> int:
         "Settings: 100B midtraining tokens, sequence length 8192, global batch seq 128 "
         "(1,048,576 tokens), 1 node, 4 GPUs, EP1, microbatch 8, fresh optimizer state, "
         "2000-step warmup then constant LR.",
+        "",
+        (
+            "Exception: `275M integration wide top16 Cx4` is the high-active diagnostic "
+            "trained on the same token budget as the 275M wide Cx8 pretraining run. "
+            "It uses 1 node, 8 GPUs, EP1, microbatch 4, and the same global batch seq 128 "
+            "to fit the larger active parameter count."
+        ),
         "",
     ]
 
