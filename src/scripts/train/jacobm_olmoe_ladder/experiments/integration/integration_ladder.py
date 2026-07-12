@@ -110,6 +110,7 @@ from olmo_core.train.callbacks import (
     CheckpointerCallback,
     ConfigSaverCallback,
     NvidiaProfilerCallback,
+    SpeedMonitorCallback,
     TorchMemoryHistoryCallback,
     WandBCallback,
 )
@@ -317,6 +318,17 @@ INTEGRATION_SPECS = {
         tag="intw256e8k",
         description="Wide integration candidate: 256E/top8, 0.5d routed experts, 0.5d shared expert, one dense prefix layer.",
     ),
+    "wide_256e16k": IntegrationSpec(
+        num_experts=256,
+        top_k=16,
+        moe_hidden_mult=1 / 2,
+        num_shared_experts=1,
+        shared_hidden_mult=1 / 2,
+        dense_layers=(0,),
+        layer_overrides={},
+        tag="intw256e16k",
+        description="High-active wide integration candidate: 256E/top16, 0.5d routed experts, 0.5d shared expert, one dense prefix layer.",
+    ),
     "deep_256e8k": IntegrationSpec(
         num_experts=256,
         top_k=8,
@@ -402,6 +414,12 @@ def get_parser() -> argparse.ArgumentParser:
         type=float,
         default=CHINCHILLA_MULTIPLE,
         help="Training duration multiple, based on active non-embedding parameters.",
+    )
+    parser.add_argument(
+        "--max-duration-tokens",
+        type=int,
+        default=None,
+        help="Explicit training duration in tokens. Overrides --chinchilla-multiple when set.",
     )
     parser.add_argument(
         "--global-batch-size-seq",
@@ -1048,6 +1066,7 @@ def build_trainer_config(
             "config_saver",
             ConfigSaverCallback(),
         )
+        .with_callback("speed_monitor", SpeedMonitorCallback())
         .with_callback(
             "wandb",
             WandBCallback(
@@ -1191,10 +1210,16 @@ def build_config(opts: argparse.Namespace, overrides: List[str]) -> ExperimentCo
 
     configure_model_size(opts)
     model_config = build_model_config(tokenizer_config)
-    max_duration_tokens = Duration.chinchilla_tokens(
-        opts.chinchilla_multiple,
-        model_params=model_config.num_active_non_embedding_params,
-    ).value
+    if opts.max_duration_tokens is not None and opts.max_duration_tokens <= 0:
+        raise ValueError("--max-duration-tokens must be > 0 when set")
+    max_duration_tokens = (
+        opts.max_duration_tokens
+        if opts.max_duration_tokens is not None
+        else Duration.chinchilla_tokens(
+            opts.chinchilla_multiple,
+            model_params=model_config.num_active_non_embedding_params,
+        ).value
+    )
     configure_sweep_hparams(opts, sequence_length, max_duration_tokens)
     dataset_config = build_dataset_config(opts, tokenizer_config, sequence_length)
     data_loader_config = NumpyDataLoaderConfig(
