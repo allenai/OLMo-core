@@ -1922,3 +1922,50 @@ fresh optimizer state unchanged.
 | --- | --- | --- | --- |
 | `mt-1p2b-intw256e8k-cx8-lr4e-5-r1` | https://beaker.org/ex/01KX7032K1GXDKQR2D9FAA0CBF | GBS seq 96; 1 node x 8 GPUs; EP8 / MB3 | started |
 | `mt-1p2b-intd256e8k-cx8-lr4e-5-r1` | https://beaker.org/ex/01KX703FE8T96HJM4EFG90KHVF | GBS seq 96; 1 node x 8 GPUs; EP8 / MB3 | scheduled |
+
+## 2026-07-12 Status Refresh
+
+Bounded Beaker status pass checked the currently tracked active MT/eval/OLMoBase
+jobs rather than all historical jobs. The six promoted integration Cx8
+midtraining jobs are still started/running:
+
+| Name | Beaker | Status |
+| --- | --- | --- |
+| `mt-480m-intw256e8k-cx8-lr8e-5-r1` | https://beaker.org/ex/01KX6K2NTZZRVE98HCQWE2DR64 | started |
+| `mt-810m-intw256e8k-cx8-lr4e-5-r1` | https://beaker.org/ex/01KX6K330J3Z5CSDY518BGJ05B | started |
+| `mt-1p2b-intw256e8k-cx8-lr4e-5-r1` | https://beaker.org/ex/01KX7032K1GXDKQR2D9FAA0CBF | started |
+| `mt-480m-intd256e8k-cx8-lr8e-5-r1` | https://beaker.org/ex/01KX6K41XG75V1DQ9NWZB988GQ | started |
+| `mt-810m-intd256e8k-cx8-lr4e-5-r1` | https://beaker.org/ex/01KX6K4GKDHQS05727Q9DH0NF4 | started |
+| `mt-1p2b-intd256e8k-cx8-lr4e-5-r1` | https://beaker.org/ex/01KX703FE8T96HJM4EFG90KHVF | started |
+
+Latest W&B progress snapshot for those six jobs:
+
+| Name | W&B run | Step | Tokens | Train CE |
+| --- | --- | ---: | ---: | ---: |
+| `mt-480m-intw256e8k-cx8-lr8e-5-r1` | `in1ztv0o` | 56,729 | 89.23B | 1.4254 |
+| `mt-810m-intw256e8k-cx8-lr4e-5-r1` | `sq79ify2` | 43,193 | 90.58B | 1.3558 |
+| `mt-1p2b-intw256e8k-cx8-lr4e-5-r1` | `5stly1t0` | 57,499 | 45.22B | 1.3820 |
+| `mt-480m-intd256e8k-cx8-lr8e-5-r1` | `2qobflhw` | 50,951 | 80.14B | 1.4698 |
+| `mt-810m-intd256e8k-cx8-lr4e-5-r1` | `rge9kicc` | 41,125 | 86.25B | 1.3866 |
+| `mt-1p2b-intd256e8k-cx8-lr4e-5-r1` | `k25pw5nl` | 51,747 | 40.70B | 1.3218 |
+
+All tracked final-checkpoint eval backfill jobs from the 2026-07-10 wave are
+finalized. `copy_eval_backfills_to_wandb.py --only mt-eval` copied 10 newly
+available metric sets to their source W&B runs: 1.2B baseline Cx1/Cx8 plus 275M
+integration wide/deep Cx1/Cx2/Cx4/Cx8. Existing earlier backfills were skipped
+because their eval metrics were already present.
+
+The tracked OLMoBase conversion/eval wave for midtrained Cx8 checkpoints is
+also finalized:
+
+| Source | Conversion | OLMoBase eval | Status |
+| --- | --- | --- | --- |
+| `mt-480m-baseline-cx8-lr8e-5-r1` | https://beaker.org/ex/01KX4WQ46EHZTA76REXB4DWX8E | https://beaker.org/ex/01KX4X15K8VHV25ES8YSPF0AET | finalized |
+| `mt-810m-baseline-cx8-lr4e-5-r1` | https://beaker.org/ex/01KX4WQ5D3C5E2QED9S4NKZXWG | https://beaker.org/ex/01KX4X1GRMAR78VYH0XZVJX7MX | finalized |
+| `mt-1p2b-baseline-cx8-lr4e-5-r1` | https://beaker.org/ex/01KX4WQ6MBG2Z525R1NRN6FHEH | https://beaker.org/ex/01KX4X6FYR1DTE1VMY3FEGT5XC | finalized |
+| `mt-275m-intw256e8k-cx8-lr1p6e-4-r3` | https://beaker.org/ex/01KX4WQ7T1G1SC89E0PEHW1RRS | https://beaker.org/ex/01KX4XBGFP5A0XE1JFQT2NWCVM | finalized |
+| `mt-275m-intd256e8k-cx8-lr1p6e-4-r3` | https://beaker.org/ex/01KX5DTZQJKG11EGTERPKWXA0F | https://beaker.org/ex/01KX5FF8P4F3GS5RRH5M29AFCW | finalized |
+
+Plots and result pages were regenerated after the W&B eval-backfill copy. The
+midtraining validation dashboard now includes final-checkpoint eval metrics for
+1.2B baseline Cx1/Cx8 and the 275M integration wide/deep MT runs.
