@@ -1969,3 +1969,21 @@ also finalized:
 Plots and result pages were regenerated after the W&B eval-backfill copy. The
 midtraining validation dashboard now includes final-checkpoint eval metrics for
 1.2B baseline Cx1/Cx8 and the 275M integration wide/deep MT runs.
+
+## 2026-07-12 High-Active Wide Integration Diagnostic
+
+Launched one 275M-shape wide integration diagnostic with twice as many routed
+active experts as the current wide integration candidate: 256 total routed
+experts, top16 active, 0.5d routed experts, 0.5d shared expert, and one dense
+prefix layer.
+
+The plain script-derived `Cx4` duration would not match the 275M wide Cx8 token
+budget, because the current active-parameter accounting does not change when
+`top_k` changes. To keep the intended same-data comparison, this run uses an
+explicit token-duration override. The target is the nearest lower full Cx4-batch
+multiple to the 275M wide Cx8 token count: `32,502,185,984` tokens, which is
+`262,144` tokens below `32,502,448,128`.
+
+| Name | Beaker | Variant | LR | Duration | Systems settings | Commit |
+| --- | --- | --- | ---: | --- | --- | --- |
+| `int-275m-cx4-intw256e16k-lr8e-4-r1` | https://beaker.org/ex/01KXA424V6TFS1GQ8A85PJEFRT | `wide_256e16k` | `8e-4` | `--chinchilla-multiple=4`, `--max-duration-tokens=32502185984` | 1 node x 8 GPUs; GBS seq 64; EP1 / MB4; compile-on | `9cde532` |
