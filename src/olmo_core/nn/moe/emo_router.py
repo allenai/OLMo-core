@@ -7,12 +7,12 @@ routing: for each *document* in a sequence we first restrict routing to a pool o
 (pool size sampled per document during training), then do the usual top-k routing *within* that pool. A fixed
 number of experts are always-active "shared" experts. See :class:`EmoRouter` for details.
 
-Document boundaries are derived upstream (in :meth:`olmo_core.nn.transformer.Transformer.forward`)
-from the EOS token id and passed in as ``document_boundaries``; routers store
-:attr:`~MoETwoLevelRouter.eos_token_id` so the model can detect them.
+Document membership is derived upstream (in :meth:`olmo_core.nn.transformer.Transformer.forward`)
+from the EOS token id and passed in as ``seg_id`` (a per-token document id computed sync-free on
+device); routers store :attr:`~MoETwoLevelRouter.eos_token_id` so the model can detect them.
 """
 
-from typing import TYPE_CHECKING, Dict, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Dict, Optional, Tuple, Union
 
 import torch
 import torch.distributed as dist
@@ -122,8 +122,8 @@ class EmoRouter(MoETwoLevelRouter):
     The EMO router: two-level document routing with a *random* per-document expert pool and a fixed
     number of always-active shared experts.
 
-    For each document (a contiguous span delimited by EOS tokens, supplied via
-    ``document_boundaries``) we:
+    For each document (a contiguous span delimited by EOS tokens, identified per-token by the
+    on-device ``seg_id`` tensor) we:
 
     1. Compute expert logits (excluding the last ``num_shared_experts`` experts, which are always
        active and handled separately).
@@ -219,18 +219,18 @@ class EmoRouter(MoETwoLevelRouter):
         x: torch.Tensor,
         *,
         loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
-        document_boundaries: Optional[List[torch.Tensor]] = None,
+        seg_id: Optional[torch.Tensor] = None,
         **kwargs,
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
         if self.tp_mesh is not None:
             raise NotImplementedError("Tensor parallelism is not supported by EmoRouter.")
         if self.cp_mesh is not None:
             raise NotImplementedError("Context parallelism is not supported by EmoRouter.")
-        if document_boundaries is None:
+        if seg_id is None:
             raise RuntimeError(
-                "EmoRouter requires `document_boundaries`; these are derived from the EOS token id "
-                "in Transformer.forward. Make sure the model contains an EmoRouter so boundaries "
-                "are computed and plumbed through."
+                "EmoRouter requires `seg_id` (per-token document ids); these are computed on-device "
+                "in Transformer.forward from the EOS token id. Make sure the model contains an "
+                "EmoRouter so `seg_id` is computed and plumbed through."
             )
 
         # shape: (batch_size, seq_len, d_model)
@@ -243,55 +243,33 @@ class EmoRouter(MoETwoLevelRouter):
         # re-added at the end. Routing/load-balancing only happens over the non-shared experts.
         num_non_shared_experts = self.num_experts - self.num_shared_experts
         logits = logits[:, :, :num_non_shared_experts]
-        logits_mask = torch.zeros_like(logits, dtype=torch.bool)
+        B, S, _ = logits.shape
 
-        # Normalize document boundaries to plain python lists of exclusive ends, ending at seq_len.
-        document_boundaries_cpu = []
-        for b in document_boundaries:
-            bc = b.detach().cpu().tolist()
-            if not bc or bc[-1] != x.size(1):
-                bc.append(int(x.size(1)))
-            document_boundaries_cpu.append(bc)
+        # Two-level document masking, fully vectorized on-device: document membership arrives as
+        # `seg_id` (per-token document id, computed sync-free in Transformer.forward), so there is no
+        # host round-trip and no per-document Python loop. Per-token softmax over the non-shared
+        # experts, summed within each document and broadcast back to every token, gives the
+        # document's expert mass.
+        expert_probs = F.softmax(logits, dim=-1)  # (B, S, num_non_shared_experts)
+        doc_prob_per_token = ops.doc_sum_scatter(expert_probs, seg_id)  # (B, S, num_non_shared)
 
-        # For each document, keep only a (random, per-document) pool of experts.
-        for seq_idx in range(x.size(0)):
-            start = 0
-            for end in document_boundaries_cpu[seq_idx]:
-                if end <= start:
-                    start = end
-                    continue
-                # shape: (doc_len, num_non_shared_experts)
-                sequence_logits = logits[seq_idx, start:end, :]
-                expert_probs = F.softmax(sequence_logits, dim=-1)
-                # Document-summed expert probability mass.
-                document_expert_probs = expert_probs.sum(dim=0)
+        # Sample the per-document pool size (constant within a document), then keep only the top
+        # `pool` experts per document (by document-summed probability) and mask the rest.
+        if self.training:
+            pool_docid = torch.randint(
+                self.min_document_expert_pool,
+                self.max_document_expert_pool + 1,
+                (B, S),
+                device=logits.device,
+            )
+        else:
+            pool_docid = torch.full(
+                (B, S), self.eval_document_expert_pool, device=logits.device, dtype=torch.long
+            )
+        pool_per_token = pool_docid.gather(1, seg_id)  # (B, S), same pool for tokens in a doc
 
-                # Sample the pool size for this document.
-                if self.training:
-                    document_expert_pool = int(
-                        torch.randint(
-                            self.min_document_expert_pool,
-                            self.max_document_expert_pool + 1,
-                            (1,),
-                        ).item()
-                    )
-                else:
-                    document_expert_pool = self.eval_document_expert_pool
-
-                bot_document_expert_pool = num_non_shared_experts - document_expert_pool
-                if bot_document_expert_pool <= 0:
-                    # Pool covers all non-shared experts; nothing to mask.
-                    start = end
-                    continue
-
-                # Discard the lowest-probability experts (outside the pool) for this document.
-                experts_to_discard = torch.topk(
-                    -document_expert_probs, bot_document_expert_pool
-                ).indices
-                logits_mask[seq_idx, start:end, experts_to_discard] = True
-                start = end
-
-        logits.masked_fill_(logits_mask, float("-inf"))
+        keep = ops.pool_keep_mask(doc_prob_per_token, pool_per_token)
+        logits = logits.masked_fill(~keep, float("-inf"))
 
         # shape: (batch_size, seq_len, num_non_shared_experts)
         if self.gating_function == MoERouterGatingFunction.softmax:

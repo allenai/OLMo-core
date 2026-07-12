@@ -302,3 +302,87 @@ def histc(x: torch.Tensor, num_classes: int) -> torch.Tensor:
         return torch.histc(x.float(), bins=num_classes, min=0, max=num_classes - 1).int()
     else:
         return torch.histc(x, bins=num_classes, min=0, max=num_classes - 1)
+
+
+def segment_ids_from_eos(input_ids: torch.Tensor, eos_token_id: int) -> torch.Tensor:
+    """
+    Compute per-token document ids on-device (no host sync), replacing the CPU
+    ``torch.nonzero`` + Python-loop boundary construction used by two-level MoE routers.
+
+    A document is the half-open span between consecutive EOS positions, with the EOS token
+    itself belonging to the document it *starts* (the following one). This matches the old
+    ``[start, end)`` boundary convention where the leading span excludes its terminating EOS.
+
+    :param input_ids: token ids of shape ``(B, S)``.
+    :param eos_token_id: the end-of-document token id.
+
+    :returns: ``seg_id`` of shape ``(B, S)`` (long), where ``seg_id[b, s]`` is the index of the
+        document that token ``s`` belongs to within sequence ``b`` (starting at 0).
+    """
+    eos = (input_ids == eos_token_id).to(torch.long)
+    eos[:, 0] = 0  # drop position 0 to match the old `pos = pos[pos > 0]`
+    return eos.cumsum(dim=1)
+
+
+def doc_rank(doc_prob_per_token: torch.Tensor) -> torch.Tensor:
+    """
+    Per-token descending rank of each expert by its document-summed probability.
+
+    :param doc_prob_per_token: ``(B, S, E)`` document-summed expert probabilities broadcast to
+        every token (see :func:`doc_sum_scatter`).
+
+    :returns: ``(B, S, E)`` long ranks where ``0`` is the highest-probability expert.
+    """
+    return doc_prob_per_token.argsort(dim=-1, descending=True).argsort(dim=-1)
+
+
+def doc_sum_scatter(per_token: torch.Tensor, seg_id: torch.Tensor) -> torch.Tensor:
+    """
+    Sum a per-token quantity over each token's document, then broadcast the document total
+    back to every token in that document. Fully vectorized (scatter_add + gather), no sync.
+
+    The document axis is materialized at size ``S`` (a safe static upper bound: a length-``S``
+    sequence has at most ``S`` documents), which keeps shapes compile-friendly.
+
+    :param per_token: ``(B, S, E)`` per-token values (e.g. softmax expert probabilities).
+    :param seg_id: ``(B, S)`` document ids from :func:`segment_ids_from_eos`.
+
+    :returns: ``(B, S, E)`` where each token holds its document's summed value.
+    """
+    B, S, E = per_token.shape
+    idx = seg_id.unsqueeze(-1).expand(-1, -1, E)
+    doc_sums = torch.zeros(B, S, E, dtype=per_token.dtype, device=per_token.device)
+    doc_sums.scatter_add_(1, idx, per_token)
+    return doc_sums.gather(1, idx)
+
+
+def pool_keep_mask(
+    doc_prob_per_token: torch.Tensor,
+    pool_per_token: torch.Tensor,
+    num_forced: int = 0,
+) -> torch.Tensor:
+    """
+    Vectorized two-level document pool selection: keep the top ``pool`` experts per document
+    (by document-summed probability), always keeping the last ``num_forced`` experts.
+
+    Reproduces the old per-document ``topk`` masking semantics: forced experts (the last
+    ``num_forced`` experts) are excluded from the ranking and always kept, and only the
+    ``pool - num_forced`` best of the remaining candidates are kept. A threshold ``< 0`` (i.e.
+    ``pool < num_forced``) keeps no candidates, and ``pool >= E`` keeps everything.
+
+    :param doc_prob_per_token: ``(B, S, E)`` document-summed expert probabilities per token.
+    :param pool_per_token: ``(B, S)`` per-token pool size (constant within a document).
+    :param num_forced: number of trailing experts always kept and excluded from ranking.
+
+    :returns: ``(B, S, E)`` boolean mask, ``True`` where the expert is kept for that token.
+    """
+    if num_forced > 0:
+        prob_for_rank = doc_prob_per_token.clone()
+        prob_for_rank[..., -num_forced:] = float("-inf")
+    else:
+        prob_for_rank = doc_prob_per_token
+    rank_keep = doc_rank(prob_for_rank)
+    keep = rank_keep < (pool_per_token.unsqueeze(-1) - num_forced)
+    if num_forced > 0:
+        keep[..., -num_forced:] = True
+    return keep

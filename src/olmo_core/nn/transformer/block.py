@@ -1,6 +1,6 @@
 import math
 from abc import abstractmethod
-from typing import TYPE_CHECKING, Dict, List, Optional, Tuple, Union, cast
+from typing import TYPE_CHECKING, Dict, Optional, Tuple, Union, cast
 
 import torch
 import torch.nn as nn
@@ -588,17 +588,17 @@ class MoETransformerBlock(TransformerBlockBase):
         x: torch.Tensor,
         *,
         loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
-        document_boundaries: Optional[List[torch.Tensor]] = None,
+        seg_id: Optional[torch.Tensor] = None,
         **kwargs,
     ) -> torch.Tensor:
-        # NOTE: `document_boundaries` is captured explicitly (not forwarded via **kwargs) so it only
+        # NOTE: `seg_id` is captured explicitly (not forwarded via **kwargs) so it only
         # reaches the MoE router and never the attention module.
         h = x + self.dropout(self.attention(self.attention_norm(x), **kwargs))
         return h + self.dropout(
             self.feed_forward_moe(
                 self.feed_forward_norm(h),
                 loss_div_factor=loss_div_factor,
-                document_boundaries=document_boundaries,
+                seg_id=seg_id,
             )
         )
 
@@ -696,17 +696,15 @@ class MoEReorderedNormTransformerBlock(MoETransformerBlock):
         x: torch.Tensor,
         *,
         loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
-        document_boundaries: Optional[List[torch.Tensor]] = None,
+        seg_id: Optional[torch.Tensor] = None,
         **kwargs,
     ) -> torch.Tensor:
-        # NOTE: `document_boundaries` is captured explicitly (not forwarded via **kwargs) so it only
+        # NOTE: `seg_id` is captured explicitly (not forwarded via **kwargs) so it only
         # reaches the MoE router and never the attention module.
         h = x + self.dropout(self.attention_norm(self.attention(x, **kwargs)))
         return h + self.dropout(
             self.feed_forward_norm(
-                self.feed_forward_moe(
-                    h, loss_div_factor=loss_div_factor, document_boundaries=document_boundaries
-                )
+                self.feed_forward_moe(h, loss_div_factor=loss_div_factor, seg_id=seg_id)
             )
         )
 

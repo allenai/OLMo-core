@@ -35,6 +35,7 @@ from olmo_core.nn.attention.ring import (
     RingContextParallelStyle,
     UlyssesContextParallelStyle,
 )
+from olmo_core.ops.moe import segment_ids_from_eos
 from olmo_core.utils import get_default_device, mark_dynamic, move_to_device
 
 from ..attention import (
@@ -385,36 +386,27 @@ class Transformer(nn.Module):
         self._emo_router_cache: Tuple[Optional[int], List[int]] = cache
         return cache
 
-    def _emo_document_boundaries(
-        self, input_ids: torch.Tensor
-    ) -> Tuple[Optional[List[torch.Tensor]], List[int]]:
+    def _emo_segment_ids(self, input_ids: torch.Tensor) -> Tuple[Optional[torch.Tensor], List[int]]:
         """
-        Compute per-instance document boundaries from EOS token positions in ``input_ids``, but only
-        if the model actually contains a document-aware MoE router.
+        Compute per-token document ids (``seg_id``) from EOS token positions in ``input_ids``, but
+        only if the model actually contains a document-aware MoE router.
 
-        For non-EMO models this short-circuits on the cached detection and the boundary tensors are
-        never computed (and nothing is passed to any router).
+        This is fully vectorized on-device (a single cumsum, no host sync) — see
+        :func:`olmo_core.ops.moe.segment_ids_from_eos`. For non-EMO models it short-circuits on the
+        cached detection and ``seg_id`` is never computed (and nothing is passed to any router).
 
-        :returns: A ``(boundaries, block_indices)`` tuple where ``boundaries`` is a list (one entry
-            per instance) of 1-D tensors of document-boundary positions, and ``block_indices`` are
-            the indices of the blocks that should receive them. Returns ``(None, [])`` when no
-            document-aware router is present.
+        :returns: A ``(seg_id, block_indices)`` tuple where ``seg_id`` is a ``(B, S)`` tensor of
+            per-token document ids and ``block_indices`` are the indices of the blocks that should
+            receive it. Returns ``(None, [])`` when no document-aware router is present.
         """
         eos_token_id, block_indices = self._detect_emo_routers()
         if eos_token_id is None:
             return None, []
 
-        matches = input_ids == eos_token_id
-        boundaries: List[torch.Tensor] = []
-        for row in matches:
-            pos = torch.nonzero(row, as_tuple=True)[0]
-            # Drop position 0 to avoid empty leading documents.
-            pos = pos[pos > 0]
-            if pos.numel() > 1:
-                pos = pos.unique(sorted=True)
-            boundaries.append(pos)
-
-        return boundaries, block_indices
+        seg_id = segment_ids_from_eos(input_ids, eos_token_id)
+        if self.compile_enabled:
+            mark_dynamic(seg_id, (0, 1), strict=False)
+        return seg_id, block_indices
 
     def _prepare_inputs(
         self,
@@ -544,13 +536,13 @@ class Transformer(nn.Module):
             input_ids = move_to_device(input_ids, self.device)
             labels = move_to_device(labels, self.device)
 
-            # Document-aware MoE routers (e.g. EmoRouter) need per-document boundaries derived from
+            # Document-aware MoE routers (e.g. EmoRouter) need per-token document ids derived from
             # the EOS token. Only computed/plumbed when such a router is present, and only routed to
             # the blocks that use it, so non-EMO models are completely unaffected.
-            emo_boundaries, emo_block_indices = self._emo_document_boundaries(input_ids)
-            if emo_boundaries is not None:
+            emo_seg_id, emo_block_indices = self._emo_segment_ids(input_ids)
+            if emo_seg_id is not None:
                 for block_idx in emo_block_indices:
-                    per_block_kwargs[block_idx]["document_boundaries"] = emo_boundaries
+                    per_block_kwargs[block_idx]["seg_id"] = emo_seg_id
 
             if (max_doc_len is not None or cu_doc_lens is not None) and cache_leftpad is not None:
                 raise ValueError("max_doc_len/cu_doc_lens and cache_leftpad are mutually exclusive")
