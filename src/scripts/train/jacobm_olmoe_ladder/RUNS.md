@@ -2008,3 +2008,24 @@ Follow-up jobs launched:
 Plots/result pages were refreshed after detecting this completion. The new eval
 metrics are not expected in the result tables until the eval backfill finishes
 and is copied back to the source W&B run.
+
+## 2026-07-12 480M Integration MT Completion Follow-up
+
+`mt-480m-intw256e8k-cx8-lr8e-5-r1` finished successfully at `step63579` in
+Beaker experiment https://beaker.org/ex/01KX6K2NTZZRVE98HCQWE2DR64. The final
+checkpoint is:
+
+`/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/midtraining/mt-480m-intw256e8k-cx8-lr8e-5-r1/step63579`
+
+Follow-up jobs launched:
+
+| Follow-up | Beaker | Status at launch | Notes |
+| --- | --- | --- | --- |
+| Final-checkpoint eval backfill | https://beaker.org/ex/01KXAG736RGRPJ23ZF172DTHBH | starting | Uses `integration_midtraining_ladder.py --integration-config=wide_256e8k` so validation metrics match the integration architecture. Copy metrics to the source W&B run after it finishes. |
+| HF conversion for OLMoBase | https://beaker.org/ex/01KXAG811R26WXR368B2N3A3B0 | wrote HF files | One-row manifest: `eval_480m_integration_mt_cx8_targets.jsonl`. HF checkpoint target is `hf-checkpoints/midtraining/mt-480m-intw256e8k-cx8-lr8e-5-r1/step63579`. |
+| OLMoBase eval | https://beaker.org/ex/01KXAGZ02JQ3M71M6MBE9PBBZT | starting | Standard 8-engine Jupiter OLMoBase eval in `ai2/olmo-instruct`, launched from the converted HF checkpoint. |
+
+Plots/result pages were refreshed after detecting this completion. The new eval
+metrics are not expected in the result tables until the eval backfill finishes
+and is copied back to the source W&B run.
+
