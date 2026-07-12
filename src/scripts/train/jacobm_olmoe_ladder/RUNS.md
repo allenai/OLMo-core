@@ -2043,13 +2043,43 @@ finished successfully:
 | Name | Beaker | Final checkpoint | Follow-ups |
 | --- | --- | --- | --- |
 | `mt-480m-intd256e8k-cx8-lr8e-5-r1` | https://beaker.org/ex/01KX6K41XG75V1DQ9NWZB988GQ | `step63579` | Eval backfill https://beaker.org/ex/01KXBF8ECAS3EK0TXW6X9B0TKP; HF conversion https://beaker.org/ex/01KXBF94GH2KDH2ZAJYT2E8ZF7; OLMoBase eval https://beaker.org/ex/01KXBPB8V0724FNM2RK46GVTPD. |
-| `mt-810m-intd256e8k-cx8-lr4e-5-r1` | https://beaker.org/ex/01KX6K4GKDHQS05727Q9NWZB988GQ | `step47684` | Eval backfill https://beaker.org/ex/01KXBF8DFXXTRXTW6ZRP4TRGBG; HF conversion https://beaker.org/ex/01KXBF95SYXE13VVMHEXJWNS4H; OLMoBase eval https://beaker.org/ex/01KXBPBHYMFHPNZ2KAC6WE2J5X. |
+| `mt-810m-intd256e8k-cx8-lr4e-5-r1` | https://beaker.org/ex/01KX6K4GKDHQS05727Q9DH0NF4 | `step47684` | Eval backfill https://beaker.org/ex/01KXBF8DFXXTRXTW6ZRP4TRGBG; HF conversion https://beaker.org/ex/01KXBF95SYXE13VVMHEXJWNS4H; OLMoBase eval https://beaker.org/ex/01KXBPBHYMFHPNZ2KAC6WE2J5X. |
 
 Also finalized since the previous refresh: 480M/810M wide integration MT eval
-backfills and OLMoBase evals, plus the 275M high-active top16 diagnostic. The
-wide integration MT eval metrics were copied back to their source W&B runs after
+backfills and OLMoBase evals, plus the 275M high-active top16 diagnostic. Wide
+integration MT eval metrics were copied back to their source W&B runs after
 adding promoted integration entries to `copy_eval_backfills_to_wandb.py`.
 
 Plots and generated result pages were refreshed. `write_midtraining_validation_results.py`
 now tracks the promoted integration MT runs directly, including the still-running
 1.2B wide/deep Cx8 MT jobs.
+
+## 2026-07-12 Status Refresh
+
+Bounded refresh checked the currently active midtraining/eval follow-ups rather
+than the full historical run set.
+
+Newly finalized:
+
+- `mt-480m-intd256e8k-cx8-lr8e-5-r1` final-checkpoint eval backfill finished and
+  its metrics were copied into the training W&B run. Its OLMoBase eval
+  [01KXBPB8V0724FNM2RK46GVTPD](https://beaker.org/ex/01KXBPB8V0724FNM2RK46GVTPD)
+  also finalized successfully.
+- `mt-810m-intd256e8k-cx8-lr4e-5-r1` final-checkpoint eval backfill finished and
+  its metrics were copied into the training W&B run. Its OLMoBase eval
+  [01KXBPBHYMFHPNZ2KAC6WE2J5X](https://beaker.org/ex/01KXBPBHYMFHPNZ2KAC6WE2J5X)
+  also finalized successfully.
+
+Still running at this refresh:
+
+| Name | W&B | Tokens | Train CE | Notes |
+| --- | --- | ---: | ---: | --- |
+| `mt-1p2b-intw256e8k-cx8-lr4e-5-r1` | `5stly1t0` | 79.82B / 100B | 1.3434 | 1 node x 8 GPUs, EP8 / MB3. |
+| `mt-1p2b-intd256e8k-cx8-lr4e-5-r1` | `k25pw5nl` | 71.92B / 100B | 1.3694 | 1 node x 8 GPUs, EP8 / MB3. |
+| `mt-275m-intw256e16k-cx4-lr8e-5-r1` | `kmxhtpxp` | 44.07B / 100B | 1.5550 | High-active 256E/top16 diagnostic MT follow-up. |
+
+Generated outputs refreshed:
+
+- `results/midtraining_validation.md` / `.json`
+- `results/olmobase_evals.md` / `.json`
+- targeted integration plots and `PLOTTED_RESULTS.md`
