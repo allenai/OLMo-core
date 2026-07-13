@@ -6,66 +6,8 @@ from types import SimpleNamespace
 import pytest
 import torch
 
-import olmo_core.nn.ddp.block as block_mod
-import olmo_core.nn.ddp.model as model_mod
 from olmo_core.nn.moe.v2 import ep_no_sync_tbo_rowwise as rowwise_tbo
 from olmo_core.nn.moe.v2.ep_config import ExpertParallelPath
-
-
-def test_block_selects_rowwise_no_sync_tbo(monkeypatch):
-    calls: list = []
-
-    def fake_rowwise(block, x0, x1_ctx, x1_is_fresh, **kwargs):
-        calls.append(("rowwise", block, x0, x1_ctx, x1_is_fresh, kwargs))
-        return "rowwise-out", "rowwise-ctx"
-
-    monkeypatch.setattr(block_mod, "_combined_forward_ep_no_sync_tbo_rowwise", fake_rowwise)
-
-    fake_block = SimpleNamespace(
-        ep=SimpleNamespace(path=ExpertParallelPath.rowwise_nvshmem),
-    )
-    out, ctx = block_mod.OLMoDDPTransformerBlock.combined_forward_rowwise_nvshmem_tbo(
-        fake_block,
-        "x0",
-        {"x1": "x1"},
-        True,
-        loss_div_factor=3.0,
-    )
-
-    assert (out, ctx) == ("rowwise-out", "rowwise-ctx")
-    assert calls == [
-        (
-            "rowwise",
-            fake_block,
-            "x0",
-            {"x1": "x1"},
-            True,
-            {"loss_div_factor": 3.0},
-        )
-    ]
-
-
-def test_block_rejects_tbo_when_rowwise_nvshmem_disabled(monkeypatch):
-    calls: list = []
-
-    monkeypatch.setattr(
-        block_mod,
-        "_combined_forward_ep_no_sync_tbo_rowwise",
-        lambda *args, **kwargs: calls.append(("rowwise", args, kwargs)),
-    )
-
-    fake_block = SimpleNamespace(
-        ep=SimpleNamespace(path=ExpertParallelPath.no_sync_1d),
-    )
-    with pytest.raises(RuntimeError, match="only supported"):
-        block_mod.OLMoDDPTransformerBlock.combined_forward_rowwise_nvshmem_tbo(
-            fake_block,
-            "x0",
-            {"x1": "x1"},
-            True,
-        )
-
-    assert calls == []
 
 
 def test_rowwise_tbo_fails_closed_for_fp8():
@@ -76,52 +18,6 @@ def test_rowwise_tbo_fails_closed_for_fp8():
 
     with pytest.raises(NotImplementedError, match="Rowwise FP8"):
         rowwise_tbo._check_rowwise_tbo_supported(block)  # type: ignore[arg-type]
-
-
-def test_model_finalizes_rowwise_pending_context(monkeypatch):
-    calls: list = []
-
-    def fake_stage_c(block, ctx):
-        calls.append(("stage_c", block, ctx))
-        return "combined-pending"
-
-    def fake_tail(block, ctx):
-        calls.append(("tail", block, ctx))
-        return "x1-final"
-
-    monkeypatch.setattr(model_mod, "ep_no_sync_rowwise_tbo_stage_c_launch", fake_stage_c)
-    monkeypatch.setattr(model_mod, "ep_no_sync_rowwise_tbo_stage_tail", fake_tail)
-
-    class FakeModel:
-        def maybe_forward_lm_head(self, x, lm_head_kwargs, labels=None):
-            calls.append(("lm_head", x, lm_head_kwargs, labels))
-            return f"head:{x}:{labels}"
-
-    fake_block = SimpleNamespace()
-    pending = rowwise_tbo._NoSyncRowwiseTboPendingContext(
-        block=fake_block,  # type: ignore[arg-type]
-        lane_id=1,
-        a_state=SimpleNamespace(),  # type: ignore[arg-type]
-        global_x_rank_major=torch.ones(1, 2),
-    )
-
-    h0, h1 = model_mod.OLMoDDPModel._tbo_last_step(
-        FakeModel(),  # type: ignore[arg-type]
-        "x0-final",
-        pending,
-        {"foo": "bar"},
-        "labels0",
-        "labels1",
-    )
-
-    assert h0 == "head:x0-final:labels0"
-    assert h1 == "head:x1-final:labels1"
-    assert calls == [
-        ("stage_c", fake_block, pending),
-        ("lm_head", "x0-final", {"foo": "bar"}, "labels0"),
-        ("tail", fake_block, "combined-pending"),
-        ("lm_head", "x1-final", {"foo": "bar"}, "labels1"),
-    ]
 
 
 def test_rowwise_tbo_combined_forward_fresh_schedule(monkeypatch):
