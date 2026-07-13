@@ -2114,3 +2114,39 @@ Generated outputs refreshed:
 - `results/in_loop_evals.md` / `.json`
 - `results/midtraining_validation.md` / `.json`
 - `results/olmobase_evals.md` / `.json`
+
+## 2026-07-13 MT Finish Follow-up
+
+Status check found two additional midtraining runs finalized successfully:
+
+| Name | Beaker | Final checkpoint | W&B | Final CE |
+| --- | --- | --- | --- | ---: |
+| `mt-1p2b-intw256e8k-cx8-lr4e-5-r1` | https://beaker.org/ex/01KX7032K1GXDKQR2D9FAA0CBF | `step127157` | `5stly1t0` | 1.2618 |
+| `mt-275m-intw256e16k-cx4-lr8e-5-r1` | https://beaker.org/ex/01KXBH2HBN9W4M46H33CRGHVJS | `step95368` | `kmxhtpxp` | 1.4481 |
+
+Launched final-checkpoint eval backfills:
+
+| Source run | Eval backfill | Workspace | Settings |
+| --- | --- | --- | --- |
+| `mt-1p2b-intw256e8k-cx8-lr4e-5-r1` | https://beaker.org/ex/01KXE09P543W9B3P9Y5AW1K2PR | `ai2/OLMo-3-moe-experiments` | Titan urgent, 1 node x 8 GPUs, `integration_midtraining_ladder.py --integration-config=wide_256e8k`. |
+| `mt-275m-intw256e16k-cx4-lr8e-5-r1` | https://beaker.org/ex/01KXE0A23TX57JCMSX8CYM1VT8 | `ai2/olmo-instruct` | Titan urgent, 1 node x 8 GPUs, `integration_midtraining_ladder.py --integration-config=wide_256e16k`. |
+
+Launched HF conversions:
+
+| Source checkpoint | HF target | Conversion |
+| --- | --- | --- |
+| `midtraining/mt-1p2b-intw256e8k-cx8-lr4e-5-r1/step127157` | `hf-checkpoints/midtraining/mt-1p2b-intw256e8k-cx8-lr4e-5-r1/step127157` | https://beaker.org/ex/01KXE0C5662V06ANB4JW7DTE1E |
+| `midtraining/mt-275m-intw256e16k-cx4-lr8e-5-r1/step95368` | `hf-checkpoints/midtraining/mt-275m-intw256e16k-cx4-lr8e-5-r1/step95368` | https://beaker.org/ex/01KXE0C6BFQFWVJKCDWK7300J5 |
+
+Added `eval_20260713_finished_mt_targets.jsonl` for these two checkpoints.
+`convert_275m_eval_targets.py` now maps `integration wide 256E/top16`
+manifests to `--integration-config=wide_256e16k`, and
+`launch_olmobase_evals.py` has a `mt-int-wide-top16` naming slug. OLMoBase evals
+were not launched in this pass because both conversion jobs were still only
+scheduled at the final status check.
+
+Still running:
+
+| Name | Beaker | W&B | Tokens | Train CE |
+| --- | --- | --- | ---: | ---: |
+| `mt-1p2b-intd256e8k-cx8-lr4e-5-r1` | https://beaker.org/ex/01KX703FE8T96HJM4EFG90KHVF | `k25pw5nl` | 94.48B / 100B | 1.1887 |

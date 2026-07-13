@@ -118,7 +118,12 @@ def infer_script_and_args(target: dict[str, Any]) -> tuple[Path, list[str]]:
 
     if variant.startswith("integration wide") or variant.startswith("integration deep"):
         script = ROOT / "src/scripts/train/jacobm_olmoe_ladder/experiments/integration/integration_ladder.py"
-        integration = "wide_256e8k" if variant.startswith("integration wide") else "deep_256e8k"
+        if variant.startswith("integration deep"):
+            integration = "deep_256e8k"
+        elif "top16" in variant.lower() or "256e/top16" in variant.lower():
+            integration = "wide_256e16k"
+        else:
+            integration = "wide_256e8k"
         return script, [*common, f"--integration-config={integration}"]
 
     script = ROOT / "src/scripts/train/jacobm_olmoe_ladder/moe_a0_ladder.py"

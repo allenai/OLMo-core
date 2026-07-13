@@ -1,6 +1,6 @@
 # Midtraining Validation Results
 
-Generated: 2026-07-13 06:44 UTC
+Generated: 2026-07-13 15:09 UTC
 
 Interpretation: lower is better for CE loss, PPL, Z loss, router Z loss, and load-balancing loss; higher is better for MFU/TPS. Accuracy-style validation metrics are higher-is-better when present.
 
@@ -23,7 +23,7 @@ Exception: `275M integration wide top16 Cx4` is the high-active diagnostic train
 | 275M baseline Cx4 | 1/1 | 1/1 | 1.5e-4 |  |
 | 275M integration deep Cx4 | 1/1 | 1/1 | 1.5e-4 |  |
 | 275M integration wide Cx4 | 1/1 | 1/1 | 1.5e-4 |  |
-| 275M integration wide top16 Cx4 | 0/1 | 0/1 |  | 8e-5 |
+| 275M integration wide top16 Cx4 | 1/1 | 0/1 |  |  |
 | 275M baseline Cx8 | 4/4 | 4/4 | 2e-4, 4e-4, 8e-4, 1.6e-3 |  |
 | 275M integration deep Cx8 | 1/1 | 1/1 | 1.6e-4 |  |
 | 275M integration wide Cx8 | 1/1 | 1/1 | 1.6e-4 |  |
@@ -38,7 +38,7 @@ Exception: `275M integration wide top16 Cx4` is the high-active diagnostic train
 | 1.2B baseline Cx1 | 1/1 | 1/1 | 4e-5 |  |
 | 1.2B baseline Cx8 | 1/1 | 1/1 | 4e-5 |  |
 | 1.2B integration deep Cx8 | 0/1 | 0/1 |  | 4e-5 |
-| 1.2B integration wide Cx8 | 0/1 | 0/1 |  | 4e-5 |
+| 1.2B integration wide Cx8 | 1/1 | 0/1 |  |  |
 
 ## Eval Win Summary
 
@@ -519,7 +519,7 @@ No `eval/*` validation metrics are present for this source group yet.
 
 | LR | state | tokens | train CE | train PPL | Z loss | router Z | load balance | MFU | TPS/GPU | links |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| 8e-5 | running | 88.23B | 1.5089 | 4.5217 | 0.00075 | 0.00059 | 0.11062 | 23.51 | 231041.4 | [W&B](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/kmxhtpxp) [Beaker](https://beaker.org/ex/01KXBH2HBN9W4M46H33CRGHVJS) |
+| 8e-5 | finished | 100.00B | 1.4481 | 4.2552 | 0.00077 | 0.00057 | 0.11095 | 23.20 | 227983.8 | [W&B](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/kmxhtpxp) [Beaker](https://beaker.org/ex/01KXBH2HBN9W4M46H33CRGHVJS) |
 
 ## 275M baseline Cx8 Source
 
@@ -606,13 +606,13 @@ No `eval/*` validation metrics are present for this source group yet.
 
 | LR | state | tokens | train CE | train PPL | Z loss | router Z | load balance | MFU | TPS/GPU | links |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| 4e-5 | running | 82.35B | 1.3551 | 3.8771 | 0.00078 | 0.00041 | 0.25980 | 23.24 | 57154.8 | [W&B](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/k25pw5nl) [Beaker](https://beaker.org/ex/01KX703FE8T96HJM4EFG90KHVF) |
+| 4e-5 | running | 94.59B | 1.4723 | 4.3594 | 0.00084 | 0.00044 | 0.25995 | 23.15 | 56930.4 | [W&B](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/k25pw5nl) [Beaker](https://beaker.org/ex/01KX703FE8T96HJM4EFG90KHVF) |
 
 ## 1.2B integration wide Cx8 Source
 
 | LR | state | tokens | train CE | train PPL | Z loss | router Z | load balance | MFU | TPS/GPU | links |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| 4e-5 | running | 91.60B | 1.3998 | 4.0542 | 0.00079 | 0.00035 | 0.20969 | 25.01 | 65131.2 | [W&B](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/5stly1t0) [Beaker](https://beaker.org/ex/01KX7032K1GXDKQR2D9FAA0CBF) |
+| 4e-5 | finished | 100.00B | 1.2618 | 3.5317 | 0.00075 | 0.00038 | 0.20970 | 25.10 | 65370.1 | [W&B](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/5stly1t0) [Beaker](https://beaker.org/ex/01KX7032K1GXDKQR2D9FAA0CBF) |
 
 ## Validation Metrics
 

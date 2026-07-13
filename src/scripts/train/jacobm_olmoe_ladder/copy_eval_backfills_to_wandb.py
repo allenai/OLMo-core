@@ -50,6 +50,8 @@ BACKFILLS = [
     BackfillSpec("mt-eval-480m-intd256e8k-cx8-lr8e-5-r1", "mt-480m-intd256e8k-cx8-lr8e-5-r1"),
     BackfillSpec("mt-eval-810m-intw256e8k-cx8-lr4e-5-r1", "mt-810m-intw256e8k-cx8-lr4e-5-r1"),
     BackfillSpec("mt-eval-810m-intd256e8k-cx8-lr4e-5-r1", "mt-810m-intd256e8k-cx8-lr4e-5-r1"),
+    BackfillSpec("mt-eval-1p2b-intw256e8k-cx8-lr4e-5-r1", "mt-1p2b-intw256e8k-cx8-lr4e-5-r1"),
+    BackfillSpec("mt-eval-275m-intw256e16k-cx4-lr8e-5-r1", "mt-275m-intw256e16k-cx4-lr8e-5-r1"),
     BackfillSpec("eval-275m-275-01", "olmoe3-tiny-275m-cx1-b256k-gpu2-ep1mb16-lr1.2e-3-r2"),
     BackfillSpec("eval-275m-275-02", "olmoe3-tiny-275m-cx1-b256k-gpu2-ep1mb16-lr1.5e-3-r2"),
     BackfillSpec("eval-275m-275-03", "olmoe3-tiny-275m-cx1-b256k-gpu2-ep1mb16-lr1e-3-r2"),
