@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Optional, cast
+from typing import TYPE_CHECKING, Optional, Tuple, Union, cast
 
+import nvtx
 import torch
-
-from olmo_core._nvtx import maybe_nvtx_annotate
-from olmo_core.nn.moe.v2._nvtx_colors import COMM_COLOR
 
 from ...moe.utils import wait_stream_no_compile
 from ..utils import (
@@ -21,30 +19,27 @@ from .ep_no_sync_buffers import (
 )
 from .ep_no_sync_common import (
     build_keep_reorder,
+    padded_local_expert_splits_for_capacity,
     restore_drop_unpermute_1d,
     sync_tail_drop_allowed_splits_single_a2a,
 )
 from .routed_experts import requires_host_side_split_sizes, use_torch_grouped_mm
 
 if TYPE_CHECKING:
-    from .block import MoEFusedV2TransformerBlock
+    from olmo_core.nn.ddp.block import OLMoDDPTransformerBlock
 
 
 def combined_forward_ep_no_sync_1d(
-    block: MoEFusedV2TransformerBlock,
+    block: OLMoDDPTransformerBlock,
     x: torch.Tensor,
     *,
-    loss_div_factor: Optional[torch.Tensor | float] = None,
+    loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
     **kwargs,
 ) -> torch.Tensor:
     """Legacy 1D EP no-sync forward using symmetric-memory all_to_all_vdev ops.
 
     This path is kept primarily because the current TBO implementation still
     shares its 1D machinery. Row-wise no-sync is the production no-sync path.
-
-    TODO(ep-legacy): this VDev-1d path only runs on the legacy torch symmetric-memory backend
-    (``OLMO_USE_OWN_SYMM_MEM=0``); OLMo-owned symm-mem supports only the rowwise path. Consider
-    removing it once TBO no longer depends on the 1D machinery and rowwise is the sole no-sync path.
     """
     self = block
     assert self.routed_experts is not None
@@ -52,10 +47,7 @@ def combined_forward_ep_no_sync_1d(
     assert self.ep_enabled
     assert self.num_local_routed_experts is not None
     assert use_torch_grouped_mm(), "EP no-sync implementation requires torch.grouped_mm support"
-    assert (
-        not requires_host_side_split_sizes()
-    ), "EP no-sync implementation does not support host-side split size communication"
-
+    assert not requires_host_side_split_sizes(), "EP no-sync implementation does not support host-side split size communication"
     group_name = get_ep_no_sync_group_name(self)
     B, S, D = x.shape
 
@@ -105,22 +97,18 @@ def combined_forward_ep_no_sync_1d(
     num_out_tokens = local_x_global_routed_expert_indices.numel()
 
     with torch.no_grad():
-        with maybe_nvtx_annotate("config_capacity", COMM_COLOR):
+        with nvtx.annotate("ConfigCapacity", color="green"):
             requested_splits = local_batch_size_per_global_routed_expert.to(dtype=torch.long)
             rank_capacity = compute_ep_no_sync_rank_capacity(self, num_out_tokens)
             allowed_splits, recv_splits_by_src_local, _drop_token_cnt = cast(
-                tuple[torch.Tensor, torch.Tensor, torch.Tensor],
+                Tuple[torch.Tensor, torch.Tensor, torch.Tensor],
                 sync_tail_drop_allowed_splits_single_a2a(
                     self,
                     requested_splits,
                     rank_capacity=rank_capacity,
                 ),
             )
-            (
-                local_reorder_indices,
-                local_inverse_reorder_indices,
-                packed_keep_mask,
-            ) = build_keep_reorder(
+            local_reorder_indices, local_inverse_reorder_indices, packed_keep_mask = build_keep_reorder(
                 requested_splits=requested_splits,
                 keep_splits=allowed_splits,
                 num_out_tokens=num_out_tokens,
@@ -137,9 +125,7 @@ def combined_forward_ep_no_sync_1d(
                     device=requested_splits.device,
                     dtype=torch.long,
                 ),
-                "received_tokens_after_drop": recv_splits_by_src_local.sum(
-                    dtype=torch.long
-                ).detach(),
+                "received_tokens_after_drop": recv_splits_by_src_local.sum(dtype=torch.long).detach(),
                 "allowed_splits": allowed_splits.detach(),
                 "local_kept_tokens": num_kept.detach(),
                 "combined_tokens": num_kept.detach(),
@@ -170,9 +156,9 @@ def combined_forward_ep_no_sync_1d(
     hidden_shape_before_permute = moe_inp.shape
 
     with torch.no_grad():
-        padded_batch_size_per_local_expert = recv_splits_by_src_local.sum(
-            dim=0,
-            dtype=torch.long,
+        padded_batch_size_per_local_expert = padded_local_expert_splits_for_capacity(
+            recv_splits_by_src_local,
+            rank_capacity=rank_capacity,
         )
 
     assert local_reorder_indices is not None
@@ -180,11 +166,8 @@ def combined_forward_ep_no_sync_1d(
     assert packed_keep_mask is not None
     assert num_kept is not None
 
-    with maybe_nvtx_annotate("permute_local_tokens", COMM_COLOR):
-        (
-            permutated_local_x,
-            reversed_local_x_permutation_mapping,
-        ) = moe_permute_1d_fused_drop_no_compile(
+    with nvtx.annotate("Permute local tokens", color="green"):
+        permutated_local_x, reversed_local_x_permutation_mapping = moe_permute_1d_fused_drop_no_compile(
             inp=moe_inp,
             routing_map=routing_map,
             num_out_tokens=num_out_tokens,
@@ -225,7 +208,7 @@ def combined_forward_ep_no_sync_1d(
 
     dispatch_rank_major = dispatch_out
 
-    with maybe_nvtx_annotate("permute_global_tokens", COMM_COLOR):
+    with nvtx.annotate("Permute global tokens", color="green"):
         if self.routed_experts.num_local_experts == 1:
             dispatch_rank_major = dispatch_rank_major.clone()
             global_chunk_row_id_map = None
@@ -247,7 +230,7 @@ def combined_forward_ep_no_sync_1d(
         padded_batch_size_per_local_expert,
     )
 
-    with maybe_nvtx_annotate("unpermute_global_tokens", COMM_COLOR):
+    with nvtx.annotate("Unpermute global tokens", color="green"):
         if self.routed_experts.num_local_experts == 1:
             global_x_rank_major = dispatch_rank_major
         else:
@@ -275,10 +258,8 @@ def combined_forward_ep_no_sync_1d(
         self.ep_pg,
     )
 
-    with maybe_nvtx_annotate("unpermute_merge_local_tokens", COMM_COLOR):
-        combine_out_for_unpermute = (
-            combine_out.clone() if buffers.combine_out_is_shared else combine_out
-        )
+    with nvtx.annotate("Unpermute-Merge local tokens", color="green"):
+        combine_out_for_unpermute = combine_out.clone() if buffers.combine_out_is_shared else combine_out
         local_x = restore_drop_unpermute_1d(
             self,
             combine_out=combine_out_for_unpermute,
@@ -297,24 +278,12 @@ def combined_forward_ep_no_sync_1d(
         assert shared_out_gate is not None
 
         with torch.cuda.stream(self.get_dense_stream()):
-            shared_out = self.shared_experts.forward2(
-                shared_out_up, shared_out_gate, attn_res_out.shape
+            shared_out = self.shared_experts.forward2(shared_out_up, shared_out_gate, attn_res_out.shape)
+            mixed_shared_out = self._mix_shared_out(
+                shared_out,
+                local_x_global_shared_expert_weights,
+                attn_res_out.shape,
             )
-            if self.shared_experts_router:
-                assert local_x_global_shared_expert_weights is not None
-                _, _, E_s = local_x_global_shared_expert_weights.shape
-                mixed_shared_out = (
-                    torch.bmm(
-                        local_x_global_shared_expert_weights.to(shared_out.dtype).reshape(
-                            B * S, 1, E_s
-                        ),
-                        shared_out.permute(1, 2, 0, 3).contiguous().view(B * S, E_s, D),
-                    )
-                    .squeeze(1)
-                    .view(B, S, D)
-                )
-            else:
-                mixed_shared_out = shared_out.squeeze(0)
     else:
         mixed_shared_out = None
 

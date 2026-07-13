@@ -6,17 +6,11 @@ from typing import TYPE_CHECKING, List, Optional
 import torch
 
 if TYPE_CHECKING:
-    from .block import MoEFusedV2TransformerBlock
+    from olmo_core.nn.ddp.block import OLMoDDPTransformerBlock
 
 
 @dataclass
 class SyncedTboPendingContext:
-    """
-    Carries the in-flight state between the two stages of the synchronous expert-parallel
-    two-batch-overlap forward, so the second micro-batch's all-to-all can be launched while the
-    first micro-batch's tail (unpermute + combine) is still being computed.
-    """
-
     global_x: torch.Tensor
     send_counts: List[int]
     recv_counts: List[int]
@@ -26,4 +20,4 @@ class SyncedTboPendingContext:
     in_shape: torch.Size
     mixed_shared_out: Optional[torch.Tensor]
     attn_res_out: torch.Tensor
-    last_block: MoEFusedV2TransformerBlock
+    last_block: OLMoDDPTransformerBlock

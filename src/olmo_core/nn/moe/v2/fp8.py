@@ -1,36 +1,26 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Callable, Mapping, Optional
+from typing import TYPE_CHECKING, Any, Mapping, Optional, Tuple
 
+import nvtx
 import torch
 
-from olmo_core._nvtx import maybe_nvtx_annotate
 from olmo_core.config import Config, StrEnum
-from olmo_core.doc_utils import beta_feature
 from olmo_core.kernels import (
     prequantize_scaled_grouped_mm_rhs,
     scaled_grouped_mm_q,
     scaled_grouped_mm_q_fp8_weight,
 )
-from olmo_core.nn.moe.v2._nvtx_colors import EXPERTS_COLOR
 
 if TYPE_CHECKING:
-    from .block import MoEFusedV2TransformerBlock
+    from olmo_core.nn.ddp.block import OLMoDDPTransformerBlock
 
 
 class MoERowwiseFP8ScaleMode(StrEnum):
-    """
-    An enumeration of the supported rowwise-FP8 scale-computation modes.
-    """
-
     rceil = "rceil"
-    """
-    Round the per-row scale up to the next power of two (round-ceiling).
-    """
 
 
-@beta_feature
 @dataclass
 class MoERowwiseFP8Config(Config):
     enabled: bool = True
@@ -79,7 +69,7 @@ def normalize_rowwise_fp8_config(
     )
 
 
-def reset_shared_rowwise_fp8_cache(block: MoEFusedV2TransformerBlock) -> None:
+def reset_shared_rowwise_fp8_cache(block: OLMoDDPTransformerBlock) -> None:
     block._shared_rowwise_fp8_up_prequant = None
     block._shared_rowwise_fp8_down_prequant = None
     block._shared_rowwise_fp8_up_prequant_t = None
@@ -97,19 +87,18 @@ def _rowwise_fp8_enabled(cfg: Optional[MoERowwiseFP8Config]) -> bool:
     return cfg is not None and cfg.enabled
 
 
-def invalidate_rowwise_fp8_cache(block: MoEFusedV2TransformerBlock) -> None:
+def invalidate_rowwise_fp8_cache(block: OLMoDDPTransformerBlock) -> None:
     if block.routed_experts is not None:
         block.routed_experts.invalidate_rowwise_fp8_cache()
     reset_shared_rowwise_fp8_cache(block)
 
 
 @torch.no_grad()
-def refresh_shared_rowwise_fp8_cache(block: MoEFusedV2TransformerBlock) -> None:
+def refresh_shared_rowwise_fp8_cache(block: OLMoDDPTransformerBlock) -> None:
     cfg = block.rowwise_fp8
     if not _rowwise_fp8_enabled(cfg):
         reset_shared_rowwise_fp8_cache(block)
         return
-    assert cfg is not None
     if block.shared_experts is None:
         reset_shared_rowwise_fp8_cache(block)
         return
@@ -119,7 +108,7 @@ def refresh_shared_rowwise_fp8_cache(block: MoEFusedV2TransformerBlock) -> None:
     up_weight = getattr(block, "_shared_rowwise_fp8_up_gate_weight", None)
     down_weight = getattr(block, "_shared_rowwise_fp8_down_weight", None)
     if (
-        cfg.fp8_only_params
+        cfg.fp8_only_params  # type: ignore[union-attr]
         and up_weight is not None
         and down_weight is not None
         and (up_weight.anchor_storage_released or down_weight.anchor_storage_released)
@@ -144,7 +133,7 @@ def refresh_shared_rowwise_fp8_cache(block: MoEFusedV2TransformerBlock) -> None:
         reset_shared_rowwise_fp8_cache(block)
         return
 
-    with maybe_nvtx_annotate("moe_rowwise_fp8_param_refresh_shared_weight_prequant", EXPERTS_COLOR):
+    with nvtx.annotate("moe_rowwise_fp8_param_refresh_shared_weight_prequant"):
         if up_weight is not None and down_weight is not None:
             up_weight.refresh_from_logical_weight(
                 block.shared_experts.w_up_gate,
@@ -186,7 +175,7 @@ def refresh_shared_rowwise_fp8_cache(block: MoEFusedV2TransformerBlock) -> None:
 
 
 @torch.no_grad()
-def refresh_rowwise_fp8_cache(block: MoEFusedV2TransformerBlock) -> None:
+def refresh_rowwise_fp8_cache(block: OLMoDDPTransformerBlock) -> None:
     block_cfg = block.rowwise_fp8
     routed_cfg = block.routed_experts.rowwise_fp8 if block.routed_experts is not None else None
     shared_enabled = _rowwise_fp8_enabled(block_cfg)
@@ -197,9 +186,7 @@ def refresh_rowwise_fp8_cache(block: MoEFusedV2TransformerBlock) -> None:
 
     if block.routed_experts is not None:
         if routed_enabled:
-            with maybe_nvtx_annotate(
-                "moe_rowwise_fp8_param_refresh_routed_weight_prequant", EXPERTS_COLOR
-            ):
+            with nvtx.annotate("moe_rowwise_fp8_param_refresh_routed_weight_prequant"):
                 block.routed_experts.refresh_rowwise_fp8_cache()
         else:
             block.routed_experts.invalidate_rowwise_fp8_cache()
@@ -207,11 +194,11 @@ def refresh_rowwise_fp8_cache(block: MoEFusedV2TransformerBlock) -> None:
 
 
 def shared_experts_forward1_rowwise_fp8(
-    block: MoEFusedV2TransformerBlock,
+    block: OLMoDDPTransformerBlock,
     x: torch.Tensor,
     *,
     use_fast_accum: bool,
-) -> tuple[torch.Tensor, torch.Tensor]:
+) -> Tuple[torch.Tensor, torch.Tensor]:
     assert block.shared_experts is not None
     if x.ndim == 3:
         B, S, D = x.shape
@@ -241,7 +228,6 @@ def shared_experts_forward1_rowwise_fp8(
     cfg = block.rowwise_fp8
     fp8_only_params = cfg is not None and cfg.fp8_only_params
     up_anchor = block.shared_experts.w_up_gate.unsqueeze(0)
-    mm_impl: Callable[..., Any]
     if fp8_only_params:
         up_weight = getattr(block, "_shared_rowwise_fp8_up_gate_weight", None)
         if up_weight is None:
@@ -251,7 +237,7 @@ def shared_experts_forward1_rowwise_fp8(
         up_anchor = up_anchor.detach()
         mm_impl = scaled_grouped_mm_q_fp8_weight
     else:
-        mm_impl = scaled_grouped_mm_q
+        mm_impl = scaled_grouped_mm_q  # type: ignore[assignment]
     up_gate = mm_impl(
         x2,
         up_anchor,
@@ -263,7 +249,7 @@ def shared_experts_forward1_rowwise_fp8(
 
 
 def shared_experts_forward_rowwise_fp8(
-    block: MoEFusedV2TransformerBlock,
+    block: OLMoDDPTransformerBlock,
     x: torch.Tensor,
     *,
     use_fast_accum: bool,
@@ -293,7 +279,6 @@ def shared_experts_forward_rowwise_fp8(
     cfg = block.rowwise_fp8
     fp8_only_params = cfg is not None and cfg.fp8_only_params
     up_anchor = block.shared_experts.w_up_gate.unsqueeze(0)
-    up_mm_impl: Callable[..., Any]
     if fp8_only_params:
         up_weight = getattr(block, "_shared_rowwise_fp8_up_gate_weight", None)
         if up_weight is None:
@@ -303,7 +288,7 @@ def shared_experts_forward_rowwise_fp8(
         up_anchor = up_anchor.detach()
         up_mm_impl = scaled_grouped_mm_q_fp8_weight
     else:
-        up_mm_impl = scaled_grouped_mm_q
+        up_mm_impl = scaled_grouped_mm_q  # type: ignore[assignment]
     up_gate = up_mm_impl(
         x2,
         up_anchor,
@@ -328,7 +313,6 @@ def shared_experts_forward_rowwise_fp8(
         prequantized_rhs_for_dgrad=down_prequant_t,
     )
     down_anchor = block.shared_experts.w_down
-    down_mm_impl: Callable[..., Any]
     if fp8_only_params:
         down_weight = getattr(block, "_shared_rowwise_fp8_down_weight", None)
         if down_weight is None:
@@ -337,7 +321,7 @@ def shared_experts_forward_rowwise_fp8(
         down_anchor = down_anchor.detach()
         down_mm_impl = scaled_grouped_mm_q_fp8_weight
     else:
-        down_mm_impl = scaled_grouped_mm_q
+        down_mm_impl = scaled_grouped_mm_q  # type: ignore[assignment]
     out_2d = down_mm_impl(
         hidden_2d,
         down_anchor,
@@ -347,7 +331,7 @@ def shared_experts_forward_rowwise_fp8(
 
 
 def shared_experts_forward2_rowwise_fp8(
-    block: MoEFusedV2TransformerBlock,
+    block: OLMoDDPTransformerBlock,
     up: torch.Tensor,
     gate: torch.Tensor,
     xshape: torch.Size,
@@ -377,7 +361,6 @@ def shared_experts_forward2_rowwise_fp8(
     cfg = block.rowwise_fp8
     fp8_only_params = cfg is not None and cfg.fp8_only_params
     down_anchor = block.shared_experts.w_down
-    mm_impl: Callable[..., Any]
     if fp8_only_params:
         down_weight = getattr(block, "_shared_rowwise_fp8_down_weight", None)
         if down_weight is None:
@@ -386,7 +369,7 @@ def shared_experts_forward2_rowwise_fp8(
         down_anchor = down_anchor.detach()
         mm_impl = scaled_grouped_mm_q_fp8_weight
     else:
-        mm_impl = scaled_grouped_mm_q
+        mm_impl = scaled_grouped_mm_q  # type: ignore[assignment]
     out_2d = mm_impl(
         hidden_2d,
         down_anchor,

@@ -1,13 +1,14 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Optional, cast
+import os
+import time
+from typing import TYPE_CHECKING, Optional, Tuple, Union, cast
 
+import nvtx
 import torch
 import torch.distributed as dist
 
-from olmo_core._nvtx import maybe_nvtx_annotate
 from olmo_core.distributed.utils import get_rank
-from olmo_core.nn.moe.v2._nvtx_colors import COMM_COLOR
 
 from ...moe.utils import (
     moe_unpermute_1d_fused_drop_no_compile,
@@ -15,31 +16,114 @@ from ...moe.utils import (
 )
 
 if TYPE_CHECKING:
-    from .block import MoEFusedV2TransformerBlock
+    from olmo_core.nn.ddp.block import OLMoDDPTransformerBlock
 
 
-@maybe_nvtx_annotate("build_keep_reorder", COMM_COLOR)
+def padded_local_expert_splits_for_capacity(
+    recv_splits_by_src_local: torch.Tensor,
+    *,
+    rank_capacity: int,
+) -> torch.Tensor:
+    local_splits = recv_splits_by_src_local.sum(dim=0, dtype=torch.long)
+    if local_splits.numel() == 0:
+        return local_splits
+
+    # No-sync dispatch buffers are padded to the receiving rank capacity. The
+    # row layout keeps real expert chunks first and puts tail padding in the
+    # final local expert chunk, matching build_chunk_te_routing_map().
+    pad = torch.clamp(
+        local_splits.new_full((), rank_capacity) - local_splits.sum(dtype=torch.long),
+        min=0,
+    )
+    padded_splits = local_splits.clone()
+    padded_splits[-1] = padded_splits[-1] + pad
+    return padded_splits
+
+
+def _ep_sync_debug_enabled() -> bool:
+    verbose = (
+        os.getenv("OLMO_ROWWISE_VERBOSE_DEBUG_PRINT")
+        or os.getenv("OLMO_TBO_VERBOSE_DEBUG_PRINT", "0")
+    )
+    if (verbose or "").strip().lower() not in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }:
+        return False
+    ranks = os.getenv("OLMO_ROWWISE_DEBUG_RANKS") or os.getenv("OLMO_TBO_DEBUG_RANKS")
+    if not ranks or not dist.is_available() or not dist.is_initialized():
+        return True
+    rank = str(dist.get_rank())
+    return rank in {part.strip() for part in ranks.split(",") if part.strip()}
+
+
+def _ep_sync_rank_tag() -> str:
+    if not dist.is_available() or not dist.is_initialized():
+        return "rank=? local_rank=?"
+    return f"rank={dist.get_rank()} local_rank={os.getenv('LOCAL_RANK', '?')}"
+
+
+def _ep_sync_tensor_desc(name: str, tensor: torch.Tensor) -> str:
+    return f"{name}=tensor"
+
+
+def _ep_sync_debug_print(label: str, **tensors: torch.Tensor) -> None:
+    if not _ep_sync_debug_enabled():
+        return
+    parts = ["[OLMO_ROWWISE_SYNC_DEBUG]", _ep_sync_rank_tag(), label]
+    parts.extend(_ep_sync_tensor_desc(name, tensor) for name, tensor in tensors.items())
+    print(" | ".join(str(part) for part in parts), flush=True)
+
+
+def rowwise_stage_debug_enabled() -> bool:
+    if os.getenv("OLMO_ROWWISE_STAGE_DEBUG", "0").strip().lower() not in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }:
+        return False
+    ranks = os.getenv("OLMO_ROWWISE_STAGE_DEBUG_RANKS") or os.getenv("OLMO_TBO_DEBUG_RANKS")
+    if not ranks or not dist.is_available() or not dist.is_initialized():
+        return True
+    if ranks.strip().lower() in {"all", "*"}:
+        return True
+    rank = str(dist.get_rank())
+    return rank in {part.strip() for part in ranks.split(",") if part.strip()}
+
+
+def rowwise_stage_debug_print(label: str, **fields: object) -> None:
+    if not rowwise_stage_debug_enabled():
+        return
+    parts = ["[OLMO_ROWWISE_STAGE]", f"t={time.perf_counter():.6f}", _ep_sync_rank_tag(), label]
+    parts.extend(f"{name}={value}" for name, value in fields.items())
+    print(" | ".join(str(part) for part in parts), flush=True)
+
+
+def rowwise_stage_debug_sync(label: str, device: torch.device | None = None) -> None:
+    if os.getenv("OLMO_ROWWISE_STAGE_DEBUG_SYNC", "0").strip().lower() not in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }:
+        return
+    rowwise_stage_debug_print(f"{label}:sync-enter")
+    if device is None:
+        torch.cuda.synchronize()
+    else:
+        torch.cuda.synchronize(device)
+    rowwise_stage_debug_print(f"{label}:sync-exit")
+
+
+@nvtx.annotate("_build_keep_reorder")
 def build_keep_reorder(
     requested_splits: torch.Tensor,
     keep_splits: torch.Tensor,
     num_out_tokens: int,
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    """
-    Build the reorder that implements per-expert capacity dropping for the no-sync all-to-all.
-
-    Given the number of tokens routed to each expert (``requested_splits``) and how many of those
-    each expert is allowed to keep under the rank capacity (``keep_splits``), stably partition the
-    ``num_out_tokens`` rows so the kept rows come first (in original order) and the dropped tail
-    rows come last.
-
-    :param requested_splits: Per-expert routed-token counts, shape ``(num_experts,)``.
-    :param keep_splits: Per-expert kept-token counts (``<= requested_splits``).
-    :param num_out_tokens: Total routed rows (``requested_splits.sum()``).
-
-    :returns: ``(reorder_indices, inverse_reorder_indices, packed_keep_mask)`` — the permutation
-        that packs kept-then-dropped, its inverse, and a boolean mask (in packed order) marking the
-        kept rows.
-    """
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     requested = requested_splits.to(dtype=torch.long)
     keep = keep_splits.to(dtype=torch.long)
     token_ids = torch.arange(num_out_tokens, device=keep.device, dtype=torch.long)
@@ -72,17 +156,17 @@ def build_keep_reorder(
     return reorder_indices, inverse_reorder_indices, packed_keep_mask
 
 
-@maybe_nvtx_annotate("sync_tail_drop_allowed_splits_single_a2a", COMM_COLOR)
+@nvtx.annotate("SyncTokenCount", color="green")
 def sync_tail_drop_allowed_splits_single_a2a(
-    block: MoEFusedV2TransformerBlock,
+    block: OLMoDDPTransformerBlock,
     requested_splits: torch.Tensor,
     *,
     rank_capacity: int,
     return_keep_matrix: bool = False,
-) -> (
-    tuple[torch.Tensor, torch.Tensor, torch.Tensor]
-    | tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]
-):
+) -> Union[
+    Tuple[torch.Tensor, torch.Tensor, torch.Tensor],
+    Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor],
+]:
     """
     Tail-drop keep-split sync with a single all-gather.
     Each EP rank receives every rank's requested splits, then computes the
@@ -103,16 +187,24 @@ def sync_tail_drop_allowed_splits_single_a2a(
         device=requested.device,
         dtype=requested.dtype,
     )
-    # DEBUG HOOK: this all_gather exchanges per-rank requested token counts to agree on a global
-    # tail-drop. To trace it, set OLMO_TBO_VERBOSE_DEBUG_PRINT=1 (optionally scope with
-    # OLMO_TBO_DEBUG_RANKS=0,1) and uncomment:
-    #   if os.getenv("OLMO_TBO_VERBOSE_DEBUG_PRINT") == "1":
-    #       print(f"[tbo] rank={dist.get_rank()} sync_tail_drop block={self.block_idx} "
-    #             f"requested={tuple(requested.shape)} rank_capacity={rank_capacity}", flush=True)
+    _ep_sync_debug_print(
+        (
+            "sync_tail_drop:all_gather-enter "
+            f"block={self.block_idx} ep_world_size={self.ep_world_size} "
+            f"num_local_experts={self.num_local_routed_experts} rank_capacity={rank_capacity}"
+        ),
+        requested=requested,
+        gathered_payload=gathered_payload,
+    )
     dist.all_gather_into_tensor(
         gathered_payload,
         requested,
         group=self.ep_pg,
+    )
+    _ep_sync_debug_print(
+        f"sync_tail_drop:all_gather-exit block={self.block_idx}",
+        requested=requested,
+        gathered_payload=gathered_payload,
     )
 
     gathered_payload_2d = gathered_payload.view(self.ep_world_size, expected_splits)
@@ -160,9 +252,9 @@ def sync_tail_drop_allowed_splits_single_a2a(
     )
 
 
-@maybe_nvtx_annotate("restore_drop_unpermute_1d", COMM_COLOR)
+@nvtx.annotate("_restore_drop_unpermute_1d")
 def restore_drop_unpermute_1d(
-    block: MoEFusedV2TransformerBlock,
+    block: OLMoDDPTransformerBlock,
     *,
     combine_out: torch.Tensor,
     local_inverse_reorder_indices: torch.Tensor,
@@ -174,13 +266,6 @@ def restore_drop_unpermute_1d(
     row_id_map_is_packed: bool = False,
     backward_grad_input_buffer: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
-    """
-    Restore capacity-dropped rows and unpermute the combined expert outputs (1D no-sync path).
-
-    Inverts :func:`build_keep_reorder` — scatters the kept expert outputs in ``combine_out`` back
-    to their pre-drop positions (zero-filling the dropped tail), then unpermutes by the original
-    routing map and applies the routed-expert combine weights to reconstruct the per-token output.
-    """
     self = block
     assert self.routed_experts_router is not None
     merging_probs = local_x_global_routed_expert_weights.view(
@@ -208,7 +293,7 @@ def restore_drop_unpermute_1d(
         if row_id_map_is_packed:
             restored_local_x = combine_out
         else:
-            with maybe_nvtx_annotate("restore_drop", COMM_COLOR):
+            with nvtx.annotate("RestoreDrop", color="green"):
                 restored_local_x = combine_out.index_select(
                     0,
                     local_inverse_reorder_indices,
@@ -234,7 +319,7 @@ def restore_drop_unpermute_1d(
         )
     if backend == "cuda":
         raise RuntimeError(
-            "ep_no_sync_restore_unpermute_backend='cuda' is not implemented yet. "
+            "EP restore_unpermute_backend='cuda' is not implemented yet. "
             "TODO: add a custom CUDA path mirroring TE _moe_unpermute_index_map semantics."
         )
-    raise RuntimeError(f"Unhandled ep_no_sync_restore_unpermute_backend: {backend}")
+    raise RuntimeError(f"Unhandled EP restore_unpermute_backend: {backend}")

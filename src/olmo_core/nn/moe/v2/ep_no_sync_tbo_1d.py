@@ -1,16 +1,10 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Dict, Optional, cast
+from typing import TYPE_CHECKING, Dict, Optional, Tuple, Union, cast
 
+import nvtx
 import torch
 
-from olmo_core._nvtx import maybe_nvtx_annotate
-from olmo_core.nn.moe.v2._nvtx_colors import (
-    COMM_COLOR,
-    EXPERTS_COLOR,
-    ROUTING_COLOR,
-    TBO_COLOR,
-)
 from olmo_core.utils import get_or_init_stream
 
 from ...moe.utils import (
@@ -35,21 +29,22 @@ from .ep_no_sync_buffers import (
 )
 from .ep_no_sync_common import (
     build_keep_reorder,
+    padded_local_expert_splits_for_capacity,
     restore_drop_unpermute_1d,
     sync_tail_drop_allowed_splits_single_a2a,
 )
 from .routed_experts import requires_host_side_split_sizes, use_torch_grouped_mm
 
 if TYPE_CHECKING:
-    from .block import MoEFusedV2TransformerBlock
+    from olmo_core.nn.ddp.block import OLMoDDPTransformerBlock
 
 
 def ep_no_sync_stage_a(
-    block: MoEFusedV2TransformerBlock,
+    block: OLMoDDPTransformerBlock,
     x: torch.Tensor,
     *,
     lane_id: int,
-    loss_div_factor: Optional[torch.Tensor | float] = None,
+    loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
     **kwargs,
 ) -> _NoSyncStageAState:
     self = block
@@ -58,13 +53,11 @@ def ep_no_sync_stage_a(
     assert self.ep_enabled
     assert self.num_local_routed_experts is not None
     assert use_torch_grouped_mm(), "EP no-sync implementation requires torch.grouped_mm support"
-    assert (
-        not requires_host_side_split_sizes()
-    ), "EP no-sync implementation does not support host-side split size communication"
-    if self.ep.is_rowwise:
+    assert not requires_host_side_split_sizes(), "EP no-sync implementation does not support host-side split size communication"
+    if self.ep.uses_rowwise_buffers:
         raise RuntimeError(
-            "A rowwise EP path is only implemented for "
-            "combined_forward_ep_no_sync_rowwise() (non-TBO path) right now."
+            "1D no-sync TBO was removed. Use "
+            "ExpertParallelConfig(path='rowwise_nvshmem', schedule='tbo') instead."
         )
 
     group_name = get_ep_no_sync_group_name(self)
@@ -74,7 +67,7 @@ def ep_no_sync_stage_a(
     del x
 
     attn_kwargs = dict(kwargs)
-    with maybe_nvtx_annotate("a_attn_router", ROUTING_COLOR):
+    with nvtx.annotate("A-AttnRouter", color="purple"):
         attn_res_out = self._checkpointed_res_norm_attn(block_inp, **attn_kwargs)
         moe_inp = self._prepare_moe_input(attn_res_out)
         (
@@ -112,21 +105,11 @@ def ep_no_sync_stage_a(
 
         if self.shared_experts is not None:
             shared_out = self.shared_experts(moe_inp)
-            if self.shared_experts_router:
-                assert local_x_global_shared_expert_weights is not None
-                _, _, E_s = local_x_global_shared_expert_weights.shape
-                mixed_shared_out = (
-                    torch.bmm(
-                        local_x_global_shared_expert_weights.to(shared_out.dtype).reshape(
-                            B * S, 1, E_s
-                        ),
-                        shared_out.permute(1, 2, 0, 3).contiguous().view(B * S, E_s, D),
-                    )
-                    .squeeze(1)
-                    .view(B, S, D)
-                )
-            else:
-                mixed_shared_out = shared_out.squeeze(0)
+            mixed_shared_out = self._mix_shared_out(
+                shared_out,
+                local_x_global_shared_expert_weights,
+                attn_res_out.shape,
+            )
             shared_done_event = record_stream_event_no_compile(dense_stream)
         else:
             mixed_shared_out = None
@@ -137,22 +120,18 @@ def ep_no_sync_stage_a(
     num_out_tokens = local_x_global_routed_expert_indices.numel()
 
     with torch.no_grad():
-        with maybe_nvtx_annotate("a_config_capacity", COMM_COLOR):
+        with nvtx.annotate("A-ConfigCapacity", color="green"):
             requested_splits = local_batch_size_per_global_routed_expert.to(dtype=torch.long)
             rank_capacity = compute_ep_no_sync_rank_capacity(self, num_out_tokens)
             allowed_splits, recv_splits_by_src_local, _drop_token_cnt = cast(
-                tuple[torch.Tensor, torch.Tensor, torch.Tensor],
+                Tuple[torch.Tensor, torch.Tensor, torch.Tensor],
                 sync_tail_drop_allowed_splits_single_a2a(
                     self,
                     requested_splits,
                     rank_capacity=rank_capacity,
                 ),
             )
-            (
-                local_reorder_indices,
-                local_inverse_reorder_indices,
-                packed_keep_mask,
-            ) = build_keep_reorder(
+            local_reorder_indices, local_inverse_reorder_indices, packed_keep_mask = build_keep_reorder(
                 requested_splits=requested_splits,
                 keep_splits=allowed_splits,
                 num_out_tokens=num_out_tokens,
@@ -176,14 +155,11 @@ def ep_no_sync_stage_a(
         slot_idx=slot_idx,
     )
 
-    with maybe_nvtx_annotate("a_permute_local", COMM_COLOR):
+    with nvtx.annotate("A-PermuteLocal", color="green"):
         routing_map = local_x_global_routed_expert_indices.view(
             -1, self.routed_experts_router.top_k
         ).int()
-        (
-            permutated_local_x,
-            reversed_local_x_permutation_mapping,
-        ) = moe_permute_1d_fused_drop_no_compile(
+        permutated_local_x, reversed_local_x_permutation_mapping = moe_permute_1d_fused_drop_no_compile(
             inp=moe_inp,
             routing_map=routing_map,
             num_out_tokens=num_out_tokens,
@@ -228,9 +204,7 @@ def ep_no_sync_stage_a(
     )
 
 
-def ep_no_sync_stage_d_launch(
-    block: MoEFusedV2TransformerBlock, a_state: _NoSyncStageAState
-) -> _NoSyncStageDState:
+def ep_no_sync_stage_d_launch(block: OLMoDDPTransformerBlock, a_state: _NoSyncStageAState) -> _NoSyncStageDState:
     self = block
     comm_stream = get_or_init_stream(id=f"ep_no_sync_comm_block_{self.block_idx}", priority=0)
     wait_stream_no_compile(this_stream=comm_stream, other_stream=torch.cuda.current_stream())
@@ -258,9 +232,7 @@ def ep_no_sync_stage_d_launch(
     )
 
 
-def ep_no_sync_stage_e(
-    block: MoEFusedV2TransformerBlock, d_state: _NoSyncStageDState
-) -> _NoSyncTboPendingContext:
+def ep_no_sync_stage_e(block: OLMoDDPTransformerBlock, d_state: _NoSyncStageDState) -> _NoSyncTboPendingContext:
     self = block
     assert self.routed_experts is not None
     wait_event_no_compile(torch.cuda.current_stream(), d_state.dispatch_done_event)
@@ -270,12 +242,12 @@ def ep_no_sync_stage_e(
     dispatch_rank_major = d_state.dispatch_out
 
     with torch.no_grad():
-        padded_batch_size_per_local_expert = a_state.recv_splits_by_src_local.sum(
-            dim=0,
-            dtype=torch.long,
+        padded_batch_size_per_local_expert = padded_local_expert_splits_for_capacity(
+            a_state.recv_splits_by_src_local,
+            rank_capacity=dispatch_rank_major.shape[0],
         )
 
-    with maybe_nvtx_annotate("e_permute_global", COMM_COLOR):
+    with nvtx.annotate("E-PermuteGlobal", color="green"):
         if self.routed_experts.num_local_experts == 1:
             dispatch_rank_major = dispatch_rank_major.clone()
             global_chunk_row_id_map = None
@@ -292,13 +264,13 @@ def ep_no_sync_stage_e(
                 backward_grad_input_buffer=buffers.dispatch_out.detach(),
             )
 
-    with maybe_nvtx_annotate("e_routed_experts", EXPERTS_COLOR):
+    with nvtx.annotate("E-RoutedExperts", color="green"):
         dispatch_rank_major = self.routed_experts(
             dispatch_rank_major,
             padded_batch_size_per_local_expert,
         )
 
-    with maybe_nvtx_annotate("e_unpermute_global", COMM_COLOR):
+    with nvtx.annotate("E-UnpermuteGlobal", color="green"):
         if self.routed_experts.num_local_experts == 1:
             global_x_rank_major = dispatch_rank_major
         else:
@@ -319,7 +291,7 @@ def ep_no_sync_stage_e(
 
 
 def ep_no_sync_stage_c_launch(
-    block: MoEFusedV2TransformerBlock,
+    block: OLMoDDPTransformerBlock,
     pending_ctx: _NoSyncTboPendingContext,
 ) -> _NoSyncTboPendingContext:
     del block
@@ -348,9 +320,7 @@ def ep_no_sync_stage_c_launch(
     return pending_ctx
 
 
-def ep_no_sync_stage_tail(
-    block: MoEFusedV2TransformerBlock, pending_ctx: _NoSyncTboPendingContext
-) -> torch.Tensor:
+def ep_no_sync_stage_tail(block: OLMoDDPTransformerBlock, pending_ctx: _NoSyncTboPendingContext) -> torch.Tensor:
     self = block
     if pending_ctx.combine_done_event is not None:
         wait_event_no_compile(torch.cuda.current_stream(), pending_ctx.combine_done_event)
@@ -360,13 +330,9 @@ def ep_no_sync_stage_tail(
     if a_state.shared_done_event is not None:
         wait_event_no_compile(torch.cuda.current_stream(), a_state.shared_done_event)
 
-    combine_out = (
-        pending_ctx.combine_out if pending_ctx.combine_out is not None else buffers.combine_out
-    )
-    with maybe_nvtx_annotate("tail_unpermute_merge", COMM_COLOR):
-        combine_out_for_unpermute = (
-            combine_out.clone() if buffers.combine_out_is_shared else combine_out
-        )
+    combine_out = pending_ctx.combine_out if pending_ctx.combine_out is not None else buffers.combine_out
+    with nvtx.annotate("Tail-UnpermuteMerge", color="green"):
+        combine_out_for_unpermute = combine_out.clone() if buffers.combine_out_is_shared else combine_out
         local_x = restore_drop_unpermute_1d(
             self,
             combine_out=combine_out_for_unpermute,
@@ -393,28 +359,29 @@ def ep_no_sync_stage_tail(
 
 
 def combined_forward_ep_no_sync_tbo(
-    block: MoEFusedV2TransformerBlock,
+    block: OLMoDDPTransformerBlock,
     x0: torch.Tensor,
     x1_ctx: object,
     x1_is_fresh: bool,
     *,
-    loss_div_factor: Optional[torch.Tensor | float] = None,
+    loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
     **kwargs,
-) -> tuple[torch.Tensor, _NoSyncTboPendingContext]:
+) -> Tuple[torch.Tensor, _NoSyncTboPendingContext]:
     self = block
     if x1_is_fresh:
         pending_prev = None
     else:
         if not isinstance(x1_ctx, _NoSyncTboPendingContext):
             raise RuntimeError(
-                "Expected no-sync TBO context from previous block, " f"got type={type(x1_ctx)}"
+                "Expected no-sync TBO context from previous block, "
+                f"got type={type(x1_ctx)}"
             )
         pending_prev = x1_ctx
 
-    with maybe_nvtx_annotate("tbo_1", TBO_COLOR):
+    with nvtx.annotate("TBO-1", color="orange"):
         if pending_prev is not None:
             pending_prev = ep_no_sync_stage_c_launch(pending_prev.block, pending_prev)
-    with maybe_nvtx_annotate("tbo_0", TBO_COLOR):
+    with nvtx.annotate("TBO-0", color="purple"):
         a0 = ep_no_sync_stage_a(
             self,
             x0,
@@ -423,7 +390,7 @@ def combined_forward_ep_no_sync_tbo(
             **kwargs,
         )
 
-    with maybe_nvtx_annotate("tbo_1", TBO_COLOR):
+    with nvtx.annotate("TBO-1", color="orange"):
         if x1_is_fresh:
             fresh_ctx = cast(Dict[str, torch.Tensor], x1_ctx)
             block_inp1 = fresh_ctx["x1"]
@@ -431,9 +398,9 @@ def combined_forward_ep_no_sync_tbo(
             assert pending_prev is not None
             block_inp1 = ep_no_sync_stage_tail(pending_prev.block, pending_prev)
 
-    with maybe_nvtx_annotate("tbo_0", TBO_COLOR):
+    with nvtx.annotate("TBO-0", color="purple"):
         d0 = ep_no_sync_stage_d_launch(self, a0)
-    with maybe_nvtx_annotate("tbo_1", TBO_COLOR):
+    with nvtx.annotate("TBO-1", color="orange"):
         a1 = ep_no_sync_stage_a(
             self,
             block_inp1,
@@ -442,17 +409,17 @@ def combined_forward_ep_no_sync_tbo(
             **kwargs,
         )
 
-    with maybe_nvtx_annotate("tbo_1", TBO_COLOR):
+    with nvtx.annotate("TBO-1", color="orange"):
         d1 = ep_no_sync_stage_d_launch(self, a1)
-    with maybe_nvtx_annotate("tbo_0", TBO_COLOR):
+    with nvtx.annotate("TBO-0", color="purple"):
         pending0_pre_c = ep_no_sync_stage_e(self, d0)
 
-    with maybe_nvtx_annotate("tbo_0", TBO_COLOR):
+    with nvtx.annotate("TBO-0", color="purple"):
         pending0_post_c = ep_no_sync_stage_c_launch(self, pending0_pre_c)
-    with maybe_nvtx_annotate("tbo_1", TBO_COLOR):
+    with nvtx.annotate("TBO-1", color="orange"):
         pending1_pre_c = ep_no_sync_stage_e(self, d1)
 
-    with maybe_nvtx_annotate("tbo_0", TBO_COLOR):
+    with nvtx.annotate("TBO-0", color="purple"):
         final_out = ep_no_sync_stage_tail(self, pending0_post_c)
 
     return final_out, pending1_pre_c

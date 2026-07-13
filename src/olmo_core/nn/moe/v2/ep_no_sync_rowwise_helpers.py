@@ -1,106 +1,115 @@
-"""
-Route-map and metric helpers for the rowwise no-sync expert-parallel forward.
-
-``build_rowwise_route_maps`` computes the per-route destination rank/row maps for the rowwise
-all-to-all (tail-dropped routes encoded as ``-1``); the ``*_ep_no_sync_rowwise_metrics`` helpers
-accumulate/reset the per-block drop/utilization counters read by the block's auxiliary metrics. To
-trace route-map construction, set ``OLMO_TBO_VERBOSE_DEBUG_PRINT=1`` (optionally scoped with
-``OLMO_TBO_DEBUG_RANKS``) and add prints around the kernel calls.
-"""
-
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Dict, Optional
+from typing import TYPE_CHECKING, Dict, Optional, Tuple
 
+import nvtx
 import torch
 
-from olmo_core._nvtx import maybe_nvtx_annotate
-from olmo_core.distributed.utils import get_rank
-from olmo_core.nn.moe.v2._nvtx_colors import COMM_COLOR
+from olmo_core.distributed.utils import get_rank, hide_from_torch, unhide_from_torch
+
+from .checkpointing import is_checkpoint_recomputing
 
 if TYPE_CHECKING:
+    from olmo_core.nn.ddp.block import OLMoDDPTransformerBlock
     from olmo_core.train.common import ReduceType
 
-    from .block import MoEFusedV2TransformerBlock
+try:
+    _torch_compile_disable = torch.compiler.disable
+except AttributeError:
+
+    def _torch_compile_disable(fn):
+        return fn
 
 
-def reset_ep_no_sync_rowwise_metrics(block: MoEFusedV2TransformerBlock) -> None:
-    """Clear the per-block rowwise drop/utilization metric accumulators."""
+def reset_ep_no_sync_rowwise_metrics(block: OLMoDDPTransformerBlock) -> None:
     block._ep_no_sync_rowwise_drop_tokens_sum = None
     block._ep_no_sync_rowwise_total_tokens_sum = None
     block._ep_no_sync_rowwise_symm_util_max = None
 
 
 def add_ep_no_sync_rowwise_metrics(
-    block: MoEFusedV2TransformerBlock,
-    out: Dict[str, tuple[torch.Tensor, Optional["ReduceType"]]],
+    block: OLMoDDPTransformerBlock,
+    out: Dict[str, Tuple[torch.Tensor, Optional["ReduceType"]]],
     reduce_type_cls,
 ) -> None:
-    """Emit the accumulated rowwise metrics (token drop rate, symm-buffer utilization) into ``out`` with their reduce types."""
     if (
         block._ep_no_sync_rowwise_drop_tokens_sum is not None
         and block._ep_no_sync_rowwise_total_tokens_sum is not None
     ):
+        drop_tokens_sum = unhide_from_torch(block._ep_no_sync_rowwise_drop_tokens_sum)
+        total_tokens_sum = unhide_from_torch(block._ep_no_sync_rowwise_total_tokens_sum)
         drop_ratio = (
-            block._ep_no_sync_rowwise_drop_tokens_sum.to(dtype=torch.float32)
-            / block._ep_no_sync_rowwise_total_tokens_sum.to(dtype=torch.float32).clamp_min(1.0)
+            drop_tokens_sum.to(dtype=torch.float32)
+            / total_tokens_sum.to(dtype=torch.float32).clamp_min(1.0)
         ).clamp(0.0, 1.0)
         out["token drop rate"] = (drop_ratio, reduce_type_cls.mean)
 
     if block._ep_no_sync_rowwise_symm_util_max is not None:
+        symm_util_max = unhide_from_torch(block._ep_no_sync_rowwise_symm_util_max)
         out["symm buffer util"] = (
-            block._ep_no_sync_rowwise_symm_util_max.to(dtype=torch.float32),
+            symm_util_max.to(dtype=torch.float32),
             reduce_type_cls.max,
         )
 
 
+@_torch_compile_disable
+def should_accumulate_ep_no_sync_rowwise_metrics(
+    accumulate_routed_aux_loss_metrics: Optional[bool],
+) -> bool:
+    # True means original checkpoint forward, False means recompute. None asks
+    # us to use the same best-effort dynamic signal as router metric
+    # accumulation for compiled checkpointed rowwise blocks.
+    if accumulate_routed_aux_loss_metrics is None:
+        return not is_checkpoint_recomputing()
+    return accumulate_routed_aux_loss_metrics
+
+
+@_torch_compile_disable
 def accumulate_ep_no_sync_rowwise_metrics(
-    block: MoEFusedV2TransformerBlock,
+    block: OLMoDDPTransformerBlock,
     *,
     drop_token_cnt: torch.Tensor,
     num_out_tokens: int,
     recv_splits_by_src_local: torch.Tensor,
     rank_capacity: int,
 ) -> None:
-    """Accumulate one forward's drop count, token count, and symm-buffer utilization into the block's running rowwise totals."""
     if rank_capacity <= 0:
         return
 
-    drop_sum = drop_token_cnt.to(dtype=torch.float32)
+    drop_sum = drop_token_cnt.detach().to(dtype=torch.float32)
     total_sum = torch.empty_like(drop_sum).fill_(num_out_tokens)
-    util = recv_splits_by_src_local.sum(dtype=torch.float32) * (1.0 / rank_capacity)
+    util = (
+        recv_splits_by_src_local.detach().sum(dtype=torch.float32)
+        * (1.0 / rank_capacity)
+    )
 
     if block._ep_no_sync_rowwise_drop_tokens_sum is None:
-        block._ep_no_sync_rowwise_drop_tokens_sum = drop_sum
+        block._ep_no_sync_rowwise_drop_tokens_sum = hide_from_torch(drop_sum)
     else:
-        block._ep_no_sync_rowwise_drop_tokens_sum = (
-            block._ep_no_sync_rowwise_drop_tokens_sum + drop_sum
-        )
+        prev = unhide_from_torch(block._ep_no_sync_rowwise_drop_tokens_sum)
+        block._ep_no_sync_rowwise_drop_tokens_sum = hide_from_torch(prev + drop_sum)
 
     if block._ep_no_sync_rowwise_total_tokens_sum is None:
-        block._ep_no_sync_rowwise_total_tokens_sum = total_sum
+        block._ep_no_sync_rowwise_total_tokens_sum = hide_from_torch(total_sum)
     else:
-        block._ep_no_sync_rowwise_total_tokens_sum = (
-            block._ep_no_sync_rowwise_total_tokens_sum + total_sum
-        )
+        prev = unhide_from_torch(block._ep_no_sync_rowwise_total_tokens_sum)
+        block._ep_no_sync_rowwise_total_tokens_sum = hide_from_torch(prev + total_sum)
 
     if block._ep_no_sync_rowwise_symm_util_max is None:
-        block._ep_no_sync_rowwise_symm_util_max = util
+        block._ep_no_sync_rowwise_symm_util_max = hide_from_torch(util)
     else:
-        block._ep_no_sync_rowwise_symm_util_max = torch.maximum(
-            block._ep_no_sync_rowwise_symm_util_max,
-            util,
-        )
+        prev = unhide_from_torch(block._ep_no_sync_rowwise_symm_util_max)
+        block._ep_no_sync_rowwise_symm_util_max = hide_from_torch(torch.maximum(prev, util))
 
 
-@maybe_nvtx_annotate("build_rowwise_route_maps", COMM_COLOR)
+@nvtx.annotate("_build_rowwise_route_maps")
 def build_rowwise_route_maps(
-    block: MoEFusedV2TransformerBlock,
+    block: OLMoDDPTransformerBlock,
     *,
     routing_map: torch.Tensor,
     allowed_splits: torch.Tensor,
     keep_from_src_dest_local: torch.Tensor,
-) -> tuple[torch.Tensor, torch.Tensor]:
+) -> Tuple[torch.Tensor, torch.Tensor]:
     """
     Build per-route destination rank/row maps for row-wise dispatch.
     Routes dropped by tail-capacity are encoded as -1.
@@ -169,37 +178,12 @@ def build_rowwise_route_maps(
         safe_experts,
         torch.full_like(safe_experts, invalid_bucket),
     )
-    sort_order = torch.argsort(bucket_ids, stable=True)
-    sorted_bucket_ids = bucket_ids.index_select(0, sort_order)
-    counts_per_bucket = torch.zeros(
-        (expert_count + 1,),
-        device=routing_map.device,
-        dtype=torch.long,
-    )
-    counts_per_bucket.scatter_add_(
-        0,
-        bucket_ids,
-        torch.ones_like(bucket_ids, dtype=torch.long),
-    )
-    starts_per_bucket = torch.cumsum(counts_per_bucket, dim=0) - counts_per_bucket
-    sorted_pos = torch.arange(
-        num_routes,
-        device=routing_map.device,
-        dtype=torch.long,
-    ) - starts_per_bucket.index_select(0, sorted_bucket_ids)
-
-    pos_in_bucket = torch.empty_like(sorted_pos)
-    pos_in_bucket.scatter_(0, sort_order, sorted_pos)
-
-    keep_limits = allowed_splits_i64.index_select(0, safe_experts)
-    kept_mask = valid_mask & (pos_in_bucket < keep_limits)
-
     dst_rank = torch.div(
         safe_experts,
         self.num_local_routed_experts,
         rounding_mode="floor",
     )
-    dst_local_expert = torch.remainder(
+    torch.remainder(
         safe_experts,
         self.num_local_routed_experts,
     )
@@ -212,8 +196,44 @@ def build_rowwise_route_maps(
         torch.cumsum(recv_total_by_dest_local, dim=1) - recv_total_by_dest_local
     )
 
-    base_rows = local_expert_base_by_dest[dst_rank, dst_local_expert]
-    base_rows = base_rows + send_base_by_dest_local[dst_rank, dst_local_expert]
+    base_rows_by_expert = (
+        local_expert_base_by_dest + send_base_by_dest_local
+    ).reshape(-1)
+
+    # Compute stable in-bucket positions without argsort. torch.argsort lowers
+    # through tuple-returning aten.sort, which AOTAutograd cannot partition when
+    # compiled rowwise EP is combined with recompute and stream control deps.
+    #
+    # Keep the lowering 1-D per expert: a single wide [routes, experts] equality
+    # matrix currently trips Inductor Triton codegen in the full rowwise graph.
+    pos_in_bucket = torch.zeros_like(bucket_ids)
+    keep_limits = torch.zeros_like(bucket_ids)
+    base_rows = torch.zeros_like(bucket_ids)
+
+    # Keep this as a static Python loop over experts. A sort/scatter formulation
+    # produces tuple-returning ops that have been fragile under compiled rowwise
+    # EP with recompute, while a wide one-hot [routes, experts] cumsum has
+    # tripped Inductor codegen in the full graph.
+    for expert_id in range(expert_count):
+        expert_mask = bucket_ids == expert_id
+        expert_pos = torch.cumsum(
+            expert_mask.to(dtype=torch.long),
+            dim=0,
+            dtype=torch.long,
+        ) - 1
+        pos_in_bucket = torch.where(expert_mask, expert_pos, pos_in_bucket)
+        keep_limits = torch.where(
+            expert_mask,
+            allowed_splits_i64[expert_id],
+            keep_limits,
+        )
+        base_rows = torch.where(
+            expert_mask,
+            base_rows_by_expert[expert_id],
+            base_rows,
+        )
+    kept_mask = valid_mask & (pos_in_bucket < keep_limits)
+
     dst_rows_all = base_rows + pos_in_bucket
 
     neg_ones = torch.full_like(dst_rank, -1)

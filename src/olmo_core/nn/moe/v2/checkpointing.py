@@ -1,28 +1,26 @@
-"""
-Thread-local state for activation checkpointing.
-
-Tracks whether execution is currently inside a checkpointed forward or a
-recompute, so MoE forwards wrapped in activation checkpointing can avoid
-repeating metric side effects when their forward is recomputed in backward.
-"""
-
 import threading
 from contextlib import contextmanager
+from typing import Tuple
 
 import torch
 
 _CHECKPOINT_RECOMPUTE_STATE = threading.local()
 _CHECKPOINT_FORWARD_STATE = threading.local()
 
+try:
+    _torch_compile_disable = torch.compiler.disable
+except AttributeError:
+    def _torch_compile_disable(fn):
+        return fn
 
-@torch.compiler.disable
+
+@_torch_compile_disable
 def is_checkpoint_forwarding() -> bool:
     return getattr(_CHECKPOINT_FORWARD_STATE, "depth", 0) > 0
 
 
-@torch.compiler.disable
+@_torch_compile_disable
 def is_checkpoint_recomputing() -> bool:
-    """Whether execution is inside an activation-checkpoint recompute."""
     if getattr(_CHECKPOINT_RECOMPUTE_STATE, "depth", 0) > 0:
         return True
 
@@ -39,18 +37,13 @@ def is_checkpoint_recomputing() -> bool:
         return False
 
 
-@torch.compiler.disable
+@_torch_compile_disable
 def is_activation_checkpointing() -> bool:
     return is_checkpoint_forwarding() or is_checkpoint_recomputing()
 
 
-@torch.compiler.disable
-def get_rowwise_checkpoint_state() -> tuple[bool, bool]:
-    """
-    Return ``(checkpointing_active, save_for_recompute)``: whether activation
-    checkpointing is active, and whether outputs should be saved (``True`` on the
-    initial forward, ``False`` during recompute so side effects aren't repeated).
-    """
+@_torch_compile_disable
+def get_rowwise_checkpoint_state() -> Tuple[bool, bool]:
     checkpoint_forwarding = is_checkpoint_forwarding()
     checkpoint_recomputing = is_checkpoint_recomputing()
     return checkpoint_forwarding or checkpoint_recomputing, not checkpoint_recomputing
@@ -58,7 +51,6 @@ def get_rowwise_checkpoint_state() -> tuple[bool, bool]:
 
 @contextmanager
 def checkpoint_forward_context():
-    """Mark the enclosed block as a checkpointed forward (re-entrant via depth)."""
     depth = getattr(_CHECKPOINT_FORWARD_STATE, "depth", 0)
     _CHECKPOINT_FORWARD_STATE.depth = depth + 1
     try:
@@ -73,7 +65,6 @@ def checkpoint_forward_context():
 
 @contextmanager
 def checkpoint_recompute_context():
-    """Mark the enclosed block as an activation-checkpoint recompute (re-entrant via depth)."""
     depth = getattr(_CHECKPOINT_RECOMPUTE_STATE, "depth", 0)
     _CHECKPOINT_RECOMPUTE_STATE.depth = depth + 1
     try:
