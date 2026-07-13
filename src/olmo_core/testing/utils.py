@@ -7,6 +7,9 @@ import torch
 import olmo_core.nn.attention.flash_attn_api as flash_attn_api
 import olmo_core.nn.attention.flash_linear_attn_api as flash_linear_attn_api
 import olmo_core.nn.moe.utils as moe_utils
+from olmo_core.kernels.grouped_mm_row_offset import (
+    cutlass_headers_available as _cutlass_headers_available,
+)
 
 log = logging.getLogger(__name__)
 
@@ -215,6 +218,21 @@ TORCH_GROUPED_MM_MARKS = (
 
 def requires_torch_grouped_mm(func):
     for mark in TORCH_GROUPED_MM_MARKS:
+        func = mark(func)
+    return func
+
+
+GROUPED_MM_ROW_OFFSET_MARKS = (
+    *TORCH_GROUPED_MM_MARKS,
+    pytest.mark.skipif(
+        not _cutlass_headers_available(),
+        reason="Requires CUTLASS headers to build the grouped_mm row-offset extension",
+    ),
+)
+
+
+def requires_grouped_mm_row_offset(func):
+    for mark in GROUPED_MM_ROW_OFFSET_MARKS:
         func = mark(func)
     return func
 

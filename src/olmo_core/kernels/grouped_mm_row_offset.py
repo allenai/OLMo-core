@@ -36,6 +36,20 @@ def _cutlass_include_paths() -> list[Path]:
     )
 
 
+def cutlass_headers_available() -> bool:
+    """
+    Whether the CUTLASS headers required to JIT-build the row-offset extension are present.
+
+    Cheap file-existence check (does not build); useful for skipping tests on images that ship
+    torch + CUDA toolkit but not the CUTLASS submodule.
+    """
+    try:
+        _cutlass_include_paths()
+    except Exception:
+        return False
+    return True
+
+
 def _arch_list() -> list[str]:
     raw = os.getenv("OLMO_GROUPED_MM_ROW_OFFSET_ARCH_LIST")
     if raw is None:

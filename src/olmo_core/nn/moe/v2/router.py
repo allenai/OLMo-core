@@ -552,13 +552,15 @@ class MoERouterV2(nn.Module):
         if self.random_expert_assignment:
             scores = scores * 0 + torch.rand_like(scores)  # random, but keep the autograd graph
 
-        # HACK
-        # onehot_hack_scores = torch.zeros_like(scores)
-        # onehot_hack_scores[:,:,0]=1.0
-        # scores = scores * 0 + onehot_hack_scores
-        # scores (batch, seqlen, num_experts)
-
         if scores_only:
+            if self.gating_function == MoERouterGatingFunction.topk_softmax:
+                # The scores-only path (e.g. shared-expert mixing) returns the dense score
+                # vector over all experts; topk_softmax has no top-k masking here, so it would
+                # silently mix in non-selected experts. Reject rather than route incorrectly.
+                raise NotImplementedError(
+                    "gating_function='topk_softmax' is not supported for scores-only routing "
+                    "(the dense score vector would ignore top_k)."
+                )
             if self.normalize_expert_weights is not None:
                 scores = scores.div(
                     torch.norm(

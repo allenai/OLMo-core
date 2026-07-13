@@ -10,7 +10,11 @@ from olmo_core.nn.moe.v2.routed_experts import (
     RoutedExperts,
     requires_host_side_split_sizes,
 )
-from olmo_core.testing import requires_gpu, requires_torch_grouped_mm
+from olmo_core.testing import (
+    requires_gpu,
+    requires_grouped_mm_row_offset,
+    requires_torch_grouped_mm,
+)
 
 
 def _batch_sizes_for_runtime(
@@ -214,7 +218,7 @@ def test_routed_experts_forward_matches_baseline_with_different_pad_positions():
         torch.testing.assert_close(y_padded.index_select(0, active_idx), y_baseline)
 
 
-@requires_torch_grouped_mm
+@requires_grouped_mm_row_offset
 def test_routed_experts_forward_row_offset_writes_canonical_window():
     torch.manual_seed(123)
     device = torch.device("cuda")

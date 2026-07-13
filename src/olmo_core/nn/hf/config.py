@@ -217,6 +217,18 @@ def _get_olmo3moe_config(model: "MoEFusedV2Transformer") -> PretrainedConfig:
             f"({', '.join(unsupported_modifiers)}) is not supported."
         )
 
+    # The HF olmo3moe router/expert linears are bias-free and the converter only copies
+    # contiguous SwiGLU up/gate weights, so biased or non-SwiGLU experts can't be represented.
+    if router.bias is not None:
+        raise NotImplementedError("Exporting olmo3moe with a biased router is not supported.")
+    if routed_experts.bias:
+        raise NotImplementedError("Exporting olmo3moe with biased routed experts is not supported.")
+    if routed_experts.activation.value != "swiglu":
+        raise NotImplementedError(
+            f"Exporting olmo3moe with routed-expert activation "
+            f"{routed_experts.activation.value!r} is not supported (only SwiGLU)."
+        )
+
     # Dense MLP intermediate size, if there are any dense layers.
     dense_mlp_intermediate_size: Optional[int] = None
     if dense_block is not None:
