@@ -73,6 +73,12 @@ def _get_transformer_config(
         "llama3_8b": TransformerConfig.llama3_8B,
         "llama3_70b": TransformerConfig.llama3_70B,
         "llama3_405b": TransformerConfig.llama3_405B,
+        "qwen3_0_6b": TransformerConfig.qwen3_0_6B,
+        "qwen3_1_7b": TransformerConfig.qwen3_1_7B,
+        "qwen3_4b": TransformerConfig.qwen3_4B,
+        "qwen3_8b": TransformerConfig.qwen3_8B,
+        "qwen3_14b": TransformerConfig.qwen3_14B,
+        "qwen3_32b": TransformerConfig.qwen3_32B,
     }
 
     result = transformer_configs[model_arch](vocab_size)
