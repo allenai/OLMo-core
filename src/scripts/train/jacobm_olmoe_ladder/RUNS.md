@@ -2196,3 +2196,23 @@ summary metrics back to source W&B run `k25pw5nl` with
 
 Added `eval_20260713_1p2b_deep_olmobase_targets.jsonl` and registered the
 OLMoBase experiment in `write_olmobase_eval_results.py`.
+
+## 2026-07-13 Eval Result Collection
+
+Collected finished eval results and refreshed the eval dashboards:
+
+- `results/olmobase_evals.*`
+- `results/in_loop_evals.*`
+- `results/midtraining_validation.*`
+
+Newly finalized OLMoBase evals:
+
+| Name | Beaker | Status |
+| --- | --- | --- |
+| `olmoe3-1p2b-cx8-mt-int-wide-olmobase` | https://beaker.org/ex/01KXE4E4JD4QJER5KEQX2EJF6E | finalized 2026-07-13 |
+| `olmoe3-275m-cx4-mt-int-wide-top16-olmobase` | https://beaker.org/ex/01KXE8ZQTDBCC2QRX8YXDWHAS9 | finalized 2026-07-13 |
+| `olmoe3-275m-cx4-mt-int-wide-top16-top8-olmobase` | https://beaker.org/ex/01KXE900EMBX7MDDFQEWMMN69J | finalized 2026-07-13 |
+
+`olmoe3-1p2b-cx8-mt-int-deep-olmobase` is still scheduled in Beaker as of this
+check: https://beaker.org/ex/01KXEJ2N0VW8815658DPNXQH7R.
+
