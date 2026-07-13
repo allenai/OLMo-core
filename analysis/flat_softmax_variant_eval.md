@@ -1,6 +1,24 @@
 # Plan: flat-softmax inference variant (remove gate-score reweighting) + regression eval
 
-**Status (2026-07-13): NOT STARTED.** This is a distinct follow-up to the gate-score *distribution*
+**Status (2026-07-13): IMPLEMENTED + FULL SWEEP LAUNCHED.** Code done on branch
+`amandab/landmark-flat-softmax` (commit `2a85ee255`): the `landmark_flat_softmax` flag +
+`OLMO_LANDMARK_FLAT_SOFTMAX` env fallback, flat decode in all three landmark decode paths
+(non-compressive exact-length `_decode_probs` **and** ragged `_decode_ragged`, plus compressive
+`_compressive_decode_probs`), unit tests, and the three harness passthroughs. A 4k/limit-50 RULER
+sanity pair (compressive base ckpt) validated the flat path activates end-to-end (the "flat-softmax
+decode variant ACTIVE" log fires; flat vs gated scores differ per-subtask ±0.02-0.06 with a sane
+close aggregate 0.902 vs 0.908). The full baseline-vs-variant sweep is launched: **96 Beaker
+experiments** (RULER 36 = 3 ckpts x gated/flat x 6 lengths; HELMET 6; SFT 54 = 3 ckpts x gated/flat x
+9 tasks) at fraction 0.1, full datasets. Experiment IDs are in
+`analysis/flat_softmax_sweep_manifest.csv`.
+
+**KNOWN ISSUE (harvest):** the oe-eval datalake upload endpoint was returning `404 Not Found`
+cluster-wide at launch time, so the `flat-softmax-ablation` dashboard will NOT auto-populate and every
+RULER job exits 1 at the very end. The metrics are still computed and printed in each job's Beaker log
+(and written to weka for HELMET/SFT) -- harvest with `analysis/flat_softmax_harvest.py`, do NOT rerun
+(see memory `ruler-datalake-upload-failure-recovery`).
+
+This is a distinct follow-up to the gate-score *distribution*
 study (`analysis/in_progress_gate_distribution.md`). That study only *observed* the gate scores. This
 task *changes inference*: add an inference-only flag that removes the gate-score reweighting, then
 measure how much eval quality regresses on HELMET, RULER, and the SFT datasets (full datasets) for the
