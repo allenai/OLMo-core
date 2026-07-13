@@ -29,6 +29,14 @@ DEFAULT_GROUPS = [
 DEFAULT_EXPERIMENTS = [
     "01KX02MYSA36TFKBT99XAE0XZ6",  # 275M baseline Cx1 midtrained OLMoBase
     "01KX02N80T6NXX8TZEJM8TC0Z5",  # 275M baseline Cx8 midtrained OLMoBase
+    "01KX4XBGFP5A0XE1JFQT2NWCVM",  # 275M wide integration Cx8 midtrained OLMoBase
+    "01KX5FF8P4F3GS5RRH5M29AFCW",  # 275M deep integration Cx8 midtrained OLMoBase
+    "01KXAGZ02JQ3M71M6MBE9PBBZT",  # 480M wide integration Cx8 midtrained OLMoBase
+    "01KXBPB8V0724FNM2RK46GVTPD",  # 480M deep integration Cx8 midtrained OLMoBase
+    "01KX4X1GRMAR78VYH0XZVJX7MX",  # 810M baseline Cx8 midtrained OLMoBase
+    "01KXAFXV1EAX2FC89C3YGZEJ61",  # 810M wide integration Cx8 midtrained OLMoBase
+    "01KXBPBHYMFHPNZ2KAC6WE2J5X",  # 810M deep integration Cx8 midtrained OLMoBase
+    "01KX4X6FYR1DTE1VMY3FEGT5XC",  # 1.2B baseline Cx8 midtrained OLMoBase
     "01KXE4E4JD4QJER5KEQX2EJF6E",  # 1.2B wide integration Cx8 midtrained OLMoBase
     "01KXEJ2N0VW8815658DPNXQH7R",  # 1.2B deep integration Cx8 midtrained OLMoBase
     "01KXE8ZQTDBCC2QRX8YXDWHAS9",  # 275M top16 integration midtrained OLMoBase
