@@ -122,9 +122,9 @@ def _install_forced_router(block: OLMoDDPTransformerBlock):
         return _forced_forward
 
     assert block.routed_experts_router is not None
-    block.routed_experts_router.forward = _make_forced_forward(block.routed_experts_router)
+    block.routed_experts_router.forward = _make_forced_forward(block.routed_experts_router)  # type: ignore[method-assign]
     if block.shared_experts_router is not None:
-        block.shared_experts_router.forward = _make_forced_forward(block.shared_experts_router)
+        block.shared_experts_router.forward = _make_forced_forward(block.shared_experts_router)  # type: ignore[method-assign]
 
 
 @requires_gpu

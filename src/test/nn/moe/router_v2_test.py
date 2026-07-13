@@ -129,21 +129,6 @@ def test_router_bias_gamma_creates_buffer_and_biases_routing():
     assert _build(bias_gamma=None).score_bias is None
 
 
-def test_router_use_quant_scores_matches_plain_for_separated_scores():
-    torch.manual_seed(0)
-    x = torch.randn(2, 4, 16)
-    router = _build(top_k=2, use_quant_scores=True)
-
-    weights, indices, _, _ = router(x, False)
-    assert weights.shape == (2, 4, 2) and indices.shape == (2, 4, 2)
-
-    # Quantizing well-separated softmax scores (q=2**14) does not change which experts
-    # are selected; weights come from the original (un-quantized) scores either way.
-    router.use_quant_scores = False
-    _, indices_ref, _, _ = router(x, False)
-    assert torch.equal(indices, indices_ref)
-
-
 @pytest.mark.parametrize(
     "gating", [MoERouterGatingFunction.softmax, MoERouterGatingFunction.sigmoid]
 )

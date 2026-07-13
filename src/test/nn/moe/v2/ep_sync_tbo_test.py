@@ -115,7 +115,7 @@ def _install_deterministic_topk_router(block: OLMoDDPTransformerBlock):
         return _forward
 
     assert block.routed_experts_router is not None
-    block.routed_experts_router.forward = _make(block.routed_experts_router)
+    block.routed_experts_router.forward = _make(block.routed_experts_router)  # type: ignore[method-assign]
 
 
 def _install_model_routers(model) -> None:

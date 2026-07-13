@@ -105,6 +105,14 @@ class SharedExperts(nn.Module):
         # Per-expert down: (E, H, D)
         self.w_down = nn.Parameter(torch.empty(E, H, D, device=init_device, dtype=dtype.as_pt()))
 
+        self.reset_parameters()
+
+    def reset_parameters(self) -> None:
+        # Standalone default; the model-level init may override this with a depth-scaled std.
+        std = 0.02
+        for w in (self.w_up_gate, self.w_down):
+            nn.init.trunc_normal_(w, mean=0.0, std=std, a=-3 * std, b=3 * std)
+
     def _raise_if_fp8_anchor_storage_released(self) -> None:
         if getattr(self, "_fp8_anchor_storage_released", False):
             raise RuntimeError(
