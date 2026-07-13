@@ -3,9 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Mapping, Optional, Tuple
 
-import nvtx
 import torch
 
+from olmo_core._nvtx import nvtx
 from olmo_core.config import Config, StrEnum
 from olmo_core.kernels import (
     prequantize_scaled_grouped_mm_rhs,

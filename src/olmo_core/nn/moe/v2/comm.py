@@ -21,6 +21,25 @@ from olmo_core.kernels.scaled_grouped_mm import (
 )
 
 
+def _check_input_grads(grads: tuple, needs_input_grad: tuple) -> tuple:
+    """
+    Validate the gradient tuple a ``torch.autograd.Function`` ``backward`` returns: one gradient per
+    positional ``forward`` input, with a non-``None`` gradient only where the input requires one.
+    Catches the easy-to-make misalignment where a shifted/extra ``None`` silently corrupts gradients.
+    """
+    if len(grads) != len(needs_input_grad):
+        raise RuntimeError(
+            f"backward returned {len(grads)} gradients but forward took "
+            f"{len(needs_input_grad)} inputs — the gradient tuple is misaligned"
+        )
+    for i, g in enumerate(grads):
+        if g is not None and not needs_input_grad[i]:
+            raise RuntimeError(
+                f"backward returned a gradient for input #{i}, which does not require grad"
+            )
+    return grads
+
+
 def _rowwise_debug_enabled() -> bool:
     if os.getenv("OLMO_ROWWISE_DEBUG_PRINT", "0").strip().lower() not in {
         "1",
@@ -674,7 +693,7 @@ class _RowwiseFP8DispatchExpertsCombineAutograd(torch.autograd.Function):
             ctx.dispatch_out_lease.release()
         ctx.dispatch_out_lease = None
         ctx.group = None
-        return (
+        grads = (
             grad_source,
             None,
             None,
@@ -704,6 +723,7 @@ class _RowwiseFP8DispatchExpertsCombineAutograd(torch.autograd.Function):
             None,
             None,
         )
+        return _check_input_grads(grads, ctx.needs_input_grad)
 
 
 class _RowwiseCombineWeightedAutograd(torch.autograd.Function):
@@ -1008,7 +1028,7 @@ class _RowwiseCombineWeightedAutograd(torch.autograd.Function):
             ctx.symm_gathered_routes_lease.release()
         ctx.symm_gathered_routes_lease = None
         ctx.group = None
-        return (
+        grads = (
             grad_expert_out,
             None,
             None,
@@ -1025,6 +1045,7 @@ class _RowwiseCombineWeightedAutograd(torch.autograd.Function):
             None,
             None,
         )
+        return _check_input_grads(grads, ctx.needs_input_grad)
 
 
 class _DispatchRowwiseAutograd(torch.autograd.Function):
@@ -1203,7 +1224,10 @@ class _DispatchRowwiseAutograd(torch.autograd.Function):
             ctx.symm_out_lease.release()
         ctx.symm_out_lease = None
         ctx.group = None
-        return grad_input, None, None, None, None, None, None, None, None, None, None, None, None
+        return _check_input_grads(
+            (grad_input, None, None, None, None, None, None, None, None, None, None, None, None),
+            ctx.needs_input_grad,
+        )
 
 
 class _DispatchRowwiseFP8Autograd(torch.autograd.Function):
@@ -1373,7 +1397,9 @@ class _DispatchRowwiseFP8Autograd(torch.autograd.Function):
             ctx.symm_out_lease.release()
         ctx.symm_out_lease = None
         ctx.group = None
-        return grad_input, None, None, None, None, None, None, None, None, None
+        return _check_input_grads(
+            (grad_input, None, None, None, None, None, None, None, None, None), ctx.needs_input_grad
+        )
 
 
 class _RowwiseCombineWeightedFP8Autograd(torch.autograd.Function):
@@ -1623,7 +1649,10 @@ class _RowwiseCombineWeightedFP8Autograd(torch.autograd.Function):
                 orig_dtype=ctx.expert_out_dtype,
             )
 
-        return grad_expert_out, None, None, grad_probs, None, None, None, None, None, None
+        return _check_input_grads(
+            (grad_expert_out, None, None, grad_probs, None, None, None, None, None, None),
+            ctx.needs_input_grad,
+        )
 
 
 class _DispatchVDevAutograd(torch.autograd.Function):
@@ -1746,7 +1775,10 @@ class _DispatchVDevAutograd(torch.autograd.Function):
             )
         # grad_source_input = grad_symm_input.clone() # no need to copy
         grad_source_input = grad_symm_input
-        return grad_source_input, None, None, None, None, None, None, None, None
+        return _check_input_grads(
+            (grad_source_input, None, None, None, None, None, None, None, None),
+            ctx.needs_input_grad,
+        )
 
 
 class _CombineVDevAutograd(torch.autograd.Function):
@@ -1873,4 +1905,6 @@ class _CombineVDevAutograd(torch.autograd.Function):
         grad_input = symm_grad_input
         # grad_input = torch.empty_like(symm_grad_input)
         # grad_input.copy_(symm_grad_input)
-        return grad_input, None, None, None, None, None, None, None, None, None
+        return _check_input_grads(
+            (grad_input, None, None, None, None, None, None, None, None), ctx.needs_input_grad
+        )

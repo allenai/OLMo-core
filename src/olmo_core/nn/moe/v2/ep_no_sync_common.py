@@ -4,10 +4,10 @@ import os
 import time
 from typing import TYPE_CHECKING, Optional, Tuple, Union, cast
 
-import nvtx
 import torch
 import torch.distributed as dist
 
+from olmo_core._nvtx import nvtx
 from olmo_core.distributed.utils import get_rank
 
 from ...moe.utils import (

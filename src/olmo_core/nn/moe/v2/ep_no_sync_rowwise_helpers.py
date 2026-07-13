@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Dict, Optional, Tuple
 
-import nvtx
 import torch
 
+from olmo_core._nvtx import nvtx
 from olmo_core.distributed.utils import get_rank, hide_from_torch, unhide_from_torch
 
 from .checkpointing import is_checkpoint_recomputing

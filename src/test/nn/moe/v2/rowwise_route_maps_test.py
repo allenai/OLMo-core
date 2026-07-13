@@ -95,7 +95,7 @@ def test_build_rowwise_route_maps_matches_reference(device: str):
     allowed_splits = keep_from_src_dest_local[0].reshape(-1)
 
     dst_ranks, dst_rows = build_rowwise_route_maps(
-        block,
+        block,  # type: ignore[arg-type]
         routing_map=routing_map,
         allowed_splits=allowed_splits,
         keep_from_src_dest_local=keep_from_src_dest_local,

@@ -2,11 +2,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Optional, Union, cast
 
-import nvtx
 import torch
 import torch.distributed as dist
 from torch.utils.checkpoint import checkpoint
 
+from olmo_core._nvtx import nvtx
 from olmo_core.distributed.utils import get_rank
 from olmo_core.ops import moe as ops
 

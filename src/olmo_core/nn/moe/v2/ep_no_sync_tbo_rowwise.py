@@ -4,10 +4,10 @@ import os
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Dict, Optional, Tuple, Union, cast
 
-import nvtx
 import torch
 import torch.distributed as dist
 
+from olmo_core._nvtx import nvtx
 from olmo_core.utils import get_or_init_stream
 
 from ...moe.utils import (

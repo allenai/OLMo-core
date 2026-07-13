@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Optional, Tuple, Union, cast
 
-import nvtx
 import torch
+
+from olmo_core._nvtx import nvtx
 
 from ...moe.utils import wait_stream_no_compile
 from ..utils import (

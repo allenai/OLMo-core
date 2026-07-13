@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Dict, Optional, Tuple, Union, cast
 
-import nvtx
 import torch
 import torch.distributed as dist
 
+from olmo_core._nvtx import nvtx
 from olmo_core.ops import moe as ops
 
 from ...moe.utils import async_copy_to_cpu

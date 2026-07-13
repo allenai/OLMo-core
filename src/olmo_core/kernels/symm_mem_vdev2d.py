@@ -4,8 +4,9 @@ import importlib
 import os
 from typing import Optional
 
-import nvtx
 import torch
+
+from olmo_core._nvtx import nvtx
 
 from .mxfp8_utils import quantize_rows_to_mxfp8, reduce_gathered_rows_from_mxfp8
 
