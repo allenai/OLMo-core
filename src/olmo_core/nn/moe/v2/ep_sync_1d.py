@@ -1,24 +1,13 @@
-"""
-Synchronous (count-synchronized) expert-parallel forward (single batch, no two-batch overlap).
-
-``combined_forward_ep_1d`` exchanges per-expert token counts with a blocking all-to-all, then
-dispatches and combines tokens with an async all-to-all over the expert-parallel group, runs the
-routed experts, and overlaps the shared experts on a side stream. "Sync" refers to the token-count
-synchronization (the no-sync paths instead use a fixed per-rank capacity and never block on counts).
-"""
-
 from __future__ import annotations
 
-import logging
-from typing import TYPE_CHECKING, Optional, cast
+from typing import TYPE_CHECKING, Optional, Union, cast
 
 import torch
 import torch.distributed as dist
 from torch.utils.checkpoint import checkpoint
 
-from olmo_core._nvtx import maybe_nvtx_annotate
+from olmo_core._nvtx import nvtx
 from olmo_core.distributed.utils import get_rank
-from olmo_core.nn.moe.v2._nvtx_colors import COMM_COLOR, EXPERTS_COLOR
 from olmo_core.ops import moe as ops
 
 from ...moe.utils import async_copy_to_cpu, wait_stream_no_compile
@@ -26,27 +15,24 @@ from ..utils import moe_permute_no_compile, moe_unpermute_no_compile
 from .routed_experts import requires_host_side_split_sizes
 
 if TYPE_CHECKING:
-    from .block import MoEFusedV2TransformerBlock
-
-log = logging.getLogger(__name__)
+    from olmo_core.nn.ddp.block import OLMoDDPTransformerBlock
 
 
 def routed_experts_unpermute_1d(
-    block: MoEFusedV2TransformerBlock,
+    block: OLMoDDPTransformerBlock,
     global_x: torch.Tensor,
     global_x_local_expert_indices: torch.Tensor,
     parallel_batch_size_per_local_expert_cpu,
     hidden_shape_before_permute2: torch.Size,
     reversed_global_x_permutation_mapping: Optional[torch.Tensor],
 ) -> torch.Tensor:
-    """Run the routed experts on the gathered global tokens and unpermute them back."""
     del global_x_local_expert_indices
     self = block
     assert self.routed_experts is not None
 
     global_x = self.routed_experts(global_x, parallel_batch_size_per_local_expert_cpu)
 
-    with maybe_nvtx_annotate("unpermute_global_tokens", COMM_COLOR):
+    with nvtx.annotate("Unpermute global tokens", color="green"):
         if self.routed_experts.num_local_experts == 1:
             return global_x
         return moe_unpermute_no_compile(
@@ -59,18 +45,17 @@ def routed_experts_unpermute_1d(
 
 
 def checkpointed_permute_routed_experts_unpermute_1d(
-    block: MoEFusedV2TransformerBlock,
+    block: OLMoDDPTransformerBlock,
     global_x: torch.Tensor,
     global_x_local_expert_indices: torch.Tensor,
     parallel_batch_size_per_local_expert_cpu,
 ) -> torch.Tensor:
-    """Permute gathered tokens by local expert, then run + unpermute (optionally checkpointed)."""
     self = block
     assert self.routed_experts is not None
 
     # The initial permute does not save input for backward, so only the
     # routed-expert/unpermute section is optionally checkpointed.
-    with maybe_nvtx_annotate("permute_global_tokens", COMM_COLOR):
+    with nvtx.annotate("Permute global tokens for MLP", color="green"):
         routing_map2 = global_x_local_expert_indices.view(-1, 1).int()
         num_out_tokens2 = routing_map2.size(0)
         hidden_shape_before_permute2 = global_x.shape
@@ -107,10 +92,10 @@ def checkpointed_permute_routed_experts_unpermute_1d(
 
 
 def combined_forward_ep_1d(
-    block: MoEFusedV2TransformerBlock,
+    block: OLMoDDPTransformerBlock,
     x: torch.Tensor,
     *,
-    loss_div_factor: Optional[torch.Tensor | float] = None,
+    loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
     **kwargs,
 ) -> torch.Tensor:
     """Forward function with synced expert parallelism."""
@@ -146,7 +131,7 @@ def combined_forward_ep_1d(
         other_stream=torch.cuda.current_stream(),
     )
 
-    with maybe_nvtx_annotate("token_count_all_to_all", COMM_COLOR):
+    with nvtx.annotate("Token count all_to_all", color="green"):
         with torch.no_grad():
             global_batch_size_per_local_expert = torch.empty_like(
                 local_batch_size_per_global_routed_expert,
@@ -178,7 +163,7 @@ def combined_forward_ep_1d(
 
     moe_inp = moe_inp.view(-1, in_shape[-1])
 
-    with maybe_nvtx_annotate("sync_token_count", COMM_COLOR):
+    with nvtx.annotate("Sync token count", color="green"):
         with torch.no_grad():
             global_batch_size_handle.wait()
 
@@ -218,7 +203,7 @@ def combined_forward_ep_1d(
             self.num_local_routed_experts,
         )
 
-    with maybe_nvtx_annotate("permute_local_tokens", COMM_COLOR):
+    with nvtx.annotate("Permute local tokens", color="green"):
         routing_map = local_x_global_routed_expert_indices.view(
             -1, self.routed_experts_router.top_k
         ).int()
@@ -252,17 +237,13 @@ def combined_forward_ep_1d(
         tokens_received = sum(recv_counts)
 
     if tokens_received == 0:
-        log.warning(
-            "(grad=%s) block %s EP rank %s has 0 tokens received in all2all: "
-            "send_counts=%s recv_counts=%s",
-            torch.is_grad_enabled(),
-            self.block_idx,
-            get_rank(self.ep_pg),
-            send_counts,
-            recv_counts,
+        print(
+            f"[Warning] (grad={torch.is_grad_enabled()}) block {self.block_idx} "
+            f"EP rank {get_rank(self.ep_pg)} has 0 tokens received in all2all: "
+            f"send_counts={send_counts} recv_counts={recv_counts}"
         )
 
-    with maybe_nvtx_annotate("all2all", COMM_COLOR):
+    with nvtx.annotate("all2all", color="green"):
         permutated_local_x, global_x, global_x_handle = ops.all_to_all_async(
             permutated_local_x,
             recv_counts,
@@ -293,7 +274,7 @@ def combined_forward_ep_1d(
     before_rev_all2all_event = torch.cuda.current_stream().record_event(
         event=self._before_rev_all2all_event
     )
-    with maybe_nvtx_annotate("reverse_all_to_all", COMM_COLOR):
+    with nvtx.annotate("reverse_all_to_all", color="green"):
         global_x = cast(torch.Tensor, global_x)
 
         global_x, local_x, local_x_handle = ops.all_to_all_async(
@@ -308,32 +289,22 @@ def combined_forward_ep_1d(
         assert shared_out_gate is not None
 
         self.get_dense_stream().wait_event(before_rev_all2all_event)
-        with maybe_nvtx_annotate("merge_shared", EXPERTS_COLOR):
+        with nvtx.annotate("merge_shared", color="purple"):
             with torch.cuda.stream(self.get_dense_stream()):
                 shared_out = self.shared_experts.forward2(
                     shared_out_up, shared_out_gate, attn_res_out.shape
                 )
-                if self.shared_experts_router:
-                    assert local_x_global_shared_expert_weights is not None
-                    _, _, E_s = local_x_global_shared_expert_weights.shape
-                    mixed_shared_out = (
-                        torch.bmm(
-                            local_x_global_shared_expert_weights.to(shared_out.dtype).reshape(
-                                B * S, 1, E_s
-                            ),
-                            shared_out.permute(1, 2, 0, 3).contiguous().view(B * S, E_s, D),
-                        )
-                        .squeeze(1)
-                        .view(B, S, D)
-                    )
-                else:
-                    mixed_shared_out = shared_out.squeeze(0)
+                mixed_shared_out = self._mix_shared_out(
+                    shared_out,
+                    local_x_global_shared_expert_weights,
+                    attn_res_out.shape,
+                )
     else:
         mixed_shared_out = None
 
     local_x = ops.all_to_all_wait(global_x, local_x, local_x_handle)
 
-    with maybe_nvtx_annotate("unpermute_merge_local_tokens", COMM_COLOR):
+    with nvtx.annotate("Unpermute-Merge local tokens", color="green"):
         if self.checkpoint_second_unpermute:
             local_x = checkpoint(
                 moe_unpermute_no_compile,

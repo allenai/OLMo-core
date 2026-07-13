@@ -1,23 +1,11 @@
-"""
-Synchronous (count-synchronized) expert-parallel forward with two-batch overlap (TBO).
-
-``combined_forward_ep_tbo`` runs two micro-batches through the synchronous expert-parallel pipeline
-with their stages interleaved so one batch's expert-parallel all-to-all overlaps the other's
-attention/router compute. It shares the per-batch permute/dispatch/combine machinery with
-:mod:`~olmo_core.nn.moe.v2.ep_sync_1d`. Batch 0 ("TBO-0") is finished within the call; batch 1
-("TBO-1") is left mid-flight and returned in a :class:`SyncedTboPendingContext` for the next block
-(or the model's final TBO step) to complete.
-"""
-
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Optional, cast
+from typing import TYPE_CHECKING, Dict, Optional, Tuple, Union, cast
 
 import torch
 import torch.distributed as dist
 
-from olmo_core._nvtx import maybe_nvtx_annotate
-from olmo_core.nn.moe.v2._nvtx_colors import COMM_COLOR, EXPERTS_COLOR, TBO_COLOR
+from olmo_core._nvtx import nvtx
 from olmo_core.ops import moe as ops
 
 from ...moe.utils import async_copy_to_cpu
@@ -27,20 +15,24 @@ from .routed_experts import requires_host_side_split_sizes
 from .tbo_state import SyncedTboPendingContext
 
 if TYPE_CHECKING:
-    from .block import MoEFusedV2TransformerBlock
+    from olmo_core.nn.ddp.block import OLMoDDPTransformerBlock
 
 
 def combined_forward_ep_tbo(
-    block: MoEFusedV2TransformerBlock,
+    block: OLMoDDPTransformerBlock,
     x0: torch.Tensor,
     x1_ctx: object,
     x1_is_fresh: bool,
     *,
-    loss_div_factor: Optional[torch.Tensor | float] = None,
+    loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
     **kwargs,
-) -> tuple[torch.Tensor, object]:
-    """Synchronous expert-parallel forward with two-batch overlap (see module docstring)."""
+) -> Tuple[torch.Tensor, object]:
     self = block
+    if self.ep.no_sync:
+        raise RuntimeError(
+            "1D no-sync TBO was removed. Use "
+            "ExpertParallelConfig(path='rowwise_nvshmem', schedule='tbo') instead."
+        )
 
     assert self.routed_experts is not None
     assert self.routed_experts_router is not None
@@ -64,7 +56,8 @@ def combined_forward_ep_tbo(
             self.num_local_routed_experts,
         )  # e.g. [0, 1, 2, 3, 0, 1, 2, 3, ...] for 4 local experts
 
-    with maybe_nvtx_annotate("tbo_1", TBO_COLOR):
+    ############################ TBO 1 ############################
+    with nvtx.annotate("TBO-1", color="orange"):
         if x1_is_fresh:
             local_x1, local_x_handle1 = None, None
             last_block = None
@@ -80,19 +73,24 @@ def combined_forward_ep_tbo(
 
             assert last_block.routed_experts_router is not None
             # finish reverse all2all and other ops for x1
-            with maybe_nvtx_annotate("reverse_all_to_all", COMM_COLOR):
+            with nvtx.annotate("reverse_all_to_all", color="green"):
                 global_x1 = cast(torch.Tensor, global_x1)
                 global_x1, local_x1, local_x_handle1 = ops.all_to_all_async(
+                    # local_x1, local_x_handle1 = ops.all_to_all(
                     global_x1,
                     send_counts1,
                     recv_counts1,
                     group=last_block.ep_pg,
+                    # async_op=True,
                 )
 
-    with maybe_nvtx_annotate("tbo_0", TBO_COLOR):
+    ############################ END: TBO 1 ########################
+
+    with nvtx.annotate("TBO-0", color="purple"):
         # attention
         # + attention norm
         # + residual connection
+        # attn_res_out = block_inp + self.attention_norm(self.attention(block_inp, **kwargs))
         attn_res_out = self._checkpointed_res_norm_attn(block_inp, **kwargs)
         moe_inp = self._prepare_moe_input(attn_res_out)
         # routed expert router
@@ -110,8 +108,8 @@ def combined_forward_ep_tbo(
             routed_expert_router_aux_loss_info,
         )
 
-        # 1. Communicate the number of tokens that will be sent to each device
-        with maybe_nvtx_annotate("token_count_all_to_all", COMM_COLOR):
+        ########### 1. Communicate the number of tokens that will be sent to each device ###########
+        with nvtx.annotate("Token count all_to_all", color="green"):
             with torch.no_grad():
                 # Pass token count information to the device on which the
                 # target expert resides.
@@ -126,6 +124,8 @@ def combined_forward_ep_tbo(
                 )
 
                 assert global_batch_size_handle is not None  # because of async
+
+        ############################################ end
 
         if self.shared_experts_router:
             # shared expert router
@@ -145,27 +145,12 @@ def combined_forward_ep_tbo(
         # forward shared experts
         if self.shared_experts is not None:
             shared_out = self.shared_experts.forward(moe_inp)
-            with maybe_nvtx_annotate("merge_shared", EXPERTS_COLOR):
-                if self.shared_experts_router:
-                    assert local_x_global_shared_expert_weights is not None
-                    # weighted sum of the shared experts by router weights
-                    # local_x_global_shared_expert_weights -> (B, S, E_shared)
-                    # shared_out -> (E_shared, B, S, D)
-                    _, _, E_s = local_x_global_shared_expert_weights.shape
-                    mixed_shared_out = (
-                        torch.bmm(
-                            local_x_global_shared_expert_weights.to(shared_out.dtype).reshape(
-                                B * S, 1, E_s
-                            ),  # (BS, 1, E),
-                            shared_out.permute(1, 2, 0, 3)
-                            .contiguous()
-                            .view(B * S, E_s, D),  # (BS, E, D)
-                        )
-                        .squeeze(1)
-                        .view(B, S, D)
-                    )
-                else:
-                    mixed_shared_out = shared_out.squeeze(0)
+            with nvtx.annotate("merge_shared", color="purple"):
+                mixed_shared_out = self._mix_shared_out(
+                    shared_out,
+                    local_x_global_shared_expert_weights,
+                    attn_res_out.shape,
+                )
         else:
             mixed_shared_out = None
 
@@ -173,11 +158,11 @@ def combined_forward_ep_tbo(
 
         moe_inp = moe_inp.view(-1, in_shape[-1])  # (B*S, D)
 
-        # 3. Configure the sizes for grouped GEMM
+        ###########  3. Configure the sizes for grouped GEMM ###########
 
         # Compute the number of tokens that will be received from each
         # device and permute the input data across the devices.
-        with maybe_nvtx_annotate("sync_token_count", COMM_COLOR):
+        with nvtx.annotate("Sync token count", color="green"):
             with torch.no_grad():
                 global_batch_size_handle.wait()
 
@@ -208,9 +193,9 @@ def combined_forward_ep_tbo(
                     parallel_batch_size_per_local_expert, event=self._dtoh_event
                 )
 
-        # 2. permute local tokens to be ready for all-to-all communication
+        ########### 2. permute local tokens to be ready for all-to-all communication ###########
 
-        with maybe_nvtx_annotate("permute_local_tokens", COMM_COLOR):
+        with nvtx.annotate("Permute local tokens", color="green"):
             routing_map = local_x_global_routed_expert_indices.view(
                 -1, self.routed_experts_router.top_k
             ).int()
@@ -224,15 +209,18 @@ def combined_forward_ep_tbo(
             )
 
         with torch.no_grad():
+            # torch.cuda.current_stream().synchronize() # wait for the copy to CPU to finish
             assert dtoh_event_send
             assert dtoh_event_recv
             assert dtoh_event
+            # dtoh_event_send.synchronize()
+            # dtoh_event_recv.synchronize()
             dtoh_event.synchronize()
             send_counts = send_counts_cpu.tolist()  # tensor to list
             recv_counts = recv_counts_cpu.tolist()  # tensor to list
             tokens_received = sum(recv_counts)
 
-        with maybe_nvtx_annotate("all2all", COMM_COLOR):
+        with nvtx.annotate("all2all", color="green"):
             permutated_local_x, global_x, global_x_handle = ops.all_to_all_async(
                 permutated_local_x,
                 recv_counts,
@@ -248,9 +236,9 @@ def combined_forward_ep_tbo(
                 output_size=tokens_received,
             )  # e.g. [0, ...,  0, ... , 3, ..., 3, 0, ...] for 4 local experts
 
-    with maybe_nvtx_annotate("tbo_1", TBO_COLOR):
+    with nvtx.annotate("TBO-1", color="orange"):
         if x1_is_fresh:
-            x1_ctx = cast(dict, x1_ctx)
+            x1_ctx = cast(Dict, x1_ctx)
             x1 = x1_ctx["x1"]
             assert x1.shape == (B, S, D)
             block_inp1 = x1
@@ -269,10 +257,11 @@ def combined_forward_ep_tbo(
             assert local_x1 is not None
             assert last_block.routed_experts_router is not None
 
+            # local_x_handle1.wait()
             local_x1 = ops.all_to_all_wait(global_x1, local_x1, local_x_handle1)
 
-            # 9. Unpermute the (local) tokens returned by all-to-all communication
-            with maybe_nvtx_annotate("unpermute_merge_local_tokens", COMM_COLOR):
+            ## 9. Unpermute the (local) tokens returned by all-to-all communication ##
+            with nvtx.annotate("Unpermute-Merge local tokens", color="green"):
                 local_x1 = moe_unpermute_no_compile(
                     inp=local_x1,
                     row_id_map=reversed_local_x_permutation_mapping1,
@@ -282,6 +271,7 @@ def combined_forward_ep_tbo(
                     restore_shape=hidden_shape_before_permute1,
                     map_type="index",
                 )
+            ## end
 
             local_x1 = local_x1.view(in_shape1)
 
@@ -289,11 +279,12 @@ def combined_forward_ep_tbo(
 
             block_inp1 = last_block._res_norm_mlp(attn_res_out1, mlp_out1)
 
-        # x1 last step done
+        ########## x1 last step done ##########
 
         # attention
         # + attention norm
         # + residual connection
+        # attn_res_out1 = block_inp1 + self.attention_norm(self.attention(block_inp1, **kwargs))
         attn_res_out1 = self._checkpointed_res_norm_attn(block_inp1, **kwargs)
         moe_inp1 = self._prepare_moe_input(attn_res_out1)
 
@@ -312,7 +303,7 @@ def combined_forward_ep_tbo(
             routed_expert_router_aux_loss_info1,
         )
 
-        with maybe_nvtx_annotate("token_count_all_to_all", COMM_COLOR):
+        with nvtx.annotate("Token count all_to_all", color="green"):
             with torch.no_grad():
                 # Pass token count information to the device on which the
                 # target expert resides.
@@ -346,27 +337,12 @@ def combined_forward_ep_tbo(
         if self.shared_experts is not None:
             shared_out1 = self.shared_experts.forward(moe_inp1)
 
-            with maybe_nvtx_annotate("merge_shared", EXPERTS_COLOR):
-                if self.shared_experts_router:
-                    assert local_x_global_shared_expert_weights1 is not None
-                    # weighted sum of the shared experts by router weights
-                    # local_x_global_shared_expert_weights -> (B, S, E_shared)
-                    # shared_out -> (E_shared, B, S, D)
-                    _, _, E_s1 = local_x_global_shared_expert_weights1.shape
-                    mixed_shared_out1 = (
-                        torch.bmm(
-                            local_x_global_shared_expert_weights1.to(shared_out1.dtype).reshape(
-                                B * S, 1, E_s1
-                            ),  # (BS, 1, E),
-                            shared_out1.permute(1, 2, 0, 3)
-                            .contiguous()
-                            .view(B * S, E_s1, D),  # (BS, E, D)
-                        )
-                        .squeeze(1)
-                        .view(B, S, D)
-                    )
-                else:
-                    mixed_shared_out1 = shared_out1.squeeze(0)
+            with nvtx.annotate("merge_shared", color="purple"):
+                mixed_shared_out1 = self._mix_shared_out(
+                    shared_out1,
+                    local_x_global_shared_expert_weights1,
+                    attn_res_out1.shape,
+                )
         else:
             mixed_shared_out1 = None
 
@@ -374,11 +350,11 @@ def combined_forward_ep_tbo(
 
         moe_inp1 = moe_inp1.view(-1, in_shape1[-1])  # (B*S, D)
 
-        # 3. Configure the sizes for grouped GEMM
+        ###########  3. Configure the sizes for grouped GEMM ###########
 
         # Compute the number of tokens that will be received from each
         # device and permute the input data across the devices.
-        with maybe_nvtx_annotate("sync_token_count", COMM_COLOR):
+        with nvtx.annotate("Sync token count", color="green"):
             with torch.no_grad():
                 global_batch_size_handle1.wait()
 
@@ -409,9 +385,9 @@ def combined_forward_ep_tbo(
                     parallel_batch_size_per_local_expert1, event=self._dtoh_event_tbo1
                 )
 
-        # 2. permute local tokens to be ready for all-to-all communication
+        ########### 2. permute local tokens to be ready for all-to-all communication ###########
 
-        with maybe_nvtx_annotate("permute_local_tokens", COMM_COLOR):
+        with nvtx.annotate("Permute local tokens", color="green"):
             routing_map1 = local_x_global_routed_expert_indices1.view(
                 -1, self.routed_experts_router.top_k
             ).int()
@@ -424,25 +400,34 @@ def combined_forward_ep_tbo(
                 map_type="index",
             )
 
+        #### end
+
         with torch.no_grad():
+            # torch.cuda.current_stream().synchronize() # wait for the copy to CPU to finish
             # assert dtoh_event_send1
             # assert dtoh_event_recv1
             assert dtoh_event1
+            # dtoh_event_send1.synchronize()
+            # dtoh_event_recv1.synchronize()
             dtoh_event1.synchronize()
             send_counts1 = send_counts_cpu1.tolist()  # tensor to list
             recv_counts1 = recv_counts_cpu1.tolist()  # tensor to list
             tokens_received1 = sum(recv_counts1)
+    ############################ END: TBO 1 ########################
 
-    with maybe_nvtx_annotate("tbo_0", TBO_COLOR):
+    with nvtx.annotate("TBO-0", color="purple"):
         global_x = ops.all_to_all_wait(permutated_local_x, global_x, global_x_handle)
 
-    with maybe_nvtx_annotate("tbo_1", TBO_COLOR):
-        with maybe_nvtx_annotate("all2all", COMM_COLOR):
+    ############################ TBO 1 ############################
+    with nvtx.annotate("TBO-1", color="orange"):
+        with nvtx.annotate("all2all", color="green"):
+            # global_x1, global_x_handle1 = ops.all_to_all(
             permutated_local_x1, global_x1, global_x_handle1 = ops.all_to_all_async(
                 permutated_local_x1,
                 recv_counts1,
                 send_counts1,
                 group=self.ep_pg,
+                # async_op=True
             )
 
         with torch.no_grad():
@@ -452,8 +437,9 @@ def combined_forward_ep_tbo(
                 global_batch_size_per_local_expert1.flatten(),
                 output_size=tokens_received1,
             )  # e.g. [0, ...,  0, ... , 3, ..., 3, 0, ...] for 4 local experts
+    ############################ END: TBO 1 ########################
 
-    with maybe_nvtx_annotate("tbo_0", TBO_COLOR):
+    with nvtx.annotate("TBO-0", color="purple"):
         global_x = checkpointed_permute_routed_experts_unpermute_1d(
             self,
             global_x,
@@ -465,22 +451,28 @@ def combined_forward_ep_tbo(
             ),
         )
 
-    with maybe_nvtx_annotate("tbo_1", TBO_COLOR):
+    ############################ TBO 1 ############################
+    with nvtx.annotate("TBO-1", color="orange"):
         global_x1 = ops.all_to_all_wait(permutated_local_x1, global_x1, global_x_handle1)
 
-    with maybe_nvtx_annotate("tbo_0", TBO_COLOR):
-        # 8. reverse_all_to_all
+    ############################ END: TBO 1 ########################
 
-        with maybe_nvtx_annotate("reverse_all_to_all", COMM_COLOR):
+    with nvtx.annotate("TBO-0", color="purple"):
+        ########## 8. reverse_all_to_all ###########
+
+        with nvtx.annotate("reverse_all_to_all", color="green"):
             global_x = cast(torch.Tensor, global_x)
             global_x, local_x, local_x_handle = ops.all_to_all_async(
+                # local_x, local_x_handle = ops.all_to_all(
                 global_x,
                 send_counts,
                 recv_counts,
                 group=self.ep_pg,
+                # async_op=True
             )
 
-    with maybe_nvtx_annotate("tbo_1", TBO_COLOR):
+    ############################ TBO 1 ############################
+    with nvtx.annotate("TBO-1", color="orange"):
         global_x1 = checkpointed_permute_routed_experts_unpermute_1d(
             self,
             global_x1,
@@ -492,11 +484,16 @@ def combined_forward_ep_tbo(
             ),
         )
 
-    with maybe_nvtx_annotate("tbo_0", TBO_COLOR):
+    ############################ END: TBO 1 ########################
+
+    with nvtx.annotate("TBO-0", color="purple"):
         local_x = ops.all_to_all_wait(global_x, local_x, local_x_handle)
 
-        # 9. Unpermute the (local) tokens returned by all-to-all communication
-        with maybe_nvtx_annotate("unpermute_merge_local_tokens", COMM_COLOR):
+        # del global_x # done with global tokens
+        ############################################ end
+
+        ############ 9. Unpermute the (local) tokens returned by all-to-all communication ##########
+        with nvtx.annotate("Unpermute-Merge local tokens", color="green"):
             local_x = moe_unpermute_no_compile(
                 inp=local_x,
                 row_id_map=reversed_local_x_permutation_mapping,
@@ -506,6 +503,7 @@ def combined_forward_ep_tbo(
                 restore_shape=hidden_shape_before_permute,
                 map_type="index",
             )
+        ############################################ end
 
         local_x = local_x.view(in_shape)
 
@@ -513,7 +511,10 @@ def combined_forward_ep_tbo(
 
         final_out = self._res_norm_mlp(attn_res_out, mlp_out)
 
-    with maybe_nvtx_annotate("tbo_1", TBO_COLOR):
+        #######################
+
+    ############################ TBO 1 ############################
+    with nvtx.annotate("TBO-1", color="orange"):
         x1_ctx = SyncedTboPendingContext(
             global_x=global_x1,
             send_counts=send_counts1,
@@ -526,6 +527,8 @@ def combined_forward_ep_tbo(
             attn_res_out=attn_res_out1,
             last_block=self,
         )
+
+    ############################ END: TBO 1 ########################
 
     return (
         final_out,

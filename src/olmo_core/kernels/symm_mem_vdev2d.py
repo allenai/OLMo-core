@@ -6,16 +6,14 @@ from typing import Optional
 
 import torch
 
-try:
-    import nvtx
-except ImportError:
-    from olmo_core._nvtx import nvtx
+from olmo_core._nvtx import nvtx
 
 from .mxfp8_utils import quantize_rows_to_mxfp8, reduce_gathered_rows_from_mxfp8
 
 _EXTENSION_MODULE_NAME = "olmo_core.kernels._symm_mem_vdev2d_ext_gpu"
 _CUDA_EXTENSION = None
 _CUDA_EXTENSION_ERROR: Optional[Exception] = None
+_PREFLIGHTED_ROWWISE_COLLECTIVE_LAUNCHES: set[tuple[int, int]] = set()
 
 
 def _load_cuda_extension():
@@ -66,6 +64,68 @@ def nvshmem_world_barrier() -> None:
 
 
 @torch.compiler.disable
+def preflight_rowwise_collective_launches(nblocks: int) -> None:
+    """Validate rowwise NVSHMEM collective launch grids before compiled runtime."""
+    nblocks = int(nblocks)
+    if nblocks <= 0:
+        raise ValueError(
+            "strict NVSHMEM rowwise collective preflight requires rowwise_nblocks > 0 "
+            "(0 means auto and cannot be validated before runtime)"
+        )
+    device_idx = torch.cuda.current_device()
+    key = (device_idx, nblocks)
+    if key in _PREFLIGHTED_ROWWISE_COLLECTIVE_LAUNCHES:
+        return
+    ext = _load_cuda_extension()
+    ext.preflight_rowwise_collective_launches(nblocks)
+    _PREFLIGHTED_ROWWISE_COLLECTIVE_LAUNCHES.add(key)
+
+
+@torch.compiler.disable
+def rowwise_signal_peers_on_stream(
+    signals: torch.Tensor,
+    signal_row: int,
+    generation: int,
+    group_name: str,
+    *,
+    quiet_before_signal: bool = True,
+) -> None:
+    """Signal every peer in ``group_name`` for one row of a symmetric signal tensor."""
+    ext = _load_cuda_extension()
+    ext.rowwise_signal_peers_on_stream(
+        signals,
+        int(signal_row),
+        int(generation),
+        group_name,
+        bool(quiet_before_signal),
+    )
+
+
+@torch.compiler.disable
+def rowwise_wait_signal_peers_on_stream(
+    signals: torch.Tensor,
+    signal_row: int,
+    generation: int,
+    group_name: str,
+) -> None:
+    """Wait on the current CUDA stream until every peer has signaled one row."""
+    ext = _load_cuda_extension()
+    ext.rowwise_wait_signal_peers_on_stream(
+        signals,
+        int(signal_row),
+        int(generation),
+        group_name,
+    )
+
+
+@torch.compiler.disable
+def olmo_symm_peer_base_ptrs(tensor: torch.Tensor, group_name: str) -> torch.Tensor:
+    """Return device int64 peer-visible base pointers for an OLMo symmetric tensor."""
+    ext = _load_cuda_extension()
+    return ext.olmo_symm_peer_base_ptrs(tensor, group_name)
+
+
+@torch.compiler.disable
 def all_to_all_vdev_2d_nblocks(
     input: torch.Tensor,
     out: torch.Tensor,
@@ -76,20 +136,6 @@ def all_to_all_vdev_2d_nblocks(
     major_align: int = 1,
     nblocks: int = 0,
 ) -> None:
-    """
-    Variable-length 2D all-to-all over NVSHMEM symmetric memory.
-
-    Sends each rank's ``input`` rows to peers per ``in_splits`` and writes the
-    received rows into ``out`` at the positions described by ``out_splits_offsets``.
-
-    :param input: This rank's send buffer (symmetric memory).
-    :param out: This rank's receive buffer (symmetric memory).
-    :param in_splits: Per-destination send counts.
-    :param out_splits_offsets: Per-source receive counts + offsets into ``out``.
-    :param group_name: The registered process-group name.
-    :param major_align: Alignment (in rows) for the major dimension of the layout.
-    :param nblocks: Number of CTA blocks to launch (0 = kernel default).
-    """
     ext = _load_cuda_extension()
     ext.all_to_all_vdev_2d_nblocks(
         input,
@@ -112,19 +158,6 @@ def all_to_all_vdev_2d_offset_nblocks(
     *,
     nblocks: int = 0,
 ) -> None:
-    """
-    Like :func:`all_to_all_vdev_2d_nblocks` but with precomputed send offsets.
-
-    Takes ``in_splits_offsets`` (per-destination counts + offsets into ``input``)
-    instead of plain splits, so the caller controls the exact source layout.
-
-    :param input: This rank's send buffer (symmetric memory).
-    :param out: This rank's receive buffer (symmetric memory).
-    :param in_splits_offsets: Per-destination send counts + offsets into ``input``.
-    :param out_splits_offsets: Per-source receive counts + offsets into ``out``.
-    :param group_name: The registered process-group name.
-    :param nblocks: Number of CTA blocks to launch (0 = kernel default).
-    """
     ext = _load_cuda_extension()
     ext.all_to_all_vdev_2d_offset_nblocks(
         input,
@@ -149,22 +182,6 @@ def rowwise_dispatch_put(
     pre_barrier: bool = False,
     post_barrier: bool = True,
 ) -> None:
-    """
-    One-sided per-row dispatch of tokens to experts over NVSHMEM.
-
-    Puts each row of ``input`` to its destination ``(dst_ranks[i], dst_rows[i])``
-    slot in the peer's ``out`` buffer; rows with a negative destination are skipped.
-
-    :param input: Local rows to dispatch.
-    :param out: Destination buffer on the peer (symmetric memory).
-    :param dst_ranks: Per-row destination rank.
-    :param dst_rows: Per-row destination row index within the peer buffer.
-    :param group_name: The registered process-group name.
-    :param probs: Optional per-row routing weights to carry alongside.
-    :param nblocks: Number of CTA blocks to launch (0 = kernel default).
-    :param pre_barrier: Barrier before the puts.
-    :param post_barrier: Barrier after the puts (so receivers see completion).
-    """
     ext = _load_cuda_extension()
     ext.rowwise_dispatch_put(
         input,
@@ -176,6 +193,145 @@ def rowwise_dispatch_put(
         nblocks,
         pre_barrier,
         post_barrier,
+    )
+
+
+@torch.compiler.disable
+def rowwise_build_compact_route_records(
+    dst_ranks: torch.Tensor,
+    dst_rows: torch.Tensor,
+    route_experts: torch.Tensor,
+    *,
+    num_local_experts: int,
+    num_waves: int,
+    nblocks: int = 0,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    if dst_ranks.ndim != 2 or dst_rows.ndim != 2 or route_experts.ndim != 2:
+        raise ValueError("dst_ranks, dst_rows, and route_experts must be rank-2 [N, K]")
+    if tuple(dst_ranks.shape) != tuple(dst_rows.shape) or tuple(dst_ranks.shape) != tuple(
+        route_experts.shape
+    ):
+        raise ValueError("dst_ranks, dst_rows, and route_experts must have identical shapes")
+    ext = _load_cuda_extension()
+    num_routes = dst_ranks.numel()
+    route_records = torch.empty((num_routes, 4), device=dst_ranks.device, dtype=torch.long)
+    wave_counts = torch.empty((int(num_waves),), device=dst_ranks.device, dtype=torch.long)
+    wave_fill_counts = torch.empty_like(wave_counts)
+    wave_offsets = torch.empty((int(num_waves) + 1,), device=dst_ranks.device, dtype=torch.long)
+    ext.rowwise_build_compact_route_records(
+        dst_ranks,
+        dst_rows,
+        route_experts,
+        route_records,
+        wave_counts,
+        wave_fill_counts,
+        wave_offsets,
+        int(num_local_experts),
+        int(num_waves),
+        int(nblocks),
+    )
+    return route_records, wave_offsets
+
+
+@torch.compiler.disable
+def rowwise_dispatch_put_compact(
+    input: torch.Tensor,
+    out: torch.Tensor,
+    route_records: torch.Tensor,
+    wave_offsets: torch.Tensor,
+    wave_idx: int,
+    group_name: str,
+    *,
+    nblocks: int = 0,
+    pre_barrier: bool = False,
+    post_barrier: bool = True,
+) -> None:
+    ext = _load_cuda_extension()
+    ext.rowwise_dispatch_put_compact(
+        input,
+        out,
+        route_records,
+        wave_offsets,
+        int(wave_idx),
+        group_name,
+        nblocks,
+        pre_barrier,
+        post_barrier,
+    )
+
+
+@torch.compiler.disable
+def rowwise_dispatch_put_compact_weighted(
+    input: torch.Tensor,
+    out: torch.Tensor,
+    route_records: torch.Tensor,
+    wave_offsets: torch.Tensor,
+    wave_idx: int,
+    probs: torch.Tensor,
+    group_name: str,
+    *,
+    nblocks: int = 0,
+    pre_barrier: bool = False,
+    post_barrier: bool = True,
+) -> None:
+    ext = _load_cuda_extension()
+    ext.rowwise_dispatch_put_compact_weighted(
+        input,
+        out,
+        route_records,
+        wave_offsets,
+        int(wave_idx),
+        probs,
+        group_name,
+        nblocks,
+        pre_barrier,
+        post_barrier,
+    )
+
+
+@torch.compiler.disable
+def rowwise_inverse_route_meta_put_compact(
+    inverse_route_meta: torch.Tensor,
+    route_records: torch.Tensor,
+    wave_offsets: torch.Tensor,
+    *,
+    src_rank: int,
+    group_name: str,
+    nblocks: int = 0,
+    pre_barrier: bool = False,
+    post_barrier: bool = True,
+    scalar_put: bool = False,
+) -> None:
+    ext = _load_cuda_extension()
+    ext.rowwise_inverse_route_meta_put_compact(
+        inverse_route_meta,
+        route_records,
+        wave_offsets,
+        int(src_rank),
+        group_name,
+        nblocks,
+        pre_barrier,
+        post_barrier,
+        scalar_put,
+    )
+
+
+@torch.compiler.disable
+def rowwise_build_inverse_route_meta_from_global_records(
+    inverse_route_meta: torch.Tensor,
+    global_route_records: torch.Tensor,
+    global_wave_offsets: torch.Tensor,
+    *,
+    local_rank: int,
+    nblocks: int = 0,
+) -> None:
+    ext = _load_cuda_extension()
+    ext.rowwise_build_inverse_route_meta_from_global_records(
+        inverse_route_meta,
+        global_route_records,
+        global_wave_offsets,
+        int(local_rank),
+        nblocks,
     )
 
 
@@ -192,28 +348,12 @@ def rowwise_dispatch_put_scaled(
     nblocks: int = 0,
     pre_barrier: bool = False,
     post_barrier: bool = True,
+    zero_unwritten: bool = False,
 ) -> None:
-    """
-    MXFP8 variant of :func:`rowwise_dispatch_put`.
-
-    Quantizes ``input_hp`` to rowwise MXFP8 (qdata + e8m0 block scales), then
-    dispatches the quantized data and the scales as two back-to-back rowwise puts
-    (into ``out_q`` and ``out_scales``), barriering only after the second.
-
-    :param input_hp: High-precision local rows to quantize and dispatch.
-    :param out_q: Destination FP8 qdata buffer on the peer.
-    :param out_scales: Destination scales buffer on the peer.
-    :param dst_ranks: Per-row destination rank.
-    :param dst_rows: Per-row destination row index.
-    :param group_name: The registered process-group name.
-    :param block_size: MXFP8 block size (default 32).
-    :param nblocks: Number of CTA blocks to launch (0 = kernel default).
-    :param pre_barrier: Barrier before the first put.
-    :param post_barrier: Barrier after the scales put.
-    """
-    # Optional debug safety init for stale-capacity issues; off by default to
-    # avoid full-buffer memset overhead in the fp8 hot path.
-    if os.getenv("OLMO_ROWWISE_FP8_DISPATCH_INIT_OUT", "0") == "1":
+    # The rowwise dispatch kernel only writes rows referenced by valid route
+    # maps. Keep an opt-in safety init for diagnostics or callers that knowingly
+    # include padded rows in downstream math.
+    if zero_unwritten or os.getenv("OLMO_ROWWISE_FP8_DISPATCH_INIT_OUT", "0") == "1":
         out_q.zero_()
         out_scales.fill_(1.0)
 
@@ -254,23 +394,6 @@ def rowwise_combine_get(
     pre_barrier: bool = True,
     post_barrier: bool = False,
 ) -> None:
-    """
-    One-sided per-row combine: gather expert outputs back and reduce into ``out``.
-
-    Pulls each token's expert-output rows from ``(src_ranks, src_rows)`` and combines
-    them (optionally weighted by ``probs``) into ``out`` — the inverse of dispatch.
-
-    :param expert_out: Local expert-output buffer peers read from (symmetric memory).
-    :param out: Per-token combined output (this rank).
-    :param src_ranks: Per-row source rank to gather from.
-    :param src_rows: Per-row source row index.
-    :param group_name: The registered process-group name.
-    :param probs: Optional per-row combine weights.
-    :param nblocks: Number of CTA blocks to launch (0 = kernel default).
-    :param gathered_out: Optional buffer to also receive the raw gathered rows.
-    :param pre_barrier: Barrier before the gets (so senders are ready).
-    :param post_barrier: Barrier after the gets.
-    """
     ext = _load_cuda_extension()
     ext.rowwise_combine_get(
         expert_out,
@@ -284,6 +407,60 @@ def rowwise_combine_get(
         pre_barrier,
         post_barrier,
     )
+
+
+@torch.compiler.disable
+def rowwise_combine_put(
+    expert_out: torch.Tensor,
+    gathered_out: torch.Tensor,
+    inverse_route_meta: torch.Tensor,
+    row_start: torch.Tensor,
+    num_rows: torch.Tensor,
+    group_name: str,
+    *,
+    nblocks: int = 0,
+    pre_barrier: bool = False,
+    post_barrier: bool = True,
+) -> None:
+    ext = _load_cuda_extension()
+    if gathered_out.ndim == 3:
+        gathered_flat = gathered_out.view(
+            gathered_out.shape[0] * gathered_out.shape[1], gathered_out.shape[2]
+        )
+    else:
+        gathered_flat = gathered_out
+    ext.rowwise_combine_put(
+        expert_out,
+        gathered_flat,
+        inverse_route_meta,
+        row_start,
+        num_rows,
+        group_name,
+        nblocks,
+        pre_barrier,
+        post_barrier,
+    )
+
+
+@torch.compiler.disable
+def rowwise_reduce_gathered_routes(
+    gathered: torch.Tensor,
+    probs: torch.Tensor,
+    out: torch.Tensor,
+    route_ranks: Optional[torch.Tensor] = None,
+) -> None:
+    ext = _load_cuda_extension()
+    ext.rowwise_reduce_gathered_routes(gathered, probs, out, route_ranks)
+
+
+@torch.compiler.disable
+def rowwise_reduce_gathered_routes_unweighted(
+    gathered: torch.Tensor,
+    out: torch.Tensor,
+    route_ranks: Optional[torch.Tensor] = None,
+) -> None:
+    ext = _load_cuda_extension()
+    ext.rowwise_reduce_gathered_routes_unweighted(gathered, out, route_ranks)
 
 
 @nvtx.annotate("rowwise_combine_get_scaled")
@@ -304,29 +481,6 @@ def rowwise_combine_get_scaled(
     pre_barrier: bool = True,
     post_barrier: bool = False,
 ) -> None:
-    """
-    MXFP8 variant of :func:`rowwise_combine_get` for top-k routing.
-
-    For ``[N, K]`` routing, gathers each token's K expert-output rows in MXFP8
-    (qdata via :func:`rowwise_gather_get`, then the scales), masking invalid/dropped
-    ``(src_ranks, src_rows)`` entries, then dequantizes and reduces the K rows
-    (weighted by ``probs``) into ``out``.
-
-    :param expert_out_q: Local FP8 expert-output qdata peers read from.
-    :param expert_out_scales: Local expert-output block scales peers read from.
-    :param out: Per-token combined high-precision output (this rank).
-    :param src_ranks: ``[N, K]`` per-(token, slot) source rank (negative = dropped).
-    :param src_rows: ``[N, K]`` per-(token, slot) source row index.
-    :param group_name: The registered process-group name.
-    :param probs: Optional ``[N, K]`` combine weights.
-    :param block_size: MXFP8 block size (default 32).
-    :param nblocks: Number of CTA blocks to launch (0 = kernel default).
-    :param gathered_out: Optional buffer for the dequantized gathered rows.
-    :param gathered_q_out: Optional pre-allocated ``[N, K, ·]`` buffer for gathered qdata.
-    :param gathered_scales_out: Optional pre-allocated ``[N, K, ·]`` buffer for gathered scales.
-    :param pre_barrier: Barrier before the first gather.
-    :param post_barrier: Barrier after the scales gather.
-    """
     if src_ranks.ndim != 2 or src_rows.ndim != 2:
         raise ValueError(
             f"src_ranks/src_rows must be [N,K], got {tuple(src_ranks.shape)} and {tuple(src_rows.shape)}"
@@ -441,25 +595,10 @@ def rowwise_combine_get_fused(
     *,
     probs: Optional[torch.Tensor] = None,
     nblocks: int = 0,
+    gathered_out: Optional[torch.Tensor] = None,
     pre_barrier: bool = True,
     post_barrier: bool = False,
 ) -> None:
-    """
-    Fused single-kernel variant of :func:`rowwise_combine_get`.
-
-    Performs the gather and the weighted combine in one kernel launch (rather than a
-    gather followed by a separate reduce), for the bf16/high-precision path.
-
-    :param expert_out: Local expert-output buffer peers read from (symmetric memory).
-    :param out: Per-token combined output (this rank).
-    :param src_ranks: Per-row source rank to gather from.
-    :param src_rows: Per-row source row index.
-    :param group_name: The registered process-group name.
-    :param probs: Optional per-row combine weights.
-    :param nblocks: Number of CTA blocks to launch (0 = kernel default).
-    :param pre_barrier: Barrier before the gets.
-    :param post_barrier: Barrier after the gets.
-    """
     ext = _load_cuda_extension()
     ext.rowwise_combine_get_fused(
         expert_out,
@@ -469,6 +608,7 @@ def rowwise_combine_get_fused(
         probs,
         group_name,
         nblocks,
+        gathered_out,
         pre_barrier,
         post_barrier,
     )
@@ -486,22 +626,6 @@ def rowwise_gather_get(
     pre_barrier: bool = True,
     post_barrier: bool = False,
 ) -> None:
-    """
-    One-sided per-row gather (no combine): pull source rows into ``out``.
-
-    Like :func:`rowwise_combine_get` but only gathers — writes each gathered row to
-    its own slot in ``out`` without reducing across them. Used as the gather half of
-    :func:`rowwise_combine_get_scaled`.
-
-    :param expert_out: Local buffer peers read from (symmetric memory).
-    :param out: Destination buffer for the gathered rows (this rank).
-    :param src_ranks: Per-row source rank.
-    :param src_rows: Per-row source row index.
-    :param group_name: The registered process-group name.
-    :param nblocks: Number of CTA blocks to launch (0 = kernel default).
-    :param pre_barrier: Barrier before the gets.
-    :param post_barrier: Barrier after the gets.
-    """
     ext = _load_cuda_extension()
     ext.rowwise_gather_get(
         expert_out,
@@ -513,16 +637,3 @@ def rowwise_gather_get(
         pre_barrier,
         post_barrier,
     )
-
-
-__all__ = [
-    "nvshmem_world_barrier",
-    "all_to_all_vdev_2d_nblocks",
-    "all_to_all_vdev_2d_offset_nblocks",
-    "rowwise_dispatch_put",
-    "rowwise_dispatch_put_scaled",
-    "rowwise_combine_get",
-    "rowwise_combine_get_scaled",
-    "rowwise_combine_get_fused",
-    "rowwise_gather_get",
-]

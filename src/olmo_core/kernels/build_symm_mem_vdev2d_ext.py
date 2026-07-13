@@ -3,75 +3,16 @@ from __future__ import annotations
 import argparse
 import os
 import shutil
-import site
 import subprocess
-import sys
 import sysconfig
 from pathlib import Path
 
-
-# Local copy (not olmo_core.utils.env_bool) to keep this build entrypoint stdlib-only: it runs as
-# `python -m olmo_core.kernels.build_symm_mem_vdev2d_ext` at image-build time and must not import
-# olmo_core (and hence torch).
-def _env_bool(name: str, default: bool = False) -> bool:
-    raw = os.getenv(name)
-    if raw is None:
-        return default
-    return raw.strip().lower() in {"1", "true", "yes", "on"}
-
-
-def _find_nvshmem_paths() -> tuple[Path, Path, Path, Path]:
-    include_candidates: list[Path] = []
-    lib_candidates: list[Path] = []
-
-    nvshmem_include = os.getenv("NVSHMEM_INCLUDE_DIR")
-    if nvshmem_include:
-        include_candidates.append(Path(nvshmem_include))
-
-    nvshmem_lib = os.getenv("NVSHMEM_LIB_DIR")
-    if nvshmem_lib:
-        lib_candidates.append(Path(nvshmem_lib))
-
-    nvshmem_home = os.getenv("NVSHMEM_HOME")
-    if nvshmem_home:
-        home = Path(nvshmem_home)
-        include_candidates.append(home / "include")
-        lib_candidates.append(home / "lib")
-
-    for base in site.getsitepackages() + [site.getusersitepackages()] + sys.path:
-        if not base:
-            continue
-        root = Path(base) / "nvidia" / "nvshmem"
-        include_candidates.append(root / "include")
-        lib_candidates.append(root / "lib")
-
-    include_dir: Path | None = None
-    for candidate in include_candidates:
-        if (candidate / "nvshmem.h").is_file():
-            include_dir = candidate
-            break
-    if include_dir is None:
-        raise RuntimeError(
-            "Could not locate NVSHMEM include dir (nvshmem.h). "
-            "Set NVSHMEM_INCLUDE_DIR or NVSHMEM_HOME."
-        )
-
-    lib_dir: Path | None = None
-    for candidate in lib_candidates:
-        if (candidate / "libnvshmem_device.a").is_file() and (
-            candidate / "libnvshmem_host.so.3"
-        ).is_file():
-            lib_dir = candidate
-            break
-    if lib_dir is None:
-        raise RuntimeError(
-            "Could not locate NVSHMEM library dir (libnvshmem_device.a + libnvshmem_host.so.3). "
-            "Set NVSHMEM_LIB_DIR or NVSHMEM_HOME."
-        )
-
-    host_so = lib_dir / "libnvshmem_host.so.3"
-    device_a = lib_dir / "libnvshmem_device.a"
-    return include_dir, lib_dir, host_so, device_a
+from .cuda_build_utils import (
+    _env_bool,
+    _find_nvshmem_paths,
+    _infer_cmake_cuda_architectures,
+    _torch_cuda_arch_list_from_cmake_architectures,
+)
 
 
 def _build_extension_setuptools(*, inplace: bool, verbose: bool, force: bool) -> None:
@@ -81,8 +22,8 @@ def _build_extension_setuptools(*, inplace: bool, verbose: bool, force: bool) ->
     this_dir = Path(__file__).resolve().parent
     repo_root = this_dir.parents[2]
     cuda_dir = this_dir / "cuda"
-    cpp_src = cuda_dir / "symm_mem_vdev2d.cpp"
-    cu_src = cuda_dir / "symm_mem_vdev2d_kernel.cu"
+    cpp_src = cuda_dir / "olmo_symm_mem_bindings.cpp"
+    cu_src = cuda_dir / "olmo_symm_mem_kernels.cu"
 
     include_dir, lib_dir, host_so, device_a = _find_nvshmem_paths()
 
@@ -128,7 +69,7 @@ def _build_extension_setuptools(*, inplace: bool, verbose: bool, force: bool) ->
     os.chdir(repo_root)
     try:
         setup(
-            name="olmo-symm-mem-vdev2d-ext",
+            name="olmo-symm-mem-ext",
             ext_modules=[ext],
             cmdclass={"build_ext": BuildExtension.with_options(use_ninja=True)},
             script_args=script_args,
@@ -143,7 +84,7 @@ def _build_extension_cmake(*, inplace: bool, verbose: bool, force: bool) -> None
     this_dir = Path(__file__).resolve().parent
     repo_root = this_dir.parents[2]
     cuda_dir = this_dir / "cuda"
-    build_dir = repo_root / "build" / "symm_mem_vdev2d_cmake"
+    build_dir = repo_root / "build" / "olmo_symm_mem_cmake"
     output_dir = this_dir if inplace else (repo_root / "build")
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -159,6 +100,7 @@ def _build_extension_cmake(*, inplace: bool, verbose: bool, force: bool) -> None
 
     torch_cmake_prefix = torch.utils.cmake_prefix_path
     glibcxx_abi = int(torch._C._GLIBCXX_USE_CXX11_ABI)
+    cuda_architectures = _infer_cmake_cuda_architectures(torch)
 
     cmake_args = [
         "cmake",
@@ -176,13 +118,23 @@ def _build_extension_cmake(*, inplace: bool, verbose: bool, force: bool) -> None
         f"-DGLIBCXX_USE_CXX11_ABI={glibcxx_abi}",
         f"-DCMAKE_LIBRARY_OUTPUT_DIRECTORY={output_dir}",
     ]
+    if cuda_architectures:
+        cmake_args.append(f"-DCMAKE_CUDA_ARCHITECTURES={cuda_architectures}")
     if shutil.which("ninja"):
         cmake_args.extend(["-G", "Ninja"])
+
+    cmake_env = os.environ.copy()
+    if cuda_architectures and "TORCH_CUDA_ARCH_LIST" not in cmake_env:
+        torch_arch_list = _torch_cuda_arch_list_from_cmake_architectures(cuda_architectures)
+        if torch_arch_list:
+            cmake_env["TORCH_CUDA_ARCH_LIST"] = torch_arch_list
 
     build_args = [
         "cmake",
         "--build",
         str(build_dir),
+        "--target",
+        "_symm_mem_vdev2d_ext_gpu",
     ]
     if verbose:
         build_args.append("--verbose")
@@ -190,8 +142,8 @@ def _build_extension_cmake(*, inplace: bool, verbose: bool, force: bool) -> None
     if jobs and jobs > 0:
         build_args.extend(["--parallel", str(jobs)])
 
-    subprocess.run(cmake_args, check=True)
-    subprocess.run(build_args, check=True)
+    subprocess.run(cmake_args, check=True, env=cmake_env)
+    subprocess.run(build_args, check=True, env=cmake_env)
 
     so_name = f"_symm_mem_vdev2d_ext_gpu{ext_suffix}"
     target_path = output_dir / so_name
@@ -203,19 +155,6 @@ def _build_extension_cmake(*, inplace: bool, verbose: bool, force: bool) -> None
 
 
 def build_extension(*, inplace: bool, verbose: bool, force: bool, backend: str = "cmake") -> None:
-    """
-    Build the GPU-side NVSHMEM ``symm_mem_vdev2d`` extension ahead of time.
-
-    Called by ``symm_mem_vdev2d``'s loader (when auto-build is enabled) and by the
-    ``python -m olmo_core.kernels.build_symm_mem_vdev2d_ext`` CLI.
-
-    :param inplace: Build the extension in-place (next to the sources).
-    :param verbose: Emit verbose build output.
-    :param force: Clean the build directory before building.
-    :param backend: Build backend, ``"cmake"`` (default) or ``"setuptools"``.
-
-    :raises ValueError: If ``backend`` is not a supported value.
-    """
     backend_norm = backend.strip().lower()
     if backend_norm == "cmake":
         _build_extension_cmake(inplace=inplace, verbose=verbose, force=force)
@@ -227,9 +166,8 @@ def build_extension(*, inplace: bool, verbose: bool, force: bool, backend: str =
 
 
 def main() -> None:
-    """CLI entry point for building the extension (``python -m ...build_symm_mem_vdev2d_ext``)."""
     parser = argparse.ArgumentParser(
-        description="Build GPU-side NVSHMEM 2D all_to_all extension with CUDA device-link."
+        description="Build the GPU-side OLMo NVSHMEM symmetric-memory extension with CUDA device-link."
     )
     parser.add_argument("--inplace", action="store_true", help="Build extension in-place.")
     parser.add_argument("--verbose", action="store_true", help="Verbose build output.")

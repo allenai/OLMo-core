@@ -8,29 +8,23 @@ from olmo_core.exceptions import OLMoConfigurationError
 
 
 class ExpertParallelPath(StrEnum):
+    # Synchronized all-to-all EP. Does not require symmetric memory.
     sync_1d = "sync_1d"
-    """Synchronized all-to-all EP. Does not require symmetric memory."""
+    # Legacy no-sync EP over symmetric-memory all_to_all_vdev primitives. It
+    # still pays permute/unpermute overhead, so rowwise_nvshmem is preferred for
+    # no-sync symmetric-memory EP.
     no_sync_1d = "no_sync_1d"
-    """
-    Legacy no-sync EP over symmetric-memory ``all_to_all_vdev`` primitives. It still pays
-    permute/unpermute overhead, so ``rowwise_nvshmem`` is preferred for no-sync symmetric-memory EP.
-    """
+    # Production OLMo-owned rowwise NVSHMEM EP. Uses static rowwise buffers and
+    # device-side dispatch/combine metadata.
     rowwise_nvshmem = "rowwise_nvshmem"
-    """
-    Production OLMo-owned rowwise NVSHMEM EP. Uses static rowwise buffers and device-side
-    dispatch/combine metadata.
-    """
+    # Experimental rowwise NVSHMEM waves. This tries to overlap the same batch's
+    # dispatch, expert GEMMs, and combine, but the current NVSHMEM implementation
+    # consumes enough SM resources that overlap has not made this faster. Not
+    # recommended for training.
     rowwise_wave = "rowwise_wave"
-    """
-    Experimental rowwise NVSHMEM waves. This tries to overlap the same batch's dispatch, expert
-    GEMMs, and combine, but the current NVSHMEM implementation consumes enough SM resources that
-    overlap has not made this faster. Not recommended for training.
-    """
+    # DeepEP V2 ElasticBuffer backend. Uses DeepEP's own communication buffers
+    # instead of OLMo symmetric-memory buffers.
     deepep_v2 = "deepep_v2"
-    """
-    DeepEP V2 ElasticBuffer backend. Uses DeepEP's own communication buffers instead of OLMo
-    symmetric-memory buffers.
-    """
 
 
 class ExpertParallelSchedule(StrEnum):
@@ -40,57 +34,38 @@ class ExpertParallelSchedule(StrEnum):
 
 @dataclass
 class DeepEPConfig(Config):
+    # Optional DeepEP source/build path to add to sys.path before import. If not
+    # set, the backend falls back to OLMO_DEEPEP_PATH or /workspace/DeepEP.
     path: Optional[str] = None
-    """
-    Optional DeepEP source/build path to add to ``sys.path`` before import. If not set, the backend
-    falls back to ``OLMO_DEEPEP_PATH`` or ``/workspace/DeepEP``.
-    """
+    # SMs to use for DeepEP dispatch/combine kernels. 0 lets DeepEP estimate a
+    # value from topology, bandwidth, number of experts, and top-k.
     num_sms: int = 0
-    """
-    SMs to use for DeepEP dispatch/combine kernels. 0 lets DeepEP estimate a value from topology,
-    bandwidth, number of experts, and top-k.
-    """
+    # RDMA queue pairs to use for DeepEP dispatch/combine. 0 lets DeepEP infer a
+    # value from num_sms and the selected communication mode.
     num_qps: int = 0
-    """
-    RDMA queue pairs to use for DeepEP dispatch/combine. 0 lets DeepEP infer a value from
-    ``num_sms`` and the selected communication mode.
-    """
+    # RDMA queue pairs to pre-allocate in the ElasticBuffer. 0 lets DeepEP choose
+    # its default upper bound; otherwise this must be >= num_qps.
     num_allocated_qps: int = 0
-    """
-    RDMA queue pairs to pre-allocate in the ElasticBuffer. 0 lets DeepEP choose its default upper
-    bound; otherwise this must be >= ``num_qps``.
-    """
+    # Padding alignment for received rows per expert. The current model path
+    # consumes packed rows, so deepep_v2 validates this as 1 for now.
     expert_alignment: int = 1
-    """
-    Padding alignment for received rows per expert. The current model path consumes packed rows, so
-    ``deepep_v2`` validates this as 1 for now.
-    """
+    # Pass async_with_compute_stream=True to DeepEP. When enabled, DeepEP returns
+    # an event instead of making the current stream wait for comm immediately;
+    # callers must place explicit waits before consuming comm outputs.
     async_mode: bool = False
-    """
-    Pass ``async_with_compute_stream=True`` to DeepEP. When enabled, DeepEP returns an event instead
-    of making the current stream wait for comm immediately; callers must place explicit waits before
-    consuming comm outputs.
-    """
+    # Hint DeepEP's auto-tuner to reserve fewer SMs so communication can overlap
+    # with GEMM. If false, DeepEP tends to choose a larger SM count for standalone
+    # communication speed.
     prefer_overlap_with_compute: bool = True
-    """
-    Hint DeepEP's auto-tuner to reserve fewer SMs so communication can overlap with GEMM. If false,
-    DeepEP tends to choose a larger SM count for standalone communication speed.
-    """
+    # Allow DeepEP's hybrid communication mode. This can use more QPs but is the
+    # intended path for mixed NVLink/RDMA topologies.
     allow_hybrid_mode: bool = True
-    """
-    Allow DeepEP's hybrid communication mode. This can use more QPs but is the intended path for
-    mixed NVLink/RDMA topologies.
-    """
+    # Allow DeepEP combine to reduce multiple contributions for a token inside
+    # its communication/reduction path.
     allow_multiple_reduction: bool = True
-    """
-    Allow DeepEP combine to reduce multiple contributions for a token inside its
-    communication/reduction path.
-    """
+    # Where to apply top-k weights. "swiglu" fuses the weights into the routed
+    # expert path and currently requires bias-free down projections.
     weighting: str = "swiglu"
-    """
-    Where to apply top-k weights. ``"swiglu"`` fuses the weights into the routed expert path and
-    currently requires bias-free down projections.
-    """
 
     def validate(self) -> None:
         self.weighting = self.weighting.lower()
@@ -109,11 +84,9 @@ class ExpertParallelConfig(Config):
     path: ExpertParallelPath = ExpertParallelPath.sync_1d
     schedule: ExpertParallelSchedule = ExpertParallelSchedule.normal
 
+    # Rowwise and deepep_v2 use this as destination-rank expanded-row capacity
+    # and may tail-drop overflow routes.
     capacity_factor: float = 1.25
-    """
-    Rowwise and ``deepep_v2`` use this as destination-rank expanded-row capacity and may tail-drop
-    overflow routes.
-    """
     shared_slots: int = 1
     major_align: int = 1
 
@@ -140,11 +113,12 @@ class ExpertParallelConfig(Config):
         self.rowwise_wave_mode = self.rowwise_wave_mode.lower()
         self.deepep.validate()
 
+        # These backends/schedules are declared but not yet wired into block/train dispatch, so a
+        # config selecting one would silently run a different path. Fail loudly until they land.
         if self.path in (ExpertParallelPath.rowwise_wave, ExpertParallelPath.deepep_v2):
-            # These backends are declared but not yet wired up: selecting one would silently run a
-            # different path (rowwise_wave -> rowwise_nvshmem) or be rejected downstream (deepep_v2
-            # -> no-sync symm-mem branch). Fail loudly until the backends land.
             raise OLMoConfigurationError(f"EP path {self.path.value!r} is not yet supported")
+        if self.schedule == ExpertParallelSchedule.tbo:
+            raise OLMoConfigurationError("EP schedule='tbo' is not yet supported")
 
         if self.capacity_factor <= 0:
             raise OLMoConfigurationError(
@@ -179,10 +153,15 @@ class ExpertParallelConfig(Config):
                 "'te_fused'|'te_unfused'|'cuda' "
                 f"(got {self.restore_unpermute_backend!r})"
             )
-        if self.schedule == ExpertParallelSchedule.tbo:
-            # ep.schedule does not drive dispatch yet (TBO is selected by the train module), so a
-            # 'tbo' schedule here would be silently ignored. Reject it until it is wired up.
-            raise OLMoConfigurationError("EP schedule='tbo' is not yet supported")
+        if (
+            self.schedule == ExpertParallelSchedule.tbo
+            and self.path != ExpertParallelPath.rowwise_nvshmem
+        ):
+            raise OLMoConfigurationError(
+                "EP schedule='tbo' is only supported with "
+                f"path={ExpertParallelPath.rowwise_nvshmem!r} "
+                f"(got path={self.path!r})"
+            )
         if self.checkpoint_tbo and self.path != ExpertParallelPath.rowwise_nvshmem:
             raise OLMoConfigurationError(
                 "EP checkpoint_tbo=True is only supported with "

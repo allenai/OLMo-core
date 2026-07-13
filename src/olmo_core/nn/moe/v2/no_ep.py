@@ -1,22 +1,31 @@
 from __future__ import annotations
 
+import os
 from typing import TYPE_CHECKING, Optional, Union, cast
 
 import torch
 
-from olmo_core._nvtx import maybe_nvtx_annotate
-from olmo_core.nn.moe.v2._nvtx_colors import COMM_COLOR
+from olmo_core._nvtx import nvtx
 
 from ...moe.utils import async_copy_to_cpu, wait_stream_no_compile
 from ..utils import moe_permute_no_compile, moe_unpermute_no_compile
 from .routed_experts import requires_host_side_split_sizes
 
 if TYPE_CHECKING:
-    from .block import MoEFusedV2TransformerBlock
+    from olmo_core.nn.ddp.block import OLMoDDPTransformerBlock
+
+
+def _debug_tensors_enabled() -> bool:
+    return os.getenv("OLMO_MOE_ROWWISE_DEBUG_TENSORS", "0").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
 
 
 def combined_forward_no_ep(
-    block: MoEFusedV2TransformerBlock,
+    block: OLMoDDPTransformerBlock,
     x: torch.Tensor,
     *,
     loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
@@ -82,21 +91,11 @@ def combined_forward_no_ep(
 
         with torch.cuda.stream(self.get_dense_stream()):
             shared_out = self.shared_experts(moe_inp)
-            if self.shared_experts.num_experts == 1:
-                mixed_shared_out = shared_out.squeeze(0)
-            else:
-                assert local_x_global_shared_expert_weights is not None
-                _, _, E_s = local_x_global_shared_expert_weights.shape
-                mixed_shared_out = (
-                    torch.bmm(
-                        local_x_global_shared_expert_weights.to(shared_out.dtype).reshape(
-                            B * S, 1, E_s
-                        ),
-                        shared_out.permute(1, 2, 0, 3).contiguous().view(B * S, E_s, D),
-                    )
-                    .squeeze(1)
-                    .view(B, S, D)
-                )
+            mixed_shared_out = self._mix_shared_out(
+                shared_out,
+                local_x_global_shared_expert_weights,
+                attn_res_out.shape,
+            )
 
     moe_inp = moe_inp.view(-1, in_shape[-1])
 
@@ -106,7 +105,7 @@ def combined_forward_no_ep(
     num_out_tokens = routing_map.size(0) * self.routed_experts_router.top_k
     hidden_shape_before_permute = moe_inp.shape
 
-    with maybe_nvtx_annotate("permute", COMM_COLOR):
+    with nvtx.annotate("Permute", color="green"):
         permutated_input_tokens, reversed_input_permutation_mapping = moe_permute_no_compile(
             inp=moe_inp,
             routing_map=routing_map,
@@ -114,7 +113,10 @@ def combined_forward_no_ep(
             map_type="index",
         )
 
-    torch._dynamo.mark_dynamic(permutated_input_tokens, 0)
+    # The row count is always B * S * top_k for no-EP routing. Marking it
+    # dynamic makes downstream shape-specialized kernels harder to compile and
+    # can trigger Dynamo constraint violations.
+    # torch._dynamo.mark_dynamic(permutated_input_tokens, 0)
 
     if requires_host_side_split_sizes():
         assert dtoh_event is not None
@@ -127,8 +129,11 @@ def combined_forward_no_ep(
         mlp_x = self.routed_experts(
             permutated_input_tokens, local_batch_size_per_global_routed_expert
         )
+    if _debug_tensors_enabled() and self.block_idx == 0:
+        self._debug_no_ep_expert_out = mlp_x.detach()
+        self._debug_no_ep_batch_size_per_expert = local_batch_size_per_global_routed_expert.detach()
 
-    with maybe_nvtx_annotate("unpermute", COMM_COLOR):
+    with nvtx.annotate("Unpermute", color="green"):
         unpermutated_x: torch.Tensor = moe_unpermute_no_compile(
             inp=mlp_x,
             row_id_map=reversed_input_permutation_mapping,
@@ -138,6 +143,8 @@ def combined_forward_no_ep(
                 -1, self.routed_experts_router.top_k
             ),
         )
+    if _debug_tensors_enabled() and self.block_idx == 0:
+        self._debug_no_ep_combined_local_x = unpermutated_x.detach()
 
     x_moe = unpermutated_x.view(in_shape)
 
