@@ -144,9 +144,7 @@ def maybe_dump_ep_no_sync_saved_activations(
     _DEBUG_STATE.record_named_saved_activation = _record_saved_tensor
     try:
         with torch.autograd.graph.saved_tensors_hooks(_record_saved_tensor, lambda tensor: tensor):
-            out = no_sync_forward(
-                x, loss_div_factor=loss_div_factor, **forward_kwargs
-            )
+            out = no_sync_forward(x, loss_div_factor=loss_div_factor, **forward_kwargs)
     finally:
         if old_recorder is None:
             try:
@@ -216,8 +214,7 @@ def maybe_dump_ep_no_sync_saved_activations(
             record_sources.update(tensor_sources)
 
     total_unique_storage_nbytes_live = sum(
-        cast(int, record["storage_nbytes"])
-        for record in live_saved_activations_by_storage.values()
+        cast(int, record["storage_nbytes"]) for record in live_saved_activations_by_storage.values()
     )
     total_param_storage_nbytes_live = sum(
         cast(int, record["storage_nbytes"])

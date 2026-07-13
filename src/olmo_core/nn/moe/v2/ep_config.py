@@ -70,18 +70,14 @@ class DeepEPConfig(Config):
     def validate(self) -> None:
         self.weighting = self.weighting.lower()
         if self.num_sms < 0:
-            raise OLMoConfigurationError(
-                f"EP DeepEP num_sms must be >= 0 (got {self.num_sms})"
-            )
+            raise OLMoConfigurationError(f"EP DeepEP num_sms must be >= 0 (got {self.num_sms})")
         if self.num_qps < 0:
-            raise OLMoConfigurationError(
-                f"EP DeepEP num_qps must be >= 0 (got {self.num_qps})"
-            )
+            raise OLMoConfigurationError(f"EP DeepEP num_qps must be >= 0 (got {self.num_qps})")
         if self.num_allocated_qps < 0:
             raise OLMoConfigurationError(
-                "EP DeepEP num_allocated_qps must be >= 0 "
-                f"(got {self.num_allocated_qps})"
+                "EP DeepEP num_allocated_qps must be >= 0 " f"(got {self.num_allocated_qps})"
             )
+
 
 @dataclass
 class ExpertParallelConfig(Config):
@@ -122,31 +118,23 @@ class ExpertParallelConfig(Config):
                 f"EP capacity_factor must be > 0 (got {self.capacity_factor})"
             )
         if self.shared_slots < 1:
-            raise OLMoConfigurationError(
-                f"EP shared_slots must be >= 1 (got {self.shared_slots})"
-            )
+            raise OLMoConfigurationError(f"EP shared_slots must be >= 1 (got {self.shared_slots})")
         if self.major_align < 1:
-            raise OLMoConfigurationError(
-                f"EP major_align must be >= 1 (got {self.major_align})"
-            )
+            raise OLMoConfigurationError(f"EP major_align must be >= 1 (got {self.major_align})")
         if self.rowwise_nblocks < 0:
             raise OLMoConfigurationError(
                 f"EP rowwise_nblocks must be >= 0 (got {self.rowwise_nblocks})"
             )
         if self.rowwise_wave_num_waves < 1:
             raise OLMoConfigurationError(
-                "EP rowwise_wave_num_waves must be >= 1 "
-                f"(got {self.rowwise_wave_num_waves})"
+                "EP rowwise_wave_num_waves must be >= 1 " f"(got {self.rowwise_wave_num_waves})"
             )
         if self.rowwise_wave_mode != "expert":
             raise OLMoConfigurationError(
                 "EP rowwise_wave_mode currently supports only 'expert' "
                 f"(got {self.rowwise_wave_mode!r})"
             )
-        if (
-            self.path != ExpertParallelPath.rowwise_wave
-            and self.rowwise_wave_num_waves != 1
-        ):
+        if self.path != ExpertParallelPath.rowwise_wave and self.rowwise_wave_num_waves != 1:
             raise OLMoConfigurationError(
                 "EP rowwise_wave_num_waves is only valid with "
                 f"path={ExpertParallelPath.rowwise_wave!r} "

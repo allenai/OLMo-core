@@ -78,7 +78,7 @@ def _peer_base_ptrs_world() -> None:
         group=group,
     )
     workspace.fill_(rank + 1)
-    ptrs = olmo_symm_mem.peer_base_ptrs(workspace, group=group)
+    ptrs = olmo_symm_mem.peer_base_ptrs(workspace, group=group)  # type: ignore[attr-defined]
     ptrs_cpu = ptrs.cpu().tolist()
 
     assert len(ptrs_cpu) == world_size

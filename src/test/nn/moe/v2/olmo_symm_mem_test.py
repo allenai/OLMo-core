@@ -77,7 +77,7 @@ def test_peer_base_ptrs_registers_group_and_calls_extension(monkeypatch):
     monkeypatch.setattr(olmo_symm_mem, "_load_cuda_extension", lambda: ext)
     monkeypatch.setattr(olmo_symm_mem.dist, "barrier", lambda *, group: barriers.append(group))
 
-    ptrs = olmo_symm_mem.peer_base_ptrs(tensor, group=group)  # type: ignore[arg-type]
+    ptrs = olmo_symm_mem.peer_base_ptrs(tensor, group=group)  # type: ignore[attr-defined]
 
     assert registered == {"group": group, "device": tensor.device}
     assert barriers == [group]

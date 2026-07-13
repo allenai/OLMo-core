@@ -363,7 +363,7 @@ def main() -> None:
         "max_abs_diff_ref_fused_weighted": max_abs_diff_ref_fused_weighted,
         "max_abs_diff_ref_fused_gathered": max_abs_diff_ref_fused_gathered,
     }
-    gathered = [None] * world_size
+    gathered: list = [None] * world_size
     dist.all_gather_object(gathered, result, group=group)
 
     if rank == 0:

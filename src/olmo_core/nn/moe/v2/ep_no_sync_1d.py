@@ -47,7 +47,9 @@ def combined_forward_ep_no_sync_1d(
     assert self.ep_enabled
     assert self.num_local_routed_experts is not None
     assert use_torch_grouped_mm(), "EP no-sync implementation requires torch.grouped_mm support"
-    assert not requires_host_side_split_sizes(), "EP no-sync implementation does not support host-side split size communication"
+    assert (
+        not requires_host_side_split_sizes()
+    ), "EP no-sync implementation does not support host-side split size communication"
     group_name = get_ep_no_sync_group_name(self)
     B, S, D = x.shape
 
@@ -108,7 +110,11 @@ def combined_forward_ep_no_sync_1d(
                     rank_capacity=rank_capacity,
                 ),
             )
-            local_reorder_indices, local_inverse_reorder_indices, packed_keep_mask = build_keep_reorder(
+            (
+                local_reorder_indices,
+                local_inverse_reorder_indices,
+                packed_keep_mask,
+            ) = build_keep_reorder(
                 requested_splits=requested_splits,
                 keep_splits=allowed_splits,
                 num_out_tokens=num_out_tokens,
@@ -125,7 +131,9 @@ def combined_forward_ep_no_sync_1d(
                     device=requested_splits.device,
                     dtype=torch.long,
                 ),
-                "received_tokens_after_drop": recv_splits_by_src_local.sum(dtype=torch.long).detach(),
+                "received_tokens_after_drop": recv_splits_by_src_local.sum(
+                    dtype=torch.long
+                ).detach(),
                 "allowed_splits": allowed_splits.detach(),
                 "local_kept_tokens": num_kept.detach(),
                 "combined_tokens": num_kept.detach(),
@@ -167,7 +175,10 @@ def combined_forward_ep_no_sync_1d(
     assert num_kept is not None
 
     with nvtx.annotate("Permute local tokens", color="green"):
-        permutated_local_x, reversed_local_x_permutation_mapping = moe_permute_1d_fused_drop_no_compile(
+        (
+            permutated_local_x,
+            reversed_local_x_permutation_mapping,
+        ) = moe_permute_1d_fused_drop_no_compile(
             inp=moe_inp,
             routing_map=routing_map,
             num_out_tokens=num_out_tokens,
@@ -259,7 +270,9 @@ def combined_forward_ep_no_sync_1d(
     )
 
     with nvtx.annotate("Unpermute-Merge local tokens", color="green"):
-        combine_out_for_unpermute = combine_out.clone() if buffers.combine_out_is_shared else combine_out
+        combine_out_for_unpermute = (
+            combine_out.clone() if buffers.combine_out_is_shared else combine_out
+        )
         local_x = restore_drop_unpermute_1d(
             self,
             combine_out=combine_out_for_unpermute,
@@ -278,7 +291,9 @@ def combined_forward_ep_no_sync_1d(
         assert shared_out_gate is not None
 
         with torch.cuda.stream(self.get_dense_stream()):
-            shared_out = self.shared_experts.forward2(shared_out_up, shared_out_gate, attn_res_out.shape)
+            shared_out = self.shared_experts.forward2(
+                shared_out_up, shared_out_gate, attn_res_out.shape
+            )
             mixed_shared_out = self._mix_shared_out(
                 shared_out,
                 local_x_global_shared_expert_weights,

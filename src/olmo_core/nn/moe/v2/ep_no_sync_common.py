@@ -41,9 +41,8 @@ def padded_local_expert_splits_for_capacity(
 
 
 def _ep_sync_debug_enabled() -> bool:
-    verbose = (
-        os.getenv("OLMO_ROWWISE_VERBOSE_DEBUG_PRINT")
-        or os.getenv("OLMO_TBO_VERBOSE_DEBUG_PRINT", "0")
+    verbose = os.getenv("OLMO_ROWWISE_VERBOSE_DEBUG_PRINT") or os.getenv(
+        "OLMO_TBO_VERBOSE_DEBUG_PRINT", "0"
     )
     if (verbose or "").strip().lower() not in {
         "1",

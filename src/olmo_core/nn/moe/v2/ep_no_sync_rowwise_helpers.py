@@ -78,10 +78,7 @@ def accumulate_ep_no_sync_rowwise_metrics(
 
     drop_sum = drop_token_cnt.detach().to(dtype=torch.float32)
     total_sum = torch.empty_like(drop_sum).fill_(num_out_tokens)
-    util = (
-        recv_splits_by_src_local.detach().sum(dtype=torch.float32)
-        * (1.0 / rank_capacity)
-    )
+    util = recv_splits_by_src_local.detach().sum(dtype=torch.float32) * (1.0 / rank_capacity)
 
     if block._ep_no_sync_rowwise_drop_tokens_sum is None:
         block._ep_no_sync_rowwise_drop_tokens_sum = hide_from_torch(drop_sum)
@@ -196,9 +193,7 @@ def build_rowwise_route_maps(
         torch.cumsum(recv_total_by_dest_local, dim=1) - recv_total_by_dest_local
     )
 
-    base_rows_by_expert = (
-        local_expert_base_by_dest + send_base_by_dest_local
-    ).reshape(-1)
+    base_rows_by_expert = (local_expert_base_by_dest + send_base_by_dest_local).reshape(-1)
 
     # Compute stable in-bucket positions without argsort. torch.argsort lowers
     # through tuple-returning aten.sort, which AOTAutograd cannot partition when
@@ -216,11 +211,14 @@ def build_rowwise_route_maps(
     # tripped Inductor codegen in the full graph.
     for expert_id in range(expert_count):
         expert_mask = bucket_ids == expert_id
-        expert_pos = torch.cumsum(
-            expert_mask.to(dtype=torch.long),
-            dim=0,
-            dtype=torch.long,
-        ) - 1
+        expert_pos = (
+            torch.cumsum(
+                expert_mask.to(dtype=torch.long),
+                dim=0,
+                dtype=torch.long,
+            )
+            - 1
+        )
         pos_in_bucket = torch.where(expert_mask, expert_pos, pos_in_bucket)
         keep_limits = torch.where(
             expert_mask,

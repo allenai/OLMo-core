@@ -10,6 +10,7 @@ _CHECKPOINT_FORWARD_STATE = threading.local()
 try:
     _torch_compile_disable = torch.compiler.disable
 except AttributeError:
+
     def _torch_compile_disable(fn):
         return fn
 

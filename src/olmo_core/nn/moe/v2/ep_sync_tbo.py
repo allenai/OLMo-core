@@ -41,7 +41,6 @@ def combined_forward_ep_tbo(
 
     B, S, D = x0.shape
 
-
     # rename "x" to avoid confusion
     block_inp = x0
     del x0
@@ -55,19 +54,17 @@ def combined_forward_ep_tbo(
                 device=block_inp.device,
             ),
             self.num_local_routed_experts,
-        ) # e.g. [0, 1, 2, 3, 0, 1, 2, 3, ...] for 4 local experts
-
+        )  # e.g. [0, 1, 2, 3, 0, 1, 2, 3, ...] for 4 local experts
 
     ############################ TBO 1 ############################
-    with nvtx.annotate("TBO-1", color='orange'):
+    with nvtx.annotate("TBO-1", color="orange"):
         if x1_is_fresh:
             local_x1, local_x_handle1 = None, None
             last_block = None
         else:
             if not isinstance(x1_ctx, SyncedTboPendingContext):
                 raise RuntimeError(
-                    "Expected synced TBO context from previous block, "
-                    f"got type={type(x1_ctx)}"
+                    "Expected synced TBO context from previous block, " f"got type={type(x1_ctx)}"
                 )
             global_x1 = x1_ctx.global_x
             send_counts1 = x1_ctx.send_counts
@@ -76,10 +73,10 @@ def combined_forward_ep_tbo(
 
             assert last_block.routed_experts_router is not None
             # finish reverse all2all and other ops for x1
-            with nvtx.annotate("reverse_all_to_all", color='green'):
+            with nvtx.annotate("reverse_all_to_all", color="green"):
                 global_x1 = cast(torch.Tensor, global_x1)
                 global_x1, local_x1, local_x_handle1 = ops.all_to_all_async(
-                # local_x1, local_x_handle1 = ops.all_to_all(
+                    # local_x1, local_x_handle1 = ops.all_to_all(
                     global_x1,
                     send_counts1,
                     recv_counts1,
@@ -87,10 +84,9 @@ def combined_forward_ep_tbo(
                     # async_op=True,
                 )
 
-
     ############################ END: TBO 1 ########################
 
-    with nvtx.annotate("TBO-0", color='purple'):
+    with nvtx.annotate("TBO-0", color="purple"):
         # attention
         # + attention norm
         # + residual connection
@@ -99,14 +95,12 @@ def combined_forward_ep_tbo(
         moe_inp = self._prepare_moe_input(attn_res_out)
         # routed expert router
         (
-            local_x_global_routed_expert_weights, # (B, S, top_k)
-            local_x_global_routed_expert_indices, # (B, S, top_k)
-            local_batch_size_per_global_routed_expert, # (num_experts, )
+            local_x_global_routed_expert_weights,  # (B, S, top_k)
+            local_x_global_routed_expert_indices,  # (B, S, top_k)
+            local_batch_size_per_global_routed_expert,  # (num_experts, )
             routed_expert_router_aux_loss_info,
         ) = self.routed_experts_router(
-            moe_inp,
-            False,
-            loss_div_factor=loss_div_factor # scalar
+            moe_inp, False, loss_div_factor=loss_div_factor  # scalar
         )
 
         attn_res_out = self._attach_routed_aux_loss(
@@ -114,9 +108,8 @@ def combined_forward_ep_tbo(
             routed_expert_router_aux_loss_info,
         )
 
-
         ########### 1. Communicate the number of tokens that will be sent to each device ###########
-        with nvtx.annotate("Token count all_to_all", color='green'):
+        with nvtx.annotate("Token count all_to_all", color="green"):
             with torch.no_grad():
                 # Pass token count information to the device on which the
                 # target expert resides.
@@ -124,36 +117,35 @@ def combined_forward_ep_tbo(
                     local_batch_size_per_global_routed_expert,
                 )
                 global_batch_size_handle = dist.all_to_all_single(
-                    global_batch_size_per_local_expert, # Gathered concatenated output tensor.
-                    local_batch_size_per_global_routed_expert, # Input tensor to scatter.
+                    global_batch_size_per_local_expert,  # Gathered concatenated output tensor.
+                    local_batch_size_per_global_routed_expert,  # Input tensor to scatter.
                     group=self.ep_pg,
                     async_op=True,
                 )
 
-                assert global_batch_size_handle is not None # because of async
+                assert global_batch_size_handle is not None  # because of async
 
         ############################################ end
 
         if self.shared_experts_router:
             # shared expert router
             (
-                local_x_global_shared_expert_weights, # (B, S, E_shared)
+                local_x_global_shared_expert_weights,  # (B, S, E_shared)
                 _,
                 _,
-                _
+                _,
             ) = self.shared_experts_router(
                 moe_inp,
                 True,  # only need scores for shared experts
-                loss_div_factor=loss_div_factor # scalar
+                loss_div_factor=loss_div_factor,  # scalar
             )
         else:
             local_x_global_shared_expert_weights = None
 
-
         # forward shared experts
         if self.shared_experts is not None:
             shared_out = self.shared_experts.forward(moe_inp)
-            with nvtx.annotate("merge_shared", color='purple'):
+            with nvtx.annotate("merge_shared", color="purple"):
                 mixed_shared_out = self._mix_shared_out(
                     shared_out,
                     local_x_global_shared_expert_weights,
@@ -166,18 +158,19 @@ def combined_forward_ep_tbo(
 
         moe_inp = moe_inp.view(-1, in_shape[-1])  # (B*S, D)
 
-
         ###########  3. Configure the sizes for grouped GEMM ###########
 
         # Compute the number of tokens that will be received from each
         # device and permute the input data across the devices.
-        with nvtx.annotate("Sync token count", color='green'):
+        with nvtx.annotate("Sync token count", color="green"):
             with torch.no_grad():
                 global_batch_size_handle.wait()
 
                 # Reshape to (ep_world_size, num_local_routed_experts).
-                local_batch_size_per_global_routed_expert = local_batch_size_per_global_routed_expert.view(
-                    self.ep_world_size, self.num_local_routed_experts
+                local_batch_size_per_global_routed_expert = (
+                    local_batch_size_per_global_routed_expert.view(
+                        self.ep_world_size, self.num_local_routed_experts
+                    )
                 )
                 global_batch_size_per_local_expert = global_batch_size_per_local_expert.view(
                     self.ep_world_size, self.num_local_routed_experts
@@ -188,28 +181,32 @@ def combined_forward_ep_tbo(
                     dtype=torch.long,
                 )
 
-
                 send_counts_gpu = local_batch_size_per_global_routed_expert.sum(dim=-1)
                 recv_counts_gpu = global_batch_size_per_local_expert.sum(dim=-1)
-                send_counts_cpu, _, dtoh_event_send = async_copy_to_cpu(send_counts_gpu, event=self._dtoh_event_send)
-                recv_counts_cpu, _, dtoh_event_recv = async_copy_to_cpu(recv_counts_gpu, event=self._dtoh_event_recv)
-                parallel_batch_size_per_local_expert_cpu, _, dtoh_event = async_copy_to_cpu(parallel_batch_size_per_local_expert, event=self._dtoh_event)
-
-
+                send_counts_cpu, _, dtoh_event_send = async_copy_to_cpu(
+                    send_counts_gpu, event=self._dtoh_event_send
+                )
+                recv_counts_cpu, _, dtoh_event_recv = async_copy_to_cpu(
+                    recv_counts_gpu, event=self._dtoh_event_recv
+                )
+                parallel_batch_size_per_local_expert_cpu, _, dtoh_event = async_copy_to_cpu(
+                    parallel_batch_size_per_local_expert, event=self._dtoh_event
+                )
 
         ########### 2. permute local tokens to be ready for all-to-all communication ###########
 
-        with nvtx.annotate("Permute local tokens", color='green'):
-            routing_map = local_x_global_routed_expert_indices.view(-1, self.routed_experts_router.top_k).int()
-            num_out_tokens = routing_map.size(0) * self.routed_experts_router.top_k # dropless
+        with nvtx.annotate("Permute local tokens", color="green"):
+            routing_map = local_x_global_routed_expert_indices.view(
+                -1, self.routed_experts_router.top_k
+            ).int()
+            num_out_tokens = routing_map.size(0) * self.routed_experts_router.top_k  # dropless
             hidden_shape_before_permute = moe_inp.shape
             permutated_local_x, reversed_local_x_permutation_mapping = moe_permute_no_compile(
                 inp=moe_inp,
                 routing_map=routing_map,
                 num_out_tokens=num_out_tokens,
-                map_type='index'
+                map_type="index",
             )
-
 
         with torch.no_grad():
             # torch.cuda.current_stream().synchronize() # wait for the copy to CPU to finish
@@ -219,11 +216,11 @@ def combined_forward_ep_tbo(
             # dtoh_event_send.synchronize()
             # dtoh_event_recv.synchronize()
             dtoh_event.synchronize()
-            send_counts = send_counts_cpu.tolist() # tensor to list
-            recv_counts = recv_counts_cpu.tolist() # tensor to list
+            send_counts = send_counts_cpu.tolist()  # tensor to list
+            recv_counts = recv_counts_cpu.tolist()  # tensor to list
             tokens_received = sum(recv_counts)
 
-        with nvtx.annotate("all2all", color='green'):
+        with nvtx.annotate("all2all", color="green"):
             permutated_local_x, global_x, global_x_handle = ops.all_to_all_async(
                 permutated_local_x,
                 recv_counts,
@@ -237,12 +234,12 @@ def combined_forward_ep_tbo(
                 global_x_local_expert_indices_0,
                 global_batch_size_per_local_expert.flatten(),
                 output_size=tokens_received,
-            ) # e.g. [0, ...,  0, ... , 3, ..., 3, 0, ...] for 4 local experts
+            )  # e.g. [0, ...,  0, ... , 3, ..., 3, 0, ...] for 4 local experts
 
-    with nvtx.annotate("TBO-1", color='orange'):
+    with nvtx.annotate("TBO-1", color="orange"):
         if x1_is_fresh:
             x1_ctx = cast(Dict, x1_ctx)
-            x1 = x1_ctx['x1']
+            x1 = x1_ctx["x1"]
             assert x1.shape == (B, S, D)
             block_inp1 = x1
             del x1
@@ -264,16 +261,17 @@ def combined_forward_ep_tbo(
             local_x1 = ops.all_to_all_wait(global_x1, local_x1, local_x_handle1)
 
             ## 9. Unpermute the (local) tokens returned by all-to-all communication ##
-            with nvtx.annotate("Unpermute-Merge local tokens", color='green'):
+            with nvtx.annotate("Unpermute-Merge local tokens", color="green"):
                 local_x1 = moe_unpermute_no_compile(
                     inp=local_x1,
                     row_id_map=reversed_local_x_permutation_mapping1,
-                    merging_probs=local_x_global_routed_expert_weights1.view(-1, last_block.routed_experts_router.top_k),
+                    merging_probs=local_x_global_routed_expert_weights1.view(
+                        -1, last_block.routed_experts_router.top_k
+                    ),
                     restore_shape=hidden_shape_before_permute1,
-                    map_type='index',
+                    map_type="index",
                 )
             ## end
-
 
             local_x1 = local_x1.view(in_shape1)
 
@@ -292,14 +290,12 @@ def combined_forward_ep_tbo(
 
         # routed expert router
         (
-            local_x_global_routed_expert_weights1, # (B, S, top_k)
-            local_x_global_routed_expert_indices1, # (B, S, top_k)
-            local_batch_size_per_global_routed_expert1, # (num_experts, )
+            local_x_global_routed_expert_weights1,  # (B, S, top_k)
+            local_x_global_routed_expert_indices1,  # (B, S, top_k)
+            local_batch_size_per_global_routed_expert1,  # (num_experts, )
             routed_expert_router_aux_loss_info1,
         ) = self.routed_experts_router(
-            moe_inp1,
-            False,
-            loss_div_factor=loss_div_factor # scalar
+            moe_inp1, False, loss_div_factor=loss_div_factor  # scalar
         )
 
         attn_res_out1 = self._attach_routed_aux_loss(
@@ -307,9 +303,7 @@ def combined_forward_ep_tbo(
             routed_expert_router_aux_loss_info1,
         )
 
-
-
-        with nvtx.annotate("Token count all_to_all", color='green'):
+        with nvtx.annotate("Token count all_to_all", color="green"):
             with torch.no_grad():
                 # Pass token count information to the device on which the
                 # target expert resides.
@@ -317,36 +311,33 @@ def combined_forward_ep_tbo(
                     local_batch_size_per_global_routed_expert1,
                 )
                 global_batch_size_handle1 = dist.all_to_all_single(
-                    global_batch_size_per_local_expert1, # Gathered concatenated output tensor.
-                    local_batch_size_per_global_routed_expert1, # Input tensor to scatter.
+                    global_batch_size_per_local_expert1,  # Gathered concatenated output tensor.
+                    local_batch_size_per_global_routed_expert1,  # Input tensor to scatter.
                     group=self.ep_pg,
                     async_op=True,
                 )
 
-                assert global_batch_size_handle1 is not None # because of async
-
-
+                assert global_batch_size_handle1 is not None  # because of async
 
         if self.shared_experts_router:
             # shared expert router
             (
-                local_x_global_shared_expert_weights1, # (B, S, E_shared)
+                local_x_global_shared_expert_weights1,  # (B, S, E_shared)
                 _,
                 _,
-                _
+                _,
             ) = self.shared_experts_router(
                 moe_inp1,
                 True,  # only need scores for shared experts
-                loss_div_factor=loss_div_factor # scalar
+                loss_div_factor=loss_div_factor,  # scalar
             )
         else:
             local_x_global_shared_expert_weights1 = None
 
-
         if self.shared_experts is not None:
             shared_out1 = self.shared_experts.forward(moe_inp1)
 
-            with nvtx.annotate("merge_shared", color='purple'):
+            with nvtx.annotate("merge_shared", color="purple"):
                 mixed_shared_out1 = self._mix_shared_out(
                     shared_out1,
                     local_x_global_shared_expert_weights1,
@@ -359,18 +350,19 @@ def combined_forward_ep_tbo(
 
         moe_inp1 = moe_inp1.view(-1, in_shape1[-1])  # (B*S, D)
 
-
         ###########  3. Configure the sizes for grouped GEMM ###########
 
         # Compute the number of tokens that will be received from each
         # device and permute the input data across the devices.
-        with nvtx.annotate("Sync token count", color='green'):
+        with nvtx.annotate("Sync token count", color="green"):
             with torch.no_grad():
                 global_batch_size_handle1.wait()
 
                 # Reshape to (ep_world_size, num_local_routed_experts).
-                local_batch_size_per_global_routed_expert1 = local_batch_size_per_global_routed_expert1.view(
-                    self.ep_world_size, self.num_local_routed_experts
+                local_batch_size_per_global_routed_expert1 = (
+                    local_batch_size_per_global_routed_expert1.view(
+                        self.ep_world_size, self.num_local_routed_experts
+                    )
                 )
                 global_batch_size_per_local_expert1 = global_batch_size_per_local_expert1.view(
                     self.ep_world_size, self.num_local_routed_experts
@@ -381,30 +373,34 @@ def combined_forward_ep_tbo(
                     dtype=torch.long,
                 )
 
-
                 send_counts_gpu1 = local_batch_size_per_global_routed_expert1.sum(dim=-1)
                 recv_counts_gpu1 = global_batch_size_per_local_expert1.sum(dim=-1)
-                send_counts_cpu1, _, dtoh_event_send1 = async_copy_to_cpu(send_counts_gpu1, event=self._dtoh_event_send1)
-                recv_counts_cpu1, _, dtoh_event_recv1 = async_copy_to_cpu(recv_counts_gpu1, event=self._dtoh_event_recv1)
-                parallel_batch_size_per_local_expert_cpu1, _, dtoh_event1 = async_copy_to_cpu(parallel_batch_size_per_local_expert1, event=self._dtoh_event1)
-
+                send_counts_cpu1, _, dtoh_event_send1 = async_copy_to_cpu(
+                    send_counts_gpu1, event=self._dtoh_event_send1
+                )
+                recv_counts_cpu1, _, dtoh_event_recv1 = async_copy_to_cpu(
+                    recv_counts_gpu1, event=self._dtoh_event_recv1
+                )
+                parallel_batch_size_per_local_expert_cpu1, _, dtoh_event1 = async_copy_to_cpu(
+                    parallel_batch_size_per_local_expert1, event=self._dtoh_event1
+                )
 
         ########### 2. permute local tokens to be ready for all-to-all communication ###########
 
-        with nvtx.annotate("Permute local tokens", color='green'):
-            routing_map1 = local_x_global_routed_expert_indices1.view(-1, self.routed_experts_router.top_k).int()
-            num_out_tokens1 = routing_map1.size(0) * self.routed_experts_router.top_k # dropless
+        with nvtx.annotate("Permute local tokens", color="green"):
+            routing_map1 = local_x_global_routed_expert_indices1.view(
+                -1, self.routed_experts_router.top_k
+            ).int()
+            num_out_tokens1 = routing_map1.size(0) * self.routed_experts_router.top_k  # dropless
             hidden_shape_before_permute1 = moe_inp1.shape
             permutated_local_x1, reversed_local_x_permutation_mapping1 = moe_permute_no_compile(
                 inp=moe_inp1,
                 routing_map=routing_map1,
                 num_out_tokens=num_out_tokens1,
-                map_type='index'
+                map_type="index",
             )
 
         #### end
-
-
 
         with torch.no_grad():
             # torch.cuda.current_stream().synchronize() # wait for the copy to CPU to finish
@@ -414,18 +410,17 @@ def combined_forward_ep_tbo(
             # dtoh_event_send1.synchronize()
             # dtoh_event_recv1.synchronize()
             dtoh_event1.synchronize()
-            send_counts1 = send_counts_cpu1.tolist() # tensor to list
-            recv_counts1 = recv_counts_cpu1.tolist() # tensor to list
+            send_counts1 = send_counts_cpu1.tolist()  # tensor to list
+            recv_counts1 = recv_counts_cpu1.tolist()  # tensor to list
             tokens_received1 = sum(recv_counts1)
     ############################ END: TBO 1 ########################
 
-    with nvtx.annotate("TBO-0", color='purple'):
+    with nvtx.annotate("TBO-0", color="purple"):
         global_x = ops.all_to_all_wait(permutated_local_x, global_x, global_x_handle)
 
-
     ############################ TBO 1 ############################
-    with nvtx.annotate("TBO-1", color='orange'):
-        with nvtx.annotate("all2all", color='green'):
+    with nvtx.annotate("TBO-1", color="orange"):
+        with nvtx.annotate("all2all", color="green"):
             # global_x1, global_x_handle1 = ops.all_to_all(
             permutated_local_x1, global_x1, global_x_handle1 = ops.all_to_all_async(
                 permutated_local_x1,
@@ -441,12 +436,10 @@ def combined_forward_ep_tbo(
                 global_x_local_expert_indices_0,
                 global_batch_size_per_local_expert1.flatten(),
                 output_size=tokens_received1,
-            ) # e.g. [0, ...,  0, ... , 3, ..., 3, 0, ...] for 4 local experts
+            )  # e.g. [0, ...,  0, ... , 3, ..., 3, 0, ...] for 4 local experts
     ############################ END: TBO 1 ########################
 
-
-
-    with nvtx.annotate("TBO-0", color='purple'):
+    with nvtx.annotate("TBO-0", color="purple"):
         global_x = checkpointed_permute_routed_experts_unpermute_1d(
             self,
             global_x,
@@ -458,22 +451,19 @@ def combined_forward_ep_tbo(
             ),
         )
 
-
-
     ############################ TBO 1 ############################
-    with nvtx.annotate("TBO-1", color='orange'):
+    with nvtx.annotate("TBO-1", color="orange"):
         global_x1 = ops.all_to_all_wait(permutated_local_x1, global_x1, global_x_handle1)
 
     ############################ END: TBO 1 ########################
 
-    with nvtx.annotate("TBO-0", color='purple'):
-
+    with nvtx.annotate("TBO-0", color="purple"):
         ########## 8. reverse_all_to_all ###########
 
-        with nvtx.annotate("reverse_all_to_all", color='green'):
+        with nvtx.annotate("reverse_all_to_all", color="green"):
             global_x = cast(torch.Tensor, global_x)
             global_x, local_x, local_x_handle = ops.all_to_all_async(
-            # local_x, local_x_handle = ops.all_to_all(
+                # local_x, local_x_handle = ops.all_to_all(
                 global_x,
                 send_counts,
                 recv_counts,
@@ -481,9 +471,8 @@ def combined_forward_ep_tbo(
                 # async_op=True
             )
 
-
     ############################ TBO 1 ############################
-    with nvtx.annotate("TBO-1", color='orange'):
+    with nvtx.annotate("TBO-1", color="orange"):
         global_x1 = checkpointed_permute_routed_experts_unpermute_1d(
             self,
             global_x1,
@@ -497,27 +486,26 @@ def combined_forward_ep_tbo(
 
     ############################ END: TBO 1 ########################
 
-    with nvtx.annotate("TBO-0", color='purple'):
+    with nvtx.annotate("TBO-0", color="purple"):
         local_x = ops.all_to_all_wait(global_x, local_x, local_x_handle)
 
         # del global_x # done with global tokens
         ############################################ end
 
-
         ############ 9. Unpermute the (local) tokens returned by all-to-all communication ##########
-        with nvtx.annotate("Unpermute-Merge local tokens", color='green'):
+        with nvtx.annotate("Unpermute-Merge local tokens", color="green"):
             local_x = moe_unpermute_no_compile(
                 inp=local_x,
                 row_id_map=reversed_local_x_permutation_mapping,
-                merging_probs=local_x_global_routed_expert_weights.view(-1, self.routed_experts_router.top_k),
+                merging_probs=local_x_global_routed_expert_weights.view(
+                    -1, self.routed_experts_router.top_k
+                ),
                 restore_shape=hidden_shape_before_permute,
-                map_type='index',
+                map_type="index",
             )
         ############################################ end
 
-
         local_x = local_x.view(in_shape)
-
 
         mlp_out = self._merge_routed_and_shared(local_x, mixed_shared_out)
 
@@ -525,9 +513,8 @@ def combined_forward_ep_tbo(
 
         #######################
 
-
     ############################ TBO 1 ############################
-    with nvtx.annotate("TBO-1", color='orange'):
+    with nvtx.annotate("TBO-1", color="orange"):
         x1_ctx = SyncedTboPendingContext(
             global_x=global_x1,
             send_counts=send_counts1,
@@ -541,10 +528,7 @@ def combined_forward_ep_tbo(
             last_block=self,
         )
 
-
-
     ############################ END: TBO 1 ########################
-
 
     return (
         final_out,

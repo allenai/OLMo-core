@@ -53,7 +53,9 @@ def ep_no_sync_stage_a(
     assert self.ep_enabled
     assert self.num_local_routed_experts is not None
     assert use_torch_grouped_mm(), "EP no-sync implementation requires torch.grouped_mm support"
-    assert not requires_host_side_split_sizes(), "EP no-sync implementation does not support host-side split size communication"
+    assert (
+        not requires_host_side_split_sizes()
+    ), "EP no-sync implementation does not support host-side split size communication"
     if self.ep.uses_rowwise_buffers:
         raise RuntimeError(
             "1D no-sync TBO was removed. Use "
@@ -131,7 +133,11 @@ def ep_no_sync_stage_a(
                     rank_capacity=rank_capacity,
                 ),
             )
-            local_reorder_indices, local_inverse_reorder_indices, packed_keep_mask = build_keep_reorder(
+            (
+                local_reorder_indices,
+                local_inverse_reorder_indices,
+                packed_keep_mask,
+            ) = build_keep_reorder(
                 requested_splits=requested_splits,
                 keep_splits=allowed_splits,
                 num_out_tokens=num_out_tokens,
@@ -159,7 +165,10 @@ def ep_no_sync_stage_a(
         routing_map = local_x_global_routed_expert_indices.view(
             -1, self.routed_experts_router.top_k
         ).int()
-        permutated_local_x, reversed_local_x_permutation_mapping = moe_permute_1d_fused_drop_no_compile(
+        (
+            permutated_local_x,
+            reversed_local_x_permutation_mapping,
+        ) = moe_permute_1d_fused_drop_no_compile(
             inp=moe_inp,
             routing_map=routing_map,
             num_out_tokens=num_out_tokens,
@@ -204,7 +213,9 @@ def ep_no_sync_stage_a(
     )
 
 
-def ep_no_sync_stage_d_launch(block: OLMoDDPTransformerBlock, a_state: _NoSyncStageAState) -> _NoSyncStageDState:
+def ep_no_sync_stage_d_launch(
+    block: OLMoDDPTransformerBlock, a_state: _NoSyncStageAState
+) -> _NoSyncStageDState:
     self = block
     comm_stream = get_or_init_stream(id=f"ep_no_sync_comm_block_{self.block_idx}", priority=0)
     wait_stream_no_compile(this_stream=comm_stream, other_stream=torch.cuda.current_stream())
@@ -232,7 +243,9 @@ def ep_no_sync_stage_d_launch(block: OLMoDDPTransformerBlock, a_state: _NoSyncSt
     )
 
 
-def ep_no_sync_stage_e(block: OLMoDDPTransformerBlock, d_state: _NoSyncStageDState) -> _NoSyncTboPendingContext:
+def ep_no_sync_stage_e(
+    block: OLMoDDPTransformerBlock, d_state: _NoSyncStageDState
+) -> _NoSyncTboPendingContext:
     self = block
     assert self.routed_experts is not None
     wait_event_no_compile(torch.cuda.current_stream(), d_state.dispatch_done_event)
@@ -320,7 +333,9 @@ def ep_no_sync_stage_c_launch(
     return pending_ctx
 
 
-def ep_no_sync_stage_tail(block: OLMoDDPTransformerBlock, pending_ctx: _NoSyncTboPendingContext) -> torch.Tensor:
+def ep_no_sync_stage_tail(
+    block: OLMoDDPTransformerBlock, pending_ctx: _NoSyncTboPendingContext
+) -> torch.Tensor:
     self = block
     if pending_ctx.combine_done_event is not None:
         wait_event_no_compile(torch.cuda.current_stream(), pending_ctx.combine_done_event)
@@ -330,9 +345,13 @@ def ep_no_sync_stage_tail(block: OLMoDDPTransformerBlock, pending_ctx: _NoSyncTb
     if a_state.shared_done_event is not None:
         wait_event_no_compile(torch.cuda.current_stream(), a_state.shared_done_event)
 
-    combine_out = pending_ctx.combine_out if pending_ctx.combine_out is not None else buffers.combine_out
+    combine_out = (
+        pending_ctx.combine_out if pending_ctx.combine_out is not None else buffers.combine_out
+    )
     with nvtx.annotate("Tail-UnpermuteMerge", color="green"):
-        combine_out_for_unpermute = combine_out.clone() if buffers.combine_out_is_shared else combine_out
+        combine_out_for_unpermute = (
+            combine_out.clone() if buffers.combine_out_is_shared else combine_out
+        )
         local_x = restore_drop_unpermute_1d(
             self,
             combine_out=combine_out_for_unpermute,
@@ -373,8 +392,7 @@ def combined_forward_ep_no_sync_tbo(
     else:
         if not isinstance(x1_ctx, _NoSyncTboPendingContext):
             raise RuntimeError(
-                "Expected no-sync TBO context from previous block, "
-                f"got type={type(x1_ctx)}"
+                "Expected no-sync TBO context from previous block, " f"got type={type(x1_ctx)}"
             )
         pending_prev = x1_ctx
 

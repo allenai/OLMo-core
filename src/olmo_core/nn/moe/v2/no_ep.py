@@ -98,7 +98,9 @@ def combined_forward_no_ep(
 
     moe_inp = moe_inp.view(-1, in_shape[-1])
 
-    routing_map = local_x_global_routed_expert_indices.view(-1, self.routed_experts_router.top_k).int()
+    routing_map = local_x_global_routed_expert_indices.view(
+        -1, self.routed_experts_router.top_k
+    ).int()
     num_out_tokens = routing_map.size(0) * self.routed_experts_router.top_k
     hidden_shape_before_permute = moe_inp.shape
 
@@ -119,14 +121,16 @@ def combined_forward_no_ep(
         assert dtoh_event is not None
         dtoh_event = cast(torch.cuda.Event, dtoh_event)
         dtoh_event.synchronize()
-        mlp_x = self.routed_experts(permutated_input_tokens, local_batch_size_per_global_routed_expert_cpu)
+        mlp_x = self.routed_experts(
+            permutated_input_tokens, local_batch_size_per_global_routed_expert_cpu
+        )
     else:
-        mlp_x = self.routed_experts(permutated_input_tokens, local_batch_size_per_global_routed_expert)
+        mlp_x = self.routed_experts(
+            permutated_input_tokens, local_batch_size_per_global_routed_expert
+        )
     if _debug_tensors_enabled() and self.block_idx == 0:
         self._debug_no_ep_expert_out = mlp_x.detach()
-        self._debug_no_ep_batch_size_per_expert = (
-            local_batch_size_per_global_routed_expert.detach()
-        )
+        self._debug_no_ep_batch_size_per_expert = local_batch_size_per_global_routed_expert.detach()
 
     with nvtx.annotate("Unpermute", color="green"):
         unpermutated_x: torch.Tensor = moe_unpermute_no_compile(
@@ -134,7 +138,9 @@ def combined_forward_no_ep(
             row_id_map=reversed_input_permutation_mapping,
             restore_shape=hidden_shape_before_permute,
             map_type="index",
-            merging_probs=local_x_global_routed_expert_weights.view(-1, self.routed_experts_router.top_k),
+            merging_probs=local_x_global_routed_expert_weights.view(
+                -1, self.routed_experts_router.top_k
+            ),
         )
     if _debug_tensors_enabled() and self.block_idx == 0:
         self._debug_no_ep_combined_local_x = unpermutated_x.detach()

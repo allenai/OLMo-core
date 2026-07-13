@@ -561,7 +561,7 @@ def main() -> None:
         else 0.0
     )
 
-    gathered = [None] * world_size
+    gathered: list = [None] * world_size
     result = {
         "rank": rank,
         "dispatch_avg_ms": mean(dispatch_times_ms),

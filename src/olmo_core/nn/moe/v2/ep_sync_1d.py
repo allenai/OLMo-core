@@ -167,8 +167,10 @@ def combined_forward_ep_1d(
         with torch.no_grad():
             global_batch_size_handle.wait()
 
-            local_batch_size_per_global_routed_expert = local_batch_size_per_global_routed_expert.view(
-                self.ep_world_size, self.num_local_routed_experts
+            local_batch_size_per_global_routed_expert = (
+                local_batch_size_per_global_routed_expert.view(
+                    self.ep_world_size, self.num_local_routed_experts
+                )
             )
             global_batch_size_per_local_expert = global_batch_size_per_local_expert.view(
                 self.ep_world_size, self.num_local_routed_experts
@@ -180,8 +182,12 @@ def combined_forward_ep_1d(
 
             send_counts_gpu = local_batch_size_per_global_routed_expert.sum(dim=-1)
             recv_counts_gpu = global_batch_size_per_local_expert.sum(dim=-1)
-            send_counts_cpu, copy_stream, dtoh_event_send = async_copy_to_cpu(send_counts_gpu, event=self._dtoh_event_send)
-            recv_counts_cpu, copy_stream, dtoh_event_recv = async_copy_to_cpu(recv_counts_gpu, event=self._dtoh_event_recv)
+            send_counts_cpu, copy_stream, dtoh_event_send = async_copy_to_cpu(
+                send_counts_gpu, event=self._dtoh_event_send
+            )
+            recv_counts_cpu, copy_stream, dtoh_event_recv = async_copy_to_cpu(
+                recv_counts_gpu, event=self._dtoh_event_recv
+            )
             parallel_batch_size_per_local_expert_cpu, copy_stream, dtoh_event = async_copy_to_cpu(
                 parallel_batch_size_per_local_expert,
                 event=self._dtoh_event,
@@ -198,7 +204,9 @@ def combined_forward_ep_1d(
         )
 
     with nvtx.annotate("Permute local tokens", color="green"):
-        routing_map = local_x_global_routed_expert_indices.view(-1, self.routed_experts_router.top_k).int()
+        routing_map = local_x_global_routed_expert_indices.view(
+            -1, self.routed_experts_router.top_k
+        ).int()
         num_out_tokens = routing_map.size(0) * self.routed_experts_router.top_k
         hidden_shape_before_permute = moe_inp.shape
         permutated_local_x, reversed_local_x_permutation_mapping = moe_permute_no_compile(
@@ -283,7 +291,9 @@ def combined_forward_ep_1d(
         self.get_dense_stream().wait_event(before_rev_all2all_event)
         with nvtx.annotate("merge_shared", color="purple"):
             with torch.cuda.stream(self.get_dense_stream()):
-                shared_out = self.shared_experts.forward2(shared_out_up, shared_out_gate, attn_res_out.shape)
+                shared_out = self.shared_experts.forward2(
+                    shared_out_up, shared_out_gate, attn_res_out.shape
+                )
                 mixed_shared_out = self._mix_shared_out(
                     shared_out,
                     local_x_global_shared_expert_weights,
@@ -300,7 +310,9 @@ def combined_forward_ep_1d(
                 moe_unpermute_no_compile,
                 inp=local_x,
                 row_id_map=reversed_local_x_permutation_mapping,
-                merging_probs=local_x_global_routed_expert_weights.view(-1, self.routed_experts_router.top_k),
+                merging_probs=local_x_global_routed_expert_weights.view(
+                    -1, self.routed_experts_router.top_k
+                ),
                 restore_shape=hidden_shape_before_permute,
                 map_type="index",
                 use_reentrant=False,
@@ -310,7 +322,9 @@ def combined_forward_ep_1d(
             local_x = moe_unpermute_no_compile(
                 inp=local_x,
                 row_id_map=reversed_local_x_permutation_mapping,
-                merging_probs=local_x_global_routed_expert_weights.view(-1, self.routed_experts_router.top_k),
+                merging_probs=local_x_global_routed_expert_weights.view(
+                    -1, self.routed_experts_router.top_k
+                ),
                 restore_shape=hidden_shape_before_permute,
                 map_type="index",
             )
