@@ -2083,3 +2083,34 @@ Generated outputs refreshed:
 - `results/midtraining_validation.md` / `.json`
 - `results/olmobase_evals.md` / `.json`
 - targeted integration plots and `PLOTTED_RESULTS.md`
+
+## 2026-07-13 Full Status Refresh
+
+Full refresh checked active Beaker jobs, W&B progress for active runs, result
+tables, and all plot families. Running experiments remain excluded from plots.
+
+No new terminal pretraining or OLMoBase eval completions were found since the
+previous refresh.
+
+Still running at this refresh:
+
+| Name | Beaker | W&B | Tokens | Train CE | Approx remaining |
+| --- | --- | --- | ---: | ---: | ---: |
+| `mt-1p2b-intw256e8k-cx8-lr4e-5-r1` | https://beaker.org/ex/01KX7032K1GXDKQR2D9FAA0CBF | `5stly1t0` | 91.58B / 100B | 1.2190 | ~5 hours |
+| `mt-1p2b-intd256e8k-cx8-lr4e-5-r1` | https://beaker.org/ex/01KX703FE8T96HJM4EFG90KHVF | `k25pw5nl` | 82.34B / 100B | 1.2083 | ~12 hours |
+| `mt-275m-intw256e16k-cx4-lr8e-5-r1` | https://beaker.org/ex/01KXBH2HBN9W4M46H33CRGHVJS | `kmxhtpxp` | 88.18B / 100B | 1.5908 | ~2-3 hours |
+
+Previously launched high-active pretraining
+`int-275m-cx4-intw256e16k-lr8e-4-r1`
+([01KXA424V6TFS1GQ8A85PJEFRT](https://beaker.org/ex/01KXA424V6TFS1GQ8A85PJEFRT))
+is finalized with exit code 0.
+
+Generated outputs refreshed:
+
+- all plot families via `experiments/plot_all_experiments.sh` with
+  `REFRESH_STALE_CACHE=1 INCLUDE_RUNNING=0`
+- `PLOTTED_RESULTS.md`
+- `results/optimal_losses.md` / `.json`
+- `results/in_loop_evals.md` / `.json`
+- `results/midtraining_validation.md` / `.json`
+- `results/olmobase_evals.md` / `.json`

@@ -1,6 +1,6 @@
 # Optimal Loss Values
 
-Generated: 2026-07-12 06:01 UTC
+Generated: 2026-07-13 06:44 UTC
 
 Source: `/weka/oe-adapt-default/jacobm/olmoe3/OLMo-core/src/scripts/train/jacobm_olmoe_ladder/PLOTTED_RESULTS.md`. Values mirror the completed-run plotting policy: final-window training CE averaged over the last 250M tokens, running jobs excluded.
 

@@ -1,6 +1,6 @@
 # Midtraining Validation Results
 
-Generated: 2026-07-12 23:34 UTC
+Generated: 2026-07-13 06:44 UTC
 
 Interpretation: lower is better for CE loss, PPL, Z loss, router Z loss, and load-balancing loss; higher is better for MFU/TPS. Accuracy-style validation metrics are higher-is-better when present.
 
@@ -519,7 +519,7 @@ No `eval/*` validation metrics are present for this source group yet.
 
 | LR | state | tokens | train CE | train PPL | Z loss | router Z | load balance | MFU | TPS/GPU | links |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| 8e-5 | running | 44.32B | 1.5102 | 4.5275 | 0.00085 | 0.00074 | 0.11081 | 22.27 | 218868.5 | [W&B](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/kmxhtpxp) [Beaker](https://beaker.org/ex/01KXBH2HBN9W4M46H33CRGHVJS) |
+| 8e-5 | running | 88.23B | 1.5089 | 4.5217 | 0.00075 | 0.00059 | 0.11062 | 23.51 | 231041.4 | [W&B](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/kmxhtpxp) [Beaker](https://beaker.org/ex/01KXBH2HBN9W4M46H33CRGHVJS) |
 
 ## 275M baseline Cx8 Source
 
@@ -606,13 +606,13 @@ No `eval/*` validation metrics are present for this source group yet.
 
 | LR | state | tokens | train CE | train PPL | Z loss | router Z | load balance | MFU | TPS/GPU | links |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| 4e-5 | running | 71.96B | 1.2986 | 3.6641 | 0.00084 | 0.00040 | 0.25989 | 23.20 | 57034.6 | [W&B](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/k25pw5nl) [Beaker](https://beaker.org/ex/01KX703FE8T96HJM4EFG90KHVF) |
+| 4e-5 | running | 82.35B | 1.3551 | 3.8771 | 0.00078 | 0.00041 | 0.25980 | 23.24 | 57154.8 | [W&B](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/k25pw5nl) [Beaker](https://beaker.org/ex/01KX703FE8T96HJM4EFG90KHVF) |
 
 ## 1.2B integration wide Cx8 Source
 
 | LR | state | tokens | train CE | train PPL | Z loss | router Z | load balance | MFU | TPS/GPU | links |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| 4e-5 | running | 79.87B | 1.1850 | 3.2708 | 0.00076 | 0.00037 | 0.20961 | 24.88 | 64805.2 | [W&B](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/5stly1t0) [Beaker](https://beaker.org/ex/01KX7032K1GXDKQR2D9FAA0CBF) |
+| 4e-5 | running | 91.60B | 1.3998 | 4.0542 | 0.00079 | 0.00035 | 0.20969 | 25.01 | 65131.2 | [W&B](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/5stly1t0) [Beaker](https://beaker.org/ex/01KX7032K1GXDKQR2D9FAA0CBF) |
 
 ## Validation Metrics
 
