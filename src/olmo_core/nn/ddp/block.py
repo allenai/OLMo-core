@@ -776,7 +776,9 @@ class OLMoDDPTransformerBlock(olmo_core.nn.transformer.block.TransformerBlockBas
 
     @property
     def is_moe(self) -> bool:
-        return True
+        # Shared-only (no routed experts) blocks are dense: they must fall through to the dense
+        # forward/dispatch path and stay out of the EP / TBO-MoE loops, which key on is_moe.
+        return self.has_routed_experts
 
     @property
     def has_routed_experts(self) -> bool:

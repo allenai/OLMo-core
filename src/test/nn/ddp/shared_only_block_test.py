@@ -38,6 +38,8 @@ def test_shared_only_ddp_block_is_dense_stack_block():
     assert block.is_shared_only
     assert not block.has_routed_experts
     assert block.has_shared_experts
+    # Shared-only blocks are dense: is_moe must be False so they stay off the EP / TBO-MoE paths.
+    assert not block.is_moe
 
     x = torch.randn(2, 4, 16)
     out = block(x)
