@@ -40,7 +40,7 @@ import argparse
 import sys
 
 from olmo_core.internal.common import build_launch_config, get_root_dir
-from olmo_core.launch.beaker import OLMoCoreBeakerImage
+from olmo_core.launch.beaker import BeakerEnvVar, OLMoCoreBeakerImage
 from olmo_core.utils import prepare_cli_environment
 
 ALL_TASKS = ["contra", "nq", "rerank", "outlier", "oolong", "fiqa", "scifact",
@@ -61,7 +61,7 @@ def variant_from_run_name(run_name: str) -> str:
 
 
 def build_eval_launch_config(
-    *, run_name, task, variant, cluster, step, ckpt, results_dir, prompt_format, ngpu, max_test, max_length, batch_size, priority, ladder_version, xlong, xlong_rungs, cot_mode
+    *, run_name, task, variant, cluster, step, ckpt, results_dir, prompt_format, ngpu, max_test, max_length, batch_size, priority, ladder_version, xlong, xlong_rungs, cot_mode, gate_log_dir, gate_log_all, landmark_top_k_blocks
 ):
     root_dir = get_root_dir(cluster)  # e.g. /weka/oe-training-default/ai2-llm (mounts weka bucket)
     # Eval CODE now ships IN the cloned repo (src/scripts/ctc_eval); the runner runs from the repo root
@@ -97,6 +97,28 @@ def build_eval_launch_config(
     launch_config.priority = priority
     launch_config.step_soft_timeout = None  # we submit with follow=False (don't block on many evals);
     launch_config.step_timeout = None        # the 10-min default soft timeout forbids follow=False
+
+    # Optional landmark gate-score logging (olmo_core.nn.attention.landmark_gate_analysis). Only
+    # landmark/compressive variants apply the hard top-k retrieval the hook records; the native eval
+    # already decodes with landmark_top_k_fraction=0.1 (GenerationConfig default), so setting the env
+    # is all that's needed. Each of the NGPU torchrun workers inherits these container env vars and
+    # writes its own "<base>.rank<N>" JSONL under the (weka-mounted) gate_log_dir, readable after the
+    # run. The recorder assumes bs=1, which the on-node runner already forces for landmark/compressive.
+    # Fixed hard top-k: keep the top-k highest-scoring landmark blocks per decode step (overrides the
+    # native eval's default landmark_top_k_fraction=0.1). Threaded into eval_lc_native.py's
+    # GenerationConfig via OLMO_EVAL_LANDMARK_TOP_K_BLOCKS. Only meaningful for landmark/compressive.
+    if landmark_top_k_blocks is not None:
+        launch_config.env_vars.append(
+            BeakerEnvVar(name="OLMO_EVAL_LANDMARK_TOP_K_BLOCKS", value=str(landmark_top_k_blocks))
+        )
+    if gate_log_dir:
+        base = f"{gate_log_dir.rstrip('/')}/gate_{run_name}_{task}"
+        launch_config.env_vars.append(
+            BeakerEnvVar(name="OLMO_LANDMARK_GATE_LOG", value=base)
+        )
+        launch_config.env_vars.append(BeakerEnvVar(name="OLMO_GATE_DATASET", value=task))
+        if gate_log_all:
+            launch_config.env_vars.append(BeakerEnvVar(name="OLMO_GATE_LOG_ALL", value="1"))
     return launch_config
 
 
@@ -141,6 +163,18 @@ def main():
     ap.add_argument("--xlong-rungs", default="64k,128k",
                     help="which xlong sizes to add when --xlong (add 256k explicitly; it is huge).")
     ap.add_argument("--dry-run", action="store_true", help="build + print the job, do NOT submit.")
+    ap.add_argument("--landmark-top-k-blocks", type=int, default=None,
+                    help="landmark/compressive only: fixed hard top-k (keep the top-k highest-scoring "
+                         "landmark blocks per decode step), overriding the native eval's default "
+                         "landmark_top_k_fraction=0.1. Length-independent.")
+    ap.add_argument("--gate-log-dir", default="",
+                    help="landmark/compressive only: ABSOLUTE weka dir for per-decoded-token landmark "
+                         "gate-score logs (olmo_core.nn.attention.landmark_gate_analysis). Each job "
+                         "writes '<dir>/gate_<run>_<task>.rank<N>' (one per GPU worker), readable "
+                         "after the run. Empty (default) = no gate logging.")
+    ap.add_argument("--gate-log-all", action="store_true",
+                    help="with --gate-log-dir: also log EVERY candidate block's gate score each step "
+                         "(not just the top-k kept ones), so the full distribution is recoverable.")
     args = ap.parse_args()
 
     prepare_cli_environment()
@@ -150,6 +184,10 @@ def main():
     bad = [t for t in tasks if t not in ALL_TASKS]
     if bad:
         raise SystemExit(f"unknown task(s) {bad}; choose from {ALL_TASKS}.")
+
+    if (args.gate_log_dir or args.landmark_top_k_blocks is not None) and variant not in ("landmark", "compressive"):
+        print(f"WARNING: gate logging / landmark top-k requested but variant={variant} is not "
+              f"landmark/compressive -- the hook records nothing and top-k is ignored.", file=sys.stderr)
 
     print(f"=== Beaker multirung eval | run={args.run_name} variant={variant} "
           f"tasks={tasks} cluster={args.cluster} dry_run={args.dry_run} ===")
@@ -162,6 +200,8 @@ def main():
             ngpu=args.ngpu, max_test=args.max_test, max_length=args.max_length,
             batch_size=args.batch_size, priority=args.priority, ladder_version=args.ladder_version,
             xlong=args.xlong, xlong_rungs=args.xlong_rungs, cot_mode=args.cot_mode,
+            gate_log_dir=args.gate_log_dir, gate_log_all=args.gate_log_all,
+            landmark_top_k_blocks=args.landmark_top_k_blocks,
         )
         print(f"\n--- [{task}] {lc.name} ---")
         print(f"    cmd: {lc.cmd[-1]}")

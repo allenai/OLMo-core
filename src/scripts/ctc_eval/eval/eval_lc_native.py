@@ -115,8 +115,17 @@ def main():
     device = torch.device(f"cuda:{local_rank}")
 
     t0 = time.time()
+    # Optional fixed hard top-k landmark retrieval at decode (landmark/compressive models only). When
+    # OLMO_EVAL_LANDMARK_TOP_K_BLOCKS is set, keep the top-k highest-scoring landmark blocks per step,
+    # overriding GenerationConfig's default landmark_top_k_fraction=0.1 (an explicit blocks value takes
+    # precedence). Unset (default) preserves the previous behavior. Used by the gate-score analysis
+    # (run_q4b_beaker_multirung_eval.py --landmark-top-k-blocks), and required for the gate-log hook to
+    # record (it only fires under hard top-k retrieval).
+    _lm_topk_env = os.environ.get("OLMO_EVAL_LANDMARK_TOP_K_BLOCKS")
+    _lm_topk = int(_lm_topk_env) if _lm_topk_env else None
     gen_cfg = GenerationConfig(eos_token_id=tok.eos_token_id, pad_token_id=tok.pad_token_id,
-                               max_length=args.max_length, use_cache=True)
+                               max_length=args.max_length, use_cache=True,
+                               landmark_top_k_blocks=_lm_topk)
     gm = TransformerGenerationModuleConfig(
         gen_cfg, float8_config=None, dtype=DType("bfloat16"), compile_model=False,
     ).build(checkpoint_dir=args.model_path, device=device)
