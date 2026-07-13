@@ -61,12 +61,15 @@ def _olmo_ddp_model_state_dict_to_load(
             missing.append(checkpoint_name)
             continue
         source_shape = tuple(getattr(source_metadata, "size", ()))
-        if source_shape and source_shape != tuple(target.shape):
+        source_numel = 1
+        for dim in source_shape:
+            source_numel *= dim
+        if source_shape and source_numel != target.numel():
             raise RuntimeError(
                 f"Checkpoint tensor '{checkpoint_name}' has shape {source_shape}, "
-                f"expected {tuple(target.shape)}"
+                f"but the model tensor has shape {tuple(target.shape)}"
             )
-        state_dict[checkpoint_name] = target
+        state_dict[checkpoint_name] = target.reshape(source_shape or target.shape)
 
     if missing:
         raise RuntimeError(
@@ -428,7 +431,9 @@ class TransformerGenerationModule(GenerationModule):
             self.model.load_state_dict(
                 {
                     model_name: state_dict[f"module.{model_name}.main"]
-                    for model_name in self.model.state_dict()
+                    .reshape(target.shape)
+                    .to(dtype=target.dtype)
+                    for model_name, target in self.model.state_dict().items()
                 }
             )
         else:

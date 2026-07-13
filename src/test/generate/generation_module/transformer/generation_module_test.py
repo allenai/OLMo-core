@@ -507,7 +507,7 @@ def test_from_checkpoint_loads_olmo_ddp_layout(tmp_path: Path):
     source_model = config.build()
     expected_state = {name: value.clone() for name, value in source_model.state_dict().items()}
     checkpoint_state = {
-        f"module.{name}.main": value.clone() for name, value in expected_state.items()
+        f"module.{name}.main": value.reshape(-1).clone() for name, value in expected_state.items()
     }
     checkpoint_state.update(
         {
