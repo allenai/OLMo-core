@@ -565,6 +565,18 @@ class RoutedExperts(nn.Module):
             ),
         )
 
+        self.reset_parameters()
+
+    def reset_parameters(self) -> None:
+        # Standalone default; the model-level init (``init_moe_v2``) may override the weights
+        # with a depth-scaled std. Biases are not touched by that init, so zero them here.
+        std = 0.02
+        for w in (self.w_up_gate, self.w_down):
+            nn.init.trunc_normal_(w, mean=0.0, std=std, a=-3 * std, b=3 * std)
+        for b in (self.b_up_gate, self.b_down):
+            if b is not None:
+                nn.init.zeros_(b)
+
     def _sync_rowwise_fp8_weight_anchors(self) -> None:
         fp8_only_params = (
             self.rowwise_fp8 is not None

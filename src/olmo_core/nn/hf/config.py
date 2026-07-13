@@ -197,10 +197,9 @@ def _get_olmo3moe_config(model: "MoEFusedV2Transformer") -> PretrainedConfig:
     router = moe_block.routed_experts_router
     # Selection modifiers change which experts a token routes to at inference; the HF router has no
     # equivalent state, so exporting them would silently diverge.
-    if router.bias_gamma is not None or router.use_quant_scores:
+    if router.bias_gamma is not None:
         raise NotImplementedError(
-            "Exporting olmo3moe with router selection modifiers (bias_gamma / use_quant_scores) "
-            "is not supported."
+            "Exporting olmo3moe with router selection modifiers (bias_gamma) is not supported."
         )
 
     # Dense MLP intermediate size, if there are any dense layers.
