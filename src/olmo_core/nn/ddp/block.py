@@ -1130,7 +1130,11 @@ class OLMoDDPTransformerBlock(olmo_core.nn.transformer.block.TransformerBlockBas
             shared_expert_weights = None
 
         rowwise_fp8_cfg = self.rowwise_fp8
-        use_rowwise_fp8 = rowwise_fp8_cfg is not None and rowwise_fp8_cfg.enabled
+        use_rowwise_fp8 = (
+            rowwise_fp8_cfg is not None
+            and rowwise_fp8_cfg.enabled
+            and mlp_inp.device.type == "cuda"
+        )
         if use_rowwise_fp8 and not self._rowwise_fp8_checked:
             assert rowwise_fp8_cfg is not None
             rowwise_fp8_cfg.assert_runtime_supported()

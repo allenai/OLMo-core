@@ -167,7 +167,11 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
                 first_moe_idx = idx
             if block.is_moe:
                 moe_block = cast(OLMoDDPTransformerBlock, block)
-                if moe_block.ep.no_sync and moe_block.ep.shared_slots < 2:
+                if (
+                    not moe_block.is_shared_only
+                    and moe_block.ep.no_sync
+                    and moe_block.ep.shared_slots < 2
+                ):
                     raise OLMoConfigurationError(
                         "When TBO and EP no-sync are enabled, ep.shared_slots must be >= 2 "
                         f"(block={moe_block.block_idx}, got {moe_block.ep.shared_slots})."
@@ -242,7 +246,12 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
         return sum(
             1
             for block in self.blocks.values()
-            if block.is_moe and isinstance(block, OLMoDDPTransformerBlock) and block.ep.no_sync
+            if (
+                block.is_moe
+                and isinstance(block, OLMoDDPTransformerBlock)
+                and not block.is_shared_only
+                and block.ep.no_sync
+            )
         )
 
     @torch.no_grad()
@@ -321,7 +330,12 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
         ep_blocks = [
             (block_key, cast(OLMoDDPTransformerBlock, block))
             for block_key, block in self.blocks.items()
-            if block.is_moe and isinstance(block, OLMoDDPTransformerBlock) and block.ep.no_sync
+            if (
+                block.is_moe
+                and isinstance(block, OLMoDDPTransformerBlock)
+                and not block.is_shared_only
+                and block.ep.no_sync
+            )
         ]
         if not ep_blocks:
             if pad_to_block_count != 0:
