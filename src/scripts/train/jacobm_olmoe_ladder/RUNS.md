@@ -2150,3 +2150,31 @@ Still running:
 | Name | Beaker | W&B | Tokens | Train CE |
 | --- | --- | --- | ---: | ---: |
 | `mt-1p2b-intd256e8k-cx8-lr4e-5-r1` | https://beaker.org/ex/01KX703FE8T96HJM4EFG90KHVF | `k25pw5nl` | 94.48B / 100B | 1.1887 |
+
+## 2026-07-13 OLMoBase Launch Follow-up
+
+The two HF conversions and two final-checkpoint eval backfills from the previous
+section finalized successfully. Copied both eval-backfill metric sets back to
+their source W&B training runs with `copy_eval_backfills_to_wandb.py`, then
+refreshed `results/midtraining_validation.*`.
+
+Prepared a topK=8 eval variant for the high-active top16 checkpoint by creating
+a hardlinked HF checkpoint copy:
+
+`hf-checkpoints/midtraining/mt-275m-intw256e16k-cx4-lr8e-5-r1/step95368-topk8`
+
+Only `config.json` differs from the default converted checkpoint:
+`num_experts_per_tok=8` and `original_num_experts_per_tok=16`. Model weights and
+tokenizer files are hardlinked to the default topK=16 HF checkpoint.
+
+Launched OLMoBase evals:
+
+| Name | HF checkpoint | Beaker | Workspace | Status at launch check |
+| --- | --- | --- | --- | --- |
+| `olmoe3-1p2b-cx8-mt-int-wide-olmobase` | `hf-checkpoints/midtraining/mt-1p2b-intw256e8k-cx8-lr4e-5-r1/step127157` | https://beaker.org/ex/01KXE4E4JD4QJER5KEQX2EJF6E | `ai2/OLMo-3-moe-experiments` | started |
+| `olmoe3-275m-cx4-mt-int-wide-top16-olmobase` | `hf-checkpoints/midtraining/mt-275m-intw256e16k-cx4-lr8e-5-r1/step95368` | https://beaker.org/ex/01KXE4EEA2AW00JT58FVSJ6QTP | `ai2/olmo-instruct` | created |
+| `olmoe3-275m-cx4-mt-int-wide-top16-top8-olmobase` | `hf-checkpoints/midtraining/mt-275m-intw256e16k-cx4-lr8e-5-r1/step95368-topk8` | https://beaker.org/ex/01KXE4EQ00WWMKW3EZ2DZ91PPH | `ai2/olmo-instruct` | created |
+
+Added `eval_20260713_olmobase_targets.jsonl` and registered these explicit
+experiment IDs in `write_olmobase_eval_results.py`; refreshed
+`results/olmobase_evals.*`, which now lists the three jobs as pending/running.

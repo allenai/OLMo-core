@@ -32,6 +32,7 @@ VARIANT_SLUGS = {
     "baseline 48E/top4 midtraining": "mt-baseline",
     "integration wide 256E/top8 midtraining": "mt-int-wide",
     "integration wide 256E/top16 midtraining": "mt-int-wide-top16",
+    "integration wide 256E/top16 midtraining eval-top8": "mt-int-wide-top16-top8",
     "integration deep 256E/top8 midtraining": "mt-int-deep",
     "Qwen-like active matched 4.5d": "q3am",
     "Qwen-like true 3.0d + depth": "q3td",

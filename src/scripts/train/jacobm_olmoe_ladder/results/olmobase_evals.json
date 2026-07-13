@@ -1,5 +1,5 @@
 {
-  "generated_at_utc": "2026-07-13T06:44:30.503691+00:00",
+  "generated_at_utc": "2026-07-13T16:22:25.680523+00:00",
   "records": [
     {
       "experiment_id": "01KWNC2HEFG1P706WE2MQN26AH",
@@ -7301,6 +7301,24 @@
         }
       },
       "url": "https://beaker.org/ex/01KX02MYSA36TFKBT99XAE0XZ6",
+      "workspace": "ai2/olmo-instruct"
+    },
+    {
+      "experiment_id": "01KXE4EEA2AW00JT58FVSJ6QTP",
+      "message": "",
+      "name": "olmoe3-275m-cx4-mt-int-wide-top16-olmobase",
+      "status": "created",
+      "suites": {},
+      "url": "https://beaker.org/ex/01KXE4EEA2AW00JT58FVSJ6QTP",
+      "workspace": "ai2/olmo-instruct"
+    },
+    {
+      "experiment_id": "01KXE4EQ00WWMKW3EZ2DZ91PPH",
+      "message": "",
+      "name": "olmoe3-275m-cx4-mt-int-wide-top16-top8-olmobase",
+      "status": "created",
+      "suites": {},
+      "url": "https://beaker.org/ex/01KXE4EQ00WWMKW3EZ2DZ91PPH",
       "workspace": "ai2/olmo-instruct"
     },
     {
@@ -34075,6 +34093,15 @@
         }
       },
       "url": "https://beaker.org/ex/01KWNADEPKBF1JY939N5JG2GTN",
+      "workspace": "ai2/OLMo-3-moe-experiments"
+    },
+    {
+      "experiment_id": "01KXE4E4JD4QJER5KEQX2EJF6E",
+      "message": "",
+      "name": "olmoe3-1p2b-cx8-mt-int-wide-olmobase",
+      "status": "started",
+      "suites": {},
+      "url": "https://beaker.org/ex/01KXE4E4JD4QJER5KEQX2EJF6E",
       "workspace": "ai2/OLMo-3-moe-experiments"
     },
     {
