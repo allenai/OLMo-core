@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Dict, Optional, Union, cast
+from typing import TYPE_CHECKING, Dict, Optional, Tuple, Union, cast
 
 import torch
 import torch.distributed as dist
@@ -10,7 +10,7 @@ from torch.distributed.tensor import Replicate, Shard, distribute_tensor
 from torch.distributed.tensor.parallel import PrepareModuleInput, parallelize_module
 
 import olmo_core.ops.moe as ops
-from olmo_core._nvtx import maybe_nvtx_annotate
+from olmo_core._nvtx import nvtx
 from olmo_core.config import Config, DType
 from olmo_core.distributed.utils import (
     _HiddenTensor,
@@ -20,7 +20,7 @@ from olmo_core.distributed.utils import (
     is_distributed,
     unhide_from_torch,
 )
-from olmo_core.nn.moe.v2._nvtx_colors import ROUTING_COLOR
+from olmo_core.exceptions import OLMoConfigurationError
 
 from ...output_discard_checkpoint import OutputDiscardCheckpoint
 from ..loss import MoELoadBalancingLossGranularity, load_balancing_loss, router_z_loss
@@ -38,15 +38,6 @@ def _cast_to_fp32(x: torch.Tensor) -> torch.Tensor:
 class MoERouterConfigV2(Config):
     """
     A configuration class for easily building any of the different MoE router modules.
-
-    .. note::
-        Unlike the rest of the codebase, this config stores dimension-related fields
-        (e.g. ``d_model``, ``num_experts``) directly. Other configs keep such dimensions
-        out of the config and instead receive them only as arguments to :meth:`build`
-        (e.g. ``AttentionConfig.build(d_model, ...)``), so the dimensions live in a single
-        place and flow down from the top-level transformer config. The v2 configs deviate
-        by duplicating the dimensions here. This should be unified in the future to follow
-        the dimension-agnostic ``build(d_model, ...)`` convention.
     """
 
     d_model: int
@@ -54,6 +45,7 @@ class MoERouterConfigV2(Config):
     num_experts: int
 
     top_k: int
+    bias: bool = False
     jitter_eps: Optional[float] = None
     normalize_expert_weights: Optional[float] = None
     uniform_expert_assignment: bool = False
@@ -68,31 +60,30 @@ class MoERouterConfigV2(Config):
     )
     z_loss_weight: Optional[float] = None
     orth_loss_weight: Optional[float] = None
-    restore_weight_scale: bool = False
-    """
-    If ``True``, multiply the expert weights by ``top_k`` so the scores have a
-    similar scale to dense models.
-    """
-    original_top_k: Optional[int] = None
-    """
-    Restore expert-weight scales to match a model trained with a different ``top_k``.
-    """
-    use_recompute_fp32_cast: bool = False
-    """
-    Save the fp32 cast of the router input through an ``OutputDiscardCheckpoint`` and
-    recompute it in backward, trading extra backward compute for memory.
-    """
-    use_quant_scores: bool = False
-    """
-    Select the top-k experts from quantized (tie-broken) scores while keeping the
-    expert weights from the original scores to preserve smooth gradients.
-    """
+    restore_weight_scale: bool = False  # if True, multiply the router weights by topK so that the scores have similar scale as dense models.
+    expert_weight_scale: Optional[float] = None
+    original_top_k: Optional[
+        int
+    ] = None  # for restoring weight scales to match a model trained with a different top_k
+    use_recompute_fp32_cast: bool = False  # whether to use an OutputDiscardCheckpoint to save the fp32 cast of the router input for recomputation in backward, which can save memory at the cost of extra compute in backward.
+    score_correction_bias: bool = False
+    n_group: Optional[int] = None
+    topk_group: Optional[int] = None
+    sigmoid_stability_epsilon: float = 1e-7
 
     def num_params(self) -> int:
         """
         The number of params that the module will have once built.
+
+        :param d_model: The model dimensionality.
         """
-        return self.d_model * self.num_experts
+        num_params = 0
+
+        num_params += self.d_model * self.num_experts
+        if self.bias:
+            num_params += self.num_experts
+
+        return num_params
 
     def build(
         self,
@@ -101,7 +92,9 @@ class MoERouterConfigV2(Config):
         """
         Build the corresponding MoE router module.
 
-        :param init_device: The device to initialize the parameters on, e.g. "cpu", "meta".
+        :param d_model: The model dimensionality.
+        :param num_experts: The number of experts.
+        :param init_device: The device initialize the parameters on, e.g. "cpu", "meta".
         """
         kwargs = self.as_dict(exclude_none=True, recurse=False)
 
@@ -133,6 +126,7 @@ class MoERouterV2(nn.Module):
         d_model: int,
         num_experts: int,
         top_k: int,
+        bias: bool = False,
         jitter_eps: Optional[float] = None,
         normalize_expert_weights: Optional[float] = None,
         uniform_expert_assignment: bool = False,
@@ -146,9 +140,13 @@ class MoERouterV2(nn.Module):
         init_device: str = "cpu",
         record_routing_batch_size: bool = False,
         restore_weight_scale: bool = False,
+        expert_weight_scale: Optional[float] = None,
         original_top_k: Optional[int] = None,
-        use_recompute_fp32_cast: bool = False,
-        use_quant_scores: bool = False,
+        use_recompute_fp32_cast=False,
+        score_correction_bias: bool = False,
+        n_group: Optional[int] = None,
+        topk_group: Optional[int] = None,
+        sigmoid_stability_epsilon: float = 1e-7,
         dtype: torch.dtype = torch.float32,
     ):
         super().__init__()
@@ -156,6 +154,7 @@ class MoERouterV2(nn.Module):
         self.num_experts = num_experts
 
         self.top_k = top_k
+        self.use_bias = bias
         self.jitter_eps = jitter_eps
         self.normalize_expert_weights = normalize_expert_weights
         self.uniform_expert_assignment = uniform_expert_assignment
@@ -171,12 +170,17 @@ class MoERouterV2(nn.Module):
         self.tp_mesh: Optional[DeviceMesh] = None
         self.record_routing_batch_size = record_routing_batch_size
         self.restore_weight_scale = restore_weight_scale
+        self.expert_weight_scale = expert_weight_scale
         self.original_top_k = original_top_k
         self.use_recompute_fp32_cast = use_recompute_fp32_cast
-        self.use_quant_scores = use_quant_scores
+        self.score_correction_bias = score_correction_bias
+        self.n_group = n_group
+        self.topk_group = topk_group
+        self.sigmoid_stability_epsilon = sigmoid_stability_epsilon
 
-        if self.bias_gamma is not None:
-            assert self.bias_gamma > 0
+        if self.bias_gamma is not None or self.score_correction_bias:
+            if self.bias_gamma is not None:
+                assert self.bias_gamma > 0
             self.register_buffer("score_bias", torch.zeros(self.num_experts, device=init_device))
         else:
             self.register_buffer("score_bias", None)
@@ -196,8 +200,14 @@ class MoERouterV2(nn.Module):
         self.weight = nn.Parameter(
             torch.empty(self.num_experts * self.d_model, device=init_device, dtype=dtype)
         )
+        self.bias = (
+            nn.Parameter(torch.empty(self.num_experts, device=init_device, dtype=dtype))
+            if bias
+            else None
+        )
         self.reset_parameters()
 
+        self._debug_index = None
         self._recompute_cache = None
         self.use_recompute_cache = False
 
@@ -206,10 +216,12 @@ class MoERouterV2(nn.Module):
             torch.zeros(self.num_experts, device=self.device)
         )
 
-        if self.bias_gamma is not None:
-            assert self.score_bias is not None
+        if self.score_bias is not None:
             score_bias = cast(torch.Tensor, self.score_bias)
             score_bias.zero_()
+
+        if self.bias_gamma is not None:
+            assert self.score_bias is not None
             self._score_bias_batch_size_per_expert = hide_from_torch(
                 torch.zeros(self.num_experts, device=self.device)
             )
@@ -224,6 +236,8 @@ class MoERouterV2(nn.Module):
             self._orth_loss = hide_from_torch(torch.zeros([], device=self.device))
 
         nn.init.trunc_normal_(self.weight, std=0.02, a=-3 * 0.02, b=3 * 0.02)
+        if self.bias is not None:
+            nn.init.trunc_normal_(self.bias, std=0.02, a=-3 * 0.02, b=3 * 0.02)
 
     @property
     def device(self) -> torch.device:
@@ -342,22 +356,45 @@ class MoERouterV2(nn.Module):
             noise = torch.rand_like(x)
             return x * (low + noise * (high - low))
 
-    @maybe_nvtx_annotate("MoERouter.get_top_k", ROUTING_COLOR)
-    def get_top_k(self, scores: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    @nvtx.annotate("MoERouter.get_top_k", color="blue")
+    def get_top_k(self, scores: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         expert_weights: torch.Tensor
         expert_indices: torch.Tensor
-        if self.bias_gamma is None:
-            if self.top_k == 1:
-                expert_weights, expert_indices = scores.max(dim=-1, keepdim=True)
-            else:
-                expert_weights, expert_indices = torch.topk(scores, self.top_k, dim=-1)
-        else:
-            assert self.score_bias is not None
-            with torch.no_grad():
-                _, expert_indices = torch.topk(
-                    scores + self.score_bias.unsqueeze(0), self.top_k, dim=-1  # type: ignore
+        selection_scores = scores
+        if self.score_bias is not None:
+            selection_scores = scores + self.score_bias.unsqueeze(0)  # type: ignore[union-attr]
+
+        if self.n_group is not None and self.topk_group is not None:
+            if self.num_experts % self.n_group != 0:
+                raise OLMoConfigurationError(
+                    f"num_experts ({self.num_experts}) must be divisible by n_group ({self.n_group})"
                 )
-            expert_weights = scores.gather(-1, expert_indices)
+            if not (0 < self.topk_group <= self.n_group):
+                raise OLMoConfigurationError(
+                    f"topk_group ({self.topk_group}) must be in [1, n_group={self.n_group}]"
+                )
+            experts_per_group = self.num_experts // self.n_group
+            group_scores = (
+                selection_scores.view(*selection_scores.shape[:-1], self.n_group, experts_per_group)
+                .topk(min(2, experts_per_group), dim=-1)[0]
+                .sum(dim=-1)
+            )
+            group_idx = torch.topk(group_scores, k=self.topk_group, dim=-1, sorted=False)[1]
+            group_mask = torch.zeros_like(group_scores, dtype=torch.bool)
+            group_mask.scatter_(-1, group_idx, True)
+            score_mask = (
+                group_mask.unsqueeze(-1)
+                .expand(*selection_scores.shape[:-1], self.n_group, experts_per_group)
+                .reshape_as(selection_scores)
+            )
+            selection_scores = selection_scores.masked_fill(~score_mask, float("-inf"))
+
+        with torch.no_grad() if self.score_bias is not None else torch.enable_grad():
+            if self.top_k == 1:
+                _, expert_indices = selection_scores.max(dim=-1, keepdim=True)
+            else:
+                _, expert_indices = torch.topk(selection_scores, self.top_k, dim=-1)
+        expert_weights = scores.gather(-1, expert_indices)
 
         if self.uniform_expert_assignment:
             expert_indices = _uniform_expert_assignment(expert_indices, self.num_experts)
@@ -367,16 +404,18 @@ class MoERouterV2(nn.Module):
 
     def get_expert_logits(self, x: torch.Tensor) -> torch.Tensor:
         return F.linear(
-            x.float(), get_local_tensor(self.weight).view(self.num_experts, self.d_model).float()
+            x.float(),
+            get_local_tensor(self.weight).view(self.num_experts, self.d_model).float(),
+            None if self.bias is None else get_local_tensor(self.bias).float(),
         )
 
     @torch.no_grad()
     def compute_metrics(
         self, reset: bool = True
-    ) -> Dict[str, tuple[torch.Tensor, Optional["ReduceType"]]]:
+    ) -> Dict[str, Tuple[torch.Tensor, Optional["ReduceType"]]]:
         from olmo_core.train.common import ReduceType
 
-        out: Dict[str, tuple[torch.Tensor, Optional["ReduceType"]]] = {}
+        out: Dict[str, Tuple[torch.Tensor, Optional["ReduceType"]]] = {}
 
         # Load imbalance.
         batch_size_per_expert = self.batch_size_per_expert
@@ -449,14 +488,14 @@ class MoERouterV2(nn.Module):
         logits = torch.round(logits.float() * q) / q
         return logits
 
-    @maybe_nvtx_annotate("MoERouter.forward", ROUTING_COLOR)
+    @nvtx.annotate("MoERouter.forward", color="blue")
     def forward(
         self,
         x: torch.Tensor,
         scores_only: bool,
         *,
         loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
-    ) -> tuple[
+    ) -> Tuple[
         torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor], Optional[torch.Tensor]
     ]:
         """
@@ -486,13 +525,17 @@ class MoERouterV2(nn.Module):
             cast_checkpoint.discard_output_and_register_recompute(logits)
 
         # shape: (batch_size, seq_len, num_experts)
-        if self.gating_function == MoERouterGatingFunction.softmax:
+        if self.gating_function in (
+            MoERouterGatingFunction.softmax,
+            MoERouterGatingFunction.topk_softmax,
+        ):
             scores = logits.softmax(dim=-1)
         elif self.gating_function == MoERouterGatingFunction.sigmoid:
             scores = F.sigmoid(logits)
             # to avoid NaNs in the load balancing loss
             # if all logits of a token are very negative for all experts, sigmoid gives 0 for all experts, causing NaNs when we div by the sum.
-            scores = scores + 1e-7
+            if self.sigmoid_stability_epsilon:
+                scores = scores + self.sigmoid_stability_epsilon
         else:
             raise NotImplementedError(self.gating_function)
 
@@ -518,32 +561,43 @@ class MoERouterV2(nn.Module):
             # If we only need the scores, return them directly.
             return scores, None, None, None
 
-        if self.use_quant_scores:
+        UES_QUANT_SCORES = False
+        if UES_QUANT_SCORES:
             # TODO: merge into get_top_k
             scores_sel = self._quantize_scores(scores)
             scores_sel = self._break_ties(scores_sel)
-            _, expert_indices = self.get_top_k(scores_sel)
+            expert_indices = self.get_top_k(scores_sel)[1]
 
             # weights from original scores/logits (not quantized), to keep smooth grads
             expert_weights = scores.gather(-1, expert_indices)
 
+        elif self.gating_function == MoERouterGatingFunction.topk_softmax:
+            selection_logits = logits
+            if self.score_bias is not None:
+                selection_logits = logits + self.score_bias.unsqueeze(0)  # type: ignore[union-attr]
+
+            with torch.no_grad() if self.score_bias is not None else torch.enable_grad():
+                _, expert_indices = torch.topk(selection_logits, self.top_k, dim=-1)
+            if self.uniform_expert_assignment:
+                expert_indices = _uniform_expert_assignment(expert_indices, self.num_experts)
+
+            expert_logits = logits.gather(-1, expert_indices)
+            expert_weights = expert_logits.softmax(dim=-1, dtype=expert_logits.dtype)
         else:
             # shape: (batch_size, seq_len, top_k)
             expert_weights, expert_indices = self.get_top_k(scores)
 
-        # NOTE: this expert-index recompute cache assumes a single in-flight microbatch with a
-        # strict first-forward-then-recompute ordering, so it is incompatible with pipeline
-        # parallelism, where interleaved microbatch forwards/recomputes would corrupt the
-        # single cache slot.
-        # TODO(pp-router-recompute-cache): when wiring PP for MoE-v2, either key the cache per
-        # microbatch or disable use_recompute_cache while PP is active. Flagged for Tianhua.
+        # TODO: check
+        # WARN: does not work with PP
         if self.use_recompute_cache:
             if self._recompute_cache is None:  # first forward
                 if torch.is_grad_enabled():
                     self._recompute_cache = expert_indices.detach()  # save for recompute
             else:  # recompute
                 expert_indices = self._recompute_cache  # use saved expert indices
-                self._recompute_cache = None
+                self._recompute_cache = None  #
+        else:
+            pass
 
         if self.normalize_expert_weights is not None:
             expert_weights = expert_weights.div(
@@ -560,6 +614,9 @@ class MoERouterV2(nn.Module):
         if self.restore_weight_scale:
             expert_weights = expert_weights * self.top_k
 
+        if self.expert_weight_scale is not None:
+            expert_weights = expert_weights * self.expert_weight_scale
+
         if self.original_top_k is not None and self.top_k != self.original_top_k:
             expert_weights = expert_weights * (self.original_top_k / self.top_k) ** 0.5
 
@@ -572,6 +629,31 @@ class MoERouterV2(nn.Module):
             # shape: (num_experts,)
             batch_size_per_expert = batched_batch_size_per_expert.sum(dim=0)
 
+        # with torch.no_grad():
+        #     if self._debug_index is None: # first forward
+        #         self._debug_index = expert_indices.detach().cpu()
+        #     else: # recompute
+        #         recomputed = expert_indices.detach().cpu()
+        #         if not (self._debug_index == recomputed).all():
+        #             print("Debug expert indices mismatch!")
+        #             with open(f"/workspace/{dist.get_rank()}_ori_index.pt", "wb") as f:
+        #                 torch.save(self._debug_index, f)
+        #             with open(f"/workspace/{dist.get_rank()}_recomputed_index.pt", "wb") as f:
+        #                 torch.save(recomputed, f)
+        #             debug_info = {
+        #                 'scores': scores.detach().cpu(),
+        #                 'expert_weights': expert_weights.detach().cpu(),
+        #                 'logits': logits.detach().cpu(),
+        #                 'weight': self.weight.data.detach().cpu(),
+        #                 'x': x.detach().cpu(),
+        #             }
+        #             with open(f"/workspace/{dist.get_rank()}_debug_info.pt", "wb") as f:
+        #                 torch.save(debug_info, f)
+
+        #             raise ValueError("Debug expert indices mismatch!")
+        #         else:
+        #             self._debug_index = None #
+
         aux_loss_info = (
             scores,
             logits,
@@ -581,7 +663,7 @@ class MoERouterV2(nn.Module):
         )
         return expert_weights, expert_indices, batch_size_per_expert, aux_loss_info
 
-    @maybe_nvtx_annotate("MoERouter.compute_aux_loss", ROUTING_COLOR)
+    @nvtx.annotate("MoERouter.compute_aux_loss")
     def compute_aux_loss(
         self,
         scores,
@@ -686,6 +768,10 @@ class MoERouterV2(nn.Module):
         self.register_parameter(
             "weight", nn.Parameter(distribute_tensor(self.weight, tp_mesh, [Replicate()]))
         )
+        if self.bias is not None:
+            self.register_parameter(
+                "bias", nn.Parameter(distribute_tensor(self.bias, tp_mesh, [Replicate()]))
+            )
 
     def apply_cp(self, cp_mesh: DeviceMesh):
         self.cp_mesh = cp_mesh
