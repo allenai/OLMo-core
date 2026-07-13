@@ -10,7 +10,7 @@ from olmo_core.nn.moe.v2.routed_experts import (
     RoutedExperts,
     requires_host_side_split_sizes,
 )
-from olmo_core.testing import requires_gpu, requires_grouped_gemm
+from olmo_core.testing import requires_gpu, requires_torch_grouped_mm
 
 
 def _batch_sizes_for_runtime(
@@ -92,7 +92,7 @@ def _naive_routed_mlp_reference(
 
 
 @requires_gpu
-@requires_grouped_gemm
+@requires_torch_grouped_mm
 def test_no_ep_routed_core_matches_naive_reference():
     torch.manual_seed(17)
     device = torch.device("cuda")
@@ -173,7 +173,7 @@ def test_no_ep_routed_core_matches_naive_reference():
 
 
 @requires_gpu
-@requires_grouped_gemm
+@requires_torch_grouped_mm
 def test_routed_experts_forward_matches_baseline_with_different_pad_positions():
     torch.manual_seed(42)
     device = torch.device("cuda")
@@ -214,7 +214,7 @@ def test_routed_experts_forward_matches_baseline_with_different_pad_positions():
         torch.testing.assert_close(y_padded.index_select(0, active_idx), y_baseline)
 
 
-@requires_gpu
+@requires_torch_grouped_mm
 def test_routed_experts_forward_row_offset_writes_canonical_window():
     torch.manual_seed(123)
     device = torch.device("cuda")
@@ -262,7 +262,7 @@ def test_routed_experts_forward_row_offset_writes_canonical_window():
 
 
 @requires_gpu
-@requires_grouped_gemm
+@requires_torch_grouped_mm
 def test_routed_experts_speed_vs_pad_positions():
     if os.getenv("OLMO_RUN_ROUTED_EXPERTS_PERF_TEST", "0") != "1":
         pytest.skip(
