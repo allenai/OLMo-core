@@ -838,6 +838,17 @@ class RoutedExperts(nn.Module):
             batch_size_per_expert, torch.Tensor
         ), "only accept Tensor for batch_size_per_expert"
 
+        if (down_proj_out is not None or row_weights is not None) and (
+            self.b_up_gate is not None or self.b_down is not None
+        ):
+            # The rowwise EP paths pass capacity-padded buffers with only the valid per-expert
+            # counts, and the down output aliases a symmetric combine buffer. Expert-bias
+            # expansion doesn't match that padded/aliased layout, so require bias-free experts.
+            raise NotImplementedError(
+                "Routed-expert biases are not supported on the rowwise EP path "
+                "(down_proj_out / row_weights); use bias-free routed experts there."
+            )
+
         if requires_host_side_split_sizes():
             # CPU-side split sizes are required by grouped_gemm cublas mode.
             # grouped_gemm CUTLASS mode can accept device-side split sizes, but it is slow.
@@ -910,8 +921,6 @@ class RoutedExperts(nn.Module):
         num_valid_rows = batch_size_per_expert_tensor.sum()
         h = self.chunk_and_activate(up_gate, num_elements=num_valid_rows)  # -> (BS, H)
         if row_weights is not None:
-            if self.b_down is not None:
-                raise RuntimeError("row_weights require bias-free routed experts")
             if row_weights.numel() != h.shape[0]:
                 raise RuntimeError(
                     "row_weights must have one value per routed row: "
@@ -928,18 +937,11 @@ class RoutedExperts(nn.Module):
             out=down_proj_out,
         )  # -> (BS, D)
         if self.b_down is not None:
-            down = cast(torch.Tensor, down)
-            bias = self._expand_expert_bias(
+            down = cast(torch.Tensor, down) + self._expand_expert_bias(
                 self.b_down,
                 batch_size_per_expert_tensor,
                 output_size=down.shape[0],
             )
-            if down_proj_out is not None:
-                # ``down`` aliases the caller's symmetric combine buffer (rowwise TBO no-sync
-                # path); add in-place so the combine kernel reads the biased output.
-                down = down.add_(bias)
-            else:
-                down = down + bias
 
         return cast(torch.Tensor, down)  # ensure type is Tensor
 
