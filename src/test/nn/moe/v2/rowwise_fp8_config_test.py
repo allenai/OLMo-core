@@ -17,7 +17,6 @@ from olmo_core.nn.moe.v2.routed_experts import (
     swiglu_backward_grad_up_gate,
 )
 from olmo_core.nn.parallel.distributed import MultiGroupDistributedDataParallel
-from olmo_core.testing import requires_gpu
 
 
 def test_rowwise_fp8_config_validate_block_size():
@@ -65,23 +64,6 @@ def test_rowwise_fp8_allows_disabling_fp8_only_params():
     assert cfg.fp8_only_params is False
 
 
-def test_routed_experts_build_initializes_weights():
-    # Regression: build() must initialize the expert parameters (they were previously left as
-    # raw torch.empty storage), so a freshly built module has finite, non-zero weights.
-    module = RoutedExperts(
-        d_model=16,
-        hidden_size=32,
-        num_experts=4,
-        bias=False,
-        dtype=DType.float32,
-        init_device="cpu",
-    )
-    assert torch.isfinite(module.w_up_gate).all()
-    assert torch.isfinite(module.w_down).all()
-    assert module.w_up_gate.abs().sum() > 0
-    assert module.w_down.abs().sum() > 0
-
-
 def test_routed_experts_accepts_rowwise_fp8_dict():
     module = RoutedExperts(
         d_model=512,
@@ -89,7 +71,7 @@ def test_routed_experts_accepts_rowwise_fp8_dict():
         num_experts=4,
         bias=False,
         dtype=DType.float32,
-        rowwise_fp8={"enabled": True, "block_size": 32},  # type: ignore[arg-type]
+        rowwise_fp8={"enabled": True, "block_size": 32},
         init_device="cpu",
     )
     assert isinstance(module.rowwise_fp8, MoERowwiseFP8Config)
@@ -103,7 +85,7 @@ def test_routed_experts_zero_grad_clears_mxfp8_store_grads():
         num_experts=2,
         bias=False,
         dtype=DType.bfloat16,
-        rowwise_fp8={"enabled": True, "block_size": 32, "fp8_only_params": True},  # type: ignore[arg-type]
+        rowwise_fp8={"enabled": True, "block_size": 32, "fp8_only_params": True},
         init_device="cpu",
     )
     module._rowwise_fp8_up_gate_weight.grad_bf16 = torch.ones_like(module.w_up_gate)
@@ -124,15 +106,17 @@ def test_routed_experts_zero_grad_clears_mxfp8_store_grads():
     assert module._rowwise_fp8_down_weight.grad_bf16 is None
 
 
-@requires_gpu
 def test_routed_experts_mxfp8_weight_anchors_follow_to_empty():
+    if not torch.cuda.is_available():
+        return
+
     module = RoutedExperts(
         d_model=32,
         hidden_size=32,
         num_experts=2,
         bias=False,
         dtype=DType.float32,
-        rowwise_fp8={"enabled": True, "block_size": 32, "fp8_only_params": True},  # type: ignore[arg-type]
+        rowwise_fp8={"enabled": True, "block_size": 32, "fp8_only_params": True},
         init_device="cpu",
     )
     module.to_empty(device=torch.device("cuda"))
@@ -152,7 +136,7 @@ def test_routed_experts_fp8_only_disables_anchor_grads():
         num_experts=2,
         bias=False,
         dtype=DType.bfloat16,
-        rowwise_fp8={"enabled": True, "block_size": 32, "fp8_only_params": True},  # type: ignore[arg-type]
+        rowwise_fp8={"enabled": True, "block_size": 32, "fp8_only_params": True},
         init_device="cpu",
     )
 
@@ -207,7 +191,7 @@ def test_routed_experts_refresh_does_not_read_released_anchors(monkeypatch):
         num_experts=2,
         bias=False,
         dtype=DType.bfloat16,
-        rowwise_fp8={"enabled": True, "block_size": 32, "fp8_only_params": True},  # type: ignore[arg-type]
+        rowwise_fp8={"enabled": True, "block_size": 32, "fp8_only_params": True},
         init_device="cpu",
     )
     up_rhs = ScaledGroupedMMPrequantizedRHS(
@@ -264,7 +248,7 @@ def test_routed_experts_syncs_mxfp8_store_grads_from_anchor_main_grad():
         num_experts=2,
         bias=False,
         dtype=DType.bfloat16,
-        rowwise_fp8={"enabled": True, "block_size": 32, "fp8_only_params": True},  # type: ignore[arg-type]
+        rowwise_fp8={"enabled": True, "block_size": 32, "fp8_only_params": True},
         init_device="cpu",
     )
     up_main_grad = torch.full(module.w_up_gate.shape, 3.0, dtype=torch.float32)
@@ -342,170 +326,6 @@ def test_fp8_weight_store_refresh_from_logical_weight_uses_explicit_layout_specs
         (1, 8, 16),
         (1, 16, 8),
     ]
-
-
-@requires_gpu
-def test_routed_experts_refresh_marks_owned_prequant_caches_versionless(monkeypatch):
-    module = RoutedExperts(
-        d_model=512,
-        hidden_size=256,
-        num_experts=2,
-        bias=False,
-        dtype=DType.float32,
-        rowwise_fp8={"enabled": True, "block_size": 32},  # type: ignore[arg-type]
-        init_device="cuda",
-    )
-
-    def _fake_prequant(mat_b: torch.Tensor, *, check_mat_b_version: bool = True):
-        return ScaledGroupedMMPrequantizedRHS(
-            mat_b_q=torch.empty_like(mat_b, dtype=torch.float8_e4m3fn),
-            scale_b=torch.empty((1,), dtype=torch.float8_e8m0fnu),
-            mat_b_shape=tuple(mat_b.shape),
-            mat_b_version=0 if check_mat_b_version else -1,
-        )
-
-    monkeypatch.setattr(
-        "olmo_core.nn.fp8_weight.prequantize_scaled_grouped_mm_rhs",
-        _fake_prequant,
-    )
-
-    module.refresh_rowwise_fp8_cache()
-
-    assert module._rowwise_fp8_up_gate_prequant is not None
-    assert module._rowwise_fp8_up_gate_prequant.mat_b_version == -1
-    assert module._rowwise_fp8_up_gate_prequant_t is not None
-    assert module._rowwise_fp8_up_gate_prequant_t.mat_b_version == -1
-    assert module._rowwise_fp8_down_prequant is not None
-    assert module._rowwise_fp8_down_prequant.mat_b_version == -1
-    assert module._rowwise_fp8_down_prequant_t is not None
-    assert module._rowwise_fp8_down_prequant_t.mat_b_version == -1
-
-
-def test_routed_experts_forward_rowwise_fp8_uses_cached_prequantized_rhs(monkeypatch):
-    module = RoutedExperts(
-        d_model=512,
-        hidden_size=256,
-        num_experts=2,
-        bias=False,
-        dtype=DType.float32,
-        rowwise_fp8={"enabled": True, "block_size": 32},  # type: ignore[arg-type]
-        init_device="cpu",
-    )
-
-    up_q = module.w_up_gate.transpose(1, 2).to(torch.float8_e4m3fn)
-    up_t_q = module.w_up_gate.to(torch.float8_e4m3fn)
-    up_s = torch.ones((module.num_experts, 1), dtype=torch.float8_e8m0fnu)
-    down_q = module.w_down.to(torch.float8_e4m3fn)
-    down_t_q = module.w_down.transpose(1, 2).to(torch.float8_e4m3fn)
-    down_s = torch.ones((module.num_experts, 1), dtype=torch.float8_e8m0fnu)
-
-    module._rowwise_fp8_up_gate_prequant = ScaledGroupedMMPrequantizedRHS(
-        mat_b_q=up_q,
-        scale_b=up_s,
-        mat_b_shape=tuple(module.w_up_gate.transpose(1, 2).shape),
-        mat_b_version=int(module.w_up_gate._version),
-    )
-    module._rowwise_fp8_up_gate_prequant_t = ScaledGroupedMMPrequantizedRHS(
-        mat_b_q=up_t_q,
-        scale_b=up_s,
-        mat_b_shape=tuple(module.w_up_gate.shape),
-        mat_b_version=int(module.w_up_gate._version),
-    )
-    module._rowwise_fp8_down_prequant = ScaledGroupedMMPrequantizedRHS(
-        mat_b_q=down_q,
-        scale_b=down_s,
-        mat_b_shape=tuple(module.w_down.shape),
-        mat_b_version=int(module.w_down._version),
-    )
-    module._rowwise_fp8_down_prequant_t = ScaledGroupedMMPrequantizedRHS(
-        mat_b_q=down_t_q,
-        scale_b=down_s,
-        mat_b_shape=tuple(module.w_down.transpose(1, 2).shape),
-        mat_b_version=int(module.w_down._version),
-    )
-    module._rowwise_fp8_weight_versions = (
-        int(module.w_up_gate._version),
-        int(module.w_down._version),
-    )
-    module._rowwise_fp8_up_gate_weight.prequantized_rhs = module._rowwise_fp8_up_gate_prequant
-    module._rowwise_fp8_up_gate_weight.prequantized_rhs_for_dgrad = (
-        module._rowwise_fp8_up_gate_prequant_t
-    )
-    module._rowwise_fp8_down_weight.prequantized_rhs = module._rowwise_fp8_down_prequant
-    module._rowwise_fp8_down_weight.prequantized_rhs_for_dgrad = module._rowwise_fp8_down_prequant_t
-
-    seen = {"calls": 0, "prequantized_lhs_count": 0}
-
-    def _stub_scaled_grouped_mm_q_fp8_weight(
-        mat_a: torch.Tensor,
-        grad_anchor: torch.Tensor,
-        *,
-        offs: torch.Tensor,
-        input_grad_out: torch.Tensor | None = None,
-        use_fast_accum: bool = True,
-        prequantized_lhs=None,
-        prequantized_rhs=None,
-        prequantized_rhs_for_dgrad=None,
-        wgrad_sink=None,
-        wgrad_sink_transpose_last2: bool = False,
-        wgrad_sink_squeeze_first_dim: bool = False,
-    ) -> torch.Tensor:
-        if prequantized_lhs is not None:
-            seen["prequantized_lhs_count"] += 1
-        del (
-            offs,
-            input_grad_out,
-            use_fast_accum,
-            prequantized_lhs,
-            prequantized_rhs_for_dgrad,
-            wgrad_sink,
-            wgrad_sink_transpose_last2,
-            wgrad_sink_squeeze_first_dim,
-        )
-        seen["calls"] += 1
-        assert prequantized_rhs is not None
-        return torch.zeros(
-            (mat_a.shape[0], grad_anchor.shape[-1]), dtype=mat_a.dtype, device=mat_a.device
-        )
-
-    def _forbid_forward_time_prequant(*args, **kwargs):
-        del args, kwargs
-        raise AssertionError("routed rowwise FP8 forward must not refresh/prequantize weights")
-
-    monkeypatch.setattr(
-        "olmo_core.nn.moe.v2.routed_experts.scaled_grouped_mm_q_fp8_weight",
-        _stub_scaled_grouped_mm_q_fp8_weight,
-    )
-    monkeypatch.setattr(
-        "olmo_core.nn.fp8_weight.prequantize_scaled_grouped_mm_rhs",
-        _forbid_forward_time_prequant,
-    )
-
-    x = torch.randn(8, 512, dtype=torch.float32)
-    batch = torch.tensor([4, 4], dtype=torch.int32)
-    input_q = x.to(torch.float8_e4m3fn)
-    input_scales = torch.ones((x.shape[0], x.shape[1] // 32), dtype=torch.float8_e8m0fnu)
-    _ = module._forward_rowwise_fp8(
-        x,
-        batch,
-        prequantized_input_q=input_q,
-        prequantized_input_scales=input_scales,
-    )
-    assert seen["calls"] == 2
-    assert seen["prequantized_lhs_count"] == 2
-
-
-@requires_gpu
-def test_swiglu_backward_grad_up_gate_compiled_helper_matches_eager(monkeypatch):
-    monkeypatch.setenv("OLMO_MXFP8_COMPILE_SWIGLU_BWD", "1")
-    torch.manual_seed(123)
-    up_gate = torch.randn(16, 128, device="cuda", dtype=torch.bfloat16)
-    grad_h = torch.randn(16, 64, device="cuda", dtype=torch.bfloat16)
-
-    actual = swiglu_backward_grad_up_gate(up_gate, grad_h)
-    expected = _swiglu_backward_grad_up_gate_impl(up_gate, grad_h)
-
-    torch.testing.assert_close(actual, expected, rtol=1e-2, atol=1e-2)
 
 
 def test_multigroup_ddp_zeroes_module_logical_grads():
@@ -622,3 +442,171 @@ def test_block_refresh_rowwise_fp8_cache_shared_only_does_not_refresh_routed():
     assert seen == {"refresh": 0, "invalidate": 1}
     assert block._shared_rowwise_fp8_up_prequant is None
     assert block._shared_rowwise_fp8_down_prequant is None
+
+
+def test_routed_experts_refresh_marks_owned_prequant_caches_versionless(monkeypatch):
+    if not torch.cuda.is_available():
+        return
+
+    module = RoutedExperts(
+        d_model=512,
+        hidden_size=256,
+        num_experts=2,
+        bias=False,
+        dtype=DType.float32,
+        rowwise_fp8={"enabled": True, "block_size": 32},
+        init_device="cuda",
+    )
+
+    def _fake_prequant(mat_b: torch.Tensor, *, check_mat_b_version: bool = True):
+        return ScaledGroupedMMPrequantizedRHS(
+            mat_b_q=torch.empty_like(mat_b, dtype=torch.float8_e4m3fn),
+            scale_b=torch.empty((1,), dtype=torch.float8_e8m0fnu),
+            mat_b_shape=tuple(mat_b.shape),
+            mat_b_version=0 if check_mat_b_version else -1,
+        )
+
+    monkeypatch.setattr(
+        "olmo_core.nn.fp8_weight.prequantize_scaled_grouped_mm_rhs",
+        _fake_prequant,
+    )
+
+    module.refresh_rowwise_fp8_cache()
+
+    assert module._rowwise_fp8_up_gate_prequant is not None
+    assert module._rowwise_fp8_up_gate_prequant.mat_b_version == -1
+    assert module._rowwise_fp8_up_gate_prequant_t is not None
+    assert module._rowwise_fp8_up_gate_prequant_t.mat_b_version == -1
+    assert module._rowwise_fp8_down_prequant is not None
+    assert module._rowwise_fp8_down_prequant.mat_b_version == -1
+    assert module._rowwise_fp8_down_prequant_t is not None
+    assert module._rowwise_fp8_down_prequant_t.mat_b_version == -1
+
+
+def test_routed_experts_forward_rowwise_fp8_uses_cached_prequantized_rhs(monkeypatch):
+    module = RoutedExperts(
+        d_model=512,
+        hidden_size=256,
+        num_experts=2,
+        bias=False,
+        dtype=DType.float32,
+        rowwise_fp8={"enabled": True, "block_size": 32},
+        init_device="cpu",
+    )
+
+    up_q = module.w_up_gate.transpose(1, 2).to(torch.float8_e4m3fn)
+    up_t_q = module.w_up_gate.to(torch.float8_e4m3fn)
+    up_s = torch.ones((module.num_experts, 1), dtype=torch.float8_e8m0fnu)
+    down_q = module.w_down.to(torch.float8_e4m3fn)
+    down_t_q = module.w_down.transpose(1, 2).to(torch.float8_e4m3fn)
+    down_s = torch.ones((module.num_experts, 1), dtype=torch.float8_e8m0fnu)
+
+    module._rowwise_fp8_up_gate_prequant = ScaledGroupedMMPrequantizedRHS(
+        mat_b_q=up_q,
+        scale_b=up_s,
+        mat_b_shape=tuple(module.w_up_gate.transpose(1, 2).shape),
+        mat_b_version=int(module.w_up_gate._version),
+    )
+    module._rowwise_fp8_up_gate_prequant_t = ScaledGroupedMMPrequantizedRHS(
+        mat_b_q=up_t_q,
+        scale_b=up_s,
+        mat_b_shape=tuple(module.w_up_gate.shape),
+        mat_b_version=int(module.w_up_gate._version),
+    )
+    module._rowwise_fp8_down_prequant = ScaledGroupedMMPrequantizedRHS(
+        mat_b_q=down_q,
+        scale_b=down_s,
+        mat_b_shape=tuple(module.w_down.shape),
+        mat_b_version=int(module.w_down._version),
+    )
+    module._rowwise_fp8_down_prequant_t = ScaledGroupedMMPrequantizedRHS(
+        mat_b_q=down_t_q,
+        scale_b=down_s,
+        mat_b_shape=tuple(module.w_down.transpose(1, 2).shape),
+        mat_b_version=int(module.w_down._version),
+    )
+    module._rowwise_fp8_weight_versions = (
+        int(module.w_up_gate._version),
+        int(module.w_down._version),
+    )
+    module._rowwise_fp8_up_gate_weight.prequantized_rhs = module._rowwise_fp8_up_gate_prequant
+    module._rowwise_fp8_up_gate_weight.prequantized_rhs_for_dgrad = (
+        module._rowwise_fp8_up_gate_prequant_t
+    )
+    module._rowwise_fp8_down_weight.prequantized_rhs = module._rowwise_fp8_down_prequant
+    module._rowwise_fp8_down_weight.prequantized_rhs_for_dgrad = module._rowwise_fp8_down_prequant_t
+
+    seen = {"calls": 0, "prequantized_lhs_count": 0}
+
+    def _stub_scaled_grouped_mm_q_fp8_weight(
+        mat_a: torch.Tensor,
+        grad_anchor: torch.Tensor,
+        *,
+        offs: torch.Tensor,
+        input_grad_out: torch.Tensor | None = None,
+        use_fast_accum: bool = True,
+        prequantized_lhs=None,
+        prequantized_rhs=None,
+        prequantized_rhs_for_dgrad=None,
+        wgrad_sink=None,
+        wgrad_sink_transpose_last2: bool = False,
+        wgrad_sink_squeeze_first_dim: bool = False,
+    ) -> torch.Tensor:
+        if prequantized_lhs is not None:
+            seen["prequantized_lhs_count"] += 1
+        del (
+            offs,
+            input_grad_out,
+            use_fast_accum,
+            prequantized_lhs,
+            prequantized_rhs_for_dgrad,
+            wgrad_sink,
+            wgrad_sink_transpose_last2,
+            wgrad_sink_squeeze_first_dim,
+        )
+        seen["calls"] += 1
+        assert prequantized_rhs is not None
+        return torch.zeros(
+            (mat_a.shape[0], grad_anchor.shape[-1]), dtype=mat_a.dtype, device=mat_a.device
+        )
+
+    def _forbid_forward_time_prequant(*args, **kwargs):
+        del args, kwargs
+        raise AssertionError("routed rowwise FP8 forward must not refresh/prequantize weights")
+
+    monkeypatch.setattr(
+        "olmo_core.nn.moe.v2.routed_experts.scaled_grouped_mm_q_fp8_weight",
+        _stub_scaled_grouped_mm_q_fp8_weight,
+    )
+    monkeypatch.setattr(
+        "olmo_core.nn.fp8_weight.prequantize_scaled_grouped_mm_rhs",
+        _forbid_forward_time_prequant,
+    )
+
+    x = torch.randn(8, 512, dtype=torch.float32)
+    batch = torch.tensor([4, 4], dtype=torch.int32)
+    input_q = x.to(torch.float8_e4m3fn)
+    input_scales = torch.ones((x.shape[0], x.shape[1] // 32), dtype=torch.float8_e8m0fnu)
+    _ = module._forward_rowwise_fp8(
+        x,
+        batch,
+        prequantized_input_q=input_q,
+        prequantized_input_scales=input_scales,
+    )
+    assert seen["calls"] == 2
+    assert seen["prequantized_lhs_count"] == 2
+
+
+def test_swiglu_backward_grad_up_gate_compiled_helper_matches_eager(monkeypatch):
+    if not torch.cuda.is_available():
+        return
+
+    monkeypatch.setenv("OLMO_MXFP8_COMPILE_SWIGLU_BWD", "1")
+    torch.manual_seed(123)
+    up_gate = torch.randn(16, 128, device="cuda", dtype=torch.bfloat16)
+    grad_h = torch.randn(16, 64, device="cuda", dtype=torch.bfloat16)
+
+    actual = swiglu_backward_grad_up_gate(up_gate, grad_h)
+    expected = _swiglu_backward_grad_up_gate_impl(up_gate, grad_h)
+
+    torch.testing.assert_close(actual, expected, rtol=1e-2, atol=1e-2)

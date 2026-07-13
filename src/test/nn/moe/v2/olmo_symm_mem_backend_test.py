@@ -62,6 +62,31 @@ def _alloc_two_independent_subgroups() -> None:
     dist.barrier()
 
 
+def _peer_base_ptrs_world() -> None:
+    from olmo_core.kernels import olmo_symm_mem
+
+    os.environ["OLMO_USE_OWN_SYMM_MEM"] = "1"
+    group = dist.group.WORLD
+    rank = dist.get_rank(group)
+    world_size = dist.get_world_size(group)
+    device = torch.device("cuda", torch.cuda.current_device())
+
+    workspace = olmo_symm_mem.empty(
+        (256,),
+        dtype=torch.uint8,
+        device=device,
+        group=group,
+    )
+    workspace.fill_(rank + 1)
+    ptrs = olmo_symm_mem.peer_base_ptrs(workspace, group=group)
+    ptrs_cpu = ptrs.cpu().tolist()
+
+    assert len(ptrs_cpu) == world_size
+    assert all(ptr > 0 for ptr in ptrs_cpu)
+    assert ptrs_cpu[rank] == workspace.data_ptr()
+    dist.barrier(group=group)
+
+
 def _rowwise_dispatch_combine_roundtrip() -> None:
     from olmo_core.kernels import olmo_symm_mem
     from olmo_core.kernels.symm_mem_vdev2d import (
@@ -186,10 +211,11 @@ def _rowwise_dispatch_combine_subgroup_only() -> None:
     dist.barrier()
 
 
-@pytest.mark.skipif(torch.cuda.device_count() < 4, reason="Requires 4 GPUs")
 @requires_multi_gpu
 def test_olmo_symm_alloc_subgroup_without_world_participation():
     _require_olmo_symm_extension()
+    if torch.cuda.device_count() < 4:
+        pytest.skip("Requires at least 4 GPUs")
     run_distributed_test(
         _alloc_on_subgroup_only,
         world_size=4,
@@ -198,13 +224,25 @@ def test_olmo_symm_alloc_subgroup_without_world_participation():
     )
 
 
-@pytest.mark.skipif(torch.cuda.device_count() < 4, reason="Requires 4 GPUs")
 @requires_multi_gpu
 def test_olmo_symm_alloc_two_independent_subgroups():
     _require_olmo_symm_extension()
+    if torch.cuda.device_count() < 4:
+        pytest.skip("Requires at least 4 GPUs")
     run_distributed_test(
         _alloc_two_independent_subgroups,
         world_size=4,
+        backend="nccl",
+        start_method="spawn",
+    )
+
+
+@requires_multi_gpu
+def test_olmo_symm_peer_base_ptrs_world():
+    _require_olmo_symm_extension()
+    run_distributed_test(
+        _peer_base_ptrs_world,
+        world_size=2,
         backend="nccl",
         start_method="spawn",
     )
@@ -221,10 +259,11 @@ def test_olmo_symm_rowwise_dispatch_combine_roundtrip():
     )
 
 
-@pytest.mark.skipif(torch.cuda.device_count() < 4, reason="Requires 4 GPUs")
 @requires_multi_gpu
 def test_olmo_symm_rowwise_subgroup_without_world_participation():
     _require_olmo_symm_extension()
+    if torch.cuda.device_count() < 4:
+        pytest.skip("Requires at least 4 GPUs")
     run_distributed_test(
         _rowwise_dispatch_combine_subgroup_only,
         world_size=4,

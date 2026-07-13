@@ -2,35 +2,30 @@ from __future__ import annotations
 
 from contextlib import nullcontext
 from types import SimpleNamespace
-from typing import Any, List
 
 import pytest
 import torch
 
-from olmo_core.nn.ddp import block as block_mod
-from olmo_core.nn.ddp import model as model_mod
-from olmo_core.nn.moe.v2 import ep_no_sync_tbo_1d as tbo_1d
+import olmo_core.nn.ddp.block as block_mod
+import olmo_core.nn.ddp.model as model_mod
 from olmo_core.nn.moe.v2 import ep_no_sync_tbo_rowwise as rowwise_tbo
-from olmo_core.nn.moe.v2.ep_config import ExpertParallelConfig, ExpertParallelPath
+from olmo_core.nn.moe.v2.ep_config import ExpertParallelPath
 
 
 def test_block_selects_rowwise_no_sync_tbo(monkeypatch):
-    calls: List[Any] = []
+    calls = []
 
     def fake_rowwise(block, x0, x1_ctx, x1_is_fresh, **kwargs):
         calls.append(("rowwise", block, x0, x1_ctx, x1_is_fresh, kwargs))
         return "rowwise-out", "rowwise-ctx"
 
-    def fake_1d(*args, **kwargs):
-        calls.append(("1d", args, kwargs))
-        return "1d-out", "1d-ctx"
+    monkeypatch.setattr(block_mod, "_combined_forward_ep_no_sync_tbo_rowwise", fake_rowwise)
 
-    monkeypatch.setattr(rowwise_tbo, "combined_forward_ep_no_sync_tbo_rowwise", fake_rowwise)
-    monkeypatch.setattr(tbo_1d, "combined_forward_ep_no_sync_tbo", fake_1d)
-
-    fake_block = SimpleNamespace(ep=ExpertParallelConfig(path=ExpertParallelPath.rowwise_nvshmem))
-    out, ctx = block_mod.OLMoDDPTransformerBlock.combined_forward_ep_no_sync_tbo(
-        fake_block,  # type: ignore[arg-type]
+    fake_block = SimpleNamespace(
+        ep=SimpleNamespace(path=ExpertParallelPath.rowwise_nvshmem),
+    )
+    out, ctx = block_mod.OLMoDDPTransformerBlock.combined_forward_rowwise_nvshmem_tbo(
+        fake_block,
         "x0",
         {"x1": "x1"},
         True,
@@ -50,45 +45,41 @@ def test_block_selects_rowwise_no_sync_tbo(monkeypatch):
     ]
 
 
-def test_block_keeps_existing_1d_tbo_when_rowwise_disabled(monkeypatch):
-    calls: List[Any] = []
+def test_block_rejects_tbo_when_rowwise_nvshmem_disabled(monkeypatch):
+    calls = []
 
     monkeypatch.setattr(
-        rowwise_tbo,
-        "combined_forward_ep_no_sync_tbo_rowwise",
+        block_mod,
+        "_combined_forward_ep_no_sync_tbo_rowwise",
         lambda *args, **kwargs: calls.append(("rowwise", args, kwargs)),
     )
 
-    def fake_1d(block, x0, x1_ctx, x1_is_fresh, **kwargs):
-        calls.append(("1d", block, x0, x1_ctx, x1_is_fresh, kwargs))
-        return "1d-out", "1d-ctx"
-
-    monkeypatch.setattr(tbo_1d, "combined_forward_ep_no_sync_tbo", fake_1d)
-
-    fake_block = SimpleNamespace(ep=ExpertParallelConfig(path=ExpertParallelPath.no_sync_1d))
-    out, ctx = block_mod.OLMoDDPTransformerBlock.combined_forward_ep_no_sync_tbo(
-        fake_block,  # type: ignore[arg-type]
-        "x0",
-        {"x1": "x1"},
-        True,
+    fake_block = SimpleNamespace(
+        ep=SimpleNamespace(path=ExpertParallelPath.no_sync_1d),
     )
+    with pytest.raises(RuntimeError, match="only supported"):
+        block_mod.OLMoDDPTransformerBlock.combined_forward_rowwise_nvshmem_tbo(
+            fake_block,
+            "x0",
+            {"x1": "x1"},
+            True,
+        )
 
-    assert (out, ctx) == ("1d-out", "1d-ctx")
-    assert calls[0][0] == "1d"
+    assert calls == []
 
 
 def test_rowwise_tbo_fails_closed_for_fp8():
     block = SimpleNamespace(
-        ep=ExpertParallelConfig(path=ExpertParallelPath.rowwise_nvshmem),
+        ep=SimpleNamespace(path=ExpertParallelPath.rowwise_nvshmem),
         rowwise_fp8=SimpleNamespace(enabled=True),
     )
 
     with pytest.raises(NotImplementedError, match="Rowwise FP8"):
-        rowwise_tbo._check_rowwise_tbo_supported(block)  # type: ignore[arg-type]
+        rowwise_tbo._check_rowwise_tbo_supported(block)
 
 
 def test_model_finalizes_rowwise_pending_context(monkeypatch):
-    calls: List[Any] = []
+    calls = []
 
     def fake_stage_c(block, ctx):
         calls.append(("stage_c", block, ctx))
@@ -98,24 +89,24 @@ def test_model_finalizes_rowwise_pending_context(monkeypatch):
         calls.append(("tail", block, ctx))
         return "x1-final"
 
-    monkeypatch.setattr(rowwise_tbo, "ep_no_sync_rowwise_tbo_stage_c_launch", fake_stage_c)
-    monkeypatch.setattr(rowwise_tbo, "ep_no_sync_rowwise_tbo_stage_tail", fake_tail)
+    monkeypatch.setattr(model_mod, "ep_no_sync_rowwise_tbo_stage_c_launch", fake_stage_c)
+    monkeypatch.setattr(model_mod, "ep_no_sync_rowwise_tbo_stage_tail", fake_tail)
 
     class FakeModel:
         def maybe_forward_lm_head(self, x, lm_head_kwargs, labels=None):
             calls.append(("lm_head", x, lm_head_kwargs, labels))
             return f"head:{x}:{labels}"
 
-    fake_block = SimpleNamespace(ep=ExpertParallelConfig(path=ExpertParallelPath.rowwise_nvshmem))
+    fake_block = SimpleNamespace()
     pending = rowwise_tbo._NoSyncRowwiseTboPendingContext(
-        block=fake_block,  # type: ignore[arg-type]
+        block=fake_block,
         lane_id=1,
-        a_state=SimpleNamespace(),  # type: ignore[arg-type]
+        a_state=SimpleNamespace(),
         global_x_rank_major=torch.ones(1, 2),
     )
 
     h0, h1 = model_mod.OLMoDDPModel._tbo_last_step(
-        FakeModel(),  # type: ignore[arg-type]
+        FakeModel(),
         "x0-final",
         pending,
         {"foo": "bar"},
@@ -134,7 +125,7 @@ def test_model_finalizes_rowwise_pending_context(monkeypatch):
 
 
 def test_rowwise_tbo_combined_forward_fresh_schedule(monkeypatch):
-    calls: List[Any] = []
+    calls = []
     fake_block = SimpleNamespace()
 
     def fake_stage_a(block, x, *, lane_id, loss_div_factor=None, **kwargs):
@@ -150,7 +141,7 @@ def test_rowwise_tbo_combined_forward_fresh_schedule(monkeypatch):
         return rowwise_tbo._NoSyncRowwiseTboPendingContext(
             block=block,
             lane_id=d_state.lane_id,
-            a_state=SimpleNamespace(lane_id=d_state.lane_id),  # type: ignore[arg-type]
+            a_state=SimpleNamespace(lane_id=d_state.lane_id),
             global_x_rank_major=torch.tensor([[float(d_state.lane_id)]]),
         )
 
@@ -171,7 +162,7 @@ def test_rowwise_tbo_combined_forward_fresh_schedule(monkeypatch):
     monkeypatch.setattr(rowwise_tbo, "ep_no_sync_rowwise_tbo_stage_tail", fake_tail)
 
     out, pending = rowwise_tbo.combined_forward_ep_no_sync_tbo_rowwise(
-        fake_block,  # type: ignore[arg-type]
+        fake_block,
         "x0",
         {"x1": "x1"},
         True,
@@ -195,7 +186,7 @@ def test_rowwise_tbo_combined_forward_fresh_schedule(monkeypatch):
 
 
 def test_rowwise_stage_d_launch_uses_comm_stream_and_dispatch(monkeypatch):
-    calls: List[Any] = []
+    calls = []
     event = object()
     comm_stream = object()
 
@@ -214,7 +205,7 @@ def test_rowwise_stage_d_launch_uses_comm_stream_and_dispatch(monkeypatch):
     monkeypatch.setattr(
         rowwise_tbo,
         "record_stream_event_no_compile",
-        lambda stream: calls.append(("record_event", stream)) or event,  # type: ignore[func-returns-value]
+        lambda stream: calls.append(("record_event", stream)) or event,
     )
 
     class FakeDispatch:
@@ -237,7 +228,7 @@ def test_rowwise_stage_d_launch_uses_comm_stream_and_dispatch(monkeypatch):
     )
     block = SimpleNamespace(block_idx=4, ep_pg="pg")
 
-    d_state = rowwise_tbo.ep_no_sync_rowwise_tbo_stage_d_launch(block, a_state)  # type: ignore[arg-type]
+    d_state = rowwise_tbo.ep_no_sync_rowwise_tbo_stage_d_launch(block, a_state)
 
     assert d_state.lane_id == 1
     assert d_state.a_state is a_state
@@ -245,19 +236,11 @@ def test_rowwise_stage_d_launch_uses_comm_stream_and_dispatch(monkeypatch):
     assert d_state.dispatch_done_event is event
     assert calls[0] == ("wait_stream", comm_stream, "current-stream")
     assert calls[1][0] == "dispatch"
-    assert calls[1][1] == (
-        a_state.moe_inp,
-        None,
-        a_state.dst_ranks,
-        a_state.dst_rows,
-        buffers.dispatch_out,
-        None,
-        "ep_group",
-        "pg",
-        64,
-        False,
-        True,
-        True,
-        True,
-    )
+    dispatch_args = calls[1][1]
+    assert torch.equal(dispatch_args[0], a_state.moe_inp)
+    assert dispatch_args[1] is None
+    assert torch.equal(dispatch_args[2], a_state.dst_ranks)
+    assert torch.equal(dispatch_args[3], a_state.dst_rows)
+    assert dispatch_args[4] is buffers.dispatch_out
+    assert dispatch_args[5:] == (None, "ep_group", "pg", 64, False, True, True, True)
     assert calls[2] == ("record_event", comm_stream)
