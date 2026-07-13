@@ -118,6 +118,21 @@ class GenerationConfig(Config):
     and when top-k retrieval is disabled.
     """
 
+    landmark_flat_softmax: bool = False
+    """
+    For landmark-attention models only. **Inference-only ablation.** When enabled, keep the hard
+    top-k block selection unchanged but replace the landmark grouped/gated softmax at decode time
+    with a **plain (flat) softmax over exactly the currently-visible key positions** -- i.e. drop the
+    per-block gate reweighting and within-block split, letting a single softmax over the raw attention
+    logits allocate mass across all selected regions. The visible support matches the gated scheme's
+    value-carrying support: for non-compressive landmark models it is the selected blocks' content
+    tokens plus the local section (landmark positions carry no value and stay masked); for compressive
+    models it is the selected blocks' content + landmark tokens plus the local section, with
+    non-selected blocks (and their reserved ``landmark_nonselected_mass``) fully excluded. Defaults to
+    ``False`` (no behavior change). Can also be enabled via the ``OLMO_LANDMARK_FLAT_SOFTMAX`` env var.
+    Does not affect prefill or training. See ``analysis/flat_softmax_variant_eval.md``.
+    """
+
     def __post_init__(self):
         self.validate()
 

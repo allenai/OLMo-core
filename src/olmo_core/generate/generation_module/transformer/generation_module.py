@@ -1,6 +1,7 @@
 import json
 import logging
 import math
+import os
 import tempfile
 import time
 from pathlib import Path
@@ -366,6 +367,17 @@ class TransformerGenerationModule(GenerationModule):
                 top_k=top_k,
                 nonselected_landmark_mass=generation_config.landmark_nonselected_mass,
             )
+            # Inference-only flat-softmax ablation (keep top-k selection, drop gate reweighting).
+            # Enabled via GenerationConfig or the OLMO_LANDMARK_FLAT_SOFTMAX env var (the latter lets
+            # eval harnesses toggle the variant with no model-arg change). See
+            # analysis/flat_softmax_variant_eval.md.
+            flat_softmax = generation_config.landmark_flat_softmax or bool(
+                os.environ.get("OLMO_LANDMARK_FLAT_SOFTMAX")
+            )
+            if flat_softmax:
+                log.info("Landmark flat-softmax decode variant ACTIVE (gate reweighting removed)")
+            for attn in self._landmark_attention_layers():
+                attn._eval_flat_softmax = flat_softmax  # type: ignore[attr-defined]
             # Optional landmark-gate analysis hook (off unless OLMO_LANDMARK_GATE_LOG is set). Tag
             # each landmark layer with its block index so the recorder can key gates by layer, then
             # open a fresh per-example record (context_len defaults to the content prompt length).
@@ -602,9 +614,7 @@ class TransformerGenerationModule(GenerationModule):
         """True if every landmark layer supports the right-padded cross-length batched decode
         (:meth:`generate_landmark_batch`)."""
         layers = self._landmark_attention_layers()
-        return bool(layers) and all(
-            getattr(a, "_supports_ragged_decode", False) for a in layers
-        )
+        return bool(layers) and all(getattr(a, "_supports_ragged_decode", False) for a in layers)
 
     @torch.inference_mode()
     def generate_landmark_batch(
@@ -656,7 +666,9 @@ class TransformerGenerationModule(GenerationModule):
         mem_freq = mem_freqs.pop()
         block_size = mem_freq + 1
         mem_id = gen_cfg.landmark_mem_id
-        pad_id = gen_cfg.landmark_pad_id if gen_cfg.landmark_pad_id is not None else gen_cfg.pad_token_id
+        pad_id = (
+            gen_cfg.landmark_pad_id if gen_cfg.landmark_pad_id is not None else gen_cfg.pad_token_id
+        )
         eos = gen_cfg.eos_token_id
         dev = self.device
         B = len(prompts)

@@ -34,6 +34,9 @@
 #                       above), OLMO_GATE_DATASET,
 #   OLMO_CORE_GATE_LOG_ALL (non-empty -> also log EVERY candidate block's gate score, not just the
 #                       top-k kept ones; larger logs, needs OLMO_CORE_GATE_LOG),
+#   OLMO_CORE_FLAT_SOFTMAX (non-empty -> inference-only ablation: keep hard top-k selection but drop
+#                       the per-block gate reweighting, plain softmax over the selected support; needs
+#                       a top-k above; see analysis/flat_softmax_variant_eval.md),
 #   HELMET_MAX_LENGTH (cap HELMET suite, e.g. 32768 for an un-extended model),
 #   HELMET_TIMEOUT (gantry --timeout, seconds; default 0 = submit & detach so
 #                   RULER launches immediately, -1 = follow the run to completion)
@@ -110,6 +113,12 @@ OLMO_GATE_DATASET="${OLMO_GATE_DATASET:-ruler}"
 # and where the hard cutoff falls within it -- is recoverable for peakiness analysis. Off by default
 # because it scales each record with the number of past blocks (O(context) rather than O(top_k)).
 OLMO_CORE_GATE_LOG_ALL="${OLMO_CORE_GATE_LOG_ALL:-}"
+# Inference-only flat-softmax ablation. When set to any non-empty value, thread
+# OLMO_LANDMARK_FLAT_SOFTMAX=1 into the RULER container so landmark decode keeps the hard top-k block
+# selection but drops the per-block gate reweighting (plain softmax over the selected support). Only
+# meaningful with hard top-k active (OLMO_CORE_LANDMARK_TOP_K or *_FRACTION). Empty (default) = the
+# usual gated decode. See analysis/flat_softmax_variant_eval.md. Independent of gate logging.
+OLMO_CORE_FLAT_SOFTMAX="${OLMO_CORE_FLAT_SOFTMAX:-}"
 if [ -n "${OLMO_CORE_GATE_LOG}" ] && [ -z "${OLMO_CORE_LANDMARK_TOP_K}" ] \
    && [ -z "${OLMO_CORE_LANDMARK_TOP_K_FRACTION}" ]; then
   echo "WARNING: OLMO_CORE_GATE_LOG is set but neither OLMO_CORE_LANDMARK_TOP_K nor" >&2
@@ -302,6 +311,12 @@ if [ "${SKIP_RULER:-0}" != "1" ]; then
         gate_log_gantry_args="${gate_log_gantry_args},env##4=OLMO_GATE_LOG_ALL=1"
       fi
     fi
+    # Flat-softmax ablation env (independent of gate logging). env##5 keeps N unique vs the gate-log
+    # env##1-4 above; the cookbook strips ##\d+ so it renders as a plain gantry --env.
+    flat_softmax_gantry_args=""
+    if [ -n "${OLMO_CORE_FLAT_SOFTMAX}" ]; then
+      flat_softmax_gantry_args=",env##5=OLMO_LANDMARK_FLAT_SOFTMAX=1"
+    fi
     echo "==> Launching RULER ${task} (max_length=${max_length}) for ${MODEL_PATH}"
     attempt=1
     until _submit_with_watchdog olmo-cookbook-eval evaluate \
@@ -319,7 +334,7 @@ if [ "${SKIP_RULER:-0}" != "1" ]; then
       ${OE_EVAL_BRANCH_FLAG} \
       ${NAME_SUFFIX_FLAG} \
       "${RULER_LIMIT_ARGS[@]+"${RULER_LIMIT_ARGS[@]}"}" \
-      -l "install=uv sync --python 3.11 && uv pip install --no-deps ${FLASH_ATTN_WHEEL} && uv pip install --no-deps git+https://github.com/allenai/OLMo-core.git@${OLMO_CORE_COMMIT} && uv pip install dataclass-extensions==0.5.0 && uv pip install flash-linear-attention==0.4.1${gate_log_gantry_args}" \
+      -l "install=uv sync --python 3.11 && uv pip install --no-deps ${FLASH_ATTN_WHEEL} && uv pip install --no-deps git+https://github.com/allenai/OLMo-core.git@${OLMO_CORE_COMMIT} && uv pip install dataclass-extensions==0.5.0 && uv pip install flash-linear-attention==0.4.1${gate_log_gantry_args}${flat_softmax_gantry_args}" \
       --model-args "${model_args}"; do
       if [ "${attempt}" -ge "${RULER_SUBMIT_RETRIES}" ]; then
         echo "    !! RULER ${task} (nsm=${OLMO_CORE_LANDMARK_NONSELECTED_MASS:-default}) failed after ${attempt} attempts -- skipping"

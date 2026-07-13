@@ -817,6 +817,21 @@ class FastCompressiveLandmarkAttention(FastLandmarkAttention):
                     scores[..., lm_idx],
                 )
 
+        if getattr(self, "_eval_flat_softmax", False):
+            # Inference-only ablation: keep the hard top-k selection but replace the gated softmax
+            # with a plain softmax over exactly the value-carrying support. For the compressive model
+            # that is {selected blocks' content + landmark tokens, local section}; non-selected blocks
+            # are excluded entirely (no ``nonselected_landmark_mass`` alpha when the flag is on).
+            # ``selected`` marks only landmark positions, so index the per-block landmark to recover
+            # each block's keep flag and broadcast it over the block's Lb positions.
+            # See analysis/flat_softmax_variant_eval.md.
+            flat_visible = last_section_b.expand(B, H, 1, total).clone()
+            if S > 0:
+                block_landmark_pos = torch.arange(Lb - 1, S, Lb, device=device)
+                block_sel = selected[..., block_landmark_pos]  # (B, H, 1, n_past_blocks) bool
+                flat_visible[..., :S] |= block_sel.repeat_interleave(Lb, dim=-1)
+            return torch.softmax(scores.masked_fill(~flat_visible, neg_inf), dim=-1)
+
         # Gate (cross-block) softmax over the selected landmarks + the local section.
         gate_set = selected | last_section_b
         gate_w = torch.softmax(scores.masked_fill(~gate_set, neg_inf), dim=-1)
