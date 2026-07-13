@@ -193,6 +193,16 @@ def refresh_rowwise_fp8_cache(block: OLMoDDPTransformerBlock) -> None:
     refresh_shared_rowwise_fp8_cache(block)
 
 
+def _require_swiglu_shared_experts(shared_experts) -> None:
+    # The rowwise-FP8 shared-expert helpers reshape the projection as SwiGLU (up|gate) and apply
+    # SiLU-gated activation unconditionally, so other activations (e.g. relu2) aren't supported here.
+    if shared_experts.activation.value != "swiglu":
+        raise NotImplementedError(
+            "Rowwise-FP8 shared experts only support SwiGLU activation, got "
+            f"{shared_experts.activation.value!r}."
+        )
+
+
 def shared_experts_forward1_rowwise_fp8(
     block: OLMoDDPTransformerBlock,
     x: torch.Tensor,
@@ -200,6 +210,7 @@ def shared_experts_forward1_rowwise_fp8(
     use_fast_accum: bool,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     assert block.shared_experts is not None
+    _require_swiglu_shared_experts(block.shared_experts)
     if x.ndim == 3:
         B, S, D = x.shape
         x2 = x.reshape(B * S, D)
@@ -255,6 +266,7 @@ def shared_experts_forward_rowwise_fp8(
     use_fast_accum: bool,
 ) -> torch.Tensor:
     assert block.shared_experts is not None
+    _require_swiglu_shared_experts(block.shared_experts)
     if x.ndim != 3:
         raise RuntimeError(
             "shared_experts_forward_rowwise_fp8 expects x to be [B, S, D], "

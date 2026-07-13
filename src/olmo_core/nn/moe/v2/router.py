@@ -189,6 +189,16 @@ class MoERouterV2(nn.Module):
             )
 
         if (
+            self.gating_function == MoERouterGatingFunction.topk_softmax
+            and self.random_expert_assignment
+        ):
+            raise OLMoConfigurationError(
+                "random_expert_assignment is not supported with gating_function='topk_softmax': "
+                "the topk_softmax path selects experts from the raw logits, so it would ignore the "
+                "randomized scores and route deterministically."
+            )
+
+        if (
             self.n_group is not None
             and self.topk_group is not None
             and self.num_experts % self.n_group == 0
