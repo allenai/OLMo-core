@@ -211,6 +211,14 @@ def _get_olmo3moe_config(model: "MoEFusedV2Transformer") -> PretrainedConfig:
         unsupported_modifiers.append(f"gating_function={router.gating_function.value}")
     if router.n_group is not None or router.topk_group is not None:
         unsupported_modifiers.append("grouped routing (n_group/topk_group)")
+    # Weight-rescaling modifiers: core multiplies the selected expert weights in the router
+    # forward, but the HF Olmo3Moe router has no corresponding field/multiply.
+    if router.expert_weight_scale is not None:
+        unsupported_modifiers.append("expert_weight_scale")
+    if router.original_top_k is not None:
+        unsupported_modifiers.append("original_top_k")
+    if router.restore_weight_scale:
+        unsupported_modifiers.append("restore_weight_scale")
     if unsupported_modifiers:
         raise NotImplementedError(
             f"Exporting olmo3moe with router selection modifiers "

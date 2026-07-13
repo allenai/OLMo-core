@@ -928,11 +928,18 @@ class RoutedExperts(nn.Module):
             out=down_proj_out,
         )  # -> (BS, D)
         if self.b_down is not None:
-            down = cast(torch.Tensor, down) + self._expand_expert_bias(
+            down = cast(torch.Tensor, down)
+            bias = self._expand_expert_bias(
                 self.b_down,
                 batch_size_per_expert_tensor,
                 output_size=down.shape[0],
             )
+            if down_proj_out is not None:
+                # ``down`` aliases the caller's symmetric combine buffer (rowwise TBO no-sync
+                # path); add in-place so the combine kernel reads the biased output.
+                down = down.add_(bias)
+            else:
+                down = down + bias
 
         return cast(torch.Tensor, down)  # ensure type is Tensor
 

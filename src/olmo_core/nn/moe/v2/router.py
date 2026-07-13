@@ -188,6 +188,19 @@ class MoERouterV2(nn.Module):
                 "silently route to experts outside the allowed group."
             )
 
+        if (
+            self.n_group is not None
+            and self.topk_group is not None
+            and self.num_experts % self.n_group == 0
+        ):
+            experts_per_group = self.num_experts // self.n_group
+            if self.top_k > self.topk_group * experts_per_group:
+                raise OLMoConfigurationError(
+                    f"top_k ({self.top_k}) exceeds the number of experts reachable under grouped "
+                    f"routing (topk_group * experts_per_group = {self.topk_group} * "
+                    f"{experts_per_group}); top-k would otherwise select masked out-of-group experts."
+                )
+
         if self.bias_gamma is not None or self.score_correction_bias:
             if self.bias_gamma is not None:
                 assert self.bias_gamma > 0
