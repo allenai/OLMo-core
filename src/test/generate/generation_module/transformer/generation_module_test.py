@@ -6,7 +6,7 @@ import torch
 import torch.distributed as dist
 
 from olmo_core.config import DType
-from olmo_core.distributed.checkpoint import save_model_and_optim_state
+from olmo_core.distributed.checkpoint import save_model_and_optim_state, save_state_dict
 from olmo_core.distributed.parallel.data_parallel import DataParallelType
 from olmo_core.distributed.utils import get_world_size
 from olmo_core.generate.generation_module import TransformerGenerationModule
@@ -502,6 +502,38 @@ def create_test_checkpoint_for_merging(
         json.dump(config_dict, f)
 
 
+def test_from_checkpoint_loads_olmo_ddp_layout(tmp_path: Path):
+    config = small_transformer_config(n_layers=1)
+    source_model = config.build()
+    expected_state = {name: value.clone() for name, value in source_model.state_dict().items()}
+    checkpoint_state = {
+        f"module.{name}.main": value.clone() for name, value in expected_state.items()
+    }
+    checkpoint_state.update(
+        {
+            f"module.{name}.exp_avg": torch.zeros_like(value)
+            for name, value in expected_state.items()
+        }
+    )
+
+    checkpoint_dir = tmp_path / "ddp-checkpoint"
+    save_state_dict(checkpoint_dir / "model_and_optim", checkpoint_state)
+    create_test_checkpoint_for_merging(
+        tmp_path / "config-source",
+        seed=0,
+        transformer_config=config,
+    )
+    (checkpoint_dir / "config.json").write_text(
+        (tmp_path / "config-source" / "config.json").read_text()
+    )
+
+    loaded = TransformerGenerationModule.from_checkpoint(checkpoint_dir, device="cpu")
+    actual_state = loaded.model.state_dict()
+    assert actual_state.keys() == expected_state.keys()
+    for name, expected in expected_state.items():
+        torch.testing.assert_close(actual_state[name], expected)
+
+
 def test_from_checkpoints_single_checkpoint(tmp_path: Path):
     """Test that from_checkpoints with a single checkpoint behaves like from_checkpoint."""
     config = small_transformer_config(n_layers=2)
@@ -558,9 +590,9 @@ def test_from_checkpoints_weight_averaging(tmp_path: Path):
 
         # Verify dtype is float32 (default) for floating point tensors
         if merged_state[key].is_floating_point():
-            assert (
-                merged_state[key].dtype == torch.float32
-            ), f"Expected float32 for {key}, got {merged_state[key].dtype}"
+            assert merged_state[key].dtype == torch.float32, (
+                f"Expected float32 for {key}, got {merged_state[key].dtype}"
+            )
 
         # Calculate expected average
         tensors = [state_dict[key].float() for state_dict in state_dicts]

@@ -43,6 +43,38 @@ from olmo_core.utils import gc_cuda, get_default_device, log_or_print, move_to_d
 log = logging.getLogger(__name__)
 
 
+def _olmo_ddp_model_state_dict_to_load(
+    model: Transformer,
+    metadata: Metadata,
+) -> Optional[Dict[str, torch.Tensor]]:
+    """Build a model-only load target for OLMo DDP training checkpoints."""
+    checkpoint_metadata = metadata.state_dict_metadata
+    if not any(key.startswith("module.") and key.endswith(".main") for key in checkpoint_metadata):
+        return None
+
+    state_dict: Dict[str, torch.Tensor] = {}
+    missing: List[str] = []
+    for model_name, target in model.state_dict().items():
+        checkpoint_name = f"module.{model_name}.main"
+        source_metadata = checkpoint_metadata.get(checkpoint_name)
+        if source_metadata is None:
+            missing.append(checkpoint_name)
+            continue
+        source_shape = tuple(getattr(source_metadata, "size", ()))
+        if source_shape and source_shape != tuple(target.shape):
+            raise RuntimeError(
+                f"Checkpoint tensor '{checkpoint_name}' has shape {source_shape}, "
+                f"expected {tuple(target.shape)}"
+            )
+        state_dict[checkpoint_name] = target
+
+    if missing:
+        raise RuntimeError(
+            "OLMo DDP checkpoint is missing model tensors: " + ", ".join(missing[:20])
+        )
+    return state_dict
+
+
 class TransformerGenerationModule(GenerationModule):
     """Module for autoregressive text generation with transformer models."""
 
@@ -375,7 +407,15 @@ class TransformerGenerationModule(GenerationModule):
         if metadata is None:
             metadata = get_checkpoint_metadata(train_module_dir)
 
-        state_dict = self.state_dict_to_load(metadata)
+        ddp_model_state_dict = _olmo_ddp_model_state_dict_to_load(self.model, metadata)
+        if ddp_model_state_dict is not None:
+            log_or_print(
+                log,
+                f"Loading {len(ddp_model_state_dict)} model tensors from OLMo DDP checkpoint",
+            )
+            state_dict: Dict[str, Any] = ddp_model_state_dict
+        else:
+            state_dict = self.state_dict_to_load(metadata)
         load_state_dict(
             train_module_dir,
             state_dict,  # state is loaded into here, in-place
@@ -384,7 +424,15 @@ class TransformerGenerationModule(GenerationModule):
             work_dir=work_dir,
             thread_count=load_thread_count,
         )
-        self.load_state_dict(state_dict)
+        if ddp_model_state_dict is not None:
+            self.model.load_state_dict(
+                {
+                    model_name: state_dict[f"module.{model_name}.main"]
+                    for model_name in self.model.state_dict()
+                }
+            )
+        else:
+            self.load_state_dict(state_dict)
 
     @classmethod
     def from_checkpoint(
