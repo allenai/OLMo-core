@@ -211,14 +211,20 @@ def _get_olmo3moe_config(model: "MoEFusedV2Transformer") -> PretrainedConfig:
         unsupported_modifiers.append(f"gating_function={router.gating_function.value}")
     if router.n_group is not None or router.topk_group is not None:
         unsupported_modifiers.append("grouped routing (n_group/topk_group)")
-    # Weight-rescaling modifiers: core multiplies the selected expert weights in the router
-    # forward, but the HF Olmo3Moe router has no corresponding field/multiply.
+    # ``expert_weight_scale`` multiplies the selected expert weights in the router forward, but the
+    # HF Olmo3Moe router has no corresponding field/multiply. (``original_top_k`` and
+    # ``restore_weight_scale`` ARE representable — they map to the HF config below.)
     if router.expert_weight_scale is not None:
         unsupported_modifiers.append("expert_weight_scale")
-    if router.original_top_k is not None:
-        unsupported_modifiers.append("original_top_k")
-    if router.restore_weight_scale:
-        unsupported_modifiers.append("restore_weight_scale")
+    # The HF sigmoid router hard-codes a 1e-7 stability epsilon, so a different value would route
+    # with different weights after export.
+    if (
+        router.gating_function == MoERouterGatingFunction.sigmoid
+        and router.sigmoid_stability_epsilon != 1e-7
+    ):
+        unsupported_modifiers.append(
+            f"sigmoid_stability_epsilon={router.sigmoid_stability_epsilon}"
+        )
     if unsupported_modifiers:
         raise NotImplementedError(
             f"Exporting olmo3moe with router selection modifiers "
@@ -235,6 +241,12 @@ def _get_olmo3moe_config(model: "MoEFusedV2Transformer") -> PretrainedConfig:
         raise NotImplementedError(
             f"Exporting olmo3moe with routed-expert activation "
             f"{routed_experts.activation.value!r} is not supported (only SwiGLU)."
+        )
+    shared_experts = moe_block.shared_experts
+    if shared_experts is not None and shared_experts.activation.value != "swiglu":
+        raise NotImplementedError(
+            f"Exporting olmo3moe with shared-expert activation "
+            f"{shared_experts.activation.value!r} is not supported (only SwiGLU)."
         )
 
     # Dense MLP intermediate size, if there are any dense layers.
