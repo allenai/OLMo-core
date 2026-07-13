@@ -2172,8 +2172,8 @@ Launched OLMoBase evals:
 | Name | HF checkpoint | Beaker | Workspace | Status at launch check |
 | --- | --- | --- | --- | --- |
 | `olmoe3-1p2b-cx8-mt-int-wide-olmobase` | `hf-checkpoints/midtraining/mt-1p2b-intw256e8k-cx8-lr4e-5-r1/step127157` | https://beaker.org/ex/01KXE4E4JD4QJER5KEQX2EJF6E | `ai2/OLMo-3-moe-experiments` | started |
-| `olmoe3-275m-cx4-mt-int-wide-top16-olmobase` | `hf-checkpoints/midtraining/mt-275m-intw256e16k-cx4-lr8e-5-r1/step95368` | https://beaker.org/ex/01KXE4EEA2AW00JT58FVSJ6QTP | `ai2/olmo-instruct` | created |
-| `olmoe3-275m-cx4-mt-int-wide-top16-top8-olmobase` | `hf-checkpoints/midtraining/mt-275m-intw256e16k-cx4-lr8e-5-r1/step95368-topk8` | https://beaker.org/ex/01KXE4EQ00WWMKW3EZ2DZ91PPH | `ai2/olmo-instruct` | created |
+| `olmoe3-275m-cx4-mt-int-wide-top16-olmobase` | `hf-checkpoints/midtraining/mt-275m-intw256e16k-cx4-lr8e-5-r1/step95368` | https://beaker.org/ex/01KXE8ZQTDBCC2QRX8YXDWHAS9 | `ai2/OLMo-3-moe-experiments` | scheduled |
+| `olmoe3-275m-cx4-mt-int-wide-top16-top8-olmobase` | `hf-checkpoints/midtraining/mt-275m-intw256e16k-cx4-lr8e-5-r1/step95368-topk8` | https://beaker.org/ex/01KXE900EMBX7MDDFQEWMMN69J | `ai2/OLMo-3-moe-experiments` | scheduled |
 
 Added `eval_20260713_olmobase_targets.jsonl` and registered these explicit
 experiment IDs in `write_olmobase_eval_results.py`; refreshed

@@ -1,6 +1,6 @@
 # OLMoBase Eval Results
 
-Generated: 2026-07-13 16:22 UTC
+Generated: 2026-07-13 17:41 UTC
 
 Values are suite-level aggregates emitted by `olmo-eval`. Higher is better for accuracy/F1/pass-style metrics; lower is better for BPB/loss/perplexity-style metrics. The `direction` column is a heuristic based on suite/metric names, so treat `see metric` rows literally.
 
@@ -56,8 +56,8 @@ Completed result caches live under `/weka/oe-adapt-default/jacobm/olmoe3/OLMo-co
 | olmoe3-275m-cx8-q3td-olmobase | finalized | ai2/olmo-instruct | [beaker](https://beaker.org/ex/01KWNC3SSSR77GFQNZFEYFKFG9) |  |
 | olmoe3-275m-cx8-q3am-olmobase | finalized | ai2/olmo-instruct | [beaker](https://beaker.org/ex/01KWNC35WC375QGJ1KDZ0X64ES) |  |
 | olmoe3-275m-cx1-mt-baseline-olmobase | finalized | ai2/olmo-instruct | [beaker](https://beaker.org/ex/01KX02MYSA36TFKBT99XAE0XZ6) |  |
-| olmoe3-275m-cx4-mt-int-wide-top16-olmobase | created | ai2/olmo-instruct | [beaker](https://beaker.org/ex/01KXE4EEA2AW00JT58FVSJ6QTP) |  |
-| olmoe3-275m-cx4-mt-int-wide-top16-top8-olmobase | created | ai2/olmo-instruct | [beaker](https://beaker.org/ex/01KXE4EQ00WWMKW3EZ2DZ91PPH) |  |
+| olmoe3-275m-cx4-mt-int-wide-top16-olmobase | scheduled | ai2/OLMo-3-moe-experiments | [beaker](https://beaker.org/ex/01KXE8ZQTDBCC2QRX8YXDWHAS9) |  |
+| olmoe3-275m-cx4-mt-int-wide-top16-top8-olmobase | scheduled | ai2/OLMo-3-moe-experiments | [beaker](https://beaker.org/ex/01KXE900EMBX7MDDFQEWMMN69J) |  |
 | olmoe3-275m-cx8-mt-int-deep-olmobase | finalized | ai2/OLMo-3-moe-experiments | [beaker](https://beaker.org/ex/01KX5FF8P4F3GS5RRH5M29AFCW) |  |
 | olmoe3-275m-cx8-mt-baseline-olmobase | finalized | ai2/olmo-instruct | [beaker](https://beaker.org/ex/01KX02N80T6NXX8TZEJM8TC0Z5) |  |
 | olmoe3-480m-cx8-baseline-olmobase | finalized | ai2/olmo-instruct | [beaker](https://beaker.org/ex/01KWNC2VJ296NADBKAAES8Q052) |  |
