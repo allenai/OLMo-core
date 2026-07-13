@@ -1,4 +1,5 @@
 import logging
+import os
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -16,76 +17,43 @@ import torch
 import torch.distributed as dist
 from torch.distributed._composable.replicate import replicate
 from torch.distributed.device_mesh import DeviceMesh
-from torch.utils.checkpoint import (
-    CheckpointPolicy,
-    SelectiveCheckpointContext,
-    checkpoint,
-    noop_context_fn,
-)
+from torch.utils.checkpoint import checkpoint, noop_context_fn
 
 import olmo_core.nn.transformer
-from olmo_core._nvtx import maybe_nvtx_annotate
+from olmo_core._nvtx import nvtx
 from olmo_core.distributed.parallel import get_pp_mesh
 from olmo_core.distributed.utils import hide_from_torch, unhide_from_torch
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.kernels import olmo_symm_mem
-from olmo_core.nn.ddp.block import OLMoDDPTransformerBlock
-from olmo_core.nn.lm_head import LMOutputWithLoss
-from olmo_core.nn.moe.utils import moe_unpermute_no_compile
-from olmo_core.nn.moe.v2._nvtx_colors import (
-    COMM_COLOR,
-    EXPERTS_COLOR,
-    ROUTING_COLOR,
-    TBO_COLOR,
-)
-from olmo_core.nn.moe.v2.checkpointing import checkpoint_recompute_context_fn
-
-# NOTE: the expert-parallel "no-sync" families (ep_no_sync_buffers / ep_no_sync_tbo_1d /
-# ep_no_sync_tbo_rowwise) are imported lazily inside the methods that use them
-# (prewarm_ep_no_sync_symm_buffers, apply_ep, _tbo_last_step), so this module imports
-# cleanly without those files present. They ship in later, stacked PRs.
-from olmo_core.nn.moe.v2.tbo_state import SyncedTboPendingContext
-from olmo_core.ops import moe as ops
+from olmo_core.kernels import symm_mem_vdev2d as symm_mem_vdev2d_kernels
 from olmo_core.utils import mark_dynamic
 
+from ..lm_head import LMOutputWithLoss
+from ..moe.v2.checkpointing import checkpoint_recompute_context_fn
+from ..moe.v2.ep_config import ExpertParallelPath
+from ..moe.v2.ep_no_sync_buffers import (
+    _NoSyncSymmSharedPool,
+    compute_ep_no_sync_rank_capacity,
+    get_ep_no_sync_buffers,
+    get_ep_no_sync_rowwise_fp8_buffers,
+    prewarm_ep_no_sync_rowwise_lifetime_leases,
+    use_ep_no_sync_rowwise_symm_combine_gather,
+    use_ep_no_sync_rowwise_symm_combine_out,
+    use_ep_no_sync_rowwise_symm_dispatch_in,
+)
+from ..moe.v2.ep_no_sync_tbo_rowwise import (
+    _NoSyncRowwiseTboPendingContext,
+    ep_no_sync_rowwise_tbo_stage_c_launch,
+    ep_no_sync_rowwise_tbo_stage_tail,
+)
+from .block import OLMoDDPTransformerBlock
+
 if TYPE_CHECKING:
-    from olmo_core.nn.fp8_weight import FP8WeightStore
-    from olmo_core.nn.moe.v2.ep_no_sync_buffers import _NoSyncSymmSharedPool
     from olmo_core.train.common import ReduceType
 log = logging.getLogger(__name__)
 
-# aten = torch.ops.aten
-# c10d = torch.ops.c10d
 
-should_save_ops = [
-    torch.ops.aten.mm.default,
-    torch.ops.aten.bmm.default,
-    torch.ops.aten.addmm.default,
-    torch.ops.aten.rand_like.default,
-    # torch.ops.c10d.alltoall_base_.default,
-    # torch.ops.flash_attn_3.fwd.default,
-]
-try:
-    should_save_ops.append(torch.ops.flash_attn._flash_attn_forward.default)
-except (AttributeError, RuntimeError):  # pragma: no cover - flash_attn unavailable
-    pass
-
-
-def policy_fn(ctx: SelectiveCheckpointContext, op, *args, **kwargs):
-    # print(f'ctx: {ctx}, op: {op}')
-    if op in should_save_ops:
-        # save outputs of these ops; don't recompute them
-        return CheckpointPolicy.MUST_SAVE
-    else:
-        # everything else can be recomputed
-        return CheckpointPolicy.PREFER_RECOMPUTE
-
-
-# recompute_context_fn = functools.partial(create_selective_checkpoint_contexts, policy_fn)
 recompute_context_fn = checkpoint_recompute_context_fn
-
-# from olmo_core.nn.utils import selective_checkpointing_context_fn
-# recompute_context_fn = selective_checkpointing_context_fn
 
 
 def _fp32_post_grad_acc_hook(param: torch.Tensor):
@@ -106,10 +74,8 @@ def _fp32_post_grad_acc_hook(param: torch.Tensor):
 
 class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
     """
-    A fused Mixture-of-Experts transformer, composed of
-    :class:`~olmo_core.nn.ddp.block.OLMoDDPTransformerBlock` blocks (optionally preceded by
-    dense blocks). Built from a
-    :class:`~olmo_core.nn.transformer.config.OLMoDDPModelConfig`.
+    An MoE transformer implementation, to be used with one of the
+    :class:`MoETransformerBlock` block types.
     """
 
     def __init__(self, *args, **kwargs):
@@ -119,6 +85,7 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
         self.recompute_block_keys: Optional[List[str]] = kwargs.pop("recompute_block_keys")
         self.checkpoint_tbo_dense_layers = False
         self.has_grad_accum_fp32_buffer = False  # whether the model has grad accum buffer for fp32 master grad, will be set in `attach_fp32_accum`
+        self._compile_requested = False
 
         super().__init__(*args, **kwargs)
         self.ep_enabled = False  # default
@@ -128,6 +95,7 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
         # stages owned different numbers of MoE blocks. Current OLMo-owned EP
         # paths should generally avoid needing these.
         self._ep_no_sync_dummy_symm_tensors: List[torch.Tensor] = []
+        self._deepep_v2_runtime_cache: Dict[object, object] = {}
 
         assert not (
             self.recompute_all_blocks_by_chunk and self.recompute_each_block
@@ -150,6 +118,68 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
     #         assert isinstance(self.offload_context, CpuOffloadHook)
     #         self.offload_context.offload_handler.groupid_reset()
 
+    def named_ddp_blocks(self) -> Iterator[tuple[str, OLMoDDPTransformerBlock]]:
+        for block_key, block in self.blocks.items():
+            if isinstance(block, OLMoDDPTransformerBlock):
+                yield block_key, block
+
+    def named_required_ddp_blocks(self) -> Iterator[tuple[str, OLMoDDPTransformerBlock]]:
+        for block_key, block in self.blocks.items():
+            if not isinstance(block, OLMoDDPTransformerBlock):
+                raise OLMoConfigurationError(
+                    "OLMoDDPModel only supports OLMoDDPTransformerBlock blocks. "
+                    "Use a shared-only OLMoDDPTransformerBlock for dense layers."
+                )
+            yield block_key, block
+
+    def ddp_blocks(self) -> Iterator[OLMoDDPTransformerBlock]:
+        for _, block in self.named_ddp_blocks():
+            yield block
+
+    def named_routed_blocks(self) -> Iterator[tuple[str, OLMoDDPTransformerBlock]]:
+        for block_key, block in self.named_ddp_blocks():
+            if block.has_routed_experts:
+                yield block_key, block
+
+    def routed_blocks(self) -> Iterator[OLMoDDPTransformerBlock]:
+        for _, block in self.named_routed_blocks():
+            yield block
+
+    def named_shared_blocks(self) -> Iterator[tuple[str, OLMoDDPTransformerBlock]]:
+        for block_key, block in self.named_ddp_blocks():
+            if block.has_shared_experts:
+                yield block_key, block
+
+    def shared_blocks(self) -> Iterator[OLMoDDPTransformerBlock]:
+        for _, block in self.named_shared_blocks():
+            yield block
+
+    def named_ep_no_sync_blocks(self) -> Iterator[tuple[str, OLMoDDPTransformerBlock]]:
+        for block_key, block in self.named_routed_blocks():
+            if block.ep.uses_olmo_symm:
+                yield block_key, block
+
+    def ep_no_sync_blocks(self) -> Iterator[OLMoDDPTransformerBlock]:
+        for _, block in self.named_ep_no_sync_blocks():
+            yield block
+
+    def named_fp8_blocks(self) -> Iterator[tuple[str, object]]:
+        for block_key, block in self.blocks.items():
+            if getattr(block, "named_fp8_weight_stores", None) is not None:
+                yield block_key, block
+                continue
+            attention = getattr(block, "attention", None)
+            if getattr(attention, "named_fp8_weight_stores", None) is not None:
+                yield block_key, block
+
+    def fp8_blocks(self) -> Iterator[object]:
+        for _, block in self.named_fp8_blocks():
+            yield block
+
+    @property
+    def has_routed_blocks(self) -> bool:
+        return any(True for _ in self.routed_blocks())
+
     def _check_tbo_requirements(self):
         # make sure dense blocks only appear before moe blocks
         # because TBO requires that moe blocks are consecutive
@@ -158,36 +188,42 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
         found_moe = False
         first_moe_idx = None
         for idx, block in enumerate(self.blocks.values()):
-            if found_moe and not block.is_moe:
+            is_routed_block = (
+                isinstance(block, OLMoDDPTransformerBlock) and block.has_routed_experts
+            )
+            if found_moe and not is_routed_block:
                 raise OLMoConfigurationError(
                     "When TBO is enabled, all dense blocks must appear before MoE blocks."
                 )
-            if block.is_moe and not found_moe:
+            if is_routed_block and not found_moe:
                 found_moe = True
                 first_moe_idx = idx
-            if block.is_moe:
+            if is_routed_block:
                 moe_block = cast(OLMoDDPTransformerBlock, block)
                 if moe_block.ep.no_sync and moe_block.ep.shared_slots < 2:
                     raise OLMoConfigurationError(
-                        "When TBO and EP no-sync are enabled, ep.shared_slots must be >= 2 "
+                        "When TBO and EP no-sync are enabled, EP shared_slots must be >= 2 "
                         f"(block={moe_block.block_idx}, got {moe_block.ep.shared_slots})."
+                    )
+                if moe_block.ep.path != ExpertParallelPath.rowwise_nvshmem:
+                    raise OLMoConfigurationError(
+                        "TBO is only supported with "
+                        f"EP path={ExpertParallelPath.rowwise_nvshmem!r}; "
+                        f"got EP path={moe_block.ep.path!r} "
+                        f"(block={moe_block.block_idx})."
                     )
 
         return first_moe_idx
 
     def purge_cuda_events(self):
         # set all events to None (so that the model can be deepcopied in PP split)
-        for layer in self.blocks.values():
-            if layer.is_moe:
-                layer = cast(OLMoDDPTransformerBlock, layer)
-                layer.purge_cuda_events()
+        for layer in self.ddp_blocks():
+            layer.purge_cuda_events()
 
     def install_cuda_events(self):
         # re-install events after deepcopy
-        for layer in self.blocks.values():
-            if layer.is_moe:
-                layer = cast(OLMoDDPTransformerBlock, layer)
-                layer.install_cuda_events()
+        for layer in self.ddp_blocks():
+            layer.install_cuda_events()
 
     @property
     def is_moe(self) -> bool:
@@ -208,10 +244,7 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
             mean_offset = self._pp_group_size
 
         out: Dict[str, Tuple[torch.Tensor, Optional["ReduceType"]]] = {}
-        for block_idx, block in self.blocks.items():
-            if not block.is_moe:
-                continue
-            block = cast(OLMoDDPTransformerBlock, block)
+        for block_idx, block in self.named_routed_blocks():
             block_metrics = block.compute_metrics(reset=reset)
             for metric_name, (metric_val, reduce_type) in block_metrics.items():
                 out[f"block {int(block_idx):02d}/{metric_name}"] = (metric_val, reduce_type)
@@ -233,64 +266,59 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
         return out
 
     def reset_auxiliary_metrics(self):
-        for block in self.blocks.values():
-            if not block.is_moe:
-                continue
-            cast(OLMoDDPTransformerBlock, block).reset_metrics()
+        for block in self.routed_blocks():
+            block.reset_metrics()
 
     def count_ep_no_sync_blocks(self) -> int:
-        return sum(
-            1
-            for block in self.blocks.values()
-            if block.is_moe and isinstance(block, OLMoDDPTransformerBlock) and block.ep.no_sync
-        )
+        return sum(1 for _ in self.ep_no_sync_blocks())
+
+    def count_non_rowwise_ep_no_sync_blocks(self) -> int:
+        return sum(1 for block in self.ep_no_sync_blocks() if not block.ep.uses_rowwise_buffers)
 
     @torch.no_grad()
     def refresh_rowwise_fp8_cache(self) -> None:
-        for block in self.blocks.values():
-            if not block.is_moe or not isinstance(block, OLMoDDPTransformerBlock):
-                continue
+        for block in self.ddp_blocks():
             block.refresh_rowwise_fp8_cache()
 
-    def named_fp8_weight_stores(self) -> Iterator[tuple[str, "FP8WeightStore"]]:
-        for block_key, block in self.blocks.items():
-            if not block.is_moe or not isinstance(block, OLMoDDPTransformerBlock):
-                continue
-            for name, weight in block.named_fp8_weight_stores():
-                yield f"blocks.{block_key}.{name}", weight
+    def named_fp8_weight_stores(self) -> Iterator[tuple[str, object]]:
+        for block_key, block in self.named_fp8_blocks():
+            named_block_fp8_weight_stores = getattr(block, "named_fp8_weight_stores", None)
+            if named_block_fp8_weight_stores is not None:
+                for name, weight in named_block_fp8_weight_stores():
+                    yield f"blocks.{block_key}.{name}", weight
 
-    def named_mxfp8_expert_weights(self) -> Iterator[tuple[str, "FP8WeightStore"]]:
+            attention = getattr(block, "attention", None)
+            named_attention_fp8_weight_stores = getattr(attention, "named_fp8_weight_stores", None)
+            if named_attention_fp8_weight_stores is not None:
+                for name, weight in named_attention_fp8_weight_stores():
+                    yield f"blocks.{block_key}.attention.{name}", weight
+
+    def named_mxfp8_expert_weights(self) -> Iterator[tuple[str, object]]:
         yield from self.named_fp8_weight_stores()
 
     def zero_fp8_weight_store_grads(self, set_to_none: bool = True) -> None:
         for _, weight in self.named_fp8_weight_stores():
-            weight.zero_grad(set_to_none=set_to_none)
+            weight.zero_grad(set_to_none=set_to_none)  # type: ignore[attr-defined]
 
     def zero_mxfp8_expert_weight_grads(self, set_to_none: bool = True) -> None:
         self.zero_fp8_weight_store_grads(set_to_none=set_to_none)
 
     def disable_fp8_weight_anchor_grads(self) -> None:
-        for block in self.blocks.values():
-            if not block.is_moe or not isinstance(block, OLMoDDPTransformerBlock):
-                continue
+        for block in self.ddp_blocks():
             block.disable_fp8_weight_anchor_grads()
 
     def disable_mxfp8_expert_anchor_grads(self) -> None:
         self.disable_fp8_weight_anchor_grads()
 
     def release_fp8_weight_anchor_storage(self) -> None:
-        for block in self.blocks.values():
-            if not block.is_moe or not isinstance(block, OLMoDDPTransformerBlock):
-                continue
+        for block in self.ddp_blocks():
             block.release_fp8_weight_anchor_storage()
 
     def release_mxfp8_expert_anchor_storage(self) -> None:
         self.release_fp8_weight_anchor_storage()
 
     def sync_fp8_weight_store_grads_from_anchor(self) -> None:
-        for block in self.blocks.values():
-            if not block.is_moe or not isinstance(block, OLMoDDPTransformerBlock):
-                continue
+        for block in self.ddp_blocks():
             block.sync_fp8_weight_store_grads_from_anchor()
 
     def sync_mxfp8_expert_weight_grads_from_anchor(self) -> None:
@@ -308,21 +336,7 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
         pad_to_block_count: int,
         rowwise_lifetime_lease_slots: Optional[int] = None,
     ) -> None:
-        from olmo_core.nn.moe.v2.ep_no_sync_buffers import (
-            compute_ep_no_sync_rank_capacity,
-            get_ep_no_sync_buffers,
-            get_ep_no_sync_rowwise_fp8_buffers,
-            prewarm_ep_no_sync_rowwise_lifetime_leases,
-            use_ep_no_sync_rowwise_symm_combine_gather,
-            use_ep_no_sync_rowwise_symm_combine_out,
-            use_ep_no_sync_rowwise_symm_dispatch_in,
-        )
-
-        ep_blocks = [
-            (block_key, cast(OLMoDDPTransformerBlock, block))
-            for block_key, block in self.blocks.items()
-            if block.is_moe and isinstance(block, OLMoDDPTransformerBlock) and block.ep.no_sync
-        ]
+        ep_blocks = list(self.named_ep_no_sync_blocks())
         if not ep_blocks:
             if pad_to_block_count != 0:
                 raise RuntimeError(
@@ -342,7 +356,6 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
         dtype = param.dtype
         device = param.device
         d_model = self.d_model
-        top_k = first_block.routed_experts_router.top_k
         prewarm_local_microbatch_size = max_local_microbatch_size
         if self.tbo:
             if max_local_microbatch_size % 2 != 0:
@@ -352,11 +365,19 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
                 )
             prewarm_local_microbatch_size = max_local_microbatch_size // 2
 
-        num_out_tokens = prewarm_local_microbatch_size * top_k
-        rank_capacity = compute_ep_no_sync_rank_capacity(first_block, num_out_tokens)
+        max_rank_capacity = 1
 
         for block_key, block in ep_blocks:
-            if block.ep.is_rowwise:
+            assert block.routed_experts_router is not None
+            top_k = block.routed_experts_router.top_k
+            num_out_tokens = prewarm_local_microbatch_size * top_k
+            rank_capacity = compute_ep_no_sync_rank_capacity(block, num_out_tokens)
+            max_rank_capacity = max(max_rank_capacity, rank_capacity)
+            if block.ep.uses_rowwise_buffers:
+                if block.ep.rowwise_transport == "nvshmem" and device.type == "cuda":
+                    symm_mem_vdev2d_kernels.preflight_rowwise_collective_launches(
+                        block.ep.rowwise_nblocks
+                    )
                 rowwise_fp8_cfg = block.rowwise_fp8
                 use_rowwise_fp8 = (
                     rowwise_fp8_cfg is not None
@@ -385,14 +406,29 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
                     or block.checkpoint_attn
                     or block.checkpoint_permute_moe_unpermute
                 )
-                block._ep_no_sync_rowwise_static_checkpoint_state = (
-                    None if block_uses_checkpointing else (False, True)
-                )
-                # With our checkpoint context, the original checkpointed forward
-                # and its recompute both use scratch buffers; no long-lived lease
-                # is needed. Force the rowwise path into scratch-buffer mode for
-                # checkpointed blocks so compiled checkpoint paths do not depend
-                # on Python-side checkpoint-context detection.
+                if (self.compile_enabled or self._compile_requested) and block_is_checkpointed:
+                    # torch.compile() requires checkpoint context_fn entries to
+                    # be TorchDispatchModes, so the compiled model-level
+                    # checkpoint uses noop_context_fn. Give checkpointed rowwise
+                    # blocks a static state instead of relying on Python-side
+                    # context detection inside the compiled region. This keeps
+                    # forward and recompute on the same tensor-producing path
+                    # without installing a TorchDispatchMode in production.
+                    #
+                    # Leave metric accumulation dynamic so the original
+                    # checkpointed forward records metrics while recompute does
+                    # not. The rowwise transport metric helper uses the same
+                    # best-effort recompute signal as the router metrics.
+                    block._ep_no_sync_rowwise_static_checkpoint_state = (True, None)
+                else:
+                    block._ep_no_sync_rowwise_static_checkpoint_state = (
+                        None if block_uses_checkpointing else (False, True)
+                    )
+                # The original checkpointed forward and its recompute both use
+                # scratch buffers; no long-lived lease is needed. Force the
+                # rowwise path into scratch-buffer mode for checkpointed blocks
+                # so compiled checkpoint paths do not depend on Python-side
+                # checkpoint-context detection.
                 block._ep_no_sync_force_scratch_lifetime_buffers = block_is_checkpointed
                 runtime_uses_lifetime_leases = not block._ep_no_sync_force_scratch_lifetime_buffers
                 if not runtime_uses_lifetime_leases:
@@ -473,42 +509,47 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
                 f"pad_to_block_count ({pad_to_block_count}) is smaller than local EP no-sync block count ({len(ep_blocks)})"
             )
         if pad_count:
-            torch_symm_mem: Any = None
-            if not olmo_symm_mem.is_enabled():
+            if olmo_symm_mem.is_enabled():
+                symm_mem = None
+            else:
                 try:
-                    import torch.distributed._symmetric_memory as _torch_symm_mem
+                    import torch.distributed._symmetric_memory as symm_mem  # type: ignore[no-redef]
                 except ImportError as e:
                     raise RuntimeError(
                         "EP no-sync requires torch.distributed._symmetric_memory"
                     ) from e
-                torch_symm_mem = _torch_symm_mem
             for _ in range(pad_count):
                 if olmo_symm_mem.is_enabled():
                     tensor = olmo_symm_mem.empty(
-                        (rank_capacity, d_model),
+                        (max_rank_capacity, d_model),
                         dtype=dtype,
                         device=device,
                         group=first_block.ep_pg,
                     )
                     olmo_symm_mem.rendezvous(tensor, group=first_block.ep_pg)
                 else:
-                    assert torch_symm_mem is not None
-                    tensor = torch_symm_mem.empty(
-                        (rank_capacity, d_model),
+                    assert symm_mem is not None
+                    tensor = symm_mem.empty(
+                        (max_rank_capacity, d_model),
                         dtype=dtype,
                         device=device,
                     )
-                    torch_symm_mem.rendezvous(tensor, group=first_block.ep_pg)
+                    symm_mem.rendezvous(tensor, group=first_block.ep_pg)
                 self._ep_no_sync_dummy_symm_tensors.append(tensor)
-
-    # NOTE: shadowed by the real `apply_ep` defined below; kept commented for reference.
-    # def apply_ep(self, ep_mesh: DeviceMesh, **kwargs):
-    #     raise OLMoConfigurationError("Do not use `apply_ep`, use `apply_epdp` instead.")
 
     def apply_compile(self):
         super().apply_compile()
         self._tbo_last_step = torch.compile(self._tbo_last_step)  # type: ignore[method-assign]
-        self.forward_embed = torch.compile(self.forward_embed)  # type: ignore[method-assign]
+        compile_forward_embed = os.getenv(
+            "OLMO_COMPILE_FORWARD_EMBED", "1"
+        ).strip().lower() not in {
+            "0",
+            "false",
+            "no",
+            "off",
+        }
+        if compile_forward_embed:
+            self.forward_embed = torch.compile(self.forward_embed)  # type: ignore[method-assign]
         # self._forward_blocks = torch.compile(self._forward_blocks)
 
     def apply_ddp(
@@ -561,19 +602,18 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
         param_dtype: Optional[torch.dtype] = None,
         compile_enabled: bool = False,
         autograd_compile_enabled: bool = False,
-        ep_no_sync_shared_pool: Optional["_NoSyncSymmSharedPool"] = None,
-    ) -> Optional["_NoSyncSymmSharedPool"]:
+        ep_no_sync_shared_pool: Optional[_NoSyncSymmSharedPool] = None,
+    ) -> Optional[_NoSyncSymmSharedPool]:
         """
         Apply EP to the model.
         """
-        from olmo_core.nn.moe.v2.ep_no_sync_buffers import _NoSyncSymmSharedPool
+        self._compile_requested = bool(compile_enabled)
+        self._deepep_v2_runtime_cache = {}
 
         shared_pool_to_return = ep_no_sync_shared_pool
         ep_no_sync_blocks: List[OLMoDDPTransformerBlock] = []
-        for block in self.blocks.values():
-            if not block.is_moe:
-                continue
-            block = cast(OLMoDDPTransformerBlock, block)
+        deepep_blocks: List[OLMoDDPTransformerBlock] = []
+        for block in self.routed_blocks():
             # ep_mp_group is the optional high-priority NCCL group for
             # synchronized EP collectives that should start promptly while shared
             # experts run. It is intentionally not used by no-sync blocks.
@@ -583,14 +623,16 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
             # explicit EP rendezvous runs. Use the regular DeviceMesh EP group
             # for no-sync blocks.
             block.apply_ep(ep_mesh, ep_pg=None if block.ep.no_sync else ep_mp_group)
-            if block.ep.no_sync:
+            if block.ep.uses_olmo_symm:
                 ep_no_sync_blocks.append(block)
+            if block.ep.is_deepep:
+                deepep_blocks.append(block)
 
         if ep_no_sync_blocks:
             slot_counts = {block.ep.shared_slots for block in ep_no_sync_blocks}
             if len(slot_counts) != 1:
                 raise OLMoConfigurationError(
-                    "All EP no-sync blocks must use the same ep.shared_slots "
+                    "All EP no-sync blocks must use the same EP shared_slots "
                     f"value, got {sorted(slot_counts)}"
                 )
             shared_slots = next(iter(slot_counts))
@@ -628,6 +670,20 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
                 block._ep_no_sync_shared_pool = shared_pool
                 block._ep_no_sync_shared_slot = block.block_idx % shared_slots
 
+        if deepep_blocks:
+            first_pg = deepep_blocks[0].ep_pg
+            if first_pg is None:
+                raise RuntimeError("DeepEP block is missing ep_pg after apply_ep()")
+            max_capacity_factor = max(block.ep.capacity_factor for block in deepep_blocks)
+            for block in deepep_blocks:
+                if block.ep_pg is not first_pg:
+                    raise RuntimeError(
+                        "All DeepEP blocks in a model part must share the same ep_pg "
+                        f"(block={block.block_idx})"
+                    )
+                block._deepep_v2_runtime_cache = self._deepep_v2_runtime_cache
+                block._deepep_v2_max_capacity_factor = max_capacity_factor
+
         self.ep_enabled = True
         return shared_pool_to_return
 
@@ -635,6 +691,8 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
         self,
         dp_mesh: DeviceMesh,
         ep_mesh: Optional[DeviceMesh],
+        dense_process_group: Optional[dist.ProcessGroup] = None,
+        expert_process_group: Optional[dist.ProcessGroup] = None,
         accumulate_grads_in_fp32: bool = True,
         reduce_grads_in_fp32: bool = True,
         bucket_cap_mb: Optional[int] = None,
@@ -655,12 +713,16 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
         self.to(torch.bfloat16)
         self.disable_mxfp8_expert_anchor_grads()
 
-        dp_group = dp_mesh.get_group()
+        dp_group = dense_process_group if dense_process_group is not None else dp_mesh.get_group()
 
         if ep_mesh is None:
             epdp_group = dp_group
         else:
-            epdp_group = ep_mesh["ep_dp"].get_group()
+            epdp_group = (
+                expert_process_group
+                if expert_process_group is not None
+                else ep_mesh["ep_dp"].get_group()
+            )
 
         def param_process_group_fn(name: str, param: torch.nn.Parameter):
             # MoE params → EP_DP group
@@ -670,18 +732,52 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
             # Dense params → DP group
             return dp_group
 
+        init_sync_env = os.environ.get("OLMO_DDP_INIT_SYNC")
+        init_sync = (
+            True
+            if init_sync_env is None
+            else init_sync_env.strip().lower() in {"1", "true", "yes", "on"}
+        )
+
+        total_params = 0
+        total_numel = 0
+        ep_params = 0
+        ep_numel = 0
+        for param in self.parameters():
+            total_params += 1
+            total_numel += param.numel()
+            if param in ep_sharded_params:
+                ep_params += 1
+                ep_numel += param.numel()
+        dense_params = total_params - ep_params
+        dense_numel = total_numel - ep_numel
+        log.info(
+            "Applying OLMo MultiGroup DDP "
+            "(init_sync=%s, dense_pg_size=%s, expert_pg_size=%s, "
+            "dense_params=%d/%d, expert_params=%d/%d, device=%s)",
+            "enabled" if init_sync else "disabled",
+            dist.get_world_size(dp_group),
+            dist.get_world_size(epdp_group),
+            dense_params,
+            dense_numel,
+            ep_params,
+            ep_numel,
+            self.device,
+        )
+
         ddp_model = MultiGroupDistributedDataParallel(
             module=self,
             dim=0,  # for scatter/gather
-            init_sync=True,  # meta device
-            process_group=dp_mesh.get_group(),
+            init_sync=init_sync,
+            process_group=dp_group,
             param_process_group_fn=param_process_group_fn,
             accumulate_grads_in_fp32=accumulate_grads_in_fp32,
             reduce_grads_in_fp32=reduce_grads_in_fp32,
             bucket_cap_mb=bucket_cap_mb,
         )
+        log.info("Finished applying OLMo MultiGroup DDP")
 
-        from olmo_core.nn.transformer.model import (
+        from ..transformer.model import (
             _hide_cpu_inputs_from_torch,
             _unhide_cpu_inputs_from_torch,
         )
@@ -706,16 +802,11 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
         )
 
     def prepare_experts_for_ddp(self, world_mesh: DeviceMesh):
-        for block in self.blocks.values():
-            if not block.is_moe:
-                continue
+        for block in self.routed_blocks():
             pass  # TODO: Anything to do here?
 
     def post_batch(self, dry_run: bool = False):
-        for block in self.blocks.values():
-            if not block.is_moe:
-                continue
-            block = cast(OLMoDDPTransformerBlock, block)
+        for block in self.ddp_blocks():
             block.post_batch(dry_run=dry_run)
 
     @torch.no_grad()
@@ -725,9 +816,11 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
         max_seq_len: Optional[int] = None,
         max_local_microbatch_size: Optional[int] = None,
         device: Optional[torch.device] = None,
-        world_mesh: Optional[Dict[str, Optional[DeviceMesh]]] = None,
+        world_mesh: Dict[str, Optional[DeviceMesh]],
         model_part_idx: int = 0,
     ) -> torch.Generator:
+        from olmo_core.nn.attention import Attention, FusedAttention
+
         """
         Initialize the model weights.
 
@@ -737,20 +830,14 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
             expected. This is used to warm-up some MoE cache.
         :param device: The device the local copy of the model will be trained on.
         """
-        from olmo_core.nn.attention import Attention, FusedAttention
-        from olmo_core.nn.ddp.block import OLMoDDPTransformerBlock
-
         device = device or self.device
-        # params = list(self.parameters())
         # TODO(dtype): materialization currently relies on the same broad bf16
         # cast as apply_dp(); replace with an explicit precision policy.
         self.to(torch.bfloat16)
         self.to_empty(device=device)
-        # new_params = list(self.parameters())
-        for name, module in self.named_modules():
-            if hasattr(module, "reset_parameters"):  # TODO: what's the point of this
+        for _, module in self.named_modules():
+            if hasattr(module, "reset_parameters"):
                 module.reset_parameters()  # type: ignore
-                # log.info(f"'{name}' called reset_parameters()")
 
         seed = self.init_seed
 
@@ -758,7 +845,7 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
         # 1. PP stage
         # 2. model part within the PP stage (eg, interleaved 1F1B)
         if self.pp_enabled:
-            assert world_mesh is not None and world_mesh["dense"] is not None
+            assert world_mesh["dense"] is not None
             seed += get_pp_mesh(world_mesh["dense"]).get_local_rank()
             seed += model_part_idx * 997  # random prime
 
@@ -766,7 +853,7 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
         # but within the same EP_DP group, they should share the same init value
         ep_generator = None
         if self.ep_enabled:
-            assert world_mesh is not None and world_mesh["moe"] is not None
+            assert world_mesh["moe"]
             ep_mp_rank = world_mesh["moe"]["ep_mp"].get_local_rank()
             ep_seed = (
                 seed + (1 + ep_mp_rank) * 653
@@ -786,65 +873,30 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
                 generator=generator,
             )
 
-        for block in self.blocks.values():
+        for _, block in self.named_required_ddp_blocks():
             # This might fail if it's wrapped.
-            if isinstance(block, OLMoDDPTransformerBlock):
-                block = cast(OLMoDDPTransformerBlock, block)
+            # v2 MoE/shared-only DDP blocks.
+            att = cast(Union[Attention, FusedAttention], block.attention)
 
-                # v2 MoE blocks.
-                att = cast(Union[Attention, FusedAttention], block.attention)
-
-                # Attention weights.
-                self.init_method.init_attention(
-                    att,
-                    d_model=self.d_model,
-                    block_idx=block.block_idx,
-                    num_blocks=self.n_layers,
-                    std=self.init_std,
-                    generator=generator,
-                )
-                # MoE weights.
-                self.init_method.init_moe_v2(
-                    block,
-                    d_model=self.d_model,
-                    block_idx=block.block_idx,
-                    num_blocks=self.n_layers,
-                    std=self.init_std,
-                    generator=generator,
-                    ep_generator=ep_generator,
-                )
-
-            else:
-                # usually this is for the first dense layer
-                from olmo_core.nn.transformer.block import TransformerBlock
-
-                block = cast(TransformerBlock, block)
-                att = cast(Union[Attention, FusedAttention], block.attention)
-
-                # Attention weights.
-                self.init_method.init_attention(
-                    att,
-                    d_model=self.d_model,
-                    block_idx=block.block_idx,
-                    num_blocks=self.n_layers,
-                    std=self.init_std,
-                    generator=generator,
-                )
-
-                # Feed-forward weights.
-                if hasattr(block, "feed_forward"):
-                    self.init_method.init_feed_forward(
-                        block.feed_forward,
-                        d_model=self.d_model,
-                        block_idx=block.block_idx,
-                        num_blocks=self.n_layers,
-                        std=self.init_std,
-                        generator=generator,
-                    )
-
-                # MoE weights.
-                if hasattr(block, "feed_forward_moe"):
-                    raise OLMoConfigurationError("Do not use the old MoE block")
+            # Attention weights.
+            self.init_method.init_attention(
+                att,
+                d_model=self.d_model,
+                block_idx=block.block_idx,
+                num_blocks=self.n_layers,
+                std=self.init_std,
+                generator=generator,
+            )
+            # MoE/shared-expert weights.
+            self.init_method.init_moe_v2(
+                block,
+                d_model=self.d_model,
+                block_idx=block.block_idx,
+                num_blocks=self.n_layers,
+                std=self.init_std,
+                generator=generator,
+                ep_generator=ep_generator,
+            )
 
             # Warm up RoPE cache for attention-like sequence mixers. Recurrent
             # mixers such as GDN do not have RoPE.
@@ -852,25 +904,10 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
             if max_seq_len is not None and rope is not None:
                 rope.warmup_cache(max_seq_len, device)
 
-        if self.lm_head is not None and not self.tie_word_embeddings:
+        if self.lm_head is not None:
             self.init_method.init_final_w_out(
                 self.lm_head.w_out, d_model=self.d_model, std=self.init_std, generator=generator
             )
-
-        # ``to_empty()`` above gives the embedding and LM-head weights fresh, independent storage,
-        # so re-establish weight tying by re-pointing the LM head at the embedding weight.
-        if self.tie_word_embeddings:
-            self._tie_weights()
-        # get one next int from the generator
-        # if everything goes right, all ranks should have the same next int
-        # valid_test = (
-        #     torch.randint(0, 1000000, (1,), generator=generator, device=device).cpu().item()
-        # )  # attach debugger to check
-
-        # call lazy_init to make sure params has the _mp_param and _fp_param fields
-        # replicate.state(self).lazy_init()
-        # for ep_module in self._ep_modules:
-        #     replicate.state(ep_module).lazy_init()
 
         return generator
 
@@ -891,7 +928,7 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
             if hasattr(p, "_main_grad_fp32"):
                 p._main_grad_fp32 = None  # type: ignore[attr-defined]
         for _, weight in self.named_fp8_weight_stores():
-            weight.set_main_grad_to_none()
+            weight.set_main_grad_to_none()  # type: ignore[attr-defined]
 
     def forward_tbo(
         self,
@@ -939,7 +976,10 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
 
         # forward dense blocks
         for block_idx, (block_key, block) in enumerate(self.blocks.items()):
-            if block.is_moe:
+            is_routed_block = (
+                isinstance(block, OLMoDDPTransformerBlock) and block.has_routed_experts
+            )
+            if is_routed_block:
                 assert (
                     first_moe_idx == block_idx
                 ), f"first_moe_idx {first_moe_idx}, block_idx {block_idx}, block.block_idx {block.block_idx}"
@@ -947,7 +987,7 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
             # Mark sizes as dynamic for torch.compile().
             if self.compile_enabled:
                 mark_dynamic(h, (0, 1), strict=False)
-            with maybe_nvtx_annotate(f"fwd_block_{block_idx}", ROUTING_COLOR):
+            with nvtx.annotate(f"fwd_block_{block_idx}", color="blue"):
                 # with self.offload_context:
                 one_block_kwargs = per_block_kwargs.get(int(block_key), {})
                 if self.checkpoint_tbo_dense_layers:
@@ -981,16 +1021,11 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
         x1_ctx: object = {
             "x1": x1,
         }
-        for block_idx, block in enumerate(self.blocks.values()):
-            # skip dense blocks
-            if not block.is_moe:
-                continue
-
-            with maybe_nvtx_annotate(f"fwd_block_{block_idx}", ROUTING_COLOR):
-                block = cast(OLMoDDPTransformerBlock, block)
+        for block_key, block in self.named_routed_blocks():
+            with nvtx.annotate(f"fwd_block_{block_key}", color="blue"):
                 # with self.offload_context:
-                # x0, x1_ctx = block.checkpointed_combined_forward_ep_tbo(x0, x1_ctx, x1_is_fresh, **block_kwargs)
-                x0, x1_ctx = block.combined_forward_ep_tbo(
+                # x0, x1_ctx = block.checkpointed_combined_forward_rowwise_nvshmem_tbo(x0, x1_ctx, x1_is_fresh, **block_kwargs)
+                x0, x1_ctx = block.combined_forward_rowwise_nvshmem_tbo(
                     x0, x1_ctx, x1_is_fresh, **all_block_kwargs
                 )
                 x1_is_fresh = False  # after the first TBO block, x1 is no longer fresh
@@ -1013,105 +1048,22 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
         labels0: Optional[torch.Tensor],
         labels1: Optional[torch.Tensor],
     ):
-        if not isinstance(x1_ctx, SyncedTboPendingContext):
-            # No-sync TBO: the pending context carries its producing block, whose config
-            # selects the family, so only the family in use is imported here.
-            block = cast(OLMoDDPTransformerBlock, getattr(x1_ctx, "block"))
-            # The two families' stage fns take different pending-context types; the runtime family
-            # matches the context, so bind them through Any-typed locals.
-            stage_c_launch: Any
-            stage_tail: Any
-            if block.ep.is_rowwise:
-                from olmo_core.nn.moe.v2.ep_no_sync_tbo_rowwise import (
-                    ep_no_sync_rowwise_tbo_stage_c_launch,
-                    ep_no_sync_rowwise_tbo_stage_tail,
-                )
-
-                stage_c_launch = ep_no_sync_rowwise_tbo_stage_c_launch
-                stage_tail = ep_no_sync_rowwise_tbo_stage_tail
-            else:
-                from olmo_core.nn.moe.v2.ep_no_sync_tbo_1d import (
-                    ep_no_sync_stage_c_launch,
-                    ep_no_sync_stage_tail,
-                )
-
-                stage_c_launch = ep_no_sync_stage_c_launch
-                stage_tail = ep_no_sync_stage_tail
-
-            with maybe_nvtx_annotate("tbo_1", TBO_COLOR):
-                pending_ctx = stage_c_launch(block, x1_ctx)
+        if isinstance(x1_ctx, _NoSyncRowwiseTboPendingContext):
+            with nvtx.annotate("TBO-1", color="orange"):
+                pending_ctx = ep_no_sync_rowwise_tbo_stage_c_launch(x1_ctx.block, x1_ctx)
 
             h0 = self.maybe_forward_lm_head(x0, lm_head_kwargs, labels=labels0)
 
-            with maybe_nvtx_annotate("tbo_1", TBO_COLOR):
-                x1 = stage_tail(block, pending_ctx)
+            with nvtx.annotate("TBO-1", color="orange"):
+                x1 = ep_no_sync_rowwise_tbo_stage_tail(x1_ctx.block, pending_ctx)
 
             h1 = self.maybe_forward_lm_head(x1, lm_head_kwargs, labels=labels1)
             return h0, h1
 
-        with maybe_nvtx_annotate("tbo_1", TBO_COLOR):
-            global_x1 = x1_ctx.global_x
-            send_counts1 = x1_ctx.send_counts
-            recv_counts1 = x1_ctx.recv_counts
-            last_block = x1_ctx.last_block
-
-            assert last_block.routed_experts_router is not None
-            # finish reverse all2all and other ops for x1
-            with maybe_nvtx_annotate("reverse_all_to_all", COMM_COLOR):
-                global_x1 = cast(torch.Tensor, global_x1)
-                # Async all-to-all disabled; use the equivalent synchronous all-to-all.
-                # global_x1, local_x1, local_x_handle1 = ops.all_to_all_async(
-                #     global_x1,
-                #     send_counts1,
-                #     recv_counts1,
-                #     group=last_block.ep_pg,
-                # )
-                local_x1, _ = ops.all_to_all(
-                    global_x1,
-                    send_counts1,
-                    recv_counts1,
-                    group=last_block.ep_pg,
-                )
-
-            reversed_local_x_permutation_mapping1 = x1_ctx.reversed_local_x_permutation_mapping
-            local_x_global_routed_expert_weights1 = x1_ctx.local_x_global_routed_expert_weights
-            hidden_shape_before_permute1 = x1_ctx.hidden_shape_before_permute
-            in_shape1 = x1_ctx.in_shape
-            mixed_shared_out1 = x1_ctx.mixed_shared_out
-            attn_res_out1 = x1_ctx.attn_res_out
-
-            assert last_block is not None
-            assert last_block.routed_experts_router is not None
-
-        # x0 lm head
-        h0 = self.maybe_forward_lm_head(x0, lm_head_kwargs, labels=labels0)
-
-        with maybe_nvtx_annotate("tbo_1", TBO_COLOR):
-            # local_x1 = ops.all_to_all_wait(global_x1, local_x1, local_x_handle1)
-
-            ## 9. Unpermute the (local) tokens returned by all-to-all communication ##
-            with maybe_nvtx_annotate("unpermute_merge_local_tokens", COMM_COLOR):
-                local_x1 = moe_unpermute_no_compile(
-                    inp=local_x1,
-                    row_id_map=reversed_local_x_permutation_mapping1,
-                    merging_probs=local_x_global_routed_expert_weights1.view(
-                        -1, last_block.routed_experts_router.top_k
-                    ),
-                    restore_shape=hidden_shape_before_permute1,
-                    map_type="index",
-                )
-            ## end
-
-            local_x1 = local_x1.view(in_shape1)
-
-            mlp_out1 = last_block._merge_routed_and_shared(local_x1, mixed_shared_out1)
-
-            x1 = attn_res_out1 + last_block.feed_forward_norm(mlp_out1)
-
-        # Get final logits but again pass-through in case of pipeline parallelism.
-        h1 = self.maybe_forward_lm_head(x1, lm_head_kwargs, labels=labels1)
-
-        return h0, h1
+        raise RuntimeError(
+            "Expected rowwise NVSHMEM TBO pending context for the final TBO step, "
+            f"got type={type(x1_ctx)}"
+        )
 
     def _merge_tbo_outputs(
         self,
@@ -1193,40 +1145,40 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
         return h0
 
     def _forward_blocks(
-        self, h, all_block_kwargs: Dict[str, Any], per_block_kwargs: Dict[Any, Dict[str, Any]]
+        self, h, all_block_kwargs: Dict[str, Any], per_block_kwargs: Dict[int, Dict[str, Any]]
     ) -> torch.Tensor:
         # Run each block.
         for block_idx, (block_key, block) in enumerate(self.blocks.items()):
             # Mark sizes as dynamic for torch.compile().
             if self.compile_enabled:
                 mark_dynamic(h, (0, 1), strict=False)
-            with maybe_nvtx_annotate(f"fwd_block_{block_key}", ROUTING_COLOR):
-                block_kwargs = per_block_kwargs.get(int(block_key), {})
-                combined_kwargs = {**all_block_kwargs, **block_kwargs}
-                do_not_recompute: List[int] = []  # HACK
-                if (self.recompute_each_block and (block_idx not in do_not_recompute)) or (
-                    self.recompute_block_keys and block_key in self.recompute_block_keys
-                ):
-                    h = checkpoint(
-                        self._forwrad_one_block,
-                        h,
-                        block_key,
-                        combined_kwargs,
-                        use_reentrant=False,
-                        context_fn=(
-                            noop_context_fn if self.compile_enabled else recompute_context_fn
-                        ),
-                        # determinism_check='none',
-                    )
-                    h = cast(torch.Tensor, h)
-                else:
-                    h = self._forwrad_one_block(h, block_key, combined_kwargs)
+            block_kwargs = per_block_kwargs.get(int(block_key), {})
+            combined_kwargs = {**all_block_kwargs, **block_kwargs}
+            do_not_recompute: List[int] = []
+            if (self.recompute_each_block and (block_idx not in do_not_recompute)) or (
+                self.recompute_block_keys and block_key in self.recompute_block_keys
+            ):
+                h = checkpoint(
+                    self._forwrad_one_block,
+                    h,
+                    block_key,
+                    combined_kwargs,
+                    use_reentrant=False,
+                    context_fn=(noop_context_fn if self.compile_enabled else recompute_context_fn),
+                    # determinism_check='none',
+                )
+                h = cast(torch.Tensor, h)
+            else:
+                h = self._forwrad_one_block(h, block_key, combined_kwargs)
 
         return h
 
     def _forwrad_one_block(self, h, block_key: str, block_kwargs: Dict[str, Any]) -> torch.Tensor:
+        if self.compile_enabled:
+            mark_dynamic(h, (0, 1), strict=False)
         block = self.blocks[block_key]
-        h = block(h, **block_kwargs)
+        with nvtx.annotate(f"fwd_block_{block_key}", color="blue"):
+            h = block(h, **block_kwargs)
         return h
 
     def forward_embed(self, input_ids: torch.Tensor) -> torch.Tensor:
@@ -1316,7 +1268,7 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
             if labels is not None:
                 lm_head_kwargs["labels"] = labels
 
-            with maybe_nvtx_annotate("lm_head", EXPERTS_COLOR):
+            with nvtx.annotate("lm_head", color="purple"):
                 out = self.lm_head(h, **lm_head_kwargs)
 
             # check for nan
@@ -1326,6 +1278,12 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
         else:
             out = h
         return out
+
+
+# Compatibility name for existing configs, scripts, and imports.
+MoEFusedV2Transformer = OLMoDDPModel
+
+__all__ = ["OLMoDDPModel", "MoEFusedV2Transformer"]
 
 
 def _hide_cpu_inputs_from_torch(m, args, kwargs) -> Optional[Tuple[Any, Dict[str, Any]]]:
@@ -1343,6 +1301,3 @@ def _unhide_cpu_inputs_from_torch(m, args, kwargs) -> Optional[Tuple[Any, Dict[s
     if (doc_lens := kwargs.get("doc_lens")) is not None:
         kwargs["doc_lens"] = unhide_from_torch(doc_lens)
     return (args, kwargs)
-
-
-__all__ = ["OLMoDDPModel"]
