@@ -178,6 +178,16 @@ class MoERouterV2(nn.Module):
         self.topk_group = topk_group
         self.sigmoid_stability_epsilon = sigmoid_stability_epsilon
 
+        if self.gating_function == MoERouterGatingFunction.topk_softmax and (
+            self.n_group is not None or self.topk_group is not None
+        ):
+            raise OLMoConfigurationError(
+                "Grouped routing (n_group/topk_group) is not supported with "
+                "gating_function='topk_softmax': group masking is only applied on the "
+                "softmax/sigmoid selection path (get_top_k), so the topk_softmax path would "
+                "silently route to experts outside the allowed group."
+            )
+
         if self.bias_gamma is not None or self.score_correction_bias:
             if self.bias_gamma is not None:
                 assert self.bias_gamma > 0

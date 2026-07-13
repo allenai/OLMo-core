@@ -7,6 +7,7 @@ from olmo_core.doc_utils import beta_feature
 from olmo_core.nn.attention import Attention
 from olmo_core.nn.attention.recurrent import GatedDeltaNet
 from olmo_core.nn.moe.mlp import DroplessMoEMLP, MoEMLP
+from olmo_core.nn.moe.router import MoERouterGatingFunction
 from olmo_core.nn.rope import RoPEScalingConfig
 from olmo_core.nn.transformer.block import (
     MoEReorderedNormTransformerBlock,
@@ -195,11 +196,25 @@ def _get_olmo3moe_config(model: "MoEFusedV2Transformer") -> PretrainedConfig:
 
     routed_experts = moe_block.routed_experts
     router = moe_block.routed_experts_router
-    # Selection modifiers change which experts a token routes to at inference; the HF router has no
-    # equivalent state, so exporting them would silently diverge.
+    # Selection modifiers change which experts a token routes to at inference. The HF Olmo3Moe
+    # router only implements plain softmax/sigmoid gating with no score-bias or group-masking
+    # path, so exporting any of these would silently diverge (or crash on the first HF forward).
+    unsupported_modifiers = []
     if router.bias_gamma is not None:
+        unsupported_modifiers.append("bias_gamma")
+    if router.score_correction_bias:
+        unsupported_modifiers.append("score_correction_bias")
+    if router.gating_function not in (
+        MoERouterGatingFunction.softmax,
+        MoERouterGatingFunction.sigmoid,
+    ):
+        unsupported_modifiers.append(f"gating_function={router.gating_function.value}")
+    if router.n_group is not None or router.topk_group is not None:
+        unsupported_modifiers.append("grouped routing (n_group/topk_group)")
+    if unsupported_modifiers:
         raise NotImplementedError(
-            "Exporting olmo3moe with router selection modifiers (bias_gamma) is not supported."
+            f"Exporting olmo3moe with router selection modifiers "
+            f"({', '.join(unsupported_modifiers)}) is not supported."
         )
 
     # Dense MLP intermediate size, if there are any dense layers.
