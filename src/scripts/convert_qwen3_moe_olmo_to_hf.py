@@ -11,13 +11,72 @@ from pathlib import Path
 from typing import Any
 
 import torch
-from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer, GenerationConfig
 
 from olmo_core.nn.moe.v2.hf.convert_checkpoint import load_state_dict_direct
 from olmo_core.utils import prepare_cli_environment
 
 
 log = logging.getLogger(__name__)
+
+_TOKEN_ID_ATTRIBUTES = ("bos_token_id", "eos_token_id", "pad_token_id")
+
+
+def _tokenizer_metadata(tokenizer: Any) -> dict[str, Any]:
+    return {
+        **{name: getattr(tokenizer, name, None) for name in _TOKEN_ID_ATTRIBUTES},
+        "vocab_size": len(tokenizer),
+        "chat_template": getattr(tokenizer, "chat_template", None),
+    }
+
+
+def _sync_tokenizer_metadata(config: Any, tokenizer: Any) -> dict[str, Any]:
+    metadata = _tokenizer_metadata(tokenizer)
+    for name in _TOKEN_ID_ATTRIBUTES:
+        setattr(config, name, metadata[name])
+    return metadata
+
+
+def _verify_tokenizer_metadata(
+    *,
+    output_path: Path,
+    tokenizer_name: str,
+) -> dict[str, Any]:
+    expected_tokenizer = AutoTokenizer.from_pretrained(
+        tokenizer_name,
+        trust_remote_code=False,
+    )
+    exported_tokenizer = AutoTokenizer.from_pretrained(
+        output_path,
+        trust_remote_code=False,
+    )
+    expected = _tokenizer_metadata(expected_tokenizer)
+    actual = _tokenizer_metadata(exported_tokenizer)
+    if actual != expected:
+        mismatches = {
+            name: {"expected": expected[name], "actual": actual[name]}
+            for name in expected
+            if actual[name] != expected[name]
+        }
+        raise ValueError(f"Exported tokenizer metadata differs from the source: {mismatches}")
+
+    model_config = AutoConfig.from_pretrained(output_path, trust_remote_code=False)
+    generation_config = GenerationConfig.from_pretrained(output_path)
+    for config_name, config in (
+        ("model config", model_config),
+        ("generation config", generation_config),
+    ):
+        for name in _TOKEN_ID_ATTRIBUTES:
+            value = getattr(config, name, None)
+            if value != expected[name]:
+                raise ValueError(
+                    f"Exported {config_name} has {name}={value!r}; "
+                    f"expected {expected[name]!r} from {tokenizer_name}"
+                )
+
+    return {name: expected[name] for name in (*_TOKEN_ID_ATTRIBUTES, "vocab_size")} | {
+        "chat_template_matches": True
+    }
 
 
 def _num_experts(config: Any) -> int:
@@ -171,6 +230,7 @@ def verify_export(
     *,
     checkpoint_path: Path,
     output_path: Path,
+    tokenizer_name: str,
     dtype: torch.dtype,
 ) -> None:
     log.info("Loading exported Hugging Face checkpoint from %s", output_path)
@@ -188,6 +248,10 @@ def verify_export(
         thread_count=32,
     )
     load_qwen3_moe_from_olmo_state(hf_model, olmo_state, verify_only=True)
+    tokenizer_metadata = _verify_tokenizer_metadata(
+        output_path=output_path,
+        tokenizer_name=tokenizer_name,
+    )
     result = {
         "source_checkpoint": str(checkpoint_path),
         "hf_export": str(output_path),
@@ -195,9 +259,10 @@ def verify_export(
         "exact_match": True,
         "source_tensor_count": len(olmo_state),
         "hf_parameter_count": len(hf_model.state_dict()),
+        "tokenizer_metadata": tokenizer_metadata,
     }
     (output_path / "weight-verification.json").write_text(json.dumps(result, indent=2) + "\n")
-    log.info("Exact weight verification complete")
+    log.info("Exact weight and tokenizer metadata verification complete")
 
 
 def convert_checkpoint(
@@ -215,11 +280,17 @@ def convert_checkpoint(
             raise FileExistsError(f"Output path already exists: {output_path}")
         shutil.rmtree(output_path)
 
+    log.info("Loading tokenizer from %s", tokenizer_name)
+    tokenizer = AutoTokenizer.from_pretrained(tokenizer_name, trust_remote_code=False)
+
     log.info("Building native Hugging Face model skeleton from %s", hf_model_name)
     config = AutoConfig.from_pretrained(hf_model_name, trust_remote_code=False)
     config.torch_dtype = dtype
+    tokenizer_metadata = _sync_tokenizer_metadata(config, tokenizer)
     with torch.device("meta"):
         hf_model = AutoModelForCausalLM.from_config(config, trust_remote_code=False)
+    generation_config = GenerationConfig.from_model_config(config)
+    hf_model.generation_config = generation_config
     hf_model.to(dtype=dtype)
     hf_model.to_empty(device="cpu")
 
@@ -243,8 +314,8 @@ def convert_checkpoint(
         safe_serialization=True,
         max_shard_size=max_shard_size,
     )
-    tokenizer = AutoTokenizer.from_pretrained(tokenizer_name, trust_remote_code=False)
     tokenizer.save_pretrained(output_path)
+    generation_config.save_pretrained(output_path)
 
     provenance = {
         "source_checkpoint": str(checkpoint_path),
@@ -253,6 +324,10 @@ def convert_checkpoint(
         "dtype": str(dtype).removeprefix("torch."),
         "source_tensor_count": source_tensor_count,
         "hf_parameter_count": len(hf_model.state_dict()),
+        "tokenizer_metadata": {
+            name: tokenizer_metadata[name] for name in (*_TOKEN_ID_ATTRIBUTES, "vocab_size")
+        },
+        "chat_template_preserved": tokenizer_metadata["chat_template"] is not None,
     }
     (output_path / "conversion.json").write_text(json.dumps(provenance, indent=2) + "\n")
     log.info("Conversion complete")
@@ -263,7 +338,11 @@ def main() -> None:
     parser.add_argument("--checkpoint-path", type=Path, required=True)
     parser.add_argument("--output-path", type=Path, required=True)
     parser.add_argument("--hf-model-name", default="Qwen/Qwen3-30B-A3B-Base")
-    parser.add_argument("--tokenizer-name", default="Qwen/Qwen3-30B-A3B")
+    parser.add_argument(
+        "--tokenizer-name",
+        required=True,
+        help="Exact tokenizer directory or HF identifier to package with the export.",
+    )
     parser.add_argument("--dtype", choices=("bfloat16", "float32"), default="bfloat16")
     parser.add_argument("--max-shard-size", default="5GB")
     parser.add_argument("--save-overwrite", action="store_true")
@@ -275,6 +354,7 @@ def main() -> None:
         verify_export(
             checkpoint_path=args.checkpoint_path,
             output_path=args.output_path,
+            tokenizer_name=args.tokenizer_name,
             dtype=getattr(torch, args.dtype),
         )
         return
