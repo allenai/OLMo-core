@@ -261,6 +261,54 @@ class Transformer(nn.Module):
                 rope_buffers[int(key)] = None
         return rope_buffers
 
+    def prepare_cp_sequence_inputs(
+        self,
+        input_ids: torch.Tensor,
+        labels: Optional[torch.Tensor] = None,
+        *,
+        ignore_index: int = -100,
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor], int]:
+        """
+        Shard sequence inputs for context parallelism before entering a pipeline schedule.
+
+        Pipeline-parallel stages exchange hidden activations with already-local CP sequence
+        lengths. The model still needs the original full sequence length later so each stage can
+        build and shard its own RoPE buffers consistently.
+
+        :returns: The CP-sharded ``input_ids``, the CP-sharded ``labels`` (or ``None``), and the
+            original (pre-shard) sequence length.
+        """
+        cp_load_balancer = self._cp_load_balancer
+        if cp_load_balancer is None:
+            raise OLMoConfigurationError(
+                "prepare_cp_sequence_inputs() requires context parallelism to be applied first"
+            )
+        if input_ids.dim() < 2:
+            raise ValueError("'input_ids' must have a batch and sequence dimension")
+        if labels is not None and labels.shape[:2] != input_ids.shape[:2]:
+            raise ValueError(
+                f"'labels' shape {tuple(labels.shape)} does not match input batch/sequence "
+                f"shape {tuple(input_ids.shape[:2])}"
+            )
+
+        original_seq_len = input_ids.shape[1]
+        inputs = [input_ids]
+        seq_dims = [1]
+        pad_values: List[Union[int, float]] = [0]
+
+        if labels is not None:
+            inputs.append(labels)
+            seq_dims.append(1)
+            pad_values.append(ignore_index)
+
+        sharded_inputs = cp_load_balancer.batch_shard(
+            inputs=inputs,
+            seq_dims=seq_dims,
+            pad_values=pad_values,
+        )
+        sharded_labels = sharded_inputs[1] if labels is not None else None
+        return sharded_inputs[0], sharded_labels, original_seq_len
+
     @torch.no_grad()
     def init_weights(
         self,
