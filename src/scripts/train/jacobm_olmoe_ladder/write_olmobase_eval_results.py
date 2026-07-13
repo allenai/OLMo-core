@@ -30,6 +30,7 @@ DEFAULT_EXPERIMENTS = [
     "01KX02MYSA36TFKBT99XAE0XZ6",  # 275M baseline Cx1 midtrained OLMoBase
     "01KX02N80T6NXX8TZEJM8TC0Z5",  # 275M baseline Cx8 midtrained OLMoBase
     "01KXE4E4JD4QJER5KEQX2EJF6E",  # 1.2B wide integration Cx8 midtrained OLMoBase
+    "01KXEJ2N0VW8815658DPNXQH7R",  # 1.2B deep integration Cx8 midtrained OLMoBase
     "01KXE8ZQTDBCC2QRX8YXDWHAS9",  # 275M top16 integration midtrained OLMoBase
     "01KXE900EMBX7MDDFQEWMMN69J",  # 275M top16 integration midtrained OLMoBase with eval topK=8
 ]

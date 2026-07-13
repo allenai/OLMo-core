@@ -2178,3 +2178,21 @@ Launched OLMoBase evals:
 Added `eval_20260713_olmobase_targets.jsonl` and registered these explicit
 experiment IDs in `write_olmobase_eval_results.py`; refreshed
 `results/olmobase_evals.*`, which now lists the three jobs as pending/running.
+
+## 2026-07-13 Final 1.2B Deep Midtraining Eval Follow-up
+
+`mt-1p2b-intd256e8k-cx8-lr4e-5-r1` finished successfully at `step127157`
+from Beaker [01KX703FE8T96HJM4EFG90KHVF](https://beaker.org/ex/01KX703FE8T96HJM4EFG90KHVF).
+
+Launched and finalized the final-checkpoint eval backfill, then copied 180
+summary metrics back to source W&B run `k25pw5nl` with
+`copy_eval_backfills_to_wandb.py`:
+
+| Kind | Beaker | Notes |
+| --- | --- | --- |
+| Eval backfill | https://beaker.org/ex/01KXEFDEBTMVC594FGSY2FBD4G | Titan urgent, 1 node x 8 GPUs, `integration_midtraining_ladder.py --integration-config=deep_256e8k`; finalized with exit code 0. |
+| HF conversion | https://beaker.org/ex/01KXEFCXXE1N7ZSZCT26C3F53H | Jupiter urgent, 1 GPU; wrote `hf-checkpoints/midtraining/mt-1p2b-intd256e8k-cx8-lr4e-5-r1/step127157`. |
+| OLMoBase eval | https://beaker.org/ex/01KXEJ2N0VW8815658DPNXQH7R | MoE workspace, Jupiter urgent, 8 vLLM instances, standard OLMoBase task suite. |
+
+Added `eval_20260713_1p2b_deep_olmobase_targets.jsonl` and registered the
+OLMoBase experiment in `write_olmobase_eval_results.py`.
