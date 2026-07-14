@@ -135,11 +135,12 @@ torchrun --nproc-per-node=8 src/scripts/official/OLMo2/OLMo-2-0325-32B-train.py 
 
 **Internal scripts** (`src/scripts/train/`): Use `prepare_cli_environment()` with commands (`launch`, `train`, `train_single`, `prep`, `dry_run`). See `template.py` for the starting point.
 
-`src/scripts/train/` is also the hub for ALL of our own training code, organized by experiment
+ALL of our own training code lives in `src/scripts/train/memexpress/`, organized by experiment
 family (`cpt/`, `sft_5task/`, `sft_docchunk/`, `attn_explore/`, ...) — see the index in
-`src/scripts/train/README.md` and each family's README. A gitignored repo-root symlink `training/`
-points there for quick inspection. New training scripts go in the matching family folder (or a new
-one with a README), never loose in `sft/` (upstream-only).
+`src/scripts/train/memexpress/README.md` and each family's README. Two shortcuts point there:
+`scripts/memexpress` (tracked symlink) and the gitignored repo-root `training/`. New training
+scripts go in the matching family folder (or a new one with a README), never loose in
+`src/scripts/train/sft/` (upstream-only).
 
 ```bash
 python src/scripts/train/OLMo2-1B.py dry_run test-run ai2/titan-cirrascale

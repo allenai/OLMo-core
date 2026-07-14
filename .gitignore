@@ -83,5 +83,5 @@ core
 # STALE and should be deleted (`rm -rf ./corpus-reasoning`).
 /corpus-reasoning/
 
-# repo-root symlink to src/scripts/train (the training-code hub) for quick inspection
+# repo-root symlink to src/scripts/train/memexpress (the training-code hub) for quick inspection
 /training

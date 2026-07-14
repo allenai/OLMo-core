@@ -2,8 +2,8 @@
 
 How we train and eval OLMo-core models on the Berkeley H200 nodes, **without** AI2 infra (no weka,
 no Beaker). This is the local counterpart to the Beaker flow in CLAUDE.md. Reference launchers live
-in the `src/scripts/train/` hub (see its README) — local launchers are the `*local*.sbatch` files in each family folder; a good canonical example is
-`src/scripts/train/attn_explore/run_q06b_dense_contra_n20_local_mooney.sbatch`.
+in the `src/scripts/train/memexpress/` hub (see its README) — local launchers are the `*local*.sbatch` files in each family folder; a good canonical example is
+`src/scripts/train/memexpress/attn_explore/run_q06b_dense_contra_n20_local_mooney.sbatch`.
 
 ## Cluster map
 
@@ -124,8 +124,8 @@ replicate the three inputs:
 
 ```bash
 # Smoke first, then full:
-sbatch --export=ALL,MAX_STEPS=10,NGPU=2 src/scripts/train/attn_explore/run_q06b_dense_contra_n20_local_mooney.sbatch
-sbatch src/scripts/train/attn_explore/run_q06b_dense_contra_n20_local_mooney.sbatch
+sbatch --export=ALL,MAX_STEPS=10,NGPU=2 src/scripts/train/memexpress/attn_explore/run_q06b_dense_contra_n20_local_mooney.sbatch
+sbatch src/scripts/train/memexpress/attn_explore/run_q06b_dense_contra_n20_local_mooney.sbatch
 ```
 
 ## Eval pipeline
