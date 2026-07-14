@@ -7,6 +7,7 @@ import argparse
 import json
 import os
 import tempfile
+import time
 from collections import defaultdict
 from datetime import UTC, datetime
 from pathlib import Path
@@ -152,17 +153,34 @@ def main() -> None:
     parser.add_argument("--artifact-status-root", type=Path, required=True)
     parser.add_argument("--artifact-label", action="append", default=[])
     parser.add_argument("--output", type=Path, required=True)
-    args = parser.parse_args()
-    report = audit(
-        args.manifest,
-        args.family_status_root,
-        args.artifact_status_root,
-        args.artifact_label,
+    parser.add_argument(
+        "--wait-seconds",
+        type=int,
+        default=0,
+        help="Wait up to this many seconds for incomplete receipts before failing.",
     )
-    write_json_atomically(args.output, report)
-    print(json.dumps(report, indent=2, sort_keys=True))
-    if report["status"] != "COMPLETE":
-        raise SystemExit(1)
+    parser.add_argument("--poll-seconds", type=int, default=300)
+    args = parser.parse_args()
+    if args.wait_seconds < 0 or args.poll_seconds <= 0:
+        raise ValueError("wait-seconds must be nonnegative and poll-seconds must be positive")
+    deadline = time.monotonic() + args.wait_seconds
+    while True:
+        report = audit(
+            args.manifest,
+            args.family_status_root,
+            args.artifact_status_root,
+            args.artifact_label,
+        )
+        write_json_atomically(args.output, report)
+        print(json.dumps(report, indent=2, sort_keys=True), flush=True)
+        if report["status"] == "COMPLETE":
+            return
+        if time.monotonic() >= deadline:
+            raise SystemExit(1)
+        remaining = max(0, int(deadline - time.monotonic()))
+        sleep_seconds = min(args.poll_seconds, remaining)
+        print(f"Migration is incomplete; auditing again in {sleep_seconds}s", flush=True)
+        time.sleep(sleep_seconds)
 
 
 if __name__ == "__main__":

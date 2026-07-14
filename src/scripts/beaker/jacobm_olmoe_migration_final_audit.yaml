@@ -24,6 +24,8 @@ tasks:
           --artifact-label hf_legacy_exports \
           --artifact-label eval_legacy_outputs \
           --output "${AUDIT}" \
+          --wait-seconds 86400 \
+          --poll-seconds 300 \
           2>&1 | tee /results/final_audit.log
 
         CREDENTIALS=/tmp/google/credentials.json
@@ -59,7 +61,7 @@ tasks:
       memory: 4 GiB
     context:
       priority: urgent
-      minRuntime: 10m
+      minRuntime: 24h0m0s
       autoResume: false
     constraints:
       cluster:
@@ -67,4 +69,4 @@ tasks:
     hostNetworking: true
     propagateFailure: false
     propagatePreemption: false
-    timeout: 1h0m0s
+    timeout: 30h0m0s
