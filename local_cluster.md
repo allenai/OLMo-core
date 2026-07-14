@@ -10,7 +10,7 @@ in `src/scripts/train/sft/*_local*.sbatch` / `*local_mooney.sbatch`; a good cano
 | Node | GPUs | Partition | Notes |
 |---|---|---|---|
 | `hermione` | none | — | Login/head node. 6 cores, ~7.5 GB RAM. Edit + submit only; heavy imports OOM. |
-| `horton` | 8×H200 | `berkeleynlp` | QOS `preemptive_high_sewonm`. Claude dev sessions run here (`claude-horton`). |
+| `horton` | 8×H200 | `berkeleynlp` | QOS `preemptive_high_sewonm`. |
 | `mooney`, `cubbins`, `sneetches` | 8×H200 each | `jsteinhardt` (`--account=site`) | Main training/eval nodes. All have a fast env on node-local `/data`. |
 | `mcfuzz` | 8×H200 | `jsteinhardt` | Usable but NO `/data/prasann` yet (admin must create) → falls back to slow NFS env. |
 | `lorax` | H200 | `berkeleynlp` | Frequently draining (`sinfo -R`). Rarely used. |
@@ -73,8 +73,8 @@ source /accounts/projects/berkeleynlp/prasann/projects/OLMo-core/src/scripts/loc
 
 It sets `REPO`, puts the fast env on `PATH` (direct PATH — `conda activate` hangs minutes on NFS
 lock contention), `PYTHONPATH=$REPO/src`, the offline flags, `PYTHONWARNINGS=ignore`,
-`WANDB_API_KEY`/`WANDB_FLAG`, a random `MASTER_PORT`, and defines `pick_clean_gpus N` +
-`fresh_workdir ROOT`. Pre-set a var before sourcing to override a default (e.g.
+`WANDB_API_KEY`/`WANDB_FLAG`, a random `MASTER_PORT`, and defines `fresh_workdir ROOT`
+(fresh per-job `/data` work dir). Pre-set a var before sourcing to override a default (e.g.
 `HF_HUB_OFFLINE=0` to allow a one-time model download). The one thing it CANNOT cover is the
 `#SBATCH` header (slurm parses that before the script runs) — partition/qos/gres and
 `--output=/data/prasann/joblogs/...` stay in each launcher.
@@ -128,14 +128,6 @@ sbatch --export=ALL,MAX_STEPS=10,NGPU=2 src/scripts/train/sft/run_q06b_dense_con
 sbatch src/scripts/train/sft/run_q06b_dense_contra_n20_local_mooney.sbatch
 ```
 
-Inside the sbatch, before torchrun, **pin clean GPUs** — allocations regularly include a
-rogue-occupied GPU (and nvidia-smi is not cgroup-isolated, so filter by memory used):
-
-```bash
-mapfile -t CLEAN < <(nvidia-smi --query-gpu=memory.used,uuid --format=csv,noheader,nounits | awk -F', ' '$1+0 < 2000 {print $2}')
-export CUDA_VISIBLE_DEVICES=$(IFS=,; echo "${CLEAN[*]:0:$NGPU}")
-```
-
 ## Eval pipeline
 
 Evals run as sbatch jobs **pinned to the node that holds the checkpoint**, reading it in place from
@@ -148,13 +140,9 @@ error bars) are in CLAUDE.md.
 
 - Watch: `squeue -u prasann`; who's on my nodes + QOS:
   `squeue -w mooney,cubbins,sneetches -o '%.10i %.10u %.16q %.8T %b %N'`.
-- Live log: `tail -f /data/prasann/joblogs/<name>_<jobid>.log` **from that node** (or
-  `/net/<host>/data/...` from elsewhere). Older jobs logged to hidden `.<family>_%x_%j.log` files
-  in the repo root; those are archived in `logs/` (gitignored) — new launchers must not log to the
-  repo/NFS.
 - Cancel with `scancel <jobid>`.
-- Claude runs inside a `claude-horton` srun allocation → a nested `srun --nodelist=<other-node>`
-  fails (inherits SLURM_*). **Always `sbatch`** for work on other nodes.
+- From inside an existing srun allocation, a nested `srun --nodelist=<other-node>` fails (inherits
+  `SLURM_*`). **Always `sbatch`** for work on other nodes.
 - The shell is zsh: no word-splitting — wrap `for`-loops over command output in `bash -c`.
 
 ## Known traps (each has burned a real experiment)
@@ -166,6 +154,5 @@ error bars) are in CLAUDE.md.
 | Silent auto-resume | Relaunch into a non-empty `--save-folder` resumes at step N; step counts + wall-clock garbage, configs can mix | Fresh/unique save folder per config; check first log line is `step=1` |
 | Wrong `load_path` depth | Trains from scratch (CE ≈ 12) | Point at `.../model_and_optim` |
 | Unrepaired marker embeddings | Docchunk/landmark runs train to chance | `fix_marker_embeddings.py` the base first |
-| Rogue GPU in allocation | OOM/slow on one rank | Clean-GPU pinning snippet above |
 | HF hub access from compute node | Silent multi-minute dataloader stalls | `HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1` |
-| Nested `srun` from Claude's allocation | `Unable to create step ...` | Use `sbatch` |
+| Nested `srun` inside an allocation | `Unable to create step ...` | Use `sbatch` |

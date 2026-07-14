@@ -17,8 +17,6 @@
 #   - WANDB_API_KEY  from ~/.netrc if unset; WANDB_FLAG="--no-wandb" when no creds
 #   - MASTER_PORT    randomized for torchrun (avoids collisions between co-located jobs)
 # Functions:
-#   - pick_clean_gpus N   -> CUDA_VISIBLE_DEVICES = first N GPUs with <2GB used (allocations
-#                            regularly include a rogue-occupied GPU; nvidia-smi isn't cgroup-isolated)
 #   - fresh_workdir ROOT  -> echoes a fresh per-job work dir ROOT/cache-$SLURM_JOB_ID (stale NFS
 #                            locks from killed jobs poison reused work dirs)
 #
@@ -48,19 +46,6 @@ WANDB_FLAG=""
 [ -z "${WANDB_API_KEY:-}" ] && WANDB_FLAG="--no-wandb" && echo "local_env: no wandb creds -> WANDB_FLAG=--no-wandb"
 
 export MASTER_PORT=$((29000 + RANDOM % 1000))
-
-pick_clean_gpus() {
-  local n="${1:?usage: pick_clean_gpus N}"
-  local clean
-  mapfile -t clean < <(nvidia-smi --query-gpu=memory.used,uuid --format=csv,noheader,nounits |
-    awk -F', ' '$1+0 < 2000 {print $2}')
-  if [ "${#clean[@]}" -lt "$n" ]; then
-    echo "local_env: WARNING only ${#clean[@]} clean GPUs for requested $n" >&2
-  fi
-  CUDA_VISIBLE_DEVICES=$(IFS=,; echo "${clean[*]:0:$n}")
-  export CUDA_VISIBLE_DEVICES
-  echo "local_env: CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES"
-}
 
 fresh_workdir() {
   local root="${1:?usage: fresh_workdir ROOT}"

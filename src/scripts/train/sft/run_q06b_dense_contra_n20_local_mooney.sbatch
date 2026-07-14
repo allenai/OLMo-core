@@ -27,8 +27,6 @@ BASE_CKPT="${BASE_CKPT:-/data/prasann/olmo_ckpts/qwen3_0_6B_base_olmo/model_and_
 RUN_NAME="${RUN_NAME:-q06b-dense-contra-n20-sft-local}"
 echo "=== HOST=$(hostname) NGPU=$NGPU MAX_STEPS=$MAX_STEPS BASE=$BASE_CKPT RUN=$RUN_NAME START=$(date '+%F %T') ==="
 
-pick_clean_gpus "$NGPU"
-
 # Stage the (tiny) data + a FRESH work dir on node-local /data: shared-NFS work dirs accumulate
 # stale NFSv4 locks from killed jobs (ranks then hang in nfs_wait_bit_killable before step 1).
 LOCAL_ROOT=/data/prasann/contra_n20_smoke
