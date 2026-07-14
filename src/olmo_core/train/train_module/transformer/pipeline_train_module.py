@@ -290,6 +290,10 @@ class TransformerPipelineTrainModule(TrainModule):
         return self._cp_config is not None
 
     @property
+    def dp_config(self) -> Optional[TransformerDataParallelConfig]:
+        return self._dp_config
+
+    @property
     def train_pp_schedule(self) -> PipelineSchedule:
         self.trainer  # make sure trainer has been attached before trying to access this
         assert self._train_pp_schedule is not None
