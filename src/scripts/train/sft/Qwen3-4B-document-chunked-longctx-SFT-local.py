@@ -66,13 +66,15 @@ from olmo_core.train.train_module import (
     TransformerTrainModuleConfig,
 )
 from olmo_core.utils import seed_all
+from olmo_core.data.document_chunk_landmark import (  # canonical ids -- never retype
+    DOC_END_ID,
+    DOC_START_ID,
+    EOS_TOKEN_ID,
+    LANDMARK_TOKEN_ID,
+    PAD_TOKEN_ID,
+    REAL_VOCAB_SIZE,
+)
 
-# Special-token / reserved ids (match the converter + document_chunk_landmark defaults).
-EOS_TOKEN_ID = 151643
-LANDMARK_TOKEN_ID = 151860
-DOC_START_ID = 151648  # <|box_start|>
-DOC_END_ID = 151649  # <|box_end|>
-PAD_TOKEN_ID = 151863  # interior window-fill padding (landmark only)
 
 MEM_FREQ = 63  # landmark block size = 64
 

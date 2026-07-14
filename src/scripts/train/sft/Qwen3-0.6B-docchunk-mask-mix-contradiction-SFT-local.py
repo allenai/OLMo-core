@@ -45,20 +45,24 @@ from olmo_core.train import (
 from olmo_core.train.callbacks import (
     ConfigSaverCallback,
     GPUMemoryMonitorCallback,
+    WandBCallback,
 )
 from olmo_core.train.train_module import (
     TransformerDataParallelConfig,
     TransformerDataParallelWrappingStrategy,
     TransformerTrainModuleConfig,
 )
-from olmo_core.distributed.utils import get_rank
+from olmo_core.distributed.utils import get_rank, get_world_size
 from olmo_core.utils import seed_all
+from olmo_core.data.document_chunk_landmark import (  # canonical ids -- never retype
+    DOC_END_ID,
+    DOC_START_ID,
+    EOS_TOKEN_ID,
+    LANDMARK_TOKEN_ID,
+    PAD_TOKEN_ID,
+    REAL_VOCAB_SIZE,
+)
 
-# ---- reserved ids (match the docdense converter / document_chunk_landmark defaults) ----
-DOC_START_ID = 151648
-DOC_END_ID = 151649
-EOS_TOKEN_ID = 151643  # Qwen3-Base <|endoftext|> (pad == eos; trailing pad -> PAD by the "after first
-#                        eos" rule, so no dedicated pad_id is needed for the dense docchunk path).
 
 # ---- LOCAL paths (shared NFS / readable from any Berkeley GPU node) ----
 # Base: an existing qwen3_0_6B dense olmo-core distcp (d_model 1024 / n_layers 28 / vocab 151936 ==
@@ -87,9 +91,14 @@ def build_and_fit(opts: argparse.Namespace) -> None:
             f"(PadToLength would SKIP the long examples). Raise --seq-len."
         )
     # micro-batch = 1 instance (rank_microbatch = seq_len); global batch = grad_accum instances.
-    # #training forwards == n_examples * epochs (independent of grad_accum), which is mix_total_forwards.
+    # The curriculum's p_standard is driven by a PER-RANK forward counter, and data is sharded across
+    # the DP ranks (1 instance/GPU/forward), so rank 0 does only n_examples*epochs/world_size forwards.
+    # Dividing by world_size here makes p_standard actually anneal to mix_end_p by end-of-training
+    # (else it stalls at mix_start_p*(1-1/world_size) -- worse the more GPUs -- and the model never
+    # trains predominantly on its target mask; see the mask-mix-ngpu-anneal bug).
     global_batch_size = opts.grad_accum * seq_len
-    mix_total_forwards = n_examples * opts.epochs
+    world_size = max(1, get_world_size())
+    mix_total_forwards = max(1, (n_examples * opts.epochs) // world_size)
 
     # ---- mask-mix config keys threaded into document_chunk_attention ----
     mix_keys: dict = {}
@@ -129,15 +138,27 @@ def build_and_fit(opts: argparse.Namespace) -> None:
         # dilation_n / dilation_m are ONLY valid with hierarchical_dilated (config.py asserts this).
         qwen_kwargs["dilation_n"] = opts.dilation_n
         qwen_kwargs["dilation_m"] = opts.dilation_m
+        if opts.dilation_cycle is not None:
+            # rotating "Hierarchical K": stride resets every L layers instead of saturating.
+            qwen_kwargs["dilation_cycle"] = opts.dilation_cycle
     elif opts.cross_doc_mode == "random_doc":
         # random_doc: each context doc attends itself + a seeded-random ``doc_keep_prob`` subset of the
         # STRICTLY EARLIER docs (BigBird-style; RANDOM connectivity, not strided). FREE query/answer
         # tokens still attend the full context. keep_prob=1.0 == full cross-doc (approaches full attn).
         qwen_kwargs["doc_keep_prob"] = opts.doc_keep_prob
         qwen_kwargs["random_doc_seed"] = opts.random_doc_seed
+        qwen_kwargs["random_doc_per_example"] = opts.random_doc_per_example
+    # Hybrid full/chunked: these layer indices run plain full (causal) attention while the rest use
+    # the chunked mask. Orthogonal to cross_doc_mode (applies to any document_chunked variant).
+    full_attn_layers = None
+    if opts.full_attention_layers:
+        full_attn_layers = [int(x) for x in opts.full_attention_layers.split(",") if x.strip() != ""]
+        qwen_kwargs["full_attention_layers"] = full_attn_layers
     print(f"[docchunk-mix] cross_doc_mode={opts.cross_doc_mode} "
+          f"full_attention_layers={full_attn_layers} "
           f"dilation_n={opts.dilation_n if opts.cross_doc_mode=='hierarchical_dilated' else None} "
           f"dilation_m={opts.dilation_m if opts.cross_doc_mode=='hierarchical_dilated' else None} "
+          f"dilation_cycle={opts.dilation_cycle if opts.cross_doc_mode=='hierarchical_dilated' else None} "
           f"doc_keep_prob={opts.doc_keep_prob if opts.cross_doc_mode=='random_doc' else None}",
           flush=True)
     model_factory = {
@@ -190,7 +211,7 @@ def build_and_fit(opts: argparse.Namespace) -> None:
         tokenizer=tokenizer_config,
         work_dir=opts.work_dir or WORK_DIR,
         global_batch_size=global_batch_size,
-        seed=34521,
+        seed=34521 + opts.seed,
         num_workers=2,
     )
 
@@ -217,7 +238,39 @@ def build_and_fit(opts: argparse.Namespace) -> None:
         .with_callback("config_saver", ConfigSaverCallback())
     )
 
-    seed_all(12536)
+    # wandb. The docchunk path had NO wandb wiring at all, so every masked arm (chunked /
+    # hierarchical / random_doc / the full-attention-layer hybrids) logged only to a slurm file --
+    # while the `full` arm, which uses a different script, logged normally. Same group as the dense
+    # script ("memory-networks") so masked and dense arms of one sweep land side by side.
+    if opts.wandb:
+        trainer_config = trainer_config.with_callback(
+            "wandb",
+            WandBCallback(
+                name=run_name,
+                group=opts.wandb_group or run_name,
+                entity=opts.wandb_entity,
+                project="memory-networks",
+                enabled=True,
+                cancel_check_interval=10,
+                config={
+                    "cross_doc_mode": opts.cross_doc_mode,
+                    "full_attention_layers": opts.full_attention_layers or "none",
+                    "dilation_n": opts.dilation_n,
+                    "dilation_m": opts.dilation_m,
+                    "dilation_cycle": opts.dilation_cycle,
+                    "doc_keep_prob": opts.doc_keep_prob,
+                    "mix_mode": opts.mix_mode,
+                    "seq_len": seq_len,
+                    "epochs": opts.epochs,
+                    "seed": opts.seed,
+                    "n_examples": n_examples,
+                    "base_checkpoint": base_checkpoint,
+                    "data_dir": opts.data_dir,
+                },
+            ),
+        )
+
+    seed_all(12536 + opts.seed)
     model = model_config.build(init_device="meta")
     train_module = train_module_config.build(model)
     source = instance_source_config.build(data_loader_config.work_dir)
@@ -264,21 +317,53 @@ def main() -> None:
     ap.add_argument("--epochs", type=int, default=NUM_EPOCHS)
     ap.add_argument("--max-steps", type=int, default=0, help="stop after N steps (0 = full)")
     ap.add_argument("--lr", type=float, default=LR)
-    ap.add_argument("--cross-doc-mode", choices=["chunked", "hierarchical_dilated", "random_doc"],
+    ap.add_argument("--cross-doc-mode",
+                    choices=["standard", "chunked", "hierarchical_dilated", "random_doc"],
                     default="chunked",
-                    help="document-chunked cross-document visibility policy (see build_and_fit)")
+                    help="document-chunked cross-document visibility policy (see build_and_fit). "
+                         "'standard' is plain causal attention through this module -- the control for "
+                         "separating a mask effect from a module/data problem")
     ap.add_argument("--dilation-n", type=int, default=3,
                     help="hierarchical_dilated: #docs a context query attends per layer (incl. self)")
     ap.add_argument("--dilation-m", type=int, default=2,
                     help="hierarchical_dilated: dilation base; per-layer stride = dilation_m**layer")
+    ap.add_argument("--dilation-cycle", type=int, default=None,
+                    help="hierarchical_dilated: rotation period L. Stride ROTATES with depth as "
+                         "dilation_m**(layer_idx %% L) (deep layers revisit short strides) instead of the "
+                         "default pure-saturation dilation_m**layer_idx (stride grows monotonically). "
+                         "None = saturating (legacy); e.g. 3 = rotating 'Hierarchical K'.")
     ap.add_argument("--doc-keep-prob", type=float, default=0.5,
                     help="random_doc: fraction of STRICTLY-EARLIER docs each context doc attends (0..1)")
     ap.add_argument("--random-doc-seed", type=int, default=42, help="random_doc: RNG seed")
+    ap.add_argument(
+        "--random-doc-per-example",
+        action="store_true",
+        help="random_doc: give EVERY EXAMPLE its own random sparsity graph (deterministic per "
+        "example) instead of one graph shared by all examples. Ablates whether a STABLE mask "
+        "matters or whether sparse-but-varied connectivity suffices.",
+    )
+    ap.add_argument("--full-attention-layers", type=str, default="",
+                    help="comma-separated layer indices that use PLAIN FULL (causal) attention instead "
+                         "of the chunked mask (hybrid full/chunked). Negative counts from the end "
+                         "(-1=last). E.g. '0' / '13' / '-1'. Empty = all layers chunked.")
     ap.add_argument("--mix-mode", choices=["none", "static", "curriculum"], default="none")
     ap.add_argument("--standard-mix-prob", type=float, default=0.10)
     ap.add_argument("--mix-start-p", type=float, default=0.80)
     ap.add_argument("--mix-end-p", type=float, default=0.0)
     ap.add_argument("--mix-seed", type=int, default=42)
+    ap.add_argument(
+        "--seed",
+        type=int,
+        default=0,
+        help="run-to-run seed offset: shifts BOTH the data-order seed and the global torch seed. "
+        "Vary it (with everything else held fixed) to measure the noise floor -- differences "
+        "between attention masks are only meaningful above the spread across these seeds.",
+    )
+    ap.add_argument("--no-wandb", dest="wandb", action="store_false",
+                    help="disable wandb (it is ON by default; needs WANDB_API_KEY)")
+    ap.add_argument("--wandb-entity", default=None)
+    ap.add_argument("--wandb-group", default=None,
+                    help="group several arms of one sweep together (default: the run name)")
     ap.add_argument("--mix-log-interval", type=int, default=5)
     ap.add_argument("--no-compile", dest="compile", action="store_false")
     opts = ap.parse_args()

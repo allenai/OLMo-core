@@ -1,23 +1,23 @@
 """
-LOCAL (torchrun, no Beaker/weka) DENSE variant of the Qwen3-0.6B contradiction-n20 SFT.
+LOCAL (torchrun, no Beaker/weka) DILATED-SLIDING-WINDOW variant of the Qwen3-0.6B contradiction-n20
+SFT -- the "Hierarchical K" rotating-dilation mask (``AttentionType.dilated_sliding_window``).
 
-Sibling of ``Qwen3-0.6B-fast-landmark-contradiction-n20-SFT-local.py`` but with standard dense
-attention (no landmark tokens): the model is ``qwen3_0_6B`` with ``fast_landmark=False`` and the data
-is fed straight through ``PadToLengthInstanceSource`` (no ``LandmarkInstanceSource`` wrapper -- the
-raw n20 npy shards are landmark-agnostic; landmark tokens are only inserted at load time by the
-landmark source). Because dense attention never touches the landmark token embedding, the RAW
-Qwen3-0.6B base is a valid init here (unlike the landmark variants, which want a landmark-pretrained
-base). This makes it a quick, honest "can a 0.6B learn contradiction n20 no-cot at all" baseline.
+Sibling of ``Qwen3-0.6B-dense-contradiction-n20-SFT-local.py``: identical model size, data pipeline
+(raw n20 no-cot npy shards through ``PadToLengthInstanceSource``), optimizer, and schedule -- the ONLY
+difference is the attention mask. Each layer attends just ``K`` keys per query at a per-layer dilation
+stride ``base ** (layer_idx % L)``, so the loss curves are directly comparable to the dense run from
+the same RAW Qwen3-0.6B base (the mask is positional; no landmark tokens, so the raw base is a valid
+init -- though a pretrained-dense base starts badly mismatched with a tiny K, which is part of what a
+quick debug run measures).
 
 Run::
 
     PYTHONPATH=.../OLMo-core/src torchrun --nproc_per_node=8 \\
-      src/scripts/train/sft/Qwen3-0.6B-dense-contradiction-n20-SFT-local.py \\
-      --run-name q06b-dense-contra-n20-sft-local
+      src/scripts/train/sft/Qwen3-0.6B-dilated-contradiction-n20-SFT-local.py \\
+      --run-name q06b-dilated-contra-n20-sft-local --dilated-k 3
 """
 
 import argparse
-import json
 from dataclasses import replace
 from datetime import datetime
 
@@ -28,9 +28,7 @@ from olmo_core.data.composable import (
     PadToLengthInstanceSourceConfig,
 )
 from olmo_core.distributed.parallel import DataParallelType
-from olmo_core.distributed.utils import get_rank
 from olmo_core.float8 import Float8Config
-from olmo_core.nn.attention import AttentionBackendName
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import LinearWithWarmup, OptimGroupOverride, SkipStepAdamWConfig
 from olmo_core.train import (
@@ -57,8 +55,8 @@ SEQUENCE_LENGTH = 2048
 
 # ---- LOCAL paths (shared NFS) ----
 DATA_PATH = "/scratch/users/prasann/longctx_sft_qwen/contradiction_n20"
-# RAW Qwen3-0.6B base distcp (dense is landmark-agnostic, so this is a valid init). Lives on mooney
-# node-local /data -> this launcher is mooney-pinned. Override with --base-checkpoint.
+# RAW Qwen3-0.6B base distcp (the dilated mask is positional -> landmark-agnostic -> the raw base is a
+# valid init). Lives on mooney node-local /data -> this launcher is mooney-pinned.
 BASE_CHECKPOINT = "/data/prasann/olmo_ckpts/qwen3_0_6B_base_olmo/model_and_optim"
 SAVE_ROOT = "/scratch/users/prasann/olmo_ckpts"
 WORK_DIR = "/scratch/users/prasann/longctx_sft_qwen/dataset-cache"
@@ -77,23 +75,17 @@ def build_and_fit(opts: argparse.Namespace) -> None:
     # Shards are separated by single EOS tokens; qwen3 ties bos==eos, so drop BOS for segmentation.
     doc_tokenizer_config = replace(tokenizer_config, bos_token_id=None)
 
-    seq_len = opts.seq_len
-    global_batch_size = seq_len * 8
-    model_factory = {
-        "0.6B": TransformerConfig.qwen3_0_6B,
-        "4B": TransformerConfig.qwen3_4B,
-    }[opts.model_size]
-    model_config = model_factory(
+    model_config = TransformerConfig.qwen3_0_6B(
         vocab_size=tokenizer_config.padded_vocab_size(),
-        # qwen3 factories default backend=None -> TorchAttentionBackend, which can't KV-cache during
-        # eval decode (eval_lc_native.py generates with use_cache=True). Pin flash_2 so the saved
-        # config.json supports KV-cached generation (matches the docchunk-mix script).
-        attn_backend=AttentionBackendName.flash_2,
+        dilated_sliding_window=True,
+        dilated_window_k=opts.dilated_k,
+        dilated_window_num_configs=opts.dilated_num_configs,
+        dilated_window_base=opts.dilated_base,
     )
 
     train_module_config = TransformerTrainModuleConfig(
-        rank_microbatch_size=seq_len,
-        max_sequence_length=seq_len,
+        rank_microbatch_size=SEQUENCE_LENGTH,
+        max_sequence_length=SEQUENCE_LENGTH,
         optim=SkipStepAdamWConfig(
             lr=opts.lr,
             weight_decay=0.0,
@@ -119,7 +111,7 @@ def build_and_fit(opts: argparse.Namespace) -> None:
     instance_source_config = PadToLengthInstanceSourceConfig.from_npy(
         f"{opts.data_path}/token_ids_part_*.npy",
         tokenizer=doc_tokenizer_config,
-        sequence_length=seq_len,
+        sequence_length=SEQUENCE_LENGTH,
         label_mask_paths=[f"{opts.data_path}/labels_mask_*.npy"],
         expand_glob=True,
     )
@@ -127,7 +119,7 @@ def build_and_fit(opts: argparse.Namespace) -> None:
     data_loader_config = ComposableDataLoaderConfig(
         tokenizer=tokenizer_config,
         work_dir=opts.work_dir,
-        global_batch_size=global_batch_size,
+        global_batch_size=GLOBAL_BATCH_SIZE,
         seed=34521,
         num_workers=opts.num_workers,
     )
@@ -180,24 +172,10 @@ def build_and_fit(opts: argparse.Namespace) -> None:
     trainer = trainer_config.build(train_module, data_loader)
     trainer.fit()
 
-    if opts.save_checkpoint:
-        from olmo_core.distributed.checkpoint import save_model_and_optim_state
-
-        model_dir = f"{save_folder}/model_and_optim"
-        save_model_and_optim_state(model_dir, train_module.model, save_overwrite=True)
-        if get_rank() == 0:
-            experiment = {
-                "model": model_config.as_config_dict(),
-                "dataset": {"tokenizer": tokenizer_config.as_config_dict()},
-            }
-            with open(f"{save_folder}/config.json", "w") as f:
-                json.dump(experiment, f)
-            print(f"[dense-contra] saved model-only checkpoint -> {save_folder}", flush=True)
-
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--run-name", default="q06b-dense-contra-n20-sft-local")
+    ap.add_argument("--run-name", default="q06b-dilated-contra-n20-sft-local")
     ap.add_argument("--save-folder", default=None, help=f"default {SAVE_ROOT}/<run-name>")
     ap.add_argument("--base-checkpoint", default=BASE_CHECKPOINT,
                     help="olmo distcp model_and_optim subdir to init from")
@@ -207,15 +185,14 @@ def main() -> None:
                     help="dataset-cache dir; use a FRESH node-local dir to avoid stale NFS locks")
     ap.add_argument("--num-workers", type=int, default=4,
                     help="data loader workers (0 = load in-process; simplest for tiny smoke data)")
-    ap.add_argument("--model-size", choices=["0.6B", "4B"], default="0.6B",
-                    help="qwen3_0_6B vs qwen3_4B factory (same docchunk-agnostic dense path)")
-    ap.add_argument("--seq-len", type=int, default=SEQUENCE_LENGTH,
-                    help="pad/truncate length; global batch = seq_len * 8 (1 instance/GPU on 8 GPUs)")
-    ap.add_argument("--save-checkpoint", action="store_true",
-                    help="after fit, save model-only checkpoint (config.json + model_and_optim) for eval")
     ap.add_argument("--epochs", type=int, default=NUM_EPOCHS)
     ap.add_argument("--max-steps", type=int, default=0, help="stop after N steps (0 = full; smoke)")
     ap.add_argument("--lr", type=float, default=LR)
+    ap.add_argument("--dilated-k", type=int, default=3, help="keys attended per layer (K)")
+    ap.add_argument("--dilated-num-configs", type=int, default=3,
+                    help="rotation cycle length (L); dilation resets every L layers")
+    ap.add_argument("--dilated-base", type=int, default=2,
+                    help="dilation base m; stride at cycle position p is m**p")
     ap.add_argument("--no-compile", dest="compile", action="store_false")
     ap.add_argument("--no-wandb", dest="wandb", action="store_false")
     ap.add_argument("--wandb-entity", default=None)

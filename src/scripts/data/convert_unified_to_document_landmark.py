@@ -43,9 +43,12 @@ from typing import List, Optional, Tuple
 import numpy as np
 from transformers import AutoTokenizer
 
-from olmo_core.data.document_chunk_landmark import (
+from olmo_core.data.document_chunk_landmark import (  # canonical ids -- never retype
     DOC_END_ID,
     DOC_START_ID,
+    EOS_TOKEN_ID,
+    LANDMARK_TOKEN_ID,
+    PAD_TOKEN_ID,
     emit_document_chunk_dense,
     emit_document_chunk_landmark,
     segment_prompt_to_chunks,
@@ -53,12 +56,6 @@ from olmo_core.data.document_chunk_landmark import (
 
 log = logging.getLogger("convert_unified_doc_chunked")
 
-# Qwen3 ids (match olmo_core.data.TokenizerConfig.qwen3() + the document_chunk_landmark defaults).
-EOS_TOKEN_ID = 151643  # <|endoftext|>
-LANDMARK_TOKEN_ID = (
-    151860  # reserved id reused as the landmark/memory token (matches the base ckpt)
-)
-PAD_TOKEN_ID = 151863  # dedicated interior window-fill padding (never supervised; runtime -> PAD)
 DEFAULT_TOKENIZER = "Qwen/Qwen3-4B"
 
 TOKEN_DTYPE = np.uint32
@@ -80,6 +77,8 @@ def tokenize_example(
     chunk_by: str,
     item_regex: str,
     use_titles: bool,
+    free_pad_repeat: int = 0,
+    repeat_doc_text: int = 1,
 ) -> Optional[Tuple[np.ndarray, np.ndarray]]:
     """Tokenize one unified example into a document-chunked instance, or ``None`` to skip."""
     segments, ids, _mask = segment_prompt_to_chunks(
@@ -94,6 +93,8 @@ def tokenize_example(
         use_titles=use_titles,
         doc_start_id=DOC_START_ID,
         doc_end_id=DOC_END_ID,
+        free_pad_repeat=free_pad_repeat,
+        repeat_doc_text=repeat_doc_text,
     )
     if any(t in RESERVED_INSERTED for t in ids):
         return None  # the rendered prompt already contains a reserved inserted id -> ambiguous
@@ -111,6 +112,29 @@ def tokenize_example(
     if len(out_ids) > seq_len:
         return None  # too long for this sequence length -> drop (raise --seq-len to keep)
     return np.asarray(out_ids, dtype=TOKEN_DTYPE), np.asarray(out_mask, dtype=MASK_DTYPE)
+
+
+def _gold_fingerprint_entry(out_ids: np.ndarray, example: dict):
+    """
+    Build the ``(content_fingerprint, sorted gold chunk indices)`` sidecar entry for one emitted
+    instance, or ``None`` if the example has no ``gold_doc_indices``.
+
+    The fingerprint is over the emitted content ids (which end with the single real EOS; the loader
+    right-pads afterwards), so it matches ``content_fingerprint_from_row(input_ids, eos)`` at train
+    time. Only valid for the **dense** doc-chunked layout, where wrapped-doc / chunk index equals the
+    document's stream order (== ``Claim id - 1``); the landmark layout repacks documents into windows,
+    so its chunk indexing does not line up with ``gold_doc_indices`` and is rejected by the caller.
+    """
+    from olmo_core.nn.attention.gold_grad_mask import (
+        content_fingerprint,
+        gold_chunks_from_gold_doc_indices,
+    )
+
+    gdi = example.get("gold_doc_indices")
+    if not gdi:
+        return None
+    fp = content_fingerprint(out_ids.tolist())
+    return fp, sorted(gold_chunks_from_gold_doc_indices(gdi))
 
 
 def iter_examples(patterns: List[str], limit: int) -> List[dict]:
@@ -182,15 +206,42 @@ def main() -> None:
         "per-document title can't shortcut the task (e.g. review-outlier titles that name the "
         "product category). MUST match the eval (eval_lc_native_docchunk.py --use-titles).",
     )
+    p.add_argument(
+        "--free-pad-repeat",
+        type=int,
+        default=0,
+        help="Append N repeats of FREE_PAD_SENTENCE after the documents and before the answer. These "
+        "are FREE tokens -- they attend the WHOLE context under every cross_doc_mode -- so this widens "
+        "the budget of positions that can do cross-document comparison. The knob for the "
+        "'do the FREE tokens saturate at 100 documents?' experiment. "
+        "MUST match the eval (--free-pad-repeat), or the model sees a prompt layout it never trained on.",
+    )
+    p.add_argument(
+        "--repeat-doc-text",
+        type=int,
+        default=1,
+        help="Repeat each document's TEXT N times inside its chunk. Grows the chunk without "
+        "changing the document COUNT or the document-level attention graph -- the control for "
+        "--free-pad-repeat (adds tokens that are NEVER free). MUST match the eval.",
+    )
     p.add_argument("--tokenizer", default=DEFAULT_TOKENIZER)
     p.add_argument("--limit", type=int, default=0)
     p.add_argument("--shard-tokens", type=int, default=20_000_000)
+    p.add_argument(
+        "--emit-gold-sidecar",
+        action="store_true",
+        help="Also write gold_fingerprints.json {content_fingerprint -> [gold chunk idx]} aligned to "
+        "the emitted shards, for gold-document gradient masking (olmo_core.nn.attention.gold_grad_mask). "
+        "Dense layout only (the landmark repacking breaks the chunk-index == Claim-id-1 alignment).",
+    )
     args = p.parse_args()
 
     if args.emit == "landmark" and args.seq_len % (args.mem_freq + 1) != 0:
         raise SystemExit(
             f"--seq-len must be a multiple of block_size (mem_freq+1={args.mem_freq + 1}) for landmark."
         )
+    if args.emit_gold_sidecar and args.emit != "dense":
+        raise SystemExit("--emit-gold-sidecar requires --emit dense (chunk index == Claim id - 1).")
 
     tok = AutoTokenizer.from_pretrained(args.tokenizer)
     os.makedirs(args.out_dir, exist_ok=True)
@@ -218,7 +269,10 @@ def main() -> None:
         tok_buf.clear()
         mask_buf.clear()
 
+    gold_table: dict = {}
+    n_gold = 0
     lengths: List[int] = []
+    n_loss_tokens = 0
     for ex in examples:
         res = tokenize_example(
             tok,
@@ -232,20 +286,71 @@ def main() -> None:
             chunk_by=args.chunk_by,
             item_regex=args.item_regex,
             use_titles=args.use_titles,
+            free_pad_repeat=args.free_pad_repeat,
+            repeat_doc_text=args.repeat_doc_text,
         )
         if res is None:
             dropped += 1
             continue
         ids, mask = res
+        if args.emit_gold_sidecar:
+            entry = _gold_fingerprint_entry(ids, ex)
+            if entry is not None:
+                gold_table[entry[0]] = entry[1]
+                n_gold += 1
         tok_buf.append(ids)
         mask_buf.append(mask)
         kept += 1
         lengths.append(len(ids))
+        n_loss_tokens += int(np.asarray(mask).sum())
         buffered += len(ids)
         if buffered >= args.shard_tokens:
             flush()
             buffered = 0
     flush()
+
+    # ---- metadata.json: a HARD requirement of the docchunk trainers ----
+    # They read `num_instances` (which drives the mask-mixing anneal, `mix_total_forwards`) and
+    # `max_example_len` (to refuse a --seq-len that would make PadToLength silently SKIP long
+    # examples). This file used to be absent and got hand-backfilled per shard, which meant a shard
+    # could carry a WRONG num_instances -- silently corrupting the curriculum -- or none at all, and
+    # the trainer would simply die. Write it here so the shard is self-describing by construction.
+    meta = {
+        "task": args.task,
+        "emit": args.emit,
+        "cot_mode": args.cot_mode,
+        "chunk_by": args.chunk_by,
+        "wrap_docs": True,
+        "free_pad_repeat": args.free_pad_repeat,
+        "use_titles": args.use_titles,
+        "tokenizer": args.tokenizer,
+        "eos_token_id": EOS_TOKEN_ID,
+        "doc_start_id": DOC_START_ID,
+        "doc_end_id": DOC_END_ID,
+        "landmark_token_id": LANDMARK_TOKEN_ID if args.emit == "landmark" else None,
+        "pad_token_id": PAD_TOKEN_ID if args.emit == "landmark" else None,
+        "mem_freq": args.mem_freq if args.emit == "landmark" else None,
+        "dtype": np.dtype(TOKEN_DTYPE).name,
+        "mask_dtype": "bool",
+        "num_instances": kept,
+        "num_dropped": dropped,
+        "num_tokens": int(sum(lengths)),
+        "num_loss_tokens": n_loss_tokens,
+        "max_example_len": int(max(lengths)) if lengths else 0,
+        "min_example_len": int(min(lengths)) if lengths else 0,
+    }
+    meta_path = os.path.join(args.out_dir, "metadata.json")
+    with open(meta_path, "w") as f:
+        json.dump(meta, f, indent=2)
+    log.info(
+        f"metadata.json -> {meta_path} (num_instances={kept}, max_example_len="
+        f"{meta['max_example_len']}, num_loss_tokens={n_loss_tokens})"
+    )
+    if args.emit_gold_sidecar:
+        gold_path = os.path.join(args.out_dir, "gold_fingerprints.json")
+        with open(gold_path, "w") as f:
+            json.dump(gold_table, f)
+        log.info(f"gold sidecar: {n_gold} examples with gold_doc_indices -> {gold_path}")
     if lengths:
         arr = np.asarray(lengths)
         log.info(

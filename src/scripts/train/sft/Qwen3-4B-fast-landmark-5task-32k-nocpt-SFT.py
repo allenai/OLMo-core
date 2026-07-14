@@ -63,11 +63,15 @@ CP_DEGREE = 8
 NUM_NODES = 2  # 2 nodes x 8 GPUs = 16 GPUs; cp_degree=8 -> NUM_NODES DP replicas
 
 # ---------------------------------------------------------------------------
-# Data (weka) -- ladder40k (rungs up to 32k context; max doc ~40k tokens).
+# Data (weka) -- UNIFIED with the dense/compressive 5-task refs so the effective (post-drop) mix
+# matches across architectures: the 4 non-nq tasks from single_task_ladders_v2, nq from the p10
+# pipeline (10% hard-neg + CE filter), NOT the forbidden 98%-hard {cptmix_data_ladder40k}/nq.
+# At this 40960 landmark window the flat 2.0/1.0 weights below give the same ~2.0 effective contra
+# as the dense ref's drop-compensated 2.9/1.3 at its 32768 window.
 # ---------------------------------------------------------------------------
-DATA_ROOT = "/weka/oe-training-default/ai2-llm/checkpoints/prasanns/cptmix_data_ladder40k"
+DATA_ROOT = "/weka/oe-training-default/ai2-llm/checkpoints/prasanns/single_task_ladders_v2"
 CONTRA_DATA_ROOT = f"{DATA_ROOT}/contradiction"
-NQ_DATA_ROOT = f"{DATA_ROOT}/nq"
+NQ_DATA_ROOT = "/weka/oe-training-default/ai2-llm/checkpoints/prasanns/single_task_ladders_p10/nq"
 OOLONG_DATA_ROOT = f"{DATA_ROOT}/oolong"
 RERANK_DATA_ROOT = f"{DATA_ROOT}/rerank"
 OUTLIER_DATA_ROOT = f"{DATA_ROOT}/outlier"
@@ -96,7 +100,9 @@ CONTRA_FRAC = max(0.0, SFT_BUDGET - (NQ_FRAC + OOLONG_FRAC + RERANK_FRAC + OUTLI
 # Optimization / budget
 # ---------------------------------------------------------------------------
 LR = 1e-5
-TARGET_STEPS = 1465
+# ~700M training tokens: 8550 steps x 2 DP windows x 40960 = 700M, token-matched to the dense/
+# compressive 5-task refs (was 1465 steps ~120M). Same 40960 window + NUM_NODES=2 as compressive.
+TARGET_STEPS = 8550
 GLOBAL_BATCH_SIZE = NUM_NODES * SEQUENCE_LENGTH  # one window per CP=8 DP replica/step (grad-accum 1)
 TARGET_TOKENS = GLOBAL_BATCH_SIZE * TARGET_STEPS
 MAX_STEPS = max(1, round(TARGET_TOKENS / GLOBAL_BATCH_SIZE))

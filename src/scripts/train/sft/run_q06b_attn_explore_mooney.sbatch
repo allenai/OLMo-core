@@ -38,7 +38,15 @@ trap '_mirror_log; kill $_MIRROR_PID 2>/dev/null' EXIT
 REPO="${REPO:-/accounts/projects/berkeleynlp/prasann/projects/OLMo-core}"
 NGPU="${NGPU:-8}"
 MAX_STEPS="${MAX_STEPS:-0}"
-VARIANT="${VARIANT:?set VARIANT=full|chunked|hier}"
+VARIANT="${VARIANT:?set VARIANT=full|std|chunked|hier|random}"
+# VALIDATE. The dispatch below is a two-way if/else (full -> dense script; EVERYTHING ELSE ->
+# docchunk script), so an unrecognized VARIANT used to fall silently into the `else` and train
+# **chunked** while every log line looked healthy -- a wrong experiment that reports a plausible
+# number. Fail loudly instead.
+case "$VARIANT" in
+  full|std|chunked|hier|random) ;;
+  *) echo "FATAL: unknown VARIANT='$VARIANT' (expected: full|std|chunked|hier|random)"; exit 2 ;;
+esac
 NDOCS="${NDOCS:-100}"
 MODEL_SIZE="${MODEL_SIZE:-0.6B}"
 SEQ_LEN="${SEQ_LEN:-6144}"
@@ -82,9 +90,24 @@ if [ "$VARIANT" = "full" ]; then
 else
   DATA_SRC=/scratch/users/prasann/longctx_sft_qwen/contradiction_n${NDOCS}_docdense_nocot
 fi
+# Cross the data/attention arms (dense script on the docdense shard, or vice-versa) to isolate whether
+# a result comes from the shard or from the attention module.
+DATA_SRC="${DATA_SRC_OVERRIDE:-$DATA_SRC}"
 DATA_LOCAL=$ROOT/data/$(basename "$DATA_SRC")
 mkdir -p "$DATA_LOCAL"
-cp -un "$DATA_SRC"/* "$DATA_LOCAL"/ 2>/dev/null || cp -n "$DATA_SRC"/* "$DATA_LOCAL"/ 2>/dev/null || true
+# rsync, NOT `cp -un`. `cp -un` is no-clobber: if a shard of the SAME NAME was staged here by an
+# earlier job, a REBUILT shard is silently ignored and the job trains on the stale node-local copy --
+# a wrong experiment that reports a plausible number. (This bit us: a shard rebuilt from 2000
+# examples was ignored in favour of a stale 500-example copy.) rsync re-copies whenever size/mtime
+# differ, so the node-local data always matches the source.
+rsync -a --delete "$DATA_SRC/" "$DATA_LOCAL/"
+# Fail loudly if the staged shard still disagrees with the source.
+_src_n=$(python3 -c "import json;print(json.load(open('$DATA_SRC/metadata.json'))['num_instances'])" 2>/dev/null || echo x)
+_dst_n=$(python3 -c "import json;print(json.load(open('$DATA_LOCAL/metadata.json'))['num_instances'])" 2>/dev/null || echo y)
+if [ "$_src_n" != "$_dst_n" ]; then
+  echo "FATAL: staged shard mismatch (src num_instances=$_src_n, node-local=$_dst_n)"; exit 4
+fi
+echo "DATA staged: num_instances=$_src_n from $DATA_SRC"
 WORK_LOCAL=$ROOT/cache-$SLURM_JOB_ID
 mkdir -p "$WORK_LOCAL"
 SAVE_LOCAL=$ROOT/ckpts/$RUN
@@ -104,15 +127,46 @@ if [ "$VARIANT" = "full" ]; then
     $MAXARG $WANDB_FLAG
 else
   CDM="chunked"; DILARGS=""
-  if [ "$VARIANT" = "hier" ]; then CDM="hierarchical_dilated"; DILARGS="--dilation-n $DIL_N --dilation-m $DIL_M"; fi
-  if [ "$VARIANT" = "random" ]; then CDM="random_doc"; DILARGS="--doc-keep-prob ${KEEP:-0.5}"; fi
-  # docchunk launcher has no wandb wiring; it always runs offline-safe.
+  if [ "$VARIANT" = "hier" ]; then
+    CDM="hierarchical_dilated"; DILARGS="--dilation-n $DIL_N --dilation-m $DIL_M"
+    # DIL_CYCLE set -> rotating "Hierarchical K" (stride resets every L layers); unset -> saturating (legacy).
+    [ -n "${DIL_CYCLE:-}" ] && DILARGS="$DILARGS --dilation-cycle $DIL_CYCLE"
+  fi
+  if [ "$VARIANT" = "random" ]; then
+    CDM="random_doc"; DILARGS="--doc-keep-prob ${KEEP:-0.5}"
+    # RAND_PER_EX=1 -> a FRESH random graph per example (vs the default: one graph shared by
+    # every example). Ablates whether the model needs a stable sparsity structure to learn.
+    [ "${RAND_PER_EX:-0}" = "1" ] && DILARGS="$DILARGS --random-doc-per-example"
+  fi
+  # std -> cross_doc_mode="standard" (plain causal through the DocumentChunkedAttention module): the
+  # control that separates "the module/data is broken" from "the mask is too restrictive".
+  if [ "$VARIANT" = "std" ]; then CDM="standard"; fi
+  # mask-mixing: MIX_MODE=static (fixed fraction of examples trained full-causal) or
+  # curriculum (anneal MIX_START_P -> MIX_END_P full-causal fraction). DEFAULT curriculum
+  # (mixing rescues restrictive masks + collapses the design hierarchy; pass MIX_MODE=none to opt out).
+  MIXMODE="${MIX_MODE:-curriculum}"; MIXARGS="--mix-mode $MIXMODE"
+  [ "$MIXMODE" = "static" ]     && MIXARGS="$MIXARGS --standard-mix-prob ${MIX_PROB:-0.10}"
+  [ "$MIXMODE" = "curriculum" ] && MIXARGS="$MIXARGS --mix-start-p ${MIX_START_P:-0.8} --mix-end-p ${MIX_END_P:-0.0}"
+  # Hybrid full/chunked: FULL_ATTN=layer indices that run PLAIN full (causal) attention while the rest
+  # stay chunked (negative counts from the end, -1=last). Empty -> all layers chunked.
+  #
+  # GOTCHA: `sbatch --export=ALL,FULL_ATTN=9,10,11` SPLITS ON COMMAS -> the job silently receives
+  # FULL_ATTN=9 (one layer, not three) and trains the wrong config while looking healthy. Pass a
+  # multi-layer list EITHER as a real env var (`FULL_ATTN=9,10,11 sbatch --export=ALL ...`) OR with
+  # colons (FULL_ATTN=9:10:11), which we normalize to commas here.
+  FULL_ATTN="${FULL_ATTN:-}"; FULL_ATTN="${FULL_ATTN//:/,}"
+  FAARG=""; [ -n "$FULL_ATTN" ] && FAARG="--full-attention-layers ${FULL_ATTN}"
+  echo "FULL_ATTN='${FULL_ATTN}' (layers running plain causal; empty = all chunked)"
+  # wandb now works on the docchunk path too (it previously logged nowhere -- only the `full` arm,
+  # which uses the dense script, was ever wired up). WANDB_GROUP groups a whole sweep.
+  WBGROUP=""; [ -n "${WANDB_GROUP:-}" ] && WBGROUP="--wandb-group ${WANDB_GROUP}"
   torchrun --nproc_per_node="$NGPU" --master_port="$MASTER_PORT" \
     src/scripts/train/sft/Qwen3-0.6B-docchunk-mask-mix-contradiction-SFT-local.py \
     --run-name "$RUN" --base-checkpoint "$BASE_CKPT" \
     --data-dir "$DATA_LOCAL" --work-dir "$WORK_LOCAL" --save-folder "$SAVE_LOCAL" \
-    --model-size "$MODEL_SIZE" --seq-len "$SEQ_LEN" --epochs "$EPOCHS" --grad-accum 8 --mix-mode none \
-    --cross-doc-mode "$CDM" $DILARGS --save-checkpoint --no-compile \
+    --model-size "$MODEL_SIZE" --seq-len "$SEQ_LEN" --epochs "$EPOCHS" --grad-accum 8 $MIXARGS \
+    --cross-doc-mode "$CDM" $DILARGS $FAARG --save-checkpoint --no-compile \
+    --seed "${SEED:-0}" $WANDB_FLAG $WBGROUP \
     $MAXARG
 fi
 echo "=== DONE $(date '+%F %T')  rc=$? ==="

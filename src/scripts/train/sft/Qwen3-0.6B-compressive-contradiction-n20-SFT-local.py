@@ -1,23 +1,27 @@
 """
-LOCAL (torchrun, no Beaker/weka) DENSE variant of the Qwen3-0.6B contradiction-n20 SFT.
+LOCAL (torchrun, no Beaker/weka) COMPRESSIVE-landmark variant of the Qwen3-0.6B contradiction-n20 SFT.
 
-Sibling of ``Qwen3-0.6B-fast-landmark-contradiction-n20-SFT-local.py`` but with standard dense
-attention (no landmark tokens): the model is ``qwen3_0_6B`` with ``fast_landmark=False`` and the data
-is fed straight through ``PadToLengthInstanceSource`` (no ``LandmarkInstanceSource`` wrapper -- the
-raw n20 npy shards are landmark-agnostic; landmark tokens are only inserted at load time by the
-landmark source). Because dense attention never touches the landmark token embedding, the RAW
-Qwen3-0.6B base is a valid init here (unlike the landmark variants, which want a landmark-pretrained
-base). This makes it a quick, honest "can a 0.6B learn contradiction n20 no-cot at all" baseline.
+Sibling of ``Qwen3-0.6B-fast-landmark-contradiction-n20-SFT-local.py``. Two things differ, both
+forced by the compressive attention kernel (mirrors the 4B compressive script):
+  1. Model: ``fast_compressive_landmark=True`` (+ ``nonselected_landmark_mass=0.1`` -- each past
+     block's landmark token contributes its value as a compressed block summary; alpha reserves 10%
+     of attention mass for the non-selected blocks) instead of ``fast_landmark=True``.
+  2. Init from the COMPRESSIVE-pretrained 0.6B 64k base (its landmark-token embedding + compressive
+     grouped-softmax attention were trained during compressive CPT), NOT the dense/plain-landmark base.
+
+Data pipeline is identical to the fast-landmark launcher: the single-doc n20 instances go through
+``PadToLengthInstanceSource`` (pad each doc to ``content_len``, a multiple of ``mem_freq``) then
+``LandmarkInstanceSource`` inserts a landmark token every ``mem_freq`` positions, so the kernel's
+positional ``is_mem`` (``pos % block_size == block_size - 1``) holds. No packing needed at n20.
 
 Run::
 
     PYTHONPATH=.../OLMo-core/src torchrun --nproc_per_node=8 \\
-      src/scripts/train/sft/Qwen3-0.6B-dense-contradiction-n20-SFT-local.py \\
-      --run-name q06b-dense-contra-n20-sft-local
+      src/scripts/train/sft/Qwen3-0.6B-compressive-contradiction-n20-SFT-local.py \\
+      --run-name q06b-comp-contra-n20-sft-local
 """
 
 import argparse
-import json
 from dataclasses import replace
 from datetime import datetime
 
@@ -25,12 +29,11 @@ from olmo_core.config import DType
 from olmo_core.data import TokenizerConfig
 from olmo_core.data.composable import (
     ComposableDataLoaderConfig,
+    LandmarkInstanceSourceConfig,
     PadToLengthInstanceSourceConfig,
 )
 from olmo_core.distributed.parallel import DataParallelType
-from olmo_core.distributed.utils import get_rank
 from olmo_core.float8 import Float8Config
-from olmo_core.nn.attention import AttentionBackendName
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import LinearWithWarmup, OptimGroupOverride, SkipStepAdamWConfig
 from olmo_core.train import (
@@ -53,13 +56,15 @@ from olmo_core.train.train_module import (
 )
 from olmo_core.utils import seed_all
 
+DEFAULT_MEM_FREQ = 63
 SEQUENCE_LENGTH = 2048
+LANDMARK_TOKEN_ID = 151860
+NONSELECTED_LANDMARK_MASS = 0.1  # alpha for compressive attention
 
-# ---- LOCAL paths (shared NFS) ----
+# ---- LOCAL paths ----
 DATA_PATH = "/scratch/users/prasann/longctx_sft_qwen/contradiction_n20"
-# RAW Qwen3-0.6B base distcp (dense is landmark-agnostic, so this is a valid init). Lives on mooney
-# node-local /data -> this launcher is mooney-pinned. Override with --base-checkpoint.
-BASE_CHECKPOINT = "/data/prasann/olmo_ckpts/qwen3_0_6B_base_olmo/model_and_optim"
+# COMPRESSIVE-pretrained 0.6B 64k base (weka -> s3 -> mooney /data). Override with --base-checkpoint.
+BASE_CHECKPOINT = "/data/prasann/olmo_ckpts/q06_bases/comp/model_and_optim"
 SAVE_ROOT = "/scratch/users/prasann/olmo_ckpts"
 WORK_DIR = "/scratch/users/prasann/longctx_sft_qwen/dataset-cache"
 
@@ -73,27 +78,29 @@ def build_and_fit(opts: argparse.Namespace) -> None:
     run_name_with_ts = f"{run_name}-{datetime.now().astimezone().strftime('%Y%m%dT%H%M%S%z')}"
     save_folder = opts.save_folder or f"{SAVE_ROOT}/{run_name}"
 
+    mem_freq = opts.mem_freq
+    block_size = mem_freq + 1
+    if SEQUENCE_LENGTH % block_size != 0:
+        raise SystemExit(
+            f"SEQUENCE_LENGTH={SEQUENCE_LENGTH} not divisible by block_size={block_size}"
+        )
+    content_sequence_length = SEQUENCE_LENGTH // block_size * mem_freq
+    print(f"[geometry] mem_freq={mem_freq} block_size={block_size} "
+          f"seq_len={SEQUENCE_LENGTH} content_len={content_sequence_length}", flush=True)
+
     tokenizer_config = TokenizerConfig.qwen3()
-    # Shards are separated by single EOS tokens; qwen3 ties bos==eos, so drop BOS for segmentation.
     doc_tokenizer_config = replace(tokenizer_config, bos_token_id=None)
 
-    seq_len = opts.seq_len
-    global_batch_size = seq_len * 8
-    model_factory = {
-        "0.6B": TransformerConfig.qwen3_0_6B,
-        "4B": TransformerConfig.qwen3_4B,
-    }[opts.model_size]
-    model_config = model_factory(
+    model_config = TransformerConfig.qwen3_0_6B(
         vocab_size=tokenizer_config.padded_vocab_size(),
-        # qwen3 factories default backend=None -> TorchAttentionBackend, which can't KV-cache during
-        # eval decode (eval_lc_native.py generates with use_cache=True). Pin flash_2 so the saved
-        # config.json supports KV-cached generation (matches the docchunk-mix script).
-        attn_backend=AttentionBackendName.flash_2,
+        fast_compressive_landmark=True,
+        mem_freq=mem_freq,
+        nonselected_landmark_mass=NONSELECTED_LANDMARK_MASS,
     )
 
     train_module_config = TransformerTrainModuleConfig(
-        rank_microbatch_size=seq_len,
-        max_sequence_length=seq_len,
+        rank_microbatch_size=SEQUENCE_LENGTH,
+        max_sequence_length=SEQUENCE_LENGTH,
         optim=SkipStepAdamWConfig(
             lr=opts.lr,
             weight_decay=0.0,
@@ -116,20 +123,24 @@ def build_and_fit(opts: argparse.Namespace) -> None:
         max_grad_norm=1.0,
     )
 
-    instance_source_config = PadToLengthInstanceSourceConfig.from_npy(
-        f"{opts.data_path}/token_ids_part_*.npy",
-        tokenizer=doc_tokenizer_config,
-        sequence_length=seq_len,
-        label_mask_paths=[f"{opts.data_path}/labels_mask_*.npy"],
-        expand_glob=True,
+    instance_source_config = LandmarkInstanceSourceConfig(
+        source=PadToLengthInstanceSourceConfig.from_npy(
+            f"{DATA_PATH}/token_ids_part_*.npy",
+            tokenizer=doc_tokenizer_config,
+            sequence_length=content_sequence_length,
+            label_mask_paths=[f"{DATA_PATH}/labels_mask_*.npy"],
+            expand_glob=True,
+        ),
+        mem_freq=mem_freq,
+        mem_id=LANDMARK_TOKEN_ID,
     )
 
     data_loader_config = ComposableDataLoaderConfig(
         tokenizer=tokenizer_config,
-        work_dir=opts.work_dir,
-        global_batch_size=global_batch_size,
+        work_dir=WORK_DIR,
+        global_batch_size=GLOBAL_BATCH_SIZE,
         seed=34521,
-        num_workers=opts.num_workers,
+        num_workers=4,
     )
 
     trainer_config = (
@@ -180,52 +191,22 @@ def build_and_fit(opts: argparse.Namespace) -> None:
     trainer = trainer_config.build(train_module, data_loader)
     trainer.fit()
 
-    if opts.save_checkpoint:
-        from olmo_core.distributed.checkpoint import save_model_and_optim_state
-
-        model_dir = f"{save_folder}/model_and_optim"
-        save_model_and_optim_state(model_dir, train_module.model, save_overwrite=True)
-        if get_rank() == 0:
-            experiment = {
-                "model": model_config.as_config_dict(),
-                "dataset": {"tokenizer": tokenizer_config.as_config_dict()},
-            }
-            with open(f"{save_folder}/config.json", "w") as f:
-                json.dump(experiment, f)
-            print(f"[dense-contra] saved model-only checkpoint -> {save_folder}", flush=True)
-
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--run-name", default="q06b-dense-contra-n20-sft-local")
+    ap.add_argument("--run-name", default="q06b-comp-contra-n20-sft-local")
     ap.add_argument("--save-folder", default=None, help=f"default {SAVE_ROOT}/<run-name>")
     ap.add_argument("--base-checkpoint", default=BASE_CHECKPOINT,
                     help="olmo distcp model_and_optim subdir to init from")
-    ap.add_argument("--data-path", default=DATA_PATH,
-                    help="dir with token_ids_part_*.npy + labels_mask_*.npy shards")
-    ap.add_argument("--work-dir", default=WORK_DIR,
-                    help="dataset-cache dir; use a FRESH node-local dir to avoid stale NFS locks")
-    ap.add_argument("--num-workers", type=int, default=4,
-                    help="data loader workers (0 = load in-process; simplest for tiny smoke data)")
-    ap.add_argument("--model-size", choices=["0.6B", "4B"], default="0.6B",
-                    help="qwen3_0_6B vs qwen3_4B factory (same docchunk-agnostic dense path)")
-    ap.add_argument("--seq-len", type=int, default=SEQUENCE_LENGTH,
-                    help="pad/truncate length; global batch = seq_len * 8 (1 instance/GPU on 8 GPUs)")
-    ap.add_argument("--save-checkpoint", action="store_true",
-                    help="after fit, save model-only checkpoint (config.json + model_and_optim) for eval")
     ap.add_argument("--epochs", type=int, default=NUM_EPOCHS)
     ap.add_argument("--max-steps", type=int, default=0, help="stop after N steps (0 = full; smoke)")
+    ap.add_argument("--mem-freq", type=int, default=DEFAULT_MEM_FREQ,
+                    help="landmark spacing; block_size = mem_freq+1 (63->64)")
     ap.add_argument("--lr", type=float, default=LR)
     ap.add_argument("--no-compile", dest="compile", action="store_false")
     ap.add_argument("--no-wandb", dest="wandb", action="store_false")
     ap.add_argument("--wandb-entity", default=None)
     opts = ap.parse_args()
-
-    # Debug aid for silent stalls (NFS locks / hub timeouts / collective hangs): periodically dump
-    # every thread's Python stack to stderr so the blocking frame shows up in the slurm log.
-    import faulthandler
-
-    faulthandler.dump_traceback_later(300, repeat=True)
 
     prepare_training_environment()
     try:

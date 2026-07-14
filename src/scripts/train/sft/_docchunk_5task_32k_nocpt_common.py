@@ -62,20 +62,20 @@ from olmo_core.train.train_module import (
     TransformerDataParallelWrappingStrategy,
     TransformerTrainModuleConfig,
 )
+from olmo_core.data.document_chunk_landmark import (  # canonical ids -- never retype
+    DOC_END_ID,
+    DOC_START_ID,
+    EOS_TOKEN_ID,
+    LANDMARK_TOKEN_ID,
+    PAD_TOKEN_ID,
+)
 
-# ---------------------------------------------------------------------------
-# Geometry / reserved ids (match the converter + olmo_core.data.document_chunk_landmark defaults).
 # ---------------------------------------------------------------------------
 SEQUENCE_LENGTH = 40960  # 32k-scale window (matrix-comparable); landmark: 40960 / 64 = 640 blocks.
 MEM_FREQ = 63  # landmark block size = 64
 NUM_NODES = 4  # 4x8=32 H200 data-parallel (docchunk has no CP; DP only). 32 inst/step. Raised from
 # 2->4 for the hierarchical run to halve wall-clock under a fixed token budget (MAX_STEPS halved to
 # match), so train+eval fits a tight deadline. Same ~700M content tokens as the 2-node/2200-step runs.
-EOS_TOKEN_ID = 151643
-LANDMARK_TOKEN_ID = 151860
-DOC_START_ID = 151648  # <|box_start|>
-DOC_END_ID = 151649  # <|box_end|>
-PAD_TOKEN_ID = 151863  # interior window-fill padding (landmark only)
 
 # ---------------------------------------------------------------------------
 # Doc-chunked data (weka). NOTE: the original ``cptmix_docchunk_ladder40k`` root is EMPTY on
@@ -125,7 +125,9 @@ _WSUM = sum(_W.values())
 LR = 1e-5
 WORLD_SIZE = NUM_NODES * 8
 GLOBAL_BATCH_SIZE = WORLD_SIZE * SEQUENCE_LENGTH  # tokens; 8 * 40960 = 327680 -> 8 instances/step
-MAX_STEPS = 1100  # ~700M content tokens @ 32 inst/step (4 nodes) = same budget as 2200@16 inst (2 nodes)
+MAX_STEPS = (
+    1100  # ~700M content tokens @ 32 inst/step (4 nodes) = same budget as 2200@16 inst (2 nodes)
+)
 
 
 def _task_source(emit: str, name: str, doc_tok) -> NumpyDocumentSourceConfig:
@@ -191,6 +193,14 @@ def build_docchunk_experiment(
         beaker_launch_config.env_vars.append(
             BeakerEnvVar(name="DOCCHUNK_RANDOM_DOC_SEED", value=str(RANDOM_DOC_SEED))
         )
+        # Same story for the hierarchical-dilated hyperparameters: the on-node rebuild re-reads env, so
+        # propagate the launch-host values or it would silently fall back to the defaults (4 / 2 / 3).
+        # Harmless for the non-hierarchical variants.
+        for _name in ("DOCCHUNK_DILATION_N", "DOCCHUNK_DILATION_M", "DOCCHUNK_DILATION_CYCLE"):
+            if _name in os.environ:
+                beaker_launch_config.env_vars.append(
+                    BeakerEnvVar(name=_name, value=os.environ[_name])
+                )
 
     tokenizer_config = TokenizerConfig.qwen3()
     # EOS-separated instances; qwen3 ties bos==eos, so drop BOS for document-boundary detection.
@@ -239,12 +249,17 @@ def build_docchunk_experiment(
             "pad_id": PAD_TOKEN_ID,
         }
     elif variant == "hierarchical":
+        # dilation_n (#docs/layer, incl. self), dilation_m (base k: per-layer stride = k**cycle_pos),
+        # dilation_cycle (rotation period L: cycle_pos = layer_idx % L). Defaults reproduce the prior
+        # run (n=4, m=2, cycle=3); override at launch via env (encode the value in the run name), e.g.
+        # DOCCHUNK_DILATION_M=25 for a 3-layer rotation with base k=25 (strides 1, 25, 625).
         model_config = TransformerConfig.qwen3_4B(
             vocab_size=tokenizer_config.padded_vocab_size(),
             document_chunked=True,
             cross_doc_mode="hierarchical_dilated",
-            dilation_n=4,
-            dilation_m=2,
+            dilation_n=int(os.environ.get("DOCCHUNK_DILATION_N", "4")),
+            dilation_m=int(os.environ.get("DOCCHUNK_DILATION_M", "2")),
+            dilation_cycle=int(os.environ.get("DOCCHUNK_DILATION_CYCLE", "3")),
         ).with_rope_scaling(
             YaRNRoPEScalingConfig(factor=2, beta_fast=32, beta_slow=1, old_context_len=32768)
         )

@@ -17,10 +17,15 @@ import time
 
 import numpy as np
 import torch
+from olmo_core.data.document_chunk_landmark import (  # canonical ids -- never retype
+    DOC_END_ID,
+    DOC_START_ID,
+    EOS_TOKEN_ID,
+    LANDMARK_TOKEN_ID,
+    PAD_TOKEN_ID,
+    REAL_VOCAB_SIZE,
+)
 
-EOS_TOKEN_ID = 151643
-DOC_START_ID = 151648
-DOC_END_ID = 151649
 
 
 def main():
