@@ -17,6 +17,9 @@ in `src/scripts/train/sft/*_local*.sbatch` / `*local_mooney.sbatch`; a good cano
 
 **QOS / preemption (jsteinhardt), lowest → highest:** `normal` < `preemptive` (no GPU cap) <
 `preemptive_high` (8 GPU/user cap). Higher preempts (requeues) lower.
+**On the `berkeleynlp` partition (horton/lorax)** the same rules apply but our high QOS is
+`preemptive_high_sewonm` with a **4 GPU/user cap** — default to it there just like
+`preemptive_high` on jsteinhardt, preempting lower-QOS jobs freely.
 **DIRECTIVE: default to `preemptive_high` and preempt freely** — don't wait for idle GPUs or
 downsize to fit; only jobs at equal/higher QOS (incl. reserved `preemptive_high_<lab>`) are off
 limits. Use plain `preemptive` only when running more than 8 GPUs of sweep arms in parallel (it has
