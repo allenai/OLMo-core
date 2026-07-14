@@ -33,6 +33,7 @@ from olmo_core.internal.common import (
 )
 from olmo_core.io import copy_dir, dir_is_empty, get_parent, join_path, list_directory
 from olmo_core.launch.beaker import BeakerLaunchConfig
+import numpy as np
 from olmo_core.nn.attention import AttentionBackendName
 from olmo_core.nn.rope import YaRNRoPEScalingConfig
 from olmo_core.nn.transformer import TransformerConfig
@@ -218,6 +219,7 @@ def build_sft_dataset(
         generate_doc_lengths=True,  # ...and mask attention so that they don't attend to each other
         long_doc_strategy=LongDocStrategy.truncate,  # truncate docs...
         sequence_length=sequence_length,  # ...that are over this length
+        dtype=np.uint32,  # Qwen3 vocab size >65535 requires uint32
     )
 
     return dataset
