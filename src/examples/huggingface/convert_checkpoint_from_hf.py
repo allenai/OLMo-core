@@ -4,12 +4,6 @@ model into a format that can be loaded by OLMo-core for fine-tuning.
 
 Note that this script is architecture-dependent. Some models may work out-of-the-box. Support for
 other models can be added by updating the constants in :mod:`olmo_core.nn.hf.convert`.
-
-Warnings:
-    - Only model weights are converted; optimizer states cannot be recovered from HF-format
-      checkpoints. This means you cannot resume training from the converted checkpoint.
-    - Tokenizer configuration must be specified separately.
-    - Some architecture-specific features may not be fully supported.
 """
 
 import json
@@ -79,6 +73,12 @@ def _get_transformer_config(
         "llama3_8b": TransformerConfig.llama3_8B,
         "llama3_70b": TransformerConfig.llama3_70B,
         "llama3_405b": TransformerConfig.llama3_405B,
+        "qwen3_0_6b": TransformerConfig.qwen3_0_6B,
+        "qwen3_1_7b": TransformerConfig.qwen3_1_7B,
+        "qwen3_4b": TransformerConfig.qwen3_4B,
+        "qwen3_8b": TransformerConfig.qwen3_8B,
+        "qwen3_14b": TransformerConfig.qwen3_14B,
+        "qwen3_32b": TransformerConfig.qwen3_32B,
     }
 
     result = transformer_configs[model_arch](vocab_size)

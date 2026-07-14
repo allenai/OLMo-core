@@ -61,7 +61,7 @@ def build_launch_config(
     root_dir: Optional[str] = None,
     task_name: str = "train",
     workspace: str = "ai2/OLMo-core",
-    budget: str = "ai2/oe-other",
+    budget: str = "ai2/oe-base",
     nccl_debug: Union[bool, str] = False,
     flight_recorder: bool = False,
     beaker_image: str = OLMoCoreBeakerImage.stable,
@@ -167,6 +167,7 @@ CLUSTER_TO_GPU_TYPE = {
     "ai2/jupiter": "NVIDIA H100 80GB HBM3",
     "ai2/ceres": "NVIDIA H100 80GB HBM3",
     "ai2/titan": "NVIDIA B200",
+    "ai2/holmes": "NVIDIA B300 SXM6 AC",
 }
 
 
