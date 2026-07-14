@@ -1,7 +1,7 @@
 import logging
 import os
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Dict, List, Optional, cast
 
 from olmo_core.config import StrEnum
 from olmo_core.distributed.utils import get_rank
@@ -55,6 +55,11 @@ class CometCallback(Callback):
     .. note::
         This callback logs metrics from every single step to Comet.ml, regardless of the value
         of :data:`Trainer.metrics_collect_interval <olmo_core.train.Trainer.metrics_collect_interval>`.
+    """
+
+    priority: ClassVar[int] = 3
+    """
+    Initialize before checkpointing, since pre-train checkpoint saves may flush metrics.
     """
 
     enabled: bool = True
