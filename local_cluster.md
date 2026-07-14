@@ -1,7 +1,7 @@
 # Running jobs on the local (Berkeley) slurm cluster
 
 How we train and eval OLMo-core models on the Berkeley H200 nodes, **without** AI2 infra (no weka,
-no Beaker). This is the local counterpart to the Beaker flow in CLAUDE.md. Reference launchers live
+no Beaker). This is the local counterpart to the Beaker flow in `beaker.md`. Reference launchers live
 in the `src/scripts/train/memexpress/` hub (see its README) — local launchers are the `*local*.sbatch` files in each family folder; a good canonical example is
 `src/scripts/train/memexpress/attn_explore/run_q06b_dense_contra_n20_local_mooney.sbatch`.
 

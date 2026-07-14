@@ -3,7 +3,7 @@
 Standalone writeups that used to hang loose at the repo root: experiment diagnoses, task briefs
 for agents, and setup notes. These are *reference documents* — still-valid knowledge, unlike
 `deprecated/` (things that must not be used). New writeups of this kind go here, not the repo
-root; the root keeps only README/CHANGELOG/CONTRIBUTING/CLAUDE.md/local_cluster.md.
+root; the root keeps only README/CHANGELOG/CONTRIBUTING/CLAUDE.md/local_cluster.md/beaker.md.
 
 | Doc | What it is |
 |---|---|

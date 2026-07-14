@@ -157,7 +157,7 @@ reference anything in there; when you retire a script, `git mv` it in and log it
 
 Experiment diagnoses, task briefs, and setup notes live in `records/` (see its README for the
 index). New writeups of this kind go there — the repo root keeps only
-README/CHANGELOG/CONTRIBUTING/CLAUDE.md/local_cluster.md.
+README/CHANGELOG/CONTRIBUTING/CLAUDE.md/local_cluster.md/beaker.md.
 
 ## Local (Berkeley) cluster
 
@@ -167,6 +167,11 @@ known traps — is documented in `local_cluster.md`. Read it before touching any
 launcher or debugging a hung/crashed local run.
 
 ## Docker and Beaker Launch
+
+**Practical how-to + hard-won lessons for launching anything on Beaker from this machine live in
+`beaker.md` (repo root)** — launch/gantry templates, monitoring/cancel commands that actually
+work, the weka-vs-S3 staging two-step, and the traps index. This section covers the underlying
+mechanics.
 
 The Docker image (`src/Dockerfile`) is a two-stage build: a `build` stage compiles GPU-specific dependencies (flash-attn, TransformerEngine, grouped_gemm, ring-flash-attn, etc.) on an NVIDIA CUDA devel image, and a `release` stage copies the conda environment into a lighter Ubuntu base with AWS CLI, Google Cloud SDK, and MLNX OFED drivers. The image contains all dependencies but *not* the OLMo-core package itself — source code is cloned at runtime.
 
