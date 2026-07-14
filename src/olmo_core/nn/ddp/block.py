@@ -20,43 +20,52 @@ except ImportError:
 from olmo_core.distributed.utils import get_rank, get_world_size
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.kernels import ScaledGroupedMMPrequantizedRHS, olmo_symm_mem
-from olmo_core.nn.attention.base import SequenceMixerConfig
-from olmo_core.nn.buffer_cache import BufferCache
+from olmo_core.kernels import symm_mem_vdev2d as symm_mem_vdev2d_kernels
 from olmo_core.nn.fp8_weight import FP8WeightCacheSpec, FP8WeightStore
-from olmo_core.nn.layer_norm import LayerNormConfig
-from olmo_core.nn.moe.v2.checkpointing import (
-    get_rowwise_checkpoint_state,
-    is_checkpoint_recomputing,
-)
-
-# NOTE: the expert-parallel "no-sync" strategy families (async VDev + rowwise-FP8) and the
-# activation-debug helper are imported lazily at their dispatch sites below, so this module
-# imports cleanly without those files present (they ship in later, stacked PRs). See the
-# combined_forward_ep_no_sync_* wrapper methods and the rowwise metric/symm helper sites.
-from olmo_core.nn.moe.v2.ep_config import ExpertParallelConfig
-from olmo_core.nn.moe.v2.fp8 import MoERowwiseFP8Config
-from olmo_core.nn.moe.v2.fp8 import (
-    invalidate_rowwise_fp8_cache as _invalidate_rowwise_fp8_cache,
-)
-from olmo_core.nn.moe.v2.fp8 import normalize_rowwise_fp8_config
-from olmo_core.nn.moe.v2.fp8 import (
-    refresh_rowwise_fp8_cache as _refresh_rowwise_fp8_cache,
-)
-from olmo_core.nn.moe.v2.fp8 import shared_experts_forward_rowwise_fp8
-from olmo_core.nn.moe.v2.no_ep import combined_forward_no_ep as _combined_forward_no_ep
-from olmo_core.nn.moe.v2.routed_experts import RoutedExperts, RoutedExpertsConfig
-from olmo_core.nn.moe.v2.router import MoERouterConfigV2, MoERouterV2
-from olmo_core.nn.moe.v2.shared_experts import SharedExperts, SharedExpertsConfig
 from olmo_core.nn.transformer.config import TransformerBlockConfig, TransformerBlockType
 from olmo_core.ops import attach_auxiliary_loss
 from olmo_core.utils import get_or_init_stream
 
-# The synchronous expert-parallel dispatch (ep_sync_1d / ep_sync_tbo) is imported lazily at
-# its wrapper methods below, so this module imports cleanly without those files present
-# (they ship in a later PR). See combined_forward_ep_1d / combined_forward_ep_tbo.
-# from olmo_core.nn.moe.v2.ep_sync_1d import combined_forward_ep_1d as _combined_forward_ep_1d
-# from olmo_core.nn.moe.v2.ep_sync_tbo import combined_forward_ep_tbo as _combined_forward_ep_tbo
+from ..attention.base import SequenceMixerConfig
+from ..buffer_cache import BufferCache
+from ..layer_norm import LayerNormConfig
+from ..moe.v2.activation_debug import maybe_dump_ep_no_sync_saved_activations
+from ..moe.v2.checkpointing import (
+    get_rowwise_checkpoint_state,
+    is_checkpoint_recomputing,
+)
+from ..moe.v2.ep_config import ExpertParallelConfig, ExpertParallelPath
+from ..moe.v2.ep_no_sync_1d import (
+    combined_forward_ep_no_sync_1d as _combined_forward_ep_no_sync_1d,
+)
+from ..moe.v2.ep_no_sync_buffers import (
+    _NoSyncSymmSharedPool,
+    resolve_ep_no_sync_rowwise_symm_options,
+)
+from ..moe.v2.ep_no_sync_rowwise import (
+    combined_forward_ep_no_sync_rowwise as _combined_forward_ep_no_sync_rowwise,
+)
 
+# The experimental ``rowwise_wave`` and ``deepep_v2`` backends are imported lazily at their
+# dispatch sites below: those modules land in a later PR and ``ExpertParallelConfig`` rejects
+# the paths in the meantime, so the module-level import here must not require them.
+from ..moe.v2.ep_no_sync_rowwise_helpers import (
+    add_ep_no_sync_rowwise_metrics,
+    reset_ep_no_sync_rowwise_metrics,
+)
+from ..moe.v2.ep_no_sync_tbo_rowwise import (
+    combined_forward_ep_no_sync_tbo_rowwise as _combined_forward_ep_no_sync_tbo_rowwise,
+)
+from ..moe.v2.ep_sync_1d import combined_forward_ep_1d as _combined_forward_ep_1d
+from ..moe.v2.fp8 import MoERowwiseFP8Config
+from ..moe.v2.fp8 import invalidate_rowwise_fp8_cache as _invalidate_rowwise_fp8_cache
+from ..moe.v2.fp8 import normalize_rowwise_fp8_config
+from ..moe.v2.fp8 import refresh_rowwise_fp8_cache as _refresh_rowwise_fp8_cache
+from ..moe.v2.fp8 import shared_experts_forward_rowwise_fp8
+from ..moe.v2.no_ep import combined_forward_no_ep as _combined_forward_no_ep
+from ..moe.v2.routed_experts import RoutedExperts, RoutedExpertsConfig
+from ..moe.v2.router import MoERouterConfigV2, MoERouterV2
+from ..moe.v2.shared_experts import SharedExperts, SharedExpertsConfig
 
 # Process-local cache for the EP->group "0" symmetric-memory alias.
 # This makes repeated calls from multiple MoE blocks idempotent when they use
@@ -96,11 +105,11 @@ class OLMoDDPTransformerBlockConfig(TransformerBlockConfig):
     """
     Configuration for a :class:`OLMoDDPTransformerBlock`.
 
-    Unlike :class:`~olmo_core.nn.transformer.config.TransformerBlockConfig`, this block does not
-    use the ``feed_forward`` / ``feed_forward_moe`` fields; the feed-forward sublayer is described
-    by :data:`routed_experts` (+ :data:`routed_experts_router`) and the optional
-    :data:`shared_experts` (+ :data:`shared_experts_router`). The inherited ``layer_norm`` field is
-    used for both the attention and feed-forward norms.
+    Unlike :class:`~olmo_core.nn.transformer.config.TransformerBlockConfig`, this block does not use
+    the ``feed_forward`` / ``feed_forward_moe`` fields; the feed-forward sublayer is described by
+    :data:`routed_experts` (+ :data:`routed_experts_router`) and the optional :data:`shared_experts`
+    (+ :data:`shared_experts_router`). The inherited ``layer_norm`` field is used for both the
+    attention and feed-forward norms.
     """
 
     shared_experts: Optional[SharedExpertsConfig] = None
@@ -127,7 +136,19 @@ class OLMoDDPTransformerBlockConfig(TransformerBlockConfig):
 
     use_peri_norm: bool = False
     """
-    Apply a "peri-norm" — an additional input norm on the attention and feed-forward sublayers.
+    Apply a "peri-norm" — an additional input (pre) norm on the attention and feed-forward
+    sublayers, in addition to the branch norms.
+    """
+
+    use_pre_norm: bool = False
+    """
+    Use ``layer_norm`` as the sublayer *input* (pre) norm rather than the post-sublayer branch norm.
+
+    .. note::
+        ``use_pre_norm`` / ``use_peri_norm`` overload how the attention/feed-forward norms are
+        placed, which makes checkpoint conversion fragile across model families. A future cleanup
+        may replace them with explicit placement fields and stable ``pre_*``/``post_*`` norm module
+        names (with back-compat aliases).
     """
 
     checkpoint_attn: bool = False
@@ -140,26 +161,21 @@ class OLMoDDPTransformerBlockConfig(TransformerBlockConfig):
     Activation-checkpoint the permute → experts → unpermute region of the MoE sublayer.
     """
 
-    checkpoint_combined_ep_tbo: bool = False
-    """
-    Activation-checkpoint the combined expert-parallel two-batch-overlap forward.
-    """
-
     checkpoint_second_unpermute: bool = False
     """
     Activation-checkpoint the second (combine) unpermute.
     """
 
-    rowwise_fp8: Optional[MoERowwiseFP8Config] = None
+    ep: Optional[ExpertParallelConfig] = None
     """
-    Optional rowwise-FP8 configuration for the shared experts (beta).
+    Expert-parallel dispatch configuration. Selects the EP family (sync / no-sync, 1D / rowwise);
+    ``None`` keeps the block on the no-expert-parallel path.
     """
 
-    # Expert-parallel knobs. These configure the expert-parallel dispatch families, which are
-    # imported lazily and land in follow-up changes; they have no effect on the no-expert-parallel
-    # path and are documented when those families land.
-    #
-    ep: Optional[ExpertParallelConfig] = None
+    rowwise_fp8: Optional[MoERowwiseFP8Config] = None
+    """
+    Optional rowwise-FP8 configuration for the experts (beta).
+    """
 
     def build(
         self,
@@ -170,16 +186,17 @@ class OLMoDDPTransformerBlockConfig(TransformerBlockConfig):
         init_device: str = "cpu",
         cache: Optional[BufferCache] = None,
     ) -> olmo_core.nn.transformer.block.TransformerBlockBase:
-        assert (
-            self.feed_forward is None and self.feed_forward_moe is None
-        ), "OLMoDDPTransformerBlock does not support `feed_forward` or `feed_forward_moe` (use TransformerBlockConfig instead). Set `shared_experts` and `routed_experts` instead."
+        assert self.feed_forward is None and self.feed_forward_moe is None, (
+            "OLMoDDPTransformerBlock does not support `feed_forward` or `feed_forward_moe`. "
+            "Use `shared_experts` for dense/shared MLPs and `routed_experts` for routed MoE."
+        )
 
         kwargs = self.as_dict(exclude_none=False, recurse=False)
         kwargs.pop("name")
         kwargs.pop("feed_forward")  # from parent config
         kwargs.pop("feed_forward_moe")  # from parent config
-        # The MoE-v2 block takes separate attention / feed-forward norm configs; source
-        # both from the single `layer_norm` field (builds two identical norm modules).
+        # The block constructor takes the split attention/feed-forward norms; build both from
+        # the single inherited `layer_norm` field (two identical norm modules).
         layer_norm = kwargs.pop("layer_norm")
         if layer_norm is None:
             raise OLMoConfigurationError(
@@ -217,9 +234,9 @@ class OLMoDDPTransformerBlockConfig(TransformerBlockConfig):
             block_params += self.shared_experts_router.num_params()
         if self.layer_norm is not None:
             block_params += self.layer_norm.num_params(d_model)
-        if self.use_peri_norm:
-            if self.layer_norm is not None:
-                block_params += 2 * self.layer_norm.num_params(d_model)
+        if self.use_peri_norm and self.layer_norm is not None:
+            # Peri-norm adds a post-attention and a post-feed-forward norm.
+            block_params += 2 * self.layer_norm.num_params(d_model)
 
         return block_params
 
@@ -241,13 +258,20 @@ class OLMoDDPTransformerBlockConfig(TransformerBlockConfig):
             block_params += self.shared_experts_router.num_params()
         if self.layer_norm is not None:
             block_params += self.layer_norm.num_params(d_model)
-        if self.use_peri_norm:
-            if self.layer_norm is not None:
-                block_params += 2 * self.layer_norm.num_params(d_model)
+        if self.use_peri_norm and self.layer_norm is not None:
+            # Peri-norm adds a post-attention and a post-feed-forward norm.
+            block_params += 2 * self.layer_norm.num_params(d_model)
 
         return block_params
 
-    def flops_per_seq(self, d_model: int, seqlen: int) -> int:
+    def flops_per_seq(
+        self,
+        d_model: int,
+        seqlen: int,
+        *,
+        layer_idx: Optional[int] = None,
+        n_layers: Optional[int] = None,
+    ) -> int:
         flops = 0
 
         # attention
@@ -257,8 +281,8 @@ class OLMoDDPTransformerBlockConfig(TransformerBlockConfig):
             flops += (
                 self.sequence_mixer.build(
                     d_model,
-                    layer_idx=0,
-                    n_layers=1,
+                    layer_idx=layer_idx if layer_idx is not None else 0,
+                    n_layers=n_layers if n_layers is not None else 1,
                     init_device="meta",
                 ).num_flops_per_token(seqlen)
                 * seqlen
@@ -290,7 +314,7 @@ class OLMoDDPTransformerBlockConfig(TransformerBlockConfig):
         # x3 for fwd+bwd
         # x2 for GEMM
         if self.routed_experts is not None:
-            assert self.routed_experts_router is not None
+            assert self.routed_experts_router is not None, "routed_experts must have a router"
             flops += (
                 (3 * 3 * 2)
                 * seqlen
@@ -317,21 +341,10 @@ class OLMoDDPTransformerBlockConfig(TransformerBlockConfig):
 
 
 if TYPE_CHECKING:
-    from olmo_core.nn.moe.v2.ep_no_sync_buffers import _NoSyncSymmSharedPool
     from olmo_core.train.common import ReduceType
 
 
 class OLMoDDPTransformerBlock(olmo_core.nn.transformer.block.TransformerBlockBase):
-    """
-    A fused Mixture-of-Experts transformer block: it owns both the attention sublayer and the MoE
-    feed-forward sublayer (routed experts + optional shared experts) so their compute and
-    communication can be overlapped. Built from a :class:`OLMoDDPTransformerBlockConfig`.
-
-    The forward path is selected at runtime from the block's expert-parallel configuration; this
-    drop ships the no-expert-parallel path (:func:`~olmo_core.nn.moe.v2.no_ep.combined_forward_no_ep`),
-    with the expert-parallel dispatch families imported lazily and landing in follow-up changes.
-    """
-
     def __init__(
         self,
         *,
@@ -346,12 +359,12 @@ class OLMoDDPTransformerBlock(olmo_core.nn.transformer.block.TransformerBlockBas
         routed_experts: Optional[RoutedExpertsConfig],
         feed_forward_norm: LayerNormConfig,
         use_peri_norm: bool = False,
+        use_pre_norm: bool = False,
         dropout: float = 0.0,
         attention_residual_alpha: Optional[float] = None,
         feed_forward_residual_alpha: Optional[float] = None,
         checkpoint_attn=False,
         checkpoint_permute_moe_unpermute=False,
-        checkpoint_combined_ep_tbo=False,
         checkpoint_second_unpermute=False,
         ep: Optional[ExpertParallelConfig] = None,
         rowwise_fp8: Optional[MoERowwiseFP8Config] = None,
@@ -386,7 +399,10 @@ class OLMoDDPTransformerBlock(olmo_core.nn.transformer.block.TransformerBlockBas
         self._shared_rowwise_fp8_weight_versions: Optional[Tuple[int, int]] = None
         self._shared_rowwise_fp8_up_gate_weight: Optional[FP8WeightStore] = None
         self._shared_rowwise_fp8_down_weight: Optional[FP8WeightStore] = None
+        if use_peri_norm and use_pre_norm:
+            raise OLMoConfigurationError("use_peri_norm and use_pre_norm are mutually exclusive")
         self.use_peri_norm = use_peri_norm
+        self.use_pre_norm = use_pre_norm
 
         ######## START: Attention ########
         self.attention = sequence_mixer.build(
@@ -457,17 +473,13 @@ class OLMoDDPTransformerBlock(olmo_core.nn.transformer.block.TransformerBlockBas
                 ),
             )
             # Shared Experts Router
-            if shared_experts.num_experts > 1:
-                # Need router if more than one experts
-                assert (
-                    shared_experts_router is not None
-                ), "Need shared_experts_router when using shared experts with more than one expert"
+            if shared_experts_router is not None:
                 self.shared_experts_router = shared_experts_router.build(init_device=init_device)
             else:
-                assert (
-                    shared_experts_router is None
-                ), "Should not set shared_experts_router when using only one shared expert"
-                # No router if just one
+                if shared_experts.num_experts > 1:
+                    raise OLMoConfigurationError(
+                        "Need shared_experts_router when using more than one shared expert"
+                    )
                 self.shared_experts_router = None
         else:
             # Shared Experts not enabled
@@ -492,8 +504,8 @@ class OLMoDDPTransformerBlock(olmo_core.nn.transformer.block.TransformerBlockBas
         # CUDA events for the EP device<->host comm overlap. `torch.cuda.Event()` requires CUDA, so
         # allocate them only when CUDA is available; on a CUDA-less machine they stay None so the
         # block can be *constructed* on CPU (every forward path that uses them is GPU-only). When
-        # CUDA is available they are allocated once, up front — the same behavior as before — so the
-        # object ids stay stable for torch.compile across all forward paths (EP and no-EP).
+        # CUDA is available they are allocated once, up front, so the object ids stay stable for
+        # torch.compile across all forward paths (EP and no-EP).
         #
         # The first set serves the single-batch paths (ep_sync_1d / no_ep) and the first batch of
         # two-batch overlap (TBO); the ``_tbo1`` set is the second overlapped TBO batch.
@@ -514,7 +526,6 @@ class OLMoDDPTransformerBlock(olmo_core.nn.transformer.block.TransformerBlockBas
 
         self.checkpoint_attn = checkpoint_attn
         self.checkpoint_permute_moe_unpermute = checkpoint_permute_moe_unpermute
-        self.checkpoint_combined_ep_tbo = checkpoint_combined_ep_tbo
         self.checkpoint_second_unpermute = checkpoint_second_unpermute
         self.ep = ep.copy(deep=True) if ep is not None else ExpertParallelConfig()
         self.ep.validate()
@@ -522,14 +533,19 @@ class OLMoDDPTransformerBlock(olmo_core.nn.transformer.block.TransformerBlockBas
         self._ep_no_sync_symm_cache: Dict[str, torch.Tensor] = {}
         self._ep_no_sync_static_buffer_cache: Dict[Tuple[object, ...], object] = {}
         self._ep_no_sync_rowwise_fp8_static_buffer_cache: Dict[Tuple[object, ...], object] = {}
-        self._ep_no_sync_rowwise_static_checkpoint_state: Optional[Tuple[bool, bool]] = None
+        self._ep_no_sync_rowwise_static_checkpoint_state: Optional[
+            Tuple[bool, Optional[bool]]
+        ] = None
         self._ep_no_sync_force_scratch_lifetime_buffers = False
         self._ep_no_sync_symm_lease_pools: Dict[str, object] = {}
         self._ep_no_sync_last_debug: Dict[str, torch.Tensor] = {}
-        self._ep_no_sync_shared_pool: Optional["_NoSyncSymmSharedPool"] = None
+        self._ep_no_sync_shared_pool: Optional[_NoSyncSymmSharedPool] = None
         self._ep_no_sync_shared_slot: int = 0
         self._ep_no_sync_te_backend_warned: bool = False
-        # Row-wise EP no-sync metrics (populated only by combined_forward_ep_no_sync_rowwise()).
+        self._deepep_v2_runtime: Optional[object] = None
+        self._deepep_v2_runtime_cache: Optional[dict[object, object]] = None
+        self._deepep_v2_max_capacity_factor: float = self.ep.capacity_factor
+        # EP no-sync tail-drop metrics, populated by rowwise and DeepEP paths.
         self._ep_no_sync_rowwise_drop_tokens_sum: Optional[torch.Tensor] = None
         self._ep_no_sync_rowwise_total_tokens_sum: Optional[torch.Tensor] = None
         self._ep_no_sync_rowwise_symm_util_max: Optional[torch.Tensor] = None
@@ -675,12 +691,6 @@ class OLMoDDPTransformerBlock(olmo_core.nn.transformer.block.TransformerBlockBas
         self._before_rev_all2all_event_tbo1 = None  # type: ignore[assignment]
 
     def install_cuda_events(self):
-        # Idempotent: allocate the events once (keeping stable object ids for torch.compile), so
-        # repeated calls — from __init__ (on CUDA), the model-level fan-out, and
-        # reinstall-after-deepcopy — are safe. A prior purge_cuda_events() resets them to None so
-        # this reinstalls.
-        if self._dtoh_event is not None:
-            return
         self._dtoh_event = cast(torch.cuda.Event, torch.cuda.Event())
         self._dtoh_event_send = cast(torch.cuda.Event, torch.cuda.Event())
         self._dtoh_event_recv = cast(torch.cuda.Event, torch.cuda.Event())
@@ -704,20 +714,15 @@ class OLMoDDPTransformerBlock(olmo_core.nn.transformer.block.TransformerBlockBas
             metrics_routed = {}
         out = dict(metrics_routed)
 
-        # Row-wise EP metrics are only produced by the no-sync rowwise all-to-all path; that
-        # helper module is not present unless the rowwise dispatch family is installed, so only
-        # import it when the rowwise path is actually configured.
-        if self.ep.is_rowwise:
-            from olmo_core.nn.moe.v2.ep_no_sync_rowwise_helpers import (
-                add_ep_no_sync_rowwise_metrics,
-                reset_ep_no_sync_rowwise_metrics,
-            )
+        add_ep_no_sync_rowwise_metrics(self, out, ReduceType)
 
-            add_ep_no_sync_rowwise_metrics(self, out, ReduceType)
+        if reset:
+            reset_ep_no_sync_rowwise_metrics(self)
 
-            if reset:
-                reset_ep_no_sync_rowwise_metrics(self)
-
+        # metrics = {
+        #     "shared": metrics_shared,
+        #     "routed": metrics_routed,
+        # }
         return out
 
     def reset_metrics(self):
@@ -725,12 +730,7 @@ class OLMoDDPTransformerBlock(olmo_core.nn.transformer.block.TransformerBlockBas
         #     self.shared_experts_router.reset_metrics()
         if self.routed_experts_router:
             self.routed_experts_router.reset_metrics()
-        if self.ep.is_rowwise:
-            from olmo_core.nn.moe.v2.ep_no_sync_rowwise_helpers import (
-                reset_ep_no_sync_rowwise_metrics,
-            )
-
-            reset_ep_no_sync_rowwise_metrics(self)
+        reset_ep_no_sync_rowwise_metrics(self)
 
     def num_flops_per_token(self, seq_len: int) -> int:
         """
@@ -775,12 +775,6 @@ class OLMoDDPTransformerBlock(olmo_core.nn.transformer.block.TransformerBlockBas
         return flops
 
     @property
-    def is_moe(self) -> bool:
-        # Shared-only (no routed experts) blocks are dense: they must fall through to the dense
-        # forward/dispatch path and stay out of the EP / TBO-MoE loops, which key on is_moe.
-        return self.has_routed_experts
-
-    @property
     def has_routed_experts(self) -> bool:
         return self.routed_experts is not None
 
@@ -791,6 +785,10 @@ class OLMoDDPTransformerBlock(olmo_core.nn.transformer.block.TransformerBlockBas
     @property
     def is_shared_only(self) -> bool:
         return self.has_shared_experts and not self.has_routed_experts
+
+    @property
+    def is_moe(self) -> bool:
+        return self.has_routed_experts
 
     @property
     def ep_enabled(self) -> bool:
@@ -813,36 +811,38 @@ class OLMoDDPTransformerBlock(olmo_core.nn.transformer.block.TransformerBlockBas
         loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
         **kwargs,
     ) -> torch.Tensor:
-        if self.routed_experts:
-            if self.ep_enabled:
-                if (
-                    self.ep.no_sync and self.training
-                ):  # in eval mode, different ranks might get different input token counts, and no-sync can freeze
-                    no_sync_forward = (
-                        self.combined_forward_ep_no_sync_rowwise
-                        if self.ep.is_rowwise
-                        else self.combined_forward_ep_no_sync_1d
-                    )
-                    from olmo_core.nn.moe.v2.activation_debug import (
-                        maybe_dump_ep_no_sync_saved_activations,
-                    )
-
-                    debug_out = maybe_dump_ep_no_sync_saved_activations(
-                        self,
-                        x,
-                        loss_div_factor=loss_div_factor,
-                        forward_kwargs=kwargs,
-                        no_sync_forward=no_sync_forward,
-                    )
-                    if debug_out is not None:
-                        return debug_out
-                    return no_sync_forward(x, loss_div_factor=loss_div_factor, **kwargs)
-                return self.combined_forward_ep_1d(x, loss_div_factor=loss_div_factor, **kwargs)
-            else:
-                return self.combined_forward_no_ep(x, loss_div_factor=loss_div_factor, **kwargs)
-        else:
-            # only shared_experts
+        if not self.has_routed_experts:
             return self.combined_forward_shared_only(x, loss_div_factor=loss_div_factor, **kwargs)
+
+        if not self.ep_enabled:
+            return self.combined_forward_no_ep(x, loss_div_factor=loss_div_factor, **kwargs)
+
+        # In eval mode, different ranks might get different input token counts,
+        # and no-sync can freeze. Fall back to the synced EP path there.
+        if not (self.ep.no_sync and self.training):
+            return self.combined_forward_ep_1d(x, loss_div_factor=loss_div_factor, **kwargs)
+
+        if self.ep.path == ExpertParallelPath.rowwise_wave:
+            no_sync_forward = self.combined_forward_ep_no_sync_rowwise_wave
+        elif self.ep.path == ExpertParallelPath.rowwise_nvshmem:
+            no_sync_forward = self.combined_forward_ep_no_sync_rowwise
+        elif self.ep.path == ExpertParallelPath.deepep_v2:
+            no_sync_forward = self.combined_forward_ep_deepep_v2
+        elif self.ep.path == ExpertParallelPath.no_sync_1d:
+            no_sync_forward = self.combined_forward_ep_no_sync_1d
+        else:
+            raise RuntimeError(f"Unsupported EP no-sync path {self.ep.path!r}")
+
+        debug_out = maybe_dump_ep_no_sync_saved_activations(
+            self,
+            x,
+            loss_div_factor=loss_div_factor,
+            forward_kwargs=kwargs,
+            no_sync_forward=no_sync_forward,
+        )
+        if debug_out is not None:
+            return debug_out
+        return no_sync_forward(x, loss_div_factor=loss_div_factor, **kwargs)
 
     def apply_pp(self, pp_mesh: DeviceMesh):
         pass  # nothing to do
@@ -968,7 +968,6 @@ class OLMoDDPTransformerBlock(olmo_core.nn.transformer.block.TransformerBlockBas
         assert (
             self.routed_experts is not None
         ), "ep can only be applied when routed_experts is enabled"
-        # ep_dp_mesh = ep_mesh["ep_dp"]
         ep_mp_mesh = ep_mesh["ep_mp"]
         ep_pg = kwargs.get("ep_pg")
         self.ep_mesh = ep_mesh
@@ -980,12 +979,15 @@ class OLMoDDPTransformerBlock(olmo_core.nn.transformer.block.TransformerBlockBas
         self.num_local_routed_experts = self.routed_experts.num_local_experts
         self._ep_enabled = True
         self.ep_pg = ep_pg if ep_pg is not None else ep_mp_mesh.get_group()
+        self._deepep_v2_runtime = None
+        self._deepep_v2_runtime_cache = None
+        self._deepep_v2_max_capacity_factor = self.ep.capacity_factor
 
-        if self.ep.no_sync:
-            if olmo_symm_mem.is_enabled() and not self.ep.is_rowwise:
+        if self.ep.uses_olmo_symm:
+            if olmo_symm_mem.is_enabled() and not self.ep.uses_rowwise_buffers:
                 raise RuntimeError(
                     "OLMo-owned symmetric memory currently supports only the rowwise "
-                    "EP no-sync path. Set OLMO_USE_OWN_SYMM_MEM=0 to use the legacy "
+                    "or wave/Mega EP no-sync paths. Set OLMO_USE_OWN_SYMM_MEM=0 to use the legacy "
                     "torch.ops.symm_mem.all_to_all_vdev path."
                 )
             if _symm_mem is None and not olmo_symm_mem.is_enabled():
@@ -1029,12 +1031,12 @@ class OLMoDDPTransformerBlock(olmo_core.nn.transformer.block.TransformerBlockBas
                     f"(block={self.block_idx}, rank={get_rank(self.ep_pg)}): {e}"
                 ) from e
             self._ep_symm_group_name = group_name
-            if self.ep.is_rowwise:
-                from olmo_core.nn.moe.v2.ep_no_sync_buffers import (
-                    resolve_ep_no_sync_rowwise_symm_options,
-                )
-
+            if self.ep.uses_rowwise_buffers:
                 resolve_ep_no_sync_rowwise_symm_options(self)
+                if self.ep.rowwise_transport == "nvshmem":
+                    symm_mem_vdev2d_kernels.preflight_rowwise_collective_launches(
+                        self.ep.rowwise_nblocks
+                    )
             self._ep_no_sync_symm_cache.clear()
             self._ep_no_sync_static_buffer_cache.clear()
             self._ep_no_sync_rowwise_fp8_static_buffer_cache.clear()
@@ -1049,8 +1051,11 @@ class OLMoDDPTransformerBlock(olmo_core.nn.transformer.block.TransformerBlockBas
         raise NotImplementedError("TP is not supported in MoEFusedV1TransformerBlock")
 
     def apply_cp(self, cp_mesh: DeviceMesh, ring=None, uly=None):
-        del cp_mesh, ring, uly
-        raise NotImplementedError("CP is not supported in OLMoDDPTransformerBlock")
+        self.attention.apply_cp(cp_mesh, ring=ring, uly=uly)
+        if self.routed_experts_router is not None:
+            self.routed_experts_router.apply_cp(cp_mesh)
+        if self.shared_experts_router is not None:
+            self.shared_experts_router.apply_cp(cp_mesh)
 
     def apply_fsdp(
         self,
@@ -1065,8 +1070,11 @@ class OLMoDDPTransformerBlock(olmo_core.nn.transformer.block.TransformerBlockBas
             # dynamic=False
         )
 
-        # NOTE: the tbo might be called by the outer model directly (by block.combined_forward_ep_tbo(x, ...) instead of block(x, ...)), so need to compile it here as well
-        self.combined_forward_ep_tbo = torch.compile(self.combined_forward_ep_tbo)  # type: ignore[method-assign]
+        # NOTE: the rowwise NVSHMEM TBO forward is called by the outer model
+        # directly, so compile it here as well.
+        self.combined_forward_rowwise_nvshmem_tbo = torch.compile(  # type: ignore[method-assign]
+            self.combined_forward_rowwise_nvshmem_tbo
+        )
         self._res_norm_attn = torch.compile(self._res_norm_attn)  # type: ignore[method-assign]
 
     @property
@@ -1117,12 +1125,15 @@ class OLMoDDPTransformerBlock(olmo_core.nn.transformer.block.TransformerBlockBas
         assert self.routed_experts_router is None
         assert self.shared_experts is not None
 
-        attn_res_out = self._checkpointed_res_norm_attn(x, **kwargs)
+        block_inp = x
+        del x
+
+        attn_res_out = self._checkpointed_res_norm_attn(block_inp, **kwargs)
         kwargs.pop("max_doc_len", None)
         kwargs.pop("cu_doc_lens", None)
         mlp_inp = self._prepare_moe_input(attn_res_out)
 
-        if self.shared_experts_router is not None:
+        if self.shared_experts_router:
             shared_expert_weights, _, _, _ = self.shared_experts_router(
                 mlp_inp,
                 True,
@@ -1132,6 +1143,7 @@ class OLMoDDPTransformerBlock(olmo_core.nn.transformer.block.TransformerBlockBas
             shared_expert_weights = None
 
         rowwise_fp8_cfg = self.rowwise_fp8
+        # Rowwise FP8 requires CUDA; on CPU (smoke/eval/materialize) fall back to the dense path.
         use_rowwise_fp8 = (
             rowwise_fp8_cfg is not None
             and rowwise_fp8_cfg.enabled
@@ -1151,9 +1163,197 @@ class OLMoDDPTransformerBlock(olmo_core.nn.transformer.block.TransformerBlockBas
             )
         else:
             shared_out = self.shared_experts(mlp_inp)
+        mlp_out = self._mix_shared_out(
+            shared_out,
+            shared_expert_weights,
+            attn_res_out.shape,
+        )
 
-        mlp_out = self._mix_shared_out(shared_out, shared_expert_weights, attn_res_out.shape)
         return self._res_norm_mlp(attn_res_out, mlp_out)
+
+    def combined_forward_no_ep(
+        self,
+        x: torch.Tensor,
+        *,
+        loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
+        **kwargs,
+    ) -> torch.Tensor:
+        return _combined_forward_no_ep(
+            self,
+            x,
+            loss_div_factor=loss_div_factor,
+            **kwargs,
+        )
+
+    def combined_forward_ep_no_sync_1d(
+        self,
+        x: torch.Tensor,
+        *,
+        loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
+        **kwargs,
+    ) -> torch.Tensor:
+        return _combined_forward_ep_no_sync_1d(
+            self,
+            x,
+            loss_div_factor=loss_div_factor,
+            **kwargs,
+        )
+
+    def combined_forward_ep_no_sync_rowwise(
+        self,
+        x: torch.Tensor,
+        *,
+        loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
+        **kwargs,
+    ) -> torch.Tensor:
+        checkpoint_state = self._ep_no_sync_rowwise_static_checkpoint_state
+        if checkpoint_state is None:
+            checkpoint_state = get_rowwise_checkpoint_state()
+        activation_checkpointing, accumulate_routed_aux_loss_metrics = checkpoint_state
+        return _combined_forward_ep_no_sync_rowwise(
+            self,
+            x,
+            activation_checkpointing=activation_checkpointing,
+            accumulate_routed_aux_loss_metrics=accumulate_routed_aux_loss_metrics,
+            loss_div_factor=loss_div_factor,
+            **kwargs,
+        )
+
+    def combined_forward_ep_no_sync_rowwise_wave(
+        self,
+        x: torch.Tensor,
+        *,
+        loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
+        **kwargs,
+    ) -> torch.Tensor:
+        checkpoint_state = self._ep_no_sync_rowwise_static_checkpoint_state
+        if checkpoint_state is None:
+            checkpoint_state = get_rowwise_checkpoint_state()
+        activation_checkpointing, accumulate_routed_aux_loss_metrics = checkpoint_state
+        from ..moe.v2.ep_no_sync_rowwise_wave import (
+            combined_forward_ep_no_sync_rowwise_wave as _combined_forward_ep_no_sync_rowwise_wave,
+        )
+
+        return _combined_forward_ep_no_sync_rowwise_wave(
+            self,
+            x,
+            activation_checkpointing=activation_checkpointing,
+            accumulate_routed_aux_loss_metrics=accumulate_routed_aux_loss_metrics,
+            loss_div_factor=loss_div_factor,
+            **kwargs,
+        )
+
+    def combined_forward_ep_deepep_v2(
+        self,
+        x: torch.Tensor,
+        *,
+        loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
+        **kwargs,
+    ) -> torch.Tensor:
+        checkpoint_state = self._ep_no_sync_rowwise_static_checkpoint_state
+        if checkpoint_state is None:
+            checkpoint_state = get_rowwise_checkpoint_state()
+        _, accumulate_routed_aux_loss_metrics = checkpoint_state
+        from ..moe.v2.ep_deepep_v2 import (
+            combined_forward_ep_deepep_v2 as _combined_forward_ep_deepep_v2,
+        )
+
+        return _combined_forward_ep_deepep_v2(
+            self,
+            x,
+            accumulate_routed_aux_loss_metrics=accumulate_routed_aux_loss_metrics,
+            loss_div_factor=loss_div_factor,
+            **kwargs,
+        )
+
+    def combined_forward_rowwise_nvshmem_tbo(
+        self,
+        x0: torch.Tensor,
+        x1_ctx: object,
+        x1_is_fresh: bool,
+        *,
+        loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
+        **kwargs,
+    ) -> Tuple[torch.Tensor, object]:
+        if self.ep.path != ExpertParallelPath.rowwise_nvshmem:
+            raise RuntimeError(
+                "EP TBO is only supported with "
+                f"path={ExpertParallelPath.rowwise_nvshmem!r}; "
+                f"got path={self.ep.path!r}"
+            )
+        return _combined_forward_ep_no_sync_tbo_rowwise(
+            self,
+            x0,
+            x1_ctx,
+            x1_is_fresh,
+            loss_div_factor=loss_div_factor,
+            **kwargs,
+        )
+
+    def combined_forward_ep_1d(
+        self,
+        x: torch.Tensor,
+        *,
+        loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
+        **kwargs,
+    ) -> torch.Tensor:
+        return _combined_forward_ep_1d(
+            self,
+            x,
+            loss_div_factor=loss_div_factor,
+            **kwargs,
+        )
+
+    def checkpointed_combined_forward_rowwise_nvshmem_tbo(
+        self,
+        x0: torch.Tensor,
+        x1_ctx: object,
+        x1_is_fresh: bool,
+        *,
+        loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
+        **kwargs,
+    ) -> Tuple[torch.Tensor, object]:
+        if self.ep.checkpoint_tbo:
+            out = checkpoint(
+                self.combined_forward_rowwise_nvshmem_tbo,
+                x0,
+                x1_ctx,
+                x1_is_fresh,
+                loss_div_factor=loss_div_factor,
+                use_reentrant=False,
+                **kwargs,
+            )
+            return cast(Tuple[torch.Tensor, object], out)
+        else:
+            return self.combined_forward_rowwise_nvshmem_tbo(
+                x0,
+                x1_ctx,
+                x1_is_fresh,
+                loss_div_factor=loss_div_factor,
+                **kwargs,
+            )
+
+    # -------------------------------------------------------------------------
+    # Shared forward helpers
+    # -------------------------------------------------------------------------
+    def _prepare_moe_input(self, x: torch.Tensor) -> torch.Tensor:
+        if self.use_peri_norm:
+            assert self.feed_forward_input_norm is not None
+            return self.feed_forward_input_norm(x)
+        if self.use_pre_norm:
+            return self.feed_forward_norm(x)
+        return x
+
+    def _merge_routed_and_shared(
+        self,
+        routed_out: torch.Tensor,
+        mixed_shared_out: Optional[torch.Tensor],
+    ) -> torch.Tensor:
+        if self.shared_experts is None:
+            return routed_out
+        if mixed_shared_out is None:
+            raise RuntimeError("shared_experts is enabled but mixed_shared_out is missing")
+        return routed_out + mixed_shared_out
 
     def _mix_shared_out(
         self,
@@ -1182,196 +1382,9 @@ class OLMoDDPTransformerBlock(olmo_core.nn.transformer.block.TransformerBlockBas
             .view(B, S, D)
         )
 
-    def combined_forward_no_ep(
-        self,
-        x: torch.Tensor,
-        *,
-        loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
-        **kwargs,
-    ) -> torch.Tensor:
-        return _combined_forward_no_ep(
-            self,
-            x,
-            loss_div_factor=loss_div_factor,
-            **kwargs,
-        )
-
-    def combined_forward_ep_no_sync_1d(
-        self,
-        x: torch.Tensor,
-        *,
-        loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
-        **kwargs,
-    ) -> torch.Tensor:
-        from olmo_core.nn.moe.v2.ep_no_sync_1d import (
-            combined_forward_ep_no_sync_1d as _combined_forward_ep_no_sync_1d,
-        )
-
-        return _combined_forward_ep_no_sync_1d(
-            self,
-            x,
-            loss_div_factor=loss_div_factor,
-            **kwargs,
-        )
-
-    def combined_forward_ep_no_sync_rowwise(
-        self,
-        x: torch.Tensor,
-        *,
-        loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
-        **kwargs,
-    ) -> torch.Tensor:
-        checkpoint_state = self._ep_no_sync_rowwise_static_checkpoint_state
-        if checkpoint_state is None:
-            checkpoint_state = get_rowwise_checkpoint_state()
-        activation_checkpointing, accumulate_routed_aux_loss_metrics = checkpoint_state
-        from olmo_core.nn.moe.v2.ep_no_sync_rowwise import (
-            combined_forward_ep_no_sync_rowwise as _combined_forward_ep_no_sync_rowwise,
-        )
-
-        return _combined_forward_ep_no_sync_rowwise(
-            self,
-            x,
-            activation_checkpointing=activation_checkpointing,
-            accumulate_routed_aux_loss_metrics=accumulate_routed_aux_loss_metrics,
-            loss_div_factor=loss_div_factor,
-            **kwargs,
-        )
-
-    def combined_forward_ep_no_sync_tbo(
-        self,
-        x0: torch.Tensor,
-        x1_ctx: object,
-        x1_is_fresh: bool,
-        *,
-        loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
-        **kwargs,
-    ) -> Tuple[torch.Tensor, object]:
-        if self.ep.is_rowwise:
-            from olmo_core.nn.moe.v2.ep_no_sync_tbo_rowwise import (
-                combined_forward_ep_no_sync_tbo_rowwise as _combined_forward_ep_no_sync_tbo_rowwise,
-            )
-
-            return _combined_forward_ep_no_sync_tbo_rowwise(
-                self,
-                x0,
-                x1_ctx,
-                x1_is_fresh,
-                loss_div_factor=loss_div_factor,
-                **kwargs,
-            )
-        from olmo_core.nn.moe.v2.ep_no_sync_tbo_1d import (
-            combined_forward_ep_no_sync_tbo as _combined_forward_ep_no_sync_tbo,
-        )
-
-        return _combined_forward_ep_no_sync_tbo(
-            self,
-            x0,
-            x1_ctx,
-            x1_is_fresh,
-            loss_div_factor=loss_div_factor,
-            **kwargs,
-        )
-
-    def combined_forward_ep_1d(
-        self,
-        x: torch.Tensor,
-        *,
-        loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
-        **kwargs,
-    ) -> torch.Tensor:
-        from olmo_core.nn.moe.v2.ep_sync_1d import (
-            combined_forward_ep_1d as _combined_forward_ep_1d,
-        )
-
-        return _combined_forward_ep_1d(
-            self,
-            x,
-            loss_div_factor=loss_div_factor,
-            **kwargs,
-        )
-
-    def combined_forward_ep_tbo(
-        self,
-        x0: torch.Tensor,
-        x1_ctx: object,
-        x1_is_fresh: bool,
-        *,
-        loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
-        **kwargs,
-    ) -> Tuple[torch.Tensor, object]:
-        # Dispatch no-sync here so the no-sync TBO path never imports the sync module.
-        if self.ep.no_sync:
-            return self.combined_forward_ep_no_sync_tbo(
-                x0,
-                x1_ctx,
-                x1_is_fresh,
-                loss_div_factor=loss_div_factor,
-                **kwargs,
-            )
-        from olmo_core.nn.moe.v2.ep_sync_tbo import (
-            combined_forward_ep_tbo as _combined_forward_ep_tbo,
-        )
-
-        return _combined_forward_ep_tbo(
-            self,
-            x0,
-            x1_ctx,
-            x1_is_fresh,
-            loss_div_factor=loss_div_factor,
-            **kwargs,
-        )
-
-    def checkpointed_combined_forward_ep_tbo(
-        self,
-        x0: torch.Tensor,
-        x1_ctx: object,
-        x1_is_fresh: bool,
-        *,
-        loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
-        **kwargs,
-    ) -> Tuple[torch.Tensor, object]:
-        if self.checkpoint_combined_ep_tbo:
-            out = checkpoint(
-                self.combined_forward_ep_tbo,
-                x0,
-                x1_ctx,
-                x1_is_fresh,
-                loss_div_factor=loss_div_factor,
-                use_reentrant=False,
-                **kwargs,
-            )
-            return cast(Tuple[torch.Tensor, object], out)
-        else:
-            return self.combined_forward_ep_tbo(
-                x0,
-                x1_ctx,
-                x1_is_fresh,
-                loss_div_factor=loss_div_factor,
-                **kwargs,
-            )
-
-    # -------------------------------------------------------------------------
-    # Shared forward helpers
-    # -------------------------------------------------------------------------
-    def _prepare_moe_input(self, x: torch.Tensor) -> torch.Tensor:
-        if self.use_peri_norm:
-            assert self.feed_forward_input_norm is not None
-            return self.feed_forward_input_norm(x)
-        return x
-
-    def _merge_routed_and_shared(
-        self,
-        routed_out: torch.Tensor,
-        mixed_shared_out: Optional[torch.Tensor],
-    ) -> torch.Tensor:
-        if self.shared_experts is None:
-            return routed_out
-        if mixed_shared_out is None:
-            raise RuntimeError("shared_experts is enabled but mixed_shared_out is missing")
-        return routed_out + mixed_shared_out
-
     def _res_norm_mlp(self, residual: torch.Tensor, mlp_out: torch.Tensor) -> torch.Tensor:
+        if self.use_pre_norm:
+            return residual + mlp_out
         return residual + self.feed_forward_norm(mlp_out)
 
     def _res_norm_attn(self, block_inp, **kwargs) -> torch.Tensor:
@@ -1379,6 +1392,9 @@ class OLMoDDPTransformerBlock(olmo_core.nn.transformer.block.TransformerBlockBas
         if self.use_peri_norm:
             assert self.attention_input_norm is not None
             attn_in = self.attention_input_norm(block_inp)
+        elif self.use_pre_norm:
+            attn_in = self.attention_norm(block_inp)
+            return block_inp + self.attention(attn_in, **kwargs)
         attn_res_out = block_inp + self.attention_norm(self.attention(attn_in, **kwargs))
         return attn_res_out
 
@@ -1404,4 +1420,12 @@ class OLMoDDPTransformerBlock(olmo_core.nn.transformer.block.TransformerBlockBas
             self.routed_experts_router.post_batch(dry_run=dry_run)
 
 
-__all__ = ["OLMoDDPTransformerBlockConfig", "OLMoDDPTransformerBlock"]
+MoEFusedV2TransformerBlockConfig = OLMoDDPTransformerBlockConfig
+MoEFusedV2TransformerBlock = OLMoDDPTransformerBlock
+
+__all__ = [
+    "OLMoDDPTransformerBlock",
+    "OLMoDDPTransformerBlockConfig",
+    "MoEFusedV2TransformerBlock",
+    "MoEFusedV2TransformerBlockConfig",
+]
