@@ -196,7 +196,7 @@ Pre-built images are listed in the `OLMoCoreBeakerImage` enum in `src/olmo_core/
 
 `BeakerLaunchConfig` also supports `pre_setup` and `post_setup` hooks for running commands before/after the package install step, Weka bucket mounts, and multi-node settings (replicas, leader selection, host networking).
 
-**Job priority — ALWAYS `urgent`, never lower.** Every Beaker/gantry job (training, eval, data build) must launch at `priority="urgent"` (or `immediate`); never `normal`/`high`/`low`. Lower-priority jobs pend behind capacity; `urgent` preempts to get nodes. Set `BeakerLaunchConfig.priority = "urgent"`, pass `--priority urgent` to launchers, or bump a live job with `beaker job update-priority <job-id> urgent`. If you add or edit a launcher, make `urgent` its default.
+**Job priority — ALWAYS `urgent`, never lower.** Every Beaker/gantry job (training, eval, data build) must launch at `priority="urgent"` — exactly `urgent`: never `normal`/`high`/`low`, and not `immediate` either. Lower-priority jobs pend behind capacity; `urgent` preempts to get nodes. Set `BeakerLaunchConfig.priority = "urgent"`, pass `--priority urgent` to launchers, or bump a live job with `beaker job update-priority <job-id> urgent`. If you add or edit a launcher, make `urgent` its default.
 
 ## Testing
 

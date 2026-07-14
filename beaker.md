@@ -14,7 +14,7 @@ The Beaker counterpart to `local_cluster.md`. Everything here is validated from 
 1. **Commit AND push before launching.** Both the internal `launch` command and gantry clone the
    repo at your *pushed* HEAD — a dirty tree errors, and an unpushed commit either fails
    (`RemoteBranchNotFoundError`, sometimes silently after "Launched") or ships stale code.
-2. **Priority is ALWAYS `urgent`** (or `immediate`) — never normal/high; lower pends for hours
+2. **Priority is ALWAYS `urgent` — exactly `urgent`, not `immediate`, never normal/high**; lower pends for hours
    behind capacity. Bump a queued job in place: `beaker job update-priority <JOB-id> urgent`.
 3. **GPU jobs → `ai2/jupiter`** (H100s; gantry `--cluster` may need the full
    `ai2/jupiter-cirrascale-2` form). Never neptune for training — L40S, ~5x slower (MFU 4.5%).
