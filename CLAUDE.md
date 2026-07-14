@@ -94,6 +94,9 @@ Everything is configured via `@dataclass` classes inheriting from `Config`. This
 - `composable/`: The preferred data loading API, built on a pipeline of `TokenSource` -> `InstanceSource` -> `ComposableDataLoader`. Sources can be sliced, sampled, mixed with ratios, and split for curriculum learning. Use `InstanceSource.visualize()` to inspect the source tree. See the module docstring in `src/olmo_core/data/composable/__init__.py` for detailed examples.
 - `mixes/`: Predefined data mixture configs (dolma17, OLMoE-mix-0824, etc.) with paths to tokenized data by source and tokenizer.
 - Training data is stored on AI2 infrastructure (Weka filesystem, GCS). For local development, use small validation sets or synthetic data.
+- **Our data-generation pipeline** (task JSONL → tokenized SFT shards → weka/local staging) is
+  mapped in `src/scripts/data/README.md`: layer 1 = `src/corpus_reasoning/data/` (task
+  generators), layer 2 = `src/scripts/data/` (converters + gantry/sbatch staging).
 
 ### Document-chunked / landmark attention: REPAIR THE BASE CHECKPOINT FIRST
 
