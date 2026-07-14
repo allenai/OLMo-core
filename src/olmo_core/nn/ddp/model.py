@@ -816,11 +816,9 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
         max_seq_len: Optional[int] = None,
         max_local_microbatch_size: Optional[int] = None,
         device: Optional[torch.device] = None,
-        world_mesh: Dict[str, Optional[DeviceMesh]],
+        world_mesh: Optional[Dict[str, Optional[DeviceMesh]]] = None,
         model_part_idx: int = 0,
     ) -> torch.Generator:
-        from olmo_core.nn.attention import Attention, FusedAttention
-
         """
         Initialize the model weights.
 
@@ -829,7 +827,11 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
         :param max_local_microbatch_size: The maximum local (rank) micro-batch size (in tokens)
             expected. This is used to warm-up some MoE cache.
         :param device: The device the local copy of the model will be trained on.
+        :param world_mesh: The parallel meshes; required only when pipeline or expert parallelism
+            is enabled (used to derive per-rank init seeds). Optional for standalone/non-parallel init.
         """
+        from olmo_core.nn.attention import Attention, FusedAttention
+
         device = device or self.device
         # TODO(dtype): materialization currently relies on the same broad bf16
         # cast as apply_dp(); replace with an explicit precision policy.
@@ -845,7 +847,7 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
         # 1. PP stage
         # 2. model part within the PP stage (eg, interleaved 1F1B)
         if self.pp_enabled:
-            assert world_mesh["dense"] is not None
+            assert world_mesh is not None and world_mesh["dense"] is not None
             seed += get_pp_mesh(world_mesh["dense"]).get_local_rank()
             seed += model_part_idx * 997  # random prime
 
@@ -853,7 +855,7 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
         # but within the same EP_DP group, they should share the same init value
         ep_generator = None
         if self.ep_enabled:
-            assert world_mesh["moe"]
+            assert world_mesh is not None and world_mesh["moe"]
             ep_mp_rank = world_mesh["moe"]["ep_mp"].get_local_rank()
             ep_seed = (
                 seed + (1 + ep_mp_rank) * 653
