@@ -1,13 +1,14 @@
 from __future__ import annotations
 
-from collections import defaultdict
 import logging
 import os
+from collections import defaultdict
 from typing import Any, Iterable, Optional
 
-from olmo_core._nvtx import nvtx
 import torch
 import torch.distributed as dist
+
+from olmo_core._nvtx import nvtx
 
 from .p2p_transport import NCCLRMAPipelineP2PTransport, P2PKey, rma_group_hostnames
 
@@ -263,7 +264,7 @@ def build_p2p_executor(
             logger.warning(
                 "p2p_backend=%r requested, but NCCL host-enqueued RMA is not "
                 "supported for inter-node communicators in this environment "
-                "(hosts=%s). Falling back to p2p_backend=\"nccl\".",
+                '(hosts=%s). Falling back to p2p_backend="nccl".',
                 backend,
                 sorted(hostnames),
             )

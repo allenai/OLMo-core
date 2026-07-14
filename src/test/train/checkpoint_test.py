@@ -1,5 +1,6 @@
 import os
 import time
+from typing import cast
 
 import pytest
 import torch
@@ -9,7 +10,7 @@ from olmo_core.distributed.utils import barrier, get_rank
 from olmo_core.io import dir_is_empty, file_exists, is_url, normalize_path
 from olmo_core.testing import run_distributed_test
 from olmo_core.train.checkpoint import Checkpointer
-from olmo_core.train.train_module import BasicTrainModule
+from olmo_core.train.train_module import BasicTrainModule, TrainModule
 
 
 def run_checkpointer(base_dir, work_dir, model_factory):
@@ -180,6 +181,7 @@ def test_checkpointer_resume_reset_only_applies_on_actual_resume(
     train_module = _RecordingDirectTrainModule(reset_optimizer_states_on_resume=True)
     checkpointer = Checkpointer(work_dir=tmp_path / "work_dir")
     # Default load_trainer_state=None: the resume reset must apply only when trainer state is found.
-    checkpointer.load(dir, train_module)
+    # The fake only needs the duck-typed direct-checkpoint surface Checkpointer.load() probes for.
+    checkpointer.load(dir, cast(TrainModule, train_module))
 
     assert train_module.received_reset is (True if has_trainer_state else None)
