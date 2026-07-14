@@ -20,7 +20,7 @@ from olmo_core.nn.transformer import (
     TransformerType,
 )
 from olmo_core.optim import OLMoDDPOptimizerConfig
-from olmo_core.testing import requires_gpu, requires_multi_gpu, run_distributed_test
+from olmo_core.testing import requires_multi_gpu, run_distributed_test
 from olmo_core.train.train_module import OLMoDDPTrainModuleConfig
 from olmo_core.train.train_module.transformer import (
     TransformerDataParallelConfig,
@@ -233,11 +233,11 @@ def _run_resume_resets_optimizer_moments(save_dir):
     assert restored_any_moment
 
 
-@requires_gpu
+@requires_multi_gpu
 def test_moe_v2_train_module_resume_resets_optimizer_moments(tmp_path):
     run_distributed_test(
         _run_resume_resets_optimizer_moments,
-        world_size=1,
+        world_size=2,
         backend="nccl",
         start_method="spawn",
         func_args=(str(tmp_path / "checkpoint"),),
@@ -275,11 +275,11 @@ def _run_direct_checkpoint_restores_buffers(save_dir):
         torch.testing.assert_close(restored[name], expected)
 
 
-@requires_gpu
+@requires_multi_gpu
 def test_moe_v2_train_module_direct_checkpoint_restores_buffers(tmp_path):
     run_distributed_test(
         _run_direct_checkpoint_restores_buffers,
-        world_size=1,
+        world_size=2,
         backend="nccl",
         start_method="spawn",
         func_args=(str(tmp_path / "checkpoint"),),
