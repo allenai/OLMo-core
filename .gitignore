@@ -82,3 +82,6 @@ core
 # This entry remains only to ignore any leftover standalone clone at the repo root; that clone is
 # STALE and should be deleted (`rm -rf ./corpus-reasoning`).
 /corpus-reasoning/
+
+# repo-root symlink to src/scripts/train (the training-code hub) for quick inspection
+/training
