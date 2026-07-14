@@ -87,6 +87,7 @@ class PipelineP2PBackend(StrEnum):
 
     nccl = "nccl"
     nccl_rma = "nccl_rma"
+    nccl_rma_ack = "nccl_rma_ack"
     nccl_device = "nccl_device"
 
 

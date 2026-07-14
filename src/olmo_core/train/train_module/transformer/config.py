@@ -506,6 +506,11 @@ class OLMoDDPTrainModuleConfig(TrainModuleConfig):
     state_dict_load_opts: Optional[Dict[str, Any]] = None
     load_key_mapping: Optional[Dict[str, str]] = None
     reset_optimizer_states_on_load: bool = False
+    reset_optimizer_states_on_resume: bool = False
+
+    # Gradient reduction settings.
+
+    reduce_scatter_grads: bool = False
 
     # Other train settings.
 
@@ -545,3 +550,7 @@ class OLMoDDPTrainModuleConfig(TrainModuleConfig):
             eval_only=eval_only,
             **kwargs,
         )
+
+
+# Back-compat alias for the former name of the fused MoE-v2 train-module config.
+MoEV2TransformerTrainModuleConfig = OLMoDDPTrainModuleConfig
