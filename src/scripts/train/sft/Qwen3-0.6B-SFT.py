@@ -267,6 +267,7 @@ class SFTConfig(Config):
         user_name = get_beaker_username()
 
         tokenizer_config = TokenizerConfig(vocab_size=151680, eos_token_id=151645, pad_token_id=151645, bos_token_id=151644)
+        model_vocab_size = 151936
         dataset_config = build_sft_dataset(
             root_dir=root_dir,
             tokenizer_config=tokenizer_config,
@@ -315,7 +316,7 @@ class SFTConfig(Config):
 
         model = TransformerConfig.qwen3_0_6B(
             attn_backend=AttentionBackendName.flash_2,
-            vocab_size=tokenizer_config.padded_vocab_size(),
+            vocab_size=model_vocab_size,  # must match converted checkpoint
         )
 
         config = SFTConfig(
