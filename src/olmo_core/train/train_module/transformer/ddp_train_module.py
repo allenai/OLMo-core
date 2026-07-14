@@ -208,7 +208,7 @@ class OLMoDDPTrainModule(TrainModule):
                 )
         # if ac_config is not None:
         #     raise OLMoConfigurationError("In OLMoDDPTrainModule, activation checkpointing is controlled by the model, not the train module.")
-        if float8_config is not None:
+        if float8_config is not None and float8_config.enabled:
             raise NotImplementedError("Float8 quantization is not implemented")
 
         assert dp_config is not None, "Data parallel config is required for OLMoDDPTrainModule"
@@ -453,8 +453,13 @@ class OLMoDDPTrainModule(TrainModule):
                     f"{tp.__class__.__name__}.degree must be at least 1 and divide into the world size"
                 )
             dp_world_size //= tp.degree
+        # A negative EP degree is the "use all remaining ranks" shorthand: expert parallelism
+        # spans the whole folded DP x CP pool.
+        ep_degree = folded_dp_cp_world_size if ep is not None and ep.degree < 0 else None
         if ep is not None:
-            if ep.degree <= 1 or folded_dp_cp_world_size % ep.degree != 0:
+            if ep_degree is None:
+                ep_degree = ep.degree
+            if ep_degree <= 1 or folded_dp_cp_world_size % ep_degree != 0:
                 raise OLMoConfigurationError(
                     f"{ep.__class__.__name__}.degree must be at least 1 and divide into the "
                     f"folded DP x CP world size, got folded_dp_cp_world_size={folded_dp_cp_world_size} and ep.degree={ep.degree}"
@@ -520,7 +525,8 @@ class OLMoDDPTrainModule(TrainModule):
             if pp is not None:
                 names.append(MeshDimName.pp)
 
-            ep_dp_world_size = folded_dp_cp_world_size // ep.degree
+            assert ep_degree is not None
+            ep_dp_world_size = folded_dp_cp_world_size // ep_degree
             names.append(MeshDimName.ep_dp)
             names.append(MeshDimName.ep_mp)
 
@@ -535,11 +541,11 @@ class OLMoDDPTrainModule(TrainModule):
                     mesh = folded_rank_grid.reshape(
                         pp_world_size_for_layout,
                         ep_dp_world_size,
-                        ep.degree,
+                        ep_degree,
                     )
                 else:
                     folded_rank_grid = dense_rank_grid.reshape(folded_dp_cp_world_size)
-                    mesh = folded_rank_grid.reshape(ep_dp_world_size, ep.degree)
+                    mesh = folded_rank_grid.reshape(ep_dp_world_size, ep_degree)
 
             device_mesh = DeviceMesh(
                 device_type=device_type,

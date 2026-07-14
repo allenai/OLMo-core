@@ -864,11 +864,15 @@ class PipelineSchedule:
         input_ids: torch.Tensor,
         target: Optional[torch.Tensor] = None,
         forward_only: bool = False,
+        num_microbatches: Optional[int] = None,
         **kwargs,
     ) -> List[List[Optional["LMOutputWithLoss"]]]:
         """
         :param args: Only passed to first stage.
         :param kwargs: Passed to all stages.
+        :param num_microbatches: Override the number of microbatches for this step only (e.g. a
+            reduced-microbatch dry run). Restored afterwards. Consumed here rather than forwarded to
+            the model.
 
         :return: A list with length of num stages. Each element of the list is an inner list with length of num microbatches. Each element in the inner list is either (1) the output of the corresponding microbatch if that stage is the last stage, or (2) None if that stage is not the last stage.
         """
@@ -884,13 +888,19 @@ class PipelineSchedule:
         else:
             args = (input_ids,)
 
-        # in inference mode, change to one seq per microbatch
+        # Temporarily override the microbatch count when requested (inference uses one seq per
+        # microbatch; a reduced dry run passes an explicit count), restoring it after the step.
         old_num_microbatches = None
         if forward_only:
             old_num_microbatches = self.schedule_impl._n_microbatches
             self.schedule_impl.reset_n_microbatches(
                 input_ids.size(0) // 1
             )  # one seq per microbatch
+        elif (
+            num_microbatches is not None and num_microbatches != self.schedule_impl._n_microbatches
+        ):
+            old_num_microbatches = self.schedule_impl._n_microbatches
+            self.schedule_impl.reset_n_microbatches(num_microbatches)
 
         self.schedule_impl.prepare_step(
             global_batch_size=input_ids.size(0),
@@ -903,8 +913,7 @@ class PipelineSchedule:
         self.schedule_impl.clear_step_info()
 
         # reset
-        if forward_only:
-            assert old_num_microbatches is not None
+        if old_num_microbatches is not None:
             self.schedule_impl.reset_n_microbatches(old_num_microbatches)
 
         return step_output
