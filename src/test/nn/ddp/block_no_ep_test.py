@@ -21,12 +21,11 @@ from olmo_core.testing import requires_gpu, requires_grouped_gemm
 
 
 def test_v2_no_ep_module_names_importable():
-    """The no-EP core ships ``no_ep`` / ``checkpointing`` / ``tbo_state``; the EP families land later."""
-    from olmo_core.nn.moe.v2 import checkpointing, no_ep, tbo_state
+    """The no-EP core ships ``no_ep`` / ``checkpointing``; the EP families land later."""
+    from olmo_core.nn.moe.v2 import checkpointing, no_ep
 
     assert hasattr(no_ep, "combined_forward_no_ep")
     assert hasattr(checkpointing, "checkpoint_recompute_context_fn")
-    assert hasattr(tbo_state, "SyncedTboPendingContext")
 
 
 def _build_block(
