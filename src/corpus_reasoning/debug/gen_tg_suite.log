@@ -1,0 +1,27 @@
+eval: 300 examples -> data/textgroups_eval_n20_g3_k2_t70_w0_mixed.jsonl
+eval: 300 examples -> data/textgroups_eval_n100_g3_k2_t70_w0_mixed.jsonl
+eval: 300 examples -> data/textgroups_eval_n500_g3_k2_t70_w0_mixed.jsonl
+=== regenerating suite dump ===
+wrote 21 files to examples/suite_examples_full/:
+  examples/suite_examples_full/niah_contradiction.txt
+  examples/suite_examples_full/oolong.txt
+  examples/suite_examples_full/helmet_narrativeqa.txt
+  examples/suite_examples_full/helmet_summ_govreport.txt
+  examples/suite_examples_full/beir_scifact.txt
+  examples/suite_examples_full/beir_nfcorpus.txt
+  examples/suite_examples_full/beir_msmarco.txt
+  examples/suite_examples_full/msmarco_rerank.txt
+  examples/suite_examples_full/redundancy.txt
+  examples/suite_examples_full/absence.txt
+  examples/suite_examples_full/strmatch.txt
+  examples/suite_examples_full/qdmatch.txt
+  examples/suite_examples_full/xabsence.txt
+  examples/suite_examples_full/n2ified_nq.txt
+  examples/suite_examples_full/mathmatch.txt
+  examples/suite_examples_full/contradiction.txt
+  examples/suite_examples_full/cycle.txt
+  examples/suite_examples_full/textgroups.txt
+  examples/suite_examples_full/outlier.txt
+  examples/suite_examples_full/grouping.txt
+  examples/suite_examples_full/reorder.txt
+=== ALL DONE ===

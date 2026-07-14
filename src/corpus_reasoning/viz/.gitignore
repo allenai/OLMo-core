@@ -1,0 +1,3 @@
+# Pipeline artifacts are regeneratable (`bash viz/run.sh`). The committed,
+# shareable snapshot lives in demo/index.html instead.
+outputs/

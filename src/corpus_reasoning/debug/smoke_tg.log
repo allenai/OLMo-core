@@ -1,0 +1,44 @@
+[ok] feature=nouns: 8 examples, exact-K + exact-counts verified
+[ok] feature=verbs: 8 examples, exact-K + exact-counts verified
+[ok] feature=adjectives: 8 examples, exact-K + exact-counts verified
+[ok] feature=connector: 8 examples, exact-K + exact-counts verified
+
+=== sample passages (first 3) ===
+[1] (13 nouns) The miner and the palace and the fountain and the saddle rested bravely. The fountain celebrated slowly. It guarded calmly. The valley and the musician wandered abruptly. The meadow and the orchard and the fisherman rested abruptly. The palace and the teacher and the cathedral echoed calmly. They vanished wearily.
+[2] (17 nouns) The baker and the library circled softly. The miner and the carriage soared wearily. The glacier and the musician and the gardener and the engine celebrated wearily. The weaver and the hunter and the musician harvested restlessly. The blacksmith and the river guarded quietly. The island and the innkeeper soared softly. The market and the fountain crumbled suddenly.
+[3] (13 nouns) The wagon and the anchor and the harvester lingered softly. The library rested abruptly. The beacon and the chapel and the wagon glimmered quietly. The castle and the library and the carriage studied abruptly. The farmer and the tavern and the tower argued wearily.
+
+query: Each passage has a value: the number of nouns. Find every group of 3 passages whose values add up to 30 (exactly 30).
+gold: [[1, 3, 16], [17, 18, 24]]
+
+=== cot_mode=label OUTPUT ===
+[[1, 3, 16], [17, 18, 24]]
+
+=== cot_mode=template OUTPUT ===
+Reasoning: each passage's value is its number of nouns.
+- Passages [1]=13 + [3]=13 + [16]=4 sum to 30 (exactly 30).
+- Passages [17]=18 + [18]=7 + [24]=5 sum to 30 (exactly 30).
+Groups: [[1, 3, 16], [17, 18, 24]]
+
+=== cot_mode=scan OUTPUT ===
+Reasoning: counting the nouns in each passage: [1]=13, [2]=17, [3]=13, [4]=15, [5]=16, [6]=16, [7]=17, [8]=16, [9]=15, [10]=15, [11]=16, [12]=15, [13]=17, [14]=17, [15]=17, [16]=4, [17]=18, [18]=7, [19]=14, [20]=15, [21]=14, [22]=15, [23]=17, [24]=5.
+Passages 1, 3, 16 give 13 + 13 + 4 = 30, summing to 30.
+Passages 17, 18, 24 give 18 + 7 + 5 = 30, summing to 30.
+Groups: [[1, 3, 16], [17, 18, 24]]
+
+=== prompt tail ===
+ e telescope gathered softly.
+
+Passage 24: The glacier and the tavern and the valley labored eagerly. It paused suddenly. The palace and the forest soared wearily. She watched bravely.
+
+Given the following numbered list of passages, identify all groups of passages matching the criterion below.
+
+Output your answer as a JSON list of groups, where each group is a list of the matching passage IDs. For example: [[3, 8, 12]]
+If there are no matching groups, output: []
+
+Each passage has a value: the number of nouns. Find every group of 3 passages whose values add up to 30 (exactly 30).
+
+### Response:
+
+
+ALL SMOKE CHECKS PASSED
