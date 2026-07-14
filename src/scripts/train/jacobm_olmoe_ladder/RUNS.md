@@ -2216,3 +2216,16 @@ Newly finalized OLMoBase evals:
 `olmoe3-1p2b-cx8-mt-int-deep-olmobase` is still scheduled in Beaker as of this
 check: https://beaker.org/ex/01KXEJ2N0VW8815658DPNXQH7R.
 
+## 2026-07-14 Full Status Refresh
+
+Refreshed plots, plotted-results markdown, in-loop eval summaries, midtraining
+validation summaries, and OLMoBase eval summaries.
+
+The final pending midtrained OLMoBase eval finalized successfully:
+
+| Name | Beaker | Status |
+| --- | --- | --- |
+| `olmoe3-1p2b-cx8-mt-int-deep-olmobase` | https://beaker.org/ex/01KXEJ2N0VW8815658DPNXQH7R | finalized 2026-07-13, exit code 0 |
+
+`results/olmobase_evals.*` now includes all finalized midtrained OLMoBase runs.
+
