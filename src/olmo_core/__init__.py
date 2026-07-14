@@ -35,21 +35,20 @@ def _default_triton_cache_dir() -> None:
         or os.environ.get("SLURM_LOCALID")
         or os.environ.get("OMPI_COMM_WORLD_LOCAL_RANK")
         or os.environ.get("MV2_COMM_WORLD_LOCAL_RANK")
-        or "0"
     )
     job_id = (
         os.environ.get("BEAKER_EXPERIMENT_ID")
         or os.environ.get("SLURM_JOB_ID")
         or os.environ.get("JOB_ID")
+        or f"pid{os.getpid()}"  # no launcher job id (bare torchrun / torch.multiprocessing)
     )
-    if not job_id:
-        # No launcher job id (e.g. a bare `torchrun` or `torch.multiprocessing` launch): fall back
-        # to a per-process id so two simultaneous local jobs — or ranks that haven't set LOCAL_RANK
-        # by import time — don't share a cache directory.
-        job_id = f"pid{os.getpid()}"
+    # If the rank env isn't set yet — e.g. this module is imported before a spawned worker sets
+    # LOCAL_RANK inside the child — fall back to a per-process leaf so ranks sharing a job id don't
+    # all collide on local_rank_0.
+    rank_component = f"local_rank_{local_rank}" if local_rank is not None else f"pid{os.getpid()}"
     host = socket.gethostname().split(".")[0] or "host"
     base = Path(os.environ.get("OLMO_TRITON_CACHE_BASE", "/tmp/olmo-triton-cache"))
-    cache_dir = base / str(job_id) / host / f"local_rank_{local_rank}"
+    cache_dir = base / str(job_id) / host / rank_component
     cache_dir.mkdir(parents=True, exist_ok=True)
     os.environ["TRITON_CACHE_DIR"] = str(cache_dir)
     os.environ[_TRITON_CACHE_AUTO_ENV] = str(cache_dir)
