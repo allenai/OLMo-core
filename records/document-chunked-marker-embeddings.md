@@ -105,3 +105,18 @@ cos = F.cosine_similarity(emb[151648][None].float(), emb[151649][None].float()).
 Every marker-dense (100-doc) document-chunked number produced before the fix, across `chunked`,
 `hierarchical_dilated`, and `random_doc` at all keep-probs, plus every hybrid full/chunked-layer
 sweep. Any run whose base was not `-fixmark` should be assumed contaminated until re-run.
+
+---
+
+## ⚠ SEQUEL (2026-07-14): the repair in this document was INCOMPLETE
+
+The fix described above made the markers mutually distinguishable (cos 1.0 → ~0.01) but renormed them
+to `<|im_start|>`'s norm — **0.396 against a trained-token median of 1.415**. RMSNorm rescales every
+position to the same RMS, so a marker row at ~1/3.6 of a normal token becomes a full-strength *noise*
+vector wherever it appears. On the leak-free document-chunked shards (marker immediately before every
+`Claim N:` label) that flatlines training at CE ≈ 0.79 for **every** attention mask — including plain
+causal — reproducing this document's exact signature and masquerading, again, as a mask result.
+
+`fix_marker_embeddings.py` now seeds each marker from a real trained delimiter row and asserts the
+norm is in-distribution. **Any base repaired before 2026-07-14 must be re-repaired.**
+Full diagnosis: `records/n100-chunked-marker-position-bug.md`.

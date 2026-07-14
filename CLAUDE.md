@@ -111,6 +111,15 @@ chance and the failure looks exactly like a modeling result.
 tokenized shards are correct — do NOT rebuild data. See `records/document-chunked-marker-embeddings.md` for
 the full diagnosis, the one-line check for whether a base is affected, and the validation numbers.
 
+⚠ **Fixing the marker cosine is NOT enough — the marker NORM matters too.** The first version of
+`fix_marker_embeddings.py` made the markers mutually distinguishable but left them at ~1/3.6 the norm
+of a real token, which RMSNorm amplifies into full-strength noise. On the leak-free (label-inside-chunk)
+shards this flatlines training at CE ≈ 0.79 for **every** mask, including plain causal — an
+unrestricted model cannot even memorize the data, so it reads as "the mask is too restrictive" when it
+is not. The script now seeds each marker from a real trained delimiter row (`«`/`»`/…) and asserts the
+norm is in-distribution. Any base repaired before 2026-07-14 is affected: re-run the script.
+See `records/n100-chunked-marker-position-bug.md`.
+
 ### Distributed Training (`src/olmo_core/distributed/`)
 
 - `parallel/`: Implementations of data (FSDP/HSDP/DDP), tensor, pipeline, context (ring attention), and expert parallelism. These can be combined for multi-dimensional parallelism.

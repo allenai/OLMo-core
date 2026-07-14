@@ -14,11 +14,24 @@ structure is destroyed. Empirically a Qwen3-0.6B trains to CE ~0.004 on a 100-cl
 shard with no markers, and plateaus at CE ~0.79 (chance-level f1) on the byte-identical shard *with*
 markers.
 
-This script gives each marker a distinct, in-distribution embedding: the mean of the trained rows
-plus small per-token noise (the standard initialization for newly-added tokens). Marker ids are never
-loss targets (the label mask covers only the answer span), so only the input embedding matters; we
-keep the norm in the range of the other special tokens so a tied output head cannot be nudged into
-emitting them.
+This script gives each marker a distinct, in-distribution embedding by **copying the row of a real,
+trained delimiter token** (``«``, ``»``, ...) and adding a small perturbation so the markers can still
+specialize. Marker ids are never loss targets (the label mask covers only the answer span), so only
+the input embedding matters.
+
+.. warning::
+   **Fixing the cosine is not enough -- the norm matters just as much.** The original version of this
+   script built each marker as ``mean(trained rows) + noise`` renormed to the norm of ``<|im_start|>``.
+   That made the markers mutually distinguishable (cos ~0.01) but left them at norm **0.396** against a
+   trained-token median of **1.415** -- roughly 1/3.6 of a real token, pointing in a meaningless
+   "average token" direction. RMSNorm rescales every position to the same RMS, so such a row is
+   amplified into a full-strength *noise* vector at each marker position. On the leak-free
+   document-chunked shards (where a marker precedes every ``Claim N:`` label) training then flatlines
+   at CE ~0.79 for **every** attention mask -- including plain causal -- i.e. an unrestricted model
+   cannot even memorize the data. Deleting the markers, or giving them trained donor rows, restores
+   learning (CE 0.058 vs 0.79 at 375 steps, single-variable). The "tied output head" rationale for the
+   small norm does not apply: Qwen3-0.6B's ``lm_head`` is **not** tied to the embeddings here.
+   See ``records/n100-chunked-marker-position-bug.md``.
 
 Usage::
 
@@ -47,13 +60,34 @@ from olmo_core.data.document_chunk_landmark import (  # canonical ids -- never r
 # The real Qwen3 vocab ends here; rows at or beyond this index are untrained padding.
 
 
+#: Trained delimiter tokens whose rows seed each marker. Delimiters are the right donors: the model
+#: already reads them as "a boundary is here", which is exactly the marker's job.
+DONOR_TOKENS = {
+    DOC_START_ID: "«",
+    DOC_END_ID: "»",
+    LANDMARK_TOKEN_ID: "§",
+    PAD_TOKEN_ID: "¶",
+}
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--base", required=True, help="source model_and_optim distcp dir")
     ap.add_argument("--out", required=True, help="destination dir (a model_and_optim/ is written under it)")
     ap.add_argument("--model-size", default="0.6B", choices=["0.6B", "4B"])
     ap.add_argument("--seed", type=int, default=34521)
+    ap.add_argument(
+        "--jitter",
+        type=float,
+        default=0.1,
+        help="per-marker noise added to the donor row, as a fraction of the trained-row std, so the "
+        "markers can specialize away from their donors during training",
+    )
     args = ap.parse_args()
+
+    from transformers import AutoTokenizer
+
+    tok = AutoTokenizer.from_pretrained("Qwen/Qwen3-0.6B")
 
     factory = {"0.6B": TransformerConfig.qwen3_0_6B, "4B": TransformerConfig.qwen3_4B}[args.model_size]
     model = factory(vocab_size=TokenizerConfig.qwen3().padded_vocab_size()).build(init_device="cpu")
@@ -61,36 +95,49 @@ def main() -> None:
 
     emb = model.embeddings.weight.data
     trained = emb[:REAL_VOCAB_SIZE].float()
-    mean = trained.mean(dim=0)
-    # Match the scale of the *trained* special tokens rather than the corpus mean, so a tied output
-    # head does not gain a large logit for a token that should never be generated.
-    target_norm = emb[151644].float().norm()  # <|im_start|>: a genuinely-trained special token
+    median_norm = trained.norm(dim=-1).median()
+    std = trained.std()
 
     g = torch.Generator().manual_seed(args.seed)
-    markers = {
+    names = {
         DOC_START_ID: "doc_start",
         DOC_END_ID: "doc_end",
         LANDMARK_TOKEN_ID: "landmark",
         PAD_TOKEN_ID: "pad",
     }
-    print(f"trained-row mean norm={trained.norm(dim=-1).mean():.4f}  target_norm={target_norm:.4f}")
-    for tid, name in markers.items():
-        before = emb[tid].float().clone()
-        noise = torch.randn(emb.shape[1], generator=g) * trained.std()
-        vec = mean + noise
-        vec = vec / vec.norm() * target_norm
+    print(f"trained-row median norm={median_norm:.4f}  (markers must land near this, NOT far below it)")
+    for tid, name in names.items():
+        donor_str = DONOR_TOKENS[tid]
+        donor_ids = tok.encode(donor_str, add_special_tokens=False)
+        if len(donor_ids) != 1 or donor_ids[0] >= REAL_VOCAB_SIZE or donor_ids[0] == EOS_TOKEN_ID:
+            raise SystemExit(f"donor {donor_str!r} for {name} is not a single trained token: {donor_ids}")
+        donor = donor_ids[0]
+        before = emb[tid].float().norm()
+        vec = emb[donor].float() + torch.randn(emb.shape[1], generator=g) * (std * args.jitter)
         emb[tid] = vec.to(emb.dtype)
-        print(f"  {tid} {name:10s} norm {before.norm():.4f} -> {emb[tid].float().norm():.4f}")
+        print(
+            f"  {tid} {name:10s} <- {donor_str!r} (id {donor})   norm {before:.4f} -> "
+            f"{emb[tid].float().norm():.4f}"
+        )
 
-    # The whole point is that the markers become mutually distinguishable -- assert it.
-    ids = list(markers)
+    # 1) The markers must be mutually distinguishable (the original bug: all were bit-identical).
+    ids = list(names)
     for i in range(len(ids)):
         for j in range(i + 1, len(ids)):
             cos = torch.nn.functional.cosine_similarity(
                 emb[ids[i]].float()[None], emb[ids[j]].float()[None]
             ).item()
-            assert abs(cos) < 0.5, f"markers {ids[i]}/{ids[j]} still near-identical (cos={cos:.4f})"
-    print("all marker pairs are now distinguishable (|cos| < 0.5)")
+            assert abs(cos) < 0.9, f"markers {ids[i]}/{ids[j]} too similar (cos={cos:.4f})"
+    # 2) ...AND in-distribution in scale. A marker at a small fraction of a real token's norm is
+    #    amplified by RMSNorm into full-strength noise, which silently destroys training on any
+    #    marker-dense shard (see the module docstring).
+    for tid, name in names.items():
+        ratio = (emb[tid].float().norm() / median_norm).item()
+        assert 0.5 < ratio < 2.0, (
+            f"marker {name} norm is {ratio:.2f}x the trained-row median -- out of distribution. "
+            "This is the exact failure the donor-row init exists to prevent."
+        )
+    print("markers are distinguishable AND in-distribution in norm")
 
     save_model_and_optim_state(f"{args.out}/model_and_optim", model)
     print(f"wrote fixed base -> {args.out}/model_and_optim")
