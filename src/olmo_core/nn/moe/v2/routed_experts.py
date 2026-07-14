@@ -29,7 +29,7 @@ import os
 try:
     import grouped_gemm  # type: ignore
     import grouped_gemm.ops  # type: ignore  # noqa: F401
-except ImportError:  # pragma: no cover - import guard
+except Exception:  # pragma: no cover - import guard
     grouped_gemm = None  # type: ignore[assignment]
 import weakref
 from dataclasses import dataclass
@@ -40,24 +40,47 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.distributed.device_mesh import DeviceMesh
 
-from olmo_core._nvtx import maybe_nvtx_annotate
-from olmo_core.config import Config, DType
+from olmo_core._nvtx import nvtx
+from olmo_core.config import Config, DType, StrEnum
 from olmo_core.kernels import (
     OlmoMXFP8Tensor,
     ScaledGroupedMMPrequantizedLHS,
     ScaledGroupedMMPrequantizedRHS,
 )
 from olmo_core.kernels import grouped_mm as grouped_mm_with_buffers
-from olmo_core.kernels import scaled_grouped_mm_q, scaled_grouped_mm_q_fp8_weight
+from olmo_core.kernels import (
+    grouped_mm_row_offset,
+    scaled_grouped_mm_q,
+    scaled_grouped_mm_q_fp8_weight,
+)
 from olmo_core.kernels.mxfp8_utils import (
     dequantize_rows_from_mxfp8,
     swiglu_quantize_rows_from_mxfp8,
     swiglu_quantize_rows_to_mxfp8,
 )
+from olmo_core.kernels.swiglu import swiglu_valid_prefix
 from olmo_core.nn.fp8_weight import FP8WeightCacheSpec, FP8WeightStore
-from olmo_core.nn.moe.v2._nvtx_colors import EXPERTS_COLOR
 
 from .fp8 import MoERowwiseFP8Config, normalize_rowwise_fp8_config
+
+
+class ExpertActivation(StrEnum):
+    swiglu = "swiglu"
+    relu2 = "relu2"
+    gpt_oss_swiglu = "gpt_oss_swiglu"
+
+
+def _debug_is_inf_or_nan(x):
+    return torch.logical_or(~torch.isfinite(x), torch.isnan(x))
+
+
+def _debug_get_row_indices_for_nan_or_inf(x):
+    return torch.where(_debug_is_inf_or_nan(x).any(dim=-1))[0]
+
+
+def _debug_get_row_indices_for_nan_or_inf_before_end(x, end):
+    naninf_row_indices = _debug_get_row_indices_for_nan_or_inf(x)
+    return naninf_row_indices[naninf_row_indices < end]
 
 
 def _identity_fp8_rhs(weight: torch.Tensor) -> torch.Tensor:
@@ -209,9 +232,6 @@ class _SwiGLUQuantizeRowsFromMXFP8Autograd(torch.autograd.Function):
 
 @torch.compiler.disable
 def gmm_no_compile(a, b, batch_sizes, trans_b=False):
-    # TODO: the third-party grouped_gemm op requires bf16 inputs (cf. the v1 DroplessMoEMLP
-    # path), so this torch<2.10 fallback would fail for a float32-built RoutedExperts. Cast
-    # a/b to bf16 and restore the original dtype if/when this path is exercised.
     return grouped_gemm.ops.gmm(a, b, batch_sizes, trans_b)
 
 
@@ -239,23 +259,17 @@ def gmm(
             )
         else:
             out_tensor = F.grouped_mm(a, b_grouped_mm, offs=offs)
-        # NOTE: grouped_mm leaves the padding rows beyond the last offset (pos >= offs[-1])
-        # uninitialized; those values can be NaN/Inf and must not be consumed by downstream ops
-        # on valid tokens. To debug a suspected leak into the valid rows, enable:
-        #     valid = int(batch_sizes.sum())
-        #     bad = torch.nonzero(~torch.isfinite(out_tensor[:valid]).all(dim=-1)).flatten()
-        #     if bad.numel():
-        #         raise RuntimeError(f"non-finite grouped_mm output in valid rows {bad.tolist()}")
+        # WARNING: https://docs.pytorch.org/docs/stable/generated/torch.nn.functional.grouped_mm.html
+        # "offs[i] marks the end of group i and offs[-1] must be strictly less than the total length of that operand’s sliced dimension"
+        # so padded positions are always necessary? I think "strictly less than" is a documentation mistake
+
+        # BIG NOTE: grouped_mm's returned value containes uninitialized values for the padded positions (pos > offsets[-1]), which can be NaN and may cause later ops to produce NaN in valid positions.
+        # if _debug_get_row_indices_for_nan_or_inf_before_end(out, batch_sizes.sum()).numel() > 0:
+        #     raise RuntimeError(f"NaN or Inf detected in grouped_mm output in valid tokens. batch_sizes={batch_sizes} offs={offs} out={out}")
         return out_tensor
 
     if out is not None or input_grad_out is not None:
         raise RuntimeError("gmm(out=..., input_grad_out=...) requires torch grouped_mm backend")
-    if grouped_gemm is None:
-        raise RuntimeError(
-            "RoutedExperts grouped matmul requires either torch>=2.10 "
-            "(torch.nn.functional.grouped_mm) or the optional `grouped_gemm` package; "
-            "neither is available."
-        )
     return gmm_no_compile(a, b, batch_sizes, trans_b)
 
 
@@ -317,70 +331,104 @@ def scaled_grouped_mm_q_fp8_weight_no_compile(
     )
 
 
-def use_torch_grouped_mm() -> bool:
-    # ``torch.nn.functional.grouped_mm`` was added in torch 2.10; feature-detect it
-    # (same approach as ``olmo_core.testing.has_torch_grouped_mm``).
-    return hasattr(F, "grouped_mm")
+# if env variable OLMO_USE_TORCH_GROUPED_MM is set, use its value to determine whether to use torch grouped_mm;
+USE_TORCH_GROUPED_MM: Optional[bool] = None
+env_val = os.getenv("OLMO_USE_TORCH_GROUPED_MM")
+if env_val is not None:
+    if env_val.lower() in ("1", "true", "yes"):
+        USE_TORCH_GROUPED_MM = True
+    elif env_val.lower() in ("0", "false", "no"):
+        USE_TORCH_GROUPED_MM = False
+    else:
+        raise ValueError(
+            f"Invalid value for OLMO_USE_TORCH_GROUPED_MM: {env_val}. Expected one of (1, 0, true, false, yes, no)."
+        )
+else:
+    # otherwise, use feature detection and version gate.
+    USE_TORCH_GROUPED_MM = None
 
 
-def requires_host_side_split_sizes() -> bool:
-    # grouped_gemm cublas mode requires host-side split sizes; torch grouped_mm does not.
-    return not use_torch_grouped_mm()
+def use_torch_grouped_mm():
+    global USE_TORCH_GROUPED_MM
+    if USE_TORCH_GROUPED_MM is not None:
+        return USE_TORCH_GROUPED_MM
+
+    torch_version = torch.__version__.split("+")[0]  # strip local build suffix, e.g. +cu128
+    try:
+        major_str, minor_str, *_ = torch_version.split(".")
+        major, minor = int(major_str), int(minor_str)
+        meets_version_gate = major > 2 or (major == 2 and minor >= 10)
+    except (ValueError, TypeError):
+        # Fall back to feature detection on unusual version strings.
+        meets_version_gate = hasattr(F, "grouped_mm")
+
+    # grouped_mm was added in torch 2.10; hasattr keeps this robust to local builds.
+    USE_TORCH_GROUPED_MM = meets_version_gate and hasattr(F, "grouped_mm")
+    return USE_TORCH_GROUPED_MM
+
+
+REQUIRES_HOST_SIDE_SPLIT_SIZES = None  # cache the result of whether host-side split sizes are required, since it does not change during runtime and checking it requires parsing torch version every time.
+
+
+def requires_host_side_split_sizes():
+    # read from cache if available
+    global REQUIRES_HOST_SIDE_SPLIT_SIZES
+    if REQUIRES_HOST_SIDE_SPLIT_SIZES is not None:
+        return REQUIRES_HOST_SIDE_SPLIT_SIZES
+
+    # grouped_gemm cublas mode requires host-side split sizes, grouped_mm does not.
+    REQUIRES_HOST_SIDE_SPLIT_SIZES = not use_torch_grouped_mm()
+
+    return REQUIRES_HOST_SIDE_SPLIT_SIZES
 
 
 @dataclass
 class RoutedExpertsConfig(Config):
-    """
-    Configuration for routed experts in a MoE block.
+    """Configuration for routed experts in a MoE block."""
 
-    .. note::
-        Unlike the rest of the codebase, this config stores dimension-related fields
-        (e.g. ``d_model``, ``hidden_size``, ``num_experts``) directly. Other configs keep
-        such dimensions out of the config and instead receive them only as arguments to
-        :meth:`build` (e.g. ``AttentionConfig.build(d_model, ...)``), so the dimensions live
-        in a single place and flow down from the top-level transformer config. The v2 configs
-        deviate by duplicating the dimensions here. This should be unified in the future to
-        follow the dimension-agnostic ``build(d_model, ...)`` convention.
-    """
-
+    # Input (and output) dimension of the experts
     d_model: int
-    """Input (and output) dimension of the experts."""
 
+    # Hidden (intermediate) dimension of the experts
     hidden_size: int
-    """Hidden (intermediate) dimension of the experts."""
 
+    # Number of routed experts
     num_experts: int
-    """Number of routed experts."""
 
+    # Whether to use bias in the experts
     bias: bool
-    """Whether to use bias in the experts."""
 
+    # default dtype for the experts
     dtype: DType
-    """Default dtype for the experts."""
 
+    # Optional FP8 config used by rowwise EP no-sync path.
     rowwise_fp8: Optional[MoERowwiseFP8Config] = None
-    """Optional FP8 config used by the rowwise EP no-sync path."""
+    activation: ExpertActivation = ExpertActivation.swiglu
+    activation_alpha: float = 1.702
+    activation_limit: Optional[float] = None
 
     def build(
         self,
         init_device: str = "cpu",
     ) -> "RoutedExperts":
-        """
-        Build the corresponding routed-experts module.
-
-        :param init_device: The device to initialize the parameters on, e.g. "cpu", "meta".
-        """
         kwargs = self.as_dict()
         return RoutedExperts(init_device=init_device, **kwargs)
 
     def num_params(self) -> int:
         """
         The number of params that the module will have once built.
+
+        :param d_model: The model dimensionality.
         """
 
-        params = 3 * self.d_model * self.hidden_size  # up, gate, down
+        up_factor = (
+            2
+            if self.activation in (ExpertActivation.swiglu, ExpertActivation.gpt_oss_swiglu)
+            else 1
+        )
+        params = (up_factor + 1) * self.d_model * self.hidden_size  # up[/gate], down
         if self.bias:
-            params += 2 * self.hidden_size  # up and gate bias
+            params += up_factor * self.hidden_size  # up[/gate] bias
             params += self.d_model  # down bias
 
         params *= self.num_experts  # for each expert
@@ -400,9 +448,14 @@ class RoutedExpertsConfig(Config):
                 f"top_k ({top_k}) cannot be greater than num_experts ({self.num_experts})"
             )
 
-        params = 3 * self.d_model * self.hidden_size  # up, gate, down
+        up_factor = (
+            2
+            if self.activation in (ExpertActivation.swiglu, ExpertActivation.gpt_oss_swiglu)
+            else 1
+        )
+        params = (up_factor + 1) * self.d_model * self.hidden_size  # up[/gate], down
         if self.bias:
-            params += 2 * self.hidden_size  # up and gate bias
+            params += up_factor * self.hidden_size  # up[/gate] bias
             params += self.d_model  # down bias
 
         params *= top_k  # for each expert
@@ -419,21 +472,60 @@ class RoutedExperts(nn.Module):
         bias: bool,
         dtype: DType,
         rowwise_fp8: Optional[MoERowwiseFP8Config] = None,
+        activation: ExpertActivation = ExpertActivation.swiglu,
+        activation_alpha: float = 1.702,
+        activation_limit: Optional[float] = None,
         init_device: str = "cpu",
     ):
         super().__init__()
         self.d_model = d_model
         self.hidden_size = hidden_size
         self.num_experts = num_experts
-        assert not bias, "Routed experts do not support bias for now."
+        self.activation = ExpertActivation(activation)
+        self.activation_alpha = float(activation_alpha)
+        self.activation_limit = None if activation_limit is None else float(activation_limit)
+        self.bias = bias
+        up_factor = (
+            2
+            if self.activation in (ExpertActivation.swiglu, ExpertActivation.gpt_oss_swiglu)
+            else 1
+        )
         self.w_up_gate = nn.Parameter(
             torch.empty(
-                num_experts, 2 * hidden_size, d_model, dtype=dtype.as_pt(), device=init_device
+                num_experts,
+                up_factor * hidden_size,
+                d_model,
+                dtype=dtype.as_pt(),
+                device=init_device,
             ),
         )
 
         self.w_down = nn.Parameter(
             torch.empty(num_experts, hidden_size, d_model, dtype=dtype.as_pt(), device=init_device),
+        )
+        self.b_up_gate = (
+            nn.Parameter(
+                torch.empty(
+                    num_experts,
+                    up_factor * hidden_size,
+                    dtype=dtype.as_pt(),
+                    device=init_device,
+                ),
+            )
+            if bias
+            else None
+        )
+        self.b_down = (
+            nn.Parameter(
+                torch.empty(
+                    num_experts,
+                    d_model,
+                    dtype=dtype.as_pt(),
+                    device=init_device,
+                ),
+            )
+            if bias
+            else None
         )
         owner_ref = weakref.ref(self)
         self.w_up_gate._moe_rowwise_fp8_cache_owner = owner_ref  # type: ignore[attr-defined]
@@ -476,11 +568,14 @@ class RoutedExperts(nn.Module):
         self.reset_parameters()
 
     def reset_parameters(self) -> None:
-        # Standalone default; the model-level init may override this with a depth-scaled std
-        # (and an EP generator for the sharded expert weights).
+        # Standalone default; the model-level init (``init_moe_v2``) may override the weights
+        # with a depth-scaled std. Biases are not touched by that init, so zero them here.
         std = 0.02
         for w in (self.w_up_gate, self.w_down):
             nn.init.trunc_normal_(w, mean=0.0, std=std, a=-3 * std, b=3 * std)
+        for b in (self.b_up_gate, self.b_down):
+            if b is not None:
+                nn.init.zeros_(b)
 
     def _sync_rowwise_fp8_weight_anchors(self) -> None:
         fp8_only_params = (
@@ -648,6 +743,10 @@ class RoutedExperts(nn.Module):
         prequantized_input_q: Optional[torch.Tensor] = None,
         prequantized_input_scales: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
+        if self.activation != ExpertActivation.swiglu:
+            raise RuntimeError("rowwise FP8 routed experts currently require swiglu activation")
+        if self.b_up_gate is not None or self.b_down is not None:
+            raise RuntimeError("rowwise FP8 routed experts do not support expert biases")
         cfg = self.rowwise_fp8
         assert cfg is not None
 
@@ -718,7 +817,7 @@ class RoutedExperts(nn.Module):
         return cast(torch.Tensor, down)
 
     # @torch.compiler.disable(recursive=False)
-    @maybe_nvtx_annotate("RoutedExperts.forward", EXPERTS_COLOR)
+    @nvtx.annotate("RoutedExperts.forward", color="blue")
     def forward(
         self,
         x: torch.Tensor,
@@ -726,6 +825,7 @@ class RoutedExperts(nn.Module):
         *,
         down_proj_out: Optional[torch.Tensor] = None,
         up_proj_input_grad_out: Optional[torch.Tensor] = None,
+        row_weights: Optional[torch.Tensor] = None,
         use_rowwise_fp8: bool = False,
         rowwise_fp8_input_q: Optional[torch.Tensor] = None,
         rowwise_fp8_input_scales: Optional[torch.Tensor] = None,
@@ -737,6 +837,17 @@ class RoutedExperts(nn.Module):
         assert isinstance(
             batch_size_per_expert, torch.Tensor
         ), "only accept Tensor for batch_size_per_expert"
+
+        if (down_proj_out is not None or row_weights is not None) and (
+            self.b_up_gate is not None or self.b_down is not None
+        ):
+            # The rowwise EP paths pass capacity-padded buffers with only the valid per-expert
+            # counts, and the down output aliases a symmetric combine buffer. Expert-bias
+            # expansion doesn't match that padded/aliased layout, so require bias-free experts.
+            raise NotImplementedError(
+                "Routed-expert biases are not supported on the rowwise EP path "
+                "(down_proj_out / row_weights); use bias-free routed experts there."
+            )
 
         if requires_host_side_split_sizes():
             # CPU-side split sizes are required by grouped_gemm cublas mode.
@@ -761,18 +872,18 @@ class RoutedExperts(nn.Module):
             return x
 
         if self._use_rowwise_fp8(x, enabled=use_rowwise_fp8):
+            if row_weights is not None:
+                raise RuntimeError(
+                    "row_weights are not supported with rowwise FP8 routed experts yet"
+                )
+            if self.activation != ExpertActivation.swiglu:
+                raise RuntimeError("rowwise FP8 routed experts currently require swiglu activation")
             return self._forward_rowwise_fp8(
                 x,
                 batch_size_per_expert_tensor,
                 prequantized_input_q=rowwise_fp8_input_q,
                 prequantized_input_scales=rowwise_fp8_input_scales,
             )
-        # NOTE: with fp8_only_params=True the bf16 expert anchors are also grad-disabled
-        # (requires_grad=False), so reaching this bf16 fallback *during training* would silently
-        # produce no expert-weight gradients. This guard only catches the storage-released case;
-        # a grad-context-aware guard (raise when grad is enabled but the anchors don't require
-        # grad, without breaking eval, where grad-disabled bf16 is fine) is deferred to the GPU
-        # FP8 correctness pass.
         if (
             self.rowwise_fp8 is not None
             and self.rowwise_fp8.enabled
@@ -790,7 +901,7 @@ class RoutedExperts(nn.Module):
         w_up_gate = self.w_up_gate  # (E, H, 2D)
         w_down = self.w_down  # (E, H, D)
 
-        # up + gate projection
+        # up (+ gate) projection
         up_gate = gmm(
             x,
             w_up_gate,
@@ -800,8 +911,22 @@ class RoutedExperts(nn.Module):
         )  # -> (BS, 2H)
 
         up_gate = cast(torch.Tensor, up_gate)  # ensure type is Tensor
+        if self.b_up_gate is not None:
+            up_gate = up_gate + self._expand_expert_bias(
+                self.b_up_gate,
+                batch_size_per_expert_tensor,
+                output_size=up_gate.shape[0],
+            )
 
-        h = self.chunk_and_activate(up_gate)  # -> (BS, H)
+        num_valid_rows = batch_size_per_expert_tensor.sum()
+        h = self.chunk_and_activate(up_gate, num_elements=num_valid_rows)  # -> (BS, H)
+        if row_weights is not None:
+            if row_weights.numel() != h.shape[0]:
+                raise RuntimeError(
+                    "row_weights must have one value per routed row: "
+                    f"weights={tuple(row_weights.shape)} rows={h.shape[0]}"
+                )
+            h = h * row_weights.reshape(-1, 1).to(dtype=h.dtype)
 
         # down projection
         down = gmm(
@@ -811,36 +936,159 @@ class RoutedExperts(nn.Module):
             trans_b=False,
             out=down_proj_out,
         )  # -> (BS, D)
+        if self.b_down is not None:
+            down = cast(torch.Tensor, down) + self._expand_expert_bias(
+                self.b_down,
+                batch_size_per_expert_tensor,
+                output_size=down.shape[0],
+            )
 
         return cast(torch.Tensor, down)  # ensure type is Tensor
+
+    @nvtx.annotate("RoutedExperts.forward_row_offset", color="blue")
+    def forward_row_offset(
+        self,
+        x: torch.Tensor,
+        batch_size_per_expert: torch.Tensor,
+        *,
+        expert_start: int,
+        expert_end: int,
+        row_start: torch.Tensor,
+        down_proj_out: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        """
+        Forward a contiguous local-expert window in its canonical rowwise-EP rows.
+
+        ``row_start`` is a CUDA scalar holding the first canonical row for
+        ``expert_start``. The grouped-MM data-prep kernel shifts A/C pointers by
+        that scalar, so no activation repack is needed for wave execution.
+        """
+        if torch.is_grad_enabled():
+            raise RuntimeError("forward_row_offset is forward-only and requires no_grad")
+        if requires_host_side_split_sizes():
+            raise RuntimeError("forward_row_offset requires the torch grouped_mm backend")
+        if not use_torch_grouped_mm():
+            raise RuntimeError("forward_row_offset requires torch grouped_mm support")
+        if self.activation != ExpertActivation.swiglu:
+            raise RuntimeError("forward_row_offset currently requires swiglu activation")
+        if self.b_up_gate is not None or self.b_down is not None:
+            raise RuntimeError("forward_row_offset does not support expert biases")
+        if self.rowwise_fp8 is not None and self.rowwise_fp8.enabled:
+            raise RuntimeError("forward_row_offset does not support rowwise FP8 experts yet")
+        if not x.is_cuda:
+            raise RuntimeError("forward_row_offset requires CUDA input")
+        if batch_size_per_expert.device != x.device:
+            raise RuntimeError("batch_size_per_expert must be on the same CUDA device as x")
+        if row_start.device != x.device or row_start.numel() != 1:
+            raise RuntimeError("row_start must be a CUDA scalar on the same device as x")
+        if expert_start < 0 or expert_end > self.num_local_experts or expert_start >= expert_end:
+            raise RuntimeError(
+                f"invalid expert range [{expert_start}, {expert_end}) for {self.num_local_experts} local experts"
+            )
+
+        batch_size_per_expert_tensor = batch_size_per_expert.to(dtype=torch.int32)
+        batch_size_window = batch_size_per_expert_tensor[int(expert_start) : int(expert_end)]
+        num_valid_rows = batch_size_window.sum()
+
+        up_gate = torch.empty(
+            (x.shape[0], self.w_up_gate.shape[1]),
+            device=x.device,
+            dtype=x.dtype,
+        )
+        grouped_mm_row_offset(
+            x,
+            self.w_up_gate[int(expert_start) : int(expert_end)].transpose(1, 2),
+            batch_size_window,
+            row_start=row_start,
+            out=up_gate,
+        )
+
+        h = self.chunk_and_activate(
+            up_gate,
+            num_elements=num_valid_rows,
+            start=row_start,
+        )
+        if down_proj_out is None:
+            down_proj_out = torch.empty(
+                (x.shape[0], self.w_down.shape[2]),
+                device=x.device,
+                dtype=x.dtype,
+            )
+        grouped_mm_row_offset(
+            h,
+            self.w_down[int(expert_start) : int(expert_end)],
+            batch_size_window,
+            row_start=row_start,
+            out=down_proj_out,
+        )
+        return down_proj_out
 
     def act_and_down(
         self, up_gate: torch.Tensor, batch_size_per_expert_tensor: torch.Tensor
     ) -> torch.Tensor:
         # swiglu + down projection
         # so that it apply activation checkpointing if needed
-        h = self.chunk_and_activate(up_gate)  # -> (BS, H)
+        if self.b_up_gate is not None:
+            up_gate = up_gate + self._expand_expert_bias(
+                self.b_up_gate,
+                batch_size_per_expert_tensor,
+                output_size=up_gate.shape[0],
+            )
+        num_valid_rows = batch_size_per_expert_tensor.sum()
+        h = self.chunk_and_activate(up_gate, num_elements=num_valid_rows)  # -> (BS, H)
 
         down = gmm(h, self.w_down, batch_size_per_expert_tensor, trans_b=False)  # -> (BS, H)
+        if self.b_down is not None:
+            down = down + self._expand_expert_bias(
+                self.b_down,
+                batch_size_per_expert_tensor,
+                output_size=down.shape[0],
+            )
         return down
 
-    def chunk_and_activate(self, up_gate: torch.Tensor) -> torch.Tensor:
-        # NOTE: this might include pad tokens, but I decide not to exlude pads:
-        # 1 chunk_and_activate is cheap relative to MoE GEMMs, even at 2x capacity.
-        # 2 Excluding tail pads without sync is hard with stock PyTorch ops;
-        #   true compute-skipping usually needs dynamic slicing (.item() sync) or a custom kernel.
-        # 3 Extra pad-handling ops can cost more than just doing SiLU on full buffer.
-        up, gate = up_gate.chunk(2, dim=-1)
-        h = up * F.silu(gate)  # -> (BS, H)
+    @staticmethod
+    def _expand_expert_bias(
+        bias: torch.Tensor,
+        batch_size_per_expert_tensor: torch.Tensor,
+        *,
+        output_size: Optional[int] = None,
+    ) -> torch.Tensor:
+        repeats = batch_size_per_expert_tensor.to(device=bias.device, dtype=torch.long)
+        return torch.repeat_interleave(bias, repeats, dim=0, output_size=output_size)
+
+    def chunk_and_activate(
+        self,
+        up_gate: torch.Tensor,
+        *,
+        num_elements: Optional[torch.Tensor] = None,
+        start: torch.Tensor | int | None = None,
+    ) -> torch.Tensor:
+        # Forward-only EP can skip padded tail rows with a custom kernel while
+        # keeping training on the autograd-backed PyTorch activation.
+        if self.activation == ExpertActivation.swiglu:
+            if (
+                num_elements is not None
+                and up_gate.is_cuda
+                and num_elements.device == up_gate.device
+                and not torch.is_grad_enabled()
+            ):
+                return swiglu_valid_prefix(up_gate, num_elements, start=start)
+            up, gate = up_gate.chunk(2, dim=-1)
+            h = up * F.silu(gate)  # -> (BS, H)
+        elif self.activation == ExpertActivation.gpt_oss_swiglu:
+            gate = up_gate[..., ::2]
+            up = up_gate[..., 1::2]
+            if self.activation_limit is not None:
+                gate = gate.clamp(max=self.activation_limit)
+                up = up.clamp(min=-self.activation_limit, max=self.activation_limit)
+            h = (up + 1.0) * gate * torch.sigmoid(gate * self.activation_alpha)
+        elif self.activation == ExpertActivation.relu2:
+            h = F.relu(up_gate).square()
+        else:
+            raise NotImplementedError(self.activation)
         return h
 
     def apply_ep(self, ep_mesh: DeviceMesh, **kwargs):
-        # NOTE: this allocates each rank's local expert shard as fresh (uninitialized) storage
-        # rather than scattering an already-initialized weight — expert parallelism is applied
-        # before init/load, and the sharded params are filled afterward by the model-level init
-        # (init_moe_v2, with an EP generator) or a checkpoint load.
-        # NOTE: the ep_dp/ep_mp mesh dim names must be reconciled with the repo's EP mesh builder
-        # (get_ep_mesh) when the EP train-module integration lands.
         # shard dim 0 to ep_mp, replicate on ep_dp mesh
         self.ep_mesh = ep_mesh["ep_dp", "ep_mp"]
         # with torch.no_grad():  # just to avoid tracking the rebind below
@@ -852,10 +1100,15 @@ class RoutedExperts(nn.Module):
         ), "num_experts must be divisible by the number of expert partitions"
         self.num_local_experts = self.num_experts // self.ep_dim
 
+        up_factor = (
+            2
+            if self.activation in (ExpertActivation.swiglu, ExpertActivation.gpt_oss_swiglu)
+            else 1
+        )
         self.w_up_gate = nn.Parameter(
             torch.empty(
                 self.num_local_experts,
-                2 * self.hidden_size,
+                up_factor * self.hidden_size,
                 self.d_model,
                 dtype=self.w_up_gate.dtype,
                 device=self.w_up_gate.device,
@@ -871,6 +1124,24 @@ class RoutedExperts(nn.Module):
                 device=self.w_down.device,
             ),
         )
+        if self.bias:
+            assert self.b_up_gate is not None and self.b_down is not None
+            self.b_up_gate = nn.Parameter(
+                torch.empty(
+                    self.num_local_experts,
+                    up_factor * self.hidden_size,
+                    dtype=self.b_up_gate.dtype,
+                    device=self.b_up_gate.device,
+                ),
+            )
+            self.b_down = nn.Parameter(
+                torch.empty(
+                    self.num_local_experts,
+                    self.d_model,
+                    dtype=self.b_down.dtype,
+                    device=self.b_down.device,
+                ),
+            )
         owner_ref = weakref.ref(self)
         self.w_up_gate._moe_rowwise_fp8_cache_owner = owner_ref  # type: ignore[attr-defined]
         self.w_down._moe_rowwise_fp8_cache_owner = owner_ref  # type: ignore[attr-defined]

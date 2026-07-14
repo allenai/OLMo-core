@@ -295,6 +295,8 @@ class InitMethod(StrEnum):
                 b=3 * std,
                 generator=generator,
             )
+            if b.shared_experts_router.bias is not None:
+                _apply_init(nn.init.zeros_, b.shared_experts_router.bias)
         if b.routed_experts_router:
             _apply_init(
                 nn.init.trunc_normal_,
@@ -305,6 +307,8 @@ class InitMethod(StrEnum):
                 b=3 * std,
                 generator=generator,
             )
+            if b.routed_experts_router.bias is not None:
+                _apply_init(nn.init.zeros_, b.routed_experts_router.bias)
 
         if b.routed_experts:
             # The routed expert weights may be sharded across the expert-parallel mesh, so use the
@@ -327,6 +331,10 @@ class InitMethod(StrEnum):
                 b=3 * std,
                 generator=ep_generator,
             )
+            if b.routed_experts.b_up_gate is not None:
+                _apply_init(nn.init.zeros_, b.routed_experts.b_up_gate)
+            if b.routed_experts.b_down is not None:
+                _apply_init(nn.init.zeros_, b.routed_experts.b_down)
 
         if b.shared_experts:
             _apply_init(

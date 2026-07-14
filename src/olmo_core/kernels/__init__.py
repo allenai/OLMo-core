@@ -7,6 +7,7 @@ not require a GPU or a compiler.
 """
 
 from .grouped_mm import grouped_mm
+from .grouped_mm_row_offset import grouped_mm_row_offset
 from .mxfp8_tensor import OlmoMXFP8Tensor
 from .scaled_grouped_mm import (
     ScaledGroupedMMPrequantizedLHS,
@@ -18,6 +19,7 @@ from .scaled_grouped_mm import (
 
 __all__ = [
     "grouped_mm",
+    "grouped_mm_row_offset",
     "OlmoMXFP8Tensor",
     "ScaledGroupedMMPrequantizedLHS",
     "ScaledGroupedMMPrequantizedRHS",

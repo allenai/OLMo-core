@@ -114,7 +114,7 @@ def _install_forced_router(block: OLMoDDPTransformerBlock):
         return _forced_forward
 
     assert block.routed_experts_router is not None
-    block.routed_experts_router.forward = _make_forced_forward(block.routed_experts_router)
+    block.routed_experts_router.forward = _make_forced_forward(block.routed_experts_router)  # type: ignore[method-assign]
 
 
 def _run_ep_no_sync_drop_behavior():

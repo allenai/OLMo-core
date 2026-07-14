@@ -7,6 +7,7 @@ from olmo_core.doc_utils import beta_feature
 from olmo_core.nn.attention import Attention
 from olmo_core.nn.attention.recurrent import GatedDeltaNet
 from olmo_core.nn.moe.mlp import DroplessMoEMLP, MoEMLP
+from olmo_core.nn.moe.router import MoERouterGatingFunction
 from olmo_core.nn.rope import RoPEScalingConfig
 from olmo_core.nn.transformer.block import (
     MoEReorderedNormTransformerBlock,
@@ -195,12 +196,57 @@ def _get_olmo3moe_config(model: "MoEFusedV2Transformer") -> PretrainedConfig:
 
     routed_experts = moe_block.routed_experts
     router = moe_block.routed_experts_router
-    # Selection modifiers change which experts a token routes to at inference; the HF router has no
-    # equivalent state, so exporting them would silently diverge.
-    if router.bias_gamma is not None or router.use_quant_scores:
+    # Selection modifiers change which experts a token routes to at inference. The HF Olmo3Moe
+    # router only implements plain softmax/sigmoid gating with no score-bias or group-masking
+    # path, so exporting any of these would silently diverge (or crash on the first HF forward).
+    unsupported_modifiers = []
+    if router.bias_gamma is not None:
+        unsupported_modifiers.append("bias_gamma")
+    if router.score_correction_bias:
+        unsupported_modifiers.append("score_correction_bias")
+    if router.gating_function not in (
+        MoERouterGatingFunction.softmax,
+        MoERouterGatingFunction.sigmoid,
+    ):
+        unsupported_modifiers.append(f"gating_function={router.gating_function.value}")
+    if router.n_group is not None or router.topk_group is not None:
+        unsupported_modifiers.append("grouped routing (n_group/topk_group)")
+    # ``expert_weight_scale`` multiplies the selected expert weights in the router forward, but the
+    # HF Olmo3Moe router has no corresponding field/multiply. (``original_top_k`` and
+    # ``restore_weight_scale`` ARE representable — they map to the HF config below.)
+    if router.expert_weight_scale is not None:
+        unsupported_modifiers.append("expert_weight_scale")
+    # The HF sigmoid router hard-codes a 1e-7 stability epsilon, so a different value would route
+    # with different weights after export.
+    if (
+        router.gating_function == MoERouterGatingFunction.sigmoid
+        and router.sigmoid_stability_epsilon != 1e-7
+    ):
+        unsupported_modifiers.append(
+            f"sigmoid_stability_epsilon={router.sigmoid_stability_epsilon}"
+        )
+    if unsupported_modifiers:
         raise NotImplementedError(
-            "Exporting olmo3moe with router selection modifiers (bias_gamma / use_quant_scores) "
-            "is not supported."
+            f"Exporting olmo3moe with router selection modifiers "
+            f"({', '.join(unsupported_modifiers)}) is not supported."
+        )
+
+    # The HF olmo3moe router/expert linears are bias-free and the converter only copies
+    # contiguous SwiGLU up/gate weights, so biased or non-SwiGLU experts can't be represented.
+    if router.bias is not None:
+        raise NotImplementedError("Exporting olmo3moe with a biased router is not supported.")
+    if routed_experts.bias:
+        raise NotImplementedError("Exporting olmo3moe with biased routed experts is not supported.")
+    if routed_experts.activation.value != "swiglu":
+        raise NotImplementedError(
+            f"Exporting olmo3moe with routed-expert activation "
+            f"{routed_experts.activation.value!r} is not supported (only SwiGLU)."
+        )
+    shared_experts = moe_block.shared_experts
+    if shared_experts is not None and shared_experts.activation.value != "swiglu":
+        raise NotImplementedError(
+            f"Exporting olmo3moe with shared-expert activation "
+            f"{shared_experts.activation.value!r} is not supported (only SwiGLU)."
         )
 
     # Dense MLP intermediate size, if there are any dense layers.
