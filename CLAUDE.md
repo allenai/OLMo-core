@@ -140,6 +140,12 @@ python src/scripts/train/OLMo2-1B.py dry_run test-run ai2/titan-cirrascale
 python src/scripts/train/OLMo2-1B.py launch olmo2-1b-test ai2/jupiter-cirrascale-2 --launch.num_nodes=4
 ```
 
+## Deprecated scripts
+
+Retired scripts live in `deprecated/` (mirroring their old repo-relative path) with a README row
+saying why and what replaces them — see `deprecated/README.md` for the convention. Never use or
+reference anything in there; when you retire a script, `git mv` it in and log it.
+
 ## Local (Berkeley) cluster
 
 We also train/eval on Berkeley slurm H200 nodes without AI2 infra (no weka, no Beaker). The full
