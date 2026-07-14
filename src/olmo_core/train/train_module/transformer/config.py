@@ -450,6 +450,10 @@ class TransformerTrainModuleConfig(TrainModuleConfig):
             )
         else:
             if eval_only:
+                # TODO(dense-train-module-eval-only): add eval_only support to TransformerTrainModule
+                # so eval_checkpoints works for dense models. Needs the __init__ to skip the
+                # optimizer build and make self.optim optional (guarding state_dict + the
+                # train-only step/zero_grads paths), mirroring the pipeline / OLMoDDP modules.
                 raise OLMoConfigurationError(
                     "TransformerTrainModule does not support eval_only=True yet; use a pipeline "
                     "or OLMoDDP train module for eval-only workflows such as eval_checkpoints."
