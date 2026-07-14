@@ -105,7 +105,7 @@ chance and the failure looks exactly like a modeling result.
 
 **Before any document-chunked / landmark training from a fresh base, run
 `src/scripts/data/fix_marker_embeddings.py` on the checkpoint and train from the repaired copy.** The
-tokenized shards are correct — do NOT rebuild data. See `document-chunked-marker-embeddings.md` for
+tokenized shards are correct — do NOT rebuild data. See `records/document-chunked-marker-embeddings.md` for
 the full diagnosis, the one-line check for whether a base is affected, and the validation numbers.
 
 ### Distributed Training (`src/olmo_core/distributed/`)
@@ -145,6 +145,12 @@ python src/scripts/train/OLMo2-1B.py launch olmo2-1b-test ai2/jupiter-cirrascale
 Retired scripts live in `deprecated/` (mirroring their old repo-relative path) with a README row
 saying why and what replaces them — see `deprecated/README.md` for the convention. Never use or
 reference anything in there; when you retire a script, `git mv` it in and log it.
+
+## Records (standalone writeups)
+
+Experiment diagnoses, task briefs, and setup notes live in `records/` (see its README for the
+index). New writeups of this kind go there — the repo root keeps only
+README/CHANGELOG/CONTRIBUTING/CLAUDE.md/local_cluster.md.
 
 ## Local (Berkeley) cluster
 

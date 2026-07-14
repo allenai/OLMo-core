@@ -9,7 +9,7 @@
 #
 # Base MUST be the marker-repaired (-fixmark) checkpoint: on a stock Qwen3 base the
 # <|box_start|>/<|box_end|> rows are bit-identical (never trained), which at 100 docs yields low train
-# CE but ~0 held-out f1. See document-chunked-marker-embeddings.md.
+# CE but ~0 held-out f1. See records/document-chunked-marker-embeddings.md.
 #
 #   bash src/scripts/train/sft/run_q06b_goldgrad_local.sh n100
 #   bash src/scripts/train/sft/run_q06b_goldgrad_local.sh n20

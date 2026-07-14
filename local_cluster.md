@@ -117,7 +117,7 @@ replicate the three inputs:
      instead of ~1–2).
    - **Repair the marker embeddings first** for any document-chunked/landmark run:
      `src/scripts/data/fix_marker_embeddings.py` on the base, train from the repaired copy
-     (see CLAUDE.md and `document-chunked-marker-embeddings.md`).
+     (see CLAUDE.md and `records/document-chunked-marker-embeddings.md`).
 3. **Standalone torchrun launcher.** A `*-SFT-local.py` script builds the configs and calls
    `trainer.fit()` directly with local paths (mirrors `internal/experiment.py::train`), wrapped by
    an sbatch file. Every launcher takes env overrides:

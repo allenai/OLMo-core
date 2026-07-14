@@ -70,5 +70,5 @@ cat <<EOF
   # data is on weka (mounted in jobs) at: /weka/oe-training-default/ai2-llm/checkpoints/prasanns/cr_suite_data
 
 You can now drive the whole pipeline from here (gantry/launch jobs run on Beaker; nothing
-GPU-local needed). See instruction-tuning-setup.md for the pipeline + weka pointers.
+GPU-local needed). See records/instruction-tuning-setup.md for the pipeline + weka pointers.
 EOF

@@ -71,7 +71,7 @@ regression (pre-CP vs CP code) on the fast-landmark CPT ckpt: **identical** (nia
   64k via Ulysses CP (shards activations). Enabled in the unified + packed fast/sparse scripts.
 - **Eval top-k**: landmark decode now defaults to **hard top-k retrieval, top 10%**
   (`GenerationConfig.landmark_top_k_fraction=0.1`).
-- **GPU-agent briefs** (repo root, hand to a CUDA box): `landmark-packing-cp-task.md` (✅ done),
+- **GPU-agent briefs** (`records/`, hand to a CUDA box): `landmark-packing-cp-task.md` (✅ done),
   `landmark-sparse-decode-task.md` (TODO — make top-k decode O(k·block) not O(context); the real
   long-ctx eval speedup).
 

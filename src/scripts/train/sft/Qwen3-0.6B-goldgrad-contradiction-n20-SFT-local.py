@@ -87,7 +87,7 @@ from olmo_core.data.document_chunk_landmark import (  # canonical ids -- never r
 # MUST be a marker-REPAIRED (-fixmark) base: Qwen3 never trains the <|box_start|>/<|box_end|> rows, so
 # on a stock base they are bit-identical (cos=1.0) and the model cannot perceive document structure.
 # With 100 docs (200 markers) that silently produces low train CE but ~0 held-out f1 -- a broken-base
-# artifact that reads exactly like a modeling result. See document-chunked-marker-embeddings.md.
+# artifact that reads exactly like a modeling result. See records/document-chunked-marker-embeddings.md.
 BASE_CHECKPOINT = (
     "/scratch/users/prasann/cpt_mix_ckpts/q06b-dense-cpt-modelonly-fixmark/model_and_optim"
 )
