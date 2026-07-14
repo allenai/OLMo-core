@@ -215,6 +215,7 @@ class SpeedMonitorCallback(Callback):
             flops_ps_avg = self._total_flops / total_time
             self.trainer.record_metric("throughput/device/flopsPS", flops_ps)
             self.trainer.record_metric("throughput/device/flopsPS (actual avg)", flops_ps_avg)
+            self.trainer.record_metric("throughput/device/TFLOPs_per_GPU", flops_ps / 1e12)
             self.trainer.record_metric(
                 "throughput/total petaflops", self.trainer.global_train_petaflops
             )
@@ -242,7 +243,5 @@ class SpeedMonitorCallback(Callback):
             mfu = 100 * flops_ps / self.device_peak_flops_per_second
             mfu_avg = 100 * flops_ps_avg / self.device_peak_flops_per_second
             self._mfu_avg = mfu_avg
-            tflops_per_gpu = flops_ps / 1e12
             self.trainer.record_metric("throughput/device/MFU", mfu)
             self.trainer.record_metric("throughput/device/MFU (actual avg)", mfu_avg)
-            self.trainer.record_metric("throughput/device/TFLOPs_per_GPU", tflops_per_gpu)
