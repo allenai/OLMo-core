@@ -1102,6 +1102,7 @@ class OLMoDDPTrainModule(TrainModule):
         # Persistent model buffers (e.g. the router's aux-loss-free score_bias) are not optimizer
         # state, so they must be added to the checkpoint explicitly; optim.load_state_dict() below
         # only round-trips the optimizer keys.
+        # TODO review
         save_dict = dict(state_dict)
         for key, buffer in self._persistent_model_buffer_state_dict().items():
             assert key not in save_dict, f"Buffer key '{key}' collides with an optimizer state key"
