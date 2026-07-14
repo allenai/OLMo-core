@@ -140,6 +140,13 @@ python src/scripts/train/OLMo2-1B.py dry_run test-run ai2/titan-cirrascale
 python src/scripts/train/OLMo2-1B.py launch olmo2-1b-test ai2/jupiter-cirrascale-2 --launch.num_nodes=4
 ```
 
+## Local (Berkeley) cluster
+
+We also train/eval on Berkeley slurm H200 nodes without AI2 infra (no weka, no Beaker). The full
+pipeline — nodes/QOS, the NFS-vs-`/data` rule, env setup, the weka-free training recipe, and the
+known traps — is documented in `local_cluster.md`. Read it before touching any `*local*.sbatch`
+launcher or debugging a hung/crashed local run.
+
 ## Docker and Beaker Launch
 
 The Docker image (`src/Dockerfile`) is a two-stage build: a `build` stage compiles GPU-specific dependencies (flash-attn, TransformerEngine, grouped_gemm, ring-flash-attn, etc.) on an NVIDIA CUDA devel image, and a `release` stage copies the conda environment into a lighter Ubuntu base with AWS CLI, Google Cloud SDK, and MLNX OFED drivers. The image contains all dependencies but *not* the OLMo-core package itself — source code is cloned at runtime.
