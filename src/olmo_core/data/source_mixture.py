@@ -214,23 +214,17 @@ class SourceMixtureDataset:  # Note: "dataset" naming is a bit inconsistent with
     A list of sources and their associated paths and token counts.
     """
 
-    filter_zero_token_paths: bool = False
-    """
-    If ``True``, drop paths that contribute zero tokens from :meth:`to_index` and :meth:`to_paths`.
-    Defaults to ``False`` to preserve the historical path indexing (zero-token paths produce no
-    instances downstream anyway, but keeping them keeps the ``(path, idx)`` numbering stable).
-    """
-
     def selected_path_tokens(self) -> List[SourcePathTokens]:
         """
-        Flatten the mixture to its per-path token counts, optionally dropping zero-token paths
-        (see :data:`filter_zero_token_paths`). Both :meth:`to_index` and :meth:`to_paths` route
-        through this so their ``idx`` ordering stays aligned.
+        Flatten the mixture to the paths that contribute at least one token. Both :meth:`to_index`
+        and :meth:`to_paths` route through this so their ``idx`` ordering stays aligned; zero-token
+        paths are dropped since they produce no instances downstream.
         """
-        path_tokens = list(chain.from_iterable(outcome.path_tokens for outcome in self.sources))
-        if self.filter_zero_token_paths:
-            path_tokens = [item for item in path_tokens if item.tokens > 0]
-        return path_tokens
+        return [
+            item
+            for item in chain.from_iterable(outcome.path_tokens for outcome in self.sources)
+            if item.tokens > 0
+        ]
 
     def to_index(self) -> Dict[Tuple[str, int], int]:
         """

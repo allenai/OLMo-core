@@ -2779,10 +2779,6 @@ class NumpyFSLDatasetConfig(NumpyDatasetConfig):
             mixture = self.source_mixture_config.build(
                 npdtype=self.get_dtype(), sequence_length=self.sequence_length
             )
-            # Drop paths that were sampled to zero tokens so the mixture's path index stays tight:
-            # they produce no instances downstream, and the prep loop would otherwise carry them as
-            # no-ops. to_paths()/to_index() filter together, so their idx ordering stays aligned.
-            mixture.filter_zero_token_paths = True
             dataset = NumpyFSLDatasetMixture(
                 *mixture.to_paths(),
                 seed=self.source_mixture_config.seed,
