@@ -133,11 +133,16 @@ class SpeedMonitorCallback(Callback):
             device_name = torch.cuda.get_device_name(self.trainer.device)
 
             tm = self.trainer.train_module
-            # OLMoDDP (MoE) always runs experts/activations in bfloat16.
+            # The device FLOP table is for FP16/BF16 Tensor Core peaks, so treat either as half
+            # precision. OLMoDDP (MoE) always runs experts/activations in bfloat16.
+            half_precision_dtypes = (torch.bfloat16, torch.float16)
             using_half_precision = (
                 isinstance(tm, OLMoDDPTrainModule)
-                or tm.autocast_precision == torch.bfloat16
-                or (tm.dp_config is not None and tm.dp_config.param_dtype == DType.bfloat16)
+                or tm.autocast_precision in half_precision_dtypes
+                or (
+                    tm.dp_config is not None
+                    and tm.dp_config.param_dtype in (DType.bfloat16, DType.float16)
+                )
             )
             self.device_peak_flops_per_second = get_device_peak_flops_per_second(
                 device_name, using_half_precision=using_half_precision
