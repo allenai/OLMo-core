@@ -1,4 +1,14 @@
 """
+.. deprecated::
+    ``DilatedSlidingWindowAttention`` (``AttentionType.dilated_sliding_window``) -- the *positional*
+    "Hierarchical K" rotating-dilation window -- is **deprecated and no longer supported**;
+    constructing it (or selecting it via config) raises :class:`NotImplementedError`. Use the
+    document-chunked hierarchical-dilated pattern instead:
+    :class:`~olmo_core.nn.attention.document_chunked.DocumentChunkedAttention` with
+    ``cross_doc_mode="hierarchical_dilated"``, which ports the same rotating per-layer dilation
+    schedule (via ``dilation_cycle``) to document granularity with FREE tokens and document
+    boundaries. The functions/classes below are retained only for reference and back-compat imports.
+
 ``DilatedSlidingWindowAttention`` -- a **dilated causal sliding-window** mask whose dilation stride
 *rotates with transformer depth* ("Hierarchical K"). Each layer attends to only ``K`` keys per query
 (so attention stays ``O(N*K)`` per layer), but the spacing between those keys grows geometrically as
@@ -174,6 +184,14 @@ class DilatedSlidingWindowAttention(Attention):
         softmax_scale: Optional[float] = None,
         **kwargs,
     ):
+        raise NotImplementedError(
+            "DilatedSlidingWindowAttention (AttentionType.dilated_sliding_window, the *positional* "
+            "'Hierarchical K' rotating-dilation window) is DEPRECATED and no longer supported. Use the "
+            "document-chunked hierarchical-dilated pattern instead: DocumentChunkedAttention with "
+            "cross_doc_mode='hierarchical_dilated' (document-granularity, rotating per-layer dilation "
+            "via 'dilation_cycle', with FREE tokens and document boundaries). See "
+            "olmo_core.nn.attention.chunked_mask.build_chunked_allowed_mask."
+        )
         if kwargs.get("window_size") is not None:
             raise OLMoConfigurationError(
                 "DilatedSlidingWindowAttention does not support the flash sliding-window "

@@ -63,6 +63,8 @@ class DocumentLandmarkAttention(LandmarkAttention):
     :param doc_window_k: Window size for the ``"doc_window"`` pattern.
     :param token_window_w: Window width for the ``"token_window"`` pattern.
     :param dilation_n: Documents attended per layer for the ``"hierarchical_dilated"`` pattern.
+    :param dilation_cycle: Rotation period ``L`` for the ``"hierarchical_dilated"`` pattern (the stride
+        rotates with depth as ``layer_idx % L``). Defaults to 3.
     :param dilation_m: Dilation base for the ``"hierarchical_dilated"`` pattern (stride
         ``m**layer_idx``, saturated once the span covers all history).
     :param dilation_max_docs: Optional fixed saturation reference for ``"hierarchical_dilated"``
@@ -107,6 +109,7 @@ class DocumentLandmarkAttention(LandmarkAttention):
         token_window_w: int = 0,
         dilation_n: int = 2,
         dilation_m: int = 2,
+        dilation_cycle: int = 3,
         dilation_max_docs: Optional[int] = None,
         layer_idx: int = 0,
         n_layers: int = 1,
@@ -135,6 +138,7 @@ class DocumentLandmarkAttention(LandmarkAttention):
             token_window_w=token_window_w,
             dilation_n=dilation_n,
             dilation_m=dilation_m,
+            dilation_cycle=dilation_cycle,
             dilation_max_docs=dilation_max_docs,
         )
         # Transient per-forward chunk roles, stashed by ``forward`` for ``_landmark_masks`` to read.

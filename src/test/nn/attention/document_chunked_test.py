@@ -15,7 +15,7 @@ from olmo_core.nn.layer_norm import LayerNormConfig
 from olmo_core.nn.rope import RoPEConfig, RoPEType
 
 
-def _attention(name: AttentionType, *, cross_doc_mode=None, **kw):
+def _attention(name: AttentionType, *, cross_doc_mode=None, layer_idx=0, n_layers=1, **kw):
     config = AttentionConfig(
         name=name,
         n_heads=8,
@@ -28,7 +28,7 @@ def _attention(name: AttentionType, *, cross_doc_mode=None, **kw):
         rope=RoPEConfig(name=RoPEType.default, theta=10_000),
         **kw,
     )
-    return config.build(64, layer_idx=0, n_layers=1)
+    return config.build(64, layer_idx=layer_idx, n_layers=n_layers)
 
 
 def _doc_chunked_attention(*, cross_doc_mode: str = "chunked", **kw):
@@ -104,6 +104,62 @@ def test_document_chunked_eager_training_backward():
     x = torch.randn(1, 12, 64, requires_grad=True)
     attn(x, chunk_ids=CHUNK_IDS).sum().backward()
     assert x.grad is not None and torch.isfinite(x.grad).all()
+
+
+# ---------------------------------------------------------------------------
+# Hybrid full/chunked: designated layers ignore the chunked mask and run plain causal attention.
+# ---------------------------------------------------------------------------
+
+
+def test_full_attention_layers_flag_resolves_per_layer():
+    # full_attention_layers=[0, -1] over a 4-layer stack: layers 0 and 3 are full, 1 and 2 chunked.
+    flags = {
+        li: AttentionConfig(
+            name=AttentionType.document_chunked,
+            n_heads=8,
+            n_kv_heads=2,
+            head_dim=8,
+            bias=False,
+            full_attention_layers=[0, -1],
+            rope=RoPEConfig(name=RoPEType.default, theta=10_000),
+        )
+        .build(64, layer_idx=li, n_layers=4)
+        ._is_full_attention_layer
+        for li in range(4)
+    }
+    assert flags == {0: True, 1: False, 2: False, 3: True}
+
+
+def test_full_attention_layer_matches_plain_causal():
+    # A layer marked full-attention must reduce to ordinary causal attention even when chunk_ids are
+    # passed (the roles are ignored), while a chunked layer with the same weights must differ.
+    full = _doc_chunked_attention(full_attention_layers=[0], n_layers=1)
+    chunked = _doc_chunked_attention(n_layers=1)
+    base = _attention(AttentionType.default)
+    base.load_state_dict(full.state_dict())
+    chunked.load_state_dict(full.state_dict())
+    for m in (full, chunked, base):
+        m.eval()
+    x = torch.randn(1, 12, 64)
+    with torch.no_grad():
+        out_full = full(x, chunk_ids=CHUNK_IDS)
+        out_base = base(x)
+        out_chunked = chunked(x, chunk_ids=CHUNK_IDS)
+    # Full-attention layer ignores chunk_ids -> identical to plain causal attention.
+    assert torch.allclose(out_full, out_base, atol=1e-5)
+    # ... and genuinely different from the chunked masking (sanity that the mask normally bites).
+    assert not torch.allclose(out_full, out_chunked, atol=1e-4)
+
+
+def test_full_attention_layers_out_of_range_rejected():
+    with pytest.raises(OLMoConfigurationError):
+        _doc_chunked_attention(full_attention_layers=[5], n_layers=4)
+
+
+def test_full_attention_layers_requires_document_chunked():
+    # The knob is document_chunked-only; setting it on plain attention must be rejected by the config.
+    with pytest.raises(OLMoConfigurationError):
+        _attention(AttentionType.default, full_attention_layers=[0])
 
 
 # ---------------------------------------------------------------------------
@@ -222,3 +278,76 @@ def test_random_doc_pattern_dense_flex_parity_and_semantics():
     M0 = build_chunked_allowed_mask(AttentionPattern(name="random_doc", doc_keep_prob=0.0), cids)[0]
     Mc = build_chunked_allowed_mask(AttentionPattern(name="chunked"), cids)[0]
     assert bool((M0 == Mc).all())
+
+
+# --- Qwen3.5 hybrid (Gated DeltaNet + full attention) document_chunked wiring ---------------
+
+
+def _qwen35_attn_layers(model):
+    return [
+        int(k)
+        for k, b in model.blocks.items()
+        if isinstance(getattr(b, "attention", None), DocumentChunkedAttention)
+    ]
+
+
+@pytest.mark.parametrize(
+    "cross_doc_mode,extra",
+    [
+        ("chunked", {}),
+        ("hierarchical_dilated", dict(dilation_n=4, dilation_m=2, dilation_cycle=3)),
+        ("random_doc", dict(doc_keep_prob=0.5, random_doc_seed=42)),
+    ],
+)
+def test_qwen3_5_document_chunked_only_on_full_attn_layers(cross_doc_mode, extra):
+    """``document_chunked=True`` applies DocumentChunkedAttention to Qwen3.5's 6 full-attention
+    blocks (layers 3, 7, 11, 15, 19, 23) only; the 18 Gated DeltaNet blocks are untouched."""
+    from olmo_core.nn.attention import AttentionBackendName
+    from olmo_core.nn.attention.recurrent import GatedDeltaNet
+    from olmo_core.nn.transformer import TransformerConfig
+
+    config = TransformerConfig.qwen3_5_0_8B(
+        vocab_size=248320,
+        document_chunked=True,
+        cross_doc_mode=cross_doc_mode,
+        attn_backend=AttentionBackendName.flash_2,
+        **extra,
+    )
+    model = config.build(init_device="meta")
+    assert _qwen35_attn_layers(model) == [3, 7, 11, 15, 19, 23]
+    gdn = [
+        k
+        for k, b in model.blocks.items()
+        if isinstance(getattr(b, "attention", None), GatedDeltaNet)
+    ]
+    assert len(gdn) == 18
+    assert model.blocks["3"].attention.cross_doc_mode == cross_doc_mode
+
+
+def test_qwen3_5_document_chunked_config_roundtrip():
+    """The saved config.json must round-trip so eval reloads the full-attn layers as chunked."""
+    from olmo_core.nn.attention import AttentionBackendName
+    from olmo_core.nn.transformer import TransformerConfig
+
+    config = TransformerConfig.qwen3_5_0_8B(
+        vocab_size=248320,
+        document_chunked=True,
+        cross_doc_mode="chunked",
+        attn_backend=AttentionBackendName.flash_2,
+    )
+    rebuilt = TransformerConfig.from_dict(config.as_config_dict()).build(init_device="meta")
+    assert _qwen35_attn_layers(rebuilt) == [3, 7, 11, 15, 19, 23]
+    assert rebuilt.blocks["3"].attention.cross_doc_mode == "chunked"
+
+
+def test_qwen3_5_document_chunked_validation():
+    from olmo_core.nn.transformer import TransformerConfig
+
+    with pytest.raises(OLMoConfigurationError):  # cross_doc_mode requires document_chunked
+        TransformerConfig.qwen3_5_0_8B(vocab_size=248320, cross_doc_mode="chunked")
+    with pytest.raises(OLMoConfigurationError):  # dilation_* requires hierarchical_dilated
+        TransformerConfig.qwen3_5_0_8B(
+            vocab_size=248320, document_chunked=True, cross_doc_mode="chunked", dilation_n=3
+        )
+    with pytest.raises(OLMoConfigurationError):  # full_attention_layers requires document_chunked
+        TransformerConfig.qwen3_5_0_8B(vocab_size=248320, full_attention_layers=[0])

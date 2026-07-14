@@ -26,7 +26,7 @@ Two emitters consume those segments:
 
 import logging
 import re
-from typing import List, NamedTuple, Optional, Pattern, Tuple
+from typing import Dict, List, NamedTuple, Optional, Pattern, Tuple
 
 log = logging.getLogger(__name__)
 
@@ -36,18 +36,111 @@ __all__ = [
     "DOC_END_ID",
     "DOC_START_STR",
     "DOC_END_STR",
+    "EOS_TOKEN_ID",
+    "LANDMARK_TOKEN_ID",
+    "PAD_TOKEN_ID",
+    "REAL_VOCAB_SIZE",
+    "RESERVED_IDS",
+    "ReservedIds",
+    "reserved_ids",
     "find_chunk_spans",
     "segment_prompt_to_chunks",
     "emit_document_chunk_dense",
     "emit_document_chunk_landmark",
 ]
 
-# Default document-boundary markers: existing Qwen3 reserved special tokens (single id, no vocab
-# growth / embedding resize), matching corpus-reasoning ``scripts/lib/chunked_attention.py``.
+# ---------------------------------------------------------------------------------------------
+# THE canonical reserved-token ids for the document-chunk / landmark data path.
+#
+# Import these -- never retype the literals. They were previously re-declared in ~14 files across
+# two repos, which is precisely how a mismatch can go unnoticed (a shard built with one id and a
+# model/eval expecting another produces plausible-looking numbers, not a crash).
+#
+# Document-boundary markers are *existing* Qwen3 reserved special tokens, so using them costs no
+# vocab growth and no embedding resize. The catch: Qwen3 never TRAINED these rows, so their
+# embeddings are bit-identical out-of-distribution vectors -- run
+# ``src/scripts/data/fix_marker_embeddings.py`` on any base checkpoint before training on
+# marker-bearing shards. See ``document-chunked-marker-embeddings.md``.
+# ---------------------------------------------------------------------------------------------
 DOC_START_STR = "<|box_start|>"
 DOC_END_STR = "<|box_end|>"
 DOC_START_ID = 151648
 DOC_END_ID = 151649
+
+#: End-of-text. NOTE: Qwen3's tokenizer resolves ``eos_token_id`` to 151645 (``<|im_end|>``), but
+#: these SFT shards are trained to stop on 151643 -- pass ``--eos-token-id 151643`` at eval or
+#: generation never terminates and rambles (see ``eval-lc-native-nocot-fullpath-bug``).
+EOS_TOKEN_ID = 151643
+
+#: Landmark ("memory") token inserted at the end of each landmark window, and the padding token used
+#: to fill a short window. Both live PAST the real vocab (``REAL_VOCAB_SIZE``) in the embedding
+#: matrix's padded region, so they are untrained too -- same repair applies.
+LANDMARK_TOKEN_ID = 151860
+PAD_TOKEN_ID = 151863
+
+#: Qwen3's real vocabulary ends here; rows at or beyond this index are untrained padding.
+REAL_VOCAB_SIZE = 151669
+
+#: The filler unit for ``free_pad_repeat`` (see :func:`segment_prompt_to_chunks`). Deliberately
+#: content-free: it must add FREE *positions* (which attend the whole context) without adding any
+#: information about the task, or the experiment would confound "more FREE capacity" with "a better
+#: prompt". ~11 Qwen3 tokens per repeat.
+FREE_PAD_SENTENCE = "Review the claims above carefully before answering. "
+
+
+class ReservedIds(NamedTuple):
+    """The reserved token ids the document-chunk / landmark path depends on, for one tokenizer.
+
+    The ids are **tokenizer-specific** -- Qwen3 and Qwen3.5 have different vocabularies -- so a
+    single module-level constant is not enough. Look the set up by family via :data:`RESERVED_IDS`
+    rather than retyping literals, which is how a shard built for one tokenizer and a model expecting
+    another silently produce plausible-but-wrong numbers.
+
+    :param doc_start: ``<|box_start|>`` -- opens a context document.
+    :param doc_end: ``<|box_end|>`` -- closes a context document.
+    :param eos: The id the SFT shards are trained to stop on (NOT necessarily ``tok.eos_token_id``).
+    :param landmark: The landmark / "memory" token placed at each landmark-window boundary.
+    :param pad: Padding inside a short landmark window.
+    :param real_vocab_size: Rows at or beyond this index are untrained embedding padding.
+    """
+
+    doc_start: int
+    doc_end: int
+    eos: int
+    landmark: int
+    pad: int
+    real_vocab_size: int
+
+
+#: Reserved-id sets by model family. ``qwen3`` mirrors the module-level constants above.
+RESERVED_IDS: Dict[str, ReservedIds] = {
+    "qwen3": ReservedIds(
+        doc_start=151648, doc_end=151649, eos=151643,
+        landmark=151860, pad=151863, real_vocab_size=151669,
+    ),
+    "qwen3_5": ReservedIds(
+        doc_start=248049, doc_end=248050, eos=248044,
+        landmark=248200, pad=248203, real_vocab_size=248192,
+    ),
+}
+
+
+def reserved_ids(family: str = "qwen3") -> ReservedIds:
+    """Look up the reserved-id set for a model family.
+
+    :param family: ``"qwen3"`` or ``"qwen3_5"``.
+
+    :returns: The :class:`ReservedIds` for that family.
+
+    :raises KeyError: If the family is unknown -- better a loud failure than a silent wrong id.
+    """
+    try:
+        return RESERVED_IDS[family]
+    except KeyError:
+        raise KeyError(
+            f"unknown model family {family!r}; known: {sorted(RESERVED_IDS)}. "
+            "Add an entry to RESERVED_IDS rather than hardcoding ids at the call site."
+        ) from None
 
 
 class ChunkSegment(NamedTuple):
@@ -209,6 +302,8 @@ def segment_prompt_to_chunks(
     doc_end_id: int = DOC_END_ID,
     doc_start_str: str = DOC_START_STR,
     doc_end_str: str = DOC_END_STR,
+    free_pad_repeat: int = 0,
+    repeat_doc_text: int = 1,
 ) -> Tuple[List[ChunkSegment], List[int], List[bool]]:
     """
     Render a task prompt with document boundaries marked by special tokens, tokenize, and split it
@@ -236,6 +331,19 @@ def segment_prompt_to_chunks(
     if not getattr(tok, "is_fast", False):
         raise RuntimeError("A fast tokenizer is required for offset-based loss masking.")
 
+    # Duplicate each document's TEXT in place, so the chunk grows but the document COUNT and the
+    # document-level attention graph are untouched. This is the control for ``free_pad_repeat``:
+    # it adds a comparable number of tokens *inside* chunks (never FREE), so if widening the FREE
+    # budget helps and this does not, the effect is specifically FREE-position capacity rather than
+    # "more tokens / more compute". Applied before build_prompt so the wrapped span and the prompt
+    # body see the same text.
+    if repeat_doc_text > 1:
+        example = dict(example)
+        example["documents"] = [
+            {**d, "text": " ".join([str(d.get("text", ""))] * repeat_doc_text)}
+            for d in example.get("documents", [])
+        ]
+
     prompt, answer = build_prompt(
         example,
         task=task,
@@ -250,6 +358,18 @@ def segment_prompt_to_chunks(
         prompt = _wrap_documents(prompt, example.get("documents", []), doc_start_str, doc_end_str)
     else:
         raise ValueError(f"Unknown chunk_by {chunk_by!r}; expected 'line' or 'document'.")
+
+    # FREE padding: extra tokens appended AFTER the wrapped documents and BEFORE the answer. They sit
+    # outside every <|box_start|>..<|box_end|> span, so chunk-id reconstruction assigns them the FREE
+    # role -- i.e. they attend the WHOLE context under every cross_doc_mode. This is the knob for the
+    # "do the FREE tokens saturate?" experiment: document-chunked models score well at 20 documents
+    # with ZERO gold-pair connectivity in the context stack (all the cross-document comparison happens
+    # at the trailing FREE positions) and collapse at 100 documents. Widening the FREE budget tests
+    # whether that collapse is a capacity limit of those positions.
+    # Applied here, inside the SINGLE source of truth for train and eval prefill, so the two layouts
+    # cannot drift apart.
+    if free_pad_repeat > 0:
+        prompt = prompt + "\n" + (FREE_PAD_SENTENCE * free_pad_repeat)
 
     messages = [{"role": "user", "content": prompt}]
     prompt_str = tok.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)

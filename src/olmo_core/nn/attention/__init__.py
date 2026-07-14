@@ -414,8 +414,17 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
     dilation_m: Optional[int] = None
     """
     For :class:`DocumentChunkedAttention` with ``cross_doc_mode="hierarchical_dilated"`` only: the
-    dilation base ``m >= 1``. At transformer layer ``ell`` the stride is ``m**ell`` (saturated once it
-    spans all history), so the receptive span is ``(n-1)*m**ell`` documents. Defaults to 2.
+    dilation base ``m >= 1``. At cycle position ``p = ell % dilation_cycle`` the stride is ``m**p``
+    (saturated within the cycle once it spans all history), so the receptive span is ``(n-1)*m**p``
+    documents. Defaults to 2.
+    """
+    dilation_cycle: Optional[int] = None
+    """
+    For the document-chunked family with ``cross_doc_mode="hierarchical_dilated"`` only: the rotation
+    period ``L`` -- the dilation stride rotates with depth as ``layer_idx % L`` (the "Hierarchical K"
+    schedule), so deep layers revisit the fine-grained small-stride patterns. ``None`` (default) uses
+    the pattern default of 3. (Note the pure-saturation schedule ``dilation_cycle=None`` at the
+    :class:`~olmo_core.nn.attention.chunked_mask.AttentionPattern` level is deprecated.)
     """
     dilation_max_docs: Optional[int] = None
     """
@@ -432,6 +441,13 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
     document indices; vary :attr:`random_doc_seed`).
     """
     random_doc_seed: Optional[int] = None
+
+    random_doc_per_example: Optional[bool] = None
+    """
+    ``random_doc``: give EVERY EXAMPLE its own random sparsity graph (still deterministic
+    per example) instead of one graph shared across all examples. The ablation for "does the
+    model need a *stable* mask, or just sparse connectivity?".
+    """
     """
     For :class:`DocumentChunkedAttention` with ``cross_doc_mode="random_doc"`` only: seed for the
     per-document-pair keep hash. Defaults to 42.
@@ -442,6 +458,13 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
     granularity at which fully-masked blocks are skipped). ``None`` (default) uses FlexAttention's
     default of 128. Shrinking it (e.g. 64 / 32) lets sub-128-token chunks realize their block-sparsity
     at the cost of higher kernel overhead; profile the crossover per chunk-size distribution.
+    """
+    full_attention_layers: Optional[List[int]] = None
+    """
+    For :class:`DocumentChunkedAttention` (``name="document_chunked"``) only: layer indices that use
+    plain full (causal) attention instead of the chunked mask -- a hybrid where these ``N`` layers see
+    the whole sequence while the rest stay document-chunked. Negative indices count from the end
+    (``-1`` = last layer). ``None`` / empty (default) -> every layer uses the chunked mask.
     """
     dilated_window_k: Optional[int] = None
     """
@@ -588,13 +611,16 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
         cross_doc_mode = kwargs.pop("cross_doc_mode", None)
         dilation_n = kwargs.pop("dilation_n", None)
         dilation_m = kwargs.pop("dilation_m", None)
+        dilation_cycle = kwargs.pop("dilation_cycle", None)
         dilation_max_docs = kwargs.pop("dilation_max_docs", None)
         doc_keep_prob = kwargs.pop("doc_keep_prob", None)
         random_doc_seed = kwargs.pop("random_doc_seed", None)
+        random_doc_per_example = kwargs.pop("random_doc_per_example", None)
         flex_block_size = kwargs.pop("flex_block_size", None)
         dilated_window_k = kwargs.pop("dilated_window_k", None)
         dilated_window_num_configs = kwargs.pop("dilated_window_num_configs", None)
         dilated_window_base = kwargs.pop("dilated_window_base", None)
+        full_attention_layers = kwargs.pop("full_attention_layers", None)
         if mem_freq is not None and not (possible_types & set(_LANDMARK_ATTENTION_TYPES)):
             raise OLMoConfigurationError(
                 "'mem_freq' is only supported with landmark attention variants "
@@ -645,12 +671,15 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
             AttentionType.document_compressive_landmark,
         }
         if (
-            dilation_n is not None or dilation_m is not None or dilation_max_docs is not None
+            dilation_n is not None
+            or dilation_m is not None
+            or dilation_cycle is not None
+            or dilation_max_docs is not None
         ) and not (possible_types & _DOC_CHUNKED_TYPES):
             raise OLMoConfigurationError(
-                "'dilation_n' / 'dilation_m' / 'dilation_max_docs' are only supported with "
-                "document_chunked, document_landmark, or document_compressive_landmark attention "
-                f"(got name='{self.name}')"
+                "'dilation_n' / 'dilation_m' / 'dilation_cycle' / 'dilation_max_docs' are only "
+                "supported with document_chunked, document_landmark, or "
+                f"document_compressive_landmark attention (got name='{self.name}')"
             )
         if nonselected_landmark_mass is not None and not (
             possible_types
@@ -671,6 +700,11 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
             raise OLMoConfigurationError(
                 "'dilated_window_k' / 'dilated_window_num_configs' / 'dilated_window_base' are only "
                 f"supported with dilated_sliding_window attention (got name='{self.name}')"
+            )
+        if full_attention_layers is not None and AttentionType.document_chunked not in possible_types:
+            raise OLMoConfigurationError(
+                "'full_attention_layers' (hybrid full/chunked layers) is only supported with "
+                f"document_chunked attention (got name='{self.name}')"
             )
 
         try:
@@ -731,6 +765,8 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
                     kwargs["dilation_n"] = dilation_n
                 if dilation_m is not None:
                     kwargs["dilation_m"] = dilation_m
+                if dilation_cycle is not None:
+                    kwargs["dilation_cycle"] = dilation_cycle
                 if dilation_max_docs is not None:
                     kwargs["dilation_max_docs"] = dilation_max_docs
                 kwargs["layer_idx"] = layer_idx
@@ -752,6 +788,8 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
                     kwargs["dilation_n"] = dilation_n
                 if dilation_m is not None:
                     kwargs["dilation_m"] = dilation_m
+                if dilation_cycle is not None:
+                    kwargs["dilation_cycle"] = dilation_cycle
                 if dilation_max_docs is not None:
                     kwargs["dilation_max_docs"] = dilation_max_docs
                 kwargs["layer_idx"] = layer_idx
@@ -787,14 +825,20 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
                     kwargs["dilation_n"] = dilation_n
                 if dilation_m is not None:
                     kwargs["dilation_m"] = dilation_m
+                if dilation_cycle is not None:
+                    kwargs["dilation_cycle"] = dilation_cycle
                 if dilation_max_docs is not None:
                     kwargs["dilation_max_docs"] = dilation_max_docs
                 if doc_keep_prob is not None:
                     kwargs["doc_keep_prob"] = doc_keep_prob
                 if random_doc_seed is not None:
                     kwargs["random_seed"] = random_doc_seed
+                if random_doc_per_example is not None:
+                    kwargs["random_doc_per_example"] = random_doc_per_example
                 if flex_block_size is not None:
                     kwargs["flex_block_size"] = flex_block_size
+                if full_attention_layers is not None:
+                    kwargs["full_attention_layers"] = full_attention_layers
                 # The hierarchical-dilated pattern picks its stride from the layer index.
                 kwargs["layer_idx"] = layer_idx
                 kwargs["n_layers"] = n_layers

@@ -83,14 +83,20 @@ class AttentionPattern:
         ``"chunked"`` (isolated docs); ``1.0`` to full causal cross-document attention.
     :param dilation_n: ``"hierarchical_dilated"``: number of documents a context query attends per
         layer (itself + the ``n-1`` strided predecessors). ``n == 1`` collapses to ``"chunked"``.
-    :param dilation_m: ``"hierarchical_dilated"``: dilation base ``m >= 1``. At transformer layer
-        ``ell`` the stride is ``s = m**ell`` (saturated, see :func:`build_chunked_allowed_mask`), so
-        the receptive span is ``(n-1)*m**ell`` documents. ``m == 1`` collapses to a fixed
-        ``"doc_window"`` of width ``n-1`` at every layer.
+    :param dilation_m: ``"hierarchical_dilated"``: dilation base ``m >= 1``. At cycle position ``p``
+        (see :attr:`dilation_cycle`) the stride is ``s = m**p`` (saturated within the cycle, see
+        :func:`build_chunked_allowed_mask`), so the receptive span is ``(n-1)*m**p`` documents.
+        ``m == 1`` collapses to a fixed ``"doc_window"`` of width ``n-1`` at every layer.
+    :param dilation_cycle: ``"hierarchical_dilated"``: the **rotation period** ``L``. The per-layer
+        dilation stride *rotates* with a fixed period -- the cycle position is ``p = layer_idx % L`` --
+        so deep layers revisit the fine-grained small-stride patterns instead of freezing at the widest
+        stride (the "Hierarchical K" schedule; see :func:`hierarchical_effective_layer`). Defaults to
+        3. ``dilation_cycle=None`` (the old pure-saturation schedule, no rotation) is **deprecated** and
+        raises :class:`NotImplementedError`.
     :param dilation_max_docs: ``"hierarchical_dilated"``: optional fixed reference document count for
-        the saturation cap. When ``None`` (default) the cap is computed **per sequence** from the
-        actual maximum context-chunk index; when set, this fixed value is used instead (so every
-        sequence saturates at the same layer).
+        the within-cycle saturation cap. When ``None`` (default) the cap is computed **per sequence**
+        from the actual maximum context-chunk index; when set, this fixed value is used instead (so
+        every sequence saturates at the same cycle position).
     """
 
     name: str = "chunked"
@@ -99,8 +105,10 @@ class AttentionPattern:
     keep_prob: float = 1.0
     doc_keep_prob: float = 0.1
     random_seed: int = 42
+    random_doc_per_example: bool = False
     dilation_n: int = 2
     dilation_m: int = 2
+    dilation_cycle: Optional[int] = 3
     dilation_max_docs: Optional[int] = None
 
     def __post_init__(self) -> None:
@@ -117,6 +125,16 @@ class AttentionPattern:
             if self.dilation_m < 1:
                 raise ValueError(
                     f"hierarchical_dilated requires dilation_m >= 1 (got {self.dilation_m})"
+                )
+            if self.dilation_cycle is None:
+                raise NotImplementedError(
+                    "hierarchical_dilated 'dilation_cycle=None' (the pure-saturation schedule with no "
+                    "rotation) is deprecated. Set a fixed rotation period, e.g. dilation_cycle=3 "
+                    "(the default), so the dilation stride rotates with depth."
+                )
+            if self.dilation_cycle < 1:
+                raise ValueError(
+                    f"hierarchical_dilated requires dilation_cycle >= 1 (got {self.dilation_cycle})"
                 )
         if self.name == "random_doc" and not (0.0 <= self.doc_keep_prob <= 1.0):
             raise ValueError(
@@ -297,24 +315,41 @@ def collapse_roles_to_causal(
 
 
 def hierarchical_effective_layer(
-    layer_idx: int, n: int, m: int, max_chunk: torch.Tensor
+    layer_idx: int, n: int, m: int, max_chunk: torch.Tensor, cycle: Optional[int] = None
 ) -> torch.Tensor:
     """
-    Per-sequence *saturated* (effective) layer index for the ``"hierarchical_dilated"`` pattern.
+    Per-sequence *effective* layer index (cycle position) for the ``"hierarchical_dilated"`` pattern.
 
     The dilation stride at transformer layer ``ell`` is ``m**ell`` and the receptive span of a layer
-    is ``(n-1)*m**ell`` documents. Once that span already covers all of a sequence's history there is
-    nothing left to dilate into, so deeper layers reuse the widest pattern instead of expanding past
-    the end of the document list. Concretely, ``L* = min{ ell : (n-1)*m**ell >= max_chunk }`` and the
-    effective layer is ``min(layer_idx, L*)``.
+    is ``(n-1)*m**ell`` documents.
+
+    Two effects combine, in order:
+
+    * **Rotation** (``cycle`` given): the schedule *rotates* with a fixed period so deep layers revisit
+      the fine-grained (small-stride) patterns instead of freezing at the widest stride. The cycle
+      position is ``p = layer_idx % cycle`` (à la the "Hierarchical K" positional schedule). With
+      ``cycle=None`` the position is just ``layer_idx`` (no rotation).
+    * **Within-cycle saturation**: once a cycle position's span already covers all of a sequence's
+      history there is nothing left to dilate into, so it is capped at
+      ``L* = min{ ell : (n-1)*m**ell >= max_chunk }``. Big sequences (large ``L*``) never hit the cap
+      and rotate freely; small ones saturate at the right position.
+
+    So the returned effective layer is ``min(layer_idx % cycle, L*)`` (or ``min(layer_idx, L*)`` when
+    ``cycle`` is ``None``).
 
     :param layer_idx: The transformer layer index (0-based).
     :param n: Documents attended per layer (``dilation_n``).
     :param m: Dilation base (``dilation_m``).
     :param max_chunk: Per-sequence maximum context-chunk index, shape ``(B,)``.
+    :param cycle: The rotation period (``dilation_cycle``). ``None`` disables rotation (pure
+        saturation) -- retained only for internal/low-level callers; the user-facing
+        :class:`AttentionPattern` deprecates ``dilation_cycle=None``.
 
-    :returns: An integer tensor ``(B,)`` of effective layer indices in ``[0, layer_idx]``.
+    :returns: An integer tensor ``(B,)`` of effective layer indices in ``[0, min(layer_idx, cycle-1)]``.
     """
+    layer_idx = int(layer_idx)
+    if cycle is not None:
+        layer_idx = layer_idx % int(cycle)
     cap = torch.full_like(max_chunk, layer_idx)
     # For ``m == 1`` the stride is constant (``1**ell == 1``) and for ``n == 1`` only the own document
     # is ever in range, so saturation is a no-op -- the stride ``m**layer_idx`` already behaves
@@ -343,20 +378,58 @@ _RD_MIX = 2654435761
 _RD_MASK = 0x7FFFFFFF  # 2**31 - 1
 
 
+def random_doc_nonce(chunk_ids: torch.Tensor) -> torch.Tensor:
+    """Per-example nonce for the ``"random_doc"`` pattern's *per-example* mode.
+
+    Derived from the example's own ``chunk_ids`` content (the document-boundary layout, which differs
+    between examples because documents differ in length), so it is:
+
+    * **distinct per example** -- every example gets its own random sparsity graph, instead of the one
+      global graph over document *indices* that the default mode shares across every example; and
+    * **deterministic** -- the same example always yields the same graph, at train and at eval, so a
+      held-out example is scored on a well-defined mask rather than a fresh coin flip.
+
+    This is the knob for the ablation "does the model need a *stable* sparsity graph to learn, or is
+    sparse-but-varied connectivity enough?" -- the default (shared graph) lets the model potentially
+    learn the fixed structure; the per-example mode denies it that.
+
+    :param chunk_ids: ``(B, T)`` per-token chunk roles.
+
+    :returns: An int64 tensor of shape ``(B,)``.
+    """
+    b, t = chunk_ids.shape
+    pos = torch.arange(t, device=chunk_ids.device, dtype=torch.int64) + 1
+    # +3 lifts the negative roles (FREE=-1, PAD=-2, SINK=-3) to >=0 so they contribute to the hash.
+    h = ((chunk_ids.to(torch.int64) + 3) * pos * _RD_A) ^ (pos * _RD_B)
+    return (h.sum(dim=-1) * _RD_MIX) & _RD_MASK
+
+
 def _random_doc_keep(
-    qc: torch.Tensor, kc: torch.Tensor, keep_prob: float, seed: int
+    qc: torch.Tensor,
+    kc: torch.Tensor,
+    keep_prob: float,
+    seed: int,
+    nonce: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
     """Deterministic Bernoulli keep for the ``"random_doc"`` pattern: ``True`` iff the ordered
     document pair ``(query_doc=qc, key_doc=kc)`` is kept, with per-pair probability ``keep_prob``.
 
-    The keep is a seeded multiplicative hash of ``(qc, kc, seed)`` (no batch/layer term), so it is a
-    fixed random sparsity graph over document indices -- identical across layers and reproducible. ``qc``
-    / ``kc`` broadcast (e.g. ``(B, S, 1)`` and ``(B, 1, S)`` -> ``(B, S, S)``). Element-equivalent to the
+    The keep is a seeded multiplicative hash of ``(qc, kc, seed)`` (no layer term), so it is a fixed
+    random sparsity graph over document indices -- identical across layers and reproducible. ``qc`` /
+    ``kc`` broadcast (e.g. ``(B, S, 1)`` and ``(B, 1, S)`` -> ``(B, S, S)``). Element-equivalent to the
     ``random_doc`` branch of :func:`build_chunked_mask_mod`.
+
+    :param nonce: Optional per-example nonce, shape ``(B,)`` (see :func:`random_doc_nonce`). When
+        given it is mixed into the hash, so **each example gets its own sparsity graph** instead of
+        one graph shared by every example. Still deterministic per example -- eval reproduces the
+        same graph for the same input.
     """
     a = qc.to(torch.int64)
     b = kc.to(torch.int64)
     h = (a * _RD_A) ^ (b * _RD_B) ^ (int(seed) * _RD_C)
+    if nonce is not None:
+        # broadcast (B,) against the trailing query/key dims of qc/kc
+        h = h ^ nonce.to(torch.int64).reshape(-1, *([1] * (h.dim() - 1)))
     h = (h * _RD_MIX) & _RD_MASK
     u = h.to(torch.float32) * (1.0 / float(_RD_MASK))
     return u < keep_prob
@@ -380,7 +453,8 @@ def build_chunked_allowed_mask(
     :param is_anchor: ``(B, S)`` / ``(S,)`` bool, required for ``"last_token_anchor"``.
     :param random_keep: ``(B, S, S)`` / ``(S, S)`` bool, required for ``"random_token"``.
     :param layer_idx: The transformer layer index; only used by the layer-dependent
-        ``"hierarchical_dilated"`` pattern (the stride is ``m**layer_idx``, saturated). Ignored by all
+        ``"hierarchical_dilated"`` pattern (the stride is ``m**(layer_idx % dilation_cycle)``, saturated
+        within the cycle -- see :func:`hierarchical_effective_layer`). Ignored by all
         other patterns.
 
     :returns: A boolean ``(B, S, S)`` tensor; ``True`` where the query (dim 1) may attend the key
@@ -438,8 +512,11 @@ def build_chunked_allowed_mask(
         # Own document + a seeded-random ~doc_keep_prob subset of STRICTLY EARLIER documents. The keep
         # is a deterministic hash of the ordered (query_doc, key_doc) pair -> a fixed random sparsity
         # graph over document indices, identical across layers (chunk_ids is shared per forward).
+        # With random_doc_per_example, a per-example nonce is mixed in so EVERY EXAMPLE gets its own
+        # graph (still deterministic per example) -- the "does a stable mask matter?" ablation.
         cross_doc = (qc > kc) & (qc >= 0) & (kc >= 0)
-        keep = _random_doc_keep(qc, kc, pattern.doc_keep_prob, pattern.random_seed)
+        nonce = random_doc_nonce(chunk_ids) if pattern.random_doc_per_example else None
+        keep = _random_doc_keep(qc, kc, pattern.doc_keep_prob, pattern.random_seed, nonce=nonce)
         context_ok = same_chunk | (cross_doc & keep)
     elif name == "hierarchical_dilated":
         n = pattern.dilation_n
@@ -449,7 +526,9 @@ def build_chunked_allowed_mask(
         max_chunk = torch.where(is_ctx, chunk_ids, torch.zeros_like(chunk_ids)).amax(dim=1)  # (B,)
         if pattern.dilation_max_docs is not None:
             max_chunk = torch.full_like(max_chunk, pattern.dilation_max_docs)
-        eff_l = hierarchical_effective_layer(layer_idx, n, m, max_chunk)  # (B,)
+        eff_l = hierarchical_effective_layer(
+            layer_idx, n, m, max_chunk, cycle=pattern.dilation_cycle
+        )  # (B,)
         # Stride s = m**eff_l per sequence (>= 1). eff_l is capped at layer_idx so this never overflows
         # for any sane depth.
         stride = (torch.full_like(eff_l, m) ** eff_l).clamp(min=1).view(B, 1, 1)  # (B, 1, 1)
@@ -539,6 +618,9 @@ def build_chunked_mask_mod(pattern: AttentionPattern, chunk_ids: torch.Tensor):
     if name == "random_doc":
         keep_prob = pattern.doc_keep_prob
         seed_c = int(pattern.random_seed) * _RD_C
+        # Per-example nonces are precomputed here (once per forward) and closed over, so the mask_mod
+        # body stays a pure elementwise function of (b, q_idx, kv_idx) -- Triton-friendly.
+        nonces = random_doc_nonce(cids) if pattern.random_doc_per_example else None
 
         def mask_mod(b, h, q_idx, kv_idx):
             qc = cids[b, q_idx]
@@ -550,6 +632,8 @@ def build_chunked_mask_mod(pattern: AttentionPattern, chunk_ids: torch.Tensor):
             # Same multiplicative hash as _random_doc_keep (int64 wraps mod 2**64 on both torch and
             # Triton; only the low 31 bits are used, so wrapping is well-defined and identical).
             hh = (qc.to(torch.int64) * _RD_A) ^ (kc.to(torch.int64) * _RD_B) ^ seed_c
+            if nonces is not None:
+                hh = hh ^ nonces[b]
             hh = (hh * _RD_MIX) & _RD_MASK
             keep = (hh.to(torch.float32) * (1.0 / float(_RD_MASK))) < keep_prob
             q_free = (qc < 0) & q_np

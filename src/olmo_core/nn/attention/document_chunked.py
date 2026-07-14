@@ -108,12 +108,21 @@ class DocumentChunkedAttention(Attention):
     :param token_window_w: Window width for the ``"token_window"`` pattern.
     :param dilation_n: Documents attended per layer for the ``"hierarchical_dilated"`` pattern.
     :param dilation_m: Dilation base for the ``"hierarchical_dilated"`` pattern. At this layer the
-        stride is ``m**layer_idx`` (saturated once the span covers all history).
+        stride is ``m**(layer_idx % dilation_cycle)`` (saturated within the cycle once the span covers
+        all history).
+    :param dilation_cycle: Rotation period ``L`` for the ``"hierarchical_dilated"`` pattern (the stride
+        rotates with depth as ``layer_idx % L``). Defaults to 3.
     :param dilation_max_docs: Optional fixed saturation reference for ``"hierarchical_dilated"``
         (``None`` -> compute the cap per sequence from the actual chunk count).
     :param layer_idx: The transformer layer index this module lives at (0-based). The
         ``"hierarchical_dilated"`` pattern reads it to pick the per-layer dilation stride; other
         patterns ignore it.
+    :param full_attention_layers: Optional list of layer indices that should use **plain full
+        (causal) attention** instead of the chunked mask -- a hybrid where these ``N`` layers see the
+        whole sequence and the rest stay document-chunked. Negative indices count from the end
+        (``-1`` = last layer). When ``layer_idx`` is in this set the module drops ``chunk_ids`` and
+        falls through to ordinary causal attention (identical to a ``"standard"``-pattern layer, and
+        KV-cache-friendly at eval). ``None`` / empty -> every layer uses the chunked mask.
 
     See :class:`Attention` for the remaining parameters.
     """
@@ -126,12 +135,15 @@ class DocumentChunkedAttention(Attention):
         token_window_w: int = 0,
         doc_keep_prob: float = 0.1,
         random_seed: int = 42,
+        random_doc_per_example: bool = False,
         dilation_n: int = 2,
         dilation_m: int = 2,
+        dilation_cycle: int = 3,
         dilation_max_docs: Optional[int] = None,
         flex_block_size: int = _FLEX_DEFAULT_BLOCK_SIZE,
         layer_idx: int = 0,
         n_layers: int = 1,
+        full_attention_layers: Optional[list] = None,
         softmax_scale: Optional[float] = None,
         **kwargs,
     ):
@@ -152,6 +164,18 @@ class DocumentChunkedAttention(Attention):
         self.cross_doc_mode = cross_doc_mode
         self.layer_idx = layer_idx
         self.n_layers = n_layers
+        # Hybrid full/chunked: designated layers ignore the chunked mask and run plain causal
+        # attention. Normalize negative indices from the end and validate against depth.
+        normalized_full: set = set()
+        for i in full_attention_layers or []:
+            j = i + n_layers if i < 0 else i
+            if not (0 <= j < n_layers):
+                raise OLMoConfigurationError(
+                    f"full_attention_layers index {i} is out of range for n_layers={n_layers}."
+                )
+            normalized_full.add(j)
+        self.full_attention_layers = frozenset(normalized_full)
+        self._is_full_attention_layer = layer_idx in self.full_attention_layers
         self.flex_block_size = int(flex_block_size)
         self._pattern = AttentionPattern(
             name=cross_doc_mode,
@@ -159,8 +183,10 @@ class DocumentChunkedAttention(Attention):
             token_window_w=token_window_w,
             doc_keep_prob=doc_keep_prob,
             random_seed=random_seed,
+            random_doc_per_example=random_doc_per_example,
             dilation_n=dilation_n,
             dilation_m=dilation_m,
+            dilation_cycle=dilation_cycle,
             dilation_max_docs=dilation_max_docs,
         )
         # The base ``Attention`` only forwards ``softmax_scale`` to the backend; store it for our own
@@ -183,6 +209,10 @@ class DocumentChunkedAttention(Attention):
         ``(B, T)`` (or ``(T,)``); see the module docstring. All other arguments are forwarded to
         :meth:`Attention.forward`.
         """
+        # Hybrid: a full-attention layer ignores the roles entirely -> plain causal attention (and no
+        # chunk_ids/CP conflict, since there are effectively no roles here).
+        if self._is_full_attention_layer:
+            chunk_ids = None
         if chunk_ids is not None and self.cp_enabled:
             raise OLMoConfigurationError(
                 "DocumentChunkedAttention does not support Ulysses CP together with chunk_ids "

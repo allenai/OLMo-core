@@ -1,6 +1,7 @@
 """Tests for the ``"hierarchical_dilated"`` chunked-attention pattern: a *layer-dependent* document
-mask where transformer layer ``ell`` attends the ``n`` documents at stride ``m**ell`` behind a context
-query (saturating once the span covers all history). See
+mask where transformer layer ``ell`` attends the ``n`` documents at stride ``m**(ell % dilation_cycle)``
+behind a context query. The schedule **rotates** with a fixed period ``dilation_cycle`` (default 3) and
+**saturates within the cycle** once the span covers all history. See
 :func:`olmo_core.nn.attention.chunked_mask.build_chunked_allowed_mask` and
 :class:`olmo_core.nn.attention.document_chunked.DocumentChunkedAttention`."""
 
@@ -8,7 +9,11 @@ import pytest
 import torch
 
 from olmo_core.exceptions import OLMoConfigurationError
-from olmo_core.nn.attention import AttentionConfig, AttentionType, DocumentChunkedAttention
+from olmo_core.nn.attention import (
+    AttentionConfig,
+    AttentionType,
+    DocumentChunkedAttention,
+)
 from olmo_core.nn.attention.chunked_mask import (
     FREE_CHUNK_ID,
     PAD_CHUNK_ID,
@@ -69,16 +74,44 @@ def test_layer2_sees_self_and_stride4():
         }
 
 
-def test_layer3_saturates_and_deeper_layers_reuse_it():
-    # max_chunk = 7; L* = smallest ell with (n-1)*m^ell >= 7 -> 2^3 = 8 >= 7, so L* = 3.
-    assert int(hierarchical_effective_layer(3, 2, 2, torch.tensor([7]))[0]) == 3
-    # At/after L* the stride is capped at m^L* = 8, so layers 3, 4, 5 produce IDENTICAL masks.
-    base = _allowed(D8, n=2, m=2, layer_idx=3)
-    assert torch.equal(base, _allowed(D8, n=2, m=2, layer_idx=4))
-    assert torch.equal(base, _allowed(D8, n=2, m=2, layer_idx=5))
-    # Stride 8 > max gap 7 -> a context chunk attends only itself at the saturated layer.
+def test_rotation_repeats_every_cycle():
+    # Default dilation_cycle=3: the stride rotates 1, 2, 4, 1, 2, 4, ... so layer L and L+3 (and L+6)
+    # produce IDENTICAL masks (D8 has 8 chunks -> L*=3, big enough that no within-cycle saturation
+    # binds at positions 0..2, so the rotation is pure).
+    for base_layer in (0, 1, 2):
+        base = _allowed(D8, n=2, m=2, layer_idx=base_layer)
+        assert torch.equal(base, _allowed(D8, n=2, m=2, layer_idx=base_layer + 3))
+        assert torch.equal(base, _allowed(D8, n=2, m=2, layer_idx=base_layer + 6))
+    # Concretely layer 3 rotates back to layer 0's stride 1 (sees {c, c-1}), NOT self-only.
     for c in range(8):
-        assert _attended_chunks(D8, n=2, m=2, layer_idx=3, query_chunk=c) == {c}
+        assert _attended_chunks(D8, n=2, m=2, layer_idx=3, query_chunk=c) == {
+            x for x in (c, c - 1) if x >= 0
+        }
+
+
+def test_within_cycle_saturation():
+    # For a SMALL window the stride overshoots the doc count partway through the cycle, so the
+    # effective layer saturates within the cycle. With a fixed cap of 2 docs: L* = min{ell: 2^ell>=2}
+    # = 1, so cycle positions 0,1,2 -> effective 0,1,1 (position 2 saturates back to 1).
+    small = torch.tensor([2])
+    assert int(hierarchical_effective_layer(0, 2, 2, small, cycle=3)[0]) == 0
+    assert int(hierarchical_effective_layer(1, 2, 2, small, cycle=3)[0]) == 1
+    assert int(hierarchical_effective_layer(2, 2, 2, small, cycle=3)[0]) == 1  # saturated in-cycle
+    # A BIG window never hits the cap within the cycle -> pure rotation (positions == layer % cycle).
+    big = torch.tensor([999])
+    assert int(hierarchical_effective_layer(2, 2, 2, big, cycle=3)[0]) == 2
+    assert int(hierarchical_effective_layer(5, 2, 2, big, cycle=3)[0]) == 2  # 5 % 3 == 2
+
+
+def test_dilation_cycle_none_is_deprecated():
+    # The pure-saturation schedule (dilation_cycle=None, no rotation) is deprecated -> NotImplementedError.
+    with pytest.raises(NotImplementedError):
+        AttentionPattern(
+            name="hierarchical_dilated", dilation_n=2, dilation_m=2, dilation_cycle=None
+        )
+    # ... but the low-level helper still supports cycle=None for internal callers (pure saturation).
+    # max_chunk=7 -> L*=3, so effective layer 3 is uncapped (min(3, 3)).
+    assert int(hierarchical_effective_layer(3, 2, 2, torch.tensor([7]), cycle=None)[0]) == 3
 
 
 def test_isolation_non_strided_chunks_unattended():
