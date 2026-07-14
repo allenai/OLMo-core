@@ -63,25 +63,38 @@ line" symptom). Corollaries:
 One conda env everywhere: `corpus-reasoning-olmo` (torch 2.9.1+cu128, **flash-attn 2.8.2 pinned** —
 2.8.3 has a varlen-backward SIGSEGV regression). Master copy on NFS at
 `/scratch/users/prasann/conda/envs/corpus-reasoning-olmo`; fast clones on `/data` of
-horton/mooney/cubbins/sneetches (`import transformers` 2 s vs 60 s). Launchers pick the fast one:
+horton/mooney/cubbins/sneetches (`import transformers` 2 s vs 60 s).
+
+**All the shell-level conventions live in one master file — source it, don't copy-paste:**
 
 ```bash
-ENV=/data/prasann/conda/envs/corpus-reasoning-olmo
-[ -d "$ENV" ] || ENV=/scratch/users/prasann/conda/envs/corpus-reasoning-olmo
-export PATH="$ENV/bin:$PATH"   # direct PATH — `conda activate` hangs minutes on NFS lock contention
+source /accounts/projects/berkeleynlp/prasann/projects/OLMo-core/src/scripts/local_env.sh
 ```
 
-Two more env facts every job needs:
+It sets `REPO`, puts the fast env on `PATH` (direct PATH — `conda activate` hangs minutes on NFS
+lock contention), `PYTHONPATH=$REPO/src`, the offline flags, `PYTHONWARNINGS=ignore`,
+`WANDB_API_KEY`/`WANDB_FLAG`, a random `MASTER_PORT`, and defines `pick_clean_gpus N` +
+`fresh_workdir ROOT`. Pre-set a var before sourcing to override a default (e.g.
+`HF_HUB_OFFLINE=0` to allow a one-time model download). The one thing it CANNOT cover is the
+`#SBATCH` header (slurm parses that before the script runs) — partition/qos/gres and
+`--output=/data/prasann/joblogs/...` stay in each launcher.
+`run_q06b_dense_contra_n20_local_mooney.sbatch` is the reference retrofit; older launchers still
+inline these conventions and can migrate as they're touched.
+
+Background on the settings it applies:
 
 - The env's olmo_core is an **editable install of THIS repo** (`.../projects/OLMo-core/src`) — all
   5 copies (the `/scratch` master + the 4 `/data` clones) were re-pointed on 2026-07-13, so a plain
-  `import olmo_core` runs the working tree. Launchers still set `PYTHONPATH=$REPO/src`, which is
-  now harmless redundancy. (Historical trap, in case a stale env copy resurfaces: they used to
-  point at a frozen upstream clone at `/scratch/users/prasann/OLMo-core` — deleted 2026-07-13, it
-  contained nothing not already in this repo's history — so forgetting `PYTHONPATH` silently ran
-  months-old code. Check with `python -c 'import olmo_core; print(olmo_core.__file__)'`.)
-- `export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1` — the HF cache is warm and compute-node egress
-  is blocked/slow; without these, dataloader workers silently stall in multi-minute hub retries.
+  `import olmo_core` runs the working tree, and `PYTHONPATH=$REPO/src` is a harmless safety net.
+  (Historical trap, in case a stale env copy resurfaces: they used to point at a frozen upstream
+  clone at `/scratch/users/prasann/OLMo-core` — deleted 2026-07-13, it contained nothing not
+  already in this repo's history — so forgetting `PYTHONPATH` silently ran months-old code. Check
+  with `python -c 'import olmo_core; print(olmo_core.__file__)'`.)
+- `HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1` — serve tokenizers/models from the local HF cache and
+  never touch huggingface.co. Without them every `from_pretrained` does hub freshness checks, and
+  compute-node egress is blocked/slow, so those requests sit in silent multi-minute retry stalls
+  (× ranks × dataloader workers). Requires a warm cache: download new models once from the login
+  node, or `HF_HUB_OFFLINE=0` before sourcing.
 
 For one-off Python on the head node, call the interpreter by absolute path (skips the 1.4 s
 `conda activate`): `/scratch/users/prasann/conda/envs/corpus-reasoning-olmo/bin/python`.

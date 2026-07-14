@@ -18,39 +18,16 @@
 #SBATCH --output=/data/prasann/joblogs/q06b_dense_contra_local_%j.log
 
 set -uo pipefail
-REPO=/accounts/projects/berkeleynlp/prasann/projects/OLMo-core
+# Env conventions (fast env, offline flags, wandb, PYTHONWARNINGS, MASTER_PORT, gpu/workdir
+# helpers) all live in local_env.sh -- see local_cluster.md.
+source /accounts/projects/berkeleynlp/prasann/projects/OLMo-core/src/scripts/local_env.sh
 NGPU="${NGPU:-8}"
 MAX_STEPS="${MAX_STEPS:-0}"
 BASE_CKPT="${BASE_CKPT:-/data/prasann/olmo_ckpts/qwen3_0_6B_base_olmo/model_and_optim}"
 RUN_NAME="${RUN_NAME:-q06b-dense-contra-n20-sft-local}"
 echo "=== HOST=$(hostname) NGPU=$NGPU MAX_STEPS=$MAX_STEPS BASE=$BASE_CKPT RUN=$RUN_NAME START=$(date '+%F %T') ==="
 
-ENV=/data/prasann/conda/envs/corpus-reasoning-olmo
-[ -d "$ENV" ] || ENV=/scratch/users/prasann/conda/envs/corpus-reasoning-olmo
-# Direct PATH instead of `conda activate` (activate hangs for minutes on NFS lock contention when
-# multiple jobs start concurrently; the env's bin on PATH is all torchrun needs).
-export PATH="$ENV/bin:$PATH"
-
-export PYTHONPATH="$REPO/src"
-export TOKENIZERS_PARALLELISM=false
-# The HF cache is warm; never hit the hub (blocked/slow egress from compute nodes causes silent
-# multi-minute retry stalls in dataloader workers).
-export HF_HUB_OFFLINE=1
-export TRANSFORMERS_OFFLINE=1
-# Silence the per-process FutureWarning storm (e.g. deprecated TRANSFORMERS_CACHE) so 8 ranks don't
-# flood stdout. Combined with the /data --output log (never /accounts NFS), this avoids the
-# nfs_wait_bit_killable stall where concurrent NFS log appends deadlock the ranks before step 1.
-export PYTHONWARNINGS=ignore
-if [ -z "${WANDB_API_KEY:-}" ]; then
-  WANDB_API_KEY=$(awk '/machine api.wandb.ai/{f=1} f&&/password/{print $2; exit}' "$HOME/.netrc" 2>/dev/null)
-  export WANDB_API_KEY
-fi
-WANDB_FLAG=""
-[ -z "${WANDB_API_KEY:-}" ] && WANDB_FLAG="--no-wandb" && echo "WARN: no wandb creds -> --no-wandb"
-
-mapfile -t CLEAN < <(nvidia-smi --query-gpu=memory.used,uuid --format=csv,noheader,nounits | awk -F', ' '$1+0 < 2000 {print $2}')
-export CUDA_VISIBLE_DEVICES=$(IFS=,; echo "${CLEAN[*]:0:$NGPU}")
-echo "CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES"
+pick_clean_gpus "$NGPU"
 
 # Stage the (tiny) data + a FRESH work dir on node-local /data: shared-NFS work dirs accumulate
 # stale NFSv4 locks from killed jobs (ranks then hang in nfs_wait_bit_killable before step 1).
@@ -58,14 +35,12 @@ LOCAL_ROOT=/data/prasann/contra_n20_smoke
 DATA_LOCAL=$LOCAL_ROOT/data
 mkdir -p "$DATA_LOCAL"
 cp -u /scratch/users/prasann/longctx_sft_qwen/contradiction_n20/* "$DATA_LOCAL"/
-WORK_LOCAL=$LOCAL_ROOT/cache-$SLURM_JOB_ID
-mkdir -p "$WORK_LOCAL"
+WORK_LOCAL=$(fresh_workdir "$LOCAL_ROOT")
 SAVE_LOCAL=$LOCAL_ROOT/ckpts/$RUN_NAME
 mkdir -p "$SAVE_LOCAL"
 
 cd "$REPO"
 MAXARG=""; [ "$MAX_STEPS" -gt 0 ] && MAXARG="--max-steps $MAX_STEPS"
-MASTER_PORT=$((29000 + RANDOM % 1000))
 torchrun --nproc_per_node="$NGPU" --master_port="$MASTER_PORT" \
   src/scripts/train/sft/Qwen3-0.6B-dense-contradiction-n20-SFT-local.py \
   --run-name "$RUN_NAME" --base-checkpoint "$BASE_CKPT" \
