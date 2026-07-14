@@ -211,7 +211,9 @@ class Checkpointer:
 
         :param reset_optimizer_states_on_load: Only honored by train modules that implement the
             direct checkpoint API (:meth:`load_state_dict_direct`). When ``True``, optimizer moments
-            are discarded on load and only the main params are restored.
+            are discarded on load and only the main params are restored. When left ``None`` it
+            defaults, on an actual resume (i.e. only when trainer state is found), to the train
+            module's ``reset_optimizer_states_on_resume`` setting.
         """
         dir = normalize_path(dir)
 
@@ -229,6 +231,14 @@ class Checkpointer:
 
             if load_trainer_state is True and trainer_state is None:
                 raise FileNotFoundError(f"Missing trainer state in checkpoint dir '{dir}'")
+
+        # The resume-specific optimizer reset only applies to an actual resume, so derive it here
+        # (after the trainer-state probe) rather than for every non-``False`` load: loading a
+        # standalone model/optimizer checkpoint that has no trainer state must keep its moments.
+        if reset_optimizer_states_on_load is None and trainer_state is not None:
+            reset_optimizer_states_on_load = getattr(
+                train_module, "reset_optimizer_states_on_resume", None
+            )
 
         # Load train module state.
         train_module_dir = f"{dir}/model_and_optim"

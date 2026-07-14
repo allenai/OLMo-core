@@ -1052,20 +1052,14 @@ class Trainer:
         :param load_trainer_state: Load trainer state (data loader state, RNG states, and other bookkeeping).
         :param load_optim_state: Load optimizer state in the train module.
         :param reset_optimizer_states_on_load: Override whether optimizer state should be reset for
-            this checkpoint load. When left ``None`` on a resume (``load_trainer_state=True``), it
-            defaults to the train module's ``reset_optimizer_states_on_resume`` setting, if any.
+            this checkpoint load. When left ``None``, :meth:`Checkpointer.load` defaults it to the
+            train module's ``reset_optimizer_states_on_resume`` setting on an actual resume (i.e.
+            only when trainer state is found in the checkpoint).
         """
         load_trainer_state = (
             self.load_trainer_state if load_trainer_state is None else load_trainer_state
         )
         load_optim_state = self.load_optim_state if load_optim_state is None else load_optim_state
-        # Any load that isn't explicitly load_trainer_state=False is a potential resume (the default
-        # of None loads trainer state when present, which is the normal automatic-resume path), so
-        # apply the train module's resume-specific optimizer reset flag here too.
-        if reset_optimizer_states_on_load is None and load_trainer_state is not False:
-            reset_optimizer_states_on_load = getattr(
-                self.train_module, "reset_optimizer_states_on_resume", None
-            )
         if dir == self.save_folder:
             if load_trainer_state is False:
                 log.warning(
