@@ -360,6 +360,11 @@ def get_cpu_offload_context(
     model_layers: int = 1,
 ):
     """Return (context_manager, group_commit_op) when enabled, else (nullcontext, None)."""
+    # Build the handler only when enabled: its __init__ allocates CUDA streams, which would raise
+    # on CPU-only / disabled (smoke/materialize) paths that expect the no-op return below.
+    if not enabled:
+        return nullcontext(), None
+
     cpu_offload_handler = CpuOffloadHandler(
         num_offload_group=num_layers,
         num_model_group=model_layers,
@@ -369,12 +374,10 @@ def get_cpu_offload_context(
     def group_prefetch_offload_commit_async(tensor):
         return group_prefetch_offload_commit(tensor, cpu_offload_handler)
 
-    if enabled:
-        return (
-            CpuOffloadHook(offload_handler=cpu_offload_handler),
-            group_prefetch_offload_commit_async,
-        )
-    return nullcontext(), None
+    return (
+        CpuOffloadHook(offload_handler=cpu_offload_handler),
+        group_prefetch_offload_commit_async,
+    )
 
 
 def tensor_need_offloading_checker_activations(tensor):
