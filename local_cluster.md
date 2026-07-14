@@ -73,8 +73,13 @@ export PATH="$ENV/bin:$PATH"   # direct PATH — `conda activate` hangs minutes 
 
 Two more env facts every job needs:
 
-- The env's olmo_core is an editable install of a **different** checkout
-  (`/scratch/users/prasann/OLMo-core`). To run THIS working tree: `export PYTHONPATH=$REPO/src`.
+- The env's olmo_core is an **editable install of THIS repo** (`.../projects/OLMo-core/src`) — all
+  5 copies (the `/scratch` master + the 4 `/data` clones) were re-pointed on 2026-07-13, so a plain
+  `import olmo_core` runs the working tree. Launchers still set `PYTHONPATH=$REPO/src`, which is
+  now harmless redundancy. (Historical trap, in case a stale env copy resurfaces: they used to
+  point at a frozen upstream clone at `/scratch/users/prasann/OLMo-core`, so forgetting
+  `PYTHONPATH` silently ran months-old code. Check with
+  `python -c 'import olmo_core; print(olmo_core.__file__)'`.)
 - `export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1` — the HF cache is warm and compute-node egress
   is blocked/slow; without these, dataloader workers silently stall in multi-minute hub retries.
 
