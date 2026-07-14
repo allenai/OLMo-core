@@ -104,20 +104,6 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
             self.tbo and self.recompute_each_block
         ), "Cannot use TBO when recompute_each_block is True."
 
-        self.cpu_offload = False  # NOTE : CPU activation offload is not useful due to low pcie bandwidth, so disable it for now
-
-        # not used
-        # self.offload_context, self.offload_sync_func = get_cpu_offload_context(
-        #     enabled=self.cpu_offload,
-        #     num_layers=4,
-        #     model_layers=self.n_layers,
-        # )
-
-    # def reset_offload_handler(self): # NOTE: cpu activation offload should not be used
-    #     if self.cpu_offload:
-    #         assert isinstance(self.offload_context, CpuOffloadHook)
-    #         self.offload_context.offload_handler.groupid_reset()
-
     def named_ddp_blocks(self) -> Iterator[tuple[str, OLMoDDPTransformerBlock]]:
         for block_key, block in self.blocks.items():
             if isinstance(block, OLMoDDPTransformerBlock):
@@ -996,7 +982,6 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
             if self.compile_enabled:
                 mark_dynamic(h, (0, 1), strict=False)
             with nvtx.annotate(f"fwd_block_{block_idx}", color="blue"):
-                # with self.offload_context:
                 one_block_kwargs = per_block_kwargs.get(int(block_key), {})
                 if self.checkpoint_tbo_dense_layers:
                     h = checkpoint(
@@ -1008,11 +993,6 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
                     h = cast(torch.Tensor, h)
                 else:
                     h = block(h, **all_block_kwargs, **one_block_kwargs)
-
-            # commit cpu offload
-            # if torch.is_grad_enabled() and self.offload_sync_func is not None:
-            #     h = self.offload_sync_func(h)
-            #     h = cast(torch.Tensor, h)
 
         # forward moe blocks with TBO
         x0, x1 = h.chunk(2, dim=0)  # assume even batch size
@@ -1031,16 +1011,14 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
         }
         for block_key, block in self.named_routed_blocks():
             with nvtx.annotate(f"fwd_block_{block_key}", color="blue"):
-                # with self.offload_context:
-                # x0, x1_ctx = block.checkpointed_combined_forward_rowwise_nvshmem_tbo(x0, x1_ctx, x1_is_fresh, **block_kwargs)
+                # Thread the block's per-block kwargs (e.g. context-parallel RoPE shards) alongside
+                # the shared kwargs, matching the dense/non-TBO loops; otherwise routed blocks under
+                # CP + TBO would miss their pos_sin/pos_cos/freqs_cis shards.
+                one_block_kwargs = per_block_kwargs.get(int(block_key), {})
                 x0, x1_ctx = block.combined_forward_rowwise_nvshmem_tbo(
-                    x0, x1_ctx, x1_is_fresh, **all_block_kwargs
+                    x0, x1_ctx, x1_is_fresh, **all_block_kwargs, **one_block_kwargs
                 )
                 x1_is_fresh = False  # after the first TBO block, x1 is no longer fresh
-
-            # if torch.is_grad_enabled() and self.offload_sync_func is not None:
-            #     x0 = self.offload_sync_func(x0)
-            #     x0 = cast(torch.Tensor, x0)
 
         # finish x1 last steps
         h0, h1 = self._tbo_last_step(x0, x1_ctx, lm_head_kwargs, labels0, labels1)

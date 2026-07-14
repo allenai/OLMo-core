@@ -102,32 +102,80 @@ _SHARED_DOWN_FP8_CACHE_SPECS = (
 
 @dataclass
 class OLMoDDPTransformerBlockConfig(TransformerBlockConfig):
+    """
+    Configuration for a :class:`OLMoDDPTransformerBlock`.
+
+    Unlike :class:`~olmo_core.nn.transformer.config.TransformerBlockConfig`, this block does not use
+    the ``feed_forward`` / ``feed_forward_moe`` fields; the feed-forward sublayer is described by
+    :data:`routed_experts` (+ :data:`routed_experts_router`) and the optional :data:`shared_experts`
+    (+ :data:`shared_experts_router`). The inherited ``layer_norm`` field is used for both the
+    attention and feed-forward norms.
+    """
+
     shared_experts: Optional[SharedExpertsConfig] = None
+    """
+    The optional shared (always-on) experts applied to every token.
+    """
 
     routed_experts: Optional[RoutedExpertsConfig] = None
+    """
+    The routed experts that each token is dispatched to via :data:`routed_experts_router`.
+    """
 
     shared_experts_router: Optional[MoERouterConfigV2] = None
+    """
+    The router that produces the (gated) combine weights for the shared experts. Only needed when
+    there is more than one shared expert.
+    """
 
     routed_experts_router: Optional[MoERouterConfigV2] = None
+    """
+    The router that selects the top-k routed experts for each token and produces their combine
+    weights.
+    """
 
-    # TODO: These booleans overload the meaning of attention_norm and
-    # feed_forward_norm. With use_pre_norm=True they are input/pre norms, while
-    # the default/reordered path uses them as post-sublayer branch norms; peri
-    # norm then adds separate *_input_norm modules for the pre norms. This makes
-    # checkpoint conversion fragile across model families. Consider replacing
-    # this with explicit placement fields, e.g.
-    # attention_norm_placement/feed_forward_norm_placement in:
-    #   {"none", "pre", "branch_post", "pre_and_branch_post"}
-    # and stable module names like pre_attention_norm, post_attention_norm,
-    # pre_feed_forward_norm, and post_feed_forward_norm, with compatibility
-    # aliases for existing checkpoints.
     use_peri_norm: bool = False
+    """
+    Apply a "peri-norm" — an additional input (pre) norm on the attention and feed-forward
+    sublayers, in addition to the branch norms.
+    """
+
     use_pre_norm: bool = False
+    """
+    Use ``layer_norm`` as the sublayer *input* (pre) norm rather than the post-sublayer branch norm.
+
+    .. note::
+        ``use_pre_norm`` / ``use_peri_norm`` overload how the attention/feed-forward norms are
+        placed, which makes checkpoint conversion fragile across model families. A future cleanup
+        may replace them with explicit placement fields and stable ``pre_*``/``post_*`` norm module
+        names (with back-compat aliases).
+    """
+
     checkpoint_attn: bool = False
+    """
+    Activation-checkpoint the attention sublayer.
+    """
+
     checkpoint_permute_moe_unpermute: bool = False
+    """
+    Activation-checkpoint the permute → experts → unpermute region of the MoE sublayer.
+    """
+
     checkpoint_second_unpermute: bool = False
+    """
+    Activation-checkpoint the second (combine) unpermute.
+    """
+
     ep: Optional[ExpertParallelConfig] = None
+    """
+    Expert-parallel dispatch configuration. Selects the EP family (sync / no-sync, 1D / rowwise);
+    ``None`` keeps the block on the no-expert-parallel path.
+    """
+
     rowwise_fp8: Optional[MoERowwiseFP8Config] = None
+    """
+    Optional rowwise-FP8 configuration for the experts (beta).
+    """
 
     def build(
         self,
