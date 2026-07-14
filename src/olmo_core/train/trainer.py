@@ -9,6 +9,7 @@ from collections import OrderedDict, defaultdict
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import timedelta
+from numbers import Real
 from pathlib import Path
 from typing import (
     Any,
@@ -83,6 +84,17 @@ log = logging.getLogger(__name__)
 
 
 T = TypeVar("T")
+
+
+def _metric_value_to_tensor(value: Union[float, torch.Tensor]) -> torch.Tensor:
+    if not isinstance(value, torch.Tensor):
+        # Coerce Python scalars to float64 so large integer metrics (e.g. token counts) don't
+        # overflow or lose precision when torch would otherwise pick int64/float32.
+        if isinstance(value, Real):
+            return torch.tensor(value, dtype=torch.float64)
+        return torch.tensor(value)
+
+    return get_local_tensor(value.detach()).float()
 
 
 class TrainerStateDict(TypedDict):
@@ -1253,10 +1265,7 @@ class Trainer:
         if namespace is not None:
             name = f"{namespace.rstrip('/')}/{name.lstrip('/')}"
 
-        if not isinstance(value, torch.Tensor):
-            value = torch.tensor(value)
-        else:
-            value = get_local_tensor(value.detach()).float()
+        value = _metric_value_to_tensor(value)
 
         if self.global_step not in self._metrics:
             self._metrics[self.global_step] = OrderedDict()
