@@ -1040,6 +1040,7 @@ class Trainer:
         *,
         load_trainer_state: Optional[bool] = None,
         load_optim_state: Optional[bool] = None,
+        reset_optimizer_states_on_load: Optional[bool] = None,
     ):
         """
         Load a checkpoint.
@@ -1050,6 +1051,10 @@ class Trainer:
         :param dir: The path/URL to a checkpoint or a folder of checkpoints.
         :param load_trainer_state: Load trainer state (data loader state, RNG states, and other bookkeeping).
         :param load_optim_state: Load optimizer state in the train module.
+        :param reset_optimizer_states_on_load: Override whether optimizer state should be reset for
+            this checkpoint load. When left ``None``, :meth:`Checkpointer.load` defaults it to the
+            train module's ``reset_optimizer_states_on_resume`` setting on an actual resume (i.e.
+            only when trainer state is found in the checkpoint).
         """
         load_trainer_state = (
             self.load_trainer_state if load_trainer_state is None else load_trainer_state
@@ -1093,6 +1098,7 @@ class Trainer:
             self.train_module,
             load_trainer_state=load_trainer_state,
             load_optim_state=load_optim_state,
+            reset_optimizer_states_on_load=reset_optimizer_states_on_load,
         )
         if trainer_state is not None:
             self.load_state_dict(cast(TrainerStateDict, trainer_state))
@@ -1115,6 +1121,7 @@ class Trainer:
         *,
         load_trainer_state: Optional[bool] = None,
         load_optim_state: Optional[bool] = None,
+        reset_optimizer_states_on_load: Optional[bool] = None,
     ) -> bool:
         """
         Like :meth:`load_checkpoint()` but is a no-op if there is no checkpoint in the ``dir`` provided.
@@ -1135,6 +1142,7 @@ class Trainer:
                 dir,
                 load_trainer_state=load_trainer_state,
                 load_optim_state=load_optim_state,
+                reset_optimizer_states_on_load=reset_optimizer_states_on_load,
             )
             assert self.checkpoint_loaded
             return True

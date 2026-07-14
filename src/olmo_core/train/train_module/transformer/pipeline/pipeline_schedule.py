@@ -3,23 +3,29 @@ import os
 import re
 from collections import Counter, defaultdict
 from enum import Enum
-from typing import Any, List, Mapping, NamedTuple, Optional, Sequence, Union
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    List,
+    Mapping,
+    NamedTuple,
+    Optional,
+    Sequence,
+    Tuple,
+    Union,
+)
 
 import torch
 import torch.distributed as dist
 
-from olmo_core._nvtx import maybe_nvtx_annotate
+from olmo_core._nvtx import nvtx
 from olmo_core.nn.lm_head import LMOutputWithLoss
 
 from .gpu_activation_offload import GPUActivationOffloader
 from .helpers import generate_stage_to_rank_mapping
-from .p2p_transport import NCCLRMAPipelineP2PTransport
+from .p2p_executor import PipelineP2PExecutor, build_p2p_executor
 from .pipeline_stage import CustomPipelineStage
-
-# nvtx range colors for the pipeline schedule (see olmo_core._nvtx.maybe_nvtx_annotate).
-_PP_P2P_COLOR = "blue"  # point-to-point send/recv between stages
-_PP_FORWARD_COLOR = "green"  # micro-batch forward compute
-_PP_BACKWARD_COLOR = "red"  # micro-batch backward compute
 
 logger = logging.getLogger(__name__)
 
@@ -110,6 +116,9 @@ class PipelineAction(NamedTuple):
 
         if self.need_reload:
             repr = "↘" + repr
+        else:
+            # repr = " " + repr
+            pass
 
         return repr
 
@@ -164,6 +173,32 @@ class CustomScheduleInterleaved1F1B:
             )
         self.configure_pipeline_order()
 
+    def _rma_slot_depth(self) -> int:
+        env_value = os.environ.get("OLMO_NCCL_RMA_P2P_SLOT_DEPTH")
+        if self.p2p_backend == "nccl_rma_ack":
+            if env_value is not None and int(env_value) != 1:
+                raise RuntimeError(
+                    "p2p_backend='nccl_rma_ack' requires OLMO_NCCL_RMA_P2P_SLOT_DEPTH=1"
+                )
+            return 1
+
+        if env_value is not None:
+            slot_depth = int(env_value)
+            if slot_depth < 1:
+                raise RuntimeError(
+                    "OLMO_NCCL_RMA_P2P_SLOT_DEPTH must be >= 1, " f"got {slot_depth}"
+                )
+            return slot_depth
+
+        if not self.enable_p2p_overlap:
+            return 1
+        if self.max_p2p_overlap_steps is None:
+            raise RuntimeError(
+                "nccl_rma P2P requires a bounded max_p2p_overlap_steps or an explicit "
+                "OLMO_NCCL_RMA_P2P_SLOT_DEPTH"
+            )
+        return max(1, self.max_p2p_overlap_steps + 1)
+
     def __init__(
         self,
         stages: list[CustomPipelineStage],
@@ -194,15 +229,12 @@ class CustomScheduleInterleaved1F1B:
         self.p2p_backend = getattr(stages[0], "p2p_backend", "nccl")
         if any(getattr(stage, "p2p_backend", "nccl") != self.p2p_backend for stage in stages):
             raise RuntimeError("All local pipeline stages must use the same P2P backend")
-        self.p2p_transport: Optional[NCCLRMAPipelineP2PTransport] = None
-        if self.p2p_backend == "nccl_rma":
-            self.p2p_transport = NCCLRMAPipelineP2PTransport(
-                group=stages[0].p2p_group,
-                device=stages[0].device,
-                num_stages=stages[0].num_stages,
-            )
-            for stage in stages:
-                stage.set_p2p_transport(self.p2p_transport)
+        self.p2p_executor: PipelineP2PExecutor = build_p2p_executor(
+            backend=self.p2p_backend,
+            rank=self.rank,
+            stages=stages,
+        )
+        self.p2p_transport = self.p2p_executor.transport
         # Set the pipeline stage states
         self.stage_index_to_group_rank = generate_stage_to_rank_mapping(
             self.pp_group_size, self._num_stages, style=self.placement_style
@@ -210,11 +242,27 @@ class CustomScheduleInterleaved1F1B:
         for stage in self._stages:
             stage.stage_index_to_group_rank = self.stage_index_to_group_rank
 
+        # Set the same has_backward flag for stage object
+        # for stage in self._stages:
+        #     stage.has_backward = self._has_backward
+
         self._stages_initialized = False
+
+        # avoid putting a reference to 'self' inside the lambda, it creates a ref cycle
+        # has_loss: bool = self._loss_fn is not None
+        # self._should_compute_loss = lambda stage: stage.is_last and has_loss
 
         self.n_local_stages = 2
         assert len(stages) == 2, "Interleaved 1F1B requires exactly 2 stages per rank."
         self.rank = stages[0].group_rank
+        # self.number_of_rounds = max(1, n_microbatches // self.pp_group_size)
+        # self.microbatches_per_round = n_microbatches // self.number_of_rounds
+        # if n_microbatches % self.number_of_rounds != 0:
+        #     raise ValueError(
+        #         "Interleaved 1F1B requires the number of microbatches to be a "
+        #         f"multiple of the number of rounds ({self.number_of_rounds}), "
+        #         f"but got {n_microbatches}."
+        #     )
 
         self.reset_n_microbatches(n_microbatches)
 
@@ -263,7 +311,12 @@ class CustomScheduleInterleaved1F1B:
         self._stages_initialized = True
 
     def step(
-        self, *args, target: Optional[torch.Tensor] = None, forward_only: bool = False, **kwargs
+        self,
+        *args,
+        target: Optional[torch.Tensor] = None,
+        forward_only: bool = False,
+        progress_callback: Optional[Callable[[int, int], None]] = None,
+        **kwargs,
     ) -> List[List[Optional[LMOutputWithLoss]]]:
         """
         Run one iteration of the pipeline schedule with *whole-batch* input.
@@ -289,7 +342,13 @@ class CustomScheduleInterleaved1F1B:
             targets_split = None
 
         # Run microbatches
-        self._step_microbatches(args_split, kwargs_split, targets_split, forward_only=forward_only)
+        self._step_microbatches(
+            args_split,
+            kwargs_split,
+            targets_split,
+            forward_only=forward_only,
+            progress_callback=progress_callback,
+        )
 
         outputs: List[List[Optional[LMOutputWithLoss]]] = [
             stage.get_stage_outputs_as_list() for stage in self._stages
@@ -319,6 +378,7 @@ class CustomScheduleInterleaved1F1B:
                 raise ValueError(f"Expected zero or one positional tensor arg, got {len(args)}")
 
             input_ids: Optional[torch.Tensor] = None
+            args_split: List[Tuple[Any, ...]]
             if len(args) == 1:
                 input_ids = args[0]
                 if not isinstance(input_ids, torch.Tensor) or input_ids.dim() == 0:
@@ -330,15 +390,11 @@ class CustomScheduleInterleaved1F1B:
                         f"input batch size {input_ids.size(0)} is smaller than num_microbatches={self._n_microbatches}"
                     )
                 input_id_chunks = list(torch.tensor_split(input_ids, self._n_microbatches, dim=0))
-                args_split: List[tuple] = [(chunk,) for chunk in input_id_chunks]
+                args_split = [(chunk,) for chunk in input_id_chunks]
             else:
                 args_split = [()] * self._n_microbatches
-            kwargs_split: List[dict] = [{} for _ in range(self._n_microbatches)]
+            kwargs_split: List[Dict[str, Any]] = [{} for _ in range(self._n_microbatches)]
 
-            # TODO(pp-split-doc-lens): intra-document masking passes `doc_lens`/`max_doc_lens` (set by
-            # the train module's _prepare_batch), which aren't in supported_keys, so this splitter
-            # raises before the model forward for a valid training mode. Accept and split them (per
-            # microbatch). Flagged for Tianhua; exercisable once the train module drives PP. (Codex)
             supported_keys = {
                 "loss_div_factor",
                 "labels",
@@ -346,6 +402,8 @@ class CustomScheduleInterleaved1F1B:
                 "loss_reduction",
                 "z_loss_multiplier",
                 "return_logits",
+                "cp_already_sharded",
+                "cp_original_seq_len",
             }
             unexpected_keys = set(kwargs) - supported_keys
             if unexpected_keys:
@@ -396,6 +454,16 @@ class CustomScheduleInterleaved1F1B:
                         raise TypeError("'return_logits' must be a bool")
                     for kwarg_mb in kwargs_split:
                         kwarg_mb[key] = value
+                elif key == "cp_already_sharded":
+                    if not isinstance(value, bool):
+                        raise TypeError("'cp_already_sharded' must be a bool")
+                    for kwarg_mb in kwargs_split:
+                        kwarg_mb[key] = value
+                elif key == "cp_original_seq_len":
+                    if not isinstance(value, int):
+                        raise TypeError("'cp_original_seq_len' must be an int")
+                    for kwarg_mb in kwargs_split:
+                        kwarg_mb[key] = value
 
             return args_split, kwargs_split
         else:
@@ -441,6 +509,7 @@ class CustomScheduleInterleaved1F1B:
         kwarg_mbs: list,
         target_mbs: Optional[list] = None,
         forward_only: bool = False,
+        progress_callback: Optional[Callable[[int, int], None]] = None,
     ):
         if not self._stages_initialized:
             self._initialize_stages(arg_mbs[0], kwarg_mbs[0])
@@ -449,20 +518,10 @@ class CustomScheduleInterleaved1F1B:
         for stage in self._stages:
             stage._prepare_forward_backward_meta(self._n_microbatches, arg_mbs[0], kwarg_mbs[0])
         if self.p2p_transport is not None:
-            payload_meta: Optional[torch.Tensor] = None
-            for stage in self._stages:
-                for meta in (stage.outputs_meta, stage.inputs_meta):
-                    if meta is not None and meta.dtype == stage.p2p_dtype and meta.dim() == 3:
-                        payload_meta = meta
-                        break
-                if payload_meta is not None:
-                    break
-            if payload_meta is None:
-                raise RuntimeError("Could not infer NCCL RMA P2P payload metadata")
-            self.p2p_transport.prepare_step(
+            self.p2p_executor.prepare_step(
+                stages=self._stages,
                 num_microbatches=self._n_microbatches,
-                payload_shape=tuple(payload_meta.size()),
-                payload_dtype=payload_meta.dtype,
+                slot_depth=self._rma_slot_depth(),
             )
 
         stage_index_to_stage: dict[int, CustomPipelineStage] = {
@@ -482,60 +541,9 @@ class CustomScheduleInterleaved1F1B:
         # count either full_backward or backward_weight together, to determine when to sync DP grads
         backward_counter: Counter[int] = Counter()
         forward_counter: Counter[int] = Counter()
+        reported_progress: set[int] = set()
         past_first_backward = False
-        # Loop interleaved 1F1B launches one tick-wide P2P batch, but waits
-        # recv handles only when the next local compute consumes them. 1F1B-V
-        # overrides this method to keep its peer/key launch ordering.
-        pending_p2p: dict[
-            tuple[str, int, int, int],
-            list[tuple[Any, Any, str, int]],
-        ] = defaultdict(list)
         completed_p2p_overlap_compute_steps = 0
-
-        def wait_all_p2p() -> None:
-            for key in list(pending_p2p):
-                wait_p2p_key(key)
-
-        def wait_p2p_key(key: tuple[str, int, int, int]) -> None:
-            for handle, _op, _op_kind, _launch_overlap_step in pending_p2p.pop(key, []):
-                handle.wait()
-
-        def wait_p2p_ops(op_kinds: set[str] | frozenset[str]) -> None:
-            for key in list(pending_p2p):
-                pending = pending_p2p.pop(key)
-                still_pending: list[tuple[Any, Any, str, int]] = []
-                for handle, op, op_kind, launch_overlap_step in pending:
-                    if op_kind in op_kinds:
-                        handle.wait()
-                    else:
-                        still_pending.append((handle, op, op_kind, launch_overlap_step))
-                if still_pending:
-                    pending_p2p[key] = still_pending
-
-        def prune_completed_p2p() -> None:
-            for key, entries in list(pending_p2p.items()):
-                pending: list[tuple[Any, Any, str, int]] = []
-                for handle, op, op_kind, launch_overlap_step in entries:
-                    if handle.is_completed():
-                        handle.wait()
-                    else:
-                        pending.append((handle, op, op_kind, launch_overlap_step))
-                if pending:
-                    pending_p2p[key] = pending
-                else:
-                    pending_p2p.pop(key, None)
-
-        def wait_p2p_launched_at_or_before(overlap_compute_step: int) -> None:
-            for key in list(pending_p2p):
-                pending = pending_p2p.pop(key)
-                still_pending: list[tuple[Any, Any, str, int]] = []
-                for handle, op, op_kind, launch_overlap_step in pending:
-                    if launch_overlap_step <= overlap_compute_step:
-                        handle.wait()
-                    else:
-                        still_pending.append((handle, op, op_kind, launch_overlap_step))
-                if still_pending:
-                    pending_p2p[key] = still_pending
 
         def wait_for_action_inputs(action: PipelineAction) -> None:
             assert action.microbatch_index is not None
@@ -543,41 +551,49 @@ class CustomScheduleInterleaved1F1B:
             mb_index = action.microbatch_index
             if action.computation_type == PipelineActionType.FORWARD:
                 if not stage.is_first and not stage.has_local_forward_src():
-                    wait_p2p_key(("F", action.stage_index - 1, action.stage_index, mb_index))
+                    self.p2p_executor.wait_key(
+                        ("F", action.stage_index - 1, action.stage_index, mb_index)
+                    )
             elif action.computation_type == PipelineActionType.FULL_BACKWARD:
                 if not forward_only and not stage.is_last and not stage.has_local_backward_src():
-                    wait_p2p_key(("B", action.stage_index + 1, action.stage_index, mb_index))
-
-        def launch_p2p_ops(keyed_ops: list[tuple[tuple[str, int, int, int], str, Any]]) -> None:
-            if not keyed_ops:
-                return
-            with maybe_nvtx_annotate("P2P", _PP_P2P_COLOR):
-                if self.p2p_backend == "nccl_rma":
-                    handles = [op.start() for _key, _op_kind, op in keyed_ops]
-                else:
-                    handles = dist.batch_isend_irecv([op for _key, _op_kind, op in keyed_ops])
-            if len(handles) == 1 and len(keyed_ops) > 1:
-                handles_for_ops = handles * len(keyed_ops)
-            elif len(handles) == len(keyed_ops):
-                handles_for_ops = handles
-            else:
-                raise RuntimeError(
-                    "Unexpected number of P2P work handles from batch_isend_irecv: "
-                    f"got {len(handles)} handles for {len(keyed_ops)} ops"
-                )
-            for (key, op_kind, op), handle in zip(keyed_ops, handles_for_ops):
-                pending_p2p[key].append(
-                    (
-                        handle,
-                        op,
-                        op_kind,
-                        completed_p2p_overlap_compute_steps,
+                    self.p2p_executor.wait_key(
+                        ("B", action.stage_index + 1, action.stage_index, mb_index)
                     )
-                )
+
+        def maybe_wait_for_action_inputs(action: PipelineAction) -> None:
+            assert action.microbatch_index is not None
+            stage = stage_index_to_stage[action.stage_index]
+            mb_index = action.microbatch_index
+            if action.computation_type == PipelineActionType.FORWARD:
+                if not stage.is_first and not stage.has_local_forward_src():
+                    self.p2p_executor.maybe_wait_key(
+                        ("F", action.stage_index - 1, action.stage_index, mb_index)
+                    )
+            elif action.computation_type == PipelineActionType.FULL_BACKWARD:
+                if not forward_only and not stage.is_last and not stage.has_local_backward_src():
+                    self.p2p_executor.maybe_wait_key(
+                        ("B", action.stage_index + 1, action.stage_index, mb_index)
+                    )
+
+        def next_real_compute_action(start_time_step: int) -> Optional[PipelineAction]:
+            for future_time_step in range(start_time_step + 1, len(self.pipeline_order[self.rank])):
+                future_action = self.pipeline_order[self.rank][future_time_step]
+                if self._action_advances_p2p_overlap(future_action):
+                    return future_action
+            return None
+
+        def maybe_prefetch_next_action_inputs(time_step: int) -> None:
+            if not self.p2p_executor.should_prefetch_next_action_inputs:
+                return
+            next_compute_action = next_real_compute_action(time_step)
+            if next_compute_action is None:
+                return
+            maybe_wait_for_action_inputs(next_compute_action)
 
         # reload_event: Optional[torch.cuda.Event] = None
         for time_step, action in enumerate(self.pipeline_order[self.rank]):
-            prune_completed_p2p()
+            # print(f'{action}-Start')
+            self.p2p_executor.prune_completed()
 
             # do a 1-step lookahead prefetch if needed
             next_action = (
@@ -605,12 +621,16 @@ class CustomScheduleInterleaved1F1B:
                     mb_index is not None
                 ), "All currently supported action types require valid microbatch_index"
                 if computation_type == PipelineActionType.FORWARD:
+                    if progress_callback is not None and mb_index not in reported_progress:
+                        progress_callback(mb_index, self._n_microbatches)
+                        reported_progress.add(mb_index)
+
                     # perform forward computation
                     stage = stage_index_to_stage[stage_index]
                     offload_group = f"{action.stage_index}F{mb_index}"
                     forward_counter[stage_index] += 1
                     last_forward = forward_counter[stage_index] == self._n_microbatches
-                    with maybe_nvtx_annotate(f"{action.stage_index}F{mb_index}", _PP_FORWARD_COLOR):
+                    with nvtx.annotate(f"{action.stage_index}F{mb_index}", color="green"):
                         # use this context manager to capture all saved tensors in this block, it does not transfer anything at this point
                         with self.gpu_activation_offloader.get_offload_context(
                             group=offload_group,
@@ -625,6 +645,7 @@ class CustomScheduleInterleaved1F1B:
                         # start D2D transfer
                         if self.use_gpu_activation_offload:
                             _ = self.gpu_activation_offloader.async_offload(offload_group)
+                    # self._maybe_compute_loss(stage, output, target_mbs, mb_index)
                     self._maybe_local_forward_handoff(stage, mb_index, stage_index_to_stage)
                     keyed_ops.extend(
                         (
@@ -634,6 +655,7 @@ class CustomScheduleInterleaved1F1B:
                         )
                         for op in stage.get_fwd_send_ops(mb_index)
                     )
+                    maybe_prefetch_next_action_inputs(time_step)
                 elif computation_type == PipelineActionType.FULL_BACKWARD:
                     if forward_only:
                         # in forward only (eval) mode, skip backward computation, but need to free fwd_cache wihch
@@ -652,14 +674,17 @@ class CustomScheduleInterleaved1F1B:
 
                         backward_counter[stage_index] += 1
                         last_backward = backward_counter[stage_index] == self._n_microbatches
-                        with maybe_nvtx_annotate(
-                            f"{action.stage_index}B{mb_index}", _PP_BACKWARD_COLOR
-                        ):
+                        # grad_scale_factor = (
+                        #     self._n_microbatches if self.scale_grads else 1
+                        # )
+                        with nvtx.annotate(f"{action.stage_index}B{mb_index}", color="red"):
                             stage.backward_one_chunk(
                                 mb_index,
                                 loss=None,  # loss is retrieved inside the stage
                                 last_backward=last_backward,
                             )
+                        # if last_backward:
+                        #     stage.scale_grads(grad_scale_factor)
 
                         if action.need_reload and self.use_gpu_activation_offload:
                             self.gpu_activation_offloader.manual_release_group(
@@ -674,6 +699,7 @@ class CustomScheduleInterleaved1F1B:
                             )
                             for op in stage.get_bwd_send_ops(mb_index)
                         )
+                        maybe_prefetch_next_action_inputs(time_step)
                         past_first_backward = True
                 elif computation_type == PipelineActionType.FULL_BACKWARD_CONT:
                     # continuation of full backward, no computation
@@ -750,6 +776,9 @@ class CustomScheduleInterleaved1F1B:
                         pass
                     elif computation_type == FULL_BACKWARD_CONT:
                         # If not the first stage, then receive bwd gradients
+                        # if stage_index - 1 in stage_index_to_stage:
+                        #     stage = stage_index_to_stage[stage_index - 1]
+                        #     ops.extend(stage.get_bwd_recv_ops(mb_index))
                         pass
                     elif computation_type == FULL_BACKWARD:
                         if forward_only:
@@ -770,15 +799,19 @@ class CustomScheduleInterleaved1F1B:
                     else:
                         raise ValueError(f"Unknown computation type {computation_type}")
 
-            launch_p2p_ops(keyed_ops)
+            self.p2p_executor.launch(
+                keyed_ops,
+                completed_p2p_overlap_compute_steps=completed_p2p_overlap_compute_steps,
+                debug_context=f"t={time_step} action={action}",
+            )
 
             # do the communication
-            if pending_p2p:
+            if self.p2p_executor.has_pending:
                 if forward_only:
                     # in forward only mode, just wait right away for simplicity
-                    wait_all_p2p()
+                    self.p2p_executor.wait_all()
                 elif not self.enable_p2p_overlap:
-                    wait_all_p2p()
+                    self.p2p_executor.wait_all()
                 else:
                     has_blocking_op = any(
                         op_kind not in self.p2p_overlap_ops for _key, op_kind, _op in keyed_ops
@@ -786,17 +819,19 @@ class CustomScheduleInterleaved1F1B:
                     if (
                         not past_first_backward
                     ):  # it's only safe collect the p2p handles at N+1 step in the stable 1F1B phase. Need to collect it immediately in the warmup phase
-                        wait_all_p2p()
+                        self.p2p_executor.wait_all()
                     elif has_blocking_op:
-                        wait_all_p2p()
+                        self.p2p_executor.wait_all()
                     if self.max_p2p_overlap_steps is not None:
-                        wait_p2p_launched_at_or_before(
+                        self.p2p_executor.wait_launched_at_or_before(
                             completed_p2p_overlap_compute_steps - self.max_p2p_overlap_steps
                         )
 
+            # print(f'{action}-Done')
+
             pass  # time step done
 
-        wait_all_p2p()
+        self.p2p_executor.wait_all()
 
         return
 
@@ -868,6 +903,7 @@ class CustomSchedule1F1BV(CustomScheduleInterleaved1F1B):
         kwarg_mbs: list,
         target_mbs: Optional[list] = None,
         forward_only: bool = False,
+        progress_callback: Optional[Callable[[int, int], None]] = None,
     ):
         if not self._stages_initialized:
             self._initialize_stages(arg_mbs[0], kwarg_mbs[0])
@@ -876,20 +912,10 @@ class CustomSchedule1F1BV(CustomScheduleInterleaved1F1B):
         for stage in self._stages:
             stage._prepare_forward_backward_meta(self._n_microbatches, arg_mbs[0], kwarg_mbs[0])
         if self.p2p_transport is not None:
-            payload_meta: Optional[torch.Tensor] = None
-            for stage in self._stages:
-                for meta in (stage.outputs_meta, stage.inputs_meta):
-                    if meta is not None and meta.dtype == stage.p2p_dtype and meta.dim() == 3:
-                        payload_meta = meta
-                        break
-                if payload_meta is not None:
-                    break
-            if payload_meta is None:
-                raise RuntimeError("Could not infer NCCL RMA P2P payload metadata")
-            self.p2p_transport.prepare_step(
+            self.p2p_executor.prepare_step(
+                stages=self._stages,
                 num_microbatches=self._n_microbatches,
-                payload_shape=tuple(payload_meta.size()),
-                payload_dtype=payload_meta.dtype,
+                slot_depth=self._rma_slot_depth(),
             )
 
         stage_index_to_stage: dict[int, CustomPipelineStage] = {
@@ -909,76 +935,9 @@ class CustomSchedule1F1BV(CustomScheduleInterleaved1F1B):
         # count either full_backward or backward_weight together, to determine when to sync DP grads
         backward_counter: Counter[int] = Counter()
         forward_counter: Counter[int] = Counter()
+        reported_progress: set[int] = set()
         past_first_backward = False
-        outstanding_p2p: dict[
-            tuple[str, int, int, int],
-            list[tuple[Any, Any, str, int]],
-        ] = defaultdict(list)
         completed_p2p_overlap_compute_steps = 0
-
-        def debug(message: str) -> None:
-            if self.p2p_backend != "nccl_rma" or os.environ.get("OLMO_NCCL_RMA_P2P_DEBUG") != "1":
-                return
-            print(f"[rank {self.rank} pipeline-rma] {message}", flush=True)
-
-        def p2p_launch_label(
-            key: tuple[str, int, int, int],
-            peer_keyed_ops: list[tuple[tuple[str, int, int, int], str, Any]],
-        ) -> str:
-            kind, src_stage, dst_stage, mb_index = key
-            labels = set()
-            for _key, op_kind, _op in peer_keyed_ops:
-                if op_kind.endswith("SEND"):
-                    labels.add(f"{src_stage}{kind}{mb_index}-S")
-                else:
-                    labels.add(f"{dst_stage}{kind}{mb_index}-R")
-            return ",".join(sorted(labels))
-
-        def wait_p2p_key(key: tuple[str, int, int, int]) -> None:
-            debug(f"wait key={key} entries={len(outstanding_p2p.get(key, []))}")
-            for handle, _op, _op_kind, _launch_overlap_step in outstanding_p2p.pop(key, []):
-                handle.wait()
-
-        def wait_all_p2p() -> None:
-            for key in list(outstanding_p2p):
-                wait_p2p_key(key)
-
-        def wait_p2p_ops(op_kinds: set[str] | frozenset[str]) -> None:
-            for key in list(outstanding_p2p):
-                pending = outstanding_p2p.pop(key)
-                still_pending: list[tuple[Any, Any, str, int]] = []
-                for handle, op, op_kind, launch_overlap_step in pending:
-                    if op_kind in op_kinds:
-                        handle.wait()
-                    else:
-                        still_pending.append((handle, op, op_kind, launch_overlap_step))
-                if still_pending:
-                    outstanding_p2p[key] = still_pending
-
-        def prune_completed_p2p() -> None:
-            for key, entries in list(outstanding_p2p.items()):
-                pending: list[tuple[Any, Any, str, int]] = []
-                for handle, op, op_kind, launch_overlap_step in entries:
-                    if handle.is_completed():
-                        handle.wait()
-                    else:
-                        pending.append((handle, op, op_kind, launch_overlap_step))
-                if pending:
-                    outstanding_p2p[key] = pending
-                else:
-                    outstanding_p2p.pop(key, None)
-
-        def wait_p2p_launched_at_or_before(overlap_compute_step: int) -> None:
-            for key in list(outstanding_p2p):
-                pending = outstanding_p2p.pop(key)
-                still_pending: list[tuple[Any, Any, str, int]] = []
-                for handle, op, op_kind, launch_overlap_step in pending:
-                    if launch_overlap_step <= overlap_compute_step:
-                        handle.wait()
-                    else:
-                        still_pending.append((handle, op, op_kind, launch_overlap_step))
-                if still_pending:
-                    outstanding_p2p[key] = still_pending
 
         def wait_for_action_inputs(action: PipelineAction) -> None:
             assert action.microbatch_index is not None
@@ -986,15 +945,20 @@ class CustomSchedule1F1BV(CustomScheduleInterleaved1F1B):
             mb_index = action.microbatch_index
             if action.computation_type == PipelineActionType.FORWARD:
                 if not stage.is_first and not stage.has_local_forward_src():
-                    wait_p2p_key(("F", action.stage_index - 1, action.stage_index, mb_index))
+                    self.p2p_executor.wait_key(
+                        ("F", action.stage_index - 1, action.stage_index, mb_index)
+                    )
             elif action.computation_type == PipelineActionType.FULL_BACKWARD:
                 if not forward_only and not stage.is_last and not stage.has_local_backward_src():
-                    wait_p2p_key(("B", action.stage_index + 1, action.stage_index, mb_index))
+                    self.p2p_executor.wait_key(
+                        ("B", action.stage_index + 1, action.stage_index, mb_index)
+                    )
 
         # reload_event: Optional[torch.cuda.Event] = None
         for time_step, action in enumerate(self.pipeline_order[self.rank]):
-            debug(f"time_step={time_step} action={action}")
-            prune_completed_p2p()
+            self.p2p_executor.debug(f"time_step={time_step} action={action}")
+            # print(f'{action}-Start')
+            self.p2p_executor.prune_completed()
 
             # do a 1-step lookahead prefetch if needed
             next_action = (
@@ -1022,12 +986,16 @@ class CustomSchedule1F1BV(CustomScheduleInterleaved1F1B):
                     mb_index is not None
                 ), "All currently supported action types require valid microbatch_index"
                 if computation_type == PipelineActionType.FORWARD:
+                    if progress_callback is not None and mb_index not in reported_progress:
+                        progress_callback(mb_index, self._n_microbatches)
+                        reported_progress.add(mb_index)
+
                     # perform forward computation
                     stage = stage_index_to_stage[stage_index]
                     offload_group = f"{action.stage_index}F{mb_index}"
                     forward_counter[stage_index] += 1
                     last_forward = forward_counter[stage_index] == self._n_microbatches
-                    with maybe_nvtx_annotate(f"{action.stage_index}F{mb_index}", _PP_FORWARD_COLOR):
+                    with nvtx.annotate(f"{action.stage_index}F{mb_index}", color="green"):
                         # use this context manager to capture all saved tensors in this block, it does not transfer anything at this point
                         with self.gpu_activation_offloader.get_offload_context(
                             group=offload_group,
@@ -1042,6 +1010,7 @@ class CustomSchedule1F1BV(CustomScheduleInterleaved1F1B):
                         # start D2D transfer
                         if self.use_gpu_activation_offload:
                             _ = self.gpu_activation_offloader.async_offload(offload_group)
+                    # self._maybe_compute_loss(stage, output, target_mbs, mb_index)
                     self._maybe_local_forward_handoff(stage, mb_index, stage_index_to_stage)
                     keyed_ops.extend(
                         (
@@ -1069,14 +1038,17 @@ class CustomSchedule1F1BV(CustomScheduleInterleaved1F1B):
 
                         backward_counter[stage_index] += 1
                         last_backward = backward_counter[stage_index] == self._n_microbatches
-                        with maybe_nvtx_annotate(
-                            f"{action.stage_index}B{mb_index}", _PP_BACKWARD_COLOR
-                        ):
+                        # grad_scale_factor = (
+                        #     self._n_microbatches if self.scale_grads else 1
+                        # )
+                        with nvtx.annotate(f"{action.stage_index}B{mb_index}", color="red"):
                             stage.backward_one_chunk(
                                 mb_index,
                                 loss=None,  # loss is retrieved inside the stage
                                 last_backward=last_backward,
                             )
+                        # if last_backward:
+                        #     stage.scale_grads(grad_scale_factor)
 
                         if action.need_reload and self.use_gpu_activation_offload:
                             self.gpu_activation_offloader.manual_release_group(
@@ -1167,6 +1139,9 @@ class CustomSchedule1F1BV(CustomScheduleInterleaved1F1B):
                         pass
                     elif computation_type == FULL_BACKWARD_CONT:
                         # If not the first stage, then receive bwd gradients
+                        # if stage_index - 1 in stage_index_to_stage:
+                        #     stage = stage_index_to_stage[stage_index - 1]
+                        #     ops.extend(stage.get_bwd_recv_ops(mb_index))
                         pass
                     elif computation_type == FULL_BACKWARD:
                         if forward_only:
@@ -1254,52 +1229,19 @@ class CustomSchedule1F1BV(CustomScheduleInterleaved1F1B):
                             keyed_ops_by_peer_and_key[(peer, key)],
                             key=lambda item: item[1],
                         )
-                        with maybe_nvtx_annotate(
-                            p2p_launch_label(key, peer_keyed_ops), _PP_P2P_COLOR
-                        ):
-                            debug(
-                                "launch "
-                                f"peer={peer} key={key} "
-                                f"kinds={[op_kind for _, op_kind, _ in peer_keyed_ops]}"
-                            )
-                            if self.p2p_backend == "nccl_rma":
-                                handles = [op.start() for _, _, op in peer_keyed_ops]
-                            else:
-                                handles = dist.batch_isend_irecv(
-                                    [op for _, _, op in peer_keyed_ops]
-                                )
-                        if len(handles) == 1 and len(peer_keyed_ops) > 1:
-                            # NCCL coalescing may return a single Work that covers
-                            # the whole same-key peer batch. Associate it with every
-                            # keyed op so later dependency waits cannot skip any
-                            # receive, but do not coalesce unrelated keys together:
-                            # waiting on one key would otherwise force waits for
-                            # independent overlappable transfers.
-                            handles_for_ops = handles * len(peer_keyed_ops)
-                        elif len(handles) == len(peer_keyed_ops):
-                            handles_for_ops = handles
-                        else:
-                            raise RuntimeError(
-                                "Unexpected number of P2P work handles from batch_isend_irecv: "
-                                f"got {len(handles)} handles for {len(peer_keyed_ops)} ops"
-                            )
-                        for (key, op_kind, op), handle in zip(peer_keyed_ops, handles_for_ops):
-                            outstanding_p2p[key].append(
-                                (
-                                    handle,
-                                    op,
-                                    op_kind,
-                                    completed_p2p_overlap_compute_steps,
-                                )
-                            )
+                        self.p2p_executor.launch(
+                            peer_keyed_ops,
+                            completed_p2p_overlap_compute_steps=completed_p2p_overlap_compute_steps,
+                            debug_context=f"peer={peer} key={key}",
+                        )
 
             # do the communication
-            if outstanding_p2p:
+            if self.p2p_executor.has_pending:
                 if forward_only:
                     # in forward only mode, just wait right away for simplicity
-                    wait_all_p2p()
+                    self.p2p_executor.wait_all()
                 elif not self.enable_p2p_overlap:
-                    wait_all_p2p()
+                    self.p2p_executor.wait_all()
                 else:
                     # In training mode, the overlap cap is measured in local
                     # compute steps, not raw schedule slots. Placeholder slots
@@ -1311,19 +1253,21 @@ class CustomSchedule1F1BV(CustomScheduleInterleaved1F1B):
                         "B_RECV",
                     } - set(self.p2p_overlap_ops)
                     if blocking_ops:
-                        wait_p2p_ops(blocking_ops)
+                        self.p2p_executor.wait_ops(blocking_ops)
                     if (
                         not past_first_backward
                     ):  # it's only safe collect the p2p handles at N+1 step in the stable 1F1B phase. Need to collect it immediately in the warmup phase
-                        wait_all_p2p()
+                        self.p2p_executor.wait_all()
                     if self.max_p2p_overlap_steps is not None:
-                        wait_p2p_launched_at_or_before(
+                        self.p2p_executor.wait_launched_at_or_before(
                             completed_p2p_overlap_compute_steps - self.max_p2p_overlap_steps
                         )
 
+            # print(f'{action}-Done')
+
             pass  # time step done
 
-        wait_all_p2p()
+        self.p2p_executor.wait_all()
 
         return
 

@@ -1,12 +1,9 @@
-import logging
 from functools import partial
 from typing import Dict, Optional, cast
 
 import torch
 
 from olmo_core.utils import get_or_init_stream
-
-log = logging.getLogger(__name__)
 
 # TODO: consider switching to weakref to automatically free memory when tensor is gone
 
@@ -60,7 +57,7 @@ class GPUActivationOffloader:
         if group in self._reload_events:
             torch.cuda.current_stream().wait_stream(self._stream)
             del self._reload_events[group]
-            log.debug("Reload event for group %s completed.", group)
+            print(f"[GPUActivationOffloader] Reload event for group {group} completed.")
         else:
             raise RuntimeError("No reload event recorded, cannot wait.")
 
@@ -82,6 +79,7 @@ class GPUActivationOffloader:
         else:
             raise RuntimeError("No saved tensors found for this group, cannot release.")
 
+    # ---------- hooks ----------
     def _pack_hook(self, group: str, t: torch.Tensor):
         # Only consider CUDA tensors; skip tiny ones if threshold set
         if not t.is_cuda:
@@ -108,6 +106,7 @@ class GPUActivationOffloader:
         if key not in self._saved_tensors_by_group.get(group, {}):
             raise RuntimeError("Tensor handle not found?")
 
+        # t = self._saved_tensors_by_group[group].pop(key)
         t = self._saved_tensors_by_group[group][key]
 
         # remove empty group
@@ -131,11 +130,13 @@ class GPUActivationOffloader:
             return None
 
         # wait for current stream to be done with these tensors
+        # self._stream.wait_stream(torch.cuda.current_stream()) # BUG;TODO
         torch.cuda.current_stream().synchronize()
 
         total_sz_gb = 0
         # async copy each tensor
         with torch.cuda.stream(self._stream):
+            # start_event = self._stream.record_event()
             for key, t in _saved_tensors.items():
                 if t.device.index != torch.cuda.current_device():
                     raise RuntimeError(
@@ -148,13 +149,8 @@ class GPUActivationOffloader:
             end_event = cast(torch.cuda.Event, end_event)
             self._offload_events[group] = end_event
 
-        log.debug(
-            "Offload %d tensors (%.2f GB, group %s) from GPU %s to %s in background.",
-            len(_saved_tensors),
-            total_sz_gb,
-            group,
-            torch.cuda.current_device(),
-            self.target_device,
+        print(
+            f"[GPUActivationOffloader] Offload {len(_saved_tensors)} tensors ({total_sz_gb:.2f} GB, group {group}) from GPU {torch.cuda.current_device()} to {self.target_device} in background."
         )
         return end_event
 
@@ -173,10 +169,13 @@ class GPUActivationOffloader:
         else:  # no offload event recorded, this means no offload happened
             raise RuntimeError("No offload event recorded, cannot reload.")
 
+        # wait for current stream to be done with these tensors
+        # self._stream.wait_stream(torch.cuda.current_stream())
         total_sz_gb = 0
 
         # async copy each tensor
         with torch.cuda.stream(self._stream):
+            # start_event = self._stream.record_event()
             for key, t in _saved_tensors.items():
                 if t.device.index == torch.cuda.current_device():
                     raise RuntimeError(
@@ -190,12 +189,7 @@ class GPUActivationOffloader:
             end_event = cast(torch.cuda.Event, end_event)
             self._reload_events[group] = end_event
 
-        log.debug(
-            "Reload %d tensors (%.2f GB, group %s) from %s to GPU %s in background.",
-            len(_saved_tensors),
-            total_sz_gb,
-            group,
-            self.target_device,
-            torch.cuda.current_device(),
+        print(
+            f"[GPUActivationOffloader] Reload {len(_saved_tensors)} tensors ({total_sz_gb:.2f} GB, group {group}) from {self.target_device} to GPU {torch.cuda.current_device()} in background."
         )
         return end_event

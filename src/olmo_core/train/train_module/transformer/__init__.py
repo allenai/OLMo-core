@@ -1,4 +1,5 @@
 from .config import (
+    MoEV2TransformerTrainModuleConfig,
     OLMoDDPTrainModuleConfig,
     TransformerActivationCheckpointingConfig,
     TransformerActivationCheckpointingMode,
@@ -12,6 +13,7 @@ from .config import (
     TransformerTrainModuleConfig,
 )
 from .ddp_train_module import OLMoDDPTrainModule
+from .moe_train_module import MoEV2TransformerTrainModule
 from .pipeline.pipeline_schedule import (
     CustomPipelineStage,
     CustomSchedule1F1BV,
@@ -27,6 +29,8 @@ __all__ = [
     "TransformerPipelineTrainModuleConfig",
     "OLMoDDPTrainModule",
     "OLMoDDPTrainModuleConfig",
+    "MoEV2TransformerTrainModule",
+    "MoEV2TransformerTrainModuleConfig",
     "TransformerActivationCheckpointingConfig",
     "TransformerActivationCheckpointingMode",
     "TransformerDataParallelConfig",

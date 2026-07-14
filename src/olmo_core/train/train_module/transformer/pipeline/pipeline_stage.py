@@ -11,6 +11,7 @@ from torch.nn.parallel import DistributedDataParallel
 from olmo_core.nn.lm_head import LMOutputWithLoss
 from olmo_core.nn.parallel.distributed import MultiGroupDistributedDataParallel
 
+# from torch.distributed.pipelining._backward import stage_backward, stage_backward_input
 from .helpers import stage_backward
 from .p2p_transport import NCCLRMAPipelineP2PTransport, P2PKey, RMARecvOp, RMASendOp
 
@@ -63,12 +64,15 @@ def flip_requires_sync(submod: torch.nn.Module, require_sync: bool):
 
 class CustomPipelineStage:
     """
-    Drop-in replacement for :class:`PipelineStage` that adds two features:
+    Drop-in replacement for :class:`PipelineStage` that adds a few features:
 
-    1. Keeps only a small pool (≤ pipeline depth) of receive/grad buffers and re-uses them across
-       micro-batches, rather than allocating per micro-batch.
-    2. Overrides ``forward_maybe_with_nosync`` / ``backward_maybe_with_nosync`` to support
-       ``torch.distributed._composable.replicate`` (not just ``DistributedDataParallel``).
+    1. keeps only a *small
+    pool* (≤ pipeline depth) of receive/grad buffers and re-uses them across
+    micro-batches.
+
+    2. override `forward_maybe_with_nosync` and `backward_maybe_with_nosync` to
+    support torch.distributed._composable.replicate (used to be just torch.nn.parallel.DistributedDataParallel)
+
     """
 
     def __init__(
@@ -110,10 +114,7 @@ class CustomPipelineStage:
         assert isinstance(d_model, int), "submodule must have d_model (int) attribute"
         self.d_model: int = d_model
 
-        # dtype for receive/send buffers.
-        # TODO(pp-p2p-dtype): hard-coded to bf16, which assumes bf16 stage activations. Non-bf16 runs
-        # (fp32/fp16) would allocate mismatched receive buffers; derive this from the stage outputs
-        # instead. Flagged for Tianhua; resolve with the MoE train module integration. (Codex)
+        # dtype for receive/send buffers
         self.p2p_dtype: torch.dtype = torch.bfloat16
 
         # `group_rank` is rank in process group `group`.
@@ -141,7 +142,7 @@ class CustomPipelineStage:
                 f"Pipeline group size {self.group_size} cannot be larger than number of stages {self.num_stages}"
             )
 
-        if self.p2p_backend not in {"nccl", "nccl_rma"}:
+        if self.p2p_backend not in {"nccl", "nccl_rma", "nccl_rma_ack"}:
             raise RuntimeError(f"Unsupported custom pipeline P2P backend: {self.p2p_backend}")
 
         # map microbatch ID to list of forward tensor args
@@ -155,18 +156,30 @@ class CustomPipelineStage:
         # used for: after backward, need to store the stage input grads before sending to previous stage
         self.bwd_cache: dict[int, torch.Tensor] = {}  # mb_idx -> stage_input_grads
 
+        # Initialize has_backward to false; this will be set to true if loss
+        # function is passed to pipeline schedule
+        # self.has_backward = False
+
+        # To be populated later by the Schedule
+        # self.chunks: Optional[int] = None
         self.stage_index_to_group_rank: dict[int, int] = {
             i: i % self.group_size for i in range(self.num_stages)
         }
 
+        # self.inputs: Optional[list[torch.Tensor]] = None
         self.inputs_meta: Optional[torch.Tensor] = None
         self.outputs_meta: Optional[torch.Tensor] = None
 
         self.received_activations: dict[int, torch.Tensor] = {}
         self.received_grads: dict[int, torch.Tensor] = {}
 
-        # Outputs of this stage, for the outer schedule to return to the train module (detached
-        # losses; empty on non-last stages).
+        # these are the buffers used in backwards send/recv, they are allocated later
+        # self.outputs_grad: list[torch.Tensor] = []
+
+        # store outputs of this stage for logging purposes, the outer schedule can access this to return
+        # information to the train module
+        # the outputs should be detached losses
+        # None if not last stage
         self.stage_outputs: dict[int, Optional[LMOutputWithLoss]] = {}  # mb_idx -> output
 
         # runtime per step info (can change in each step())
@@ -195,6 +208,16 @@ class CustomPipelineStage:
         """
         return self.stage_index == self.num_stages - 1
 
+    # def _check_chunk_id(self, chunk_id: int):
+    #     if self.chunks is None:
+    #         raise RuntimeError(
+    #             "Attempted to access chunk_id before chunks have been configured."
+    #         )
+    #     if chunk_id >= self.chunks:
+    #         raise RuntimeError(
+    #             f"Chunk id {chunk_id} is out of range [0, {self.chunks})"
+    #         )
+
     def forward_one_chunk(
         self,
         fwd_chunk_id: int,
@@ -202,6 +225,8 @@ class CustomPipelineStage:
         kwargs: Optional[Dict[str, Any]] = None,
         last_forward: bool = False,
     ):
+        # print(f"{self.stage_index}.forward_one_chunk({fwd_chunk_id})")
+
         if self.is_first:
             # First stage doesn't need to receive anything
             composite_args = args
@@ -209,27 +234,21 @@ class CustomPipelineStage:
             # Receive activations for this chunk
             # Activations only come in args form
             stage_input = self._retrieve_recv_activations(fwd_chunk_id)
-            # TODO(pp-rma-stale-slot-grad): under p2p_backend='nccl_rma', stage_input is the
-            # persistent RMA window slot reused across batches; requires_grad_(True) here leaves a
-            # populated `.grad` after backward, so the next batch accumulates into a stale grad.
-            # Zero/detach the slot's grad on reuse. Flagged for Tianhua; RMA path, GPU-only. (Codex)
             stage_input.requires_grad_(True)
             composite_args = (stage_input,)  # make it a tuple
 
         composite_kwargs = kwargs or {}
 
+        # self._validate_fwd_input(args, kwargs)
+
         # Compute forward
+        # print(f'{self.stage_index}_{fwd_chunk_id}-F-Start')
         output: Union[torch.Tensor, LMOutputWithLoss] = self.forward_maybe_with_nosync(
             last_forward, *composite_args, **composite_kwargs
         )
+        # print(f'{self.stage_index}_{fwd_chunk_id}-F-End')
 
         if self.is_last:
-            # TODO(pp-capture-losses-hook): when driven by the MoE train module, the `capture_losses`
-            # forward hook is registered on all model parts and, on the last stage, returns
-            # `loss.unsqueeze(0)` — replacing the model's LMOutputWithLoss and tripping this assert on
-            # the first last-stage forward. Reconcile the hook with the custom stage (skip it on PP
-            # stages, or accept the hook's output shape here). Flagged for Tianhua; exercisable once
-            # the train module drives the custom schedule. (Codex)
             assert isinstance(
                 output, LMOutputWithLoss
             ), "Last stage output must be LMOutputWithLoss"
@@ -254,6 +273,7 @@ class CustomPipelineStage:
             composite_args[0],  # input_values
             stage_output_with_graph,  # stage_output
         )
+        # print(f"{self.stage_index}.forward_one_chunk({fwd_chunk_id}) ret")
 
     def backward_one_chunk(
         self,
@@ -272,8 +292,11 @@ class CustomPipelineStage:
         last_backward is controlled by the schedule and signals synchronization of gradients across DP groups
         after the last backward.
         """
+        # print(f"{self.stage_index}.backward_one_chunk({bwd_chunk_id})")
 
         _ = torch.zeros(128, device=self.device)  # to make nvtx ranges more visible
+
+        # self._check_chunk_id(bwd_chunk_id)
 
         (
             input_values,
@@ -307,9 +330,15 @@ class CustomPipelineStage:
         grads_of_stage_input, _ = self.backward_maybe_with_nosync(
             "full", bwd_kwargs, last_backward=last_backward
         )
+        # with torch.no_grad():
+        #     names = [n for n, p in self.submod.named_parameters()]
+        #     debug_norm = torch.nn.utils.get_total_norm([p.grad for p in self.submod.parameters()])
         assert len(grads_of_stage_input) == 1, "Expect only one input to the stage"
         if not self.is_first:
             assert grads_of_stage_input[0] is not None, "Expect input grad to be not None"
+            # check for nan
+            # if torch.isnan(grads_of_stage_input[0]).any():
+            #     raise RuntimeError("NaN detected in gradients of stage input")
             self.bwd_cache[bwd_chunk_id] = grads_of_stage_input[0]  # only one input expected
 
         if self.is_last and not self.is_first:
@@ -410,6 +439,7 @@ class CustomPipelineStage:
     def set_local_backward_grad(self, bwd_chunk_id: int, tensor: torch.Tensor) -> None:
         self.received_grads[bwd_chunk_id] = tensor
 
+    # ------------------- fwd ---------------------
     def get_fwd_recv_ops(self, fwd_chunk_id: int) -> List[dist.P2POp]:
         if self.is_first:
             return []
@@ -421,9 +451,9 @@ class CustomPipelineStage:
         assert meta is not None
 
         key = ("F", source_stage_index, self.stage_index, fwd_chunk_id)
-        if getattr(self, "p2p_backend", "nccl") == "nccl_rma":
+        if getattr(self, "p2p_backend", "nccl") in {"nccl_rma", "nccl_rma_ack"}:
             op = self._get_rma_recv_op(key, source_stage_index)
-            self.received_activations[fwd_chunk_id] = op.recv_slot
+            self.received_activations[fwd_chunk_id] = op.output_tensor
             return [op]  # type: ignore[list-item]
 
         recv_buffer = _make_tensor_from_meta(meta, self.device)
@@ -449,12 +479,14 @@ class CustomPipelineStage:
         assert buffer.size() == meta.size()
         assert buffer.dtype == meta.dtype
 
-        if getattr(self, "p2p_backend", "nccl") == "nccl_rma":
+        if getattr(self, "p2p_backend", "nccl") in {"nccl_rma", "nccl_rma_ack"}:
             key = ("F", self.stage_index, dst_stage_index, fwd_chunk_id)
             return [self._get_rma_send_op(key, dst_stage_index, buffer.detach())]  # type: ignore[list-item]
 
         ops = self._get_send_ops(dst_stage_index, buffer.detach())
         return ops
+
+    # ------------------- bwd ---------------------
 
     def get_bwd_send_ops(self, bwd_chunk_id: int) -> list[dist.P2POp]:
         if self.is_first:
@@ -472,7 +504,7 @@ class CustomPipelineStage:
         assert send_buffer.size() == meta.size()
         assert send_buffer.dtype == meta.dtype
 
-        if getattr(self, "p2p_backend", "nccl") == "nccl_rma":
+        if getattr(self, "p2p_backend", "nccl") in {"nccl_rma", "nccl_rma_ack"}:
             key = ("B", self.stage_index, dest_stage_index, bwd_chunk_id)
             return [self._get_rma_send_op(key, dest_stage_index, send_buffer.detach())]  # type: ignore[list-item]
 
@@ -493,9 +525,9 @@ class CustomPipelineStage:
         assert meta is not None
 
         key = ("B", source_stage_index, self.stage_index, bwd_chunk_id)
-        if getattr(self, "p2p_backend", "nccl") == "nccl_rma":
+        if getattr(self, "p2p_backend", "nccl") in {"nccl_rma", "nccl_rma_ack"}:
             op = self._get_rma_recv_op(key, source_stage_index)
-            self.received_grads[bwd_chunk_id] = op.recv_slot
+            self.received_grads[bwd_chunk_id] = op.output_tensor
             return [op]  # type: ignore[list-item]
 
         recv_buffer = _make_tensor_from_meta(meta, self.device)
@@ -522,11 +554,6 @@ class CustomPipelineStage:
         assert self._step_micro_batch_size is not None, "Need to call prepare_step"
         assert self._step_seqlen is not None, "Need to call prepare_step"
         assert self.submod.d_model is not None
-        # TODO(pp-cp-seqlen-shape): _step_seqlen is the full (unsharded) sequence length, but with
-        # context parallelism the actual activations are sharded to local_cp_seq, so the P2P meta
-        # shape mismatches and trips the size assert in get_fwd_send_ops(). Derive the P2P shape
-        # after CP sharding (or reject CP + custom PP). Flagged for Tianhua; GPU-only, CP-coupled.
-        # (Codex)
         example_p2p_tensor = torch.empty(
             (self._step_micro_batch_size, self._step_seqlen, self.d_model),
             device="meta",
@@ -627,18 +654,17 @@ class CustomPipelineStage:
                     result = perform_backward(backward_type)()
         elif isinstance(self.submod, MultiGroupDistributedDataParallel):
             if last_backward:
-                # TODO(pp-multigroup-finalize-grad-reduce): MultiGroupDistributedDataParallel
-                # launches async bucket all-reduces from its grad hooks and requires
-                # finalize_grad_reduce() afterward; without it fp32 comm buckets aren't copied back
-                # and reductions may still be in flight at optimizer.step(). Call it here on the
-                # synced last backward. Flagged for Tianhua; exercisable once the train module wraps
-                # PP stages in MultiGroupDDP. (Codex)
                 result = perform_backward(backward_type)()
             else:
                 with self.submod.no_sync():  # type: ignore[operator]
                     result = perform_backward(backward_type)()
 
         elif self.is_rddp:  # composable.replicate
+            # # The optimizer handles gradient synchronization for us, so always backward with no sync
+            # self.submod.set_requires_gradient_sync(False) # type: ignore
+            # result = perform_backward(backward_type)()
+            # self.submod.set_requires_gradient_sync(True) # type: ignore
+
             if last_backward:
                 state = _rep.state(self.submod)  # grab _ReplicateState
                 ddp_impl = state._ddp  # the hidden real DDP
