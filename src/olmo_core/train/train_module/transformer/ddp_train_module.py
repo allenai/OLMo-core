@@ -1,139 +1,110 @@
 import contextlib
-from itertools import product
 import logging
+import math
 import os
 import time
-from dataclasses import replace
 from functools import cached_property, lru_cache
-from typing import Any, Callable, Dict, Generator, Optional, Tuple, Union, Iterable, Sequence
+from itertools import product
+from typing import (
+    Any,
+    Callable,
+    Collection,
+    Dict,
+    Generator,
+    List,
+    Optional,
+    Sequence,
+    Tuple,
+    TypeVar,
+    Union,
+    cast,
+)
 
-from olmo_core.nn.ddp import OLMoDDPModel
 import torch
 import torch.distributed as dist
-import torch.distributed.checkpoint.state_dict as dist_cp_sd
-import torch.nn as nn
-from torch.distributed.device_mesh import DeviceMesh
-from torch.distributed.tensor import distribute_tensor
-from torch.distributed.checkpoint.metadata import Metadata
-from torch.distributed.fsdp import FSDPModule
-from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
-from torch.distributed.tensor import DTensor
-from torch.nn.parallel import DistributedDataParallel as DDP
-from torch.optim import Optimizer
-from typing import List, Optional, Tuple
-from torch.distributed.device_mesh import DeviceMesh, init_device_mesh
-from torch.distributed.tensor import Placement, Replicate, Shard
-from torch.distributed.pipelining import PipelineStage
-from ...common import MetricMergeStrategy, ReduceType
-import math
-from olmo_core.aliases import PathOrStr
 import torch.distributed.checkpoint as dist_cp
-from torch.distributed.checkpoint.default_planner import DefaultSavePlanner, DefaultLoadPlanner
-from olmo_core.distributed.checkpoint import _prepare_env_for_save, RemoteFileSystemWriter, RemoteFileSystemReader
+import torch.distributed.checkpoint.state_dict as dist_cp_sd
 from torch.distributed import ProcessGroup
+from torch.distributed.checkpoint.default_planner import DefaultSavePlanner
+from torch.distributed.checkpoint.metadata import (
+    BytesStorageMetadata,
+    Metadata,
+    TensorStorageMetadata,
+)
+from torch.distributed.device_mesh import DeviceMesh
+from torch.distributed.fsdp import FSDPModule
+from torch.distributed.pipelining import PipelineStage
+from torch.distributed.tensor import DTensor, Replicate, Shard
+from torch.nn.parallel import DistributedDataParallel as DDP
+
+from olmo_core._nvtx import nvtx
+from olmo_core.aliases import PathOrStr
 from olmo_core.data.utils import get_labels, split_batch
 from olmo_core.distributed.checkpoint import (
-    merge_state_dicts,
-    prune_state_dict,
-    swap_param_keys,
+    RemoteFileSystemReader,
+    RemoteFileSystemWriter,
+    _prepare_env_for_save,
 )
 from olmo_core.distributed.parallel import (
     DataParallelType,
+    MeshDimName,
+    get_device_mesh_info,
 )
+from olmo_core.distributed.parallel.context_parallel import ContextParallelConfig
+from olmo_core.distributed.parallel.data_parallel import DataParallelConfig
+from olmo_core.distributed.parallel.expert_parallel import ExpertParallelConfig
+from olmo_core.distributed.parallel.pipeline_parallel import (
+    PipelineParallelConfig,
+    PipelineSchedule,
+)
+from olmo_core.distributed.parallel.tensor_parallel import TensorParallelConfig
 from olmo_core.distributed.utils import (
     backend_supports_cuda,
     get_local_tensor,
+    get_rank,
     get_reduce_divide_factor,
     get_world_size,
     is_distributed,
-    get_global_rank,
-    get_rank,
 )
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.float8 import Float8Config
+from olmo_core.nn.ddp import OLMoDDPModel
 from olmo_core.nn.lm_head import LMOutputWithLoss
-from olmo_core.nn.transformer import Transformer
-from olmo_core.nn.transformer.config import TransformerActivationCheckpointingMode
-from olmo_core.optim import OptimConfig, SkipStepOptimizer, OLMoDDPOptimizerConfig
+from olmo_core.nn.parallel.distributed import MultiGroupDistributedDataParallel
+from olmo_core.nn.transformer import OLMoDDPModelConfig, Transformer
+from olmo_core.optim import OLMoDDPOptimizerConfig
 from olmo_core.optim.scheduler import Scheduler
-from olmo_core.utils import gc_cuda, get_default_device, log_once, move_to_device
-from typing import List, Optional, TypeVar, cast
-from olmo_core.nn.transformer import OLMoDDPModelConfig, MoETransformer, Transformer
-from collections import OrderedDict
-from ...common import ReduceType
-from ..train_module import EvalBatchSpec, TrainModule
+from olmo_core.utils import get_default_device, log_once, move_to_device
 
+from ...common import MetricMergeStrategy, ReduceType
+from ..train_module import EvalBatchSpec, TrainModule
 from .config import (
     TransformerActivationCheckpointingConfig,
     TransformerContextParallelConfig,
     TransformerDataParallelConfig,
     TransformerExpertParallelConfig,
+    TransformerPipelineParallelConfig,
     TransformerTensorParallelConfig,
-    TransformerPipelineParallelConfig
 )
-from olmo_core.distributed.parallel.data_parallel import DataParallelConfig, DataParallelType, DPMeshDimName
-from olmo_core.distributed.parallel.expert_parallel import ExpertParallelConfig
-from olmo_core.distributed.parallel.pipeline_parallel import (
-    PipelineParallelConfig,
-    PipelineSchedule,
-    PipelineScheduleType,
-    PipelineSplitStyle,
-)
-from olmo_core.distributed.parallel.tensor_parallel import TensorParallelConfig
-from olmo_core.distributed.parallel.context_parallel import ContextParallelConfig
-from olmo_core.distributed.parallel import MeshDimName, get_device_mesh_info
-from olmo_core.nn.parallel.distributed import MultiGroupDistributedDataParallel
-from olmo_core._nvtx import nvtx
 
 log = logging.getLogger(__name__)
 
 
 M = TypeVar("M", bound=List[OLMoDDPModel])
 
+
 def cpu_mesh_like(gpu_mesh: DeviceMesh) -> DeviceMesh:
     # gpu_mesh.mesh is a CPU int tensor of ranks with the mesh's shape
-    ranks = gpu_mesh.mesh.clone()          # e.g., tensor([[0,1],[2,3]]) or nested shape
+    ranks = gpu_mesh.mesh.clone()  # e.g., tensor([[0,1],[2,3]]) or nested shape
     return DeviceMesh(
         "cpu",
-        ranks,                             # keep the exact shape
+        ranks,  # keep the exact shape
         mesh_dim_names=gpu_mesh.mesh_dim_names,
     )
 
 
 class FlatSavePlanner(DefaultSavePlanner):
     pass
-
-from torch.distributed.checkpoint.planner import (
-    LoadPlan,
-    LoadPlanner,
-    ReadItem,
-    SavePlan,
-    SavePlanner,
-    WriteItem,
-    WriteItemType,
-)
-from torch.distributed.checkpoint.default_planner import (
-    create_default_global_load_plan,
-    create_default_local_load_plan,
-    create_default_global_save_plan,
-    create_default_local_save_plan,
-)
-from torch.distributed.checkpoint.metadata import (
-    BytesStorageMetadata,
-    ChunkStorageMetadata,
-    Metadata,
-    MetadataIndex,
-    STATE_DICT_TYPE,
-    STORAGE_TYPES,
-    StorageMeta,
-    TensorStorageMetadata,
-)
-from torch.distributed.checkpoint.planner_helpers import (
-    _create_default_metadata_only_plan,
-    _create_read_items,
-    _create_write_items,
-    _init_state_dict,
-)
 
 
 class OLMoDDPTrainModule(TrainModule):
@@ -173,7 +144,7 @@ class OLMoDDPTrainModule(TrainModule):
                 "on model.config for FLOP accounting. Build the model from its config, or "
                 "attach the global config before constructing the train module."
             )
-        
+
         ######################### Validate arguments. [BEGIN] #########################
         if rank_microbatch_size % max_sequence_length != 0:
             raise OLMoConfigurationError(
@@ -205,25 +176,31 @@ class OLMoDDPTrainModule(TrainModule):
         # PP related state.
         self._train_pp_schedule: Optional[PipelineSchedule] = None
         self._pp_stages: Optional[List[PipelineStage]] = None
-        self.pp_group_rank = 0 # default 0
-        self.pp_group_size = 1 # default 1
-        self.pp_prev_rank = -1 # no previous stage
-        self.pp_next_rank = -1 # no next stage
-        self.pp_final_stage_rank = 0 # default 0
+        self.pp_group_rank = 0  # default 0
+        self.pp_group_size = 1  # default 1
+        self.pp_prev_rank = -1  # no previous stage
+        self.pp_next_rank = -1  # no next stage
+        self.pp_final_stage_rank = 0  # default 0
 
         # If True, the DDP will not all-reduce grad for the last microbatch
-        # instead it will call optim.step() which will reduce_scatter 
-        # directly into the owner main grad 
+        # instead it will call optim.step() which will reduce_scatter
+        # directly into the owner main grad
         self.reduce_scatter_grads = reduce_scatter_grads
 
         if tp_config is not None:
-            assert tp_config.degree > 1, "Tensor parallelism requires a degree > 1, otherwise use None"
+            assert (
+                tp_config.degree > 1
+            ), "Tensor parallelism requires a degree > 1, otherwise use None"
             raise NotImplementedError("Tensor parallelism is not implemented")
         if pp_config is not None:
-            assert pp_config.degree > 1, "Pipeline parallelism requires a degree > 1, otherwise use None"
+            assert (
+                pp_config.degree > 1
+            ), "Pipeline parallelism requires a degree > 1, otherwise use None"
             # raise NotImplementedError("Pipeline parallelism is not implemented")
         if cp_config is not None:
-            assert cp_config.degree > 1, "Context parallelism requires a degree > 1, otherwise use None"
+            assert (
+                cp_config.degree > 1
+            ), "Context parallelism requires a degree > 1, otherwise use None"
             if getattr(model, "tbo", False):
                 raise OLMoConfigurationError(
                     "OLMoDDPTrainModule does not support context parallelism with "
@@ -246,15 +223,18 @@ class OLMoDDPTrainModule(TrainModule):
 
         if is_distributed():
             self._build_world_mesh(
-                dp=dp_config, tp=tp_config, cp=cp_config, ep=ep_config, pp=pp_config, device_type=self.device.type
+                dp=dp_config,
+                tp=tp_config,
+                cp=cp_config,
+                ep=ep_config,
+                pp=pp_config,
+                device_type=self.device.type,
             )
             self.dp_world_size = get_world_size(self.dp_process_group)
             log.info(f"Data parallel world size = {self.dp_world_size:,d}")
-            assert self.world_mesh['dense'] is not None
+            assert self.world_mesh["dense"] is not None
         else:
-            raise OLMoConfigurationError(
-                "Training parallelism is required for OLMoDDPTrainModule"
-            )
+            raise OLMoConfigurationError("Training parallelism is required for OLMoDDPTrainModule")
 
         self._dp_config = dp_config
         self._cp_config = cp_config
@@ -262,28 +242,30 @@ class OLMoDDPTrainModule(TrainModule):
         self._ep_config = ep_config
         self._pp_config = pp_config
 
-        # Keep the global model config as the source of truth for FLOP accounting.
-        # The local modules may be PP/EP/TP sharded, or may never have existed as
-        # a full unsharded model in future init flows.
-        self._global_model_config = cast(OLMoDDPModelConfig, model.config)
+        # Capture num_flops_per_token from the full unsplit model before parallelize_and_init_model
+        # shards/splits it. Under PP each rank only holds its stage's layers, so querying the
+        # (sharded) model parts would undercount. Uses the model-level accounting
+        # (Transformer.num_flops_per_token = Σ block + lm_head); the v2 block implements the MoE
+        # formula (routed + shared experts, top-k).
+        self._full_model_num_flops_per_token = model.num_flops_per_token
 
         # Parallelize model.
         self.model_parts = self.parallelize_and_init_model(
-                    model,
-                    compile_model=compile_model,
-                    float8_config=float8_config,
-                    dp_config=dp_config,
-                    tp_config=tp_config,
-                    cp_config=cp_config,
-                    ep_config=ep_config,
-                    ac_config=ac_config,
-                    pp_config=pp_config,
-                    eval_only=eval_only,
-                )
+            model,
+            compile_model=compile_model,
+            float8_config=float8_config,
+            dp_config=dp_config,
+            tp_config=tp_config,
+            cp_config=cp_config,
+            ep_config=ep_config,
+            ac_config=ac_config,
+            pp_config=pp_config,
+            eval_only=eval_only,
+        )
 
         import torch._dynamo.config as dynamo_cfg
-        dynamo_cfg.recompile_limit = 64  # or any higher number you want
 
+        dynamo_cfg.recompile_limit = 64  # or any higher number you want
 
         if compile_model:
             self.compile_model()
@@ -297,7 +279,7 @@ class OLMoDDPTrainModule(TrainModule):
         self.label_ignore_index = label_ignore_index
         self.z_loss_multiplier = z_loss_multiplier
 
-        self.max_grad_norm = max_grad_norm # TODO: remove, use optim.max_grad_norm
+        self.max_grad_norm = max_grad_norm  # TODO: remove, use optim.max_grad_norm
         self.scheduler = scheduler
         self.state_dict_save_opts = state_dict_save_opts or dist_cp_sd.StateDictOptions(
             flatten_optimizer_state_dict=True, cpu_offload=True
@@ -314,16 +296,19 @@ class OLMoDDPTrainModule(TrainModule):
             # Build optimizer(s).
             log.info("Building optimizer...")
 
-            from olmo_core.optim.moe_optimizer import OLMoDDPOptimizer, OLMoDDPOptimizerConfig
+            from olmo_core.optim.moe_optimizer import OLMoDDPOptimizerConfig
+
             assert isinstance(optim, OLMoDDPOptimizerConfig)
             optim = cast(OLMoDDPOptimizerConfig, optim)
             self.optim = optim.build(
-                self.model_parts, 
-                self, 
-                strict=False # group_overrides might only be matched in one group, strict=False allows it to not match in one group (could match in some other group),
+                self.model_parts,
+                self,
+                strict=False,  # group_overrides might only be matched in one group, strict=False allows it to not match in one group (could match in some other group),
             )
 
-            if self.reduce_scatter_grads and isinstance(self.model_parts[0], MultiGroupDistributedDataParallel):
+            if self.reduce_scatter_grads and isinstance(
+                self.model_parts[0], MultiGroupDistributedDataParallel
+            ):
                 raise NotImplementedError(
                     "reduce_scatter_grads=True is incompatible with MultiGroupDistributedDataParallel. "
                     "Disable DDP all-reduce path first or use reduce_scatter_grads=False."
@@ -359,8 +344,9 @@ class OLMoDDPTrainModule(TrainModule):
         else:
             # if the model has implemented `cast_to_fwd_bwd_precision` method, call it.
             if hasattr(model, "_cast_to_fwd_bwd_precision"):
-                assert callable(model._cast_to_fwd_bwd_precision), \
-                    "model._cast_to_fwd_bwd_precision must be callable"
+                assert callable(
+                    model._cast_to_fwd_bwd_precision
+                ), "model._cast_to_fwd_bwd_precision must be callable"
                 model._cast_to_fwd_bwd_precision()
             else:
                 # if the model doesn't have `cast_to_fwd_bwd_precision`, we need to cast the parameters directly.
@@ -409,7 +395,9 @@ class OLMoDDPTrainModule(TrainModule):
         """
 
         if len(self.world_mesh) > 0:
-            raise RuntimeError("world mesh already exists! You can only call 'build_world_mesh' once!")
+            raise RuntimeError(
+                "world mesh already exists! You can only call 'build_world_mesh' once!"
+            )
 
         device_type = device_type or get_default_device().type
         dp_world_size = get_world_size()
@@ -453,13 +441,12 @@ class OLMoDDPTrainModule(TrainModule):
                     f"folded DP x CP world size, got folded_dp_cp_world_size={folded_dp_cp_world_size} and ep.degree={ep.degree}"
                 )
 
-
         # Build up dense mesh dimensions. (PP, DP, CP)
         names: List[str] = []
         dims: List[int] = []
 
         # Pipeline parallel first.
-        use_paired_pp = False # TODO: move to config
+        use_paired_pp = False  # TODO: move to config
         # TODO 2: implement paired pp properly
         if pp is not None:
             names.append(MeshDimName.pp)
@@ -479,7 +466,7 @@ class OLMoDDPTrainModule(TrainModule):
             dims.append(cp.degree)
 
         if pp is not None and use_paired_pp:
-            names.append('pp_paired')
+            names.append("pp_paired")
             dims.append(2)
 
         with torch.device("cpu"):
@@ -488,11 +475,11 @@ class OLMoDDPTrainModule(TrainModule):
         if pp is not None and use_paired_pp:
             r = mesh.permute(0, 2, 1).contiguous()
             pp_dim, pp_paired, dp_dim = r.shape
-            r_merged = r.reshape(pp_dim * pp_paired, dp_dim)      # (pp*pp_paired, dp)
+            r_merged = r.reshape(pp_dim * pp_paired, dp_dim)  # (pp*pp_paired, dp)
             mesh = r_merged
-            names.remove('pp_paired')
+            names.remove("pp_paired")
 
-        self.dense_mesh  = DeviceMesh(
+        self.dense_mesh = DeviceMesh(
             device_type=device_type,
             mesh=mesh,
             mesh_dim_names=tuple(names),
@@ -500,15 +487,15 @@ class OLMoDDPTrainModule(TrainModule):
         # self.dense_mesh = init_device_mesh(device_type, tuple(dims), mesh_dim_names=tuple(names))
         log.info(f"Built dense_mesh {get_device_mesh_info(self.dense_mesh)}")
 
-        if ep is None: # EP not used
+        if ep is None:  # EP not used
             self.moe_mesh = None
-            log.info(f"Built moe_mesh None")
+            log.info("Built moe_mesh None")
 
         else:
             # Build up moe mesh dimensions using MoE parallel folding. The dense
             # DP x CP pool is reinterpreted as EP_DP x EP_MP so CP does not
             # multiply the minimum GPU requirement for EP.
-            names: List[str] = []
+            names = []
 
             # Pipeline parallel first.
             if pp is not None:
@@ -534,7 +521,7 @@ class OLMoDDPTrainModule(TrainModule):
                 else:
                     folded_rank_grid = dense_rank_grid.reshape(folded_dp_cp_world_size)
                     mesh = folded_rank_grid.reshape(ep_dp_world_size, ep.degree)
-            
+
             device_mesh = DeviceMesh(
                 device_type=device_type,
                 mesh=mesh,
@@ -549,11 +536,11 @@ class OLMoDDPTrainModule(TrainModule):
 
         if pp is not None:
             # self.dense_mesh['pp'] and self.moe_mesh['pp'] should be the same
-            self.pp_group = self.dense_mesh['pp'].get_group() # 
-            
-        self.dp_group = self.dense_mesh['dp'].get_group()
+            self.pp_group = self.dense_mesh["pp"].get_group()  #
+
+        self.dp_group = self.dense_mesh["dp"].get_group()
         if cp is not None:
-            self.cp_group = self.dense_mesh['cp'].get_group()
+            self.cp_group = self.dense_mesh["cp"].get_group()
             self.dense_dp_cp_group, _dense_dp_cp_groups = self._build_mesh_dim_process_group(
                 self.dense_mesh,
                 (MeshDimName.dp, MeshDimName.cp),
@@ -563,8 +550,8 @@ class OLMoDDPTrainModule(TrainModule):
             self.cp_group = None
             self.dense_dp_cp_group = self.dp_group
         if self.moe_mesh is not None:
-            self.ep_dp_group = self.moe_mesh['ep_dp'].get_group()
-            self.ep_mp_group = self.moe_mesh['ep_mp'].get_group()
+            self.ep_dp_group = self.moe_mesh["ep_dp"].get_group()
+            self.ep_mp_group = self.moe_mesh["ep_mp"].get_group()
             # Under parallel folding, CP is already folded into the MoE EP-DP axis.
             self.expert_param_group = self.ep_dp_group
 
@@ -681,15 +668,15 @@ class OLMoDDPTrainModule(TrainModule):
             #     f"global batch size ({self.trainer.global_batch_size:,d}) must be divisible by "
             #     f"micro-batch size ({self.rank_microbatch_size:,d}) x DP world size ({dp_ws})"
             # )
-            pass # BUG: when batch size warmup + load checkpoint
+            pass  # BUG: when batch size warmup + load checkpoint
 
         if self.pp_enabled:
             # Initialize pipeline schedule.
             assert self._train_pp_schedule is None  # make sure we don't initialize this twice
             assert self._pp_stages is not None
             assert self._pp_config is not None
-            assert self.world_mesh['dense'] is not None
-            pp_mesh = self.world_mesh['dense']['pp']
+            assert self.world_mesh["dense"] is not None
+            pp_mesh = self.world_mesh["dense"]["pp"]
             assert pp_mesh is not None
 
             # Determine the number of micro-batches.
@@ -702,7 +689,6 @@ class OLMoDDPTrainModule(TrainModule):
                 pp_mesh=pp_mesh,
                 schedule_name=self._pp_config.schedule,
                 forward_pull_ahead_extra_activations=self._pp_config.forward_pull_ahead_extra_activations,
-
                 num_microbatches=num_microbatches,
             )
             if not self._rowwise_lifetime_lease_slots_env_is_set():
@@ -771,10 +757,7 @@ class OLMoDDPTrainModule(TrainModule):
             )
         log.info(
             "Prewarming rowwise lifetime lease slots per local PP stage: %s",
-            {
-                stage.stage_index: slots
-                for stage, slots in zip(self._pp_stages, slots_by_part)
-            },
+            {stage.stage_index: slots for stage, slots in zip(self._pp_stages, slots_by_part)},
         )
         return slots_by_part
 
@@ -790,8 +773,7 @@ class OLMoDDPTrainModule(TrainModule):
                 requested = int(normalized)
             except ValueError as exc:
                 raise OLMoConfigurationError(
-                    "OLMO_PP_DRY_RUN_MICROBATCHES must be a positive integer, "
-                    "'0', or 'full'"
+                    "OLMO_PP_DRY_RUN_MICROBATCHES must be a positive integer, " "'0', or 'full'"
                 ) from exc
             if requested <= 0:
                 return full_num_microbatches
@@ -802,7 +784,15 @@ class OLMoDDPTrainModule(TrainModule):
         # TODO: consider using the config system than environment variables for this
         raw_value = os.getenv("OLMO_PP_DRY_RUN_MODE", "independent")
         normalized = raw_value.strip().lower().replace("-", "_")
-        if normalized in {"", "independent", "local", "stage", "stage_local", "accelerated", "hybrid"}:
+        if normalized in {
+            "",
+            "independent",
+            "local",
+            "stage",
+            "stage_local",
+            "accelerated",
+            "hybrid",
+        }:
             return "independent"
         if normalized in {"full", "legacy", "full_pp", "true_pp"}:
             return "full"
@@ -815,8 +805,7 @@ class OLMoDDPTrainModule(TrainModule):
         }:
             return "reduced_true_pp"
         raise OLMoConfigurationError(
-            "OLMO_PP_DRY_RUN_MODE must be one of: independent, full/true_pp, "
-            "or reduced_true_pp"
+            "OLMO_PP_DRY_RUN_MODE must be one of: independent, full/true_pp, " "or reduced_true_pp"
         )
 
     def _pp_full_num_microbatches(self) -> int:
@@ -892,7 +881,7 @@ class OLMoDDPTrainModule(TrainModule):
             "stage_outputs",
         ):
             runtime_state = getattr(stage, attr_name, None)
-            if hasattr(runtime_state, "clear"):
+            if runtime_state is not None and hasattr(runtime_state, "clear"):
                 runtime_state.clear()
 
         clear_step_info = getattr(stage, "clear_step_info", None)
@@ -907,7 +896,7 @@ class OLMoDDPTrainModule(TrainModule):
         micro_batch_size: int,
         num_microbatches: int,
     ) -> List[Dict[str, Any]]:
-        kwargs_mbs = [{} for _ in range(num_microbatches)]
+        kwargs_mbs: List[Dict[str, Any]] = [{} for _ in range(num_microbatches)]
         for key, value in kwargs.items():
             if isinstance(value, torch.Tensor) and value.size(0) == original_batch_size:
                 for mb_idx in range(num_microbatches):
@@ -954,11 +943,11 @@ class OLMoDDPTrainModule(TrainModule):
             )
 
         input_id_mbs = [
-            input_ids[start:start + micro_batch_size].contiguous()
+            input_ids[start : start + micro_batch_size].contiguous()
             for start in range(0, original_batch_size, micro_batch_size)
         ]
         label_mbs = [
-            labels[start:start + micro_batch_size].contiguous()
+            labels[start : start + micro_batch_size].contiguous()
             for start in range(0, original_batch_size, micro_batch_size)
         ]
         kwargs_mbs = self._split_pp_dry_run_model_kwargs(
@@ -1047,9 +1036,9 @@ class OLMoDDPTrainModule(TrainModule):
                                 grad_scale = batch_num_tokens_for_loss.detach().float().reciprocal()
                             else:
                                 grad_scale = 1.0 / max(float(batch_num_tokens_for_loss), 1.0)
-                            stage.received_grads[mb_idx] = torch.ones_like(
-                                stage_output
-                            ).mul_(grad_scale)
+                            stage.received_grads[mb_idx] = torch.ones_like(stage_output).mul_(
+                                grad_scale
+                            )
                         stage.backward_one_chunk(
                             mb_idx,
                             last_backward=is_last_microbatch,
@@ -1060,9 +1049,11 @@ class OLMoDDPTrainModule(TrainModule):
     def load_state_dict(self, state_dict: Dict[str, Any]) -> None:
         raise NotImplementedError("Use load_state_dict_direct instead")
 
-    def state_dict_to_load(self, metadata: Metadata, *, optim: Optional[bool] = True) -> Dict[str, Any]:
+    def state_dict_to_load(
+        self, metadata: Metadata, *, optim: Optional[bool] = True
+    ) -> Dict[str, Any]:
         raise NotImplementedError("Use load_state_dict_direct instead")
-    
+
     def state_dict(self, *, optim: Optional[bool] = True) -> Dict[str, Any]:
         raise NotImplementedError("Use save_state_dict_direct or load_state_dict_direct instead")
 
@@ -1076,12 +1067,12 @@ class OLMoDDPTrainModule(TrainModule):
         throttle_uploads: bool = False,
     ):
         optim = self._require_optimizer()
-        state_dict = optim.state_dict() # this will free optim states, need to load back after save
+        state_dict = optim.state_dict()  # this will free optim states, need to load back after save
 
         # this is count the param size of the global dtensor, not the local shard
-        main_param_sz = 0 
+        main_param_sz = 0
         for key, value in state_dict.items():
-            if key.endswith('.main'):
+            if key.endswith(".main"):
                 main_param_sz += value.numel()
 
         # this is the theretical model param size calculated from config before PP split
@@ -1127,9 +1118,7 @@ class OLMoDDPTrainModule(TrainModule):
 
         dir = normalize_path(dir)
         reader = RemoteFileSystemReader(
-            dir, 
-            thread_count=thread_count, 
-            pre_download=pre_download, work_dir=work_dir
+            dir, thread_count=thread_count, pre_download=pre_download, work_dir=work_dir
         )
 
         metadata = reader.read_metadata()
@@ -1209,10 +1198,9 @@ class OLMoDDPTrainModule(TrainModule):
                         sd_to_load[optional_key] = []
                     elif isinstance(optional_meta, TensorStorageMetadata):
                         current_value = sd_to_load.get(optional_key)
-                        if (
-                            not isinstance(current_value, torch.Tensor)
-                            or tuple(current_value.shape) != tuple(optional_meta.size)
-                        ):
+                        if not isinstance(current_value, torch.Tensor) or tuple(
+                            current_value.shape
+                        ) != tuple(optional_meta.size):
                             sd_to_load[optional_key] = torch.empty(
                                 tuple(optional_meta.size),
                                 dtype=optional_meta.properties.dtype,
@@ -1220,7 +1208,9 @@ class OLMoDDPTrainModule(TrainModule):
                             )
 
                 if reset_optimizer_moments_on_load:
-                    log.info("Resetting optimizer exp_avg and exp_avg_sq buffers during checkpoint load")
+                    log.info(
+                        "Resetting optimizer exp_avg and exp_avg_sq buffers during checkpoint load"
+                    )
                     for key in list(sd_to_load.keys()):
                         if key.endswith(".exp_avg") or key.endswith(".exp_avg_sq"):
                             sd_to_load.pop(key)
@@ -1259,7 +1249,9 @@ class OLMoDDPTrainModule(TrainModule):
                 is_optimizer_main_param = checkpoint_key.endswith(".main")
                 local_tensor = param.data.view(-1) if is_optimizer_main_param else param.data
                 local_numel = local_tensor.numel()
-                global_shape = (global_numel,) if is_optimizer_main_param else tuple(tensor_meta.size)
+                global_shape = (
+                    (global_numel,) if is_optimizer_main_param else tuple(tensor_meta.size)
+                )
 
                 if local_numel == global_numel:
                     model_state[checkpoint_key] = local_tensor
@@ -1312,13 +1304,13 @@ class OLMoDDPTrainModule(TrainModule):
         return tuple(reversed(stride))
 
     def _resolve_model_checkpoint_key(
-        self, param_name: str, checkpoint_keys: Sequence[str]
+        self, param_name: str, checkpoint_keys: Collection[str]
     ) -> Optional[str]:
         def strip_wrapper_prefixes(name: str) -> str:
             while True:
                 for prefix in ("module.", "_orig_mod."):
                     if name.startswith(prefix):
-                        name = name[len(prefix):]
+                        name = name[len(prefix) :]
                         break
                 else:
                     return name
@@ -1422,7 +1414,9 @@ class OLMoDDPTrainModule(TrainModule):
             )
 
             if (~instance_mask).all():
-                print(f'[Warning] rank {dist.get_rank()} All instances ({instance_mask.shape}) in the micro-batch are masked out')
+                print(
+                    f"[Warning] rank {dist.get_rank()} All instances ({instance_mask.shape}) in the micro-batch are masked out"
+                )
 
         #############################
 
@@ -1436,10 +1430,12 @@ class OLMoDDPTrainModule(TrainModule):
                 # get an artificially *low* loss for these batches. But it is really hard (and slow)
                 # to do this properly in a distributed setup. We add back in the full number of tokens
                 # for the loss so that each rank contributes to the loss calculation fairly.
-                batch_num_tokens_for_loss += (~instance_mask).sum() * (batch["labels"].shape[1] - 1) # shifted labels does not count last token
-            
+                batch_num_tokens_for_loss += (~instance_mask).sum() * (
+                    batch["labels"].shape[1] - 1
+                )  # shifted labels does not count last token
+
             if batch_num_tokens_for_loss.item() == 0:
-                print(f'[Warning] rank {dist.get_rank()} batch_num_tokens_for_loss == 0')
+                print(f"[Warning] rank {dist.get_rank()} batch_num_tokens_for_loss == 0")
 
             batch_num_tokens_for_loss = move_to_device(batch_num_tokens_for_loss, self.device)
             if is_distributed():
@@ -1475,8 +1471,7 @@ class OLMoDDPTrainModule(TrainModule):
                         mode="DDP",
                     )
                 with self._train_microbatch_context(micro_batch_idx, num_micro_batches):
-                    with nvtx.annotate(f"fwd_mb{micro_batch_idx}", color='blue'):
-                        
+                    with nvtx.annotate(f"fwd_mb{micro_batch_idx}", color="blue"):
                         input_ids, labels, model_kwargs = self._prepare_batch(micro_batch)
                         # Run forward pass, get losses.
                         debug_dump_logits = self._debug_should_dump("logits")
@@ -1510,20 +1505,19 @@ class OLMoDDPTrainModule(TrainModule):
                             z_batch_loss += get_local_tensor(z_loss.detach())
                             del z_loss
 
-                    with nvtx.annotate(f"bwd_mb{micro_batch_idx}", color='red'):
+                    with nvtx.annotate(f"bwd_mb{micro_batch_idx}", color="red"):
                         # Run backward pass.
                         loss.backward()
-
 
             del batch  # In case this helps with memory utilization.
 
             for idx, model in enumerate(self.model_parts):
                 model.finalize_grad_reduce()
-            
+
         else:
             # pipeline parallel forward / backward
             # Run pipeline schedule.
-            input_ids, labels, model_kwargs = self._prepare_batch(batch, batch['labels'])
+            input_ids, labels, model_kwargs = self._prepare_batch(batch, batch["labels"])
             assert labels is not None
             dry_run_mode = self._pp_dry_run_mode() if dry_run else "full"
             dry_run_complete_mode = "PP"
@@ -1533,16 +1527,17 @@ class OLMoDDPTrainModule(TrainModule):
             batch_num_tokens_for_loss = (labels != self.label_ignore_index).sum()
 
             if instance_mask is not None and not dry_run:
-
                 # WARN: When we mask out instances with the instance filter, we count those tokens
                 # for the loss anyways. They will count as tokens with a zero loss. This means we
                 # get an artificially *low* loss for these batches. But it is really hard (and slow)
                 # to do this properly in a distributed setup. We add back in the full number of tokens
                 # for the loss so that each rank contributes to the loss calculation fairly.
-                batch_num_tokens_for_loss += (~instance_mask).sum() * (batch["labels"].shape[1] - 1) # shifted labels does not count last token
+                batch_num_tokens_for_loss += (~instance_mask).sum() * (
+                    batch["labels"].shape[1] - 1
+                )  # shifted labels does not count last token
 
             if batch_num_tokens_for_loss.item() == 0:
-                print(f'[Warning] rank {dist.get_rank()} batch_num_tokens_for_loss == 0')
+                print(f"[Warning] rank {dist.get_rank()} batch_num_tokens_for_loss == 0")
 
             batch_num_tokens_for_loss = move_to_device(batch_num_tokens_for_loss, self.device)
             if is_distributed():
@@ -1556,12 +1551,15 @@ class OLMoDDPTrainModule(TrainModule):
                 batch_num_tokens_for_loss = batch_num_tokens_for_loss.clamp_min(1)
 
             if dry_run and dry_run_mode == "reduced_true_pp":
-                input_ids, labels, model_kwargs, dry_run_num_microbatches = (
-                    self._maybe_reduce_pp_dry_run_batch(input_ids, labels, model_kwargs)
-                )
+                (
+                    input_ids,
+                    labels,
+                    model_kwargs,
+                    dry_run_num_microbatches,
+                ) = self._maybe_reduce_pp_dry_run_batch(input_ids, labels, model_kwargs)
                 batch_num_tokens_for_loss = (labels != self.label_ignore_index).sum()
                 if batch_num_tokens_for_loss.item() == 0:
-                    print(f'[Warning] rank {dist.get_rank()} batch_num_tokens_for_loss == 0')
+                    print(f"[Warning] rank {dist.get_rank()} batch_num_tokens_for_loss == 0")
                 batch_num_tokens_for_loss = move_to_device(batch_num_tokens_for_loss, self.device)
                 if is_distributed():
                     global_batch_num_tokens_for_loss = batch_num_tokens_for_loss.clone()
@@ -1596,18 +1594,15 @@ class OLMoDDPTrainModule(TrainModule):
             else:
                 progress_callback = None
                 if dry_run:
-                    progress_mode = (
-                        "PP reduced true"
-                        if dry_run_mode == "reduced_true_pp"
-                        else "PP"
-                    )
-                    progress_callback = lambda microbatch_idx, num_microbatches: (
+                    progress_mode = "PP reduced true" if dry_run_mode == "reduced_true_pp" else "PP"
+
+                    def progress_callback(microbatch_idx, num_microbatches):
                         self._print_dry_run_microbatch_progress(
                             microbatch_idx,
                             num_microbatches,
                             mode=progress_mode,
                         )
-                    )
+
                 pp_outputs = self.run_pipeline(
                     input_ids,
                     labels,
@@ -1623,24 +1618,31 @@ class OLMoDDPTrainModule(TrainModule):
                 # Collect losses from all micro-batches and all stages.
                 for stage_outputs in pp_outputs:
                     for mb_output in stage_outputs:
-                        if mb_output is None: # non-last stage
+                        if mb_output is None:  # non-last stage
                             continue
                         else:
                             assert isinstance(mb_output, LMOutputWithLoss)
                             _, loss, ce_loss, z_loss = mb_output
 
                             # ce_loss should always be not None
-                            ce_batch_loss = (ce_batch_loss + ce_loss.detach()) if ce_batch_loss is not None else ce_loss.detach()
+                            ce_batch_loss = (
+                                (ce_batch_loss + ce_loss.detach())
+                                if ce_batch_loss is not None
+                                else ce_loss.detach()
+                            )
 
                             # z loss is optional
                             if z_loss is not None:
-                                z_batch_loss = (z_batch_loss + z_loss.detach()) if z_batch_loss is not None else z_loss.detach()
+                                z_batch_loss = (
+                                    (z_batch_loss + z_loss.detach())
+                                    if z_batch_loss is not None
+                                    else z_loss.detach()
+                                )
 
             for idx, model in enumerate(self.model_parts):
                 model.finalize_grad_reduce()
-            
-        #############################
 
+        #############################
 
         for model in self.model_parts:
             model.post_batch(dry_run=dry_run)
@@ -1658,11 +1660,12 @@ class OLMoDDPTrainModule(TrainModule):
 
             torch.cuda.empty_cache()
             from olmo_core.train.globals import set_global_arg
+
             set_global_arg("dry_run_done", True)
             return
 
         # Record loss metrics.
-        from olmo_core.optim.moe_optimizer import OLMoDDPOptimizer
+
         optim = self._require_optimizer()
         with nvtx.annotate("record_metrics"):
             if self.pp_enabled:
@@ -1682,7 +1685,6 @@ class OLMoDDPTrainModule(TrainModule):
                 self.record_ce_loss(ce_batch_loss)
                 optim.latest_loss = ce_batch_loss
 
-    
             if z_batch_loss is not None:
                 assert self.z_loss_multiplier is not None
                 self.record_metric(
@@ -1723,7 +1725,6 @@ class OLMoDDPTrainModule(TrainModule):
     def eval_batch(
         self, batch: Dict[str, Any], labels: Optional[torch.Tensor] = None
     ) -> Union[torch.Tensor, Optional[LMOutputWithLoss]]:
-
         # Currently all of our evaluators require the full logits locally,
         # but when we're using CP/TP we usually can't materialize the full logits locally (due to OOMs).
         # However we could at least support in-loop PPL evals with a little work in the evaluator
@@ -1765,7 +1766,7 @@ class OLMoDDPTrainModule(TrainModule):
                     ignore_index=self.label_ignore_index,
                     loss_reduction="none",
                     **model_kwargs,
-                ) 
+                )
                 # merge lm_output from all stages and all micro-batches
                 # List[List[Optional[LMOutputWithLoss]]] --> Optional[LMOutputWithLoss]
                 final_lm_output: Optional[LMOutputWithLoss] = None
@@ -1785,12 +1786,12 @@ class OLMoDDPTrainModule(TrainModule):
                         else:
                             assert isinstance(mb_output, LMOutputWithLoss)
                             (
-                                logits, # [mb, seq_len, vocab_size]
+                                logits,  # [mb, seq_len, vocab_size]
                                 loss,  # [mb, seq_len] because loss_reduction="none"
-                                ce_loss, # [mb, seq_len]
+                                ce_loss,  # [mb, seq_len]
                                 z_loss,  # ??
-                             ) = mb_output
-                            
+                            ) = mb_output
+
                             # always not None
                             loss_list.append(loss)
                             ce_loss_list.append(ce_loss)
@@ -1828,19 +1829,22 @@ class OLMoDDPTrainModule(TrainModule):
         labels: torch.Tensor,
         **kwargs,
     ) -> List[List[Optional[LMOutputWithLoss]]]:
-
         # the micro-batch size should be a multiple of pp degree
         def pad_dim_0_to_multiple_of(tensor: torch.Tensor, multiple: int) -> torch.Tensor:
             bsz = tensor.size(0)
             if bsz % multiple == 0:
                 return tensor
             pad_size = multiple - (bsz % multiple)
-            padding_tensor = tensor[-1].unsqueeze(0).expand(pad_size, *tensor.size()[1:]) # repeat last element
+            padding_tensor = (
+                tensor[-1].unsqueeze(0).expand(pad_size, *tensor.size()[1:])
+            )  # repeat last element
             padded_tensor = torch.cat([tensor, padding_tensor], dim=0).contiguous()
             return padded_tensor
 
         original_batch_size = input_ids.size(0)
-        padded_input_ids = pad_dim_0_to_multiple_of(input_ids, self.train_pp_schedule.pp_mesh.size())
+        padded_input_ids = pad_dim_0_to_multiple_of(
+            input_ids, self.train_pp_schedule.pp_mesh.size()
+        )
         padded_labels = pad_dim_0_to_multiple_of(labels, self.train_pp_schedule.pp_mesh.size())
         for k, v in kwargs.items():
             if isinstance(v, torch.Tensor) and v.size(0) == original_batch_size:
@@ -1850,7 +1854,7 @@ class OLMoDDPTrainModule(TrainModule):
             schedule_outputs = self.train_pp_schedule.step(
                 padded_input_ids,
                 target=padded_labels,
-                forward_only=True, # <<<--- eval mode
+                forward_only=True,  # <<<--- eval mode
                 # kwargs from now ---
                 # loss_div_factor=batch_num_tokens_for_loss,
                 labels=padded_labels,
@@ -1859,10 +1863,10 @@ class OLMoDDPTrainModule(TrainModule):
 
         # remove padding results from outputs
         for stage_idx in range(len(schedule_outputs)):
-            schedule_outputs[stage_idx] = schedule_outputs[stage_idx][: original_batch_size]
+            schedule_outputs[stage_idx] = schedule_outputs[stage_idx][:original_batch_size]
 
         return schedule_outputs
-    
+
     def _point_to_low_precision_params(self):
         for model in self.model_parts:
             for name, param in model.named_parameters():
@@ -1879,7 +1883,7 @@ class OLMoDDPTrainModule(TrainModule):
 
     def _copy_full_precision_to_low_precision_params(self):
         from torch.distributed.utils import _alloc_storage
-         
+
         for model in self.model_parts:
             for name, param in model.named_parameters():
                 if hasattr(param, "_ddp_ignored") and param._ddp_ignored:
@@ -1887,9 +1891,10 @@ class OLMoDDPTrainModule(TrainModule):
                 _alloc_storage(param._mp_param, param.size())
                 with torch.no_grad():
                     # assert param.data == param._fp_param, "param.data should point to param._fp_param before copy"
-                    assert param.data.dtype == torch.float32, "param.data should be float32 before copy"
+                    assert (
+                        param.data.dtype == torch.float32
+                    ), "param.data should be float32 before copy"
                     param._mp_param.copy_(param.data)
-
 
     def run_pipeline(
         self,
@@ -1918,15 +1923,18 @@ class OLMoDDPTrainModule(TrainModule):
             )
         return schedule_outputs
 
-
-
     def optim_step(self):
         from olmo_core.optim.moe_optimizer import OLMoDDPOptimizer
+
         optim = self._require_optimizer()
         debug_dump_grads = self._debug_should_dump("grads")
         if debug_dump_grads:
             self._debug_dump_model_grads("pre_optim")
-        if debug_dump_grads or self._debug_dump_optim_grad_norms or self._debug_log_optim_grad_norms:
+        if (
+            debug_dump_grads
+            or self._debug_dump_optim_grad_norms
+            or self._debug_log_optim_grad_norms
+        ):
             setattr(optim, "_olmo_debug_global_step", self.trainer.global_step)
 
         # dist.barrier()
@@ -1938,8 +1946,6 @@ class OLMoDDPTrainModule(TrainModule):
         else:
             pass
             # raise RuntimeError("Deprecated code path, only reduce-scatter grads is supported now")
-            
-        
 
         # Maybe adjust learning rate.
         if self.scheduler is not None:
@@ -1971,7 +1977,6 @@ class OLMoDDPTrainModule(TrainModule):
 
         for model in self.model_parts:
             model.post_optim_step()
-        
 
     def zero_grads(self):
         self._require_optimizer()
@@ -2074,12 +2079,17 @@ class OLMoDDPTrainModule(TrainModule):
         else:
             # Build indices on CPU in float64. CUDA linspace over very large tensors can
             # round the final index past the end before index_select sees it.
-            sample_indices = torch.linspace(
-                0,
-                flat.numel() - 1,
-                steps=sample_n,
-                dtype=torch.float64,
-            ).round().long().clamp_(0, flat.numel() - 1)
+            sample_indices = (
+                torch.linspace(
+                    0,
+                    flat.numel() - 1,
+                    steps=sample_n,
+                    dtype=torch.float64,
+                )
+                .round()
+                .long()
+                .clamp_(0, flat.numel() - 1)
+            )
             sample = flat.index_select(0, sample_indices.to(device=flat.device)).float().cpu()
         return {
             "shape": tuple(local.shape),
@@ -2248,9 +2258,9 @@ class OLMoDDPTrainModule(TrainModule):
             os.path.join(step_dir, "manifest.pt"),
         )
 
-    @lru_cache
+    @lru_cache  # type: ignore[override]
     def num_flops_per_token(self, seq_len: int) -> int:
-        return int(self._global_model_config.num_flops_per_token(seq_len))
+        return int(self._full_model_num_flops_per_token(seq_len))
 
     def global_num_flops_in_batch(self, batch: Dict[str, Any]) -> Optional[int]:
         global_num_tokens = self.trainer.data_loader.global_num_tokens_in_batch(batch)
@@ -2267,46 +2277,48 @@ class OLMoDDPTrainModule(TrainModule):
         with contextlib.ExitStack() as stack:
             if isinstance(self.model_parts[0], FSDPModule):
                 raise OLMoConfigurationError("FSDP not supported. Use replicate()")
-            elif isinstance(self.model_parts[0], DDP): 
+            elif isinstance(self.model_parts[0], DDP):
                 raise OLMoConfigurationError("torch DDP not supported. Use replicate()")
             elif isinstance(self.model_parts[0], MultiGroupDistributedDataParallel):
                 if not is_last_mb and self.dp_config.only_allreduce_last_microbatch:
                     stack.enter_context(self.model_parts[0].no_sync())
-            elif self.dp_config.name == DataParallelType.ddp: # temp fix
+            elif self.dp_config.name == DataParallelType.ddp:  # temp fix
                 if (
-                    self.reduce_scatter_grads # if use RS, always no sync
-                    or  # if not, fall back to all-reduce
-                    ( 
+                    self.reduce_scatter_grads  # if use RS, always no sync
+                    or (  # if not, fall back to all-reduce
                         # if specified, only AR at the last microbatch
-                        not is_last_mb and self.dp_config.only_allreduce_last_microbatch
+                        not is_last_mb
+                        and self.dp_config.only_allreduce_last_microbatch
                     )
                 ):
-                    stack.enter_context(self.ddp_no_sync(self.model_parts)) # only DDP has no_sync(), can only call set_requires_gradient_sync()
+                    stack.enter_context(
+                        self.ddp_no_sync(self.model_parts)
+                    )  # only DDP has no_sync(), can only call set_requires_gradient_sync()
             yield
-
 
     @contextlib.contextmanager
     def ddp_no_sync(self, model_parts: List[OLMoDDPModel]):
         for module in model_parts:
-            assert callable(getattr(module, "set_requires_gradient_sync", None)), \
-        f"{type(module).__name__} must implement set_requires_gradient_sync(flag: bool). " \
-        "This is automatically managed if the model is returned by torch.distributed._composable.replicate"
+            assert callable(getattr(module, "set_requires_gradient_sync", None)), (
+                f"{type(module).__name__} must implement set_requires_gradient_sync(flag: bool). "
+                "This is automatically managed if the model is returned by torch.distributed._composable.replicate"
+            )
             # non-EP modules
-            module.set_requires_gradient_sync(False) # type: ignore
+            module.set_requires_gradient_sync(False)  # type: ignore
 
             # EP managed modules
-            ep_modules = [m for m in module.modules() if getattr(m, '_ep_sharded', False) ]
+            ep_modules = [m for m in module.modules() if getattr(m, "_ep_sharded", False)]
             for m in ep_modules:
-                m.set_requires_gradient_sync(False) # type: ignore
+                m.set_requires_gradient_sync(False)  # type: ignore
 
         try:
             yield
         finally:
             for module in model_parts:
-                module.set_requires_gradient_sync(True) # type: ignore
-                ep_modules = [m for m in module.modules() if getattr(m, '_ep_sharded', False) ]
+                module.set_requires_gradient_sync(True)  # type: ignore
+                ep_modules = [m for m in module.modules() if getattr(m, "_ep_sharded", False)]
                 for m in ep_modules:
-                    m.set_requires_gradient_sync(True) # type: ignore
+                    m.set_requires_gradient_sync(True)  # type: ignore
 
     @contextlib.contextmanager
     def _eval_batch_context(self) -> Generator[None, None, None]:
@@ -2316,19 +2328,13 @@ class OLMoDDPTrainModule(TrainModule):
 
     @contextlib.contextmanager
     def _model_forward_context(self) -> Generator[None, None, None]:
-        with contextlib.ExitStack() as stack:
-            # if self.autocast_precision is not None:
-            #     stack.enter_context(torch.autocast(self.device.type, dtype=self.autocast_precision))
-            # NOTE: autocast_precision is deleted
-            yield
-
-
+        # No autocast context here; OLMoDDP relies on the model's own dtype handling.
+        yield
 
     def _clip_grad_norm(
         self, max_grad_norm: float, norm_type: float = 2.0, foreach: Optional[bool] = None
     ) -> torch.Tensor:
         raise RuntimeError("Deprecated. Use optimizer's grad clipping instead.")
-
 
     def _prepare_batch(
         self, batch: Dict[str, Any], labels: Optional[torch.Tensor] = None
@@ -2383,10 +2389,9 @@ class OLMoDDPTrainModule(TrainModule):
         model_kwargs["cp_original_seq_len"] = original_seq_len
         return input_ids, labels, model_kwargs
 
-
     def parallelize_and_init_model(
         self,
-        model: OLMoDDPModel, # the full model before sharding, the same on all ranks
+        model: OLMoDDPModel,  # the full model before sharding, the same on all ranks
         *,
         compile_model: bool = False,
         float8_config: Optional[Float8Config] = None,
@@ -2403,11 +2408,11 @@ class OLMoDDPTrainModule(TrainModule):
         if tp_config is not None:
             raise NotImplementedError("TP not supported yet")
 
-
         if pp_config is not None:
-
-            assert self.world_mesh['dense'] is not None, "Dense mesh must be built before applying pipeline parallelism"
-            self.pp_mesh = self.world_mesh['dense']['pp']
+            assert (
+                self.world_mesh["dense"] is not None
+            ), "Dense mesh must be built before applying pipeline parallelism"
+            self.pp_mesh = self.world_mesh["dense"]["pp"]
             self.pp_group = self.pp_mesh.get_group()
             self.pp_group_rank = get_rank(self.pp_group)
             self.pp_group_size = get_world_size(self.pp_group)
@@ -2415,34 +2420,33 @@ class OLMoDDPTrainModule(TrainModule):
             self.pp_next_rank = (self.pp_group_rank + 1) % self.pp_group_size
             self.pp_final_stage_rank = pp_config.final_stage_rank()
             log.info(
-                "Creating pipeline P2P process groups "
-                "(global_rank=%d, pp_rank=%d/%d)",
+                "Creating pipeline P2P process groups " "(global_rank=%d, pp_rank=%d/%d)",
                 dist.get_rank(),
                 self.pp_group_rank,
                 self.pp_group_size,
             )
             pp_p2p_group = pp_config.build_p2p_process_group(self.world_mesh["dense"])
             log.info(
-                "Created pipeline P2P process groups "
-                "(global_rank=%d, pp_rank=%d/%d)",
+                "Created pipeline P2P process groups " "(global_rank=%d, pp_rank=%d/%d)",
                 dist.get_rank(),
                 self.pp_group_rank,
                 self.pp_group_size,
             )
             if is_distributed():
                 log.info(
-                    "Synchronizing after pipeline P2P process-group creation "
-                    "(global_rank=%d)",
+                    "Synchronizing after pipeline P2P process-group creation " "(global_rank=%d)",
                     dist.get_rank(),
                 )
                 dist.barrier()
 
             # Split model into pipeline stages.
-            model.purge_cuda_events() # set event to None so that can be deepcopied
-            
+            model.purge_cuda_events()  # set event to None so that can be deepcopied
+
             stages_and_model_parts = pp_config.split_model(
-                model, pp_mesh=self.pp_mesh, device=self.device, 
-                use_ddp=self.world_mesh['dense']['dp'].size() > 1,
+                model,
+                pp_mesh=self.pp_mesh,
+                device=self.device,
+                use_ddp=self.world_mesh["dense"]["dp"].size() > 1,
                 p2p_group=pp_p2p_group,
             )
             stages = stages_and_model_parts[0]
@@ -2457,16 +2461,20 @@ class OLMoDDPTrainModule(TrainModule):
             log.info(
                 f"Applied pipeline parallelism to the model with {get_device_mesh_info(self.pp_mesh)}"
             )
-            
+
             # TODO: chunk layers into stages (I don't understand this TODO)
-            assert self.world_mesh is not None, "World mesh must be built before applying expert parallelism"
-            assert self.world_mesh['dense'] is not None, "Dense mesh must be built before applying expert parallelism"
+            assert (
+                self.world_mesh is not None
+            ), "World mesh must be built before applying expert parallelism"
+            assert (
+                self.world_mesh["dense"] is not None
+            ), "Dense mesh must be built before applying expert parallelism"
 
             for m in model_parts:
                 m.apply_pp(self.pp_mesh)
 
         else:
-            model_parts: List[OLMoDDPModel] = [model] # no PP, single part
+            model_parts = [model]  # no PP, single part
 
         # Maybe apply FP8 training.
         if float8_config is not None and float8_config.enabled:
@@ -2490,9 +2498,15 @@ class OLMoDDPTrainModule(TrainModule):
             # EP-DP combined
             # for the dense part, replicate over DP pg
             # for the moe part, replicate over EP-DP pg
-            assert self.world_mesh is not None, "World mesh must be built before applying expert parallelism"
-            assert self.world_mesh["moe"] is not None, "MoE mesh must be built before applying expert parallelism"
-            assert self.world_mesh["dense"] is not None, "Dense mesh must be built before applying expert parallelism"
+            assert (
+                self.world_mesh is not None
+            ), "World mesh must be built before applying expert parallelism"
+            assert (
+                self.world_mesh["moe"] is not None
+            ), "MoE mesh must be built before applying expert parallelism"
+            assert (
+                self.world_mesh["dense"] is not None
+            ), "Dense mesh must be built before applying expert parallelism"
             ep_mesh = self.world_mesh["moe"]
             dp_mesh = self.world_mesh["dense"]["dp"]
             dense_param_group = self.dense_dp_cp_group
@@ -2516,8 +2530,7 @@ class OLMoDDPTrainModule(TrainModule):
                 # still buys useful overlap on current NCCL/torch versions.
                 nccl_opts = dist.ProcessGroupNCCL.Options(is_high_priority_stream=True)
                 log.info(
-                    "Creating high-priority NCCL EP-MP process groups "
-                    "(global_rank=%d)",
+                    "Creating high-priority NCCL EP-MP process groups " "(global_rank=%d)",
                     dist.get_rank(),
                 )
                 ep_mp_group, ep_mp_groups = dist.new_subgroups_by_enumeration(
@@ -2564,7 +2577,7 @@ class OLMoDDPTrainModule(TrainModule):
                     len(model_parts),
                 )
 
-            ddp_model_parts = []
+            ddp_model_parts: List[OLMoDDPModel] = []
             for m in model_parts:
                 if not m.is_moe:
                     raise OLMoConfigurationError("Expert parallelism is only valid for MoE models")
@@ -2594,8 +2607,12 @@ class OLMoDDPTrainModule(TrainModule):
         else:
             # Pure DP (no EP)
             pass
-            assert self.world_mesh is not None, "World mesh must be built before applying expert parallelism"
-            assert self.world_mesh["dense"] is not None, "Dense mesh must be built before applying expert parallelism"
+            assert (
+                self.world_mesh is not None
+            ), "World mesh must be built before applying expert parallelism"
+            assert (
+                self.world_mesh["dense"] is not None
+            ), "Dense mesh must be built before applying expert parallelism"
             # param_dtype = dp_config.param_dtype.as_pt() if dp_config.param_dtype is not None else None
             dp_mesh = self.world_mesh["dense"]["dp"]
             ep_mesh = None
@@ -2664,12 +2681,13 @@ class OLMoDDPTrainModule(TrainModule):
                 assert self._pp_stages[idx].submod is m
                 self._pp_stages[idx].submod = ddp_m
 
-        with nvtx.annotate("OLMoDDPTrainModule.refresh_rowwise_fp8_cache_before_first_step", color="red"):
+        with nvtx.annotate(
+            "OLMoDDPTrainModule.refresh_rowwise_fp8_cache_before_first_step", color="red"
+        ):
             for m in ddp_model_parts:
                 m.refresh_rowwise_fp8_cache()
 
         return ddp_model_parts
-
 
     def memory_usage_estimation(self):
         pass
@@ -2681,7 +2699,7 @@ class OLMoDDPTrainModule(TrainModule):
         rank_microbatch_size: int,
     ):
         from olmo_core.nn.ddp import OLMoDDPModel
-        
+
         # Materialize and init parameters.
         log.info("Initializing model weights...")
         for model_part_idx, m in enumerate(model_parts):
@@ -2690,8 +2708,8 @@ class OLMoDDPTrainModule(TrainModule):
                 max_seq_len=max_sequence_length,
                 max_local_microbatch_size=rank_microbatch_size,
                 device=self.device,
-                world_mesh=self.world_mesh, # only PP mesh is used, should be fine
-                model_part_idx=model_part_idx
+                world_mesh=self.world_mesh,  # only PP mesh is used, should be fine
+                model_part_idx=model_part_idx,
             )
             # for n, p in m.named_parameters():
             #     print(f'{n} {p.shape}: mean={p.data.mean().item()}, std={p.data.std().item()}')
@@ -2745,9 +2763,7 @@ class OLMoDDPTrainModule(TrainModule):
         local_counts = [m.count_ep_no_sync_blocks() for m in typed_parts]
         if not any(local_counts):
             return
-        prewarm_rank_microbatch_size = self._cp_local_rank_microbatch_size(
-            rank_microbatch_size
-        )
+        prewarm_rank_microbatch_size = self._cp_local_rank_microbatch_size(rank_microbatch_size)
 
         use_olmo_symm = olmo_symm_mem.is_enabled()
         if not use_olmo_symm and self.pp_enabled:
@@ -2781,7 +2797,9 @@ class OLMoDDPTrainModule(TrainModule):
                     "rowwise_lifetime_lease_slots sequence length must match model_parts: "
                     f"{len(rowwise_lifetime_lease_slots)} vs {len(typed_parts)}"
                 )
-            rowwise_slots_by_part = [int(slots) for slots in rowwise_lifetime_lease_slots]
+            rowwise_slots_by_part: List[Optional[int]] = [
+                int(slots) for slots in rowwise_lifetime_lease_slots
+            ]
         else:
             rowwise_slots_by_part = [rowwise_lifetime_lease_slots for _ in typed_parts]
 
@@ -2799,7 +2817,6 @@ class OLMoDDPTrainModule(TrainModule):
             log.info("Applied torch.compile() to the model")
         else:
             log.warning("Skipping model compilation since CUDA is not available")
-
 
     def reduce_send_recv(self, x: Optional[torch.Tensor] = None) -> torch.Tensor:
         # assert self.pp_enabled and self._pp_config is not None
@@ -2820,8 +2837,9 @@ class OLMoDDPTrainModule(TrainModule):
         # # print(f'{get_rank()} (pp group rank {self.pp_group_rank}) got {x.item()}')
         # return x
 
-
-        assert self.pp_enabled and self._pp_config is not None, "reduce_send_recv is only valid when PP is enabled"
+        assert (
+            self.pp_enabled and self._pp_config is not None
+        ), "reduce_send_recv is only valid when PP is enabled"
         if self.pp_group_rank == self.pp_final_stage_rank:
             assert x is not None
             # Reduce across the parameter replica group for dense weights. With CP this includes
@@ -2858,7 +2876,7 @@ class OLMoDDPTrainModule(TrainModule):
             #     f"{get_global_rank(dst_rank, group=self.pp_group)} (pp group rank {dst_rank})"
             # )
             send_ops.append(dist.P2POp(dist.isend, x, group=self.pp_group, group_peer=dst_rank))
-        
+
         if len(recv_ops) > 0:
             recv_reqs = dist.batch_isend_irecv(recv_ops)
             for req in recv_reqs:

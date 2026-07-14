@@ -1,15 +1,15 @@
 from __future__ import annotations
 
-from contextlib import contextmanager
 import os
 import socket
+from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass
 from typing import Iterator, Optional
 
 import torch
 import torch.distributed as dist
-from olmo_core._nvtx import nvtx
 
+from olmo_core._nvtx import nvtx
 from olmo_core.kernels import nccl_rma_p2p
 
 P2PKey = tuple[str, int, int, int]
@@ -109,7 +109,9 @@ class _RMASendWork(_RMAWork):
             with nvtx.annotate(label, color="blue"):
                 if op.wait_for_ack:
                     if op.ack_context_id is None:
-                        raise RuntimeError("RMA send op requires an ack context but none was provided")
+                        raise RuntimeError(
+                            "RMA send op requires an ack context but none was provided"
+                        )
                     _debug(f"send wait ack key={op.key} peer={op.peer} channel={op.channel_index}")
                     with nvtx.annotate(f"{label}-wait-ack", color="purple"):
                         nccl_rma_p2p.wait_signal(op.ack_context_id, peer=op.peer, op_count=1)
@@ -164,7 +166,9 @@ class _RMARecvWork(_RMAWork):
                         f"key={self.op.key} peer={self.op.peer} channel={self.op.channel_index}"
                     )
                     with nvtx.annotate(f"{label}-ack", color="purple"):
-                        nccl_rma_p2p.signal(self.op.ack_context_id, peer=self.op.peer)
+                        nccl_rma_p2p.signal(  # type: ignore[attr-defined]
+                            self.op.ack_context_id, peer=self.op.peer
+                        )
                 self._record_event()
             self._wait_enqueued = True
             _debug(
@@ -234,7 +238,7 @@ class NCCLRMAPipelineP2PTransport:
             raise RuntimeError(
                 "NCCL RMA P2P host APIs are not supported for this inter-node "
                 f"communicator; group spans hosts {sorted(self.hostnames)}. "
-                "Use p2p_backend=\"nccl\" for inter-node PP, or use the RMA "
+                'Use p2p_backend="nccl" for inter-node PP, or use the RMA '
                 "backend only for single-node PP groups."
             )
 
@@ -254,7 +258,9 @@ class NCCLRMAPipelineP2PTransport:
                     ack_unique_id,
                     rank=self.group_rank,
                     world_size=self.group_size,
-                    device=device.index if device.index is not None else torch.cuda.current_device(),
+                    device=device.index
+                    if device.index is not None
+                    else torch.cuda.current_device(),
                 )
                 self.ack_context_ids.append(ack_context_id)
                 _debug(f"initialized ack context channel={channel_index}")
@@ -291,7 +297,7 @@ class NCCLRMAPipelineP2PTransport:
             with torch.cuda.stream(stream):
                 yield
 
-    def send_stream_context(self, *, wait_for_compute: bool) -> Iterator[None]:
+    def send_stream_context(self, *, wait_for_compute: bool) -> AbstractContextManager[None]:
         return self._stream_context(self._send_stream, wait_for_compute=wait_for_compute)
 
     def _synchronize_before_teardown(self) -> None:
@@ -317,7 +323,9 @@ class NCCLRMAPipelineP2PTransport:
         slot_depth: int = 2,
     ) -> None:
         if num_microbatches < 1:
-            raise RuntimeError(f"NCCL RMA P2P requires at least one microbatch, got {num_microbatches}")
+            raise RuntimeError(
+                f"NCCL RMA P2P requires at least one microbatch, got {num_microbatches}"
+            )
         if slot_depth < 1:
             raise RuntimeError(f"NCCL RMA P2P slot_depth must be >= 1, got {slot_depth}")
         if self.use_ack and slot_depth != 1:
@@ -401,7 +409,9 @@ class NCCLRMAPipelineP2PTransport:
                 f"NCCL RMA P2P tensor shape {tuple(tensor.size())} does not match {self.payload_shape}"
             )
         if tensor.dtype != self.payload_dtype:
-            raise RuntimeError(f"NCCL RMA P2P tensor dtype {tensor.dtype} does not match {self.payload_dtype}")
+            raise RuntimeError(
+                f"NCCL RMA P2P tensor dtype {tensor.dtype} does not match {self.payload_dtype}"
+            )
         channel_index = self._channel_index(key)
         slot_index, send_slot = self._slot(key)
         wait_for_ack = False
@@ -455,11 +465,7 @@ class NCCLRMAPipelineP2PTransport:
         # NCCL 2.29.7 exposes only signal index/context 0, so waits consume one
         # signal from the peer-wide signal queue. Correctness depends on keeping
         # per-peer send order and wait order consistent in the pipeline schedule.
-        _debug(
-            "make recv "
-            f"key={key} peer={peer} slot={slot_index} "
-            "op_count=1"
-        )
+        _debug("make recv " f"key={key} peer={peer} slot={slot_index} " "op_count=1")
         return RMARecvOp(
             transport=self,
             key=key,
