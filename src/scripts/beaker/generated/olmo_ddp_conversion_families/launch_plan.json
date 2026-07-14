@@ -1,0 +1,100 @@
+{
+  "schema_version": 1,
+  "manifest": "/weka/oe-adapt-default/jacobm/olmoe3/olmo-ddp-migration/OLMo-core/JACOBM_DDP_PUBLICATION_MANIFEST.json",
+  "workspace": "ai2/OLMo-3-moe-experiments",
+  "cluster": "ai2/holmes",
+  "priority": "urgent",
+  "gpu_count_per_job": 1,
+  "job_count": 12,
+  "total_gpu_count": 12,
+  "total_model_count": 198,
+  "excluded_running_families": [
+    "baseline"
+  ],
+  "jobs": [
+    {
+      "family": "dense0_shared",
+      "model_count": 16,
+      "gpu_count": 1,
+      "spec": "jacobm_olmo_ddp_dense0_shared_family.yaml",
+      "experiment_name": "jacobm-olmo-ddp-dense0-shared-family-v1-urgent"
+    },
+    {
+      "family": "dense2_shared",
+      "model_count": 16,
+      "gpu_count": 1,
+      "spec": "jacobm_olmo_ddp_dense2_shared_family.yaml",
+      "experiment_name": "jacobm-olmo-ddp-dense2-shared-family-v1-urgent"
+    },
+    {
+      "family": "dense4_shared",
+      "model_count": 16,
+      "gpu_count": 1,
+      "spec": "jacobm_olmo_ddp_dense4_shared_family.yaml",
+      "experiment_name": "jacobm-olmo-ddp-dense4-shared-family-v1-urgent"
+    },
+    {
+      "family": "expert_coarse_24e_top2",
+      "model_count": 16,
+      "gpu_count": 1,
+      "spec": "jacobm_olmo_ddp_expert_coarse_24e_top2_family.yaml",
+      "experiment_name": "jacobm-olmo-ddp-expert-coarse-24e-top2-family-v1-urgent"
+    },
+    {
+      "family": "expert_fine_96e_top8",
+      "model_count": 16,
+      "gpu_count": 1,
+      "spec": "jacobm_olmo_ddp_expert_fine_96e_top8_family.yaml",
+      "experiment_name": "jacobm-olmo-ddp-expert-fine-96e-top8-family-v1-urgent"
+    },
+    {
+      "family": "integration_deep",
+      "model_count": 23,
+      "gpu_count": 1,
+      "spec": "jacobm_olmo_ddp_integration_deep_family.yaml",
+      "experiment_name": "jacobm-olmo-ddp-integration-deep-family-v1-urgent"
+    },
+    {
+      "family": "integration_wide",
+      "model_count": 23,
+      "gpu_count": 1,
+      "spec": "jacobm_olmo_ddp_integration_wide_family.yaml",
+      "experiment_name": "jacobm-olmo-ddp-integration-wide-family-v1-urgent"
+    },
+    {
+      "family": "qwen_active_4p5d",
+      "model_count": 16,
+      "gpu_count": 1,
+      "spec": "jacobm_olmo_ddp_qwen_active_4p5d_family.yaml",
+      "experiment_name": "jacobm-olmo-ddp-qwen-active-4p5d-family-v1-urgent"
+    },
+    {
+      "family": "qwen_true_3d",
+      "model_count": 16,
+      "gpu_count": 1,
+      "spec": "jacobm_olmo_ddp_qwen_true_3d_family.yaml",
+      "experiment_name": "jacobm-olmo-ddp-qwen-true-3d-family-v1-urgent"
+    },
+    {
+      "family": "shared_no_shared",
+      "model_count": 16,
+      "gpu_count": 1,
+      "spec": "jacobm_olmo_ddp_shared_no_shared_family.yaml",
+      "experiment_name": "jacobm-olmo-ddp-shared-no-shared-family-v1-urgent"
+    },
+    {
+      "family": "sparsity_high_96e_top4",
+      "model_count": 12,
+      "gpu_count": 1,
+      "spec": "jacobm_olmo_ddp_sparsity_high_96e_top4_family.yaml",
+      "experiment_name": "jacobm-olmo-ddp-sparsity-high-96e-top4-family-v1-urgent"
+    },
+    {
+      "family": "sparsity_huge_192e_top4",
+      "model_count": 12,
+      "gpu_count": 1,
+      "spec": "jacobm_olmo_ddp_sparsity_huge_192e_top4_family.yaml",
+      "experiment_name": "jacobm-olmo-ddp-sparsity-huge-192e-top4-family-v1-urgent"
+    }
+  ]
+}

@@ -1,0 +1,35 @@
+{
+  "manifest_id": "pretraining/expert_coarse_24e_top2/1p2b/cx2",
+  "source_checkpoint": "/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/expert_granularity/eg-1p2b-cx2-eg24e2k-lr3e-4-r1/step108174",
+  "resolution": "reconstructed_from_legacy_builder",
+  "origin_config": null,
+  "origin_config_sha256": null,
+  "materialized_config": "/weka/oe-adapt-default/jacobm/olmoe3/olmo-ddp-migration/OLMo-core/JACOBM_DDP_CONFIGS/pretraining/expert_coarse_24e_top2/1p2b/cx2/config.json",
+  "materialized_config_sha256": "4fc1ba86f6501cf8a97d1b2c0fda64e4dd1edb612a724c8bea35a03c8873f8c5",
+  "model_config_sha256": "124f468dd479fa3fcc06b6f098cb3523cd2f017fc6c6977df2014d2144b1c82b",
+  "schema_validation": "skipped",
+  "reconstruction": {
+    "builder": "/weka/oe-adapt-default/jacobm/olmoe3/OLMo-core/src/scripts/train/jacobm_olmoe_ladder/moe_a0_ladder.py",
+    "argv": [
+      "--model-size=1p2b",
+      "--save-folder=/tmp/reconstructed-config-only",
+      "--name=eg-1p2b-cx2-eg24e2k-lr3e-4-r1",
+      "--data-root=s3://ai2-llm",
+      "--lr=3e-4",
+      "--chinchilla-multiple=2",
+      "--global-batch-size-seq=48",
+      "--num-nodes=1",
+      "--gpus-per-node=1",
+      "--micro-batch-size=1",
+      "--ep-dim=1",
+      "--ladder-evals",
+      "--eval-task-set=fast",
+      "--eval-interval=2000",
+      "--save-interval=999999999",
+      "--ephemeral-save-interval=500",
+      "--no-pre-train-checkpoint",
+      "--tag=eg-1p2b-cx2-eg24e2k-lr3e-4-r1",
+      "--expert-geometry=coarse_24e_top2"
+    ]
+  }
+}

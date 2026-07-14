@@ -1,0 +1,35 @@
+{
+  "manifest_id": "pretraining/dense4_shared/1p2b/cx2",
+  "source_checkpoint": "/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/dense_schedule/ds-1p2b-cx2-ds4-sh-lr6e-4-r1/step108230",
+  "resolution": "reconstructed_from_legacy_builder",
+  "origin_config": null,
+  "origin_config_sha256": null,
+  "materialized_config": "/weka/oe-adapt-default/jacobm/olmoe3/olmo-ddp-migration/OLMo-core/JACOBM_DDP_CONFIGS/pretraining/dense4_shared/1p2b/cx2/config.json",
+  "materialized_config_sha256": "e518126d099eb89136875e0af0561283b52dba4a7687b63940af35e395ac895c",
+  "model_config_sha256": "c73888d730c67135388aed9a8ba106b979ecc4bd147a4202d382e8cd42586533",
+  "schema_validation": "skipped",
+  "reconstruction": {
+    "builder": "/weka/oe-adapt-default/jacobm/olmoe3/OLMo-core/src/scripts/train/jacobm_olmoe_ladder/moe_a0_ladder.py",
+    "argv": [
+      "--model-size=1p2b",
+      "--save-folder=/tmp/reconstructed-config-only",
+      "--name=ds-1p2b-cx2-ds4-sh-lr6e-4-r1",
+      "--data-root=s3://ai2-llm",
+      "--lr=6e-4",
+      "--chinchilla-multiple=2",
+      "--global-batch-size-seq=48",
+      "--num-nodes=1",
+      "--gpus-per-node=1",
+      "--micro-batch-size=1",
+      "--ep-dim=1",
+      "--ladder-evals",
+      "--eval-task-set=fast",
+      "--eval-interval=2000",
+      "--save-interval=999999999",
+      "--ephemeral-save-interval=500",
+      "--no-pre-train-checkpoint",
+      "--tag=ds-1p2b-cx2-ds4-sh-lr6e-4-r1",
+      "--dense-schedule=dense4_shared"
+    ]
+  }
+}

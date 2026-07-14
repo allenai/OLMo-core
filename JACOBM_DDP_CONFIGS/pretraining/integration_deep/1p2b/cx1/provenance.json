@@ -1,0 +1,12 @@
+{
+  "manifest_id": "pretraining/integration_deep/1p2b/cx1",
+  "source_checkpoint": "/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/integration/int-1p2b-cx1-intd256e8k-lr4e-4-r2/step81809",
+  "resolution": "colocated",
+  "origin_config": "/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/integration/int-1p2b-cx1-intd256e8k-lr4e-4-r2/step81809/config.json",
+  "origin_config_sha256": "7aa38778abda043d80dc1965bc225955eeffa3e30584a739aca82aa6939ea256",
+  "materialized_config": "/weka/oe-adapt-default/jacobm/olmoe3/olmo-ddp-migration/OLMo-core/JACOBM_DDP_CONFIGS/pretraining/integration_deep/1p2b/cx1/config.json",
+  "materialized_config_sha256": "dd17813d4cb4e5cae252ce928fe5cf9c1f5deef0884adb787797a81dfe2b2fa6",
+  "model_config_sha256": "6d1d148ce00e5c2234e485bbb9d44a1f4d966fca7e59c88499fdbf7dbe1736da",
+  "schema_validation": "skipped",
+  "reconstruction": null
+}

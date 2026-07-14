@@ -1,0 +1,2231 @@
+# JacobM OLMoE Ladder Runs
+
+This file tracks tiny MoE ladder experiments launched from this branch so we can
+disambiguate run names, batch sizes, LR sweeps, data roots, and Beaker jobs later.
+
+Unless noted otherwise, runs use:
+
+- Script: `src/scripts/train/jacobm_olmoe_ladder/tiny_275m.py`
+- Model: tiny MoE, about 278M active / 1.13B total params
+- Data mix: `DataMix.OLMo_mix_0925`
+- Data root: `s3://ai2-llm`
+- Cluster: `ai2/titan`, 1 node, 8 GPUs
+- Image: `tianhuat/olmo-core-torch211-2404-cu128`
+- Workspace: `ai2/OLMo-3-moe-experiments`
+- Budget: `ai2/oe-other`
+- Priority: `urgent`
+- WandB: `ai2-llm/jacobm-olmoe-ladder`
+- Scheduler: linear warmup then cosine decay to 0.1x final LR
+- Warmup fraction: 10%
+- Sequence length: 8192
+- Future checkpoint root: `/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3`
+
+Earlier runs before this checkpoint-root cleanup were launched with the local
+machine username in the path, so they saved under
+`/weka/oe-training-default/ai2-llm/checkpoints/jacob/<run-name>`. Future ladder
+launchers default to the `jacobm/olmoe3` root above. Set `CHECKPOINT_ROOT` to
+override this in the launcher scripts.
+
+## Run Table
+
+Run names must be unique because the checkpoint path is derived from the run /
+experiment name.
+
+| Date | Run | Script | Chinchilla | Batch tokens | Batch seqs | LR | Beaker ID | Beaker link | Notes |
+| --- | --- | --- | ---: | ---: | ---: | ---: | --- | --- | --- |
+| 2026-06-02 | `olmoe3-tiny-275m-4xchinchilla-smoketest` | `src/scripts/train/OLMoE3-tiny-275m-active-smoketest.py` | 4x | 1,048,576 | 128 | 2e-4 | `01KT54GVVNM8JRJ94A9ASVVJKX` | https://beaker.org/ex/01KT54GVVNM8JRJ94A9ASVVJKX | Initial successful tiny MoE run. Used the predecessor smoketest script and original WandB project before the ladder project rename. |
+| 2026-06-02 | `olmoe3-tiny-275m-cx1-lr1e-4` | `tiny_275m.py` | 1x | 2,097,152 | 256 | 1e-4 | `01KT5JFNT1DEYX814KN5XD3NYZ` | https://beaker.org/ex/01KT5JFNT1DEYX814KN5XD3NYZ | First 2M-batch Cx1 LR sweep run; reached training. |
+| 2026-06-02 | `olmoe3-tiny-275m-cx1-lr3e-4` | `tiny_275m.py` | 1x | 2,097,152 | 256 | 3e-4 | `01KT5K59VSV3G6BX7WDE5V156B` | https://beaker.org/ex/01KT5K59VSV3G6BX7WDE5V156B | 2M-batch Cx1 LR sweep. |
+| 2026-06-02 | `olmoe3-tiny-275m-cx1-lr8e-4` | `tiny_275m.py` | 1x | 2,097,152 | 256 | 8e-4 | `01KT5K5EM002XR2K3818Y1XV0T` | https://beaker.org/ex/01KT5K5EM002XR2K3818Y1XV0T | 2M-batch Cx1 LR sweep; best visible training CE among `1e-4`, `3e-4`, and `8e-4` in the attached W&B plot. |
+| 2026-06-02 | `olmoe3-tiny-275m-cx1-lr1.2e-3` | `tiny_275m.py` | 1x | 2,097,152 | 256 | 1.2e-3 | `01KT5K5MJ19KGCQK5CV96JJ3CS` | https://beaker.org/ex/01KT5K5MJ19KGCQK5CV96JJ3CS | 2M-batch Cx1 LR sweep; queued when the 256k-batch sweep was planned. |
+| 2026-06-02 | `olmoe3-tiny-275m-cx1-b256k-lr3e-4` | `tiny_275m.py` | 1x | 262,144 | 32 | 3e-4 | `01KT5QEQ3CKEEG2D2XD938RR3S` | https://beaker.org/ex/01KT5QEQ3CKEEG2D2XD938RR3S | 256k-batch Cx1 LR sweep. |
+| 2026-06-02 | `olmoe3-tiny-275m-cx1-b256k-lr5e-4` | `tiny_275m.py` | 1x | 262,144 | 32 | 5e-4 | `01KT5QEVY6QNE4VNHF21DZVG4H` | https://beaker.org/ex/01KT5QEVY6QNE4VNHF21DZVG4H | 256k-batch Cx1 LR sweep. |
+| 2026-06-02 | `olmoe3-tiny-275m-cx1-b256k-lr8e-4` | `tiny_275m.py` | 1x | 262,144 | 32 | 8e-4 | `01KT5QF1R9GKB17899TN04Z1VD` | https://beaker.org/ex/01KT5QF1R9GKB17899TN04Z1VD | 256k-batch Cx1 LR sweep. |
+| 2026-06-02 | `olmoe3-tiny-275m-cx1-b256k-lr1.2e-3` | `tiny_275m.py` | 1x | 262,144 | 32 | 1.2e-3 | `01KT5QF87053QWKAYK53NBKGS2` | https://beaker.org/ex/01KT5QF87053QWKAYK53NBKGS2 | 256k-batch Cx1 LR sweep. |
+| 2026-06-02 | `olmoe3-tiny-275m-cx2-b256k-lr5e-4` | `tiny_275m.py` | 2x | 262,144 | 32 | 5e-4 | `01KT61W21PBSX5F2SS0RHNSAPS` | https://beaker.org/ex/01KT61W21PBSX5F2SS0RHNSAPS | Cx2 transfer check; queued before Cx1 follow-ups. |
+| 2026-06-02 | `olmoe3-tiny-275m-cx2-b256k-lr7e-4` | `tiny_275m.py` | 2x | 262,144 | 32 | 7e-4 | `01KT61W6Z3S0TQ58CJ9RHRP15G` | https://beaker.org/ex/01KT61W6Z3S0TQ58CJ9RHRP15G | Cx2 transfer check; queued before Cx1 follow-ups. |
+| 2026-06-02 | `olmoe3-tiny-275m-cx1-b256k-lr4e-4` | `tiny_275m.py` | 1x | 262,144 | 32 | 4e-4 | `01KT61WCH6S6N0MV4VVB7751RR` | https://beaker.org/ex/01KT61WCH6S6N0MV4VVB7751RR | 256k-batch Cx1 LR refinement. |
+| 2026-06-02 | `olmoe3-tiny-275m-cx1-b256k-lr6e-4` | `tiny_275m.py` | 1x | 262,144 | 32 | 6e-4 | `01KT61WJF7MWYVEV8CG6SGG9NM` | https://beaker.org/ex/01KT61WJF7MWYVEV8CG6SGG9NM | 256k-batch Cx1 LR refinement. |
+| 2026-06-02 | `olmoe3-tiny-275m-cx1-b256k-lr7e-4` | `tiny_275m.py` | 1x | 262,144 | 32 | 7e-4 | `01KT61WR3EC0A5JHRY35EE1R7A` | https://beaker.org/ex/01KT61WR3EC0A5JHRY35EE1R7A | 256k-batch Cx1 LR refinement. |
+| 2026-06-02 | `olmoe3-tiny-275m-cx1-b256k-lr1e-3` | `tiny_275m.py` | 1x | 262,144 | 32 | 1e-3 | `01KT61WY9CK4MHK3CX39KKYYG0` | https://beaker.org/ex/01KT61WY9CK4MHK3CX39KKYYG0 | 256k-batch Cx1 LR refinement. |
+| 2026-06-02 | `olmoe3-tiny-275m-cx1-b128k-lr5e-4` | `tiny_275m.py` | 1x | 131,072 | 16 | 5e-4 | `01KT61X45SVNDB6YYNKKEJWJD1` | https://beaker.org/ex/01KT61X45SVNDB6YYNKKEJWJD1 | 128k-batch Cx1 batch-size probe. |
+| 2026-06-02 | `olmoe3-tiny-275m-cx1-b128k-lr8e-4` | `tiny_275m.py` | 1x | 131,072 | 16 | 8e-4 | `01KT61XAEYQ7R2A64QYP6CW3Y1` | https://beaker.org/ex/01KT61XAEYQ7R2A64QYP6CW3Y1 | 128k-batch Cx1 batch-size probe. |
+| 2026-06-02 | `olmoe3-tiny-275m-cx1-b512k-lr5e-4` | `tiny_275m.py` | 1x | 524,288 | 64 | 5e-4 | `01KT61XFXM7N00EVCYJHF183G5` | https://beaker.org/ex/01KT61XFXM7N00EVCYJHF183G5 | 512k-batch Cx1 batch-size probe. |
+| 2026-06-02 | `olmoe3-tiny-275m-cx1-b512k-lr8e-4` | `tiny_275m.py` | 1x | 524,288 | 64 | 8e-4 | `01KT61XPH6PGMNYMGD95ST09PS` | https://beaker.org/ex/01KT61XPH6PGMNYMGD95ST09PS | 512k-batch Cx1 batch-size probe. |
+| 2026-06-03 | `olmoe3-tiny-275m-cx1-b256k-n2-lr1.5e-3` | `tiny_275m.py` | 1x | 262,144 | 32 | 1.5e-3 | `01KT73WQH8SDVQ0DS3XGAYD6KT` | https://beaker.org/ex/01KT73WQH8SDVQ0DS3XGAYD6KT | Two-node high-side LR probe. Checkpoints under `jacobm/olmoe3`. |
+| 2026-06-03 | `olmoe3-tiny-275m-cx1-b256k-n2-lr2e-3` | `tiny_275m.py` | 1x | 262,144 | 32 | 2e-3 | `01KT73WX76DE1RT678F7R3Y0C1` | https://beaker.org/ex/01KT73WX76DE1RT678F7R3Y0C1 | Two-node high-side LR probe. Checkpoints under `jacobm/olmoe3`. |
+| 2026-06-03 | `olmoe3-tiny-275m-cx2-b256k-lr1e-3` | `tiny_275m.py` | 2x | 262,144 | 32 | 1e-3 | `01KT79MKV709DG6F6WQ1NSQT8J` | https://beaker.org/ex/01KT79MKV709DG6F6WQ1NSQT8J | Cx2 high-side check after `7e-4` beat `5e-4`. |
+| 2026-06-03 | `olmoe3-tiny-275m-cx4-b512k-lr1e-3` | `tiny_275m.py` | 4x | 524,288 | 64 | 1e-3 | `01KT79MT2NJBZ9QXQS969P9RQ2` | https://beaker.org/ex/01KT79MT2NJBZ9QXQS969P9RQ2 | Cx4 LR sweep at dense-ladder Cx4 batch rule. |
+| 2026-06-03 | `olmoe3-tiny-275m-cx4-b512k-lr1.5e-3` | `tiny_275m.py` | 4x | 524,288 | 64 | 1.5e-3 | `01KT79N045S7RHSF80FKE2H77B` | https://beaker.org/ex/01KT79N045S7RHSF80FKE2H77B | Cx4 LR sweep at dense-ladder Cx4 batch rule. |
+| 2026-06-03 | `olmoe3-tiny-275m-cx4-b512k-lr2.5e-3` | `tiny_275m.py` | 4x | 524,288 | 64 | 2.5e-3 | `01KT79N5S8NM71V6RXMVNB85AV` | https://beaker.org/ex/01KT79N5S8NM71V6RXMVNB85AV | Cx4 LR sweep at dense-ladder Cx4 batch rule. |
+| 2026-06-03 | `olmoe3-tiny-275m-cx4-b512k-lr3.5e-3` | `tiny_275m.py` | 4x | 524,288 | 64 | 3.5e-3 | `01KT79NBSBGCSAJ225ZNHR63ZY` | https://beaker.org/ex/01KT79NBSBGCSAJ225ZNHR63ZY | Cx4 LR sweep at dense-ladder Cx4 batch rule. |
+| 2026-06-03 | `olmoe3-tiny-275m-cx1-b256k-lr3e-3` | `tiny_275m.py` | 1x | 262,144 | 32 | 3e-3 | `01KT7A59M00K94XJ59WMK2H517` | https://beaker.org/ex/01KT7A59M00K94XJ59WMK2H517 | Extra high-side Cx1 LR probe for cleaner U-plot. |
+| 2026-06-03 | `olmoe3-tiny-275m-cx1-b256k-lr5e-3` | `tiny_275m.py` | 1x | 262,144 | 32 | 5e-3 | `01KT7A5EBAX04FYRRVK8BRXX1B` | https://beaker.org/ex/01KT7A5EBAX04FYRRVK8BRXX1B | Extra high-side Cx1 LR probe for cleaner U-plot. |
+| 2026-06-03 | `olmoe3-tiny-275m-cx2-b256k-ep1mb4-lr1e-3` | `tiny_275m.py` | 2x | 262,144 | 32 | 1e-3 | `01KT7JTTXH7ND3CVCM76Y7BDH9` | https://beaker.org/ex/01KT7JTTXH7ND3CVCM76Y7BDH9 | Stopped accidental 8-GPU optimized requeue before the smaller-GPU smoke. EP=1, microbatch=4. |
+| 2026-06-03 | `olmoe3-tiny-275m-cx4-b512k-ep1mb8-lr1e-3` | `tiny_275m.py` | 4x | 524,288 | 64 | 1e-3 | `01KT7JV2FD3T57PM5BG28DTJH4` | https://beaker.org/ex/01KT7JV2FD3T57PM5BG28DTJH4 | Stopped accidental 8-GPU optimized requeue before the smaller-GPU smoke. EP=1, microbatch=8. |
+| 2026-06-03 | `olmoe3-tiny-275m-cx4-b512k-ep1mb8-lr1.5e-3` | `tiny_275m.py` | 4x | 524,288 | 64 | 1.5e-3 | `01KT7JV8DDQ4ZF7SB3BX7XXPZX` | https://beaker.org/ex/01KT7JV8DDQ4ZF7SB3BX7XXPZX | Stopped accidental 8-GPU optimized requeue before the smaller-GPU smoke. EP=1, microbatch=8. |
+| 2026-06-03 | `olmoe3-tiny-275m-cx4-b512k-ep1mb8-lr2.5e-3` | `tiny_275m.py` | 4x | 524,288 | 64 | 2.5e-3 | `01KT7JVE2BVB70KHD37Y39F36V` | https://beaker.org/ex/01KT7JVE2BVB70KHD37Y39F36V | Stopped accidental 8-GPU optimized requeue before the smaller-GPU smoke. EP=1, microbatch=8. |
+| 2026-06-03 | `olmoe3-tiny-275m-cx4-b512k-ep1mb8-lr3.5e-3` | `tiny_275m.py` | 4x | 524,288 | 64 | 3.5e-3 | `01KT7JVMPHDH3EN3T3N20F3MJN` | https://beaker.org/ex/01KT7JVMPHDH3EN3T3N20F3MJN | Stopped accidental 8-GPU optimized requeue before the smaller-GPU smoke. EP=1, microbatch=8. |
+| 2026-06-03 | `olmoe3-tiny-275m-cx1-b256k-gpu2-ep1mb16-lr3e-3` | `tiny_275m.py` | 1x | 262,144 | 32 | 3e-3 | `01KT7KBFWN0SYRHB9K10S2KXWK` | https://beaker.org/ex/01KT7KBFWN0SYRHB9K10S2KXWK | Two-GPU smoke for preserving the 256k global batch with microbatch=16 and EP=1. |
+| 2026-06-03 | `olmoe3-tiny-275m-cx2-b256k-gpu2-ep1mb16-lr1e-3` | `tiny_275m.py` | 2x | 262,144 | 32 | 1e-3 | `01KT7KXRZMJVWYJDBDRFEW7PFX` | https://beaker.org/ex/01KT7KXRZMJVWYJDBDRFEW7PFX | Relaunched with partial-node settings after throughput smoke. 2 GPUs, EP=1, microbatch=16. |
+| 2026-06-04 | `olmoe3-tiny-275m-cx1-b256k-gpu2-ep1mb16-lr8e-4-r2` | `tiny_275m.py` | 1x | 262,144 | 32 | 8e-4 | `01KTA3V92BK4FBXXEQF80KSAAA` | https://beaker.org/ex/01KTA3V92BK4FBXXEQF80KSAAA | Current-family Cx1 cold/mid probe. Finished step 15365, avg250M 2.7888, avg500M 2.7915. 2 GPUs, EP=1, microbatch=16. |
+| 2026-06-04 | `olmoe3-tiny-275m-cx1-b256k-gpu2-ep1mb16-lr1e-3-r2` | `tiny_275m.py` | 1x | 262,144 | 32 | 1e-3 | `01KTA3W6HMJHQ6SM72NXW55AW3` | https://beaker.org/ex/01KTA3W6HMJHQ6SM72NXW55AW3 | Current-family Cx1 cold/mid probe. Finished step 15365, avg250M 2.7852, avg500M 2.7881. 2 GPUs, EP=1, microbatch=16. |
+| 2026-06-04 | `olmoe3-tiny-275m-cx1-b256k-gpu2-ep1mb16-lr1.2e-3-r2` | `tiny_275m.py` | 1x | 262,144 | 32 | 1.2e-3 | `01KTA3X9R2PWD408NG6617M1NS` | https://beaker.org/ex/01KTA3X9R2PWD408NG6617M1NS | Current-family Cx1 cold/mid probe. Finished step 15365, avg250M 2.7843, avg500M 2.7876. 2 GPUs, EP=1, microbatch=16. |
+| 2026-06-04 | `olmoe3-tiny-275m-cx1-b256k-gpu2-ep1mb16-lr1.5e-3-r2` | `tiny_275m.py` | 1x | 262,144 | 32 | 1.5e-3 | `01KT9T7WAH2A5D2W14P9P3VF81` | https://beaker.org/ex/01KT9T7WAH2A5D2W14P9P3VF81 | Current-family Cx1 basin rerun to clean up the LR-rule plot. Finished step 15365, avg250M 2.7794, avg500M 2.7831. 2 GPUs, EP=1, microbatch=16. |
+| 2026-06-04 | `olmoe3-tiny-275m-cx1-b256k-gpu2-ep1mb16-lr2e-3-r2` | `tiny_275m.py` | 1x | 262,144 | 32 | 2e-3 | `01KT9T9F9A3VNG4YYF8B7TNS84` | https://beaker.org/ex/01KT9T9F9A3VNG4YYF8B7TNS84 | Current-family Cx1 basin rerun to clean up the LR-rule plot. Finished step 15365, avg250M 2.7765, avg500M 2.7809. 2 GPUs, EP=1, microbatch=16. |
+| 2026-06-04 | `olmoe3-tiny-275m-cx1-b256k-gpu8-ep8mb4-lr1e-3-sanity` | `tiny_275m.py` | 1x | 262,144 | 32 | 1e-3 | `01KTA98DW402AB3DJH739WBPW5` | https://beaker.org/ex/01KTA98DW402AB3DJH739WBPW5 | Diagnostic-only sanity check for the Cx1 settings-family discrepancy. Finished step 15365, avg250M 2.7671, avg500M 2.7702. Uses EP=8 with the highest legal microbatch for 8 GPUs at 256k global batch. Exclude from ladder LR fits and canonical plots. |
+| 2026-06-05 | `olmoe3-tiny-275m-cx1-b256k-gpu8-ep8mb4-lr1e-3-dropless-sanity` | `tiny_275m.py` | 1x | 262,144 | 32 | 1e-3 | `01KTAPHEJMG8DV9ZB4RHTRHMCV` | https://beaker.org/ex/01KTAPHEJMG8DV9ZB4RHTRHMCV | Failed before training because the W&B group name exceeded the 128-character limit. Diagnostic-only follow-up to the EP=8 sanity check; replacement below uses the same EP=8, 8-GPU, microbatch=4 setting with `--no-use-rowwise-a2a`. Exclude from ladder LR fits and canonical plots. |
+| 2026-06-05 | `olmoe3-tiny-cx1-ep8drop-lr1e-3` | `tiny_275m.py` | 1x | 262,144 | 32 | 1e-3 | `01KTB86J84BNDZJYXWMPVC9FVG` | https://beaker.org/ex/01KTB86J84BNDZJYXWMPVC9FVG | Replacement dropless EP sanity check with a shorter W&B group name. 8 GPUs, EP=8, microbatch=4, `--no-use-rowwise-a2a`. Finished step 15365, avg100M 2.7646, avg250M 2.7668, avg500M 2.7699, skipped steps 0, token drop rate 0.0. Exclude from ladder LR fits and canonical plots. |
+| 2026-06-03 | `olmoe3-tiny-275m-cx4-b512k-gpu4-ep1mb16-lr1e-3` | `tiny_275m.py` | 4x | 524,288 | 64 | 1e-3 | `01KT7KXYNS2CZDHVQ3THE6DGHH` | https://beaker.org/ex/01KT7KXYNS2CZDHVQ3THE6DGHH | Relaunched with partial-node settings after throughput smoke. 4 GPUs, EP=1, microbatch=16. |
+| 2026-06-03 | `olmoe3-tiny-275m-cx4-b512k-gpu4-ep1mb16-lr1.5e-3` | `tiny_275m.py` | 4x | 524,288 | 64 | 1.5e-3 | `01KT7KY3WARYXENM35PNFM9M4C` | https://beaker.org/ex/01KT7KY3WARYXENM35PNFM9M4C | Relaunched with partial-node settings after throughput smoke. 4 GPUs, EP=1, microbatch=16. |
+| 2026-06-03 | `olmoe3-tiny-275m-cx4-b512k-gpu4-ep1mb16-lr2.5e-3` | `tiny_275m.py` | 4x | 524,288 | 64 | 2.5e-3 | `01KT7KYASSEMQJY7P6P040G7ND` | https://beaker.org/ex/01KT7KYASSEMQJY7P6P040G7ND | Relaunched with partial-node settings after throughput smoke. 4 GPUs, EP=1, microbatch=16. |
+| 2026-06-03 | `olmoe3-tiny-275m-cx4-b512k-gpu4-ep1mb16-lr3.5e-3` | `tiny_275m.py` | 4x | 524,288 | 64 | 3.5e-3 | `01KT7KYG086VY082EN6HPSSX9G` | https://beaker.org/ex/01KT7KYG086VY082EN6HPSSX9G | Relaunched with partial-node settings after throughput smoke. 4 GPUs, EP=1, microbatch=16. |
+| 2026-06-03 | `olmoe3-tiny-275m-cx1-b256k-gpu2-ep1mb16-lr5e-3` | `tiny_275m.py` | 1x | 262,144 | 32 | 5e-3 | `01KT7KYTYWGV7CAFNNBBWAT91H` | https://beaker.org/ex/01KT7KYTYWGV7CAFNNBBWAT91H | Relaunched high-side Cx1 LR point with partial-node settings. 2 GPUs, EP=1, microbatch=16. |
+| 2026-06-03 | `olmoe3-tiny-275m-cx1-b256k-gpu2-ep1mb16-lr8e-3` | `tiny_275m.py` | 1x | 262,144 | 32 | 8e-3 | `01KT7MQ5F42DBCD30P8JDKJ9JH` | https://beaker.org/ex/01KT7MQ5F42DBCD30P8JDKJ9JH | High-side Cx1 follow-up to clearly bracket the right side of the U-plot. 2 GPUs, EP=1, microbatch=16. |
+| 2026-06-03 | `olmoe3-tiny-275m-cx2-b256k-gpu2-ep1mb16-lr1.5e-3` | `tiny_275m.py` | 2x | 262,144 | 32 | 1.5e-3 | `01KT7MQAVHRSPW4VG6BVQSY8AW` | https://beaker.org/ex/01KT7MQAVHRSPW4VG6BVQSY8AW | Cx2 high-side follow-up. 2 GPUs, EP=1, microbatch=16. |
+| 2026-06-03 | `olmoe3-tiny-275m-cx2-b256k-gpu2-ep1mb16-lr2.5e-3` | `tiny_275m.py` | 2x | 262,144 | 32 | 2.5e-3 | `01KT7MQGH9KF529Q8NC6N63F8K` | https://beaker.org/ex/01KT7MQGH9KF529Q8NC6N63F8K | Cx2 high-side follow-up. 2 GPUs, EP=1, microbatch=16. |
+| 2026-06-03 | `olmoe3-tiny-275m-cx2-b256k-gpu2-ep1mb16-lr3.5e-3` | `tiny_275m.py` | 2x | 262,144 | 32 | 3.5e-3 | `01KT7MQPK57YJ9KM7NKN06BDFB` | https://beaker.org/ex/01KT7MQPK57YJ9KM7NKN06BDFB | Cx2 high-side follow-up. 2 GPUs, EP=1, microbatch=16. |
+| 2026-06-04 | `olmoe3-tiny-275m-cx2-b256k-gpu2-ep1mb16-lr6e-4-r2` | `tiny_275m.py` | 2x | 262,144 | 32 | 6e-4 | `01KT9RWMECT8AZ63RQH748STYB` | https://beaker.org/ex/01KT9RWMECT8AZ63RQH748STYB | Current-family Cx2 low/mid probe to resolve the old `5e-4`/`7e-4` vs current-family trend mismatch. 2 GPUs, EP=1, microbatch=16. |
+| 2026-06-04 | `olmoe3-tiny-275m-cx2-b256k-gpu2-ep1mb16-lr8e-4-r2` | `tiny_275m.py` | 2x | 262,144 | 32 | 8e-4 | `01KT9S05X2WW2BPJVVJXGRYQSV` | https://beaker.org/ex/01KT9S05X2WW2BPJVVJXGRYQSV | Current-family Cx2 low/mid probe to resolve the old `5e-4`/`7e-4` vs current-family trend mismatch. 2 GPUs, EP=1, microbatch=16. |
+| 2026-06-03 | `olmoe3-tiny-275m-cx4-b512k-gpu4-ep1mb16-lr5e-3` | `tiny_275m.py` | 4x | 524,288 | 64 | 5e-3 | `01KT7MQWG562KJVZYX2G8A19CZ` | https://beaker.org/ex/01KT7MQWG562KJVZYX2G8A19CZ | Cx4 high-side follow-up after `3.5e-3` looked healthy early. 4 GPUs, EP=1, microbatch=16. |
+| 2026-06-03 | `olmoe3-tiny-275m-cx4-b512k-gpu4-ep1mb16-lr5e-4` | `tiny_275m.py` | 4x | 524,288 | 64 | 5e-4 | `01KT7RXNBYGEQSJ50QFNPFSMM6` | https://beaker.org/ex/01KT7RXNBYGEQSJ50QFNPFSMM6 | Cx4 low-side bracket after current Cx4 relaunches favored `1e-3` over higher LRs at matched tokens. 4 GPUs, EP=1, microbatch=16. |
+| 2026-06-03 | `olmoe3-tiny-275m-cx4-b512k-gpu4-ep1mb16-lr7e-4` | `tiny_275m.py` | 4x | 524,288 | 64 | 7e-4 | `01KT7RY46X44N47G58WS1G3REQ` | https://beaker.org/ex/01KT7RY46X44N47G58WS1G3REQ | Cx4 low-side bracket after current Cx4 relaunches favored `1e-3` over higher LRs at matched tokens. 4 GPUs, EP=1, microbatch=16. |
+| 2026-06-03 | `olmoe3-tiny-275m-cx8-smoke-b768k-gpu2-ep1mb24-lr5e-4` | `tiny_275m.py` | 0.1x | 786,432 | 96 | 5e-4 | `01KT7V50NF2AEH7TM1S3KB3Y0R` | https://beaker.org/ex/01KT7V50NF2AEH7TM1S3KB3Y0R | Failed dry-run OOM. 2 GPUs, EP=1, microbatch=24 was too large. |
+| 2026-06-03 | `olmoe3-tiny-275m-cx16-smoke-b1m-gpu2-ep1mb32-lr5e-4` | `tiny_275m.py` | 0.1x | 1,048,576 | 128 | 5e-4 | `01KT7V5CDARY8XGYYJ7DEKHY49` | https://beaker.org/ex/01KT7V5CDARY8XGYYJ7DEKHY49 | Failed dry-run OOM. 2 GPUs, EP=1, microbatch=32 was too large. |
+| 2026-06-03 | `olmoe3-moe-a0-810m-smoke-b256k-gpu2-ep1mb16-lr5e-4` | `tiny_275m.py` | 0.02x | 262,144 | 32 | 5e-4 | `01KT7V71MBZ9730W3FBFB1AVEH` | https://beaker.org/ex/01KT7V71MBZ9730W3FBFB1AVEH | Failed before training because model-size support was not present in the launched runtime. Relaunch from a commit with `--model-size`. |
+| 2026-06-03 | `olmoe3-moe-a0-810m-smoke-b256k-gpu2-ep1mb8-lr5e-4` | `tiny_275m.py` | 0.02x | 262,144 | 32 | 5e-4 | `01KT7V7CT1MN2XGZ90SF3WT104` | https://beaker.org/ex/01KT7V7CT1MN2XGZ90SF3WT104 | Failed before training because model-size support was not present in the launched runtime. Relaunch from a commit with `--model-size`. |
+| 2026-06-03 | `olmoe3-moe-a0-1p2b-smoke-b256k-gpu2-ep1mb8-lr3e-4` | `tiny_275m.py` | 0.02x | 262,144 | 32 | 3e-4 | `01KT7V7RG65QGYZ6KPNJM9ZEW2` | https://beaker.org/ex/01KT7V7RG65QGYZ6KPNJM9ZEW2 | Failed before training because model-size support was not present in the launched runtime. Relaunch from a commit with `--model-size`. |
+| 2026-06-03 | `olmoe3-moe-a0-1p2b-smoke-b256k-gpu2-ep1mb4-lr3e-4` | `tiny_275m.py` | 0.02x | 262,144 | 32 | 3e-4 | `01KT7V84489P8W01WEGX4JP8S7` | https://beaker.org/ex/01KT7V84489P8W01WEGX4JP8S7 | Failed before training because model-size support was not present in the launched runtime. Relaunch from a commit with `--model-size`. |
+| 2026-06-04 | `olmoe3-tiny-275m-cx8-smoke-b768k-gpu2-ep1mb16-lr5e-4` | `tiny_275m.py` | 0.1x | 786,432 | 96 | 5e-4 | `01KT829008RED7EA12EP2J2KSV` | https://beaker.org/ex/01KT829008RED7EA12EP2J2KSV | Retry after `mb24` OOM. Reached final smoke step 513/513 with skipped steps 0, finite loss, and final logged step about 693 TFLOPs/GPU. |
+| 2026-06-04 | `olmoe3-tiny-275m-cx16-smoke-b1m-gpu2-ep1mb16-lr5e-4` | `tiny_275m.py` | 0.1x | 1,048,576 | 128 | 5e-4 | `01KT829CG1KNWB9GRVVZ8HAY0T` | https://beaker.org/ex/01KT829CG1KNWB9GRVVZ8HAY0T | Canonical retry after `mb32` OOM. Reached final smoke step 385/385 and exited 0 with skipped steps 0 and healthy throughput. |
+| 2026-06-04 | `olmoe3-tiny-275m-cx16-smoke-b1m-gpu2-ep1mb16-lr5e-4` | `tiny_275m.py` | 0.1x | 1,048,576 | 128 | 5e-4 | `01KT82H1A9XT62VC8XRVZHJPWV` | https://beaker.org/ex/01KT82H1A9XT62VC8XRVZHJPWV | Accidental duplicate of the canonical Cx16 smoke; stopped manually because it used the same checkpoint root. Ignore for analysis. |
+| 2026-06-04 | `olmoe3-moe-a0-810m-smoke-b256k-gpu2-ep1mb16-lr5e-4-r2` | `tiny_275m.py` | 0.02x | 262,144 | 32 | 5e-4 | `01KT82MKYTJDPBRN01P0XHXS38` | https://beaker.org/ex/01KT82MKYTJDPBRN01P0XHXS38 | Relaunch from commit with `--model-size` support. Failed dry-run OOM on 2 GPUs, EP=1, microbatch=16. |
+| 2026-06-04 | `olmoe3-moe-a0-810m-smoke-b256k-gpu2-ep1mb8-lr5e-4-r2` | `tiny_275m.py` | 0.02x | 262,144 | 32 | 5e-4 | `01KT82MYJXY98QSK4CMES19PH9` | https://beaker.org/ex/01KT82MYJXY98QSK4CMES19PH9 | Relaunch from commit with `--model-size` support. Failed dry-run OOM on 2 GPUs, EP=1, microbatch=8. |
+| 2026-06-04 | `olmoe3-moe-a0-1p2b-smoke-b256k-gpu2-ep1mb8-lr3e-4-r2` | `tiny_275m.py` | 0.02x | 262,144 | 32 | 3e-4 | `01KT82NA11D9E3DEH1NPXDR6WJ` | https://beaker.org/ex/01KT82NA11D9E3DEH1NPXDR6WJ | Relaunch from commit with `--model-size` support. Failed dry-run OOM on 2 GPUs, EP=1, microbatch=8. |
+| 2026-06-04 | `olmoe3-moe-a0-1p2b-smoke-b256k-gpu2-ep1mb4-lr3e-4-r2` | `tiny_275m.py` | 0.02x | 262,144 | 32 | 3e-4 | `01KT82NN0Q5MPJQ167W5XY8BQA` | https://beaker.org/ex/01KT82NN0Q5MPJQ167W5XY8BQA | Relaunch from commit with `--model-size` support. Failed dry-run OOM on 2 GPUs, EP=1, microbatch=4. |
+| 2026-06-04 | `olmoe3-tiny-275m-cx8-b768k-gpu2-ep1mb16-lr3e-4` | `tiny_275m.py` | 8x | 786,432 | 96 | 3e-4 | `01KT836RV6PHBQ3M5SCVYECWC4` | https://beaker.org/ex/01KT836RV6PHBQ3M5SCVYECWC4 | Stopped manually before completion; replaced by coarser factor-of-two grid. Ignore for analysis. |
+| 2026-06-04 | `olmoe3-tiny-275m-cx8-b768k-gpu2-ep1mb16-lr5e-4` | `tiny_275m.py` | 8x | 786,432 | 96 | 5e-4 | `01KT8373YTV4C1G08D20XXMHZG` | https://beaker.org/ex/01KT8373YTV4C1G08D20XXMHZG | Stopped manually before completion; replaced by coarser factor-of-two grid. Ignore for analysis. |
+| 2026-06-04 | `olmoe3-tiny-275m-cx8-b768k-gpu2-ep1mb16-lr7e-4` | `tiny_275m.py` | 8x | 786,432 | 96 | 7e-4 | `01KT837GAWN3H1XBYASH520M2A` | https://beaker.org/ex/01KT837GAWN3H1XBYASH520M2A | Stopped manually before completion; replaced by coarser factor-of-two grid. Ignore for analysis. |
+| 2026-06-04 | `olmoe3-tiny-275m-cx8-b768k-gpu2-ep1mb16-lr1e-3` | `tiny_275m.py` | 8x | 786,432 | 96 | 1e-3 | `01KT837VTNEK7F783YZYHYRJ1Y` | https://beaker.org/ex/01KT837VTNEK7F783YZYHYRJ1Y | Stopped manually before completion; replaced by coarser factor-of-two grid. Ignore for analysis. |
+| 2026-06-04 | `olmoe3-tiny-275m-cx16-b1m-gpu2-ep1mb16-lr2e-4` | `tiny_275m.py` | 16x | 1,048,576 | 128 | 2e-4 | `01KT8387116V5NF6QNDCSBN9CA` | https://beaker.org/ex/01KT8387116V5NF6QNDCSBN9CA | Stopped manually before completion; replaced by coarser factor-of-two grid. Ignore for analysis. |
+| 2026-06-04 | `olmoe3-tiny-275m-cx16-b1m-gpu2-ep1mb16-lr3e-4` | `tiny_275m.py` | 16x | 1,048,576 | 128 | 3e-4 | `01KT838HX2QMM7RJCYT2P6MW92` | https://beaker.org/ex/01KT838HX2QMM7RJCYT2P6MW92 | Stopped manually before completion; replaced by coarser factor-of-two grid. Ignore for analysis. |
+| 2026-06-04 | `olmoe3-tiny-275m-cx16-b1m-gpu2-ep1mb16-lr5e-4` | `tiny_275m.py` | 16x | 1,048,576 | 128 | 5e-4 | `01KT838WN9G1WDPG5RWBS0CGTM` | https://beaker.org/ex/01KT838WN9G1WDPG5RWBS0CGTM | Stopped manually before completion; replaced by coarser factor-of-two grid. Ignore for analysis. |
+| 2026-06-04 | `olmoe3-tiny-275m-cx16-b1m-gpu2-ep1mb16-lr7e-4` | `tiny_275m.py` | 16x | 1,048,576 | 128 | 7e-4 | `01KT83989R9R79D6FA2QXX15J9` | https://beaker.org/ex/01KT83989R9R79D6FA2QXX15J9 | Stopped manually before completion; replaced by coarser factor-of-two grid. Ignore for analysis. |
+| 2026-06-04 | `olmoe3-moe-a0-810m-smoke-b256k-gpu4-ep1mb8-lr5e-4-r3` | `tiny_275m.py` | 0.02x | 262,144 | 32 | 5e-4 | `01KT840XF9T975KJM3SHXFCH7D` | https://beaker.org/ex/01KT840XF9T975KJM3SHXFCH7D | Failed OOM. 4 GPUs, EP=1, microbatch=8 still too large. |
+| 2026-06-04 | `olmoe3-moe-a0-810m-smoke-b256k-gpu4-ep1mb4-lr5e-4-r3` | `tiny_275m.py` | 0.02x | 262,144 | 32 | 5e-4 | `01KT8418KTXB8Z26DVJF8VRSGD` | https://beaker.org/ex/01KT8418KTXB8Z26DVJF8VRSGD | Succeeded. Validated 810M setting: 4 GPUs, EP=1, microbatch=4; skipped steps 0, about 610 actual avg TFLOPs/GPU. |
+| 2026-06-05 | `olmoe3-moe-a0-810m-cx1-b256k-gpu4-ep1mb4-lr1.6e-3-pilot` | `tiny_275m.py` | 1x | 262,144 | 32 | 1.6e-3 | `01KTAPFMM1YG2TE3RJX9B94CH1` | https://beaker.org/ex/01KTAPFMM1YG2TE3RJX9B94CH1 | Exploratory 810M Cx1 pilot at the transferred-LR estimate. Stopped intentionally on 2026-06-05 around step 7669 / 2.01B tokens to free 4 GPUs for the `6e-3` hot-side sentinel. Ignore for final LR selection and canonical plots. |
+| 2026-06-05 | `olmoe3-moe-a0-810m-cx1-b256k-gpu4-ep1mb4-lr6e-4-r1` | `tiny_275m.py` | 1x | 262,144 | 32 | 6e-4 | `01KTB9D4971X2ZEXK61W1WJ23H` | https://beaker.org/ex/01KTB9D4971X2ZEXK61W1WJ23H | First 810M Cx1 LR sweep, cold-side anchor. Finished step 52648, avg100M 2.4096, avg250M 2.4103, avg500M 2.4131. Best observed point so far, but it is on the low-LR edge. 4 GPUs, EP=1, microbatch=4. |
+| 2026-06-05 | `olmoe3-moe-a0-810m-cx1-b256k-gpu4-ep1mb4-lr1.2e-3-r1` | `tiny_275m.py` | 1x | 262,144 | 32 | 1.2e-3 | `01KTB9DGWWHW2C5HJAYC40AZPX` | https://beaker.org/ex/01KTB9DGWWHW2C5HJAYC40AZPX | First 810M Cx1 LR sweep, below transferred estimate. Finished step 52648, avg100M 2.4147, avg250M 2.4156, avg500M 2.4188. 4 GPUs, EP=1, microbatch=4. |
+| 2026-06-05 | `olmoe3-moe-a0-810m-cx1-b256k-gpu4-ep1mb4-lr2.4e-3-r1` | `tiny_275m.py` | 1x | 262,144 | 32 | 2.4e-3 | `01KTB9DWX644NVSVP6Y6B6N7J7` | https://beaker.org/ex/01KTB9DWX644NVSVP6Y6B6N7J7 | First 810M Cx1 LR sweep, above transferred estimate. Finished step 52648, avg100M 2.4456, avg250M 2.4465, avg500M 2.4499. 4 GPUs, EP=1, microbatch=4. |
+| 2026-06-05 | `olmoe3-moe-a0-810m-cx1-b256k-gpu4-ep1mb4-lr6e-3-r1` | `tiny_275m.py` | 1x | 262,144 | 32 | 6e-3 | `01KTB9E8MXS8TWGFS1F65HJJMD` | https://beaker.org/ex/01KTB9E8MXS8TWGFS1F65HJJMD | First 810M Cx1 LR sweep, hot-side sentinel. Finished step 52648, avg100M 2.5418, avg250M 2.5424, avg500M 2.5457. Confirms the hot side is bracketed. 4 GPUs, EP=1, microbatch=4. |
+| 2026-06-05 | `olmoe3-moe-a0-810m-cx1-b256k-gpu4-ep1mb4-lr3e-4-cold-r1` | `tiny_275m.py` | 1x | 262,144 | 32 | 3e-4 | `01KTCBDVG2FJCPTFVR16G6X0TE` | https://beaker.org/ex/01KTCBDVG2FJCPTFVR16G6X0TE | Cold-side extension because the first 810M Cx1 sweep was low-edge best at `6e-4`. Finished step 52648, avg100M 2.4201, avg250M 2.4207, avg500M 2.4234. 4 GPUs, EP=1, microbatch=4. Created from launcher `launch_moe_a0_810m_cx1_cold_ext.sh`. |
+| 2026-06-05 | `olmoe3-moe-a0-810m-cx1-b256k-gpu4-ep1mb4-lr1.5e-4-cold-r1` | `tiny_275m.py` | 1x | 262,144 | 32 | 1.5e-4 | `01KTCBE8QQ4S23W3DCBDNGWNQS` | https://beaker.org/ex/01KTCBE8QQ4S23W3DCBDNGWNQS | Cold-side extension because the first 810M Cx1 sweep was low-edge best at `6e-4`. Finished step 52648, avg100M 2.4482, avg250M 2.4486, avg500M 2.4512. 4 GPUs, EP=1, microbatch=4. Created from launcher `launch_moe_a0_810m_cx1_cold_ext.sh`. |
+| 2026-06-05 | `olmoe3-moe-a0-810m-cx1-b256k-gpu4-ep1mb4-lr5e-5-cold-sentinel-r1` | `tiny_275m.py` | 1x | 262,144 | 32 | 5e-5 | `01KTCBQ1RGPG86GR8KKBYN6DT1` | https://beaker.org/ex/01KTCBQ1RGPG86GR8KKBYN6DT1 | Failed before training because the generated W&B group exceeded the 128-character limit. Ignore for analysis. |
+| 2026-06-05 | `olmoe3-810m-cx1-b256k-gpu8-ep1mb4-lr5e-5-cs-r2` | `tiny_275m.py` | 1x | 262,144 | 32 | 5e-5 | `01KTCD57W068CSD9F72HFAQ21N` | https://beaker.org/ex/01KTCD57W068CSD9F72HFAQ21N | Short-name relaunch of the far cold-side sentinel. Finished step 52648, avg100M 2.5678, avg250M 2.5680, avg500M 2.5705. 8 GPUs, EP=1, microbatch=4, same global batch as the 4-GPU Cx1 runs. Confirms `5e-5` is far too cold. |
+| 2026-06-06 | `olmoe3-moe-a0-810m-cx4-b512k-gpu8-ep1mb4-lr2e-4-r1` | `tiny_275m.py` | 4x | 524,288 | 64 | 2e-4 | `01KTDDANJ6V1T8ZPF4VNPEQQHZ` | https://beaker.org/ex/01KTDDANJ6V1T8ZPF4VNPEQQHZ | 810M Cx4 four-point sweep centered around the transfer-calibrated Cx4 estimate. Finished step 105295, 55.205B tokens, avg100M 2.2516, avg250M 2.2578, avg500M 2.2568. 8 GPUs, EP=1, microbatch=4, final-only permanent checkpoint plus ephemeral resume checkpoints. |
+| 2026-06-06 | `olmoe3-moe-a0-810m-cx4-b512k-gpu8-ep1mb4-lr4e-4-r1` | `tiny_275m.py` | 4x | 524,288 | 64 | 4e-4 | `01KTDDB3P13BMCY965FKKFC8VV` | https://beaker.org/ex/01KTDDB3P13BMCY965FKKFC8VV | 810M Cx4 four-point sweep centered around the transfer-calibrated Cx4 estimate. Finished step 105295, 55.205B tokens, avg100M 2.2364, avg250M 2.2427, avg500M 2.2417. Best completed Cx4 point. 8 GPUs, EP=1, microbatch=4, final-only permanent checkpoint plus ephemeral resume checkpoints. |
+| 2026-06-06 | `olmoe3-moe-a0-810m-cx4-b512k-gpu8-ep1mb4-lr8e-4-r1` | `tiny_275m.py` | 4x | 524,288 | 64 | 8e-4 | `01KTDDBGWNHKZ3F4Q1VJD2RPTS` | https://beaker.org/ex/01KTDDBGWNHKZ3F4Q1VJD2RPTS | 810M Cx4 four-point sweep centered around the transfer-calibrated Cx4 estimate. Finished step 105295, 55.205B tokens, avg100M 2.2387, avg250M 2.2451, avg500M 2.2442. Very close to but slightly worse than `4e-4`. 8 GPUs, EP=1, microbatch=4, final-only permanent checkpoint plus ephemeral resume checkpoints. |
+| 2026-06-06 | `olmoe3-moe-a0-810m-cx4-b512k-gpu8-ep1mb4-lr1.6e-3-r1` | `tiny_275m.py` | 4x | 524,288 | 64 | 1.6e-3 | `01KTDDBWP8EC88V8SDW5Y0VTSV` | https://beaker.org/ex/01KTDDBWP8EC88V8SDW5Y0VTSV | 810M Cx4 four-point sweep centered around the transfer-calibrated Cx4 estimate. Finished step 105295, 55.205B tokens, avg100M 2.2622, avg250M 2.2687, avg500M 2.2678. Hot-side point; substantially worse than the `4e-4`/`8e-4` basin. 8 GPUs, EP=1, microbatch=4, final-only permanent checkpoint plus ephemeral resume checkpoints. |
+| 2026-06-07 | `olmoe3-moe-a0-1p2b-cx1-b256k-gpu8-ep1mb2-lr1e-4-r1` | `tiny_275m.py` | 1x | 262,144 | 32 | 1e-4 | `01KTG4J00SXZPREAA3A1E463P9` | https://beaker.org/ex/01KTG4J00SXZPREAA3A1E463P9 | First 1.2B Cx1 sweep centered from updated 810M transfer rule. Finished step 81190, 21.283B tokens, avg100M 2.3549, avg250M 2.3550, avg500M 2.3580. W&B `tvx71brh`. 8 GPUs, EP=1, microbatch=2, in-loop fast evals every 2000 steps. |
+| 2026-06-07 | `olmoe3-moe-a0-1p2b-cx1-b256k-gpu8-ep1mb2-lr2e-4-r1` | `tiny_275m.py` | 1x | 262,144 | 32 | 2e-4 | `01KTG4JAQ2Z82YSGPAWRBW353H` | https://beaker.org/ex/01KTG4JAQ2Z82YSGPAWRBW353H | First 1.2B Cx1 sweep centered from updated 810M transfer rule. Finished step 81190, 21.283B tokens, avg100M 2.3244, avg250M 2.3246, avg500M 2.3276. W&B `ehcm9znb`. 8 GPUs, EP=1, microbatch=2, in-loop fast evals every 2000 steps. |
+| 2026-06-07 | `olmoe3-moe-a0-1p2b-cx1-b256k-gpu8-ep1mb2-lr4e-4-r1` | `tiny_275m.py` | 1x | 262,144 | 32 | 4e-4 | `01KTG4JQ19A27ZC6H0FDD9661S` | https://beaker.org/ex/01KTG4JQ19A27ZC6H0FDD9661S | First 1.2B Cx1 sweep centered from updated 810M transfer rule. Finished step 81190, 21.283B tokens, avg100M 2.3106, avg250M 2.3108, avg500M 2.3139. Best completed Cx1 point. W&B `r9esbx26`. 8 GPUs, EP=1, microbatch=2, in-loop fast evals every 2000 steps. |
+| 2026-06-07 | `olmoe3-moe-a0-1p2b-cx1-b256k-gpu8-ep1mb2-lr8e-4-r1` | `tiny_275m.py` | 1x | 262,144 | 32 | 8e-4 | `01KTG4K2MZHZNCYVG5K9RPV4SW` | https://beaker.org/ex/01KTG4K2MZHZNCYVG5K9RPV4SW | First 1.2B Cx1 sweep centered from updated 810M transfer rule. Finished step 81190, 21.283B tokens, avg100M 2.3145, avg250M 2.3148, avg500M 2.3181. W&B `eiuofxc6`. 8 GPUs, EP=1, microbatch=2, in-loop fast evals every 2000 steps. |
+| 2026-06-07 | `olmoe3-moe-a0-810m-cx8-b768k-gpu8-ep1mb4-lr1e-4-r1` | `tiny_275m.py` | 8x | 786,432 | 96 | 1e-4 | `01KTHQWMSQ0A4P6RCNKPS7YPYD` | https://beaker.org/ex/01KTHQWMSQ0A4P6RCNKPS7YPYD | Cancelled intentionally on 2026-06-08 after switching to the new 3-point-centered LR policy. This was the extra cold-side insurance point for 810M Cx8; do not include in canonical full-run analysis unless later resumed and completed. 8 GPUs, EP=1, microbatch=4, in-loop fast evals every 2000 steps. |
+| 2026-06-07 | `olmoe3-moe-a0-810m-cx8-b768k-gpu8-ep1mb4-lr2e-4-r1` | `tiny_275m.py` | 8x | 786,432 | 96 | 2e-4 | `01KTHQX04RMEK7C7V6DZRZVXM6` | https://beaker.org/ex/01KTHQX04RMEK7C7V6DZRZVXM6 | 810M Cx8 sweep queued while 1.2B Cx1 was near finish. Finished step 140394, 110.410B tokens, avg100M 2.1827, avg250M 2.1844, avg500M 2.1879. W&B `a0k0519k`. 8 GPUs, EP=1, microbatch=4, in-loop fast evals every 2000 steps. |
+| 2026-06-07 | `olmoe3-moe-a0-810m-cx8-b768k-gpu8-ep1mb4-lr4e-4-r1` | `tiny_275m.py` | 8x | 786,432 | 96 | 4e-4 | `01KTHQXB575GS84FBP4SNZ1GAA` | https://beaker.org/ex/01KTHQXB575GS84FBP4SNZ1GAA | 810M Cx8 sweep queued while 1.2B Cx1 was near finish. Finished step 140394, 110.410B tokens, avg100M 2.1705, avg250M 2.1721, avg500M 2.1756. Best completed Cx8 point. W&B `dkpaicdc`. 8 GPUs, EP=1, microbatch=4, in-loop fast evals every 2000 steps. |
+| 2026-06-07 | `olmoe3-moe-a0-810m-cx8-b768k-gpu8-ep1mb4-lr8e-4-r1` | `tiny_275m.py` | 8x | 786,432 | 96 | 8e-4 | `01KTHQXNN4MFDBAP490ACJTJ07` | https://beaker.org/ex/01KTHQXNN4MFDBAP490ACJTJ07 | 810M Cx8 sweep queued while 1.2B Cx1 was near finish. Finished step 140394, 110.410B tokens, avg100M 2.1752, avg250M 2.1768, avg500M 2.1803. Hot side is worse than `4e-4`, so Cx8 is bracketed. W&B `rhtrhhet`. 8 GPUs, EP=1, microbatch=4, in-loop fast evals every 2000 steps. |
+| 2026-06-09 | `olmoe3-moe-a0-810m-cx16-b1m-gpu8-ep1mb4-lr2e-4-r1` | `tiny_275m.py` | 16x | 1,048,576 | 128 | 2e-4 | `01KTNWAFMP6A4PHYWZDD7B00AV` | https://beaker.org/ex/01KTNWAFMP6A4PHYWZDD7B00AV | 810M Cx16 3-point sweep centered from completed Cx1/Cx4/Cx8 LR-rule fit; Cx16 predicted optimum about 4.25e-4. Stopped intentionally on 2026-06-09 after the baseline plan shifted to finish Cx1/Cx2/Cx4/Cx8 first and reserve GPUs for 1.2B/midpoint follow-ups. Exclude from canonical LR fits unless explicitly resumed and completed. 8 GPUs, EP=1, microbatch=4, in-loop fast evals every 2000 steps. |
+| 2026-06-09 | `olmoe3-moe-a0-810m-cx16-b1m-gpu8-ep1mb4-lr4e-4-r1` | `tiny_275m.py` | 16x | 1,048,576 | 128 | 4e-4 | `01KTNWATWQYX39RJVQE3141N8P` | https://beaker.org/ex/01KTNWATWQYX39RJVQE3141N8P | 810M Cx16 3-point sweep centered from completed Cx1/Cx4/Cx8 LR-rule fit; Cx16 predicted optimum about 4.25e-4. Stopped intentionally on 2026-06-09 after the baseline plan shifted to finish Cx1/Cx2/Cx4/Cx8 first and reserve GPUs for 1.2B/midpoint follow-ups. Exclude from canonical LR fits unless explicitly resumed and completed. 8 GPUs, EP=1, microbatch=4, in-loop fast evals every 2000 steps. |
+| 2026-06-09 | `olmoe3-moe-a0-810m-cx16-b1m-gpu8-ep1mb4-lr8e-4-r1` | `tiny_275m.py` | 16x | 1,048,576 | 128 | 8e-4 | `01KTNWB6SW5H07ED0YC63S897X` | https://beaker.org/ex/01KTNWB6SW5H07ED0YC63S897X | 810M Cx16 3-point sweep centered from completed Cx1/Cx4/Cx8 LR-rule fit; Cx16 predicted optimum about 4.25e-4. Stopped while queued on 2026-06-09 after the baseline plan shifted to finish Cx1/Cx2/Cx4/Cx8 first and reserve GPUs for 1.2B/midpoint follow-ups. Exclude from canonical LR fits unless explicitly resumed and completed. 8 GPUs, EP=1, microbatch=4, in-loop fast evals every 2000 steps. |
+| 2026-06-07 | `olmoe3-moe-a0-1p2b-cx4-b512k-gpu8-ep1mb2-lr1.5e-4-r1` | `tiny_275m.py` | 4x | 524,288 | 64 | 1.5e-4 | `01KTHW5XZXCNW9VV7FAMCS1C8F` | https://beaker.org/ex/01KTHW5XZXCNW9VV7FAMCS1C8F | 1.2B Cx4 sweep centered from completed 1.2B Cx1 plus updated 810M transfer rule. Finished step 162379, 85.133B tokens; repaired W&B history scan on 2026-06-10 saw full 85.133B tokens, avg100M 2.1655, avg250M 2.1654, avg500M 2.1679. W&B `5u5iumvr`. 8 GPUs, EP=1, microbatch=2, in-loop fast evals every 2000 steps. |
+| 2026-06-07 | `olmoe3-moe-a0-1p2b-cx4-b512k-gpu8-ep1mb2-lr3e-4-r1` | `tiny_275m.py` | 4x | 524,288 | 64 | 3e-4 | `01KTHW68C59T1XE9WNFW3EP3G1` | https://beaker.org/ex/01KTHW68C59T1XE9WNFW3EP3G1 | 1.2B Cx4 sweep centered from completed 1.2B Cx1 plus updated 810M transfer rule. Finished step 162379, 85.133B tokens; repaired W&B history scan on 2026-06-10 saw avg100M 2.1500, avg250M 2.1508, avg500M 2.1531. W&B `rkjs2sze`. 8 GPUs, EP=1, microbatch=2, in-loop fast evals every 2000 steps. |
+| 2026-06-07 | `olmoe3-moe-a0-1p2b-cx4-b512k-gpu8-ep1mb2-lr6e-4-r1` | `tiny_275m.py` | 4x | 524,288 | 64 | 6e-4 | `01KTHW6KH3XFR790J6J4G8ZAJ6` | https://beaker.org/ex/01KTHW6KH3XFR790J6J4G8ZAJ6 | 1.2B Cx4 sweep centered from completed 1.2B Cx1 plus updated 810M transfer rule. Finished step 162379, 85.133B tokens; repaired W&B history scan on 2026-06-10 saw avg100M 2.1549, avg250M 2.1548, avg500M 2.1573. W&B `1tzma107`. Close to, but worse than, `3e-4`; this is not a strict hot-side bracket, so the `1.2e-3` run was resumed. 8 GPUs, EP=1, microbatch=2, in-loop fast evals every 2000 steps. |
+| 2026-06-07 | `olmoe3-moe-a0-1p2b-cx4-b512k-gpu8-ep1mb2-lr1.2e-3-r1` | `tiny_275m.py` | 4x | 524,288 | 64 | 1.2e-3 | `01KTHW6ZSXGD1P8NEA7S3KM198` | https://beaker.org/ex/01KTHW6ZSXGD1P8NEA7S3KM198 | Initially stopped on 2026-06-08 after switching to the 3-point-centered LR policy, but resumed on 2026-06-10 because `3e-4`/`6e-4` are too close to count as a strict hot-side bracket. New Beaker job attempt `01KTSB2H1TMF7Z1T2MY40J2QM0`; existing checkpoint folder contains `step10500`, so this should resume rather than restart. Include only after the resumed full run completes. 8 GPUs, EP=1, microbatch=2, in-loop fast evals every 2000 steps. |
+| 2026-06-10 | `olmoe3-moe-a0-1p2b-cx8-b768k-gpu32-ep1mb1-lr2e-4-r1` | `tiny_275m.py` | 8x | 786,432 | 96 | 2e-4 | `01KTQZ0CTP2MBNHS1KT4BRGXEB` | https://beaker.org/ex/01KTQZ0CTP2MBNHS1KT4BRGXEB | 1.2B Cx8 3-point sweep centered from the validated 1.2B Cx4 transfer result. 4 nodes x 8 GPUs, EP=1, microbatch=1. Stopped intentionally on 2026-06-11 after the 4-node jobs showed only about 300 TFLOPs/GPU; replaced by one-node `gpu8-ep1mb4` `r2` below. Exclude this 4-node attempt from canonical LR analysis unless explicitly resumed and completed. |
+| 2026-06-10 | `olmoe3-moe-a0-1p2b-cx8-b768k-gpu32-ep1mb1-lr4e-4-r1` | `tiny_275m.py` | 8x | 786,432 | 96 | 4e-4 | `01KTQZ0Q834TV6CCW5FZGKG12G` | https://beaker.org/ex/01KTQZ0Q834TV6CCW5FZGKG12G | 1.2B Cx8 3-point sweep centered from the validated 1.2B Cx4 transfer result. Kept running as the 4-node systems comparison point after the 4-node jobs showed only about 300 TFLOPs/GPU. Finished step 216505, 170.266B tokens, avg100M 2.0871, avg250M 2.0835, avg500M 2.0852. W&B `gbt7khqj`, skipped steps 0 at ~6.29B tokens. 4 nodes x 8 GPUs, EP=1, microbatch=1, in-loop fast evals every 2000 steps. Treat as systems-comparison data; prefer one-node `gpu8-ep1mb4` for canonical 1.2B Cx8. |
+| 2026-06-10 | `olmoe3-moe-a0-1p2b-cx8-b768k-gpu32-ep1mb1-lr8e-4-r1` | `tiny_275m.py` | 8x | 786,432 | 96 | 8e-4 | `01KTQZ13TY5D8ZZFZ6AZ9CDYKT` | https://beaker.org/ex/01KTQZ13TY5D8ZZFZ6AZ9CDYKT | 1.2B Cx8 3-point sweep centered from the validated 1.2B Cx4 transfer result. 4 nodes x 8 GPUs, EP=1, microbatch=1. Stopped intentionally on 2026-06-11 after the 4-node jobs showed only about 300 TFLOPs/GPU; replaced by one-node `gpu8-ep1mb4` `r2` below. Exclude this 4-node attempt from canonical LR analysis unless explicitly resumed and completed. |
+| 2026-06-11 | `olmoe3-moe-a0-1p2b-cx8-b768k-gpu8-ep1mb4-lr2e-4-r2` | `tiny_275m.py` | 8x | 786,432 | 96 | 2e-4 | `01KTWB5V3CBHWS868FKGBX342D` | https://beaker.org/ex/01KTWB5V3CBHWS868FKGBX342D | One-node replacement for the stopped 4-node `2e-4` attempt. 1 node x 8 GPUs, EP=1, microbatch=4, same 96-sequence global batch, in-loop fast evals every 2000 steps. Queued/created at launch. |
+| 2026-06-11 | `olmoe3-moe-a0-1p2b-cx8-b768k-gpu8-ep1mb4-lr8e-4-r2` | `tiny_275m.py` | 8x | 786,432 | 96 | 8e-4 | `01KTWB65YRYR8K44RYXBZ7T5WJ` | https://beaker.org/ex/01KTWB65YRYR8K44RYXBZ7T5WJ | One-node replacement for the stopped 4-node `8e-4` attempt. 1 node x 8 GPUs, EP=1, microbatch=4, same 96-sequence global batch, in-loop fast evals every 2000 steps. Queued/created at launch. |
+| 2026-06-07 | `olmoe3-moe-a0-810m-cx2-b512k-gpu8-ep1mb4-lr1.5e-4-r1` | `tiny_275m.py` | 2x | 524,288 | 64 | 1.5e-4 | `01KTHW7HB59AMPSZBP8FJHS5QG` | https://beaker.org/ex/01KTHW7HB59AMPSZBP8FJHS5QG | Paused intentionally on 2026-06-08 to free 8 GPUs for another user's urgent job. Resumed/requeued on 2026-06-08 with fresh job `01KTMJHQVXKD9FXCT3YTNQPVYJ`, started again at 2026-06-08 21:43 UTC, then paused again at 2026-06-08 22:00 UTC so the midpoint smoke could run first. Resumed/requeued again after midpoint smoke validation with fresh job `01KTMMFXYQ39FSYQ4JGHM91N53`. Finished step 52648, 27.603B tokens, avg100M 2.3544, avg250M 2.3608, avg500M 2.3589. W&B `fcqkb55w`. 8 GPUs, EP=1, microbatch=4, in-loop fast evals every 2000 steps. |
+| 2026-06-07 | `olmoe3-moe-a0-810m-cx2-b512k-gpu8-ep1mb4-lr3e-4-r1` | `tiny_275m.py` | 2x | 524,288 | 64 | 3e-4 | `01KTHW7WY6Z2NFAP8FNT1HP3XN` | https://beaker.org/ex/01KTHW7WY6Z2NFAP8FNT1HP3XN | 810M Cx2 sweep queued after 1.2B Cx4 launch. Finished step 52648, 27.603B tokens, avg100M 2.3245, avg250M 2.3308, avg500M 2.3291. W&B `ogp6mrt6`. 8 GPUs, EP=1, microbatch=4, in-loop fast evals every 2000 steps. |
+| 2026-06-07 | `olmoe3-moe-a0-810m-cx2-b512k-gpu8-ep1mb4-lr6e-4-r1` | `tiny_275m.py` | 2x | 524,288 | 64 | 6e-4 | `01KTHW88Q43J8M8CRCDN9VZDHV` | https://beaker.org/ex/01KTHW88Q43J8M8CRCDN9VZDHV | Stopped while queued on 2026-06-08 so another user's urgent 8-GPU job could go first. Resumed/requeued on 2026-06-08 with fresh job `01KTMJHR97JYCGJG05F5QQ555N`, then stopped again at 2026-06-08 22:00 UTC so the midpoint smoke could run first. Resumed/requeued again after midpoint smoke validation with fresh queued job `01KTMMFXNT05K156KYEGXFG7H6`. Finished step 52648, 27.603B tokens, avg100M 2.3096, avg250M 2.3160, avg500M 2.3144. Best completed Cx2 point so far. W&B `okb4e1u0`. 8 GPUs, EP=1, microbatch=4, in-loop fast evals every 2000 steps. |
+| 2026-06-07 | `olmoe3-moe-a0-810m-cx2-b512k-gpu8-ep1mb4-lr1.2e-3-r1` | `tiny_275m.py` | 2x | 524,288 | 64 | 1.2e-3 | `01KTHW8MCKRJH3PW0W58KRVXA4` | https://beaker.org/ex/01KTHW8MCKRJH3PW0W58KRVXA4 | Stopped while queued on 2026-06-08 so another user's urgent 8-GPU job could go first. Resumed/requeued on 2026-06-08 with fresh job `01KTMJHRPEG8QHDWE2N16Z2QZR`, then stopped again at 2026-06-08 22:00 UTC so the midpoint smoke could run first. Resumed/requeued again after midpoint smoke validation with fresh queued job `01KTMMFXSJH84D3Q74PQ815VVS`. Finished step 52648, 27.603B tokens, avg100M 2.3112, avg250M 2.3176, avg500M 2.3161. Hot side is slightly worse than `6e-4`, so Cx2 is bracketed. W&B `d13uavyt`. 8 GPUs, EP=1, microbatch=4, in-loop fast evals every 2000 steps. |
+| 2026-06-08 | `olmoe3-moe-a0-mid-480m-smoke-b256k-gpu4-ep1mb8-lr1.2e-3-r1` | `tiny_275m.py` | 0.02x | 262,144 | 32 | 1.2e-3 | `01KTMJY87YW09KHB4H6ERGZQ4K` | https://beaker.org/ex/01KTMJY87YW09KHB4H6ERGZQ4K | Midpoint baseline smoke for planned `mid_480m` rung. Failed before training because W&B group name exceeded the 128-character limit; no useful smoke signal. Relaunched with shorter name in `01KTMM5YQTGA9TXKFYMF5NPB46`. |
+| 2026-06-08 | `m480-smoke-gpu4-ep1mb8-lr12-r2` | `tiny_275m.py` | 0.02x | 262,144 | 32 | 1.2e-3 | `01KTMM5YQTGA9TXKFYMF5NPB46` | https://beaker.org/ex/01KTMM5YQTGA9TXKFYMF5NPB46 | Short-name retry of midpoint baseline smoke. Passed startup: reached step 436, skipped steps 0, CE loss fell to about 4.5, and throughput stabilized around 632-644 TFLOPs/GPU with about 621 actual avg TFLOPs/GPU. Stopped intentionally after validation so queued ladder jobs could proceed. 4 GPUs, EP=1, microbatch=8, no in-loop evals. |
+| 2026-06-08 | `m480-cx1-b256k-gpu4-ep1mb8-lr6e-4-r1` | `tiny_275m.py` | 1x | 262,144 | 32 | 6e-4 | `01KTMMJCV3818NDPK51R89MH08` | https://beaker.org/ex/01KTMMJCV3818NDPK51R89MH08 | Midpoint `mid_480m` Cx1 3-point sweep centered from transferred LR estimate after smoke validation. Finished step 29022, 7.608B tokens, avg100M 2.5696, avg250M 2.5676, avg500M 2.5725. W&B `56vuwauw`. 4 GPUs, EP=1, microbatch=8, in-loop fast evals every 2000 steps. |
+| 2026-06-08 | `m480-cx1-b256k-gpu4-ep1mb8-lr1.2e-3-r1` | `tiny_275m.py` | 1x | 262,144 | 32 | 1.2e-3 | `01KTMMJSTMY3TSR7MHH5G7M22H` | https://beaker.org/ex/01KTMMJSTMY3TSR7MHH5G7M22H | Midpoint `mid_480m` Cx1 3-point sweep centered from transferred LR estimate after smoke validation. Finished step 29022, 7.608B tokens, avg100M 2.5653, avg250M 2.5636, avg500M 2.5690. Best completed Cx1 point. W&B `49mybsr0`. 4 GPUs, EP=1, microbatch=8, in-loop fast evals every 2000 steps. |
+| 2026-06-08 | `m480-cx1-b256k-gpu4-ep1mb8-lr2.4e-3-r1` | `tiny_275m.py` | 1x | 262,144 | 32 | 2.4e-3 | `01KTMMK7VN9BXSCBYX2HQKQQWH` | https://beaker.org/ex/01KTMMK7VN9BXSCBYX2HQKQQWH | Midpoint `mid_480m` Cx1 3-point sweep centered from transferred LR estimate after smoke validation. Finished step 29022, 7.608B tokens, avg100M 2.5839, avg250M 2.5826, avg500M 2.5889. Hot side is worse than `1.2e-3`, so Cx1 is bracketed. W&B `7zz7c1zu`. 4 GPUs, EP=1, microbatch=8, in-loop fast evals every 2000 steps. |
+| 2026-06-08 | `m480-cx2-b512k-gpu4-ep1mb8-lr3e-4-r1` | `tiny_275m.py` | 2x | 524,288 | 64 | 3e-4 | `01KTMMKN716ZSRZN473CV4BC23` | https://beaker.org/ex/01KTMMKN716ZSRZN473CV4BC23 | Midpoint `mid_480m` Cx2 3-point sweep centered from transferred LR estimate after smoke validation. Finished step 29022, 15.216B tokens, avg100M 2.4828, avg250M 2.4889, avg500M 2.4874. W&B `ridb7me5`. 4 GPUs, EP=1, microbatch=8, in-loop fast evals every 2000 steps. |
+| 2026-06-08 | `m480-cx2-b512k-gpu4-ep1mb8-lr6e-4-r1` | `tiny_275m.py` | 2x | 524,288 | 64 | 6e-4 | `01KTMMM35QKDE15XCSKG76Z6ST` | https://beaker.org/ex/01KTMMM35QKDE15XCSKG76Z6ST | Midpoint `mid_480m` Cx2 3-point sweep centered from transferred LR estimate after smoke validation. Finished step 29022, 15.216B tokens, avg100M 2.4597, avg250M 2.4658, avg500M 2.4643. W&B `9bf5s9lf`. 4 GPUs, EP=1, microbatch=8, in-loop fast evals every 2000 steps. |
+| 2026-06-08 | `m480-cx2-b512k-gpu4-ep1mb8-lr1.2e-3-r1` | `tiny_275m.py` | 2x | 524,288 | 64 | 1.2e-3 | `01KTMMMHBEV4JW3N0X4X3MFHK8` | https://beaker.org/ex/01KTMMMHBEV4JW3N0X4X3MFHK8 | Midpoint `mid_480m` Cx2 3-point sweep centered from transferred LR estimate after smoke validation. Finished step 29022, 15.216B tokens, avg100M 2.4519, avg250M 2.4580, avg500M 2.4567. Best completed Cx2 point so far, but on the high edge. W&B `roj7jv11`. 4 GPUs, EP=1, microbatch=8, in-loop fast evals every 2000 steps. |
+| 2026-06-09 | `m480-cx2-b512k-gpu4-ep1mb8-lr2.4e-3-r1` | `tiny_275m.py` | 2x | 524,288 | 64 | 2.4e-3 | `01KTPWRQD0Z7SN3KEA6EBMTCB2` | https://beaker.org/ex/01KTPWRQD0Z7SN3KEA6EBMTCB2 | Midpoint `mid_480m` Cx2 high-side extension after the initial Cx2 triplet was monotonic and high-edge-best at `1.2e-3`. Finished step 29022, 15.216B tokens by W&B summary. W&B history is temporarily short: analyzer still sees only 8.577B tokens, avg100M 2.6475, avg250M 2.6518, avg500M 2.6612. Re-run analyzer before plotting/fitting this point. W&B `t8c3jnru`. Launched from `launch_moe_a0_mid_480m_cx2_followups.sh`. 4 GPUs, EP=1, microbatch=8, in-loop fast evals every 2000 steps. |
+| 2026-06-09 | `m480-cx2-b512k-gpu4-ep1mb8-lr9.6e-3-r1` | `tiny_275m.py` | 2x | 524,288 | 64 | 9.6e-3 | `01KTQ3V5C3BJNDXHD38BV76KTH` | https://beaker.org/ex/01KTQ3V5C3BJNDXHD38BV76KTH | Midpoint `mid_480m` Cx2 far hot-side sentinel to quickly find the right-side turnover after the initial triplet was monotonic. Finished step 29022, 15.216B tokens by W&B summary. W&B history is temporarily short: analyzer still sees only 6.070B tokens, avg100M 2.9432, avg250M 2.9405, avg500M 2.9432. This is already clearly hot, but re-run analyzer before final plotting/fitting. W&B `q1n36aql`. Launched from `launch_moe_a0_mid_480m_cx2_followups.sh`. 4 GPUs, EP=1, microbatch=8, in-loop fast evals every 2000 steps. |
+| 2026-06-08 | `m480-cx4-b512k-gpu4-ep1mb8-lr4e-4-r1` | `tiny_275m.py` | 4x | 524,288 | 64 | 4e-4 | `01KTMMMZ1539AV33SHB12S17Q4` | https://beaker.org/ex/01KTMMMZ1539AV33SHB12S17Q4 | Midpoint `mid_480m` Cx4 3-point sweep centered from transferred LR estimate after smoke validation. Finished step 58044, 30.432B tokens; refreshed history avg100M 2.3854, avg250M 2.3903, avg500M 2.3887. W&B `qtomqoti`. 4 GPUs, EP=1, microbatch=8, in-loop fast evals every 2000 steps. |
+| 2026-06-08 | `m480-cx4-b512k-gpu4-ep1mb8-lr8e-4-r1` | `tiny_275m.py` | 4x | 524,288 | 64 | 8e-4 | `01KTMMNC9R56MX1MSGZQ865SXA` | https://beaker.org/ex/01KTMMNC9R56MX1MSGZQ865SXA | Midpoint `mid_480m` Cx4 3-point sweep centered from transferred LR estimate after smoke validation. Finished step 58044, 30.432B tokens; refreshed history avg100M 2.3739, avg250M 2.3788, avg500M 2.3772. Best completed Cx4 point; Cx4 is now bracketed by `4e-4` and `1.6e-3`. W&B `r5jfqoq8`. 4 GPUs, EP=1, microbatch=8, in-loop fast evals every 2000 steps. |
+| 2026-06-08 | `m480-cx4-b512k-gpu4-ep1mb8-lr1.6e-3-r1` | `tiny_275m.py` | 4x | 524,288 | 64 | 1.6e-3 | `01KTMMNTA3NN9K4THQXCKGP717` | https://beaker.org/ex/01KTMMNTA3NN9K4THQXCKGP717 | Midpoint `mid_480m` Cx4 3-point sweep centered from transferred LR estimate after smoke validation. Finished step 58044, 30.432B tokens; refreshed history avg100M 2.3820, avg250M 2.3869, avg500M 2.3855. W&B `0sv8ymgk`. 4 GPUs, EP=1, microbatch=8, in-loop fast evals every 2000 steps. |
+| 2026-06-10 | `m480-cx4-b512k-gpu4-ep1mb8-lr1e-4-r2` | `tiny_275m.py` | 4x | 524,288 | 64 | 1e-4 | `01KTSC4J4KGTZXY0XP5P0AXQXM` | https://beaker.org/ex/01KTSC4J4KGTZXY0XP5P0AXQXM | Midpoint `mid_480m` Cx4 cold-side sentinel launched before the stale W&B history refresh showed Cx4 was already bracketed. Finished step 58044, 30.432B tokens, avg100M 2.4642, avg250M 2.4689, avg500M 2.4673. Extra cold-side insurance point; W&B `0mvi3nov`. 4 GPUs, EP=1, microbatch=8, in-loop fast evals every 2000 steps. |
+| 2026-06-10 | `m480-cx8-b768k-gpu8-ep1mb4-lr2e-4-r1` | `tiny_275m.py` | 8x | 786,432 | 96 | 2e-4 | `01KTQYY60VX9NNSHTS81CK4DZX` | https://beaker.org/ex/01KTQYY60VX9NNSHTS81CK4DZX | Midpoint `mid_480m` Cx8 3-point sweep centered from Cx4/transfer evidence. Finished step 77392, 60.864B tokens; avg100M 2.3437, avg250M 2.3428, avg500M 2.3449. W&B `o88mknat`. 8 GPUs total, EP=1, microbatch=4, in-loop fast evals every 2000 steps. |
+| 2026-06-10 | `m480-cx8-b768k-gpu8-ep1mb4-lr4e-4-r1` | `tiny_275m.py` | 8x | 786,432 | 96 | 4e-4 | `01KTQYYHA1W5SE0Y955JBH17X9` | https://beaker.org/ex/01KTQYYHA1W5SE0Y955JBH17X9 | Midpoint `mid_480m` Cx8 3-point sweep centered from Cx4/transfer evidence. Finished step 77392, 60.864B tokens; avg100M 2.3172, avg250M 2.3163, avg500M 2.3185. W&B `pochsiqs`. 8 GPUs total, EP=1, microbatch=4, in-loop fast evals every 2000 steps. |
+| 2026-06-10 | `m480-cx8-b768k-gpu8-ep1mb4-lr8e-4-r1` | `tiny_275m.py` | 8x | 786,432 | 96 | 8e-4 | `01KTQYYW8GRSTHMBNH5WA69Q7H` | https://beaker.org/ex/01KTQYYW8GRSTHMBNH5WA69Q7H | Midpoint `mid_480m` Cx8 3-point sweep centered from Cx4/transfer evidence. Finished step 77392, 60.864B tokens; avg100M 2.3085, avg250M 2.3076, avg500M 2.3099. Best completed Cx8 point so far, on the hot edge. W&B `ehjbiul4`. 8 GPUs total, EP=1, microbatch=4, in-loop fast evals every 2000 steps. |
+| 2026-06-10 | `m480-cx8-b768k-gpu8-ep1mb4-lr3.2e-3-r2` | `tiny_275m.py` | 8x | 786,432 | 96 | 3.2e-3 | `01KTSC51ZXE3YQAZMANDP15QT7` | https://beaker.org/ex/01KTSC51ZXE3YQAZMANDP15QT7 | Midpoint `mid_480m` Cx8 hot-side sentinel after `8e-4` beat `4e-4` among finished points. Finished step 77392, 60.864B tokens, avg100M 2.3494, avg250M 2.3486, avg500M 2.3510. This brackets Cx8 on the hot side; W&B `fvbz0h7v`. 8 GPUs total, EP=1, microbatch=4, in-loop fast evals every 2000 steps. |
+| 2026-06-05 | `olmoe3-eval-275m-cx1-lr1e-3-r2` | `tiny_275m.py` | eval-only | n/a | n/a | n/a | `01KTD0JFDAE3CXYKZV85CYVRYC` | https://beaker.org/ex/01KTD0JFDAE3CXYKZV85CYVRYC | Eval backfill smoke over checkpoint `/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/olmoe3-tiny-275m-cx1-b256k-gpu2-ep1mb16-lr1e-3-r2/step15365`. Finished successfully with 178 W&B eval keys, including downstream BPB/BPB v2 metrics and LM validation components. Created from launcher `launch_moe_a0_eval_backfill_smoke.sh`; ignore for LR U-plots. |
+| 2026-06-05 | `olmoe3-275m-cx1-evaltest-lr1e-3` | `tiny_275m.py` | 1x | 262,144 | 32 | 1e-3 | `01KTD0K416CRVYAN5CN5SQPK5Y` | https://beaker.org/ex/01KTD0K416CRVYAN5CN5SQPK5Y | 275M Cx1 ladder-eval training test. 2 GPUs, EP=1, microbatch=16, `--ladder-evals --eval-task-set=fast --eval-interval=100`. Passed startup and logged 178 W&B eval keys by step 197 with skipped steps 0, but the 100-step eval cadence made the run too slow. Stopped intentionally on 2026-06-06 after proving the eval hook. Ignore for canonical LR-selection unless we explicitly promote it. Future in-loop eval training should use interval 2000 plus final eval/checkpoint. |
+| 2026-06-04 | `olmoe3-moe-a0-1p2b-smoke-b256k-gpu4-ep1mb4-lr3e-4-r3` | `tiny_275m.py` | 0.02x | 262,144 | 32 | 3e-4 | `01KT841MWJKFK5KWCAXCGA9WC1` | https://beaker.org/ex/01KT841MWJKFK5KWCAXCGA9WC1 | Succeeded. Preferred 1.2B setting: 4 GPUs, EP=1, microbatch=4; skipped steps 0, about 662 actual avg TFLOPs/GPU. |
+| 2026-06-04 | `olmoe3-moe-a0-1p2b-smoke-b256k-gpu4-ep2mb4-lr3e-4-r3` | `tiny_275m.py` | 0.02x | 262,144 | 32 | 3e-4 | `01KT8420RGXWJ8C3JFCNG67W2T` | https://beaker.org/ex/01KT8420RGXWJ8C3JFCNG67W2T | Succeeded but slower than EP=1. Keep as memory fallback only; skipped steps 0, about 607 actual avg TFLOPs/GPU. |
+| 2026-06-04 | `olmoe3-tiny-275m-cx8-b768k-gpu4-ep1mb8-lr2e-4` | `tiny_275m.py` | 8x | 786,432 | 96 | 2e-4 | `01KT8445FT6GZFKPE7JKS3F8RY` | https://beaker.org/ex/01KT8445FT6GZFKPE7JKS3F8RY | Replacement coarse factor-of-two Cx8 LR grid. 4 GPUs, EP=1, microbatch=8. |
+| 2026-06-04 | `olmoe3-tiny-275m-cx8-b768k-gpu4-ep1mb8-lr4e-4` | `tiny_275m.py` | 8x | 786,432 | 96 | 4e-4 | `01KT844H6AQWZNNSXJZRV258VZ` | https://beaker.org/ex/01KT844H6AQWZNNSXJZRV258VZ | Replacement coarse factor-of-two Cx8 LR grid. 4 GPUs, EP=1, microbatch=8. |
+| 2026-06-04 | `olmoe3-tiny-275m-cx8-b768k-gpu4-ep1mb8-lr8e-4` | `tiny_275m.py` | 8x | 786,432 | 96 | 8e-4 | `01KT844XB38AM31SCZDSTA1EAA` | https://beaker.org/ex/01KT844XB38AM31SCZDSTA1EAA | Replacement coarse factor-of-two Cx8 LR grid. 4 GPUs, EP=1, microbatch=8. |
+| 2026-06-04 | `olmoe3-tiny-275m-cx8-b768k-gpu4-ep1mb8-lr1.6e-3` | `tiny_275m.py` | 8x | 786,432 | 96 | 1.6e-3 | `01KT84589PJ0VDVSS7CDQPBSCV` | https://beaker.org/ex/01KT84589PJ0VDVSS7CDQPBSCV | Replacement coarse factor-of-two Cx8 LR grid. 4 GPUs, EP=1, microbatch=8. |
+| 2026-06-04 | `olmoe3-tiny-275m-cx16-b1m-gpu4-ep1mb16-lr1e-4` | `tiny_275m.py` | 16x | 1,048,576 | 128 | 1e-4 | `01KT845KM5CF6JZHJB6KW6WARW` | https://beaker.org/ex/01KT845KM5CF6JZHJB6KW6WARW | Replacement coarse factor-of-two Cx16 LR grid. 4 GPUs, EP=1, microbatch=16. |
+| 2026-06-04 | `olmoe3-tiny-275m-cx16-b1m-gpu4-ep1mb16-lr2e-4` | `tiny_275m.py` | 16x | 1,048,576 | 128 | 2e-4 | `01KT845WN987DZTN03Q7NSXAK4` | https://beaker.org/ex/01KT845WN987DZTN03Q7NSXAK4 | Replacement coarse factor-of-two Cx16 LR grid. 4 GPUs, EP=1, microbatch=16. |
+| 2026-06-04 | `olmoe3-tiny-275m-cx16-b1m-gpu4-ep1mb16-lr4e-4` | `tiny_275m.py` | 16x | 1,048,576 | 128 | 4e-4 | `01KT8466QCKVK2WDKW7F75TK9H` | https://beaker.org/ex/01KT8466QCKVK2WDKW7F75TK9H | Replacement coarse factor-of-two Cx16 LR grid. 4 GPUs, EP=1, microbatch=16. |
+| 2026-06-04 | `olmoe3-tiny-275m-cx16-b1m-gpu4-ep1mb16-lr8e-4` | `tiny_275m.py` | 16x | 1,048,576 | 128 | 8e-4 | `01KT846JGMA8TDYZGGH4E34K3P` | https://beaker.org/ex/01KT846JGMA8TDYZGGH4E34K3P | Replacement coarse factor-of-two Cx16 LR grid. 4 GPUs, EP=1, microbatch=16. |
+
+Status update for the replacement Cx8/Cx16 grids above: all eight jobs failed
+before completion when `/weka/oe-training-default` filled up during checkpoint
+writes. Their intermediate checkpoints were deleted during cleanup, so they
+cannot be resumed. Treat them as partial-only W&B curves and exclude them from
+completed-run U-plots and final LR rules.
+
+Accidental relaunches from commit `bdd30f9` were stopped quickly after we
+realized the deleted checkpoint dirs prevented resume. Ignore these jobs and
+their W&B runs for analysis:
+
+- Cx8 `2e-4`: `01KT8HHKES4H7D59RY9WB80MNJ`
+- Cx8 `4e-4`: `01KT8HHZPVWKAHB2MCTJFFZA4H`
+- Cx8 `8e-4`: `01KT8HJB8JPBEKHFCD9EZCXJQZ`
+- Cx8 `1.6e-3`: `01KT8HJPVC15B839NFH1W17G5B`
+- Cx16 `1e-4`: `01KT8HK34D5T5JPEN454R2NZR2`
+- Cx16 `2e-4`: `01KT8HKFBYQC1MXAGJXDBP96FQ`
+- Cx16 `4e-4`: `01KT8HKT4P0ZB8QXDPP57Y6MDP`
+- Cx16 `8e-4`: `01KT8HM745W5A1J1Y3TWRZ3QT0`
+
+Fresh `r2` reruns from commit `2cfd4c56` use final-only permanent checkpoints
+plus latest ephemeral checkpoints. These are the canonical Cx8/Cx16 completion
+runs unless a job fails and is explicitly replaced:
+
+- Cx8 `2e-4`, `gpu4-ep1mb8`: `01KT8JPNQTTSQFDCGNV7HT8VV1`
+- Cx8 `4e-4`, `gpu4-ep1mb8`: `01KT8JQ0V85RVSY309P3BXQ85Y`
+- Cx8 `6e-4`, `gpu4-ep1mb8`: `01KT8JQCM49JRFVNMT7WRV701V`
+- Cx8 `8e-4`, `gpu4-ep1mb8`: `01KT8JQR750TFJKE13ZXY7JYTT`
+- Cx16 `2e-4`, `gpu8-ep1mb16`: `01KT8JR3WKXCR6TN8897A57DHS`
+- Cx16 `4e-4`, `gpu8-ep1mb16`: `01KT8JRFSG3J7AJ5PV7E32Z46K`
+- Cx16 `6e-4`, `gpu8-ep1mb16`: `01KT8JRVAG6RVGT231477NGQD9`
+
+Status update: the Cx16 `2e-4` `r2` experiment
+(`01KT8JR3WKXCR6TN8897A57DHS`) had its first job fail at step ~4507 with a
+CUDA/NCCL watchdog abort, not a storage-full checkpoint failure. The experiment
+was resumed in Beaker so it can pick up from the latest checkpoint:
+
+- Cx16 `2e-4`, `gpu8-ep1mb16`, `r2` resumed job:
+  `01KT8P9WZJ20XGTY44BH38M9W2`
+
+An accidental fresh-from-scratch replacement was briefly launched and stopped
+early; ignore it for analysis:
+
+- Cx16 `2e-4`, `gpu8-ep1mb16`, `r3`: `01KT8NJ55CHAKYCG1E1J7Q9QBJ`
+
+Status update: the four Cx8 `r2` runs finished successfully on 2026-06-04:
+
+- Cx8 `2e-4`: finished, step 40971, 32.221B tokens, avg250M 2.5429,
+  avg500M 2.5422.
+- Cx8 `4e-4`: finished, step 40971, 32.221B tokens, avg250M 2.5092,
+  avg500M 2.5085.
+- Cx8 `6e-4`: finished, step 40971, 32.221B tokens, avg250M 2.4978,
+  avg500M 2.4972.
+- Cx8 `8e-4`: finished, step 40971, 32.221B tokens, avg250M 2.4909,
+  avg500M 2.4903.
+- Cx8 `1.6e-3`: finished, step 40971, 32.221B tokens, avg250M 2.4864,
+  avg500M 2.4859.
+
+The best completed Cx8 point was initially the high-edge `1.6e-3` run, so
+launched high-side extensions:
+
+- Cx8 `1.6e-3`, `gpu4-ep1mb8`, `r2`: `01KT9D6W9F4RGA5RSA8XSSMEP3`
+- Cx8 `3.2e-3`, `gpu4-ep1mb8`, `r2`: `01KT9Q661N0YHYHC9A9T9AGV1J`;
+  stopped intentionally after Cx8 `1.6e-3` was already clearly worse than the
+  completed `8e-4` best. Ignore for full-run analysis.
+- Cx8 `3.2e-3`, `gpu4-ep1mb8`, `r3`: `01KTAA55V6QXN45QZFBHTY6B65`;
+  launched after the full `1.6e-3` run finished better than `8e-4`, leaving the
+  rung high-edge-best. Finished successfully on 2026-06-05 at step 40971,
+  32.221B tokens, avg250M 2.4987, avg500M 2.4982. This brackets Cx8 on the
+  right side; best observed remains `1.6e-3`.
+- Cx8 `6.4e-3`, `gpu4-ep1mb8`, `r2`: `01KT9Q6HX5X6KFW5RD1VSC9BV4`;
+  stopped intentionally after lower high-side probes were already clearly worse.
+  Ignore for full-run analysis.
+- Cx8 `6.4e-3`, `gpu4-ep1mb8`, `r3`: `01KTAC584AMG9645NEKF479R15`;
+  far right-side sentinel launched after adopting the policy of occasionally
+  jumping farther when a completed curve is still monotonically improving at the
+  high edge. Finished successfully on 2026-06-05 at step 40971, 32.221B
+  tokens, avg250M 2.5347, avg500M 2.5341.
+- Cx8 `1.6e-2`, `gpu4-ep1mb8`, `sentinel`: `01KTACFJ4D4FQG33ZPT4R306WT`;
+  true order-of-magnitude sentinel to quickly find a right-side upturn. Finished
+  successfully on 2026-06-05 at step 40971, 32.221B tokens, avg250M 2.6285,
+  avg500M 2.6278.
+
+Status update: the canonical Cx16 `r2` runs finished successfully on 2026-06-04.
+
+- Cx16 `2e-4`: finished after Beaker resume, step 61457, 64.442B tokens,
+  avg250M 2.4759, avg500M 2.4744.
+- Cx16 `4e-4`: finished, step 61457, 64.442B tokens, avg250M 2.4474,
+  avg500M 2.4461.
+- Cx16 `6e-4`: finished, step 61457, 64.442B tokens, avg250M 2.4367,
+  avg500M 2.4354.
+- Cx16 `1.2e-3`: finished, step 61457, 64.442B tokens, avg250M 2.4301,
+  avg500M 2.4288.
+
+The best completed Cx16 point is the high-edge `1.2e-3` run, so Cx16 is not yet
+bracketed. Launched high-side extensions:
+
+- Cx16 `1.2e-3`, `gpu8-ep1mb16`, `r2`: `01KT9H6XQJ2GEMKPKHKPCED5B1`
+- Cx16 `2.4e-3`, `gpu8-ep1mb16`, `r2`: `01KT9Q6X0B6PG3G6ZSBZGTPSVQ`;
+  stopped intentionally after Cx16 `1.2e-3` was already clearly worse than the
+  completed `6e-4` best. Ignore for full-run analysis.
+- Cx16 `2.4e-3`, `gpu8-ep1mb16`, `r3`: `01KTAC763FP2W34ZX6N4CT21QD`;
+  far right-side sentinel launched after `1.2e-3` improved enough in flight to
+  make Cx16 plausibly high-edge-best. Finished successfully on 2026-06-05 at
+  step 61457, 64.442B tokens, avg250M 2.4413, avg500M 2.4400.
+- Cx16 `4.8e-3`, `gpu8-ep1mb16`, `r2`: `01KT9Q774FWC6NZDSGTD0Y2W7K`;
+  stopped intentionally while queued after lower high-side probes were already
+  clearly worse. Ignore for full-run analysis.
+- Cx16 `6e-3`, `gpu8-ep1mb16`, `sentinel`: `01KTACHG3Z4Y1G9HW9ESYZK58Q`;
+  true order-of-magnitude sentinel to quickly find a right-side upturn. Finished
+  successfully on 2026-06-05 at step 61457, 64.442B tokens, avg250M 2.4876,
+  avg500M 2.4862.
+
+## Planned Sweeps
+
+### Cx1, 256k tokens/step
+
+Motivation: the 2M-batch Cx1 runs only have about 1920 optimizer steps and 192
+warmup steps. Dropping to 256k tokens/step gives about 15,360 optimizer steps and
+1536 warmup steps, which should make the Cx1 rung a better LR/stability probe.
+
+Recommended LRs:
+
+- `3e-4`
+- `5e-4`
+- `8e-4`
+- `1.2e-3`
+
+Launched run names:
+
+- `olmoe3-tiny-275m-cx1-b256k-lr3e-4`
+- `olmoe3-tiny-275m-cx1-b256k-lr5e-4`
+- `olmoe3-tiny-275m-cx1-b256k-lr8e-4`
+- `olmoe3-tiny-275m-cx1-b256k-lr1.2e-3`
+
+Rationale: `1e-4` is clean but clearly too slow in the 2M-batch plot, while
+`8e-4` is currently best among the visible runs. The 256k sweep keeps `3e-4` as
+a conservative anchor, adds `5e-4` between the known clean and best-visible
+settings, repeats `8e-4`, and keeps `1.2e-3` to test the high side.
+
+Launcher:
+
+```bash
+src/scripts/train/jacobm_olmoe_ladder/launch_tiny_275m_lr_sweep_cx1_b256k.sh
+```
+
+Reproducibility record / dry-run command printer:
+
+```bash
+src/scripts/train/jacobm_olmoe_ladder/reproduce_tiny_275m_lr_sweep_cx1_b256k.sh
+```
+
+## Eval Backfills Launched 2026-06-06
+
+The eval smoke `olmoe3-eval-275m-cx1-lr1e-3-r2`
+(`01KTD0JFDAE3CXYKZV85CYVRYC`) proved that final-checkpoint eval backfills work.
+After that, the in-loop eval-test training run
+`olmoe3-275m-cx1-evaltest-lr1e-3`
+(`01KTD0K416CRVYAN5CN5SQPK5Y`) was stopped intentionally because the temporary
+`--eval-interval=100` setting made it too slow. Future in-loop eval training
+should use `--eval-interval=2000` plus the final checkpoint eval.
+
+The jobs below are eval-only, tagged `eval-backfill`, and should be excluded
+from LR U-plots and training-loss analysis. All 32 finished on 2026-06-06, and
+their 180 eval-related W&B summary metrics were copied onto the corresponding
+source training W&B run summaries with `eval_backfill/...` metadata.
+
+| Name | Beaker experiment | Source checkpoint family |
+| --- | --- | --- |
+| `eval-275m-275-01` | https://beaker.org/ex/01KTDSRH22CQEQK9N3MPSHK5C6 | 275M Cx1 `1.2e-3-r2`, final checkpoint |
+| `eval-275m-275-02` | https://beaker.org/ex/01KTDSRY3TWWNV7GSK4N04X0V5 | 275M Cx1 `1.5e-3-r2`, final checkpoint |
+| `eval-275m-275-03` | https://beaker.org/ex/01KTDSSAC83NWFMTEJQR0QZHMN | 275M Cx1 `1e-3-r2`, final checkpoint |
+| `eval-275m-275-04` | https://beaker.org/ex/01KTDSSPBC9T7Z5NWBYP8KJH4H | 275M Cx1 `2e-3-r2`, final checkpoint |
+| `eval-275m-275-05` | https://beaker.org/ex/01KTDST1YNTWWX8W33J9EXZTA1 | 275M Cx1 `8e-4-r2`, final checkpoint |
+| `eval-275m-275-06` | https://beaker.org/ex/01KTDSTDSPTPARPCJEQH1N6F5T | 275M Cx16 `1.2e-3-r2`, final checkpoint |
+| `eval-275m-275-07` | https://beaker.org/ex/01KTDSTSPH5P839P0D2T1MDMPK | 275M Cx16 `2.4e-3-r3`, final checkpoint |
+| `eval-275m-275-08` | https://beaker.org/ex/01KTDSV5REYVM86SMEGFJQW56X | 275M Cx16 `2e-4-r2`, final checkpoint |
+| `eval-275m-275-09` | https://beaker.org/ex/01KTDSVH6SM4YSQ8RTK8A7GRWE | 275M Cx16 `4e-4-r2`, final checkpoint |
+| `eval-275m-275-10` | https://beaker.org/ex/01KTDSVX1NZFSSR847CDBTEB76 | 275M Cx16 `6e-3-sentinel`, final checkpoint |
+| `eval-275m-275-11` | https://beaker.org/ex/01KTDSWA6D2VCFG5A0F989V08H | 275M Cx16 `6e-4-r2`, final checkpoint |
+| `eval-275m-275-12` | https://beaker.org/ex/01KTDSWPR0GYAWWVRQAX0ZJPX7 | 275M Cx2 `1e-3`, final checkpoint |
+| `eval-275m-275-13` | https://beaker.org/ex/01KTDSX27M9FJ6B6PXW7D65JK4 | 275M Cx2 `6e-4-r2`, final checkpoint |
+| `eval-275m-275-14` | https://beaker.org/ex/01KTDSXE8J4YHX0K1RX7K9NZQ0 | 275M Cx2 `8e-4-r2`, final checkpoint |
+| `eval-275m-275-15` | https://beaker.org/ex/01KTDSXSX5PRXM01J6M918KDBF | 275M Cx4 `1.5e-3`, final checkpoint |
+| `eval-275m-275-16` | https://beaker.org/ex/01KTDSY6DTECEGRQ3ZGRRQE2RR | 275M Cx4 `1e-3`, final checkpoint |
+| `eval-275m-275-17` | https://beaker.org/ex/01KTDSYJCDCBZ6MKDVJ3PM12A9 | 275M Cx4 `2.5e-3`, final checkpoint |
+| `eval-275m-275-18` | https://beaker.org/ex/01KTDSYXN8MNT2517TFM9K2SYA | 275M Cx8 `1.6e-2-sentinel`, final checkpoint |
+| `eval-275m-275-19` | https://beaker.org/ex/01KTDSZ9NEW1SKAZCMY2W6PWJA | 275M Cx8 `1.6e-3-r2`, final checkpoint |
+| `eval-275m-275-20` | https://beaker.org/ex/01KTDSZNERKPY0N0WVBC8XMJWT | 275M Cx8 `2e-4-r2`, final checkpoint |
+| `eval-275m-275-21` | https://beaker.org/ex/01KTDT015E5PXQG3HCRD27EYA4 | 275M Cx8 `3.2e-3-r3`, final checkpoint |
+| `eval-275m-275-22` | https://beaker.org/ex/01KTDT0E3TX5HJ55E9PR9CZ4QW | 275M Cx8 `4e-4-r2`, final checkpoint |
+| `eval-275m-275-23` | https://beaker.org/ex/01KTDT0TMXNWV7K2HSGRZ1TF8F | 275M Cx8 `6.4e-3-r3`, final checkpoint |
+| `eval-275m-275-24` | https://beaker.org/ex/01KTDT17B1M54RPSKRS23K916Q | 275M Cx8 `6e-4-r2`, final checkpoint |
+| `eval-275m-275-25` | https://beaker.org/ex/01KTDT1JPCZTJ7Y7282MAP9PJN | 275M Cx8 `8e-4-r2`, final checkpoint |
+| `eval-810m-810-01` | https://beaker.org/ex/01KTDT1XT861M6E2W34A1F5Z7A | 810M Cx1 `5e-5-cs-r2`, final checkpoint |
+| `eval-810m-810-02` | https://beaker.org/ex/01KTDT2AKPF46Y2T3M8H5G8VRS | 810M Cx1 `1.2e-3-r1`, final checkpoint |
+| `eval-810m-810-03` | https://beaker.org/ex/01KTDT2NYWRZBCW8XAYB80YYC3 | 810M Cx1 `1.5e-4-cold-r1`, final checkpoint |
+| `eval-810m-810-04` | https://beaker.org/ex/01KTDT31TADK1X5SQFWCNAA41J | 810M Cx1 `2.4e-3-r1`, final checkpoint |
+| `eval-810m-810-05` | https://beaker.org/ex/01KTDT3DMNDCWEXPTCM3H84D1G | 810M Cx1 `3e-4-cold-r1`, final checkpoint |
+| `eval-810m-810-06` | https://beaker.org/ex/01KTDT3RA3DWXEZF68B6234A4B | 810M Cx1 `6e-3-r1`, final checkpoint |
+| `eval-810m-810-07` | https://beaker.org/ex/01KTDT41V1R22KWH57NTHCBKVF | 810M Cx1 `6e-4-r1`, final checkpoint |
+
+## 810M Cx4 Eval Backfills Launched 2026-06-06
+
+The Cx4 training runs did not have in-loop evals enabled. Eval-only final
+checkpoint backfills are copied back to the source training W&B summaries with
+`copy_eval_backfills_to_wandb.py` as they finish. The `2e-4`, `4e-4`, and
+`8e-4` backfills have finished and were copied back on 2026-06-06. The
+`1.6e-3` backfill finished and was copied back on 2026-06-07.
+
+| Name | Beaker experiment | Source checkpoint |
+| --- | --- | --- |
+| `eval-810m-cx4-lr2e-4-r1` | https://beaker.org/ex/01KTFFM30FQYJ6RR76826V58QM | `olmoe3-moe-a0-810m-cx4-b512k-gpu8-ep1mb4-lr2e-4-r1/step105295` |
+| `eval-810m-cx4-lr4e-4-r1` | https://beaker.org/ex/01KTFFMFKM2D7FR4EMRKEWXGFP | `olmoe3-moe-a0-810m-cx4-b512k-gpu8-ep1mb4-lr4e-4-r1/step105295` |
+| `eval-810m-cx4-lr8e-4-r1` | https://beaker.org/ex/01KTFK9M9SP2EZ7DRY4VHZCHSA | `olmoe3-moe-a0-810m-cx4-b512k-gpu8-ep1mb4-lr8e-4-r1/step105295` |
+| `eval-810m-cx4-lr1.6e-3-r1` | https://beaker.org/ex/01KTG4AXWFBSNYPTAK4JE9FFTS | `olmoe3-moe-a0-810m-cx4-b512k-gpu8-ep1mb4-lr1.6e-3-r1/step105295` |
+
+## Expert Granularity Experiment Launched 2026-06-11
+
+Experiment plan:
+`src/scripts/train/jacobm_olmoe_ladder/experiment_plans/expert_granularity.md`.
+
+Code support:
+
+- `--expert-geometry={baseline_48e_top4,coarse_24e_top2,fine_96e_top8}`
+- launchers under
+  `src/scripts/train/jacobm_olmoe_ladder/experiments/expert_granularity/`
+
+Dry-run counts at 275M:
+
+- `coarse_24e_top2`: ~0.28B active / ~0.20B active non-embedding / ~1.13B total
+- `fine_96e_top8`: ~0.28B active / ~0.20B active non-embedding / ~1.14B total
+
+Smoke tests:
+
+| Name | Beaker experiment | W&B | Status | Notes |
+| --- | --- | --- | --- | --- |
+| `eg-smoke-eg24e2k-lr2e-3-r2` | https://beaker.org/ex/01KTT5PNBZ3THN3CF1R729PB18 | `deu60y28` | finished cleanly | 275M Cx1 smoke, batch 262,144 / 32 seqs, 1 GPU, EP=1, microbatch=16, skipped steps 0. |
+| `eg-smoke-eg96e8k-lr2e-3-r2` | https://beaker.org/ex/01KTT5Q0E969CCFESR0SNJ4QE6 | `8cheit54` | failed | OOM during trainer dry-run at 1 GPU, EP=1, microbatch=16. Exclude from analysis. |
+| `eg-smoke-eg96e8k-lr2e-3-r4` | https://beaker.org/ex/01KTT5ZNZ3Z748YXGSNZHSEXC2 | `hh2qh4i9` | finished cleanly | Retry with 1 GPU, EP=1, microbatch=8. Finished step 308, 80.740M tokens, skipped steps 0. |
+
+Accidental/ambiguous smoke jobs stopped before use:
+
+- `01KTT5KMH3JD0QV1R1ETB6F1PZ`: launched before expert-geometry code was committed.
+- `01KTT5M01CG1DF523DVJZFKZ0H`: launched before expert-geometry code was committed.
+- `01KTT5VBMDWBCR3085PZHQ71ZB`: accidental duplicate coarse smoke; stopped.
+- `01KTT5VQ2V955SZ5033FMHGH4W`: accidental fine smoke still using mb16; stopped.
+
+275M Cx1 transfer probes:
+
+| Name | Variant | LR | Batch tokens | Batch seqs | GPUs | EP | Microbatch | Beaker experiment | Notes |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |
+| `eg-275m-cx1-eg24e2k-lr1e-3-r1` | `coarse_24e_top2` | 1e-3 | 262,144 | 32 | 1 | 1 | 16 | https://beaker.org/ex/01KTT68X1E45RNN2M5N250NNE1 | Finished step 15349, 4.024B tokens, avg100M 2.7834, avg250M 2.7873, avg500M 2.7894. W&B `6o5xk53j`. |
+| `eg-275m-cx1-eg24e2k-lr2e-3-r1` | `coarse_24e_top2` | 2e-3 | 262,144 | 32 | 1 | 1 | 16 | https://beaker.org/ex/01KTT697TSG6X0JTD316YN5BD6 | Finished step 15349, 4.024B tokens, avg100M 2.7769, avg250M 2.7814, avg500M 2.7849. W&B `ndkmprhm`. Best coarse Cx1 point. |
+| `eg-275m-cx1-eg24e2k-lr4e-3-r1` | `coarse_24e_top2` | 4e-3 | 262,144 | 32 | 1 | 1 | 16 | https://beaker.org/ex/01KTT69KTCH2FXME9E63T11DM3 | Finished step 15349, 4.024B tokens, avg100M 2.7850, avg250M 2.7904, avg500M 2.7965. W&B `8eoup1kb`. Coarse Cx1 is bracketed. |
+| `eg-275m-cx1-eg96e8k-lr1e-3-r1` | `fine_96e_top8` | 1e-3 | 262,144 | 32 | 1 | 1 | 8 | https://beaker.org/ex/01KTT69YPF7F1GAQH4ZPM6JT1A | Finished step 15396, 4.036B tokens, avg100M 2.7675, avg250M 2.7683, avg500M 2.7722. W&B `bpdo8b6b`. Uses mb8 fallback after mb16 OOM. |
+| `eg-275m-cx1-eg96e8k-lr2e-3-r1` | `fine_96e_top8` | 2e-3 | 262,144 | 32 | 1 | 1 | 8 | https://beaker.org/ex/01KTT6A9WYW6Y3RB31X433F87X | Finished step 15396, 4.036B tokens, avg100M 2.7628, avg250M 2.7641, avg500M 2.7695. W&B `lyky04e5`. Best fine Cx1 point. |
+| `eg-275m-cx1-eg96e8k-lr4e-3-r1` | `fine_96e_top8` | 4e-3 | 262,144 | 32 | 1 | 1 | 8 | https://beaker.org/ex/01KTT6AN3CMWPT5E9NGWZJH3DX | Finished step 15396, 4.036B tokens, avg100M 2.7652, avg250M 2.7673, avg500M 2.7750. W&B `4l7axfwy`. Fine Cx1 is bracketed. |
+
+275M Cx4 baseline-centered probes:
+
+These were queued before the Cx1 probes finished so the overnight queue can keep
+working. They are centered around the 275M baseline Cx4 optimum region. If the
+variant-specific LR multiplier differs from 1.0, extend each curve with at most
+one targeted follow-up after the first three Cx4 jobs finish.
+
+| Name | Variant | LR | Batch tokens | Batch seqs | GPUs | EP | Microbatch | Beaker experiment | Notes |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |
+| `eg-275m-cx4-eg24e2k-lr8e-4-r1` | `coarse_24e_top2` | 8e-4 | 524,288 | 64 | 4 | 1 | 16 | https://beaker.org/ex/01KTT7A7ZS7EV70TR3XBJMSAVG | Finished step 30698, 16.095B tokens, avg100M 2.5758, avg250M 2.5796, avg500M 2.5822. W&B `5talvqd1`. |
+| `eg-275m-cx4-eg24e2k-lr1.6e-3-r1` | `coarse_24e_top2` | 1.6e-3 | 524,288 | 64 | 4 | 1 | 16 | https://beaker.org/ex/01KTT7AJT93MT6DW89FE1A04RE | Finished step 30698, 16.095B tokens, avg100M 2.5676, avg250M 2.5713, avg500M 2.5740. W&B `eq0vqyj9`. Best coarse Cx4 point. |
+| `eg-275m-cx4-eg24e2k-lr3.2e-3-r1` | `coarse_24e_top2` | 3.2e-3 | 524,288 | 64 | 4 | 1 | 16 | https://beaker.org/ex/01KTT7AYPX74Y4QG4C6GWGX3A0 | Finished step 30698, 16.095B tokens, avg100M 2.5768, avg250M 2.5805, avg500M 2.5833. W&B `mrpoyk8n`. Coarse Cx4 is bracketed. |
+| `eg-275m-cx4-eg96e8k-lr8e-4-r1` | `fine_96e_top8` | 8e-4 | 524,288 | 64 | 4 | 1 | 8 | https://beaker.org/ex/01KTT7B9XNDT2D578HYR8VBVYA | Finished step 30791, 16.143B tokens, avg100M 2.5577, avg250M 2.5582, avg500M 2.5599. W&B `0vr98te9`. |
+| `eg-275m-cx4-eg96e8k-lr1.6e-3-r1` | `fine_96e_top8` | 1.6e-3 | 524,288 | 64 | 4 | 1 | 8 | https://beaker.org/ex/01KTT7BMTTSW6VAY20FM8XKVWB | Finished step 30791, 16.143B tokens, avg100M 2.5516, avg250M 2.5523, avg500M 2.5541. W&B `gsqree2x`. Best fine Cx4 point. |
+| `eg-275m-cx4-eg96e8k-lr3.2e-3-r1` | `fine_96e_top8` | 3.2e-3 | 524,288 | 64 | 4 | 1 | 8 | https://beaker.org/ex/01KTT7C0KBTY8TVNC361Z2G3KV | Finished step 30791, 16.143B tokens, avg100M 2.5623, avg250M 2.5629, avg500M 2.5650. W&B `589cgpj0`. Fine Cx4 is bracketed; uses mb8 fallback after mb16 OOM at Cx1 smoke. |
+
+275M Cx2/Cx8 transferred-LR probes:
+
+These were approved after the Cx1/Cx4 curves showed clean LR transfer from the
+baseline 275M optimum region. Cx2 was launched first, then Cx8. The Cx8
+microbatch is `4` so the 96-sequence global batch divides evenly over 8 GPUs.
+
+| Name | Variant | LR | Batch tokens | Batch seqs | GPUs | EP | Microbatch | Beaker experiment | Notes |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |
+| `eg-275m-cx2-eg24e2k-lr5e-4-r1` | `coarse_24e_top2` | 5e-4 | 524,288 | 64 | 2 | 1 | 16 | https://beaker.org/ex/01KTVTB301X3KC47AFF6PMDGWH | Transferred Cx2 sweep; started at launch check. |
+| `eg-275m-cx2-eg24e2k-lr1e-3-r1` | `coarse_24e_top2` | 1e-3 | 524,288 | 64 | 2 | 1 | 16 | https://beaker.org/ex/01KTVTBEG3E629TDE325DPFQK6 | Transferred Cx2 sweep; started at launch check. |
+| `eg-275m-cx2-eg24e2k-lr2e-3-r1` | `coarse_24e_top2` | 2e-3 | 524,288 | 64 | 2 | 1 | 16 | https://beaker.org/ex/01KTVTBRF083397K9V6HM278YC | Transferred Cx2 sweep; started at launch check. |
+| `eg-275m-cx2-eg96e8k-lr5e-4-r1` | `fine_96e_top8` | 5e-4 | 524,288 | 64 | 2 | 1 | 8 | https://beaker.org/ex/01KTVTC4VB90FP20CSF459VSTX | Transferred Cx2 sweep; started at launch check. |
+| `eg-275m-cx2-eg96e8k-lr1e-3-r1` | `fine_96e_top8` | 1e-3 | 524,288 | 64 | 2 | 1 | 8 | https://beaker.org/ex/01KTVTCF42VT40VADJNRQ8DZ3S | Transferred Cx2 sweep; started at launch check. |
+| `eg-275m-cx2-eg96e8k-lr2e-3-r1` | `fine_96e_top8` | 2e-3 | 524,288 | 64 | 2 | 1 | 8 | https://beaker.org/ex/01KTVTCTVEAQ480W38BMGK21C1 | Transferred Cx2 sweep; started at launch check. |
+| `eg-275m-cx8-eg24e2k-lr8e-4-r1` | `coarse_24e_top2` | 8e-4 | 786,432 | 96 | 8 | 1 | 4 | https://beaker.org/ex/01KTVTDHG4W7D77KTMK287N36Y | Finished step 40930, 32.189B tokens, avg100M 2.4990, avg250M 2.5035, avg500M 2.5017. W&B `zu643dvj`. |
+| `eg-275m-cx8-eg24e2k-lr1.6e-3-r1` | `coarse_24e_top2` | 1.6e-3 | 786,432 | 96 | 8 | 1 | 4 | https://beaker.org/ex/01KTVTDXBT5YKA0Z2Q45P2TCNM | Finished step 40930, 32.189B tokens, avg100M 2.4947, avg250M 2.4990, avg500M 2.4973. W&B `ff9vq2dh`. Current best coarse Cx8 point, pending final `3.2e-3`. |
+| `eg-275m-cx8-eg24e2k-lr3.2e-3-r1` | `coarse_24e_top2` | 3.2e-3 | 786,432 | 96 | 8 | 1 | 4 | https://beaker.org/ex/01KTVTE88FV3A9W5SQRYQ3Q4JP | Finished step 40930, 32.189B tokens, avg100M 2.5046, avg250M 2.5092, avg500M 2.5074. W&B `1d8wo3d7`. Coarse Cx8 is bracketed; `1.6e-3` remains best. |
+| `eg-275m-cx8-eg96e8k-lr8e-4-r1` | `fine_96e_top8` | 8e-4 | 786,432 | 96 | 8 | 1 | 4 | https://beaker.org/ex/01KTVTEMFWXR4N9AW58HFDZ31Y | Running at 2026-06-12 status check; W&B `djnuz8yq` had just started, so no useful signal yet. |
+| `eg-275m-cx8-eg96e8k-lr1.6e-3-r1` | `fine_96e_top8` | 1.6e-3 | 786,432 | 96 | 8 | 1 | 4 | https://beaker.org/ex/01KTVTF04AHCR2VP8DCPERSY7D | Transferred Cx8 sweep; queued/created at launch check. |
+| `eg-275m-cx8-eg96e8k-lr3.2e-3-r1` | `fine_96e_top8` | 3.2e-3 | 786,432 | 96 | 8 | 1 | 4 | https://beaker.org/ex/01KTVTFBWY8CPQQNMXBCHFK029 | Transferred Cx8 sweep; queued/created at launch check. |
+
+810M Cx1/Cx4 best-observed baseline LR transfer checks:
+
+These runs test whether the expert-granularity LR transfer observed at 275M
+continues to hold at 810M. They use the best observed trained baseline LRs,
+not a fresh LR sweep: Cx1 `6e-4` and Cx4 `4e-4`. Launches use the canonical
+810M settings from `SETTINGS_AUDIT.md`: EP=1, microbatch=4, 8 GPUs, with
+Cx1 batch 262,144 / 32 seqs and Cx4 batch 524,288 / 64 seqs.
+
+| Name | Variant | Cx | LR | Batch tokens | Batch seqs | GPUs | EP | Microbatch | Beaker experiment | Notes |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |
+| `eg-810m-cx1-eg24e2k-lr6e-4-r1` | `coarse_24e_top2` | 1 | 6e-4 | 262,144 | 32 | 8 | 1 | 4 | https://beaker.org/ex/01KTX8DY64MRW5DCWAJZPQY1YR | Finished successfully by 2026-06-13 status check. W&B `1nqxk9iw`, 13.790B tokens, avg250M `2.4191`; worse than baseline Cx1 `2.4104`. |
+| `eg-810m-cx4-eg24e2k-lr4e-4-r1` | `coarse_24e_top2` | 4 | 4e-4 | 524,288 | 64 | 8 | 1 | 4 | https://beaker.org/ex/01KTXR4J7FN4ERB9BYDKC261F5 | Finished successfully by 2026-06-13 status check. W&B `q50qk891`, 55.158B tokens, avg250M `2.2585`; worse than baseline Cx4 `2.2424`. |
+| `eg-810m-cx1-eg96e8k-lr6e-4-r1` | `fine_96e_top8` | 1 | 6e-4 | 262,144 | 32 | 8 | 1 | 4 | https://beaker.org/ex/01KTXR7563GGMW6FE57TTVACSY | Finished successfully by 2026-06-13 status check. W&B `wjto6qtp`, 13.825B tokens, avg250M `2.3985`; better than baseline Cx1 `2.4104`. |
+| `eg-810m-cx4-eg96e8k-lr4e-4-r1` | `fine_96e_top8` | 4 | 4e-4 | 524,288 | 64 | 8 | 1 | 4 | https://beaker.org/ex/01KTXR9YA2QAR7HB1XS1R0FTBW | Finished successfully by 2026-06-13 status check. W&B `7cbm4c9b`, 55.299B tokens, avg250M `2.2353`; better than baseline Cx4 `2.2424`. |
+
+275M Cx2 `b384k` batch-repair reruns:
+
+These rerun the three comparable 275M Cx2 curves after discovering that the
+original baseline Cx2 used 262,144 tokens / 32 seqs while the first
+expert-granularity Cx2 jobs used 524,288 tokens / 64 seqs. The new canonical
+Cx2 setting is 393,216 tokens / 48 seqs, 2 GPUs, EP=1, microbatch=8.
+Treat the older Cx2 curves as diagnostic until these finish. The first two
+`b384k` attempts were stopped before meaningful training:
+
+- `r1`, LRs `5e-4`, `1e-3`, `2e-3`, Beaker IDs:
+  `01KTWRZERD6B0AMVFFVM9S8NQB`, `01KTWRZTRYS6ZNY7JA0BQ104KF`,
+  `01KTWS072YT07TW1GBWK7GT8FN`, `01KTWS0KBHE36Z442JHESC5ME8`,
+  `01KTWS0YRMJ6YS7A68R5Z9N4KW`, `01KTWS1BRBPCMNYFMMG45J4EN2`,
+  `01KTWS1R4QG212PVE1SDG5ZDKX`, `01KTWS2448JWCTHSQTSEJHEFQM`,
+  `01KTWS2GJFBH1NJZ59JGA8DYZ9`.
+- `r2`, LRs `8e-4`, `1.6e-3`, `3.2e-3`, Beaker IDs:
+  `01KTWSNHBWR13VH3MNMEP3GSQ6`, `01KTWSNW9M0J8PM844036DWT9Z`,
+  `01KTWSP8D5X4922FGAFNT3HFAC`, `01KTWSPM8W068K9R879H1K5H8J`,
+  `01KTWSQ08PYQJ42HF8DPSPKJ1X`, `01KTWSQC03WSA1VZJQK0M1SQF1`,
+  `01KTWSQQG44CKZNMG09VPPZEDD`, `01KTWSR3GJF9TNM12TBX6XG918`,
+  `01KTWSRF3XZ8M981H3JRHAWGBQ`.
+
+The canonical `r3` grid is centered on the fitted 275M Cx2 prediction
+(`~1.75e-3` to `1.8e-3`) using `9e-4`, `1.8e-3`, and `3.6e-3`.
+
+| Name | Variant | LR | Batch tokens | Batch seqs | GPUs | EP | Microbatch | Beaker experiment | Notes |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |
+| `olmoe3-tiny-275m-cx2-b384k-gpu2-ep1mb8-lr9e-4-r3` | baseline A0 | 9e-4 | 393,216 | 48 | 2 | 1 | 8 | https://beaker.org/ex/01KTWSSSBRVT08888H1QA5ZAMA | Finished step 20486, 8.055B tokens, avg100M 2.6613, avg250M 2.6605, avg500M 2.6619. W&B `atxrokcu`. |
+| `olmoe3-tiny-275m-cx2-b384k-gpu2-ep1mb8-lr1.8e-3-r3` | baseline A0 | 1.8e-3 | 393,216 | 48 | 2 | 1 | 8 | https://beaker.org/ex/01KTWST9K76CKHW8PJEJNATKBE | Finished step 20486, 8.055B tokens, avg100M 2.6546, avg250M 2.6541, avg500M 2.6560. Best observed repaired 275M Cx2 point. W&B `lq4zvsx4`. |
+| `olmoe3-tiny-275m-cx2-b384k-gpu2-ep1mb8-lr3.6e-3-r3` | baseline A0 | 3.6e-3 | 393,216 | 48 | 2 | 1 | 8 | https://beaker.org/ex/01KTWSTTHAPYKGXHACBYQ4AH9T | Finished step 20486, 8.055B tokens, avg100M 2.6612, avg250M 2.6610, avg500M 2.6637. W&B `pv6y1aqx`. |
+| `eg-275m-cx2-b384k-eg24e2k-lr9e-4-r3` | `coarse_24e_top2` | 9e-4 | 393,216 | 48 | 2 | 1 | 8 | https://beaker.org/ex/01KTWSV732H19AQCQVNTW3MF86 | Canonical Cx2 batch-repair rerun; queued/created at launch check. |
+| `eg-275m-cx2-b384k-eg24e2k-lr1.8e-3-r3` | `coarse_24e_top2` | 1.8e-3 | 393,216 | 48 | 2 | 1 | 8 | https://beaker.org/ex/01KTWSVGQD9TPX9ERFPXXYESF5 | Canonical Cx2 batch-repair rerun; queued/created at launch check. |
+| `eg-275m-cx2-b384k-eg24e2k-lr3.6e-3-r3` | `coarse_24e_top2` | 3.6e-3 | 393,216 | 48 | 2 | 1 | 8 | https://beaker.org/ex/01KTWSVW0JAJSVFQ1Q9FCS4FQ0 | Canonical Cx2 batch-repair rerun; queued/created at launch check. |
+| `eg-275m-cx2-b384k-eg96e8k-lr9e-4-r3` | `fine_96e_top8` | 9e-4 | 393,216 | 48 | 2 | 1 | 8 | https://beaker.org/ex/01KTWSW8G04HREZK5W7W8FF43Y | Canonical Cx2 batch-repair rerun; queued/created at launch check. |
+| `eg-275m-cx2-b384k-eg96e8k-lr1.8e-3-r3` | `fine_96e_top8` | 1.8e-3 | 393,216 | 48 | 2 | 1 | 8 | https://beaker.org/ex/01KTWSWN0F4QTW6DMYHG0GY1VV | Canonical Cx2 batch-repair rerun; queued/created at launch check. |
+| `eg-275m-cx2-b384k-eg96e8k-lr3.6e-3-r3` | `fine_96e_top8` | 3.6e-3 | 393,216 | 48 | 2 | 1 | 8 | https://beaker.org/ex/01KTWSX298YRHX43R7SA55T9PY | Canonical Cx2 batch-repair rerun; queued/created at launch check. |
+
+mid_480m and 810M Cx2 `b384k` batch-repair reruns:
+
+These extend the smoother Cx2 batch repair to larger baseline sizes. 1.2B Cx2
+is intentionally not launched yet. Treat the older `b512k` Cx2 curves for
+mid_480m and 810M as diagnostic once these finish.
+
+| Name | Model | LR | Batch tokens | Batch seqs | GPUs | EP | Microbatch | Beaker experiment | Notes |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |
+| `m480-cx2-b384k-gpu4-ep1mb4-lr4.5e-4-r1` | `mid_480m` | 4.5e-4 | 393,216 | 48 | 4 | 1 | 4 | https://beaker.org/ex/01KTWV11QM0BKFWXZ8QGPQXHTP | Cx2 repair sweep centered at predicted LR `9e-4`; queued/created at launch check. |
+| `m480-cx2-b384k-gpu4-ep1mb4-lr9e-4-r1` | `mid_480m` | 9e-4 | 393,216 | 48 | 4 | 1 | 4 | https://beaker.org/ex/01KTWV1E704BPEXJK95HPJ22T4 | Cx2 repair sweep centered at predicted LR `9e-4`; queued/created at launch check. |
+| `m480-cx2-b384k-gpu4-ep1mb4-lr1.8e-3-r1` | `mid_480m` | 1.8e-3 | 393,216 | 48 | 4 | 1 | 4 | https://beaker.org/ex/01KTWV1TRD9BQG0JFB5BXYZ2C6 | Cx2 repair sweep centered at predicted LR `9e-4`; queued/created at launch check. |
+| `olmoe3-moe-a0-810m-cx2-b384k-gpu8-ep1mb2-lr2.8e-4-r1` | `810m` | 2.8e-4 | 393,216 | 48 | 8 | 1 | 2 | https://beaker.org/ex/01KTWV28D8KFYH2KJ9835S3C48 | Failed before training on 2026-06-12 with distributed startup/checkpointer error: `RuntimeError: ... gloo/transport/tcp/pair.cc:547] Connection closed by peer` during `Checkpointer.pre_train()`. Treat as infrastructure/startup failure, not a model/LR result. Retried as `r2`. |
+| `olmoe3-moe-a0-810m-cx2-b384k-gpu8-ep1mb2-lr5.6e-4-r1` | `810m` | 5.6e-4 | 393,216 | 48 | 8 | 1 | 2 | https://beaker.org/ex/01KTWV2PB16G6R4JP34CHY9NC3 | Failed before training on 2026-06-12 with the same distributed startup/checkpointer error as the other 810M Cx2 `r1` repair jobs. Treat as infrastructure/startup failure. Retried as `r2`. |
+| `olmoe3-moe-a0-810m-cx2-b384k-gpu8-ep1mb2-lr1.12e-3-r1` | `810m` | 1.12e-3 | 393,216 | 48 | 8 | 1 | 2 | https://beaker.org/ex/01KTWV33CYVNDPZ3FGWSXWYXPA | Failed before training on 2026-06-12 with the same distributed startup/checkpointer error as the other 810M Cx2 `r1` repair jobs. Treat as infrastructure/startup failure. Retried as `r2`. |
+| `m480-cx2-b384k-gpu4-ep1mb4-lr4.5e-4-r2` | `mid_480m` | 4.5e-4 | 393,216 | 48 | 4 | 1 | 4 | https://beaker.org/ex/01KTXRKKTJMXPCR64DMQT2CR41 | Accidental duplicate retry created while relaunching only 810M Cx2 repairs; stopped immediately on 2026-06-12. Ignore. |
+| `m480-cx2-b384k-gpu4-ep1mb4-lr9e-4-r2` | `mid_480m` | 9e-4 | 393,216 | 48 | 4 | 1 | 4 | https://beaker.org/ex/01KTXRKYEBSZY146G0EYDJ4FXD | Accidental duplicate retry created while relaunching only 810M Cx2 repairs; stopped immediately on 2026-06-12. Ignore. |
+| `m480-cx2-b384k-gpu4-ep1mb4-lr1.8e-3-r2` | `mid_480m` | 1.8e-3 | 393,216 | 48 | 4 | 1 | 4 | https://beaker.org/ex/01KTXRMAHNAHEV0SV04BTPJ60F | Accidental duplicate retry created while relaunching only 810M Cx2 repairs; stopped immediately on 2026-06-12. Ignore. |
+| `olmoe3-moe-a0-810m-cx2-b384k-gpu8-ep1mb2-lr2.8e-4-r2` | `810m` | 2.8e-4 | 393,216 | 48 | 8 | 1 | 2 | https://beaker.org/ex/01KTXRMPNEYF37JVNREN6WZV5K | Failed before training on 2026-06-12 because W&B rejected the generated group name: `invalid parameters: 128 limit exceeded for GroupName`. Code fix `07df5ad` shortens W&B groups; retried as `r3`. Ignore for analysis. |
+| `olmoe3-moe-a0-810m-cx2-b384k-gpu8-ep1mb2-lr5.6e-4-r2` | `810m` | 5.6e-4 | 393,216 | 48 | 8 | 1 | 2 | https://beaker.org/ex/01KTXRN76Y3J0TXX9HZN7YNMQX | Failed before training on 2026-06-12 with the same W&B `GroupName` length error as the other `r2` jobs. Code fix `07df5ad` shortens W&B groups; retried as `r3`. Ignore for analysis. |
+| `olmoe3-moe-a0-810m-cx2-b384k-gpu8-ep1mb2-lr1.12e-3-r2` | `810m` | 1.12e-3 | 393,216 | 48 | 8 | 1 | 2 | https://beaker.org/ex/01KTXRNNPV1134T95XAKC2HJWE | Failed before training on 2026-06-12 with the same W&B `GroupName` length error as the other `r2` jobs. Code fix `07df5ad` shortens W&B groups; retried as `r3`. Ignore for analysis. |
+| `olmoe3-moe-a0-810m-cx2-b384k-gpu8-ep1mb2-lr2.8e-4-r3` | `810m` | 2.8e-4 | 393,216 | 48 | 8 | 1 | 2 | https://beaker.org/ex/01KTYEJH9S58TDA837YZANCJ9C | Finished successfully by 2026-06-13 status check. W&B `uh4el1df`, 27.603B tokens, avg250M `2.3333`. |
+| `olmoe3-moe-a0-810m-cx2-b384k-gpu8-ep1mb2-lr5.6e-4-r3` | `810m` | 5.6e-4 | 393,216 | 48 | 8 | 1 | 2 | https://beaker.org/ex/01KTYEJWXR7X0KFBFQ57G9YC9V | Finished successfully by 2026-06-13 status check. W&B `v5puakhq`, 27.603B tokens, avg250M `2.3204`; best observed repaired 810M Cx2 point. |
+| `olmoe3-moe-a0-810m-cx2-b384k-gpu8-ep1mb2-lr1.12e-3-r3` | `810m` | 1.12e-3 | 393,216 | 48 | 8 | 1 | 2 | https://beaker.org/ex/01KTYEK7S5MXJYSJMGB3BNR1HE | Finished successfully by 2026-06-13 status check. W&B `sxivrph5`, 27.603B tokens, avg250M `2.3268`; hot side is worse than `5.6e-4`, so repaired 810M Cx2 is bracketed. |
+
+275M extreme-granularity Cx1 probes:
+
+These diagnostic probes test whether the `fine_96e_top8` improvement continues
+to even higher top-k and smaller per-expert hidden sizes. They use the same Cx1
+LR triplet as the earlier expert-granularity transfer probes. Treat these as
+small probes, not automatic full-ladder variants.
+
+| Name | Variant | LR | Batch tokens | Batch seqs | GPUs | EP | Microbatch | Beaker experiment | Notes |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |
+| `eg-275m-cx1-eg192e16k-lr1e-3-r1` | `extreme_192e_top16` | 1e-3 | 262,144 | 32 | 1 | 1 | 4 | https://beaker.org/ex/01KTVV5B6ZWBR64FACMZH96TMQ | Extreme granularity probe; finalized by 2026-06-12 status check. |
+| `eg-275m-cx1-eg192e16k-lr2e-3-r1` | `extreme_192e_top16` | 2e-3 | 262,144 | 32 | 1 | 1 | 4 | https://beaker.org/ex/01KTVV5QVXKG7D0MJC304SVSDM | Extreme granularity probe; finalized by 2026-06-12 status check. |
+| `eg-275m-cx1-eg192e16k-lr4e-3-r1` | `extreme_192e_top16` | 4e-3 | 262,144 | 32 | 1 | 1 | 4 | https://beaker.org/ex/01KTVV63GS5WFC8VVFYDY24183 | Extreme granularity probe; finalized by 2026-06-12 status check. |
+| `eg-275m-cx1-eg384e32k-lr1e-3-r1` | `ultra_384e_top32` | 1e-3 | 262,144 | 32 | 1 | 1 | 2 | https://beaker.org/ex/01KTVV6EZ981F8YJ8B2M6X1S57 | Ultra granularity probe; finalized by 2026-06-12 status check. |
+| `eg-275m-cx1-eg384e32k-lr2e-3-r1` | `ultra_384e_top32` | 2e-3 | 262,144 | 32 | 1 | 1 | 2 | https://beaker.org/ex/01KTVV6TWVNSJGTMHPWY9JS4Y6 | Ultra granularity probe; running at 2026-06-12 status check. |
+| `eg-275m-cx1-eg384e32k-lr4e-3-r1` | `ultra_384e_top32` | 4e-3 | 262,144 | 32 | 1 | 1 | 2 | https://beaker.org/ex/01KTVV76SNY7XF5AER7ST06F04 | Ultra granularity probe; running at 2026-06-12 status check. |
+
+## 2026-06-11 Total Sparsity Experiment
+
+First-wave variants:
+
+- `sp96e4k`: 96 experts, top-4, `moe_hidden_size=d_model`; exact 275M dry-run
+  count is 278,856,192 active params / 2,069,561,856 total params = 13.47%
+  active/total.
+- `sp192e4k`: 192 experts, top-4, `moe_hidden_size=d_model`; exact 275M dry-run
+  count is 279,667,200 active params / 3,938,935,296 total params = 7.10%
+  active/total.
+
+The first wave intentionally does not include `sp24e4k`, because that is less
+sparse than the baseline and is reserved for a later diagnostic only.
+
+Smoke tests:
+
+| Name | Variant | LR | Batch tokens | Batch seqs | GPUs | EP | Microbatch | Beaker experiment | Notes |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |
+| `sp-smoke-sp96e4k-lr2e-3-r1` | `high_total_96e_top4` | 2e-3 | 262,144 | 32 | 4 | 1 | 4 | https://beaker.org/ex/01KTWFC73099P7Y0TVCRGJSZHZ | Total-sparsity smoke from commit `22aeaab`; finished cleanly at step 308, skipped steps 0, peak reserved memory 55.9 GiB. |
+| `sp-smoke-sp192e4k-lr2e-3-r1` | `huge_total_192e_top4` | 2e-3 | 262,144 | 32 | 4 | 1 | 4 | https://beaker.org/ex/01KTWFCK6QBQ4QH5X3TBKF98MA | Total-sparsity smoke from commit `22aeaab`; finished cleanly at step 310, skipped steps 0, peak reserved memory 79.3 GiB. |
+
+275M Cx1/Cx4 transferred LR grids:
+
+| Name | Variant | Cx | LR | Batch tokens | Batch seqs | GPUs | EP | Microbatch | Beaker experiment | Notes |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |
+| `sp-275m-cx1-sp96e4k-lr1e-3-r1` | `high_total_96e_top4` | 1 | 1e-3 | 262,144 | 32 | 4 | 1 | 4 | https://beaker.org/ex/01KTWGMXVT9N3GSXEBYC2H5KV3 | Finished normally on 2026-06-12 before the sparsity pause. Treat as diagnostic-only for now; do not launch further sparsity work until explicitly resumed. |
+| `sp-275m-cx1-sp96e4k-lr2e-3-r1` | `high_total_96e_top4` | 1 | 2e-3 | 262,144 | 32 | 4 | 1 | 4 | https://beaker.org/ex/01KTWGNAEEZZ71FPN3GPGFRW89 | Stopped intentionally on 2026-06-12 after starting, to pause sparsity work and focus on expert granularity. Ignore unless explicitly resumed. |
+| `sp-275m-cx1-sp96e4k-lr4e-3-r1` | `high_total_96e_top4` | 1 | 4e-3 | 262,144 | 32 | 4 | 1 | 4 | https://beaker.org/ex/01KTWGNPBFPAJWYPQ0Z2VFN4YY | Stopped intentionally on 2026-06-12 before start. Ignore unless explicitly resumed. |
+| `sp-275m-cx4-sp96e4k-lr8e-4-r1` | `high_total_96e_top4` | 4 | 8e-4 | 524,288 | 64 | 4 | 1 | 4 | https://beaker.org/ex/01KTWGP25M12KH4YYA9W0FXMFJ | Stopped intentionally on 2026-06-12 before start. Ignore unless explicitly resumed. |
+| `sp-275m-cx4-sp96e4k-lr1.6e-3-r1` | `high_total_96e_top4` | 4 | 1.6e-3 | 524,288 | 64 | 4 | 1 | 4 | https://beaker.org/ex/01KTWGPDKXH3953BDF61N0G57Q | Stopped intentionally on 2026-06-12 before start. Ignore unless explicitly resumed. |
+| `sp-275m-cx4-sp96e4k-lr3.2e-3-r1` | `high_total_96e_top4` | 4 | 3.2e-3 | 524,288 | 64 | 4 | 1 | 4 | https://beaker.org/ex/01KTWGPSSMJZ5Z002E57BK64RE | Stopped intentionally on 2026-06-12 before start. Ignore unless explicitly resumed. |
+| `sp-275m-cx1-sp192e4k-lr1e-3-r1` | `huge_total_192e_top4` | 1 | 1e-3 | 262,144 | 32 | 4 | 1 | 4 | https://beaker.org/ex/01KTWGQ57J8FW4F95CM27ASC99 | Stopped intentionally on 2026-06-12 before start. Ignore unless explicitly resumed. |
+| `sp-275m-cx1-sp192e4k-lr2e-3-r1` | `huge_total_192e_top4` | 1 | 2e-3 | 262,144 | 32 | 4 | 1 | 4 | https://beaker.org/ex/01KTWGQH2M6JDTXZ2VKNYF7Z0E | Stopped intentionally on 2026-06-12 before start. Ignore unless explicitly resumed. |
+| `sp-275m-cx1-sp192e4k-lr4e-3-r1` | `huge_total_192e_top4` | 1 | 4e-3 | 262,144 | 32 | 4 | 1 | 4 | https://beaker.org/ex/01KTWGQWXG9TZAT8SSZ231TM0M | Stopped intentionally on 2026-06-12 before start. Ignore unless explicitly resumed. |
+| `sp-275m-cx4-sp192e4k-lr8e-4-r1` | `huge_total_192e_top4` | 4 | 8e-4 | 524,288 | 64 | 4 | 1 | 4 | https://beaker.org/ex/01KTWGR9QHSDAS5RCV7NZV5GJ7 | Stopped intentionally on 2026-06-12 before start. Ignore unless explicitly resumed. |
+| `sp-275m-cx4-sp192e4k-lr1.6e-3-r1` | `huge_total_192e_top4` | 4 | 1.6e-3 | 524,288 | 64 | 4 | 1 | 4 | https://beaker.org/ex/01KTWGRN09127CB35E5SGS0B03 | Stopped intentionally on 2026-06-12 before start. Ignore unless explicitly resumed. |
+| `sp-275m-cx4-sp192e4k-lr3.2e-3-r1` | `huge_total_192e_top4` | 4 | 3.2e-3 | 524,288 | 64 | 4 | 1 | 4 | https://beaker.org/ex/01KTWGS0RHZ743VAGKQ9R85JG5 | Stopped intentionally on 2026-06-12 before start. Ignore unless explicitly resumed. |
+
+
+275M Cx1/Cx2 LR-transfer checks resumed on 2026-06-13:
+
+This resumes the total-sparsity LR-transfer evidence set before any larger
+cluster flood. The previously completed `sp-275m-cx1-sp96e4k-lr1e-3-r1` counts
+as the low-LR high-total Cx1 point; the old stopped r1 jobs remain ignored.
+Fresh Cx1 relaunches use `r2`, while the repaired canonical Cx2 `b384k` runs
+start at `r1`.
+
+| Name | Variant | Cx | LR | Batch tokens | Batch seqs | GPUs | EP | Microbatch | Beaker experiment | Notes |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |
+| `sp-275m-cx1-sp96e4k-lr2e-3-r2` | `high_total_96e_top4` | 1 | 2e-3 | 262,144 | 32 | 2 | 1 | 8 | https://beaker.org/ex/01KV1XRZ26YZMGK569RAPN2VVG | Succeeded by 2026-06-14 status check. W&B `lf5r8ido`, 4.036B tokens, avg250M `2.7542`. Earlier failed W&B attempt `4ugxb4jk` reached 0.524B and should be ignored. |
+| `sp-275m-cx1-sp96e4k-lr4e-3-r2` | `high_total_96e_top4` | 1 | 4e-3 | 262,144 | 32 | 2 | 1 | 8 | https://beaker.org/ex/01KV1XSA4VW4HTSM49XBSNKCBW | Succeeded by 2026-06-14 status check. W&B `4kwl9xab`, 4.036B tokens, avg250M `2.7667`. Completes high-total Cx1 grid alongside `lr1e-3-r1` and `lr2e-3-r2`. |
+| `sp-275m-cx1-sp192e4k-lr1e-3-r2` | `huge_total_192e_top4` | 1 | 1e-3 | 262,144 | 32 | 2 | 1 | 8 | https://beaker.org/ex/01KV1XT2440PKB6GFP7FHEP0S7 | Succeeded by 2026-06-14 status check. W&B `il8tvmpo`, 4.052B tokens, avg250M `2.7515`. |
+| `sp-275m-cx1-sp192e4k-lr2e-3-r2` | `huge_total_192e_top4` | 1 | 2e-3 | 262,144 | 32 | 2 | 1 | 8 | https://beaker.org/ex/01KV1XTDSPHDGQV7ZYYXSTTT7K | Succeeded by 2026-06-14 status check. W&B `oe5sszg7`, 4.052B tokens, avg250M `2.7486`; current best huge-total Cx1 point, with `lr4e-3` still running. |
+| `sp-275m-cx1-sp192e4k-lr4e-3-r2` | `huge_total_192e_top4` | 1 | 4e-3 | 262,144 | 32 | 2 | 1 | 8 | https://beaker.org/ex/01KV1XTT5DNDJA724MQW7YY9S3 | Running at 2026-06-14 status check. W&B `xvpsp4nl`, 1.999B tokens, live CE summary `3.1560`. |
+| `sp-275m-cx2-sp96e4k-lr9e-4-r1` | `high_total_96e_top4` | 2 | 9e-4 | 393,216 | 48 | 2 | 1 | 8 | https://beaker.org/ex/01KV1XVM1K7X6X61EHN1H0S3NG | Running at 2026-06-14 status check. W&B `juoie4su`, 2.519B tokens, live CE summary `3.0804`. Repaired canonical `b384k` Cx2 LR-transfer check. |
+| `sp-275m-cx2-sp96e4k-lr1.8e-3-r1` | `high_total_96e_top4` | 2 | 1.8e-3 | 393,216 | 48 | 2 | 1 | 8 | https://beaker.org/ex/01KV1XW04NPE3HV7Q2D8SC8SHH | Running at 2026-06-14 status check. W&B `tajjw92i`, 0.714B tokens, live CE summary `3.6386`. Repaired canonical `b384k` Cx2 LR-transfer check. |
+| `sp-275m-cx2-sp96e4k-lr3.6e-3-r1` | `high_total_96e_top4` | 2 | 3.6e-3 | 393,216 | 48 | 2 | 1 | 8 | https://beaker.org/ex/01KV1XWBC6TZW3NZ1MTKG97541 | Running at 2026-06-14 status check. W&B `xf9ao51p`, 0.786B tokens, live CE summary `3.3910`. Repaired canonical `b384k` Cx2 LR-transfer check. |
+| `sp-275m-cx2-sp192e4k-lr9e-4-r1` | `huge_total_192e_top4` | 2 | 9e-4 | 393,216 | 48 | 2 | 1 | 8 | https://beaker.org/ex/01KV1XWMSSDZKRZDZ7JBWGXBP3 | Pending at 2026-06-14 status check. Repaired canonical `b384k` Cx2 LR-transfer check. |
+| `sp-275m-cx2-sp192e4k-lr1.8e-3-r1` | `huge_total_192e_top4` | 2 | 1.8e-3 | 393,216 | 48 | 2 | 1 | 8 | https://beaker.org/ex/01KV1XWYR2V2CYPRF78R51STBC | Pending at 2026-06-14 status check. Repaired canonical `b384k` Cx2 LR-transfer check. |
+| `sp-275m-cx2-sp192e4k-lr3.6e-3-r1` | `huge_total_192e_top4` | 2 | 3.6e-3 | 393,216 | 48 | 2 | 1 | 8 | https://beaker.org/ex/01KV1XX9ASC00EDZ7XYSKR5H8F | Pending at 2026-06-14 status check. Repaired canonical `b384k` Cx2 LR-transfer check. |
+
+275M Cx4/Cx8 sparsity LR-transfer checks resumed on 2026-06-14:
+
+These complete the initial 275M total-sparsity LR verification grid across
+Cx1/Cx2/Cx4/Cx8. They use the same current compute-efficient systems policy as
+the Cx1/Cx2 relaunches: `gpu2-ep1mb8`, with systems settings kept in tags rather
+than run names. The launchers were updated afterward to use the committed
+`moe_a0_ladder.py` entrypoint going forward; these submitted jobs used the
+tracked compatibility entrypoint from commit `fabfbc7`.
+
+| Name | Variant | Cx | LR | Batch tokens | Batch seqs | GPUs | EP | Microbatch | Beaker experiment | Notes |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |
+| `sp-275m-cx4-sp96e4k-lr8e-4-r1` | `high_total_96e_top4` | 4 | 8e-4 | 524,288 | 64 | 2 | 1 | 8 | https://beaker.org/ex/01KV2B3VJD8KDZ4HKZNXKSMHX7 | Queued on 2026-06-14 as `b512k-gpu2-ep1mb8`; low LR bracket around the 275M Cx4 baseline-best center. Pending at 2026-06-14 status check. |
+| `sp-275m-cx4-sp96e4k-lr1.6e-3-r1` | `high_total_96e_top4` | 4 | 1.6e-3 | 524,288 | 64 | 2 | 1 | 8 | https://beaker.org/ex/01KV2B46SQHXX2ZMSFRJZZ6JAW | Queued on 2026-06-14 as `b512k-gpu2-ep1mb8`; centered on the 275M Cx4 baseline-best LR. Pending at 2026-06-14 status check. |
+| `sp-275m-cx4-sp96e4k-lr3.2e-3-r1` | `high_total_96e_top4` | 4 | 3.2e-3 | 524,288 | 64 | 2 | 1 | 8 | https://beaker.org/ex/01KV2B4J3PKZD6SNX027NYPWPZ | Queued on 2026-06-14 as `b512k-gpu2-ep1mb8`; high LR bracket around the 275M Cx4 baseline-best center. Pending at 2026-06-14 status check. |
+| `sp-275m-cx4-sp192e4k-lr8e-4-r1` | `huge_total_192e_top4` | 4 | 8e-4 | 524,288 | 64 | 2 | 1 | 8 | https://beaker.org/ex/01KV2B4Y0MRJYPWFE16Z72HVP9 | Queued on 2026-06-14 as `b512k-gpu2-ep1mb8`; low LR bracket around the 275M Cx4 baseline-best center. Pending at 2026-06-14 status check. |
+| `sp-275m-cx4-sp192e4k-lr1.6e-3-r1` | `huge_total_192e_top4` | 4 | 1.6e-3 | 524,288 | 64 | 2 | 1 | 8 | https://beaker.org/ex/01KV2B59K1JMDQ9WMBQ1GYJ5QX | Queued on 2026-06-14 as `b512k-gpu2-ep1mb8`; centered on the 275M Cx4 baseline-best LR. Pending at 2026-06-14 status check. |
+| `sp-275m-cx4-sp192e4k-lr3.2e-3-r1` | `huge_total_192e_top4` | 4 | 3.2e-3 | 524,288 | 64 | 2 | 1 | 8 | https://beaker.org/ex/01KV2B5NRNE74GEY4PSZZY2D21 | Queued on 2026-06-14 as `b512k-gpu2-ep1mb8`; high LR bracket around the 275M Cx4 baseline-best center. Pending at 2026-06-14 status check. |
+| `sp-275m-cx8-sp96e4k-lr8e-4-r1` | `high_total_96e_top4` | 8 | 8e-4 | 786,432 | 96 | 2 | 1 | 8 | https://beaker.org/ex/01KV2B6D04XAHH2WDA16CE5BZY | Queued on 2026-06-14 as `b768k-gpu2-ep1mb8`; low LR bracket around the 275M Cx8 baseline-best center. Pending at 2026-06-14 status check. |
+| `sp-275m-cx8-sp96e4k-lr1.6e-3-r1` | `high_total_96e_top4` | 8 | 1.6e-3 | 786,432 | 96 | 2 | 1 | 8 | https://beaker.org/ex/01KV2B6R1WK12RJK9PB32ADC2F | Queued on 2026-06-14 as `b768k-gpu2-ep1mb8`; centered on the 275M Cx8 baseline-best LR. Pending at 2026-06-14 status check. |
+| `sp-275m-cx8-sp96e4k-lr3.2e-3-r1` | `high_total_96e_top4` | 8 | 3.2e-3 | 786,432 | 96 | 2 | 1 | 8 | https://beaker.org/ex/01KV2B72630DRVYDDWZV8KVJE8 | Queued on 2026-06-14 as `b768k-gpu2-ep1mb8`; high LR bracket around the 275M Cx8 baseline-best center. Pending at 2026-06-14 status check. |
+| `sp-275m-cx8-sp192e4k-lr8e-4-r1` | `huge_total_192e_top4` | 8 | 8e-4 | 786,432 | 96 | 2 | 1 | 8 | https://beaker.org/ex/01KV2B7DQ28K6ZKTTVAPGKQSC9 | Queued on 2026-06-14 as `b768k-gpu2-ep1mb8`; low LR bracket around the 275M Cx8 baseline-best center. Pending at 2026-06-14 status check. |
+| `sp-275m-cx8-sp192e4k-lr1.6e-3-r1` | `huge_total_192e_top4` | 8 | 1.6e-3 | 786,432 | 96 | 2 | 1 | 8 | https://beaker.org/ex/01KV2B7SVC1SEGHT2SQ9F0N9MF | Queued on 2026-06-14 as `b768k-gpu2-ep1mb8`; centered on the 275M Cx8 baseline-best LR. Pending at 2026-06-14 status check. |
+| `sp-275m-cx8-sp192e4k-lr3.2e-3-r1` | `huge_total_192e_top4` | 8 | 3.2e-3 | 786,432 | 96 | 2 | 1 | 8 | https://beaker.org/ex/01KV2B858VQ1W3CS7W9TYHAW0K | Queued on 2026-06-14 as `b768k-gpu2-ep1mb8`; high LR bracket around the 275M Cx8 baseline-best center. Pending at 2026-06-14 status check. |
+
+480M promoted sparsity points queued on 2026-06-17:
+
+These use the smoothed LR-transfer rule from the completed 275M sparsity fits:
+estimate the sparsity multiplier from fitted 275M optima, anchor it to the
+trusted/best-observed 480M baseline LR for each Cx, and round to clean launch
+LRs. Launched on Titan/original workspace with torch compilation enabled via
+`--compile`.
+
+| Name | Variant | Cx | LR | Batch tokens | Batch seqs | GPUs | EP | Microbatch | Beaker experiment | Notes |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |
+| `sp-480m-cx1-sp96e4k-lr1e-3-r1` | `high_total_96e_top4` | 1 | 1e-3 | 262,144 | 32 | 4 | 1 | 8 | https://beaker.org/ex/01KVBBJ4G374KH0N4CBT9NTVGC | Promoted 480M single point; shifted from 275M fitted sparsity multiplier and anchored to 480M baseline best. |
+| `sp-480m-cx2-sp96e4k-lr8e-4-r1` | `high_total_96e_top4` | 2 | 8e-4 | 393,216 | 48 | 4 | 1 | 4 | https://beaker.org/ex/01KVBBJFM780945FPFQNMY2GXW | Promoted 480M single point; shifted from 275M fitted sparsity multiplier and anchored to 480M baseline best. |
+| `sp-480m-cx4-sp96e4k-lr7e-4-r1` | `high_total_96e_top4` | 4 | 7e-4 | 524,288 | 64 | 4 | 1 | 8 | https://beaker.org/ex/01KVBBJW1K1STV1DJAS2G3F6NF | Promoted 480M single point; shifted from 275M fitted sparsity multiplier and anchored to 480M baseline best. |
+| `sp-480m-cx8-sp96e4k-lr7e-4-r1` | `high_total_96e_top4` | 8 | 7e-4 | 786,432 | 96 | 8 | 1 | 4 | https://beaker.org/ex/01KVBBK7C63XDYRTQX7G8Z0X1Z | Promoted 480M single point; shifted from 275M fitted sparsity multiplier and anchored to 480M baseline best. |
+| `sp-480m-cx1-sp192e4k-lr8e-4-r1` | `huge_total_192e_top4` | 1 | 8e-4 | 262,144 | 32 | 4 | 1 | 8 | https://beaker.org/ex/01KVBBKK4RH7KV0M5A55FDD160 | Failed on 2026-06-17 during dry-run backward with CUDA OOM at `mb8`; replaced by `r2` with `mb4`. |
+| `sp-480m-cx1-sp192e4k-lr8e-4-r2` | `huge_total_192e_top4` | 1 | 8e-4 | 262,144 | 32 | 4 | 1 | 4 | https://beaker.org/ex/01KVBCDG93ADEPNQPKDEN6QV3R | Replacement for OOMed `r1`; same LR/global batch, lower per-GPU microbatch so grad accumulation is `32 / (4 GPUs * mb4) = 2`. |
+| `sp-480m-cx2-sp192e4k-lr6e-4-r1` | `huge_total_192e_top4` | 2 | 6e-4 | 393,216 | 48 | 4 | 1 | 4 | https://beaker.org/ex/01KVBBKZ0S4CV16WZ7XSCK2SEW | Promoted 480M single point; uses smoothed LR shift rather than overreacting to the unusually cold 275M Cx2 fit. |
+| `sp-480m-cx4-sp192e4k-lr6e-4-r1` | `huge_total_192e_top4` | 4 | 6e-4 | 524,288 | 64 | 4 | 1 | 8 | https://beaker.org/ex/01KVBBMATGRB22ZHSJ49A3GYH2 | Failed on 2026-06-17 during dry-run backward with CUDA OOM at `mb8`; replaced by `r2` with `mb4`. |
+| `sp-480m-cx4-sp192e4k-lr6e-4-r2` | `huge_total_192e_top4` | 4 | 6e-4 | 524,288 | 64 | 4 | 1 | 4 | https://beaker.org/ex/01KVBC1XJ7GNVVA4XE2JHB6QGS | Replacement for OOMed `r1`; same LR/global batch, lower per-GPU microbatch so grad accumulation is `64 / (4 GPUs * mb4) = 4`. |
+| `sp-480m-cx8-sp192e4k-lr6e-4-r1` | `huge_total_192e_top4` | 8 | 6e-4 | 786,432 | 96 | 8 | 1 | 4 | https://beaker.org/ex/01KVBBMQ9C8DEGWQXVQVMWJWAE | Promoted 480M single point; shifted from 275M fitted sparsity multiplier and anchored to 480M baseline best. |
+
+275M shared-expert no-shared matched-active LR checks queued on 2026-06-14:
+
+These are the first shared-expert ablation probes. They use
+`--shared-expert-config=no_shared_matched_active`, which removes the shared
+expert and sets routed expert hidden size to `9/8 * d_model` so the active MoE
+hidden ratio remains `4.5d`, matching the baseline active allocation. LR grids
+are centered on current 275M baseline best observed/fitted centers: Cx1 around
+`2e-3`, repaired Cx2 around `1.8e-3`.
+
+| Name | Variant | Cx | LR | Batch tokens | Batch seqs | GPUs | EP | Microbatch | Beaker experiment | Notes |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |
+| `se-275m-cx1-se0m9-lr1e-3-r1` | `no_shared_matched_active` | 1 | 1e-3 | 262,144 | 32 | 2 | 1 | 8 | https://beaker.org/ex/01KV2E5MNF7PADNAATH0Y8SPZH | Queued on 2026-06-14 as `b256k-gpu2-ep1mb8`; low LR bracket around the 275M Cx1 baseline-best center. Queued retry canceled before start on 2026-06-15 while deferring shared-expert work. |
+| `se-275m-cx1-se0m9-lr2e-3-r1` | `no_shared_matched_active` | 1 | 2e-3 | 262,144 | 32 | 2 | 1 | 8 | https://beaker.org/ex/01KV2E5ZPEQTPZCV1ZP25TZ8KK | Queued on 2026-06-14 as `b256k-gpu2-ep1mb8`; centered on the 275M Cx1 baseline best observed LR. Queued retry canceled before start on 2026-06-15 while deferring shared-expert work. |
+| `se-275m-cx1-se0m9-lr4e-3-r1` | `no_shared_matched_active` | 1 | 4e-3 | 262,144 | 32 | 2 | 1 | 8 | https://beaker.org/ex/01KV2E6BF8RWNCFZFMR1DNXKEH | Queued on 2026-06-14 as `b256k-gpu2-ep1mb8`; high LR bracket around the 275M Cx1 baseline-best center. Queued retry canceled before start on 2026-06-15 while deferring shared-expert work. |
+| `se-275m-cx2-se0m9-lr9e-4-r1` | `no_shared_matched_active` | 2 | 9e-4 | 393,216 | 48 | 2 | 1 | 8 | https://beaker.org/ex/01KV2E6Q6NW9T6HAP7SFQSX6MD | Queued on 2026-06-14 as repaired `b384k-gpu2-ep1mb8`; low LR bracket around the 275M Cx2 baseline-best center. Queued retry canceled before start on 2026-06-15 while deferring shared-expert work. |
+| `se-275m-cx2-se0m9-lr1.8e-3-r1` | `no_shared_matched_active` | 2 | 1.8e-3 | 393,216 | 48 | 2 | 1 | 8 | https://beaker.org/ex/01KV2E732HD94M1NB65QWKG4D3 | Queued on 2026-06-14 as repaired `b384k-gpu2-ep1mb8`; centered on the 275M Cx2 baseline best observed LR. Queued retry canceled before start on 2026-06-15 while deferring shared-expert work. |
+| `se-275m-cx2-se0m9-lr3.6e-3-r1` | `no_shared_matched_active` | 2 | 3.6e-3 | 393,216 | 48 | 2 | 1 | 8 | https://beaker.org/ex/01KV2E7F2WJPBFVPK2VXTZAG01 | Queued on 2026-06-14 as repaired `b384k-gpu2-ep1mb8`; high LR bracket around the 275M Cx2 baseline-best center. Queued retry canceled before start on 2026-06-15 while deferring shared-expert work. |
+
+## 2026-06-12 Stable-Name Launch Bundle
+
+This bundle uses semantic, resume-stable names: model/variant, Cx, batch policy
+when optimizer-relevant, LR, and attempt id. Node count, GPU count, EP, and
+microbatch are recorded in W&B/Beaker tags/config and in this ledger, not in the
+new run names. The Beaker runtime still uses the committed compatibility script
+`src/scripts/train/jacobm_olmoe_ladder/tiny_275m.py`; local docs/scripts may
+refer to the preferred `moe_a0_ladder.py` name after that file is committed.
+
+An initial launch attempt used the local-only `moe_a0_ladder.py` path before it
+was present in the remote commit used by Beaker. These experiments were stopped
+immediately and should be ignored: `01KTZ0WKC2KM7YMBFJRG3SEJ3H`,
+`01KTZ0WZD0EGG8JBAQTW8RWTX6`, `01KTZ0XBA98Z2HSVMWP4355PNA`,
+`01KTZ0Y0GDH21QDKNK61Q7DZDT`, `01KTZ0YC8NEE1GEFMDX9Y4DAZ9`,
+`01KTZ0YR3VBQ8PN4SBQ34DDEMV`, `01KTZ0Z26Q4QK3HC0RXM9ZFYJ0`,
+`01KTZ0ZE3018K63YY9XDXZJG16`, `01KTZ0ZRJGZFF8YG0N8B2T9GDS`,
+`01KTZ104BRE6X8HKNQR42BZFXE`, `01KTZ10FXNJ555R9S2EDENDRGG`.
+
+1.2B Cx2 `b384k` baseline:
+
+| Name | Model | LR | Batch tokens | Batch seqs | GPUs | EP | Microbatch | Beaker experiment | Notes |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |
+| `olmoe3-moe-a0-1p2b-cx2-b384k-lr1.5e-4-r1` | `1p2b` | 1.5e-4 | 393,216 | 48 | 8 | 1 | 2 | https://beaker.org/ex/01KTZ15R9Q87WDSPN6740YQX06 | Running at 2026-06-13 status check. W&B `dtd8qeiv`, 15.639B tokens, live CE summary `2.5166`. Stable run name; systems settings in tags. |
+| `olmoe3-moe-a0-1p2b-cx2-b384k-lr3e-4-r1` | `1p2b` | 3e-4 | 393,216 | 48 | 8 | 1 | 2 | https://beaker.org/ex/01KTZ163MP8B3VFGGY7YWHSFB6 | First job failed before training on 2026-06-13 with `ModuleNotFoundError: olmo_core` on a B200 node after Gantry setup; experiment now has a fresh pending retry. Do not treat as model/LR signal. |
+| `olmoe3-moe-a0-1p2b-cx2-b384k-lr6e-4-r1` | `1p2b` | 6e-4 | 393,216 | 48 | 8 | 1 | 2 | https://beaker.org/ex/01KTZ16ETE4R5XZYHKSB8SXDXM | Running at 2026-06-13 status check. W&B `54pt8zj7`, 14.950B tokens, live CE summary `2.3018`. Stable run name; systems settings in tags. |
+
+480M expert-granularity full ladder at predicted LRs:
+
+| Name | Variant | Cx | LR | Batch tokens | Batch seqs | GPUs | EP | Microbatch | Beaker experiment | Notes |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |
+| `eg-480m-cx1-eg24e2k-lr9e-4-r1` | `coarse_24e_top2` | 1 | 9e-4 | 262,144 | 32 | 4 | 1 | 8 | https://beaker.org/ex/01KTZ17462R909ZKQB3X6SXDH8 | Finished by 2026-06-13 status check. W&B `rcgxm5qv`, 7.601B tokens, avg250M `2.5817`. Runtime argument uses `--model-size=mid_480m` for compatibility; name/docs use canonical `480m`. |
+| `eg-480m-cx2-eg24e2k-lr1e-3-r1` | `coarse_24e_top2` | 2 | 1e-3 | 393,216 | 48 | 4 | 1 | 4 | https://beaker.org/ex/01KTZ17FZN0J2F45HRYPP8R0R2 | Finished by 2026-06-13 status check. W&B `ksfrmhct`, 15.201B tokens, avg250M `2.4767`. Predicted-LR full-ladder run with repaired `b384k` Cx2. Runtime argument uses `--model-size=mid_480m` for compatibility. |
+| `eg-480m-cx4-eg24e2k-lr8e-4-r1` | `coarse_24e_top2` | 4 | 8e-4 | 524,288 | 64 | 4 | 1 | 8 | https://beaker.org/ex/01KTZ17W6A94BW60A8DS1C9CXA | Running at 2026-06-13 status check. W&B `wq8gib5l`, 18.315B tokens, live CE summary `2.5611`. Runtime argument uses `--model-size=mid_480m` for compatibility. |
+| `eg-480m-cx8-eg24e2k-lr8e-4-r1` | `coarse_24e_top2` | 8 | 8e-4 | 786,432 | 96 | 8 | 1 | 4 | https://beaker.org/ex/01KTZ187DS1DCVR3F67HTMPGWF | Running at 2026-06-13 status check. W&B `epx7o7ty`, 29.148B tokens, live CE summary `2.4715`. Runtime argument uses `--model-size=mid_480m` for compatibility. |
+| `eg-480m-cx1-eg96e8k-lr1e-3-r1` | `fine_96e_top8` | 1 | 1e-3 | 262,144 | 32 | 4 | 1 | 8 | https://beaker.org/ex/01KTZ18KQDJ02P9B7C074Q5S86 | Finished by 2026-06-13 status check. W&B `nvndg2tr`, 7.623B tokens, avg250M `2.5546`. Runtime argument uses `--model-size=mid_480m` for compatibility. |
+| `eg-480m-cx2-eg96e8k-lr1e-3-r1` | `fine_96e_top8` | 2 | 1e-3 | 393,216 | 48 | 4 | 1 | 4 | https://beaker.org/ex/01KTZ18Z8EK00WCE2G3AVCFCNM | Running at 2026-06-13 status check. W&B `fzk2affn`, 7.058B tokens, live CE summary `2.7996`. Predicted-LR full-ladder run with repaired `b384k` Cx2. Runtime argument uses `--model-size=mid_480m` for compatibility. |
+| `eg-480m-cx4-eg96e8k-lr8e-4-r1` | `fine_96e_top8` | 4 | 8e-4 | 524,288 | 64 | 4 | 1 | 8 | https://beaker.org/ex/01KTZ19B5WKD9EEMGWYRH3HQ7B | Running at 2026-06-13 status check. W&B `ezokso90`, 7.711B tokens, live CE summary `2.6682`. Runtime argument uses `--model-size=mid_480m` for compatibility. |
+| `eg-480m-cx8-eg96e8k-lr8e-4-r1` | `fine_96e_top8` | 8 | 8e-4 | 786,432 | 96 | 8 | 1 | 4 | https://beaker.org/ex/01KTZ19QVD4G1MJN612YENYA7T | Running at 2026-06-13 status check. W&B `8676ezla`, 10.789B tokens, live CE summary `2.7340`. Runtime argument uses `--model-size=mid_480m` for compatibility. |
+
+810M and 1.2B expert-granularity baseline-best LR promotions:
+
+These are single-point promoted checks for the two main expert-granularity variants. They use the best observed baseline LR at the same size/Cx because the fitted EG architecture LR multipliers are effectively 1. Systems settings follow the repaired canonical policy: Cx2 uses `b384k`; systems settings are tags/config, not name components.
+
+| Name | Variant | Model | Cx | LR | Batch tokens | Batch seqs | GPUs | EP | Microbatch | Beaker experiment | Notes |
+| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |
+| `eg-810m-cx2-eg24e2k-lr5.6e-4-r1` | `coarse_24e_top2` | `810m` | 2 | 5.6e-4 | 393,216 | 48 | 8 | 1 | 6 | https://beaker.org/ex/01KV1XP9TRQ9DRCW8YD8Y6V1AD | Requeued on 2026-06-14 with `mb6` after stopping old queued `mb2` experiment `01KV12PKBDP6AKDJKP8CPA4R6P`. Uses repaired canonical `b384k` Cx2 and baseline best observed 810M Cx2 LR. |
+| `eg-810m-cx2-eg96e8k-lr5.6e-4-r1` | `fine_96e_top8` | `810m` | 2 | 5.6e-4 | 393,216 | 48 | 8 | 1 | 6 | https://beaker.org/ex/01KV1XQ9SQ4X2HCPRB8BGMRW3Q | Requeued on 2026-06-14 with `mb6` after stopping old queued `mb2` experiment `01KV12XM4AQ2JPT8BCEKYZWSXS`. Uses repaired canonical `b384k` Cx2 and baseline best observed 810M Cx2 LR. |
+| `eg-810m-cx8-eg24e2k-lr4e-4-r1` | `coarse_24e_top2` | `810m` | 8 | 4e-4 | 786,432 | 96 | 8 | 1 | 6 | https://beaker.org/ex/01KV1XPMWWFHH6BT5SVEPG107G | Requeued on 2026-06-14 with `mb6` after stopping old queued `mb4` experiment `01KV12XYVN3MPGN7MMBAGWAV2N`. Uses baseline best observed 810M Cx8 LR. |
+| `eg-810m-cx8-eg96e8k-lr4e-4-r1` | `fine_96e_top8` | `810m` | 8 | 4e-4 | 786,432 | 96 | 8 | 1 | 6 | https://beaker.org/ex/01KV1XQMPM62PXBRPGX1MYD059 | Requeued on 2026-06-14 with `mb6` after stopping old queued `mb4` experiment `01KV12YBA3E82W81TTP2TBGGJ7`. Uses baseline best observed 810M Cx8 LR. |
+| `eg-1p2b-cx1-eg24e2k-lr4e-4-r1` | `coarse_24e_top2` | `1p2b` | 1 | 4e-4 | 262,144 | 32 | 8 | 1 | 4 | https://beaker.org/ex/01KV1XPYR4NCYB9E4GA1YX4HQ0 | Requeued on 2026-06-14 with `mb4` after stopping old queued `mb2` experiment `01KV12YPMFZA0QA35RGNRVSAC8`. Uses baseline best observed 1.2B Cx1 LR. |
+| `eg-1p2b-cx1-eg96e8k-lr4e-4-r1` | `fine_96e_top8` | `1p2b` | 1 | 4e-4 | 262,144 | 32 | 8 | 1 | 4 | https://beaker.org/ex/01KV1XQZZNEANQ47WX1TZ1YSHE | Requeued on 2026-06-14 with `mb4` after stopping old queued `mb2` experiment `01KV12Z1ZNT7TR9814FRT7MR9W`. Uses baseline best observed 1.2B Cx1 LR. |
+| `eg-1p2b-cx4-eg24e2k-lr4e-4-r1` | `coarse_24e_top2` | `1p2b` | 4 | 4e-4 | 524,288 | 64 | 8 | 1 | 4 | https://beaker.org/ex/01KV299VFSQ8879TGTB56T8PW1 | Queued on 2026-06-14 with one-node `gpu8-ep1mb4`. Uses baseline best observed/center 1.2B Cx4 LR. |
+| `eg-1p2b-cx4-eg96e8k-lr4e-4-r1` | `fine_96e_top8` | `1p2b` | 4 | 4e-4 | 524,288 | 64 | 8 | 1 | 4 | https://beaker.org/ex/01KV29A65FTV4YHJACBMZB6TVG | Queued on 2026-06-14 with one-node `gpu8-ep1mb4`. Uses baseline best observed/center 1.2B Cx4 LR. |
+
+
+## 2026-06-15 Holmes B300 Low-Priority Launches
+
+These launches use `ai2/holmes`, workspace `ai2/holmes-testing`, low priority,
+preemptible scheduling, image `tianhuat/olmo-core-torch212-2404-cu130`,
+`--no-python`, and `PYTHONPATH=/gantry-runtime/src:/workspace/OLMo-core/src`.
+Run names remain semantic and omit systems-only settings.
+
+Shared expert no-shared matched-active full 275M ladder:
+
+| Name | Variant | Cx | LR | Batch tokens | Batch seqs | GPUs | EP | Microbatch | Beaker experiment | Notes |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |
+| `se-275m-cx1-se0m9-lr1e-3-r2` | `no_shared_matched_active` | 1 | 1e-3 | 262,144 | 32 | 2 | 1 | 8 | https://beaker.org/ex/01KV4S1A2VJ8W6A36JZJ30MRQC | First Cx1 low LR point; created before the GitHub timeout and kept live. |
+| `se-275m-cx1-se0m9-lr2e-3-r2` | `no_shared_matched_active` | 1 | 2e-3 | 262,144 | 32 | 2 | 1 | 8 | https://beaker.org/ex/01KV4S1SE6Y9WG241RFHW13FM6 | Centered Cx1 point; created before the GitHub timeout and kept live. |
+| `se-275m-cx1-se0m9-lr4e-3-r2` | `no_shared_matched_active` | 1 | 4e-3 | 262,144 | 32 | 2 | 1 | 8 | https://beaker.org/ex/01KV4VYBME3W6GA0ZA7GRTE1AE | High Cx1 LR point. |
+| `se-275m-cx2-se0m9-lr9e-4-r2` | `no_shared_matched_active` | 2 | 9e-4 | 393,216 | 48 | 2 | 1 | 8 | https://beaker.org/ex/01KV4VYPWP0WHX21GYM3ZF9FNW | Low repaired Cx2 point. |
+| `se-275m-cx2-se0m9-lr1.8e-3-r2` | `no_shared_matched_active` | 2 | 1.8e-3 | 393,216 | 48 | 2 | 1 | 8 | https://beaker.org/ex/01KV4VZ2A7057V3BS39DZRYT1S | Centered repaired Cx2 point. |
+| `se-275m-cx2-se0m9-lr3.6e-3-r2` | `no_shared_matched_active` | 2 | 3.6e-3 | 393,216 | 48 | 2 | 1 | 8 | https://beaker.org/ex/01KV4VZE4SVATSS6K9Y773GHV8 | High repaired Cx2 point. |
+| `se-275m-cx4-se0m9-lr8e-4-r2` | `no_shared_matched_active` | 4 | 8e-4 | 524,288 | 64 | 2 | 1 | 8 | https://beaker.org/ex/01KV4VZT5Y8BJY5FR2MC1MYJM0 | Low Cx4 point. |
+| `se-275m-cx4-se0m9-lr1.6e-3-r2` | `no_shared_matched_active` | 4 | 1.6e-3 | 524,288 | 64 | 2 | 1 | 8 | https://beaker.org/ex/01KV4W05X15D8AQZEM1MQ5GXNN | Centered Cx4 point. |
+| `se-275m-cx4-se0m9-lr3.2e-3-r2` | `no_shared_matched_active` | 4 | 3.2e-3 | 524,288 | 64 | 2 | 1 | 8 | https://beaker.org/ex/01KV4W0HWFHAWQCFHWVEK49F2F | High Cx4 point. |
+| `se-275m-cx8-se0m9-lr8e-4-r2` | `no_shared_matched_active` | 8 | 8e-4 | 786,432 | 96 | 4 | 1 | 8 | https://beaker.org/ex/01KV4W0X8APJ53CE4CDTCBTMJD | Low Cx8 point. |
+| `se-275m-cx8-se0m9-lr1.6e-3-r2` | `no_shared_matched_active` | 8 | 1.6e-3 | 786,432 | 96 | 4 | 1 | 8 | https://beaker.org/ex/01KV4W19KKRJRY1PM5D6DZJFCJ | Centered Cx8 point. |
+| `se-275m-cx8-se0m9-lr3.2e-3-r2` | `no_shared_matched_active` | 8 | 3.2e-3 | 786,432 | 96 | 4 | 1 | 8 | https://beaker.org/ex/01KV4W1KD8DW2JGM23NYZPGDAX | High Cx8 point. |
+
+Total sparsity `sp192e4k` colder repaired Cx2 probes:
+
+| Name | Variant | Cx | LR | Batch tokens | Batch seqs | GPUs | EP | Microbatch | Beaker experiment | Notes |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |
+| `sp-275m-cx2-sp192e4k-lr2.25e-4-r2` | `huge_total_192e_top4` | 2 | 2.25e-4 | 393,216 | 48 | 2 | 1 | 8 | https://beaker.org/ex/01KV4XGKGSJR5DZ0JPAFPTTEH1 | Compile-off relaunch is running; first compiled Holmes attempt `01KV4WT73YXVN6TXCVQ9Q08P20` failed during TorchInductor dry-run backward. Colder LR probe after the first Cx2 grid failed to bracket cleanly. |
+| `sp-275m-cx2-sp192e4k-lr4.5e-4-r2` | `huge_total_192e_top4` | 2 | 4.5e-4 | 393,216 | 48 | 2 | 1 | 8 | https://beaker.org/ex/01KV4XGWHF7RPS67AR49Y6ZMVQ | Compile-off relaunch is running; first compiled Holmes attempt `01KV4WTJ3RASB9ZDA4ZW873RBM` failed during TorchInductor dry-run backward. Colder LR probe after the first Cx2 grid failed to bracket cleanly. |
+| `sp-275m-cx2-sp192e4k-lr6e-4-r2` | `huge_total_192e_top4` | 2 | 6e-4 | 393,216 | 48 | 2 | 1 | 8 | https://beaker.org/ex/01KV4XH6DQW29CVTF5J0R8QN90 | Compile-off relaunch is running; first compiled Holmes attempt `01KV4WTYAGKJ3ARRQ6X1MNZYNE` failed during TorchInductor dry-run backward. Colder LR probe after the first Cx2 grid failed to bracket cleanly. |
+
+1.2B expert-granularity Cx8 promotions:
+
+| Name | Variant | Model | Cx | LR | Batch tokens | Batch seqs | GPUs | EP | Microbatch | Beaker experiment | Notes |
+| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |
+| `eg-1p2b-cx8-eg24e2k-lr4e-4-r1` | `coarse_24e_top2` | `1p2b` | 8 | 4e-4 | 786,432 | 96 | 8 | 1 | 4 | https://beaker.org/ex/01KV4XHHY9GSZQ308RJXBZ61RM | Compile-off relaunch is running; first compiled Holmes attempt `01KV4WW43MVJZ12ZNSHZ1E8T9M` failed during TorchInductor dry-run backward. Uses the 1.2B Cx8 baseline best observed LR and canonical one-node `gpu8-ep1mb4` setting. |
+| `eg-1p2b-cx8-eg96e8k-lr4e-4-r1` | `fine_96e_top8` | `1p2b` | 8 | 4e-4 | 786,432 | 96 | 8 | 1 | 4 | https://beaker.org/ex/01KV4XHXP1E2S8QM01YCDPWZ2K | Compile-off relaunch is running; first compiled Holmes attempt `01KV4WWG4BTFH6XZN1NHN71A7Y` failed during TorchInductor dry-run backward. Uses the 1.2B Cx8 baseline best observed LR and canonical one-node `gpu8-ep1mb4` setting. |
+
+Dense-layer scheduling 275M full ladder:
+
+These jobs test baseline shared-expert MoE geometry with different numbers of
+early dense layers. They were launched on 2026-06-15 with `--no-compile` after
+TorchInductor dry-run failures on Holmes/B300 compiled jobs. LR grids are
+centered on the current 275M baseline best observed settings: Cx1 around
+`2e-3`, Cx2 around `1.8e-3`, and Cx4/Cx8 around `1.6e-3`. Cx1/Cx2/Cx4 use
+2 GPUs with `mb8`; Cx8 uses 4 GPUs with `mb8`.
+
+| Name | Variant | Cx | LR | Batch tokens | Batch seqs | GPUs | EP | Microbatch | Beaker experiment | Notes |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |
+| `ds-275m-cx1-ds0-sh-lr1e-3-r1` | `dense0_shared` | 1 | 1e-3 | 262,144 | 32 | 2 | 1 | 8 | https://beaker.org/ex/01KV4Y1PEJ6DDH97CKF8RE1TB0 | Low Cx1 LR point; queued/ready at launch status sweep. |
+| `ds-275m-cx1-ds0-sh-lr2e-3-r1` | `dense0_shared` | 1 | 2e-3 | 262,144 | 32 | 2 | 1 | 8 | https://beaker.org/ex/01KV4Y21HSRAZP1QZPFPFS4PMG | Centered Cx1 LR point; queued/ready at launch status sweep. |
+| `ds-275m-cx1-ds0-sh-lr4e-3-r1` | `dense0_shared` | 1 | 4e-3 | 262,144 | 32 | 2 | 1 | 8 | https://beaker.org/ex/01KV4Y2DPM77KHXD71WMVT1DQ7 | High Cx1 LR point; queued/ready at launch status sweep. |
+| `ds-275m-cx2-ds0-sh-lr9e-4-r1` | `dense0_shared` | 2 | 9e-4 | 393,216 | 48 | 2 | 1 | 8 | https://beaker.org/ex/01KV4Y2SXNE1XVP4SFVZ0ZBKTP | Low repaired Cx2 LR point; queued/ready at launch status sweep. |
+| `ds-275m-cx2-ds0-sh-lr1.8e-3-r1` | `dense0_shared` | 2 | 1.8e-3 | 393,216 | 48 | 2 | 1 | 8 | https://beaker.org/ex/01KV4Y34QW7DA1SRS3GYJE4XS6 | Centered repaired Cx2 LR point; queued/ready at launch status sweep. |
+| `ds-275m-cx2-ds0-sh-lr3.6e-3-r1` | `dense0_shared` | 2 | 3.6e-3 | 393,216 | 48 | 2 | 1 | 8 | https://beaker.org/ex/01KV4Y3H3RE6RV1VWXMT3W6CAW | High repaired Cx2 LR point; queued/ready at launch status sweep. |
+| `ds-275m-cx4-ds0-sh-lr8e-4-r1` | `dense0_shared` | 4 | 8e-4 | 524,288 | 64 | 2 | 1 | 8 | https://beaker.org/ex/01KV4Y3X786SVGDT4W5A08Z3EZ | Low Cx4 LR point; queued/ready at launch status sweep. |
+| `ds-275m-cx4-ds0-sh-lr1.6e-3-r1` | `dense0_shared` | 4 | 1.6e-3 | 524,288 | 64 | 2 | 1 | 8 | https://beaker.org/ex/01KV4Y48ZP5YGE41G2CSF009S5 | Centered Cx4 LR point; queued/ready at launch status sweep. |
+| `ds-275m-cx4-ds0-sh-lr3.2e-3-r1` | `dense0_shared` | 4 | 3.2e-3 | 524,288 | 64 | 2 | 1 | 8 | https://beaker.org/ex/01KV4Y4M9ZQNZBZY83M5EJGNXV | High Cx4 LR point; queued/ready at launch status sweep. |
+| `ds-275m-cx8-ds0-sh-lr8e-4-r1` | `dense0_shared` | 8 | 8e-4 | 786,432 | 96 | 4 | 1 | 8 | https://beaker.org/ex/01KV4Y4ZYWG8Q1FSKT1TBB1DWE | Low Cx8 LR point; queued/ready at launch status sweep. |
+| `ds-275m-cx8-ds0-sh-lr1.6e-3-r1` | `dense0_shared` | 8 | 1.6e-3 | 786,432 | 96 | 4 | 1 | 8 | https://beaker.org/ex/01KV4Y5AKVA9Z8DVAMKVZ99VM7 | Centered Cx8 LR point; queued/ready at launch status sweep. |
+| `ds-275m-cx8-ds0-sh-lr3.2e-3-r1` | `dense0_shared` | 8 | 3.2e-3 | 786,432 | 96 | 4 | 1 | 8 | https://beaker.org/ex/01KV4Y5NQK9H0EWYXHK7929JYN | High Cx8 LR point; queued/ready at launch status sweep. |
+| `ds-275m-cx1-ds2-sh-lr1e-3-r1` | `dense2_shared` | 1 | 1e-3 | 262,144 | 32 | 2 | 1 | 8 | https://beaker.org/ex/01KV4Y61NZSQXB6ZT3GE6HZNVV | Low Cx1 LR point; queued/ready at launch status sweep. |
+| `ds-275m-cx1-ds2-sh-lr2e-3-r1` | `dense2_shared` | 1 | 2e-3 | 262,144 | 32 | 2 | 1 | 8 | https://beaker.org/ex/01KV4Y6EHR069XE2B27SF8X57M | Centered Cx1 LR point; queued/ready at launch status sweep. |
+| `ds-275m-cx1-ds2-sh-lr4e-3-r1` | `dense2_shared` | 1 | 4e-3 | 262,144 | 32 | 2 | 1 | 8 | https://beaker.org/ex/01KV4Y6SH495P38DS006SXJSD0 | High Cx1 LR point; queued/ready at launch status sweep. |
+| `ds-275m-cx2-ds2-sh-lr9e-4-r1` | `dense2_shared` | 2 | 9e-4 | 393,216 | 48 | 2 | 1 | 8 | https://beaker.org/ex/01KV4Y7572MZJRK73GX75M9SA2 | Low repaired Cx2 LR point; queued/ready at launch status sweep. |
+| `ds-275m-cx2-ds2-sh-lr1.8e-3-r1` | `dense2_shared` | 2 | 1.8e-3 | 393,216 | 48 | 2 | 1 | 8 | https://beaker.org/ex/01KV4Y7HJYE1M76JNEB2S9TGCQ | Centered repaired Cx2 LR point; queued/ready at launch status sweep. |
+| `ds-275m-cx2-ds2-sh-lr3.6e-3-r1` | `dense2_shared` | 2 | 3.6e-3 | 393,216 | 48 | 2 | 1 | 8 | https://beaker.org/ex/01KV4Y7XHH7M0B093XKKKNXMTD | High repaired Cx2 LR point; queued/ready at launch status sweep. |
+| `ds-275m-cx4-ds2-sh-lr8e-4-r1` | `dense2_shared` | 4 | 8e-4 | 524,288 | 64 | 2 | 1 | 8 | https://beaker.org/ex/01KV4Y89CK7ANNQ2GSM7V0TNQ7 | Low Cx4 LR point; queued at launch status sweep. |
+| `ds-275m-cx4-ds2-sh-lr1.6e-3-r1` | `dense2_shared` | 4 | 1.6e-3 | 524,288 | 64 | 2 | 1 | 8 | https://beaker.org/ex/01KV4Y8KFCNV116NX5PF2EWMCX | Centered Cx4 LR point; queued at launch status sweep. |
+| `ds-275m-cx4-ds2-sh-lr3.2e-3-r1` | `dense2_shared` | 4 | 3.2e-3 | 524,288 | 64 | 2 | 1 | 8 | https://beaker.org/ex/01KV4Y8YPVRBA9Z2EQAMG18KAV | High Cx4 LR point; queued at launch status sweep. |
+| `ds-275m-cx8-ds2-sh-lr8e-4-r1` | `dense2_shared` | 8 | 8e-4 | 786,432 | 96 | 4 | 1 | 8 | https://beaker.org/ex/01KV4Y9A5WVZQ0TP3H2W1Z7XQE | Low Cx8 LR point; queued at launch status sweep. |
+| `ds-275m-cx8-ds2-sh-lr1.6e-3-r1` | `dense2_shared` | 8 | 1.6e-3 | 786,432 | 96 | 4 | 1 | 8 | https://beaker.org/ex/01KV4Y9NWCFM7W68XAP8X96DPY | Centered Cx8 LR point; queued at launch status sweep. |
+| `ds-275m-cx8-ds2-sh-lr3.2e-3-r1` | `dense2_shared` | 8 | 3.2e-3 | 786,432 | 96 | 4 | 1 | 8 | https://beaker.org/ex/01KV4YA1YPHX0MNJJPJX7EXV2P | High Cx8 LR point; queued at launch status sweep. |
+| `ds-275m-cx1-ds4-sh-lr1e-3-r1` | `dense4_shared` | 1 | 1e-3 | 262,144 | 32 | 2 | 1 | 8 | https://beaker.org/ex/01KV4YADSKN7S4HWZ1TVARACQ4 | Low Cx1 LR point; queued at launch status sweep. |
+| `ds-275m-cx1-ds4-sh-lr2e-3-r1` | `dense4_shared` | 1 | 2e-3 | 262,144 | 32 | 2 | 1 | 8 | https://beaker.org/ex/01KV4YASSZBX5P7HVHMJQBBQ1K | Centered Cx1 LR point; queued at launch status sweep. |
+| `ds-275m-cx1-ds4-sh-lr4e-3-r1` | `dense4_shared` | 1 | 4e-3 | 262,144 | 32 | 2 | 1 | 8 | https://beaker.org/ex/01KV4YB5CE4B31YSCDV0K3WNRR | High Cx1 LR point; queued at launch status sweep. |
+| `ds-275m-cx2-ds4-sh-lr9e-4-r1` | `dense4_shared` | 2 | 9e-4 | 393,216 | 48 | 2 | 1 | 8 | https://beaker.org/ex/01KV4YBHMJTNCP0SM3YK08EZ4K | Low repaired Cx2 LR point; queued at launch status sweep. |
+| `ds-275m-cx2-ds4-sh-lr1.8e-3-r1` | `dense4_shared` | 2 | 1.8e-3 | 393,216 | 48 | 2 | 1 | 8 | https://beaker.org/ex/01KV4YBXPAE5M8J21NTRKRBSRZ | Centered repaired Cx2 LR point; queued at launch status sweep. |
+| `ds-275m-cx2-ds4-sh-lr3.6e-3-r1` | `dense4_shared` | 2 | 3.6e-3 | 393,216 | 48 | 2 | 1 | 8 | https://beaker.org/ex/01KV4YC900HRN7ZBNFT5N78KQG | High repaired Cx2 LR point; queued at launch status sweep. |
+| `ds-275m-cx4-ds4-sh-lr8e-4-r1` | `dense4_shared` | 4 | 8e-4 | 524,288 | 64 | 2 | 1 | 8 | https://beaker.org/ex/01KV4YCN2PTK9M89HJGEKSPNBJ | Low Cx4 LR point; queued at launch status sweep. |
+| `ds-275m-cx4-ds4-sh-lr1.6e-3-r1` | `dense4_shared` | 4 | 1.6e-3 | 524,288 | 64 | 2 | 1 | 8 | https://beaker.org/ex/01KV4YD2P9FPNE426Q55PHEB0D | Centered Cx4 LR point; queued at launch status sweep. |
+| `ds-275m-cx4-ds4-sh-lr3.2e-3-r1` | `dense4_shared` | 4 | 3.2e-3 | 524,288 | 64 | 2 | 1 | 8 | https://beaker.org/ex/01KV4YDDW3D4BDVEQDCPA82D6A | High Cx4 LR point; queued at launch status sweep. |
+| `ds-275m-cx8-ds4-sh-lr8e-4-r1` | `dense4_shared` | 8 | 8e-4 | 786,432 | 96 | 4 | 1 | 8 | https://beaker.org/ex/01KV4YDRDXA3DWNKS46NRZQ21C | Low Cx8 LR point; queued at launch status sweep. |
+| `ds-275m-cx8-ds4-sh-lr1.6e-3-r1` | `dense4_shared` | 8 | 1.6e-3 | 786,432 | 96 | 4 | 1 | 8 | https://beaker.org/ex/01KV4YE44K6ZZ4W95C28TQ9M5P | Centered Cx8 LR point; queued at launch status sweep. |
+| `ds-275m-cx8-ds4-sh-lr3.2e-3-r1` | `dense4_shared` | 8 | 3.2e-3 | 786,432 | 96 | 4 | 1 | 8 | https://beaker.org/ex/01KV4YEFSFN2VRRWKRW9X8PWMW | High Cx8 LR point; queued at launch status sweep. |
+
+## 2026-06-15 Titan Compile-On Reroute From Holmes
+
+After Holmes/B300 jobs on the CUDA 13 image showed TorchInductor backward failures
+with compile-on, and very slow throughput with `--no-compile`, the expensive
+jobs were moved back to the known-good Titan path. These replacements use
+`ai2/titan`, workspace `ai2/OLMo-3-moe-experiments`, image
+`tianhuat/olmo-core-torch211-2404-cu128`, Gantry-managed Python, and torch
+compile enabled. The 275M dense Cx1/Cx2 Holmes compile-off jobs were left alive
+because they are small enough to finish overnight; compile should not materially
+change the training-loss comparison, aside from normal kernel-level numerical
+noise, but it has a large throughput impact.
+
+1.2B reroutes:
+
+| Name | Canceled Holmes experiment | Titan replacement | Notes |
+| --- | --- | --- | --- |
+| `olmoe3-moe-a0-1p2b-cx2-b384k-lr1.2e-3-r1` | https://beaker.org/ex/01KV4S0G40B8VGFZXNHPEZXP6D | https://beaker.org/ex/01KV4ZH073A7T1VYKV30HCPKB6 | Holmes run had already finalized failed after repeated auto-resume attempts; Titan replacement is compile-on. |
+| `eg-1p2b-cx8-eg24e2k-lr4e-4-r1` | https://beaker.org/ex/01KV4XHHY9GSZQ308RJXBZ61RM | https://beaker.org/ex/01KV4ZJCSV6NFW52ENF8T7DNPH | Holmes compile-off run canceled; Titan replacement is compile-on. |
+| `eg-1p2b-cx8-eg96e8k-lr4e-4-r1` | https://beaker.org/ex/01KV4XHXP1E2S8QM01YCDPWZ2K | https://beaker.org/ex/01KV4ZJRYRHYF4SMV965SZGWTE | Holmes compile-off run canceled; Titan replacement is compile-on. |
+
+Dense-schedule Cx4/Cx8 reroutes:
+
+| Name | Canceled Holmes experiment | Titan replacement |
+| --- | --- | --- |
+| `ds-275m-cx4-ds0-sh-lr8e-4-r1` | https://beaker.org/ex/01KV4Y3X786SVGDT4W5A08Z3EZ | https://beaker.org/ex/01KV4ZKJH33EH0CJK5M17X0VDT |
+| `ds-275m-cx4-ds0-sh-lr1.6e-3-r1` | https://beaker.org/ex/01KV4Y48ZP5YGE41G2CSF009S5 | https://beaker.org/ex/01KV4ZKZFJH2ZYYD77HPZ65DBP |
+| `ds-275m-cx4-ds0-sh-lr3.2e-3-r1` | https://beaker.org/ex/01KV4Y4M9ZQNZBZY83M5EJGNXV | https://beaker.org/ex/01KV4ZMACPFM2N8D4Y4TPGG7MN |
+| `ds-275m-cx8-ds0-sh-lr8e-4-r1` | https://beaker.org/ex/01KV4Y4ZYWG8Q1FSKT1TBB1DWE | https://beaker.org/ex/01KV4ZMP17CSGYVNDY3RS4NPG7 |
+| `ds-275m-cx8-ds0-sh-lr1.6e-3-r1` | https://beaker.org/ex/01KV4Y5AKVA9Z8DVAMKVZ99VM7 | https://beaker.org/ex/01KV4ZN2FK9R17YY57ED785E4N |
+| `ds-275m-cx8-ds0-sh-lr3.2e-3-r1` | https://beaker.org/ex/01KV4Y5NQK9H0EWYXHK7929JYN | https://beaker.org/ex/01KV4ZNDVC78PK6CM8X8JAKJBZ |
+| `ds-275m-cx4-ds2-sh-lr8e-4-r1` | https://beaker.org/ex/01KV4Y89CK7ANNQ2GSM7V0TNQ7 | https://beaker.org/ex/01KV4ZNT2JCKR4Y5J27QQX897T |
+| `ds-275m-cx4-ds2-sh-lr1.6e-3-r1` | https://beaker.org/ex/01KV4Y8KFCNV116NX5PF2EWMCX | https://beaker.org/ex/01KV4ZP5H7A4SD26S7DBA1S63Y |
+| `ds-275m-cx4-ds2-sh-lr3.2e-3-r1` | https://beaker.org/ex/01KV4Y8YPVRBA9Z2EQAMG18KAV | https://beaker.org/ex/01KV4ZPHPHD728WDG8KH0K0DJM |
+| `ds-275m-cx8-ds2-sh-lr8e-4-r1` | https://beaker.org/ex/01KV4Y9A5WVZQ0TP3H2W1Z7XQE | https://beaker.org/ex/01KV4ZPXPZ92ZAZJKB35ZV911T |
+| `ds-275m-cx8-ds2-sh-lr1.6e-3-r1` | https://beaker.org/ex/01KV4Y9NWCFM7W68XAP8X96DPY | https://beaker.org/ex/01KV4ZQ8TT6EFGYCMBZVKWB948 |
+| `ds-275m-cx8-ds2-sh-lr3.2e-3-r1` | https://beaker.org/ex/01KV4YA1YPHX0MNJJPJX7EXV2P | https://beaker.org/ex/01KV4ZQMYM262S4HBWA30H32F4 |
+| `ds-275m-cx4-ds4-sh-lr8e-4-r1` | https://beaker.org/ex/01KV4YCN2PTK9M89HJGEKSPNBJ | https://beaker.org/ex/01KV4ZR0P5P8RMFN05270PGEA6 |
+| `ds-275m-cx4-ds4-sh-lr1.6e-3-r1` | https://beaker.org/ex/01KV4YD2P9FPNE426Q55PHEB0D | https://beaker.org/ex/01KV4ZRCAXBEC0677NXHYK8AM1 |
+| `ds-275m-cx4-ds4-sh-lr3.2e-3-r1` | https://beaker.org/ex/01KV4YDDW3D4BDVEQDCPA82D6A | https://beaker.org/ex/01KV4ZRRP14CRDQR5DN668RD1W |
+| `ds-275m-cx8-ds4-sh-lr8e-4-r1` | https://beaker.org/ex/01KV4YDRDXA3DWNKS46NRZQ21C | https://beaker.org/ex/01KV4ZS4W0WS9XRZHNJ4WXDKJQ |
+| `ds-275m-cx8-ds4-sh-lr1.6e-3-r1` | https://beaker.org/ex/01KV4YE44K6ZZ4W95C28TQ9M5P | https://beaker.org/ex/01KV4ZSFWZFGFW5FA3BP6EEWYA |
+| `ds-275m-cx8-ds4-sh-lr3.2e-3-r1` | https://beaker.org/ex/01KV4YEFSFN2VRRWKRW9X8PWMW | https://beaker.org/ex/01KV4ZSW494V171PW9XX2197EK |
+
+## 2026-06-15 Shared-Expert No-Shared Promoted Holmes Runs
+
+Launched the active-matched no-shared shared-expert ablation after the 275M
+Cx1/Cx2/Cx4/Cx8 LR-transfer ladders finished and broadly confirmed baseline LR
+transfer. These jobs intentionally use Holmes/B300 low-priority preemptible
+capacity with torch compilation enabled. Every job is single-node and capped at
+8 GPUs because Holmes InfiniBand is unhealthy; `1p2b Cx8` is intentionally held
+out for now.
+
+Common settings:
+
+```text
+cluster = ai2/holmes
+workspace = ai2/holmes-testing
+image = tianhuat/olmo-core-torch212-2404-cu130
+priority = low
+preemptible = true
+--shared-expert-config=no_shared_matched_active
+--compile
+--no-python
+PYTHONPATH=/gantry-runtime/src:/workspace/OLMo-core/src
+```
+
+| Name | Model | Cx | LR | Batch tokens | GBS seq | GPUs | EP | MB | Beaker | Notes |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |
+| `se-480m-cx1-se0m9-lr1.2e-3-r1` | 480M | 1 | 1.2e-3 | 262,144 | 32 | 4 | 1 | 8 | https://beaker.org/ex/01KV6973XM7G19ZPA1NS7Y1GNK | Baseline best-observed LR; Holmes compile-on. |
+| `se-480m-cx2-se0m9-lr9e-4-r1` | 480M | 2 | 9e-4 | 393,216 | 48 | 4 | 1 | 4 | https://beaker.org/ex/01KV69N19B2G4B5VCH375PW7AT | Legal microbatch relaunch after initial `mb8` failed divisibility (`01KV697F0TCYCCJNX0VQCJAXAE`). |
+| `se-480m-cx4-se0m9-lr8e-4-r1` | 480M | 4 | 8e-4 | 524,288 | 64 | 4 | 1 | 8 | https://beaker.org/ex/01KV697TS4XZ3DC834CDMZ7G49 | Baseline best-observed LR; Holmes compile-on. |
+| `se-480m-cx8-se0m9-lr8e-4-r1` | 480M | 8 | 8e-4 | 786,432 | 96 | 8 | 1 | 4 | https://beaker.org/ex/01KV6986KXTDCGEV6P7QT8QRRS | Baseline best-observed LR; Holmes compile-on. |
+| `se-810m-cx1-se0m9-lr6e-4-r1` | 810M | 1 | 6e-4 | 262,144 | 32 | 8 | 1 | 4 | https://beaker.org/ex/01KV698JMNYGCGVMVWSG9ZYKG5 | Baseline best-observed LR; Holmes compile-on. |
+| `se-810m-cx2-se0m9-lr5.6e-4-r1` | 810M | 2 | 5.6e-4 | 393,216 | 48 | 8 | 1 | 2 | https://beaker.org/ex/01KV69NCK5KQPSSVEET8GKZ833 | Legal microbatch relaunch after initial `mb4` failed divisibility (`01KV698ZE9BBNTE7Z3B43Q82MX`). |
+| `se-810m-cx4-se0m9-lr4e-4-r1` | 810M | 4 | 4e-4 | 524,288 | 64 | 8 | 1 | 4 | https://beaker.org/ex/01KV699AA6XVSNJ33WTJPDR9JT | Baseline best-observed LR; Holmes compile-on. |
+| `se-810m-cx8-se0m9-lr4e-4-r1` | 810M | 8 | 4e-4 | 786,432 | 96 | 8 | 1 | 4 | https://beaker.org/ex/01KV699NQMH6B3ZR5SXQKVBGPF | Baseline best-observed LR; 8-GPU cap rather than old >8-GPU plan. |
+| `se-1p2b-cx1-se0m9-lr4e-4-r1` | 1.2B | 1 | 4e-4 | 262,144 | 32 | 8 | 1 | 2 | https://beaker.org/ex/01KV69A1ZGD6SZH4A7TT3F7C54 | Baseline best-observed LR; Holmes compile-on. |
+| `se-1p2b-cx2-se0m9-lr6e-4-r1` | 1.2B | 2 | 6e-4 | 393,216 | 48 | 8 | 1 | 2 | https://beaker.org/ex/01KV69ADE3VQ7JPXSEZ00KK4S8 | Baseline best-observed LR; Holmes compile-on. |
+| `se-1p2b-cx4-se0m9-lr3e-4-r1` | 1.2B | 4 | 3e-4 | 524,288 | 64 | 8 | 1 | 2 | https://beaker.org/ex/01KV69ASNJF9D05MM7KDBHKPH7 | Baseline best-observed LR; Holmes compile-on. |
+
+
+
+## 2026-06-15 Qwen3-Like 275M Geometry Ladder
+
+Implemented and launched the dedicated Qwen3-like geometry lane from commit
+`ffd8810e` using `experiments/qwen3_like/qwen3_like_ladder.py`. Both smoke tests
+were launched first on Holmes low-priority/preemptible with torch compilation on;
+`q3td128e8k` reached training, and `q3am128e8k` reached active training steps
+before the full grid was queued.
+
+Common settings:
+
+```text
+cluster = ai2/holmes
+workspace = ai2/holmes-testing
+image = tianhuat/olmo-core-torch212-2404-cu130
+priority = low
+preemptible = true
+--model-size=275m
+--compile
+--no-python
+PYTHONPATH=/gantry-runtime/src:/workspace/OLMo-core/src
+```
+
+Smoke tests:
+
+| Name | Variant | Cx | LR | Batch tokens | GBS seq | GPUs | EP | MB | Beaker | Notes |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |
+| `q3-smoke-q3am128e8k-lr2e-3-r1` | `active_matched` | 0.02 | 2e-3 | 262,144 | 32 | 2 | 1 | 8 | https://beaker.org/ex/01KV6R4Z8ADQP70ZVNZE5RMSPF | Reached training steps before full queue launch. |
+| `q3-smoke-q3td128e8k-lr2e-3-r1` | `true_3d_depth_matched` | 0.02 | 2e-3 | 262,144 | 32 | 2 | 1 | 8 | https://beaker.org/ex/01KV6R5AXD5HP21TPS5VBYRMAF | Reached training before full queue launch. |
+
+Full 275M LR grid:
+
+| Name | Variant | Cx | LR | Batch tokens | GBS seq | GPUs | EP | MB | Beaker | Notes |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |
+| `q3-275m-cx1-q3am128e8k-lr1e-3-r1` | `active_matched` | 1 | 1e-3 | 262,144 | 32 | 2 | 1 | 8 | https://beaker.org/ex/01KV6RMBYP05EPB71BCG64WV5J | Baseline-centered LR grid. |
+| `q3-275m-cx1-q3am128e8k-lr2e-3-r1` | `active_matched` | 1 | 2e-3 | 262,144 | 32 | 2 | 1 | 8 | https://beaker.org/ex/01KV6RMS0N53D1VZCBB9R6JG0T | Baseline-centered LR grid. |
+| `q3-275m-cx1-q3am128e8k-lr4e-3-r1` | `active_matched` | 1 | 4e-3 | 262,144 | 32 | 2 | 1 | 8 | https://beaker.org/ex/01KV6RN4JS2HANRBAX8Z41EB8Q | Baseline-centered LR grid. |
+| `q3-275m-cx2-q3am128e8k-lr9e-4-r1` | `active_matched` | 2 | 9e-4 | 393,216 | 48 | 2 | 1 | 8 | https://beaker.org/ex/01KV6RNG802VM2J0HH70MBSY7W | Repaired b384k batch. |
+| `q3-275m-cx2-q3am128e8k-lr1.8e-3-r1` | `active_matched` | 2 | 1.8e-3 | 393,216 | 48 | 2 | 1 | 8 | https://beaker.org/ex/01KV6RNVR1Q44NKSSMY1ZD2J2T | Repaired b384k batch. |
+| `q3-275m-cx2-q3am128e8k-lr3.6e-3-r1` | `active_matched` | 2 | 3.6e-3 | 393,216 | 48 | 2 | 1 | 8 | https://beaker.org/ex/01KV6RP8FGPDWMK9QCANHQNRQX | Repaired b384k batch. |
+| `q3-275m-cx4-q3am128e8k-lr8e-4-r1` | `active_matched` | 4 | 8e-4 | 524,288 | 64 | 2 | 1 | 8 | https://beaker.org/ex/01KV6RPPAG49RDBG9H7HK0657P | Baseline-centered LR grid. |
+| `q3-275m-cx4-q3am128e8k-lr1.6e-3-r1` | `active_matched` | 4 | 1.6e-3 | 524,288 | 64 | 2 | 1 | 8 | https://beaker.org/ex/01KV6RQ316ECRHW85A24Y6EWX7 | Baseline-centered LR grid. |
+| `q3-275m-cx4-q3am128e8k-lr3.2e-3-r1` | `active_matched` | 4 | 3.2e-3 | 524,288 | 64 | 2 | 1 | 8 | https://beaker.org/ex/01KV6RQEPEVWZ77BBVYKTHDA40 | Baseline-centered LR grid. |
+| `q3-275m-cx8-q3am128e8k-lr8e-4-r1` | `active_matched` | 8 | 8e-4 | 786,432 | 96 | 4 | 1 | 8 | https://beaker.org/ex/01KV6RQTG0Y3R2QCETC3PZRS5V | Baseline-centered LR grid. |
+| `q3-275m-cx8-q3am128e8k-lr1.6e-3-r1` | `active_matched` | 8 | 1.6e-3 | 786,432 | 96 | 4 | 1 | 8 | https://beaker.org/ex/01KV6RR7EKF1PEHD6RZGT1PJW3 | Baseline-centered LR grid. |
+| `q3-275m-cx8-q3am128e8k-lr3.2e-3-r1` | `active_matched` | 8 | 3.2e-3 | 786,432 | 96 | 4 | 1 | 8 | https://beaker.org/ex/01KV6RRKMSA7A9S2XWJX3BZP6J | Baseline-centered LR grid. |
+| `q3-275m-cx1-q3td128e8k-lr1e-3-r1` | `true_3d_depth_matched` | 1 | 1e-3 | 262,144 | 32 | 2 | 1 | 8 | https://beaker.org/ex/01KV6RS0SNE0DGCS9FZKRMPVK1 | Baseline-centered LR grid. |
+| `q3-275m-cx1-q3td128e8k-lr2e-3-r1` | `true_3d_depth_matched` | 1 | 2e-3 | 262,144 | 32 | 2 | 1 | 8 | https://beaker.org/ex/01KV6RSCPRRXPWBA75ZYTM0K4Z | Baseline-centered LR grid. |
+| `q3-275m-cx1-q3td128e8k-lr4e-3-r1` | `true_3d_depth_matched` | 1 | 4e-3 | 262,144 | 32 | 2 | 1 | 8 | https://beaker.org/ex/01KV6RSREYKWXKV2ZTR7KRK3R6 | Baseline-centered LR grid. |
+| `q3-275m-cx2-q3td128e8k-lr9e-4-r1` | `true_3d_depth_matched` | 2 | 9e-4 | 393,216 | 48 | 2 | 1 | 8 | https://beaker.org/ex/01KV6RT54YM8Z83MVEFCQ9DWMF | Repaired b384k batch. |
+| `q3-275m-cx2-q3td128e8k-lr1.8e-3-r1` | `true_3d_depth_matched` | 2 | 1.8e-3 | 393,216 | 48 | 2 | 1 | 8 | https://beaker.org/ex/01KV6RTJVQGMHH0Z869ARDACS8 | Repaired b384k batch. |
+| `q3-275m-cx2-q3td128e8k-lr3.6e-3-r1` | `true_3d_depth_matched` | 2 | 3.6e-3 | 393,216 | 48 | 2 | 1 | 8 | https://beaker.org/ex/01KV6RTZZ758F5W6S7MFH637CK | Repaired b384k batch. |
+| `q3-275m-cx4-q3td128e8k-lr8e-4-r1` | `true_3d_depth_matched` | 4 | 8e-4 | 524,288 | 64 | 2 | 1 | 8 | https://beaker.org/ex/01KV6RVBEDK4VKXEVP76T3Z36W | Baseline-centered LR grid. |
+| `q3-275m-cx4-q3td128e8k-lr1.6e-3-r1` | `true_3d_depth_matched` | 4 | 1.6e-3 | 524,288 | 64 | 2 | 1 | 8 | https://beaker.org/ex/01KV6RVQ417KSG7TVRYT9JNKZN | Baseline-centered LR grid. |
+| `q3-275m-cx4-q3td128e8k-lr3.2e-3-r1` | `true_3d_depth_matched` | 4 | 3.2e-3 | 524,288 | 64 | 2 | 1 | 8 | https://beaker.org/ex/01KV6RW2YYJ7ET11CR9BYG6ZBH | Baseline-centered LR grid. |
+| `q3-275m-cx8-q3td128e8k-lr8e-4-r1` | `true_3d_depth_matched` | 8 | 8e-4 | 786,432 | 96 | 4 | 1 | 8 | https://beaker.org/ex/01KV6RWF257HD2QCVHF5MX6TXH | Baseline-centered LR grid. |
+| `q3-275m-cx8-q3td128e8k-lr1.6e-3-r1` | `true_3d_depth_matched` | 8 | 1.6e-3 | 786,432 | 96 | 4 | 1 | 8 | https://beaker.org/ex/01KV6RWTWKDD665W7SXHMJHYTG | Baseline-centered LR grid. |
+| `q3-275m-cx8-q3td128e8k-lr3.2e-3-r1` | `true_3d_depth_matched` | 8 | 3.2e-3 | 786,432 | 96 | 4 | 1 | 8 | https://beaker.org/ex/01KV6RX6DTPYBJCC6RJ6JCFR8W | Baseline-centered LR grid. |
+
+## 2026-06-16 Total-Sparsity `sp192e4k` Colder LR Probes
+
+Queued one colder LR probe each for the two unbracketed huge-total sparsity
+settings after the 275M `sp192e4k` Cx4/Cx8 curves showed their best completed
+points at the cold edge. Both probes use `lr4e-4`, a full factor of two below
+the previous cold edge `8e-4`, rather than a small interpolation.
+
+Common settings:
+
+```text
+cluster = ai2/titan
+workspace = ai2/OLMo-3-moe-experiments
+image = tianhuat/olmo-core-torch211-2404-cu128
+priority = urgent
+--model-size=275m
+--total-sparsity=huge_total_192e_top4
+```
+
+| Name | Variant | Cx | LR | Batch tokens | GBS seq | GPUs | EP | MB | Beaker | Notes |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |
+| `sp-275m-cx4-sp192e4k-lr4e-4-r1` | `huge_total_192e_top4` | 4 | 4e-4 | 524,288 | 64 | 2 | 1 | 8 | https://beaker.org/ex/01KV7F27DNMKAZC7A4P6095GEB | Colder Cx4 probe after `8e-4` beat `1.6e-3`/`3.2e-3`; factor-2 below previous cold edge. |
+| `sp-275m-cx8-sp192e4k-lr4e-4-r1` | `huge_total_192e_top4` | 8 | 4e-4 | 786,432 | 96 | 2 | 1 | 8 | https://beaker.org/ex/01KV7F2X1CSZPQ5D8DPW2PZ94Q | Colder Cx8 probe after `8e-4` beat `1.6e-3` and the hot point was missing/unfinished in the current plotted set; factor-2 below previous cold edge. |
+
+## 2026-06-16 Qwen3-Like True-3D Cold-Side LR Probes
+
+Queued one colder LR probe for each 275M `true_3d_depth_matched`
+(`q3td128e8k`) data multiple after the left side of the Cx1/Cx2 curves looked
+flat and the larger Cx4/Cx8 true-3D runs were still in flight. These do not
+include the `active_matched` / `q3am128e8k` 4.5d variant, which looked adequately
+bracketed so far.
+
+Common settings:
+
+```text
+cluster = ai2/holmes
+workspace = ai2/holmes-testing
+image = tianhuat/olmo-core-torch212-2404-cu130
+priority = low
+preemptible = true
+--model-size=275m
+--qwen3-like=true_3d_depth_matched
+--compile
+--no-python
+PYTHONPATH=/gantry-runtime/src:/workspace/OLMo-core/src
+```
+
+| Name | Variant | Cx | LR | Batch tokens | GBS seq | GPUs | EP | MB | Beaker | Notes |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |
+| `q3-275m-cx1-q3td128e8k-lr5e-4-r1` | `true_3d_depth_matched` | 1 | 5e-4 | 262,144 | 32 | 2 | 1 | 8 | https://beaker.org/ex/01KV7FP61XF8FRHNCBAYG41P11 | Cold-side extension, factor-2 below previous cold edge `1e-3`. |
+| `q3-275m-cx2-q3td128e8k-lr4.5e-4-r1` | `true_3d_depth_matched` | 2 | 4.5e-4 | 393,216 | 48 | 2 | 1 | 8 | https://beaker.org/ex/01KV7FPG0XN8XS0M3GF28JV43C | Cold-side extension, factor-2 below previous cold edge `9e-4`. |
+| `q3-275m-cx4-q3td128e8k-lr4e-4-r1` | `true_3d_depth_matched` | 4 | 4e-4 | 524,288 | 64 | 2 | 1 | 8 | https://beaker.org/ex/01KV7FPTF3J0KM1H7JBXK3TP50 | Cold-side extension, factor-2 below previous cold edge `8e-4`. |
+| `q3-275m-cx8-q3td128e8k-lr4e-4-r1` | `true_3d_depth_matched` | 8 | 4e-4 | 786,432 | 96 | 4 | 1 | 8 | https://beaker.org/ex/01KV7FQ68QN0FJ35CTB13ASX1G | Cold-side extension, factor-2 below previous cold edge `8e-4`. |
+
+## 2026-06-16 Qwen3-Like 480M Promotion Partial Launch
+
+Started the Qwen3-like larger-size promotion wave on Holmes low-priority,
+preemptible, compile-on after the 275M Qwen results looked ready to promote.
+The original launcher included both 480M and 810M, but Jacob asked to hold 810M
+before the launcher reached that section. No 810M Qwen jobs were submitted.
+
+One 480M job did not submit in the original Holmes wave:
+`q3-480m-cx8-q3td128e8k-lr8e-4-r1` failed at Beaker image resolution with
+`BeakerImageNotFound: tianhuat/olmo-core-torch212-2404-cu130`. Jacob later asked
+to re-queue this missing 480M job. Two normal Gantry retries from the submit host
+failed before Beaker submission on a GitHub visibility-check timeout, so the job
+was created directly from a Titan Beaker spec in the original workspace.
+
+Common settings:
+
+```text
+cluster = ai2/holmes
+workspace = ai2/holmes-testing
+image = tianhuat/olmo-core-torch212-2404-cu130
+priority = low
+preemptible = true
+--compile
+--no-python
+PYTHONPATH=/gantry-runtime/src:/workspace/OLMo-core/src
+```
+
+| Name | Variant | Model | Cx | LR | Batch tokens | GBS seq | GPUs | EP | MB | Beaker | Notes |
+| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |
+| `q3-480m-cx1-q3am128e8k-lr1.2e-3-r1` | `active_matched` | 480M | 1 | 1.2e-3 | 262,144 | 32 | 4 | 1 | 8 | https://beaker.org/ex/01KV8XQ15CGKKGDN4034HV5AB6 | Baseline best-observed LR; created before pausing 810M. |
+| `q3-480m-cx2-q3am128e8k-lr9e-4-r1` | `active_matched` | 480M | 2 | 9e-4 | 393,216 | 48 | 4 | 1 | 4 | https://beaker.org/ex/01KV8XQCNKPEVVHSGG6C3M78XF | Baseline best-observed LR; repaired b384k batch. |
+| `q3-480m-cx4-q3am128e8k-lr8e-4-r1` | `active_matched` | 480M | 4 | 8e-4 | 524,288 | 64 | 4 | 1 | 8 | https://beaker.org/ex/01KV8XQRFM73CADTDCZ051HN89 | Baseline best-observed LR. |
+| `q3-480m-cx8-q3am128e8k-lr8e-4-r1` | `active_matched` | 480M | 8 | 8e-4 | 786,432 | 96 | 8 | 1 | 4 | https://beaker.org/ex/01KV8XR424AH5NFFTM5EQ43EGN | Baseline best-observed LR. |
+| `q3-480m-cx1-q3td128e8k-lr1.2e-3-r1` | `true_3d_depth_matched` | 480M | 1 | 1.2e-3 | 262,144 | 32 | 4 | 1 | 8 | https://beaker.org/ex/01KV8XRGQWNVWBH6XARJX9264H | Baseline best-observed LR. |
+| `q3-480m-cx2-q3td128e8k-lr9e-4-r1` | `true_3d_depth_matched` | 480M | 2 | 9e-4 | 393,216 | 48 | 4 | 1 | 4 | https://beaker.org/ex/01KV8XRWC6XC3ZWWM2M61QBRKF | Baseline best-observed LR; repaired b384k batch. |
+| `q3-480m-cx4-q3td128e8k-lr8e-4-r1` | `true_3d_depth_matched` | 480M | 4 | 8e-4 | 524,288 | 64 | 4 | 1 | 8 | https://beaker.org/ex/01KV8XS7PFTCT2K6R8XE0AD7VJ | Baseline best-observed LR. |
+| `q3-480m-cx8-q3td128e8k-lr8e-4-r1` | `true_3d_depth_matched` | 480M | 8 | 8e-4 | 786,432 | 96 | 8 | 1 | 4 | https://beaker.org/ex/01KV8ZS3CB95G6BK2DPSX90X6F | Re-queued on Titan/original workspace from a direct Beaker spec after the Holmes image lookup miss and local GitHub submitter timeouts. |
+
+
+## 2026-06-17 Status Check and Plot Refresh
+
+Status check scoped to tracker rows that were still open or ambiguous, plus recent
+Qwen3-like rows without completion notes. This avoids re-querying old rows already
+marked finished/canceled in this document.
+
+Queried 139 candidate open/ambiguous Beaker experiments:
+
+- 110 finalized
+- 24 canceled
+- 5 still running
+
+Still running as of the check:
+
+| Name | Beaker | Started | Notes |
+| --- | --- | --- | --- |
+| `q3-480m-cx2-q3td128e8k-lr9e-4-r1` | https://beaker.org/ex/01KV8XRWC6XC3ZWWM2M61QBRKF | 2026-06-16 19:18 UTC | True-3D 480M Cx2 promoted point. |
+| `q3-480m-cx4-q3am128e8k-lr8e-4-r1` | https://beaker.org/ex/01KV8XQRFM73CADTDCZ051HN89 | 2026-06-16 19:17 UTC | Active-matched 480M Cx4 promoted point. |
+| `q3-480m-cx4-q3td128e8k-lr8e-4-r1` | https://beaker.org/ex/01KV8XS7PFTCT2K6R8XE0AD7VJ | 2026-06-16 19:18 UTC | True-3D 480M Cx4 promoted point. |
+| `q3-480m-cx8-q3am128e8k-lr8e-4-r1` | https://beaker.org/ex/01KV8XR424AH5NFFTM5EQ43EGN | 2026-06-16 19:17 UTC | Active-matched 480M Cx8 promoted point. |
+| `q3-480m-cx8-q3td128e8k-lr8e-4-r1` | https://beaker.org/ex/01KV8ZS3CB95G6BK2DPSX90X6F | 2026-06-16 20:53 UTC | True-3D 480M Cx8 promoted point, re-queued on Titan. |
+
+Newly finalized/high-signal since the last status pass:
+
+| Name | Beaker | Finalized | Notes |
+| --- | --- | --- | --- |
+| `q3-480m-cx2-q3am128e8k-lr9e-4-r1` | https://beaker.org/ex/01KV8XQCNKPEVVHSGG6C3M78XF | 2026-06-17 02:57 UTC | Active-matched 480M Cx2 promoted point. |
+| `q3-480m-cx1-q3td128e8k-lr1.2e-3-r1` | https://beaker.org/ex/01KV8XRGQWNVWBH6XARJX9264H | 2026-06-16 23:53 UTC | True-3D 480M Cx1 promoted point. |
+| `q3-480m-cx1-q3am128e8k-lr1.2e-3-r1` | https://beaker.org/ex/01KV8XQ15CGKKGDN4034HV5AB6 | 2026-06-16 23:26 UTC | Active-matched 480M Cx1 promoted point. |
+| `q3-275m-cx{1,2,4,8}-q3td128e8k` cold-side probes | see 2026-06-16 table above | 2026-06-16 | All four true-3D cold-side probes finalized. |
+
+Plot refresh completed with stale-cache refresh only. Changed/generated plot files:
+
+- `plots/qwen3_like/480m_cx1_uplot.png`
+- `plots/qwen3_like/480m_cx2_uplot.png`
+- `plots/qwen3_like/summary_observed_best.png`
+- `plots/shared_expert/1p2b_cx2_uplot.png`
+- `plots/shared_expert/summary_observed_best.png`
+- `plots/dense_schedule/275m_cx8_uplot.png`
+- `plots/total_sparsity/275m_cx8_uplot.png`
+
+No additional jobs were launched during this status check.
+
+
+## 2026-06-17 1.2B Cx2 Baseline Hot-Side Extension
+
+Queued one additional hot-side repaired-batch 1.2B Cx2 baseline point because the
+current Cx2 U-curve still was not bracketed on the hot side. This uses the same
+semantic/resume-stable run name policy as the earlier repaired Cx2 runs; systems
+settings are only in tags/config.
+
+| Name | Model | LR | Batch tokens | Batch seqs | Nodes | GPUs / node | EP | Microbatch | Beaker experiment | Notes |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |
+| `olmoe3-moe-a0-1p2b-cx2-b384k-lr2.4e-3-r1` | `1p2b` | 2.4e-3 | 393,216 | 48 | 2 | 8 | 1 | 3 | https://beaker.org/ex/01KV9X79WWBY9JYS3WWAS8M1SW | Titan/original workspace, compile-on, urgent priority. `48 / (2 nodes * 8 GPUs * mb3) = 1`, so the repaired Cx2 optimizer batch is legal. Factor-2 hot-side extension above `lr1.2e-3`. |
+
+
+## 2026-06-17 Follow-Up Status Check and Plot Refresh
+
+Status check again scoped to tracker rows that were open or ambiguous, plus recent
+Qwen 480M promoted rows and the new 1.2B Cx2 hot-side baseline run.
+
+Queried 111 candidate open/ambiguous Beaker experiments:
+
+- 85 finalized
+- 25 canceled
+- 1 still running
+
+Still running:
+
+| Name | Beaker | Started | Notes |
+| --- | --- | --- | --- |
+| `olmoe3-moe-a0-1p2b-cx2-b384k-lr2.4e-3-r1` | https://beaker.org/ex/01KV9X79WWBY9JYS3WWAS8M1SW | 2026-06-17 04:29 UTC | 2-node Titan hot-side baseline extension. |
+
+New status changes since the previous check:
+
+| Name | Beaker | State | Time | Notes |
+| --- | --- | --- | --- | --- |
+| `q3-480m-cx8-q3td128e8k-lr8e-4-r1` | https://beaker.org/ex/01KV8ZS3CB95G6BK2DPSX90X6F | finalized | 2026-06-17 13:07 UTC | True-3D 480M Cx8 promoted point. |
+| `q3-480m-cx8-q3am128e8k-lr8e-4-r1` | https://beaker.org/ex/01KV8XR424AH5NFFTM5EQ43EGN | finalized | 2026-06-17 09:53 UTC | Active-matched 480M Cx8 promoted point. |
+| `q3-480m-cx2-q3td128e8k-lr9e-4-r1` | https://beaker.org/ex/01KV8XRWC6XC3ZWWM2M61QBRKF | finalized | 2026-06-17 04:08 UTC | True-3D 480M Cx2 promoted point. |
+| `q3-480m-cx4-q3td128e8k-lr8e-4-r1` | https://beaker.org/ex/01KV8XS7PFTCT2K6R8XE0AD7VJ | finalized | 2026-06-17 09:38 UTC | True-3D 480M Cx4 promoted point. Earlier low-priority attempt was preempted at 07:36 UTC; auto-resume completed successfully. W&B run `umqcq7bm`. |
+| `q3-480m-cx4-q3am128e8k-lr8e-4-r1` | https://beaker.org/ex/01KV8XQRFM73CADTDCZ051HN89 | finalized | 2026-06-17 10:23 UTC | Active-matched 480M Cx4 promoted point. Earlier low-priority attempts were preempted at 07:36 and 08:15 UTC; auto-resume completed successfully. W&B run `v7vgfj0v`. |
+
+Plot refresh completed with stale-cache refresh only. Changed/generated plot files:
+
+- `plots/qwen3_like/480m_cx2_uplot.png`
+- `plots/qwen3_like/480m_cx4_uplot.png`
+- `plots/qwen3_like/480m_cx8_uplot.png`
+- `plots/qwen3_like/summary_observed_best.png`
+- `plots/shared_expert/810m_cx8_uplot.png`
+- `plots/shared_expert/summary_observed_best.png`
+
+No additional jobs were launched during this status check.
+
+
+## 2026-06-18 810M Total-Sparsity Relaunches
+
+The first 810M total-sparsity promotion wave used EP1 everywhere for full comparability. The `sp96e4k` jobs fit on one Titan node; Cx1 finished cleanly and Cx2/Cx4/Cx8 were still running at the status check. The `sp192e4k` jobs OOMed/finalized with exit code 1 at `1 node x 8 GPUs`, `EP=1`, `microbatch=1`, so they were relaunched as `r2` on 2 Titan nodes while preserving EP1, LR, global batch, and microbatch.
+
+Original failed `sp192e4k` attempts:
+
+| Name | Cx | LR | GBS seq | Nodes | GPUs / node | EP | MB | Beaker | Notes |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |
+| `sp-810m-cx1-sp192e4k-lr4e-4-r1` | 1 | 4e-4 | 32 | 1 | 8 | 1 | 1 | https://beaker.org/ex/01KVCYAEJEJ2NBQ58FHAQB9B52 | Failed quickly with exit code 1/OOM. |
+| `sp-810m-cx2-sp192e4k-lr4e-4-r1` | 2 | 4e-4 | 48 | 1 | 8 | 1 | 1 | https://beaker.org/ex/01KVCYATNRJ4ZTJBVMW599BYY3 | Failed quickly with exit code 1/OOM. |
+| `sp-810m-cx4-sp192e4k-lr3e-4-r1` | 4 | 3e-4 | 64 | 1 | 8 | 1 | 1 | https://beaker.org/ex/01KVCYB6C56R079ZEJ1D4FXXDB | Failed quickly with exit code 1/OOM. |
+| `sp-810m-cx8-sp192e4k-lr3e-4-r1` | 8 | 3e-4 | 96 | 1 | 8 | 1 | 1 | https://beaker.org/ex/01KVCYBJ8PNDKSASQXBGRM7CAB | Failed quickly with exit code 1/OOM. |
+
+Replacement `sp192e4k` attempts:
+
+| Name | Cx | LR | GBS seq | Nodes | GPUs / node | EP | MB | Beaker | Notes |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |
+| `sp-810m-cx1-sp192e4k-lr4e-4-r2` | 1 | 4e-4 | 32 | 2 | 8 | 1 | 1 | https://beaker.org/ex/01KVEGEKW8E218NNY0XTHWTJ9W | Legal accumulation: `32 / (2 * 8 * 1) = 2`. |
+| `sp-810m-cx2-sp192e4k-lr4e-4-r2` | 2 | 4e-4 | 48 | 2 | 8 | 1 | 1 | https://beaker.org/ex/01KVEGF07SQE61D4JJXQ9H6S7V | Legal accumulation: `48 / (2 * 8 * 1) = 3`. |
+| `sp-810m-cx4-sp192e4k-lr3e-4-r2` | 4 | 3e-4 | 64 | 2 | 8 | 1 | 1 | https://beaker.org/ex/01KVEGFC3RQVYFW07077WNKMV0 | Legal accumulation: `64 / (2 * 8 * 1) = 4`. |
+| `sp-810m-cx8-sp192e4k-lr3e-4-r2` | 8 | 3e-4 | 96 | 2 | 8 | 1 | 1 | https://beaker.org/ex/01KVEGFQWQGQ6JWNBHC5YR23B1 | Legal accumulation: `96 / (2 * 8 * 1) = 6`. |
+
+
+## 2026-06-19 Manual Restarts Status Refresh
+
+Jacob manually restarted the remaining failed/canceled expert-granularity tail jobs.
+The restarts reuse the original Beaker experiment IDs and add new job attempts on
+those experiments. At this status refresh the new attempts were created but not
+yet scheduled or started.
+
+| Run | Beaker experiment | Latest job attempt | Created UTC | Status | Notes |
+| --- | --- | --- | --- | --- | --- |
+| `eg-810m-cx8-eg96e8k-lr4e-4-r1` | https://beaker.org/ex/01KV1XQMPM62PXBRPGX1MYD059 | `01KVERB5G3CXQP564R4GE8ZGKQ` | 2026-06-19 01:36 | created, not scheduled | Previous attempts failed; no finished W&B retry found yet. |
+| `eg-1p2b-cx4-eg24e2k-lr4e-4-r1` | https://beaker.org/ex/01KV299VFSQ8879TGTB56T8PW1 | `01KVERBW94NECDFG1WNJE3GE7R` | 2026-06-19 01:36 | created, not scheduled | Previous attempts reached up to 64.70B tokens but did not finish. |
+| `eg-1p2b-cx4-eg96e8k-lr4e-4-r1` | https://beaker.org/ex/01KV29A65FTV4YHJACBMZB6TVG | `01KVERCFF9931AVS5EDETW9DW1` | 2026-06-19 01:37 | created, not scheduled | Previous attempt reached 44.83B tokens but did not finish. |
+| `eg-1p2b-cx8-eg24e2k-lr4e-4-r1` | https://beaker.org/ex/01KV4ZJCSV6NFW52ENF8T7DNPH | `01KVERD285WWF9BKE5CP60HNP9` | 2026-06-19 01:37 | created, not scheduled | Previous attempts reached up to 74.07B tokens but did not finish. |
+| `eg-1p2b-cx8-eg96e8k-lr4e-4-r1` | https://beaker.org/ex/01KV4ZJRYRHYF4SMV965SZGWTE | `01KVERDHRD5ZYT41V8K0CG5MFP` | 2026-06-19 01:37 | created, not scheduled | Previous attempt reached 24.63B tokens but did not finish. |
+
+The 810M `sp192e4k` total-sparsity `r2` replacements from 2026-06-18 were also
+still created but unscheduled at this refresh. They should not be requeued again
+unless those replacement attempts fail.
+
+Dense-schedule cleanup added to the same manual-restart batch:
+
+| Run | Beaker experiment | Latest job attempt | Created UTC | Status | Notes |
+| --- | --- | --- | --- | --- | --- |
+| `ds-275m-cx4-ds2-sh-lr8e-4-r1` | https://beaker.org/ex/01KV4ZNT2JCKR4Y5J27QQX897T | `01KVEREHTQ3467H8Q5SZ5YME4M` | 2026-06-19 01:38 | created, not scheduled | Previous replacement reached 14.50B tokens but did not finish. This is the missing low-LR Cx4 point for `dense2_shared`. |
+
+
+## 2026-06-19 EG Cx2 and Qwen3-Like 810M Launches
+
+Queued the missing 1.2B expert-granularity Cx2 promoted points after the 1.2B
+Cx2 baseline hot-side extension completed. Both use the repaired `b384k` batch,
+`EP=1`, `mb=2`, compile-on, Titan/original workspace, and the baseline-best
+observed Cx2 LR `3e-4`.
+
+| Name | Variant | Model | Cx | LR | Batch tokens | GBS seq | GPUs | EP | MB | Beaker | Notes |
+| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |
+| `eg-1p2b-cx2-eg24e2k-lr3e-4-r1` | `coarse_24e_top2` | 1.2B | 2 | 3e-4 | 393,216 | 48 | 8 | 1 | 2 | https://beaker.org/ex/01KVFDD6YEDEZD7F06RYB6FPK5 | Legal accumulation: `48 / (1 * 8 * 2) = 3`. |
+| `eg-1p2b-cx2-eg96e8k-lr3e-4-r1` | `fine_96e_top8` | 1.2B | 2 | 3e-4 | 393,216 | 48 | 8 | 1 | 2 | https://beaker.org/ex/01KVFDG3FS2GVD8Z3Q26CQJ7MV | Legal accumulation: `48 / (1 * 8 * 2) = 3`. |
+
+Queued the first 810M Qwen3-like promoted wave. No prior 810M qwen-like W&B rows
+existed before launch. These run on Holmes low-priority/preemptible with
+compile-on, `--shared-filesystem`, Weka checkpoint folders, and Beaker-reported
+`autoResume=true`.
+
+| Name | Variant | Model | Cx | LR | Batch tokens | GBS seq | GPUs | EP | MB | Beaker | Notes |
+| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |
+| `q3-810m-cx1-q3am128e8k-lr6e-4-r1` | `active_matched` | 810M | 1 | 6e-4 | 262,144 | 32 | 8 | 1 | 4 | https://beaker.org/ex/01KVFDKEW4XR0RV06QZ2TKY6FE | Holmes low-priority/preemptible; autoResume true. |
+| `q3-810m-cx2-q3am128e8k-lr5.6e-4-r1` | `active_matched` | 810M | 2 | 5.6e-4 | 393,216 | 48 | 8 | 1 | 2 | https://beaker.org/ex/01KVFDM5KWV2FHX2NYASD43GWF | Holmes low-priority/preemptible; autoResume true. |
+| `q3-810m-cx4-q3am128e8k-lr4e-4-r1` | `active_matched` | 810M | 4 | 4e-4 | 524,288 | 64 | 8 | 1 | 4 | https://beaker.org/ex/01KVFDMV84805JW8VJYEXZ4SPW | Holmes low-priority/preemptible; autoResume true. |
+| `q3-810m-cx8-q3am128e8k-lr4e-4-r1` | `active_matched` | 810M | 8 | 4e-4 | 786,432 | 96 | 8 | 1 | 4 | https://beaker.org/ex/01KVFDNGV9TDAP885HG5MD68FB | Holmes low-priority/preemptible; autoResume true. |
+| `q3-810m-cx1-q3td128e8k-lr6e-4-r1` | `true_3d_depth_matched` | 810M | 1 | 6e-4 | 262,144 | 32 | 8 | 1 | 4 | https://beaker.org/ex/01KVFDP5S2C89BXMFEAZV0DHZD | Holmes low-priority/preemptible; autoResume true. |
+| `q3-810m-cx2-q3td128e8k-lr5.6e-4-r1` | `true_3d_depth_matched` | 810M | 2 | 5.6e-4 | 393,216 | 48 | 8 | 1 | 2 | https://beaker.org/ex/01KVFDPNGJDX45X41MZ247N717 | Holmes low-priority/preemptible; autoResume true. |
+| `q3-810m-cx4-q3td128e8k-lr4e-4-r1` | `true_3d_depth_matched` | 810M | 4 | 4e-4 | 524,288 | 64 | 8 | 1 | 4 | https://beaker.org/ex/01KVFDQ2FHVRFFD97SDYBMD694 | Holmes low-priority/preemptible; autoResume true. |
+| `q3-810m-cx8-q3td128e8k-lr4e-4-r1` | `true_3d_depth_matched` | 810M | 8 | 4e-4 | 786,432 | 96 | 8 | 1 | 4 | https://beaker.org/ex/01KVFDQH6BQSBMRHBKZD5RE46W | Holmes low-priority/preemptible; autoResume true. |
+
+## 2026-06-20 Status Check and Plot Refresh
+
+Status check scoped to the recent/open surface from the tracker rather than the full historical run set. Plots were regenerated with `INCLUDE_RUNNING=1 REFRESH_STALE_CACHE=1`, and `PLOTTED_RESULTS.md` was regenerated from the same cached W&B data with completed runs only. The stats writer now includes Qwen3-like rows in addition to baseline, expert granularity, total sparsity, shared expert, and dense schedule.
+
+Newly finalized since the previous tracker update:
+
+| Name | Beaker | Finalized UTC | Notes |
+| --- | --- | --- | --- |
+| `q3-810m-cx1-q3am128e8k-lr6e-4-r1` | https://beaker.org/ex/01KVFDKEW4XR0RV06QZ2TKY6FE | 2026-06-19 21:23 | Active-matched Qwen-like 810M Cx1 finished cleanly. |
+| `q3-810m-cx1-q3td128e8k-lr6e-4-r1` | https://beaker.org/ex/01KVFDP5S2C89BXMFEAZV0DHZD | 2026-06-20 07:31 | True-3D Qwen-like 810M Cx1 finished cleanly. |
+| `eg-1p2b-cx4-eg24e2k-lr4e-4-r1` | https://beaker.org/ex/01KV299VFSQ8879TGTB56T8PW1 | 2026-06-19 14:36 | Manual restart finished cleanly. |
+| `eg-1p2b-cx4-eg96e8k-lr4e-4-r1` | https://beaker.org/ex/01KV29A65FTV4YHJACBMZB6TVG | 2026-06-20 07:29 | Manual restart finished cleanly. |
+| `ds-275m-cx4-ds2-sh-lr8e-4-r1` | https://beaker.org/ex/01KV4ZNT2JCKR4Y5J27QQX897T | 2026-06-19 13:19 | Dense-schedule cleanup point finished cleanly. |
+| `sp-810m-cx1-sp192e4k-lr4e-4-r2` | https://beaker.org/ex/01KVEGEKW8E218NNY0XTHWTJ9W | 2026-06-20 04:28 | 2-node replacement finished cleanly. |
+| `sp-810m-cx1-sp96e4k-lr5e-4-r1` | https://beaker.org/ex/01KVCY8ZT9SQ45ZSBA9V3C3FXB | 2026-06-18 17:11 | Finished cleanly. |
+| `sp-810m-cx2-sp96e4k-lr5e-4-r1` | https://beaker.org/ex/01KVCY9BH97KKXV64MBSQ8Z50H | 2026-06-19 00:36 | Finished cleanly. |
+| `sp-810m-cx4-sp96e4k-lr3.5e-4-r1` | https://beaker.org/ex/01KVCY9Q1T233BQHBRND8D95JJ | 2026-06-19 09:12 | Finished cleanly. |
+| `sp-810m-cx8-sp96e4k-lr3.5e-4-r1` | https://beaker.org/ex/01KVCYA2XT84N5XVZBNS0QKJKN | 2026-06-20 04:29 | Finished cleanly. |
+| `olmoe3-moe-a0-1p2b-cx2-b384k-lr2.4e-3-r1` | https://beaker.org/ex/01KV9X79WWBY9JYS3WWAS8M1SW | 2026-06-17 21:44 | Hot-side 1.2B Cx2 baseline extension finished cleanly. |
+
+Still running at the status check:
+
+| Name | Beaker | Started UTC | Notes |
+| --- | --- | --- | --- |
+| `eg-1p2b-cx2-eg24e2k-lr3e-4-r1` | https://beaker.org/ex/01KVFDD6YEDEZD7F06RYB6FPK5 | 2026-06-19 17:44 | New EG Cx2 coarse run. |
+| `eg-1p2b-cx2-eg96e8k-lr3e-4-r1` | https://beaker.org/ex/01KVFDG3FS2GVD8Z3Q26CQJ7MV | 2026-06-20 04:28 | New EG Cx2 fine run. |
+| `q3-810m-cx4-q3td128e8k-lr4e-4-r1` | https://beaker.org/ex/01KVFDQ2FHVRFFD97SDYBMD694 | 2026-06-20 04:06 | True-3D Qwen-like 810M Cx4. |
+| `q3-810m-cx8-q3td128e8k-lr4e-4-r1` | https://beaker.org/ex/01KVFDQH6BQSBMRHBKZD5RE46W | 2026-06-20 04:05 | True-3D Qwen-like 810M Cx8. |
+| `eg-810m-cx8-eg96e8k-lr4e-4-r1` | https://beaker.org/ex/01KV1XQMPM62PXBRPGX1MYD059 | 2026-06-19 02:14 | Manual restart running. |
+| `eg-1p2b-cx8-eg24e2k-lr4e-4-r1` | https://beaker.org/ex/01KV4ZJCSV6NFW52ENF8T7DNPH | 2026-06-19 09:51 | Manual restart running. |
+| `eg-1p2b-cx8-eg96e8k-lr4e-4-r1` | https://beaker.org/ex/01KV4ZJRYRHYF4SMV965SZGWTE | 2026-06-19 12:04 | Manual restart running. |
+| `sp-810m-cx2-sp192e4k-lr4e-4-r2` | https://beaker.org/ex/01KVEGF07SQE61D4JJXQ9H6S7V | 2026-06-20 04:31 | 2-node replacement running. |
+
+Created but not scheduled/started in the latest Beaker job attempt:
+
+| Name | Beaker | Created UTC | Notes |
+| --- | --- | --- | --- |
+| `q3-810m-cx2-q3am128e8k-lr5.6e-4-r1` | https://beaker.org/ex/01KVFDM5KWV2FHX2NYASD43GWF | 2026-06-20 08:04 | Waiting on Holmes capacity/latest attempt. |
+| `q3-810m-cx4-q3am128e8k-lr4e-4-r1` | https://beaker.org/ex/01KVFDMV84805JW8VJYEXZ4SPW | 2026-06-20 08:04 | Waiting on Holmes capacity/latest attempt. |
+| `q3-810m-cx8-q3am128e8k-lr4e-4-r1` | https://beaker.org/ex/01KVFDNGV9TDAP885HG5MD68FB | 2026-06-20 08:04 | Waiting on Holmes capacity/latest attempt. |
+| `q3-810m-cx2-q3td128e8k-lr5.6e-4-r1` | https://beaker.org/ex/01KVFDPNGJDX45X41MZ247N717 | 2026-06-20 08:04 | Waiting on Holmes capacity/latest attempt. |
+| `sp-810m-cx4-sp192e4k-lr3e-4-r2` | https://beaker.org/ex/01KVEGFC3RQVYFW07077WNKMV0 | 2026-06-18 23:18 | Still unscheduled. |
+| `sp-810m-cx8-sp192e4k-lr3e-4-r2` | https://beaker.org/ex/01KVEGFQWQGQ6JWNBHC5YR23B1 | 2026-06-18 23:19 | Still unscheduled. |
+
+Tracked plot/stat updates from this refresh were focused on expert granularity, total sparsity, dense schedule Cx4, and the Qwen3-like summary. No new jobs were launched during this status check.
+
+## 2026-06-20 Qwen3-Like 1.2B Launches
+
+Queued the first 1.2B Qwen3-like promoted wave after 275M/480M results showed good LR transfer and the first 810M Cx1 points also looked healthy. These use the canonical baseline-best observed LR policy from `PLOTTED_RESULTS.md`: Cx1 `4e-4`, repaired Cx2 `6e-4`, Cx4 `3e-4`, and canonical one-node Cx8 `2e-4`. All jobs run on Holmes low-priority/preemptible with compile-on, `--shared-filesystem`, Weka checkpoint folders, and Beaker-reported `autoResume=true`.
+
+| Name | Variant | Model | Cx | LR | Batch tokens | GBS seq | GPUs | EP | MB | Beaker | Notes |
+| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |
+| `q3-1p2b-cx1-q3am128e8k-lr4e-4-r1` | `active_matched` | 1.2B | 1 | 4e-4 | 262,144 | 32 | 8 | 1 | 2 | https://beaker.org/ex/01KVJ3237BYM0Y9NVA6FWM3H4Z | Legal accumulation: `32 / (1 * 8 * 2) = 2`. |
+| `q3-1p2b-cx2-q3am128e8k-lr6e-4-r1` | `active_matched` | 1.2B | 2 | 6e-4 | 393,216 | 48 | 8 | 1 | 2 | https://beaker.org/ex/01KVJ32E9D5MQ00NNAW4QJTGMW | Legal accumulation: `48 / (1 * 8 * 2) = 3`. |
+| `q3-1p2b-cx4-q3am128e8k-lr3e-4-r1` | `active_matched` | 1.2B | 4 | 3e-4 | 524,288 | 64 | 8 | 1 | 2 | https://beaker.org/ex/01KVJ32TJEXX4XR9FY0QN8PA0T | Legal accumulation: `64 / (1 * 8 * 2) = 4`. |
+| `q3-1p2b-cx8-q3am128e8k-lr2e-4-r1` | `active_matched` | 1.2B | 8 | 2e-4 | 786,432 | 96 | 8 | 1 | 4 | https://beaker.org/ex/01KVJ335S4S3YXSVDQ56NX4PG1 | Legal accumulation: `96 / (1 * 8 * 4) = 3`. |
+| `q3-1p2b-cx1-q3td128e8k-lr4e-4-r1` | `true_3d_depth_matched` | 1.2B | 1 | 4e-4 | 262,144 | 32 | 8 | 1 | 2 | https://beaker.org/ex/01KVJ33HPRPCQ6ERM46864M1Z3 | Legal accumulation: `32 / (1 * 8 * 2) = 2`. |
+| `q3-1p2b-cx2-q3td128e8k-lr6e-4-r1` | `true_3d_depth_matched` | 1.2B | 2 | 6e-4 | 393,216 | 48 | 8 | 1 | 2 | https://beaker.org/ex/01KVJ33YG7A5DKD5EPZDTSFRPR | Legal accumulation: `48 / (1 * 8 * 2) = 3`. |
+| `q3-1p2b-cx4-q3td128e8k-lr3e-4-r1` | `true_3d_depth_matched` | 1.2B | 4 | 3e-4 | 524,288 | 64 | 8 | 1 | 2 | https://beaker.org/ex/01KVJ34BFBN49YH2AKVSHS0GW5 | Legal accumulation: `64 / (1 * 8 * 2) = 4`. |
+| `q3-1p2b-cx8-q3td128e8k-lr2e-4-r1` | `true_3d_depth_matched` | 1.2B | 8 | 2e-4 | 786,432 | 96 | 8 | 1 | 4 | https://beaker.org/ex/01KVJ34PWJAAAD3AWB58SVQCKT | Legal accumulation: `96 / (1 * 8 * 4) = 3`. |
+
+## 2026-06-20 Qwen3-Like 1.2B Cx8 LR Correction
+
+After adding the same-global-batch 1.2B Cx8 baseline `gpu32-ep1mb1` point to the baseline plots, the corrected best observed Cx8 LR is `4e-4`, not the colder one-node-only `2e-4` view. The original Qwen-like 1.2B Cx8 `2e-4` jobs were stopped before starting and replaced with `4e-4` jobs. The global batch remains `96` sequences / `786,432` tokens, `EP=1`, `mb=4`, one Holmes node, low-priority/preemptible, compile-on, and Beaker-reported `autoResume=true`.
+
+Stopped colder Cx8 jobs:
+
+| Name | Variant | LR | Beaker | Finalized UTC | Notes |
+| --- | --- | ---: | --- | --- | --- |
+| `q3-1p2b-cx8-q3am128e8k-lr2e-4-r1` | `active_matched` | 2e-4 | https://beaker.org/ex/01KVJ335S4S3YXSVDQ56NX4PG1 | 2026-06-20 09:05 | Stopped before scheduling/starting. |
+| `q3-1p2b-cx8-q3td128e8k-lr2e-4-r1` | `true_3d_depth_matched` | 2e-4 | https://beaker.org/ex/01KVJ34PWJAAAD3AWB58SVQCKT | 2026-06-20 09:05 | Stopped before scheduling/starting. |
+
+Replacement Cx8 jobs:
+
+| Name | Variant | Model | Cx | LR | Batch tokens | GBS seq | GPUs | EP | MB | Beaker | Notes |
+| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |
+| `q3-1p2b-cx8-q3am128e8k-lr4e-4-r1` | `active_matched` | 1.2B | 8 | 4e-4 | 786,432 | 96 | 8 | 1 | 4 | https://beaker.org/ex/01KVJ4GXHKR0DP3PXHPR5ZZ6GB | Legal accumulation: `96 / (1 * 8 * 4) = 3`. |
+| `q3-1p2b-cx8-q3td128e8k-lr4e-4-r1` | `true_3d_depth_matched` | 1.2B | 8 | 4e-4 | 786,432 | 96 | 8 | 1 | 4 | https://beaker.org/ex/01KVJ4H8PTJDJCGHHFRB8CD3GP | Legal accumulation: `96 / (1 * 8 * 4) = 3`. |
+
+## 2026-06-22 Status Check and Plot Refresh
+
+Status check scoped to recent/open tracker rows rather than the full historical run set. Plots were regenerated with `INCLUDE_RUNNING=1 REFRESH_STALE_CACHE=1`, and `PLOTTED_RESULTS.md` was regenerated from the same cached W&B data with completed runs only. During the refresh, the expert-granularity plotter was fixed to define the same `PLOTTABLE_STATES = {"finished", "running"}` filter used by the other plotters, so crashed/failed terminal runs remain excluded when `--include-running` is set.
+
+Newly finalized since the 2026-06-20 tracker update:
+
+| Name | Beaker | Finalized UTC | Notes |
+| --- | --- | --- | --- |
+| `eg-1p2b-cx2-eg24e2k-lr3e-4-r1` | https://beaker.org/ex/01KVFDD6YEDEZD7F06RYB6FPK5 | 2026-06-20 21:07 | 1.2B EG Cx2 coarse finished cleanly. |
+| `eg-1p2b-cx2-eg96e8k-lr3e-4-r1` | https://beaker.org/ex/01KVFDG3FS2GVD8Z3Q26CQJ7MV | 2026-06-21 08:53 | 1.2B EG Cx2 fine finished cleanly. |
+| `eg-810m-cx8-eg96e8k-lr4e-4-r1` | https://beaker.org/ex/01KV1XQMPM62PXBRPGX1MYD059 | 2026-06-20 08:18 | 810M EG Cx8 fine manual restart finished cleanly. |
+| `eg-1p2b-cx8-eg24e2k-lr4e-4-r1` | https://beaker.org/ex/01KV4ZJCSV6NFW52ENF8T7DNPH | 2026-06-21 07:27 | 1.2B EG Cx8 coarse manual restart finished cleanly. |
+| `sp-810m-cx2-sp192e4k-lr4e-4-r2` | https://beaker.org/ex/01KVEGF07SQE61D4JJXQ9H6S7V | 2026-06-21 02:29 | 810M total-sparsity `sp192e4k` Cx2 replacement finished cleanly. |
+| `q3-810m-cx2-q3am128e8k-lr5.6e-4-r1` | https://beaker.org/ex/01KVFDM5KWV2FHX2NYASD43GWF | 2026-06-20 22:33 | Qwen-like active-matched 810M Cx2 finished cleanly. |
+| `q3-810m-cx4-q3am128e8k-lr4e-4-r1` | https://beaker.org/ex/01KVFDMV84805JW8VJYEXZ4SPW | 2026-06-21 20:05 | Qwen-like active-matched 810M Cx4 finished cleanly. |
+| `q3-810m-cx2-q3td128e8k-lr5.6e-4-r1` | https://beaker.org/ex/01KVFDPNGJDX45X41MZ247N717 | 2026-06-21 16:31 | Qwen-like true-3D 810M Cx2 finished cleanly. |
+| `q3-810m-cx4-q3td128e8k-lr4e-4-r1` | https://beaker.org/ex/01KVFDQ2FHVRFFD97SDYBMD694 | 2026-06-21 23:16 | Qwen-like true-3D 810M Cx4 finished cleanly. |
+
+Still running or started at the status check:
+
+| Name | Beaker | Started UTC | Notes |
+| --- | --- | --- | --- |
+| `eg-1p2b-cx8-eg96e8k-lr4e-4-r1` | https://beaker.org/ex/01KV4ZJRYRHYF4SMV965SZGWTE | 2026-06-19 12:04 | 1.2B EG Cx8 fine still running. |
+| `sp-810m-cx4-sp192e4k-lr3e-4-r2` | https://beaker.org/ex/01KVEGFC3RQVYFW07077WNKMV0 | 2026-06-20 21:10 | 810M total-sparsity `sp192e4k` Cx4 running. |
+| `sp-810m-cx8-sp192e4k-lr3e-4-r2` | https://beaker.org/ex/01KVEGFQWQGQ6JWNBHC5YR23B1 | 2026-06-21 02:31 | 810M total-sparsity `sp192e4k` Cx8 running. |
+| `q3-810m-cx8-q3am128e8k-lr4e-4-r1` | https://beaker.org/ex/01KVFDNGV9TDAP885HG5MD68FB | 2026-06-21 23:01 | Qwen-like active-matched 810M Cx8 running. |
+| `q3-810m-cx8-q3td128e8k-lr4e-4-r1` | https://beaker.org/ex/01KVFDQH6BQSBMRHBKZD5RE46W | 2026-06-21 23:17 | Qwen-like true-3D 810M Cx8 running. |
+| `q3-1p2b-cx2-q3am128e8k-lr6e-4-r1` | https://beaker.org/ex/01KVJ32E9D5MQ00NNAW4QJTGMW | 2026-06-22 05:46 | Qwen-like active-matched 1.2B Cx2 running. |
+| `q3-1p2b-cx4-q3am128e8k-lr3e-4-r1` | https://beaker.org/ex/01KVJ32TJEXX4XR9FY0QN8PA0T | 2026-06-21 21:57 | Qwen-like active-matched 1.2B Cx4 running. |
+
+Created/scheduled but not started at the status check:
+
+| Name | Beaker | Latest job created UTC | Notes |
+| --- | --- | --- | --- |
+| `q3-1p2b-cx1-q3am128e8k-lr4e-4-r1` | https://beaker.org/ex/01KVJ3237BYM0Y9NVA6FWM3H4Z | 2026-06-22 05:41 | Scheduled on Holmes but not started in latest attempt. |
+| `q3-1p2b-cx1-q3td128e8k-lr4e-4-r1` | https://beaker.org/ex/01KVJ33HPRPCQ6ERM46864M1Z3 | 2026-06-22 05:00 | Waiting on Holmes capacity/latest attempt. |
+| `q3-1p2b-cx2-q3td128e8k-lr6e-4-r1` | https://beaker.org/ex/01KVJ33YG7A5DKD5EPZDTSFRPR | 2026-06-22 05:00 | Waiting on Holmes capacity/latest attempt. |
+| `q3-1p2b-cx4-q3td128e8k-lr3e-4-r1` | https://beaker.org/ex/01KVJ34BFBN49YH2AKVSHS0GW5 | 2026-06-20 08:42 | Waiting on Holmes capacity/latest attempt. |
+| `q3-1p2b-cx8-q3am128e8k-lr4e-4-r1` | https://beaker.org/ex/01KVJ4GXHKR0DP3PXHPR5ZZ6GB | 2026-06-20 09:06 | Corrected Cx8 `4e-4` replacement; waiting on Holmes capacity/latest attempt. |
+| `q3-1p2b-cx8-q3td128e8k-lr4e-4-r1` | https://beaker.org/ex/01KVJ4H8PTJDJCGHHFRB8CD3GP | 2026-06-20 09:07 | Corrected Cx8 `4e-4` replacement; waiting on Holmes capacity/latest attempt. |
+
+Plot refresh updated all plot families. The visible high-signal changes are in expert granularity, total sparsity, Qwen3-like 810M/1.2B, shared expert, and dense schedule. No jobs were launched during this status check.
+
+
+## 2026-06-23 Status Check and Finished-Only Plot Refresh
+
+Status check scoped to tracker rows that were still running, queued, or otherwise ambiguous at the previous update. Plots were regenerated without `INCLUDE_RUNNING`, so all refreshed plot artifacts now use finished runs only. `PLOTTED_RESULTS.md` was regenerated from the same finished-only policy. A scan-friendly status matrix was added in `RUN_TRACKER.md`.
+
+Newly finalized since the 2026-06-22 tracker update:
+
+| Name | Beaker | Finalized UTC | Notes |
+| --- | --- | --- | --- |
+| `eg-1p2b-cx8-eg96e8k-lr4e-4-r1` | https://beaker.org/ex/01KV4ZJRYRHYF4SMV965SZGWTE | 2026-06-22 13:02 | 1.2B EG Cx8 fine finished cleanly. |
+| `sp-810m-cx4-sp192e4k-lr3e-4-r2` | https://beaker.org/ex/01KVEGFC3RQVYFW07077WNKMV0 | 2026-06-22 12:00 | 810M total-sparsity `sp192e4k` Cx4 replacement finished cleanly. |
+| `sp-810m-cx8-sp192e4k-lr3e-4-r2` | https://beaker.org/ex/01KVEGFQWQGQ6JWNBHC5YR23B1 | 2026-06-23 18:37 | 810M total-sparsity `sp192e4k` Cx8 replacement finished cleanly. |
+| `q3-810m-cx8-q3td128e8k-lr4e-4-r1` | https://beaker.org/ex/01KVFDQH6BQSBMRHBKZD5RE46W | 2026-06-23 17:50 | Qwen-like true-3D 810M Cx8 finished cleanly after preemptible retries. |
+| `q3-1p2b-cx1-q3am128e8k-lr4e-4-r1` | https://beaker.org/ex/01KVJ3237BYM0Y9NVA6FWM3H4Z | 2026-06-23 00:15 | Qwen-like active-matched 1.2B Cx1 finished cleanly. |
+
+Still running or started at the status check:
+
+| Name | Beaker | Started UTC | Notes |
+| --- | --- | --- | --- |
+| `q3-810m-cx8-q3am128e8k-lr4e-4-r1` | https://beaker.org/ex/01KVFDNGV9TDAP885HG5MD68FB | 2026-06-23 19:00 | Active-matched Qwen-like 810M Cx8; many low-priority preemptions so far. |
+| `q3-1p2b-cx4-q3am128e8k-lr3e-4-r1` | https://beaker.org/ex/01KVJ32TJEXX4XR9FY0QN8PA0T | 2026-06-23 17:52 | Active-matched Qwen-like 1.2B Cx4 running. |
+| `q3-1p2b-cx1-q3td128e8k-lr4e-4-r1` | https://beaker.org/ex/01KVJ33HPRPCQ6ERM46864M1Z3 | 2026-06-23 19:00 | True-3D Qwen-like 1.2B Cx1 running. |
+
+Created/queued but not started at the status check:
+
+| Name | Beaker | Latest job created UTC | Notes |
+| --- | --- | --- | --- |
+| `q3-1p2b-cx2-q3am128e8k-lr6e-4-r1` | https://beaker.org/ex/01KVJ32E9D5MQ00NNAW4QJTGMW | 2026-06-23 19:02 | Active-matched Qwen-like 1.2B Cx2; latest attempt created after earlier preemptions. |
+| `q3-1p2b-cx2-q3td128e8k-lr6e-4-r1` | https://beaker.org/ex/01KVJ33YG7A5DKD5EPZDTSFRPR | 2026-06-23 18:31 | True-3D Qwen-like 1.2B Cx2 waiting on Holmes capacity/latest attempt. |
+| `q3-1p2b-cx4-q3td128e8k-lr3e-4-r1` | https://beaker.org/ex/01KVJ34BFBN49YH2AKVSHS0GW5 | 2026-06-23 18:31 | True-3D Qwen-like 1.2B Cx4 waiting on Holmes capacity/latest attempt. |
+| `q3-1p2b-cx8-q3am128e8k-lr4e-4-r1` | https://beaker.org/ex/01KVJ4GXHKR0DP3PXHPR5ZZ6GB | 2026-06-20 09:06 | Corrected active-matched Cx8 `4e-4` replacement; still not started. |
+| `q3-1p2b-cx8-q3td128e8k-lr4e-4-r1` | https://beaker.org/ex/01KVJ4H8PTJDJCGHHFRB8CD3GP | 2026-06-20 09:07 | Corrected true-3D Cx8 `4e-4` replacement; still not started. |
+
+Finished-only plot refresh changed expert granularity 1.2B Cx8, total-sparsity 810M Cx4/Cx8, Qwen3-like 810M Cx8, and their summary plots. No jobs were launched during this status check.
+
+
+## 2026-06-23 Dense Schedule and Shared Expert Promoted Launches
+
+Queued the remaining dense schedule and shared expert promoted grid on Titan urgent after deciding not to wait on Holmes. All jobs use the original workspace `ai2/OLMo-3-moe-experiments`, cluster `ai2/titan`, budget `ai2/oe-other`, priority `urgent`, image `tianhuat/olmo-core-torch211-2404-cu128`, compile-on, Weka `oe-training-default`, `EP=1`, and baseline best-observed LR transfers. No `--preemptible` flag is used for these Titan urgent jobs.
+
+Launch order was all 480M first, then 810M, then 1.2B. Batch settings are the usual promoted settings: 480M uses 4 GPUs for Cx1/2/4 and 8 GPUs for Cx8; 810M and 1.2B use 8 GPUs for all Cx values.
+
+Dense schedule launchers:
+
+| Name | Model | Variant | Cx | LR | GBS seq | GPUs | MB | Beaker |
+| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | --- |
+| `ds-480m-cx1-ds0-sh-lr1.2e-3-r1` | 480M | dense0_shared | 1 | 1.2e-3 | 32 | 4 | 8 | https://beaker.org/ex/01KVV1CZVG06AQRE9YJN6HVCJY |
+| `ds-480m-cx2-ds0-sh-lr9e-4-r1` | 480M | dense0_shared | 2 | 9e-4 | 48 | 4 | 4 | https://beaker.org/ex/01KVV1DA8EAHMVBM57HAHKV9TP |
+| `ds-480m-cx4-ds0-sh-lr8e-4-r1` | 480M | dense0_shared | 4 | 8e-4 | 64 | 4 | 8 | https://beaker.org/ex/01KVV1DPPPV8HBR844VHGNG3JC |
+| `ds-480m-cx8-ds0-sh-lr8e-4-r1` | 480M | dense0_shared | 8 | 8e-4 | 96 | 8 | 4 | https://beaker.org/ex/01KVV1E2AH1GPJNPGSDW37XPP5 |
+| `ds-480m-cx1-ds2-sh-lr1.2e-3-r1` | 480M | dense2_shared | 1 | 1.2e-3 | 32 | 4 | 8 | https://beaker.org/ex/01KVV1EDZWQSSHA4YF25QGQJ00 |
+| `ds-480m-cx2-ds2-sh-lr9e-4-r1` | 480M | dense2_shared | 2 | 9e-4 | 48 | 4 | 4 | https://beaker.org/ex/01KVV1ESV5CNP1H981VDH3A3T5 |
+| `ds-480m-cx4-ds2-sh-lr8e-4-r1` | 480M | dense2_shared | 4 | 8e-4 | 64 | 4 | 8 | https://beaker.org/ex/01KVV1F5QEP0C8FFC3CDW8JG8S |
+| `ds-480m-cx8-ds2-sh-lr8e-4-r1` | 480M | dense2_shared | 8 | 8e-4 | 96 | 8 | 4 | https://beaker.org/ex/01KVV1FNX61ZWWVQ8S6GW726D8 |
+| `ds-480m-cx1-ds4-sh-lr1.2e-3-r1` | 480M | dense4_shared | 1 | 1.2e-3 | 32 | 4 | 8 | https://beaker.org/ex/01KVV1GZRFHDPMKZ42F5VKPWZB |
+| `ds-480m-cx2-ds4-sh-lr9e-4-r1` | 480M | dense4_shared | 2 | 9e-4 | 48 | 4 | 4 | https://beaker.org/ex/01KVV1J50HB640YVZC281S1EFV |
+| `ds-480m-cx4-ds4-sh-lr8e-4-r1` | 480M | dense4_shared | 4 | 8e-4 | 64 | 4 | 8 | https://beaker.org/ex/01KVV1K3G5ZWD4SZ23GHM103XT |
+| `ds-480m-cx8-ds4-sh-lr8e-4-r1` | 480M | dense4_shared | 8 | 8e-4 | 96 | 8 | 4 | https://beaker.org/ex/01KVV1M34XRJVE60K6MQNM9B4J |
+| `ds-810m-cx1-ds0-sh-lr6e-4-r1` | 810M | dense0_shared | 1 | 6e-4 | 32 | 8 | 4 | https://beaker.org/ex/01KVV1TQEETCC76CS0R2JNH9YZ |
+| `ds-810m-cx2-ds0-sh-lr5.6e-4-r1` | 810M | dense0_shared | 2 | 5.6e-4 | 48 | 8 | 2 | https://beaker.org/ex/01KVV1VH6PBPP31RD0SM58BM46 |
+| `ds-810m-cx4-ds0-sh-lr4e-4-r1` | 810M | dense0_shared | 4 | 4e-4 | 64 | 8 | 4 | https://beaker.org/ex/01KVV1WC9YCBY0PFA78QM1E12P |
+| `ds-810m-cx8-ds0-sh-lr4e-4-r1` | 810M | dense0_shared | 8 | 4e-4 | 96 | 8 | 4 | https://beaker.org/ex/01KVV1X7T3RPAX3B0SAK4HTKT8 |
+| `ds-810m-cx1-ds2-sh-lr6e-4-r1` | 810M | dense2_shared | 1 | 6e-4 | 32 | 8 | 4 | https://beaker.org/ex/01KVV1Y7V48ZG09C34XYHNSRZ2 |
+| `ds-810m-cx2-ds2-sh-lr5.6e-4-r1` | 810M | dense2_shared | 2 | 5.6e-4 | 48 | 8 | 2 | https://beaker.org/ex/01KVV1Z3EJ66SEPY2BB4A3ZH59 |
+| `ds-810m-cx4-ds2-sh-lr4e-4-r1` | 810M | dense2_shared | 4 | 4e-4 | 64 | 8 | 4 | https://beaker.org/ex/01KVV1ZW8RSN4EGZEN54MA18VN |
+| `ds-810m-cx8-ds2-sh-lr4e-4-r1` | 810M | dense2_shared | 8 | 4e-4 | 96 | 8 | 4 | https://beaker.org/ex/01KVV20XZKCAXGRMTB9MDVFAWN |
+| `ds-810m-cx1-ds4-sh-lr6e-4-r1` | 810M | dense4_shared | 1 | 6e-4 | 32 | 8 | 4 | https://beaker.org/ex/01KVV21W5MQFCX9R6NWC7FCARD |
+| `ds-810m-cx2-ds4-sh-lr5.6e-4-r1` | 810M | dense4_shared | 2 | 5.6e-4 | 48 | 8 | 2 | https://beaker.org/ex/01KVV22W9JRH1FFKVVQAYRZV8F |
+| `ds-810m-cx4-ds4-sh-lr4e-4-r1` | 810M | dense4_shared | 4 | 4e-4 | 64 | 8 | 4 | https://beaker.org/ex/01KVV23RDA44XBKW3D59DBYYEX |
+| `ds-810m-cx8-ds4-sh-lr4e-4-r1` | 810M | dense4_shared | 8 | 4e-4 | 96 | 8 | 4 | https://beaker.org/ex/01KVV24VVNWDCGF6JSFKXYJ024 |
+| `ds-1p2b-cx1-ds0-sh-lr4e-4-r1` | 1.2B | dense0_shared | 1 | 4e-4 | 32 | 8 | 2 | https://beaker.org/ex/01KVV26CWEGWR09P5JBVR1QX24 |
+| `ds-1p2b-cx2-ds0-sh-lr6e-4-r1` | 1.2B | dense0_shared | 2 | 6e-4 | 48 | 8 | 2 | https://beaker.org/ex/01KVV27GXZ5DRQMRKWHN5G5BYA |
+| `ds-1p2b-cx4-ds0-sh-lr3e-4-r1` | 1.2B | dense0_shared | 4 | 3e-4 | 64 | 8 | 2 | https://beaker.org/ex/01KVV28EST9EFM4ZF43BP2FN15 |
+| `ds-1p2b-cx8-ds0-sh-lr4e-4-r1` | 1.2B | dense0_shared | 8 | 4e-4 | 96 | 8 | 4 | https://beaker.org/ex/01KVV29F7ZM9RW8DWF073QYYGF |
+| `ds-1p2b-cx1-ds2-sh-lr4e-4-r1` | 1.2B | dense2_shared | 1 | 4e-4 | 32 | 8 | 2 | https://beaker.org/ex/01KVV2AGRGJBFMPVKVN64G5754 |
+| `ds-1p2b-cx2-ds2-sh-lr6e-4-r1` | 1.2B | dense2_shared | 2 | 6e-4 | 48 | 8 | 2 | https://beaker.org/ex/01KVV2BE87YJBG7E68XCKRMTH4 |
+| `ds-1p2b-cx4-ds2-sh-lr3e-4-r1` | 1.2B | dense2_shared | 4 | 3e-4 | 64 | 8 | 2 | https://beaker.org/ex/01KVV2CCDP7P9C9HM6RYAMM2M8 |
+| `ds-1p2b-cx8-ds2-sh-lr4e-4-r1` | 1.2B | dense2_shared | 8 | 4e-4 | 96 | 8 | 4 | https://beaker.org/ex/01KVV2CVAH6ZYWMRYC8TRDS4DJ |
+| `ds-1p2b-cx1-ds4-sh-lr4e-4-r1` | 1.2B | dense4_shared | 1 | 4e-4 | 32 | 8 | 2 | https://beaker.org/ex/01KVV2DBHBF9BPT3SS3VH5K71W |
+| `ds-1p2b-cx2-ds4-sh-lr6e-4-r1` | 1.2B | dense4_shared | 2 | 6e-4 | 48 | 8 | 2 | https://beaker.org/ex/01KVV2DYRCB5ZDNTZHBD0MXGNX |
+| `ds-1p2b-cx4-ds4-sh-lr3e-4-r1` | 1.2B | dense4_shared | 4 | 3e-4 | 64 | 8 | 2 | https://beaker.org/ex/01KVV2EE8YK7B0MF0EFJ3P9YCZ |
+| `ds-1p2b-cx8-ds4-sh-lr4e-4-r1` | 1.2B | dense4_shared | 8 | 4e-4 | 96 | 8 | 4 | https://beaker.org/ex/01KVV2F1R6M48R02BKM9RVJZH0 |
+
+Shared expert remaining launches:
+
+| Name | Model | Variant | Cx | LR | GBS seq | GPUs | MB | Beaker |
+| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | --- |
+| `se-480m-cx1-se0m9-lr1.2e-3-r1` | 480M | no_shared_matched_active | 1 | 1.2e-3 | 32 | 4 | 8 | https://beaker.org/ex/01KVV1PVHBPE33XRTVF97HAZ1Y |
+| `se-480m-cx2-se0m9-lr9e-4-r1` | 480M | no_shared_matched_active | 2 | 9e-4 | 48 | 4 | 4 | https://beaker.org/ex/01KVV1QTFGB2JVZMSQZX8JVSW3 |
+| `se-480m-cx4-se0m9-lr8e-4-r1` | 480M | no_shared_matched_active | 4 | 8e-4 | 64 | 4 | 8 | https://beaker.org/ex/01KVV1RQDKHRTTTZNZ7ZWC5V90 |
+| `se-480m-cx8-se0m9-lr8e-4-r1` | 480M | no_shared_matched_active | 8 | 8e-4 | 96 | 8 | 4 | https://beaker.org/ex/01KVV1SHCZDHM17VHV0XWCA1J0 |
+| `se-1p2b-cx8-se0m9-lr4e-4-r1` | 1.2B | no_shared_matched_active | 8 | 4e-4 | 96 | 8 | 4 | https://beaker.org/ex/01KVV2FTHMVKP4ARF5B2A86DN5 |
+
+## 2026-06-24 Shared-Expert Status Audit and Duplicate Cleanup
+
+Audited the shared-expert `no_shared_matched_active` runs after the 2026-06-23 Titan relaunches revealed that the 480M checkpoints already existed. The 2026-06-15 Holmes promoted runs through 1.2B Cx4 are Beaker-finalized with exit code 0 and have final-looking Weka checkpoint directories. The current remaining shared-expert promoted cell is 1.2B Cx8.
+
+The shared-expert plotter was also fixed to classify `se-480m-*` names as 480M; before this fix, the completed 480M shared-expert runs were missing from the generated shared-expert plotted-result table even though Beaker and Weka showed completion.
+
+Canonical promoted shared-expert status:
+
+| Name | Beaker | Status | Finalized UTC | Checkpoint step | Notes |
+| --- | --- | --- | --- | ---: | --- |
+| `se-480m-cx1-se0m9-lr1.2e-3-r1` | https://beaker.org/ex/01KV6973XM7G19ZPA1NS7Y1GNK | finalized, exit 0 | 2026-06-15 22:34 | 29022 | Canonical Holmes compile-on run. |
+| `se-480m-cx2-se0m9-lr9e-4-r1` | https://beaker.org/ex/01KV69N19B2G4B5VCH375PW7AT | finalized, exit 0 | 2026-06-16 01:52 | 38696 | Canonical Holmes legal-microbatch run. |
+| `se-480m-cx4-se0m9-lr8e-4-r1` | https://beaker.org/ex/01KV697TS4XZ3DC834CDMZ7G49 | finalized, exit 0 | 2026-06-16 06:14 | 58044 | Canonical Holmes compile-on run. |
+| `se-480m-cx8-se0m9-lr8e-4-r1` | https://beaker.org/ex/01KV6986KXTDCGEV6P7QT8QRRS | finalized, exit 0 | 2026-06-16 07:58 | 77392 | Canonical Holmes compile-on run. |
+| `se-810m-cx1-se0m9-lr6e-4-r1` | https://beaker.org/ex/01KV698JMNYGCGVMVWSG9ZYKG5 | finalized, exit 0 | 2026-06-16 01:56 | 52648 | Canonical Holmes compile-on run. |
+| `se-810m-cx2-se0m9-lr5.6e-4-r1` | https://beaker.org/ex/01KV69NCK5KQPSSVEET8GKZ833 | finalized, exit 0 | 2026-06-16 10:22 | 70197 | Canonical Holmes legal-microbatch run. |
+| `se-810m-cx4-se0m9-lr4e-4-r1` | https://beaker.org/ex/01KV699AA6XVSNJ33WTJPDR9JT | finalized, exit 0 | 2026-06-16 16:01 | 105295 | Canonical Holmes compile-on run. |
+| `se-810m-cx8-se0m9-lr4e-4-r1` | https://beaker.org/ex/01KV699NQMH6B3ZR5SXQKVBGPF | finalized, exit 0 | 2026-06-17 13:07 | 140394 | Canonical Holmes compile-on run. |
+| `se-1p2b-cx1-se0m9-lr4e-4-r1` | https://beaker.org/ex/01KV69A1ZGD6SZH4A7TT3F7C54 | finalized, exit 0 | 2026-06-16 11:52 | 81190 | Canonical Holmes compile-on run. |
+| `se-1p2b-cx2-se0m9-lr6e-4-r1` | https://beaker.org/ex/01KV69ADE3VQ7JPXSEZ00KK4S8 | finalized, exit 0 | 2026-06-17 02:38 | 108253 | Canonical Holmes compile-on run. |
+| `se-1p2b-cx4-se0m9-lr3e-4-r1` | https://beaker.org/ex/01KV69ASNJF9D05MM7KDBHKPH7 | finalized, exit 0 | 2026-06-18 01:37 | 162379 | Canonical Holmes compile-on run. |
+| `se-1p2b-cx8-se0m9-lr4e-4-r1` | https://beaker.org/ex/01KVV2FTHMVKP4ARF5B2A86DN5 | created/queued |  |  | Remaining promoted shared-expert cell; Titan urgent compile-on. |
+
+Duplicate 2026-06-23 Titan relaunch cleanup:
+
+| Name | Beaker | Status | Notes |
+| --- | --- | --- | --- |
+| `se-480m-cx1-se0m9-lr1.2e-3-r1` | https://beaker.org/ex/01KVV1PVHBPE33XRTVF97HAZ1Y | finalized, exit 0 | Duplicate resume/eval-only against already-complete checkpoint. |
+| `se-480m-cx2-se0m9-lr9e-4-r1` | https://beaker.org/ex/01KVV1QTFGB2JVZMSQZX8JVSW3 | finalized, exit 0 | Duplicate resume/eval-only against already-complete checkpoint. |
+| `se-480m-cx4-se0m9-lr8e-4-r1` | https://beaker.org/ex/01KVV1RQDKHRTTTZNZ7ZWC5V90 | finalized, exit 0 | Duplicate resume/eval-only against already-complete checkpoint. |
+| `se-480m-cx8-se0m9-lr8e-4-r1` | https://beaker.org/ex/01KVV1SHCZDHM17VHV0XWCA1J0 | stopped before start | Stopped on 2026-06-24 after confirming canonical 480M Cx8 completion. |
+
+## 2026-06-30 1.2B Total-Sparsity Smoke Tests
+
+Queued three short 0.02x Chinchilla smoke tests for the 1.2B total-sparsity
+promotion settings. These are smoke-specific names and checkpoint folders, so
+they will not collide with later full Cx1/2/4/8 promoted runs. All use
+`ai2/titan`, workspace `ai2/OLMo-3-moe-experiments`, image
+`tianhuat/olmo-core-torch211-2404-cu128`, compile-on, `EP=1`, Weka
+`oe-training-default`, budget `ai2/oe-other`, priority `urgent`, and
+`--no-pre-train-checkpoint`.
+
+| Name | Variant | Shape | LR | GBS seq | Nodes | GPUs / node | EP | MB | Beaker |
+| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| `sp-smoke-1p2b-cx4shape-sp192e4k-lr2.25e-4-r1` | `huge_total_192e_top4` | Cx4-shaped `b512k` memory smoke | 2.25e-4 | 64 | 4 | 8 | 1 | 1 | https://beaker.org/ex/01KWCN66HYTCCGJFH7HPBVW5HA |
+| `sp-smoke-1p2b-cx2shape-sp192e4k-lr4e-4-r1` | `huge_total_192e_top4` | Cx2-shaped `b384k` divisibility smoke | 4e-4 | 48 | 3 | 8 | 1 | 1 | https://beaker.org/ex/01KWCN6R8JYF73JV22WB0RW3YT |
+| `sp-smoke-1p2b-cx8shape-sp96e4k-lr3.5e-4-r1` | `high_total_96e_top4` | Cx8-shaped `b768k` one-node smoke | 3.5e-4 | 96 | 1 | 8 | 1 | 4 | https://beaker.org/ex/01KWCN78Z4645GA6P41MQJYQ6T |
+
+
+## 2026-06-30 Integration Smoke Tests
+
+Queued two short 0.02x Chinchilla smoke tests for the integration candidates.
+Both use `ai2/titan`, workspace `ai2/OLMo-3-moe-experiments`, image
+`tianhuat/olmo-core-torch211-2404-cu128`, compile-on, `EP=1`, Weka
+`oe-training-default`, budget `ai2/oe-other`, priority `urgent`, and
+`--no-pre-train-checkpoint`. Batch shape is Cx1-style `b256k` with
+`global_batch_size_seq=32`, 2 GPUs, microbatch 8, and grad accumulation 2.
+
+| Name | Variant | LR | GBS seq | Nodes | GPUs / node | EP | MB | Beaker | Status |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |
+| `int-smoke-intw256e8k-lr1.6e-3-r1` | `wide_256e8k` | 1.6e-3 | 32 | 1 | 2 | 1 | 8 | https://beaker.org/ex/01KWDC0M1PMH7CQ314SV97VBVA | trained 310 steps; ~545-555 TFLOPs/GPU, actual avg ~537T; in eval |
+| `int-smoke-intd256e8k-lr1.6e-3-r1` | `deep_256e8k` | 1.6e-3 | 32 | 1 | 2 | 1 | 8 | https://beaker.org/ex/01KWDC0ZQ1TKRWHH6JJCYZJJXV | training reached >296/303 steps; ~532-542 TFLOPs/GPU; below >600 launch gate |
+
+The previously queued 1.2B total-sparsity smoke experiments were stopped on
+2026-06-30 so the integration smokes can get through the queue first:
+
+| Name | Beaker | Status |
+| --- | --- | --- |
+| `sp-smoke-1p2b-cx4shape-sp192e4k-lr2.25e-4-r1` | https://beaker.org/ex/01KWCN66HYTCCGJFH7HPBVW5HA | stopped 2026-06-30 |
+| `sp-smoke-1p2b-cx2shape-sp192e4k-lr4e-4-r1` | https://beaker.org/ex/01KWCN6R8JYF73JV22WB0RW3YT | stopped 2026-06-30 |
+| `sp-smoke-1p2b-cx8shape-sp96e4k-lr3.5e-4-r1` | https://beaker.org/ex/01KWCN78Z4645GA6P41MQJYQ6T | stopped 2026-06-30 |
+
+
+
+Additional mb16 smoke tests queued on 2026-06-30 to test whether larger microbatches improve throughput:
+
+| Name | Variant | LR | GBS seq | Nodes | GPUs / node | EP | MB | Beaker | Status |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |
+| `int-smoke-intw256e8k-lr1.6e-3-mb16-r1` | `wide_256e8k` | 1.6e-3 | 32 | 1 | 2 | 1 | 16 | https://beaker.org/ex/01KWDDKJHVYPKEAS490R7Q677X | failed/OOM during backward; tried to allocate 24.50 GiB with ~22.30 GiB free |
+| `int-smoke-intd256e8k-lr1.6e-3-mb16-r1` | `deep_256e8k` | 1.6e-3 | 32 | 1 | 2 | 1 | 16 | https://beaker.org/ex/01KWDDKYDR413XCM9SGXX4A8J4 | failed/OOM during backward; tried to allocate 24.50 GiB with ~15.26 GiB free |
+
+The mb16 smoke tests did not fit, so the full 275M grid was launched with the
+known legal settings in
+`src/scripts/train/jacobm_olmoe_ladder/experiments/integration/launch_275m_grid.sh`.
+This follows the user decision to launch the grid even if the larger-microbatch
+smokes failed or stayed below the rough `>600 TFLOPs/GPU` target.
+
+## 2026-06-30 Integration 275M Grid Launch
+
+Launched the full 275M LR grid for both integration candidates. All jobs use
+`ai2/titan`, workspace `ai2/OLMo-3-moe-experiments`, image
+`tianhuat/olmo-core-torch211-2404-cu128`, compile-on, `EP=1`, Weka
+`oe-training-default`, budget `ai2/oe-other`, priority `urgent`, and
+`--no-pre-train-checkpoint`.
+
+Batch settings are: Cx1 `global_batch_size_seq=32`, 2 GPUs, MB 8; Cx2
+`global_batch_size_seq=48`, 2 GPUs, MB 8; Cx4 `global_batch_size_seq=64`,
+4 GPUs, MB 8; Cx8 `global_batch_size_seq=96`, 8 GPUs, MB 4.
+
+| Name | Variant | Cx | LR | GBS seq | GPUs | MB | Beaker |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | --- |
+| `int-275m-cx1-intw256e8k-lr8e-4-r1` | `wide_256e8k` | 1 | 8e-4 | 32 | 2 | 8 | https://beaker.org/ex/01KWDDW61H689812K3DWHWH97W |
+| `int-275m-cx1-intw256e8k-lr1.6e-3-r1` | `wide_256e8k` | 1 | 1.6e-3 | 32 | 2 | 8 | https://beaker.org/ex/01KWDDWKR6E5ZGKGE0114WM851 |
+| `int-275m-cx1-intw256e8k-lr3.2e-3-r1` | `wide_256e8k` | 1 | 3.2e-3 | 32 | 2 | 8 | https://beaker.org/ex/01KWDDWZ15ET9GRVJB2NT7W6FZ |
+| `int-275m-cx2-intw256e8k-lr8e-4-r1` | `wide_256e8k` | 2 | 8e-4 | 48 | 2 | 8 | https://beaker.org/ex/01KWDDXAREEBFDZZQ4PK00EBTR |
+| `int-275m-cx2-intw256e8k-lr1.6e-3-r1` | `wide_256e8k` | 2 | 1.6e-3 | 48 | 2 | 8 | https://beaker.org/ex/01KWDDXPPS8V7W8ZQADM5YRYFP |
+| `int-275m-cx2-intw256e8k-lr3.2e-3-r1` | `wide_256e8k` | 2 | 3.2e-3 | 48 | 2 | 8 | https://beaker.org/ex/01KWDDY2PTBN2FR8M8D90Q8M7J |
+| `int-275m-cx4-intw256e8k-lr8e-4-r1` | `wide_256e8k` | 4 | 8e-4 | 64 | 4 | 8 | https://beaker.org/ex/01KWDDYE49G1366Q1EQFD3S7P5 |
+| `int-275m-cx4-intw256e8k-lr1.6e-3-r1` | `wide_256e8k` | 4 | 1.6e-3 | 64 | 4 | 8 | https://beaker.org/ex/01KWDDYSVFBA5PC370YP3YF33C |
+| `int-275m-cx4-intw256e8k-lr3.2e-3-r1` | `wide_256e8k` | 4 | 3.2e-3 | 64 | 4 | 8 | https://beaker.org/ex/01KWDDZ61FD5RH3B8XPCTMSKZT |
+| `int-275m-cx8-intw256e8k-lr8e-4-r1` | `wide_256e8k` | 8 | 8e-4 | 96 | 8 | 4 | https://beaker.org/ex/01KWDDZJ4VKPJEK5Z4M3EW5MM8 |
+| `int-275m-cx8-intw256e8k-lr1.6e-3-r1` | `wide_256e8k` | 8 | 1.6e-3 | 96 | 8 | 4 | https://beaker.org/ex/01KWDDZXH0WR1TPS113853WXXS |
+| `int-275m-cx8-intw256e8k-lr3.2e-3-r1` | `wide_256e8k` | 8 | 3.2e-3 | 96 | 8 | 4 | https://beaker.org/ex/01KWDE09EB8M529584J3GY1MK6 |
+| `int-275m-cx1-intd256e8k-lr8e-4-r1` | `deep_256e8k` | 1 | 8e-4 | 32 | 2 | 8 | https://beaker.org/ex/01KWDE0ME50VN6F2YJW0Z3ZVF3 |
+| `int-275m-cx1-intd256e8k-lr1.6e-3-r1` | `deep_256e8k` | 1 | 1.6e-3 | 32 | 2 | 8 | https://beaker.org/ex/01KWDE11612W4MVCKN07XAHYRJ |
+| `int-275m-cx1-intd256e8k-lr3.2e-3-r1` | `deep_256e8k` | 1 | 3.2e-3 | 32 | 2 | 8 | https://beaker.org/ex/01KWDE1CQJCDBMVZJWVXNDNQGQ |
+| `int-275m-cx2-intd256e8k-lr8e-4-r1` | `deep_256e8k` | 2 | 8e-4 | 48 | 2 | 8 | https://beaker.org/ex/01KWDE1RNPPST5WDYR5YB7PWMH |
+| `int-275m-cx2-intd256e8k-lr1.6e-3-r1` | `deep_256e8k` | 2 | 1.6e-3 | 48 | 2 | 8 | https://beaker.org/ex/01KWDE24TJXQ46KZBK8QR2CWNY |
+| `int-275m-cx2-intd256e8k-lr3.2e-3-r1` | `deep_256e8k` | 2 | 3.2e-3 | 48 | 2 | 8 | https://beaker.org/ex/01KWDE2GB96RXRAPZ8QP0CBDDY |
+| `int-275m-cx4-intd256e8k-lr8e-4-r1` | `deep_256e8k` | 4 | 8e-4 | 64 | 4 | 8 | https://beaker.org/ex/01KWDE2W8WT29FVNGBFN5RDY76 |
+| `int-275m-cx4-intd256e8k-lr1.6e-3-r1` | `deep_256e8k` | 4 | 1.6e-3 | 64 | 4 | 8 | https://beaker.org/ex/01KWDE380ZVWYB82Q8HX0T8Q8Y |
+| `int-275m-cx4-intd256e8k-lr3.2e-3-r1` | `deep_256e8k` | 4 | 3.2e-3 | 64 | 4 | 8 | https://beaker.org/ex/01KWDE3M8Y7ZS58WK7MD4KGJEE |
+| `int-275m-cx8-intd256e8k-lr8e-4-r1` | `deep_256e8k` | 8 | 8e-4 | 96 | 8 | 4 | https://beaker.org/ex/01KWDE3ZQP626MZ7M04WS4PFWX |
+| `int-275m-cx8-intd256e8k-lr1.6e-3-r1` | `deep_256e8k` | 8 | 1.6e-3 | 96 | 8 | 4 | https://beaker.org/ex/01KWDE4BWZFRSC1Y818AYE9HWH |
+| `int-275m-cx8-intd256e8k-lr3.2e-3-r1` | `deep_256e8k` | 8 | 3.2e-3 | 96 | 8 | 4 | https://beaker.org/ex/01KWDE4Q0SPJQ8JAXEX1SP03T9 |
+
+## 2026-07-01 Integration 480M Wide Baseline-LR Launch
+
+Queued the 480M promoted single-point ladder for the wide integration candidate
+(`wide_256e8k`: 256E/top8 + shared expert + one dense prefix layer). These use
+the baseline-transfer LRs, canonical Cx batch sizes, `ai2/titan`, workspace
+`ai2/OLMo-3-moe-experiments`, image `tianhuat/olmo-core-torch211-2404-cu128`,
+compile-on, `EP=1`, Weka `oe-training-default`, budget `ai2/oe-other`,
+priority `urgent`, and `--no-pre-train-checkpoint`. Microbatch settings follow
+the proven-safe 480M total-sparsity 192E/top4 replacements for Cx1/Cx4.
+
+| Name | Variant | Cx | LR | GBS seq | GPUs | MB | Beaker |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | --- |
+| `int-480m-cx1-intw256e8k-lr1.2e-3-r1` | `wide_256e8k` | 1 | 1.2e-3 | 32 | 4 | 4 | https://beaker.org/ex/01KWE2XDE9NATMWCWKAH9X29JT |
+| `int-480m-cx2-intw256e8k-lr9e-4-r1` | `wide_256e8k` | 2 | 9e-4 | 48 | 4 | 4 | https://beaker.org/ex/01KWE2XSK8ET39TTM3SERZ5MNS |
+| `int-480m-cx4-intw256e8k-lr8e-4-r1` | `wide_256e8k` | 4 | 8e-4 | 64 | 4 | 4 | https://beaker.org/ex/01KWE2Y61CJEQEDW57MDJEPRDH |
+| `int-480m-cx8-intw256e8k-lr8e-4-r1` | `wide_256e8k` | 8 | 8e-4 | 96 | 8 | 4 | https://beaker.org/ex/01KWE2YHFRQHAF56KCK95FPK62 |
+
+## 2026-07-01 Integration 480M Deep Baseline-LR Launch
+
+Queued the 480M promoted single-point ladder for the deep integration candidate
+(`deep_256e8k`: 256E/top8 + shared expert + one dense prefix layer + deeper layer schedule).
+These use the same baseline-transfer LRs and canonical Cx batch sizes as the
+480M wide integration launch, on `ai2/titan`, workspace
+`ai2/OLMo-3-moe-experiments`, image `tianhuat/olmo-core-torch211-2404-cu128`,
+compile-on, `EP=1`, Weka `oe-training-default`, budget `ai2/oe-other`,
+priority `urgent`, and `--no-pre-train-checkpoint`. Microbatch settings match
+the sparsity-safe 480M wide integration launch: MB4 throughout.
+
+| Name | Variant | Cx | LR | GBS seq | GPUs | MB | Beaker |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | --- |
+| `int-480m-cx1-intd256e8k-lr1.2e-3-r1` | `deep_256e8k` | 1 | 1.2e-3 | 32 | 4 | 4 | https://beaker.org/ex/01KWF7Z3GFWM8JS31NB0P9M516 |
+| `int-480m-cx2-intd256e8k-lr9e-4-r1` | `deep_256e8k` | 2 | 9e-4 | 48 | 4 | 4 | https://beaker.org/ex/01KWF7ZG3C483QD0KA5G3ZB231 |
+| `int-480m-cx4-intd256e8k-lr8e-4-r1` | `deep_256e8k` | 4 | 8e-4 | 64 | 4 | 4 | https://beaker.org/ex/01KWF804APPWNTTXT0B118G5MB |
+| `int-480m-cx8-intd256e8k-lr8e-4-r1` | `deep_256e8k` | 8 | 8e-4 | 96 | 8 | 4 | https://beaker.org/ex/01KWF80JBYFGSJPDV2QNE8BYQY |
+
+## 2026-07-01 Integration 275M Wide Cold-Side Follow-Ups
+
+Queued cold-side follow-up points for the 275M wide integration candidate because
+Cx4 and Cx8 had their best observed LR at the cold edge of the original
+`8e-4, 1.6e-3, 3.2e-3` grid. Both use `ai2/titan`, workspace
+`ai2/OLMo-3-moe-experiments`, image `tianhuat/olmo-core-torch211-2404-cu128`,
+compile-on, `EP=1`, Weka `oe-training-default`, budget `ai2/oe-other`,
+priority `urgent`, and `--no-pre-train-checkpoint`.
+
+| Name | Variant | Cx | LR | GBS seq | GPUs | MB | Beaker |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | --- |
+| `int-275m-cx4-intw256e8k-lr4e-4-r1` | `wide_256e8k` | 4 | 4e-4 | 64 | 4 | 8 | https://beaker.org/ex/01KWFRX0XC1823E3F0NG4VV9F4 |
+| `int-275m-cx8-intw256e8k-lr4e-4-r1` | `wide_256e8k` | 8 | 4e-4 | 96 | 8 | 4 | https://beaker.org/ex/01KWFRYPK82AC42HWXR0HNRE3G |
+
+
+## 2026-07-02 Eval Smoke Backend Follow-up and 810M Deep Requeue
+
+Tried several OLMoBase smoke-test variants against the converted baseline 275M
+Cx1 HF checkpoint. The checkpoint and HF model code load correctly, but fast
+vLLM eval is currently blocked by the eval image/backend stack: default vLLM hits
+a FlashInfer JIT path that requires missing `nvcc`; the explicit FlashAttention
+path starts quickly but crashes with a `quack`/`cutlass` `ThrMma` attribute error;
+SDPA is not registered; Triton/direct backend smoke attempts hung during provider
+initialization; and HF provider works but is far too slow (~0.5 items/sec). Full
+eval sweeps remain paused until the fast vLLM path is fixed.
+
+To unblock the eval smoke queue, the created-only 810M deep integration Cx2/Cx4/Cx8
+jobs were temporarily stopped. After the eval path was diagnosed, those same cells
+were relaunched on Titan urgent with compile on and the same training settings:
+
+| Name | Cx | LR | GBS seq | GPUs | MB | Beaker |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| `int-810m-cx2-intd256e8k-lr5.6e-4-r1` | 2 | 5.6e-4 | 48 | 8 | 2 | https://beaker.org/ex/01KWHQZQZ811104C16PJ4GTWG7 |
+| `int-810m-cx4-intd256e8k-lr4e-4-r1` | 4 | 4e-4 | 64 | 8 | 4 | https://beaker.org/ex/01KWHR02WQ7S4FCQ77WJNFSA5S |
+| `int-810m-cx8-intd256e8k-lr4e-4-r1` | 8 | 4e-4 | 96 | 8 | 4 | https://beaker.org/ex/01KWHR0DANF34FXQ236WKHHGMM |
+
+
+## 2026-07-03 1.2B Total-Sparsity Smoke Requeue
+
+Requeued the three short 0.02x Chinchilla 1.2B total-sparsity smoke tests that
+were intentionally stopped on 2026-06-30. These use new `-r2` names and
+checkpoint folders so they do not collide with the stopped `-r1` records. Settings
+match the original smoke specs: `ai2/titan`, workspace
+`ai2/OLMo-3-moe-experiments`, image `tianhuat/olmo-core-torch211-2404-cu128`,
+compile-on, Weka `oe-training-default`, budget `ai2/oe-other`, priority
+`urgent`, `EP=1`, ladder fast evals, and `--no-pre-train-checkpoint`.
+
+| Name | Variant | Shape | LR | GBS seq | Nodes | GPUs / node | EP | MB | Beaker |
+| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| `sp-smoke-1p2b-cx4shape-sp192e4k-lr2.25e-4-r2` | `huge_total_192e_top4` | Cx4-shaped `b512k` memory smoke | 2.25e-4 | 64 | 4 | 8 | 1 | 1 | https://beaker.org/ex/01KWKEE4SRKAW61NADPQX7Z78G |
+| `sp-smoke-1p2b-cx2shape-sp192e4k-lr4e-4-r2` | `huge_total_192e_top4` | Cx2-shaped `b384k` divisibility smoke | 4e-4 | 48 | 3 | 8 | 1 | 1 | https://beaker.org/ex/01KWKEEMPQB5WBX0BCWGYJFN9V |
+| `sp-smoke-1p2b-cx8shape-sp96e4k-lr3.5e-4-r2` | `high_total_96e_top4` | Cx8-shaped `b768k` one-node smoke | 3.5e-4 | 96 | 1 | 8 | 1 | 4 | https://beaker.org/ex/01KWKEF30D4JDTPN3VSEMBQ5ND |
+
+## 2026-07-03 1.2B Total-Sparsity Smoke Failure Notes
+
+The requeued 1.2B total-sparsity smoke tests failed with CUDA OOMs, so hold off
+on further 1.2B sparsity promotion until we deliberately revisit systems settings.
+This is not blocking the near-term experiment plan because the lower-scale runs
+already show that increasing total sparsity is strongly beneficial.
+
+Observed failure modes:
+
+| Name | Failure | Suggested next retry |
+| --- | --- | --- |
+| `sp-smoke-1p2b-cx4shape-sp192e4k-lr2.25e-4-r2` | OOM during MoE optimizer/model flattening; tried to allocate another 54.33 GiB with ~1.53 GiB free. Microbatch is not the relevant lever. | If needed later, retry 192E/top4 with higher expert parallelism, starting at `EP=2`, then `EP=4` if optimizer init still OOMs. |
+| `sp-smoke-1p2b-cx2shape-sp192e4k-lr4e-4-r2` | OOM during optimizer tensor distribution; ranks were effectively at full 178 GiB B200 memory. Microbatch is not the relevant lever. | Same as above: retry 192E/top4 with higher EP rather than only lowering microbatch. |
+| `sp-smoke-1p2b-cx8shape-sp96e4k-lr3.5e-4-r2` | OOM during compiled compute at `mb=4`; process used ~178.19 / 178.36 GiB. | If needed later, retry 96E/top4 Cx8-shape with `mb=2`, then `mb=1` if necessary. |
+
+Do not relaunch the same `EP=1`/`mb` settings unchanged. For the 192E/top4
+1.2B tests, prioritize changing expert parallelism/sharding over activation-only
+settings; for the 96E/top4 Cx8-shaped test, reducing microbatch is likely enough.
+
+## 2026-07-07 Larger-Model Baseline Midtraining Sweep
+
+The 480M/810M/1.2B Cx8 smoke tests stepped successfully with compile on, so they
+were stopped and replaced by the full 100B-token one-LR midtraining sweep. All
+runs use `midtraining_ladder.py`, Titan urgent, Weka `oe-training-default`,
+workspace `ai2/OLMo-3-moe-experiments`, budget `ai2/oe-other`, image
+`tianhuat/olmo-core-torch211-2404-cu128`, sequence length 8192, fresh optimizer
+state, weight-only load, fast in-loop evals every 2000 steps, and semantic run
+names that omit systems settings.
+
+| Name | Source checkpoint | LR | GBS seq | GPUs | EP | MB | Beaker |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | --- |
+| `mt-480m-baseline-cx1-lr1p2e-4-r1` | `m480-cx1-b256k-gpu4-ep1mb8-lr1.2e-3-r1/step29022` | 1.2e-4 | 192 | 4 | 1 | 8 | https://beaker.org/ex/01KWZARWH7XAS4MD2238VRKP0Y |
+| `mt-480m-baseline-cx2-lr9e-5-r1` | `m480-cx2-b384k-gpu4-ep1mb4-lr9e-4-r1/step38696` | 9e-5 | 192 | 4 | 1 | 8 | https://beaker.org/ex/01KWZARZ2XT6HP3HZ4AK0F5EKT |
+| `mt-480m-baseline-cx4-lr8e-5-r1` | `m480-cx4-b512k-gpu4-ep1mb8-lr8e-4-r1/step58044` | 8e-5 | 192 | 4 | 1 | 8 | https://beaker.org/ex/01KWZARWY3JYNCT8HAMYAD17J7 |
+| `mt-480m-baseline-cx8-lr8e-5-r1` | `m480-cx8-b768k-gpu8-ep1mb4-lr8e-4-r1/step77392` | 8e-5 | 192 | 4 | 1 | 8 | https://beaker.org/ex/01KWZARZ2T7FZDH42Q2VS92WXN |
+| `mt-810m-baseline-cx1-lr6e-5-r1` | `olmoe3-moe-a0-810m-cx1-b256k-gpu4-ep1mb4-lr6e-4-r1/step52648` | 6e-5 | 256 | 8 | 1 | 4 | https://beaker.org/ex/01KWZAT4PF87PYA96JT7ZXSQKX |
+| `mt-810m-baseline-cx2-lr5p6e-5-r1` | `olmoe3-moe-a0-810m-cx2-b384k-gpu8-ep1mb2-lr5.6e-4-r3/step70197` | 5.6e-5 | 256 | 8 | 1 | 4 | https://beaker.org/ex/01KWZAT5N7AJ6C1HTTRMDD8WMT |
+| `mt-810m-baseline-cx4-lr4e-5-r1` | `olmoe3-moe-a0-810m-cx4-b512k-gpu8-ep1mb4-lr4e-4-r1/step105295` | 4e-5 | 256 | 8 | 1 | 4 | https://beaker.org/ex/01KWZAT4PE90E0X0N6Z126Q8SR |
+| `mt-810m-baseline-cx8-lr4e-5-r1` | `olmoe3-moe-a0-810m-cx8-b768k-gpu8-ep1mb4-lr4e-4-r1/step140394` | 4e-5 | 256 | 8 | 1 | 4 | https://beaker.org/ex/01KWZAT4PQ0NWD20VS0XT12ZF5 |
+| `mt-1p2b-baseline-cx1-lr4e-5-r1` | `olmoe3-moe-a0-1p2b-cx1-b256k-gpu8-ep1mb2-lr4e-4-r1/step81190` | 4e-5 | 384 | 8 | 1 | 4 | https://beaker.org/ex/01KWZAVZFS1FMR59ASRVH7VD4X |
+| `mt-1p2b-baseline-cx2-lr6e-5-r1` | `olmoe3-moe-a0-1p2b-cx2-b384k-lr6e-4-r1/step108253` | 6e-5 | 384 | 8 | 1 | 4 | https://beaker.org/ex/01KWZAV9B2740S4NZDAZJW5A0R |
+| `mt-1p2b-baseline-cx4-lr3e-5-r1` | `olmoe3-moe-a0-1p2b-cx4-b512k-gpu8-ep1mb2-lr3e-4-r1/step162379` | 3e-5 | 384 | 8 | 1 | 4 | https://beaker.org/ex/01KWZAVC810DHNY5VE958S6DTG |
+| `mt-1p2b-baseline-cx8-lr4e-5-r1` | `olmoe3-moe-a0-1p2b-cx8-b768k-gpu32-ep1mb1-lr4e-4-r1/step216505` | 4e-5 | 384 | 8 | 1 | 4 | https://beaker.org/ex/01KWZAV9AGDSD3PTS5RAM7G5N2 |
+
+## 2026-07-07 275M Integration Midtraining Single Points
+
+These runs midtrain the best observed 275M wide/deep integration checkpoints for
+Cx1/2/4/8. They use the same midtraining LR transfer rule as the baseline
+single points: `0.1 * canonical 275M baseline best observed pretraining LR` for
+the matching Cx multiple. All runs use `midtraining_ladder.py`, 100B tokens,
+sequence length 8192, global batch seq 128, 1 node x 4 GPUs, EP1, microbatch 8,
+Titan urgent, Weka `oe-training-default`, workspace
+`ai2/OLMo-3-moe-experiments`, budget `ai2/oe-other`, image
+`tianhuat/olmo-core-torch211-2404-cu128`, compile on, fresh optimizer state,
+weight-only load, and fast in-loop evals every 2000 steps.
+
+| Name | Source checkpoint | LR | Beaker |
+| --- | --- | ---: | --- |
+| `mt-275m-intw256e8k-cx1-lr2e-4-r1` | `integration/int-275m-cx1-intw256e8k-lr1.6e-3-r1/step15499` | 2e-4 | https://beaker.org/ex/01KWZB3VB8H7HJTZQXCDKXAYHN |
+| `mt-275m-intw256e8k-cx2-lr1p8e-4-r1` | `integration/int-275m-cx2-intw256e8k-lr1.6e-3-r1/step20665` | 1.8e-4 | https://beaker.org/ex/01KWZB3WH75S6M876M642273WE |
+| `mt-275m-intw256e8k-cx4-lr1p5e-4-r1` | `integration/int-275m-cx4-intw256e8k-lr8e-4-r1/step30997` | 1.5e-4 | https://beaker.org/ex/01KWZB3VCP4J8D3Y42GYZVV0CD |
+| `mt-275m-intw256e8k-cx8-lr1p6e-4-r1` | `integration/int-275m-cx8-intw256e8k-lr8e-4-r1/step41329` | 1.6e-4 | https://beaker.org/ex/01KWZB3VQM01HJ9N40K22KPS0Z |
+| `mt-275m-intd256e8k-cx1-lr2e-4-r1` | `integration/int-275m-cx1-intd256e8k-lr1.6e-3-r1/step15130` | 2e-4 | https://beaker.org/ex/01KWZB6GXRPVHQ2WF1MNHP5YJY |
+| `mt-275m-intd256e8k-cx2-lr1p8e-4-r1` | `integration/int-275m-cx2-intd256e8k-lr1.6e-3-r1/step20173` | 1.8e-4 | https://beaker.org/ex/01KWZB7BGDRM0PHYP5DH81ZXTX |
+| `mt-275m-intd256e8k-cx4-lr1p5e-4-r1` | `integration/int-275m-cx4-intd256e8k-lr1.6e-3-r1/step30259` | 1.5e-4 | https://beaker.org/ex/01KWZB85A7ANH2EEY3CRJQQKRC |
+| `mt-275m-intd256e8k-cx8-lr1p6e-4-r1` | `integration/int-275m-cx8-intd256e8k-lr1.6e-3-r1/step40345` | 1.6e-4 | https://beaker.org/ex/01KWZB8XM9X3RHMBTGXWABFKGZ |
+
+Status update 2026-07-08: all eight `r1` integration midtraining jobs failed before training because they used the baseline `midtraining_ladder.py` architecture while loading wide/deep integration checkpoints. The fixed relaunch path is `experiments/midtraining/launch_275m_integration_lr_transfer.sh`, which uses `integration_midtraining_ladder.py` and forces fresh MoE optimizer state on load. Use `SWEEP_SUFFIX=r2` or later for replacements.
+
+False-start `r2` replacements were launched on 2026-07-08 before the new launcher was pushed. They used git ref `f8af705`, failed immediately with `integration_midtraining_ladder.py` missing, and should be ignored.
+
+| Name | Source checkpoint | LR | Beaker |
+| --- | --- | ---: | --- |
+| `mt-275m-intw256e8k-cx1-lr2e-4-r2` | `integration/int-275m-cx1-intw256e8k-lr1.6e-3-r1/step15499` | 2e-4 | https://beaker.org/ex/01KX1WP2HT8KHBZCPB3M8345QK |
+| `mt-275m-intw256e8k-cx2-lr1p8e-4-r2` | `integration/int-275m-cx2-intw256e8k-lr1.6e-3-r1/step20665` | 1.8e-4 | https://beaker.org/ex/01KX1WPFC3RWQ5K3X4403NCHDH |
+| `mt-275m-intw256e8k-cx4-lr1p5e-4-r2` | `integration/int-275m-cx4-intw256e8k-lr8e-4-r1/step30997` | 1.5e-4 | https://beaker.org/ex/01KX1WPW0TYH0YPRZ8A4JJN0DP |
+| `mt-275m-intw256e8k-cx8-lr1p6e-4-r2` | `integration/int-275m-cx8-intw256e8k-lr8e-4-r1/step41329` | 1.6e-4 | https://beaker.org/ex/01KX1WQ8AFG7149YMBAB44QEZH |
+| `mt-275m-intd256e8k-cx1-lr2e-4-r2` | `integration/int-275m-cx1-intd256e8k-lr1.6e-3-r1/step15130` | 2e-4 | https://beaker.org/ex/01KX1WQKR9KRQHDX0AM2FMMAQP |
+| `mt-275m-intd256e8k-cx2-lr1p8e-4-r2` | `integration/int-275m-cx2-intd256e8k-lr1.6e-3-r1/step20173` | 1.8e-4 | https://beaker.org/ex/01KX1WQZ765V617HSDVD1CEVPF |
+| `mt-275m-intd256e8k-cx4-lr1p5e-4-r2` | `integration/int-275m-cx4-intd256e8k-lr1.6e-3-r1/step30259` | 1.5e-4 | https://beaker.org/ex/01KX1WRB9PS47NC4ETSMB0BJ5N |
+| `mt-275m-intd256e8k-cx8-lr1p6e-4-r2` | `integration/int-275m-cx8-intd256e8k-lr1.6e-3-r1/step40345` | 1.6e-4 | https://beaker.org/ex/01KX1WRQBQS37V8PC2VNFYJNKK |
+
+Canonical `r3` replacements launched on 2026-07-08 from pushed commit `34f5d5a`. These use 100B midtraining tokens, sequence length 8192, global batch seq 128, 1 node x 4 GPUs, EP1, microbatch 8, Titan urgent, compile on, and fresh optimizer-state loading via `integration_midtraining_ladder.py`.
+
+| Name | Source checkpoint | LR | Beaker |
+| --- | --- | ---: | --- |
+| `mt-275m-intw256e8k-cx1-lr2e-4-r3` | `integration/int-275m-cx1-intw256e8k-lr1.6e-3-r1/step15499` | 2e-4 | https://beaker.org/ex/01KX1WZ551YCZYTHXRQEDX1WK1 |
+| `mt-275m-intw256e8k-cx2-lr1p8e-4-r3` | `integration/int-275m-cx2-intw256e8k-lr1.6e-3-r1/step20665` | 1.8e-4 | https://beaker.org/ex/01KX1WZGKE5K5GF4SZ98G7SVJD |
+| `mt-275m-intw256e8k-cx4-lr1p5e-4-r3` | `integration/int-275m-cx4-intw256e8k-lr8e-4-r1/step30997` | 1.5e-4 | https://beaker.org/ex/01KX1WZXCBX8VFNFFZK2DT50JB |
+| `mt-275m-intw256e8k-cx8-lr1p6e-4-r3` | `integration/int-275m-cx8-intw256e8k-lr8e-4-r1/step41329` | 1.6e-4 | https://beaker.org/ex/01KX1X0AJAMCEE5MSXBP33PHNG |
+| `mt-275m-intd256e8k-cx1-lr2e-4-r3` | `integration/int-275m-cx1-intd256e8k-lr1.6e-3-r1/step15130` | 2e-4 | https://beaker.org/ex/01KX1X0QVHZ7X0HSF0YNJWEBBH |
+| `mt-275m-intd256e8k-cx2-lr1p8e-4-r3` | `integration/int-275m-cx2-intd256e8k-lr1.6e-3-r1/step20173` | 1.8e-4 | https://beaker.org/ex/01KX1X14K49GJN4KS9QQ3JEQ1E |
+| `mt-275m-intd256e8k-cx4-lr1p5e-4-r3` | `integration/int-275m-cx4-intd256e8k-lr1.6e-3-r1/step30259` | 1.5e-4 | https://beaker.org/ex/01KX1X1GPC3N51C7E8AW2YXN63 |
+| `mt-275m-intd256e8k-cx8-lr1p6e-4-r3` | `integration/int-275m-cx8-intd256e8k-lr1.6e-3-r1/step40345` | 1.6e-4 | https://beaker.org/ex/01KX1X203AABJ29GHKST48J5E9 |
+
+## 2026-07-08 Midtraining Hold And 275M OLMoBase Eval Launch
+
+Stopped the larger-model baseline midtraining Cx2/Cx4 jobs so we can wait for
+useful 275M midtraining signal before spending compute at larger scales. Cx1 and
+Cx8 larger-model jobs remain active, and all 275M midtraining jobs are left to
+finish.
+
+Stopped experiments:
+
+| Run | Beaker |
+| --- | --- |
+| `mt-480m-baseline-cx2-lr9e-5-r1` | https://beaker.org/ex/01KWZARZ2XT6HP3HZ4AK0F5EKT |
+| `mt-480m-baseline-cx4-lr8e-5-r1` | https://beaker.org/ex/01KWZARWY3JYNCT8HAMYAD17J7 |
+| `mt-810m-baseline-cx2-lr5p6e-5-r1` | https://beaker.org/ex/01KWZAT5N7AJ6C1HTTRMDD8WMT |
+| `mt-810m-baseline-cx4-lr4e-5-r1` | https://beaker.org/ex/01KWZAT4PE90E0X0N6Z126Q8SR |
+| `mt-1p2b-baseline-cx2-lr6e-5-r1` | https://beaker.org/ex/01KWZAV9B2740S4NZDAZJW5A0R |
+| `mt-1p2b-baseline-cx4-lr3e-5-r1` | https://beaker.org/ex/01KWZAVC810DHNY5VE958S6DTG |
+
+Converted and launched OLMoBase evals for the selected optimal 275M midtraining
+checkpoints, using `2e-4` for both Cx1 and Cx8 based on the validation win
+summary. Conversion jobs used one Jupiter GPU each; eval jobs use the standard
+8-engine Jupiter OLMoBase launcher in `ai2/olmo-instruct`.
+
+| Source checkpoint | HF checkpoint | Conversion | OLMoBase eval |
+| --- | --- | --- | --- |
+| `midtraining/mt-275m-baseline-cx1-lr2e-4-r1/step95368` | `hf-checkpoints/midtraining/mt-275m-baseline-cx1-lr2e-4-r1/step95368` | https://beaker.org/ex/01KX02AE8YRXS7Q8SGV0TAMEN7 | https://beaker.org/ex/01KX02MYSA36TFKBT99XAE0XZ6 |
+| `midtraining/mt-275m-baseline-cx8-lr2e-4-r1/step95368` | `hf-checkpoints/midtraining/mt-275m-baseline-cx8-lr2e-4-r1/step95368` | https://beaker.org/ex/01KX02AFMHGPSH4ZQMS0A5BEF7 | https://beaker.org/ex/01KX02N80T6NXX8TZEJM8TC0Z5 |
+
+## 2026-07-09 Midtraining Eval Backfills
+
+Launched final-checkpoint fast eval backfills for finished midtraining runs that
+were missing `eval/*` metrics on their source W&B runs. These use
+`experiments/midtraining/launch_eval_backfills.sh`, Titan urgent, 1 node x 2
+GPUs, image `tianhuat/olmo-core-torch211-2404-cu128`, workspace
+`ai2/OLMo-3-moe-experiments`, and budget `ai2/oe-other`. After they finish, run
+`copy_eval_backfills_to_wandb.py --only mt-eval` so the metrics land on the
+source training runs.
+
+| Source run | Checkpoint | Model size | Eval backfill | Beaker | Initial state |
+| --- | --- | --- | --- | --- | --- |
+| `mt-275m-baseline-cx2-lr1p8e-4-r1` | `step95368` | 275M | `mt-eval-275m-baseline-cx2-lr1p8e-4-r1` | https://beaker.org/ex/01KX40CX1CHF7CFFQSDZK4Z4RE | running |
+| `mt-275m-baseline-cx4-lr1p5e-4-r1` | `step95368` | 275M | `mt-eval-275m-baseline-cx4-lr1p5e-4-r1` | https://beaker.org/ex/01KX40D8PFC9Z920Q3T70TGMSQ | created |
+| `mt-480m-baseline-cx1-lr1p2e-4-r1` | `step63579` | 480M | `mt-eval-480m-baseline-cx1-lr1p2e-4-r1` | https://beaker.org/ex/01KX40CX2BCWQZ6N1AAAQ42J0A | running |
+| `mt-480m-baseline-cx8-lr8e-5-r1` | `step63579` | 480M | `mt-eval-480m-baseline-cx8-lr8e-5-r1` | https://beaker.org/ex/01KX40D8N8FWQKGJXQ5716CKHG | created |
+| `mt-810m-baseline-cx1-lr6e-5-r1` | `step47684` | 810M | `mt-eval-810m-baseline-cx1-lr6e-5-r1` | https://beaker.org/ex/01KX40CX1TDFGF4115E01P6Y3Q | running |
+| `mt-810m-baseline-cx8-lr4e-5-r1` | `step47684` | 810M | `mt-eval-810m-baseline-cx8-lr4e-5-r1` | https://beaker.org/ex/01KX40D8K5SZJG3G4HNP8VDX67 | running |
+
+## 2026-07-10 Midtraining Cx8 Eval Expansion
+
+Launched the remaining finished final-checkpoint eval backfills identified after
+the 2026-07-10 MT status pass. The 275M integration-wide backfills run in
+`ai2/olmo-instruct` with no budget and use
+`integration_midtraining_ladder.py --integration-config=wide_256e8k`; the 1.2B
+baseline Cx8 backfill runs in the MoE workspace with 8 GPUs. `ai2/olmo-instruct`
+was missing the canonical `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`
+secrets, so those were copied from `ai2/OLMo-3-moe-experiments` before launch.
+
+| Source run | Checkpoint | Model size | Eval backfill | Beaker | Initial state |
+| --- | --- | --- | --- | --- | --- |
+| `mt-275m-intw256e8k-cx1-lr2e-4-r3` | `step95368` | 275M | `mt-eval-275m-intw256e8k-cx1-lr2e-4-r3` | https://beaker.org/ex/01KX4WK50SP2Z3S81H1597P5Q5 | running |
+| `mt-275m-intw256e8k-cx2-lr1p8e-4-r3` | `step95368` | 275M | `mt-eval-275m-intw256e8k-cx2-lr1p8e-4-r3` | https://beaker.org/ex/01KX4WKJCYDT2XQAYJFCS9PZJD | running |
+| `mt-275m-intw256e8k-cx4-lr1p5e-4-r3` | `step95368` | 275M | `mt-eval-275m-intw256e8k-cx4-lr1p5e-4-r3` | https://beaker.org/ex/01KX4WKZYZJG8W8DPD3F7M1XXH | created |
+| `mt-275m-intw256e8k-cx8-lr1p6e-4-r3` | `step95368` | 275M | `mt-eval-275m-intw256e8k-cx8-lr1p6e-4-r3` | https://beaker.org/ex/01KX4WME9TKAQHGM8CE3073HHZ | created |
+| `mt-1p2b-baseline-cx8-lr4e-5-r1` | `step31790` | 1.2B | `mt-eval-1p2b-baseline-cx8-lr4e-5-r1` | https://beaker.org/ex/01KX4WN3XFYSZAGH33KWYF62TV | running |
+| `mt-275m-intd256e8k-cx1-lr2e-4-r3` | `step95368` | 275M | `mt-eval-275m-intd256e8k-cx1-lr2e-4-r3` | https://beaker.org/ex/01KX5CM5NCAGRQ97Z51CSCVXR3 | created |
+| `mt-275m-intd256e8k-cx2-lr1p8e-4-r3` | `step95368` | 275M | `mt-eval-275m-intd256e8k-cx2-lr1p8e-4-r3` | https://beaker.org/ex/01KX5CMGM8BKX6JYHXWQ3A1CXJ | created |
+| `mt-275m-intd256e8k-cx4-lr1p5e-4-r3` | `step95368` | 275M | `mt-eval-275m-intd256e8k-cx4-lr1p5e-4-r3` | https://beaker.org/ex/01KX5CMWZR8PJSJEG56DCB9455 | created |
+| `mt-275m-intd256e8k-cx8-lr1p6e-4-r3` | `step95368` | 275M | `mt-eval-275m-intd256e8k-cx8-lr1p6e-4-r3` | https://beaker.org/ex/01KX5CN86SGER9E88YASSS7J06 | created |
+| `mt-1p2b-baseline-cx1-lr4e-5-r1` | `step31790` | 1.2B | `mt-eval-1p2b-baseline-cx1-lr4e-5-r1` | https://beaker.org/ex/01KX5CNTTRBMEXBA1XJ1JNM0ZR | created |
+
+Converted and launched OLMoBase evals for Cx8 midtrained checkpoints that were
+ready as of this pass. Conversion jobs use one Jupiter GPU and write HF outputs
+under `hf-checkpoints/midtraining/`. OLMoBase jobs use the standard 8-engine
+Jupiter vLLM launcher; 275M/480M evals run in `ai2/olmo-instruct`, while
+810M/1.2B evals run in `ai2/OLMo-3-moe-experiments`.
+
+| Source checkpoint | HF checkpoint | Conversion | OLMoBase eval | Initial state |
+| --- | --- | --- | --- | --- |
+| `midtraining/mt-480m-baseline-cx8-lr8e-5-r1/step63579` | `hf-checkpoints/midtraining/mt-480m-baseline-cx8-lr8e-5-r1/step63579` | https://beaker.org/ex/01KX4WQ46EHZTA76REXB4DWX8E | https://beaker.org/ex/01KX4X15K8VHV25ES8YSPF0AET | running |
+| `midtraining/mt-810m-baseline-cx8-lr4e-5-r1/step47684` | `hf-checkpoints/midtraining/mt-810m-baseline-cx8-lr4e-5-r1/step47684` | https://beaker.org/ex/01KX4WQ5D3C5E2QED9S4NKZXWG | https://beaker.org/ex/01KX4X1GRMAR78VYH0XZVJX7MX | running |
+| `midtraining/mt-1p2b-baseline-cx8-lr4e-5-r1/step31790` | `hf-checkpoints/midtraining/mt-1p2b-baseline-cx8-lr4e-5-r1/step31790` | https://beaker.org/ex/01KX4WQ6MBG2Z525R1NRN6FHEH | https://beaker.org/ex/01KX4X6FYR1DTE1VMY3FEGT5XC | running |
+| `midtraining/mt-275m-intw256e8k-cx8-lr1p6e-4-r3/step95368` | `hf-checkpoints/midtraining/mt-275m-intw256e8k-cx8-lr1p6e-4-r3/step95368` | https://beaker.org/ex/01KX4WQ7T1G1SC89E0PEHW1RRS | https://beaker.org/ex/01KX4XBGFP5A0XE1JFQT2NWCVM | scheduled |
+| `midtraining/mt-275m-intd256e8k-cx8-lr1p6e-4-r3/step95368` | `hf-checkpoints/midtraining/mt-275m-intd256e8k-cx8-lr1p6e-4-r3/step95368` | https://beaker.org/ex/01KX5DTZQJKG11EGTERPKWXA0F | https://beaker.org/ex/01KX5FF8P4F3GS5RRH5M29AFCW | scheduled |
+
+## 2026-07-10 Promoted Integration Cx8 Midtraining
+
+Added and pushed `experiments/midtraining/launch_integration_cx8_promoted.sh`
+at commit `445ab3e` before launching, so Beaker sees the launcher file. This
+wave runs Cx8 midtraining for the finished integration checkpoints: all three
+wide sizes plus the two available deep sizes. The 1.2B deep Cx8 MT run is held
+until `int-1p2b-cx8-intd256e8k-lr4e-4-r2` finishes pretraining.
+
+All jobs use the same 100B-token midtraining recipe as baseline MT, sequence
+length 8192, Titan urgent, compile on, fresh optimizer state, weight-only load,
+and 10% of the matching baseline Cx8 pretraining LR.
+
+| Name | Source checkpoint | LR | Global batch seq | GPUs | EP / MB | Beaker | Initial state |
+| --- | --- | ---: | ---: | ---: | --- | --- | --- |
+| `mt-480m-intw256e8k-cx8-lr8e-5-r1` | `integration/int-480m-cx8-intw256e8k-lr8e-4-r1/step78042` | 8e-5 | 192 | 4 | EP1 / MB8 | https://beaker.org/ex/01KX5AVB82NXXXP2AWHB5Y003C | running |
+| `mt-810m-intw256e8k-cx8-lr4e-5-r1` | `integration/int-810m-cx8-intw256e8k-lr4e-4-r1/step141423` | 4e-5 | 256 | 8 | EP1 / MB4 | https://beaker.org/ex/01KX5AVR579VFZX7PNPFZ7K6Y9 | running |
+| `mt-1p2b-intw256e8k-cx8-lr4e-5-r1` | `integration/int-1p2b-cx8-intw256e8k-lr4e-4-r2/step217870` | 4e-5 | 384 | 8 | EP1 / MB4 | https://beaker.org/ex/01KX5AWBA0E2YNCAXPSQWWW9F5 | failed |
+| `mt-480m-intd256e8k-cx8-lr8e-5-r1` | `integration/int-480m-cx8-intd256e8k-lr8e-4-r1/step78659` | 8e-5 | 192 | 4 | EP1 / MB8 | https://beaker.org/ex/01KX5AX3WZZ44PV3D6PEGHRQ8V | scheduled |
+| `mt-810m-intd256e8k-cx8-lr4e-5-r1` | `integration/int-810m-cx8-intd256e8k-lr4e-4-r1/step138619` | 4e-5 | 256 | 8 | EP1 / MB4 | https://beaker.org/ex/01KX5AXRY5713CS0AQPFKF6T0W | scheduled |
+
+Status/storage follow-up: all five initial promoted Cx8 integration MT jobs
+finalized with checkpoint-save failures. The clearest log was
+`OSError: [Errno 28] No space left on device` from distributed checkpoint
+writing on `/weka/oe-training-default`; the other failures showed checkpoint
+barrier/connection-closed teardown consistent with one rank failing during save.
+The 1.2B deep Cx8 pretraining checkpoint is now available at
+`integration/int-1p2b-cx8-intd256e8k-lr4e-4-r2/step218156`.
+
+Storage audit scoped only to
+`/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3`: our folder is
+about 42T. The canonical finished integration pretraining checkpoints account
+for about 6.47 TiB of non-temp storage; final checkpoint optimizer tensors are
+about 2.16 TiB, and older periodic checkpoints for those same runs account for
+about 3.24 TiB. Three stale partial 1.2B wide `r1` integration directories add
+about 0.64 TiB, and the failed MT temp checkpoint
+`midtraining/mt-810m-intw256e8k-cx8-lr4e-5-r1/step11000-tmp` adds about 122 GiB.
+Final checkpoint optimizer tensors are interleaved in `model_and_optim/*.distcp`
+shards, so freeing them safely requires rewriting model-only checkpoints rather
+than deleting individual files. Cleanup is deferred until after this experiment
+wave.
+
+Restart attempt: relaunch the same six semantic promoted Cx8 MT runs after the
+storage audit, including the newly available 1.2B deep Cx8 source. These reuse
+the existing save folders so partial MT checkpoints can resume where possible.
+
+| Name | Beaker | Initial state |
+| --- | --- | --- |
+| `mt-480m-intw256e8k-cx8-lr8e-5-r1` | https://beaker.org/ex/01KX6K2NTZZRVE98HCQWE2DR64 | started |
+| `mt-810m-intw256e8k-cx8-lr4e-5-r1` | https://beaker.org/ex/01KX6K330J3Z5CSDY518BGJ05B | started |
+| `mt-1p2b-intw256e8k-cx8-lr4e-5-r1` | https://beaker.org/ex/01KX6K3KB852TCJYC4KVBXVXVP | started |
+| `mt-480m-intd256e8k-cx8-lr8e-5-r1` | https://beaker.org/ex/01KX6K41XG75V1DQ9NWZB988GQ | started |
+| `mt-810m-intd256e8k-cx8-lr4e-5-r1` | https://beaker.org/ex/01KX6K4GKDHQS05727Q9DH0NF4 | scheduled |
+| `mt-1p2b-intd256e8k-cx8-lr4e-5-r1` | https://beaker.org/ex/01KX6K4YBN8659G8SY8A4WAQA4 | scheduled |
+
+Follow-up status: 480M wide/deep and 810M wide/deep are running after relaunch.
+Both 1.2B relaunches finalized with CUDA OOMs rather than storage errors.
+`mt-1p2b-intw256e8k-cx8-lr4e-5-r1` OOMed during checkpoint restore/model-buffer
+sync while trying to allocate 36.61 GiB with 32.35 GiB free. `mt-1p2b-intd256e8k-cx8-lr4e-5-r1`
+OOMed during compiled forward with the GPU nearly full. Retry these with
+lower-memory 1.2B settings instead of EP1/MB4, likely closer to the EP8-style
+settings used by 1.2B integration pretraining.
+
+The four 480M/810M relaunches have started and written new partial checkpoints
+(`step3000`/`step3500`/`step4000` depending on the run), so they are past launch
+and storage-write smoke.
+
+1.2B PT-settings relaunch: the 1.2B integration pretraining runs that produced
+these checkpoints used sequence length 8192, Cx8 global batch seq 96
+(`b768k`), one node with 8 GPUs, EP8, and microbatch 3. The promoted MT launcher
+now uses those exact systems settings for 1.2B while keeping the MT recipe and
+fresh optimizer state unchanged.
+
+| Name | Beaker | Systems settings | Initial state |
+| --- | --- | --- | --- |
+| `mt-1p2b-intw256e8k-cx8-lr4e-5-r1` | https://beaker.org/ex/01KX7032K1GXDKQR2D9FAA0CBF | GBS seq 96; 1 node x 8 GPUs; EP8 / MB3 | started |
+| `mt-1p2b-intd256e8k-cx8-lr4e-5-r1` | https://beaker.org/ex/01KX703FE8T96HJM4EFG90KHVF | GBS seq 96; 1 node x 8 GPUs; EP8 / MB3 | scheduled |
+
+## 2026-07-12 Status Refresh
+
+Bounded Beaker status pass checked the currently tracked active MT/eval/OLMoBase
+jobs rather than all historical jobs. The six promoted integration Cx8
+midtraining jobs are still started/running:
+
+| Name | Beaker | Status |
+| --- | --- | --- |
+| `mt-480m-intw256e8k-cx8-lr8e-5-r1` | https://beaker.org/ex/01KX6K2NTZZRVE98HCQWE2DR64 | started |
+| `mt-810m-intw256e8k-cx8-lr4e-5-r1` | https://beaker.org/ex/01KX6K330J3Z5CSDY518BGJ05B | started |
+| `mt-1p2b-intw256e8k-cx8-lr4e-5-r1` | https://beaker.org/ex/01KX7032K1GXDKQR2D9FAA0CBF | started |
+| `mt-480m-intd256e8k-cx8-lr8e-5-r1` | https://beaker.org/ex/01KX6K41XG75V1DQ9NWZB988GQ | started |
+| `mt-810m-intd256e8k-cx8-lr4e-5-r1` | https://beaker.org/ex/01KX6K4GKDHQS05727Q9DH0NF4 | started |
+| `mt-1p2b-intd256e8k-cx8-lr4e-5-r1` | https://beaker.org/ex/01KX703FE8T96HJM4EFG90KHVF | started |
+
+Latest W&B progress snapshot for those six jobs:
+
+| Name | W&B run | Step | Tokens | Train CE |
+| --- | --- | ---: | ---: | ---: |
+| `mt-480m-intw256e8k-cx8-lr8e-5-r1` | `in1ztv0o` | 56,729 | 89.23B | 1.4254 |
+| `mt-810m-intw256e8k-cx8-lr4e-5-r1` | `sq79ify2` | 43,193 | 90.58B | 1.3558 |
+| `mt-1p2b-intw256e8k-cx8-lr4e-5-r1` | `5stly1t0` | 57,499 | 45.22B | 1.3820 |
+| `mt-480m-intd256e8k-cx8-lr8e-5-r1` | `2qobflhw` | 50,951 | 80.14B | 1.4698 |
+| `mt-810m-intd256e8k-cx8-lr4e-5-r1` | `rge9kicc` | 41,125 | 86.25B | 1.3866 |
+| `mt-1p2b-intd256e8k-cx8-lr4e-5-r1` | `k25pw5nl` | 51,747 | 40.70B | 1.3218 |
+
+All tracked final-checkpoint eval backfill jobs from the 2026-07-10 wave are
+finalized. `copy_eval_backfills_to_wandb.py --only mt-eval` copied 10 newly
+available metric sets to their source W&B runs: 1.2B baseline Cx1/Cx8 plus 275M
+integration wide/deep Cx1/Cx2/Cx4/Cx8. Existing earlier backfills were skipped
+because their eval metrics were already present.
+
+The tracked OLMoBase conversion/eval wave for midtrained Cx8 checkpoints is
+also finalized:
+
+| Source | Conversion | OLMoBase eval | Status |
+| --- | --- | --- | --- |
+| `mt-480m-baseline-cx8-lr8e-5-r1` | https://beaker.org/ex/01KX4WQ46EHZTA76REXB4DWX8E | https://beaker.org/ex/01KX4X15K8VHV25ES8YSPF0AET | finalized |
+| `mt-810m-baseline-cx8-lr4e-5-r1` | https://beaker.org/ex/01KX4WQ5D3C5E2QED9S4NKZXWG | https://beaker.org/ex/01KX4X1GRMAR78VYH0XZVJX7MX | finalized |
+| `mt-1p2b-baseline-cx8-lr4e-5-r1` | https://beaker.org/ex/01KX4WQ6MBG2Z525R1NRN6FHEH | https://beaker.org/ex/01KX4X6FYR1DTE1VMY3FEGT5XC | finalized |
+| `mt-275m-intw256e8k-cx8-lr1p6e-4-r3` | https://beaker.org/ex/01KX4WQ7T1G1SC89E0PEHW1RRS | https://beaker.org/ex/01KX4XBGFP5A0XE1JFQT2NWCVM | finalized |
+| `mt-275m-intd256e8k-cx8-lr1p6e-4-r3` | https://beaker.org/ex/01KX5DTZQJKG11EGTERPKWXA0F | https://beaker.org/ex/01KX5FF8P4F3GS5RRH5M29AFCW | finalized |
+
+Plots and result pages were regenerated after the W&B eval-backfill copy. The
+midtraining validation dashboard now includes final-checkpoint eval metrics for
+1.2B baseline Cx1/Cx8 and the 275M integration wide/deep MT runs.
+
+## 2026-07-12 High-Active Wide Integration Diagnostic
+
+Launched one 275M-shape wide integration diagnostic with twice as many routed
+active experts as the current wide integration candidate: 256 total routed
+experts, top16 active, 0.5d routed experts, 0.5d shared expert, and one dense
+prefix layer.
+
+The plain script-derived `Cx4` duration would not match the 275M wide Cx8 token
+budget, because the current active-parameter accounting does not change when
+`top_k` changes. To keep the intended same-data comparison, this run uses an
+explicit token-duration override. The target is the nearest lower full Cx4-batch
+multiple to the 275M wide Cx8 token count: `32,502,185,984` tokens, which is
+`262,144` tokens below `32,502,448,128`.
+
+| Name | Beaker | Variant | LR | Duration | Systems settings | Commit |
+| --- | --- | --- | ---: | --- | --- | --- |
+| `int-275m-cx4-intw256e16k-lr8e-4-r1` | https://beaker.org/ex/01KXA424V6TFS1GQ8A85PJEFRT | `wide_256e16k` | `8e-4` | `--chinchilla-multiple=4`, `--max-duration-tokens=32502185984` | 1 node x 8 GPUs; GBS seq 64; EP1 / MB4; compile-on | `9cde532` |
+
+Midtraining follow-up:
+
+| Name | Beaker | Source checkpoint | LR | Duration | Systems settings | Commit |
+| --- | --- | --- | ---: | --- | --- | --- |
+| `mt-275m-intw256e16k-cx4-lr8e-5-r1` | https://beaker.org/ex/01KXBH2HBN9W4M46H33CRGHVJS | `integration/int-275m-cx4-intw256e16k-lr8e-4-r1/step61993` | `8e-5` | 100B MT tokens | 1 node x 8 GPUs; GBS seq 128; EP1 / MB4; compile-on; fresh optimizer / weight-only load | `0e1b7bb` |
+
+
+## 2026-07-12 810M Integration MT Completion Follow-up
+
+`mt-810m-intw256e8k-cx8-lr4e-5-r1` finished successfully at `step47684` in
+Beaker experiment https://beaker.org/ex/01KX6K330J3Z5CSDY518BGJ05B. The final
+checkpoint is:
+
+`/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/midtraining/mt-810m-intw256e8k-cx8-lr4e-5-r1/step47684`
+
+Follow-up jobs launched:
+
+| Follow-up | Beaker | Status at launch | Notes |
+| --- | --- | --- | --- |
+| Final-checkpoint eval backfill | https://beaker.org/ex/01KXAEK0VQBM0S74A8KZXXHWWM | starting | Uses `integration_midtraining_ladder.py --integration-config=wide_256e8k` so validation metrics match the integration architecture. Copy metrics to the source W&B run after it finishes. |
+| HF conversion for OLMoBase | https://beaker.org/ex/01KXAEMCSE3T436X2K4DGK0FYH | succeeded | One-row manifest: `eval_810m_integration_mt_cx8_targets.jsonl`. HF checkpoint written to `hf-checkpoints/midtraining/mt-810m-intw256e8k-cx8-lr4e-5-r1/step47684`. |
+| OLMoBase eval | https://beaker.org/ex/01KXAFXV1EAX2FC89C3YGZEJ61 | starting | Standard 8-engine Jupiter OLMoBase eval in the MoE workspace, launched from the converted HF checkpoint. |
+
+Plots/result pages were refreshed after detecting this completion. The new eval
+metrics are not expected in the result tables until the eval backfill finishes
+and is copied back to the source W&B run.
+
+## 2026-07-12 480M Integration MT Completion Follow-up
+
+`mt-480m-intw256e8k-cx8-lr8e-5-r1` finished successfully at `step63579` in
+Beaker experiment https://beaker.org/ex/01KX6K2NTZZRVE98HCQWE2DR64. The final
+checkpoint is:
+
+`/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/midtraining/mt-480m-intw256e8k-cx8-lr8e-5-r1/step63579`
+
+Follow-up jobs launched:
+
+| Follow-up | Beaker | Status at launch | Notes |
+| --- | --- | --- | --- |
+| Final-checkpoint eval backfill | https://beaker.org/ex/01KXAG736RGRPJ23ZF172DTHBH | starting | Uses `integration_midtraining_ladder.py --integration-config=wide_256e8k` so validation metrics match the integration architecture. Copy metrics to the source W&B run after it finishes. |
+| HF conversion for OLMoBase | https://beaker.org/ex/01KXAG811R26WXR368B2N3A3B0 | wrote HF files | One-row manifest: `eval_480m_integration_mt_cx8_targets.jsonl`. HF checkpoint target is `hf-checkpoints/midtraining/mt-480m-intw256e8k-cx8-lr8e-5-r1/step63579`. |
+| OLMoBase eval | https://beaker.org/ex/01KXAGZ02JQ3M71M6MBE9PBBZT | starting | Standard 8-engine Jupiter OLMoBase eval in `ai2/olmo-instruct`, launched from the converted HF checkpoint. |
+
+Plots/result pages were refreshed after detecting this completion. The new eval
+metrics are not expected in the result tables until the eval backfill finishes
+and is copied back to the source W&B run.
+
+## 2026-07-12 Deep Integration MT Completion Follow-up
+
+Status refresh found two additional promoted integration Cx8 midtraining runs
+finished successfully:
+
+| Name | Beaker | Final checkpoint | Follow-ups |
+| --- | --- | --- | --- |
+| `mt-480m-intd256e8k-cx8-lr8e-5-r1` | https://beaker.org/ex/01KX6K41XG75V1DQ9NWZB988GQ | `step63579` | Eval backfill https://beaker.org/ex/01KXBF8ECAS3EK0TXW6X9B0TKP; HF conversion https://beaker.org/ex/01KXBF94GH2KDH2ZAJYT2E8ZF7; OLMoBase eval https://beaker.org/ex/01KXBPB8V0724FNM2RK46GVTPD. |
+| `mt-810m-intd256e8k-cx8-lr4e-5-r1` | https://beaker.org/ex/01KX6K4GKDHQS05727Q9DH0NF4 | `step47684` | Eval backfill https://beaker.org/ex/01KXBF8DFXXTRXTW6ZRP4TRGBG; HF conversion https://beaker.org/ex/01KXBF95SYXE13VVMHEXJWNS4H; OLMoBase eval https://beaker.org/ex/01KXBPBHYMFHPNZ2KAC6WE2J5X. |
+
+Also finalized since the previous refresh: 480M/810M wide integration MT eval
+backfills and OLMoBase evals, plus the 275M high-active top16 diagnostic. Wide
+integration MT eval metrics were copied back to their source W&B runs after
+adding promoted integration entries to `copy_eval_backfills_to_wandb.py`.
+
+Plots and generated result pages were refreshed. `write_midtraining_validation_results.py`
+now tracks the promoted integration MT runs directly, including the still-running
+1.2B wide/deep Cx8 MT jobs.
+
+## 2026-07-12 Status Refresh
+
+Bounded refresh checked the currently active midtraining/eval follow-ups rather
+than the full historical run set.
+
+Newly finalized:
+
+- `mt-480m-intd256e8k-cx8-lr8e-5-r1` final-checkpoint eval backfill finished and
+  its metrics were copied into the training W&B run. Its OLMoBase eval
+  [01KXBPB8V0724FNM2RK46GVTPD](https://beaker.org/ex/01KXBPB8V0724FNM2RK46GVTPD)
+  also finalized successfully.
+- `mt-810m-intd256e8k-cx8-lr4e-5-r1` final-checkpoint eval backfill finished and
+  its metrics were copied into the training W&B run. Its OLMoBase eval
+  [01KXBPBHYMFHPNZ2KAC6WE2J5X](https://beaker.org/ex/01KXBPBHYMFHPNZ2KAC6WE2J5X)
+  also finalized successfully.
+
+Still running at this refresh:
+
+| Name | W&B | Tokens | Train CE | Notes |
+| --- | --- | ---: | ---: | --- |
+| `mt-1p2b-intw256e8k-cx8-lr4e-5-r1` | `5stly1t0` | 79.82B / 100B | 1.3434 | 1 node x 8 GPUs, EP8 / MB3. |
+| `mt-1p2b-intd256e8k-cx8-lr4e-5-r1` | `k25pw5nl` | 71.92B / 100B | 1.3694 | 1 node x 8 GPUs, EP8 / MB3. |
+| `mt-275m-intw256e16k-cx4-lr8e-5-r1` | `kmxhtpxp` | 44.07B / 100B | 1.5550 | High-active 256E/top16 diagnostic MT follow-up. |
+
+Generated outputs refreshed:
+
+- `results/midtraining_validation.md` / `.json`
+- `results/olmobase_evals.md` / `.json`
+- targeted integration plots and `PLOTTED_RESULTS.md`
+
+## 2026-07-13 Full Status Refresh
+
+Full refresh checked active Beaker jobs, W&B progress for active runs, result
+tables, and all plot families. Running experiments remain excluded from plots.
+
+No new terminal pretraining or OLMoBase eval completions were found since the
+previous refresh.
+
+Still running at this refresh:
+
+| Name | Beaker | W&B | Tokens | Train CE | Approx remaining |
+| --- | --- | --- | ---: | ---: | ---: |
+| `mt-1p2b-intw256e8k-cx8-lr4e-5-r1` | https://beaker.org/ex/01KX7032K1GXDKQR2D9FAA0CBF | `5stly1t0` | 91.58B / 100B | 1.2190 | ~5 hours |
+| `mt-1p2b-intd256e8k-cx8-lr4e-5-r1` | https://beaker.org/ex/01KX703FE8T96HJM4EFG90KHVF | `k25pw5nl` | 82.34B / 100B | 1.2083 | ~12 hours |
+| `mt-275m-intw256e16k-cx4-lr8e-5-r1` | https://beaker.org/ex/01KXBH2HBN9W4M46H33CRGHVJS | `kmxhtpxp` | 88.18B / 100B | 1.5908 | ~2-3 hours |
+
+Previously launched high-active pretraining
+`int-275m-cx4-intw256e16k-lr8e-4-r1`
+([01KXA424V6TFS1GQ8A85PJEFRT](https://beaker.org/ex/01KXA424V6TFS1GQ8A85PJEFRT))
+is finalized with exit code 0.
+
+Generated outputs refreshed:
+
+- all plot families via `experiments/plot_all_experiments.sh` with
+  `REFRESH_STALE_CACHE=1 INCLUDE_RUNNING=0`
+- `PLOTTED_RESULTS.md`
+- `results/optimal_losses.md` / `.json`
+- `results/in_loop_evals.md` / `.json`
+- `results/midtraining_validation.md` / `.json`
+- `results/olmobase_evals.md` / `.json`
+
+## 2026-07-13 MT Finish Follow-up
+
+Status check found two additional midtraining runs finalized successfully:
+
+| Name | Beaker | Final checkpoint | W&B | Final CE |
+| --- | --- | --- | --- | ---: |
+| `mt-1p2b-intw256e8k-cx8-lr4e-5-r1` | https://beaker.org/ex/01KX7032K1GXDKQR2D9FAA0CBF | `step127157` | `5stly1t0` | 1.2618 |
+| `mt-275m-intw256e16k-cx4-lr8e-5-r1` | https://beaker.org/ex/01KXBH2HBN9W4M46H33CRGHVJS | `step95368` | `kmxhtpxp` | 1.4481 |
+
+Launched final-checkpoint eval backfills:
+
+| Source run | Eval backfill | Workspace | Settings |
+| --- | --- | --- | --- |
+| `mt-1p2b-intw256e8k-cx8-lr4e-5-r1` | https://beaker.org/ex/01KXE09P543W9B3P9Y5AW1K2PR | `ai2/OLMo-3-moe-experiments` | Titan urgent, 1 node x 8 GPUs, `integration_midtraining_ladder.py --integration-config=wide_256e8k`. |
+| `mt-275m-intw256e16k-cx4-lr8e-5-r1` | https://beaker.org/ex/01KXE0A23TX57JCMSX8CYM1VT8 | `ai2/olmo-instruct` | Titan urgent, 1 node x 8 GPUs, `integration_midtraining_ladder.py --integration-config=wide_256e16k`. |
+
+Launched HF conversions:
+
+| Source checkpoint | HF target | Conversion |
+| --- | --- | --- |
+| `midtraining/mt-1p2b-intw256e8k-cx8-lr4e-5-r1/step127157` | `hf-checkpoints/midtraining/mt-1p2b-intw256e8k-cx8-lr4e-5-r1/step127157` | https://beaker.org/ex/01KXE0C5662V06ANB4JW7DTE1E |
+| `midtraining/mt-275m-intw256e16k-cx4-lr8e-5-r1/step95368` | `hf-checkpoints/midtraining/mt-275m-intw256e16k-cx4-lr8e-5-r1/step95368` | https://beaker.org/ex/01KXE0C6BFQFWVJKCDWK7300J5 |
+
+Added `eval_20260713_finished_mt_targets.jsonl` for these two checkpoints.
+`convert_275m_eval_targets.py` now maps `integration wide 256E/top16`
+manifests to `--integration-config=wide_256e16k`, and
+`launch_olmobase_evals.py` has a `mt-int-wide-top16` naming slug. OLMoBase evals
+were not launched in this pass because both conversion jobs were still only
+scheduled at the final status check.
+
+Still running:
+
+| Name | Beaker | W&B | Tokens | Train CE |
+| --- | --- | --- | ---: | ---: |
+| `mt-1p2b-intd256e8k-cx8-lr4e-5-r1` | https://beaker.org/ex/01KX703FE8T96HJM4EFG90KHVF | `k25pw5nl` | 94.48B / 100B | 1.1887 |
+
+## 2026-07-13 OLMoBase Launch Follow-up
+
+The two HF conversions and two final-checkpoint eval backfills from the previous
+section finalized successfully. Copied both eval-backfill metric sets back to
+their source W&B training runs with `copy_eval_backfills_to_wandb.py`, then
+refreshed `results/midtraining_validation.*`.
+
+Prepared a topK=8 eval variant for the high-active top16 checkpoint by creating
+a hardlinked HF checkpoint copy:
+
+`hf-checkpoints/midtraining/mt-275m-intw256e16k-cx4-lr8e-5-r1/step95368-topk8`
+
+Only `config.json` differs from the default converted checkpoint:
+`num_experts_per_tok=8` and `original_num_experts_per_tok=16`. Model weights and
+tokenizer files are hardlinked to the default topK=16 HF checkpoint.
+
+Launched OLMoBase evals:
+
+| Name | HF checkpoint | Beaker | Workspace | Status at launch check |
+| --- | --- | --- | --- | --- |
+| `olmoe3-1p2b-cx8-mt-int-wide-olmobase` | `hf-checkpoints/midtraining/mt-1p2b-intw256e8k-cx8-lr4e-5-r1/step127157` | https://beaker.org/ex/01KXE4E4JD4QJER5KEQX2EJF6E | `ai2/OLMo-3-moe-experiments` | started |
+| `olmoe3-275m-cx4-mt-int-wide-top16-olmobase` | `hf-checkpoints/midtraining/mt-275m-intw256e16k-cx4-lr8e-5-r1/step95368` | https://beaker.org/ex/01KXE8ZQTDBCC2QRX8YXDWHAS9 | `ai2/OLMo-3-moe-experiments` | scheduled |
+| `olmoe3-275m-cx4-mt-int-wide-top16-top8-olmobase` | `hf-checkpoints/midtraining/mt-275m-intw256e16k-cx4-lr8e-5-r1/step95368-topk8` | https://beaker.org/ex/01KXE900EMBX7MDDFQEWMMN69J | `ai2/OLMo-3-moe-experiments` | scheduled |
+
+Added `eval_20260713_olmobase_targets.jsonl` and registered these explicit
+experiment IDs in `write_olmobase_eval_results.py`; refreshed
+`results/olmobase_evals.*`, which now lists the three jobs as pending/running.
+
+## 2026-07-13 Final 1.2B Deep Midtraining Eval Follow-up
+
+`mt-1p2b-intd256e8k-cx8-lr4e-5-r1` finished successfully at `step127157`
+from Beaker [01KX703FE8T96HJM4EFG90KHVF](https://beaker.org/ex/01KX703FE8T96HJM4EFG90KHVF).
+
+Launched and finalized the final-checkpoint eval backfill, then copied 180
+summary metrics back to source W&B run `k25pw5nl` with
+`copy_eval_backfills_to_wandb.py`:
+
+| Kind | Beaker | Notes |
+| --- | --- | --- |
+| Eval backfill | https://beaker.org/ex/01KXEFDEBTMVC594FGSY2FBD4G | Titan urgent, 1 node x 8 GPUs, `integration_midtraining_ladder.py --integration-config=deep_256e8k`; finalized with exit code 0. |
+| HF conversion | https://beaker.org/ex/01KXEFCXXE1N7ZSZCT26C3F53H | Jupiter urgent, 1 GPU; wrote `hf-checkpoints/midtraining/mt-1p2b-intd256e8k-cx8-lr4e-5-r1/step127157`. |
+| OLMoBase eval | https://beaker.org/ex/01KXEJ2N0VW8815658DPNXQH7R | MoE workspace, Jupiter urgent, 8 vLLM instances, standard OLMoBase task suite. |
+
+Added `eval_20260713_1p2b_deep_olmobase_targets.jsonl` and registered the
+OLMoBase experiment in `write_olmobase_eval_results.py`.
+
+## 2026-07-13 Eval Result Collection
+
+Collected finished eval results and refreshed the eval dashboards:
+
+- `results/olmobase_evals.*`
+- `results/in_loop_evals.*`
+- `results/midtraining_validation.*`
+
+Newly finalized OLMoBase evals:
+
+| Name | Beaker | Status |
+| --- | --- | --- |
+| `olmoe3-1p2b-cx8-mt-int-wide-olmobase` | https://beaker.org/ex/01KXE4E4JD4QJER5KEQX2EJF6E | finalized 2026-07-13 |
+| `olmoe3-275m-cx4-mt-int-wide-top16-olmobase` | https://beaker.org/ex/01KXE8ZQTDBCC2QRX8YXDWHAS9 | finalized 2026-07-13 |
+| `olmoe3-275m-cx4-mt-int-wide-top16-top8-olmobase` | https://beaker.org/ex/01KXE900EMBX7MDDFQEWMMN69J | finalized 2026-07-13 |
+
+`olmoe3-1p2b-cx8-mt-int-deep-olmobase` is still scheduled in Beaker as of this
+check: https://beaker.org/ex/01KXEJ2N0VW8815658DPNXQH7R.
+
+## 2026-07-14 Full Status Refresh
+
+Refreshed plots, plotted-results markdown, in-loop eval summaries, midtraining
+validation summaries, and OLMoBase eval summaries.
+
+The final pending midtrained OLMoBase eval finalized successfully:
+
+| Name | Beaker | Status |
+| --- | --- | --- |
+| `olmoe3-1p2b-cx8-mt-int-deep-olmobase` | https://beaker.org/ex/01KXEJ2N0VW8815658DPNXQH7R | finalized 2026-07-13, exit code 0 |
+
+`results/olmobase_evals.*` now includes all finalized midtrained OLMoBase runs.
+

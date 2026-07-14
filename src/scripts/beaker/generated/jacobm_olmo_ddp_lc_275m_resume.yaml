@@ -1,0 +1,70 @@
+version: v2
+description: Resume the 100B-token 65k-context OLMoDDP 275M continuation from its latest checkpoint
+tasks:
+  - name: train
+    image:
+      beaker: tianhuat/olmo-core-torch212-2404-cu130
+    hostNetworking: true
+    command: [/bin/bash, -lc]
+    arguments:
+      - |
+        set -euxo pipefail
+        SOURCE_REPO=/weka/oe-adapt-default/jacobm/olmoe3/olmo-ddp-migration/OLMo-core
+        REPO=/tmp/OLMo-core
+        RUN_NAME=lc-275m-baseline-cx8-mt2e-4-lc1e-4-64k-r2
+        LOAD_PATH=/weka/oe-adapt-default/jacobm/olmoe3/olmo-ddp-migration/converted-checkpoints/midtraining/mt-275m-baseline-cx8-lr2e-4-r1/step95368
+        rm -rf "${REPO}"
+        mkdir -p "${REPO}/src/scripts/train" /results
+        cp -a "${SOURCE_REPO}/src/olmo_core" "${REPO}/src/"
+        cp "${SOURCE_REPO}/src/scripts/train/jacobm_olmoe3_275m_long_context.py" \
+          "${REPO}/src/scripts/train/"
+        cd "${REPO}"
+        export PYTHONPATH="${REPO}/src"
+        export PYTHONUNBUFFERED=1
+        export CUDA_SCALE_LAUNCH_QUEUES=4x
+        export OLMO_SHARED_FS=1
+        export OLMOE3_275M_LC_LOAD_PATH="${LOAD_PATH}"
+        export OLMOE3_275M_LC_SAVE_ROOT=/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/olmo-ddp/long-context
+        export OLMOE3_275M_LC_WORK_DIR=/weka/oe-training-default/ai2-llm/checkpoints/yashasbls/dataset-cache
+        export OLMOE3_275M_LC_MAX_TOKENS=100000000000
+        export OLMOE3_275M_LC_RANK_MICROBATCH_SEQUENCES=4
+        export OLMOE3_275M_LC_WORLD_SIZE=8
+        export OLMOE3_275M_LC_LR=1e-4
+        export OLMOE3_275M_LC_USE_COMPILE=1
+        export OLMOE3_275M_LC_WANDB=1
+        export OLMOE3_275M_LC_ASYNC_BOOKKEEPING=0
+        export OLMOE3_275M_LC_SAVE_INTERVAL=5000
+        export OLMOE3_275M_LC_EPHEMERAL_SAVE_INTERVAL=1000
+        export WANDB_RUN_ID=e4hvrd33
+        export WANDB_RESUME=allow
+        export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+        export OMP_NUM_THREADS=8
+        python --version | tee /results/python_version.txt
+        nvidia-smi | tee /results/nvidia_smi_before.txt
+        torchrun --standalone --nproc-per-node=8 \
+          src/scripts/train/jacobm_olmoe3_275m_long_context.py \
+          train "${RUN_NAME}" local \
+          2>&1 | tee /results/train.log
+        nvidia-smi | tee /results/nvidia_smi_after.txt
+    envVars:
+      - name: WANDB_API_KEY
+        secret: jacobm_WANDB_API_KEY
+    datasets:
+      - mountPath: /weka/oe-adapt-default
+        source:
+          weka: oe-adapt-default
+      - mountPath: /weka/oe-training-default
+        source:
+          weka: oe-training-default
+    result:
+      path: /results
+    resources:
+      gpuCount: 8
+      sharedMemory: 128GiB
+    context:
+      priority: urgent
+      preemptible: false
+    constraints:
+      cluster:
+        - ai2/holmes
+    timeout: 336h

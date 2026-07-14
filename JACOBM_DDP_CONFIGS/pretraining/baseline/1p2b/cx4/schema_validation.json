@@ -1,0 +1,16 @@
+{
+  "protocol": "legacy_config_checkpoint_schema_v1",
+  "status": "LEGACY_CONFIG_SCHEMA_MATCH",
+  "validated_at": "2026-07-13T22:07:33.009269+00:00",
+  "checkpoint": "/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/olmoe3-moe-a0-1p2b-cx4-b512k-gpu8-ep1mb2-lr3e-4-r1/step162379",
+  "checkpoint_model_dir": "/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/olmoe3-moe-a0-1p2b-cx4-b512k-gpu8-ep1mb2-lr3e-4-r1/step162379/model_and_optim",
+  "config": "/weka/oe-adapt-default/jacobm/olmoe3/olmo-ddp-migration/OLMo-core/JACOBM_DDP_CONFIGS/pretraining/baseline/1p2b/cx4/config.json",
+  "config_sha256": "756b22946c164b240edd387749e263e342373939c2e181a2634c3c4048b4e6f9",
+  "model_tensor_count": 332,
+  "model_numel": 7758270976,
+  "checkpoint_main_tensor_count": 332,
+  "checkpoint_main_numel": 7758270976,
+  "keys_exact": true,
+  "numel_exact": true,
+  "dtypes_exact": true
+}

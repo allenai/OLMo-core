@@ -1,0 +1,12 @@
+{
+  "manifest_id": "pretraining/qwen_true_3d/810m/cx8",
+  "source_checkpoint": "/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/qwen3_like/q3-810m-cx8-q3td128e8k-lr4e-4-r1/step140464",
+  "resolution": "archived_hf",
+  "origin_config": "/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/hf-checkpoints/q3-810m-cx8-q3td128e8k-lr4e-4-r1/step140464/olmo_config.json",
+  "origin_config_sha256": "5a84d749f20d0a5692cf17b74332459247b5c0c356ba89d437b16699ce2fe17d",
+  "materialized_config": "/weka/oe-adapt-default/jacobm/olmoe3/olmo-ddp-migration/OLMo-core/JACOBM_DDP_CONFIGS/pretraining/qwen_true_3d/810m/cx8/config.json",
+  "materialized_config_sha256": "045e9f318d3a56bae15f37ba463b2f968798edc3396c383feacdbdd8159fc5fb",
+  "model_config_sha256": "147be48dccf58e49c89ec8161180fddefc89aadf4b60428f013b954d5fe966b8",
+  "schema_validation": "skipped",
+  "reconstruction": null
+}

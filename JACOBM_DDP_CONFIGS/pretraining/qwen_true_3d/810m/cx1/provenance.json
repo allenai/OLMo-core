@@ -1,0 +1,35 @@
+{
+  "manifest_id": "pretraining/qwen_true_3d/810m/cx1",
+  "source_checkpoint": "/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/qwen3_like/q3-810m-cx1-q3td128e8k-lr6e-4-r1/step52674",
+  "resolution": "reconstructed_from_legacy_builder",
+  "origin_config": null,
+  "origin_config_sha256": null,
+  "materialized_config": "/weka/oe-adapt-default/jacobm/olmoe3/olmo-ddp-migration/OLMo-core/JACOBM_DDP_CONFIGS/pretraining/qwen_true_3d/810m/cx1/config.json",
+  "materialized_config_sha256": "0748a95888942d83e1d8e1ccc8d7538cbe8a6b96ada746887576f48fc2bb530f",
+  "model_config_sha256": "147be48dccf58e49c89ec8161180fddefc89aadf4b60428f013b954d5fe966b8",
+  "schema_validation": "skipped",
+  "reconstruction": {
+    "builder": "/weka/oe-adapt-default/jacobm/olmoe3/OLMo-core/src/scripts/train/jacobm_olmoe_ladder/experiments/qwen3_like/qwen3_like_ladder.py",
+    "argv": [
+      "--model-size=810m",
+      "--save-folder=/tmp/reconstructed-config-only",
+      "--name=q3-810m-cx1-q3td128e8k-lr6e-4-r1",
+      "--data-root=s3://ai2-llm",
+      "--lr=6e-4",
+      "--chinchilla-multiple=1",
+      "--global-batch-size-seq=32",
+      "--num-nodes=1",
+      "--gpus-per-node=1",
+      "--micro-batch-size=1",
+      "--ep-dim=1",
+      "--ladder-evals",
+      "--eval-task-set=fast",
+      "--eval-interval=2000",
+      "--save-interval=999999999",
+      "--ephemeral-save-interval=500",
+      "--no-pre-train-checkpoint",
+      "--tag=q3-810m-cx1-q3td128e8k-lr6e-4-r1",
+      "--qwen3-like=true_3d_depth_matched"
+    ]
+  }
+}
