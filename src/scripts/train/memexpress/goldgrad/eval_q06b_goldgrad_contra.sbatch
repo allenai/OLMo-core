@@ -32,7 +32,11 @@ _mirror_log() { cp -f "$_SRC_LOG" "$MIRROR_DIR/eval_goldgrad_${SLURM_JOB_ID}.log
 ( while true; do _mirror_log; sleep 20; done ) & _MIRROR_PID=$!
 
 REPO="${REPO:-/accounts/projects/berkeleynlp/prasann/projects/OLMo-core}"
-CR_SRC=/scratch/users/prasann/corpus-reasoning
+# Eval code MUST come from this repo, not the /scratch standalone checkout. The standalone still has
+# the OLD document wrap (claim label left OUTSIDE the chunk = the free-token leak), so a model trained
+# on the leak-free shards is scored against a prompt layout it never saw: it emits well-formed output
+# (parse_rate 1.0) and f1 collapses to 0.000 while its train CE is ~0.001. Overridable, but don't.
+CR_SRC="${CR_SRC:-$REPO/src/corpus_reasoning}"
 N_RANDOM="${N_RANDOM:-2}"
 TAG="${TAG:-fa}"   # must match the train run's TAG (fa = full attention)
 RUNS="${RUNS:-q06b-goldgrad-${TAG}-n20-full q06b-goldgrad-${TAG}-n20-gpr${N_RANDOM} q06b-goldgrad-${TAG}-n20-rand${N_RANDOM}}"
