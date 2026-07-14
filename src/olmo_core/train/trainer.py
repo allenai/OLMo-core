@@ -1059,7 +1059,10 @@ class Trainer:
             self.load_trainer_state if load_trainer_state is None else load_trainer_state
         )
         load_optim_state = self.load_optim_state if load_optim_state is None else load_optim_state
-        if reset_optimizer_states_on_load is None and load_trainer_state is True:
+        # Any load that isn't explicitly load_trainer_state=False is a potential resume (the default
+        # of None loads trainer state when present, which is the normal automatic-resume path), so
+        # apply the train module's resume-specific optimizer reset flag here too.
+        if reset_optimizer_states_on_load is None and load_trainer_state is not False:
             reset_optimizer_states_on_load = getattr(
                 self.train_module, "reset_optimizer_states_on_resume", None
             )

@@ -8,6 +8,7 @@ from itertools import product
 from typing import (
     Any,
     Callable,
+    ClassVar,
     Collection,
     Dict,
     Generator,
@@ -222,6 +223,19 @@ class OLMoDDPTrainModule(TrainModule):
             raise OLMoConfigurationError(
                 "OLMoDDPTrainModule requires only_allreduce_last_microbatch=True; "
                 "per-micro-batch all-reduce is not supported by MultiGroupDistributedDataParallel."
+            )
+
+        if (
+            state_dict_save_opts is not None
+            or state_dict_load_opts is not None
+            or load_key_mapping is not None
+        ):
+            # The direct checkpoint save/load path manages its own planners and key resolution and
+            # does not consume these options, so accepting them would silently ignore requested
+            # strictness / CPU offload / key remapping. Reject until they are actually wired up.
+            raise OLMoConfigurationError(
+                "OLMoDDPTrainModule does not support state_dict_save_opts, state_dict_load_opts, "
+                "or load_key_mapping; its direct checkpoint save/load ignores them. Leave them unset."
             )
 
         ########################## Validate arguments. [END] ##########################
@@ -1085,10 +1099,18 @@ class OLMoDDPTrainModule(TrainModule):
 
         # assert main_param_sz == model_param_sz, f"Main param size {main_param_sz} != model param size {model_param_sz}"
 
+        # Persistent model buffers (e.g. the router's aux-loss-free score_bias) are not optimizer
+        # state, so they must be added to the checkpoint explicitly; optim.load_state_dict() below
+        # only round-trips the optimizer keys.
+        save_dict = dict(state_dict)
+        for key, buffer in self._persistent_model_buffer_state_dict().items():
+            assert key not in save_dict, f"Buffer key '{key}' collides with an optimizer state key"
+            save_dict[key] = buffer
+
         dir = _prepare_env_for_save(dir, process_group=process_group, save_overwrite=save_overwrite)
         planner = FlatSavePlanner(dedup_save_to_lowest_rank=True)
         dist_cp.state_dict_saver.save(
-            state_dict,
+            save_dict,
             storage_writer=RemoteFileSystemWriter(
                 dir,
                 thread_count=thread_count,
@@ -1127,6 +1149,7 @@ class OLMoDDPTrainModule(TrainModule):
         )
 
         metadata = reader.read_metadata()
+        checkpoint_keys = set(metadata.state_dict_metadata.keys())
 
         if self.eval_only:
             sd_to_load = self._get_model_state_dict_for_eval_load(metadata)
@@ -1139,7 +1162,6 @@ class OLMoDDPTrainModule(TrainModule):
         else:
             optim = self._require_optimizer()
             sd_to_load = optim.state_dict()
-            checkpoint_keys = set(metadata.state_dict_metadata.keys())
             has_optimizer_moments = any(
                 key.endswith((".exp_avg", ".exp_avg_sq", ".muon_momentum", ".step"))
                 for key in checkpoint_keys
@@ -1234,6 +1256,27 @@ class OLMoDDPTrainModule(TrainModule):
                 # load into model params
                 optim._copy_main_params_to_model_params()
 
+        # Restore persistent model buffers (e.g. the router's score_bias) on both the eval and
+        # training paths. These are model state updated outside the optimizer, so they are always
+        # restored when present in the checkpoint, independent of optimizer-state handling above.
+        buffers_to_load = {
+            key: buffer
+            for key, buffer in self._persistent_model_buffer_state_dict().items()
+            if key in checkpoint_keys
+        }
+        if buffers_to_load:
+            # Use a fresh reader for this separate load pass rather than reusing the one already
+            # consumed by the optimizer/model load above.
+            buffer_reader = RemoteFileSystemReader(
+                dir, thread_count=thread_count, pre_download=pre_download, work_dir=work_dir
+            )
+            dist_cp.state_dict_loader.load(
+                buffers_to_load,
+                checkpoint_id=dir,
+                storage_reader=buffer_reader,
+                process_group=process_group,
+            )
+
         torch.cuda.empty_cache()
 
         return
@@ -1308,20 +1351,48 @@ class OLMoDDPTrainModule(TrainModule):
             running *= int(dim)
         return tuple(reversed(stride))
 
+    _MODEL_BUFFER_KEY_PREFIX: ClassVar[str] = "model_buffer."
+
+    @staticmethod
+    def _strip_wrapper_prefixes(name: str) -> str:
+        while True:
+            for prefix in ("module.", "_orig_mod."):
+                if name.startswith(prefix):
+                    name = name[len(prefix) :]
+                    break
+            else:
+                return name
+
+    def _persistent_model_buffer_state_dict(self) -> Dict[str, torch.Tensor]:
+        """
+        Map each persistent model buffer to a stable checkpoint key.
+
+        Persistent buffers (e.g. the router's aux-loss-free ``score_bias``) hold learned state that
+        is updated outside the optimizer, so they must be checkpointed alongside optimizer state.
+        Keys are stripped of DDP / ``torch.compile`` wrapper prefixes so a checkpoint saved from the
+        wrapped training model reloads into the unwrapped eval model and vice versa.
+        """
+        buffer_state: Dict[str, torch.Tensor] = {}
+        for model_part in self.model_parts:
+            for module_name, module in model_part.named_modules():
+                for buffer_name, buffer in module._buffers.items():
+                    if buffer is None or buffer_name in module._non_persistent_buffers_set:
+                        continue
+                    full_name = f"{module_name}.{buffer_name}" if module_name else buffer_name
+                    key = self._MODEL_BUFFER_KEY_PREFIX + self._strip_wrapper_prefixes(full_name)
+                    if key in buffer_state:
+                        raise RuntimeError(
+                            f"Duplicate persistent buffer checkpoint key '{key}'; buffer names "
+                            "collide across model parts."
+                        )
+                    buffer_state[key] = buffer
+        return buffer_state
+
     def _resolve_model_checkpoint_key(
         self, param_name: str, checkpoint_keys: Collection[str]
     ) -> Optional[str]:
-        def strip_wrapper_prefixes(name: str) -> str:
-            while True:
-                for prefix in ("module.", "_orig_mod."):
-                    if name.startswith(prefix):
-                        name = name[len(prefix) :]
-                        break
-                else:
-                    return name
-
         param_names: List[str] = []
-        for candidate_name in (param_name, strip_wrapper_prefixes(param_name)):
+        for candidate_name in (param_name, self._strip_wrapper_prefixes(param_name)):
             if candidate_name not in param_names:
                 param_names.append(candidate_name)
 
