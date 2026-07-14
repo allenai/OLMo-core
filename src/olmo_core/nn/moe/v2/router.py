@@ -178,6 +178,14 @@ class MoERouterV2(nn.Module):
         self.topk_group = topk_group
         self.sigmoid_stability_epsilon = sigmoid_stability_epsilon
 
+        if (self.n_group is None) != (self.topk_group is None):
+            # Grouped routing needs both knobs; with only one set, the group-masking branch
+            # (which checks both) never runs and routing silently falls back to global top-k.
+            raise OLMoConfigurationError(
+                "Grouped routing requires both n_group and topk_group to be set (or neither); "
+                f"got n_group={self.n_group}, topk_group={self.topk_group}."
+            )
+
         if self.gating_function == MoERouterGatingFunction.topk_softmax and (
             self.n_group is not None or self.topk_group is not None
         ):
