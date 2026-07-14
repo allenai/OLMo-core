@@ -61,7 +61,7 @@ tasks:
       memory: 4 GiB
     context:
       priority: urgent
-      minRuntime: 24h0m0s
+      minRuntime: 8h0m0s
       autoResume: false
     constraints:
       cluster:
