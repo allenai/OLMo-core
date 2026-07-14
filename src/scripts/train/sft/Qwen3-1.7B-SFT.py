@@ -266,7 +266,7 @@ class SFTConfig(Config):
         root_dir = get_root_dir(cluster)
         user_name = get_beaker_username()
 
-        tokenizer_config = TokenizerConfig.dolma2()
+        tokenizer_config = TokenizerConfig.from_hf("Qwen/Qwen3-1.7B")
         dataset_config = build_sft_dataset(
             root_dir=root_dir,
             tokenizer_config=tokenizer_config,
