@@ -71,7 +71,7 @@ from olmo_core.float8 import Float8Config
 from olmo_core.nn.ddp import OLMoDDPModel
 from olmo_core.nn.lm_head import LMOutputWithLoss
 from olmo_core.nn.parallel.distributed import MultiGroupDistributedDataParallel
-from olmo_core.nn.transformer import OLMoDDPModelConfig, Transformer
+from olmo_core.nn.transformer import Transformer
 from olmo_core.optim import OLMoDDPOptimizerConfig
 from olmo_core.optim.scheduler import Scheduler
 from olmo_core.utils import get_default_device, log_once, move_to_device
@@ -138,12 +138,6 @@ class OLMoDDPTrainModule(TrainModule):
     ):
         super().__init__()
         assert isinstance(model, OLMoDDPModel), "OLMoDDPTrainModule only supports OLMoDDPModel"
-        if not isinstance(model.config, OLMoDDPModelConfig):
-            raise OLMoConfigurationError(
-                "OLMoDDPTrainModule requires a global OLMoDDPModelConfig "
-                "on model.config for FLOP accounting. Build the model from its config, or "
-                "attach the global config before constructing the train module."
-            )
 
         ######################### Validate arguments. [BEGIN] #########################
         if rank_microbatch_size % max_sequence_length != 0:
@@ -218,6 +212,17 @@ class OLMoDDPTrainModule(TrainModule):
 
         assert dp_config is not None, "Data parallel config is required for OLMoDDPTrainModule"
         assert dp_config.name == "ddp", "Data parallel config must be 'ddp'"
+
+        if not dp_config.only_allreduce_last_microbatch:
+            # MultiGroupDistributedDataParallel accumulates gradients in-place into flat bucket
+            # views, so a bucket can be all-reduced exactly once per accumulation window. Reducing
+            # on every micro-batch would re-reduce already-reduced grads (in-flight buckets are
+            # still being written), leaving gradients unreduced or corrupted. Non-final micro-batches
+            # must therefore stay under ``no_sync()`` and reduce only on the last one.
+            raise OLMoConfigurationError(
+                "OLMoDDPTrainModule requires only_allreduce_last_microbatch=True; "
+                "per-micro-batch all-reduce is not supported by MultiGroupDistributedDataParallel."
+            )
 
         ########################## Validate arguments. [END] ##########################
 
@@ -1953,11 +1958,14 @@ class OLMoDDPTrainModule(TrainModule):
                 new_lr = self.scheduler.set_lr(group, self.trainer)
                 self.trainer.record_metric(f"LR (group {group_idx})", new_lr, namespace="optim")
 
-        # Step optimizer.
+        # Step optimizer. OLMoDDPOptimizer.step() copies the updated main params back to the model
+        # params via _copy_main_params_to_model_params(), which already rebuilds every rowwise-FP8
+        # cache from the fresh weights. Refreshing again here would repeat a full quantization pass
+        # each step with no intervening weight update, so the refresh below is kept disabled.
         optim.step()
-        with nvtx.annotate("OLMoDDPTrainModule.refresh_rowwise_fp8_cache_after_optim", color="red"):
-            for model in self.model_parts:
-                model.refresh_rowwise_fp8_cache()
+        # with nvtx.annotate("OLMoDDPTrainModule.refresh_rowwise_fp8_cache_after_optim", color="red"):
+        #     for model in self.model_parts:
+        #         model.refresh_rowwise_fp8_cache()
 
         # dist.barrier()
         # if dist.get_rank() == 0:
@@ -2280,7 +2288,10 @@ class OLMoDDPTrainModule(TrainModule):
             elif isinstance(self.model_parts[0], DDP):
                 raise OLMoConfigurationError("torch DDP not supported. Use replicate()")
             elif isinstance(self.model_parts[0], MultiGroupDistributedDataParallel):
-                if not is_last_mb and self.dp_config.only_allreduce_last_microbatch:
+                # only_allreduce_last_microbatch is validated to be True at construction, so every
+                # non-final micro-batch accumulates under no_sync() and the single
+                # finalize_grad_reduce() after the loop reduces the fully-accumulated grads once.
+                if not is_last_mb:
                     stack.enter_context(self.model_parts[0].no_sync())
             elif self.dp_config.name == DataParallelType.ddp:  # temp fix
                 if (

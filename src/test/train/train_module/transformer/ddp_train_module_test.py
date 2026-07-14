@@ -16,7 +16,7 @@ from olmo_core.nn.transformer import (
     TransformerType,
 )
 from olmo_core.optim import OLMoDDPOptimizerConfig
-from olmo_core.testing import requires_multi_gpu, run_distributed_test
+from olmo_core.testing import requires_gpu, requires_multi_gpu, run_distributed_test
 from olmo_core.train.train_module import OLMoDDPTrainModuleConfig
 from olmo_core.train.train_module.transformer import (
     TransformerDataParallelConfig,
@@ -137,4 +137,102 @@ def test_moe_v2_train_module_construction_ep():
         world_size=2,
         backend="nccl",
         start_method="spawn",
+    )
+
+
+def test_moe_v2_train_module_config_reset_optimizer_states_roundtrips():
+    config = OLMoDDPTrainModuleConfig(
+        rank_microbatch_size=1024,
+        max_sequence_length=512,
+        optim=OLMoDDPOptimizerConfig(lr=1e-3),
+        reset_optimizer_states_on_resume=True,
+    )
+    restored = OLMoDDPTrainModuleConfig.from_dict(config.as_dict())
+    assert restored == config
+    assert restored.reset_optimizer_states_on_resume is True
+    # The resume flag is distinct from the generic on-load flag, which stays at its default.
+    assert restored.reset_optimizer_states_on_load is False
+
+
+def _run_rejects_per_microbatch_allreduce():
+    import pytest
+
+    from olmo_core.exceptions import OLMoConfigurationError
+
+    model = _tiny_model_config().build(init_device="cpu")
+    config = OLMoDDPTrainModuleConfig(
+        rank_microbatch_size=512,
+        max_sequence_length=512,
+        optim=OLMoDDPOptimizerConfig(lr=1e-3),
+        dp_config=TransformerDataParallelConfig(
+            name=DataParallelType.ddp, only_allreduce_last_microbatch=False
+        ),
+    )
+    # MultiGroupDistributedDataParallel reduces each bucket once per accumulation window, so
+    # per-micro-batch all-reduce is unsupported and must be rejected up front.
+    with pytest.raises(OLMoConfigurationError, match="only_allreduce_last_microbatch"):
+        config.build(model, device=torch.device("cpu"), eval_only=True)
+
+
+def test_moe_v2_train_module_rejects_per_microbatch_allreduce():
+    run_distributed_test(
+        _run_rejects_per_microbatch_allreduce,
+        world_size=2,
+        backend="gloo",
+        start_method="spawn",
+    )
+
+
+_MOMENT_SUFFIXES = (".exp_avg", ".exp_avg_sq")
+
+
+def _build_ddp_train_module_for_checkpoint():
+    model = _tiny_model_config(dtype=DType.bfloat16).build(init_device="cuda")
+    config = OLMoDDPTrainModuleConfig(
+        rank_microbatch_size=512,
+        max_sequence_length=512,
+        optim=OLMoDDPOptimizerConfig(lr=1e-3),
+        dp_config=TransformerDataParallelConfig(name=DataParallelType.ddp),
+    )
+    return config.build(model, device=torch.device("cuda"), eval_only=False)
+
+
+def _run_resume_resets_optimizer_moments(save_dir):
+    # Save a checkpoint carrying non-zero optimizer moments, then verify that the resume flag
+    # (threaded through as reset_optimizer_states_on_load) actually controls whether those moments
+    # are restored or discarded on load.
+    tm = _build_ddp_train_module_for_checkpoint()
+    assert tm.optim is not None
+    for key, state in tm.optim.states.items():
+        if key.endswith(_MOMENT_SUFFIXES):
+            state.to_local().fill_(0.5)
+    tm.save_state_dict_direct(save_dir)
+
+    # Reset on load: only the main params are restored, so freshly zero-initialized moments stay zero.
+    tm_reset = _build_ddp_train_module_for_checkpoint()
+    assert tm_reset.optim is not None
+    tm_reset.load_state_dict_direct(save_dir, reset_optimizer_states_on_load=True)
+    for key, state in tm_reset.optim.states.items():
+        if key.endswith(_MOMENT_SUFFIXES):
+            assert torch.count_nonzero(state.to_local()) == 0, key
+
+    # No reset: the saved (non-zero) moments are restored.
+    tm_restore = _build_ddp_train_module_for_checkpoint()
+    assert tm_restore.optim is not None
+    tm_restore.load_state_dict_direct(save_dir, reset_optimizer_states_on_load=False)
+    restored_any_moment = any(
+        key.endswith(_MOMENT_SUFFIXES) and torch.count_nonzero(state.to_local()) > 0
+        for key, state in tm_restore.optim.states.items()
+    )
+    assert restored_any_moment
+
+
+@requires_gpu
+def test_moe_v2_train_module_resume_resets_optimizer_moments(tmp_path):
+    run_distributed_test(
+        _run_resume_resets_optimizer_moments,
+        world_size=1,
+        backend="nccl",
+        start_method="spawn",
+        func_args=(str(tmp_path / "checkpoint"),),
     )
