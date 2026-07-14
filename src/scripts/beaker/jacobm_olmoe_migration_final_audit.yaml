@@ -1,0 +1,70 @@
+version: v2
+description: Audit and publish the final Jacob OLMoE DDP migration receipts
+tasks:
+  - name: final-migration-audit
+    image:
+      beaker: 01KW8G8JC20H11Y60PPTE2VN4Q
+    command: [/bin/bash, -lc]
+    arguments:
+      - |
+        set -euo pipefail
+        REPO=/weka/oe-adapt-default/jacobm/olmoe3/olmo-ddp-migration/OLMo-core
+        MIGRATION_ROOT=/weka/oe-adapt-default/jacobm/olmoe3/olmo-ddp-migration
+        FAMILY_STATUS=${MIGRATION_ROOT}/converted-checkpoints/_family_status
+        ARTIFACT_STATUS=${MIGRATION_ROOT}/migration-status/legacy-artifacts
+        AUDIT=${MIGRATION_ROOT}/migration-status/final_audit.json
+        GCS_MANIFESTS=gs://ai2-llm/checkpoints/jacobm/olmoe3/olmo-ddp-converted/v1/manifests/
+
+        mkdir -p /results /tmp/google "$(dirname "${AUDIT}")"
+        cd "${REPO}"
+        python src/scripts/audit_jacobm_migration.py \
+          --manifest JACOBM_DDP_PUBLICATION_MANIFEST.json \
+          --family-status-root "${FAMILY_STATUS}" \
+          --artifact-status-root "${ARTIFACT_STATUS}" \
+          --artifact-label hf_legacy_exports \
+          --artifact-label eval_legacy_outputs \
+          --output "${AUDIT}" \
+          2>&1 | tee /results/final_audit.log
+
+        CREDENTIALS=/tmp/google/credentials.json
+        umask 077
+        printenv GANTRY_GOOGLE_CREDENTIALS > "${CREDENTIALS}"
+        export GOOGLE_APPLICATION_CREDENTIALS="${CREDENTIALS}"
+        unset GANTRY_GOOGLE_CREDENTIALS
+        gcloud auth login --cred-file="${CREDENTIALS}" --quiet
+        gcloud storage cp JACOBM_DDP_PUBLICATION_MANIFEST.json \
+          "${GCS_MANIFESTS}checkpoint_publication_manifest.json"
+        gcloud storage cp "${AUDIT}" "${GCS_MANIFESTS}migration_audit.json"
+        gcloud storage cp \
+          src/scripts/train/jacobm_olmoe_ladder/v1/MIGRATION.md \
+          "${GCS_MANIFESTS}migration_record.md"
+        gcloud storage cp \
+          src/scripts/train/jacobm_olmoe_ladder/v1/DEFAULT_RUN_SETTINGS.md \
+          "${GCS_MANIFESTS}default_run_settings.md"
+        gcloud storage cp \
+          src/scripts/train/jacobm_olmoe_ladder/v1/ARTIFACTS.md \
+          "${GCS_MANIFESTS}artifact_layout.md"
+        cp "${AUDIT}" /results/final_audit.json
+    envVars:
+      - name: GANTRY_GOOGLE_CREDENTIALS
+        secret: jacobm_GOOGLE_CREDENTIALS
+    datasets:
+      - mountPath: /weka/oe-adapt-default
+        source:
+          weka: oe-adapt-default
+    result:
+      path: /results
+    resources:
+      cpuCount: 2
+      memory: 4 GiB
+    context:
+      priority: urgent
+      minRuntime: 10m
+      autoResume: false
+    constraints:
+      cluster:
+        - ai2/holmes
+    hostNetworking: true
+    propagateFailure: false
+    propagatePreemption: false
+    timeout: 1h0m0s
