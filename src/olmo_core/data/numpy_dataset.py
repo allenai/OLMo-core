@@ -842,29 +842,43 @@ class NumpyFSLDatasetMixture(NumpyFSLDataset):
         )
 
     def _write_document_indices(self):
-        paths_needed: List[Tuple[PathOrStr, int]] = []
-        num_reused = 0
-        num_zero_instance = 0
+        # A path can appear multiple times in a mixture (e.g. upsampling / repetition). Every
+        # occurrence shares the same path-derived indices file but keeps its own token allocation
+        # in ``_path_offset_index`` (Hamilton rounding can give occurrences different counts), so
+        # size the shared file for the largest allocation across occurrences; otherwise a later,
+        # larger occurrence would read past the generated tail.
+        max_instances_by_path: Dict[str, int] = {}
+        ordered_paths: List[PathOrStr] = []
         for idx, path in enumerate(self.paths):
+            key = str(path)
+            instances = self._path_offset_index[(key, idx)] // self.sequence_length
+            if key in max_instances_by_path:
+                max_instances_by_path[key] = max(max_instances_by_path[key], instances)
+            else:
+                max_instances_by_path[key] = instances
+                ordered_paths.append(path)
+
+        paths_needed: List[PathOrStr] = []
+        num_reused = 0
+        for path in ordered_paths:
             indices_path = self._get_instance_indices_path(path)
             if indices_path.is_file():
                 num_reused += 1
                 log.info(f"Reusing mixture instance indices for '{path}' at:\n'{indices_path}'")
-            elif all(path != needed_path for needed_path, _ in paths_needed):
-                paths_needed.append((path, idx))
+            else:
+                paths_needed.append(path)
 
+        num_zero_instance = 0
         if paths_needed:
             with concurrent.futures.ProcessPoolExecutor(
                 max_workers=_get_data_prep_max_workers()
             ) as executor:
                 future_to_path: Dict[concurrent.futures.Future, PathOrStr] = {}
-                for path, idx in paths_needed:
+                for path in paths_needed:
                     indices_path = self._get_instance_indices_path(path)
                     log.info(f"Gathering instance indices for '{path}'...")
                     # NOTE: We limit the number of instances by total target token count // sequence length
-                    max_instances = (
-                        self._path_offset_index[(str(path), idx)] // self.sequence_length
-                    )
+                    max_instances = max_instances_by_path[str(path)]
 
                     # Sampling from small npy files can result in 0 instance indices.
                     # We skip processing these to avoid writing empty mmapped files.
