@@ -909,6 +909,12 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
                 self.lm_head.w_out, d_model=self.d_model, std=self.init_std, generator=generator
             )
 
+        # `to_empty()` above allocated fresh storage for the embedding and LM-head params, breaking
+        # any weight tie; re-establish it so a tied model doesn't silently train/save an independent
+        # output matrix.
+        if self.tie_word_embeddings:
+            self._tie_weights()
+
         return generator
 
     def attach_fp32_accum(self):

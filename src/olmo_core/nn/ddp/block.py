@@ -1080,7 +1080,7 @@ class OLMoDDPTransformerBlock(olmo_core.nn.transformer.block.TransformerBlockBas
         block_inp = x
         del x
 
-        attn_res_out = self._res_norm_attn(block_inp, **kwargs)
+        attn_res_out = self._checkpointed_res_norm_attn(block_inp, **kwargs)
         kwargs.pop("max_doc_len", None)
         kwargs.pop("cu_doc_lens", None)
         mlp_inp = self._prepare_moe_input(attn_res_out)
@@ -1095,7 +1095,12 @@ class OLMoDDPTransformerBlock(olmo_core.nn.transformer.block.TransformerBlockBas
             shared_expert_weights = None
 
         rowwise_fp8_cfg = self.rowwise_fp8
-        use_rowwise_fp8 = rowwise_fp8_cfg is not None and rowwise_fp8_cfg.enabled
+        # Rowwise FP8 requires CUDA; on CPU (smoke/eval/materialize) fall back to the dense path.
+        use_rowwise_fp8 = (
+            rowwise_fp8_cfg is not None
+            and rowwise_fp8_cfg.enabled
+            and mlp_inp.device.type == "cuda"
+        )
         if use_rowwise_fp8 and not self._rowwise_fp8_checked:
             assert rowwise_fp8_cfg is not None
             rowwise_fp8_cfg.assert_runtime_supported()
