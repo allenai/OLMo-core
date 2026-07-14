@@ -8,6 +8,7 @@ import fnmatch
 import logging
 import sys
 from dataclasses import dataclass, field
+from datetime import timedelta
 from pathlib import Path
 from typing import List, Optional, Tuple, cast
 from urllib.parse import urlparse
@@ -209,9 +210,15 @@ def build_sft_dataset(
     label_mask_paths = [f"{clean_path}/labels_mask_*.npy"]
     expand_glob = True
 
+    packing_tokenizer = TokenizerConfig(
+        vocab_size=tokenizer_config.vocab_size,
+        eos_token_id=tokenizer_config.eos_token_id,
+        pad_token_id=tokenizer_config.pad_token_id,
+        bos_token_id=None,  # Qwen3 chat format: <|im_end|> is followed by \n not <|im_start|>, so EOS+BOS pair detection finds 0 boundaries
+    )
     dataset = NumpyPackedFSLDatasetConfig(
         # general config
-        tokenizer=tokenizer_config,
+        tokenizer=packing_tokenizer,
         work_dir=get_work_dir(root_dir).replace("dataset-cache", "qwen3-dataset-cache-v2"),
         paths=token_id_paths,
         expand_glob=expand_glob,
