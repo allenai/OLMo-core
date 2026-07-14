@@ -77,9 +77,9 @@ Two more env facts every job needs:
   5 copies (the `/scratch` master + the 4 `/data` clones) were re-pointed on 2026-07-13, so a plain
   `import olmo_core` runs the working tree. Launchers still set `PYTHONPATH=$REPO/src`, which is
   now harmless redundancy. (Historical trap, in case a stale env copy resurfaces: they used to
-  point at a frozen upstream clone at `/scratch/users/prasann/OLMo-core`, so forgetting
-  `PYTHONPATH` silently ran months-old code. Check with
-  `python -c 'import olmo_core; print(olmo_core.__file__)'`.)
+  point at a frozen upstream clone at `/scratch/users/prasann/OLMo-core` — deleted 2026-07-13, it
+  contained nothing not already in this repo's history — so forgetting `PYTHONPATH` silently ran
+  months-old code. Check with `python -c 'import olmo_core; print(olmo_core.__file__)'`.)
 - `export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1` — the HF cache is warm and compute-node egress
   is blocked/slow; without these, dataloader workers silently stall in multi-minute hub retries.
 

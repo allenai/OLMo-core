@@ -24,11 +24,14 @@ from transformers import AutoTokenizer
 
 from corpus_reasoning.lib.olmo_models import build_transformer_config, resolve_olmo_model
 
-# olmo-core source location is env-overridable so the same script works on slurm
-# (/scratch/...) and on VESSL (/mnt/corpus/...). Both clusters keep an editable clone there.
+# convert_checkpoint_from_hf lives in olmo-core's examples/ (not part of the installed package),
+# so it needs a sys.path entry. Default to the repo this file lives in; CORPUS_OLMO_SRC overrides
+# for other checkouts (e.g. VESSL's /mnt/corpus clone).
 import os as _os
-_OLMO_SRC = _os.environ.get("CORPUS_OLMO_SRC", "/scratch/users/prasann/OLMo-core")
-# sys.path hack removed: corpus_reasoning is a package on PYTHONPATH=src
+from pathlib import Path as _Path
+
+_OLMO_SRC = _os.environ.get("CORPUS_OLMO_SRC", str(_Path(__file__).resolve().parents[3]))
+sys.path.insert(0, f"{_OLMO_SRC}/src/examples/huggingface")
 from convert_checkpoint_from_hf import convert_checkpoint_from_hf  # noqa: E402
 
 from olmo_core.data.tokenizer import TokenizerConfig  # noqa: E402
