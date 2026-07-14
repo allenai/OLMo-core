@@ -219,7 +219,7 @@ def build_sft_dataset(
     dataset = NumpyPackedFSLDatasetConfig(
         # general config
         tokenizer=packing_tokenizer,
-        work_dir=get_work_dir(root_dir).replace("dataset-cache", "qwen3-dataset-cache-v2"),
+        work_dir=get_work_dir(root_dir).replace("dataset-cache", "qwen3-dataset-cache-v3"),
         paths=token_id_paths,
         expand_glob=expand_glob,
         label_mask_paths=label_mask_paths,
