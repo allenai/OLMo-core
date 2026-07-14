@@ -61,6 +61,15 @@ site/
 core
 /dataset-cache/
 
+# slurm job logs: old sbatch launchers wrote hidden `.<family>_%x_%j.log` files to the repo root;
+# those now live in /logs. Both patterns ignored so stale launchers don't re-clutter git status.
+/logs/
+/.*.log
+
+# runtime artifacts: gantry scratch dir from launching at repo root; wrangler (viz site) cache
+/train/
+/.wrangler/
+
 # local-only artifacts (never commit): preserved eval-score dumps + scratch configs
 /eval_results_kept/
 /configfile.txt
@@ -68,5 +77,8 @@ core
 # Claude Code session/memory dir
 .claude/
 
-# corpus-reasoning kept as a standalone clone (was a submodule; removed so gantry launches work)
+# The corpus-reasoning CODE is now ported into src/corpus_reasoning/ and IS tracked -- one repo, one
+# git history. Only the large corpora/checkpoints stay outside (on /scratch).
+# This entry remains only to ignore any leftover standalone clone at the repo root; that clone is
+# STALE and should be deleted (`rm -rf ./corpus-reasoning`).
 /corpus-reasoning/

@@ -1,0 +1,1036 @@
+W0713 20:37:35.973000 3147632 site-packages/torch/distributed/run.py:803] 
+W0713 20:37:35.973000 3147632 site-packages/torch/distributed/run.py:803] *****************************************
+W0713 20:37:35.973000 3147632 site-packages/torch/distributed/run.py:803] Setting OMP_NUM_THREADS environment variable for each process to be 1 in default, to avoid your system being overloaded, please further tune the variable for optimal performance in your application as needed. 
+W0713 20:37:35.973000 3147632 site-packages/torch/distributed/run.py:803] *****************************************
+Setting env var 'TORCH_NCCL_AVOID_RECORD_STREAMS' to '1'
+Setting env var 'TORCH_DIST_INIT_BARRIER' to '1'
+Setting env var 'TORCH_NCCL_AVOID_RECORD_STREAMS' to '1'
+Setting env var 'TORCH_DIST_INIT_BARRIER' to '1'
+Setting env var 'TORCH_NCCL_AVOID_RECORD_STREAMS' to '1'
+Setting env var 'TORCH_DIST_INIT_BARRIER' to '1'
+Setting env var 'TORCH_NCCL_AVOID_RECORD_STREAMS' to '1'
+Setting env var 'TORCH_DIST_INIT_BARRIER' to '1'
+Initializing process group with timeout=datetime.timedelta(seconds=900)...
+Initializing process group with timeout=datetime.timedelta(seconds=900)...
+Initializing process group with timeout=datetime.timedelta(seconds=900)...
+Initializing process group with timeout=datetime.timedelta(seconds=900)...
+[Gloo] Rank 1 is connected to 3 peer ranks. Expected number of connected peer ranks is : 3
+[Gloo] Rank 0 is connected to 3 peer ranks. Expected number of connected peer ranks is : 3
+[Gloo] Rank 3 is connected to 3 peer ranks. Expected number of connected peer ranks is : 3
+[Gloo] Rank 2 is connected to 3 peer ranks. Expected number of connected peer ranks is : 3
+[W713 20:37:44.453168416 ProcessGroupNCCL.cpp:924] Warning: TORCH_NCCL_AVOID_RECORD_STREAMS is the default now, this environment variable is thus deprecated. (function operator())
+[W713 20:37:44.453263061 ProcessGroupNCCL.cpp:924] Warning: TORCH_NCCL_AVOID_RECORD_STREAMS is the default now, this environment variable is thus deprecated. (function operator())
+[W713 20:37:44.453273950 ProcessGroupNCCL.cpp:924] Warning: TORCH_NCCL_AVOID_RECORD_STREAMS is the default now, this environment variable is thus deprecated. (function operator())
+[W713 20:37:44.453384814 ProcessGroupNCCL.cpp:924] Warning: TORCH_NCCL_AVOID_RECORD_STREAMS is the default now, this environment variable is thus deprecated. (function operator())
+Global rank 0 = local rank 0 = file system local rank 0
+Global rank 1 = local rank 1 = file system local rank 1
+Global rank 3 = local rank 3 = file system local rank 3
+Global rank 2 = local rank 2 = file system local rank 2
+2026-07-13 20:37:44.754	cubbins:0	olmo_core.utils:237	WARNING	Will skip setting env var 'OMP_NUM_THREADS' since it's already set to '8'
+2026-07-13 20:37:44.754	cubbins:2	olmo_core.utils:237	WARNING	Will skip setting env var 'OMP_NUM_THREADS' since it's already set to '8'
+2026-07-13 20:37:44.754	cubbins:3	olmo_core.utils:237	WARNING	Will skip setting env var 'OMP_NUM_THREADS' since it's already set to '8'
+2026-07-13 20:37:44.755	cubbins:1	olmo_core.utils:237	WARNING	Will skip setting env var 'OMP_NUM_THREADS' since it's already set to '8'
+2026-07-13 20:37:44.755	cubbins:0	olmo_core.utils:237	INFO	Env var 'TOKENIZERS_PARALLELISM' already set to 'false'
+2026-07-13 20:37:44.755	cubbins:0	olmo_core.train:148	INFO	Using distributed backend cpu:gloo,cuda:nccl
+2026-07-13 20:37:44.756	cubbins:0	olmo_core.nn.transformer.config:373	INFO	Building transformer with 751,632,384 total params, 596,049,920 non-embedding params
+2026-07-13 20:37:44.758	cubbins:0	olmo_core.nn.attention:1009	INFO	Using attention backend 'flash_2'
+2026-07-13 20:37:44.759	cubbins:0	olmo_core.nn.attention:1009	INFO	Using attention backend 'flash_2'
+2026-07-13 20:37:44.760	cubbins:0	olmo_core.nn.attention:1009	INFO	Using attention backend 'flash_2'
+2026-07-13 20:37:44.761	cubbins:0	olmo_core.nn.attention:1009	INFO	Using attention backend 'flash_2'
+2026-07-13 20:37:44.762	cubbins:0	olmo_core.nn.attention:1009	INFO	Using attention backend 'flash_2'
+2026-07-13 20:37:44.763	cubbins:0	olmo_core.nn.attention:1009	INFO	Using attention backend 'flash_2'
+2026-07-13 20:37:44.764	cubbins:0	olmo_core.nn.attention:1009	INFO	Using attention backend 'flash_2'
+2026-07-13 20:37:44.764	cubbins:0	olmo_core.nn.attention:1009	INFO	Using attention backend 'flash_2'
+2026-07-13 20:37:44.766	cubbins:0	olmo_core.nn.attention:1009	INFO	Using attention backend 'flash_2'
+2026-07-13 20:37:44.768	cubbins:0	olmo_core.nn.attention:1009	INFO	Using attention backend 'flash_2'
+2026-07-13 20:37:44.771	cubbins:0	olmo_core.nn.attention:1009	INFO	Using attention backend 'flash_2'
+2026-07-13 20:37:44.773	cubbins:0	olmo_core.nn.attention:1009	INFO	Using attention backend 'flash_2'
+2026-07-13 20:37:44.775	cubbins:0	olmo_core.nn.attention:1009	INFO	Using attention backend 'flash_2'
+2026-07-13 20:37:44.776	cubbins:0	olmo_core.nn.attention:1009	INFO	Using attention backend 'flash_2'
+2026-07-13 20:37:44.778	cubbins:0	olmo_core.nn.attention:1009	INFO	Using attention backend 'flash_2'
+2026-07-13 20:37:44.780	cubbins:0	olmo_core.nn.attention:1009	INFO	Using attention backend 'flash_2'
+2026-07-13 20:37:44.781	cubbins:0	olmo_core.nn.attention:1009	INFO	Using attention backend 'flash_2'
+2026-07-13 20:37:44.783	cubbins:0	olmo_core.nn.attention:1009	INFO	Using attention backend 'flash_2'
+2026-07-13 20:37:44.784	cubbins:0	olmo_core.nn.attention:1009	INFO	Using attention backend 'flash_2'
+2026-07-13 20:37:44.785	cubbins:0	olmo_core.nn.attention:1009	INFO	Using attention backend 'flash_2'
+2026-07-13 20:37:44.786	cubbins:0	olmo_core.nn.attention:1009	INFO	Using attention backend 'flash_2'
+2026-07-13 20:37:44.787	cubbins:0	olmo_core.nn.attention:1009	INFO	Using attention backend 'flash_2'
+2026-07-13 20:37:44.788	cubbins:0	olmo_core.nn.attention:1009	INFO	Using attention backend 'flash_2'
+2026-07-13 20:37:44.789	cubbins:0	olmo_core.nn.attention:1009	INFO	Using attention backend 'flash_2'
+2026-07-13 20:37:44.790	cubbins:0	olmo_core.nn.attention:1009	INFO	Using attention backend 'flash_2'
+2026-07-13 20:37:44.791	cubbins:0	olmo_core.nn.attention:1009	INFO	Using attention backend 'flash_2'
+2026-07-13 20:37:44.792	cubbins:0	olmo_core.nn.attention:1009	INFO	Using attention backend 'flash_2'
+2026-07-13 20:37:44.793	cubbins:0	olmo_core.nn.attention:1009	INFO	Using attention backend 'flash_2'
+2026-07-13 20:37:44.795	cubbins:0	olmo_core.nn.transformer.config:446	INFO	Transformer(
+  (embeddings): Embedding(151936, 1024)
+  (blocks): ModuleDict(
+    (0): TransformerBlock(
+      (attention): Attention(
+        (w_q): Linear(in_features=1024, out_features=2048, bias=False)
+        (w_k): Linear(in_features=1024, out_features=1024, bias=False)
+        (w_v): Linear(in_features=1024, out_features=1024, bias=False)
+        (w_out): Linear(in_features=2048, out_features=1024, bias=False)
+        (q_norm): QwenRMSNorm((128,), eps=1e-06)
+        (k_norm): QwenRMSNorm((128,), eps=1e-06)
+        (rope): RotaryEmbedding()
+        (backend): FlashAttention2Backend()
+      )
+      (attention_norm): QwenRMSNorm((1024,), eps=1e-06)
+      (attention_residual_stream): ResidualStream(
+        (dropout): Identity()
+      )
+      (feed_forward): FeedForward(
+        (w1): Linear(in_features=1024, out_features=3072, bias=False)
+        (w2): Linear(in_features=3072, out_features=1024, bias=False)
+        (w3): Linear(in_features=1024, out_features=3072, bias=False)
+      )
+      (feed_forward_norm): QwenRMSNorm((1024,), eps=1e-06)
+      (feed_forward_residual_stream): ResidualStream(
+        (dropout): Identity()
+      )
+    )
+    (1): TransformerBlock(
+      (attention): Attention(
+        (w_q): Linear(in_features=1024, out_features=2048, bias=False)
+        (w_k): Linear(in_features=1024, out_features=1024, bias=False)
+        (w_v): Linear(in_features=1024, out_features=1024, bias=False)
+        (w_out): Linear(in_features=2048, out_features=1024, bias=False)
+        (q_norm): QwenRMSNorm((128,), eps=1e-06)
+        (k_norm): QwenRMSNorm((128,), eps=1e-06)
+        (rope): RotaryEmbedding()
+        (backend): FlashAttention2Backend()
+      )
+      (attention_norm): QwenRMSNorm((1024,), eps=1e-06)
+      (attention_residual_stream): ResidualStream(
+        (dropout): Identity()
+      )
+      (feed_forward): FeedForward(
+        (w1): Linear(in_features=1024, out_features=3072, bias=False)
+        (w2): Linear(in_features=3072, out_features=1024, bias=False)
+        (w3): Linear(in_features=1024, out_features=3072, bias=False)
+      )
+      (feed_forward_norm): QwenRMSNorm((1024,), eps=1e-06)
+      (feed_forward_residual_stream): ResidualStream(
+        (dropout): Identity()
+      )
+    )
+    (2): TransformerBlock(
+      (attention): Attention(
+        (w_q): Linear(in_features=1024, out_features=2048, bias=False)
+        (w_k): Linear(in_features=1024, out_features=1024, bias=False)
+        (w_v): Linear(in_features=1024, out_features=1024, bias=False)
+        (w_out): Linear(in_features=2048, out_features=1024, bias=False)
+        (q_norm): QwenRMSNorm((128,), eps=1e-06)
+        (k_norm): QwenRMSNorm((128,), eps=1e-06)
+        (rope): RotaryEmbedding()
+        (backend): FlashAttention2Backend()
+      )
+      (attention_norm): QwenRMSNorm((1024,), eps=1e-06)
+      (attention_residual_stream): ResidualStream(
+        (dropout): Identity()
+      )
+      (feed_forward): FeedForward(
+        (w1): Linear(in_features=1024, out_features=3072, bias=False)
+        (w2): Linear(in_features=3072, out_features=1024, bias=False)
+        (w3): Linear(in_features=1024, out_features=3072, bias=False)
+      )
+      (feed_forward_norm): QwenRMSNorm((1024,), eps=1e-06)
+      (feed_forward_residual_stream): ResidualStream(
+        (dropout): Identity()
+      )
+    )
+    (3): TransformerBlock(
+      (attention): Attention(
+        (w_q): Linear(in_features=1024, out_features=2048, bias=False)
+        (w_k): Linear(in_features=1024, out_features=1024, bias=False)
+        (w_v): Linear(in_features=1024, out_features=1024, bias=False)
+        (w_out): Linear(in_features=2048, out_features=1024, bias=False)
+        (q_norm): QwenRMSNorm((128,), eps=1e-06)
+        (k_norm): QwenRMSNorm((128,), eps=1e-06)
+        (rope): RotaryEmbedding()
+        (backend): FlashAttention2Backend()
+      )
+      (attention_norm): QwenRMSNorm((1024,), eps=1e-06)
+      (attention_residual_stream): ResidualStream(
+        (dropout): Identity()
+      )
+      (feed_forward): FeedForward(
+        (w1): Linear(in_features=1024, out_features=3072, bias=False)
+        (w2): Linear(in_features=3072, out_features=1024, bias=False)
+        (w3): Linear(in_features=1024, out_features=3072, bias=False)
+      )
+      (feed_forward_norm): QwenRMSNorm((1024,), eps=1e-06)
+      (feed_forward_residual_stream): ResidualStream(
+        (dropout): Identity()
+      )
+    )
+    (4): TransformerBlock(
+      (attention): Attention(
+        (w_q): Linear(in_features=1024, out_features=2048, bias=False)
+        (w_k): Linear(in_features=1024, out_features=1024, bias=False)
+        (w_v): Linear(in_features=1024, out_features=1024, bias=False)
+        (w_out): Linear(in_features=2048, out_features=1024, bias=False)
+        (q_norm): QwenRMSNorm((128,), eps=1e-06)
+        (k_norm): QwenRMSNorm((128,), eps=1e-06)
+        (rope): RotaryEmbedding()
+        (backend): FlashAttention2Backend()
+      )
+      (attention_norm): QwenRMSNorm((1024,), eps=1e-06)
+      (attention_residual_stream): ResidualStream(
+        (dropout): Identity()
+      )
+      (feed_forward): FeedForward(
+        (w1): Linear(in_features=1024, out_features=3072, bias=False)
+        (w2): Linear(in_features=3072, out_features=1024, bias=False)
+        (w3): Linear(in_features=1024, out_features=3072, bias=False)
+      )
+      (feed_forward_norm): QwenRMSNorm((1024,), eps=1e-06)
+      (feed_forward_residual_stream): ResidualStream(
+        (dropout): Identity()
+      )
+    )
+    (5): TransformerBlock(
+      (attention): Attention(
+        (w_q): Linear(in_features=1024, out_features=2048, bias=False)
+        (w_k): Linear(in_features=1024, out_features=1024, bias=False)
+        (w_v): Linear(in_features=1024, out_features=1024, bias=False)
+        (w_out): Linear(in_features=2048, out_features=1024, bias=False)
+        (q_norm): QwenRMSNorm((128,), eps=1e-06)
+        (k_norm): QwenRMSNorm((128,), eps=1e-06)
+        (rope): RotaryEmbedding()
+        (backend): FlashAttention2Backend()
+      )
+      (attention_norm): QwenRMSNorm((1024,), eps=1e-06)
+      (attention_residual_stream): ResidualStream(
+        (dropout): Identity()
+      )
+      (feed_forward): FeedForward(
+        (w1): Linear(in_features=1024, out_features=3072, bias=False)
+        (w2): Linear(in_features=3072, out_features=1024, bias=False)
+        (w3): Linear(in_features=1024, out_features=3072, bias=False)
+      )
+      (feed_forward_norm): QwenRMSNorm((1024,), eps=1e-06)
+      (feed_forward_residual_stream): ResidualStream(
+        (dropout): Identity()
+      )
+    )
+    (6): TransformerBlock(
+      (attention): Attention(
+        (w_q): Linear(in_features=1024, out_features=2048, bias=False)
+        (w_k): Linear(in_features=1024, out_features=1024, bias=False)
+        (w_v): Linear(in_features=1024, out_features=1024, bias=False)
+        (w_out): Linear(in_features=2048, out_features=1024, bias=False)
+        (q_norm): QwenRMSNorm((128,), eps=1e-06)
+        (k_norm): QwenRMSNorm((128,), eps=1e-06)
+        (rope): RotaryEmbedding()
+        (backend): FlashAttention2Backend()
+      )
+      (attention_norm): QwenRMSNorm((1024,), eps=1e-06)
+      (attention_residual_stream): ResidualStream(
+        (dropout): Identity()
+      )
+      (feed_forward): FeedForward(
+        (w1): Linear(in_features=1024, out_features=3072, bias=False)
+        (w2): Linear(in_features=3072, out_features=1024, bias=False)
+        (w3): Linear(in_features=1024, out_features=3072, bias=False)
+      )
+      (feed_forward_norm): QwenRMSNorm((1024,), eps=1e-06)
+      (feed_forward_residual_stream): ResidualStream(
+        (dropout): Identity()
+      )
+    )
+    (7): TransformerBlock(
+      (attention): Attention(
+        (w_q): Linear(in_features=1024, out_features=2048, bias=False)
+        (w_k): Linear(in_features=1024, out_features=1024, bias=False)
+        (w_v): Linear(in_features=1024, out_features=1024, bias=False)
+        (w_out): Linear(in_features=2048, out_features=1024, bias=False)
+        (q_norm): QwenRMSNorm((128,), eps=1e-06)
+        (k_norm): QwenRMSNorm((128,), eps=1e-06)
+        (rope): RotaryEmbedding()
+        (backend): FlashAttention2Backend()
+      )
+      (attention_norm): QwenRMSNorm((1024,), eps=1e-06)
+      (attention_residual_stream): ResidualStream(
+        (dropout): Identity()
+      )
+      (feed_forward): FeedForward(
+        (w1): Linear(in_features=1024, out_features=3072, bias=False)
+        (w2): Linear(in_features=3072, out_features=1024, bias=False)
+        (w3): Linear(in_features=1024, out_features=3072, bias=False)
+      )
+      (feed_forward_norm): QwenRMSNorm((1024,), eps=1e-06)
+      (feed_forward_residual_stream): ResidualStream(
+        (dropout): Identity()
+      )
+    )
+    (8): TransformerBlock(
+      (attention): Attention(
+        (w_q): Linear(in_features=1024, out_features=2048, bias=False)
+        (w_k): Linear(in_features=1024, out_features=1024, bias=False)
+        (w_v): Linear(in_features=1024, out_features=1024, bias=False)
+        (w_out): Linear(in_features=2048, out_features=1024, bias=False)
+        (q_norm): QwenRMSNorm((128,), eps=1e-06)
+        (k_norm): QwenRMSNorm((128,), eps=1e-06)
+        (rope): RotaryEmbedding()
+        (backend): FlashAttention2Backend()
+      )
+      (attention_norm): QwenRMSNorm((1024,), eps=1e-06)
+      (attention_residual_stream): ResidualStream(
+        (dropout): Identity()
+      )
+      (feed_forward): FeedForward(
+        (w1): Linear(in_features=1024, out_features=3072, bias=False)
+        (w2): Linear(in_features=3072, out_features=1024, bias=False)
+        (w3): Linear(in_features=1024, out_features=3072, bias=False)
+      )
+      (feed_forward_norm): QwenRMSNorm((1024,), eps=1e-06)
+      (feed_forward_residual_stream): ResidualStream(
+        (dropout): Identity()
+      )
+    )
+    (9): TransformerBlock(
+      (attention): Attention(
+        (w_q): Linear(in_features=1024, out_features=2048, bias=False)
+        (w_k): Linear(in_features=1024, out_features=1024, bias=False)
+        (w_v): Linear(in_features=1024, out_features=1024, bias=False)
+        (w_out): Linear(in_features=2048, out_features=1024, bias=False)
+        (q_norm): QwenRMSNorm((128,), eps=1e-06)
+        (k_norm): QwenRMSNorm((128,), eps=1e-06)
+        (rope): RotaryEmbedding()
+        (backend): FlashAttention2Backend()
+      )
+      (attention_norm): QwenRMSNorm((1024,), eps=1e-06)
+      (attention_residual_stream): ResidualStream(
+        (dropout): Identity()
+      )
+      (feed_forward): FeedForward(
+        (w1): Linear(in_features=1024, out_features=3072, bias=False)
+        (w2): Linear(in_features=3072, out_features=1024, bias=False)
+        (w3): Linear(in_features=1024, out_features=3072, bias=False)
+      )
+      (feed_forward_norm): QwenRMSNorm((1024,), eps=1e-06)
+      (feed_forward_residual_stream): ResidualStream(
+        (dropout): Identity()
+      )
+    )
+    (10): TransformerBlock(
+      (attention): Attention(
+        (w_q): Linear(in_features=1024, out_features=2048, bias=False)
+        (w_k): Linear(in_features=1024, out_features=1024, bias=False)
+        (w_v): Linear(in_features=1024, out_features=1024, bias=False)
+        (w_out): Linear(in_features=2048, out_features=1024, bias=False)
+        (q_norm): QwenRMSNorm((128,), eps=1e-06)
+        (k_norm): QwenRMSNorm((128,), eps=1e-06)
+        (rope): RotaryEmbedding()
+        (backend): FlashAttention2Backend()
+      )
+      (attention_norm): QwenRMSNorm((1024,), eps=1e-06)
+      (attention_residual_stream): ResidualStream(
+        (dropout): Identity()
+      )
+      (feed_forward): FeedForward(
+        (w1): Linear(in_features=1024, out_features=3072, bias=False)
+        (w2): Linear(in_features=3072, out_features=1024, bias=False)
+        (w3): Linear(in_features=1024, out_features=3072, bias=False)
+      )
+      (feed_forward_norm): QwenRMSNorm((1024,), eps=1e-06)
+      (feed_forward_residual_stream): ResidualStream(
+        (dropout): Identity()
+      )
+    )
+    (11): TransformerBlock(
+      (attention): Attention(
+        (w_q): Linear(in_features=1024, out_features=2048, bias=False)
+        (w_k): Linear(in_features=1024, out_features=1024, bias=False)
+        (w_v): Linear(in_features=1024, out_features=1024, bias=False)
+        (w_out): Linear(in_features=2048, out_features=1024, bias=False)
+        (q_norm): QwenRMSNorm((128,), eps=1e-06)
+        (k_norm): QwenRMSNorm((128,), eps=1e-06)
+        (rope): RotaryEmbedding()
+        (backend): FlashAttention2Backend()
+      )
+      (attention_norm): QwenRMSNorm((1024,), eps=1e-06)
+      (attention_residual_stream): ResidualStream(
+        (dropout): Identity()
+      )
+      (feed_forward): FeedForward(
+        (w1): Linear(in_features=1024, out_features=3072, bias=False)
+        (w2): Linear(in_features=3072, out_features=1024, bias=False)
+        (w3): Linear(in_features=1024, out_features=3072, bias=False)
+      )
+      (feed_forward_norm): QwenRMSNorm((1024,), eps=1e-06)
+      (feed_forward_residual_stream): ResidualStream(
+        (dropout): Identity()
+      )
+    )
+    (12): TransformerBlock(
+      (attention): Attention(
+        (w_q): Linear(in_features=1024, out_features=2048, bias=False)
+        (w_k): Linear(in_features=1024, out_features=1024, bias=False)
+        (w_v): Linear(in_features=1024, out_features=1024, bias=False)
+        (w_out): Linear(in_features=2048, out_features=1024, bias=False)
+        (q_norm): QwenRMSNorm((128,), eps=1e-06)
+        (k_norm): QwenRMSNorm((128,), eps=1e-06)
+        (rope): RotaryEmbedding()
+        (backend): FlashAttention2Backend()
+      )
+      (attention_norm): QwenRMSNorm((1024,), eps=1e-06)
+      (attention_residual_stream): ResidualStream(
+        (dropout): Identity()
+      )
+      (feed_forward): FeedForward(
+        (w1): Linear(in_features=1024, out_features=3072, bias=False)
+        (w2): Linear(in_features=3072, out_features=1024, bias=False)
+        (w3): Linear(in_features=1024, out_features=3072, bias=False)
+      )
+      (feed_forward_norm): QwenRMSNorm((1024,), eps=1e-06)
+      (feed_forward_residual_stream): ResidualStream(
+        (dropout): Identity()
+      )
+    )
+    (13): TransformerBlock(
+      (attention): Attention(
+        (w_q): Linear(in_features=1024, out_features=2048, bias=False)
+        (w_k): Linear(in_features=1024, out_features=1024, bias=False)
+        (w_v): Linear(in_features=1024, out_features=1024, bias=False)
+        (w_out): Linear(in_features=2048, out_features=1024, bias=False)
+        (q_norm): QwenRMSNorm((128,), eps=1e-06)
+        (k_norm): QwenRMSNorm((128,), eps=1e-06)
+        (rope): RotaryEmbedding()
+        (backend): FlashAttention2Backend()
+      )
+      (attention_norm): QwenRMSNorm((1024,), eps=1e-06)
+      (attention_residual_stream): ResidualStream(
+        (dropout): Identity()
+      )
+      (feed_forward): FeedForward(
+        (w1): Linear(in_features=1024, out_features=3072, bias=False)
+        (w2): Linear(in_features=3072, out_features=1024, bias=False)
+        (w3): Linear(in_features=1024, out_features=3072, bias=False)
+      )
+      (feed_forward_norm): QwenRMSNorm((1024,), eps=1e-06)
+      (feed_forward_residual_stream): ResidualStream(
+        (dropout): Identity()
+      )
+    )
+    (14): TransformerBlock(
+      (attention): Attention(
+        (w_q): Linear(in_features=1024, out_features=2048, bias=False)
+        (w_k): Linear(in_features=1024, out_features=1024, bias=False)
+        (w_v): Linear(in_features=1024, out_features=1024, bias=False)
+        (w_out): Linear(in_features=2048, out_features=1024, bias=False)
+        (q_norm): QwenRMSNorm((128,), eps=1e-06)
+        (k_norm): QwenRMSNorm((128,), eps=1e-06)
+        (rope): RotaryEmbedding()
+        (backend): FlashAttention2Backend()
+      )
+      (attention_norm): QwenRMSNorm((1024,), eps=1e-06)
+      (attention_residual_stream): ResidualStream(
+        (dropout): Identity()
+      )
+      (feed_forward): FeedForward(
+        (w1): Linear(in_features=1024, out_features=3072, bias=False)
+        (w2): Linear(in_features=3072, out_features=1024, bias=False)
+        (w3): Linear(in_features=1024, out_features=3072, bias=False)
+      )
+      (feed_forward_norm): QwenRMSNorm((1024,), eps=1e-06)
+      (feed_forward_residual_stream): ResidualStream(
+        (dropout): Identity()
+      )
+    )
+    (15): TransformerBlock(
+      (attention): Attention(
+        (w_q): Linear(in_features=1024, out_features=2048, bias=False)
+        (w_k): Linear(in_features=1024, out_features=1024, bias=False)
+        (w_v): Linear(in_features=1024, out_features=1024, bias=False)
+        (w_out): Linear(in_features=2048, out_features=1024, bias=False)
+        (q_norm): QwenRMSNorm((128,), eps=1e-06)
+        (k_norm): QwenRMSNorm((128,), eps=1e-06)
+        (rope): RotaryEmbedding()
+        (backend): FlashAttention2Backend()
+      )
+      (attention_norm): QwenRMSNorm((1024,), eps=1e-06)
+      (attention_residual_stream): ResidualStream(
+        (dropout): Identity()
+      )
+      (feed_forward): FeedForward(
+        (w1): Linear(in_features=1024, out_features=3072, bias=False)
+        (w2): Linear(in_features=3072, out_features=1024, bias=False)
+        (w3): Linear(in_features=1024, out_features=3072, bias=False)
+      )
+      (feed_forward_norm): QwenRMSNorm((1024,), eps=1e-06)
+      (feed_forward_residual_stream): ResidualStream(
+        (dropout): Identity()
+      )
+    )
+    (16): TransformerBlock(
+      (attention): Attention(
+        (w_q): Linear(in_features=1024, out_features=2048, bias=False)
+        (w_k): Linear(in_features=1024, out_features=1024, bias=False)
+        (w_v): Linear(in_features=1024, out_features=1024, bias=False)
+        (w_out): Linear(in_features=2048, out_features=1024, bias=False)
+        (q_norm): QwenRMSNorm((128,), eps=1e-06)
+        (k_norm): QwenRMSNorm((128,), eps=1e-06)
+        (rope): RotaryEmbedding()
+        (backend): FlashAttention2Backend()
+      )
+      (attention_norm): QwenRMSNorm((1024,), eps=1e-06)
+      (attention_residual_stream): ResidualStream(
+        (dropout): Identity()
+      )
+      (feed_forward): FeedForward(
+        (w1): Linear(in_features=1024, out_features=3072, bias=False)
+        (w2): Linear(in_features=3072, out_features=1024, bias=False)
+        (w3): Linear(in_features=1024, out_features=3072, bias=False)
+      )
+      (feed_forward_norm): QwenRMSNorm((1024,), eps=1e-06)
+      (feed_forward_residual_stream): ResidualStream(
+        (dropout): Identity()
+      )
+    )
+    (17): TransformerBlock(
+      (attention): Attention(
+        (w_q): Linear(in_features=1024, out_features=2048, bias=False)
+        (w_k): Linear(in_features=1024, out_features=1024, bias=False)
+        (w_v): Linear(in_features=1024, out_features=1024, bias=False)
+        (w_out): Linear(in_features=2048, out_features=1024, bias=False)
+        (q_norm): QwenRMSNorm((128,), eps=1e-06)
+        (k_norm): QwenRMSNorm((128,), eps=1e-06)
+        (rope): RotaryEmbedding()
+        (backend): FlashAttention2Backend()
+      )
+      (attention_norm): QwenRMSNorm((1024,), eps=1e-06)
+      (attention_residual_stream): ResidualStream(
+        (dropout): Identity()
+      )
+      (feed_forward): FeedForward(
+        (w1): Linear(in_features=1024, out_features=3072, bias=False)
+        (w2): Linear(in_features=3072, out_features=1024, bias=False)
+        (w3): Linear(in_features=1024, out_features=3072, bias=False)
+      )
+      (feed_forward_norm): QwenRMSNorm((1024,), eps=1e-06)
+      (feed_forward_residual_stream): ResidualStream(
+        (dropout): Identity()
+      )
+    )
+    (18): TransformerBlock(
+      (attention): Attention(
+        (w_q): Linear(in_features=1024, out_features=2048, bias=False)
+        (w_k): Linear(in_features=1024, out_features=1024, bias=False)
+        (w_v): Linear(in_features=1024, out_features=1024, bias=False)
+        (w_out): Linear(in_features=2048, out_features=1024, bias=False)
+        (q_norm): QwenRMSNorm((128,), eps=1e-06)
+        (k_norm): QwenRMSNorm((128,), eps=1e-06)
+        (rope): RotaryEmbedding()
+        (backend): FlashAttention2Backend()
+      )
+      (attention_norm): QwenRMSNorm((1024,), eps=1e-06)
+      (attention_residual_stream): ResidualStream(
+        (dropout): Identity()
+      )
+      (feed_forward): FeedForward(
+        (w1): Linear(in_features=1024, out_features=3072, bias=False)
+        (w2): Linear(in_features=3072, out_features=1024, bias=False)
+        (w3): Linear(in_features=1024, out_features=3072, bias=False)
+      )
+      (feed_forward_norm): QwenRMSNorm((1024,), eps=1e-06)
+      (feed_forward_residual_stream): ResidualStream(
+        (dropout): Identity()
+      )
+    )
+    (19): TransformerBlock(
+      (attention): Attention(
+        (w_q): Linear(in_features=1024, out_features=2048, bias=False)
+        (w_k): Linear(in_features=1024, out_features=1024, bias=False)
+        (w_v): Linear(in_features=1024, out_features=1024, bias=False)
+        (w_out): Linear(in_features=2048, out_features=1024, bias=False)
+        (q_norm): QwenRMSNorm((128,), eps=1e-06)
+        (k_norm): QwenRMSNorm((128,), eps=1e-06)
+        (rope): RotaryEmbedding()
+        (backend): FlashAttention2Backend()
+      )
+      (attention_norm): QwenRMSNorm((1024,), eps=1e-06)
+      (attention_residual_stream): ResidualStream(
+        (dropout): Identity()
+      )
+      (feed_forward): FeedForward(
+        (w1): Linear(in_features=1024, out_features=3072, bias=False)
+        (w2): Linear(in_features=3072, out_features=1024, bias=False)
+        (w3): Linear(in_features=1024, out_features=3072, bias=False)
+      )
+      (feed_forward_norm): QwenRMSNorm((1024,), eps=1e-06)
+      (feed_forward_residual_stream): ResidualStream(
+        (dropout): Identity()
+      )
+    )
+    (20): TransformerBlock(
+      (attention): Attention(
+        (w_q): Linear(in_features=1024, out_features=2048, bias=False)
+        (w_k): Linear(in_features=1024, out_features=1024, bias=False)
+        (w_v): Linear(in_features=1024, out_features=1024, bias=False)
+        (w_out): Linear(in_features=2048, out_features=1024, bias=False)
+        (q_norm): QwenRMSNorm((128,), eps=1e-06)
+        (k_norm): QwenRMSNorm((128,), eps=1e-06)
+        (rope): RotaryEmbedding()
+        (backend): FlashAttention2Backend()
+      )
+      (attention_norm): QwenRMSNorm((1024,), eps=1e-06)
+      (attention_residual_stream): ResidualStream(
+        (dropout): Identity()
+      )
+      (feed_forward): FeedForward(
+        (w1): Linear(in_features=1024, out_features=3072, bias=False)
+        (w2): Linear(in_features=3072, out_features=1024, bias=False)
+        (w3): Linear(in_features=1024, out_features=3072, bias=False)
+      )
+      (feed_forward_norm): QwenRMSNorm((1024,), eps=1e-06)
+      (feed_forward_residual_stream): ResidualStream(
+        (dropout): Identity()
+      )
+    )
+    (21): TransformerBlock(
+      (attention): Attention(
+        (w_q): Linear(in_features=1024, out_features=2048, bias=False)
+        (w_k): Linear(in_features=1024, out_features=1024, bias=False)
+        (w_v): Linear(in_features=1024, out_features=1024, bias=False)
+        (w_out): Linear(in_features=2048, out_features=1024, bias=False)
+        (q_norm): QwenRMSNorm((128,), eps=1e-06)
+        (k_norm): QwenRMSNorm((128,), eps=1e-06)
+        (rope): RotaryEmbedding()
+        (backend): FlashAttention2Backend()
+      )
+      (attention_norm): QwenRMSNorm((1024,), eps=1e-06)
+      (attention_residual_stream): ResidualStream(
+        (dropout): Identity()
+      )
+      (feed_forward): FeedForward(
+        (w1): Linear(in_features=1024, out_features=3072, bias=False)
+        (w2): Linear(in_features=3072, out_features=1024, bias=False)
+        (w3): Linear(in_features=1024, out_features=3072, bias=False)
+      )
+      (feed_forward_norm): QwenRMSNorm((1024,), eps=1e-06)
+      (feed_forward_residual_stream): ResidualStream(
+        (dropout): Identity()
+      )
+    )
+    (22): TransformerBlock(
+      (attention): Attention(
+        (w_q): Linear(in_features=1024, out_features=2048, bias=False)
+        (w_k): Linear(in_features=1024, out_features=1024, bias=False)
+        (w_v): Linear(in_features=1024, out_features=1024, bias=False)
+        (w_out): Linear(in_features=2048, out_features=1024, bias=False)
+        (q_norm): QwenRMSNorm((128,), eps=1e-06)
+        (k_norm): QwenRMSNorm((128,), eps=1e-06)
+        (rope): RotaryEmbedding()
+        (backend): FlashAttention2Backend()
+      )
+      (attention_norm): QwenRMSNorm((1024,), eps=1e-06)
+      (attention_residual_stream): ResidualStream(
+        (dropout): Identity()
+      )
+      (feed_forward): FeedForward(
+        (w1): Linear(in_features=1024, out_features=3072, bias=False)
+        (w2): Linear(in_features=3072, out_features=1024, bias=False)
+        (w3): Linear(in_features=1024, out_features=3072, bias=False)
+      )
+      (feed_forward_norm): QwenRMSNorm((1024,), eps=1e-06)
+      (feed_forward_residual_stream): ResidualStream(
+        (dropout): Identity()
+      )
+    )
+    (23): TransformerBlock(
+      (attention): Attention(
+        (w_q): Linear(in_features=1024, out_features=2048, bias=False)
+        (w_k): Linear(in_features=1024, out_features=1024, bias=False)
+        (w_v): Linear(in_features=1024, out_features=1024, bias=False)
+        (w_out): Linear(in_features=2048, out_features=1024, bias=False)
+        (q_norm): QwenRMSNorm((128,), eps=1e-06)
+        (k_norm): QwenRMSNorm((128,), eps=1e-06)
+        (rope): RotaryEmbedding()
+        (backend): FlashAttention2Backend()
+      )
+      (attention_norm): QwenRMSNorm((1024,), eps=1e-06)
+      (attention_residual_stream): ResidualStream(
+        (dropout): Identity()
+      )
+      (feed_forward): FeedForward(
+        (w1): Linear(in_features=1024, out_features=3072, bias=False)
+        (w2): Linear(in_features=3072, out_features=1024, bias=False)
+        (w3): Linear(in_features=1024, out_features=3072, bias=False)
+      )
+      (feed_forward_norm): QwenRMSNorm((1024,), eps=1e-06)
+      (feed_forward_residual_stream): ResidualStream(
+        (dropout): Identity()
+      )
+    )
+    (24): TransformerBlock(
+      (attention): Attention(
+        (w_q): Linear(in_features=1024, out_features=2048, bias=False)
+        (w_k): Linear(in_features=1024, out_features=1024, bias=False)
+        (w_v): Linear(in_features=1024, out_features=1024, bias=False)
+        (w_out): Linear(in_features=2048, out_features=1024, bias=False)
+        (q_norm): QwenRMSNorm((128,), eps=1e-06)
+        (k_norm): QwenRMSNorm((128,), eps=1e-06)
+        (rope): RotaryEmbedding()
+        (backend): FlashAttention2Backend()
+      )
+      (attention_norm): QwenRMSNorm((1024,), eps=1e-06)
+      (attention_residual_stream): ResidualStream(
+        (dropout): Identity()
+      )
+      (feed_forward): FeedForward(
+        (w1): Linear(in_features=1024, out_features=3072, bias=False)
+        (w2): Linear(in_features=3072, out_features=1024, bias=False)
+        (w3): Linear(in_features=1024, out_features=3072, bias=False)
+      )
+      (feed_forward_norm): QwenRMSNorm((1024,), eps=1e-06)
+      (feed_forward_residual_stream): ResidualStream(
+        (dropout): Identity()
+      )
+    )
+    (25): TransformerBlock(
+      (attention): Attention(
+        (w_q): Linear(in_features=1024, out_features=2048, bias=False)
+        (w_k): Linear(in_features=1024, out_features=1024, bias=False)
+        (w_v): Linear(in_features=1024, out_features=1024, bias=False)
+        (w_out): Linear(in_features=2048, out_features=1024, bias=False)
+        (q_norm): QwenRMSNorm((128,), eps=1e-06)
+        (k_norm): QwenRMSNorm((128,), eps=1e-06)
+        (rope): RotaryEmbedding()
+        (backend): FlashAttention2Backend()
+      )
+      (attention_norm): QwenRMSNorm((1024,), eps=1e-06)
+      (attention_residual_stream): ResidualStream(
+        (dropout): Identity()
+      )
+      (feed_forward): FeedForward(
+        (w1): Linear(in_features=1024, out_features=3072, bias=False)
+        (w2): Linear(in_features=3072, out_features=1024, bias=False)
+        (w3): Linear(in_features=1024, out_features=3072, bias=False)
+      )
+      (feed_forward_norm): QwenRMSNorm((1024,), eps=1e-06)
+      (feed_forward_residual_stream): ResidualStream(
+        (dropout): Identity()
+      )
+    )
+    (26): TransformerBlock(
+      (attention): Attention(
+        (w_q): Linear(in_features=1024, out_features=2048, bias=False)
+        (w_k): Linear(in_features=1024, out_features=1024, bias=False)
+        (w_v): Linear(in_features=1024, out_features=1024, bias=False)
+        (w_out): Linear(in_features=2048, out_features=1024, bias=False)
+        (q_norm): QwenRMSNorm((128,), eps=1e-06)
+        (k_norm): QwenRMSNorm((128,), eps=1e-06)
+        (rope): RotaryEmbedding()
+        (backend): FlashAttention2Backend()
+      )
+      (attention_norm): QwenRMSNorm((1024,), eps=1e-06)
+      (attention_residual_stream): ResidualStream(
+        (dropout): Identity()
+      )
+      (feed_forward): FeedForward(
+        (w1): Linear(in_features=1024, out_features=3072, bias=False)
+        (w2): Linear(in_features=3072, out_features=1024, bias=False)
+        (w3): Linear(in_features=1024, out_features=3072, bias=False)
+      )
+      (feed_forward_norm): QwenRMSNorm((1024,), eps=1e-06)
+      (feed_forward_residual_stream): ResidualStream(
+        (dropout): Identity()
+      )
+    )
+    (27): TransformerBlock(
+      (attention): Attention(
+        (w_q): Linear(in_features=1024, out_features=2048, bias=False)
+        (w_k): Linear(in_features=1024, out_features=1024, bias=False)
+        (w_v): Linear(in_features=1024, out_features=1024, bias=False)
+        (w_out): Linear(in_features=2048, out_features=1024, bias=False)
+        (q_norm): QwenRMSNorm((128,), eps=1e-06)
+        (k_norm): QwenRMSNorm((128,), eps=1e-06)
+        (rope): RotaryEmbedding()
+        (backend): FlashAttention2Backend()
+      )
+      (attention_norm): QwenRMSNorm((1024,), eps=1e-06)
+      (attention_residual_stream): ResidualStream(
+        (dropout): Identity()
+      )
+      (feed_forward): FeedForward(
+        (w1): Linear(in_features=1024, out_features=3072, bias=False)
+        (w2): Linear(in_features=3072, out_features=1024, bias=False)
+        (w3): Linear(in_features=1024, out_features=3072, bias=False)
+      )
+      (feed_forward_norm): QwenRMSNorm((1024,), eps=1e-06)
+      (feed_forward_residual_stream): ResidualStream(
+        (dropout): Identity()
+      )
+    )
+  )
+  (lm_head): LMHead(
+    (norm): QwenRMSNorm((1024,), eps=1e-06)
+    (w_out): Linear(in_features=1024, out_features=151936, bias=False)
+  )
+)
+2026-07-13 20:37:44.797	cubbins:0	olmo_core.nn.transformer.config:447	INFO	Built model with:
+- 751,632,384 total params
+- 596,049,920 non-embedding params
+- 751,632,384 trainable params
+2026-07-13 20:37:44.800	cubbins:0	olmo_core.distributed.parallel:246	INFO	Built 1D device mesh with shape (dp=4,)
+2026-07-13 20:37:44.800	cubbins:0	olmo_core.train.train_module.transformer.train_module:141	INFO	Data parallel world size = 4
+2026-07-13 20:37:44.881	cubbins:0	olmo_core.train.train_module.transformer.common:136	INFO	Applied FSDP to the model with 1D device mesh with shape (dp=4,)
+2026-07-13 20:37:44.881	cubbins:0	olmo_core.train.train_module.transformer.common:147	INFO	Initializing model weights...
+2026-07-13 20:37:46.688	cubbins:0	olmo_core.train.train_module.transformer.train_module:198	INFO	Building optimizer...
+2026-07-13 20:37:46.691	cubbins:0	olmo_core.optim.config:202	INFO	Building SkipStepAdamW optimizer with 2 param group(s)...
+2026-07-13 20:37:46.691	cubbins:0	olmo_core.optim.config:210	INFO	Group 0, 1 parameter(s):
+ - weight_decay: 0.0
+ - lr: 5e-05
+ - betas: (0.9, 0.95)
+ - eps: 1e-08
+ - initial_lr: 5e-05
+2026-07-13 20:37:46.691	cubbins:0	olmo_core.optim.config:210	INFO	Group 1, 310 parameter(s):
+ - lr: 5e-05
+ - betas: (0.9, 0.95)
+ - eps: 1e-08
+ - weight_decay: 0.0
+ - initial_lr: 5e-05
+[goldgrad] mode=gold_plus_random n_random=2 patched 28 attention modules; 2000 gold examples
+2026-07-13 20:37:46.699	cubbins:0	olmo_core.data.composable.numpy_document_source:778	INFO	Assuming dtype 'uint32' based on vocab size
+2026-07-13 20:37:46.700	cubbins:0	olmo_core.data.composable.numpy_document_source:232	INFO	Expanding globs...
+2026-07-13 20:37:46.703	cubbins:0	olmo_core.data.composable.numpy_document_source:257	INFO	Expanded '/scratch/users/prasann/longctx_sft_qwen/contradiction_n100_docdense_nocot_gold2k/token_ids_part_*.npy' into 1 paths:
+- '/scratch/users/prasann/longctx_sft_qwen/contradiction_n100_docdense_nocot_gold2k/token_ids_part_000000.npy'
+2026-07-13 20:37:46.704	cubbins:0	olmo_core.data.composable.numpy_document_source:232	INFO	Expanding globs...
+2026-07-13 20:37:46.707	cubbins:0	olmo_core.data.composable.numpy_document_source:257	INFO	Expanded '/scratch/users/prasann/longctx_sft_qwen/contradiction_n100_docdense_nocot_gold2k/labels_mask_*.npy' into 1 paths:
+- '/scratch/users/prasann/longctx_sft_qwen/contradiction_n100_docdense_nocot_gold2k/labels_mask_part_000000.npy'
+
+ PadToLengthInstanceSource(9b11d49): 12.3M tokens
+└─  NumpyDocumentSource(023cecb): 9.4M tokens [/scratch/user...cdense_nocot_gold2k/token_ids_part_*.npy]
+
+2026-07-13 20:37:46.725	cubbins:0	olmo_core.train.trainer:373	INFO	Creating new process group for async bookkeeping
+[Gloo] Rank 0 is connected to 3 peer ranks. Expected number of connected peer ranks is : 3
+[Gloo] Rank 2 is connected to 3 peer ranks. Expected number of connected peer ranks is : 3
+[Gloo] Rank 1 is connected to 3 peer ranks. Expected number of connected peer ranks is : 3
+[Gloo] Rank 3 is connected to 3 peer ranks. Expected number of connected peer ranks is : 3
+2026-07-13 20:37:46.730	cubbins:0	olmo_core.train.trainer:901	INFO	Loading checkpoint from '/scratch/users/prasann/cpt_mix_ckpts/q06b-dense-cpt-modelonly-fixmark/model_and_optim'...
+2026-07-13 20:37:49.269	cubbins:0	olmo_core.train.trainer:922	INFO	Checkpoint successfully loaded
+2026-07-13 20:37:49.273	cubbins:0	olmo_core.train.trainer:713	INFO	Callback order:
+2026-07-13 20:37:49.273	cubbins:0	olmo_core.train.trainer:715	INFO	  - Callback 1: checkpointer
+2026-07-13 20:37:49.274	cubbins:0	olmo_core.train.trainer:715	INFO	  - Callback 2: config_saver
+2026-07-13 20:37:49.274	cubbins:0	olmo_core.train.trainer:715	INFO	  - Callback 3: console_logger
+2026-07-13 20:37:49.274	cubbins:0	olmo_core.train.trainer:715	INFO	  - Callback 4: garbage_collector
+2026-07-13 20:37:49.274	cubbins:0	olmo_core.train.trainer:715	INFO	  - Callback 5: gpu_monitor
+2026-07-13 20:37:49.274	cubbins:0	olmo_core.train.trainer:715	INFO	  - Callback 6: speed_monitor
+2026-07-13 20:37:49.274	cubbins:0	olmo_core.train.trainer:718	INFO	Training for 250 steps
+2026-07-13 20:37:49.274	cubbins:0	olmo_core.train.callbacks.checkpointer:229	INFO	Creating new process group for checkpointing (needed for async checkpointing)
+[Gloo] Rank 0 is connected to 3 peer ranks. Expected number of connected peer ranks is : 3
+[Gloo] Rank 1 is connected to 3 peer ranks. Expected number of connected peer ranks is : 3
+[Gloo] Rank 2 is connected to 3 peer ranks. Expected number of connected peer ranks is : 3
+[Gloo] Rank 3 is connected to 3 peer ranks. Expected number of connected peer ranks is : 3
+2026-07-13 20:37:49.290	cubbins:0	olmo_core.train.callbacks.garbage_collector:33	INFO	Automatic GC disabled for training, will run GC every 1000 steps
+2026-07-13 20:37:49.290	cubbins:0	olmo_core.train.callbacks.gpu_memory_monitor:41	INFO	GPU capacity: NVIDIA H200 with 139.80GiB memory of which 0.87GiB is currently allocated and 1.45GiB is currently reserved.
+2026-07-13 20:37:49.291	cubbins:0	olmo_core.train.callbacks.speed_monitor:114	INFO	Device: NVIDIA H200, Device peak Flops/s: 312000000000000
+2026-07-13 20:37:49.293	cubbins:0	olmo_core.train.trainer:1452	INFO	Starting forward/backward dry-run batch...
+[gold-grad] call#1: B=1 S=6144 mode=gold_plus_random n_random=2 fp_hits=1/1 cum_hits=1/1 detached=4959/6144
+[gold-grad] call#1: B=1 S=6144 mode=gold_plus_random n_random=2 fp_hits=1/1 cum_hits=1/1 detached=4912/6144[gold-grad] call#1: B=1 S=6144 mode=gold_plus_random n_random=2 fp_hits=1/1 cum_hits=1/1 detached=4948/6144
+
+[gold-grad] call#1: B=1 S=6144 mode=gold_plus_random n_random=2 fp_hits=1/1 cum_hits=1/1 detached=4858/6144
+[gold-grad] call#2: B=1 S=6144 mode=gold_plus_random n_random=2 fp_hits=1/1 cum_hits=2/2 detached=4955/6144
+[gold-grad] call#2: B=1 S=6144 mode=gold_plus_random n_random=2 fp_hits=1/1 cum_hits=2/2 detached=4789/6144
+[gold-grad] call#2: B=1 S=6144 mode=gold_plus_random n_random=2 fp_hits=1/1 cum_hits=2/2 detached=4948/6144
+[gold-grad] call#2: B=1 S=6144 mode=gold_plus_random n_random=2 fp_hits=1/1 cum_hits=2/2 detached=4729/6144
+2026-07-13 20:37:50.042	cubbins:0	olmo_core.train.trainer:1454	INFO	Dry-run complete
+2026-07-13 20:37:50.042	cubbins:0	olmo_core.data.composable.data_loader:570	INFO	Using existing global indices file for seed 34521 and epoch 1 at:
+'/data/prasann/goldgrad/cache-bench-n100/global_indices_epoch1_max_seq_len6144_seed34521_seq_len6144_shuffleinter_source_size2000_v1.npy'
+2026-07-13 20:37:50.043	cubbins:0	olmo_core.train.trainer:1459	INFO	Starting epoch 1...
+[gold-grad] call#3: B=1 S=6144 mode=gold_plus_random n_random=2 fp_hits=1/1 cum_hits=3/3 detached=4944/6144
+[gold-grad] call#3: B=1 S=6144 mode=gold_plus_random n_random=2 fp_hits=1/1 cum_hits=3/3 detached=4815/6144
+[gold-grad] call#3: B=1 S=6144 mode=gold_plus_random n_random=2 fp_hits=1/1 cum_hits=3/3 detached=4832/6144
+[gold-grad] call#3: B=1 S=6144 mode=gold_plus_random n_random=2 fp_hits=1/1 cum_hits=3/3 detached=4955/6144
+[gold-grad] call#4: B=1 S=6144 mode=gold_plus_random n_random=2 fp_hits=1/1 cum_hits=4/4 detached=5011/6144
+[gold-grad] call#4: B=1 S=6144 mode=gold_plus_random n_random=2 fp_hits=1/1 cum_hits=4/4 detached=4804/6144
+[gold-grad] call#4: B=1 S=6144 mode=gold_plus_random n_random=2 fp_hits=1/1 cum_hits=4/4 detached=4955/6144
+[gold-grad] call#4: B=1 S=6144 mode=gold_plus_random n_random=2 fp_hits=1/1 cum_hits=4/4 detached=4783/6144
+[gold-grad] call#5: B=1 S=6144 mode=gold_plus_random n_random=2 fp_hits=1/1 cum_hits=5/5 detached=4930/6144
+[gold-grad] call#5: B=1 S=6144 mode=gold_plus_random n_random=2 fp_hits=1/1 cum_hits=5/5 detached=4911/6144
+2026-07-13 20:37:50.973	cubbins:0	olmo_core.train.callbacks.console_logger:68	INFO	[step=1/250,epoch=1]
+    gpu_memory/GPU active mem (%)=17.63
+    gpu_memory/GPU active mem (GiB)=24.64
+    gpu_memory/GPU reserved mem (%)=21.71
+    gpu_memory/GPU reserved mem (GiB)=30.36
+    optim/LR (group 0)=6.25E-06
+    optim/LR (group 1)=6.25E-06
+    optim/step skipped=0.0
+    optim/total grad norm=29.18
+    train/CE loss=3.233
+    throughput/device/data loading (s)=0.0069
+    train/PPL=25.36
+[gold-grad] call#5: B=1 S=6144 mode=gold_plus_random n_random=2 fp_hits=1/1 cum_hits=5/5 detached=4814/6144
+[gold-grad] call#5: B=1 S=6144 mode=gold_plus_random n_random=2 fp_hits=1/1 cum_hits=5/5 detached=4842/6144
+[gold-grad] call#6: B=1 S=6144 mode=gold_plus_random n_random=2 fp_hits=1/1 cum_hits=6/6 detached=4885/6144[gold-grad] call#6: B=1 S=6144 mode=gold_plus_random n_random=2 fp_hits=1/1 cum_hits=6/6 detached=4905/6144
+
+[gold-grad] call#6: B=1 S=6144 mode=gold_plus_random n_random=2 fp_hits=1/1 cum_hits=6/6 detached=4993/6144
+[gold-grad] call#6: B=1 S=6144 mode=gold_plus_random n_random=2 fp_hits=1/1 cum_hits=6/6 detached=4998/6144
+2026-07-13 20:37:51.361	cubbins:0	olmo_core.train.callbacks.console_logger:61	INFO	[step=2/250,epoch=1]
+[gold-grad] call#7: B=1 S=6144 mode=gold_plus_random n_random=2 fp_hits=1/1 cum_hits=7/7 detached=4848/6144[gold-grad] call#7: B=1 S=6144 mode=gold_plus_random n_random=2 fp_hits=1/1 cum_hits=7/7 detached=4918/6144
+
+[gold-grad] call#7: B=1 S=6144 mode=gold_plus_random n_random=2 fp_hits=1/1 cum_hits=7/7 detached=4957/6144
+[gold-grad] call#7: B=1 S=6144 mode=gold_plus_random n_random=2 fp_hits=1/1 cum_hits=7/7 detached=4919/6144
+[gold-grad] call#8: B=1 S=6144 mode=gold_plus_random n_random=2 fp_hits=1/1 cum_hits=8/8 detached=4983/6144
+[gold-grad] call#8: B=1 S=6144 mode=gold_plus_random n_random=2 fp_hits=1/1 cum_hits=8/8 detached=4935/6144
+[gold-grad] call#8: B=1 S=6144 mode=gold_plus_random n_random=2 fp_hits=1/1 cum_hits=8/8 detached=4882/6144
+[gold-grad] call#8: B=1 S=6144 mode=gold_plus_random n_random=2 fp_hits=1/1 cum_hits=8/8 detached=4903/6144
+2026-07-13 20:37:51.760	cubbins:0	olmo_core.train.callbacks.console_logger:61	INFO	[step=3/250,epoch=1]
+[gold-grad] call#9: B=1 S=6144 mode=gold_plus_random n_random=2 fp_hits=1/1 cum_hits=9/9 detached=4868/6144[gold-grad] call#9: B=1 S=6144 mode=gold_plus_random n_random=2 fp_hits=1/1 cum_hits=9/9 detached=4925/6144
+
+[gold-grad] call#9: B=1 S=6144 mode=gold_plus_random n_random=2 fp_hits=1/1 cum_hits=9/9 detached=4898/6144
+[gold-grad] call#9: B=1 S=6144 mode=gold_plus_random n_random=2 fp_hits=1/1 cum_hits=9/9 detached=4901/6144
+[gold-grad] call#10: B=1 S=6144 mode=gold_plus_random n_random=2 fp_hits=1/1 cum_hits=10/10 detached=4928/6144
+[gold-grad] call#10: B=1 S=6144 mode=gold_plus_random n_random=2 fp_hits=1/1 cum_hits=10/10 detached=4989/6144
+[gold-grad] call#10: B=1 S=6144 mode=gold_plus_random n_random=2 fp_hits=1/1 cum_hits=10/10 detached=4868/6144
+[gold-grad] call#10: B=1 S=6144 mode=gold_plus_random n_random=2 fp_hits=1/1 cum_hits=10/10 detached=4918/6144
+2026-07-13 20:37:52.162	cubbins:0	olmo_core.train.callbacks.console_logger:61	INFO	[step=4/250,epoch=1]
+[gold-grad] call#11: B=1 S=6144 mode=gold_plus_random n_random=2 fp_hits=1/1 cum_hits=11/11 detached=4839/6144
+[gold-grad] call#11: B=1 S=6144 mode=gold_plus_random n_random=2 fp_hits=1/1 cum_hits=11/11 detached=5001/6144
+[gold-grad] call#11: B=1 S=6144 mode=gold_plus_random n_random=2 fp_hits=1/1 cum_hits=11/11 detached=4919/6144
+[gold-grad] call#11: B=1 S=6144 mode=gold_plus_random n_random=2 fp_hits=1/1 cum_hits=11/11 detached=4869/6144
+[gold-grad] call#12: B=1 S=6144 mode=gold_plus_random n_random=2 fp_hits=1/1 cum_hits=12/12 detached=4833/6144[gold-grad] call#12: B=1 S=6144 mode=gold_plus_random n_random=2 fp_hits=1/1 cum_hits=12/12 detached=4942/6144
+
+[gold-grad] call#12: B=1 S=6144 mode=gold_plus_random n_random=2 fp_hits=1/1 cum_hits=12/12 detached=4786/6144
+[gold-grad] call#12: B=1 S=6144 mode=gold_plus_random n_random=2 fp_hits=1/1 cum_hits=12/12 detached=4980/6144
+2026-07-13 20:37:52.563	cubbins:0	olmo_core.train.callbacks.console_logger:61	INFO	[step=5/250,epoch=1]
+2026-07-13 20:37:52.963	cubbins:0	olmo_core.train.callbacks.console_logger:61	INFO	[step=6/250,epoch=1]
+2026-07-13 20:37:53.364	cubbins:0	olmo_core.train.callbacks.console_logger:61	INFO	[step=7/250,epoch=1]
+2026-07-13 20:37:53.764	cubbins:0	olmo_core.train.callbacks.console_logger:61	INFO	[step=8/250,epoch=1]
+2026-07-13 20:37:54.164	cubbins:0	olmo_core.train.callbacks.console_logger:61	INFO	[step=9/250,epoch=1]
+2026-07-13 20:37:54.602	cubbins:0	olmo_core.train.callbacks.console_logger:68	INFO	[step=10/250,epoch=1,eta=1m(hard stop)]
+    gpu_memory/GPU active mem (%)=18.65
+    gpu_memory/GPU active mem (GiB)=26.07
+    gpu_memory/GPU reserved mem (%)=21.71
+    gpu_memory/GPU reserved mem (GiB)=30.36
+    optim/LR (group 0)=4.96E-05
+    optim/LR (group 1)=4.96E-05
+    optim/step skipped=0.0
+    optim/total grad norm=8.574
+    throughput/chinchilla multiple=4.12E-05
+    throughput/device/BPS=2.457
+    throughput/device/BPS (actual avg)=2.496
+    throughput/device/MFU=75.53
+    throughput/device/MFU (actual avg)=76.71
+    throughput/device/TPS=30,197
+    throughput/device/TPS (actual avg)=30,669
+    throughput/device/flopsPS=235.7T
+    throughput/device/flopsPS (actual avg)=239.3T
+    throughput/total petaflops=3.836
+    throughput/total tokens=491,520
+    train/CE loss=0.9698
+    throughput/device/data loading (%)=0.1993
+    throughput/device/data loading (s)=0.0008
+    train/PPL=2.637
+2026-07-13 20:37:54.984	cubbins:0	olmo_core.train.callbacks.console_logger:61	INFO	[step=11/250,epoch=1]
+2026-07-13 20:37:55.385	cubbins:0	olmo_core.train.callbacks.console_logger:61	INFO	[step=12/250,epoch=1]
+2026-07-13 20:37:55.788	cubbins:0	olmo_core.train.callbacks.console_logger:61	INFO	[step=13/250,epoch=1]
+2026-07-13 20:37:56.188	cubbins:0	olmo_core.train.callbacks.console_logger:61	INFO	[step=14/250,epoch=1]
+2026-07-13 20:37:56.589	cubbins:0	olmo_core.train.callbacks.console_logger:61	INFO	[step=15/250,epoch=1]
+2026-07-13 20:37:56.993	cubbins:0	olmo_core.train.callbacks.console_logger:61	INFO	[step=16/250,epoch=1]
+2026-07-13 20:37:57.395	cubbins:0	olmo_core.train.callbacks.console_logger:61	INFO	[step=17/250,epoch=1]
+2026-07-13 20:37:57.796	cubbins:0	olmo_core.train.callbacks.console_logger:61	INFO	[step=18/250,epoch=1]
+2026-07-13 20:37:58.197	cubbins:0	olmo_core.train.callbacks.console_logger:61	INFO	[step=19/250,epoch=1]
+2026-07-13 20:37:58.631	cubbins:0	olmo_core.train.callbacks.console_logger:68	INFO	[step=20/250,epoch=1,eta=1m(hard stop)]
+    gpu_memory/GPU active mem (%)=18.65
+    gpu_memory/GPU active mem (GiB)=26.07
+    gpu_memory/GPU reserved mem (%)=21.71
+    gpu_memory/GPU reserved mem (GiB)=30.36
+    optim/LR (group 0)=4.75E-05
+    optim/LR (group 1)=4.75E-05
+    optim/step skipped=0.0
+    optim/total grad norm=5.944
+    throughput/chinchilla multiple=8.25E-05
+    throughput/device/BPS=2.491
+    throughput/device/BPS (actual avg)=2.489
+    throughput/device/MFU=76.55
+    throughput/device/MFU (actual avg)=76.50
+    throughput/device/TPS=30,605
+    throughput/device/TPS (actual avg)=30,585
+    throughput/device/flopsPS=238.8T
+    throughput/device/flopsPS (actual avg)=238.7T
+    throughput/total petaflops=7.671
+    throughput/total tokens=983,040
+    train/CE loss=0.8220
+    throughput/device/data loading (%)=0.2187
+    throughput/device/data loading (s)=0.0009
+    train/PPL=2.275
+2026-07-13 20:37:59.013	cubbins:0	olmo_core.train.callbacks.console_logger:61	INFO	[step=21/250,epoch=1]
+2026-07-13 20:37:59.413	cubbins:0	olmo_core.train.callbacks.console_logger:61	INFO	[step=22/250,epoch=1]
+2026-07-13 20:37:59.816	cubbins:0	olmo_core.train.callbacks.console_logger:61	INFO	[step=23/250,epoch=1]
+2026-07-13 20:38:00.228	cubbins:0	olmo_core.train.callbacks.console_logger:61	INFO	[step=24/250,epoch=1]
+2026-07-13 20:38:00.629	cubbins:0	olmo_core.train.callbacks.console_logger:61	INFO	[step=25/250,epoch=1]
+2026-07-13 20:38:01.029	cubbins:0	olmo_core.train.callbacks.console_logger:61	INFO	[step=26/250,epoch=1]
+2026-07-13 20:38:01.429	cubbins:0	olmo_core.train.callbacks.console_logger:61	INFO	[step=27/250,epoch=1]
+2026-07-13 20:38:01.841	cubbins:0	olmo_core.train.callbacks.console_logger:61	INFO	[step=28/250,epoch=1]
+2026-07-13 20:38:02.242	cubbins:0	olmo_core.train.callbacks.console_logger:61	INFO	[step=29/250,epoch=1]
+2026-07-13 20:38:02.674	cubbins:0	olmo_core.train.callbacks.console_logger:68	INFO	[step=30/250,epoch=1,eta=1m(hard stop)]
+    gpu_memory/GPU active mem (%)=18.65
+    gpu_memory/GPU active mem (GiB)=26.07
+    gpu_memory/GPU reserved mem (%)=21.71
+    gpu_memory/GPU reserved mem (GiB)=30.36
+    optim/LR (group 0)=4.55E-05
+    optim/LR (group 1)=4.55E-05
+    optim/step skipped=0.0
+    optim/total grad norm=4.891
+    throughput/chinchilla multiple=0.0001
+    throughput/device/BPS=2.496
+    throughput/device/BPS (actual avg)=2.483
+    throughput/device/MFU=76.72
+    throughput/device/MFU (actual avg)=76.33
+    throughput/device/TPS=30,673
+    throughput/device/TPS (actual avg)=30,515
+    throughput/device/flopsPS=239.4T
+    throughput/device/flopsPS (actual avg)=238.1T
+    throughput/total petaflops=11.51
+    throughput/total tokens=1,474,560
+    train/CE loss=0.7986
+    throughput/device/data loading (%)=0.1972
+    throughput/device/data loading (s)=0.0008
+    train/PPL=2.222
+2026-07-13 20:38:03.056	cubbins:0	olmo_core.train.callbacks.console_logger:61	INFO	[step=31/250,epoch=1]
+2026-07-13 20:38:03.457	cubbins:0	olmo_core.train.callbacks.console_logger:61	INFO	[step=32/250,epoch=1]
+2026-07-13 20:38:03.856	cubbins:0	olmo_core.train.callbacks.console_logger:61	INFO	[step=33/250,epoch=1]
+2026-07-13 20:38:04.257	cubbins:0	olmo_core.train.callbacks.console_logger:61	INFO	[step=34/250,epoch=1]
+2026-07-13 20:38:04.658	cubbins:0	olmo_core.train.callbacks.console_logger:61	INFO	[step=35/250,epoch=1]
+2026-07-13 20:38:05.060	cubbins:0	olmo_core.train.callbacks.console_logger:61	INFO	[step=36/250,epoch=1]
+2026-07-13 20:38:05.472	cubbins:0	olmo_core.train.callbacks.console_logger:61	INFO	[step=37/250,epoch=1]
+2026-07-13 20:38:05.873	cubbins:0	olmo_core.train.callbacks.console_logger:61	INFO	[step=38/250,epoch=1]
+2026-07-13 20:38:06.273	cubbins:0	olmo_core.train.callbacks.console_logger:61	INFO	[step=39/250,epoch=1]
+2026-07-13 20:38:06.700	cubbins:0	olmo_core.train.trainer:969	INFO	Saving checkpoint for step 40 to '/data/prasann/olmo_ckpts/_bench/bench-n100-gpr2/step40'...
+2026-07-13 20:38:06.700	cubbins:0	olmo_core.train.trainer:1361	INFO	Waiting for bookkeeping ops to finish: 'reduce_metrics' (3 ops)...
+2026-07-13 20:38:06.700	cubbins:0	olmo_core.train.trainer:1361	INFO	Waiting for bookkeeping ops to finish: 'Trainer._check_if_canceled' (2 ops)...
+2026-07-13 20:38:06.708	cubbins:0	olmo_core.train.callbacks.console_logger:68	INFO	[step=40/250,epoch=1]
+    gpu_memory/GPU active mem (%)=18.65
+    gpu_memory/GPU active mem (GiB)=26.07
+    gpu_memory/GPU reserved mem (%)=21.71
+    gpu_memory/GPU reserved mem (GiB)=30.36
+    optim/LR (group 0)=4.34E-05
+    optim/LR (group 1)=4.34E-05
+    optim/step skipped=0.0
+    optim/total grad norm=5.302
+    throughput/chinchilla multiple=0.0002
+    throughput/device/BPS=2.455
+    throughput/device/BPS (actual avg)=2.482
+    throughput/device/MFU=75.47
+    throughput/device/MFU (actual avg)=76.27
+    throughput/device/TPS=30,171
+    throughput/device/TPS (actual avg)=30,493
+    throughput/device/flopsPS=235.5T
+    throughput/device/flopsPS (actual avg)=238.0T
+    throughput/total petaflops=15.34
+    throughput/total tokens=1,966,080
+    train/CE loss=0.5453
+    throughput/device/data loading (%)=0.1781
+    throughput/device/data loading (s)=0.0007
+    train/PPL=1.725
+2026-07-13 20:38:06.713	cubbins:0	olmo_core.train.trainer:1366	INFO	All bookkeeping ops complete
+2026-07-13 20:38:15.098	cubbins:0	olmo_core.train.callbacks.config_saver:62	WARNING	Config not set on ConfigSaverCallback, doing nothing
+2026-07-13 20:38:15.314	cubbins:0	olmo_core.train.trainer:989	INFO	Checkpoint saved
+2026-07-13 20:38:15.315	cubbins:0	olmo_core.train.trainer:1361	INFO	Waiting for bookkeeping ops to finish: 'reduce_metrics' (1 ops)...
+2026-07-13 20:38:15.681	cubbins:0	olmo_core.train.callbacks.console_logger:68	INFO	[step=40/250,epoch=1]
+    checkpoint/save_duration_s=8.806
+2026-07-13 20:38:15.681	cubbins:0	olmo_core.train.trainer:1366	INFO	All bookkeeping ops complete
+2026-07-13 20:38:16.172	cubbins:0	olmo_core.train.trainer:763	INFO	Training complete

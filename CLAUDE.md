@@ -95,6 +95,19 @@ Everything is configured via `@dataclass` classes inheriting from `Config`. This
 - `mixes/`: Predefined data mixture configs (dolma17, OLMoE-mix-0824, etc.) with paths to tokenized data by source and tokenizer.
 - Training data is stored on AI2 infrastructure (Weka filesystem, GCS). For local development, use small validation sets or synthetic data.
 
+### Document-chunked / landmark attention: REPAIR THE BASE CHECKPOINT FIRST
+
+Qwen3 never trains the embedding rows for the reserved marker tokens that the document-chunked and
+landmark data paths are built on (`<|box_start|>`/`<|box_end|>`, plus the landmark/pad ids past the
+real vocab). Their embeddings are **bit-identical** (cosine similarity 1.0000), so the model cannot
+distinguish an "open document" marker from a "close document" one. Marker-dense runs then train to
+chance and the failure looks exactly like a modeling result.
+
+**Before any document-chunked / landmark training from a fresh base, run
+`src/scripts/data/fix_marker_embeddings.py` on the checkpoint and train from the repaired copy.** The
+tokenized shards are correct — do NOT rebuild data. See `document-chunked-marker-embeddings.md` for
+the full diagnosis, the one-line check for whether a base is affected, and the validation numbers.
+
 ### Distributed Training (`src/olmo_core/distributed/`)
 
 - `parallel/`: Implementations of data (FSDP/HSDP/DDP), tensor, pipeline, context (ring attention), and expert parallelism. These can be combined for multi-dimensional parallelism.
@@ -160,3 +173,27 @@ Pre-built images are listed in the `OLMoCoreBeakerImage` enum in `src/olmo_core/
 - Name individual test functions `test_*` and prefer `pytest.mark.parametrize` to cover multiple inputs or configurations without duplicating code.
 - GPU tests use `@pytest.mark.gpu` and are skipped without a GPU.
 - Distributed tests use helpers in `src/olmo_core/testing/distributed.py`.
+
+## Reporting experimental results
+
+**`n` means CORPUS SIZE — never eval-set size.** In this project `n` is reserved for the number of
+documents/claims in an example's context (`n=20`, `n=100`, the `..._n100_k3` files, `--ndocs`). It is
+a property of the *task*. Using the same letter for how many examples an eval ran on has already
+caused real confusion, so:
+
+- For eval-set size write **`eval_size`** (or spell it out: "488 eval examples"). Never `n=488`.
+- New eval scripts must emit the field `eval_size` in their result JSON. Older results wrote this as
+  `n`, which is exactly the collision being retired — when reading them, translate to `eval_size`
+  rather than propagating the old name.
+- The same applies in prose, tables, run names, and anything ingested into results-hub.
+
+**Eval sets should have at least 500 examples, and a smaller one must be flagged.** If a number came
+from fewer than 500 eval examples, say so *inline, next to the number* — give the size and its error
+bar, e.g. `f1=0.83  ⚠ eval_size=100 only (±0.038)`. Never present a sub-500 result bare; a small eval
+inflates noise into apparent findings. (The contradiction held-out set is 488 examples, which is the
+entire file and is accepted as-is.)
+
+**Quote a resolution, not three decimals.** On a right/wrong-graded eval, the binomial standard error
+is ±0.021 at f1≈0.70 and ±0.010 at f1≈0.95 for 488 examples. Before calling a difference real, check
+it against that — and remember eval noise is only half the story, since run-to-run seed variation adds
+more.
