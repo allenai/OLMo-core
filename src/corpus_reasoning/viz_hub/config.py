@@ -45,10 +45,26 @@ OLMO_CORE_ROOT = os.environ.get("OLMO_CORE_ROOT", _default_olmo_core_root())
 # drive the "Experiments" section.
 SFT_SCRIPTS_DIR = os.path.join(OLMO_CORE_ROOT, "src", "scripts", "train", "memexpress")
 
+# --- Results hub (the central collaborative results.csv) ----------------------
+# The "Results" tab renders the central results table. Its data lives in the
+# standalone results-hub repo (collaborators push rows there). Point at that
+# checkout; if it isn't present the Results tab just renders empty.
+def _default_results_hub_dir() -> str:
+    # sibling of the OLMo-core checkout is the usual local layout
+    cand = os.path.join(os.path.dirname(OLMO_CORE_ROOT), "results-hub")
+    if os.path.isfile(os.path.join(cand, "results.csv")):
+        return cand
+    return "/accounts/projects/berkeleynlp/prasann/projects/results-hub"
+
+
+RESULTS_HUB_DIR = os.environ.get("RESULTS_HUB_DIR", _default_results_hub_dir())
+RESULTS_CSV = os.path.join(RESULTS_HUB_DIR, "results.csv")
+
 # --- Outputs ------------------------------------------------------------------
 OUT_DIR = os.environ.get("VIZ_OUT_DIR", os.path.join(VIZ_DIR, "outputs"))
 DATA_EXAMPLES_JSON = os.path.join(OUT_DIR, "data_examples.json")
 EXPERIMENTS_JSON = os.path.join(OUT_DIR, "experiments.json")
+RESULTS_JSON = os.path.join(OUT_DIR, "results_table.json")
 SITE_HTML = os.path.join(OUT_DIR, "index.html")
 
 # Checked-in demo (a committed snapshot of the rendered site, EMO-style).

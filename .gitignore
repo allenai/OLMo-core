@@ -77,10 +77,9 @@ core
 # Claude Code session/memory dir
 .claude/
 
-# The corpus-reasoning CODE is now ported into src/corpus_reasoning/ and IS tracked -- one repo, one
-# git history. Only the large corpora/checkpoints stay outside (on /scratch).
-# This entry remains only to ignore any leftover standalone clone at the repo root; that clone is
-# STALE and should be deleted (`rm -rf ./corpus-reasoning`).
+# The corpus-reasoning CODE lives in src/corpus_reasoning/ (tracked). The root clone was DELETED
+# 2026-07-13 (its unique viz-hub work pushed to origin + vendored into src/corpus_reasoning/viz_hub/).
+# This entry only guards against an accidental re-clone at the repo root.
 /corpus-reasoning/
 
 # repo-root symlink to src/scripts/train/memexpress (the training-code hub) for quick inspection

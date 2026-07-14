@@ -1,0 +1,12 @@
+{
+  "_comment": "Curated RULER niah_single accuracy by context length. Edit this by hand as runs finish (live numbers live in wandb project memory-networks). null = pending/not-yet-measured. Baseline + no-ruler numbers are from the CPT-mix script comment headers.",
+  "ruler_metric": "RULER niah_single accuracy",
+  "rungs": ["4k", "8k", "16k", "32k", "64k"],
+  "rows": [
+    {"key": "base", "label": "CPT base — no SFT (q4b-dense-dolma3longmino)", "scores": [0.93, 0.91, 0.89, null, null]},
+    {"key": "noruler-4k", "label": "No-RULER SFT (0% CPT, 4k)", "scores": [0.88, 0.84, 0.78, null, null]},
+    {"key": "cptmix-4k", "label": "CPT-mix 15% (4k)", "scores": [null, null, null, null, null]},
+    {"key": "cptmix-5k", "label": "CPT-mix 30% (5k)", "scores": [null, null, null, null, null]},
+    {"key": "cpt40-64k", "label": "CPT-mix 40% (64k, 10-task)", "scores": [null, null, null, null, null]}
+  ]
+}
