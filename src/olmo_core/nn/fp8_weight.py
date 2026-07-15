@@ -1,15 +1,20 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable, Mapping, Optional, Sequence
+from typing import Callable, Mapping, Optional, Sequence, Union
 
 import torch
 
 from olmo_core.doc_utils import beta_feature
 from olmo_core.kernels import (
     ScaledGroupedMMPrequantizedRHS,
+    ScaledMMPrequantizedRHS,
     prequantize_scaled_grouped_mm_rhs,
 )
+
+# A prequantized RHS cache entry. The grouped-mm variant backs the MoE experts; the scaled-mm
+# variant backs MXFP8 linear/attention projections. The prequantizer callable produces one of these.
+PrequantizedRHS = Union[ScaledGroupedMMPrequantizedRHS, ScaledMMPrequantizedRHS]
 
 
 @dataclass(frozen=True)
@@ -46,15 +51,23 @@ class FP8WeightStore:
         cache_specs: Sequence[FP8WeightCacheSpec] = (),
         anchor_param: Optional[torch.nn.Parameter] = None,
         optimizer_enabled: bool = False,
-        prequantized_rhs: Optional[ScaledGroupedMMPrequantizedRHS] = None,
-        prequantized_rhs_for_dgrad: Optional[ScaledGroupedMMPrequantizedRHS] = None,
+        prequantized_rhs: Optional[PrequantizedRHS] = None,
+        prequantized_rhs_for_dgrad: Optional[PrequantizedRHS] = None,
+        prequantizer: Optional[Callable[..., PrequantizedRHS]] = None,
     ) -> None:
         self.logical_name = logical_name
         self.logical_shape = logical_shape
         self.cache_specs = tuple(cache_specs)
         self.anchor_param = anchor_param
         self.optimizer_enabled = optimizer_enabled
-        self.cache_values: dict[str, ScaledGroupedMMPrequantizedRHS] = {}
+        # The prequantizer produces cache entries from a transformed logical weight. Defaults to the
+        # grouped-mm quantizer (MoE experts); MXFP8 linear/attention projections inject the scaled-mm
+        # quantizer instead. Resolve the default here (not as a default arg) so it tracks the current
+        # module-level binding.
+        self.prequantizer = (
+            prequantizer if prequantizer is not None else prequantize_scaled_grouped_mm_rhs
+        )
+        self.cache_values: dict[str, PrequantizedRHS] = {}
         if prequantized_rhs is not None:
             self.cache_values["rhs"] = prequantized_rhs
         if prequantized_rhs_for_dgrad is not None:
@@ -116,22 +129,22 @@ class FP8WeightStore:
         self.main_grad_fp32 = value
 
     @property
-    def prequantized_rhs(self) -> Optional[ScaledGroupedMMPrequantizedRHS]:
+    def prequantized_rhs(self) -> Optional[PrequantizedRHS]:
         return self.cache_values.get("rhs")
 
     @prequantized_rhs.setter
-    def prequantized_rhs(self, value: Optional[ScaledGroupedMMPrequantizedRHS]) -> None:
+    def prequantized_rhs(self, value: Optional[PrequantizedRHS]) -> None:
         self._set_cache("rhs", value)
 
     @property
-    def prequantized_rhs_for_dgrad(self) -> Optional[ScaledGroupedMMPrequantizedRHS]:
+    def prequantized_rhs_for_dgrad(self) -> Optional[PrequantizedRHS]:
         return self.cache_values.get("rhs_for_dgrad")
 
     @prequantized_rhs_for_dgrad.setter
-    def prequantized_rhs_for_dgrad(self, value: Optional[ScaledGroupedMMPrequantizedRHS]) -> None:
+    def prequantized_rhs_for_dgrad(self, value: Optional[PrequantizedRHS]) -> None:
         self._set_cache("rhs_for_dgrad", value)
 
-    def _set_cache(self, name: str, value: Optional[ScaledGroupedMMPrequantizedRHS]) -> None:
+    def _set_cache(self, name: str, value: Optional[PrequantizedRHS]) -> None:
         if value is None:
             self.cache_values.pop(name, None)
             return
@@ -249,13 +262,13 @@ class FP8WeightStore:
         if not tensors:
             raise ValueError("refresh_from_tensors requires at least one cache tensor")
         for name, tensor in tensors.items():
-            self.cache_values[name] = prequantize_scaled_grouped_mm_rhs(
+            self.cache_values[name] = self.prequantizer(
                 tensor,
                 check_mat_b_version=False,
             )
         self.weight_versions = tuple(int(t._version) for t in version_tensors)
 
-    def require_cache(self, name: str) -> ScaledGroupedMMPrequantizedRHS:
+    def require_cache(self, name: str) -> PrequantizedRHS:
         cache = self.cache_values.get(name)
         if cache is None:
             raise RuntimeError(
@@ -263,10 +276,10 @@ class FP8WeightStore:
             )
         return cache
 
-    def require_prequantized_rhs(self) -> ScaledGroupedMMPrequantizedRHS:
+    def require_prequantized_rhs(self) -> PrequantizedRHS:
         return self.require_cache("rhs")
 
-    def require_prequantized_rhs_for_dgrad(self) -> ScaledGroupedMMPrequantizedRHS:
+    def require_prequantized_rhs_for_dgrad(self) -> PrequantizedRHS:
         return self.require_cache("rhs_for_dgrad")
 
     def iter_prequantized_caches(self):

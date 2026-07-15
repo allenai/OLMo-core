@@ -18,6 +18,7 @@ from olmo_core.nn.attention import (
     AttentionConfig,
     AttentionType,
     FusedAttention,
+    FusedAttentionV2,
     GateConfig,
     GateGranularity,
     NormalizedAttention,
@@ -1461,3 +1462,128 @@ def test_attention_sinks_softmax_matches_sdpa_when_inactive():
         sink_out = with_sinks(x)
         plain_out = without_sinks(x)
     torch.testing.assert_close(sink_out, plain_out, rtol=1e-4, atol=1e-4)
+
+
+def test_fused_attention_v2_matches_standard_attention():
+    from olmo_core.nn.mxfp8_linear import MXFP8Linear
+
+    seed_all(0)
+    d_model = 64
+    fused = FusedAttentionV2(
+        d_model=d_model,
+        n_heads=4,
+        n_kv_heads=2,
+        head_dim=16,
+        bias=False,
+        backend=AttentionBackendName.torch,
+    )
+    # Non-MXFP8 projections should be plain Linear layers.
+    assert isinstance(fused.w_qkv, torch.nn.Linear)
+    assert not isinstance(fused.w_qkv, MXFP8Linear)
+
+    standard = Attention(
+        d_model=d_model,
+        n_heads=4,
+        n_kv_heads=2,
+        head_dim=16,
+        bias=False,
+        backend=AttentionBackendName.torch,
+    )
+    # Copy the packed QKV projection into the standard attention's separate Q/K/V projections.
+    q_dim, kv_dim = 4 * 16, 2 * 16
+    with torch.no_grad():
+        standard.w_q.weight.copy_(fused.w_qkv.weight[:q_dim])
+        standard.w_k.weight.copy_(fused.w_qkv.weight[q_dim : q_dim + kv_dim])
+        standard.w_v.weight.copy_(fused.w_qkv.weight[q_dim + kv_dim :])
+        standard.w_out.weight.copy_(fused.w_out.weight)
+
+    x = torch.randn(2, 8, d_model)
+    with torch.no_grad():
+        torch.testing.assert_close(fused(x), standard(x))
+
+
+def test_attention_config_rejects_mxfp8_on_non_fused_v2():
+    config = AttentionConfig(
+        name=AttentionType.default, n_heads=4, head_dim=16, mxfp8_projections=True
+    )
+    with pytest.raises(OLMoConfigurationError, match="fused_v2"):
+        config.build(64, layer_idx=0, n_layers=1)
+
+
+def test_attention_use_recompute_qkv_prep_is_transparent():
+    from olmo_core.nn.transformer.init import InitMethod
+
+    def run(recompute: bool):
+        seed_all(0)
+        attention = FusedAttentionV2(
+            d_model=64,
+            n_heads=4,
+            n_kv_heads=2,
+            head_dim=16,
+            bias=False,
+            backend=AttentionBackendName.torch,
+            use_recompute_qkv_prep=recompute,
+        )
+        attention.init_weights(init_method=InitMethod.normal, d_model=64, block_idx=0, num_blocks=2)
+        x = torch.randn(2, 8, 64, requires_grad=True)
+        seed_all(123)
+        out = attention(x)
+        out.sum().backward()
+        assert x.grad is not None
+        assert attention.w_qkv.weight.grad is not None
+        return out.detach(), x.grad.detach(), attention.w_qkv.weight.grad.detach().clone()
+
+    # Recomputing Q/K/V in backward must not change the forward output or the gradients.
+    out0, grad_x0, grad_w0 = run(False)
+    out1, grad_x1, grad_w1 = run(True)
+    torch.testing.assert_close(out0, out1)
+    torch.testing.assert_close(grad_x0, grad_x1)
+    torch.testing.assert_close(grad_w0, grad_w1)
+
+
+def test_attention_config_rejects_recompute_on_unsupported_attention():
+    config = AttentionConfig(
+        name=AttentionType.normalized, n_heads=4, head_dim=16, use_recompute_qkv_prep=True
+    )
+    with pytest.raises(OLMoConfigurationError, match="use_recompute_qkv_prep"):
+        config.build(64, layer_idx=0, n_layers=1)
+
+
+def test_attention_config_allows_disabled_fused_v2_flags_on_other_types():
+    # A disabled (falsy) fused_v2-only flag is a no-op and must not break other attention types,
+    # even though as_dict keeps the explicit False.
+    config = AttentionConfig(
+        name=AttentionType.default,
+        n_heads=4,
+        head_dim=16,
+        mxfp8_projections=False,
+        mxfp8_qkv_projection=False,
+        use_recompute_qkv_prep=False,
+    )
+    attention = config.build(64, layer_idx=0, n_layers=1)
+    assert isinstance(attention, Attention)
+
+
+def test_mxfp8_saved_qkv_hooks_match_saved_tensors_by_storage():
+    # The Torch backend transposes (and, for GQA, repeats) q/k/v before SDPA, producing new tensor
+    # objects that autograd saves. The pack hook must recognize those via shared storage; matching
+    # by tensor identity would miss all of them and silently no-op.
+    from olmo_core.nn.attention import _MXFP8SavedQKVHooks
+    from olmo_core.nn.attention.backend import _repeat_kv
+
+    q = torch.randn(2, 8, 4, 32)
+    k = torch.randn(2, 8, 2, 32)
+    v = torch.randn(2, 8, 2, 32)
+    hooks = _MXFP8SavedQKVHooks(q, k, v, pack_counter=[0])
+
+    def matched(t: torch.Tensor):
+        return hooks.target_names.get(t.untyped_storage().data_ptr())
+
+    # transpose is a view -> shares storage -> matched.
+    assert matched(q.transpose(1, 2)) == "attention.q"
+    # a non-repeating kv path (n_rep=1) stays a view -> matched.
+    assert matched(_repeat_kv(k, 1).transpose(1, 2)) == "attention.k"
+    # a GQA repeat copies -> fresh storage -> not matched (acceptable; never mis-packs).
+    assert matched(_repeat_kv(k, 3)) is None
+    # unrelated tensors are never matched.
+    assert matched(torch.randn(2, 8, 4, 32)) is None

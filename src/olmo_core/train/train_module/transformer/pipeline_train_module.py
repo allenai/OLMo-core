@@ -60,6 +60,7 @@ from .config import (
     TransformerPipelineParallelConfig,
     TransformerTensorParallelConfig,
 )
+from .train_module import _assert_no_unowned_fp8_weight_stores
 
 log = logging.getLogger(__name__)
 
@@ -221,6 +222,8 @@ class TransformerPipelineTrainModule(TrainModule):
         self.optimizers: List[Optimizer] = []
         if not self.eval_only:
             log.info("Building optimizer(s)...")
+            for model in self.model_parts:
+                _assert_no_unowned_fp8_weight_stores(model)
             self.optimizers = [optim.build(model, strict=False) for model in self.model_parts]
         else:
             log.info("Skipping optimizer build because eval_only=True")

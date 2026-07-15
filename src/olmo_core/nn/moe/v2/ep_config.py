@@ -113,10 +113,8 @@ class ExpertParallelConfig(Config):
         self.rowwise_wave_mode = self.rowwise_wave_mode.lower()
         self.deepep.validate()
 
-        # These backends/schedules are declared but not yet wired into block/train dispatch, so a
-        # config selecting one would silently run a different path. Fail loudly until they land.
-        if self.path in (ExpertParallelPath.rowwise_wave, ExpertParallelPath.deepep_v2):
-            raise OLMoConfigurationError(f"EP path {self.path.value!r} is not yet supported")
+        # The tbo schedule is declared but not yet wired into block/train dispatch, so a config
+        # selecting it would silently run a different path. Fail loudly until it lands.
         if self.schedule == ExpertParallelSchedule.tbo:
             raise OLMoConfigurationError("EP schedule='tbo' is not yet supported")
 
