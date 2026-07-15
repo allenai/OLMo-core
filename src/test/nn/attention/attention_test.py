@@ -1410,6 +1410,18 @@ def test_attention_sinks_rejected_for_non_default_attention():
         config.build(32, layer_idx=0, n_layers=2)
 
 
+def test_attention_sinks_rejected_for_non_torch_backend_at_construction():
+    # An explicitly requested non-torch backend must fail while building, not on the first forward.
+    config = AttentionConfig(
+        name=AttentionType.default,
+        n_heads=4,
+        backend=AttentionBackendName.flash_2,
+        attention_sinks=True,
+    )
+    with pytest.raises(OLMoConfigurationError, match="torch attention backend"):
+        config.build(32, layer_idx=0, n_layers=2)
+
+
 def test_attention_sinks_softmax_matches_sdpa_when_inactive():
     from olmo_core.nn.transformer.init import InitMethod
 

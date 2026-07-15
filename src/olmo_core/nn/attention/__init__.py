@@ -485,6 +485,13 @@ class Attention(SequenceMixer):
         if backend is None:
             backend = AttentionBackendName.torch
 
+        # Reject an unsupported sinks/backend combination at construction (before the CPU fallback
+        # below) rather than deferring the failure to the first forward pass.
+        if attention_sinks and backend != AttentionBackendName.torch:
+            raise OLMoConfigurationError(
+                f"attention_sinks are only supported by the torch attention backend (got '{backend}')"
+            )
+
         if not torch.cuda.is_available() and backend != AttentionBackendName.torch:
             warnings.warn(
                 f"Backend is set to {backend}, but GPUs are not available. Defaulting to torch."
@@ -524,10 +531,6 @@ class Attention(SequenceMixer):
     ) -> torch.Tensor:
         if self.kv_cache_manager is not None:
             self.kv_cache_manager.record_leftpad(cache_leftpad)
-        if self.sinks is not None and not isinstance(self.backend, TorchAttentionBackend):
-            raise RuntimeError(
-                "attention_sinks are currently supported only by the torch attention backend"
-            )
         # shape: (batch_size, seq_len, n_heads, head_dim)
         att = self.backend(
             (q, k, v),
