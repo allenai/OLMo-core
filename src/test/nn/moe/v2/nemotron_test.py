@@ -3,11 +3,11 @@
 import torch
 
 from olmo_core.config import DType
+from olmo_core.nn.attention import NemotronMamba2Config
 from olmo_core.nn.layer_norm import LayerNormType
 from olmo_core.nn.moe.v2.nemotron import (
     NemotronBlockConfig,
     NemotronBlockKind,
-    NemotronMamba2Config,
     build_debug_nemotron3_nano_config,
     build_nemotron3_nano_config,
     build_nemotron3_nano_config_from_hf_config,
