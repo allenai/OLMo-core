@@ -214,14 +214,17 @@ def sample_balanced(paths, out, *, per_key, seed, keep_len=None, max_tries_mult=
     return n_written, n_dropped_len
 
 
-def sample_balanced_dense(paths, out, *, per_key, seed, keep_len=None, max_tries_mult=80):
-    """Subtask-balanced sampling that keeps each landed example's *full token run*.
+def sample_balanced_dense(paths, out, *, per_key, seed, keep_len=None, max_tokens_per_doc=10,
+                          max_tries_mult=80):
+    """Subtask-balanced sampling that keeps each landed example's *token run*.
 
     Like ``balanced`` but ``per_key`` counts DOCS per subtask, and for each kept doc we read forward
-    from the landing to grab all its consecutive decode-step records (a doc's tokens are contiguous in
-    the file). This gives both subtask coverage (for Q1/Q3/Q5 averaging) and dense multiple-tokens-per-
-    example (for Q2's decoded-token-gap curve), which the plain ``balanced`` mode is too sparse for.
-    Returns (n_written, n_dropped_len)."""
+    from the landing to grab its consecutive decode-step records (a doc's tokens are contiguous in the
+    file), up to ``max_tokens_per_doc``. This gives both subtask coverage (for Q1/Q3/Q5 averaging) and
+    dense multiple-tokens-per-example (for Q2's decoded-token-gap curve), which the plain ``balanced``
+    mode is too sparse for. The token cap keeps long-output subtasks (cwe/fwe emit ~30 tokens) from
+    dominating I/O -- Q2 only uses small gaps and Q1/Q5 are per-record, so capping is lossless for the
+    figures. Returns (n_written, n_dropped_len)."""
     rng = random.Random(seed)
     files = [(p, os.path.getsize(p)) for p in paths if os.path.getsize(p) > 0]
     n_written = 0
@@ -253,16 +256,18 @@ def sample_balanced_dense(paths, out, *, per_key, seed, keep_len=None, max_tries
                     if stall > 10000 and all(len(v) >= per_key for v in docs_kept.values()):
                         break
                     continue
-                # walk forward over this doc's contiguous token run
+                # walk forward over this doc's contiguous token run (capped)
                 got = False
+                n_tok = 0
                 cur = ln
-                while cur:
+                while cur and n_tok < max_tokens_per_doc:
                     s2 = _subtask_from_prefix(cur)
                     d2 = _int_from_prefix(cur, "doc_id")
                     if s2 != sub or d2 != doc:
                         break
                     t2 = _int_from_prefix(cur, "decoded_token_num")
                     key = (doc, t2)
+                    n_tok += 1
                     if key not in seen:
                         try:
                             rec = json.loads(cur)
@@ -333,6 +338,8 @@ def main():
                          "cross-model.")
     ap.add_argument("--per-key", type=int, default=80,
                     help="balanced: records/subtask/file; balanced-dense: docs/subtask/file")
+    ap.add_argument("--max-tokens-per-doc", type=int, default=10,
+                    help="balanced-dense: cap decode-step records kept per doc (Q2 needs only small gaps)")
     ap.add_argument("--seed", type=int, default=0)
     args = ap.parse_args()
 
@@ -351,7 +358,8 @@ def main():
             )
         elif args.mode == "balanced-dense":
             n_total, n_dropped_len = sample_balanced_dense(
-                paths, w, per_key=args.per_key, seed=args.seed, keep_len=args.len
+                paths, w, per_key=args.per_key, seed=args.seed, keep_len=args.len,
+                max_tokens_per_doc=args.max_tokens_per_doc,
             )
         else:
             n_total, n_dropped_len = sample_random(

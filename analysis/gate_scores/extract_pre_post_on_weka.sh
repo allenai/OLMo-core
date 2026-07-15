@@ -12,7 +12,8 @@ BASE="${GATE_BASE:-/weka-mount/oe-training-default/ai2-llm/checkpoints/amandab/g
 OUT="${OUT:-/results}"
 MODE="${MODE:-head}"            # head (Q1/Q2/Q5) or balanced (Q3/Q4, all subtasks)
 PER_FILE="${PER_FILE:-500}"    # head mode: records per file
-PER_KEY="${PER_KEY:-80}"       # balanced mode: records per subtask per file
+PER_KEY="${PER_KEY:-80}"       # balanced: records/subtask; balanced-dense: docs/subtask
+MAX_TOK="${MAX_TOK:-10}"       # balanced-dense: cap tokens kept per doc
 LENGTHS="${LENGTHS:-8 16 32 64}"
 PY="${PY:-python3}"
 
@@ -50,7 +51,7 @@ for K in $LENGTHS; do
     if [ -z "$files" ]; then echo "MISSING: $label ruler${K}k"; continue; fi
     echo "=== extract $label ${K}k (mode=$MODE) ==="
     $PY "$HERE/extract_gate_sets.py" $files --len $((K * 1024)) \
-        --mode "$MODE" --per-file "$PER_FILE" --per-key "$PER_KEY" \
+        --mode "$MODE" --per-file "$PER_FILE" --per-key "$PER_KEY" --max-tokens-per-doc "$MAX_TOK" \
         --out "$DUMPS/${label}_ruler_${K}k.jsonl"
   done
 done
