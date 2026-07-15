@@ -72,7 +72,7 @@ runs:
     gpu_count: 8
     expert_parallel_size: 8
     expert_parallel_path: sync_1d
-    rank_microbatch_sequences: 8
+    rank_microbatch_sequences: 4
   - task_name: 1p2b-cx8
     run_name: 1p2b-intwide-hybrid-gdn-ev1-cx8-lr4e-4-ep8-sync
     model_size: 1p2b
@@ -82,4 +82,4 @@ runs:
     gpu_count: 8
     expert_parallel_size: 8
     expert_parallel_path: sync_1d
-    rank_microbatch_sequences: 12
+    rank_microbatch_sequences: 6

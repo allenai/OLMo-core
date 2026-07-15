@@ -151,20 +151,21 @@ final-250M CE 2.364345 versus 2.373197 for wide integration (delta -0.008852).
 The remaining registered 810M and 1.2B runs will enter that plot only after W&B
 marks them finished.
 
-| Size | Cx | LR | Global batch | GPUs | EP/path | Rank MB | Accum | Job | W&B | Status |
+| Size | Cx | LR | Global batch | GPUs | EP/path | MB cap / effective | Accum | Job | W&B | Status |
 |---|---:|---:|---:|---:|---|---:|---:|---|---|---|
 | 480M | 1 | `1.2e-3` | 262,144 | 4 | EP1 | 8 | 1 | [01KXJAPH2DP3XSCHX1A637SN7K](https://beaker.org/ex/01KXJAPH2DP3XSCHX1A637SN7K) | [wl8ebsd8](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/wl8ebsd8) | finished |
 | 480M | 2 | `9e-4` | 393,216 | 4 | EP1 | 12 | 1 | [01KXJAPH62PWXK2B53PKT14M08](https://beaker.org/ex/01KXJAPH62PWXK2B53PKT14M08) | [4vzmrld1](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/4vzmrld1) | finished |
 | 810M | 1 | `6e-4` | 262,144 | 8 | EP1 | 4 | 1 | [01KXJAPH9V450M32SJC5G4KN93](https://beaker.org/ex/01KXJAPH9V450M32SJC5G4KN93) | [h1rmcm2p](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/h1rmcm2p) | finished |
 | 810M | 2 | `5.6e-4` | 393,216 | 8 | EP1 | 6 | 1 | [01KXJAPHDN7KN3TY7NXRVRZGNM](https://beaker.org/ex/01KXJAPHDN7KN3TY7NXRVRZGNM) | [1d5gxgjv](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/1d5gxgjv) | running, step 52,000/74,357 (69.9%) |
-| 1.2B | 1 | `4e-4` | 262,144 | 8 | EP8 / `sync_1d` | 8 | 4 | [01KXJAPHHB8MBPD1B3E92QH89Y](https://beaker.org/ex/01KXJAPHHB8MBPD1B3E92QH89Y) | [xapobmqb](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/xapobmqb) | running, step 17,162/86,558 (19.8%) |
-| 1.2B | 2 | `6e-4` | 393,216 | 8 | EP8 / `sync_1d` | 12 | 4 | [initial](https://beaker.org/ex/01KXJAPHN6SNXMG7X49M7HH17G) / [resume 1](https://beaker.org/ex/01KXK9R5PMR9GXBC0RMSDY2V13) / [resume 2](https://beaker.org/ex/01KXKEEFKYPGQAVWS024PTGCPK) | [initial](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/l4r1crzm) / [resume 1](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/bwvkwb9s) / [resume 2](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/jsb3obpq) | stopped after third node Xid 31; durable `step6000` |
+| 1.2B | 1 | `4e-4` | 262,144 | 8 | EP8 / `sync_1d` | 8 / 4 | 1 | [01KXJAPHHB8MBPD1B3E92QH89Y](https://beaker.org/ex/01KXJAPHHB8MBPD1B3E92QH89Y) | [xapobmqb](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/xapobmqb) | running, step 17,162/86,558 (19.8%) |
+| 1.2B | 2 | `6e-4` | 393,216 | 8 | EP8 / `sync_1d` | 12 / 6 | 1 | [initial](https://beaker.org/ex/01KXJAPHN6SNXMG7X49M7HH17G) / [resume 1](https://beaker.org/ex/01KXK9R5PMR9GXBC0RMSDY2V13) / [resume 2](https://beaker.org/ex/01KXKEEFKYPGQAVWS024PTGCPK) | [initial](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/l4r1crzm) / [resume 1](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/bwvkwb9s) / [resume 2](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/jsb3obpq) | stopped after third node Xid 31; durable `step6000` |
 
 ## Full hybrid scale Cx4/Cx8 runs
 
 - Manifest: [`launchers/pretraining/manifests/hybrid_scale_full_cx4_cx8.yaml`](launchers/pretraining/manifests/hybrid_scale_full_cx4_cx8.yaml)
 - Launcher: [`launchers/pretraining/launch_hybrid_scale_full_cx4_cx8.sh`](launchers/pretraining/launch_hybrid_scale_full_cx4_cx8.sh)
 - Beaker experiment: [01KXKTT3ZT5G4V9QTFBR6MKGEZ](https://beaker.org/ex/01KXKTT3ZT5G4V9QTFBR6MKGEZ)
+- Corrected 1.2B retry: [01KXKY6RTR5ZSD1R1BS40SF7KR](https://beaker.org/ex/01KXKY6RTR5ZSD1R1BS40SF7KR)
 - W&B project/group: `ai2-llm/jacobm-olmoe-ladder` / `olmoe3-integration-wide-hybrid-scale`
 - Checkpoint and evaluation policies match the Cx1/Cx2 production runs.
 
@@ -172,12 +173,12 @@ Submitted 2026-07-15 at urgent priority on `ai2/holmes`, requesting 32 B300
 GPUs. LRs are the observed optimal wide-intervention LRs for the matching size
 and data multiple.
 
-| Size | Cx | LR | Global batch | GPUs | EP/path | Rank MB | Accum | Job | W&B | Status |
+| Size | Cx | LR | Global batch | GPUs | EP/path | MB cap / effective | Accum | Job | W&B | Status |
 |---|---:|---:|---:|---:|---|---:|---:|---|---|---|
 | 810M | 4 | `4e-4` | 524,288 | 8 | EP1 | 4 | 2 | [01KXKTT4G4QT56NGHKWSVXWEX6](https://beaker.org/ex/01KXKTT4G4QT56NGHKWSVXWEX6) | pending | scheduled |
 | 810M | 8 | `4e-4` | 786,432 | 8 | EP1 | 6 | 2 | [01KXKTT4KPQRMJ0E1DF5GPS26A](https://beaker.org/ex/01KXKTT4KPQRMJ0E1DF5GPS26A) | pending | scheduled |
-| 1.2B | 4 | `3e-4` | 524,288 | 8 | EP8 / `sync_1d` | 8 | 8 | [01KXKTT4R8MANSKM43DEJB02GC](https://beaker.org/ex/01KXKTT4R8MANSKM43DEJB02GC) | pending | queued |
-| 1.2B | 8 | `4e-4` | 786,432 | 8 | EP8 / `sync_1d` | 12 | 8 | [01KXKTT4W01BXNZ5WRD40BT2QG](https://beaker.org/ex/01KXKTT4W01BXNZ5WRD40BT2QG) | pending | queued |
+| 1.2B | 4 | `3e-4` | 524,288 | 8 | EP8 / `sync_1d` | 4 / 4 | 2 | [failed](https://beaker.org/ex/01KXKTT4R8MANSKM43DEJB02GC) / [retry](https://beaker.org/ex/01KXKY6SXD7DFDDJDGK83NGQDF) | [failed](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/f9wybz72) / pending | retry queued; initial MB8 effective shape OOMed |
+| 1.2B | 8 | `4e-4` | 786,432 | 8 | EP8 / `sync_1d` | 6 / 6 | 2 | [failed](https://beaker.org/ex/01KXKTT4W01BXNZ5WRD40BT2QG) / [retry](https://beaker.org/ex/01KXKY6T9QR8PQDWRAN4Y76CVQ) | [failed](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/n5v3vewn) / pending | retry queued; initial MB12 effective shape OOMed |
 
 ## New wave template
 

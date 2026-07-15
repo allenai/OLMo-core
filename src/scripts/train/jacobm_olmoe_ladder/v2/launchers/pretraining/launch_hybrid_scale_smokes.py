@@ -67,15 +67,25 @@ def validate(manifest: dict[str, Any], source_repo: Path) -> list[dict[str, Any]
         if global_batch % sequence_length:
             raise ValueError(f"{task_name}: global batch is not a whole number of sequences")
         global_sequences = global_batch // sequence_length
-        dp_degree = world_size // ep_size
-        denominator = dp_degree * int(row["rank_microbatch_sequences"])
-        if global_sequences % denominator:
+        data_dp_degree = world_size
+        if global_sequences % data_dp_degree:
             raise ValueError(
                 f"{task_name}: {global_sequences} sequences is not divisible by "
-                f"DP({dp_degree})*MB({row['rank_microbatch_sequences']})"
+                f"the data-parallel world size ({data_dp_degree})"
             )
-        row["dp_degree"] = dp_degree
-        row["accumulation_steps"] = global_sequences // denominator
+        rank_sequences = global_sequences // data_dp_degree
+        rank_microbatch_cap = int(row["rank_microbatch_sequences"])
+        effective_rank_microbatch = min(rank_sequences, rank_microbatch_cap)
+        if rank_sequences % effective_rank_microbatch:
+            raise ValueError(
+                f"{task_name}: rank batch ({rank_sequences} sequences) is not divisible by "
+                f"the effective rank microbatch ({effective_rank_microbatch} sequences)"
+            )
+        row["data_dp_degree"] = data_dp_degree
+        row["ep_dp_degree"] = world_size // ep_size
+        row["rank_sequences"] = rank_sequences
+        row["effective_rank_microbatch_sequences"] = effective_rank_microbatch
+        row["accumulation_steps"] = rank_sequences // effective_rank_microbatch
     return rows
 
 
@@ -207,13 +217,19 @@ def main() -> None:
     with args.output.open("w") as file:
         yaml.dump(spec, file, Dumper=NoAliasDumper, sort_keys=False)
 
-    print("size  Cx  GPU  EP  EP path           DP  rank MB  accum  run name")
+    print(
+        "size  Cx  GPU  EP  EP path           data DP  EP DP  rank seq  "
+        "MB cap  effective  accum  run name"
+    )
     for row in rows:
         print(
             f"{row['model_size']:<5} {row['cx']:>2} {row['gpu_count']:>4} "
             f"{row['expert_parallel_size']:>3} "
-            f"{row.get('expert_parallel_path', '-'):>17} {row['dp_degree']:>3} "
-            f"{row['rank_microbatch_sequences']:>8} {row['accumulation_steps']:>6}  "
+            f"{row.get('expert_parallel_path', '-'):>17} {row['data_dp_degree']:>7} "
+            f"{row['ep_dp_degree']:>6} {row['rank_sequences']:>9} "
+            f"{row['rank_microbatch_sequences']:>7} "
+            f"{row['effective_rank_microbatch_sequences']:>10} "
+            f"{row['accumulation_steps']:>6}  "
             f"{row['run_name']}"
         )
     print(f"\nRendered {args.output}; peak concurrent allocation is "

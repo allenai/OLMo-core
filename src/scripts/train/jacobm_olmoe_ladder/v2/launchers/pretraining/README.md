@@ -10,6 +10,12 @@ provided. It validates the per-Cx optimizer batch, sequence length, world size,
 rank microbatch, gradient accumulation, EP settings, unique run names, source
 wrapper, and selected LR points before writing a spec.
 
+For these DDP+EP jobs, the data-parallel world size remains the full GPU world
+size; EP creates a separate MoE mesh and does not reduce the number of data
+shards. A configured rank microbatch larger than the rank batch is only a cap.
+The launcher prints both the cap and effective microbatch and computes
+accumulation from the effective value.
+
 ```bash
 # Inspect the complete current hybrid grid without launching.
 src/scripts/train/jacobm_olmoe_ladder/v2/launchers/pretraining/launch_275m_hybrid_gdn_ev1.sh

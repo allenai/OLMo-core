@@ -374,13 +374,19 @@ def finalize_config(config: ExperimentConfig) -> None:
         raise ValueError(f"EP size {EP_SIZE} must divide world size {WORLD_SIZE}")
     if GLOBAL_BATCH_SIZE % SEQUENCE_LENGTH:
         raise ValueError("Global batch size must contain a whole number of sequences")
-    dp_degree = WORLD_SIZE // EP_SIZE
     global_sequences = GLOBAL_BATCH_SIZE // SEQUENCE_LENGTH
-    denominator = dp_degree * RANK_MICROBATCH_SEQUENCES
-    if global_sequences % denominator:
+    data_dp_degree = WORLD_SIZE
+    if global_sequences % data_dp_degree:
         raise ValueError(
             f"Global sequence batch {global_sequences} is not divisible by "
-            f"dp_degree*rank_microbatch_sequences={denominator}"
+            f"the data-parallel world size {data_dp_degree}"
+        )
+    rank_sequences = global_sequences // data_dp_degree
+    effective_rank_microbatch = min(rank_sequences, RANK_MICROBATCH_SEQUENCES)
+    if rank_sequences % effective_rank_microbatch:
+        raise ValueError(
+            f"Rank sequence batch {rank_sequences} is not divisible by the effective "
+            f"rank microbatch {effective_rank_microbatch}"
         )
     base = load_wide_model_config(MODEL_SIZE)
     delta_fraction = (config.model.num_active_params - base.num_active_params) / base.num_active_params
@@ -388,8 +394,9 @@ def finalize_config(config: ExperimentConfig) -> None:
         raise ValueError(f"Hybrid active-parameter delta is too large: {delta_fraction:.4%}")
     log.info(
         "Hybrid wide config: size=%s active=%s total=%s active_delta=%+.4f%% tokens=%s "
-        "global_sequences=%s world=%s EP=%s DP=%s rank_microbatch_sequences=%s "
-        "grad_accum=%s lr=%s hard_stop_steps=%s",
+        "global_sequences=%s world=%s EP=%s data_DP=%s EP_DP=%s rank_sequences=%s "
+        "rank_microbatch_cap=%s effective_rank_microbatch=%s grad_accum=%s lr=%s "
+        "hard_stop_steps=%s",
         MODEL_SIZE,
         f"{config.model.num_active_params:,}",
         f"{config.model.num_params:,}",
@@ -398,9 +405,12 @@ def finalize_config(config: ExperimentConfig) -> None:
         global_sequences,
         WORLD_SIZE,
         EP_SIZE,
-        dp_degree,
+        data_dp_degree,
+        WORLD_SIZE // EP_SIZE,
+        rank_sequences,
         RANK_MICROBATCH_SEQUENCES,
-        global_sequences // denominator,
+        effective_rank_microbatch,
+        rank_sequences // effective_rank_microbatch,
         LEARNING_RATE,
         HARD_STOP_STEPS or "off",
     )
