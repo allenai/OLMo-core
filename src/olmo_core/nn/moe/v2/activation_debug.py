@@ -27,6 +27,13 @@ def _debug_activation_enabled() -> bool:
     }
 
 
+# This is a startup-only diagnostic. Snapshot its flag before torch.compile()
+# traces transformer blocks so the disabled helper is absent from the hot path.
+# In particular, the helper uses block_idx to name its output; tracing that read
+# specializes the shared block forward on every layer.
+EP_NO_SYNC_SAVED_ACTIVATIONS_DEBUG_ENABLED = _debug_activation_enabled()
+
+
 def _get_train_global_arg(key: str, default=None):
     from olmo_core.train.globals import get_global_arg
 
@@ -54,12 +61,16 @@ def maybe_dump_ep_no_sync_saved_activations(
     forward_kwargs: Dict[str, object],
     no_sync_forward: Callable[..., torch.Tensor],
 ) -> Optional[torch.Tensor]:
+    # Keep this defensive check first for direct callers. Do not read block_idx
+    # while the diagnostic is disabled: it creates one Dynamo graph per block.
+    if not _debug_activation_enabled():
+        return None
+
     activation_dump_key = f"ep_no_sync_saved_activations_dumped_block_{block.block_idx}"
     if not (
         _get_train_global_arg("dry_run_done", default=False)
         and block.block_idx == 3
         and not _get_train_global_arg(activation_dump_key, default=False)
-        and _debug_activation_enabled()
     ):
         return None
 

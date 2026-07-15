@@ -1,6 +1,10 @@
+from types import SimpleNamespace
+
 import torch
 from torch import nn
 
+from olmo_core.nn.ddp import block as ddp_block
+from olmo_core.nn.moe.v2.ep_config import ExpertParallelPath
 from olmo_core.nn.moe.v2 import activation_debug
 
 
@@ -15,6 +19,73 @@ class _DebugBlock(nn.Module):
         del loss_div_factor, kwargs
         self.calls += 1
         return x * self.weight
+
+
+class _CompileProbeBlock(nn.Module):
+    """Small stand-in that exercises the real shared block forward."""
+
+    forward = ddp_block.OLMoDDPTransformerBlock.forward
+
+    def __init__(self, block_idx: int):
+        super().__init__()
+        self.block_idx = block_idx
+        self.routed_experts = object()
+        self._ep_enabled = True
+        self.ep = SimpleNamespace(
+            no_sync=True,
+            path=ExpertParallelPath.deepep_v2,
+        )
+
+    @property
+    def has_routed_experts(self) -> bool:
+        return True
+
+    @property
+    def ep_enabled(self) -> bool:
+        return self._ep_enabled
+
+    def combined_forward_ep_deepep_v2(self, x, *, loss_div_factor=None, **kwargs):
+        del loss_div_factor, kwargs
+        return x + 1
+
+
+def test_disabled_activation_debug_does_not_specialize_compiled_forward_by_block(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        ddp_block,
+        "EP_NO_SYNC_SAVED_ACTIVATIONS_DEBUG_ENABLED",
+        False,
+    )
+    torch._dynamo.reset()
+    compiled_graphs = []
+
+    def counting_backend(graph_module, example_inputs):
+        del example_inputs
+        compiled_graphs.append(graph_module)
+        return graph_module.forward
+
+    try:
+        blocks = [
+            torch.compile(_CompileProbeBlock(idx), backend=counting_backend)
+            for idx in range(6)
+        ]
+        with torch.no_grad():
+            no_grad_out = torch.ones(2)
+            for block in blocks:
+                no_grad_out = block(no_grad_out)
+
+        grad_out = torch.ones(2, requires_grad=True)
+        for block in blocks:
+            grad_out = block(grad_out)
+    finally:
+        torch._dynamo.reset()
+
+    # Reentrant checkpointing needs one no-grad graph for the original forward
+    # and one grad-enabled graph for recompute, independent of layer count.
+    assert len(compiled_graphs) == 2
+    torch.testing.assert_close(no_grad_out, torch.full((2,), 7.0))
+    torch.testing.assert_close(grad_out, torch.full((2,), 7.0))
 
 
 def test_ep_no_sync_activation_debug_returns_none_when_gate_is_closed(monkeypatch):
