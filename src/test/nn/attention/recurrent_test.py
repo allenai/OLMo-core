@@ -187,9 +187,35 @@ def test_nemotron_mamba2_dt_bias_initialized_within_configured_range():
         time_step_floor=0.0001,
         dtype=DType.float32,
     )
+    # init_weights drives the seeded generator; without it the constructor's reset_parameters uses
+    # the global RNG (seeded by seed_all above), which is fine for the range check.
     module = config.build(64, layer_idx=0, n_layers=1)
     # softplus(dt_bias) must recover effective timesteps within the configured range, not the
     # softplus(1) == 1.31 that a plain ones-init would give.
     dt = torch.nn.functional.softplus(module.dt_bias.float())
     assert dt.min() >= config.time_step_floor - 1e-6
     assert dt.max() <= config.time_step_max + 1e-4
+
+
+def test_nemotron_mamba2_dt_bias_uses_supplied_generator_not_global_rng():
+    from olmo_core.nn.transformer.init import InitMethod
+
+    config = _small_nemotron_mamba2_config()
+
+    def init_dt_bias(global_seed: int) -> torch.Tensor:
+        # Perturb the ambient global RNG differently each time.
+        torch.manual_seed(global_seed)
+        module = config.build(64, layer_idx=0, n_layers=2)
+        generator = torch.Generator()
+        generator.manual_seed(2026)
+        module.init_weights(
+            init_method=InitMethod.normal,
+            d_model=64,
+            block_idx=0,
+            num_blocks=2,
+            generator=generator,
+        )
+        return module.dt_bias.detach().clone()
+
+    # An identical supplied generator must produce identical dt_bias regardless of global RNG state.
+    torch.testing.assert_close(init_dt_bias(1), init_dt_bias(999))

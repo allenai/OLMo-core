@@ -653,7 +653,7 @@ class NemotronMamba2Mixer(SequenceMixer):
         )
         self.reset_parameters()
 
-    def reset_parameters(self) -> None:
+    def reset_parameters(self, generator: Optional[torch.Generator] = None) -> None:
         with torch.no_grad():
             if self.A_log.device.type != "meta":
                 values = (
@@ -667,9 +667,16 @@ class NemotronMamba2Mixer(SequenceMixer):
             if self.dt_bias.device.type != "meta":
                 # Match the Nemotron-H / Mamba2 timestep init: sample dt log-uniformly in
                 # [time_step_min, time_step_max], clamp by time_step_floor, and store the
-                # inverse-softplus so softplus(dt_bias) recovers dt in the configured range.
+                # inverse-softplus so softplus(dt_bias) recovers dt in the configured range. The
+                # generator (when supplied by init_weights) keeps this tied to the model init seed
+                # rather than the ambient global RNG.
                 dt = torch.exp(
-                    torch.rand(self.num_heads, device=self.dt_bias.device, dtype=torch.float32)
+                    torch.rand(
+                        self.num_heads,
+                        device=self.dt_bias.device,
+                        dtype=torch.float32,
+                        generator=generator,
+                    )
                     * (math.log(self.time_step_max) - math.log(self.time_step_min))
                     + math.log(self.time_step_min)
                 ).clamp(min=self.time_step_floor)
@@ -820,7 +827,7 @@ class NemotronMamba2Mixer(SequenceMixer):
         elif init_method == InitMethod.llama_depth:
             out_std = std / math.sqrt(2 * (block_idx + 1))
         init_linear(self.out_proj, std=out_std, generator=generator)
-        self.reset_parameters()
+        self.reset_parameters(generator=generator)
 
     def num_flops_per_token(self, seq_len: int) -> int:
         del seq_len
