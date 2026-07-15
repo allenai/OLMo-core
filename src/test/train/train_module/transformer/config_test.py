@@ -12,13 +12,33 @@ from olmo_core.distributed.parallel import (
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.nn.feed_forward import FeedForwardConfig
 from olmo_core.nn.transformer import TransformerConfig
-from olmo_core.optim import AdamWConfig
+from olmo_core.optim import AdamWConfig, OLMoDDPOptimizerConfig
 from olmo_core.testing import run_distributed_test
 from olmo_core.train.train_module.transformer import (
+    OLMoDDPTrainModuleConfig,
     TransformerDataParallelConfig,
     TransformerPipelineParallelConfig,
     TransformerTrainModuleConfig,
 )
+
+
+def test_olmo_ddp_reduce_scatter_config_is_nested_under_data_parallel():
+    default_dp = TransformerDataParallelConfig(name=DataParallelType.ddp)
+    assert default_dp.use_reduce_scatter is False
+
+    dp_config = TransformerDataParallelConfig(
+        name=DataParallelType.ddp,
+        use_reduce_scatter=True,
+    )
+    train_config = OLMoDDPTrainModuleConfig(
+        rank_microbatch_size=16,
+        max_sequence_length=16,
+        optim=OLMoDDPOptimizerConfig(),
+        dp_config=dp_config,
+    )
+    build_kwargs = train_config._build_kwargs()
+    assert build_kwargs["dp_config"].use_reduce_scatter is True
+    assert "reduce_scatter_grads" not in build_kwargs
 
 
 def test_generate_pipeline_split_points():

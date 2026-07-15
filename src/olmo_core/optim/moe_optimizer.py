@@ -703,7 +703,10 @@ class OLMoDDPOptimizer:
         # self.foreach = foreach
         self._step_skipped: Optional[torch.Tensor] = None
         self.do_not_shard_tensor_smaller_than = do_not_shard_tensor_smaller_than
-        self._use_reduce_scatter_grads = True
+        # MultiGroupDDP owns normal-parameter gradient synchronization. Its
+        # default is all-reduce, and the opt-in reduce-scatter path still enters
+        # the optimizer through _copy_model_grads_to_main_grads().
+        self._use_reduce_scatter_grads = False
         self.main_grad: Dict[str, torch.Tensor] = {}
         self._param_uses_muon: Dict[str, bool] = {}
         self._flat_model_sync_groups: "OrderedDict[str, _FlatModelParamSyncGroup]" = OrderedDict()
@@ -1140,15 +1143,33 @@ class OLMoDDPOptimizer:
     def step(self, closure: Callable[[], float]) -> float:
         ...
 
-    def set_reduce_scatter_grads(self, enabled: bool = True):
-        self._use_reduce_scatter_grads = enabled
+    def normal_params_with_sharded_optimizer_state(self) -> set[torch.nn.Parameter]:
+        """Return normal model parameters whose FP32 main state is sharded.
+
+        FP8WeightStore objects use their existing optimizer-owned gradient reducer and
+        are intentionally excluded from the normal-parameter DDP configuration.
+        """
+        params: set[torch.nn.Parameter] = set()
+        for param_group in self.param_groups:
+            for name, param in param_group["named_params"].items():
+                if _is_fp8_weight_store(param) or not param.requires_grad:
+                    continue
+                main_param = self.states[f"{name}.main"]
+                if (
+                    any(isinstance(placement, Shard) for placement in main_param.placements)
+                    and main_param.device_mesh.size(0) > 1
+                ):
+                    params.add(param)
+        return params
 
     def _clip_grad(self) -> torch.Tensor:
         """
         We need to first compute the grad norm for the FULL model.
         The optimizer sees the model that's sharded across PP and EP_MP when initialized. 
         Then the optimizer further shards the model across DP or EP_DP.
-        At this point, ranks in the same DP/EP_DP already have the same grads because we've done grad-reduce.
+        At this point, replicated optimizer states have the same full reduced
+        gradients on each replica rank, while sharded optimizer states have
+        disjoint reduced gradient shards.
 
         We need to consider:
         1. PP: compute for each PP rank, then reduce across PP ranks. Apply to all grads.
@@ -1512,14 +1533,13 @@ class OLMoDDPOptimizer:
     def step(self, closure: Optional[Callable[[], float]] = None) -> Optional[float]:
 
         dbg_mem_before_cp1 = torch.cuda.memory_allocated()/1024**3
-        if getattr(self, "_use_reduce_scatter_grads", True):
-            # Precondition: DDP model did not all-reduce grads, grads on dp ranks different now
-            # the optimizer has sharded main param + states in fp32
-            # now call reduce scatter to collect averaged grads from dp ranks
-            # directly into the owned main param views
+        if getattr(self, "_use_reduce_scatter_grads", False):
+            # Legacy optimizer-owned reducer. The active train module keeps this
+            # disabled; MultiGroupDDP now owns both normal-parameter AR and RS.
             self._reduce_scatter_model_grads()
         else:
-            # Precondition: DDP model called all-reduce grads, bf16 model grads on dp ranks are the same
+            # Active DDP-owned intake: full all-reduced gradients and local
+            # reduce-scattered shards both enter through this method.
             self._copy_model_grads_to_main_grads()
 
         if self.check_nan_inf_grad and self.latest_loss is not None:
@@ -1964,6 +1984,27 @@ class OLMoDDPOptimizer:
                     main_param = self.states[f'{name}.main']
                     fp8_entries.append((name, param, model_grad, main_param))
                     continue
+
+                main_param = self.states[f'{name}.main']
+                reduced_grad_shard = getattr(
+                    param, "_olmo_ddp_reduced_grad_shard", None
+                )
+                if reduced_grad_shard is not None:
+                    if not any(
+                        isinstance(placement, Shard)
+                        for placement in main_param.placements
+                    ):
+                        raise RuntimeError(
+                            f"Received a reduce-scattered gradient for replicated "
+                            f"parameter '{name}'."
+                        )
+                    expected_numel = main_param.to_local().numel()
+                    if reduced_grad_shard.numel() != expected_numel:
+                        raise RuntimeError(
+                            f"Reduce-scattered gradient size mismatch for '{name}': "
+                            f"got {reduced_grad_shard.numel()}, expected {expected_numel}."
+                        )
+                    self.main_grad[name] = reduced_grad_shard.detach().view(-1)
                 elif self.model_has_grad_accum_fp32_buffer:
                     # the model already has a fp32 grad buffer, so the grad is already in fp32
                     # and model's bf16 grad should be None
@@ -1989,18 +2030,13 @@ class OLMoDDPOptimizer:
                     model_grad = param.grad.detach().view(-1) # unsharded local shape, BF16. It should be a view of the reducer bucket
 
 
-                # prepare main param grad view
-                main_param = self.states[f'{name}.main'] # DTensor, full shape unsharded
-
-                # self.main_grad[name] = distribute_tensor(model_grad, device_mesh=main_param.device_mesh, placements=main_param.placements, src_data_rank=None)
-
-                # it turns out distribute_tensor is too slow on cpu
-                # here is a more direct way
-                self.main_grad[name] = self.narrow_tensor(model_grad, main_param.device_mesh, main_param.placements)
-            
-
-
-                del model_grad
+                if reduced_grad_shard is None:
+                    # It turns out distribute_tensor is too slow on CPU. Narrow the
+                    # already-all-reduced gradient directly to the optimizer-owned view.
+                    self.main_grad[name] = self.narrow_tensor(
+                        model_grad, main_param.device_mesh, main_param.placements
+                    )
+                    del model_grad
                 
                 # MultiGroupDDP has already averaged EP params over EP-DP. Expert
                 # compute saw tokens from all EP-MP ranks, so divide by EP-MP here

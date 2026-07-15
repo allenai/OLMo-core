@@ -208,9 +208,24 @@ class TransformerDataParallelConfig(DataParallelConfig):
     prefetch_factor: int = 0
     
     only_allreduce_last_microbatch: bool = True
+    """
+    Synchronize gradients only on the final microbatch in an accumulation
+    window. The historical name predates normal-parameter reduce-scatter; this
+    setting controls either DDP gradient collective.
+    """
     reduce_grads_in_fp32: bool = True
     accumulate_grads_in_fp32: bool = True
     bucket_cap_mb: Optional[int] = None
+    use_reduce_scatter: bool = False
+    """
+    Reduce normal-parameter gradients directly into distributed-optimizer shards.
+
+    Parameters with replicated optimizer state continue to use all-reduce. This
+    option does not change the FP8WeightStore gradient synchronization path. It
+    currently requires final-microbatch-only synchronization, does not support
+    context parallelism, and requires the custom pipeline-stage implementation
+    when pipeline parallelism is enabled.
+    """
 
 
 @dataclass

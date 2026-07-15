@@ -596,7 +596,7 @@ class CustomPipelineStage:
 
     def forward_maybe_with_nosync(self, last_forward: bool = False, *args, **kwargs):
         # If submod is wrapped with DDP, we use the `no_sync` context manager to
-        # avoid gradient all-reduce per microbatch
+        # avoid gradient synchronization per microbatch.
         # TODO: use last_forward 
         if False:
             out_val = self.submod(*args, **kwargs) # use whatever sync setting
