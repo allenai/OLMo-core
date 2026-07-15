@@ -35,6 +35,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added MoE token permute/reorder kernels (`olmo_core.kernels.moe_chunk_reorder`, `moe_permute_drop`, `moe_unpermute_bwd`) for routing tokens to experts (with capacity dropping) and combining the expert outputs.
 - Added symmetric-memory and NCCL-RMA point-to-point communication kernels (`olmo_core.kernels.symm_mem_vdev2d`, `olmo_symm_mem`, `nccl_rma_p2p`) for expert-parallel all-to-all and one-sided RMA transport.
 - Added a fused Mixture-of-Experts transformer block and model (`OLMoDDPTransformerBlock` / `OLMoDDPModel` in `olmo_core.nn.ddp`, configured via `OLMoDDPModelConfig` and `OLMoDDPTransformerBlockConfig`; the former `MoEFusedV2*` names remain importable as aliases), wired into the transformer build dispatch (`TransformerType.moe_fused_v2` / `TransformerBlockType.moe_fused_v2`) and weight initialization (`InitMethod.init_moe_v2`). This first drop runs the single-process (no expert-parallel) forward path; the expert-parallel dispatch families are imported lazily and land in follow-up changes.
+- Added an opt-in slow-batch-load warning to `SpeedMonitorCallback`: set `OLMO_BATCH_LOAD_WARN_SECONDS` to a positive number to log a warning whenever a step's batch-load time meets or exceeds it (an invalid value is ignored with a warning).
+- Added `patch_torch_stream_custom_ops()` (called from `prepare_cli_environment()`), which registers a missing fake for PyTorch 2.11's `streams::sync_dealloc` op and installs a stable stream/event lookup fallback so `torch.compile` (notably compiled pipeline-parallel backward graphs) traces correctly. It no-ops on torch builds without `torch._dynamo.variables.streams`.
 
 
 ### Fixed
@@ -52,6 +54,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed `Transformer.init_weights` so that under interleaved pipeline parallelism (e.g. `Interleaved1F1B`, `InterleavedZeroBubble`) the multiple model chunks owned by a single rank no longer initialize to identical parameters. Adds a `model_part_idx` kwarg incorporated into the seed as `model_part_idx * pp_size`.
 - Disabled `torch.compile` tracing through `TEAttentionBackend.forward`, whose Python/pybind setup is not Dynamo-safe.
 - Fixed `TransformerPipelineTrainModule.num_flops_per_token` returning `None` under pipeline parallelism. Each PP rank only holds its stage's layers, so summing FLOPs from `model_parts` undercounts the model. Capture `model.num_flops_per_token` as a bound method before `split_model` deepcopies and drops layers, then call it at metric time. On meta device (the standard PP init path) this has no memory cost.
+- Fixed `GatedDeltaNet.num_flops_per_token()` to report training FLOPs (a factor of 3 for forward + dgrad + wgrad), matching the other sequence mixers; it previously reported forward-only work, undercounting GDN MFU/TFLOPs.
+- Fixed attention FLOP accounting (`Attention` / `FusedAttention` `num_flops_per_token`) to count the exact causal (and sliding-window) attended `(query, key)` pairs. It previously ignored causal masking, overcounting full-attention layers by ~2x; reported model TFLOPs/MFU on the attention-compute term therefore drop relative to older logs.
 
 ### Changed
 
