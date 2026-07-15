@@ -177,7 +177,7 @@ and data multiple.
 |---|---:|---:|---:|---:|---|---:|---:|---|---|---|
 | 810M | 4 | `4e-4` | 524,288 | 8 | EP1 | 4 | 2 | [01KXKTT4G4QT56NGHKWSVXWEX6](https://beaker.org/ex/01KXKTT4G4QT56NGHKWSVXWEX6) | pending | scheduled |
 | 810M | 8 | `4e-4` | 786,432 | 8 | EP1 | 6 | 2 | [01KXKTT4KPQRMJ0E1DF5GPS26A](https://beaker.org/ex/01KXKTT4KPQRMJ0E1DF5GPS26A) | pending | scheduled |
-| 1.2B | 4 | `3e-4` | 524,288 | 8 | EP8 / `sync_1d` | 4 / 4 | 2 | [failed](https://beaker.org/ex/01KXKTT4R8MANSKM43DEJB02GC) / [retry](https://beaker.org/ex/01KXKY6SXD7DFDDJDGK83NGQDF) | [failed](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/f9wybz72) / pending | retry queued; initial MB8 effective shape OOMed |
+| 1.2B | 4 | `3e-4` | 524,288 | 8 | EP8 / `sync_1d` | 4 / 4 | 2 | [failed](https://beaker.org/ex/01KXKTT4R8MANSKM43DEJB02GC) / [retry](https://beaker.org/ex/01KXKY6SXD7DFDDJDGK83NGQDF) | [failed](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/f9wybz72) / [retry](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/9c1fcuto) | running; corrected two-microbatch dry run and first real optimizer step passed |
 | 1.2B | 8 | `4e-4` | 786,432 | 8 | EP8 / `sync_1d` | 6 / 6 | 2 | [failed](https://beaker.org/ex/01KXKTT4W01BXNZ5WRD40BT2QG) / [retry](https://beaker.org/ex/01KXKY6T9QR8PQDWRAN4Y76CVQ) | [failed](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/n5v3vewn) / pending | retry queued; initial MB12 effective shape OOMed |
 
 ## New wave template

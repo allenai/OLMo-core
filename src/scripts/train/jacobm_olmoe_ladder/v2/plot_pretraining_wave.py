@@ -146,6 +146,7 @@ HYBRID_GDN_EV1 = Variant(
         RegisteredRun("810m", 2, 5.6e-4, "1d5gxgjv"),
         RegisteredRun("1p2b", 1, 4e-4, "xapobmqb"),
         RegisteredRun("1p2b", 2, 6e-4, "bwvkwb9s"),
+        RegisteredRun("1p2b", 4, 3e-4, "9c1fcuto"),
     ),
 )
 
