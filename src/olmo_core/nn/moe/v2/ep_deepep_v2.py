@@ -79,7 +79,10 @@ def _import_deepep_cached(deepep_path: Optional[str]) -> object:
             sys.path.insert(0, resolved_path)
     try:
         import deep_ep  # type: ignore[import-not-found]
-    except Exception as e:
+    except (ImportError, OSError) as e:
+        # Only treat an actually-missing package (ImportError) or a shared-library load failure
+        # (OSError, e.g. a missing .so) as "DeepEP unavailable". Any other exception raised during
+        # module init is a real error and should surface rather than be reported as absence.
         raise RuntimeError(
             "Failed to import DeepEP for EP path='deepep_v2'. "
             "Build/install DeepEP first, set OLMO_DEEPEP_PATH, or set "

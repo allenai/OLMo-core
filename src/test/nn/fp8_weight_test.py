@@ -67,3 +67,37 @@ def test_transformer_train_module_guard_rejects_unowned_fp8_stores():
             self.lin = nn.Linear(8, 8)
 
     _assert_no_unowned_fp8_weight_stores(_Plain())
+
+
+def test_pipeline_per_part_fp8_guard_flags_mxfp8_part():
+    # The pipeline train module runs the ownership guard on every model part before building its
+    # per-part optimizers. Mirror that per-part loop: a part with MXFP8 projections must be flagged
+    # (its ordinary per-part optimizer would leave the frozen anchor weights unstepped).
+    import torch.nn as nn
+
+    from olmo_core.exceptions import OLMoConfigurationError
+    from olmo_core.nn.attention import FusedAttentionV2
+    from olmo_core.train.train_module.transformer.train_module import (
+        _assert_no_unowned_fp8_weight_stores,
+    )
+
+    class _PlainPart(nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.lin = nn.Linear(8, 8)
+
+    class _MXFP8Part(nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.attn = FusedAttentionV2(
+                d_model=64, n_heads=4, n_kv_heads=2, head_dim=16, bias=False, mxfp8_projections=True
+            )
+
+    model_parts = [_PlainPart(), _MXFP8Part()]
+    flagged = []
+    for part in model_parts:
+        try:
+            _assert_no_unowned_fp8_weight_stores(part)
+        except OLMoConfigurationError:
+            flagged.append(type(part).__name__)
+    assert flagged == ["_MXFP8Part"]

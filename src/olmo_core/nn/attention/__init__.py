@@ -370,6 +370,11 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
     """
     Save Q/K/V for backward as MXFP8 to reduce the saved-activation footprint. Supported by the
     ``default`` and ``fused_v2`` attention implementations.
+
+    .. note::
+        The flash backends save Q/K/V unmodified, so all three are packed. The ``torch`` backend
+        transposes Q/K/V (a view -> still packed) but for GQA (``n_kv_heads < n_heads``) it also
+        repeats K/V into fresh storage before SDPA, so only Q is packed for GQA on that backend.
     """
 
     def num_params(self, d_model: int) -> int:
