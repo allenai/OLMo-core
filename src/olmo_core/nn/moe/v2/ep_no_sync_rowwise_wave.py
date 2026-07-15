@@ -5,11 +5,11 @@ import os
 import warnings
 from typing import TYPE_CHECKING, Optional, Tuple, Union, cast
 
-import nvtx
 import torch
 import torch.distributed as dist
 import torch.nn.functional as F
 
+from olmo_core._nvtx import nvtx
 from olmo_core.kernels import grouped_mm_row_offset
 from olmo_core.kernels import symm_mem_vdev2d as symm_mem_vdev2d_kernels
 from olmo_core.kernels.swiglu import swiglu_backward_valid_prefix, swiglu_valid_prefix

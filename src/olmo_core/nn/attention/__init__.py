@@ -1542,10 +1542,9 @@ class FusedAttentionV2(Attention):
                 bias=bias,
                 dtype=dtype,
                 device=init_device,
-                # SDPA saves its bf16 output for backward anyway,
-                # so if we save mxfp8 inputs for w_out grad then we are saving an extra copy of the activations and wasting memory.
+                # SDPA already saves its bf16 output for backward, so saving the w_out input as
+                # MXFP8 too would just keep an extra copy of the activations and waste memory.
                 save_wgrad_input="bf16",
-                # save_wgrad_input="mxfp8",
             )
         else:
             self.w_out = nn.Linear(self.q_dim, d_model, bias=bias, dtype=dtype, device=init_device)
