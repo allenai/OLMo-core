@@ -1,0 +1,217 @@
+#!/usr/bin/env python3
+"""Reduce huge landmark gate-log JSONL to a compact per-record *gate-set* dump for Jaccard analysis.
+
+The raw gate logs are ~9 TB on weka (up to ~25 MB per JSONL line at 128k -- a per-token, per-head,
+all-candidate-block dump; see ``../in_progress_gate_distribution.md``). For the Q1-Q5 gate-similarity
+(Jaccard) figures we only need the *set of kept landmark blocks* per (layer, head) -- i.e. the
+``blocks`` field, not the scores. This script samples whole lines by random byte offset (never scanning
+a whole file) and writes one small line per sampled record:
+
+    {"len":8192,"doc":0,"sub":"","tok":1,
+     "g":{"0":{"0":[5,12,...],"1":[...]},"1":{...}}}      # g[layer][head] = kept block ids
+
+Keys are stripped to ints: ``layer0`` -> ``"0"``, ``head3`` -> ``"3"``. ``len`` = context_len,
+``doc`` = doc_id, ``sub`` = subtask (empty for RULER), ``tok`` = decoded_token_num.
+
+The output is a few MB, so all the matplotlib/Jaccard work (``plot_gate_jaccard.py``) can then run
+locally without ever re-touching weka. Run this ON a weka-mounted host (dev node or gantry job).
+
+Usage::
+
+    python extract_gate_sets.py 'BASE/<label>/ruler/gate.ruler8k.'*  --len 8192  --per-file 400 \
+        --out dumps/<label>_ruler_8k.jsonl
+
+Only stdlib is used, so any Python on the cluster works.
+"""
+import argparse
+import glob
+import json
+import os
+import random
+import re
+import sys
+
+
+def _paths(patterns):
+    out = []
+    for p in patterns:
+        hits = glob.glob(p)
+        out.extend(hits if hits else ([p] if os.path.exists(p) else []))
+    return out
+
+
+def _read_line_at(f, off):
+    """Seek to a random byte offset and return the next *complete* line (bytes), or b'' at EOF."""
+    f.seek(off)
+    if off != 0:
+        f.readline()  # discard the partial line we landed in
+    return f.readline()
+
+
+_INT_RE = re.compile(r"\d+")
+
+
+def _int_suffix(name):
+    """``layer12`` -> 12, ``head3`` -> 3."""
+    m = _INT_RE.search(name)
+    return int(m.group()) if m else None
+
+
+def _compact(rec):
+    """Turn one full gate record into the compact block-set form (or None if it has no gates).
+
+    Captures ``n`` = the number of *candidate* landmark blocks (from ``all_scores``/``all_blocks`` of
+    the first head seen). ``n`` is needed only for the chance-Jaccard baseline; it is the same across
+    heads at a fixed decode step, so one sample per record is enough.
+    """
+    g = {}
+    n_cand = None
+    for lname, heads in rec.get("layers", {}).items():
+        li = _int_suffix(lname)
+        if li is None:
+            continue
+        hd = {}
+        for hname, entry in heads.items():
+            hi = _int_suffix(hname)
+            if hi is None:
+                continue
+            blocks = entry.get("blocks")
+            if not blocks:
+                continue
+            if n_cand is None:
+                cand = entry.get("all_scores")
+                if cand is None:
+                    cand = entry.get("all_blocks")
+                if cand is not None:
+                    n_cand = len(cand)
+            hd[str(hi)] = [int(b) for b in blocks]
+        if hd:
+            g[str(li)] = hd
+    if not g:
+        return None
+    out = {
+        "len": int(rec.get("context_len", -1)),
+        "doc": int(rec.get("doc_id", -1)),
+        "sub": rec.get("subtask", "") or "",
+        "tok": int(rec.get("decoded_token_num", -1)),
+        "g": g,
+    }
+    if n_cand is not None:
+        out["n"] = n_cand
+    return out
+
+
+def _emit(rec, out, *, keep_len):
+    """Compact + write one raw record; return 1 if written, -1 if off-len, 0 if empty."""
+    if keep_len is not None and int(rec.get("context_len", -1)) != keep_len:
+        return -1
+    comp = _compact(rec)
+    if comp is None:
+        return 0
+    out.write(json.dumps(comp, separators=(",", ":")))
+    out.write("\n")
+    return 1
+
+
+def sample_random(paths, out, *, per_file, seed, keep_len=None, max_tries_mult=20):
+    """Random-byte-offset sample up to ``per_file`` distinct records per file; write compact lines.
+
+    Records are de-duped per file by (doc_id, decoded_token_num) so re-landing on the same line does
+    not double count. ``keep_len`` (if given) drops records whose ``context_len`` differs -- a safety
+    filter against a stray glob. Returns (n_written, n_dropped_len).
+    """
+    rng = random.Random(seed)
+    files = [(p, os.path.getsize(p)) for p in paths if os.path.getsize(p) > 0]
+    n_written = 0
+    n_dropped_len = 0
+    for p, fsize in files:
+        seen = set()
+        tries = 0
+        cap = max_tries_mult * per_file
+        with open(p, "rb") as fh:
+            while len(seen) < per_file and tries < cap:
+                tries += 1
+                ln = _read_line_at(fh, rng.randrange(fsize))
+                if not ln:
+                    continue
+                try:
+                    rec = json.loads(ln)
+                except Exception:
+                    continue
+                key = (rec.get("doc_id"), rec.get("decoded_token_num"))
+                if key in seen:
+                    continue
+                r = _emit(rec, out, keep_len=keep_len)
+                if r == -1:
+                    n_dropped_len += 1
+                elif r == 1:
+                    seen.add(key)
+                    n_written += 1
+        print(f"  {os.path.basename(p)}: kept {len(seen)} records ({tries} tries)", file=sys.stderr)
+    return n_written, n_dropped_len
+
+
+def sample_head(paths, out, *, per_file, keep_len=None):
+    """Stream the first ``per_file`` records of each file (never seeks). Records are in decode order
+    (doc 0 tok 1, doc 0 tok 2, ...), so head-sampling yields the *same* (doc, tok) keys across models
+    -- required for the cross-model comparison (Q4) -- and, with a large enough ``per_file``, walks
+    through every RULER subtask. Returns (n_written, n_dropped_len)."""
+    files = [p for p in paths if os.path.getsize(p) > 0]
+    n_written = 0
+    n_dropped_len = 0
+    for p in files:
+        kept = 0
+        with open(p) as fh:
+            for line in fh:
+                if kept >= per_file:
+                    break
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                except Exception:
+                    continue
+                r = _emit(rec, out, keep_len=keep_len)
+                if r == -1:
+                    n_dropped_len += 1
+                elif r == 1:
+                    kept += 1
+                    n_written += 1
+        print(f"  {os.path.basename(p)}: kept {kept} records (head)", file=sys.stderr)
+    return n_written, n_dropped_len
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("paths", nargs="+", help="gate-log files / globs (one context length's worker files)")
+    ap.add_argument("--out", required=True, help="compact JSONL output path")
+    ap.add_argument("--len", type=int, default=None,
+                    help="expected context_len; records with a different len are dropped (safety filter)")
+    ap.add_argument("--per-file", type=int, default=800, help="max records to keep per worker file")
+    ap.add_argument("--mode", choices=["head", "random"], default="head",
+                    help="head: first N records (decode order; aligns docs across models -> use for "
+                         "cross-model Q4). random: byte-offset sample (unaligned but unbiased).")
+    ap.add_argument("--seed", type=int, default=0)
+    args = ap.parse_args()
+
+    paths = _paths(args.paths)
+    if not paths:
+        print(f"NO FILES for {args.paths}", file=sys.stderr)
+        sys.exit(3)
+    os.makedirs(os.path.dirname(os.path.abspath(args.out)), exist_ok=True)
+
+    with open(args.out, "w") as w:
+        if args.mode == "head":
+            n_total, n_dropped_len = sample_head(paths, w, per_file=args.per_file, keep_len=args.len)
+        else:
+            n_total, n_dropped_len = sample_random(
+                paths, w, per_file=args.per_file, seed=args.seed, keep_len=args.len
+            )
+
+    print(f"wrote {n_total} records -> {args.out}"
+          + (f"  (dropped {n_dropped_len} off-len)" if n_dropped_len else ""))
+
+
+if __name__ == "__main__":
+    main()
