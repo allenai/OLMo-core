@@ -16,6 +16,7 @@ from olmo_core.nn.moe.v2.shared_experts import SharedExpertsConfig
 from olmo_core.testing import (
     requires_gpu,
     requires_grouped_gemm,
+    requires_grouped_mm_row_offset,
     requires_multi_gpu,
     requires_symm_mem_vdev2d,
     run_distributed_test,
@@ -983,6 +984,7 @@ def _run_ep_no_sync_rowwise_wave_matches_rowwise():
 
 @requires_multi_gpu
 @requires_grouped_gemm
+@requires_grouped_mm_row_offset
 @requires_symm_mem_vdev2d
 def test_v2_ep_no_sync_rowwise_wave_matches_rowwise():
     run_distributed_test(

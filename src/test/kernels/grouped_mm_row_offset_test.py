@@ -3,10 +3,10 @@ from __future__ import annotations
 import torch
 
 from olmo_core.kernels.grouped_mm_row_offset import grouped_mm_row_offset
-from olmo_core.testing import requires_gpu
+from olmo_core.testing import requires_grouped_mm_row_offset
 
 
-@requires_gpu
+@requires_grouped_mm_row_offset
 def test_grouped_mm_row_offset_writes_only_shifted_groups():
     device = torch.device("cuda")
     torch.manual_seed(1234)
