@@ -25,25 +25,28 @@ remain future work; their result and callback contracts below already apply.
 
 `plot_pretraining_wave.py` is the v2 training-loss plotting entry point. Each
 wave explicitly registers its W&B run IDs and compares one intervention only
-against the wide v1 integration baseline. The first registered wave is the
-275M-active GDN hybrid (`expand_v=1`) at Cx1/2/4/8.
+against the matching-size wide v1 integration baseline. The first registered
+wave is the GDN hybrid (`expand_v=1`): a 275M LR sweep at Cx1/2/4/8 plus the
+480M, 810M, and 1.2B Cx1/Cx2 fixed-LR scale runs.
 
 ```bash
 .venv/bin/python \
   src/scripts/train/jacobm_olmoe_ladder/v2/plot_pretraining_wave.py \
-  --wave 275m_hybrid_gdn_ev1 --include-running --refresh-stale-cache
+  --wave hybrid_gdn_ev1 --refresh-stale-cache
 ```
 
-The script uses the final-250M-token mean training CE and follows the v1 plot
-contract: one intervention-only all-Cx U-plot and one observed-best summary that
-compares the intervention with the wide baseline. It also writes JSON/Markdown
-result tables. A Cx enters the summary only when its finished intervention
-points support a valid quadratic fit with the observed best strictly inside the
-swept LR range; the summary label is still the actual observed-best LR, never
-the fitted prediction. Only finished runs are eligible for plots or selection;
-incomplete sweeps remain marked provisional in the result table.
-W&B histories reuse the migrated v1 cache, and running jobs fetch and cache only
-a tail window.
+The script writes all sizes into one `hybrid_gdn_ev1/` artifact directory and
+uses the final-250M-token mean training CE. The 275M outputs follow the strict
+v1 LR-selection contract: an intervention-only U-plot and an observed-best
+summary against wide. A Cx enters that summary only when its finished points
+support a valid quadratic fit with the observed best strictly inside the swept
+LR range; the label is still the actual observed-best LR, never the fitted
+prediction. The separate scale-transfer plot adds 480M/810M/1.2B cells as their
+registered runs finish, but explicitly labels them fixed-LR comparisons because
+their LRs were transferred from wide rather than optimized for hybrid. The
+shared JSON/Markdown result table records both modes. W&B histories reuse the
+migrated v1 cache; `--include-running` remains available for diagnostic tables
+but running points never enter formal selection.
 
 ## Result Contract
 

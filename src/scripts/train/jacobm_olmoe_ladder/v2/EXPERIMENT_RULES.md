@@ -12,8 +12,11 @@ stop and resolve the conflict before launching more compute.
   intervention.
 - `launchers/pretraining/generated/`: disposable rendered Beaker specs.
 - `plot_pretraining_wave.py`: shared pretraining-loss plots and result tables.
-- `plots/pretraining/<wave>/`: one U-plot and one summary per intervention.
-- `results/pretraining/<wave>.{json,md}`: exact plotted values and W&B links.
+- `plots/pretraining/<intervention>/`: all model-size plots for one
+  intervention, including per-size U-plots where LR sweeps exist, the strict
+  optimal-LR summary, and fixed-LR scale-transfer comparisons.
+- `results/pretraining/<intervention>/results.{json,md}`: exact plotted values,
+  completion/selection mode, and W&B links across every registered model size.
 - `NEXT_EXPERIMENTS.md`: ordered architecture experiment queue and decisions.
 - `RUNS.md`: live v2 launch ledger. `v1/` remains historical provenance.
 
@@ -93,6 +96,9 @@ global_tokens = sequence_length * world_size * rank_microbatch_sequences * accum
 - Produce exactly one observed-best summary per intervention. It contains the
   intervention and the wide baseline, but only for Cx values satisfying the
   bracketing rule above.
+- Larger-size runs launched only at transferred wide-optimal LRs belong in a
+  separate fixed-LR comparison plot. Never label them hybrid-optimal until a
+  hybrid LR sweep brackets an observed best.
 - Annotate the summary with actual observed-best LRs. Fitted stars and vertical
   lines belong only on the U-plot.
 - Do not produce delta plots by default.

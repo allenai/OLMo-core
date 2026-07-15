@@ -14,6 +14,10 @@ job IDs and W&B IDs once they exist. Detailed migration-era DDP jobs remain in
 - Bracketing extensions: [01KXHZNJ5FD5RA0BRC4ZF3DRKC](https://beaker.org/ex/01KXHZNJ5FD5RA0BRC4ZF3DRKC)
 - Exact job/W&B table: [`../v1/DDP_RUNS.md`](../v1/DDP_RUNS.md#275m-integration-wide-hybrid-control)
 - Plot/results registry: [`plot_pretraining_wave.py`](plot_pretraining_wave.py)
+- Consolidated all-size artifacts:
+  [`plots/pretraining/hybrid_gdn_ev1/`](plots/pretraining/hybrid_gdn_ev1/)
+  and
+  [`results/pretraining/hybrid_gdn_ev1/results.md`](results/pretraining/hybrid_gdn_ev1/results.md)
 
 Status on 2026-07-15 17:11 UTC: the original grid and the added Cx1/Cx2 `4e-4`
 and Cx4 `3.2e-3` points are complete. The Cx8 `3.2e-3` run was interrupted by
@@ -139,6 +143,10 @@ and final evals. The 810M Cx1/Cx2 and 1.2B Cx1 runs remain healthy. The 1.2B
 Cx2 job was terminated when its Holmes node was cordoned for an unrecoverable
 Xid 31; its replacement resumed from `step2500`, has passed step 3,500, and is
 running normally.
+
+The completed 480M Cx1/Cx2 losses are included in the consolidated fixed-LR
+scale-transfer plot. The registered 810M and 1.2B runs will enter that plot only
+after W&B marks them finished.
 
 | Size | Cx | LR | Global batch | GPUs | EP/path | Rank MB | Accum | Job | W&B | Status |
 |---|---:|---:|---:|---:|---|---:|---:|---|---|---|
