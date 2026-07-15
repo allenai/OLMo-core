@@ -284,7 +284,9 @@ class _ScaledMMMXFP8FP8WeightFunction(torch.autograd.Function):
         prequantized_rhs_for_dgrad: ScaledMMPrequantizedRHS,
         wgrad_sink: Optional[Any],
         save_wgrad_input_as_mxfp8: bool,
+        grad_anchor: Optional[Tensor] = None,
     ) -> Tensor:
+        del grad_anchor  # only present to force this Function into the autograd graph
         assert mat_a.dtype == torch.bfloat16, (
             "MXFP8 linear currently expects bf16 activations, " f"got mat_a.dtype={mat_a.dtype}"
         )
@@ -374,7 +376,8 @@ class _ScaledMMMXFP8FP8WeightFunction(torch.autograd.Function):
             if ctx.wgrad_sink is not None:
                 ctx.wgrad_sink.accumulate_wgrad(grad_weight)
 
-        return grad_a, None, None, None, None
+        # Trailing None is for the (non-differentiable) grad_anchor input.
+        return grad_a, None, None, None, None, None
 
 
 def scaled_mm_mxfp8_fp8_weight(
@@ -391,12 +394,20 @@ def scaled_mm_mxfp8_fp8_weight(
     Weight gradients are routed to `wgrad_sink`; the module weight is only an
     initialization/checkpoint/cache anchor.
     """
+    grad_anchor: Optional[Tensor] = None
+    if wgrad_sink is not None and not mat_a.requires_grad:
+        # The only autograd-tracked input is `mat_a`. When it doesn't require grad (e.g. the module
+        # is the first trainable layer, or follows a frozen/detached embedding) the output would get
+        # no grad_fn, so backward() -- and thus the weight-grad routing to `wgrad_sink` -- would
+        # never run. Add a differentiable anchor to keep the Function in the graph.
+        grad_anchor = torch.zeros((), device=mat_a.device, dtype=mat_a.dtype, requires_grad=True)
     return _ScaledMMMXFP8FP8WeightFunction.apply(
         mat_a,
         prequantized_rhs,
         prequantized_rhs_for_dgrad,
         wgrad_sink,
         save_wgrad_input_as_mxfp8,
+        grad_anchor,
     )
 
 

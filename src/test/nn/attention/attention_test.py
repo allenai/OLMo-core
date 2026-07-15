@@ -1562,3 +1562,28 @@ def test_attention_config_allows_disabled_fused_v2_flags_on_other_types():
     )
     attention = config.build(64, layer_idx=0, n_layers=1)
     assert isinstance(attention, Attention)
+
+
+def test_mxfp8_saved_qkv_hooks_match_saved_tensors_by_storage():
+    # The Torch backend transposes (and, for GQA, repeats) q/k/v before SDPA, producing new tensor
+    # objects that autograd saves. The pack hook must recognize those via shared storage; matching
+    # by tensor identity would miss all of them and silently no-op.
+    from olmo_core.nn.attention import _MXFP8SavedQKVHooks
+    from olmo_core.nn.attention.backend import _repeat_kv
+
+    q = torch.randn(2, 8, 4, 32)
+    k = torch.randn(2, 8, 2, 32)
+    v = torch.randn(2, 8, 2, 32)
+    hooks = _MXFP8SavedQKVHooks(q, k, v, pack_counter=[0])
+
+    def matched(t: torch.Tensor):
+        return hooks.target_names.get(t.untyped_storage().data_ptr())
+
+    # transpose is a view -> shares storage -> matched.
+    assert matched(q.transpose(1, 2)) == "attention.q"
+    # a non-repeating kv path (n_rep=1) stays a view -> matched.
+    assert matched(_repeat_kv(k, 1).transpose(1, 2)) == "attention.k"
+    # a GQA repeat copies -> fresh storage -> not matched (acceptable; never mis-packs).
+    assert matched(_repeat_kv(k, 3)) is None
+    # unrelated tensors are never matched.
+    assert matched(torch.randn(2, 8, 4, 32)) is None

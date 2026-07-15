@@ -177,15 +177,21 @@ class _MXFP8SavedQKVHooks:
         *,
         pack_counter: list[int],
     ) -> None:
+        # Match by storage pointer, not tensor identity. The attention backend transposes (and, for
+        # GQA, may repeat) q/k/v into new tensor objects before SDPA, and autograd saves *those*
+        # derived tensors. View transforms such as transpose share storage with the originals, so a
+        # storage-pointer key still recognizes them; identity matching would miss all of them and
+        # the pack would silently no-op. (A GQA repeat that copies k/v gets fresh storage and is
+        # not matched -- acceptable, and it never mis-packs an unrelated tensor.)
         self.target_names = {
-            id(q): "attention.q",
-            id(k): "attention.k",
-            id(v): "attention.v",
+            q.untyped_storage().data_ptr(): "attention.q",
+            k.untyped_storage().data_ptr(): "attention.k",
+            v.untyped_storage().data_ptr(): "attention.v",
         }
         self.pack_counter = pack_counter
 
     def pack(self, t: torch.Tensor) -> Any:
-        name = self.target_names.get(id(t))
+        name = self.target_names.get(t.untyped_storage().data_ptr())
         if name is None:
             _record_saved_activation_debug(t, "attention.sdpa.saved_passthrough")
             return t

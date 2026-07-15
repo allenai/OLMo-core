@@ -3,8 +3,11 @@ import torch
 import torch.nn.functional as F
 
 from olmo_core.nn.mxfp8_linear import MXFP8Linear
+from olmo_core.testing import GPU_MARKS
 
-pytestmark = pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required")
+# Module-level equivalent of @requires_gpu (marks every test gpu + skips without a GPU); the
+# pytest.mark.gpu also routes these to the kernels GPU CI job.
+pytestmark = list(GPU_MARKS)
 
 
 @pytest.mark.parametrize("save_wgrad_input", ["mxfp8", "bf16"])

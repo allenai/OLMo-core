@@ -62,6 +62,38 @@ from .config import (
 log = logging.getLogger(__name__)
 
 
+def _assert_no_unowned_fp8_weight_stores(model: nn.Module) -> None:
+    """
+    Fail loudly if the model contains FP8 weight stores (e.g. :class:`MXFP8Linear`, used by
+    ``AttentionConfig(name="fused_v2", mxfp8_projections=True)``) whose weights are trained only by
+    the OLMoDDP fused optimizer.
+
+    :class:`TransformerTrainModule` uses an ordinary optimizer that never discovers these side
+    stores, so their frozen anchor weights would silently never update. Such models must use
+    :class:`~olmo_core.train.train_module.OLMoDDPTrainModule` instead.
+    """
+    offending: list[str] = []
+    seen_store_ids: set = set()
+    for module_name, module in model.named_modules():
+        named_stores = getattr(module, "named_fp8_weight_stores", None)
+        if named_stores is None:
+            continue
+        for _, store in named_stores():
+            if id(store) in seen_store_ids:
+                continue
+            seen_store_ids.add(id(store))
+            if getattr(store, "optimizer_enabled", False):
+                offending.append(module_name or "<root>")
+                break
+
+    if offending:
+        raise OLMoConfigurationError(
+            f"Model modules {offending} use FP8 weight stores whose weights are trained only by "
+            "the OLMoDDP fused optimizer, but TransformerTrainModule uses an ordinary optimizer "
+            "that would leave them frozen. Use OLMoDDPTrainModule for these models."
+        )
+
+
 class TransformerTrainModule(TrainModule):
     """
     A :class:`TrainModule` for any :class:`~olmo_core.nn.transformer.Transformer` model
@@ -196,6 +228,7 @@ class TransformerTrainModule(TrainModule):
 
         # Build optimizer(s).
         log.info("Building optimizer...")
+        _assert_no_unowned_fp8_weight_stores(self.model)
         self.optim: Optimizer = optim.build(self.model, strict=True)
 
     @property
