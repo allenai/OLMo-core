@@ -55,6 +55,24 @@ B_COLOR = "tab:orange"
 # --------------------------------------------------------------------------------------------------
 # data model
 # --------------------------------------------------------------------------------------------------
+def _mask(blocks):
+    """Pack a list of block ids into an int bitmask (bit i set => block i is in the kept set).
+
+    Bitmask AND/OR + popcount is the fast path for Jaccard over ~100-element sets (all C-level),
+    which matters because the Q1 curves alone are ~10^7 pairwise comparisons."""
+    m = 0
+    for b in blocks:
+        m |= 1 << b
+    return m
+
+
+try:
+    _popcount = int.bit_count  # py3.10+
+except AttributeError:  # pragma: no cover
+    def _popcount(x):  # type: ignore
+        return bin(x).count("1")
+
+
 class Record:
     __slots__ = ("length", "doc", "sub", "tok", "n", "gates")
 
@@ -64,15 +82,16 @@ class Record:
         self.sub = d.get("sub", "") or ""
         self.tok = int(d["tok"])
         self.n = int(d["n"]) if "n" in d else None
-        # gates[layer_int][head_int] = frozenset(block ids)
-        self.gates: Dict[int, Dict[int, frozenset]] = {
-            int(l): {int(h): frozenset(bs) for h, bs in heads.items()}
+        # gates[layer_int][head_int] = int bitmask of kept block ids
+        self.gates: Dict[int, Dict[int, int]] = {
+            int(l): {int(h): _mask(bs) for h, bs in heads.items()}
             for l, heads in d["g"].items()
         }
 
 
-def load_dumps(patterns) -> Dict[int, List[Record]]:
-    """Load compact dumps, grouping records by context length."""
+def load_dumps(patterns, per_file_cap=None) -> Dict[int, List[Record]]:
+    """Load compact dumps, grouping records by context length. ``per_file_cap`` bounds records read
+    per file (the big 64k dumps hold far more than the plot caps use)."""
     by_len: Dict[int, List[Record]] = defaultdict(list)
     files = []
     for pat in patterns:
@@ -80,6 +99,7 @@ def load_dumps(patterns) -> Dict[int, List[Record]]:
     if not files:
         print(f"WARNING: no dump files match {patterns}", file=sys.stderr)
     for path in files:
+        n = 0
         with open(path) as f:
             for line in f:
                 line = line.strip()
@@ -87,14 +107,18 @@ def load_dumps(patterns) -> Dict[int, List[Record]]:
                     continue
                 r = Record(json.loads(line))
                 by_len[r.length].append(r)
+                n += 1
+                if per_file_cap is not None and n >= per_file_cap:
+                    break
     return by_len
 
 
-def jac(a: frozenset, b: frozenset) -> float:
-    if not a and not b:
+def jac(a: int, b: int) -> float:
+    """Jaccard of two block-set bitmasks."""
+    if a == 0 and b == 0:
         return 1.0
-    u = len(a | b)
-    return len(a & b) / u if u else 1.0
+    u = _popcount(a | b)
+    return _popcount(a & b) / u if u else 1.0
 
 
 def exact_jaccard(N: int, k: int) -> float:
@@ -120,7 +144,7 @@ def baseline_for(records: List[Record]) -> float:
             ns.append(r.n)
         for heads in r.gates.values():
             for s in heads.values():
-                ks.append(len(s))
+                ks.append(_popcount(s))
     if not ks:
         return float("nan")
     k = int(round(float(np.median(ks))))
@@ -506,6 +530,8 @@ def main():
     ap.add_argument("--max-records", type=int, default=200, help="cap records per (len,model) for curves")
     ap.add_argument("--matrix-records", type=int, default=80, help="cap records for the heatmaps")
     ap.add_argument("--head-stride", type=int, default=1, help="use every Nth head in Q3/Q4 (speed)")
+    ap.add_argument("--load-cap", type=int, default=250,
+                    help="max records to read per dump file (dumps hold more than the plots need)")
     ap.add_argument("--cap-docs", type=int, default=24, help="max docs per (sub,layer,head,tok) in Q3")
     ap.add_argument("--infer-subtask", metavar="ORDER:SIZE", default=None,
                     help="derive subtask from doc_id when logs store it empty, e.g. "
@@ -514,8 +540,8 @@ def main():
 
     os.makedirs(args.outdir, exist_ok=True)
 
-    A = {"label": args.a_label, "by_len": load_dumps(args.a_dumps)}
-    B = {"label": args.b_label, "by_len": load_dumps(args.b_dumps)}
+    A = {"label": args.a_label, "by_len": load_dumps(args.a_dumps, args.load_cap)}
+    B = {"label": args.b_label, "by_len": load_dumps(args.b_dumps, args.load_cap)}
     for m in (A, B):
         counts = {len_label(L): len(m["by_len"].get(L, [])) for L in args.lengths}
         print(f"{m['label']}: records/len = {counts}")
@@ -537,7 +563,7 @@ def main():
 
         subs_order = order
     else:
-        present = sorted(norm_sub(s) for s in subs_present(A["by_len"], B["by_len"]))
+        present = sorted(set(norm_sub(s) for s in subs_present(A["by_len"], B["by_len"])))
         subs_order = present
         if present == [""]:
             print("NOTE: subtask field empty in logs -> Q3/Q4 pooled into a single 'all' bar. "
