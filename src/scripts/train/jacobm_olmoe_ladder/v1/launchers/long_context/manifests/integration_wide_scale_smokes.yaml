@@ -1,0 +1,74 @@
+schema_version: 1
+
+experiment:
+  description: 64k integration-wide capacity and throughput smokes for 810M and 1.2B
+  checkpoint_root: /weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/olmo-ddp/long-context-smokes
+
+source:
+  repo: /weka/oe-adapt-default/jacobm/olmoe3/olmo-ddp-migration/OLMo-core
+  wrapper: src/scripts/train/jacobm_olmoe3_long_context_beaker.sh
+  image: 01KW8G8JC20H11Y60PPTE2VN4Q
+
+beaker:
+  workspace: ai2/OLMo-3-moe-experiments
+  cluster: ai2/holmes
+  priority: urgent
+  shared_memory: 128 GiB
+  min_runtime: 10m
+  timeout: 4h
+  result_path: /results
+
+secrets:
+  WANDB_API_KEY: jacobm_WANDB_API_KEY
+  BEAKER_TOKEN: jacobm_BEAKER_TOKEN
+  GANTRY_GOOGLE_CREDENTIALS: jacobm_GOOGLE_CREDENTIALS
+
+datasets:
+  - mount_path: /weka/oe-adapt-default
+    weka: oe-adapt-default
+  - mount_path: /weka/oe-training-default
+    weka: oe-training-default
+
+training:
+  work_dir: /weka/oe-training-default/ai2-llm/checkpoints/yashasbls/dataset-cache
+  sequence_length: 65536
+  global_batch_size: 4194304
+  learning_rate: "2e-5"
+  warmup_steps: 2000
+  hard_stop_steps: 12
+  save_interval: 1000
+  ephemeral_save_interval: 500
+  compile: true
+  wandb: true
+  evals: false
+
+smokes:
+  - task_name: 810m-integration-wide-ep1-mb4
+    run_name: smoke-lc-810m-integration-wide-cx8-64k-ep1-mb4-r2
+    model_size: 810m
+    family: integration_wide
+    load_path: gs://ai2-llm/checkpoints/jacobm/olmoe3/olmo-ddp-converted/v1/midtraining/integration_wide/810m/cx8
+    gpu_count: 8
+    expert_parallel_size: 1
+    expert_parallel_path: sync_1d
+    rank_microbatch_sequences: 4
+
+  - task_name: 1p2b-integration-wide-ep1-mb2
+    run_name: smoke-lc-1p2b-integration-wide-cx8-64k-ep1-mb2-r2
+    model_size: 1p2b
+    family: integration_wide
+    load_path: gs://ai2-llm/checkpoints/jacobm/olmoe3/olmo-ddp-converted/v1/midtraining/integration_wide/1p2b/cx8
+    gpu_count: 8
+    expert_parallel_size: 1
+    expert_parallel_path: sync_1d
+    rank_microbatch_sequences: 2
+
+  - task_name: 1p2b-integration-wide-ep8-sync-mb4
+    run_name: smoke-lc-1p2b-integration-wide-cx8-64k-ep8-sync-mb4-r3
+    model_size: 1p2b
+    family: integration_wide
+    load_path: gs://ai2-llm/checkpoints/jacobm/olmoe3/olmo-ddp-converted/v1/midtraining/integration_wide/1p2b/cx8
+    gpu_count: 8
+    expert_parallel_size: 8
+    expert_parallel_path: sync_1d
+    rank_microbatch_sequences: 4

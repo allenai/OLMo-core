@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Continue a converted 275M OLMoE3 checkpoint at 65k context with no EP."""
+"""Continue a converted OLMoE3 checkpoint at 65k context.
+
+The generic ``OLMOE3_LC_*`` environment variables take precedence. The legacy
+``OLMOE3_275M_LC_*`` names remain as fallbacks so the original 275M job stays
+reproducible.
+"""
 
 # ruff: noqa: E402
 
@@ -9,7 +14,6 @@ import json
 import logging
 import os
 import socket
-import sys
 from copy import deepcopy
 from dataclasses import replace
 from functools import partial
@@ -35,12 +39,15 @@ os.environ.setdefault("OLMO_DDP_INIT_SYNC", "0")
 os.environ.setdefault("OLMO_DATA_PREP_WORKERS", "8")
 
 import torch
+from cached_path import cached_path
 
 from olmo_core.config import DType
 from olmo_core.data import (
+    DataMix,
     InstanceFilterConfig,
     NumpyDataLoaderConfig,
     NumpyPackedFSLDatasetConfig,
+    NumpyPaddedFSLDatasetConfig,
     TokenizerConfig,
 )
 from olmo_core.distributed.parallel import DataParallelType
@@ -54,55 +61,100 @@ from olmo_core.internal.experiment import (
     build_config,
     main,
 )
+from olmo_core.io import join_path
+from olmo_core.nn.moe.v2.ep_config import ExpertParallelPath
 from olmo_core.nn.rope import YaRNRoPEScalingConfig
 from olmo_core.nn.transformer import OLMoDDPModelConfig
 from olmo_core.optim import ConstantWithWarmup, OLMoDDPOptimizerConfig, OptimGroupOverride
 from olmo_core.train import Duration, LoadStrategy, TrainerConfig
-from olmo_core.train.callbacks import CheckpointerCallback, SpeedMonitorCallback, WandBCallback
+from olmo_core.train.callbacks import (
+    BeakerCallback,
+    CheckpointerCallback,
+    ConfigSaverCallback,
+    DownstreamEvaluatorCallbackConfig,
+    LMEvaluatorCallbackConfig,
+    SpeedMonitorCallback,
+    WandBCallback,
+)
 from olmo_core.train.checkpoint import CheckpointerConfig
-from olmo_core.train.train_module import OLMoDDPTrainModuleConfig, TransformerDataParallelConfig
+from olmo_core.train.train_module import (
+    OLMoDDPTrainModuleConfig,
+    TransformerDataParallelConfig,
+    TransformerExpertParallelConfig,
+)
 
 
 log = logging.getLogger(__name__)
 
 
-def env_bool(name: str, default: bool) -> bool:
-    value = os.environ.get(name)
+def lc_env(name: str, default: str | None = None) -> str | None:
+    value = os.environ.get(f"OLMOE3_LC_{name}")
+    if value is None:
+        value = os.environ.get(f"OLMOE3_275M_LC_{name}")
+    return default if value is None else value
+
+
+def lc_bool(name: str, default: bool) -> bool:
+    value = lc_env(name)
     if value is None:
         return default
     if value.lower() in {"1", "true", "yes", "on"}:
         return True
     if value.lower() in {"0", "false", "no", "off"}:
         return False
-    raise ValueError(f"{name} must be a boolean, got {value!r}")
+    raise ValueError(f"OLMOE3_LC_{name} must be a boolean, got {value!r}")
 
 
-SEQUENCE_LENGTH = 65_536
-GLOBAL_BATCH_SIZE = 2 * 1024 * 1024
-MAX_TOKENS = int(os.environ.get("OLMOE3_275M_LC_MAX_TOKENS", "100000000000"))
-RANK_MICROBATCH_SEQUENCES = int(os.environ.get("OLMOE3_275M_LC_RANK_MICROBATCH_SEQUENCES", "4"))
-EXPECTED_WORLD_SIZE = int(os.environ.get("OLMOE3_275M_LC_WORLD_SIZE", "8"))
-LEARNING_RATE = float(os.environ.get("OLMOE3_275M_LC_LR", "1e-4"))
-WARMUP_STEPS = int(os.environ.get("OLMOE3_275M_LC_WARMUP_STEPS", "2000"))
-USE_COMPILE = env_bool("OLMOE3_275M_LC_USE_COMPILE", True)
-WANDB_ENABLED = env_bool("OLMOE3_275M_LC_WANDB", True)
-ASYNC_BOOKKEEPING = env_bool("OLMOE3_275M_LC_ASYNC_BOOKKEEPING", False)
-SAVE_INTERVAL = int(os.environ.get("OLMOE3_275M_LC_SAVE_INTERVAL", "5000"))
-EPHEMERAL_SAVE_INTERVAL = int(os.environ.get("OLMOE3_275M_LC_EPHEMERAL_SAVE_INTERVAL", "1000"))
+MODEL_SIZE = cast(str, lc_env("MODEL_SIZE", "275m"))
+FAMILY = cast(str, lc_env("FAMILY", "baseline"))
+SEQUENCE_LENGTH = int(cast(str, lc_env("SEQUENCE_LENGTH", "65536")))
+GLOBAL_BATCH_SIZE = int(cast(str, lc_env("GLOBAL_BATCH_SIZE", str(2 * 1024 * 1024))))
+MAX_TOKENS = int(cast(str, lc_env("MAX_TOKENS", "100000000000")))
+RANK_MICROBATCH_SEQUENCES = int(cast(str, lc_env("RANK_MICROBATCH_SEQUENCES", "4")))
+EXPECTED_WORLD_SIZE = int(cast(str, lc_env("WORLD_SIZE", "8")))
+EP_SIZE = int(cast(str, lc_env("EP_SIZE", "1")))
+EP_PATH = ExpertParallelPath(cast(str, lc_env("EP_PATH", ExpertParallelPath.sync_1d.value)))
+LEARNING_RATE = float(cast(str, lc_env("LR", "1e-4")))
+WARMUP_STEPS = int(cast(str, lc_env("WARMUP_STEPS", "2000")))
+HARD_STOP_STEPS = int(cast(str, lc_env("HARD_STOP_STEPS", "0")))
+USE_COMPILE = lc_bool("USE_COMPILE", True)
+WANDB_ENABLED = lc_bool("WANDB", True)
+EVALS_ENABLED = lc_bool("EVALS", True)
+EVAL_INTERVAL = int(cast(str, lc_env("EVAL_INTERVAL", "1000")))
+EVAL_STEPS = int(cast(str, lc_env("EVAL_STEPS", "0")))
+EVAL_SEQUENCE_LENGTH = int(cast(str, lc_env("EVAL_SEQUENCE_LENGTH", "8192")))
+EVAL_TASK_SET = cast(str, lc_env("EVAL_TASK_SET", "fast"))
+EVAL_ON_FINISH = lc_bool("EVAL_ON_FINISH", False)
+ASYNC_BOOKKEEPING = lc_bool("ASYNC_BOOKKEEPING", False)
+SAVE_INTERVAL = int(cast(str, lc_env("SAVE_INTERVAL", "5000")))
+EPHEMERAL_SAVE_INTERVAL = int(cast(str, lc_env("EPHEMERAL_SAVE_INTERVAL", "1000")))
 
-LOAD_PATH = os.environ.get("OLMOE3_275M_LC_LOAD_PATH")
-SAVE_ROOT = os.environ.get(
-    "OLMOE3_275M_LC_SAVE_ROOT",
-    "/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/olmo-ddp/long-context",
+LOAD_PATH = lc_env("LOAD_PATH")
+SAVE_ROOT = cast(
+    str,
+    lc_env(
+        "SAVE_ROOT",
+        "/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/olmo-ddp/long-context",
+    ),
 )
-WORK_DIR = os.environ.get(
-    "OLMOE3_275M_LC_WORK_DIR",
-    "/weka/oe-training-default/ai2-llm/checkpoints/jacobm/dataset-cache/long-context-65k",
+WORK_DIR = cast(
+    str,
+    lc_env(
+        "WORK_DIR",
+        "/weka/oe-training-default/ai2-llm/checkpoints/jacobm/dataset-cache/long-context-65k",
+    ),
 )
-LC_DATA_GLOB = os.environ.get(
-    "OLMOE3_275M_LC_DATA_GLOB",
-    "/weka/oe-training-default/ai2-llm/preprocessed/tylerr/"
-    "lc-reshard-final-cleaned/v0.1/allenai/dolma2-tokenizer/*.npy",
+LC_DATA_GLOB = cast(
+    str,
+    lc_env(
+        "DATA_GLOB",
+        "/weka/oe-training-default/ai2-llm/preprocessed/tylerr/"
+        "lc-reshard-final-cleaned/v0.1/allenai/dolma2-tokenizer/*.npy",
+    ),
+)
+EVAL_DATA_ROOT = cast(
+    str,
+    lc_env("EVAL_DATA_ROOT", "/weka/oe-training-default/ai2-llm"),
 )
 
 ROPE_SCALING = YaRNRoPEScalingConfig(
@@ -117,10 +169,8 @@ torch.set_float32_matmul_precision("high")
 
 def load_checkpoint_config() -> Dict[str, Any]:
     if LOAD_PATH is None:
-        raise OLMoConfigurationError(
-            "Set OLMOE3_275M_LC_LOAD_PATH to a converted OLMoDDP checkpoint"
-        )
-    path = Path(LOAD_PATH) / "config.json"
+        raise OLMoConfigurationError("Set OLMOE3_LC_LOAD_PATH to a converted OLMoDDP checkpoint")
+    path = cached_path(join_path(LOAD_PATH, "config.json"), quiet=True)
     with path.open("r", encoding="utf-8") as file:
         value = json.load(file)
     if not isinstance(value, dict):
@@ -156,6 +206,12 @@ def build_model_config(common: CommonComponents) -> OLMoDDPModelConfig:
             block_config.attention.rope = replace(attention.rope, scaling=ROPE_SCALING)
         overrides[block_idx] = block_config
     config.block_overrides = overrides
+    if EP_SIZE > 1:
+        if config.block.ep is not None:
+            config.block.ep.path = EP_PATH
+        for block_config in config.block_overrides.values():
+            if block_config.ep is not None:
+                block_config.ep.path = EP_PATH
     config.validate()
     return config
 
@@ -199,7 +255,7 @@ def build_train_module_config(common: CommonComponents) -> OLMoDDPTrainModuleCon
             reduce_grads_in_fp32=True,
             accumulate_grads_in_fp32=True,
         ),
-        ep_config=None,
+        ep_config=TransformerExpertParallelConfig(degree=EP_SIZE) if EP_SIZE > 1 else None,
         pp_config=None,
         tp_config=None,
         cp_config=None,
@@ -235,6 +291,16 @@ def build_data_components(common: CommonComponents) -> DataComponents:
 
 def build_trainer_config(common: CommonComponents) -> TrainerConfig:
     assert LOAD_PATH is not None
+    if EVAL_TASK_SET == "hellaswag":
+        downstream_tasks = ["hellaswag"]
+    else:
+        from olmo_core.eval.task_groups import TASK_GROUPS
+
+        try:
+            downstream_tasks = sorted(TASK_GROUPS[EVAL_TASK_SET])
+        except KeyError as error:
+            raise ValueError(f"Task set not recognized: {EVAL_TASK_SET}") from error
+    eval_duration = Duration.steps(EVAL_STEPS) if EVAL_STEPS > 0 else Duration.epochs(1)
     return (
         TrainerConfig(
             save_folder=common.save_folder,
@@ -248,13 +314,14 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 load_thread_count=8,
                 throttle_uploads=True,
             ),
-            metrics_collect_interval=10,
+            metrics_collect_interval=1 if HARD_STOP_STEPS else 10,
             cancel_check_interval=10,
             # Async metric callbacks can let ranks enqueue distributed bookkeeping
             # collectives in different orders when rank 0 stalls while logging to W&B.
             # Keep these collectives synchronous for long-running LC jobs.
             async_bookkeeping=ASYNC_BOOKKEEPING,
             max_duration=Duration.tokens(MAX_TOKENS),
+            hard_stop=Duration.steps(HARD_STOP_STEPS) if HARD_STOP_STEPS else None,
         )
         .with_callback(
             "checkpointer",
@@ -267,23 +334,55 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             ),
         )
         .with_callback("speed_monitor", SpeedMonitorCallback())
+        .with_callback("config_saver", ConfigSaverCallback())
+        .with_callback("beaker", BeakerCallback())
+        .with_callback(
+            "lm_evaluator",
+            LMEvaluatorCallbackConfig(
+                eval_dataset=NumpyPaddedFSLDatasetConfig.from_data_mix(
+                    DataMix.v3_small_ppl_validation,
+                    mix_base_dir=EVAL_DATA_ROOT,
+                    sequence_length=EVAL_SEQUENCE_LENGTH,
+                    tokenizer=common.tokenizer,
+                    work_dir=common.work_dir,
+                ),
+                eval_interval=EVAL_INTERVAL,
+                eval_duration=eval_duration,
+                eval_on_finish=EVAL_ON_FINISH,
+                enabled=EVALS_ENABLED,
+            ),
+        )
+        .with_callback(
+            "downstream_evaluator",
+            DownstreamEvaluatorCallbackConfig(
+                tasks=downstream_tasks,
+                tokenizer=common.tokenizer,
+                eval_interval=EVAL_INTERVAL,
+                eval_duration=eval_duration,
+                eval_on_finish=EVAL_ON_FINISH,
+                enabled=EVALS_ENABLED,
+            ),
+        )
         .with_callback(
             "wandb",
             WandBCallback(
                 name=common.run_name,
-                group="olmoe3-275m-long-context",
+                group=f"olmoe3-{MODEL_SIZE}-{FAMILY}-long-context",
                 project="jacobm-olmoe-ladder",
                 entity="ai2-llm",
                 enabled=WANDB_ENABLED,
                 cancel_check_interval=10,
                 tags=[
                     "long-context",
-                    "275m",
+                    MODEL_SIZE,
+                    FAMILY,
                     "cx8",
                     "midtrained",
                     "olmo-ddp",
-                    "ep1",
+                    f"ep{EP_SIZE}",
+                    EP_PATH.value if EP_SIZE > 1 else "no-ep",
                     "64k",
+                    "smoke" if HARD_STOP_STEPS else "full-run",
                 ],
             ),
         )
@@ -313,9 +412,15 @@ def build_local_common_components(
 
 
 def finalize_config(config: ExperimentConfig) -> None:
-    if config.train_module.ep_config is not None:
-        raise ValueError("275M long-context training must not enable expert parallelism")
+    if EXPECTED_WORLD_SIZE < 1 or EP_SIZE < 1 or EXPECTED_WORLD_SIZE % EP_SIZE:
+        raise ValueError(f"EP size {EP_SIZE} must divide world size {EXPECTED_WORLD_SIZE}")
+    if GLOBAL_BATCH_SIZE % SEQUENCE_LENGTH:
+        raise ValueError("Global batch size must contain a whole number of sequences")
+    expert_dp_degree = EXPECTED_WORLD_SIZE // EP_SIZE
     global_sequences = GLOBAL_BATCH_SIZE // SEQUENCE_LENGTH
+    # The data loader shards the global sequence batch across every rank, including
+    # ranks that participate in expert parallelism. Therefore gradient accumulation
+    # is based on world size, not the number of DP groups.
     denominator = EXPECTED_WORLD_SIZE * RANK_MICROBATCH_SEQUENCES
     if global_sequences % denominator != 0:
         raise ValueError(
@@ -324,14 +429,19 @@ def finalize_config(config: ExperimentConfig) -> None:
         )
     log.info(
         "Long-context config: tokens=%s seq_len=%s global_sequences=%s "
-        "rank_microbatch_sequences=%s grad_accum_steps=%s lr=%s EP=off compile=%s "
-        "async_bookkeeping=%s",
+        "world=%s EP=%s EP_path=%s EP_DP=%s rank_microbatch_sequences=%s "
+        "grad_accum_steps=%s lr=%s hard_stop_steps=%s compile=%s async_bookkeeping=%s",
         f"{MAX_TOKENS:,}",
         f"{SEQUENCE_LENGTH:,}",
         global_sequences,
+        EXPECTED_WORLD_SIZE,
+        EP_SIZE,
+        EP_PATH.value if EP_SIZE > 1 else "off",
+        expert_dp_degree,
         RANK_MICROBATCH_SEQUENCES,
         global_sequences // denominator,
         LEARNING_RATE,
+        HARD_STOP_STEPS or "off",
         USE_COMPILE,
         ASYNC_BOOKKEEPING,
     )
@@ -339,7 +449,7 @@ def finalize_config(config: ExperimentConfig) -> None:
 
 def make_config(cli_context: CliContext) -> ExperimentConfig:
     if cli_context.cmd in {SubCmd.train, SubCmd.train_single, SubCmd.launch} and LOAD_PATH is None:
-        raise OLMoConfigurationError("OLMOE3_275M_LC_LOAD_PATH is required")
+        raise OLMoConfigurationError("OLMOE3_LC_LOAD_PATH is required")
     builder = partial(
         build_config,
         common_config_builder=build_local_common_components,
