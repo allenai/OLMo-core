@@ -247,6 +247,7 @@ EP_BACKEND=_env_choice(
     ("rowwise_nvshmem", "deepep_v2", "no_sync_1d"),
 )
 USE_ROWWISE_A2A=EP_BACKEND == "rowwise_nvshmem"
+USE_MOE_FP8_BACKEND=EP_BACKEND in ("rowwise_nvshmem", "deepep_v2")
 ROWWISE_BACKEND=_env_choice("OLMOE3_TESTRUN_ROWWISE_BACKEND", "nvshmem", ("nvshmem",))
 USE_FP8=_env_bool("OLMOE3_TESTRUN_USE_FP8", True)
 USE_FP8_ATTN_QKV=USE_FP8
@@ -361,7 +362,7 @@ def build_model_config(common: CommonComponents) -> OLMoDDPModelConfig:
             checkpoint_second_unpermute=False,
             rowwise_fp8=MoERowwiseFP8Config(
                 enabled=USE_FP8,
-            ) if USE_ROWWISE_A2A else None,
+            ) if USE_MOE_FP8_BACKEND else None,
             attention=AttentionConfig(
                 name=AttentionType.fused_v2,
                 # name=AttentionType.default,
@@ -449,7 +450,7 @@ def build_model_config(common: CommonComponents) -> OLMoDDPModelConfig:
         use_peri_norm=USE_PERI_NORM,
         rowwise_fp8=MoERowwiseFP8Config(
             enabled=USE_FP8,
-        ) if USE_ROWWISE_A2A else None,
+        ) if USE_MOE_FP8_BACKEND else None,
         attention=AttentionConfig(
             name=AttentionType.fused_v2,
             # name=AttentionType.default,

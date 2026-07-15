@@ -2696,6 +2696,10 @@ class OLMoDDPTrainModule(TrainModule):
             # for n, p in m.named_parameters():
             #     print(f'{n} {p.shape}: mean={p.data.mean().item()}, std={p.data.std().item()}')
 
+        self._prewarm_deepep_v2_runtimes(
+            model_parts=model_parts,
+            rank_microbatch_size=rank_microbatch_size,
+        )
         self._prewarm_ep_no_sync_symm_buffers(
             model_parts=model_parts,
             rank_microbatch_size=rank_microbatch_size,
@@ -2881,6 +2885,23 @@ class OLMoDDPTrainModule(TrainModule):
             model_parts=self.model_parts,
             context=context,
         )
+
+    def _prewarm_deepep_v2_runtimes(
+        self,
+        *,
+        model_parts,
+        rank_microbatch_size: int,
+    ) -> None:
+        if self.world_mesh.get("moe") is None:
+            return
+
+        prewarm_rank_microbatch_size = self._cp_local_rank_microbatch_size(
+            rank_microbatch_size
+        )
+        for model_part in model_parts:
+            cast(OLMoDDPModel, model_part).prewarm_deepep_v2_runtimes(
+                max_local_microbatch_size=prewarm_rank_microbatch_size,
+            )
 
     def _prewarm_ep_no_sync_symm_buffers(
         self,
