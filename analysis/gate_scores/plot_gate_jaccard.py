@@ -148,6 +148,15 @@ def len_label(L):
     return f"{L // 1024}k"
 
 
+def norm_sub(sub):
+    """``ruler_cwe__8192`` -> ``cwe`` (strip the ``ruler_`` prefix and ``__<len>`` suffix)."""
+    if not sub:
+        return sub
+    s = sub[len("ruler_"):] if sub.startswith("ruler_") else sub
+    i = s.rfind("__")
+    return s[:i] if i > 0 else s
+
+
 # --------------------------------------------------------------------------------------------------
 # Q1 -- cross-layer, same head
 # --------------------------------------------------------------------------------------------------
@@ -480,8 +489,9 @@ def _save(fig, outdir, name):
     print(f"wrote {path}")
 
 
-# subtask resolver installed at runtime (handles empty-subtask logs via --infer-subtask)
-_subs_of = lambda r: r.sub  # noqa: E731
+# subtask resolver installed at runtime (normalizes ``ruler_cwe__8192`` -> ``cwe``; --infer-subtask
+# overrides it for logs that store the subtask empty)
+_subs_of = lambda r: norm_sub(r.sub)  # noqa: E731
 
 
 def main():
@@ -527,7 +537,7 @@ def main():
 
         subs_order = order
     else:
-        present = sorted(s for s in subs_present(A["by_len"], B["by_len"]))
+        present = sorted(norm_sub(s) for s in subs_present(A["by_len"], B["by_len"]))
         subs_order = present
         if present == [""]:
             print("NOTE: subtask field empty in logs -> Q3/Q4 pooled into a single 'all' bar. "

@@ -30,6 +30,7 @@ import os
 import random
 import re
 import sys
+from collections import defaultdict
 
 
 def _paths(patterns):
@@ -151,6 +152,61 @@ def sample_random(paths, out, *, per_file, seed, keep_len=None, max_tries_mult=2
     return n_written, n_dropped_len
 
 
+def _subtask_from_prefix(ln, limit=2048):
+    """Read the top-level ``subtask`` string from a line's prefix (it precedes the giant ``layers``
+    payload) without json-parsing the whole ~MB record. Returns str or None."""
+    m = re.search(rb'"subtask":\s*"((?:[^"\\]|\\.)*)"', ln[:limit])
+    return m.group(1).decode("utf-8", "replace") if m else None
+
+
+def sample_balanced(paths, out, *, per_key, seed, keep_len=None, max_tries_mult=60):
+    """Byte-offset sample up to ``per_key`` distinct records *per subtask* per file -- covers every
+    RULER subtask instead of getting stuck in the first (huge) subtask block, as head-sampling does.
+    Subtask is read from each candidate's prefix so rejected lines are never fully parsed. Returns
+    (n_written, n_dropped_len)."""
+    rng = random.Random(seed)
+    files = [(p, os.path.getsize(p)) for p in paths if os.path.getsize(p) > 0]
+    n_written = 0
+    n_dropped_len = 0
+    for p, fsize in files:
+        counts = defaultdict(int)   # subtask -> kept
+        seen = set()                # (doc, tok) dedup
+        tries = 0
+        stall = 0
+        cap = max_tries_mult * per_key
+        with open(p, "rb") as fh:
+            while tries < cap:
+                tries += 1
+                ln = _read_line_at(fh, rng.randrange(fsize))
+                if not ln:
+                    continue
+                sub = _subtask_from_prefix(ln)
+                if sub is None or counts[sub] >= per_key:
+                    stall += 1
+                    if stall > 8000 and counts and all(v >= per_key for v in counts.values()):
+                        break  # every subtask seen so far is full and we keep re-landing on them
+                    continue
+                try:
+                    rec = json.loads(ln)
+                except Exception:
+                    continue
+                key = (rec.get("doc_id"), rec.get("decoded_token_num"))
+                if key in seen:
+                    continue
+                r = _emit(rec, out, keep_len=keep_len)
+                if r == -1:
+                    n_dropped_len += 1
+                elif r == 1:
+                    seen.add(key)
+                    counts[sub] += 1
+                    n_written += 1
+                    stall = 0
+        kept_by_sub = {k: v for k, v in sorted(counts.items())}
+        print(f"  {os.path.basename(p)}: kept {sum(counts.values())} records over "
+              f"{len(counts)} subtasks {kept_by_sub}", file=sys.stderr)
+    return n_written, n_dropped_len
+
+
 def sample_head(paths, out, *, per_file, keep_len=None):
     """Stream the first ``per_file`` records of each file (never seeks). Records are in decode order
     (doc 0 tok 1, doc 0 tok 2, ...), so head-sampling yields the *same* (doc, tok) keys across models
@@ -189,9 +245,12 @@ def main():
     ap.add_argument("--len", type=int, default=None,
                     help="expected context_len; records with a different len are dropped (safety filter)")
     ap.add_argument("--per-file", type=int, default=800, help="max records to keep per worker file")
-    ap.add_argument("--mode", choices=["head", "random"], default="head",
-                    help="head: first N records (decode order; aligns docs across models -> use for "
-                         "cross-model Q4). random: byte-offset sample (unaligned but unbiased).")
+    ap.add_argument("--mode", choices=["head", "random", "balanced"], default="head",
+                    help="head: first N records (decode order; multiple tokens per example, but stays "
+                         "in the first subtask -> use for Q1/Q2/Q5). balanced: --per-key records per "
+                         "subtask via byte-offset sampling (covers all subtasks -> use for Q3/Q4; both "
+                         "models share doc ids so cross-model keys overlap). random: plain byte-offset.")
+    ap.add_argument("--per-key", type=int, default=80, help="balanced mode: records per subtask per file")
     ap.add_argument("--seed", type=int, default=0)
     args = ap.parse_args()
 
@@ -204,6 +263,10 @@ def main():
     with open(args.out, "w") as w:
         if args.mode == "head":
             n_total, n_dropped_len = sample_head(paths, w, per_file=args.per_file, keep_len=args.len)
+        elif args.mode == "balanced":
+            n_total, n_dropped_len = sample_balanced(
+                paths, w, per_key=args.per_key, seed=args.seed, keep_len=args.len
+            )
         else:
             n_total, n_dropped_len = sample_random(
                 paths, w, per_file=args.per_file, seed=args.seed, keep_len=args.len
