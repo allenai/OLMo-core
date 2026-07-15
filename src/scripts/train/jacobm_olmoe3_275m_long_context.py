@@ -70,6 +70,7 @@ from olmo_core.train import Duration, LoadStrategy, TrainerConfig
 from olmo_core.train.callbacks import (
     BeakerCallback,
     CheckpointerCallback,
+    CheckpointRemovalStrategy,
     ConfigSaverCallback,
     DownstreamEvaluatorCallbackConfig,
     LMEvaluatorCallbackConfig,
@@ -128,6 +129,9 @@ EVAL_ON_FINISH = lc_bool("EVAL_ON_FINISH", False)
 ASYNC_BOOKKEEPING = lc_bool("ASYNC_BOOKKEEPING", False)
 SAVE_INTERVAL = int(cast(str, lc_env("SAVE_INTERVAL", "5000")))
 EPHEMERAL_SAVE_INTERVAL = int(cast(str, lc_env("EPHEMERAL_SAVE_INTERVAL", "1000")))
+CHECKPOINT_REMOVAL = CheckpointRemovalStrategy(
+    cast(str, lc_env("CHECKPOINT_REMOVAL", CheckpointRemovalStrategy.ephemeral_only.value))
+)
 
 LOAD_PATH = lc_env("LOAD_PATH")
 SAVE_ROOT = cast(
@@ -331,6 +335,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 # OLMoDDPTrainModule does not implement async checkpoint staging.
                 save_async=False,
                 pre_train_checkpoint=False,
+                remove=CHECKPOINT_REMOVAL,
             ),
         )
         .with_callback("speed_monitor", SpeedMonitorCallback())

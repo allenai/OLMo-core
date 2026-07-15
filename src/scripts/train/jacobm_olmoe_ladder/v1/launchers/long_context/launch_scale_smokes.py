@@ -46,9 +46,11 @@ def validate(manifest: dict[str, Any], source_repo: Path) -> list[dict[str, Any]
     if global_batch % sequence_length:
         raise ValueError("Global batch must contain a whole number of sequences")
     global_sequences = global_batch // sequence_length
-    rows = manifest.get("smokes")
+    rows = manifest.get("runs")
+    if rows is None:
+        rows = manifest.get("smokes")
     if not isinstance(rows, list) or not rows:
-        raise ValueError("Manifest must contain at least one smoke")
+        raise ValueError("Manifest must contain at least one run")
     names: set[str] = set()
     run_names: set[str] = set()
     for row in rows:
@@ -105,6 +107,7 @@ def build_task(
             env_var("OLMOE3_LC_WORK_DIR", training["work_dir"]),
             env_var("OLMOE3_LC_SEQUENCE_LENGTH", training["sequence_length"]),
             env_var("OLMOE3_LC_GLOBAL_BATCH_SIZE", training["global_batch_size"]),
+            env_var("OLMOE3_LC_MAX_TOKENS", training.get("max_tokens", 100_000_000_000)),
             env_var("OLMOE3_LC_RANK_MICROBATCH_SEQUENCES", row["rank_microbatch_sequences"]),
             env_var("OLMOE3_LC_WORLD_SIZE", row["gpu_count"]),
             env_var("OLMOE3_LC_EP_SIZE", row["expert_parallel_size"]),
@@ -114,6 +117,17 @@ def build_task(
             env_var("OLMOE3_LC_HARD_STOP_STEPS", training["hard_stop_steps"]),
             env_var("OLMOE3_LC_SAVE_INTERVAL", training["save_interval"]),
             env_var("OLMOE3_LC_EPHEMERAL_SAVE_INTERVAL", training["ephemeral_save_interval"]),
+            env_var(
+                "OLMOE3_LC_CHECKPOINT_REMOVAL",
+                training.get("checkpoint_removal", "ephemeral_only"),
+            ),
+            env_var("OLMOE3_LC_EVAL_INTERVAL", training.get("eval_interval", 1000)),
+            env_var("OLMOE3_LC_EVAL_STEPS", training.get("eval_steps", 0)),
+            env_var("OLMOE3_LC_EVAL_TASK_SET", training.get("eval_task_set", "fast")),
+            env_var(
+                "OLMOE3_LC_EVAL_ON_FINISH",
+                int(bool(training.get("eval_on_finish", False))),
+            ),
             env_var("OLMOE3_LC_USE_COMPILE", int(bool(training["compile"]))),
             env_var("OLMOE3_LC_WANDB", int(bool(training["wandb"]))),
             env_var("OLMOE3_LC_EVALS", int(bool(training["evals"]))),
@@ -139,7 +153,7 @@ def build_task(
         "context": {
             "priority": str(beaker["priority"]),
             "minRuntime": str(beaker["min_runtime"]),
-            "autoResume": False,
+            "autoResume": bool(beaker.get("auto_resume", False)),
         },
         "constraints": {"cluster": [str(beaker["cluster"])]},
         "hostNetworking": True,
@@ -155,6 +169,11 @@ def main() -> None:
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--task", action="append", default=[])
     parser.add_argument("--experiment-name")
+    parser.add_argument(
+        "--allow-existing",
+        action="store_true",
+        help="Allow submission when a run directory exists so Beaker can resume it.",
+    )
     parser.add_argument("--submit", action="store_true")
     args = parser.parse_args()
 
@@ -198,7 +217,7 @@ def main() -> None:
     existing = [
         root / str(row["run_name"]) for row in rows if (root / str(row["run_name"])).exists()
     ]
-    if existing:
+    if existing and not args.allow_existing:
         raise RuntimeError(
             "Refusing to submit existing checkpoint directories:\n"
             + "\n".join(f"  - {path}" for path in existing)

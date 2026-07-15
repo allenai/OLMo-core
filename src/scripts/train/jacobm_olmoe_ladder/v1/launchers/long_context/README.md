@@ -33,3 +33,31 @@ The production recommendation is EP1: both EP1 configurations clear the
 600-TFLOPs/GPU target, while 1.2B EP8 is about 15% slower than 1.2B EP1. EP8
 MB8 also cannot fit because its compiled logits-gradient buffer requests an
 additional 98 GiB during backward.
+
+## Full integration-wide continuations
+
+The full 810M and 1.2B runs are defined in
+`manifests/integration_wide_scale_full.yaml`. Render and inspect them with:
+
+```bash
+uv run --no-sync python \
+  src/scripts/train/jacobm_olmoe_ladder/v1/launchers/long_context/launch_scale_smokes.py \
+  --manifest src/scripts/train/jacobm_olmoe_ladder/v1/launchers/long_context/manifests/integration_wide_scale_full.yaml \
+  --output src/scripts/train/jacobm_olmoe_ladder/v1/launchers/long_context/generated/integration_wide_scale_full.yaml
+```
+
+Both runs use 100B tokens, 64k sequences, a 4 Mi-token global batch, LR `2e-5`,
+8 Holmes B300s, EP1, in-loop fast evals every 2,000 steps, permanent checkpoints
+every 5,000 steps, and rolling ephemeral checkpoints every 1,000 steps. Beaker
+auto-resume is enabled; the trainer checks the run's save folder before falling
+back to the source checkpoint in GCS.
+
+The fixed 2,000-step warmup followed by constant LR is an acknowledged v1
+schedule mistake. It is intentionally retained for these final v1 runs so they
+remain comparable with completed 275M/480M long-context runs. The v2 experiment
+queue records a controlled transition to the percentage-based pretraining
+schedule. Do not change the schedule within this wave.
+
+The launcher refuses an existing run directory by default. Use
+`--allow-existing` only when deliberately requeueing an interrupted run; the
+trainer will then resume from the latest checkpoint in that directory.

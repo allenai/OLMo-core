@@ -44,3 +44,18 @@ Cx has a finished, bracketed LR sweep under the rules in
 
 The original migration-era statement of this plan remains in the repository
 root at `JACOBM_MIGRATION_PLAN.md`; this file is the live v2 queue.
+
+## Training-schedule transition
+
+The v1 pretraining ladder used a 10%-of-training linear warmup followed by
+cosine decay to 0.1x peak LR. Midtraining and long-context adaptation instead
+used a fixed 2,000-step linear warmup followed by constant LR. That discrepancy
+was accidental, but the remaining v1 long-context continuations (including
+810M and 1.2B integration-wide) must retain the fixed-2,000-step schedule so the
+wave remains internally comparable.
+
+Before promoting the v2 recipe, run controlled scheduler experiments that
+change only the schedule. Compare the v1 incumbent against the pretraining
+schedule separately for midtraining and long-context adaptation, starting with
+a smaller representative model before applying the result across the ladder.
+Do not silently mix the new schedule into the remaining v1 runs.
