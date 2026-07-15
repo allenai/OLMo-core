@@ -160,6 +160,25 @@ marks them finished.
 | 1.2B | 1 | `4e-4` | 262,144 | 8 | EP8 / `sync_1d` | 8 | 4 | [01KXJAPHHB8MBPD1B3E92QH89Y](https://beaker.org/ex/01KXJAPHHB8MBPD1B3E92QH89Y) | [xapobmqb](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/xapobmqb) | running, step 17,162/86,558 (19.8%) |
 | 1.2B | 2 | `6e-4` | 393,216 | 8 | EP8 / `sync_1d` | 12 | 4 | [initial](https://beaker.org/ex/01KXJAPHN6SNXMG7X49M7HH17G) / [resume 1](https://beaker.org/ex/01KXK9R5PMR9GXBC0RMSDY2V13) / [resume 2](https://beaker.org/ex/01KXKEEFKYPGQAVWS024PTGCPK) | [initial](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/l4r1crzm) / [resume 1](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/bwvkwb9s) / [resume 2](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/jsb3obpq) | stopped after third node Xid 31; durable `step6000` |
 
+## Full hybrid scale Cx4/Cx8 runs
+
+- Manifest: [`launchers/pretraining/manifests/hybrid_scale_full_cx4_cx8.yaml`](launchers/pretraining/manifests/hybrid_scale_full_cx4_cx8.yaml)
+- Launcher: [`launchers/pretraining/launch_hybrid_scale_full_cx4_cx8.sh`](launchers/pretraining/launch_hybrid_scale_full_cx4_cx8.sh)
+- Beaker experiment: [01KXKTT3ZT5G4V9QTFBR6MKGEZ](https://beaker.org/ex/01KXKTT3ZT5G4V9QTFBR6MKGEZ)
+- W&B project/group: `ai2-llm/jacobm-olmoe-ladder` / `olmoe3-integration-wide-hybrid-scale`
+- Checkpoint and evaluation policies match the Cx1/Cx2 production runs.
+
+Submitted 2026-07-15 at urgent priority on `ai2/holmes`, requesting 32 B300
+GPUs. LRs are the observed optimal wide-intervention LRs for the matching size
+and data multiple.
+
+| Size | Cx | LR | Global batch | GPUs | EP/path | Rank MB | Accum | Job | W&B | Status |
+|---|---:|---:|---:|---:|---|---:|---:|---|---|---|
+| 810M | 4 | `4e-4` | 524,288 | 8 | EP1 | 4 | 2 | [01KXKTT4G4QT56NGHKWSVXWEX6](https://beaker.org/ex/01KXKTT4G4QT56NGHKWSVXWEX6) | pending | scheduled |
+| 810M | 8 | `4e-4` | 786,432 | 8 | EP1 | 6 | 2 | [01KXKTT4KPQRMJ0E1DF5GPS26A](https://beaker.org/ex/01KXKTT4KPQRMJ0E1DF5GPS26A) | pending | scheduled |
+| 1.2B | 4 | `3e-4` | 524,288 | 8 | EP8 / `sync_1d` | 8 | 8 | [01KXKTT4R8MANSKM43DEJB02GC](https://beaker.org/ex/01KXKTT4R8MANSKM43DEJB02GC) | pending | queued |
+| 1.2B | 8 | `4e-4` | 786,432 | 8 | EP8 / `sync_1d` | 12 | 8 | [01KXKTT4W01BXNZ5WRD40BT2QG](https://beaker.org/ex/01KXKTT4W01BXNZ5WRD40BT2QG) | pending | queued |
+
 ## New wave template
 
 | Intervention | Manifest | Beaker experiment | W&B group | Status | Decision |

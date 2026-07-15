@@ -29,6 +29,9 @@ src/scripts/train/jacobm_olmoe_ladder/v2/launchers/pretraining/launch_hybrid_sca
 # Render only the two 1.2B synchronized EP8 probes.
 src/scripts/train/jacobm_olmoe_ladder/v2/launchers/pretraining/launch_hybrid_scale_smokes.sh \
   --task 1p2b-cx1-mb8-ep8-sync --task 1p2b-cx2-mb12-ep8-sync
+
+# Inspect the promoted 810M/1.2B Cx4/Cx8 production jobs.
+src/scripts/train/jacobm_olmoe_ladder/v2/launchers/pretraining/launch_hybrid_scale_full_cx4_cx8.sh
 ```
 
 The scale launcher copies the Beaker wrapper to node-local `/tmp` before

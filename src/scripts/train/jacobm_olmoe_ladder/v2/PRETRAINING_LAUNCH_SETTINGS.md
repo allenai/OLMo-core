@@ -1,9 +1,8 @@
 # Hybrid pretraining launch settings
 
-This note collects, but does not launch, the promoted `expand_v=1` hybrid Cx1
-and Cx2 runs at 480M, 810M, and 1.2B. Microbatch and expert-parallel choices are
-provisional until short Holmes B300 measurements establish the fastest legal
-configuration that fits.
+This note records the promoted `expand_v=1` hybrid runs at 480M, 810M, and
+1.2B. Holmes B300 smoke measurements established the production microbatch and
+expert-parallel settings used below.
 
 ## Fixed scientific settings
 
@@ -14,7 +13,8 @@ configuration that fits.
 - Retain RoPE, initialization standard deviation `0.01`, the wide global-layer
   placement, MoE geometry, dense-first-FFN block, norms, and bias settings.
 - Preserve the canonical optimizer batches: Cx1 is 32 sequences / 262,144
-  tokens; Cx2 is 48 sequences / 393,216 tokens.
+  tokens; Cx2 is 48 sequences / 393,216 tokens; Cx4 is 64 sequences / 524,288
+  tokens; Cx8 is 96 sequences / 786,432 tokens.
 - Use the existing optimizer and token-based schedule: 10% linear warmup,
   cosine decay to 10% of peak LR, weight decay `0.1`, betas `(0.9, 0.95)`, and
   the established no-decay/expert optimizer groups.
@@ -38,6 +38,10 @@ config. Steps are the first complete optimizer step at or beyond the target.
 | 810M | 2 | `5.6e-4` | 730,950,232 | 29,238,009,280 | 393,216 | 74,357 | 29,238,362,112 |
 | 1.2B | 1 | `4e-4` | 1,134,521,920 | 22,690,438,400 | 262,144 | 86,558 | 22,690,660,352 |
 | 1.2B | 2 | `6e-4` | 1,134,521,920 | 45,380,876,800 | 393,216 | 115,410 | 45,381,058,560 |
+| 810M | 4 | `4e-4` | 730,950,232 | 58,476,018,560 | 524,288 | 111,535 | 58,476,462,080 |
+| 810M | 8 | `4e-4` | 730,950,232 | 116,952,037,120 | 786,432 | 148,713 | 116,952,662,016 |
+| 1.2B | 4 | `3e-4` | 1,134,521,920 | 90,761,753,600 | 524,288 | 173,115 | 90,762,117,120 |
+| 1.2B | 8 | `4e-4` | 1,134,521,920 | 181,523,507,200 | 786,432 | 230,820 | 181,524,234,240 |
 
 ## Historical wide-integration launch reference
 
@@ -143,3 +147,20 @@ was automatically removed.
 
 The promoted six-run Cx1/Cx2 allocation requires 40 concurrent GPUs: two
 four-GPU 480M jobs and four eight-GPU 810M/1.2B jobs.
+
+## Promoted 810M/1.2B Cx4/Cx8 settings
+
+The Cx4/Cx8 production jobs reuse the demonstrated-fit Cx1/Cx2 microbatch
+ceilings when they divide the canonical optimizer batch. The architecture and
+8k sequence shape are unchanged, so no additional smoke round is needed.
+
+| Size | Cx | GPUs | EP / path | Rank MB | Accum | Transferred LR |
+|---|---:|---:|---|---:|---:|---:|
+| 810M | 4 | 8 | EP1 | 4 | 2 | `4e-4` |
+| 810M | 8 | 8 | EP1 | 6 | 2 | `4e-4` |
+| 1.2B | 4 | 8 | EP8 / `sync_1d` | 8 | 8 | `3e-4` |
+| 1.2B | 8 | 8 | EP8 / `sync_1d` | 12 | 8 | `4e-4` |
+
+These four jobs were submitted together on 2026-07-15 as Beaker experiment
+[`01KXKTT3ZT5G4V9QTFBR6MKGEZ`](https://beaker.org/ex/01KXKTT3ZT5G4V9QTFBR6MKGEZ),
+requesting 32 B300 GPUs at urgent priority.
