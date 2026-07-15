@@ -187,6 +187,7 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
         libibverbs-dev \
         ibverbs-providers \
         ibverbs-utils \
+        infiniband-diags \
         librdmacm1 \
         librdmacm-dev \
         perftest \
