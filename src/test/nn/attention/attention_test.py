@@ -18,6 +18,7 @@ from olmo_core.nn.attention import (
     AttentionConfig,
     AttentionType,
     FusedAttention,
+    FusedAttentionV2,
     GateConfig,
     GateGranularity,
     NormalizedAttention,
@@ -1461,3 +1462,49 @@ def test_attention_sinks_softmax_matches_sdpa_when_inactive():
         sink_out = with_sinks(x)
         plain_out = without_sinks(x)
     torch.testing.assert_close(sink_out, plain_out, rtol=1e-4, atol=1e-4)
+
+
+def test_fused_attention_v2_matches_standard_attention():
+    from olmo_core.nn.mxfp8_linear import MXFP8Linear
+
+    seed_all(0)
+    d_model = 64
+    fused = FusedAttentionV2(
+        d_model=d_model,
+        n_heads=4,
+        n_kv_heads=2,
+        head_dim=16,
+        bias=False,
+        backend=AttentionBackendName.torch,
+    )
+    # Non-MXFP8 projections should be plain Linear layers.
+    assert isinstance(fused.w_qkv, torch.nn.Linear)
+    assert not isinstance(fused.w_qkv, MXFP8Linear)
+
+    standard = Attention(
+        d_model=d_model,
+        n_heads=4,
+        n_kv_heads=2,
+        head_dim=16,
+        bias=False,
+        backend=AttentionBackendName.torch,
+    )
+    # Copy the packed QKV projection into the standard attention's separate Q/K/V projections.
+    q_dim, kv_dim = 4 * 16, 2 * 16
+    with torch.no_grad():
+        standard.w_q.weight.copy_(fused.w_qkv.weight[:q_dim])
+        standard.w_k.weight.copy_(fused.w_qkv.weight[q_dim : q_dim + kv_dim])
+        standard.w_v.weight.copy_(fused.w_qkv.weight[q_dim + kv_dim :])
+        standard.w_out.weight.copy_(fused.w_out.weight)
+
+    x = torch.randn(2, 8, d_model)
+    with torch.no_grad():
+        torch.testing.assert_close(fused(x), standard(x))
+
+
+def test_attention_config_rejects_mxfp8_on_non_fused_v2():
+    config = AttentionConfig(
+        name=AttentionType.default, n_heads=4, head_dim=16, mxfp8_projections=True
+    )
+    with pytest.raises(OLMoConfigurationError, match="fused_v2"):
+        config.build(64, layer_idx=0, n_layers=1)
