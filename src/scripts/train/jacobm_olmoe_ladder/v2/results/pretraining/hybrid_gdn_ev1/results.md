@@ -1,6 +1,6 @@
 # Active hybrid GDN intervention
 
-Generated: `2026-07-15T17:26:48.547325+00:00`
+Generated: `2026-07-15T20:57:58.231858+00:00`
 
 Selection metric: final `250M`-token mean training CE. Only finished runs are eligible.
 The optimal-LR summary includes only bracketed 275M sweeps with a valid quadratic fit.
@@ -17,7 +17,7 @@ Fitted LR minima in the 275M U-plot are visual aids and are never used to select
 | 275m | Cx8 | LR sweep | provisional (3/4) | 2.419273 (0.0008) | 2.396380 (0.0016) | -0.022893 |
 | 480m | Cx1 | fixed-LR transfer | finished | 2.543281 (0.0012) | 2.510874 (0.0012) | -0.032407 |
 | 480m | Cx2 | fixed-LR transfer | finished | 2.423888 (0.0009) | 2.412790 (0.0009) | -0.011097 |
-| 810m | Cx1 | fixed-LR transfer | pending | 2.373197 (0.0006) | — | — |
+| 810m | Cx1 | fixed-LR transfer | finished | 2.373197 (0.0006) | 2.364345 (0.0006) | -0.008852 |
 | 810m | Cx2 | fixed-LR transfer | pending | 2.268948 (0.00056) | — | — |
 | 1p2b | Cx1 | fixed-LR transfer | pending | 2.273062 (0.0004) | — | — |
 | 1p2b | Cx2 | fixed-LR transfer | pending | 2.178332 (0.0006) | — | — |
@@ -59,6 +59,7 @@ Fitted LR minima in the 275M U-plot are visual aids and are never used to select
 | 480m | wide integration (SWA) | 1 | 0.0012 | finished | 7.672 | 2.543281 | [z4wxvc6h](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/z4wxvc6h) |
 | 480m | hybrid (GDN, expand_v=1) | 2 | 0.0009 | finished | 15.939 | 2.412790 | [4vzmrld1](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/4vzmrld1) |
 | 480m | wide integration (SWA) | 2 | 0.0009 | finished | 15.344 | 2.423888 | [ywj13bkw](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/ywj13bkw) |
+| 810m | hybrid (GDN, expand_v=1) | 1 | 0.0006 | finished | 14.619 | 2.364345 | [h1rmcm2p](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/h1rmcm2p) |
 | 810m | wide integration (SWA) | 1 | 0.0006 | finished | 13.903 | 2.373197 | [w912irkq](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/w912irkq) |
 | 810m | wide integration (SWA) | 2 | 0.00056 | finished | 27.805 | 2.268948 | [jpbqhfvc](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/jpbqhfvc) |
 | 1p2b | wide integration (SWA) | 1 | 0.0004 | finished | 21.417 | 2.273062 | [hww8eksq](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/hww8eksq) |

@@ -6,14 +6,23 @@ All runs use 64k sequences, a 100B-token budget, 8 Holmes B300s, DDP, no expert
 parallelism, no context parallelism, block recomputation, and a fresh optimizer.
 Learning rate is one half of the source midtraining LR.
 
-| Size | Family | LR | Global batch | Rank microbatch | Beaker experiment | Job | W&B | Current state (2026-07-15 17:00 UTC) |
+The remaining V1 long-context runs deliberately retain the established V1
+schedule: 2,000 fixed linear warmup steps followed by a constant LR. This keeps
+them comparable to the completed 275M/480M continuations. The intended switch
+to the pretraining-style 10%-of-training warmup plus cosine decay is recorded as
+a controlled V2 experiment in `../v2/NEXT_EXPERIMENTS.md`; it must not be mixed
+into the remaining V1 runs.
+
+| Size | Family | LR | Global batch | Rank microbatch | Beaker experiment | Job | W&B | Current state (2026-07-15 21:03 UTC) |
 |---|---|---:|---:|---:|---|---|---|---|
 | 275M | baseline | `1e-4` | 2 Mi tokens | 4 seq | [`01KXEW4KTBWXMY9XPYANZ6T7YD`](https://beaker.org/ex/01KXEW4KTBWXMY9XPYANZ6T7YD) | `01KXEW4M665ZHPG6SCV25N533Q` | [`e4hvrd33`](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/e4hvrd33) | finished, step 47,684 / 100.001B tokens |
 | 275M | integration deep | `8e-5` | 2 Mi tokens | 4 seq | [`01KXFP8ZKCB5BBMX5WY9MV5WWW`](https://beaker.org/ex/01KXFP8ZKCB5BBMX5WY9MV5WWW) | `01KXFP8ZYY404ABS636ANN09HX` | [`hq0yjd50`](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/hq0yjd50) | finished, step 47,684 / 100.001B tokens |
 | 275M | integration wide | `8e-5` | 2 Mi tokens | 4 seq | [`01KXFPTD55Y7JDRM27995GFX61`](https://beaker.org/ex/01KXFPTD55Y7JDRM27995GFX61) | `01KXFPTDKAZ85835R6QV1ABKC8` | [`zm8iut38`](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/zm8iut38) | finished, step 47,684 / 100.001B tokens |
 | 480M | baseline | `4e-5` | 3 Mi tokens | 6 seq | [`01KXFP8ZKCB5BBMX5WY9MV5WWW`](https://beaker.org/ex/01KXFP8ZKCB5BBMX5WY9MV5WWW) | `01KXFP902AXYVT672A1JMC5Z5E` | [`9lgu2exp`](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/9lgu2exp) | finished, step 31,790 / 100.003B tokens |
-| 480M | integration deep | `4e-5` | 3 Mi tokens | 6 seq | [`01KXFP8ZKCB5BBMX5WY9MV5WWW`](https://beaker.org/ex/01KXFP8ZKCB5BBMX5WY9MV5WWW) | `01KXFP905NYT6E9AAYP288Q6YD` | [`32yjntyu`](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/32yjntyu) | running, step 26,739/31,790 (84.1%) |
-| 480M | integration wide | `4e-5` | 3 Mi tokens | 6 seq | [`01KXFQJ6M4HDHJ50WVS4ECB8KK`](https://beaker.org/ex/01KXFQJ6M4HDHJ50WVS4ECB8KK) | `01KXFQJ70Y3ZAV6KEPQJE59RSK` | [`3357zlh6`](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/3357zlh6) | running, step 30,039/31,790 (94.5%) |
+| 480M | integration deep | `4e-5` | 3 Mi tokens | 6 seq | [`01KXFP8ZKCB5BBMX5WY9MV5WWW`](https://beaker.org/ex/01KXFP8ZKCB5BBMX5WY9MV5WWW) | `01KXFP905NYT6E9AAYP288Q6YD` | [`32yjntyu`](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/32yjntyu) | running, step 29,872/31,790 (94.0%) |
+| 480M | integration wide | `4e-5` | 3 Mi tokens | 6 seq | [`01KXFQJ6M4HDHJ50WVS4ECB8KK`](https://beaker.org/ex/01KXFQJ6M4HDHJ50WVS4ECB8KK) | `01KXFQJ70Y3ZAV6KEPQJE59RSK` | [`3357zlh6`](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/3357zlh6) | finished, step 31,790 / 100.003B tokens |
+| 810M | integration wide | `2e-5` | 4 Mi tokens | 4 seq x 2 accum | [`01KXKR6GQJVTQNH89JM5XDJG2S`](https://beaker.org/ex/01KXKR6GQJVTQNH89JM5XDJG2S) | `01KXKR6H5CSHAZP4ZP0TE33V9T` | [`ayiz8iiy`](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/ayiz8iiy) | GCS load/dry run passed; training at 627.6 TFLOPs/GPU |
+| 1.2B | integration wide | `2e-5` | 4 Mi tokens | 2 seq x 4 accum | [`01KXKR6GQJVTQNH89JM5XDJG2S`](https://beaker.org/ex/01KXKR6GQJVTQNH89JM5XDJG2S) | `01KXKR6HBJH957BFTZYHBN5Z5C` | [`wx24jlwm`](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/wx24jlwm) | GCS load/dry run passed; training at 681.6 TFLOPs/GPU |
 
 ## 275M integration-wide hybrid control
 
@@ -77,4 +86,4 @@ use urgent priority on Holmes, and retain the original per-Cx batch settings.
 | 1 | `4e-4` | 262,144 | 16 seq | 1 | 4,222,483,520 | 16,108 | [`01KXHZNJGGRPHHN4PYYG90T9AP`](https://beaker.org/ex/01KXHZNJGGRPHHN4PYYG90T9AP) | [`fkm77yos`](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/fkm77yos) | finished |
 | 2 | `4e-4` | 393,216 | 8 seq | 3 | 8,444,967,040 | 21,477 | [`01KXHZNJKTW5ZFH2F7BT01GQPB`](https://beaker.org/ex/01KXHZNJKTW5ZFH2F7BT01GQPB) | [`s5qmhyb2`](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/s5qmhyb2) | finished |
 | 4 | `3.2e-3` | 524,288 | 16 seq | 2 | 16,889,934,080 | 32,215 | [`01KXHZNJQ84EGNZYZ8N7KBAR43`](https://beaker.org/ex/01KXHZNJQ84EGNZYZ8N7KBAR43) | [`sr1jgmao`](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/sr1jgmao) | finished |
-| 8 | `3.2e-3` | 786,432 | 16 seq | 3 | 33,779,868,160 | 42,954 | [initial](https://beaker.org/ex/01KXHZNJTHJH9K7X88TJA5Q537) / [resume](https://beaker.org/ex/01KXKBZK6FKCM081WJH3YP82TX) | [initial](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/f7lbyrfl) / [resume](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/ntoo8vlo) | resumed from durable `step29000`; running |
+| 8 | `3.2e-3` | 786,432 | 16 seq | 3 | 33,779,868,160 | 42,954 | [initial](https://beaker.org/ex/01KXHZNJTHJH9K7X88TJA5Q537) / [resume](https://beaker.org/ex/01KXKBZK6FKCM081WJH3YP82TX) | [initial](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/f7lbyrfl) / [resume](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/ntoo8vlo) | running, step 38,758/42,954 (90.2%) |

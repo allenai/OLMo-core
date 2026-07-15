@@ -30,7 +30,7 @@ wave is the GDN hybrid (`expand_v=1`): a 275M LR sweep at Cx1/2/4/8 plus the
 480M, 810M, and 1.2B Cx1/Cx2 fixed-LR scale runs.
 
 ```bash
-.venv/bin/python \
+uv run --with wandb --with matplotlib python \
   src/scripts/train/jacobm_olmoe_ladder/v2/plot_pretraining_wave.py \
   --wave hybrid_gdn_ev1 --refresh-stale-cache
 ```

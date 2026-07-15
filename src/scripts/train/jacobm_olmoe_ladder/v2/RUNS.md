@@ -19,11 +19,11 @@ job IDs and W&B IDs once they exist. Detailed migration-era DDP jobs remain in
   and
   [`results/pretraining/hybrid_gdn_ev1/results.md`](results/pretraining/hybrid_gdn_ev1/results.md)
 
-Status on 2026-07-15 17:11 UTC: the original grid and the added Cx1/Cx2 `4e-4`
+Status on 2026-07-15 20:59 UTC: the original grid and the added Cx1/Cx2 `4e-4`
 and Cx4 `3.2e-3` points are complete. The Cx8 `3.2e-3` run was interrupted by
-a Holmes node Xid 31 failure at step 29,498/42,954 and has now resumed from its
-durable `step29000` checkpoint. Cx8 remains withheld from the optimal-LR summary
-until that hot-side point finishes.
+a Holmes node Xid 31 failure at step 29,498/42,954, resumed from its durable
+`step29000` checkpoint, and is now at step 38,758/42,954 (90.2%). Cx8 remains
+withheld from the optimal-LR summary until that hot-side point finishes.
 
 | Cx | LR | Global batch | Rank microbatch | Accumulation | Job | W&B | Status |
 |---:|---:|---:|---:|---:|---|---|---|
@@ -42,7 +42,7 @@ until that hot-side point finishes.
 | 8 | `4e-4` | 786,432 | 16 | 3 | [01KXFSA1GT8JJWTVMSNXF428XW](https://beaker.org/ex/01KXFSA1GT8JJWTVMSNXF428XW) | [b0z3qfmi](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/b0z3qfmi) | finished |
 | 8 | `8e-4` | 786,432 | 16 | 3 | [01KXFSA1M6ZR3JCNXB2VQ9K04J](https://beaker.org/ex/01KXFSA1M6ZR3JCNXB2VQ9K04J) | [rkxojd03](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/rkxojd03) | finished |
 | 8 | `1.6e-3` | 786,432 | 16 | 3 | [01KXFSA1QH0T6YHPV54FMR88AA](https://beaker.org/ex/01KXFSA1QH0T6YHPV54FMR88AA) | [66aja50m](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/66aja50m) | finished |
-| 8 | `3.2e-3` | 786,432 | 16 | 3 | [initial](https://beaker.org/ex/01KXHZNJTHJH9K7X88TJA5Q537) / [resume](https://beaker.org/ex/01KXKBZK6FKCM081WJH3YP82TX) | [initial](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/f7lbyrfl) / [resume](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/ntoo8vlo) | resumed from `step29000`; running |
+| 8 | `3.2e-3` | 786,432 | 16 | 3 | [initial](https://beaker.org/ex/01KXHZNJTHJH9K7X88TJA5Q537) / [resume](https://beaker.org/ex/01KXKBZK6FKCM081WJH3YP82TX) | [initial](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/f7lbyrfl) / [resume](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/ntoo8vlo) | running, step 38,758/42,954 (90.2%) |
 
 ## Hybrid scale microbatch smokes
 
@@ -138,24 +138,27 @@ Submitted 2026-07-15 at urgent priority on `ai2/holmes` using 40 requested B300
 GPUs. LRs are the observed optimal wide-intervention LRs for each matching size
 and data multiple.
 
-Status on 2026-07-15 17:11 UTC: both 480M runs finished with final checkpoints
-and final evals. The 810M Cx1/Cx2 and 1.2B Cx1 runs remain healthy. The 1.2B
-Cx2 job was terminated when its Holmes node was cordoned for an unrecoverable
-Xid 31; its replacement resumed from `step2500`, has passed step 3,500, and is
-running normally.
+Status on 2026-07-15 20:59 UTC: both 480M runs and the 810M Cx1 run finished
+with final checkpoints and final evals. The 810M Cx2 and 1.2B Cx1 runs remain
+healthy. Three successive 1.2B Cx2 attempts were terminated when their Holmes
+nodes were cordoned for unrecoverable Xid 31 errors. The latest attempt reached
+the durable `step6000` checkpoint before failing during its step-6,000 LM eval;
+no 1.2B Cx2 job is currently running.
 
-The completed 480M Cx1/Cx2 losses are included in the consolidated fixed-LR
-scale-transfer plot. The registered 810M and 1.2B runs will enter that plot only
-after W&B marks them finished.
+The completed 480M Cx1/Cx2 and 810M Cx1 losses are included in the consolidated
+fixed-LR scale-transfer plot. At the transferred LR, hybrid 810M Cx1 has
+final-250M CE 2.364345 versus 2.373197 for wide integration (delta -0.008852).
+The remaining registered 810M and 1.2B runs will enter that plot only after W&B
+marks them finished.
 
 | Size | Cx | LR | Global batch | GPUs | EP/path | Rank MB | Accum | Job | W&B | Status |
 |---|---:|---:|---:|---:|---|---:|---:|---|---|---|
 | 480M | 1 | `1.2e-3` | 262,144 | 4 | EP1 | 8 | 1 | [01KXJAPH2DP3XSCHX1A637SN7K](https://beaker.org/ex/01KXJAPH2DP3XSCHX1A637SN7K) | [wl8ebsd8](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/wl8ebsd8) | finished |
 | 480M | 2 | `9e-4` | 393,216 | 4 | EP1 | 12 | 1 | [01KXJAPH62PWXK2B53PKT14M08](https://beaker.org/ex/01KXJAPH62PWXK2B53PKT14M08) | [4vzmrld1](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/4vzmrld1) | finished |
-| 810M | 1 | `6e-4` | 262,144 | 8 | EP1 | 4 | 1 | [01KXJAPH9V450M32SJC5G4KN93](https://beaker.org/ex/01KXJAPH9V450M32SJC5G4KN93) | [h1rmcm2p](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/h1rmcm2p) | running, step 43,259/55,768 (77.6%) |
-| 810M | 2 | `5.6e-4` | 393,216 | 8 | EP1 | 6 | 1 | [01KXJAPHDN7KN3TY7NXRVRZGNM](https://beaker.org/ex/01KXJAPHDN7KN3TY7NXRVRZGNM) | [1d5gxgjv](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/1d5gxgjv) | running, step 35,999/74,357 (48.4%) |
-| 1.2B | 1 | `4e-4` | 262,144 | 8 | EP8 / `sync_1d` | 8 | 4 | [01KXJAPHHB8MBPD1B3E92QH89Y](https://beaker.org/ex/01KXJAPHHB8MBPD1B3E92QH89Y) | [xapobmqb](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/xapobmqb) | running, step 11,999/86,558 (13.9%) |
-| 1.2B | 2 | `6e-4` | 393,216 | 8 | EP8 / `sync_1d` | 12 | 4 | [initial](https://beaker.org/ex/01KXJAPHN6SNXMG7X49M7HH17G) / [resume](https://beaker.org/ex/01KXK9R5PMR9GXBC0RMSDY2V13) | [initial](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/l4r1crzm) / [resume](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/bwvkwb9s) | resumed from `step2500`; running past step 3,500 |
+| 810M | 1 | `6e-4` | 262,144 | 8 | EP1 | 4 | 1 | [01KXJAPH9V450M32SJC5G4KN93](https://beaker.org/ex/01KXJAPH9V450M32SJC5G4KN93) | [h1rmcm2p](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/h1rmcm2p) | finished |
+| 810M | 2 | `5.6e-4` | 393,216 | 8 | EP1 | 6 | 1 | [01KXJAPHDN7KN3TY7NXRVRZGNM](https://beaker.org/ex/01KXJAPHDN7KN3TY7NXRVRZGNM) | [1d5gxgjv](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/1d5gxgjv) | running, step 52,000/74,357 (69.9%) |
+| 1.2B | 1 | `4e-4` | 262,144 | 8 | EP8 / `sync_1d` | 8 | 4 | [01KXJAPHHB8MBPD1B3E92QH89Y](https://beaker.org/ex/01KXJAPHHB8MBPD1B3E92QH89Y) | [xapobmqb](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/xapobmqb) | running, step 17,162/86,558 (19.8%) |
+| 1.2B | 2 | `6e-4` | 393,216 | 8 | EP8 / `sync_1d` | 12 | 4 | [initial](https://beaker.org/ex/01KXJAPHN6SNXMG7X49M7HH17G) / [resume 1](https://beaker.org/ex/01KXK9R5PMR9GXBC0RMSDY2V13) / [resume 2](https://beaker.org/ex/01KXKEEFKYPGQAVWS024PTGCPK) | [initial](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/l4r1crzm) / [resume 1](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/bwvkwb9s) / [resume 2](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/jsb3obpq) | stopped after third node Xid 31; durable `step6000` |
 
 ## New wave template
 
