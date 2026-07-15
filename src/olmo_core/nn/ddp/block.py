@@ -1266,6 +1266,11 @@ class OLMoDDPTransformerBlock(olmo_core.nn.transformer.block.TransformerBlockBas
             **kwargs,
         )
 
+    # TODO(ep-tbo-dispatch): this two-batch-overlap forward (and its checkpointed wrapper below) is
+    # currently unreachable — the block's no-sync dispatch selects on ep.path only and never routes
+    # to it, so ep.schedule=tbo is rejected by ep_config.validate() as "not yet supported". Wire a
+    # path==rowwise_nvshmem & schedule==tbo branch into the forward dispatch, then lift that
+    # rejection.
     def combined_forward_rowwise_nvshmem_tbo(
         self,
         x0: torch.Tensor,
