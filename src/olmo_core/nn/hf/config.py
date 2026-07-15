@@ -1,7 +1,7 @@
 import logging
 from typing import Any, Dict, List, Optional
 
-from transformers import Olmo2Config, PretrainedConfig
+from transformers import Olmo2Config, PretrainedConfig, Qwen3Config
 
 from olmo_core.doc_utils import beta_feature
 from olmo_core.nn.attention import Attention
@@ -83,6 +83,30 @@ def _get_flex_olmo_config(model: MoETransformer) -> PretrainedConfig:
     )
 
 
+def _get_qwen3_config(model: "Transformer", blocks: list, first_block: TransformerBlock) -> Qwen3Config:
+    if not isinstance(first_block.attention, Attention):
+        raise NotImplementedError(
+            f"Attention is not a {Attention.__name__}, unable to build HF config for Qwen3"
+        )
+    rope_scaling = _get_and_validate_rope_scaling_config(blocks) if first_block.attention.rope is not None else None
+    return Qwen3Config(
+        vocab_size=model.vocab_size,
+        hidden_size=model.d_model,
+        intermediate_size=first_block.feed_forward.hidden_size,
+        num_hidden_layers=model.n_layers,
+        num_attention_heads=first_block.attention.n_heads,
+        num_key_value_heads=first_block.attention.n_kv_heads,
+        head_dim=first_block.attention.head_dim,
+        hidden_act="silu",
+        max_position_embeddings=131072,
+        rms_norm_eps=first_block.attention_norm.eps,
+        rope_theta=first_block.attention.rope.theta if first_block.attention.rope is not None else 1_000_000,
+        rope_scaling=rope_scaling,
+        attention_bias=first_block.attention.w_out.bias is not None,
+        tie_word_embeddings=model.tie_word_embeddings,
+    )
+
+
 @beta_feature
 def get_hf_config(model: Transformer) -> PretrainedConfig:
     if isinstance(model, NormalizedTransformer):
@@ -95,6 +119,10 @@ def get_hf_config(model: Transformer) -> PretrainedConfig:
 
     blocks = list(model.blocks.values())
     first_block = blocks[0]
+    if isinstance(first_block, TransformerBlock) and not isinstance(
+        first_block, ReorderedNormTransformerBlock
+    ):
+        return _get_qwen3_config(model, blocks, first_block)
     if not isinstance(first_block, ReorderedNormTransformerBlock):
         raise NotImplementedError(
             f"Block is not a {ReorderedNormTransformerBlock.__name__}, unable to build HF config for {model.__class__.__name__}"
