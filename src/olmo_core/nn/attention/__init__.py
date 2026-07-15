@@ -469,30 +469,32 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
             raise OLMoConfigurationError("attention_sinks are only supported by default attention")
 
         # The MXFP8 packed-projection options are only wired up for fused_v2 attention; route them
-        # there and reject them for any other implementation.
+        # there and reject them for any other implementation. A disabled (falsy) flag is a no-op, so
+        # only reject when one is actually enabled.
         fused_v2_kwargs = {
             key: kwargs.pop(key)
             for key in ("mxfp8_projections", "mxfp8_qkv_projection", "mxfp8_out_projection")
             if key in kwargs
         }
-        if fused_v2_kwargs and self.name != AttentionType.fused_v2:
-            raise OLMoConfigurationError(
-                f"{sorted(fused_v2_kwargs)} are only supported by fused_v2 attention"
-            )
+        if any(fused_v2_kwargs.values()) and self.name != AttentionType.fused_v2:
+            enabled = sorted(key for key, value in fused_v2_kwargs.items() if value)
+            raise OLMoConfigurationError(f"{enabled} are only supported by fused_v2 attention")
 
         # QKV recompute / MXFP8-save are honored by the shared Attention.forward, so they apply to
-        # the default and fused_v2 implementations (fused and normalized override forward).
+        # the default and fused_v2 implementations (fused and normalized override forward). As above,
+        # only reject an enabled flag.
         shared_forward_kwargs = {
             key: kwargs.pop(key)
             for key in ("use_recompute_qkv_prep", "mxfp8_save_qkv_for_backward")
             if key in kwargs
         }
-        if shared_forward_kwargs and self.name not in (
+        if any(shared_forward_kwargs.values()) and self.name not in (
             AttentionType.default,
             AttentionType.fused_v2,
         ):
+            enabled = sorted(key for key, value in shared_forward_kwargs.items() if value)
             raise OLMoConfigurationError(
-                f"{sorted(shared_forward_kwargs)} are only supported by default and fused_v2 attention"
+                f"{enabled} are only supported by default and fused_v2 attention"
             )
 
         try:

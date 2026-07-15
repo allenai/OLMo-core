@@ -1547,3 +1547,18 @@ def test_attention_config_rejects_recompute_on_unsupported_attention():
     )
     with pytest.raises(OLMoConfigurationError, match="use_recompute_qkv_prep"):
         config.build(64, layer_idx=0, n_layers=1)
+
+
+def test_attention_config_allows_disabled_fused_v2_flags_on_other_types():
+    # A disabled (falsy) fused_v2-only flag is a no-op and must not break other attention types,
+    # even though as_dict keeps the explicit False.
+    config = AttentionConfig(
+        name=AttentionType.default,
+        n_heads=4,
+        head_dim=16,
+        mxfp8_projections=False,
+        mxfp8_qkv_projection=False,
+        use_recompute_qkv_prep=False,
+    )
+    attention = config.build(64, layer_idx=0, n_layers=1)
+    assert isinstance(attention, Attention)

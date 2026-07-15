@@ -53,7 +53,7 @@ class FP8WeightStore:
         optimizer_enabled: bool = False,
         prequantized_rhs: Optional[PrequantizedRHS] = None,
         prequantized_rhs_for_dgrad: Optional[PrequantizedRHS] = None,
-        prequantizer: Callable[..., PrequantizedRHS] = prequantize_scaled_grouped_mm_rhs,
+        prequantizer: Optional[Callable[..., PrequantizedRHS]] = None,
     ) -> None:
         self.logical_name = logical_name
         self.logical_shape = logical_shape
@@ -62,8 +62,11 @@ class FP8WeightStore:
         self.optimizer_enabled = optimizer_enabled
         # The prequantizer produces cache entries from a transformed logical weight. Defaults to the
         # grouped-mm quantizer (MoE experts); MXFP8 linear/attention projections inject the scaled-mm
-        # quantizer instead.
-        self.prequantizer = prequantizer
+        # quantizer instead. Resolve the default here (not as a default arg) so it tracks the current
+        # module-level binding.
+        self.prequantizer = (
+            prequantizer if prequantizer is not None else prequantize_scaled_grouped_mm_rhs
+        )
         self.cache_values: dict[str, PrequantizedRHS] = {}
         if prequantized_rhs is not None:
             self.cache_values["rhs"] = prequantized_rhs
