@@ -2,7 +2,7 @@ import torch
 import torch.nn.functional as F
 
 from olmo_core.kernels.swiglu import swiglu_backward_valid_prefix, swiglu_valid_prefix
-from olmo_core.testing import requires_gpu
+from olmo_core.testing import requires_gpu, requires_triton
 
 
 def test_swiglu_valid_prefix_torch_fallback():
@@ -52,6 +52,7 @@ def test_swiglu_backward_valid_prefix_torch_fallback():
 
 
 @requires_gpu
+@requires_triton
 def test_swiglu_valid_prefix_matches_torch_and_leaves_tail_untouched():
     rows = 37
     hidden = 64
@@ -73,6 +74,7 @@ def test_swiglu_valid_prefix_matches_torch_and_leaves_tail_untouched():
 
 
 @requires_gpu
+@requires_triton
 def test_swiglu_backward_valid_prefix_accepts_device_start_offset():
     rows = 37
     hidden = 64
@@ -111,6 +113,7 @@ def test_swiglu_backward_valid_prefix_accepts_device_start_offset():
 
 
 @requires_gpu
+@requires_triton
 def test_swiglu_valid_prefix_accepts_device_start_offset():
     rows = 37
     hidden = 64
