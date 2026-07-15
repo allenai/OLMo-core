@@ -16,7 +16,12 @@ from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.nn.attention.base import SequenceMixer, SequenceMixerConfig
 from olmo_core.nn.attention.kv_cache import KVCacheManager
-from olmo_core.nn.attention.recurrent import GatedDeltaNet, GatedDeltaNetConfig
+from olmo_core.nn.attention.recurrent import (
+    GatedDeltaNet,
+    GatedDeltaNetConfig,
+    NemotronMamba2Config,
+    NemotronMamba2Mixer,
+)
 
 from ..buffer_cache import BufferCache
 from ..config import ModuleConfig
@@ -77,6 +82,8 @@ __all__ = [
     "UlyssesContextParallelStyle",
     "GatedDeltaNetConfig",
     "GatedDeltaNet",
+    "NemotronMamba2Config",
+    "NemotronMamba2Mixer",
 ]
 
 log = logging.getLogger(__name__)
@@ -201,6 +208,11 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
     dtype: DType = DType.float32
     sliding_window: Optional[SlidingWindowAttentionConfig] = None
     use_head_qk_norm: Optional[bool] = None
+    attention_sinks: bool = False
+    """
+    Add a per-head learnable "attention sink" logit (as in GPT-OSS). Only supported by the default
+    attention with the torch backend.
+    """
 
     def num_params(self, d_model: int) -> int:
         """
@@ -254,6 +266,10 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
             params += n_heads * head_dim
             params += n_kv_heads * head_dim
 
+        # Per-head attention-sink logits.
+        if self.attention_sinks:
+            params += n_heads
+
         return params
 
     def build(
@@ -292,6 +308,13 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
             init_device=init_device,
             cache=cache,
         )
+
+        # Attention sinks are only wired up for the default attention; drop the flag otherwise so
+        # the other implementations don't see an unexpected keyword argument.
+        if not kwargs.get("attention_sinks", False):
+            kwargs.pop("attention_sinks", None)
+        elif self.name != AttentionType.default:
+            raise OLMoConfigurationError("attention_sinks are only supported by default attention")
 
         try:
             if self.name == "default":
@@ -365,6 +388,7 @@ class Attention(SequenceMixer):
         init_device: str = "cpu",
         cache: Optional[BufferCache] = None,
         use_head_qk_norm: bool = False,
+        attention_sinks: bool = False,
     ):
         super().__init__()
 
@@ -407,6 +431,13 @@ class Attention(SequenceMixer):
 
         self.clip_qkv = clip_qkv
         self.use_head_qk_norm = use_head_qk_norm
+
+        # Per-head learnable attention-sink logits (GPT-OSS). See :meth:`sdpa`.
+        self.sinks: Optional[nn.Parameter] = (
+            nn.Parameter(torch.empty(n_heads, dtype=dtype, device=init_device))
+            if attention_sinks
+            else None
+        )
 
         self.q_norm: Optional[LayerNorm] = None
         self.k_norm: Optional[LayerNorm] = None
@@ -461,6 +492,13 @@ class Attention(SequenceMixer):
         if backend is None:
             backend = AttentionBackendName.torch
 
+        # Reject an unsupported sinks/backend combination at construction (before the CPU fallback
+        # below) rather than deferring the failure to the first forward pass.
+        if attention_sinks and backend != AttentionBackendName.torch:
+            raise OLMoConfigurationError(
+                f"attention_sinks are only supported by the torch attention backend (got '{backend}')"
+            )
+
         if not torch.cuda.is_available() and backend != AttentionBackendName.torch:
             warnings.warn(
                 f"Backend is set to {backend}, but GPUs are not available. Defaulting to torch."
@@ -511,6 +549,7 @@ class Attention(SequenceMixer):
             max_doc_len_k=max_doc_len_k,
             local_k_slice=local_k_slice,
             kv_cache_manager=self.kv_cache_manager,
+            sinks=self.sinks,
         )
         if self.kv_cache_manager is not None:
             self.kv_cache_manager.update_seqlen(q.shape[1])
@@ -769,6 +808,9 @@ class Attention(SequenceMixer):
             std = std / (2 * num_blocks) ** 0.5
 
         init_linear(self.w_out, std=std, generator=generator)
+
+        if self.sinks is not None:
+            nn.init.normal_(self.sinks, mean=0.0, std=std, generator=generator)
 
     def init_kv_cache_manager(self, batch_size: int, max_seq_len: int):
         """
