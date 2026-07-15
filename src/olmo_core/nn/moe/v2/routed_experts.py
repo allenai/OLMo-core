@@ -688,13 +688,22 @@ class RoutedExperts(nn.Module):
                     "Cannot refresh rowwise FP8 routed expert caches from released bf16 anchors. "
                     "The optimizer must refresh MXFP8 stores directly from fp32 main params."
                 )
-            self._rowwise_fp8_up_gate_prequant = self._rowwise_fp8_up_gate_weight.prequantized_rhs
-            self._rowwise_fp8_up_gate_prequant_t = (
-                self._rowwise_fp8_up_gate_weight.prequantized_rhs_for_dgrad
+            # See below: narrow the store's widened union back to the grouped-mm variant.
+            self._rowwise_fp8_up_gate_prequant = cast(
+                Optional[ScaledGroupedMMPrequantizedRHS],
+                self._rowwise_fp8_up_gate_weight.prequantized_rhs,
             )
-            self._rowwise_fp8_down_prequant = self._rowwise_fp8_down_weight.prequantized_rhs
-            self._rowwise_fp8_down_prequant_t = (
-                self._rowwise_fp8_down_weight.prequantized_rhs_for_dgrad
+            self._rowwise_fp8_up_gate_prequant_t = cast(
+                Optional[ScaledGroupedMMPrequantizedRHS],
+                self._rowwise_fp8_up_gate_weight.prequantized_rhs_for_dgrad,
+            )
+            self._rowwise_fp8_down_prequant = cast(
+                Optional[ScaledGroupedMMPrequantizedRHS],
+                self._rowwise_fp8_down_weight.prequantized_rhs,
+            )
+            self._rowwise_fp8_down_prequant_t = cast(
+                Optional[ScaledGroupedMMPrequantizedRHS],
+                self._rowwise_fp8_down_weight.prequantized_rhs_for_dgrad,
             )
             self._rowwise_fp8_weight_versions = None
             return
@@ -709,12 +718,24 @@ class RoutedExperts(nn.Module):
             self.w_down,
             version_tensors=(self.w_down,),
         )
-        self._rowwise_fp8_up_gate_prequant = self._rowwise_fp8_up_gate_weight.prequantized_rhs
-        self._rowwise_fp8_up_gate_prequant_t = (
-            self._rowwise_fp8_up_gate_weight.prequantized_rhs_for_dgrad
+        # The store's prequantized RHS type widened to a union (to also back MXFP8 linear); these
+        # routed-expert stores only ever hold the grouped-mm variant, so narrow back to it.
+        self._rowwise_fp8_up_gate_prequant = cast(
+            Optional[ScaledGroupedMMPrequantizedRHS],
+            self._rowwise_fp8_up_gate_weight.prequantized_rhs,
         )
-        self._rowwise_fp8_down_prequant = self._rowwise_fp8_down_weight.prequantized_rhs
-        self._rowwise_fp8_down_prequant_t = self._rowwise_fp8_down_weight.prequantized_rhs_for_dgrad
+        self._rowwise_fp8_up_gate_prequant_t = cast(
+            Optional[ScaledGroupedMMPrequantizedRHS],
+            self._rowwise_fp8_up_gate_weight.prequantized_rhs_for_dgrad,
+        )
+        self._rowwise_fp8_down_prequant = cast(
+            Optional[ScaledGroupedMMPrequantizedRHS],
+            self._rowwise_fp8_down_weight.prequantized_rhs,
+        )
+        self._rowwise_fp8_down_prequant_t = cast(
+            Optional[ScaledGroupedMMPrequantizedRHS],
+            self._rowwise_fp8_down_weight.prequantized_rhs_for_dgrad,
+        )
         self._rowwise_fp8_weight_versions = (
             int(self.w_up_gate._version),
             int(self.w_down._version),
