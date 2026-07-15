@@ -90,6 +90,8 @@ class ExpertParallelConfig(Config):
     shared_slots: int = 1
     major_align: int = 1
 
+    # Intentionally 32, not the legacy flat `ep_no_sync_rowwise_nblocks` default of 256: a deliberate
+    # retune for the migrated rowwise dispatch/combine kernels, not a regression.
     rowwise_nblocks: int = 32
     share_dispatch_out: bool = False
     share_combine_out: bool = False
