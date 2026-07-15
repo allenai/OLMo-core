@@ -569,3 +569,16 @@ Intentionally NOT ported from `329e0a203`:
 
 Held for evidence / separate workstreams (per audit): none from this batch beyond the above; NCCL-RMA
 ACK transport was found already present in core (only its smoke/transport tests are olmo-only).
+
+## TE CPU activation-offload prototype
+
+Ported olmo-ddp's canonical CPU activation-offload module to `nn/moe/v2/te/cpu_offload.py`
+(vendored NVIDIA code, torch-only despite the `te` dir name) plus a package `__init__.py` and an
+import/GPU-disabled-path smoke test. Marked experimental in the docstrings.
+
+- Not wired into `nn/ddp/model.py`: olmo itself keeps the offload path disabled (`self.cpu_offload =
+  False`, `get_cpu_offload_context(...)` commented out — "not useful due to low PCIe bandwidth"), and
+  core had already dropped the import. Left unwired rather than reintroducing dead/commented wiring.
+- Did NOT port `cpu_offload_simple_varlen.py`: it is an earlier, unreferenced near-duplicate of the
+  canonical module (which is itself the "variable tensors per group" variant). Available to add later
+  if a reason emerges.
