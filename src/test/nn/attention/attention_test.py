@@ -24,6 +24,7 @@ from olmo_core.nn.attention import (
     NormalizedAttention,
     RingAttentionLoadBalancerType,
     SlidingWindowAttentionConfig,
+    _causal_attention_positions,
 )
 from olmo_core.nn.attention.ring import (
     RingContextParallelStyle,
@@ -1587,3 +1588,58 @@ def test_mxfp8_saved_qkv_hooks_match_saved_tensors_by_storage():
     assert matched(_repeat_kv(k, 3)) is None
     # unrelated tensors are never matched.
     assert matched(torch.randn(2, 8, 4, 32)) is None
+
+
+def test_causal_attention_positions():
+    # Full causal attention: the triangle sum, including the diagonal (self-attention).
+    assert _causal_attention_positions(1) == 1
+    assert _causal_attention_positions(4) == 10  # 4 + 3 + 2 + 1
+    assert _causal_attention_positions(32) == 32 * 33 // 2
+
+    # A window at least as large as the sequence is equivalent to full attention.
+    assert _causal_attention_positions(32, 32) == _causal_attention_positions(32)
+    assert _causal_attention_positions(32, 100) == _causal_attention_positions(32)
+
+    # Sliding window: an early triangle plus a flat ``window_size`` per remaining query.
+    assert _causal_attention_positions(32, 8) == 8 * 9 // 2 + (32 - 8) * 8
+
+
+def test_attention_num_flops_per_token_applies_causal_discount():
+    d_model, n_heads, seq_len = 64, 4, 32
+    attn = AttentionConfig(name=AttentionType.default, n_heads=n_heads).build(
+        d_model, layer_idx=0, n_layers=1
+    )
+    head_dim = attn.head_dim
+    param_flops = 6 * sum(p.numel() for p in attn.parameters())
+    expected_attn = 12 * n_heads * head_dim * _causal_attention_positions(seq_len) // seq_len
+
+    assert attn.num_flops_per_token(seq_len) == param_flops + expected_attn
+    # The causal triangle roughly halves the attention-compute term relative to the pre-change
+    # formula, which counted a full ``seq_len`` of keys per query.
+    old_style_attn = 12 * n_heads * head_dim * seq_len
+    assert expected_attn < old_style_attn
+    assert expected_attn * 2 > old_style_attn  # ~half, not an order of magnitude off
+
+
+def test_attention_num_flops_per_token_sliding_window_is_cheaper():
+    d_model, n_heads, seq_len = 64, 4, 32
+    sliding_window = SlidingWindowAttentionConfig(
+        pattern=[8],
+        force_full_attention_on_first_layer=False,
+        force_full_attention_on_last_layer=False,
+    )
+    swa_attn = AttentionConfig(
+        name=AttentionType.default, n_heads=n_heads, sliding_window=sliding_window
+    ).build(d_model, layer_idx=0, n_layers=4)
+    full_attn = AttentionConfig(name=AttentionType.default, n_heads=n_heads).build(
+        d_model, layer_idx=0, n_layers=4
+    )
+
+    assert swa_attn.window_size == 8
+    # Same parameters, so any difference is purely the windowed attention-compute term.
+    assert swa_attn.num_flops_per_token(seq_len) < full_attn.num_flops_per_token(seq_len)
+
+    head_dim = swa_attn.head_dim
+    param_flops = 6 * sum(p.numel() for p in swa_attn.parameters())
+    expected_attn = 12 * n_heads * head_dim * _causal_attention_positions(seq_len, 8) // seq_len
+    assert swa_attn.num_flops_per_token(seq_len) == param_flops + expected_attn
