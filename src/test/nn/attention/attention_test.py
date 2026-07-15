@@ -1377,3 +1377,75 @@ def test_fused_attention_num_flops_per_token():
     # Larger models should be more expensive.
     fused_large = FusedAttention(d_model=256, n_heads=n_heads, init_device="cuda")
     assert fused_large.num_flops_per_token(32) > fused_small.num_flops_per_token(32)
+
+
+def test_attention_sinks_num_params_and_build():
+    config = AttentionConfig(
+        name=AttentionType.default,
+        n_heads=4,
+        n_kv_heads=2,
+        head_dim=8,
+        bias=True,
+        attention_sinks=True,
+    )
+    without = AttentionConfig(
+        name=AttentionType.default,
+        n_heads=4,
+        n_kv_heads=2,
+        head_dim=8,
+        bias=True,
+    )
+    # Sinks add exactly one learnable logit per head.
+    assert config.num_params(32) == without.num_params(32) + 4
+
+    attention = config.build(32, layer_idx=0, n_layers=2)
+    assert isinstance(attention, Attention)
+    assert attention.sinks is not None
+    assert attention.sinks.shape == (4,)
+
+
+def test_attention_sinks_rejected_for_non_default_attention():
+    config = AttentionConfig(name=AttentionType.normalized, n_heads=4, attention_sinks=True)
+    with pytest.raises(OLMoConfigurationError, match="attention_sinks"):
+        config.build(32, layer_idx=0, n_layers=2)
+
+
+def test_attention_sinks_softmax_matches_sdpa_when_inactive():
+    from olmo_core.nn.transformer.init import InitMethod
+
+    seed_all(0)
+    d_model, seq_len = 32, 16
+
+    with_sinks = Attention(
+        d_model=d_model,
+        n_heads=4,
+        n_kv_heads=2,
+        head_dim=8,
+        backend=AttentionBackendName.torch,
+        attention_sinks=True,
+    )
+    with_sinks.init_weights(
+        init_method=InitMethod.normal, d_model=d_model, block_idx=0, num_blocks=2
+    )
+
+    without_sinks = Attention(
+        d_model=d_model,
+        n_heads=4,
+        n_kv_heads=2,
+        head_dim=8,
+        backend=AttentionBackendName.torch,
+    )
+    without_sinks.load_state_dict(
+        {k: v for k, v in with_sinks.state_dict().items() if k != "sinks"}
+    )
+
+    x = torch.randn(2, seq_len, d_model)
+
+    assert with_sinks.sinks is not None
+    # A very negative sink logit makes the extra softmax column vanish, so the manual sink softmax
+    # must collapse to the plain SDPA result.
+    with torch.no_grad():
+        with_sinks.sinks.fill_(-1e4)
+        sink_out = with_sinks(x)
+        plain_out = without_sinks(x)
+    torch.testing.assert_close(sink_out, plain_out, rtol=1e-4, atol=1e-4)
