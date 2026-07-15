@@ -1,11 +1,14 @@
 import logging
 import math
+import os
 import warnings
+from contextlib import nullcontext
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Iterator, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any, Iterator, List, Optional, Tuple, Union, cast
 
 import torch
 import torch.nn as nn
+from torch.autograd.graph import saved_tensors_hooks
 from torch.distributed import DeviceMesh
 from torch.distributed.tensor import Placement, Replicate, Shard
 from torch.distributed.tensor.parallel import parallelize_module
@@ -28,6 +31,7 @@ from ..config import ModuleConfig
 from ..functional import l2_normalize
 from ..layer_norm import LayerNorm, LayerNormConfig
 from ..mxfp8_linear import MXFP8Linear
+from ..output_discard_checkpoint import OutputDiscardCheckpoint
 from ..rope import (
     ComplexRotaryEmbedding,
     FusedRotaryEmbedding,
@@ -89,6 +93,125 @@ __all__ = [
 ]
 
 log = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class _MXFP8SavedTensor:
+    qdata: torch.Tensor
+    scales: torch.Tensor
+    shape: torch.Size
+    dtype: torch.dtype
+    name: str
+
+
+def _can_save_tensor_as_mxfp8(t: torch.Tensor) -> bool:
+    return (
+        t.is_cuda
+        and t.dtype == torch.bfloat16
+        and t.ndim >= 2
+        and t.shape[-1] % 32 == 0
+        and t.requires_grad
+    )
+
+
+def _set_saved_activation_name(t: torch.Tensor, name: str) -> torch.Tensor:
+    t._olmo_saved_activation_name = name  # type: ignore[attr-defined]
+    if os.getenv("OLMO_EP_NO_SYNC_SAVED_ACTIVATIONS_DEBUG"):
+        try:
+            from olmo_core.nn.moe.v2.activation_debug import (
+                record_named_saved_activation,
+            )
+
+            record_named_saved_activation(t, name)
+        except Exception:
+            pass
+    return t
+
+
+def _record_saved_activation_debug(t: torch.Tensor, name: str) -> None:
+    if not os.getenv("OLMO_EP_NO_SYNC_SAVED_ACTIVATIONS_DEBUG"):
+        return
+
+    try:
+        from olmo_core.nn.moe.v2.activation_debug import record_named_saved_activation
+
+        record_named_saved_activation(t, name)
+    except Exception:
+        pass
+
+
+def _pack_mxfp8_saved_tensor(t: torch.Tensor, *, name: str) -> _MXFP8SavedTensor:
+    from olmo_core.kernels.mxfp8_utils import quantize_rows_to_mxfp8
+
+    t_2d = t.reshape(-1, t.shape[-1])
+    qdata, scales = quantize_rows_to_mxfp8(t_2d, block_size=32)
+    _set_saved_activation_name(qdata, f"{name}.mxfp8_qdata")
+    _set_saved_activation_name(scales, f"{name}.mxfp8_scales")
+    return _MXFP8SavedTensor(
+        qdata=qdata,
+        scales=scales,
+        shape=t.shape,
+        dtype=t.dtype,
+        name=name,
+    )
+
+
+def _unpack_mxfp8_saved_tensor(x: _MXFP8SavedTensor) -> torch.Tensor:
+    from olmo_core.kernels.mxfp8_utils import dequantize_rows_from_mxfp8
+
+    t_2d = dequantize_rows_from_mxfp8(
+        x.qdata,
+        x.scales,
+        block_size=32,
+        out_dtype=x.dtype,
+    )
+    return t_2d.view(x.shape)
+
+
+class _MXFP8SavedQKVHooks:
+    def __init__(
+        self,
+        q: torch.Tensor,
+        k: torch.Tensor,
+        v: torch.Tensor,
+        *,
+        pack_counter: list[int],
+    ) -> None:
+        self.target_names = {
+            id(q): "attention.q",
+            id(k): "attention.k",
+            id(v): "attention.v",
+        }
+        self.pack_counter = pack_counter
+
+    def pack(self, t: torch.Tensor) -> Any:
+        name = self.target_names.get(id(t))
+        if name is None:
+            _record_saved_activation_debug(t, "attention.sdpa.saved_passthrough")
+            return t
+        if not _can_save_tensor_as_mxfp8(t):
+            return t
+
+        self.pack_counter[0] += 1
+        return _pack_mxfp8_saved_tensor(t, name=name)
+
+    def unpack(self, x: Any) -> torch.Tensor:
+        if not isinstance(x, _MXFP8SavedTensor):
+            return x
+
+        return _unpack_mxfp8_saved_tensor(x)
+
+
+@torch.compiler.disable(reason="MXFP8 saved-QKV hooks close over per-forward tensors")
+def _mxfp8_saved_qkv_hooks(
+    q: torch.Tensor,
+    k: torch.Tensor,
+    v: torch.Tensor,
+    *,
+    pack_counter: list[int],
+):
+    hooks = _MXFP8SavedQKVHooks(q, k, v, pack_counter=pack_counter)
+    return saved_tensors_hooks(hooks.pack, hooks.unpack)
 
 
 class GateGranularity(StrEnum):
@@ -234,8 +357,13 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
     """
     use_recompute_qkv_prep: Optional[bool] = None
     """
-    Recompute :class:`FusedAttentionV2`'s Q/K/V preparation in the backward pass to save activation
-    memory. Only supported by ``fused_v2`` attention.
+    Recompute the Q/K/V preparation in the backward pass to save activation memory. Supported by the
+    ``default`` and ``fused_v2`` attention implementations.
+    """
+    mxfp8_save_qkv_for_backward: Optional[bool] = None
+    """
+    Save Q/K/V for backward as MXFP8 to reduce the saved-activation footprint. Supported by the
+    ``default`` and ``fused_v2`` attention implementations.
     """
 
     def num_params(self, d_model: int) -> int:
@@ -340,16 +468,11 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
         elif self.name != AttentionType.default:
             raise OLMoConfigurationError("attention_sinks are only supported by default attention")
 
-        # The MXFP8 projection / QKV-recompute options are only wired up for fused_v2 attention;
-        # route them there and reject them for any other implementation.
+        # The MXFP8 packed-projection options are only wired up for fused_v2 attention; route them
+        # there and reject them for any other implementation.
         fused_v2_kwargs = {
             key: kwargs.pop(key)
-            for key in (
-                "mxfp8_projections",
-                "mxfp8_qkv_projection",
-                "mxfp8_out_projection",
-                "use_recompute_qkv_prep",
-            )
+            for key in ("mxfp8_projections", "mxfp8_qkv_projection", "mxfp8_out_projection")
             if key in kwargs
         }
         if fused_v2_kwargs and self.name != AttentionType.fused_v2:
@@ -357,9 +480,24 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
                 f"{sorted(fused_v2_kwargs)} are only supported by fused_v2 attention"
             )
 
+        # QKV recompute / MXFP8-save are honored by the shared Attention.forward, so they apply to
+        # the default and fused_v2 implementations (fused and normalized override forward).
+        shared_forward_kwargs = {
+            key: kwargs.pop(key)
+            for key in ("use_recompute_qkv_prep", "mxfp8_save_qkv_for_backward")
+            if key in kwargs
+        }
+        if shared_forward_kwargs and self.name not in (
+            AttentionType.default,
+            AttentionType.fused_v2,
+        ):
+            raise OLMoConfigurationError(
+                f"{sorted(shared_forward_kwargs)} are only supported by default and fused_v2 attention"
+            )
+
         try:
             if self.name == "default":
-                return Attention(**kwargs)
+                return Attention(**kwargs, **shared_forward_kwargs)
             elif self.name == "fused":
                 kwargs.pop("use_flash", None)
                 if "window_size" in kwargs:
@@ -368,7 +506,7 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
                     )
                 return FusedAttention(**kwargs)
             elif self.name == "fused_v2":
-                return FusedAttentionV2(**kwargs, **fused_v2_kwargs)
+                return FusedAttentionV2(**kwargs, **fused_v2_kwargs, **shared_forward_kwargs)
             elif self.name == "normalized":
                 if "window_size" in kwargs:
                     raise OLMoConfigurationError(
@@ -432,8 +570,14 @@ class Attention(SequenceMixer):
         cache: Optional[BufferCache] = None,
         use_head_qk_norm: bool = False,
         attention_sinks: bool = False,
+        use_recompute_qkv_prep: bool = False,
+        mxfp8_save_qkv_for_backward: bool = False,
     ):
         super().__init__()
+
+        self.use_recompute_qkv_prep = use_recompute_qkv_prep
+        self.mxfp8_save_qkv_for_backward = mxfp8_save_qkv_for_backward
+        self._mxfp8_saved_qkv_for_backward_last_pack_count = 0
 
         self.n_heads = n_heads
         self.n_kv_heads = n_kv_heads or n_heads
@@ -720,29 +864,65 @@ class Attention(SequenceMixer):
         B, T, _ = x.shape
 
         start_pos = self.kv_cache_manager.current_position() if self.kv_cache_manager else None
-        q, k, v = self._prepare_qkv(
-            x,
-            pos_sin=pos_sin,
-            pos_cos=pos_cos,
-            freqs_cis=freqs_cis,
-            start_pos=start_pos,
-            cu_doc_lens=cu_doc_lens,
-        )
+
+        # Optionally recompute Q/K/V in backward (trading compute for activation memory) by wrapping
+        # the projection in an OutputDiscardCheckpoint.
+        qkv_checkpoint: Optional[OutputDiscardCheckpoint] = None
+        if torch.is_grad_enabled() and x.requires_grad and self.use_recompute_qkv_prep:
+            qkv_checkpoint = OutputDiscardCheckpoint()
+            q, k, v = cast(
+                Tuple[torch.Tensor, torch.Tensor, torch.Tensor],
+                qkv_checkpoint.checkpoint(
+                    self._prepare_qkv,
+                    x,
+                    pos_sin=pos_sin,
+                    pos_cos=pos_cos,
+                    freqs_cis=freqs_cis,
+                    start_pos=start_pos,
+                    cu_doc_lens=cu_doc_lens,
+                ),
+            )
+        else:
+            q, k, v = self._prepare_qkv(
+                x,
+                pos_sin=pos_sin,
+                pos_cos=pos_cos,
+                freqs_cis=freqs_cis,
+                start_pos=start_pos,
+                cu_doc_lens=cu_doc_lens,
+            )
+
+        # Optionally save Q/K/V for backward as MXFP8 to reduce the saved-activation footprint.
+        self._mxfp8_saved_qkv_for_backward_last_pack_count = 0
+        qkv_save_counter = [0]
+        if (
+            torch.is_grad_enabled()
+            and self.mxfp8_save_qkv_for_backward
+            and any(t.requires_grad for t in (q, k, v))
+        ):
+            qkv_save_context: Any = _mxfp8_saved_qkv_hooks(q, k, v, pack_counter=qkv_save_counter)
+        else:
+            qkv_save_context = nullcontext()
 
         # shape: (batch_size, seq_len, n_heads, head_dim)
-        att = self.sdpa(
-            q,
-            k,
-            v,
-            cu_doc_lens=cu_doc_lens,
-            cu_doc_lens_q=cu_doc_lens_q,
-            cu_doc_lens_k=cu_doc_lens_k,
-            max_doc_len=max_doc_len,
-            max_doc_len_q=max_doc_len_q,
-            max_doc_len_k=max_doc_len_k,
-            local_k_slice=local_k_slice,
-            cache_leftpad=cache_leftpad,
-        )
+        with qkv_save_context:
+            att = self.sdpa(
+                q,
+                k,
+                v,
+                cu_doc_lens=cu_doc_lens,
+                cu_doc_lens_q=cu_doc_lens_q,
+                cu_doc_lens_k=cu_doc_lens_k,
+                max_doc_len=max_doc_len,
+                max_doc_len_q=max_doc_len_q,
+                max_doc_len_k=max_doc_len_k,
+                local_k_slice=local_k_slice,
+                cache_leftpad=cache_leftpad,
+            )
+        self._mxfp8_saved_qkv_for_backward_last_pack_count = qkv_save_counter[0]
+        if qkv_checkpoint is not None:
+            # Recompute Q/K/V before attention backward consumes the discarded activations.
+            qkv_checkpoint.discard_output_and_register_recompute(att)
 
         if self.gate is not None:
             assert self.w_g is not None

@@ -1508,3 +1508,42 @@ def test_attention_config_rejects_mxfp8_on_non_fused_v2():
     )
     with pytest.raises(OLMoConfigurationError, match="fused_v2"):
         config.build(64, layer_idx=0, n_layers=1)
+
+
+def test_attention_use_recompute_qkv_prep_is_transparent():
+    from olmo_core.nn.transformer.init import InitMethod
+
+    def run(recompute: bool):
+        seed_all(0)
+        attention = FusedAttentionV2(
+            d_model=64,
+            n_heads=4,
+            n_kv_heads=2,
+            head_dim=16,
+            bias=False,
+            backend=AttentionBackendName.torch,
+            use_recompute_qkv_prep=recompute,
+        )
+        attention.init_weights(init_method=InitMethod.normal, d_model=64, block_idx=0, num_blocks=2)
+        x = torch.randn(2, 8, 64, requires_grad=True)
+        seed_all(123)
+        out = attention(x)
+        out.sum().backward()
+        assert x.grad is not None
+        assert attention.w_qkv.weight.grad is not None
+        return out.detach(), x.grad.detach(), attention.w_qkv.weight.grad.detach().clone()
+
+    # Recomputing Q/K/V in backward must not change the forward output or the gradients.
+    out0, grad_x0, grad_w0 = run(False)
+    out1, grad_x1, grad_w1 = run(True)
+    torch.testing.assert_close(out0, out1)
+    torch.testing.assert_close(grad_x0, grad_x1)
+    torch.testing.assert_close(grad_w0, grad_w1)
+
+
+def test_attention_config_rejects_recompute_on_unsupported_attention():
+    config = AttentionConfig(
+        name=AttentionType.normalized, n_heads=4, head_dim=16, use_recompute_qkv_prep=True
+    )
+    with pytest.raises(OLMoConfigurationError, match="use_recompute_qkv_prep"):
+        config.build(64, layer_idx=0, n_layers=1)
