@@ -1,0 +1,46 @@
+# OLMoE ladder v2 experiment queue
+
+This is the concrete post-migration architecture plan. The scientific and
+operational rules in `EXPERIMENT_RULES.md` govern every item below. All isolated
+tests train from scratch at Cx1/Cx2/Cx4/Cx8 and compare against the 275M-active
+wide v1 integration model.
+
+| Order | Experiment | Change from parent recipe | State |
+|---:|---|---|---|
+| 1 | GDN hybrid | On wide, replace sliding-attention layers with GatedDeltaNet; keep geometry, global-attention placement, RoPE, initialization, and `expand_v=1` fixed. | In progress; finish and bracket the current LR sweeps. |
+| 2 | Aligned geometry and mixer ratio | Use the dense ladder's 275M width, depth, attention geometry, and four-GDN/one-global pattern while retaining MoE and the dense-first-FFN design. | Planned; config and parameter matching not yet implemented. |
+| 3 | NoPE | On the hybrid recipe, remove RoPE only from global-attention layers and train from initialization. | Planned. Confirm this parent recipe before implementation; the earlier shorthand “integration + NoPE” was less specific. |
+| 4 | Initialization | On the wide control, change only initialization standard deviation from 0.01 to 0.02. | Optional/planned. |
+| 5 | Combined 275M pilot | Combine only interventions whose isolated evidence is neutral-to-positive. | Blocked on isolated results. |
+| 6 | Promote combined recipe | Run the full pretraining ladder, then midtraining, then 8K-to-65K long-context adaptation. | Blocked on the combined pilot. |
+
+## Dense-hybrid alignment target
+
+Apart from the intentional dense-versus-MoE FFN difference, full alignment with
+the coworker dense hybrid requires all of the following changes from the current
+wide-derived `expand_v=1` hybrid:
+
+- adopt the dense ladder's per-rung width, depth, head, and attention geometry,
+  resolving its 450M/1.4B rung labels against our 480M/1.2B rungs;
+- use the exact four-GDN/one-global repeating pattern (20% global attention),
+  including GDN as the sequence mixer in our dense-first-FFN block when needed
+  to preserve the ratio;
+- change GDN from `expand_v=1` to the dense recipe's `expand_v=2`;
+- change global attention from GQA to the dense recipe's full KV-head geometry
+  and add its elementwise attention gate;
+- remove RoPE from global-attention layers (NoPE); and
+- change initialization standard deviation from `0.01` to `0.02`.
+
+Peri-norm placement, RMSNorm and QK-norm types/epsilons, 128-dimensional heads,
+SiLU, embedding scaling/normalization, bias settings, and the remaining GDN
+dynamics already agree and do not need interventions. Re-audit active parameters
+and FLOPs after composing the alignment changes; `expand_v=2` is deliberately
+deferred rather than folded into the current hybrid promotion decision.
+
+For geometry-changing experiments, record both token-matched quality and
+active-parameter/FLOP efficiency. Do not promote a result until each relevant
+Cx has a finished, bracketed LR sweep under the rules in
+`EXPERIMENT_RULES.md`.
+
+The original migration-era statement of this plan remains in the repository
+root at `JACOBM_MIGRATION_PLAN.md`; this file is the live v2 queue.

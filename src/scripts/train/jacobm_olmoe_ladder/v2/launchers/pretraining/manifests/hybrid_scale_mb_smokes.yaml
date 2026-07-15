@@ -1,0 +1,120 @@
+schema_version: 1
+
+experiment:
+  description: Largest-candidate B300 microbatch smokes for promoted hybrid scale runs
+  checkpoint_root: /weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/olmo-ddp/pretraining-smokes
+
+source:
+  repo: /weka/oe-adapt-default/jacobm/olmoe3/olmo-ddp-migration/OLMo-core
+  wrapper: src/scripts/train/jacobm_olmoe3_hybrid_scale_beaker.sh
+  image: 01KW8G8JC20H11Y60PPTE2VN4Q
+
+beaker:
+  workspace: ai2/OLMo-3-moe-experiments
+  cluster: ai2/holmes
+  priority: urgent
+  shared_memory: 64 GiB
+  min_runtime: 10m
+  timeout: 4h
+  result_path: /results
+
+secrets:
+  AWS_ACCESS_KEY_ID: AWS_ACCESS_KEY_ID
+  AWS_SECRET_ACCESS_KEY: AWS_SECRET_ACCESS_KEY
+  WANDB_API_KEY: jacobm_WANDB_API_KEY
+  BEAKER_TOKEN: jacobm_BEAKER_TOKEN
+  HF_TOKEN: jacobm_HF_TOKEN
+
+datasets:
+  - mount_path: /weka/oe-adapt-default
+    weka: oe-adapt-default
+  - mount_path: /weka/oe-training-default
+    weka: oe-training-default
+
+training:
+  sequence_length: 8192
+  hard_stop_steps: 12
+  # The trainer always saves at the hard stop. Avoid multiplying very large
+  # optimizer-state checkpoints during short capacity/throughput probes.
+  save_interval: 1000
+  ephemeral_save_interval: 500
+  eval_interval: 10
+  eval_steps: 1
+  compile: true
+  wandb: true
+
+smokes:
+  - task_name: 480m-cx1-mb8-ep1
+    run_name: smoke-480m-intwide-hybrid-gdn-ev1-cx1-mb8-ep1-r2
+    model_size: 480m
+    cx: 1
+    learning_rate: "1.2e-3"
+    global_batch_size: 262144
+    gpu_count: 4
+    expert_parallel_size: 1
+    rank_microbatch_sequences: 8
+  - task_name: 480m-cx2-mb12-ep1
+    run_name: smoke-480m-intwide-hybrid-gdn-ev1-cx2-mb12-ep1-r2
+    model_size: 480m
+    cx: 2
+    learning_rate: "9e-4"
+    global_batch_size: 393216
+    gpu_count: 4
+    expert_parallel_size: 1
+    rank_microbatch_sequences: 12
+  - task_name: 810m-cx1-mb4-ep1
+    run_name: smoke-810m-intwide-hybrid-gdn-ev1-cx1-mb4-ep1-r2
+    model_size: 810m
+    cx: 1
+    learning_rate: "6e-4"
+    global_batch_size: 262144
+    gpu_count: 8
+    expert_parallel_size: 1
+    rank_microbatch_sequences: 4
+  - task_name: 810m-cx2-mb6-ep1
+    run_name: smoke-810m-intwide-hybrid-gdn-ev1-cx2-mb6-ep1-r2
+    model_size: 810m
+    cx: 2
+    learning_rate: "5.6e-4"
+    global_batch_size: 393216
+    gpu_count: 8
+    expert_parallel_size: 1
+    rank_microbatch_sequences: 6
+  - task_name: 1p2b-cx1-mb8-ep8-sync
+    run_name: smoke-1p2b-intwide-hybrid-gdn-ev1-cx1-mb8-ep8-sync-r4
+    model_size: 1p2b
+    cx: 1
+    learning_rate: "4e-4"
+    global_batch_size: 262144
+    gpu_count: 8
+    expert_parallel_size: 8
+    expert_parallel_path: sync_1d
+    rank_microbatch_sequences: 8
+  - task_name: 1p2b-cx2-mb12-ep8-sync
+    run_name: smoke-1p2b-intwide-hybrid-gdn-ev1-cx2-mb12-ep8-sync-r5
+    model_size: 1p2b
+    cx: 2
+    learning_rate: "6e-4"
+    global_batch_size: 393216
+    gpu_count: 8
+    expert_parallel_size: 8
+    expert_parallel_path: sync_1d
+    rank_microbatch_sequences: 12
+  - task_name: 1p2b-cx1-mb4-ep1
+    run_name: smoke-1p2b-intwide-hybrid-gdn-ev1-cx1-mb4-ep1-r5
+    model_size: 1p2b
+    cx: 1
+    learning_rate: "4e-4"
+    global_batch_size: 262144
+    gpu_count: 8
+    expert_parallel_size: 1
+    rank_microbatch_sequences: 4
+  - task_name: 1p2b-cx2-mb3-ep1
+    run_name: smoke-1p2b-intwide-hybrid-gdn-ev1-cx2-mb3-ep1-r6
+    model_size: 1p2b
+    cx: 2
+    learning_rate: "6e-4"
+    global_batch_size: 393216
+    gpu_count: 8
+    expert_parallel_size: 1
+    rank_microbatch_sequences: 3
