@@ -25,6 +25,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added a configurable `determinism_check` option to activation checkpointing (default `"default"`); set it to `"none"` to skip torch's recompute metadata check for opaque linear-attention kernels under `torch.compile`.
 
 
+### Changed
+
+- Removed the `ai2-olmo-eval` dependency from the `eval` extra. The `olmo_eval` package (used for in-loop downstream evals) is now vendored under `olmo_core.eval.olmo_eval`, and its bundled task/dataset data is downloaded on demand from a GCS archive via `cached_path` (configurable with the `OLMO_EVAL_DATA_URL` environment variable) instead of being shipped with the package.
+
 ### Fixed
 
 - The CPU `Test` CI job now caches `HF_HOME` across runs so the HuggingFace roundtrip tests (Qwen3-0.6B, Gemma-3-270m) don't re-download their checkpoints every run.

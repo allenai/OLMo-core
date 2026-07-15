@@ -34,7 +34,7 @@ from ..train_module import EvalBatchSizeUnit, EvalBatchSpec, TransformerTrainMod
 from .callback import Callback, CallbackConfig
 
 if TYPE_CHECKING:
-    from olmo_eval import HFTokenizer
+    from olmo_core.eval.olmo_eval import HFTokenizer
 
     from ..trainer import Trainer
 
@@ -299,7 +299,7 @@ class LMEvaluatorCallbackConfig(CallbackConfig):
 
 @cache
 def _all_tasks() -> Set[str]:
-    from olmo_eval import list_tasks
+    from olmo_core.eval.olmo_eval import list_tasks
 
     return set(list_tasks())
 
@@ -335,7 +335,7 @@ class DownstreamEvaluator(Evaluator):
         dp_process_group: Optional[dist.ProcessGroup] = None,
         lazy: bool = False,
     ):
-        from olmo_eval import ICLMetric
+        from olmo_core.eval.olmo_eval import ICLMetric
 
         if task not in _all_tasks():
             raise OLMoConfigurationError(f"Unknown downstream eval task: '{task}'")
@@ -361,7 +361,11 @@ class DownstreamEvaluator(Evaluator):
         return f"{self.name} '{self.label}'"
 
     def _build_data_loader(self) -> DataLoader:
-        from olmo_eval import ICLMetric, ICLMultiChoiceTaskDataset, build_task
+        from olmo_core.eval.olmo_eval import (
+            ICLMetric,
+            ICLMultiChoiceTaskDataset,
+            build_task,
+        )
 
         log.info(f"Building downstream eval task dataset for '{self.label}'...")
 
@@ -484,7 +488,7 @@ class DownstreamEvaluatorCallbackConfig(CallbackConfig):
         if not self.enabled:
             return None
 
-        from olmo_eval import HFTokenizer
+        from olmo_core.eval.olmo_eval import HFTokenizer
 
         if self.tokenizer.identifier is None:
             raise OLMoConfigurationError(
