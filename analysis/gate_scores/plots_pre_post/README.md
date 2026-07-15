@@ -29,12 +29,17 @@ n candidate blocks; n,k read from the data per length).
 Two-stage, because the raw gate logs are ~9 TB on weka (up to ~25 MB per JSONL line):
 
 1. **Extraction (on-cluster, weka-mounted):** `extract_gate_sets.py` reduces the raw per-token/per-head
-   all-candidate-block dumps to compact per-record *kept-block sets*. Two samplings:
-   - **head mode** (first N records/file) → dense multiple-tokens-per-example, used for **Q1/Q2/Q5**.
-     Stays within the first RULER subtask (`cwe`); fine since these pool over layers/heads.
-   - **balanced mode** (`--per-key` records per subtask) → all 13 RULER subtasks, used for **Q3/Q4**.
-     Both checkpoints share doc ids, so cross-model keys overlap.
-   Driver: `extract_pre_post_on_weka.sh` (set `MODE=head` or `MODE=balanced`).
+   all-candidate-block dumps to compact per-record *kept-block sets*. RULER files are ordered in large
+   per-subtask blocks, so plain head-sampling stays inside the first subtask (`cwe`); two subtask-
+   balanced modes fix that:
+   - **balanced-dense** (`--per-key` DOCS per subtask, each with its full token run, capped at
+     `--max-tokens-per-doc`) → all 13 subtasks **and** dense multiple-tokens-per-example. Used for
+     **Q1/Q2/Q5** (Q2's token-gap curve needs several decode steps per example).
+   - **balanced** (`--per-key` records per subtask) → all 13 subtasks with wide doc coverage. Used for
+     **Q3/Q4**, whose cross-model bars need the *same* (doc, token) sampled in both checkpoints; the
+     wider doc coverage gives better overlap than the dense mode's ~15 docs/subtask.
+   Both checkpoints share doc ids, so cross-model keys overlap. Driver: `extract_pre_post_on_weka.sh`
+   (`MODE=balanced-dense` or `MODE=balanced`).
 2. **Plotting (local):** `plot_gate_jaccard.py` computes the Q1–Q5 Jaccards from the compact dumps and
    renders the figures. Set representation is int bitmasks + popcount (the Q1 curves are ~10⁷ pairwise
    comparisons).
@@ -42,39 +47,39 @@ Two-stage, because the raw gate logs are ~9 TB on weka (up to ~25 MB per JSONL l
 ## Reproduce
 
 ```bash
-# 1. extract on weka (gantry, jupiter, weka-mounted) — head dumps for Q1/Q2/Q5:
+# 1. extract on weka (gantry, jupiter, weka-mounted). Q1/Q2/Q5 use balanced-dense dumps:
 gantry run -w ai2/flex2 -b ai2/oe-other -c ai2/jupiter --priority urgent \
   --beaker-image tylerr/olmo-core-tch291cu128-2025-11-25 \
-  --branch amandab/gate-jaccard-analysis --ref b8fa0750d \
+  --branch amandab/gate-jaccard-analysis --ref <sha> \
   --weka oe-training-default:/weka-mount/oe-training-default \
   --python-manager conda --system-python --install "echo skip" \
+  --env MODE=balanced-dense --env PER_KEY=15 --env MAX_TOK=10 \
   -- bash analysis/gate_scores/extract_pre_post_on_weka.sh
 #    and again with --env MODE=balanced --env PER_KEY=60 for the Q3/Q4 dumps.
 
-# 2. fetch the result datasets, then plot locally:
+# 2. fetch the result datasets, then plot locally (Q1/Q2/Q5 from dense, Q3/Q4 from balanced):
 python analysis/gate_scores/plot_gate_jaccard.py \
-  --a-label "compressive base (pre-SFT)"  --a-dumps 'HEAD/q4b-base-fastcomplm-s2385_ruler_*.jsonl' \
-  --b-label "compressive SFT (post-SFT)"  --b-dumps 'HEAD/q4b-comp-5task-s8550_ruler_*.jsonl' \
-  --lengths 8192 16384 32768 65536 --outdir plots_pre_post
-#    (Q3/Q4 panel regenerated from the BALANCED dumps.)
+  --a-label "compressive base (pre-SFT)"  --a-dumps 'DENSE/q4b-base-fastcomplm-s2385_ruler_*.jsonl' \
+  --b-label "compressive SFT (post-SFT)"  --b-dumps 'DENSE/q4b-comp-5task-s8550_ruler_*.jsonl' \
+  --lengths 8192 16384 32768 65536 --load-cap 700 --outdir plots_pre_post
 ```
 
-Beaker extraction jobs: head `01KXK750KNKJ6WVW8FD3X3VSKK`, balanced `01KXK869P6YQ5YYCGX24G9PJ5D`
-(workspace `ai2/flex2`). Gate-log provenance: `../in_progress_gate_distribution.md`.
+Beaker extraction jobs (workspace `ai2/flex2`): balanced-dense `01KXKPRYS6GEEKRQ23XRACV183` (Q1/Q2/Q5),
+balanced `01KXK869P6YQ5YYCGX24G9PJ5D` (Q3/Q4). Gate-log provenance: `../in_progress_gate_distribution.md`.
 
 ## What the pre/post comparison shows
 
 Both checkpoints are structurally similar (same decay shapes, same layer/head block structure as the
 original compressive-vs-fast figures), but SFT leaves a consistent fingerprint:
 
-- **Q1 (across layers):** similarity decays with layer gap and ticks up at the extremes. Pre/post are
-  nearly identical at 8k/16k, but at **32k the base (pre-SFT) keeps a *higher* cross-layer Jaccard than
-  the SFT model** — SFT makes distant layers select *more distinct* block sets (more layer
-  specialization). The layer×layer matrix shows SFT deepening a few "cold" layers (e.g. L24) that
-  disagree with the rest.
+- **Q1 (across layers):** similarity decays with layer gap and ticks up at the extremes. Averaged
+  over all 13 subtasks, **post-SFT (orange) sits *above* pre-SFT (blue) at every length** — SFT makes a
+  head's opened-gate set *more* consistent across layers. (Note: on `cwe` alone the effect reverses at
+  32k, so this conclusion depends on subtask-balancing — see caveats.) The layer×layer matrix shows the
+  same block structure for both, with a few "cold" layers (e.g. L7–8, L33) that disagree with the rest.
 - **Q2 (across decoded tokens, same example):** **SFT is markedly more stable** — at 64k the SFT model
-  holds ~0.55–0.70 Jaccard across decode steps vs ~0.51–0.57 for base. Post-SFT re-selects the same
-  landmark blocks step to step much more consistently.
+  holds ~0.55–0.63 Jaccard across decode steps vs ~0.52–0.55 for base, and the gap holds at every
+  length. Post-SFT re-selects the same landmark blocks step to step much more consistently.
 - **Q3/Q4 (per subtask):** **post-SFT cross-example Jaccard (orange) is higher than pre-SFT (blue) on
   almost every subtask and length** — SFT sharpens *positional bias* (the gate keys off block position
   more than content). **Cross-model (green) sits below both** at 8k–32k — the two checkpoints disagree
@@ -87,8 +92,10 @@ Net: SFT concentrates the landmark gate — more stable across decode steps, mor
 examples, more specialized across layers — without changing the qualitative structure.
 
 ### Caveats
-- **Q1/Q2/Q5** are computed from **head-sampled** dumps, which fall in RULER's first subtask (`cwe`);
-  these questions pool over layers/heads/tokens and are subtask-agnostic, so that is representative but
-  not a subtask average. **Q3/Q4** use the **balanced** dumps (all 13 subtasks, ~50 docs each).
-- Sample: ~200 (Q1/Q2/Q5) / 780 (Q3/Q4) records per length per model; the plot caps subsample further.
-  Trends are stable but exact values will wiggle with the sampling seed.
+- **Q1/Q2/Q5** use the **balanced-dense** dumps — all 13 subtasks, ~15 docs/subtask, each with a
+  10-token run. This is a genuine subtask average (an earlier `cwe`-only version disagreed with it, e.g.
+  the Q1 32k ordering flips). **Q3/Q4** use the **balanced** dumps (all 13 subtasks, ~60 records/subtask
+  over ~50 docs) for better cross-model (doc,token) overlap; the dense mode's ~15 docs/subtask leaves
+  some cross-model bars empty.
+- Sample: ~1500 records/length/model (dense) and ~780 (balanced); the plot caps subsample further
+  (`--max-records`, `--matrix-records`). Trends are stable but exact values wiggle with the seed.
