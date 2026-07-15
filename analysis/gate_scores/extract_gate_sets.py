@@ -159,6 +159,13 @@ def _subtask_from_prefix(ln, limit=2048):
     return m.group(1).decode("utf-8", "replace") if m else None
 
 
+def _int_from_prefix(ln, key, limit=2048):
+    """Read a top-level integer field (doc_id / decoded_token_num) from a line's prefix. Returns int
+    or None."""
+    m = re.search(rb'"' + re.escape(key.encode()) + rb'":\s*(-?\d+)', ln[:limit])
+    return int(m.group(1)) if m else None
+
+
 def sample_balanced(paths, out, *, per_key, seed, keep_len=None, max_tries_mult=60):
     """Byte-offset sample up to ``per_key`` distinct records *per subtask* per file -- covers every
     RULER subtask instead of getting stuck in the first (huge) subtask block, as head-sampling does.
@@ -207,6 +214,78 @@ def sample_balanced(paths, out, *, per_key, seed, keep_len=None, max_tries_mult=
     return n_written, n_dropped_len
 
 
+def sample_balanced_dense(paths, out, *, per_key, seed, keep_len=None, max_tries_mult=80):
+    """Subtask-balanced sampling that keeps each landed example's *full token run*.
+
+    Like ``balanced`` but ``per_key`` counts DOCS per subtask, and for each kept doc we read forward
+    from the landing to grab all its consecutive decode-step records (a doc's tokens are contiguous in
+    the file). This gives both subtask coverage (for Q1/Q3/Q5 averaging) and dense multiple-tokens-per-
+    example (for Q2's decoded-token-gap curve), which the plain ``balanced`` mode is too sparse for.
+    Returns (n_written, n_dropped_len)."""
+    rng = random.Random(seed)
+    files = [(p, os.path.getsize(p)) for p in paths if os.path.getsize(p) > 0]
+    n_written = 0
+    n_dropped_len = 0
+    for p, fsize in files:
+        docs_kept = defaultdict(set)   # subtask -> set(doc_id)
+        seen = set()                   # (doc, tok) dedup
+        tries = 0
+        stall = 0
+        cap = max_tries_mult * per_key
+        with open(p, "rb") as fh:
+            while tries < cap:
+                tries += 1
+                off = rng.randrange(fsize)
+                fh.seek(off)
+                if off:
+                    fh.readline()  # discard partial line we landed in
+                ln = fh.readline()
+                if not ln:
+                    continue
+                sub = _subtask_from_prefix(ln)
+                doc = _int_from_prefix(ln, "doc_id")
+                if sub is None or doc is None:
+                    continue
+                if doc in docs_kept[sub]:
+                    continue  # already collected this doc
+                if len(docs_kept[sub]) >= per_key:
+                    stall += 1
+                    if stall > 10000 and all(len(v) >= per_key for v in docs_kept.values()):
+                        break
+                    continue
+                # walk forward over this doc's contiguous token run
+                got = False
+                cur = ln
+                while cur:
+                    s2 = _subtask_from_prefix(cur)
+                    d2 = _int_from_prefix(cur, "doc_id")
+                    if s2 != sub or d2 != doc:
+                        break
+                    t2 = _int_from_prefix(cur, "decoded_token_num")
+                    key = (doc, t2)
+                    if key not in seen:
+                        try:
+                            rec = json.loads(cur)
+                        except Exception:
+                            rec = None
+                        if rec is not None:
+                            r = _emit(rec, out, keep_len=keep_len)
+                            if r == -1:
+                                n_dropped_len += 1
+                            elif r == 1:
+                                seen.add(key)
+                                n_written += 1
+                                got = True
+                    cur = fh.readline()
+                if got:
+                    docs_kept[sub].add(doc)
+                    stall = 0
+        summary = {k: len(v) for k, v in sorted(docs_kept.items())}
+        print(f"  {os.path.basename(p)}: kept {n_written} records over "
+              f"{len(docs_kept)} subtasks (docs/sub {summary})", file=sys.stderr)
+    return n_written, n_dropped_len
+
+
 def sample_head(paths, out, *, per_file, keep_len=None):
     """Stream the first ``per_file`` records of each file (never seeks). Records are in decode order
     (doc 0 tok 1, doc 0 tok 2, ...), so head-sampling yields the *same* (doc, tok) keys across models
@@ -245,12 +324,15 @@ def main():
     ap.add_argument("--len", type=int, default=None,
                     help="expected context_len; records with a different len are dropped (safety filter)")
     ap.add_argument("--per-file", type=int, default=800, help="max records to keep per worker file")
-    ap.add_argument("--mode", choices=["head", "random", "balanced"], default="head",
-                    help="head: first N records (decode order; multiple tokens per example, but stays "
-                         "in the first subtask -> use for Q1/Q2/Q5). balanced: --per-key records per "
-                         "subtask via byte-offset sampling (covers all subtasks -> use for Q3/Q4; both "
-                         "models share doc ids so cross-model keys overlap). random: plain byte-offset.")
-    ap.add_argument("--per-key", type=int, default=80, help="balanced mode: records per subtask per file")
+    ap.add_argument("--mode", choices=["head", "random", "balanced", "balanced-dense"], default="head",
+                    help="head: first N records (decode order; dense tokens, but only the first "
+                         "subtask). balanced: --per-key records per subtask (all subtasks, sparse per "
+                         "example -> Q3/Q4). balanced-dense: --per-key DOCS per subtask, each with its "
+                         "full token run (all subtasks AND dense tokens -> Q1/Q2/Q5). random: plain "
+                         "byte-offset. Both checkpoints share doc ids, so balanced* keys overlap "
+                         "cross-model.")
+    ap.add_argument("--per-key", type=int, default=80,
+                    help="balanced: records/subtask/file; balanced-dense: docs/subtask/file")
     ap.add_argument("--seed", type=int, default=0)
     args = ap.parse_args()
 
@@ -265,6 +347,10 @@ def main():
             n_total, n_dropped_len = sample_head(paths, w, per_file=args.per_file, keep_len=args.len)
         elif args.mode == "balanced":
             n_total, n_dropped_len = sample_balanced(
+                paths, w, per_key=args.per_key, seed=args.seed, keep_len=args.len
+            )
+        elif args.mode == "balanced-dense":
+            n_total, n_dropped_len = sample_balanced_dense(
                 paths, w, per_key=args.per_key, seed=args.seed, keep_len=args.len
             )
         else:
