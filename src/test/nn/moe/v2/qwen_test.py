@@ -1,6 +1,5 @@
 """Config-construction tests for the Qwen3-MoE variant builders."""
 
-import olmo_core.nn.moe.v2 as moe_v2
 from olmo_core.nn.moe.v2.qwen import (
     QWEN3_MOE_LAYER_PATTERN,
     build_debug_qwen3_moe_config,
@@ -8,20 +7,6 @@ from olmo_core.nn.moe.v2.qwen import (
     build_qwen3_moe_config_from_hf_config,
 )
 from olmo_core.nn.transformer.config import OLMoDDPModelConfig
-
-
-def test_qwen_builders_exported_from_package():
-    # The public builders/constants are lazily exported from the v2 package (not just the module).
-    for name in (
-        "build_qwen3_moe_config",
-        "build_qwen3_moe_config_from_hf_config",
-        "build_debug_qwen3_moe_config",
-        "get_qwen3_moe_text_config_overrides",
-        "QWEN3_MOE_LAYER_PATTERN",
-        "QWEN3_DENSE_MOE_LAYER_TYPE",
-    ):
-        assert name in moe_v2.__all__
-        assert getattr(moe_v2, name) is not None
 
 
 def test_build_debug_qwen3_moe_config_uses_interleaved_layer_pattern():

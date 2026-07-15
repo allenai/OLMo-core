@@ -7,6 +7,9 @@ Config builders for Qwen3-MoE (and Qwen3.5/3.6 linear-attention) models on the f
     conversion path in :mod:`olmo_core.nn.hf.convert` yet, so a config produced here cannot load a
     HuggingFace Qwen-MoE checkpoint. :func:`build_qwen3_moe_config_from_hf_config` maps HF *config*
     hyperparameters only.
+
+    These builders are accessed via this module path (``olmo_core.nn.moe.v2.qwen``); they are not
+    re-exported from the package namespace.
 """
 
 from __future__ import annotations
@@ -34,15 +37,6 @@ from olmo_core.nn.moe.v2.shared_experts import SharedExpertsConfig
 from olmo_core.nn.rope import RoPEConfig, RoPEType
 from olmo_core.nn.transformer import TransformerBlockType, TransformerType
 from olmo_core.nn.transformer.config import OLMoDDPModelConfig, TransformerBlockConfig
-
-__all__ = [
-    "QWEN3_MOE_LAYER_PATTERN",
-    "QWEN3_DENSE_MOE_LAYER_TYPE",
-    "build_qwen3_moe_config",
-    "build_qwen3_moe_config_from_hf_config",
-    "build_debug_qwen3_moe_config",
-    "get_qwen3_moe_text_config_overrides",
-]
 
 QWEN3_MOE_LAYER_PATTERN = (
     "linear_attention",
