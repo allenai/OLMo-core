@@ -10,7 +10,9 @@ set -uo pipefail
 BASE="${GATE_BASE:-/weka-mount/oe-training-default/ai2-llm/checkpoints/amandab/gate_scores}"
 [ -d "$BASE" ] || BASE="/weka/oe-training-default/ai2-llm/checkpoints/amandab/gate_scores"
 OUT="${OUT:-/results}"
-PER_FILE="${PER_FILE:-500}"
+MODE="${MODE:-head}"            # head (Q1/Q2/Q5) or balanced (Q3/Q4, all subtasks)
+PER_FILE="${PER_FILE:-500}"    # head mode: records per file
+PER_KEY="${PER_KEY:-80}"       # balanced mode: records per subtask per file
 LENGTHS="${LENGTHS:-8 16 32 64}"
 PY="${PY:-python3}"
 
@@ -46,9 +48,10 @@ for K in $LENGTHS; do
   for label in "$PRE" "$POST"; do
     files=$(ls "$BASE/$label/ruler/"gate.ruler${K}k.* 2>/dev/null)
     if [ -z "$files" ]; then echo "MISSING: $label ruler${K}k"; continue; fi
-    echo "=== extract $label ${K}k ==="
-    $PY "$HERE/extract_gate_sets.py" $files --len $((K * 1024)) --per-file "$PER_FILE" \
-        --mode head --out "$DUMPS/${label}_ruler_${K}k.jsonl"
+    echo "=== extract $label ${K}k (mode=$MODE) ==="
+    $PY "$HERE/extract_gate_sets.py" $files --len $((K * 1024)) \
+        --mode "$MODE" --per-file "$PER_FILE" --per-key "$PER_KEY" \
+        --out "$DUMPS/${label}_ruler_${K}k.jsonl"
   done
 done
 
