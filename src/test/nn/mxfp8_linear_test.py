@@ -4,10 +4,19 @@ import torch.nn.functional as F
 
 from olmo_core.nn.mxfp8_linear import MXFP8Linear
 from olmo_core.testing import GPU_MARKS
+from olmo_core.testing.utils import compute_capability
 
 # Module-level equivalent of @requires_gpu (marks every test gpu + skips without a GPU); the
-# pytest.mark.gpu also routes these to the kernels GPU CI job.
-pytestmark = list(GPU_MARKS)
+# pytest.mark.gpu also routes these to the kernels GPU CI job. The MXFP8 quantize/scaled-mm kernels
+# additionally require compute capability >= 9 (they don't compile on older archs like the A100),
+# matching the other fp8 kernel suites (e.g. scaled_grouped_mm_q_test).
+pytestmark = [
+    *GPU_MARKS,
+    pytest.mark.skipif(
+        compute_capability is None or compute_capability < 9,
+        reason=f"MXFP8 kernels require compute capability >= 9 (device has {compute_capability})",
+    ),
+]
 
 
 @pytest.mark.parametrize("save_wgrad_input", ["mxfp8", "bf16"])

@@ -363,6 +363,18 @@ def _get_deepep_v2_runtime(
     return runtime
 
 
+def _routed_experts_need_grad(routed_experts: Optional[Any]) -> bool:
+    """Whether the routed experts have trainable state (plain params or optimizer-owned fp8 stores)."""
+    if routed_experts is None:
+        return False
+    if any(p.requires_grad for p in routed_experts.parameters()):
+        return True
+    named_stores = getattr(routed_experts, "named_fp8_weight_stores", None)
+    if named_stores is not None:
+        return any(getattr(store, "optimizer_enabled", False) for _, store in named_stores())
+    return False
+
+
 class _DeepEpV2Autograd(torch.autograd.Function):
     @staticmethod
     def forward(  # type: ignore[override]
@@ -373,7 +385,9 @@ class _DeepEpV2Autograd(torch.autograd.Function):
         block: OLMoDDPTransformerBlock,
         runtime: _DeepEpV2Runtime,
         rank_capacity: int,
+        grad_anchor: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
+        del grad_anchor  # only present to force this Function into the autograd graph
         recv_x_out = torch.empty(
             (int(rank_capacity), runtime.hidden),
             device=source_input.device,
@@ -491,7 +505,8 @@ class _DeepEpV2Autograd(torch.autograd.Function):
         )
         _deep_ep_wait(event, async_with_compute_stream=runtime.async_with_compute_stream)
 
-        return combined_grad_x, None, grad_topk_weights, None, None, None
+        # Trailing None is for the (non-differentiable) grad_anchor input.
+        return combined_grad_x, None, grad_topk_weights, None, None, None, None
 
 
 def combined_forward_ep_deepep_v2(
@@ -639,6 +654,21 @@ def combined_forward_ep_deepep_v2(
         .contiguous()
     )
 
+    # The routed-expert weights are reached only through ``self`` inside the Function's inner
+    # (enable_grad) graph, not as tensor inputs. When neither tensor input requires grad -- e.g.
+    # frozen lower layers and a frozen router with trainable experts -- the Function would get no
+    # grad_fn, its backward would never run, and expert weight grads would be silently dropped. Add
+    # a differentiable anchor in that case to keep the Function in the graph.
+    grad_anchor: Optional[torch.Tensor] = None
+    if (
+        torch.is_grad_enabled()
+        and not (moe_inp.requires_grad or topk_weights.requires_grad)
+        and _routed_experts_need_grad(self.routed_experts)
+    ):
+        grad_anchor = torch.zeros(
+            (), device=moe_inp.device, dtype=moe_inp.dtype, requires_grad=True
+        )
+
     with nvtx.annotate("deepep_v2/routed", color="green"):
         routed_out = _DeepEpV2Autograd.apply(
             moe_inp,
@@ -647,6 +677,7 @@ def combined_forward_ep_deepep_v2(
             self,
             runtime,
             rank_capacity,
+            grad_anchor,
         )
 
     x_moe = routed_out.view(in_shape)
