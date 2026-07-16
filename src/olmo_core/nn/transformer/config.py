@@ -2038,7 +2038,7 @@ class OLMoDDPModelConfig(TransformerConfig):
     adds recomputation overhead for no benefit.
     """
 
-    recompute_each_block: bool = True
+    recompute_each_block: bool = False
     """
     Recompute each block individually. Keeps only one block's activations live at a time at the
     cost of extra recomputation. Works with or without pipeline parallelism, but is incompatible
