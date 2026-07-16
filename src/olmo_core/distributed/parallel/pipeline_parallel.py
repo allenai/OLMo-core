@@ -315,7 +315,10 @@ def draw_pipeline_timeline(pp_order: Dict[int, List[Any]],
                            title: str = "Pipeline schedule",
                            figsize_per_cell: float = 0.35,
                            outpath: Optional[str] = None,
-                           microbatch_index_offset: int = 0):
+                           microbatch_index_offset: int = 0,
+                           compact_rows: bool = False,
+                           publication_style: bool = False,
+                           cell_height_to_width: float = 1.0):
 
     ranks = sorted(pp_order.keys())
     assert ranks == list(range(len(ranks))), "pp_order keys should be 0..N-1"
@@ -357,15 +360,22 @@ def draw_pipeline_timeline(pp_order: Dict[int, List[Any]],
     total_w = total_w[0]
         # ---- figure sizing
     width = max(8, total_w * figsize_per_cell)
-    height = max(2.5, num_ranks * 0.55 * 2 + 1.4)
+    row_stride = 1 if compact_rows else 2
+    height = max(2.5, num_ranks * 0.55 * row_stride + 1.4)
     fig, ax = plt.subplots(figsize=(width, height), constrained_layout=True)
-    ax.set_title(title, fontsize=14, pad=10)
+    font_weight = "bold" if publication_style else "normal"
+    ax.set_title(
+        title,
+        fontsize=15 if publication_style else 14,
+        fontweight=font_weight,
+        pad=36 if publication_style else 34,
+    )
 
     # colors
-    C_FWD   = "#3B64C3"
-    C_FWD_2 = "#A5B2E7"
-    C_BWD_2 = "#B9D992"
-    C_BWD   = "#355113"
+    C_FWD, C_FWD_TEXT = "#3B64C3", "white"
+    C_FWD_2, C_FWD_2_TEXT = "#A5B2E7", "black"
+    C_BWD, C_BWD_TEXT = "#355113", "white"
+    C_BWD_2, C_BWD_2_TEXT = "#B9D992", "black"
     C_IDLE  = "#9E9E9E"
 
     def format_action(stage_id: int, kind: Any, mb: Optional[int]) -> str:
@@ -384,7 +394,8 @@ def draw_pipeline_timeline(pp_order: Dict[int, List[Any]],
     x_offset = 0
     for iy, r in enumerate(ranks):
         y = num_ranks - 1 - iy
-        y = y * 2 
+        if not compact_rows:
+            y = y * 2
         x_offset = 0
         for t, op in enumerate(pp_order[r]):
             # x0 = x_edges[t]
@@ -395,25 +406,25 @@ def draw_pipeline_timeline(pp_order: Dict[int, List[Any]],
             else:
                 stage_id, kind, mb, need_offload, need_reload = op
 
-            text_color = 'white'
+            text_color = "white"
             if kind is None:
                 color, width_rect, txt = C_IDLE, 1, ""
             elif kind.name == "FULL_BACKWARD_CONT":
                 continue # skip drawing the continuation cell
             elif kind.name == "FORWARD":
                 color, width_rect, txt = C_FWD, 1, format_action(stage_id, kind, mb)
-                # text_color = 'white'
+                text_color = C_FWD_TEXT
                 assert stage_id is not None
                 if stage_id >= num_ranks:
                     color = C_FWD_2
-                    text_color = 'black'
+                    text_color = C_FWD_2_TEXT
             elif kind.name == "FULL_BACKWARD":
                 color, width_rect, txt = C_BWD, 2, format_action(stage_id, kind, mb)
-                # text_color = 'white'
+                text_color = C_BWD_TEXT
                 assert stage_id is not None
                 if stage_id >= num_ranks:
                     color = C_BWD_2
-                    text_color = 'black'
+                    text_color = C_BWD_2_TEXT
             else:
                 raise AssertionError(f"Unexpected kind: {kind}")
 
@@ -425,43 +436,58 @@ def draw_pipeline_timeline(pp_order: Dict[int, List[Any]],
 
                 ax.text(x_offset + width_rect/2, y + 0.5, txt,
                         va="center", ha="center",
-                        fontsize=8,
+                        fontsize=9 if publication_style else 8,
+                        fontweight="normal",
                         color=text_color)
                 
             x_offset += width_rect
     total_w = x_offset
     # ---- axes / grid
     ax.set_xlim(0, total_w)
-    ax.set_ylim(0, num_ranks * 2)
-    ax.set_yticks([num_ranks * 2 - 1 - 0.5 - i * 2 for i in range(num_ranks)])
+    plot_height = num_ranks if compact_rows else num_ranks * 2
+    ax.set_ylim(0, plot_height)
+    if compact_rows:
+        ax.set_yticks([num_ranks - 0.5 - i for i in range(num_ranks)])
+    else:
+        ax.set_yticks([num_ranks * 2 - 1 - 0.5 - i * 2 for i in range(num_ranks)])
     ax.set_yticklabels([f"Rank {i}" for i in ranks])
-    ax.set_xlabel("Time")
-    ax.set_ylabel("Pipeline stage")
+    ax.set_xlabel(
+        "Time", fontsize=11 if publication_style else None, fontweight=font_weight
+    )
+    ax.set_ylabel(
+        "Pipeline stage", fontsize=11 if publication_style else None, fontweight=font_weight
+    )
 
     # ticks: every ~20 labels max on the stretched x-scale
     ax.set_xticks(range(0, total_w, max(1, total_w // 20)))
     # minor vertical grid at every unit (this also shows the midline when a column is doubled)
     ax.set_xticks(range(total_w + 1), minor=True)
-    ax.set_yticks(range(num_ranks * 2), minor=True)
+    ax.set_yticks(range(plot_height), minor=True)
     ax.grid(which='minor', linestyle=':', linewidth=0.3, color="#666666", alpha=0.5)
-    ax.tick_params(axis='both', which='major', labelsize=9)
+    ax.tick_params(axis='both', which='major', labelsize=10 if publication_style else 9)
+    if publication_style:
+        for label in [*ax.get_xticklabels(), *ax.get_yticklabels()]:
+            label.set_fontweight("bold")
 
-    # ---- legend OUTSIDE the axes (no overlap)
+    # ---- legend below the title and above the axes
     fwd_patch  = Rectangle((0,0),1,1, facecolor=C_FWD,  edgecolor='black', linewidth=0.3)
     bwd_patch  = Rectangle((0,0),1,1, facecolor=C_BWD,  edgecolor='black', linewidth=0.3)
     idle_patch = Rectangle((0,0),1,1, facecolor=C_IDLE, edgecolor='black', linewidth=0.3)
     ax.legend([fwd_patch, bwd_patch, idle_patch],
               ["Forward", "Backward", "Idle"],
-              loc="upper left", bbox_to_anchor=(1.01, 1.0),
-              borderaxespad=0., frameon=False)
+              loc="lower center", bbox_to_anchor=(0.5, 1.01), ncols=3,
+              borderaxespad=0.0, frameon=False,
+              prop={"size": 10, "weight": font_weight})
 
-    ax.set_aspect('equal')
+    # Values above 1 make schedule cells narrower without reducing their
+    # height. This is useful for publication figures with long timelines.
+    ax.set_aspect(cell_height_to_width)
     for s in ax.spines.values():
         s.set_visible(False)
 
     if outpath:
         os.makedirs(os.path.dirname(outpath) or ".", exist_ok=True)
-        fig.savefig(outpath, dpi=200)  # you can add bbox_inches="tight" if you place legend below
+        fig.savefig(outpath, dpi=200, bbox_inches="tight")
     return fig, ax
 
 
