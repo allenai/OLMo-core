@@ -48,6 +48,12 @@ shared JSON/Markdown result table records both modes. W&B histories reuse the
 migrated v1 cache; `--include-running` remains available for diagnostic tables
 but running points never enter formal selection.
 
+The canonical window is fixed at 250M tokens. Regeneration verifies that each
+W&B history actually spans that complete interval and fails loudly rather than
+publishing a partial tail. If a W&B reset leaves the final run segment shorter
+than 250M tokens, register and combine its predecessor segment(s) before
+regenerating the formal artifacts.
+
 ## Result Contract
 
 - Pretraining: load training losses and post-training validation results for

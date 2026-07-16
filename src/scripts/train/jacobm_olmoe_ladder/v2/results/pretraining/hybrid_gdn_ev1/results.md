@@ -1,10 +1,10 @@
 # Active hybrid GDN intervention
 
-Generated: `2026-07-16T05:12:24.504758+00:00`
+Generated: `2026-07-16T05:58:10.053466+00:00`
 
 Selection metric: final `250M`-token mean training CE. Only finished runs are eligible.
 The optimal-LR summary includes only bracketed 275M sweeps with a valid quadratic fit.
-The larger-size figure is a fixed-LR transfer comparison at the wide-optimal LR; it does not claim that LR is hybrid-optimal.
+The all-size figure uses observed-optimal points for 275M and fixed wide-LR transfer points for larger sizes; pending hybrid cells are labeled explicitly.
 Fitted LR minima in the 275M U-plot are visual aids and are never used to select results.
 
 ## Completed results

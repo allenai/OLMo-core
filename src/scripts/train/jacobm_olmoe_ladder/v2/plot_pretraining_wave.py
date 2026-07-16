@@ -43,6 +43,8 @@ LOSS_KEY = "train/CE loss"
 TOKENS_KEY = "throughput/total tokens"
 HISTORY_FIELDS = ["_step", TOKENS_KEY, LOSS_KEY]
 PLOTTABLE_STATES = {"finished", "running"}
+FINAL_WINDOW_M = 250
+FINAL_WINDOW_TOKENS = FINAL_WINDOW_M * 1_000_000
 
 
 @dataclass(frozen=True)
@@ -89,6 +91,16 @@ class Point:
     run_id: str
     name: str
     url: str
+
+
+class IncompleteTailWindowError(RuntimeError):
+    def __init__(self, *, available_tokens: float, required_tokens: int) -> None:
+        self.available_tokens = available_tokens
+        self.required_tokens = required_tokens
+        super().__init__(
+            f"history covers only {available_tokens / 1e6:.1f}M of the required "
+            f"{required_tokens / 1e6:.0f}M final-token window"
+        )
 
 
 WIDE_INTEGRATION = Variant(
@@ -148,12 +160,12 @@ HYBRID_GDN_EV1 = Variant(
         RegisteredRun("480m", 2, 9e-4, "4vzmrld1"),
         RegisteredRun("810m", 1, 6e-4, "h1rmcm2p"),
         RegisteredRun("810m", 2, 5.6e-4, "1d5gxgjv"),
-        RegisteredRun("810m", 4, 4e-4, "adi3mjy7"),
-        RegisteredRun("810m", 8, 4e-4, "sucwb1sc"),
-        RegisteredRun("1p2b", 1, 4e-4, "xapobmqb"),
-        RegisteredRun("1p2b", 2, 6e-4, "bwvkwb9s"),
-        RegisteredRun("1p2b", 4, 3e-4, "9c1fcuto"),
-        RegisteredRun("1p2b", 8, 4e-4, "48b58zfx"),
+        RegisteredRun("810m", 4, 4e-4, "bvlzu2c9"),
+        RegisteredRun("810m", 8, 4e-4, "k1d1td9b"),
+        RegisteredRun("1p2b", 1, 4e-4, "1d24xfx5"),
+        RegisteredRun("1p2b", 2, 6e-4, "vr2jfn4c"),
+        RegisteredRun("1p2b", 4, 3e-4, "h5ft97x1"),
+        RegisteredRun("1p2b", 8, 4e-4, "zyeib8rb"),
     ),
 )
 
@@ -202,6 +214,12 @@ def _mean_tail_loss(history: list[dict[str, Any]], window_tokens: int) -> tuple[
 
     samples.sort()
     end_tokens = samples[-1][0]
+    available_tokens = end_tokens - samples[0][0]
+    if available_tokens < window_tokens:
+        raise IncompleteTailWindowError(
+            available_tokens=available_tokens,
+            required_tokens=window_tokens,
+        )
     losses = [loss for tokens, loss in samples if tokens >= end_tokens - window_tokens]
     if not losses:
         return None
@@ -277,10 +295,13 @@ def load_points(
     refresh_cache: bool,
     refresh_stale_cache: bool,
 ) -> list[Point]:
+    if window_m != FINAL_WINDOW_M:
+        raise ValueError(f"canonical pretraining summaries require exactly {FINAL_WINDOW_M}M tokens")
     api = wandb.Api(timeout=90)
     points: list[Point] = []
     allowed_states = PLOTTABLE_STATES if include_running else {"finished"}
-    window_tokens = window_m * 1_000_000
+    window_tokens = FINAL_WINDOW_TOKENS
+    incomplete_tails: list[str] = []
 
     for variant in (wave.baseline, wave.intervention):
         for registered in variant.runs:
@@ -296,7 +317,14 @@ def load_points(
                 refresh_cache=refresh_cache,
                 refresh_stale_cache=refresh_stale_cache,
             )
-            loss_info = _mean_tail_loss(history, window_tokens)
+            try:
+                loss_info = _mean_tail_loss(history, window_tokens)
+            except IncompleteTailWindowError as exc:
+                incomplete_tails.append(
+                    f"{registered.run_id} ({variant.key} {registered.model} Cx{registered.cx}): {exc}"
+                )
+                print(f"INCOMPLETE FINAL WINDOW: {incomplete_tails[-1]}")
+                continue
             if loss_info is None:
                 print(f"skip {registered.run_id}: no usable {LOSS_KEY} history")
                 continue
@@ -322,6 +350,12 @@ def load_points(
                 f"Cx{registered.cx} {registered.lr:.2g} "
                 f"{run.state:>8} avg{window_m}M={loss:.6f} tokens={tokens_b:.3f}B"
             )
+    if incomplete_tails:
+        details = "\n  - ".join(incomplete_tails)
+        raise RuntimeError(
+            "Refusing to generate partial final-window summaries. Register and combine "
+            "the predecessor W&B run history for each reset/resume segment:\n  - " + details
+        )
     model_order = {model: index for index, model in enumerate(wave.models)}
     return sorted(
         points,
@@ -480,84 +514,85 @@ def plot_fixed_lr_scale_comparison(
     output_path: Path,
     window_m: int,
 ) -> Path:
-    """Compare completed larger-size runs at transferred wide-optimal LRs."""
+    """Compare all sizes while clearly marking unfinished hybrid cells."""
 
-    models = [
-        model
-        for model in wave.models
-        if model not in wave.lr_sweep_models
-        and any(_finished(points, wave.intervention.key, model, cx) for cx in (1, 2, 4, 8))
-    ]
-    if not models:
-        fig, ax = plt.subplots(figsize=(8.0, 3.0))
-        ax.axis("off")
-        ax.text(0.5, 0.5, "No completed larger-size hybrid runs yet", ha="center", va="center")
-        ax.set_title("Fixed-LR scale transfer")
-    else:
-        fig, axes = plt.subplots(
-            1,
-            len(models),
-            figsize=(max(6.0, 3.8 * len(models)), 4.4),
-            squeeze=False,
-        )
-        fig.patch.set_facecolor("white")
-        for ax, model in zip(axes[0], models):
-            ax.set_facecolor("white")
-            completed_cxs = [
-                cx
+    models = list(wave.models)
+    fig, axes = plt.subplots(
+        1,
+        len(models),
+        figsize=(max(8.0, 3.6 * len(models)), 4.6),
+        squeeze=False,
+    )
+    fig.patch.set_facecolor("white")
+    for ax, model in zip(axes[0], models):
+        ax.set_facecolor("white")
+        intervention_cxs: list[int] = []
+        for variant, color, linestyle in (
+            (wave.baseline, "black", "--"),
+            (wave.intervention, wave.intervention.color, "-"),
+        ):
+            selected = [
+                point
                 for cx in (1, 2, 4, 8)
-                if _best_finished(points, wave.intervention.key, model, cx) is not None
-                and _best_finished(points, wave.baseline.key, model, cx) is not None
+                if (point := _best_finished(points, variant.key, model, cx)) is not None
             ]
-            for variant, color, linestyle in (
-                (wave.baseline, "black", "--"),
-                (wave.intervention, wave.intervention.color, "-"),
-            ):
-                selected = [
-                    _best_finished(points, variant.key, model, cx) for cx in completed_cxs
-                ]
-                selected = [point for point in selected if point is not None]
-                if not selected:
-                    continue
-                ax.plot(
-                    [point.cx for point in selected],
-                    [point.loss for point in selected],
-                    marker="o",
-                    linewidth=2.0,
-                    color=color,
-                    linestyle=linestyle,
-                    label=variant.label,
-                )
-            for cx in completed_cxs:
-                point = _best_finished(points, wave.intervention.key, model, cx)
-                if point is not None:
-                    ax.annotate(
-                        f"LR {point.lr:.2g}",
-                        (point.cx, point.loss),
-                        textcoords="offset points",
-                        xytext=(8 if point.cx == min(completed_cxs) else 0, 7),
-                        ha="left" if point.cx == min(completed_cxs) else "center",
-                        fontsize=7,
-                        color=wave.intervention.color,
-                    )
-            ax.set_xscale("log", base=2)
-            ax.set_xticks((1, 2, 4, 8))
-            ax.set_xticklabels(("Cx1", "Cx2", "Cx4", "Cx8"))
-            ax.set_xlabel("data multiple")
-            ax.set_title(model)
-            ax.grid(True, which="both", alpha=0.25)
-        axes[0][0].set_ylabel(f"train CE avg{window_m}M")
-        handles, labels = axes[0][0].get_legend_handles_labels()
-        if handles:
-            fig.legend(
-                handles,
-                labels,
-                loc="lower center",
-                ncol=len(handles),
-                bbox_to_anchor=(0.5, -0.02),
-                frameon=False,
+            if not selected:
+                continue
+            if variant.key == wave.intervention.key:
+                intervention_cxs = [point.cx for point in selected]
+            ax.plot(
+                [point.cx for point in selected],
+                [point.loss for point in selected],
+                marker="o",
+                linewidth=2.0,
+                color=color,
+                linestyle=linestyle,
+                label=variant.label,
             )
-        fig.suptitle("Fixed-LR scale transfer (wide-optimal LR; hybrid LR not optimized)")
+        for cx in intervention_cxs:
+            point = _best_finished(points, wave.intervention.key, model, cx)
+            assert point is not None
+            ax.annotate(
+                f"LR {point.lr:.2g}",
+                (point.cx, point.loss),
+                textcoords="offset points",
+                xytext=(0, 7),
+                ha="center",
+                fontsize=7,
+                color=wave.intervention.color,
+            )
+        pending_cxs = [cx for cx in (1, 2, 4, 8) if cx not in intervention_cxs]
+        if pending_cxs:
+            pending = ", ".join(f"Cx{cx}" for cx in pending_cxs)
+            ax.text(
+                0.04,
+                0.04,
+                f"hybrid pending: {pending}",
+                transform=ax.transAxes,
+                fontsize=7,
+                color="#6b7280",
+                ha="left",
+                va="bottom",
+            )
+        mode = "observed-optimal LR" if model in wave.lr_sweep_models else "wide-LR transfer"
+        ax.set_xscale("log", base=2)
+        ax.set_xticks((1, 2, 4, 8))
+        ax.set_xticklabels(("Cx1", "Cx2", "Cx4", "Cx8"))
+        ax.set_xlabel("data multiple")
+        ax.set_title(f"{model}\n{mode}", fontsize=10)
+        ax.grid(True, which="both", alpha=0.25)
+    axes[0][0].set_ylabel(f"train CE avg{window_m}M")
+    handles, labels = axes[0][0].get_legend_handles_labels()
+    if handles:
+        fig.legend(
+            handles,
+            labels,
+            loc="lower center",
+            ncol=len(handles),
+            bbox_to_anchor=(0.5, -0.02),
+            frameon=False,
+        )
+    fig.suptitle("All-size hybrid comparison (finished runs only)")
     output_path.parent.mkdir(parents=True, exist_ok=True)
     fig.tight_layout(rect=(0, 0.08, 1, 0.94))
     fig.savefig(output_path, dpi=180, facecolor="white")
@@ -633,7 +668,7 @@ def write_results(points: list[Point], wave: Wave, output_path: Path, window_m: 
         "",
         f"Selection metric: final `{window_m}M`-token mean training CE. Only finished runs are eligible.",
         "The optimal-LR summary includes only bracketed 275M sweeps with a valid quadratic fit.",
-        "The larger-size figure is a fixed-LR transfer comparison at the wide-optimal LR; it does not claim that LR is hybrid-optimal.",
+        "The all-size figure uses observed-optimal points for 275M and fixed wide-LR transfer points for larger sizes; pending hybrid cells are labeled explicitly.",
         "Fitted LR minima in the 275M U-plot are visual aids and are never used to select results.",
         "",
         "## Completed results",
@@ -688,7 +723,6 @@ def main() -> None:
     parser.add_argument("--wave", choices=sorted(WAVES), default="hybrid_gdn_ev1")
     parser.add_argument("--project", default=PROJECT)
     parser.add_argument("--cache-dir", type=Path, default=DEFAULT_CACHE_DIR)
-    parser.add_argument("--window-m", type=int, default=250)
     parser.add_argument("--include-running", action="store_true")
     parser.add_argument(
         "--refresh-cache",
@@ -716,7 +750,7 @@ def main() -> None:
         wave,
         project=args.project,
         cache_dir=args.cache_dir,
-        window_m=args.window_m,
+        window_m=FINAL_WINDOW_M,
         include_running=args.include_running,
         refresh_cache=args.refresh_cache,
         refresh_stale_cache=args.refresh_stale_cache,
@@ -731,7 +765,7 @@ def main() -> None:
                 wave,
                 model,
                 output_dir / f"{model}_uplot.png",
-                args.window_m,
+                FINAL_WINDOW_M,
             )
             for model in wave.lr_sweep_models
         ),
@@ -739,16 +773,16 @@ def main() -> None:
             points,
             wave,
             output_dir / "summary_observed_best.png",
-            args.window_m,
+            FINAL_WINDOW_M,
         ),
         plot_fixed_lr_scale_comparison(
             points,
             wave,
             output_dir / "fixed_lr_scale_comparison.png",
-            args.window_m,
+            FINAL_WINDOW_M,
         ),
     ]
-    result_paths = write_results(points, wave, results_path, args.window_m)
+    result_paths = write_results(points, wave, results_path, FINAL_WINDOW_M)
     print("\nWrote:")
     for path in (*paths, *result_paths):
         print(path)

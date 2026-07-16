@@ -87,7 +87,11 @@ global_tokens = sequence_length * world_size * rank_microbatch_sequences * accum
    quadratic prediction is a diagnostic and may guide follow-ups; it is never
    substituted into the summary as if it were trained.
 6. Use the final-250M-token mean training CE as the primary pretraining metric.
-   Check wider/narrower windows when differences are small or noisy.
+   The formal plotter must verify that the registered W&B history spans the
+   complete 250M-token interval; never publish a partial final-window mean. If
+   a W&B reset or resume creates a shorter final segment, stop regeneration and
+   combine the predecessor run history before plotting. Check wider/narrower
+   windows separately when differences are small or noisy.
 
 ## Plotting contract
 
