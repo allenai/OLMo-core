@@ -15,11 +15,14 @@ The v2 operating entry points are now:
 - [`models/`](models/): audited model-config builders and parameter comparisons.
 - [`launchers/pretraining/`](launchers/pretraining/): config-driven DDP
   pretraining sweep launcher and intervention manifests.
+- [`launchers/validation/`](launchers/validation/): final-checkpoint eval-only
+  launcher and explicit backfill manifests.
 - [`RUNS.md`](RUNS.md): live post-migration run ledger.
 
-The launcher is dry-run by default and requires explicit `--submit` plus an
-experiment name to create external work. Midtraining and long-context launchers
-remain future work; their result and callback contracts below already apply.
+The launchers are dry-run by default and require explicit `--submit` plus an
+experiment name to create external work. Midtraining and long-context training
+launchers remain future work; their result and callback contracts below already
+apply.
 
 ## Pretraining plots
 

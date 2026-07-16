@@ -1,12 +1,12 @@
 # Midtraining Validation Results
 
-Generated: 2026-07-14 03:14 UTC
+Generated: 2026-07-16 16:11 UTC
 
 Interpretation: lower is better for CE loss, PPL, Z loss, router Z loss, and load-balancing loss; higher is better for MFU/TPS. Accuracy-style validation metrics are higher-is-better when present.
 
 Selection rule: use only `eval/*` validation metrics for midtraining checkpoint/LR selection. Training loss on the midtraining mixture is shown only as run-health metadata and must not be used to choose LRs.
 
-Backfill note: the first 275M grid did not run in-loop evals during training, so final-checkpoint eval-only backfills are required. Once those eval jobs finish and `copy_eval_backfills_to_wandb.py` copies their metrics back, this table will populate the `eval/*` section.
+Backfill note: the first 275M grid did not run in-loop evals. Its final-checkpoint eval-only backfills are complete, and `copy_eval_backfills_to_wandb.py` copied their metrics onto the source runs used by this table.
 
 Settings: 100B midtraining tokens, sequence length 8192, global batch seq 128 (1,048,576 tokens), 1 node, 4 GPUs, EP1, microbatch 8, fresh optimizer state, 2000-step warmup then constant LR.
 

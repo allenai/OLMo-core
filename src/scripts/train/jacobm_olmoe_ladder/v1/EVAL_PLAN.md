@@ -50,6 +50,12 @@ long-context HF exports and RULER outputs are also still Weka/S3 artifacts and
 have not yet been archived under the V1 GCS `hf/long-context` and
 `evals/long-context` prefixes.
 
+Status refresh on 2026-07-16 16:12 UTC: the 810M and 1.2B integration-wide
+continuations are still training at 27.133B and 20.422B of 100B tokens,
+respectively. Their final checkpoints do not exist yet, so no new HF conversion
+or RULER job is due. The six completed 275M/480M records above remain complete;
+no long-context eval was relaunched in this refresh.
+
 ## Training/evaluation separation decision
 
 As of 2026-07-16, all new and resumed pretraining, midtraining, and

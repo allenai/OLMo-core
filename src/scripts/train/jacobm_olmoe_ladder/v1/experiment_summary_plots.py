@@ -31,7 +31,9 @@ def _variant_key(variant: str, variants: Sequence[SummaryVariant]) -> str | None
     return None
 
 
-def _best_observed(points: Iterable[object], variants: Sequence[SummaryVariant]) -> dict[tuple[str, int, str], object]:
+def _best_observed(
+    points: Iterable[object], variants: Sequence[SummaryVariant]
+) -> dict[tuple[str, int, str], object]:
     best: dict[tuple[str, int, str], object] = {}
     for point in points:
         if point.state != "finished":
@@ -80,17 +82,15 @@ def plot_observed_best_summary(
     """
 
     best = _best_observed(points, variants)
-    experiment_keys = {
-        (model, cx)
-        for (model, cx, variant) in best
-        if variant != BASELINE_KEY
-    }
+    experiment_keys = {(model, cx) for (model, cx, variant) in best if variant != BASELINE_KEY}
     if not experiment_keys:
         _write_placeholder(out_path, title)
         return False
 
-    models = sorted({model for model, _ in experiment_keys}, key=lambda model: MODEL_ORDER.get(model, 99))
-    fig_width = max(6.0, 3.8 * len(models))
+    models = sorted(
+        {model for model, _ in experiment_keys}, key=lambda model: MODEL_ORDER.get(model, 99)
+    )
+    fig_width = max(8.0, 4.2 * len(models))
     fig, axes = plt.subplots(1, len(models), figsize=(fig_width, 4.4), squeeze=False, sharey=False)
 
     for ax, model in zip(axes[0], models):
@@ -161,6 +161,6 @@ def plot_observed_best_summary(
         )
     fig.tight_layout(rect=(0, 0.08, 1, 0.94))
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(out_path, dpi=180)
+    fig.savefig(out_path, dpi=180, bbox_inches="tight")
     plt.close(fig)
     return True

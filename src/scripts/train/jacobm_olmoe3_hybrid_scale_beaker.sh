@@ -15,6 +15,8 @@ cp "${SOURCE_REPO}/src/scripts/train/jacobm_olmoe3_hybrid_scale.py" \
   "${REPO}/src/scripts/train/"
 cp "${SOURCE_REPO}/src/scripts/train/jacobm_olmoe_ladder/v2/models/hybrid_wide.py" \
   "${REPO}/src/scripts/train/jacobm_olmoe_ladder/v2/models/"
+cp "${SOURCE_REPO}/src/scripts/train/jacobm_olmoe_ladder/v2/models/geometry_matched_275m.py" \
+  "${REPO}/src/scripts/train/jacobm_olmoe_ladder/v2/models/"
 cp -a "${SOURCE_REPO}/JACOBM_DDP_CONFIGS" "${REPO}/"
 
 cd "${REPO}"
@@ -32,7 +34,13 @@ if (( ${OLMOE3_HYBRID_EP_SIZE:-1} > 1 )) && \
     --inplace --backend cmake
 fi
 
+SUBCOMMAND=${OLMOE3_HYBRID_SUBCOMMAND:-train}
+LOG_NAME=train.log
+if [[ "${SUBCOMMAND}" == "eval_checkpoints" ]]; then
+  LOG_NAME=eval.log
+fi
+
 torchrun --standalone --nproc-per-node="${OLMOE3_HYBRID_WORLD_SIZE:?}" \
   src/scripts/train/jacobm_olmoe3_hybrid_scale.py \
-  train "${OLMOE3_HYBRID_RUN_NAME}" local \
-  2>&1 | tee /results/train.log
+  "${SUBCOMMAND}" "${OLMOE3_HYBRID_RUN_NAME}" local \
+  2>&1 | tee "/results/${LOG_NAME}"

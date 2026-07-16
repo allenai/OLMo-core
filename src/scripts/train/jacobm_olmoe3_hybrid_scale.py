@@ -109,6 +109,8 @@ EVAL_INTERVAL = int(os.environ.get("OLMOE3_HYBRID_EVAL_INTERVAL", "1000"))
 EVAL_STEPS = int(os.environ.get("OLMOE3_HYBRID_EVAL_STEPS", "0"))
 EVAL_TASK_SET = os.environ.get("OLMOE3_HYBRID_EVAL_TASK_SET", "hellaswag")
 EVAL_ON_FINISH = env_bool("OLMOE3_HYBRID_EVAL_ON_FINISH", False)
+EVAL_CHECKPOINT = os.environ.get("OLMOE3_HYBRID_EVAL_CHECKPOINT")
+EVAL_BACKFILL = EVAL_CHECKPOINT is not None
 SAVE_INTERVAL = int(os.environ.get("OLMOE3_HYBRID_SAVE_INTERVAL", "1000"))
 EPHEMERAL_SAVE_INTERVAL = int(os.environ.get("OLMOE3_HYBRID_EPHEMERAL_SAVE_INTERVAL", "500"))
 CHECKPOINT_REMOVAL = CheckpointRemovalStrategy(
@@ -257,11 +259,17 @@ def build_data_components(common: CommonComponents) -> DataComponents:
             global_batch_size=common.global_batch_size,
             seed=34521,
             num_workers=8,
+            # Eval-only backfills restore trainer state to recover the source
+            # step/token counters. The training loader itself is never used,
+            # so do not let an innocuous loader fingerprint difference block
+            # final-checkpoint validation.
+            ignore_fingerprint_mismatch=EVAL_BACKFILL,
         ),
     )
 
 
 def build_trainer_config(common: CommonComponents) -> TrainerConfig:
+    evals_enabled = EVALS_ENABLED or EVAL_BACKFILL
     if EVAL_TASK_SET == "hellaswag":
         downstream_tasks = ["hellaswag"]
     else:
@@ -276,6 +284,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         save_folder=common.save_folder,
         save_overwrite=False,
         no_checkpoints=not CHECKPOINTS_ENABLED,
+        checkpoints_to_eval=[EVAL_CHECKPOINT] if EVAL_CHECKPOINT is not None else None,
         checkpointer=CheckpointerConfig(
             save_thread_count=3,
             load_thread_count=8,
@@ -325,7 +334,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 eval_interval=EVAL_INTERVAL,
                 eval_duration=eval_duration,
                 eval_on_finish=EVAL_ON_FINISH,
-                enabled=EVALS_ENABLED,
+                enabled=evals_enabled,
             ),
         )
         .with_callback(
@@ -336,14 +345,14 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 eval_interval=EVAL_INTERVAL,
                 eval_duration=eval_duration,
                 eval_on_finish=EVAL_ON_FINISH,
-                enabled=EVALS_ENABLED,
+                enabled=evals_enabled,
             ),
         )
         .with_callback(
             "wandb",
             WandBCallback(
                 name=common.run_name,
-                group=variant_group,
+                group=(f"{variant_group}-validation-backfills" if EVAL_BACKFILL else variant_group),
                 project="jacobm-olmoe-ladder",
                 entity="ai2-llm",
                 enabled=WANDB_ENABLED,
@@ -356,7 +365,11 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                     "gdn",
                     "olmo-ddp",
                     f"ep{EP_SIZE}",
-                    "smoke" if HARD_STOP_STEPS else "full-run",
+                    (
+                        "validation-backfill"
+                        if EVAL_BACKFILL
+                        else ("smoke" if HARD_STOP_STEPS else "full-run")
+                    ),
                 ],
             ),
         )
@@ -391,6 +404,14 @@ def finalize_config(config: ExperimentConfig) -> None:
         raise ValueError(f"Unknown model size {MODEL_SIZE!r}; choose one of {MODEL_SIZES}")
     if HARD_STOP_STEPS and not CHECKPOINTS_ENABLED:
         log.info("Smoke checkpointing is disabled; no final hard-stop checkpoint will be written")
+    if EVAL_BACKFILL:
+        if CHECKPOINTS_ENABLED:
+            raise ValueError("Eval-only backfills must set OLMOE3_HYBRID_CHECKPOINTS=0")
+        if not EVALS_ENABLED:
+            log.info("Enabling evaluator callbacks because an eval checkpoint was supplied")
+        assert EVAL_CHECKPOINT is not None
+        if not Path(EVAL_CHECKPOINT).is_dir():
+            raise ValueError(f"Eval checkpoint does not exist: {EVAL_CHECKPOINT}")
     if WORLD_SIZE < 1 or EP_SIZE < 1 or WORLD_SIZE % EP_SIZE:
         raise ValueError(f"EP size {EP_SIZE} must divide world size {WORLD_SIZE}")
     if GLOBAL_BATCH_SIZE % SEQUENCE_LENGTH:

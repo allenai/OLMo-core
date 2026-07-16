@@ -1,0 +1,73 @@
+schema_version: 1
+
+experiment:
+  key: 275m_hybrid_geometry_full_validation
+  description: Full final-checkpoint validation for completed 275M v2 hybrid runs
+  checkpoint_root: /weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/olmo-ddp/pretraining
+
+source:
+  repo: /weka/oe-adapt-default/jacobm/olmoe3/olmo-ddp-migration/OLMo-core
+  wrapper: src/scripts/train/jacobm_olmoe3_hybrid_scale_beaker.sh
+  image: 01KW8G8JC20H11Y60PPTE2VN4Q
+
+beaker:
+  workspace: ai2/OLMo-3-moe-experiments
+  cluster: ai2/holmes
+  priority: urgent
+  gpu_count: 2
+  shared_memory: 64 GiB
+  min_runtime: 10m
+  auto_resume: true
+  timeout: 24h0m0s
+  result_path: /results
+
+secrets:
+  AWS_ACCESS_KEY_ID: AWS_ACCESS_KEY_ID
+  AWS_SECRET_ACCESS_KEY: AWS_SECRET_ACCESS_KEY
+  WANDB_API_KEY: jacobm_WANDB_API_KEY
+  BEAKER_TOKEN: jacobm_BEAKER_TOKEN
+
+datasets:
+  - mount_path: /weka/oe-adapt-default
+    weka: oe-adapt-default
+  - mount_path: /weka/oe-training-default
+    weka: oe-training-default
+
+evaluation:
+  task_set: full
+  sequence_length: 8192
+  rank_microbatch_sequences: 4
+  save_root: /weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/olmo-ddp/eval-backfills/pretraining
+  batch_sizes:
+    1: 262144
+    2: 393216
+    4: 524288
+    8: 786432
+
+# One eval-only task per final checkpoint. These are all finished v2 runs that
+# lacked a post-training full-suite validation run at the 2026-07-16 audit.
+targets:
+  - {source_run: pt-275m-intwide-hybrid-gdn-ev1-cx1-lr4e-4-r1, variant: integration_wide_gdn_ev1, cx: 1, lr: 4e-4, step: step16108}
+  - {source_run: pt-275m-intwide-hybrid-gdn-ev1-cx1-lr8e-4-r1, variant: integration_wide_gdn_ev1, cx: 1, lr: 8e-4, step: step16108}
+  - {source_run: pt-275m-intwide-hybrid-gdn-ev1-cx1-lr1p6e-3-r1, variant: integration_wide_gdn_ev1, cx: 1, lr: 1.6e-3, step: step16108}
+  - {source_run: pt-275m-intwide-hybrid-gdn-ev1-cx1-lr3p2e-3-r1, variant: integration_wide_gdn_ev1, cx: 1, lr: 3.2e-3, step: step16108}
+  - {source_run: pt-275m-intwide-hybrid-gdn-ev1-cx2-lr4e-4-r1, variant: integration_wide_gdn_ev1, cx: 2, lr: 4e-4, step: step21477}
+  - {source_run: pt-275m-intwide-hybrid-gdn-ev1-cx2-lr8e-4-r1, variant: integration_wide_gdn_ev1, cx: 2, lr: 8e-4, step: step21477}
+  - {source_run: pt-275m-intwide-hybrid-gdn-ev1-cx2-lr1p6e-3-r1, variant: integration_wide_gdn_ev1, cx: 2, lr: 1.6e-3, step: step21477}
+  - {source_run: pt-275m-intwide-hybrid-gdn-ev1-cx2-lr3p2e-3-r1, variant: integration_wide_gdn_ev1, cx: 2, lr: 3.2e-3, step: step21477}
+  - {source_run: pt-275m-intwide-hybrid-gdn-ev1-cx4-lr4e-4-r1, variant: integration_wide_gdn_ev1, cx: 4, lr: 4e-4, step: step32215}
+  - {source_run: pt-275m-intwide-hybrid-gdn-ev1-cx4-lr8e-4-r1, variant: integration_wide_gdn_ev1, cx: 4, lr: 8e-4, step: step32215}
+  - {source_run: pt-275m-intwide-hybrid-gdn-ev1-cx4-lr1p6e-3-r1, variant: integration_wide_gdn_ev1, cx: 4, lr: 1.6e-3, step: step32215}
+  - {source_run: pt-275m-intwide-hybrid-gdn-ev1-cx4-lr3p2e-3-r1, variant: integration_wide_gdn_ev1, cx: 4, lr: 3.2e-3, step: step32215}
+  - {source_run: pt-275m-intwide-hybrid-gdn-ev1-cx8-lr4e-4-r1, variant: integration_wide_gdn_ev1, cx: 8, lr: 4e-4, step: step42954}
+  - {source_run: pt-275m-intwide-hybrid-gdn-ev1-cx8-lr8e-4-r1, variant: integration_wide_gdn_ev1, cx: 8, lr: 8e-4, step: step42954}
+  - {source_run: pt-275m-intwide-hybrid-gdn-ev1-cx8-lr1p6e-3-r1, variant: integration_wide_gdn_ev1, cx: 8, lr: 1.6e-3, step: step42954}
+  - {source_run: pt-275m-intwide-hybrid-gdn-ev1-cx8-lr3p2e-3-r1, variant: integration_wide_gdn_ev1, cx: 8, lr: 3.2e-3, step: step42954}
+  - {source_run: pt-275m-geometry-hybrid-gdn-ev2-cx1-lr4e-4-r1, variant: geometry_275m_gdn_ev2, cx: 1, lr: 4e-4, step: step17285}
+  - {source_run: pt-275m-geometry-hybrid-gdn-ev2-cx1-lr8e-4-r1, variant: geometry_275m_gdn_ev2, cx: 1, lr: 8e-4, step: step17285}
+  - {source_run: pt-275m-geometry-hybrid-gdn-ev2-cx1-lr1p6e-3-r1, variant: geometry_275m_gdn_ev2, cx: 1, lr: 1.6e-3, step: step17285}
+  - {source_run: pt-275m-geometry-hybrid-gdn-ev2-cx1-lr3p2e-3-r1, variant: geometry_275m_gdn_ev2, cx: 1, lr: 3.2e-3, step: step17285}
+  - {source_run: pt-275m-geometry-hybrid-gdn-ev2-cx2-lr4e-4-r1, variant: geometry_275m_gdn_ev2, cx: 2, lr: 4e-4, step: step23047}
+  - {source_run: pt-275m-geometry-hybrid-gdn-ev2-cx2-lr8e-4-r1, variant: geometry_275m_gdn_ev2, cx: 2, lr: 8e-4, step: step23047}
+  - {source_run: pt-275m-geometry-hybrid-gdn-ev2-cx2-lr1p6e-3-r1, variant: geometry_275m_gdn_ev2, cx: 2, lr: 1.6e-3, step: step23047}
+  - {source_run: pt-275m-geometry-hybrid-gdn-ev2-cx2-lr3p2e-3-r1, variant: geometry_275m_gdn_ev2, cx: 2, lr: 3.2e-3, step: step23047}

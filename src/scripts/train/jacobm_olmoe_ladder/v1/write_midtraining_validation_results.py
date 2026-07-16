@@ -1,11 +1,10 @@
 #!/usr/bin/env python
 """Write a midtraining validation/progress dashboard from W&B summaries.
 
-The first 275M midtraining grid was launched with ``--eval-task-set=fast`` but
-without enabling ladder eval callbacks, so the runs currently do not log
-``eval/*`` validation metrics. This dashboard still tracks the grid separately
-from the pretraining/in-loop eval dashboards and will surface validation metrics
-if later midtraining runs log them.
+The first 275M midtraining grid was launched without enabling ladder eval
+callbacks. Its final-checkpoint eval-only backfills have since been copied onto
+the source W&B runs, so this dashboard tracks the complete post-hoc validation
+record separately from pretraining results.
 """
 
 from __future__ import annotations
@@ -313,7 +312,11 @@ def load_summary(run: Any, *, project: str, cache_dir: Path, refresh_cache: bool
         with cache_path.open() as f:
             cached = json.load(f)
         meta = cached.get("metadata", {})
-        if meta.get("cache_version") == CACHE_VERSION and meta.get("state") == "finished" and run.state == "finished":
+        if (
+            meta.get("cache_version") == CACHE_VERSION
+            and meta.get("state") == "finished"
+            and run.state == "finished"
+        ):
             return cached
 
     summary = {key: jsonable(value) for key, value in dict(run.summary).items()}
@@ -455,7 +458,11 @@ def metric_winners(records: list[dict[str, Any]], metric: str) -> set[str]:
         best = min(value for _, value in values)
     else:
         return set()
-    return {record_key(record) for record, value in values if math.isclose(value, best, rel_tol=1e-12, abs_tol=1e-12)}
+    return {
+        record_key(record)
+        for record, value in values
+        if math.isclose(value, best, rel_tol=1e-12, abs_tol=1e-12)
+    }
 
 
 def fmt_eval_cell(record: dict[str, Any], metric: str, winners: set[str]) -> str:
@@ -465,7 +472,9 @@ def fmt_eval_cell(record: dict[str, Any], metric: str, winners: set[str]) -> str
     return value
 
 
-def win_count_tables(records: list[dict[str, Any]], metrics: list[str]) -> tuple[list[list[str]], list[list[str]]]:
+def win_count_tables(
+    records: list[dict[str, Any]], metrics: list[str]
+) -> tuple[list[list[str]], list[list[str]]]:
     by_lr = {record["lr"]: 0 for record in records}
     by_category: dict[str, dict[str, int]] = {}
     category_totals: dict[str, int] = {}
@@ -483,7 +492,10 @@ def win_count_tables(records: list[dict[str, Any]], metrics: list[str]) -> tuple
     category_rows = []
     for category in sorted(by_category):
         row = [category, str(category_totals[category])]
-        row.extend(str(by_category[category][record["lr"]]) for record in sorted(records, key=lambda r: lr_sort_key(r["lr"])))
+        row.extend(
+            str(by_category[category][record["lr"]])
+            for record in sorted(records, key=lambda r: lr_sort_key(r["lr"]))
+        )
         category_rows.append(row)
     return count_rows, category_rows
 
@@ -498,7 +510,9 @@ def lr_sort_key(lr: str) -> float:
     return float(lr)
 
 
-def parse_record(target: MidtrainTarget, run: Any | None, payload: dict[str, Any] | None) -> dict[str, Any]:
+def parse_record(
+    target: MidtrainTarget, run: Any | None, payload: dict[str, Any] | None
+) -> dict[str, Any]:
     summary = payload["summary"] if payload else {}
     train_loss = summary.get("train/CE loss")
     return {
@@ -515,12 +529,15 @@ def parse_record(target: MidtrainTarget, run: Any | None, payload: dict[str, Any
         "step": summary.get("_step"),
         "tokens": summary.get("throughput/total tokens") or summary.get("optim/total tokens"),
         "train_ce_loss": train_loss,
-        "train_ppl": summary.get("train/PPL") or (math.exp(train_loss) if isinstance(train_loss, (int, float)) else None),
+        "train_ppl": summary.get("train/PPL")
+        or (math.exp(train_loss) if isinstance(train_loss, (int, float)) else None),
         "z_loss": summary.get("train/Z loss"),
         "router_z_loss": summary.get("train/router Z loss"),
         "load_balancing_loss": summary.get("train/load balancing loss"),
-        "mfu": summary.get("throughput/device/MFU") or summary.get("throughput/device/MFU (actual avg)"),
-        "tps": summary.get("throughput/device/TPS") or summary.get("throughput/device/TPS (actual avg)"),
+        "mfu": summary.get("throughput/device/MFU")
+        or summary.get("throughput/device/MFU (actual avg)"),
+        "tps": summary.get("throughput/device/TPS")
+        or summary.get("throughput/device/TPS (actual avg)"),
         "eval_metrics": {
             key: value
             for key, value in summary.items()
@@ -534,7 +551,9 @@ def main() -> int:
     parser.add_argument("--project", default=DEFAULT_PROJECT)
     parser.add_argument("--cache-dir", type=Path, default=DEFAULT_CACHE_DIR)
     parser.add_argument("--output", type=Path, default=RESULTS_DIR / "midtraining_validation.md")
-    parser.add_argument("--json-output", type=Path, default=RESULTS_DIR / "midtraining_validation.json")
+    parser.add_argument(
+        "--json-output", type=Path, default=RESULTS_DIR / "midtraining_validation.json"
+    )
     parser.add_argument("--refresh-cache", action="store_true")
     args = parser.parse_args()
 
@@ -550,7 +569,12 @@ def main() -> int:
     for target in TARGETS:
         run = runs.get(target.semantic_name)
         payload = (
-            load_summary(run, project=args.project, cache_dir=args.cache_dir, refresh_cache=args.refresh_cache)
+            load_summary(
+                run,
+                project=args.project,
+                cache_dir=args.cache_dir,
+                refresh_cache=args.refresh_cache,
+            )
             if run is not None
             else None
         )
@@ -582,10 +606,10 @@ def main() -> int:
         ),
         "",
         (
-            "Backfill note: the first 275M grid did not run in-loop evals during "
-            "training, so final-checkpoint eval-only backfills are required. Once "
-            "those eval jobs finish and `copy_eval_backfills_to_wandb.py` copies "
-            "their metrics back, this table will populate the `eval/*` section."
+            "Backfill note: the first 275M grid did not run in-loop evals. Its "
+            "final-checkpoint eval-only backfills are complete, and "
+            "`copy_eval_backfills_to_wandb.py` copied their metrics onto the source "
+            "runs used by this table."
         ),
         "",
         "Settings: 100B midtraining tokens, sequence length 8192, global batch seq 128 "
@@ -617,38 +641,64 @@ def main() -> int:
                 ", ".join(record["lr"] for record in group if record["state"] != "finished") or "",
             ]
         )
-    lines.extend(md_table(["source", "training finished", "eval metrics present", "LRs with evals", "still running"], summary_rows))
+    lines.extend(
+        md_table(
+            [
+                "source",
+                "training finished",
+                "eval metrics present",
+                "LRs with evals",
+                "still running",
+            ],
+            summary_rows,
+        )
+    )
     lines.append("")
 
     if eval_metric_names:
-        raw_metric_names = eval_metric_names
-        dedup_metric_names = deduplicated_metrics(eval_metric_names)
-        lines.extend([
-            "## Eval Win Summary",
-            "",
-            (
-                "Wins are computed separately within each source checkpoint group. "
-                "Raw counts include every logged eval metric. De-duplicated counts "
-                "collapse `v2`/non-`v2` repeats for the same task and score family, "
-                "preferring `v2` when both are present. Ties, if any, count for every tied LR."
-            ),
-            "",
-        ])
+        lines.extend(
+            [
+                "## Eval Win Summary",
+                "",
+                (
+                    "Wins are computed separately within each source checkpoint group. "
+                    "Raw counts include every logged eval metric. De-duplicated counts "
+                    "collapse `v2`/non-`v2` repeats for the same task and score family, "
+                    "preferring `v2` when both are present. Ties, if any, count for every tied LR."
+                ),
+                "",
+            ]
+        )
         for source in present_sources:
             group = [record for record in records if record["source"] == source]
-            group_metric_names = sorted({metric for record in group for metric in record["eval_metrics"]})
+            group_metric_names = sorted(
+                {metric for record in group for metric in record["eval_metrics"]}
+            )
             lines.extend([f"### {source} Win Counts", ""])
             if not group_metric_names:
-                lines.extend(["No `eval/*` validation metrics are present for this source group yet.", ""])
+                lines.extend(
+                    ["No `eval/*` validation metrics are present for this source group yet.", ""]
+                )
                 continue
             group_dedup_metric_names = deduplicated_metrics(group_metric_names)
             raw_rows, _ = win_count_tables(group, group_metric_names)
             dedup_rows, category_rows = win_count_tables(group, group_dedup_metric_names)
             dedup_by_lr = {row[0]: row[1] for row in dedup_rows}
             combined_rows = [[lr, raw_count, dedup_by_lr.get(lr, "")] for lr, raw_count in raw_rows]
-            lines.extend(md_table(["LR", f"raw wins / {len(group_metric_names)}", f"dedup wins / {len(group_dedup_metric_names)}"], combined_rows))
+            lines.extend(
+                md_table(
+                    [
+                        "LR",
+                        f"raw wins / {len(group_metric_names)}",
+                        f"dedup wins / {len(group_dedup_metric_names)}",
+                    ],
+                    combined_rows,
+                )
+            )
             lines.append("")
-            category_headers = ["category", "dedup metrics"] + [record["lr"] for record in sorted(group, key=lambda r: lr_sort_key(r["lr"]))]
+            category_headers = ["category", "dedup metrics"] + [
+                record["lr"] for record in sorted(group, key=lambda r: lr_sort_key(r["lr"]))
+            ]
             lines.extend(md_table(category_headers, category_rows))
             lines.append("")
 
@@ -696,12 +746,19 @@ def main() -> int:
 
     lines.extend(["## Validation Metrics", ""])
     if not eval_metric_names:
-        lines.append("No `eval/*` validation metrics have been copied onto these midtraining runs yet.")
+        lines.append(
+            "No `eval/*` validation metrics have been copied onto these midtraining runs yet."
+        )
         lines.append("")
     else:
-        headers = ["metric", "direction"] + [f"{record['source']} {record['lr']}" for record in records]
+        headers = ["metric", "direction"] + [
+            f"{record['source']} {record['lr']}" for record in records
+        ]
         rows = []
-        records_by_source = {source: [record for record in records if record["source"] == source] for source in present_sources}
+        records_by_source = {
+            source: [record for record in records if record["source"] == source]
+            for source in present_sources
+        }
         for metric in eval_metric_names:
             winners = set()
             for group in records_by_source.values():

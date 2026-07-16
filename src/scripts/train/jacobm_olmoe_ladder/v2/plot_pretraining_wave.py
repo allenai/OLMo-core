@@ -75,6 +75,8 @@ class Wave:
     baseline_active_parameters: dict[str, int]
     baseline: Variant
     intervention: Variant
+    additional_baselines: tuple[Variant, ...] = ()
+    uplot_baselines: bool = False
 
 
 @dataclass(frozen=True)
@@ -169,6 +171,30 @@ HYBRID_GDN_EV1 = Variant(
     ),
 )
 
+GEOMETRY_GDN_EV2 = Variant(
+    key="geometry_gdn_ev2",
+    label="geometry-matched hybrid (GDN, expand_v=2)",
+    color="#dc2626",
+    runs=(
+        RegisteredRun("275m", 1, 4e-4, "sa70hegz"),
+        RegisteredRun("275m", 1, 8e-4, "3ddxwqks"),
+        RegisteredRun("275m", 1, 1.6e-3, "8zx9zgnw"),
+        RegisteredRun("275m", 1, 3.2e-3, "terfkng8"),
+        RegisteredRun("275m", 2, 4e-4, "oaazdm2h"),
+        RegisteredRun("275m", 2, 8e-4, "u4cinuz5"),
+        RegisteredRun("275m", 2, 1.6e-3, "3oqkg24h"),
+        RegisteredRun("275m", 2, 3.2e-3, "pz6377bu"),
+        RegisteredRun("275m", 4, 4e-4, "7jzlrolc"),
+        RegisteredRun("275m", 4, 8e-4, "gwve4pn6"),
+        RegisteredRun("275m", 4, 1.6e-3, "hwjvw532"),
+        RegisteredRun("275m", 4, 3.2e-3, "hmjkig0r"),
+        RegisteredRun("275m", 8, 4e-4, "7mlzc5x4"),
+        RegisteredRun("275m", 8, 8e-4, "wo8raj1p"),
+        RegisteredRun("275m", 8, 1.6e-3, "0x3i869n"),
+        RegisteredRun("275m", 8, 3.2e-3, "aholwcgr"),
+    ),
+)
+
 WAVES = {
     "hybrid_gdn_ev1": Wave(
         key="hybrid_gdn_ev1",
@@ -194,11 +220,39 @@ WAVES = {
         },
         baseline=WIDE_INTEGRATION,
         intervention=HYBRID_GDN_EV1,
-    )
+    ),
+    "geometry_gdn_ev2": Wave(
+        key="geometry_gdn_ev2",
+        title="Geometry-matched active hybrid GDN intervention",
+        intervention_label="geometry-matched hybrid GDN (expand_v=2)",
+        architecture_note=(
+            "275M geometry-matched architecture with d_model=640, 10 layers, "
+            "four-GDN/one-global attention placement, and expand_v=2. The wide "
+            "integration and first expand_v=1 hybrid are both explicit references."
+        ),
+        models=("275m",),
+        lr_sweep_models=("275m",),
+        active_parameters={"275m": 290_782_080},
+        baseline_active_parameters={"275m": 280_207_872},
+        baseline=WIDE_INTEGRATION,
+        additional_baselines=(HYBRID_GDN_EV1,),
+        intervention=GEOMETRY_GDN_EV2,
+        uplot_baselines=True,
+    ),
 }
 
 
-def _mean_tail_loss(history: list[dict[str, Any]], window_tokens: int) -> tuple[float, float] | None:
+def reference_variants(wave: Wave) -> tuple[Variant, ...]:
+    return (wave.baseline, *wave.additional_baselines)
+
+
+def all_variants(wave: Wave) -> tuple[Variant, ...]:
+    return (*reference_variants(wave), wave.intervention)
+
+
+def _mean_tail_loss(
+    history: list[dict[str, Any]], window_tokens: int
+) -> tuple[float, float] | None:
     samples: list[tuple[float, float]] = []
     for row in history:
         tokens = row.get(TOKENS_KEY)
@@ -296,15 +350,19 @@ def load_points(
     refresh_stale_cache: bool,
 ) -> list[Point]:
     if window_m != FINAL_WINDOW_M:
-        raise ValueError(f"canonical pretraining summaries require exactly {FINAL_WINDOW_M}M tokens")
+        raise ValueError(
+            f"canonical pretraining summaries require exactly {FINAL_WINDOW_M}M tokens"
+        )
     api = wandb.Api(timeout=90)
     points: list[Point] = []
     allowed_states = PLOTTABLE_STATES if include_running else {"finished"}
     window_tokens = FINAL_WINDOW_TOKENS
     incomplete_tails: list[str] = []
 
-    for variant in (wave.baseline, wave.intervention):
+    for variant in all_variants(wave):
         for registered in variant.runs:
+            if registered.model not in wave.models:
+                continue
             run = api.run(f"{project}/{registered.run_id}")
             if run.state not in allowed_states:
                 print(f"skip {registered.run_id}: state={run.state}")
@@ -461,6 +519,26 @@ def plot_intervention_uplot(
             color=line.get_color(),
         )
 
+        if wave.uplot_baselines:
+            reference_styles = (("x", "black"), ("D", "#2563eb"))
+            for index, reference in enumerate(reference_variants(wave)):
+                point = _best_finished(points, reference.key, model, cx)
+                if point is None:
+                    continue
+                marker, color = reference_styles[index % len(reference_styles)]
+                scatter_kwargs = {
+                    "marker": marker,
+                    "s": 44,
+                    "linewidth": 1.2,
+                    "zorder": 4,
+                    "label": reference.label if cx == 1 else "_nolegend_",
+                }
+                if marker == "D":
+                    scatter_kwargs.update(facecolors="none", edgecolors=color)
+                else:
+                    scatter_kwargs.update(color=color)
+                ax.scatter([point.lr], [point.loss], **scatter_kwargs)
+
     ax.set_xscale("log")
     ax.set_xlabel("learning rate")
     ax.set_ylabel(f"train CE avg{window_m}M")
@@ -484,18 +562,23 @@ def plot_optimal_summary(points: list[Point], wave: Wave, output_path: Path, win
         if _fit_minimum(_finished(points, wave.intervention.key, model, cx)) is not None
     }
     eligible_points = [point for point in points if (point.model, point.cx) in eligible_keys]
+    reference_styles = (("black", "--"), ("#2563eb", ":"))
+    summary_variants = tuple(
+        SummaryVariant(
+            "baseline" if index == 0 else reference.key,
+            (reference.key,),
+            reference.label,
+            color=reference_styles[index % len(reference_styles)][0],
+            linestyle=reference_styles[index % len(reference_styles)][1],
+        )
+        for index, reference in enumerate(reference_variants(wave))
+    )
     plot_observed_best_summary(
         eligible_points,
         out_path=output_path,
         title=f"{wave.title}: observed optimal LRs",
         variants=(
-            SummaryVariant(
-                "baseline",
-                (wave.baseline.key,),
-                wave.baseline.label,
-                color="black",
-                linestyle="--",
-            ),
+            *summary_variants,
             SummaryVariant(
                 wave.intervention.key,
                 (wave.intervention.key,),
@@ -527,10 +610,15 @@ def plot_fixed_lr_scale_comparison(
     for ax, model in zip(axes[0], models):
         ax.set_facecolor("white")
         intervention_cxs: list[int] = []
-        for variant, color, linestyle in (
-            (wave.baseline, "black", "--"),
-            (wave.intervention, wave.intervention.color, "-"),
-        ):
+        comparison_styles = [
+            (reference, color, linestyle)
+            for reference, (color, linestyle) in zip(
+                reference_variants(wave),
+                (("black", "--"), ("#2563eb", ":")),
+            )
+        ]
+        comparison_styles.append((wave.intervention, wave.intervention.color, "-"))
+        for variant, color, linestyle in comparison_styles:
             selected = [
                 point
                 for cx in (1, 2, 4, 8)
@@ -567,7 +655,7 @@ def plot_fixed_lr_scale_comparison(
             ax.text(
                 0.04,
                 0.04,
-                f"hybrid pending: {pending}",
+                f"intervention pending: {pending}",
                 transform=ax.transAxes,
                 fontsize=7,
                 color="#6b7280",
@@ -592,7 +680,7 @@ def plot_fixed_lr_scale_comparison(
             bbox_to_anchor=(0.5, -0.02),
             frameon=False,
         )
-    fig.suptitle("All-size hybrid comparison (finished runs only)")
+    fig.suptitle(f"{wave.title} (finished runs only)")
     output_path.parent.mkdir(parents=True, exist_ok=True)
     fig.tight_layout(rect=(0, 0.08, 1, 0.94))
     fig.savefig(output_path, dpi=180, facecolor="white")
@@ -600,17 +688,21 @@ def plot_fixed_lr_scale_comparison(
     return output_path
 
 
-def write_results(points: list[Point], wave: Wave, output_path: Path, window_m: int) -> tuple[Path, Path]:
+def write_results(
+    points: list[Point], wave: Wave, output_path: Path, window_m: int
+) -> tuple[Path, Path]:
     generated_at = datetime.now(UTC).isoformat()
     results: list[dict[str, Any]] = []
-    registered_cells = {
-        (registered.model, registered.cx) for registered in wave.intervention.runs
-    }
+    registered_cells = {(registered.model, registered.cx) for registered in wave.intervention.runs}
     for model, cx in sorted(
         registered_cells,
         key=lambda cell: (wave.models.index(cell[0]), cell[1]),
     ):
-        baseline = _best_finished(points, wave.baseline.key, model, cx)
+        references = {
+            reference.key: _best_finished(points, reference.key, model, cx)
+            for reference in reference_variants(wave)
+        }
+        baseline = references[wave.baseline.key]
         intervention = _best_finished(points, wave.intervention.key, model, cx)
         finished = _finished(points, wave.intervention.key, model, cx)
         complete_count = len(finished)
@@ -628,10 +720,17 @@ def write_results(points: list[Point], wave: Wave, output_path: Path, window_m: 
                 "completed_intervention_runs": complete_count,
                 "expected_intervention_runs": expected_count,
                 "wide_reference": asdict(baseline) if baseline else None,
+                "references": {
+                    key: asdict(point) if point else None for key, point in references.items()
+                },
                 "intervention_result": asdict(intervention) if intervention else None,
                 "delta_intervention_minus_wide": (
                     intervention.loss - baseline.loss if baseline and intervention else None
                 ),
+                "delta_intervention_minus_reference": {
+                    key: intervention.loss - point.loss if intervention and point else None
+                    for key, point in references.items()
+                },
             }
         )
 
@@ -648,6 +747,7 @@ def write_results(points: list[Point], wave: Wave, output_path: Path, window_m: 
             "reported as hybrid-optimal without an LR sweep."
         ),
         "baseline_active_parameters": wave.baseline_active_parameters,
+        "reference_variants": [reference.key for reference in reference_variants(wave)],
         "intervention_active_parameters": wave.active_parameters,
         "active_parameter_delta_fraction": {
             model: wave.active_parameters[model] / wave.baseline_active_parameters[model] - 1
@@ -673,11 +773,11 @@ def write_results(points: list[Point], wave: Wave, output_path: Path, window_m: 
         "",
         "## Completed results",
         "",
-        "| Model | Cx | Mode | Status | Wide reference (LR) | Hybrid result (LR) | Delta |",
-        "|---|---:|---|---|---:|---:|---:|",
+        "| Model | Cx | Mode | Status | References (loss @ LR) | Intervention (loss @ LR) | Deltas vs references |",
+        "|---|---:|---|---|---|---:|---|",
     ]
     for result in results:
-        wide = result["wide_reference"]
+        references = result["references"]
         intervention = result["intervention_result"]
         if result["complete"]:
             status = "complete" if result["mode"] == "lr_sweep" else "finished"
@@ -688,16 +788,21 @@ def write_results(points: list[Point], wave: Wave, output_path: Path, window_m: 
                 if result["mode"] == "lr_sweep"
                 else "pending"
             )
-        wide_text = f"{wide['loss']:.6f} ({wide['lr']:.2g})" if wide else "—"
+        reference_text = "; ".join(
+            f"{key}: {point['loss']:.6f} @ {point['lr']:.2g}" if point else f"{key}: —"
+            for key, point in references.items()
+        )
         intervention_text = (
             f"{intervention['loss']:.6f} ({intervention['lr']:.2g})" if intervention else "—"
         )
-        delta = result["delta_intervention_minus_wide"]
-        delta_text = f"{delta:+.6f}" if delta is not None else "—"
+        delta_text = "; ".join(
+            f"{key}: {delta:+.6f}" if delta is not None else f"{key}: —"
+            for key, delta in result["delta_intervention_minus_reference"].items()
+        )
         mode = "LR sweep" if result["mode"] == "lr_sweep" else "fixed-LR transfer"
         lines.append(
             f"| {result['model']} | Cx{result['cx']} | {mode} | {status} | "
-            f"{wide_text} | {intervention_text} | {delta_text} |"
+            f"{reference_text} | {intervention_text} | {delta_text} |"
         )
 
     lines.extend(
@@ -740,10 +845,7 @@ def main() -> None:
 
     wave = WAVES[args.wave]
     output_dir = args.output_dir or V2_DIR / "plots" / "pretraining" / wave.key
-    results_path = (
-        args.results_path
-        or V2_DIR / "results" / "pretraining" / wave.key / "results"
-    )
+    results_path = args.results_path or V2_DIR / "results" / "pretraining" / wave.key / "results"
     output_dir.mkdir(parents=True, exist_ok=True)
 
     points = load_points(

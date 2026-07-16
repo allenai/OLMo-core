@@ -11,6 +11,10 @@ stop and resolve the conflict before launching more compute.
 - `launchers/pretraining/manifests/`: one source-of-truth manifest per
   intervention.
 - `launchers/pretraining/generated/`: disposable rendered Beaker specs.
+- `launchers/validation/launch_backfills.py`: shared final-checkpoint eval-only
+  rendering and explicit Beaker submission.
+- `launchers/validation/manifests/`: exact source checkpoints that require
+  post-training validation.
 - `plot_pretraining_wave.py`: shared pretraining-loss plots and result tables.
 - `plots/pretraining/<intervention>/`: all model-size plots for one
   intervention, including per-size U-plots where LR sweeps exist, the strict
@@ -26,8 +30,10 @@ intervention. Add a manifest and an optional thin wrapper around
 
 ## Scientific comparison contract
 
-1. The sole baseline for new work is the 275M-active wide integration model
-   unless a later decision explicitly replaces it.
+1. The default baseline for new work is the 275M-active wide integration model.
+   Successor interventions may additionally show their immediate architectural
+   parent when explicitly requested. The geometry-matched hybrid therefore
+   compares against both wide integration and the first `expand_v=1` hybrid.
 2. An isolated intervention is trained from scratch using the wide recipe plus
    only the named architectural change. Do not initialize an architecture
    ablation from a wide checkpoint.
@@ -95,11 +101,12 @@ global_tokens = sequence_length * world_size * rank_microbatch_sequences * accum
 
 ## Plotting contract
 
-- Produce exactly one intervention-only all-Cx U-plot per intervention. It has
-  one curve per Cx and does not contain the baseline.
+- Produce exactly one all-Cx U-plot per intervention. It has one intervention
+  curve per Cx. Ordinarily it is intervention-only; an explicitly requested
+  parent comparison may add reference markers without adding reference curves.
 - Produce exactly one observed-best summary per intervention. It contains the
-  intervention and the wide baseline, but only for Cx values satisfying the
-  bracketing rule above.
+  intervention and wide baseline, plus any explicitly requested immediate
+  parent, but only for Cx values satisfying the bracketing rule above.
 - Larger-size runs launched only at transferred wide-optimal LRs belong in a
   separate fixed-LR comparison plot. Never label them hybrid-optimal until a
   hybrid LR sweep brackets an observed best.
@@ -112,8 +119,9 @@ global_tokens = sequence_length * world_size * rank_microbatch_sequences * accum
   download complete W&B histories.
 - Store both JSON and Markdown result tables next to the plot family. Tables may
   show running/provisional points, but must label them clearly.
-- New pretraining results compare only with wide integration—not every v1
-  intervention.
+- New pretraining results compare with wide integration, not every v1
+  intervention. The geometry-matched hybrid also includes the first hybrid as
+  its immediate parent reference by explicit project decision.
 - Whenever plots or result tables change, update the run ledger in the same
   commit when applicable and push all three artifact types to the current
   GitHub experiment branch.
