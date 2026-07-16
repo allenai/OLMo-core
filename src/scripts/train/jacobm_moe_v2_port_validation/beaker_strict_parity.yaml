@@ -8,6 +8,9 @@ tasks:
     arguments:
       - >-
         bash /weka/oe-adapt-default/jacobm/olmoe3/olmo-ddp-migration/OLMo-core-moe-v2-core-validation/src/scripts/train/jacobm_moe_v2_port_validation/run_strict_parity.sh
+    envVars:
+      - {name: BEAKER_TOKEN, secret: jacobm_BEAKER_TOKEN}
+      - {name: OLMOE3_PORT_SUBMIT_POSTGATE, value: "1"}
     datasets:
       - mountPath: /weka/oe-adapt-default
         source:

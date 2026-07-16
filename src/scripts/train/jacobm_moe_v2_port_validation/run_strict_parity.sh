@@ -40,3 +40,12 @@ PYTHONPATH="${CANDIDATE_REPO}/src" python \
   2>&1 | tee /results/comparison.log
 
 cp "${REPORT}" /results/strict_parity.json
+
+if [[ ${OLMOE3_PORT_SUBMIT_POSTGATE:-0} == 1 ]]; then
+  beaker experiment create \
+    "${CANDIDATE_REPO}/src/scripts/train/jacobm_moe_v2_port_validation/beaker_postgate.yaml" \
+    --workspace ai2/OLMo-3-moe-experiments \
+    --name jacobm-moe-v2-core-port-postgate-0cdcc8b81 \
+    --format json \
+    | tee /results/postgate_submission.json
+fi

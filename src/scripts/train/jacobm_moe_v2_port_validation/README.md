@@ -32,3 +32,8 @@ EP8 `sync_1d`, MB cap 8/effective MB4, accumulation 1, no checkpoints, and no
 in-loop evals. Compare tokens/sec, step time, and peak memory across branches;
 the branches use different FLOP accounting, so their reported TFLOPs/MFU are
 not directly comparable.
+
+The submitted strict-parity task sets `OLMOE3_PORT_SUBMIT_POSTGATE=1`, so a
+successful comparison submits `beaker_postgate.yaml` itself. Because the
+submission command is after the strict comparator under `set -e`, neither
+training job is created if checkpoint loading or any exact comparison fails.
