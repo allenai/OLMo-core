@@ -13,16 +13,16 @@ to the pretraining-style 10%-of-training warmup plus cosine decay is recorded as
 a controlled V2 experiment in `../v2/NEXT_EXPERIMENTS.md`; it must not be mixed
 into the remaining V1 runs.
 
-| Size | Family | LR | Global batch | Rank microbatch | Beaker experiment | Job | W&B | Current state (2026-07-15 21:03 UTC) |
+| Size | Family | LR | Global batch | Rank microbatch | Beaker experiment | Job | W&B | Current state (2026-07-16 01:59 UTC) |
 |---|---|---:|---:|---:|---|---|---|---|
 | 275M | baseline | `1e-4` | 2 Mi tokens | 4 seq | [`01KXEW4KTBWXMY9XPYANZ6T7YD`](https://beaker.org/ex/01KXEW4KTBWXMY9XPYANZ6T7YD) | `01KXEW4M665ZHPG6SCV25N533Q` | [`e4hvrd33`](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/e4hvrd33) | finished, step 47,684 / 100.001B tokens |
 | 275M | integration deep | `8e-5` | 2 Mi tokens | 4 seq | [`01KXFP8ZKCB5BBMX5WY9MV5WWW`](https://beaker.org/ex/01KXFP8ZKCB5BBMX5WY9MV5WWW) | `01KXFP8ZYY404ABS636ANN09HX` | [`hq0yjd50`](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/hq0yjd50) | finished, step 47,684 / 100.001B tokens |
 | 275M | integration wide | `8e-5` | 2 Mi tokens | 4 seq | [`01KXFPTD55Y7JDRM27995GFX61`](https://beaker.org/ex/01KXFPTD55Y7JDRM27995GFX61) | `01KXFPTDKAZ85835R6QV1ABKC8` | [`zm8iut38`](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/zm8iut38) | finished, step 47,684 / 100.001B tokens |
 | 480M | baseline | `4e-5` | 3 Mi tokens | 6 seq | [`01KXFP8ZKCB5BBMX5WY9MV5WWW`](https://beaker.org/ex/01KXFP8ZKCB5BBMX5WY9MV5WWW) | `01KXFP902AXYVT672A1JMC5Z5E` | [`9lgu2exp`](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/9lgu2exp) | finished, step 31,790 / 100.003B tokens |
-| 480M | integration deep | `4e-5` | 3 Mi tokens | 6 seq | [`01KXFP8ZKCB5BBMX5WY9MV5WWW`](https://beaker.org/ex/01KXFP8ZKCB5BBMX5WY9MV5WWW) | `01KXFP905NYT6E9AAYP288Q6YD` | [`32yjntyu`](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/32yjntyu) | running, step 29,872/31,790 (94.0%) |
+| 480M | integration deep | `4e-5` | 3 Mi tokens | 6 seq | [`01KXFP8ZKCB5BBMX5WY9MV5WWW`](https://beaker.org/ex/01KXFP8ZKCB5BBMX5WY9MV5WWW) | `01KXFP905NYT6E9AAYP288Q6YD` | [`32yjntyu`](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/32yjntyu) | finished, step 31,790 / 100.003B tokens |
 | 480M | integration wide | `4e-5` | 3 Mi tokens | 6 seq | [`01KXFQJ6M4HDHJ50WVS4ECB8KK`](https://beaker.org/ex/01KXFQJ6M4HDHJ50WVS4ECB8KK) | `01KXFQJ70Y3ZAV6KEPQJE59RSK` | [`3357zlh6`](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/3357zlh6) | finished, step 31,790 / 100.003B tokens |
-| 810M | integration wide | `2e-5` | 4 Mi tokens | 4 seq x 2 accum | [`01KXKR6GQJVTQNH89JM5XDJG2S`](https://beaker.org/ex/01KXKR6GQJVTQNH89JM5XDJG2S) | `01KXKR6H5CSHAZP4ZP0TE33V9T` | [`ayiz8iiy`](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/ayiz8iiy) | GCS load/dry run passed; training at 627.6 TFLOPs/GPU |
-| 1.2B | integration wide | `2e-5` | 4 Mi tokens | 2 seq x 4 accum | [`01KXKR6GQJVTQNH89JM5XDJG2S`](https://beaker.org/ex/01KXKR6GQJVTQNH89JM5XDJG2S) | `01KXKR6HBJH957BFTZYHBN5Z5C` | [`wx24jlwm`](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/wx24jlwm) | GCS load/dry run passed; training at 681.6 TFLOPs/GPU |
+| 810M | integration wide | `2e-5` | 4 Mi tokens | 4 seq x 2 accum | [`01KXKR6GQJVTQNH89JM5XDJG2S`](https://beaker.org/ex/01KXKR6GQJVTQNH89JM5XDJG2S) | `01KXKR6H5CSHAZP4ZP0TE33V9T` | [`ayiz8iiy`](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/ayiz8iiy) | running, step 1,929 / 23,842 (8.1%), 8.091B tokens, 626.2 TFLOPs/GPU |
+| 1.2B | integration wide | `2e-5` | 4 Mi tokens | 2 seq x 4 accum | [`01KXKR6GQJVTQNH89JM5XDJG2S`](https://beaker.org/ex/01KXKR6GQJVTQNH89JM5XDJG2S) | `01KXKR6HBJH957BFTZYHBN5Z5C` | [`wx24jlwm`](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/wx24jlwm) | running, step 1,389 / 23,842 (5.8%), 5.826B tokens, 681.3 TFLOPs/GPU |
 
 ## 275M integration-wide hybrid control
 

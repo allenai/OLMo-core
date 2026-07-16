@@ -114,8 +114,12 @@ WIDE_INTEGRATION = Variant(
         RegisteredRun("480m", 2, 9e-4, "ywj13bkw"),
         RegisteredRun("810m", 1, 6e-4, "w912irkq"),
         RegisteredRun("810m", 2, 5.6e-4, "jpbqhfvc"),
+        RegisteredRun("810m", 4, 4e-4, "58ftjxmw"),
+        RegisteredRun("810m", 8, 4e-4, "kyti8h1y"),
         RegisteredRun("1p2b", 1, 4e-4, "hww8eksq"),
         RegisteredRun("1p2b", 2, 6e-4, "jfwntmwm"),
+        RegisteredRun("1p2b", 4, 3e-4, "u7ab1tpb"),
+        RegisteredRun("1p2b", 8, 4e-4, "bqjzmiqi"),
     ),
 )
 
@@ -144,9 +148,12 @@ HYBRID_GDN_EV1 = Variant(
         RegisteredRun("480m", 2, 9e-4, "4vzmrld1"),
         RegisteredRun("810m", 1, 6e-4, "h1rmcm2p"),
         RegisteredRun("810m", 2, 5.6e-4, "1d5gxgjv"),
+        RegisteredRun("810m", 4, 4e-4, "adi3mjy7"),
+        RegisteredRun("810m", 8, 4e-4, "sucwb1sc"),
         RegisteredRun("1p2b", 1, 4e-4, "xapobmqb"),
         RegisteredRun("1p2b", 2, 6e-4, "bwvkwb9s"),
         RegisteredRun("1p2b", 4, 3e-4, "9c1fcuto"),
+        RegisteredRun("1p2b", 8, 4e-4, "48b58zfx"),
     ),
 )
 

@@ -3,6 +3,44 @@
 This document tracks the near-term plan for evaluating ladder checkpoints with the
 new `olmo-eval` checkout in `/weka/oe-adapt-default/jacobm/olmoe3/olmo-eval`.
 
+## 2026-07-14 Long-Context Backend Decision
+
+- Use converted HF checkpoints with vLLM for RULER.
+- The full `ruler_all__65536` suite completed on the final 275M baseline
+  long-context checkpoint with one Jupiter H100: 1,300 examples in 651.1
+  scoring seconds (2.0 examples/second), with aggregate recall `0.1753`.
+- Beaker experiment: `01KXHATN799NGFT5ADBAK343MT`.
+- The standard OLMo-core provider imports correctly but rejects this OLMo-DDP
+  checkpoint layout: it expects distributed keys starting with `model`, while
+  OLMo-DDP stores `module.*.main`. This requires real provider support for DDP
+  checkpoint loading, not a dependency or validation workaround.
+- Canonical conversion/eval launchers: `launch_lc_hf_conversions.py` and
+  `launch_lc_ruler_hf.py`.
+- Generated summaries: `results/long_context_evals.md` and
+  `results/long_context_evals.json`; raw metrics and predictions are cached
+  under `results/cache/ruler/<beaker-experiment-id>/`.
+
+## 2026-07-16 Long-Context Eval Refresh
+
+All completed 275M/480M long-context checkpoints now have either a finished or
+launched RULER-64K eval. Missing HF conversions were submitted as five parallel
+one-H100 Jupiter tasks in Beaker experiment
+[`01KXMA60MA5SK89ZKNCBMQK857`](https://beaker.org/ex/01KXMA60MA5SK89ZKNCBMQK857).
+The conversion tasks are resumable and require a validated
+`conversion_complete.json` marker before evaluation.
+
+| model | RULER experiment | state at launch |
+| --- | --- | --- |
+| 275M baseline | [`01KXHATN799NGFT5ADBAK343MT`](https://beaker.org/ex/01KXHATN799NGFT5ADBAK343MT) | finished |
+| 275M integration deep | [`01KXMAF717DYMFG7NCRE9J69ND`](https://beaker.org/ex/01KXMAF717DYMFG7NCRE9J69ND) | launched |
+| 275M integration wide | [`01KXMAFF0TBDCA4Z83B6PB4052`](https://beaker.org/ex/01KXMAFF0TBDCA4Z83B6PB4052) | launched |
+| 480M baseline | [`01KXMAFPGY9QY7SK6MJKQHWTSW`](https://beaker.org/ex/01KXMAFPGY9QY7SK6MJKQHWTSW) | launched |
+| 480M integration deep | [`01KXMAJ765PQ9QYYYDAMSYW183`](https://beaker.org/ex/01KXMAJ765PQ9QYYYDAMSYW183) | launched |
+| 480M integration wide | [`01KXMAVY30QJ7J2X94H00XGBJ8`](https://beaker.org/ex/01KXMAVY30QJ7J2X94H00XGBJ8) | launched |
+
+The 810M/1.2B integration-wide checkpoints are still training, so their
+conversions and evals are intentionally not launched yet.
+
 ## Current State
 
 - A single base-eval smoke test has completed successfully from a converted HF
@@ -490,4 +528,3 @@ GPUs, `provider.num_instances=2`, `tensor_parallel_size=1`, `bfloat16`,
 | --- | --- | --- | --- |
 | `olmoe3-275m-cx1-baseline-vllm2-fa-eager-rerun-titan` | `ai2/titan` / B200 | Reproduce original B200 engine-death behavior. | https://beaker.org/ex/01KWMKBXJ0PWVGSZFX031TVQR8 |
 | `olmoe3-275m-cx1-baseline-vllm2-fa-eager-rerun-jupiter` | `ai2/jupiter` / H100 | Check whether the same image/runtime fails similarly on H100. | https://beaker.org/ex/01KWMKCNSJ455QGCKMT8F34W3C |
-

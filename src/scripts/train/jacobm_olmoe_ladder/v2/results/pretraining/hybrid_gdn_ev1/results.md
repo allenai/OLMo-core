@@ -1,6 +1,6 @@
 # Active hybrid GDN intervention
 
-Generated: `2026-07-15T20:57:58.231858+00:00`
+Generated: `2026-07-16T02:01:47.508074+00:00`
 
 Selection metric: final `250M`-token mean training CE. Only finished runs are eligible.
 The optimal-LR summary includes only bracketed 275M sweeps with a valid quadratic fit.
@@ -14,13 +14,17 @@ Fitted LR minima in the 275M U-plot are visual aids and are never used to select
 | 275m | Cx1 | LR sweep | complete | 2.741044 (0.0016) | 2.694642 (0.0016) | -0.046402 |
 | 275m | Cx2 | LR sweep | complete | 2.608295 (0.0016) | 2.569988 (0.0016) | -0.038307 |
 | 275m | Cx4 | LR sweep | complete | 2.506019 (0.0008) | 2.478165 (0.0016) | -0.027853 |
-| 275m | Cx8 | LR sweep | provisional (3/4) | 2.419273 (0.0008) | 2.396380 (0.0016) | -0.022893 |
+| 275m | Cx8 | LR sweep | complete | 2.419273 (0.0008) | 2.396380 (0.0016) | -0.022893 |
 | 480m | Cx1 | fixed-LR transfer | finished | 2.543281 (0.0012) | 2.510874 (0.0012) | -0.032407 |
 | 480m | Cx2 | fixed-LR transfer | finished | 2.423888 (0.0009) | 2.412790 (0.0009) | -0.011097 |
 | 810m | Cx1 | fixed-LR transfer | finished | 2.373197 (0.0006) | 2.364345 (0.0006) | -0.008852 |
 | 810m | Cx2 | fixed-LR transfer | pending | 2.268948 (0.00056) | — | — |
+| 810m | Cx4 | fixed-LR transfer | pending | 2.192802 (0.0004) | — | — |
+| 810m | Cx8 | fixed-LR transfer | pending | 2.104939 (0.0004) | — | — |
 | 1p2b | Cx1 | fixed-LR transfer | pending | 2.273062 (0.0004) | — | — |
 | 1p2b | Cx2 | fixed-LR transfer | pending | 2.178332 (0.0006) | — | — |
+| 1p2b | Cx4 | fixed-LR transfer | pending | 2.094219 (0.0003) | — | — |
+| 1p2b | Cx8 | fixed-LR transfer | pending | 2.022641 (0.0004) | — | — |
 
 ## Runs
 
@@ -51,6 +55,7 @@ Fitted LR minima in the 275M U-plot are visual aids and are never used to select
 | 275m | hybrid (GDN, expand_v=1) | 8 | 0.0004 | finished | 33.780 | 2.412233 | [b0z3qfmi](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/b0z3qfmi) |
 | 275m | hybrid (GDN, expand_v=1) | 8 | 0.0008 | finished | 33.780 | 2.397966 | [rkxojd03](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/rkxojd03) |
 | 275m | hybrid (GDN, expand_v=1) | 8 | 0.0016 | finished | 33.780 | 2.396380 | [66aja50m](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/66aja50m) |
+| 275m | hybrid (GDN, expand_v=1) | 8 | 0.0032 | finished | 33.780 | 2.414943 | [ntoo8vlo](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/ntoo8vlo) |
 | 275m | wide integration (SWA) | 8 | 0.0004 | finished | 32.502 | 2.435915 | [iv901lom](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/iv901lom) |
 | 275m | wide integration (SWA) | 8 | 0.0008 | finished | 32.502 | 2.419273 | [qe052lo4](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/qe052lo4) |
 | 275m | wide integration (SWA) | 8 | 0.0016 | finished | 32.502 | 2.423303 | [qu2zaxr7](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/qu2zaxr7) |
@@ -62,5 +67,9 @@ Fitted LR minima in the 275M U-plot are visual aids and are never used to select
 | 810m | hybrid (GDN, expand_v=1) | 1 | 0.0006 | finished | 14.619 | 2.364345 | [h1rmcm2p](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/h1rmcm2p) |
 | 810m | wide integration (SWA) | 1 | 0.0006 | finished | 13.903 | 2.373197 | [w912irkq](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/w912irkq) |
 | 810m | wide integration (SWA) | 2 | 0.00056 | finished | 27.805 | 2.268948 | [jpbqhfvc](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/jpbqhfvc) |
+| 810m | wide integration (SWA) | 4 | 0.0004 | finished | 55.610 | 2.192802 | [58ftjxmw](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/58ftjxmw) |
+| 810m | wide integration (SWA) | 8 | 0.0004 | finished | 111.220 | 2.104939 | [kyti8h1y](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/kyti8h1y) |
 | 1p2b | wide integration (SWA) | 1 | 0.0004 | finished | 21.417 | 2.273062 | [hww8eksq](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/hww8eksq) |
 | 1p2b | wide integration (SWA) | 2 | 0.0006 | finished | 42.835 | 2.178332 | [jfwntmwm](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/jfwntmwm) |
+| 1p2b | wide integration (SWA) | 4 | 0.0003 | finished | 85.670 | 2.094219 | [u7ab1tpb](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/u7ab1tpb) |
+| 1p2b | wide integration (SWA) | 8 | 0.0004 | finished | 171.340 | 2.022641 | [bqjzmiqi](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/bqjzmiqi) |

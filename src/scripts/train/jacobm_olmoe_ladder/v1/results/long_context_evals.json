@@ -1,0 +1,43 @@
+{
+  "generated_at_utc": "2026-07-14T22:25:13.247815+00:00",
+  "protocol": "jacobm_olmoe_long_context_evals_v1",
+  "records": [
+    {
+      "aggregate_recall": 0.1753076923076923,
+      "backend": "vllm",
+      "beaker_experiment_id": "01KXHATN799NGFT5ADBAK343MT",
+      "beaker_url": "https://beaker.org/ex/01KXHATN799NGFT5ADBAK343MT",
+      "context_length": 65536,
+      "errors": [],
+      "experiment_duration_seconds": 689.7956206798553,
+      "experiment_name": "olmoe3-275m-baseline-lc-ruler64k-vllm-1gpu",
+      "hf_checkpoint": "/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/olmo-ddp/hf/long-context/lc-275m-baseline-cx8-mt2e-4-lc1e-4-64k-r2/step47684",
+      "items_per_second": 1.996517815895875,
+      "model_size": "275m",
+      "num_instances": 1300,
+      "num_tasks": 13,
+      "provider_init_seconds": 33.138959884643555,
+      "raw_metrics": "/weka/oe-adapt-default/jacobm/olmoe3/olmo-ddp-migration/OLMo-core/src/scripts/train/jacobm_olmoe_ladder/v1/results/cache/ruler/01KXHATN799NGFT5ADBAK343MT/main/metrics.json",
+      "run_name": "lc-275m-baseline-cx8-mt2e-4-lc1e-4-64k-r2",
+      "scoring_seconds": 651.133683681488,
+      "step": "step47684",
+      "task_recall": {
+        "ruler_cwe__65536": 0.007000000000000001,
+        "ruler_fwe__65536": 0.0,
+        "ruler_niah_mk_1__65536": 0.32,
+        "ruler_niah_mk_2__65536": 0.0,
+        "ruler_niah_mk_3__65536": 0.03,
+        "ruler_niah_mq__65536": 0.0875,
+        "ruler_niah_mv__65536": 0.0925,
+        "ruler_niah_s_1__65536": 0.45,
+        "ruler_niah_s_2__65536": 0.53,
+        "ruler_niah_s_3__65536": 0.27,
+        "ruler_qa_1__65536": 0.12,
+        "ruler_qa_2__65536": 0.27,
+        "ruler_vt__65536": 0.10200000000000001
+      },
+      "task_suite": "ruler_all__65536",
+      "variant": "baseline"
+    }
+  ]
+}
