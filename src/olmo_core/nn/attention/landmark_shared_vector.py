@@ -66,9 +66,16 @@ from olmo_core.distributed.parallel.context_parallel import (
     all_to_all_single_cp2hp,
     all_to_all_single_hp2cp,
 )
+from olmo_core.distributed.utils import get_rank
 from olmo_core.exceptions import OLMoConfigurationError
 
-from .landmark import build_landmark_masks, landmark_grouped_softmax, repeat_kv
+from .landmark import (
+    build_block_doc_id,
+    build_landmark_masks,
+    build_local_packed_position_ids,
+    landmark_grouped_softmax,
+    repeat_kv,
+)
 from .landmark_fast import FastLandmarkAttention, fused_landmark_attention_fast
 from .landmark_kernel import has_landmark_kernel
 
@@ -177,14 +184,13 @@ class SharedVectorLandmarkAttention(FastLandmarkAttention):
         """Landmark attention with the appended per-block positional vector.
 
         Mirrors :meth:`FastLandmarkAttention.forward` (RoPE/QK-norm via ``_prepare_qkv``, optional
-        Ulysses CP), but the ``head_dim`` output and the ``vec_dim`` tail are projected by ``w_out``
-        and ``w_out_vec`` respectively and summed. KV-cached generation (prefill + decode) is
-        supported via :meth:`_forward_generate`.
+        Ulysses CP, ``cu_doc_lens`` sequence packing), but the ``head_dim`` output and the
+        ``vec_dim`` tail are projected by ``w_out`` and ``w_out_vec`` respectively and summed.
+        KV-cached generation (prefill + decode) is supported via :meth:`_forward_generate`.
         """
         if any(
             v is not None
             for v in (
-                cu_doc_lens,
                 cu_doc_lens_q,
                 cu_doc_lens_k,
                 max_doc_len,
@@ -194,7 +200,8 @@ class SharedVectorLandmarkAttention(FastLandmarkAttention):
             )
         ):
             raise NotImplementedError(
-                "Intra-document masking (cu_doc_lens) is not supported with landmark attention"
+                "SharedVectorLandmarkAttention supports symmetric intra-document masking via "
+                "'cu_doc_lens' only; the cross-attention variants are not supported"
             )
         # Generation path: cached prefill / incremental decode (produces main + tail, both projected).
         if self.kv_cache_manager is not None:
@@ -209,8 +216,22 @@ class SharedVectorLandmarkAttention(FastLandmarkAttention):
             )
 
         B, T_local, _ = x.shape
+        # Per-document RoPE for sequence packing (see FastLandmarkAttention.forward for the Ulysses
+        # CP subtlety: positions are computed on this rank's local shard, before the all-to-all).
+        rope_cu_doc_lens, position_ids = cu_doc_lens, None
+        if cu_doc_lens is not None and self.cp_enabled:
+            assert self._cp_pg is not None
+            position_ids = build_local_packed_position_ids(
+                cu_doc_lens, B, T_local, get_rank(self._cp_pg), self._cp_world_size
+            )
+            rope_cu_doc_lens = None
         q, k, v = self._prepare_qkv(
-            x, pos_sin=pos_sin, pos_cos=pos_cos, freqs_cis=freqs_cis, cu_doc_lens=None
+            x,
+            pos_sin=pos_sin,
+            pos_cos=pos_cos,
+            freqs_cis=freqs_cis,
+            cu_doc_lens=rope_cu_doc_lens,
+            position_ids=position_ids,
         )
         if self.cp_enabled:
             assert self._cp_pg is not None
@@ -229,9 +250,18 @@ class SharedVectorLandmarkAttention(FastLandmarkAttention):
         k = repeat_kv(k.transpose(1, 2), n_rep)
         v = repeat_kv(v.transpose(1, 2), n_rep)
 
+        # Per-block document ids for sequence packing (None for the single-document path). Built
+        # after the CP all-to-all so ``T`` is the full (un-sharded) sequence length, matching
+        # ``cu_doc_lens``'s convention.
+        doc_id = (
+            build_block_doc_id(cu_doc_lens, B, T, self.block_size)
+            if cu_doc_lens is not None
+            else None
+        )
+
         # shape: (B, H, T, head_dim) and (B, H, T, vec_dim)
-        main = self._attn_core(q, k, v)
-        tail = self._shared_vector_tail(q, k, v).to(main.dtype)
+        main = self._attn_core(q, k, v, doc_id=doc_id, cu_doc_lens=cu_doc_lens)
+        tail = self._shared_vector_tail(q, k, v, doc_id=doc_id).to(main.dtype)
 
         # Concatenate along the head-dim so a single Ulysses all-to-all scatters the sequence back and
         # gathers the heads, then split for the two output projections.
@@ -247,9 +277,21 @@ class SharedVectorLandmarkAttention(FastLandmarkAttention):
         tail_flat = combined[..., self.head_dim :].reshape(B, T_local, -1)
         return self.w_out(main_flat) + self.w_out_vec(tail_flat)
 
-    def _attn_core(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor) -> torch.Tensor:
+    def _attn_core(
+        self,
+        q: torch.Tensor,
+        k: torch.Tensor,
+        v: torch.Tensor,
+        doc_id: Optional[torch.Tensor] = None,
+        cu_doc_lens: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
         """The plain (non-compressive) landmark ``head_dim`` output ``(B, H, T, head_dim)``. Overrides
-        the (kernel-only) base ``_attn_core`` to add the eager path; also used by ``_prefill``."""
+        the (kernel-only) base ``_attn_core`` to add the eager path; also used by ``_prefill``.
+
+        :param doc_id: Per-block document ids (see :func:`build_block_doc_id`), used by the fused
+            kernel path.
+        :param cu_doc_lens: Cumulative document lengths, used by the eager (dense) path.
+        """
         if self.use_kernel:
             if not has_landmark_kernel():
                 raise RuntimeError(
@@ -259,16 +301,29 @@ class SharedVectorLandmarkAttention(FastLandmarkAttention):
             T = q.shape[2]
             is_mem = (torch.arange(T, device=q.device) % self.block_size) == (self.block_size - 1)
             return fused_landmark_attention_fast(
-                q, k, v, is_mem, sm_scale=self.softmax_scale, block_size=self.block_size
+                q,
+                k,
+                v,
+                is_mem,
+                sm_scale=self.softmax_scale,
+                block_size=self.block_size,
+                doc_id=doc_id,
             )
-        return self._main_dense(q, k, v)
+        return self._main_dense(q, k, v, cu_doc_lens=cu_doc_lens)
 
-    def _main_dense(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor) -> torch.Tensor:
+    def _main_dense(
+        self,
+        q: torch.Tensor,
+        k: torch.Tensor,
+        v: torch.Tensor,
+        cu_doc_lens: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
         """Eager (dense) non-compressive landmark output ``(B, H, T, head_dim)`` -- identical to
-        ``LandmarkAttention._eager_forward``."""
+        ``LandmarkAttention._eager_forward``, optionally with ``cu_doc_lens`` block-diagonal
+        document masking for sequence packing."""
         B, H, T, _ = q.shape
         attn_mask, is_mem, last_section_mask = build_landmark_masks(
-            T, self.block_size, q.device, q.dtype
+            T, self.block_size, q.device, q.dtype, cu_doc_lens=cu_doc_lens, batch_size=B
         )
 
         attn = torch.matmul(q, k.transpose(-1, -2)) * self.softmax_scale
@@ -285,7 +340,11 @@ class SharedVectorLandmarkAttention(FastLandmarkAttention):
         return torch.matmul(probs, v)
 
     def _shared_vector_tail(
-        self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor
+        self,
+        q: torch.Tensor,
+        k: torch.Tensor,
+        v: torch.Tensor,
+        doc_id: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """Compute the ``vec_dim`` output tail ``(B, H, T, vec_dim)`` for every query.
 
@@ -294,6 +353,12 @@ class SharedVectorLandmarkAttention(FastLandmarkAttention):
         single softmax, per query, over ``[scores to past-block landmarks] ++ [scores to the query's
         own-block content]`` -- so we never build the dense ``(T, T)`` attention matrix. This matches
         the top-level (cross-block) softmax of the landmark grouped softmax by construction.
+
+        :param doc_id: Optional per-block document ids ``(B, nb)`` (see :func:`build_block_doc_id`)
+            for sequence packing. A past block only gates a query if it lies strictly before the
+            query's block *and* shares its document id; a block is wholly inside one document by
+            construction (boundaries are required to be block-aligned), so the own-block ("local")
+            gate group needs no such check.
         """
         B, H, T, D = q.shape
         Lb = self.block_size
@@ -338,6 +403,7 @@ class SharedVectorLandmarkAttention(FastLandmarkAttention):
             e: torch.Tensor,
             base_t: torch.Tensor,
             nb0: int,
+            doc_id: Optional[torch.Tensor] = None,
         ) -> torch.Tensor:
             """Tail ``(B, H, C, vec)`` for a contiguous, block-aligned span of ``C = mc*Lb`` queries
             starting at block ``nb0``. Each query's tail is independent, so this equals the matching
@@ -350,7 +416,14 @@ class SharedVectorLandmarkAttention(FastLandmarkAttention):
             sl = torch.einsum("bhid,bhnd->bhin", q_c.float(), k_lm.float()) * scale
             block_of_query = (nb0 + torch.arange(C, device=device) // Lb).view(C, 1)  # (C, 1)
             past_valid = block_idx < block_of_query  # (C, nb): block strictly before query's block
-            sl = sl.masked_fill(~past_valid.view(1, 1, C, nb), neg_inf)
+            if doc_id is not None:
+                # doc id of each query's own block, broadcast to its Lb tokens: (B, C).
+                query_doc = doc_id[:, nb0 : nb0 + mc].repeat_interleave(Lb, dim=1)
+                same_doc = query_doc.unsqueeze(-1) == doc_id.unsqueeze(1)  # (B, C, nb)
+                past_valid = past_valid.view(1, C, nb) & same_doc  # (B, C, nb)
+                sl = sl.masked_fill(~past_valid.unsqueeze(1), neg_inf)
+            else:
+                sl = sl.masked_fill(~past_valid.view(1, 1, C, nb), neg_inf)
 
             # gate group 2: scores to the query's own-block content (causal, excludes the landmark).
             qb = q_c.float().reshape(Bc, Hc, mc, Lb, D)
@@ -385,9 +458,11 @@ class SharedVectorLandmarkAttention(FastLandmarkAttention):
             t0, t1 = nb0 * Lb, nb1 * Lb
             q_c, k_c = q[:, :, t0:t1], k[:, :, t0:t1]
             if use_ckpt:
-                part = checkpoint(_tail_chunk, q_c, k_c, k_lm, e, base_t, nb0, use_reentrant=False)
+                part = checkpoint(
+                    _tail_chunk, q_c, k_c, k_lm, e, base_t, nb0, doc_id, use_reentrant=False
+                )
             else:
-                part = _tail_chunk(q_c, k_c, k_lm, e, base_t, nb0)
+                part = _tail_chunk(q_c, k_c, k_lm, e, base_t, nb0, doc_id)
             parts.append(part)
         return torch.cat(parts, dim=2)
 
