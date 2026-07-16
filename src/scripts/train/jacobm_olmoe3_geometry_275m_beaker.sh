@@ -3,6 +3,7 @@
 set -euo pipefail
 
 : "${OLMOE3_HYBRID_RUN_NAME:?OLMOE3_HYBRID_RUN_NAME must be set}"
+: "${BEAKER_TOKEN:?BEAKER_TOKEN must be set for the Beaker progress callback}"
 
 SOURCE_REPO=${SOURCE_REPO:-/weka/oe-adapt-default/jacobm/olmoe3/olmo-ddp-migration/OLMo-core}
 REPO=/tmp/OLMo-core

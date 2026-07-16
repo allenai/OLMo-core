@@ -26,6 +26,7 @@ secrets:
   AWS_ACCESS_KEY_ID: AWS_ACCESS_KEY_ID
   AWS_SECRET_ACCESS_KEY: AWS_SECRET_ACCESS_KEY
   WANDB_API_KEY: jacobm_WANDB_API_KEY
+  BEAKER_TOKEN: jacobm_BEAKER_TOKEN
 
 datasets:
   - mount_path: /weka/oe-adapt-default
