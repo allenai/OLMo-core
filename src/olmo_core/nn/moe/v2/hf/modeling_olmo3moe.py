@@ -317,9 +317,15 @@ class Olmo3MoeExperts(nn.ModuleList):
             return self._forward_compile_fallback(hidden_states, topk_ids, topk_weights)
 
         if self._can_use_grouped_mm(hidden_states):
-            return self._forward_grouped_mm(hidden_states, topk_ids, topk_weights)
+            # `_can_use_grouped_mm` is a cheap gate, but whether `grouped_mm` actually accepts a
+            # given device/dtype combination varies across torch builds. Fall back to the reference
+            # loop if the op rejects the operands rather than failing the forward.
+            try:
+                return self._forward_grouped_mm(hidden_states, topk_ids, topk_weights)
+            except (NotImplementedError, RuntimeError):
+                pass
 
-        # Eager reference routing, used when torch grouped_mm is unavailable.
+        # Eager reference routing, used when torch grouped_mm is unavailable or unsupported.
         return self._forward_loop(hidden_states, topk_ids, topk_weights)
 
 
