@@ -176,10 +176,17 @@ class BatchSizeSchedulerCallback(Callback):
             optimizers = [self.trainer.train_module.optim]
             scheduler = self.trainer.train_module.scheduler
 
-        if not optimizers:
+        if optimizers is None:
             raise NotImplementedError(
                 f"Unable to adjust learning rate for {self.trainer.train_module.__class__.__name__} train module class"
             )
+
+        # In eval-only mode the train module has no optimizer(s) (e.g. Trainer.eval_checkpoints
+        # reusing a training config with a batch-size schedule), so there is no LR to adjust.
+        optimizers = [optim for optim in optimizers if optim is not None]
+        if not optimizers:
+            log.info("No optimizer present (eval-only); skipping learning-rate adjustment.")
+            return
 
         for optim in optimizers:
             if not isinstance(
