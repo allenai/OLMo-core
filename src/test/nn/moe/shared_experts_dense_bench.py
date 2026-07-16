@@ -3,11 +3,15 @@ Quick forward-time comparison of the two dense-MLP implementations: MoE-v2's sin
 ``SharedExperts`` vs the standard ``FeedForward``. See ``shared_experts_v2_test.py`` for the
 correctness/parity checks.
 
-Run as a script (any device; auto-selects CUDA + bf16 when available):
-    python src/test/nn/moe/shared_experts_dense_bench.py --d-model 4096 --hidden-size 11008
+Run as a script (any device; auto-selects CUDA + bf16 when available). The size sweep used to
+compare the two implementations (run on a GPU with the torch 2.10 image):
 
-Sweep several (d_model, hidden_size) sizes in one run:
-    python src/test/nn/moe/shared_experts_dense_bench.py --sizes 1024:4096 4096:11008
+    python src/test/nn/moe/shared_experts_dense_bench.py \
+        --sizes 1024:4096 2048:8192 4096:11008 4096:14336 \
+        --seq-len 2048 --batch-size 4
+
+Or a single size:
+    python src/test/nn/moe/shared_experts_dense_bench.py --d-model 4096 --hidden-size 11008
 """
 
 import argparse
