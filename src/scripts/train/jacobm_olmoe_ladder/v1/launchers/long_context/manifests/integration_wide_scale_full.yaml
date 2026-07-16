@@ -44,11 +44,13 @@ training:
   checkpoint_removal: ephemeral_only
   compile: true
   wandb: true
-  evals: true
+  # Training and evaluation are separate jobs. Run validation and RULER from
+  # the final checkpoint after training completes.
+  evals: false
   eval_interval: 2000
   eval_steps: 0
   eval_task_set: fast
-  eval_on_finish: true
+  eval_on_finish: false
 
 runs:
   - task_name: 810m-integration-wide

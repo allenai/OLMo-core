@@ -50,11 +50,12 @@ but running points never enter formal selection.
 
 ## Result Contract
 
-- Pretraining: load training losses and in-loop evals for the new run and the
-  wide integration baseline.
-- Midtraining: load in-loop evals, but do not build a training-loss comparison.
-- Long context: load in-loop evals and external RULER results, but do not build a
+- Pretraining: load training losses and post-training validation results for
+  the new run and the wide integration baseline.
+- Midtraining: load post-training validation results, but do not build a
   training-loss comparison.
+- Long context: load post-training validation and external RULER results, but
+  do not build a training-loss comparison.
 - Run external RULER through converted HF checkpoints and vLLM on Jupiter. The
   current `olmo-eval` OLMo-core provider does not load OLMo-DDP checkpoints
   whose state keys use the `module.*.main` layout.
@@ -69,19 +70,18 @@ Every v2 pretraining, midtraining, and long-context trainer must attach:
 2. `BeakerCallback`, which writes `trainer.training_progress` into the Beaker
    description. `training_progress` already includes the rolling MFU from the
    speed monitor, so a second MFU-specific callback is not needed.
-3. In-loop language-model validation through `LMEvaluatorCallbackConfig`.
-4. In-loop downstream evaluation through `DownstreamEvaluatorCallbackConfig`.
-5. `WandBCallback` and `ConfigSaverCallback` for durable metrics and exact run
+3. `WandBCallback` and `ConfigSaverCallback` for durable metrics and exact run
    reconstruction.
 
-The scale-hybrid trainer now implements these callbacks. Production manifests
-select the v1 `fast` evaluation group every 2,000 steps and on finish; smoke
-manifests retain the short HellaSwag-only probe.
+Evaluator callbacks must be disabled in training jobs, including on finish.
+Run validation in separate eval-only jobs from final checkpoints. This avoids
+the evaluator memory state that caused illegal-memory failures and prevents
+full validation epochs from distorting training throughput and ETA.
 
 ## v1 Audit Finding
 
-The existing ladder trainers only attach in-loop eval callbacks when
-`--ladder-evals` or checkpoint-eval mode is enabled. They do not explicitly
-attach `BeakerCallback`. The standalone 275M long-context trainer still needs
-the centralized v2 callback contract; the scale-hybrid trainer has been brought
-into compliance.
+The existing ladder trainers only attach evaluator callbacks when
+`--ladder-evals` or checkpoint-eval mode is enabled. Do not use
+`--ladder-evals` for new training. The standalone trainers retain disabled
+evaluator definitions for compatibility with eval-only use, but production
+training manifests set their evaluator enable flags to false.

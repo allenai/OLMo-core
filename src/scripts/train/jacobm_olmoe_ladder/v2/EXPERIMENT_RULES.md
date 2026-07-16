@@ -163,16 +163,19 @@ Every new v2 pretraining, midtraining, and long-context trainer must include:
 
 - `SpeedMonitorCallback` for rolling MFU;
 - `BeakerCallback` so the job description exposes training progress and MFU;
-- in-loop language-model and downstream evaluation callbacks;
 - `WandBCallback` and `ConfigSaverCallback`;
 - checkpointing appropriate to the stage.
 
-The scale-hybrid trainer implements this contract, including v1's `fast`
-in-loop evaluation suite for production runs and rolling MFU in Beaker.
+Do not enable language-model or downstream evaluator callbacks in a training
+job, including at the final training step. In-loop evaluation has caused both
+large throughput regressions and illegal-memory failures in the DDP training
+process. Run validation in a separate eval-only job from the completed final
+checkpoint instead.
 
-Pretraining plots use training CE plus in-loop evals. Midtraining and
-long-context comparisons use in-loop evals rather than training-loss plots.
-Long-context additionally uses external RULER through HF/vLLM on Jupiter.
+Pretraining plots use training CE plus post-training validation results.
+Midtraining and long-context comparisons use post-training validation rather
+than training-loss plots. Long-context additionally uses external RULER
+through HF/vLLM on Jupiter.
 
 ## Completion and promotion record
 
@@ -183,7 +186,7 @@ For each intervention, record:
 - complete per-Cx LR grid and canonical batch settings;
 - Beaker and W&B identities;
 - observed-best losses/LRs and whether every Cx is bracketed;
-- in-loop eval results;
+- post-training validation results and eval-job identity;
 - decision: reject, retain for combination, or gather more evidence.
 
 Do not declare an intervention promoted from a partial run, predicted LR, or

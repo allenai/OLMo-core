@@ -22,24 +22,44 @@ new `olmo-eval` checkout in `/weka/oe-adapt-default/jacobm/olmoe3/olmo-eval`.
 
 ## 2026-07-16 Long-Context Eval Refresh
 
-All completed 275M/480M long-context checkpoints now have either a finished or
-launched RULER-64K eval. Missing HF conversions were submitted as five parallel
+All completed 275M/480M long-context checkpoints now have a finished RULER-64K
+eval. Missing HF conversions were submitted as five parallel
 one-H100 Jupiter tasks in Beaker experiment
 [`01KXMA60MA5SK89ZKNCBMQK857`](https://beaker.org/ex/01KXMA60MA5SK89ZKNCBMQK857).
 The conversion tasks are resumable and require a validated
 `conversion_complete.json` marker before evaluation.
 
-| model | RULER experiment | state at launch |
-| --- | --- | --- |
-| 275M baseline | [`01KXHATN799NGFT5ADBAK343MT`](https://beaker.org/ex/01KXHATN799NGFT5ADBAK343MT) | finished |
-| 275M integration deep | [`01KXMAF717DYMFG7NCRE9J69ND`](https://beaker.org/ex/01KXMAF717DYMFG7NCRE9J69ND) | launched |
-| 275M integration wide | [`01KXMAFF0TBDCA4Z83B6PB4052`](https://beaker.org/ex/01KXMAFF0TBDCA4Z83B6PB4052) | launched |
-| 480M baseline | [`01KXMAFPGY9QY7SK6MJKQHWTSW`](https://beaker.org/ex/01KXMAFPGY9QY7SK6MJKQHWTSW) | launched |
-| 480M integration deep | [`01KXMAJ765PQ9QYYYDAMSYW183`](https://beaker.org/ex/01KXMAJ765PQ9QYYYDAMSYW183) | launched |
-| 480M integration wide | [`01KXMAVY30QJ7J2X94H00XGBJ8`](https://beaker.org/ex/01KXMAVY30QJ7J2X94H00XGBJ8) | launched |
+| model | RULER experiment | aggregate recall | state |
+| --- | --- | ---: | --- |
+| 275M baseline | [`01KXHATN799NGFT5ADBAK343MT`](https://beaker.org/ex/01KXHATN799NGFT5ADBAK343MT) | `0.1753` | finished |
+| 275M integration deep | [`01KXMAF717DYMFG7NCRE9J69ND`](https://beaker.org/ex/01KXMAF717DYMFG7NCRE9J69ND) | `0.2518` | finished |
+| 275M integration wide | [`01KXMAFF0TBDCA4Z83B6PB4052`](https://beaker.org/ex/01KXMAFF0TBDCA4Z83B6PB4052) | `0.2159` | finished |
+| 480M baseline | [`01KXMAFPGY9QY7SK6MJKQHWTSW`](https://beaker.org/ex/01KXMAFPGY9QY7SK6MJKQHWTSW) | `0.2109` | finished |
+| 480M integration deep | [`01KXMAJ765PQ9QYYYDAMSYW183`](https://beaker.org/ex/01KXMAJ765PQ9QYYYDAMSYW183) | `0.1978` | finished |
+| 480M integration wide | [`01KXMAVY30QJ7J2X94H00XGBJ8`](https://beaker.org/ex/01KXMAVY30QJ7J2X94H00XGBJ8) | `0.2095` | finished |
 
-The 810M/1.2B integration-wide checkpoints are still training, so their
-conversions and evals are intentionally not launched yet.
+Raw outputs for all six runs are cached under `results/cache/ruler/`, and the
+six-record summaries in `results/long_context_evals.{json,md}` have been
+regenerated. The 810M/1.2B integration-wide checkpoints are still training, so
+their conversions and evals are intentionally not launched yet.
+
+The V1 long-context trainers did not emit in-loop `eval/*` metrics. RULER is the
+current final-checkpoint evaluation record; any LM/downstream validation
+backfill would be additional work rather than a missing RULER job. The new
+long-context HF exports and RULER outputs are also still Weka/S3 artifacts and
+have not yet been archived under the V1 GCS `hf/long-context` and
+`evals/long-context` prefixes.
+
+## Training/evaluation separation decision
+
+As of 2026-07-16, all new and resumed pretraining, midtraining, and
+long-context jobs disable evaluator callbacks inside the training process,
+including final-step evaluation. Periodic full validation caused severe
+slowdowns, and evaluator execution was implicated in illegal-memory failures.
+Once a final checkpoint exists, launch separate eval-only validation jobs.
+Long-context checkpoints additionally follow the existing HF conversion plus
+RULER/vLLM path. Record eval Beaker/W&B identities alongside the training run;
+do not treat missing in-loop `eval/*` keys as missing training output.
 
 ## Current State
 

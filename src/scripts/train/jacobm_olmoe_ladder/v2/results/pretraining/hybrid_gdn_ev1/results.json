@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-07-16T02:01:47.508074+00:00",
+  "generated_at": "2026-07-16T05:12:24.504758+00:00",
   "project": "ai2-llm/jacobm-olmoe-ladder",
   "wave": "hybrid_gdn_ev1",
   "models": [
@@ -536,6 +536,20 @@
     },
     {
       "model": "810m",
+      "variant": "hybrid_gdn_ev1",
+      "variant_label": "hybrid (GDN, expand_v=1)",
+      "cx": 2,
+      "lr": 0.00056,
+      "lr_tag": "0.00056",
+      "loss": 2.247185260244885,
+      "state": "finished",
+      "tokens_b": 29.238362112,
+      "run_id": "1d5gxgjv",
+      "name": "810m-intwide-hybrid-gdn-ev1-cx2-lr5p6e-4",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/1d5gxgjv"
+    },
+    {
+      "model": "810m",
       "variant": "wide_integration",
       "variant_label": "wide integration (SWA)",
       "cx": 2,
@@ -904,9 +918,9 @@
       "model": "810m",
       "cx": 2,
       "mode": "fixed_lr_transfer",
-      "complete": false,
+      "complete": true,
       "optimal_summary_eligible": false,
-      "completed_intervention_runs": 0,
+      "completed_intervention_runs": 1,
       "expected_intervention_runs": 1,
       "wide_reference": {
         "model": "810m",
@@ -922,8 +936,21 @@
         "name": "int-810m-cx2-intw256e8k-lr5.6e-4-r1_0.82@12.40B_810m_intw256e8k_20L8K256N1S_intw256e8k-810m-cx2-lr5.6e-4-r1",
         "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/jpbqhfvc"
       },
-      "intervention_result": null,
-      "delta_intervention_minus_wide": null
+      "intervention_result": {
+        "model": "810m",
+        "variant": "hybrid_gdn_ev1",
+        "variant_label": "hybrid (GDN, expand_v=1)",
+        "cx": 2,
+        "lr": 0.00056,
+        "lr_tag": "0.00056",
+        "loss": 2.247185260244885,
+        "state": "finished",
+        "tokens_b": 29.238362112,
+        "run_id": "1d5gxgjv",
+        "name": "810m-intwide-hybrid-gdn-ev1-cx2-lr5p6e-4",
+        "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/1d5gxgjv"
+      },
+      "delta_intervention_minus_wide": -0.021762259163946585
     },
     {
       "model": "810m",

@@ -39,10 +39,13 @@ training:
   save_interval: 999999999
   ephemeral_save_interval: 500
   checkpoint_removal: ephemeral_only
+  # Training and evaluation are separate jobs. This avoids evaluator memory
+  # faults and keeps training throughput/ETA meaningful.
+  evals: false
   eval_interval: 2000
   eval_steps: 0
   eval_task_set: fast
-  eval_on_finish: true
+  eval_on_finish: false
   compile: true
   wandb: true
 

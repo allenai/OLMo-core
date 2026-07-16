@@ -146,7 +146,10 @@ def build_task(
             ),
             env_var("OLMOE3_HYBRID_USE_COMPILE", int(bool(training["compile"]))),
             env_var("OLMOE3_HYBRID_WANDB", int(bool(training["wandb"]))),
-            env_var("OLMOE3_HYBRID_EVALS", 1),
+            env_var(
+                "OLMOE3_HYBRID_EVALS",
+                int(bool(training.get("evals", False))),
+            ),
             env_var("OLMOE3_HYBRID_SAVE_ROOT", manifest["experiment"]["checkpoint_root"]),
         ]
     )

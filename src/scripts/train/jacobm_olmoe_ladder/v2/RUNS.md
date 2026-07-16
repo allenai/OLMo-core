@@ -132,22 +132,24 @@ The next legal Cx2 EP1 fallback is MB3 with accumulation 2:
 - Checkpoint root: `/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/olmo-ddp/pretraining`
 - Checkpoint policy: rolling ephemeral save every 500 steps with
   `remove=ephemeral_only`; final checkpoint is permanent.
-- Evaluation policy: v1 `fast` task group and LM validation every 2,000 steps,
-  plus both evaluations on finish.
+- Evaluation policy: no evaluator callbacks inside the training process,
+  including on finish. Run validation afterward in separate eval-only jobs.
 
 Submitted 2026-07-15 at urgent priority on `ai2/holmes` using 40 requested B300
 GPUs. LRs are the observed optimal wide-intervention LRs for each matching size
 and data multiple.
 
-Status on 2026-07-16 01:59 UTC: both 480M runs and the 810M Cx1 run finished
-with final checkpoints and final evals. The 810M Cx2 and 1.2B Cx1 runs remain
-healthy. The fourth 1.2B Cx2 attempt resumed from `step6000`, reached and saved
-the durable `step8000` checkpoint, then exited after an illegal-memory-access
-failure in its EP process group. No 1.2B Cx2 job is currently running.
+Status on 2026-07-16 05:35 UTC: both 480M runs and both 810M Cx1/Cx2 runs are
+finished. The eval-enabled 1.2B Cx1 attempt was stopped at durable `step26000`.
+The fifth 1.2B Cx2 attempt reached durable `step10000` and failed during an
+evaluator transition with an illegal memory access. Both were requeued in
+[no-eval resume experiment 01KXMPNWR2ZA53JZN7V4A6PRGS](https://beaker.org/ex/01KXMPNWR2ZA53JZN7V4A6PRGS)
+with evaluator callbacks disabled and the same run/checkpoint directories.
 
-The completed 480M Cx1/Cx2 and 810M Cx1 losses are included in the consolidated
-fixed-LR scale-transfer plot. At the transferred LR, hybrid 810M Cx1 has
-final-250M CE 2.364345 versus 2.373197 for wide integration (delta -0.008852).
+The completed 480M Cx1/Cx2 and 810M Cx1/Cx2 losses are included in the
+consolidated fixed-LR scale-transfer plot. At the transferred LR, hybrid 810M
+Cx1 has final-250M CE 2.364345 versus 2.373197 for wide integration (delta
+-0.008852), and hybrid 810M Cx2 has 2.247185 versus 2.268948 (delta -0.021762).
 The remaining registered 810M and 1.2B runs will enter that plot only after W&B
 marks them finished.
 
@@ -156,9 +158,9 @@ marks them finished.
 | 480M | 1 | `1.2e-3` | 262,144 | 4 | EP1 | 8 | 1 | [01KXJAPH2DP3XSCHX1A637SN7K](https://beaker.org/ex/01KXJAPH2DP3XSCHX1A637SN7K) | [wl8ebsd8](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/wl8ebsd8) | finished |
 | 480M | 2 | `9e-4` | 393,216 | 4 | EP1 | 12 | 1 | [01KXJAPH62PWXK2B53PKT14M08](https://beaker.org/ex/01KXJAPH62PWXK2B53PKT14M08) | [4vzmrld1](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/4vzmrld1) | finished |
 | 810M | 1 | `6e-4` | 262,144 | 8 | EP1 | 4 | 1 | [01KXJAPH9V450M32SJC5G4KN93](https://beaker.org/ex/01KXJAPH9V450M32SJC5G4KN93) | [h1rmcm2p](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/h1rmcm2p) | finished |
-| 810M | 2 | `5.6e-4` | 393,216 | 8 | EP1 | 6 | 1 | [01KXJAPHDN7KN3TY7NXRVRZGNM](https://beaker.org/ex/01KXJAPHDN7KN3TY7NXRVRZGNM) | [1d5gxgjv](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/1d5gxgjv) | running, step 71,799/74,357 (96.6%) |
-| 1.2B | 1 | `4e-4` | 262,144 | 8 | EP8 / `sync_1d` | 8 / 4 | 1 | [01KXJAPHHB8MBPD1B3E92QH89Y](https://beaker.org/ex/01KXJAPHHB8MBPD1B3E92QH89Y) | [xapobmqb](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/xapobmqb) | running, step 21,999/86,558 (25.4%) |
-| 1.2B | 2 | `6e-4` | 393,216 | 8 | EP8 / `sync_1d` | 12 / 6 | 1 | [initial](https://beaker.org/ex/01KXJAPHN6SNXMG7X49M7HH17G) / [resume 1](https://beaker.org/ex/01KXK9R5PMR9GXBC0RMSDY2V13) / [resume 2](https://beaker.org/ex/01KXKEEFKYPGQAVWS024PTGCPK) / [resume 3](https://beaker.org/ex/01KXKSKC7K2KNQ9EN99EE5N11F) | [initial](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/l4r1crzm) / [resume 1](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/bwvkwb9s) / [resume 2](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/jsb3obpq) / [resume 3](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/ezechghu) | stopped after illegal-memory-access failure; durable `step8000` |
+| 810M | 2 | `5.6e-4` | 393,216 | 8 | EP1 | 6 | 1 | [01KXJAPHDN7KN3TY7NXRVRZGNM](https://beaker.org/ex/01KXJAPHDN7KN3TY7NXRVRZGNM) | [1d5gxgjv](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/1d5gxgjv) | finished, step 74,357 |
+| 1.2B | 1 | `4e-4` | 262,144 | 8 | EP8 / `sync_1d` | 8 / 4 | 1 | [eval-enabled](https://beaker.org/ex/01KXJAPHHB8MBPD1B3E92QH89Y) / [no-eval resume](https://beaker.org/ex/01KXMPNX36KW85J97N8MAKBQEA) | [eval-enabled](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/xapobmqb) / [no-eval resume](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/1d24xfx5) | no-eval job running; explicitly loaded `step26000` |
+| 1.2B | 2 | `6e-4` | 393,216 | 8 | EP8 / `sync_1d` | 12 / 6 | 1 | [initial](https://beaker.org/ex/01KXJAPHN6SNXMG7X49M7HH17G) / [resume 1](https://beaker.org/ex/01KXK9R5PMR9GXBC0RMSDY2V13) / [resume 2](https://beaker.org/ex/01KXKEEFKYPGQAVWS024PTGCPK) / [resume 3](https://beaker.org/ex/01KXKSKC7K2KNQ9EN99EE5N11F) / [resume 4](https://beaker.org/ex/01KXMHBTR1D29J3SND9FZ13B8Z) / [no-eval resume](https://beaker.org/ex/01KXMPNX6QXBFKH2DRRYMPXDV6) | [initial](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/l4r1crzm) / [resume 1](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/bwvkwb9s) / [resume 2](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/jsb3obpq) / [resume 3](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/ezechghu) / [resume 4](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/jybetzoc) / [no-eval resume](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/vr2jfn4c) | no-eval job passed `step10001` and is running |
 
 ## Full hybrid scale Cx4/Cx8 runs
 
@@ -166,6 +168,7 @@ marks them finished.
 - Launcher: [`launchers/pretraining/launch_hybrid_scale_full_cx4_cx8.sh`](launchers/pretraining/launch_hybrid_scale_full_cx4_cx8.sh)
 - Beaker experiment: [01KXKTT3ZT5G4V9QTFBR6MKGEZ](https://beaker.org/ex/01KXKTT3ZT5G4V9QTFBR6MKGEZ)
 - Corrected 1.2B retry: [01KXKY6RTR5ZSD1R1BS40SF7KR](https://beaker.org/ex/01KXKY6RTR5ZSD1R1BS40SF7KR)
+- No-eval resume: [01KXMPNY9SWZSYGWB4585Z1YEH](https://beaker.org/ex/01KXMPNY9SWZSYGWB4585Z1YEH)
 - W&B project/group: `ai2-llm/jacobm-olmoe-ladder` / `olmoe3-integration-wide-hybrid-scale`
 - Checkpoint and evaluation policies match the Cx1/Cx2 production runs.
 
@@ -175,10 +178,19 @@ and data multiple.
 
 | Size | Cx | LR | Global batch | GPUs | EP/path | MB cap / effective | Accum | Job | W&B | Status |
 |---|---:|---:|---:|---:|---|---:|---:|---|---|---|
-| 810M | 4 | `4e-4` | 524,288 | 8 | EP1 | 4 | 2 | [01KXKTT4G4QT56NGHKWSVXWEX6](https://beaker.org/ex/01KXKTT4G4QT56NGHKWSVXWEX6) | [adi3mjy7](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/adi3mjy7) | running, step 13,149, 6.894B tokens, 441.3 TFLOPs/GPU |
-| 810M | 8 | `4e-4` | 786,432 | 8 | EP1 | 6 | 2 | [01KXKTT4KPQRMJ0E1DF5GPS26A](https://beaker.org/ex/01KXKTT4KPQRMJ0E1DF5GPS26A) | [sucwb1sc](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/sucwb1sc) | running, step 10,649, 8.375B tokens, 507.7 TFLOPs/GPU |
-| 1.2B | 4 | `3e-4` | 524,288 | 8 | EP8 / `sync_1d` | 4 / 4 | 2 | [failed](https://beaker.org/ex/01KXKTT4R8MANSKM43DEJB02GC) / [retry](https://beaker.org/ex/01KXKY6SXD7DFDDJDGK83NGQDF) | [failed](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/f9wybz72) / [retry](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/9c1fcuto) | running, step 1,999, 1.048B tokens, 457.5 TFLOPs/GPU |
-| 1.2B | 8 | `4e-4` | 786,432 | 8 | EP8 / `sync_1d` | 6 / 6 | 2 | [failed](https://beaker.org/ex/01KXKTT4W01BXNZ5WRD40BT2QG) / [retry](https://beaker.org/ex/01KXKY6T9QR8PQDWRAN4Y76CVQ) | [failed](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/n5v3vewn) / [retry](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/48b58zfx) | running, step 1,999, 1.572B tokens, 526.4 TFLOPs/GPU |
+| 810M | 4 | `4e-4` | 524,288 | 8 | EP1 | 4 | 2 | [eval-enabled](https://beaker.org/ex/01KXKTT4G4QT56NGHKWSVXWEX6) / [no-eval resume](https://beaker.org/ex/01KXMPNYN9J377PP8F8YZ763NJ) | [eval-enabled](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/adi3mjy7) / [no-eval resume](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/bvlzu2c9) | no-eval job running from `step24500` |
+| 810M | 8 | `4e-4` | 786,432 | 8 | EP1 | 6 | 2 | [eval-enabled](https://beaker.org/ex/01KXKTT4KPQRMJ0E1DF5GPS26A) / [no-eval resume](https://beaker.org/ex/01KXMPNYRK51C80XFNZNAP337M) | [eval-enabled](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/sucwb1sc) / [no-eval resume](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/k1d1td9b) | no-eval job running from completed `step20000` |
+| 1.2B | 4 | `3e-4` | 524,288 | 8 | EP8 / `sync_1d` | 4 / 4 | 2 | [failed](https://beaker.org/ex/01KXKTT4R8MANSKM43DEJB02GC) / [eval-enabled retry](https://beaker.org/ex/01KXKY6SXD7DFDDJDGK83NGQDF) / [no-eval resume](https://beaker.org/ex/01KXMPNYVY6A2RMTNW2E27H9GR) | [failed](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/f9wybz72) / [eval-enabled retry](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/9c1fcuto) / [no-eval resume](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/h5ft97x1) | no-eval job running; explicitly loaded `step4000` |
+| 1.2B | 8 | `4e-4` | 786,432 | 8 | EP8 / `sync_1d` | 6 / 6 | 2 | [failed](https://beaker.org/ex/01KXKTT4W01BXNZ5WRD40BT2QG) / [eval-enabled retry](https://beaker.org/ex/01KXKY6T9QR8PQDWRAN4Y76CVQ) / [no-eval resume](https://beaker.org/ex/01KXMPNYZ7Q1J3BXXD47KET92X) | [failed](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/n5v3vewn) / [eval-enabled retry](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/48b58zfx) / [no-eval resume](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/zyeib8rb) | no-eval job running from `step4500` |
+
+### Unqueued complete-ladder cells
+
+The 480M hybrid Cx4 and Cx8 cells have never been queued. If this wave is meant
+to be a complete four-size by four-data-multiple ladder, these are the only
+entirely missing pretraining cells. Their transferred wide-optimal LRs are
+`8e-4` for both Cx4 and Cx8. They need a short B300 microbatch smoke/config
+addition before production submission; no jobs should be inferred from the
+existing 810M/1.2B Cx4/Cx8 manifest.
 
 ## New wave template
 

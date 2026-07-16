@@ -15,8 +15,8 @@ uv run --no-sync python \
 
 All probes use 64k sequences, a 4M-token optimizer batch, 8 B300s on Holmes,
 urgent priority, and a 12-step hard stop. The 1.2B matrix compares EP1 against
-EP8 with the stable `sync_1d` path. Evals are disabled for the throughput smoke;
-the trainer still includes the standard eval callbacks for promoted full runs.
+EP8 with the stable `sync_1d` path. Evals are disabled in both smoke and full
+training runs; validation and RULER run afterward as separate jobs.
 
 ## Integration-wide results (2026-07-15)
 
@@ -47,10 +47,11 @@ uv run --no-sync python \
 ```
 
 Both runs use 100B tokens, 64k sequences, a 4 Mi-token global batch, LR `2e-5`,
-8 Holmes B300s, EP1, in-loop fast evals every 2,000 steps, permanent checkpoints
-every 5,000 steps, and rolling ephemeral checkpoints every 1,000 steps. Beaker
+8 Holmes B300s, EP1, no training-process evals, permanent checkpoints every
+5,000 steps, and rolling ephemeral checkpoints every 1,000 steps. Beaker
 auto-resume is enabled; the trainer checks the run's save folder before falling
-back to the source checkpoint in GCS.
+back to the source checkpoint in GCS. After training, run validation and RULER
+from the final checkpoint in separate eval-only jobs.
 
 The fixed 2,000-step warmup followed by constant LR is an acknowledged v1
 schedule mistake. It is intentionally retained for these final v1 runs so they

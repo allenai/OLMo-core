@@ -22,8 +22,8 @@ expert-parallel settings used below.
   promotion. These are observed optima from the preceding width ladder, not
   newly measured hybrid optima at the larger sizes.
 - The trainer must satisfy the v2 callback contract before launch: speed/MFU,
-  Beaker progress, in-loop LM and downstream evals, W&B, config saving, and
-  checkpointing.
+  Beaker progress, W&B, config saving, and checkpointing. Evaluators remain
+  disabled; validation runs afterward in separate eval-only jobs.
 
 ## Promoted points and hybrid token budgets
 
@@ -98,17 +98,17 @@ alongside it to determine whether B300 compute throughput removes the historical
 reason to prefer EP8 at 1.2B.
 
 Each smoke should cover optimizer construction, compiled forward/backward, at
-least ten real optimizer steps, one in-loop eval trigger if practical, and a
-checkpoint write. Record peak active memory, TFLOPs/GPU, tokens/second per GPU,
+least ten real optimizer steps, and a checkpoint write. Evaluator memory is
+tested in separate eval-only jobs. Record peak active memory, TFLOPs/GPU, tokens/second per GPU,
 tokens/second for the whole job, skipped steps, EP degree, and compile state.
 
 ## B300 smoke results
 
 Completed 2026-07-15. Throughput numbers are medians over clean optimizer
-steps 3, 4, 8, and 9, excluding graph compilation, checkpointing, and eval
-bookkeeping. Every passing row ran 12 optimizer steps, compiled
-forward/backward, LM and HellaSwag in-loop evals, and at least one full
-checkpoint. No passing row recorded an OOM or skipped optimizer step.
+steps 3, 4, 8, and 9, excluding graph compilation, checkpointing, and the
+historical evaluator bookkeeping used in those smokes. Every passing row ran
+12 optimizer steps, compiled forward/backward, and at least one full
+checkpoint. Future smokes do not run evaluators inside the training process.
 
 | Size | Cx | GPUs | EP / path | MB cap / effective | Accum | TFLOPs/GPU | MFU | tokens/s/GPU | tokens/s job | Peak device GiB | Result |
 |---|---:|---:|---|---:|---:|---:|---:|---:|---:|---:|---|
