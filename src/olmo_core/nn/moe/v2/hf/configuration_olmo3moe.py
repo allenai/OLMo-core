@@ -7,6 +7,7 @@ from transformers.modeling_rope_utils import rope_config_validation
 class Olmo3MoeConfig(PretrainedConfig):
     model_type = "olmo3moe"
     keys_to_ignore_at_inference = ["past_key_values"]
+    ignore_keys_at_rope_validation = {"truncate"}
     base_model_tp_plan = {
         "layers.*.self_attn.q_proj": "colwise_rep",  # we need to replicate here due to the added norm on q and k
         "layers.*.self_attn.k_proj": "colwise_rep",  # we need to replicate here due to the added norm on q and k
@@ -62,6 +63,8 @@ class Olmo3MoeConfig(PretrainedConfig):
         use_peri_ln=False,
         **kwargs,
     ):
+        # Newer transformers pass RoPE settings as ``rope_parameters``; fall back to ``rope_scaling``.
+        rope_parameters = kwargs.pop("rope_parameters", rope_scaling)
         super().__init__(
             pad_token_id=pad_token_id,
             bos_token_id=bos_token_id,
@@ -109,18 +112,6 @@ class Olmo3MoeConfig(PretrainedConfig):
         self.hidden_act = hidden_act
         self.initializer_range = initializer_range
         self.use_cache = use_cache
-        self.rope_theta = rope_theta
-        self.rope_scaling = rope_scaling
-        self._rope_scaling_validation()
-        self.attention_bias = attention_bias
-        self.attention_dropout = attention_dropout
-
-        self.rms_norm_eps = rms_norm_eps
-        self.use_head_qk_norm = use_head_qk_norm
-
-        self.embed_scale = embed_scale
-        self.embed_norm = embed_norm
-        self.use_peri_ln = use_peri_ln
 
         self.sliding_window = sliding_window
         self.layer_types: List[str]
@@ -134,12 +125,23 @@ class Olmo3MoeConfig(PretrainedConfig):
 
         layer_type_validation(self.layer_types)
 
+        # Newer transformers validates nested per-layer RoPE configs against ``self.layer_types``,
+        # so layer metadata must be set before assigning/validating RoPE.
+        self.rope_theta = rope_theta
+        self.rope_scaling = rope_parameters
+        self._rope_scaling_validation()
+        self.attention_bias = attention_bias
+        self.attention_dropout = attention_dropout
+
+        self.rms_norm_eps = rms_norm_eps
+        self.use_head_qk_norm = use_head_qk_norm
+
+        self.embed_scale = embed_scale
+        self.embed_norm = embed_norm
+        self.use_peri_ln = use_peri_ln
+
         self.dense_layers_indices = (
-            dense_layers_indices
-            if dense_layers_indices is not None
-            else [
-                0,
-            ]
+            dense_layers_indices if dense_layers_indices is not None else [0]
         )
 
     def _rope_scaling_validation(self):
