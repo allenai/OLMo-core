@@ -1,0 +1,82 @@
+version: v2
+description: Post-parity training controls for moe-v2-core port 0cdcc8b81 (275M full + 1.2B EP8 smoke)
+tasks:
+  - name: 275m-cx1-full
+    image:
+      beaker: 01KW8G8JC20H11Y60PPTE2VN4Q
+    command: [/bin/bash, -lc]
+    arguments:
+      - >-
+        bash /weka/oe-adapt-default/jacobm/olmoe3/olmo-ddp-migration/OLMo-core-moe-v2-core-validation/src/scripts/train/jacobm_moe_v2_port_validation/run_train.sh
+    envVars:
+      - {name: AWS_ACCESS_KEY_ID, secret: AWS_ACCESS_KEY_ID}
+      - {name: AWS_SECRET_ACCESS_KEY, secret: AWS_SECRET_ACCESS_KEY}
+      - {name: WANDB_API_KEY, secret: jacobm_WANDB_API_KEY}
+      - {name: BEAKER_TOKEN, secret: jacobm_BEAKER_TOKEN}
+      - {name: HF_TOKEN, secret: jacobm_HF_TOKEN}
+      - {name: OLMOE3_PORT_RUN_NAME, value: portcheck-0cdcc8b81-275m-intwide-hybrid-gdn-ev1-cx1-lr1p6e-3-r1}
+      - {name: OLMOE3_PORT_MODEL_SIZE, value: 275m}
+      - {name: OLMOE3_PORT_LR, value: "1.6e-3"}
+      - {name: OLMOE3_PORT_CHINCHILLA_MULTIPLE, value: "1"}
+      - {name: OLMOE3_PORT_GLOBAL_BATCH_SIZE, value: "262144"}
+      - {name: OLMOE3_PORT_WORLD_SIZE, value: "2"}
+      - {name: OLMOE3_PORT_EP_SIZE, value: "1"}
+      - {name: OLMOE3_PORT_RANK_MICROBATCH_SEQUENCES, value: "16"}
+      - {name: OLMOE3_PORT_SEQUENCE_LENGTH, value: "8192"}
+      - {name: OLMOE3_PORT_HARD_STOP_STEPS, value: "0"}
+      - {name: OLMOE3_PORT_SAVE_INTERVAL, value: "999999999"}
+      - {name: OLMOE3_PORT_EPHEMERAL_SAVE_INTERVAL, value: "500"}
+      - {name: OLMOE3_PORT_CHECKPOINT_REMOVAL, value: ephemeral_only}
+      - {name: OLMOE3_PORT_USE_COMPILE, value: "1"}
+      - {name: OLMOE3_PORT_WANDB, value: "1"}
+      - {name: OLMOE3_PORT_CHECKPOINTS, value: "1"}
+    datasets:
+      - {mountPath: /weka/oe-adapt-default, source: {weka: oe-adapt-default}}
+      - {mountPath: /weka/oe-training-default, source: {weka: oe-training-default}}
+    result: {path: /results}
+    resources: {gpuCount: 2, sharedMemory: 64 GiB}
+    context: {priority: urgent, minRuntime: 8h, autoResume: true}
+    constraints: {cluster: [ai2/holmes]}
+    hostNetworking: true
+    propagateFailure: false
+    propagatePreemption: false
+    timeout: 168h
+
+  - name: 1p2b-cx1-ep8-sync-smoke
+    image:
+      beaker: 01KW8G8JC20H11Y60PPTE2VN4Q
+    command: [/bin/bash, -lc]
+    arguments:
+      - >-
+        bash /weka/oe-adapt-default/jacobm/olmoe3/olmo-ddp-migration/OLMo-core-moe-v2-core-validation/src/scripts/train/jacobm_moe_v2_port_validation/run_train.sh
+    envVars:
+      - {name: AWS_ACCESS_KEY_ID, secret: AWS_ACCESS_KEY_ID}
+      - {name: AWS_SECRET_ACCESS_KEY, secret: AWS_SECRET_ACCESS_KEY}
+      - {name: WANDB_API_KEY, secret: jacobm_WANDB_API_KEY}
+      - {name: BEAKER_TOKEN, secret: jacobm_BEAKER_TOKEN}
+      - {name: HF_TOKEN, secret: jacobm_HF_TOKEN}
+      - {name: OLMOE3_PORT_RUN_NAME, value: portcheck-0cdcc8b81-1p2b-intwide-hybrid-gdn-ev1-cx1-ep8-sync-smoke}
+      - {name: OLMOE3_PORT_MODEL_SIZE, value: 1p2b}
+      - {name: OLMOE3_PORT_LR, value: "4e-4"}
+      - {name: OLMOE3_PORT_CHINCHILLA_MULTIPLE, value: "1"}
+      - {name: OLMOE3_PORT_GLOBAL_BATCH_SIZE, value: "262144"}
+      - {name: OLMOE3_PORT_WORLD_SIZE, value: "8"}
+      - {name: OLMOE3_PORT_EP_SIZE, value: "8"}
+      - {name: OLMOE3_PORT_EP_PATH, value: sync_1d}
+      - {name: OLMOE3_PORT_RANK_MICROBATCH_SEQUENCES, value: "8"}
+      - {name: OLMOE3_PORT_SEQUENCE_LENGTH, value: "8192"}
+      - {name: OLMOE3_PORT_HARD_STOP_STEPS, value: "12"}
+      - {name: OLMOE3_PORT_USE_COMPILE, value: "1"}
+      - {name: OLMOE3_PORT_WANDB, value: "1"}
+      - {name: OLMOE3_PORT_CHECKPOINTS, value: "0"}
+    datasets:
+      - {mountPath: /weka/oe-adapt-default, source: {weka: oe-adapt-default}}
+      - {mountPath: /weka/oe-training-default, source: {weka: oe-training-default}}
+    result: {path: /results}
+    resources: {gpuCount: 8, sharedMemory: 64 GiB}
+    context: {priority: urgent, minRuntime: 10m, autoResume: false}
+    constraints: {cluster: [ai2/holmes]}
+    hostNetworking: true
+    propagateFailure: false
+    propagatePreemption: false
+    timeout: 4h
