@@ -29,7 +29,10 @@ from olmo_core.utils import get_or_init_stream
 from ..attention.base import SequenceMixerConfig
 from ..buffer_cache import BufferCache
 from ..layer_norm import LayerNormConfig
-from ..moe.v2.activation_debug import maybe_dump_ep_no_sync_saved_activations
+from ..moe.v2.activation_debug import (
+    EP_NO_SYNC_SAVED_ACTIVATIONS_DEBUG_ENABLED,
+    maybe_dump_ep_no_sync_saved_activations,
+)
 from ..moe.v2.checkpointing import (
     get_rowwise_checkpoint_state,
     is_checkpoint_recomputing,
@@ -833,15 +836,19 @@ class OLMoDDPTransformerBlock(olmo_core.nn.transformer.block.TransformerBlockBas
         else:
             raise RuntimeError(f"Unsupported EP no-sync path {self.ep.path!r}")
 
-        debug_out = maybe_dump_ep_no_sync_saved_activations(
-            self,
-            x,
-            loss_div_factor=loss_div_factor,
-            forward_kwargs=kwargs,
-            no_sync_forward=no_sync_forward,
-        )
-        if debug_out is not None:
-            return debug_out
+        # Keep the disabled-by-default activation diagnostic out of the compiled hot path. Its
+        # per-layer block_idx key otherwise forces one Dynamo graph per block (and per grad mode
+        # under reentrant checkpoint), eventually sending unmatched block forwards to eager.
+        if EP_NO_SYNC_SAVED_ACTIVATIONS_DEBUG_ENABLED:
+            debug_out = maybe_dump_ep_no_sync_saved_activations(
+                self,
+                x,
+                loss_div_factor=loss_div_factor,
+                forward_kwargs=kwargs,
+                no_sync_forward=no_sync_forward,
+            )
+            if debug_out is not None:
+                return debug_out
         return no_sync_forward(x, loss_div_factor=loss_div_factor, **kwargs)
 
     def apply_pp(self, pp_mesh: DeviceMesh):
