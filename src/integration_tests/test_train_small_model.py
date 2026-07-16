@@ -14,11 +14,17 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, Optional, Set
 
+import numpy as np
 import pytest
 import torch
 
 from olmo_core.config import Config, DType
-from olmo_core.data import NumpyDataLoaderConfig, NumpyFSLDatasetConfig, TokenizerConfig
+from olmo_core.data import (
+    NumpyDataLoaderConfig,
+    NumpyFSLDatasetConfig,
+    NumpyPaddedFSLDatasetConfig,
+    TokenizerConfig,
+)
 from olmo_core.data.numpy_dataset import NumpyDatasetConfig
 from olmo_core.distributed.checkpoint import load_state_dict
 from olmo_core.distributed.parallel import DataParallelType
@@ -27,7 +33,11 @@ from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import AdamWConfig
 from olmo_core.testing import run_distributed_test
 from olmo_core.train import Duration, TrainerConfig
-from olmo_core.train.callbacks import CheckpointerCallback, ModelMergeCallback
+from olmo_core.train.callbacks import (
+    CheckpointerCallback,
+    LMEvaluatorCallbackConfig,
+    ModelMergeCallback,
+)
 from olmo_core.train.callbacks.callback import Callback
 from olmo_core.train.train_module import (
     TransformerDataParallelConfig,
@@ -54,6 +64,20 @@ class WeightCaptureCallback(Callback):
                 k: get_local_tensor(p.data.detach()).cpu().float().clone()
                 for k, p in self.trainer.train_module.model.named_parameters()
             }
+
+
+@dataclass
+class MetricCaptureCallback(Callback):
+    """Test callback that records every metric passed to ``log_metrics``."""
+
+    seen_keys: Set[str] = field(default_factory=set)
+    ce_losses: Dict[str, float] = field(default_factory=dict)
+
+    def log_metrics(self, step: int, metrics: Dict[str, float]):
+        for key, value in metrics.items():
+            self.seen_keys.add(key)
+            if "CE loss" in key:
+                self.ce_losses[key] = value
 
 
 @dataclass
@@ -132,6 +156,74 @@ def train(config: ExperimentConfig):
     assert not torch.isnan(logits).any(), "Forward pass with merged weights produced NaN"
     assert not torch.isinf(logits).any(), "Forward pass with merged weights produced Inf"
     log.info("Forward pass verification passed")
+
+    # Verify eval_only actually runs an evaluation end-to-end: rebuild the train module with no
+    # optimizer (the path Trainer.eval_checkpoints uses for dense models) and run an LMEvaluator
+    # over the trained checkpoint via Trainer.eval_checkpoints().
+    eval_model = config.model.build(init_device="meta")
+    eval_module = config.train_module.build(eval_model, eval_only=True)
+    assert eval_module.optim is None, "eval_only train module should not build an optimizer"
+
+    # Small hermetic eval dataset (the LMEvaluator requires a *padded* FSL dataset; a synthetic file
+    # avoids both the external data download and the uint32 index overflow on the full c4 shard).
+    tokenizer_config = TokenizerConfig.gpt2()
+    assert config.dataset.work_dir is not None
+    eval_work_dir = Path(config.dataset.work_dir)
+    eval_data_path = eval_work_dir / "eval_synthetic.npy"
+    rng = np.random.default_rng(0)
+    docs = []
+    for _ in range(16):
+        doc = rng.integers(0, tokenizer_config.eos_token_id, size=40, dtype=np.uint16)
+        docs.append(np.append(doc, np.uint16(tokenizer_config.eos_token_id)))
+    np.concatenate(docs).astype(np.uint16).tofile(eval_data_path)
+
+    metric_capture = MetricCaptureCallback()
+    eval_trainer_config = (
+        TrainerConfig(
+            save_folder=config.trainer.save_folder,
+            save_overwrite=True,
+            metrics_collect_interval=1,
+            cancel_check_interval=1,
+            max_duration=Duration.steps(1),
+            checkpoints_to_eval=[str(model_and_optim_path)],
+        )
+        .with_callback(
+            "lm_evaluator",
+            LMEvaluatorCallbackConfig(
+                eval_dataset=NumpyPaddedFSLDatasetConfig(
+                    paths=[str(eval_data_path)],
+                    metadata=[{"label": "synthetic-eval"}],
+                    sequence_length=64,
+                    tokenizer=tokenizer_config,
+                    work_dir=str(eval_work_dir),
+                ),
+                eval_interval=1,
+                eval_duration=Duration.steps(2),
+            ),
+        )
+        .with_callback("metric_capture", metric_capture)
+    )
+    eval_data_loader = config.data_loader.build(
+        dataset, dp_process_group=eval_module.dp_process_group
+    )
+    eval_trainer = eval_trainer_config.build(eval_module, eval_data_loader)
+
+    eval_trainer.eval_checkpoints()
+
+    # The evaluator must have actually run and produced a finite CE-loss metric.
+    assert metric_capture.ce_losses, (
+        f"eval_checkpoints did not record a CE-loss metric; saw keys: "
+        f"{sorted(metric_capture.seen_keys)}"
+    )
+    for key, value in metric_capture.ce_losses.items():
+        assert torch.isfinite(torch.tensor(value)), f"eval metric {key!r} is not finite: {value}"
+
+    # Training entry points must remain unavailable without an optimizer.
+    with pytest.raises(AssertionError):
+        eval_module.optim_step()
+    with pytest.raises(AssertionError):
+        eval_module.zero_grads()
+    log.info("eval_only eval_checkpoints verification passed")
 
 
 def build_config(
