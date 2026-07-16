@@ -213,8 +213,7 @@ def build_task(
         ]
     )
     env_vars.extend(
-        env_var(str(name), str(value))
-        for name, value in training.get("static_env", {}).items()
+        env_var(str(name), str(value)) for name, value in training.get("static_env", {}).items()
     )
     env_var_names = [item["name"] for item in env_vars]
     if len(env_var_names) != len(set(env_var_names)):
@@ -239,7 +238,7 @@ def build_task(
         "context": {
             "priority": priority,
             "minRuntime": str(beaker["min_runtime"]),
-            "autoResume": False,
+            "autoResume": bool(beaker.get("auto_resume", False)),
         },
         "constraints": {"cluster": [cluster]},
         "hostNetworking": True,
@@ -307,7 +306,9 @@ def existing_checkpoint_dirs(manifest: dict[str, Any], points: list[SweepPoint])
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("manifest", type=Path)
-    parser.add_argument("--point", action="append", default=[], help="Exact CX:LR point; repeat as needed")
+    parser.add_argument(
+        "--point", action="append", default=[], help="Exact CX:LR point; repeat as needed"
+    )
     parser.add_argument("--cx", type=int, nargs="+", help="Select complete Cx grids")
     parser.add_argument("--lr", nargs="+", help="Select matching LRs from selected/all Cx grids")
     parser.add_argument("--output", type=Path, help="Rendered Beaker YAML path")
@@ -315,7 +316,9 @@ def main() -> None:
     parser.add_argument("--cluster")
     parser.add_argument("--workspace")
     parser.add_argument("--experiment-name", help="Required with --submit")
-    parser.add_argument("--submit", action="store_true", help="Create the rendered Beaker experiment")
+    parser.add_argument(
+        "--submit", action="store_true", help="Create the rendered Beaker experiment"
+    )
     parser.add_argument(
         "--resume-existing",
         action="store_true",
@@ -326,7 +329,9 @@ def main() -> None:
     manifest_path = args.manifest.resolve()
     manifest = load_manifest(manifest_path)
     points = select_points(all_points(manifest), args)
-    source_repo = os.environ.get("SOURCE_REPO", str(manifest["source"].get("repo", find_repo_root())))
+    source_repo = os.environ.get(
+        "SOURCE_REPO", str(manifest["source"].get("repo", find_repo_root()))
+    )
     source_repo_path = Path(source_repo)
     wrapper_path = source_repo_path / str(manifest["source"]["wrapper"])
     if not source_repo_path.is_dir() or not wrapper_path.is_file():

@@ -15,6 +15,7 @@ backbone geometry while retaining the tested MoE recipe:
 | Layers | 12 | 10 |
 | Query heads | 8 | 8 |
 | Head dimension | 128 | 128 |
+| GDN `expand_v` | 1 | 2 |
 | GDN layers | 2, 4, 6, 8, 10 | 0, 1, 2, 3, 5, 6, 7, 8 |
 | Full-attention layers | 0, 1, 3, 5, 7, 9, 11 | 4, 9 |
 | Dense FFN layers | 0 | 0 |
@@ -22,9 +23,9 @@ backbone geometry while retaining the tested MoE recipe:
 | Experts / top-k / shared | 256 / 8 / 1 | 256 / 8 / 1 |
 
 Layer 0 uses GDN plus the dense-first FFN. Layers 1–9 use MoE FFNs; full
-attention replaces GDN at layers 4 and 9. The experiment retains RoPE,
-`expand_v=1`, and `init_std=0.01` so NoPE, `expand_v=2`, and initialization
-remain separate interventions.
+attention replaces GDN at layers 4 and 9. The experiment adopts the dense
+hybrid's `expand_v=2` while retaining RoPE and `init_std=0.01`, so NoPE and
+initialization remain separate interventions.
 
 ## Full-attention choice
 
@@ -36,16 +37,22 @@ the attention output before the output projection.
 
 The builder therefore exposes two audited profiles:
 
-| Profile | KV heads | Attention gate | Expert hidden | Dense-first hidden | Active params | Active non-embedding | Delta vs current hybrid non-embedding | Total params |
+| Profile | KV heads | Attention gate | Expert hidden | Dense-first hidden | Active params | Delta vs current hybrid active | Active non-embedding | Total params |
 |---|---:|---|---:|---:|---:|---:|---:|---:|
-| `geometry_only` | 4 | no | 664 | 5,976 | 275,019,648 | 210,794,368 | -0.156% | 3,120,551,808 |
-| `dense_attention` | 8 | elementwise | 648 | 5,832 | 274,876,288 | 210,651,008 | -0.224% | 3,051,841,408 |
+| `geometry_only` | 4 | no | 664 | 5,976 | 290,782,080 | +0.898% | 226,556,800 | 3,136,314,240 |
+| `dense_attention` | 8 | elementwise | 648 | 5,832 | 290,638,720 | +0.848% | 226,413,440 | 3,067,603,840 |
 
-The strict `dense_attention` profile is 0.224% below the dense model's
-275,493,760 active parameters and 0.292% below its 211,268,480 active
-non-embedding parameters. The `geometry_only` profile is the cleaner isolated
-test of the previously planned width/depth/mixer-ratio bundle. KV-head geometry
-and the attention gate can then be added together or tested separately.
+The primary `geometry_only` profile changes exactly the agreed geometry bundle
+plus `expand_v=2`. Its 290.78M active parameters are 2.59M, or 0.898%, above
+the current 288.19M hybrid. Its active non-embedding count is 7.31% higher,
+because reducing `d_model` from 768 to 640 removes 12.85M embedding parameters
+while the extra GDN capacity adds non-embedding parameters. Accordingly, the
+Cx-derived token budgets are also 7.31% larger than the current hybrid's.
 
-No training launcher is attached yet. Choose the profile before constructing
-the LR-sweep manifest.
+The optional `dense_attention` profile is not part of this first launch. It
+exists for a later exact-KV-head/attention-gate alignment test.
+
+The smoke and sweep launchers live under `launchers/pretraining/`. Smokes test
+the largest legal per-Cx microbatches without writing checkpoints. The full
+sweep uses the original hybrid's four learning rates at every Cx only after
+those capacity tests pass.

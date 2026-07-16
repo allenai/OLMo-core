@@ -76,7 +76,6 @@ from scripts.train.jacobm_olmoe_ladder.v2.models.hybrid_wide import (
     load_wide_model_config,
 )
 
-
 log = logging.getLogger(__name__)
 torch.set_float32_matmul_precision("high")
 
@@ -89,6 +88,7 @@ def env_bool(name: str, default: bool) -> bool:
 
 
 MODEL_SIZE = os.environ.get("OLMOE3_HYBRID_MODEL_SIZE", "275m")
+MODEL_VARIANT = os.environ.get("OLMOE3_HYBRID_MODEL_VARIANT", "integration_wide_gdn_ev1")
 SEQUENCE_LENGTH = int(os.environ.get("OLMOE3_HYBRID_SEQUENCE_LENGTH", "8192"))
 GLOBAL_BATCH_SIZE = int(os.environ.get("OLMOE3_HYBRID_GLOBAL_BATCH_SIZE", "262144"))
 WORLD_SIZE = int(os.environ.get("OLMOE3_HYBRID_WORLD_SIZE", "2"))
@@ -96,15 +96,14 @@ EP_SIZE = int(os.environ.get("OLMOE3_HYBRID_EP_SIZE", "1"))
 EP_PATH = ExpertParallelPath(
     os.environ.get("OLMOE3_HYBRID_EP_PATH", ExpertParallelPath.rowwise_nvshmem.value)
 )
-RANK_MICROBATCH_SEQUENCES = int(
-    os.environ.get("OLMOE3_HYBRID_RANK_MICROBATCH_SEQUENCES", "16")
-)
+RANK_MICROBATCH_SEQUENCES = int(os.environ.get("OLMOE3_HYBRID_RANK_MICROBATCH_SEQUENCES", "16"))
 LEARNING_RATE = float(os.environ.get("OLMOE3_HYBRID_LR", "1.6e-3"))
 CHINCHILLA_MULTIPLE = float(os.environ.get("OLMOE3_HYBRID_CHINCHILLA_MULTIPLE", "1"))
 MAX_TOKENS_OVERRIDE = os.environ.get("OLMOE3_HYBRID_MAX_TOKENS")
 HARD_STOP_STEPS = int(os.environ.get("OLMOE3_HYBRID_HARD_STOP_STEPS", "0"))
 USE_COMPILE = env_bool("OLMOE3_HYBRID_USE_COMPILE", True)
 WANDB_ENABLED = env_bool("OLMOE3_HYBRID_WANDB", True)
+CHECKPOINTS_ENABLED = env_bool("OLMOE3_HYBRID_CHECKPOINTS", True)
 EVALS_ENABLED = env_bool("OLMOE3_HYBRID_EVALS", False)
 EVAL_INTERVAL = int(os.environ.get("OLMOE3_HYBRID_EVAL_INTERVAL", "1000"))
 EVAL_STEPS = int(os.environ.get("OLMOE3_HYBRID_EVAL_STEPS", "0"))
@@ -124,13 +123,22 @@ WORK_DIR = os.environ.get(
     "/weka/oe-training-default/ai2-llm/checkpoints/yashasbls/dataset-cache",
 )
 DATA_ROOT = os.environ.get("OLMOE3_HYBRID_DATA_ROOT", "s3://ai2-llm")
-EVAL_DATA_ROOT = os.environ.get(
-    "OLMOE3_HYBRID_EVAL_DATA_ROOT", "/weka/oe-training-default/ai2-llm"
-)
+EVAL_DATA_ROOT = os.environ.get("OLMOE3_HYBRID_EVAL_DATA_ROOT", "/weka/oe-training-default/ai2-llm")
 
 
 def model_config():
-    model = build_hybrid_model_config(MODEL_SIZE)
+    if MODEL_VARIANT == "integration_wide_gdn_ev1":
+        model = build_hybrid_model_config(MODEL_SIZE)
+    elif MODEL_VARIANT == "geometry_275m_gdn_ev2":
+        from scripts.train.jacobm_olmoe_ladder.v2.models.geometry_matched_275m import (
+            build_geometry_matched_model_config,
+        )
+
+        if MODEL_SIZE != "275m":
+            raise ValueError("The geometry_275m_gdn_ev2 variant only supports MODEL_SIZE=275m")
+        model = build_geometry_matched_model_config("geometry_only")
+    else:
+        raise ValueError(f"Unknown model variant {MODEL_VARIANT!r}")
     if EP_SIZE > 1:
         if model.block.ep is not None:
             model.block.ep.path = EP_PATH
@@ -264,22 +272,23 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         except KeyError as e:
             raise ValueError(f"Task set not recognized: {EVAL_TASK_SET}") from e
     eval_duration = Duration.steps(EVAL_STEPS) if EVAL_STEPS > 0 else Duration.epochs(1)
-    trainer = (
-        TrainerConfig(
-            save_folder=common.save_folder,
-            save_overwrite=False,
-            checkpointer=CheckpointerConfig(
-                save_thread_count=3,
-                load_thread_count=8,
-                throttle_uploads=True,
-            ),
-            metrics_collect_interval=1 if HARD_STOP_STEPS else 10,
-            cancel_check_interval=10,
-            async_bookkeeping=False,
-            max_duration=Duration.tokens(max_tokens()),
-            hard_stop=Duration.steps(HARD_STOP_STEPS) if HARD_STOP_STEPS else None,
-        )
-        .with_callback(
+    trainer = TrainerConfig(
+        save_folder=common.save_folder,
+        save_overwrite=False,
+        no_checkpoints=not CHECKPOINTS_ENABLED,
+        checkpointer=CheckpointerConfig(
+            save_thread_count=3,
+            load_thread_count=8,
+            throttle_uploads=True,
+        ),
+        metrics_collect_interval=1 if HARD_STOP_STEPS else 10,
+        cancel_check_interval=10,
+        async_bookkeeping=False,
+        max_duration=Duration.tokens(max_tokens()),
+        hard_stop=Duration.steps(HARD_STOP_STEPS) if HARD_STOP_STEPS else None,
+    )
+    if CHECKPOINTS_ENABLED:
+        trainer = trainer.with_callback(
             "checkpointer",
             CheckpointerCallback(
                 save_interval=SAVE_INTERVAL,
@@ -289,7 +298,18 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 remove=CHECKPOINT_REMOVAL,
             ),
         )
-        .with_callback("speed_monitor", SpeedMonitorCallback())
+    variant_group = (
+        "olmoe3-275m-geometry-gdn-ev2"
+        if MODEL_VARIANT == "geometry_275m_gdn_ev2"
+        else "olmoe3-integration-wide-hybrid-scale"
+    )
+    variant_tags = (
+        ["geometry-matched", "expand-v-2"]
+        if MODEL_VARIANT == "geometry_275m_gdn_ev2"
+        else ["integration-wide", "expand-v-1"]
+    )
+    trainer = (
+        trainer.with_callback("speed_monitor", SpeedMonitorCallback())
         .with_callback("config_saver", ConfigSaverCallback())
         .with_callback("beaker", BeakerCallback())
         .with_callback(
@@ -323,7 +343,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             "wandb",
             WandBCallback(
                 name=common.run_name,
-                group="olmoe3-integration-wide-hybrid-scale",
+                group=variant_group,
                 project="jacobm-olmoe-ladder",
                 entity="ai2-llm",
                 enabled=WANDB_ENABLED,
@@ -331,10 +351,9 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 tags=[
                     "pretraining",
                     MODEL_SIZE,
-                    "integration-wide",
+                    *variant_tags,
                     "hybrid",
                     "gdn",
-                    "expand-v-1",
                     "olmo-ddp",
                     f"ep{EP_SIZE}",
                     "smoke" if HARD_STOP_STEPS else "full-run",
@@ -370,6 +389,8 @@ def build_local_common_components(
 def finalize_config(config: ExperimentConfig) -> None:
     if MODEL_SIZE not in MODEL_SIZES:
         raise ValueError(f"Unknown model size {MODEL_SIZE!r}; choose one of {MODEL_SIZES}")
+    if HARD_STOP_STEPS and not CHECKPOINTS_ENABLED:
+        log.info("Smoke checkpointing is disabled; no final hard-stop checkpoint will be written")
     if WORLD_SIZE < 1 or EP_SIZE < 1 or WORLD_SIZE % EP_SIZE:
         raise ValueError(f"EP size {EP_SIZE} must divide world size {WORLD_SIZE}")
     if GLOBAL_BATCH_SIZE % SEQUENCE_LENGTH:
@@ -389,16 +410,21 @@ def finalize_config(config: ExperimentConfig) -> None:
             f"rank microbatch {effective_rank_microbatch}"
         )
     base = load_wide_model_config(MODEL_SIZE)
-    delta_fraction = (config.model.num_active_params - base.num_active_params) / base.num_active_params
+    delta_fraction = (
+        config.model.num_active_params - base.num_active_params
+    ) / base.num_active_params
     if abs(delta_fraction) > MAX_ACTIVE_PARAMETER_DELTA_FRACTION:
         raise ValueError(f"Hybrid active-parameter delta is too large: {delta_fraction:.4%}")
     log.info(
-        "Hybrid wide config: size=%s active=%s total=%s active_delta=%+.4f%% tokens=%s "
+        "Hybrid config: variant=%s size=%s active=%s active_non_embedding=%s total=%s "
+        "active_delta=%+.4f%% tokens=%s "
         "global_sequences=%s world=%s EP=%s data_DP=%s EP_DP=%s rank_sequences=%s "
         "rank_microbatch_cap=%s effective_rank_microbatch=%s grad_accum=%s lr=%s "
         "hard_stop_steps=%s",
+        MODEL_VARIANT,
         MODEL_SIZE,
         f"{config.model.num_active_params:,}",
+        f"{config.model.num_active_non_embedding_params:,}",
         f"{config.model.num_params:,}",
         100 * delta_fraction,
         f"{max_tokens():,}",

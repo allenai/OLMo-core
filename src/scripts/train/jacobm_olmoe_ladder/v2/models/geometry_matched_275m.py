@@ -2,11 +2,12 @@
 """Design candidate 275M MoE hybrids on the dense ladder's model geometry.
 
 The primary ``geometry_only`` profile isolates width, depth, mixer placement,
-and head geometry from the already-tested hybrid. It deliberately retains our
-current GQA ratio and ungated RoPE full-attention blocks. The
+head geometry, and GDN value expansion from the already-tested hybrid. It
+deliberately retains our current GQA ratio and ungated RoPE full-attention
+blocks. The
 ``dense_attention`` profile additionally matches the dense 275M rung's KV-head
-count and elementwise attention gate, while still holding NoPE, ``expand_v=2``,
-and initialization for their own later interventions.
+count and elementwise attention gate, while still holding NoPE and
+initialization for their own later interventions.
 """
 
 from __future__ import annotations
@@ -45,16 +46,18 @@ class Profile:
     expert_hidden_size: int
     n_kv_heads: int
     attention_gate: bool
+    gdn_expand_v: float
 
 
 PROFILES = {
-    # Closest practical active match while changing only the already-planned
-    # geometry bundle. 664 is BF16-tile aligned and keeps the dense first FFN
-    # equal to top-k routed width plus shared-expert width.
+    # Keep the already-audited geometry candidate unchanged except for adopting
+    # the dense hybrid's expand_v=2. This lands within 1% of the current 288M
+    # hybrid's active-parameter count without retuning the MoE widths.
     "geometry_only": Profile(
         expert_hidden_size=664,
         n_kv_heads=4,
         attention_gate=False,
+        gdn_expand_v=2.0,
     ),
     # Also match the dense 275M full-attention shape (8 Q / 8 KV) and its
     # elementwise gate. 648 gives a near-exact active match with 8-wide tensor
@@ -64,7 +67,13 @@ PROFILES = {
         expert_hidden_size=648,
         n_kv_heads=8,
         attention_gate=True,
+        gdn_expand_v=2.0,
     ),
+}
+
+EXPECTED_PROFILE_COUNTS = {
+    "geometry_only": (290_782_080, 226_556_800, 3_136_314_240),
+    "dense_attention": (290_638_720, 226_413_440, 3_067_603_840),
 }
 
 
@@ -124,12 +133,14 @@ def _full_attention_block(
 def build_geometry_matched_model_config(
     profile_name: str = "geometry_only",
 ) -> OLMoDDPModelConfig:
-    """Build one geometry-matched candidate without changing NoPE/init/expand-v."""
+    """Build one geometry-matched candidate while retaining RoPE and initialization."""
 
     try:
         profile = PROFILES[profile_name]
     except KeyError as exc:
-        raise ValueError(f"unknown profile {profile_name!r}; choose one of {tuple(PROFILES)}") from exc
+        raise ValueError(
+            f"unknown profile {profile_name!r}; choose one of {tuple(PROFILES)}"
+        ) from exc
 
     parent = build_hybrid_model_config("275m")
     candidate = deepcopy(parent)
@@ -137,14 +148,15 @@ def build_geometry_matched_model_config(
     candidate.n_layers = N_LAYERS
     candidate.embed_scale = math.sqrt(D_MODEL)
 
-    # Use a tested expand_v=1 GDN block as the base for all layers.
+    # Use the tested GDN block as the base for all layers, then adopt the
+    # profile's explicitly audited value expansion.
     moe_block = deepcopy(parent.resolved_block_configs[2])
     _resize_moe_block(moe_block, profile.expert_hidden_size)
     gdn = cast(GatedDeltaNetConfig, moe_block.sequence_mixer)
     gdn.n_heads = N_HEADS
     gdn.n_v_heads = N_HEADS
     gdn.head_dim = HEAD_DIM
-    gdn.expand_v = 1.0
+    gdn.expand_v = profile.gdn_expand_v
     candidate.block = moe_block
 
     attention_template = cast(AttentionConfig, parent.resolved_block_configs[0].sequence_mixer)
@@ -163,9 +175,7 @@ def build_geometry_matched_model_config(
         if isinstance(block.sequence_mixer, GatedDeltaNetConfig)
     )
     actual_full = tuple(
-        i
-        for i, block in enumerate(resolved)
-        if isinstance(block.sequence_mixer, AttentionConfig)
+        i for i, block in enumerate(resolved) if isinstance(block.sequence_mixer, AttentionConfig)
     )
     if actual_gdn != GDN_LAYERS or actual_full != FULL_ATTENTION_LAYERS:
         raise ValueError(f"unexpected mixer pattern: GDN={actual_gdn}, full={actual_full}")
@@ -174,12 +184,22 @@ def build_geometry_matched_model_config(
     if candidate.init_std != 0.01:
         raise ValueError("geometry candidate must retain init_std=0.01")
     if any(
-        cast(GatedDeltaNetConfig, resolved[i].sequence_mixer).expand_v != 1.0
+        cast(GatedDeltaNetConfig, resolved[i].sequence_mixer).expand_v != profile.gdn_expand_v
         for i in GDN_LAYERS
     ):
-        raise ValueError("geometry candidate must retain expand_v=1")
+        raise ValueError(f"geometry candidate must use expand_v={profile.gdn_expand_v:g}")
     if any(cast(AttentionConfig, resolved[i].sequence_mixer).rope is None for i in actual_full):
         raise ValueError("geometry candidate must retain RoPE")
+    actual_counts = (
+        candidate.num_active_params,
+        candidate.num_active_non_embedding_params,
+        candidate.num_params,
+    )
+    if actual_counts != EXPECTED_PROFILE_COUNTS[profile_name]:
+        raise ValueError(
+            f"unexpected {profile_name} parameter counts: expected "
+            f"{EXPECTED_PROFILE_COUNTS[profile_name]}, found {actual_counts}"
+        )
 
     return candidate
 
@@ -204,12 +224,16 @@ def parameter_summary(profile_name: str) -> dict[str, Any]:
         "num_experts": 256,
         "top_k": TOP_K,
         "shared_experts": 1,
-        "gdn_expand_v": 1.0,
+        "gdn_expand_v": profile.gdn_expand_v,
         "rope": True,
         "init_std": candidate.init_std,
         "active_params": candidate.num_active_params,
         "active_non_embedding_params": candidate.num_active_non_embedding_params,
         "total_params": candidate.num_params,
+        "delta_vs_current_hybrid_active": (candidate.num_active_params - parent.num_active_params),
+        "delta_fraction_vs_current_hybrid_active": (
+            candidate.num_active_params / parent.num_active_params - 1
+        ),
         "delta_vs_current_hybrid_active_non_embedding": (
             candidate.num_active_non_embedding_params - parent.num_active_non_embedding_params
         ),
@@ -222,12 +246,10 @@ def parameter_summary(profile_name: str) -> dict[str, Any]:
         / DENSE_REFERENCE_ACTIVE_PARAMS
         - 1,
         "delta_vs_dense_reference_active_non_embedding": (
-            candidate.num_active_non_embedding_params
-            - DENSE_REFERENCE_ACTIVE_NON_EMBEDDING_PARAMS
+            candidate.num_active_non_embedding_params - DENSE_REFERENCE_ACTIVE_NON_EMBEDDING_PARAMS
         ),
         "delta_fraction_vs_dense_reference_active_non_embedding": (
-            candidate.num_active_non_embedding_params
-            / DENSE_REFERENCE_ACTIVE_NON_EMBEDDING_PARAMS
+            candidate.num_active_non_embedding_params / DENSE_REFERENCE_ACTIVE_NON_EMBEDDING_PARAMS
             - 1
         ),
     }

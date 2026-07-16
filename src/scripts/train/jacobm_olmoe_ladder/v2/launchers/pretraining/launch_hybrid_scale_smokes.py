@@ -147,6 +147,10 @@ def build_task(
             env_var("OLMOE3_HYBRID_USE_COMPILE", int(bool(training["compile"]))),
             env_var("OLMOE3_HYBRID_WANDB", int(bool(training["wandb"]))),
             env_var(
+                "OLMOE3_HYBRID_CHECKPOINTS",
+                int(bool(training.get("checkpoints", True))),
+            ),
+            env_var(
                 "OLMOE3_HYBRID_EVALS",
                 int(bool(training.get("evals", False))),
             ),
@@ -172,7 +176,7 @@ def build_task(
         "context": {
             "priority": str(beaker["priority"]),
             "minRuntime": str(beaker["min_runtime"]),
-            "autoResume": False,
+            "autoResume": bool(beaker.get("auto_resume", False)),
         },
         "constraints": {"cluster": [str(beaker["cluster"])]},
         "hostNetworking": True,
@@ -235,8 +239,10 @@ def main() -> None:
             f"{row['accumulation_steps']:>6}  "
             f"{row['run_name']}"
         )
-    print(f"\nRendered {args.output}; peak concurrent allocation is "
-          f"{sum(int(row['gpu_count']) for row in rows)} GPUs.")
+    print(
+        f"\nRendered {args.output}; peak concurrent allocation is "
+        f"{sum(int(row['gpu_count']) for row in rows)} GPUs."
+    )
 
     if not args.submit:
         print("Dry run only. Add --submit --experiment-name NAME to launch.")
@@ -244,7 +250,9 @@ def main() -> None:
     if not args.experiment_name:
         parser.error("--experiment-name is required with --submit")
     root = Path(str(manifest["experiment"]["checkpoint_root"]))
-    existing = [root / str(row["run_name"]) for row in rows if (root / str(row["run_name"])).exists()]
+    existing = [
+        root / str(row["run_name"]) for row in rows if (root / str(row["run_name"])).exists()
+    ]
     if existing and not args.resume_existing:
         raise RuntimeError(
             "Refusing to submit existing checkpoint directories:\n"

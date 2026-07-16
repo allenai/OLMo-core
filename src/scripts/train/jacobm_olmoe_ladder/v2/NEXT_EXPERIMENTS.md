@@ -8,7 +8,7 @@ wide v1 integration model.
 | Order | Experiment | Change from parent recipe | State |
 |---:|---|---|---|
 | 1 | GDN hybrid | On wide, replace sliding-attention layers with GatedDeltaNet; keep geometry, global-attention placement, RoPE, initialization, and `expand_v=1` fixed. | In progress; finish and bracket the current LR sweeps. |
-| 2 | Aligned geometry and mixer ratio | Use the dense ladder's 275M width, depth, attention geometry, and four-GDN/one-global pattern while retaining MoE and the dense-first-FFN design. | Two active-matched configs are audited; choose geometry-only versus dense KV-head/gate matching before building the LR sweep. |
+| 2 | Aligned geometry, mixer ratio, and GDN value width | Use the dense ladder's 275M width, depth, four-GDN/one-global pattern, and `expand_v=2` while retaining MoE, the dense-first-FFN design, our GQA ratio, RoPE, and initialization. | Primary 290.78M-active config audited; capacity smokes precede the inherited four-LR sweep. |
 | 3 | NoPE | On the hybrid recipe, remove RoPE only from global-attention layers and train from initialization. | Planned. Confirm this parent recipe before implementation; the earlier shorthand “integration + NoPE” was less specific. |
 | 4 | Initialization | On the wide control, change only initialization standard deviation from 0.01 to 0.02. | Optional/planned. |
 | 5 | Combined 275M pilot | Combine only interventions whose isolated evidence is neutral-to-positive. | Blocked on isolated results. |
@@ -36,8 +36,9 @@ wide-derived `expand_v=1` hybrid:
 Peri-norm placement, RMSNorm and QK-norm types/epsilons, 128-dimensional heads,
 SiLU, embedding scaling/normalization, bias settings, and the remaining GDN
 dynamics already agree and do not need interventions. Re-audit active parameters
-and FLOPs after composing the alignment changes; `expand_v=2` is deliberately
-deferred rather than folded into the current hybrid promotion decision.
+and FLOPs after composing the alignment changes. `expand_v=2` is now folded
+into the geometry experiment; exact KV-head/gate matching, NoPE, and the new
+initialization remain separately testable.
 
 For geometry-changing experiments, record both token-matched quality and
 active-parameter/FLOP efficiency. Do not promote a result until each relevant

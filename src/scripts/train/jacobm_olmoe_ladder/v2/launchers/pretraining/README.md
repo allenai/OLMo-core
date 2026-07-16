@@ -32,6 +32,13 @@ src/scripts/train/jacobm_olmoe_ladder/v2/launchers/pretraining/launch_275m_hybri
 # Inspect the current largest-candidate 480M/810M/1.2B microbatch smokes.
 src/scripts/train/jacobm_olmoe_ladder/v2/launchers/pretraining/launch_hybrid_scale_smokes.sh
 
+# Inspect the largest-legal-microbatch geometry/expand_v=2 smokes.
+src/scripts/train/jacobm_olmoe_ladder/v2/launchers/pretraining/launch_275m_geometry_gdn_ev2_smokes.sh \
+  --task cx1-mb16 --task cx2-mb24 --task cx4-mb32 --task cx8-mb48
+
+# Inspect the 16-point geometry/expand_v=2 LR sweep without launching it.
+src/scripts/train/jacobm_olmoe_ladder/v2/launchers/pretraining/launch_275m_geometry_gdn_ev2.sh
+
 # Render only the two 1.2B synchronized EP8 probes.
 src/scripts/train/jacobm_olmoe_ladder/v2/launchers/pretraining/launch_hybrid_scale_smokes.sh \
   --task 1p2b-cx1-mb8-ep8-sync --task 1p2b-cx2-mb12-ep8-sync
@@ -47,6 +54,14 @@ The scale launcher copies the Beaker wrapper to node-local `/tmp` before
 executing it, so an in-progress job is isolated from later edits to the shared
 source checkout. Scale smokes save one final hard-stop checkpoint; intermediate
 checkpoint intervals are intentionally beyond the 12-step smoke horizon.
+The geometry/`expand_v=2` capacity smokes are a deliberate exception: they set
+the trainer's `no_checkpoints` mode and write no model or optimizer checkpoint.
+
+Only the geometry/`expand_v=2` smoke and sweep manifests use Beaker's
+unallocated queue (`minRuntime: 0m`, `autoResume: true`). Do not copy that
+scheduling exception into other intervention manifests without an explicit
+decision. The deprecated `preemptible` field is omitted because Beaker rejects
+combining it with `minRuntime` or `autoResume`.
 
 To add an intervention:
 
