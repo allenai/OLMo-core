@@ -536,3 +536,49 @@ deleted them).
   instead of an inline `torch.cuda.is_available()` skip.
 - GPU-only, still unverified here: MXFP8 GEMM parity and the fused-optimizer end-to-end weight-update
   step (belongs to the OLMoDDP optimizer GPU suite).
+
+## Material runtime-diffs port (slow-batch warn, GDN FLOPs, logger test, torch-stream, attention FLOPs)
+
+Ported the genuinely-missing material runtime diffs identified by the verified audit. Each was
+checked against current core before porting (the raw tree diff over-reports gaps).
+
+Ported:
+- Slow batch-load warning `OLMO_BATCH_LOAD_WARN_SECONDS` (`5a4afb68e`, speed_monitor.py) + CPU
+  valid/invalid-threshold tests.
+- GDN training-FLOPs x3 factor (`39659e83b`, recurrent.py) + analytical test (`@requires_fla`).
+- Logger callback-order regression test only (`2c8815e3a`); the comet/wandb init-ordering impl was
+  already present in core.
+- Torch stream custom-op patch `patch_torch_stream_custom_ops()` (`c4c5319a6`, utils.py) wired into
+  `prepare_cli_environment()` + test. Guarded to no-op without `torch._dynamo.variables.streams`, so
+  inert until torch 2.11; landed now so it's ready. NOTE: the setup_logging/`OLMO_RICH_LOGGING`
+  refactor bundled in the same upstream commit was already present in core — nothing to port there.
+- Causal + sliding-window attention FLOP accounting (`329e0a203`). Adapted rather than copied: core's
+  FLOP API is `num_flops_per_token` (per-token), not olmo's `flops_per_seq(d_model, seqlen)` (that API
+  survives only on the unused `OLMoDDPTransformerBlockConfig.flops_per_seq`). Added
+  `_causal_attention_positions()` and applied exact causal / windowed counting in `Attention` and
+  `FusedAttention`. This corrects a ~2x overcount of full-attention compute FLOPs (core never applied
+  the causal /2), so reported model TFLOPs / MFU drop on the attention term vs older logs; a historical
+  note is left at each call site. The live MFU path (`train_module -> model.num_flops_per_token` over
+  built blocks) is per-layer correct because each layer's real `window_size` is read.
+
+Intentionally NOT ported from `329e0a203`:
+- The 422-line `fa4_intra_doc_attention_bench.py` (benchmark; scripts workstream).
+- The NVTX annotation relocation in olmo `nn/ddp/model.py` (orthogonal profiling labeling, not FLOPs).
+- `layer_idx`/`n_layers` threading into `OLMoDDPTransformerBlockConfig.flops_per_seq`: that config-level
+  estimator has no callers in core and routes through the now-fixed `num_flops_per_token` anyway.
+
+Held for evidence / separate workstreams (per audit): none from this batch beyond the above; NCCL-RMA
+ACK transport was found already present in core (only its smoke/transport tests are olmo-only).
+
+## TE CPU activation-offload prototype
+
+Ported olmo-ddp's canonical CPU activation-offload module to `nn/moe/v2/te/cpu_offload.py`
+(vendored NVIDIA code, torch-only despite the `te` dir name) plus a package `__init__.py` and an
+import/GPU-disabled-path smoke test. Marked experimental in the docstrings.
+
+- Not wired into `nn/ddp/model.py`: olmo itself keeps the offload path disabled (`self.cpu_offload =
+  False`, `get_cpu_offload_context(...)` commented out — "not useful due to low PCIe bandwidth"), and
+  core had already dropped the import. Left unwired rather than reintroducing dead/commented wiring.
+- Did NOT port `cpu_offload_simple_varlen.py`: it is an earlier, unreferenced near-duplicate of the
+  canonical module (which is itself the "variable tensors per group" variant). Available to add later
+  if a reason emerges.

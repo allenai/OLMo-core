@@ -534,6 +534,24 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
             ) from e
 
 
+def _causal_attention_positions(seq_len: int, window_size: Optional[int] = None) -> int:
+    """
+    The number of attended ``(query, key)`` pairs across a sequence under causal masking, optionally
+    capped by a sliding window.
+
+    For full causal attention this is the triangle ``seq_len * (seq_len + 1) // 2`` (each query
+    attends to itself and all earlier tokens). With a sliding ``window_size`` each query attends to
+    at most ``window_size`` positions, so the early queries still form a triangle while the rest
+    contribute a flat ``window_size`` each.
+
+    :param seq_len: The sequence length.
+    :param window_size: The sliding-window size, or ``None`` for full causal attention.
+    """
+    if window_size is None or window_size >= seq_len:
+        return seq_len * (seq_len + 1) // 2
+    return window_size * (window_size + 1) // 2 + (seq_len - window_size) * window_size
+
+
 class Attention(SequenceMixer):
     """
     An implementation of multi-head self-attention with support for multi-query (MQA)
@@ -1105,13 +1123,19 @@ class Attention(SequenceMixer):
         # 6 FLOPs per parameter (2 ops * 3 for forward+backward)
         param_flops = 6 * sum(p.numel() for p in self.parameters())
 
-        # Attention computation (QK^T and Attn*V)
-        # 12x multiplier: 2 matmuls * 2 ops each * 3 for forward+backward
-        # For sliding window attention, effective sequence length is limited by window size
+        # Attention computation (QK^T and Attn*V).
+        # 12x multiplier: 2 matmuls * 2 ops each * 3 for forward+backward.
         # Note that flash attention technically uses more flops (14x multiplier) due to recomputation,
         # however, we just compute the idealized flops for SDPA.
-        effective_seq_len = min(self.window_size, seq_len) if self.window_size else seq_len
-        attn_flops = 12 * self.n_heads * self.head_dim * effective_seq_len
+        #
+        # Historical note: this previously counted ``12 * n_heads * head_dim * effective_seq_len``
+        # with ``effective_seq_len = min(window_size, seq_len)``, which ignored causal masking and
+        # used a flat sliding-window cap. That overcounted full-attention layers by ~2x (no causal
+        # /2) and only roughly approximated sliding-window layers. We now count the exact causal /
+        # sliding-window ``(query, key)`` pairs, so reported model TFLOPs / MFU for full-attention
+        # runs drop on the attention-compute term relative to logs produced before this change.
+        attention_positions = _causal_attention_positions(seq_len, self.window_size or None)
+        attn_flops = 12 * self.n_heads * self.head_dim * attention_positions // seq_len
 
         return param_flops + attn_flops
 
@@ -1459,9 +1483,14 @@ class FusedAttention(SequenceMixer):
         # 6 FLOPs per parameter (2 ops * 3 for forward+backward)
         param_flops = 6 * sum(p.numel() for p in self.parameters())
 
-        # Attention computation (QK^T and Attn*V)
-        # 12x multiplier: 2 matmuls * 2 ops each * 3 for forward+backward
-        attn_flops = 12 * self.n_heads * self.head_dim * seq_len
+        # Attention computation (QK^T and Attn*V).
+        # 12x multiplier: 2 matmuls * 2 ops each * 3 for forward+backward.
+        # Historical note: this previously counted ``12 * n_heads * head_dim * seq_len``, ignoring
+        # causal masking and overcounting by ~2x. We now count the exact causal ``(query, key)``
+        # pairs, so reported model TFLOPs / MFU drop on the attention-compute term relative to logs
+        # produced before this change.
+        attention_positions = _causal_attention_positions(seq_len)
+        attn_flops = 12 * self.n_heads * self.head_dim * attention_positions // seq_len
 
         return param_flops + attn_flops
 
