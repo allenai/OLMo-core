@@ -232,11 +232,9 @@ jobs:
             image: akshitab/olmo-core-tch2100cu128-rma-2026-07-08
             gpus: 1
             run: |
-              for dims in "1024 4096" "2048 8192" "4096 11008" "4096 14336"; do
-                set -- $dims
-                python src/test/nn/moe/shared_experts_dense_bench.py \
-                  --d-model "$1" --hidden-size "$2" --seq-len 2048 --batch-size 4
-              done
+              python src/test/nn/moe/shared_experts_dense_bench.py \
+                --sizes 1024:4096 2048:8192 4096:11008 4096:14336 \
+                --seq-len 2048 --batch-size 4
 
           - name: Test optim (GPU)
             image: *gpu_test_image

@@ -5,6 +5,9 @@ correctness/parity checks.
 
 Run as a script (any device; auto-selects CUDA + bf16 when available):
     python src/test/nn/moe/shared_experts_dense_bench.py --d-model 4096 --hidden-size 11008
+
+Sweep several (d_model, hidden_size) sizes in one run:
+    python src/test/nn/moe/shared_experts_dense_bench.py --sizes 1024:4096 4096:11008
 """
 
 import argparse
@@ -78,6 +81,14 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--seq-len", type=int, default=2048)
     p.add_argument("--d-model", type=int, default=2048)
     p.add_argument("--hidden-size", type=int, default=8192)
+    p.add_argument(
+        "--sizes",
+        nargs="+",
+        default=None,
+        metavar="D_MODEL:HIDDEN_SIZE",
+        help="Sweep several sizes in one run, e.g. --sizes 1024:4096 4096:11008. "
+        "Overrides --d-model/--hidden-size.",
+    )
     p.add_argument("--warmup", type=int, default=10)
     p.add_argument("--iters", type=int, default=50)
     p.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
@@ -93,16 +104,23 @@ def main() -> None:
         if args.dtype is not None
         else (DType.bfloat16 if device.type == "cuda" else DType.float32)
     )
-    benchmark(
-        batch_size=args.batch_size,
-        seq_len=args.seq_len,
-        d_model=args.d_model,
-        hidden_size=args.hidden_size,
-        warmup=args.warmup,
-        iters=args.iters,
-        device=device,
-        dtype=dtype,
-    )
+
+    if args.sizes:
+        sizes = [tuple(int(v) for v in s.split(":", 1)) for s in args.sizes]
+    else:
+        sizes = [(args.d_model, args.hidden_size)]
+
+    for d_model, hidden_size in sizes:
+        benchmark(
+            batch_size=args.batch_size,
+            seq_len=args.seq_len,
+            d_model=d_model,
+            hidden_size=hidden_size,
+            warmup=args.warmup,
+            iters=args.iters,
+            device=device,
+            dtype=dtype,
+        )
 
 
 if __name__ == "__main__":
