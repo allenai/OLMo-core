@@ -39,25 +39,32 @@ The no-checkpoint smokes run 12 optimizer steps with compilation, W&B, the
 speed/MFU callback, and Beaker progress reporting enabled. They write no model
 or optimizer checkpoints and run no evaluators.
 
-Start with the largest legal no-accumulation shape at every Cx:
+The largest legal no-accumulation shape was tested first at every Cx. The
+validated production settings are:
 
-| Cx | Global sequences | GPUs | First MB | Accumulation | Audited fallbacks |
-|---:|---:|---:|---:|---:|---|
-| 1 | 32 | 2 | 16 | 1 | 8 |
-| 2 | 48 | 2 | 24 | 1 | 12, 8 |
-| 4 | 64 | 2 | 32 | 1 | 16, 8 |
-| 8 | 96 | 2 | 48 | 1 | 24, 16, 12 |
+| Cx | Global sequences | GPUs | Validated MB | Accumulation | Active memory | Mean TFLOPs/GPU | W&B |
+|---:|---:|---:|---:|---:|---:|---:|---|
+| 1 | 32 | 2 | 16 | 1 | 197.3 GiB | 368.0 | `4zeb0iah` |
+| 2 | 48 | 2 | 12 | 2 | 156.8 GiB | 413.2 | `hj0ip22r` |
+| 4 | 64 | 2 | 16 | 2 | 197.3 GiB | 387.4 | `adpjvm8b` |
+| 8 | 96 | 2 | 16 | 3 | 197.3 GiB | 471.1 | `rl5kz2u5` |
 
-Fall back only after an OOM. Promote the largest passing legal microbatch for
-each Cx and record peak device memory, TFLOPs/GPU, MFU, and job throughput here
-before launching the sweep.
+Each promoted shape completed a compiled forward/backward dry run and 12 real
+optimizer steps with exit code zero. TFLOPs/GPU is the arithmetic mean of the
+11 reported step-level samples; these very short runs are capacity tests, not
+stable throughput benchmarks. MB24, MB32, and MB48 all produced genuine CUDA
+OOMs during the compiled dry run. Because Cx2 MB24 and Cx8 MB24 have identical
+per-rank tensor shapes, the former also rules out the latter. The first smoke
+attempt was stopped after it exposed a missing `BEAKER_TOKEN`; it is an
+infrastructure-canceled attempt, not a memory result. No smoke wrote a model or
+optimizer checkpoint.
 
 ## LR sweep
 
-After all four Cx batch shapes pass, launch these four inherited LRs at every
+All four Cx batch shapes passed. Launch these four inherited LRs at every
 Cx: `4e-4`, `8e-4`, `1.6e-3`, and `3.2e-3`. This is 16 tasks and 32 B300s at
-maximum concurrency. The full manifest must contain the smoke-validated
-microbatches before submission.
+maximum concurrency. The full manifest contains the smoke-validated
+microbatches above.
 
 This intervention's smokes and LR sweep have an explicit scheduling exception:
 urgent priority with `minRuntime: 0m` and `autoResume: true`. They are therefore

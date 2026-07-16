@@ -200,6 +200,43 @@ validated MB12 shape.
 | 480M | 4 | `8e-4` | 524,288 | 4 | 1 | 8 | 2 | [01KXMTAR1ZB3ERY8JQ0MH4681B](https://beaker.org/ex/01KXMTAR1ZB3ERY8JQ0MH4681B) | pending initialization | queued |
 | 480M | 8 | `8e-4` | 786,432 | 8 | 1 | 12 | 1 | [01KXMTAR5C5JX0ATP038ECKNWS](https://beaker.org/ex/01KXMTAR5C5JX0ATP038ECKNWS) | pending initialization | queued |
 
+## 275M aligned-geometry GDN (`expand_v=2`)
+
+- Model: `geometry_only` in
+  [`models/geometry_matched_275m.py`](models/geometry_matched_275m.py)
+- Full manifest:
+  [`launchers/pretraining/manifests/275m_geometry_gdn_ev2.yaml`](launchers/pretraining/manifests/275m_geometry_gdn_ev2.yaml)
+- Smoke manifest:
+  [`launchers/pretraining/manifests/275m_geometry_gdn_ev2_smokes.yaml`](launchers/pretraining/manifests/275m_geometry_gdn_ev2_smokes.yaml)
+- W&B project/group: `ai2-llm/jacobm-olmoe-ladder` /
+  `olmoe3-275m-geometry-gdn-ev2`
+- Scheduling exception: urgent, unallocated (`minRuntime: 0m`), and
+  `autoResume: true` on two Holmes B300s per task.
+- Smoke attempt r1:
+  [01KXMY0DJA4W89BWK9SRNHR0WD](https://beaker.org/ex/01KXMY0DJA4W89BWK9SRNHR0WD)
+- Smoke capacity attempt r2:
+  [01KXMY5XE54S5R9ERXQHKVG5T0](https://beaker.org/ex/01KXMY5XE54S5R9ERXQHKVG5T0)
+- Smoke fallback attempt r3:
+  [01KXMYJQDN2MADN3AZRRSMFVNW](https://beaker.org/ex/01KXMYJQDN2MADN3AZRRSMFVNW)
+
+Attempt r1 was stopped after model construction exposed that the Beaker token
+secret had been omitted. It provides no capacity result. In r2, MB24, MB32,
+and MB48 failed with genuine compiled-dry-run CUDA OOMs. Cx1 MB16 passed. The
+r3 fallbacks established the remaining production shapes. Every passing row
+completed compilation plus 12 optimizer steps with checkpointing and all
+evaluator callbacks disabled.
+
+| Cx | Global batch | MB | Accum | Job | W&B | Active memory | Mean TFLOPs/GPU | Status |
+|---:|---:|---:|---:|---|---|---:|---:|---|
+| 1 | 262,144 | 16 | 1 | [01KXMY5XS9V9XKPK9KEKQZ9NDS](https://beaker.org/ex/01KXMY5XS9V9XKPK9KEKQZ9NDS) | [4zeb0iah](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/4zeb0iah) | 197.3 GiB | 368.0 | passed |
+| 2 | 393,216 | 12 | 2 | [01KXMYJQSAE4B6SG06E36H196F](https://beaker.org/ex/01KXMYJQSAE4B6SG06E36H196F) | [hj0ip22r](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/hj0ip22r) | 156.8 GiB | 413.2 | passed |
+| 4 | 524,288 | 16 | 2 | [01KXMYJQWNW5STRF7STH139N99](https://beaker.org/ex/01KXMYJQWNW5STRF7STH139N99) | [adpjvm8b](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/adpjvm8b) | 197.3 GiB | 387.4 | passed |
+| 8 | 786,432 | 16 | 3 | [01KXMYJR0980PYVC9FTWBQD9RH](https://beaker.org/ex/01KXMYJR0980PYVC9FTWBQD9RH) | [rl5kz2u5](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/rl5kz2u5) | 197.3 GiB | 471.1 | passed |
+
+The TFLOPs values are arithmetic means of 11 reported step-level samples in
+each short smoke. They are useful for detecting gross regressions, but are not
+steady-state benchmarks.
+
 ## New wave template
 
 | Intervention | Manifest | Beaker experiment | W&B group | Status | Decision |

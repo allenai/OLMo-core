@@ -63,8 +63,8 @@ training:
     OLMOE3_HYBRID_WANDB: "1"
 
 # These are the exact four LRs used at each Cx for the first 275M hybrid sweep.
-# Microbatches are placeholders until the capacity smokes finish; the manifest
-# must be updated with the largest validated values before submission.
+# The microbatches are the largest settings validated by compiled, 12-step B300
+# smoke tests on 2026-07-16.
 sweep:
   1:
     chinchilla_multiple: "1"
