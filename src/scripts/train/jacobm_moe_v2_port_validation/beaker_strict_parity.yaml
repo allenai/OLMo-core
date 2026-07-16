@@ -25,8 +25,8 @@ tasks:
       sharedMemory: 64 GiB
     context:
       priority: urgent
-      minRuntime: 10m
-      autoResume: false
+      minRuntime: 0m
+      autoResume: true
     constraints:
       cluster: [ai2/holmes]
     hostNetworking: true

@@ -35,7 +35,7 @@ tasks:
       - {mountPath: /weka/oe-training-default, source: {weka: oe-training-default}}
     result: {path: /results}
     resources: {gpuCount: 2, sharedMemory: 64 GiB}
-    context: {priority: urgent, minRuntime: 8h, autoResume: true}
+    context: {priority: urgent, minRuntime: 0m, autoResume: true}
     constraints: {cluster: [ai2/holmes]}
     hostNetworking: true
     propagateFailure: false
@@ -74,7 +74,7 @@ tasks:
       - {mountPath: /weka/oe-training-default, source: {weka: oe-training-default}}
     result: {path: /results}
     resources: {gpuCount: 8, sharedMemory: 64 GiB}
-    context: {priority: urgent, minRuntime: 10m, autoResume: false}
+    context: {priority: urgent, minRuntime: 0m, autoResume: true}
     constraints: {cluster: [ai2/holmes]}
     hostNetworking: true
     propagateFailure: false

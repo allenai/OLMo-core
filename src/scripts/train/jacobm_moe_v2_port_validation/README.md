@@ -37,3 +37,7 @@ The submitted strict-parity task sets `OLMOE3_PORT_SUBMIT_POSTGATE=1`, so a
 successful comparison submits `beaker_postgate.yaml` itself. Because the
 submission command is after the strict comparator under `set -e`, neither
 training job is created if checkpoint loading or any exact comparison fails.
+
+All three branch-comparison tasks use the unallocated queue: urgent priority,
+`minRuntime: 0m`, and `autoResume: true`. The deprecated `preemptible` field is
+omitted because Beaker rejects combining it with `minRuntime`/`autoResume`.
