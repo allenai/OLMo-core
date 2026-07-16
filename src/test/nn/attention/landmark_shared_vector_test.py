@@ -7,7 +7,13 @@ computation:
 * the eager ``head_dim`` output equals ordinary (non-compressive) landmark attention;
 * the tail from :meth:`SharedVectorLandmarkAttention._shared_vector_tail` (used by *both* paths)
   equals a dense brute-force tail derived from the full landmark grouped-softmax probabilities.
+
+``cu_doc_lens`` sequence packing is covered by the ``test_packing_*`` tests below: a packed forward
+(one sequence, ``cu_doc_lens``) must equal gradient accumulation over the same documents fed
+one-at-a-time, for both the ``head_dim`` output and the (doc-aware) ``vec_dim`` tail.
 """
+
+from typing import Optional
 
 import pytest
 import torch
@@ -19,7 +25,13 @@ from olmo_core.nn.attention import (
     LandmarkAttention,
     SharedVectorLandmarkAttention,
 )
-from olmo_core.nn.attention.landmark import build_landmark_masks, landmark_grouped_softmax
+from olmo_core.nn.attention.landmark import (
+    build_block_doc_id,
+    build_landmark_masks,
+    landmark_grouped_softmax,
+)
+from olmo_core.nn.attention.landmark_kernel import has_landmark_kernel
+from olmo_core.testing import requires_gpu
 
 
 def _build(
@@ -60,15 +72,23 @@ def _qkv(m: SharedVectorLandmarkAttention, B: int, T: int, dtype: torch.dtype):
 
 
 def _dense_tail_reference(
-    m: SharedVectorLandmarkAttention, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor
+    m: SharedVectorLandmarkAttention,
+    q: torch.Tensor,
+    k: torch.Tensor,
+    v: torch.Tensor,
+    cu_doc_lens: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
     """Brute-force tail from the dense landmark grouped-softmax probabilities ``P``.
 
-    ``tail_i = sum_j P_ij * (base if j in query i's block else e_{block(j)})``.
+    ``tail_i = sum_j P_ij * (base if j in query i's block else e_{block(j)})``. With ``cu_doc_lens``,
+    ``P`` (from :func:`build_landmark_masks`) already has cross-document entries at exactly zero, so
+    the ``cross`` / ``same_mass`` split below naturally excludes another document's blocks.
     """
     B, H, T, _ = q.shape
     Lb = m.block_size
-    attn_mask, is_mem, last_section_mask = build_landmark_masks(T, Lb, q.device, q.dtype)
+    attn_mask, is_mem, last_section_mask = build_landmark_masks(
+        T, Lb, q.device, q.dtype, cu_doc_lens=cu_doc_lens, batch_size=B
+    )
     attn = torch.matmul(q, k.transpose(-1, -2)) * m.softmax_scale + attn_mask
     attn = torch.maximum(attn, torch.tensor(torch.finfo(attn.dtype).min, dtype=attn.dtype))
     P = landmark_grouped_softmax(
@@ -119,6 +139,144 @@ def test_tail_matches_dense_bruteforce():
     tail = m._shared_vector_tail(q, k, v)
     ref = _dense_tail_reference(m, q, k, v)
     torch.testing.assert_close(tail, ref, atol=1e-4, rtol=1e-4)
+
+
+def test_tail_matches_dense_bruteforce_packed():
+    """The doc-aware tail (``doc_id`` given) must match the dense brute-force reference computed
+    with the matching ``cu_doc_lens``, which independently derives cross-document masking via the
+    full grouped-softmax probability matrix rather than the block-gate shortcut."""
+    m = _build()
+    with torch.no_grad():
+        m.weight_landmark.normal_(std=0.3)
+        m.base.normal_(std=0.3)
+    Lb = m.block_size
+    doc_lens = [2 * Lb, 3 * Lb]
+    T = sum(doc_lens)
+    q, k, v = _qkv(m, B=2, T=T, dtype=torch.float32)
+    # Flattened-over-batch: both rows share the same [doc_lens[0], doc_lens[1]] layout.
+    cu_doc_lens = torch.tensor([0, doc_lens[0], T, T + doc_lens[0], 2 * T], dtype=torch.int32)
+    doc_id = build_block_doc_id(cu_doc_lens, batch_size=2, seq_len=T, block_size=Lb)
+
+    tail = m._shared_vector_tail(q, k, v, doc_id=doc_id)
+    ref = _dense_tail_reference(m, q, k, v, cu_doc_lens=cu_doc_lens)
+    torch.testing.assert_close(tail, ref, atol=1e-4, rtol=1e-4)
+
+
+def test_packing_no_cross_document_attention():
+    """A query in the second document's tail must be unaffected by perturbing the first document's
+    keys/values -- the direct analogue of ``test_landmark_packing_no_cross_document_attention``."""
+    m = _build()
+    with torch.no_grad():
+        m.weight_landmark.normal_(std=0.3)
+        m.base.normal_(std=0.3)
+    Lb = m.block_size
+    doc_lens = [2 * Lb, 3 * Lb]
+    T = sum(doc_lens)
+    q, k, v = _qkv(m, B=1, T=T, dtype=torch.float32)
+    cu_doc_lens = torch.tensor([0, *torch.tensor(doc_lens).cumsum(0).tolist()], dtype=torch.int32)
+    doc_id = build_block_doc_id(cu_doc_lens, batch_size=1, seq_len=T, block_size=Lb)
+
+    tail = m._shared_vector_tail(q, k, v, doc_id=doc_id)
+
+    k2, v2 = k.clone(), v.clone()
+    k2[:, :, : doc_lens[0]] += torch.randn_like(k2[:, :, : doc_lens[0]])
+    v2[:, :, : doc_lens[0]] += torch.randn_like(v2[:, :, : doc_lens[0]])
+    tail2 = m._shared_vector_tail(q, k2, v2, doc_id=doc_id)
+
+    # Second document's queries (positions doc_lens[0]:) are untouched by the first document's edit.
+    torch.testing.assert_close(
+        tail[:, :, doc_lens[0] :], tail2[:, :, doc_lens[0] :], atol=1e-6, rtol=1e-6
+    )
+    # Sanity: the edit *did* change the first document's own tail (the perturbation is not a no-op).
+    assert not torch.allclose(tail[:, :, : doc_lens[0]], tail2[:, :, : doc_lens[0]])
+
+
+def _packing_equivalence_check(*, mem_freq: int = 15, doc_lens, batch_size: int = 1):
+    """Run a packed forward/backward (one sequence with ``cu_doc_lens``) through the full module and
+    compare against gradient accumulation over the same documents fed one-at-a-time. Outputs and all
+    parameter gradients must match -- the invariant packed SFT relies on. Mirrors
+    ``landmark_test.py::_packing_equivalence_check``, using a coarser tolerance because (unlike plain
+    ``LandmarkAttention``) the tail is always computed in float32 internally (see ``_tail_query_chunk``
+    module docs), independent of packing.
+    """
+    block_size = mem_freq + 1
+    assert all(L % block_size == 0 for L in doc_lens)
+    T = sum(doc_lens)
+    torch.manual_seed(0)
+
+    m = SharedVectorLandmarkAttention(
+        d_model=64,
+        n_heads=4,
+        n_kv_heads=4,
+        head_dim=16,
+        mem_freq=mem_freq,
+        vec_dim=8,
+        use_kernel=False,
+        bias=False,
+        dtype=torch.float64,
+    )
+    with torch.no_grad():
+        m.weight_landmark.normal_(std=0.3)
+        m.base.normal_(std=0.1)
+        m.w_out_vec.weight.normal_(std=0.1)
+    m.train()
+
+    x_packed = torch.randn(batch_size, T, 64, dtype=torch.float64, requires_grad=True)
+    # Flattened-over-batch boundaries: every row shares the same ``doc_lens`` layout.
+    flat = []
+    running = 0
+    for _ in range(batch_size):
+        for L in doc_lens:
+            running += L
+            flat.append(running)
+    cu_doc_lens = torch.tensor([0, *flat], dtype=torch.int32)
+
+    out_packed = m(x_packed, cu_doc_lens=cu_doc_lens)
+    out_packed.pow(2).sum().backward()
+    packed_grads = {n: p.grad.clone() for n, p in m.named_parameters()}
+
+    for p in m.parameters():
+        p.grad = None
+    x_unpacked = x_packed.detach().clone().requires_grad_(True)
+    rows_out = []
+    for b in range(batch_size):
+        start = 0
+        doc_outs = []
+        for L in doc_lens:
+            doc_outs.append(m(x_unpacked[b : b + 1, start : start + L, :]))
+            start += L
+        rows_out.append(torch.cat(doc_outs, dim=1))
+    out_accum = torch.cat(rows_out, dim=0)
+    out_accum.pow(2).sum().backward()
+    accum_grads = {n: p.grad.clone() for n, p in m.named_parameters()}
+
+    torch.testing.assert_close(out_packed, out_accum, atol=1e-5, rtol=1e-4)
+    torch.testing.assert_close(x_packed.grad, x_unpacked.grad, atol=1e-5, rtol=1e-4)
+    for name in packed_grads:
+        torch.testing.assert_close(
+            packed_grads[name], accum_grads[name], atol=1e-5, rtol=1e-4, msg=name
+        )
+
+
+def test_packing_matches_grad_accumulation():
+    _packing_equivalence_check(doc_lens=[32, 48])
+
+
+def test_packing_matches_grad_accumulation_three_docs():
+    _packing_equivalence_check(doc_lens=[16, 32, 32])
+
+
+def test_packing_matches_grad_accumulation_batched():
+    _packing_equivalence_check(doc_lens=[16, 32], batch_size=2)
+
+
+def test_packing_rejects_unaligned_document_boundary():
+    m = _build()
+    T = m.block_size * 3
+    x = torch.randn(1, T, m.d_model)
+    unaligned = torch.tensor([0, m.block_size + 2, T], dtype=torch.int32)
+    with pytest.raises(ValueError, match="LandmarkPackingInstanceSource"):
+        m(x, cu_doc_lens=unaligned)
 
 
 def test_tail_chunking_matches_single_chunk_and_grads():
@@ -354,3 +512,42 @@ def test_config_build_and_validation():
     assert m.vec_dim == 8
     assert m.w_out.in_features == 4 * 16  # unchanged base shape
     assert m.w_out_vec.in_features == 4 * 8
+
+
+@requires_gpu
+@pytest.mark.skipif(not has_landmark_kernel(), reason="requires triton landmark kernel")
+def test_kernel_packing_head_dim_matches_eager():
+    """The fused-kernel ``head_dim`` output (``_attn_core`` with ``doc_id``) must match the eager
+    dense ``head_dim`` output (``_main_dense`` with the equivalent ``cu_doc_lens``), on a batch of two
+    rows with distinct document layouts. (``_shared_vector_tail`` is shared by both paths -- see the
+    CPU ``test_packing_*`` tests above for its doc-aware correctness -- so only the ``head_dim``
+    branch differs here and needs a kernel-specific check.)
+    """
+    torch.manual_seed(0)
+    mem_freq = 15
+    block_size = mem_freq + 1
+    m = SharedVectorLandmarkAttention(
+        d_model=64,
+        n_heads=4,
+        n_kv_heads=4,
+        head_dim=16,
+        mem_freq=mem_freq,
+        vec_dim=8,
+        use_kernel=True,
+        bias=False,
+    ).cuda()
+
+    B, T = 2, block_size * 4
+    # Row 0: docs [2 blocks, 2 blocks]; row 1: docs [1 block, 3 blocks].
+    cu_doc_lens = torch.tensor(
+        [0, 2 * block_size, T, T + block_size, 2 * T], dtype=torch.int32, device="cuda"
+    )
+    doc_id = build_block_doc_id(cu_doc_lens, B, T, block_size)
+
+    q, k, v = _qkv(m, B=B, T=T, dtype=torch.bfloat16)
+    q, k, v = q.cuda(), k.cuda(), v.cuda()
+
+    main_kernel = m._attn_core(q, k, v, doc_id=doc_id)
+    main_eager = m._main_dense(q, k, v, cu_doc_lens=cu_doc_lens)
+
+    torch.testing.assert_close(main_kernel, main_eager, rtol=1e-2, atol=1e-2)

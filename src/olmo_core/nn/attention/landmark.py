@@ -13,7 +13,7 @@ This module holds the framework-agnostic pieces (the grouped softmax and GQA hea
 kernel lives in :mod:`olmo_core.nn.attention.landmark_kernel`.
 """
 
-from typing import Tuple
+from typing import Optional, Tuple
 
 import torch
 
@@ -29,29 +29,78 @@ __all__ = [
 
 
 def build_landmark_masks(
-    T: int, block_size: int, device: torch.device, dtype: torch.dtype
+    T: int,
+    block_size: int,
+    device: torch.device,
+    dtype: torch.dtype,
+    cu_doc_lens: Optional[torch.Tensor] = None,
+    batch_size: int = 1,
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """
     Build the additive causal attention mask, the landmark mask (``is_mem``), and the
-    ``last_section_mask`` used by the eager (dense) landmark grouped-softmax path. All are
-    batch-independent (built with leading dims of 1) and depend only on ``T`` and the landmark
-    ``block_size`` (``= mem_freq + 1``).
+    ``last_section_mask`` used by the eager (dense) landmark grouped-softmax path. Without
+    ``cu_doc_lens`` these are batch-independent (built with leading dims of 1) and depend only on
+    ``T`` and the landmark ``block_size`` (``= mem_freq + 1``); with ``cu_doc_lens`` the additive
+    mask gains a batch dimension because each batch element can have its own document layout.
 
     :param T: The (padded) sequence length; must be a multiple of ``block_size``.
     :param block_size: The landmark block size (the landmark token is the last token of each block).
     :param device: The device to build the masks on.
     :param dtype: The dtype of the additive attention mask.
+    :param cu_doc_lens: Optional 1D tensor of cumulative document lengths for sequence packing,
+        following the flattened-over-batch convention (see :func:`build_block_doc_id`). An additive
+        block-diagonal document mask is folded into the causal mask so a query never attends across
+        a document boundary. Every document boundary must fall on a landmark block boundary.
+    :param batch_size: The number of sequences in the micro-batch. Used to reshape the flattened
+        ``cu_doc_lens`` into per-sequence document ids.
 
     :returns: ``(attn_mask, is_mem, last_section_mask)`` where ``attn_mask`` is the additive causal
-        mask of shape ``(1, 1, T, T)`` (with the query's own-section landmark also masked), ``is_mem``
-        marks past landmark key positions, and ``last_section_mask`` marks, for each query, the keys
-        in its own ("last") section. ``is_mem`` and ``last_section_mask`` are boolean.
+        mask of shape ``(1, 1, T, T)`` (or ``(batch_size, 1, T, T)`` when ``cu_doc_lens`` is given),
+        with the query's own-section landmark also masked, ``is_mem`` marks past landmark key
+        positions, and ``last_section_mask`` marks, for each query, the keys in its own ("last")
+        section. ``is_mem`` and ``last_section_mask`` are boolean.
+
+    :raises ValueError: If a document boundary is not a multiple of ``block_size``, or
+        ``cu_doc_lens`` does not describe exactly ``batch_size * T`` tokens.
     """
     finfo_min = torch.finfo(dtype).min
 
     # additive causal mask, shape (1, 1, T, T): 0 on/below the diagonal, -inf above.
     causal = torch.full((T, T), finfo_min, dtype=dtype, device=device)
     attn_mask = torch.triu(causal, diagonal=1)[None, None].clone()
+
+    if cu_doc_lens is not None:
+        # Fold in a block-diagonal document mask: keys in a different document than the query are
+        # set to -inf. The periodic ``is_mem`` pattern (below) is computed over global positions, so
+        # each document boundary must coincide with a block boundary or the landmark tokens of one
+        # document would be mis-grouped with another's.
+        boundaries = cu_doc_lens.to(device=device, dtype=torch.long)
+        if bool((boundaries % block_size != 0).any().item()):
+            raise ValueError(
+                f"Landmark packing requires every document boundary to be a multiple of the "
+                f"landmark block size (mem_freq + 1 = {block_size}), but got "
+                f"cu_doc_lens={cu_doc_lens.tolist()}. This almost always means the document "
+                f"lengths came from the wrong source: EOS-derived 'generate_doc_lengths' or a "
+                f"generic token packer (PackingInstanceSource / ConcatAndChunk) do NOT produce "
+                f"block-aligned landmark documents. Build packed landmark SFT data with "
+                f"LandmarkPackingInstanceSource (it inserts landmarks per document and emits "
+                f"block-aligned doc_lens) and set generate_doc_lengths=False."
+            )
+        total = batch_size * T
+        if int(boundaries[-1].item()) != total:
+            raise ValueError(
+                f"cu_doc_lens must describe exactly batch_size * T = {total} tokens (flattened "
+                f"over the batch), but its last entry is {int(boundaries[-1].item())}."
+            )
+        # Per-token document id over the flattened batch, shape (batch_size * T,): document 0, then
+        # 1, etc. The implicit boundary at every multiple of T (each instance is exactly T tokens)
+        # means a document never straddles two batch elements.
+        interior = boundaries[(boundaries > 0) & (boundaries < total)]
+        positions = torch.arange(total, device=device)
+        doc_id = torch.searchsorted(interior, positions, right=True).view(batch_size, T)
+        # (B, 1, T, T): True where a query and key are in different documents.
+        cross_doc = doc_id[:, None, :, None] != doc_id[:, None, None, :]
+        attn_mask = attn_mask.masked_fill(cross_doc, finfo_min)
 
     # shape: (1, 1, 1, T)
     is_mem = ((torch.arange(T, device=device) % block_size) == (block_size - 1)).view(1, 1, 1, T)
