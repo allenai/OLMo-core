@@ -96,8 +96,11 @@ def test_olmo3moe_experts_grouped_mm_matches_reference_loop():
     topk_ids = torch.randint(0, num_experts, (n_tokens, top_k))
     topk_weights = torch.rand(n_tokens, top_k)
 
-    # These dims satisfy the 16-byte alignment guard, so the grouped-mm path is taken.
-    assert experts._can_use_grouped_mm(hidden_states)
+    # The dims satisfy the 16-byte alignment guard, but grouped_mm itself needs a new enough torch
+    # (the package supports torch>=2.6, while grouped_mm's `offs=` API lands in 2.10). Skip rather
+    # than fail where the op is unavailable; the forward falls back to `_forward_loop` there anyway.
+    if not experts._can_use_grouped_mm(hidden_states):
+        pytest.skip("torch grouped_mm unavailable")
     reference = experts._forward_loop(hidden_states, topk_ids, topk_weights)
     grouped = experts._forward_grouped_mm(hidden_states, topk_ids, topk_weights)
     torch.testing.assert_close(grouped, reference, rtol=1e-5, atol=1e-5)
