@@ -237,6 +237,36 @@ The TFLOPs values are arithmetic means of 11 reported step-level samples in
 each short smoke. They are useful for detecting gross regressions, but are not
 steady-state benchmarks.
 
+### Four-LR sweep
+
+- Beaker experiment:
+  [01KXMZAGY82BW0FYT4S6J2TQH8](https://beaker.org/ex/01KXMZAGY82BW0FYT4S6J2TQH8)
+- Submitted: 2026-07-16 at urgent priority as unallocated, auto-resuming work
+- Scope: all four inherited LRs (`4e-4`, `8e-4`, `1.6e-3`, `3.2e-3`) at each
+  of Cx1/Cx2/Cx4/Cx8; 16 tasks, two B300s per task
+- Checkpoints: enabled only for production; rolling ephemeral every 500 steps,
+  final permanent, `remove=ephemeral_only`
+- Evaluation: no in-loop or on-finish evaluators; validation is post hoc
+
+| Cx | LR | MB | Accum | Job | W&B | Status |
+|---:|---:|---:|---:|---|---|---|
+| 1 | `4e-4` | 16 | 1 | [01KXMZAHBMFQY0JT31JV3ATRXR](https://beaker.org/ex/01KXMZAHBMFQY0JT31JV3ATRXR) | [sa70hegz](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/sa70hegz) | running |
+| 1 | `8e-4` | 16 | 1 | [01KXMZAHEYW17EP0B3XHJH3RK7](https://beaker.org/ex/01KXMZAHEYW17EP0B3XHJH3RK7) | [3ddxwqks](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/3ddxwqks) | running |
+| 1 | `1.6e-3` | 16 | 1 | [01KXMZAJ53C3YS6FNKPKPT0A5T](https://beaker.org/ex/01KXMZAJ53C3YS6FNKPKPT0A5T) | [8zx9zgnw](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/8zx9zgnw) | running |
+| 1 | `3.2e-3` | 16 | 1 | [01KXMZAJB819CC1WS154TZP24G](https://beaker.org/ex/01KXMZAJB819CC1WS154TZP24G) | [terfkng8](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/terfkng8) | running |
+| 2 | `4e-4` | 12 | 2 | [01KXMZAJQ6BPCQ5TQX783EKPJ9](https://beaker.org/ex/01KXMZAJQ6BPCQ5TQX783EKPJ9) | pending initialization | queued |
+| 2 | `8e-4` | 12 | 2 | [01KXMZAJXF4J0AMT8G6Q4E4EET](https://beaker.org/ex/01KXMZAJXF4J0AMT8G6Q4E4EET) | pending initialization | queued |
+| 2 | `1.6e-3` | 12 | 2 | [01KXMZAK152MVAVD4QZS6C05C9](https://beaker.org/ex/01KXMZAK152MVAVD4QZS6C05C9) | pending initialization | queued |
+| 2 | `3.2e-3` | 12 | 2 | [01KXMZAK4T000W47TJNS1A9GQ6](https://beaker.org/ex/01KXMZAK4T000W47TJNS1A9GQ6) | pending initialization | queued |
+| 4 | `4e-4` | 16 | 2 | [01KXMZAK8BPCBXJGES1K4DTXJS](https://beaker.org/ex/01KXMZAK8BPCBXJGES1K4DTXJS) | [7jzlrolc](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/7jzlrolc) | running |
+| 4 | `8e-4` | 16 | 2 | [01KXMZAKBNSA46H7GXKVX90EXK](https://beaker.org/ex/01KXMZAKBNSA46H7GXKVX90EXK) | [gwve4pn6](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/gwve4pn6) | running |
+| 4 | `1.6e-3` | 16 | 2 | [01KXMZAKEXB7QDCG4CZ2PT04KH](https://beaker.org/ex/01KXMZAKEXB7QDCG4CZ2PT04KH) | [hwjvw532](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/hwjvw532) | running |
+| 4 | `3.2e-3` | 16 | 2 | [01KXMZAKJFKA9ERVNDSQ9FENE5](https://beaker.org/ex/01KXMZAKJFKA9ERVNDSQ9FENE5) | [hmjkig0r](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/hmjkig0r) | running |
+| 8 | `4e-4` | 16 | 3 | [01KXMZAKNNNJ2YG3522S5K40YZ](https://beaker.org/ex/01KXMZAKNNNJ2YG3522S5K40YZ) | [7mlzc5x4](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/7mlzc5x4) | running |
+| 8 | `8e-4` | 16 | 3 | [01KXMZAKS5D3978QHT5D911M7C](https://beaker.org/ex/01KXMZAKS5D3978QHT5D911M7C) | [wo8raj1p](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/wo8raj1p) | running |
+| 8 | `1.6e-3` | 16 | 3 | [01KXMZAKWCVBD3GMWHV0TK54NP](https://beaker.org/ex/01KXMZAKWCVBD3GMWHV0TK54NP) | [0x3i869n](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/0x3i869n) | running |
+| 8 | `3.2e-3` | 16 | 3 | [01KXMZAKZNQCX93WENA0DVAWBW](https://beaker.org/ex/01KXMZAKZNQCX93WENA0DVAWBW) | [aholwcgr](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/aholwcgr) | running |
+
 ## New wave template
 
 | Intervention | Manifest | Beaker experiment | W&B group | Status | Decision |

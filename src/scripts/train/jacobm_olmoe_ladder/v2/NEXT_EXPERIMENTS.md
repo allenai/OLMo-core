@@ -8,7 +8,7 @@ wide v1 integration model.
 | Order | Experiment | Change from parent recipe | State |
 |---:|---|---|---|
 | 1 | GDN hybrid | On wide, replace sliding-attention layers with GatedDeltaNet; keep geometry, global-attention placement, RoPE, initialization, and `expand_v=1` fixed. | In progress; finish and bracket the current LR sweeps. |
-| 2 | Aligned geometry, mixer ratio, and GDN value width | Use the dense ladder's 275M width, depth, four-GDN/one-global pattern, and `expand_v=2` while retaining MoE, the dense-first-FFN design, our GQA ratio, RoPE, and initialization. | Primary 290.78M-active config audited; capacity smokes precede the inherited four-LR sweep. |
+| 2 | Aligned geometry, mixer ratio, and GDN value width | Use the dense ladder's 275M width, depth, four-GDN/one-global pattern, and `expand_v=2` while retaining MoE, the dense-first-FFN design, our GQA ratio, RoPE, and initialization. | Primary 290.78M-active config and production microbatches audited; 16-run inherited-LR sweep launched 2026-07-16. |
 | 3 | NoPE | On the hybrid recipe, remove RoPE only from global-attention layers and train from initialization. | Planned. Confirm this parent recipe before implementation; the earlier shorthand “integration + NoPE” was less specific. |
 | 4 | Initialization | On the wide control, change only initialization standard deviation from 0.01 to 0.02. | Optional/planned. |
 | 5 | Combined 275M pilot | Combine only interventions whose isolated evidence is neutral-to-positive. | Blocked on isolated results. |
