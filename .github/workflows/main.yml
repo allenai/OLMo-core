@@ -226,13 +226,17 @@ jobs:
 
           # TEMPORARY: not a correctness test — a timing comparison of the two dense-MLP
           # implementations (MoE-v2 single-expert SharedExperts vs standard FeedForward), run as a
-          # script so CI logs the bf16 GPU numbers. Remove once the comparison is recorded.
+          # script across a few sizes so CI logs the bf16 GPU numbers. Uses the torch 2.10 image
+          # (the MoE-v2 target). Remove once the comparison is recorded.
           - name: Dense MLP benchmark (GPU) [temporary]
-            image: *gpu_test_image
+            image: akshitab/olmo-core-tch2100cu128-rma-2026-07-08
             gpus: 1
             run: |
-              python src/test/nn/moe/shared_experts_dense_bench.py \
-                --d-model 4096 --hidden-size 11008 --seq-len 2048 --batch-size 4
+              for dims in "1024 4096" "2048 8192" "4096 11008" "4096 14336"; do
+                set -- $dims
+                python src/test/nn/moe/shared_experts_dense_bench.py \
+                  --d-model "$1" --hidden-size "$2" --seq-len 2048 --batch-size 4
+              done
 
           - name: Test optim (GPU)
             image: *gpu_test_image
