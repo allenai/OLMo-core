@@ -11,6 +11,11 @@ stop and resolve the conflict before launching more compute.
 - `launchers/pretraining/manifests/`: one source-of-truth manifest per
   intervention.
 - `launchers/pretraining/generated/`: disposable rendered Beaker specs.
+- `launchers/midtraining/launch_midtraining.py`: shared validation, rendering,
+  and explicit submission for weight-only midtraining continuations.
+- `launchers/midtraining/manifests/`: exact source checkpoint and stage recipe
+  for each promoted Cx8 model.
+- `launchers/midtraining/generated/`: disposable rendered midtraining specs.
 - `launchers/validation/launch_backfills.py`: shared final-checkpoint eval-only
   rendering and explicit Beaker submission.
 - `launchers/validation/manifests/`: exact source checkpoints that require
@@ -164,6 +169,8 @@ intervention wave. Use exact `--point CX:LR` selectors for targeted extensions.
   `--resume-existing` is explicitly supplied.
 - Store DDP pretraining checkpoints under
   `/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/olmo-ddp/pretraining/`.
+- Store DDP midtraining checkpoints under
+  `/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/olmo-ddp/midtraining/`.
 - Match v1 resume retention for full training: write an ephemeral checkpoint
   every 500 steps with `remove=ephemeral_only`, so each new resume checkpoint
   replaces the previous ephemeral one. Retain the final checkpoint permanently;

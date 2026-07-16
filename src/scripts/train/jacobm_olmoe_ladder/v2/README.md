@@ -15,14 +15,16 @@ The v2 operating entry points are now:
 - [`models/`](models/): audited model-config builders and parameter comparisons.
 - [`launchers/pretraining/`](launchers/pretraining/): config-driven DDP
   pretraining sweep launcher and intervention manifests.
+- [`launchers/midtraining/`](launchers/midtraining/): config-driven,
+  weight-only midtraining continuations from final pretraining checkpoints.
 - [`launchers/validation/`](launchers/validation/): final-checkpoint eval-only
   launcher and explicit backfill manifests.
 - [`RUNS.md`](RUNS.md): live post-migration run ledger.
 
 The launchers are dry-run by default and require explicit `--submit` plus an
-experiment name to create external work. Midtraining and long-context training
-launchers remain future work; their result and callback contracts below already
-apply.
+experiment name to create external work. The first-hybrid Cx8 midtraining path
+is implemented; long-context launchers remain future work. The result and
+callback contracts below already apply to every stage.
 
 ## Pretraining plots
 

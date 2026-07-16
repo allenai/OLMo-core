@@ -188,17 +188,22 @@ and data multiple.
 - Manifest: [`launchers/pretraining/manifests/hybrid_scale_480m_cx4_cx8.yaml`](launchers/pretraining/manifests/hybrid_scale_480m_cx4_cx8.yaml)
 - Launcher: [`launchers/pretraining/launch_hybrid_scale_480m_cx4_cx8.sh`](launchers/pretraining/launch_hybrid_scale_480m_cx4_cx8.sh)
 - Beaker experiment: [01KXMTAQPTG52EPEXMQN0Q1YJ7](https://beaker.org/ex/01KXMTAQPTG52EPEXMQN0Q1YJ7)
+- Unallocated Cx8 replacement:
+  [01KXPEF6MWN4AKPH6CRJNZ1GWE](https://beaker.org/ex/01KXPEF6MWN4AKPH6CRJNZ1GWE)
 
 Submitted 2026-07-16 at urgent priority on `ai2/holmes`. Both cells use the
 observed-best wide-integration LR `8e-4`, EP1, the canonical global batch, and
 no in-loop or on-finish evaluation. Cx4 uses the largest proven-safe legal
 microbatch below the projected-over-capacity MB16 shape. Cx8 uses the already
-validated MB12 shape.
+validated MB12 shape. The allocated Cx8 task never started and produced no
+checkpoint; it was canceled on 2026-07-16 and requeued with the same semantic
+run/checkpoint identity as urgent unallocated, auto-resuming work
+(`minRuntime: 0m`). The Cx4 task in the original experiment was left untouched.
 
 | Size | Cx | LR | Global batch | GPUs | EP | MB | Accum | Job | W&B | Status |
 |---|---:|---:|---:|---:|---:|---:|---:|---|---|---|
 | 480M | 4 | `8e-4` | 524,288 | 4 | 1 | 8 | 2 | [01KXMTAR1ZB3ERY8JQ0MH4681B](https://beaker.org/ex/01KXMTAR1ZB3ERY8JQ0MH4681B) | pending initialization | queued |
-| 480M | 8 | `8e-4` | 786,432 | 8 | 1 | 12 | 1 | [01KXMTAR5C5JX0ATP038ECKNWS](https://beaker.org/ex/01KXMTAR5C5JX0ATP038ECKNWS) | pending initialization | queued |
+| 480M | 8 | `8e-4` | 786,432 | 8 | 1 | 12 | 1 | [allocated, canceled](https://beaker.org/ex/01KXMTAR5C5JX0ATP038ECKNWS) / [unallocated replacement](https://beaker.org/ex/01KXPEF7J9GMGAJ1ZJNXMKJ11R) | [3jbywbrh](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/3jbywbrh) | running; optimizer steps confirmed |
 
 ## 275M aligned-geometry GDN (`expand_v=2`)
 
@@ -271,6 +276,37 @@ at `1.6e-3` and a valid quadratic fit.
 | 8 | `8e-4` | 16 | 3 | [01KXMZAKS5D3978QHT5D911M7C](https://beaker.org/ex/01KXMZAKS5D3978QHT5D911M7C) | [wo8raj1p](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/wo8raj1p) | running, 15.311B / 36.250B |
 | 8 | `1.6e-3` | 16 | 3 | [01KXMZAKWCVBD3GMWHV0TK54NP](https://beaker.org/ex/01KXMZAKWCVBD3GMWHV0TK54NP) | [0x3i869n](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/0x3i869n) | running, 15.067B / 36.250B |
 | 8 | `3.2e-3` | 16 | 3 | [01KXMZAKZNQCX93WENA0DVAWBW](https://beaker.org/ex/01KXMZAKZNQCX93WENA0DVAWBW) | [aholwcgr](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/aholwcgr) | running, 15.028B / 36.250B |
+
+## Cx8 first-hybrid midtraining
+
+- Manifest:
+  [`launchers/midtraining/manifests/275m_hybrid_gdn_ev1_cx8.yaml`](launchers/midtraining/manifests/275m_hybrid_gdn_ev1_cx8.yaml)
+- Launcher:
+  [`launchers/midtraining/launch_midtraining.py`](launchers/midtraining/launch_midtraining.py)
+- Beaker experiments: [r1](https://beaker.org/ex/01KXPEFRXGZSS05XXDAJ9PFSZ5),
+  [credential-fixed r2](https://beaker.org/ex/01KXPEQBYPY9YA87QJ1YS8BTYV)
+- Source: permanent final checkpoint `step42954` from the observed-best 275M
+  `expand_v=1` hybrid Cx8 run at pretraining LR `1.6e-3`
+- Destination:
+  `/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/olmo-ddp/midtraining/mt-275m-intwide-hybrid-gdn-ev1-cx8-lr1p6e-4-r1`
+- Scheduling: urgent unallocated, `minRuntime: 0m`, `autoResume: true`, four
+  Holmes B300s, EP1
+- Recipe: 100B tokens at 8K; global batch 1,048,576 tokens / 128 sequences;
+  rank MB8; four-way accumulation; weight-only initialization with a fresh
+  optimizer; 2,000-step linear warmup into constant LR `1.6e-4`
+- Checkpoints: rolling ephemeral every 500 steps, final permanent,
+  `remove=ephemeral_only`; no automatic permanent-checkpoint cleanup
+- Evaluation: no in-loop or on-finish evaluators; full validation is post hoc
+
+The r1 task was canceled before checkpoint loading or step 1 after its GCS
+source-mixture scan exposed a missing Google credential injection. It wrote no
+checkpoint. The wrapper and manifest now use the established
+`jacobm_GOOGLE_CREDENTIALS` path, and r2 keeps the same semantic run/checkpoint
+identity.
+
+| Model | Job | W&B | Status |
+|---|---|---|---|
+| 275M `expand_v=1` hybrid Cx8 | [r1 canceled](https://beaker.org/ex/01KXPEFSNRXYB5N3KAAEWJD2ZR) / [r2](https://beaker.org/ex/01KXPEQCA0TQF17JDTKSE3P6E7) | pending initialization | running; authenticated source-mixture build in progress |
 
 ## Post-training validation backfills
 
