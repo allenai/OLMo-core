@@ -8,7 +8,7 @@ wide v1 integration model.
 | Order | Experiment | Change from parent recipe | State |
 |---:|---|---|---|
 | 1 | GDN hybrid | On wide, replace sliding-attention layers with GatedDeltaNet; keep geometry, global-attention placement, RoPE, initialization, and `expand_v=1` fixed. | In progress; finish and bracket the current LR sweeps. |
-| 2 | Aligned geometry and mixer ratio | Use the dense ladder's 275M width, depth, attention geometry, and four-GDN/one-global pattern while retaining MoE and the dense-first-FFN design. | Planned; config and parameter matching not yet implemented. |
+| 2 | Aligned geometry and mixer ratio | Use the dense ladder's 275M width, depth, attention geometry, and four-GDN/one-global pattern while retaining MoE and the dense-first-FFN design. | Two active-matched configs are audited; choose geometry-only versus dense KV-head/gate matching before building the LR sweep. |
 | 3 | NoPE | On the hybrid recipe, remove RoPE only from global-attention layers and train from initialization. | Planned. Confirm this parent recipe before implementation; the earlier shorthand “integration + NoPE” was less specific. |
 | 4 | Initialization | On the wide control, change only initialization standard deviation from 0.01 to 0.02. | Optional/planned. |
 | 5 | Combined 275M pilot | Combine only interventions whose isolated evidence is neutral-to-positive. | Blocked on isolated results. |
@@ -26,8 +26,10 @@ wide-derived `expand_v=1` hybrid:
   including GDN as the sequence mixer in our dense-first-FFN block when needed
   to preserve the ratio;
 - change GDN from `expand_v=1` to the dense recipe's `expand_v=2`;
-- change global attention from GQA to the dense recipe's full KV-head geometry
-  and add its elementwise attention gate;
+- match the dense rung's exact query/KV-head geometry and add its elementwise
+  attention gate. This is size-dependent: dense 275M/450M use 8 Q / 8 KV
+  heads (MHA), while dense 810M and above use 2:1 GQA. Our current 275M/480M
+  models use 8 Q / 4 KV heads;
 - remove RoPE from global-attention layers (NoPE); and
 - change initialization standard deviation from `0.01` to `0.02`.
 

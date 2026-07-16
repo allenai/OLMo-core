@@ -34,6 +34,8 @@ config. Steps are the first complete optimizer step at or beyond the target.
 |---|---:|---:|---:|---:|---:|---:|---:|
 | 480M | 1 | `1.2e-3` | 398,468,336 | 7,969,366,720 | 262,144 | 30,401 | 7,969,439,744 |
 | 480M | 2 | `9e-4` | 398,468,336 | 15,938,733,440 | 393,216 | 40,535 | 15,939,010,560 |
+| 480M | 4 | `8e-4` | 398,468,336 | 31,877,466,880 | 524,288 | 60,802 | 31,877,758,976 |
+| 480M | 8 | `8e-4` | 398,468,336 | 63,754,933,760 | 786,432 | 81,069 | 63,755,255,808 |
 | 810M | 1 | `6e-4` | 730,950,232 | 14,619,004,640 | 262,144 | 55,768 | 14,619,246,592 |
 | 810M | 2 | `5.6e-4` | 730,950,232 | 29,238,009,280 | 393,216 | 74,357 | 29,238,362,112 |
 | 1.2B | 1 | `4e-4` | 1,134,521,920 | 22,690,438,400 | 262,144 | 86,558 | 22,690,660,352 |
@@ -172,3 +174,18 @@ requesting 32 B300 GPUs at urgent priority.
 The corrected 1.2B retries were submitted as Beaker experiment
 [`01KXKY6RTR5ZSD1R1BS40SF7KR`](https://beaker.org/ex/01KXKY6RTR5ZSD1R1BS40SF7KR),
 requesting 16 B300 GPUs at urgent priority.
+
+## Promoted 480M Cx4/Cx8 settings
+
+The omitted 480M cells use the observed-best wide-integration LRs and the
+canonical Cx4/Cx8 global batches. Cx4 uses the largest proven-safe legal
+microbatch divisor below MB16; Cx8 uses the already validated MB12 shape.
+
+| Size | Cx | GPUs | EP | MB cap / effective | Accum | Transferred LR |
+|---|---:|---:|---:|---:|---:|---:|
+| 480M | 4 | 4 | EP1 | 8 / 8 | 2 | `8e-4` |
+| 480M | 8 | 8 | EP1 | 12 / 12 | 1 | `8e-4` |
+
+Submitted together on 2026-07-16 as Beaker experiment
+[`01KXMTAQPTG52EPEXMQN0Q1YJ7`](https://beaker.org/ex/01KXMTAQPTG52EPEXMQN0Q1YJ7)
+at urgent priority. Both tasks are queued pending Holmes allocation.

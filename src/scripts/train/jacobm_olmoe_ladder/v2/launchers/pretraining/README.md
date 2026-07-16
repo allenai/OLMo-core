@@ -38,6 +38,9 @@ src/scripts/train/jacobm_olmoe_ladder/v2/launchers/pretraining/launch_hybrid_sca
 
 # Inspect the promoted 810M/1.2B Cx4/Cx8 production jobs.
 src/scripts/train/jacobm_olmoe_ladder/v2/launchers/pretraining/launch_hybrid_scale_full_cx4_cx8.sh
+
+# Inspect the 480M Cx4/Cx8 completion jobs.
+src/scripts/train/jacobm_olmoe_ladder/v2/launchers/pretraining/launch_hybrid_scale_480m_cx4_cx8.sh
 ```
 
 The scale launcher copies the Beaker wrapper to node-local `/tmp` before

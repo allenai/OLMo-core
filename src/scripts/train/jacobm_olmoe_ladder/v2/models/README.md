@@ -11,6 +11,13 @@ GatedDeltaNet. It derives the GDN head count from the source attention, fixes
 non-mixer block fields remain identical. It does not alter MoE widths merely to
 force exact parameter equality.
 
+`geometry_matched_275m.py` designs the next 275M candidates on the dense
+ladder's `d_model=640`, 10-layer, four-GDN/one-full-attention geometry. It
+reports both a strict geometry-only profile and a profile that additionally
+matches the dense 275M rung's 8-Q/8-KV full attention and elementwise gate.
+Both deliberately retain RoPE, `expand_v=1`, and `init_std=0.01` so those
+remain separately testable interventions.
+
 Run the structural and parameter audit without creating a training job:
 
 ```bash

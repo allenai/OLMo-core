@@ -183,14 +183,22 @@ and data multiple.
 | 1.2B | 4 | `3e-4` | 524,288 | 8 | EP8 / `sync_1d` | 4 / 4 | 2 | [failed](https://beaker.org/ex/01KXKTT4R8MANSKM43DEJB02GC) / [eval-enabled retry](https://beaker.org/ex/01KXKY6SXD7DFDDJDGK83NGQDF) / [no-eval resume](https://beaker.org/ex/01KXMPNYVY6A2RMTNW2E27H9GR) | [failed](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/f9wybz72) / [eval-enabled retry](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/9c1fcuto) / [no-eval resume](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/h5ft97x1) | no-eval job running; explicitly loaded `step4000` |
 | 1.2B | 8 | `4e-4` | 786,432 | 8 | EP8 / `sync_1d` | 6 / 6 | 2 | [failed](https://beaker.org/ex/01KXKTT4W01BXNZ5WRD40BT2QG) / [eval-enabled retry](https://beaker.org/ex/01KXKY6T9QR8PQDWRAN4Y76CVQ) / [no-eval resume](https://beaker.org/ex/01KXMPNYZ7Q1J3BXXD47KET92X) | [failed](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/n5v3vewn) / [eval-enabled retry](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/48b58zfx) / [no-eval resume](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/zyeib8rb) | no-eval job running from `step4500` |
 
-### Unqueued complete-ladder cells
+### 480M Cx4/Cx8 completion runs
 
-The 480M hybrid Cx4 and Cx8 cells have never been queued. If this wave is meant
-to be a complete four-size by four-data-multiple ladder, these are the only
-entirely missing pretraining cells. Their transferred wide-optimal LRs are
-`8e-4` for both Cx4 and Cx8. They need a short B300 microbatch smoke/config
-addition before production submission; no jobs should be inferred from the
-existing 810M/1.2B Cx4/Cx8 manifest.
+- Manifest: [`launchers/pretraining/manifests/hybrid_scale_480m_cx4_cx8.yaml`](launchers/pretraining/manifests/hybrid_scale_480m_cx4_cx8.yaml)
+- Launcher: [`launchers/pretraining/launch_hybrid_scale_480m_cx4_cx8.sh`](launchers/pretraining/launch_hybrid_scale_480m_cx4_cx8.sh)
+- Beaker experiment: [01KXMTAQPTG52EPEXMQN0Q1YJ7](https://beaker.org/ex/01KXMTAQPTG52EPEXMQN0Q1YJ7)
+
+Submitted 2026-07-16 at urgent priority on `ai2/holmes`. Both cells use the
+observed-best wide-integration LR `8e-4`, EP1, the canonical global batch, and
+no in-loop or on-finish evaluation. Cx4 uses the largest proven-safe legal
+microbatch below the projected-over-capacity MB16 shape. Cx8 uses the already
+validated MB12 shape.
+
+| Size | Cx | LR | Global batch | GPUs | EP | MB | Accum | Job | W&B | Status |
+|---|---:|---:|---:|---:|---:|---:|---:|---|---|---|
+| 480M | 4 | `8e-4` | 524,288 | 4 | 1 | 8 | 2 | [01KXMTAR1ZB3ERY8JQ0MH4681B](https://beaker.org/ex/01KXMTAR1ZB3ERY8JQ0MH4681B) | pending initialization | queued |
+| 480M | 8 | `8e-4` | 786,432 | 8 | 1 | 12 | 1 | [01KXMTAR5C5JX0ATP038ECKNWS](https://beaker.org/ex/01KXMTAR5C5JX0ATP038ECKNWS) | pending initialization | queued |
 
 ## New wave template
 
