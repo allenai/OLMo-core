@@ -224,6 +224,16 @@ jobs:
                 --ignore-glob='src/test/nn/moe/v2*' \
                 src/test/nn/moe*
 
+          # TEMPORARY: not a correctness test — a timing comparison of the two dense-MLP
+          # implementations (MoE-v2 single-expert SharedExperts vs standard FeedForward), run as a
+          # script so CI logs the bf16 GPU numbers. Remove once the comparison is recorded.
+          - name: Dense MLP benchmark (GPU) [temporary]
+            image: *gpu_test_image
+            gpus: 1
+            run: |
+              python src/test/nn/moe/shared_experts_dense_bench.py \
+                --d-model 4096 --hidden-size 11008 --seq-len 2048 --batch-size 4
+
           - name: Test optim (GPU)
             image: *gpu_test_image
             gpus: 2
