@@ -265,6 +265,11 @@ jobs:
       - uses: astral-sh/setup-uv@v6
         with:
           python-version: "3.12"
+          # Pin an explicit uv version so setup-uv resolves from its bundled manifest instead of
+          # querying the GitHub "latest release" API. The GPU matrix launches many jobs at once and
+          # the concurrent unauthenticated lookups were intermittently rate-limited, failing the jobs
+          # in the setup step with "Github API request failed while getting latest release".
+          version: "0.11.29"
 
       - name: Install Gantry
         run:
