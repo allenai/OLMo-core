@@ -34,7 +34,7 @@ _default_triton_cache_dir()
 
 # Keep this before any olmo_core imports: several modules import nvtx at import
 # time, and NVTX_DISABLE only works if it is set before nvtx is imported.
-USE_NV_PROFILE = True
+USE_NV_PROFILE = False
 if not USE_NV_PROFILE:
     os.environ["NVTX_DISABLE"] = "1"
 
@@ -142,20 +142,20 @@ if len(sys.argv) > 1 and sys.argv[1] == "eval_checkpoints":
 
 
 EVAL_INTERVAL = 2000
-SAVE_INTERVAL = 5000
+SAVE_INTERVAL = 2000
 
-NUM_EXPERTS = 128
+NUM_EXPERTS = 64
 TOP_K = 4
 ORIGINAL_TOP_K=None
-D_MODEL=8 * 1024
-D_ATTN=12 * 1024
+D_MODEL=3 * 1024
+D_ATTN=4 * 1024
 
 HEAD_DIM=128
 NUM_HEAD = D_ATTN // HEAD_DIM
 NUM_KV_HEAD= NUM_HEAD // 4
-MOE_HIDDEN_SIZE = 10 * 1024
+MOE_HIDDEN_SIZE = 3 * 1024
 NUM_SHARED_EXPERTS = 1  # Number of shared experts in the shared MLP
-SHARED_MLP_HIDDEN_SIZE = 8 * 1024   # Hidden size for shared MLP (or dense branch MLP in arctic) in MoE blocks
+SHARED_MLP_HIDDEN_SIZE = 3 * 1024   # Hidden size for shared MLP (or dense branch MLP in arctic) in MoE blocks
 
 EFFECTIVE_MLP = (MOE_HIDDEN_SIZE * TOP_K + SHARED_MLP_HIDDEN_SIZE * NUM_SHARED_EXPERTS)
 MLP_RATIO = EFFECTIVE_MLP / D_MODEL
@@ -164,22 +164,24 @@ MLP_RATIO = EFFECTIVE_MLP / D_MODEL
 DENSE_LAYER_MLP = (TOP_K * MOE_HIDDEN_SIZE + SHARED_MLP_HIDDEN_SIZE * NUM_SHARED_EXPERTS)
 
 # DP_DIM=2
-EP_DIM=32
-PP_DIM=1
+EP_DIM=8
+PP_DIM=2
 
 # ref
-REF_NUM_NODES=1
-TAG=f'rc-bf16-bs2-ds-ep32-n128'
+REF_NUM_NODES=2
+TAG=f'rep'
 
 LR_ALPHA = 0.53
 
 # stage 1 - xM -
 MAX_DURATION = int(200e9)
-MICRO_BSZ = 2
-GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * 2 * 4
-# GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * 2 * 8
+MICRO_BSZ = 4
+GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * 2 * 8
+LR= 1.8e-4  # the LR is set for stable stage
 LR_REF_BSZ_IN_M=8
 USE_FP8=False
+
+
 
 
 
@@ -192,14 +194,13 @@ GLOBAL_BATCH_TOKENS_IN_M = GLOBAL_BATCH_SIZE // 1024 // 1024
 
 
 
-SCHED_WARMUP_TOKENS = int((10e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE)
+SCHED_WARMUP_TOKENS = int((30e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE)
 SCHED_FAST_DECAY_TOKENS = int((0e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE)
 SCHED_LONG_DECAY_TOKENS = int((19990e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE)
 SCHED_MID_FRACTION = 1.0
 SCHED_FINAL_FRACTION = 1.0 # WSD
 
 
-LR= 3e-4  # the LR is set for stable stage
 LR= LR / SCHED_MID_FRACTION # transform LR to peak at fast warmup
 
 LR=LR * (GLOBAL_BATCH_SIZE / (LR_REF_BSZ_IN_M * 1024 * 1024))**LR_ALPHA # lr is for X Million token
@@ -208,11 +209,12 @@ EXPERT_LR = LR
 # EXPERT_LR = LR * math.sqrt(TOP_K / NUM_EXPERTS)  # scale lr for expert params, # 1/4.8989 = 0.204
 # EXPERT_LR = LR * 0.5  # scale lr for expert params, empirical choice
 
-NUM_LAYERS=6
+ORIGINAL_NUM_LAYERS=40
+MINUS_LAST_STAGE=1
+NUM_LAYERS=ORIGINAL_NUM_LAYERS - MINUS_LAST_STAGE
 
 if PP_DIM > 1:
-    MINUS_LAST_STAGE=1
-    NUM_LAYERS, SPLIT_POINTS = _get_split_points(NUM_LAYERS, PP_DIM * 2, minus_last_stage=MINUS_LAST_STAGE)
+    _, SPLIT_POINTS = _get_split_points(ORIGINAL_NUM_LAYERS, PP_DIM * 2, minus_last_stage=MINUS_LAST_STAGE)
 else:
     SPLIT_POINTS = None
 
@@ -230,22 +232,29 @@ if IN_EVAL_MODE:
 USE_COMPILE=True
 USE_NO_SYNC_EP=True
 # USE_AC=False
-PER_LAYER_RECOMPUTE=True
+PER_LAYER_RECOMPUTE=False
 USE_TBO=False
 GRAD_ACC_IN_FP32=True
 GRAD_REDUCE_IN_FP32=True
 UNIFORM_ASSIGN=False
 RANDOM_ASSIGN=True
 USE_ROWWISE_A2A=True
+
 USE_FP8_ATTN_QKV=USE_FP8
 USE_FP8_ATTN_OUT=USE_FP8
 USE_FP8_ATTN_SAVE_QKV=False
-ROWWISE_A2A_NBLOCKS=128
+
+# USE_FP8_ATTN_QKV=False
+# USE_FP8_ATTN_OUT=False
+# USE_FP8_ATTN_SAVE_QKV=False
+
+FP8_FUSED_AUTOGRAD_RECOMPUTE_SWIGLU=False
+ROWWISE_A2A_NBLOCKS=256 if EP_DIM <=8 else 64 # for intra-node, can use more blocks to increase overlap; for inter-node, the bottleneck is the network, so fewer blocks can reduce overhead.
 SEED = 2026
 USE_MUON = False
 USE_PERI_NORM = True
 PRODUCTION_RUN = True
-EP_NO_SYNC_CAPACITY_FACTOR = 1.25
+EP_NO_SYNC_CAPACITY_FACTOR = 1.1875
 # save a little bit of memory
 # import torch._functorch.config  # Force initialization by accessing dynamo first
 # torch._functorch.config.activation_memory_budget = 0.1
@@ -278,8 +287,8 @@ def build_model_config(common: CommonComponents) -> OLMoDDPModelConfig:
     )
     use_block_no_sync_ep = USE_NO_SYNC_EP and EP_DIM > 1
     block_ep_path = (
-        ExpertParallelPath.deepep_v2
-        # ExpertParallelPath.rowwise_nvshmem
+        ExpertParallelPath.rowwise_nvshmem
+        # ExpertParallelPath.deepep_v2
         if use_block_no_sync_ep and USE_ROWWISE_A2A
         else ExpertParallelPath.no_sync_1d
         if use_block_no_sync_ep
@@ -318,7 +327,7 @@ def build_model_config(common: CommonComponents) -> OLMoDDPModelConfig:
             checkpoint_permute_moe_unpermute=False,
             checkpoint_attn=False,
             checkpoint_second_unpermute=False,
-            rowwise_fp8=MoERowwiseFP8Config(enabled=USE_FP8, fused_autograd_recompute_swiglu=False) if USE_ROWWISE_A2A else None,
+            rowwise_fp8=MoERowwiseFP8Config(enabled=USE_FP8, fused_autograd_recompute_swiglu=FP8_FUSED_AUTOGRAD_RECOMPUTE_SWIGLU) if USE_ROWWISE_A2A else None,
             attention=AttentionConfig(
                 name=AttentionType.fused_v2,
                 # name=AttentionType.default,
@@ -352,9 +361,8 @@ def build_model_config(common: CommonComponents) -> OLMoDDPModelConfig:
                 gating_function=MoERouterGatingFunction.softmax,
                 uniform_expert_assignment=UNIFORM_ASSIGN,
                 random_expert_assignment=RANDOM_ASSIGN,
-                lb_loss_weight=0.015,
-                # z_loss_weight=1e-5,
-                z_loss_weight=1e-4,
+                lb_loss_weight=0.01,
+                z_loss_weight=2e-4,
                 lb_loss_granularity=MoELoadBalancingLossGranularity.local_batch,
                 dtype=dtype,
                 normalize_expert_weights=1.0,
@@ -406,7 +414,7 @@ def build_model_config(common: CommonComponents) -> OLMoDDPModelConfig:
     dense_block_config = OLMoDDPTransformerBlockConfig(
         name=TransformerBlockType.moe_fused_v2,
         use_peri_norm=USE_PERI_NORM,
-        rowwise_fp8=MoERowwiseFP8Config(enabled=USE_FP8, fused_autograd_recompute_swiglu=False) if USE_ROWWISE_A2A else None,
+        rowwise_fp8=MoERowwiseFP8Config(enabled=USE_FP8, fused_autograd_recompute_swiglu=FP8_FUSED_AUTOGRAD_RECOMPUTE_SWIGLU) if USE_ROWWISE_A2A else None,
         attention=AttentionConfig(
             name=AttentionType.fused_v2,
             # name=AttentionType.default,
@@ -442,8 +450,11 @@ def build_model_config(common: CommonComponents) -> OLMoDDPModelConfig:
 
     # First block will be a regular transformer block (no MoE component).
     config.block_overrides = {
-        # 0: deepcopy(dense_block_config),
+        0: deepcopy(dense_block_config),
         # 1: deepcopy(dense_block_config),
+
+        # also make last layer dense
+        # NUM_LAYERS-1: deepcopy(dense_block_config),
     }
 
     return config
@@ -500,7 +511,8 @@ def build_train_module_config(common: CommonComponents) -> OLMoDDPTrainModuleCon
             compile=USE_COMPILE,
             dtype=DType.float32,
             sigma_factor=12,
-            use_distributed=True
+            use_distributed=True,
+            check_nan_inf_grad=False,
         ),
         compile_model=USE_COMPILE,
         ac_config=None, # AC handled elsewhere for MoE
@@ -613,9 +625,9 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         .with_callback(
             "profiler",
             NvidiaProfilerCallback(enabled=USE_NV_PROFILE,
-                                   profile_ranks=list(range(0, 8*8, 8)),
-                                   start=31,
-                                   end=35
+                                   profile_ranks=list(range(0, 8*32, 8)),
+                                   start=11,
+                                   end=15
             )
         )
         .with_callback(
