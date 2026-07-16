@@ -1,8 +1,10 @@
 from collections.abc import Callable
+from inspect import signature
 from typing import Optional, Union, cast
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from transformers.activations import ACT2FN
 from transformers.cache_utils import Cache, DynamicCache
 from transformers.generation.utils import GenerationMixin
@@ -26,30 +28,63 @@ from transformers.utils.generic import TransformersKwargs, can_return_tuple
 from .configuration_olmo3moe import Olmo3MoeConfig
 
 
+def _create_mask_compat(mask_fn: Callable, **kwargs):
+    """Call Transformers mask helpers across the `input_embeds` rename."""
+    params = set(signature(mask_fn).parameters)
+    if "input_embeds" in params and "inputs_embeds" in kwargs:
+        kwargs["input_embeds"] = kwargs.pop("inputs_embeds")
+    return mask_fn(**{k: v for k, v in kwargs.items() if k in params})
+
+
+def _uses_layer_type_rope_parameters(config: Olmo3MoeConfig) -> bool:
+    rope_parameters = getattr(config, "rope_parameters", None)
+    layer_types = set(getattr(config, "layer_types", []) or [])
+    return (
+        isinstance(rope_parameters, dict)
+        and bool(rope_parameters)
+        and bool(layer_types)
+        and set(rope_parameters).issubset(layer_types)
+    )
+
+
+def _get_rope_parameters(config: Olmo3MoeConfig, layer_type: Optional[str] = None) -> dict:
+    rope_parameters = config.rope_parameters
+    if layer_type is not None and _uses_layer_type_rope_parameters(config):
+        return rope_parameters[layer_type]
+    return rope_parameters
+
+
 class Olmo3MoeRotaryEmbedding(nn.Module):
     inv_freq: torch.Tensor  # fix linting for `register_buffer`
 
-    def __init__(self, config: Olmo3MoeConfig, device=None):
+    def __init__(self, config: Olmo3MoeConfig, device=None, layer_type: Optional[str] = None):
         super().__init__()
         self.max_seq_len_cached = config.max_position_embeddings
         self.original_max_seq_len = config.max_position_embeddings
 
         self.config = config
+        self.layer_type = layer_type
 
-        self.rope_type = self.config.rope_parameters["rope_type"]
+        rope_parameters = _get_rope_parameters(config, layer_type)
+        rope_type = rope_parameters["rope_type"]
+        self.rope_type = {layer_type: rope_type} if layer_type is not None else rope_type
         rope_init_fn: Callable = self.compute_default_rope_parameters
-        if self.rope_type != "default":
-            rope_init_fn = ROPE_INIT_FUNCTIONS[self.rope_type]
-        inv_freq, self.attention_scaling = rope_init_fn(self.config, device)
+        if rope_type != "default":
+            rope_init_fn = ROPE_INIT_FUNCTIONS[rope_type]
+        inv_freq, attention_scaling = rope_init_fn(self.config, device, layer_type=layer_type)
 
-        self.register_buffer("inv_freq", inv_freq, persistent=False)
-        self.register_buffer("original_inv_freq", inv_freq.clone(), persistent=False)
+        prefix = f"{layer_type}_" if layer_type is not None else ""
+        self.register_buffer(f"{prefix}inv_freq", inv_freq, persistent=False)
+        self.register_buffer(f"{prefix}original_inv_freq", inv_freq.clone(), persistent=False)
+        setattr(self, f"{prefix}attention_scaling", attention_scaling)
+        self.attention_scaling = attention_scaling
 
     @staticmethod
     def compute_default_rope_parameters(
         config: Olmo3MoeConfig | None = None,
         device: Optional["torch.device"] = None,
         seq_len: int | None = None,
+        layer_type: Optional[str] = None,
     ) -> tuple["torch.Tensor", float]:
         """
         Computes the inverse frequencies according to the original RoPE implementation
@@ -65,7 +100,8 @@ class Olmo3MoeRotaryEmbedding(nn.Module):
             post-processing scaling factor applied to the computed cos/sin (unused in this type of RoPE).
         """
         assert config is not None
-        base = config.rope_parameters["rope_theta"]
+        rope_parameters = _get_rope_parameters(config, layer_type)
+        base = rope_parameters["rope_theta"]
         dim = (
             getattr(config, "head_dim", None)
             or config.attention_hidden_size // config.num_attention_heads
@@ -85,9 +121,17 @@ class Olmo3MoeRotaryEmbedding(nn.Module):
 
     @torch.no_grad()
     @dynamic_rope_update  # power user: used with advanced RoPE types (e.g. dynamic rope)
-    def forward(self, x, position_ids):
+    def forward(self, x, position_ids, layer_type: Optional[str] = None):
+        layer_type = layer_type or self.layer_type
+        if layer_type is None:
+            inv_freq = self.inv_freq
+            attention_scaling = self.attention_scaling
+        else:
+            inv_freq = getattr(self, f"{layer_type}_inv_freq")
+            attention_scaling = getattr(self, f"{layer_type}_attention_scaling")
+
         inv_freq_expanded = (
-            self.inv_freq[None, :, None].float().expand(position_ids.shape[0], -1, 1).to(x.device)
+            inv_freq[None, :, None].float().expand(position_ids.shape[0], -1, 1).to(x.device)
         )
         position_ids_expanded = position_ids[:, None, :].float()
 
@@ -97,8 +141,8 @@ class Olmo3MoeRotaryEmbedding(nn.Module):
         with torch.autocast(device_type=device_type, enabled=False):  # Force float32
             freqs = (inv_freq_expanded.float() @ position_ids_expanded.float()).transpose(1, 2)
             emb = torch.cat((freqs, freqs), dim=-1)
-            cos = emb.cos() * self.attention_scaling
-            sin = emb.sin() * self.attention_scaling
+            cos = emb.cos() * attention_scaling
+            sin = emb.sin() * attention_scaling
             return cos, sin
 
 
@@ -142,6 +186,120 @@ class Olmo3MoeExperts(nn.ModuleList):
     fallback (very slow) to avoid TorchDynamo graph breaks if it is ever traced.
     """
 
+    @staticmethod
+    def _torch_grouped_mm_available() -> bool:
+        if not hasattr(F, "grouped_mm"):
+            return False
+
+        # Keep a conservative version guard for environments where the symbol
+        # may exist before the `offs=` API used below is supported.
+        torch_version = torch.__version__.split("+")[0]
+        try:
+            major_str, minor_str, *_ = torch_version.split(".")
+            major, minor = int(major_str), int(minor_str)
+        except (ValueError, TypeError):
+            return True
+
+        return major > 2 or (major == 2 and minor >= 10)
+
+    def _can_use_grouped_mm(self, hidden_states: torch.Tensor) -> bool:
+        if not self._torch_grouped_mm_available() or len(self) == 0:
+            return False
+        if hidden_states.device.type not in {"cpu", "cuda"}:
+            return False
+        if hidden_states.dtype not in {torch.float32, torch.float16, torch.bfloat16}:
+            return False
+
+        first_expert = cast(Olmo3MoeExpert, self[0])
+        hidden_size = first_expert.hidden_size
+        intermediate_size = first_expert.moe_intermediate_size
+
+        # grouped_mm requires row strides to be aligned to 16 bytes.
+        element_size = hidden_states.element_size()
+        return (hidden_size * element_size) % 16 == 0 and (
+            intermediate_size * element_size
+        ) % 16 == 0
+
+    def _forward_compile_fallback(
+        self,
+        hidden_states: torch.Tensor,
+        topk_ids: torch.Tensor,
+        topk_weights: torch.Tensor,
+    ) -> torch.Tensor:
+        out = hidden_states.new_zeros(hidden_states.shape)
+        for expert_id, expert in enumerate(self):
+            # Aggregate the routing weights for this expert across the K slots.
+            w = (topk_weights * (topk_ids == expert_id).to(topk_weights.dtype)).sum(
+                dim=1, keepdim=True
+            )  # (N, 1)
+            out = out + expert(hidden_states) * w
+        return out
+
+    def _forward_loop(
+        self,
+        hidden_states: torch.Tensor,
+        topk_ids: torch.Tensor,
+        topk_weights: torch.Tensor,
+    ) -> torch.Tensor:
+        N, H = hidden_states.shape
+        out = hidden_states.new_zeros((N, H))
+        for expert_id, expert in enumerate(self):
+            mask = topk_ids == expert_id  # (N, K) bool
+            if not mask.any():
+                continue
+            token_ids, k_ids = mask.nonzero(as_tuple=True)  # both (M,)
+            x_sel = hidden_states.index_select(0, token_ids)  # (M, H)
+            y_sel = expert(x_sel)  # (M, H)
+            w_sel = topk_weights[token_ids, k_ids].unsqueeze(-1).to(dtype=hidden_states.dtype)
+            out.index_add_(0, token_ids, y_sel * w_sel)
+        return out
+
+    def _forward_grouped_mm(
+        self,
+        hidden_states: torch.Tensor,
+        topk_ids: torch.Tensor,
+        topk_weights: torch.Tensor,
+    ) -> torch.Tensor:
+        """Run routed experts by grouping tokens per expert and using grouped_mm."""
+        N, H = hidden_states.shape
+        K = topk_ids.shape[-1]
+        num_experts = len(self)
+
+        route_token_ids = torch.arange(N, device=hidden_states.device).repeat_interleave(K)
+        route_expert_ids = topk_ids.reshape(-1)
+        route_weights = topk_weights.reshape(-1).to(dtype=hidden_states.dtype)
+
+        sorted_route_ids = torch.argsort(route_expert_ids)
+        sorted_expert_ids = route_expert_ids.index_select(0, sorted_route_ids)
+        sorted_token_ids = route_token_ids.index_select(0, sorted_route_ids)
+        sorted_weights = route_weights.index_select(0, sorted_route_ids)
+
+        batch_size_per_expert = torch.bincount(sorted_expert_ids, minlength=num_experts).to(
+            dtype=torch.int32
+        )
+        offs = torch.cumsum(batch_size_per_expert, dim=0, dtype=torch.int32)
+        x_grouped = hidden_states.index_select(0, sorted_token_ids)
+
+        w_gate_up = torch.stack(
+            [
+                torch.cat((expert.gate_proj.weight, expert.up_proj.weight), dim=0).transpose(0, 1)
+                for expert in self
+            ]
+        )
+        w_down = torch.stack([expert.down_proj.weight.transpose(0, 1) for expert in self])
+
+        gate_up = F.grouped_mm(x_grouped, w_gate_up, offs=offs)
+        gate, up = gate_up.chunk(2, dim=-1)
+        hidden = cast(Olmo3MoeExpert, self[0]).act_fn(gate) * up
+        y_grouped = F.grouped_mm(hidden, w_down, offs=offs)
+
+        # Reduce in the same expert-order as the reference loop. This avoids
+        # duplicate-index CUDA atomics and keeps close greedy decisions stable.
+        weighted_y_grouped = y_grouped * sorted_weights.unsqueeze(-1)
+        token_expert_order = torch.argsort(sorted_token_ids * num_experts + sorted_expert_ids)
+        weighted_y = weighted_y_grouped.index_select(0, token_expert_order)
+        return weighted_y.reshape(N, K, H).sum(dim=1)
+
     def forward(
         self,
         hidden_states: torch.Tensor,  # (N, H)
@@ -156,30 +314,13 @@ class Olmo3MoeExperts(nn.ModuleList):
             is_compiling = False
 
         if is_compiling:
-            out = hidden_states.new_zeros(hidden_states.shape)
-            for expert_id, expert in enumerate(self):
-                # Aggregate the routing weights for this expert across the K slots.
-                w = (topk_weights * (topk_ids == expert_id).to(topk_weights.dtype)).sum(
-                    dim=1, keepdim=True
-                )  # (N, 1)
-                out = out + expert(hidden_states) * w
-            return out
+            return self._forward_compile_fallback(hidden_states, topk_ids, topk_weights)
 
-        # Eager reference routing (faster), but uses data-dependent shapes.
-        N, H = hidden_states.shape
-        out = hidden_states.new_zeros((N, H))
-        for expert_id, expert in enumerate(self):
-            mask = topk_ids == expert_id  # (N, K) bool
-            if not mask.any():
-                continue
-            token_ids, k_ids = mask.nonzero(as_tuple=True)  # both (M,)
-            x_sel = hidden_states.index_select(0, token_ids)  # (M, H)
-            y_sel = expert(x_sel)  # (M, H)
-            w_sel = (
-                topk_weights[token_ids, k_ids].unsqueeze(-1).to(dtype=hidden_states.dtype)
-            )  # (M, 1)
-            out.index_add_(0, token_ids, y_sel * w_sel)
-        return out
+        if self._can_use_grouped_mm(hidden_states):
+            return self._forward_grouped_mm(hidden_states, topk_ids, topk_weights)
+
+        # Eager reference routing, used when torch grouped_mm is unavailable.
+        return self._forward_loop(hidden_states, topk_ids, topk_weights)
 
 
 class Olmo3MoeSparseMLP(nn.Module):
@@ -546,7 +687,17 @@ class Olmo3MoeModel(Olmo3MoePreTrainedModel):
         )
         self.norm = Olmo3MoeRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.gradient_checkpointing = False
-        self.rotary_embs = Olmo3MoeRotaryEmbedding(config=config)
+        if _uses_layer_type_rope_parameters(config):
+            # LC exports can use YaRN for full attention and default RoPE for
+            # sliding attention, so cache one rotary module per layer type.
+            self.rotary_embs = nn.ModuleDict(
+                {
+                    layer_type: Olmo3MoeRotaryEmbedding(config=config, layer_type=layer_type)
+                    for layer_type in sorted(set(config.layer_types))
+                }
+            )
+        else:
+            self.rotary_embs = Olmo3MoeRotaryEmbedding(config=config)
 
         # Initialize weights and apply final processing
         self.post_init()
@@ -592,24 +743,33 @@ class Olmo3MoeModel(Olmo3MoePreTrainedModel):
 
         # It may already have been prepared by e.g. `generate`
         if not isinstance(causal_mask_mapping := attention_mask, dict):
-            # Prepare mask arguments
-            # ``cache_position`` was dropped from the mask builders in transformers >5.6 (it was
-            # already unused before that), so we don't pass it.
+            # Prepare mask arguments. ``_create_mask_compat`` filters kwargs to the mask helper's
+            # signature, so it tolerates transformers versions that added/removed ``cache_position``
+            # or renamed ``inputs_embeds`` -> ``input_embeds``.
             mask_kwargs = {
                 "config": self.config,
                 "inputs_embeds": inputs_embeds,
                 "attention_mask": attention_mask,
+                "cache_position": cache_position,
                 "past_key_values": past_key_values,
                 "position_ids": position_ids,
             }
             # Create the masks
             causal_mask_mapping = {
-                "full_attention": create_causal_mask(**mask_kwargs),
-                "sliding_attention": create_sliding_window_causal_mask(**mask_kwargs),
+                "full_attention": _create_mask_compat(create_causal_mask, **mask_kwargs),
+                "sliding_attention": _create_mask_compat(
+                    create_sliding_window_causal_mask, **mask_kwargs
+                ),
             }
 
         hidden_states = inputs_embeds
-        position_embeddings = self.rotary_embs(hidden_states, position_ids)
+        if isinstance(self.rotary_embs, nn.ModuleDict):
+            position_embeddings = {
+                layer_type: rotary_emb(hidden_states, position_ids, layer_type=layer_type)
+                for layer_type, rotary_emb in self.rotary_embs.items()
+            }
+        else:
+            position_embeddings = self.rotary_embs(hidden_states, position_ids)
 
         for decoder_layer in self.layers:
             # if used in vllm with PP, a few layers will be replaced by PPMissingLayer(), which just passes the inputs through, so we need to skip the attention mask and position embeddings in that case
@@ -619,13 +779,18 @@ class Olmo3MoeModel(Olmo3MoePreTrainedModel):
 
             decoder_layer = cast(Olmo3MoeDecoderLayer, decoder_layer)
             attention_mask = causal_mask_mapping[decoder_layer.self_attn.attention_type]
+            layer_position_embeddings = (
+                position_embeddings[decoder_layer.self_attn.attention_type]
+                if isinstance(position_embeddings, dict)
+                else position_embeddings
+            )
             hidden_states = decoder_layer(
                 hidden_states,
                 attention_mask=attention_mask,
                 position_ids=position_ids,
                 past_key_values=past_key_values,
                 cache_position=cache_position,
-                position_embeddings=position_embeddings,
+                position_embeddings=layer_position_embeddings,
                 **kwargs,
             )
 
