@@ -31,6 +31,7 @@ from olmo_core.nn.attention.landmark import (
     landmark_grouped_softmax,
 )
 from olmo_core.nn.attention.landmark_kernel import has_landmark_kernel
+from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.testing import requires_gpu
 
 
@@ -277,6 +278,82 @@ def test_packing_rejects_unaligned_document_boundary():
     unaligned = torch.tensor([0, m.block_size + 2, T], dtype=torch.int32)
     with pytest.raises(ValueError, match="LandmarkPackingInstanceSource"):
         m(x, cu_doc_lens=unaligned)
+
+
+def test_packing_accepts_max_doc_len():
+    """The transformer model always computes ``max_doc_len = max(doc_lens)`` and passes it to every
+    attention module's forward alongside ``cu_doc_lens`` whenever packing is active (see
+    ``TransformerModel.forward``) -- even though (like ``FastLandmarkAttention``) this module derives
+    everything it needs from ``cu_doc_lens``/``doc_id`` and ignores ``max_doc_len``. Regression test:
+    an earlier version rejected any non-None ``max_doc_len``, which crashed every real packed training
+    step (only unit tests calling ``cu_doc_lens`` alone, without the ``max_doc_len`` the model always
+    supplies, could have missed this)."""
+    m = _build()
+    doc_lens = [m.block_size, 2 * m.block_size]
+    T = sum(doc_lens)
+    x = torch.randn(1, T, m.d_model)
+    cu_doc_lens = torch.tensor([0, *torch.tensor(doc_lens).cumsum(0).tolist()], dtype=torch.int32)
+
+    out_with_max_doc_len = m(x, cu_doc_lens=cu_doc_lens, max_doc_len=max(doc_lens))
+    out_without = m(x, cu_doc_lens=cu_doc_lens)
+    torch.testing.assert_close(out_with_max_doc_len, out_without)
+
+
+def test_model_packing_matches_grad_accumulation():
+    """End-to-end check through the full transformer (the path SFT actually uses), mirroring
+    ``landmark_test.py::test_landmark_model_packing_matches_grad_accumulation``. This is the
+    regression test for the ``max_doc_len`` bug above at the level it actually manifested: the
+    transformer model always passes ``doc_lens``/``max_doc_lens`` together to every attention
+    module's forward, which a module-level call with ``cu_doc_lens`` alone cannot exercise.
+    """
+    torch.manual_seed(0)
+    doc_lens = [16, 32]  # multiples of block_size (16, since mem_freq=15 -> kernel tile minimum)
+    T = sum(doc_lens)
+    config = TransformerConfig.llama_like(
+        d_model=64,
+        vocab_size=256,
+        n_layers=2,
+        n_heads=4,
+        n_kv_heads=4,
+        qk_norm=False,
+        rope_theta=10_000,
+        shared_vector_landmark=True,
+        mem_freq=15,
+        vec_dim=8,
+        landmark_use_kernel=False,
+    )
+    model = config.build()
+    model.init_weights(device=torch.device("cpu"), max_seq_len=T)
+    model.double()
+    model.train()
+
+    input_ids = torch.randint(0, 256, (1, T))
+
+    logits_packed = model(
+        input_ids=input_ids,
+        doc_lens=torch.tensor([doc_lens], dtype=torch.int32),
+        max_doc_lens=[max(doc_lens)],
+    )
+    logits_packed.pow(2).sum().backward()
+    packed_grads = {n: p.grad.clone() for n, p in model.named_parameters() if p.grad is not None}
+
+    for p in model.parameters():
+        p.grad = None
+    logits_list = []
+    start = 0
+    for L in doc_lens:
+        logits_list.append(model(input_ids=input_ids[:, start : start + L]))
+        start += L
+    logits_accum = torch.cat(logits_list, dim=1)
+    logits_accum.pow(2).sum().backward()
+    accum_grads = {n: p.grad.clone() for n, p in model.named_parameters() if p.grad is not None}
+
+    torch.testing.assert_close(logits_packed, logits_accum, atol=1e-4, rtol=1e-4)
+    assert packed_grads.keys() == accum_grads.keys()
+    for name in packed_grads:
+        torch.testing.assert_close(
+            packed_grads[name], accum_grads[name], atol=1e-4, rtol=1e-4, msg=name
+        )
 
 
 def test_tail_chunking_matches_single_chunk_and_grads():

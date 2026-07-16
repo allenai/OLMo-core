@@ -1893,7 +1893,12 @@ class TransformerConfig(ModelConfig):
                 mem_freq=mem_freq,
                 landmark_use_kernel=(
                     landmark_use_kernel
-                    if (landmark or document_landmark or pattern_has_plain_landmark)
+                    if (
+                        landmark
+                        or document_landmark
+                        or pattern_has_plain_landmark
+                        or uses_shared_vector_landmark
+                    )
                     else None
                 ),
                 num_landmarks=(
