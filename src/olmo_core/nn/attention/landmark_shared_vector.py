@@ -193,7 +193,6 @@ class SharedVectorLandmarkAttention(FastLandmarkAttention):
             for v in (
                 cu_doc_lens_q,
                 cu_doc_lens_k,
-                max_doc_len,
                 max_doc_len_q,
                 max_doc_len_k,
                 local_k_slice,

@@ -590,11 +590,16 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
                 f"(no landmark layer is configured; got name='{self.name}')"
             )
         if landmark_use_kernel is not None and not (
-            possible_types & {AttentionType.landmark, AttentionType.document_landmark}
+            possible_types
+            & {
+                AttentionType.landmark,
+                AttentionType.document_landmark,
+                AttentionType.shared_vector_landmark,
+            }
         ):
             raise OLMoConfigurationError(
-                "'landmark_use_kernel' is only supported with landmark or document_landmark "
-                f"attention (got name='{self.name}')"
+                "'landmark_use_kernel' is only supported with landmark, document_landmark, or "
+                f"shared_vector_landmark attention (got name='{self.name}')"
             )
         if vec_dim is not None and AttentionType.shared_vector_landmark not in possible_types:
             raise OLMoConfigurationError(
@@ -717,6 +722,8 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
                     )
                 if vec_dim is not None:
                     kwargs["vec_dim"] = vec_dim
+                if landmark_use_kernel is not None:
+                    kwargs["use_kernel"] = landmark_use_kernel
                 return SharedVectorLandmarkAttention(mem_freq=mem_freq, **kwargs)
             elif effective_name == "document_landmark":
                 if mem_freq is None:
