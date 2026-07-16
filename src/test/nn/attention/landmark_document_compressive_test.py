@@ -23,6 +23,7 @@ from olmo_core.nn.attention.chunked_mask import (
 from olmo_core.nn.attention.landmark import (
     compressive_landmark_grouped_softmax,
     landmark_grouped_softmax,
+    repeat_kv,
 )
 from olmo_core.nn.attention.landmark_compressive import (
     fused_compressive_landmark_attention,
@@ -162,6 +163,66 @@ def test_document_compressive_bad_alpha_rejected():
         DocumentCompressiveLandmarkAttention(
             mem_freq=3, n_heads=8, head_dim=8, d_model=64, nonselected_landmark_mass=1.0
         )
+
+
+def test_document_compressive_group_landmark_selection_builds():
+    attn = _doc_compressive_attention(mem_freq=3, group_landmark_selection="mean")
+    assert attn.group_landmark_selection == "mean"
+
+
+def test_document_compressive_bad_group_landmark_selection_rejected():
+    with pytest.raises(OLMoConfigurationError):
+        DocumentCompressiveLandmarkAttention(
+            mem_freq=3, n_heads=8, head_dim=8, d_model=64, group_landmark_selection="bogus"
+        )
+
+
+def test_document_compressive_group_landmark_selection_decode_matches_fast_variant():
+    """``DocumentCompressiveLandmarkAttention`` borrows ``_decode_one`` / ``_compressive_decode_probs``
+    / ``_group_landmark_scores`` from :class:`FastCompressiveLandmarkAttention` via class-attribute
+    assignment (see the module docstring), not inheritance -- so this exercises those methods with
+    ``self`` actually bound to a *Document* instance, confirming ``self.n_heads`` / ``self.n_kv_heads``
+    / ``self.group_landmark_selection`` all resolve correctly there too, not just on the Fast class.
+    Mirrors ``test_group_landmark_selection_forces_agreement_across_gqa_group`` in
+    ``landmark_compressive_decode_test.py``.
+    """
+    Lb, total = 16, 63
+
+    def block_mass(probs: torch.Tensor, block_start: int) -> float:
+        return float(probs[block_start : block_start + Lb].sum())
+
+    k_kv = torch.zeros(1, 1, total, 1)
+    k_kv[0, 0, 15, 0] = 1.0
+    k_kv[0, 0, 31, 0] = 2.0
+    k_kv[0, 0, 47, 0] = 3.0
+    k = repeat_kv(k_kv, 2)
+    v = torch.eye(total).view(1, 1, total, total).expand(1, 2, total, total).contiguous()
+    q = torch.zeros(1, 2, 1, 1)
+    q[0, 0, 0, 0] = 1.0
+    q[0, 1, 0, 0] = -0.9
+
+    for mode, head1_agrees in ((None, False), ("mean", True), ("max", True)):
+        attn = DocumentCompressiveLandmarkAttention(
+            mem_freq=15,
+            n_heads=2,
+            n_kv_heads=1,
+            head_dim=1,
+            d_model=2,
+            nonselected_landmark_mass=0.0,
+            group_landmark_selection=mode,
+        )
+        attn.eval()
+        attn.set_landmark_eval_decode(total, "extend_last_block", top_k=1)
+        with torch.no_grad():
+            probs = attn._decode_one(q, k, v, total - 1)
+        attn.clear_landmark_eval_decode()
+
+        head0, head1 = probs[0, 0, 0], probs[0, 1, 0]
+        assert block_mass(head0, 32) > 1e-6 and block_mass(head0, 0) < 1e-9
+        if head1_agrees:
+            assert block_mass(head1, 32) > 1e-6 and block_mass(head1, 0) < 1e-9
+        else:
+            assert block_mass(head1, 0) > 1e-6 and block_mass(head1, 32) < 1e-9
 
 
 def test_document_compressive_isolation_and_free_bridge():

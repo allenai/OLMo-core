@@ -61,7 +61,7 @@ def variant_from_run_name(run_name: str) -> str:
 
 
 def build_eval_launch_config(
-    *, run_name, task, variant, cluster, step, ckpt, results_dir, prompt_format, ngpu, max_test, max_length, batch_size, priority, ladder_version, xlong, xlong_rungs, cot_mode
+    *, run_name, task, variant, cluster, step, ckpt, results_dir, prompt_format, ngpu, max_test, max_length, batch_size, priority, ladder_version, xlong, xlong_rungs, cot_mode, landmark_group_selection=None
 ):
     root_dir = get_root_dir(cluster)  # e.g. /weka/oe-training-default/ai2-llm (mounts weka bucket)
     # Eval CODE now ships IN the cloned repo (src/scripts/ctc_eval); the runner runs from the repo root
@@ -75,6 +75,7 @@ def build_eval_launch_config(
         f"EVAL_OUT_DIR='{results_dir}' PROMPT_FORMAT='{prompt_format}' "
         f"MAX_TEST={max_test} MAX_LENGTH={max_length} BATCH_SIZE={batch_size} NGPU={ngpu} "
         f"LADDER_XLONG={int(xlong)} XLONG_RUNGS='{xlong_rungs}' COT_MODE='{cot_mode}' "
+        f"LANDMARK_GROUP_SELECTION='{landmark_group_selection or ''}' "
         f"LADDER_VERSION={ladder_version} WEKA_LLM={root_dir} bash {runner}"
     )
     cmd = ["bash", "-lc", inner]
@@ -140,6 +141,12 @@ def main():
                          "and uploaded to the v2 eval bundle.")
     ap.add_argument("--xlong-rungs", default="64k,128k",
                     help="which xlong sizes to add when --xlong (add 256k explicitly; it is huge).")
+    ap.add_argument("--landmark-group-selection", choices=["mean", "max"], default=None,
+                    help="GQA compressive-landmark checkpoints only: share top-k landmark block "
+                         "selection across each KV group's query heads instead of each head "
+                         "retrieving independently. Omit (default) for independent per-head "
+                         "selection. Pass a distinct --results-dir per sweep value to avoid "
+                         "overwriting another config's output.")
     ap.add_argument("--dry-run", action="store_true", help="build + print the job, do NOT submit.")
     args = ap.parse_args()
 
@@ -162,6 +169,7 @@ def main():
             ngpu=args.ngpu, max_test=args.max_test, max_length=args.max_length,
             batch_size=args.batch_size, priority=args.priority, ladder_version=args.ladder_version,
             xlong=args.xlong, xlong_rungs=args.xlong_rungs, cot_mode=args.cot_mode,
+            landmark_group_selection=args.landmark_group_selection,
         )
         print(f"\n--- [{task}] {lc.name} ---")
         print(f"    cmd: {lc.cmd[-1]}")

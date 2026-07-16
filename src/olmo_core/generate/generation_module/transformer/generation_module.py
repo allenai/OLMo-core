@@ -36,6 +36,7 @@ from olmo_core.io import is_url, join_path, normalize_path
 from olmo_core.nn.attention import (
     Attention,
     AttentionBackendName,
+    DocumentCompressiveLandmarkAttention,
     DocumentLandmarkAttention,
     FastCompressiveLandmarkAttention,
     FastLandmarkAttention,
@@ -225,14 +226,24 @@ class TransformerGenerationModule(GenerationModule):
         mode: str,
         top_k: Optional[int] = None,
         nonselected_landmark_mass: Optional[float] = None,
+        group_landmark_selection: Optional[str] = None,
     ):
         for attn in self._landmark_attention_layers():
-            if isinstance(attn, FastCompressiveLandmarkAttention):
+            # ``DocumentCompressiveLandmarkAttention`` does not subclass
+            # ``FastCompressiveLandmarkAttention`` (it subclasses ``DocumentLandmarkAttention`` and
+            # borrows the compressive decode methods via explicit class-attribute assignment, see
+            # landmark_document_compressive.py), so both need checking here -- an isinstance check
+            # against only ``FastCompressiveLandmarkAttention`` would silently skip
+            # ``nonselected_landmark_mass``/``group_landmark_selection`` for document-chunked models.
+            if isinstance(
+                attn, (FastCompressiveLandmarkAttention, DocumentCompressiveLandmarkAttention)
+            ):
                 attn.set_landmark_eval_decode(
                     prompt_len,
                     mode,
                     top_k=top_k,
                     nonselected_landmark_mass=nonselected_landmark_mass,
+                    group_landmark_selection=group_landmark_selection,
                 )
             else:
                 attn.set_landmark_eval_decode(prompt_len, mode, top_k=top_k)  # type: ignore[attr-defined]
@@ -365,6 +376,7 @@ class TransformerGenerationModule(GenerationModule):
                 generation_config.landmark_decode_mode,
                 top_k=top_k,
                 nonselected_landmark_mass=generation_config.landmark_nonselected_mass,
+                group_landmark_selection=generation_config.landmark_group_selection,
             )
             # Optional landmark-gate analysis hook (off unless OLMO_LANDMARK_GATE_LOG is set). Tag
             # each landmark layer with its block index so the recorder can key gates by layer, then

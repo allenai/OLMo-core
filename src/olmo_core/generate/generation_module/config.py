@@ -118,6 +118,18 @@ class GenerationConfig(Config):
     and when top-k retrieval is disabled.
     """
 
+    landmark_group_selection: Optional[str] = None
+    """
+    For :class:`~olmo_core.nn.attention.FastCompressiveLandmarkAttention` /
+    :class:`~olmo_core.nn.attention.DocumentCompressiveLandmarkAttention` models under GQA
+    (``n_kv_heads < n_heads``) with top-k decode (``landmark_top_k_blocks`` set) only: share the top-k
+    landmark block selection across each KV group's query heads via ``"mean"`` or ``"max"``
+    aggregation of their scores, instead of each head retrieving independently (which otherwise defeats
+    GQA's KV-bandwidth sharing at decode -- see :class:`FastCompressiveLandmarkAttention`). ``None``
+    (the default) uses the value baked into the attention module (default ``None``, i.e. unchanged
+    per-head selection). Ignored by other models, MHA models, and when top-k retrieval is disabled.
+    """
+
     def __post_init__(self):
         self.validate()
 
@@ -156,4 +168,9 @@ class GenerationConfig(Config):
             raise ValueError(
                 "landmark_nonselected_mass must be in [0, 1) or None, "
                 f"got {self.landmark_nonselected_mass}"
+            )
+        if self.landmark_group_selection not in (None, "mean", "max"):
+            raise ValueError(
+                "landmark_group_selection must be 'mean', 'max', or None, "
+                f"got {self.landmark_group_selection!r}"
             )

@@ -33,6 +33,13 @@ BATCH_SIZE="${BATCH_SIZE:-8}"
 NGPU="${NGPU:-8}"
 TOKENIZER="${TOKENIZER:-Qwen/Qwen3-4B}"
 PROMPT_FORMAT="${PROMPT_FORMAT:-chat}"   # chat=SFT (apply_chat_template) | raw=BASE/CPT | alpaca=legacy
+# GQA compressive-landmark checkpoints only: share top-k landmark block selection across each KV
+# group's query heads ("mean"/"max") instead of each head retrieving independently. Empty (default)
+# keeps independent per-head selection; only takes effect with top-k decode enabled (on by default
+# via GenerationConfig.landmark_top_k_fraction).
+LANDMARK_GROUP_SELECTION="${LANDMARK_GROUP_SELECTION:-}"
+GROUP_ARGS=""
+[ -n "$LANDMARK_GROUP_SELECTION" ] && GROUP_ARGS="--landmark-group-selection $LANDMARK_GROUP_SELECTION"
 # Landmark + compressive attention can't do batched/left-padded generation (blocks tied to absolute
 # position) -> force batch_size=1 for those variants. Dense keeps the configured (larger) batch.
 case "$VARIANT" in landmark|compressive) BATCH_SIZE=1 ;; esac
@@ -119,7 +126,7 @@ if [ "$TASK" = "rerank" ] && [ "$LADDER_VERSION" != "v2" ] && [ "$VARIANT" != "d
     echo "=== rerank CE @${r} ($CEF) -> $O ==="
     $TR --model-path "$CKPT" --out "$O" --tokenizer "$TOKENIZER" --max-length "$MAX_LENGTH" \
         --root "$BUNDLE" --max-test-samples "$MAX_TEST" --batch-size "$BATCH_SIZE" --skip-ruler --skip-gen \
-        --ladder --ladder-tasks rerank --ladder-rungs 2k --rerank-data "$CEF" || rc=$?
+        --ladder --ladder-tasks rerank --ladder-rungs 2k --rerank-data "$CEF" $GROUP_ARGS || rc=$?
     [ -f "$O" ] && cp "$O" "$RESULTS/${RUN}_rerank_ce_${r}.json" 2>/dev/null || true
     GEN="${O%.json}.generations.jsonl"
     [ -f "$GEN" ] && cp "$GEN" "$RESULTS/${RUN}_rerank_ce_${r}.generations.jsonl" 2>/dev/null || true
@@ -190,7 +197,7 @@ if [ "$VARIANT" = "docchunk" ]; then
 else
   $TR --model-path "$CKPT" --out "$OUT" --tokenizer "$TOKENIZER" --max-length "$MAX_LENGTH" \
       --root "$BUNDLE" --max-test-samples "$MAX_TEST" --batch-size "$BATCH_SIZE" --skip-ruler --skip-gen \
-      --ladder $VFLAG $XLFLAG --ladder-tasks "$LTASK" --ladder-rungs "$RUNGS" $EXTRA
+      --ladder $VFLAG $XLFLAG --ladder-tasks "$LTASK" --ladder-rungs "$RUNGS" $EXTRA $GROUP_ARGS
   rc=$?
 fi
 if [ -f "$OUT" ]; then
