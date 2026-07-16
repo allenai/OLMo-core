@@ -97,3 +97,43 @@ def test_pp_num_flops_per_token():
     run_distributed_test(
         _run_pp_num_flops_per_token, world_size=2, backend="gloo", start_method="spawn"
     )
+
+
+def _tiny_dense_train_module_config() -> "TransformerTrainModuleConfig":
+    return TransformerTrainModuleConfig(
+        rank_microbatch_size=128,
+        max_sequence_length=128,
+        optim=AdamWConfig(),
+    )
+
+
+def _tiny_dense_model():
+    return TransformerConfig.llama_like(
+        d_model=64,
+        vocab_size=128,
+        n_layers=2,
+        n_heads=2,
+        feed_forward=FeedForwardConfig(hidden_size=128, bias=False),
+    ).build(init_device="cpu")
+
+
+def test_dense_train_module_eval_only_skips_optimizer():
+    tm = _tiny_dense_train_module_config().build(
+        _tiny_dense_model(), device=torch.device("cpu"), eval_only=True
+    )
+    assert tm.eval_only is True
+    assert tm.optim is None
+    # No optimizer -> state dict must omit optim state, and train-only entry points are unavailable.
+    assert "optim" not in tm.state_dict()
+    assert "optim" not in tm.state_dict_to_save()
+    with pytest.raises(AssertionError):
+        tm.optim_step()
+    with pytest.raises(AssertionError):
+        tm.zero_grads()
+
+
+def test_dense_train_module_builds_optimizer_by_default():
+    tm = _tiny_dense_train_module_config().build(_tiny_dense_model(), device=torch.device("cpu"))
+    assert tm.eval_only is False
+    assert tm.optim is not None
+    assert "optim" in tm.state_dict()

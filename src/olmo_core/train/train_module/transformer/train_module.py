@@ -129,6 +129,9 @@ class TransformerTrainModule(TrainModule):
         when loading a checkpoint.
     :param load_key_mapping: Can be used to load a checkpoint where certain parameter have different names.
         This dictionary should map current keys to keys in the checkpoint to be loaded.
+    :param eval_only: If ``True``, build the module without an optimizer for evaluation-only workflows
+        (e.g. :meth:`~olmo_core.train.Trainer.eval_checkpoints`). Training methods are unavailable and
+        optimizer state is neither saved nor loaded.
     """
 
     def __init__(
@@ -153,6 +156,7 @@ class TransformerTrainModule(TrainModule):
         state_dict_load_opts: Optional[dist_cp_sd.StateDictOptions] = None,
         load_key_mapping: Optional[Dict[str, str]] = None,
         label_ignore_index: int = -100,
+        eval_only: bool = False,
     ):
         super().__init__()
 
@@ -225,11 +229,16 @@ class TransformerTrainModule(TrainModule):
             flatten_optimizer_state_dict=True, strict=True
         )
         self.load_key_mapping = load_key_mapping
+        self.eval_only = eval_only
 
-        # Build optimizer(s).
-        log.info("Building optimizer...")
-        _assert_no_unowned_fp8_weight_stores(self.model)
-        self.optim: Optimizer = optim.build(self.model, strict=True)
+        # Build optimizer — skipped in ``eval_only`` mode (no backward, no step).
+        self.optim: Optional[Optimizer] = None
+        if not self.eval_only:
+            log.info("Building optimizer...")
+            _assert_no_unowned_fp8_weight_stores(self.model)
+            self.optim = optim.build(self.model, strict=True)
+        else:
+            log.info("Skipping optimizer build because eval_only=True")
 
     @property
     def dp_process_group(self) -> Optional[dist.ProcessGroup]:
@@ -280,7 +289,7 @@ class TransformerTrainModule(TrainModule):
 
     def state_dict(self, *, optim: Optional[bool] = None) -> Dict[str, Any]:
         if optim is None:
-            optim = True
+            optim = self.optim is not None
         return self._get_state_dict(self.state_dict_save_opts, optim=optim)
 
     def state_dict_to_load(
@@ -295,6 +304,9 @@ class TransformerTrainModule(TrainModule):
         if optim is None:
             if not has_optim_state:
                 log.warning("No optimizer state found in checkpoint")
+                optim = False
+            elif self.optim is None:
+                # eval_only: never load optim state, even if the checkpoint has it.
                 optim = False
             else:
                 optim = True
@@ -339,11 +351,12 @@ class TransformerTrainModule(TrainModule):
 
     def state_dict_to_save(self, *, optim: Optional[bool] = None) -> Dict[str, Any]:
         if optim is None:
-            optim = True
+            optim = self.optim is not None
         return self._get_state_dict(self.state_dict_save_opts, optim=optim)
 
     def load_state_dict(self, state_dict: Dict[str, Any]) -> None:
-        load_optim = "optim" in state_dict
+        # In eval_only mode there is no optimizer to load into, even if the checkpoint carries state.
+        load_optim = "optim" in state_dict and self.optim is not None
 
         if self.load_key_mapping is not None:
             swap_param_keys(state_dict, self.load_key_mapping, reverse=True, quiet=True)
@@ -545,6 +558,7 @@ class TransformerTrainModule(TrainModule):
         return output
 
     def optim_step(self):
+        assert self.optim is not None, "optim_step() is not available in eval_only mode"
         # Maybe clip gradients.
         if self.max_grad_norm is not None:
             grad_norm = self._clip_grad_norm(self.max_grad_norm)
@@ -569,6 +583,7 @@ class TransformerTrainModule(TrainModule):
         self.model.post_optim_step()
 
     def zero_grads(self):
+        assert self.optim is not None, "zero_grads() is not available in eval_only mode"
         self.optim.zero_grad(set_to_none=True)
 
     def model_forward(
@@ -636,6 +651,7 @@ class TransformerTrainModule(TrainModule):
             "model": dist_cp_sd.get_model_state_dict(self.model, options=sd_options),
         }
         if optim:
+            assert self.optim is not None, "cannot include optimizer state in eval_only mode"
             state_dict["optim"] = dist_cp_sd.get_optimizer_state_dict(
                 self.model, self.optim, options=sd_options
             )
