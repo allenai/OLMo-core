@@ -943,7 +943,9 @@ class OLMoDDPTransformerBlock(olmo_core.nn.transformer.block.TransformerBlockBas
                 resolve_ep_no_sync_rowwise_symm_options(self)
                 if self.ep.rowwise_transport == "nvshmem":
                     symm_mem_vdev2d_kernels.preflight_rowwise_collective_launches(
-                        self.ep.rowwise_nblocks
+                        self.ep.rowwise_get_nblocks,
+                        self.ep.rowwise_put_nblocks,
+                        self.ep.rowwise_weighted_put_nblocks,
                     )
             self._ep_no_sync_symm_cache.clear()
             self._ep_no_sync_static_buffer_cache.clear()

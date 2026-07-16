@@ -28,7 +28,10 @@ The initial implementation supports the regular rowwise path only. Rowwise FP8
 fails closed for now because it needs separate per-lane symmetric q/scale
 buffers before two lanes can be safely in flight.
 
-The main performance knob is `ep_no_sync_rowwise_nblocks`. The rowwise
-NVSHMEM kernels are collective launches with stream barriers, so CUDA stream
-concurrency is possible, but useful SM overlap with attention/GEMM should be
-validated with Nsight and an `nblocks` sweep.
+The rowwise launch controls are `ep.rowwise_get_nblocks`,
+`ep.rowwise_put_nblocks`, and `ep.rowwise_weighted_put_nblocks`. TBO dispatch
+forward uses ordinary PUT, dispatch backward uses GET, combine forward uses
+GET, and combine backward selects ordinary or weighted PUT according to the
+scratch-buffer path. The NVSHMEM kernels are collective launches with stream
+barriers, so CUDA stream concurrency is possible, but useful SM overlap with
+attention/GEMM should be validated with Nsight and per-kernel-family sweeps.

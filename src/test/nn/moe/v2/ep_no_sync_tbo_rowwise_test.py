@@ -224,7 +224,9 @@ def test_rowwise_stage_d_launch_uses_comm_stream_and_dispatch(monkeypatch):
         dst_rows=torch.arange(2).view(2, 1),
         buffers=buffers,
         group_name="ep_group",
-        rowwise_nblocks=64,
+        rowwise_get_nblocks=61,
+        rowwise_put_nblocks=62,
+        rowwise_weighted_put_nblocks=63,
     )
     block = SimpleNamespace(block_idx=4, ep_pg="pg")
 
@@ -242,5 +244,5 @@ def test_rowwise_stage_d_launch_uses_comm_stream_and_dispatch(monkeypatch):
     assert torch.equal(dispatch_args[2], a_state.dst_ranks)
     assert torch.equal(dispatch_args[3], a_state.dst_rows)
     assert dispatch_args[4] is buffers.dispatch_out
-    assert dispatch_args[5:] == (None, "ep_group", "pg", 64, False, True, True, True)
+    assert dispatch_args[5:] == (None, "ep_group", "pg", 61, 62, False, True, True, True)
     assert calls[2] == ("record_event", comm_stream)

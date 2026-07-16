@@ -75,7 +75,9 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--num-experts", type=int, default=32)
     parser.add_argument("--top-k", type=int, default=4)
     parser.add_argument("--capacity-factor", type=float, default=1.25)
-    parser.add_argument("--rowwise-nblocks", type=int, default=32)
+    parser.add_argument("--rowwise-get-nblocks", type=int, default=256)
+    parser.add_argument("--rowwise-put-nblocks", type=int, default=256)
+    parser.add_argument("--rowwise-weighted-put-nblocks", type=int, default=128)
     parser.add_argument(
         "--deepep-path",
         type=str,

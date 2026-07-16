@@ -98,7 +98,12 @@ def _build_block(
             dtype=DType.float32,
         ),
         feed_forward_norm=layer_norm,
-        ep=MoEExpertParallelConfig(path=ep_path, rowwise_nblocks=128),
+        ep=MoEExpertParallelConfig(
+            path=ep_path,
+            rowwise_get_nblocks=128,
+            rowwise_put_nblocks=128,
+            rowwise_weighted_put_nblocks=128,
+        ),
         init_device=init_device,
     )
 
@@ -171,7 +176,12 @@ def _build_model(
                 dtype=DType.float32,
             ),
             feed_forward_norm=layer_norm,
-            ep=MoEExpertParallelConfig(path=ep_path, rowwise_nblocks=128),
+            ep=MoEExpertParallelConfig(
+                path=ep_path,
+                rowwise_get_nblocks=128,
+                rowwise_put_nblocks=128,
+                rowwise_weighted_put_nblocks=128,
+            ),
         ),
     )
     return config.build(init_device=init_device)

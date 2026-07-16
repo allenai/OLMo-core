@@ -96,7 +96,9 @@ def _build_block(
     num_experts: int,
     top_k: int,
     capacity_factor: float,
-    rowwise_nblocks: int,
+    rowwise_get_nblocks: int,
+    rowwise_put_nblocks: int,
+    rowwise_weighted_put_nblocks: int,
     rowwise_wave: bool,
     rowwise_wave_num_waves: int,
     rowwise_wave_recompute_linear1: bool,
@@ -173,7 +175,9 @@ def _build_block(
             ),
             capacity_factor=capacity_factor,
             major_align=1,
-            rowwise_nblocks=rowwise_nblocks,
+            rowwise_get_nblocks=rowwise_get_nblocks,
+            rowwise_put_nblocks=rowwise_put_nblocks,
+            rowwise_weighted_put_nblocks=rowwise_weighted_put_nblocks,
             rowwise_wave_num_waves=(
                 rowwise_wave_num_waves if rowwise_wave else 1
             ),

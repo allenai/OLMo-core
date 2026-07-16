@@ -493,11 +493,15 @@ def combined_forward_ep_no_sync_rowwise(
             allowed_splits=allowed_splits,
             keep_from_src_dest_local=keep_from_src_dest_local,
         )
-        rowwise_nblocks = self.ep.rowwise_nblocks
+        rowwise_get_nblocks = self.ep.rowwise_get_nblocks
+        rowwise_put_nblocks = self.ep.rowwise_put_nblocks
+        rowwise_weighted_put_nblocks = self.ep.rowwise_weighted_put_nblocks
         rowwise_stage_debug_print(
             "rowwise:build-route-exit",
             block=self.block_idx,
-            nblocks=rowwise_nblocks,
+            get_nblocks=rowwise_get_nblocks,
+            put_nblocks=rowwise_put_nblocks,
+            weighted_put_nblocks=rowwise_weighted_put_nblocks,
         )
         inverse_route_meta = None
         rowwise_combine_row_start = None
@@ -511,7 +515,7 @@ def combined_forward_ep_no_sync_rowwise(
                     routing_map,
                     num_local_experts=self.num_local_routed_experts,
                     num_waves=1,
-                    nblocks=rowwise_nblocks,
+                    nblocks=rowwise_put_nblocks,
                 )
             )
             inverse_route_meta = get_or_init_ep_no_sync_symm_tensor(
@@ -528,7 +532,7 @@ def combined_forward_ep_no_sync_rowwise(
                 compact_wave_offsets,
                 src_rank=torch.distributed.get_rank(self.ep_pg),
                 group_name=group_name,
-                nblocks=rowwise_nblocks,
+                nblocks=rowwise_put_nblocks,
                 pre_barrier=True,
                 post_barrier=True,
                 scalar_put=use_symm_dispatch_in,
@@ -619,7 +623,8 @@ def combined_forward_ep_no_sync_rowwise(
             rowwise_fp8_cfg.fused_autograd_recompute_swiglu,
             group_name,
             self.ep_pg,
-            rowwise_nblocks,
+            rowwise_get_nblocks,
+            rowwise_put_nblocks,
             up_wgrad_sink,
             up_wgrad_sink_transpose_last2,
             False,
@@ -652,7 +657,8 @@ def combined_forward_ep_no_sync_rowwise(
             rowwise_fp8_cfg.block_size,
             group_name,
             self.ep_pg,
-            rowwise_nblocks,
+            rowwise_get_nblocks,
+            rowwise_put_nblocks,
         )
     else:
         assert buffers is not None
@@ -668,7 +674,8 @@ def combined_forward_ep_no_sync_rowwise(
             buffers.dispatch_out_lease,
             group_name,
             self.ep_pg,
-            rowwise_nblocks,
+            rowwise_get_nblocks,
+            rowwise_put_nblocks,
             source_input_aliases_symm_input,
             grad_out_aliases_symm_out,
             True,
@@ -728,7 +735,8 @@ def combined_forward_ep_no_sync_rowwise(
             rowwise_fp8_cfg.block_size,
             group_name,
             self.ep_pg,
-            self.ep.rowwise_nblocks,
+            rowwise_get_nblocks,
+            rowwise_put_nblocks,
         )
     else:
         assert buffers is not None
@@ -751,7 +759,7 @@ def combined_forward_ep_no_sync_rowwise(
                 rowwise_combine_row_start,
                 rowwise_combine_num_rows,
                 group_name,
-                nblocks=self.ep.rowwise_nblocks,
+                nblocks=rowwise_put_nblocks,
                 pre_barrier=True,
                 post_barrier=True,
             )
@@ -780,7 +788,9 @@ def combined_forward_ep_no_sync_rowwise(
                 route_probs,
                 group_name,
                 self.ep_pg,
-                self.ep.rowwise_nblocks,
+                rowwise_get_nblocks,
+                rowwise_put_nblocks,
+                rowwise_weighted_put_nblocks,
                 expert_out_aliases_symm_expert_out,
                 True,
                 False,

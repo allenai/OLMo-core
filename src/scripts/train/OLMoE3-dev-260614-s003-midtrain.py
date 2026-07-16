@@ -332,7 +332,9 @@ def build_model_config(common: CommonComponents) -> OLMoDDPModelConfig:
                 share_combine_out=PER_LAYER_RECOMPUTE,  # if layer-recompute, want to make combine_out shared (not per-layer persistent) to save memory; extra copy overhead applies.
                 share_dispatch_out=PER_LAYER_RECOMPUTE,  # if layer-recompute, want to make dispatch_out shared (not per-layer persistent) to save memory; extra copy overhead applies.
                 shared_slots=2 if block_uses_tbo else 1,
-                rowwise_nblocks=ROWWISE_A2A_NBLOCKS,
+                rowwise_get_nblocks=ROWWISE_A2A_NBLOCKS,
+                rowwise_put_nblocks=ROWWISE_A2A_NBLOCKS,
+                rowwise_weighted_put_nblocks=min(ROWWISE_A2A_NBLOCKS, 128),
                 capacity_factor=EP_NO_SYNC_CAPACITY_FACTOR,
             ),
             checkpoint_permute_moe_unpermute=False,

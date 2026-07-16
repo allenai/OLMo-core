@@ -91,7 +91,9 @@ def _build_block(
         ep = ExpertParallelConfig(
             path=path,
             capacity_factor=ep_no_sync_capacity_factor,
-            rowwise_nblocks=256,
+            rowwise_get_nblocks=256,
+            rowwise_put_nblocks=256,
+            rowwise_weighted_put_nblocks=128,
             checkpoint_tbo=checkpoint_combined_ep_tbo,
         )
 
@@ -152,6 +154,12 @@ def _build_block(
     )
 
 
+def _set_rowwise_block_counts(block: OLMoDDPTransformerBlock, value: int) -> None:
+    block.ep.rowwise_get_nblocks = value
+    block.ep.rowwise_put_nblocks = value
+    block.ep.rowwise_weighted_put_nblocks = value
+
+
 def test_v2_ep_config_selects_rowwise_wave_path():
     block = _build_block(
         ep_no_sync=False,
@@ -169,6 +177,30 @@ def test_v2_ep_config_selects_rowwise_wave_path():
     assert block.ep.rowwise_transport == "nvshmem"
     assert block.ep.rowwise_wave_num_waves == 4
     assert block.ep.rowwise_wave_mode == "expert"
+
+
+def test_v2_ep_config_rowwise_nblock_defaults():
+    ep = ExpertParallelConfig()
+
+    assert ep.rowwise_get_nblocks == 256
+    assert ep.rowwise_put_nblocks == 256
+    assert ep.rowwise_weighted_put_nblocks == 128
+
+
+@pytest.mark.parametrize(
+    "setting_name",
+    [
+        "rowwise_get_nblocks",
+        "rowwise_put_nblocks",
+        "rowwise_weighted_put_nblocks",
+    ],
+)
+def test_v2_ep_config_rejects_negative_rowwise_nblock_setting(setting_name):
+    ep = ExpertParallelConfig()
+    setattr(ep, setting_name, -1)
+
+    with pytest.raises(OLMoConfigurationError, match=setting_name):
+        ep.validate()
 
 
 def test_v2_ep_config_tbo_only_allows_rowwise_nvshmem():
@@ -635,7 +667,7 @@ def _run_ep_no_sync_rowwise_matches_synced():
     _install_deterministic_topk_router(block_ep)
     _install_deterministic_topk_router(block_rowwise)
 
-    block_rowwise.ep.rowwise_nblocks = 128
+    _set_rowwise_block_counts(block_rowwise, 128)
     block_rowwise.ep.validate()
 
     block_ep.train()
@@ -681,7 +713,9 @@ def _run_ep_no_sync_rowwise_wave_matches_rowwise():
         ep=ExpertParallelConfig(
             path=ExpertParallelPath.rowwise_wave,
             capacity_factor=2.0,
-            rowwise_nblocks=128,
+            rowwise_get_nblocks=128,
+            rowwise_put_nblocks=128,
+            rowwise_weighted_put_nblocks=128,
             rowwise_wave_num_waves=2,
         ),
         d_model=128,
@@ -698,8 +732,8 @@ def _run_ep_no_sync_rowwise_wave_matches_rowwise():
     _install_deterministic_topk_router(block_rowwise)
     _install_deterministic_topk_router(block_wave)
 
-    block_rowwise.ep.rowwise_nblocks = 128
-    block_wave.ep.rowwise_nblocks = 128
+    _set_rowwise_block_counts(block_rowwise, 128)
+    _set_rowwise_block_counts(block_wave, 128)
     block_rowwise.ep.validate()
     block_wave.ep.validate()
     block_rowwise.train()
@@ -752,7 +786,9 @@ def _run_ep_no_sync_rowwise_wave_matches_rowwise():
         ep=ExpertParallelConfig(
             path=ExpertParallelPath.rowwise_wave,
             capacity_factor=2.0,
-            rowwise_nblocks=32,
+            rowwise_get_nblocks=32,
+            rowwise_put_nblocks=32,
+            rowwise_weighted_put_nblocks=32,
             rowwise_wave_num_waves=2,
         ),
         d_model=128,
@@ -771,8 +807,8 @@ def _run_ep_no_sync_rowwise_wave_matches_rowwise():
 
     block_rowwise_bf16.to(dtype=torch.bfloat16)
     block_wave_bf16.to(dtype=torch.bfloat16)
-    block_rowwise_bf16.ep.rowwise_nblocks = 32
-    block_wave_bf16.ep.rowwise_nblocks = 32
+    _set_rowwise_block_counts(block_rowwise_bf16, 32)
+    _set_rowwise_block_counts(block_wave_bf16, 32)
     block_rowwise_bf16.ep.validate()
     block_wave_bf16.ep.validate()
     block_rowwise_bf16.train()
@@ -827,7 +863,9 @@ def _run_ep_no_sync_rowwise_wave_matches_rowwise():
         ep=ExpertParallelConfig(
             path=ExpertParallelPath.rowwise_wave,
             capacity_factor=2.0,
-            rowwise_nblocks=32,
+            rowwise_get_nblocks=32,
+            rowwise_put_nblocks=32,
+            rowwise_weighted_put_nblocks=32,
             rowwise_wave_num_waves=4,
         ),
         d_model=128,
@@ -846,8 +884,8 @@ def _run_ep_no_sync_rowwise_wave_matches_rowwise():
 
     block_rowwise_eval.to(dtype=torch.bfloat16)
     block_wave_eval.to(dtype=torch.bfloat16)
-    block_rowwise_eval.ep.rowwise_nblocks = 32
-    block_wave_eval.ep.rowwise_nblocks = 32
+    _set_rowwise_block_counts(block_rowwise_eval, 32)
+    _set_rowwise_block_counts(block_wave_eval, 32)
     block_rowwise_eval.ep.validate()
     block_wave_eval.ep.validate()
     block_rowwise_eval.eval()
@@ -895,10 +933,10 @@ def _run_ep_no_sync_rowwise_drop_matches_independent_rowwise_block():
     _install_deterministic_topk_router(block_a)
     _install_deterministic_topk_router(block_b)
 
-    block_a.ep.rowwise_nblocks = 128
+    _set_rowwise_block_counts(block_a, 128)
     block_a.ep.validate()
 
-    block_b.ep.rowwise_nblocks = 128
+    _set_rowwise_block_counts(block_b, 128)
     block_b.ep.validate()
 
     block_a.train()
@@ -997,8 +1035,8 @@ def _run_ep_no_sync_rowwise_capacity_tail_poison_does_not_change_backward():
         _install_deterministic_topk_router(block_a)
         _install_deterministic_topk_router(block_b)
 
-        block_a.ep.rowwise_nblocks = 128
-        block_b.ep.rowwise_nblocks = 128
+        _set_rowwise_block_counts(block_a, 128)
+        _set_rowwise_block_counts(block_b, 128)
         block_a.ep.validate()
         block_b.ep.validate()
         block_a.train()

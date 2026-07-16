@@ -253,7 +253,12 @@ USE_FP8=_env_bool("OLMOE3_TESTRUN_USE_FP8", True)
 USE_FP8_ATTN_QKV=USE_FP8
 USE_FP8_ATTN_OUT=USE_FP8
 USE_FP8_ATTN_SAVE_QKV=False
-ROWWISE_A2A_NBLOCKS=_env_int("OLMOE3_TESTRUN_ROWWISE_NBLOCKS", 128 if EP_DIM <=8 else 64) # keep the intra-node default below NVSHMEM 3.7's collective-launch grid cap; override with OLMOE3_TESTRUN_ROWWISE_NBLOCKS when tuning.
+ROWWISE_GET_NBLOCKS=_env_int("OLMOE3_TESTRUN_ROWWISE_GET_NBLOCKS", 256 if EP_DIM <=8 else 64)
+ROWWISE_PUT_NBLOCKS=_env_int("OLMOE3_TESTRUN_ROWWISE_PUT_NBLOCKS", 256 if EP_DIM <=8 else 64)
+ROWWISE_WEIGHTED_PUT_NBLOCKS=_env_int(
+    "OLMOE3_TESTRUN_ROWWISE_WEIGHTED_PUT_NBLOCKS",
+    128 if EP_DIM <=8 else 64,
+)
 EP_CAPACITY_FACTOR=_env_float("OLMOE3_TESTRUN_EP_CAPACITY_FACTOR", 1.5)
 DEEPEP_PATH=os.environ.get("OLMOE3_TESTRUN_DEEPEP_PATH")
 DEEPEP_NUM_SMS=_env_int("OLMOE3_TESTRUN_DEEPEP_NUM_SMS", 0)
@@ -341,7 +346,9 @@ def build_model_config(common: CommonComponents) -> OLMoDDPModelConfig:
                 share_combine_out=PER_LAYER_RECOMPUTE, # if layer-recompute, want to make combine_out shared (not per-layer persistent) to save memory; extra copy overhead applies.
                 share_dispatch_out=PER_LAYER_RECOMPUTE, # if layer-recompute, want to make dispatch_out shared (not per-layer persistent) to save memory; extra copy overhead applies.
                 shared_slots=2 if block_ep_schedule == ExpertParallelSchedule.tbo else 1,
-                rowwise_nblocks=ROWWISE_A2A_NBLOCKS,
+                rowwise_get_nblocks=ROWWISE_GET_NBLOCKS,
+                rowwise_put_nblocks=ROWWISE_PUT_NBLOCKS,
+                rowwise_weighted_put_nblocks=ROWWISE_WEIGHTED_PUT_NBLOCKS,
                 capacity_factor=EP_CAPACITY_FACTOR,
                 deepep=DeepEPConfig(
                     path=DEEPEP_PATH,

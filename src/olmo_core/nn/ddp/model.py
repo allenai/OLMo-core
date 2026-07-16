@@ -455,7 +455,9 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
             if block.ep.uses_rowwise_buffers:
                 if block.ep.rowwise_transport == "nvshmem" and device.type == "cuda":
                     symm_mem_vdev2d_kernels.preflight_rowwise_collective_launches(
-                        block.ep.rowwise_nblocks
+                        block.ep.rowwise_get_nblocks,
+                        block.ep.rowwise_put_nblocks,
+                        block.ep.rowwise_weighted_put_nblocks,
                     )
                 rowwise_fp8_cfg = block.rowwise_fp8
                 use_rowwise_fp8 = (
