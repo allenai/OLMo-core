@@ -19,6 +19,7 @@ from olmo_core.train.checkpoint import Checkpointer
 from olmo_core.train.train_module.transformer import OLMoDDPTrainModuleConfig
 from olmo_core.utils import prepare_cli_environment
 from scripts.train.jacobm_moe_v2_port_validation.config_adapter import (
+    adapt_train_module_payload,
     build_model_config,
     load_recorded_config,
 )
@@ -140,7 +141,9 @@ def main() -> None:
     if hasattr(model_config, "recompute_block_keys"):
         model_config.recompute_block_keys = None
 
-    train_config = OLMoDDPTrainModuleConfig.from_dict(recorded["train_module"])
+    train_config = OLMoDDPTrainModuleConfig.from_dict(
+        adapt_train_module_payload(recorded["train_module"])
+    )
     train_config.rank_microbatch_size = args.sequence_length
     train_config.max_sequence_length = args.sequence_length
     train_config.compile_model = False

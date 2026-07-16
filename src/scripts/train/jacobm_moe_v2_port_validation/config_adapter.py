@@ -57,6 +57,30 @@ def adapt_model_payload(payload: dict[str, Any]) -> dict[str, Any]:
     return model
 
 
+def adapt_train_module_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """Drop serialized Muon controls after proving this run selected Adam everywhere."""
+
+    train_module = copy.deepcopy(payload)
+    optim = train_module["optim"]
+    for override in optim.get("group_overrides") or []:
+        use_muon = override.get("opts", {}).pop("use_muon", False)
+        if use_muon:
+            raise ValueError("The moe-v2-core port cannot represent a Muon optimizer group")
+
+    # The source OLMoDDP optimizer grew optional Muon controls after the port
+    # branch forked. They have no effect when every group has use_muon=False.
+    for field in (
+        "muon_momentum",
+        "muon_nesterov",
+        "muon_ns_coefficients",
+        "muon_eps",
+        "muon_ns_steps",
+        "muon_adjust_lr_fn",
+    ):
+        optim.pop(field, None)
+    return train_module
+
+
 def build_model_config(config_path: Path) -> OLMoDDPModelConfig:
     recorded = load_recorded_config(config_path)
     model = OLMoDDPModelConfig.from_dict(adapt_model_payload(recorded["model"]))

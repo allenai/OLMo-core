@@ -20,6 +20,9 @@ The only config translations are:
 - identical `attention_norm` and `feed_forward_norm` configs become the port's
   single `layer_norm` config;
 - attention `d_attn / n_heads` becomes `head_dim` (128 for this family).
+- serialized Muon-only optimizer fields are dropped only after requiring every
+  source parameter group to have `use_muon=false`; these controls are absent on
+  the older port branch and are inert for this AdamW recipe.
 
 The full 275M control uses the historical optimum and exact production batch
 geometry: LR `1.6e-3`, 262,144 tokens/global batch, 8,192-token sequences, two

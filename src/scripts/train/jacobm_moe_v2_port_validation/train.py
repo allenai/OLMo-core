@@ -58,6 +58,7 @@ from olmo_core.train.train_module import (
     TransformerExpertParallelConfig,
 )
 from scripts.train.jacobm_moe_v2_port_validation.config_adapter import (
+    adapt_train_module_payload,
     build_model_config as build_adapted_model_config,
     load_recorded_config,
 )
@@ -147,7 +148,9 @@ def max_tokens() -> int:
 
 def build_train_module_config(common: CommonComponents) -> OLMoDDPTrainModuleConfig:
     recorded = load_recorded_config(SOURCE_CONFIG)
-    config = OLMoDDPTrainModuleConfig.from_dict(recorded["train_module"])
+    config = OLMoDDPTrainModuleConfig.from_dict(
+        adapt_train_module_payload(recorded["train_module"])
+    )
     config.rank_microbatch_size = RANK_MICROBATCH_SEQUENCES * common.max_sequence_length
     config.max_sequence_length = common.max_sequence_length
     config.optim.lr = LEARNING_RATE
