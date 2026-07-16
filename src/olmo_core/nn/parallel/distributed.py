@@ -29,11 +29,16 @@ class _GradBucket:
     process_group: Any
     storage_dtype: torch.dtype
     comm_dtype: torch.dtype
+    reduce_scatter: bool
     params: list[torch.nn.Parameter]
     ranges: list[tuple[int, int]]
+    local_ranges: list[tuple[int, int]]
     numel: int
+    local_numel: int
     flat_storage: torch.Tensor
     flat_comm: Optional[torch.Tensor]
+    flat_reduced_storage: Optional[torch.Tensor]
+    flat_reduced_comm: Optional[torch.Tensor]
 
 
 class MultiGroupDistributedDataParallel(Module):
@@ -82,6 +87,7 @@ class MultiGroupDistributedDataParallel(Module):
         param_process_group_fn: Optional[Callable[[str, torch.nn.Parameter], Any]] = None,
         accumulate_grads_in_fp32: bool = False,
         reduce_grads_in_fp32: bool = False,
+        use_reduce_scatter: bool = False,
     ) -> None:
         super().__init__()
 
@@ -140,6 +146,10 @@ class MultiGroupDistributedDataParallel(Module):
 
         self._accumulate_grads_in_fp32 = accumulate_grads_in_fp32
         self._reduce_grads_in_fp32 = reduce_grads_in_fp32
+        self.use_reduce_scatter = use_reduce_scatter
+        self._reduce_scatter_configured = not use_reduce_scatter
+        self._reduce_scatter_params: set[torch.nn.Parameter] = set()
+        self._reduce_scatter_pack_scratch: Dict[tuple[torch.device, torch.dtype], torch.Tensor] = {}
 
         if self._accumulate_grads_in_fp32 and not self._reduce_grads_in_fp32:
             raise ValueError("accumulate_grads_in_fp32 requires reduce_grads_in_fp32 to be True")
@@ -210,11 +220,13 @@ class MultiGroupDistributedDataParallel(Module):
         self._grad_buckets: list[_GradBucket] = []
         self._param_to_bucket_idx: Dict[torch.nn.Parameter, int] = {}
         self._param_to_bucket_view: Dict[torch.nn.Parameter, torch.Tensor] = {}
+        self._param_to_reduced_grad_view: Dict[torch.nn.Parameter, torch.Tensor] = {}
         self._bucket_ready_count: list[int] = []
         self._grad_reduce_hooks: list[tuple[Any, int]] = []
         self._grad_views_need_rebind = False
         self._warned_grad_view_rebind = False
         self._forwards_since_finalize = 0
+        self._has_started_forward = False
 
         self._build_grad_buckets()
         self._bind_bucket_views(zero_buffers=True, reason="initialization")
@@ -231,13 +243,13 @@ class MultiGroupDistributedDataParallel(Module):
                 )
 
         # Register the AccumulateGrad post hooks that drive this wrapper's
-        # own bucket readiness/all-reduce path.
+        # own bucket readiness/gradient-reduction path.
         self._accum_grad_hooks: list[RemovableHandle] = []
 
         self._param_grad_ready: OrderedDict[torch.nn.Parameter, bool] = OrderedDict()
         self._next_reduce_bucket_idx = 0
 
-        # the hook that controls gradient allreduce
+        # Hooks that control bucketed gradient reduction.
         self._register_accum_grad_hook()
 
     def __getattr__(self, name: str) -> Any:
@@ -292,6 +304,7 @@ class MultiGroupDistributedDataParallel(Module):
         current_process_group = None
         current_storage_dtype: Optional[torch.dtype] = None
         current_comm_dtype: Optional[torch.dtype] = None
+        current_reduce_scatter = False
 
         def flush_current_bucket() -> None:
             nonlocal current_params
@@ -301,6 +314,7 @@ class MultiGroupDistributedDataParallel(Module):
             nonlocal current_process_group
             nonlocal current_storage_dtype
             nonlocal current_comm_dtype
+            nonlocal current_reduce_scatter
 
             if not current_params:
                 return
@@ -309,6 +323,22 @@ class MultiGroupDistributedDataParallel(Module):
             assert current_comm_dtype is not None
             assert current_process_group is not None
 
+            world_size = dist.get_world_size(current_process_group)
+            local_ranges: list[tuple[int, int]] = []
+            local_numel = 0
+            if current_reduce_scatter:
+                for param in current_params:
+                    if param.numel() % world_size != 0:
+                        raise RuntimeError(
+                            "Reduce-scatter requires every optimizer-sharded parameter "
+                            f"to be divisible by its replica-group size; parameter "
+                            f"'{self._param_to_name.get(param, '<unnamed>')}' has "
+                            f"{param.numel()} elements for group size {world_size}."
+                        )
+                    param_local_numel = param.numel() // world_size
+                    local_ranges.append((local_numel, local_numel + param_local_numel))
+                    local_numel += param_local_numel
+
             flat_storage = torch.zeros(
                 current_numel, device=self.device, dtype=current_storage_dtype
             )
@@ -316,23 +346,43 @@ class MultiGroupDistributedDataParallel(Module):
             if current_comm_dtype != current_storage_dtype:
                 flat_comm = torch.empty(current_numel, device=self.device, dtype=current_comm_dtype)
 
+            flat_reduced_storage = None
+            flat_reduced_comm = None
+            if current_reduce_scatter:
+                flat_reduced_storage = torch.empty(
+                    local_numel, device=self.device, dtype=current_storage_dtype
+                )
+                if current_comm_dtype != current_storage_dtype:
+                    flat_reduced_comm = torch.empty(
+                        local_numel, device=self.device, dtype=current_comm_dtype
+                    )
+
             bucket_idx = len(self._grad_buckets)
             self._grad_buckets.append(
                 _GradBucket(
                     process_group=current_process_group,
                     storage_dtype=current_storage_dtype,
                     comm_dtype=current_comm_dtype,
+                    reduce_scatter=current_reduce_scatter,
                     params=list(current_params),
                     ranges=list(current_ranges),
+                    local_ranges=local_ranges,
                     numel=current_numel,
+                    local_numel=local_numel,
                     flat_storage=flat_storage,
                     flat_comm=flat_comm,
+                    flat_reduced_storage=flat_reduced_storage,
+                    flat_reduced_comm=flat_reduced_comm,
                 )
             )
 
             for param, (start, end) in zip(current_params, current_ranges):
                 self._param_to_bucket_idx[param] = bucket_idx
                 self._param_to_bucket_view[param] = flat_storage[start:end].view_as(param)
+            if current_reduce_scatter:
+                assert flat_reduced_storage is not None
+                for param, (start, end) in zip(current_params, local_ranges):
+                    self._param_to_reduced_grad_view[param] = flat_reduced_storage[start:end]
 
             current_params = []
             current_ranges = []
@@ -341,17 +391,20 @@ class MultiGroupDistributedDataParallel(Module):
             current_process_group = None
             current_storage_dtype = None
             current_comm_dtype = None
+            current_reduce_scatter = False
 
         for param in params_in_reduce_order:
             process_group = self.param_to_process_group[param]
             storage_dtype = self._get_storage_dtype_for_param(param)
             comm_dtype = self._get_comm_dtype_for_storage(storage_dtype)
+            reduce_scatter = param in self._reduce_scatter_params
             param_bytes = param.numel() * torch.empty((), dtype=comm_dtype).element_size()
 
             should_flush = current_params and (
                 process_group is not current_process_group
                 or storage_dtype != current_storage_dtype
                 or comm_dtype != current_comm_dtype
+                or reduce_scatter != current_reduce_scatter
                 or (current_bucket_bytes + param_bytes > self.bucket_bytes_cap)
             )
             if should_flush:
@@ -366,9 +419,59 @@ class MultiGroupDistributedDataParallel(Module):
             current_process_group = process_group
             current_storage_dtype = storage_dtype
             current_comm_dtype = comm_dtype
+            current_reduce_scatter = reduce_scatter
 
         flush_current_bucket()
         self._bucket_ready_count = [0 for _ in self._grad_buckets]
+
+    def configure_reduce_scatter_params(self, params: set[torch.nn.Parameter]) -> None:
+        """Configure optimizer-sharded parameters before the first forward pass.
+
+        The optimizer decides state placement after this wrapper is constructed. This
+        method rebuilds the gradient buckets using that placement as the source of
+        truth: optimizer-sharded parameters use reduce-scatter, while all other normal
+        parameters remain on the all-reduce path.
+        """
+        if not self.use_reduce_scatter:
+            if params:
+                raise RuntimeError(
+                    "Cannot configure reduce-scatter parameters when " "use_reduce_scatter=False."
+                )
+            return
+        if self._has_started_forward:
+            raise RuntimeError(
+                "Reduce-scatter parameters must be configured before the first forward pass."
+            )
+        if self._grad_reduce_hooks:
+            raise RuntimeError("Cannot rebuild gradient buckets while reductions are in flight.")
+
+        unknown_params = params.difference(self.param_to_process_group)
+        if unknown_params:
+            raise RuntimeError(
+                "Optimizer reduce-scatter placement includes parameters that are not "
+                "managed by this DDP wrapper."
+            )
+
+        for param in self._module_parameters:
+            if not param.requires_grad:
+                continue
+            self._set_param_grad_buffer(param, None)
+            if self._accumulate_grads_in_fp32:
+                param.grad = None
+            if hasattr(param, "_olmo_ddp_reduced_grad_shard"):
+                delattr(param, "_olmo_ddp_reduced_grad_shard")
+
+        self._reduce_scatter_params = set(params)
+        self._grad_buckets = []
+        self._param_to_bucket_idx = {}
+        self._param_to_bucket_view = {}
+        self._param_to_reduced_grad_view = {}
+        self._build_grad_buckets()
+        self._bind_bucket_views(zero_buffers=True, reason="reduce-scatter configuration")
+        self._next_reduce_bucket_idx = 0
+        for param in self._param_grad_ready:
+            self._param_grad_ready[param] = False
+        self._reduce_scatter_configured = True
 
     def _bind_bucket_views(self, *, zero_buffers: bool, reason: str) -> None:
         if zero_buffers:
@@ -461,34 +564,84 @@ class MultiGroupDistributedDataParallel(Module):
         main_grad.add_(g)
         param.grad = None
 
-    def _launch_bucket_all_reduce(self, bucket_idx: int) -> None:
+    def _get_reduce_scatter_pack_scratch(self, bucket: _GradBucket) -> torch.Tensor:
+        key = (bucket.flat_storage.device, bucket.comm_dtype)
+        scratch = self._reduce_scatter_pack_scratch.get(key)
+        if scratch is None or scratch.numel() < bucket.numel:
+            scratch = torch.empty(
+                bucket.numel,
+                device=bucket.flat_storage.device,
+                dtype=bucket.comm_dtype,
+            )
+            self._reduce_scatter_pack_scratch[key] = scratch
+        return scratch[: bucket.numel]
+
+    def _launch_bucket_grad_reduce(self, bucket_idx: int) -> None:
         if self._comm_hooks:
             raise NotImplementedError("Comm hooks are not implemented in bucket-view mode.")
 
         bucket = self._grad_buckets[bucket_idx]
-        world_size = bucket.process_group.size()
+        world_size = dist.get_world_size(bucket.process_group)
 
-        if bucket.storage_dtype == bucket.comm_dtype:
-            tensor_for_reduce = bucket.flat_storage
+        # Average over the bucket's replica group. Expert buckets use EP-DP here;
+        # the optimizer applies the remaining EP-MP factor when building main_grad.
+        if bucket.reduce_scatter:
+            assert bucket.flat_reduced_storage is not None
+            scratch = self._get_reduce_scatter_pack_scratch(bucket)
+            packed = scratch.view(world_size, bucket.local_numel)
+
+            for (full_start, full_end), (local_start, local_end) in zip(
+                bucket.ranges, bucket.local_ranges
+            ):
+                local_numel = local_end - local_start
+                packed[:, local_start:local_end].copy_(
+                    bucket.flat_storage[full_start:full_end].view(world_size, local_numel)
+                )
+
+            if bucket.storage_dtype == bucket.comm_dtype:
+                bucket.flat_storage.copy_(scratch)
+                tensor_for_reduce = bucket.flat_storage
+                tensor_for_output = bucket.flat_reduced_storage
+            else:
+                assert bucket.flat_comm is not None
+                assert bucket.flat_reduced_comm is not None
+                bucket.flat_comm.copy_(scratch)
+                tensor_for_reduce = bucket.flat_comm
+                tensor_for_output = bucket.flat_reduced_comm
+
             tensor_for_reduce.div_(world_size)
+            handle = torch.distributed.reduce_scatter_tensor(
+                tensor_for_output,
+                tensor_for_reduce,
+                op=ReduceOp.SUM,
+                group=bucket.process_group,
+                async_op=True,
+            )
         else:
-            assert bucket.flat_comm is not None
-            bucket.flat_comm.copy_(bucket.flat_storage)
-            bucket.flat_comm.div_(world_size)
-            tensor_for_reduce = bucket.flat_comm
+            if bucket.storage_dtype == bucket.comm_dtype:
+                tensor_for_reduce = bucket.flat_storage
+                tensor_for_reduce.div_(world_size)
+            else:
+                assert bucket.flat_comm is not None
+                bucket.flat_comm.copy_(bucket.flat_storage)
+                bucket.flat_comm.div_(world_size)
+                tensor_for_reduce = bucket.flat_comm
 
-        handle = torch.distributed.all_reduce(
-            tensor_for_reduce, op=ReduceOp.SUM, group=bucket.process_group, async_op=True
-        )
+            handle = torch.distributed.all_reduce(
+                tensor_for_reduce,
+                op=ReduceOp.SUM,
+                group=bucket.process_group,
+                async_op=True,
+            )
         self._grad_reduce_hooks.append((handle, bucket_idx))
 
-    def _maybe_kick_start_all_reduce(self):
+    def _maybe_kick_start_grad_reduce(self):
         while self._next_reduce_bucket_idx < len(self._grad_buckets):
             bucket = self._grad_buckets[self._next_reduce_bucket_idx]
             if self._bucket_ready_count[self._next_reduce_bucket_idx] < len(bucket.params):
                 break
 
-            self._launch_bucket_all_reduce(self._next_reduce_bucket_idx)
+            self._launch_bucket_grad_reduce(self._next_reduce_bucket_idx)
             self._next_reduce_bucket_idx += 1
 
     def _register_accum_grad_hook(self):
@@ -507,9 +660,9 @@ class MultiGroupDistributedDataParallel(Module):
 
             # do this in backward
             if self.overlap_grad_reduce:
-                self._maybe_kick_start_all_reduce()
+                self._maybe_kick_start_grad_reduce()
 
-            # otherwise, leave the all-reduce to finalize_grad_reduce
+            # Otherwise, leave the collective to finalize_grad_reduce().
 
         for index, param in enumerate(self._module_parameters):
             if not param.requires_grad:
@@ -518,11 +671,9 @@ class MultiGroupDistributedDataParallel(Module):
             # set up param order
             self._param_grad_ready[param] = False
 
-            # NOTE: in order to ensure param grads reduce always happen in the same order,
-            # instead of launching all-reduce in accumulate_grad_hook
-            # it only notifies the grad is ready
-            # and the actual all-reduce is kicked off in _maybe_kick_start_all_reduce
-            # based on what grads are ready
+            # To ensure parameter gradients are reduced in the same order, the
+            # hook only reports readiness. The AR or RS collective is launched
+            # later in bucket order.
             self._accum_grad_hooks.append(
                 param.register_post_accumulate_grad_hook(notify_grad_ready)
             )
@@ -545,18 +696,28 @@ class MultiGroupDistributedDataParallel(Module):
                     bucket_idx = self._param_to_bucket_idx[param]
                     self._bucket_ready_count[bucket_idx] += 1
 
-            self._maybe_kick_start_all_reduce()
+            self._maybe_kick_start_grad_reduce()
 
         # now all grad reduce should have been launched
         assert self._next_reduce_bucket_idx == len(self._grad_buckets), (
-            f"Not all bucket all-reduce operations were launched: "
+            f"Not all bucket gradient reductions were launched: "
             f"{self._next_reduce_bucket_idx} vs {len(self._grad_buckets)}"
         )
 
         for idx, (handle, bucket_idx) in enumerate(self._grad_reduce_hooks):
             handle.wait()
             bucket = self._grad_buckets[bucket_idx]
-            if bucket.flat_comm is not None:
+            if bucket.reduce_scatter:
+                assert bucket.flat_reduced_storage is not None
+                if bucket.flat_reduced_comm is not None:
+                    bucket.flat_reduced_storage.copy_(bucket.flat_reduced_comm)
+                for param in bucket.params:
+                    setattr(
+                        param,
+                        "_olmo_ddp_reduced_grad_shard",
+                        self._param_to_reduced_grad_view[param],
+                    )
+            elif bucket.flat_comm is not None:
                 bucket.flat_storage.copy_(bucket.flat_comm)
         self._grad_reduce_hooks = []
 
@@ -622,7 +783,13 @@ class MultiGroupDistributedDataParallel(Module):
             self.require_backward_grad_sync = old_require_backward_grad_sync
 
     def _pre_forward(self, *inputs, **kwargs):
+        if self.use_reduce_scatter and not self._reduce_scatter_configured:
+            raise RuntimeError(
+                "use_reduce_scatter=True requires optimizer placement to be "
+                "configured before the first forward pass."
+            )
         self._ensure_grad_views_bound(allow_none_rebind=True, where="forward")
+        self._has_started_forward = True
         self._forwards_since_finalize += 1
         return inputs, kwargs
 
@@ -663,6 +830,9 @@ class MultiGroupDistributedDataParallel(Module):
             sync_logical_grads()
 
     def zero_grad(self, set_to_none: bool = True):
+        for param in self._reduce_scatter_params:
+            if hasattr(param, "_olmo_ddp_reduced_grad_shard"):
+                delattr(param, "_olmo_ddp_reduced_grad_shard")
         if not set_to_none:
             # Fast path for bucket-view mode: zero bucket storage once and keep view bindings.
             if self._grad_views_need_rebind:
@@ -698,6 +868,9 @@ class MultiGroupDistributedDataParallel(Module):
         self._zero_module_logical_grads(set_to_none=True)
 
     def set_main_grads_to_none(self):
+        for param in self._reduce_scatter_params:
+            if hasattr(param, "_olmo_ddp_reduced_grad_shard"):
+                delattr(param, "_olmo_ddp_reduced_grad_shard")
         if hasattr(self.module, "set_main_grads_to_none"):
             self.module.set_main_grads_to_none()
         else:

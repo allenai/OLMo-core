@@ -582,3 +582,26 @@ import/GPU-disabled-path smoke test. Marked experimental in the docstrings.
 - Did NOT port `cpu_offload_simple_varlen.py`: it is an earlier, unreferenced near-duplicate of the
   canonical module (which is itself the "variable tensors per group" variant). Available to add later
   if a reason emerges.
+
+## Reduce-scatter for OLMo DDP gradients (e3b5d69d9)
+
+Ported the opt-in normal-parameter reduce-scatter path for `MultiGroupDistributedDataParallel`
+(new `use_reduce_scatter` flag, `configure_reduce_scatter_params`, per-bucket RS packing +
+`reduce_scatter_tensor`, `_olmo_ddp_reduced_grad_shard` intake in `OLMoDDPOptimizer`), wired
+through `dp_config.use_reduce_scatter` on the train module.
+
+Conflict resolutions (kept core's cleanups, took olmo-ddp's functional additions):
+
+- `moe_optimizer.py`: did NOT reintroduce olmo-ddp's `@overload def step` stubs — core had already
+  removed them. Dropped an unused `dbg_mem_before_cp1` debug line. Flipped `_use_reduce_scatter_grads`
+  default to `False` (legacy optimizer-owned reducer stays off; MultiGroupDDP owns AR and RS).
+- `ddp_train_module.py`: removed the old `reduce_scatter_grads` constructor arg and its
+  `NotImplementedError` guard, replaced by the config-driven `configure_reduce_scatter_params` path.
+- `config.py`: removed the now-dead `reduce_scatter_grads` field from `OLMoDDPTrainModuleConfig`
+  (the train module no longer accepts it; `build()` would otherwise pass an unknown kwarg). Kept
+  core's Sphinx-cross-ref docstrings and folded in the reduce-scatter semantics.
+- Tests: the source modified `multigroup_distributed_test.py`, which core had renamed to
+  `distributed_test.py`. Folded the new reduce-scatter models/helpers/tests into `distributed_test.py`
+  and added `start_method="spawn"` to every new `run_distributed_test` call (per the spawn policy).
+  Adapted `config_test.py` to core's build path (`as_dict(...)` instead of olmo-ddp's `_build_kwargs()`).
+  3 CPU-backend RS tests pass locally; optimizer-step / EP-parity tests are multi-GPU-gated.

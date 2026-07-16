@@ -682,6 +682,7 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
         accumulate_grads_in_fp32: bool = True,
         reduce_grads_in_fp32: bool = True,
         bucket_cap_mb: Optional[int] = None,
+        use_reduce_scatter: bool = False,
     ):
         from olmo_core.nn.parallel.distributed import MultiGroupDistributedDataParallel
 
@@ -760,6 +761,7 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
             accumulate_grads_in_fp32=accumulate_grads_in_fp32,
             reduce_grads_in_fp32=reduce_grads_in_fp32,
             bucket_cap_mb=bucket_cap_mb,
+            use_reduce_scatter=use_reduce_scatter,
         )
         log.info("Finished applying OLMo MultiGroup DDP")
 

@@ -241,9 +241,10 @@ class TransformerDataParallelConfig(DataParallelConfig):
 
     only_allreduce_last_microbatch: bool = True
     """
-    Only all-reduce gradients on the last micro-batch of a gradient-accumulation step (skip the
+    Only synchronize gradients on the last micro-batch of a gradient-accumulation step (skip the
     reduction on intermediate micro-batches). Used by :class:`OLMoDDPTrainModule` with
-    :class:`~olmo_core.nn.parallel.MultiGroupDistributedDataParallel`.
+    :class:`~olmo_core.nn.parallel.MultiGroupDistributedDataParallel`. The historical name predates
+    normal-parameter reduce-scatter; this setting controls whichever DDP gradient collective is used.
     """
 
     reduce_grads_in_fp32: bool = True
@@ -253,7 +254,18 @@ class TransformerDataParallelConfig(DataParallelConfig):
     """Accumulate gradients in fp32 (see :class:`~olmo_core.nn.parallel.MultiGroupDistributedDataParallel`)."""
 
     bucket_cap_mb: Optional[int] = None
-    """Gradient all-reduce bucket size cap in MiB (``None`` = backend default)."""
+    """Gradient reduction bucket size cap in MiB (``None`` = backend default)."""
+
+    use_reduce_scatter: bool = False
+    """
+    Reduce normal-parameter gradients directly into distributed-optimizer shards.
+
+    Parameters with replicated optimizer state continue to use all-reduce. This
+    option does not change the FP8WeightStore gradient synchronization path. It
+    currently requires final-microbatch-only synchronization, does not support
+    context parallelism, and requires the custom pipeline-stage implementation
+    when pipeline parallelism is enabled.
+    """
 
 
 @dataclass
@@ -511,10 +523,6 @@ class OLMoDDPTrainModuleConfig(TrainModuleConfig):
     load_key_mapping: Optional[Dict[str, str]] = None
     reset_optimizer_states_on_load: bool = False
     reset_optimizer_states_on_resume: bool = False
-
-    # Gradient reduction settings.
-
-    reduce_scatter_grads: bool = False
 
     # Other train settings.
 

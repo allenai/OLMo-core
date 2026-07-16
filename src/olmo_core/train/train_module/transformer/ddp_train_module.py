@@ -134,7 +134,6 @@ class OLMoDDPTrainModule(TrainModule):
         reset_optimizer_states_on_load: bool = False,
         reset_optimizer_states_on_resume: bool = False,
         label_ignore_index: int = -100,
-        reduce_scatter_grads: bool = False,
         eval_only: bool = False,
     ):
         super().__init__()
@@ -177,11 +176,6 @@ class OLMoDDPTrainModule(TrainModule):
         self.pp_next_rank = -1  # no next stage
         self.pp_final_stage_rank = 0  # default 0
 
-        # If True, the DDP will not all-reduce grad for the last microbatch
-        # instead it will call optim.step() which will reduce_scatter
-        # directly into the owner main grad
-        self.reduce_scatter_grads = reduce_scatter_grads
-
         if tp_config is not None:
             assert (
                 tp_config.degree > 1
@@ -213,6 +207,29 @@ class OLMoDDPTrainModule(TrainModule):
 
         assert dp_config is not None, "Data parallel config is required for OLMoDDPTrainModule"
         assert dp_config.name == "ddp", "Data parallel config must be 'ddp'"
+        self.use_reduce_scatter = dp_config.use_reduce_scatter
+        if self.use_reduce_scatter and cp_config is not None:
+            raise OLMoConfigurationError(
+                "Normal-parameter reduce-scatter is not yet supported with context "
+                "parallelism. Dense gradients reduce over DP x CP, while optimizer "
+                "state is currently sharded over DP only."
+            )
+        if self.use_reduce_scatter and not dp_config.only_allreduce_last_microbatch:
+            raise OLMoConfigurationError(
+                "Normal-parameter reduce-scatter requires gradient synchronization "
+                "only on the final microbatch. Set "
+                "dp_config.only_allreduce_last_microbatch=True."
+            )
+        if (
+            self.use_reduce_scatter
+            and pp_config is not None
+            and not pp_config.use_custom_stage_implementation
+        ):
+            raise OLMoConfigurationError(
+                "Normal-parameter reduce-scatter with pipeline parallelism requires "
+                "use_custom_stage_implementation=True so non-final local backwards "
+                "run under MultiGroupDDP.no_sync()."
+            )
 
         if not dp_config.only_allreduce_last_microbatch:
             # MultiGroupDistributedDataParallel accumulates gradients in-place into flat bucket
@@ -325,15 +342,27 @@ class OLMoDDPTrainModule(TrainModule):
                 strict=False,  # group_overrides might only be matched in one group, strict=False allows it to not match in one group (could match in some other group),
             )
 
-            if self.reduce_scatter_grads and isinstance(
-                self.model_parts[0], MultiGroupDistributedDataParallel
-            ):
-                raise NotImplementedError(
-                    "reduce_scatter_grads=True is incompatible with MultiGroupDistributedDataParallel. "
-                    "Disable DDP all-reduce path first or use reduce_scatter_grads=False."
-                )
-
-            self.optim.set_reduce_scatter_grads(self.reduce_scatter_grads)
+            # MultiGroupDDP owns normal-parameter reduction. Keep the optimizer's
+            # older post-backward reducer disabled so FP8WeightStore gradients stay
+            # on their existing, independent synchronization path.
+            if self.use_reduce_scatter:
+                sharded_params = self.optim.normal_params_with_sharded_optimizer_state()
+                unconfigured_params = set(sharded_params)
+                for model_part in self.model_parts:
+                    if not isinstance(model_part, MultiGroupDistributedDataParallel):
+                        raise RuntimeError(
+                            "use_reduce_scatter=True requires MultiGroupDistributedDataParallel."
+                        )
+                    local_sharded_params = sharded_params.intersection(
+                        model_part.param_to_process_group
+                    )
+                    model_part.configure_reduce_scatter_params(local_sharded_params)
+                    unconfigured_params.difference_update(local_sharded_params)
+                if unconfigured_params:
+                    raise RuntimeError(
+                        "Some optimizer-sharded normal parameters are not managed by "
+                        "any MultiGroupDistributedDataParallel model part."
+                    )
         else:
             log.info("Skipping optimizer build because eval_only=True")
 
@@ -2024,12 +2053,6 @@ class OLMoDDPTrainModule(TrainModule):
         # if dist.get_rank() == 0:
         #     print("-------optim_step start--------")
 
-        if self.reduce_scatter_grads:
-            pass
-        else:
-            pass
-            # raise RuntimeError("Deprecated code path, only reduce-scatter grads is supported now")
-
         # Maybe adjust learning rate.
         if self.scheduler is not None:
             for group_idx, group in enumerate(optim.param_groups):
@@ -2261,10 +2284,14 @@ class OLMoDDPTrainModule(TrainModule):
                 }
                 if param.grad is not None:
                     entry["grad"] = self._debug_tensor_payload(param.grad)
-                main_grad = getattr(param, "_main_grad_fp32", None)
-                if main_grad is not None:
-                    entry["main_grad_fp32"] = self._debug_tensor_payload(main_grad)
-                if "grad" in entry or "main_grad_fp32" in entry:
+                reduced_grad_shard = getattr(param, "_olmo_ddp_reduced_grad_shard", None)
+                if reduced_grad_shard is not None:
+                    entry["reduced_grad_shard"] = self._debug_tensor_payload(reduced_grad_shard)
+                else:
+                    main_grad = getattr(param, "_main_grad_fp32", None)
+                    if main_grad is not None:
+                        entry["main_grad_fp32"] = self._debug_tensor_payload(main_grad)
+                if any(key in entry for key in ("grad", "main_grad_fp32", "reduced_grad_shard")):
                     entries.append(entry)
 
         payload = {
@@ -2290,9 +2317,13 @@ class OLMoDDPTrainModule(TrainModule):
                 tensors: List[Tuple[str, torch.Tensor]] = []
                 if param.grad is not None:
                     tensors.append(("grad", param.grad))
-                main_grad = getattr(param, "_main_grad_fp32", None)
-                if main_grad is not None:
-                    tensors.append(("main_grad_fp32", main_grad))
+                reduced_grad_shard = getattr(param, "_olmo_ddp_reduced_grad_shard", None)
+                if reduced_grad_shard is not None:
+                    tensors.append(("reduced_grad_shard", reduced_grad_shard))
+                else:
+                    main_grad = getattr(param, "_main_grad_fp32", None)
+                    if main_grad is not None:
+                        tensors.append(("main_grad_fp32", main_grad))
 
                 for grad_name, tensor in tensors:
                     local = get_local_tensor(tensor.detach())
@@ -2373,12 +2404,9 @@ class OLMoDDPTrainModule(TrainModule):
                     stack.enter_context(self.model_parts[0].no_sync())
             elif self.dp_config.name == DataParallelType.ddp:  # temp fix
                 if (
-                    self.reduce_scatter_grads  # if use RS, always no sync
-                    or (  # if not, fall back to all-reduce
-                        # if specified, only AR at the last microbatch
-                        not is_last_mb
-                        and self.dp_config.only_allreduce_last_microbatch
-                    )
+                    # If specified, only synchronize at the last microbatch.
+                    not is_last_mb
+                    and self.dp_config.only_allreduce_last_microbatch
                 ):
                     stack.enter_context(
                         self.ddp_no_sync(self.model_parts)
@@ -2756,6 +2784,7 @@ class OLMoDDPTrainModule(TrainModule):
                 accumulate_grads_in_fp32=dp_config.accumulate_grads_in_fp32,
                 reduce_grads_in_fp32=dp_config.reduce_grads_in_fp32,
                 bucket_cap_mb=dp_config.bucket_cap_mb,
+                use_reduce_scatter=dp_config.use_reduce_scatter,
             )
             log.info(
                 "Wrapped OLMo DDP model part %d/%d with MultiGroupDistributedDataParallel",
