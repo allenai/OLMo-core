@@ -448,6 +448,12 @@ def _run_eval_only_gpu():
         rank_microbatch_size=64 * 2,
         max_sequence_length=64,
         optim=AdamWConfig(lr=1e-3),
+        # bf16 params so the flash-attention backend accepts the eval forward (it rejects fp32).
+        dp_config=TransformerDataParallelConfig(
+            name=DataParallelType.fsdp,
+            param_dtype=DType.bfloat16,
+            reduce_dtype=DType.float32,
+        ),
     ).build(model, device=torch.device("cuda"), eval_only=True)
 
     assert train_module.optim is None, "eval_only train module should not build an optimizer"
