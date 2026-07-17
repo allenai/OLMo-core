@@ -102,11 +102,17 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     tokenizer_config = TokenizerConfig.qwen3()
 
     # Qwen3-4B with the SHARED-VECTOR landmark mixer (AttentionType.shared_vector_landmark).
+    # landmark_use_kernel=True: use the fused Triton kernel for the head_dim output (the long-context
+    # training path). Since 58974c035 wired landmark_use_kernel through for shared_vector_landmark,
+    # the factory default of False silently falls back to the eager O(T^2) dense path, which would
+    # OOM at this script's 65536-token window (a (B, H, T, T) attn matrix -- see the sister SFT
+    # script's 2026-07-16 OOM in landmark_shared_vector.py's _main_dense).
     model_config = TransformerConfig.qwen3_4B(
         vocab_size=tokenizer_config.padded_vocab_size(),
         shared_vector_landmark=True,
         mem_freq=MEM_FREQ,
         vec_dim=VEC_DIM,
+        landmark_use_kernel=True,
     )
 
     train_module_config = TransformerTrainModuleConfig(
