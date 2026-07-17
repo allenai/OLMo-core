@@ -110,3 +110,59 @@ def test_build_rowwise_route_maps_matches_reference(device: str):
 
     assert torch.equal(dst_ranks, expected_ranks)
     assert torch.equal(dst_rows, expected_rows)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required")
+def test_build_rowwise_route_maps_torch_compile_cuda():
+    ep_world_size = 3
+    num_local_experts = 2
+    block = SimpleNamespace(
+        ep_pg=object(),
+        ep_world_size=ep_world_size,
+        num_local_routed_experts=num_local_experts,
+        block_idx=0,
+    )
+    device = "cuda"
+
+    routing_map = torch.tensor(
+        [
+            [0, 1, 5],
+            [3, 0, -1],
+            [5, 4, 1],
+            [2, 3, 5],
+            [0, 1, 4],
+            [3, 2, 5],
+            [4, 0, 2],
+            [1, 5, 3],
+        ],
+        device=device,
+        dtype=torch.long,
+    )
+    keep_from_src_dest_local = torch.tensor(
+        [
+            [[2, 3], [2, 2], [2, 3]],
+            [[1, 0], [2, 1], [0, 1]],
+            [[0, 2], [1, 0], [3, 0]],
+        ],
+        device=device,
+        dtype=torch.long,
+    )
+    allowed_splits = keep_from_src_dest_local[0].reshape(-1)
+
+    compiled = torch.compile(build_rowwise_route_maps, fullgraph=False)
+    dst_ranks, dst_rows = compiled(
+        block,
+        routing_map=routing_map,
+        allowed_splits=allowed_splits,
+        keep_from_src_dest_local=keep_from_src_dest_local,
+    )
+    expected_ranks, expected_rows = _reference_rowwise_route_maps(
+        routing_map,
+        allowed_splits,
+        keep_from_src_dest_local,
+        ep_world_size=ep_world_size,
+        num_local_experts=num_local_experts,
+    )
+
+    assert torch.equal(dst_ranks, expected_ranks)
+    assert torch.equal(dst_rows, expected_rows)
