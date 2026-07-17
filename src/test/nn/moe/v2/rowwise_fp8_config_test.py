@@ -17,6 +17,7 @@ from olmo_core.nn.moe.v2.routed_experts import (
     swiglu_backward_grad_up_gate,
 )
 from olmo_core.nn.parallel.distributed import MultiGroupDistributedDataParallel
+from olmo_core.testing import requires_gpu
 
 
 def test_rowwise_fp8_config_validate_block_size():
@@ -106,10 +107,8 @@ def test_routed_experts_zero_grad_clears_mxfp8_store_grads():
     assert module._rowwise_fp8_down_weight.grad_bf16 is None
 
 
+@requires_gpu
 def test_routed_experts_mxfp8_weight_anchors_follow_to_empty():
-    if not torch.cuda.is_available():
-        return
-
     module = RoutedExperts(
         d_model=32,
         hidden_size=32,
@@ -444,10 +443,8 @@ def test_block_refresh_rowwise_fp8_cache_shared_only_does_not_refresh_routed():
     assert block._shared_rowwise_fp8_down_prequant is None
 
 
+@requires_gpu
 def test_routed_experts_refresh_marks_owned_prequant_caches_versionless(monkeypatch):
-    if not torch.cuda.is_available():
-        return
-
     module = RoutedExperts(
         d_model=512,
         hidden_size=256,
@@ -597,10 +594,8 @@ def test_routed_experts_forward_rowwise_fp8_uses_cached_prequantized_rhs(monkeyp
     assert seen["prequantized_lhs_count"] == 2
 
 
+@requires_gpu
 def test_swiglu_backward_grad_up_gate_compiled_helper_matches_eager(monkeypatch):
-    if not torch.cuda.is_available():
-        return
-
     monkeypatch.setenv("OLMO_MXFP8_COMPILE_SWIGLU_BWD", "1")
     torch.manual_seed(123)
     up_gate = torch.randn(16, 128, device="cuda", dtype=torch.bfloat16)
