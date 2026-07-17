@@ -772,7 +772,25 @@ def test_optimizer_step_reduce_scatter_matches_all_reduce(backend: str):
     )
 
 
-@pytest.mark.parametrize("backend", BACKENDS)
+# This test uses world_size=4, so the NCCL backend needs four GPUs (one per rank); the CPU/gloo
+# backend runs the four ranks as plain processes. Gate only the NCCL param so gloo still runs.
+@pytest.mark.parametrize(
+    "backend",
+    [
+        pytest.param("gloo", id="backend=GLOO"),
+        pytest.param(
+            "cuda:nccl,cpu:gloo",
+            id="backend=NCCL",
+            marks=(
+                pytest.mark.gpu,
+                pytest.mark.skipif(
+                    torch.cuda.device_count() < 4,
+                    reason="parameter-process-group routing over 4 ranks requires four GPUs",
+                ),
+            ),
+        ),
+    ],
+)
 def test_reduce_scatter_uses_parameter_process_group(backend: str):
     run_distributed_test(
         _run_reduce_scatter_uses_parameter_process_group,
