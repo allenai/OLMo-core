@@ -67,7 +67,14 @@ from .landmark_kernel import _bwd_preprocess, has_landmark_kernel
 # independent selection). A private sentinel (distinct from ``None``) is needed for the
 # ``set_landmark_eval_decode`` override parameter, since ``None`` is itself a meaningful value
 # there ("force selection back off for this eval run"), not just "leave unset".
-_GROUP_LANDMARK_SELECTIONS = (None, "mean", "max")
+#
+# ``"inverse_mean"`` is a deliberate *anti-selection* sanity check, not a real method: it shares one
+# top-k across the group like ``"mean"``, but keeps the group's LEAST-attended blocks (bottom-k of the
+# mean score) instead of the most-attended. It exists to bound how much retrieval quality matters on a
+# task -- if metrics barely move when we force attention onto the worst blocks, the task is robust to
+# which blocks are retrieved (so a small mean-vs-none gap is expected); if metrics collapse, selection
+# genuinely matters. Never use it in production.
+_GROUP_LANDMARK_SELECTIONS = (None, "mean", "max", "inverse_mean")
 _NO_OVERRIDE = object()
 
 try:
@@ -845,6 +852,13 @@ class FastCompressiveLandmarkAttention(FastLandmarkAttention):
         off or there is nothing to group (``n_rep == 1``, i.e. MHA), so that path is bit-identical to
         the pre-existing per-head behavior.
 
+        ``"inverse_mean"`` is the anti-selection sanity check (see :data:`_GROUP_LANDMARK_SELECTIONS`):
+        it returns the *negated* group mean so the caller's ``topk`` keeps the group's lowest-scoring
+        (least-attended) blocks. Because the returned tensor is used for ranking only -- the gate and
+        within-block softmaxes downstream re-read the true ``scores`` -- the selected bad blocks are
+        still weighted by their real (low) scores, so this genuinely forces attention onto the blocks
+        the group cares least about.
+
         :param lm_scores: Per-head landmark-key logits, ``(B, H, 1, n_lm)``.
         """
         if self.group_landmark_selection is None:
@@ -856,6 +870,10 @@ class FastCompressiveLandmarkAttention(FastLandmarkAttention):
         grouped = lm_scores.view(B, self.n_kv_heads, n_rep, one, n_lm)
         if self.group_landmark_selection == "mean":
             agg = grouped.mean(dim=2, keepdim=True)
+        elif self.group_landmark_selection == "inverse_mean":
+            # Negate so the caller's top-k picks the LOWEST-mean (least-attended) blocks. Sanity
+            # check only; see the class/constant docstrings.
+            agg = -grouped.mean(dim=2, keepdim=True)
         else:
             assert self.group_landmark_selection == "max"
             agg = grouped.amax(dim=2, keepdim=True)

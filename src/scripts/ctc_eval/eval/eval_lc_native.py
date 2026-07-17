@@ -70,12 +70,14 @@ def main():
     ap.add_argument("--save-generations", action=argparse.BooleanOptionalAction, default=True,
                     help="dump per-example model generations (+ gold/per-example metrics) to a sidecar "
                          "<out>.generations.jsonl for error inspection. On by default; --no-save-generations to skip.")
-    ap.add_argument("--landmark-group-selection", choices=["mean", "max"], default=None,
+    ap.add_argument("--landmark-group-selection", choices=["mean", "max", "inverse_mean"], default=None,
                     help="GQA compressive-landmark checkpoints only: share top-k landmark block "
                          "selection across each KV group's query heads instead of each head "
                          "retrieving independently (only takes effect with top-k decode enabled, "
                          "which is on by default via GenerationConfig.landmark_top_k_fraction). "
-                         "Omit (default) for independent per-head selection.")
+                         "Omit (default) for independent per-head selection. 'inverse_mean' is an "
+                         "anti-selection SANITY CHECK (keeps the group's LEAST-attended blocks) to "
+                         "bound how much retrieval quality matters -- not a real method.")
     args = ap.parse_args()
     os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
     # xlong opt-in: the runner truncates prompts to (max_length - max_new_tokens), so max_length

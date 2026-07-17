@@ -141,12 +141,13 @@ def main():
                          "and uploaded to the v2 eval bundle.")
     ap.add_argument("--xlong-rungs", default="64k,128k",
                     help="which xlong sizes to add when --xlong (add 256k explicitly; it is huge).")
-    ap.add_argument("--landmark-group-selection", choices=["mean", "max"], default=None,
+    ap.add_argument("--landmark-group-selection", choices=["mean", "max", "inverse_mean"], default=None,
                     help="GQA compressive-landmark checkpoints only: share top-k landmark block "
                          "selection across each KV group's query heads instead of each head "
                          "retrieving independently. Omit (default) for independent per-head "
-                         "selection. Pass a distinct --results-dir per sweep value to avoid "
-                         "overwriting another config's output.")
+                         "selection. 'inverse_mean' is an anti-selection SANITY CHECK (keeps the "
+                         "group's LEAST-attended blocks). Pass a distinct --results-dir per sweep "
+                         "value to avoid overwriting another config's output.")
     ap.add_argument("--dry-run", action="store_true", help="build + print the job, do NOT submit.")
     args = ap.parse_args()
 

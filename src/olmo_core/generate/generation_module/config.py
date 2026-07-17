@@ -169,8 +169,8 @@ class GenerationConfig(Config):
                 "landmark_nonselected_mass must be in [0, 1) or None, "
                 f"got {self.landmark_nonselected_mass}"
             )
-        if self.landmark_group_selection not in (None, "mean", "max"):
+        if self.landmark_group_selection not in (None, "mean", "max", "inverse_mean"):
             raise ValueError(
-                "landmark_group_selection must be 'mean', 'max', or None, "
+                "landmark_group_selection must be 'mean', 'max', 'inverse_mean', or None, "
                 f"got {self.landmark_group_selection!r}"
             )
