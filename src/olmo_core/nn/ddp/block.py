@@ -394,7 +394,8 @@ class OLMoDDPTransformerBlock(olmo_core.nn.transformer.block.TransformerBlockBas
         self.shared_experts: Optional[SharedExperts]
         self.shared_experts_router: Optional[MoERouterV2]
         self.rowwise_fp8 = normalize_rowwise_fp8_config(rowwise_fp8)
-        self._rowwise_fp8_checked = False
+        if self.rowwise_fp8 is not None and self.rowwise_fp8.enabled:
+            self.rowwise_fp8.assert_runtime_supported()
         self._shared_rowwise_fp8_up_prequant: Optional[ScaledGroupedMMPrequantizedRHS] = None
         self._shared_rowwise_fp8_down_prequant: Optional[ScaledGroupedMMPrequantizedRHS] = None
         self._shared_rowwise_fp8_up_prequant_t: Optional[ScaledGroupedMMPrequantizedRHS] = None
@@ -1154,10 +1155,6 @@ class OLMoDDPTransformerBlock(olmo_core.nn.transformer.block.TransformerBlockBas
             and rowwise_fp8_cfg.enabled
             and mlp_inp.device.type == "cuda"
         )
-        if use_rowwise_fp8 and not self._rowwise_fp8_checked:
-            assert rowwise_fp8_cfg is not None
-            rowwise_fp8_cfg.assert_runtime_supported()
-            self._rowwise_fp8_checked = True
 
         if use_rowwise_fp8:
             assert rowwise_fp8_cfg is not None
