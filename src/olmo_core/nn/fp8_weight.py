@@ -3,9 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Callable, Mapping, Optional, Sequence, Union
 
-import nvtx
 import torch
 
+from olmo_core._nvtx import nvtx
 from olmo_core.doc_utils import beta_feature
 from olmo_core.kernels import (
     ScaledGroupedMMPrequantizedRHS,
