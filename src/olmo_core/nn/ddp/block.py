@@ -547,7 +547,6 @@ class OLMoDDPTransformerBlock(olmo_core.nn.transformer.block.TransformerBlockBas
         self._ep_no_sync_te_backend_warned: bool = False
         self._deepep_v2_runtime: Optional[object] = None
         self._deepep_v2_runtime_cache: Optional[dict[object, object]] = None
-        self._deepep_v2_max_capacity_factor: float = self.ep.capacity_factor
         # EP no-sync tail-drop metrics, populated by rowwise and DeepEP paths.
         self._ep_no_sync_rowwise_drop_tokens_sum: Optional[torch.Tensor] = None
         self._ep_no_sync_rowwise_total_tokens_sum: Optional[torch.Tensor] = None
@@ -988,7 +987,6 @@ class OLMoDDPTransformerBlock(olmo_core.nn.transformer.block.TransformerBlockBas
         self.ep_pg = ep_pg if ep_pg is not None else ep_mp_mesh.get_group()
         self._deepep_v2_runtime = None
         self._deepep_v2_runtime_cache = None
-        self._deepep_v2_max_capacity_factor = self.ep.capacity_factor
 
         if self.ep.uses_olmo_symm:
             if olmo_symm_mem.is_enabled() and not self.ep.uses_rowwise_buffers:
@@ -1254,6 +1252,7 @@ class OLMoDDPTransformerBlock(olmo_core.nn.transformer.block.TransformerBlockBas
         self,
         x: torch.Tensor,
         *,
+        deepep_reentrant_checkpoint: bool = False,
         loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
         **kwargs,
     ) -> torch.Tensor:
@@ -1269,6 +1268,7 @@ class OLMoDDPTransformerBlock(olmo_core.nn.transformer.block.TransformerBlockBas
             self,
             x,
             accumulate_routed_aux_loss_metrics=accumulate_routed_aux_loss_metrics,
+            accumulate_router_aux_loss_metrics=(True if deepep_reentrant_checkpoint else None),
             loss_div_factor=loss_div_factor,
             **kwargs,
         )
