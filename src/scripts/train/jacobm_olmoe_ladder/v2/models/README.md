@@ -11,7 +11,7 @@ GatedDeltaNet. It derives the GDN head count from the source attention, fixes
 non-mixer block fields remain identical. It does not alter MoE widths merely to
 force exact parameter equality.
 
-`geometry_matched_275m.py` designs the next 275M candidates on the dense
+`geometry_matched_275m.py` designs the initial 275M candidates on the dense
 ladder's `d_model=640`, 10-layer, four-GDN/one-full-attention geometry. It
 reports both a strict geometry-only profile and a profile that additionally
 matches the dense 275M rung's 8-Q/8-KV full attention and elementwise gate.
@@ -19,11 +19,21 @@ Both use the dense hybrid's `expand_v=2` and deliberately retain RoPE and
 `init_std=0.01`. The primary profile keeps our 8-Q/4-KV ungated full attention
 and all previously audited FFN widths unchanged.
 
+`geometry_matched_scale.py` extends the primary geometry-only configuration to
+480M, 810M, and 1.2B by mapping them to the dense ladder's 450M, 810M, and 1.4B
+geometries. It preserves the exact existing 275M builder, keeps total active
+parameters within 0.14% of the current hybrid at every larger size, and
+strictly validates mixer placement, GDN/full-attention shapes, retained RoPE
+and initialization, and exact parameter counts.
+
 Run the structural and parameter audit without creating a training job:
 
 ```bash
 PYTHONPATH=src .venv/bin/python \
   src/scripts/train/jacobm_olmoe_ladder/v2/models/hybrid_wide.py
+
+PYTHONPATH=src uv run python \
+  src/scripts/train/jacobm_olmoe_ladder/v2/models/geometry_matched_scale.py
 ```
 
 Expected active-parameter comparison:

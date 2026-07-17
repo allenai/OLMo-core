@@ -12,6 +12,9 @@ The v2 operating entry points are now:
   experiment queue and promotion path.
 - [`PRETRAINING_LAUNCH_SETTINGS.md`](PRETRAINING_LAUNCH_SETTINGS.md): collected
   larger-size Cx1/Cx2 settings and the pending B300 microbatch study.
+- [`GEOMETRY_MATCHED_SCALE.md`](GEOMETRY_MATCHED_SCALE.md): exact
+  275M/480M/810M/1.2B geometry-matched `expand_v=2` configs and parameter
+  audits.
 - [`models/`](models/): audited model-config builders and parameter comparisons.
 - [`launchers/pretraining/`](launchers/pretraining/): config-driven DDP
   pretraining sweep launcher and intervention manifests.
