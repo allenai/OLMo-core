@@ -4,8 +4,8 @@ from typing import Any
 import pytest
 import torch
 
-import olmo_core.nn.ddp.block as ddp_block_module
 import olmo_core.nn.ddp.model as ddp_model_module
+import olmo_core.nn.moe.v2.ep_deepep_v2 as ep_deepep_v2_module
 from olmo_core.nn.ddp.block import OLMoDDPTransformerBlock
 from olmo_core.nn.ddp.model import OLMoDDPModel
 from olmo_core.nn.moe.v2.ep_config import ExpertParallelConfig, ExpertParallelPath
@@ -145,8 +145,8 @@ def test_reentrant_checkpoint_accumulates_each_deepep_metric_once(
         return x.square()
 
     monkeypatch.setattr(
-        ddp_block_module,
-        "_combined_forward_ep_deepep_v2",
+        ep_deepep_v2_module,
+        "combined_forward_ep_deepep_v2",
         fake_combined_forward,
     )
     block = _stub_block(ExpertParallelPath.deepep_v2)
