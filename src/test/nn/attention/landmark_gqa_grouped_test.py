@@ -400,3 +400,24 @@ def test_fused_grouped_mha_matches_plain_compressive_kernel():
         q, k, v, is_mem, sm_scale=scale, block_size=block_size
     )
     torch.testing.assert_close(out_grouped, out_plain, rtol=1e-4, atol=1e-4)
+
+
+def test_group_mean_query_cp_local_shard():
+    # Under Ulysses CP a rank holds only n_heads/cp query heads. _group_mean_query must reshape by the
+    # LOCAL head count, not self.n_kv_heads. Simulate a cp=8 shard of a 32-head/8-kv model: 4 local
+    # heads = exactly one KV group (n_rep=4), so the group mean makes all 4 local heads identical.
+    attn = _build(n_heads=32, n_kv_heads=8, head_dim=8)  # global counts; n_rep=4
+    B, H_local, T, D = 1, 4, 16, 8  # cp=8 -> 4 local query heads (one group)
+    q = torch.randn(B, H_local, T, D, dtype=torch.float64)
+    qg = attn._group_mean_query(q)
+    assert qg.shape == q.shape
+    torch.testing.assert_close(qg, q.mean(dim=1, keepdim=True).expand_as(q), atol=1e-12, rtol=0)
+    # two local groups (8 local heads, cp=4): means computed within each contiguous block of 4.
+    q2 = torch.randn(B, 8, T, D, dtype=torch.float64)
+    qg2 = attn._group_mean_query(q2)
+    torch.testing.assert_close(
+        qg2[:, :4], q2[:, :4].mean(1, keepdim=True).expand(B, 4, T, D), atol=1e-12, rtol=0
+    )
+    torch.testing.assert_close(
+        qg2[:, 4:], q2[:, 4:].mean(1, keepdim=True).expand(B, 4, T, D), atol=1e-12, rtol=0
+    )

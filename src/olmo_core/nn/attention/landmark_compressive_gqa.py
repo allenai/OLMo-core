@@ -67,17 +67,25 @@ class CompressiveGQAGroupedAttention(FastCompressiveLandmarkAttention):
         self.use_kernel = use_kernel
 
     def _group_mean_query(self, q: torch.Tensor) -> torch.Tensor:
-        """Group-mean query ``q̄`` for the gate path. ``q``: ``(B, n_heads, T, D)`` (post-``repeat_kv``,
+        """Group-mean query ``q̄`` for the gate path. ``q``: ``(B, H_local, T, D)`` (post-``repeat_kv``,
         so heads ``[g*n_rep, (g+1)*n_rep)`` share KV group ``g``). Returns the per-group mean, expanded
-        back to ``n_heads`` -- so every head in a group carries its group's averaged query. ``n_rep==1``
-        returns ``q`` unchanged (the MHA no-op)."""
+        back to ``H_local`` -- so every head in a group carries its group's averaged query. ``n_rep==1``
+        returns ``q`` unchanged (the MHA no-op).
+
+        Uses the *local* head count ``H_local = q.shape[1]`` (not ``self.n_heads``): under Ulysses CP
+        each rank holds only ``n_heads / cp`` query heads (and ``n_kv_heads / cp`` KV heads), so the
+        number of KV groups on this rank is ``H_local // n_rep``, not ``self.n_kv_heads``. The ratio
+        ``n_rep`` is CP-invariant (CP divides ``n_heads`` and ``n_kv_heads`` equally), and the head
+        scatter keeps whole groups contiguous on a rank, so this reshape is correct with or without CP.
+        """
         n_rep = self.n_heads // self.n_kv_heads
         if n_rep == 1:
             return q
         B, H, T, D = q.shape
-        grouped = q.view(B, self.n_kv_heads, n_rep, T, D)
+        n_groups = H // n_rep  # local KV-group count (== n_kv_heads without CP)
+        grouped = q.view(B, n_groups, n_rep, T, D)
         gmean = grouped.mean(dim=2, keepdim=True)
-        return gmean.expand(B, self.n_kv_heads, n_rep, T, D).reshape(B, H, T, D)
+        return gmean.expand(B, n_groups, n_rep, T, D).reshape(B, H, T, D)
 
     def _attn_core(
         self,
