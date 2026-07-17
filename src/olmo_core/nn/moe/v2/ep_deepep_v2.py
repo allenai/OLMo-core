@@ -212,22 +212,28 @@ def _expanded_weight_grad_to_topk_grad(
     src_token = src_global - src_rank * runtime.num_max_tokens_per_rank
     expanded_slots_by_lane = metadata[:, 2 : 2 + runtime.num_topk].to(dtype=torch.long)
     flat_grad_by_src = grad_by_src.reshape(-1)
-    for lane in range(runtime.num_topk):
-        expanded_slots = expanded_slots_by_lane[:, lane]
-        valid = (
+    grad_flat_numel = grad_flat.numel()
+    if grad_flat_numel > 0:
+        safe_src_rank = src_rank.clamp(0, block.ep_world_size - 1)
+        safe_src_token = src_token.clamp(0, runtime.num_max_tokens_per_rank - 1)
+        base_flat_dst = (
+            safe_src_rank * runtime.num_max_tokens_per_rank + safe_src_token
+        ) * runtime.num_topk
+        lane_ids = torch.arange(runtime.num_topk, device=metadata.device, dtype=torch.long)
+        flat_dst = base_flat_dst.unsqueeze(1) + lane_ids.unsqueeze(0)
+        valid_rows = (
             (metadata_row < actual_recv_tokens)
             & (src_rank >= 0)
             & (src_rank < block.ep_world_size)
             & (src_token >= 0)
             & (src_token < runtime.num_max_tokens_per_rank)
-            & (expanded_slots >= 0)
-            & (expanded_slots < grad_flat.numel())
         )
-        valid_slots = expanded_slots[valid]
-        flat_dst = (
-            src_rank[valid] * runtime.num_max_tokens_per_rank + src_token[valid]
-        ) * runtime.num_topk + lane
-        flat_grad_by_src.scatter_add_(0, flat_dst, grad_flat.index_select(0, valid_slots))
+        valid_slots = (expanded_slots_by_lane >= 0) & (expanded_slots_by_lane < grad_flat_numel)
+        valid = valid_rows.unsqueeze(1) & valid_slots
+        safe_slots = expanded_slots_by_lane.clamp(0, grad_flat_numel - 1)
+        slot_grad = grad_flat.index_select(0, safe_slots.reshape(-1))
+        slot_grad = slot_grad * valid.reshape(-1).to(dtype=slot_grad.dtype)
+        flat_grad_by_src.scatter_add_(0, flat_dst.reshape(-1), slot_grad)
 
     # Every receiving rank owns a different subset of expanded rows. Sum those
     # per-source contributions so the original token owner can return a normal
