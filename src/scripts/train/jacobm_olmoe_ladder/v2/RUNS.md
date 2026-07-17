@@ -191,6 +191,8 @@ and data multiple.
 - Beaker experiment: [01KXMTAQPTG52EPEXMQN0Q1YJ7](https://beaker.org/ex/01KXMTAQPTG52EPEXMQN0Q1YJ7)
 - Unallocated Cx8 replacement:
   [01KXPEF6MWN4AKPH6CRJNZ1GWE](https://beaker.org/ex/01KXPEF6MWN4AKPH6CRJNZ1GWE)
+- Standalone allocated Cx4 post-maintenance continuation:
+  [01KXS08WEZXJNAXAP6C8N2MA9S](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXS08WEZXJNAXAP6C8N2MA9S?taskId=01KXS08WF65TBMV4ARYA1AMA1C&jobId=01KXS08WJHAFA1BQZPTNCBYAWY)
 
 Submitted 2026-07-16 at urgent priority on `ai2/holmes`. Both cells use the
 observed-best wide-integration LR `8e-4`, EP1, the canonical global batch, and
@@ -199,11 +201,18 @@ microbatch below the projected-over-capacity MB16 shape. Cx8 uses the already
 validated MB12 shape. The allocated Cx8 task never started and produced no
 checkpoint; it was canceled on 2026-07-16 and requeued with the same semantic
 run/checkpoint identity as urgent unallocated, auto-resuming work
-(`minRuntime: 0m`). The Cx4 task in the original experiment was left untouched.
+(`minRuntime: 0m`). The Cx4 task in the original experiment was initially left
+untouched.
+Maintenance later preempted Cx4. Resuming the paired work also duplicated the
+already-running Cx8 task, so both paired attempts were canceled and Cx4 alone
+was submitted in the standalone experiment above. It retains the same semantic
+run/checkpoint directory and will resume from durable `step29000`. At
+2026-07-17 21:40 UTC it is urgent and queued for four B300s; the workspace is
+using all 64 allocated slots.
 
 | Size | Cx | LR | Global batch | GPUs | EP | MB | Accum | Job | W&B | Status |
 |---|---:|---:|---:|---:|---:|---:|---:|---|---|---|
-| 480M | 4 | `8e-4` | 524,288 | 4 | 1 | 8 | 2 | [01KXMTAR1ZB3ERY8JQ0MH4681B](https://beaker.org/ex/01KXMTAR1ZB3ERY8JQ0MH4681B) | [ofpwvdl6](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/ofpwvdl6) | running, 12.32B / 31.885B tokens (38.6%) |
+| 480M | 4 | `8e-4` | 524,288 | 4 | 1 | 8 | 2 | [initial](https://beaker.org/ex/01KXMTAR1ZB3ERY8JQ0MH4681B) / [standalone continuation](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXS08WEZXJNAXAP6C8N2MA9S?taskId=01KXS08WF65TBMV4ARYA1AMA1C&jobId=01KXS08WJHAFA1BQZPTNCBYAWY) | [ofpwvdl6](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/ofpwvdl6) | queued from `step29000` |
 | 480M | 8 | `8e-4` | 786,432 | 8 | 1 | 12 | 1 | [allocated, canceled](https://beaker.org/ex/01KXMTAR5C5JX0ATP038ECKNWS) / [unallocated replacement](https://beaker.org/ex/01KXPEF7J9GMGAJ1ZJNXMKJ11R) | [3jbywbrh](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/3jbywbrh) | running, 21.53B / 63.770B tokens (33.8%) |
 
 ## 275M aligned-geometry GDN (`expand_v=2`)
