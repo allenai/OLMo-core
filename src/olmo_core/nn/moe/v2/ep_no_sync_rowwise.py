@@ -18,6 +18,7 @@ from .comm import (
     _RowwiseFP8DispatchExpertsCombineAutograd,
 )
 from .ep_no_sync_buffers import (
+    acquire_ep_no_sync_fp8_combine_gather_lease,
     acquire_ep_no_sync_fp8_dispatch_out_lease,
     acquire_ep_no_sync_rowwise_lifetime_leases,
     compute_ep_no_sync_rank_capacity,
@@ -276,27 +277,63 @@ def combined_forward_ep_no_sync_rowwise(
     combine_in_scales: Optional[torch.Tensor] = None
     if use_rowwise_fp8:
         assert rowwise_fp8_cfg is not None
-        fp8_buffers = get_cached_ep_no_sync_rowwise_fp8_buffers(
-            self,
+        use_fp8_symm_dispatch_in = use_ep_no_sync_rowwise_symm_dispatch_in(self)
+        use_fp8_symm_combine_gather = use_ep_no_sync_rowwise_symm_combine_gather(self)
+        fp8_lease_combine_gather = use_fp8_symm_combine_gather and lease_lifetime_buffers
+        rowwise_stage_debug_print(
+            "rowwise:fp8-get-buffers-enter",
+            block=self.block_idx,
             dispatch_out_cap=dispatch_out_cap,
             combine_in_cap=combine_in_cap,
+            use_symm_dispatch_in=use_fp8_symm_dispatch_in,
+            use_symm_combine_gather=use_fp8_symm_combine_gather,
+            lease_lifetime=lease_lifetime_buffers,
+        )
+        fp8_buffers = get_cached_ep_no_sync_rowwise_fp8_buffers(
+            self,
+            dispatch_in_cap=num_input_tokens,
+            dispatch_out_cap=dispatch_out_cap,
+            combine_in_cap=combine_in_cap,
+            combine_gather_cap=num_input_tokens,
+            combine_gather_top_k=top_k,
             d_model=moe_inp.shape[1],
             block_size=rowwise_fp8_cfg.block_size,
             device=moe_inp.device,
+            need_dispatch_in=use_fp8_symm_dispatch_in,
             need_dispatch_out=not lease_lifetime_buffers,
+            need_combine_gather=not fp8_lease_combine_gather,
+        )
+        rowwise_stage_debug_print(
+            "rowwise:fp8-get-buffers-cache",
+            block=self.block_idx,
+            cached=fp8_buffers is not None,
         )
         if fp8_buffers is None:
             fp8_buffers = get_ep_no_sync_rowwise_fp8_buffers(
                 self,
+                dispatch_in_cap=num_input_tokens,
                 dispatch_out_cap=dispatch_out_cap,
                 combine_in_cap=combine_in_cap,
+                combine_gather_cap=num_input_tokens,
+                combine_gather_top_k=top_k,
                 d_model=moe_inp.shape[1],
                 block_size=rowwise_fp8_cfg.block_size,
                 device=moe_inp.device,
                 lease_dispatch_out=False,
+                lease_combine_gather=False,
+                need_dispatch_in=use_fp8_symm_dispatch_in,
                 need_dispatch_out=not lease_lifetime_buffers,
+                need_combine_gather=not fp8_lease_combine_gather,
             )
+        rowwise_stage_debug_print(
+            "rowwise:fp8-get-buffers-exit",
+            block=self.block_idx,
+        )
         if lease_lifetime_buffers:
+            rowwise_stage_debug_print(
+                "rowwise:fp8-dispatch-out-lease-enter",
+                block=self.block_idx,
+            )
             dispatch_out_lease = acquire_ep_no_sync_fp8_dispatch_out_lease(
                 self,
                 dispatch_out_cap=dispatch_out_cap,
@@ -310,6 +347,33 @@ def combined_forward_ep_no_sync_rowwise(
                 dispatch_out_scales=dispatch_out_lease.tensor("dispatch_out_scales"),
                 dispatch_out_lease=dispatch_out_lease,
             )
+            rowwise_stage_debug_print(
+                "rowwise:fp8-dispatch-out-lease-exit",
+                block=self.block_idx,
+            )
+            if fp8_lease_combine_gather:
+                rowwise_stage_debug_print(
+                    "rowwise:fp8-combine-gather-lease-enter",
+                    block=self.block_idx,
+                )
+                combine_gather_lease = acquire_ep_no_sync_fp8_combine_gather_lease(
+                    self,
+                    combine_gather_cap=num_input_tokens,
+                    combine_gather_top_k=top_k,
+                    d_model=moe_inp.shape[1],
+                    block_size=rowwise_fp8_cfg.block_size,
+                    device=moe_inp.device,
+                )
+                fp8_buffers = replace(
+                    fp8_buffers,
+                    combine_gather_q=combine_gather_lease.tensor("combine_gather_q"),
+                    combine_gather_scales=combine_gather_lease.tensor("combine_gather_scales"),
+                    combine_gather_lease=combine_gather_lease,
+                )
+                rowwise_stage_debug_print(
+                    "rowwise:fp8-combine-gather-lease-exit",
+                    block=self.block_idx,
+                )
         dispatch_out_q = fp8_buffers.dispatch_out_q
         dispatch_out_scales = fp8_buffers.dispatch_out_scales
         combine_in_q = fp8_buffers.combine_in_q
@@ -509,6 +573,12 @@ def combined_forward_ep_no_sync_rowwise(
         assert dispatch_out_scales is not None
         assert combine_in_q is not None
         assert combine_in_scales is not None
+        dispatch_in_q = fp8_buffers.dispatch_in_q if use_fp8_symm_dispatch_in else None  # type: ignore[union-attr]
+        dispatch_in_scales = fp8_buffers.dispatch_in_scales if use_fp8_symm_dispatch_in else None  # type: ignore[union-attr]
+        combine_gather_q = fp8_buffers.combine_gather_q if use_fp8_symm_combine_gather else None  # type: ignore[union-attr]
+        combine_gather_scales = (
+            fp8_buffers.combine_gather_scales if use_fp8_symm_combine_gather else None  # type: ignore[union-attr]
+        )
         routed_experts = self.routed_experts
         routed_fp8_cfg = routed_experts.rowwise_fp8
         if routed_fp8_cfg is None or not routed_fp8_cfg.enabled:
@@ -552,6 +622,11 @@ def combined_forward_ep_no_sync_rowwise(
             down_prequant,
             down_prequant_t,
             fp8_buffers.dispatch_out_lease,  # type: ignore[union-attr]
+            fp8_buffers.combine_gather_lease,  # type: ignore[union-attr]
+            dispatch_in_q,
+            dispatch_in_scales,
+            combine_gather_q,
+            combine_gather_scales,
             rowwise_fp8_cfg.block_size,
             rowwise_fp8_cfg.use_fast_accum,
             rowwise_fp8_cfg.fused_autograd_recompute_swiglu,
@@ -569,6 +644,12 @@ def combined_forward_ep_no_sync_rowwise(
         assert rowwise_fp8_cfg is not None
         assert dispatch_out_q is not None
         assert dispatch_out_scales is not None
+        dispatch_in_q = fp8_buffers.dispatch_in_q if use_fp8_symm_dispatch_in else None  # type: ignore[union-attr]
+        dispatch_in_scales = fp8_buffers.dispatch_in_scales if use_fp8_symm_dispatch_in else None  # type: ignore[union-attr]
+        combine_gather_q = fp8_buffers.combine_gather_q if use_fp8_symm_combine_gather else None  # type: ignore[union-attr]
+        combine_gather_scales = (
+            fp8_buffers.combine_gather_scales if use_fp8_symm_combine_gather else None  # type: ignore[union-attr]
+        )
         dispatch_rank_major = _DispatchRowwiseFP8Autograd.apply(
             moe_inp,
             dst_ranks,
@@ -576,6 +657,11 @@ def combined_forward_ep_no_sync_rowwise(
             dispatch_out_q,
             dispatch_out_scales,
             fp8_buffers.dispatch_out_lease,  # type: ignore[union-attr]
+            dispatch_in_q,
+            dispatch_in_scales,
+            combine_gather_q,
+            combine_gather_scales,
+            fp8_buffers.combine_gather_lease,  # type: ignore[union-attr]
             rowwise_fp8_cfg.block_size,
             group_name,
             self.ep_pg,
@@ -639,6 +725,10 @@ def combined_forward_ep_no_sync_rowwise(
         assert rowwise_fp8_cfg is not None
         assert combine_in_q is not None
         assert combine_in_scales is not None
+        combine_gather_q = fp8_buffers.combine_gather_q if use_fp8_symm_combine_gather else None  # type: ignore[union-attr]
+        combine_gather_scales = (
+            fp8_buffers.combine_gather_scales if use_fp8_symm_combine_gather else None  # type: ignore[union-attr]
+        )
         local_x = _RowwiseCombineWeightedFP8Autograd.apply(
             dispatch_rank_major,
             dst_ranks,
@@ -646,6 +736,8 @@ def combined_forward_ep_no_sync_rowwise(
             route_probs,
             combine_in_q,
             combine_in_scales,
+            combine_gather_q,
+            combine_gather_scales,
             rowwise_fp8_cfg.block_size,
             group_name,
             self.ep_pg,

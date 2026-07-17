@@ -264,8 +264,8 @@ def test_rowwise_dispatch_put_scaled_applies_outer_barriers_once(monkeypatch):
     qdata = torch.empty((1, 512), dtype=torch.float32)
     scales = torch.empty((1, 16), dtype=torch.float32)
 
-    def _fake_quantize(input_hp, *, block_size=32):
-        del input_hp, block_size
+    def _fake_quantize(input_hp, *, block_size=32, out=None, scales_out=None):
+        del input_hp, block_size, out, scales_out
         return qdata, scales
 
     calls = []
