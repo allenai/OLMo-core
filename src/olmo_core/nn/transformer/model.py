@@ -1,4 +1,5 @@
 import logging
+import os
 from collections import defaultdict
 from functools import cached_property
 from typing import (
@@ -14,6 +15,7 @@ from typing import (
     cast,
 )
 
+import nvtx
 import torch
 import torch.nn as nn
 from torch.distributed import DeviceMesh
@@ -77,6 +79,42 @@ __all__ = [
 
 
 log = logging.getLogger(__name__)
+
+
+def _nvtx_enabled() -> bool:
+    return os.environ.get("NVTX_DISABLE", "0").strip().lower() not in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
+class _BeginBackwardNVTX(torch.autograd.Function):
+    """Open a backward NVTX range after the downstream gradient is ready."""
+
+    @staticmethod
+    def forward(ctx, x: torch.Tensor, message: str) -> torch.Tensor:
+        ctx.message = message
+        return x
+
+    @staticmethod
+    def backward(ctx, grad: torch.Tensor):
+        nvtx.push_range(ctx.message, color="red")
+        return grad, None
+
+
+class _EndBackwardNVTX(torch.autograd.Function):
+    """Close a backward NVTX range after the block gradient is computed."""
+
+    @staticmethod
+    def forward(ctx, x: torch.Tensor) -> torch.Tensor:
+        return x
+
+    @staticmethod
+    def backward(ctx, grad: torch.Tensor):
+        nvtx.pop_range()
+        return grad
 
 
 class Transformer(nn.Module):
@@ -598,7 +636,14 @@ class Transformer(nn.Module):
             # Mark sizes as dynamic for torch.compile().
             if self.compile_enabled:
                 mark_dynamic(h, (0, 1), strict=False)
-            h = block(h, **all_block_kwargs, **block_kwargs)
+            if _nvtx_enabled() and torch.is_grad_enabled():
+                # Backward executes these identity nodes in reverse order,
+                # bracketing the complete block backward, including FSDP work.
+                h = _EndBackwardNVTX.apply(h)
+            with nvtx.annotate(f"fwd_block_{block_idx}", color="blue"):
+                h = block(h, **all_block_kwargs, **block_kwargs)
+            if _nvtx_enabled() and torch.is_grad_enabled():
+                h = _BeginBackwardNVTX.apply(h, f"bwd_block_{block_idx}")
 
         # Get final logits but again pass-through in case of pipeline parallelism.
         if self.lm_head is not None:

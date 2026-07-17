@@ -4,6 +4,7 @@ from dataclasses import replace
 from functools import cached_property, lru_cache
 from typing import Any, Dict, Generator, Literal, Optional, Tuple, Union
 
+import nvtx
 import torch
 import torch.distributed as dist
 import torch.distributed.checkpoint.state_dict as dist_cp_sd
@@ -342,6 +343,7 @@ class TransformerTrainModule(TrainModule):
             )
             gc_cuda()
 
+    @nvtx.annotate("train_batch")
     def train_batch(self, batch: Dict[str, Any], dry_run: bool = False):
         # Set model to train mode if it isn't already.
         self._set_model_mode("train")
@@ -396,30 +398,32 @@ class TransformerTrainModule(TrainModule):
         # Train one micro-batch at a time.
         for micro_batch_idx, micro_batch in enumerate(micro_batches):
             with self._train_microbatch_context(micro_batch_idx, num_micro_batches):
-                input_ids, labels, model_kwargs = self._prepare_batch(micro_batch)
+                with nvtx.annotate(f"fwd_mb{micro_batch_idx}", color="blue"):
+                    input_ids, labels, model_kwargs = self._prepare_batch(micro_batch)
 
-                # Run forward pass, get losses.
-                _, loss, ce_loss, z_loss = self.model_forward(
-                    input_ids,
-                    labels=labels,
-                    ignore_index=self.label_ignore_index,
-                    loss_reduction="sum",
-                    z_loss_multiplier=self.z_loss_multiplier,
-                    loss_div_factor=batch_num_tokens_for_loss,
-                    return_logits=False,
-                    **model_kwargs,
-                )
+                    # Run forward pass, get losses.
+                    _, loss, ce_loss, z_loss = self.model_forward(
+                        input_ids,
+                        labels=labels,
+                        ignore_index=self.label_ignore_index,
+                        loss_reduction="sum",
+                        z_loss_multiplier=self.z_loss_multiplier,
+                        loss_div_factor=batch_num_tokens_for_loss,
+                        return_logits=False,
+                        **model_kwargs,
+                    )
 
-                # Update total batch CE and Z loss.
-                ce_batch_loss += get_local_tensor(ce_loss.detach())
-                del ce_loss
-                if z_batch_loss is not None:
-                    assert z_loss is not None
-                    z_batch_loss += get_local_tensor(z_loss.detach())
-                    del z_loss
+                    # Update total batch CE and Z loss.
+                    ce_batch_loss += get_local_tensor(ce_loss.detach())
+                    del ce_loss
+                    if z_batch_loss is not None:
+                        assert z_loss is not None
+                        z_batch_loss += get_local_tensor(z_loss.detach())
+                        del z_loss
 
                 # Run backward pass.
-                loss.backward()
+                with nvtx.annotate(f"bwd_mb{micro_batch_idx}", color="red"):
+                    loss.backward()
 
         del batch  # In case this helps with memory utilization.
 
