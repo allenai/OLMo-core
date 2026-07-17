@@ -1,6 +1,6 @@
 # Midtraining Validation Results
 
-Generated: 2026-07-16 16:11 UTC
+Generated: 2026-07-17 02:36 UTC
 
 Interpretation: lower is better for CE loss, PPL, Z loss, router Z loss, and load-balancing loss; higher is better for MFU/TPS. Accuracy-style validation metrics are higher-is-better when present.
 

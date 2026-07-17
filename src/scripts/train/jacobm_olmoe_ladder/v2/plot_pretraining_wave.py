@@ -53,6 +53,7 @@ class RegisteredRun:
     cx: int
     lr: float
     run_id: str
+    predecessor_run_ids: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -93,6 +94,9 @@ class Point:
     run_id: str
     name: str
     url: str
+    segment_run_ids: tuple[str, ...]
+    token_resets: int
+    deduplicated_samples: int
 
 
 class IncompleteTailWindowError(RuntimeError):
@@ -126,6 +130,8 @@ WIDE_INTEGRATION = Variant(
         RegisteredRun("275m", 8, 3.2e-3, "235ye5lg"),
         RegisteredRun("480m", 1, 1.2e-3, "z4wxvc6h"),
         RegisteredRun("480m", 2, 9e-4, "ywj13bkw"),
+        RegisteredRun("480m", 4, 8e-4, "rblv9hpr"),
+        RegisteredRun("480m", 8, 8e-4, "vdcrgfy0"),
         RegisteredRun("810m", 1, 6e-4, "w912irkq"),
         RegisteredRun("810m", 2, 5.6e-4, "jpbqhfvc"),
         RegisteredRun("810m", 4, 4e-4, "58ftjxmw"),
@@ -160,6 +166,8 @@ HYBRID_GDN_EV1 = Variant(
         RegisteredRun("275m", 8, 3.2e-3, "ntoo8vlo"),
         RegisteredRun("480m", 1, 1.2e-3, "wl8ebsd8"),
         RegisteredRun("480m", 2, 9e-4, "4vzmrld1"),
+        RegisteredRun("480m", 4, 8e-4, "ofpwvdl6"),
+        RegisteredRun("480m", 8, 8e-4, "3jbywbrh"),
         RegisteredRun("810m", 1, 6e-4, "h1rmcm2p"),
         RegisteredRun("810m", 2, 5.6e-4, "1d5gxgjv"),
         RegisteredRun("810m", 4, 4e-4, "bvlzu2c9"),
@@ -188,8 +196,8 @@ GEOMETRY_GDN_EV2 = Variant(
         RegisteredRun("275m", 4, 8e-4, "gwve4pn6"),
         RegisteredRun("275m", 4, 1.6e-3, "hwjvw532"),
         RegisteredRun("275m", 4, 3.2e-3, "hmjkig0r"),
-        RegisteredRun("275m", 8, 4e-4, "7mlzc5x4"),
-        RegisteredRun("275m", 8, 8e-4, "wo8raj1p"),
+        RegisteredRun("275m", 8, 4e-4, "9k8mo2q5", ("7mlzc5x4",)),
+        RegisteredRun("275m", 8, 8e-4, "xdo7p86h", ("wo8raj1p",)),
         RegisteredRun("275m", 8, 1.6e-3, "0x3i869n"),
         RegisteredRun("275m", 8, 3.2e-3, "aholwcgr"),
     ),
@@ -252,9 +260,9 @@ def all_variants(wave: Wave) -> tuple[Variant, ...]:
 
 def _mean_tail_loss(
     history: list[dict[str, Any]], window_tokens: int
-) -> tuple[float, float] | None:
-    samples: list[tuple[float, float]] = []
-    for row in history:
+) -> tuple[float, float, int, int] | None:
+    chronological: list[tuple[int, float, int, float, float]] = []
+    for index, row in enumerate(history):
         tokens = row.get(TOKENS_KEY)
         loss = row.get(LOSS_KEY)
         if tokens is None or loss is None:
@@ -262,11 +270,29 @@ def _mean_tail_loss(
         tokens = float(tokens)
         loss = float(loss)
         if math.isfinite(tokens) and math.isfinite(loss):
-            samples.append((tokens, loss))
-    if not samples:
+            step = row.get("_step")
+            chronological.append(
+                (
+                    int(row.get("_segment", 0)),
+                    float(step) if step is not None else float(index),
+                    index,
+                    tokens,
+                    loss,
+                )
+            )
+    if not chronological:
         return None
 
-    samples.sort()
+    chronological.sort(key=lambda sample: (sample[0], sample[1], sample[2]))
+    token_resets = sum(
+        current[3] < previous[3]
+        for previous, current in zip(chronological, chronological[1:], strict=False)
+    )
+    latest_loss_by_tokens: dict[float, float] = {}
+    for _, _, _, tokens, loss in chronological:
+        latest_loss_by_tokens[tokens] = loss
+    deduplicated_samples = len(chronological) - len(latest_loss_by_tokens)
+    samples = sorted(latest_loss_by_tokens.items())
     end_tokens = samples[-1][0]
     available_tokens = end_tokens - samples[0][0]
     if available_tokens < window_tokens:
@@ -277,7 +303,7 @@ def _mean_tail_loss(
     losses = [loss for tokens, loss in samples if tokens >= end_tokens - window_tokens]
     if not losses:
         return None
-    return statistics.mean(losses), end_tokens / 1e9
+    return statistics.mean(losses), end_tokens / 1e9, token_resets, deduplicated_samples
 
 
 def _load_tail_history(
@@ -289,7 +315,7 @@ def _load_tail_history(
     refresh_cache: bool,
     refresh_stale_cache: bool,
 ) -> list[dict[str, Any]]:
-    if run.state == "finished":
+    if run.state != "running":
         return scan_history_cached(
             run,
             project=project,
@@ -363,18 +389,23 @@ def load_points(
         for registered in variant.runs:
             if registered.model not in wave.models:
                 continue
-            run = api.run(f"{project}/{registered.run_id}")
+            segment_run_ids = (*registered.predecessor_run_ids, registered.run_id)
+            segment_runs = [api.run(f"{project}/{run_id}") for run_id in segment_run_ids]
+            run = segment_runs[-1]
             if run.state not in allowed_states:
                 print(f"skip {registered.run_id}: state={run.state}")
                 continue
-            history = _load_tail_history(
-                run,
-                project=project,
-                cache_dir=cache_dir,
-                window_tokens=window_tokens,
-                refresh_cache=refresh_cache,
-                refresh_stale_cache=refresh_stale_cache,
-            )
+            history: list[dict[str, Any]] = []
+            for segment, segment_run in enumerate(segment_runs):
+                segment_history = _load_tail_history(
+                    segment_run,
+                    project=project,
+                    cache_dir=cache_dir,
+                    window_tokens=window_tokens,
+                    refresh_cache=refresh_cache,
+                    refresh_stale_cache=refresh_stale_cache,
+                )
+                history.extend({**row, "_segment": segment} for row in segment_history)
             try:
                 loss_info = _mean_tail_loss(history, window_tokens)
             except IncompleteTailWindowError as exc:
@@ -386,7 +417,7 @@ def load_points(
             if loss_info is None:
                 print(f"skip {registered.run_id}: no usable {LOSS_KEY} history")
                 continue
-            loss, tokens_b = loss_info
+            loss, tokens_b, token_resets, deduplicated_samples = loss_info
             points.append(
                 Point(
                     model=registered.model,
@@ -401,6 +432,9 @@ def load_points(
                     run_id=registered.run_id,
                     name=run.display_name or run.name,
                     url=run.url,
+                    segment_run_ids=segment_run_ids,
+                    token_resets=token_resets,
+                    deduplicated_samples=deduplicated_samples,
                 )
             )
             print(
@@ -408,6 +442,13 @@ def load_points(
                 f"Cx{registered.cx} {registered.lr:.2g} "
                 f"{run.state:>8} avg{window_m}M={loss:.6f} tokens={tokens_b:.3f}B"
             )
+            if len(segment_run_ids) > 1:
+                print(f"  combined W&B segments: {', '.join(segment_run_ids)}")
+            if token_resets or deduplicated_samples:
+                print(
+                    f"  replay handling: token_resets={token_resets}, "
+                    f"deduplicated_samples={deduplicated_samples} (latest observation kept)"
+                )
     if incomplete_tails:
         details = "\n  - ".join(incomplete_tails)
         raise RuntimeError(
@@ -810,14 +851,25 @@ def write_results(
             "",
             "## Runs",
             "",
-            "| Model | Variant | Cx | LR | State | Tokens (B) | Final-window CE | W&B |",
-            "|---|---|---:|---:|---|---:|---:|---|",
+            "| Model | Variant | Cx | LR | State | Tokens (B) | Final-window CE | Replay handling | W&B |",
+            "|---|---|---:|---:|---|---:|---:|---|---|",
         ]
     )
     for point in points:
+        wandb_base_url = point.url.rsplit("/runs/", 1)[0]
+        wandb_links = " / ".join(
+            f"[{run_id}]({wandb_base_url}/runs/{run_id})" for run_id in point.segment_run_ids
+        )
+        replay = "—"
+        if point.token_resets or point.deduplicated_samples:
+            replay = (
+                f"{point.token_resets} reset(s); "
+                f"{point.deduplicated_samples} duplicate token sample(s) removed"
+            )
         lines.append(
             f"| {point.model} | {point.variant_label} | {point.cx} | {point.lr:.2g} | {point.state} | "
-            f"{point.tokens_b:.3f} | {point.loss:.6f} | [{point.run_id}]({point.url}) |"
+            f"{point.tokens_b:.3f} | {point.loss:.6f} | {replay} | "
+            f"{wandb_links} |"
         )
     md_path.write_text("\n".join(lines) + "\n")
     return json_path, md_path

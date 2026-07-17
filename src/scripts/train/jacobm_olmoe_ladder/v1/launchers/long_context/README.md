@@ -1,7 +1,7 @@
 # Long-context launchers
 
-`launch_scale_smokes.py` validates and renders the 810M/1.2B integration-wide
-64k smoke matrix. It is a dry run unless both `--submit` and an explicit
+`launch_scale_smokes.py` validates and renders the 810M/1.2B 64k smoke and
+production manifests. It is a dry run unless both `--submit` and an explicit
 `--experiment-name` are supplied.
 
 ```bash
@@ -62,3 +62,13 @@ schedule. Do not change the schedule within this wave.
 The launcher refuses an existing run directory by default. Use
 `--allow-existing` only when deliberately requeueing an interrupted run; the
 trainer will then resume from the latest checkpoint in that directory.
+
+## Full baseline continuations
+
+The matching 810M and 1.2B baseline continuations are defined in
+`manifests/baseline_scale_full.yaml`. They reuse the proven integration-wide
+production shapes because the model sizes and MoE topology match: 8 Holmes
+B300s, EP1, a 4 Mi-token global batch, rank MB4/accum2 for 810M and rank
+MB2/accum4 for 1.2B. Both source midtraining checkpoints used LR `4e-5`, so the
+50%-of-MT long-context rule gives LC LR `2e-5`. Training-process evaluators are
+disabled and final validation/RULER remain separate jobs.

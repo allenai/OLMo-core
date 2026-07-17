@@ -11,9 +11,7 @@ from pathlib import Path
 
 
 REPO = Path("/weka/oe-adapt-default/jacobm/olmoe3/olmo-ddp-migration/OLMo-core")
-DDP_ROOT = Path(
-    "/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/olmo-ddp"
-)
+DDP_ROOT = Path("/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/olmo-ddp")
 
 WORKSPACE = "ai2/OLMo-3-moe-experiments"
 BUDGET = "ai2/oe-other"
@@ -68,8 +66,18 @@ MODELS = {
             23_842,
         ),
         Model(
+            "810m-baseline",
+            "lc-810m-baseline-cx8-mt4e-5-lc2e-5-64k-r1",
+            23_842,
+        ),
+        Model(
             "1p2b-integration-wide",
             "lc-1p2b-integration-wide-cx8-mt4e-5-lc2e-5-64k-r1",
+            23_842,
+        ),
+        Model(
+            "1p2b-baseline",
+            "lc-1p2b-baseline-cx8-mt4e-5-lc2e-5-64k-r1",
             23_842,
         ),
     )

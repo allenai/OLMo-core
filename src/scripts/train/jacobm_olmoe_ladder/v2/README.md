@@ -55,9 +55,11 @@ but running points never enter formal selection.
 
 The canonical window is fixed at 250M tokens. Regeneration verifies that each
 W&B history actually spans that complete interval and fails loudly rather than
-publishing a partial tail. If a W&B reset leaves the final run segment shorter
-than 250M tokens, register and combine its predecessor segment(s) before
-regenerating the formal artifacts.
+publishing a partial tail. A same-run checkpoint replay is detected from the
+token counter, de-duplicated by token position with the latest observation
+retained, and surfaced in the result table. If a reset creates a separate final
+run segment shorter than 250M tokens, list the earlier W&B IDs in that point's
+`predecessor_run_ids` and combine them before regenerating the formal artifacts.
 
 ## Result Contract
 
@@ -67,6 +69,9 @@ regenerating the formal artifacts.
   training-loss comparison.
 - Long context: load post-training validation and external RULER results, but
   do not build a training-loss comparison.
+- Separate v2 validation runs are collected with
+  `collect_validation_results.py`; its Markdown file tracks coverage and its
+  JSON file retains every exported `eval/*` metric.
 - Run external RULER through converted HF checkpoints and vLLM on Jupiter. The
   current `olmo-eval` OLMo-core provider does not load OLMo-DDP checkpoints
   whose state keys use the `module.*.main` layout.

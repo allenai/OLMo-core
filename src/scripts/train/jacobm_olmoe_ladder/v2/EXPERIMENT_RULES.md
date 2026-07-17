@@ -99,8 +99,10 @@ global_tokens = sequence_length * world_size * rank_microbatch_sequences * accum
    substituted into the summary as if it were trained.
 6. Use the final-250M-token mean training CE as the primary pretraining metric.
    The formal plotter must verify that the registered W&B history spans the
-   complete 250M-token interval; never publish a partial final-window mean. If
-   a W&B reset or resume creates a shorter final segment, stop regeneration and
+   complete 250M-token interval; never publish a partial final-window mean.
+   De-duplicate replayed positions within one resumed W&B run by token count,
+   keep the latest observation, and record that handling in the result table.
+   If a reset creates a separate shorter final segment, stop regeneration and
    combine the predecessor run history before plotting. Check wider/narrower
    windows separately when differences are small or noisy.
 

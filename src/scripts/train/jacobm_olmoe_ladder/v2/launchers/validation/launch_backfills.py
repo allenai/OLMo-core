@@ -28,10 +28,14 @@ class NoAliasDumper(yaml.SafeDumper):
 class Target:
     source_run: str
     checkpoint: Path
+    model_size: str
     variant: str
     cx: int
     lr: str
     global_batch_size: int
+    expert_parallel_size: int
+    expert_parallel_path: str
+    rank_microbatch_sequences: int
 
     @property
     def eval_run(self) -> str:
@@ -53,21 +57,35 @@ def load_manifest(path: Path) -> dict[str, Any]:
     return manifest
 
 
-def parse_targets(manifest: dict[str, Any]) -> list[Target]:
+def parse_targets(manifest: dict[str, Any], source_runs: set[str] | None = None) -> list[Target]:
     checkpoint_root = Path(str(manifest["experiment"]["checkpoint_root"]))
     batch_sizes = {int(k): int(v) for k, v in manifest["evaluation"]["batch_sizes"].items()}
+    available = {str(raw["source_run"]) for raw in manifest["targets"]}
+    if source_runs and (missing := source_runs - available):
+        raise ValueError(f"Unknown source runs: {sorted(missing)}")
     targets: list[Target] = []
     for raw in manifest["targets"]:
         source_run = str(raw["source_run"])
+        if source_runs and source_run not in source_runs:
+            continue
         checkpoint = checkpoint_root / source_run / str(raw["step"])
         cx = int(raw["cx"])
         target = Target(
             source_run=source_run,
             checkpoint=checkpoint,
+            model_size=str(raw.get("model_size", "275m")),
             variant=str(raw["variant"]),
             cx=cx,
             lr=str(raw["lr"]),
             global_batch_size=batch_sizes[cx],
+            expert_parallel_size=int(raw.get("expert_parallel_size", 1)),
+            expert_parallel_path=str(raw.get("expert_parallel_path", "sync_1d")),
+            rank_microbatch_sequences=int(
+                raw.get(
+                    "rank_microbatch_sequences",
+                    manifest["evaluation"]["rank_microbatch_sequences"],
+                )
+            ),
         )
         if target.variant not in {"integration_wide_gdn_ev1", "geometry_275m_gdn_ev2"}:
             raise ValueError(f"Unknown model variant for {source_run}: {target.variant}")
@@ -101,7 +119,7 @@ def build_task(manifest: dict[str, Any], target: Target, *, source_repo: Path) -
     env_vars.extend(
         [
             env_value("OLMOE3_HYBRID_RUN_NAME", target.eval_run),
-            env_value("OLMOE3_HYBRID_MODEL_SIZE", "275m"),
+            env_value("OLMOE3_HYBRID_MODEL_SIZE", target.model_size),
             env_value("OLMOE3_HYBRID_MODEL_VARIANT", target.variant),
             env_value("OLMOE3_HYBRID_SUBCOMMAND", "eval_checkpoints"),
             env_value("OLMOE3_HYBRID_EVAL_CHECKPOINT", target.checkpoint),
@@ -117,10 +135,11 @@ def build_task(manifest: dict[str, Any], target: Target, *, source_repo: Path) -
             env_value("OLMOE3_HYBRID_GLOBAL_BATCH_SIZE", target.global_batch_size),
             env_value("OLMOE3_HYBRID_SEQUENCE_LENGTH", evaluation["sequence_length"]),
             env_value("OLMOE3_HYBRID_WORLD_SIZE", beaker["gpu_count"]),
-            env_value("OLMOE3_HYBRID_EP_SIZE", "1"),
+            env_value("OLMOE3_HYBRID_EP_SIZE", target.expert_parallel_size),
+            env_value("OLMOE3_HYBRID_EP_PATH", target.expert_parallel_path),
             env_value(
                 "OLMOE3_HYBRID_RANK_MICROBATCH_SEQUENCES",
-                evaluation["rank_microbatch_sequences"],
+                target.rank_microbatch_sequences,
             ),
         ]
     )
@@ -164,13 +183,7 @@ def main() -> None:
 
     manifest_path = args.manifest.resolve()
     manifest = load_manifest(manifest_path)
-    targets = parse_targets(manifest)
-    if args.source_run:
-        wanted = set(args.source_run)
-        targets = [target for target in targets if target.source_run in wanted]
-        missing = wanted - {target.source_run for target in targets}
-        if missing:
-            raise ValueError(f"Unknown source runs: {sorted(missing)}")
+    targets = parse_targets(manifest, set(args.source_run) or None)
     source_repo = Path(os.environ.get("SOURCE_REPO", str(manifest["source"]["repo"]))).resolve()
     if not source_repo.is_dir():
         raise ValueError(f"Missing source repo: {source_repo}")
@@ -187,7 +200,10 @@ def main() -> None:
 
     print("source run | variant | Cx | final checkpoint")
     for target in targets:
-        print(f"{target.source_run} | {target.variant} | {target.cx} | {target.checkpoint.name}")
+        print(
+            f"{target.source_run} | {target.model_size} | {target.variant} | "
+            f"{target.cx} | EP{target.expert_parallel_size} | {target.checkpoint.name}"
+        )
     gpu_count = int(manifest["beaker"]["gpu_count"])
     print(f"\n{len(targets)} tasks, {gpu_count} GPUs/task, {len(targets) * gpu_count} GPUs total")
     print(f"Rendered: {output}")
