@@ -287,3 +287,116 @@ def test_gate_couples_gradient_across_group():
     )  # q_gate == q -> no cross-head path
     assert grouped_coupling > 1e-4, grouped_coupling  # shared gate couples heads 0 and 1
     assert perhead_coupling < 1e-12, perhead_coupling  # per-head gate: head 1 independent of head 0
+
+
+# ---------------------------------------------------------------------------
+# GPU: fused grouped kernel vs the eager grouped path (forward + backward parity)
+# ---------------------------------------------------------------------------
+
+import pytest  # noqa: E402
+
+from olmo_core.nn.attention.landmark_kernel import has_landmark_kernel  # noqa: E402
+from olmo_core.testing import requires_gpu  # noqa: E402
+
+
+def _group_mean_query(q, n_kv_heads):
+    B, H, T, D = q.shape
+    n_rep = H // n_kv_heads
+    if n_rep == 1:
+        return q
+    g = q.view(B, n_kv_heads, n_rep, T, D)
+    return g.mean(dim=2, keepdim=True).expand(B, n_kv_heads, n_rep, T, D).reshape(B, H, T, D)
+
+
+def _eager_grouped_out(q, q_gate, k, v, block_size, scale):
+    """Eager grouped-gate compressive output (B,H,T,D) -- the parity reference for the fused kernel."""
+    B, H, T, _ = q.shape
+    attn_mask, is_mem, lsm = build_landmark_masks(T, block_size, q.device, q.dtype)
+    x = torch.matmul(q, k.transpose(-1, -2)) * scale + attn_mask
+    x = torch.maximum(x, torch.tensor(torch.finfo(x.dtype).min, device=x.device, dtype=x.dtype))
+    x_gate = torch.matmul(q_gate, k.transpose(-1, -2)) * scale + attn_mask
+    is_mem_col = ((torch.arange(T, device=q.device) % block_size) == (block_size - 1)).view(
+        1, 1, 1, T
+    )
+    gate_logits = torch.where(is_mem_col, x_gate, x)
+    probs = compressive_landmark_grouped_softmax(
+        x,
+        dim=-1,
+        is_mem=is_mem.expand(B, H, T, T),
+        last_section_mask=lsm.expand(B, 1, T, T),
+        gate_logits=gate_logits,
+    ).to(q.dtype)
+    return torch.matmul(probs, v)
+
+
+@requires_gpu
+@pytest.mark.skipif(not has_landmark_kernel(), reason="requires triton landmark kernel")
+@pytest.mark.parametrize("n_heads, n_kv_heads", [(8, 2), (4, 4)])  # GQA (n_rep=4) and MHA (n_rep=1)
+@pytest.mark.parametrize("head_dim, mem_freq", [(64, 15), (128, 63)])
+def test_fused_grouped_matches_eager_fwd_bwd(n_heads, n_kv_heads, head_dim, mem_freq):
+    from olmo_core.nn.attention.landmark_compressive_gqa_kernel import (
+        fused_compressive_gqa_grouped_attention,
+    )
+
+    torch.manual_seed(0)
+    block_size = mem_freq + 1
+    B, T = 2, block_size * 4
+    scale = head_dim**-0.5
+    is_mem = (torch.arange(T, device="cuda") % block_size) == (block_size - 1)
+
+    def mk():
+        g = torch.randn(B, n_heads, T, head_dim, device="cuda", dtype=torch.float32) * 0.5
+        return g.clone().requires_grad_(True)
+
+    q_e, k_e, v_e = mk(), mk(), mk()
+    q_f = q_e.detach().clone().requires_grad_(True)
+    k_f = k_e.detach().clone().requires_grad_(True)
+    v_f = v_e.detach().clone().requires_grad_(True)
+
+    out_e = _eager_grouped_out(q_e, _group_mean_query(q_e, n_kv_heads), k_e, v_e, block_size, scale)
+    out_f = fused_compressive_gqa_grouped_attention(
+        q_f,
+        _group_mean_query(q_f, n_kv_heads),
+        k_f,
+        v_f,
+        is_mem,
+        sm_scale=scale,
+        block_size=block_size,
+    )
+    torch.testing.assert_close(out_f, out_e, rtol=2e-3, atol=2e-3)
+
+    g = torch.randn_like(out_e)
+    out_e.backward(g)
+    out_f.backward(g)
+    # q.grad includes the gate gradient distributed back through group_mean -> validates dq_gate too.
+    torch.testing.assert_close(q_f.grad, q_e.grad, rtol=3e-3, atol=3e-3)
+    torch.testing.assert_close(k_f.grad, k_e.grad, rtol=3e-3, atol=3e-3)
+    torch.testing.assert_close(v_f.grad, v_e.grad, rtol=3e-3, atol=3e-3)
+
+
+@requires_gpu
+@pytest.mark.skipif(not has_landmark_kernel(), reason="requires triton landmark kernel")
+def test_fused_grouped_mha_matches_plain_compressive_kernel():
+    # n_rep == 1: q_gate == q, so the grouped kernel must equal the plain compressive kernel exactly.
+    from olmo_core.nn.attention.landmark_compressive import fused_compressive_landmark_attention
+    from olmo_core.nn.attention.landmark_compressive_gqa_kernel import (
+        fused_compressive_gqa_grouped_attention,
+    )
+
+    torch.manual_seed(1)
+    head_dim, mem_freq = 64, 15
+    block_size = mem_freq + 1
+    B, H, T = 2, 4, block_size * 4
+    scale = head_dim**-0.5
+    is_mem = (torch.arange(T, device="cuda") % block_size) == (block_size - 1)
+    q = torch.randn(B, H, T, head_dim, device="cuda", dtype=torch.float32)
+    k = torch.randn(B, H, T, head_dim, device="cuda", dtype=torch.float32)
+    v = torch.randn(B, H, T, head_dim, device="cuda", dtype=torch.float32)
+
+    out_grouped = fused_compressive_gqa_grouped_attention(
+        q, q, k, v, is_mem, sm_scale=scale, block_size=block_size  # q_gate == q
+    )
+    out_plain = fused_compressive_landmark_attention(
+        q, k, v, is_mem, sm_scale=scale, block_size=block_size
+    )
+    torch.testing.assert_close(out_grouped, out_plain, rtol=1e-4, atol=1e-4)
