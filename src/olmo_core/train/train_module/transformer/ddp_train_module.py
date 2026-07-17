@@ -611,8 +611,11 @@ class OLMoDDPTrainModule(TrainModule):
         self.world_mesh = {
             "dense": self.dense_mesh,
             "moe": self.moe_mesh,
-            "dense_cpu": cpu_mesh_like(self.dense_mesh),
-            "moe_cpu": None if self.moe_mesh is None else cpu_mesh_like(self.moe_mesh),
+            
+            # the following are not used, but kept for compatibility with existing code
+            # takes a lot time to initialize with 512 ranks.
+            # "dense_cpu": cpu_mesh_like(self.dense_mesh),
+            # "moe_cpu": None if self.moe_mesh is None else cpu_mesh_like(self.moe_mesh),
         }
 
     @staticmethod

@@ -144,18 +144,18 @@ if len(sys.argv) > 1 and sys.argv[1] == "eval_checkpoints":
 EVAL_INTERVAL = 2000
 SAVE_INTERVAL = 2000
 
-NUM_EXPERTS = 64
+NUM_EXPERTS = 128
 TOP_K = 4
 ORIGINAL_TOP_K=None
-D_MODEL=2 * 1024 + 512
-D_ATTN=3 * 1024
+D_MODEL=3 * 1024
+D_ATTN=4 * 1024
 
 HEAD_DIM=128
 NUM_HEAD = D_ATTN // HEAD_DIM
 NUM_KV_HEAD= NUM_HEAD // 4
-MOE_HIDDEN_SIZE = 2 * 1024 + 512
+MOE_HIDDEN_SIZE = 3 * 1024
 NUM_SHARED_EXPERTS = 1  # Number of shared experts in the shared MLP
-SHARED_MLP_HIDDEN_SIZE = 2 * 1024 + 512   # Hidden size for shared MLP (or dense branch MLP in arctic) in MoE blocks
+SHARED_MLP_HIDDEN_SIZE = 3 * 1024   # Hidden size for shared MLP (or dense branch MLP in arctic) in MoE blocks
 
 EFFECTIVE_MLP = (MOE_HIDDEN_SIZE * TOP_K + SHARED_MLP_HIDDEN_SIZE * NUM_SHARED_EXPERTS)
 MLP_RATIO = EFFECTIVE_MLP / D_MODEL
@@ -165,7 +165,7 @@ DENSE_LAYER_MLP = (TOP_K * MOE_HIDDEN_SIZE + SHARED_MLP_HIDDEN_SIZE * NUM_SHARED
 
 # DP_DIM=2
 EP_DIM=8
-PP_DIM=1
+PP_DIM=4
 
 # ref
 REF_NUM_NODES=16
@@ -175,7 +175,7 @@ LR_ALPHA = 0.53
 
 # stage 1 - xM -
 MAX_DURATION = int(200e9)
-MICRO_BSZ = 3
+MICRO_BSZ = 2
 GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * 2 * 24
 LR= 1.8e-4  # the LR is set for stable stage
 LR_REF_BSZ_IN_M=8
@@ -209,8 +209,8 @@ EXPERT_LR = LR
 # EXPERT_LR = LR * math.sqrt(TOP_K / NUM_EXPERTS)  # scale lr for expert params, # 1/4.8989 = 0.204
 # EXPERT_LR = LR * 0.5  # scale lr for expert params, empirical choice
 
-ORIGINAL_NUM_LAYERS=32
-MINUS_LAST_STAGE=0
+ORIGINAL_NUM_LAYERS=40
+MINUS_LAST_STAGE=1
 NUM_LAYERS=ORIGINAL_NUM_LAYERS - MINUS_LAST_STAGE
 
 if PP_DIM > 1:
@@ -237,7 +237,7 @@ USE_TBO=False
 GRAD_ACC_IN_FP32=True
 GRAD_REDUCE_IN_FP32=True
 UNIFORM_ASSIGN=False
-RANDOM_ASSIGN=False
+RANDOM_ASSIGN=True
 USE_ROWWISE_A2A=True
 
 USE_FP8_ATTN_QKV=USE_FP8
@@ -452,7 +452,7 @@ def build_model_config(common: CommonComponents) -> OLMoDDPModelConfig:
     # First block will be a regular transformer block (no MoE component).
     config.block_overrides = {
         0: deepcopy(dense_block_config),
-        # 1: deepcopy(dense_block_config),
+        1: deepcopy(dense_block_config),
 
         # also make last layer dense
         # NUM_LAYERS-1: deepcopy(dense_block_config),
@@ -593,7 +593,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             checkpointer=CheckpointerConfig(
                 save_thread_count=3, load_thread_count=2, throttle_uploads=True
             ),
-            metrics_collect_interval=10,
+            metrics_collect_interval=20,
             cancel_check_interval=cancel_check_interval,
             max_duration=Duration.tokens(MAX_DURATION),
             # steps_to_skip=[StepSkipRange(start=41312, stop=41329)]
