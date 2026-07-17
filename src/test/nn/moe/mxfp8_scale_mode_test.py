@@ -15,6 +15,8 @@ from olmo_core.kernels.mxfp8_utils import (
 )
 from olmo_core.mxfp8_config import get_mxfp8_default_scale_mode
 from olmo_core.nn.moe.v2.fp8 import MoERowwiseFP8Config, MoERowwiseFP8ScaleMode
+from olmo_core.testing import requires_gpu
+from olmo_core.testing.utils import requires_compute_capability
 
 
 def _one_block(value: float) -> torch.Tensor:
@@ -155,7 +157,8 @@ def test_mxfp8_te_backend_request_raises_for_cpu_input(
         quantize_rows_to_mxfp8(x, block_size=32, scale_mode="rceil")
 
 
-@pytest.mark.skipif(not torch.cuda.is_available(), reason="requires CUDA")
+@requires_gpu
+@requires_compute_capability(min_cc=9)
 def test_mxfp8_te_preallocated_rceil_matches_olmo(monkeypatch: pytest.MonkeyPatch) -> None:
     if mxfp8_utils._get_te_mxfp8_state() is None:  # type: ignore[attr-defined]
         pytest.skip("TransformerEngine MXFP8 is unavailable")
@@ -179,7 +182,7 @@ def test_mxfp8_te_preallocated_rceil_matches_olmo(monkeypatch: pytest.MonkeyPatc
     assert torch.equal(s_olmo.view(torch.uint8), s_te.view(torch.uint8))
 
 
-@pytest.mark.skipif(not torch.cuda.is_available(), reason="requires CUDA")
+@requires_gpu
 def test_mxfp8_te_backend_request_raises_when_unavailable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

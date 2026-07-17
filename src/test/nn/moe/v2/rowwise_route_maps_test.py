@@ -6,6 +6,7 @@ import pytest
 import torch
 
 from olmo_core.nn.moe.v2.ep_no_sync_rowwise_helpers import build_rowwise_route_maps
+from olmo_core.testing import GPU_MARKS, requires_gpu
 
 
 def _reference_rowwise_route_maps(
@@ -57,11 +58,8 @@ def _reference_rowwise_route_maps(
     return dst_ranks.to(routing_map.device), dst_rows.to(routing_map.device)
 
 
-@pytest.mark.parametrize("device", ["cpu", "cuda"])
+@pytest.mark.parametrize("device", ["cpu", pytest.param("cuda", marks=GPU_MARKS)])
 def test_build_rowwise_route_maps_matches_reference(device: str):
-    if device == "cuda" and not torch.cuda.is_available():
-        pytest.skip("CUDA required")
-
     ep_world_size = 3
     num_local_experts = 2
     block = SimpleNamespace(
@@ -112,7 +110,7 @@ def test_build_rowwise_route_maps_matches_reference(device: str):
     assert torch.equal(dst_rows, expected_rows)
 
 
-@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required")
+@requires_gpu
 def test_build_rowwise_route_maps_torch_compile_cuda():
     ep_world_size = 3
     num_local_experts = 2

@@ -146,9 +146,9 @@ def test_quantize_rows_to_mxfp8_supports_output_buffers():
     assert scales.shape == (x.shape[0], x.shape[1] // 32)
 
 
+@requires_gpu
+@requires_compute_capability(min_cc=9)
 def test_weighted_quantize_rows_to_mxfp8_matches_materialized_cuda():
-    if not torch.cuda.is_available():
-        return
     torch.manual_seed(1984)
     rows, top_k, hidden = 37, 4, 512
     x = torch.randn(rows, hidden, device="cuda", dtype=torch.bfloat16) * 0.25
@@ -166,9 +166,9 @@ def test_weighted_quantize_rows_to_mxfp8_matches_materialized_cuda():
     assert torch.equal(scales.view(torch.uint8), scales_ref.view(torch.uint8))
 
 
+@requires_gpu
+@requires_compute_capability(min_cc=9)
 def test_weighted_quantize_rows_to_mxfp8_supports_output_buffers_cuda():
-    if not torch.cuda.is_available():
-        return
     torch.manual_seed(1985)
     rows, top_k, hidden = 17, 3, 256
     x = torch.randn(rows, hidden, device="cuda", dtype=torch.bfloat16)
