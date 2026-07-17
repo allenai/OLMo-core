@@ -4,6 +4,10 @@ import os
 import socket
 from pathlib import Path
 
+from . import mxfp8_config as _mxfp8_config
+
+_mxfp8_config.get_mxfp8_default_scale_mode()  # Resolves OLMO_MXFP8_SCALE_MODE once.
+
 # Marks a ``TRITON_CACHE_DIR`` value that we set ourselves (vs. a user-provided override), so
 # processes that inherit our env — e.g. ranks spawned after this module was first imported — can
 # tell the difference and recompute their own directory instead of reusing the parent's.

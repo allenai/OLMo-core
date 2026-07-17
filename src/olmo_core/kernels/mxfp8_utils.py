@@ -5,6 +5,12 @@ from typing import Optional, Tuple
 
 import torch
 
+from olmo_core.mxfp8_config import MXFP8_SCALE_MODE_RCEIL as _MXFP8_SCALE_MODE_RCEIL
+from olmo_core.mxfp8_config import MXFP8ScaleMode
+from olmo_core.mxfp8_config import (
+    normalize_mxfp8_scale_mode as _normalize_mxfp8_scale_mode,
+)
+
 try:
     import nvtx
 except ImportError:
@@ -57,22 +63,54 @@ _MXFP8_DOT_NUM_STAGES = 2
 
 _TE_MXFP8_IMPORT_ATTEMPTED = False
 _TE_MXFP8_STATE = None
+_MXFP8_BACKEND_OLMO = "olmo"
+_MXFP8_BACKEND_TE = "te"
+_MXFP8_BACKEND_ENV = "OLMO_MXFP8_QDQ_BACKEND"
+_MXFP8_BACKEND_ALIASES = {
+    _MXFP8_BACKEND_OLMO: _MXFP8_BACKEND_OLMO,
+    "triton": _MXFP8_BACKEND_OLMO,
+    _MXFP8_BACKEND_TE: _MXFP8_BACKEND_TE,
+    "transformer_engine": _MXFP8_BACKEND_TE,
+    "transformerengine": _MXFP8_BACKEND_TE,
+}
 
 
 def ceil_div(a: int, b: int) -> int:
     return (a + b - 1) // b
 
 
+def _normalize_mxfp8_backend(value: str, *, env_name: str) -> str:
+    normalized = _MXFP8_BACKEND_ALIASES.get(value.strip().lower())
+    if normalized is None:
+        raise ValueError(
+            f"{env_name}/{_MXFP8_BACKEND_ENV} must be 'olmo' or 'te' "
+            f"(legacy alias 'triton' means 'olmo'), got {value!r}"
+        )
+    return normalized
+
+
 def _mxfp8_backend(kind: str) -> str:
-    specific_backend = os.environ.get(f"OLMO_MXFP8_{kind}_BACKEND")
-    backend = specific_backend
-    if backend is None:
-        backend = os.environ.get("OLMO_MXFP8_QDQ_BACKEND", "triton")
-    return backend.strip().lower()
+    specific_env = f"OLMO_MXFP8_{kind}_BACKEND"
+    specific_backend = os.environ.get(specific_env)
+    if specific_backend is not None:
+        return _normalize_mxfp8_backend(specific_backend, env_name=specific_env)
+    return _normalize_mxfp8_backend(
+        os.environ.get(_MXFP8_BACKEND_ENV, _MXFP8_BACKEND_OLMO),
+        env_name=_MXFP8_BACKEND_ENV,
+    )
 
 
 def _mxfp8_backend_wants_te(kind: str) -> bool:
-    return _mxfp8_backend(kind) in {"te", "transformer_engine"}
+    return _mxfp8_backend(kind) == _MXFP8_BACKEND_TE
+
+
+def _te_backend_requested_error(kind: str, reason: str) -> RuntimeError:
+    specific_env = f"OLMO_MXFP8_{kind}_BACKEND"
+    return RuntimeError(
+        f"TransformerEngine MXFP8 {kind} backend was requested via "
+        f"{specific_env}/{_MXFP8_BACKEND_ENV}, but it cannot run for this call: "
+        f"{reason}. Unset the backend env var to use OLMo, or set it to 'olmo'."
+    )
 
 
 def _get_te_mxfp8_state():
@@ -104,6 +142,49 @@ def _get_te_mxfp8_state():
 def _te_mxfp8_compact_scale_layout(rows: int, cols: int, block_size: int) -> bool:
     scale_cols = cols // block_size
     return rows % 128 == 0 and scale_cols % 4 == 0
+
+
+def _te_quantize_unavailable_reason(
+    x: torch.Tensor,
+    *,
+    block_size: int,
+    scale_mode: MXFP8ScaleMode,
+    out: Optional[torch.Tensor],
+    scales_out: Optional[torch.Tensor],
+) -> str:
+    if scale_mode != _MXFP8_SCALE_MODE_RCEIL:
+        return "TransformerEngine MXFP8 quantize currently supports only rceil scale mode"
+    if block_size != 32:
+        return f"TransformerEngine MXFP8 quantize requires block_size=32, got {block_size}"
+    if not x.is_cuda:
+        return "TransformerEngine MXFP8 quantize requires a CUDA input tensor"
+    if x.ndim != 2:
+        return f"TransformerEngine MXFP8 quantize requires rank-2 input, got shape={tuple(x.shape)}"
+    if not x.is_contiguous():
+        return "TransformerEngine MXFP8 quantize requires contiguous input"
+    if x.dtype not in {torch.bfloat16, torch.float16, torch.float32}:
+        return f"TransformerEngine MXFP8 quantize does not support input dtype {x.dtype}"
+
+    rows, cols = x.shape
+    if rows % 32 != 0 or cols % block_size != 0:
+        return (
+            "TransformerEngine MXFP8 quantize requires rows divisible by 32 and "
+            f"cols divisible by {block_size}, got shape={tuple(x.shape)}"
+        )
+    if not _te_mxfp8_compact_scale_layout(rows, cols, block_size):
+        return (
+            "TransformerEngine compact rowwise scale layout requires rows divisible "
+            "by 128 and scale columns divisible by 4"
+        )
+    if _get_te_mxfp8_state() is None:
+        return "TransformerEngine MXFP8 is not installed/importable"
+    if (out is None) != (scales_out is None):
+        return "TransformerEngine MXFP8 quantize requires both out and scales_out, or neither"
+    if out is not None and not out.is_contiguous():
+        return "TransformerEngine MXFP8 quantize requires contiguous out"
+    if scales_out is not None and not scales_out.is_contiguous():
+        return "TransformerEngine MXFP8 quantize requires contiguous scales_out"
+    return "unsupported TransformerEngine MXFP8 quantize call"
 
 
 def to_blocked(input_matrix: torch.Tensor) -> torch.Tensor:
@@ -140,9 +221,11 @@ if triton is not None:
         triton.Config({"BLOCK_M": 8, "BLOCK_N": 256}, num_warps=4, num_stages=1),
         triton.Config({"BLOCK_M": 8, "BLOCK_N": 512}, num_warps=4, num_stages=1),
         triton.Config({"BLOCK_M": 8, "BLOCK_N": 1024}, num_warps=4, num_stages=1),
+        triton.Config({"BLOCK_M": 8, "BLOCK_N": 2048}, num_warps=8, num_stages=1),
         triton.Config({"BLOCK_M": 16, "BLOCK_N": 256}, num_warps=4, num_stages=2),
         triton.Config({"BLOCK_M": 16, "BLOCK_N": 512}, num_warps=4, num_stages=2),
         triton.Config({"BLOCK_M": 16, "BLOCK_N": 1024}, num_warps=4, num_stages=2),
+        triton.Config({"BLOCK_M": 16, "BLOCK_N": 1024}, num_warps=8, num_stages=1),
         triton.Config({"BLOCK_M": 32, "BLOCK_N": 128}, num_warps=4, num_stages=2),
         triton.Config({"BLOCK_M": 32, "BLOCK_N": 256}, num_warps=4, num_stages=2),
         triton.Config({"BLOCK_M": 32, "BLOCK_N": 256}, num_warps=4, num_stages=3),
@@ -156,13 +239,16 @@ if triton is not None:
         triton.Config({"BLOCK_M": 8, "BLOCK_N": 256}, num_warps=4, num_stages=1),
         triton.Config({"BLOCK_M": 8, "BLOCK_N": 512}, num_warps=4, num_stages=1),
         triton.Config({"BLOCK_M": 8, "BLOCK_N": 1024}, num_warps=4, num_stages=1),
+        triton.Config({"BLOCK_M": 8, "BLOCK_N": 2048}, num_warps=8, num_stages=1),
         triton.Config({"BLOCK_M": 16, "BLOCK_N": 256}, num_warps=4, num_stages=2),
         triton.Config({"BLOCK_M": 16, "BLOCK_N": 512}, num_warps=4, num_stages=2),
         triton.Config({"BLOCK_M": 16, "BLOCK_N": 1024}, num_warps=4, num_stages=2),
+        triton.Config({"BLOCK_M": 16, "BLOCK_N": 2048}, num_warps=8, num_stages=1),
         triton.Config({"BLOCK_M": 32, "BLOCK_N": 128}, num_warps=4, num_stages=2),
         triton.Config({"BLOCK_M": 32, "BLOCK_N": 256}, num_warps=4, num_stages=2),
         triton.Config({"BLOCK_M": 32, "BLOCK_N": 256}, num_warps=4, num_stages=3),
         triton.Config({"BLOCK_M": 32, "BLOCK_N": 512}, num_warps=8, num_stages=2),
+        triton.Config({"BLOCK_M": 32, "BLOCK_N": 1024}, num_warps=8, num_stages=1),
         triton.Config({"BLOCK_M": 64, "BLOCK_N": 64}, num_warps=4, num_stages=2),
         triton.Config({"BLOCK_M": 64, "BLOCK_N": 128}, num_warps=4, num_stages=2),
         triton.Config({"BLOCK_M": 64, "BLOCK_N": 256}, num_warps=8, num_stages=2),
@@ -288,12 +374,79 @@ if triton is not None:
         block_offset = pid_col * local_numel + (pid_row * output_block_stride)
         tl.store(output_ptr + block_offset + dest_indices_flat, scales_flat)
 
+    @triton.jit
+    def _triton_mxfp8_scale_byte_and_inv_scale(
+        max_abs,
+        RCEIL_SCALE: tl.constexpr,
+        USE_BF16_EXP: tl.constexpr,
+    ):
+        F8E4M3_MAX_RCP: tl.constexpr = 1.0 / 448.0
+        E8M0_EXP_BIAS: tl.constexpr = 127.0
+        E8M0_EXP_BIAS_INT: tl.constexpr = 127
+        F8E4M3_LARGEST_POW2: tl.constexpr = 8.0
+        F8E4M3_LARGEST_POW2_INT: tl.constexpr = 8
+        BF16_MBITS: tl.constexpr = 7
+
+        if RCEIL_SCALE and USE_BF16_EXP:
+            max_abs_bf16 = max_abs.to(tl.bfloat16)
+            max_abs_i16 = max_abs_bf16.to(tl.int16, bitcast=True)
+            largest_p2 = ((max_abs_i16 >> BF16_MBITS) & 0xFF) - E8M0_EXP_BIAS_INT
+            mantissa = max_abs_i16 & 0x7F
+            # For E4M3 max=448=1.75*2^8, round-up increments the scale
+            # exactly when the normalized bf16 mantissa is greater than 1.75.
+            round_up = tl.where(mantissa > 0x60, 1, 0)
+            scale_unbiased_i32 = largest_p2 - F8E4M3_LARGEST_POW2_INT + round_up
+            scale_unbiased_i32 = tl.maximum(scale_unbiased_i32, -E8M0_EXP_BIAS_INT)
+            scale_unbiased_i32 = tl.minimum(scale_unbiased_i32, E8M0_EXP_BIAS_INT)
+            scale_biased_i32 = (scale_unbiased_i32 + E8M0_EXP_BIAS_INT).to(tl.int32)
+            scale_biased_u8 = scale_biased_i32.to(tl.uint8)
+            inv_exp = 254 - scale_biased_i32
+            inv_bits = inv_exp.to(tl.uint32) << 23
+            inv_bits = tl.where(inv_exp == 0, 0x00400000, inv_bits)
+            inv_scale = inv_bits.to(tl.float32, bitcast=True)
+        elif RCEIL_SCALE:
+            # NVIDIA MXFP8 paper round-up scale recipe: https://arxiv.org/html/2506.08027v2
+            scale_unbiased = -tl.floor(-tl.log2(max_abs * F8E4M3_MAX_RCP))
+            scale_unbiased = tl.maximum(scale_unbiased, -E8M0_EXP_BIAS)
+            scale_unbiased = tl.minimum(scale_unbiased, E8M0_EXP_BIAS)
+            scale_biased_i32 = (scale_unbiased + E8M0_EXP_BIAS).to(tl.int32)
+            scale_biased_u8 = scale_biased_i32.to(tl.uint8)
+            inv_exp = 254 - scale_biased_i32
+            inv_bits = inv_exp.to(tl.uint32) << 23
+            inv_bits = tl.where(inv_exp == 0, 0x00400000, inv_bits)
+            inv_scale = inv_bits.to(tl.float32, bitcast=True)
+        elif USE_BF16_EXP:
+            max_abs_bf16 = max_abs.to(tl.bfloat16)
+            max_abs_i16 = max_abs_bf16.to(tl.int16, bitcast=True)
+            largest_p2 = ((max_abs_i16 >> BF16_MBITS) & 0xFF) - E8M0_EXP_BIAS_INT
+            scale_unbiased_i32 = largest_p2 - F8E4M3_LARGEST_POW2_INT
+            scale_unbiased_i32 = tl.maximum(scale_unbiased_i32, -E8M0_EXP_BIAS_INT)
+            scale_unbiased_i32 = tl.minimum(scale_unbiased_i32, E8M0_EXP_BIAS_INT)
+            scale_biased_i32 = (scale_unbiased_i32 + E8M0_EXP_BIAS_INT).to(tl.int32)
+            scale_biased_u8 = scale_biased_i32.to(tl.uint8)
+            inv_exp = 254 - scale_biased_i32
+            inv_bits = inv_exp.to(tl.uint32) << 23
+            inv_bits = tl.where(inv_exp == 0, 0x00400000, inv_bits)
+            inv_scale = inv_bits.to(tl.float32, bitcast=True)
+        else:
+            largest_p2 = tl.floor(tl.log2(max_abs))
+            scale_unbiased = largest_p2 - F8E4M3_LARGEST_POW2
+            scale_unbiased = tl.maximum(scale_unbiased, -E8M0_EXP_BIAS)
+            scale_unbiased = tl.minimum(scale_unbiased, E8M0_EXP_BIAS)
+            scale_biased_i32 = (scale_unbiased + E8M0_EXP_BIAS).to(tl.int32)
+            scale_biased_u8 = scale_biased_i32.to(tl.uint8)
+            inv_exp = 254 - scale_biased_i32
+            inv_bits = inv_exp.to(tl.uint32) << 23
+            inv_bits = tl.where(inv_exp == 0, 0x00400000, inv_bits)
+            inv_scale = inv_bits.to(tl.float32, bitcast=True)
+        return scale_biased_u8, inv_scale
+
     # Broader Q autotune while we characterize B200 codegen. The routed up/gate
     # save path defaults to two chunks, so the widest activation no longer
     # depends on one fragile full-width specialization.
     @triton.autotune(
         configs=_MXFP8_Q_AUTOTUNE_CONFIGS,
-        key=["n_rows", "n_cols", "BLOCK_SIZE", "USE_BF16_EXP"],
+        key=["n_rows", "n_cols", "BLOCK_SIZE", "USE_BF16_EXP", "RCEIL_SCALE"],
     )
     @triton.jit
     def _triton_mxfp8_quantize_dim0(
@@ -312,17 +465,13 @@ if triton is not None:
         BLOCK_M: tl.constexpr,
         BLOCK_N: tl.constexpr,
         USE_BF16_EXP: tl.constexpr,
+        RCEIL_SCALE: tl.constexpr,
     ):
         # Quantizes contiguous [M, K] to:
         # - q_ptr: e4m3 values [M, K]
         # - scale_ptr: e8m0 biased exponents [M, K//BLOCK_SIZE] as uint8
         FP32_TINY: tl.constexpr = 1.1754943508222875e-38
         F8E4M3_MAX: tl.constexpr = 448.0
-        E8M0_EXP_BIAS: tl.constexpr = 127.0
-        E8M0_EXP_BIAS_INT: tl.constexpr = 127
-        F8E4M3_LARGEST_POW2: tl.constexpr = 8.0
-        F8E4M3_LARGEST_POW2_INT: tl.constexpr = 8
-        BF16_MBITS: tl.constexpr = 7
         SCALE_BLOCKS_PER_TILE: tl.constexpr = BLOCK_N // BLOCK_SIZE
 
         pid_m = tl.program_id(0)
@@ -341,29 +490,12 @@ if triton is not None:
         max_abs = tl.where(max_abs == max_abs, max_abs, 0.0)  # NaN -> 0
         max_abs = tl.maximum(max_abs, FP32_TINY)
 
-        if USE_BF16_EXP:
-            max_abs_bf16 = max_abs.to(tl.bfloat16)
-            max_abs_i16 = max_abs_bf16.to(tl.int16, bitcast=True)
-            largest_p2 = ((max_abs_i16 >> BF16_MBITS) & 0xFF) - E8M0_EXP_BIAS_INT
-            scale_unbiased = largest_p2 - F8E4M3_LARGEST_POW2_INT
-            scale_unbiased = tl.maximum(scale_unbiased, -E8M0_EXP_BIAS_INT)
-            scale_unbiased = tl.minimum(scale_unbiased, E8M0_EXP_BIAS_INT)
-            scale_biased_i32 = (scale_unbiased + E8M0_EXP_BIAS_INT).to(tl.int32)
-            scale_biased_u8 = scale_biased_i32.to(tl.uint8)
-            inv_exp = 254 - scale_biased_i32
-            inv_bits = inv_exp.to(tl.uint32) << 23
-            inv_bits = tl.where(inv_exp == 0, 0x00400000, inv_bits)
-            inv_scale = inv_bits.to(tl.float32, bitcast=True)
-            q_hp = x_r * inv_scale[:, None]
-        else:
-            largest_p2 = tl.floor(tl.log2(max_abs))
-            scale_unbiased = largest_p2 - F8E4M3_LARGEST_POW2
-            scale_unbiased = tl.maximum(scale_unbiased, -E8M0_EXP_BIAS)
-            scale_unbiased = tl.minimum(scale_unbiased, E8M0_EXP_BIAS)
-
-            scale_biased_u8 = (scale_unbiased + E8M0_EXP_BIAS).to(tl.uint8)
-            dequant_scale = tl.exp2(scale_unbiased).to(tl.float32)
-            q_hp = x_r / dequant_scale[:, None]
+        scale_biased_u8, inv_scale = _triton_mxfp8_scale_byte_and_inv_scale(
+            max_abs,
+            RCEIL_SCALE=RCEIL_SCALE,
+            USE_BF16_EXP=USE_BF16_EXP,
+        )
+        q_hp = x_r * inv_scale[:, None]
 
         q_hp = tl.where(q_hp == q_hp, q_hp, 0.0)
         q_hp = tl.maximum(q_hp, -F8E4M3_MAX)
@@ -376,6 +508,86 @@ if triton is not None:
         scale_col_idx = pid_n * SCALE_BLOCKS_PER_TILE + tl.arange(0, SCALE_BLOCKS_PER_TILE)[None, :]
         scale_offsets = row_idx * s_stride_0 + scale_col_idx * s_stride_1
         scale_mask = (row_idx < n_rows) & (scale_col_idx < n_scale_cols)
+        scale_tile = tl.reshape(scale_biased_u8, (BLOCK_M, SCALE_BLOCKS_PER_TILE))
+        tl.store(scale_ptr + scale_offsets, scale_tile, mask=scale_mask)
+
+    @triton.autotune(
+        configs=_MXFP8_Q_AUTOTUNE_CONFIGS,
+        key=["n_rows", "top_k", "n_cols", "BLOCK_SIZE", "RCEIL_SCALE"],
+    )
+    @triton.jit
+    def _triton_mxfp8_weighted_quantize_dim0(
+        x_ptr,
+        x_stride_0,
+        x_stride_1,
+        weights_ptr,
+        w_stride_0,
+        w_stride_1,
+        q_ptr,
+        q_stride_0,
+        q_stride_1,
+        scale_ptr,
+        s_stride_0,
+        s_stride_1,
+        n_rows,
+        top_k,
+        n_cols,
+        BLOCK_SIZE: tl.constexpr,
+        BLOCK_M: tl.constexpr,
+        BLOCK_N: tl.constexpr,
+        RCEIL_SCALE: tl.constexpr,
+    ):
+        # Quantizes logical rows:
+        #   out[n * top_k + k, :] = x[n, :] * bf16(weights[n, k])
+        # to MXFP8. This matches the current bf16 materialized path used by
+        # rowwise MoE backward before quantization.
+        FP32_TINY: tl.constexpr = 1.1754943508222875e-38
+        F8E4M3_MAX: tl.constexpr = 448.0
+        SCALE_BLOCKS_PER_TILE: tl.constexpr = BLOCK_N // BLOCK_SIZE
+
+        pid_m = tl.program_id(0)
+        pid_n = tl.program_id(1)
+
+        route_row = pid_m * BLOCK_M + tl.arange(0, BLOCK_M)[:, None]
+        source_row = route_row // top_k
+        route_lane = route_row - source_row * top_k
+        col_idx = pid_n * BLOCK_N + tl.arange(0, BLOCK_N)[None, :]
+
+        total_rows = n_rows * top_k
+        q_mask = (route_row < total_rows) & (col_idx < n_cols)
+        x_offsets = source_row * x_stride_0 + col_idx * x_stride_1
+        x = tl.load(x_ptr + x_offsets, mask=q_mask, other=0.0).to(tl.float32)
+
+        weight_offsets = source_row * w_stride_0 + route_lane * w_stride_1
+        weight_mask = route_row < total_rows
+        weight = tl.load(weights_ptr + weight_offsets, mask=weight_mask, other=0.0)
+        weight = weight.to(tl.bfloat16).to(tl.float32)
+        weighted = (x * weight).to(tl.bfloat16)
+
+        x_r = weighted.reshape(BLOCK_M * SCALE_BLOCKS_PER_TILE, BLOCK_SIZE).to(tl.float32)
+        max_abs = tl.max(tl.abs(x_r), axis=1)
+        max_abs = tl.where(max_abs == max_abs, max_abs, 0.0)  # NaN -> 0
+        max_abs = tl.maximum(max_abs, FP32_TINY)
+
+        scale_biased_u8, inv_scale = _triton_mxfp8_scale_byte_and_inv_scale(
+            max_abs,
+            RCEIL_SCALE=RCEIL_SCALE,
+            USE_BF16_EXP=True,
+        )
+        q_hp = x_r * inv_scale[:, None]
+
+        q_hp = tl.where(q_hp == q_hp, q_hp, 0.0)
+        q_hp = tl.maximum(q_hp, -F8E4M3_MAX)
+        q_hp = tl.minimum(q_hp, F8E4M3_MAX)
+
+        q_tile = tl.reshape(q_hp, (BLOCK_M, BLOCK_N)).to(tl.float8e4nv)
+        q_offsets = route_row * q_stride_0 + col_idx * q_stride_1
+        tl.store(q_ptr + q_offsets, q_tile, mask=q_mask)
+
+        n_scale_cols = tl.cdiv(n_cols, BLOCK_SIZE)
+        scale_col_idx = pid_n * SCALE_BLOCKS_PER_TILE + tl.arange(0, SCALE_BLOCKS_PER_TILE)[None, :]
+        scale_offsets = route_row * s_stride_0 + scale_col_idx * s_stride_1
+        scale_mask = (route_row < total_rows) & (scale_col_idx < n_scale_cols)
         scale_tile = tl.reshape(scale_biased_u8, (BLOCK_M, SCALE_BLOCKS_PER_TILE))
         tl.store(scale_ptr + scale_offsets, scale_tile, mask=scale_mask)
 
@@ -398,16 +610,12 @@ if triton is not None:
         BLOCK_N: tl.constexpr,
         NUM_GROUPS: tl.constexpr,
         USE_BF16_EXP: tl.constexpr,
+        RCEIL_SCALE: tl.constexpr,
     ):
         # Same quantization tile shape as _triton_mxfp8_quantize_dim0, but
         # writes scale bytes directly in grouped SWIZZLE_32_4_4 layout.
         FP32_TINY: tl.constexpr = 1.1754943508222875e-38
         F8E4M3_MAX: tl.constexpr = 448.0
-        E8M0_EXP_BIAS: tl.constexpr = 127.0
-        E8M0_EXP_BIAS_INT: tl.constexpr = 127
-        F8E4M3_LARGEST_POW2: tl.constexpr = 8.0
-        F8E4M3_LARGEST_POW2_INT: tl.constexpr = 8
-        BF16_MBITS: tl.constexpr = 7
         SCALE_BLOCKS_PER_TILE: tl.constexpr = BLOCK_N // BLOCK_SIZE
 
         pid_m = tl.program_id(0)
@@ -426,29 +634,12 @@ if triton is not None:
         max_abs = tl.where(max_abs == max_abs, max_abs, 0.0)  # NaN -> 0
         max_abs = tl.maximum(max_abs, FP32_TINY)
 
-        if USE_BF16_EXP:
-            max_abs_bf16 = max_abs.to(tl.bfloat16)
-            max_abs_i16 = max_abs_bf16.to(tl.int16, bitcast=True)
-            largest_p2 = ((max_abs_i16 >> BF16_MBITS) & 0xFF) - E8M0_EXP_BIAS_INT
-            scale_unbiased = largest_p2 - F8E4M3_LARGEST_POW2_INT
-            scale_unbiased = tl.maximum(scale_unbiased, -E8M0_EXP_BIAS_INT)
-            scale_unbiased = tl.minimum(scale_unbiased, E8M0_EXP_BIAS_INT)
-            scale_biased_i32 = (scale_unbiased + E8M0_EXP_BIAS_INT).to(tl.int32)
-            scale_biased_u8 = scale_biased_i32.to(tl.uint8)
-            inv_exp = 254 - scale_biased_i32
-            inv_bits = inv_exp.to(tl.uint32) << 23
-            inv_bits = tl.where(inv_exp == 0, 0x00400000, inv_bits)
-            inv_scale = inv_bits.to(tl.float32, bitcast=True)
-            q_hp = x_r * inv_scale[:, None]
-        else:
-            largest_p2 = tl.floor(tl.log2(max_abs))
-            scale_unbiased = largest_p2 - F8E4M3_LARGEST_POW2
-            scale_unbiased = tl.maximum(scale_unbiased, -E8M0_EXP_BIAS)
-            scale_unbiased = tl.minimum(scale_unbiased, E8M0_EXP_BIAS)
-
-            scale_biased_u8 = (scale_unbiased + E8M0_EXP_BIAS).to(tl.uint8)
-            dequant_scale = tl.exp2(scale_unbiased).to(tl.float32)
-            q_hp = x_r / dequant_scale[:, None]
+        scale_biased_u8, inv_scale = _triton_mxfp8_scale_byte_and_inv_scale(
+            max_abs,
+            RCEIL_SCALE=RCEIL_SCALE,
+            USE_BF16_EXP=USE_BF16_EXP,
+        )
+        q_hp = x_r * inv_scale[:, None]
 
         q_hp = tl.where(q_hp == q_hp, q_hp, 0.0)
         q_hp = tl.maximum(q_hp, -F8E4M3_MAX)
@@ -521,12 +712,11 @@ if triton is not None:
         BLOCK_N: tl.constexpr,
         EVEN_M: tl.constexpr,
         EVEN_N: tl.constexpr,
+        RCEIL_SCALE: tl.constexpr,
     ):
         # Computes h = up * silu(gate) and quantizes h to MXFP8 in one pass.
         FP32_TINY: tl.constexpr = 1.1754943508222875e-38
         F8E4M3_MAX: tl.constexpr = 448.0
-        E8M0_EXP_BIAS: tl.constexpr = 127.0
-        F8E4M3_LARGEST_POW2: tl.constexpr = 8.0
         SCALE_BLOCKS_PER_TILE: tl.constexpr = BLOCK_N // BLOCK_SIZE
 
         pid_m = tl.program_id(0)
@@ -558,14 +748,12 @@ if triton is not None:
         max_abs = tl.where(max_abs == max_abs, max_abs, 0.0)  # NaN -> 0
         max_abs = tl.maximum(max_abs, FP32_TINY)
 
-        largest_p2 = tl.floor(tl.log2(max_abs))
-        scale_unbiased = largest_p2 - F8E4M3_LARGEST_POW2
-        scale_unbiased = tl.maximum(scale_unbiased, -E8M0_EXP_BIAS)
-        scale_unbiased = tl.minimum(scale_unbiased, E8M0_EXP_BIAS)
-        scale_biased_u8 = (scale_unbiased + E8M0_EXP_BIAS).to(tl.uint8)
-
-        inv_dequant_scale = tl.exp2(-scale_unbiased).to(tl.float32)
-        q_hp = h_r * inv_dequant_scale[:, None]
+        scale_biased_u8, inv_scale = _triton_mxfp8_scale_byte_and_inv_scale(
+            max_abs,
+            RCEIL_SCALE=RCEIL_SCALE,
+            USE_BF16_EXP=False,
+        )
+        q_hp = h_r * inv_scale[:, None]
         q_hp = tl.where(q_hp == q_hp, q_hp, 0.0)
         q_hp = tl.maximum(q_hp, -F8E4M3_MAX)
         q_hp = tl.minimum(q_hp, F8E4M3_MAX)
@@ -610,12 +798,12 @@ if triton is not None:
         BLOCK_SIZE: tl.constexpr,
         BLOCK_M: tl.constexpr,
         BLOCK_N: tl.constexpr,
+        RCEIL_SCALE: tl.constexpr,
     ):
         # Computes h = up * silu(gate) from MXFP8 input and requantizes h to MXFP8.
         FP32_TINY: tl.constexpr = 1.1754943508222875e-38
         F8E4M3_MAX: tl.constexpr = 448.0
         E8M0_EXP_BIAS: tl.constexpr = 127.0
-        F8E4M3_LARGEST_POW2: tl.constexpr = 8.0
         SCALE_BLOCKS_PER_TILE: tl.constexpr = BLOCK_N // BLOCK_SIZE
 
         pid_m = tl.program_id(0)
@@ -660,14 +848,12 @@ if triton is not None:
         max_abs = tl.where(max_abs == max_abs, max_abs, 0.0)  # NaN -> 0
         max_abs = tl.maximum(max_abs, FP32_TINY)
 
-        largest_p2 = tl.floor(tl.log2(max_abs))
-        scale_unbiased = largest_p2 - F8E4M3_LARGEST_POW2
-        scale_unbiased = tl.maximum(scale_unbiased, -E8M0_EXP_BIAS)
-        scale_unbiased = tl.minimum(scale_unbiased, E8M0_EXP_BIAS)
-        scale_biased_u8 = (scale_unbiased + E8M0_EXP_BIAS).to(tl.uint8)
-
-        inv_dequant_scale = tl.exp2(-scale_unbiased).to(tl.float32)
-        q_hp = h_r * inv_dequant_scale[:, None]
+        scale_biased_u8, inv_scale = _triton_mxfp8_scale_byte_and_inv_scale(
+            max_abs,
+            RCEIL_SCALE=RCEIL_SCALE,
+            USE_BF16_EXP=False,
+        )
+        q_hp = h_r * inv_scale[:, None]
         q_hp = tl.where(q_hp == q_hp, q_hp, 0.0)
         q_hp = tl.maximum(q_hp, -F8E4M3_MAX)
         q_hp = tl.minimum(q_hp, F8E4M3_MAX)
@@ -796,7 +982,6 @@ if triton is not None:
         BLOCK_M: tl.constexpr,
         BLOCK_N: tl.constexpr,
     ):
-        E8M0_EXP_BIAS: tl.constexpr = 127.0
         SCALE_BLOCKS_PER_TILE: tl.constexpr = BLOCK_N // BLOCK_SIZE
         pid_m = tl.program_id(0)
         pid_n = tl.program_id(1)
@@ -813,7 +998,9 @@ if triton is not None:
         scale_mask = (row_idx < n_rows) & (scale_col_idx < n_scale_cols)
         s_offsets = row_idx * s_stride_0 + scale_col_idx * s_stride_1
         s_u8 = tl.load(scales_u8_ptr + s_offsets, mask=scale_mask, other=0).to(tl.int32)
-        scales = tl.exp2(s_u8.to(tl.float32) - E8M0_EXP_BIAS)
+        scale_bits = s_u8.to(tl.uint32) << 23
+        scale_bits = tl.where(s_u8 == 0, 0x00400000, scale_bits)
+        scales = scale_bits.to(tl.float32, bitcast=True)
 
         q_blocks = q.reshape(BLOCK_M * SCALE_BLOCKS_PER_TILE, BLOCK_SIZE)
         scale_blocks = scales.reshape(BLOCK_M * SCALE_BLOCKS_PER_TILE)
@@ -1044,15 +1231,21 @@ def _quantize_to_mxfp8_torch(
     x: torch.Tensor,
     *,
     block_size: int = 32,
+    scale_mode: Optional[MXFP8ScaleMode] = None,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
+    scale_mode = _normalize_mxfp8_scale_mode(scale_mode)
     orig_shape = x.shape
     x_blocks = x.reshape(*orig_shape[:-1], orig_shape[-1] // block_size, block_size)
 
     max_abs = torch.amax(torch.abs(x_blocks), dim=-1)
     max_abs = torch.clamp(max_abs, min=torch.finfo(torch.float32).tiny)
 
-    largest_p2 = torch.floor(torch.log2(max_abs))
-    scale_unbiased = largest_p2 - _F8E4M3_LARGEST_POW2
+    if scale_mode == _MXFP8_SCALE_MODE_RCEIL:
+        # NVIDIA MXFP8 paper round-up scale recipe: https://arxiv.org/html/2506.08027v2
+        scale_unbiased = torch.ceil(torch.log2(max_abs / _F8E4M3_MAX))
+    else:
+        largest_p2 = torch.floor(torch.log2(max_abs))
+        scale_unbiased = largest_p2 - _F8E4M3_LARGEST_POW2
     scale_unbiased = torch.clamp(scale_unbiased, -_F8E8M0_EXP_BIAS, _F8E8M0_EXP_BIAS)
     scale_biased = (scale_unbiased + _F8E8M0_EXP_BIAS).to(torch.uint8)
     scales = scale_biased.view(torch.float8_e8m0fnu)
@@ -1076,9 +1269,11 @@ def _quantize_to_mxfp8_triton(
     x: torch.Tensor,
     *,
     block_size: int = 32,
+    scale_mode: Optional[MXFP8ScaleMode] = None,
     out: Optional[torch.Tensor] = None,
     scales_out: Optional[torch.Tensor] = None,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
+    scale_mode = _normalize_mxfp8_scale_mode(scale_mode)
     if triton is None or tl is None:
         raise RuntimeError("Triton is not available")
     if not x.is_cuda:
@@ -1116,6 +1311,7 @@ def _quantize_to_mxfp8_triton(
         cols,
         BLOCK_SIZE=block_size,
         USE_BF16_EXP=x.dtype == torch.bfloat16,
+        RCEIL_SCALE=scale_mode == _MXFP8_SCALE_MODE_RCEIL,
     )
     if scales_out is not None:
         return qdata, scales_out
@@ -1126,11 +1322,16 @@ def _swiglu_quantize_rows_to_mxfp8_torch(
     up_gate: torch.Tensor,
     *,
     block_size: int = 32,
+    scale_mode: Optional[MXFP8ScaleMode] = None,
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     hidden = up_gate.shape[1] // 2
     up, gate = up_gate.split(hidden, dim=-1)
     h = up * torch.nn.functional.silu(gate)
-    qdata, scales = quantize_to_mxfp8(h, block_size=block_size)
+    qdata, scales = quantize_to_mxfp8(
+        h,
+        block_size=block_size,
+        scale_mode=scale_mode,
+    )
     return h, qdata, scales
 
 
@@ -1138,7 +1339,9 @@ def _swiglu_quantize_rows_to_mxfp8_triton(
     up_gate: torch.Tensor,
     *,
     block_size: int = 32,
+    scale_mode: Optional[MXFP8ScaleMode] = None,
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    scale_mode = _normalize_mxfp8_scale_mode(scale_mode)
     if triton is None or tl is None:
         raise RuntimeError("Triton is not available")
     if not up_gate.is_cuda:
@@ -1195,6 +1398,7 @@ def _swiglu_quantize_rows_to_mxfp8_triton(
         BLOCK_N=_MXFP8_SWIGLU_BLOCK_N,
         EVEN_M=rows % _MXFP8_SWIGLU_BLOCK_M == 0,
         EVEN_N=hidden % _MXFP8_SWIGLU_BLOCK_N == 0,
+        RCEIL_SCALE=scale_mode == _MXFP8_SCALE_MODE_RCEIL,
         num_warps=_MXFP8_SWIGLU_NUM_WARPS,
         num_stages=_MXFP8_SWIGLU_NUM_STAGES,
     )
@@ -1205,6 +1409,7 @@ def swiglu_quantize_rows_to_mxfp8(
     up_gate: torch.Tensor,
     *,
     block_size: int = 32,
+    scale_mode: Optional[MXFP8ScaleMode] = None,
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """
     Compute SwiGLU activation and quantize it to MXFP8 in one API.
@@ -1214,6 +1419,7 @@ def swiglu_quantize_rows_to_mxfp8(
       qdata: float8_e4m3fn [M, H]
       scales: float8_e8m0fnu [M, H//block_size]
     """
+    scale_mode = _normalize_mxfp8_scale_mode(scale_mode)
     if up_gate.ndim != 2:
         raise ValueError(f"Expected rank-2 up_gate [M, 2H], got {tuple(up_gate.shape)}")
     if block_size != 32:
@@ -1229,9 +1435,17 @@ def swiglu_quantize_rows_to_mxfp8(
     if up_gate.is_cuda:
         if triton is None:
             raise RuntimeError("Triton is required for CUDA SwiGLU MXFP8 quantization")
-        return _swiglu_quantize_rows_to_mxfp8_triton(up_gate, block_size=block_size)
+        return _swiglu_quantize_rows_to_mxfp8_triton(
+            up_gate,
+            block_size=block_size,
+            scale_mode=scale_mode,
+        )
 
-    return _swiglu_quantize_rows_to_mxfp8_torch(up_gate, block_size=block_size)
+    return _swiglu_quantize_rows_to_mxfp8_torch(
+        up_gate,
+        block_size=block_size,
+        scale_mode=scale_mode,
+    )
 
 
 def _swiglu_quantize_rows_from_mxfp8_torch(
@@ -1239,6 +1453,7 @@ def _swiglu_quantize_rows_from_mxfp8_torch(
     up_gate_scales: torch.Tensor,
     *,
     block_size: int = 32,
+    scale_mode: Optional[MXFP8ScaleMode] = None,
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     up_gate = dequantize_from_mxfp8(
         up_gate_q,
@@ -1246,7 +1461,11 @@ def _swiglu_quantize_rows_from_mxfp8_torch(
         block_size=block_size,
         out_dtype=torch.bfloat16,
     )
-    return _swiglu_quantize_rows_to_mxfp8_torch(up_gate, block_size=block_size)
+    return _swiglu_quantize_rows_to_mxfp8_torch(
+        up_gate,
+        block_size=block_size,
+        scale_mode=scale_mode,
+    )
 
 
 def _swiglu_quantize_rows_from_mxfp8_triton(
@@ -1254,7 +1473,9 @@ def _swiglu_quantize_rows_from_mxfp8_triton(
     up_gate_scales: torch.Tensor,
     *,
     block_size: int = 32,
+    scale_mode: Optional[MXFP8ScaleMode] = None,
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    scale_mode = _normalize_mxfp8_scale_mode(scale_mode)
     if triton is None or tl is None:
         raise RuntimeError("Triton is not available")
     if not up_gate_q.is_cuda or not up_gate_scales.is_cuda:
@@ -1325,6 +1546,7 @@ def _swiglu_quantize_rows_from_mxfp8_triton(
         BLOCK_SIZE=block_size,
         BLOCK_M=_MXFP8_SWIGLU_FROM_FP8_BLOCK_M,
         BLOCK_N=_MXFP8_SWIGLU_FROM_FP8_BLOCK_N,
+        RCEIL_SCALE=scale_mode == _MXFP8_SCALE_MODE_RCEIL,
         num_warps=_MXFP8_SWIGLU_FROM_FP8_NUM_WARPS,
         num_stages=_MXFP8_SWIGLU_FROM_FP8_NUM_STAGES,
     )
@@ -1336,6 +1558,7 @@ def swiglu_quantize_rows_from_mxfp8(
     up_gate_scales: torch.Tensor,
     *,
     block_size: int = 32,
+    scale_mode: Optional[MXFP8ScaleMode] = None,
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """
     Compute SwiGLU from MXFP8 input and requantize output to MXFP8.
@@ -1349,6 +1572,7 @@ def swiglu_quantize_rows_from_mxfp8(
       qdata: float8_e4m3fn [M, H]
       scales: float8_e8m0fnu [M, H//block_size]
     """
+    scale_mode = _normalize_mxfp8_scale_mode(scale_mode)
     if block_size != 32:
         raise ValueError(f"Only block_size=32 is supported (got {block_size})")
     if up_gate_q.ndim != 2 or up_gate_scales.ndim != 2:
@@ -1364,12 +1588,14 @@ def swiglu_quantize_rows_from_mxfp8(
             up_gate_q,
             up_gate_scales,
             block_size=block_size,
+            scale_mode=scale_mode,
         )
 
     return _swiglu_quantize_rows_from_mxfp8_torch(
         up_gate_q,
         up_gate_scales,
         block_size=block_size,
+        scale_mode=scale_mode,
     )
 
 
@@ -1377,9 +1603,12 @@ def _quantize_to_mxfp8_te(
     x: torch.Tensor,
     *,
     block_size: int,
+    scale_mode: MXFP8ScaleMode,
     out: Optional[torch.Tensor],
     scales_out: Optional[torch.Tensor],
 ) -> Optional[Tuple[torch.Tensor, torch.Tensor]]:
+    if scale_mode != _MXFP8_SCALE_MODE_RCEIL:
+        return None
     if (
         block_size != 32
         or not x.is_cuda
@@ -1420,6 +1649,7 @@ def _quantize_to_mxfp8_te(
         columnwise_scale_inv=None,
         fp8_dtype=tex.DType.kFloat8E4M3,
         quantizer=quantizer,
+        with_gemm_swizzled_scales=False,
     )
     quantizer.update_quantized(x, te_tensor)
     return out, scales_out
@@ -1430,6 +1660,7 @@ def quantize_to_mxfp8(
     x: torch.Tensor,
     *,
     block_size: int = 32,
+    scale_mode: Optional[MXFP8ScaleMode] = None,
     out: Optional[torch.Tensor] = None,
     scales_out: Optional[torch.Tensor] = None,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -1440,6 +1671,7 @@ def quantize_to_mxfp8(
       qdata: float8_e4m3fn [M, K]
       scales: float8_e8m0fnu [M, K//block_size]
     """
+    scale_mode = _normalize_mxfp8_scale_mode(scale_mode)
     if x.ndim != 2:
         raise ValueError(f"Expected rank-2 tensor, got shape={tuple(x.shape)}")
     if block_size != 32:
@@ -1476,27 +1708,216 @@ def quantize_to_mxfp8(
     if out is not None and not out.is_contiguous():
         raise ValueError("out must be contiguous")
 
-    # CUDA fast path: fused Triton quantization avoids eager pointwise op chains.
-    if x.is_cuda:
-        if _mxfp8_backend_wants_te("Q"):
-            te_result = _quantize_to_mxfp8_te(
+    q_backend = _mxfp8_backend("Q")
+    if q_backend == _MXFP8_BACKEND_TE:
+        te_result = _quantize_to_mxfp8_te(
+            x,
+            block_size=block_size,
+            scale_mode=scale_mode,
+            out=out,
+            scales_out=scales_out,
+        )
+        if te_result is not None:
+            return te_result
+        raise _te_backend_requested_error(
+            "Q",
+            _te_quantize_unavailable_reason(
                 x,
                 block_size=block_size,
+                scale_mode=scale_mode,
                 out=out,
                 scales_out=scales_out,
-            )
-            if te_result is not None:
-                return te_result
+            ),
+        )
+
+    # CUDA fast path: fused OLMo Triton quantization avoids eager pointwise op chains.
+    if x.is_cuda:
         if triton is None:
             raise RuntimeError("Triton is required for CUDA MXFP8 quantization")
         return _quantize_to_mxfp8_triton(
             x,
             block_size=block_size,
+            scale_mode=scale_mode,
             out=out,
             scales_out=scales_out,
         )
 
-    qdata, scales = _quantize_to_mxfp8_torch(x, block_size=block_size)
+    qdata, scales = _quantize_to_mxfp8_torch(
+        x,
+        block_size=block_size,
+        scale_mode=scale_mode,
+    )
+    if out is not None:
+        out.copy_(qdata)
+        qdata = out
+    if scales_out is not None:
+        scales_out.copy_(scales)
+        scales = scales_out
+    return qdata, scales
+
+
+def _weighted_quantize_rows_to_mxfp8_torch(
+    x: torch.Tensor,
+    weights: torch.Tensor,
+    *,
+    block_size: int,
+    scale_mode: MXFP8ScaleMode,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    weighted = (x.unsqueeze(1) * weights.to(device=x.device, dtype=x.dtype).unsqueeze(-1)).reshape(
+        x.shape[0] * weights.shape[1], x.shape[1]
+    )
+    if not weighted.is_contiguous():
+        weighted = weighted.contiguous()
+    return quantize_to_mxfp8(
+        weighted,
+        block_size=block_size,
+        scale_mode=scale_mode,
+    )
+
+
+def _weighted_quantize_rows_to_mxfp8_triton(
+    x: torch.Tensor,
+    weights: torch.Tensor,
+    *,
+    block_size: int,
+    scale_mode: MXFP8ScaleMode,
+    out: Optional[torch.Tensor],
+    scales_out: Optional[torch.Tensor],
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    scale_mode = _normalize_mxfp8_scale_mode(scale_mode)
+    if triton is None or tl is None:
+        raise RuntimeError("Triton is not available")
+    if not x.is_cuda or not weights.is_cuda:
+        raise RuntimeError("Triton weighted MXFP8 quantization requires CUDA tensors")
+    if x.dtype != torch.bfloat16:
+        raise ValueError(f"Triton weighted MXFP8 quantization expects bf16 input, got {x.dtype}")
+
+    rows, cols = x.shape
+    top_k = weights.shape[1]
+    output_rows = rows * top_k
+    if out is not None:
+        qdata = out
+    else:
+        qdata = torch.empty((output_rows, cols), device=x.device, dtype=torch.float8_e4m3fn)
+    if scales_out is not None:
+        scales_u8 = scales_out.view(torch.uint8)
+    else:
+        scales_u8 = torch.empty(
+            (output_rows, cols // block_size), device=x.device, dtype=torch.uint8
+        )
+
+    def grid(meta):
+        return (
+            triton.cdiv(output_rows, meta["BLOCK_M"]),
+            triton.cdiv(cols, meta["BLOCK_N"]),
+        )
+
+    _triton_mxfp8_weighted_quantize_dim0[grid](
+        x,
+        x.stride(0),
+        x.stride(1),
+        weights,
+        weights.stride(0),
+        weights.stride(1),
+        qdata,
+        qdata.stride(0),
+        qdata.stride(1),
+        scales_u8,
+        scales_u8.stride(0),
+        scales_u8.stride(1),
+        rows,
+        top_k,
+        cols,
+        BLOCK_SIZE=block_size,
+        RCEIL_SCALE=scale_mode == _MXFP8_SCALE_MODE_RCEIL,
+    )
+    if scales_out is not None:
+        return qdata, scales_out
+    return qdata, scales_u8.view(torch.float8_e8m0fnu)
+
+
+@nvtx.annotate("weighted_quantize_rows_to_mxfp8", color="red")
+def weighted_quantize_rows_to_mxfp8(
+    x: torch.Tensor,
+    weights: torch.Tensor,
+    *,
+    block_size: int = 32,
+    scale_mode: Optional[MXFP8ScaleMode] = None,
+    out: Optional[torch.Tensor] = None,
+    scales_out: Optional[torch.Tensor] = None,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """
+    Quantize route-weighted rows to MXFP8 without materializing [N, K, H].
+
+    The returned tensors are flattened over routes:
+      qdata: [N * K, H]
+      scales: [N * K, H // block_size]
+
+    For CUDA bf16 input, the Triton path matches:
+      (x[:, None, :] * weights.to(x.dtype)[:, :, None]).reshape(N * K, H)
+      quantize_rows_to_mxfp8(...)
+    """
+    scale_mode = _normalize_mxfp8_scale_mode(scale_mode)
+    if x.ndim != 2:
+        raise ValueError(f"Expected x rank-2 [N, H], got {tuple(x.shape)}")
+    if weights.ndim != 2:
+        raise ValueError(f"Expected weights rank-2 [N, K], got {tuple(weights.shape)}")
+    if weights.shape[0] != x.shape[0]:
+        raise ValueError(
+            f"weights first dim must match x rows: {tuple(weights.shape)} vs {tuple(x.shape)}"
+        )
+    if block_size != 32:
+        raise ValueError(f"Only block_size=32 is supported (got {block_size})")
+    if x.shape[1] % block_size != 0:
+        raise ValueError(f"x hidden dim must be divisible by {block_size}, got {tuple(x.shape)}")
+    expected_q_shape = (x.shape[0] * weights.shape[1], x.shape[1])
+    expected_scales_shape = (expected_q_shape[0], x.shape[1] // block_size)
+    if out is not None:
+        if tuple(out.shape) != expected_q_shape:
+            raise ValueError(
+                f"out shape mismatch: expected {expected_q_shape}, got {tuple(out.shape)}"
+            )
+        if out.dtype != torch.float8_e4m3fn:
+            raise ValueError(f"out dtype mismatch: expected {torch.float8_e4m3fn}, got {out.dtype}")
+        if out.device != x.device:
+            raise ValueError(f"out device mismatch: expected {x.device}, got {out.device}")
+        if not out.is_contiguous():
+            raise ValueError("out must be contiguous")
+    if scales_out is not None:
+        if tuple(scales_out.shape) != expected_scales_shape:
+            raise ValueError(
+                "scales_out shape mismatch: "
+                f"expected {expected_scales_shape}, got {tuple(scales_out.shape)}"
+            )
+        if scales_out.dtype != torch.float8_e8m0fnu:
+            raise ValueError(
+                f"scales_out dtype mismatch: expected {torch.float8_e8m0fnu}, got {scales_out.dtype}"
+            )
+        if scales_out.device != x.device:
+            raise ValueError(
+                f"scales_out device mismatch: expected {x.device}, got {scales_out.device}"
+            )
+        if not scales_out.is_contiguous():
+            raise ValueError("scales_out must be contiguous")
+
+    if x.is_cuda and weights.is_cuda and x.dtype == torch.bfloat16:
+        if triton is None:
+            raise RuntimeError("Triton is required for CUDA weighted MXFP8 quantization")
+        return _weighted_quantize_rows_to_mxfp8_triton(
+            x,
+            weights,
+            block_size=block_size,
+            scale_mode=scale_mode,
+            out=out,
+            scales_out=scales_out,
+        )
+
+    qdata, scales = _weighted_quantize_rows_to_mxfp8_torch(
+        x,
+        weights,
+        block_size=block_size,
+        scale_mode=scale_mode,
+    )
     if out is not None:
         out.copy_(qdata)
         qdata = out
@@ -1547,8 +1968,50 @@ def _dequantize_from_mxfp8_te(
         columnwise_scale_inv=None,
         fp8_dtype=tex.DType.kFloat8E4M3,
         quantizer=quantizer,
+        with_gemm_swizzled_scales=False,
     )
     return te_tensor.dequantize(dtype=out_dtype)
+
+
+def _te_dequantize_unavailable_reason(
+    qdata: torch.Tensor,
+    scales: torch.Tensor,
+    *,
+    block_size: int,
+    out_dtype: torch.dtype,
+    out: Optional[torch.Tensor],
+) -> str:
+    if out is not None:
+        return (
+            "TransformerEngine MXFP8 dequantize does not support preallocated out in this wrapper"
+        )
+    if block_size != 32:
+        return f"TransformerEngine MXFP8 dequantize requires block_size=32, got {block_size}"
+    if not qdata.is_cuda or not scales.is_cuda:
+        return "TransformerEngine MXFP8 dequantize requires CUDA qdata and scales"
+    if not qdata.is_contiguous() or not scales.is_contiguous():
+        return "TransformerEngine MXFP8 dequantize requires contiguous qdata and scales"
+    if qdata.dtype != torch.float8_e4m3fn:
+        return f"TransformerEngine MXFP8 dequantize requires qdata dtype float8_e4m3fn, got {qdata.dtype}"
+    if scales.dtype != torch.float8_e8m0fnu:
+        return f"TransformerEngine MXFP8 dequantize requires scales dtype float8_e8m0fnu, got {scales.dtype}"
+    if out_dtype not in {torch.bfloat16, torch.float16, torch.float32}:
+        return f"TransformerEngine MXFP8 dequantize does not support output dtype {out_dtype}"
+
+    rows, cols = qdata.shape
+    if rows % 32 != 0 or cols % block_size != 0:
+        return (
+            "TransformerEngine MXFP8 dequantize requires rows divisible by 32 and "
+            f"cols divisible by {block_size}, got shape={tuple(qdata.shape)}"
+        )
+    if not _te_mxfp8_compact_scale_layout(rows, cols, block_size):
+        return (
+            "TransformerEngine compact rowwise scale layout requires rows divisible "
+            "by 128 and scale columns divisible by 4"
+        )
+    if _get_te_mxfp8_state() is None:
+        return "TransformerEngine MXFP8 is not installed/importable"
+    return "unsupported TransformerEngine MXFP8 dequantize call"
 
 
 @nvtx.annotate("dequantize_from_mxfp8", color="red")
@@ -1594,9 +2057,21 @@ def dequantize_from_mxfp8(
             raise ValueError(f"out dtype mismatch: expected {out_dtype}, got {out.dtype}")
         if out.device != qdata.device:
             raise ValueError(f"out device mismatch: expected {qdata.device}, got {out.device}")
+        if _mxfp8_backend("DQ") == _MXFP8_BACKEND_TE:
+            raise _te_backend_requested_error(
+                "DQ",
+                _te_dequantize_unavailable_reason(
+                    qdata,
+                    scales,
+                    block_size=block_size,
+                    out_dtype=out_dtype,
+                    out=out,
+                ),
+            )
         out_tensor = out
     else:
-        if _mxfp8_backend_wants_te("DQ"):
+        dq_backend = _mxfp8_backend("DQ")
+        if dq_backend == _MXFP8_BACKEND_TE:
             te_out = _dequantize_from_mxfp8_te(
                 qdata,
                 scales,
@@ -1606,6 +2081,16 @@ def dequantize_from_mxfp8(
             )
             if te_out is not None:
                 return te_out
+            raise _te_backend_requested_error(
+                "DQ",
+                _te_dequantize_unavailable_reason(
+                    qdata,
+                    scales,
+                    block_size=block_size,
+                    out_dtype=out_dtype,
+                    out=out,
+                ),
+            )
         out_tensor = torch.empty((m, k), device=qdata.device, dtype=out_dtype)
 
     use_triton = qdata.is_cuda and scales.is_cuda and triton is not None
@@ -1939,6 +2424,7 @@ def quantize_grouped_2d_to_mxfp8_blocked(
     offs: torch.Tensor,
     *,
     block_size: int = 32,
+    scale_mode: Optional[MXFP8ScaleMode] = None,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     """
     Quantize grouped 2D input for scaled_grouped_mm (2D-3D).
@@ -1947,6 +2433,7 @@ def quantize_grouped_2d_to_mxfp8_blocked(
       qdata: [M, K] float8_e4m3fn
       scales_blocked: [>=M, K//block_size] float8_e8m0fnu in grouped blocked layout packing.
     """
+    scale_mode = _normalize_mxfp8_scale_mode(scale_mode)
     if x.ndim != 2:
         raise ValueError(f"Expected x to be rank-2, got {tuple(x.shape)}")
     if offs.ndim != 1:
@@ -1972,7 +2459,11 @@ def quantize_grouped_2d_to_mxfp8_blocked(
         offs = offs.to(device=x.device)
 
     # Keep capacity/static shape for mat_a and avoid active-row compaction.
-    qdata, scales = quantize_to_mxfp8(x, block_size=block_size)
+    qdata, scales = quantize_to_mxfp8(
+        x,
+        block_size=block_size,
+        scale_mode=scale_mode,
+    )
 
     if x.is_cuda:
         scales_blocked = _to_blocked_m_groups_triton(scales, offs)
@@ -2002,10 +2493,12 @@ def _quantize_grouped_2d_to_mxfp8_blocked_fused_triton(
     offs: torch.Tensor,
     *,
     block_size: int = 32,
+    scale_mode: Optional[MXFP8ScaleMode] = None,
     out: Optional[torch.Tensor] = None,
     blocked_scales_out: Optional[torch.Tensor] = None,
     zero_unwritten_tail: bool = True,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
+    scale_mode = _normalize_mxfp8_scale_mode(scale_mode)
     if triton is None or tl is None:
         raise RuntimeError("Triton is required for fused grouped MXFP8 quantize+swizzle")
     if not x.is_cuda:
@@ -2081,6 +2574,7 @@ def _quantize_grouped_2d_to_mxfp8_blocked_fused_triton(
         BLOCK_N=_MXFP8_Q_BLOCK_N,
         NUM_GROUPS=num_groups,
         USE_BF16_EXP=x.dtype == torch.bfloat16,
+        RCEIL_SCALE=scale_mode == _MXFP8_SCALE_MODE_RCEIL,
         num_warps=_MXFP8_Q_NUM_WARPS,
         num_stages=_MXFP8_Q_NUM_STAGES,
     )
@@ -2092,6 +2586,7 @@ def quantize_grouped_2d_to_mxfp8_blocked_fused(
     offs: torch.Tensor,
     *,
     block_size: int = 32,
+    scale_mode: Optional[MXFP8ScaleMode] = None,
     out: Optional[torch.Tensor] = None,
     blocked_scales_out: Optional[torch.Tensor] = None,
     zero_unwritten_tail: bool = True,
@@ -2103,6 +2598,7 @@ def quantize_grouped_2d_to_mxfp8_blocked_fused(
     grouped_scales_to_mxfp8_blocked(scales, offs), but fuses the scale swizzle
     into the quantization kernel for CUDA inputs.
     """
+    scale_mode = _normalize_mxfp8_scale_mode(scale_mode)
     if x.ndim != 2:
         raise ValueError(f"Expected x to be rank-2, got {tuple(x.shape)}")
     if offs.ndim != 1:
@@ -2122,6 +2618,7 @@ def quantize_grouped_2d_to_mxfp8_blocked_fused(
             x,
             offs,
             block_size=block_size,
+            scale_mode=scale_mode,
             out=out,
             blocked_scales_out=blocked_scales_out,
             zero_unwritten_tail=zero_unwritten_tail,
@@ -2131,6 +2628,7 @@ def quantize_grouped_2d_to_mxfp8_blocked_fused(
         x,
         offs,
         block_size=block_size,
+        scale_mode=scale_mode,
     )
     if out is not None:
         out.copy_(qdata)
@@ -2172,6 +2670,7 @@ def quantize_grouped_weight_3d_to_mxfp8_blocked(
     mat_b: torch.Tensor,
     *,
     block_size: int = 32,
+    scale_mode: Optional[MXFP8ScaleMode] = None,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     """
     Quantize grouped 3D RHS operand [G, K, N] for scaled_grouped_mm.
@@ -2180,6 +2679,7 @@ def quantize_grouped_weight_3d_to_mxfp8_blocked(
       qdata: [G, K, N] float8_e4m3fn
       scales_blocked: [G, blocked_scale_K * blocked_scale_N] float8_e8m0fnu
     """
+    scale_mode = _normalize_mxfp8_scale_mode(scale_mode)
     if mat_b.ndim != 3:
         raise ValueError(f"Expected mat_b rank-3 [G, K, N], got {tuple(mat_b.shape)}")
 
@@ -2193,14 +2693,22 @@ def quantize_grouped_weight_3d_to_mxfp8_blocked(
     # transposed views so trailing dims are already column-major (stride [1, K]).
     mat_b_nk = mat_b.transpose(-2, -1)  # [G, N, K]
     if mat_b_nk.is_contiguous():
-        q_nk, s_nk = quantize_to_mxfp8(mat_b_nk.reshape(g * n, k), block_size=block_size)
+        q_nk, s_nk = quantize_to_mxfp8(
+            mat_b_nk.reshape(g * n, k),
+            block_size=block_size,
+            scale_mode=scale_mode,
+        )
         q_nk = q_nk.reshape(g, n, k)
         s_nk = s_nk.reshape(g, n, k // block_size)
     else:
         q_parts = []
         s_parts = []
         for i in range(g):
-            q_i, s_i = quantize_to_mxfp8(mat_b_nk[i], block_size=block_size)
+            q_i, s_i = quantize_to_mxfp8(
+                mat_b_nk[i],
+                block_size=block_size,
+                scale_mode=scale_mode,
+            )
             q_parts.append(q_i)
             s_parts.append(s_i)
         q_nk = torch.stack(q_parts, dim=0)
@@ -2215,12 +2723,14 @@ def quantize_grouped_weight_3d_to_mxfp8_unblocked(
     mat_b: torch.Tensor,
     *,
     block_size: int = 32,
+    scale_mode: Optional[MXFP8ScaleMode] = None,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     """
     Quantize grouped 3D RHS operand [G, K, N] to:
       qdata: [G, K, N] float8_e4m3fn (column-major trailing dims)
       scales_nk: [G, N, K//block_size] float8_e8m0fnu (unblocked, non-swizzled)
     """
+    scale_mode = _normalize_mxfp8_scale_mode(scale_mode)
     if mat_b.ndim != 3:
         raise ValueError(f"Expected mat_b rank-3 [G, K, N], got {tuple(mat_b.shape)}")
 
@@ -2234,14 +2744,22 @@ def quantize_grouped_weight_3d_to_mxfp8_unblocked(
     # transposed views so trailing dims are column-major (stride [1, K]).
     mat_b_nk = mat_b.transpose(-2, -1)  # [G, N, K]
     if mat_b_nk.is_contiguous():
-        q_nk, s_nk = quantize_to_mxfp8(mat_b_nk.reshape(g * n, k), block_size=block_size)
+        q_nk, s_nk = quantize_to_mxfp8(
+            mat_b_nk.reshape(g * n, k),
+            block_size=block_size,
+            scale_mode=scale_mode,
+        )
         q_nk = q_nk.reshape(g, n, k)
         s_nk = s_nk.reshape(g, n, k // block_size)
     else:
         q_parts = []
         s_parts = []
         for i in range(g):
-            q_i, s_i = quantize_to_mxfp8(mat_b_nk[i], block_size=block_size)
+            q_i, s_i = quantize_to_mxfp8(
+                mat_b_nk[i],
+                block_size=block_size,
+                scale_mode=scale_mode,
+            )
             q_parts.append(q_i)
             s_parts.append(s_i)
         q_nk = torch.stack(q_parts, dim=0)
@@ -2255,6 +2773,7 @@ def quantize_rows_to_mxfp8(
     x: torch.Tensor,
     *,
     block_size: int = 32,
+    scale_mode: Optional[MXFP8ScaleMode] = None,
     out: Optional[torch.Tensor] = None,
     scales_out: Optional[torch.Tensor] = None,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -2262,6 +2781,7 @@ def quantize_rows_to_mxfp8(
     return quantize_to_mxfp8(
         x,
         block_size=block_size,
+        scale_mode=scale_mode,
         out=out,
         scales_out=scales_out,
     )
@@ -2272,6 +2792,7 @@ def quantize_row_halves_to_mxfp8(
     x: torch.Tensor,
     *,
     block_size: int = 32,
+    scale_mode: Optional[MXFP8ScaleMode] = None,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     """
     Quantize a row-major [M, 2H] tensor as two [M, H] halves.
@@ -2282,6 +2803,7 @@ def quantize_row_halves_to_mxfp8(
     Inductor generate an fp8 masked-load fill constant that Triton cannot lower.
     The useful work is still done by the two explicit Triton quantize kernels.
     """
+    scale_mode = _normalize_mxfp8_scale_mode(scale_mode)
     if x.ndim != 2:
         raise ValueError(f"Expected rank-2 tensor, got shape={tuple(x.shape)}")
     if block_size != 32:
@@ -2293,7 +2815,11 @@ def quantize_row_halves_to_mxfp8(
     if hidden % block_size != 0:
         raise ValueError(f"Split dim must be divisible by {block_size}, got hidden={hidden}")
     if not x.is_cuda or triton is None or _mxfp8_backend_wants_te("Q"):
-        return quantize_rows_to_mxfp8(x, block_size=block_size)
+        return quantize_rows_to_mxfp8(
+            x,
+            block_size=block_size,
+            scale_mode=scale_mode,
+        )
 
     rows = x.shape[0]
     qdata = torch.empty((rows, 2 * hidden), device=x.device, dtype=torch.float8_e4m3fn)
@@ -2306,12 +2832,14 @@ def quantize_row_halves_to_mxfp8(
     _quantize_to_mxfp8_triton(
         x[:, :hidden],
         block_size=block_size,
+        scale_mode=scale_mode,
         out=qdata[:, :hidden],
         scales_out=scales[:, :scale_hidden],
     )
     _quantize_to_mxfp8_triton(
         x[:, hidden:],
         block_size=block_size,
+        scale_mode=scale_mode,
         out=qdata[:, hidden:],
         scales_out=scales[:, scale_hidden:],
     )
