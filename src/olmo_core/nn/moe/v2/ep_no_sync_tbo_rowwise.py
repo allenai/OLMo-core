@@ -120,7 +120,9 @@ class _NoSyncRowwiseStageAState:
     padded_batch_size_per_local_expert: torch.Tensor
     dst_ranks: torch.Tensor
     dst_rows: torch.Tensor
-    rowwise_nblocks: int
+    rowwise_get_nblocks: int
+    rowwise_put_nblocks: int
+    rowwise_weighted_put_nblocks: int
     use_symm_dispatch_in: bool
     use_symm_combine_out: bool
     use_symm_combine_gather: bool
@@ -324,10 +326,16 @@ def ep_no_sync_rowwise_tbo_stage_a(
             allowed_splits=allowed_splits,
             keep_from_src_dest_local=keep_from_src_dest_local,
         )
-        rowwise_nblocks = self.ep.rowwise_nblocks
+        rowwise_get_nblocks = self.ep.rowwise_get_nblocks
+        rowwise_put_nblocks = self.ep.rowwise_put_nblocks
+        rowwise_weighted_put_nblocks = self.ep.rowwise_weighted_put_nblocks
         # _tbo_debug_print(
         #     self,
-        #     f"A{lane_id}:route-maps-exit nblocks={rowwise_nblocks}",
+        #     (
+        #         f"A{lane_id}:route-maps-exit get_nblocks={rowwise_get_nblocks} "
+        #         f"put_nblocks={rowwise_put_nblocks} "
+        #         f"weighted_put_nblocks={rowwise_weighted_put_nblocks}"
+        #     ),
         #     routing_map=routing_map,
         #     dst_ranks=dst_ranks,
         #     dst_rows=dst_rows,
@@ -353,7 +361,9 @@ def ep_no_sync_rowwise_tbo_stage_a(
         padded_batch_size_per_local_expert=padded_batch_size_per_local_expert,
         dst_ranks=dst_ranks,
         dst_rows=dst_rows,
-        rowwise_nblocks=rowwise_nblocks,
+        rowwise_get_nblocks=rowwise_get_nblocks,
+        rowwise_put_nblocks=rowwise_put_nblocks,
+        rowwise_weighted_put_nblocks=rowwise_weighted_put_nblocks,
         use_symm_dispatch_in=use_symm_dispatch_in,
         use_symm_combine_out=use_symm_combine_out,
         use_symm_combine_gather=use_symm_combine_gather,
@@ -397,7 +407,8 @@ def ep_no_sync_rowwise_tbo_stage_d_launch(
             getattr(a_state.buffers, "dispatch_out_lease", None),
             a_state.group_name,
             self.ep_pg,
-            a_state.rowwise_nblocks,
+            a_state.rowwise_get_nblocks,
+            a_state.rowwise_put_nblocks,
             source_input_aliases_symm_input,
             grad_out_aliases_symm_out,
             True,
@@ -546,7 +557,9 @@ def ep_no_sync_rowwise_tbo_stage_c_launch(
             route_probs,
             a_state.group_name,
             block.ep_pg,
-            a_state.rowwise_nblocks,
+            a_state.rowwise_get_nblocks,
+            a_state.rowwise_put_nblocks,
+            a_state.rowwise_weighted_put_nblocks,
             expert_out_aliases_symm_expert_out,
             True,
             True,

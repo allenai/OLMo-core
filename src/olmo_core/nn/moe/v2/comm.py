@@ -375,7 +375,8 @@ class _RowwiseFP8DispatchExpertsCombineAutograd(torch.autograd.Function):
         recompute_swiglu: bool,
         group_name: str,
         group: dist.ProcessGroup,
-        nblocks: int,
+        get_nblocks: int,
+        put_nblocks: int,
         up_wgrad_sink,
         up_wgrad_sink_transpose_last2: bool,
         up_wgrad_sink_squeeze_first_dim: bool,
@@ -401,8 +402,10 @@ class _RowwiseFP8DispatchExpertsCombineAutograd(torch.autograd.Function):
             raise RuntimeError(
                 f"Invalid block_size={block_size} for hidden dim {source_input.shape[1]}"
             )
-        if nblocks < 0:
-            raise RuntimeError(f"nblocks must be >= 0 (got {nblocks})")
+        if get_nblocks < 0:
+            raise RuntimeError(f"get_nblocks must be >= 0 (got {get_nblocks})")
+        if put_nblocks < 0:
+            raise RuntimeError(f"put_nblocks must be >= 0 (got {put_nblocks})")
 
         source_input_contig = (
             source_input if source_input.is_contiguous() else source_input.contiguous()
@@ -448,7 +451,7 @@ class _RowwiseFP8DispatchExpertsCombineAutograd(torch.autograd.Function):
             dst_rows_i64,
             group_name,
             block_size=int(block_size),
-            nblocks=int(nblocks),
+            nblocks=int(put_nblocks),
             input_q=dispatch_in_q,
             input_scales=dispatch_in_scales,
         )
@@ -694,7 +697,7 @@ class _RowwiseFP8DispatchExpertsCombineAutograd(torch.autograd.Function):
             group_name,
             probs=probs_f32,
             block_size=int(block_size),
-            nblocks=int(nblocks),
+            nblocks=int(get_nblocks),
             gathered_q_out=gathered_q_for_get,
             gathered_scales_out=gathered_scales_for_get,
         )
@@ -709,7 +712,8 @@ class _RowwiseFP8DispatchExpertsCombineAutograd(torch.autograd.Function):
 
         ctx.group = group
         ctx.group_name = group_name
-        ctx.nblocks = int(nblocks)
+        ctx.get_nblocks = int(get_nblocks)
+        ctx.put_nblocks = int(put_nblocks)
         ctx.block_size = int(block_size)
         ctx.use_fast_accum = bool(use_fast_accum)
         ctx.recompute_swiglu = bool(recompute_swiglu)
@@ -829,7 +833,7 @@ class _RowwiseFP8DispatchExpertsCombineAutograd(torch.autograd.Function):
             dst_rows,
             ctx.group_name,
             block_size=ctx.block_size,
-            nblocks=ctx.nblocks,
+            nblocks=ctx.put_nblocks,
             input_q=(
                 ctx.combine_gather_q.view(-1, ctx.combine_gather_q.shape[-1])
                 if ctx.combine_gather_q is not None
@@ -1123,7 +1127,7 @@ class _RowwiseFP8DispatchExpertsCombineAutograd(torch.autograd.Function):
             dst_rows,
             ctx.group_name,
             block_size=ctx.block_size,
-            nblocks=ctx.nblocks,
+            nblocks=ctx.get_nblocks,
             gathered_q_out=ctx.combine_gather_q,
             gathered_scales_out=ctx.combine_gather_scales,
         )
@@ -1178,7 +1182,8 @@ class _RowwiseFP8DispatchExpertsCombineAutograd(torch.autograd.Function):
             None,  # recompute_swiglu
             None,  # group_name
             None,  # group
-            None,  # nblocks
+            None,  # get_nblocks
+            None,  # put_nblocks
             None,  # up_wgrad_sink
             None,  # up_wgrad_sink_transpose_last2
             None,  # up_wgrad_sink_squeeze_first_dim
@@ -1204,7 +1209,9 @@ class _RowwiseCombineWeightedAutograd(torch.autograd.Function):
         probs: torch.Tensor,
         group_name: str,
         group: dist.ProcessGroup,
-        nblocks: int,
+        get_nblocks: int,
+        put_nblocks: int,
+        weighted_put_nblocks: int,
         expert_out_aliases_symm_expert_out: bool,
         pre_barrier: bool,
         post_barrier: bool,
@@ -1231,8 +1238,12 @@ class _RowwiseCombineWeightedAutograd(torch.autograd.Function):
                 "probs shape mismatch with src_ranks/src_rows: "
                 f"{tuple(probs.shape)} vs {tuple(src_ranks.shape)}"
             )
-        if nblocks < 0:
-            raise RuntimeError(f"nblocks must be >= 0 (got {nblocks})")
+        if get_nblocks < 0:
+            raise RuntimeError(f"get_nblocks must be >= 0 (got {get_nblocks})")
+        if put_nblocks < 0:
+            raise RuntimeError(f"put_nblocks must be >= 0 (got {put_nblocks})")
+        if weighted_put_nblocks < 0:
+            raise RuntimeError(f"weighted_put_nblocks must be >= 0 (got {weighted_put_nblocks})")
 
         src_ranks_i64 = (
             src_ranks if src_ranks.dtype == torch.long else src_ranks.to(dtype=torch.long)
@@ -1346,7 +1357,7 @@ class _RowwiseCombineWeightedAutograd(torch.autograd.Function):
             src_rows_i64,
             group_name,
             probs=probs_f32,
-            nblocks=nblocks,
+            nblocks=get_nblocks,
             gathered_out=gathered_routes_for_kernel,
             pre_barrier=pre_barrier,
             post_barrier=post_barrier,
@@ -1362,7 +1373,8 @@ class _RowwiseCombineWeightedAutograd(torch.autograd.Function):
         # )
         ctx.group = group
         ctx.group_name = group_name
-        ctx.nblocks = int(nblocks)
+        ctx.put_nblocks = int(put_nblocks)
+        ctx.weighted_put_nblocks = int(weighted_put_nblocks)
         ctx.probs_input_dtype = probs.dtype
         ctx.symm_expert_out = symm_expert_out
         ctx.symm_combine_out_lease = symm_combine_out_lease
@@ -1442,7 +1454,7 @@ class _RowwiseCombineWeightedAutograd(torch.autograd.Function):
                     flat_ranks,
                     flat_rows,
                     ctx.group_name,
-                    nblocks=ctx.nblocks,
+                    nblocks=ctx.put_nblocks,
                 )
                 # _rowwise_debug_sync("rowwise_combine_backward_dispatch_put_unweighted", symm_grad_expert_out.device)
                 # _rowwise_debug_print(
@@ -1470,7 +1482,7 @@ class _RowwiseCombineWeightedAutograd(torch.autograd.Function):
                     src_rows,
                     ctx.group_name,
                     probs=probs,
-                    nblocks=ctx.nblocks,
+                    nblocks=ctx.weighted_put_nblocks,
                 )
                 # _rowwise_debug_sync("rowwise_combine_backward_dispatch_put", symm_grad_expert_out.device)
                 # _rowwise_debug_print(
@@ -1493,20 +1505,22 @@ class _RowwiseCombineWeightedAutograd(torch.autograd.Function):
         ctx.group = None
         grads = (
             grad_expert_out,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
+            None,  # symm_expert_out
+            None,  # symm_combine_out
+            None,  # symm_combine_out_lease
+            None,  # symm_gathered_routes
+            None,  # symm_gathered_routes_lease
+            None,  # src_ranks
+            None,  # src_rows
             grad_probs,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
+            None,  # group_name
+            None,  # group
+            None,  # get_nblocks
+            None,  # put_nblocks
+            None,  # weighted_put_nblocks
+            None,  # expert_out_aliases_symm_expert_out
+            None,  # pre_barrier
+            None,  # post_barrier
         )
         return _check_input_grads(grads, ctx.needs_input_grad)
 
@@ -1524,7 +1538,8 @@ class _DispatchRowwiseAutograd(torch.autograd.Function):
         symm_out_lease,
         group_name: str,
         group: dist.ProcessGroup,
-        nblocks: int,
+        get_nblocks: int,
+        put_nblocks: int,
         source_input_aliases_symm_input: bool,
         grad_out_aliases_symm_out: bool,
         get_pre_barrier: bool,
@@ -1540,8 +1555,10 @@ class _DispatchRowwiseAutograd(torch.autograd.Function):
             raise RuntimeError("dst_ranks/dst_rows must be [N, K] and match source_input first dim")
         if symm_out.ndim != 2 or symm_out.shape[1] != source_input.shape[1]:
             raise RuntimeError("symm_out must be [C, D] with matching hidden dim to source_input")
-        if nblocks < 0:
-            raise RuntimeError(f"nblocks must be >= 0 (got {nblocks})")
+        if get_nblocks < 0:
+            raise RuntimeError(f"get_nblocks must be >= 0 (got {get_nblocks})")
+        if put_nblocks < 0:
+            raise RuntimeError(f"put_nblocks must be >= 0 (got {put_nblocks})")
 
         source_input_contig = source_input
         if not source_input_contig.is_contiguous():
@@ -1595,7 +1612,7 @@ class _DispatchRowwiseAutograd(torch.autograd.Function):
             dst_ranks_i64,
             dst_rows_i64,
             group_name,
-            nblocks=nblocks,
+            nblocks=put_nblocks,
         )
         # _rowwise_debug_sync("rowwise_dispatch_forward_put", symm_out.device)
         # _rowwise_debug_print(
@@ -1608,7 +1625,7 @@ class _DispatchRowwiseAutograd(torch.autograd.Function):
 
         ctx.group_name = group_name
         ctx.group = group
-        ctx.nblocks = int(nblocks)
+        ctx.get_nblocks = int(get_nblocks)
         ctx.get_pre_barrier = bool(get_pre_barrier)
         ctx.get_post_barrier = bool(get_post_barrier)
         ctx.grad_out_aliases_symm_out = bool(grad_out_aliases_symm_out)
@@ -1667,7 +1684,7 @@ class _DispatchRowwiseAutograd(torch.autograd.Function):
             dst_ranks,
             dst_rows,
             ctx.group_name,
-            nblocks=ctx.nblocks,
+            nblocks=ctx.get_nblocks,
             gathered_out=gathered_grad_out,
             pre_barrier=ctx.get_pre_barrier,
             post_barrier=ctx.get_post_barrier,
@@ -1688,7 +1705,22 @@ class _DispatchRowwiseAutograd(torch.autograd.Function):
         ctx.symm_out_lease = None
         ctx.group = None
         return _check_input_grads(
-            (grad_input, None, None, None, None, None, None, None, None, None, None, None, None),
+            (
+                grad_input,
+                None,  # symm_input
+                None,  # dst_ranks
+                None,  # dst_rows
+                None,  # symm_out
+                None,  # symm_out_lease
+                None,  # group_name
+                None,  # group
+                None,  # get_nblocks
+                None,  # put_nblocks
+                None,  # source_input_aliases_symm_input
+                None,  # grad_out_aliases_symm_out
+                None,  # get_pre_barrier
+                None,  # get_post_barrier
+            ),
             ctx.needs_input_grad,
         )
 
@@ -1711,7 +1743,8 @@ class _DispatchRowwiseFP8Autograd(torch.autograd.Function):
         block_size: int,
         group_name: str,
         group: dist.ProcessGroup,
-        nblocks: int,
+        get_nblocks: int,
+        put_nblocks: int,
     ) -> torch.Tensor:
         if source_input.ndim != 2:
             raise RuntimeError(
@@ -1748,8 +1781,10 @@ class _DispatchRowwiseFP8Autograd(torch.autograd.Function):
             raise RuntimeError(
                 f"symm_out_scales must be float8_e8m0fnu, got {symm_out_scales.dtype}"
             )
-        if nblocks < 0:
-            raise RuntimeError(f"nblocks must be >= 0 (got {nblocks})")
+        if get_nblocks < 0:
+            raise RuntimeError(f"get_nblocks must be >= 0 (got {get_nblocks})")
+        if put_nblocks < 0:
+            raise RuntimeError(f"put_nblocks must be >= 0 (got {put_nblocks})")
 
         source_input_contig = (
             source_input if source_input.is_contiguous() else source_input.contiguous()
@@ -1852,7 +1887,7 @@ class _DispatchRowwiseFP8Autograd(torch.autograd.Function):
             dst_rows_i64,
             group_name,
             block_size=int(block_size),
-            nblocks=nblocks,
+            nblocks=put_nblocks,
             input_q=dispatch_in_q,
             input_scales=dispatch_in_scales,
         )
@@ -1867,7 +1902,7 @@ class _DispatchRowwiseFP8Autograd(torch.autograd.Function):
 
         ctx.group_name = group_name
         ctx.group = group
-        ctx.nblocks = int(nblocks)
+        ctx.get_nblocks = int(get_nblocks)
         ctx.block_size = int(block_size)
         ctx.logical_out_shape = tuple(symm_out_q.shape)
         ctx.logical_out_dtype = source_input.dtype
@@ -1926,7 +1961,7 @@ class _DispatchRowwiseFP8Autograd(torch.autograd.Function):
             dst_rows,
             ctx.group_name,
             block_size=ctx.block_size,
-            nblocks=ctx.nblocks,
+            nblocks=ctx.get_nblocks,
             gathered_q_out=ctx.combine_gather_q,
             gathered_scales_out=ctx.combine_gather_scales,
         )
@@ -1963,7 +1998,8 @@ class _DispatchRowwiseFP8Autograd(torch.autograd.Function):
                 None,  # block_size
                 None,  # group_name
                 None,  # group
-                None,  # nblocks
+                None,  # get_nblocks
+                None,  # put_nblocks
             ),
             ctx.needs_input_grad,
         )
@@ -1984,7 +2020,8 @@ class _RowwiseCombineWeightedFP8Autograd(torch.autograd.Function):
         block_size: int,
         group_name: str,
         group: dist.ProcessGroup,
-        nblocks: int,
+        get_nblocks: int,
+        put_nblocks: int,
     ) -> torch.Tensor:
         if expert_out.ndim != 2:
             raise RuntimeError("expert_out must be rank-2 [R, D]")
@@ -2035,8 +2072,10 @@ class _RowwiseCombineWeightedFP8Autograd(torch.autograd.Function):
             raise RuntimeError(
                 f"symm_expert_out_scales must be float8_e8m0fnu, got {symm_expert_out_scales.dtype}"
             )
-        if nblocks < 0:
-            raise RuntimeError(f"nblocks must be >= 0 (got {nblocks})")
+        if get_nblocks < 0:
+            raise RuntimeError(f"get_nblocks must be >= 0 (got {get_nblocks})")
+        if put_nblocks < 0:
+            raise RuntimeError(f"put_nblocks must be >= 0 (got {put_nblocks})")
 
         src_ranks_i64 = (
             src_ranks if src_ranks.dtype == torch.long else src_ranks.to(dtype=torch.long)
@@ -2165,7 +2204,7 @@ class _RowwiseCombineWeightedFP8Autograd(torch.autograd.Function):
             group_name,
             probs=probs_f32,
             block_size=int(block_size),
-            nblocks=nblocks,
+            nblocks=get_nblocks,
             gathered_q_out=(
                 combine_gather_q
                 if combine_gather_q is not None
@@ -2196,7 +2235,7 @@ class _RowwiseCombineWeightedFP8Autograd(torch.autograd.Function):
 
         ctx.group = group
         ctx.group_name = group_name
-        ctx.nblocks = int(nblocks)
+        ctx.put_nblocks = int(put_nblocks)
         ctx.block_size = int(block_size)
         ctx.probs_input_dtype = probs.dtype
         ctx.expert_out_shape = tuple(expert_out.shape)
@@ -2260,7 +2299,7 @@ class _RowwiseCombineWeightedFP8Autograd(torch.autograd.Function):
                 src_rows,
                 ctx.group_name,
                 block_size=ctx.block_size,
-                nblocks=ctx.nblocks,
+                nblocks=ctx.put_nblocks,
                 input_q=(
                     ctx.combine_gather_q.view(-1, ctx.combine_gather_q.shape[-1])
                     if ctx.combine_gather_q is not None
@@ -2302,7 +2341,8 @@ class _RowwiseCombineWeightedFP8Autograd(torch.autograd.Function):
                 None,  # block_size
                 None,  # group_name
                 None,  # group
-                None,  # nblocks
+                None,  # get_nblocks
+                None,  # put_nblocks
             ),
             ctx.needs_input_grad,
         )

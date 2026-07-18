@@ -90,7 +90,9 @@ class ExpertParallelConfig(Config):
     shared_slots: int = 1
     major_align: int = 1
 
-    rowwise_nblocks: int = 32
+    rowwise_get_nblocks: int = 256
+    rowwise_put_nblocks: int = 256
+    rowwise_weighted_put_nblocks: int = 128
     share_dispatch_out: bool = False
     share_combine_out: bool = False
     restore_unpermute_backend: str = "te_fused"
@@ -126,10 +128,16 @@ class ExpertParallelConfig(Config):
             raise OLMoConfigurationError(f"EP shared_slots must be >= 1 (got {self.shared_slots})")
         if self.major_align < 1:
             raise OLMoConfigurationError(f"EP major_align must be >= 1 (got {self.major_align})")
-        if self.rowwise_nblocks < 0:
-            raise OLMoConfigurationError(
-                f"EP rowwise_nblocks must be >= 0 (got {self.rowwise_nblocks})"
-            )
+        for setting_name in (
+            "rowwise_get_nblocks",
+            "rowwise_put_nblocks",
+            "rowwise_weighted_put_nblocks",
+        ):
+            setting_value = getattr(self, setting_name)
+            if setting_value < 0:
+                raise OLMoConfigurationError(
+                    f"EP {setting_name} must be >= 0 (got {setting_value})"
+                )
         if self.rowwise_wave_num_waves < 1:
             raise OLMoConfigurationError(
                 "EP rowwise_wave_num_waves must be >= 1 " f"(got {self.rowwise_wave_num_waves})"

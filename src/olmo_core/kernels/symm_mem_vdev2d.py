@@ -13,7 +13,7 @@ from .mxfp8_utils import quantize_rows_to_mxfp8, reduce_gathered_rows_from_mxfp8
 _EXTENSION_MODULE_NAME = "olmo_core.kernels._symm_mem_vdev2d_ext_gpu"
 _CUDA_EXTENSION = None
 _CUDA_EXTENSION_ERROR: Optional[Exception] = None
-_PREFLIGHTED_ROWWISE_COLLECTIVE_LAUNCHES: set[tuple[int, int]] = set()
+_PREFLIGHTED_ROWWISE_COLLECTIVE_LAUNCHES: set[tuple[int, int, int, int]] = set()
 
 
 def _load_cuda_extension():
@@ -64,20 +64,36 @@ def nvshmem_world_barrier() -> None:
 
 
 @torch.compiler.disable
-def preflight_rowwise_collective_launches(nblocks: int) -> None:
+def preflight_rowwise_collective_launches(
+    get_nblocks: int,
+    put_nblocks: int,
+    weighted_put_nblocks: int,
+) -> None:
     """Validate rowwise NVSHMEM collective launch grids before compiled runtime."""
-    nblocks = int(nblocks)
-    if nblocks <= 0:
-        raise ValueError(
-            "strict NVSHMEM rowwise collective preflight requires rowwise_nblocks > 0 "
-            "(0 means auto and cannot be validated before runtime)"
-        )
+    get_nblocks = int(get_nblocks)
+    put_nblocks = int(put_nblocks)
+    weighted_put_nblocks = int(weighted_put_nblocks)
+    for setting_name, setting_value in (
+        ("rowwise_get_nblocks", get_nblocks),
+        ("rowwise_put_nblocks", put_nblocks),
+        ("rowwise_weighted_put_nblocks", weighted_put_nblocks),
+    ):
+        if setting_value <= 0:
+            raise ValueError(
+                "strict NVSHMEM rowwise collective preflight requires "
+                f"{setting_name} > 0 (0 means auto and cannot be validated "
+                "before runtime)"
+            )
     device_idx = torch.cuda.current_device()
-    key = (device_idx, nblocks)
+    key = (device_idx, get_nblocks, put_nblocks, weighted_put_nblocks)
     if key in _PREFLIGHTED_ROWWISE_COLLECTIVE_LAUNCHES:
         return
     ext = _load_cuda_extension()
-    ext.preflight_rowwise_collective_launches(nblocks)
+    ext.preflight_rowwise_collective_launches(
+        get_nblocks,
+        put_nblocks,
+        weighted_put_nblocks,
+    )
     _PREFLIGHTED_ROWWISE_COLLECTIVE_LAUNCHES.add(key)
 
 

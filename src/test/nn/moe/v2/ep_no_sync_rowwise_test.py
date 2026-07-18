@@ -142,7 +142,9 @@ def _run_rowwise_ep_dropless_matches_no_ep():
     # Select the rowwise path before apply_ep: apply_ep configures the rowwise symmetric-memory
     # buffers and rejects the non-rowwise (VDev) path under the default OLMo-owned symm-mem backend.
     ep_block.ep.path = ExpertParallelPath.rowwise_nvshmem
-    ep_block.ep.rowwise_nblocks = 128
+    ep_block.ep.rowwise_get_nblocks = 128
+    ep_block.ep.rowwise_put_nblocks = 128
+    ep_block.ep.rowwise_weighted_put_nblocks = 128
     ep_block.apply_ep(ep_mesh)
 
     _init_block_params(no_ep_block)
