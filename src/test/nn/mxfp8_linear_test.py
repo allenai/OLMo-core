@@ -7,14 +7,14 @@ from olmo_core.testing import GPU_MARKS
 from olmo_core.testing.utils import compute_capability
 
 # Module-level equivalent of @requires_gpu (marks every test gpu + skips without a GPU); the
-# pytest.mark.gpu also routes these to the kernels GPU CI job. The MXFP8 quantize/scaled-mm kernels
-# additionally require compute capability >= 9 (they don't compile on older archs like the A100),
-# matching the other fp8 kernel suites (e.g. scaled_grouped_mm_q_test).
+# pytest.mark.gpu also routes these to the kernels GPU CI job. MXFP8Linear's forward uses the
+# blockwise (1x32) mxfp8 scaled_mm, which cuBLAS only supports on SM100/Blackwell; on SM90 (H100)
+# it raises CUBLAS_STATUS_NOT_SUPPORTED, so require compute capability >= 10.
 pytestmark = [
     *GPU_MARKS,
     pytest.mark.skipif(
-        compute_capability is None or compute_capability < 9,
-        reason=f"MXFP8 kernels require compute capability >= 9 (device has {compute_capability})",
+        compute_capability is None or compute_capability < 10,
+        reason=f"MXFP8 blockwise scaled_mm requires compute capability >= 10 (device has {compute_capability})",
     ),
 ]
 
