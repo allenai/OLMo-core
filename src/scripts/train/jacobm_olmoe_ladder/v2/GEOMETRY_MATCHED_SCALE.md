@@ -226,7 +226,9 @@ geometry-family plots compare against both wide integration and the first
 `expand_v=1` hybrid.
 
 The NoPE wave is urgent unallocated work on Holmes, pinned to commit
-`fcf1c1b8828a3bddd0bad477a5c4055e63b0275f`:
+`fcf1c1b8828a3bddd0bad477a5c4055e63b0275f`. The machine-readable submission
+record, including every task ID, is
+[`launchers/pretraining/generated/geometry_matched_scale_full_submissions.json`](launchers/pretraining/generated/geometry_matched_scale_full_submissions.json).
 
 | Size | Cx | LR | GPUs | Beaker work |
 |---|---:|---:|---:|---|

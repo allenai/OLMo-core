@@ -1,0 +1,146 @@
+[
+  {
+    "model_variant": "geometry_matched_gdn_ev2_nope",
+    "task_name": "480m-cx1",
+    "run_name": "pt-480m-geometry-gdn-ev2-nope-cx1-lr1p2e-3-r1",
+    "commit": "fcf1c1b8828a3bddd0bad477a5c4055e63b0275f",
+    "experiment_id": "01KXT0BJGPBS2T4AR7HDNDWZ9P",
+    "task_ids": [
+      "01KXT0BJGXZ45EEH56ZNAADNZ2"
+    ],
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXT0BJGPBS2T4AR7HDNDWZ9P"
+  },
+  {
+    "model_variant": "geometry_matched_gdn_ev2_nope",
+    "task_name": "480m-cx2",
+    "run_name": "pt-480m-geometry-gdn-ev2-nope-cx2-lr9e-4-r1",
+    "commit": "fcf1c1b8828a3bddd0bad477a5c4055e63b0275f",
+    "experiment_id": "01KXT0BNMA5XJ30YMY13N874H9",
+    "task_ids": [
+      "01KXT0BNMFEPSREZNQD0ZSF4NG"
+    ],
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXT0BNMA5XJ30YMY13N874H9"
+  },
+  {
+    "model_variant": "geometry_matched_gdn_ev2_nope",
+    "task_name": "480m-cx4",
+    "run_name": "pt-480m-geometry-gdn-ev2-nope-cx4-lr8e-4-r1",
+    "commit": "fcf1c1b8828a3bddd0bad477a5c4055e63b0275f",
+    "experiment_id": "01KXT0BRP1DMHMDQ6XQFPZSCQ9",
+    "task_ids": [
+      "01KXT0BRP62ZYH8FPK1QAY1XF2"
+    ],
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXT0BRP1DMHMDQ6XQFPZSCQ9"
+  },
+  {
+    "model_variant": "geometry_matched_gdn_ev2_nope",
+    "task_name": "480m-cx8",
+    "run_name": "pt-480m-geometry-gdn-ev2-nope-cx8-lr8e-4-r1",
+    "commit": "fcf1c1b8828a3bddd0bad477a5c4055e63b0275f",
+    "experiment_id": "01KXT0BVRMSPAJDKVMVMP68FXR",
+    "task_ids": [
+      "01KXT0BVRWRH3VJRR1B8BV378Q"
+    ],
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXT0BVRMSPAJDKVMVMP68FXR"
+  },
+  {
+    "model_variant": "geometry_matched_gdn_ev2_nope",
+    "task_name": "810m-cx1",
+    "run_name": "pt-810m-geometry-gdn-ev2-nope-cx1-lr6e-4-r1",
+    "commit": "fcf1c1b8828a3bddd0bad477a5c4055e63b0275f",
+    "experiment_id": "01KXT0BYYSB24R01PMA7DHGH8A",
+    "task_ids": [
+      "01KXT0BYZ2YK5CKKBPTY0C4P0N",
+      "01KXT0BZ2NS2P1ARWHRKGS23PE"
+    ],
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXT0BYYSB24R01PMA7DHGH8A"
+  },
+  {
+    "model_variant": "geometry_matched_gdn_ev2_nope",
+    "task_name": "810m-cx2",
+    "run_name": "pt-810m-geometry-gdn-ev2-nope-cx2-lr5p6e-4-r1",
+    "commit": "fcf1c1b8828a3bddd0bad477a5c4055e63b0275f",
+    "experiment_id": "01KXT0C24FCYYH8C3RJ91K7X16",
+    "task_ids": [
+      "01KXT0C24PR6C6FNG68S56BAQT",
+      "01KXT0C288K86M0R1Q9FPJT4ZV"
+    ],
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXT0C24FCYYH8C3RJ91K7X16"
+  },
+  {
+    "model_variant": "geometry_matched_gdn_ev2_nope",
+    "task_name": "810m-cx4",
+    "run_name": "pt-810m-geometry-gdn-ev2-nope-cx4-lr4e-4-r1",
+    "commit": "fcf1c1b8828a3bddd0bad477a5c4055e63b0275f",
+    "experiment_id": "01KXT0C5HCYCCKY44GN2RCC5MC",
+    "task_ids": [
+      "01KXT0C5HN8974JBPDW5CGHMP3",
+      "01KXT0C5PPR3SGZF8ES48VQ919"
+    ],
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXT0C5HCYCCKY44GN2RCC5MC"
+  },
+  {
+    "model_variant": "geometry_matched_gdn_ev2_nope",
+    "task_name": "810m-cx8",
+    "run_name": "pt-810m-geometry-gdn-ev2-nope-cx8-lr4e-4-r1",
+    "commit": "fcf1c1b8828a3bddd0bad477a5c4055e63b0275f",
+    "experiment_id": "01KXT0C8TNW8DBCMRNVA1SKVV4",
+    "task_ids": [
+      "01KXT0C8TV59QMHV50T2J1XQFD",
+      "01KXT0C8Y8RE22C7ZF4NDFQGVT"
+    ],
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXT0C8TNW8DBCMRNVA1SKVV4"
+  },
+  {
+    "model_variant": "geometry_matched_gdn_ev2_nope",
+    "task_name": "1p2b-cx1",
+    "run_name": "pt-1p2b-geometry-gdn-ev2-nope-cx1-lr4e-4-ep8-sync-r1",
+    "commit": "fcf1c1b8828a3bddd0bad477a5c4055e63b0275f",
+    "experiment_id": "01KXT0CC2W6ABQXB8F8WWNBXXE",
+    "task_ids": [
+      "01KXT0CC34N7XC3ZEF9FQEX21J",
+      "01KXT0CC6J686R3B6WMJEHA7FC"
+    ],
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXT0CC2W6ABQXB8F8WWNBXXE"
+  },
+  {
+    "model_variant": "geometry_matched_gdn_ev2_nope",
+    "task_name": "1p2b-cx2",
+    "run_name": "pt-1p2b-geometry-gdn-ev2-nope-cx2-lr6e-4-ep8-sync-r1",
+    "commit": "fcf1c1b8828a3bddd0bad477a5c4055e63b0275f",
+    "experiment_id": "01KXT0CF9V3ZP1NDA72DAJKG4V",
+    "task_ids": [
+      "01KXT0CFA4DN0JCSNSP57BABDZ",
+      "01KXT0CFECQPXC1T8HMGKJH1GC"
+    ],
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXT0CF9V3ZP1NDA72DAJKG4V"
+  },
+  {
+    "model_variant": "geometry_matched_gdn_ev2_nope",
+    "task_name": "1p2b-cx4",
+    "run_name": "pt-1p2b-geometry-gdn-ev2-nope-cx4-lr3e-4-ep8-sync-r1",
+    "commit": "fcf1c1b8828a3bddd0bad477a5c4055e63b0275f",
+    "experiment_id": "01KXT0CKPC9NV36GKDXZH5SM17",
+    "task_ids": [
+      "01KXT0CKPNKTWHX2RPHRW33PEG",
+      "01KXT0CKW5V4AAWA92BHHK4QA8",
+      "01KXT0CM18F6XHNVPJE70GT57E",
+      "01KXT0CM4HPEE871VH5D0ZJ9YB"
+    ],
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXT0CKPC9NV36GKDXZH5SM17"
+  },
+  {
+    "model_variant": "geometry_matched_gdn_ev2_nope",
+    "task_name": "1p2b-cx8",
+    "run_name": "pt-1p2b-geometry-gdn-ev2-nope-cx8-lr4e-4-ep8-sync-r1",
+    "commit": "fcf1c1b8828a3bddd0bad477a5c4055e63b0275f",
+    "experiment_id": "01KXT0CQBVT4T414SAZQYT1RAS",
+    "task_ids": [
+      "01KXT0CQC6DQFD7D4EN8PEDD3K",
+      "01KXT0CQFQP5X53QBAQKWSN4KD",
+      "01KXT0CQK524VGV8H2J0VRYZTP",
+      "01KXT0CQWJRZ68V4FPX26GRE3Z"
+    ],
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXT0CQBVT4T414SAZQYT1RAS"
+  }
+]
