@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-07-18T02:26:08.033268+00:00",
+  "generated_at": "2026-07-18T05:57:57.560253+00:00",
   "project": "ai2-llm/jacobm-olmoe-ladder",
   "wave": "hybrid_gdn_ev1",
   "models": [
@@ -675,6 +675,25 @@
       "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/ywj13bkw",
       "segment_run_ids": [
         "ywj13bkw"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0
+    },
+    {
+      "model": "480m",
+      "variant": "hybrid_gdn_ev1",
+      "variant_label": "hybrid (GDN, expand_v=1)",
+      "cx": 4,
+      "lr": 0.0008,
+      "lr_tag": "0.0008",
+      "loss": 2.305995657758893,
+      "state": "finished",
+      "tokens_b": 31.877758976,
+      "run_id": "h06m5ls2",
+      "name": "480m-intwide-hybrid-gdn-ev1-cx4-lr8e-4",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/h06m5ls2",
+      "segment_run_ids": [
+        "h06m5ls2"
       ],
       "token_resets": 0,
       "deduplicated_samples": 0
@@ -1402,9 +1421,9 @@
       "model": "480m",
       "cx": 4,
       "mode": "fixed_lr_transfer",
-      "complete": false,
+      "complete": true,
       "optimal_summary_eligible": false,
-      "completed_intervention_runs": 0,
+      "completed_intervention_runs": 1,
       "expected_intervention_runs": 1,
       "wide_reference": {
         "model": "480m",
@@ -1446,10 +1465,28 @@
           "deduplicated_samples": 0
         }
       },
-      "intervention_result": null,
-      "delta_intervention_minus_wide": null,
+      "intervention_result": {
+        "model": "480m",
+        "variant": "hybrid_gdn_ev1",
+        "variant_label": "hybrid (GDN, expand_v=1)",
+        "cx": 4,
+        "lr": 0.0008,
+        "lr_tag": "0.0008",
+        "loss": 2.305995657758893,
+        "state": "finished",
+        "tokens_b": 31.877758976,
+        "run_id": "h06m5ls2",
+        "name": "480m-intwide-hybrid-gdn-ev1-cx4-lr8e-4",
+        "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/h06m5ls2",
+        "segment_run_ids": [
+          "h06m5ls2"
+        ],
+        "token_resets": 0,
+        "deduplicated_samples": 0
+      },
+      "delta_intervention_minus_wide": -0.023980192168453485,
       "delta_intervention_minus_reference": {
-        "wide_integration": null
+        "wide_integration": -0.023980192168453485
       }
     },
     {

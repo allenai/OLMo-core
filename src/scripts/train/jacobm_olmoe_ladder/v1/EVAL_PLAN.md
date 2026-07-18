@@ -56,10 +56,14 @@ respectively. Their final checkpoints do not exist yet, so no new HF conversion
 or RULER job is due. The six completed 275M/480M records above remain complete;
 no long-context eval was relaunched in this refresh.
 
-Status refresh on 2026-07-18 02:35 UTC: 810M integration-wide is at 56.12B,
-1.2B integration-wide at 36.99B, and 810M baseline at 19.16B of 100B tokens.
-The 1.2B baseline continuation is queued to resume after its last preempted
-segment. None has a final checkpoint, so there is still no new HF conversion,
+Status refresh on 2026-07-18 05:57 UTC: 810M integration-wide is at 61.95B,
+1.2B integration-wide at 41.10B, and 810M baseline at 25.29B of 100B tokens.
+The 1.2B baseline continuation is running in W&B run
+[`8yqbbo8n`](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/8yqbbo8n)
+from step 0. Its prior attempt stopped at step 759, before the first ephemeral
+save at step 1,000, so there was no LC checkpoint to resume; the new worker
+correctly reloaded the converted midtraining source and started a fresh LC
+optimizer. None has a final checkpoint, so there is still no new HF conversion,
 validation backfill, or RULER eval to launch. The existing six 275M/480M RULER
 records remain complete and their result files were regenerated.
 
