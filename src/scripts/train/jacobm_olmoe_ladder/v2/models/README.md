@@ -13,11 +13,12 @@ force exact parameter equality.
 
 `geometry_matched_275m.py` designs the initial 275M candidates on the dense
 ladder's `d_model=640`, 10-layer, four-GDN/one-full-attention geometry. It
-reports both a strict geometry-only profile and a profile that additionally
-matches the dense 275M rung's 8-Q/8-KV full attention and elementwise gate.
-Both use the dense hybrid's `expand_v=2` and deliberately retain RoPE and
-`init_std=0.01`. The primary profile keeps our 8-Q/4-KV ungated full attention
-and all previously audited FFN widths unchanged.
+reports a strict geometry-only profile, a NoPE profile that removes RoPE only
+from global-attention layers 4 and 9, and a profile that additionally matches
+the dense 275M rung's 8-Q/8-KV full attention and elementwise gate. All use
+the dense hybrid's `expand_v=2` and retain `init_std=0.01`. The primary and
+NoPE profiles keep our 8-Q/4-KV ungated full attention and all previously
+audited FFN widths unchanged. RoPE and NoPE have identical parameter counts.
 
 `geometry_matched_scale.py` extends the primary geometry-only configuration to
 480M, 810M, and 1.2B by mapping them to the dense ladder's 450M, 810M, and 1.4B

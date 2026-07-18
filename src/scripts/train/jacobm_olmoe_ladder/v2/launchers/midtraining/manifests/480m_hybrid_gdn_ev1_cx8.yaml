@@ -1,0 +1,56 @@
+schema_version: 1
+
+experiment:
+  description: 480M expand-v1 GDN hybrid Cx8 midtraining continuation
+  checkpoint_root: /weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/olmo-ddp/midtraining
+
+source:
+  repo: /weka/oe-adapt-default/jacobm/olmoe3/olmo-ddp-migration/OLMo-core
+  wrapper: src/scripts/train/jacobm_olmoe3_hybrid_midtraining_beaker.sh
+  image: 01KW8G8JC20H11Y60PPTE2VN4Q
+
+beaker:
+  workspace: ai2/OLMo-3-moe-experiments
+  cluster: ai2/holmes
+  priority: urgent
+  shared_memory: 64 GiB
+  # Explicitly authorized for this midtraining launch on 2026-07-18.
+  min_runtime: 0m
+  auto_resume: true
+  timeout: 168h
+  result_path: /results
+
+secrets:
+  AWS_ACCESS_KEY_ID: AWS_ACCESS_KEY_ID
+  AWS_SECRET_ACCESS_KEY: AWS_SECRET_ACCESS_KEY
+  WANDB_API_KEY: jacobm_WANDB_API_KEY
+  BEAKER_TOKEN: jacobm_BEAKER_TOKEN
+  GANTRY_GOOGLE_CREDENTIALS: jacobm_GOOGLE_CREDENTIALS
+
+datasets:
+  - mount_path: /weka/oe-adapt-default
+    weka: oe-adapt-default
+  - mount_path: /weka/oe-training-default
+    weka: oe-training-default
+
+training:
+  sequence_length: 8192
+  max_tokens: 100000000000
+  warmup_steps: 2000
+  source_processes: 16
+  save_interval: 999999999
+  ephemeral_save_interval: 500
+  checkpoint_removal: ephemeral_only
+  compile: true
+
+runs:
+  - task_name: 480m-hybrid-gdn-ev1-cx8
+    run_name: mt-480m-intwide-hybrid-gdn-ev1-cx8-lr8e-5-r1
+    model_size: 480m
+    model_variant: integration_wide_gdn_ev1
+    load_path: /weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/olmo-ddp/pretraining/480m-intwide-hybrid-gdn-ev1-cx8-lr8e-4/step81069
+    learning_rate: "8e-5"
+    global_batch_size: 1048576
+    gpu_count: 4
+    expert_parallel_size: 1
+    rank_microbatch_sequences: 8

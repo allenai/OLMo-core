@@ -4,10 +4,10 @@
 The primary ``geometry_only`` profile isolates width, depth, mixer placement,
 head geometry, and GDN value expansion from the already-tested hybrid. It
 deliberately retains our current GQA ratio and ungated RoPE full-attention
-blocks. The
-``dense_attention`` profile additionally matches the dense 275M rung's KV-head
-count and elementwise attention gate, while still holding NoPE and
-initialization for their own later interventions.
+blocks. ``geometry_nope`` changes only those two full-attention blocks from
+RoPE to NoPE. The ``dense_attention`` profile additionally matches the dense
+275M rung's KV-head count and elementwise attention gate, while still holding
+NoPE and initialization for their own later interventions.
 """
 
 from __future__ import annotations
@@ -47,6 +47,7 @@ class Profile:
     n_kv_heads: int
     attention_gate: bool
     gdn_expand_v: float
+    rope: bool
 
 
 PROFILES = {
@@ -58,6 +59,15 @@ PROFILES = {
         n_kv_heads=4,
         attention_gate=False,
         gdn_expand_v=2.0,
+        rope=True,
+    ),
+    # Change only positional encoding in the two full-attention layers.
+    "geometry_nope": Profile(
+        expert_hidden_size=664,
+        n_kv_heads=4,
+        attention_gate=False,
+        gdn_expand_v=2.0,
+        rope=False,
     ),
     # Also match the dense 275M full-attention shape (8 Q / 8 KV) and its
     # elementwise gate. 648 gives a near-exact active match with 8-wide tensor
@@ -68,11 +78,13 @@ PROFILES = {
         n_kv_heads=8,
         attention_gate=True,
         gdn_expand_v=2.0,
+        rope=True,
     ),
 }
 
 EXPECTED_PROFILE_COUNTS = {
     "geometry_only": (290_782_080, 226_556_800, 3_136_314_240),
+    "geometry_nope": (290_782_080, 226_556_800, 3_136_314_240),
     "dense_attention": (290_638_720, 226_413_440, 3_067_603_840),
 }
 
@@ -126,6 +138,8 @@ def _full_attention_block(
         if profile.attention_gate
         else None
     )
+    if not profile.rope:
+        attention.rope = None
     full.sequence_mixer = attention
     return full
 
@@ -188,8 +202,13 @@ def build_geometry_matched_model_config(
         for i in GDN_LAYERS
     ):
         raise ValueError(f"geometry candidate must use expand_v={profile.gdn_expand_v:g}")
-    if any(cast(AttentionConfig, resolved[i].sequence_mixer).rope is None for i in actual_full):
-        raise ValueError("geometry candidate must retain RoPE")
+    if profile.rope:
+        if any(
+            cast(AttentionConfig, resolved[i].sequence_mixer).rope is None for i in actual_full
+        ):
+            raise ValueError(f"{profile_name} must retain RoPE")
+    elif any(cast(AttentionConfig, resolved[i].sequence_mixer).rope is not None for i in actual_full):
+        raise ValueError(f"{profile_name} must use NoPE")
     actual_counts = (
         candidate.num_active_params,
         candidate.num_active_non_embedding_params,
@@ -225,7 +244,7 @@ def parameter_summary(profile_name: str) -> dict[str, Any]:
         "top_k": TOP_K,
         "shared_experts": 1,
         "gdn_expand_v": profile.gdn_expand_v,
-        "rope": True,
+        "rope": profile.rope,
         "init_std": candidate.init_std,
         "active_params": candidate.num_active_params,
         "active_non_embedding_params": candidate.num_active_non_embedding_params,

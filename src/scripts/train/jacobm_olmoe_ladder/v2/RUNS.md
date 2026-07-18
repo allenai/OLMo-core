@@ -324,6 +324,34 @@ identity.
 | Model | Job | W&B | Status |
 |---|---|---|---|
 | 275M `expand_v=1` hybrid Cx8 | [r1 canceled](https://beaker.org/ex/01KXPEFSNRXYB5N3KAAEWJD2ZR) / [r2](https://beaker.org/ex/01KXPEQCA0TQF17JDTKSE3P6E7) | [zfrdh1pn](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/zfrdh1pn) | running; 22.02B / 100B tokens (22.0%) at the 2026-07-17 refresh, durable `step21000` present |
+| 480M `expand_v=1` hybrid Cx8 | [01KXS955Q6RZQQM7PEGSWF3XDT](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXS955Q6RZQQM7PEGSWF3XDT?taskId=01KXS955QG0FG968ME9CAZ8RB2&jobId=01KXS955TSVZE9HEMCNDJP72QP) | pending initialization | running on four B300s; submitted urgent unallocated on 2026-07-18 |
+
+The 480M continuation loads the permanent first-hybrid Cx8 PT checkpoint
+`step81069` weight-only, starts a fresh optimizer at LR `8e-5`, and otherwise
+uses the same 100B-token midtraining recipe as 275M: 8K sequences, a
+1,048,576-token global batch, EP1, rank MB8, accumulation 4, and a fixed
+2,000-step warmup into constant LR. Its destination is
+`/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/olmo-ddp/midtraining/mt-480m-intwide-hybrid-gdn-ev1-cx8-lr8e-5-r1`.
+
+## 275M geometry + NoPE
+
+- Model variant: `geometry_275m_gdn_ev2_nope`
+- Dedicated Beaker wrapper:
+  `src/scripts/train/jacobm_olmoe3_geometry_275m_nope_beaker.sh`
+- Scaling-smoke manifest:
+  [`launchers/pretraining/manifests/275m_geometry_gdn_ev2_nope_scaling_smokes.yaml`](launchers/pretraining/manifests/275m_geometry_gdn_ev2_nope_scaling_smokes.yaml)
+- Scaling-smoke launcher:
+  [`launchers/pretraining/launch_275m_geometry_gdn_ev2_nope_scaling_smokes.sh`](launchers/pretraining/launch_275m_geometry_gdn_ev2_nope_scaling_smokes.sh)
+- W&B group: `ai2-llm/jacobm-olmoe-ladder` /
+  `olmoe3-275m-geometry-gdn-ev2-nope`
+
+The NoPE variant changes only the two full-attention blocks at layers 4 and 9.
+It retains the geometry model's 290,782,080 active, 226,556,800 active
+non-embedding, and 3,136,314,240 total parameters. Its first launch is a
+checkpoint-free, evaluator-free, compiled 12-step DDP scaling study at the Cx1
+and Cx8 endpoints on 2/4/8 B300s. All tasks use EP1 and exact canonical global
+batches. The production LR-sweep GPU layout will be chosen from the measured
+wall-clock throughput rather than assumed from per-GPU TFLOPs.
 
 ## Post-training validation backfills
 

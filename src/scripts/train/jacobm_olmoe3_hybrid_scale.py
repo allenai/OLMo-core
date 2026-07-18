@@ -139,6 +139,16 @@ def model_config():
         if MODEL_SIZE != "275m":
             raise ValueError("The geometry_275m_gdn_ev2 variant only supports MODEL_SIZE=275m")
         model = build_geometry_matched_model_config("geometry_only")
+    elif MODEL_VARIANT == "geometry_275m_gdn_ev2_nope":
+        from scripts.train.jacobm_olmoe_ladder.v2.models.geometry_matched_275m import (
+            build_geometry_matched_model_config,
+        )
+
+        if MODEL_SIZE != "275m":
+            raise ValueError(
+                "The geometry_275m_gdn_ev2_nope variant only supports MODEL_SIZE=275m"
+            )
+        model = build_geometry_matched_model_config("geometry_nope")
     elif MODEL_VARIANT == "geometry_matched_gdn_ev2":
         from scripts.train.jacobm_olmoe_ladder.v2.models.geometry_matched_scale import (
             build_geometry_matched_scale_model_config,
@@ -315,19 +325,23 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         )
     geometry_variant = MODEL_VARIANT in {
         "geometry_275m_gdn_ev2",
+        "geometry_275m_gdn_ev2_nope",
         "geometry_matched_gdn_ev2",
     }
-    if MODEL_VARIANT == "geometry_275m_gdn_ev2":
+    if MODEL_VARIANT == "geometry_275m_gdn_ev2_nope":
+        variant_group = "olmoe3-275m-geometry-gdn-ev2-nope"
+    elif MODEL_VARIANT == "geometry_275m_gdn_ev2":
         variant_group = "olmoe3-275m-geometry-gdn-ev2"
     elif MODEL_VARIANT == "geometry_matched_gdn_ev2":
         variant_group = "olmoe3-geometry-matched-gdn-ev2-scale"
     else:
         variant_group = "olmoe3-integration-wide-hybrid-scale"
-    variant_tags = (
-        ["geometry-matched", "expand-v-2"]
-        if geometry_variant
-        else ["integration-wide", "expand-v-1"]
-    )
+    if MODEL_VARIANT == "geometry_275m_gdn_ev2_nope":
+        variant_tags = ["geometry-matched", "expand-v-2", "nope"]
+    elif geometry_variant:
+        variant_tags = ["geometry-matched", "expand-v-2", "rope"]
+    else:
+        variant_tags = ["integration-wide", "expand-v-1", "rope"]
     trainer = (
         trainer.with_callback("speed_monitor", SpeedMonitorCallback())
         .with_callback("config_saver", ConfigSaverCallback())
