@@ -148,6 +148,16 @@ def model_config():
         if MODEL_SIZE != "275m":
             raise ValueError("The geometry_275m_gdn_ev2_nope variant only supports MODEL_SIZE=275m")
         model = build_geometry_matched_model_config("geometry_nope")
+    elif MODEL_VARIANT == "geometry_275m_gdn_ev2_nope_gated":
+        from scripts.train.jacobm_olmoe_ladder.v2.models.geometry_matched_275m import (
+            build_geometry_matched_model_config,
+        )
+
+        if MODEL_SIZE != "275m":
+            raise ValueError(
+                "The geometry_275m_gdn_ev2_nope_gated variant only supports MODEL_SIZE=275m"
+            )
+        model = build_geometry_matched_model_config("geometry_nope_gated")
     elif MODEL_VARIANT == "geometry_matched_gdn_ev2":
         from scripts.train.jacobm_olmoe_ladder.v2.models.geometry_matched_scale import (
             build_geometry_matched_scale_model_config,
@@ -331,10 +341,13 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
     geometry_variant = MODEL_VARIANT in {
         "geometry_275m_gdn_ev2",
         "geometry_275m_gdn_ev2_nope",
+        "geometry_275m_gdn_ev2_nope_gated",
         "geometry_matched_gdn_ev2",
         "geometry_matched_gdn_ev2_nope",
     }
-    if MODEL_VARIANT == "geometry_275m_gdn_ev2_nope":
+    if MODEL_VARIANT == "geometry_275m_gdn_ev2_nope_gated":
+        variant_group = "olmoe3-275m-geometry-gdn-ev2-nope-gated"
+    elif MODEL_VARIANT == "geometry_275m_gdn_ev2_nope":
         variant_group = "olmoe3-275m-geometry-gdn-ev2-nope"
     elif MODEL_VARIANT == "geometry_275m_gdn_ev2":
         variant_group = "olmoe3-275m-geometry-gdn-ev2"
@@ -345,10 +358,13 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
     else:
         variant_group = "olmoe3-integration-wide-hybrid-scale"
     if MODEL_VARIANT in {
+        "geometry_275m_gdn_ev2_nope_gated",
         "geometry_275m_gdn_ev2_nope",
         "geometry_matched_gdn_ev2_nope",
     }:
         variant_tags = ["geometry-matched", "expand-v-2", "nope"]
+        if MODEL_VARIANT == "geometry_275m_gdn_ev2_nope_gated":
+            variant_tags.append("attention-gate")
     elif geometry_variant:
         variant_tags = ["geometry-matched", "expand-v-2", "rope"]
     else:

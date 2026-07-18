@@ -1,0 +1,93 @@
+# 275M NoPE attention-gating intervention
+
+This intervention starts from `geometry_nope` and changes only the two global
+attention blocks at layers 4 and 9. Each block gains the dense ladder's
+elementwise, full-precision sigmoid attention gate. The existing 8-query /
+4-KV-head GQA shape, MoE widths, NoPE, `expand_v=2`, and `init_std=0.01` remain
+fixed so this is a clean gating test.
+
+## Gate definition
+
+The selected gate is:
+
+```python
+GateConfig(
+    granularity=GateGranularity.elementwise,
+    full_precision=True,
+)
+```
+
+For each token and gated attention layer, a bias-free `640 -> 1024` projection
+produces one gate value per query-head element. A sigmoid maps those values to
+`[0, 1]`; the result multiplies the attention output before the output
+projection. The sigmoid function and placement are fixed by the implementation.
+
+There are only two exposed gating choices:
+
+- `granularity`: `headwise` or `elementwise`; use `elementwise` to match the
+  dense ladder.
+- `full_precision`: whether sigmoid and gating are computed in FP32; use
+  `true` to match the dense ladder.
+
+There is no separate gate learning rate, bias, temperature, activation, dropout,
+or loss coefficient. Gate weights use the model's normal initialization. Under
+this intervention that is still `init_std=0.01`; the dense ladder uses its
+default `0.02`, which remains a separate initialization experiment.
+
+## Architecture comparison
+
+| Field | NoPE + gated MoE candidate | Dense 275M hybrid | Alignment |
+|---|---:|---:|---|
+| Model dimension / layers | 640 / 10 | 640 / 10 | exact |
+| GDN / global layers | 8 / 2 at layers 4, 9 | 8 / 2 at layers 4, 9 | exact |
+| GDN Q/V heads, head dim, `expand_v` | 8 / 8 / 128 / 2 | 8 / 8 / 128 / 2 | exact |
+| Global query heads / head dim | 8 / 128 | 8 / 128 | exact |
+| Global KV heads | 4 | 8 | intentionally unmatched |
+| Global position encoding | NoPE | NoPE | exact |
+| Attention gate | elementwise, FP32 | elementwise, FP32 | exact |
+| QK norm | per-head RMSNorm, eps `1e-6` | per-head RMSNorm, eps `1e-6` | exact |
+| Block/norm layout | peri-norm RMSNorm | peri-norm RMSNorm | exact |
+| Embedding scale/norm | `sqrt(640)` / RMSNorm | `sqrt(640)` / RMSNorm | exact |
+| Initialization standard deviation | `0.01` | `0.02` | still different |
+| FFN | dense-first layer 0, then MoE | dense in every layer | intentional MoE difference |
+
+Ignoring the intentional dense-versus-MoE FFN difference and the explicitly
+held 4-versus-8 KV-head ratio, initialization is the only remaining
+architectural/training-recipe mismatch at 275M. There is no residual width,
+depth, mixer-ratio, norm-type, norm-placement, head-dimension, positional
+encoding, or GDN-value-width difference.
+
+The current MoE config uses the Transformer Engine attention backend inherited
+from the converted v1 config, whereas the dense Holmes launcher selects
+FlashAttention 4. This is an execution-kernel difference, not an architectural
+one; the gate is applied after scaled dot-product attention in either case. We
+retain Transformer Engine for the isolated intervention and can benchmark a
+backend change separately if desired.
+
+The gate adds `640 * 1024 = 655,360` parameters to each of two global attention
+layers:
+
+| Profile | Active params | Active non-embedding | Total params |
+|---|---:|---:|---:|
+| NoPE, ungated | 290,782,080 | 226,556,800 | 3,136,314,240 |
+| NoPE, elementwise gated | 292,092,800 | 227,867,520 | 3,137,624,960 |
+| Delta | +1,310,720 | +1,310,720 | +1,310,720 |
+
+This is a 0.45% active-parameter increase over the ungated NoPE control. We do
+not shrink the experts to compensate, because doing so would confound the
+gating intervention.
+
+## Prepared launch path
+
+- Capacity smokes:
+  [`launchers/pretraining/manifests/275m_geometry_gdn_ev2_nope_gated_smokes.yaml`](launchers/pretraining/manifests/275m_geometry_gdn_ev2_nope_gated_smokes.yaml)
+- Full sweep:
+  [`launchers/pretraining/manifests/275m_geometry_gdn_ev2_nope_gated.yaml`](launchers/pretraining/manifests/275m_geometry_gdn_ev2_nope_gated.yaml)
+- Beaker wrapper:
+  `src/scripts/train/jacobm_olmoe3_geometry_275m_nope_gated_beaker.sh`
+
+The checkpoint-free smokes reuse the maximum successful NoPE microbatches:
+Cx1 MB8 on four GPUs, Cx2 MB12 on four, Cx4 MB16 on four, and Cx8 MB12 on
+eight. The full manifest retains the same four LRs (`4e-4`, `8e-4`, `1.6e-3`,
+`3.2e-3`) for every Cx and has an 80-GPU peak if fully concurrent. Nothing has
+been submitted.

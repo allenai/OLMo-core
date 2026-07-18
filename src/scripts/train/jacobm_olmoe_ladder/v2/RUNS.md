@@ -512,6 +512,11 @@ allocated-versus-unallocated scheduling decision.
   workers also stopped before W&B initialization, so the W&B-only results
   dashboard reports seven `not_started` and three `crashed`; all ten require
   a future eval-only resubmission.
+- The healthy terminated logs show active evaluator progress and no model or
+  Python exception; the jobs received external SIGTERM. A targeted retry
+  manifest containing exactly the ten missing checkpoints is prepared at
+  `launchers/validation/manifests/275m_geometry_missing_full.yaml`. It renders
+  10 two-GPU tasks (20 GPUs peak) and has not been submitted.
 - Newly completed larger-scale checkpoint: the 1.2B Cx1 final validation is
   queued separately in
   [01KXPZ4WQ72WBVPNAD0KBT2WKY](https://beaker.org/ex/01KXPZ4WQ72WBVPNAD0KBT2WKY)
