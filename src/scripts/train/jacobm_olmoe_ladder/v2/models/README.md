@@ -27,7 +27,9 @@ RoPE and NoPE have identical parameter counts; the isolated gate adds
 geometries. It preserves the exact existing 275M builder, keeps total active
 parameters within 0.14% of the current hybrid at every larger size, and
 strictly validates mixer placement, GDN/full-attention shapes, retained RoPE
-and initialization, and exact parameter counts.
+and initialization, and exact parameter counts. Its NoPE profile changes only
+the full-attention `rope` field; its gated NoPE profile then changes only
+`attention.gate`, using elementwise granularity and full-precision gating.
 
 Run the structural and parameter audit without creating a training job:
 
@@ -37,6 +39,10 @@ PYTHONPATH=src .venv/bin/python \
 
 PYTHONPATH=src uv run python \
   src/scripts/train/jacobm_olmoe_ladder/v2/models/geometry_matched_scale.py
+
+PYTHONPATH=src uv run python \
+  src/scripts/train/jacobm_olmoe_ladder/v2/models/geometry_matched_scale.py \
+  --nope --attention-gate
 ```
 
 Expected active-parameter comparison:

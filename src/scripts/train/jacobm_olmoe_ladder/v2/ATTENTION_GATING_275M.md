@@ -89,5 +89,19 @@ gating intervention.
 The checkpoint-free smokes reuse the maximum successful NoPE microbatches:
 Cx1 MB8 on four GPUs, Cx2 MB12 on four, Cx4 MB16 on four, and Cx8 MB12 on
 eight. The full manifest retains the same four LRs (`4e-4`, `8e-4`, `1.6e-3`,
-`3.2e-3`) for every Cx and has an 80-GPU peak if fully concurrent. Nothing has
-been submitted.
+`3.2e-3`) for every Cx and has an 80-GPU peak if fully concurrent.
+
+The urgent unallocated capacity smoke
+[01KXSZKW55FZKJSD9CPFW4WZ82](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXSZKW55FZKJSD9CPFW4WZ82)
+passed all four cells on 2026-07-18. Each reached step 11, exited 0, and wrote
+no checkpoint:
+
+| Cx | GPUs | Rank MB | Median final-5 TFLOPs/GPU | Active / reserved memory |
+|---:|---:|---:|---:|---:|
+| 1 | 4 | 8 | 340.7 | 108.0 / 108.8 GiB |
+| 2 | 4 | 12 | 368.9 | 148.8 / 149.8 GiB |
+| 4 | 4 | 16 | 394.3 | 189.5 / 191.1 GiB |
+| 8 | 8 | 12 | 376.0 | 144.4 / 145.3 GiB |
+
+The exact 16-point LR sweep was then submitted as urgent unallocated work:
+[01KXT07N6AGD1S0REJA3TH897G](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXT07N6AGD1S0REJA3TH897G).

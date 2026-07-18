@@ -4,7 +4,9 @@ Dense-ladder source: `scaling-ladders` commit `aaeeca3`,
 `ladders/mainline/workloads/arch.py`. The canonical builder is
 [`models/geometry_matched_scale.py`](models/geometry_matched_scale.py), selected
 from the scale trainer with `geometry_matched_gdn_ev2` for RoPE or
-`geometry_matched_gdn_ev2_nope` for NoPE.
+`geometry_matched_gdn_ev2_nope` for NoPE. The prepared
+`geometry_matched_gdn_ev2_nope_gated` profile adds only the dense ladder's
+elementwise full-precision attention gate to the NoPE model.
 
 No full 480M/810M/1.2B training job has been launched from these
 configurations. The NoPE configs have completed checkpoint-free capacity and
@@ -96,6 +98,15 @@ NoPE changes no parameter count. Strict construction checks confirmed:
 | 480M | 501,137,856 | 424,067,520 | 7,220,707,776 |
 | 810M | 858,237,056 | 755,476,608 | 11,865,532,544 |
 | 1.2B | 1,289,441,280 | 1,160,990,720 | 18,515,005,440 |
+
+The gated profile adds one `d_model -> n_heads * head_dim` projection to every
+full-attention layer and changes no other field:
+
+| Size | Gated active | Gated active non-embedding | Gated total stored |
+|---|---:|---:|---:|
+| 480M | 503,497,152 | 426,426,816 | 7,223,067,072 |
+| 810M | 864,528,512 | 761,768,064 | 11,871,824,000 |
+| 1.2B | 1,299,927,040 | 1,171,476,480 | 18,525,491,200 |
 
 The performance statistics are medians over the final five reported steps, not
 compile-polluted whole-run averages:
@@ -192,19 +203,23 @@ In the preceding ETA table, an asterisk means that exact
 measured by a smoke. It does not mean optimal or recommended. Unstarred cells
 are inferred from directly measured microbatch and multi-node scaling.
 
-## Full-run handoff
+## Production launchers
 
-Before launching:
+The strict production launcher is
+[`launchers/pretraining/launch_geometry_matched_scale_full.py`](launchers/pretraining/launch_geometry_matched_scale_full.py).
+It requires all 12 cells, validates the selected GPU/EP/microbatch layout and
+the transferred wide-integration LR for each cell, audits exact model counts,
+refuses accidental reuse of an existing checkpoint directory, and records
+every Beaker experiment ID.
 
-1. Wait for the 275M NoPE sweep to establish the transferred LR rule.
-2. Insert the transferred LR for each Cx into the production manifest; the
-   GPU, EP, microbatch, and accumulation choices are fixed by the selected
-   layout above.
-3. Create the production manifest through the shared `launch_sweep.py` path;
-   preserve these exact global batches, EP1 for 480M/810M, and EP8 `sync_1d`
-   for 1.2B.
-4. Full runs write rolling ephemeral checkpoints every 500 steps with
-   `remove=ephemeral_only`, retain the final checkpoint, and disable all
-   in-loop/on-finish evaluators.
-5. Register Beaker and W&B IDs before plotting. The geometry-family plots
-   compare against both wide integration and the first `expand_v=1` hybrid.
+- NoPE manifest:
+  [`launchers/pretraining/manifests/geometry_matched_scale_nope_full.yaml`](launchers/pretraining/manifests/geometry_matched_scale_nope_full.yaml)
+- Equivalent gated-attention manifest, prepared but not authorized for
+  submission:
+  [`launchers/pretraining/manifests/geometry_matched_scale_nope_gated_full.yaml`](launchers/pretraining/manifests/geometry_matched_scale_nope_gated_full.yaml)
+
+The production jobs write rolling ephemeral checkpoints every 500 steps with
+`remove=ephemeral_only`, retain the final checkpoint, and disable all
+in-loop/on-finish evaluators. Register Beaker and W&B IDs before plotting. The
+geometry-family plots compare against both wide integration and the first
+`expand_v=1` hybrid.

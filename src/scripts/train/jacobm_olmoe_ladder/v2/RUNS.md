@@ -444,6 +444,24 @@ running. The updated U-plot and observed-best summary are under
 | 8 | `1.6e-3` | 8 | 12 | 1 | [01KXSABK8R6YKTP2JQB0VG0SWR](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXSABHBX2Z4G1JFV8W1PN6AN?taskId=01KXSABK5DR58R40YGF660FXPJ&jobId=01KXSABK8R6YKTP2JQB0VG0SWR) | [n8kkr1y8](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/n8kkr1y8) | running |
 | 8 | `3.2e-3` | 8 | 12 | 1 | [01KXSABKC1YQXYYHJ2ECTYMGJW](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXSABHBX2Z4G1JFV8W1PN6AN?taskId=01KXSABK8TBRFE0H7GKK82HRYT&jobId=01KXSABKC1YQXYYHJ2ECTYMGJW) | [qhjvjwcu](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/qhjvjwcu) | running |
 
+## 275M geometry + NoPE + gated attention
+
+- Model variant: `geometry_275m_gdn_ev2_nope_gated`
+- Architecture and parameter audit:
+  [`ATTENTION_GATING_275M.md`](ATTENTION_GATING_275M.md)
+- Scheduling: urgent unallocated Holmes B300s, `minRuntime: 0m`,
+  non-preemptible, auto-resuming
+- Capacity smoke:
+  [01KXSZKW55FZKJSD9CPFW4WZ82](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXSZKW55FZKJSD9CPFW4WZ82)
+- Full LR sweep:
+  [01KXT07N6AGD1S0REJA3TH897G](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXT07N6AGD1S0REJA3TH897G)
+
+The smoke passed all four production shapes on 2026-07-18: Cx1 MB8,
+Cx2 MB12, and Cx4 MB16 on four GPUs, plus Cx8 MB12 on eight GPUs. Every task
+reached step 11 and exited 0 without writing a checkpoint. The promoted sweep
+contains `4e-4`, `8e-4`, `1.6e-3`, and `3.2e-3` for every Cx, requesting 80
+GPUs at full concurrency with no in-loop or on-finish evaluators.
+
 ## Larger geometry + NoPE capacity smokes
 
 - Model variant: `geometry_matched_gdn_ev2_nope`
@@ -517,7 +535,9 @@ allocated-versus-unallocated scheduling decision.
   Python exception; the jobs received external SIGTERM. A targeted retry
   manifest containing exactly the ten missing checkpoints is prepared at
   `launchers/validation/manifests/275m_geometry_missing_full.yaml`. It renders
-  10 two-GPU tasks (20 GPUs peak) and has not been submitted.
+  10 two-GPU tasks (20 GPUs peak). The allocated urgent retry was submitted as
+  [01KXSZKECGP966SZXJ8B19G36R](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXSZKECGP966SZXJ8B19G36R)
+  on 2026-07-18.
 - Newly completed larger-scale checkpoint: the 1.2B Cx1 final validation is
   queued separately in
   [01KXPZ4WQ72WBVPNAD0KBT2WKY](https://beaker.org/ex/01KXPZ4WQ72WBVPNAD0KBT2WKY)

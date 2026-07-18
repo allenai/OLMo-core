@@ -45,6 +45,17 @@ src/scripts/train/jacobm_olmoe_ladder/v2/launchers/pretraining/launch_275m_geome
 # Inspect the 16-point NoPE + attention-gating LR sweep without launching it.
 src/scripts/train/jacobm_olmoe_ladder/v2/launchers/pretraining/launch_275m_geometry_gdn_ev2_nope_gated.sh
 
+# Inspect the complete 480M/810M/1.2B NoPE production wave.
+PYTHONPATH=src .venv/bin/python \
+  src/scripts/train/jacobm_olmoe_ladder/v2/launchers/pretraining/launch_geometry_matched_scale_full.py \
+  --manifest src/scripts/train/jacobm_olmoe_ladder/v2/launchers/pretraining/manifests/geometry_matched_scale_nope_full.yaml
+
+# Inspect the equivalent gated-attention wave. This command is deliberately
+# dry-run only until the 275M gating sweep establishes the intervention.
+PYTHONPATH=src .venv/bin/python \
+  src/scripts/train/jacobm_olmoe_ladder/v2/launchers/pretraining/launch_geometry_matched_scale_full.py \
+  --manifest src/scripts/train/jacobm_olmoe_ladder/v2/launchers/pretraining/manifests/geometry_matched_scale_nope_gated_full.yaml
+
 # Render only the two 1.2B synchronized EP8 probes.
 src/scripts/train/jacobm_olmoe_ladder/v2/launchers/pretraining/launch_hybrid_scale_smokes.sh \
   --task 1p2b-cx1-mb8-ep8-sync --task 1p2b-cx2-mb12-ep8-sync
@@ -64,11 +75,13 @@ The geometry/`expand_v=2` and NoPE-plus-gating capacity smokes are deliberate
 exceptions: they set the trainer's `no_checkpoints` mode and write no model or
 optimizer checkpoint.
 
-Only the geometry/`expand_v=2` smoke and sweep manifests use Beaker's
-unallocated queue (`minRuntime: 0m`, `autoResume: true`). Do not copy that
-scheduling exception into other intervention manifests without an explicit
-decision. The deprecated `preemptible` field is omitted because Beaker rejects
-combining it with `minRuntime` or `autoResume`.
+Only explicitly designated geometry/`expand_v=2` work uses Beaker's
+unallocated queue (`minRuntime: 0m`, `autoResume: true`). This currently
+includes the 275M geometry, NoPE, and gated-attention sweeps plus the larger
+NoPE production wave. Do not copy that scheduling exception into other
+intervention manifests without an explicit decision. Gantry receives
+`preemptible=False`; it omits the deprecated Beaker field while retaining the
+requested non-preemptible behavior.
 
 To add an intervention:
 
