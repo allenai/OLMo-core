@@ -8,8 +8,8 @@ wide v1 integration model.
 | Order | Experiment | Change from parent recipe | State |
 |---:|---|---|---|
 | 1 | GDN hybrid | On wide, replace sliding-attention layers with GatedDeltaNet; keep geometry, global-attention placement, RoPE, initialization, and `expand_v=1` fixed. | In progress; finish and bracket the current LR sweeps. |
-| 2 | Aligned geometry, mixer ratio, and GDN value width | Use the corresponding dense ladder width, depth, four-GDN/one-global pattern, and `expand_v=2` while retaining MoE, the dense-first-FFN design, our GQA ratio, RoPE, and initialization. | 275M inherited-LR sweep in progress. Active-matched 480M/810M/1.2B configs designed and locally audited; no larger-size runs launched. |
-| 3 | NoPE | On the 275M aligned-geometry recipe, remove RoPE only from global-attention layers and train from initialization. | Independent variant implemented; all 2/4/8-GPU Cx1/Cx8 scaling smokes passed. Four-LR Cx1/2/4/8 production sweep submitted unallocated using 4/4/4/8 GPUs. |
+| 2 | Aligned geometry, mixer ratio, and GDN value width | Use the corresponding dense ladder width, depth, four-GDN/one-global pattern, and `expand_v=2` while retaining MoE, the dense-first-FFN design, our GQA ratio, RoPE, and initialization. | 275M inherited-LR sweep in progress. Active-matched 480M/810M/1.2B configs are audited; their NoPE variants passed the full capacity/scaling smoke matrix, but no larger full run has launched. |
+| 3 | NoPE | On the aligned-geometry recipe, remove RoPE only from global-attention layers and train from initialization. | 275M four-LR Cx1/2/4/8 sweep is running unallocated. All larger 480M/810M/1.2B one-/multi-node smokes passed; select GPUs from the recorded ETA matrix after the 275M sweep establishes transferred LRs. |
 | 4 | Initialization | On the wide control, change only initialization standard deviation from 0.01 to 0.02. | Optional/planned. |
 | 5 | Combined 275M pilot | Combine only interventions whose isolated evidence is neutral-to-positive. | Blocked on isolated results. |
 | 6 | Promote combined recipe | Run the full pretraining ladder, then midtraining, then 8K-to-65K long-context adaptation. | Blocked on the combined pilot. |
@@ -48,10 +48,12 @@ Cx has a finished, bracketed LR sweep under the rules in
 The original migration-era statement of this plan remains in the repository
 root at `JACOBM_MIGRATION_PLAN.md`; this file is the live v2 queue.
 
-The larger geometry family will return to allocated runs. Before launching it,
-smoke-test the largest plausible per-rank microbatch on Holmes B300s for each
-size and choose EP from measured throughput. Do not copy the temporary
-unallocated scheduling exception from the 275M sweep.
+The larger NoPE geometry family has completed checkpoint-free unallocated
+smokes on Holmes B300s. Exact parameter counts, measured TFLOPs/GPU, memory,
+and the all-Cx ETA matrix are recorded in `GEOMETRY_MATCHED_SCALE.md`. Before
+launching full runs, wait for the 275M NoPE LR decision, select one GPU count
+per size/Cx, calculate total concurrency, and explicitly decide whether the
+production wave should remain unallocated or return to the allocated queue.
 
 ## Training-schedule transition
 

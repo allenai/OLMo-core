@@ -1,0 +1,177 @@
+[
+  {
+    "task_name": "480m-cx1-gpu4-mb8",
+    "run_name": "smoke-480m-geometry-gdn-ev2-nope-cx1-gpu4-mb8-r1",
+    "commit": "0b2317a94c6d1cf8292a7cbfbc3624c781dd579c",
+    "experiment_id": "01KXSC2FSTRZ9ZZ89CKGFS4BB7",
+    "task_ids": [
+      "01KXSC2FT7BPXG0TNBQ6JCQ63E"
+    ],
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXSC2FSTRZ9ZZ89CKGFS4BB7"
+  },
+  {
+    "task_name": "480m-cx8-gpu4-mb12",
+    "run_name": "smoke-480m-geometry-gdn-ev2-nope-cx8-gpu4-mb12-r1",
+    "commit": "0b2317a94c6d1cf8292a7cbfbc3624c781dd579c",
+    "experiment_id": "01KXSC2K1SXBAYKEVSFNA6C3FK",
+    "task_ids": [
+      "01KXSC2K238BKXNEJEM72Z2KZV"
+    ],
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXSC2K1SXBAYKEVSFNA6C3FK"
+  },
+  {
+    "task_name": "810m-cx1-gpu8-mb4",
+    "run_name": "smoke-810m-geometry-gdn-ev2-nope-cx1-gpu8-mb4-r1",
+    "commit": "0b2317a94c6d1cf8292a7cbfbc3624c781dd579c",
+    "experiment_id": "01KXSC2P6QRTXFFM6NGAQ1WFZY",
+    "task_ids": [
+      "01KXSC2P6ZGXQC0F1HYXX83WMB"
+    ],
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXSC2P6QRTXFFM6NGAQ1WFZY"
+  },
+  {
+    "task_name": "810m-cx8-gpu8-mb6",
+    "run_name": "smoke-810m-geometry-gdn-ev2-nope-cx8-gpu8-mb6-r1",
+    "commit": "0b2317a94c6d1cf8292a7cbfbc3624c781dd579c",
+    "experiment_id": "01KXSC2SP97DMX7H6P7S00QQWP",
+    "task_ids": [
+      "01KXSC2SPHJBXNWPAJVVDYQ3TM"
+    ],
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXSC2SP97DMX7H6P7S00QQWP"
+  },
+  {
+    "task_name": "1p2b-cx1-gpu8-mb4",
+    "run_name": "smoke-1p2b-geometry-gdn-ev2-nope-cx1-gpu8-mb4-ep8-sync-r1",
+    "commit": "0b2317a94c6d1cf8292a7cbfbc3624c781dd579c",
+    "experiment_id": "01KXSC2WV4NBYJ1Z95RKZ6ACM2",
+    "task_ids": [
+      "01KXSC2WV987KVVMMGZ704MJ27"
+    ],
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXSC2WV4NBYJ1Z95RKZ6ACM2"
+  },
+  {
+    "task_name": "1p2b-cx8-gpu8-mb6",
+    "run_name": "smoke-1p2b-geometry-gdn-ev2-nope-cx8-gpu8-mb6-ep8-sync-r1",
+    "commit": "0b2317a94c6d1cf8292a7cbfbc3624c781dd579c",
+    "experiment_id": "01KXSC2ZYHVDBZ9CVXET9FPYNE",
+    "task_ids": [
+      "01KXSC2ZYNYYZ09HH92N2SH1Z0"
+    ],
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXSC2ZYHVDBZ9CVXET9FPYNE"
+  },
+  {
+    "task_name": "480m-cx1-gpu4-mb8",
+    "run_name": "smoke-480m-geometry-gdn-ev2-nope-cx1-gpu4-mb8-r2",
+    "commit": "07d749c954dfd62653f84c488a2a14c7f3ab8ce8",
+    "experiment_id": "01KXSCD0AFBF1YVYJPAKS4DRX6",
+    "task_ids": [
+      "01KXSCD0AN562H7RQAS02MW833"
+    ],
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXSCD0AFBF1YVYJPAKS4DRX6"
+  },
+  {
+    "task_name": "480m-cx8-gpu4-mb12",
+    "run_name": "smoke-480m-geometry-gdn-ev2-nope-cx8-gpu4-mb12-r2",
+    "commit": "07d749c954dfd62653f84c488a2a14c7f3ab8ce8",
+    "experiment_id": "01KXSCD3EKY3RWEK20CHV7XC7N",
+    "task_ids": [
+      "01KXSCD3ES86V6KF4CPW1NE1E9"
+    ],
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXSCD3EKY3RWEK20CHV7XC7N"
+  },
+  {
+    "task_name": "810m-cx1-gpu8-mb4",
+    "run_name": "smoke-810m-geometry-gdn-ev2-nope-cx1-gpu8-mb4-r2",
+    "commit": "07d749c954dfd62653f84c488a2a14c7f3ab8ce8",
+    "experiment_id": "01KXSCD6Y0QTE3CXH2BFJJKNGN",
+    "task_ids": [
+      "01KXSCD6Y8G31MHMN00J0HZ270"
+    ],
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXSCD6Y0QTE3CXH2BFJJKNGN"
+  },
+  {
+    "task_name": "810m-cx8-gpu8-mb6",
+    "run_name": "smoke-810m-geometry-gdn-ev2-nope-cx8-gpu8-mb6-r2",
+    "commit": "07d749c954dfd62653f84c488a2a14c7f3ab8ce8",
+    "experiment_id": "01KXSCDA2JDTF73BJSRP7DMM3Y",
+    "task_ids": [
+      "01KXSCDA2SKNF832WSXJC87JPK"
+    ],
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXSCDA2JDTF73BJSRP7DMM3Y"
+  },
+  {
+    "task_name": "1p2b-cx1-gpu8-mb4",
+    "run_name": "smoke-1p2b-geometry-gdn-ev2-nope-cx1-gpu8-mb4-ep8-sync-r2",
+    "commit": "07d749c954dfd62653f84c488a2a14c7f3ab8ce8",
+    "experiment_id": "01KXSCDD4VE2HAV2T4Y8V1W5T2",
+    "task_ids": [
+      "01KXSCDD52NZ67BTBYGPQR2V4W"
+    ],
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXSCDD4VE2HAV2T4Y8V1W5T2"
+  },
+  {
+    "task_name": "1p2b-cx8-gpu8-mb6",
+    "run_name": "smoke-1p2b-geometry-gdn-ev2-nope-cx8-gpu8-mb6-ep8-sync-r2",
+    "commit": "07d749c954dfd62653f84c488a2a14c7f3ab8ce8",
+    "experiment_id": "01KXSCDGHHF6DKFZFADG1RQN0P",
+    "task_ids": [
+      "01KXSCDGHN2R49HR6XW95FD9BM"
+    ],
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXSCDGHHF6DKFZFADG1RQN0P"
+  },
+  {
+    "task_name": "810m-cx1-gpu8-mb4",
+    "run_name": "smoke-810m-geometry-gdn-ev2-nope-cx1-gpu8-mb4-r3",
+    "commit": "9aed31f6b03a5902d6220371998246ea573bf06f",
+    "experiment_id": "01KXSCY02FZRQ84KRAQ25RXGRX",
+    "task_ids": [
+      "01KXSCY02KQF2SKCGMY66DGGFZ"
+    ],
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXSCY02FZRQ84KRAQ25RXGRX"
+  },
+  {
+    "task_name": "480m-cx8-gpu8-mb12",
+    "run_name": "smoke-480m-geometry-gdn-ev2-nope-cx8-gpu8-mb12-r1",
+    "commit": "9aed31f6b03a5902d6220371998246ea573bf06f",
+    "experiment_id": "01KXSD1SSCA5NCGYDP9Z2XB5ER",
+    "task_ids": [
+      "01KXSD1SSNK9KMJN2GP6G41MRR"
+    ],
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXSD1SSCA5NCGYDP9Z2XB5ER"
+  },
+  {
+    "task_name": "810m-cx8-gpu16-mb6",
+    "run_name": "smoke-810m-geometry-gdn-ev2-nope-cx8-gpu16-mb6-r1",
+    "commit": "9aed31f6b03a5902d6220371998246ea573bf06f",
+    "experiment_id": "01KXSD1WZ9FYXHTPV1C1JYJ1V1",
+    "task_ids": [
+      "01KXSD1WZHK8SY0EM266YP9B3P",
+      "01KXSD1XBPWJ3JA0XA8HGH8M33"
+    ],
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXSD1WZ9FYXHTPV1C1JYJ1V1"
+  },
+  {
+    "task_name": "1p2b-cx8-gpu16-mb6",
+    "run_name": "smoke-1p2b-geometry-gdn-ev2-nope-cx8-gpu16-mb6-ep8-sync-r1",
+    "commit": "9aed31f6b03a5902d6220371998246ea573bf06f",
+    "experiment_id": "01KXSD5GHS1MAFWTY1B20ZJ9XK",
+    "task_ids": [
+      "01KXSD5GHZV1SRC85FPHBPCRM1",
+      "01KXSD5GNMJXEFW3F05FVZZGAF"
+    ],
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXSD5GHS1MAFWTY1B20ZJ9XK"
+  },
+  {
+    "task_name": "1p2b-cx8-gpu32-mb3",
+    "run_name": "smoke-1p2b-geometry-gdn-ev2-nope-cx8-gpu32-mb3-ep8-sync-r1",
+    "commit": "9aed31f6b03a5902d6220371998246ea573bf06f",
+    "experiment_id": "01KXSD5KVEQNQ4J53CS6XPSGRA",
+    "task_ids": [
+      "01KXSD5KVN1CXAABMXHEQXEKD6",
+      "01KXSD5M3VJJKM1XJS61KVG1YY",
+      "01KXSD5M8B4TSZ7GA85BR5Z658",
+      "01KXSD5MC9TC3XSC4H755G57ZH"
+    ],
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXSD5KVEQNQ4J53CS6XPSGRA"
+  }
+]

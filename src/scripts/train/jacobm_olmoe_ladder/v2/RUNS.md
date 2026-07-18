@@ -405,6 +405,44 @@ The production sweep was submitted on 2026-07-18 as urgent unallocated work:
 | 8 | `1.6e-3` | 8 | 12 | 1 | [01KXSABK8R6YKTP2JQB0VG0SWR](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXSABHBX2Z4G1JFV8W1PN6AN?taskId=01KXSABK5DR58R40YGF660FXPJ&jobId=01KXSABK8R6YKTP2JQB0VG0SWR) | pending initialization | scheduled |
 | 8 | `3.2e-3` | 8 | 12 | 1 | [01KXSABKC1YQXYYHJ2ECTYMGJW](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXSABHBX2Z4G1JFV8W1PN6AN?taskId=01KXSABK8TBRFE0H7GKK82HRYT&jobId=01KXSABKC1YQXYYHJ2ECTYMGJW) | pending initialization | created |
 
+## Larger geometry + NoPE capacity smokes
+
+- Model variant: `geometry_matched_gdn_ev2_nope`
+- Manifest:
+  [`launchers/pretraining/manifests/geometry_matched_scale_nope_smokes.yaml`](launchers/pretraining/manifests/geometry_matched_scale_nope_smokes.yaml)
+- Launcher:
+  [`launchers/pretraining/launch_geometry_matched_scale_nope_smokes.py`](launchers/pretraining/launch_geometry_matched_scale_nope_smokes.py)
+- Detailed parameter, performance, and ETA record:
+  [`GEOMETRY_MATCHED_SCALE.md`](GEOMETRY_MATCHED_SCALE.md)
+- Scheduling: urgent unallocated Holmes B300s, `minRuntime: 0m`,
+  non-preemptible, auto-resuming
+- Workload: compiled dry run plus 12 optimizer steps; checkpointing and all
+  evaluators disabled
+
+All ten valid settings passed. Performance below is the median of the final
+five step-level samples.
+
+| Size | Cx | GPUs | EP | MB | Accum | Beaker work | W&B | TFLOPs/GPU | Status |
+|---|---:|---:|---:|---:|---:|---|---|---:|---|
+| 480M | 1 | 4 | 1 | 8 | 1 | [01KXSCD0AFBF1YVYJPAKS4DRX6](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXSCD0AFBF1YVYJPAKS4DRX6) | [wllr6m1g](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/wllr6m1g) | 379.8 | passed |
+| 480M | 8 | 4 | 1 | 12 | 2 | [01KXSCD3EKY3RWEK20CHV7XC7N](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXSCD3EKY3RWEK20CHV7XC7N) | [xch3s5bw](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/xch3s5bw) | 460.8 | passed |
+| 480M | 8 | 8 | 1 | 12 | 1 | [01KXSD1SSCA5NCGYDP9Z2XB5ER](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXSD1SSCA5NCGYDP9Z2XB5ER) | [s8ubt7sh](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/s8ubt7sh) | 416.0 | passed |
+| 810M | 1 | 8 | 1 | 4 | 1 | [01KXSCY02FZRQ84KRAQ25RXGRX](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXSCY02FZRQ84KRAQ25RXGRX) | [0xfsc1vs](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/0xfsc1vs) | 312.6 | passed |
+| 810M | 8 | 8 | 1 | 6 | 2 | [01KXSCDA2JDTF73BJSRP7DMM3Y](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXSCDA2JDTF73BJSRP7DMM3Y) | [kfm4ynjr](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/kfm4ynjr) | 447.9 | passed |
+| 810M | 8 | 16 | 1 | 6 | 1 | [01KXSD1WZ9FYXHTPV1C1JYJ1V1](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXSD1WZ9FYXHTPV1C1JYJ1V1) | [o54vnqvg](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/o54vnqvg) | 380.3 | passed |
+| 1.2B | 1 | 8 | 8 | 4 | 1 | [01KXSCDD4VE2HAV2T4Y8V1W5T2](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXSCDD4VE2HAV2T4Y8V1W5T2) | [g1d4fcd7](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/g1d4fcd7) | 409.5 | passed |
+| 1.2B | 8 | 8 | 8 | 6 | 2 | [01KXSCDGHHF6DKFZFADG1RQN0P](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXSCDGHHF6DKFZFADG1RQN0P) | [c69nxyn3](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/c69nxyn3) | 440.5 | passed |
+| 1.2B | 8 | 16 | 8 | 6 | 1 | [01KXSD5GHS1MAFWTY1B20ZJ9XK](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXSD5GHS1MAFWTY1B20ZJ9XK) | [kfm18iir](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/kfm18iir) | 410.8 | passed |
+| 1.2B | 8 | 32 | 8 | 3 | 1 | [01KXSD5KVEQNQ4J53CS6XPSGRA](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXSD5KVEQNQ4J53CS6XPSGRA) | [owvnz62c](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/owvnz62c) | 315.6 | passed |
+
+The first six submissions installed the checkout into the image and produced a
+CUDA/TransformerEngine ABI mismatch before model execution. They wrote no
+checkpoint and are excluded from capacity results. The corrected jobs use the
+image environment unchanged. The first corrected 810M Cx1 worker then
+segfaulted after optimizer initialization; its identical r3 retry above
+passed, classifying that attempt as transient infrastructure rather than an
+OOM or model failure.
+
 ## Post-training validation backfills
 
 - Manifest: [`launchers/validation/manifests/275m_hybrid_geometry_full.yaml`](launchers/validation/manifests/275m_hybrid_geometry_full.yaml)

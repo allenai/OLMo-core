@@ -3,12 +3,12 @@
 Dense-ladder source: `scaling-ladders` commit `aaeeca3`,
 `ladders/mainline/workloads/arch.py`. The canonical builder is
 [`models/geometry_matched_scale.py`](models/geometry_matched_scale.py), selected
-from the scale trainer with `geometry_matched_gdn_ev2`.
+from the scale trainer with `geometry_matched_gdn_ev2` for RoPE or
+`geometry_matched_gdn_ev2_nope` for NoPE.
 
-No training jobs have been launched from these larger-size configurations.
-Future smokes and training runs return to allocated Holmes capacity; the
-unallocated exception applied only to the first 275M geometry sweep and the
-branch-comparison experiments.
+No full 480M/810M/1.2B training job has been launched from these
+configurations. The NoPE configs have completed checkpoint-free capacity and
+scaling smokes on Holmes B300s; the measurements and ETA handoff are below.
 
 ## Scaling rule
 
@@ -76,45 +76,93 @@ PYTHONPATH=src uv run python \
   src/scripts/train/jacobm_olmoe_ladder/v2/models/geometry_matched_scale.py
 ```
 
-## Deferred launch handoff
+## Larger NoPE capacity and scaling smokes
 
-Status as of 2026-07-17: the configs and trainer selection path are ready, but
-no 480M/810M/1.2B smoke or training job has been launched and no launch
-manifest has been approved.
+The independent launcher and manifest are:
 
-When this family is resumed:
+- [`launchers/pretraining/launch_geometry_matched_scale_nope_smokes.py`](launchers/pretraining/launch_geometry_matched_scale_nope_smokes.py)
+- [`launchers/pretraining/manifests/geometry_matched_scale_nope_smokes.yaml`](launchers/pretraining/manifests/geometry_matched_scale_nope_smokes.yaml)
 
-1. Use `src/scripts/train/jacobm_olmoe3_hybrid_scale.py` with
-   `OLMOE3_HYBRID_MODEL_VARIANT=geometry_matched_gdn_ev2`.
-2. Use normal allocated Holmes B300 capacity in
-   `ai2/OLMo-3-moe-experiments` at urgent priority. Do not use the
-   `minRuntime: 0m` unallocated exception from the 275M sweep or the
-   branch-comparison jobs.
-3. Create one manifest for this intervention through the shared
-   `launch_sweep.py`; dry-render and inspect it before any submission.
-4. Capacity-smoke each size with compilation and the real optimizer, starting
-   at the largest plausible rank microbatch. Preserve the chosen global
-   optimizer batch exactly while changing GPU count, microbatch, or
-   accumulation.
-5. Minimize expert parallelism. Start 480M and 810M from EP=1 candidates.
-   For 1.2B, measure the previously useful EP=8 path and test EP=1 only if its
-   memory and throughput are credible on B300s. Select from measured
-   TFLOPs/GPU rather than assuming the first hybrid's result transfers.
-6. Smokes should write no checkpoints and run no evaluators. Full runs should
-   use ephemeral saves every 500 steps with `remove=ephemeral_only`, retain the
-   final checkpoint, and resume under the same semantic run/checkpoint name.
-7. Disable all in-loop and on-finish evaluators. After training, launch the
-   full validation suite as separate final-checkpoint backfills.
-8. Register every full run's Beaker and W&B IDs before regenerating the
-   geometry-family plots. Those plots compare against both wide integration
-   and the first `expand_v=1` hybrid.
+Every valid row below completed a compiled dry run plus 12 optimizer steps on
+Holmes B300s with exact production model/optimizer construction. Checkpointing,
+in-loop evaluation, and on-finish evaluation were all disabled. The runs were
+urgent unallocated work (`minRuntime: 0m`, non-preemptible, auto-resuming) in
+`ai2/OLMo-3-moe-experiments`.
 
-Decisions intentionally deferred until launch planning:
+NoPE changes no parameter count. Strict construction checks confirmed:
 
-- which Cx values to run at 480M/810M/1.2B;
-- whether to transfer the wide/first-hybrid LR or wait for the completed 275M
-  geometry sweep to choose the transfer rule;
-- exact global batches, GPU counts, rank microbatches, accumulation, and EP;
-  and
-- whether the first larger-size wave is a limited promotion check or the full
-  Cx1/Cx2/Cx4/Cx8 ladder.
+| Size | Active | Active non-embedding | Total stored |
+|---|---:|---:|---:|
+| 480M | 501,137,856 | 424,067,520 | 7,220,707,776 |
+| 810M | 858,237,056 | 755,476,608 | 11,865,532,544 |
+| 1.2B | 1,289,441,280 | 1,160,990,720 | 18,515,005,440 |
+
+The performance statistics are medians over the final five reported steps, not
+compile-polluted whole-run averages:
+
+| Size | Cx | GPUs | EP | Rank MB | Accum | TFLOPs/GPU | TPS/GPU | Active / reserved memory | W&B |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---|
+| 480M | 1 | 4 | 1 | 8 | 1 | 379.8 | 137,426 | 184.7 / 185.3 GiB | [wllr6m1g](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/wllr6m1g) |
+| 480M | 8 | 4 | 1 | 12 | 2 | 460.8 | 166,744 | 246.8 / 247.4 GiB | [xch3s5bw](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/xch3s5bw) |
+| 480M | 8 | 8 | 1 | 12 | 1 | 416.0 | 150,519 | 236.7 / 237.4 GiB | [s8ubt7sh](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/s8ubt7sh) |
+| 810M | 1 | 8 | 1 | 4 | 1 | 312.6 | 63,187 | 167.4 / 167.6 GiB | [0xfsc1vs](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/0xfsc1vs) |
+| 810M | 8 | 8 | 1 | 6 | 2 | 447.9 | 90,530 | 209.6 / 209.8 GiB | [kfm4ynjr](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/kfm4ynjr) |
+| 810M | 8 | 16 | 1 | 6 | 1 | 380.3 | 76,867 | 201.3 / 201.5 GiB | [o54vnqvg](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/o54vnqvg) |
+| 1.2B | 1 | 8 | 8 | 4 | 1 | 409.5 | 54,441 | 168.5 / 171.8 GiB | [g1d4fcd7](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/g1d4fcd7) |
+| 1.2B | 8 | 8 | 8 | 6 | 2 | 440.5 | 58,555 | 231.5 / 236.8 GiB | [c69nxyn3](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/c69nxyn3) |
+| 1.2B | 8 | 16 | 8 | 6 | 1 | 410.8 | 54,609 | 218.7 / 223.9 GiB | [kfm18iir](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/kfm18iir) |
+| 1.2B | 8 | 32 | 8 | 3 | 1 | 315.6 | 41,957 | 117.7 / 120.3 GiB | [owvnz62c](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/owvnz62c) |
+
+The initial six one-node attempts used Gantry's project-install path and
+invalidated the image's CUDA/TransformerEngine ABI; they are infrastructure
+failures and provide no capacity result. The corrected launcher preserves the
+tested image environment. One corrected 810M Cx1 worker then segfaulted after
+optimizer construction; the identical retry above passed, while the larger
+810M MB6 run also passed, so that attempt is recorded as a transient
+worker/hardware failure rather than a model-capacity failure.
+
+### Rough full-run ETAs
+
+The token budget is exactly `20 * active_non_embedding_params * Cx`. Asterisks
+mark combinations measured directly. Other cells preserve the canonical
+32/48/64/96-sequence batches and extrapolate TPS from the measured
+size-specific microbatch curve plus measured multi-node scaling. They are
+planning estimates, not throughput guarantees. `MB×A` means rank microbatch
+sequences times gradient-accumulation steps.
+
+| Size | Cx | Target tokens | 4 GPUs | 8 GPUs | 16 GPUs | 32 GPUs |
+|---|---:|---:|---:|---:|---:|---:|
+| 480M | 1 | 8.481B | 4.3h* (`8×1`) | 3.6h (`4×1`) | — | — |
+| 480M | 2 | 16.963B | 7.1h (`12×1`) | 5.6h (`6×1`) | — | — |
+| 480M | 4 | 33.925B | 17.1h (`8×2`) | 9.5h (`8×1`) | — | — |
+| 480M | 8 | 67.851B | 28.3h* (`12×2`) | 15.7h* (`12×1`) | — | — |
+| 810M | 1 | 15.110B | — | 8.3h* (`4×1`) | 9.3h (`2×1`) | — |
+| 810M | 2 | 30.219B | — | 11.6h (`6×1`) | 12.7h (`3×1`) | — |
+| 810M | 4 | 60.438B | — | 33.2h (`4×2`) | 19.6h (`4×1`) | — |
+| 810M | 8 | 120.876B | — | 46.4h* (`6×2`) | 27.3h* (`6×1`) | — |
+| 1.2B | 1 | 23.220B | — | 14.8h* (`4×1`) | 9.6h (`2×1`) | 7.4h (`1×1`) |
+| 1.2B | 2 | 46.440B | — | 27.5h (`6×1`) | 16.9h (`3×1`) | invalid at the fixed batch |
+| 1.2B | 4 | 92.879B | — | 59.2h (`4×2`) | 31.8h (`4×1`) | 21.8h (`2×1`) |
+| 1.2B | 8 | 185.759B | — | 110.2h* (`6×2`) | 59.1h* (`6×1`) | 38.4h* (`3×1`) |
+
+Startup and compilation add roughly 5–10 minutes per job and are excluded from
+the table. The current measurements imply that 480M Cx1/Cx2 and 810M Cx1/Cx2
+gain too little wall-clock speed from doubling GPUs; the larger Cx values
+scale materially. The 1.2B Cx8 choices trade approximately 4.6 days on 8 GPUs,
+2.5 days on 16, or 1.6 days on 32, with diminishing GPU efficiency.
+
+## Full-run handoff
+
+Before launching:
+
+1. Wait for the 275M NoPE sweep to establish the transferred LR rule.
+2. Select one GPU count per size/Cx from the ETA table and calculate the total
+   concurrent GPU request.
+3. Create the production manifest through the shared `launch_sweep.py` path;
+   preserve these exact global batches, EP1 for 480M/810M, and EP8 `sync_1d`
+   for 1.2B.
+4. Full runs write rolling ephemeral checkpoints every 500 steps with
+   `remove=ephemeral_only`, retain the final checkpoint, and disable all
+   in-loop/on-finish evaluators.
+5. Register Beaker and W&B IDs before plotting. The geometry-family plots
+   compare against both wide integration and the first `expand_v=1` hybrid.
