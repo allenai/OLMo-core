@@ -277,15 +277,16 @@ WAVES = {
         intervention_label="geometry-matched hybrid GDN (expand_v=2, NoPE)",
         architecture_note=(
             "The 275M geometry-matched expand_v=2 hybrid with RoPE removed only "
-            "from full-attention layers. The wide integration model and the "
-            "otherwise-identical RoPE geometry model are explicit references."
+            "from full-attention layers. The wide integration model, first "
+            "expand_v=1 hybrid, and otherwise-identical RoPE geometry model are "
+            "explicit references."
         ),
         models=("275m",),
         lr_sweep_models=("275m",),
         active_parameters={"275m": 290_782_080},
         baseline_active_parameters={"275m": 280_207_872},
         baseline=WIDE_INTEGRATION,
-        additional_baselines=(GEOMETRY_GDN_EV2,),
+        additional_baselines=(HYBRID_GDN_EV1, GEOMETRY_GDN_EV2),
         intervention=GEOMETRY_GDN_EV2_NOPE,
         uplot_baselines=True,
     ),
@@ -564,6 +565,7 @@ def plot_intervention_uplot(
             [point.loss for point in group],
             marker="o",
             linewidth=1.8,
+            color=wave.intervention.color,
             label=f"Cx{cx}",
         )
         fit = _fit_minimum(group)
@@ -603,12 +605,13 @@ def plot_intervention_uplot(
         )
 
         if wave.uplot_baselines:
-            reference_styles = (("x", "black"), ("D", "#2563eb"))
+            reference_markers = ("x", "D", "s", "^")
             for index, reference in enumerate(reference_variants(wave)):
                 point = _best_finished(points, reference.key, model, cx)
                 if point is None:
                     continue
-                marker, color = reference_styles[index % len(reference_styles)]
+                marker = reference_markers[index % len(reference_markers)]
+                color = "black" if index == 0 else reference.color
                 scatter_kwargs = {
                     "marker": marker,
                     "s": 44,
@@ -645,14 +648,14 @@ def plot_optimal_summary(points: list[Point], wave: Wave, output_path: Path, win
         if _fit_minimum(_finished(points, wave.intervention.key, model, cx)) is not None
     }
     eligible_points = [point for point in points if (point.model, point.cx) in eligible_keys]
-    reference_styles = (("black", "--"), ("#2563eb", ":"))
+    reference_linestyles = ("--", ":", "-.", (0, (3, 1, 1, 1)))
     summary_variants = tuple(
         SummaryVariant(
             "baseline" if index == 0 else reference.key,
             (reference.key,),
             reference.label,
-            color=reference_styles[index % len(reference_styles)][0],
-            linestyle=reference_styles[index % len(reference_styles)][1],
+            color="black" if index == 0 else reference.color,
+            linestyle=reference_linestyles[index % len(reference_linestyles)],
         )
         for index, reference in enumerate(reference_variants(wave))
     )
@@ -693,12 +696,14 @@ def plot_fixed_lr_scale_comparison(
     for ax, model in zip(axes[0], models):
         ax.set_facecolor("white")
         intervention_cxs: list[int] = []
+        reference_linestyles = ("--", ":", "-.", (0, (3, 1, 1, 1)))
         comparison_styles = [
-            (reference, color, linestyle)
-            for reference, (color, linestyle) in zip(
-                reference_variants(wave),
-                (("black", "--"), ("#2563eb", ":")),
+            (
+                reference,
+                "black" if index == 0 else reference.color,
+                reference_linestyles[index % len(reference_linestyles)],
             )
+            for index, reference in enumerate(reference_variants(wave))
         ]
         comparison_styles.append((wave.intervention, wave.intervention.color, "-"))
         for variant, color, linestyle in comparison_styles:
@@ -754,19 +759,23 @@ def plot_fixed_lr_scale_comparison(
         ax.grid(True, which="both", alpha=0.25)
     axes[0][0].set_ylabel(f"train CE avg{window_m}M")
     handles, labels = axes[0][0].get_legend_handles_labels()
+    legend_rows = 1
     if handles:
+        legend_columns = min(len(handles), 2 if len(models) == 1 else len(handles))
+        legend_rows = math.ceil(len(handles) / legend_columns)
         fig.legend(
             handles,
             labels,
             loc="lower center",
-            ncol=len(handles),
+            ncol=legend_columns,
             bbox_to_anchor=(0.5, -0.02),
             frameon=False,
         )
     fig.suptitle(f"{wave.title} (finished runs only)")
+    bottom_margin = 0.08 + 0.07 * (legend_rows - 1)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.tight_layout(rect=(0, 0.08, 1, 0.94))
-    fig.savefig(output_path, dpi=180, facecolor="white")
+    fig.tight_layout(rect=(0, bottom_margin, 1, 0.94))
+    fig.savefig(output_path, dpi=180, facecolor="white", bbox_inches="tight")
     plt.close(fig)
     return output_path
 

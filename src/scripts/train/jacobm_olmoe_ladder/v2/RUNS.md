@@ -25,12 +25,12 @@ below retain the full launch and retry history.
 | pretraining | aligned geometry + NoPE Cx8 sweep | running | four runs at 28.0-29.0% | [work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXSABHBX2Z4G1JFV8W1PN6AN) |
 | midtraining | first hybrid 275M Cx8 | running | 72.87B / 100B tokens (72.9%) | [1keo2hz6](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/1keo2hz6) |
 | midtraining | first hybrid 480M Cx8 | running | 5.03B / 100B tokens (5.0%) | [mnp9rv5l](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/mnp9rv5l) |
-| validation | first hybrid + geometry backfills | partial | 23 finished, 3 crashed, 7 not started | [results](results/validation/hybrid_full.md) |
+| validation | first hybrid + geometry backfills | partial | 23 finished; 7 need restart; 3 remain scheduled | [results](results/validation/hybrid_full.md) |
 
 All active pretraining and midtraining cells in this snapshot are either
-running or finished; no active training cell is failed. The three crashed
-validation rows and seven not-started rows are an eval-only backlog, not
-training failures.
+running or finished; no active training cell is failed. The seven manual
+restarts and three scheduled tasks are an eval-only backlog, not training
+failures.
 
 ## 275M active hybrid GDN (`expand_v=1`)
 
@@ -502,6 +502,12 @@ allocated-versus-unallocated scheduling decision.
   older crashed attempt. The complete metric export and compact coverage table are generated
   by [`collect_validation_results.py`](collect_validation_results.py) under
   [`results/validation/`](results/validation/).
+- A direct Beaker audit on 2026-07-18 found seven geometry tasks whose latest
+  job exited 143 and has no live retry: Cx1 at `4e-4`, `8e-4`, and `3.2e-3`;
+  Cx2 at `4e-4` and `8e-4`; and Cx4 at `1.6e-3` and `3.2e-3`. Four of these
+  stopped before W&B initialization, so the W&B-only results dashboard labels
+  them `not_started` rather than `crashed`. Cx1 `1.6e-3` and Cx2
+  `1.6e-3`/`3.2e-3` remain scheduled and do not need manual restart.
 - Newly completed larger-scale checkpoint: the 1.2B Cx1 final validation is
   queued separately in
   [01KXPZ4WQ72WBVPNAD0KBT2WKY](https://beaker.org/ex/01KXPZ4WQ72WBVPNAD0KBT2WKY)
