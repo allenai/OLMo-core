@@ -46,7 +46,7 @@ training:
 runs:
   - task_name: 480m-cx1-gpu4-mb8
     wave: 1
-    run_name: smoke-480m-geometry-gdn-ev2-nope-cx1-gpu4-mb8-r1
+    run_name: smoke-480m-geometry-gdn-ev2-nope-cx1-gpu4-mb8-r2
     model_size: 480m
     cx: 1
     learning_rate: "1.2e-3"
@@ -58,7 +58,7 @@ runs:
 
   - task_name: 480m-cx8-gpu4-mb12
     wave: 1
-    run_name: smoke-480m-geometry-gdn-ev2-nope-cx8-gpu4-mb12-r1
+    run_name: smoke-480m-geometry-gdn-ev2-nope-cx8-gpu4-mb12-r2
     model_size: 480m
     cx: 8
     learning_rate: "8e-4"
@@ -70,7 +70,7 @@ runs:
 
   - task_name: 810m-cx1-gpu8-mb4
     wave: 1
-    run_name: smoke-810m-geometry-gdn-ev2-nope-cx1-gpu8-mb4-r1
+    run_name: smoke-810m-geometry-gdn-ev2-nope-cx1-gpu8-mb4-r2
     model_size: 810m
     cx: 1
     learning_rate: "6e-4"
@@ -82,7 +82,7 @@ runs:
 
   - task_name: 810m-cx8-gpu8-mb6
     wave: 1
-    run_name: smoke-810m-geometry-gdn-ev2-nope-cx8-gpu8-mb6-r1
+    run_name: smoke-810m-geometry-gdn-ev2-nope-cx8-gpu8-mb6-r2
     model_size: 810m
     cx: 8
     learning_rate: "4e-4"
@@ -94,7 +94,7 @@ runs:
 
   - task_name: 1p2b-cx1-gpu8-mb4
     wave: 1
-    run_name: smoke-1p2b-geometry-gdn-ev2-nope-cx1-gpu8-mb4-ep8-sync-r1
+    run_name: smoke-1p2b-geometry-gdn-ev2-nope-cx1-gpu8-mb4-ep8-sync-r2
     model_size: 1p2b
     cx: 1
     learning_rate: "4e-4"
@@ -107,7 +107,7 @@ runs:
 
   - task_name: 1p2b-cx8-gpu8-mb6
     wave: 1
-    run_name: smoke-1p2b-geometry-gdn-ev2-nope-cx8-gpu8-mb6-ep8-sync-r1
+    run_name: smoke-1p2b-geometry-gdn-ev2-nope-cx8-gpu8-mb6-ep8-sync-r2
     model_size: 1p2b
     cx: 8
     learning_rate: "4e-4"

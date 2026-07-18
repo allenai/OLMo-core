@@ -212,7 +212,10 @@ def recipe_for(
         propagate_preemption=True if int(row["num_nodes"]) > 1 else None,
         synchronized_start_timeout="90m" if int(row["num_nodes"]) > 1 else None,
         torchrun=True,
-        system_python=True,
+        # The image is already the tested training environment. Do not let
+        # Gantry install this checkout into it, which can replace CUDA Python
+        # packages underneath the image's prebuilt TransformerEngine binary.
+        no_python=True,
         pre_setup="unset S3_PROFILE",
     )
 
