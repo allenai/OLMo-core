@@ -190,25 +190,21 @@ def build_rowwise_route_maps(
 
     base_rows_by_expert = (local_expert_base_by_dest + send_base_by_dest_local).reshape(-1)
 
-    # Compute stable in-expert route positions without argsort and without a
-    # per-expert Python loop. Scatter each route into a sparse [expert, route]
-    # marker matrix, prefix-sum along route order, then gather each route's
-    # prefix. The extra invalid bucket keeps dropped/invalid routes masked while
-    # preserving dense indexing.
-    route_positions = torch.arange(num_routes, device=routing_map.device, dtype=torch.long)
-    flat_bucket_idx = bucket_ids * num_routes + route_positions
-    bucket_marks = torch.zeros(
-        (expert_count + 1) * num_routes,
-        device=routing_map.device,
-        dtype=torch.long,
-    )
-    bucket_marks.scatter_(0, flat_bucket_idx, 1)
-    bucket_prefix = torch.cumsum(
-        bucket_marks.view(expert_count + 1, num_routes),
-        dim=1,
-        dtype=torch.long,
-    ).reshape(-1)
-    pos_in_bucket = bucket_prefix.index_select(0, flat_bucket_idx) - 1
+    # Stable in-expert route position (rank within each expert bucket, in route
+    # order). A stable sort groups equal buckets while preserving route order, so
+    # each route's position is its offset from the start of its group. This keeps
+    # O(routes) memory instead of a dense [expert, route] matrix, which would be
+    # (expert_count + 1) * num_routes and blow up for large expert counts.
+    seq = torch.arange(num_routes, device=routing_map.device, dtype=torch.long)
+    order = torch.argsort(bucket_ids, stable=True)
+    sorted_buckets = bucket_ids.index_select(0, order)
+    is_group_start = torch.ones(num_routes, device=routing_map.device, dtype=torch.bool)
+    is_group_start[1:] = sorted_buckets[1:] != sorted_buckets[:-1]
+    group_start = torch.cummax(
+        torch.where(is_group_start, seq, torch.zeros_like(seq)), dim=0
+    ).values
+    pos_in_bucket = torch.empty(num_routes, device=routing_map.device, dtype=torch.long)
+    pos_in_bucket.scatter_(0, order, seq - group_start)
 
     keep_limits = allowed_splits_i64.index_select(0, safe_experts)
     base_rows = base_rows_by_expert.index_select(0, safe_experts)

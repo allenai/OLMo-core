@@ -110,6 +110,45 @@ def test_build_rowwise_route_maps_matches_reference(device: str):
     assert torch.equal(dst_rows, expected_rows)
 
 
+@pytest.mark.parametrize("seed", [0, 1, 2, 3])
+def test_build_rowwise_route_maps_matches_reference_randomized(seed: int):
+    ep_world_size = 4
+    num_local_experts = 8
+    expert_count = ep_world_size * num_local_experts
+    block = SimpleNamespace(
+        ep_pg=object(),
+        ep_world_size=ep_world_size,
+        num_local_routed_experts=num_local_experts,
+        block_idx=0,
+    )
+
+    gen = torch.Generator().manual_seed(seed)
+    # Many routes per expert plus some dropped (-1) routes exercise stable
+    # in-bucket ordering and tail-capacity dropping.
+    routing_map = torch.randint(-1, expert_count, (96, 6), generator=gen, dtype=torch.long)
+    keep_from_src_dest_local = torch.randint(
+        0, 4, (ep_world_size, ep_world_size, num_local_experts), generator=gen, dtype=torch.long
+    )
+    allowed_splits = keep_from_src_dest_local[0].reshape(-1)
+
+    dst_ranks, dst_rows = build_rowwise_route_maps(
+        block,  # type: ignore[arg-type]
+        routing_map=routing_map,
+        allowed_splits=allowed_splits,
+        keep_from_src_dest_local=keep_from_src_dest_local,
+    )
+    expected_ranks, expected_rows = _reference_rowwise_route_maps(
+        routing_map,
+        allowed_splits,
+        keep_from_src_dest_local,
+        ep_world_size=ep_world_size,
+        num_local_experts=num_local_experts,
+    )
+
+    assert torch.equal(dst_ranks, expected_ranks)
+    assert torch.equal(dst_rows, expected_rows)
+
+
 @requires_gpu
 def test_build_rowwise_route_maps_torch_compile_cuda():
     ep_world_size = 3
