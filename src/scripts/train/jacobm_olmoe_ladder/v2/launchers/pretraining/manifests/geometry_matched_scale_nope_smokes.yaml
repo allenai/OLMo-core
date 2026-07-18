@@ -70,7 +70,7 @@ runs:
 
   - task_name: 810m-cx1-gpu8-mb4
     wave: 1
-    run_name: smoke-810m-geometry-gdn-ev2-nope-cx1-gpu8-mb4-r2
+    run_name: smoke-810m-geometry-gdn-ev2-nope-cx1-gpu8-mb4-r3
     model_size: 810m
     cx: 1
     learning_rate: "6e-4"
