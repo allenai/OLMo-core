@@ -383,6 +383,28 @@ its launcher is
 It contains the four inherited LRs (`4e-4`, `8e-4`, `1.6e-3`, `3.2e-3`) at
 Cx1/2/4/8, requesting 80 B300s at full concurrency.
 
+The production sweep was submitted on 2026-07-18 as urgent unallocated work:
+[01KXSABHBX2Z4G1JFV8W1PN6AN](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXSABHBX2Z4G1JFV8W1PN6AN).
+
+| Cx | LR | GPUs | MB | Accum | Job | W&B | Status |
+|---:|---:|---:|---:|---:|---|---|---|
+| 1 | `4e-4` | 4 | 8 | 1 | [01KXSABHFQKSGQZJ523MSA68V1](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXSABHBX2Z4G1JFV8W1PN6AN?taskId=01KXSABHC318G5N5Y7A8YNG5W2&jobId=01KXSABHFQKSGQZJ523MSA68V1) | pending initialization | scheduled |
+| 1 | `8e-4` | 4 | 8 | 1 | [01KXSABHK67TJHNGDW33P7PT16](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXSABHBX2Z4G1JFV8W1PN6AN?taskId=01KXSABHFWP0MFE5G037D9BXRS&jobId=01KXSABHK67TJHNGDW33P7PT16) | pending initialization | scheduled |
+| 1 | `1.6e-3` | 4 | 8 | 1 | [01KXSABHPJMYFFT1T96H98D5J1](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXSABHBX2Z4G1JFV8W1PN6AN?taskId=01KXSABHKB3DPXFCBAWNAZG115&jobId=01KXSABHPJMYFFT1T96H98D5J1) | pending initialization | scheduled |
+| 1 | `3.2e-3` | 4 | 8 | 1 | [01KXSABHTFS04FEGPH1NAD92RY](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXSABHBX2Z4G1JFV8W1PN6AN?taskId=01KXSABHPQAGSY0SFA0T26MCV1&jobId=01KXSABHTFS04FEGPH1NAD92RY) | pending initialization | created |
+| 2 | `4e-4` | 4 | 12 | 1 | [01KXSABHZ85TAGR88MJYXKQBEX](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXSABHBX2Z4G1JFV8W1PN6AN?taskId=01KXSABHTJM6X9EKGHDER3XEVD&jobId=01KXSABHZ85TAGR88MJYXKQBEX) | pending initialization | created |
+| 2 | `8e-4` | 4 | 12 | 1 | [01KXSABJ2YNA80PFV3FHAKMRZK](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXSABHBX2Z4G1JFV8W1PN6AN?taskId=01KXSABHZEYSF5QY7MJP0DWCX9&jobId=01KXSABJ2YNA80PFV3FHAKMRZK) | pending initialization | created |
+| 2 | `1.6e-3` | 4 | 12 | 1 | [01KXSABJ68WBX4TVSTR56BVZ1A](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXSABHBX2Z4G1JFV8W1PN6AN?taskId=01KXSABJ34R4AE29AGHGXP65NN&jobId=01KXSABJ68WBX4TVSTR56BVZ1A) | pending initialization | created |
+| 2 | `3.2e-3` | 4 | 12 | 1 | [01KXSABJBS8QP3R5HEMG6JSWEN](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXSABHBX2Z4G1JFV8W1PN6AN?taskId=01KXSABJ6A8DE73DQ51KM26C6P&jobId=01KXSABJBS8QP3R5HEMG6JSWEN) | pending initialization | created |
+| 4 | `4e-4` | 4 | 16 | 1 | [01KXSABJFAQ0SMEQH6PR4Y8C19](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXSABHBX2Z4G1JFV8W1PN6AN?taskId=01KXSABJBWZE65DRH4M21WB0T9&jobId=01KXSABJFAQ0SMEQH6PR4Y8C19) | pending initialization | created |
+| 4 | `8e-4` | 4 | 16 | 1 | [01KXSABJKMVAAY3KZ7HDZ284M9](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXSABHBX2Z4G1JFV8W1PN6AN?taskId=01KXSABJFCB5F0HWX0BR2ZAENY&jobId=01KXSABJKMVAAY3KZ7HDZ284M9) | pending initialization | created |
+| 4 | `1.6e-3` | 4 | 16 | 1 | [01KXSABJQM8P4QM4HNQBJP3CSV](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXSABHBX2Z4G1JFV8W1PN6AN?taskId=01KXSABJKP9QQNCAM9YT0NWRNP&jobId=01KXSABJQM8P4QM4HNQBJP3CSV) | pending initialization | created |
+| 4 | `3.2e-3` | 4 | 16 | 1 | [01KXSABJVYPN084NPHSDR2QV95](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXSABHBX2Z4G1JFV8W1PN6AN?taskId=01KXSABJQPQRZSJSPTNMY0MRK5&jobId=01KXSABJVYPN084NPHSDR2QV95) | pending initialization | created |
+| 8 | `4e-4` | 8 | 12 | 1 | [01KXSABK0Y35G8W2EBSNT97JBS](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXSABHBX2Z4G1JFV8W1PN6AN?taskId=01KXSABJW0PR83WZ70FAB6W2H0&jobId=01KXSABK0Y35G8W2EBSNT97JBS) | pending initialization | created |
+| 8 | `8e-4` | 8 | 12 | 1 | [01KXSABK5B78Z8CTT7944NDYAF](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXSABHBX2Z4G1JFV8W1PN6AN?taskId=01KXSABK10HX9VBTHCTKGHJ12P&jobId=01KXSABK5B78Z8CTT7944NDYAF) | pending initialization | created |
+| 8 | `1.6e-3` | 8 | 12 | 1 | [01KXSABK8R6YKTP2JQB0VG0SWR](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXSABHBX2Z4G1JFV8W1PN6AN?taskId=01KXSABK5DR58R40YGF660FXPJ&jobId=01KXSABK8R6YKTP2JQB0VG0SWR) | pending initialization | scheduled |
+| 8 | `3.2e-3` | 8 | 12 | 1 | [01KXSABKC1YQXYYHJ2ECTYMGJW](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXSABHBX2Z4G1JFV8W1PN6AN?taskId=01KXSABK8TBRFE0H7GKK82HRYT&jobId=01KXSABKC1YQXYYHJ2ECTYMGJW) | pending initialization | created |
+
 ## Post-training validation backfills
 
 - Manifest: [`launchers/validation/manifests/275m_hybrid_geometry_full.yaml`](launchers/validation/manifests/275m_hybrid_geometry_full.yaml)
