@@ -172,8 +172,10 @@ def recipe_for(
     ]
     env_secrets = [(str(name), str(secret)) for name, secret in manifest.get("secrets", {}).items()]
     weka = [(str(item["bucket"]), str(item["mount"])) for item in manifest.get("weka", [])]
-    git_repo = GitRepoState.from_remote(
-        str(source["remote"]),
+    # Resolve file membership from the local immutable Git tree. The generated
+    # Beaker entrypoint still clones source["remote"] at this exact pushed SHA,
+    # while avoiding a dependency on local GitHub CLI authentication.
+    git_repo = GitRepoState.from_env(
         ref=commit,
         branch=str(source["branch"]),
     )
