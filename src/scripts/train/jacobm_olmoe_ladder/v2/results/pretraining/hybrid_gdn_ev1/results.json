@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-07-17T03:38:26.198872+00:00",
+  "generated_at": "2026-07-18T02:26:08.033268+00:00",
   "project": "ai2-llm/jacobm-olmoe-ladder",
   "wave": "hybrid_gdn_ev1",
   "models": [
@@ -700,6 +700,25 @@
     },
     {
       "model": "480m",
+      "variant": "hybrid_gdn_ev1",
+      "variant_label": "hybrid (GDN, expand_v=1)",
+      "cx": 8,
+      "lr": 0.0008,
+      "lr_tag": "0.0008",
+      "loss": 2.2362050320367395,
+      "state": "finished",
+      "tokens_b": 63.755255808,
+      "run_id": "d34a9o4t",
+      "name": "480m-intwide-hybrid-gdn-ev1-cx8-lr8e-4",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/d34a9o4t",
+      "segment_run_ids": [
+        "d34a9o4t"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0
+    },
+    {
+      "model": "480m",
       "variant": "wide_integration",
       "variant_label": "wide integration (SWA)",
       "cx": 8,
@@ -789,6 +808,25 @@
       "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/jpbqhfvc",
       "segment_run_ids": [
         "jpbqhfvc"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0
+    },
+    {
+      "model": "810m",
+      "variant": "hybrid_gdn_ev1",
+      "variant_label": "hybrid (GDN, expand_v=1)",
+      "cx": 4,
+      "lr": 0.0004,
+      "lr_tag": "0.0004",
+      "loss": 2.1604400080954753,
+      "state": "finished",
+      "tokens_b": 58.47646208,
+      "run_id": "kye1c19u",
+      "name": "810m-intwide-hybrid-gdn-ev1-cx4-lr4e-4",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/kye1c19u",
+      "segment_run_ids": [
+        "kye1c19u"
       ],
       "token_resets": 0,
       "deduplicated_samples": 0
@@ -1418,9 +1456,9 @@
       "model": "480m",
       "cx": 8,
       "mode": "fixed_lr_transfer",
-      "complete": false,
+      "complete": true,
       "optimal_summary_eligible": false,
-      "completed_intervention_runs": 0,
+      "completed_intervention_runs": 1,
       "expected_intervention_runs": 1,
       "wide_reference": {
         "model": "480m",
@@ -1462,10 +1500,28 @@
           "deduplicated_samples": 0
         }
       },
-      "intervention_result": null,
-      "delta_intervention_minus_wide": null,
+      "intervention_result": {
+        "model": "480m",
+        "variant": "hybrid_gdn_ev1",
+        "variant_label": "hybrid (GDN, expand_v=1)",
+        "cx": 8,
+        "lr": 0.0008,
+        "lr_tag": "0.0008",
+        "loss": 2.2362050320367395,
+        "state": "finished",
+        "tokens_b": 63.755255808,
+        "run_id": "d34a9o4t",
+        "name": "480m-intwide-hybrid-gdn-ev1-cx8-lr8e-4",
+        "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/d34a9o4t",
+        "segment_run_ids": [
+          "d34a9o4t"
+        ],
+        "token_resets": 0,
+        "deduplicated_samples": 0
+      },
+      "delta_intervention_minus_wide": -0.0150995539419303,
       "delta_intervention_minus_reference": {
-        "wide_integration": null
+        "wide_integration": -0.0150995539419303
       }
     },
     {
@@ -1616,9 +1672,9 @@
       "model": "810m",
       "cx": 4,
       "mode": "fixed_lr_transfer",
-      "complete": false,
+      "complete": true,
       "optimal_summary_eligible": false,
-      "completed_intervention_runs": 0,
+      "completed_intervention_runs": 1,
       "expected_intervention_runs": 1,
       "wide_reference": {
         "model": "810m",
@@ -1660,10 +1716,28 @@
           "deduplicated_samples": 0
         }
       },
-      "intervention_result": null,
-      "delta_intervention_minus_wide": null,
+      "intervention_result": {
+        "model": "810m",
+        "variant": "hybrid_gdn_ev1",
+        "variant_label": "hybrid (GDN, expand_v=1)",
+        "cx": 4,
+        "lr": 0.0004,
+        "lr_tag": "0.0004",
+        "loss": 2.1604400080954753,
+        "state": "finished",
+        "tokens_b": 58.47646208,
+        "run_id": "kye1c19u",
+        "name": "810m-intwide-hybrid-gdn-ev1-cx4-lr4e-4",
+        "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/kye1c19u",
+        "segment_run_ids": [
+          "kye1c19u"
+        ],
+        "token_resets": 0,
+        "deduplicated_samples": 0
+      },
+      "delta_intervention_minus_wide": -0.03236178357146313,
       "delta_intervention_minus_reference": {
-        "wide_integration": null
+        "wide_integration": -0.03236178357146313
       }
     },
     {

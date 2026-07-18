@@ -56,6 +56,13 @@ respectively. Their final checkpoints do not exist yet, so no new HF conversion
 or RULER job is due. The six completed 275M/480M records above remain complete;
 no long-context eval was relaunched in this refresh.
 
+Status refresh on 2026-07-18 02:35 UTC: 810M integration-wide is at 56.12B,
+1.2B integration-wide at 36.99B, and 810M baseline at 19.16B of 100B tokens.
+The 1.2B baseline continuation is queued to resume after its last preempted
+segment. None has a final checkpoint, so there is still no new HF conversion,
+validation backfill, or RULER eval to launch. The existing six 275M/480M RULER
+records remain complete and their result files were regenerated.
+
 The matching 810M and 1.2B baseline continuations were queued on 2026-07-17 in
 [experiment 01KXPYTPVH09F88PVR64G22HG3](https://beaker.org/ex/01KXPYTPVH09F88PVR64G22HG3).
 Their HF conversion, RULER, and final-checkpoint validation remain intentionally

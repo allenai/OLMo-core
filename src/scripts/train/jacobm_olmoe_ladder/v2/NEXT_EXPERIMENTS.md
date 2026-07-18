@@ -10,9 +10,11 @@ wide v1 integration model.
 | 1 | GDN hybrid | On wide, replace sliding-attention layers with GatedDeltaNet; keep geometry, global-attention placement, RoPE, initialization, and `expand_v=1` fixed. | In progress; finish and bracket the current LR sweeps. |
 | 2 | Aligned geometry, mixer ratio, and GDN value width | Use the corresponding dense ladder width, depth, four-GDN/one-global pattern, and `expand_v=2` while retaining MoE, the dense-first-FFN design, our GQA ratio, RoPE, and initialization. | 275M inherited-LR sweep in progress. Active-matched 480M/810M/1.2B configs are audited; their NoPE variants passed the full capacity/scaling smoke matrix, but no larger full run has launched. |
 | 3 | NoPE | On the aligned-geometry recipe, remove RoPE only from global-attention layers and train from initialization. | 275M four-LR Cx1/2/4/8 sweep is running unallocated. All larger smokes passed and the 192-GPU production layout is selected; wait only for transferred LRs before launch. |
-| 4 | Initialization | On the wide control, change only initialization standard deviation from 0.01 to 0.02. | Optional/planned. |
-| 5 | Combined 275M pilot | Combine only interventions whose isolated evidence is neutral-to-positive. | Blocked on isolated results. |
-| 6 | Promote combined recipe | Run the full pretraining ladder, then midtraining, then 8K-to-65K long-context adaptation. | Blocked on the combined pilot. |
+| 4 | Exact full-attention geometry and gating | Match the dense ladder's size-specific Q/KV-head layout and elementwise attention gate while holding the promoted hybrid geometry fixed. Split heads and gating into separate controls if their implementation permits a clean isolation. | Planned; not yet implemented or prioritized ahead of NoPE. |
+| 5 | Initialization | On the promoted control, change only initialization standard deviation from 0.01 to 0.02. | Optional/planned. |
+| 6 | LatentMoE | Add the coworker's LatentMoE implementation to the promoted hybrid recipe and test it as an isolated MoE intervention before composition. | Deferred until the coworker's implementation is available and verified in this branch. |
+| 7 | Combined 275M pilot | Combine only interventions whose isolated evidence is neutral-to-positive. | Blocked on isolated results. |
+| 8 | Promote combined recipe | Run the full pretraining ladder, then midtraining, then 8K-to-65K long-context adaptation. | Blocked on the combined pilot. |
 
 ## Dense-hybrid alignment target
 

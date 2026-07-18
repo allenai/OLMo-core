@@ -166,16 +166,16 @@ HYBRID_GDN_EV1 = Variant(
         RegisteredRun("275m", 8, 3.2e-3, "ntoo8vlo"),
         RegisteredRun("480m", 1, 1.2e-3, "wl8ebsd8"),
         RegisteredRun("480m", 2, 9e-4, "4vzmrld1"),
-        RegisteredRun("480m", 4, 8e-4, "ofpwvdl6"),
-        RegisteredRun("480m", 8, 8e-4, "3jbywbrh"),
+        RegisteredRun("480m", 4, 8e-4, "h06m5ls2"),
+        RegisteredRun("480m", 8, 8e-4, "d34a9o4t"),
         RegisteredRun("810m", 1, 6e-4, "h1rmcm2p"),
         RegisteredRun("810m", 2, 5.6e-4, "1d5gxgjv"),
-        RegisteredRun("810m", 4, 4e-4, "bvlzu2c9"),
-        RegisteredRun("810m", 8, 4e-4, "k1d1td9b"),
+        RegisteredRun("810m", 4, 4e-4, "kye1c19u"),
+        RegisteredRun("810m", 8, 4e-4, "s5gvyjiz"),
         RegisteredRun("1p2b", 1, 4e-4, "1d24xfx5"),
-        RegisteredRun("1p2b", 2, 6e-4, "vr2jfn4c"),
-        RegisteredRun("1p2b", 4, 3e-4, "h5ft97x1"),
-        RegisteredRun("1p2b", 8, 4e-4, "zyeib8rb"),
+        RegisteredRun("1p2b", 2, 6e-4, "4k1bh4k2"),
+        RegisteredRun("1p2b", 4, 3e-4, "vc3c6gj6"),
+        RegisteredRun("1p2b", 8, 4e-4, "7eemhu7g"),
     ),
 )
 
@@ -200,6 +200,30 @@ GEOMETRY_GDN_EV2 = Variant(
         RegisteredRun("275m", 8, 8e-4, "xdo7p86h", ("wo8raj1p",)),
         RegisteredRun("275m", 8, 1.6e-3, "0x3i869n"),
         RegisteredRun("275m", 8, 3.2e-3, "aholwcgr"),
+    ),
+)
+
+GEOMETRY_GDN_EV2_NOPE = Variant(
+    key="geometry_gdn_ev2_nope",
+    label="geometry-matched hybrid (GDN, expand_v=2, NoPE)",
+    color="#7c3aed",
+    runs=(
+        RegisteredRun("275m", 1, 4e-4, "52ph1l67"),
+        RegisteredRun("275m", 1, 8e-4, "epdjswap"),
+        RegisteredRun("275m", 1, 1.6e-3, "8mnuuecq"),
+        RegisteredRun("275m", 1, 3.2e-3, "7gfls4r6"),
+        RegisteredRun("275m", 2, 4e-4, "wpbz1ar9"),
+        RegisteredRun("275m", 2, 8e-4, "7u4epzt6"),
+        RegisteredRun("275m", 2, 1.6e-3, "gjmz37ct"),
+        RegisteredRun("275m", 2, 3.2e-3, "xahm1pbt"),
+        RegisteredRun("275m", 4, 4e-4, "pmfco9gy"),
+        RegisteredRun("275m", 4, 8e-4, "k5mjm4ev"),
+        RegisteredRun("275m", 4, 1.6e-3, "4x00n8lj"),
+        RegisteredRun("275m", 4, 3.2e-3, "z1lw0z2i"),
+        RegisteredRun("275m", 8, 4e-4, "t76b5xjy"),
+        RegisteredRun("275m", 8, 8e-4, "d29gx1x9"),
+        RegisteredRun("275m", 8, 1.6e-3, "n8kkr1y8"),
+        RegisteredRun("275m", 8, 3.2e-3, "qhjvjwcu"),
     ),
 )
 
@@ -245,6 +269,24 @@ WAVES = {
         baseline=WIDE_INTEGRATION,
         additional_baselines=(HYBRID_GDN_EV1,),
         intervention=GEOMETRY_GDN_EV2,
+        uplot_baselines=True,
+    ),
+    "geometry_gdn_ev2_nope": Wave(
+        key="geometry_gdn_ev2_nope",
+        title="Geometry-matched NoPE active hybrid GDN intervention",
+        intervention_label="geometry-matched hybrid GDN (expand_v=2, NoPE)",
+        architecture_note=(
+            "The 275M geometry-matched expand_v=2 hybrid with RoPE removed only "
+            "from full-attention layers. The wide integration model and the "
+            "otherwise-identical RoPE geometry model are explicit references."
+        ),
+        models=("275m",),
+        lr_sweep_models=("275m",),
+        active_parameters={"275m": 290_782_080},
+        baseline_active_parameters={"275m": 280_207_872},
+        baseline=WIDE_INTEGRATION,
+        additional_baselines=(GEOMETRY_GDN_EV2,),
+        intervention=GEOMETRY_GDN_EV2_NOPE,
         uplot_baselines=True,
     ),
 }

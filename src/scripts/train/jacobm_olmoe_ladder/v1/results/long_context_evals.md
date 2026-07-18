@@ -1,6 +1,6 @@
 # Long-Context Evaluation Results
 
-Generated: 2026-07-17 02:37 UTC
+Generated: 2026-07-18 02:30 UTC
 
 RULER uses 13 tasks with 100 examples per task at 65,536 tokens. Higher recall is better. Raw metrics and predictions are cached under `results/cache/ruler/`.
 

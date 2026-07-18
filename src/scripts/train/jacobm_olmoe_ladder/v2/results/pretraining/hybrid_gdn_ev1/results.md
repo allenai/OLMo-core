@@ -1,6 +1,6 @@
 # Active hybrid GDN intervention
 
-Generated: `2026-07-17T03:38:26.198872+00:00`
+Generated: `2026-07-18T02:26:08.033268+00:00`
 
 Selection metric: final `250M`-token mean training CE. Only finished runs are eligible.
 The optimal-LR summary includes only bracketed 275M sweeps with a valid quadratic fit.
@@ -18,10 +18,10 @@ Fitted LR minima in the 275M U-plot are visual aids and are never used to select
 | 480m | Cx1 | fixed-LR transfer | finished | wide_integration: 2.543281 @ 0.0012 | 2.510874 (0.0012) | wide_integration: -0.032407 |
 | 480m | Cx2 | fixed-LR transfer | finished | wide_integration: 2.423888 @ 0.0009 | 2.412790 (0.0009) | wide_integration: -0.011097 |
 | 480m | Cx4 | fixed-LR transfer | pending | wide_integration: 2.329976 @ 0.0008 | — | wide_integration: — |
-| 480m | Cx8 | fixed-LR transfer | pending | wide_integration: 2.251305 @ 0.0008 | — | wide_integration: — |
+| 480m | Cx8 | fixed-LR transfer | finished | wide_integration: 2.251305 @ 0.0008 | 2.236205 (0.0008) | wide_integration: -0.015100 |
 | 810m | Cx1 | fixed-LR transfer | finished | wide_integration: 2.373197 @ 0.0006 | 2.364345 (0.0006) | wide_integration: -0.008852 |
 | 810m | Cx2 | fixed-LR transfer | finished | wide_integration: 2.268948 @ 0.00056 | 2.247185 (0.00056) | wide_integration: -0.021762 |
-| 810m | Cx4 | fixed-LR transfer | pending | wide_integration: 2.192802 @ 0.0004 | — | wide_integration: — |
+| 810m | Cx4 | fixed-LR transfer | finished | wide_integration: 2.192802 @ 0.0004 | 2.160440 (0.0004) | wide_integration: -0.032362 |
 | 810m | Cx8 | fixed-LR transfer | pending | wide_integration: 2.104939 @ 0.0004 | — | wide_integration: — |
 | 1p2b | Cx1 | fixed-LR transfer | finished | wide_integration: 2.273062 @ 0.0004 | 2.253953 (0.0004) | wide_integration: -0.019109 |
 | 1p2b | Cx2 | fixed-LR transfer | pending | wide_integration: 2.178332 @ 0.0006 | — | wide_integration: — |
@@ -67,11 +67,13 @@ Fitted LR minima in the 275M U-plot are visual aids and are never used to select
 | 480m | hybrid (GDN, expand_v=1) | 2 | 0.0009 | finished | 15.939 | 2.412790 | — | [4vzmrld1](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/4vzmrld1) |
 | 480m | wide integration (SWA) | 2 | 0.0009 | finished | 15.344 | 2.423888 | — | [ywj13bkw](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/ywj13bkw) |
 | 480m | wide integration (SWA) | 4 | 0.0008 | finished | 30.687 | 2.329976 | — | [rblv9hpr](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/rblv9hpr) |
+| 480m | hybrid (GDN, expand_v=1) | 8 | 0.0008 | finished | 63.755 | 2.236205 | — | [d34a9o4t](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/d34a9o4t) |
 | 480m | wide integration (SWA) | 8 | 0.0008 | finished | 61.375 | 2.251305 | — | [vdcrgfy0](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/vdcrgfy0) |
 | 810m | hybrid (GDN, expand_v=1) | 1 | 0.0006 | finished | 14.619 | 2.364345 | — | [h1rmcm2p](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/h1rmcm2p) |
 | 810m | wide integration (SWA) | 1 | 0.0006 | finished | 13.903 | 2.373197 | — | [w912irkq](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/w912irkq) |
 | 810m | hybrid (GDN, expand_v=1) | 2 | 0.00056 | finished | 29.238 | 2.247185 | — | [1d5gxgjv](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/1d5gxgjv) |
 | 810m | wide integration (SWA) | 2 | 0.00056 | finished | 27.805 | 2.268948 | — | [jpbqhfvc](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/jpbqhfvc) |
+| 810m | hybrid (GDN, expand_v=1) | 4 | 0.0004 | finished | 58.476 | 2.160440 | — | [kye1c19u](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/kye1c19u) |
 | 810m | wide integration (SWA) | 4 | 0.0004 | finished | 55.610 | 2.192802 | — | [58ftjxmw](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/58ftjxmw) |
 | 810m | wide integration (SWA) | 8 | 0.0004 | finished | 111.220 | 2.104939 | — | [kyti8h1y](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/kyti8h1y) |
 | 1p2b | hybrid (GDN, expand_v=1) | 1 | 0.0004 | finished | 22.691 | 2.253953 | — | [1d24xfx5](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/1d24xfx5) |

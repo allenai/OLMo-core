@@ -4,6 +4,34 @@ Record post-migration experiment waves here. Per-run rows must include Beaker
 job IDs and W&B IDs once they exist. Detailed migration-era DDP jobs remain in
 [`../v1/DDP_RUNS.md`](../v1/DDP_RUNS.md).
 
+## Live status snapshot (2026-07-18 02:35 UTC)
+
+This is the current source of truth for active V2 work. The detailed sections
+below retain the full launch and retry history.
+
+| Stage | Family / cell | State | Progress / result | Current W&B |
+|---|---|---|---|---|
+| pretraining | first hybrid 480M Cx4 | running | 24.55B / 31.89B tokens (77.0%) | [h06m5ls2](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/h06m5ls2) |
+| pretraining | first hybrid 480M Cx8 | finished | final-250M CE `2.236205` | [d34a9o4t](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/d34a9o4t) |
+| pretraining | first hybrid 810M Cx4 | finished | final-250M CE `2.160440` | [kye1c19u](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/kye1c19u) |
+| pretraining | first hybrid 810M Cx8 | running | 78.77B / 116.95B tokens (67.4%) | [s5gvyjiz](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/s5gvyjiz) |
+| pretraining | first hybrid 1.2B Cx1 | finished | final-250M CE `2.253953`; validation finished | [1d24xfx5](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/1d24xfx5) |
+| pretraining | first hybrid 1.2B Cx2 | running | 37.94B / 45.38B tokens (83.6%) | [4k1bh4k2](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/4k1bh4k2) |
+| pretraining | first hybrid 1.2B Cx4 | running | 37.06B / 90.75B tokens (40.8%) | [vc3c6gj6](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/vc3c6gj6) |
+| pretraining | first hybrid 1.2B Cx8 | running | 44.83B / 181.51B tokens (24.7%) | [7eemhu7g](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/7eemhu7g) |
+| pretraining | aligned geometry + NoPE Cx1 sweep | finished | 4/4; observed best `8e-4`, CE `2.712805` | [results](results/pretraining/geometry_gdn_ev2_nope/results.md) |
+| pretraining | aligned geometry + NoPE Cx2 sweep | running | four runs at 58.0-61.6% | [work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXSABHBX2Z4G1JFV8W1PN6AN) |
+| pretraining | aligned geometry + NoPE Cx4 sweep | running | four runs at 29.0-31.7% | [work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXSABHBX2Z4G1JFV8W1PN6AN) |
+| pretraining | aligned geometry + NoPE Cx8 sweep | running | four runs at 28.0-29.0% | [work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXSABHBX2Z4G1JFV8W1PN6AN) |
+| midtraining | first hybrid 275M Cx8 | running | 72.87B / 100B tokens (72.9%) | [1keo2hz6](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/1keo2hz6) |
+| midtraining | first hybrid 480M Cx8 | running | 5.03B / 100B tokens (5.0%) | [mnp9rv5l](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/mnp9rv5l) |
+| validation | first hybrid + geometry backfills | partial | 23 finished, 3 crashed, 7 not started | [results](results/validation/hybrid_full.md) |
+
+All active pretraining and midtraining cells in this snapshot are either
+running or finished; no active training cell is failed. The three crashed
+validation rows and seven not-started rows are an eval-only backlog, not
+training failures.
+
 ## 275M active hybrid GDN (`expand_v=1`)
 
 - Manifest: [`launchers/pretraining/manifests/275m_hybrid_gdn_ev1.yaml`](launchers/pretraining/manifests/275m_hybrid_gdn_ev1.yaml)
@@ -386,6 +414,14 @@ Cx1/2/4/8, requesting 80 B300s at full concurrency.
 The production sweep was submitted on 2026-07-18 as urgent unallocated work:
 [01KXSABHBX2Z4G1JFV8W1PN6AN](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXSABHBX2Z4G1JFV8W1PN6AN).
 
+Status at 2026-07-18 02:35 UTC: all 16 tasks started successfully and none
+failed. All four Cx1 runs are finished. Their strict final-250M losses are
+`2.727856`, `2.712805`, `2.713057`, and `2.757006` in ascending LR order;
+the observed interior best is `8e-4`. The four Cx2 runs are 58.0-61.6%
+complete, Cx4 is 29.0-31.7%, and Cx8 is 28.0-29.0%. The Cx1 U-plot and
+observed-best summary are now under
+[`plots/pretraining/geometry_gdn_ev2_nope/`](plots/pretraining/geometry_gdn_ev2_nope/).
+
 | Cx | LR | GPUs | MB | Accum | Job | W&B | Status |
 |---:|---:|---:|---:|---:|---|---|---|
 | 1 | `4e-4` | 4 | 8 | 1 | [01KXSABHFQKSGQZJ523MSA68V1](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXSABHBX2Z4G1JFV8W1PN6AN?taskId=01KXSABHC318G5N5Y7A8YNG5W2&jobId=01KXSABHFQKSGQZJ523MSA68V1) | pending initialization | scheduled |
@@ -460,9 +496,10 @@ allocated-versus-unallocated scheduling decision.
   geometry Cx1/Cx2 checkpoints; one eval-only task per final checkpoint, two
   Holmes B300s per task, full validation suite, no optimizer construction or
   optimizer-state load
-- Status on 2026-07-17: 14 jobs finished with 498 exported `eval/*` metrics
-  each, two evaluations are running, and the remaining eight original jobs are
-  queued. The complete metric export and compact coverage table are generated
+- Status on 2026-07-18: 23 jobs are finished with 498 exported `eval/*`
+  metrics each, three geometry jobs are crashed, and seven geometry jobs have
+  not started. The successful 1.2B Cx1 retry is correctly selected over its
+  older crashed attempt. The complete metric export and compact coverage table are generated
   by [`collect_validation_results.py`](collect_validation_results.py) under
   [`results/validation/`](results/validation/).
 - Newly completed larger-scale checkpoint: the 1.2B Cx1 final validation is

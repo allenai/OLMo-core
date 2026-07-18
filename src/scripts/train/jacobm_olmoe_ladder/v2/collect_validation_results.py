@@ -69,12 +69,23 @@ def collect(targets: list[dict[str, Any]], project: str) -> list[dict[str, Any]]
     api = wandb.Api(timeout=90)
     eval_names = [target["eval_run"] for target in targets]
     runs = list(api.runs(project, filters={"display_name": {"$in": eval_names}}))
+
+    def run_rank(run: Any) -> tuple[int, int, str]:
+        eval_metric_count = sum(key.startswith("eval/") for key in run.summary.keys())
+        state_rank = {
+            "finished": 3,
+            "running": 2,
+            "pending": 1,
+            "crashed": 0,
+            "failed": 0,
+            "killed": 0,
+        }.get(run.state, 0)
+        return eval_metric_count, state_rank, str(getattr(run, "created_at", ""))
+
     by_name: dict[str, Any] = {}
     for run in runs:
         previous = by_name.get(run.display_name)
-        if previous is None or str(getattr(run, "updated_at", "")) > str(
-            getattr(previous, "updated_at", "")
-        ):
+        if previous is None or run_rank(run) > run_rank(previous):
             by_name[run.display_name] = run
 
     records: list[dict[str, Any]] = []
