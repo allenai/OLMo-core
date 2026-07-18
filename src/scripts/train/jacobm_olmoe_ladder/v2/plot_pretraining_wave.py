@@ -224,6 +224,42 @@ GEOMETRY_GDN_EV2_NOPE = Variant(
         RegisteredRun("275m", 8, 8e-4, "d29gx1x9"),
         RegisteredRun("275m", 8, 1.6e-3, "n8kkr1y8"),
         RegisteredRun("275m", 8, 3.2e-3, "qhjvjwcu"),
+        RegisteredRun("480m", 1, 1.2e-3, "i2bij623"),
+        RegisteredRun("480m", 2, 9e-4, "2d1t07dn"),
+        RegisteredRun("480m", 4, 8e-4, "ke2n42cm"),
+        RegisteredRun("480m", 8, 8e-4, "pej34iwq"),
+        RegisteredRun("810m", 1, 6e-4, "8z7txpf8"),
+        RegisteredRun("810m", 2, 5.6e-4, "upxsysuv"),
+        RegisteredRun("810m", 4, 4e-4, "8ewnju8z"),
+        RegisteredRun("810m", 8, 4e-4, "bf0yrani"),
+        RegisteredRun("1p2b", 1, 4e-4, "dngmbyg2"),
+        RegisteredRun("1p2b", 2, 6e-4, "hd12kewt"),
+        RegisteredRun("1p2b", 4, 3e-4, "xxrj2oou"),
+        RegisteredRun("1p2b", 8, 4e-4, "i4z9h3jn"),
+    ),
+)
+
+GEOMETRY_GDN_EV2_NOPE_GATED = Variant(
+    key="geometry_gdn_ev2_nope_gated",
+    label="geometry-matched hybrid (GDN, expand_v=2, NoPE, gated attention)",
+    color="#059669",
+    runs=(
+        RegisteredRun("275m", 1, 4e-4, "lg619wiz"),
+        RegisteredRun("275m", 1, 8e-4, "q81uxrxu"),
+        RegisteredRun("275m", 1, 1.6e-3, "sxuuwzzm"),
+        RegisteredRun("275m", 1, 3.2e-3, "1pr3blts"),
+        RegisteredRun("275m", 2, 4e-4, "sehjqtyk"),
+        RegisteredRun("275m", 2, 8e-4, "bttby9r8"),
+        RegisteredRun("275m", 2, 1.6e-3, "ef4umox3"),
+        RegisteredRun("275m", 2, 3.2e-3, "ofodwbzz"),
+        RegisteredRun("275m", 4, 4e-4, "fh9tl31v"),
+        RegisteredRun("275m", 4, 8e-4, "gwzx0ekc"),
+        RegisteredRun("275m", 4, 1.6e-3, "jr74v01c"),
+        RegisteredRun("275m", 4, 3.2e-3, "2s5s1yw0"),
+        RegisteredRun("275m", 8, 4e-4, "qehufcr5"),
+        RegisteredRun("275m", 8, 8e-4, "ouxblu4g"),
+        RegisteredRun("275m", 8, 1.6e-3, "3xjjt5sa"),
+        RegisteredRun("275m", 8, 3.2e-3, "mbvin02a"),
     ),
 )
 
@@ -276,18 +312,53 @@ WAVES = {
         title="Geometry-matched NoPE active hybrid GDN intervention",
         intervention_label="geometry-matched hybrid GDN (expand_v=2, NoPE)",
         architecture_note=(
-            "The 275M geometry-matched expand_v=2 hybrid with RoPE removed only "
-            "from full-attention layers. The wide integration model, first "
-            "expand_v=1 hybrid, and otherwise-identical RoPE geometry model are "
-            "explicit references."
+            "The geometry-matched expand_v=2 hybrid at each size with RoPE "
+            "removed only from full-attention layers. The wide integration "
+            "model, first expand_v=1 hybrid, and available otherwise-identical "
+            "RoPE geometry model are explicit references."
         ),
-        models=("275m",),
+        models=("275m", "480m", "810m", "1p2b"),
         lr_sweep_models=("275m",),
-        active_parameters={"275m": 290_782_080},
-        baseline_active_parameters={"275m": 280_207_872},
+        active_parameters={
+            "275m": 290_782_080,
+            "480m": 501_137_856,
+            "810m": 858_237_056,
+            "1p2b": 1_289_441_280,
+        },
+        baseline_active_parameters={
+            "275m": 280_207_872,
+            "480m": 486_348_800,
+            "810m": 823_569_920,
+            "1p2b": 1_225_011_712,
+        },
         baseline=WIDE_INTEGRATION,
         additional_baselines=(HYBRID_GDN_EV1, GEOMETRY_GDN_EV2),
         intervention=GEOMETRY_GDN_EV2_NOPE,
+        uplot_baselines=True,
+    ),
+    "geometry_gdn_ev2_nope_gated": Wave(
+        key="geometry_gdn_ev2_nope_gated",
+        title="Geometry-matched NoPE gated-attention active hybrid GDN intervention",
+        intervention_label=(
+            "geometry-matched hybrid GDN (expand_v=2, NoPE, gated attention)"
+        ),
+        architecture_note=(
+            "The 275M geometry-matched expand_v=2 NoPE hybrid with the dense "
+            "ladder's elementwise full-precision attention gate added only to "
+            "the two full-attention layers. Wide integration, first hybrid, "
+            "RoPE geometry, and ungated NoPE are explicit references."
+        ),
+        models=("275m",),
+        lr_sweep_models=("275m",),
+        active_parameters={"275m": 292_092_800},
+        baseline_active_parameters={"275m": 280_207_872},
+        baseline=WIDE_INTEGRATION,
+        additional_baselines=(
+            HYBRID_GDN_EV1,
+            GEOMETRY_GDN_EV2,
+            GEOMETRY_GDN_EV2_NOPE,
+        ),
+        intervention=GEOMETRY_GDN_EV2_NOPE_GATED,
         uplot_baselines=True,
     ),
 }

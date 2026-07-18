@@ -32,18 +32,23 @@ callback contracts below already apply to every stage.
 ## Pretraining plots
 
 `plot_pretraining_wave.py` is the v2 training-loss plotting entry point. Each
-wave explicitly registers its W&B run IDs and compares one intervention only
-against the matching-size wide v1 integration baseline. The first registered
-wave is the GDN hybrid (`expand_v=1`): a 275M LR sweep at Cx1/2/4/8 plus the
-480M, 810M, and 1.2B Cx1/Cx2 fixed-LR scale runs.
+wave explicitly registers its W&B run IDs and compares one intervention
+against the matching-size wide v1 integration baseline plus any explicitly
+named architecture controls. Registered waves cover the first GDN hybrid
+(`expand_v=1`), geometry-matched `expand_v=2`, geometry plus NoPE, and geometry
+plus NoPE with elementwise attention gating.
 
 ```bash
 uv run --with wandb --with matplotlib python \
   src/scripts/train/jacobm_olmoe_ladder/v2/plot_pretraining_wave.py \
   --wave hybrid_gdn_ev1 --refresh-stale-cache
+
+uv run --with wandb --with matplotlib python \
+  src/scripts/train/jacobm_olmoe_ladder/v2/plot_pretraining_wave.py \
+  --wave geometry_gdn_ev2_nope_gated --refresh-stale-cache
 ```
 
-The script writes all sizes into one `hybrid_gdn_ev1/` artifact directory and
+The script writes each selected wave into one matching artifact directory and
 uses the final-250M-token mean training CE. The 275M outputs follow the strict
 v1 LR-selection contract: an intervention-only U-plot and an observed-best
 summary against wide. A Cx enters that summary only when its finished points

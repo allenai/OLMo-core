@@ -244,3 +244,9 @@ record, including every task ID, is
 | 1.2B | 2 | `6e-4` | 16 | [01KXT0CF9V3ZP1NDA72DAJKG4V](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXT0CF9V3ZP1NDA72DAJKG4V) |
 | 1.2B | 4 | `3e-4` | 32 | [01KXT0CKPC9NV36GKDXZH5SM17](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXT0CKPC9NV36GKDXZH5SM17) |
 | 1.2B | 8 | `4e-4` | 32 | [01KXT0CQBVT4T414SAZQYT1RAS](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXT0CQBVT4T414SAZQYT1RAS) |
+
+Status at 2026-07-18 14:21 UTC: 480M Cx1 and Cx2 finished successfully at
+strict final-250M CE `2.526546` and `2.419441`; the remaining ten jobs are
+running. Their W&B IDs are registered in
+[`plot_pretraining_wave.py`](plot_pretraining_wave.py), so later finished-only
+refreshes require no registry change.

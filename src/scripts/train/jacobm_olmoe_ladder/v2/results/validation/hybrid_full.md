@@ -1,26 +1,26 @@
 # V2 Post-Training Validation Results
 
-Generated: 2026-07-18 05:57 UTC
+Generated: 2026-07-18 14:12 UTC
 
 Each finished W&B run used the full post-training validation task set. The complete metric dictionary is retained in the adjacent JSON file.
 
-Coverage: crashed=3, finished=23, not_started=7
+Coverage: finished=33
 
 | Model | Variant | Cx | LR | Source checkpoint | State | Eval metrics | W&B |
 |---|---|---:|---:|---|---|---:|---|
 | 1p2b | `integration_wide_gdn_ev1` | Cx1 | 4e-4 | `step86558` | finished | 498 | [nrkr62f1](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/nrkr62f1) |
-| 275m | `geometry_275m_gdn_ev2` | Cx1 | 4e-4 | `step17285` | crashed | 0 | [mstfqgfk](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/mstfqgfk) |
-| 275m | `geometry_275m_gdn_ev2` | Cx1 | 8e-4 | `step17285` | crashed | 0 | [kykf2ga7](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/kykf2ga7) |
-| 275m | `geometry_275m_gdn_ev2` | Cx1 | 0.0016 | `step17285` | not_started | 0 | — |
-| 275m | `geometry_275m_gdn_ev2` | Cx1 | 0.0032 | `step17285` | not_started | 0 | — |
-| 275m | `geometry_275m_gdn_ev2` | Cx2 | 4e-4 | `step23047` | crashed | 0 | [6qkse64t](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/6qkse64t) |
-| 275m | `geometry_275m_gdn_ev2` | Cx2 | 8e-4 | `step23047` | not_started | 0 | — |
-| 275m | `geometry_275m_gdn_ev2` | Cx2 | 0.0016 | `step23047` | not_started | 0 | — |
-| 275m | `geometry_275m_gdn_ev2` | Cx2 | 0.0032 | `step23047` | not_started | 0 | — |
+| 275m | `geometry_275m_gdn_ev2` | Cx1 | 4e-4 | `step17285` | finished | 498 | [8puj500e](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/8puj500e) |
+| 275m | `geometry_275m_gdn_ev2` | Cx1 | 8e-4 | `step17285` | finished | 498 | [ay29mrmv](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/ay29mrmv) |
+| 275m | `geometry_275m_gdn_ev2` | Cx1 | 0.0016 | `step17285` | finished | 498 | [9dkxpsfi](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/9dkxpsfi) |
+| 275m | `geometry_275m_gdn_ev2` | Cx1 | 0.0032 | `step17285` | finished | 498 | [jllpg3qx](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/jllpg3qx) |
+| 275m | `geometry_275m_gdn_ev2` | Cx2 | 4e-4 | `step23047` | finished | 498 | [3nrg51dr](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/3nrg51dr) |
+| 275m | `geometry_275m_gdn_ev2` | Cx2 | 8e-4 | `step23047` | finished | 498 | [lh126udp](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/lh126udp) |
+| 275m | `geometry_275m_gdn_ev2` | Cx2 | 0.0016 | `step23047` | finished | 498 | [4d1unh96](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/4d1unh96) |
+| 275m | `geometry_275m_gdn_ev2` | Cx2 | 0.0032 | `step23047` | finished | 498 | [zbs69br1](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/zbs69br1) |
 | 275m | `geometry_275m_gdn_ev2` | Cx4 | 4e-4 | `step34570` | finished | 498 | [bgl6khc4](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/bgl6khc4) |
 | 275m | `geometry_275m_gdn_ev2` | Cx4 | 8e-4 | `step34570` | finished | 498 | [eegfli2u](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/eegfli2u) |
-| 275m | `geometry_275m_gdn_ev2` | Cx4 | 0.0016 | `step34570` | not_started | 0 | — |
-| 275m | `geometry_275m_gdn_ev2` | Cx4 | 0.0032 | `step34570` | not_started | 0 | — |
+| 275m | `geometry_275m_gdn_ev2` | Cx4 | 0.0016 | `step34570` | finished | 498 | [nflctkj5](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/nflctkj5) |
+| 275m | `geometry_275m_gdn_ev2` | Cx4 | 0.0032 | `step34570` | finished | 498 | [urtkt84x](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/urtkt84x) |
 | 275m | `geometry_275m_gdn_ev2` | Cx8 | 4e-4 | `step46094` | finished | 498 | [2wtqat9u](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/2wtqat9u) |
 | 275m | `geometry_275m_gdn_ev2` | Cx8 | 8e-4 | `step46094` | finished | 498 | [3w6pv014](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/3w6pv014) |
 | 275m | `geometry_275m_gdn_ev2` | Cx8 | 0.0016 | `step46094` | finished | 498 | [ro3a2n1y](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/ro3a2n1y) |

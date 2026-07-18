@@ -72,6 +72,16 @@ The matching 810M and 1.2B baseline continuations were queued on 2026-07-17 in
 Their HF conversion, RULER, and final-checkpoint validation remain intentionally
 pending until training finishes.
 
+Status refresh on 2026-07-18 14:21 UTC: no additional long-context checkpoint
+has finished, so the six-record RULER result set remains complete and
+unchanged. The 810M integration-wide and baseline runs are active at 75.49B
+and 39.67B tokens. The latest 1.2B integration-wide and baseline workers
+exited 143 at 42.02B and 1.04B tokens; replacement tasks are pending in their
+existing Beaker experiments. Integration-wide has a step-10,000 ephemeral
+checkpoint to resume. Baseline still has no step-1,000 LC save and will reload
+the source midtraining checkpoint. No HF conversion, validation backfill, or
+RULER eval is due yet.
+
 ## Training/evaluation separation decision
 
 As of 2026-07-16, all new and resumed pretraining, midtraining, and

@@ -105,3 +105,28 @@ no checkpoint:
 
 The exact 16-point LR sweep was then submitted as urgent unallocated work:
 [01KXT07N6AGD1S0REJA3TH897G](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXT07N6AGD1S0REJA3TH897G).
+
+## Sweep results
+
+All 16 tasks exited 0. Every Cx is bracketed and supports the formal quadratic
+curve check; the observed-best point, rather than the fitted prediction, is
+used in the summary:
+
+| Cx | Observed-best LR | Final-250M CE | Delta vs ungated NoPE | Delta vs RoPE geometry |
+|---:|---:|---:|---:|---:|
+| 1 | `8e-4` | `2.711104` | `-0.001701` | `+0.003223` |
+| 2 | `1.6e-3` | `2.580768` | `-0.004411` | `+0.001805` |
+| 4 | `8e-4` | `2.476065` | `-0.001719` | `+0.001434` |
+| 8 | `8e-4` | `2.390397` | `-0.001556` | `+0.000540` |
+
+Elementwise gating is therefore a small, consistent improvement over the
+ungated NoPE control at every data multiple. It nearly closes the NoPE-to-RoPE
+gap, especially at Cx8, but does not beat the otherwise-identical RoPE
+geometry model.
+
+- U-plot:
+  [`plots/pretraining/geometry_gdn_ev2_nope_gated/275m_uplot.png`](plots/pretraining/geometry_gdn_ev2_nope_gated/275m_uplot.png)
+- Observed-best summary:
+  [`plots/pretraining/geometry_gdn_ev2_nope_gated/summary_observed_best.png`](plots/pretraining/geometry_gdn_ev2_nope_gated/summary_observed_best.png)
+- Exact results:
+  [`results/pretraining/geometry_gdn_ev2_nope_gated/results.md`](results/pretraining/geometry_gdn_ev2_nope_gated/results.md)
