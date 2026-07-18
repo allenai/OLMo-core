@@ -219,7 +219,7 @@ def build_sft_dataset(
     dataset = NumpyPackedFSLDatasetConfig(
         # general config
         tokenizer=packing_tokenizer,
-        work_dir=get_work_dir(root_dir).replace("dataset-cache", "qwen3-dataset-cache-v3"),
+        work_dir=get_work_dir(root_dir).replace("dataset-cache", "qwen3-dataset-cache-v4"),
         paths=token_id_paths,
         expand_glob=expand_glob,
         label_mask_paths=label_mask_paths,
@@ -273,7 +273,7 @@ class SFTConfig(Config):
         root_dir = get_root_dir(cluster)
         user_name = get_beaker_username()
 
-        tokenizer_config = TokenizerConfig(vocab_size=151680, eos_token_id=151645, pad_token_id=151645, bos_token_id=151644)
+        tokenizer_config = TokenizerConfig(vocab_size=151680, eos_token_id=151643, pad_token_id=151643, bos_token_id=151644)
         model_vocab_size = 151936
         dataset_config = build_sft_dataset(
             root_dir=root_dir,
