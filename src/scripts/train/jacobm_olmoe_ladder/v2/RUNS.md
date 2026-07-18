@@ -443,6 +443,14 @@ segfaulted after optimizer initialization; its identical r3 retry above
 passed, classifying that attempt as transient infrastructure rather than an
 OOM or model failure.
 
+The future full-run layout is selected but not launched: all four 480M Cx
+points use eight GPUs, all four 810M points use 16, 1.2B Cx1/Cx2 use 16, and
+1.2B Cx4/Cx8 use 32. That is 12 jobs and 192 peak GPUs. Exact rank
+microbatches, ETAs, and estimated GPU-hours are in
+`GEOMETRY_MATCHED_SCALE.md`. The production manifest remains blocked only on
+the four transferred LRs from the running 275M NoPE sweep and the final
+allocated-versus-unallocated scheduling decision.
+
 ## Post-training validation backfills
 
 - Manifest: [`launchers/validation/manifests/275m_hybrid_geometry_full.yaml`](launchers/validation/manifests/275m_hybrid_geometry_full.yaml)

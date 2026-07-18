@@ -9,7 +9,7 @@ wide v1 integration model.
 |---:|---|---|---|
 | 1 | GDN hybrid | On wide, replace sliding-attention layers with GatedDeltaNet; keep geometry, global-attention placement, RoPE, initialization, and `expand_v=1` fixed. | In progress; finish and bracket the current LR sweeps. |
 | 2 | Aligned geometry, mixer ratio, and GDN value width | Use the corresponding dense ladder width, depth, four-GDN/one-global pattern, and `expand_v=2` while retaining MoE, the dense-first-FFN design, our GQA ratio, RoPE, and initialization. | 275M inherited-LR sweep in progress. Active-matched 480M/810M/1.2B configs are audited; their NoPE variants passed the full capacity/scaling smoke matrix, but no larger full run has launched. |
-| 3 | NoPE | On the aligned-geometry recipe, remove RoPE only from global-attention layers and train from initialization. | 275M four-LR Cx1/2/4/8 sweep is running unallocated. All larger 480M/810M/1.2B one-/multi-node smokes passed; select GPUs from the recorded ETA matrix after the 275M sweep establishes transferred LRs. |
+| 3 | NoPE | On the aligned-geometry recipe, remove RoPE only from global-attention layers and train from initialization. | 275M four-LR Cx1/2/4/8 sweep is running unallocated. All larger smokes passed and the 192-GPU production layout is selected; wait only for transferred LRs before launch. |
 | 4 | Initialization | On the wide control, change only initialization standard deviation from 0.01 to 0.02. | Optional/planned. |
 | 5 | Combined 275M pilot | Combine only interventions whose isolated evidence is neutral-to-positive. | Blocked on isolated results. |
 | 6 | Promote combined recipe | Run the full pretraining ladder, then midtraining, then 8K-to-65K long-context adaptation. | Blocked on the combined pilot. |
@@ -50,10 +50,11 @@ root at `JACOBM_MIGRATION_PLAN.md`; this file is the live v2 queue.
 
 The larger NoPE geometry family has completed checkpoint-free unallocated
 smokes on Holmes B300s. Exact parameter counts, measured TFLOPs/GPU, memory,
-and the all-Cx ETA matrix are recorded in `GEOMETRY_MATCHED_SCALE.md`. Before
-launching full runs, wait for the 275M NoPE LR decision, select one GPU count
-per size/Cx, calculate total concurrency, and explicitly decide whether the
-production wave should remain unallocated or return to the allocated queue.
+the all-Cx ETA matrix, and the selected 192-GPU layout are recorded in
+`GEOMETRY_MATCHED_SCALE.md`. Before launching full runs, wait for the 275M NoPE
+LR decision, insert the four transferred LRs, and explicitly decide whether
+the production wave should remain unallocated or return to the allocated
+queue.
 
 ## Training-schedule transition
 

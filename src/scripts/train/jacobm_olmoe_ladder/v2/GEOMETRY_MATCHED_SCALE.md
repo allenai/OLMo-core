@@ -151,13 +151,55 @@ gain too little wall-clock speed from doubling GPUs; the larger Cx values
 scale materially. The 1.2B Cx8 choices trade approximately 4.6 days on 8 GPUs,
 2.5 days on 16, or 1.6 days on 32, with diminishing GPU efficiency.
 
+### Selected production GPU layout
+
+On 2026-07-18, the following layout was selected for the larger NoPE wave:
+
+| Size | Cx | GPUs | EP | Rank MB | Accum | Rough ETA | Estimated GPU-hours |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| 480M | 1 | 8 | 1 | 4 | 1 | 3.6h | 29 |
+| 480M | 2 | 8 | 1 | 6 | 1 | 5.6h | 45 |
+| 480M | 4 | 8 | 1 | 8 | 1 | 9.5h | 76 |
+| 480M | 8 | 8 | 1 | 12 | 1 | 15.7h | 125 |
+| 810M | 1 | 16 | 1 | 2 | 1 | 9.3h | 149 |
+| 810M | 2 | 16 | 1 | 3 | 1 | 12.7h | 204 |
+| 810M | 4 | 16 | 1 | 4 | 1 | 19.6h | 313 |
+| 810M | 8 | 16 | 1 | 6 | 1 | 27.3h | 437 |
+| 1.2B | 1 | 16 | 8 | 2 | 1 | 9.6h | 154 |
+| 1.2B | 2 | 16 | 8 | 3 | 1 | 16.9h | 271 |
+| 1.2B | 4 | 32 | 8 | 2 | 1 | 21.8h | 699 |
+| 1.2B | 8 | 32 | 8 | 3 | 1 | 38.4h | 1,230 |
+
+This is 12 jobs, approximately 3,731 GPU-hours, and a peak request of **192
+GPUs**:
+
+```text
+480M:          4 jobs *  8 GPUs = 32
+810M:          4 jobs * 16 GPUs = 64
+1.2B Cx1/Cx2: 2 jobs * 16 GPUs = 32
+1.2B Cx4/Cx8: 2 jobs * 32 GPUs = 64
+                                      ---
+                                      192
+```
+
+At an average realized capacity of 64 GPUs, the aggregate work is about 58
+hours; at 80 GPUs it is about 47 hours. Individual job dependencies are absent,
+so the scheduler may pack the wave in any order. These estimates exclude queue
+latency and add only negligible full-run-relative compile overhead.
+
+In the preceding ETA table, an asterisk means that exact
+`(size, Cx, GPU count, rank MB, accumulation)` combination was directly
+measured by a smoke. It does not mean optimal or recommended. Unstarred cells
+are inferred from directly measured microbatch and multi-node scaling.
+
 ## Full-run handoff
 
 Before launching:
 
 1. Wait for the 275M NoPE sweep to establish the transferred LR rule.
-2. Select one GPU count per size/Cx from the ETA table and calculate the total
-   concurrent GPU request.
+2. Insert the transferred LR for each Cx into the production manifest; the
+   GPU, EP, microbatch, and accumulation choices are fixed by the selected
+   layout above.
 3. Create the production manifest through the shared `launch_sweep.py` path;
    preserve these exact global batches, EP1 for 480M/810M, and EP8 `sync_1d`
    for 1.2B.
