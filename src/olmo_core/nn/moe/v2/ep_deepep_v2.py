@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import math
 import os
 import sys
 from dataclasses import dataclass
@@ -12,6 +11,7 @@ import torch.distributed as dist
 
 from olmo_core._nvtx import nvtx
 from olmo_core.distributed.utils import get_rank
+from olmo_core.kernels.mxfp8_utils import quantize_rows_to_mxfp8
 
 from ...moe.utils import wait_stream_no_compile
 from .ep_config import ExpertParallelPath
@@ -22,7 +22,12 @@ from .ep_no_sync_rowwise_helpers import (
     build_rowwise_route_maps,
     should_accumulate_ep_no_sync_rowwise_metrics,
 )
-from .routed_experts import requires_host_side_split_sizes, use_torch_grouped_mm
+from .fp8 import shared_experts_forward_rowwise_fp8
+from .routed_experts import (
+    ExpertActivation,
+    requires_host_side_split_sizes,
+    use_torch_grouped_mm,
+)
 
 if TYPE_CHECKING:
     from olmo_core.nn.ddp.block import OLMoDDPTransformerBlock
@@ -50,6 +55,7 @@ class _DeepEpV2Runtime:
     num_sms: int
     num_qps: int
     async_with_compute_stream: bool
+    use_fp8_dispatch: bool
 
 
 @dataclass(frozen=True)
@@ -68,6 +74,7 @@ class _DeepEpV2RuntimeKey:
     prefer_overlap_with_compute: bool
     allow_hybrid_mode: bool
     allow_multiple_reduction: bool
+    use_fp8_dispatch: bool
 
 
 @lru_cache(maxsize=None)
@@ -108,6 +115,47 @@ def is_deepep_available(deepep_path: Optional[str] = None) -> bool:
 def _deep_ep_wait(event: Any, *, async_with_compute_stream: bool) -> None:
     if async_with_compute_stream:
         event.current_stream_wait()
+
+
+def _deepep_v2_uses_fp8(block: OLMoDDPTransformerBlock) -> bool:
+    cfg = getattr(block, "rowwise_fp8", None)
+    return cfg is not None and cfg.enabled
+
+
+def _pack_deepep_mxfp8_scales(scales: torch.Tensor) -> torch.Tensor:
+    """Pack four UE8M0 scales into each DeepEP ``sf_pack_t`` entry."""
+    if scales.dtype != torch.float8_e8m0fnu:
+        raise RuntimeError(
+            "DeepEP MXFP8 dispatch expects float8_e8m0fnu scales, " f"got {scales.dtype}"
+        )
+    if scales.ndim != 2 or scales.shape[1] % 4 != 0:
+        raise RuntimeError(
+            "DeepEP MXFP8 dispatch requires a rank-2 scale tensor with four-scale "
+            f"packing, got shape={tuple(scales.shape)}"
+        )
+    return scales.contiguous().view(torch.int32)
+
+
+def _unpack_deepep_mxfp8_scales(packed_scales: torch.Tensor) -> torch.Tensor:
+    """Expose opaque DeepEP ``sf_pack_t`` payloads as OLMo UE8M0 scales."""
+    if packed_scales.dtype != torch.int32 or packed_scales.ndim != 2:
+        raise RuntimeError(
+            "DeepEP MXFP8 received scales must be a rank-2 int32 tensor, "
+            f"got dtype={packed_scales.dtype} shape={tuple(packed_scales.shape)}"
+        )
+    return packed_scales.contiguous().view(torch.float8_e8m0fnu)
+
+
+def _logical_rank2_tensor(
+    shape: tuple[int, int],
+    *,
+    dtype: torch.dtype,
+    device: torch.device,
+) -> torch.Tensor:
+    # The scaled grouped-MM reads q/scales in forward. This storage-free BF16
+    # view supplies the logical shape and the leaf whose gradient DeepEP sends
+    # back to the source ranks.
+    return torch.empty((), dtype=dtype, device=device).expand(shape)
 
 
 def _expanded_expert_counts(handle: Any, expert_alignment: int) -> torch.Tensor:
@@ -164,22 +212,28 @@ def _expanded_weight_grad_to_topk_grad(
     src_token = src_global - src_rank * runtime.num_max_tokens_per_rank
     expanded_slots_by_lane = metadata[:, 2 : 2 + runtime.num_topk].to(dtype=torch.long)
     flat_grad_by_src = grad_by_src.reshape(-1)
-    for lane in range(runtime.num_topk):
-        expanded_slots = expanded_slots_by_lane[:, lane]
-        valid = (
+    grad_flat_numel = grad_flat.numel()
+    if grad_flat_numel > 0:
+        safe_src_rank = src_rank.clamp(0, block.ep_world_size - 1)
+        safe_src_token = src_token.clamp(0, runtime.num_max_tokens_per_rank - 1)
+        base_flat_dst = (
+            safe_src_rank * runtime.num_max_tokens_per_rank + safe_src_token
+        ) * runtime.num_topk
+        lane_ids = torch.arange(runtime.num_topk, device=metadata.device, dtype=torch.long)
+        flat_dst = base_flat_dst.unsqueeze(1) + lane_ids.unsqueeze(0)
+        valid_rows = (
             (metadata_row < actual_recv_tokens)
             & (src_rank >= 0)
             & (src_rank < block.ep_world_size)
             & (src_token >= 0)
             & (src_token < runtime.num_max_tokens_per_rank)
-            & (expanded_slots >= 0)
-            & (expanded_slots < grad_flat.numel())
         )
-        valid_slots = expanded_slots[valid]
-        flat_dst = (
-            src_rank[valid] * runtime.num_max_tokens_per_rank + src_token[valid]
-        ) * runtime.num_topk + lane
-        flat_grad_by_src.scatter_add_(0, flat_dst, grad_flat.index_select(0, valid_slots))
+        valid_slots = (expanded_slots_by_lane >= 0) & (expanded_slots_by_lane < grad_flat_numel)
+        valid = valid_rows.unsqueeze(1) & valid_slots
+        safe_slots = expanded_slots_by_lane.clamp(0, grad_flat_numel - 1)
+        slot_grad = grad_flat.index_select(0, safe_slots.reshape(-1))
+        slot_grad = slot_grad * valid.reshape(-1).to(dtype=slot_grad.dtype)
+        flat_grad_by_src.scatter_add_(0, flat_dst.reshape(-1), slot_grad)
 
     # Every receiving rank owns a different subset of expanded rows. Sum those
     # per-source contributions so the original token owner can return a normal
@@ -226,8 +280,26 @@ def _validate_deepep_v2_block(
             "deepep_v2 EP with deepep.weighting='swiglu' requires bias-free "
             "routed expert down projections."
         )
-    if block.rowwise_fp8 is not None and block.rowwise_fp8.enabled and x.device.type == "cuda":
-        raise RuntimeError("deepep_v2 EP does not support rowwise FP8 experts yet")
+    if _deepep_v2_uses_fp8(block):
+        assert block.rowwise_fp8 is not None
+        routed_fp8 = block.routed_experts.rowwise_fp8
+        if routed_fp8 is None or not routed_fp8.enabled:
+            raise RuntimeError(
+                "deepep_v2 FP8 requires rowwise FP8 on both the transformer "
+                "block and its routed experts"
+            )
+        if block.routed_experts.b_up_gate is not None:
+            raise RuntimeError("deepep_v2 FP8 routed experts do not support expert biases")
+        if block.rowwise_fp8.block_size != 32:
+            raise RuntimeError(
+                "deepep_v2 FP8 dispatch requires MXFP8 block_size=32, "
+                f"got {block.rowwise_fp8.block_size}"
+            )
+        if (
+            block.shared_experts is not None
+            and block.shared_experts.activation != ExpertActivation.swiglu
+        ):
+            raise RuntimeError("deepep_v2 FP8 shared experts currently require swiglu")
     if not use_torch_grouped_mm():
         raise RuntimeError("deepep_v2 EP requires torch.grouped_mm support")
     if requires_host_side_split_sizes():
@@ -240,19 +312,45 @@ def _global_num_max_tokens_per_rank(
     requested_tokens: int,
     device: torch.device,
 ) -> int:
-    requested_tensor = torch.tensor([requested_tokens], device=device, dtype=torch.long)
+    # Construct the scalar on-device. torch.tensor([value], device="cuda")
+    # stages through pageable CPU memory and synchronizes the CUDA stream.
+    requested_tensor = torch.empty((1,), device=device, dtype=torch.long)
+    requested_tensor.fill_(requested_tokens)
     dist.all_reduce(requested_tensor, op=dist.ReduceOp.MAX, group=block.ep_pg)
     return int(requested_tensor.item())
 
 
 def _requested_num_max_tokens_per_rank(
-    block: OLMoDDPTransformerBlock,
     local_tokens: int,
 ) -> int:
-    max_capacity_factor = float(
-        getattr(block, "_deepep_v2_max_capacity_factor", block.ep.capacity_factor)
-    )
-    return max(local_tokens, int(math.ceil(local_tokens * max_capacity_factor)))
+    if local_tokens <= 0:
+        raise ValueError(f"DeepEP requires a positive source-token capacity, got {local_tokens}")
+    # DeepEP uses this value as a source-token bound and as the stride in
+    # `src_token_global_idx = src_rank * num_max_tokens_per_rank + src_token`.
+    # It is not the destination expanded-route capacity; top-k and
+    # capacity_factor are already accounted for by `rank_capacity` below.
+    return int(local_tokens)
+
+
+def _warm_deepep_v2_process_group(
+    block: OLMoDDPTransformerBlock,
+    device: torch.device,
+) -> None:
+    # DeepEP reuses PyTorch's NCCL communicator by default. For a freshly
+    # created ProcessGroupNCCL, backend._comm_ptr() is null until that exact
+    # group has launched its first CUDA collective. Passing the null pointer to
+    # DeepEP's ncclTeamWorld() segfaults during ElasticBuffer size calculation.
+    # Initialize it entirely on-device; no host readback is needed.
+    if not int(os.getenv("EP_REUSE_NCCL_COMM", "1")):
+        return
+    ready = torch.empty((1,), device=device, dtype=torch.int32)
+    ready.zero_()
+    dist.all_reduce(ready, group=block.ep_pg)
+    # ElasticBuffer queries NCCL's device-team metadata immediately after this
+    # helper. Finish the one-time communicator initialization before exposing
+    # its raw pointer to DeepEP. ElasticBuffer initialization synchronizes
+    # anyway; this never runs in forward or recompute.
+    torch.cuda.synchronize(device)
 
 
 def _runtime_key(block: OLMoDDPTransformerBlock, hidden: int, top_k: int) -> _DeepEpV2RuntimeKey:
@@ -275,6 +373,7 @@ def _runtime_key(block: OLMoDDPTransformerBlock, hidden: int, top_k: int) -> _De
         prefer_overlap_with_compute=deepep_cfg.prefer_overlap_with_compute,
         allow_hybrid_mode=deepep_cfg.allow_hybrid_mode,
         allow_multiple_reduction=deepep_cfg.allow_multiple_reduction,
+        use_fp8_dispatch=_deepep_v2_uses_fp8(block),
     )
 
 
@@ -286,17 +385,13 @@ def _get_deepep_v2_runtime(
     hidden: int,
     top_k: int,
     device: torch.device,
+    static_num_max_tokens_per_rank: Optional[int] = None,
 ) -> _DeepEpV2Runtime:
     assert block.ep_pg is not None
     assert block.routed_experts_router is not None
     assert block.num_local_routed_experts is not None
 
-    requested_tokens = _requested_num_max_tokens_per_rank(block, local_tokens)
-    num_max_tokens_per_rank = _global_num_max_tokens_per_rank(
-        block,
-        requested_tokens,
-        device,
-    )
+    requested_tokens = _requested_num_max_tokens_per_rank(local_tokens)
     runtime_cache = getattr(block, "_deepep_v2_runtime_cache", None)
     if runtime_cache is None:
         runtime_cache = {}
@@ -304,16 +399,50 @@ def _get_deepep_v2_runtime(
     key = _runtime_key(block, hidden, top_k)
     runtime = runtime_cache.get(key)
     if runtime is not None:
-        if num_max_tokens_per_rank <= runtime.num_max_tokens_per_rank:
+        # The model shares this cache across matching DeepEP blocks. Capacity
+        # was fixed when the runtime was created, so the normal fixed-shape hot
+        # path only needs this host-side local bound check. Do
+        # not repeat the CUDA scalar copy, NCCL MAX, and .item() here: those
+        # operations introduced two stream synchronizations per DeepEP call.
+        if requested_tokens <= runtime.num_max_tokens_per_rank:
             block._deepep_v2_runtime = runtime
             return runtime
         raise RuntimeError(
             "deepep_v2 EP saw more tokens than its shared ElasticBuffer "
-            f"capacity: requested={num_max_tokens_per_rank}, "
-            f"capacity={runtime.num_max_tokens_per_rank}. Initialize "
-            "deepep_v2 with the largest local token shape first; "
-            "the shared runtime sizes num_max_tokens_per_rank from the "
-            "largest DeepEP capacity_factor seen in apply_ep()."
+            f"capacity: local_requested={requested_tokens}, "
+            f"capacity={runtime.num_max_tokens_per_rank}. Prewarm deepep_v2 "
+            "with the largest configured local microbatch token count."
+        )
+
+    if key.use_fp8_dispatch:
+        assert block.rowwise_fp8 is not None
+        # Runtime capability discovery can query the CUDA device. Keep it in
+        # this one-time, compile-disabled construction path rather than the
+        # per-block forward validation.
+        block.rowwise_fp8.assert_runtime_supported()
+
+    if static_num_max_tokens_per_rank is not None:
+        # Normal training prewarms from the configured rank microbatch size,
+        # which is identical across the EP group. This avoids capacity MAX
+        # negotiation and host readback even on the first model forward; the
+        # startup-only collective below merely makes the NCCL communicator
+        # safe for DeepEP to reuse.
+        num_max_tokens_per_rank = int(static_num_max_tokens_per_rank)
+        if num_max_tokens_per_rank < requested_tokens:
+            raise ValueError(
+                "Static DeepEP source-token capacity is smaller than the "
+                f"requested shape: capacity={num_max_tokens_per_rank}, "
+                f"requested={requested_tokens}"
+            )
+        _warm_deepep_v2_process_group(block, device)
+    else:
+        # Fallback for direct callers that bypass model prewarm. ElasticBuffer
+        # construction requires a host capacity identical on every EP rank, so
+        # this cold path must negotiate and read back the maximum once.
+        num_max_tokens_per_rank = _global_num_max_tokens_per_rank(
+            block,
+            requested_tokens,
+            device,
         )
 
     deepep_cfg = block.ep.deepep
@@ -324,6 +453,7 @@ def _get_deepep_v2_runtime(
         num_max_tokens_per_rank=num_max_tokens_per_rank,
         hidden=hidden,
         num_topk=top_k,
+        use_fp8_dispatch=key.use_fp8_dispatch,
         deterministic=False,
         allow_hybrid_mode=deepep_cfg.allow_hybrid_mode,
         allow_multiple_reduction=deepep_cfg.allow_multiple_reduction,
@@ -360,6 +490,7 @@ def _get_deepep_v2_runtime(
         num_sms=num_sms,
         num_qps=num_qps,
         async_with_compute_stream=deepep_cfg.async_mode,
+        use_fp8_dispatch=key.use_fp8_dispatch,
     )
     runtime_cache[key] = runtime
     block._deepep_v2_runtime = runtime
@@ -378,6 +509,25 @@ def _routed_experts_need_grad(routed_experts: Optional[Any]) -> bool:
     return False
 
 
+def prewarm_deepep_v2_runtime(
+    block: OLMoDDPTransformerBlock,
+    *,
+    max_local_tokens: int,
+    hidden: int,
+    top_k: int,
+    device: torch.device,
+) -> _DeepEpV2Runtime:
+    """Create a DeepEP runtime from a configured, globally identical token bound."""
+    return _get_deepep_v2_runtime(
+        block,
+        local_tokens=max_local_tokens,
+        hidden=hidden,
+        top_k=top_k,
+        device=device,
+        static_num_max_tokens_per_rank=max_local_tokens,
+    )
+
+
 class _DeepEpV2Autograd(torch.autograd.Function):
     @staticmethod
     def forward(  # type: ignore[override]
@@ -391,36 +541,76 @@ class _DeepEpV2Autograd(torch.autograd.Function):
         grad_anchor: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         del grad_anchor  # only present to force this Function into the autograd graph
-        recv_x_out = torch.empty(
-            (int(rank_capacity), runtime.hidden),
-            device=source_input.device,
-            dtype=source_input.dtype,
-        )
         recv_topk_weights_out = torch.empty(
             (int(rank_capacity),),
             device=topk_weights.device,
             dtype=topk_weights.dtype,
         )
-        (
-            recv_x,
-            _recv_topk_idx,
-            expanded_topk_weights,
-            handle,
-            event,
-        ) = runtime.buffer.dispatch_expanded_into(
-            source_input,
-            topk_idx=topk_idx,
-            topk_weights=topk_weights,
-            recv_x_out=recv_x_out,
-            recv_topk_weights_out=recv_topk_weights_out,
-            num_experts=runtime.num_experts,
-            num_max_tokens_per_rank=runtime.num_max_tokens_per_rank,
-            expert_alignment=runtime.expert_alignment,
-            num_sms=runtime.num_sms,
-            num_qps=runtime.num_qps,
-            async_with_compute_stream=runtime.async_with_compute_stream,
-            do_cpu_sync=False,
-        )
+        if runtime.use_fp8_dispatch:
+            assert block.rowwise_fp8 is not None
+            source_q, source_scales = quantize_rows_to_mxfp8(
+                source_input,
+                block_size=int(block.rowwise_fp8.block_size),
+                scale_mode=block.rowwise_fp8.scale_mode.value,
+            )
+            source_packed_scales = _pack_deepep_mxfp8_scales(source_scales)
+            recv_q_out = torch.empty(
+                (int(rank_capacity), runtime.hidden),
+                device=source_input.device,
+                dtype=source_q.dtype,
+            )
+            recv_packed_scales_out = torch.empty(
+                (int(rank_capacity), source_packed_scales.shape[1]),
+                device=source_input.device,
+                dtype=source_packed_scales.dtype,
+            )
+            (
+                recv_payload,
+                _recv_topk_idx,
+                expanded_topk_weights,
+                handle,
+                event,
+            ) = runtime.buffer.dispatch_expanded_into(
+                (source_q, source_packed_scales),
+                topk_idx=topk_idx,
+                topk_weights=topk_weights,
+                recv_x_out=recv_q_out,
+                recv_sf_out=recv_packed_scales_out,
+                recv_topk_weights_out=recv_topk_weights_out,
+                num_experts=runtime.num_experts,
+                num_max_tokens_per_rank=runtime.num_max_tokens_per_rank,
+                expert_alignment=runtime.expert_alignment,
+                num_sms=runtime.num_sms,
+                num_qps=runtime.num_qps,
+                async_with_compute_stream=runtime.async_with_compute_stream,
+                do_cpu_sync=False,
+            )
+        else:
+            recv_x_out = torch.empty(
+                (int(rank_capacity), runtime.hidden),
+                device=source_input.device,
+                dtype=source_input.dtype,
+            )
+            (
+                recv_payload,
+                _recv_topk_idx,
+                expanded_topk_weights,
+                handle,
+                event,
+            ) = runtime.buffer.dispatch_expanded_into(
+                source_input,
+                topk_idx=topk_idx,
+                topk_weights=topk_weights,
+                recv_x_out=recv_x_out,
+                recv_topk_weights_out=recv_topk_weights_out,
+                num_experts=runtime.num_experts,
+                num_max_tokens_per_rank=runtime.num_max_tokens_per_rank,
+                expert_alignment=runtime.expert_alignment,
+                num_sms=runtime.num_sms,
+                num_qps=runtime.num_qps,
+                async_with_compute_stream=runtime.async_with_compute_stream,
+                do_cpu_sync=False,
+            )
         _deep_ep_wait(event, async_with_compute_stream=runtime.async_with_compute_stream)
         if expanded_topk_weights is None:
             raise RuntimeError("deepep_v2 expanded dispatch did not return top-k weights")
@@ -430,17 +620,50 @@ class _DeepEpV2Autograd(torch.autograd.Function):
         expanded_weights = expanded_topk_weights.reshape(-1, 1)
         if need_grad_topk_weights:
             expanded_weights = expanded_weights.detach().requires_grad_(True)
-        recv_x_for_experts = recv_x.detach().requires_grad_(True)
         assert block.routed_experts is not None
-        with torch.enable_grad():
-            expert_out = block.routed_experts(
-                recv_x_for_experts,
-                batch_size_per_expert,
-                row_weights=expanded_weights,
+        if runtime.use_fp8_dispatch:
+            if not isinstance(recv_payload, tuple) or len(recv_payload) != 2:
+                raise RuntimeError("DeepEP FP8 expanded dispatch did not return (q, scales)")
+            recv_q, recv_packed_scales = recv_payload
+            recv_scales = _unpack_deepep_mxfp8_scales(recv_packed_scales)
+            recv_x_for_experts = (
+                _logical_rank2_tensor(
+                    (int(rank_capacity), runtime.hidden),
+                    dtype=source_input.dtype,
+                    device=source_input.device,
+                )
+                .detach()
+                .requires_grad_(True)
             )
+            with torch.enable_grad():
+                unweighted_expert_out = block.routed_experts(
+                    recv_x_for_experts,
+                    batch_size_per_expert,
+                    use_rowwise_fp8=True,
+                    rowwise_fp8_input_q=recv_q,
+                    rowwise_fp8_input_scales=recv_scales,
+                )
+                # DeepEP combine is BF16-only. Weighting the bias-free down
+                # projection output is mathematically equivalent to weighting
+                # its SwiGLU input, while keeping the received payload MXFP8.
+                expert_graph_out = unweighted_expert_out * expanded_weights.to(
+                    dtype=unweighted_expert_out.dtype
+                )
+        else:
+            if isinstance(recv_payload, tuple):
+                raise RuntimeError(
+                    "DeepEP BF16 expanded dispatch unexpectedly returned FP8 payload"
+                )
+            recv_x_for_experts = recv_payload.detach().requires_grad_(True)
+            with torch.enable_grad():
+                expert_graph_out = block.routed_experts(
+                    recv_x_for_experts,
+                    batch_size_per_expert,
+                    row_weights=expanded_weights,
+                )
 
         combined_x, _combined_topk_weights, event = runtime.buffer.combine(
-            expert_out,
+            expert_graph_out,
             handle=handle,
             num_sms=runtime.num_sms,
             num_qps=runtime.num_qps,
@@ -454,7 +677,7 @@ class _DeepEpV2Autograd(torch.autograd.Function):
         ctx.local_num_tokens = int(topk_weights.shape[0])
         ctx.topk_weights_dtype = topk_weights.dtype
         ctx.need_grad_topk_weights = need_grad_topk_weights
-        ctx.save_for_backward(recv_x_for_experts, expert_out, expanded_weights)
+        ctx.save_for_backward(recv_x_for_experts, expert_graph_out, expanded_weights)
         return combined_x
 
     @staticmethod
@@ -462,7 +685,7 @@ class _DeepEpV2Autograd(torch.autograd.Function):
         runtime: _DeepEpV2Runtime = ctx.runtime
         block: OLMoDDPTransformerBlock = ctx.block
         handle = ctx.handle
-        recv_x, expert_out, expanded_weights = ctx.saved_tensors
+        recv_x, expert_graph_out, expanded_weights = ctx.saved_tensors
 
         grad_weighted_expert_out = torch.empty_like(recv_x)
         (
@@ -481,7 +704,7 @@ class _DeepEpV2Autograd(torch.autograd.Function):
         )
         _deep_ep_wait(event, async_with_compute_stream=runtime.async_with_compute_stream)
 
-        torch.autograd.backward(expert_out, grad_weighted_expert_out)
+        torch.autograd.backward(expert_graph_out, grad_weighted_expert_out)
         if recv_x.grad is None:
             raise RuntimeError("deepep_v2 expert backward did not produce grad for recv_x")
         grad_topk_weights = None
@@ -517,6 +740,7 @@ def combined_forward_ep_deepep_v2(
     x: torch.Tensor,
     *,
     accumulate_routed_aux_loss_metrics: Optional[bool] = None,
+    accumulate_router_aux_loss_metrics: Optional[bool] = None,
     loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
     **kwargs,
 ) -> torch.Tensor:
@@ -580,7 +804,15 @@ def combined_forward_ep_deepep_v2(
             other_stream=torch.cuda.current_stream(),
         )
         with torch.cuda.stream(self.get_dense_stream()):
-            shared_out = self.shared_experts(moe_inp)
+            if _deepep_v2_uses_fp8(self):
+                assert self.rowwise_fp8 is not None
+                shared_out = shared_experts_forward_rowwise_fp8(
+                    self,
+                    moe_inp,
+                    use_fast_accum=self.rowwise_fp8.use_fast_accum,
+                )
+            else:
+                shared_out = self.shared_experts(moe_inp)
             mixed_shared_out = self._mix_shared_out(
                 shared_out,
                 local_x_global_shared_expert_weights,
@@ -691,4 +923,5 @@ def combined_forward_ep_deepep_v2(
     return self._attach_routed_aux_loss(
         final_out,
         routed_expert_router_aux_loss_info,
+        accumulate_metrics=accumulate_router_aux_loss_metrics,
     )

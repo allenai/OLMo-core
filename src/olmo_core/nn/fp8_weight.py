@@ -5,6 +5,7 @@ from typing import Callable, Mapping, Optional, Sequence, Union
 
 import torch
 
+from olmo_core._nvtx import nvtx
 from olmo_core.doc_utils import beta_feature
 from olmo_core.kernels import (
     ScaledGroupedMMPrequantizedRHS,
@@ -285,19 +286,20 @@ class FP8WeightStore:
     def iter_prequantized_caches(self):
         return self.cache_values.values()
 
+    @nvtx.annotate("FP8WeightStore.accumulate_wgrad")
     def accumulate_wgrad(self, grad: torch.Tensor) -> None:
+        grad = grad.detach()
         if self.accumulate_wgrad_in_fp32:
-            grad_fp32 = grad.detach().to(torch.float32)
             if self.main_grad_fp32 is None:
-                self.main_grad_fp32 = grad_fp32.contiguous()
+                self.main_grad_fp32 = grad.to(torch.float32).contiguous()
             else:
-                self.main_grad_fp32.add_(grad_fp32)
+                self.main_grad_fp32.add_(grad)
             self.grad_bf16 = None
         else:
-            grad_bf16 = grad.detach().to(torch.bfloat16)
             if self.grad_bf16 is None:
-                self.grad_bf16 = grad_bf16.contiguous()
+                self.grad_bf16 = grad.to(torch.bfloat16).contiguous()
             else:
+                grad_bf16 = grad if grad.dtype == torch.bfloat16 else grad.to(torch.bfloat16)
                 self.grad_bf16.add_(grad_bf16)
             self.main_grad_fp32 = None
 

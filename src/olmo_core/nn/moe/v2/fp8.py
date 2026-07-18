@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Mapping, Optional, Tuple
 
 import torch
@@ -12,20 +12,27 @@ from olmo_core.kernels import (
     scaled_grouped_mm_q,
     scaled_grouped_mm_q_fp8_weight,
 )
+from olmo_core.mxfp8_config import get_mxfp8_default_scale_mode
 
 if TYPE_CHECKING:
     from olmo_core.nn.ddp.block import OLMoDDPTransformerBlock
 
 
 class MoERowwiseFP8ScaleMode(StrEnum):
+    floor = "floor"  # current / OCP-style conversion
+    # NVIDIA MXFP8 paper round-up scale recipe: https://arxiv.org/html/2506.08027v2
     rceil = "rceil"
+
+
+def _default_rowwise_fp8_scale_mode() -> MoERowwiseFP8ScaleMode:
+    return MoERowwiseFP8ScaleMode(get_mxfp8_default_scale_mode())
 
 
 @dataclass
 class MoERowwiseFP8Config(Config):
     enabled: bool = True
     block_size: int = 32
-    scale_mode: MoERowwiseFP8ScaleMode = MoERowwiseFP8ScaleMode.rceil
+    scale_mode: MoERowwiseFP8ScaleMode = field(default_factory=_default_rowwise_fp8_scale_mode)
     use_fast_accum: bool = True
     fp8_only_params: bool = True
     fused_autograd: bool = True
@@ -35,6 +42,14 @@ class MoERowwiseFP8Config(Config):
         if self.block_size != 32:
             raise ValueError(
                 f"Only block_size=32 is supported for MoE rowwise FP8 (got {self.block_size})"
+            )
+        self.scale_mode = MoERowwiseFP8ScaleMode(self.scale_mode)
+        if self.scale_mode.value != get_mxfp8_default_scale_mode():
+            raise ValueError(
+                "MoE rowwise FP8 scale_mode is resolved from OLMO_MXFP8_SCALE_MODE "
+                "when olmo_core is imported. Set "
+                f"OLMO_MXFP8_SCALE_MODE={self.scale_mode.value!r} before importing "
+                "olmo_core, or leave rowwise_fp8.scale_mode unset."
             )
 
     def assert_runtime_supported(self) -> None:

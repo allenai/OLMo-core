@@ -180,11 +180,6 @@ def build_rowwise_route_maps(
         self.num_local_routed_experts,
         rounding_mode="floor",
     )
-    torch.remainder(
-        safe_experts,
-        self.num_local_routed_experts,
-    )
-
     prefix_by_source = torch.cumsum(keep_matrix, dim=0) - keep_matrix
     src_rank = get_rank(self.ep_pg)
     send_base_by_dest_local = prefix_by_source[src_rank]
@@ -195,41 +190,24 @@ def build_rowwise_route_maps(
 
     base_rows_by_expert = (local_expert_base_by_dest + send_base_by_dest_local).reshape(-1)
 
-    # Compute stable in-bucket positions without argsort. torch.argsort lowers
-    # through tuple-returning aten.sort, which AOTAutograd cannot partition when
-    # compiled rowwise EP is combined with recompute and stream control deps.
-    #
-    # Keep the lowering 1-D per expert: a single wide [routes, experts] equality
-    # matrix currently trips Inductor Triton codegen in the full rowwise graph.
-    pos_in_bucket = torch.zeros_like(bucket_ids)
-    keep_limits = torch.zeros_like(bucket_ids)
-    base_rows = torch.zeros_like(bucket_ids)
+    # Stable in-expert route position (rank within each expert bucket, in route
+    # order). A stable sort groups equal buckets while preserving route order, so
+    # each route's position is its offset from the start of its group. This keeps
+    # O(routes) memory instead of a dense [expert, route] matrix, which would be
+    # (expert_count + 1) * num_routes and blow up for large expert counts.
+    seq = torch.arange(num_routes, device=routing_map.device, dtype=torch.long)
+    order = torch.argsort(bucket_ids, stable=True)
+    sorted_buckets = bucket_ids.index_select(0, order)
+    is_group_start = torch.ones(num_routes, device=routing_map.device, dtype=torch.bool)
+    is_group_start[1:] = sorted_buckets[1:] != sorted_buckets[:-1]
+    group_start = torch.cummax(
+        torch.where(is_group_start, seq, torch.zeros_like(seq)), dim=0
+    ).values
+    pos_in_bucket = torch.empty(num_routes, device=routing_map.device, dtype=torch.long)
+    pos_in_bucket.scatter_(0, order, seq - group_start)
 
-    # Keep this as a static Python loop over experts. A sort/scatter formulation
-    # produces tuple-returning ops that have been fragile under compiled rowwise
-    # EP with recompute, while a wide one-hot [routes, experts] cumsum has
-    # tripped Inductor codegen in the full graph.
-    for expert_id in range(expert_count):
-        expert_mask = bucket_ids == expert_id
-        expert_pos = (
-            torch.cumsum(
-                expert_mask.to(dtype=torch.long),
-                dim=0,
-                dtype=torch.long,
-            )
-            - 1
-        )
-        pos_in_bucket = torch.where(expert_mask, expert_pos, pos_in_bucket)
-        keep_limits = torch.where(
-            expert_mask,
-            allowed_splits_i64[expert_id],
-            keep_limits,
-        )
-        base_rows = torch.where(
-            expert_mask,
-            base_rows_by_expert[expert_id],
-            base_rows,
-        )
+    keep_limits = allowed_splits_i64.index_select(0, safe_experts)
+    base_rows = base_rows_by_expert.index_select(0, safe_experts)
     kept_mask = valid_mask & (pos_in_bucket < keep_limits)
 
     dst_rows_all = base_rows + pos_in_bucket

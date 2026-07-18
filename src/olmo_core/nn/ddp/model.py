@@ -103,6 +103,19 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
         assert not (
             self.tbo and self.recompute_each_block
         ), "Cannot use TBO when recompute_each_block is True."
+        # Chunk recompute wraps all blocks in one non-reentrant checkpoint, which
+        # breaks DeepEP's recv_x leaf identity and drops expert grads. Only the
+        # per-block reentrant path in _forward_blocks handles DeepEP correctly.
+        if self.recompute_all_blocks_by_chunk and any(
+            isinstance(block, OLMoDDPTransformerBlock)
+            and block.has_routed_experts
+            and block.ep.is_deepep
+            for block in self.blocks.values()
+        ):
+            raise OLMoConfigurationError(
+                "recompute_all_blocks_by_chunk is not supported with DeepEP expert "
+                "parallelism; use recompute_each_block instead."
+            )
 
     def named_ddp_blocks(self) -> Iterator[tuple[str, OLMoDDPTransformerBlock]]:
         for block_key, block in self.blocks.items():
@@ -313,6 +326,35 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
     def zero_grad(self, set_to_none: bool = True) -> None:
         super().zero_grad(set_to_none=set_to_none)
         self.zero_fp8_weight_store_grads(set_to_none=set_to_none)
+
+    @torch.no_grad()
+    def prewarm_deepep_v2_runtimes(
+        self,
+        *,
+        max_local_microbatch_size: int,
+    ) -> None:
+        deepep_blocks = [block for block in self.routed_blocks() if block.ep.is_deepep]
+        if not deepep_blocks:
+            return
+
+        param = next((p for p in self.parameters() if p.is_floating_point()), None)
+        if param is None:
+            raise RuntimeError("Cannot infer device for DeepEP runtime prewarm")
+
+        # Import locally to keep the model/block module initialization order
+        # simple: block.py also installs the DeepEP combined-forward method.
+        from ..moe.v2.ep_deepep_v2 import prewarm_deepep_v2_runtime
+
+        for block in deepep_blocks:
+            if block.routed_experts_router is None:
+                raise RuntimeError("DeepEP block is missing its routed router during prewarm")
+            prewarm_deepep_v2_runtime(
+                block,
+                max_local_tokens=max_local_microbatch_size,
+                hidden=self.d_model,
+                top_k=block.routed_experts_router.top_k,
+                device=param.device,
+            )
 
     @torch.no_grad()
     def prewarm_ep_no_sync_symm_buffers(
@@ -660,7 +702,6 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
             first_pg = deepep_blocks[0].ep_pg
             if first_pg is None:
                 raise RuntimeError("DeepEP block is missing ep_pg after apply_ep()")
-            max_capacity_factor = max(block.ep.capacity_factor for block in deepep_blocks)
             for block in deepep_blocks:
                 if block.ep_pg is not first_pg:
                     raise RuntimeError(
@@ -668,7 +709,6 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
                         f"(block={block.block_idx})"
                     )
                 block._deepep_v2_runtime_cache = self._deepep_v2_runtime_cache
-                block._deepep_v2_max_capacity_factor = max_capacity_factor
 
         self.ep_enabled = True
         return shared_pool_to_return
@@ -1146,22 +1186,71 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
             if (self.recompute_each_block and (block_idx not in do_not_recompute)) or (
                 self.recompute_block_keys and block_key in self.recompute_block_keys
             ):
-                h = checkpoint(
-                    self._forwrad_one_block,
-                    h,
-                    block_key,
-                    combined_kwargs,
-                    use_reentrant=False,
-                    context_fn=(noop_context_fn if self.compile_enabled else recompute_context_fn),
-                    # determinism_check='none',
+                use_reentrant = (
+                    isinstance(block, OLMoDDPTransformerBlock)
+                    and block.has_routed_experts
+                    and block.ep_enabled
+                    and block.training
+                    and block.ep.is_deepep
                 )
+                if use_reentrant:
+                    # DeepEP's custom autograd function builds a private expert
+                    # graph and invokes its backward from the communication
+                    # backward. Non-reentrant checkpointing restores its saved
+                    # leaf tensors as different wrappers, so gradients land on
+                    # a different recv_x leaf. Reentrant checkpointing rebuilds
+                    # the complete block and keeps the DeepEP handle, expert
+                    # graph, and recv_x leaf from the same recomputed forward.
+                    combined_kwargs["deepep_reentrant_checkpoint"] = True
+                    # Reentrant checkpointing only reruns the block (and backprops
+                    # the DeepEP expert graph) if an input requires grad. In
+                    # expert-only / frozen-lower-layer runs h can be detached, which
+                    # would silently drop expert grads, so pass a grad-requiring
+                    # anchor; expert grads still flow through the module params.
+                    grad_anchor = (
+                        None
+                        if h.requires_grad
+                        else torch.zeros((), device=h.device, requires_grad=True)
+                    )
+                    h = checkpoint(
+                        self._forwrad_one_block,
+                        h,
+                        block_key,
+                        combined_kwargs,
+                        grad_anchor,
+                        use_reentrant=True,
+                        # The user config can randomize expert assignment. The
+                        # recompute must replay the same routing decisions.
+                        preserve_rng_state=True,
+                    )
+                else:
+                    h = checkpoint(
+                        self._forwrad_one_block,
+                        h,
+                        block_key,
+                        combined_kwargs,
+                        use_reentrant=False,
+                        context_fn=(
+                            noop_context_fn if self.compile_enabled else recompute_context_fn
+                        ),
+                        # determinism_check='none',
+                    )
                 h = cast(torch.Tensor, h)
             else:
                 h = self._forwrad_one_block(h, block_key, combined_kwargs)
 
         return h
 
-    def _forwrad_one_block(self, h, block_key: str, block_kwargs: Dict[str, Any]) -> torch.Tensor:
+    def _forwrad_one_block(
+        self,
+        h,
+        block_key: str,
+        block_kwargs: Dict[str, Any],
+        grad_anchor: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        # grad_anchor only keeps reentrant checkpointing's recompute alive when h is
+        # detached (see _forward_blocks); it is intentionally unused here.
+        del grad_anchor
         if self.compile_enabled:
             mark_dynamic(h, (0, 1), strict=False)
         block = self.blocks[block_key]
