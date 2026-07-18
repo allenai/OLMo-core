@@ -4,8 +4,9 @@
 The 480M, 810M, and 1.2B models adopt the corresponding dense ladder's
 450M, 810M, and 1.4B width/depth/head geometry and every-fifth-layer global
 attention pattern. As in the first 275M ``geometry_only`` experiment, they
-retain the MoE recipe, dense-first FFN, RoPE, ungated global attention,
-initialization, and the size's existing GQA ratio.
+retain the MoE recipe, dense-first FFN, ungated global attention,
+initialization, and the size's existing GQA ratio. The optional NoPE profile
+changes only the full-attention layers' ``rope`` field.
 """
 
 from __future__ import annotations
@@ -162,6 +163,8 @@ def _full_attention_block(
     block: OLMoDDPTransformerBlockConfig,
     attention_template: AttentionConfig,
     geometry: Geometry,
+    *,
+    rope: bool,
 ) -> OLMoDDPTransformerBlockConfig:
     full = deepcopy(block)
     attention = deepcopy(attention_template)
@@ -171,16 +174,24 @@ def _full_attention_block(
     attention.d_attn = None
     attention.sliding_window = None
     attention.gate = None
+    if not rope:
+        attention.rope = None
     full.sequence_mixer = attention
     return full
 
 
-def build_geometry_matched_scale_model_config(model_size: str) -> OLMoDDPModelConfig:
-    """Build one primary geometry-only model in the scale family."""
+def _build_geometry_matched_scale_model_config(
+    model_size: str,
+    *,
+    rope: bool,
+) -> OLMoDDPModelConfig:
+    """Build one geometry-matched model before cross-profile parity checks."""
 
     geometry = _geometry(model_size)
     if model_size == "275m":
-        return build_geometry_matched_275m_model_config("geometry_only")
+        return build_geometry_matched_275m_model_config(
+            "geometry_only" if rope else "geometry_nope"
+        )
 
     parent = build_hybrid_model_config(model_size)
     candidate = deepcopy(parent)
@@ -224,6 +235,7 @@ def build_geometry_matched_scale_model_config(model_size: str) -> OLMoDDPModelCo
             moe_block,
             attention_template,
             geometry,
+            rope=rope,
         )
     candidate.block_overrides = overrides
     candidate.validate()
@@ -266,7 +278,7 @@ def build_geometry_matched_scale_model_config(model_size: str) -> OLMoDDPModelCo
             attention.n_heads != geometry.n_heads
             or attention.n_kv_heads != geometry.n_kv_heads
             or attention.head_dim != HEAD_DIM
-            or attention.rope is None
+            or (attention.rope is None) != (not rope)
             or attention.gate is not None
         ):
             raise ValueError(f"unexpected full-attention shape at {model_size} layer {layer_idx}")
@@ -289,10 +301,64 @@ def build_geometry_matched_scale_model_config(model_size: str) -> OLMoDDPModelCo
     return candidate
 
 
-def parameter_summary(model_size: str) -> dict[str, Any]:
+def _assert_nope_only_changes_rope(
+    model_size: str,
+    rope_model: OLMoDDPModelConfig,
+    nope_model: OLMoDDPModelConfig,
+) -> None:
+    rope_counts = (
+        rope_model.num_active_params,
+        rope_model.num_active_non_embedding_params,
+        rope_model.num_params,
+    )
+    nope_counts = (
+        nope_model.num_active_params,
+        nope_model.num_active_non_embedding_params,
+        nope_model.num_params,
+    )
+    if nope_counts != rope_counts:
+        raise ValueError(
+            f"{model_size} NoPE changed parameter counts: RoPE={rope_counts}, NoPE={nope_counts}"
+        )
+
+    normalized_nope = deepcopy(nope_model)
+    assert normalized_nope.block_overrides is not None
+    assert rope_model.block_overrides is not None
+    for layer_idx in _geometry(model_size).full_attention_layers:
+        nope_attention = cast(
+            AttentionConfig,
+            normalized_nope.block_overrides[layer_idx].sequence_mixer,
+        )
+        rope_attention = cast(
+            AttentionConfig,
+            rope_model.block_overrides[layer_idx].sequence_mixer,
+        )
+        if nope_attention.rope is not None or rope_attention.rope is None:
+            raise ValueError(f"{model_size} layer {layer_idx} did not form a RoPE/NoPE pair")
+        nope_attention.rope = deepcopy(rope_attention.rope)
+
+    if normalized_nope.as_dict() != rope_model.as_dict():
+        raise ValueError(f"{model_size} NoPE changed fields other than full-attention RoPE")
+
+
+def build_geometry_matched_scale_model_config(
+    model_size: str,
+    *,
+    rope: bool = True,
+) -> OLMoDDPModelConfig:
+    """Build a strictly audited RoPE or NoPE geometry-matched model."""
+
+    candidate = _build_geometry_matched_scale_model_config(model_size, rope=rope)
+    if not rope:
+        rope_model = _build_geometry_matched_scale_model_config(model_size, rope=True)
+        _assert_nope_only_changes_rope(model_size, rope_model, candidate)
+    return candidate
+
+
+def parameter_summary(model_size: str, *, rope: bool = True) -> dict[str, Any]:
     geometry = _geometry(model_size)
     parent = build_hybrid_model_config(model_size)
-    candidate = build_geometry_matched_scale_model_config(model_size)
+    candidate = build_geometry_matched_scale_model_config(model_size, rope=rope)
     return {
         "model_size": model_size,
         "dense_geometry_rung": geometry.dense_rung,
@@ -310,7 +376,7 @@ def parameter_summary(model_size: str) -> dict[str, Any]:
         "top_k": TOP_K,
         "shared_experts": 1,
         "gdn_expand_v": GDN_EXPAND_V,
-        "rope": True,
+        "rope": rope,
         "attention_gate": False,
         "init_std": candidate.init_std,
         "active_params": candidate.num_active_params,
@@ -336,9 +402,19 @@ def parameter_summary(model_size: str) -> dict[str, Any]:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model-size", choices=MODEL_SIZES, action="append")
+    parser.add_argument(
+        "--nope",
+        action="store_true",
+        help="Build the strictly matched NoPE profile instead of the RoPE profile",
+    )
     args = parser.parse_args()
     model_sizes = args.model_size or list(MODEL_SIZES)
-    print(json.dumps([parameter_summary(size) for size in model_sizes], indent=2))
+    print(
+        json.dumps(
+            [parameter_summary(size, rope=not args.nope) for size in model_sizes],
+            indent=2,
+        )
+    )
 
 
 if __name__ == "__main__":

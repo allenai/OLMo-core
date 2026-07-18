@@ -17,6 +17,8 @@ cp "${SOURCE_REPO}/src/scripts/train/jacobm_olmoe_ladder/v2/models/hybrid_wide.p
   "${REPO}/src/scripts/train/jacobm_olmoe_ladder/v2/models/"
 cp "${SOURCE_REPO}/src/scripts/train/jacobm_olmoe_ladder/v2/models/geometry_matched_275m.py" \
   "${REPO}/src/scripts/train/jacobm_olmoe_ladder/v2/models/"
+cp "${SOURCE_REPO}/src/scripts/train/jacobm_olmoe_ladder/v2/models/geometry_matched_scale.py" \
+  "${REPO}/src/scripts/train/jacobm_olmoe_ladder/v2/models/"
 cp -a "${SOURCE_REPO}/JACOBM_DDP_CONFIGS" "${REPO}/"
 
 cd "${REPO}"

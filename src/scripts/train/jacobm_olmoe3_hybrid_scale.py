@@ -92,6 +92,7 @@ MODEL_VARIANT = os.environ.get("OLMOE3_HYBRID_MODEL_VARIANT", "integration_wide_
 SEQUENCE_LENGTH = int(os.environ.get("OLMOE3_HYBRID_SEQUENCE_LENGTH", "8192"))
 GLOBAL_BATCH_SIZE = int(os.environ.get("OLMOE3_HYBRID_GLOBAL_BATCH_SIZE", "262144"))
 WORLD_SIZE = int(os.environ.get("OLMOE3_HYBRID_WORLD_SIZE", "2"))
+NUM_NODES = int(os.environ.get("OLMOE3_HYBRID_NUM_NODES", "1"))
 EP_SIZE = int(os.environ.get("OLMOE3_HYBRID_EP_SIZE", "1"))
 EP_PATH = ExpertParallelPath(
     os.environ.get("OLMOE3_HYBRID_EP_PATH", ExpertParallelPath.rowwise_nvshmem.value)
@@ -145,9 +146,7 @@ def model_config():
         )
 
         if MODEL_SIZE != "275m":
-            raise ValueError(
-                "The geometry_275m_gdn_ev2_nope variant only supports MODEL_SIZE=275m"
-            )
+            raise ValueError("The geometry_275m_gdn_ev2_nope variant only supports MODEL_SIZE=275m")
         model = build_geometry_matched_model_config("geometry_nope")
     elif MODEL_VARIANT == "geometry_matched_gdn_ev2":
         from scripts.train.jacobm_olmoe_ladder.v2.models.geometry_matched_scale import (
@@ -155,6 +154,12 @@ def model_config():
         )
 
         model = build_geometry_matched_scale_model_config(MODEL_SIZE)
+    elif MODEL_VARIANT == "geometry_matched_gdn_ev2_nope":
+        from scripts.train.jacobm_olmoe_ladder.v2.models.geometry_matched_scale import (
+            build_geometry_matched_scale_model_config,
+        )
+
+        model = build_geometry_matched_scale_model_config(MODEL_SIZE, rope=False)
     else:
         raise ValueError(f"Unknown model variant {MODEL_VARIANT!r}")
     if EP_SIZE > 1:
@@ -327,6 +332,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         "geometry_275m_gdn_ev2",
         "geometry_275m_gdn_ev2_nope",
         "geometry_matched_gdn_ev2",
+        "geometry_matched_gdn_ev2_nope",
     }
     if MODEL_VARIANT == "geometry_275m_gdn_ev2_nope":
         variant_group = "olmoe3-275m-geometry-gdn-ev2-nope"
@@ -334,9 +340,14 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         variant_group = "olmoe3-275m-geometry-gdn-ev2"
     elif MODEL_VARIANT == "geometry_matched_gdn_ev2":
         variant_group = "olmoe3-geometry-matched-gdn-ev2-scale"
+    elif MODEL_VARIANT == "geometry_matched_gdn_ev2_nope":
+        variant_group = "olmoe3-geometry-matched-gdn-ev2-nope-scale"
     else:
         variant_group = "olmoe3-integration-wide-hybrid-scale"
-    if MODEL_VARIANT == "geometry_275m_gdn_ev2_nope":
+    if MODEL_VARIANT in {
+        "geometry_275m_gdn_ev2_nope",
+        "geometry_matched_gdn_ev2_nope",
+    }:
         variant_tags = ["geometry-matched", "expand-v-2", "nope"]
     elif geometry_variant:
         variant_tags = ["geometry-matched", "expand-v-2", "rope"]
@@ -439,6 +450,13 @@ def finalize_config(config: ExperimentConfig) -> None:
             raise ValueError(f"Eval checkpoint does not exist: {EVAL_CHECKPOINT}")
     if WORLD_SIZE < 1 or EP_SIZE < 1 or WORLD_SIZE % EP_SIZE:
         raise ValueError(f"EP size {EP_SIZE} must divide world size {WORLD_SIZE}")
+    if NUM_NODES < 1:
+        raise ValueError(f"NUM_NODES must be positive, got {NUM_NODES}")
+    if "WORLD_SIZE" in os.environ and int(os.environ["WORLD_SIZE"]) != WORLD_SIZE:
+        raise ValueError(
+            f"Configured world size {WORLD_SIZE} does not match torchrun world size "
+            f"{os.environ['WORLD_SIZE']}"
+        )
     if GLOBAL_BATCH_SIZE % SEQUENCE_LENGTH:
         raise ValueError("Global batch size must contain a whole number of sequences")
     global_sequences = GLOBAL_BATCH_SIZE // SEQUENCE_LENGTH
@@ -499,7 +517,7 @@ def make_config(cli_context: CliContext) -> ExperimentConfig:
         tokenizer=TokenizerConfig.dolma2(),
         global_batch_size=GLOBAL_BATCH_SIZE,
         max_sequence_length=SEQUENCE_LENGTH,
-        num_nodes=1,
+        num_nodes=NUM_NODES,
         include_default_evals=False,
         finalize_config=finalize_config,
     )
