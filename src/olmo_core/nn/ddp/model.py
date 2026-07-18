@@ -32,10 +32,12 @@ from ..lm_head import LMOutputWithLoss
 from ..moe.v2.checkpointing import checkpoint_recompute_context_fn
 from ..moe.v2.ep_config import ExpertParallelPath
 from ..moe.v2.ep_no_sync_buffers import (
+    EpNoSyncSymmTensorInfo,
     _NoSyncSymmSharedPool,
     compute_ep_no_sync_rank_capacity,
     get_ep_no_sync_buffers,
     get_ep_no_sync_rowwise_fp8_buffers,
+    iter_ep_no_sync_symm_tensor_infos,
     prewarm_ep_no_sync_rowwise_lifetime_leases,
     use_ep_no_sync_rowwise_symm_combine_gather,
     use_ep_no_sync_rowwise_symm_combine_out,
@@ -270,6 +272,10 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
 
     def count_ep_no_sync_blocks(self) -> int:
         return sum(1 for _ in self.ep_no_sync_blocks())
+
+    def iter_ep_no_sync_symm_tensor_infos(self) -> Iterator[EpNoSyncSymmTensorInfo]:
+        for block in self.ep_no_sync_blocks():
+            yield from iter_ep_no_sync_symm_tensor_infos(block)
 
     def count_non_rowwise_ep_no_sync_blocks(self) -> int:
         return sum(1 for block in self.ep_no_sync_blocks() if not block.ep.uses_rowwise_buffers)
@@ -515,7 +521,7 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
                 )
                 if use_rowwise_fp8:
                     assert rowwise_fp8_cfg is not None
-                    rowwise_fp8_cfg.assert_runtime_supported()
+                    # Runtime support is asserted once inside get_ep_no_sync_rowwise_fp8_buffers.
                     get_ep_no_sync_rowwise_fp8_buffers(
                         block,
                         dispatch_in_cap=prewarm_local_microbatch_size,

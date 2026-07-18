@@ -3,6 +3,7 @@ import logging
 import math
 import os
 import time
+from collections import OrderedDict
 from functools import cached_property, lru_cache
 from itertools import product
 from typing import (
@@ -2885,6 +2886,160 @@ class OLMoDDPTrainModule(TrainModule):
                 max_local_microbatch_size=prewarm_rank_microbatch_size,
             )
 
+    @staticmethod
+    def _ep_no_sync_symm_summary_enabled() -> bool:
+        raw = os.getenv("OLMO_EP_NO_SYNC_SYMM_BUFFER_SUMMARY", "1")
+        return raw.strip().lower() not in {"", "0", "false", "no", "off"}
+
+    @staticmethod
+    def _ep_no_sync_symm_prewarm_summary_enabled() -> bool:
+        raw = os.getenv("OLMO_EP_NO_SYNC_SYMM_BUFFER_SUMMARY_PREWARM", "0")
+        return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+    @staticmethod
+    def _should_log_ep_no_sync_symm_summary_rank() -> bool:
+        if not dist.is_available() or not dist.is_initialized():
+            return True
+        ranks = (
+            os.getenv("OLMO_EP_NO_SYNC_SYMM_BUFFER_SUMMARY_RANKS")
+            or os.getenv("OLMO_ROWWISE_DEBUG_RANKS")
+            or os.getenv("OLMO_TBO_DEBUG_RANKS")
+        )
+        if ranks is None:
+            return dist.get_rank() == 0
+        normalized = ranks.strip().lower()
+        if normalized in {"all", "*"}:
+            return True
+        if normalized in {"", "none", "off", "0-only"}:
+            return dist.get_rank() == 0
+        selected_ranks = {part.strip() for part in ranks.split(",") if part.strip()}
+        return str(dist.get_rank()) in selected_ranks
+
+    @staticmethod
+    def _gib(nbytes: int) -> float:
+        return float(nbytes) / float(1024**3)
+
+    def _log_ep_no_sync_symm_buffer_summary(
+        self,
+        *,
+        model_parts,
+        context: str,
+    ) -> None:
+        if not self._ep_no_sync_symm_summary_enabled():
+            return
+
+        typed_parts = [cast(OLMoDDPModel, m) for m in model_parts]
+        unique_infos: "OrderedDict[Tuple[str, int], Tuple[int, Any]]" = OrderedDict()
+        duplicate_refs = 0
+        for model_part_idx, model_part in enumerate(typed_parts):
+            for info in model_part.iter_ep_no_sync_symm_tensor_infos():
+                if info.nbytes <= 0:
+                    continue
+                storage_key = (str(info.device), int(info.data_ptr))
+                if storage_key in unique_infos:
+                    duplicate_refs += 1
+                    continue
+                unique_infos[storage_key] = (model_part_idx, info)
+
+        if not self._should_log_ep_no_sync_symm_summary_rank():
+            return
+
+        rank = dist.get_rank() if dist.is_available() and dist.is_initialized() else 0
+        local_rank = os.getenv("LOCAL_RANK", "?")
+        total_bytes = sum(info.nbytes for _, info in unique_infos.values())
+        lines = [
+            (
+                f"EP no-sync symmetric buffer summary ({context}) "
+                f"rank={rank} local_rank={local_rank}: "
+                f"unique_tensors={len(unique_infos)}, duplicate_refs={duplicate_refs}, "
+                f"requested={self._gib(total_bytes):.4f} GiB"
+            )
+        ]
+
+        if torch.cuda.is_available():
+            device = torch.device(self.device)
+            if device.type != "cuda":
+                device = torch.device("cuda")
+            cuda_stats = torch.cuda.memory_stats(device)
+
+            def stat(name: str) -> int:
+                return int(cuda_stats.get(name, 0))
+
+            free_bytes, total_device_bytes = torch.cuda.mem_get_info(device)
+            reserved_bytes = torch.cuda.memory_reserved(device)
+            allocated_bytes = torch.cuda.memory_allocated(device)
+            used_bytes = total_device_bytes - free_bytes
+            non_torch_bytes = max(0, used_bytes - reserved_bytes)
+            lines.append(
+                "  CUDA now: "
+                f"allocated={self._gib(allocated_bytes):.4f} GiB, "
+                f"reserved={self._gib(reserved_bytes):.4f} GiB, "
+                f"device_used={self._gib(used_bytes):.4f} GiB, "
+                f"non_torch~={self._gib(non_torch_bytes):.4f} GiB"
+            )
+            lines.append(
+                "  PyTorch stats: "
+                f"allocated_peak={self._gib(stat('allocated_bytes.all.peak')):.4f} GiB, "
+                f"reserved_peak={self._gib(stat('reserved_bytes.all.peak')):.4f} GiB, "
+                f"active_current={self._gib(stat('active_bytes.all.current')):.4f} GiB, "
+                f"active_peak={self._gib(stat('active_bytes.all.peak')):.4f} GiB"
+            )
+            lines.append(
+                "  PyTorch fragmentation/cache: "
+                f"inactive_split_current={self._gib(stat('inactive_split_bytes.all.current')):.4f} GiB, "
+                f"inactive_split_peak={self._gib(stat('inactive_split_bytes.all.peak')):.4f} GiB, "
+                f"segment_current={self._gib(stat('segment_bytes.all.current')):.4f} GiB, "
+                f"segment_peak={self._gib(stat('segment_bytes.all.peak')):.4f} GiB, "
+                f"alloc_retries={stat('num_alloc_retries')}, "
+                f"ooms={stat('num_ooms')}"
+            )
+
+        if unique_infos:
+            owner_totals: Dict[str, int] = {}
+            owner_counts: Dict[str, int] = {}
+            detail_rows = []
+            for model_part_idx, info in unique_infos.values():
+                owner = (
+                    info.owner
+                    if info.owner == "shared_pool"
+                    else f"part{model_part_idx}:{info.owner}"
+                )
+                owner_totals[owner] = owner_totals.get(owner, 0) + info.nbytes
+                owner_counts[owner] = owner_counts.get(owner, 0) + 1
+                detail_rows.append((info.nbytes, model_part_idx, info))
+
+            lines.append("  by owner:")
+            for owner, nbytes in sorted(
+                owner_totals.items(), key=lambda item: item[1], reverse=True
+            ):
+                lines.append(
+                    f"    {owner}: {self._gib(nbytes):.4f} GiB " f"({owner_counts[owner]} tensors)"
+                )
+
+            try:
+                detail_limit = int(os.getenv("OLMO_EP_NO_SYNC_SYMM_BUFFER_SUMMARY_LIMIT", "64"))
+            except ValueError:
+                detail_limit = 64
+            if detail_limit != 0:
+                detail_rows.sort(key=lambda row: row[0], reverse=True)
+                shown_rows = detail_rows if detail_limit < 0 else detail_rows[:detail_limit]
+                lines.append(f"  largest buffers: showing {len(shown_rows)}/{len(detail_rows)}")
+                for nbytes, model_part_idx, info in shown_rows:
+                    dtype = str(info.dtype).replace("torch.", "")
+                    lines.append(
+                        f"    {self._gib(nbytes):.4f} GiB "
+                        f"part={model_part_idx} {info.owner}.{info.name} "
+                        f"shape={info.shape} dtype={dtype} device={info.device}"
+                    )
+
+        log.info("\n".join(lines))
+
+    def log_ep_no_sync_symm_buffer_summary(self, *, context: str) -> None:
+        self._log_ep_no_sync_symm_buffer_summary(
+            model_parts=self.model_parts,
+            context=context,
+        )
+
     def _prewarm_ep_no_sync_symm_buffers(
         self,
         *,
@@ -2945,6 +3100,16 @@ class OLMoDDPTrainModule(TrainModule):
                 max_local_microbatch_size=prewarm_rank_microbatch_size,
                 pad_to_block_count=max_count,
                 rowwise_lifetime_lease_slots=rowwise_slots_by_part[model_part_idx],
+            )
+
+        if self._ep_no_sync_symm_prewarm_summary_enabled():
+            self._log_ep_no_sync_symm_buffer_summary(
+                model_parts=typed_parts,
+                context=(
+                    "after prewarm, "
+                    f"rank_microbatch_size={prewarm_rank_microbatch_size}, "
+                    f"rowwise_lifetime_lease_slots={rowwise_lifetime_lease_slots}"
+                ),
             )
 
     def compile_model(self):

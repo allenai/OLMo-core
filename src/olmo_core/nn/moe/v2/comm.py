@@ -65,6 +65,22 @@ def _rowwise_debug_sync_enabled() -> bool:
     }
 
 
+def _rowwise_bool_env_enabled(name: str) -> bool:
+    return os.getenv(name, "0").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "y",
+        "on",
+    }
+
+
+def _rowwise_ibgda_enabled() -> bool:
+    return _rowwise_bool_env_enabled("NVSHMEM_IB_ENABLE_IBGDA") and not _rowwise_bool_env_enabled(
+        "NVSHMEM_DISABLE_IBGDA"
+    )
+
+
 def _rowwise_rank_tag() -> str:
     if not dist.is_available() or not dist.is_initialized():
         return "rank=? local_rank=?"
@@ -1596,6 +1612,12 @@ class _DispatchRowwiseAutograd(torch.autograd.Function):
             if not source_input_aliases_symm_input:
                 symm_input_view.copy_(source_input_contig)
             dispatch_source = symm_input_view
+        elif _rowwise_ibgda_enabled():
+            raise RuntimeError(
+                "rowwise NVSHMEM/IBGDA dispatch requires a symmetric source "
+                "staging buffer. Enable OLMO_MOE_ROWWISE_SYMM_DISPATCH_IN=1 "
+                "or leave it on auto for inter-node EP."
+            )
 
         # _rowwise_debug_print(
         #     "rowwise_dispatch_forward_put",

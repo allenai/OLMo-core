@@ -77,6 +77,8 @@ def test_rowwise_bf16_combine_releases_lifetime_leases_and_grads_probs(monkeypat
         "test_group",
         None,
         1,
+        1,
+        1,
         False,
         False,
         False,
@@ -170,6 +172,7 @@ def test_rowwise_fp8_combine_backward_returns_grad_probs(monkeypatch):
         32,
         "test_group",
         None,
+        1,
         1,
     )
     out.sum().backward()

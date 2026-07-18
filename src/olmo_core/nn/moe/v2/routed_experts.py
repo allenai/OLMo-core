@@ -537,7 +537,8 @@ class RoutedExperts(nn.Module):
         self.ep_rank: int = 0
         self.rowwise_fp8 = normalize_rowwise_fp8_config(rowwise_fp8)
         if self.rowwise_fp8 is not None and self.rowwise_fp8.enabled:
-            self.rowwise_fp8.assert_runtime_supported()
+            # Config-only check here; runtime CUDA support is asserted at FP8 buffer build.
+            self.rowwise_fp8.validate()
         self._rowwise_fp8_up_gate_prequant: Optional[ScaledGroupedMMPrequantizedRHS] = None
         self._rowwise_fp8_down_prequant: Optional[ScaledGroupedMMPrequantizedRHS] = None
         self._rowwise_fp8_up_gate_prequant_t: Optional[ScaledGroupedMMPrequantizedRHS] = None

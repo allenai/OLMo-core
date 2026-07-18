@@ -395,7 +395,8 @@ class OLMoDDPTransformerBlock(olmo_core.nn.transformer.block.TransformerBlockBas
         self.shared_experts_router: Optional[MoERouterV2]
         self.rowwise_fp8 = normalize_rowwise_fp8_config(rowwise_fp8)
         if self.rowwise_fp8 is not None and self.rowwise_fp8.enabled:
-            self.rowwise_fp8.assert_runtime_supported()
+            # Config-only check here; runtime CUDA support is asserted at FP8 buffer build.
+            self.rowwise_fp8.validate()
         self._shared_rowwise_fp8_up_prequant: Optional[ScaledGroupedMMPrequantizedRHS] = None
         self._shared_rowwise_fp8_down_prequant: Optional[ScaledGroupedMMPrequantizedRHS] = None
         self._shared_rowwise_fp8_up_prequant_t: Optional[ScaledGroupedMMPrequantizedRHS] = None
