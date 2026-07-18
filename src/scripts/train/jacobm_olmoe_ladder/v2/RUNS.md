@@ -342,6 +342,8 @@ uses the same 100B-token midtraining recipe as 275M: 8K sequences, a
   [`launchers/pretraining/manifests/275m_geometry_gdn_ev2_nope_scaling_smokes.yaml`](launchers/pretraining/manifests/275m_geometry_gdn_ev2_nope_scaling_smokes.yaml)
 - Scaling-smoke launcher:
   [`launchers/pretraining/launch_275m_geometry_gdn_ev2_nope_scaling_smokes.sh`](launchers/pretraining/launch_275m_geometry_gdn_ev2_nope_scaling_smokes.sh)
+- Scaling-smoke Beaker work:
+  [01KXS9BR4NKK06H7HJ5X73KQP2](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXS9BR4NKK06H7HJ5X73KQP2)
 - W&B group: `ai2-llm/jacobm-olmoe-ladder` /
   `olmoe3-275m-geometry-gdn-ev2-nope`
 
@@ -350,8 +352,36 @@ It retains the geometry model's 290,782,080 active, 226,556,800 active
 non-embedding, and 3,136,314,240 total parameters. Its first launch is a
 checkpoint-free, evaluator-free, compiled 12-step DDP scaling study at the Cx1
 and Cx8 endpoints on 2/4/8 B300s. All tasks use EP1 and exact canonical global
-batches. The production LR-sweep GPU layout will be chosen from the measured
+batches. The production LR-sweep GPU layout below was selected from measured
 wall-clock throughput rather than assumed from per-GPU TFLOPs.
+
+Submitted on 2026-07-18 at urgent priority as unallocated work
+(`minRuntime: 0m`, `autoResume: true`) on Holmes. The six tasks request 28
+B300s at full concurrency:
+
+| Cx | GPUs | Global batch | Rank MB | Accum | Mean TFLOPs/GPU | Total-token speedup | Job | W&B | Status |
+|---:|---:|---:|---:|---:|---:|---:|---|---|---|
+| 1 | 2 | 262,144 | 16 | 1 | 430.9 | 1.00x | [01KXS9BR89EBX1T7SVAC0XFGXA](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXS9BR4NKK06H7HJ5X73KQP2?taskId=01KXS9BR4XT8AZKXWQFPTR3GVA&jobId=01KXS9BR89EBX1T7SVAC0XFGXA) | [vow8stjm](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/vow8stjm) | passed |
+| 1 | 4 | 262,144 | 8 | 1 | 322.1 | 1.50x | [01KXS9BRCBFWA5TMYXPTYR7H8C](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXS9BR4NKK06H7HJ5X73KQP2?taskId=01KXS9BR8F979NJ9H3R8ATNFDC&jobId=01KXS9BRCBFWA5TMYXPTYR7H8C) | [mxghr6je](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/mxghr6je) | passed; production choice |
+| 1 | 8 | 262,144 | 4 | 1 | 210.5 | 1.95x | [01KXS9BRFNZ4AWAFHPSZ62SZ0M](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXS9BR4NKK06H7HJ5X73KQP2?taskId=01KXS9BRCEYMW0MYBFS9PNQDWR&jobId=01KXS9BRFNZ4AWAFHPSZ62SZ0M) | [lxovdnqd](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/lxovdnqd) | passed |
+| 8 | 2 | 786,432 | 16 | 3 | 422.3 | 1.00x | [01KXS9BRK0ZDX6SXRRZTAJNE98](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXS9BR4NKK06H7HJ5X73KQP2?taskId=01KXS9BRFSF0Z4663HYRA65RE8&jobId=01KXS9BRK0ZDX6SXRRZTAJNE98) | [bjevyjbh](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/bjevyjbh) | passed |
+| 8 | 4 | 786,432 | 12 | 2 | 384.9 | 1.82x | [01KXS9BRPEYT77MQFME8C8YH3H](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXS9BR4NKK06H7HJ5X73KQP2?taskId=01KXS9BRK4DVHSYBFZNMEPQ5ZE&jobId=01KXS9BRPEYT77MQFME8C8YH3H) | [5ie1n90w](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/5ie1n90w) | passed |
+| 8 | 8 | 786,432 | 12 | 1 | 362.0 | 3.43x | [01KXS9BRT1QBH9DCMVJ89NW0TF](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXS9BR4NKK06H7HJ5X73KQP2?taskId=01KXS9BRPJKPSNXKW5JESDARBQ&jobId=01KXS9BRT1QBH9DCMVJ89NW0TF) | [27qhyqgo](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/27qhyqgo) | passed; production choice |
+
+Mean TFLOPs/GPU is the arithmetic mean of the 11 reported speed samples,
+matching the earlier geometry-smoke reporting convention. Total-token speedup
+uses mean per-device TPS multiplied by world size and is normalized within
+each Cx. Cx1 uses four GPUs in production because eight GPUs provide only
+1.31x more throughput for twice the GPUs. Cx8 uses eight because it is 1.88x
+faster than four. Cx2/Cx4 use four GPUs, removing accumulation while retaining
+the already validated MB12/MB16 per-rank shapes.
+
+The independent production manifest is
+[`launchers/pretraining/manifests/275m_geometry_gdn_ev2_nope.yaml`](launchers/pretraining/manifests/275m_geometry_gdn_ev2_nope.yaml);
+its launcher is
+[`launchers/pretraining/launch_275m_geometry_gdn_ev2_nope.sh`](launchers/pretraining/launch_275m_geometry_gdn_ev2_nope.sh).
+It contains the four inherited LRs (`4e-4`, `8e-4`, `1.6e-3`, `3.2e-3`) at
+Cx1/2/4/8, requesting 80 B300s at full concurrency.
 
 ## Post-training validation backfills
 
