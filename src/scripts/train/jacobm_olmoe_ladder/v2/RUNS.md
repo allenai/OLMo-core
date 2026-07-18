@@ -324,7 +324,7 @@ identity.
 | Model | Job | W&B | Status |
 |---|---|---|---|
 | 275M `expand_v=1` hybrid Cx8 | [r1 canceled](https://beaker.org/ex/01KXPEFSNRXYB5N3KAAEWJD2ZR) / [r2](https://beaker.org/ex/01KXPEQCA0TQF17JDTKSE3P6E7) | [zfrdh1pn](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/zfrdh1pn) | running; 22.02B / 100B tokens (22.0%) at the 2026-07-17 refresh, durable `step21000` present |
-| 480M `expand_v=1` hybrid Cx8 | [01KXS955Q6RZQQM7PEGSWF3XDT](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXS955Q6RZQQM7PEGSWF3XDT?taskId=01KXS955QG0FG968ME9CAZ8RB2&jobId=01KXS955TSVZE9HEMCNDJP72QP) | pending initialization | running on four B300s; submitted urgent unallocated on 2026-07-18 |
+| 480M `expand_v=1` hybrid Cx8 | [01KXS955Q6RZQQM7PEGSWF3XDT](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXS955Q6RZQQM7PEGSWF3XDT?taskId=01KXS955QG0FG968ME9CAZ8RB2&jobId=01KXS955TSVZE9HEMCNDJP72QP) | [mnp9rv5l](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/mnp9rv5l) | running; source loaded and optimizer steps confirmed, step 70/95,368 at the 2026-07-18 launch audit |
 
 The 480M continuation loads the permanent first-hybrid Cx8 PT checkpoint
 `step81069` weight-only, starts a fresh optimizer at LR `8e-5`, and otherwise
