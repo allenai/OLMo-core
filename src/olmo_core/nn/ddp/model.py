@@ -1189,11 +1189,22 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
                     # the complete block and keeps the DeepEP handle, expert
                     # graph, and recv_x leaf from the same recomputed forward.
                     combined_kwargs["deepep_reentrant_checkpoint"] = True
+                    # Reentrant checkpointing only reruns the block (and backprops
+                    # the DeepEP expert graph) if an input requires grad. In
+                    # expert-only / frozen-lower-layer runs h can be detached, which
+                    # would silently drop expert grads, so pass a grad-requiring
+                    # anchor; expert grads still flow through the module params.
+                    grad_anchor = (
+                        None
+                        if h.requires_grad
+                        else torch.zeros((), device=h.device, requires_grad=True)
+                    )
                     h = checkpoint(
                         self._forwrad_one_block,
                         h,
                         block_key,
                         combined_kwargs,
+                        grad_anchor,
                         use_reentrant=True,
                         # The user config can randomize expert assignment. The
                         # recompute must replay the same routing decisions.
@@ -1217,7 +1228,16 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
 
         return h
 
-    def _forwrad_one_block(self, h, block_key: str, block_kwargs: Dict[str, Any]) -> torch.Tensor:
+    def _forwrad_one_block(
+        self,
+        h,
+        block_key: str,
+        block_kwargs: Dict[str, Any],
+        grad_anchor: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        # grad_anchor only keeps reentrant checkpointing's recompute alive when h is
+        # detached (see _forward_blocks); it is intentionally unused here.
+        del grad_anchor
         if self.compile_enabled:
             mark_dynamic(h, (0, 1), strict=False)
         block = self.blocks[block_key]

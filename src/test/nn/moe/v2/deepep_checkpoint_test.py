@@ -46,13 +46,15 @@ def test_per_block_checkpoint_uses_reentrant_only_for_deepep(
 ) -> None:
     checkpoint_kwargs = []
     forwarded_kwargs = []
+    forwarded_anchors = []
 
     def fake_checkpoint(function, *args, **kwargs):
         checkpoint_kwargs.append(kwargs)
         return function(*args)
 
-    def forward_one_block(h, _block_key, block_kwargs):
+    def forward_one_block(h, _block_key, block_kwargs, grad_anchor=None):
         forwarded_kwargs.append(block_kwargs)
+        forwarded_anchors.append(grad_anchor)
         return h + 1
 
     monkeypatch.setattr(ddp_model_module, "checkpoint", fake_checkpoint)
@@ -79,9 +81,13 @@ def test_per_block_checkpoint_uses_reentrant_only_for_deepep(
         assert "context_fn" not in checkpoint_kwargs[0]
         assert checkpoint_kwargs[0]["preserve_rng_state"] is True
         assert forwarded_kwargs[0]["deepep_reentrant_checkpoint"] is True
+        # h is detached here, so a grad-requiring anchor is passed to keep the
+        # reentrant recompute (and DeepEP expert backward) alive.
+        assert forwarded_anchors[0] is not None and forwarded_anchors[0].requires_grad
     else:
         assert "context_fn" in checkpoint_kwargs[0]
         assert "deepep_reentrant_checkpoint" not in forwarded_kwargs[0]
+        assert forwarded_anchors[0] is None
 
 
 def test_reentrant_checkpoint_supports_deepep_nested_backward_pattern() -> None:
