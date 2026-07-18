@@ -1,10 +1,14 @@
 """Tests for ``OLMoDDPModel`` construction and FLOP accounting."""
 
+import pytest
+
 from olmo_core.config import DType
+from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.nn.attention import AttentionConfig, AttentionType
 from olmo_core.nn.ddp.block import OLMoDDPTransformerBlockConfig
 from olmo_core.nn.layer_norm import LayerNormConfig, LayerNormType
 from olmo_core.nn.lm_head import LMHeadConfig
+from olmo_core.nn.moe.v2.ep_config import ExpertParallelConfig, ExpertParallelPath
 from olmo_core.nn.moe.v2.routed_experts import RoutedExpertsConfig
 from olmo_core.nn.moe.v2.router import MoERouterConfigV2
 from olmo_core.nn.transformer import (
@@ -48,3 +52,12 @@ def test_moe_v2_model_builds():
     assert len(model.blocks) == 2
     assert any(p.numel() > 0 for p in model.parameters())
     assert model.num_flops_per_token(seq_len=512) > 0
+
+
+def test_deepep_rejects_chunk_recompute():
+    config = _build_model_config(n_layers=2)
+    config.recompute_all_blocks_by_chunk = True
+    assert isinstance(config.block, OLMoDDPTransformerBlockConfig)
+    config.block.ep = ExpertParallelConfig(path=ExpertParallelPath.deepep_v2)
+    with pytest.raises(OLMoConfigurationError, match="recompute_all_blocks_by_chunk"):
+        config.build(init_device="cpu")

@@ -103,6 +103,19 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
         assert not (
             self.tbo and self.recompute_each_block
         ), "Cannot use TBO when recompute_each_block is True."
+        # Chunk recompute wraps all blocks in one non-reentrant checkpoint, which
+        # breaks DeepEP's recv_x leaf identity and drops expert grads. Only the
+        # per-block reentrant path in _forward_blocks handles DeepEP correctly.
+        if self.recompute_all_blocks_by_chunk and any(
+            isinstance(block, OLMoDDPTransformerBlock)
+            and block.has_routed_experts
+            and block.ep.is_deepep
+            for block in self.blocks.values()
+        ):
+            raise OLMoConfigurationError(
+                "recompute_all_blocks_by_chunk is not supported with DeepEP expert "
+                "parallelism; use recompute_each_block instead."
+            )
 
     def named_ddp_blocks(self) -> Iterator[tuple[str, OLMoDDPTransformerBlock]]:
         for block_key, block in self.blocks.items():
