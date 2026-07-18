@@ -426,3 +426,130 @@ def test_group_mean_query_cp_local_shard():
     torch.testing.assert_close(
         qg2[:, 4:], q2[:, 4:].mean(1, keepdim=True).expand(B, 4, T, D), atol=1e-12, rtol=0
     )
+
+
+# ---------------------------------------------------------------------------
+# Decode gate variants (Version A grouped gate vs Version B selection-only)
+# ---------------------------------------------------------------------------
+
+from olmo_core.nn.attention.landmark_compressive import (  # noqa: E402
+    FastCompressiveLandmarkAttention,
+)
+
+
+def _plain_compressive(*, mem_freq, head_dim, n_heads, n_kv_heads, dtype=torch.float64):
+    d_model = n_heads * head_dim
+    attn = AttentionConfig(
+        name=AttentionType.fast_compressive_landmark,
+        n_heads=n_heads,
+        n_kv_heads=n_kv_heads,
+        head_dim=head_dim,
+        bias=False,
+        mem_freq=mem_freq,
+        qk_norm=LayerNormConfig(name="rms", eps=1e-6, bias=False),
+        use_head_qk_norm=True,
+    ).build(d_model, layer_idx=0, n_layers=1, init_device="cpu")
+    assert isinstance(attn, FastCompressiveLandmarkAttention)
+    return attn.to(dtype).eval()
+
+
+def test_decode_grouped_gate_matches_brute_reference():
+    # Version A: the grouped decode gate must reproduce the group-mean gating math (gate from group-mean
+    # landmark logits, within-block per-head) at the query row. Compared against the float64 brute
+    # reference (the decode path uses torch.softmax directly, so it stays full float64 -- unlike the
+    # eager prefill, which downcasts to float32 inside the grouped softmax).
+    #
+    # k (and v) MUST be GQA-shared across each group's n_rep heads, exactly as ``repeat_kv`` produces
+    # them before attention. The decode gate computes ``q̄ @ kᵀ`` (mean-query dotted with the key),
+    # which equals the oracle's ``mean_h(q_h · k_b)`` ONLY because the landmark key k_b is shared
+    # across the group. With per-head-independent k those two differ (~7e-2) -- a condition that can't
+    # occur in a real GQA forward, where k is always repeat_kv'd.
+    attn = _build(n_heads=6, n_kv_heads=2, mem_freq=15)  # n_rep=3
+    assert attn.decode_gate_mode == "grouped"
+    Lb = attn.block_size
+    B, H, T, D = 1, 6, 32, attn.head_dim  # 2 blocks of 16
+    n_rep = H // attn.n_kv_heads
+    torch.manual_seed(0)
+    q = torch.randn(B, H, T, D, dtype=torch.float64)  # per-head query (the gate averages over these)
+    # GQA-shared k/v: n_kv distinct heads repeat_interleave'd to H (the post-repeat_kv layout).
+    k = torch.randn(B, attn.n_kv_heads, T, D, dtype=torch.float64).repeat_interleave(n_rep, dim=1)
+    v = torch.randn(B, attn.n_kv_heads, T, D, dtype=torch.float64).repeat_interleave(n_rep, dim=1)
+    qpos = T - 2  # non-landmark position in the last block
+
+    # brute reference: full grouped compressive probs (float64), take row qpos over the causal keys.
+    attn_mask, _, _ = build_landmark_masks(T, Lb, q.device, q.dtype)
+    x = (q @ k.transpose(-1, -2)) * attn.softmax_scale + attn_mask
+    gate_x = _group_mean_gate_logits(x, Lb, attn.n_kv_heads)
+    ref_probs = _brute_grouped_gate(x, gate_x, Lb)  # (B,H,T,T)
+    ref_out = (ref_probs @ v)[:, :, qpos]  # (B,H,D)
+
+    with torch.no_grad():
+        dec = attn._decode_one(
+            q[:, :, qpos : qpos + 1], k[:, :, : qpos + 1], v[:, :, : qpos + 1], qpos
+        )
+    torch.testing.assert_close(dec[:, :, 0], ref_out, atol=1e-7, rtol=1e-6)
+
+
+def test_decode_selection_only_equals_per_head_compressive():
+    # Version B (decode_gate_mode="selection_only", group_landmark_selection=None): the decode gate
+    # falls back to per-head, so _decode_one must be identical to the plain compressive decode.
+    grouped = _build(n_heads=6, n_kv_heads=2, mem_freq=15)
+    grouped.decode_gate_mode = "selection_only"
+    plain = _plain_compressive(mem_freq=15, head_dim=grouped.head_dim, n_heads=6, n_kv_heads=2)
+    B, H, T, D = 1, 6, 32, grouped.head_dim
+    torch.manual_seed(1)
+    q = torch.randn(B, H, T, D, dtype=torch.float64)
+    k = torch.randn(B, H, T, D, dtype=torch.float64)
+    v = torch.randn(B, H, T, D, dtype=torch.float64)
+    qpos = T - 2
+    with torch.no_grad():
+        og = grouped._decode_one(q[:, :, qpos : qpos + 1], k[:, :, : qpos + 1], v[:, :, : qpos + 1], qpos)
+        op = plain._decode_one(q[:, :, qpos : qpos + 1], k[:, :, : qpos + 1], v[:, :, : qpos + 1], qpos)
+    torch.testing.assert_close(og, op, atol=1e-9, rtol=1e-8)
+
+
+def test_decode_grouped_differs_from_selection_only():
+    # Version A vs Version B produce different decode outputs when n_rep > 1 (the whole reason to A/B).
+    B, H, T, D = 1, 6, 32, 16
+    torch.manual_seed(2)
+    q = torch.randn(B, H, T, D, dtype=torch.float64)
+    k = torch.randn(B, H, T, D, dtype=torch.float64)
+    v = torch.randn(B, H, T, D, dtype=torch.float64)
+    qpos = T - 2
+
+    def dec(mode):
+        attn = _build(n_heads=6, n_kv_heads=2, mem_freq=15, head_dim=D)
+        attn.decode_gate_mode = mode
+        with torch.no_grad():
+            return attn._decode_one(
+                q[:, :, qpos : qpos + 1], k[:, :, : qpos + 1], v[:, :, : qpos + 1], qpos
+            )
+
+    assert not torch.allclose(dec("grouped"), dec("selection_only"), atol=1e-4)
+
+
+def test_decode_grouped_mha_is_noop():
+    # n_rep == 1: q_gate == q, so gate_scores == scores and the grouped decode equals per-head decode.
+    grouped = _build(n_heads=4, n_kv_heads=4, mem_freq=15)  # n_rep=1
+    plain = _plain_compressive(mem_freq=15, head_dim=grouped.head_dim, n_heads=4, n_kv_heads=4)
+    B, H, T, D = 1, 4, 32, grouped.head_dim
+    torch.manual_seed(3)
+    q = torch.randn(B, H, T, D, dtype=torch.float64)
+    k = torch.randn(B, H, T, D, dtype=torch.float64)
+    v = torch.randn(B, H, T, D, dtype=torch.float64)
+    qpos = T - 2
+    with torch.no_grad():
+        og = grouped._decode_one(q[:, :, qpos : qpos + 1], k[:, :, : qpos + 1], v[:, :, : qpos + 1], qpos)
+        op = plain._decode_one(q[:, :, qpos : qpos + 1], k[:, :, : qpos + 1], v[:, :, : qpos + 1], qpos)
+    torch.testing.assert_close(og, op, atol=1e-9, rtol=1e-8)
+
+
+def test_set_landmark_eval_decode_switches_decode_gate_mode():
+    attn = _build(n_heads=6, n_kv_heads=2, mem_freq=15)
+    assert attn.decode_gate_mode == "grouped"
+    attn.set_landmark_eval_decode(32, "extend_last_block", decode_gate_mode="selection_only")
+    assert attn.decode_gate_mode == "selection_only"
+    attn.set_landmark_eval_decode(32, "extend_last_block")  # None -> unchanged
+    assert attn.decode_gate_mode == "selection_only"
+    attn.set_landmark_eval_decode(32, "extend_last_block", decode_gate_mode="grouped")
+    assert attn.decode_gate_mode == "grouped"

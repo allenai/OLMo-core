@@ -885,6 +885,7 @@ class FastCompressiveLandmarkAttention(FastLandmarkAttention):
         is_mem: torch.Tensor,
         last_section: torch.Tensor,
         section_start: int,
+        gate_scores: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """Compressive grouped softmax for a single decode query.
 
@@ -894,6 +895,15 @@ class FastCompressiveLandmarkAttention(FastLandmarkAttention):
         :param last_section: Boolean mask ``(total,)`` marking the local-section keys.
         :param section_start: Start position of the local section; a multiple of ``block_size`` so
             the past region ``[0, section_start)`` partitions into whole landmark blocks.
+        :param gate_scores: Optional separate logits ``(B, H, 1, total)`` used **only** for the
+            cross-block GATE (the block rescaling ``G_b`` and the top-k retrieval that ranks blocks) at
+            the *past-landmark* columns; the within-block softmax and the local section keep ``scores``.
+            Used by :class:`~olmo_core.nn.attention.landmark_compressive_gqa.CompressiveGQAGroupedAttention`
+            to gate decode by group-mean landmark scores, matching the group-mean gating it was trained
+            with (Version A). ``None`` (default) uses ``scores`` for the gate too -- the per-head decode,
+            which is the unchanged behavior (and, with ``group_landmark_selection`` set, the
+            selection-only Version B). When provided, its landmark columns are already group-shared, so
+            the top-k ranking is naturally group-shared and ``_group_landmark_scores`` is skipped.
 
         :returns: Attention probabilities of shape ``(B, H, 1, total)``.
         """
@@ -908,11 +918,20 @@ class FastCompressiveLandmarkAttention(FastLandmarkAttention):
         lm_idx = is_mem.nonzero(as_tuple=True)[0]  # past landmark positions
         n_lm = int(lm_idx.numel())
 
+        # The GATE (block rescaling + top-k ranking) reads ``gate_src``: ``scores`` per-head by default,
+        # or group-mean landmark logits (at the landmark columns) when ``gate_scores`` is given. The
+        # within-block softmax below always reads the per-head ``scores``.
+        gate_src = scores if gate_scores is None else torch.where(is_mem_b, gate_scores, scores)
+
         top_k = self._eval_top_k
         recording = gate_log.is_enabled()
         if top_k is not None and n_lm > top_k:
-            lm_scores = scores[..., lm_idx]  # (B, H, 1, n_lm)
-            rank_scores = self._group_landmark_scores(lm_scores)
+            lm_scores = gate_src[..., lm_idx]  # (B, H, 1, n_lm)
+            # ``gate_scores`` is already group-shared at landmark columns, so rank on it directly;
+            # otherwise apply the selection-only group aggregation (group_landmark_selection).
+            rank_scores = lm_scores if gate_scores is not None else self._group_landmark_scores(
+                lm_scores
+            )
             keep = torch.zeros_like(lm_scores, dtype=torch.bool)
             keep.scatter_(-1, rank_scores.topk(top_k, dim=-1).indices, True)
             selected = torch.zeros(B, H, 1, total, dtype=torch.bool, device=device)
@@ -934,19 +953,19 @@ class FastCompressiveLandmarkAttention(FastLandmarkAttention):
                     getattr(self, "_gate_log_layer_idx", None),
                     keep_all,
                     lm_idx // Lb,
-                    scores[..., lm_idx],
+                    gate_src[..., lm_idx],
                 )
 
         # Gate (cross-block) softmax over the selected landmarks + the local section.
         gate_set = selected | last_section_b
-        gate_w = torch.softmax(scores.masked_fill(~gate_set, neg_inf), dim=-1)
+        gate_w = torch.softmax(gate_src.masked_fill(~gate_set, neg_inf), dim=-1)
 
         final = torch.zeros(B, H, 1, total, dtype=gate_w.dtype, device=device)
         # Local section keys keep their gate weight directly.
         final = torch.where(last_section_b, gate_w, final)
-        # Past blocks: full within-block softmax distributes the block's gate weight over its
-        # content tokens AND its landmark. Non-selected blocks have gate weight 0 here (their
-        # landmark was masked out of ``gate_set``), so they contribute 0 in this term.
+        # Past blocks: full within-block softmax (over the PER-HEAD ``scores``) distributes the block's
+        # gate weight over its content tokens AND its landmark. Non-selected blocks have gate weight 0
+        # here (their landmark was masked out of ``gate_set``), so they contribute 0 in this term.
         if S > 0:
             within = torch.softmax(scores[..., :S].reshape(B, H, 1, S // Lb, Lb), dim=-1)
             within = within.reshape(B, H, 1, S)
@@ -959,10 +978,19 @@ class FastCompressiveLandmarkAttention(FastLandmarkAttention):
         if has_nonselected:
             final = final * (1.0 - alpha)
             nonsel = is_mem_b & (~selected)
-            ns_w = torch.softmax(scores.masked_fill(~nonsel, neg_inf), dim=-1)
+            ns_w = torch.softmax(gate_src.masked_fill(~nonsel, neg_inf), dim=-1)
             final = final + alpha * ns_w
 
         return final
+
+    def _decode_gate_scores(
+        self, q: torch.Tensor, k: torch.Tensor
+    ) -> Optional[torch.Tensor]:
+        """Optional separate GATE logits for decode (see ``gate_scores`` in
+        :meth:`_compressive_decode_probs`). Base class: ``None`` (the per-head gate). Overridden by
+        :class:`~olmo_core.nn.attention.landmark_compressive_gqa.CompressiveGQAGroupedAttention` to
+        return group-mean landmark logits so decode matches its group-mean training/prefill gate."""
+        return None
 
     def _decode_one(
         self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, qpos: int
@@ -980,7 +1008,10 @@ class FastCompressiveLandmarkAttention(FastLandmarkAttention):
         section_start = (qpos // Lb) * Lb
 
         scores = torch.matmul(q, k.transpose(-1, -2)) * self.softmax_scale
-        probs = self._compressive_decode_probs(scores, is_mem, last_section, section_start)
+        gate_scores = self._decode_gate_scores(q, k)
+        probs = self._compressive_decode_probs(
+            scores, is_mem, last_section, section_start, gate_scores=gate_scores
+        )
         return torch.matmul(probs.to(v.dtype), v)
 
     def _decode_one_eval(
@@ -997,5 +1028,8 @@ class FastCompressiveLandmarkAttention(FastLandmarkAttention):
         last_section = j >= section_start
 
         scores = torch.matmul(q, k.transpose(-1, -2)) * self.softmax_scale
-        probs = self._compressive_decode_probs(scores, is_mem, last_section, section_start)
+        gate_scores = self._decode_gate_scores(q, k)
+        probs = self._compressive_decode_probs(
+            scores, is_mem, last_section, section_start, gate_scores=gate_scores
+        )
         return torch.matmul(probs.to(v.dtype), v)

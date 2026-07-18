@@ -28,8 +28,10 @@ from typing import Optional
 
 import torch
 
+from olmo_core.exceptions import OLMoConfigurationError
+
 from .landmark import build_landmark_masks, compressive_landmark_grouped_softmax
-from .landmark_compressive import FastCompressiveLandmarkAttention
+from .landmark_compressive import _NO_OVERRIDE, FastCompressiveLandmarkAttention
 from .landmark_kernel import has_landmark_kernel
 
 
@@ -42,6 +44,17 @@ class CompressiveGQAGroupedAttention(FastCompressiveLandmarkAttention):
         ``True``; falls back to the eager grouped-softmax path when the kernel is unavailable (CPU / no
         triton). The eager path is autograd-differentiable and is the reference the kernel is validated
         against, but it materializes the dense ``(T, T)`` attention matrix.
+    :param decode_gate_mode: How the cross-block gate is computed at *decode* time (train/prefill always
+        use the group-mean gate). Two eval variants for a grouped-trained model:
+
+        * ``"grouped"`` (default, **Version A**): the decode gate logit at each past landmark is the
+          group-mean ``q̄·k_landmark``, exactly matching the group-mean gating the model was trained
+          with. With top-k retrieval the ranking is then naturally group-shared, so
+          ``group_landmark_selection`` is redundant (leave it ``None``).
+        * ``"selection_only"`` (**Version B**): fall back to the inherited *per-head* decode gate; use
+          ``group_landmark_selection="mean"`` to make only the top-k block *selection* group-shared
+          (the gate *weights* stay per-head). This does NOT match training's soft gate -- it is the
+          weaker, inference-only approximation, provided for A/B comparison.
 
     See :class:`FastCompressiveLandmarkAttention` for ``mem_freq`` / ``nonselected_landmark_mass`` /
     ``group_landmark_selection`` and the remaining parameters.
@@ -55,6 +68,7 @@ class CompressiveGQAGroupedAttention(FastCompressiveLandmarkAttention):
         softmax_scale: Optional[float] = None,
         group_landmark_selection: Optional[str] = None,
         use_kernel: bool = True,
+        decode_gate_mode: str = "grouped",
         **kwargs,
     ):
         super().__init__(
@@ -65,6 +79,12 @@ class CompressiveGQAGroupedAttention(FastCompressiveLandmarkAttention):
             **kwargs,
         )
         self.use_kernel = use_kernel
+        if decode_gate_mode not in ("grouped", "selection_only"):
+            raise OLMoConfigurationError(
+                "decode_gate_mode must be 'grouped' or 'selection_only' "
+                f"(got {decode_gate_mode!r})"
+            )
+        self.decode_gate_mode = decode_gate_mode
 
     def _group_mean_query(self, q: torch.Tensor) -> torch.Tensor:
         """Group-mean query ``q̄`` for the gate path. ``q``: ``(B, H_local, T, D)`` (post-``repeat_kv``,
@@ -86,6 +106,45 @@ class CompressiveGQAGroupedAttention(FastCompressiveLandmarkAttention):
         grouped = q.view(B, n_groups, n_rep, T, D)
         gmean = grouped.mean(dim=2, keepdim=True)
         return gmean.expand(B, n_groups, n_rep, T, D).reshape(B, H, T, D)
+
+    def _decode_gate_scores(
+        self, q: torch.Tensor, k: torch.Tensor
+    ) -> Optional[torch.Tensor]:
+        """Group-mean gate logits for decode (Version A), matching the group-mean gate used at
+        train/prefill. Returns ``q̄ @ kᵀ * scale`` when :attr:`decode_gate_mode` == ``"grouped"``;
+        ``None`` (per-head gate, the inherited behavior) for ``"selection_only"`` (Version B). When
+        ``n_rep == 1`` (MHA) ``q̄ == q`` so the returned scores equal ``scores`` -- an exact no-op."""
+        if self.decode_gate_mode != "grouped":
+            return None
+        q_gate = self._group_mean_query(q)
+        return torch.matmul(q_gate, k.transpose(-1, -2)) * self.softmax_scale
+
+    def set_landmark_eval_decode(
+        self,
+        prompt_len: int,
+        mode: str = "extend_last_block",
+        top_k: Optional[int] = None,
+        nonselected_landmark_mass: Optional[float] = None,
+        group_landmark_selection: Optional[str] = _NO_OVERRIDE,  # type: ignore[assignment]
+        decode_gate_mode: Optional[str] = None,
+    ) -> None:
+        """Enable eval decode (see :class:`FastCompressiveLandmarkAttention`). Adds
+        ``decode_gate_mode`` (``"grouped"``/``"selection_only"``) to switch the decode gate between the
+        two eval variants; ``None`` leaves :attr:`decode_gate_mode` unchanged."""
+        super().set_landmark_eval_decode(
+            prompt_len,
+            mode,
+            top_k=top_k,
+            nonselected_landmark_mass=nonselected_landmark_mass,
+            group_landmark_selection=group_landmark_selection,
+        )
+        if decode_gate_mode is not None:
+            if decode_gate_mode not in ("grouped", "selection_only"):
+                raise OLMoConfigurationError(
+                    "decode_gate_mode must be 'grouped' or 'selection_only' "
+                    f"(got {decode_gate_mode!r})"
+                )
+            self.decode_gate_mode = decode_gate_mode
 
     def _attn_core(
         self,

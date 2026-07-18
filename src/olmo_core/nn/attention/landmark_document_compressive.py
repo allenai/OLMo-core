@@ -72,6 +72,9 @@ class DocumentCompressiveLandmarkAttention(DocumentLandmarkAttention):
     _decode_one_eval = FastCompressiveLandmarkAttention._decode_one_eval
     _compressive_decode_probs = FastCompressiveLandmarkAttention._compressive_decode_probs
     _group_landmark_scores = FastCompressiveLandmarkAttention._group_landmark_scores
+    # The borrowed ``_decode_one`` calls ``self._decode_gate_scores``; borrow the base (per-head, None)
+    # implementation so DocumentCompressive decode stays per-head (it is not the GQA-grouped variant).
+    _decode_gate_scores = FastCompressiveLandmarkAttention._decode_gate_scores
 
     def __init__(
         self,
