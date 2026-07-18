@@ -11,6 +11,7 @@ from olmo_core.nn.ddp.block import OLMoDDPTransformerBlock
 from olmo_core.nn.layer_norm import LayerNormConfig, LayerNormType
 from olmo_core.nn.moe import MoERouterGatingFunction
 from olmo_core.nn.moe.v2.ep_config import ExpertParallelConfig, ExpertParallelPath
+from olmo_core.nn.moe.v2.fp8 import MoERowwiseFP8Config
 from olmo_core.nn.moe.v2.routed_experts import RoutedExpertsConfig
 from olmo_core.nn.moe.v2.router import MoERouterConfigV2
 from olmo_core.nn.moe.v2.shared_experts import SharedExpertsConfig
@@ -23,6 +24,7 @@ from olmo_core.testing import (
     requires_triton,
     run_distributed_test,
 )
+from olmo_core.testing.utils import requires_compute_capability
 
 
 def test_v2_extracted_forward_module_names_importable():
@@ -1140,6 +1142,52 @@ def test_v2_ep_no_sync_rowwise_drop_matches_independent_rowwise_block():
 def test_v2_ep_no_sync_rowwise_capacity_tail_poison_does_not_change_backward():
     run_distributed_test(
         _run_ep_no_sync_rowwise_capacity_tail_poison_does_not_change_backward,
+        backend="nccl",
+        start_method="spawn",
+    )
+
+
+def _run_ep_no_sync_rowwise_fp8_combine_gather_lease_released():
+    ep_mesh = _build_ep_mesh()
+    block = _build_block(
+        ep_no_sync=True,
+        ep_no_sync_use_rowwise_all_to_all=True,
+        d_model=512,
+        hidden_size=1024,
+        num_experts=8,
+        top_k=2,
+        uniform_expert_assignment=False,
+        # fused_autograd=False takes the separate dispatch/experts/combine path, where the
+        # dispatch autograd (not the combine autograd) owns the combine-gather lease release.
+        rowwise_fp8=MoERowwiseFP8Config(fused_autograd=False),
+    )
+    block.apply_ep(ep_mesh)
+
+    _init_block_params(block)
+    _install_deterministic_topk_router(block)
+    _set_rowwise_block_counts(block, 128)
+    # Force the leased symmetric combine-gather staging buffer so this path is exercised.
+    block.ep.rowwise_symm_combine_gather = True
+    block.ep.validate()
+    block.train()
+
+    for _ in range(3):
+        x = torch.randn(1, 8, block.d_model, device="cuda", dtype=torch.float32, requires_grad=True)
+        block(x).square().mean().backward()
+
+    pool = block._ep_no_sync_symm_lease_pools.get("combine_gather_rowwise_fp8")
+    assert pool is not None, "combine-gather lease pool was never created"
+    # Every leased combine-gather slot must return to the free list after each backward;
+    # otherwise repeated steps leak pool slots and eventually fail with "no free slot".
+    assert len(pool._in_use_slots) == 0  # type: ignore[attr-defined]
+
+
+@requires_multi_gpu
+@requires_symm_mem_vdev2d
+@requires_compute_capability(min_cc=10)
+def test_v2_ep_no_sync_rowwise_fp8_combine_gather_lease_released():
+    run_distributed_test(
+        _run_ep_no_sync_rowwise_fp8_combine_gather_lease_released,
         backend="nccl",
         start_method="spawn",
     )
