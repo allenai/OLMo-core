@@ -78,6 +78,13 @@ def main():
                          "Omit (default) for independent per-head selection. 'inverse_mean' is an "
                          "anti-selection SANITY CHECK (keeps the group's LEAST-attended blocks) to "
                          "bound how much retrieval quality matters -- not a real method.")
+    ap.add_argument("--landmark-decode-gate-mode", choices=["grouped", "selection_only"], default=None,
+                    help="GROUPED-TRAINED (compressive_gqa_grouped) checkpoints only: how the cross-block "
+                         "gate is computed at decode. 'grouped' (Version A) uses the group-mean gate, "
+                         "matching training; 'selection_only' (Version B) uses the per-head gate and "
+                         "relies on --landmark-group-selection=mean to share only the top-k selection. "
+                         "Omit (default) to use the module's baked-in default ('grouped'). Ignored by "
+                         "non-grouped models.")
     args = ap.parse_args()
     os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
     # xlong opt-in: the runner truncates prompts to (max_length - max_new_tokens), so max_length
@@ -125,7 +132,8 @@ def main():
     t0 = time.time()
     gen_cfg = GenerationConfig(eos_token_id=tok.eos_token_id, pad_token_id=tok.pad_token_id,
                                max_length=args.max_length, use_cache=True,
-                               landmark_group_selection=args.landmark_group_selection)
+                               landmark_group_selection=args.landmark_group_selection,
+                               landmark_decode_gate_mode=args.landmark_decode_gate_mode)
     gm = TransformerGenerationModuleConfig(
         gen_cfg, float8_config=None, dtype=DType("bfloat16"), compile_model=False,
     ).build(checkpoint_dir=args.model_path, device=device)

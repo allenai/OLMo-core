@@ -61,7 +61,7 @@ def variant_from_run_name(run_name: str) -> str:
 
 
 def build_eval_launch_config(
-    *, run_name, task, variant, cluster, step, ckpt, results_dir, prompt_format, ngpu, max_test, max_length, batch_size, priority, ladder_version, xlong, xlong_rungs, cot_mode, landmark_group_selection=None
+    *, run_name, task, variant, cluster, step, ckpt, results_dir, prompt_format, ngpu, max_test, max_length, batch_size, priority, ladder_version, xlong, xlong_rungs, cot_mode, landmark_group_selection=None, landmark_decode_gate_mode=None, eval_tag=""
 ):
     root_dir = get_root_dir(cluster)  # e.g. /weka/oe-training-default/ai2-llm (mounts weka bucket)
     # Eval CODE now ships IN the cloned repo (src/scripts/ctc_eval); the runner runs from the repo root
@@ -76,11 +76,16 @@ def build_eval_launch_config(
         f"MAX_TEST={max_test} MAX_LENGTH={max_length} BATCH_SIZE={batch_size} NGPU={ngpu} "
         f"LADDER_XLONG={int(xlong)} XLONG_RUNGS='{xlong_rungs}' COT_MODE='{cot_mode}' "
         f"LANDMARK_GROUP_SELECTION='{landmark_group_selection or ''}' "
+        f"LANDMARK_DECODE_GATE_MODE='{landmark_decode_gate_mode or ''}' "
+        f"EVAL_TAG='{eval_tag}' "
         f"LADDER_VERSION={ladder_version} WEKA_LLM={root_dir} bash {runner}"
     )
     cmd = ["bash", "-lc", inner]
 
-    name = f"ev-{task}-{run_name}"
+    # ``eval_tag`` keeps parallel configs on the same checkpoint (e.g. the two decode-gate modes) from
+    # colliding: it both suffixes the on-weka result files/dirs (via EVAL_TAG in the runner) AND
+    # disambiguates the Beaker job name here.
+    name = f"ev-{task}-{run_name}" + (f"-{eval_tag}" if eval_tag else "")
     launch_config = build_launch_config(
         name=name,
         cmd=cmd,
@@ -146,10 +151,28 @@ def main():
                          "selection across each KV group's query heads instead of each head "
                          "retrieving independently. Omit (default) for independent per-head "
                          "selection. 'inverse_mean' is an anti-selection SANITY CHECK (keeps the "
-                         "group's LEAST-attended blocks). Pass a distinct --results-dir per sweep "
-                         "value to avoid overwriting another config's output.")
+                         "group's LEAST-attended blocks). Distinct configs are auto-separated by the "
+                         "eval tag (see --landmark-decode-gate-mode), so you do NOT need a manual "
+                         "--results-dir to avoid overwrites.")
+    ap.add_argument("--landmark-decode-gate-mode", choices=["grouped", "selection_only"], default=None,
+                    help="GROUPED-TRAINED (compressive_gqa_grouped) checkpoints only: decode-gate mode. "
+                         "'grouped' (Version A) = group-mean gate matching training; 'selection_only' "
+                         "(Version B) = per-head gate, pair with --landmark-group-selection=mean to "
+                         "share only the top-k selection. Omit for the module default ('grouped'). The "
+                         "value is folded into an eval tag that suffixes result files/dirs AND the "
+                         "Beaker job name, so two decode modes on the same checkpoint never collide.")
     ap.add_argument("--dry-run", action="store_true", help="build + print the job, do NOT submit.")
     args = ap.parse_args()
+
+    # Eval tag = a compact, self-describing suffix built from the decode-gate mode (+ group selection).
+    # It suffixes on-weka outputs (via EVAL_TAG) and the Beaker job name so parallel configs on ONE
+    # checkpoint don't overwrite each other. Empty when neither knob is set -> unchanged legacy paths.
+    _tag_parts = []
+    if args.landmark_decode_gate_mode:
+        _tag_parts.append(f"dg-{args.landmark_decode_gate_mode}")
+    if args.landmark_group_selection:
+        _tag_parts.append(f"gs-{args.landmark_group_selection}")
+    eval_tag = "_".join(_tag_parts)
 
     prepare_cli_environment()
 
@@ -171,6 +194,7 @@ def main():
             batch_size=args.batch_size, priority=args.priority, ladder_version=args.ladder_version,
             xlong=args.xlong, xlong_rungs=args.xlong_rungs, cot_mode=args.cot_mode,
             landmark_group_selection=args.landmark_group_selection,
+            landmark_decode_gate_mode=args.landmark_decode_gate_mode, eval_tag=eval_tag,
         )
         print(f"\n--- [{task}] {lc.name} ---")
         print(f"    cmd: {lc.cmd[-1]}")
