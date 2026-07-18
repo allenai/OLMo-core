@@ -10,8 +10,9 @@ elementwise full-precision attention gate to the NoPE model.
 
 The NoPE configs completed checkpoint-free capacity and scaling smokes on
 Holmes B300s, and the 12-cell production wave was submitted on 2026-07-18.
-The equivalent larger gated-attention wave is fully rendered and audited but
-has not been submitted.
+The equivalent larger gated-attention wave was submitted on 2026-07-18 after
+the completed 275M sweep showed that the wide-integration LR transfer remained
+well behaved and gating improved the ungated NoPE control at every Cx.
 
 ## Scaling rule
 
@@ -215,8 +216,7 @@ every Beaker experiment ID.
 
 - NoPE manifest:
   [`launchers/pretraining/manifests/geometry_matched_scale_nope_full.yaml`](launchers/pretraining/manifests/geometry_matched_scale_nope_full.yaml)
-- Equivalent gated-attention manifest, prepared but not authorized for
-  submission:
+- Gated-attention manifest:
   [`launchers/pretraining/manifests/geometry_matched_scale_nope_gated_full.yaml`](launchers/pretraining/manifests/geometry_matched_scale_nope_gated_full.yaml)
 
 The production jobs write rolling ephemeral checkpoints every 500 steps with
@@ -250,3 +250,25 @@ strict final-250M CE `2.526546` and `2.419441`; the remaining ten jobs are
 running. Their W&B IDs are registered in
 [`plot_pretraining_wave.py`](plot_pretraining_wave.py), so later finished-only
 refreshes require no registry change.
+
+The gated-attention wave uses the identical GPU, EP, microbatch,
+checkpointing, and evaluator-free layout, with the same transferred
+wide-integration LR in every cell. It is urgent unallocated work on Holmes,
+pinned to commit `1a85227bdb8baeab2ad05555935aae78938bb0cd`. At submission,
+the four 480M cells were scheduled and the remaining eight cells were pending
+capacity.
+
+| Size | Cx | LR | GPUs | Beaker work |
+|---|---:|---:|---:|---|
+| 480M | 1 | `1.2e-3` | 8 | [01KXTT8KHQZ92TJAXBRG79GZT8](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXTT8KHQZ92TJAXBRG79GZT8) |
+| 480M | 2 | `9e-4` | 8 | [01KXTT8PKBA0B8VVNP55E3AYT5](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXTT8PKBA0B8VVNP55E3AYT5) |
+| 480M | 4 | `8e-4` | 8 | [01KXTT8T7MC08YGQ6V5WPDKCWX](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXTT8T7MC08YGQ6V5WPDKCWX) |
+| 480M | 8 | `8e-4` | 8 | [01KXTT8X9VKP82260N493DH4EK](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXTT8X9VKP82260N493DH4EK) |
+| 810M | 1 | `6e-4` | 16 | [01KXTT90CAE46TJV2B7MSKYB67](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXTT90CAE46TJV2B7MSKYB67) |
+| 810M | 2 | `5.6e-4` | 16 | [01KXTT942J0XN2Y1NASX6ERDSA](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXTT942J0XN2Y1NASX6ERDSA) |
+| 810M | 4 | `4e-4` | 16 | [01KXTT97A7NWEJAGGCZABF4FJX](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXTT97A7NWEJAGGCZABF4FJX) |
+| 810M | 8 | `4e-4` | 16 | [01KXTT9B23KWGGZZ9JY9YWEV8X](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXTT9B23KWGGZZ9JY9YWEV8X) |
+| 1.2B | 1 | `4e-4` | 16 | [01KXTT9EDB2G0MGDSC2GVPNFTT](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXTT9EDB2G0MGDSC2GVPNFTT) |
+| 1.2B | 2 | `6e-4` | 16 | [01KXTT9JCD6Z82ZJJ2267G6WFC](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXTT9JCD6Z82ZJJ2267G6WFC) |
+| 1.2B | 4 | `3e-4` | 32 | [01KXTT9P94G80ZX6VSQRWDQ1BA](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXTT9P94G80ZX6VSQRWDQ1BA) |
+| 1.2B | 8 | `4e-4` | 32 | [01KXTT9T80V7CTFE09WDS2D428](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXTT9T80V7CTFE09WDS2D428) |

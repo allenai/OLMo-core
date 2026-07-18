@@ -22,6 +22,7 @@ below retain the full launch and retry history.
 | pretraining | aligned geometry + NoPE 275M sweep | finished | 16/16; observed best LR is `8e-4`, `1.6e-3`, `8e-4`, `8e-4` at Cx1/2/4/8 | [results](results/pretraining/geometry_gdn_ev2_nope/results.md) |
 | pretraining | aligned geometry + NoPE + gated attention 275M sweep | finished | 16/16; observed best LR is `8e-4`, `1.6e-3`, `8e-4`, `8e-4` at Cx1/2/4/8 | [results](results/pretraining/geometry_gdn_ev2_nope_gated/results.md) |
 | pretraining | larger aligned geometry + NoPE | running | 480M Cx1/Cx2 finished; remaining ten cells running | [results](results/pretraining/geometry_gdn_ev2_nope/results.md) |
+| pretraining | larger aligned geometry + NoPE + gated attention | submitted | 12 cells; four 480M scheduled and eight larger cells pending at launch | [launch record](launchers/pretraining/generated/geometry_matched_scale_full_submissions.json) |
 | midtraining | first hybrid 275M Cx8 | finished | 100B; final checkpoint `step95368`; post-training validation pending | [1keo2hz6](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/1keo2hz6) |
 | midtraining | first hybrid 480M Cx8 | running | 35.43B / 100B tokens (35.4%) | [mnp9rv5l](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/mnp9rv5l) |
 | validation | first hybrid + geometry backfills | finished | 33/33 targets; 498 exported metrics each | [results](results/validation/hybrid_full.md) |
@@ -527,8 +528,12 @@ by `0.016735` and `0.004447` CE but trail the first hybrid by `0.015672` and
 labels the other cells pending.
 
 The equivalent larger NoPE-plus-gated-attention launcher and complete 12-cell
-manifest have also been structurally and count validated. They have not been
-submitted; the 275M gated sweep remains the decision gate.
+manifest were structurally and count validated, then submitted on 2026-07-18
+after the completed 275M gated sweep improved on ungated NoPE at all four Cx.
+The wave uses the identical 192-GPU peak layout and the same transferred
+wide-integration LRs as the ungated wave. Its 12 Beaker work IDs and exact
+settings are recorded in [`GEOMETRY_MATCHED_SCALE.md`](GEOMETRY_MATCHED_SCALE.md)
+and the machine-readable submission record.
 
 ## Post-training validation backfills
 

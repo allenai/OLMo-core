@@ -124,6 +124,12 @@ ungated NoPE control at every data multiple. It nearly closes the NoPE-to-RoPE
 gap, especially at Cx8, but does not beat the otherwise-identical RoPE
 geometry model.
 
+This result promoted the gated architecture to the full 480M/810M/1.2B
+production wave using the same transferred wide-integration LRs and the same
+192-GPU peak layout as the larger ungated NoPE wave. The exact launch settings
+and Beaker work links are in
+[`GEOMETRY_MATCHED_SCALE.md`](GEOMETRY_MATCHED_SCALE.md).
+
 - U-plot:
   [`plots/pretraining/geometry_gdn_ev2_nope_gated/275m_uplot.png`](plots/pretraining/geometry_gdn_ev2_nope_gated/275m_uplot.png)
 - Observed-best summary:
