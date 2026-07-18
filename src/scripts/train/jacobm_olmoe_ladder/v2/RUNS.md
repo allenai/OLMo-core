@@ -500,13 +500,18 @@ segfaulted after optimizer initialization; its identical r3 retry above
 passed, classifying that attempt as transient infrastructure rather than an
 OOM or model failure.
 
-The future full-run layout is selected but not launched: all four 480M Cx
-points use eight GPUs, all four 810M points use 16, 1.2B Cx1/Cx2 use 16, and
-1.2B Cx4/Cx8 use 32. That is 12 jobs and 192 peak GPUs. Exact rank
-microbatches, ETAs, and estimated GPU-hours are in
-`GEOMETRY_MATCHED_SCALE.md`. The production manifest remains blocked only on
-the four transferred LRs from the running 275M NoPE sweep and the final
-allocated-versus-unallocated scheduling decision.
+The selected production layout uses eight GPUs for all four 480M points, 16
+for all four 810M points, 16 for 1.2B Cx1/Cx2, and 32 for 1.2B Cx4/Cx8. The
+12 urgent unallocated runs were submitted on 2026-07-18, requesting 192 peak
+GPUs and using the transferred wide-integration LRs. Exact rank microbatches,
+LRs, Beaker IDs, ETAs, and estimated GPU-hours are in
+[`GEOMETRY_MATCHED_SCALE.md`](GEOMETRY_MATCHED_SCALE.md). All are pinned to
+commit `fcf1c1b8828a3bddd0bad477a5c4055e63b0275f`, retain rolling ephemeral
+checkpoints every 500 steps, and disable in-loop/on-finish evaluators.
+
+The equivalent larger NoPE-plus-gated-attention launcher and complete 12-cell
+manifest have also been structurally and count validated. They have not been
+submitted; the 275M gated sweep remains the decision gate.
 
 ## Post-training validation backfills
 

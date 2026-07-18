@@ -8,9 +8,10 @@ from the scale trainer with `geometry_matched_gdn_ev2` for RoPE or
 `geometry_matched_gdn_ev2_nope_gated` profile adds only the dense ladder's
 elementwise full-precision attention gate to the NoPE model.
 
-No full 480M/810M/1.2B training job has been launched from these
-configurations. The NoPE configs have completed checkpoint-free capacity and
-scaling smokes on Holmes B300s; the measurements and ETA handoff are below.
+The NoPE configs completed checkpoint-free capacity and scaling smokes on
+Holmes B300s, and the 12-cell production wave was submitted on 2026-07-18.
+The equivalent larger gated-attention wave is fully rendered and audited but
+has not been submitted.
 
 ## Scaling rule
 
@@ -223,3 +224,21 @@ The production jobs write rolling ephemeral checkpoints every 500 steps with
 in-loop/on-finish evaluators. Register Beaker and W&B IDs before plotting. The
 geometry-family plots compare against both wide integration and the first
 `expand_v=1` hybrid.
+
+The NoPE wave is urgent unallocated work on Holmes, pinned to commit
+`fcf1c1b8828a3bddd0bad477a5c4055e63b0275f`:
+
+| Size | Cx | LR | GPUs | Beaker work |
+|---|---:|---:|---:|---|
+| 480M | 1 | `1.2e-3` | 8 | [01KXT0BJGPBS2T4AR7HDNDWZ9P](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXT0BJGPBS2T4AR7HDNDWZ9P) |
+| 480M | 2 | `9e-4` | 8 | [01KXT0BNMA5XJ30YMY13N874H9](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXT0BNMA5XJ30YMY13N874H9) |
+| 480M | 4 | `8e-4` | 8 | [01KXT0BRP1DMHMDQ6XQFPZSCQ9](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXT0BRP1DMHMDQ6XQFPZSCQ9) |
+| 480M | 8 | `8e-4` | 8 | [01KXT0BVRMSPAJDKVMVMP68FXR](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXT0BVRMSPAJDKVMVMP68FXR) |
+| 810M | 1 | `6e-4` | 16 | [01KXT0BYYSB24R01PMA7DHGH8A](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXT0BYYSB24R01PMA7DHGH8A) |
+| 810M | 2 | `5.6e-4` | 16 | [01KXT0C24FCYYH8C3RJ91K7X16](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXT0C24FCYYH8C3RJ91K7X16) |
+| 810M | 4 | `4e-4` | 16 | [01KXT0C5HCYCCKY44GN2RCC5MC](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXT0C5HCYCCKY44GN2RCC5MC) |
+| 810M | 8 | `4e-4` | 16 | [01KXT0C8TNW8DBCMRNVA1SKVV4](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXT0C8TNW8DBCMRNVA1SKVV4) |
+| 1.2B | 1 | `4e-4` | 16 | [01KXT0CC2W6ABQXB8F8WWNBXXE](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXT0CC2W6ABQXB8F8WWNBXXE) |
+| 1.2B | 2 | `6e-4` | 16 | [01KXT0CF9V3ZP1NDA72DAJKG4V](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXT0CF9V3ZP1NDA72DAJKG4V) |
+| 1.2B | 4 | `3e-4` | 32 | [01KXT0CKPC9NV36GKDXZH5SM17](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXT0CKPC9NV36GKDXZH5SM17) |
+| 1.2B | 8 | `4e-4` | 32 | [01KXT0CQBVT4T414SAZQYT1RAS](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXT0CQBVT4T414SAZQYT1RAS) |
