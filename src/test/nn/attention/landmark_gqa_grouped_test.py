@@ -100,7 +100,12 @@ def test_grouped_gate_matches_brute_reference():
 
     assert torch.isfinite(probs).all()
     torch.testing.assert_close(probs.sum(-1), probs.new_ones(B, H, T), atol=1e-5, rtol=0)
-    torch.testing.assert_close(probs, ref.to(probs.dtype), atol=1e-6, rtol=1e-5)
+    # ``compressive_landmark_grouped_softmax`` runs its softmax in float32 internally
+    # (``LandmarkGroupedSoftmaxFunction`` hardcodes ``.to(torch.float32)``), so ``probs`` carry
+    # float32 precision even from a float64 input, while ``ref`` stays full float64. Tolerance is
+    # therefore float32-appropriate (~1e-5 abs seen on GPU), not float64: a real grouping-logic error
+    # would misplace whole probability mass (O(0.1+)), far above this.
+    torch.testing.assert_close(probs, ref.to(probs.dtype), atol=2e-4, rtol=1e-3)
 
 
 def test_grouped_gate_shares_block_score_ratio_within_group():
