@@ -60,3 +60,20 @@ def test_experimental_backend_entry_points_exist():
     assert hasattr(ep_no_sync_rowwise_wave, "combined_forward_ep_no_sync_rowwise_wave")
     # DeepEP availability probe must be import-safe even without the optional package installed.
     assert ep_deepep_v2.is_deepep_available("/nonexistent-deepep-path") is False
+
+
+def test_ep_config_deprecated_rowwise_nblocks_populates_split_fields():
+    # Configs from before the get/put/weighted_put split still deserialize and migrate.
+    config = ExpertParallelConfig.from_dict({"rowwise_nblocks": 128})
+    with pytest.warns(DeprecationWarning, match="rowwise_nblocks"):
+        config.validate()
+    assert config.rowwise_get_nblocks == 128
+    assert config.rowwise_put_nblocks == 128
+    assert config.rowwise_weighted_put_nblocks == 128
+    assert config.rowwise_nblocks is None
+
+
+def test_ep_config_deprecated_rowwise_nblocks_rejects_conflict():
+    config = ExpertParallelConfig(rowwise_nblocks=128, rowwise_put_nblocks=64)
+    with pytest.raises(OLMoConfigurationError, match="rowwise_nblocks"):
+        config.validate()

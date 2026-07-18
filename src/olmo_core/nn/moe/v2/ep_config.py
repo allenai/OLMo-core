@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -93,6 +94,9 @@ class ExpertParallelConfig(Config):
     rowwise_get_nblocks: int = 256
     rowwise_put_nblocks: int = 256
     rowwise_weighted_put_nblocks: int = 128
+    # Deprecated: rowwise_nblocks was split into the three per-collective settings above. When set,
+    # its value is applied to any of those still left at their default (see validate()).
+    rowwise_nblocks: Optional[int] = None
     share_dispatch_out: bool = False
     share_combine_out: bool = False
     restore_unpermute_backend: str = "te_fused"
@@ -108,12 +112,38 @@ class ExpertParallelConfig(Config):
 
     deepep: DeepEPConfig = field(default_factory=DeepEPConfig)
 
+    def _migrate_rowwise_nblocks(self) -> None:
+        if self.rowwise_nblocks is None:
+            return
+        warnings.warn(
+            "ExpertParallelConfig.rowwise_nblocks is deprecated; use rowwise_get_nblocks / "
+            "rowwise_put_nblocks / rowwise_weighted_put_nblocks instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        for setting_name, default in (
+            ("rowwise_get_nblocks", 256),
+            ("rowwise_put_nblocks", 256),
+            ("rowwise_weighted_put_nblocks", 128),
+        ):
+            current = getattr(self, setting_name)
+            if current == default:
+                setattr(self, setting_name, self.rowwise_nblocks)
+            elif current != self.rowwise_nblocks:
+                raise OLMoConfigurationError(
+                    f"EP rowwise_nblocks={self.rowwise_nblocks} conflicts with explicit "
+                    f"{setting_name}={current}; set only the per-collective fields."
+                )
+        self.rowwise_nblocks = None
+
     def validate(self) -> None:
         self.path = ExpertParallelPath(self.path)
         self.schedule = ExpertParallelSchedule(self.schedule)
         self.restore_unpermute_backend = self.restore_unpermute_backend.lower()
         self.rowwise_wave_mode = self.rowwise_wave_mode.lower()
         self.deepep.validate()
+
+        self._migrate_rowwise_nblocks()
 
         # The tbo schedule is declared but not yet wired into block/train dispatch, so a config
         # selecting it would silently run a different path. Fail loudly until it lands.
