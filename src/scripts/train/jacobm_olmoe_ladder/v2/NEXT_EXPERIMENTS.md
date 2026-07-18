@@ -12,9 +12,11 @@ wide v1 integration model.
 | 3 | NoPE | On the aligned-geometry recipe, remove RoPE only from global-attention layers and train from initialization. | 275M four-LR Cx1/2/4/8 sweep is running unallocated. All larger smokes passed and the 192-GPU production layout is selected; wait only for transferred LRs before launch. |
 | 4 | Full-attention gating, then exact head geometry | First add only the dense ladder's elementwise full-precision gate to the 275M NoPE model while retaining 8-Q/4-KV GQA. If useful, separately test the dense 8-Q/8-KV attention shape. | Isolated gated model and launchers are implemented but not launched; capacity smoke and LR-sweep launch await approval. |
 | 5 | Initialization | On the promoted control, change only initialization standard deviation from 0.01 to 0.02. | Optional/planned. |
-| 6 | LatentMoE | Add the coworker's LatentMoE implementation to the promoted hybrid recipe and test it as an isolated MoE intervention before composition. | Deferred until the coworker's implementation is available and verified in this branch. |
-| 7 | Combined 275M pilot | Combine only interventions whose isolated evidence is neutral-to-positive. | Blocked on isolated results. |
-| 8 | Promote combined recipe | Run the full pretraining ladder, then midtraining, then 8K-to-65K long-context adaptation. | Blocked on the combined pilot. |
+| 6 | Remove QK norm | On the promoted control, remove per-head RMSNorm from Q and K in global-attention layers only. Keep GDN's internal output norm and every other norm unchanged. | Deferred isolated architecture ablation. This intentionally departs from the dense ladder, which uses QK norm. |
+| 7 | FP8 training | Hold the promoted architecture fixed and compare an explicitly selected OLMo-core FP8 training mode against the BF16 control, recording loss, stability, memory, tokens/s, and TFLOPs/GPU. | Deferred precision/systems ablation; choose and smoke the exact FP8 mode after the architecture is stable. |
+| 8 | LatentMoE | Add the coworker's LatentMoE implementation to the promoted hybrid recipe and test it as an isolated MoE intervention before composition. | Deferred until the coworker's implementation is available and verified in this branch. |
+| 9 | Combined 275M pilot | Combine only interventions whose isolated evidence is neutral-to-positive. | Blocked on isolated results. |
+| 10 | Promote combined recipe | Run the full pretraining ladder, then midtraining, then 8K-to-65K long-context adaptation. | Blocked on the combined pilot. |
 
 ## Dense-hybrid alignment target
 
