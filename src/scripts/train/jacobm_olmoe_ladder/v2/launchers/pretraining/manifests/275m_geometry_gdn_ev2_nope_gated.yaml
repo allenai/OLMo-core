@@ -14,8 +14,8 @@ beaker:
   cluster: ai2/holmes
   priority: urgent
   shared_memory: 128 GiB
-  # Allocated by default. Make an explicit scheduling decision before launch.
-  min_runtime: 10m
+  # Explicitly authorized as unallocated work on 2026-07-18.
+  min_runtime: 0m
   auto_resume: true
   timeout: 168h
   result_path: /results

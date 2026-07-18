@@ -6,7 +6,9 @@ The 480M, 810M, and 1.2B models adopt the corresponding dense ladder's
 attention pattern. As in the first 275M ``geometry_only`` experiment, they
 retain the MoE recipe, dense-first FFN, ungated global attention,
 initialization, and the size's existing GQA ratio. The optional NoPE profile
-changes only the full-attention layers' ``rope`` field.
+changes only the full-attention layers' ``rope`` field. The optional gated
+NoPE profile then adds only the dense ladder's elementwise, full-precision
+attention gate.
 """
 
 from __future__ import annotations
@@ -18,7 +20,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, cast
 
-from olmo_core.nn.attention import AttentionConfig
+from olmo_core.nn.attention import AttentionConfig, GateConfig, GateGranularity
 from olmo_core.nn.attention.recurrent import GatedDeltaNetConfig
 from olmo_core.nn.ddp import OLMoDDPTransformerBlockConfig
 from olmo_core.nn.transformer import OLMoDDPModelConfig
@@ -165,6 +167,7 @@ def _full_attention_block(
     geometry: Geometry,
     *,
     rope: bool,
+    attention_gate: bool,
 ) -> OLMoDDPTransformerBlockConfig:
     full = deepcopy(block)
     attention = deepcopy(attention_template)
@@ -173,7 +176,14 @@ def _full_attention_block(
     attention.head_dim = HEAD_DIM
     attention.d_attn = None
     attention.sliding_window = None
-    attention.gate = None
+    attention.gate = (
+        GateConfig(
+            granularity=GateGranularity.elementwise,
+            full_precision=True,
+        )
+        if attention_gate
+        else None
+    )
     if not rope:
         attention.rope = None
     full.sequence_mixer = attention
@@ -184,13 +194,20 @@ def _build_geometry_matched_scale_model_config(
     model_size: str,
     *,
     rope: bool,
+    attention_gate: bool,
 ) -> OLMoDDPModelConfig:
     """Build one geometry-matched model before cross-profile parity checks."""
 
     geometry = _geometry(model_size)
     if model_size == "275m":
+        if rope and attention_gate:
+            raise ValueError("the isolated attention-gating profile is defined on NoPE")
         return build_geometry_matched_275m_model_config(
-            "geometry_only" if rope else "geometry_nope"
+            (
+                "geometry_only"
+                if rope
+                else ("geometry_nope_gated" if attention_gate else "geometry_nope")
+            )
         )
 
     parent = build_hybrid_model_config(model_size)
@@ -236,6 +253,7 @@ def _build_geometry_matched_scale_model_config(
             attention_template,
             geometry,
             rope=rope,
+            attention_gate=attention_gate,
         )
     candidate.block_overrides = overrides
     candidate.validate()
@@ -279,14 +297,32 @@ def _build_geometry_matched_scale_model_config(
             or attention.n_kv_heads != geometry.n_kv_heads
             or attention.head_dim != HEAD_DIM
             or (attention.rope is None) != (not rope)
-            or attention.gate is not None
         ):
             raise ValueError(f"unexpected full-attention shape at {model_size} layer {layer_idx}")
+        if attention_gate:
+            if (
+                attention.gate is None
+                or attention.gate.granularity != GateGranularity.elementwise
+                or not attention.gate.full_precision
+            ):
+                raise ValueError(
+                    f"unexpected attention gate at {model_size} layer {layer_idx}"
+                )
+        elif attention.gate is not None:
+            raise ValueError(f"{model_size} layer {layer_idx} must remain ungated")
 
+    gate_params = (
+        geometry.d_model
+        * geometry.n_heads
+        * HEAD_DIM
+        * len(geometry.full_attention_layers)
+        if attention_gate
+        else 0
+    )
     expected_counts = (
-        geometry.expected_active_params,
-        geometry.expected_active_non_embedding_params,
-        geometry.expected_total_params,
+        geometry.expected_active_params + gate_params,
+        geometry.expected_active_non_embedding_params + gate_params,
+        geometry.expected_total_params + gate_params,
     )
     actual_counts = (
         candidate.num_active_params,
@@ -345,20 +381,66 @@ def build_geometry_matched_scale_model_config(
     model_size: str,
     *,
     rope: bool = True,
+    attention_gate: bool = False,
 ) -> OLMoDDPModelConfig:
-    """Build a strictly audited RoPE or NoPE geometry-matched model."""
+    """Build a strictly audited geometry-matched model profile."""
 
-    candidate = _build_geometry_matched_scale_model_config(model_size, rope=rope)
-    if not rope:
-        rope_model = _build_geometry_matched_scale_model_config(model_size, rope=True)
+    if rope and attention_gate:
+        raise ValueError("the isolated attention-gating profile is defined on NoPE")
+    candidate = _build_geometry_matched_scale_model_config(
+        model_size,
+        rope=rope,
+        attention_gate=attention_gate,
+    )
+    if not rope and not attention_gate:
+        rope_model = _build_geometry_matched_scale_model_config(
+            model_size,
+            rope=True,
+            attention_gate=False,
+        )
         _assert_nope_only_changes_rope(model_size, rope_model, candidate)
+    elif attention_gate:
+        ungated = _build_geometry_matched_scale_model_config(
+            model_size,
+            rope=False,
+            attention_gate=False,
+        )
+        normalized = deepcopy(candidate)
+        assert normalized.block_overrides is not None
+        for layer_idx in _geometry(model_size).full_attention_layers:
+            attention = cast(
+                AttentionConfig,
+                normalized.block_overrides[layer_idx].sequence_mixer,
+            )
+            if (
+                attention.gate is None
+                or attention.gate.granularity != GateGranularity.elementwise
+                or not attention.gate.full_precision
+            ):
+                raise ValueError(
+                    f"{model_size} layer {layer_idx} does not have the expected gate"
+                )
+            attention.gate = None
+        if normalized.as_dict() != ungated.as_dict():
+            raise ValueError(
+                f"{model_size} gated NoPE changed fields other than attention.gate"
+            )
     return candidate
 
 
-def parameter_summary(model_size: str, *, rope: bool = True) -> dict[str, Any]:
+def parameter_summary(
+    model_size: str,
+    *,
+    rope: bool = True,
+    attention_gate: bool = False,
+) -> dict[str, Any]:
     geometry = _geometry(model_size)
     parent = build_hybrid_model_config(model_size)
-    candidate = build_geometry_matched_scale_model_config(model_size, rope=rope)
+    candidate = build_geometry_matched_scale_model_config(
+        model_size,
+        rope=rope,
+        attention_gate=attention_gate,
+    )
     return {
         "model_size": model_size,
         "dense_geometry_rung": geometry.dense_rung,
@@ -377,7 +459,7 @@ def parameter_summary(model_size: str, *, rope: bool = True) -> dict[str, Any]:
         "shared_experts": 1,
         "gdn_expand_v": GDN_EXPAND_V,
         "rope": rope,
-        "attention_gate": False,
+        "attention_gate": attention_gate,
         "init_std": candidate.init_std,
         "active_params": candidate.num_active_params,
         "active_non_embedding_params": candidate.num_active_non_embedding_params,
@@ -407,11 +489,25 @@ def main() -> None:
         action="store_true",
         help="Build the strictly matched NoPE profile instead of the RoPE profile",
     )
+    parser.add_argument(
+        "--attention-gate",
+        action="store_true",
+        help="Add the isolated elementwise attention gate to the NoPE profile",
+    )
     args = parser.parse_args()
+    if args.attention_gate and not args.nope:
+        parser.error("--attention-gate requires --nope")
     model_sizes = args.model_size or list(MODEL_SIZES)
     print(
         json.dumps(
-            [parameter_summary(size, rope=not args.nope) for size in model_sizes],
+            [
+                parameter_summary(
+                    size,
+                    rope=not args.nope,
+                    attention_gate=args.attention_gate,
+                )
+                for size in model_sizes
+            ],
             indent=2,
         )
     )
