@@ -2888,8 +2888,10 @@ class OLMoDDPTrainModule(TrainModule):
 
     @staticmethod
     def _ep_no_sync_symm_summary_enabled() -> bool:
-        raw = os.getenv("OLMO_EP_NO_SYNC_SYMM_BUFFER_SUMMARY", "1")
-        return raw.strip().lower() not in {"", "0", "false", "no", "off"}
+        # Opt-in: this walks every symmetric tensor and queries CUDA allocator stats, so keep it off
+        # for normal runs and enable it explicitly in IBGDA/debug recipes.
+        raw = os.getenv("OLMO_EP_NO_SYNC_SYMM_BUFFER_SUMMARY", "0")
+        return raw.strip().lower() in {"1", "true", "yes", "on"}
 
     @staticmethod
     def _ep_no_sync_symm_prewarm_summary_enabled() -> bool:
