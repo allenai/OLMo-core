@@ -69,9 +69,7 @@ base.GLOBAL_BATCH_TOKENS_IN_M = base.GLOBAL_BATCH_SIZE // 1024 // 1024
 base.SCHED_WARMUP_TOKENS = int((10e9 // base.GLOBAL_BATCH_SIZE) * base.GLOBAL_BATCH_SIZE)
 base.SCHED_FAST_DECAY_TOKENS = 0
 base.SCHED_LONG_DECAY_TOKENS = int((19990e9 // base.GLOBAL_BATCH_SIZE) * base.GLOBAL_BATCH_SIZE)
-base.LR = 2e-4 * (
-    base.GLOBAL_BATCH_SIZE / (base.LR_REF_BSZ_IN_M * 1024 * 1024)
-) ** base.LR_ALPHA
+base.LR = 2e-4 * (base.GLOBAL_BATCH_SIZE / (base.LR_REF_BSZ_IN_M * 1024 * 1024)) ** base.LR_ALPHA
 base.EXPERT_LR = base.LR
 base.MONKEY_PATCH_DECAY_DURATION_TOKENS = int(
     (200e9 // base.GLOBAL_BATCH_SIZE) * base.GLOBAL_BATCH_SIZE
@@ -97,6 +95,10 @@ def build_smoke_trainer_config(common):
 def finalize_smoke_config(config: ExperimentConfig) -> None:
     base.finalize_config(config)
     if config.launch is not None:
+        config.launch.env_secrets = [
+            secret for secret in config.launch.env_secrets if secret.required
+        ]
+        config.launch.google_credentials_secret = None
         config.launch.cmd = [NSYS_WRAPPER, *config.launch.cmd]
         config.launch.follow = False
         config.launch.step_timeout = None
