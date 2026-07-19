@@ -21,7 +21,7 @@ below retain the full launch and retry history.
 | pretraining | first hybrid 1.2B Cx8 | running | 80.18B / 181.52B tokens (44.2%); ~541 TFLOPs/GPU | [7eemhu7g](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/7eemhu7g) |
 | pretraining | aligned geometry + NoPE 275M sweep | finished | 16/16; observed best LR is `8e-4`, `1.6e-3`, `8e-4`, `8e-4` at Cx1/2/4/8 | [results](results/pretraining/geometry_gdn_ev2_nope/results.md) |
 | pretraining | aligned geometry + NoPE + gated attention 275M sweep | finished | 16/16; observed best LR is `8e-4`, `1.6e-3`, `8e-4`, `8e-4` at Cx1/2/4/8 | [results](results/pretraining/geometry_gdn_ev2_nope_gated/results.md) |
-| pretraining | larger aligned geometry + NoPE | running | 5/12 finished; 5 running; 1.2B Cx1/Cx8 stopped on non-finite grad norm and are pending checkpoint resume | [results](results/pretraining/geometry_gdn_ev2_nope/results.md) |
+| pretraining | larger aligned geometry + NoPE | running | 5/12 finished; 5 original workers running; 1.2B Cx1/Cx8 checkpoint resumes re-queued | [launch record](launchers/pretraining/generated/geometry_matched_scale_full_submissions.json) |
 | pretraining | larger aligned geometry + NoPE + gated attention | running | 4/12 finished; 3 running; 810M Cx4 transiently segfaulted; all four 1.2B cells rejected by an overly strict count guard pending retry | [results](results/pretraining/geometry_gdn_ev2_nope_gated/results.md) |
 | midtraining | first hybrid 275M Cx8 | finished | 100B; final checkpoint `step95368`; post-training validation pending | [1keo2hz6](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/1keo2hz6) |
 | midtraining | first hybrid 480M Cx8 | running | 68.16B / 100B tokens (68.2%); ~572 TFLOPs/GPU | [mnp9rv5l](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/mnp9rv5l) |
@@ -526,7 +526,9 @@ checkpoints every 500 steps, and disable in-loop/on-finish evaluators.
 Status at 2026-07-19 02:40 UTC: 480M Cx1/Cx2/Cx4 and 810M Cx1/Cx2 are
 finished. The 480M Cx8, 810M Cx4/Cx8, and 1.2B Cx2/Cx4 cells are running.
 The 1.2B Cx1 and Cx8 workers stopped on a non-finite total grad norm after
-durable rolling checkpoints and are queued for explicit checkpoint resumes.
+durable rolling checkpoints. Their explicit checkpoint resumes were submitted
+as [Cx1](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXW45Z12PGXNQ9466KRY561R)
+and [Cx8](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXW463APF8FT6RV8T8XZ2D6Q).
 The all-size fixed-LR plot includes the five finished cells and labels the
 remaining cells pending.
 

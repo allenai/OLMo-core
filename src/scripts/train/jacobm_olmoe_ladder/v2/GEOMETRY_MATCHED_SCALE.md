@@ -248,7 +248,9 @@ record, including every task ID, is
 Status at 2026-07-19 02:40 UTC: 480M Cx1/Cx2/Cx4 and 810M Cx1/Cx2 are
 finished. The 480M Cx8, 810M Cx4/Cx8, and 1.2B Cx2/Cx4 cells are running.
 The 1.2B Cx1 and Cx8 workers stopped on `Non-finite total grad norm` after
-durable rolling checkpoints and are pending explicit checkpoint resumes.
+durable rolling checkpoints. Their explicit resumes were submitted from the
+same checkpoint directories as [Cx1 work 01KXW45Z12PGXNQ9466KRY561R](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXW45Z12PGXNQ9466KRY561R)
+and [Cx8 work 01KXW463APF8FT6RV8T8XZ2D6Q](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXW463APF8FT6RV8T8XZ2D6Q).
 Their W&B IDs are registered in [`plot_pretraining_wave.py`](plot_pretraining_wave.py),
 so later finished-only refreshes require no registry change.
 
