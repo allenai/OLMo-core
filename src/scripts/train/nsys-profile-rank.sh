@@ -48,7 +48,7 @@ if (( global_rank % rank_stride == 0 )); then
     exec nsys profile \
         --capture-range=cudaProfilerApi \
         --capture-range-end=stop \
-        --trace=cuda,nvtx,osrt,nccl \
+        --trace=cuda,nvtx,osrt \
         --sample=process-tree \
         --backtrace=fp \
         --force-overwrite=true \
