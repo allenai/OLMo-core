@@ -44,6 +44,7 @@ PROFILE_END_STEP = 135
 SMOKE_STEPS = 160
 NSYS_WRAPPER = "src/scripts/train/nsys-profile-rank.sh"
 BEAKER_IMAGE = "akshitab/olmo-core-tch2110cu130-2026-07-03"
+BEAKER_WORKSPACE = "ai2/OLMo-3-moe-experiments"
 
 
 def _load_base_script() -> ModuleType:
@@ -113,6 +114,7 @@ _config_builder = partial(
     trainer_config_builder=build_smoke_trainer_config,
     num_nodes=DEFAULT_NUM_NODES,
     beaker_image=BEAKER_IMAGE,
+    beaker_workspace=BEAKER_WORKSPACE,
     flight_recorder=True,
     include_instance_filter=True,
     include_default_evals=False,
