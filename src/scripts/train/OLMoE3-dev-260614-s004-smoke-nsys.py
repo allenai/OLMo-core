@@ -15,8 +15,8 @@ Launch (choose the priority explicitly)::
         launch OLMoE3-dev-260614-s004-smoke-nsys ai2/holmes \
         --launch.priority=normal
 
-The launch is asynchronous. Nsight reports are written to the Beaker results
-dataset under ``/results/nsight`` for global ranks 0, 8, 16, and 24.
+The launch is asynchronous. Nsight reports and NCCL flight-recorder dumps are
+written to Weka under ``/weka/oe-training-default/ai2-llm/profiling/robertb``.
 """
 
 from __future__ import annotations
@@ -33,8 +33,9 @@ from types import ModuleType
 os.environ["OLMO_USE_NV_PROFILE"] = "1"
 
 from olmo_core.internal.experiment import CliContext, ExperimentConfig, build_config, main
+from olmo_core.launch.beaker import BeakerEnvVar
 from olmo_core.train import Duration
-from olmo_core.train.callbacks import NvidiaProfilerCallback
+from olmo_core.train.callbacks import NvidiaProfilerCallback, WandBCallback
 
 
 BASE_SCRIPT = Path(__file__).with_name("OLMoE3-dev-260614-s004.py")
@@ -45,6 +46,9 @@ SMOKE_STEPS = 160
 NSYS_WRAPPER = "src/scripts/train/nsys-profile-rank.sh"
 BEAKER_IMAGE = "akshitab/olmo-core-tch2110cu130-2026-07-03"
 BEAKER_WORKSPACE = "ai2/OLMo-3-moe-experiments"
+WANDB_ENTITY = "ai2-llm"
+WANDB_PROJECT = "robertb-moe-tests"
+WEKA_PROFILE_BASE = "/weka/oe-training-default/ai2-llm/profiling/robertb"
 
 
 def _load_base_script() -> ModuleType:
@@ -82,6 +86,12 @@ def build_smoke_trainer_config(common):
     config.hard_stop = Duration.steps(SMOKE_STEPS)
     config.no_checkpoints = True
 
+    wandb_callback = config.callbacks["wandb"]
+    if not isinstance(wandb_callback, WandBCallback):
+        raise TypeError("Expected the smoke trainer to have a W&B callback")
+    wandb_callback.entity = WANDB_ENTITY
+    wandb_callback.project = WANDB_PROJECT
+
     num_nodes = int(os.environ.get("NUM_NODES", DEFAULT_NUM_NODES))
     config.callbacks["profiler"] = NvidiaProfilerCallback(
         enabled=True,
@@ -94,11 +104,18 @@ def build_smoke_trainer_config(common):
 
 def finalize_smoke_config(config: ExperimentConfig) -> None:
     base.finalize_config(config)
+    profile_root = f"{WEKA_PROFILE_BASE}/{config.run_name}"
     if config.launch is not None:
         config.launch.env_secrets = [
             secret for secret in config.launch.env_secrets if secret.required
         ]
         config.launch.google_credentials_secret = None
+        config.launch.env_vars.append(
+            BeakerEnvVar(name="NSYS_OUTPUT_DIR", value=f"{profile_root}/nsight")
+        )
+        for env_var in config.launch.env_vars:
+            if env_var.name == "TORCH_FR_DUMP_TEMP_FILE":
+                env_var.value = f"{profile_root}/flightrecorder/nccl_trace_rank_"
         config.launch.cmd = [NSYS_WRAPPER, *config.launch.cmd]
         config.launch.follow = False
         config.launch.step_timeout = None
