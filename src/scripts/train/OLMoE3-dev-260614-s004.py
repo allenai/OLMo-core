@@ -34,12 +34,11 @@ _default_triton_cache_dir()
 
 # Keep this before any olmo_core imports: several modules import nvtx at import
 # time, and NVTX_DISABLE only works if it is set before nvtx is imported.
-USE_NV_PROFILE = False
+USE_NV_PROFILE = os.environ.get("OLMO_USE_NV_PROFILE", "0") == "1"
 if not USE_NV_PROFILE:
     os.environ["NVTX_DISABLE"] = "1"
 
 import torch
-import transformer_engine
 from functools import partial
 
 from olmo_core.config import DType
