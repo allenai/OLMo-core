@@ -52,14 +52,19 @@ from olmo_core.data.composable import (
     ComposableDataLoaderConfig,
     PadToLengthInstanceSourceConfig,
 )
-from olmo_core.data.document_chunk_landmark import RESERVED_IDS  # canonical ids -- never retype
+from olmo_core.data.document_chunk_landmark import (
+    RESERVED_IDS,  # canonical ids -- never retype
+)
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.distributed.utils import get_rank, get_world_size
 from olmo_core.float8 import Float8Config
 from olmo_core.nn.attention import AttentionBackendName
-from olmo_core.nn.lm_head import LMLossImplementation
 from olmo_core.nn.attention.chunked_mask import mask_mix_standard_prob
-from olmo_core.nn.transformer import TransformerConfig
+from olmo_core.nn.lm_head import LMLossImplementation
+from olmo_core.nn.transformer import (
+    TransformerActivationCheckpointingMode,
+    TransformerConfig,
+)
 from olmo_core.optim import LinearWithWarmup, OptimGroupOverride, SkipStepAdamWConfig
 from olmo_core.train import (
     Duration,
@@ -74,6 +79,7 @@ from olmo_core.train.callbacks import (
     WandBCallback,
 )
 from olmo_core.train.train_module import (
+    TransformerActivationCheckpointingConfig,
     TransformerDataParallelConfig,
     TransformerDataParallelWrappingStrategy,
     TransformerTrainModuleConfig,
@@ -240,10 +246,14 @@ def build_model_config(opts: argparse.Namespace) -> TransformerConfig:
     :returns: The model config, with ``document_chunk_attention`` set for the chunked arms.
     """
     factory = MODEL_FACTORIES[opts.model_scale]
-    # Pin flash_2 so the saved config.json supports KV-cached generation at eval (the qwen3_5
-    # factories default attn_backend=None otherwise; matches the source attn_explore scripts).
+    # Pin flash_2 by default so the saved config.json supports KV-cached generation at eval (the
+    # qwen3_5 factories default attn_backend=None otherwise; matches the source attn_explore
+    # scripts). ``--attn-backend torch`` is an escape hatch for clusters where flash-attn isn't
+    # importable/compatible (e.g. a fresh env on an unverified GPU arch) -- SDPA works everywhere
+    # but does not support KV-cached generation, so eval on a torch-backend checkpoint needs the
+    # full-precompute path, not incremental decoding.
     qwen_kwargs: Dict[str, Any] = dict(
-        vocab_size=opts.vocab_size, attn_backend=AttentionBackendName.flash_2
+        vocab_size=opts.vocab_size, attn_backend=AttentionBackendName(opts.attn_backend)
     )
     if opts.variant != "full":
         # Chunked mask on the full-attention blocks only; GDN blocks ignore chunk_ids.
@@ -272,6 +282,93 @@ def build_model_config(opts: argparse.Namespace) -> TransformerConfig:
             **mix_keys,
         }
     return model_config
+
+
+#: Scales that need FULL parameter sharding + activation checkpointing to fit 40960 on an 80GB
+#: H100 (proven OOM on jupiter: 76.71 GiB allocated then OOM in the first dry-run batch at
+#: shard_degree=1 / no AC). 0.8B already fits at shard_degree=1 / no AC on 141GB H200s -- keep it
+#: on that path so its proven runs don't change.
+_LARGE_SCALES = ("4b", "9b")
+
+
+def resolve_activation_checkpointing(opts: argparse.Namespace) -> str:
+    """Resolve ``--activation-checkpointing`` ("auto" -> scale-dependent default).
+
+    :param opts: Parsed CLI options (``model_scale``, ``activation_checkpointing``).
+
+    :returns: ``"full"`` or ``"none"``.
+    """
+    if opts.activation_checkpointing != "auto":
+        return opts.activation_checkpointing
+    return "full" if opts.model_scale in _LARGE_SCALES else "none"
+
+
+def resolve_shard_degree(opts: argparse.Namespace, world_size: int) -> int:
+    """Resolve ``--shard-degree`` ("auto" -> scale-dependent default).
+
+    0.8B keeps its proven ``shard_degree=1`` default (single-GPU-resident params fit 141GB
+    H200s); 4B/9B default to full FSDP over ``world_size`` (matches the proven 40k-seq docchunk
+    pattern in ``_docchunk_5task_32k_nocpt_common.py``, needed to fit an 80GB H100).
+
+    :param opts: Parsed CLI options (``model_scale``, ``shard_degree``).
+    :param world_size: DP world size (real, or hypothetical under ``--dry-run``).
+
+    :returns: The resolved ``shard_degree``.
+    """
+    if opts.shard_degree:
+        return opts.shard_degree
+    return world_size if opts.model_scale in _LARGE_SCALES else 1
+
+
+def build_train_module_config(
+    opts: argparse.Namespace, world_size: int
+) -> TransformerTrainModuleConfig:
+    """Build the :class:`TransformerTrainModuleConfig` (FSDP + activation checkpointing).
+
+    Shared by ``dry_run`` (to print the resolved config) and ``build_and_fit`` so the two never
+    drift apart.
+
+    :param opts: Parsed CLI options.
+    :param world_size: DP world size (real, or hypothetical under ``--dry-run``).
+
+    :returns: The train-module config, unbuilt (no CUDA needed to construct it).
+    """
+    ac_mode = resolve_activation_checkpointing(opts)
+    shard_degree = resolve_shard_degree(opts, world_size)
+    return TransformerTrainModuleConfig(
+        rank_microbatch_size=opts.micro_batch_instances * opts.seq_len,
+        max_sequence_length=opts.seq_len,
+        optim=SkipStepAdamWConfig(
+            lr=opts.lr,
+            weight_decay=0.0,
+            betas=(0.9, 0.95),
+            group_overrides=[
+                OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
+            ],
+        ),
+        scheduler=LinearWithWarmup(warmup_fraction=0.03, alpha_f=0.0),
+        compile_model=opts.compile,
+        dp_config=TransformerDataParallelConfig(
+            name=DataParallelType.fsdp,
+            param_dtype=DType.bfloat16,
+            reduce_dtype=DType.float32,
+            wrapping_strategy=TransformerDataParallelWrappingStrategy.full,
+            shard_degree=shard_degree,
+        ),
+        # FULL-block AC needed for 4B/9B at seq_len=40960 on 80GB H100s (same rationale as the
+        # proven docchunk 5task Beaker scripts: FFN-only AC leaves attention activations resident
+        # and still OOMs). 0.8B fits without it on 141GB H200s, so leave it off there by default.
+        ac_config=(
+            TransformerActivationCheckpointingConfig(
+                mode=TransformerActivationCheckpointingMode.full
+            )
+            if ac_mode == "full"
+            else None
+        ),
+        float8_config=Float8Config(enabled=False),
+        z_loss_multiplier=None,
+        max_grad_norm=1.0,
+    )
 
 
 def build_provenance(opts: argparse.Namespace, world_size: int) -> Dict[str, Any]:
@@ -423,6 +520,14 @@ def dry_run(opts: argparse.Namespace) -> None:
         f"micro_batch_instances={opts.micro_batch_instances}"
     )
     print(f"  world_size={world_size} (hypothetical) -> per-rank instances/step={plan['per_rank']}")
+    train_module_config = build_train_module_config(opts, world_size)
+    ac_config = train_module_config.ac_config
+    print(
+        f"  train_module: dp_name={train_module_config.dp_config.name} "
+        f"shard_degree={train_module_config.dp_config.shard_degree} "
+        f"AC={ac_config.mode if ac_config is not None else 'none'} "
+        f"rank_microbatch_size={train_module_config.rank_microbatch_size:,} tokens"
+    )
     if plan["curriculum"] is not None:
         c = plan["curriculum"]
         print(
@@ -477,30 +582,7 @@ def build_and_fit(opts: argparse.Namespace) -> None:
         with open(os.path.join(save_folder, "provenance.json"), "w") as f:
             json.dump(build_provenance(opts, world_size), f, indent=2, default=str)
 
-    train_module_config = TransformerTrainModuleConfig(
-        rank_microbatch_size=opts.micro_batch_instances * opts.seq_len,
-        max_sequence_length=opts.seq_len,
-        optim=SkipStepAdamWConfig(
-            lr=opts.lr,
-            weight_decay=0.0,
-            betas=(0.9, 0.95),
-            group_overrides=[
-                OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
-            ],
-        ),
-        scheduler=LinearWithWarmup(warmup_fraction=0.03, alpha_f=0.0),
-        compile_model=opts.compile,
-        dp_config=TransformerDataParallelConfig(
-            name=DataParallelType.fsdp,
-            param_dtype=DType.bfloat16,
-            reduce_dtype=DType.float32,
-            wrapping_strategy=TransformerDataParallelWrappingStrategy.full,
-            shard_degree=1,
-        ),
-        float8_config=Float8Config(enabled=False),
-        z_loss_multiplier=None,
-        max_grad_norm=1.0,
-    )
+    train_module_config = build_train_module_config(opts, world_size)
 
     trainer_config = (
         TrainerConfig(
@@ -645,6 +727,29 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--num-workers", type=int, default=2, help="dataloader workers per rank")
     ap.add_argument("--max-steps", type=int, default=0, help="hard-stop after N steps (0 = full)")
     ap.add_argument("--vocab-size", type=int, default=VOCAB_SIZE)
+    ap.add_argument(
+        "--activation-checkpointing",
+        choices=["auto", "full", "none"],
+        default="auto",
+        help="full-block activation checkpointing. auto (default) = full for 4b/9b (needed to "
+        "fit seq_len=40960 on an 80GB H100; proven OOM otherwise), none for 0.8b (already fits "
+        "at 141GB H200 without it). full is safe at every scale if you want to force it.",
+    )
+    ap.add_argument(
+        "--shard-degree",
+        type=int,
+        default=0,
+        help="FSDP shard_degree. 0 (default/auto) = 1 for 0.8b (proven working), world_size for "
+        "4b/9b (full parameter sharding, needed to fit seq_len=40960 on an 80GB H100). Override "
+        "to force a specific value.",
+    )
+    ap.add_argument(
+        "--attn-backend",
+        choices=["flash_2", "torch"],
+        default="flash_2",
+        help="attention backend for the full-attention blocks (default flash_2; use torch/SDPA "
+        "on a cluster where flash-attn is not importable or not verified for the GPU arch)",
+    )
     ap.add_argument(
         "--seed",
         type=int,
