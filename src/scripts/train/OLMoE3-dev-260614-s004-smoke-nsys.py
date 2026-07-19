@@ -16,7 +16,7 @@ Launch (choose the priority explicitly)::
         --launch.priority=normal
 
 The launch is asynchronous. Nsight reports and NCCL flight-recorder dumps are
-written to Weka under ``/weka/oe-training-default/ai2-llm/profiling/robertb``.
+written to Weka under ``/weka/oe-training-default/robertb/profiling``.
 """
 
 from __future__ import annotations
@@ -48,7 +48,7 @@ BEAKER_IMAGE = "akshitab/olmo-core-tch2110cu130-2026-07-03"
 BEAKER_WORKSPACE = "ai2/OLMo-3-moe-experiments"
 WANDB_ENTITY = "ai2-llm"
 WANDB_PROJECT = "robertb-moe-tests"
-WEKA_PROFILE_BASE = "/weka/oe-training-default/ai2-llm/profiling/robertb"
+WEKA_PROFILE_BASE = "/weka/oe-training-default/robertb/profiling"
 
 
 def _load_base_script() -> ModuleType:
