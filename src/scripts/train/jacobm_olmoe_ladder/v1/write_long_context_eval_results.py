@@ -47,7 +47,10 @@ def read_record(metrics_path: Path) -> dict[str, Any]:
     provider_init = max(payload.get("provider_init_seconds", {}).values(), default=None)
     return {
         "beaker_experiment_id": beaker_experiment_id,
-        "beaker_url": f"https://beaker.org/ex/{beaker_experiment_id}",
+        "beaker_url": (
+            "https://beaker.org/orgs/ai2/workspaces/"
+            f"OLMo-3-moe-experiments/work/{beaker_experiment_id}"
+        ),
         "experiment_name": payload["experiment_name"],
         "run_name": model.parent.name,
         "step": model.name,

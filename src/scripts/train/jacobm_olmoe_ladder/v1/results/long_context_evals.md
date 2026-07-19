@@ -1,6 +1,6 @@
 # Long-Context Evaluation Results
 
-Generated: 2026-07-18 05:57 UTC
+Generated: 2026-07-19 16:36 UTC
 
 RULER uses 13 tasks with 100 examples per task at 65,536 tokens. Higher recall is better. Raw metrics and predictions are cached under `results/cache/ruler/`.
 
@@ -8,12 +8,12 @@ The canonical inference path is converted HF checkpoints with vLLM on one Jupite
 
 | size | variant | checkpoint | backend | aggregate recall | examples | scoring time | examples/s | Beaker |
 | --- | --- | --- | --- | ---: | ---: | ---: | ---: | --- |
-| 275m | baseline | `lc-275m-baseline-cx8-mt2e-4-lc1e-4-64k-r2/step47684` | vllm | 0.1753 | 1300 | 651.1s | 2.00 | [01KXHATN799NGFT5ADBAK343MT](https://beaker.org/ex/01KXHATN799NGFT5ADBAK343MT) |
-| 275m | integration_deep | `lc-275m-integration-deep-cx8-mt1p6e-4-lc8e-5-64k-r1/step47684` | vllm | 0.2518 | 1300 | 750.2s | 1.73 | [01KXMAF717DYMFG7NCRE9J69ND](https://beaker.org/ex/01KXMAF717DYMFG7NCRE9J69ND) |
-| 275m | integration_wide | `lc-275m-integration-wide-cx8-mt1p6e-4-lc8e-5-64k-r1/step47684` | vllm | 0.2159 | 1300 | 691.9s | 1.88 | [01KXMAFF0TBDCA4Z83B6PB4052](https://beaker.org/ex/01KXMAFF0TBDCA4Z83B6PB4052) |
-| 480m | baseline | `lc-480m-baseline-cx8-mt8e-5-lc4e-5-64k-r1/step31790` | vllm | 0.2109 | 1300 | 670.8s | 1.94 | [01KXMAFPGY9QY7SK6MJKQHWTSW](https://beaker.org/ex/01KXMAFPGY9QY7SK6MJKQHWTSW) |
-| 480m | integration_deep | `lc-480m-integration-deep-cx8-mt8e-5-lc4e-5-64k-r1/step31790` | vllm | 0.1978 | 1300 | 920.0s | 1.41 | [01KXMAJ765PQ9QYYYDAMSYW183](https://beaker.org/ex/01KXMAJ765PQ9QYYYDAMSYW183) |
-| 480m | integration_wide | `lc-480m-integration-wide-cx8-mt8e-5-lc4e-5-64k-r1/step31790` | vllm | 0.2095 | 1300 | 1197.6s | 1.09 | [01KXMAVY30QJ7J2X94H00XGBJ8](https://beaker.org/ex/01KXMAVY30QJ7J2X94H00XGBJ8) |
+| 275m | baseline | `lc-275m-baseline-cx8-mt2e-4-lc1e-4-64k-r2/step47684` | vllm | 0.1753 | 1300 | 651.1s | 2.00 | [01KXHATN799NGFT5ADBAK343MT](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXHATN799NGFT5ADBAK343MT) |
+| 275m | integration_deep | `lc-275m-integration-deep-cx8-mt1p6e-4-lc8e-5-64k-r1/step47684` | vllm | 0.2518 | 1300 | 750.2s | 1.73 | [01KXMAF717DYMFG7NCRE9J69ND](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXMAF717DYMFG7NCRE9J69ND) |
+| 275m | integration_wide | `lc-275m-integration-wide-cx8-mt1p6e-4-lc8e-5-64k-r1/step47684` | vllm | 0.2159 | 1300 | 691.9s | 1.88 | [01KXMAFF0TBDCA4Z83B6PB4052](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXMAFF0TBDCA4Z83B6PB4052) |
+| 480m | baseline | `lc-480m-baseline-cx8-mt8e-5-lc4e-5-64k-r1/step31790` | vllm | 0.2109 | 1300 | 670.8s | 1.94 | [01KXMAFPGY9QY7SK6MJKQHWTSW](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXMAFPGY9QY7SK6MJKQHWTSW) |
+| 480m | integration_deep | `lc-480m-integration-deep-cx8-mt8e-5-lc4e-5-64k-r1/step31790` | vllm | 0.1978 | 1300 | 920.0s | 1.41 | [01KXMAJ765PQ9QYYYDAMSYW183](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXMAJ765PQ9QYYYDAMSYW183) |
+| 480m | integration_wide | `lc-480m-integration-wide-cx8-mt8e-5-lc4e-5-64k-r1/step31790` | vllm | 0.2095 | 1300 | 1197.6s | 1.09 | [01KXMAVY30QJ7J2X94H00XGBJ8](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXMAVY30QJ7J2X94H00XGBJ8) |
 
 ## 275m baseline
 

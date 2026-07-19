@@ -269,7 +269,9 @@ GEOMETRY_GDN_EV2_NOPE_GATED = Variant(
         RegisteredRun("810m", 4, 4e-4, "l0u9gv52"),
         RegisteredRun("810m", 8, 4e-4, "pvoq0dq6"),
         RegisteredRun("1p2b", 1, 4e-4, "ojtvkjgk"),
+        RegisteredRun("1p2b", 2, 6e-4, "kko6fe0y"),
         RegisteredRun("1p2b", 4, 3e-4, "bhr5mgpr"),
+        RegisteredRun("1p2b", 8, 4e-4, "z4zmtqmu"),
     ),
 )
 
