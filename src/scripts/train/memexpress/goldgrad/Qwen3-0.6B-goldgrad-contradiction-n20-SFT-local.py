@@ -47,6 +47,14 @@ from olmo_core.data.composable import (
     ComposableDataLoaderConfig,
     PadToLengthInstanceSourceConfig,
 )
+from olmo_core.data.document_chunk_landmark import (  # canonical ids -- never retype
+    DOC_END_ID,
+    DOC_START_ID,
+    EOS_TOKEN_ID,
+    LANDMARK_TOKEN_ID,
+    PAD_TOKEN_ID,
+    REAL_VOCAB_SIZE,
+)
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.distributed.utils import get_rank
 from olmo_core.float8 import Float8Config
@@ -72,15 +80,6 @@ from olmo_core.train.train_module import (
     TransformerTrainModuleConfig,
 )
 from olmo_core.utils import seed_all
-from olmo_core.data.document_chunk_landmark import (  # canonical ids -- never retype
-    DOC_END_ID,
-    DOC_START_ID,
-    EOS_TOKEN_ID,
-    LANDMARK_TOKEN_ID,
-    PAD_TOKEN_ID,
-    REAL_VOCAB_SIZE,
-)
-
 
 # ---- LOCAL paths (shared /scratch, readable from any Berkeley GPU node) ----
 # Shared dense CPT base so all attention-pattern / grad-mode variants init from the SAME weights.
@@ -224,8 +223,9 @@ def build_and_fit(opts: argparse.Namespace) -> None:
     if opts.checkpoint_during_training:
         trainer_config = trainer_config.with_callback(
             "checkpointer",
-            CheckpointerCallback(save_interval=1000, ephemeral_save_interval=250, max_checkpoints=2,
-                                 save_async=True),
+            CheckpointerCallback(
+                save_interval=1000, ephemeral_save_interval=250, max_checkpoints=2, save_async=True
+            ),
         )
     if opts.wandb:
         from datetime import datetime
@@ -256,11 +256,21 @@ def build_and_fit(opts: argparse.Namespace) -> None:
             make_fingerprint_gold_mask_fn,
         )
 
-        gold_path = opts.gold_path or f"{opts.data_dir}/gold_fingerprints.json"
+        # The pair-aware modes need the PAIR-preserving sidecar (values are [[a, b], ...]); the
+        # doc-level modes are happy with the flat one. gold_pairs.json is built by
+        # debug/build_gold_pairs.py from the source JSONL's gold_doc_indices.
+        needs_pairs = opts.grad_mode in ("gold_pair", "gold_halves")
+        default_sidecar = "gold_pairs.json" if needs_pairs else "gold_fingerprints.json"
+        gold_path = opts.gold_path or f"{opts.data_dir}/{default_sidecar}"
         if not os.path.exists(gold_path):
             raise SystemExit(
                 f"--grad-mode={opts.grad_mode} needs a gold sidecar; not found at {gold_path}. "
-                "Re-tokenize with convert_unified_to_document_landmark.py --emit-gold-sidecar."
+                + (
+                    "Build it with debug/build_gold_pairs.py (the flat sidecar cannot express which "
+                    "doc contradicts which)."
+                    if needs_pairs
+                    else "Re-tokenize with convert_unified_to_document_landmark.py --emit-gold-sidecar."
+                )
             )
         gold_table = json.load(open(gold_path))
         gm_fn = make_fingerprint_gold_mask_fn(
@@ -272,11 +282,13 @@ def build_and_fit(opts: argparse.Namespace) -> None:
             mode=opts.grad_mode,
             seed=opts.grad_seed,
             n_gold=opts.n_gold,
+            n_pairs=opts.n_pairs,
         )
         holder = install_gold_grad_mask(train_module.model, gm_fn)
         if get_rank() == 0:
             print(
-                f"[goldgrad] mode={opts.grad_mode} n_random={opts.n_random} "
+                f"[goldgrad] mode={opts.grad_mode} n_random={opts.n_random} n_gold={opts.n_gold} "
+                f"n_pairs={opts.n_pairs} sidecar={os.path.basename(gold_path)} "
                 f"patched {holder.n_patched} attention modules; {len(gold_table)} gold examples",
                 flush=True,
             )
@@ -304,48 +316,114 @@ def build_and_fit(opts: argparse.Namespace) -> None:
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--data-dir", default="/scratch/users/prasann/longctx_sft_qwen/contradiction_n20_docdense_nocot_gold",
-                    help="docdense-gold shard dir (token_ids_part_*.npy + labels_mask_*.npy + gold_fingerprints.json)")
-    ap.add_argument("--n-gold", type=int, default=1,
-                    help="gold_subsample only: how many gold docs to keep (constant in N -> O(1))")
-    ap.add_argument("--plain-attention", action="store_true",
-                    help="stock causal Qwen3 (no DocumentChunkedAttention). Math-identical to the "
-                         "default random_doc@1.0 mask, but skips the doc-chunked dense-mask path that "
-                         "SIGSEGVs at seq 6144. gold-grad still works (it reads chunk_ids from ids).")
-    ap.add_argument("--grad-mode",
-                    choices=["full", "gold_plus_random", "gold_subsample", "random_only",
-                             "random_nongold"],
-                    default="gold_plus_random",
-                    help="full = baseline (all docs get grad); gold_plus_random = O(1) (gold + n_random); "
-                         "random_only = same-sparsity control drawn from ALL docs (NB: keeps ~40%% of "
-                         "gold BY CHANCE -- not gold-free); random_nongold = STRICT gold-free control "
-                         "(same sparsity, sampled only from non-gold docs)")
-    ap.add_argument("--n-random", type=int, default=2,
-                    help="extra random docs kept beyond the forced set (see --grad-mode)")
-    ap.add_argument("--grad-seed", type=int, default=0, help="seed for the per-example random doc choice")
-    ap.add_argument("--gold-path", default=None, help="override gold sidecar path (default <data-dir>/gold_fingerprints.json)")
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    ap.add_argument(
+        "--data-dir",
+        default="/scratch/users/prasann/longctx_sft_qwen/contradiction_n20_docdense_nocot_gold",
+        help="docdense-gold shard dir (token_ids_part_*.npy + labels_mask_*.npy + gold_fingerprints.json)",
+    )
+    ap.add_argument(
+        "--n-gold",
+        type=int,
+        default=1,
+        help="gold_subsample / gold_halves only: how many gold docs to keep (constant in "
+        "N -> O(1)). For gold_halves these are drawn from DISTINCT pairs.",
+    )
+    ap.add_argument(
+        "--n-pairs",
+        type=int,
+        default=1,
+        help="gold_pair only: how many COMPLETE contradicting pairs to keep (2 docs each)",
+    )
+    ap.add_argument(
+        "--plain-attention",
+        action="store_true",
+        help="stock causal Qwen3 (no DocumentChunkedAttention). Math-identical to the "
+        "default random_doc@1.0 mask, but skips the doc-chunked dense-mask path that "
+        "SIGSEGVs at seq 6144. gold-grad still works (it reads chunk_ids from ids).",
+    )
+    ap.add_argument(
+        "--grad-mode",
+        choices=[
+            "full",
+            "gold_plus_random",
+            "gold_subsample",
+            "random_only",
+            "random_nongold",
+            "gold_pair",
+            "gold_halves",
+        ],
+        default="gold_plus_random",
+        help="full = baseline (all docs get grad); gold_plus_random = O(1) (gold + n_random); "
+        "random_only = same-sparsity control drawn from ALL docs (NB: keeps ~40%% of "
+        "gold BY CHANCE -- not gold-free); random_nongold = STRICT gold-free control "
+        "(same sparsity, sampled only from non-gold docs); gold_pair = keep n_pairs "
+        "COMPLETE contradicting pairs; gold_halves = its matched control (same gold "
+        "COUNT, but orphaned halves from distinct pairs -- never a complete pair)",
+    )
+    ap.add_argument(
+        "--n-random",
+        type=int,
+        default=2,
+        help="extra random docs kept beyond the forced set (see --grad-mode)",
+    )
+    ap.add_argument(
+        "--grad-seed", type=int, default=0, help="seed for the per-example random doc choice"
+    )
+    ap.add_argument(
+        "--gold-path",
+        default=None,
+        help="override gold sidecar path (default <data-dir>/gold_fingerprints.json)",
+    )
     ap.add_argument("--run-name", default="q06b-goldgrad-contra-n20")
     ap.add_argument("--save-folder", default=None, help=f"default {SAVE_ROOT}/<run-name>")
-    ap.add_argument("--base-checkpoint", default=None, help=f"model_and_optim distcp subdir (default {BASE_CHECKPOINT})")
+    ap.add_argument(
+        "--base-checkpoint",
+        default=None,
+        help=f"model_and_optim distcp subdir (default {BASE_CHECKPOINT})",
+    )
     ap.add_argument("--work-dir", default=None, help=f"data-loader cache dir (default {WORK_DIR})")
     ap.add_argument("--num-workers", type=int, default=2)
     ap.add_argument("--model-size", choices=["0.6B", "4B"], default="0.6B")
     # DEFAULT random_doc + doc_keep_prob=1.0 == plain FULL causal attention (see the model_config
     # comment). "chunked" is available but is the known-to-lose control -- every arm floors out.
-    ap.add_argument("--cross-doc-mode", choices=["random_doc", "chunked"], default="random_doc",
-                    help="random_doc(+--doc-keep-prob 1.0) = FULL causal attention (default)")
-    ap.add_argument("--doc-keep-prob", type=float, default=1.0,
-                    help="random_doc keep prob; 1.0 = full causal, 0.0 = pure chunked")
+    ap.add_argument(
+        "--cross-doc-mode",
+        choices=["random_doc", "chunked"],
+        default="random_doc",
+        help="random_doc(+--doc-keep-prob 1.0) = FULL causal attention (default)",
+    )
+    ap.add_argument(
+        "--doc-keep-prob",
+        type=float,
+        default=1.0,
+        help="random_doc keep prob; 1.0 = full causal, 0.0 = pure chunked",
+    )
     ap.add_argument("--seq-len", type=int, default=SEQUENCE_LENGTH)
-    ap.add_argument("--grad-accum", type=int, default=8, help="instances per optimizer step (mbs = seq_len)")
-    ap.add_argument("--save-checkpoint", action="store_true", help="after fit, save model-only checkpoint for eval")
-    ap.add_argument("--checkpoint-during-training", action="store_true", help="also periodic-checkpoint during fit")
+    ap.add_argument(
+        "--grad-accum", type=int, default=8, help="instances per optimizer step (mbs = seq_len)"
+    )
+    ap.add_argument(
+        "--save-checkpoint",
+        action="store_true",
+        help="after fit, save model-only checkpoint for eval",
+    )
+    ap.add_argument(
+        "--checkpoint-during-training",
+        action="store_true",
+        help="also periodic-checkpoint during fit",
+    )
     ap.add_argument("--epochs", type=int, default=NUM_EPOCHS)
     ap.add_argument("--max-steps", type=int, default=0, help="stop after N steps (0 = full; smoke)")
     ap.add_argument("--lr", type=float, default=LR)
-    ap.add_argument("--compile", dest="compile", action="store_true",
-                    help="torch.compile the model (default OFF; the per-forward gold fingerprint is not compile-capturable)")
+    ap.add_argument(
+        "--compile",
+        dest="compile",
+        action="store_true",
+        help="torch.compile the model (default OFF; the per-forward gold fingerprint is not compile-capturable)",
+    )
     ap.add_argument("--no-wandb", dest="wandb", action="store_false")
     ap.add_argument("--wandb-group", default=None)
     ap.add_argument("--wandb-entity", default=None)

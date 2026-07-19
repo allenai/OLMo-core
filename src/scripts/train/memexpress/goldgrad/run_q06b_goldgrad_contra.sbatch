@@ -58,6 +58,10 @@ DOC_KEEP_PROB="${DOC_KEEP_PROB:-1.0}"
 TAG="${TAG:-fa}"      # run-name tag: fa = full attention
 NDOCS="${NDOCS:-n20}" # which rung: n20 | n100 (must match DATA_SRC)
 N_GOLD="${N_GOLD:-1}" # gold_subsample: # gold docs kept (constant in N -> O(1))
+# gold_pair: # COMPLETE contradicting pairs kept (2 docs each). gold_halves uses N_GOLD orphans drawn
+# from DISTINCT pairs -> gold_pair N_PAIRS=1 and gold_halves N_GOLD=2 are budget-matched (2 gold docs,
+# same doc count, same gold fraction) and differ ONLY in whether the pair is intact.
+N_PAIRS="${N_PAIRS:-1}"
 # -fixmark = marker-embedding-REPAIRED base. REQUIRED for any marker-bearing (doc-chunked) shard: on a
 # stock Qwen3 base <|box_start|>/<|box_end|> are bit-identical (cos=1.0, never trained), and at 100 docs
 # that yields low train CE but ~0 held-out f1. See document-chunked-marker-embeddings.md.
@@ -112,6 +116,8 @@ for MODE in $GRAD_MODES; do
     gold_subsample)   RUN="q06b-goldgrad-${TAG}-${NDOCS}-gsub${N_GOLD}_${N_RANDOM}" ;;
     random_only)      RUN="q06b-goldgrad-${TAG}-${NDOCS}-rand${N_RANDOM}" ;;
     random_nongold)   RUN="q06b-goldgrad-${TAG}-${NDOCS}-nogold${N_RANDOM}" ;;
+    gold_pair)        RUN="q06b-goldgrad-${TAG}-${NDOCS}-pair${N_PAIRS}_${N_RANDOM}" ;;
+    gold_halves)      RUN="q06b-goldgrad-${TAG}-${NDOCS}-half${N_GOLD}_${N_RANDOM}" ;;
     *) echo "unknown MODE=$MODE"; exit 5 ;;
   esac
   WORK_LOCAL=$ROOT/cache-$SLURM_JOB_ID-$MODE; mkdir -p "$WORK_LOCAL"
@@ -126,7 +132,7 @@ for MODE in $GRAD_MODES; do
     src/scripts/train/memexpress/goldgrad/Qwen3-0.6B-goldgrad-contradiction-n20-SFT-local.py \
     --run-name "$RUN" --base-checkpoint "$BASE_CKPT" \
     --data-dir "$DATA_LOCAL" --work-dir "$WORK_LOCAL" --save-folder "$SAVE_FOLDER" \
-    --grad-mode "$MODE" --n-random "$N_RANDOM" --n-gold "$N_GOLD" \
+    --grad-mode "$MODE" --n-random "$N_RANDOM" --n-gold "$N_GOLD" --n-pairs "$N_PAIRS" \
     --cross-doc-mode "$CROSS_DOC_MODE" --doc-keep-prob "$DOC_KEEP_PROB" \
     --seq-len "$SEQ_LEN" --epochs "$EPOCHS" --grad-accum 8 --num-workers 0 \
     --save-checkpoint --wandb-group "goldgrad-contra-n20-${TAG}" $MAXARG $WANDB_FLAG

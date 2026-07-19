@@ -26,7 +26,7 @@ Two emitters consume those segments:
 
 import logging
 import re
-from typing import Dict, List, NamedTuple, Optional, Pattern, Tuple
+from typing import Callable, Dict, List, NamedTuple, Optional, Pattern, Tuple
 
 log = logging.getLogger(__name__)
 
@@ -45,6 +45,7 @@ __all__ = [
     "reserved_ids",
     "find_chunk_spans",
     "segment_prompt_to_chunks",
+    "summary_span_text",
     "emit_document_chunk_dense",
     "emit_document_chunk_landmark",
 ]
@@ -115,12 +116,24 @@ class ReservedIds(NamedTuple):
 #: Reserved-id sets by model family. ``qwen3`` mirrors the module-level constants above.
 RESERVED_IDS: Dict[str, ReservedIds] = {
     "qwen3": ReservedIds(
-        doc_start=151648, doc_end=151649, eos=151643,
-        landmark=151860, pad=151863, real_vocab_size=151669,
+        doc_start=151648,
+        doc_end=151649,
+        eos=151643,
+        landmark=151860,
+        pad=151863,
+        real_vocab_size=151669,
     ),
+    # Verified against the Qwen3.5-0.8B-Base tokenizer files: base vocab ids 0..248043 plus 33
+    # added specials 248044..248076 (``<|endoftext|>``=248044, ``<|box_start|>``=248049,
+    # ``<|box_end|>``=248050), so real ids end at 248077; the embedding matrix has 248320 rows, so
+    # landmark/pad sit in the untrained padded region [248077, 248320) like Qwen3's do.
     "qwen3_5": ReservedIds(
-        doc_start=248049, doc_end=248050, eos=248044,
-        landmark=248200, pad=248203, real_vocab_size=248192,
+        doc_start=248049,
+        doc_end=248050,
+        eos=248044,
+        landmark=248200,
+        pad=248203,
+        real_vocab_size=248077,
     ),
 }
 
@@ -202,7 +215,55 @@ def _wrap_item_lines(text: str, item_re: Pattern, start_str: str, end_str: str) 
     return "".join(out)
 
 
-def _wrap_documents(text: str, documents: List[dict], start_str: str, end_str: str) -> str:
+def summary_span_text(cell_idx: int, k: int, n_docs: int) -> str:
+    """
+    The natural-language **summary span** for one cell of the ``"summary_attention"`` layout.
+
+    Built entirely from **real, already-trained tokens** -- deliberately NOT a new reserved special
+    token. Qwen3 never trains its reserved rows (they are bit-identical, cosine 1.0000, and
+    out-of-distribution in norm), which silently flatlines marker-dense training at CE ~0.79 for
+    *every* mask including plain causal; `records/document-chunked-marker-embeddings.md` records that
+    swapping the markers for ordinary tokens made training converge normally. A phrase therefore needs
+    no checkpoint repair and adds no new embedding-bug surface.
+
+    The text restates its own cell's claim indices, so (a) every span is textually **distinct** -- no
+    verbatim repetition, the failure mode that voided the ``free_pad_repeat`` probe -- and (b) it
+    carries in-chunk index redundancy, the only intervention that has ever *improved* the chunked mask
+    (see ``results/masks-n100.md`` §3).
+
+    :param cell_idx: 0-based index of the cell this span summarizes.
+    :param k: The cell size (documents per cell).
+    :param n_docs: Total number of context documents (clamps the final cell).
+
+    :returns: The span's text, ready to be wrapped in the document-boundary markers.
+    """
+    lo = cell_idx * k + 1
+    hi = min((cell_idx + 1) * k, n_docs)
+    slots = " ".join(f"[{i}]" for i in range(lo, hi + 1))
+    return f"\n\nSummary of claims {lo} to {hi}: {slots}"
+
+
+#: Per-task text normalizations applied by the prompt renderer (``_format_documents`` in
+#: ``corpus_reasoning/lib/data_format.py``) BEFORE a document's text is embedded in the rendered
+#: prompt. ``_wrap_documents`` does a verbatim substring search against the ORIGINAL
+#: ``documents[i]["text"]``, so any renderer-side transform must be mirrored here or the search
+#: fails and the document silently stays FREE (unisolated) -- see the reorder wrapping bug
+#: (docs/records/... n=100 wrapping fix): reorder collapses internal ``"\n\n"`` (Gutenberg
+#: passages' own paragraph breaks) to ``"\n"`` so a passage remains one paragraph in the prompt;
+#: without the same collapse here, 12/12 documents failed to match on the first n12 example.
+_RENDERER_TEXT_NORMALIZERS: Dict[str, Callable[[str], str]] = {
+    "reorder": lambda body: body.replace("\n\n", "\n"),
+}
+
+
+def _wrap_documents(
+    text: str,
+    documents: List[dict],
+    start_str: str,
+    end_str: str,
+    summary_every_k: int = 0,
+    task: str = "",
+) -> str:
     """Wrap the document block with boundary strings so **nothing between the first and last document
     is FREE** -- every id / title / label AND the inter-document ``\\n\\n`` separators are inside a
     chunk. Only the leading instruction / question prefix and the trailing positioned query / answer
@@ -214,7 +275,21 @@ def _wrap_documents(text: str, documents: List[dict], start_str: str, end_str: s
     document's chunk extends over any trailing whitespace so the document -> suffix separator is not
     FREE either. This is stricter than corpus-reasoning's paragraph wrap (which leaves the ``\\n\\n``
     joins free); here the only FREE tokens are the instruction/question and the query/answer.
+
+    :param summary_every_k: When ``> 0``, emit the ``"summary_attention"`` layout: after every ``k``-th
+        document insert an additional, separately-wrapped **summary span** (see
+        :func:`summary_span_text`), so chunk indices run on a stride of ``k+1`` and a span is identified
+        by ``(chunk_id % (k+1)) == k``. The span is emitted as its **own** chunk, deliberately breaking
+        the contiguity rule above -- otherwise it would be absorbed into the *next* document's chunk and
+        carry no separate role. It goes at the **END** of its cell because the mask is causal: a relay
+        can only carry information forward, so it must already have read what it relays. ``0``
+        (default) leaves the layout untouched.
+    :param task: Unified task name. Selects a text normalization from
+        ``_RENDERER_TEXT_NORMALIZERS`` mirroring what the prompt renderer does to a document's text
+        before embedding it, so the verbatim search below matches what's actually in ``text``. Most
+        tasks embed document text unmodified (no-op).
     """
+    normalize = _RENDERER_TEXT_NORMALIZERS.get(task)
     # Locate each document body in order (spans in ORIGINAL-text coordinates; markers inserted after).
     body_spans: List[Tuple[int, int]] = []
     cursor = 0
@@ -224,6 +299,8 @@ def _wrap_documents(text: str, documents: List[dict], start_str: str, end_str: s
         body = str(d.get("text", "")).strip()
         if not body:
             continue
+        if normalize is not None:
+            body = normalize(body)
         n_docs += 1
         idx = text.find(body, cursor)
         if idx == -1:
@@ -261,7 +338,9 @@ def _wrap_documents(text: str, documents: List[dict], start_str: str, end_str: s
         else:
             cstart = chunk_spans[i - 1][1]  # contiguous: absorb the separator + this doc's label
         if i == len(body_spans) - 1:
-            cend = bend  # last doc: swallow trailing whitespace so the doc->suffix "\n\n" isn't FREE
+            cend = (
+                bend  # last doc: swallow trailing whitespace so the doc->suffix "\n\n" isn't FREE
+            )
             while cend < len(text) and text[cend] in "\n\r\t ":
                 cend += 1
         else:
@@ -273,15 +352,26 @@ def _wrap_documents(text: str, documents: List[dict], start_str: str, end_str: s
     # many-document examples like contradiction with ~950 claims; this is O(len).) chunk_spans are
     # increasing and contiguous (each cstart == the previous cend for i>0), so ``pos`` only moves
     # forward and a free gap appears only before the first chunk (the prefix).
+    # NB the summary spans are emitted HERE, in this pass -- i.e. AFTER every document body has been
+    # located by ``text.find(body, cursor)`` above. Inserting them into ``text`` beforehand would shift
+    # the coordinates and could make a body fail to match verbatim, which silently leaves that document
+    # FREE (unisolated).
+    n_docs = len(chunk_spans)
     pieces: List[str] = []
     pos = 0
-    for cstart, cend in chunk_spans:
+    for i, (cstart, cend) in enumerate(chunk_spans):
         if cstart > pos:
             pieces.append(text[pos:cstart])
         pieces.append(start_str)
         pieces.append(text[cstart:cend])
         pieces.append(end_str)
         pos = cend
+        # Close the cell: emit its summary span as a separate chunk (also after a short final cell, so
+        # every cell has exactly one span and the ``% (k+1)`` stride holds).
+        if summary_every_k > 0 and ((i + 1) % summary_every_k == 0 or i == n_docs - 1):
+            pieces.append(start_str)
+            pieces.append(summary_span_text(i // summary_every_k, summary_every_k, n_docs))
+            pieces.append(end_str)
     if pos < len(text):
         pieces.append(text[pos:])
     return "".join(pieces)
@@ -304,6 +394,7 @@ def segment_prompt_to_chunks(
     doc_end_str: str = DOC_END_STR,
     free_pad_repeat: int = 0,
     repeat_doc_text: int = 1,
+    summary_every_k: int = 0,
 ) -> Tuple[List[ChunkSegment], List[int], List[bool]]:
     """
     Render a task prompt with document boundaries marked by special tokens, tokenize, and split it
@@ -322,6 +413,13 @@ def segment_prompt_to_chunks(
         ``False`` -- titles are dropped so a per-document title can't hand the model a shortcut (e.g.
         review-outlier titles that name the product category = the outlier attribute). Must match
         between training and eval (both call this with the same value).
+    :param summary_every_k: ``chunk_by="document"`` only: emit the ``"summary_attention"`` layout --
+        one extra **summary span** chunk after every ``k`` documents (see :func:`summary_span_text` and
+        :func:`_wrap_documents`). ``0`` (default) leaves the layout untouched. **Must match between
+        training and eval**, like :attr:`free_pad_repeat`: it changes the chunk-index stride to
+        ``k+1``, which is exactly what the ``"summary_attention"`` mask's arithmetic assumes, so a
+        mismatch silently rebinds every chunk role. The *bandwidth* / *relay* knobs are NOT here --
+        they live on the attention config, so one tokenized shard serves every rung of the ladder.
 
     :returns: ``(segments, ids, mask)`` -- the segment list (for the landmark emitter), the flat token
         ids (markers included; for the dense emitter), and the per-token loss mask.
@@ -352,10 +450,22 @@ def segment_prompt_to_chunks(
         cot_mode=cot_mode,
         use_titles=use_titles,
     )
+    if summary_every_k > 0 and chunk_by != "document":
+        raise ValueError(
+            f"summary_every_k requires chunk_by='document' (got chunk_by={chunk_by!r}); the "
+            "summary_attention chunk-index stride is defined over documents."
+        )
     if chunk_by == "line":
         prompt = _wrap_item_lines(prompt, re.compile(item_regex), doc_start_str, doc_end_str)
     elif chunk_by == "document":
-        prompt = _wrap_documents(prompt, example.get("documents", []), doc_start_str, doc_end_str)
+        prompt = _wrap_documents(
+            prompt,
+            example.get("documents", []),
+            doc_start_str,
+            doc_end_str,
+            summary_every_k=summary_every_k,
+            task=task,
+        )
     else:
         raise ValueError(f"Unknown chunk_by {chunk_by!r}; expected 'line' or 'document'.")
 

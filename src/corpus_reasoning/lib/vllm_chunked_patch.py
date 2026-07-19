@@ -44,6 +44,20 @@ _FULL_EXTRAS: dict[str, "torch.Tensor"] = {}
 _FREE_CHUNK_ID = -1
 _PAD_CHUNK_ID = -2
 
+# Debug counters for the patched metadata builder (populated by install()):
+#   calls    — total builder invocations
+#   applied  — invocations where the chunked mask_mod was installed + BlockMask rebuilt
+#   direct   — rebuilds through the efficient _build_block_mask_direct path
+#   fallback — rebuilds through create_block_mask (kv page size != kernel block size,
+#              e.g. hybrid models); the chunked mask IS still applied on this path.
+_DEBUG_STATE: dict = {}
+
+
+def get_debug_state() -> dict:
+    """Return the live builder-patch counters (empty dict before install())."""
+    return _DEBUG_STATE
+
+
 # Thread-local that the patched runner uses to publish the current batch's
 # input_batch reference to the patched metadata builder. We need the token IDs
 # from `input_batch.token_ids_cpu` to derive chunk IDs each step.
@@ -175,15 +189,23 @@ def _patch_flex_impl_forward_reshape() -> None:
         # vLLM a pre-reshaped view via a tiny shim. Easier: subclass-wrap
         # kv_cache so .unbind(0) returns reshape-friendly tensors. Even
         # easier: replace the whole forward with a copy that uses reshape.
-        # We pick the simplest path — call the original but pre-`contiguous()`
-        # the kv_cache. `.contiguous()` is a no-op when strides already match.
+        # We pick the simplest path — hand the original a re-laid-out copy of
+        # kv_cache such that `kv_cache.unbind(1)` yields CONTIGUOUS K and V
+        # slices (so the subsequent `.view(-1, H, D)` succeeds). A plain
+        # `.contiguous()` is NOT enough: for a contiguous
+        # (num_blocks, 2, page, H, D) tensor, unbind(1) slices still have a
+        # stride jump across the block dim and cannot be flattened by view.
+        # transpose(0,1).contiguous() packs K and V each into one contiguous
+        # region; transposing back restores the expected indexing. Safe
+        # because this forward only READS the cache (writes happen upstream),
+        # and cheap (~tens of MB per call at validation cache sizes).
         if (
             attn_metadata is not None
-            and getattr(attn_metadata, "causal", False)
             and kv_cache.numel() > 0
-            and not kv_cache.is_contiguous()
+            and kv_cache.dim() >= 2
+            and kv_cache.shape[1] == 2
         ):
-            kv_cache = kv_cache.contiguous()
+            kv_cache = kv_cache.transpose(0, 1).contiguous().transpose(0, 1)
         return orig_forward(
             self, layer, query, key, value, kv_cache, attn_metadata,
             output=output, output_scale=output_scale,
@@ -277,7 +299,9 @@ def _patch_flex_metadata_builder() -> None:
 
     orig_build = FlexAttentionMetadataBuilder.build
 
-    _debug_state = {"calls": 0, "applied": 0, "logged": False}
+    global _DEBUG_STATE
+    _DEBUG_STATE = {"calls": 0, "applied": 0, "direct": 0, "fallback": 0, "logged": False}
+    _debug_state = _DEBUG_STATE
 
     def wrapped(self, common_prefix_len, common_attn_metadata, fast_build=False):
         metadata = orig_build(
@@ -329,9 +353,34 @@ def _patch_flex_metadata_builder() -> None:
         # update_block_table path (supports_update_block_table=False), so the
         # builder is called every step — same path as the default backend.
         if metadata.direct_build and metadata.causal:
+            _debug_state["direct"] += 1
             metadata.block_mask = metadata._build_block_mask_direct()
         else:
-            metadata.block_mask = metadata.build_block_mask()
+            # ⚠ metadata.build_block_mask() recomputes `self.get_mask_mod()`
+            # internally — the DEFAULT causal mask_mod — and would silently
+            # DROP the chunked mask_mod we just installed (hybrid models hit
+            # this path whenever kv page size != kernel block size, i.e.
+            # direct_build=False). Build the BlockMask ourselves from
+            # `metadata.mask_mod` (the chunked one) instead — this is
+            # build_block_mask() verbatim with the mask_mod swapped.
+            _debug_state["fallback"] += 1
+            from vllm.v1.attention.backends.flex_attention import (
+                create_block_mask_compiled,
+            )
+            kv_len = (
+                metadata.total_cache_tokens
+                if metadata.uses_paged_kv
+                else metadata.num_actual_tokens
+            )
+            metadata.block_mask = create_block_mask_compiled(
+                metadata.mask_mod,
+                None,
+                None,
+                metadata.num_actual_tokens,
+                kv_len,
+                device=metadata.block_table.device,
+                BLOCK_SIZE=(metadata.q_block_size, metadata.kv_block_size),
+            )
         return metadata
 
     FlexAttentionMetadataBuilder.build = wrapped
@@ -426,10 +475,15 @@ def _build_chunked_final_mask_mod(metadata, chunk_ids: torch.Tensor):
         # request_lookup — same tensor used in _convert_physical_to_logical.
         req_idx = doc_ids[q_idx]
 
-        # Clamp logical indices to >= 0 before gather so we don't OOB on
-        # invalid positions; is_valid will mask them out below.
-        safe_q = torch.clamp(logical_q_idx, min=0)
-        safe_kv = torch.clamp(logical_kv_idx, min=0)
+        # Clamp logical indices into chunk_ids' bounds before gather so we
+        # don't OOB on invalid positions; is_valid masks them out below.
+        # (The generic create_block_mask path evaluates the FULL physical
+        # grid, so garbage block-table slots produce arbitrarily large
+        # logical indices — the direct path never sees those, but the
+        # fallback does, and an unclamped gather device-asserts.)
+        max_pos = chunk_ids.shape[1] - 1
+        safe_q = torch.clamp(logical_q_idx, min=0, max=max_pos)
+        safe_kv = torch.clamp(logical_kv_idx, min=0, max=max_pos)
         q_chunk = chunk_ids[req_idx, safe_q]
         kv_chunk = chunk_ids[req_idx, safe_kv]
 

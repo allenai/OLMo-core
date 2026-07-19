@@ -43,6 +43,113 @@ from olmo_core.data.document_chunk_landmark import (  # canonical ids -- never r
 # Reserved ids (match the converter + olmo_core.data.document_chunk_landmark defaults).
 
 
+_GOLD_HOP_UNSET = object()
+
+
+def gold_hop_cfg(model_path: str, key: str, default=_GOLD_HOP_UNSET):
+    """
+    Read one attention knob out of a checkpoint's ``config.json``.
+
+    The gold-hop base graph is a pure function of ``(random_doc_seed, doc_keep_prob, per-example
+    nonce)``, so **eval must rebuild it with the values the model TRAINED under**. Taking them from CLI
+    flags instead would let a mismatched ``--doc-keep-prob`` hand the model a completely different
+    (still plausible, still gold-edited) graph at eval and quietly measure nothing -- so they are read
+    from the checkpoint, which is the only thing that actually knows.
+
+    The config is the launcher's ``{"model": model_config.as_config_dict(), ...}``; the knob lives at
+    ``model.block.sequence_mixer.<key>``, but it is searched recursively so a config-layout change
+    upstream cannot silently produce a wrong default.
+
+    :raises SystemExit: if the key is absent (and no ``default`` given) or ambiguous.
+    """
+    with open(os.path.join(model_path, "config.json")) as f:
+        cfg = json.load(f)
+
+    found = []
+
+    def walk(o):
+        if isinstance(o, dict):
+            for k, v in o.items():
+                if k == key:
+                    found.append(v)
+                walk(v)
+        elif isinstance(o, list):
+            for v in o:
+                walk(v)
+
+    walk(cfg)
+    uniq = {json.dumps(v, sort_keys=True) for v in found}
+    if not found:
+        if default is _GOLD_HOP_UNSET:
+            raise SystemExit(
+                f"[gold-hop] {model_path}/config.json has no {key!r}. This checkpoint was not trained "
+                "as a gold_hop_controlled model, so there is no graph to reproduce."
+            )
+        return default
+    if len(uniq) > 1:
+        raise SystemExit(
+            f"[gold-hop] {model_path}/config.json has conflicting values for {key!r}: {sorted(uniq)}. "
+            "Refusing to guess which graph the model trained under."
+        )
+    return found[0]
+
+
+def build_eval_prefill(
+    tok,
+    raw_example,
+    *,
+    variant: str,
+    cot_mode: str,
+    doc_start_id: int,
+    doc_end_id: int,
+    free_pad_repeat: int = 0,
+    repeat_doc_text: int = 1,
+    summary_every_k: int = 0,
+    mem_freq: int = 63,
+):
+    """
+    Render one eval example's **prompt-only prefill** token ids.
+
+    Module-level and public **on purpose**: this is the single source of truth for the eval prefill's
+    token layout, and anything that needs to key off that layout must call *this*, not re-derive it.
+    Concretely, ``build_gold_pairs_for_eval.py`` fingerprints these exact ids to build the gold-hop
+    sidecar -- and a fingerprint is a SHA1, so a one-token drift between two copies of this rendering
+    would produce a 0% hit rate (or, worse, a partial one).
+
+    :param variant: ``"dense"`` / ``"full"`` use the dense emitter; ``"landmark"`` packs into landmark
+        windows.
+    :param cot_mode: ``"none"`` / ``"enumerate"`` / ... -- MUST match the training shard.
+    :param free_pad_repeat: MUST match the training shard (extra FREE tokens after the documents).
+    :param repeat_doc_text: MUST match the training shard (each document's text repeated N times).
+    :param summary_every_k: MUST match the training shard (the ``summary_attention`` span layout).
+
+    :returns: The prefill token ids (a list). Note there is **no answer, no EOS and no padding** here --
+        so its content fingerprint differs from the training shard's row for the same example.
+    """
+    from olmo_core.data.document_chunk_landmark import (
+        emit_document_chunk_dense,
+        emit_document_chunk_landmark,
+        segment_prompt_to_chunks,
+    )
+
+    segs, ids, _ = segment_prompt_to_chunks(
+        tok, raw_example, "contradiction", query_position="both", cot_mode=cot_mode,
+        chunk_by="document", item_regex=r"\|\|", include_answer=False,
+        doc_start_id=doc_start_id, doc_end_id=doc_end_id,
+        # MUST equal the training shard's value, or the prefill layout differs from training.
+        free_pad_repeat=free_pad_repeat,
+        repeat_doc_text=repeat_doc_text,
+        summary_every_k=summary_every_k,
+    )
+    if variant in ("dense", "full"):
+        out, _ = emit_document_chunk_dense(segs)  # box markers present; full attention ignores them
+    else:
+        out, _ = emit_document_chunk_landmark(
+            segs, mem_freq=mem_freq, mem_id=LANDMARK_TOKEN_ID, pad_id=PAD_TOKEN_ID
+        )
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--variant", required=True, choices=["dense", "landmark", "full"])
@@ -61,6 +168,12 @@ def main():
     ap.add_argument("--contra-data", default="data/contradiction_eval_pubmed_both_n100_k3.jsonl")
     ap.add_argument("--max-test-samples", type=int, default=100)
     ap.add_argument(
+        "--per-example-out",
+        default=None,
+        help="if set, dump per-example grading (idx, prediction, gold_pairs, predicted_pairs, "
+        "precision/recall/f1/exact_match) as a JSON list -- for connectivity-stratified analysis.",
+    )
+    ap.add_argument(
         "--contra-max-new-tokens",
         type=int,
         default=2400,
@@ -76,7 +189,35 @@ def main():
     ap.add_argument("--repeat-doc-text", type=int, default=1,
                     help="MUST match the training shard: repeat each document's text N times "
                          "inside its chunk.")
+    ap.add_argument(
+        "--summary-every-k",
+        type=int,
+        default=0,
+        help="MUST match the training shard: emit the summary_attention layout (one extra "
+        "'Summary of claims X to Y: ...' span chunk after every K documents, so chunk "
+        "indices run on a stride of K+1). A mismatch silently rebinds every chunk "
+        "role, because the mask identifies a span as (chunk_id %% (K+1)) == K. The "
+        "bandwidth / relay knobs are NOT here: they are attention-config values "
+        "restored from the checkpoint, so ONE shard serves every rung of the ladder.",
+    )
     ap.add_argument("--cot-mode", default="enumerate")
+    ap.add_argument(
+        "--gold-pairs",
+        default=None,
+        help="REQUIRED for a gold_hop_controlled checkpoint: gold_pairs.json keyed by the PREFILL "
+        "fingerprint ({fingerprint: [[a, b], ...]}, 0-based chunk ids). Build it with "
+        "src/scripts/data/build_gold_pairs_for_eval.py using the SAME layout flags as this eval -- "
+        "the training shard's gold_pairs.json will NOT work here (its rows include the answer + EOS, "
+        "so every fingerprint would miss). Every document-bearing row must hit or this eval aborts.",
+    )
+    ap.add_argument(
+        "--gold-hops",
+        default=None,
+        choices=("1", "2", "3", "inf"),
+        help="gold_hop_controlled arm; must equal the arm baked into the checkpoint's config.json "
+        "(install_gold_hop_mask refuses to install if they disagree, so a typo cannot score hop_inf "
+        "under a run named hop2).",
+    )
     ap.add_argument(
         "--landmark-top-k-blocks",
         type=int,
@@ -91,6 +232,21 @@ def main():
         "Overridden by --landmark-top-k-blocks.",
     )
     args = ap.parse_args()
+
+    # Pure-argument validation FIRST, before CUDA init / the model build: a flag typo should fail in
+    # milliseconds, not after a multi-minute checkpoint load.
+    if bool(args.gold_pairs) != bool(args.gold_hops):
+        raise SystemExit(
+            "--gold-pairs and --gold-hops must be given together (the sidecar names the gold pairs; "
+            "the arm names what to do with them)."
+        )
+    if args.gold_pairs and args.variant != "dense":
+        raise SystemExit(
+            f"--gold-hops needs --variant dense (DocumentChunkedAttention); got {args.variant!r}. "
+            "'--variant full' does not even thread chunk_ids, so the gold mask would be silently "
+            "absent and every arm would score as unrestricted attention."
+        )
+
     os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 
     from transformers import AutoTokenizer
@@ -102,13 +258,14 @@ def main():
     from olmo_core.data.document_chunk_landmark import (
         DOC_START_ID as _DS,
     )
-    from olmo_core.data.document_chunk_landmark import (
-        emit_document_chunk_dense,
-        emit_document_chunk_landmark,
-        segment_prompt_to_chunks,
-    )
     from olmo_core.generate.generation_module.config import GenerationConfig
     from olmo_core.generate.generation_module.transformer import TransformerGenerationModuleConfig
+    from olmo_core.nn.attention.gold_grad_mask import content_fingerprint_from_row
+    from olmo_core.nn.attention.gold_hop_mask import (
+        GOLD_HOPS_INF,
+        install_gold_hop_mask,
+        make_fingerprint_gold_hop_fn,
+    )
     from corpus_reasoning.eval.evaluate import _eval_contradiction, load_unified_examples
 
     # Resolve boundary/eos ids from CLI (Qwen3 defaults preserve prior behavior; Qwen3.5 overrides).
@@ -163,25 +320,60 @@ def main():
         flush=True,
     )
 
+    # ---- gold_hop_controlled: install the per-example gold-edited doc graph ----
+    # The mask is gold-derived, so eval needs the EVAL set's gold pairs -- keyed by the fingerprint of
+    # the prompt-only prefill (no answer, no EOS, no padding), which is a different key space from the
+    # training shard's rows. Gold identity still never enters the token stream: the lookup is a hash of
+    # the ids the model is about to read.
+    gold_hop_holder = None
+    if args.gold_pairs:
+        if not use_cache:
+            # Without a KV cache, decode re-forwards the FULL sequence (prompt + tokens generated so
+            # far). Its fingerprint is not the prefill's, so every decode row would miss and degrade to
+            # plain causal. The hit-rate assert below would catch it, but say why up front.
+            raise SystemExit("--gold-hops requires the KV-cached decode path (use_cache=True).")
+        gold_pairs_table = json.load(open(args.gold_pairs))
+        gold_hop_fn = make_fingerprint_gold_hop_fn(
+            gold_pairs_table,
+            doc_start_id=ds_id,
+            doc_end_id=de_id,
+            eos_id=eos_id,
+            hops=GOLD_HOPS_INF if args.gold_hops == "inf" else int(args.gold_hops),
+            doc_keep_prob=gold_hop_cfg(args.model_path, "doc_keep_prob"),
+            seed=gold_hop_cfg(args.model_path, "random_doc_seed", default=42),
+            per_example=True,
+            # ⚠ Read from the checkpoint, never a CLI flag: decoys change the graph, so a mismatch
+            # would evaluate the model on a mask it never trained under -- silently, and with a
+            # perfectly plausible-looking f1.
+            n_decoys=gold_hop_cfg(args.model_path, "gold_decoys", default=0) or 0,
+        )
+        gold_hop_holder = install_gold_hop_mask(gm.model, gold_hop_fn)
+        print(
+            f"[gold-hop] arm={args.gold_hops} sidecar={args.gold_pairs} "
+            f"({len(gold_pairs_table)} examples) attached_layers={gold_hop_holder.n_attached} "
+            f"keep_prob={gold_hop_cfg(args.model_path, 'doc_keep_prob')} "
+            f"decoys={gold_hop_cfg(args.model_path, 'gold_decoys', default=0)} (from config.json)",
+            flush=True,
+        )
+
     max_new_tokens = args.contra_max_new_tokens
     cap = args.max_length - max_new_tokens
 
     def build_prefill(raw_example):
-        segs, ids, _ = segment_prompt_to_chunks(
-            tok, raw_example, "contradiction", query_position="both", cot_mode=args.cot_mode,
-            chunk_by="document", item_regex=r"\|\|", include_answer=False,
-            doc_start_id=ds_id, doc_end_id=de_id,
-            # MUST equal the training shard's value, or the prefill layout differs from training.
+        # Delegates to the module-level renderer, which is also what build_gold_pairs_for_eval.py
+        # fingerprints -- one implementation, so the sidecar's keys cannot drift from these ids.
+        return build_eval_prefill(
+            tok,
+            raw_example,
+            variant=args.variant,
+            cot_mode=args.cot_mode,
+            doc_start_id=ds_id,
+            doc_end_id=de_id,
             free_pad_repeat=args.free_pad_repeat,
             repeat_doc_text=args.repeat_doc_text,
+            summary_every_k=args.summary_every_k,
+            mem_freq=args.mem_freq,
         )
-        if args.variant in ("dense", "full"):
-            out, _ = emit_document_chunk_dense(segs)  # box markers present; full attention ignores them
-        else:
-            out, _ = emit_document_chunk_landmark(
-                segs, mem_freq=args.mem_freq, mem_id=LANDMARK_TOKEN_ID, pad_id=PAD_TOKEN_ID
-            )
-        return out
 
     block_size = args.mem_freq + 1  # landmark window (64); the eager landmark forward needs T % 64 == 0
 
@@ -263,6 +455,37 @@ def main():
         print(f"[topk] fixed top_k={args.landmark_top_k_blocks} on {n_set} landmark layers", flush=True)
 
     my_gidx = list(range(rank, len(examples), world))
+
+    # ---- gold-hop PRE-FLIGHT: every prefill must be in the sidecar, checked BEFORE any generation ----
+    # Cheap (CPU tokenization) and it fails in seconds instead of after a full eval. The post-hoc holder
+    # assert below still runs -- this one proves the KEYS match, that one proves the HOOK actually saw
+    # them.
+    if gold_hop_holder is not None:
+        missing = []
+        for gi in my_gidx:
+            raw = examples[gi].get("ex", examples[gi])
+            fp = content_fingerprint_from_row(build_prefill(raw), eos_id)
+            if fp not in gold_pairs_table:
+                missing.append((gi, fp))
+        if missing:
+            shown = "\n  ".join(f"example idx={gi}: {fp}" for gi, fp in missing[:3])
+            raise SystemExit(
+                f"[gold-hop] FATAL pre-flight: {len(missing)}/{len(my_gidx)} eval prefills are NOT in "
+                f"{args.gold_pairs}.\nThose rows would silently fall back to an ALL-TRUE graph = plain "
+                "causal over the context, i.e. they would be scored as unrestricted `standard` (near "
+                "the ceiling) and the arm would look like a triumphant result while measuring nothing."
+                "\nThe sidecar must be built from THIS eval file with THESE layout flags "
+                f"(--cot-mode {args.cot_mode} --free-pad-repeat {args.free_pad_repeat} "
+                f"--repeat-doc-text {args.repeat_doc_text} --summary-every-k {args.summary_every_k} "
+                f"--doc-start-id {ds_id} --doc-end-id {de_id} --eos-token-id {eos_id}) via "
+                f"src/scripts/data/build_gold_pairs_for_eval.py.\nmissing:\n  {shown}"
+            )
+        print(
+            f"[gold-hop] pre-flight OK: {len(my_gidx)}/{len(my_gidx)} eval prefills found in the "
+            "sidecar",
+            flush=True,
+        )
+
     local = []
     skipped = 0
     for gi in my_gidx:
@@ -279,6 +502,20 @@ def main():
             )
         local.append((gi, generate_one(prefill)))
 
+    # ---- gold-hop POST-HOC: the hook must actually have masked every document-bearing forward ----
+    # The pre-flight proved the keys match; this proves the graph reached attention. Raises rather than
+    # warns: a miss here means those rows ran as plain causal, which reads as a near-ceiling SUCCESS.
+    # NB the denominator counts only document-bearing rows -- KV-cached decode feeds one token at a
+    # time, carries no documents, and is a FREE query that every arm lets attend the cache causally.
+    if gold_hop_holder is not None:
+        gold_hop_holder.require_full_hit_rate(context=f"eval of {args.model_path}")
+        print(
+            f"[gold-hop] hit rate {gold_hop_holder.hit_rate:.1%} on "
+            f"{gold_hop_holder.counters.get('graph_rows', 0)} document-bearing rows | "
+            f"{gold_hop_holder.summary()}",
+            flush=True,
+        )
+
     full = [None] * len(examples)
     if world > 1:
         parts = [None] * world
@@ -291,7 +528,14 @@ def main():
             full[gi] = resp
 
     if is_main:
-        res, _ = _eval_contradiction(examples, full)
+        res, details = _eval_contradiction(examples, full)
+        if args.per_example_out:
+            for i, d in enumerate(details):
+                d["idx"] = i
+            os.makedirs(os.path.dirname(args.per_example_out) or ".", exist_ok=True)
+            with open(args.per_example_out, "w") as f:
+                json.dump(details, f)
+            print(f"[per-example] wrote {len(details)} rows -> {args.per_example_out}", flush=True)
         summary = {
             "model_path": args.model_path,
             "variant": args.variant,

@@ -168,6 +168,8 @@ def select_keep_docs(
     mode: str,
     rng: random.Random,
     n_gold: int = 0,
+    gold_pairs: Optional[Sequence[Sequence[int]]] = None,
+    n_pairs: int = 1,
 ) -> Set[int]:
     """
     Choose the set of context-document indices that keep gradient this example.
@@ -185,12 +187,28 @@ def select_keep_docs(
           keeps gold BY CHANCE (~``|gold|*n_keep/|present|``), so it is a same-sparsity control, *not*
           a gold-free one.
         * ``"random_nongold"`` -- STRICT gold-free control: same sparsity, sampled only from non-gold.
+        * ``"gold_pair"`` -- keep ``n_pairs`` COMPLETE gold pairs (both halves of each) plus
+          ``n_random`` random non-gold docs. Requires ``gold_pairs``.
+        * ``"gold_halves"`` -- the matched control for ``"gold_pair"``: keep ``n_gold`` gold docs drawn
+          from ``n_gold`` DISTINCT pairs (i.e. orphaned halves, never a complete pair) plus
+          ``n_random`` random non-gold. With ``n_gold=2`` vs ``gold_pair`` ``n_pairs=1`` the two arms
+          hold the gold COUNT, the doc count and the gold fraction fixed and differ *only* in whether
+          the two gold docs form a contradicting pair.
 
     :param rng: A seeded :class:`random.Random` (seed per-example so the choice is stable across
         epochs and reproducible).
-    :param n_gold: ``"gold_subsample"`` only -- how many gold docs to keep.
+    :param n_gold: ``"gold_subsample"`` / ``"gold_halves"`` only -- how many gold docs to keep.
+    :param gold_pairs: The row's gold docs grouped into contradicting pairs, e.g.
+        ``[[6, 19], [18, 48], [32, 72]]``. Required by the pair-aware modes.
+    :param n_pairs: ``"gold_pair"`` only -- how many complete pairs to keep.
 
     :returns: The set of document indices to keep (a subset of ``present_docs``).
+
+    .. note::
+        The pair-aware modes exist because the label is a *relation* (the model must emit
+        ``[[9, 28], ...]``), yet every doc-level mode treats gold as an unordered set -- so
+        ``gold_subsample`` with ``n_gold=1`` keeps one half of a pair and detaches its partner, and
+        gradient never flows through both ends of a contradiction at once.
     """
     present = [d for d in present_docs if d >= 0]
     present_set = set(present)
@@ -201,7 +219,9 @@ def select_keep_docs(
         keep.update(pool[: max(0, n_random)])
         return keep
     if mode == "random_only":
-        n_keep = min(len(present), len([g for g in gold_docs if g in present_set]) + max(0, n_random))
+        n_keep = min(
+            len(present), len([g for g in gold_docs if g in present_set]) + max(0, n_random)
+        )
         pool = sorted(present_set)
         rng.shuffle(pool)
         return set(pool[:n_keep])
@@ -222,19 +242,38 @@ def select_keep_docs(
         rng.shuffle(pool)
         keep.update(pool[: max(0, n_random)])
         return keep
+    if mode in ("gold_pair", "gold_halves"):
+        if not gold_pairs:
+            raise ValueError(f"mode {mode!r} needs gold_pairs (the pair-preserving sidecar)")
+        # Only pairs whose BOTH halves are present can be kept intact.
+        pairs = [[int(a) for a in p] for p in gold_pairs if all(int(a) in present_set for a in p)]
+        rng.shuffle(pairs)
+        keep: Set[int] = set()
+        if mode == "gold_pair":
+            for p in pairs[: max(0, n_pairs)]:
+                keep.update(p)
+        else:  # gold_halves: one orphan from each of n_gold DISTINCT pairs -> never a complete pair
+            for p in pairs[: max(0, n_gold)]:
+                keep.add(p[rng.randrange(len(p))])
+        pool = sorted(present_set - set(gold_docs))
+        rng.shuffle(pool)
+        keep.update(pool[: max(0, n_random)])
+        return keep
     if mode == "random_nongold":
         # STRICT control: sample the same NUMBER of docs but ONLY from non-gold ones, so the gold
         # gradient is exactly zero. Needed because "random_only" draws from ALL docs and therefore
         # keeps ~len(gold)*n_keep/len(present) gold docs BY CHANCE (with 6 gold of 20 and 8 kept that
         # is ~2.4 gold docs/example, i.e. it is NOT a gold-free arm) -- so "random_only" cannot, on its
         # own, tell us whether knowing the true contradiction is what matters.
-        n_keep = min(len(present), len([g for g in gold_docs if g in present_set]) + max(0, n_random))
+        n_keep = min(
+            len(present), len([g for g in gold_docs if g in present_set]) + max(0, n_random)
+        )
         pool = sorted(present_set - set(gold_docs))
         rng.shuffle(pool)
         return set(pool[:n_keep])
     raise ValueError(
         f"Unknown gold-grad mode {mode!r}; expected 'gold_plus_random', 'gold_subsample', "
-        "'random_only' or 'random_nongold'."
+        "'random_only', 'random_nongold', 'gold_pair' or 'gold_halves'."
     )
 
 
@@ -257,6 +296,7 @@ def make_fingerprint_gold_mask_fn(
     seed: int = 0,
     debug_calls: int = 12,
     n_gold: int = 0,
+    n_pairs: int = 1,
 ) -> GoldMaskFn:
     """
     Build a ``keep_mask_fn(input_ids) -> (B, S) bool`` that looks up each row's gold document set from
@@ -276,7 +316,23 @@ def make_fingerprint_gold_mask_fn(
     :param seed: Base seed for the per-example random doc choice.
     :param debug_calls: Log a ``[gold-grad]`` line for the first this-many forwards.
     """
-    table = {k: set(int(i) for i in v) for k, v in gold_table.items()}
+    # A sidecar value is either a FLAT list of gold doc ids ([6, 18, 19, ...]) or a list of
+    # contradicting PAIRS ([[6, 19], [18, 48], ...]). Accept both: the doc-level modes only need the
+    # flat set, the pair-aware modes need the grouping.
+    table: Dict[str, Set[int]] = {}
+    pair_table: Dict[str, List[List[int]]] = {}
+    for k, v in gold_table.items():
+        items = list(v)
+        if items and isinstance(items[0], (list, tuple)):
+            pair_table[k] = [[int(a) for a in p] for p in items]  # type: ignore[union-attr]
+            table[k] = {int(a) for p in items for a in p}  # type: ignore[union-attr]
+        else:
+            table[k] = {int(i) for i in items}  # type: ignore[arg-type]
+    if mode in ("gold_pair", "gold_halves") and not pair_table:
+        raise ValueError(
+            f"mode {mode!r} needs a PAIR-preserving gold sidecar (values like [[6, 19], [18, 48]]); "
+            "the flat gold_fingerprints.json cannot express which docs contradict which."
+        )
     state = {"calls": 0, "rows": 0, "hits": 0}
 
     def fn(input_ids: torch.Tensor) -> torch.Tensor:
@@ -299,7 +355,14 @@ def make_fingerprint_gold_mask_fn(
             present_docs = [int(d) for d in torch.unique(row_roles[row_roles >= 0]).tolist()]
             rng = random.Random(f"{seed}:{fp}")
             keep_docs = select_keep_docs(
-                present_docs, gold, n_random=n_random, mode=mode, rng=rng, n_gold=n_gold
+                present_docs,
+                gold,
+                n_random=n_random,
+                mode=mode,
+                rng=rng,
+                n_gold=n_gold,
+                gold_pairs=pair_table.get(fp),
+                n_pairs=n_pairs,
             )
             for gi in keep_docs:
                 keep[b] |= row_roles == gi
@@ -337,9 +400,7 @@ class GoldGradMaskHolder:
     _hook_handle: object = field(default=None, repr=False)
 
 
-def install_gold_grad_mask(
-    model: torch.nn.Module, keep_mask_fn: GoldMaskFn
-) -> GoldGradMaskHolder:
+def install_gold_grad_mask(model: torch.nn.Module, keep_mask_fn: GoldMaskFn) -> GoldGradMaskHolder:
     """
     Install gold-document gradient masking on ``model`` in place.
 

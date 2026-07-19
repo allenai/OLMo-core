@@ -54,9 +54,32 @@ TASKS = {
         "index_base": 1,                        # contra gold is 1-INDEXED (see
                                                 # generate_pubmed_contradiction_data.py);
                                                 # normalize to 0-indexed internally, write back 1-indexed.
-        "rungs": {"2k": 100, "8k": 190, "16k": 385, "32k": 765},
+        # 2026-07-19 re-rung 3k/8k/16k/32k -> 2k/4k/8k (CTC suite Stage-1 fixed eval rungs;
+        # 16k/32k deferred per BUILD_MATRIX.md). Values from the row-16 n-ladder table.
+        # 2026-07-19 FIX 2 (token calibration): the row-16 n-ladder values (40/88/190) were set
+        # from a "doc text only, pre-wrap" token estimate and undershot the 2048/4096/8192 labels
+        # by ~1.7-1.8x once the actual rendered prompt (instruction + query + box markers) is
+        # measured. Recalibrated via tokenizer-measured tokens = 288.7 + 22.82*n_docs (Qwen3.5,
+        # 50-example sample/rung, full prefill incl. wrap markers) -- see BUILD_MATRIX.md FIX 2.
+        "rungs": {"2k": 77, "4k": 167, "8k": 346},
         "out_tmpl": "contradiction_eval_pubmed_both_n{n}_k3.jsonl",
         "filler_glob": f"{DATA}/contradiction_*_k3.jsonl",  # harvest non-gold texts
+    },
+    "hpqa": {
+        # CTC suite HotpotQA fixed-eval rungs (BUILD_MATRIX.md row 2 / ACTION A2b). Canonical is
+        # the n=205 bridge-question eval built on cubbins (500 rows, 20 hard negs/ex, 0-indexed
+        # gold) -- shrink-derive 2k/4k/8k from it same as nq/rerank.
+        "canonical": "/data/prasann/ctc_suite_data/hotpotqa/hotpotqa_eval_k205_bridge_hn20_500.jsonl",
+        "mode": "shrink",
+        "gold_field": "gold_doc_indices",
+        "gold_is_pairs": False,
+        "extra_index_fields": ["hard_neg_indices"],
+        # 2026-07-19 FIX 2 (token calibration): 11/24/50 undershot 2048/4096/8192 by ~1.5-1.6x
+        # (tokenizer-measured full prefill, not just doc text). Recalibrated via
+        # tokens = 66.6 + 113.36*n_docs (Qwen3.5, 50-example sample/rung) -- see BUILD_MATRIX.md
+        # FIX 2.
+        "rungs": {"2k": 17, "4k": 36, "8k": 72},
+        "out_tmpl": "hotpotqa_eval_bridge_hn20_n{n}_500.jsonl",
     },
     "nq": {
         "canonical": f"{E5}/nq/nq_validation_k200_hn20_600.jsonl",
@@ -73,7 +96,11 @@ TASKS = {
         "gold_field": "gold_doc_indices",
         "gold_is_pairs": False,
         "answers_from_gold": True,              # answers = "; ".join(1-indexed gold)
-        "rungs": {"3k": 22, "8k": 55, "16k": 110, "32k": 220},
+        # 2026-07-19 re-rung 3k/8k/16k/32k -> 2k/4k/8k (see contra note above).
+        # 2026-07-19 FIX 2 (token calibration): CONFIRMED already within +-10% of the
+        # 2048/4096/8192 labels (tokenizer-measured full prefill medians: 2158/4230/8490, i.e.
+        # ratios 1.05/1.03/1.04) -- no change. See BUILD_MATRIX.md FIX 2.
+        "rungs": {"2k": 14, "4k": 28, "8k": 57},
         "out_tmpl": "outlier_wiki100w_n{n}_k3_eval_600.jsonl",
     },
     "rerank": {

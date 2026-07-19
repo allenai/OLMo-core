@@ -25,7 +25,7 @@ intra-document packing (``cu_doc_lens``), or Ulysses CP while ``chunk_ids`` is a
 """
 
 import logging
-from typing import Optional
+from typing import Any, Optional
 
 import torch
 import torch.nn.functional as F
@@ -114,6 +114,19 @@ class DocumentChunkedAttention(Attention):
         rotates with depth as ``layer_idx % L``). Defaults to 3.
     :param dilation_max_docs: Optional fixed saturation reference for ``"hierarchical_dilated"``
         (``None`` -> compute the cap per sequence from the actual chunk count).
+    :param summary_every_k: Cell size for the ``"summary_attention"`` pattern: how many context
+        documents precede each summary span. Must match the tokenized layout.
+    :param summary_bandwidth: Relay bandwidth for ``"summary_attention"``: how many of each earlier
+        summary span's leading tokens a later chunk may attend. ``0`` removes the relay (a pure
+        cell-blocks mask -- the bandwidth ladder's floor control).
+    :param summary_relay: Whether a ``"summary_attention"`` summary span may read its own cell
+        (``True``, the treatment) or nothing at all (``False``, the vacuous placebo).
+    :param gold_decoys: ``"gold_hop_controlled"``: distance-matched non-gold decoy pairs per gold
+        pair (the leak fix). Recorded so eval rebuilds the SAME graph the model trained under.
+    :param gold_hops: Arm of the ``"gold_hop_controlled"`` ladder: ``1`` / ``2`` / ``3`` / ``-1``
+        (=inf). Recorded so the saved ``config.json`` names the arm; the per-example graph itself is
+        supplied at runtime by :func:`~olmo_core.nn.attention.gold_hop_mask.install_gold_hop_mask`,
+        which cross-checks this value against the hook it installs.
     :param layer_idx: The transformer layer index this module lives at (0-based). The
         ``"hierarchical_dilated"`` pattern reads it to pick the per-layer dilation stride; other
         patterns ignore it.
@@ -140,6 +153,11 @@ class DocumentChunkedAttention(Attention):
         dilation_m: int = 2,
         dilation_cycle: int = 3,
         dilation_max_docs: Optional[int] = None,
+        summary_every_k: int = 10,
+        summary_bandwidth: int = 0,
+        summary_relay: bool = True,
+        gold_hops: int = 2,
+        gold_decoys: int = 0,
         flex_block_size: int = _FLEX_DEFAULT_BLOCK_SIZE,
         layer_idx: int = 0,
         n_layers: int = 1,
@@ -188,12 +206,21 @@ class DocumentChunkedAttention(Attention):
             dilation_m=dilation_m,
             dilation_cycle=dilation_cycle,
             dilation_max_docs=dilation_max_docs,
+            summary_every_k=summary_every_k,
+            summary_bandwidth=summary_bandwidth,
+            summary_relay=summary_relay,
+            gold_hops=gold_hops,
+            gold_decoys=gold_decoys,
         )
         # The base ``Attention`` only forwards ``softmax_scale`` to the backend; store it for our own
         # SDPA call (mirrors :class:`LandmarkAttention`).
         self.softmax_scale = softmax_scale if softmax_scale is not None else self.head_dim**-0.5
         # Transient per-forward chunk roles, stashed by ``forward`` for ``sdpa`` to read.
         self._chunk_ids: Optional[torch.Tensor] = None
+        # Set by ``gold_hop_mask.install_gold_hop_mask``: the shared holder whose ``adjacency`` a
+        # forward pre-hook refreshes each forward with this batch's gold-edited doc->doc graph. Only
+        # the "gold_hop_controlled" pattern reads it; ``None`` for every other pattern.
+        self._gold_hop_holder: Optional[Any] = None
         # Sticky fallback: set if FlexAttention errors at runtime (then use the dense mask). Also
         # settable by tests to force the materialized path for flex-vs-dense parity checks.
         self._force_eager_mask: bool = False
@@ -248,6 +275,32 @@ class DocumentChunkedAttention(Attention):
             chunk_ids = chunk_ids.expand(batch_size, T)
         return chunk_ids
 
+    def _gold_hop_adjacency(self, batch_size: int) -> Optional[torch.Tensor]:
+        """
+        This forward's per-example gold-edited doc->doc graph, or ``None`` for non-gold patterns.
+
+        Raises rather than falling back if the ``"gold_hop_controlled"`` pattern is configured but no
+        hook is installed: a missing graph is not a degraded mask, it is a *different experiment*, and
+        the whole point of the arm is which edges are absent.
+        """
+        if self.cross_doc_mode != "gold_hop_controlled":
+            return None
+        holder = self._gold_hop_holder
+        adj = None if holder is None else holder.adjacency
+        if adj is None:
+            raise OLMoConfigurationError(
+                "cross_doc_mode='gold_hop_controlled' but no gold-hop graph is available for this "
+                "forward. Install the fingerprint hook with "
+                "olmo_core.nn.attention.gold_hop_mask.install_gold_hop_mask(model, fn) before "
+                "training/eval."
+            )
+        if adj.shape[0] != batch_size and adj.shape[0] != 1:
+            raise OLMoConfigurationError(
+                f"gold-hop adjacency batch ({adj.shape[0]}) does not match the forward's batch "
+                f"({batch_size}); the pre-hook and the attention forward disagree about the batch."
+            )
+        return adj
+
     def _build_additive_mask(self, chunk_ids: torch.Tensor, *, dtype: torch.dtype) -> torch.Tensor:
         """Materialize the chunked allowed-mask as a ``(B, 1, T, T)`` additive bias (0 / finfo.min)."""
         device = chunk_ids.device
@@ -255,7 +308,11 @@ class DocumentChunkedAttention(Attention):
         # (B, T, T) boolean: True where the query may attend the key (causal + roles + pattern). The
         # layer index drives the per-layer dilation stride for the "hierarchical_dilated" pattern.
         allowed = build_chunked_allowed_mask(
-            self._pattern, chunk_ids, is_anchor=is_anchor, layer_idx=self.layer_idx
+            self._pattern,
+            chunk_ids,
+            is_anchor=is_anchor,
+            layer_idx=self.layer_idx,
+            doc_adjacency=self._gold_hop_adjacency(chunk_ids.shape[0]),
         )
         finfo_min = torch.finfo(dtype).min
         return torch.where(

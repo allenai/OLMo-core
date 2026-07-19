@@ -1,0 +1,15 @@
+{
+  "model_path": "/data/prasann/ctc_suite/ckpts/ctc-smoke-contra-3ep",
+  "variant": "dense",
+  "contra_data": "/data/prasann/ctc_suite_data/eval_rungs/contradiction_eval_pubmed_both_n20_k3.jsonl",
+  "eval_size": 488,
+  "landmark_top_k_blocks": null,
+  "landmark_top_k_fraction": null,
+  "contradiction": {
+    "precision": 0.8818306010928961,
+    "recall": 0.8818306010928961,
+    "f1": 0.8818306010928961,
+    "exact_match": 0.6762295081967213,
+    "parse_rate": 1.0
+  }
+}

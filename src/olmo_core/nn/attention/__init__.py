@@ -452,6 +452,46 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
     For :class:`DocumentChunkedAttention` with ``cross_doc_mode="random_doc"`` only: seed for the
     per-document-pair keep hash. Defaults to 42.
     """
+    summary_every_k: Optional[int] = None
+    """
+    For :class:`DocumentChunkedAttention` with ``cross_doc_mode="summary_attention"`` only: the **cell
+    size** -- how many context documents precede each summary span. The tokenized layout must match
+    (``summary_every_k`` docs then one summary span per cell), so chunk indices run on a stride of
+    ``summary_every_k + 1``. Defaults to 10.
+    """
+    summary_bandwidth: Optional[int] = None
+    """
+    For :class:`DocumentChunkedAttention` with ``cross_doc_mode="summary_attention"`` only: the **relay
+    bandwidth** -- how many of each earlier summary span's leading tokens a later chunk may attend. The
+    dose knob of the bandwidth ladder; the data is identical across rungs, only visibility changes.
+    ``0`` (default) removes the relay entirely, reproducing a pure cell-blocks mask (the floor control).
+    """
+    summary_relay: Optional[bool] = None
+    """
+    For :class:`DocumentChunkedAttention` with ``cross_doc_mode="summary_attention"`` only: whether a
+    summary span may read its own cell's documents. ``True`` (default) is the treatment. ``False`` is
+    the **placebo** -- the span keeps its position, tokens, and every edge into it, but reads nothing,
+    so it provably carries zero document content.
+    """
+    gold_decoys: Optional[int] = None
+    """
+    For :class:`DocumentChunkedAttention` with ``cross_doc_mode="gold_hop_controlled"`` only:
+    distance-matched non-gold decoy pairs per gold pair, given the identical edit so the arm's
+    structural signature stops naming the gold pair. Measured: ``0`` leaves ``hop_inf`` at graph-only
+    precision@3 16.2% (66x chance); ``12`` cuts it to 2.0% (8x) and makes ``hop2`` / ``hop_inf``
+    leak-matched, which is what the ``hop2 - hop_inf`` contrast requires.
+    """
+    gold_hops: Optional[int] = None
+    """
+    For :class:`DocumentChunkedAttention` with ``cross_doc_mode="gold_hop_controlled"`` only: which arm
+    of the multi-hop gold-routing ladder -- ``1`` (gold edge forced present), ``2`` / ``3`` (gold edge
+    **deleted**, shortest gold path forced to exactly that length), or ``-1``
+    (:data:`~olmo_core.nn.attention.gold_hop_mask.GOLD_HOPS_INF`: gold edge deleted and every path cut,
+    the leak-matched control). Recorded here so the checkpoint's ``config.json`` names the arm; the
+    per-example graph is built at runtime by
+    :func:`~olmo_core.nn.attention.gold_hop_mask.install_gold_hop_mask`, which refuses to install if the
+    two disagree.
+    """
     flex_block_size: Optional[int] = None
     """
     For :class:`DocumentChunkedAttention` only: the FlexAttention ``create_block_mask`` block size (the
@@ -616,6 +656,11 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
         doc_keep_prob = kwargs.pop("doc_keep_prob", None)
         random_doc_seed = kwargs.pop("random_doc_seed", None)
         random_doc_per_example = kwargs.pop("random_doc_per_example", None)
+        summary_every_k = kwargs.pop("summary_every_k", None)
+        summary_bandwidth = kwargs.pop("summary_bandwidth", None)
+        summary_relay = kwargs.pop("summary_relay", None)
+        gold_hops = kwargs.pop("gold_hops", None)
+        gold_decoys = kwargs.pop("gold_decoys", None)
         flex_block_size = kwargs.pop("flex_block_size", None)
         dilated_window_k = kwargs.pop("dilated_window_k", None)
         dilated_window_num_configs = kwargs.pop("dilated_window_num_configs", None)
@@ -704,6 +749,24 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
         if full_attention_layers is not None and AttentionType.document_chunked not in possible_types:
             raise OLMoConfigurationError(
                 "'full_attention_layers' (hybrid full/chunked layers) is only supported with "
+                f"document_chunked attention (got name='{self.name}')"
+            )
+        if (
+            summary_every_k is not None
+            or summary_bandwidth is not None
+            or summary_relay is not None
+        ) and not (possible_types & _DOC_CHUNKED_TYPES):
+            raise OLMoConfigurationError(
+                "'summary_every_k' / 'summary_bandwidth' / 'summary_relay' are only supported with "
+                "document_chunked, document_landmark, or document_compressive_landmark attention "
+                f"(got name='{self.name}')"
+            )
+        if (
+            gold_hops is not None or gold_decoys is not None
+        ) and AttentionType.document_chunked not in possible_types:
+            raise OLMoConfigurationError(
+                "'gold_hops' / 'gold_decoys' (the multi-hop gold-routing ladder) are only supported "
+                "with "
                 f"document_chunked attention (got name='{self.name}')"
             )
 
@@ -835,6 +898,18 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
                     kwargs["random_seed"] = random_doc_seed
                 if random_doc_per_example is not None:
                     kwargs["random_doc_per_example"] = random_doc_per_example
+                # Cell size / relay bandwidth / relay on-off for the "summary_attention" pattern.
+                if summary_every_k is not None:
+                    kwargs["summary_every_k"] = summary_every_k
+                if summary_bandwidth is not None:
+                    kwargs["summary_bandwidth"] = summary_bandwidth
+                if summary_relay is not None:
+                    kwargs["summary_relay"] = summary_relay
+                # The arm of the "gold_hop_controlled" ladder (recorded; the graph arrives via the hook).
+                if gold_hops is not None:
+                    kwargs["gold_hops"] = gold_hops
+                if gold_decoys is not None:
+                    kwargs["gold_decoys"] = gold_decoys
                 if flex_block_size is not None:
                     kwargs["flex_block_size"] = flex_block_size
                 if full_attention_layers is not None:

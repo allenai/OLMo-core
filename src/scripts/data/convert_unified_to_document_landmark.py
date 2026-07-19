@@ -4,9 +4,12 @@ Convert **unified-format** task JSONL into **document-chunked** SFT shards for O
 the **landmark** layout (``--emit landmark``, for
 :class:`~olmo_core.nn.attention.DocumentLandmarkAttention`).
 
-Document boundaries use **registered special tokens** ``<|box_start|>`` / ``<|box_end|>`` (real Qwen3
-reserved tokens; ids 151648 / 151649): each context document/item-line is wrapped at the *string*
-level and the tokenizer emits the boundary ids natively. All the shared logic (prompt rendering,
+Document boundaries use **registered special tokens** ``<|box_start|>`` / ``<|box_end|>``: each
+context document/item-line is wrapped at the *string* level and the tokenizer emits the boundary ids
+natively. The boundary/EOS/landmark/pad **ids are tokenizer-specific** -- select them with
+``--marker-set`` (``qwen3``: 151648/151649/151643, the default; ``qwen3_5``: 248049/248050/248044,
+matching ``Qwen/Qwen3.5-*``); the resolved ids are verified against ``--tokenizer`` at startup and
+recorded in the shard's ``metadata.json``. All the shared logic (prompt rendering,
 wrapping, tokenization, segmentation) lives in
 :func:`olmo_core.data.document_chunk_landmark.segment_prompt_to_chunks`, which is also used by the
 native eval harness so train and eval token layouts match exactly.
@@ -44,13 +47,13 @@ import numpy as np
 from transformers import AutoTokenizer
 
 from olmo_core.data.document_chunk_landmark import (  # canonical ids -- never retype
-    DOC_END_ID,
-    DOC_START_ID,
-    EOS_TOKEN_ID,
-    LANDMARK_TOKEN_ID,
-    PAD_TOKEN_ID,
+    DOC_END_STR,
+    DOC_START_STR,
+    RESERVED_IDS,
+    ReservedIds,
     emit_document_chunk_dense,
     emit_document_chunk_landmark,
+    reserved_ids,
     segment_prompt_to_chunks,
 )
 
@@ -60,8 +63,6 @@ DEFAULT_TOKENIZER = "Qwen/Qwen3-4B"
 
 TOKEN_DTYPE = np.uint32
 MASK_DTYPE = np.bool_
-# Ids the converter inserts; if any already occur in a rendered prompt, the example is ambiguous.
-RESERVED_INSERTED = (LANDMARK_TOKEN_ID, PAD_TOKEN_ID)
 
 
 def tokenize_example(
@@ -79,8 +80,14 @@ def tokenize_example(
     use_titles: bool,
     free_pad_repeat: int = 0,
     repeat_doc_text: int = 1,
+    summary_every_k: int = 0,
+    ids_set: ReservedIds = RESERVED_IDS["qwen3"],
 ) -> Optional[Tuple[np.ndarray, np.ndarray]]:
-    """Tokenize one unified example into a document-chunked instance, or ``None`` to skip."""
+    """Tokenize one unified example into a document-chunked instance, or ``None`` to skip.
+
+    :param ids_set: The tokenizer-specific reserved ids (boundary markers / EOS / landmark / pad).
+        Defaults to the Qwen3 set, which keeps every existing invocation byte-identical.
+    """
     segments, ids, _mask = segment_prompt_to_chunks(
         tok,
         example,
@@ -91,23 +98,25 @@ def tokenize_example(
         item_regex=item_regex,
         include_answer=True,
         use_titles=use_titles,
-        doc_start_id=DOC_START_ID,
-        doc_end_id=DOC_END_ID,
+        doc_start_id=ids_set.doc_start,
+        doc_end_id=ids_set.doc_end,
         free_pad_repeat=free_pad_repeat,
         repeat_doc_text=repeat_doc_text,
+        summary_every_k=summary_every_k,
     )
-    if any(t in RESERVED_INSERTED for t in ids):
+    # Ids the converter inserts; if any already occur in a rendered prompt, the example is ambiguous.
+    if any(t in (ids_set.landmark, ids_set.pad) for t in ids):
         return None  # the rendered prompt already contains a reserved inserted id -> ambiguous
 
     if emit == "dense":
         out_ids, out_mask = emit_document_chunk_dense(segments)
     else:  # landmark
         out_ids, out_mask = emit_document_chunk_landmark(
-            segments, mem_freq=mem_freq, mem_id=LANDMARK_TOKEN_ID, pad_id=PAD_TOKEN_ID
+            segments, mem_freq=mem_freq, mem_id=ids_set.landmark, pad_id=ids_set.pad
         )
 
     # Append the EOS document separator (PadToLengthInstanceSource pads each instance up to seq_len).
-    out_ids.append(EOS_TOKEN_ID)
+    out_ids.append(ids_set.eos)
     out_mask.append(False)
     if len(out_ids) > seq_len:
         return None  # too long for this sequence length -> drop (raise --seq-len to keep)
@@ -224,7 +233,56 @@ def main() -> None:
         "changing the document COUNT or the document-level attention graph -- the control for "
         "--free-pad-repeat (adds tokens that are NEVER free). MUST match the eval.",
     )
+    p.add_argument(
+        "--summary-every-k",
+        type=int,
+        default=0,
+        help="Emit the summary_attention layout: one extra 'Summary of claims X to Y: [X]...[Y]' span "
+        "-- its own chunk -- after every K documents, so chunk indices run on a stride of K+1 and the "
+        "summary_attention mask identifies a span as (chunk_id %% (K+1)) == K. 0 (default) = off. "
+        "MUST match the eval (--summary-every-k) and the model's summary_every_k, or every chunk role "
+        "is silently rebound. The bandwidth/relay knobs are NOT here -- they live on the attention "
+        "config, so ONE shard serves every rung of the bandwidth ladder.",
+    )
     p.add_argument("--tokenizer", default=DEFAULT_TOKENIZER)
+    p.add_argument(
+        "--marker-set",
+        default="qwen3",
+        choices=sorted(RESERVED_IDS),
+        help="Which tokenizer family's reserved ids to use (boundary markers / EOS / landmark / "
+        "pad). MUST match --tokenizer -- the boundary ids are verified against it at startup. "
+        "Default 'qwen3' keeps existing invocations byte-identical.",
+    )
+    p.add_argument(
+        "--doc-start-id",
+        type=int,
+        default=None,
+        help="Override the <|box_start|> id from --marker-set (rarely needed).",
+    )
+    p.add_argument(
+        "--doc-end-id",
+        type=int,
+        default=None,
+        help="Override the <|box_end|> id from --marker-set (rarely needed).",
+    )
+    p.add_argument(
+        "--eos-token-id",
+        type=int,
+        default=None,
+        help="Override the EOS terminator id from --marker-set (rarely needed).",
+    )
+    p.add_argument(
+        "--landmark-id",
+        type=int,
+        default=None,
+        help="(landmark) Override the landmark token id from --marker-set.",
+    )
+    p.add_argument(
+        "--pad-id",
+        type=int,
+        default=None,
+        help="(landmark) Override the window-fill pad id from --marker-set.",
+    )
     p.add_argument("--limit", type=int, default=0)
     p.add_argument("--shard-tokens", type=int, default=20_000_000)
     p.add_argument(
@@ -243,7 +301,42 @@ def main() -> None:
     if args.emit_gold_sidecar and args.emit != "dense":
         raise SystemExit("--emit-gold-sidecar requires --emit dense (chunk index == Claim id - 1).")
 
+    # Resolve the reserved-id set: --marker-set base, explicit --*-id flags override field-by-field.
+    ids_set = reserved_ids(args.marker_set)
+    overrides = {
+        "doc_start": args.doc_start_id,
+        "doc_end": args.doc_end_id,
+        "eos": args.eos_token_id,
+        "landmark": args.landmark_id,
+        "pad": args.pad_id,
+    }
+    ids_set = ids_set._replace(**{k: v for k, v in overrides.items() if v is not None})
+
     tok = AutoTokenizer.from_pretrained(args.tokenizer)
+    # A shard built with one id set and a model/eval expecting another produces plausible-looking
+    # numbers, not a crash -- so verify the resolved ids against THIS tokenizer, loudly.
+    for name, tok_str, want in (
+        ("doc_start", DOC_START_STR, ids_set.doc_start),
+        ("doc_end", DOC_END_STR, ids_set.doc_end),
+    ):
+        got = tok.convert_tokens_to_ids(tok_str)
+        if got != want:
+            raise SystemExit(
+                f"marker-id mismatch: tokenizer {args.tokenizer!r} maps {tok_str!r} -> {got}, but "
+                f"the resolved id set (--marker-set {args.marker_set}) expects {name}={want}. "
+                "Pass the --marker-set matching the tokenizer (e.g. --marker-set qwen3_5 for a "
+                "Qwen3.5 tokenizer) or explicit --doc-start-id/--doc-end-id overrides."
+            )
+    if ids_set.eos >= len(tok):
+        raise SystemExit(
+            f"eos id {ids_set.eos} is out of range for tokenizer {args.tokenizer!r} "
+            f"(len {len(tok)}); --marker-set {args.marker_set} does not match this tokenizer."
+        )
+    log.info(
+        f"marker set '{args.marker_set}': doc_start={ids_set.doc_start} doc_end={ids_set.doc_end} "
+        f"eos={ids_set.eos} landmark={ids_set.landmark} pad={ids_set.pad}"
+    )
+
     os.makedirs(args.out_dir, exist_ok=True)
     examples = iter_examples(args.input_jsonl, args.limit)
     log.info(
@@ -288,6 +381,8 @@ def main() -> None:
             use_titles=args.use_titles,
             free_pad_repeat=args.free_pad_repeat,
             repeat_doc_text=args.repeat_doc_text,
+            summary_every_k=args.summary_every_k,
+            ids_set=ids_set,
         )
         if res is None:
             dropped += 1
@@ -322,13 +417,15 @@ def main() -> None:
         "chunk_by": args.chunk_by,
         "wrap_docs": True,
         "free_pad_repeat": args.free_pad_repeat,
+        "summary_every_k": args.summary_every_k,
         "use_titles": args.use_titles,
         "tokenizer": args.tokenizer,
-        "eos_token_id": EOS_TOKEN_ID,
-        "doc_start_id": DOC_START_ID,
-        "doc_end_id": DOC_END_ID,
-        "landmark_token_id": LANDMARK_TOKEN_ID if args.emit == "landmark" else None,
-        "pad_token_id": PAD_TOKEN_ID if args.emit == "landmark" else None,
+        "marker_set": args.marker_set,
+        "eos_token_id": ids_set.eos,
+        "doc_start_id": ids_set.doc_start,
+        "doc_end_id": ids_set.doc_end,
+        "landmark_token_id": ids_set.landmark if args.emit == "landmark" else None,
+        "pad_token_id": ids_set.pad if args.emit == "landmark" else None,
         "mem_freq": args.mem_freq if args.emit == "landmark" else None,
         "dtype": np.dtype(TOKEN_DTYPE).name,
         "mask_dtype": "bool",

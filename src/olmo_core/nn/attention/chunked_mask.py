@@ -35,6 +35,7 @@ __all__ = [
     "CHUNKED_ATTENTION_PATTERNS",
     "AttentionPattern",
     "hierarchical_effective_layer",
+    "chunk_token_offset",
     "build_chunked_allowed_mask",
     "build_chunked_mask_mod",
     "build_chunk_ids_from_tokens",
@@ -57,6 +58,8 @@ CHUNKED_ATTENTION_PATTERNS = (
     "random_token",
     "random_doc",
     "hierarchical_dilated",
+    "summary_attention",
+    "gold_hop_controlled",
 )
 
 
@@ -97,6 +100,38 @@ class AttentionPattern:
         the within-cycle saturation cap. When ``None`` (default) the cap is computed **per sequence**
         from the actual maximum context-chunk index; when set, this fixed value is used instead (so
         every sequence saturates at the same cycle position).
+    :param summary_every_k: ``"summary_attention"``: the **cell size** -- the number of context
+        documents per cell. The tokenized layout must place exactly ``summary_every_k`` documents then
+        one **summary span** in each cell, so chunk indices run on a stride of ``summary_every_k + 1``
+        (``cell(id) = id // (k+1)``, ``is_summary(id) = (id % (k+1)) == k``). Must be ``>= 1``, and the
+        document count must be divisible by it so no partial cell breaks the modular arithmetic.
+    :param summary_bandwidth: ``"summary_attention"``: the **relay bandwidth** ``b`` -- how many of each
+        earlier summary span's leading tokens a later chunk may attend. This is the dose knob of the
+        bandwidth ladder: the tokenized data is unchanged across rungs, only visibility varies.
+        ``0`` removes the relay entirely, which reproduces a pure "cell blocks" mask (documents see
+        their own cell only) and is the ladder's floor control; large values expose the whole span.
+    :param summary_relay: ``"summary_attention"``: whether a summary span may read its own cell's
+        documents. ``True`` (default) is the treatment -- the span aggregates its cell and relays it
+        forward. ``False`` is the **placebo**: the span keeps its position, its tokens, and every edge
+        into it, but reads nothing, so it provably carries **zero** document content (see
+        :func:`build_chunked_allowed_mask`). Used to test whether information-free keys alone move the
+        metric.
+    :param gold_hops: ``"gold_hop_controlled"``: which arm of the multi-hop gold-routing ladder --
+        ``1`` (the gold edge is forced **present**), ``2`` / ``3`` (the gold edge is **deleted** and the
+        shortest gold path forced to exactly that length), or
+        :data:`~olmo_core.nn.attention.gold_hop_mask.GOLD_HOPS_INF` (``-1``: gold edge deleted **and**
+        every path cut -- the leak-matched control). This pattern is a pure **consumer**: the graph is
+        built per example by :mod:`~olmo_core.nn.attention.gold_hop_mask` (which owns the base
+        ``doc_keep_prob``, the seed, and the gold-pair sidecar) and handed to
+        :func:`build_chunked_allowed_mask` as ``doc_adjacency``. The field is carried here so the arm
+        is recorded in the saved ``config.json`` and can be cross-checked against the installed hook
+        instead of trusted.
+    :param gold_decoys: ``"gold_hop_controlled"``: distance-matched NON-gold pairs per gold pair given
+        the identical edit, so the arm's structural signature stops naming the gold pair. Carried here
+        for provenance; the graph is built by
+        :mod:`~olmo_core.nn.attention.gold_hop_mask`. ``0`` is the un-camouflaged design, whose leak is
+        measured and large (``hop_inf``: a graph-only classifier reaches precision@3 16.2% vs 0.245%
+        chance). ``12`` cuts that to 2.0% and makes ``hop2`` / ``hop_inf`` leak-matched.
     """
 
     name: str = "chunked"
@@ -110,6 +145,11 @@ class AttentionPattern:
     dilation_m: int = 2
     dilation_cycle: Optional[int] = 3
     dilation_max_docs: Optional[int] = None
+    summary_every_k: int = 10
+    summary_bandwidth: int = 0
+    summary_relay: bool = True
+    gold_hops: int = 2
+    gold_decoys: int = 0
 
     def __post_init__(self) -> None:
         if self.name not in CHUNKED_ATTENTION_PATTERNS:
@@ -139,6 +179,23 @@ class AttentionPattern:
         if self.name == "random_doc" and not (0.0 <= self.doc_keep_prob <= 1.0):
             raise ValueError(
                 f"random_doc requires 0 <= doc_keep_prob <= 1 (got {self.doc_keep_prob})"
+            )
+        if self.name == "summary_attention":
+            if self.summary_every_k < 1:
+                raise ValueError(
+                    f"summary_attention requires summary_every_k >= 1 (got {self.summary_every_k})"
+                )
+            if self.summary_bandwidth < 0:
+                raise ValueError(
+                    f"summary_attention requires summary_bandwidth >= 0 "
+                    f"(got {self.summary_bandwidth})"
+                )
+        if self.name == "gold_hop_controlled" and self.gold_hops not in (1, 2, 3, -1):
+            # -1 == gold_hop_mask.GOLD_HOPS_INF; spelled out to keep this module import-free of the
+            # gold-aware layer (gold_hop_mask imports THIS module).
+            raise ValueError(
+                f"gold_hop_controlled requires gold_hops in (1, 2, 3, -1 [=inf]) "
+                f"(got {self.gold_hops})"
             )
 
     def needs_anchor(self) -> bool:
@@ -404,6 +461,33 @@ def random_doc_nonce(chunk_ids: torch.Tensor) -> torch.Tensor:
     return (h.sum(dim=-1) * _RD_MIX) & _RD_MASK
 
 
+def chunk_token_offset(chunk_ids: torch.Tensor) -> torch.Tensor:
+    """
+    Per-token offset within its own chunk, i.e. ``0`` for the first token of each chunk, ``1`` for the
+    second, and so on. Required by the ``"summary_attention"`` pattern's **bandwidth gate**, which
+    exposes only the leading ``summary_bandwidth`` tokens of each summary span.
+
+    Chunks are contiguous runs of equal ``chunk_id`` (the document-boundary markers guarantee this), so
+    the offset is ``position - (position of the first token of this run)``, computed with a running
+    maximum over run-start positions. Offsets for FREE / PAD runs are meaningless but harmless: the
+    pattern only reads this for context chunks.
+
+    Computed once per forward and closed over by
+    :func:`build_chunked_mask_mod`, mirroring :func:`random_doc_nonce`, so the ``mask_mod`` body stays a
+    pure elementwise function of ``(b, q_idx, kv_idx)``.
+
+    :param chunk_ids: Per-token role ids ``(B, T)``. See the module docstring.
+
+    :returns: An int64 tensor of shape ``(B, T)``.
+    """
+    b, t = chunk_ids.shape
+    pos = torch.arange(t, device=chunk_ids.device, dtype=torch.int64).expand(b, t)
+    is_start = torch.ones_like(chunk_ids, dtype=torch.bool)
+    is_start[:, 1:] = chunk_ids[:, 1:] != chunk_ids[:, :-1]
+    run_start = torch.cummax(torch.where(is_start, pos, torch.zeros_like(pos)), dim=1).values
+    return pos - run_start
+
+
 def _random_doc_keep(
     qc: torch.Tensor,
     kc: torch.Tensor,
@@ -441,6 +525,7 @@ def build_chunked_allowed_mask(
     is_anchor: Optional[torch.Tensor] = None,
     random_keep: Optional[torch.Tensor] = None,
     layer_idx: int = 0,
+    doc_adjacency: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
     """
     Materialize a chunked-attention pattern as a dense boolean ``(B, S, S)`` mask (``True`` = attend).
@@ -452,6 +537,10 @@ def build_chunked_allowed_mask(
     :param chunk_ids: Per-token role ids, shape ``(B, S)`` or ``(S,)``. See module docstring.
     :param is_anchor: ``(B, S)`` / ``(S,)`` bool, required for ``"last_token_anchor"``.
     :param random_keep: ``(B, S, S)`` / ``(S, S)`` bool, required for ``"random_token"``.
+    :param doc_adjacency: ``(B, D, D)`` / ``(D, D)`` bool, required for ``"gold_hop_controlled"``:
+        ``doc_adjacency[b, q, k]`` = example ``b``'s document ``q`` may attend document ``k``. Built
+        per example by :mod:`~olmo_core.nn.attention.gold_hop_mask` from a fingerprint lookup, so gold
+        identity stays out of the token stream. Ignored by every other pattern.
     :param layer_idx: The transformer layer index; only used by the layer-dependent
         ``"hierarchical_dilated"`` pattern (the stride is ``m**(layer_idx % dilation_cycle)``, saturated
         within the cycle -- see :func:`hierarchical_effective_layer`). Ignored by all
@@ -460,6 +549,10 @@ def build_chunked_allowed_mask(
     :returns: A boolean ``(B, S, S)`` tensor; ``True`` where the query (dim 1) may attend the key
         (dim 2).
     """
+    # NOTE (``summary_attention``): the layout must be `k` docs then one summary span per cell, so
+    # chunk ids run on a stride of ``k+1``. The pattern is a pure function of ``(qc, kc)`` and the
+    # per-token in-chunk offset, with **no layer term** -- so one fixed graph serves every layer and a
+    # "hop" is unambiguous, exactly as for ``random_doc``.
     if chunk_ids.dim() == 1:
         chunk_ids = chunk_ids.unsqueeze(0)
     B, S = chunk_ids.shape
@@ -539,6 +632,63 @@ def build_chunked_allowed_mask(
             (diff >= 0) & (qc >= 0) & (kc >= 0) & ((diff % stride) == 0) & ((diff // stride) < n)
         )
         context_ok = same_chunk | stride_ok
+    elif name == "summary_attention":
+        # Documents are grouped into CELLS of `k` docs, each followed by one SUMMARY span (its own
+        # chunk), so chunk indices run on a stride of P = k+1. Within a cell attention is full; the
+        # summary span reads its whole cell (it sits at the cell END, so causally it has already seen
+        # every doc of the cell) and is then attendable by every LATER cell -> any two documents in
+        # different cells are exactly 2 hops apart, with no gold-aware term anywhere.
+        p = pattern.summary_every_k + 1
+        both_ctx = (qc >= 0) & (kc >= 0)
+        cell_q, cell_k = qc // p, kc // p
+        is_sum_q = (qc % p) == pattern.summary_every_k
+        is_sum_k = (kc % p) == pattern.summary_every_k
+        same_cell = (cell_q == cell_k) & both_ctx
+        doc_reads_own_cell = same_cell & ~is_sum_q & ~is_sum_k
+        # The placebo (`summary_relay=False`) severs exactly this edge set, which provably reduces the
+        # summary span to zero document content -- its only other keys are earlier summary spans, which
+        # are severed for the same reason. Hence there is no non-vacuous "no path" control here.
+        sum_reads_own_cell = same_cell & is_sum_q & ~is_sum_k & bool(pattern.summary_relay)
+        # BANDWIDTH GATE: only the leading `summary_bandwidth` tokens of an earlier span are visible.
+        # `summary_bandwidth=0` removes every cross-cell edge -> a pure cell-blocks mask.
+        offset_kv = chunk_token_offset(chunk_ids).unsqueeze(1)  # (B, 1, S)
+        visible_sum = is_sum_k & both_ctx & (offset_kv < pattern.summary_bandwidth)
+        reads_earlier_sum = (cell_k < cell_q) & visible_sum
+        context_ok = same_chunk | (
+            (doc_reads_own_cell | sum_reads_own_cell | reads_earlier_sum) & (qc >= kc)
+        )
+    elif name == "gold_hop_controlled":
+        # The ONE gold-aware pattern. Structurally identical to ``random_doc`` -- own document plus a
+        # subset of the strictly-earlier ones -- except the subset arrives as an explicit per-example
+        # doc->doc graph instead of being hashed from the indices, because it has been EDITED: the gold
+        # pair's direct edge is deleted and a path of a controlled length forced in its place. Building
+        # the graph needs the example's gold pairs, which must never touch the token stream, so it is
+        # built in a fingerprint-keyed forward pre-hook and handed in here already finished. See
+        # :mod:`olmo_core.nn.attention.gold_hop_mask`.
+        if doc_adjacency is None:
+            raise ValueError(
+                "gold_hop_controlled requires a doc_adjacency tensor (the per-example, gold-edited "
+                "doc->doc graph). Install the hook with gold_hop_mask.install_gold_hop_mask(); "
+                "without it there is no graph and the arm would be silently wrong rather than absent."
+            )
+        if doc_adjacency.dim() == 2:
+            doc_adjacency = doc_adjacency.unsqueeze(0)
+        if doc_adjacency.shape[0] == 1 and B > 1:
+            doc_adjacency = doc_adjacency.expand(B, -1, -1)
+        n_d = doc_adjacency.shape[-1]
+        max_id = int(chunk_ids.max().item())
+        if max_id >= n_d:
+            raise ValueError(
+                f"doc_adjacency covers {n_d} documents but chunk_ids reference document {max_id}."
+            )
+        cross_doc = (qc > kc) & (qc >= 0) & (kc >= 0)
+        # Gather adj[b, qc, kc] -> (B, S, S). Negative roles are clamped to a valid index and then
+        # discarded by ``cross_doc`` (FREE/PAD/SINK never take this branch), so the clamp cannot leak.
+        flat_idx = qc.clamp(min=0).to(torch.int64) * n_d + kc.clamp(min=0).to(torch.int64)
+        adj_ok = (
+            doc_adjacency.reshape(B, n_d * n_d).gather(1, flat_idx.reshape(B, -1)).reshape(B, S, S)
+        )
+        context_ok = same_chunk | (cross_doc & adj_ok)
     else:  # pragma: no cover - guarded by AttentionPattern.__post_init__
         raise ValueError(f"Unknown chunked attention pattern: {name}")
 
@@ -644,4 +794,42 @@ def build_chunked_mask_mod(pattern: AttentionPattern, chunk_ids: torch.Tensor):
 
         return mask_mod
 
+    if name == "summary_attention":
+        p = pattern.summary_every_k + 1
+        k_cell = pattern.summary_every_k
+        bandwidth = pattern.summary_bandwidth
+        relay = bool(pattern.summary_relay)
+        # Precomputed once per forward and closed over, exactly like `random_doc`'s nonces, so the body
+        # stays a pure elementwise function of (b, q_idx, kv_idx) -- Triton-friendly.
+        offsets = chunk_token_offset(cids)
+
+        def mask_mod(b, h, q_idx, kv_idx):
+            qc = cids[b, q_idx]
+            kc = cids[b, kv_idx]
+            q_np = qc != PAD_CHUNK_ID
+            kv_np = kc != PAD_CHUNK_ID
+            same = (qc == kc) & (qc >= 0)
+            both_ctx = (qc >= 0) & (kc >= 0)
+            cell_q = qc // p
+            cell_k = kc // p
+            is_sum_q = (qc % p) == k_cell
+            is_sum_k = (kc % p) == k_cell
+            same_cell = (cell_q == cell_k) & both_ctx
+            doc_own = same_cell & ~is_sum_q & ~is_sum_k
+            sum_own = same_cell & is_sum_q & ~is_sum_k & relay
+            visible_sum = is_sum_k & both_ctx & (offsets[b, kv_idx] < bandwidth)
+            earlier_sum = (cell_k < cell_q) & visible_sum
+            ctx_ok = same | ((doc_own | sum_own | earlier_sum) & (qc >= kc))
+            q_free = (qc < 0) & q_np
+            kv_free = (kc < 0) & kv_np
+            return ((q_idx >= kv_idx) & q_np & kv_np & (ctx_ok | q_free | kv_free)) | (
+                q_idx == kv_idx
+            )
+
+        return mask_mod
+
+    # ``gold_hop_controlled`` deliberately lands here: its graph comes from a per-forward Python hook
+    # (fingerprint -> gold pairs -> edited graph), which is not torch.compile-capturable, so the whole
+    # family runs eager anyway. Declining a mask_mod keeps it on the one dense boolean path rather than
+    # splitting the arm across two code paths.
     return None  # unsupported pattern -> caller uses the dense materialized mask

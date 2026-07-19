@@ -1743,6 +1743,11 @@ class TransformerConfig(ModelConfig):
         doc_keep_prob: Optional[float] = None,
         random_doc_seed: Optional[int] = None,
         random_doc_per_example: Optional[bool] = None,
+        summary_every_k: Optional[int] = None,
+        summary_bandwidth: Optional[int] = None,
+        summary_relay: Optional[bool] = None,
+        gold_hops: Optional[int] = None,
+        gold_decoys: Optional[int] = None,
         flex_block_size: Optional[int] = None,
         dilated_sliding_window: bool = False,
         dilated_window_k: Optional[int] = None,
@@ -1876,6 +1881,20 @@ class TransformerConfig(ModelConfig):
                 "'dilation_n' / 'dilation_m' / 'dilation_cycle' / 'dilation_max_docs' are only valid "
                 "with a document-chunked family ('document_chunked' / 'document_landmark' / "
                 "'document_compressive', with cross_doc_mode='hierarchical_dilated')."
+            )
+        if (
+            summary_every_k is not None
+            or summary_bandwidth is not None
+            or summary_relay is not None
+        ) and not document_chunked:
+            raise OLMoConfigurationError(
+                "'summary_every_k' / 'summary_bandwidth' / 'summary_relay' are only valid with "
+                "'document_chunked=True' and cross_doc_mode='summary_attention'."
+            )
+        if (gold_hops is not None or gold_decoys is not None) and not document_chunked:
+            raise OLMoConfigurationError(
+                "'gold_hops' / 'gold_decoys' are only valid with 'document_chunked=True' and "
+                "cross_doc_mode='gold_hop_controlled'."
             )
 
         pattern_landmark_types = layer_types.landmark_types() if layer_types is not None else set()
@@ -2034,6 +2053,17 @@ class TransformerConfig(ModelConfig):
                 doc_keep_prob=doc_keep_prob if document_chunked else None,
                 random_doc_seed=random_doc_seed if document_chunked else None,
                 random_doc_per_example=random_doc_per_example if document_chunked else None,
+                # summary_attention (dense DocumentChunkedAttention with
+                # cross_doc_mode="summary_attention"): cell size, relay bandwidth, and relay on/off.
+                summary_every_k=summary_every_k if document_chunked else None,
+                summary_bandwidth=summary_bandwidth if document_chunked else None,
+                summary_relay=summary_relay if document_chunked else None,
+                # gold_hop_controlled (dense DocumentChunkedAttention with
+                # cross_doc_mode="gold_hop_controlled"): which arm of the multi-hop gold-routing
+                # ladder. Recorded here so config.json names the arm; the per-example gold-edited graph
+                # is supplied at runtime by gold_hop_mask.install_gold_hop_mask.
+                gold_hops=gold_hops if document_chunked else None,
+                gold_decoys=gold_decoys if document_chunked else None,
                 # FlexAttention block-mask granularity (dense DocumentChunkedAttention only). Smaller
                 # (e.g. 32) lets sub-128-token chunks realize block-sparsity; ignored by landmark
                 # variants (no flex path).

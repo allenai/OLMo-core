@@ -29,6 +29,7 @@ import random
 from datasets import load_dataset
 from tqdm import tqdm
 
+from corpus_reasoning.lib.bm25 import sample_from_pool
 from corpus_reasoning.lib.io import save_jsonl, print_dataset_stats
 
 
@@ -106,7 +107,7 @@ def _ce_gold_keep(scorer, questions, golds, hard_neg_lists,
 
 
 def _generate_split(ds, num_wanted, args, rng, bm25_searcher, split_name,
-                    ce_scorer=None):
+                    ce_scorer=None, random_pool=None):
     """Build up to `num_wanted` examples from a nq_open split.
 
     Uses batched BM25 search (via Lucene's Java thread pool) to amortize the
@@ -210,12 +211,26 @@ def _generate_split(ds, num_wanted, args, rng, bm25_searcher, split_name,
                 n_hard_k = min(n_neg, max(1, round(args.hard_neg_frac * n_neg)) if args.hard_neg_frac > 0 else 0)
                 ex_hard_negs = hard_negs[:n_hard_k]
                 n_rand_k = n_neg - len(ex_hard_negs)
-                pool_distractors = bm25_searcher.sample_random_passages(
-                    n_rand_k,
-                    exclude_docids={gold_docid} | {d["text"] for d in ex_hard_negs},
-                    exclude_answers=ex["answer"],
-                    rng=rng,
-                ) if n_rand_k > 0 else []
+                if n_rand_k > 0 and random_pool is not None:
+                    # Pre-fetched pool + pure-Python sampling: avoids up to
+                    # ~180 serial Lucene `doc()` lookups per example (the
+                    # dominant cost at n_docs up to 200 w/ hard-neg-frac 0.1
+                    # -- see BM25Searcher.prefetch_random_pool docstring).
+                    pool_distractors = sample_from_pool(
+                        random_pool, n_rand_k,
+                        exclude_answers=ex["answer"],
+                        exclude_texts={gold["text"]} | {d["text"] for d in ex_hard_negs},
+                        rng=rng,
+                    )
+                elif n_rand_k > 0:
+                    pool_distractors = bm25_searcher.sample_random_passages(
+                        n_rand_k,
+                        exclude_docids={gold_docid} | {d["text"] for d in ex_hard_negs},
+                        exclude_answers=ex["answer"],
+                        rng=rng,
+                    )
+                else:
+                    pool_distractors = []
             else:
                 ex_hard_negs = hard_negs
                 pool_distractors = bm25_searcher.sample_random_passages(
@@ -304,6 +319,13 @@ def main():
                              "negatives, so the keep decision is stable across "
                              "pool sizes k (same questions survive at k20..k200)")
     parser.add_argument("--ce-batch-size", type=int, default=128)
+    parser.add_argument("--pool-passages", type=int, default=0,
+                        help="If > 0, pre-fetch this many random passages ONCE "
+                             "(threaded) and sample random distractors from that "
+                             "pool in pure Python instead of one Lucene doc() "
+                             "lookup per distractor per example. Continuous mode "
+                             "(--num-docs-min/-max) only. 0 = old per-example path.")
+    parser.add_argument("--pool-fetch-threads", type=int, default=16)
     args = parser.parse_args()
 
     if args.no_context:
@@ -322,6 +344,15 @@ def main():
         )
         print(f"  CE gold filter ON (min={args.ce_gold_min}, margin={args.ce_margin})")
 
+    random_pool = None
+    if args.pool_passages > 0:
+        print(f"Pre-fetching random pool: {args.pool_passages} passages "
+              f"x {args.pool_fetch_threads} threads...")
+        random_pool = bm25_searcher.prefetch_random_pool(
+            args.pool_passages, threads=args.pool_fetch_threads, seed=args.seed,
+        )
+        print(f"  Pool ready: {len(random_pool)} passages")
+
     hn_tag = f"_hn{args.num_hard_negatives}" if args.num_hard_negatives > 0 else ""
 
     for split_name, num_wanted in [("train", args.num_train), ("validation", args.num_eval)]:
@@ -334,7 +365,7 @@ def main():
 
         examples = _generate_split(
             ds, num_wanted, args, rng, bm25_searcher, split_name,
-            ce_scorer=ce_scorer,
+            ce_scorer=ce_scorer, random_pool=random_pool,
         )
 
         shard_tag = f"_s{args.shard_index}of{args.num_shards}" if args.num_shards > 1 else ""
