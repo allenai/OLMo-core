@@ -639,6 +639,11 @@ __global__ void dispatchRowsPutScaledWeighted(
     int group_size) {
 #ifndef _NVSHMEM_DEVICELIB_SUPPORTED
   CUDA_KERNEL_ASSERT_MSG(false, "SM arch unsupported for NVSHMEM");
+#elif defined(__CUDA_ARCH__) && __CUDA_ARCH__ < 1000
+  // The per-warp shared staging buffers exceed the 48 KB static shared-memory
+  // limit on pre-SM100 GPUs. This is an SM100+ reference/tuning kernel and is
+  // fail-closed at runtime below SM100, so emit a trap stub for older archs.
+  CUDA_KERNEL_ASSERT_MSG(false, "dispatchRowsPutScaledWeighted requires SM100+");
 #else
   CUDA_KERNEL_ASSERT(team != NVSHMEM_TEAM_INVALID);
   constexpr int BLOCK_SIZE = ROWWISE_MXFP8_BLOCK_SIZE;
