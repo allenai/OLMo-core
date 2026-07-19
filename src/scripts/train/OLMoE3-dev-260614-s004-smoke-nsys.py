@@ -40,9 +40,9 @@ from olmo_core.train.callbacks import NvidiaProfilerCallback, WandBCallback
 
 BASE_SCRIPT = Path(__file__).with_name("OLMoE3-dev-260614-s004.py")
 DEFAULT_NUM_NODES = 4
-PROFILE_START_STEP = 131
-PROFILE_END_STEP = 135
-SMOKE_STEPS = 160
+PROFILE_START_STEP = 31
+PROFILE_END_STEP = 35
+SMOKE_STEPS = 40
 NSYS_WRAPPER = "src/scripts/train/nsys-profile-rank.sh"
 BEAKER_IMAGE = "akshitab/olmo-core-tch2110cu130-2026-07-03"
 BEAKER_WORKSPACE = "ai2/OLMo-3-moe-experiments"
