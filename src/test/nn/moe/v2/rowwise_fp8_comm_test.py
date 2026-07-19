@@ -77,6 +77,8 @@ def test_rowwise_bf16_combine_releases_lifetime_leases_and_grads_probs(monkeypat
         "test_group",
         None,
         1,
+        1,
+        1,
         False,
         False,
         False,
@@ -108,8 +110,19 @@ def test_rowwise_fp8_combine_backward_returns_grad_probs(monkeypatch):
         nblocks,
         gathered_q_out=None,
         gathered_scales_out=None,
+        post_barrier=False,
     ):
-        del expert_q, expert_scales, src_ranks, src_rows, group_name, probs, block_size, nblocks
+        del (
+            expert_q,
+            expert_scales,
+            src_ranks,
+            src_rows,
+            group_name,
+            probs,
+            block_size,
+            nblocks,
+            post_barrier,
+        )
         combine_out.zero_()
         if gathered_q_out is not None:
             gathered_q_out.zero_()
@@ -154,9 +167,12 @@ def test_rowwise_fp8_combine_backward_returns_grad_probs(monkeypatch):
         probs,
         q,
         scales,
+        None,
+        None,
         32,
         "test_group",
         None,
+        1,
         1,
     )
     out.sum().backward()
@@ -170,11 +186,15 @@ def test_rowwise_dispatch_put_weighted_mxfp8_uses_weighted_quantize(monkeypatch)
     scales = torch.empty(6, 2, dtype=torch.float8_e8m0fnu)
     seen: dict = {"quantize": 0, "puts": []}
 
-    def _stub_weighted_quantize_rows_to_mxfp8(input_hp, probs, *, block_size):
+    def _stub_weighted_quantize_rows_to_mxfp8(
+        input_hp, probs, *, block_size, out=None, scales_out=None
+    ):
         seen["quantize"] += 1
         assert input_hp.shape == (2, 64)
         assert probs.shape == (2, 3)
         assert block_size == 32
+        assert out is None
+        assert scales_out is None
         return q, scales
 
     def _stub_rowwise_dispatch_put(

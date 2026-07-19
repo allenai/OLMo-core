@@ -20,6 +20,74 @@ def test_nvshmem_world_barrier_calls_extension(monkeypatch):
     assert ext.called
 
 
+def test_rowwise_collective_preflight_forwards_and_caches_all_settings(monkeypatch):
+    class _Ext:
+        def __init__(self):
+            self.calls = []
+
+        def preflight_rowwise_collective_launches(
+            self,
+            get_nblocks,
+            put_nblocks,
+            weighted_put_nblocks,
+        ):
+            self.calls.append((get_nblocks, put_nblocks, weighted_put_nblocks))
+
+    ext = _Ext()
+    current_device = 0
+    monkeypatch.setattr(symm_mod, "_load_cuda_extension", lambda: ext)
+    monkeypatch.setattr(symm_mod.torch.cuda, "current_device", lambda: current_device)
+    monkeypatch.setattr(symm_mod, "_PREFLIGHTED_ROWWISE_COLLECTIVE_LAUNCHES", set())
+
+    symm_mod.preflight_rowwise_collective_launches(256, 256, 128)
+    symm_mod.preflight_rowwise_collective_launches(256, 256, 128)
+    symm_mod.preflight_rowwise_collective_launches(257, 256, 128)
+    symm_mod.preflight_rowwise_collective_launches(256, 257, 128)
+    symm_mod.preflight_rowwise_collective_launches(256, 256, 129)
+    current_device = 1
+    symm_mod.preflight_rowwise_collective_launches(256, 256, 128)
+
+    assert ext.calls == [
+        (256, 256, 128),
+        (257, 256, 128),
+        (256, 257, 128),
+        (256, 256, 129),
+        (256, 256, 128),
+    ]
+    assert symm_mod._PREFLIGHTED_ROWWISE_COLLECTIVE_LAUNCHES == {
+        (0, 256, 256, 128),
+        (0, 257, 256, 128),
+        (0, 256, 257, 128),
+        (0, 256, 256, 129),
+        (1, 256, 256, 128),
+    }
+
+
+@pytest.mark.parametrize(
+    ("nblocks", "invalid_setting"),
+    [
+        ((0, 256, 128), "rowwise_get_nblocks"),
+        ((-1, 256, 128), "rowwise_get_nblocks"),
+        ((256, 0, 128), "rowwise_put_nblocks"),
+        ((256, -1, 128), "rowwise_put_nblocks"),
+        ((256, 256, 0), "rowwise_weighted_put_nblocks"),
+        ((256, 256, -1), "rowwise_weighted_put_nblocks"),
+    ],
+)
+def test_rowwise_collective_preflight_rejects_nonpositive_settings(
+    monkeypatch,
+    nblocks,
+    invalid_setting,
+):
+    def _unexpected_cuda_call():
+        raise AssertionError("invalid settings should fail before accessing CUDA")
+
+    monkeypatch.setattr(symm_mod.torch.cuda, "current_device", _unexpected_cuda_call)
+
+    with pytest.raises(ValueError, match=invalid_setting):
+        symm_mod.preflight_rowwise_collective_launches(*nblocks)
+
+
 def test_bootstrap_world_barrier_calls_extension_for_bootstrap_group(monkeypatch):
     class _Ext:
         called = False

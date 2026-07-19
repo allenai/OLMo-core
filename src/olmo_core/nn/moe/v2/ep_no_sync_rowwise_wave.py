@@ -21,7 +21,11 @@ from ...moe.utils import (
     wait_stream_no_compile,
 )
 from .checkpointing import get_rowwise_checkpoint_state
-from .comm import _DispatchRowwiseAutograd, _RowwiseCombineWeightedAutograd
+from .comm import (
+    _DispatchRowwiseAutograd,
+    _rowwise_ibgda_enabled,
+    _RowwiseCombineWeightedAutograd,
+)
 from .ep_config import ExpertParallelPath
 from .ep_no_sync_buffers import (
     compute_ep_no_sync_rank_capacity,
@@ -131,7 +135,8 @@ class _RowwiseGatherSlotsAutograd(torch.autograd.Function):
         src_rows: torch.Tensor,
         group_name: str,
         group: dist.ProcessGroup,
-        nblocks: int,
+        get_nblocks: int,
+        put_nblocks: int,
         expert_out_aliases_symm_expert_out: bool,
         pre_barrier: bool,
         post_barrier: bool,
@@ -150,8 +155,10 @@ class _RowwiseGatherSlotsAutograd(torch.autograd.Function):
             )
         if src_ranks.shape != src_rows.shape:
             raise RuntimeError("src_ranks/src_rows shape mismatch")
-        if nblocks < 0:
-            raise RuntimeError(f"nblocks must be >= 0 (got {nblocks})")
+        if get_nblocks < 0:
+            raise RuntimeError(f"get_nblocks must be >= 0 (got {get_nblocks})")
+        if put_nblocks < 0:
+            raise RuntimeError(f"put_nblocks must be >= 0 (got {put_nblocks})")
 
         src_ranks_i64 = (
             src_ranks if src_ranks.dtype == torch.long else src_ranks.to(dtype=torch.long)
@@ -182,14 +189,14 @@ class _RowwiseGatherSlotsAutograd(torch.autograd.Function):
             flat_ranks,
             flat_rows,
             group_name,
-            nblocks=nblocks,
+            nblocks=get_nblocks,
             pre_barrier=pre_barrier,
             post_barrier=post_barrier,
         )
 
         ctx.group = group
         ctx.group_name = group_name
-        ctx.nblocks = int(nblocks)
+        ctx.put_nblocks = int(put_nblocks)
         ctx.symm_expert_out = symm_expert_out
         ctx.save_for_backward(src_ranks_i64, src_rows_i64)
         return gathered_routes
@@ -223,13 +230,13 @@ class _RowwiseGatherSlotsAutograd(torch.autograd.Function):
                 flat_ranks,
                 flat_rows,
                 ctx.group_name,
-                nblocks=ctx.nblocks,
+                nblocks=ctx.put_nblocks,
             )
             grad_expert_out = ctx.symm_expert_out
 
         ctx.symm_expert_out = None
         ctx.group = None
-        return grad_expert_out, None, None, None, None, None, None, None, None, None
+        return grad_expert_out, None, None, None, None, None, None, None, None, None, None
 
 
 def _rowwise_wave_grouped_wgrad(
@@ -268,7 +275,8 @@ class _RowwiseWaveDispatchExpertsCombineAutograd(torch.autograd.Function):
         local_expert_base_rows: torch.Tensor,
         group_name: str,
         group: dist.ProcessGroup,
-        nblocks: int,
+        put_nblocks: int,
+        weighted_put_nblocks: int,
         wave_groups: Tuple[Tuple[int, int], ...],
         recompute_linear1: bool,
         recompute_act: bool,
@@ -325,8 +333,10 @@ class _RowwiseWaveDispatchExpertsCombineAutograd(torch.autograd.Function):
             raise RuntimeError("batch_size_per_local_expert must be rank-1")
         if local_expert_base_rows.ndim != 1:
             raise RuntimeError("local_expert_base_rows must be rank-1")
-        if nblocks < 0:
-            raise RuntimeError(f"nblocks must be >= 0 (got {nblocks})")
+        if put_nblocks < 0:
+            raise RuntimeError(f"put_nblocks must be >= 0 (got {put_nblocks})")
+        if weighted_put_nblocks < 0:
+            raise RuntimeError("weighted_put_nblocks must be >= 0 " f"(got {weighted_put_nblocks})")
         recompute_linear1 = bool(recompute_linear1)
         recompute_act = bool(recompute_act)
 
@@ -336,6 +346,18 @@ class _RowwiseWaveDispatchExpertsCombineAutograd(torch.autograd.Function):
         dispatch_input_contig = (
             dispatch_input if dispatch_input.is_contiguous() else dispatch_input.contiguous()
         )
+        dispatch_input_aliases_source = (
+            dispatch_input.untyped_storage().data_ptr() == source_input.untyped_storage().data_ptr()
+            and dispatch_input.storage_offset() == source_input.storage_offset()
+            and tuple(dispatch_input.shape) == tuple(source_input.shape)
+            and tuple(dispatch_input.stride()) == tuple(source_input.stride())
+        )
+        if _rowwise_ibgda_enabled() and dispatch_input_aliases_source:
+            raise RuntimeError(
+                "rowwise_wave NVSHMEM/IBGDA dispatch requires a symmetric "
+                "source staging buffer. Enable OLMO_MOE_ROWWISE_SYMM_DISPATCH_IN=1 "
+                "or leave it on auto for inter-node EP."
+            )
         probs_f32 = probs if probs.dtype == torch.float32 else probs.to(dtype=torch.float32)
         if not probs_f32.is_contiguous():
             probs_f32 = probs_f32.contiguous()
@@ -405,7 +427,8 @@ class _RowwiseWaveDispatchExpertsCombineAutograd(torch.autograd.Function):
             rows=source_input.shape[0],
             d_model=source_input.shape[1],
             waves=num_waves,
-            nblocks=nblocks,
+            put_nblocks=put_nblocks,
+            weighted_put_nblocks=weighted_put_nblocks,
         )
         for wave_idx, (start, end) in enumerate(wave_groups):
             wave_label = f"rowwise_wave/wave_{wave_idx}/experts_{int(start)}_{int(end)}"
@@ -428,7 +451,7 @@ class _RowwiseWaveDispatchExpertsCombineAutograd(torch.autograd.Function):
                         compact_wave_offsets,
                         wave_idx,
                         group_name,
-                        nblocks=int(nblocks),
+                        nblocks=int(put_nblocks),
                         pre_barrier=False,
                         post_barrier=True,
                     )
@@ -513,7 +536,7 @@ class _RowwiseWaveDispatchExpertsCombineAutograd(torch.autograd.Function):
                         wave_row_start,
                         wave_num_rows,
                         group_name,
-                        nblocks=int(nblocks),
+                        nblocks=int(put_nblocks),
                         pre_barrier=False,
                         post_barrier=True,
                     )
@@ -545,7 +568,8 @@ class _RowwiseWaveDispatchExpertsCombineAutograd(torch.autograd.Function):
         if needs_backward:
             ctx.group = group
             ctx.group_name = group_name
-            ctx.nblocks = int(nblocks)
+            ctx.put_nblocks = int(put_nblocks)
+            ctx.weighted_put_nblocks = int(weighted_put_nblocks)
             ctx.recompute_linear1 = recompute_linear1
             ctx.recompute_act = recompute_act
             ctx.probs_input_dtype = probs.dtype
@@ -685,7 +709,8 @@ class _RowwiseWaveDispatchExpertsCombineAutograd(torch.autograd.Function):
             rowwise_stage_debug_print(
                 "rowwise_wave:fused-backward-enter",
                 waves=len(ctx.wave_groups),
-                nblocks=ctx.nblocks,
+                put_nblocks=ctx.put_nblocks,
+                weighted_put_nblocks=ctx.weighted_put_nblocks,
             )
 
             wave_infos = []
@@ -723,7 +748,7 @@ class _RowwiseWaveDispatchExpertsCombineAutograd(torch.autograd.Function):
                             wave_idx,
                             probs,
                             ctx.group_name,
-                            nblocks=ctx.nblocks,
+                            nblocks=ctx.weighted_put_nblocks,
                             pre_barrier=False,
                             post_barrier=True,
                         )
@@ -850,7 +875,7 @@ class _RowwiseWaveDispatchExpertsCombineAutograd(torch.autograd.Function):
                                 wave_row_start,
                                 wave_num_rows,
                                 ctx.group_name,
-                                nblocks=ctx.nblocks,
+                                nblocks=ctx.put_nblocks,
                                 pre_barrier=False,
                                 post_barrier=True,
                             )
@@ -922,6 +947,7 @@ class _RowwiseWaveDispatchExpertsCombineAutograd(torch.autograd.Function):
             grad_probs,
             grad_w_up_gate,
             grad_w_down,
+            None,
             None,
             None,
             None,
@@ -1164,7 +1190,9 @@ def combined_forward_ep_no_sync_rowwise_wave(
 
     routing_map = local_x_global_routed_expert_indices.view(-1, top_k).int()
     route_probs = local_x_global_routed_expert_weights.view(-1, top_k)
-    rowwise_nblocks = self.ep.rowwise_nblocks
+    rowwise_get_nblocks = self.ep.rowwise_get_nblocks
+    rowwise_put_nblocks = self.ep.rowwise_put_nblocks
+    rowwise_weighted_put_nblocks = self.ep.rowwise_weighted_put_nblocks
 
     if self.shared_experts is not None:
         with torch.cuda.stream(self.get_dense_stream()):
@@ -1216,7 +1244,7 @@ def combined_forward_ep_no_sync_rowwise_wave(
             routing_map,
             num_local_experts=self.num_local_routed_experts,
             num_waves=len(wave_groups),
-            nblocks=rowwise_nblocks,
+            nblocks=rowwise_put_nblocks,
         )
         rowwise_stage_debug_print("rowwise_wave:compact-route-exit", block=self.block_idx)
         rowwise_stage_debug_sync("rowwise_wave:compact-route", moe_inp.device)
@@ -1278,7 +1306,7 @@ def combined_forward_ep_no_sync_rowwise_wave(
                     global_route_records,
                     global_wave_offsets,
                     local_rank=local_ep_rank,
-                    nblocks=rowwise_nblocks,
+                    nblocks=rowwise_put_nblocks,
                 )
             rowwise_stage_debug_print(
                 "rowwise_wave:inverse-meta-local-build-exit",
@@ -1293,7 +1321,7 @@ def combined_forward_ep_no_sync_rowwise_wave(
                 compact_wave_offsets,
                 src_rank=local_ep_rank,
                 group_name=group_name,
-                nblocks=rowwise_nblocks,
+                nblocks=rowwise_put_nblocks,
                 pre_barrier=False,
                 post_barrier=True,
                 scalar_put=use_symm_dispatch_in,
@@ -1321,7 +1349,8 @@ def combined_forward_ep_no_sync_rowwise_wave(
             local_expert_base_rows_full,
             group_name,
             self.ep_pg,
-            rowwise_nblocks,
+            rowwise_put_nblocks,
+            rowwise_weighted_put_nblocks,
             wave_groups,
             self.ep.rowwise_wave_recompute_linear1,
             self.ep.rowwise_wave_recompute_act,
@@ -1338,7 +1367,8 @@ def combined_forward_ep_no_sync_rowwise_wave(
             buffers.dispatch_out_lease,
             group_name,
             self.ep_pg,
-            rowwise_nblocks,
+            rowwise_get_nblocks,
+            rowwise_put_nblocks,
             False,
             True,
             True,
@@ -1367,7 +1397,9 @@ def combined_forward_ep_no_sync_rowwise_wave(
             route_probs,
             group_name,
             self.ep_pg,
-            rowwise_nblocks,
+            rowwise_get_nblocks,
+            rowwise_put_nblocks,
+            rowwise_weighted_put_nblocks,
             expert_out_aliases_symm_expert_out,
             True,
             False,

@@ -18,6 +18,7 @@ from .comm import (
     _RowwiseFP8DispatchExpertsCombineAutograd,
 )
 from .ep_no_sync_buffers import (
+    acquire_ep_no_sync_fp8_combine_gather_lease,
     acquire_ep_no_sync_fp8_dispatch_out_lease,
     acquire_ep_no_sync_rowwise_lifetime_leases,
     compute_ep_no_sync_rank_capacity,
@@ -174,12 +175,7 @@ def combined_forward_ep_no_sync_rowwise(
         and moe_inp.device.type == "cuda"
         and self.ep.uses_rowwise_buffers
     )
-    if use_rowwise_fp8:
-        assert rowwise_fp8_cfg is not None
-        if not self._rowwise_fp8_checked:
-            rowwise_fp8_cfg.assert_runtime_supported()
-            self._rowwise_fp8_checked = True
-    else:
+    if not use_rowwise_fp8:
         rowwise_fp8_cfg = None
 
     num_out_tokens = local_x_global_routed_expert_indices.numel()
@@ -276,27 +272,63 @@ def combined_forward_ep_no_sync_rowwise(
     combine_in_scales: Optional[torch.Tensor] = None
     if use_rowwise_fp8:
         assert rowwise_fp8_cfg is not None
-        fp8_buffers = get_cached_ep_no_sync_rowwise_fp8_buffers(
-            self,
+        use_fp8_symm_dispatch_in = use_ep_no_sync_rowwise_symm_dispatch_in(self)
+        use_fp8_symm_combine_gather = use_ep_no_sync_rowwise_symm_combine_gather(self)
+        fp8_lease_combine_gather = use_fp8_symm_combine_gather and lease_lifetime_buffers
+        rowwise_stage_debug_print(
+            "rowwise:fp8-get-buffers-enter",
+            block=self.block_idx,
             dispatch_out_cap=dispatch_out_cap,
             combine_in_cap=combine_in_cap,
+            use_symm_dispatch_in=use_fp8_symm_dispatch_in,
+            use_symm_combine_gather=use_fp8_symm_combine_gather,
+            lease_lifetime=lease_lifetime_buffers,
+        )
+        fp8_buffers = get_cached_ep_no_sync_rowwise_fp8_buffers(
+            self,
+            dispatch_in_cap=num_input_tokens,
+            dispatch_out_cap=dispatch_out_cap,
+            combine_in_cap=combine_in_cap,
+            combine_gather_cap=num_input_tokens,
+            combine_gather_top_k=top_k,
             d_model=moe_inp.shape[1],
             block_size=rowwise_fp8_cfg.block_size,
             device=moe_inp.device,
+            need_dispatch_in=use_fp8_symm_dispatch_in,
             need_dispatch_out=not lease_lifetime_buffers,
+            need_combine_gather=not fp8_lease_combine_gather,
+        )
+        rowwise_stage_debug_print(
+            "rowwise:fp8-get-buffers-cache",
+            block=self.block_idx,
+            cached=fp8_buffers is not None,
         )
         if fp8_buffers is None:
             fp8_buffers = get_ep_no_sync_rowwise_fp8_buffers(
                 self,
+                dispatch_in_cap=num_input_tokens,
                 dispatch_out_cap=dispatch_out_cap,
                 combine_in_cap=combine_in_cap,
+                combine_gather_cap=num_input_tokens,
+                combine_gather_top_k=top_k,
                 d_model=moe_inp.shape[1],
                 block_size=rowwise_fp8_cfg.block_size,
                 device=moe_inp.device,
                 lease_dispatch_out=False,
+                lease_combine_gather=False,
+                need_dispatch_in=use_fp8_symm_dispatch_in,
                 need_dispatch_out=not lease_lifetime_buffers,
+                need_combine_gather=not fp8_lease_combine_gather,
             )
+        rowwise_stage_debug_print(
+            "rowwise:fp8-get-buffers-exit",
+            block=self.block_idx,
+        )
         if lease_lifetime_buffers:
+            rowwise_stage_debug_print(
+                "rowwise:fp8-dispatch-out-lease-enter",
+                block=self.block_idx,
+            )
             dispatch_out_lease = acquire_ep_no_sync_fp8_dispatch_out_lease(
                 self,
                 dispatch_out_cap=dispatch_out_cap,
@@ -310,6 +342,33 @@ def combined_forward_ep_no_sync_rowwise(
                 dispatch_out_scales=dispatch_out_lease.tensor("dispatch_out_scales"),
                 dispatch_out_lease=dispatch_out_lease,
             )
+            rowwise_stage_debug_print(
+                "rowwise:fp8-dispatch-out-lease-exit",
+                block=self.block_idx,
+            )
+            if fp8_lease_combine_gather:
+                rowwise_stage_debug_print(
+                    "rowwise:fp8-combine-gather-lease-enter",
+                    block=self.block_idx,
+                )
+                combine_gather_lease = acquire_ep_no_sync_fp8_combine_gather_lease(
+                    self,
+                    combine_gather_cap=num_input_tokens,
+                    combine_gather_top_k=top_k,
+                    d_model=moe_inp.shape[1],
+                    block_size=rowwise_fp8_cfg.block_size,
+                    device=moe_inp.device,
+                )
+                fp8_buffers = replace(
+                    fp8_buffers,
+                    combine_gather_q=combine_gather_lease.tensor("combine_gather_q"),
+                    combine_gather_scales=combine_gather_lease.tensor("combine_gather_scales"),
+                    combine_gather_lease=combine_gather_lease,
+                )
+                rowwise_stage_debug_print(
+                    "rowwise:fp8-combine-gather-lease-exit",
+                    block=self.block_idx,
+                )
         dispatch_out_q = fp8_buffers.dispatch_out_q
         dispatch_out_scales = fp8_buffers.dispatch_out_scales
         combine_in_q = fp8_buffers.combine_in_q
@@ -441,11 +500,15 @@ def combined_forward_ep_no_sync_rowwise(
             allowed_splits=allowed_splits,
             keep_from_src_dest_local=keep_from_src_dest_local,
         )
-        rowwise_nblocks = self.ep.rowwise_nblocks
+        rowwise_get_nblocks = self.ep.rowwise_get_nblocks
+        rowwise_put_nblocks = self.ep.rowwise_put_nblocks
+        rowwise_weighted_put_nblocks = self.ep.rowwise_weighted_put_nblocks
         rowwise_stage_debug_print(
             "rowwise:build-route-exit",
             block=self.block_idx,
-            nblocks=rowwise_nblocks,
+            get_nblocks=rowwise_get_nblocks,
+            put_nblocks=rowwise_put_nblocks,
+            weighted_put_nblocks=rowwise_weighted_put_nblocks,
         )
         inverse_route_meta = None
         rowwise_combine_row_start = None
@@ -461,7 +524,7 @@ def combined_forward_ep_no_sync_rowwise(
                 routing_map,
                 num_local_experts=self.num_local_routed_experts,
                 num_waves=1,
-                nblocks=rowwise_nblocks,
+                nblocks=rowwise_put_nblocks,
             )
             inverse_route_meta = get_or_init_ep_no_sync_symm_tensor(
                 self,
@@ -477,7 +540,7 @@ def combined_forward_ep_no_sync_rowwise(
                 compact_wave_offsets,
                 src_rank=torch.distributed.get_rank(self.ep_pg),
                 group_name=group_name,
-                nblocks=rowwise_nblocks,
+                nblocks=rowwise_put_nblocks,
                 pre_barrier=True,
                 post_barrier=True,
                 scalar_put=use_symm_dispatch_in,
@@ -509,6 +572,12 @@ def combined_forward_ep_no_sync_rowwise(
         assert dispatch_out_scales is not None
         assert combine_in_q is not None
         assert combine_in_scales is not None
+        dispatch_in_q = fp8_buffers.dispatch_in_q if use_fp8_symm_dispatch_in else None  # type: ignore[union-attr]
+        dispatch_in_scales = fp8_buffers.dispatch_in_scales if use_fp8_symm_dispatch_in else None  # type: ignore[union-attr]
+        combine_gather_q = fp8_buffers.combine_gather_q if use_fp8_symm_combine_gather else None  # type: ignore[union-attr]
+        combine_gather_scales = (
+            fp8_buffers.combine_gather_scales if use_fp8_symm_combine_gather else None  # type: ignore[union-attr]
+        )
         routed_experts = self.routed_experts
         routed_fp8_cfg = routed_experts.rowwise_fp8
         if routed_fp8_cfg is None or not routed_fp8_cfg.enabled:
@@ -552,12 +621,18 @@ def combined_forward_ep_no_sync_rowwise(
             down_prequant,
             down_prequant_t,
             fp8_buffers.dispatch_out_lease,  # type: ignore[union-attr]
+            fp8_buffers.combine_gather_lease,  # type: ignore[union-attr]
+            dispatch_in_q,
+            dispatch_in_scales,
+            combine_gather_q,
+            combine_gather_scales,
             rowwise_fp8_cfg.block_size,
             rowwise_fp8_cfg.use_fast_accum,
             rowwise_fp8_cfg.fused_autograd_recompute_swiglu,
             group_name,
             self.ep_pg,
-            rowwise_nblocks,
+            rowwise_get_nblocks,
+            rowwise_put_nblocks,
             up_wgrad_sink,
             up_wgrad_sink_transpose_last2,
             False,
@@ -569,6 +644,12 @@ def combined_forward_ep_no_sync_rowwise(
         assert rowwise_fp8_cfg is not None
         assert dispatch_out_q is not None
         assert dispatch_out_scales is not None
+        dispatch_in_q = fp8_buffers.dispatch_in_q if use_fp8_symm_dispatch_in else None  # type: ignore[union-attr]
+        dispatch_in_scales = fp8_buffers.dispatch_in_scales if use_fp8_symm_dispatch_in else None  # type: ignore[union-attr]
+        combine_gather_q = fp8_buffers.combine_gather_q if use_fp8_symm_combine_gather else None  # type: ignore[union-attr]
+        combine_gather_scales = (
+            fp8_buffers.combine_gather_scales if use_fp8_symm_combine_gather else None  # type: ignore[union-attr]
+        )
         dispatch_rank_major = _DispatchRowwiseFP8Autograd.apply(
             moe_inp,
             dst_ranks,
@@ -576,10 +657,16 @@ def combined_forward_ep_no_sync_rowwise(
             dispatch_out_q,
             dispatch_out_scales,
             fp8_buffers.dispatch_out_lease,  # type: ignore[union-attr]
+            dispatch_in_q,
+            dispatch_in_scales,
+            combine_gather_q,
+            combine_gather_scales,
+            fp8_buffers.combine_gather_lease,  # type: ignore[union-attr]
             rowwise_fp8_cfg.block_size,
             group_name,
             self.ep_pg,
-            rowwise_nblocks,
+            rowwise_get_nblocks,
+            rowwise_put_nblocks,
         )
     else:
         assert buffers is not None
@@ -595,7 +682,8 @@ def combined_forward_ep_no_sync_rowwise(
             buffers.dispatch_out_lease,
             group_name,
             self.ep_pg,
-            rowwise_nblocks,
+            rowwise_get_nblocks,
+            rowwise_put_nblocks,
             source_input_aliases_symm_input,
             grad_out_aliases_symm_out,
             True,
@@ -639,6 +727,10 @@ def combined_forward_ep_no_sync_rowwise(
         assert rowwise_fp8_cfg is not None
         assert combine_in_q is not None
         assert combine_in_scales is not None
+        combine_gather_q = fp8_buffers.combine_gather_q if use_fp8_symm_combine_gather else None  # type: ignore[union-attr]
+        combine_gather_scales = (
+            fp8_buffers.combine_gather_scales if use_fp8_symm_combine_gather else None  # type: ignore[union-attr]
+        )
         local_x = _RowwiseCombineWeightedFP8Autograd.apply(
             dispatch_rank_major,
             dst_ranks,
@@ -646,10 +738,13 @@ def combined_forward_ep_no_sync_rowwise(
             route_probs,
             combine_in_q,
             combine_in_scales,
+            combine_gather_q,
+            combine_gather_scales,
             rowwise_fp8_cfg.block_size,
             group_name,
             self.ep_pg,
-            self.ep.rowwise_nblocks,
+            rowwise_get_nblocks,
+            rowwise_put_nblocks,
         )
     else:
         assert buffers is not None
@@ -672,7 +767,7 @@ def combined_forward_ep_no_sync_rowwise(
                 rowwise_combine_row_start,
                 rowwise_combine_num_rows,
                 group_name,
-                nblocks=self.ep.rowwise_nblocks,
+                nblocks=rowwise_put_nblocks,
                 pre_barrier=True,
                 post_barrier=True,
             )
@@ -701,7 +796,9 @@ def combined_forward_ep_no_sync_rowwise(
                 route_probs,
                 group_name,
                 self.ep_pg,
-                self.ep.rowwise_nblocks,
+                rowwise_get_nblocks,
+                rowwise_put_nblocks,
+                rowwise_weighted_put_nblocks,
                 expert_out_aliases_symm_expert_out,
                 True,
                 False,

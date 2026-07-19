@@ -13,7 +13,7 @@ from .mxfp8_utils import quantize_rows_to_mxfp8, reduce_gathered_rows_from_mxfp8
 _EXTENSION_MODULE_NAME = "olmo_core.kernels._symm_mem_vdev2d_ext_gpu"
 _CUDA_EXTENSION = None
 _CUDA_EXTENSION_ERROR: Optional[Exception] = None
-_PREFLIGHTED_ROWWISE_COLLECTIVE_LAUNCHES: set[tuple[int, int]] = set()
+_PREFLIGHTED_ROWWISE_COLLECTIVE_LAUNCHES: set[tuple[int, int, int, int]] = set()
 
 
 def _load_cuda_extension():
@@ -64,20 +64,36 @@ def nvshmem_world_barrier() -> None:
 
 
 @torch.compiler.disable
-def preflight_rowwise_collective_launches(nblocks: int) -> None:
+def preflight_rowwise_collective_launches(
+    get_nblocks: int,
+    put_nblocks: int,
+    weighted_put_nblocks: int,
+) -> None:
     """Validate rowwise NVSHMEM collective launch grids before compiled runtime."""
-    nblocks = int(nblocks)
-    if nblocks <= 0:
-        raise ValueError(
-            "strict NVSHMEM rowwise collective preflight requires rowwise_nblocks > 0 "
-            "(0 means auto and cannot be validated before runtime)"
-        )
+    get_nblocks = int(get_nblocks)
+    put_nblocks = int(put_nblocks)
+    weighted_put_nblocks = int(weighted_put_nblocks)
+    for setting_name, setting_value in (
+        ("rowwise_get_nblocks", get_nblocks),
+        ("rowwise_put_nblocks", put_nblocks),
+        ("rowwise_weighted_put_nblocks", weighted_put_nblocks),
+    ):
+        if setting_value <= 0:
+            raise ValueError(
+                "strict NVSHMEM rowwise collective preflight requires "
+                f"{setting_name} > 0 (0 means auto and cannot be validated "
+                "before runtime)"
+            )
     device_idx = torch.cuda.current_device()
-    key = (device_idx, nblocks)
+    key = (device_idx, get_nblocks, put_nblocks, weighted_put_nblocks)
     if key in _PREFLIGHTED_ROWWISE_COLLECTIVE_LAUNCHES:
         return
     ext = _load_cuda_extension()
-    ext.preflight_rowwise_collective_launches(nblocks)
+    ext.preflight_rowwise_collective_launches(
+        get_nblocks,
+        put_nblocks,
+        weighted_put_nblocks,
+    )
     _PREFLIGHTED_ROWWISE_COLLECTIVE_LAUNCHES.add(key)
 
 
@@ -349,6 +365,8 @@ def rowwise_dispatch_put_scaled(
     pre_barrier: bool = False,
     post_barrier: bool = True,
     zero_unwritten: bool = False,
+    input_q: Optional[torch.Tensor] = None,
+    input_scales: Optional[torch.Tensor] = None,
 ) -> None:
     # The rowwise dispatch kernel only writes rows referenced by valid route
     # maps. Keep an opt-in safety init for diagnostics or callers that knowingly
@@ -357,7 +375,12 @@ def rowwise_dispatch_put_scaled(
         out_q.zero_()
         out_scales.fill_(1.0)
 
-    qdata, scales = quantize_rows_to_mxfp8(input_hp, block_size=block_size)
+    qdata, scales = quantize_rows_to_mxfp8(
+        input_hp,
+        block_size=block_size,
+        out=input_q,
+        scales_out=input_scales,
+    )
     rowwise_dispatch_put(
         qdata,
         out_q,

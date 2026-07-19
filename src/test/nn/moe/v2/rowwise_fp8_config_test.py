@@ -1,3 +1,5 @@
+import ast
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -47,6 +49,25 @@ def test_rowwise_fp8_config_requires_scaled_grouped_mm(monkeypatch):
 
     with pytest.raises(RuntimeError, match="scaled_grouped_mm"):
         cfg.assert_runtime_supported()
+
+
+def test_rowwise_fp8_cache_miss_does_not_acquire_static_combine_gather_lease():
+    path = Path(__file__).resolve().parents[4] / "olmo_core/nn/moe/v2/ep_no_sync_rowwise.py"
+    tree = ast.parse(path.read_text())
+
+    calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "get_ep_no_sync_rowwise_fp8_buffers"
+    ]
+
+    assert len(calls) == 1
+    lease_kw = next((kw for kw in calls[0].keywords if kw.arg == "lease_combine_gather"), None)
+    assert lease_kw is not None
+    assert isinstance(lease_kw.value, ast.Constant)
+    assert lease_kw.value.value is False
 
 
 def test_rowwise_fp8_normalize_from_dict():

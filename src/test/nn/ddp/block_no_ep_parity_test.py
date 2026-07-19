@@ -99,7 +99,9 @@ def _run_dropless_path_matches_no_ep(
     _install_deterministic_topk_router(ep_block)
 
     if rowwise:
-        ep_block.ep.rowwise_nblocks = 128
+        ep_block.ep.rowwise_get_nblocks = 128
+        ep_block.ep.rowwise_put_nblocks = 128
+        ep_block.ep.rowwise_weighted_put_nblocks = 128
         ep_block.ep.validate()
 
     no_ep_block.train()

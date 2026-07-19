@@ -29,7 +29,10 @@ bool olmo_symm_has_group(const std::string& group_name);
 
 void olmo_symm_world_barrier();
 
-void preflight_rowwise_collective_launches(int64_t nblocks);
+void preflight_rowwise_collective_launches(
+    int64_t get_nblocks,
+    int64_t put_nblocks,
+    int64_t weighted_put_nblocks);
 
 void rowwise_signal_peers_on_stream(
     torch::Tensor& signals,
@@ -226,7 +229,9 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
       "preflight_rowwise_collective_launches",
       &preflight_rowwise_collective_launches,
       "Validate OLMo rowwise NVSHMEM collective-launch grids once before runtime",
-      py::arg("nblocks"));
+      py::arg("get_nblocks"),
+      py::arg("put_nblocks"),
+      py::arg("weighted_put_nblocks"));
   m.def(
       "rowwise_signal_peers_on_stream",
       &rowwise_signal_peers_on_stream,

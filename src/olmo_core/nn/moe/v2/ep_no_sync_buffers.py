@@ -123,11 +123,16 @@ class _NoSyncSymmBuffers:
 
 @dataclass
 class _NoSyncRowwiseFP8SymmBuffers:
+    dispatch_in_q: torch.Tensor
+    dispatch_in_scales: torch.Tensor
     dispatch_out_q: torch.Tensor
     dispatch_out_scales: torch.Tensor
     combine_in_q: torch.Tensor
     combine_in_scales: torch.Tensor
+    combine_gather_q: torch.Tensor
+    combine_gather_scales: torch.Tensor
     dispatch_out_lease: Optional["_NoSyncSymmLease"] = None
+    combine_gather_lease: Optional["_NoSyncSymmLease"] = None
 
 
 @dataclass
@@ -143,6 +148,38 @@ class _NoSyncSymmLeaseTensorSpec:
     shape: Tuple[int, ...]
     dtype: torch.dtype
     device: torch.device
+
+
+@dataclass(frozen=True)
+class EpNoSyncSymmTensorInfo:
+    owner: str
+    name: str
+    shape: Tuple[int, ...]
+    dtype: torch.dtype
+    device: torch.device
+    nbytes: int
+    data_ptr: int
+
+
+def _symm_tensor_info(
+    *,
+    owner: str,
+    name: str,
+    tensor: torch.Tensor,
+) -> EpNoSyncSymmTensorInfo:
+    nbytes = int(tensor.numel() * tensor.element_size())
+    data_ptr = 0
+    if nbytes > 0:
+        data_ptr = int(tensor.untyped_storage().data_ptr())
+    return EpNoSyncSymmTensorInfo(
+        owner=owner,
+        name=name,
+        shape=tuple(int(dim) for dim in tensor.shape),
+        dtype=tensor.dtype,
+        device=tensor.device,
+        nbytes=nbytes,
+        data_ptr=data_ptr,
+    )
 
 
 class _NoSyncSymmLease:
@@ -361,11 +398,11 @@ class _NoSyncSymmLeasePool:
         self._ensure_slot(slot_idx, specs)
         self._in_use_slots.add(slot_idx)
         self.high_water = max(self.high_water, len(self._in_use_slots))
-        # self._debug_print(
-        #     f"acquire owner={owner} slot={slot_idx} "
-        #     f"in_use={len(self._in_use_slots)} high_water={self.high_water} "
-        #     f"slots={len(self._slots)} free={len(self._free_slots)}"
-        # )
+        self._debug_print(
+            f"acquire owner={owner} slot={slot_idx} "
+            f"in_use={len(self._in_use_slots)} high_water={self.high_water} "
+            f"slots={len(self._slots)} free={len(self._free_slots)}"
+        )
         slot = self._slots[slot_idx]
         tensors = {
             spec.name: _view_cached_symm_tensor(slot[spec.name], spec.shape) for spec in specs
@@ -380,16 +417,25 @@ class _NoSyncSymmLeasePool:
             )
         self._in_use_slots.remove(slot_idx)
         self._free_slots.append(slot_idx)
-        # self._debug_print(
-        #     f"release slot={slot_idx} in_use={len(self._in_use_slots)} "
-        #     f"high_water={self.high_water} slots={len(self._slots)} "
-        #     f"free={len(self._free_slots)}"
-        # )
+        self._debug_print(
+            f"release slot={slot_idx} in_use={len(self._in_use_slots)} "
+            f"high_water={self.high_water} slots={len(self._slots)} "
+            f"free={len(self._free_slots)}"
+        )
 
     def iter_tensors(self) -> Iterator[torch.Tensor]:
         for slot in self._slots:
             for tensor in slot.values():
                 yield tensor
+
+    def iter_tensor_infos(self, *, owner: str) -> Iterator[EpNoSyncSymmTensorInfo]:
+        for slot_idx, slot in enumerate(self._slots):
+            for name, tensor in slot.items():
+                yield _symm_tensor_info(
+                    owner=owner,
+                    name=f"slot{slot_idx}.{name}",
+                    tensor=tensor,
+                )
 
 
 @dataclass
@@ -658,6 +704,38 @@ class _NoSyncSymmSharedPool:
         )
         return dispatch_out_q, dispatch_out_scales
 
+    def get_rowwise_fp8_dispatch_in_slot(
+        self,
+        *,
+        slot_idx: int,
+        dispatch_in_cap: int,
+        d_model: int,
+        block_size: int,
+        device: torch.device,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        if slot_idx < 0 or slot_idx >= self.num_slots:
+            raise ValueError(f"slot_idx must be in [0, {self.num_slots - 1}] (got {slot_idx})")
+        if d_model % block_size != 0:
+            raise RuntimeError(
+                "Rowwise FP8 requires hidden dim divisible by block_size: "
+                f"hidden={d_model} block_size={block_size}"
+            )
+        dispatch_in_q = self._get_or_init_slot_tensor(
+            slot_idx=slot_idx,
+            name="dispatch_in_rowwise_fp8_q",
+            shape=(dispatch_in_cap, d_model),
+            dtype=torch.float8_e4m3fn,
+            device=device,
+        )
+        dispatch_in_scales = self._get_or_init_slot_tensor(
+            slot_idx=slot_idx,
+            name="dispatch_in_rowwise_fp8_scales",
+            shape=(dispatch_in_cap, d_model // block_size),
+            dtype=torch.float8_e8m0fnu,
+            device=device,
+        )
+        return dispatch_in_q, dispatch_in_scales
+
     def get_rowwise_fp8_combine_in_slot(
         self,
         *,
@@ -690,10 +768,57 @@ class _NoSyncSymmSharedPool:
         )
         return combine_in_q, combine_in_scales
 
-    def iter_tensors(self):
+    def get_rowwise_fp8_combine_gather_slot(
+        self,
+        *,
+        slot_idx: int,
+        combine_gather_cap: int,
+        combine_gather_top_k: int,
+        d_model: int,
+        block_size: int,
+        device: torch.device,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        if slot_idx < 0 or slot_idx >= self.num_slots:
+            raise ValueError(f"slot_idx must be in [0, {self.num_slots - 1}] (got {slot_idx})")
+        if combine_gather_cap <= 0 or combine_gather_top_k <= 0:
+            raise RuntimeError(
+                "combine_gather_cap and combine_gather_top_k must be positive "
+                "when using rowwise FP8 combine gather staging"
+            )
+        if d_model % block_size != 0:
+            raise RuntimeError(
+                "Rowwise FP8 requires hidden dim divisible by block_size: "
+                f"hidden={d_model} block_size={block_size}"
+            )
+        combine_gather_q = self._get_or_init_slot_tensor(
+            slot_idx=slot_idx,
+            name="combine_gather_rowwise_fp8_q",
+            shape=(combine_gather_cap, combine_gather_top_k, d_model),
+            dtype=torch.float8_e4m3fn,
+            device=device,
+        )
+        combine_gather_scales = self._get_or_init_slot_tensor(
+            slot_idx=slot_idx,
+            name="combine_gather_rowwise_fp8_scales",
+            shape=(combine_gather_cap, combine_gather_top_k, d_model // block_size),
+            dtype=torch.float8_e8m0fnu,
+            device=device,
+        )
+        return combine_gather_q, combine_gather_scales
+
+    def iter_tensors(self) -> Iterator[torch.Tensor]:
         for slot_cache in self._slot_caches:
             for tensor in slot_cache.values():
                 yield tensor
+
+    def iter_tensor_infos(self, *, owner: str) -> Iterator[EpNoSyncSymmTensorInfo]:
+        for slot_idx, slot_cache in enumerate(self._slot_caches):
+            for name, tensor in slot_cache.items():
+                yield _symm_tensor_info(
+                    owner=owner,
+                    name=f"slot{slot_idx}.{name}",
+                    tensor=tensor,
+                )
 
 
 def get_ep_no_sync_group_name(block: "OLMoDDPTransformerBlock") -> str:
@@ -886,6 +1011,40 @@ def _fp8_dispatch_out_specs(
     )
 
 
+def _fp8_combine_gather_specs(
+    *,
+    combine_gather_cap: int,
+    combine_gather_top_k: int,
+    d_model: int,
+    block_size: int,
+    device: torch.device,
+) -> Tuple[_NoSyncSymmLeaseTensorSpec, ...]:
+    if combine_gather_cap <= 0 or combine_gather_top_k <= 0:
+        raise RuntimeError(
+            "combine_gather_cap and combine_gather_top_k must be positive "
+            "when leasing rowwise FP8 combine_gather"
+        )
+    if d_model % block_size != 0:
+        raise RuntimeError(
+            "Rowwise FP8 requires hidden dim divisible by block_size: "
+            f"hidden={d_model} block_size={block_size}"
+        )
+    return (
+        _NoSyncSymmLeaseTensorSpec(
+            name="combine_gather_q",
+            shape=(combine_gather_cap, combine_gather_top_k, d_model),
+            dtype=torch.float8_e4m3fn,
+            device=device,
+        ),
+        _NoSyncSymmLeaseTensorSpec(
+            name="combine_gather_scales",
+            shape=(combine_gather_cap, combine_gather_top_k, d_model // block_size),
+            dtype=torch.float8_e8m0fnu,
+            device=device,
+        ),
+    )
+
+
 @torch.compiler.disable
 def acquire_ep_no_sync_dispatch_out_lease(
     block: "OLMoDDPTransformerBlock",
@@ -973,6 +1132,29 @@ def acquire_ep_no_sync_combine_gather_lease(
 
 
 @torch.compiler.disable
+def acquire_ep_no_sync_fp8_combine_gather_lease(
+    block: "OLMoDDPTransformerBlock",
+    *,
+    combine_gather_cap: int,
+    combine_gather_top_k: int,
+    d_model: int,
+    block_size: int,
+    device: torch.device,
+) -> _NoSyncSymmLease:
+    pool = _get_or_init_ep_no_sync_lease_pool(block, name="combine_gather_rowwise_fp8")
+    return pool.acquire(
+        specs=_fp8_combine_gather_specs(
+            combine_gather_cap=combine_gather_cap,
+            combine_gather_top_k=combine_gather_top_k,
+            d_model=d_model,
+            block_size=block_size,
+            device=device,
+        ),
+        owner="rowwise_fp8_combine_gather",
+    )
+
+
+@torch.compiler.disable
 def prewarm_ep_no_sync_rowwise_dispatch_out_leases(
     block: "OLMoDDPTransformerBlock",
     *,
@@ -1055,31 +1237,54 @@ def prewarm_ep_no_sync_rowwise_lifetime_leases(
             ),
         )
     if need_combine_gather:
-        pool = _get_or_init_ep_no_sync_lease_pool(block, name="combine_gather")
-        pool.prewarm(
-            num_slots=num_slots,
-            specs=_bf16_combine_gather_specs(
-                combine_gather_cap=combine_gather_cap,
-                combine_gather_top_k=combine_gather_top_k,
-                d_model=d_model,
-                dtype=dtype,
-                device=device,
-            ),
-        )
+        if use_rowwise_fp8:
+            pool = _get_or_init_ep_no_sync_lease_pool(block, name="combine_gather_rowwise_fp8")
+            pool.prewarm(
+                num_slots=num_slots,
+                specs=_fp8_combine_gather_specs(
+                    combine_gather_cap=combine_gather_cap,
+                    combine_gather_top_k=combine_gather_top_k,
+                    d_model=d_model,
+                    block_size=block_size,
+                    device=device,
+                ),
+            )
+        else:
+            pool = _get_or_init_ep_no_sync_lease_pool(block, name="combine_gather")
+            pool.prewarm(
+                num_slots=num_slots,
+                specs=_bf16_combine_gather_specs(
+                    combine_gather_cap=combine_gather_cap,
+                    combine_gather_top_k=combine_gather_top_k,
+                    d_model=d_model,
+                    dtype=dtype,
+                    device=device,
+                ),
+            )
 
 
 @torch.compiler.disable
 def get_ep_no_sync_rowwise_fp8_buffers(
     block: "OLMoDDPTransformerBlock",
     *,
+    dispatch_in_cap: int,
     dispatch_out_cap: int,
     combine_in_cap: int,
+    combine_gather_cap: int,
+    combine_gather_top_k: int,
     d_model: int,
     block_size: int,
     device: torch.device,
     lease_dispatch_out: bool = False,
+    lease_combine_gather: bool = False,
+    need_dispatch_in: bool = True,
     need_dispatch_out: bool = True,
+    need_combine_gather: bool = True,
 ) -> _NoSyncRowwiseFP8SymmBuffers:
+    # One-time compile-disabled path: assert CUDA runtime support here, not in the traced forward.
+    if block.rowwise_fp8 is not None and block.rowwise_fp8.enabled:
+        block.rowwise_fp8.assert_runtime_supported()
+
     if d_model % block_size != 0:
         raise RuntimeError(
             "Rowwise FP8 requires hidden dim divisible by block_size: "
@@ -1087,11 +1292,45 @@ def get_ep_no_sync_rowwise_fp8_buffers(
         )
 
     scale_cols = d_model // block_size
+    empty_q = torch.empty((0,), dtype=torch.float8_e4m3fn, device=device)
+    empty_scales = torch.empty((0,), dtype=torch.float8_e8m0fnu, device=device)
+
+    if need_dispatch_in:
+        if block._ep_no_sync_shared_pool is not None:
+            (
+                dispatch_in_q,
+                dispatch_in_scales,
+            ) = block._ep_no_sync_shared_pool.get_rowwise_fp8_dispatch_in_slot(
+                slot_idx=block._ep_no_sync_shared_slot,
+                dispatch_in_cap=dispatch_in_cap,
+                d_model=d_model,
+                block_size=block_size,
+                device=device,
+            )
+        else:
+            dispatch_in_q = get_or_init_ep_no_sync_symm_tensor(
+                block,
+                name="dispatch_in_rowwise_fp8_q",
+                shape=(dispatch_in_cap, d_model),
+                dtype=torch.float8_e4m3fn,
+                device=device,
+            )
+            dispatch_in_scales = get_or_init_ep_no_sync_symm_tensor(
+                block,
+                name="dispatch_in_rowwise_fp8_scales",
+                shape=(dispatch_in_cap, scale_cols),
+                dtype=torch.float8_e8m0fnu,
+                device=device,
+            )
+    else:
+        dispatch_in_q = empty_q
+        dispatch_in_scales = empty_scales
+
     dispatch_out_lease: Optional[_NoSyncSymmLease]
     if not need_dispatch_out:
         dispatch_out_lease = None
-        dispatch_out_q = torch.empty((0,), dtype=torch.float8_e4m3fn, device=device)
-        dispatch_out_scales = torch.empty((0,), dtype=torch.float8_e8m0fnu, device=device)
+        dispatch_out_q = empty_q
+        dispatch_out_scales = empty_scales
     elif lease_dispatch_out:
         dispatch_out_lease = acquire_ep_no_sync_fp8_dispatch_out_lease(
             block,
@@ -1159,24 +1398,84 @@ def get_ep_no_sync_rowwise_fp8_buffers(
             dtype=torch.float8_e8m0fnu,
             device=device,
         )
+    combine_gather_lease: Optional[_NoSyncSymmLease]
+    if not need_combine_gather and not lease_combine_gather:
+        combine_gather_lease = None
+        combine_gather_q = empty_q
+        combine_gather_scales = empty_scales
+    elif lease_combine_gather:
+        combine_gather_lease = acquire_ep_no_sync_fp8_combine_gather_lease(
+            block,
+            combine_gather_cap=combine_gather_cap,
+            combine_gather_top_k=combine_gather_top_k,
+            d_model=d_model,
+            block_size=block_size,
+            device=device,
+        )
+        combine_gather_q = combine_gather_lease.tensor("combine_gather_q")  # type: ignore[union-attr]
+        combine_gather_scales = combine_gather_lease.tensor("combine_gather_scales")  # type: ignore[union-attr]
+    elif block._ep_no_sync_shared_pool is not None:
+        combine_gather_lease = None
+        (
+            combine_gather_q,
+            combine_gather_scales,
+        ) = block._ep_no_sync_shared_pool.get_rowwise_fp8_combine_gather_slot(
+            slot_idx=block._ep_no_sync_shared_slot,
+            combine_gather_cap=combine_gather_cap,
+            combine_gather_top_k=combine_gather_top_k,
+            d_model=d_model,
+            block_size=block_size,
+            device=device,
+        )
+    else:
+        combine_gather_lease = None
+        combine_gather_q = get_or_init_ep_no_sync_symm_tensor(
+            block,
+            name="combine_gather_rowwise_fp8_q",
+            shape=(combine_gather_cap, combine_gather_top_k, d_model),
+            dtype=torch.float8_e4m3fn,
+            device=device,
+        )
+        combine_gather_scales = get_or_init_ep_no_sync_symm_tensor(
+            block,
+            name="combine_gather_rowwise_fp8_scales",
+            shape=(combine_gather_cap, combine_gather_top_k, scale_cols),
+            dtype=torch.float8_e8m0fnu,
+            device=device,
+        )
+
     buffers = _NoSyncRowwiseFP8SymmBuffers(
+        dispatch_in_q=dispatch_in_q,
+        dispatch_in_scales=dispatch_in_scales,
         dispatch_out_q=dispatch_out_q,
         dispatch_out_scales=dispatch_out_scales,
         combine_in_q=combine_in_q,
         combine_in_scales=combine_in_scales,
+        combine_gather_q=combine_gather_q,
+        combine_gather_scales=combine_gather_scales,
         dispatch_out_lease=dispatch_out_lease,
+        combine_gather_lease=combine_gather_lease,
     )
-    if dispatch_out_lease is None and block._ep_no_sync_shared_pool is None:
+    if (
+        dispatch_out_lease is None
+        and combine_gather_lease is None
+        and block._ep_no_sync_shared_pool is None
+    ):
         cache = getattr(block, "_ep_no_sync_rowwise_fp8_static_buffer_cache", None)
         if cache is not None:
             cache[
                 _ep_no_sync_fp8_buffers_cache_key(
+                    dispatch_in_cap=dispatch_in_cap,
                     dispatch_out_cap=dispatch_out_cap,
                     combine_in_cap=combine_in_cap,
+                    combine_gather_cap=combine_gather_cap,
+                    combine_gather_top_k=combine_gather_top_k,
                     d_model=d_model,
                     block_size=block_size,
                     device=device,
+                    need_dispatch_in=need_dispatch_in,
                     need_dispatch_out=need_dispatch_out,
+                    need_combine_gather=need_combine_gather,
                 )
             ] = buffers
     return buffers
@@ -1193,6 +1492,16 @@ def _parse_bool_env(value: str, *, env_name: str) -> Optional[bool]:
     raise RuntimeError(
         f"{env_name} must be one of auto|0|1|true|false|yes|no|on|off, got {value!r}"
     )
+
+
+def _rowwise_ibgda_enabled() -> bool:
+    disabled = os.getenv("NVSHMEM_DISABLE_IBGDA")
+    if disabled is not None and _parse_bool_env(disabled, env_name="NVSHMEM_DISABLE_IBGDA"):
+        return False
+    enabled = os.getenv("NVSHMEM_IB_ENABLE_IBGDA")
+    if enabled is None:
+        return False
+    return bool(_parse_bool_env(enabled, env_name="NVSHMEM_IB_ENABLE_IBGDA"))
 
 
 def _rowwise_symm_auto_enabled(block: "OLMoDDPTransformerBlock") -> bool:
@@ -1304,20 +1613,30 @@ def _ep_no_sync_buffers_cache_slot(
 
 def _ep_no_sync_fp8_buffers_cache_key(
     *,
+    dispatch_in_cap: int,
     dispatch_out_cap: int,
     combine_in_cap: int,
+    combine_gather_cap: int,
+    combine_gather_top_k: int,
     d_model: int,
     block_size: int,
     device: torch.device,
+    need_dispatch_in: bool,
     need_dispatch_out: bool,
+    need_combine_gather: bool,
 ) -> Tuple[object, ...]:
     return (
+        int(dispatch_in_cap),
         int(dispatch_out_cap),
         int(combine_in_cap),
+        int(combine_gather_cap),
+        int(combine_gather_top_k),
         int(d_model),
         int(block_size),
         device,
+        bool(need_dispatch_in),
         bool(need_dispatch_out),
+        bool(need_combine_gather),
     )
 
 
@@ -1371,12 +1690,17 @@ def get_cached_ep_no_sync_buffers(
 def get_cached_ep_no_sync_rowwise_fp8_buffers(
     block: "OLMoDDPTransformerBlock",
     *,
+    dispatch_in_cap: int,
     dispatch_out_cap: int,
     combine_in_cap: int,
+    combine_gather_cap: int,
+    combine_gather_top_k: int,
     d_model: int,
     block_size: int,
     device: torch.device,
+    need_dispatch_in: bool = True,
     need_dispatch_out: bool = True,
+    need_combine_gather: bool = True,
 ) -> Optional[_NoSyncRowwiseFP8SymmBuffers]:
     if getattr(block, "_ep_no_sync_shared_pool", None) is not None:
         # Shared-pool combine_in tensors can be resized by another block sharing
@@ -1388,17 +1712,24 @@ def get_cached_ep_no_sync_rowwise_fp8_buffers(
         return None
     return cache.get(
         _ep_no_sync_fp8_buffers_cache_key(
+            dispatch_in_cap=dispatch_in_cap,
             dispatch_out_cap=dispatch_out_cap,
             combine_in_cap=combine_in_cap,
+            combine_gather_cap=combine_gather_cap,
+            combine_gather_top_k=combine_gather_top_k,
             d_model=d_model,
             block_size=block_size,
             device=device,
+            need_dispatch_in=need_dispatch_in,
             need_dispatch_out=need_dispatch_out,
+            need_combine_gather=need_combine_gather,
         )
     )
 
 
 def use_ep_no_sync_rowwise_symm_dispatch_in(block: "OLMoDDPTransformerBlock") -> bool:
+    if _rowwise_ibgda_enabled():
+        return True
     return _resolve_rowwise_symm_option(
         block,
         attr_name="ep.rowwise_symm_dispatch_in",
@@ -1814,6 +2145,25 @@ def iter_ep_no_sync_symm_tensors(block: "OLMoDDPTransformerBlock") -> Iterator[t
             yield from pool.iter_tensors()
     if block._ep_no_sync_shared_pool is not None:
         yield from block._ep_no_sync_shared_pool.iter_tensors()
+
+
+def iter_ep_no_sync_symm_tensor_infos(
+    block: "OLMoDDPTransformerBlock",
+) -> Iterator[EpNoSyncSymmTensorInfo]:
+    for name, tensor in block._ep_no_sync_symm_cache.items():
+        if isinstance(tensor, torch.Tensor):
+            yield _symm_tensor_info(
+                owner=f"block{block.block_idx}:cache",
+                name=name,
+                tensor=tensor,
+            )
+    for pool_name, pool in getattr(block, "_ep_no_sync_symm_lease_pools", {}).items():
+        if isinstance(pool, _NoSyncSymmLeasePool):
+            yield from pool.iter_tensor_infos(
+                owner=f"block{block.block_idx}:lease_pool:{pool_name}"
+            )
+    if block._ep_no_sync_shared_pool is not None:
+        yield from block._ep_no_sync_shared_pool.iter_tensor_infos(owner="shared_pool")
 
 
 def compute_ep_no_sync_rank_capacity(block: "OLMoDDPTransformerBlock", num_out_tokens: int) -> int:
