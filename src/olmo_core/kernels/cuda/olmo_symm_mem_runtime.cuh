@@ -60,18 +60,26 @@ void preflight_rowwise_collective_launches(
   int64_t* i64_ptr = nullptr;
   const int* rank_to_pe_dev = nullptr;
   const float* probs_ptr = nullptr;
+  const float* float_input_ptr = nullptr;
   const at::Half* half_input_ptr = nullptr;
   at::Half* half_out_ptr = nullptr;
   const at::BFloat16* bf16_input_ptr = nullptr;
   at::BFloat16* bf16_out_ptr = nullptr;
+  uint8_t* q_out_ptr = nullptr;
+  uint8_t* scales_out_ptr = nullptr;
   nvshmem_team_t team = NVSHMEM_TEAM_WORLD;
   size_t row_bytes = 0;
+  size_t q_row_bytes = 0;
+  size_t scales_row_bytes = 0;
   int64_t num_input_rows = 0;
   int64_t num_out_rows = 0;
   int64_t top_k = 0;
   int64_t dim = 0;
+  int64_t scale_dim = 0;
   int64_t input_row_stride = 0;
   int64_t out_row_stride = 0;
+  int64_t out_q_row_stride = 0;
+  int64_t out_scales_row_stride = 0;
   int64_t out_capacity_rows = 0;
   int64_t wave_idx = 0;
   int64_t num_waves = 0;
@@ -106,6 +114,32 @@ void preflight_rowwise_collective_launches(
 
   {
     void* args[] = {
+        &const_data_ptr,
+        &const_data_ptr,
+        &data_ptr,
+        &data_ptr,
+        &const_i64_ptr,
+        &const_i64_ptr,
+        &q_row_bytes,
+        &scales_row_bytes,
+        &num_input_rows,
+        &top_k,
+        &out_capacity_rows,
+        &team,
+        &rank_to_pe_dev,
+        &group_size};
+    preflight(
+        "dispatchRowsPutPair",
+        "rowwise_put_nblocks",
+        requested_put_blocks,
+        (const void*)dispatchRowsPutPair,
+        dim3(ROWWISE_THREADS_PER_BLOCK),
+        args,
+        0);
+  }
+
+  {
+    void* args[] = {
         &half_input_ptr,
         &half_out_ptr,
         &const_i64_ptr,
@@ -125,6 +159,93 @@ void preflight_rowwise_collective_launches(
         "rowwise_weighted_put_nblocks",
         requested_weighted_put_blocks,
         (const void*)dispatchRowsPutWeighted<at::Half>,
+        dim3(ROWWISE_THREADS_PER_BLOCK),
+        args,
+        0);
+  }
+
+  {
+    void* args[] = {
+        &float_input_ptr,
+        &q_out_ptr,
+        &scales_out_ptr,
+        &const_i64_ptr,
+        &const_i64_ptr,
+        &probs_ptr,
+        &num_input_rows,
+        &top_k,
+        &dim,
+        &scale_dim,
+        &input_row_stride,
+        &out_q_row_stride,
+        &out_scales_row_stride,
+        &out_capacity_rows,
+        &team,
+        &rank_to_pe_dev,
+        &group_size};
+    preflight(
+        "dispatchRowsPutScaledWeighted<Float>",
+        "rowwise_weighted_put_nblocks",
+        requested_weighted_put_blocks,
+        (const void*)dispatchRowsPutScaledWeighted<float>,
+        dim3(ROWWISE_THREADS_PER_BLOCK),
+        args,
+        0);
+  }
+
+  {
+    void* args[] = {
+        &half_input_ptr,
+        &q_out_ptr,
+        &scales_out_ptr,
+        &const_i64_ptr,
+        &const_i64_ptr,
+        &probs_ptr,
+        &num_input_rows,
+        &top_k,
+        &dim,
+        &scale_dim,
+        &input_row_stride,
+        &out_q_row_stride,
+        &out_scales_row_stride,
+        &out_capacity_rows,
+        &team,
+        &rank_to_pe_dev,
+        &group_size};
+    preflight(
+        "dispatchRowsPutScaledWeighted<Half>",
+        "rowwise_weighted_put_nblocks",
+        requested_weighted_put_blocks,
+        (const void*)dispatchRowsPutScaledWeighted<at::Half>,
+        dim3(ROWWISE_THREADS_PER_BLOCK),
+        args,
+        0);
+  }
+
+  {
+    void* args[] = {
+        &bf16_input_ptr,
+        &q_out_ptr,
+        &scales_out_ptr,
+        &const_i64_ptr,
+        &const_i64_ptr,
+        &probs_ptr,
+        &num_input_rows,
+        &top_k,
+        &dim,
+        &scale_dim,
+        &input_row_stride,
+        &out_q_row_stride,
+        &out_scales_row_stride,
+        &out_capacity_rows,
+        &team,
+        &rank_to_pe_dev,
+        &group_size};
+    preflight(
+        "dispatchRowsPutScaledWeighted<BFloat16>",
+        "rowwise_weighted_put_nblocks",
+        requested_weighted_put_blocks,
+        (const void*)dispatchRowsPutScaledWeighted<at::BFloat16>,
         dim3(ROWWISE_THREADS_PER_BLOCK),
         args,
         0);
@@ -341,6 +462,32 @@ void preflight_rowwise_collective_launches(
         "rowwise_get_nblocks",
         requested_get_blocks,
         (const void*)gatherRowsGet<false>,
+        dim3(ROWWISE_THREADS_PER_BLOCK),
+        args,
+        0);
+  }
+
+  {
+    void* args[] = {
+        &const_data_ptr,
+        &const_data_ptr,
+        &data_ptr,
+        &data_ptr,
+        &const_i64_ptr,
+        &const_i64_ptr,
+        &q_row_bytes,
+        &scales_row_bytes,
+        &num_out_rows,
+        &top_k,
+        &expert_capacity_rows,
+        &team,
+        &rank_to_pe_dev,
+        &group_size};
+    preflight(
+        "gatherRowsGetPair<false>",
+        "rowwise_get_nblocks",
+        requested_get_blocks,
+        (const void*)gatherRowsGetPair<false>,
         dim3(ROWWISE_THREADS_PER_BLOCK),
         args,
         0);
