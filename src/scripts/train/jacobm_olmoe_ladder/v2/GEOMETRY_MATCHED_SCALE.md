@@ -245,12 +245,13 @@ record, including every task ID, is
 | 1.2B | 4 | `3e-4` | 32 | [01KXT0CKPC9NV36GKDXZH5SM17](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXT0CKPC9NV36GKDXZH5SM17) |
 | 1.2B | 8 | `4e-4` | 32 | [01KXT0CQBVT4T414SAZQYT1RAS](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXT0CQBVT4T414SAZQYT1RAS) |
 
-Status at 2026-07-19 02:40 UTC: 480M Cx1/Cx2/Cx4 and 810M Cx1/Cx2 are
-finished. The 480M Cx8, 810M Cx4/Cx8, and 1.2B Cx2/Cx4 cells are running.
-The 1.2B Cx1 and Cx8 workers stopped on `Non-finite total grad norm` after
-durable rolling checkpoints. Their explicit resumes were submitted from the
-same checkpoint directories as [Cx1 work 01KXW45Z12PGXNQ9466KRY561R](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXW45Z12PGXNQ9466KRY561R)
-and [Cx8 work 01KXW463APF8FT6RV8T8XZ2D6Q](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXW463APF8FT6RV8T8XZ2D6Q).
+Status at 2026-07-19 04:30 UTC: 480M Cx1/Cx2/Cx4/Cx8 and 810M Cx1/Cx2/Cx4
+are finished. Newly collected strict final-250M CE is `2.239326` for 480M
+Cx8 and `2.191890` for 810M Cx4. The 810M Cx8 and 1.2B Cx1/Cx2/Cx4 cells
+are running. The [Cx1 resume](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXW45Z12PGXNQ9466KRY561R)
+is at 16.28B / 23.22B tokens. The [Cx8 resume](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXW463APF8FT6RV8T8XZ2D6Q)
+advanced by 1,400 steps but then hit the same `Non-finite total grad norm`
+assertion again; it has not been requeued a third time.
 Their W&B IDs are registered in [`plot_pretraining_wave.py`](plot_pretraining_wave.py),
 so later finished-only refreshes require no registry change.
 
@@ -258,13 +259,17 @@ The gated-attention wave uses the identical GPU, EP, microbatch,
 checkpointing, and evaluator-free layout, with the same transferred
 wide-integration LR in every cell. It is urgent unallocated work on Holmes,
 pinned to commit `1a85227bdb8baeab2ad05555935aae78938bb0cd` for the initial
-submissions. At the 2026-07-19 02:40 UTC refresh, 480M Cx1/Cx2/Cx4 and 810M
-Cx1 are finished; 480M Cx8 and 810M Cx2/Cx8 are running. The 810M Cx4 worker
-hit a transient rank SIGSEGV. All four 1.2B cells failed before training
+submissions. At the 2026-07-19 04:30 UTC refresh, 480M Cx1/Cx2/Cx4 and 810M
+Cx1 are finished. The 480M Cx8 and 810M Cx2/Cx4/Cx8 workers are running; the
+Cx4 retry has passed the transient SIGSEGV that stopped its first attempt.
+All four 1.2B cells initially failed before training
 because the common 6% active-parameter guard rejected their audited 6.1155%
 gated delta. The production entrypoint now uses a gated-only 6.2% cap while
-retaining 6% for ungated variants. The failed five cells were re-submitted as
-urgent unallocated work pinned to commit `bc6d1c7402bd558b829e5be5f9c8da6c67054d0f`:
+retaining 6% for ungated variants. The Cx1 and Cx4 retries are now running,
+Cx8 remains queued, and Cx2 hit a transient replica SIGSEGV while broadcasting
+the checkpoint-existence flag before step 1. The failed five cells were
+re-submitted as urgent unallocated work pinned to commit
+`bc6d1c7402bd558b829e5be5f9c8da6c67054d0f`:
 
 - 810M Cx4: [01KXW481J547QWEE4B10Q0JHHW](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXW481J547QWEE4B10Q0JHHW)
 - 1.2B Cx1: [01KXW485DWP28P6R0642WCS583](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXW485DWP28P6R0642WCS583)

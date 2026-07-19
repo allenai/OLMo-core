@@ -232,10 +232,10 @@ GEOMETRY_GDN_EV2_NOPE = Variant(
         RegisteredRun("810m", 2, 5.6e-4, "upxsysuv"),
         RegisteredRun("810m", 4, 4e-4, "8ewnju8z"),
         RegisteredRun("810m", 8, 4e-4, "bf0yrani"),
-        RegisteredRun("1p2b", 1, 4e-4, "dngmbyg2"),
+        RegisteredRun("1p2b", 1, 4e-4, "lubri1f1", predecessor_run_ids=("dngmbyg2",)),
         RegisteredRun("1p2b", 2, 6e-4, "hd12kewt"),
         RegisteredRun("1p2b", 4, 3e-4, "xxrj2oou"),
-        RegisteredRun("1p2b", 8, 4e-4, "i4z9h3jn"),
+        RegisteredRun("1p2b", 8, 4e-4, "h8u9xosq", predecessor_run_ids=("i4z9h3jn",)),
     ),
 )
 
@@ -266,7 +266,10 @@ GEOMETRY_GDN_EV2_NOPE_GATED = Variant(
         RegisteredRun("480m", 8, 8e-4, "4737op7s"),
         RegisteredRun("810m", 1, 6e-4, "027xoq0r"),
         RegisteredRun("810m", 2, 5.6e-4, "7ryj4klm"),
+        RegisteredRun("810m", 4, 4e-4, "l0u9gv52"),
         RegisteredRun("810m", 8, 4e-4, "pvoq0dq6"),
+        RegisteredRun("1p2b", 1, 4e-4, "ojtvkjgk"),
+        RegisteredRun("1p2b", 4, 3e-4, "bhr5mgpr"),
     ),
 )
 
