@@ -263,7 +263,14 @@ Cx1 are finished; 480M Cx8 and 810M Cx2/Cx8 are running. The 810M Cx4 worker
 hit a transient rank SIGSEGV. All four 1.2B cells failed before training
 because the common 6% active-parameter guard rejected their audited 6.1155%
 gated delta. The production entrypoint now uses a gated-only 6.2% cap while
-retaining 6% for ungated variants; the failed five cells are pending retry.
+retaining 6% for ungated variants. The failed five cells were re-submitted as
+urgent unallocated work pinned to commit `bc6d1c7402bd558b829e5be5f9c8da6c67054d0f`:
+
+- 810M Cx4: [01KXW481J547QWEE4B10Q0JHHW](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXW481J547QWEE4B10Q0JHHW)
+- 1.2B Cx1: [01KXW485DWP28P6R0642WCS583](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXW485DWP28P6R0642WCS583)
+- 1.2B Cx2: [01KXW488XBQZQS4ZC6FVN2ZZT0](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXW488XBQZQS4ZC6FVN2ZZT0)
+- 1.2B Cx4: [01KXW48CSDSEATB2FR5HJ9SKT9](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXW48CSDSEATB2FR5HJ9SKT9)
+- 1.2B Cx8: [01KXW48H5X4BQMR9BPRWWM5BS4](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXW48H5X4BQMR9BPRWWM5BS4)
 
 | Size | Cx | LR | GPUs | Beaker work |
 |---|---:|---:|---:|---|

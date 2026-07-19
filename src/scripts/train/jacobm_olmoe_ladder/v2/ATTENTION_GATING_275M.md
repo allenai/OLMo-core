@@ -134,7 +134,8 @@ The larger 1.2B gated models have an audited 6.1155% active-parameter delta
 from their geometry targets. A shared 6% sanity guard initially rejected those
 runs before step 1; the production entrypoint now permits 6.2% only when
 attention gating is enabled, while preserving the stricter 6% limit for all
-ungated variants.
+ungated variants. All four 1.2B cells were re-submitted after that fix; the
+work links are recorded in [`GEOMETRY_MATCHED_SCALE.md`](GEOMETRY_MATCHED_SCALE.md).
 
 - U-plot:
   [`plots/pretraining/geometry_gdn_ev2_nope_gated/275m_uplot.png`](plots/pretraining/geometry_gdn_ev2_nope_gated/275m_uplot.png)

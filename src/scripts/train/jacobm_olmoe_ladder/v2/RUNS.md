@@ -22,7 +22,7 @@ below retain the full launch and retry history.
 | pretraining | aligned geometry + NoPE 275M sweep | finished | 16/16; observed best LR is `8e-4`, `1.6e-3`, `8e-4`, `8e-4` at Cx1/2/4/8 | [results](results/pretraining/geometry_gdn_ev2_nope/results.md) |
 | pretraining | aligned geometry + NoPE + gated attention 275M sweep | finished | 16/16; observed best LR is `8e-4`, `1.6e-3`, `8e-4`, `8e-4` at Cx1/2/4/8 | [results](results/pretraining/geometry_gdn_ev2_nope_gated/results.md) |
 | pretraining | larger aligned geometry + NoPE | running | 5/12 finished; 5 original workers running; 1.2B Cx1/Cx8 checkpoint resumes re-queued | [launch record](launchers/pretraining/generated/geometry_matched_scale_full_submissions.json) |
-| pretraining | larger aligned geometry + NoPE + gated attention | running | 4/12 finished; 3 running; 810M Cx4 transiently segfaulted; all four 1.2B cells rejected by an overly strict count guard pending retry | [results](results/pretraining/geometry_gdn_ev2_nope_gated/results.md) |
+| pretraining | larger aligned geometry + NoPE + gated attention | running | 4/12 finished; 3 original workers running; 810M Cx4 and all four 1.2B cells re-queued after fixes | [launch record](launchers/pretraining/generated/geometry_matched_scale_full_submissions.json) |
 | midtraining | first hybrid 275M Cx8 | finished | 100B; final checkpoint `step95368`; post-training validation pending | [1keo2hz6](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/1keo2hz6) |
 | midtraining | first hybrid 480M Cx8 | running | 68.16B / 100B tokens (68.2%); ~572 TFLOPs/GPU | [mnp9rv5l](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/mnp9rv5l) |
 | validation | first hybrid + geometry backfills | finished | 33/33 targets; 498 exported metrics each | [results](results/validation/hybrid_full.md) |
@@ -540,8 +540,10 @@ At the 2026-07-19 refresh, 480M Cx1/Cx2/Cx4 and 810M Cx1 are finished;
 rank SIGSEGV. All four 1.2B cells were rejected before training by the shared
 6% active-parameter-delta guard: their audited gated delta is 6.1155%. The
 guard now permits up to 6.2% only for gated variants while leaving the 6%
-limit unchanged for ungated models; those five cells are pending retry. The
-wave otherwise retains the identical 192-GPU peak layout and transferred LRs.
+limit unchanged for ungated models. The 810M Cx4 and four 1.2B retries were
+submitted as urgent unallocated work; exact links are in
+[`GEOMETRY_MATCHED_SCALE.md`](GEOMETRY_MATCHED_SCALE.md). The wave otherwise
+retains the identical 192-GPU peak layout and transferred LRs.
 
 ## Post-training validation backfills
 
