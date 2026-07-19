@@ -260,6 +260,13 @@ GEOMETRY_GDN_EV2_NOPE_GATED = Variant(
         RegisteredRun("275m", 8, 8e-4, "ouxblu4g"),
         RegisteredRun("275m", 8, 1.6e-3, "3xjjt5sa"),
         RegisteredRun("275m", 8, 3.2e-3, "mbvin02a"),
+        RegisteredRun("480m", 1, 1.2e-3, "9rltp47w"),
+        RegisteredRun("480m", 2, 9e-4, "0crj05wz"),
+        RegisteredRun("480m", 4, 8e-4, "ur7yonej"),
+        RegisteredRun("480m", 8, 8e-4, "4737op7s"),
+        RegisteredRun("810m", 1, 6e-4, "027xoq0r"),
+        RegisteredRun("810m", 2, 5.6e-4, "7ryj4klm"),
+        RegisteredRun("810m", 8, 4e-4, "pvoq0dq6"),
     ),
 )
 
@@ -343,15 +350,25 @@ WAVES = {
             "geometry-matched hybrid GDN (expand_v=2, NoPE, gated attention)"
         ),
         architecture_note=(
-            "The 275M geometry-matched expand_v=2 NoPE hybrid with the dense "
-            "ladder's elementwise full-precision attention gate added only to "
-            "the two full-attention layers. Wide integration, first hybrid, "
+            "The geometry-matched expand_v=2 NoPE hybrid at each size with the "
+            "dense ladder's elementwise full-precision attention gate added "
+            "only to full-attention layers. Wide integration, first hybrid, "
             "RoPE geometry, and ungated NoPE are explicit references."
         ),
-        models=("275m",),
+        models=("275m", "480m", "810m", "1p2b"),
         lr_sweep_models=("275m",),
-        active_parameters={"275m": 292_092_800},
-        baseline_active_parameters={"275m": 280_207_872},
+        active_parameters={
+            "275m": 292_092_800,
+            "480m": 503_497_152,
+            "810m": 864_528_512,
+            "1p2b": 1_299_927_040,
+        },
+        baseline_active_parameters={
+            "275m": 280_207_872,
+            "480m": 486_348_800,
+            "810m": 823_569_920,
+            "1p2b": 1_225_011_712,
+        },
         baseline=WIDE_INTEGRATION,
         additional_baselines=(
             HYBRID_GDN_EV1,
@@ -857,6 +874,15 @@ def write_results(
     generated_at = datetime.now(UTC).isoformat()
     results: list[dict[str, Any]] = []
     registered_cells = {(registered.model, registered.cx) for registered in wave.intervention.runs}
+    # Fixed-LR scale waves should surface every planned model/Cx cell even
+    # before a worker has initialized W&B. This keeps the result table aligned
+    # with the four-panel plot's explicit pending labels.
+    registered_cells.update(
+        (model, cx)
+        for model in wave.models
+        if model not in wave.lr_sweep_models
+        for cx in (1, 2, 4, 8)
+    )
     for model, cx in sorted(
         registered_cells,
         key=lambda cell: (wave.models.index(cell[0]), cell[1]),
@@ -869,8 +895,10 @@ def write_results(
         intervention = _best_finished(points, wave.intervention.key, model, cx)
         finished = _finished(points, wave.intervention.key, model, cx)
         complete_count = len(finished)
-        expected_count = _expected_count(wave.intervention, model, cx)
         mode = "lr_sweep" if model in wave.lr_sweep_models else "fixed_lr_transfer"
+        expected_count = _expected_count(wave.intervention, model, cx)
+        if mode == "fixed_lr_transfer" and expected_count == 0:
+            expected_count = 1
         results.append(
             {
                 "model": model,

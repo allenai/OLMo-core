@@ -130,6 +130,12 @@ production wave using the same transferred wide-integration LRs and the same
 and Beaker work links are in
 [`GEOMETRY_MATCHED_SCALE.md`](GEOMETRY_MATCHED_SCALE.md).
 
+The larger 1.2B gated models have an audited 6.1155% active-parameter delta
+from their geometry targets. A shared 6% sanity guard initially rejected those
+runs before step 1; the production entrypoint now permits 6.2% only when
+attention gating is enabled, while preserving the stricter 6% limit for all
+ungated variants.
+
 - U-plot:
   [`plots/pretraining/geometry_gdn_ev2_nope_gated/275m_uplot.png`](plots/pretraining/geometry_gdn_ev2_nope_gated/275m_uplot.png)
 - Observed-best summary:

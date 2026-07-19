@@ -4,7 +4,7 @@ Record post-migration experiment waves here. Per-run rows must include Beaker
 job IDs and W&B IDs once they exist. Detailed migration-era DDP jobs remain in
 [`../v1/DDP_RUNS.md`](../v1/DDP_RUNS.md).
 
-## Live status snapshot (2026-07-18 14:21 UTC)
+## Live status snapshot (2026-07-19 02:40 UTC)
 
 This is the current source of truth for active V2 work. The detailed sections
 below retain the full launch and retry history.
@@ -14,26 +14,29 @@ below retain the full launch and retry history.
 | pretraining | first hybrid 480M Cx4 | finished | final-250M CE `2.305996` | [h06m5ls2](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/h06m5ls2) |
 | pretraining | first hybrid 480M Cx8 | finished | final-250M CE `2.236205` | [d34a9o4t](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/d34a9o4t) |
 | pretraining | first hybrid 810M Cx4 | finished | final-250M CE `2.160440` | [kye1c19u](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/kye1c19u) |
-| pretraining | first hybrid 810M Cx8 | running | 104.20B / 116.95B tokens (89.1%) | [s5gvyjiz](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/s5gvyjiz) |
+| pretraining | first hybrid 810M Cx8 | finished | final-250M CE `2.095585` | [s5gvyjiz](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/s5gvyjiz) |
 | pretraining | first hybrid 1.2B Cx1 | finished | final-250M CE `2.253953`; validation finished | [1d24xfx5](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/1d24xfx5) |
 | pretraining | first hybrid 1.2B Cx2 | finished | final-250M CE `2.163788` | [4k1bh4k2](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/4k1bh4k2) |
-| pretraining | first hybrid 1.2B Cx4 | running | 51.74B / 90.76B tokens (57.0%) | [vc3c6gj6](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/vc3c6gj6) |
-| pretraining | first hybrid 1.2B Cx8 | running | 61.93B / 181.52B tokens (34.1%) | [7eemhu7g](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/7eemhu7g) |
+| pretraining | first hybrid 1.2B Cx4 | running | 67.49B / 90.76B tokens (74.4%); ~500 TFLOPs/GPU | [vc3c6gj6](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/vc3c6gj6) |
+| pretraining | first hybrid 1.2B Cx8 | running | 80.18B / 181.52B tokens (44.2%); ~541 TFLOPs/GPU | [7eemhu7g](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/7eemhu7g) |
 | pretraining | aligned geometry + NoPE 275M sweep | finished | 16/16; observed best LR is `8e-4`, `1.6e-3`, `8e-4`, `8e-4` at Cx1/2/4/8 | [results](results/pretraining/geometry_gdn_ev2_nope/results.md) |
 | pretraining | aligned geometry + NoPE + gated attention 275M sweep | finished | 16/16; observed best LR is `8e-4`, `1.6e-3`, `8e-4`, `8e-4` at Cx1/2/4/8 | [results](results/pretraining/geometry_gdn_ev2_nope_gated/results.md) |
-| pretraining | larger aligned geometry + NoPE | running | 480M Cx1/Cx2 finished; remaining ten cells running | [results](results/pretraining/geometry_gdn_ev2_nope/results.md) |
-| pretraining | larger aligned geometry + NoPE + gated attention | submitted | 12 cells; four 480M scheduled and eight larger cells pending at launch | [launch record](launchers/pretraining/generated/geometry_matched_scale_full_submissions.json) |
+| pretraining | larger aligned geometry + NoPE | running | 5/12 finished; 5 running; 1.2B Cx1/Cx8 stopped on non-finite grad norm and are pending checkpoint resume | [results](results/pretraining/geometry_gdn_ev2_nope/results.md) |
+| pretraining | larger aligned geometry + NoPE + gated attention | running | 4/12 finished; 3 running; 810M Cx4 transiently segfaulted; all four 1.2B cells rejected by an overly strict count guard pending retry | [results](results/pretraining/geometry_gdn_ev2_nope_gated/results.md) |
 | midtraining | first hybrid 275M Cx8 | finished | 100B; final checkpoint `step95368`; post-training validation pending | [1keo2hz6](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/1keo2hz6) |
-| midtraining | first hybrid 480M Cx8 | running | 35.43B / 100B tokens (35.4%) | [mnp9rv5l](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/mnp9rv5l) |
+| midtraining | first hybrid 480M Cx8 | running | 68.16B / 100B tokens (68.2%); ~572 TFLOPs/GPU | [mnp9rv5l](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/mnp9rv5l) |
 | validation | first hybrid + geometry backfills | finished | 33/33 targets; 498 exported metrics each | [results](results/validation/hybrid_full.md) |
 
 The formal pretraining results and plots use finished runs only and enforce a
 complete final-250M-token history. The 275M hybrid midtraining checkpoint is
 complete, but its post-training validation remains a separate pending
 follow-up; no training-loss comparison is produced for midtraining. The
-completed NoPE, gated-attention, 480M NoPE Cx1/Cx2, and first-hybrid 1.2B Cx2
-checkpoints likewise need a future post-training validation wave; the 33/33
-coverage row applies to the previously registered validation set.
+completed NoPE and gated-attention sweeps, newly completed larger-scale cells,
+first-hybrid 1.2B Cx2, and 275M hybrid midtraining checkpoint need a future
+post-training validation wave. The 33/33 coverage row applies only to the
+previously registered validation set. The completed 480M/810M first-hybrid
+Cx1/Cx2 runs already contain the full 178-task validation suite; later
+evaluator-free scale cells require post-hoc backfills.
 
 ## 275M active hybrid GDN (`expand_v=1`)
 
@@ -520,20 +523,23 @@ LRs, Beaker IDs, ETAs, and estimated GPU-hours are in
 commit `fcf1c1b8828a3bddd0bad477a5c4055e63b0275f`, retain rolling ephemeral
 checkpoints every 500 steps, and disable in-loop/on-finish evaluators.
 
-Status at 2026-07-18 14:21 UTC: 480M Cx1 and Cx2 finished at strict
-final-250M CE `2.526546` and `2.419441`; the other ten cells are running.
-At the transferred wide LRs, these two NoPE points improve on wide integration
-by `0.016735` and `0.004447` CE but trail the first hybrid by `0.015672` and
-`0.006651`. The all-size fixed-LR plot includes these finished cells and
-labels the other cells pending.
+Status at 2026-07-19 02:40 UTC: 480M Cx1/Cx2/Cx4 and 810M Cx1/Cx2 are
+finished. The 480M Cx8, 810M Cx4/Cx8, and 1.2B Cx2/Cx4 cells are running.
+The 1.2B Cx1 and Cx8 workers stopped on a non-finite total grad norm after
+durable rolling checkpoints and are queued for explicit checkpoint resumes.
+The all-size fixed-LR plot includes the five finished cells and labels the
+remaining cells pending.
 
 The equivalent larger NoPE-plus-gated-attention launcher and complete 12-cell
 manifest were structurally and count validated, then submitted on 2026-07-18
 after the completed 275M gated sweep improved on ungated NoPE at all four Cx.
-The wave uses the identical 192-GPU peak layout and the same transferred
-wide-integration LRs as the ungated wave. Its 12 Beaker work IDs and exact
-settings are recorded in [`GEOMETRY_MATCHED_SCALE.md`](GEOMETRY_MATCHED_SCALE.md)
-and the machine-readable submission record.
+At the 2026-07-19 refresh, 480M Cx1/Cx2/Cx4 and 810M Cx1 are finished;
+480M Cx8 and 810M Cx2/Cx8 are running. The 810M Cx4 worker hit a transient
+rank SIGSEGV. All four 1.2B cells were rejected before training by the shared
+6% active-parameter-delta guard: their audited gated delta is 6.1155%. The
+guard now permits up to 6.2% only for gated variants while leaving the 6%
+limit unchanged for ungated models; those five cells are pending retry. The
+wave otherwise retains the identical 192-GPU peak layout and transferred LRs.
 
 ## Post-training validation backfills
 

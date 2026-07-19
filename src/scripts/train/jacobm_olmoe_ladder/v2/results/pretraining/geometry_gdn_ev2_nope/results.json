@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-07-18T14:15:44.596890+00:00",
+  "generated_at": "2026-07-19T02:38:26.726012+00:00",
   "project": "ai2-llm/jacobm-olmoe-ladder",
   "wave": "geometry_gdn_ev2_nope",
   "models": [
@@ -1331,6 +1331,25 @@
     },
     {
       "model": "480m",
+      "variant": "geometry_gdn_ev2_nope",
+      "variant_label": "geometry-matched hybrid (GDN, expand_v=2, NoPE)",
+      "cx": 4,
+      "lr": 0.0008,
+      "lr_tag": "0.0008",
+      "loss": 2.32376770503366,
+      "state": "finished",
+      "tokens_b": 33.925627904,
+      "run_id": "ke2n42cm",
+      "name": "pt-480m-geometry-gdn-ev2-nope-cx4-lr8e-4-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/ke2n42cm",
+      "segment_run_ids": [
+        "ke2n42cm"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0
+    },
+    {
+      "model": "480m",
       "variant": "hybrid_gdn_ev1",
       "variant_label": "hybrid (GDN, expand_v=1)",
       "cx": 4,
@@ -1407,6 +1426,25 @@
     },
     {
       "model": "810m",
+      "variant": "geometry_gdn_ev2_nope",
+      "variant_label": "geometry-matched hybrid (GDN, expand_v=2, NoPE)",
+      "cx": 1,
+      "lr": 0.0006,
+      "lr_tag": "0.0006",
+      "loss": 2.3771070751753993,
+      "state": "finished",
+      "tokens_b": 15.109718016,
+      "run_id": "8z7txpf8",
+      "name": "pt-810m-geometry-gdn-ev2-nope-cx1-lr6e-4-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/8z7txpf8",
+      "segment_run_ids": [
+        "8z7txpf8"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0
+    },
+    {
+      "model": "810m",
       "variant": "hybrid_gdn_ev1",
       "variant_label": "hybrid (GDN, expand_v=1)",
       "cx": 1,
@@ -1439,6 +1477,25 @@
       "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/w912irkq",
       "segment_run_ids": [
         "w912irkq"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0
+    },
+    {
+      "model": "810m",
+      "variant": "geometry_gdn_ev2_nope",
+      "variant_label": "geometry-matched hybrid (GDN, expand_v=2, NoPE)",
+      "cx": 2,
+      "lr": 0.00056,
+      "lr_tag": "0.00056",
+      "loss": 2.2787013739909767,
+      "state": "finished",
+      "tokens_b": 30.219436032,
+      "run_id": "upxsysuv",
+      "name": "pt-810m-geometry-gdn-ev2-nope-cx2-lr5p6e-4-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/upxsysuv",
+      "segment_run_ids": [
+        "upxsysuv"
       ],
       "token_resets": 0,
       "deduplicated_samples": 0
@@ -1515,6 +1572,25 @@
       "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/58ftjxmw",
       "segment_run_ids": [
         "58ftjxmw"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0
+    },
+    {
+      "model": "810m",
+      "variant": "hybrid_gdn_ev1",
+      "variant_label": "hybrid (GDN, expand_v=1)",
+      "cx": 8,
+      "lr": 0.0004,
+      "lr_tag": "0.0004",
+      "loss": 2.0955850868105137,
+      "state": "finished",
+      "tokens_b": 116.952662016,
+      "run_id": "s5gvyjiz",
+      "name": "810m-intwide-hybrid-gdn-ev1-cx8-lr4e-4",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/s5gvyjiz",
+      "segment_run_ids": [
+        "s5gvyjiz"
       ],
       "token_resets": 0,
       "deduplicated_samples": 0
@@ -2295,9 +2371,9 @@
       "model": "480m",
       "cx": 4,
       "mode": "fixed_lr_transfer",
-      "complete": false,
+      "complete": true,
       "optimal_summary_eligible": false,
-      "completed_intervention_runs": 0,
+      "completed_intervention_runs": 1,
       "expected_intervention_runs": 1,
       "wide_reference": {
         "model": "480m",
@@ -2359,11 +2435,29 @@
         },
         "geometry_gdn_ev2": null
       },
-      "intervention_result": null,
-      "delta_intervention_minus_wide": null,
+      "intervention_result": {
+        "model": "480m",
+        "variant": "geometry_gdn_ev2_nope",
+        "variant_label": "geometry-matched hybrid (GDN, expand_v=2, NoPE)",
+        "cx": 4,
+        "lr": 0.0008,
+        "lr_tag": "0.0008",
+        "loss": 2.32376770503366,
+        "state": "finished",
+        "tokens_b": 33.925627904,
+        "run_id": "ke2n42cm",
+        "name": "pt-480m-geometry-gdn-ev2-nope-cx4-lr8e-4-r1",
+        "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/ke2n42cm",
+        "segment_run_ids": [
+          "ke2n42cm"
+        ],
+        "token_resets": 0,
+        "deduplicated_samples": 0
+      },
+      "delta_intervention_minus_wide": -0.006208144893686374,
       "delta_intervention_minus_reference": {
-        "wide_integration": null,
-        "hybrid_gdn_ev1": null,
+        "wide_integration": -0.006208144893686374,
+        "hybrid_gdn_ev1": 0.01777204727476711,
         "geometry_gdn_ev2": null
       }
     },
@@ -2447,9 +2541,9 @@
       "model": "810m",
       "cx": 1,
       "mode": "fixed_lr_transfer",
-      "complete": false,
+      "complete": true,
       "optimal_summary_eligible": false,
-      "completed_intervention_runs": 0,
+      "completed_intervention_runs": 1,
       "expected_intervention_runs": 1,
       "wide_reference": {
         "model": "810m",
@@ -2511,11 +2605,29 @@
         },
         "geometry_gdn_ev2": null
       },
-      "intervention_result": null,
-      "delta_intervention_minus_wide": null,
+      "intervention_result": {
+        "model": "810m",
+        "variant": "geometry_gdn_ev2_nope",
+        "variant_label": "geometry-matched hybrid (GDN, expand_v=2, NoPE)",
+        "cx": 1,
+        "lr": 0.0006,
+        "lr_tag": "0.0006",
+        "loss": 2.3771070751753993,
+        "state": "finished",
+        "tokens_b": 15.109718016,
+        "run_id": "8z7txpf8",
+        "name": "pt-810m-geometry-gdn-ev2-nope-cx1-lr6e-4-r1",
+        "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/8z7txpf8",
+        "segment_run_ids": [
+          "8z7txpf8"
+        ],
+        "token_resets": 0,
+        "deduplicated_samples": 0
+      },
+      "delta_intervention_minus_wide": 0.003909934366773893,
       "delta_intervention_minus_reference": {
-        "wide_integration": null,
-        "hybrid_gdn_ev1": null,
+        "wide_integration": 0.003909934366773893,
+        "hybrid_gdn_ev1": 0.012761929250113546,
         "geometry_gdn_ev2": null
       }
     },
@@ -2523,9 +2635,9 @@
       "model": "810m",
       "cx": 2,
       "mode": "fixed_lr_transfer",
-      "complete": false,
+      "complete": true,
       "optimal_summary_eligible": false,
-      "completed_intervention_runs": 0,
+      "completed_intervention_runs": 1,
       "expected_intervention_runs": 1,
       "wide_reference": {
         "model": "810m",
@@ -2587,11 +2699,29 @@
         },
         "geometry_gdn_ev2": null
       },
-      "intervention_result": null,
-      "delta_intervention_minus_wide": null,
+      "intervention_result": {
+        "model": "810m",
+        "variant": "geometry_gdn_ev2_nope",
+        "variant_label": "geometry-matched hybrid (GDN, expand_v=2, NoPE)",
+        "cx": 2,
+        "lr": 0.00056,
+        "lr_tag": "0.00056",
+        "loss": 2.2787013739909767,
+        "state": "finished",
+        "tokens_b": 30.219436032,
+        "run_id": "upxsysuv",
+        "name": "pt-810m-geometry-gdn-ev2-nope-cx2-lr5p6e-4-r1",
+        "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/upxsysuv",
+        "segment_run_ids": [
+          "upxsysuv"
+        ],
+        "token_resets": 0,
+        "deduplicated_samples": 0
+      },
+      "delta_intervention_minus_wide": 0.00975385458214495,
       "delta_intervention_minus_reference": {
-        "wide_integration": null,
-        "hybrid_gdn_ev1": null,
+        "wide_integration": 0.00975385458214495,
+        "hybrid_gdn_ev1": 0.031516113746091534,
         "geometry_gdn_ev2": null
       }
     },
@@ -2718,7 +2848,25 @@
           "token_resets": 0,
           "deduplicated_samples": 0
         },
-        "hybrid_gdn_ev1": null,
+        "hybrid_gdn_ev1": {
+          "model": "810m",
+          "variant": "hybrid_gdn_ev1",
+          "variant_label": "hybrid (GDN, expand_v=1)",
+          "cx": 8,
+          "lr": 0.0004,
+          "lr_tag": "0.0004",
+          "loss": 2.0955850868105137,
+          "state": "finished",
+          "tokens_b": 116.952662016,
+          "run_id": "s5gvyjiz",
+          "name": "810m-intwide-hybrid-gdn-ev1-cx8-lr4e-4",
+          "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/s5gvyjiz",
+          "segment_run_ids": [
+            "s5gvyjiz"
+          ],
+          "token_resets": 0,
+          "deduplicated_samples": 0
+        },
         "geometry_gdn_ev2": null
       },
       "intervention_result": null,

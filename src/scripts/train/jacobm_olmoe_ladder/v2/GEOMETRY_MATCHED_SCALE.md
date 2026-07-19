@@ -245,18 +245,23 @@ record, including every task ID, is
 | 1.2B | 4 | `3e-4` | 32 | [01KXT0CKPC9NV36GKDXZH5SM17](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXT0CKPC9NV36GKDXZH5SM17) |
 | 1.2B | 8 | `4e-4` | 32 | [01KXT0CQBVT4T414SAZQYT1RAS](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXT0CQBVT4T414SAZQYT1RAS) |
 
-Status at 2026-07-18 14:21 UTC: 480M Cx1 and Cx2 finished successfully at
-strict final-250M CE `2.526546` and `2.419441`; the remaining ten jobs are
-running. Their W&B IDs are registered in
-[`plot_pretraining_wave.py`](plot_pretraining_wave.py), so later finished-only
-refreshes require no registry change.
+Status at 2026-07-19 02:40 UTC: 480M Cx1/Cx2/Cx4 and 810M Cx1/Cx2 are
+finished. The 480M Cx8, 810M Cx4/Cx8, and 1.2B Cx2/Cx4 cells are running.
+The 1.2B Cx1 and Cx8 workers stopped on `Non-finite total grad norm` after
+durable rolling checkpoints and are pending explicit checkpoint resumes.
+Their W&B IDs are registered in [`plot_pretraining_wave.py`](plot_pretraining_wave.py),
+so later finished-only refreshes require no registry change.
 
 The gated-attention wave uses the identical GPU, EP, microbatch,
 checkpointing, and evaluator-free layout, with the same transferred
 wide-integration LR in every cell. It is urgent unallocated work on Holmes,
-pinned to commit `1a85227bdb8baeab2ad05555935aae78938bb0cd`. At submission,
-the four 480M cells were scheduled and the remaining eight cells were pending
-capacity.
+pinned to commit `1a85227bdb8baeab2ad05555935aae78938bb0cd` for the initial
+submissions. At the 2026-07-19 02:40 UTC refresh, 480M Cx1/Cx2/Cx4 and 810M
+Cx1 are finished; 480M Cx8 and 810M Cx2/Cx8 are running. The 810M Cx4 worker
+hit a transient rank SIGSEGV. All four 1.2B cells failed before training
+because the common 6% active-parameter guard rejected their audited 6.1155%
+gated delta. The production entrypoint now uses a gated-only 6.2% cap while
+retaining 6% for ungated variants; the failed five cells are pending retry.
 
 | Size | Cx | LR | GPUs | Beaker work |
 |---|---:|---:|---:|---|

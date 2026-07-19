@@ -1,15 +1,21 @@
 {
-  "generated_at": "2026-07-18T14:20:56.720957+00:00",
+  "generated_at": "2026-07-19T02:39:15.221583+00:00",
   "project": "ai2-llm/jacobm-olmoe-ladder",
   "wave": "geometry_gdn_ev2_nope_gated",
   "models": [
-    "275m"
+    "275m",
+    "480m",
+    "810m",
+    "1p2b"
   ],
-  "architecture_note": "The 275M geometry-matched expand_v=2 NoPE hybrid with the dense ladder's elementwise full-precision attention gate added only to the two full-attention layers. Wide integration, first hybrid, RoPE geometry, and ungated NoPE are explicit references.",
+  "architecture_note": "The geometry-matched expand_v=2 NoPE hybrid at each size with the dense ladder's elementwise full-precision attention gate added only to full-attention layers. Wide integration, first hybrid, RoPE geometry, and ungated NoPE are explicit references.",
   "selection_metric": "mean train/CE loss over the final 250M observed tokens",
   "selection_rule": "275M optimal-summary cells require an interior observed best and a valid quadratic fit. Larger sizes are fixed-LR transfer comparisons at the wide-optimal LR and are never reported as hybrid-optimal without an LR sweep.",
   "baseline_active_parameters": {
-    "275m": 280207872
+    "275m": 280207872,
+    "480m": 486348800,
+    "810m": 823569920,
+    "1p2b": 1225011712
   },
   "reference_variants": [
     "wide_integration",
@@ -18,10 +24,16 @@
     "geometry_gdn_ev2_nope"
   ],
   "intervention_active_parameters": {
-    "275m": 292092800
+    "275m": 292092800,
+    "480m": 503497152,
+    "810m": 864528512,
+    "1p2b": 1299927040
   },
   "active_parameter_delta_fraction": {
-    "275m": 0.042414682768084466
+    "275m": 0.042414682768084466,
+    "480m": 0.03525936940730601,
+    "810m": 0.0497329868482812,
+    "1p2b": 0.06115478510625039
   },
   "runs": [
     {
@@ -1507,6 +1519,595 @@
       ],
       "token_resets": 0,
       "deduplicated_samples": 0
+    },
+    {
+      "model": "480m",
+      "variant": "geometry_gdn_ev2_nope",
+      "variant_label": "geometry-matched hybrid (GDN, expand_v=2, NoPE)",
+      "cx": 1,
+      "lr": 0.0012,
+      "lr_tag": "0.0012",
+      "loss": 2.5265463083295203,
+      "state": "finished",
+      "tokens_b": 8.481406976,
+      "run_id": "i2bij623",
+      "name": "pt-480m-geometry-gdn-ev2-nope-cx1-lr1p2e-3-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/i2bij623",
+      "segment_run_ids": [
+        "i2bij623"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0
+    },
+    {
+      "model": "480m",
+      "variant": "geometry_gdn_ev2_nope_gated",
+      "variant_label": "geometry-matched hybrid (GDN, expand_v=2, NoPE, gated attention)",
+      "cx": 1,
+      "lr": 0.0012,
+      "lr_tag": "0.0012",
+      "loss": 2.519642153625968,
+      "state": "finished",
+      "tokens_b": 8.528592896,
+      "run_id": "9rltp47w",
+      "name": "pt-480m-geometry-gdn-ev2-nope-gated-cx1-lr1p2e-3-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/9rltp47w",
+      "segment_run_ids": [
+        "9rltp47w"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0
+    },
+    {
+      "model": "480m",
+      "variant": "hybrid_gdn_ev1",
+      "variant_label": "hybrid (GDN, expand_v=1)",
+      "cx": 1,
+      "lr": 0.0012,
+      "lr_tag": "0.0012",
+      "loss": 2.5108739282600037,
+      "state": "finished",
+      "tokens_b": 7.969439744,
+      "run_id": "wl8ebsd8",
+      "name": "480m-intwide-hybrid-gdn-ev1-cx1-lr1p2e-3",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/wl8ebsd8",
+      "segment_run_ids": [
+        "wl8ebsd8"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0
+    },
+    {
+      "model": "480m",
+      "variant": "wide_integration",
+      "variant_label": "wide integration (SWA)",
+      "cx": 1,
+      "lr": 0.0012,
+      "lr_tag": "0.0012",
+      "loss": 2.5432814229709297,
+      "state": "finished",
+      "tokens_b": 7.671906304,
+      "run_id": "z4wxvc6h",
+      "name": "int-480m-cx1-intw256e8k-lr1.2e-3-r1_0.49@6.34B_480m_intw256e8k_16L8K256N1S_intw256e8k-480m-cx1-lr1.2e-3-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/z4wxvc6h",
+      "segment_run_ids": [
+        "z4wxvc6h"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0
+    },
+    {
+      "model": "480m",
+      "variant": "geometry_gdn_ev2_nope",
+      "variant_label": "geometry-matched hybrid (GDN, expand_v=2, NoPE)",
+      "cx": 2,
+      "lr": 0.0009,
+      "lr_tag": "0.0009",
+      "loss": 2.4194411845327175,
+      "state": "finished",
+      "tokens_b": 16.962945024,
+      "run_id": "2d1t07dn",
+      "name": "pt-480m-geometry-gdn-ev2-nope-cx2-lr9e-4-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/2d1t07dn",
+      "segment_run_ids": [
+        "2d1t07dn"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0
+    },
+    {
+      "model": "480m",
+      "variant": "geometry_gdn_ev2_nope_gated",
+      "variant_label": "geometry-matched hybrid (GDN, expand_v=2, NoPE, gated attention)",
+      "cx": 2,
+      "lr": 0.0009,
+      "lr_tag": "0.0009",
+      "loss": 2.4147182414366766,
+      "state": "finished",
+      "tokens_b": 17.057316864,
+      "run_id": "0crj05wz",
+      "name": "pt-480m-geometry-gdn-ev2-nope-gated-cx2-lr9e-4-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/0crj05wz",
+      "segment_run_ids": [
+        "0crj05wz"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0
+    },
+    {
+      "model": "480m",
+      "variant": "hybrid_gdn_ev1",
+      "variant_label": "hybrid (GDN, expand_v=1)",
+      "cx": 2,
+      "lr": 0.0009,
+      "lr_tag": "0.0009",
+      "loss": 2.4127904765261046,
+      "state": "finished",
+      "tokens_b": 15.93901056,
+      "run_id": "4vzmrld1",
+      "name": "480m-intwide-hybrid-gdn-ev1-cx2-lr9e-4",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/4vzmrld1",
+      "segment_run_ids": [
+        "4vzmrld1"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0
+    },
+    {
+      "model": "480m",
+      "variant": "wide_integration",
+      "variant_label": "wide integration (SWA)",
+      "cx": 2,
+      "lr": 0.0009,
+      "lr_tag": "0.0009",
+      "loss": 2.423887829735594,
+      "state": "finished",
+      "tokens_b": 15.343681536,
+      "run_id": "ywj13bkw",
+      "name": "int-480m-cx2-intw256e8k-lr9e-4-r1_0.49@6.34B_480m_intw256e8k_16L8K256N1S_intw256e8k-480m-cx2-lr9e-4-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/ywj13bkw",
+      "segment_run_ids": [
+        "ywj13bkw"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0
+    },
+    {
+      "model": "480m",
+      "variant": "geometry_gdn_ev2_nope",
+      "variant_label": "geometry-matched hybrid (GDN, expand_v=2, NoPE)",
+      "cx": 4,
+      "lr": 0.0008,
+      "lr_tag": "0.0008",
+      "loss": 2.32376770503366,
+      "state": "finished",
+      "tokens_b": 33.925627904,
+      "run_id": "ke2n42cm",
+      "name": "pt-480m-geometry-gdn-ev2-nope-cx4-lr8e-4-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/ke2n42cm",
+      "segment_run_ids": [
+        "ke2n42cm"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0
+    },
+    {
+      "model": "480m",
+      "variant": "geometry_gdn_ev2_nope_gated",
+      "variant_label": "geometry-matched hybrid (GDN, expand_v=2, NoPE, gated attention)",
+      "cx": 4,
+      "lr": 0.0008,
+      "lr_tag": "0.0008",
+      "loss": 2.3151238239536247,
+      "state": "finished",
+      "tokens_b": 34.114371584,
+      "run_id": "ur7yonej",
+      "name": "pt-480m-geometry-gdn-ev2-nope-gated-cx4-lr8e-4-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/ur7yonej",
+      "segment_run_ids": [
+        "ur7yonej"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0
+    },
+    {
+      "model": "480m",
+      "variant": "hybrid_gdn_ev1",
+      "variant_label": "hybrid (GDN, expand_v=1)",
+      "cx": 4,
+      "lr": 0.0008,
+      "lr_tag": "0.0008",
+      "loss": 2.305995657758893,
+      "state": "finished",
+      "tokens_b": 31.877758976,
+      "run_id": "h06m5ls2",
+      "name": "480m-intwide-hybrid-gdn-ev1-cx4-lr8e-4",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/h06m5ls2",
+      "segment_run_ids": [
+        "h06m5ls2"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0
+    },
+    {
+      "model": "480m",
+      "variant": "wide_integration",
+      "variant_label": "wide integration (SWA)",
+      "cx": 4,
+      "lr": 0.0008,
+      "lr_tag": "0.0008",
+      "loss": 2.3299758499273464,
+      "state": "finished",
+      "tokens_b": 30.687100928,
+      "run_id": "rblv9hpr",
+      "name": "int-480m-cx4-intw256e8k-lr8e-4-r1_0.49@6.34B_480m_intw256e8k_16L8K256N1S_intw256e8k-480m-cx4-lr8e-4-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/rblv9hpr",
+      "segment_run_ids": [
+        "rblv9hpr"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0
+    },
+    {
+      "model": "480m",
+      "variant": "hybrid_gdn_ev1",
+      "variant_label": "hybrid (GDN, expand_v=1)",
+      "cx": 8,
+      "lr": 0.0008,
+      "lr_tag": "0.0008",
+      "loss": 2.2362050320367395,
+      "state": "finished",
+      "tokens_b": 63.755255808,
+      "run_id": "d34a9o4t",
+      "name": "480m-intwide-hybrid-gdn-ev1-cx8-lr8e-4",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/d34a9o4t",
+      "segment_run_ids": [
+        "d34a9o4t"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0
+    },
+    {
+      "model": "480m",
+      "variant": "wide_integration",
+      "variant_label": "wide integration (SWA)",
+      "cx": 8,
+      "lr": 0.0008,
+      "lr_tag": "0.0008",
+      "loss": 2.25130458597867,
+      "state": "finished",
+      "tokens_b": 61.374726144,
+      "run_id": "vdcrgfy0",
+      "name": "int-480m-cx8-intw256e8k-lr8e-4-r1_0.49@6.34B_480m_intw256e8k_16L8K256N1S_intw256e8k-480m-cx8-lr8e-4-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/vdcrgfy0",
+      "segment_run_ids": [
+        "vdcrgfy0"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0
+    },
+    {
+      "model": "810m",
+      "variant": "geometry_gdn_ev2_nope",
+      "variant_label": "geometry-matched hybrid (GDN, expand_v=2, NoPE)",
+      "cx": 1,
+      "lr": 0.0006,
+      "lr_tag": "0.0006",
+      "loss": 2.3771070751753993,
+      "state": "finished",
+      "tokens_b": 15.109718016,
+      "run_id": "8z7txpf8",
+      "name": "pt-810m-geometry-gdn-ev2-nope-cx1-lr6e-4-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/8z7txpf8",
+      "segment_run_ids": [
+        "8z7txpf8"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0
+    },
+    {
+      "model": "810m",
+      "variant": "geometry_gdn_ev2_nope_gated",
+      "variant_label": "geometry-matched hybrid (GDN, expand_v=2, NoPE, gated attention)",
+      "cx": 1,
+      "lr": 0.0006,
+      "lr_tag": "0.0006",
+      "loss": 2.3735922857400507,
+      "state": "finished",
+      "tokens_b": 15.235547136,
+      "run_id": "027xoq0r",
+      "name": "pt-810m-geometry-gdn-ev2-nope-gated-cx1-lr6e-4-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/027xoq0r",
+      "segment_run_ids": [
+        "027xoq0r"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0
+    },
+    {
+      "model": "810m",
+      "variant": "hybrid_gdn_ev1",
+      "variant_label": "hybrid (GDN, expand_v=1)",
+      "cx": 1,
+      "lr": 0.0006,
+      "lr_tag": "0.0006",
+      "loss": 2.3643451459252858,
+      "state": "finished",
+      "tokens_b": 14.619246592,
+      "run_id": "h1rmcm2p",
+      "name": "810m-intwide-hybrid-gdn-ev1-cx1-lr6e-4",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/h1rmcm2p",
+      "segment_run_ids": [
+        "h1rmcm2p"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0
+    },
+    {
+      "model": "810m",
+      "variant": "wide_integration",
+      "variant_label": "wide integration (SWA)",
+      "cx": 1,
+      "lr": 0.0006,
+      "lr_tag": "0.0006",
+      "loss": 2.3731971408086254,
+      "state": "finished",
+      "tokens_b": 13.902544896,
+      "run_id": "w912irkq",
+      "name": "int-810m-cx1-intw256e8k-lr6e-4-r1_0.82@12.40B_810m_intw256e8k_20L8K256N1S_intw256e8k-810m-cx1-lr6e-4-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/w912irkq",
+      "segment_run_ids": [
+        "w912irkq"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0
+    },
+    {
+      "model": "810m",
+      "variant": "geometry_gdn_ev2_nope",
+      "variant_label": "geometry-matched hybrid (GDN, expand_v=2, NoPE)",
+      "cx": 2,
+      "lr": 0.00056,
+      "lr_tag": "0.00056",
+      "loss": 2.2787013739909767,
+      "state": "finished",
+      "tokens_b": 30.219436032,
+      "run_id": "upxsysuv",
+      "name": "pt-810m-geometry-gdn-ev2-nope-cx2-lr5p6e-4-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/upxsysuv",
+      "segment_run_ids": [
+        "upxsysuv"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0
+    },
+    {
+      "model": "810m",
+      "variant": "hybrid_gdn_ev1",
+      "variant_label": "hybrid (GDN, expand_v=1)",
+      "cx": 2,
+      "lr": 0.00056,
+      "lr_tag": "0.00056",
+      "loss": 2.247185260244885,
+      "state": "finished",
+      "tokens_b": 29.238362112,
+      "run_id": "1d5gxgjv",
+      "name": "810m-intwide-hybrid-gdn-ev1-cx2-lr5p6e-4",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/1d5gxgjv",
+      "segment_run_ids": [
+        "1d5gxgjv"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0
+    },
+    {
+      "model": "810m",
+      "variant": "wide_integration",
+      "variant_label": "wide integration (SWA)",
+      "cx": 2,
+      "lr": 0.00056,
+      "lr_tag": "0.00056",
+      "loss": 2.2689475194088318,
+      "state": "finished",
+      "tokens_b": 27.805089792,
+      "run_id": "jpbqhfvc",
+      "name": "int-810m-cx2-intw256e8k-lr5.6e-4-r1_0.82@12.40B_810m_intw256e8k_20L8K256N1S_intw256e8k-810m-cx2-lr5.6e-4-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/jpbqhfvc",
+      "segment_run_ids": [
+        "jpbqhfvc"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0
+    },
+    {
+      "model": "810m",
+      "variant": "hybrid_gdn_ev1",
+      "variant_label": "hybrid (GDN, expand_v=1)",
+      "cx": 4,
+      "lr": 0.0004,
+      "lr_tag": "0.0004",
+      "loss": 2.1604400080954753,
+      "state": "finished",
+      "tokens_b": 58.47646208,
+      "run_id": "kye1c19u",
+      "name": "810m-intwide-hybrid-gdn-ev1-cx4-lr4e-4",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/kye1c19u",
+      "segment_run_ids": [
+        "kye1c19u"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0
+    },
+    {
+      "model": "810m",
+      "variant": "wide_integration",
+      "variant_label": "wide integration (SWA)",
+      "cx": 4,
+      "lr": 0.0004,
+      "lr_tag": "0.0004",
+      "loss": 2.1928017916669384,
+      "state": "finished",
+      "tokens_b": 55.609655296,
+      "run_id": "58ftjxmw",
+      "name": "int-810m-cx4-intw256e8k-lr4e-4-r1_0.82@12.40B_810m_intw256e8k_20L8K256N1S_intw256e8k-810m-cx4-lr4e-4-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/58ftjxmw",
+      "segment_run_ids": [
+        "58ftjxmw"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0
+    },
+    {
+      "model": "810m",
+      "variant": "hybrid_gdn_ev1",
+      "variant_label": "hybrid (GDN, expand_v=1)",
+      "cx": 8,
+      "lr": 0.0004,
+      "lr_tag": "0.0004",
+      "loss": 2.0955850868105137,
+      "state": "finished",
+      "tokens_b": 116.952662016,
+      "run_id": "s5gvyjiz",
+      "name": "810m-intwide-hybrid-gdn-ev1-cx8-lr4e-4",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/s5gvyjiz",
+      "segment_run_ids": [
+        "s5gvyjiz"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0
+    },
+    {
+      "model": "810m",
+      "variant": "wide_integration",
+      "variant_label": "wide integration (SWA)",
+      "cx": 8,
+      "lr": 0.0004,
+      "lr_tag": "0.0004",
+      "loss": 2.1049388185986935,
+      "state": "finished",
+      "tokens_b": 111.219572736,
+      "run_id": "kyti8h1y",
+      "name": "int-810m-cx8-intw256e8k-lr4e-4-r1_0.82@12.40B_810m_intw256e8k_20L8K256N1S_intw256e8k-810m-cx8-lr4e-4-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/kyti8h1y",
+      "segment_run_ids": [
+        "kyti8h1y"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0
+    },
+    {
+      "model": "1p2b",
+      "variant": "hybrid_gdn_ev1",
+      "variant_label": "hybrid (GDN, expand_v=1)",
+      "cx": 1,
+      "lr": 0.0004,
+      "lr_tag": "0.0004",
+      "loss": 2.2539527250036,
+      "state": "finished",
+      "tokens_b": 22.690660352,
+      "run_id": "1d24xfx5",
+      "name": "1p2b-intwide-hybrid-gdn-ev1-cx1-lr4e-4-ep8-sync",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/1d24xfx5",
+      "segment_run_ids": [
+        "1d24xfx5"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0
+    },
+    {
+      "model": "1p2b",
+      "variant": "wide_integration",
+      "variant_label": "wide integration (SWA)",
+      "cx": 1,
+      "lr": 0.0004,
+      "lr_tag": "0.0004",
+      "loss": 2.273061833166726,
+      "state": "finished",
+      "tokens_b": 21.417426944,
+      "run_id": "hww8eksq",
+      "name": "int-1p2b-cx1-intw256e8k-lr4e-4-r2_1.23@19.66B_1p2b_intw256e8k_22L8K256N1S_intw256e8k-1p2b-cx1-lr4e-4-r2",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/hww8eksq",
+      "segment_run_ids": [
+        "hww8eksq"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0
+    },
+    {
+      "model": "1p2b",
+      "variant": "hybrid_gdn_ev1",
+      "variant_label": "hybrid (GDN, expand_v=1)",
+      "cx": 2,
+      "lr": 0.0006,
+      "lr_tag": "0.0006",
+      "loss": 2.1637875953185484,
+      "state": "finished",
+      "tokens_b": 45.38105856,
+      "run_id": "4k1bh4k2",
+      "name": "1p2b-intwide-hybrid-gdn-ev1-cx2-lr6e-4-ep8-sync",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/4k1bh4k2",
+      "segment_run_ids": [
+        "4k1bh4k2"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0
+    },
+    {
+      "model": "1p2b",
+      "variant": "wide_integration",
+      "variant_label": "wide integration (SWA)",
+      "cx": 2,
+      "lr": 0.0006,
+      "lr_tag": "0.0006",
+      "loss": 2.178332213335817,
+      "state": "finished",
+      "tokens_b": 42.83498496,
+      "run_id": "jfwntmwm",
+      "name": "int-1p2b-cx2-intw256e8k-lr6e-4-r2_1.23@19.66B_1p2b_intw256e8k_22L8K256N1S_intw256e8k-1p2b-cx2-lr6e-4-r2",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/jfwntmwm",
+      "segment_run_ids": [
+        "jfwntmwm"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0
+    },
+    {
+      "model": "1p2b",
+      "variant": "wide_integration",
+      "variant_label": "wide integration (SWA)",
+      "cx": 4,
+      "lr": 0.0003,
+      "lr_tag": "0.0003",
+      "loss": 2.094219446931995,
+      "state": "finished",
+      "tokens_b": 85.669707776,
+      "run_id": "u7ab1tpb",
+      "name": "int-1p2b-cx4-intw256e8k-lr3e-4-r2_1.23@19.66B_1p2b_intw256e8k_22L8K256N1S_intw256e8k-1p2b-cx4-lr3e-4-r2",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/u7ab1tpb",
+      "segment_run_ids": [
+        "u7ab1tpb"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0
+    },
+    {
+      "model": "1p2b",
+      "variant": "wide_integration",
+      "variant_label": "wide integration (SWA)",
+      "cx": 8,
+      "lr": 0.0004,
+      "lr_tag": "0.0004",
+      "loss": 2.0226406901137635,
+      "state": "finished",
+      "tokens_b": 171.33993984,
+      "run_id": "bqjzmiqi",
+      "name": "int-1p2b-cx8-intw256e8k-lr4e-4-r2_1.23@19.66B_1p2b_intw256e8k_22L8K256N1S_intw256e8k-1p2b-cx8-lr4e-4-r2",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/bqjzmiqi",
+      "segment_run_ids": [
+        "bqjzmiqi"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0
     }
   ],
   "results": [
@@ -2037,6 +2638,1068 @@
         "hybrid_gdn_ev1": -0.0059831284876890045,
         "geometry_gdn_ev2": 0.0005402475033164933,
         "geometry_gdn_ev2_nope": -0.0015559803764775282
+      }
+    },
+    {
+      "model": "480m",
+      "cx": 1,
+      "mode": "fixed_lr_transfer",
+      "complete": true,
+      "optimal_summary_eligible": false,
+      "completed_intervention_runs": 1,
+      "expected_intervention_runs": 1,
+      "wide_reference": {
+        "model": "480m",
+        "variant": "wide_integration",
+        "variant_label": "wide integration (SWA)",
+        "cx": 1,
+        "lr": 0.0012,
+        "lr_tag": "0.0012",
+        "loss": 2.5432814229709297,
+        "state": "finished",
+        "tokens_b": 7.671906304,
+        "run_id": "z4wxvc6h",
+        "name": "int-480m-cx1-intw256e8k-lr1.2e-3-r1_0.49@6.34B_480m_intw256e8k_16L8K256N1S_intw256e8k-480m-cx1-lr1.2e-3-r1",
+        "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/z4wxvc6h",
+        "segment_run_ids": [
+          "z4wxvc6h"
+        ],
+        "token_resets": 0,
+        "deduplicated_samples": 0
+      },
+      "references": {
+        "wide_integration": {
+          "model": "480m",
+          "variant": "wide_integration",
+          "variant_label": "wide integration (SWA)",
+          "cx": 1,
+          "lr": 0.0012,
+          "lr_tag": "0.0012",
+          "loss": 2.5432814229709297,
+          "state": "finished",
+          "tokens_b": 7.671906304,
+          "run_id": "z4wxvc6h",
+          "name": "int-480m-cx1-intw256e8k-lr1.2e-3-r1_0.49@6.34B_480m_intw256e8k_16L8K256N1S_intw256e8k-480m-cx1-lr1.2e-3-r1",
+          "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/z4wxvc6h",
+          "segment_run_ids": [
+            "z4wxvc6h"
+          ],
+          "token_resets": 0,
+          "deduplicated_samples": 0
+        },
+        "hybrid_gdn_ev1": {
+          "model": "480m",
+          "variant": "hybrid_gdn_ev1",
+          "variant_label": "hybrid (GDN, expand_v=1)",
+          "cx": 1,
+          "lr": 0.0012,
+          "lr_tag": "0.0012",
+          "loss": 2.5108739282600037,
+          "state": "finished",
+          "tokens_b": 7.969439744,
+          "run_id": "wl8ebsd8",
+          "name": "480m-intwide-hybrid-gdn-ev1-cx1-lr1p2e-3",
+          "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/wl8ebsd8",
+          "segment_run_ids": [
+            "wl8ebsd8"
+          ],
+          "token_resets": 0,
+          "deduplicated_samples": 0
+        },
+        "geometry_gdn_ev2": null,
+        "geometry_gdn_ev2_nope": {
+          "model": "480m",
+          "variant": "geometry_gdn_ev2_nope",
+          "variant_label": "geometry-matched hybrid (GDN, expand_v=2, NoPE)",
+          "cx": 1,
+          "lr": 0.0012,
+          "lr_tag": "0.0012",
+          "loss": 2.5265463083295203,
+          "state": "finished",
+          "tokens_b": 8.481406976,
+          "run_id": "i2bij623",
+          "name": "pt-480m-geometry-gdn-ev2-nope-cx1-lr1p2e-3-r1",
+          "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/i2bij623",
+          "segment_run_ids": [
+            "i2bij623"
+          ],
+          "token_resets": 0,
+          "deduplicated_samples": 0
+        }
+      },
+      "intervention_result": {
+        "model": "480m",
+        "variant": "geometry_gdn_ev2_nope_gated",
+        "variant_label": "geometry-matched hybrid (GDN, expand_v=2, NoPE, gated attention)",
+        "cx": 1,
+        "lr": 0.0012,
+        "lr_tag": "0.0012",
+        "loss": 2.519642153625968,
+        "state": "finished",
+        "tokens_b": 8.528592896,
+        "run_id": "9rltp47w",
+        "name": "pt-480m-geometry-gdn-ev2-nope-gated-cx1-lr1p2e-3-r1",
+        "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/9rltp47w",
+        "segment_run_ids": [
+          "9rltp47w"
+        ],
+        "token_resets": 0,
+        "deduplicated_samples": 0
+      },
+      "delta_intervention_minus_wide": -0.023639269344961633,
+      "delta_intervention_minus_reference": {
+        "wide_integration": -0.023639269344961633,
+        "hybrid_gdn_ev1": 0.008768225365964444,
+        "geometry_gdn_ev2": null,
+        "geometry_gdn_ev2_nope": -0.006904154703552212
+      }
+    },
+    {
+      "model": "480m",
+      "cx": 2,
+      "mode": "fixed_lr_transfer",
+      "complete": true,
+      "optimal_summary_eligible": false,
+      "completed_intervention_runs": 1,
+      "expected_intervention_runs": 1,
+      "wide_reference": {
+        "model": "480m",
+        "variant": "wide_integration",
+        "variant_label": "wide integration (SWA)",
+        "cx": 2,
+        "lr": 0.0009,
+        "lr_tag": "0.0009",
+        "loss": 2.423887829735594,
+        "state": "finished",
+        "tokens_b": 15.343681536,
+        "run_id": "ywj13bkw",
+        "name": "int-480m-cx2-intw256e8k-lr9e-4-r1_0.49@6.34B_480m_intw256e8k_16L8K256N1S_intw256e8k-480m-cx2-lr9e-4-r1",
+        "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/ywj13bkw",
+        "segment_run_ids": [
+          "ywj13bkw"
+        ],
+        "token_resets": 0,
+        "deduplicated_samples": 0
+      },
+      "references": {
+        "wide_integration": {
+          "model": "480m",
+          "variant": "wide_integration",
+          "variant_label": "wide integration (SWA)",
+          "cx": 2,
+          "lr": 0.0009,
+          "lr_tag": "0.0009",
+          "loss": 2.423887829735594,
+          "state": "finished",
+          "tokens_b": 15.343681536,
+          "run_id": "ywj13bkw",
+          "name": "int-480m-cx2-intw256e8k-lr9e-4-r1_0.49@6.34B_480m_intw256e8k_16L8K256N1S_intw256e8k-480m-cx2-lr9e-4-r1",
+          "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/ywj13bkw",
+          "segment_run_ids": [
+            "ywj13bkw"
+          ],
+          "token_resets": 0,
+          "deduplicated_samples": 0
+        },
+        "hybrid_gdn_ev1": {
+          "model": "480m",
+          "variant": "hybrid_gdn_ev1",
+          "variant_label": "hybrid (GDN, expand_v=1)",
+          "cx": 2,
+          "lr": 0.0009,
+          "lr_tag": "0.0009",
+          "loss": 2.4127904765261046,
+          "state": "finished",
+          "tokens_b": 15.93901056,
+          "run_id": "4vzmrld1",
+          "name": "480m-intwide-hybrid-gdn-ev1-cx2-lr9e-4",
+          "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/4vzmrld1",
+          "segment_run_ids": [
+            "4vzmrld1"
+          ],
+          "token_resets": 0,
+          "deduplicated_samples": 0
+        },
+        "geometry_gdn_ev2": null,
+        "geometry_gdn_ev2_nope": {
+          "model": "480m",
+          "variant": "geometry_gdn_ev2_nope",
+          "variant_label": "geometry-matched hybrid (GDN, expand_v=2, NoPE)",
+          "cx": 2,
+          "lr": 0.0009,
+          "lr_tag": "0.0009",
+          "loss": 2.4194411845327175,
+          "state": "finished",
+          "tokens_b": 16.962945024,
+          "run_id": "2d1t07dn",
+          "name": "pt-480m-geometry-gdn-ev2-nope-cx2-lr9e-4-r1",
+          "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/2d1t07dn",
+          "segment_run_ids": [
+            "2d1t07dn"
+          ],
+          "token_resets": 0,
+          "deduplicated_samples": 0
+        }
+      },
+      "intervention_result": {
+        "model": "480m",
+        "variant": "geometry_gdn_ev2_nope_gated",
+        "variant_label": "geometry-matched hybrid (GDN, expand_v=2, NoPE, gated attention)",
+        "cx": 2,
+        "lr": 0.0009,
+        "lr_tag": "0.0009",
+        "loss": 2.4147182414366766,
+        "state": "finished",
+        "tokens_b": 17.057316864,
+        "run_id": "0crj05wz",
+        "name": "pt-480m-geometry-gdn-ev2-nope-gated-cx2-lr9e-4-r1",
+        "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/0crj05wz",
+        "segment_run_ids": [
+          "0crj05wz"
+        ],
+        "token_resets": 0,
+        "deduplicated_samples": 0
+      },
+      "delta_intervention_minus_wide": -0.009169588298917564,
+      "delta_intervention_minus_reference": {
+        "wide_integration": -0.009169588298917564,
+        "hybrid_gdn_ev1": 0.0019277649105720052,
+        "geometry_gdn_ev2": null,
+        "geometry_gdn_ev2_nope": -0.004722943096040932
+      }
+    },
+    {
+      "model": "480m",
+      "cx": 4,
+      "mode": "fixed_lr_transfer",
+      "complete": true,
+      "optimal_summary_eligible": false,
+      "completed_intervention_runs": 1,
+      "expected_intervention_runs": 1,
+      "wide_reference": {
+        "model": "480m",
+        "variant": "wide_integration",
+        "variant_label": "wide integration (SWA)",
+        "cx": 4,
+        "lr": 0.0008,
+        "lr_tag": "0.0008",
+        "loss": 2.3299758499273464,
+        "state": "finished",
+        "tokens_b": 30.687100928,
+        "run_id": "rblv9hpr",
+        "name": "int-480m-cx4-intw256e8k-lr8e-4-r1_0.49@6.34B_480m_intw256e8k_16L8K256N1S_intw256e8k-480m-cx4-lr8e-4-r1",
+        "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/rblv9hpr",
+        "segment_run_ids": [
+          "rblv9hpr"
+        ],
+        "token_resets": 0,
+        "deduplicated_samples": 0
+      },
+      "references": {
+        "wide_integration": {
+          "model": "480m",
+          "variant": "wide_integration",
+          "variant_label": "wide integration (SWA)",
+          "cx": 4,
+          "lr": 0.0008,
+          "lr_tag": "0.0008",
+          "loss": 2.3299758499273464,
+          "state": "finished",
+          "tokens_b": 30.687100928,
+          "run_id": "rblv9hpr",
+          "name": "int-480m-cx4-intw256e8k-lr8e-4-r1_0.49@6.34B_480m_intw256e8k_16L8K256N1S_intw256e8k-480m-cx4-lr8e-4-r1",
+          "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/rblv9hpr",
+          "segment_run_ids": [
+            "rblv9hpr"
+          ],
+          "token_resets": 0,
+          "deduplicated_samples": 0
+        },
+        "hybrid_gdn_ev1": {
+          "model": "480m",
+          "variant": "hybrid_gdn_ev1",
+          "variant_label": "hybrid (GDN, expand_v=1)",
+          "cx": 4,
+          "lr": 0.0008,
+          "lr_tag": "0.0008",
+          "loss": 2.305995657758893,
+          "state": "finished",
+          "tokens_b": 31.877758976,
+          "run_id": "h06m5ls2",
+          "name": "480m-intwide-hybrid-gdn-ev1-cx4-lr8e-4",
+          "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/h06m5ls2",
+          "segment_run_ids": [
+            "h06m5ls2"
+          ],
+          "token_resets": 0,
+          "deduplicated_samples": 0
+        },
+        "geometry_gdn_ev2": null,
+        "geometry_gdn_ev2_nope": {
+          "model": "480m",
+          "variant": "geometry_gdn_ev2_nope",
+          "variant_label": "geometry-matched hybrid (GDN, expand_v=2, NoPE)",
+          "cx": 4,
+          "lr": 0.0008,
+          "lr_tag": "0.0008",
+          "loss": 2.32376770503366,
+          "state": "finished",
+          "tokens_b": 33.925627904,
+          "run_id": "ke2n42cm",
+          "name": "pt-480m-geometry-gdn-ev2-nope-cx4-lr8e-4-r1",
+          "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/ke2n42cm",
+          "segment_run_ids": [
+            "ke2n42cm"
+          ],
+          "token_resets": 0,
+          "deduplicated_samples": 0
+        }
+      },
+      "intervention_result": {
+        "model": "480m",
+        "variant": "geometry_gdn_ev2_nope_gated",
+        "variant_label": "geometry-matched hybrid (GDN, expand_v=2, NoPE, gated attention)",
+        "cx": 4,
+        "lr": 0.0008,
+        "lr_tag": "0.0008",
+        "loss": 2.3151238239536247,
+        "state": "finished",
+        "tokens_b": 34.114371584,
+        "run_id": "ur7yonej",
+        "name": "pt-480m-geometry-gdn-ev2-nope-gated-cx4-lr8e-4-r1",
+        "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/ur7yonej",
+        "segment_run_ids": [
+          "ur7yonej"
+        ],
+        "token_resets": 0,
+        "deduplicated_samples": 0
+      },
+      "delta_intervention_minus_wide": -0.014852025973721705,
+      "delta_intervention_minus_reference": {
+        "wide_integration": -0.014852025973721705,
+        "hybrid_gdn_ev1": 0.00912816619473178,
+        "geometry_gdn_ev2": null,
+        "geometry_gdn_ev2_nope": -0.008643881080035332
+      }
+    },
+    {
+      "model": "480m",
+      "cx": 8,
+      "mode": "fixed_lr_transfer",
+      "complete": false,
+      "optimal_summary_eligible": false,
+      "completed_intervention_runs": 0,
+      "expected_intervention_runs": 1,
+      "wide_reference": {
+        "model": "480m",
+        "variant": "wide_integration",
+        "variant_label": "wide integration (SWA)",
+        "cx": 8,
+        "lr": 0.0008,
+        "lr_tag": "0.0008",
+        "loss": 2.25130458597867,
+        "state": "finished",
+        "tokens_b": 61.374726144,
+        "run_id": "vdcrgfy0",
+        "name": "int-480m-cx8-intw256e8k-lr8e-4-r1_0.49@6.34B_480m_intw256e8k_16L8K256N1S_intw256e8k-480m-cx8-lr8e-4-r1",
+        "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/vdcrgfy0",
+        "segment_run_ids": [
+          "vdcrgfy0"
+        ],
+        "token_resets": 0,
+        "deduplicated_samples": 0
+      },
+      "references": {
+        "wide_integration": {
+          "model": "480m",
+          "variant": "wide_integration",
+          "variant_label": "wide integration (SWA)",
+          "cx": 8,
+          "lr": 0.0008,
+          "lr_tag": "0.0008",
+          "loss": 2.25130458597867,
+          "state": "finished",
+          "tokens_b": 61.374726144,
+          "run_id": "vdcrgfy0",
+          "name": "int-480m-cx8-intw256e8k-lr8e-4-r1_0.49@6.34B_480m_intw256e8k_16L8K256N1S_intw256e8k-480m-cx8-lr8e-4-r1",
+          "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/vdcrgfy0",
+          "segment_run_ids": [
+            "vdcrgfy0"
+          ],
+          "token_resets": 0,
+          "deduplicated_samples": 0
+        },
+        "hybrid_gdn_ev1": {
+          "model": "480m",
+          "variant": "hybrid_gdn_ev1",
+          "variant_label": "hybrid (GDN, expand_v=1)",
+          "cx": 8,
+          "lr": 0.0008,
+          "lr_tag": "0.0008",
+          "loss": 2.2362050320367395,
+          "state": "finished",
+          "tokens_b": 63.755255808,
+          "run_id": "d34a9o4t",
+          "name": "480m-intwide-hybrid-gdn-ev1-cx8-lr8e-4",
+          "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/d34a9o4t",
+          "segment_run_ids": [
+            "d34a9o4t"
+          ],
+          "token_resets": 0,
+          "deduplicated_samples": 0
+        },
+        "geometry_gdn_ev2": null,
+        "geometry_gdn_ev2_nope": null
+      },
+      "intervention_result": null,
+      "delta_intervention_minus_wide": null,
+      "delta_intervention_minus_reference": {
+        "wide_integration": null,
+        "hybrid_gdn_ev1": null,
+        "geometry_gdn_ev2": null,
+        "geometry_gdn_ev2_nope": null
+      }
+    },
+    {
+      "model": "810m",
+      "cx": 1,
+      "mode": "fixed_lr_transfer",
+      "complete": true,
+      "optimal_summary_eligible": false,
+      "completed_intervention_runs": 1,
+      "expected_intervention_runs": 1,
+      "wide_reference": {
+        "model": "810m",
+        "variant": "wide_integration",
+        "variant_label": "wide integration (SWA)",
+        "cx": 1,
+        "lr": 0.0006,
+        "lr_tag": "0.0006",
+        "loss": 2.3731971408086254,
+        "state": "finished",
+        "tokens_b": 13.902544896,
+        "run_id": "w912irkq",
+        "name": "int-810m-cx1-intw256e8k-lr6e-4-r1_0.82@12.40B_810m_intw256e8k_20L8K256N1S_intw256e8k-810m-cx1-lr6e-4-r1",
+        "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/w912irkq",
+        "segment_run_ids": [
+          "w912irkq"
+        ],
+        "token_resets": 0,
+        "deduplicated_samples": 0
+      },
+      "references": {
+        "wide_integration": {
+          "model": "810m",
+          "variant": "wide_integration",
+          "variant_label": "wide integration (SWA)",
+          "cx": 1,
+          "lr": 0.0006,
+          "lr_tag": "0.0006",
+          "loss": 2.3731971408086254,
+          "state": "finished",
+          "tokens_b": 13.902544896,
+          "run_id": "w912irkq",
+          "name": "int-810m-cx1-intw256e8k-lr6e-4-r1_0.82@12.40B_810m_intw256e8k_20L8K256N1S_intw256e8k-810m-cx1-lr6e-4-r1",
+          "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/w912irkq",
+          "segment_run_ids": [
+            "w912irkq"
+          ],
+          "token_resets": 0,
+          "deduplicated_samples": 0
+        },
+        "hybrid_gdn_ev1": {
+          "model": "810m",
+          "variant": "hybrid_gdn_ev1",
+          "variant_label": "hybrid (GDN, expand_v=1)",
+          "cx": 1,
+          "lr": 0.0006,
+          "lr_tag": "0.0006",
+          "loss": 2.3643451459252858,
+          "state": "finished",
+          "tokens_b": 14.619246592,
+          "run_id": "h1rmcm2p",
+          "name": "810m-intwide-hybrid-gdn-ev1-cx1-lr6e-4",
+          "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/h1rmcm2p",
+          "segment_run_ids": [
+            "h1rmcm2p"
+          ],
+          "token_resets": 0,
+          "deduplicated_samples": 0
+        },
+        "geometry_gdn_ev2": null,
+        "geometry_gdn_ev2_nope": {
+          "model": "810m",
+          "variant": "geometry_gdn_ev2_nope",
+          "variant_label": "geometry-matched hybrid (GDN, expand_v=2, NoPE)",
+          "cx": 1,
+          "lr": 0.0006,
+          "lr_tag": "0.0006",
+          "loss": 2.3771070751753993,
+          "state": "finished",
+          "tokens_b": 15.109718016,
+          "run_id": "8z7txpf8",
+          "name": "pt-810m-geometry-gdn-ev2-nope-cx1-lr6e-4-r1",
+          "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/8z7txpf8",
+          "segment_run_ids": [
+            "8z7txpf8"
+          ],
+          "token_resets": 0,
+          "deduplicated_samples": 0
+        }
+      },
+      "intervention_result": {
+        "model": "810m",
+        "variant": "geometry_gdn_ev2_nope_gated",
+        "variant_label": "geometry-matched hybrid (GDN, expand_v=2, NoPE, gated attention)",
+        "cx": 1,
+        "lr": 0.0006,
+        "lr_tag": "0.0006",
+        "loss": 2.3735922857400507,
+        "state": "finished",
+        "tokens_b": 15.235547136,
+        "run_id": "027xoq0r",
+        "name": "pt-810m-geometry-gdn-ev2-nope-gated-cx1-lr6e-4-r1",
+        "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/027xoq0r",
+        "segment_run_ids": [
+          "027xoq0r"
+        ],
+        "token_resets": 0,
+        "deduplicated_samples": 0
+      },
+      "delta_intervention_minus_wide": 0.00039514493142522866,
+      "delta_intervention_minus_reference": {
+        "wide_integration": 0.00039514493142522866,
+        "hybrid_gdn_ev1": 0.009247139814764882,
+        "geometry_gdn_ev2": null,
+        "geometry_gdn_ev2_nope": -0.003514789435348664
+      }
+    },
+    {
+      "model": "810m",
+      "cx": 2,
+      "mode": "fixed_lr_transfer",
+      "complete": false,
+      "optimal_summary_eligible": false,
+      "completed_intervention_runs": 0,
+      "expected_intervention_runs": 1,
+      "wide_reference": {
+        "model": "810m",
+        "variant": "wide_integration",
+        "variant_label": "wide integration (SWA)",
+        "cx": 2,
+        "lr": 0.00056,
+        "lr_tag": "0.00056",
+        "loss": 2.2689475194088318,
+        "state": "finished",
+        "tokens_b": 27.805089792,
+        "run_id": "jpbqhfvc",
+        "name": "int-810m-cx2-intw256e8k-lr5.6e-4-r1_0.82@12.40B_810m_intw256e8k_20L8K256N1S_intw256e8k-810m-cx2-lr5.6e-4-r1",
+        "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/jpbqhfvc",
+        "segment_run_ids": [
+          "jpbqhfvc"
+        ],
+        "token_resets": 0,
+        "deduplicated_samples": 0
+      },
+      "references": {
+        "wide_integration": {
+          "model": "810m",
+          "variant": "wide_integration",
+          "variant_label": "wide integration (SWA)",
+          "cx": 2,
+          "lr": 0.00056,
+          "lr_tag": "0.00056",
+          "loss": 2.2689475194088318,
+          "state": "finished",
+          "tokens_b": 27.805089792,
+          "run_id": "jpbqhfvc",
+          "name": "int-810m-cx2-intw256e8k-lr5.6e-4-r1_0.82@12.40B_810m_intw256e8k_20L8K256N1S_intw256e8k-810m-cx2-lr5.6e-4-r1",
+          "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/jpbqhfvc",
+          "segment_run_ids": [
+            "jpbqhfvc"
+          ],
+          "token_resets": 0,
+          "deduplicated_samples": 0
+        },
+        "hybrid_gdn_ev1": {
+          "model": "810m",
+          "variant": "hybrid_gdn_ev1",
+          "variant_label": "hybrid (GDN, expand_v=1)",
+          "cx": 2,
+          "lr": 0.00056,
+          "lr_tag": "0.00056",
+          "loss": 2.247185260244885,
+          "state": "finished",
+          "tokens_b": 29.238362112,
+          "run_id": "1d5gxgjv",
+          "name": "810m-intwide-hybrid-gdn-ev1-cx2-lr5p6e-4",
+          "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/1d5gxgjv",
+          "segment_run_ids": [
+            "1d5gxgjv"
+          ],
+          "token_resets": 0,
+          "deduplicated_samples": 0
+        },
+        "geometry_gdn_ev2": null,
+        "geometry_gdn_ev2_nope": {
+          "model": "810m",
+          "variant": "geometry_gdn_ev2_nope",
+          "variant_label": "geometry-matched hybrid (GDN, expand_v=2, NoPE)",
+          "cx": 2,
+          "lr": 0.00056,
+          "lr_tag": "0.00056",
+          "loss": 2.2787013739909767,
+          "state": "finished",
+          "tokens_b": 30.219436032,
+          "run_id": "upxsysuv",
+          "name": "pt-810m-geometry-gdn-ev2-nope-cx2-lr5p6e-4-r1",
+          "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/upxsysuv",
+          "segment_run_ids": [
+            "upxsysuv"
+          ],
+          "token_resets": 0,
+          "deduplicated_samples": 0
+        }
+      },
+      "intervention_result": null,
+      "delta_intervention_minus_wide": null,
+      "delta_intervention_minus_reference": {
+        "wide_integration": null,
+        "hybrid_gdn_ev1": null,
+        "geometry_gdn_ev2": null,
+        "geometry_gdn_ev2_nope": null
+      }
+    },
+    {
+      "model": "810m",
+      "cx": 4,
+      "mode": "fixed_lr_transfer",
+      "complete": false,
+      "optimal_summary_eligible": false,
+      "completed_intervention_runs": 0,
+      "expected_intervention_runs": 1,
+      "wide_reference": {
+        "model": "810m",
+        "variant": "wide_integration",
+        "variant_label": "wide integration (SWA)",
+        "cx": 4,
+        "lr": 0.0004,
+        "lr_tag": "0.0004",
+        "loss": 2.1928017916669384,
+        "state": "finished",
+        "tokens_b": 55.609655296,
+        "run_id": "58ftjxmw",
+        "name": "int-810m-cx4-intw256e8k-lr4e-4-r1_0.82@12.40B_810m_intw256e8k_20L8K256N1S_intw256e8k-810m-cx4-lr4e-4-r1",
+        "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/58ftjxmw",
+        "segment_run_ids": [
+          "58ftjxmw"
+        ],
+        "token_resets": 0,
+        "deduplicated_samples": 0
+      },
+      "references": {
+        "wide_integration": {
+          "model": "810m",
+          "variant": "wide_integration",
+          "variant_label": "wide integration (SWA)",
+          "cx": 4,
+          "lr": 0.0004,
+          "lr_tag": "0.0004",
+          "loss": 2.1928017916669384,
+          "state": "finished",
+          "tokens_b": 55.609655296,
+          "run_id": "58ftjxmw",
+          "name": "int-810m-cx4-intw256e8k-lr4e-4-r1_0.82@12.40B_810m_intw256e8k_20L8K256N1S_intw256e8k-810m-cx4-lr4e-4-r1",
+          "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/58ftjxmw",
+          "segment_run_ids": [
+            "58ftjxmw"
+          ],
+          "token_resets": 0,
+          "deduplicated_samples": 0
+        },
+        "hybrid_gdn_ev1": {
+          "model": "810m",
+          "variant": "hybrid_gdn_ev1",
+          "variant_label": "hybrid (GDN, expand_v=1)",
+          "cx": 4,
+          "lr": 0.0004,
+          "lr_tag": "0.0004",
+          "loss": 2.1604400080954753,
+          "state": "finished",
+          "tokens_b": 58.47646208,
+          "run_id": "kye1c19u",
+          "name": "810m-intwide-hybrid-gdn-ev1-cx4-lr4e-4",
+          "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/kye1c19u",
+          "segment_run_ids": [
+            "kye1c19u"
+          ],
+          "token_resets": 0,
+          "deduplicated_samples": 0
+        },
+        "geometry_gdn_ev2": null,
+        "geometry_gdn_ev2_nope": null
+      },
+      "intervention_result": null,
+      "delta_intervention_minus_wide": null,
+      "delta_intervention_minus_reference": {
+        "wide_integration": null,
+        "hybrid_gdn_ev1": null,
+        "geometry_gdn_ev2": null,
+        "geometry_gdn_ev2_nope": null
+      }
+    },
+    {
+      "model": "810m",
+      "cx": 8,
+      "mode": "fixed_lr_transfer",
+      "complete": false,
+      "optimal_summary_eligible": false,
+      "completed_intervention_runs": 0,
+      "expected_intervention_runs": 1,
+      "wide_reference": {
+        "model": "810m",
+        "variant": "wide_integration",
+        "variant_label": "wide integration (SWA)",
+        "cx": 8,
+        "lr": 0.0004,
+        "lr_tag": "0.0004",
+        "loss": 2.1049388185986935,
+        "state": "finished",
+        "tokens_b": 111.219572736,
+        "run_id": "kyti8h1y",
+        "name": "int-810m-cx8-intw256e8k-lr4e-4-r1_0.82@12.40B_810m_intw256e8k_20L8K256N1S_intw256e8k-810m-cx8-lr4e-4-r1",
+        "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/kyti8h1y",
+        "segment_run_ids": [
+          "kyti8h1y"
+        ],
+        "token_resets": 0,
+        "deduplicated_samples": 0
+      },
+      "references": {
+        "wide_integration": {
+          "model": "810m",
+          "variant": "wide_integration",
+          "variant_label": "wide integration (SWA)",
+          "cx": 8,
+          "lr": 0.0004,
+          "lr_tag": "0.0004",
+          "loss": 2.1049388185986935,
+          "state": "finished",
+          "tokens_b": 111.219572736,
+          "run_id": "kyti8h1y",
+          "name": "int-810m-cx8-intw256e8k-lr4e-4-r1_0.82@12.40B_810m_intw256e8k_20L8K256N1S_intw256e8k-810m-cx8-lr4e-4-r1",
+          "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/kyti8h1y",
+          "segment_run_ids": [
+            "kyti8h1y"
+          ],
+          "token_resets": 0,
+          "deduplicated_samples": 0
+        },
+        "hybrid_gdn_ev1": {
+          "model": "810m",
+          "variant": "hybrid_gdn_ev1",
+          "variant_label": "hybrid (GDN, expand_v=1)",
+          "cx": 8,
+          "lr": 0.0004,
+          "lr_tag": "0.0004",
+          "loss": 2.0955850868105137,
+          "state": "finished",
+          "tokens_b": 116.952662016,
+          "run_id": "s5gvyjiz",
+          "name": "810m-intwide-hybrid-gdn-ev1-cx8-lr4e-4",
+          "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/s5gvyjiz",
+          "segment_run_ids": [
+            "s5gvyjiz"
+          ],
+          "token_resets": 0,
+          "deduplicated_samples": 0
+        },
+        "geometry_gdn_ev2": null,
+        "geometry_gdn_ev2_nope": null
+      },
+      "intervention_result": null,
+      "delta_intervention_minus_wide": null,
+      "delta_intervention_minus_reference": {
+        "wide_integration": null,
+        "hybrid_gdn_ev1": null,
+        "geometry_gdn_ev2": null,
+        "geometry_gdn_ev2_nope": null
+      }
+    },
+    {
+      "model": "1p2b",
+      "cx": 1,
+      "mode": "fixed_lr_transfer",
+      "complete": false,
+      "optimal_summary_eligible": false,
+      "completed_intervention_runs": 0,
+      "expected_intervention_runs": 1,
+      "wide_reference": {
+        "model": "1p2b",
+        "variant": "wide_integration",
+        "variant_label": "wide integration (SWA)",
+        "cx": 1,
+        "lr": 0.0004,
+        "lr_tag": "0.0004",
+        "loss": 2.273061833166726,
+        "state": "finished",
+        "tokens_b": 21.417426944,
+        "run_id": "hww8eksq",
+        "name": "int-1p2b-cx1-intw256e8k-lr4e-4-r2_1.23@19.66B_1p2b_intw256e8k_22L8K256N1S_intw256e8k-1p2b-cx1-lr4e-4-r2",
+        "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/hww8eksq",
+        "segment_run_ids": [
+          "hww8eksq"
+        ],
+        "token_resets": 0,
+        "deduplicated_samples": 0
+      },
+      "references": {
+        "wide_integration": {
+          "model": "1p2b",
+          "variant": "wide_integration",
+          "variant_label": "wide integration (SWA)",
+          "cx": 1,
+          "lr": 0.0004,
+          "lr_tag": "0.0004",
+          "loss": 2.273061833166726,
+          "state": "finished",
+          "tokens_b": 21.417426944,
+          "run_id": "hww8eksq",
+          "name": "int-1p2b-cx1-intw256e8k-lr4e-4-r2_1.23@19.66B_1p2b_intw256e8k_22L8K256N1S_intw256e8k-1p2b-cx1-lr4e-4-r2",
+          "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/hww8eksq",
+          "segment_run_ids": [
+            "hww8eksq"
+          ],
+          "token_resets": 0,
+          "deduplicated_samples": 0
+        },
+        "hybrid_gdn_ev1": {
+          "model": "1p2b",
+          "variant": "hybrid_gdn_ev1",
+          "variant_label": "hybrid (GDN, expand_v=1)",
+          "cx": 1,
+          "lr": 0.0004,
+          "lr_tag": "0.0004",
+          "loss": 2.2539527250036,
+          "state": "finished",
+          "tokens_b": 22.690660352,
+          "run_id": "1d24xfx5",
+          "name": "1p2b-intwide-hybrid-gdn-ev1-cx1-lr4e-4-ep8-sync",
+          "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/1d24xfx5",
+          "segment_run_ids": [
+            "1d24xfx5"
+          ],
+          "token_resets": 0,
+          "deduplicated_samples": 0
+        },
+        "geometry_gdn_ev2": null,
+        "geometry_gdn_ev2_nope": null
+      },
+      "intervention_result": null,
+      "delta_intervention_minus_wide": null,
+      "delta_intervention_minus_reference": {
+        "wide_integration": null,
+        "hybrid_gdn_ev1": null,
+        "geometry_gdn_ev2": null,
+        "geometry_gdn_ev2_nope": null
+      }
+    },
+    {
+      "model": "1p2b",
+      "cx": 2,
+      "mode": "fixed_lr_transfer",
+      "complete": false,
+      "optimal_summary_eligible": false,
+      "completed_intervention_runs": 0,
+      "expected_intervention_runs": 1,
+      "wide_reference": {
+        "model": "1p2b",
+        "variant": "wide_integration",
+        "variant_label": "wide integration (SWA)",
+        "cx": 2,
+        "lr": 0.0006,
+        "lr_tag": "0.0006",
+        "loss": 2.178332213335817,
+        "state": "finished",
+        "tokens_b": 42.83498496,
+        "run_id": "jfwntmwm",
+        "name": "int-1p2b-cx2-intw256e8k-lr6e-4-r2_1.23@19.66B_1p2b_intw256e8k_22L8K256N1S_intw256e8k-1p2b-cx2-lr6e-4-r2",
+        "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/jfwntmwm",
+        "segment_run_ids": [
+          "jfwntmwm"
+        ],
+        "token_resets": 0,
+        "deduplicated_samples": 0
+      },
+      "references": {
+        "wide_integration": {
+          "model": "1p2b",
+          "variant": "wide_integration",
+          "variant_label": "wide integration (SWA)",
+          "cx": 2,
+          "lr": 0.0006,
+          "lr_tag": "0.0006",
+          "loss": 2.178332213335817,
+          "state": "finished",
+          "tokens_b": 42.83498496,
+          "run_id": "jfwntmwm",
+          "name": "int-1p2b-cx2-intw256e8k-lr6e-4-r2_1.23@19.66B_1p2b_intw256e8k_22L8K256N1S_intw256e8k-1p2b-cx2-lr6e-4-r2",
+          "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/jfwntmwm",
+          "segment_run_ids": [
+            "jfwntmwm"
+          ],
+          "token_resets": 0,
+          "deduplicated_samples": 0
+        },
+        "hybrid_gdn_ev1": {
+          "model": "1p2b",
+          "variant": "hybrid_gdn_ev1",
+          "variant_label": "hybrid (GDN, expand_v=1)",
+          "cx": 2,
+          "lr": 0.0006,
+          "lr_tag": "0.0006",
+          "loss": 2.1637875953185484,
+          "state": "finished",
+          "tokens_b": 45.38105856,
+          "run_id": "4k1bh4k2",
+          "name": "1p2b-intwide-hybrid-gdn-ev1-cx2-lr6e-4-ep8-sync",
+          "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/4k1bh4k2",
+          "segment_run_ids": [
+            "4k1bh4k2"
+          ],
+          "token_resets": 0,
+          "deduplicated_samples": 0
+        },
+        "geometry_gdn_ev2": null,
+        "geometry_gdn_ev2_nope": null
+      },
+      "intervention_result": null,
+      "delta_intervention_minus_wide": null,
+      "delta_intervention_minus_reference": {
+        "wide_integration": null,
+        "hybrid_gdn_ev1": null,
+        "geometry_gdn_ev2": null,
+        "geometry_gdn_ev2_nope": null
+      }
+    },
+    {
+      "model": "1p2b",
+      "cx": 4,
+      "mode": "fixed_lr_transfer",
+      "complete": false,
+      "optimal_summary_eligible": false,
+      "completed_intervention_runs": 0,
+      "expected_intervention_runs": 1,
+      "wide_reference": {
+        "model": "1p2b",
+        "variant": "wide_integration",
+        "variant_label": "wide integration (SWA)",
+        "cx": 4,
+        "lr": 0.0003,
+        "lr_tag": "0.0003",
+        "loss": 2.094219446931995,
+        "state": "finished",
+        "tokens_b": 85.669707776,
+        "run_id": "u7ab1tpb",
+        "name": "int-1p2b-cx4-intw256e8k-lr3e-4-r2_1.23@19.66B_1p2b_intw256e8k_22L8K256N1S_intw256e8k-1p2b-cx4-lr3e-4-r2",
+        "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/u7ab1tpb",
+        "segment_run_ids": [
+          "u7ab1tpb"
+        ],
+        "token_resets": 0,
+        "deduplicated_samples": 0
+      },
+      "references": {
+        "wide_integration": {
+          "model": "1p2b",
+          "variant": "wide_integration",
+          "variant_label": "wide integration (SWA)",
+          "cx": 4,
+          "lr": 0.0003,
+          "lr_tag": "0.0003",
+          "loss": 2.094219446931995,
+          "state": "finished",
+          "tokens_b": 85.669707776,
+          "run_id": "u7ab1tpb",
+          "name": "int-1p2b-cx4-intw256e8k-lr3e-4-r2_1.23@19.66B_1p2b_intw256e8k_22L8K256N1S_intw256e8k-1p2b-cx4-lr3e-4-r2",
+          "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/u7ab1tpb",
+          "segment_run_ids": [
+            "u7ab1tpb"
+          ],
+          "token_resets": 0,
+          "deduplicated_samples": 0
+        },
+        "hybrid_gdn_ev1": null,
+        "geometry_gdn_ev2": null,
+        "geometry_gdn_ev2_nope": null
+      },
+      "intervention_result": null,
+      "delta_intervention_minus_wide": null,
+      "delta_intervention_minus_reference": {
+        "wide_integration": null,
+        "hybrid_gdn_ev1": null,
+        "geometry_gdn_ev2": null,
+        "geometry_gdn_ev2_nope": null
+      }
+    },
+    {
+      "model": "1p2b",
+      "cx": 8,
+      "mode": "fixed_lr_transfer",
+      "complete": false,
+      "optimal_summary_eligible": false,
+      "completed_intervention_runs": 0,
+      "expected_intervention_runs": 1,
+      "wide_reference": {
+        "model": "1p2b",
+        "variant": "wide_integration",
+        "variant_label": "wide integration (SWA)",
+        "cx": 8,
+        "lr": 0.0004,
+        "lr_tag": "0.0004",
+        "loss": 2.0226406901137635,
+        "state": "finished",
+        "tokens_b": 171.33993984,
+        "run_id": "bqjzmiqi",
+        "name": "int-1p2b-cx8-intw256e8k-lr4e-4-r2_1.23@19.66B_1p2b_intw256e8k_22L8K256N1S_intw256e8k-1p2b-cx8-lr4e-4-r2",
+        "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/bqjzmiqi",
+        "segment_run_ids": [
+          "bqjzmiqi"
+        ],
+        "token_resets": 0,
+        "deduplicated_samples": 0
+      },
+      "references": {
+        "wide_integration": {
+          "model": "1p2b",
+          "variant": "wide_integration",
+          "variant_label": "wide integration (SWA)",
+          "cx": 8,
+          "lr": 0.0004,
+          "lr_tag": "0.0004",
+          "loss": 2.0226406901137635,
+          "state": "finished",
+          "tokens_b": 171.33993984,
+          "run_id": "bqjzmiqi",
+          "name": "int-1p2b-cx8-intw256e8k-lr4e-4-r2_1.23@19.66B_1p2b_intw256e8k_22L8K256N1S_intw256e8k-1p2b-cx8-lr4e-4-r2",
+          "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/bqjzmiqi",
+          "segment_run_ids": [
+            "bqjzmiqi"
+          ],
+          "token_resets": 0,
+          "deduplicated_samples": 0
+        },
+        "hybrid_gdn_ev1": null,
+        "geometry_gdn_ev2": null,
+        "geometry_gdn_ev2_nope": null
+      },
+      "intervention_result": null,
+      "delta_intervention_minus_wide": null,
+      "delta_intervention_minus_reference": {
+        "wide_integration": null,
+        "hybrid_gdn_ev1": null,
+        "geometry_gdn_ev2": null,
+        "geometry_gdn_ev2_nope": null
       }
     }
   ]
