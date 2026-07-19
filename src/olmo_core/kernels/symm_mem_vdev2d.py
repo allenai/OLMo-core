@@ -660,3 +660,109 @@ def rowwise_gather_get(
         pre_barrier,
         post_barrier,
     )
+
+
+@torch.compiler.disable
+def rowwise_dispatch_put_pair(
+    input_q: torch.Tensor,
+    input_scales: torch.Tensor,
+    out_q: torch.Tensor,
+    out_scales: torch.Tensor,
+    dst_ranks: torch.Tensor,
+    dst_rows: torch.Tensor,
+    group_name: str,
+    *,
+    nblocks: int = 0,
+    pre_barrier: bool = False,
+    post_barrier: bool = True,
+) -> None:
+    ext = _load_cuda_extension()
+    ext.rowwise_dispatch_put_pair(
+        input_q,
+        input_scales,
+        out_q,
+        out_scales,
+        dst_ranks,
+        dst_rows,
+        group_name,
+        nblocks,
+        pre_barrier,
+        post_barrier,
+    )
+
+
+@torch.compiler.disable
+def rowwise_dispatch_put_scaled_weighted(
+    input_hp: torch.Tensor,
+    probs: torch.Tensor,
+    out_q: torch.Tensor,
+    out_scales: torch.Tensor,
+    dst_ranks: torch.Tensor,
+    dst_rows: torch.Tensor,
+    group_name: str,
+    *,
+    block_size: int = 32,
+    nblocks: int = 0,
+    pre_barrier: bool = False,
+    post_barrier: bool = True,
+    zero_unwritten: bool = False,
+) -> None:
+    # Experimental fused version of:
+    #   weighted = input_hp[:, None, :] * probs[:, :, None]
+    #   rowwise_dispatch_put_scaled(weighted.reshape(-1, D), ...)
+    # without materializing the route-expanded high-precision tensor.
+    #
+    # We keep this primitive for benchmarking and possible future tuning, but it
+    # is deliberately not wired into the production MoE backward path. On B300,
+    # the direct CUDA/NVSHMEM kernel was bit-exact against the materialized path,
+    # but it did not beat the existing Triton-Q + rowwise-put composition at the
+    # normal rowwise nblocks setting. It only roughly tied after increasing this
+    # kernel's launch parallelism, so the default path remains the simpler,
+    # faster-in-practice materialized weighted_flat path in comm.py.
+    if zero_unwritten or os.getenv("OLMO_ROWWISE_FP8_DISPATCH_INIT_OUT", "0") == "1":
+        out_q.zero_()
+        out_scales.fill_(1.0)
+
+    ext = _load_cuda_extension()
+    ext.rowwise_dispatch_put_scaled_weighted(
+        input_hp,
+        out_q,
+        out_scales,
+        dst_ranks,
+        dst_rows,
+        probs,
+        group_name,
+        int(block_size),
+        int(nblocks),
+        bool(pre_barrier),
+        bool(post_barrier),
+    )
+
+
+@torch.compiler.disable
+def rowwise_gather_get_pair(
+    expert_q: torch.Tensor,
+    expert_scales: torch.Tensor,
+    gathered_q: torch.Tensor,
+    gathered_scales: torch.Tensor,
+    src_ranks: torch.Tensor,
+    src_rows: torch.Tensor,
+    group_name: str,
+    *,
+    nblocks: int = 0,
+    pre_barrier: bool = True,
+    post_barrier: bool = False,
+) -> None:
+    ext = _load_cuda_extension()
+    ext.rowwise_gather_get_pair(
+        expert_q,
+        expert_scales,
+        gathered_q,
+        gathered_scales,
+        src_ranks,
+        src_rows,
+        group_name,
+        nblocks,
+        pre_barrier,
+        post_barrier,
+    )

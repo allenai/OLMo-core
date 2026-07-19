@@ -75,6 +75,31 @@ void rowwise_dispatch_put(
     bool pre_barrier,
     bool post_barrier);
 
+void rowwise_dispatch_put_pair(
+    torch::Tensor& input_q,
+    torch::Tensor& input_scales,
+    torch::Tensor& out_q,
+    torch::Tensor& out_scales,
+    torch::Tensor& dst_ranks,
+    torch::Tensor& dst_rows,
+    const std::string& group_name,
+    int64_t nblocks,
+    bool pre_barrier,
+    bool post_barrier);
+
+void rowwise_dispatch_put_scaled_weighted(
+    torch::Tensor& input,
+    torch::Tensor& out_q,
+    torch::Tensor& out_scales,
+    torch::Tensor& dst_ranks,
+    torch::Tensor& dst_rows,
+    torch::Tensor& probs,
+    const std::string& group_name,
+    int64_t block_size,
+    int64_t nblocks,
+    bool pre_barrier,
+    bool post_barrier);
+
 void rowwise_build_compact_route_records(
     torch::Tensor& dst_ranks,
     torch::Tensor& dst_rows,
@@ -184,6 +209,18 @@ void rowwise_gather_get(
     bool pre_barrier,
     bool post_barrier);
 
+void rowwise_gather_get_pair(
+    torch::Tensor& expert_q,
+    torch::Tensor& expert_scales,
+    torch::Tensor& gathered_q,
+    torch::Tensor& gathered_scales,
+    torch::Tensor& src_ranks,
+    torch::Tensor& src_rows,
+    const std::string& group_name,
+    int64_t nblocks,
+    bool pre_barrier,
+    bool post_barrier);
+
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
   m.def(
       "olmo_symm_get_unique_id",
@@ -283,6 +320,37 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
       py::arg("dst_rows"),
       py::arg("probs") = std::nullopt,
       py::arg("group_name"),
+      py::arg("nblocks") = 0,
+      py::arg("pre_barrier") = false,
+      py::arg("post_barrier") = true);
+
+  m.def(
+      "rowwise_dispatch_put_pair",
+      &rowwise_dispatch_put_pair,
+      "NVSHMEM row-wise paired dispatch: put q and scales rows in one route traversal",
+      py::arg("input_q"),
+      py::arg("input_scales"),
+      py::arg("out_q"),
+      py::arg("out_scales"),
+      py::arg("dst_ranks"),
+      py::arg("dst_rows"),
+      py::arg("group_name"),
+      py::arg("nblocks") = 0,
+      py::arg("pre_barrier") = false,
+      py::arg("post_barrier") = true);
+
+  m.def(
+      "rowwise_dispatch_put_scaled_weighted",
+      &rowwise_dispatch_put_scaled_weighted,
+      "NVSHMEM weighted row-wise MXFP8 dispatch: quantize route-probability-scaled rows and put q/scales",
+      py::arg("input"),
+      py::arg("out_q"),
+      py::arg("out_scales"),
+      py::arg("dst_ranks"),
+      py::arg("dst_rows"),
+      py::arg("probs"),
+      py::arg("group_name"),
+      py::arg("block_size") = 32,
       py::arg("nblocks") = 0,
       py::arg("pre_barrier") = false,
       py::arg("post_barrier") = true);
@@ -422,6 +490,21 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
       "NVSHMEM row-wise gather: one-to-one get remote rows to local rows",
       py::arg("expert_out"),
       py::arg("out"),
+      py::arg("src_ranks"),
+      py::arg("src_rows"),
+      py::arg("group_name"),
+      py::arg("nblocks") = 0,
+      py::arg("pre_barrier") = true,
+      py::arg("post_barrier") = false);
+
+  m.def(
+      "rowwise_gather_get_pair",
+      &rowwise_gather_get_pair,
+      "NVSHMEM row-wise paired gather: get q and scales rows in one route traversal",
+      py::arg("expert_q"),
+      py::arg("expert_scales"),
+      py::arg("gathered_q"),
+      py::arg("gathered_scales"),
       py::arg("src_ranks"),
       py::arg("src_rows"),
       py::arg("group_name"),

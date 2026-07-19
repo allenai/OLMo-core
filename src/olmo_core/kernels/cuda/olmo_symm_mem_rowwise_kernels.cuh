@@ -1,3 +1,58 @@
+#include <cuda_fp8.h>
+#include <type_traits>
+
+template <typename scalar_t>
+__device__ __forceinline__ float rowwise_weighted_value_like_torch(
+    scalar_t value,
+    float prob) {
+  scalar_t prob_t = static_cast<scalar_t>(prob);
+  scalar_t weighted_t =
+      static_cast<scalar_t>(static_cast<float>(value) * static_cast<float>(prob_t));
+  return static_cast<float>(weighted_t);
+}
+
+template <>
+__device__ __forceinline__ float rowwise_weighted_value_like_torch<float>(
+    float value,
+    float prob) {
+  return value * prob;
+}
+
+template <typename scalar_t>
+__device__ __forceinline__ uint8_t rowwise_mxfp8_scale_byte(float max_abs) {
+  constexpr float FP32_TINY = 1.1754943508222875e-38f;
+  max_abs = max_abs == max_abs ? max_abs : 0.0f;
+  max_abs = fmaxf(max_abs, FP32_TINY);
+
+  int largest_p2 = 0;
+  if constexpr (std::is_same<scalar_t, at::BFloat16>::value) {
+    // Match the Triton quantizer's BF16 exponent shortcut.
+    __nv_bfloat16 max_abs_bf16 = __float2bfloat16(max_abs);
+    __nv_bfloat16_raw max_abs_raw = static_cast<__nv_bfloat16_raw>(max_abs_bf16);
+    uint16_t max_abs_bits = max_abs_raw.x;
+    largest_p2 = static_cast<int>((max_abs_bits >> 7) & 0xFF) - 127;
+  } else {
+    largest_p2 = ilogbf(max_abs);
+  }
+
+  int scale_unbiased = largest_p2 - 8;
+  scale_unbiased = max(scale_unbiased, -127);
+  scale_unbiased = min(scale_unbiased, 127);
+  return static_cast<uint8_t>(scale_unbiased + 127);
+}
+
+__device__ __forceinline__ float rowwise_mxfp8_inv_scale(uint8_t scale_byte) {
+  return ldexpf(1.0f, 127 - static_cast<int>(scale_byte));
+}
+
+__device__ __forceinline__ uint8_t rowwise_mxfp8_q_byte(float value) {
+  constexpr float F8E4M3_MAX = 448.0f;
+  value = value == value ? value : 0.0f;
+  value = fmaxf(value, -F8E4M3_MAX);
+  value = fminf(value, F8E4M3_MAX);
+  return __nv_cvt_float_to_fp8(value, __NV_SATFINITE, __NV_E4M3);
+}
+
 __global__ void dispatchRowsPut(
     const void* input_data,
     void* out_data,
@@ -37,6 +92,60 @@ __global__ void dispatchRowsPut(
         (char*)out_data + static_cast<size_t>(dst_row) * row_bytes,
         (const char*)input_data + static_cast<size_t>(src_row) * row_bytes,
         row_bytes,
+        peer_global);
+  }
+#endif
+}
+
+__global__ void dispatchRowsPutPair(
+    const void* input_q_data,
+    const void* input_scales_data,
+    void* out_q_data,
+    void* out_scales_data,
+    const int64_t* dst_ranks,
+    const int64_t* dst_rows,
+    size_t q_row_bytes,
+    size_t scales_row_bytes,
+    int64_t num_input_rows,
+    int64_t top_k,
+    int64_t out_capacity_rows,
+    nvshmem_team_t team,
+    const int* rank_to_pe,
+    int group_size) {
+#ifndef _NVSHMEM_DEVICELIB_SUPPORTED
+  CUDA_KERNEL_ASSERT_MSG(false, "SM arch unsupported for NVSHMEM");
+#else
+  CUDA_KERNEL_ASSERT(team != NVSHMEM_TEAM_INVALID);
+  int npes = olmo_route_npes(team, rank_to_pe, group_size);
+  int64_t num_routes = num_input_rows * top_k;
+  int warp_id = threadIdx.x / WARP_SIZE;
+
+  int64_t route_id =
+      static_cast<int64_t>(blockIdx.x) * ROWWISE_WARPS_PER_BLOCK + warp_id;
+  int64_t route_stride =
+      static_cast<int64_t>(gridDim.x) * ROWWISE_WARPS_PER_BLOCK;
+  for (; route_id < num_routes; route_id += route_stride) {
+    int64_t peer = dst_ranks[route_id];
+    int64_t dst_row = dst_rows[route_id];
+    if (peer < 0 || dst_row < 0) {
+      continue;
+    }
+
+    CUDA_KERNEL_ASSERT(peer < npes);
+    CUDA_KERNEL_ASSERT(dst_row < out_capacity_rows);
+
+    int64_t src_row = route_id / top_k;
+    auto peer_global = olmo_route_peer_global(team, rank_to_pe, static_cast<int>(peer));
+    nvshmemx_putmem_warp(
+        (char*)out_q_data + static_cast<size_t>(dst_row) * q_row_bytes,
+        (const char*)input_q_data + static_cast<size_t>(src_row) * q_row_bytes,
+        q_row_bytes,
+        peer_global);
+    __syncwarp();
+    nvshmemx_putmem_warp(
+        (char*)out_scales_data + static_cast<size_t>(dst_row) * scales_row_bytes,
+        (const char*)input_scales_data + static_cast<size_t>(src_row) * scales_row_bytes,
+        scales_row_bytes,
         peer_global);
   }
 #endif
@@ -504,6 +613,124 @@ __global__ void dispatchRowsPutWeighted(
 #endif
 }
 
+// Experimental weighted MXFP8 dispatch kernel. It exists because materializing
+// [N, top_k, D] weighted grads is an obvious-looking overhead in MoE combine
+// backward. Benchmarks on B300 showed this direct NVSHMEM path is bit-exact
+// against the materialized path, but not faster at the normal rowwise nblocks
+// setting; keep it as a reference/tuning target rather than production code.
+template <typename scalar_t>
+__global__ void dispatchRowsPutScaledWeighted(
+    const scalar_t* input_data,
+    uint8_t* out_q_data,
+    uint8_t* out_scales_data,
+    const int64_t* dst_ranks,
+    const int64_t* dst_rows,
+    const float* probs,
+    int64_t num_input_rows,
+    int64_t top_k,
+    int64_t dim,
+    int64_t scale_dim,
+    int64_t input_row_stride,
+    int64_t out_q_row_stride,
+    int64_t out_scales_row_stride,
+    int64_t out_capacity_rows,
+    nvshmem_team_t team,
+    const int* rank_to_pe,
+    int group_size) {
+#ifndef _NVSHMEM_DEVICELIB_SUPPORTED
+  CUDA_KERNEL_ASSERT_MSG(false, "SM arch unsupported for NVSHMEM");
+#else
+  CUDA_KERNEL_ASSERT(team != NVSHMEM_TEAM_INVALID);
+  constexpr int BLOCK_SIZE = ROWWISE_MXFP8_BLOCK_SIZE;
+  constexpr int CHUNK_BLOCKS = ROWWISE_MXFP8_Q_CHUNK_BLOCKS;
+  constexpr int CHUNK_Q_BYTES = BLOCK_SIZE * CHUNK_BLOCKS;
+
+  __shared__ uint8_t shared_q[ROWWISE_WARPS_PER_BLOCK][CHUNK_Q_BYTES];
+  __shared__ uint8_t shared_scales[ROWWISE_WARPS_PER_BLOCK]
+                                  [ROWWISE_MXFP8_MAX_SCALE_GROUPS];
+
+  int npes = olmo_route_npes(team, rank_to_pe, group_size);
+  int warp_id = threadIdx.x / WARP_SIZE;
+  int lane_id = threadIdx.x % WARP_SIZE;
+
+  int64_t num_routes = num_input_rows * top_k;
+  int64_t route_id =
+      static_cast<int64_t>(blockIdx.x) * ROWWISE_WARPS_PER_BLOCK + warp_id;
+  int64_t route_stride =
+      static_cast<int64_t>(gridDim.x) * ROWWISE_WARPS_PER_BLOCK;
+
+  for (; route_id < num_routes; route_id += route_stride) {
+    int64_t peer = dst_ranks[route_id];
+    int64_t dst_row = dst_rows[route_id];
+    if (peer < 0 || dst_row < 0) {
+      continue;
+    }
+
+    CUDA_KERNEL_ASSERT(peer < npes);
+    CUDA_KERNEL_ASSERT(dst_row < out_capacity_rows);
+    CUDA_KERNEL_ASSERT(scale_dim <= ROWWISE_MXFP8_MAX_SCALE_GROUPS);
+
+    int64_t src_row = route_id / top_k;
+    float p = probs[route_id];
+    int peer_global = 0;
+    if (lane_id == 0) {
+      peer_global = olmo_route_peer_global(team, rank_to_pe, static_cast<int>(peer));
+    }
+    peer_global = __shfl_sync(0xffffffff, peer_global, 0);
+
+    const scalar_t* src_ptr = input_data + src_row * input_row_stride;
+    uint8_t* q_shared = shared_q[warp_id];
+    uint8_t* scale_shared = shared_scales[warp_id];
+
+    for (int64_t scale_base = 0; scale_base < scale_dim; scale_base += CHUNK_BLOCKS) {
+      int64_t remaining_scale_groups = scale_dim - scale_base;
+      int chunk_groups = static_cast<int>(
+          remaining_scale_groups < CHUNK_BLOCKS ? remaining_scale_groups : CHUNK_BLOCKS);
+
+      for (int local_group = 0; local_group < chunk_groups; ++local_group) {
+        int64_t scale_group = scale_base + local_group;
+        int64_t col = scale_group * BLOCK_SIZE + lane_id;
+        float weighted = rowwise_weighted_value_like_torch(src_ptr[col], p);
+        float max_abs = fabsf(weighted);
+        max_abs = max_abs == max_abs ? max_abs : 0.0f;
+
+#pragma unroll
+        for (int offset = WARP_SIZE / 2; offset > 0; offset >>= 1) {
+          max_abs = fmaxf(max_abs, __shfl_down_sync(0xffffffff, max_abs, offset));
+        }
+        max_abs = __shfl_sync(0xffffffff, max_abs, 0);
+
+        uint8_t scale_byte = 0;
+        if (lane_id == 0) {
+          scale_byte = rowwise_mxfp8_scale_byte<scalar_t>(max_abs);
+          scale_shared[scale_group] = scale_byte;
+        }
+        scale_byte = static_cast<uint8_t>(__shfl_sync(
+            0xffffffff, static_cast<unsigned int>(scale_byte), 0));
+        float q_hp = weighted * rowwise_mxfp8_inv_scale(scale_byte);
+        q_shared[local_group * BLOCK_SIZE + lane_id] = rowwise_mxfp8_q_byte(q_hp);
+      }
+
+      __syncwarp();
+      nvshmemx_putmem_warp(
+          out_q_data +
+              static_cast<size_t>(dst_row * out_q_row_stride + scale_base * BLOCK_SIZE),
+          q_shared,
+          static_cast<size_t>(chunk_groups * BLOCK_SIZE),
+          peer_global);
+      __syncwarp();
+    }
+
+    nvshmemx_putmem_warp(
+        out_scales_data + static_cast<size_t>(dst_row * out_scales_row_stride),
+        scale_shared,
+        static_cast<size_t>(scale_dim),
+        peer_global);
+    __syncwarp();
+  }
+#endif
+}
+
 template <bool ZERO_INVALID_ROWS>
 __global__ void gatherRowsGet(
     const void* expert_out_data,
@@ -549,6 +776,71 @@ __global__ void gatherRowsGet(
         dst_ptr,
         (const char*)expert_out_data + static_cast<size_t>(src_row) * row_bytes,
         row_bytes,
+        peer_global);
+  }
+#endif
+}
+
+template <bool ZERO_INVALID_ROWS>
+__global__ void gatherRowsGetPair(
+    const void* expert_q_data,
+    const void* expert_scales_data,
+    void* gathered_q_data,
+    void* gathered_scales_data,
+    const int64_t* src_ranks,
+    const int64_t* src_rows,
+    size_t q_row_bytes,
+    size_t scales_row_bytes,
+    int64_t num_out_rows,
+    int64_t top_k,
+    int64_t expert_capacity_rows,
+    nvshmem_team_t team,
+    const int* rank_to_pe,
+    int group_size) {
+#ifndef _NVSHMEM_DEVICELIB_SUPPORTED
+  CUDA_KERNEL_ASSERT_MSG(false, "SM arch unsupported for NVSHMEM");
+#else
+  CUDA_KERNEL_ASSERT(team != NVSHMEM_TEAM_INVALID);
+  int npes = olmo_route_npes(team, rank_to_pe, group_size);
+  int64_t num_routes = num_out_rows * top_k;
+  int warp_id = threadIdx.x / WARP_SIZE;
+  int lane_id = threadIdx.x % WARP_SIZE;
+
+  int64_t route_id =
+      static_cast<int64_t>(blockIdx.x) * ROWWISE_WARPS_PER_BLOCK + warp_id;
+  int64_t route_stride =
+      static_cast<int64_t>(gridDim.x) * ROWWISE_WARPS_PER_BLOCK;
+  for (; route_id < num_routes; route_id += route_stride) {
+    int64_t peer = src_ranks[route_id];
+    int64_t src_row = src_rows[route_id];
+    char* q_dst_ptr = (char*)gathered_q_data + static_cast<size_t>(route_id) * q_row_bytes;
+    char* scales_dst_ptr =
+        (char*)gathered_scales_data + static_cast<size_t>(route_id) * scales_row_bytes;
+    if (peer < 0 || src_row < 0) {
+      if constexpr (ZERO_INVALID_ROWS) {
+        for (size_t i = static_cast<size_t>(lane_id); i < q_row_bytes; i += WARP_SIZE) {
+          q_dst_ptr[i] = 0;
+        }
+        for (size_t i = static_cast<size_t>(lane_id); i < scales_row_bytes; i += WARP_SIZE) {
+          scales_dst_ptr[i] = 0;
+        }
+      }
+      continue;
+    }
+
+    CUDA_KERNEL_ASSERT(peer < npes);
+    CUDA_KERNEL_ASSERT(src_row < expert_capacity_rows);
+    auto peer_global = olmo_route_peer_global(team, rank_to_pe, static_cast<int>(peer));
+    nvshmemx_getmem_warp(
+        q_dst_ptr,
+        (const char*)expert_q_data + static_cast<size_t>(src_row) * q_row_bytes,
+        q_row_bytes,
+        peer_global);
+    __syncwarp();
+    nvshmemx_getmem_warp(
+        scales_dst_ptr,
+        (const char*)expert_scales_data + static_cast<size_t>(src_row) * scales_row_bytes,
+        scales_row_bytes,
         peer_global);
   }
 #endif
