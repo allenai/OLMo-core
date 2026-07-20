@@ -1,0 +1,66 @@
+schema_version: 1
+
+experiment:
+  description: Checkpoint-free 275M gated-RoPE Cx1 parallelism throughput study
+  checkpoint_root: /tmp/olmoe3-275m-rope-gated-parallelism-smokes
+
+source:
+  repo: /weka/oe-adapt-default/jacobm/olmoe3/olmo-ddp-migration/OLMo-core
+  wrapper: src/scripts/train/jacobm_olmoe3_hybrid_scale_beaker.sh
+  image: 01KW8G8JC20H11Y60PPTE2VN4Q
+
+beaker:
+  workspace: ai2/OLMo-3-moe-experiments
+  cluster: ai2/holmes
+  priority: urgent
+  shared_memory: 128 GiB
+  min_runtime: 10m
+  auto_resume: false
+  timeout: 3h
+  result_path: /results
+
+secrets:
+  AWS_ACCESS_KEY_ID: AWS_ACCESS_KEY_ID
+  AWS_SECRET_ACCESS_KEY: AWS_SECRET_ACCESS_KEY
+  WANDB_API_KEY: jacobm_WANDB_API_KEY
+  BEAKER_TOKEN: jacobm_BEAKER_TOKEN
+
+datasets:
+  - mount_path: /weka/oe-adapt-default
+    weka: oe-adapt-default
+  - mount_path: /weka/oe-training-default
+    weka: oe-training-default
+
+training:
+  model_size: 275m
+  model_variant: geometry_275m_gdn_ev2_rope_gated
+  sequence_length: 8192
+  global_batch_size: 262144
+  rank_microbatch_sequences: 8
+  learning_rate: "8e-4"
+  chinchilla_multiple: 1
+  hard_stop_steps: 20
+  checkpoints: false
+  evals: false
+  compile: true
+  wandb: true
+
+# Every cell holds the 32-sequence optimizer batch and rank MB8 fixed. Changing
+# world size therefore changes accumulation only: 4x on one GPU, 2x on two,
+# and 1x on four. The rowwise cells explicitly re-test symmetric-memory group
+# startup on the current code/image and provide like-for-like sync_1d controls.
+runs:
+  - {task_name: gpu1-ep1, run_name: smoke-275m-rope-gated-cx1-gpu1-ep1-mb8-r1, gpu_count: 1, expert_parallel_size: 1, expert_parallel_path: sync_1d}
+  - {task_name: gpu2-ep1, run_name: smoke-275m-rope-gated-cx1-gpu2-ep1-mb8-r1, gpu_count: 2, expert_parallel_size: 1, expert_parallel_path: sync_1d}
+  - {task_name: gpu4-ep1-control, run_name: smoke-275m-rope-gated-cx1-gpu4-ep1-mb8-r1, gpu_count: 4, expert_parallel_size: 1, expert_parallel_path: sync_1d}
+  - {task_name: gpu2-ep2-sync, run_name: smoke-275m-rope-gated-cx1-gpu2-ep2-sync-mb8-r1, gpu_count: 2, expert_parallel_size: 2, expert_parallel_path: sync_1d}
+  - {task_name: gpu4-ep2-sync, run_name: smoke-275m-rope-gated-cx1-gpu4-ep2-sync-mb8-r1, gpu_count: 4, expert_parallel_size: 2, expert_parallel_path: sync_1d}
+  - {task_name: gpu4-ep4-sync, run_name: smoke-275m-rope-gated-cx1-gpu4-ep4-sync-mb8-r1, gpu_count: 4, expert_parallel_size: 4, expert_parallel_path: sync_1d}
+  - {task_name: gpu2-ep2-rowwise, run_name: smoke-275m-rope-gated-cx1-gpu2-ep2-rowwise-mb8-r1, gpu_count: 2, expert_parallel_size: 2, expert_parallel_path: rowwise_nvshmem}
+  - {task_name: gpu4-ep4-rowwise, run_name: smoke-275m-rope-gated-cx1-gpu4-ep4-rowwise-mb8-r1, gpu_count: 4, expert_parallel_size: 4, expert_parallel_path: rowwise_nvshmem}
+
+  # Separate microbatch-capacity cells. These preserve the same 32-sequence
+  # optimizer batch while reducing accumulation as the rank microbatch grows.
+  - {task_name: gpu1-ep1-mb32, run_name: smoke-275m-rope-gated-cx1-gpu1-ep1-mb32-r1, gpu_count: 1, expert_parallel_size: 1, expert_parallel_path: sync_1d, rank_microbatch_sequences: 32}
+  - {task_name: gpu1-ep1-mb16, run_name: smoke-275m-rope-gated-cx1-gpu1-ep1-mb16-r1, gpu_count: 1, expert_parallel_size: 1, expert_parallel_path: sync_1d, rank_microbatch_sequences: 16}
+  - {task_name: gpu2-ep1-mb16, run_name: smoke-275m-rope-gated-cx1-gpu2-ep1-mb16-r1, gpu_count: 2, expert_parallel_size: 1, expert_parallel_path: sync_1d, rank_microbatch_sequences: 16}

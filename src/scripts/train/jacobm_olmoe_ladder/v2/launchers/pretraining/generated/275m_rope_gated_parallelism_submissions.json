@@ -1,0 +1,45 @@
+[
+  {
+    "experiment_name": "jacobm-275m-rope-gated-parallelism-smokes-r1",
+    "experiment_id": "01KY0JSGA8E5YH94QX2CCQD8SJ",
+    "tasks": [
+      "gpu1-ep1",
+      "gpu2-ep1",
+      "gpu4-ep1-control",
+      "gpu2-ep2-sync",
+      "gpu4-ep2-sync",
+      "gpu4-ep4-sync",
+      "gpu2-ep2-rowwise",
+      "gpu4-ep4-rowwise"
+    ],
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY0JSGA8E5YH94QX2CCQD8SJ"
+  },
+  {
+    "experiment_name": "jacobm-275m-rope-gated-microbatch-smokes-r1",
+    "experiment_id": "01KY0K23AG62ZADRX0VWRP5GTH",
+    "tasks": [
+      "gpu1-ep1-mb32",
+      "gpu1-ep1-mb16",
+      "gpu2-ep1-mb16"
+    ],
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY0K23AG62ZADRX0VWRP5GTH"
+  },
+  {
+    "experiment_name": "jacobm-275m-rope-gated-parallelism-smokes-r2-allocated",
+    "experiment_id": "01KY0K5T6YNRPMB3P9N3YBX9M3",
+    "tasks": [
+      "gpu1-ep1",
+      "gpu2-ep1",
+      "gpu4-ep1-control",
+      "gpu2-ep2-sync",
+      "gpu4-ep2-sync",
+      "gpu4-ep4-sync",
+      "gpu2-ep2-rowwise",
+      "gpu4-ep4-rowwise",
+      "gpu1-ep1-mb32",
+      "gpu1-ep1-mb16",
+      "gpu2-ep1-mb16"
+    ],
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY0K5T6YNRPMB3P9N3YBX9M3"
+  }
+]

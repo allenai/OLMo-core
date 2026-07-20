@@ -132,6 +132,42 @@ at Cx2, while using substantially less memory at Cx1. The faster
 launchable on this image because its symmetric-memory process-group startup
 segfaults.
 
+## 275M gated-RoPE Cx1 parallelism study
+
+The checkpoint-free study in
+[`launchers/pretraining/manifests/275m_rope_gated_parallelism_smokes.yaml`](launchers/pretraining/manifests/275m_rope_gated_parallelism_smokes.yaml)
+holds the model, 262,144-token optimizer batch, sequence length, LR, compile
+mode, and 20-step duration fixed. It varies only GPU count, expert parallelism,
+EP communication path, and rank microbatch. The authoritative allocated,
+urgent Holmes batch is
+[01KY0K5T6YNRPMB3P9N3YBX9M3](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY0K5T6YNRPMB3P9N3YBX9M3).
+Two earlier zero-minimum-runtime submissions were stopped after an immediate
+preemption; they are not result-bearing runs.
+
+Throughput below is the median of the final ten reported optimizer-step
+samples. Aggregate TPS is per-GPU TPS multiplied by world size. All passing
+cells used 292,092,800 active parameters and 3,137,624,960 total parameters.
+
+| GPUs | EP / path | Rank MB | Accum | TFLOPs/GPU | TPS/GPU | TPS job | Peak active GiB | W&B | Result |
+|---:|---|---:|---:|---:|---:|---:|---:|---|---|
+| 1 | EP1 | 8 | 4 | 407.9 | 271,156 | 271,156 | 134.3 | [y5hdpz9h](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/y5hdpz9h) | pass |
+| 2 | EP1 | 8 | 2 | 384.0 | 255,260 | 510,519 | 116.8 | [6wn6bf60](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/6wn6bf60) | pass |
+| 4 | EP1 | 8 | 1 | 343.1 | 228,058 | 912,230 | 108.0 | [vhraoh7g](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/vhraoh7g) | pass |
+| 2 | EP2 / `sync_1d` | 8 | 2 | 344.0 | 228,703 | 457,406 | 114.6 | [49r9mybk](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/49r9mybk) | pass |
+| 4 | EP2 / `sync_1d` | 8 | 1 | pending | pending | pending | pending | pending | queued |
+| 4 | EP4 / `sync_1d` | 8 | 1 | pending | pending | pending | pending | pending | queued |
+| 2 | EP2 / `rowwise_nvshmem` | 8 | 2 | pending | pending | pending | pending | pending | queued; current-image startup re-test |
+| 4 | EP4 / `rowwise_nvshmem` | 8 | 1 | pending | pending | pending | pending | pending | queued; current-image startup re-test |
+| 1 | EP1 | 16 | 2 | pending | pending | pending | pending | pending | queued |
+| 1 | EP1 | 32 | 1 | pending | pending | pending | pending | pending | queued; maximum legal MB |
+| 2 | EP1 | 16 | 1 | pending | pending | pending | pending | pending | queued; maximum legal MB |
+
+The completed fixed-MB8 controls show the systems tradeoff directly: one GPU
+has the best compute efficiency, while four GPUs deliver the best job-level
+throughput. On two GPUs, EP2 is 10.4% slower per GPU than EP1 and saves only
+about 2.2 GiB/GPU of active memory, so EP1 remains the default at this scale.
+The larger-microbatch and current-image NVSHMEM conclusions remain pending.
+
 Scale smokes now retain only their final hard-stop checkpoint. The initial r4
 1.2B Cx1 job predated that change and retained step 5, 10, and 12; each is
 about 221 GB because distributed optimizer state is included. No checkpoint
