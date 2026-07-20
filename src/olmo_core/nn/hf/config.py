@@ -104,6 +104,8 @@ def _get_qwen3_config(model: "Transformer", blocks: list, first_block: Transform
         rope_scaling=rope_scaling,
         attention_bias=first_block.attention.w_out.bias is not None,
         tie_word_embeddings=model.tie_word_embeddings,
+        bos_token_id=151644,
+        eos_token_id=151643,
     )
 
 
