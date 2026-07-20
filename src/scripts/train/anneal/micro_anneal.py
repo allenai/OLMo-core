@@ -90,8 +90,15 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     work_dir = get_work_dir(root_dir)
 
     # Model + tokenizer: base-agnostic. --model_arch selects the peer TransformerConfig classmethod
-    # (qwen3_8B, olmo3_7B, …); the tokenizer (hence vocab_size) comes from the base's HF identifier.
-    tokenizer_config = TokenizerConfig.from_hf(b["tokenizer"])
+    # (qwen3_8B, olmo3_7B, …). The tokenizer (hence vocab_size) is either a NAMED olmo-core config
+    # (OLMo/dolma bases — allenai/dolma2-tokenizer is tokenizer-only on HF, so from_hf 404s on its
+    # missing model config.json) or an HF *model* repo id (Qwen3-8B-Base has a config.json).
+    _NAMED_TOKENIZERS = {
+        "allenai/dolma2-tokenizer": TokenizerConfig.dolma2,
+        "allenai/dolma2-tokenizer-sigdig": TokenizerConfig.dolma2_sigdig,
+    }
+    _named = _NAMED_TOKENIZERS.get(b["tokenizer"])
+    tokenizer_config = _named() if _named else TokenizerConfig.from_hf(b["tokenizer"])
     model_config = getattr(TransformerConfig, b["model_arch"])(
         vocab_size=tokenizer_config.padded_vocab_size(),
     )
