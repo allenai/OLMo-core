@@ -64,7 +64,7 @@ from olmo_core.data import (  # noqa: E402
 from olmo_core.data.source_mixture import SourceMixtureDatasetConfig, SourceMixtureList  # noqa: E402
 from olmo_core.internal import cookbook  # noqa: E402
 from olmo_core.internal.common import build_launch_config, get_root_dir, get_work_dir  # noqa: E402
-from olmo_core.internal.experiment import CliContext, ExperimentConfig, main  # noqa: E402
+from olmo_core.internal.experiment import CliContext, ExperimentConfig, SubCmd, main  # noqa: E402
 from olmo_core.launch.beaker import OLMoCoreBeakerImage  # noqa: E402
 from olmo_core.nn.transformer import TransformerConfig  # noqa: E402
 from olmo_core.optim.scheduler import LinearWithWarmup, SchedulerUnits, WSD  # noqa: E402
@@ -131,16 +131,31 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     data_loader_config = NumpyDataLoaderConfig(global_batch_size=GLOBAL_BATCH_SIZE, seed=seed, num_workers=4)
 
     save_freq = int(b.get("save_freq", 0))
-    trainer_config = cookbook.configure_trainer(
-        # The FIXED base checkpoint. A HF->core converted base has model weights only, so
-        # load_optim_state=false (fresh optimizer) and load_trainer_state=false (fresh data pass).
-        load_path=b["base_checkpoint"],
-        load_trainer_state=_bool(b.get("load_trainer_state", "false")),
-        load_optim_state=_bool(b.get("load_optim_state", "false")),
-        max_duration=Duration.tokens(int(float(b["length_tokens"]))),
-        checkpoint_dir=b["save_folder"],
-        work_dir=work_dir,
-    ).with_callbacks(
+    # sftlab is a pure Beaker-job INITIATOR: `launch`/`dry_run` run on a host with NO /weka mount,
+    # so configure_trainer's dir_is_empty(base_checkpoint) preflight would false-positive — a
+    # missing mount is indistinguishable from an empty dir (io.dir_is_empty returns True when the
+    # dir doesn't exist) — and abort the launch before any job is submitted. Skip that preflight on
+    # the initiator hop only; the remote `train` hop rebuilds this identical config WITH /weka
+    # mounted and validates for real (and the trainer's own load_checkpoint fails loudly if the
+    # base is genuinely absent). Keeps a launch touching only the Beaker API, never weka.
+    _initiator = cli_context.cmd in (SubCmd.launch, SubCmd.dry_run, SubCmd.launch_prep)
+    _saved_dir_is_empty = cookbook.dir_is_empty
+    if _initiator:
+        cookbook.dir_is_empty = lambda _p: False
+    try:
+        trainer_config = cookbook.configure_trainer(
+            # The FIXED base checkpoint. A HF->core converted base has model weights only, so
+            # load_optim_state=false (fresh optimizer) and load_trainer_state=false (fresh data pass).
+            load_path=b["base_checkpoint"],
+            load_trainer_state=_bool(b.get("load_trainer_state", "false")),
+            load_optim_state=_bool(b.get("load_optim_state", "false")),
+            max_duration=Duration.tokens(int(float(b["length_tokens"]))),
+            checkpoint_dir=b["save_folder"],
+            work_dir=work_dir,
+        )
+    finally:
+        cookbook.dir_is_empty = _saved_dir_is_empty
+    trainer_config = trainer_config.with_callbacks(
         cookbook.configure_default_callbacks(
             run_name=run_ts, wandb_group_name=cli_context.run_name,
             **({"checkpoint_save_interval": save_freq} if save_freq > 0 else {}),
