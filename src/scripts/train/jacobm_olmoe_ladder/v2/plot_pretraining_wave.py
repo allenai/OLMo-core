@@ -283,6 +283,30 @@ GEOMETRY_GDN_EV2_NOPE_GATED = Variant(
     ),
 )
 
+GEOMETRY_GDN_EV2_ROPE_GATED = Variant(
+    key="geometry_gdn_ev2_rope_gated",
+    label="geometry-matched hybrid (GDN, expand_v=2, RoPE, gated attention)",
+    color="#d97706",
+    runs=(
+        RegisteredRun("275m", 1, 4e-4, "kd3fyszi"),
+        RegisteredRun("275m", 1, 8e-4, "ezdsfb9n"),
+        RegisteredRun("275m", 1, 1.6e-3, "eo5bm8gw"),
+        RegisteredRun("275m", 1, 3.2e-3, "l4tp6qmo"),
+        RegisteredRun("275m", 2, 4e-4, "7gmi969q"),
+        RegisteredRun("275m", 2, 8e-4, "0ovig11c"),
+        RegisteredRun("275m", 2, 1.6e-3, "8mkt4xpz"),
+        RegisteredRun("275m", 2, 3.2e-3, "66u6ekx2"),
+        RegisteredRun("275m", 4, 4e-4, "o1p6n2v7"),
+        RegisteredRun("275m", 4, 8e-4, "iqxc5n9x"),
+        RegisteredRun("275m", 4, 1.6e-3, "n6suaxul"),
+        RegisteredRun("275m", 4, 3.2e-3, "clfmsyx8"),
+        RegisteredRun("275m", 8, 4e-4, "y1dh1cb5"),
+        RegisteredRun("275m", 8, 8e-4, "65bsc0wk"),
+        RegisteredRun("275m", 8, 1.6e-3, "8rgf3myq"),
+        RegisteredRun("275m", 8, 3.2e-3, "klgge8er"),
+    ),
+)
+
 WAVES = {
     "hybrid_gdn_ev1": Wave(
         key="hybrid_gdn_ev1",
@@ -389,6 +413,32 @@ WAVES = {
             GEOMETRY_GDN_EV2_NOPE,
         ),
         intervention=GEOMETRY_GDN_EV2_NOPE_GATED,
+        uplot_baselines=True,
+    ),
+    "geometry_gdn_ev2_rope_gated": Wave(
+        key="geometry_gdn_ev2_rope_gated",
+        title="Geometry-matched RoPE gated-attention active hybrid GDN intervention",
+        intervention_label=(
+            "geometry-matched hybrid GDN (expand_v=2, RoPE, gated attention)"
+        ),
+        architecture_note=(
+            "The 275M geometry-matched expand_v=2 gated-attention hybrid with "
+            "RoPE restored only on full-attention layers 4 and 9. Wide "
+            "integration, first hybrid, ungated RoPE geometry, ungated NoPE, "
+            "and gated NoPE are explicit references."
+        ),
+        models=("275m",),
+        lr_sweep_models=("275m",),
+        active_parameters={"275m": 292_092_800},
+        baseline_active_parameters={"275m": 280_207_872},
+        baseline=WIDE_INTEGRATION,
+        additional_baselines=(
+            HYBRID_GDN_EV1,
+            GEOMETRY_GDN_EV2,
+            GEOMETRY_GDN_EV2_NOPE,
+            GEOMETRY_GDN_EV2_NOPE_GATED,
+        ),
+        intervention=GEOMETRY_GDN_EV2_ROPE_GATED,
         uplot_baselines=True,
     ),
 }
