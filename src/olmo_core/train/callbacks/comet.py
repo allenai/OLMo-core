@@ -125,6 +125,7 @@ class CometCallback(Callback):
     _exp = None
     _exp_key: Optional[str] = None
     _finalized: bool = False
+    _train_completed: bool = False
 
     @property
     def exp(self) -> "Experiment":
@@ -214,14 +215,11 @@ class CometCallback(Callback):
     def post_train(self):
         if self.enabled and get_rank() == 0:
             log.info("Finalizing successful Comet.ml experiment...")
-            if self.notifications in (
-                CometNotificationSetting.all,
-                CometNotificationSetting.end_only,
-            ):
-                self.exp.send_notification(
-                    f"Experiment {self.exp.get_name()} ({self.exp.get_key()})",
-                    status="completed successfully",
-                )
+            # Defer the success notification to `close()`. This callback runs at a higher
+            # priority than the checkpointer, so its `post_train` also runs *before* the
+            # checkpointer saves the final checkpoint; sending "completed successfully" here
+            # could precede a failing final save. `close()` runs after all `post_train` hooks.
+            self._train_completed = True
 
     def on_error(self, exc: BaseException):
         del exc
@@ -240,6 +238,14 @@ class CometCallback(Callback):
 
     def close(self):
         if self.enabled and get_rank() == 0:
+            if self._train_completed and self.notifications in (
+                CometNotificationSetting.all,
+                CometNotificationSetting.end_only,
+            ):
+                self.exp.send_notification(
+                    f"Experiment {self.exp.get_name()} ({self.exp.get_key()})",
+                    status="completed successfully",
+                )
             self.finalize()
 
     def check_if_canceled(self):
