@@ -1,0 +1,40 @@
+[
+  {
+    "model_variant": "geometry_matched_gdn_ev2_nope",
+    "task_name": "1p2b-cx8",
+    "run_name": "pt-1p2b-geometry-gdn-ev2-nope-cx8-lr4e-4-ep8-sync-r1",
+    "commit": "45b2c821a323ab0b5049742e9d5b308e0bd988ce",
+    "diagnose_nonfinite": true,
+    "diagnostic_stop_step": 18500,
+    "diagnostic_dump_root": "/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/olmo-ddp/debug/nonfinite-grad",
+    "outcome": "failed_nonfinite_grad",
+    "failure_step": 17592,
+    "outcome_summary": "Broad NaN: 374-375 DP entries and 32-38 EP-DP entries were non-finite on every rank.",
+    "experiment_id": "01KY097ZF4F18F16P71XZWJVX0",
+    "task_ids": [
+      "01KY097ZF8CQF7GTFGEC137X6P",
+      "01KY097ZJQJ22F9SCB9C0GXVMM",
+      "01KY097ZP594N3HQ7ZNAJ70E7C",
+      "01KY097ZSYM07EHYVKNFBFD8NY"
+    ],
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY097ZF4F18F16P71XZWJVX0"
+  },
+  {
+    "model_variant": "geometry_matched_gdn_ev2_nope_gated",
+    "task_name": "1p2b-cx2",
+    "run_name": "pt-1p2b-geometry-gdn-ev2-nope-gated-cx2-lr6e-4-ep8-sync-r1",
+    "commit": "45b2c821a323ab0b5049742e9d5b308e0bd988ce",
+    "diagnose_nonfinite": true,
+    "diagnostic_stop_step": 21500,
+    "diagnostic_dump_root": "/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/olmo-ddp/debug/nonfinite-grad",
+    "outcome": "succeeded_hard_stop",
+    "final_step": 21500,
+    "outcome_summary": "Did not reproduce; crossed the previous failure position and saved durable step21500.",
+    "experiment_id": "01KY098CNTQ5E0WTZTVJG8KTXR",
+    "task_ids": [
+      "01KY098CNZ5EXA7WNCG86Y3B5G",
+      "01KY098CT1MY4KC39QHMXZMY1J"
+    ],
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY098CNTQ5E0WTZTVJG8KTXR"
+  }
+]

@@ -245,14 +245,19 @@ record, including every task ID, is
 | 1.2B | 4 | `3e-4` | 32 | [01KXT0CKPC9NV36GKDXZH5SM17](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXT0CKPC9NV36GKDXZH5SM17) |
 | 1.2B | 8 | `4e-4` | 32 | [01KXT0CQBVT4T414SAZQYT1RAS](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXT0CQBVT4T414SAZQYT1RAS) |
 
-Status at 2026-07-20 06:12 UTC: all 480M and 810M cells plus 1.2B Cx1/Cx2
-are finished, for 10/12 completed cells. The newly completed 810M Cx8 has
-strict final-250M CE `2.119848`. The 1.2B Cx4 worker is at 75.08B / 92.88B
-tokens (80.8%). The user requeued the
+Status at 2026-07-20 17:45 UTC: all 480M and 810M cells plus 1.2B Cx1/Cx2/Cx4
+are finished, for 11/12 completed cells. Strict final-250M CE is `2.119848`
+for 810M Cx8 and `2.107767` for the newly completed 1.2B Cx4. The user requeued the
 [Cx8 resume](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXW463APF8FT6RV8T8XZ2D6Q)
 in place. It resumed from the same checkpoint directory, reached step 17,644,
 and failed for a third time on the same `Non-finite total grad norm`
-assertion; it is stopped with durable `step17500`.
+assertion. The short urgent
+[diagnostic continuation](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY097ZF4F18F16P71XZWJVX0)
+resumed from durable `step17500` with the original LR and optimizer state, then
+failed again at step 17,592. The dump shows a broad failure, not one bad tensor:
+all 375 DP entries on rank 0 and 374/375 on every other rank were NaN, along
+with 32--38 EP-DP entries per rank. The next continuation should therefore use
+a separately labeled lower LR rather than blindly skip a single step.
 Their W&B IDs are registered in [`plot_pretraining_wave.py`](plot_pretraining_wave.py),
 so later finished-only refreshes require no registry change.
 
@@ -260,11 +265,11 @@ The gated-attention wave uses the identical GPU, EP, microbatch,
 checkpointing, and evaluator-free layout, with the same transferred
 wide-integration LR in every cell. It is urgent unallocated work on Holmes,
 pinned to commit `1a85227bdb8baeab2ad05555935aae78938bb0cd` for the initial
-submissions. At the 2026-07-20 06:12 UTC refresh, all 480M cells, 810M
-Cx1/Cx2/Cx4, and 1.2B Cx1 are finished, for 8/12 completed cells. Newly
-collected strict final-250M CE is `2.191179` for 810M Cx4 and `2.273007` for
-1.2B Cx1. The 810M Cx8 worker is at 117.60B / 121.88B (96.5%), while 1.2B
-Cx4/Cx8 are at 75.4% and 35.7%.
+submissions. At the 2026-07-20 17:45 UTC refresh, all 480M cells, all 810M
+cells, and 1.2B Cx1/Cx4 are finished, for 10/12 completed cells. Strict
+final-250M CE is `2.191179` for 810M Cx4, `2.114516` for 810M Cx8,
+`2.273007` for 1.2B Cx1, and `2.108263` for 1.2B Cx4. The 1.2B Cx8 worker is at 112.14B / 187.44B tokens (59.8%), at
+about 315 TFLOPs/GPU.
 All four 1.2B cells initially failed before training
 because the common 6% active-parameter guard rejected their audited 6.1155%
 gated delta. The production entrypoint now uses a gated-only 6.2% cap while
@@ -282,13 +287,20 @@ re-submitted as urgent unallocated work pinned to commit
 - 1.2B Cx4: [01KXW48CSDSEATB2FR5HJ9SKT9](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXW48CSDSEATB2FR5HJ9SKT9)
 - 1.2B Cx8: [01KXW48H5X4BQMR9BPRWWM5BS4](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXW48H5X4BQMR9BPRWWM5BS4)
 
-Do not blindly requeue either repeatedly unstable cell again. The next attempt
-should resume the same checkpoint and settings on a short diagnostic branch
-that backports the opt-in non-finite-gradient diagnostics from `cf2d0ad26`.
-If the failure is isolated to one parameter or batch, an explicit logged
-non-finite-step skip can preserve the transferred-LR experiment. If it is
-broad or repeats quickly, continue at a separately labeled 20–25% lower LR;
-do not silently treat that continuation as the original transferred-LR cell.
+Both repeatedly unstable cells were run as short diagnostic resumptions pinned
+to commit `45b2c821a`. The ungated Cx8 work is
+[01KY097ZF4F18F16P71XZWJVX0](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY097ZF4F18F16P71XZWJVX0),
+and the gated Cx2 work is
+[01KY098CNTQ5E0WTZTVJG8KTXR](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY098CNTQ5E0WTZTVJG8KTXR).
+They resume the original checkpoint directories, LR, optimizer state, batch
+layout, and data position; the only training-path change is targeted
+non-finite-gradient reporting. The ungated run reproduced a broad NaN at step
+17,592. The gated Cx2 run did not reproduce: it trained cleanly through the
+previous failure position and reached its hard stop at step 21,500, leaving a
+durable `step21500` checkpoint and no diagnostic dump. It can resume normally
+from that checkpoint at the transferred LR. The ungated Cx8 should instead
+continue at a separately labeled 20--25% lower LR; do not silently treat that
+continuation as the original transferred-LR cell.
 
 | Size | Cx | LR | GPUs | Beaker work |
 |---|---:|---:|---:|---|

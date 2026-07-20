@@ -55,7 +55,7 @@ targets:
   step: step118103
   expert_parallel_size: 8
   expert_parallel_path: sync_1d
-  rank_microbatch_sequences: 4
+  rank_microbatch_sequences: 3
 - source_run: pt-480m-geometry-gdn-ev2-nope-cx1-lr1p2e-3-r1
   model_size: 480m
   variant: geometry_matched_gdn_ev2_nope
@@ -73,7 +73,7 @@ targets:
   step: step43139
   expert_parallel_size: 1
   expert_parallel_path: sync_1d
-  rank_microbatch_sequences: 4
+  rank_microbatch_sequences: 3
 - source_run: pt-480m-geometry-gdn-ev2-nope-cx4-lr8e-4-r1
   model_size: 480m
   variant: geometry_matched_gdn_ev2_nope
@@ -109,7 +109,7 @@ targets:
   step: step76852
   expert_parallel_size: 1
   expert_parallel_path: sync_1d
-  rank_microbatch_sequences: 4
+  rank_microbatch_sequences: 3
 - source_run: pt-810m-geometry-gdn-ev2-nope-cx4-lr4e-4-r1
   model_size: 810m
   variant: geometry_matched_gdn_ev2_nope
@@ -154,7 +154,7 @@ targets:
   step: step43379
   expert_parallel_size: 1
   expert_parallel_path: sync_1d
-  rank_microbatch_sequences: 4
+  rank_microbatch_sequences: 3
 - source_run: pt-480m-geometry-gdn-ev2-nope-gated-cx4-lr8e-4-r1
   model_size: 480m
   variant: geometry_matched_gdn_ev2_nope_gated
@@ -190,7 +190,7 @@ targets:
   step: step77492
   expert_parallel_size: 1
   expert_parallel_path: sync_1d
-  rank_microbatch_sequences: 4
+  rank_microbatch_sequences: 3
 - source_run: pt-810m-geometry-gdn-ev2-nope-gated-cx4-lr4e-4-r1
   model_size: 810m
   variant: geometry_matched_gdn_ev2_nope_gated
@@ -208,7 +208,7 @@ targets:
   step: step115410
   expert_parallel_size: 8
   expert_parallel_path: sync_1d
-  rank_microbatch_sequences: 4
+  rank_microbatch_sequences: 3
 - source_run: 1p2b-intwide-hybrid-gdn-ev1-cx4-lr3e-4-ep8-sync
   model_size: 1p2b
   variant: integration_wide_gdn_ev1

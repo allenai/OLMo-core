@@ -1,6 +1,6 @@
 # Geometry-matched NoPE active hybrid GDN intervention
 
-Generated: `2026-07-20T06:06:32.552926+00:00`
+Generated: `2026-07-20T17:57:45.829736+00:00`
 
 Selection metric: final `250M`-token mean training CE. Only finished runs are eligible.
 The optimal-LR summary includes only bracketed 275M sweeps with a valid quadratic fit.
@@ -25,7 +25,7 @@ Fitted LR minima in the 275M U-plot are visual aids and are never used to select
 | 810m | Cx8 | fixed-LR transfer | finished | wide_integration: 2.104939 @ 0.0004; hybrid_gdn_ev1: 2.095585 @ 0.0004; geometry_gdn_ev2: — | 2.119848 (0.0004) | wide_integration: +0.014909; hybrid_gdn_ev1: +0.024263; geometry_gdn_ev2: — |
 | 1p2b | Cx1 | fixed-LR transfer | finished | wide_integration: 2.273062 @ 0.0004; hybrid_gdn_ev1: 2.253953 @ 0.0004; geometry_gdn_ev2: — | 2.274697 (0.0004) | wide_integration: +0.001635; hybrid_gdn_ev1: +0.020744; geometry_gdn_ev2: — |
 | 1p2b | Cx2 | fixed-LR transfer | finished | wide_integration: 2.178332 @ 0.0006; hybrid_gdn_ev1: 2.163788 @ 0.0006; geometry_gdn_ev2: — | 2.190998 (0.0006) | wide_integration: +0.012665; hybrid_gdn_ev1: +0.027210; geometry_gdn_ev2: — |
-| 1p2b | Cx4 | fixed-LR transfer | pending | wide_integration: 2.094219 @ 0.0003; hybrid_gdn_ev1: 2.081180 @ 0.0003; geometry_gdn_ev2: — | — | wide_integration: —; hybrid_gdn_ev1: —; geometry_gdn_ev2: — |
+| 1p2b | Cx4 | fixed-LR transfer | finished | wide_integration: 2.094219 @ 0.0003; hybrid_gdn_ev1: 2.081180 @ 0.0003; geometry_gdn_ev2: — | 2.107767 (0.0003) | wide_integration: +0.013548; hybrid_gdn_ev1: +0.026587; geometry_gdn_ev2: — |
 | 1p2b | Cx8 | fixed-LR transfer | pending | wide_integration: 2.022641 @ 0.0004; hybrid_gdn_ev1: —; geometry_gdn_ev2: — | — | wide_integration: —; hybrid_gdn_ev1: —; geometry_gdn_ev2: — |
 
 ## Runs
@@ -124,6 +124,7 @@ Fitted LR minima in the 275M U-plot are visual aids and are never used to select
 | 1p2b | geometry-matched hybrid (GDN, expand_v=2, NoPE) | 2 | 0.0006 | finished | 46.440 | 2.190998 | — | [hd12kewt](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/hd12kewt) |
 | 1p2b | hybrid (GDN, expand_v=1) | 2 | 0.0006 | finished | 45.381 | 2.163788 | — | [4k1bh4k2](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/4k1bh4k2) |
 | 1p2b | wide integration (SWA) | 2 | 0.0006 | finished | 42.835 | 2.178332 | — | [jfwntmwm](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/jfwntmwm) |
+| 1p2b | geometry-matched hybrid (GDN, expand_v=2, NoPE) | 4 | 0.0003 | finished | 92.880 | 2.107767 | — | [xxrj2oou](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/xxrj2oou) |
 | 1p2b | hybrid (GDN, expand_v=1) | 4 | 0.0003 | finished | 90.762 | 2.081180 | — | [vc3c6gj6](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/vc3c6gj6) |
 | 1p2b | wide integration (SWA) | 4 | 0.0003 | finished | 85.670 | 2.094219 | — | [u7ab1tpb](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/u7ab1tpb) |
 | 1p2b | wide integration (SWA) | 8 | 0.0004 | finished | 171.340 | 2.022641 | — | [bqjzmiqi](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/bqjzmiqi) |

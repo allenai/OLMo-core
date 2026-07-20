@@ -47,7 +47,7 @@ targets:
     gpu_count: 8
     expert_parallel_size: 1
     expert_parallel_path: sync_1d
-    rank_microbatch_sequences: 4
+    rank_microbatch_sequences: 1
   - source_run: lc-810m-baseline-cx8-mt4e-5-lc2e-5-64k-r1
     step: step23842
     model_size: 810m
@@ -55,4 +55,4 @@ targets:
     gpu_count: 8
     expert_parallel_size: 1
     expert_parallel_path: sync_1d
-    rank_microbatch_sequences: 4
+    rank_microbatch_sequences: 1

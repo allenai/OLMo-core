@@ -1,6 +1,6 @@
 # Geometry-matched NoPE gated-attention active hybrid GDN intervention
 
-Generated: `2026-07-20T06:07:25.235826+00:00`
+Generated: `2026-07-20T17:58:39.978064+00:00`
 
 Selection metric: final `250M`-token mean training CE. Only finished runs are eligible.
 The optimal-LR summary includes only bracketed 275M sweeps with a valid quadratic fit.
@@ -22,10 +22,10 @@ Fitted LR minima in the 275M U-plot are visual aids and are never used to select
 | 810m | Cx1 | fixed-LR transfer | finished | wide_integration: 2.373197 @ 0.0006; hybrid_gdn_ev1: 2.364345 @ 0.0006; geometry_gdn_ev2: —; geometry_gdn_ev2_nope: 2.377107 @ 0.0006 | 2.373592 (0.0006) | wide_integration: +0.000395; hybrid_gdn_ev1: +0.009247; geometry_gdn_ev2: —; geometry_gdn_ev2_nope: -0.003515 |
 | 810m | Cx2 | fixed-LR transfer | finished | wide_integration: 2.268948 @ 0.00056; hybrid_gdn_ev1: 2.247185 @ 0.00056; geometry_gdn_ev2: —; geometry_gdn_ev2_nope: 2.278701 @ 0.00056 | 2.277253 (0.00056) | wide_integration: +0.008305; hybrid_gdn_ev1: +0.030067; geometry_gdn_ev2: —; geometry_gdn_ev2_nope: -0.001449 |
 | 810m | Cx4 | fixed-LR transfer | finished | wide_integration: 2.192802 @ 0.0004; hybrid_gdn_ev1: 2.160440 @ 0.0004; geometry_gdn_ev2: —; geometry_gdn_ev2_nope: 2.191890 @ 0.0004 | 2.191179 (0.0004) | wide_integration: -0.001623; hybrid_gdn_ev1: +0.030739; geometry_gdn_ev2: —; geometry_gdn_ev2_nope: -0.000712 |
-| 810m | Cx8 | fixed-LR transfer | pending | wide_integration: 2.104939 @ 0.0004; hybrid_gdn_ev1: 2.095585 @ 0.0004; geometry_gdn_ev2: —; geometry_gdn_ev2_nope: 2.119848 @ 0.0004 | — | wide_integration: —; hybrid_gdn_ev1: —; geometry_gdn_ev2: —; geometry_gdn_ev2_nope: — |
+| 810m | Cx8 | fixed-LR transfer | finished | wide_integration: 2.104939 @ 0.0004; hybrid_gdn_ev1: 2.095585 @ 0.0004; geometry_gdn_ev2: —; geometry_gdn_ev2_nope: 2.119848 @ 0.0004 | 2.114516 (0.0004) | wide_integration: +0.009577; hybrid_gdn_ev1: +0.018931; geometry_gdn_ev2: —; geometry_gdn_ev2_nope: -0.005331 |
 | 1p2b | Cx1 | fixed-LR transfer | finished | wide_integration: 2.273062 @ 0.0004; hybrid_gdn_ev1: 2.253953 @ 0.0004; geometry_gdn_ev2: —; geometry_gdn_ev2_nope: 2.274697 @ 0.0004 | 2.273007 (0.0004) | wide_integration: -0.000055; hybrid_gdn_ev1: +0.019054; geometry_gdn_ev2: —; geometry_gdn_ev2_nope: -0.001690 |
 | 1p2b | Cx2 | fixed-LR transfer | pending | wide_integration: 2.178332 @ 0.0006; hybrid_gdn_ev1: 2.163788 @ 0.0006; geometry_gdn_ev2: —; geometry_gdn_ev2_nope: 2.190998 @ 0.0006 | — | wide_integration: —; hybrid_gdn_ev1: —; geometry_gdn_ev2: —; geometry_gdn_ev2_nope: — |
-| 1p2b | Cx4 | fixed-LR transfer | pending | wide_integration: 2.094219 @ 0.0003; hybrid_gdn_ev1: 2.081180 @ 0.0003; geometry_gdn_ev2: —; geometry_gdn_ev2_nope: — | — | wide_integration: —; hybrid_gdn_ev1: —; geometry_gdn_ev2: —; geometry_gdn_ev2_nope: — |
+| 1p2b | Cx4 | fixed-LR transfer | finished | wide_integration: 2.094219 @ 0.0003; hybrid_gdn_ev1: 2.081180 @ 0.0003; geometry_gdn_ev2: —; geometry_gdn_ev2_nope: 2.107767 @ 0.0003 | 2.108263 (0.0003) | wide_integration: +0.014043; hybrid_gdn_ev1: +0.027082; geometry_gdn_ev2: —; geometry_gdn_ev2_nope: +0.000495 |
 | 1p2b | Cx8 | fixed-LR transfer | pending | wide_integration: 2.022641 @ 0.0004; hybrid_gdn_ev1: —; geometry_gdn_ev2: —; geometry_gdn_ev2_nope: — | — | wide_integration: —; hybrid_gdn_ev1: —; geometry_gdn_ev2: —; geometry_gdn_ev2_nope: — |
 
 ## Runs
@@ -139,6 +139,7 @@ Fitted LR minima in the 275M U-plot are visual aids and are never used to select
 | 810m | hybrid (GDN, expand_v=1) | 4 | 0.0004 | finished | 58.476 | 2.160440 | — | [kye1c19u](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/kye1c19u) |
 | 810m | wide integration (SWA) | 4 | 0.0004 | finished | 55.610 | 2.192802 | — | [58ftjxmw](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/58ftjxmw) |
 | 810m | geometry-matched hybrid (GDN, expand_v=2, NoPE) | 8 | 0.0004 | finished | 120.877 | 2.119848 | — | [bf0yrani](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/bf0yrani) |
+| 810m | geometry-matched hybrid (GDN, expand_v=2, NoPE, gated attention) | 8 | 0.0004 | finished | 121.884 | 2.114516 | — | [pvoq0dq6](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/pvoq0dq6) |
 | 810m | hybrid (GDN, expand_v=1) | 8 | 0.0004 | finished | 116.953 | 2.095585 | — | [s5gvyjiz](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/s5gvyjiz) |
 | 810m | wide integration (SWA) | 8 | 0.0004 | finished | 111.220 | 2.104939 | — | [kyti8h1y](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/kyti8h1y) |
 | 1p2b | geometry-matched hybrid (GDN, expand_v=2, NoPE) | 1 | 0.0004 | finished | 23.220 | 2.274697 | — | [dngmbyg2](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/dngmbyg2) / [lubri1f1](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/lubri1f1) |
@@ -148,6 +149,8 @@ Fitted LR minima in the 275M U-plot are visual aids and are never used to select
 | 1p2b | geometry-matched hybrid (GDN, expand_v=2, NoPE) | 2 | 0.0006 | finished | 46.440 | 2.190998 | — | [hd12kewt](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/hd12kewt) |
 | 1p2b | hybrid (GDN, expand_v=1) | 2 | 0.0006 | finished | 45.381 | 2.163788 | — | [4k1bh4k2](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/4k1bh4k2) |
 | 1p2b | wide integration (SWA) | 2 | 0.0006 | finished | 42.835 | 2.178332 | — | [jfwntmwm](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/jfwntmwm) |
+| 1p2b | geometry-matched hybrid (GDN, expand_v=2, NoPE) | 4 | 0.0003 | finished | 92.880 | 2.107767 | — | [xxrj2oou](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/xxrj2oou) |
+| 1p2b | geometry-matched hybrid (GDN, expand_v=2, NoPE, gated attention) | 4 | 0.0003 | finished | 93.719 | 2.108263 | — | [bhr5mgpr](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/bhr5mgpr) |
 | 1p2b | hybrid (GDN, expand_v=1) | 4 | 0.0003 | finished | 90.762 | 2.081180 | — | [vc3c6gj6](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/vc3c6gj6) |
 | 1p2b | wide integration (SWA) | 4 | 0.0003 | finished | 85.670 | 2.094219 | — | [u7ab1tpb](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/u7ab1tpb) |
 | 1p2b | wide integration (SWA) | 8 | 0.0004 | finished | 171.340 | 2.022641 | — | [bqjzmiqi](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/bqjzmiqi) |

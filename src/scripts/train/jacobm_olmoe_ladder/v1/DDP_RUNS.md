@@ -16,7 +16,7 @@ into the remaining V1 runs.
 Evaluator callbacks are disabled in all resumed training jobs as of 2026-07-16.
 Validation and RULER run afterward from final checkpoints in separate jobs.
 
-| Size | Family | LR | Global batch | Rank microbatch | Beaker experiment | Job | W&B | Current state (2026-07-20 06:12 UTC) |
+| Size | Family | LR | Global batch | Rank microbatch | Beaker experiment | Job | W&B | Current state (2026-07-20 18:00 UTC) |
 |---|---|---:|---:|---:|---|---|---|---|
 | 275M | baseline | `1e-4` | 2 Mi tokens | 4 seq | [`01KXEW4KTBWXMY9XPYANZ6T7YD`](https://beaker.org/ex/01KXEW4KTBWXMY9XPYANZ6T7YD) | `01KXEW4M665ZHPG6SCV25N533Q` | [`e4hvrd33`](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/e4hvrd33) | finished, step 47,684 / 100.001B tokens |
 | 275M | integration deep | `8e-5` | 2 Mi tokens | 4 seq | [`01KXFP8ZKCB5BBMX5WY9MV5WWW`](https://beaker.org/ex/01KXFP8ZKCB5BBMX5WY9MV5WWW) | `01KXFP8ZYY404ABS636ANN09HX` | [`hq0yjd50`](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/hq0yjd50) | finished, step 47,684 / 100.001B tokens |
@@ -24,19 +24,25 @@ Validation and RULER run afterward from final checkpoints in separate jobs.
 | 480M | baseline | `4e-5` | 3 Mi tokens | 6 seq | [`01KXFP8ZKCB5BBMX5WY9MV5WWW`](https://beaker.org/ex/01KXFP8ZKCB5BBMX5WY9MV5WWW) | `01KXFP902AXYVT672A1JMC5Z5E` | [`9lgu2exp`](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/9lgu2exp) | finished, step 31,790 / 100.003B tokens |
 | 480M | integration deep | `4e-5` | 3 Mi tokens | 6 seq | [`01KXFP8ZKCB5BBMX5WY9MV5WWW`](https://beaker.org/ex/01KXFP8ZKCB5BBMX5WY9MV5WWW) | `01KXFP905NYT6E9AAYP288Q6YD` | [`32yjntyu`](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/32yjntyu) | finished, step 31,790 / 100.003B tokens |
 | 480M | integration wide | `4e-5` | 3 Mi tokens | 6 seq | [`01KXFQJ6M4HDHJ50WVS4ECB8KK`](https://beaker.org/ex/01KXFQJ6M4HDHJ50WVS4ECB8KK) | `01KXFQJ70Y3ZAV6KEPQJE59RSK` | [`3357zlh6`](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/3357zlh6) | finished, step 31,790 / 100.003B tokens |
-| 810M | integration wide | `2e-5` | 4 Mi tokens | 4 seq x 2 accum | [current work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXMPP1AX400D5QTC07R8V5VB) | [completed job](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXMPP1AX400D5QTC07R8V5VB?taskId=01KXMPP1K1MBVKANGMQMMJZ93W&jobId=01KXQ8KJTMHR3ERAVFFVFVB9D1) | [hxdiomdx](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/hxdiomdx) | finished, 100.001B tokens; final `step23842`; validation and RULER queued; HF conversion complete |
-| 1.2B | integration wide | `2e-5` | 4 Mi tokens | 2 seq x 4 accum | [current work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXMPP1AX400D5QTC07R8V5VB) | [preempted job](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXMPP1AX400D5QTC07R8V5VB?taskId=01KXMPP1PE5T3M7YFTXEYVM03E&jobId=01KXY7JRN4WCF1J4CVZ149PQW0) | [current](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/7u72zzks) | queued after an eval worker preempted it at 50.29B tokens; resumes from durable `step11000`; ~657 TFLOPs/GPU before preemption |
-| 810M | baseline | `2e-5` | 4 Mi tokens | 4 seq x 2 accum | [current work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXPYTPVH09F88PVR64G22HG3) | [completed job](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXPYTPVH09F88PVR64G22HG3?taskId=01KXPYTPVPY296SME2TRMV2VPH&jobId=01KXQNNVFBS4MVCR7GSKWKANQP) | [vgqd5hij](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/vgqd5hij) | finished, 100.001B tokens; final `step23842`; validation and RULER queued; HF conversion complete |
-| 1.2B | baseline | `2e-5` | 4 Mi tokens | 2 seq x 4 accum | [current work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXPYTPVH09F88PVR64G22HG3) | [preempted job](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXPYTPVH09F88PVR64G22HG3?taskId=01KXPYTPZ22EW6JX07XQ7ZMAWQ&jobId=01KXYEAHX2ENVPG5MJF70EMN05) | [current](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/8esu2pk2) | queued after an eval worker preempted it at 6.29B tokens; resumes from durable `step1000`; ~715 TFLOPs/GPU before preemption |
+| 810M | integration wide | `2e-5` | 4 Mi tokens | 4 seq x 2 accum | [current work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXMPP1AX400D5QTC07R8V5VB) | [completed job](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXMPP1AX400D5QTC07R8V5VB?taskId=01KXMPP1K1MBVKANGMQMMJZ93W&jobId=01KXQ8KJTMHR3ERAVFFVFVB9D1) | [hxdiomdx](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/hxdiomdx) | finished, 100.001B tokens; final `step23842`; RULER recall `0.1879`; validation retry pending; HF conversion complete |
+| 1.2B | integration wide | `2e-5` | 4 Mi tokens | 2 seq x 4 accum | [current work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXMPP1AX400D5QTC07R8V5VB) | [current pending job](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXMPP1AX400D5QTC07R8V5VB?taskId=01KXMPP1PE5T3M7YFTXEYVM03E&jobId=01KY09DDAGHX07YZAEADHH3C3W) | [latest segment](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/nx5r7k15) | pending at `high` priority after the latest preemption; durable `step12000` is present (50.33B tokens); latest segment reached 50.91B and ~671 TFLOPs/GPU |
+| 810M | baseline | `2e-5` | 4 Mi tokens | 4 seq x 2 accum | [current work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXPYTPVH09F88PVR64G22HG3) | [completed job](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXPYTPVH09F88PVR64G22HG3?taskId=01KXPYTPVPY296SME2TRMV2VPH&jobId=01KXQNNVFBS4MVCR7GSKWKANQP) | [vgqd5hij](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/vgqd5hij) | finished, 100.001B tokens; final `step23842`; RULER recall `0.2234`; validation retry pending; HF conversion complete |
+| 1.2B | baseline | `2e-5` | 4 Mi tokens | 2 seq x 4 accum | [current work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXPYTPVH09F88PVR64G22HG3) | [current pending job](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXPYTPVH09F88PVR64G22HG3?taskId=01KXPYTPZ22EW6JX07XQ7ZMAWQ&jobId=01KY09XJF8FMX4BR3QTXZDGA73) | [latest segment](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/mb4e1vmf) | pending at `high` priority from durable `step1000`; the preceding attempt reached step 1,009 at ~709 TFLOPs/GPU, then was preempted by an urgent LC validation task |
 
 The completed 810M LC checkpoints were submitted for full validation in
 [01KXZ1T90TVAY5MFWNSD9B68PT](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXZ1T90TVAY5MFWNSD9B68PT).
+Both original tasks OOMed with a rank microbatch of four sequences while
+computing full validation cross entropy. The corrected MB1 retry is urgent and
+pending in
+[01KY09D5199Z78P43JKZAMHF3M](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY09D5199Z78P43JKZAMHF3M).
 Their one-GPU Jupiter HF conversions completed in
 [01KXZ1X59JJ7DXAGN19ZC87V60](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXZ1X59JJ7DXAGN19ZC87V60);
 the integration-wide and baseline outputs contain 49.62 GB and 19.71 GB of HF
-weights, respectively. The one-H100 Jupiter RULER-64K evaluations are queued
-as [integration wide](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXZ2JBY2X06TZ1GAWC45S1N1)
-and [baseline](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXZ2H9E4TKZ7REK9Z7RW9VJZ).
+weights, respectively. The one-H100 Jupiter RULER-64K evaluations finished:
+[integration wide](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXZ2JBY2X06TZ1GAWC45S1N1)
+has aggregate recall `0.1879` at 1.28 examples/s, and
+[baseline](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXZ2H9E4TKZ7REK9Z7RW9VJZ)
+has aggregate recall `0.2234` at 1.34 examples/s.
 
 ## 275M integration-wide hybrid control
 
