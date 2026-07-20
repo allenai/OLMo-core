@@ -130,6 +130,35 @@ production wave using the same transferred wide-integration LRs and the same
 and Beaker work links are in
 [`GEOMETRY_MATCHED_SCALE.md`](GEOMETRY_MATCHED_SCALE.md).
 
+## RoPE interaction control
+
+The larger gated-NoPE family showed regressions at several scale cells, so a
+275M interaction control restores RoPE while retaining the gate. The new
+`geometry_rope_gated` profile is identical to `geometry_nope_gated` except for
+the RoPE object on global-attention layers 4 and 9. It retains 8 Q / 4 KV
+heads, expert hidden size 664, `expand_v=2`, elementwise full-precision
+gating, QK RMSNorm, and `init_std=0.01`.
+
+RoPE uses theta `500000`, full-precision rotary application, and no scaling.
+Because RoPE adds no weights, the gated RoPE and gated NoPE profiles have the
+same 292,092,800 active and 3,137,624,960 total parameters. A strict
+construction test confirmed exact config equality after removing RoPE from
+the new profile.
+
+- Smoke manifest:
+  [`launchers/pretraining/manifests/275m_geometry_gdn_ev2_rope_gated_smoke.yaml`](launchers/pretraining/manifests/275m_geometry_gdn_ev2_rope_gated_smoke.yaml)
+- Sweep manifest:
+  [`launchers/pretraining/manifests/275m_geometry_gdn_ev2_rope_gated.yaml`](launchers/pretraining/manifests/275m_geometry_gdn_ev2_rope_gated.yaml)
+- Smoke work:
+  [01KY0G559WGWP50DE05B8DJQGY](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY0G559WGWP50DE05B8DJQGY)
+- Sweep work:
+  [01KY0GVX8SM5998GFMGAKR3AQ6](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY0GVX8SM5998GFMGAKR3AQ6)
+
+The Cx4 MB16 checkpoint-free smoke completed 11 steps and exited 0. The full
+four-LR Cx1/Cx2/Cx4/Cx8 sweep was then submitted urgent and unallocated on 80
+Holmes B300s at peak concurrency. It deliberately reuses every training and
+systems setting from the gated-NoPE sweep.
+
 The larger 1.2B gated models have an audited 6.1155% active-parameter delta
 from the corresponding wide-integration reference. A shared 6% sanity guard
 initially rejected those runs before step 1; the production entrypoint now

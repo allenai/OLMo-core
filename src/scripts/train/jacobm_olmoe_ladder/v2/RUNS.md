@@ -4,7 +4,7 @@ Record post-migration experiment waves here. Per-run rows must include Beaker
 job IDs and W&B IDs once they exist. Detailed migration-era DDP jobs remain in
 [`../v1/DDP_RUNS.md`](../v1/DDP_RUNS.md).
 
-## Live status snapshot (2026-07-20 17:59 UTC)
+## Live status snapshot (2026-07-20 19:43 UTC)
 
 This is the current source of truth for active V2 work. The detailed sections
 below retain the full launch and retry history.
@@ -21,6 +21,7 @@ below retain the full launch and retry history.
 | pretraining | first hybrid 1.2B Cx8 | running | 138.27B / 181.52B tokens (76.2%); ~526 TFLOPs/GPU | [7eemhu7g](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/7eemhu7g) |
 | pretraining | aligned geometry + NoPE 275M sweep | finished | 16/16; observed best LR is `8e-4`, `1.6e-3`, `8e-4`, `8e-4` at Cx1/2/4/8 | [results](results/pretraining/geometry_gdn_ev2_nope/results.md) |
 | pretraining | aligned geometry + NoPE + gated attention 275M sweep | finished | 16/16; observed best LR is `8e-4`, `1.6e-3`, `8e-4`, `8e-4` at Cx1/2/4/8 | [results](results/pretraining/geometry_gdn_ev2_nope_gated/results.md) |
+| pretraining | aligned geometry + RoPE + gated attention 275M sweep | starting | 16/16 urgent unallocated tasks submitted; 80-GPU peak | [Beaker](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY0GVX8SM5998GFMGAKR3AQ6) |
 | pretraining | larger aligned geometry + NoPE | 11 finished / fresh Cx8 reproduction scheduled | 1.2B Cx4 final-250M CE `2.107767`; clean Cx8 `4e-4` retrain will be watched across steps 17K--18K | [Beaker](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY0CM4HKG0R4H352N2SQV6P1) |
 | pretraining | larger aligned geometry + NoPE + gated attention | running / ready to resume | 10/12 finished; 1.2B Cx8 at 59.8%; Cx2 diagnostic reached clean `step21500` | [results](results/pretraining/geometry_gdn_ev2_nope_gated/results.md) |
 | midtraining | first hybrid 275M Cx8 | finished | 100B; final checkpoint `step95368`; validation finished | [1keo2hz6](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/1keo2hz6) |
@@ -472,6 +473,35 @@ Plots and the exact run table are under
 [`plots/pretraining/geometry_gdn_ev2_nope_gated/`](plots/pretraining/geometry_gdn_ev2_nope_gated/)
 and
 [`results/pretraining/geometry_gdn_ev2_nope_gated/`](results/pretraining/geometry_gdn_ev2_nope_gated/).
+
+## 275M geometry + RoPE + gated attention
+
+- Model variant: `geometry_275m_gdn_ev2_rope_gated`
+- Parent: the completed `geometry_275m_gdn_ev2_nope_gated` sweep
+- Isolated change: restore RoPE only on full-attention layers 4 and 9
+- RoPE config: theta `500000`, full precision, no scaling
+- Attention gate: elementwise, full precision; 8 Q / 4 KV heads retained
+- Parameters: 292,092,800 active; 227,867,520 active non-embedding;
+  3,137,624,960 total
+- Smoke:
+  [01KY0G559WGWP50DE05B8DJQGY](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY0G559WGWP50DE05B8DJQGY)
+- Full LR sweep:
+  [01KY0GVX8SM5998GFMGAKR3AQ6](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY0GVX8SM5998GFMGAKR3AQ6)
+
+A strict local construction check normalized the new profile by removing RoPE
+from layers 4 and 9 and then compared it for exact equality with the gated-NoPE
+profile. The configs were identical after that normalization, including all
+parameter counts, mixer placement, MoE widths, head geometry, norms, gating,
+and initialization.
+
+The checkpoint-free Cx4 MB16 smoke ran on four Holmes B300s, reached all 11
+steps, and exited 0. Its final-five median was about 385.6 TFLOPs/GPU. The
+subsequent production sweep reuses the gated-NoPE optimizer batches and launch
+shapes: Cx1/Cx2/Cx4 use four GPUs with MB8/12/16, while Cx8 uses eight GPUs
+with MB12. Every Cx runs `4e-4`, `8e-4`, `1.6e-3`, and `3.2e-3`; in-loop and
+on-finish evaluation are disabled, and validation will be backfilled after
+training. All 16 tasks are urgent unallocated Holmes work with `minRuntime: 0`
+and auto-resume enabled.
 
 ## Larger geometry + NoPE capacity smokes
 

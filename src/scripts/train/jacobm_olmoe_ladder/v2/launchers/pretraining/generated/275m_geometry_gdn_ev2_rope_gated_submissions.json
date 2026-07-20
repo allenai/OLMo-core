@@ -1,0 +1,33 @@
+{
+  "model_variant": "geometry_275m_gdn_ev2_rope_gated",
+  "source_commit": "d4c3fc2eb",
+  "strict_config_check": "equals geometry_nope_gated after removing RoPE from full-attention layers 4 and 9",
+  "parameter_counts": {
+    "active": 292092800,
+    "active_non_embedding": 227867520,
+    "total": 3137624960
+  },
+  "smoke": {
+    "work_id": "01KY0G559WGWP50DE05B8DJQGY",
+    "task": "cx4-mb16",
+    "gpus": 4,
+    "steps": 11,
+    "exit_code": 0,
+    "median_final_5_tflops_per_gpu": 385.6,
+    "checkpoints": false
+  },
+  "sweep": {
+    "work_id": "01KY0GVX8SM5998GFMGAKR3AQ6",
+    "tasks": 16,
+    "peak_gpus": 80,
+    "priority": "urgent",
+    "min_runtime": 0,
+    "auto_resume": true,
+    "workspace": "ai2/OLMo-3-moe-experiments",
+    "cluster": "ai2/holmes",
+    "learning_rates": [0.0004, 0.0008, 0.0016, 0.0032],
+    "chinchilla_multiples": [1, 2, 4, 8],
+    "in_loop_evals": false,
+    "eval_on_finish": false
+  }
+}
