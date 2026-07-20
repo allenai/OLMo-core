@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -292,6 +293,14 @@ def main() -> None:
     parser.add_argument("--submit", action="store_true")
     parser.add_argument("--resume-existing", action="store_true")
     parser.add_argument(
+        "--run-suffix",
+        default="",
+        help=(
+            "Append a validated suffix to both task and run names for a clean "
+            "from-scratch reproduction with a distinct checkpoint directory."
+        ),
+    )
+    parser.add_argument(
         "--diagnose-nonfinite",
         action="store_true",
         help="Resume a known unstable cell with non-finite gradient dumps and a short hard stop.",
@@ -307,6 +316,26 @@ def main() -> None:
         if missing := wanted - available:
             raise ValueError(f"unknown selected tasks: {sorted(missing)}")
         rows = [row for row in rows if str(row["task_name"]) in wanted]
+
+    if args.run_suffix:
+        if not re.fullmatch(r"-[a-z0-9][a-z0-9-]*", args.run_suffix):
+            raise ValueError(
+                "--run-suffix must start with '-' and contain only lowercase "
+                "letters, digits, and hyphens"
+            )
+        if args.resume_existing or args.diagnose_nonfinite:
+            raise ValueError(
+                "--run-suffix is only for a clean from-scratch launch; do not "
+                "combine it with --resume-existing or --diagnose-nonfinite"
+            )
+        rows = [
+            {
+                **row,
+                "task_name": f"{row['task_name']}{args.run_suffix}",
+                "run_name": f"{row['run_name']}{args.run_suffix}",
+            }
+            for row in rows
+        ]
 
     variant = str(manifest["training"]["model_variant"])
     diagnostic_stops: dict[str, int] = {}
@@ -368,6 +397,7 @@ def main() -> None:
             "model_variant": manifest["training"]["model_variant"],
             "task_name": row["task_name"],
             "run_name": row["run_name"],
+            "run_suffix": args.run_suffix or None,
             "commit": commit,
             "diagnose_nonfinite": args.diagnose_nonfinite,
             "diagnostic_stop_step": diagnostic_stops.get(task_name),
