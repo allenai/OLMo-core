@@ -31,9 +31,9 @@ import sys
 
 # ── pre-parse sftlab build-time flags out of argv (before olmo_core.main sees it) ──────────────
 _BUILD_KEYS = {
-    "base_checkpoint", "model_arch", "tokenizer", "source_mixture_yaml", "length_tokens",
-    "seq_len", "peak_lr", "lr_schedule", "warmup_steps", "load_optim_state", "load_trainer_state",
-    "save_folder", "save_freq", "seed", "num_nodes",
+    "base_checkpoint", "model_arch", "tokenizer", "source_mixture_yaml", "source_mixture_b64",
+    "length_tokens", "seq_len", "peak_lr", "lr_schedule", "warmup_steps", "load_optim_state",
+    "load_trainer_state", "save_folder", "save_freq", "seed", "num_nodes",
 }
 _BUILD: dict[str, str] = {}
 _build_argv: list[str] = []   # the stripped flags, re-appended to the remote launch cmd
@@ -53,7 +53,10 @@ def _bool(v: str) -> bool:
 
 
 # Imports AFTER the argv strip (they're heavy; keeping them here also documents the olmo-core API).
+import base64  # noqa: E402
 from datetime import datetime  # noqa: E402
+
+import yaml  # noqa: E402
 
 from olmo_core.data import (  # noqa: E402
     InstanceFilterConfig,
@@ -110,8 +113,16 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         scheduler=_scheduler(int(b.get("warmup_steps", 0)), b.get("lr_schedule", "linear_with_warmup")),
     )
 
-    # The varied ingredient: a source_mixtures YAML (sources + target_ratio summing to 1.0).
-    source_list = SourceMixtureList.from_yaml(b["source_mixture_yaml"])
+    # The varied ingredient: a source_mixtures spec (sources + target_ratio summing to 1.0).
+    # Prefer the INLINED base64 YAML: sftlab passes the mix CONTENTS in the command, so neither the
+    # launch host nor the Beaker node has to open a shared file (the launcher re-runs this builder
+    # on BOTH hops). This mirrors how the SFT launcher carries unopened path strings, and keeps the
+    # mix authored locally in the sftlab repo. Fall back to a file path for manual/legacy runs.
+    if b.get("source_mixture_b64"):
+        mix_dict = yaml.safe_load(base64.b64decode(b["source_mixture_b64"]).decode())
+        source_list = SourceMixtureList.from_dict(mix_dict)
+    else:
+        source_list = SourceMixtureList.from_yaml(b["source_mixture_yaml"])
     source_list.validate()
     dataset_config = NumpyFSLDatasetConfig.from_src_mix(
         src_mix=SourceMixtureDatasetConfig(
