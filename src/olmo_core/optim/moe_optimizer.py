@@ -1176,9 +1176,11 @@ class OLMoDDPOptimizer:
             ep_dp_grads_replicated,
             ep_dp_grads_sharded,
         )
+        # Run opt-in diagnostics before scheduling the device-side assertion so a
+        # synchronizing debug read can capture the offending local gradients.
+        self._maybe_log_debug_grad_norms(total_grad_norm)
         if self.check_nan_inf_grad:
             _assert_finite_async(total_grad_norm, "total grad norm")
-        self._maybe_log_debug_grad_norms(total_grad_norm)
 
         clip_coef = self.max_grad_norm / (total_grad_norm + 1e-6)
         # Note: multiplying by the clamped coef is redundant when the coef is clamped to 1, but doing so
@@ -1198,13 +1200,19 @@ class OLMoDDPOptimizer:
 
     def _maybe_log_debug_grad_norms(self, total_grad_norm: torch.Tensor) -> None:
         raw_limit = os.getenv("OLMO_DDP_DEBUG_GRAD_NORMS")
+        nonfinite_only = os.getenv("OLMO_DDP_DEBUG_NONFINITE_GRAD", "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
         dump_root = (
             os.getenv("OLMO_DEBUG_DUMP_DIR")
             if os.getenv("OLMO_DEBUG_DUMP_OPTIM_GRAD_NORMS", "").strip().lower()
             in {"1", "true", "yes", "on"}
             else None
         )
-        if raw_limit is None and dump_root is None:
+        if raw_limit is None and dump_root is None and not nonfinite_only:
             return
         if raw_limit is None:
             limit = 0
@@ -1236,6 +1244,8 @@ class OLMoDDPOptimizer:
                     return
 
         total_value = total_grad_norm.detach().float().item()
+        if nonfinite_only and math.isfinite(total_value):
+            return
         raw_min = os.getenv("OLMO_DDP_DEBUG_GRAD_NORMS_MIN")
         if raw_min is not None:
             try:
@@ -1263,7 +1273,13 @@ class OLMoDDPOptimizer:
                 placements = ",".join(str(p) for p in self.states[f"{name}.main"].placements)
                 entries.append((local_norm, name, param_group["pg"], placements))
 
-        entries.sort(reverse=True, key=lambda item: item[0])
+        entries.sort(
+            reverse=True,
+            key=lambda item: (
+                not math.isfinite(item[0]),
+                item[0] if math.isfinite(item[0]) else 0.0,
+            ),
+        )
         if dump_enabled:
             run_id = os.getenv("OLMO_DEBUG_RUN_ID", "run")
             assert dump_root is not None
@@ -1289,12 +1305,14 @@ class OLMoDDPOptimizer:
             )
         if limit > 0:
             top_lines = "\n".join(
-                f"  {idx + 1:02d}. norm={norm:.6g} pg={pg} placements={placements} name={name}"
+                f"  {idx + 1:02d}. {'BAD ' if not math.isfinite(norm) else ''}"
+                f"norm={norm:.6g} pg={pg} placements={placements} name={name}"
                 for idx, (norm, name, pg, placements) in enumerate(entries[:limit])
             )
             log.warning(
-                "Debug grad norms on rank %s: total=%s top local entries:\n%s",
+                "Debug grad norms on rank %s step %s: total=%s top local entries:\n%s",
                 rank,
+                step,
                 total_value,
                 top_lines,
             )

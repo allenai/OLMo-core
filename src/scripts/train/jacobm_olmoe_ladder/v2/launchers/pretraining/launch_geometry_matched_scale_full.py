@@ -22,6 +22,10 @@ from scripts.train.jacobm_olmoe_ladder.v2.models.geometry_matched_scale import (
 SCRIPT_DIR = Path(__file__).resolve().parent
 DEFAULT_MANIFEST = SCRIPT_DIR / "manifests" / "geometry_matched_scale_nope_full.yaml"
 DEFAULT_RECORD = SCRIPT_DIR / "generated" / "geometry_matched_scale_full_submissions.json"
+DIAGNOSTIC_RECORD = SCRIPT_DIR / "generated" / "nonfinite_diagnostic_submissions.json"
+DIAGNOSTIC_DUMP_ROOT = Path(
+    "/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/olmo-ddp/debug/nonfinite-grad"
+)
 
 GLOBAL_BATCHES = {
     1: 262_144,
@@ -61,6 +65,10 @@ SELECTED_LAYOUT = {
 MODEL_VARIANTS = {
     "geometry_matched_gdn_ev2_nope": {"rope": False, "attention_gate": False},
     "geometry_matched_gdn_ev2_nope_gated": {"rope": False, "attention_gate": True},
+}
+NONFINITE_DIAGNOSTIC_STOPS = {
+    ("geometry_matched_gdn_ev2_nope", "1p2b-cx8"): 18_500,
+    ("geometry_matched_gdn_ev2_nope_gated", "1p2b-cx2"): 21_500,
 }
 
 
@@ -134,8 +142,7 @@ def validate(manifest: dict[str, Any]) -> list[dict[str, Any]]:
         global_sequences = int(row["global_batch_size"]) // sequence_length
         if global_sequences % world_size:
             raise ValueError(
-                f"{task_name}: {global_sequences} global sequences do not divide "
-                f"world={world_size}"
+                f"{task_name}: {global_sequences} global sequences do not divide world={world_size}"
             )
         rank_sequences = global_sequences // world_size
         microbatch = int(row["rank_microbatch_sequences"])
@@ -166,6 +173,8 @@ def recipe_for(
     row: dict[str, Any],
     *,
     commit: str,
+    diagnose_nonfinite: bool = False,
+    diagnostic_stop_step: int | None = None,
 ) -> Recipe:
     source = manifest["source"]
     beaker = manifest["beaker"]
@@ -197,7 +206,10 @@ def recipe_for(
             str(row["rank_microbatch_sequences"]),
         ),
         ("OLMOE3_HYBRID_SEQUENCE_LENGTH", str(training["sequence_length"])),
-        ("OLMOE3_HYBRID_HARD_STOP_STEPS", "0"),
+        (
+            "OLMOE3_HYBRID_HARD_STOP_STEPS",
+            str(diagnostic_stop_step or 0),
+        ),
         ("OLMOE3_HYBRID_CHECKPOINTS", "1"),
         ("OLMOE3_HYBRID_SAVE_INTERVAL", str(training["save_interval"])),
         (
@@ -213,12 +225,24 @@ def recipe_for(
         ("OLMOE3_HYBRID_WANDB", str(int(bool(training["wandb"])))),
         ("OLMOE3_HYBRID_SAVE_ROOT", str(manifest["experiment"]["checkpoint_root"])),
     ]
-    env_secrets = [
-        (str(name), str(secret)) for name, secret in manifest.get("secrets", {}).items()
-    ]
+    if diagnose_nonfinite:
+        if diagnostic_stop_step is None:
+            raise ValueError("diagnostic_stop_step is required for a diagnostic run")
+        env_vars.extend(
+            [
+                ("OLMO_DDP_DEBUG_NONFINITE_GRAD", "1"),
+                ("OLMO_DDP_DEBUG_GRAD_NORMS", "100"),
+                ("OLMO_DDP_DEBUG_GRAD_NORMS_RANKS", "all"),
+                ("OLMO_DEBUG_DUMP_OPTIM_GRAD_NORMS", "1"),
+                ("OLMO_DEBUG_DUMP_DIR", str(DIAGNOSTIC_DUMP_ROOT)),
+                ("OLMO_DEBUG_RUN_ID", f"{row['run_name']}-diagnostic-r1"),
+            ]
+        )
+    env_secrets = [(str(name), str(secret)) for name, secret in manifest.get("secrets", {}).items()]
     weka = [(str(item["bucket"]), str(item["mount"])) for item in manifest.get("weka", [])]
     git_repo = GitRepoState.from_env(ref=commit, branch=str(source["branch"]))
     num_nodes = int(row["num_nodes"])
+    recipe_suffix = "-nonfinite-diagnostic-r1" if diagnose_nonfinite else ""
     return Recipe(
         args=[
             "src/scripts/train/jacobm_olmoe3_hybrid_scale.py",
@@ -226,10 +250,14 @@ def recipe_for(
             str(row["run_name"]),
             "local",
         ],
-        name=str(row["run_name"]),
-        description=str(manifest["experiment"]["description"]),
+        name=f"{row['run_name']}{recipe_suffix}",
+        description=(
+            f"{manifest['experiment']['description']} (non-finite gradient diagnostic)"
+            if diagnose_nonfinite
+            else str(manifest["experiment"]["description"])
+        ),
         workspace=str(beaker["workspace"]),
-        task_name=str(row["task_name"]),
+        task_name=f"{row['task_name']}{recipe_suffix}",
         git_repo=git_repo,
         allow_dirty=False,
         yes=True,
@@ -263,6 +291,11 @@ def main() -> None:
     parser.add_argument("--task", action="append", default=[])
     parser.add_argument("--submit", action="store_true")
     parser.add_argument("--resume-existing", action="store_true")
+    parser.add_argument(
+        "--diagnose-nonfinite",
+        action="store_true",
+        help="Resume a known unstable cell with non-finite gradient dumps and a short hard stop.",
+    )
     parser.add_argument("--record", type=Path, default=DEFAULT_RECORD)
     args = parser.parse_args()
 
@@ -274,6 +307,22 @@ def main() -> None:
         if missing := wanted - available:
             raise ValueError(f"unknown selected tasks: {sorted(missing)}")
         rows = [row for row in rows if str(row["task_name"]) in wanted]
+
+    variant = str(manifest["training"]["model_variant"])
+    diagnostic_stops: dict[str, int] = {}
+    if args.diagnose_nonfinite:
+        if not args.resume_existing:
+            raise ValueError("--diagnose-nonfinite requires --resume-existing")
+        for row in rows:
+            task_name = str(row["task_name"])
+            try:
+                diagnostic_stops[task_name] = NONFINITE_DIAGNOSTIC_STOPS[(variant, task_name)]
+            except KeyError as exc:
+                raise ValueError(
+                    f"No approved non-finite diagnostic stop for {variant}/{task_name}"
+                ) from exc
+        if args.record == DEFAULT_RECORD:
+            args.record = DIAGNOSTIC_RECORD
 
     print("\nsize  Cx nodes GPU/node world EP rank_seq MB accum LR run")
     for row in rows:
@@ -306,13 +355,25 @@ def main() -> None:
     commit = validate_remote_commit(str(source["remote"]), str(source["branch"]))
     records: list[dict[str, Any]] = []
     for row in rows:
-        workload = recipe_for(manifest, row, commit=commit).launch(show_logs=False)
+        task_name = str(row["task_name"])
+        workload = recipe_for(
+            manifest,
+            row,
+            commit=commit,
+            diagnose_nonfinite=args.diagnose_nonfinite,
+            diagnostic_stop_step=diagnostic_stops.get(task_name),
+        ).launch(show_logs=False)
         experiment = workload.experiment
         record = {
             "model_variant": manifest["training"]["model_variant"],
             "task_name": row["task_name"],
             "run_name": row["run_name"],
             "commit": commit,
+            "diagnose_nonfinite": args.diagnose_nonfinite,
+            "diagnostic_stop_step": diagnostic_stops.get(task_name),
+            "diagnostic_dump_root": (
+                str(DIAGNOSTIC_DUMP_ROOT) if args.diagnose_nonfinite else None
+            ),
             "experiment_id": experiment.id,
             "task_ids": [task.id for task in experiment.tasks],
             "url": (
