@@ -7,10 +7,12 @@ deliberately retains our current GQA ratio and ungated RoPE full-attention
 blocks. ``geometry_nope`` changes only those two full-attention blocks from
 RoPE to NoPE. ``geometry_nope_gated`` adds the dense ladder's elementwise
 attention gate while retaining our 8-Q/4-KV attention shape, so gating can be
-tested without confounding it with the KV-head ratio. The ``dense_attention``
-profile additionally matches the dense 275M rung's KV-head count and
-elementwise attention gate, while deliberately retaining RoPE and the current
-initialization for separate interventions.
+tested without confounding it with the KV-head ratio. ``geometry_rope_gated``
+is the corresponding interaction control: it restores RoPE while changing
+nothing else about the gated NoPE profile. The ``dense_attention`` profile
+additionally matches the dense 275M rung's KV-head count and elementwise
+attention gate, while deliberately retaining RoPE and the current initialization
+for separate interventions.
 """
 
 from __future__ import annotations
@@ -82,6 +84,15 @@ PROFILES = {
         gdn_expand_v=2.0,
         rope=False,
     ),
+    # Restore RoPE on the gated profile without changing attention head
+    # geometry, MoE widths, initialization, or any optimization setting.
+    "geometry_rope_gated": Profile(
+        expert_hidden_size=664,
+        n_kv_heads=4,
+        attention_gate=True,
+        gdn_expand_v=2.0,
+        rope=True,
+    ),
     # Also match the dense 275M full-attention shape (8 Q / 8 KV) and its
     # elementwise gate. 648 gives a near-exact active match with 8-wide tensor
     # alignment; odd hidden widths get closer numerically but are poor
@@ -99,6 +110,7 @@ EXPECTED_PROFILE_COUNTS = {
     "geometry_only": (290_782_080, 226_556_800, 3_136_314_240),
     "geometry_nope": (290_782_080, 226_556_800, 3_136_314_240),
     "geometry_nope_gated": (292_092_800, 227_867_520, 3_137_624_960),
+    "geometry_rope_gated": (292_092_800, 227_867_520, 3_137_624_960),
     "dense_attention": (290_638_720, 226_413_440, 3_067_603_840),
 }
 
