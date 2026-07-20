@@ -252,6 +252,13 @@ class MoERouterV2(nn.Module):
         self._recompute_cache = None
         self.use_recompute_cache = False
 
+        # Router replay (R3): when set, forward uses these expert indices instead
+        # of the live top-k selection, while gate weights are still computed from
+        # the live scores at the replayed indices (so gradients keep flowing into
+        # the router). Set via set_replay_expert_indices() before each forward
+        # that should replay; persists until cleared.
+        self.replay_expert_indices: Optional[torch.Tensor] = None
+
     def reset_parameters(self):
         self._batch_size_per_expert = hide_from_torch(
             torch.zeros(self.num_experts, device=self.device)
@@ -397,10 +404,50 @@ class MoERouterV2(nn.Module):
             noise = torch.rand_like(x)
             return x * (low + noise * (high - low))
 
+    def set_replay_expert_indices(self, expert_indices: torch.Tensor) -> None:
+        """Force routing selections while keeping gate weights live and differentiable."""
+        if self.random_expert_assignment:
+            raise OLMoConfigurationError(
+                "Router replay cannot be combined with random expert assignment."
+            )
+        if expert_indices.ndim == 0 or expert_indices.shape[-1] != self.top_k:
+            raise ValueError(
+                f"Replay indices must end in top_k={self.top_k}, got shape "
+                f"{tuple(expert_indices.shape)}."
+            )
+        if expert_indices.numel() > 0:
+            min_index = int(expert_indices.min().item())
+            max_index = int(expert_indices.max().item())
+            if min_index < 0 or max_index >= self.num_experts:
+                raise ValueError(
+                    f"Replay indices must be in [0, {self.num_experts}), got "
+                    f"min={min_index}, max={max_index}."
+                )
+        self.replay_expert_indices = expert_indices.to(dtype=torch.long)
+
+    def clear_replay_expert_indices(self) -> None:
+        self.replay_expert_indices = None
+
+    def _validated_replay_indices(self, reference: torch.Tensor) -> torch.Tensor:
+        assert self.replay_expert_indices is not None
+        indices = self.replay_expert_indices
+        if indices.shape[:-1] != reference.shape[:-1]:
+            raise ValueError(
+                f"Replay indices leading shape {tuple(indices.shape[:-1])} does not match "
+                f"router input shape {tuple(reference.shape[:-1])}."
+            )
+        return indices.to(device=reference.device)
+
     @nvtx.annotate("MoERouter.get_top_k", color="blue")
     def get_top_k(self, scores: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         expert_weights: torch.Tensor
         expert_indices: torch.Tensor
+        if self.replay_expert_indices is not None:
+            # Replay: selection is forced, gate weights stay live (differentiable
+            # w.r.t. scores), score_bias / grouping / uniform-assignment are all
+            # bypassed — the replayed selection is authoritative.
+            expert_indices = self._validated_replay_indices(scores)
+            return scores.gather(-1, expert_indices), expert_indices
         selection_scores = scores
         if self.score_bias is not None:
             selection_scores = scores + self.score_bias.unsqueeze(0)  # type: ignore[union-attr]
@@ -615,14 +662,17 @@ class MoERouterV2(nn.Module):
             expert_weights = scores.gather(-1, expert_indices)
 
         elif self.gating_function == MoERouterGatingFunction.topk_softmax:
-            selection_logits = logits
-            if self.score_bias is not None:
-                selection_logits = logits + self.score_bias.unsqueeze(0)  # type: ignore[union-attr]
+            if self.replay_expert_indices is not None:
+                expert_indices = self._validated_replay_indices(logits)
+            else:
+                selection_logits = logits
+                if self.score_bias is not None:
+                    selection_logits = logits + self.score_bias.unsqueeze(0)  # type: ignore[union-attr]
 
-            with torch.no_grad() if self.score_bias is not None else torch.enable_grad():
-                _, expert_indices = torch.topk(selection_logits, self.top_k, dim=-1)
-            if self.uniform_expert_assignment:
-                expert_indices = _uniform_expert_assignment(expert_indices, self.num_experts)
+                with torch.no_grad() if self.score_bias is not None else torch.enable_grad():
+                    _, expert_indices = torch.topk(selection_logits, self.top_k, dim=-1)
+                if self.uniform_expert_assignment:
+                    expert_indices = _uniform_expert_assignment(expert_indices, self.num_experts)
 
             expert_logits = logits.gather(-1, expert_indices)
             expert_weights = expert_logits.softmax(dim=-1, dtype=expert_logits.dtype)
