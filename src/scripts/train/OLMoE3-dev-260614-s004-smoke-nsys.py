@@ -44,7 +44,7 @@ PROFILE_START_STEP = 31
 PROFILE_END_STEP = 35
 SMOKE_STEPS = 40
 NSYS_WRAPPER = "src/scripts/train/nsys-profile-rank.sh"
-BEAKER_IMAGE = "akshitab/olmo-core-tch2110cu130-2026-07-03"
+BEAKER_IMAGE = "tianhuat/olmo-core-torch212-2404-cu130"
 BEAKER_WORKSPACE = "ai2/OLMo-3-moe-experiments"
 WANDB_ENTITY = "ai2-llm"
 WANDB_PROJECT = "robertb-moe-tests"
@@ -110,8 +110,15 @@ def finalize_smoke_config(config: ExperimentConfig) -> None:
             secret for secret in config.launch.env_secrets if secret.required
         ]
         config.launch.google_credentials_secret = None
-        config.launch.env_vars.append(
-            BeakerEnvVar(name="NSYS_OUTPUT_DIR", value=f"{profile_root}/nsight")
+        config.launch.env_vars.extend(
+            [
+                BeakerEnvVar(name="NSYS_OUTPUT_DIR", value=f"{profile_root}/nsight"),
+                BeakerEnvVar(name="PYTHONPATH", value="/gantry-runtime/src"),
+            ]
+        )
+        config.launch.post_setup = (
+            "python -m olmo_core.kernels.build_symm_mem_vdev2d_ext "
+            "--inplace --backend cmake"
         )
         for env_var in config.launch.env_vars:
             if env_var.name == "TORCH_FR_DUMP_TEMP_FILE":

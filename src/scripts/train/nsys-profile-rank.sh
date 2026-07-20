@@ -37,9 +37,9 @@ if [[ -n "${TORCH_FR_DUMP_TEMP_FILE:-}" ]]; then
 fi
 
 if (( global_rank % rank_stride == 0 )); then
-    # The B300 training image used by this reproduction predates the Nsight
-    # layer in src/Dockerfile. Only one rank per node enters this branch, so a
-    # missing package is installed exactly once on each node.
+    # Only one rank per node enters this branch. If a future compatible image
+    # omits Nsight, the missing package is therefore installed exactly once on
+    # each node.
     ensure_nsys
 
     output_dir="${NSYS_OUTPUT_DIR:-${BEAKER_RESULT_DIR:-/results}/nsight}"
