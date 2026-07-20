@@ -36,7 +36,8 @@ wave explicitly registers its W&B run IDs and compares one intervention
 against the matching-size wide v1 integration baseline plus any explicitly
 named architecture controls. Registered waves cover the first GDN hybrid
 (`expand_v=1`), geometry-matched `expand_v=2`, geometry plus NoPE, and geometry
-plus NoPE with elementwise attention gating.
+plus NoPE with elementwise attention gating, along with the gated-RoPE
+interaction control.
 
 ```bash
 uv run --with wandb --with matplotlib python \
@@ -46,6 +47,10 @@ uv run --with wandb --with matplotlib python \
 uv run --with wandb --with matplotlib python \
   src/scripts/train/jacobm_olmoe_ladder/v2/plot_pretraining_wave.py \
   --wave geometry_gdn_ev2_nope_gated --refresh-stale-cache
+
+uv run --with wandb --with matplotlib python \
+  src/scripts/train/jacobm_olmoe_ladder/v2/plot_pretraining_wave.py \
+  --wave geometry_gdn_ev2_rope_gated --refresh-stale-cache
 ```
 
 The script writes each selected wave into one matching artifact directory and

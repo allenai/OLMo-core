@@ -159,6 +159,16 @@ four-LR Cx1/Cx2/Cx4/Cx8 sweep was then submitted urgent and unallocated on 80
 Holmes B300s at peak concurrency. It deliberately reuses every training and
 systems setting from the gated-NoPE sweep.
 
+The first completed curve is Cx1. Its four final-250M-token losses are
+`2.715839`, `2.697808`, `2.691980`, and `2.703272` at `4e-4`, `8e-4`,
+`1.6e-3`, and `3.2e-3`, respectively. The observed best is therefore
+`1.6e-3`; the quadratic visual-fit minimum is about `1.4e-3`. At their
+respective observed best LRs, gated RoPE is `0.049064` CE better than wide,
+`0.002661` better than the first hybrid, `0.015901` better than ungated RoPE
+geometry, `0.020825` better than ungated NoPE geometry, and `0.019124` better
+than gated NoPE. Cx2/Cx4/Cx8 are still running and remain absent from formal
+LR selection.
+
 The larger 1.2B gated models have an audited 6.1155% active-parameter delta
 from the corresponding wide-integration reference. A shared 6% sanity guard
 initially rejected those runs before step 1; the production entrypoint now
@@ -173,3 +183,9 @@ re-submitted after that fix; the work links are recorded in
   [`plots/pretraining/geometry_gdn_ev2_nope_gated/summary_observed_best.png`](plots/pretraining/geometry_gdn_ev2_nope_gated/summary_observed_best.png)
 - Exact results:
   [`results/pretraining/geometry_gdn_ev2_nope_gated/results.md`](results/pretraining/geometry_gdn_ev2_nope_gated/results.md)
+- Gated-RoPE U-plot:
+  [`plots/pretraining/geometry_gdn_ev2_rope_gated/275m_uplot.png`](plots/pretraining/geometry_gdn_ev2_rope_gated/275m_uplot.png)
+- Gated-RoPE observed-best summary:
+  [`plots/pretraining/geometry_gdn_ev2_rope_gated/summary_observed_best.png`](plots/pretraining/geometry_gdn_ev2_rope_gated/summary_observed_best.png)
+- Gated-RoPE exact results:
+  [`results/pretraining/geometry_gdn_ev2_rope_gated/results.md`](results/pretraining/geometry_gdn_ev2_rope_gated/results.md)
