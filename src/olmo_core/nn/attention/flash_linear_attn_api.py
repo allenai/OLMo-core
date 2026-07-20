@@ -23,8 +23,14 @@ def dispatch_chunk_gated_delta_rule(
     initial_state: torch.Tensor | None = None,
     output_final_state: bool = False,
     use_qk_l2norm_in_kernel: bool = False,
+    use_gate_in_kernel: bool = False,
+    A_log: torch.Tensor | None = None,
+    dt_bias: torch.Tensor | None = None,
+    use_beta_sigmoid_in_kernel: bool = False,
+    allow_neg_eigval: bool = False,
+    state_v_first: bool = False,
     cu_seqlens: torch.LongTensor | torch.Tensor | None = None,
-) -> torch.Tensor:
+) -> tuple[torch.Tensor, torch.Tensor | None]:
     assert has_fla()
     from fla.ops.gated_delta_rule import chunk_gated_delta_rule
 
@@ -38,6 +44,12 @@ def dispatch_chunk_gated_delta_rule(
         initial_state=initial_state,
         output_final_state=output_final_state,
         use_qk_l2norm_in_kernel=use_qk_l2norm_in_kernel,
+        use_gate_in_kernel=use_gate_in_kernel,
+        A_log=A_log,
+        dt_bias=dt_bias,
+        use_beta_sigmoid_in_kernel=use_beta_sigmoid_in_kernel,
+        allow_neg_eigval=allow_neg_eigval,
+        state_v_first=state_v_first,
         cu_seqlens=cu_seqlens,
     )
 

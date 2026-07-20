@@ -44,13 +44,14 @@ def test_gated_delta_net_config_num_params(recurrent_config: GatedDeltaNetConfig
 
 @requires_fla
 @requires_gpu
-def test_gated_delta_net_fwd_bwd():
+@pytest.mark.parametrize("n_v_heads", [None, 16])
+def test_gated_delta_net_fwd_bwd(n_v_heads: int | None):
     device = "cuda"
     dtype = torch.bfloat16
 
     d_model, seq_len, batch_size = 256, 32, 2
 
-    config = GatedDeltaNetConfig(n_heads=8)
+    config = GatedDeltaNetConfig(n_heads=8, n_v_heads=n_v_heads)
     module = config.build(d_model, layer_idx=0, n_layers=12, init_device=device)
 
     x = torch.randn(batch_size, seq_len, d_model, device=device, dtype=dtype, requires_grad=True)
@@ -79,8 +80,7 @@ def test_gated_delta_net_num_flops_per_token():
     gdn_flops = gdn.num_flops_per_token(seq_len)
     attn_flops = attn.num_flops_per_token(seq_len)  # type: ignore
     linear_flops = 6 * sum(
-        m.weight.numel()
-        for m in (gdn.w_q, gdn.w_k, gdn.w_v, gdn.w_a, gdn.w_b, gdn.w_g, gdn.w_out)
+        m.weight.numel() for m in (gdn.w_q, gdn.w_k, gdn.w_v, gdn.w_a, gdn.w_b, gdn.w_g, gdn.w_out)
     )
     conv_flops = 6 * gdn.conv_size * (gdn.key_dim + gdn.key_dim + gdn.value_dim)
     recurrent_flops = 24 * gdn.n_v_heads * gdn.head_k_dim * gdn.head_v_dim

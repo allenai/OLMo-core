@@ -6,7 +6,6 @@ import torch
 from torch import nn
 from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.tensor import Placement
-from torch.nn import functional as F
 
 from olmo_core.config import DType
 from olmo_core.distributed.parallel.context_parallel import (
@@ -156,10 +155,11 @@ class GatedDeltaNet(SequenceMixer):
         #        (batch_size, seq_len, n_v_heads * head_v_dim)
         q, k, v = self.w_q(x), self.w_k(x), self.w_v(x)
 
-        beta = self.w_b(x).sigmoid()
-        if self.allow_neg_eigval:
-            beta = beta * 2.0
-        g = -self.A_log.float().exp() * F.softplus(self.w_a(x).float() + self.dt_bias)
+        # FLA 0.5.1 fuses both nonlinearities into the recurrent kernel. Keep
+        # these as raw projection outputs so gate and beta work is not launched
+        # as separate PyTorch kernels.
+        g = self.w_a(x)
+        beta = self.w_b(x)
 
         if self.cp_enabled and self.uly is not None:
             assert self._cp_group is not None
@@ -177,13 +177,26 @@ class GatedDeltaNet(SequenceMixer):
         k = k.view(B, T, -1, self.head_k_dim)
         v = v.view(B, T, -1, self.head_v_dim)
 
-        if self.n_v_heads > self.n_heads:
-            repeat_factor = self.n_v_heads // self.n_heads
-            q = q.repeat_interleave(repeat_factor, dim=-2)
-            k = k.repeat_interleave(repeat_factor, dim=-2)
+        A_log = self.A_log
+        dt_bias = self.dt_bias
+        if self.cp_enabled and self.uly is not None:
+            A_log = A_log[self._cp_head_slice]
+            dt_bias = dt_bias[self._cp_head_slice]
 
         o, _ = dispatch_chunk_gated_delta_rule(
-            q=q, k=k, v=v, g=g, beta=beta, cu_seqlens=cu_doc_lens, use_qk_l2norm_in_kernel=True
+            q=q,
+            k=k,
+            v=v,
+            g=g,
+            beta=beta,
+            A_log=A_log,
+            dt_bias=dt_bias,
+            cu_seqlens=cu_doc_lens,
+            use_qk_l2norm_in_kernel=True,
+            use_gate_in_kernel=True,
+            use_beta_sigmoid_in_kernel=True,
+            allow_neg_eigval=self.allow_neg_eigval,
+            state_v_first=True,
         )
 
         if self.cp_enabled and self.uly is not None:
@@ -231,6 +244,9 @@ class GatedDeltaNet(SequenceMixer):
         self.uly = uly
         self._cp_mesh = cp_mesh
         self._cp_group = cp_mesh.get_group()
+        local_heads = self.n_v_heads // cp_world_size
+        head_start = cp_mesh.get_local_rank() * local_heads
+        self._cp_head_slice = slice(head_start, head_start + local_heads)
         self.cp_enabled = True
 
         self.q_conv1d.apply_cp(cp_mesh)
@@ -299,9 +315,13 @@ class GatedDeltaNet(SequenceMixer):
         training_factor = 3
 
         # Linear projection FLOPs (2 ops per multiply-add)
-        linear_flops = 2 * training_factor * sum(
-            m.weight.numel()
-            for m in (self.w_q, self.w_k, self.w_v, self.w_a, self.w_b, self.w_g, self.w_out)
+        linear_flops = (
+            2
+            * training_factor
+            * sum(
+                m.weight.numel()
+                for m in (self.w_q, self.w_k, self.w_v, self.w_a, self.w_b, self.w_g, self.w_out)
+            )
         )
 
         # Short convolution FLOPs (2 ops per multiply-add, kernel_size taps per output)
