@@ -224,20 +224,30 @@ class NvidiaProfilerCallback(Callback):
     _nvtx_ctx = None
 
     def pre_load_batch(self):
-        if self.enabled and get_rank() in self.profile_ranks:
-            if self.step == self.start:
-                log.info(f"Starting NVIDIA profiler at rank={get_rank()} step={self.step}...")
-                torch.cuda.cudart().cudaProfilerStart()
-                self._nvtx_ctx = torch.autograd.profiler.emit_nvtx(record_shapes=True)
-                self._nvtx_ctx.__enter__()
+        # `pre_load_batch` runs before the trainer increments its step counter, so `self.step`
+        # here is the previously completed step; compare against `start - 1` so the capture
+        # window actually begins on the requested `start` step.
+        if self.enabled and get_rank() in self.profile_ranks and self.step == self.start - 1:
+            log.info(f"Starting NVIDIA profiler at rank={get_rank()} step={self.start}...")
+            torch.cuda.cudart().cudaProfilerStart()
+            self._nvtx_ctx = torch.autograd.profiler.emit_nvtx(record_shapes=True)
+            self._nvtx_ctx.__enter__()
 
     def post_train_batch(self):
-        if self.enabled and get_rank() in self.profile_ranks:
-            if self.step == self.end and self._nvtx_ctx is not None:
-                log.info(f"Stopping NVIDIA profiler at rank={get_rank()} step={self.step}...")
-                self._nvtx_ctx.__exit__(None, None, None)
-                self._nvtx_ctx = None
-                torch.cuda.cudart().cudaProfilerStop()
+        if self.step == self.end:
+            self._stop()
+
+    def close(self):
+        # Close the capture range even if training stops (cancel/error/short run) before `end`,
+        # otherwise an external `nsys --capture-range=cudaProfilerApi` range is left open.
+        self._stop()
+
+    def _stop(self):
+        if self._nvtx_ctx is not None:
+            log.info(f"Stopping NVIDIA profiler at rank={get_rank()}...")
+            self._nvtx_ctx.__exit__(None, None, None)
+            self._nvtx_ctx = None
+            torch.cuda.cudart().cudaProfilerStop()
 
 
 @dataclass
@@ -274,19 +284,33 @@ class TorchMemoryHistoryCallback(Callback):
     Directory to write the snapshot pickle(s) to.
     """
 
+    _recording: bool = False
+
     def pre_load_batch(self):
-        if self.enabled and get_rank() in self.profile_ranks:
-            if self.step == self.start:
-                log.info(f"Starting memory profiler at rank={get_rank()} step={self.step}...")
-                torch.cuda.memory._record_memory_history(max_entries=self.max_entries)
+        # See `NvidiaProfilerCallback.pre_load_batch`: `self.step` here is the previously
+        # completed step, so start recording at `start - 1` to include the requested `start` step.
+        if self.enabled and get_rank() in self.profile_ranks and self.step == self.start - 1:
+            log.info(f"Starting memory profiler at rank={get_rank()} step={self.start}...")
+            torch.cuda.memory._record_memory_history(max_entries=self.max_entries)
+            self._recording = True
 
     def post_train_batch(self):
-        if self.enabled and get_rank() in self.profile_ranks:
-            if self.step == self.end:
-                log.info(f"Dumping memory profiler at rank={get_rank()} step={self.step}...")
-                os.makedirs(self.output_dir, exist_ok=True)
-                torch.cuda.memory._dump_snapshot(
-                    os.path.join(self.output_dir, f"memsnapshot.{get_rank()}.pickle")
-                )
-                torch.cuda.memory._record_memory_history(enabled=None)
-                log.info(f"Memory profiler stopped at rank={get_rank()} step={self.step}.")
+        if self.step == self.end:
+            self._dump_and_stop()
+
+    def close(self):
+        # Dump and disable on early exit (OOM/error/short run) so the failure window isn't lost
+        # and recording doesn't stay on until process teardown.
+        self._dump_and_stop()
+
+    def _dump_and_stop(self):
+        if not self._recording:
+            return
+        log.info(f"Dumping memory profiler at rank={get_rank()}...")
+        os.makedirs(self.output_dir, exist_ok=True)
+        torch.cuda.memory._dump_snapshot(
+            os.path.join(self.output_dir, f"memsnapshot.{get_rank()}.pickle")
+        )
+        torch.cuda.memory._record_memory_history(enabled=None)
+        self._recording = False
+        log.info(f"Memory profiler stopped at rank={get_rank()}.")
