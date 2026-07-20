@@ -217,6 +217,11 @@ def main() -> None:
         choices=sorted(MODELS),
         help="Model to convert; repeat as needed (default: every completed model missing HF).",
     )
+    parser.add_argument(
+        "--experiment-name",
+        default=NAME,
+        help="Beaker experiment name (override when adding a later conversion batch).",
+    )
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
 
@@ -245,7 +250,7 @@ def main() -> None:
                 "--workspace",
                 WORKSPACE,
                 "--name",
-                NAME,
+                args.experiment_name,
             ],
             check=True,
         )

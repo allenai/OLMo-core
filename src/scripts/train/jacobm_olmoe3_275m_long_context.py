@@ -126,6 +126,8 @@ EVAL_STEPS = int(cast(str, lc_env("EVAL_STEPS", "0")))
 EVAL_SEQUENCE_LENGTH = int(cast(str, lc_env("EVAL_SEQUENCE_LENGTH", "8192")))
 EVAL_TASK_SET = cast(str, lc_env("EVAL_TASK_SET", "fast"))
 EVAL_ON_FINISH = lc_bool("EVAL_ON_FINISH", False)
+EVAL_CHECKPOINT = lc_env("EVAL_CHECKPOINT")
+EVAL_BACKFILL = EVAL_CHECKPOINT is not None
 ASYNC_BOOKKEEPING = lc_bool("ASYNC_BOOKKEEPING", False)
 SAVE_INTERVAL = int(cast(str, lc_env("SAVE_INTERVAL", "5000")))
 EPHEMERAL_SAVE_INTERVAL = int(cast(str, lc_env("EPHEMERAL_SAVE_INTERVAL", "1000")))
@@ -289,12 +291,14 @@ def build_data_components(common: CommonComponents) -> DataComponents:
             seed=119_105_108_108 % (2**31 - 1),
             num_workers=16,
             prefetch_factor=8,
+            ignore_fingerprint_mismatch=EVAL_BACKFILL,
         ),
     )
 
 
 def build_trainer_config(common: CommonComponents) -> TrainerConfig:
     assert LOAD_PATH is not None
+    evals_enabled = EVALS_ENABLED or EVAL_BACKFILL
     if EVAL_TASK_SET == "hellaswag":
         downstream_tasks = ["hellaswag"]
     else:
@@ -305,29 +309,31 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         except KeyError as error:
             raise ValueError(f"Task set not recognized: {EVAL_TASK_SET}") from error
     eval_duration = Duration.steps(EVAL_STEPS) if EVAL_STEPS > 0 else Duration.epochs(1)
-    return (
-        TrainerConfig(
-            save_folder=common.save_folder,
-            load_path=LOAD_PATH,
-            load_strategy=LoadStrategy.always,
-            load_trainer_state=False,
-            load_optim_state=False,
-            save_overwrite=False,
-            checkpointer=CheckpointerConfig(
-                save_thread_count=3,
-                load_thread_count=8,
-                throttle_uploads=True,
-            ),
-            metrics_collect_interval=1 if HARD_STOP_STEPS else 10,
-            cancel_check_interval=10,
-            # Async metric callbacks can let ranks enqueue distributed bookkeeping
-            # collectives in different orders when rank 0 stalls while logging to W&B.
-            # Keep these collectives synchronous for long-running LC jobs.
-            async_bookkeeping=ASYNC_BOOKKEEPING,
-            max_duration=Duration.tokens(MAX_TOKENS),
-            hard_stop=Duration.steps(HARD_STOP_STEPS) if HARD_STOP_STEPS else None,
-        )
-        .with_callback(
+    trainer = TrainerConfig(
+        save_folder=common.save_folder,
+        load_path=None if EVAL_BACKFILL else LOAD_PATH,
+        load_strategy=LoadStrategy.never if EVAL_BACKFILL else LoadStrategy.always,
+        load_trainer_state=False,
+        load_optim_state=False,
+        save_overwrite=False,
+        no_checkpoints=EVAL_BACKFILL,
+        checkpoints_to_eval=[EVAL_CHECKPOINT] if EVAL_CHECKPOINT is not None else None,
+        checkpointer=CheckpointerConfig(
+            save_thread_count=3,
+            load_thread_count=8,
+            throttle_uploads=True,
+        ),
+        metrics_collect_interval=1 if HARD_STOP_STEPS else 10,
+        cancel_check_interval=10,
+        # Async metric callbacks can let ranks enqueue distributed bookkeeping
+        # collectives in different orders when rank 0 stalls while logging to W&B.
+        # Keep these collectives synchronous for long-running LC jobs.
+        async_bookkeeping=ASYNC_BOOKKEEPING,
+        max_duration=Duration.tokens(MAX_TOKENS),
+        hard_stop=Duration.steps(HARD_STOP_STEPS) if HARD_STOP_STEPS else None,
+    )
+    if not EVAL_BACKFILL:
+        trainer = trainer.with_callback(
             "checkpointer",
             CheckpointerCallback(
                 save_interval=SAVE_INTERVAL,
@@ -338,6 +344,8 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 remove=CHECKPOINT_REMOVAL,
             ),
         )
+    return (
+        trainer
         .with_callback("speed_monitor", SpeedMonitorCallback())
         .with_callback("config_saver", ConfigSaverCallback())
         .with_callback("beaker", BeakerCallback())
@@ -354,7 +362,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 eval_interval=EVAL_INTERVAL,
                 eval_duration=eval_duration,
                 eval_on_finish=EVAL_ON_FINISH,
-                enabled=EVALS_ENABLED,
+                enabled=evals_enabled,
             ),
         )
         .with_callback(
@@ -365,14 +373,18 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 eval_interval=EVAL_INTERVAL,
                 eval_duration=eval_duration,
                 eval_on_finish=EVAL_ON_FINISH,
-                enabled=EVALS_ENABLED,
+                enabled=evals_enabled,
             ),
         )
         .with_callback(
             "wandb",
             WandBCallback(
                 name=common.run_name,
-                group=f"olmoe3-{MODEL_SIZE}-{FAMILY}-long-context",
+                group=(
+                    f"olmoe3-{MODEL_SIZE}-{FAMILY}-long-context-validation-backfills"
+                    if EVAL_BACKFILL
+                    else f"olmoe3-{MODEL_SIZE}-{FAMILY}-long-context"
+                ),
                 project="jacobm-olmoe-ladder",
                 entity="ai2-llm",
                 enabled=WANDB_ENABLED,
@@ -387,7 +399,11 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                     f"ep{EP_SIZE}",
                     EP_PATH.value if EP_SIZE > 1 else "no-ep",
                     "64k",
-                    "smoke" if HARD_STOP_STEPS else "full-run",
+                    (
+                        "validation-backfill"
+                        if EVAL_BACKFILL
+                        else ("smoke" if HARD_STOP_STEPS else "full-run")
+                    ),
                 ],
             ),
         )
@@ -417,6 +433,12 @@ def build_local_common_components(
 
 
 def finalize_config(config: ExperimentConfig) -> None:
+    if EVAL_BACKFILL:
+        assert EVAL_CHECKPOINT is not None
+        if not Path(EVAL_CHECKPOINT).is_dir():
+            raise ValueError(f"Eval checkpoint does not exist: {EVAL_CHECKPOINT}")
+        if not EVALS_ENABLED:
+            log.info("Enabling evaluator callbacks because an eval checkpoint was supplied")
     if EXPECTED_WORLD_SIZE < 1 or EP_SIZE < 1 or EXPECTED_WORLD_SIZE % EP_SIZE:
         raise ValueError(f"EP size {EP_SIZE} must divide world size {EXPECTED_WORLD_SIZE}")
     if GLOBAL_BATCH_SIZE % SEQUENCE_LENGTH:

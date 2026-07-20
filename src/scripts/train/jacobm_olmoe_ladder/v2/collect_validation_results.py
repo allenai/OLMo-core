@@ -19,6 +19,9 @@ DEFAULT_MANIFESTS = (
     V2_DIR / "launchers" / "validation" / "manifests" / "275m_hybrid_geometry_full.yaml",
     V2_DIR / "launchers" / "validation" / "manifests" / "275m_geometry_cx4_cx8_full.yaml",
     V2_DIR / "launchers" / "validation" / "manifests" / "hybrid_scale_completed_full.yaml",
+    V2_DIR / "launchers" / "validation" / "manifests" / "275m_nope_gated_full.yaml",
+    V2_DIR / "launchers" / "validation" / "manifests" / "hybrid_scale_pending_full.yaml",
+    V2_DIR / "launchers" / "validation" / "manifests" / "hybrid_midtraining_completed_full.yaml",
 )
 DEFAULT_OUTPUT_BASE = V2_DIR / "results" / "validation" / "hybrid_full"
 DEFAULT_PROJECT = "ai2-llm/jacobm-olmoe-ladder"

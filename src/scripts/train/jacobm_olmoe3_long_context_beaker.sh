@@ -32,7 +32,13 @@ export OLMO_SHARED_FS=1
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 export OMP_NUM_THREADS=8
 
+SUBCOMMAND=${OLMOE3_LC_SUBCOMMAND:-train}
+LOG_NAME=train.log
+if [[ "${SUBCOMMAND}" == "eval_checkpoints" ]]; then
+  LOG_NAME=eval.log
+fi
+
 torchrun --standalone --nproc-per-node="${OLMOE3_LC_WORLD_SIZE}" \
   src/scripts/train/jacobm_olmoe3_275m_long_context.py \
-  train "${OLMOE3_LC_RUN_NAME}" local \
-  2>&1 | tee /results/train.log
+  "${SUBCOMMAND}" "${OLMOE3_LC_RUN_NAME}" local \
+  2>&1 | tee "/results/${LOG_NAME}"
