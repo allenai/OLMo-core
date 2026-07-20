@@ -245,13 +245,14 @@ record, including every task ID, is
 | 1.2B | 4 | `3e-4` | 32 | [01KXT0CKPC9NV36GKDXZH5SM17](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXT0CKPC9NV36GKDXZH5SM17) |
 | 1.2B | 8 | `4e-4` | 32 | [01KXT0CQBVT4T414SAZQYT1RAS](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXT0CQBVT4T414SAZQYT1RAS) |
 
-Status at 2026-07-19 16:35 UTC: all 480M cells, 810M Cx1/Cx2/Cx4, and
-1.2B Cx1/Cx2 are finished, for 9/12 completed cells. Newly collected strict
-final-250M CE is `2.274697` for 1.2B Cx1 and `2.190998` for 1.2B Cx2. The
-810M Cx8 worker is at 115.24B / 120.88B tokens (95.3%), and 1.2B Cx4 is at
-50.01B / 92.88B (53.8%). The [Cx8 resume](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXW463APF8FT6RV8T8XZ2D6Q)
-advanced to step 17,949 but then reproduced the `Non-finite total grad norm`
-assertion; it remains stopped.
+Status at 2026-07-20 02:53 UTC: all 480M and 810M cells plus 1.2B Cx1/Cx2
+are finished, for 10/12 completed cells. The newly completed 810M Cx8 has
+strict final-250M CE `2.119848`. The 1.2B Cx4 worker is at 69.22B / 92.88B
+tokens (74.5%). The user requeued the
+[Cx8 resume](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXW463APF8FT6RV8T8XZ2D6Q)
+in place. It resumed from the same checkpoint directory, reached step 17,644,
+and failed for a third time on the same `Non-finite total grad norm`
+assertion; it is stopped.
 Their W&B IDs are registered in [`plot_pretraining_wave.py`](plot_pretraining_wave.py),
 so later finished-only refreshes require no registry change.
 
@@ -259,15 +260,18 @@ The gated-attention wave uses the identical GPU, EP, microbatch,
 checkpointing, and evaluator-free layout, with the same transferred
 wide-integration LR in every cell. It is urgent unallocated work on Holmes,
 pinned to commit `1a85227bdb8baeab2ad05555935aae78938bb0cd` for the initial
-submissions. At the 2026-07-19 16:35 UTC refresh, all 480M cells and 810M
-Cx1/Cx2 are finished, for 6/12 completed cells. Newly collected strict
-final-250M CE is `2.239297` for 480M Cx8 and `2.277253` for 810M Cx2. The
-810M Cx4/Cx8 and 1.2B Cx1/Cx4/Cx8 workers are running.
+submissions. At the 2026-07-20 02:53 UTC refresh, all 480M cells, 810M
+Cx1/Cx2/Cx4, and 1.2B Cx1 are finished, for 8/12 completed cells. Newly
+collected strict final-250M CE is `2.191179` for 810M Cx4 and `2.273007` for
+1.2B Cx1. The 810M Cx8 worker is at 106.39B / 121.88B (87.3%), while 1.2B
+Cx2/Cx4/Cx8 are at 14.8%, 66.0%, and 29.4%.
 All four 1.2B cells initially failed before training
 because the common 6% active-parameter guard rejected their audited 6.1155%
 gated delta. The production entrypoint now uses a gated-only 6.2% cap while
 retaining 6% for ungated variants. The 1.2B Cx2 retry subsequently trained to
-step 16,654, then stopped on a non-finite total grad norm; it remains stopped.
+step 16,654, then stopped on a non-finite total grad norm. The user requeued it
+in place; the new W&B segment is healthy past step 17,689 and uses the same
+checkpoint directory.
 The failed five cells were
 re-submitted as urgent unallocated work pinned to commit
 `bc6d1c7402bd558b829e5be5f9c8da6c67054d0f`:

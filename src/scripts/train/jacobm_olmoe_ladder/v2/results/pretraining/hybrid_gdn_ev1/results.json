@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-07-19T02:37:04.975503+00:00",
+  "generated_at": "2026-07-20T02:33:51.315086+00:00",
   "project": "ai2-llm/jacobm-olmoe-ladder",
   "wave": "hybrid_gdn_ev1",
   "models": [
@@ -979,6 +979,25 @@
       "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/jfwntmwm",
       "segment_run_ids": [
         "jfwntmwm"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0
+    },
+    {
+      "model": "1p2b",
+      "variant": "hybrid_gdn_ev1",
+      "variant_label": "hybrid (GDN, expand_v=1)",
+      "cx": 4,
+      "lr": 0.0003,
+      "lr_tag": "0.0003",
+      "loss": 2.081180188890773,
+      "state": "finished",
+      "tokens_b": 90.76211712,
+      "run_id": "vc3c6gj6",
+      "name": "1p2b-intwide-hybrid-gdn-ev1-cx4-lr3e-4-ep8-sync",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/vc3c6gj6",
+      "segment_run_ids": [
+        "vc3c6gj6"
       ],
       "token_resets": 0,
       "deduplicated_samples": 0
@@ -2035,9 +2054,9 @@
       "model": "1p2b",
       "cx": 4,
       "mode": "fixed_lr_transfer",
-      "complete": false,
+      "complete": true,
       "optimal_summary_eligible": false,
-      "completed_intervention_runs": 0,
+      "completed_intervention_runs": 1,
       "expected_intervention_runs": 1,
       "wide_reference": {
         "model": "1p2b",
@@ -2079,10 +2098,28 @@
           "deduplicated_samples": 0
         }
       },
-      "intervention_result": null,
-      "delta_intervention_minus_wide": null,
+      "intervention_result": {
+        "model": "1p2b",
+        "variant": "hybrid_gdn_ev1",
+        "variant_label": "hybrid (GDN, expand_v=1)",
+        "cx": 4,
+        "lr": 0.0003,
+        "lr_tag": "0.0003",
+        "loss": 2.081180188890773,
+        "state": "finished",
+        "tokens_b": 90.76211712,
+        "run_id": "vc3c6gj6",
+        "name": "1p2b-intwide-hybrid-gdn-ev1-cx4-lr3e-4-ep8-sync",
+        "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/vc3c6gj6",
+        "segment_run_ids": [
+          "vc3c6gj6"
+        ],
+        "token_resets": 0,
+        "deduplicated_samples": 0
+      },
+      "delta_intervention_minus_wide": -0.013039258041221746,
       "delta_intervention_minus_reference": {
-        "wide_integration": null
+        "wide_integration": -0.013039258041221746
       }
     },
     {
