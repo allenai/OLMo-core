@@ -10,7 +10,7 @@ import torch.distributed as dist
 
 # Example:
 # torchrun --standalone --nproc-per-node=4 \
-#   /workspace/OLMo-core/src/test/nn/moe/v2/rowwise_combine_fused_bench.py
+#   /workspace/OLMo-core/src/scripts/benchmarks/rowwise_combine_fused_bench.py
 
 
 def _parse_args() -> argparse.Namespace:

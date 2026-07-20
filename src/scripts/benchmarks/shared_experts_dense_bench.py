@@ -6,12 +6,12 @@ correctness/parity checks.
 Run as a script (any device; auto-selects CUDA + bf16 when available). The size sweep used to
 compare the two implementations (run on a GPU with the torch 2.10 image):
 
-    python src/test/nn/moe/shared_experts_dense_bench.py \
+    python src/scripts/benchmarks/shared_experts_dense_bench.py \
         --sizes 1024:4096 2048:8192 4096:11008 4096:14336 \
         --seq-len 2048 --batch-size 4
 
 Or a single size:
-    python src/test/nn/moe/shared_experts_dense_bench.py --d-model 4096 --hidden-size 11008
+    python src/scripts/benchmarks/shared_experts_dense_bench.py --d-model 4096 --hidden-size 11008
 """
 
 import argparse
