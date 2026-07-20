@@ -9,6 +9,7 @@ import numpy as np
 import torch
 
 from ..config import Config, Registrable, StrEnum
+from ..distributed.utils import get_rank
 from ..exceptions import OLMoConfigurationError
 from .config import INITIAL_LR_FIELD, LR_FIELD
 
@@ -16,6 +17,11 @@ if TYPE_CHECKING:
     from olmo_core.train import Trainer
 
 log = logging.getLogger(__name__)
+
+
+def _warn_rank0(message: str, category: type[Warning], *, stacklevel: int = 1) -> None:
+    if get_rank() == 0:
+        warnings.warn(message, category, stacklevel=stacklevel + 1)
 
 
 class SchedulerUnits(StrEnum):
@@ -761,7 +767,7 @@ class ComposableScheduler(Scheduler):
         """
         if not self._warned_t_max_ignored:
             total_duration = sum(stage.duration for stage in self.stages)
-            warnings.warn(
+            _warn_rank0(
                 f"'{self.__class__.__name__}' ignores 't_max'; the schedule is defined "
                 f"absolutely by stage durations (total={total_duration}, "
                 f"t_max={t_max}). The LR will not rescale to fit the trainer's horizon.",
@@ -933,7 +939,7 @@ class SequentialScheduler(Scheduler):
             return self._sequential_lr(initial_lr, current, t_max)
 
         if not self._warned_t_max_ignored:
-            warnings.warn(
+            _warn_rank0(
                 f"'{self.__class__.__name__}' ignores 't_max' once 'override_decay' is active; "
                 f"the override is defined absolutely by 'start' ({self.override_decay.start}) "
                 f"and 'duration' ({self.override_decay.duration}) (t_max={t_max}).",

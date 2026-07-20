@@ -14,6 +14,38 @@ from olmo_core.testing import DEVICES, requires_flash_attn_2, requires_gpu
 
 
 @pytest.mark.parametrize("device", DEVICES)
+def test_partial_rotary_embedding(device):
+    """Partial RoPE rotates only the leading fraction of each head; trailing dims are unchanged."""
+    B, T, n_heads = 2, 8, 4
+    head_size = 256
+    partial_factor = 0.25
+    rotary_dim = int(head_size * partial_factor)
+
+    rope = RotaryEmbedding(head_size=head_size, partial_rotary_factor=partial_factor)
+
+    with torch.no_grad():
+        q = torch.rand(B, n_heads, T, head_size, device=device)
+        k = torch.rand(B, n_heads, T, head_size, device=device)
+        q_orig = q.clone()
+        k_orig = k.clone()
+
+        q_out, k_out = rope(q, k)
+
+        # Trailing (non-rotated) dimensions must be identical to the input.
+        torch.testing.assert_close(q_out[..., rotary_dim:], q_orig[..., rotary_dim:])
+        torch.testing.assert_close(k_out[..., rotary_dim:], k_orig[..., rotary_dim:])
+
+        # Leading rotated dimensions should differ from input (with high probability).
+        assert not torch.allclose(q_out[..., :rotary_dim], q_orig[..., :rotary_dim])
+        assert not torch.allclose(k_out[..., :rotary_dim], k_orig[..., :rotary_dim])
+
+        # Full RoPE (factor=1.0) should change all dimensions.
+        rope_full = RotaryEmbedding(head_size=head_size, partial_rotary_factor=1.0)
+        q_full, _ = rope_full(q_orig.clone(), k_orig.clone())
+        assert not torch.allclose(q_full, q_orig)
+
+
+@pytest.mark.parametrize("device", DEVICES)
 def test_rope_head_first_vs_seq_first(device):
     B, T, d_model, n_heads = 2, 12, 16, 4
     rope = RotaryEmbedding(head_size=d_model // n_heads)

@@ -231,9 +231,13 @@ class AttentionBackend(nn.Module):
         max_doc_len_k: Optional[int] = None,
         local_k_slice: Optional[slice] = None,
         kv_cache_manager: Optional[KVCacheManager] = None,
+        sinks: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """
         Run the attention operation.
+
+        :param sinks: Optional per-head attention-sink logits (learnable "no-op" attention
+            targets). Only the :class:`TorchAttentionBackend` consumes these.
         """
         raise NotImplementedError
 
@@ -307,6 +311,7 @@ class TorchAttentionBackend(AttentionBackend):
         max_doc_len_k: Optional[int] = None,
         local_k_slice: Optional[slice] = None,
         kv_cache_manager: Optional[KVCacheManager] = None,
+        sinks: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         del local_k_slice
 
@@ -325,6 +330,15 @@ class TorchAttentionBackend(AttentionBackend):
                 seq_len_kv=k.shape[1],
                 device=q.device,
                 window_size=self.window_size,
+            )
+        elif sinks is not None:
+            # The sink path applies softmax manually (see below), so it needs an explicit causal
+            # mask rather than relying on SDPA's ``is_causal``.
+            attn_mask = self._get_sliding_window_mask(
+                seq_len_q=q.shape[1],
+                seq_len_kv=k.shape[1],
+                device=q.device,
+                window_size=(-1, -1),
             )
 
         if any(
@@ -362,15 +376,43 @@ class TorchAttentionBackend(AttentionBackend):
         q, k, v = q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2)
 
         # shape: (batch_size, n_heads, seq_len, head_dim)
-        att = F.scaled_dot_product_attention(
-            q,
-            k,
-            v,
-            attn_mask=attn_mask,
-            dropout_p=self.dropout_p,
-            is_causal=attn_mask is None,
-            scale=self.scale,
-        )
+        if sinks is None:
+            att = F.scaled_dot_product_attention(
+                q,
+                k,
+                v,
+                attn_mask=attn_mask,
+                dropout_p=self.dropout_p,
+                is_causal=attn_mask is None,
+                scale=self.scale,
+            )
+        else:
+            # Attention sinks add a per-head learnable logit as an extra softmax column. Since SDPA
+            # can't express that, run the softmax explicitly: concatenate the sink logit, normalize
+            # over the widened last dim, then drop the sink column before the value matmul.
+            scale = self.scale if self.scale is not None else self.head_dim**-0.5
+            attn_weights = torch.matmul(q, k.transpose(2, 3)) * scale
+            assert attn_mask is not None
+            if attn_mask.dtype == torch.bool:
+                attn_weights = attn_weights.masked_fill(
+                    ~attn_mask.view(1, 1, attn_mask.shape[0], attn_mask.shape[1]),
+                    torch.finfo(attn_weights.dtype).min,
+                )
+            else:
+                attn_weights = attn_weights + attn_mask
+
+            sink_logits = sinks.to(dtype=attn_weights.dtype, device=attn_weights.device)
+            sink_logits = sink_logits.view(1, -1, 1, 1).expand(
+                attn_weights.shape[0],
+                -1,
+                attn_weights.shape[-2],
+                -1,
+            )
+            combined_logits = torch.cat((attn_weights, sink_logits), dim=-1)
+            combined_logits = combined_logits - combined_logits.max(dim=-1, keepdim=True).values
+            probs = F.softmax(combined_logits, dim=-1, dtype=combined_logits.dtype)[..., :-1]
+            probs = F.dropout(probs, p=self.dropout_p, training=self.training).to(v.dtype)
+            att = torch.matmul(probs, v)
 
         # shape: (batch_size, seq_len, n_heads, head_dim)
         att = att.transpose(1, 2)
@@ -490,6 +532,7 @@ class FlashAttention2Backend(AttentionBackend):
         max_doc_len_k: Optional[int] = None,
         local_k_slice: Optional[slice] = None,
         kv_cache_manager: Optional[KVCacheManager] = None,
+        sinks: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         if isinstance(qkv, torch.Tensor):
             if kv_cache_manager is not None:
@@ -714,6 +757,7 @@ class FlashAttention3Backend(AttentionBackend):
         max_doc_len_k: Optional[int] = None,
         local_k_slice: Optional[slice] = None,
         kv_cache_manager: Optional[KVCacheManager] = None,
+        sinks: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         if isinstance(qkv, torch.Tensor):
             if kv_cache_manager is not None:
@@ -910,6 +954,7 @@ class FlashAttention4Backend(AttentionBackend):
         max_doc_len_k: Optional[int] = None,
         local_k_slice: Optional[slice] = None,
         kv_cache_manager: Optional[KVCacheManager] = None,
+        sinks: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         assert isinstance(qkv, tuple), f"'{self.__class__.__name__}' requires unpacked QKV"
         assert local_k_slice is None, f"'{self.__class__.__name__}' doesn't support local_k_slice"
@@ -1097,6 +1142,7 @@ class TEAttentionBackend(AttentionBackend):
         max_doc_len_k: Optional[int] = None,
         local_k_slice: Optional[slice] = None,
         kv_cache_manager: Optional[KVCacheManager] = None,
+        sinks: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         del local_k_slice
 

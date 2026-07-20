@@ -8,9 +8,15 @@ on:
   pull_request:
     branches:
       - main
+      # Temporary: run CI for the incremental MoE PRs landing into this integration branch.
+      # Remove before merging akshitab/moe-v2-core into main.
+      - akshitab/moe-v2-core
   push:
     branches:
       - main
+      # Temporary: keep the MoE integration branch continuously tested as PRs merge in.
+      # Remove before merging akshitab/moe-v2-core into main.
+      - akshitab/moe-v2-core
     tags:
       - "v*.*.*"
 
@@ -22,12 +28,17 @@ env:
   AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
   BEAKER_TOKEN: ${{ secrets.BEAKER_TOKEN }}
   GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+  HF_TOKEN: ${{ secrets.HF_TOKEN }}
 
 jobs:
   checks:
     name: ${{ matrix.task.name }}
     runs-on: [ubuntu-latest]
     timeout-minutes: 15
+    env:
+      # HF models downloaded by the HF roundtrip tests are cached here across runs
+      # (see the "Cache HuggingFace models" step) to avoid re-downloading every run.
+      HF_HOME: ${{ github.workspace }}/.cache/huggingface
     strategy:
       fail-fast: false
       matrix:
@@ -131,6 +142,16 @@ jobs:
             mypy-${{ env.CACHE_PREFIX }}-${{ runner.os }}-${{ matrix.python }}-${{ hashFiles('pyproject.toml') }}-${{ github.ref }}
             mypy-${{ env.CACHE_PREFIX }}-${{ runner.os }}-${{ matrix.python }}-${{ hashFiles('pyproject.toml') }}
 
+      - name: Cache HuggingFace models
+        # The "Test" task runs the HF roundtrip tests, which download Qwen3-0.6B and
+        # Gemma-3-270m. Persist HF_HOME so they're only downloaded once. Bump the key
+        # suffix when the set of models pulled by these tests changes.
+        if: matrix.task.name == 'Test'
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.HF_HOME }}
+          key: hf-models-${{ env.CACHE_PREFIX }}-${{ runner.os }}-qwen3-0.6b-gemma3-270m
+
       - name: ${{ matrix.task.name }}
         run: |
           ${{ matrix.task.run }}
@@ -161,7 +182,10 @@ jobs:
                 --ignore-glob='src/test/nn/transformer*' \
                 --ignore-glob='src/test/nn/attention*' \
                 --ignore-glob='src/test/nn/moe*' \
+                --ignore-glob='src/test/nn/ddp*' \
                 --ignore-glob='src/test/optim*' \
+                --ignore-glob='src/test/kernels*' \
+                --ignore-glob='src/test/train/train_module/transformer/ddp_train_module*' \
                 src/test/
 
           - name: Test checkpoint (GPU)
@@ -188,8 +212,16 @@ jobs:
           - name: Test MoE (GPU)
             image: *gpu_test_image
             gpus: 2
+            # The v1 dropless MoE tests use the grouped_gemm CUTLASS kernels, which have no
+            # Blackwell (sm_100) build, so keep this job off b200.
+            gpu_type: --gpu-type h100 --gpu-type a100
+            # The v2 MoE GPU tests need TransformerEngine + torch 2.10, which this image
+            # lacks, so they run in the "Test MoE kernels" job below; exclude them here.
+            # (The fused block/model tests moved to src/test/nn/ddp, which this job's
+            # src/test/nn/moe glob doesn't reach, so only src/test/nn/moe/v2 needs excluding.)
             run: |
               pytest -v --color=yes --durations=3 -m gpu \
+                --ignore-glob='src/test/nn/moe/v2*' \
                 src/test/nn/moe*
 
           - name: Test optim (GPU)
@@ -205,6 +237,26 @@ jobs:
             run: |
               pytest -v --color=yes -m gpu \
                 src/integration_tests/
+
+          # The MoE kernels require torch >= 2.10 (torch.nn.functional.grouped_mm,
+          # F.ScalingType/F.SwizzleType) and JIT-build .cu extensions, so they need an
+          # image with both torch 2.10 and the CUDA toolkit (nvcc). Their tests are
+          # version-gated and skip on the torch 2.9 image above. The fused MoE-v2 GPU tests
+          # (src/test/nn/ddp for the block/model, src/test/nn/moe/v2 for the EP primitives) also
+          # run here since they need TransformerEngine + the same custom kernels, which the torch
+          # 2.9 image lacks.
+          - name: Test MoE kernels (GPU, torch 2.10)
+            image: akshitab/olmo-core-tch2100cu128-rma-2026-07-08 #akshitab/olmo-core-tch2100cu130-2026-07-03  #petew/olmo-core-tch2100cu128-2026-01-23
+            gpus: 2
+            # This image's kernels (grouped_gemm, symm_mem_vdev2d, FP8) are built for sm_90 only
+            # (`-gencode arch=compute_90,code=sm_90`), so pin to h100 — on a100/b200 grouped_gemm
+            # fails with "Grouped GEMM execution not possible with HW".
+            gpu_type: --gpu-type h100
+            # Build the NVSHMEM symm_mem_vdev2d ext (compiled out-of-tree; needs an image with
+            # NVSHMEM + CUDA toolkit) before pytest, so the rowwise-EP tests that import the built
+            # module at collection time can run. One `bash -c` so both run inside the gantry container.
+            run: |
+              bash -c 'python -m olmo_core.kernels.build_symm_mem_vdev2d_ext --inplace && pytest -v --color=yes --durations=3 -m gpu src/test/kernels/ src/test/nn/ddp/ src/test/nn/moe/v2/ src/test/nn/moe/moe_test.py src/test/nn/moe/routed_experts_v2_test.py src/test/train/train_module/transformer/ddp_train_module_test.py'
     steps:
       - uses: actions/checkout@v5
         with:
@@ -213,6 +265,11 @@ jobs:
       - uses: astral-sh/setup-uv@v6
         with:
           python-version: "3.12"
+          # Pin an explicit uv version so setup-uv resolves from its bundled manifest instead of
+          # querying the GitHub "latest release" API. The GPU matrix launches many jobs at once and
+          # the concurrent unauthenticated lookups were intermittently rate-limited, failing the jobs
+          # in the setup step with "Github API request failed while getting latest release".
+          version: "0.11.29"
 
       - name: Install Gantry
         run:
@@ -242,7 +299,7 @@ jobs:
           exec gantry run \
             --show-logs \
             --yes \
-            --workspace ${{ env.BEAKER_WORKSPACE }} \
+            --workspace ai2/OLMo-3-moe-experiments \
             --description 'OLMo-core ${{ matrix.task.name }}' \
             --ref ${{ env.COMMIT_SHA }} \
             --branch ${{ env.BRANCH_NAME }} \
@@ -251,10 +308,9 @@ jobs:
             --priority low \
             --preemptible \
             --gpus ${{ matrix.task.gpus }} \
-            --task-timeout 10m \
+            --task-timeout 15m \
             --host-networking \
-            --gpu-type h100 \
-            --gpu-type a100 \
+            ${{ matrix.task.gpu_type || '--gpu-type h100 --gpu-type a100 --gpu-type b200' }} \
             --system-python \
             --dataset-secret 'GOOGLE_CREDENTIALS:/.google/credentials.json' \
             --env 'GOOGLE_APPLICATION_CREDENTIALS=/.google/credentials.json' \

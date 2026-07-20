@@ -99,6 +99,16 @@ class CheckpointerCallback(Callback):
     A list of fixed steps at which to save additional permanent checkpoints.
     """
 
+    max_checkpoints: Optional[int] = 3
+    """
+    Maximum number of permanent checkpoints to keep. When a new permanent checkpoint
+    is saved and the count exceeds this limit, the oldest is removed.
+    Set to ``None`` to keep all checkpoints (previous behavior).
+
+    .. note::
+        Checkpoints saved at :data:`fixed_steps` are counted toward this limit.
+    """
+
     enabled: bool = True
 
     # Bookkeeping
@@ -125,6 +135,8 @@ class CheckpointerCallback(Callback):
                 raise OLMoConfigurationError(
                     "'ephemeral_save_interval' must be less than 'save_interval'"
                 )
+        if self.max_checkpoints is not None and self.max_checkpoints < 1:
+            raise OLMoConfigurationError("'max_checkpoints' must be at least 1")
 
     @property
     def checkpointer(self) -> Checkpointer:
@@ -195,6 +207,12 @@ class CheckpointerCallback(Callback):
         for path in self._checkpoints_to_remove:
             self._remove_checkpoint(path)
         self._checkpoints_to_remove.clear()
+
+    def _trim_checkpoints(self):
+        if self.max_checkpoints is not None:
+            while len(self._checkpoints) > self.max_checkpoints:
+                oldest_path = self._checkpoints.pop(0)
+                self._schedule_for_removal(oldest_path)
 
     def pre_train(self):
         if not self.enabled:
@@ -272,9 +290,11 @@ class CheckpointerCallback(Callback):
         if self.fixed_steps is not None and self.step in self.fixed_steps:
             # Save permanent checkpoint.
             self._checkpoints.append(self._save_checkpoint())
+            self._trim_checkpoints()
         elif self.save_interval is not None and self.step % self.save_interval == 0:
             # Save permanent checkpoint.
             self._checkpoints.append(self._save_checkpoint())
+            self._trim_checkpoints()
         elif (
             self.ephemeral_save_interval is not None
             and self.step % self.ephemeral_save_interval == 0
@@ -300,5 +320,6 @@ class CheckpointerCallback(Callback):
 
         if self.step > self._latest_checkpoint_step:
             self._checkpoints.append(self._save_checkpoint(save_async=False))
+            self._trim_checkpoints()
 
         self._await_last_checkpoint()
