@@ -261,6 +261,19 @@ a separately labeled lower LR rather than blindly skip a single step.
 Their W&B IDs are registered in [`plot_pretraining_wave.py`](plot_pretraining_wave.py),
 so later finished-only refreshes require no registry change.
 
+Because the original transferred `4e-4` LR is required for comparability, a
+clean from-scratch collapse-monitoring reproduction was submitted at urgent
+priority in
+[01KY0CM4HKG0R4H352N2SQV6P1](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY0CM4HKG0R4H352N2SQV6P1).
+It uses the identical 32-GPU, EP8 `sync_1d`, MB3, 786,432-token global-batch
+layout but writes to the new run/checkpoint directory
+`pt-1p2b-geometry-gdn-ev2-nope-cx8-lr4e-4-ep8-sync-r1-collapse-monitor-r2`.
+This is a fresh optimizer and data stream, not a continuation. Status refreshes
+must explicitly watch steps 17,000--18,000, especially total gradient norm,
+step skips, and loss, because every original trajectory collapsed in that
+window. Do not substitute this run into the formal finished-only plot until it
+has crossed that window cleanly and ultimately finished.
+
 The gated-attention wave uses the identical GPU, EP, microbatch,
 checkpointing, and evaluator-free layout, with the same transferred
 wide-integration LR in every cell. It is urgent unallocated work on Holmes,

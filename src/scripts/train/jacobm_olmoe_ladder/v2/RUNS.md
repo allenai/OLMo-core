@@ -21,7 +21,7 @@ below retain the full launch and retry history.
 | pretraining | first hybrid 1.2B Cx8 | running | 138.27B / 181.52B tokens (76.2%); ~526 TFLOPs/GPU | [7eemhu7g](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/7eemhu7g) |
 | pretraining | aligned geometry + NoPE 275M sweep | finished | 16/16; observed best LR is `8e-4`, `1.6e-3`, `8e-4`, `8e-4` at Cx1/2/4/8 | [results](results/pretraining/geometry_gdn_ev2_nope/results.md) |
 | pretraining | aligned geometry + NoPE + gated attention 275M sweep | finished | 16/16; observed best LR is `8e-4`, `1.6e-3`, `8e-4`, `8e-4` at Cx1/2/4/8 | [results](results/pretraining/geometry_gdn_ev2_nope_gated/results.md) |
-| pretraining | larger aligned geometry + NoPE | 11 finished / blocked | 1.2B Cx4 final-250M CE `2.107767`; Cx8 diagnostic reproduced a broad NaN at step 17,592 | [32jfwyvm](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/32jfwyvm) |
+| pretraining | larger aligned geometry + NoPE | 11 finished / fresh Cx8 reproduction scheduled | 1.2B Cx4 final-250M CE `2.107767`; clean Cx8 `4e-4` retrain will be watched across steps 17K--18K | [Beaker](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY0CM4HKG0R4H352N2SQV6P1) |
 | pretraining | larger aligned geometry + NoPE + gated attention | running / ready to resume | 10/12 finished; 1.2B Cx8 at 59.8%; Cx2 diagnostic reached clean `step21500` | [results](results/pretraining/geometry_gdn_ev2_nope_gated/results.md) |
 | midtraining | first hybrid 275M Cx8 | finished | 100B; final checkpoint `step95368`; validation finished | [1keo2hz6](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/1keo2hz6) |
 | midtraining | first hybrid 480M Cx8 | finished | 100.001B; final checkpoint `step95368`; validation finished | [mnp9rv5l](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/mnp9rv5l) |
@@ -530,6 +530,10 @@ checkpoint, reached step 17,644, and failed for a third time on the same
 [diagnostic continuation](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY097ZF4F18F16P71XZWJVX0)
 then reproduced a broad NaN at step 17,592: essentially every DP gradient was
 NaN on every rank. This is not an isolated tensor or one safely skippable step.
+For exact LR comparability, a new from-scratch reproduction with the identical
+32-GPU/EP8/MB3 layout and a distinct checkpoint directory is scheduled in
+[01KY0CM4HKG0R4H352N2SQV6P1](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY0CM4HKG0R4H352N2SQV6P1).
+It is explicitly marked for collapse monitoring across steps 17,000--18,000.
 
 The equivalent larger NoPE-plus-gated-attention launcher and complete 12-cell
 manifest were structurally and count validated, then submitted on 2026-07-18

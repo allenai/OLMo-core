@@ -1,0 +1,27 @@
+[
+  {
+    "model_variant": "geometry_matched_gdn_ev2_nope",
+    "task_name": "1p2b-cx8-collapse-monitor-r2",
+    "run_name": "pt-1p2b-geometry-gdn-ev2-nope-cx8-lr4e-4-ep8-sync-r1-collapse-monitor-r2",
+    "run_suffix": "-collapse-monitor-r2",
+    "collapse_monitor": true,
+    "comparison_run": "pt-1p2b-geometry-gdn-ev2-nope-cx8-lr4e-4-ep8-sync-r1",
+    "collapse_watch_steps": [
+      17000,
+      18000
+    ],
+    "checkpoint_dir": "/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/olmo-ddp/pretraining/pt-1p2b-geometry-gdn-ev2-nope-cx8-lr4e-4-ep8-sync-r1-collapse-monitor-r2",
+    "commit": "51dfddc337d7d7ec29fc64f31bd546418b0d7fb0",
+    "diagnose_nonfinite": false,
+    "diagnostic_stop_step": null,
+    "diagnostic_dump_root": null,
+    "experiment_id": "01KY0CM4HKG0R4H352N2SQV6P1",
+    "task_ids": [
+      "01KY0CM4HVNTA784W31G3TSYQG",
+      "01KY0CM4NBE0FK3GCCQSG0MFPZ",
+      "01KY0CM4RXB77F04BA4Q4JVTCS",
+      "01KY0CM4WAZQ4NV0DE4Q7VSHRM"
+    ],
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY0CM4HKG0R4H352N2SQV6P1"
+  }
+]
