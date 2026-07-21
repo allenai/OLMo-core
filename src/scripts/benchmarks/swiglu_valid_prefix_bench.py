@@ -44,8 +44,12 @@ def _torch_valid_prefix_swiglu_impl(
 ) -> torch.Tensor:
     hidden = x.shape[1] // 2
     valid_x = x[:num_elements]
+    # Reuse valid_x's data-dependent row count for the output slice. Slicing `out[:num_elements]`
+    # again would derive a second, independent unbacked size under torch.compile, and dynamo
+    # can't prove it equals `y`'s size (Eq(u2, u1)) for the copy_.
+    valid_rows = valid_x.shape[0]
     y = valid_x[:, :hidden] * F.silu(valid_x[:, hidden:])
-    out[:num_elements].copy_(y)
+    out[:valid_rows].copy_(y)
     return out
 
 
