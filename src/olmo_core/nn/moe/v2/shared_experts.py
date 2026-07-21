@@ -153,6 +153,10 @@ class SharedExperts(nn.Module):
 
         # 4) Per-expert down-proj as grouped GEMM
         #    hidden: (E, BS, H), w_down: (E, H, D) -> out: (E, BS, D)
+        # TODO: add an E==1 fast path. For a single (shared) expert the permute above is a no-op
+        # and this batched bmm is slower than a plain mm; doing `hidden.squeeze(0) @
+        # w_down.squeeze(0)` would let the eager dense path match FeedForward. Under torch.compile
+        # (max-autotune) they already reach parity, so this only matters for eager execution.
         out = torch.bmm(hidden, self.w_down)
 
         return out.view(E, B, S, D)

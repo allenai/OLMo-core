@@ -10,7 +10,7 @@ import torch.distributed as dist
 
 # Example:
 # torchrun --standalone --nproc-per-node=4 \
-#   /workspace/OLMo-core/src/test/nn/moe/v2/rowwise_combine_fused_test.py
+#   /workspace/OLMo-core/src/scripts/benchmarks/rowwise_combine_fused_bench.py
 
 
 def _parse_args() -> argparse.Namespace:
@@ -86,7 +86,8 @@ def _alloc_rendezvous_symm_tensor(
 
 
 def _load_combine_callables():
-    src_root = Path(__file__).resolve().parents[4]
+    # This file lives at src/scripts/benchmarks/, so `src` is parents[2].
+    src_root = Path(__file__).resolve().parents[2]
     src_root_str = str(src_root)
     if src_root_str not in sys.path:
         sys.path.insert(0, src_root_str)

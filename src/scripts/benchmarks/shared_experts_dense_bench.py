@@ -6,12 +6,12 @@ correctness/parity checks.
 Run as a script (any device; auto-selects CUDA + bf16 when available). The size sweep used to
 compare the two implementations (run on a GPU with the torch 2.10 image):
 
-    python src/test/nn/moe/shared_experts_dense_bench.py \
+    python src/scripts/benchmarks/shared_experts_dense_bench.py \
         --sizes 1024:4096 2048:8192 4096:11008 4096:14336 \
         --seq-len 2048 --batch-size 4
 
 Or a single size:
-    python src/test/nn/moe/shared_experts_dense_bench.py --d-model 4096 --hidden-size 11008
+    python src/scripts/benchmarks/shared_experts_dense_bench.py --d-model 4096 --hidden-size 11008
 """
 
 import argparse
@@ -55,6 +55,8 @@ def benchmark(
     iters: int,
     device: torch.device,
     dtype: DType,
+    compile: bool = False,
+    compile_mode: str = "default",
 ) -> Tuple[float, float]:
     """Time ``FeedForward`` and single-expert ``SharedExperts`` forwards; return (ff_ms, se_ms)."""
     torch.manual_seed(0)
@@ -66,13 +68,22 @@ def benchmark(
         d_model=d_model, hidden_size=hidden_size, num_experts=1, bias=False, dtype=dtype
     ).build(init_device=device.type)
 
+    ff_fn: Callable[[torch.Tensor], object] = feed_forward
+    se_fn: Callable[[torch.Tensor], object] = shared
+    if compile:
+        # `SharedExperts` pays for a permute + strided SwiGLU + batch-1 bmm that inductor can fuse
+        # away, so compile both to compare on equal footing. The warmup iters absorb the JIT cost.
+        ff_fn = torch.compile(feed_forward, mode=compile_mode)
+        se_fn = torch.compile(shared, mode=compile_mode)
+
     x = torch.randn(batch_size, seq_len, d_model, device=device, dtype=dtype.as_pt())
 
     with torch.no_grad():
-        ff_ms = _timed_ms(lambda: feed_forward(x), warmup=warmup, iters=iters, device=device)
-        se_ms = _timed_ms(lambda: shared(x), warmup=warmup, iters=iters, device=device)
+        ff_ms = _timed_ms(lambda: ff_fn(x), warmup=warmup, iters=iters, device=device)
+        se_ms = _timed_ms(lambda: se_fn(x), warmup=warmup, iters=iters, device=device)
 
-    print(f"Dense MLP forward ({device.type}, {dtype.value}, {tuple(x.shape)})")
+    compile_note = f", compile={compile_mode}" if compile else ""
+    print(f"Dense MLP forward ({device.type}, {dtype.value}, {tuple(x.shape)}{compile_note})")
     print(f"  FeedForward (standard):          {ff_ms:.3f} ms")
     print(f"  SharedExperts (dense, E=1):      {se_ms:.3f} ms")
     print(f"  SharedExperts / FeedForward:     {se_ms / max(ff_ms, 1e-6):.3f}x")
@@ -97,6 +108,17 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--iters", type=int, default=50)
     p.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     p.add_argument("--dtype", choices=[d.value for d in DType], default=None)
+    p.add_argument(
+        "--compile",
+        action="store_true",
+        help="torch.compile both implementations before timing.",
+    )
+    p.add_argument(
+        "--compile-mode",
+        default="default",
+        choices=["default", "reduce-overhead", "max-autotune"],
+        help="torch.compile mode (only used with --compile).",
+    )
     return p.parse_args()
 
 
@@ -124,6 +146,8 @@ def main() -> None:
             iters=args.iters,
             device=device,
             dtype=dtype,
+            compile=args.compile,
+            compile_mode=args.compile_mode,
         )
 
 
