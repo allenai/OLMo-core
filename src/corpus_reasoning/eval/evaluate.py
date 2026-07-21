@@ -1825,7 +1825,20 @@ def _norm_snippet(s):
 
 def _parse_snippet_list(text):
     """Extract the model's JSON list of first-four-words snippets. Falls back to
-    quote-delimited extraction if json.loads fails."""
+    quote-delimited extraction if json.loads fails, OR if the opening '[' is
+    missing entirely.
+
+    The opening bracket is treated as OPTIONAL: the label for this task is a bare
+    JSON array (``["snip1", "snip2"]``) with no natural-language lead-in, and some
+    checkpoints -- notably under document-chunked attention -- consistently drop
+    the leading '[' token and start the answer directly at the first quoted
+    snippet (content ends cleanly with ']'). Requiring '[' silently scored every
+    such response as a parse failure (absence_gutenberg chunked read parse_rate
+    ~0.01 while the emitted snippets were coherent and correct). Recovering the
+    quoted snippets from the whole string when the bracketed match is absent fixes
+    that without changing behavior for well-formed bracketed outputs. Same class
+    of bug as ``parse_doc_ids`` (primed-bracket).
+    """
     m = re.search(r"\[.*\]", text, re.DOTALL)
     if m:
         try:
@@ -1837,6 +1850,24 @@ def _parse_snippet_list(text):
         quoted = re.findall(r'"([^"]*)"', m.group(0))
         if quoted:
             return quoted
+    # No bracketed array: the model may have dropped the leading '[' (or the
+    # whole '["' -- the observed chunked failure starts directly at the first
+    # snippet's text with no opening bracket or quote). Reconstruct a parseable
+    # array and retry, so coherent snippets aren't scored as a parse failure.
+    if "]" in text and "[" not in text:
+        stripped = text.strip()
+        rebuilt = ("[" + stripped) if stripped.startswith('"') else ('["' + stripped)
+        m2 = re.search(r"\[.*\]", rebuilt, re.DOTALL)
+        if m2:
+            try:
+                arr = json.loads(m2.group(0))
+                if isinstance(arr, list):
+                    return [str(x) for x in arr]
+            except Exception:
+                pass
+            quoted = re.findall(r'"([^"]*)"', m2.group(0))
+            if quoted:
+                return quoted
     return None
 
 
