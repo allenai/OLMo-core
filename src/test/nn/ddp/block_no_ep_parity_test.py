@@ -3,6 +3,7 @@ from typing import Any
 import torch
 import torch.distributed as dist
 
+from olmo_core.distributed.utils import unhide_from_torch
 from olmo_core.testing import (
     requires_multi_gpu,
     requires_symm_mem_vdev2d,
@@ -103,39 +104,50 @@ def _run_dropless_path_matches_no_ep(
         ep_block.ep.rowwise_put_nblocks = 128
         ep_block.ep.rowwise_weighted_put_nblocks = 128
         ep_block.ep.validate()
+        # The rowwise weighted combine backward is bf16/fp16-only, so run both blocks in bf16
+        # (the path's production dtype). Cast after the identical param copy so the two stay in
+        # sync. The synced path (rowwise=False) keeps fp32 and its tight tolerances.
+        no_ep_block.to(dtype=torch.bfloat16)
+        ep_block.to(dtype=torch.bfloat16)
 
     no_ep_block.train()
     ep_block.train()
+
+    # bf16 rounding in the rowwise comm needs looser tolerances than the exact fp32 synced path.
+    out_tol = 2e-2 if rowwise else 5e-4
+    grad_tol = 2e-2 if rowwise else 1e-3
 
     x = torch.randn(
         1,
         8,
         no_ep_block.d_model,
         device="cuda",
-        dtype=torch.float32,
+        dtype=torch.bfloat16 if rowwise else torch.float32,
         requires_grad=True,
     )
     x_ep = x.detach().clone().requires_grad_(True)
 
     y_no_ep = no_ep_block(x)
     y_ep = ep_block(x_ep)
-    torch.testing.assert_close(y_ep, y_no_ep, atol=5e-4, rtol=5e-4)
+    torch.testing.assert_close(y_ep, y_no_ep, atol=out_tol, rtol=out_tol)
     if rowwise:
         drop_tokens_sum = ep_block._ep_no_sync_rowwise_drop_tokens_sum
         assert drop_tokens_sum is not None
-        assert drop_tokens_sum.item() == 0
+        # The metric is stored wrapped in a `_HiddenTensor` (kept off the autograd graph);
+        # unwrap before reading its value.
+        assert unhide_from_torch(drop_tokens_sum).item() == 0
 
     loss_no_ep = y_no_ep.square().mean() + (0.1 * y_no_ep.sum())
     loss_ep = y_ep.square().mean() + (0.1 * y_ep.sum())
     loss_no_ep.backward()
     loss_ep.backward()
 
-    torch.testing.assert_close(x_ep.grad, x.grad, atol=5e-4, rtol=5e-4)
+    torch.testing.assert_close(x_ep.grad, x.grad, atol=grad_tol, rtol=grad_tol)
     _assert_expert_grad_matches_no_ep_global_sum(
         no_ep_block,
         ep_block,
-        atol=1e-3,
-        rtol=1e-3,
+        atol=grad_tol,
+        rtol=grad_tol,
     )
 
 

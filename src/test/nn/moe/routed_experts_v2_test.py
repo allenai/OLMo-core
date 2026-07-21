@@ -1,6 +1,3 @@
-import os
-
-import pytest
 import torch
 import torch.nn.functional as F
 
@@ -268,11 +265,6 @@ def test_routed_experts_forward_row_offset_writes_canonical_window():
 @requires_gpu
 @requires_torch_grouped_mm
 def test_routed_experts_speed_vs_pad_positions():
-    if os.getenv("OLMO_RUN_ROUTED_EXPERTS_PERF_TEST", "0") != "1":
-        pytest.skip(
-            "Set OLMO_RUN_ROUTED_EXPERTS_PERF_TEST=1 to run RoutedExperts pad-position perf test"
-        )
-
     torch.manual_seed(42)
     device = torch.device("cuda")
 

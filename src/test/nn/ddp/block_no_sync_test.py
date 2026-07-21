@@ -677,22 +677,27 @@ def _run_ep_no_sync_rowwise_matches_synced():
     _set_rowwise_block_counts(block_rowwise, 128)
     block_rowwise.ep.validate()
 
+    # The rowwise weighted combine backward is bf16/fp16-only, so run both blocks in bf16 (the
+    # path's production dtype). Cast after the identical fp32 state load so the two stay in sync.
+    block_ep.to(dtype=torch.bfloat16)
+    block_rowwise.to(dtype=torch.bfloat16)
+
     block_ep.train()
     block_rowwise.train()
 
-    x = torch.randn(1, 8, block_ep.d_model, device="cuda", dtype=torch.float32, requires_grad=True)
+    x = torch.randn(1, 8, block_ep.d_model, device="cuda", dtype=torch.bfloat16, requires_grad=True)
     x_rowwise = x.detach().clone().requires_grad_(True)
 
     y_ep = block_ep(x)
     y_rowwise = block_rowwise(x_rowwise)
-    torch.testing.assert_close(y_rowwise, y_ep, atol=5e-4, rtol=5e-4)
+    torch.testing.assert_close(y_rowwise, y_ep, atol=2e-2, rtol=2e-2)
 
     loss_ep = y_ep.square().mean() + (0.1 * y_ep.sum())
     loss_rowwise = y_rowwise.square().mean() + (0.1 * y_rowwise.sum())
     loss_ep.backward()
     loss_rowwise.backward()
 
-    torch.testing.assert_close(x_rowwise.grad, x.grad, atol=5e-4, rtol=5e-4)
+    torch.testing.assert_close(x_rowwise.grad, x.grad, atol=2e-2, rtol=2e-2)
 
     ep_params = dict(block_ep.named_parameters())
     rowwise_params = dict(block_rowwise.named_parameters())
@@ -700,7 +705,7 @@ def _run_ep_no_sync_rowwise_matches_synced():
         p_rowwise = rowwise_params[name]
         if p_ep.grad is None or p_rowwise.grad is None:
             continue
-        torch.testing.assert_close(p_rowwise.grad, p_ep.grad, atol=1e-3, rtol=1e-3)
+        torch.testing.assert_close(p_rowwise.grad, p_ep.grad, atol=2e-2, rtol=2e-2)
 
 
 def _run_ep_no_sync_rowwise_wave_matches_rowwise():
@@ -948,17 +953,22 @@ def _run_ep_no_sync_rowwise_drop_matches_independent_rowwise_block():
     _set_rowwise_block_counts(block_b, 128)
     block_b.ep.validate()
 
+    # The rowwise weighted combine backward is bf16/fp16-only, so run both blocks in bf16 (the
+    # path's production dtype). Cast after the identical fp32 state load so the two stay in sync.
+    block_a.to(dtype=torch.bfloat16)
+    block_b.to(dtype=torch.bfloat16)
+
     block_a.train()
     block_b.train()
 
-    x = torch.randn(2, 64, block_a.d_model, device="cuda", dtype=torch.float32, requires_grad=True)
+    x = torch.randn(2, 64, block_a.d_model, device="cuda", dtype=torch.bfloat16, requires_grad=True)
     x_b = x.detach().clone().requires_grad_(True)
 
     y_a = block_a(x)
     y_b = block_b(x_b)
     assert torch.isfinite(y_a).all()
     assert torch.isfinite(y_b).all()
-    torch.testing.assert_close(y_b, y_a, atol=8e-4, rtol=8e-4)
+    torch.testing.assert_close(y_b, y_a, atol=2e-2, rtol=2e-2)
 
     loss_a = y_a.square().mean() + (0.1 * y_a.sum())
     loss_b = y_b.square().mean() + (0.1 * y_b.sum())
@@ -967,7 +977,7 @@ def _run_ep_no_sync_rowwise_drop_matches_independent_rowwise_block():
 
     assert torch.isfinite(x.grad).all()
     assert torch.isfinite(x_b.grad).all()
-    torch.testing.assert_close(x_b.grad, x.grad, atol=2e-3, rtol=2e-3)
+    torch.testing.assert_close(x_b.grad, x.grad, atol=2e-2, rtol=2e-2)
 
     params_a = dict(block_a.named_parameters())
     params_b = dict(block_b.named_parameters())
@@ -977,7 +987,7 @@ def _run_ep_no_sync_rowwise_drop_matches_independent_rowwise_block():
             continue
         assert torch.isfinite(p_a.grad).all()
         assert torch.isfinite(p_b.grad).all()
-        torch.testing.assert_close(p_b.grad, p_a.grad, atol=3e-3, rtol=3e-3)
+        torch.testing.assert_close(p_b.grad, p_a.grad, atol=2e-2, rtol=2e-2)
 
 
 def _poison_rowwise_capacity_tails(block: OLMoDDPTransformerBlock, *, value: float) -> int:
@@ -1048,17 +1058,23 @@ def _run_ep_no_sync_rowwise_capacity_tail_poison_does_not_change_backward():
         _set_rowwise_block_counts(block_b, 128)
         block_a.ep.validate()
         block_b.ep.validate()
+
+        # The rowwise weighted combine backward is bf16/fp16-only, so run both blocks in bf16 (the
+        # path's production dtype). Cast after the identical fp32 state load so the two stay in sync.
+        block_a.to(dtype=torch.bfloat16)
+        block_b.to(dtype=torch.bfloat16)
+
         block_a.train()
         block_b.train()
 
         x = torch.randn(
-            2, 64, block_a.d_model, device="cuda", dtype=torch.float32, requires_grad=True
+            2, 64, block_a.d_model, device="cuda", dtype=torch.bfloat16, requires_grad=True
         )
         x_b = x.detach().clone().requires_grad_(True)
 
         y_a = block_a(x)
         y_b = block_b(x_b)
-        torch.testing.assert_close(y_b, y_a, atol=8e-4, rtol=8e-4)
+        torch.testing.assert_close(y_b, y_a, atol=2e-2, rtol=2e-2)
 
         poisoned_rows = _poison_rowwise_capacity_tails(block_b, value=2048.0)
         assert poisoned_rows > 0
@@ -1070,7 +1086,7 @@ def _run_ep_no_sync_rowwise_capacity_tail_poison_does_not_change_backward():
 
         assert x.grad is not None
         assert x_b.grad is not None
-        torch.testing.assert_close(x_b.grad, x.grad, atol=2e-3, rtol=2e-3)
+        torch.testing.assert_close(x_b.grad, x.grad, atol=2e-2, rtol=2e-2)
 
         params_a = dict(block_a.named_parameters())
         params_b = dict(block_b.named_parameters())
@@ -1178,6 +1194,9 @@ def _run_ep_no_sync_rowwise_fp8_combine_gather_lease_released():
     block.train()
 
     for _ in range(3):
+        # The rowwise-FP8 forward consumes prequantized expert weights; the train loop / optimizer
+        # normally rebuilds this cache each step, so do it here before the forward.
+        block.refresh_rowwise_fp8_cache()
         x = torch.randn(1, 8, block.d_model, device="cuda", dtype=torch.float32, requires_grad=True)
         block(x).square().mean().backward()
 
