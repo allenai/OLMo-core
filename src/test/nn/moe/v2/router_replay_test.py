@@ -17,9 +17,10 @@ Runs on CPU in fp32; no GPU required.
 
 import pytest
 import torch
+import torch.nn as nn
 
 from olmo_core.nn.moe import MoERouterGatingFunction
-from olmo_core.nn.moe.v2.router import MoERouterConfigV2
+from olmo_core.nn.moe.v2.router import MoERouterConfigV2, replay_routing
 
 D_MODEL = 16
 NUM_EXPERTS = 8
@@ -148,6 +149,63 @@ def test_replay_topk_softmax_gating_path():
     # Gates: softmax over the LIVE logits at the injected indices.
     expected = logits.gather(-1, injected).softmax(dim=-1)
     torch.testing.assert_close(weights, expected)
+
+
+def _two_router_module() -> nn.Module:
+    holder = nn.Module()
+    holder.r0 = _build_router()
+    holder.r1 = _build_router()
+    return holder
+
+
+def test_replay_routing_context_manager_arms_and_clears():
+    torch.manual_seed(6)
+    holder = _two_router_module()
+    scores = torch.rand(8, NUM_EXPERTS)
+    injected = [_anti_topk_indices(scores, TOP_K), _anti_topk_indices(1 - scores, TOP_K)]
+
+    with replay_routing(holder, injected) as routers:
+        assert len(routers) == 2
+        _, i0 = holder.r0.get_top_k(scores)
+        _, i1 = holder.r1.get_top_k(scores)
+        torch.testing.assert_close(i0, injected[0])
+        torch.testing.assert_close(i1, injected[1])
+
+    assert holder.r0.replay_expert_indices is None
+    assert holder.r1.replay_expert_indices is None
+
+
+def test_replay_routing_clears_on_exception():
+    holder = _two_router_module()
+    injected = [torch.zeros(8, TOP_K, dtype=torch.long)] * 2
+
+    with pytest.raises(RuntimeError, match="boom"):
+        with replay_routing(holder, injected):
+            raise RuntimeError("boom")
+
+    assert holder.r0.replay_expert_indices is None
+    assert holder.r1.replay_expert_indices is None
+
+
+def test_replay_routing_clears_on_mid_arm_failure():
+    """If arming router 1 fails validation, router 0 must not stay armed."""
+    holder = _two_router_module()
+    good = torch.zeros(8, TOP_K, dtype=torch.long)
+    bad = torch.full((8, TOP_K), NUM_EXPERTS, dtype=torch.long)  # out of range
+
+    with pytest.raises(ValueError, match="out of range"):
+        with replay_routing(holder, [good, bad]):
+            pytest.fail("body must not run when arming fails")
+
+    assert holder.r0.replay_expert_indices is None
+    assert holder.r1.replay_expert_indices is None
+
+
+def test_replay_routing_count_mismatch():
+    holder = _two_router_module()
+    with pytest.raises(ValueError, match="index tensors for"):
+        with replay_routing(holder, [torch.zeros(8, TOP_K, dtype=torch.long)]):
+            pass
 
 
 def test_replay_validation():
