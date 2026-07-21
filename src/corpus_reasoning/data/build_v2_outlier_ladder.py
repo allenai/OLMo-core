@@ -143,7 +143,26 @@ def main():
                     default="data/wiki100w_article_pool_smoke.pkl")
     ap.add_argument("--out-root",
                     default="/scratch/users/prasann/cpt_data/eval500_v2")
+    ap.add_argument("--rungs", default=None,
+                    help="Override the default 3k/8k/16k/32k (n=22/55/110/220) ladder. "
+                         "Comma-separated n:label pairs, e.g. "
+                         "'14:2048,28:4096,57:8192,111:16384,220:32768' -- lets this "
+                         "scale-K-preserving builder target the CTC-suite's token-calibrated "
+                         "doc counts instead of the original wiki100w v2 ladder's own labels.")
+    ap.add_argument("--out-tmpl", default=None,
+                    help="Override OUT_TMPL. Supports {n} (doc count) and {lab} (rung label) "
+                         "placeholders, e.g. 'rung_{lab}.jsonl' to match the CTC-suite's "
+                         "eval_rungs/<task>/rung_<tokens>.jsonl naming.")
     args = ap.parse_args()
+
+    global RUNGS, OUT_TMPL
+    if args.rungs:
+        RUNGS = {}
+        for pair in args.rungs.split(","):
+            n_str, lab = pair.split(":")
+            RUNGS[int(n_str)] = lab
+    if args.out_tmpl:
+        OUT_TMPL = args.out_tmpl
 
     print(f"Loading article pool {args.pool_cache} ...")
     pool = ArticlePool(args.pool_cache)
@@ -166,7 +185,7 @@ def main():
     out_dir = os.path.join(args.out_root, "outlier")
     os.makedirs(out_dir, exist_ok=True)
     for n, lab in RUNGS.items():
-        path = os.path.join(out_dir, OUT_TMPL.format(n=n))
+        path = os.path.join(out_dir, OUT_TMPL.format(n=n, lab=lab))
         rows = rung_rows[n]
         save_jsonl(path, rows)
         nd = [len(r["documents"]) for r in rows]
