@@ -100,12 +100,12 @@ BASE_CHECKPOINTS = {
     "dense": f"{_AMANDAB}/q4b-base-dense-lr1.1e-4/step2385/model_and_optim",
     "landmark": f"{_AMANDAB}/q4b-base-fast-landmark-lr1p1e-4/step2385/model_and_optim",
     "compressive": f"{_AMANDAB}/qwen4b-base-compressive-lr1.1e-4/step2385/model_and_optim",
-    # NOTE: the sparse-landmark CPT base is NOT under amandab/ -- it lives directly under
-    # checkpoints/ (built by cpt/Qwen3-4B-base-sparse-landmark-dolma3longmino.py).
-    "sparselandmark": (
-        "/weka/oe-training-default/ai2-llm/checkpoints/"
-        "q4b-sparse-landmark-dolma3longmino/step2385/model_and_optim"
-    ),
+    # Verified on weka 2026-07-21 (step1000/step2000/step2385, each with config.json +
+    # model_and_optim). NOTE: the four sft_longctx/Qwen3-4B-sparse-landmark-*.py launchers point at
+    # ``checkpoints/q4b-sparse-landmark-dolma3longmino/...`` WITHOUT the ``amandab/`` segment, which
+    # does not exist -- loading it dies with "No checkpoint found in save folder or load path".
+    # The alternative base ``amandab/q4b-base-sparse-landmark-8node/step2385`` also exists.
+    "sparselandmark": f"{_AMANDAB}/q4b-sparse-landmark-dolma3longmino/step2385/model_and_optim",
 }
 
 _TASK_DIR = {"contra": "contradiction", "nq": "nq", "oolong": "oolong",

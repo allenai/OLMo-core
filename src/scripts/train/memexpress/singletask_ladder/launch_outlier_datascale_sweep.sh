@@ -92,7 +92,8 @@ echo "=== EXPERIMENT IDS ==="
 ok=0; fail=""
 for f in "$LOGD"/launch_*.log; do
   base=$(basename "$f" .log)
-  id=$(grep -aoE "https://beaker[^ ]*experiments/[0-9A-Za-z]+" "$f" 2>/dev/null | head -1)
+  # olmo-core prints "Experiment: <ws>/<name> -> https://beaker.org/ex/<id>" (NOT /experiments/<id>).
+  id=$(grep -aoE "https://beaker\.org/ex/[0-9A-Za-z]+" "$f" 2>/dev/null | head -1)
   if [ -n "$id" ]; then echo "$base -> $id"; ok=$((ok+1)); else echo "$base -> NO_ID (check $f)"; fail="$fail $base"; fi
 done
 echo "=== SUMMARY: $ok/$n launched OK; FAILED:$fail ==="
