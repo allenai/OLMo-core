@@ -276,7 +276,11 @@ GEOMETRY_GDN_EV2_NOPE_GATED = Variant(
         RegisteredRun("810m", 8, 4e-4, "pvoq0dq6"),
         RegisteredRun("1p2b", 1, 4e-4, "ojtvkjgk"),
         RegisteredRun(
-            "1p2b", 2, 6e-4, "ama4a8s0", predecessor_run_ids=("kko6fe0y",)
+            "1p2b",
+            2,
+            6e-4,
+            "u88pp5vm",
+            predecessor_run_ids=("kko6fe0y", "ama4a8s0"),
         ),
         RegisteredRun("1p2b", 4, 3e-4, "bhr5mgpr"),
         RegisteredRun("1p2b", 8, 4e-4, "z4zmtqmu"),
@@ -304,6 +308,18 @@ GEOMETRY_GDN_EV2_ROPE_GATED = Variant(
         RegisteredRun("275m", 8, 8e-4, "65bsc0wk"),
         RegisteredRun("275m", 8, 1.6e-3, "8rgf3myq"),
         RegisteredRun("275m", 8, 3.2e-3, "klgge8er"),
+        RegisteredRun("480m", 1, 1.2e-3, "ms1r0qqa"),
+        RegisteredRun("480m", 2, 9e-4, "68t7rt6l"),
+        RegisteredRun("480m", 4, 8e-4, "f582szym"),
+        RegisteredRun("480m", 8, 8e-4, "sd23pj27"),
+        RegisteredRun("810m", 1, 6e-4, "lhwdegc8"),
+        RegisteredRun("810m", 2, 5.6e-4, "lxbp2lhf"),
+        RegisteredRun("810m", 4, 4e-4, "gy61ourf"),
+        RegisteredRun("810m", 8, 4e-4, "pwl3valx"),
+        RegisteredRun("1p2b", 1, 4e-4, "yzrd8hnz"),
+        RegisteredRun("1p2b", 2, 6e-4, "1kxlcvak"),
+        RegisteredRun("1p2b", 4, 3e-4, "eg6zkszq"),
+        RegisteredRun("1p2b", 8, 4e-4, "1147k891"),
     ),
 )
 
@@ -383,9 +399,7 @@ WAVES = {
     "geometry_gdn_ev2_nope_gated": Wave(
         key="geometry_gdn_ev2_nope_gated",
         title="Geometry-matched NoPE gated-attention active hybrid GDN intervention",
-        intervention_label=(
-            "geometry-matched hybrid GDN (expand_v=2, NoPE, gated attention)"
-        ),
+        intervention_label=("geometry-matched hybrid GDN (expand_v=2, NoPE, gated attention)"),
         architecture_note=(
             "The geometry-matched expand_v=2 NoPE hybrid at each size with the "
             "dense ladder's elementwise full-precision attention gate added "
@@ -418,19 +432,27 @@ WAVES = {
     "geometry_gdn_ev2_rope_gated": Wave(
         key="geometry_gdn_ev2_rope_gated",
         title="Geometry-matched RoPE gated-attention active hybrid GDN intervention",
-        intervention_label=(
-            "geometry-matched hybrid GDN (expand_v=2, RoPE, gated attention)"
-        ),
+        intervention_label=("geometry-matched hybrid GDN (expand_v=2, RoPE, gated attention)"),
         architecture_note=(
-            "The 275M geometry-matched expand_v=2 gated-attention hybrid with "
-            "RoPE restored only on full-attention layers 4 and 9. Wide "
+            "The geometry-matched expand_v=2 gated-attention hybrid at each "
+            "size with RoPE restored only on full-attention layers. Wide "
             "integration, first hybrid, ungated RoPE geometry, ungated NoPE, "
             "and gated NoPE are explicit references."
         ),
-        models=("275m",),
+        models=("275m", "480m", "810m", "1p2b"),
         lr_sweep_models=("275m",),
-        active_parameters={"275m": 292_092_800},
-        baseline_active_parameters={"275m": 280_207_872},
+        active_parameters={
+            "275m": 292_092_800,
+            "480m": 503_497_152,
+            "810m": 864_528_512,
+            "1p2b": 1_299_927_040,
+        },
+        baseline_active_parameters={
+            "275m": 280_207_872,
+            "480m": 486_348_800,
+            "810m": 823_569_920,
+            "1p2b": 1_225_011_712,
+        },
         baseline=WIDE_INTEGRATION,
         additional_baselines=(
             HYBRID_GDN_EV1,
