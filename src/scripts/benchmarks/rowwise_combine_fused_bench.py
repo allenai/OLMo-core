@@ -86,7 +86,8 @@ def _alloc_rendezvous_symm_tensor(
 
 
 def _load_combine_callables():
-    src_root = Path(__file__).resolve().parents[4]
+    # This file lives at src/scripts/benchmarks/, so `src` is parents[2].
+    src_root = Path(__file__).resolve().parents[2]
     src_root_str = str(src_root)
     if src_root_str not in sys.path:
         sys.path.insert(0, src_root_str)
