@@ -18,18 +18,24 @@ from olmo_core.nn.attention.landmark_kernel import has_landmark_kernel
 from olmo_core.testing import requires_gpu
 
 
-def _eager_compressive_landmark_reference(q, k, v, block_size):
+def _eager_compressive_landmark_reference(q, k, v, block_size, q_gate=None):
     """Dense eager *compressive* landmark attention over ``(B, H, T, d)`` (full-context, causal).
 
     Each fully-past block's gate weight (from its landmark score, exactly as in normal landmark
     attention) is spread over the block's content tokens AND its landmark via a within-block softmax
     over all ``block_size`` tokens; the local section is plain causal attention and never attends its
     own block's landmark.
+
+    :param q_gate: Optional separate query used only for the cross-block gate logit (mirrors
+        ``fused_compressive_landmark_attention``'s ``q_gate`` param); defaults to ``q``.
     """
     B, H, T, d = q.shape
     device = q.device
     scale = 1.0 / math.sqrt(d)
     scores = (q @ k.transpose(-1, -2)).float() * scale  # (B, H, T, T)
+    gate_scores = (
+        scores if q_gate is None else (q_gate @ k.transpose(-1, -2)).float() * scale
+    )
     neg_inf = torch.finfo(scores.dtype).min
 
     pos = torch.arange(T, device=device)
@@ -43,7 +49,7 @@ def _eager_compressive_landmark_reference(q, k, v, block_size):
     local_content = same_block & (~kmem) & causal  # (T, T)
     past_landmark = past_block & kmem
     gate_set = (local_content | past_landmark).view(1, 1, T, T)
-    gate_w = torch.softmax(scores.masked_fill(~gate_set, neg_inf), dim=-1)  # (B, H, T, T)
+    gate_w = torch.softmax(gate_scores.masked_fill(~gate_set, neg_inf), dim=-1)  # (B, H, T, T)
 
     # Full within-block softmax over every block of keys (only the past-block entries are used).
     within = torch.softmax(scores.reshape(B, H, T, T // block_size, block_size), dim=-1)
@@ -421,3 +427,74 @@ def test_compressive_kernel_docmask_backward_matches_eager(
     torch.testing.assert_close(dq_k, dq_e, **grad_tol)
     torch.testing.assert_close(dk_k, dk_e, **grad_tol)
     torch.testing.assert_close(dv_k, dv_e, **grad_tol)
+
+
+@requires_gpu
+@pytest.mark.skipif(not has_landmark_kernel(), reason="requires triton landmark kernel")
+def test_compressive_kernel_q_gate_default_matches_no_q_gate():
+    """``q_gate=None`` (the default, used by every existing caller) and ``q_gate=q`` (explicit, same
+    tensor object) must produce bit-identical output -- the gate-temperature no-op guarantee at the
+    kernel level, forward and backward."""
+    torch.manual_seed(0)
+    block_size, head_dim = 16, 64
+    B, n_heads = 2, 4
+    T = block_size * 4
+    base = torch.rand(B, n_heads, T, head_dim, device="cuda", dtype=torch.float32)
+    is_mem = (torch.arange(T, device="cuda") % block_size) == (block_size - 1)
+    grad_out = torch.rand_like(base)
+
+    def grads(pass_q_gate):
+        q, k, v = (base.clone().requires_grad_(True) for _ in range(3))
+        kwargs = dict(q_gate=q) if pass_q_gate else {}
+        out = fused_compressive_landmark_attention(q, k, v, is_mem, block_size=block_size, **kwargs)
+        out.backward(grad_out)
+        return out, q.grad, k.grad, v.grad
+
+    out_default, dq_default, dk_default, dv_default = grads(False)
+    out_explicit, dq_explicit, dk_explicit, dv_explicit = grads(True)
+
+    torch.testing.assert_close(out_default, out_explicit, rtol=0, atol=0)
+    torch.testing.assert_close(dq_default, dq_explicit, rtol=0, atol=0)
+    torch.testing.assert_close(dk_default, dk_explicit, rtol=0, atol=0)
+    torch.testing.assert_close(dv_default, dv_explicit, rtol=0, atol=0)
+
+
+@requires_gpu
+@pytest.mark.skipif(not has_landmark_kernel(), reason="requires triton landmark kernel")
+@pytest.mark.parametrize("gate_scale", [0.3, 1.0, 2.5])
+def test_compressive_kernel_gate_only_matches_eager(gate_scale: float):
+    """A non-trivial, distinct ``q_gate`` tensor (mimicking a learned gate temperature) must match
+    the eager reference's gate-only computation, forward and backward, with the gradient correctly
+    split between ``dq`` (content/local, via ``q``) and ``dq_gate`` (gate, via ``q_gate``)."""
+    torch.manual_seed(0)
+    block_size, head_dim = 16, 64
+    B, n_heads = 2, 4
+    T = block_size * 4
+    q_base = torch.rand(B, n_heads, T, head_dim, device="cuda", dtype=torch.float32)
+    k_base = torch.rand(B, n_heads, T, head_dim, device="cuda", dtype=torch.float32)
+    v_base = torch.rand(B, n_heads, T, head_dim, device="cuda", dtype=torch.float32)
+    is_mem = (torch.arange(T, device="cuda") % block_size) == (block_size - 1)
+    grad_out = torch.rand_like(q_base)
+
+    def grads(use_kernel):
+        q = q_base.clone().requires_grad_(True)
+        k = k_base.clone().requires_grad_(True)
+        v = v_base.clone().requires_grad_(True)
+        q_gate = (q_base * gate_scale).clone().requires_grad_(True)
+        if use_kernel:
+            out = fused_compressive_landmark_attention(
+                q, k, v, is_mem, block_size=block_size, q_gate=q_gate
+            )
+        else:
+            out = _eager_compressive_landmark_reference(q, k, v, block_size, q_gate=q_gate)
+        out.backward(grad_out)
+        return out, q.grad, q_gate.grad, k.grad, v.grad
+
+    out_k, dq_k, dqg_k, dk_k, dv_k = grads(True)
+    out_e, dq_e, dqg_e, dk_e, dv_e = grads(False)
+
+    torch.testing.assert_close(out_k, out_e, rtol=1e-2, atol=1e-2)
+    torch.testing.assert_close(dq_k, dq_e, rtol=1e-3, atol=1e-3)
+    torch.testing.assert_close(dqg_k, dqg_e, rtol=1e-3, atol=1e-3)
+    torch.testing.assert_close(dk_k, dk_e, rtol=1e-3, atol=1e-3)
+    torch.testing.assert_close(dv_k, dv_e, rtol=1e-3, atol=1e-3)

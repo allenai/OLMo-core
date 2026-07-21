@@ -414,6 +414,13 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
     or ``"max"`` aggregation of their scores, instead of each head retrieving independently. Defaults
     to ``None`` (unchanged per-head selection). See :class:`FastCompressiveLandmarkAttention`.
     """
+    gate_temperature: Optional[bool] = None
+    """
+    For :class:`FastCompressiveLandmarkAttention` (``name="fast_compressive_landmark"``) only: adds a
+    per-layer learnable temperature on the cross-block gate softmax (initialized as a no-op).
+    Defaults to ``None``/``False`` (no temperature parameter). See
+    :class:`FastCompressiveLandmarkAttention`.
+    """
     vec_dim: Optional[int] = None
     """
     For :class:`SharedVectorLandmarkAttention` (``name="shared_vector_landmark"``) only: the length
@@ -587,6 +594,7 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
         landmark_pool = kwargs.pop("landmark_pool", None)
         nonselected_landmark_mass = kwargs.pop("nonselected_landmark_mass", None)
         group_landmark_selection = kwargs.pop("group_landmark_selection", None)
+        gate_temperature = kwargs.pop("gate_temperature", None)
         vec_dim = kwargs.pop("vec_dim", None)
         cross_doc_mode = kwargs.pop("cross_doc_mode", None)
         dilation_n = kwargs.pop("dilation_n", None)
@@ -673,6 +681,13 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
                 "(fast_compressive_landmark, document_compressive_landmark, compressive_gqa_grouped); "
                 f"got name='{self.name}'"
             )
+        if gate_temperature is not None and not (
+            possible_types & {AttentionType.fast_compressive_landmark}
+        ):
+            raise OLMoConfigurationError(
+                "'gate_temperature' is only supported with fast_compressive_landmark attention; "
+                f"got name='{self.name}'"
+            )
 
         try:
             if effective_name == "default":
@@ -711,6 +726,8 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
                     kwargs["nonselected_landmark_mass"] = nonselected_landmark_mass
                 if group_landmark_selection is not None:
                     kwargs["group_landmark_selection"] = group_landmark_selection
+                if gate_temperature is not None:
+                    kwargs["gate_temperature"] = gate_temperature
                 return FastCompressiveLandmarkAttention(mem_freq=mem_freq, **kwargs)
             elif effective_name == "compressive_gqa_grouped":
                 if mem_freq is None:

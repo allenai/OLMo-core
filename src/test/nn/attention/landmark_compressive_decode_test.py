@@ -14,14 +14,16 @@ These validate the eager decode of :class:`FastCompressiveLandmarkAttention`:
   the same top-k landmark blocks, instead of each head retrieving independently (the default, ``None``).
 """
 
+import pytest
 import torch
 
+from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.nn.attention import AttentionConfig, AttentionType
 from olmo_core.nn.attention.landmark import repeat_kv
 from olmo_core.nn.layer_norm import LayerNormConfig
 
 
-def _build(*, mem_freq, head_dim, nonselected_landmark_mass=0.1):
+def _build(*, mem_freq, head_dim, nonselected_landmark_mass=0.1, gate_temperature=False):
     attn = AttentionConfig(
         name=AttentionType.fast_compressive_landmark,
         n_heads=1,
@@ -30,6 +32,7 @@ def _build(*, mem_freq, head_dim, nonselected_landmark_mass=0.1):
         bias=False,
         mem_freq=mem_freq,
         nonselected_landmark_mass=nonselected_landmark_mass,
+        gate_temperature=gate_temperature,
         qk_norm=LayerNormConfig(name="rms", eps=1e-6, bias=False),
         use_head_qk_norm=True,
     ).build(head_dim, layer_idx=0, n_layers=1, init_device="cpu")
@@ -384,3 +387,96 @@ def test_group_landmark_selection_forces_agreement_across_gqa_group():
             # its own (weaker) preference for landmark 15.
             assert block_mass(head1, 32) > 1e-6
             assert block_mass(head1, 0) < 1e-9
+
+
+def test_gate_temperature_default_off_decode_gate_scores_is_none():
+    attn = _build(mem_freq=15, head_dim=40)
+    assert attn.log_gate_temp is None
+    q = torch.randn(1, 1, 1, 40)
+    k = torch.randn(1, 1, 40, 40)
+    assert attn._decode_gate_scores(q, k) is None
+
+
+def test_gate_temperature_decode_gate_scores_matches_scaled_formula():
+    """``_decode_gate_scores`` must equal ``q @ k^T * softmax_scale * exp(-log_gate_temp)`` --
+    the same scaling applied to ``q_gate`` at train/prefill (see ``_attn_core``), so decode is
+    consistent with training."""
+    attn = _build(mem_freq=15, head_dim=40, gate_temperature=True)
+    with torch.no_grad():
+        attn.log_gate_temp.fill_(0.7)
+    torch.manual_seed(2)
+    q = torch.randn(1, 1, 1, 40)
+    k = torch.randn(1, 1, 40, 40)
+    gate_scores = attn._decode_gate_scores(q, k)
+    expected = (
+        torch.matmul(q, k.transpose(-1, -2)) * attn.softmax_scale * torch.exp(-attn.log_gate_temp)
+    )
+    torch.testing.assert_close(gate_scores, expected)
+
+
+def test_gate_temperature_noop_at_init_matches_brute_reference():
+    """``gate_temperature=True`` initializes ``log_gate_temp`` to 0 (temp=1) -- decode output must
+    exactly match the existing no-temperature brute reference, i.e. this is a no-op at init."""
+    attn = _build(mem_freq=15, head_dim=47, gate_temperature=True)
+    Lb = 16
+    total = 47
+    section_start = (total - 1) // Lb * Lb  # = 32
+    torch.manual_seed(1)
+    q = torch.randn(1, 1, 1, total)
+    k = torch.randn(1, 1, total, total)
+    probs = _decode_probs(attn, q, k, total).double()
+
+    s = (q @ k.transpose(-1, -2)).view(-1) * attn.softmax_scale
+    ref = _brute_compressive_probs(s, Lb, section_start, top_k=None, alpha=0.0)
+    torch.testing.assert_close(probs, ref, rtol=1e-5, atol=1e-6)
+
+
+def test_gate_temperature_changes_decode_output():
+    """A nonzero ``log_gate_temp`` must change the decode attention distribution relative to
+    temp=1 -- the knob actually does something end-to-end through ``_decode_one``."""
+    attn = _build(mem_freq=15, head_dim=40, gate_temperature=True)
+    total = 40
+    torch.manual_seed(3)
+    q = torch.randn(1, 1, 1, total)
+    k = torch.randn(1, 1, total, total)
+    probs_temp1 = _decode_probs(attn, q, k, total).clone()
+
+    with torch.no_grad():
+        attn.log_gate_temp.fill_(-1.5)  # inv_temp = exp(1.5) > 1 -> sharper gate
+    probs_sharper = _decode_probs(attn, q, k, total)
+
+    assert not torch.allclose(probs_temp1, probs_sharper)
+
+
+def test_gate_temperature_decode_gradient_flows_to_log_gate_temp():
+    """Backprop through the eager decode path (``_decode_gate_scores`` -> ``_decode_one``) must
+    populate ``log_gate_temp.grad`` -- the parameter is actually in the autograd graph, not just
+    inert state."""
+    attn = _build(mem_freq=15, head_dim=40, gate_temperature=True)
+    with torch.no_grad():
+        attn.log_gate_temp.fill_(0.3)
+    total = 40
+    torch.manual_seed(4)
+    q = torch.randn(1, 1, 1, total)
+    k = torch.randn(1, 1, total, total)
+    v = torch.randn(1, 1, total, 8)
+
+    out = attn._decode_one(q, k, v, total - 1)
+    out.sum().backward()
+
+    assert attn.log_gate_temp.grad is not None
+    assert attn.log_gate_temp.grad.abs().item() > 0
+
+
+def test_gate_temperature_config_rejected_for_unsupported_types():
+    """``gate_temperature`` is only supported for ``fast_compressive_landmark``; requesting it on
+    other compressive variants must raise, not silently ignore the flag."""
+    for name in (AttentionType.compressive_gqa_grouped, AttentionType.document_compressive_landmark):
+        with pytest.raises(OLMoConfigurationError):
+            AttentionConfig(
+                name=name,
+                n_heads=2,
+                n_kv_heads=1,
+                mem_freq=15,
+                gate_temperature=True,
+            ).build(16, layer_idx=0, n_layers=1, init_device="cpu")
