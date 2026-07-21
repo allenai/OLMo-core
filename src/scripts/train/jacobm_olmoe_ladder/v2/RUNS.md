@@ -27,7 +27,7 @@ below retain the full launch and retry history.
 | pretraining | larger aligned geometry + RoPE + gated attention | 3 finished / 8 running / 1 failed | 480M Cx1/Cx2 and 810M Cx1 finished; 1.2B Cx2 failed at step 5,420 on a non-finite total gradient after saving `step5000` | [results](results/pretraining/geometry_gdn_ev2_rope_gated/results.md) |
 | midtraining | first hybrid 275M Cx8 | finished | 100B; final checkpoint `step95368`; validation finished | [1keo2hz6](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/1keo2hz6) |
 | midtraining | first hybrid 480M Cx8 | finished | 100.001B; final checkpoint `step95368`; validation finished | [mnp9rv5l](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/mnp9rv5l) |
-| validation | V2 post-training backfills | registered targets complete; gated-RoPE newly eligible | 91/91 registered targets finished with 498 metrics each; 16 gated-RoPE finals not yet queued | [results](results/validation/hybrid_full.md) |
+| validation | V2 post-training backfills | registered targets complete; gated-RoPE newly eligible | 91/91 registered targets finished with 498 metrics each; 19 finished gated-RoPE checkpoints not yet queued (16 at 275M plus 3 scale points) | [results](results/validation/hybrid_full.md) |
 
 The formal pretraining results and plots use finished runs only and enforce a
 complete final-250M-token history. The gated-RoPE sweep is now complete. Its
@@ -40,8 +40,9 @@ All six corrected Cx2 MB3 validation retries finished in
 [01KY09D3D872K0R03NHF5MGYD4](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY09D3D872K0R03NHF5MGYD4).
 The 32 NoPE/gated 275M backfills and both first-hybrid midtraining backfills
 also finished. The consolidated export now contains 91 complete targets with
-498 metrics each. The 16 newly finished gated-RoPE checkpoints are not in that
-manifest and now need a separate validation backfill.
+498 metrics each. The 16 finished 275M gated-RoPE checkpoints and three newly
+finished gated-RoPE scale checkpoints are not in that manifest; those 19
+checkpoints need a future validation backfill.
 
 The newly finished larger gated-RoPE points have strict final-250M CEs of
 `2.506239` (480M Cx1), `2.402917` (480M Cx2), and `2.368164` (810M Cx1).
