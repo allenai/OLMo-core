@@ -79,10 +79,10 @@ from scripts.train.jacobm_olmoe_ladder.v2.models.hybrid_wide import (
 log = logging.getLogger(__name__)
 torch.set_float32_matmul_precision("high")
 
-# The audited 1.2B geometry + NoPE + attention-gating profile is 6.1155%
-# larger in active parameters than the wide baseline. Keep the ordinary
-# near-match guard at 6%, but allow this one explicitly audited profile up to
-# 6.2% rather than rejecting it before training starts.
+# The audited 1.2B geometry + attention-gating profiles are 6.1155% larger in
+# active parameters than the wide baseline. Keep the ordinary near-match guard
+# at 6%, but allow these explicitly audited profiles up to 6.2% rather than
+# rejecting them before training starts.
 GATED_MAX_ACTIVE_PARAMETER_DELTA_FRACTION = 0.062
 
 
@@ -194,6 +194,16 @@ def model_config():
         model = build_geometry_matched_scale_model_config(
             MODEL_SIZE,
             rope=False,
+            attention_gate=True,
+        )
+    elif MODEL_VARIANT == "geometry_matched_gdn_ev2_rope_gated":
+        from scripts.train.jacobm_olmoe_ladder.v2.models.geometry_matched_scale import (
+            build_geometry_matched_scale_model_config,
+        )
+
+        model = build_geometry_matched_scale_model_config(
+            MODEL_SIZE,
+            rope=True,
             attention_gate=True,
         )
     else:
@@ -372,6 +382,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         "geometry_matched_gdn_ev2",
         "geometry_matched_gdn_ev2_nope",
         "geometry_matched_gdn_ev2_nope_gated",
+        "geometry_matched_gdn_ev2_rope_gated",
     }
     if MODEL_VARIANT == "geometry_275m_gdn_ev2_rope_gated":
         variant_group = "olmoe3-275m-geometry-gdn-ev2-rope-gated"
@@ -385,6 +396,8 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         variant_group = "olmoe3-geometry-matched-gdn-ev2-scale"
     elif MODEL_VARIANT == "geometry_matched_gdn_ev2_nope_gated":
         variant_group = "olmoe3-geometry-matched-gdn-ev2-nope-gated-scale"
+    elif MODEL_VARIANT == "geometry_matched_gdn_ev2_rope_gated":
+        variant_group = "olmoe3-geometry-matched-gdn-ev2-rope-gated-scale"
     elif MODEL_VARIANT == "geometry_matched_gdn_ev2_nope":
         variant_group = "olmoe3-geometry-matched-gdn-ev2-nope-scale"
     else:
@@ -403,7 +416,10 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             variant_tags.append("attention-gate")
     elif geometry_variant:
         variant_tags = ["geometry-matched", "expand-v-2", "rope"]
-        if MODEL_VARIANT == "geometry_275m_gdn_ev2_rope_gated":
+        if MODEL_VARIANT in {
+            "geometry_275m_gdn_ev2_rope_gated",
+            "geometry_matched_gdn_ev2_rope_gated",
+        }:
             variant_tags.append("attention-gate")
     else:
         variant_tags = ["integration-wide", "expand-v-1", "rope"]
@@ -533,7 +549,10 @@ def finalize_config(config: ExperimentConfig) -> None:
     ) / base.num_active_params
     max_active_parameter_delta_fraction = (
         GATED_MAX_ACTIVE_PARAMETER_DELTA_FRACTION
-        if MODEL_VARIANT == "geometry_matched_gdn_ev2_nope_gated"
+        if MODEL_VARIANT in {
+            "geometry_matched_gdn_ev2_nope_gated",
+            "geometry_matched_gdn_ev2_rope_gated",
+        }
         else MAX_ACTIVE_PARAMETER_DELTA_FRACTION
     )
     if abs(delta_fraction) > max_active_parameter_delta_fraction:

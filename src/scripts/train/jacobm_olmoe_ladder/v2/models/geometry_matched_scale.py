@@ -4,11 +4,10 @@
 The 480M, 810M, and 1.2B models adopt the corresponding dense ladder's
 450M, 810M, and 1.4B width/depth/head geometry and every-fifth-layer global
 attention pattern. As in the first 275M ``geometry_only`` experiment, they
-retain the MoE recipe, dense-first FFN, ungated global attention,
-initialization, and the size's existing GQA ratio. The optional NoPE profile
-changes only the full-attention layers' ``rope`` field. The optional gated
-NoPE profile then adds only the dense ladder's elementwise, full-precision
-attention gate.
+retain the MoE recipe, dense-first FFN, initialization, and the size's existing
+GQA ratio. The optional NoPE profile changes only the full-attention layers'
+``rope`` field. Attention gating adds only the dense ladder's elementwise,
+full-precision gate and is supported with either RoPE or NoPE.
 """
 
 from __future__ import annotations
@@ -200,11 +199,11 @@ def _build_geometry_matched_scale_model_config(
 
     geometry = _geometry(model_size)
     if model_size == "275m":
-        if rope and attention_gate:
-            raise ValueError("the isolated attention-gating profile is defined on NoPE")
         return build_geometry_matched_275m_model_config(
             (
-                "geometry_only"
+                "geometry_rope_gated"
+                if rope and attention_gate
+                else "geometry_only"
                 if rope
                 else ("geometry_nope_gated" if attention_gate else "geometry_nope")
             )
@@ -385,8 +384,6 @@ def build_geometry_matched_scale_model_config(
 ) -> OLMoDDPModelConfig:
     """Build a strictly audited geometry-matched model profile."""
 
-    if rope and attention_gate:
-        raise ValueError("the isolated attention-gating profile is defined on NoPE")
     candidate = _build_geometry_matched_scale_model_config(
         model_size,
         rope=rope,
@@ -402,7 +399,7 @@ def build_geometry_matched_scale_model_config(
     elif attention_gate:
         ungated = _build_geometry_matched_scale_model_config(
             model_size,
-            rope=False,
+            rope=rope,
             attention_gate=False,
         )
         normalized = deepcopy(candidate)
@@ -423,8 +420,15 @@ def build_geometry_matched_scale_model_config(
             attention.gate = None
         if normalized.as_dict() != ungated.as_dict():
             raise ValueError(
-                f"{model_size} gated NoPE changed fields other than attention.gate"
+                f"{model_size} gated profile changed fields other than attention.gate"
             )
+        if rope:
+            gated_nope = _build_geometry_matched_scale_model_config(
+                model_size,
+                rope=False,
+                attention_gate=True,
+            )
+            _assert_nope_only_changes_rope(model_size, candidate, gated_nope)
     return candidate
 
 
@@ -492,11 +496,9 @@ def main() -> None:
     parser.add_argument(
         "--attention-gate",
         action="store_true",
-        help="Add the isolated elementwise attention gate to the NoPE profile",
+        help="Add the isolated elementwise attention gate to the selected RoPE/NoPE profile",
     )
     args = parser.parse_args()
-    if args.attention_gate and not args.nope:
-        parser.error("--attention-gate requires --nope")
     model_sizes = args.model_size or list(MODEL_SIZES)
     print(
         json.dumps(

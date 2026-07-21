@@ -48,7 +48,7 @@ TRANSFERRED_WIDE_LRS = {
     ("1p2b", 4): "3e-4",
     ("1p2b", 8): "4e-4",
 }
-SELECTED_LAYOUT = {
+ACCELERATED_LAYOUT = {
     # (nodes, GPUs/node, EP, EP path, rank microbatch sequences)
     ("480m", 1): (1, 8, 1, "rowwise_nvshmem", 4),
     ("480m", 2): (1, 8, 1, "rowwise_nvshmem", 6),
@@ -63,9 +63,31 @@ SELECTED_LAYOUT = {
     ("1p2b", 4): (4, 8, 8, "sync_1d", 2),
     ("1p2b", 8): (4, 8, 8, "sync_1d", 3),
 }
+COMPACT_V1_LAYOUT = {
+    # Reuse the demonstrated first-hybrid layouts for 480M/810M, then retain
+    # extra nodes only for the larger 1.2B data-multiple cells.
+    # (nodes, GPUs/node, EP, EP path, rank microbatch sequences)
+    ("480m", 1): (1, 4, 1, "rowwise_nvshmem", 8),
+    ("480m", 2): (1, 4, 1, "rowwise_nvshmem", 12),
+    ("480m", 4): (1, 4, 1, "rowwise_nvshmem", 8),
+    ("480m", 8): (1, 8, 1, "rowwise_nvshmem", 12),
+    ("810m", 1): (1, 8, 1, "rowwise_nvshmem", 4),
+    ("810m", 2): (1, 8, 1, "rowwise_nvshmem", 6),
+    ("810m", 4): (1, 8, 1, "rowwise_nvshmem", 4),
+    ("810m", 8): (1, 8, 1, "rowwise_nvshmem", 6),
+    ("1p2b", 1): (1, 8, 8, "sync_1d", 4),
+    ("1p2b", 2): (2, 8, 8, "sync_1d", 3),
+    ("1p2b", 4): (2, 8, 8, "sync_1d", 4),
+    ("1p2b", 8): (4, 8, 8, "sync_1d", 3),
+}
+LAYOUT_PROFILES = {
+    "accelerated": ACCELERATED_LAYOUT,
+    "compact_v1": COMPACT_V1_LAYOUT,
+}
 MODEL_VARIANTS = {
     "geometry_matched_gdn_ev2_nope": {"rope": False, "attention_gate": False},
     "geometry_matched_gdn_ev2_nope_gated": {"rope": False, "attention_gate": True},
+    "geometry_matched_gdn_ev2_rope_gated": {"rope": True, "attention_gate": True},
 }
 NONFINITE_DIAGNOSTIC_STOPS = {
     ("geometry_matched_gdn_ev2_nope", "1p2b-cx8"): 18_500,
@@ -80,6 +102,11 @@ def validate(manifest: dict[str, Any]) -> list[dict[str, Any]]:
         profile = MODEL_VARIANTS[variant]
     except KeyError as exc:
         raise ValueError(f"unsupported production model variant {variant!r}") from exc
+    layout_profile = str(training.get("layout_profile", "accelerated"))
+    try:
+        selected_layout = LAYOUT_PROFILES[layout_profile]
+    except KeyError as exc:
+        raise ValueError(f"unsupported production layout profile {layout_profile!r}") from exc
     if int(training["hard_stop_steps"]) != 0:
         raise ValueError("production runs must set hard_stop_steps: 0")
     if not bool(training["checkpoints"]):
@@ -91,10 +118,10 @@ def validate(manifest: dict[str, Any]) -> list[dict[str, Any]]:
 
     rows = manifest["runs"]
     keys = {(str(row["model_size"]), int(row["cx"])) for row in rows}
-    if keys != set(SELECTED_LAYOUT):
+    if keys != set(selected_layout):
         raise ValueError(
             f"manifest must contain the complete 12-cell layout; missing="
-            f"{sorted(set(SELECTED_LAYOUT) - keys)}, extra={sorted(keys - set(SELECTED_LAYOUT))}"
+            f"{sorted(set(selected_layout) - keys)}, extra={sorted(keys - set(selected_layout))}"
         )
     if len(rows) != len(keys):
         raise ValueError("manifest contains duplicate model/Cx cells")
@@ -113,7 +140,7 @@ def validate(manifest: dict[str, Any]) -> list[dict[str, Any]]:
         task_names.add(task_name)
         run_names.add(run_name)
 
-        expected_layout = SELECTED_LAYOUT[key]
+        expected_layout = selected_layout[key]
         actual_layout = (
             int(row["num_nodes"]),
             int(row["gpus_per_node"]),

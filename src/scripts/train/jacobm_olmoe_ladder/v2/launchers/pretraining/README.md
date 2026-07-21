@@ -56,6 +56,11 @@ PYTHONPATH=src .venv/bin/python \
   src/scripts/train/jacobm_olmoe_ladder/v2/launchers/pretraining/launch_geometry_matched_scale_full.py \
   --manifest src/scripts/train/jacobm_olmoe_ladder/v2/launchers/pretraining/manifests/geometry_matched_scale_nope_gated_full.yaml
 
+# Inspect the compact, ordered RoPE + gated-attention scale wave. It reuses the
+# first-hybrid GPU layouts for 480M/810M and the selected 8/16/16/32-GPU 1.2B
+# layout. Pass --submit only after the printed 124-GPU batch audit is correct.
+src/scripts/train/jacobm_olmoe_ladder/v2/launchers/pretraining/launch_geometry_matched_scale_rope_gated_full.sh
+
 # Render only the two 1.2B synchronized EP8 probes.
 src/scripts/train/jacobm_olmoe_ladder/v2/launchers/pretraining/launch_hybrid_scale_smokes.sh \
   --task 1p2b-cx1-mb8-ep8-sync --task 1p2b-cx2-mb12-ep8-sync
