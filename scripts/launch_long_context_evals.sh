@@ -27,8 +27,13 @@
 # Common overrides (env vars):
 #   PRIORITY, NUM_GPUS, OLMO_CORE_TOKENIZER, OLMO_CORE_BATCH_SIZE,
 #   CLUSTER, WORKSPACE, RULER_DASHBOARD, SKIP_HELMET=1, SKIP_RULER=1,
-#   OLMO_CORE_GATE_LOG (base path -> per-decoded-token landmark-gate log on RULER; needs
-#                       OLMO_CORE_LANDMARK_TOP_K), OLMO_GATE_DATASET,
+#   RULER_LENGTHS_K (subset of lengths), RULER_LIMIT (cap examples per RULER subtask, e.g. 50),
+#   OLMO_CORE_LANDMARK_TOP_K (fixed hard top-k in blocks) or OLMO_CORE_LANDMARK_TOP_K_FRACTION
+#                       (decimal, e.g. 0.1 -> per-length k=ceil(frac*len/BLOCK_SIZE); use SKIP_HELMET=1),
+#   OLMO_CORE_GATE_LOG (base path -> per-decoded-token landmark-gate log on RULER; needs a top-k
+#                       above), OLMO_GATE_DATASET,
+#   OLMO_CORE_GATE_LOG_ALL (non-empty -> also log EVERY candidate block's gate score, not just the
+#                       top-k kept ones; larger logs, needs OLMO_CORE_GATE_LOG),
 #   HELMET_MAX_LENGTH (cap HELMET suite, e.g. 32768 for an un-extended model),
 #   HELMET_TIMEOUT (gantry --timeout, seconds; default 0 = submit & detach so
 #                   RULER launches immediately, -1 = follow the run to completion)
@@ -71,6 +76,15 @@ OLMO_CORE_USE_CACHE="${OLMO_CORE_USE_CACHE:-true}"
 # length). RULER also needs OE_EVAL_BRANCH=amandab/ruler-memproj for the model-arg to be recognized.
 # Empty (default) = dense soft-gated landmark decode. Ignored by non-landmark models.
 OLMO_CORE_LANDMARK_TOP_K="${OLMO_CORE_LANDMARK_TOP_K:-}"
+# Alternative to a fixed OLMO_CORE_LANDMARK_TOP_K: a decimal FRACTION of the context's landmark blocks
+# to keep (e.g. 0.1 = top 10%). When set (and OLMO_CORE_LANDMARK_TOP_K is empty), RULER computes a
+# PER-LENGTH block count k = ceil(fraction * len_k*1024 / BLOCK_SIZE) and passes it as
+# landmark_top_k_blocks -- so every length uses the same fraction (the GenerationConfig default is
+# fraction=0.1, but we pass an explicit block count so the fraction is applied regardless of the
+# oe-eval backend's own default, and so gate logging always records under hard top-k). Length-
+# dependent, so unlike a fixed top_k it does NOT allow a single HELMET run -> use with SKIP_HELMET=1.
+OLMO_CORE_LANDMARK_TOP_K_FRACTION="${OLMO_CORE_LANDMARK_TOP_K_FRACTION:-}"
+BLOCK_SIZE="${BLOCK_SIZE:-64}"   # landmark block size = mem_freq(63) + 1
 # Compressive-landmark checkpoints only: override the fraction of attention mass (in [0,1)) reserved
 # at top-k decode for the landmark (compression) tokens of the NON-selected blocks. When set, RULER
 # gets `landmark_nonselected_mass=<f>` and HELMET gets `--olmo_core_landmark_nonselected_mass`. Only
@@ -82,17 +96,25 @@ OLMO_CORE_LANDMARK_NONSELECTED_MASS="${OLMO_CORE_LANDMARK_NONSELECTED_MASS:-}"
 # length-job then logs, per decoded token / layer / head, the landmark BLOCKS that hard top-k
 # retrieval opened, to "<base>.ruler<k>k" (the recorder further appends ".rank<N>" per GPU worker).
 # Threaded into the RULER container as the env var OLMO_LANDMARK_GATE_LOG (plus OLMO_GATE_DATASET and
-# a per-job OLMO_GATE_CONTEXT_LEN=<length>) via gantry env args. ONLY records when
-# OLMO_CORE_LANDMARK_TOP_K is also set (gate logging captures hard top-k retrieval; dense soft-gating
-# has no gate selection to log). The per-example "subtask" field stays empty because oe-eval runs all
+# a per-job OLMO_GATE_CONTEXT_LEN=<length>) via gantry env args. ONLY records when hard top-k
+# retrieval is active -- i.e. set OLMO_CORE_LANDMARK_TOP_K (fixed) or OLMO_CORE_LANDMARK_TOP_K_FRACTION
+# (per-length); dense soft-gating has no gate selection to log. The per-example "subtask" field stays
+# empty because oe-eval runs all
 # 13 RULER subtasks in one process, so a static env var can't track it; "dataset" defaults to "ruler"
 # (override via OLMO_GATE_DATASET) and "context_len" to the job's nominal length. Empty (default) =
 # no gate logging. Only affects the RULER path (HELMET is unaffected).
 OLMO_CORE_GATE_LOG="${OLMO_CORE_GATE_LOG:-}"
 OLMO_GATE_DATASET="${OLMO_GATE_DATASET:-ruler}"
-if [ -n "${OLMO_CORE_GATE_LOG}" ] && [ -z "${OLMO_CORE_LANDMARK_TOP_K}" ]; then
-  echo "WARNING: OLMO_CORE_GATE_LOG is set but OLMO_CORE_LANDMARK_TOP_K is not -- landmark gate" >&2
-  echo "         logging only records hard top-k retrieval, so no gates will be logged." >&2
+# When set (to any non-empty value), also record EVERY candidate landmark block's gate score each
+# step (not just the top-k kept ones) via OLMO_GATE_LOG_ALL, so the full gate-score distribution --
+# and where the hard cutoff falls within it -- is recoverable for peakiness analysis. Off by default
+# because it scales each record with the number of past blocks (O(context) rather than O(top_k)).
+OLMO_CORE_GATE_LOG_ALL="${OLMO_CORE_GATE_LOG_ALL:-}"
+if [ -n "${OLMO_CORE_GATE_LOG}" ] && [ -z "${OLMO_CORE_LANDMARK_TOP_K}" ] \
+   && [ -z "${OLMO_CORE_LANDMARK_TOP_K_FRACTION}" ]; then
+  echo "WARNING: OLMO_CORE_GATE_LOG is set but neither OLMO_CORE_LANDMARK_TOP_K nor" >&2
+  echo "         OLMO_CORE_LANDMARK_TOP_K_FRACTION is -- landmark gate logging only records hard" >&2
+  echo "         top-k retrieval, so no gates will be logged." >&2
 fi
 
 # These checkpoints were written by a branch of OLMo-core whose configs use
@@ -170,6 +192,14 @@ if [ "${SKIP_RULER:-0}" != "1" ]; then
   # Override with e.g. RULER_LENGTHS_K="4" to smoke-test a single length.
   RULER_LENGTHS_K=( ${RULER_LENGTHS_K:-4 8 16 32 64 128} )
 
+  # Optional cap on the number of examples per RULER SUBTASK (oe-eval's --limit, passed through the
+  # cookbook's -x/--extra-args). RULER runs 13 subtasks per length, so RULER_LIMIT=50 -> 50 examples
+  # each -> ~650 per length instead of the full suite. Empty (default) = full eval. Built as an array
+  # so the two tokens (-x, "--limit N") pass through cleanly; bash-3.2-safe empty expansion below.
+  RULER_LIMIT="${RULER_LIMIT:-}"
+  RULER_LIMIT_ARGS=()
+  [ -n "${RULER_LIMIT}" ] && RULER_LIMIT_ARGS=(-x "--limit ${RULER_LIMIT}")
+
   # Optional non-thinking (ChatML) RULER variant. Set RULER_CHAT_TEMPLATE (e.g. qwen3_nothink) to
   # run RULER through a chat template, and OE_EVAL_BRANCH to the oe-eval branch that carries that
   # template (e.g. amandab/ruler-memproj). ALWAYS pair the non-thinking run with a distinct
@@ -227,9 +257,21 @@ if [ "${SKIP_RULER:-0}" != "1" ]; then
   for k in "${RULER_LENGTHS_K[@]}"; do
     task="ruler:${k}k"
     max_length=$(( k * 1024 ))
-    model_args="trust_remote_code=true,max_length=${max_length},tokenizer=${OLMO_CORE_TOKENIZER},use_cache=${OLMO_CORE_USE_CACHE}"
+    # Effective per-length hard top-k (in landmark blocks): a fixed OLMO_CORE_LANDMARK_TOP_K wins;
+    # else, if a fraction is given, k = ceil(fraction * len_k*1024 / BLOCK_SIZE) so every length keeps
+    # the same top fraction of blocks. Empty -> no landmark_top_k_blocks arg (backend default).
     if [ -n "${OLMO_CORE_LANDMARK_TOP_K}" ]; then
-      model_args="${model_args},landmark_top_k_blocks=${OLMO_CORE_LANDMARK_TOP_K}"
+      eff_topk="${OLMO_CORE_LANDMARK_TOP_K}"
+    elif [ -n "${OLMO_CORE_LANDMARK_TOP_K_FRACTION}" ]; then
+      eff_topk=$(awk -v k="$k" -v bs="$BLOCK_SIZE" -v f="$OLMO_CORE_LANDMARK_TOP_K_FRACTION" \
+        'BEGIN{v=f*k*1024/bs; kk=(v==int(v))?v:int(v)+1; if(kk<1)kk=1; printf "%d", kk}')
+    else
+      eff_topk=""
+    fi
+    model_args="trust_remote_code=true,max_length=${max_length},tokenizer=${OLMO_CORE_TOKENIZER},use_cache=${OLMO_CORE_USE_CACHE}"
+    if [ -n "${eff_topk}" ]; then
+      model_args="${model_args},landmark_top_k_blocks=${eff_topk}"
+      echo "    landmark_top_k_blocks=${eff_topk} (len ${k}k, fraction=${OLMO_CORE_LANDMARK_TOP_K_FRACTION:-fixed})"
     fi
     if [ -n "${OLMO_CORE_LANDMARK_NONSELECTED_MASS}" ]; then
       model_args="${model_args},landmark_nonselected_mass=${OLMO_CORE_LANDMARK_NONSELECTED_MASS}"
@@ -256,6 +298,9 @@ if [ "${SKIP_RULER:-0}" != "1" ]; then
       gate_log_gantry_args=",env##1=OLMO_LANDMARK_GATE_LOG=${gate_log_incontainer}.${task//:/}"
       gate_log_gantry_args="${gate_log_gantry_args},env##2=OLMO_GATE_DATASET=${OLMO_GATE_DATASET}"
       gate_log_gantry_args="${gate_log_gantry_args},env##3=OLMO_GATE_CONTEXT_LEN=${max_length}"
+      if [ -n "${OLMO_CORE_GATE_LOG_ALL}" ]; then
+        gate_log_gantry_args="${gate_log_gantry_args},env##4=OLMO_GATE_LOG_ALL=1"
+      fi
     fi
     echo "==> Launching RULER ${task} (max_length=${max_length}) for ${MODEL_PATH}"
     attempt=1
@@ -273,6 +318,7 @@ if [ "${SKIP_RULER:-0}" != "1" ]; then
       -g \
       ${OE_EVAL_BRANCH_FLAG} \
       ${NAME_SUFFIX_FLAG} \
+      "${RULER_LIMIT_ARGS[@]+"${RULER_LIMIT_ARGS[@]}"}" \
       -l "install=uv sync --python 3.11 && uv pip install --no-deps ${FLASH_ATTN_WHEEL} && uv pip install --no-deps git+https://github.com/allenai/OLMo-core.git@${OLMO_CORE_COMMIT} && uv pip install dataclass-extensions==0.5.0 && uv pip install flash-linear-attention==0.4.1${gate_log_gantry_args}" \
       --model-args "${model_args}"; do
       if [ "${attempt}" -ge "${RULER_SUBMIT_RETRIES}" ]; then

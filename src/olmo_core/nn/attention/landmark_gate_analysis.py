@@ -16,12 +16,29 @@ the output file (JSONL — load with ``pandas.read_json(path, lines=True)``)::
 
     {"dataset": "ruler", "doc_id": 0, "context_len": 4096, "subtask": "niah_single_1",
      "decoded_token_num": 1,
-     "layers": {"layer0": {"head0": [3, 17, 42], "head1": [...]}, "layer1": {...}, ...}}
+     "layers": {"layer0": {"head0": {"blocks": [3, 17, 42], "scores": [8.12, 6.44, 2.01]},
+                           "head1": {...}},
+                "layer1": {...}, ...}}
 
-``decoded_token_num`` starts at 1 for the first generated token of an example. The ints under each
-head are 0-based landmark-**block** ordinals (block ``b`` is the ``b``-th ``mem_freq + 1``-token
-block; its landmark sits at the block's last position), listed in descending retrieval-score order
-(the highest-scoring kept block first, the lowest-scoring kept block last).
+``decoded_token_num`` starts at 1 for the first generated token of an example. Each head maps to a
+dict with two parallel lists:
+
+* ``blocks`` — the 0-based landmark-**block** ordinals whose gate the hard top-k retrieval kept open
+  (block ``b`` is the ``b``-th ``mem_freq + 1``-token block; its landmark sits at the block's last
+  position), listed in descending retrieval-score order (the highest-scoring kept block first, the
+  lowest-scoring kept block last).
+* ``scores`` — the matching **gate scores**: the raw landmark logits (``q · k * softmax_scale`` at
+  each landmark position) that top-k ranked on, aligned one-to-one with ``blocks``. These are the
+  *pre-softmax* inputs to the cross-block gate softmax, so ``softmax(scores)`` reproduces the
+  fraction of attention mass the current gating allocates across the kept blocks (the local section
+  is a separate, always-attended competitor and is not included here). This is what lets a
+  downstream analysis measure how peaky that allocation is.
+
+If ``OLMO_GATE_LOG_ALL`` is set (to any non-empty value), each head dict additionally carries
+``all_blocks`` / ``all_scores`` covering **every** candidate landmark block this step (not just the
+top-k kept ones; again descending by score), so the full gate-score distribution — and where the
+hard cutoff falls within it — is recoverable. This is off by default because it scales the record
+size with the number of past blocks (O(context) rather than O(top_k)).
 
 Per-example metadata is read from the environment (the harness sets these per eval process)::
 
@@ -58,6 +75,7 @@ __all__ = [
 _lock = threading.Lock()
 _initialized = False
 _enabled = False
+_log_all = False
 _path: Optional[str] = None
 _file = None
 
@@ -70,11 +88,12 @@ _doc_counter = -1
 _doc_id: object = 0
 _context_len = 0
 _decoded_token_num = 0
-_current_layers: Dict[str, Dict[str, List[int]]] = {}
+# layer name -> head name -> {"blocks": [...], "scores": [...], optionally "all_blocks"/"all_scores"}.
+_current_layers: Dict[str, Dict[str, Dict[str, list]]] = {}
 
 
 def _init() -> None:
-    global _initialized, _enabled, _path, _file
+    global _initialized, _enabled, _log_all, _path, _file
     global _dataset, _subtask, _context_len_env
     with _lock:
         if _initialized:
@@ -84,6 +103,7 @@ def _init() -> None:
         if not path:
             _enabled = False
             return
+        _log_all = bool(os.environ.get("OLMO_GATE_LOG_ALL"))
         # Per-worker output so parallel eval workers never clobber the same file. Use the torchrun
         # rank when present, else the pid (oe-eval spawns one model process per GPU without setting
         # RANK, so the pid is what guarantees uniqueness there).
@@ -136,24 +156,56 @@ def start_example(content_prompt_len: int) -> None:
     _current_layers = {}
 
 
+def _ordered_blocks_scores(
+    block_ids: torch.Tensor, scores: torch.Tensor, sel: torch.Tensor
+) -> tuple:
+    """Return ``(blocks, scores)``: the selected gate slots as parallel lists, descending by score.
+
+    Non-finite scores (e.g. absent sparse-landmark chunks masked to ``-inf``) are dropped, and block
+    ordinals are deduped keeping their highest-scoring slot -- so the two lists are one-per-block.
+
+    :param block_ids: Long tensor ``(M,)`` mapping each gate slot to its landmark-block ordinal.
+    :param scores: Float tensor ``(M,)`` of each slot's gate score.
+    :param sel: Boolean tensor ``(M,)`` selecting which slots to emit (e.g. the kept mask, or all).
+    """
+    blk = block_ids[sel]
+    scr = scores[sel]
+    finite = torch.isfinite(scr)
+    blk, scr = blk[finite], scr[finite]
+    order = torch.argsort(scr, descending=True)
+    seen: set = set()
+    out_blocks: List[int] = []
+    out_scores: List[float] = []
+    for b, s in zip(blk[order].tolist(), scr[order].tolist()):
+        b = int(b)
+        if b not in seen:
+            seen.add(b)
+            out_blocks.append(b)
+            out_scores.append(round(float(s), 4))
+    return out_blocks, out_scores
+
+
 def record_layer(
     layer_idx: Optional[int],
     keep: torch.Tensor,
     block_ids: torch.Tensor,
     scores: torch.Tensor,
 ) -> None:
-    """Record the open landmark gates for one layer at the current decode step.
+    """Record the open landmark gates -- and their gate scores -- for one layer at this decode step.
 
-    The kept blocks are listed per head in descending retrieval-score order (the highest-scoring
-    block first, the lowest-scoring kept block last).
+    Per head, the kept blocks are listed in descending retrieval-score order (the highest-scoring
+    block first, the lowest-scoring kept block last), with the matching gate scores alongside. When
+    ``OLMO_GATE_LOG_ALL`` is set, every candidate block's score is recorded too (see the module
+    docstring for the emitted schema).
 
     :param layer_idx: The model layer index (used as the ``"layer{idx}"`` key).
     :param keep: Boolean tensor of shape ``(B, H, 1, M)`` where ``keep[0, h, 0, m]`` is ``True`` iff
         gate slot ``m`` is kept open for head ``h``. ``B`` must be 1.
     :param block_ids: Long tensor of shape ``(M,)`` mapping each gate slot to its landmark-block
         ordinal (so multiple slots may share a block ordinal, e.g. sparse-landmark chunks).
-    :param scores: Float tensor broadcastable to ``(B, H, 1, M)`` giving each gate slot's retrieval
-        score (the landmark logit the top-k selection ranked on), used to order the kept blocks.
+    :param scores: Float tensor broadcastable to ``(B, H, 1, M)`` giving each gate slot's gate score
+        (the raw landmark logit the top-k selection ranked on), recorded alongside the kept blocks
+        and used to order them.
     """
     if not _enabled:
         return
@@ -162,21 +214,17 @@ def record_layer(
     keep_c = keep.detach().to("cpu").reshape(B, H, -1).bool()
     block_ids_c = block_ids.detach().to("cpu").reshape(-1)
     scores_c = scores.detach().float().to("cpu").reshape(B, H, -1)
-    heads: Dict[str, List[int]] = {}
+    all_sel = torch.ones_like(keep_c[0, 0]) if _log_all else None
+    heads: Dict[str, Dict[str, list]] = {}
     for h in range(H):
-        mask = keep_c[0, h]
-        kept_blocks = block_ids_c[mask]
-        kept_scores = scores_c[0, h][mask]
-        # Highest-scoring kept block first; dedupe block ordinals keeping their first (best) slot.
-        order = torch.argsort(kept_scores, descending=True)
-        seen: set = set()
-        ordered: List[int] = []
-        for b in kept_blocks[order].tolist():
-            b = int(b)
-            if b not in seen:
-                seen.add(b)
-                ordered.append(b)
-        heads[f"head{h}"] = ordered
+        head_scores = scores_c[0, h]
+        blocks, scr = _ordered_blocks_scores(block_ids_c, head_scores, keep_c[0, h])
+        entry: Dict[str, list] = {"blocks": blocks, "scores": scr}
+        if all_sel is not None:
+            all_blocks, all_scr = _ordered_blocks_scores(block_ids_c, head_scores, all_sel)
+            entry["all_blocks"] = all_blocks
+            entry["all_scores"] = all_scr
+        heads[f"head{h}"] = entry
     _current_layers[f"layer{layer_idx}"] = heads
 
 
