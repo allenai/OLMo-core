@@ -3,6 +3,7 @@ from typing import Any
 import torch
 import torch.distributed as dist
 
+from olmo_core.distributed.utils import unhide_from_torch
 from olmo_core.testing import (
     requires_multi_gpu,
     requires_symm_mem_vdev2d,
@@ -123,7 +124,9 @@ def _run_dropless_path_matches_no_ep(
     if rowwise:
         drop_tokens_sum = ep_block._ep_no_sync_rowwise_drop_tokens_sum
         assert drop_tokens_sum is not None
-        assert drop_tokens_sum.item() == 0
+        # The metric is stored wrapped in a `_HiddenTensor` (kept off the autograd graph);
+        # unwrap before reading its value.
+        assert unhide_from_torch(drop_tokens_sum).item() == 0
 
     loss_no_ep = y_no_ep.square().mean() + (0.1 * y_no_ep.sum())
     loss_ep = y_ep.square().mean() + (0.1 * y_ep.sum())

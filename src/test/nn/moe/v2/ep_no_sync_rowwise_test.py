@@ -3,6 +3,7 @@ import torch.distributed as dist
 from torch.distributed.device_mesh import DeviceMesh
 
 from olmo_core.config import DType
+from olmo_core.distributed.utils import unhide_from_torch
 from olmo_core.nn.attention import AttentionConfig, AttentionType
 from olmo_core.nn.ddp.block import OLMoDDPTransformerBlock
 from olmo_core.nn.layer_norm import LayerNormConfig, LayerNormType
@@ -163,8 +164,11 @@ def _run_rowwise_ep_dropless_matches_no_ep():
     y_ep = ep_block(x_ep)
     torch.testing.assert_close(y_ep, y_no_ep, atol=5e-4, rtol=5e-4)
     # capacity_factor=8.0 with this routing keeps every token.
-    assert ep_block._ep_no_sync_rowwise_drop_tokens_sum is not None
-    assert ep_block._ep_no_sync_rowwise_drop_tokens_sum.item() == 0
+    drop_tokens_sum = ep_block._ep_no_sync_rowwise_drop_tokens_sum
+    assert drop_tokens_sum is not None
+    # The metric is stored wrapped in a `_HiddenTensor` (kept off the autograd graph); unwrap
+    # before reading its value.
+    assert unhide_from_torch(drop_tokens_sum).item() == 0
 
     (y_no_ep.square().mean() + 0.1 * y_no_ep.sum()).backward()
     (y_ep.square().mean() + 0.1 * y_ep.sum()).backward()
