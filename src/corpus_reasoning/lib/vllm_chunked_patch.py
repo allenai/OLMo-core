@@ -342,6 +342,24 @@ def _patch_flex_metadata_builder() -> None:
         # Stash for debugging / inspection on the metadata object.
         metadata._chunk_ids = chunk_ids
 
+        # GUARDRAIL: FlexAttention's kv_block_size MUST divide the KV-cache page size
+        # (block_size). If it does not, the flex kernel silently produces WRONG (finite,
+        # non-NaN) attention output — every generation degenerates to token-0 "!!!!". This
+        # bit us on the Qwen3.5-4B GDN-hybrid, whose attention page is 528 (=16*33), not the
+        # 544 an earlier comment assumed: kv_block_size=32 does not divide 528. Fail loudly
+        # here (with the divisor to use) rather than emit garbage that reads as a bad model.
+        if not _debug_state.get("divchecked"):
+            _debug_state["divchecked"] = True
+            bs, kvb = int(metadata.block_size), int(metadata.kv_block_size)
+            if bs % kvb != 0:
+                good = bs & -bs  # largest power-of-2 divisor of block_size
+                raise ValueError(
+                    f"[vllm_chunked_patch] flex_attn_kv_block_size={kvb} does not divide "
+                    f"the KV-cache page size block_size={bs}; this SILENTLY corrupts "
+                    f"FlexAttention output. Set flex_attn_kv_block_size={good} (largest "
+                    f"power-of-2 dividing {bs}) in the LLM(attention_config=...) call."
+                )
+
         # Replace mask_mod with a chunked variant. The chunked rule uses the
         # request index (which we get from `metadata.doc_ids[q_idx]`) to look
         # up per-request chunk IDs. The default `get_causal_mask_mod` strips
