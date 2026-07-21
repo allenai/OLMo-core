@@ -336,6 +336,7 @@ def compressive_landmark_grouped_softmax(
     dim: int,
     is_mem: torch.Tensor,
     last_section_mask: torch.Tensor,
+    gate_logits: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
     """
     The eager (dense) *compressive* grouped softmax used by compressive landmark attention.
@@ -369,6 +370,13 @@ def compressive_landmark_grouped_softmax(
     :param is_mem: Boolean mask (broadcastable to ``x``) marking landmark key positions.
     :param last_section_mask: Boolean mask (broadcastable to ``x``) marking, for each query, the keys
         that belong to the query's own ("last") section.
+    :param gate_logits: Optional separate logits (same shape / masking as ``x``) used **only** for the
+        cross-block gate softmax -- i.e. the per-block rescaling ``G_b`` -- while the within-block
+        softmax ``f_n`` (which token inside a block) still uses ``x``. Used by the GQA-grouped variant
+        (:class:`~olmo_core.nn.attention.landmark_compressive_gqa.CompressiveGQAGroupedAttention`) to
+        feed group-mean landmark scores into the gate while keeping per-head content weighting. Must
+        already carry the same additive mask as ``x``; only its landmark and own-section columns are
+        actually read. ``None`` (default) reuses ``x`` for the gate -- the original per-head behavior.
     """
     is_mem_i = is_mem.to(torch.long)
     max_mem_cnt = int(is_mem.sum(dim=dim).max().item()) + 1
@@ -378,12 +386,16 @@ def compressive_landmark_grouped_softmax(
     # (1) Cross-block GATE softmax: landmarks + the query's own section compete in the top bucket,
     #     exactly as in landmark_grouped_softmax. (Content keys land in their own block bucket here,
     #     but those values are unused -- only the gate keys and ``group_prob`` below are read.)
+    #     ``gate_logits`` (when given) overrides the logits for THIS softmax only, so the block
+    #     rescaling can use e.g. group-mean landmark scores while the within-block softmax below
+    #     keeps ``x``'s per-head scores.
+    gate_x = x if gate_logits is None else gate_logits
     resp_gate = torch.where(
         last_section_mask,
         torch.full_like(mem_group_idx, gate_bucket),
         torch.where(is_mem, torch.full_like(mem_group_idx, gate_bucket), mem_group_idx),
     )
-    gate_probs = LandmarkGroupedSoftmaxFunction.apply(x, dim, max_mem_cnt, resp_gate)
+    gate_probs = LandmarkGroupedSoftmaxFunction.apply(gate_x, dim, max_mem_cnt, resp_gate)
     # group_prob[..., b] = the gate weight assigned to block b's landmark.
     new_shape = list(x.shape)
     new_shape[dim] = max_mem_cnt

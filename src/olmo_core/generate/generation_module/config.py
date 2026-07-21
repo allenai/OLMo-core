@@ -130,6 +130,15 @@ class GenerationConfig(Config):
     per-head selection). Ignored by other models, MHA models, and when top-k retrieval is disabled.
     """
 
+    landmark_decode_gate_mode: Optional[str] = None
+    """
+    For :class:`~olmo_core.nn.attention.CompressiveGQAGroupedAttention` (grouped-trained) models only:
+    how the cross-block gate is computed at decode. ``"grouped"`` (Version A) uses the group-mean gate,
+    matching training; ``"selection_only"`` (Version B) uses the per-head gate and relies on
+    ``landmark_group_selection="mean"`` to share only the top-k *selection*. ``None`` (default) uses the
+    value baked into the attention module (default ``"grouped"``). Ignored by other models.
+    """
+
     def __post_init__(self):
         self.validate()
 
@@ -173,4 +182,9 @@ class GenerationConfig(Config):
             raise ValueError(
                 "landmark_group_selection must be 'mean', 'max', 'inverse_mean', or None, "
                 f"got {self.landmark_group_selection!r}"
+            )
+        if self.landmark_decode_gate_mode not in (None, "grouped", "selection_only"):
+            raise ValueError(
+                "landmark_decode_gate_mode must be 'grouped', 'selection_only', or None, "
+                f"got {self.landmark_decode_gate_mode!r}"
             )

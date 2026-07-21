@@ -85,6 +85,7 @@ __all__ = [
     "LandmarkAttention",
     "FastLandmarkAttention",
     "FastCompressiveLandmarkAttention",
+    "CompressiveGQAGroupedAttention",
     "SparseLandmarkAttention",
     "DocumentLandmarkAttention",
     "DocumentCompressiveLandmarkAttention",
@@ -212,6 +213,13 @@ class AttentionType(StrEnum):
     block's landmark token into the attention output -- a compressed summary of the block)
     """
 
+    compressive_gqa_grouped = "compressive_gqa_grouped"
+    """
+    ➡️ :class:`CompressiveGQAGroupedAttention` (compressive landmark attention where each past block's
+    cross-block gate is computed from the MEAN of the KV group's landmark scores for that block, so a
+    GQA group's query heads share one block rescaling; within-block + local stay per-head)
+    """
+
     sparse_landmark = "sparse_landmark"
     """
     ➡️ :class:`SparseLandmarkAttention` (sparse landmark-only-across-chunks attention)
@@ -313,6 +321,7 @@ _LANDMARK_ATTENTION_TYPES = (
     AttentionType.landmark,
     AttentionType.fast_landmark,
     AttentionType.fast_compressive_landmark,
+    AttentionType.compressive_gqa_grouped,
     AttentionType.sparse_landmark,
     AttentionType.shared_vector_landmark,
     AttentionType.document_landmark,
@@ -595,11 +604,12 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
                 AttentionType.landmark,
                 AttentionType.document_landmark,
                 AttentionType.shared_vector_landmark,
+                AttentionType.compressive_gqa_grouped,
             }
         ):
             raise OLMoConfigurationError(
-                "'landmark_use_kernel' is only supported with landmark, document_landmark, or "
-                f"shared_vector_landmark attention (got name='{self.name}')"
+                "'landmark_use_kernel' is only supported with landmark, document_landmark, "
+                f"shared_vector_landmark, or compressive_gqa_grouped attention (got name='{self.name}')"
             )
         if vec_dim is not None and AttentionType.shared_vector_landmark not in possible_types:
             raise OLMoConfigurationError(
@@ -646,27 +656,22 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
                 "document_chunked, document_landmark, or document_compressive_landmark attention "
                 f"(got name='{self.name}')"
             )
-        if nonselected_landmark_mass is not None and not (
-            possible_types
-            & {
-                AttentionType.fast_compressive_landmark,
-                AttentionType.document_compressive_landmark,
-            }
-        ):
+        _COMPRESSIVE_TYPES = {
+            AttentionType.fast_compressive_landmark,
+            AttentionType.document_compressive_landmark,
+            AttentionType.compressive_gqa_grouped,
+        }
+        if nonselected_landmark_mass is not None and not (possible_types & _COMPRESSIVE_TYPES):
             raise OLMoConfigurationError(
-                "'nonselected_landmark_mass' is only supported with fast_compressive_landmark or "
-                f"document_compressive_landmark attention (got name='{self.name}')"
+                "'nonselected_landmark_mass' is only supported with the compressive landmark variants "
+                "(fast_compressive_landmark, document_compressive_landmark, compressive_gqa_grouped); "
+                f"got name='{self.name}'"
             )
-        if group_landmark_selection is not None and not (
-            possible_types
-            & {
-                AttentionType.fast_compressive_landmark,
-                AttentionType.document_compressive_landmark,
-            }
-        ):
+        if group_landmark_selection is not None and not (possible_types & _COMPRESSIVE_TYPES):
             raise OLMoConfigurationError(
-                "'group_landmark_selection' is only supported with fast_compressive_landmark or "
-                f"document_compressive_landmark attention (got name='{self.name}')"
+                "'group_landmark_selection' is only supported with the compressive landmark variants "
+                "(fast_compressive_landmark, document_compressive_landmark, compressive_gqa_grouped); "
+                f"got name='{self.name}'"
             )
 
         try:
@@ -707,6 +712,18 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
                 if group_landmark_selection is not None:
                     kwargs["group_landmark_selection"] = group_landmark_selection
                 return FastCompressiveLandmarkAttention(mem_freq=mem_freq, **kwargs)
+            elif effective_name == "compressive_gqa_grouped":
+                if mem_freq is None:
+                    raise OLMoConfigurationError(
+                        "compressive_gqa_grouped attention requires 'mem_freq' to be set"
+                    )
+                if nonselected_landmark_mass is not None:
+                    kwargs["nonselected_landmark_mass"] = nonselected_landmark_mass
+                if group_landmark_selection is not None:
+                    kwargs["group_landmark_selection"] = group_landmark_selection
+                if landmark_use_kernel is not None:
+                    kwargs["use_kernel"] = landmark_use_kernel
+                return CompressiveGQAGroupedAttention(mem_freq=mem_freq, **kwargs)
             elif effective_name == "sparse_landmark":
                 if mem_freq is None:
                     raise OLMoConfigurationError(
@@ -2166,6 +2183,7 @@ class FusedAttention(SequenceMixer):
 from .chunked_mask import AttentionPattern  # noqa: E402
 from .document_chunked import DocumentChunkedAttention  # noqa: E402
 from .landmark_compressive import FastCompressiveLandmarkAttention  # noqa: E402
+from .landmark_compressive_gqa import CompressiveGQAGroupedAttention  # noqa: E402
 from .landmark_document import DocumentLandmarkAttention  # noqa: E402
 from .landmark_document_compressive import (  # noqa: E402
     DocumentCompressiveLandmarkAttention,

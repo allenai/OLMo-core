@@ -40,6 +40,18 @@ PROMPT_FORMAT="${PROMPT_FORMAT:-chat}"   # chat=SFT (apply_chat_template) | raw=
 LANDMARK_GROUP_SELECTION="${LANDMARK_GROUP_SELECTION:-}"
 GROUP_ARGS=""
 [ -n "$LANDMARK_GROUP_SELECTION" ] && GROUP_ARGS="--landmark-group-selection $LANDMARK_GROUP_SELECTION"
+# GROUPED-TRAINED (compressive_gqa_grouped) checkpoints only: how the cross-block gate is computed at
+# decode. 'grouped' (Version A) = group-mean gate, matches training; 'selection_only' (Version B) =
+# per-head gate, pair with LANDMARK_GROUP_SELECTION=mean to share only the top-k selection. Empty ->
+# the module's baked-in default ('grouped'). Ignored by non-grouped checkpoints.
+LANDMARK_DECODE_GATE_MODE="${LANDMARK_DECODE_GATE_MODE:-}"
+DECODE_GATE_ARGS=""
+[ -n "$LANDMARK_DECODE_GATE_MODE" ] && DECODE_GATE_ARGS="--landmark-decode-gate-mode $LANDMARK_DECODE_GATE_MODE"
+# Optional output tag so parallel eval configs on the SAME checkpoint (e.g. the two decode-gate modes)
+# write to DISTINCT dirs/files instead of overwriting each other. Set by the launcher; empty (all
+# existing callers) -> byte-identical paths to before.
+EVAL_TAG="${EVAL_TAG:-}"
+SUF="${EVAL_TAG:+_$EVAL_TAG}"
 # Landmark + compressive attention can't do batched/left-padded generation (blocks tied to absolute
 # position) -> force batch_size=1 for those variants. Dense keeps the configured (larger) batch.
 case "$VARIANT" in landmark|compressive) BATCH_SIZE=1 ;; esac
@@ -75,15 +87,12 @@ RUN_DIR="$PRASANNS/$RUN"
 # Where the per-task result JSONs land. Default = the run's own eval/ dir under prasanns/<RUN>.
 # Override via the launcher's --results-dir (forwarded as EVAL_OUT_DIR) to write anywhere on weka.
 EVAL_OUT_DIR="${EVAL_OUT_DIR:-$RUN_DIR/eval}"
-# Auto-suffix so a landmark_group_selection sweep never overwrites the independent-per-head (or a
-# different mode's) results in the same dir, regardless of whether EVAL_OUT_DIR was defaulted or
-# user-supplied via --results-dir. RUN_TAG carries the same suffix into the flat $RESULTS/ copies
-# below (keyed by $RUN, not $EVAL_OUT_DIR, so they'd otherwise collide across sweep values too).
-RUN_TAG="$RUN"
-if [ -n "$LANDMARK_GROUP_SELECTION" ]; then
-  EVAL_OUT_DIR="${EVAL_OUT_DIR%/}_grp${LANDMARK_GROUP_SELECTION}"
-  RUN_TAG="${RUN}_grp${LANDMARK_GROUP_SELECTION}"
-fi
+# Auto-suffix (from $SUF, built above from EVAL_TAG = decode-gate-mode + group-selection) so a sweep
+# over either knob never overwrites another config's results, regardless of whether EVAL_OUT_DIR was
+# defaulted or user-supplied via --results-dir. RUN_TAG carries the same suffix into the flat
+# $RESULTS/ copies below (keyed by $RUN, not $EVAL_OUT_DIR, so they'd otherwise collide too).
+RUN_TAG="${RUN}${SUF}"
+[ -n "$SUF" ] && EVAL_OUT_DIR="${EVAL_OUT_DIR%/}${SUF}"
 
 REPO="${REPO:-$PWD}"                          # cloned OLMo-core repo (gantry cwd); eval CODE = in-repo ctc_eval
 export PYTHONPATH="$REPO/src/scripts:$REPO/src:${PYTHONPATH:-}"   # so `import ctc_eval...` resolves (olmo_core also pip -e)
@@ -142,7 +151,7 @@ if [ "$TASK" = "rerank" ] && [ "$LADDER_VERSION" != "v2" ] && [ "$VARIANT" != "d
     echo "=== rerank CE @${r} ($CEF) -> $O ==="
     $TR --model-path "$CKPT" --out "$O" --tokenizer "$TOKENIZER" --max-length "$MAX_LENGTH" \
         --root "$BUNDLE" --max-test-samples "$MAX_TEST" --batch-size "$BATCH_SIZE" --skip-ruler --skip-gen \
-        --ladder --ladder-tasks rerank --ladder-rungs 2k --rerank-data "$CEF" $LANDMARK_FLAGS $GROUP_ARGS || rc=$?
+        --ladder --ladder-tasks rerank --ladder-rungs 2k --rerank-data "$CEF" $LANDMARK_FLAGS $GROUP_ARGS $DECODE_GATE_ARGS || rc=$?
     [ -f "$O" ] && cp "$O" "$RESULTS/${RUN_TAG}_rerank_ce_${r}.json" 2>/dev/null || true
     GEN="${O%.json}.generations.jsonl"
     [ -f "$GEN" ] && cp "$GEN" "$RESULTS/${RUN_TAG}_rerank_ce_${r}.generations.jsonl" 2>/dev/null || true
@@ -213,7 +222,7 @@ if [ "$VARIANT" = "docchunk" ]; then
 else
   $TR --model-path "$CKPT" --out "$OUT" --tokenizer "$TOKENIZER" --max-length "$MAX_LENGTH" \
       --root "$BUNDLE" --max-test-samples "$MAX_TEST" --batch-size "$BATCH_SIZE" --skip-ruler --skip-gen \
-      --ladder $VFLAG $XLFLAG --ladder-tasks "$LTASK" --ladder-rungs "$RUNGS" $EXTRA $LANDMARK_FLAGS $GROUP_ARGS
+      --ladder $VFLAG $XLFLAG --ladder-tasks "$LTASK" --ladder-rungs "$RUNGS" $EXTRA $LANDMARK_FLAGS $GROUP_ARGS $DECODE_GATE_ARGS
   rc=$?
 fi
 if [ -f "$OUT" ]; then
