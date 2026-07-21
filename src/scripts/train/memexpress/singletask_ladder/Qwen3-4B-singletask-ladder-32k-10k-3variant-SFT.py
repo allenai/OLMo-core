@@ -1,16 +1,17 @@
 """
 32k, context-parallel (Ulysses 8) Beaker/gantry **SINGLE-TASK** length-ladder SFT of Qwen3-4B,
-**variant-aware** (dense | landmark | compressive), on a **50% (~10k) subsample** of one task's
-20k-example ladder. **NO CPT mix** (one SFT source at ratio 1.0).
+**variant-aware** (dense | landmark | compressive | sparselandmark), on a subsample of one task's
+20k-example ladder (default 50%, ~10k). **NO CPT mix** (one SFT source at ratio 1.0).
 
 Generalises ``Qwen3-4B-compressive-singletask-ladder-32k-SFT.py`` to all three attention variants and
 adds a seeded 50% document subsample. Both the **task** and the **variant** are parsed from the run
 name (so no structural CLI plumbing through the internal framework, which only does scalar dotlist
 overrides). The run name MUST contain:
   * exactly one task keyword:  contra | nq | oolong | rerank | outlier
-  * exactly one variant keyword: dense | landmark | compressive
+  * exactly one variant keyword: dense | landmark | compressive | sparselandmark
+    (``sparselandmark`` contains ``landmark``; the parser prefers the longest match.)
 
-Per-variant model + packing + weka CPT base (all bases under ``amandab/`` -- weka-only):
+Per-variant model + packing + weka CPT base (all but sparselandmark under ``amandab/`` -- weka-only):
   * dense       -> flash-attn 2 + YaRN(factor2) + ConcatAndChunk packing (varlen EOS masking).
                    base: q4b-dense-dolma3longmino/step2385/model_and_optim
   * landmark    -> fast_landmark (mem_freq=63) + LandmarkPacking, no YaRN.
@@ -18,6 +19,11 @@ Per-variant model + packing + weka CPT base (all bases under ``amandab/`` -- wek
   * compressive -> fast_compressive_landmark (mem_freq=63, nonselected_landmark_mass=0.1)
                    + LandmarkPacking, no YaRN.
                    base: q4b-base-fast-compressive-landmark-8node/step2385/model_and_optim
+  * sparselandmark -> sparse_landmark (mem_freq=63, num_landmarks=1) + LandmarkPacking, no YaRN.
+                   Attends fully within its own chunk; past chunks are visible ONLY through their
+                   single landmark token (no expansion into past-chunk content).
+                   base: q4b-sparse-landmark-dolma3longmino/step2385/model_and_optim
+                   NOTE: no context parallelism (see the parallelism branch below).
 
 Data (weka): per-task ladder shards under
 ``prasanns/single_task_ladders/<task>/{token_ids_part_*.npy,labels_mask_*.npy}``.
@@ -54,6 +60,7 @@ from olmo_core.internal.common import build_launch_config, get_root_dir, get_wor
 from olmo_core.internal.experiment import CliContext, ExperimentConfig, main
 from olmo_core.launch.beaker import BeakerEnvVar, BeakerLaunchConfig, OLMoCoreBeakerImage
 from olmo_core.nn.attention import AttentionBackendName
+from olmo_core.nn.lm_head import LMLossImplementation
 from olmo_core.nn.rope import YaRNRoPEScalingConfig
 from olmo_core.nn.transformer import TransformerActivationCheckpointingMode, TransformerConfig
 from olmo_core.optim import LinearWithWarmup, OptimGroupOverride, SkipStepAdamWConfig
@@ -93,13 +100,19 @@ BASE_CHECKPOINTS = {
     "dense": f"{_AMANDAB}/q4b-base-dense-lr1.1e-4/step2385/model_and_optim",
     "landmark": f"{_AMANDAB}/q4b-base-fast-landmark-lr1p1e-4/step2385/model_and_optim",
     "compressive": f"{_AMANDAB}/qwen4b-base-compressive-lr1.1e-4/step2385/model_and_optim",
+    # NOTE: the sparse-landmark CPT base is NOT under amandab/ -- it lives directly under
+    # checkpoints/ (built by cpt/Qwen3-4B-base-sparse-landmark-dolma3longmino.py).
+    "sparselandmark": (
+        "/weka/oe-training-default/ai2-llm/checkpoints/"
+        "q4b-sparse-landmark-dolma3longmino/step2385/model_and_optim"
+    ),
 }
 
 _TASK_DIR = {"contra": "contradiction", "nq": "nq", "oolong": "oolong",
              "rerank": "rerank", "outlier": "outlier"}
 _TASK_LABEL = {"contra": "contradiction", "nq": "nq_retrieval", "oolong": "oolong",
                "rerank": "rerank", "outlier": "outlier"}
-_VARIANTS = ("dense", "landmark", "compressive")
+_VARIANTS = ("dense", "landmark", "compressive", "sparselandmark")
 
 LR = 2e-5  # overnight 10k matrix: bumped from 1e-5 (coordinator request 2026-06-30).
 # Global batch = 8 sequence-windows per optimizer step. With CP=8 (DP=1) this is pure GRADIENT
@@ -120,6 +133,10 @@ def _task_from_run_name(run_name: str) -> str:
 
 def _variant_from_run_name(run_name: str) -> str:
     found = [v for v in _VARIANTS if v in run_name]
+    # "sparselandmark" contains "landmark", so a plain substring scan matches both for a legitimate
+    # sparse-landmark run name. Drop any match that is a substring of a longer match; the
+    # exactly-one check below still catches genuinely ambiguous names (e.g. "dense" + "landmark").
+    found = [v for v in found if not any(v != other and v in other for other in found)]
     if len(found) != 1:
         raise SystemExit(
             f"run name {run_name!r} must contain exactly one variant of {list(_VARIANTS)} "
@@ -166,7 +183,19 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     doc_tokenizer_config = replace(tokenizer_config, bos_token_id=None)
 
     # ---- Model (per variant) ----
-    if variant == "compressive":
+    if variant == "sparselandmark":
+        # SPARSE landmark (``AttentionType.sparse_landmark``): a query attends FULLY within its own
+        # chunk, but sees PAST chunks only through their single landmark token -- the non-landmark
+        # content of past chunks is never attended (no expansion). Distinct from ``landmark``
+        # (fast_landmark), which gates blocks by their landmark and then attends the selected
+        # blocks' full content.
+        model_config = TransformerConfig.qwen3_4B(
+            vocab_size=tokenizer_config.padded_vocab_size(),
+            sparse_landmark=True,
+            mem_freq=MEM_FREQ,
+            num_landmarks=1,
+        )
+    elif variant == "compressive":
         model_config = TransformerConfig.qwen3_4B(
             vocab_size=tokenizer_config.padded_vocab_size(),
             fast_compressive_landmark=True,
@@ -187,6 +216,29 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
             YaRNRoPEScalingConfig(factor=2, beta_fast=32, beta_slow=1, old_context_len=32768)
         )
 
+    # ---- Parallelism / memory (per variant) ----
+    # ``SparseLandmarkAttention.apply_cp`` raises NotImplementedError, so the sparse-landmark arm
+    # cannot use Ulysses CP. Each rank then holds a FULL SEQUENCE_LENGTH activation set, which needs
+    # 8-way FSDP sharding + FULL activation checkpointing to fit -- both proven by the sparse-landmark
+    # CPT and longctx-SFT launchers, where shard_degree=1 and budget-mode AC each OOM'd. Dropping CP
+    # turns DP=1 into DP=8, and with rank_microbatch_size = SEQUENCE_LENGTH that yields the SAME
+    # 8-window global batch as the CP=8 variants (8 ranks x 1 window instead of 1 rank x 8 grad-accum
+    # microbatches), so the optimizer-step count matches and the data-scaling curves stay comparable.
+    if variant == "sparselandmark":
+        cp_config = None
+        shard_degree = 8
+        ac_config = TransformerActivationCheckpointingConfig(
+            mode=TransformerActivationCheckpointingMode.full,
+        )
+        # Without sequence parallelism the 40960 x padded-vocab float logit tensor dominates memory.
+        model_config.lm_head.loss_implementation = LMLossImplementation.fused_linear
+    else:
+        cp_config = TransformerContextParallelConfig.ulysses(degree=CP_DEGREE)
+        shard_degree = 1
+        ac_config = TransformerActivationCheckpointingConfig(
+            mode=TransformerActivationCheckpointingMode.budget, activation_memory_budget=0.7,
+        )
+
     train_module_config = TransformerTrainModuleConfig(
         rank_microbatch_size=SEQUENCE_LENGTH,
         max_sequence_length=SEQUENCE_LENGTH,
@@ -198,12 +250,11 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         compile_model=True,
         dp_config=TransformerDataParallelConfig(
             name=DataParallelType.hsdp, param_dtype=DType.bfloat16, reduce_dtype=DType.float32,
-            wrapping_strategy=TransformerDataParallelWrappingStrategy.full, shard_degree=1,
+            wrapping_strategy=TransformerDataParallelWrappingStrategy.full,
+            shard_degree=shard_degree,
         ),
-        cp_config=TransformerContextParallelConfig.ulysses(degree=CP_DEGREE),
-        ac_config=TransformerActivationCheckpointingConfig(
-            mode=TransformerActivationCheckpointingMode.budget, activation_memory_budget=0.7,
-        ),
+        cp_config=cp_config,
+        ac_config=ac_config,
         float8_config=Float8Config(enabled=False),
         z_loss_multiplier=None,
         max_grad_norm=1.0,

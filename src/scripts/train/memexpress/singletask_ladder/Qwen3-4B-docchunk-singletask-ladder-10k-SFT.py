@@ -78,11 +78,18 @@ EOS_TOKEN_ID = 151643
 DOC_START_ID = 151648  # <|box_start|>
 DOC_END_ID = 151649  # <|box_end|>
 
-EPOCHS = 2
+# Epochs default to 2 (the overnight 10k matrix setting). The data-scaling sweep overrides this to
+# 1 via ``STL_EPOCHS`` so its curve is comparable to the dense ``q4b-dense-outlier-ladder32k`` sweep,
+# which ran 1 epoch -- otherwise dense-vs-chunked is confounded with 2x the gradient steps.
+EPOCHS = int(os.environ.get("STL_EPOCHS", "2"))
 LR = 2e-5  # overnight 10k matrix LR (matches the 3-variant launcher).
 
 # ---- 50% subsample (whole-document seeded sampling), identical to the 3-variant launcher. ----
-SUBSAMPLE_FACTOR = 0.5
+# Env-driven (same knob name as the 3-variant launcher) so the data-scaling sweep can sweep the
+# fraction without editing the file. BOTH this and STL_EPOCHS are re-exported as Beaker env vars
+# below -- the Beaker job REBUILDS this config on the node, so a value resolved only on the launch
+# host would silently fall back to the defaults here and every sweep point would train identically.
+SUBSAMPLE_FACTOR = float(os.environ.get("STL_SUBSAMPLE", "0.5"))
 SUBSAMPLE_SEED = 7411
 
 # Box-marker (doc-chunked) per-task data root. SEE THE DATA REQUIREMENT in the module docstring.
@@ -151,6 +158,11 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         beaker_launch_config.env_vars.append(
             BeakerEnvVar(name="PYTORCH_CUDA_ALLOC_CONF", value="expandable_segments:True")
         )
+        # Propagate the sweep knobs resolved on the launch host -- see the SUBSAMPLE_FACTOR comment.
+        beaker_launch_config.env_vars.append(
+            BeakerEnvVar(name="STL_SUBSAMPLE", value=repr(SUBSAMPLE_FACTOR))
+        )
+        beaker_launch_config.env_vars.append(BeakerEnvVar(name="STL_EPOCHS", value=str(EPOCHS)))
 
     tokenizer_config = TokenizerConfig.qwen3()
     # EOS-separated instances; qwen3 ties bos==eos, so drop BOS for document-boundary detection.
