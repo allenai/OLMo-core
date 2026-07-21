@@ -21,8 +21,14 @@
 # Usage:
 #   ./launch_long_context_evals.sh /weka/oe-training-default/ai2-llm/checkpoints/<user>/<run>/stepXXXX
 #
-# All jobs run in workspace ai2/flex2; RULER results report to the memory-LC
-# dashboard (HELMET writes outputs to weka, it has no dashboard).
+# All jobs run in workspace ai2/flex2. RULER results are NOT pulled from the
+# olmo-cookbook-eval dashboard/datalake -- oe-eval-datalake.allen.ai has been
+# decommissioned, so olmo-cookbook no longer pushes results there (see the
+# --no-datalake fix in olmo-cookbook's evaluate_checkpoint) and dashboard-based
+# reads no longer work either. Use ./pull_ruler_results.py instead, which reads
+# each job's metrics-all.jsonl straight from its Beaker result dataset. The
+# RULER_DASHBOARD value below still only affects S3 output-path namespacing
+# (HELMET writes outputs to weka directly, it never used a dashboard).
 #
 # Common overrides (env vars):
 #   PRIORITY, NUM_GPUS, OLMO_CORE_TOKENIZER, OLMO_CORE_BATCH_SIZE,
