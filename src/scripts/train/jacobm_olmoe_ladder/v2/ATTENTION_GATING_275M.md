@@ -179,6 +179,13 @@ stricter 6% limit for all ungated variants. All four 1.2B cells were
 re-submitted after that fix; the work links are recorded in
 [`GEOMETRY_MATCHED_SCALE.md`](GEOMETRY_MATCHED_SCALE.md).
 
+On 2026-07-21, this result promoted gated RoPE to a complete
+480M/810M/1.2B transferred-LR wave. Its 12 urgent allocated jobs use the
+compact 124-GPU layout and were submitted Cx1, Cx2, Cx4, then Cx8, with model
+sizes ordered 480M, 810M, then 1.2B inside each group. Exact settings and work
+links are recorded in
+[`GEOMETRY_MATCHED_SCALE.md`](GEOMETRY_MATCHED_SCALE.md#gated-rope-transferred-lr-wave).
+
 - U-plot:
   [`plots/pretraining/geometry_gdn_ev2_nope_gated/275m_uplot.png`](plots/pretraining/geometry_gdn_ev2_nope_gated/275m_uplot.png)
 - Observed-best summary:

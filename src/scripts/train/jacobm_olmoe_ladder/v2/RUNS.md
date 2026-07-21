@@ -4,7 +4,7 @@ Record post-migration experiment waves here. Per-run rows must include Beaker
 job IDs and W&B IDs once they exist. Detailed migration-era DDP jobs remain in
 [`../v1/DDP_RUNS.md`](../v1/DDP_RUNS.md).
 
-## Live status snapshot (2026-07-21 03:10 UTC)
+## Live status snapshot (2026-07-21 03:59 UTC)
 
 This is the current source of truth for active V2 work. The detailed sections
 below retain the full launch and retry history.
@@ -24,6 +24,7 @@ below retain the full launch and retry history.
 | pretraining | aligned geometry + RoPE + gated attention 275M sweep | finished | 16/16; observed best LR is `1.6e-3`, `1.6e-3`, `8e-4`, `1.6e-3` at Cx1/2/4/8 | [results](results/pretraining/geometry_gdn_ev2_rope_gated/results.md) |
 | pretraining | larger aligned geometry + NoPE | 11 finished / fresh Cx8 reproduction running | new Cx8 is at 22.89B / 185.76B (12.3%); ~230 TFLOPs/GPU | [Beaker](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY0CM4HKG0R4H352N2SQV6P1) |
 | pretraining | larger aligned geometry + NoPE + gated attention | running / ready to resume | 10/12 finished; Cx8 at 146.67B / 187.44B (78.2%), ~323 TFLOPs/GPU; Cx2 durable `step21500` ready | [results](results/pretraining/geometry_gdn_ev2_nope_gated/results.md) |
+| pretraining | larger aligned geometry + RoPE + gated attention | queued | 12/12 urgent allocated; 124 GPUs requested; submitted Cx1 -> Cx2 -> Cx4 -> Cx8, with 480M -> 810M -> 1.2B inside each Cx | [submission record](launchers/pretraining/generated/geometry_matched_scale_rope_gated_full_submissions.json) |
 | midtraining | first hybrid 275M Cx8 | finished | 100B; final checkpoint `step95368`; validation finished | [1keo2hz6](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/1keo2hz6) |
 | midtraining | first hybrid 480M Cx8 | finished | 100.001B; final checkpoint `step95368`; validation finished | [mnp9rv5l](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/mnp9rv5l) |
 | validation | V2 post-training backfills | registered targets complete; gated-RoPE newly eligible | 91/91 registered targets finished with 498 metrics each; 16 gated-RoPE finals not yet queued | [results](results/validation/hybrid_full.md) |
@@ -529,6 +530,47 @@ respectively.
 | 8 | `8e-4` | 8 | 12 | [01KY0GVYSK43FX8NVFZ0BWCV02](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY0GVX8SM5998GFMGAKR3AQ6?taskId=01KY0GVYPEWRV03209HY9N6NVE&jobId=01KY0GVYSK43FX8NVFZ0BWCV02) | [65bsc0wk](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/65bsc0wk) | finished |
 | 8 | `1.6e-3` | 8 | 12 | [01KY0GVYWZ962WAHMNH6TP3DKT](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY0GVX8SM5998GFMGAKR3AQ6?taskId=01KY0GVYSN9RQEPGQN05QXNCJD&jobId=01KY0GVYWZ962WAHMNH6TP3DKT) | [8rgf3myq](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/8rgf3myq) | finished; observed best |
 | 8 | `3.2e-3` | 8 | 12 | [01KY0GVZ0776A482S2CJ2XNZ3H](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY0GVX8SM5998GFMGAKR3AQ6?taskId=01KY0GVYX0MDYP3X29ENBP97FY&jobId=01KY0GVZ0776A482S2CJ2XNZ3H) | [klgge8er](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/klgge8er) | finished |
+
+## Larger geometry + RoPE + gated attention
+
+- Model variant: `geometry_matched_gdn_ev2_rope_gated`
+- Manifest:
+  [`launchers/pretraining/manifests/geometry_matched_scale_rope_gated_full.yaml`](launchers/pretraining/manifests/geometry_matched_scale_rope_gated_full.yaml)
+- Launcher:
+  [`launchers/pretraining/launch_geometry_matched_scale_rope_gated_full.sh`](launchers/pretraining/launch_geometry_matched_scale_rope_gated_full.sh)
+- Submission record:
+  [`launchers/pretraining/generated/geometry_matched_scale_rope_gated_full_submissions.json`](launchers/pretraining/generated/geometry_matched_scale_rope_gated_full_submissions.json)
+- Commit: `02488e12f98764e265094a74e3c511ce28f5d2e7`
+- Scheduling: urgent allocated Holmes B300s, `minRuntime: 10m`,
+  non-preemptible, auto-resuming
+
+The 12 transferred-LR runs were submitted on 2026-07-21 in the requested
+Cx-major order: Cx1, Cx2, Cx4, then Cx8, with 480M, 810M, then 1.2B within
+each Cx. This is the same architecture and training recipe as the completed
+275M RoPE-plus-gate interaction control, scaled to the geometry-matched larger
+models. A strict construction audit confirmed that each model differs from its
+gated-NoPE counterpart only by restoring RoPE to full-attention layers.
+
+The compact layout requests 124 GPUs. The 480M and 810M models use EP1; all
+1.2B models use EP8 with `sync_1d`. Training retains rolling ephemeral
+checkpoints every 500 steps and the final checkpoint. In-loop and on-finish
+evaluation are disabled; validation will be backfilled after training. W&B
+IDs will be added to the plotting registry after the queued jobs initialize.
+
+| Cx | Size | LR | GPUs | EP | MB | Accum | Beaker work | State |
+|---:|---:|---:|---:|---:|---:|---:|---|---|
+| 1 | 480M | `1.2e-3` | 4 | 1 | 8 | 1 | [01KY1D2SDFV71FBM3P5MH2Y1PB](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY1D2SDFV71FBM3P5MH2Y1PB) | queued |
+| 1 | 810M | `6e-4` | 8 | 1 | 4 | 1 | [01KY1D2WJAG2DBASEWZ1ZEGB0D](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY1D2WJAG2DBASEWZ1ZEGB0D) | queued |
+| 1 | 1.2B | `4e-4` | 8 | 8 | 4 | 1 | [01KY1D30P877Q8HZZF5HA0W13S](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY1D30P877Q8HZZF5HA0W13S) | queued |
+| 2 | 480M | `9e-4` | 4 | 1 | 12 | 1 | [01KY1D33QHX6M6BVKTFSMP0PHS](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY1D33QHX6M6BVKTFSMP0PHS) | queued |
+| 2 | 810M | `5.6e-4` | 8 | 1 | 6 | 1 | [01KY1D37K0TS4HX4GA6ZTVB47F](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY1D37K0TS4HX4GA6ZTVB47F) | queued |
+| 2 | 1.2B | `6e-4` | 16 | 8 | 3 | 1 | [01KY1D3AJQRJVVNE2MHV02A0E2](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY1D3AJQRJVVNE2MHV02A0E2) | queued |
+| 4 | 480M | `8e-4` | 4 | 1 | 8 | 2 | [01KY1D3DXXR7SD25ZGY6DBNSCB](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY1D3DXXR7SD25ZGY6DBNSCB) | queued |
+| 4 | 810M | `4e-4` | 8 | 1 | 4 | 2 | [01KY1D3HA7CXA6NBCPG1SJAFX6](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY1D3HA7CXA6NBCPG1SJAFX6) | queued |
+| 4 | 1.2B | `3e-4` | 16 | 8 | 4 | 1 | [01KY1D3MMQ822XGR1TX7ZA9QNH](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY1D3MMQ822XGR1TX7ZA9QNH) | queued |
+| 8 | 480M | `8e-4` | 8 | 1 | 12 | 1 | [01KY1D3R4B4AQ6SS14AQR7E6NK](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY1D3R4B4AQ6SS14AQR7E6NK) | queued |
+| 8 | 810M | `4e-4` | 8 | 1 | 6 | 2 | [01KY1D3VK8P36CWNDZ9JNBHCEW](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY1D3VK8P36CWNDZ9JNBHCEW) | queued |
+| 8 | 1.2B | `4e-4` | 32 | 8 | 3 | 1 | [01KY1D3Z5XM58T4QS5EHQZVQW4](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY1D3Z5XM58T4QS5EHQZVQW4) | queued |
 
 ## Larger geometry + NoPE capacity smokes
 

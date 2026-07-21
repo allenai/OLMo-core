@@ -10,9 +10,10 @@ elementwise full-precision attention gate to the NoPE model.
 
 The NoPE configs completed checkpoint-free capacity and scaling smokes on
 Holmes B300s, and the 12-cell production wave was submitted on 2026-07-18.
-The equivalent larger gated-attention wave was submitted on 2026-07-18 after
-the completed 275M sweep showed that the wide-integration LR transfer remained
-well behaved and gating improved the ungated NoPE control at every Cx.
+The equivalent larger gated-NoPE wave was submitted on 2026-07-18 after the
+completed 275M sweep showed that the wide-integration LR transfer remained
+well behaved and gating improved the ungated NoPE control at every Cx. A
+larger gated-RoPE interaction wave followed on 2026-07-21.
 
 ## Scaling rule
 
@@ -218,6 +219,8 @@ every Beaker experiment ID.
   [`launchers/pretraining/manifests/geometry_matched_scale_nope_full.yaml`](launchers/pretraining/manifests/geometry_matched_scale_nope_full.yaml)
 - Gated-attention manifest:
   [`launchers/pretraining/manifests/geometry_matched_scale_nope_gated_full.yaml`](launchers/pretraining/manifests/geometry_matched_scale_nope_gated_full.yaml)
+- Gated-RoPE manifest:
+  [`launchers/pretraining/manifests/geometry_matched_scale_rope_gated_full.yaml`](launchers/pretraining/manifests/geometry_matched_scale_rope_gated_full.yaml)
 
 The production jobs write rolling ephemeral checkpoints every 500 steps with
 `remove=ephemeral_only`, retain the final checkpoint, and disable all
@@ -330,3 +333,38 @@ continuation as the original transferred-LR cell.
 | 1.2B | 2 | `6e-4` | 16 | [01KXTT9JCD6Z82ZJJ2267G6WFC](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXTT9JCD6Z82ZJJ2267G6WFC) |
 | 1.2B | 4 | `3e-4` | 32 | [01KXTT9P94G80ZX6VSQRWDQ1BA](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXTT9P94G80ZX6VSQRWDQ1BA) |
 | 1.2B | 8 | `4e-4` | 32 | [01KXTT9T80V7CTFE09WDS2D428](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXTT9T80V7CTFE09WDS2D428) |
+
+## Gated-RoPE transferred-LR wave
+
+The completed 275M interaction sweep found that restoring RoPE improved the
+gated architecture at every Cx. The corresponding 480M/810M/1.2B wave was
+therefore submitted on 2026-07-21 at the same transferred wide-integration
+LRs. Strict construction verifies that removing RoPE from each new config
+exactly reproduces the corresponding gated-NoPE model.
+
+These are urgent allocated Holmes jobs with a ten-minute minimum runtime,
+non-preemptible scheduling, and auto-resume. They are pinned to commit
+`02488e12f98764e265094a74e3c511ce28f5d2e7`. The compact layout requests 124
+GPUs total and was submitted in Cx-major order, then 480M/810M/1.2B within
+each Cx. The scheduler may start jobs in a different order as capacity fits.
+
+| Cx | Size | LR | GPUs | EP | Rank MB | Accum | Beaker work |
+|---:|---:|---:|---:|---:|---:|---:|---|
+| 1 | 480M | `1.2e-3` | 4 | 1 | 8 | 1 | [01KY1D2SDFV71FBM3P5MH2Y1PB](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY1D2SDFV71FBM3P5MH2Y1PB) |
+| 1 | 810M | `6e-4` | 8 | 1 | 4 | 1 | [01KY1D2WJAG2DBASEWZ1ZEGB0D](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY1D2WJAG2DBASEWZ1ZEGB0D) |
+| 1 | 1.2B | `4e-4` | 8 | 8 | 4 | 1 | [01KY1D30P877Q8HZZF5HA0W13S](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY1D30P877Q8HZZF5HA0W13S) |
+| 2 | 480M | `9e-4` | 4 | 1 | 12 | 1 | [01KY1D33QHX6M6BVKTFSMP0PHS](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY1D33QHX6M6BVKTFSMP0PHS) |
+| 2 | 810M | `5.6e-4` | 8 | 1 | 6 | 1 | [01KY1D37K0TS4HX4GA6ZTVB47F](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY1D37K0TS4HX4GA6ZTVB47F) |
+| 2 | 1.2B | `6e-4` | 16 | 8 | 3 | 1 | [01KY1D3AJQRJVVNE2MHV02A0E2](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY1D3AJQRJVVNE2MHV02A0E2) |
+| 4 | 480M | `8e-4` | 4 | 1 | 8 | 2 | [01KY1D3DXXR7SD25ZGY6DBNSCB](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY1D3DXXR7SD25ZGY6DBNSCB) |
+| 4 | 810M | `4e-4` | 8 | 1 | 4 | 2 | [01KY1D3HA7CXA6NBCPG1SJAFX6](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY1D3HA7CXA6NBCPG1SJAFX6) |
+| 4 | 1.2B | `3e-4` | 16 | 8 | 4 | 1 | [01KY1D3MMQ822XGR1TX7ZA9QNH](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY1D3MMQ822XGR1TX7ZA9QNH) |
+| 8 | 480M | `8e-4` | 8 | 1 | 12 | 1 | [01KY1D3R4B4AQ6SS14AQR7E6NK](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY1D3R4B4AQ6SS14AQR7E6NK) |
+| 8 | 810M | `4e-4` | 8 | 1 | 6 | 2 | [01KY1D3VK8P36CWNDZ9JNBHCEW](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY1D3VK8P36CWNDZ9JNBHCEW) |
+| 8 | 1.2B | `4e-4` | 32 | 8 | 3 | 1 | [01KY1D3Z5XM58T4QS5EHQZVQW4](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY1D3Z5XM58T4QS5EHQZVQW4) |
+
+The machine-readable record is
+[`launchers/pretraining/generated/geometry_matched_scale_rope_gated_full_submissions.json`](launchers/pretraining/generated/geometry_matched_scale_rope_gated_full_submissions.json).
+W&B IDs will be registered after the queued jobs initialize. Checkpointing
+retains rolling ephemeral saves every 500 steps plus the final checkpoint;
+all in-loop and on-finish evaluators are disabled for post-training backfill.
