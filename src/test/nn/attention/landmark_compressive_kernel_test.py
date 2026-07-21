@@ -440,8 +440,15 @@ def test_compressive_kernel_docmask_backward_matches_eager(
 @pytest.mark.skipif(not has_landmark_kernel(), reason="requires triton landmark kernel")
 def test_compressive_kernel_q_gate_default_matches_no_q_gate():
     """``q_gate=None`` (the default, used by every existing caller) and ``q_gate=q`` (explicit, same
-    tensor object) must produce bit-identical output -- the gate-temperature no-op guarantee at the
-    kernel level, forward and backward."""
+    tensor object) must produce the same output/gradients -- the gate-temperature no-op guarantee at
+    the kernel level, forward and backward.
+
+    Forward is bit-identical (``HAS_Q_GATE=True`` computes ``landmark_qk`` from a literal duplicate
+    of the same values, not a reassociated sum). Gradients are only *numerically* equal, not
+    bit-identical: with ``q_gate=q`` (same tensor), autograd sums the kernel's separately-returned
+    ``dq``/``dq_gate`` onto that one leaf, and ``dk``/``dv`` sum a within-block and a gate
+    contribution inside the kernel -- both reassociate a floating-point sum relative to the
+    ``HAS_Q_GATE=False`` path's single combined accumulation, which is not bit-exact in fp32."""
     torch.manual_seed(0)
     block_size, head_dim = 16, 64
     B, n_heads = 2, 4
@@ -461,9 +468,9 @@ def test_compressive_kernel_q_gate_default_matches_no_q_gate():
     out_explicit, dq_explicit, dk_explicit, dv_explicit = grads(True)
 
     torch.testing.assert_close(out_default, out_explicit, rtol=0, atol=0)
-    torch.testing.assert_close(dq_default, dq_explicit, rtol=0, atol=0)
-    torch.testing.assert_close(dk_default, dk_explicit, rtol=0, atol=0)
-    torch.testing.assert_close(dv_default, dv_explicit, rtol=0, atol=0)
+    torch.testing.assert_close(dq_default, dq_explicit, rtol=1e-4, atol=1e-6)
+    torch.testing.assert_close(dk_default, dk_explicit, rtol=1e-4, atol=1e-6)
+    torch.testing.assert_close(dv_default, dv_explicit, rtol=1e-4, atol=1e-6)
 
 
 @requires_gpu
