@@ -152,17 +152,23 @@ def _run_rowwise_ep_dropless_matches_no_ep():
     _copy_no_ep_weights_to_ep_shard(no_ep_block, ep_block)
     _install_deterministic_topk_router(no_ep_block)
     _install_deterministic_topk_router(ep_block)
+
+    # The rowwise weighted combine backward is bf16/fp16-only, so run both blocks in bf16 (the
+    # path's production dtype). Cast after the identical param copy so the two stay in sync.
+    no_ep_block.to(dtype=torch.bfloat16)
+    ep_block.to(dtype=torch.bfloat16)
+
     no_ep_block.train()
     ep_block.train()
 
     x = torch.randn(
-        1, 8, no_ep_block.d_model, device="cuda", dtype=torch.float32, requires_grad=True
+        1, 8, no_ep_block.d_model, device="cuda", dtype=torch.bfloat16, requires_grad=True
     )
     x_ep = x.detach().clone().requires_grad_(True)
 
     y_no_ep = no_ep_block(x)
     y_ep = ep_block(x_ep)
-    torch.testing.assert_close(y_ep, y_no_ep, atol=5e-4, rtol=5e-4)
+    torch.testing.assert_close(y_ep, y_no_ep, atol=2e-2, rtol=2e-2)
     # capacity_factor=8.0 with this routing keeps every token.
     drop_tokens_sum = ep_block._ep_no_sync_rowwise_drop_tokens_sum
     assert drop_tokens_sum is not None
@@ -172,8 +178,8 @@ def _run_rowwise_ep_dropless_matches_no_ep():
 
     (y_no_ep.square().mean() + 0.1 * y_no_ep.sum()).backward()
     (y_ep.square().mean() + 0.1 * y_ep.sum()).backward()
-    torch.testing.assert_close(x_ep.grad, x.grad, atol=5e-4, rtol=5e-4)
-    _assert_expert_grad_matches_no_ep_global_sum(no_ep_block, ep_block, atol=1e-3, rtol=1e-3)
+    torch.testing.assert_close(x_ep.grad, x.grad, atol=2e-2, rtol=2e-2)
+    _assert_expert_grad_matches_no_ep_global_sum(no_ep_block, ep_block, atol=2e-2, rtol=2e-2)
 
 
 @requires_multi_gpu
