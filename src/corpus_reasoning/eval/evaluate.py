@@ -83,19 +83,43 @@ from corpus_reasoning.lib.eval_tasks import (
 # ── Contradiction helpers ──
 
 def parse_pairs(text: str) -> list[list[int]] | None:
-    """Extract list of integer pairs from model output."""
+    """Extract list of integer pairs from model output.
+
+    The prompt PRIMES the answer with a leading ``[[``, so the model's generation is
+    usually the completion with the opening bracket(s) dropped (e.g.
+    ``1, 37], [6, 60], [35, 71]]``). The old parser required the leading ``[``, so its
+    ``\\[...\\]`` search silently dropped the FIRST pair on every such example --
+    collapsing recall and destroying exact_match (contradiction EM read ~0.60 when the
+    model was emitting the correct 3 pairs and true EM is >0.9). We now also try
+    bracket-reconstructed variants and keep the parse with the MOST pairs, and loosen
+    the regex fallback's opening bracket to optional. Same primed-bracket bug class as
+    ``parse_doc_ids`` and ``_parse_snippet_list``. Well-formed ``[[...]]`` output is
+    unchanged.
+    """
     text = text.strip()
-    for candidate in [text, re.search(r'\[[\s\S]*\]', text)]:
-        if candidate is None:
-            continue
-        s = candidate if isinstance(candidate, str) else candidate.group()
-        try:
-            parsed = json.loads(s)
-            if isinstance(parsed, list):
-                return [sorted([int(p[0]), int(p[1])]) for p in parsed if isinstance(p, list) and len(p) == 2]
-        except (json.JSONDecodeError, ValueError, TypeError):
-            continue
-    matches = re.findall(r'[\[\(]\s*(\d+)\s*,\s*(\d+)\s*[\]\)]', text)
+    candidates = [text]
+    if text[:1].isdigit():
+        candidates.append('[[' + text)          # primed '[[' dropped, starts at a digit
+    elif text.startswith('[') and not text.startswith('[['):
+        candidates.append('[' + text)           # primed outer '[' dropped, starts at '[digit'
+    best = None
+    for s in candidates:
+        for candidate in [s, re.search(r'\[\[[\s\S]*\]\]', s) or re.search(r'\[[\s\S]*\]', s)]:
+            if candidate is None:
+                continue
+            frag = candidate if isinstance(candidate, str) else candidate.group()
+            try:
+                parsed = json.loads(frag)
+                if isinstance(parsed, list):
+                    pairs = [sorted([int(p[0]), int(p[1])]) for p in parsed
+                             if isinstance(p, list) and len(p) == 2]
+                    if best is None or len(pairs) > len(best):
+                        best = pairs
+            except (json.JSONDecodeError, ValueError, TypeError):
+                continue
+    if best:
+        return best
+    matches = re.findall(r'[\[\(]?\s*(\d+)\s*,\s*(\d+)\s*[\]\)]', text)
     if matches:
         return [sorted([int(a), int(b)]) for a, b in matches]
     return [] if text in ("[]", "") else None
