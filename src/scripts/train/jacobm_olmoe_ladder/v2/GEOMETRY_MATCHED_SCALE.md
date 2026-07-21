@@ -342,29 +342,34 @@ therefore submitted on 2026-07-21 at the same transferred wide-integration
 LRs. Strict construction verifies that removing RoPE from each new config
 exactly reproduces the corresponding gated-NoPE model.
 
-These are urgent allocated Holmes jobs with a ten-minute minimum runtime,
+These are urgent unallocated Holmes jobs with a zero-minute minimum runtime,
 non-preemptible scheduling, and auto-resume. They are pinned to commit
-`02488e12f98764e265094a74e3c511ce28f5d2e7`. The compact layout requests 124
+`2242550320d8f48a28c532a078767d13dd0c3829`. The compact layout requests 124
 GPUs total and was submitted in Cx-major order, then 480M/810M/1.2B within
 each Cx. The scheduler may start jobs in a different order as capacity fits.
 
 | Cx | Size | LR | GPUs | EP | Rank MB | Accum | Beaker work |
 |---:|---:|---:|---:|---:|---:|---:|---|
-| 1 | 480M | `1.2e-3` | 4 | 1 | 8 | 1 | [01KY1D2SDFV71FBM3P5MH2Y1PB](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY1D2SDFV71FBM3P5MH2Y1PB) |
-| 1 | 810M | `6e-4` | 8 | 1 | 4 | 1 | [01KY1D2WJAG2DBASEWZ1ZEGB0D](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY1D2WJAG2DBASEWZ1ZEGB0D) |
-| 1 | 1.2B | `4e-4` | 8 | 8 | 4 | 1 | [01KY1D30P877Q8HZZF5HA0W13S](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY1D30P877Q8HZZF5HA0W13S) |
-| 2 | 480M | `9e-4` | 4 | 1 | 12 | 1 | [01KY1D33QHX6M6BVKTFSMP0PHS](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY1D33QHX6M6BVKTFSMP0PHS) |
-| 2 | 810M | `5.6e-4` | 8 | 1 | 6 | 1 | [01KY1D37K0TS4HX4GA6ZTVB47F](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY1D37K0TS4HX4GA6ZTVB47F) |
-| 2 | 1.2B | `6e-4` | 16 | 8 | 3 | 1 | [01KY1D3AJQRJVVNE2MHV02A0E2](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY1D3AJQRJVVNE2MHV02A0E2) |
-| 4 | 480M | `8e-4` | 4 | 1 | 8 | 2 | [01KY1D3DXXR7SD25ZGY6DBNSCB](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY1D3DXXR7SD25ZGY6DBNSCB) |
-| 4 | 810M | `4e-4` | 8 | 1 | 4 | 2 | [01KY1D3HA7CXA6NBCPG1SJAFX6](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY1D3HA7CXA6NBCPG1SJAFX6) |
-| 4 | 1.2B | `3e-4` | 16 | 8 | 4 | 1 | [01KY1D3MMQ822XGR1TX7ZA9QNH](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY1D3MMQ822XGR1TX7ZA9QNH) |
-| 8 | 480M | `8e-4` | 8 | 1 | 12 | 1 | [01KY1D3R4B4AQ6SS14AQR7E6NK](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY1D3R4B4AQ6SS14AQR7E6NK) |
-| 8 | 810M | `4e-4` | 8 | 1 | 6 | 2 | [01KY1D3VK8P36CWNDZ9JNBHCEW](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY1D3VK8P36CWNDZ9JNBHCEW) |
-| 8 | 1.2B | `4e-4` | 32 | 8 | 3 | 1 | [01KY1D3Z5XM58T4QS5EHQZVQW4](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY1D3Z5XM58T4QS5EHQZVQW4) |
+| 1 | 480M | `1.2e-3` | 4 | 1 | 8 | 1 | [01KY1DKVJJ0ECA4QS0SENKH49E](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY1DKVJJ0ECA4QS0SENKH49E) |
+| 1 | 810M | `6e-4` | 8 | 1 | 4 | 1 | [01KY1DKYH8Q1HAX2922D7AJA4E](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY1DKYH8Q1HAX2922D7AJA4E) |
+| 1 | 1.2B | `4e-4` | 8 | 8 | 4 | 1 | [01KY1DM1J6C028TJNQART75FY1](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY1DM1J6C028TJNQART75FY1) |
+| 2 | 480M | `9e-4` | 4 | 1 | 12 | 1 | [01KY1DM576YRXHEVF13MTVN9VJ](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY1DM576YRXHEVF13MTVN9VJ) |
+| 2 | 810M | `5.6e-4` | 8 | 1 | 6 | 1 | [01KY1DM89PS7K4BCYTX0QFVFXE](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY1DM89PS7K4BCYTX0QFVFXE) |
+| 2 | 1.2B | `6e-4` | 16 | 8 | 3 | 1 | [01KY1DMBM1CBJTPK3W3W372B56](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY1DMBM1CBJTPK3W3W372B56) |
+| 4 | 480M | `8e-4` | 4 | 1 | 8 | 2 | [01KY1DMF80H4S3G45RCDE5D1TR](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY1DMF80H4S3G45RCDE5D1TR) |
+| 4 | 810M | `4e-4` | 8 | 1 | 4 | 2 | [01KY1DMJG0DPAN2M8E9YHEQPZT](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY1DMJG0DPAN2M8E9YHEQPZT) |
+| 4 | 1.2B | `3e-4` | 16 | 8 | 4 | 1 | [01KY1DMNKHZ8AND4FYA9WFHRYA](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY1DMNKHZ8AND4FYA9WFHRYA) |
+| 8 | 480M | `8e-4` | 8 | 1 | 12 | 1 | [01KY1DMRSHXB5RTZGD39NXD2G4](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY1DMRSHXB5RTZGD39NXD2G4) |
+| 8 | 810M | `4e-4` | 8 | 1 | 6 | 2 | [01KY1DMW31S6YVCDN479XYRE7S](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY1DMW31S6YVCDN479XYRE7S) |
+| 8 | 1.2B | `4e-4` | 32 | 8 | 3 | 1 | [01KY1DN08V4T6HMJDDCPPKHGSN](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY1DN08V4T6HMJDDCPPKHGSN) |
 
 The machine-readable record is
-[`launchers/pretraining/generated/geometry_matched_scale_rope_gated_full_submissions.json`](launchers/pretraining/generated/geometry_matched_scale_rope_gated_full_submissions.json).
+[`launchers/pretraining/generated/geometry_matched_scale_rope_gated_full_unallocated_submissions.json`](launchers/pretraining/generated/geometry_matched_scale_rope_gated_full_unallocated_submissions.json).
 W&B IDs will be registered after the queued jobs initialize. Checkpointing
 retains rolling ephemeral saves every 500 steps plus the final checkpoint;
 all in-loop and on-finish evaluators are disabled for post-training backfill.
+
+The first 12 allocated work items were canceled before any execution job
+reached `started`, and no checkpoint directory was created. Their IDs are
+retained only as canceled history in
+[`geometry_matched_scale_rope_gated_full_submissions.json`](launchers/pretraining/generated/geometry_matched_scale_rope_gated_full_submissions.json).
