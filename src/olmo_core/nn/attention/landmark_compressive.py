@@ -91,7 +91,6 @@ if triton is not None:
     @triton.jit
     def _fwd_kernel_compressive(
         Q,
-        QG,  # gate-only query (defaults to Q itself for the no-temperature/backward-compat case)
         K,
         V,
         sm_scale,
@@ -100,10 +99,6 @@ if triton is not None:
         sqh,
         sqm,
         sqd,
-        sgz,
-        sgh,
-        sgm,
-        sgd,
         skz,
         skh,
         skn,
@@ -128,17 +123,18 @@ if triton is not None:
         BLOCK_DMODEL: tl.constexpr,
         N_PREFIX_Q: tl.constexpr,
         DOC_MASK: tl.constexpr,  # whether to apply intra-document (packing) masking
-        HAS_Q_GATE: tl.constexpr,  # whether QG differs from Q (gate temperature enabled)
     ):
         # Compressive landmark forward. Identical to landmark_kernel._fwd_kernel except that the
         # value contribution of a fully-past block uses the *full-block* within softmax (over all
         # BLOCK_N tokens including the landmark) instead of the content-only ``normal_p``. The gate
         # (cross-block) softmax that produces L/M is untouched, so L/M stay bit-identical to the
-        # normal landmark kernel. When ``HAS_Q_GATE`` (gate temperature enabled), the gate
-        # (cross-block) landmark logit is computed from ``QG`` instead of ``Q``. ``HAS_Q_GATE`` is a
-        # compile-time constant so the ``QG`` load and the extra ``qk_gate`` matmul are compiled out
-        # entirely when disabled (the overwhelmingly common case) -- this keeps shared-memory/register
-        # pressure, and hence which launch configs fit, identical to before this parameter existed.
+        # normal landmark kernel.
+        #
+        # This is the no-gate-temperature path: byte-for-byte the pre-existing kernel, kept
+        # completely unmodified (rather than adding a compile-time branch for an optional gate-only
+        # query) so shared-memory/register usage -- and hence which launch configs fit -- can never
+        # regress for the overwhelming majority of callers who don't use gate temperature. See
+        # :func:`_fwd_kernel_compressive_gated` for the temperature-enabled variant.
         start_m = tl.program_id(0)
         off_hz = tl.program_id(1)
 
@@ -169,9 +165,6 @@ if triton is not None:
         acc = tl.zeros([BLOCK_M, BLOCK_DMODEL], dtype=tl.float32)
 
         q_vals = tl.load(Q + offs_q, mask=offs_m[:, None] < N_CTX_Q, other=0)
-        if HAS_Q_GATE:
-            offs_qg = off_hz * sgh + offs_m[:, None] * sgm + offs_d[None, :] * sgd
-            qg_vals = tl.load(QG + offs_qg, mask=offs_m[:, None] < N_CTX_Q, other=0)
 
         for start_n in range(0, (N_PREFIX_Q + start_m)):
             k_vals = tl.load(K + offs_k, mask=offs_n[None, :] < N_CTX_KV, other=0)
@@ -184,23 +177,9 @@ if triton is not None:
                 k_doc = tl.load(DocId + batch_idx * N_BLOCKS + start_n)
                 qk = tl.where(q_doc == k_doc, qk, -1e30)
 
-            if HAS_Q_GATE:
-                # Gate-only logits (SAME masking) -> the block gate comes from the landmark column
-                # of this, not of ``qk``.
-                qk_gate = tl.zeros([BLOCK_M, BLOCK_N], dtype=qg_vals.dtype)
-                qk_gate += tl.dot(qg_vals, k_vals, allow_tf32=False)
-                qk_gate *= sm_scale
-                qk_gate = tl.where(offs_m_real[:, None] >= offs_n[None, :], qk_gate, float("-inf"))
-                if DOC_MASK:
-                    qk_gate = tl.where(q_doc == k_doc, qk_gate, -1e30)
-                landmark_qk = tl.max(
-                    tl.where(tl.arange(0, BLOCK_N)[None, :] == BLOCK_N - 1, qk_gate, float("-inf")),
-                    1,
-                )
-            else:
-                landmark_qk = tl.max(
-                    tl.where(tl.arange(0, BLOCK_N)[None, :] == BLOCK_N - 1, qk, float("-inf")), 1
-                )
+            landmark_qk = tl.max(
+                tl.where(tl.arange(0, BLOCK_N)[None, :] == BLOCK_N - 1, qk, float("-inf")), 1
+            )
             # Compressive within-block softmax over ALL block tokens (content + landmark).
             full_m = tl.max(qk, 1)
             full_p = tl.exp(qk - full_m[:, None])
@@ -259,9 +238,161 @@ if triton is not None:
         tl.store(Out + offs_o, acc, mask=offs_m[:, None] < N_CTX_Q)
 
     @triton.jit
+    def _fwd_kernel_compressive_gated(
+        Q,
+        QG,  # gate-only query, used ONLY for the cross-block gate landmark logit
+        K,
+        V,
+        sm_scale,
+        Out,
+        sqz,
+        sqh,
+        sqm,
+        sqd,
+        sgz,
+        sgh,
+        sgm,
+        sgd,
+        skz,
+        skh,
+        skn,
+        skd,
+        svz,
+        svh,
+        svn,
+        svd,
+        soz,
+        soh,
+        som,
+        sod,
+        L,
+        M,
+        DocId,  # int32 (Z, N_BLOCKS) per-block document id, or dummy when DOC_MASK is False
+        Z,
+        H,
+        N_CTX_Q,
+        N_CTX_KV,
+        N_BLOCKS,  # number of landmark blocks in the key sequence (= N_CTX_KV / BLOCK)
+        BLOCK: tl.constexpr,
+        BLOCK_DMODEL: tl.constexpr,
+        N_PREFIX_Q: tl.constexpr,
+        DOC_MASK: tl.constexpr,  # whether to apply intra-document (packing) masking
+    ):
+        # Gate-temperature variant of :func:`_fwd_kernel_compressive`: identical except the gate
+        # (cross-block) landmark logit is computed from ``QG`` instead of ``Q``. Only invoked when
+        # gate temperature is enabled (a distinct, separately-compiled kernel from the plain one, so
+        # the common no-temperature path never pays for this extra load/matmul).
+        start_m = tl.program_id(0)
+        off_hz = tl.program_id(1)
+
+        BLOCK_M: tl.constexpr = BLOCK
+        BLOCK_N: tl.constexpr = BLOCK
+
+        if DOC_MASK:
+            batch_idx = off_hz // H
+            q_doc = tl.load(DocId + batch_idx * N_BLOCKS + (start_m + N_PREFIX_Q))
+
+        offs_m = start_m * BLOCK_M + tl.arange(0, BLOCK_M)
+        offs_m_real = (start_m + N_PREFIX_Q) * BLOCK_M + tl.arange(0, BLOCK_M)
+        offs_m_real += tl.where(tl.arange(0, BLOCK_M) == BLOCK_M - 1, -1, 0)
+        offs_n = tl.arange(0, BLOCK_N)
+        offs_d = tl.arange(0, BLOCK_DMODEL)
+
+        offs_q = off_hz * sqh + offs_m[:, None] * sqm + offs_d[None, :] * sqd
+        offs_qg = off_hz * sgh + offs_m[:, None] * sgm + offs_d[None, :] * sgd
+        offs_k = off_hz * skh + offs_n[None, :] * skn + offs_d[:, None] * skd
+        offs_v = off_hz * svh + offs_n[:, None] * svn + offs_d[None, :] * svd
+
+        m_prev = tl.zeros([BLOCK_M], dtype=tl.float32) - float("inf")
+        l_prev = tl.zeros([BLOCK_M], dtype=tl.float32)
+        acc = tl.zeros([BLOCK_M, BLOCK_DMODEL], dtype=tl.float32)
+
+        q_vals = tl.load(Q + offs_q, mask=offs_m[:, None] < N_CTX_Q, other=0)
+        qg_vals = tl.load(QG + offs_qg, mask=offs_m[:, None] < N_CTX_Q, other=0)
+
+        for start_n in range(0, (N_PREFIX_Q + start_m)):
+            k_vals = tl.load(K + offs_k, mask=offs_n[None, :] < N_CTX_KV, other=0)
+
+            qk = tl.zeros([BLOCK_M, BLOCK_N], dtype=q_vals.dtype)
+            qk += tl.dot(q_vals, k_vals, allow_tf32=False)
+            qk *= sm_scale
+            qk = tl.where(offs_m_real[:, None] >= offs_n[None, :], qk, float("-inf"))
+            if DOC_MASK:
+                k_doc = tl.load(DocId + batch_idx * N_BLOCKS + start_n)
+                qk = tl.where(q_doc == k_doc, qk, -1e30)
+
+            # Gate-only logits (SAME masking) -> the block gate comes from the landmark column of
+            # this, not of ``qk``.
+            qk_gate = tl.zeros([BLOCK_M, BLOCK_N], dtype=qg_vals.dtype)
+            qk_gate += tl.dot(qg_vals, k_vals, allow_tf32=False)
+            qk_gate *= sm_scale
+            qk_gate = tl.where(offs_m_real[:, None] >= offs_n[None, :], qk_gate, float("-inf"))
+            if DOC_MASK:
+                qk_gate = tl.where(q_doc == k_doc, qk_gate, -1e30)
+
+            landmark_qk = tl.max(
+                tl.where(tl.arange(0, BLOCK_N)[None, :] == BLOCK_N - 1, qk_gate, float("-inf")), 1
+            )
+            # Compressive within-block softmax over ALL block tokens (content + landmark).
+            full_m = tl.max(qk, 1)
+            full_p = tl.exp(qk - full_m[:, None])
+            full_denom = tl.sum(full_p, 1)
+
+            m_curr = tl.maximum(landmark_qk, m_prev)
+            m_curr_ = m_curr
+            l_prev *= tl.exp(m_prev - m_curr_)
+            landmark_p = tl.exp(landmark_qk - m_curr_)
+            l_curr = landmark_p + l_prev
+            l_rcp = 1.0 / l_curr
+            landmark_p *= l_rcp
+
+            acc *= (l_prev * l_rcp)[:, None]
+            v_vals = tl.load(V + offs_v, mask=offs_n[:, None] < N_CTX_KV, other=0)
+            acc += tl.dot(
+                (landmark_p[:, None] * full_p / full_denom[:, None]).to(Q.dtype.element_ty),
+                v_vals,
+                allow_tf32=False,
+            )
+
+            l_prev = l_curr
+            m_prev = m_curr
+
+            offs_n += BLOCK_N
+            offs_k += BLOCK_N * skn
+            offs_v += BLOCK_N * svn
+
+        # Diagonal (local) block: standard causal softmax on the PER-HEAD query (no gate here).
+        k_vals = tl.load(K + offs_k, mask=offs_n[None, :] < N_CTX_KV, other=0)
+        qk = tl.zeros([BLOCK_M, BLOCK_N], dtype=q_vals.dtype)
+        qk += tl.dot(q_vals, k_vals, allow_tf32=False)
+        qk *= sm_scale
+        qk = tl.where(offs_m_real[:, None] >= offs_n[None, :], qk, float("-inf"))
+
+        m_curr = tl.maximum(tl.max(qk, 1), m_prev)
+        m_curr_ = m_curr
+        l_prev *= tl.exp(m_prev - m_curr_)
+        p = tl.exp(qk - m_curr_[:, None])
+        l_curr = tl.sum(p, 1) + l_prev
+        l_rcp = 1.0 / l_curr
+        p *= l_rcp[:, None]
+        acc *= (l_prev * l_rcp)[:, None]
+        p = p.to(Q.dtype.element_ty)
+        v_vals = tl.load(V + offs_v, mask=offs_n[:, None] < N_CTX_KV, other=0)
+        acc += tl.dot(p, v_vals, allow_tf32=False)
+
+        l_prev = l_curr
+        m_prev = m_curr
+
+        offs_L = off_hz * N_CTX_Q + offs_m
+        offs_M = off_hz * N_CTX_Q + offs_m
+        tl.store(L + offs_L, l_prev, mask=offs_m < N_CTX_Q)
+        tl.store(M + offs_M, m_prev, mask=offs_m < N_CTX_Q)
+        offs_o = off_hz * soh + offs_m[:, None] * som + offs_d[None, :] * sod
+        tl.store(Out + offs_o, acc, mask=offs_m[:, None] < N_CTX_Q)
+
+    @triton.jit
     def _bwd_kv_kernel_compressive(
         Q,
-        QG,
         K,
         V,
         sm_scale,
@@ -277,10 +408,6 @@ if triton is not None:
         sqh,
         sqm,
         sqd,
-        sgz,
-        sgh,
-        sgm,
-        sgd,
         skz,
         skh,
         skn,
@@ -299,12 +426,15 @@ if triton is not None:
         BLOCK_DMODEL: tl.constexpr,
         N_PREFIX_Q: tl.constexpr,
         DOC_MASK: tl.constexpr,
-        HAS_Q_GATE: tl.constexpr,  # whether QG differs from Q (gate temperature enabled)
     ):
         # dk/dv, one program per (key-block, head); atomic-free. Mirrors landmark_fast._bwd_kv_kernel
         # but with the compressive within-block softmax: every block token (incl. the landmark) gets
-        # a within-block value weight, and the landmark score additionally carries the gate gradient
-        # (via ``QG`` when ``HAS_Q_GATE``, else via ``Q`` directly -- see ``_fwd_kernel_compressive``).
+        # a within-block value weight, and the landmark score additionally carries the gate gradient.
+        #
+        # No-gate-temperature path: byte-for-byte the pre-existing kernel (see
+        # :func:`_fwd_kernel_compressive` for why this is kept as a separate, untouched kernel rather
+        # than a compile-time branch). See :func:`_bwd_kv_kernel_compressive_gated` for the
+        # temperature-enabled variant.
         off_hz = tl.program_id(0)
         off_z = off_hz // H
         off_h = off_hz % H
@@ -313,8 +443,6 @@ if triton is not None:
         BLOCK_N: tl.constexpr = BLOCK
 
         Q += off_z * sqz + off_h * sqh
-        if HAS_Q_GATE:
-            QG += off_z * sgz + off_h * sgh
         K += off_z * skz + off_h * skh
         V += off_z * svz + off_h * svh
         DO += off_z * sqz + off_h * sqh
@@ -395,19 +523,9 @@ if triton is not None:
             qk = tl.dot(q, tl.trans(k), allow_tf32=False)
             qk *= sm_scale
 
-            if HAS_Q_GATE:
-                qg_ptrs = QG + (offs_m[:, None] * sgm + offs_d[None, :] * sgd)
-                qg = tl.load(qg_ptrs)
-                qk_gate = tl.dot(qg, tl.trans(k), allow_tf32=False)
-                qk_gate *= sm_scale
-                landmark_qk = tl.max(
-                    tl.where(tl.arange(0, BLOCK_N)[None, :] == BLOCK_N - 1, qk_gate, float("-inf")),
-                    1,
-                )
-            else:
-                landmark_qk = tl.max(
-                    tl.where(tl.arange(0, BLOCK_N)[None, :] == BLOCK_N - 1, qk, float("-inf")), 1
-                )
+            landmark_qk = tl.max(
+                tl.where(tl.arange(0, BLOCK_N)[None, :] == BLOCK_N - 1, qk, float("-inf")), 1
+            )
             # Compressive within-block softmax over all block tokens (content + landmark).
             full_m = tl.max(qk, 1)
             full_p = tl.exp(qk - full_m[:, None])
@@ -434,21 +552,11 @@ if triton is not None:
             full_D = tl.sum(full_dist * dpv, 1)
             within_ds = p[:, None] * full_dist * (dpv - full_D[:, None])
             gate_ds = p * (full_D - Di)  # lands on the landmark column only
-            if HAS_Q_GATE:
-                # within_ds (all columns) -> dk via Q; gate_ds (landmark column only) -> dk via QG.
-                within_ds_s = (within_ds * (sm_scale * doc_keep)).to(Q.dtype.element_ty)
-                gate_ds_s = (
-                    tl.where(tl.arange(0, BLOCK_N)[None, :] == BLOCK_N - 1, gate_ds[:, None], 0.0)
-                    * (sm_scale * doc_keep)
-                ).to(Q.dtype.element_ty)
-                dk += tl.dot(tl.trans(within_ds_s), q, allow_tf32=False)
-                dk += tl.dot(tl.trans(gate_ds_s), qg, allow_tf32=False)
-            else:
-                ds = within_ds + tl.where(
-                    tl.arange(0, BLOCK_N)[None, :] == BLOCK_N - 1, gate_ds[:, None], 0.0
-                )
-                ds *= sm_scale * doc_keep
-                dk += tl.dot(tl.trans(ds.to(Q.dtype.element_ty)), q, allow_tf32=False)
+            ds = within_ds + tl.where(
+                tl.arange(0, BLOCK_N)[None, :] == BLOCK_N - 1, gate_ds[:, None], 0.0
+            )
+            ds *= sm_scale * doc_keep
+            dk += tl.dot(tl.trans(ds.to(Q.dtype.element_ty)), q, allow_tf32=False)
 
         dv_ptrs = DV + (offs_n[:, None] * svn + offs_d[None, :] * svd)
         dk_ptrs = DK + (offs_n[:, None] * skn + offs_d[None, :] * skd)
@@ -456,7 +564,7 @@ if triton is not None:
         tl.store(dk_ptrs, dk)
 
     @triton.jit
-    def _bwd_q_kernel_compressive(
+    def _bwd_kv_kernel_compressive_gated(
         Q,
         QG,
         K,
@@ -465,7 +573,6 @@ if triton is not None:
         Out,
         DO,
         DQ,
-        DQG,  # gradient w.r.t. the gate-only query (== DQ's tensor when QG is Q itself)
         DK,
         DV,
         L,
@@ -497,11 +604,9 @@ if triton is not None:
         BLOCK_DMODEL: tl.constexpr,
         N_PREFIX_Q: tl.constexpr,
         DOC_MASK: tl.constexpr,
-        HAS_Q_GATE: tl.constexpr,  # whether QG differs from Q (gate temperature enabled)
     ):
-        # dq (per-head, content + local) and, when ``HAS_Q_GATE``, dqg (gate-only query). One
-        # program per (query-block, head). Causal-only key-block loop, atomic-free. Only implemented
-        # for N_PREFIX_Q == 0 (the caller guards this).
+        # Gate-temperature variant of :func:`_bwd_kv_kernel_compressive`: the gate gradient
+        # (landmark column) additionally flows to ``dk`` via ``QG`` instead of ``Q``.
         off_hz = tl.program_id(0)
         off_z = off_hz // H
         off_h = off_hz % H
@@ -510,9 +615,173 @@ if triton is not None:
         BLOCK_N: tl.constexpr = BLOCK
 
         Q += off_z * sqz + off_h * sqh
-        if HAS_Q_GATE:
-            QG += off_z * sgz + off_h * sgh
-            DQG += off_z * sgz + off_h * sgh
+        QG += off_z * sgz + off_h * sgh
+        K += off_z * skz + off_h * skh
+        V += off_z * svz + off_h * svh
+        DO += off_z * sqz + off_h * sqh
+        DK += off_z * skz + off_h * skh
+        DV += off_z * svz + off_h * svh
+
+        offs_d = tl.arange(0, BLOCK_DMODEL)
+        D_ptrs = D + off_hz * N_CTX_Q
+        m_ptrs = M + off_hz * N_CTX_Q
+
+        start_n = tl.program_id(1) * BLOCK_N
+        start_n = tl.multiple_of(start_n, BLOCK_N)
+        offs_n = start_n + tl.arange(0, BLOCK_N)
+        k_ptrs = K + (offs_n[:, None] * skn + offs_d[None, :] * skd)
+        v_ptrs = V + (offs_n[:, None] * svn + offs_d[None, :] * svd)
+
+        if DOC_MASK:
+            k_doc = tl.load(DocId + off_z * N_BLOCKS + (start_n // BLOCK_N))
+
+        dv = tl.zeros([BLOCK_N, BLOCK_DMODEL], dtype=tl.float32)
+        dk = tl.zeros([BLOCK_N, BLOCK_DMODEL], dtype=tl.float32)
+
+        k = tl.load(k_ptrs)
+        v = tl.load(v_ptrs)
+
+        if start_n < N_PREFIX_Q * BLOCK_M:
+            start_q_index = 0
+        elif N_CTX_Q <= start_n - N_PREFIX_Q * BLOCK_M:
+            start_q_index = start_n - N_PREFIX_Q * BLOCK_M
+        else:
+            # Diagonal (local) block: standard causal softmax on the PER-HEAD query (grad -> dk via Q).
+            first_start_m = start_n - N_PREFIX_Q * BLOCK_M
+            first_start_m = tl.multiple_of(first_start_m, BLOCK_M)
+            offs_m = first_start_m + tl.arange(0, BLOCK_M)
+            offs_m_real = offs_m + N_PREFIX_Q * BLOCK_M
+            offs_m_real += tl.where(tl.arange(0, BLOCK_M) == BLOCK_M - 1, -1, 0)
+
+            q_ptrs = Q + (offs_m[:, None] * sqm + offs_d[None, :] * sqd)
+            do_ptrs = DO + (offs_m[:, None] * sqm + offs_d[None, :] * sqd)
+
+            q = tl.load(q_ptrs)
+            qk = tl.dot(q, tl.trans(k), allow_tf32=False)
+            qk = tl.where(offs_m_real[:, None] >= (offs_n[None, :]), qk, float("-inf"))
+
+            m = tl.load(m_ptrs + offs_m)
+            last_p = tl.exp(qk * sm_scale - m[:, None])
+
+            do = tl.load(do_ptrs)
+            dv += tl.dot(tl.trans(last_p.to(Q.dtype.element_ty)), do, allow_tf32=False)
+
+            Di = tl.load(D_ptrs + offs_m)
+            last_dp = tl.zeros([BLOCK_M, BLOCK_N], dtype=tl.float32) - Di[:, None]
+            last_dp += tl.dot(do, tl.trans(v), allow_tf32=False)
+            ds = last_p * last_dp * sm_scale
+
+            dk += tl.dot(tl.trans(ds.to(Q.dtype.element_ty)), q, allow_tf32=False)
+            start_q_index = first_start_m + BLOCK_M
+
+        for i in range(0, N_CTX_Q - start_q_index, BLOCK_M):
+            start_m = start_q_index + i
+            start_m = tl.multiple_of(start_m, BLOCK_M)
+            offs_m = start_m + tl.arange(0, BLOCK_M)
+
+            doc_keep = 1.0
+            if DOC_MASK:
+                q_doc = tl.load(DocId + off_z * N_BLOCKS + (start_m // BLOCK_M))
+                doc_keep = (q_doc == k_doc).to(tl.float32)
+
+            q_ptrs = Q + (offs_m[:, None] * sqm + offs_d[None, :] * sqd)
+            qg_ptrs = QG + (offs_m[:, None] * sgm + offs_d[None, :] * sgd)
+            do_ptrs = DO + (offs_m[:, None] * sqm + offs_d[None, :] * sqd)
+
+            q = tl.load(q_ptrs)
+            qg = tl.load(qg_ptrs)
+            qk = tl.dot(q, tl.trans(k), allow_tf32=False)
+            qk *= sm_scale
+            qk_gate = tl.dot(qg, tl.trans(k), allow_tf32=False)
+            qk_gate *= sm_scale
+
+            landmark_qk = tl.max(
+                tl.where(tl.arange(0, BLOCK_N)[None, :] == BLOCK_N - 1, qk_gate, float("-inf")), 1
+            )
+            full_m = tl.max(qk, 1)
+            full_p = tl.exp(qk - full_m[:, None])
+            full_dist = full_p / tl.sum(full_p, 1)[:, None]
+
+            m = tl.load(m_ptrs + offs_m)
+            p = tl.exp(landmark_qk - m)
+
+            do = tl.load(do_ptrs)
+
+            dv += tl.dot(
+                tl.trans((doc_keep * p[:, None] * full_dist).to(Q.dtype.element_ty)),
+                do,
+                allow_tf32=False,
+            )
+
+            Di = tl.load(D_ptrs + offs_m)
+            dpv = tl.dot(do, tl.trans(v), allow_tf32=False)
+            full_D = tl.sum(full_dist * dpv, 1)
+            # within_ds (all columns) -> dk via Q; gate_ds (landmark column only) -> dk via QG.
+            within_ds = p[:, None] * full_dist * (dpv - full_D[:, None])
+            gate_ds = p * (full_D - Di)
+            within_ds_s = (within_ds * (sm_scale * doc_keep)).to(Q.dtype.element_ty)
+            gate_ds_s = (
+                tl.where(tl.arange(0, BLOCK_N)[None, :] == BLOCK_N - 1, gate_ds[:, None], 0.0)
+                * (sm_scale * doc_keep)
+            ).to(Q.dtype.element_ty)
+            dk += tl.dot(tl.trans(within_ds_s), q, allow_tf32=False)
+            dk += tl.dot(tl.trans(gate_ds_s), qg, allow_tf32=False)
+
+        dv_ptrs = DV + (offs_n[:, None] * svn + offs_d[None, :] * svd)
+        dk_ptrs = DK + (offs_n[:, None] * skn + offs_d[None, :] * skd)
+        tl.store(dv_ptrs, dv)
+        tl.store(dk_ptrs, dk)
+
+    @triton.jit
+    def _bwd_q_kernel_compressive(
+        Q,
+        K,
+        V,
+        sm_scale,
+        Out,
+        DO,
+        DQ,
+        DK,
+        DV,
+        L,
+        M,
+        D,
+        sqz,
+        sqh,
+        sqm,
+        sqd,
+        skz,
+        skh,
+        skn,
+        skd,
+        svz,
+        svh,
+        svn,
+        svd,
+        DocId,  # int32 (Z, N_BLOCKS) per-block document id, or dummy when DOC_MASK is False
+        Z,
+        H,
+        N_CTX_Q,
+        N_CTX_KV,
+        N_BLOCKS,
+        BLOCK: tl.constexpr,
+        BLOCK_DMODEL: tl.constexpr,
+        N_PREFIX_Q: tl.constexpr,
+        DOC_MASK: tl.constexpr,
+    ):
+        # dq, one program per (query-block, head). Causal-only key-block loop, atomic-free. Only
+        # implemented for N_PREFIX_Q == 0 (the caller guards this).
+        #
+        # No-gate-temperature path: byte-for-byte the pre-existing kernel. See
+        # :func:`_bwd_q_kernel_compressive_gated` for the temperature-enabled variant.
+        off_hz = tl.program_id(0)
+        off_z = off_hz // H
+        off_h = off_hz % H
+
+        BLOCK_M: tl.constexpr = BLOCK
+        BLOCK_N: tl.constexpr = BLOCK
+
+        Q += off_z * sqz + off_h * sqh
         K += off_z * skz + off_h * skh
         V += off_z * svz + off_h * svh
         DO += off_z * sqz + off_h * sqh
@@ -527,8 +796,6 @@ if triton is not None:
         offs_m = start_m + tl.arange(0, BLOCK_M)
 
         q = tl.load(Q + (offs_m[:, None] * sqm + offs_d[None, :] * sqd))
-        if HAS_Q_GATE:
-            qg = tl.load(QG + (offs_m[:, None] * sgm + offs_d[None, :] * sgd))
         do = tl.load(DO + (offs_m[:, None] * sqm + offs_d[None, :] * sqd))
         m = tl.load(m_ptrs + offs_m)
         Di = tl.load(D_ptrs + offs_m)
@@ -537,8 +804,6 @@ if triton is not None:
             q_doc = tl.load(DocId + off_z * N_BLOCKS + (start_m // BLOCK_M))
 
         dq = tl.zeros([BLOCK_M, BLOCK_DMODEL], dtype=tl.float32)
-        if HAS_Q_GATE:
-            dqg = tl.zeros([BLOCK_M, BLOCK_DMODEL], dtype=tl.float32)
 
         for start_n in range(0, start_m, BLOCK_N):
             start_n = tl.multiple_of(start_n, BLOCK_N)
@@ -554,17 +819,9 @@ if triton is not None:
 
             qk = tl.dot(q, tl.trans(k), allow_tf32=False)
             qk *= sm_scale
-            if HAS_Q_GATE:
-                qk_gate = tl.dot(qg, tl.trans(k), allow_tf32=False)
-                qk_gate *= sm_scale
-                landmark_qk = tl.max(
-                    tl.where(tl.arange(0, BLOCK_N)[None, :] == BLOCK_N - 1, qk_gate, float("-inf")),
-                    1,
-                )
-            else:
-                landmark_qk = tl.max(
-                    tl.where(tl.arange(0, BLOCK_N)[None, :] == BLOCK_N - 1, qk, float("-inf")), 1
-                )
+            landmark_qk = tl.max(
+                tl.where(tl.arange(0, BLOCK_N)[None, :] == BLOCK_N - 1, qk, float("-inf")), 1
+            )
             full_m = tl.max(qk, 1)
             full_p = tl.exp(qk - full_m[:, None])
             full_dist = full_p / tl.sum(full_p, 1)[:, None]
@@ -573,22 +830,143 @@ if triton is not None:
             # full_D = do_scaled . fv = sum_n full_dist_n * (do_scaled . v_n); see _bwd_kv_kernel.
             full_D = tl.sum(full_dist * dpv, 1)
             within_ds = p[:, None] * full_dist * (dpv - full_D[:, None])
-            gate_ds = p * (full_D - Di)  # lands on the landmark column only
-            if HAS_Q_GATE:
-                # within_ds (all columns) -> dq (per-head query); gate_ds (landmark column) -> dqg.
-                within_ds_s = (within_ds * (sm_scale * doc_keep)).to(Q.dtype.element_ty)
-                gate_ds_s = (
-                    tl.where(tl.arange(0, BLOCK_N)[None, :] == BLOCK_N - 1, gate_ds[:, None], 0.0)
-                    * (sm_scale * doc_keep)
-                ).to(Q.dtype.element_ty)
-                dq += tl.dot(within_ds_s, k, allow_tf32=False)
-                dqg += tl.dot(gate_ds_s, k, allow_tf32=False)
-            else:
-                ds = within_ds + tl.where(
-                    tl.arange(0, BLOCK_N)[None, :] == BLOCK_N - 1, gate_ds[:, None], 0.0
-                )
-                ds *= sm_scale * doc_keep
-                dq += tl.dot(ds.to(Q.dtype.element_ty), k, allow_tf32=False)
+            gate_ds = p * (full_D - Di)
+            ds = within_ds + tl.where(
+                tl.arange(0, BLOCK_N)[None, :] == BLOCK_N - 1, gate_ds[:, None], 0.0
+            )
+            ds *= sm_scale * doc_keep
+            dq += tl.dot(ds.to(Q.dtype.element_ty), k, allow_tf32=False)
+
+        # diagonal key block: within-block causal attention (identical to normal landmark).
+        offs_n = start_m + tl.arange(0, BLOCK_N)
+        k = tl.load(K + (offs_n[:, None] * skn + offs_d[None, :] * skd))
+        v = tl.load(V + (offs_n[:, None] * svn + offs_d[None, :] * svd))
+        offs_m_real = offs_m + tl.where(tl.arange(0, BLOCK_M) == BLOCK_M - 1, -1, 0)
+        qk = tl.dot(q, tl.trans(k), allow_tf32=False)
+        qk = tl.where(offs_m_real[:, None] >= (offs_n[None, :]), qk, float("-inf"))
+        last_p = tl.exp(qk * sm_scale - m[:, None])
+        last_dp = tl.zeros([BLOCK_M, BLOCK_N], dtype=tl.float32) - Di[:, None]
+        last_dp += tl.dot(do, tl.trans(v), allow_tf32=False)
+        ds = last_p * last_dp * sm_scale
+        dq += tl.dot(ds.to(Q.dtype.element_ty), k, allow_tf32=False)
+
+        tl.store(DQ + (offs_m[:, None] * sqm + offs_d[None, :] * sqd), dq)
+
+    @triton.jit
+    def _bwd_q_kernel_compressive_gated(
+        Q,
+        QG,
+        K,
+        V,
+        sm_scale,
+        Out,
+        DO,
+        DQ,
+        DQG,  # gradient w.r.t. the gate-only query
+        DK,
+        DV,
+        L,
+        M,
+        D,
+        sqz,
+        sqh,
+        sqm,
+        sqd,
+        sgz,
+        sgh,
+        sgm,
+        sgd,
+        skz,
+        skh,
+        skn,
+        skd,
+        svz,
+        svh,
+        svn,
+        svd,
+        DocId,  # int32 (Z, N_BLOCKS) per-block document id, or dummy when DOC_MASK is False
+        Z,
+        H,
+        N_CTX_Q,
+        N_CTX_KV,
+        N_BLOCKS,
+        BLOCK: tl.constexpr,
+        BLOCK_DMODEL: tl.constexpr,
+        N_PREFIX_Q: tl.constexpr,
+        DOC_MASK: tl.constexpr,
+    ):
+        # dq (per-head, content + local) and dqg (gate-only query). One program per (query-block,
+        # head). N_PREFIX_Q == 0 only (caller guards).
+        off_hz = tl.program_id(0)
+        off_z = off_hz // H
+        off_h = off_hz % H
+
+        BLOCK_M: tl.constexpr = BLOCK
+        BLOCK_N: tl.constexpr = BLOCK
+
+        Q += off_z * sqz + off_h * sqh
+        QG += off_z * sgz + off_h * sgh
+        K += off_z * skz + off_h * skh
+        V += off_z * svz + off_h * svh
+        DO += off_z * sqz + off_h * sqh
+        DQ += off_z * sqz + off_h * sqh
+        DQG += off_z * sgz + off_h * sgh
+
+        offs_d = tl.arange(0, BLOCK_DMODEL)
+        D_ptrs = D + off_hz * N_CTX_Q
+        m_ptrs = M + off_hz * N_CTX_Q
+
+        start_m = tl.program_id(1) * BLOCK_M
+        start_m = tl.multiple_of(start_m, BLOCK_M)
+        offs_m = start_m + tl.arange(0, BLOCK_M)
+
+        q = tl.load(Q + (offs_m[:, None] * sqm + offs_d[None, :] * sqd))
+        qg = tl.load(QG + (offs_m[:, None] * sgm + offs_d[None, :] * sgd))
+        do = tl.load(DO + (offs_m[:, None] * sqm + offs_d[None, :] * sqd))
+        m = tl.load(m_ptrs + offs_m)
+        Di = tl.load(D_ptrs + offs_m)
+
+        if DOC_MASK:
+            q_doc = tl.load(DocId + off_z * N_BLOCKS + (start_m // BLOCK_M))
+
+        dq = tl.zeros([BLOCK_M, BLOCK_DMODEL], dtype=tl.float32)
+        dqg = tl.zeros([BLOCK_M, BLOCK_DMODEL], dtype=tl.float32)
+
+        for start_n in range(0, start_m, BLOCK_N):
+            start_n = tl.multiple_of(start_n, BLOCK_N)
+            offs_n = start_n + tl.arange(0, BLOCK_N)
+            k = tl.load(K + (offs_n[:, None] * skn + offs_d[None, :] * skd))
+            v = tl.load(V + (offs_n[:, None] * svn + offs_d[None, :] * svd))
+
+            doc_keep = 1.0
+            if DOC_MASK:
+                k_doc = tl.load(DocId + off_z * N_BLOCKS + (start_n // BLOCK_N))
+                doc_keep = (q_doc == k_doc).to(tl.float32)
+
+            qk = tl.dot(q, tl.trans(k), allow_tf32=False)
+            qk *= sm_scale
+            qk_gate = tl.dot(qg, tl.trans(k), allow_tf32=False)
+            qk_gate *= sm_scale
+            landmark_qk = tl.max(
+                tl.where(tl.arange(0, BLOCK_N)[None, :] == BLOCK_N - 1, qk_gate, float("-inf")), 1
+            )
+            full_m = tl.max(qk, 1)
+            full_p = tl.exp(qk - full_m[:, None])
+            full_dist = full_p / tl.sum(full_p, 1)[:, None]
+            p = tl.exp(landmark_qk - m)
+            dpv = tl.dot(do, tl.trans(v), allow_tf32=False)
+            # full_D = do_scaled . fv = sum_n full_dist_n * (do_scaled . v_n); see _bwd_kv_kernel.
+            full_D = tl.sum(full_dist * dpv, 1)
+            # within_ds (all columns) -> dq (per-head query); gate_ds (landmark column) -> dqg.
+            within_ds = p[:, None] * full_dist * (dpv - full_D[:, None])
+            gate_ds = p * (full_D - Di)
+            within_ds_s = (within_ds * (sm_scale * doc_keep)).to(Q.dtype.element_ty)
+            gate_ds_s = (
+                tl.where(tl.arange(0, BLOCK_N)[None, :] == BLOCK_N - 1, gate_ds[:, None], 0.0)
+                * (sm_scale * doc_keep)
+            ).to(Q.dtype.element_ty)
+            dq += tl.dot(within_ds_s, k, allow_tf32=False)
+            dqg += tl.dot(gate_ds_s, k, allow_tf32=False)
 
         # diagonal key block: within-block causal attention (identical to normal landmark; no gate
         # here, so it only contributes to dq).
@@ -605,8 +983,7 @@ if triton is not None:
         dq += tl.dot(ds.to(Q.dtype.element_ty), k, allow_tf32=False)
 
         tl.store(DQ + (offs_m[:, None] * sqm + offs_d[None, :] * sqd), dq)
-        if HAS_Q_GATE:
-            tl.store(DQG + (offs_m[:, None] * sgm + offs_d[None, :] * sgd), dqg)
+        tl.store(DQG + (offs_m[:, None] * sgm + offs_d[None, :] * sgd), dqg)
 
 
 class _FusedCompressiveLandmarkAttention(torch.autograd.Function):
@@ -647,49 +1024,89 @@ class _FusedCompressiveLandmarkAttention(torch.autograd.Function):
         else:
             num_warps = _env_int("LM_FAST_FWD_WARPS", 4)
             num_stages = _env_int("LM_FAST_FWD_STAGES", 3)
-        _fwd_kernel_compressive[grid](
-            q,
-            q_gate,
-            k,
-            v,
-            sm_scale,
-            o,
-            q.stride(0),
-            q.stride(1),
-            q.stride(2),
-            q.stride(3),
-            q_gate.stride(0),
-            q_gate.stride(1),
-            q_gate.stride(2),
-            q_gate.stride(3),
-            k.stride(0),
-            k.stride(1),
-            k.stride(2),
-            k.stride(3),
-            v.stride(0),
-            v.stride(1),
-            v.stride(2),
-            v.stride(3),
-            o.stride(0),
-            o.stride(1),
-            o.stride(2),
-            o.stride(3),
-            L,
-            m,
-            doc_id_arg,
-            q.shape[0],
-            q.shape[1],
-            q.shape[2],
-            k.shape[2],
-            n_blocks,
+        const = dict(
             BLOCK=BLOCK,
             BLOCK_DMODEL=d,
             N_PREFIX_Q=n_prefix_q,
             DOC_MASK=doc_mask,
-            HAS_Q_GATE=has_q_gate,
             num_warps=num_warps,
             num_stages=num_stages,
         )
+        # Dispatch to a genuinely separate, unmodified kernel when gate temperature is disabled (the
+        # common case), rather than a compile-time branch in a single kernel -- this guarantees the
+        # no-temperature path's compiled shared-memory/register footprint can never regress, since
+        # it's calling the exact pre-existing kernel unchanged.
+        if has_q_gate:
+            _fwd_kernel_compressive_gated[grid](
+                q,
+                q_gate,
+                k,
+                v,
+                sm_scale,
+                o,
+                q.stride(0),
+                q.stride(1),
+                q.stride(2),
+                q.stride(3),
+                q_gate.stride(0),
+                q_gate.stride(1),
+                q_gate.stride(2),
+                q_gate.stride(3),
+                k.stride(0),
+                k.stride(1),
+                k.stride(2),
+                k.stride(3),
+                v.stride(0),
+                v.stride(1),
+                v.stride(2),
+                v.stride(3),
+                o.stride(0),
+                o.stride(1),
+                o.stride(2),
+                o.stride(3),
+                L,
+                m,
+                doc_id_arg,
+                q.shape[0],
+                q.shape[1],
+                q.shape[2],
+                k.shape[2],
+                n_blocks,
+                **const,
+            )
+        else:
+            _fwd_kernel_compressive[grid](
+                q,
+                k,
+                v,
+                sm_scale,
+                o,
+                q.stride(0),
+                q.stride(1),
+                q.stride(2),
+                q.stride(3),
+                k.stride(0),
+                k.stride(1),
+                k.stride(2),
+                k.stride(3),
+                v.stride(0),
+                v.stride(1),
+                v.stride(2),
+                v.stride(3),
+                o.stride(0),
+                o.stride(1),
+                o.stride(2),
+                o.stride(3),
+                L,
+                m,
+                doc_id_arg,
+                q.shape[0],
+                q.shape[1],
+                q.shape[2],
+                k.shape[2],
+                n_blocks,
+                **const,
+            )
         ctx.save_for_backward(q, q_gate, k, v, o, L, m)
         ctx.doc_id = doc_id  # None when not packing
         ctx.grid = grid
@@ -737,31 +1154,12 @@ class _FusedCompressiveLandmarkAttention(torch.autograd.Function):
             BLOCK_M=BLOCK,
             D_HEAD=ctx.BLOCK_DMODEL,
         )
-        stride_args = (
-            q.stride(0),
-            q.stride(1),
-            q.stride(2),
-            q.stride(3),
-            q_gate.stride(0),
-            q_gate.stride(1),
-            q_gate.stride(2),
-            q_gate.stride(3),
-            k.stride(0),
-            k.stride(1),
-            k.stride(2),
-            k.stride(3),
-            v.stride(0),
-            v.stride(1),
-            v.stride(2),
-            v.stride(3),
-        )
         dims = (q.shape[0], q.shape[1], q.shape[2], k.shape[2], n_blocks)
         const = dict(
             BLOCK=BLOCK,
             BLOCK_DMODEL=ctx.BLOCK_DMODEL,
             N_PREFIX_Q=ctx.N_PREFIX_Q,
             DOC_MASK=doc_mask,
-            HAS_Q_GATE=ctx.has_q_gate,
         )
         if ctx.BLOCK_DMODEL > 128:
             warps = _env_int("LM_FAST_WARPS", 8)
@@ -770,49 +1168,124 @@ class _FusedCompressiveLandmarkAttention(torch.autograd.Function):
             warps = _env_int("LM_FAST_WARPS", 4)
             stages = _env_int("LM_FAST_STAGES", 2)
         n_kv_blocks = triton.cdiv(k.shape[2], BLOCK)
-        _bwd_kv_kernel_compressive[(ctx.grid[1], n_kv_blocks)](
-            q,
-            q_gate,
-            k,
-            v,
-            ctx.sm_scale,
-            o,
-            do_scaled,
-            dq,
-            dk,
-            dv,
-            lse,
-            m,
-            delta,
-            *stride_args,
-            doc_id_arg,
-            *dims,
-            **const,
-            num_warps=warps,
-            num_stages=stages,
-        )
-        _bwd_q_kernel_compressive[(ctx.grid[1], ctx.grid[0])](
-            q,
-            q_gate,
-            k,
-            v,
-            ctx.sm_scale,
-            o,
-            do_scaled,
-            dq,
-            dqg,
-            dk,
-            dv,
-            lse,
-            m,
-            delta,
-            *stride_args,
-            doc_id_arg,
-            *dims,
-            **const,
-            num_warps=warps,
-            num_stages=stages,
-        )
+        # Same dispatch as forward: genuinely separate, unmodified kernels for the disabled path.
+        if ctx.has_q_gate:
+            gated_stride_args = (
+                q.stride(0),
+                q.stride(1),
+                q.stride(2),
+                q.stride(3),
+                q_gate.stride(0),
+                q_gate.stride(1),
+                q_gate.stride(2),
+                q_gate.stride(3),
+                k.stride(0),
+                k.stride(1),
+                k.stride(2),
+                k.stride(3),
+                v.stride(0),
+                v.stride(1),
+                v.stride(2),
+                v.stride(3),
+            )
+            _bwd_kv_kernel_compressive_gated[(ctx.grid[1], n_kv_blocks)](
+                q,
+                q_gate,
+                k,
+                v,
+                ctx.sm_scale,
+                o,
+                do_scaled,
+                dq,
+                dk,
+                dv,
+                lse,
+                m,
+                delta,
+                *gated_stride_args,
+                doc_id_arg,
+                *dims,
+                **const,
+                num_warps=warps,
+                num_stages=stages,
+            )
+            _bwd_q_kernel_compressive_gated[(ctx.grid[1], ctx.grid[0])](
+                q,
+                q_gate,
+                k,
+                v,
+                ctx.sm_scale,
+                o,
+                do_scaled,
+                dq,
+                dqg,
+                dk,
+                dv,
+                lse,
+                m,
+                delta,
+                *gated_stride_args,
+                doc_id_arg,
+                *dims,
+                **const,
+                num_warps=warps,
+                num_stages=stages,
+            )
+        else:
+            stride_args = (
+                q.stride(0),
+                q.stride(1),
+                q.stride(2),
+                q.stride(3),
+                k.stride(0),
+                k.stride(1),
+                k.stride(2),
+                k.stride(3),
+                v.stride(0),
+                v.stride(1),
+                v.stride(2),
+                v.stride(3),
+            )
+            _bwd_kv_kernel_compressive[(ctx.grid[1], n_kv_blocks)](
+                q,
+                k,
+                v,
+                ctx.sm_scale,
+                o,
+                do_scaled,
+                dq,
+                dk,
+                dv,
+                lse,
+                m,
+                delta,
+                *stride_args,
+                doc_id_arg,
+                *dims,
+                **const,
+                num_warps=warps,
+                num_stages=stages,
+            )
+            _bwd_q_kernel_compressive[(ctx.grid[1], ctx.grid[0])](
+                q,
+                k,
+                v,
+                ctx.sm_scale,
+                o,
+                do_scaled,
+                dq,
+                dk,
+                dv,
+                lse,
+                m,
+                delta,
+                *stride_args,
+                doc_id_arg,
+                *dims,
+                **const,
+                num_warps=warps,
+                num_stages=stages,
+            )
         return dq, dqg, None, dk, dv, None, None, None, None
 
 
