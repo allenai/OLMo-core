@@ -1,5 +1,6 @@
+import contextlib
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Dict, Optional, Tuple, Union, cast
+from typing import TYPE_CHECKING, Dict, Iterator, List, Optional, Sequence, Tuple, Union, cast
 
 import torch
 import torch.distributed as dist
@@ -868,3 +869,34 @@ class MoERouterV2(nn.Module):
 
     def apply_cp(self, cp_mesh: DeviceMesh):
         self.cp_mesh = cp_mesh
+
+
+@contextlib.contextmanager
+def replay_routing(
+    module: nn.Module, per_layer_indices: Sequence[torch.Tensor]
+) -> Iterator[List[MoERouterV2]]:
+    """Replay routed-expert selections and guarantee cleanup on exit."""
+    if isinstance(module, MoERouterV2):
+        routers = [module]
+    else:
+        routers = []
+        seen: set[int] = set()
+        for owner in module.modules():
+            router = getattr(owner, "routed_experts_router", None)
+            if isinstance(router, MoERouterV2) and id(router) not in seen:
+                routers.append(router)
+                seen.add(id(router))
+
+    if len(routers) != len(per_layer_indices):
+        raise ValueError(
+            f"Received {len(per_layer_indices)} route tensors for "
+            f"{len(routers)} routed-expert routers."
+        )
+
+    try:
+        for router, indices in zip(routers, per_layer_indices):
+            router.set_replay_expert_indices(indices)
+        yield routers
+    finally:
+        for router in routers:
+            router.clear_replay_expert_indices()
