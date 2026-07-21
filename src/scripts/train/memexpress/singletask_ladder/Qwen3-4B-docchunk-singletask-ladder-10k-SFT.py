@@ -173,6 +173,9 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         vocab_size=tokenizer_config.padded_vocab_size(),
         document_chunked=True,
         cross_doc_mode="chunked",
+        # 128 is the kernel-valid block size used by the proven 5-task docchunk runs
+        # (_docchunk_5task_32k_nocpt_common.py); smaller sizes (32) fall off the fast kernel.
+        flex_block_size=128,
     ).with_rope_scaling(
         YaRNRoPEScalingConfig(factor=2, beta_fast=32, beta_slow=1, old_context_len=32768)
     )
@@ -198,12 +201,16 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
             name=DataParallelType.fsdp, param_dtype=DType.bfloat16, reduce_dtype=DType.float32,
             wrapping_strategy=TransformerDataParallelWrappingStrategy.full, shard_degree=WORLD_SIZE,
         ),
-        # FFN-only AC (NOT full): full-block AC recomputes the FlexAttention block-mask build, which is
-        # not recompute-stable on torch 2.9 (-> CheckpointError). FFN-only keeps attention out of the
-        # recompute and still fits 40960 on H200/H100-80G.
+        # FULL-block AC (attention + FFN). FFN-only AC leaves the doc-chunked attention activations
+        # resident and OOMs at 40960 on an 80 GiB H100 -- it only ever fit on H200's 141 GiB, and
+        # jupiter is H100, so every job died with "FlexAttention OOM at seq_len=40960 even after
+        # empty_cache" (verified 2026-07-21, exp 01KY2TJHFYQFEA68ZD7ST1V934). The old CheckpointError
+        # concern (flex block-mask build not recompute-stable on torch 2.9) is resolved by the S2
+        # block-mask cache: on recompute ``_get_or_build_block_mask`` returns the SAME cached
+        # BlockMask, keyed on chunk_ids identity/version, so the recompute is deterministic. This
+        # matches _docchunk_5task_32k_nocpt_common.py, whose runs are the proven precedent.
         ac_config=TransformerActivationCheckpointingConfig(
-            mode=TransformerActivationCheckpointingMode.selected_modules,
-            modules=["blocks.*.feed_forward"],
+            mode=TransformerActivationCheckpointingMode.full,
         ),
         float8_config=Float8Config(enabled=False),
         z_loss_multiplier=None,
