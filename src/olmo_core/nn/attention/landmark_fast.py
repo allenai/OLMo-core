@@ -346,9 +346,7 @@ if triton is not None:
         if DOC_MASK:
             q_doc = tl.load(DocId + off_z * N_BLOCKS + (start_m // BLOCK_M))
         if CHUNK_MASK:
-            q_chunk = tl.load(
-                ChunkIds + off_z * N_CTX_KV + offs_m, mask=offs_m < N_CTX_Q, other=-2
-            )
+            q_chunk = tl.load(ChunkIds + off_z * N_CTX_KV + offs_m, mask=offs_m < N_CTX_Q, other=-2)
 
         dq = tl.zeros([BLOCK_M, BLOCK_DMODEL], dtype=tl.float32)
 
@@ -698,6 +696,11 @@ class FastLandmarkAttention(Attention):
         self._eval_prompt_len: Optional[int] = None
         self._eval_decode_mode: str = "extend_last_block"
         self._eval_top_k: Optional[int] = None
+        # Inference-only ablation: when True, the decode step keeps the hard top-k block selection but
+        # replaces the grouped/gated softmax with a plain (flat) softmax over exactly the visible key
+        # positions. Set by the generation module from ``GenerationConfig.landmark_flat_softmax`` /
+        # ``OLMO_LANDMARK_FLAT_SOFTMAX``. See ``analysis/flat_softmax_variant_eval.md``.
+        self._eval_flat_softmax: bool = False
         # Ragged (cross-length, right-padded) batched-decode state. When ``_ragged_qpos`` is not None
         # the decode step is batched but each row carries its OWN absolute query position, prompt
         # length, and top-k -- enabling right-padded cross-length batching of landmark generation
@@ -766,6 +769,7 @@ class FastLandmarkAttention(Attention):
         """Disable "one long local block" decoding, restoring the default per-block decode."""
         self._eval_prompt_len = None
         self._eval_top_k = None
+        self._eval_flat_softmax = False
 
     def init_kv_cache_manager(self, batch_size: int, max_seq_len: int):
         # Fast landmark attention implements its own cached prefill/decode in ``_forward_generate``
@@ -1088,6 +1092,15 @@ class FastLandmarkAttention(Attention):
             is_mem=is_mem.expand(Bsz, Hn, 1, total),
             last_section_mask=last_section.expand(Bsz, Hn, 1, total),
         )
+        if getattr(self, "_eval_flat_softmax", False):
+            # Inference-only ablation: keep the hard top-k selection but replace the gated softmax
+            # with a plain softmax over exactly the value-carrying support. For the non-compressive
+            # model that support is {selected blocks' content + local section}: landmark positions
+            # carry no value and non-selected blocks are gated to zero, so ``probs > 0`` is exactly
+            # that support. See analysis/flat_softmax_variant_eval.md.
+            visible = probs > 0
+            neg = torch.finfo(scores.dtype).min
+            probs = torch.softmax(scores.masked_fill(~visible, neg), dim=-1)
         return probs, v, section_start
 
     def _decode_one(
@@ -1205,6 +1218,13 @@ class FastLandmarkAttention(Attention):
             is_mem=is_mem[:, None, None, :].expand(Bsz, Hn, 1, total),
             last_section_mask=last_section[:, None, None, :].expand(Bsz, Hn, 1, total),
         )
+        if getattr(self, "_eval_flat_softmax", False):
+            # Flat-softmax ablation (see :meth:`_decode_probs`): plain softmax over exactly the
+            # gated scheme's value-carrying support (``probs > 0`` == selected content + local
+            # section; landmarks and non-selected blocks are already zero-weight here).
+            visible = probs > 0
+            neg = torch.finfo(scores.dtype).min
+            probs = torch.softmax(scores.masked_fill(~visible, neg), dim=-1)
         return torch.matmul(probs.to(v.dtype), v)
 
     def _decode_topk_ragged(self, scores: torch.Tensor, is_mem: torch.Tensor) -> torch.Tensor:

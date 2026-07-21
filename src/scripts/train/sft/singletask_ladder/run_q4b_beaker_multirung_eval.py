@@ -61,7 +61,7 @@ def variant_from_run_name(run_name: str) -> str:
 
 
 def build_eval_launch_config(
-    *, run_name, task, variant, cluster, step, ckpt, results_dir, prompt_format, ngpu, max_test, max_length, batch_size, priority, ladder_version, xlong, xlong_rungs, cot_mode, landmark_top_k_blocks, landmark_nonselected_mass, landmark_group_selection=None, landmark_decode_gate_mode=None, eval_tag="", gate_log_dir="", gate_log_all=False
+    *, run_name, task, variant, cluster, step, ckpt, results_dir, prompt_format, ngpu, max_test, max_length, batch_size, priority, ladder_version, xlong, xlong_rungs, cot_mode, landmark_top_k_blocks, landmark_nonselected_mass, landmark_group_selection=None, landmark_decode_gate_mode=None, eval_tag="", gate_log_dir="", gate_log_all=False, landmark_flat_softmax=False
 ):
     root_dir = get_root_dir(cluster)  # e.g. /weka/oe-training-default/ai2-llm (mounts weka bucket)
     # Eval CODE now ships IN the cloned repo (src/scripts/ctc_eval); the runner runs from the repo root
@@ -117,12 +117,16 @@ def build_eval_launch_config(
     # which the on-node runner already forces for landmark/compressive.
     if gate_log_dir:
         base = f"{gate_log_dir.rstrip('/')}/gate_{run_name}_{task}"
-        launch_config.env_vars.append(
-            BeakerEnvVar(name="OLMO_LANDMARK_GATE_LOG", value=base)
-        )
+        launch_config.env_vars.append(BeakerEnvVar(name="OLMO_LANDMARK_GATE_LOG", value=base))
         launch_config.env_vars.append(BeakerEnvVar(name="OLMO_GATE_DATASET", value=task))
         if gate_log_all:
             launch_config.env_vars.append(BeakerEnvVar(name="OLMO_GATE_LOG_ALL", value="1"))
+    # Inference-only flat-softmax ablation: keep the native eval's hard top-k selection but drop the
+    # per-block gate reweighting (plain softmax over the selected support). Read by the generation
+    # module's env fallback; only meaningful for landmark/compressive variants. See
+    # analysis/flat_softmax_variant_eval.md.
+    if landmark_flat_softmax:
+        launch_config.env_vars.append(BeakerEnvVar(name="OLMO_LANDMARK_FLAT_SOFTMAX", value="1"))
     return launch_config
 
 
@@ -199,6 +203,10 @@ def main():
     ap.add_argument("--gate-log-all", action="store_true",
                     help="with --gate-log-dir: also log EVERY candidate block's gate score each step "
                          "(not just the top-k kept ones), so the full distribution is recoverable.")
+    ap.add_argument("--landmark-flat-softmax", action="store_true",
+                    help="landmark/compressive only: inference-only ablation -- keep the hard top-k "
+                         "block selection but drop the per-block gate reweighting (plain softmax over "
+                         "the selected support). See analysis/flat_softmax_variant_eval.md.")
     args = ap.parse_args()
 
     # Eval tag = a compact, self-describing suffix built from the decode-gate mode (+ group selection).
@@ -239,6 +247,7 @@ def main():
             landmark_group_selection=args.landmark_group_selection,
             landmark_decode_gate_mode=args.landmark_decode_gate_mode, eval_tag=eval_tag,
             gate_log_dir=args.gate_log_dir, gate_log_all=args.gate_log_all,
+            landmark_flat_softmax=args.landmark_flat_softmax,
         )
         print(f"\n--- [{task}] {lc.name} ---")
         print(f"    cmd: {lc.cmd[-1]}")
