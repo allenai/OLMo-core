@@ -33,6 +33,13 @@ BATCH_SIZE="${BATCH_SIZE:-8}"
 NGPU="${NGPU:-8}"
 TOKENIZER="${TOKENIZER:-Qwen/Qwen3-4B}"
 PROMPT_FORMAT="${PROMPT_FORMAT:-chat}"   # chat=SFT (apply_chat_template) | raw=BASE/CPT | alpaca=legacy
+# GQA compressive-landmark checkpoints only: share top-k landmark block selection across each KV
+# group's query heads ("mean"/"max") instead of each head retrieving independently. Empty (default)
+# keeps independent per-head selection; only takes effect with top-k decode enabled (on by default
+# via GenerationConfig.landmark_top_k_fraction).
+LANDMARK_GROUP_SELECTION="${LANDMARK_GROUP_SELECTION:-}"
+GROUP_ARGS=""
+[ -n "$LANDMARK_GROUP_SELECTION" ] && GROUP_ARGS="--landmark-group-selection $LANDMARK_GROUP_SELECTION"
 # Landmark + compressive attention can't do batched/left-padded generation (blocks tied to absolute
 # position) -> force batch_size=1 for those variants. Dense keeps the configured (larger) batch.
 case "$VARIANT" in landmark|compressive) BATCH_SIZE=1 ;; esac
@@ -68,6 +75,15 @@ RUN_DIR="$PRASANNS/$RUN"
 # Where the per-task result JSONs land. Default = the run's own eval/ dir under prasanns/<RUN>.
 # Override via the launcher's --results-dir (forwarded as EVAL_OUT_DIR) to write anywhere on weka.
 EVAL_OUT_DIR="${EVAL_OUT_DIR:-$RUN_DIR/eval}"
+# Auto-suffix so a landmark_group_selection sweep never overwrites the independent-per-head (or a
+# different mode's) results in the same dir, regardless of whether EVAL_OUT_DIR was defaulted or
+# user-supplied via --results-dir. RUN_TAG carries the same suffix into the flat $RESULTS/ copies
+# below (keyed by $RUN, not $EVAL_OUT_DIR, so they'd otherwise collide across sweep values too).
+RUN_TAG="$RUN"
+if [ -n "$LANDMARK_GROUP_SELECTION" ]; then
+  EVAL_OUT_DIR="${EVAL_OUT_DIR%/}_grp${LANDMARK_GROUP_SELECTION}"
+  RUN_TAG="${RUN}_grp${LANDMARK_GROUP_SELECTION}"
+fi
 
 REPO="${REPO:-$PWD}"                          # cloned OLMo-core repo (gantry cwd); eval CODE = in-repo ctc_eval
 export PYTHONPATH="$REPO/src/scripts:$REPO/src:${PYTHONPATH:-}"   # so `import ctc_eval...` resolves (olmo_core also pip -e)
@@ -126,10 +142,10 @@ if [ "$TASK" = "rerank" ] && [ "$LADDER_VERSION" != "v2" ] && [ "$VARIANT" != "d
     echo "=== rerank CE @${r} ($CEF) -> $O ==="
     $TR --model-path "$CKPT" --out "$O" --tokenizer "$TOKENIZER" --max-length "$MAX_LENGTH" \
         --root "$BUNDLE" --max-test-samples "$MAX_TEST" --batch-size "$BATCH_SIZE" --skip-ruler --skip-gen \
-        --ladder --ladder-tasks rerank --ladder-rungs 2k --rerank-data "$CEF" $LANDMARK_FLAGS || rc=$?
-    [ -f "$O" ] && cp "$O" "$RESULTS/${RUN}_rerank_ce_${r}.json" 2>/dev/null || true
+        --ladder --ladder-tasks rerank --ladder-rungs 2k --rerank-data "$CEF" $LANDMARK_FLAGS $GROUP_ARGS || rc=$?
+    [ -f "$O" ] && cp "$O" "$RESULTS/${RUN_TAG}_rerank_ce_${r}.json" 2>/dev/null || true
     GEN="${O%.json}.generations.jsonl"
-    [ -f "$GEN" ] && cp "$GEN" "$RESULTS/${RUN}_rerank_ce_${r}.generations.jsonl" 2>/dev/null || true
+    [ -f "$GEN" ] && cp "$GEN" "$RESULTS/${RUN_TAG}_rerank_ce_${r}.generations.jsonl" 2>/dev/null || true
   done
   echo "=== DONE rerank-CE rc=$rc $(date -u '+%F %T')Z ==="; exit $rc
 fi
@@ -197,15 +213,15 @@ if [ "$VARIANT" = "docchunk" ]; then
 else
   $TR --model-path "$CKPT" --out "$OUT" --tokenizer "$TOKENIZER" --max-length "$MAX_LENGTH" \
       --root "$BUNDLE" --max-test-samples "$MAX_TEST" --batch-size "$BATCH_SIZE" --skip-ruler --skip-gen \
-      --ladder $VFLAG $XLFLAG --ladder-tasks "$LTASK" --ladder-rungs "$RUNGS" $EXTRA $LANDMARK_FLAGS
+      --ladder $VFLAG $XLFLAG --ladder-tasks "$LTASK" --ladder-rungs "$RUNGS" $EXTRA $LANDMARK_FLAGS $GROUP_ARGS
   rc=$?
 fi
 if [ -f "$OUT" ]; then
-  cp "$OUT" "$RESULTS/${RUN}_${TASK}_multirung.json" 2>/dev/null || true
+  cp "$OUT" "$RESULTS/${RUN_TAG}_${TASK}_multirung.json" 2>/dev/null || true
   GEN="${OUT%.json}.generations.jsonl"
-  [ -f "$GEN" ] && cp "$GEN" "$RESULTS/${RUN}_${TASK}_multirung.generations.jsonl" 2>/dev/null || true
+  [ -f "$GEN" ] && cp "$GEN" "$RESULTS/${RUN_TAG}_${TASK}_multirung.generations.jsonl" 2>/dev/null || true
   echo "--- $OUT ---"; cat "$OUT"
   [ -f "$GEN" ] && python src/scripts/ctc_eval/eval/print_gen_sample.py "$GEN" "${GEN_SAMPLE_N:-6}" || true
 fi
-echo "=== DONE TASK=$TASK rc=$rc result=$RESULTS/${RUN}_${TASK}_multirung.json $(date -u '+%F %T')Z ==="
+echo "=== DONE TASK=$TASK rc=$rc result=$RESULTS/${RUN_TAG}_${TASK}_multirung.json $(date -u '+%F %T')Z ==="
 exit $rc

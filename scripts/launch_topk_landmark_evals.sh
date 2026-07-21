@@ -23,6 +23,12 @@
 # Env overrides:
 #   LENGTHS_K     space-separated lengths in K (default "8 16 32 64 128"; RULER also 4)
 #   FRACTIONS     space-separated as num/den (default "1/4 1/2 3/4")
+#   GROUP_SELECTIONS  space-separated group_landmark_selection values to sweep (default "none",
+#                 i.e. today's independent per-head top-k selection, unchanged). GQA compressive
+#                 checkpoints only: pass e.g. "none mean max" to additionally A/B whether sharing
+#                 top-k landmark-block selection across each KV group's query heads (instead of each
+#                 head retrieving independently) changes eval quality. "none" is the literal string
+#                 here (not passed through) so it can sit in a space-separated list next to mean/max.
 #   SUFFIX_TAG    extra tag appended to every run suffix (e.g. "fix"); gives HELMET a fresh
 #                 OUTPUT_DIR and RULER a fresh run name so a rerun never reuses cached/stale
 #                 outputs from a prior buggy run (the harness skips already-completed outputs)
@@ -58,6 +64,9 @@ RULER_DASHBOARD="${RULER_DASHBOARD:-memory-LC-topk}"
 LENGTHS_K=( ${LENGTHS_K:-8 16 32 64 128} )
 RULER_LENGTHS_K=( ${RULER_LENGTHS_K:-4 ${LENGTHS_K[@]}} )
 FRACTIONS=( ${FRACTIONS:-1/4 1/2 3/4} )
+# "none" (literal string, default) = today's independent per-head top-k selection, unchanged;
+# "mean"/"max" opt into GQA-shared selection (see group_landmark_selection in olmo_core).
+GROUP_SELECTIONS=( ${GROUP_SELECTIONS:-none} )
 
 # top_k (in blocks) for fraction num/den of a len_k context.
 topk_for() {
@@ -93,6 +102,7 @@ echo "olmo_core:    ${OLMO_CORE_COMMIT}"
 echo "HELMET:       ${SKIP_HELMET:+SKIP}${SKIP_HELMET:-lengths ${LENGTHS_K[*]}k}"
 echo "RULER:        ${SKIP_RULER:+SKIP}${SKIP_RULER:-lengths ${RULER_LENGTHS_K[*]}k}"
 echo "fractions:    ${FRACTIONS[*]}"
+echo "group_sel:    ${GROUP_SELECTIONS[*]}"
 echo
 
 # ============================================================================
@@ -101,32 +111,40 @@ echo
 if [ "${SKIP_HELMET:-0}" != "1" ]; then
   for len_k in "${LENGTHS_K[@]}"; do
     for frac in "${FRACTIONS[@]}"; do
-      num="${frac%/*}"; den="${frac#*/}"
-      topk="$(topk_for "$len_k" "$num" "$den")"
-      max_len=$(( len_k * 1024 ))
-      suffix="${len_k}k_tk${topk}${SUFFIX_TAG:+_${SUFFIX_TAG}}"
-      echo "==> HELMET ${len_k}k  top_k=${topk} (${frac})  suffix=${suffix}"
-      if [ "${DRY_RUN:-0}" = "1" ]; then
-        echo "DRY: HELMET MAX=MIN=${max_len} TOP_K=${topk} SUFFIX=${suffix} -> gantry_eval.sh"
-        continue
-      fi
-      ( cd "${HELMET_DIR}" && \
-        MODEL_NAME_OR_PATH="${MODEL_PATH}" \
-        MAX_LENGTH="${max_len}" \
-        MIN_LENGTH="${max_len}" \
-        OLMO_CORE_LANDMARK_TOP_K="${topk}" \
-        EVAL_NAME_SUFFIX="${suffix}" \
-        CLUSTER="${CLUSTER}" \
-        WORKSPACE="${WORKSPACE}" \
-        BUDGET="${BUDGET}" \
-        NUM_GPUS="${NUM_GPUS_HELMET}" \
-        BACKEND=olmo_core \
-        PRIORITY="${PRIORITY}" \
-        OLMO_CORE_TOKENIZER="${OLMO_CORE_TOKENIZER}" \
-        OLMO_CORE_BATCH_SIZE="${OLMO_CORE_BATCH_SIZE}" \
-        OLMO_CORE_COMMIT="${OLMO_CORE_COMMIT}" \
-        TIMEOUT=0 \
-        bash ./gantry_eval.sh )
+      for grp in "${GROUP_SELECTIONS[@]}"; do
+        num="${frac%/*}"; den="${frac#*/}"
+        topk="$(topk_for "$len_k" "$num" "$den")"
+        max_len=$(( len_k * 1024 ))
+        grp_tag=""; grp_env=""
+        if [ "$grp" != "none" ]; then
+          grp_tag="_grp${grp}"
+          grp_env="$grp"
+        fi
+        suffix="${len_k}k_tk${topk}${grp_tag}${SUFFIX_TAG:+_${SUFFIX_TAG}}"
+        echo "==> HELMET ${len_k}k  top_k=${topk} (${frac})  group_selection=${grp}  suffix=${suffix}"
+        if [ "${DRY_RUN:-0}" = "1" ]; then
+          echo "DRY: HELMET MAX=MIN=${max_len} TOP_K=${topk} GROUP_SELECTION=${grp_env} SUFFIX=${suffix} -> gantry_eval.sh"
+          continue
+        fi
+        ( cd "${HELMET_DIR}" && \
+          MODEL_NAME_OR_PATH="${MODEL_PATH}" \
+          MAX_LENGTH="${max_len}" \
+          MIN_LENGTH="${max_len}" \
+          OLMO_CORE_LANDMARK_TOP_K="${topk}" \
+          OLMO_CORE_LANDMARK_GROUP_SELECTION="${grp_env}" \
+          EVAL_NAME_SUFFIX="${suffix}" \
+          CLUSTER="${CLUSTER}" \
+          WORKSPACE="${WORKSPACE}" \
+          BUDGET="${BUDGET}" \
+          NUM_GPUS="${NUM_GPUS_HELMET}" \
+          BACKEND=olmo_core \
+          PRIORITY="${PRIORITY}" \
+          OLMO_CORE_TOKENIZER="${OLMO_CORE_TOKENIZER}" \
+          OLMO_CORE_BATCH_SIZE="${OLMO_CORE_BATCH_SIZE}" \
+          OLMO_CORE_COMMIT="${OLMO_CORE_COMMIT}" \
+          TIMEOUT=0 \
+          bash ./gantry_eval.sh )
+      done
     done
   done
 fi
@@ -137,28 +155,35 @@ fi
 if [ "${SKIP_RULER:-0}" != "1" ]; then
   for len_k in "${RULER_LENGTHS_K[@]}"; do
     for frac in "${FRACTIONS[@]}"; do
-      num="${frac%/*}"; den="${frac#*/}"
-      topk="$(topk_for "$len_k" "$num" "$den")"
-      max_len=$(( len_k * 1024 ))
-      suffix="${len_k}k_tk${topk}${SUFFIX_TAG:+_${SUFFIX_TAG}}"
-      model_args="trust_remote_code=true,max_length=${max_len},tokenizer=${OLMO_CORE_TOKENIZER},landmark_top_k_blocks=${topk}"
-      echo "==> RULER ruler:${len_k}k  top_k=${topk} (${frac})  suffix=${suffix}"
-      run_retry "RULER ${len_k}k tk${topk}" "${COOKBOOK_BIN}" evaluate \
-        "${MODEL_PATH}" \
-        --model-backend olmo_core \
-        -y "${PRIORITY}" \
-        -c "${CLUSTER}" \
-        -b "${BUDGET}" \
-        -d "${RULER_DASHBOARD}" \
-        -w "${WORKSPACE}" \
-        -t "ruler:${len_k}k" \
-        -n "${NUM_GPUS_RULER}" \
-        -z "${OLMO_CORE_BATCH_SIZE}" \
-        -g \
-        --oe-eval-branch "${OE_EVAL_BRANCH}" \
-        --name-suffix "${suffix}" \
-        -l "install=uv sync --python 3.11 && uv pip install --no-deps ${FLASH_ATTN_WHEEL} && uv pip install --no-deps git+https://github.com/allenai/OLMo-core.git@${OLMO_CORE_COMMIT}" \
-        --model-args "${model_args}"
+      for grp in "${GROUP_SELECTIONS[@]}"; do
+        num="${frac%/*}"; den="${frac#*/}"
+        topk="$(topk_for "$len_k" "$num" "$den")"
+        max_len=$(( len_k * 1024 ))
+        grp_tag=""; grp_arg=""
+        if [ "$grp" != "none" ]; then
+          grp_tag="_grp${grp}"
+          grp_arg=",group_landmark_selection=${grp}"
+        fi
+        suffix="${len_k}k_tk${topk}${grp_tag}${SUFFIX_TAG:+_${SUFFIX_TAG}}"
+        model_args="trust_remote_code=true,max_length=${max_len},tokenizer=${OLMO_CORE_TOKENIZER},landmark_top_k_blocks=${topk}${grp_arg}"
+        echo "==> RULER ruler:${len_k}k  top_k=${topk} (${frac})  group_selection=${grp}  suffix=${suffix}"
+        run_retry "RULER ${len_k}k tk${topk}${grp_tag}" "${COOKBOOK_BIN}" evaluate \
+          "${MODEL_PATH}" \
+          --model-backend olmo_core \
+          -y "${PRIORITY}" \
+          -c "${CLUSTER}" \
+          -b "${BUDGET}" \
+          -d "${RULER_DASHBOARD}" \
+          -w "${WORKSPACE}" \
+          -t "ruler:${len_k}k" \
+          -n "${NUM_GPUS_RULER}" \
+          -z "${OLMO_CORE_BATCH_SIZE}" \
+          -g \
+          --oe-eval-branch "${OE_EVAL_BRANCH}" \
+          --name-suffix "${suffix}" \
+          -l "install=uv sync --python 3.11 && uv pip install --no-deps ${FLASH_ATTN_WHEEL} && uv pip install --no-deps git+https://github.com/allenai/OLMo-core.git@${OLMO_CORE_COMMIT}" \
+          --model-args "${model_args}"
+      done
     done
   done
 fi

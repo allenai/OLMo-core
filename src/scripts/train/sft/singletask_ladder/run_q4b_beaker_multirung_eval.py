@@ -61,7 +61,7 @@ def variant_from_run_name(run_name: str) -> str:
 
 
 def build_eval_launch_config(
-    *, run_name, task, variant, cluster, step, ckpt, results_dir, prompt_format, ngpu, max_test, max_length, batch_size, priority, ladder_version, xlong, xlong_rungs, cot_mode, landmark_top_k_blocks, landmark_nonselected_mass
+    *, run_name, task, variant, cluster, step, ckpt, results_dir, prompt_format, ngpu, max_test, max_length, batch_size, priority, ladder_version, xlong, xlong_rungs, cot_mode, landmark_top_k_blocks, landmark_nonselected_mass, landmark_group_selection=None
 ):
     root_dir = get_root_dir(cluster)  # e.g. /weka/oe-training-default/ai2-llm (mounts weka bucket)
     # Eval CODE now ships IN the cloned repo (src/scripts/ctc_eval); the runner runs from the repo root
@@ -80,6 +80,7 @@ def build_eval_launch_config(
         f"EVAL_OUT_DIR='{results_dir}' PROMPT_FORMAT='{prompt_format}' "
         f"MAX_TEST={max_test} MAX_LENGTH={max_length} BATCH_SIZE={batch_size} NGPU={ngpu} "
         f"LADDER_XLONG={int(xlong)} XLONG_RUNGS='{xlong_rungs}' COT_MODE='{cot_mode}' "
+        f"LANDMARK_GROUP_SELECTION='{landmark_group_selection or ''}' "
         f"LADDER_VERSION={ladder_version} {landmark_env}WEKA_LLM={root_dir} bash {runner}"
     )
     cmd = ["bash", "-lc", inner]
@@ -154,6 +155,12 @@ def main():
                          "--landmark-top-k-blocks is also set: attention mass reserved for "
                          "non-selected landmark blocks, in [0, 1). Unset keeps the checkpoint's "
                          "trained value.")
+    ap.add_argument("--landmark-group-selection", choices=["mean", "max"], default=None,
+                    help="GQA compressive-landmark checkpoints only: share top-k landmark block "
+                         "selection across each KV group's query heads instead of each head "
+                         "retrieving independently. Omit (default) for independent per-head "
+                         "selection. The on-node runner auto-suffixes the results dir "
+                         "(_grp<mode>) so sweeping this never overwrites another mode's output.")
     ap.add_argument("--dry-run", action="store_true", help="build + print the job, do NOT submit.")
     args = ap.parse_args()
 
@@ -178,6 +185,7 @@ def main():
             xlong=args.xlong, xlong_rungs=args.xlong_rungs, cot_mode=args.cot_mode,
             landmark_top_k_blocks=args.landmark_top_k_blocks,
             landmark_nonselected_mass=args.landmark_nonselected_mass,
+            landmark_group_selection=args.landmark_group_selection,
         )
         print(f"\n--- [{task}] {lc.name} ---")
         print(f"    cmd: {lc.cmd[-1]}")

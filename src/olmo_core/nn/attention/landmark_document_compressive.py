@@ -50,6 +50,12 @@ class DocumentCompressiveLandmarkAttention(DocumentLandmarkAttention):
         top-k decode time, for the landmark tokens of the *non-selected* blocks (see
         :class:`~olmo_core.nn.attention.landmark_compressive.FastCompressiveLandmarkAttention`). Has no
         effect during training / exact eval.
+    :param group_landmark_selection: Share top-k landmark-block selection across each GQA group's
+        query heads (``"mean"``/``"max"`` aggregation of per-head scores) instead of each head
+        retrieving independently; see
+        :class:`~olmo_core.nn.attention.landmark_compressive.FastCompressiveLandmarkAttention` for the
+        full rationale. Has no effect without GQA (``n_kv_heads == n_heads``) or without top-k
+        retrieval enabled.
     :param cross_doc_mode: The chunked-attention pattern name (the pluggable cross-document policy);
         defaults to ``"chunked"``.
 
@@ -65,12 +71,14 @@ class DocumentCompressiveLandmarkAttention(DocumentLandmarkAttention):
     _decode_one = FastCompressiveLandmarkAttention._decode_one
     _decode_one_eval = FastCompressiveLandmarkAttention._decode_one_eval
     _compressive_decode_probs = FastCompressiveLandmarkAttention._compressive_decode_probs
+    _group_landmark_scores = FastCompressiveLandmarkAttention._group_landmark_scores
 
     def __init__(
         self,
         *,
         mem_freq: int,
         nonselected_landmark_mass: float = 0.1,
+        group_landmark_selection: Optional[str] = None,
         cross_doc_mode: str = "chunked",
         use_kernel: bool = False,
         softmax_scale: Optional[float] = None,
@@ -94,6 +102,12 @@ class DocumentCompressiveLandmarkAttention(DocumentLandmarkAttention):
                 f"nonselected_landmark_mass must be in [0, 1) (got {nonselected_landmark_mass})"
             )
         self.nonselected_landmark_mass = nonselected_landmark_mass
+        if group_landmark_selection not in (None, "mean", "max"):
+            raise OLMoConfigurationError(
+                "group_landmark_selection must be one of None/'mean'/'max' "
+                f"(got {group_landmark_selection!r})"
+            )
+        self.group_landmark_selection = group_landmark_selection
 
     def _eager_forward(
         self,

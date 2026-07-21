@@ -9,12 +9,15 @@ These validate the eager decode of :class:`FastCompressiveLandmarkAttention`:
 * with top-k retrieval, the non-selected blocks' landmark tokens collectively keep exactly
   ``nonselected_landmark_mass`` (alpha) of the attention mass (split by a softmax over their scores),
   their content tokens get zero, and the local section + selected blocks share the remaining
-  ``1 - alpha``.
+  ``1 - alpha``;
+* under GQA, ``group_landmark_selection`` ("mean"/"max") makes every query head in a KV group agree on
+  the same top-k landmark blocks, instead of each head retrieving independently (the default, ``None``).
 """
 
 import torch
 
 from olmo_core.nn.attention import AttentionConfig, AttentionType
+from olmo_core.nn.attention.landmark import repeat_kv
 from olmo_core.nn.layer_norm import LayerNormConfig
 
 
@@ -27,6 +30,31 @@ def _build(*, mem_freq, head_dim, nonselected_landmark_mass=0.1):
         bias=False,
         mem_freq=mem_freq,
         nonselected_landmark_mass=nonselected_landmark_mass,
+        qk_norm=LayerNormConfig(name="rms", eps=1e-6, bias=False),
+        use_head_qk_norm=True,
+    ).build(head_dim, layer_idx=0, n_layers=1, init_device="cpu")
+    attn.eval()
+    return attn
+
+
+def _build_gqa(
+    *,
+    mem_freq,
+    head_dim,
+    n_heads,
+    n_kv_heads,
+    nonselected_landmark_mass=0.1,
+    group_landmark_selection=None,
+):
+    attn = AttentionConfig(
+        name=AttentionType.fast_compressive_landmark,
+        n_heads=n_heads,
+        n_kv_heads=n_kv_heads,
+        head_dim=head_dim,
+        bias=False,
+        mem_freq=mem_freq,
+        nonselected_landmark_mass=nonselected_landmark_mass,
+        group_landmark_selection=group_landmark_selection,
         qk_norm=LayerNormConfig(name="rms", eps=1e-6, bias=False),
         use_head_qk_norm=True,
     ).build(head_dim, layer_idx=0, n_layers=1, init_device="cpu")
@@ -233,3 +261,113 @@ def test_compressive_decode_distinct_from_plain_landmark():
         o_c = compressive._decode_one(q, k, v, total - 1)
         o_p = plain._decode_one(q, k, v, total - 1)
     assert not torch.allclose(o_c, o_p, atol=1e-5)
+
+
+def test_group_landmark_scores_mean_and_max_aggregate_within_kv_group():
+    # n_heads=4, n_kv_heads=2 -> group 0 = heads {0, 1}, group 1 = heads {2, 3} (contiguous, matching
+    # `repeat_kv`'s layout: (B, n_kv_heads, T, D) -> (B, n_kv_heads * n_rep, T, D)).
+    lm_scores = torch.tensor(
+        [
+            [[5.0, 5.0, 0.0]],  # head0 (group 0)
+            [[5.0, 0.0, 6.0]],  # head1 (group 0) -- diverges from head0
+            [[2.0, 2.0, 2.0]],  # head2 (group 1)
+            [[2.0, 2.0, 2.0]],  # head3 (group 1) -- identical to head2
+        ]
+    ).unsqueeze(
+        0
+    )  # (1, 4, 1, 3)
+
+    attn_mean = _build_gqa(
+        mem_freq=15, head_dim=4, n_heads=4, n_kv_heads=2, group_landmark_selection="mean"
+    )
+    agg_mean = attn_mean._group_landmark_scores(lm_scores)
+    assert agg_mean.shape == lm_scores.shape
+    expected_g0_mean = torch.tensor([5.0, 2.5, 3.0])  # mean([5,5,0], [5,0,6])
+    torch.testing.assert_close(agg_mean[0, 0, 0], expected_g0_mean)
+    torch.testing.assert_close(agg_mean[0, 1, 0], expected_g0_mean)  # both heads see the same
+    torch.testing.assert_close(agg_mean[0, 2, 0], torch.tensor([2.0, 2.0, 2.0]))
+    torch.testing.assert_close(agg_mean[0, 3, 0], torch.tensor([2.0, 2.0, 2.0]))
+    assert (
+        int(agg_mean[0, 0, 0].argmax()) == 0
+    )  # mean favors landmark 0 (head0 and head1 agree there)
+
+    attn_max = _build_gqa(
+        mem_freq=15, head_dim=4, n_heads=4, n_kv_heads=2, group_landmark_selection="max"
+    )
+    agg_max = attn_max._group_landmark_scores(lm_scores)
+    expected_g0_max = torch.tensor([5.0, 5.0, 6.0])  # elementwise max([5,5,0], [5,0,6])
+    torch.testing.assert_close(agg_max[0, 0, 0], expected_g0_max)
+    torch.testing.assert_close(agg_max[0, 1, 0], expected_g0_max)
+    # mean and max disagree on which landmark ranks highest for this group -- the whole point of
+    # having two aggregation choices rather than one "obviously correct" one.
+    assert int(agg_max[0, 0, 0].argmax()) == 2
+
+    attn_none = _build_gqa(
+        mem_freq=15, head_dim=4, n_heads=4, n_kv_heads=2, group_landmark_selection=None
+    )
+    assert attn_none._group_landmark_scores(lm_scores) is lm_scores  # off -> exact no-op
+
+
+def test_group_landmark_scores_noop_for_mha():
+    # No GQA grouping to do (n_heads == n_kv_heads) -> always a no-op regardless of the setting, so
+    # MHA models are bit-identical whether or not `group_landmark_selection` is configured.
+    attn = _build_gqa(
+        mem_freq=15, head_dim=4, n_heads=2, n_kv_heads=2, group_landmark_selection="mean"
+    )
+    lm_scores = torch.randn(1, 2, 1, 5)
+    assert attn._group_landmark_scores(lm_scores) is lm_scores
+
+
+def test_group_landmark_selection_forces_agreement_across_gqa_group():
+    # Two query heads sharing one KV head (n_heads=2, n_kv_heads=1, n_rep=2). Past landmark blocks at
+    # 15/31/47 (block_size=16); query at 62 with `nonselected_landmark_mass=0.0` so a non-selected
+    # block's content *and* landmark get exactly zero weight -- "which block did this head keep"
+    # reduces to "which block has nonzero mass".
+    Lb, total = 16, 63
+
+    def block_mass(probs: torch.Tensor, block_start: int) -> float:
+        return float(probs[block_start : block_start + Lb].sum())
+
+    # Shared (post-repeat_kv) K: landmark dot products (with q=1) would rank 47 > 31 > 15.
+    k_kv = torch.zeros(1, 1, total, 1)
+    k_kv[0, 0, 15, 0] = 1.0
+    k_kv[0, 0, 31, 0] = 2.0
+    k_kv[0, 0, 47, 0] = 3.0
+    k = repeat_kv(k_kv, 2)  # (1, 2, total, 1), identical for both heads -- as a real KV-cache read
+    v = torch.eye(total).view(1, 1, total, total).expand(1, 2, total, total).contiguous()
+
+    # head0's query agrees with the raw K ranking (prefers landmark 47); head1's disagrees (a negative
+    # query flips the ranking, preferring landmark 15 -- the *weakest* raw dot product).
+    q = torch.zeros(1, 2, 1, 1)
+    q[0, 0, 0, 0] = 1.0
+    q[0, 1, 0, 0] = -0.9
+
+    for mode in (None, "mean", "max"):
+        attn = _build_gqa(
+            mem_freq=15,
+            head_dim=1,
+            n_heads=2,
+            n_kv_heads=1,
+            nonselected_landmark_mass=0.0,
+            group_landmark_selection=mode,
+        )
+        attn.set_landmark_eval_decode(total, "extend_last_block", top_k=1)
+        with torch.no_grad():
+            probs = attn._decode_one(q, k, v, total - 1)  # (1, 2, 1, total)
+        attn.clear_landmark_eval_decode()
+
+        head0, head1 = probs[0, 0, 0], probs[0, 1, 0]
+        # head0 always keeps block 47 (its own top-1 choice, independent or not).
+        assert block_mass(head0, 32) > 1e-6  # block [32:48) contains landmark 47
+        assert block_mass(head0, 0) < 1e-9  # block [0:16) contains landmark 15
+
+        if mode is None:
+            # Independent per-head selection: head1 keeps its OWN top-1 (landmark 15), disagreeing
+            # with head0 despite sharing a KV group -- the behavior being fixed.
+            assert block_mass(head1, 0) > 1e-6
+            assert block_mass(head1, 32) < 1e-9
+        else:
+            # Grouped selection: head1 is forced onto the group's shared choice (block 47), overriding
+            # its own (weaker) preference for landmark 15.
+            assert block_mass(head1, 32) > 1e-6
+            assert block_mass(head1, 0) < 1e-9

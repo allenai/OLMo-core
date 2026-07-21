@@ -79,6 +79,12 @@ def main():
                          "--landmark-top-k-blocks is also set: attention mass reserved for "
                          "non-selected (non-top-k) landmark blocks, in [0, 1). Unset -> keep the "
                          "checkpoint's trained value.")
+    ap.add_argument("--landmark-group-selection", choices=["mean", "max"], default=None,
+                    help="GQA compressive-landmark checkpoints only: share top-k landmark block "
+                         "selection across each KV group's query heads instead of each head "
+                         "retrieving independently (only takes effect with top-k decode enabled, "
+                         "which is on by default via GenerationConfig.landmark_top_k_fraction). "
+                         "Omit (default) for independent per-head selection.")
     args = ap.parse_args()
     os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
     # xlong opt-in: the runner truncates prompts to (max_length - max_new_tokens), so max_length
@@ -127,7 +133,8 @@ def main():
     gen_cfg = GenerationConfig(eos_token_id=tok.eos_token_id, pad_token_id=tok.pad_token_id,
                                max_length=args.max_length, use_cache=True,
                                landmark_top_k_blocks=args.landmark_top_k_blocks,
-                               landmark_nonselected_mass=args.landmark_nonselected_mass)
+                               landmark_nonselected_mass=args.landmark_nonselected_mass,
+                               landmark_group_selection=args.landmark_group_selection)
     gm = TransformerGenerationModuleConfig(
         gen_cfg, float8_config=None, dtype=DType("bfloat16"), compile_model=False,
     ).build(checkpoint_dir=args.model_path, device=device)

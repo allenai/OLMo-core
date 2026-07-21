@@ -35,6 +35,21 @@ collectively retain a fixed fraction ``nonselected_landmark_mass`` (``alpha``) o
 distributed over the local section and the selected blocks (content + landmarks) by the compressive
 grouped softmax. This lets every past block keep contributing its compressed (landmark) representation
 even when it is not in the top-k.
+
+**GQA-aware top-k (`group_landmark_selection`).** Under GQA (``n_kv_heads < n_heads``), ``repeat_kv``
+duplicates each KV group's K/V across its ``n_rep`` query heads *before* any landmark scoring runs, so
+by default the top-k retrieval above is computed independently per (duplicated) query head: two heads
+in the same group see identical landmark keys but, having different queries, can retrieve different
+blocks. That defeats the point of GQA at decode time -- the whole reason to share KV across a group is
+to share the memory traffic of reading it, and independent per-head retrieval means decode still has to
+touch the union of every group member's chosen blocks. ``group_landmark_selection`` (``"mean"`` or
+``"max"`` over the group's per-head scores, see :meth:`FastCompressiveLandmarkAttention._group_landmark_scores`)
+makes every head in a group agree on the same top-k block set, restoring that saving. Only the
+*selection* is shared -- the gate softmax and within-block softmax that weight the output still use
+each head's own real scores, so the per-head attention output itself is unchanged for whichever blocks
+end up selected. Like ``top_k`` itself, this only affects hard top-k decode; training/prefill are
+unaffected (see ``analysis/group_landmark_selection/DESIGN.md`` for the full rationale and the
+alternative aggregation methods considered).
 """
 
 import math
@@ -47,6 +62,13 @@ from olmo_core.exceptions import OLMoConfigurationError
 from . import landmark_gate_analysis as gate_log
 from .landmark_fast import FastLandmarkAttention, _env_int
 from .landmark_kernel import _bwd_preprocess, has_landmark_kernel
+
+# Valid values for ``group_landmark_selection`` (``None`` means "off", i.e. today's per-head
+# independent selection). A private sentinel (distinct from ``None``) is needed for the
+# ``set_landmark_eval_decode`` override parameter, since ``None`` is itself a meaningful value
+# there ("force selection back off for this eval run"), not just "leave unset".
+_GROUP_LANDMARK_SELECTIONS = (None, "mean", "max")
+_NO_OVERRIDE = object()
 
 try:
     import triton  # type: ignore
@@ -701,6 +723,31 @@ class FastCompressiveLandmarkAttention(FastLandmarkAttention):
         by a softmax over their landmark scores). The remaining ``1 - alpha`` is distributed over the
         local section and the selected blocks. Has no effect during training/prefill or when top-k
         retrieval is disabled.
+    :param group_landmark_selection: Under GQA (``n_kv_heads < n_heads``), how to choose the top-k
+        landmark blocks *shared* by every query head in a KV group, instead of each head picking its
+        own independently:
+
+        * ``None`` (default): unchanged behavior -- each of the ``n_rep`` query heads in a group
+          retrieves its own top-k blocks from its own scores, exactly as before ``repeat_kv``
+          duplicated the group's K/V. Different heads in the same group can therefore select
+          different blocks.
+        * ``"mean"``: average the ``n_rep`` heads' landmark scores within each group and take one
+          top-k over the average, shared by the whole group.
+        * ``"max"``: take the per-landmark max over the ``n_rep`` heads' scores within each group
+          (a block is kept if *any* head in the group ranks it highly), then top-k that.
+
+        Only the *selection* (which blocks are eligible) is shared; the gate softmax and the
+        within-block softmax that actually weight the output still use each head's own (real, not
+        aggregated) scores -- see :meth:`_group_landmark_scores`. This is an inference-only knob
+        (mirroring how ``top_k`` itself is only ever applied at eval/decode, never during training
+        or prefill): the fused kernel's dense training/prefill forward always does full per-head soft
+        gating over every block regardless of this setting, so it has zero effect until
+        :meth:`set_landmark_eval_decode` (or the constructor) turns on hard top-k retrieval. See the
+        module docstring and ``analysis/group_landmark_selection/DESIGN.md`` for the rationale (GQA's
+        whole point is that a KV group's cache reads/bandwidth are shared across its query heads; if
+        each head in the group retrieves a different block set, decode still has to touch the union of
+        all of them, quietly giving up that saving. Sharing the retrieval decision is what actually
+        realizes it).
     """
 
     # Compressive decode has different grouped-softmax semantics than the base, so it opts out of the
@@ -713,6 +760,7 @@ class FastCompressiveLandmarkAttention(FastLandmarkAttention):
         mem_freq: int,
         nonselected_landmark_mass: float = 0.1,
         softmax_scale: Optional[float] = None,
+        group_landmark_selection: Optional[str] = None,
         **kwargs,
     ):
         super().__init__(mem_freq=mem_freq, softmax_scale=softmax_scale, **kwargs)
@@ -721,6 +769,12 @@ class FastCompressiveLandmarkAttention(FastLandmarkAttention):
                 f"nonselected_landmark_mass must be in [0, 1) (got {nonselected_landmark_mass})"
             )
         self.nonselected_landmark_mass = nonselected_landmark_mass
+        if group_landmark_selection not in _GROUP_LANDMARK_SELECTIONS:
+            raise OLMoConfigurationError(
+                "group_landmark_selection must be one of None/'mean'/'max' "
+                f"(got {group_landmark_selection!r})"
+            )
+        self.group_landmark_selection = group_landmark_selection
 
     def set_landmark_eval_decode(
         self,
@@ -728,19 +782,38 @@ class FastCompressiveLandmarkAttention(FastLandmarkAttention):
         mode: str = "extend_last_block",
         top_k: Optional[int] = None,
         nonselected_landmark_mass: Optional[float] = None,
+        group_landmark_selection: Optional[str] = _NO_OVERRIDE,  # type: ignore[assignment]
     ) -> None:
         """Enable "one long local block" decoding (see :class:`FastLandmarkAttention`).
 
         :param nonselected_landmark_mass: Optionally override the module's default
             :attr:`nonselected_landmark_mass` for this eval run. Only used when ``top_k`` is set.
+        :param group_landmark_selection: Optionally override the module's default
+            :attr:`group_landmark_selection` (``None``/``"mean"``/``"max"``) for this eval run.
+            Defaults to a private "no override" sentinel (distinct from ``None``, which is itself a
+            legitimate override value here -- "force grouping off for this run" -- unlike
+            ``nonselected_landmark_mass`` where ``None`` unambiguously means "don't override").
         """
-        super().set_landmark_eval_decode(prompt_len, mode, top_k=top_k)
+        # NOT ``super().set_landmark_eval_decode(...)``: this method is shared onto
+        # ``DocumentCompressiveLandmarkAttention`` via class-attribute assignment (not inheritance,
+        # see landmark_document_compressive.py), so ``self`` is sometimes an instance of an unrelated
+        # class hierarchy. Zero-arg ``super()`` closes over ``__class__ == FastCompressiveLandmarkAttention``
+        # at compile time and raises ("obj must be an instance or subtype of type") whenever ``self``
+        # isn't in that hierarchy. Calling the known leaf implementation explicitly works for both.
+        FastLandmarkAttention.set_landmark_eval_decode(self, prompt_len, mode, top_k=top_k)
         if nonselected_landmark_mass is not None:
             if not (0.0 <= nonselected_landmark_mass < 1.0):
                 raise OLMoConfigurationError(
                     f"nonselected_landmark_mass must be in [0, 1) (got {nonselected_landmark_mass})"
                 )
             self.nonselected_landmark_mass = nonselected_landmark_mass
+        if group_landmark_selection is not _NO_OVERRIDE:
+            if group_landmark_selection not in _GROUP_LANDMARK_SELECTIONS:
+                raise OLMoConfigurationError(
+                    "group_landmark_selection must be one of None/'mean'/'max' "
+                    f"(got {group_landmark_selection!r})"
+                )
+            self.group_landmark_selection = group_landmark_selection
 
     def _attn_core(
         self,
@@ -759,6 +832,34 @@ class FastCompressiveLandmarkAttention(FastLandmarkAttention):
         return fused_compressive_landmark_attention(
             q, k, v, is_mem, sm_scale=self.softmax_scale, block_size=self.block_size, doc_id=doc_id
         )
+
+    def _group_landmark_scores(self, lm_scores: torch.Tensor) -> torch.Tensor:
+        """Aggregate per-head landmark scores across each GQA group, for top-k *ranking only*.
+
+        ``lm_scores`` has shape ``(B, H, 1, n_lm)`` with ``H == n_heads`` (already expanded from
+        ``n_kv_heads`` by ``repeat_kv``, so heads ``[g*n_rep, (g+1)*n_rep)`` share KV group ``g``).
+        When :attr:`group_landmark_selection` is set, every head's value in the returned tensor is
+        replaced by its group's aggregate, so a subsequent ``topk(..., dim=-1)`` picks the *same*
+        indices for every head in the group -- one shared retrieval decision per KV group instead of
+        ``n_rep`` independent ones. Returns ``lm_scores`` unchanged (same object) when grouping is
+        off or there is nothing to group (``n_rep == 1``, i.e. MHA), so that path is bit-identical to
+        the pre-existing per-head behavior.
+
+        :param lm_scores: Per-head landmark-key logits, ``(B, H, 1, n_lm)``.
+        """
+        if self.group_landmark_selection is None:
+            return lm_scores
+        n_rep = self.n_heads // self.n_kv_heads
+        if n_rep == 1:
+            return lm_scores
+        B, H, one, n_lm = lm_scores.shape
+        grouped = lm_scores.view(B, self.n_kv_heads, n_rep, one, n_lm)
+        if self.group_landmark_selection == "mean":
+            agg = grouped.mean(dim=2, keepdim=True)
+        else:
+            assert self.group_landmark_selection == "max"
+            agg = grouped.amax(dim=2, keepdim=True)
+        return agg.expand_as(grouped).reshape(B, H, one, n_lm)
 
     def _compressive_decode_probs(
         self,
@@ -793,8 +894,9 @@ class FastCompressiveLandmarkAttention(FastLandmarkAttention):
         recording = gate_log.is_enabled()
         if top_k is not None and n_lm > top_k:
             lm_scores = scores[..., lm_idx]  # (B, H, 1, n_lm)
+            rank_scores = self._group_landmark_scores(lm_scores)
             keep = torch.zeros_like(lm_scores, dtype=torch.bool)
-            keep.scatter_(-1, lm_scores.topk(top_k, dim=-1).indices, True)
+            keep.scatter_(-1, rank_scores.topk(top_k, dim=-1).indices, True)
             selected = torch.zeros(B, H, 1, total, dtype=torch.bool, device=device)
             selected[..., lm_idx] = keep
             has_nonselected = True

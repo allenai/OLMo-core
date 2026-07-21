@@ -397,6 +397,14 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
     fraction of attention mass reserved at top-k decode time for the landmark tokens of the
     non-selected blocks. Defaults to 0.1. See :class:`FastCompressiveLandmarkAttention`.
     """
+    group_landmark_selection: Optional[str] = None
+    """
+    For :class:`FastCompressiveLandmarkAttention` (``name="fast_compressive_landmark"``) or
+    :class:`DocumentCompressiveLandmarkAttention` (``name="document_compressive_landmark"``) only:
+    under GQA, share top-k landmark-block selection across each KV group's query heads via ``"mean"``
+    or ``"max"`` aggregation of their scores, instead of each head retrieving independently. Defaults
+    to ``None`` (unchanged per-head selection). See :class:`FastCompressiveLandmarkAttention`.
+    """
     vec_dim: Optional[int] = None
     """
     For :class:`SharedVectorLandmarkAttention` (``name="shared_vector_landmark"``) only: the length
@@ -569,6 +577,7 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
         num_landmarks = kwargs.pop("num_landmarks", None)
         landmark_pool = kwargs.pop("landmark_pool", None)
         nonselected_landmark_mass = kwargs.pop("nonselected_landmark_mass", None)
+        group_landmark_selection = kwargs.pop("group_landmark_selection", None)
         vec_dim = kwargs.pop("vec_dim", None)
         cross_doc_mode = kwargs.pop("cross_doc_mode", None)
         dilation_n = kwargs.pop("dilation_n", None)
@@ -648,6 +657,17 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
                 "'nonselected_landmark_mass' is only supported with fast_compressive_landmark or "
                 f"document_compressive_landmark attention (got name='{self.name}')"
             )
+        if group_landmark_selection is not None and not (
+            possible_types
+            & {
+                AttentionType.fast_compressive_landmark,
+                AttentionType.document_compressive_landmark,
+            }
+        ):
+            raise OLMoConfigurationError(
+                "'group_landmark_selection' is only supported with fast_compressive_landmark or "
+                f"document_compressive_landmark attention (got name='{self.name}')"
+            )
 
         try:
             if effective_name == "default":
@@ -684,6 +704,8 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
                     )
                 if nonselected_landmark_mass is not None:
                     kwargs["nonselected_landmark_mass"] = nonselected_landmark_mass
+                if group_landmark_selection is not None:
+                    kwargs["group_landmark_selection"] = group_landmark_selection
                 return FastCompressiveLandmarkAttention(mem_freq=mem_freq, **kwargs)
             elif effective_name == "sparse_landmark":
                 if mem_freq is None:
@@ -731,6 +753,8 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
                     kwargs["cross_doc_mode"] = cross_doc_mode
                 if nonselected_landmark_mass is not None:
                     kwargs["nonselected_landmark_mass"] = nonselected_landmark_mass
+                if group_landmark_selection is not None:
+                    kwargs["group_landmark_selection"] = group_landmark_selection
                 # Per-layer dilation stride for the "hierarchical_dilated" cross_doc_mode.
                 if dilation_n is not None:
                     kwargs["dilation_n"] = dilation_n
