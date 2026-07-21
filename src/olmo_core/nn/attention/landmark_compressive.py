@@ -128,14 +128,17 @@ if triton is not None:
         BLOCK_DMODEL: tl.constexpr,
         N_PREFIX_Q: tl.constexpr,
         DOC_MASK: tl.constexpr,  # whether to apply intra-document (packing) masking
+        HAS_Q_GATE: tl.constexpr,  # whether QG differs from Q (gate temperature enabled)
     ):
         # Compressive landmark forward. Identical to landmark_kernel._fwd_kernel except that the
         # value contribution of a fully-past block uses the *full-block* within softmax (over all
         # BLOCK_N tokens including the landmark) instead of the content-only ``normal_p``. The gate
         # (cross-block) softmax that produces L/M is untouched, so L/M stay bit-identical to the
-        # normal landmark kernel. The gate (cross-block) landmark logit is computed from ``QG``
-        # rather than ``Q`` -- when ``QG`` is ``Q`` itself (the no-temperature default) this is
-        # bit-identical to reading it off ``qk`` directly.
+        # normal landmark kernel. When ``HAS_Q_GATE`` (gate temperature enabled), the gate
+        # (cross-block) landmark logit is computed from ``QG`` instead of ``Q``. ``HAS_Q_GATE`` is a
+        # compile-time constant so the ``QG`` load and the extra ``qk_gate`` matmul are compiled out
+        # entirely when disabled (the overwhelmingly common case) -- this keeps shared-memory/register
+        # pressure, and hence which launch configs fit, identical to before this parameter existed.
         start_m = tl.program_id(0)
         off_hz = tl.program_id(1)
 
@@ -158,7 +161,6 @@ if triton is not None:
         offs_d = tl.arange(0, BLOCK_DMODEL)
 
         offs_q = off_hz * sqh + offs_m[:, None] * sqm + offs_d[None, :] * sqd
-        offs_qg = off_hz * sgh + offs_m[:, None] * sgm + offs_d[None, :] * sgd
         offs_k = off_hz * skh + offs_n[None, :] * skn + offs_d[:, None] * skd
         offs_v = off_hz * svh + offs_n[:, None] * svn + offs_d[None, :] * svd
 
@@ -167,7 +169,9 @@ if triton is not None:
         acc = tl.zeros([BLOCK_M, BLOCK_DMODEL], dtype=tl.float32)
 
         q_vals = tl.load(Q + offs_q, mask=offs_m[:, None] < N_CTX_Q, other=0)
-        qg_vals = tl.load(QG + offs_qg, mask=offs_m[:, None] < N_CTX_Q, other=0)
+        if HAS_Q_GATE:
+            offs_qg = off_hz * sgh + offs_m[:, None] * sgm + offs_d[None, :] * sgd
+            qg_vals = tl.load(QG + offs_qg, mask=offs_m[:, None] < N_CTX_Q, other=0)
 
         for start_n in range(0, (N_PREFIX_Q + start_m)):
             k_vals = tl.load(K + offs_k, mask=offs_n[None, :] < N_CTX_KV, other=0)
@@ -180,18 +184,23 @@ if triton is not None:
                 k_doc = tl.load(DocId + batch_idx * N_BLOCKS + start_n)
                 qk = tl.where(q_doc == k_doc, qk, -1e30)
 
-            # Gate-only logits (SAME masking) -> the block gate comes from the landmark column of
-            # this, not of ``qk``.
-            qk_gate = tl.zeros([BLOCK_M, BLOCK_N], dtype=qg_vals.dtype)
-            qk_gate += tl.dot(qg_vals, k_vals, allow_tf32=False)
-            qk_gate *= sm_scale
-            qk_gate = tl.where(offs_m_real[:, None] >= offs_n[None, :], qk_gate, float("-inf"))
-            if DOC_MASK:
-                qk_gate = tl.where(q_doc == k_doc, qk_gate, -1e30)
-
-            landmark_qk = tl.max(
-                tl.where(tl.arange(0, BLOCK_N)[None, :] == BLOCK_N - 1, qk_gate, float("-inf")), 1
-            )
+            if HAS_Q_GATE:
+                # Gate-only logits (SAME masking) -> the block gate comes from the landmark column
+                # of this, not of ``qk``.
+                qk_gate = tl.zeros([BLOCK_M, BLOCK_N], dtype=qg_vals.dtype)
+                qk_gate += tl.dot(qg_vals, k_vals, allow_tf32=False)
+                qk_gate *= sm_scale
+                qk_gate = tl.where(offs_m_real[:, None] >= offs_n[None, :], qk_gate, float("-inf"))
+                if DOC_MASK:
+                    qk_gate = tl.where(q_doc == k_doc, qk_gate, -1e30)
+                landmark_qk = tl.max(
+                    tl.where(tl.arange(0, BLOCK_N)[None, :] == BLOCK_N - 1, qk_gate, float("-inf")),
+                    1,
+                )
+            else:
+                landmark_qk = tl.max(
+                    tl.where(tl.arange(0, BLOCK_N)[None, :] == BLOCK_N - 1, qk, float("-inf")), 1
+                )
             # Compressive within-block softmax over ALL block tokens (content + landmark).
             full_m = tl.max(qk, 1)
             full_p = tl.exp(qk - full_m[:, None])
@@ -290,11 +299,12 @@ if triton is not None:
         BLOCK_DMODEL: tl.constexpr,
         N_PREFIX_Q: tl.constexpr,
         DOC_MASK: tl.constexpr,
+        HAS_Q_GATE: tl.constexpr,  # whether QG differs from Q (gate temperature enabled)
     ):
         # dk/dv, one program per (key-block, head); atomic-free. Mirrors landmark_fast._bwd_kv_kernel
         # but with the compressive within-block softmax: every block token (incl. the landmark) gets
         # a within-block value weight, and the landmark score additionally carries the gate gradient
-        # (via ``QG``, which is ``Q`` itself in the no-temperature default).
+        # (via ``QG`` when ``HAS_Q_GATE``, else via ``Q`` directly -- see ``_fwd_kernel_compressive``).
         off_hz = tl.program_id(0)
         off_z = off_hz // H
         off_h = off_hz % H
@@ -303,7 +313,8 @@ if triton is not None:
         BLOCK_N: tl.constexpr = BLOCK
 
         Q += off_z * sqz + off_h * sqh
-        QG += off_z * sgz + off_h * sgh
+        if HAS_Q_GATE:
+            QG += off_z * sgz + off_h * sgh
         K += off_z * skz + off_h * skh
         V += off_z * svz + off_h * svh
         DO += off_z * sqz + off_h * sqh
@@ -378,19 +389,25 @@ if triton is not None:
                 doc_keep = (q_doc == k_doc).to(tl.float32)
 
             q_ptrs = Q + (offs_m[:, None] * sqm + offs_d[None, :] * sqd)
-            qg_ptrs = QG + (offs_m[:, None] * sgm + offs_d[None, :] * sgd)
             do_ptrs = DO + (offs_m[:, None] * sqm + offs_d[None, :] * sqd)
 
             q = tl.load(q_ptrs)
-            qg = tl.load(qg_ptrs)
             qk = tl.dot(q, tl.trans(k), allow_tf32=False)
             qk *= sm_scale
-            qk_gate = tl.dot(qg, tl.trans(k), allow_tf32=False)
-            qk_gate *= sm_scale
 
-            landmark_qk = tl.max(
-                tl.where(tl.arange(0, BLOCK_N)[None, :] == BLOCK_N - 1, qk_gate, float("-inf")), 1
-            )
+            if HAS_Q_GATE:
+                qg_ptrs = QG + (offs_m[:, None] * sgm + offs_d[None, :] * sgd)
+                qg = tl.load(qg_ptrs)
+                qk_gate = tl.dot(qg, tl.trans(k), allow_tf32=False)
+                qk_gate *= sm_scale
+                landmark_qk = tl.max(
+                    tl.where(tl.arange(0, BLOCK_N)[None, :] == BLOCK_N - 1, qk_gate, float("-inf")),
+                    1,
+                )
+            else:
+                landmark_qk = tl.max(
+                    tl.where(tl.arange(0, BLOCK_N)[None, :] == BLOCK_N - 1, qk, float("-inf")), 1
+                )
             # Compressive within-block softmax over all block tokens (content + landmark).
             full_m = tl.max(qk, 1)
             full_p = tl.exp(qk - full_m[:, None])
@@ -415,16 +432,23 @@ if triton is not None:
             # avoids a separate ``dot(full_dist, v)`` and its (BLOCK_M, head_dim) accumulator, which
             # keeps the head_dim=256 / block=64 backward within A100 shared memory.
             full_D = tl.sum(full_dist * dpv, 1)
-            # within_ds (all columns) -> dk via Q; gate_ds (landmark column only) -> dk via QG.
             within_ds = p[:, None] * full_dist * (dpv - full_D[:, None])
-            gate_ds = p * (full_D - Di)
-            within_ds_s = (within_ds * (sm_scale * doc_keep)).to(Q.dtype.element_ty)
-            gate_ds_s = (
-                tl.where(tl.arange(0, BLOCK_N)[None, :] == BLOCK_N - 1, gate_ds[:, None], 0.0)
-                * (sm_scale * doc_keep)
-            ).to(Q.dtype.element_ty)
-            dk += tl.dot(tl.trans(within_ds_s), q, allow_tf32=False)
-            dk += tl.dot(tl.trans(gate_ds_s), qg, allow_tf32=False)
+            gate_ds = p * (full_D - Di)  # lands on the landmark column only
+            if HAS_Q_GATE:
+                # within_ds (all columns) -> dk via Q; gate_ds (landmark column only) -> dk via QG.
+                within_ds_s = (within_ds * (sm_scale * doc_keep)).to(Q.dtype.element_ty)
+                gate_ds_s = (
+                    tl.where(tl.arange(0, BLOCK_N)[None, :] == BLOCK_N - 1, gate_ds[:, None], 0.0)
+                    * (sm_scale * doc_keep)
+                ).to(Q.dtype.element_ty)
+                dk += tl.dot(tl.trans(within_ds_s), q, allow_tf32=False)
+                dk += tl.dot(tl.trans(gate_ds_s), qg, allow_tf32=False)
+            else:
+                ds = within_ds + tl.where(
+                    tl.arange(0, BLOCK_N)[None, :] == BLOCK_N - 1, gate_ds[:, None], 0.0
+                )
+                ds *= sm_scale * doc_keep
+                dk += tl.dot(tl.trans(ds.to(Q.dtype.element_ty)), q, allow_tf32=False)
 
         dv_ptrs = DV + (offs_n[:, None] * svn + offs_d[None, :] * svd)
         dk_ptrs = DK + (offs_n[:, None] * skn + offs_d[None, :] * skd)
@@ -473,10 +497,11 @@ if triton is not None:
         BLOCK_DMODEL: tl.constexpr,
         N_PREFIX_Q: tl.constexpr,
         DOC_MASK: tl.constexpr,
+        HAS_Q_GATE: tl.constexpr,  # whether QG differs from Q (gate temperature enabled)
     ):
-        # dq (per-head, content + local) and dqg (gate-only query). One program per (query-block,
-        # head). Causal-only key-block loop, atomic-free. Only implemented for N_PREFIX_Q == 0 (the
-        # caller guards this).
+        # dq (per-head, content + local) and, when ``HAS_Q_GATE``, dqg (gate-only query). One
+        # program per (query-block, head). Causal-only key-block loop, atomic-free. Only implemented
+        # for N_PREFIX_Q == 0 (the caller guards this).
         off_hz = tl.program_id(0)
         off_z = off_hz // H
         off_h = off_hz % H
@@ -485,12 +510,13 @@ if triton is not None:
         BLOCK_N: tl.constexpr = BLOCK
 
         Q += off_z * sqz + off_h * sqh
-        QG += off_z * sgz + off_h * sgh
+        if HAS_Q_GATE:
+            QG += off_z * sgz + off_h * sgh
+            DQG += off_z * sgz + off_h * sgh
         K += off_z * skz + off_h * skh
         V += off_z * svz + off_h * svh
         DO += off_z * sqz + off_h * sqh
         DQ += off_z * sqz + off_h * sqh
-        DQG += off_z * sgz + off_h * sgh
 
         offs_d = tl.arange(0, BLOCK_DMODEL)
         D_ptrs = D + off_hz * N_CTX_Q
@@ -501,7 +527,8 @@ if triton is not None:
         offs_m = start_m + tl.arange(0, BLOCK_M)
 
         q = tl.load(Q + (offs_m[:, None] * sqm + offs_d[None, :] * sqd))
-        qg = tl.load(QG + (offs_m[:, None] * sgm + offs_d[None, :] * sgd))
+        if HAS_Q_GATE:
+            qg = tl.load(QG + (offs_m[:, None] * sgm + offs_d[None, :] * sgd))
         do = tl.load(DO + (offs_m[:, None] * sqm + offs_d[None, :] * sqd))
         m = tl.load(m_ptrs + offs_m)
         Di = tl.load(D_ptrs + offs_m)
@@ -510,7 +537,8 @@ if triton is not None:
             q_doc = tl.load(DocId + off_z * N_BLOCKS + (start_m // BLOCK_M))
 
         dq = tl.zeros([BLOCK_M, BLOCK_DMODEL], dtype=tl.float32)
-        dqg = tl.zeros([BLOCK_M, BLOCK_DMODEL], dtype=tl.float32)
+        if HAS_Q_GATE:
+            dqg = tl.zeros([BLOCK_M, BLOCK_DMODEL], dtype=tl.float32)
 
         for start_n in range(0, start_m, BLOCK_N):
             start_n = tl.multiple_of(start_n, BLOCK_N)
@@ -526,11 +554,17 @@ if triton is not None:
 
             qk = tl.dot(q, tl.trans(k), allow_tf32=False)
             qk *= sm_scale
-            qk_gate = tl.dot(qg, tl.trans(k), allow_tf32=False)
-            qk_gate *= sm_scale
-            landmark_qk = tl.max(
-                tl.where(tl.arange(0, BLOCK_N)[None, :] == BLOCK_N - 1, qk_gate, float("-inf")), 1
-            )
+            if HAS_Q_GATE:
+                qk_gate = tl.dot(qg, tl.trans(k), allow_tf32=False)
+                qk_gate *= sm_scale
+                landmark_qk = tl.max(
+                    tl.where(tl.arange(0, BLOCK_N)[None, :] == BLOCK_N - 1, qk_gate, float("-inf")),
+                    1,
+                )
+            else:
+                landmark_qk = tl.max(
+                    tl.where(tl.arange(0, BLOCK_N)[None, :] == BLOCK_N - 1, qk, float("-inf")), 1
+                )
             full_m = tl.max(qk, 1)
             full_p = tl.exp(qk - full_m[:, None])
             full_dist = full_p / tl.sum(full_p, 1)[:, None]
@@ -538,16 +572,23 @@ if triton is not None:
             dpv = tl.dot(do, tl.trans(v), allow_tf32=False)
             # full_D = do_scaled . fv = sum_n full_dist_n * (do_scaled . v_n); see _bwd_kv_kernel.
             full_D = tl.sum(full_dist * dpv, 1)
-            # within_ds (all columns) -> dq (per-head query); gate_ds (landmark column) -> dqg.
             within_ds = p[:, None] * full_dist * (dpv - full_D[:, None])
-            gate_ds = p * (full_D - Di)
-            within_ds_s = (within_ds * (sm_scale * doc_keep)).to(Q.dtype.element_ty)
-            gate_ds_s = (
-                tl.where(tl.arange(0, BLOCK_N)[None, :] == BLOCK_N - 1, gate_ds[:, None], 0.0)
-                * (sm_scale * doc_keep)
-            ).to(Q.dtype.element_ty)
-            dq += tl.dot(within_ds_s, k, allow_tf32=False)
-            dqg += tl.dot(gate_ds_s, k, allow_tf32=False)
+            gate_ds = p * (full_D - Di)  # lands on the landmark column only
+            if HAS_Q_GATE:
+                # within_ds (all columns) -> dq (per-head query); gate_ds (landmark column) -> dqg.
+                within_ds_s = (within_ds * (sm_scale * doc_keep)).to(Q.dtype.element_ty)
+                gate_ds_s = (
+                    tl.where(tl.arange(0, BLOCK_N)[None, :] == BLOCK_N - 1, gate_ds[:, None], 0.0)
+                    * (sm_scale * doc_keep)
+                ).to(Q.dtype.element_ty)
+                dq += tl.dot(within_ds_s, k, allow_tf32=False)
+                dqg += tl.dot(gate_ds_s, k, allow_tf32=False)
+            else:
+                ds = within_ds + tl.where(
+                    tl.arange(0, BLOCK_N)[None, :] == BLOCK_N - 1, gate_ds[:, None], 0.0
+                )
+                ds *= sm_scale * doc_keep
+                dq += tl.dot(ds.to(Q.dtype.element_ty), k, allow_tf32=False)
 
         # diagonal key block: within-block causal attention (identical to normal landmark; no gate
         # here, so it only contributes to dq).
@@ -564,7 +605,8 @@ if triton is not None:
         dq += tl.dot(ds.to(Q.dtype.element_ty), k, allow_tf32=False)
 
         tl.store(DQ + (offs_m[:, None] * sqm + offs_d[None, :] * sqd), dq)
-        tl.store(DQG + (offs_m[:, None] * sgm + offs_d[None, :] * sgd), dqg)
+        if HAS_Q_GATE:
+            tl.store(DQG + (offs_m[:, None] * sgm + offs_d[None, :] * sgd), dqg)
 
 
 class _FusedCompressiveLandmarkAttention(torch.autograd.Function):
@@ -574,7 +616,7 @@ class _FusedCompressiveLandmarkAttention(torch.autograd.Function):
     kernel; only the value accumulation and its gradient differ."""
 
     @staticmethod
-    def forward(ctx, q, q_gate, k, v, n_prefix_q, sm_scale, block_size, doc_id=None):
+    def forward(ctx, q, q_gate, has_q_gate, k, v, n_prefix_q, sm_scale, block_size, doc_id=None):
         if triton is None:
             raise RuntimeError("Landmark attention requires 'triton' (and a CUDA device).")
         q = q.contiguous()
@@ -644,6 +686,7 @@ class _FusedCompressiveLandmarkAttention(torch.autograd.Function):
             BLOCK_DMODEL=d,
             N_PREFIX_Q=n_prefix_q,
             DOC_MASK=doc_mask,
+            HAS_Q_GATE=has_q_gate,
             num_warps=num_warps,
             num_stages=num_stages,
         )
@@ -654,6 +697,7 @@ class _FusedCompressiveLandmarkAttention(torch.autograd.Function):
         ctx.BLOCK_DMODEL = d
         ctx.N_PREFIX_Q = n_prefix_q
         ctx.BLOCK = BLOCK
+        ctx.has_q_gate = has_q_gate
         return o
 
     @staticmethod
@@ -717,6 +761,7 @@ class _FusedCompressiveLandmarkAttention(torch.autograd.Function):
             BLOCK_DMODEL=ctx.BLOCK_DMODEL,
             N_PREFIX_Q=ctx.N_PREFIX_Q,
             DOC_MASK=doc_mask,
+            HAS_Q_GATE=ctx.has_q_gate,
         )
         if ctx.BLOCK_DMODEL > 128:
             warps = _env_int("LM_FAST_WARPS", 8)
@@ -768,7 +813,7 @@ class _FusedCompressiveLandmarkAttention(torch.autograd.Function):
             num_warps=warps,
             num_stages=stages,
         )
-        return dq, dqg, dk, dv, None, None, None, None
+        return dq, dqg, None, dk, dv, None, None, None, None
 
 
 def fused_compressive_landmark_attention(
@@ -791,6 +836,9 @@ def fused_compressive_landmark_attention(
         gate landmark logit -- the within-block and local (diagonal) softmaxes always use ``q``.
         Defaults to ``q`` itself, which is bit-identical to not having this parameter at all (the
         gate logit is then read directly off ``q @ k^T``, exactly as before this parameter existed).
+        When left as ``None``, the kernel also skips the extra ``q_gate`` load/matmul entirely
+        (a compile-time branch), so shared-memory/register usage -- and hence which launch configs
+        fit -- is unaffected for every existing caller.
     """
     expected_is_mem = torch.arange(0, is_mem.shape[-1], device=is_mem.device) % block_size == (
         block_size - 1
@@ -801,10 +849,11 @@ def fused_compressive_landmark_attention(
     n_history_blocks = n_history_kv // block_size
     if sm_scale is None:
         sm_scale = 1.0 / math.sqrt(q.size(-1))
+    has_q_gate = q_gate is not None
     if q_gate is None:
         q_gate = q
     return _FusedCompressiveLandmarkAttention.apply(
-        q, q_gate, k, v, n_history_blocks, sm_scale, block_size, doc_id
+        q, q_gate, has_q_gate, k, v, n_history_blocks, sm_scale, block_size, doc_id
     )
 
 

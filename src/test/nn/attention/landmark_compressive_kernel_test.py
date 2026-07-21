@@ -26,21 +26,28 @@ def _eager_compressive_landmark_reference(q, k, v, block_size, q_gate=None):
     over all ``block_size`` tokens; the local section is plain causal attention and never attends its
     own block's landmark.
 
-    :param q_gate: Optional separate query used only for the cross-block gate logit (mirrors
-        ``fused_compressive_landmark_attention``'s ``q_gate`` param); defaults to ``q``.
+    :param q_gate: Optional separate query used only for the cross-block gate logit -- and only at
+        the landmark (memory) COLUMNS, exactly as :func:`fused_compressive_landmark_attention`'s
+        ``q_gate`` affects only ``landmark_qk`` inside the kernel. Own-section (local) columns
+        always compete using the per-head content query, never ``q_gate`` (mirrors
+        ``gate_logits = torch.where(is_mem_col, x_gate_full, x)`` in
+        :meth:`~olmo_core.nn.attention.landmark_compressive_gqa.CompressiveGQAGroupedAttention._eager_forward`).
+        Defaults to ``q``.
     """
     B, H, T, d = q.shape
     device = q.device
     scale = 1.0 / math.sqrt(d)
     scores = (q @ k.transpose(-1, -2)).float() * scale  # (B, H, T, T)
-    gate_scores = (
-        scores if q_gate is None else (q_gate @ k.transpose(-1, -2)).float() * scale
-    )
     neg_inf = torch.finfo(scores.dtype).min
 
     pos = torch.arange(T, device=device)
     sec = pos // block_size
     is_mem = (pos % block_size) == (block_size - 1)  # (T,)
+    if q_gate is None:
+        gate_scores = scores
+    else:
+        gate_from_q_gate = (q_gate @ k.transpose(-1, -2)).float() * scale
+        gate_scores = torch.where(is_mem.view(1, 1, 1, T), gate_from_q_gate, scores)
     causal = pos[None, :] <= pos[:, None]
     same_block = sec[None, :] == sec[:, None]
     past_block = sec[None, :] < sec[:, None]
