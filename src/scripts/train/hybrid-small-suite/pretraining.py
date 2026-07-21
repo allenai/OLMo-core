@@ -87,6 +87,10 @@ def build_repro_common_components(cli_context: CliContext, **kwargs) -> CommonCo
     common.root_dir = WEKA_ROOT
     common.work_dir = f"{WEKA_ROOT}/dataset-cache"
     common.save_folder = f"{WEKA_ROOT}/checkpoints/{common.run_name}"
+    if common.launch is not None:
+        # The training mix is mirrored in S3, so avoid Gantry's gcloud
+        # service-account activation path and use our read-only AWS role.
+        common.launch.google_credentials_secret = None
     return common
 
 
@@ -135,7 +139,7 @@ def build_data_components(common: CommonComponents) -> DataComponents:
     dataset_config = NumpyFSLDatasetConfig.from_data_mix(
         mix=DataMix.OLMo_mix_0925,
         tokenizer=common.tokenizer,
-        mix_base_dir="gs://ai2-llm",
+        mix_base_dir="s3://ai2-llm",
         sequence_length=common.max_sequence_length,
         max_target_sequence_length=max(8192, common.max_sequence_length),
         work_dir=common.work_dir,
