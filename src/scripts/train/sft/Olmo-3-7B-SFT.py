@@ -92,7 +92,7 @@ class BatchSizeConfig:
 
         # Determine max tokens per rank based on GPU type
         max_tokens_per_rank = MAX_RANK_MICROBATCH_SIZE_TOKENS
-        if "B200" in self.gpu_type:
+        if "B200" in self.gpu_type or "B300" in self.gpu_type:
             max_tokens_per_rank *= 2
 
         # Check if we need context parallelism based on sequence length
