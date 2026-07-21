@@ -33,7 +33,7 @@ import sys
 _BUILD_KEYS = {
     "base_checkpoint", "model_arch", "tokenizer", "source_mixture_yaml", "source_mixture_b64",
     "length_tokens", "seq_len", "peak_lr", "lr_schedule", "warmup_steps", "load_optim_state",
-    "load_trainer_state", "save_folder", "save_freq", "seed", "num_nodes",
+    "load_trainer_state", "save_folder", "save_freq", "ephemeral_save_freq", "seed", "num_nodes",
 }
 _BUILD: dict[str, str] = {}
 _build_argv: list[str] = []   # the stripped flags, re-appended to the remote launch cmd
@@ -166,10 +166,17 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         )
     finally:
         cookbook.dir_is_empty = _saved_dir_is_empty
+    # Ephemeral checkpoints for PREEMPTION-RESUME (ai2/jupiter preempts high-prio jobs): the trainer
+    # resumes from the latest checkpoint in save_folder before falling back to load_path (the base),
+    # so a frequent ephemeral checkpoint (only the most recent is kept -> ~one DCP on weka, no
+    # permanent HF-curve intermediates) means a preempted job restarts near where it left off instead
+    # of from the base. 0 disables. Distinct from save_freq (permanent, HF-curve) which stays 0.
+    _ephemeral = int(float(b.get("ephemeral_save_freq", 200)))
     trainer_config = trainer_config.with_callbacks(
         cookbook.configure_default_callbacks(
             run_name=run_ts, wandb_group_name=cli_context.run_name,
             **({"checkpoint_save_interval": save_freq} if save_freq > 0 else {}),
+            **({"ephemeral_checkpoint_save_interval": _ephemeral} if _ephemeral > 0 else {}),
         )
     )
 
