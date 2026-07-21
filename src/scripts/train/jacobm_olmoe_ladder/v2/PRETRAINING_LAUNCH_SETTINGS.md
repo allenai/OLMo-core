@@ -154,19 +154,27 @@ cells used 292,092,800 active parameters and 3,137,624,960 total parameters.
 | 2 | EP1 | 8 | 2 | 384.0 | 255,260 | 510,519 | 116.8 | [6wn6bf60](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/6wn6bf60) | pass |
 | 4 | EP1 | 8 | 1 | 343.1 | 228,058 | 912,230 | 108.0 | [vhraoh7g](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/vhraoh7g) | pass |
 | 2 | EP2 / `sync_1d` | 8 | 2 | 344.0 | 228,703 | 457,406 | 114.6 | [49r9mybk](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/49r9mybk) | pass |
-| 4 | EP2 / `sync_1d` | 8 | 1 | pending | pending | pending | pending | pending | queued |
-| 4 | EP4 / `sync_1d` | 8 | 1 | pending | pending | pending | pending | pending | queued |
-| 2 | EP2 / `rowwise_nvshmem` | 8 | 2 | pending | pending | pending | pending | pending | queued; current-image startup re-test |
-| 4 | EP4 / `rowwise_nvshmem` | 8 | 1 | pending | pending | pending | pending | pending | queued; current-image startup re-test |
-| 1 | EP1 | 16 | 2 | pending | pending | pending | pending | pending | queued |
-| 1 | EP1 | 32 | 1 | pending | pending | pending | pending | pending | queued; maximum legal MB |
-| 2 | EP1 | 16 | 1 | pending | pending | pending | pending | pending | queued; maximum legal MB |
+| 4 | EP2 / `sync_1d` | 8 | 1 | 302.9 | 201,368 | 805,472 | 105.8 | [xplnsl2d](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/xplnsl2d) | pass; DataLoader teardown warning after all samples |
+| 4 | EP4 / `sync_1d` | 8 | 1 | 326.0 | 216,728 | 866,911 | 102.2 | [bqbzk06e](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/bqbzk06e) | pass; DataLoader teardown warning after all samples |
+| 2 | EP2 / `rowwise_nvshmem` | 8 | 2 | — | — | — | — | — | failed preflight: 256 blocks exceeds B300 maximum 148 |
+| 4 | EP4 / `rowwise_nvshmem` | 8 | 1 | — | — | — | — | — | failed preflight: 256 blocks exceeds B300 maximum 148 |
+| 1 | EP1 | 16 | 2 | 425.0 | 282,528 | 282,528 | 215.9 | [m49gf2io](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/m49gf2io) | pass |
+| 1 | EP1 | 32 | 1 | — | — | — | 267.1 / 267.7 capacity | — | OOM in compiled dry run while requesting another 640 MiB |
+| 2 | EP1 | 16 | 1 | 401.1 | 266,616 | 533,233 | 198.3 | [6skpd3be](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/6skpd3be) | pass; maximum rank batch |
 
-The completed fixed-MB8 controls show the systems tradeoff directly: one GPU
-has the best compute efficiency, while four GPUs deliver the best job-level
-throughput. On two GPUs, EP2 is 10.4% slower per GPU than EP1 and saves only
-about 2.2 GiB/GPU of active memory, so EP1 remains the default at this scale.
-The larger-microbatch and current-image NVSHMEM conclusions remain pending.
+The study resolves the systems tradeoff. MB16 is the best tested efficiency
+point: 425.0 TFLOPs/GPU on one GPU and 401.1 on two, improvements of 4.2% and
+4.5% over their MB8 controls. MB32 OOMs, so MB16 is also the highest legal
+one-GPU microbatch under the fixed 32-sequence optimizer batch; on two GPUs it
+is the full rank batch. Four-GPU EP1 MB8 still gives the highest job throughput
+at 912,230 tokens/s, but only 343.1 TFLOPs/GPU.
+
+Expert parallelism is not beneficial at this size. Relative to EP1, EP2 is
+10.4% slower on two GPUs and 11.7% slower on four; EP4 is 5.0% slower on four.
+The current-image `rowwise_nvshmem` jobs did not reach throughput measurement:
+the default `rowwise_nblocks=256` fails an explicit B300 preflight whose
+hardware maximum is 148. A future rowwise test must set at most 148 blocks
+(128 is the natural next cell) before its performance can be compared.
 
 Scale smokes now retain only their final hard-stop checkpoint. The initial r4
 1.2B Cx1 job predated that change and retained step 5, 10, and 12; each is

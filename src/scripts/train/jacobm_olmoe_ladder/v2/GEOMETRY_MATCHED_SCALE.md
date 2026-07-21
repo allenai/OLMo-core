@@ -245,7 +245,7 @@ record, including every task ID, is
 | 1.2B | 4 | `3e-4` | 32 | [01KXT0CKPC9NV36GKDXZH5SM17](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXT0CKPC9NV36GKDXZH5SM17) |
 | 1.2B | 8 | `4e-4` | 32 | [01KXT0CQBVT4T414SAZQYT1RAS](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXT0CQBVT4T414SAZQYT1RAS) |
 
-Status at 2026-07-20 17:45 UTC: all 480M and 810M cells plus 1.2B Cx1/Cx2/Cx4
+Status at 2026-07-21 03:10 UTC: all 480M and 810M cells plus 1.2B Cx1/Cx2/Cx4
 are finished, for 11/12 completed cells. Strict final-250M CE is `2.119848`
 for 810M Cx8 and `2.107767` for the newly completed 1.2B Cx4. The user requeued the
 [Cx8 resume](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXW463APF8FT6RV8T8XZ2D6Q)
@@ -256,8 +256,8 @@ assertion. The short urgent
 resumed from durable `step17500` with the original LR and optimizer state, then
 failed again at step 17,592. The dump shows a broad failure, not one bad tensor:
 all 375 DP entries on rank 0 and 374/375 on every other rank were NaN, along
-with 32--38 EP-DP entries per rank. The next continuation should therefore use
-a separately labeled lower LR rather than blindly skip a single step.
+with 32--38 EP-DP entries per rank. A single-step skip is therefore not a
+credible repair for the original trajectory.
 Their W&B IDs are registered in [`plot_pretraining_wave.py`](plot_pretraining_wave.py),
 so later finished-only refreshes require no registry change.
 
@@ -272,17 +272,18 @@ This is a fresh optimizer and data stream, not a continuation. Status refreshes
 must explicitly watch steps 17,000--18,000, especially total gradient norm,
 step skips, and loss, because every original trajectory collapsed in that
 window. Do not substitute this run into the formal finished-only plot until it
-has crossed that window cleanly and ultimately finished.
+has crossed that window cleanly and ultimately finished. At this refresh it is
+running at 22.89B / 185.76B tokens (12.3%) and about 230 TFLOPs/GPU.
 
 The gated-attention wave uses the identical GPU, EP, microbatch,
 checkpointing, and evaluator-free layout, with the same transferred
 wide-integration LR in every cell. It is urgent unallocated work on Holmes,
 pinned to commit `1a85227bdb8baeab2ad05555935aae78938bb0cd` for the initial
-submissions. At the 2026-07-20 17:45 UTC refresh, all 480M cells, all 810M
+submissions. At the 2026-07-21 03:10 UTC refresh, all 480M cells, all 810M
 cells, and 1.2B Cx1/Cx4 are finished, for 10/12 completed cells. Strict
 final-250M CE is `2.191179` for 810M Cx4, `2.114516` for 810M Cx8,
-`2.273007` for 1.2B Cx1, and `2.108263` for 1.2B Cx4. The 1.2B Cx8 worker is at 112.14B / 187.44B tokens (59.8%), at
-about 315 TFLOPs/GPU.
+`2.273007` for 1.2B Cx1, and `2.108263` for 1.2B Cx4. The 1.2B Cx8 worker is at
+146.67B / 187.44B tokens (78.2%), at about 323 TFLOPs/GPU.
 All four 1.2B cells initially failed before training
 because the common 6% active-parameter guard rejected their audited 6.1155%
 gated delta. The production entrypoint now uses a gated-only 6.2% cap while

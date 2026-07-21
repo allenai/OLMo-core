@@ -159,15 +159,17 @@ four-LR Cx1/Cx2/Cx4/Cx8 sweep was then submitted urgent and unallocated on 80
 Holmes B300s at peak concurrency. It deliberately reuses every training and
 systems setting from the gated-NoPE sweep.
 
-The first completed curve is Cx1. Its four final-250M-token losses are
-`2.715839`, `2.697808`, `2.691980`, and `2.703272` at `4e-4`, `8e-4`,
-`1.6e-3`, and `3.2e-3`, respectively. The observed best is therefore
-`1.6e-3`; the quadratic visual-fit minimum is about `1.4e-3`. At their
-respective observed best LRs, gated RoPE is `0.049064` CE better than wide,
-`0.002661` better than the first hybrid, `0.015901` better than ungated RoPE
-geometry, `0.020825` better than ungated NoPE geometry, and `0.019124` better
-than gated NoPE. Cx2/Cx4/Cx8 are still running and remain absent from formal
-LR selection.
+All four curves finished with complete final-250M-token windows. Observed best
+LRs at Cx1/2/4/8 are `1.6e-3`, `1.6e-3`, `8e-4`, and `1.6e-3`; their CEs are
+`2.691980`, `2.573449`, `2.470110`, and `2.386206`. The quadratic visual-fit
+minima are approximately `1.4e-3`, `1.4e-3`, `1.1e-3`, and `1.2e-3`.
+
+At observed best, gated RoPE beats ungated RoPE geometry by `0.015901`,
+`0.005514`, `0.004521`, and `0.003651` CE at Cx1/2/4/8. It also beats ungated
+NoPE by `0.020825`, `0.011731`, `0.007674`, and `0.005747`, and gated NoPE by
+`0.019124`, `0.007319`, `0.005955`, and `0.004191`. Relative to the first
+hybrid, it is better at Cx1/Cx4/Cx8 by `0.002661`/`0.008055`/`0.010174`, and
+worse at Cx2 by `0.003461`.
 
 The larger 1.2B gated models have an audited 6.1155% active-parameter delta
 from the corresponding wide-integration reference. A shared 6% sanity guard

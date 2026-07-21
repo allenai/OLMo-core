@@ -4,7 +4,7 @@ Record post-migration experiment waves here. Per-run rows must include Beaker
 job IDs and W&B IDs once they exist. Detailed migration-era DDP jobs remain in
 [`../v1/DDP_RUNS.md`](../v1/DDP_RUNS.md).
 
-## Live status snapshot (2026-07-20 19:43 UTC; gated-RoPE refreshed 22:50 UTC)
+## Live status snapshot (2026-07-21 03:10 UTC)
 
 This is the current source of truth for active V2 work. The detailed sections
 below retain the full launch and retry history.
@@ -18,29 +18,29 @@ below retain the full launch and retry history.
 | pretraining | first hybrid 1.2B Cx1 | finished | final-250M CE `2.253953`; validation finished | [1d24xfx5](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/1d24xfx5) |
 | pretraining | first hybrid 1.2B Cx2 | finished | final-250M CE `2.163788` | [4k1bh4k2](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/4k1bh4k2) |
 | pretraining | first hybrid 1.2B Cx4 | finished | final-250M CE `2.081180` | [vc3c6gj6](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/vc3c6gj6) |
-| pretraining | first hybrid 1.2B Cx8 | running | 138.27B / 181.52B tokens (76.2%); ~526 TFLOPs/GPU | [7eemhu7g](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/7eemhu7g) |
+| pretraining | first hybrid 1.2B Cx8 | running | 152.07B / 181.52B tokens (83.8%); ~532 TFLOPs/GPU | [7eemhu7g](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/7eemhu7g) |
 | pretraining | aligned geometry + NoPE 275M sweep | finished | 16/16; observed best LR is `8e-4`, `1.6e-3`, `8e-4`, `8e-4` at Cx1/2/4/8 | [results](results/pretraining/geometry_gdn_ev2_nope/results.md) |
 | pretraining | aligned geometry + NoPE + gated attention 275M sweep | finished | 16/16; observed best LR is `8e-4`, `1.6e-3`, `8e-4`, `8e-4` at Cx1/2/4/8 | [results](results/pretraining/geometry_gdn_ev2_nope_gated/results.md) |
-| pretraining | aligned geometry + RoPE + gated attention 275M sweep | running | Cx1 4/4 finished; observed best `1.6e-3`, final-250M CE `2.691980`; Cx2/Cx4/Cx8 running | [results](results/pretraining/geometry_gdn_ev2_rope_gated/results.md) |
-| pretraining | larger aligned geometry + NoPE | 11 finished / fresh Cx8 reproduction scheduled | 1.2B Cx4 final-250M CE `2.107767`; clean Cx8 `4e-4` retrain will be watched across steps 17K--18K | [Beaker](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY0CM4HKG0R4H352N2SQV6P1) |
-| pretraining | larger aligned geometry + NoPE + gated attention | running / ready to resume | 10/12 finished; 1.2B Cx8 at 59.8%; Cx2 diagnostic reached clean `step21500` | [results](results/pretraining/geometry_gdn_ev2_nope_gated/results.md) |
+| pretraining | aligned geometry + RoPE + gated attention 275M sweep | finished | 16/16; observed best LR is `1.6e-3`, `1.6e-3`, `8e-4`, `1.6e-3` at Cx1/2/4/8 | [results](results/pretraining/geometry_gdn_ev2_rope_gated/results.md) |
+| pretraining | larger aligned geometry + NoPE | 11 finished / fresh Cx8 reproduction running | new Cx8 is at 22.89B / 185.76B (12.3%); ~230 TFLOPs/GPU | [Beaker](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY0CM4HKG0R4H352N2SQV6P1) |
+| pretraining | larger aligned geometry + NoPE + gated attention | running / ready to resume | 10/12 finished; Cx8 at 146.67B / 187.44B (78.2%), ~323 TFLOPs/GPU; Cx2 durable `step21500` ready | [results](results/pretraining/geometry_gdn_ev2_nope_gated/results.md) |
 | midtraining | first hybrid 275M Cx8 | finished | 100B; final checkpoint `step95368`; validation finished | [1keo2hz6](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/1keo2hz6) |
 | midtraining | first hybrid 480M Cx8 | finished | 100.001B; final checkpoint `step95368`; validation finished | [mnp9rv5l](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/mnp9rv5l) |
-| validation | V2 post-training backfills | running | 85 finished; six Cx2 configuration retries running at MB3 | [results](results/validation/hybrid_full.md) |
+| validation | V2 post-training backfills | registered targets complete; gated-RoPE newly eligible | 91/91 registered targets finished with 498 metrics each; 16 gated-RoPE finals not yet queued | [results](results/validation/hybrid_full.md) |
 
 The formal pretraining results and plots use finished runs only and enforce a
-complete final-250M-token history. This refresh adds NoPE 1.2B Cx4 (CE
-`2.107767`), gated 810M Cx8 (CE `2.114516`), and gated 1.2B Cx4 (CE
-`2.108263`). Six Cx2 validation targets failed before model
-evaluation because rank batch six was not divisible by the configured MB4;
-their urgent MB3 retry is running in
-[01KY09D3D872K0R03NHF5MGYD4](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY09D3D872K0R03NHF5MGYD4).
+complete final-250M-token history. The gated-RoPE sweep is now complete. Its
+observed best final-250M CEs at Cx1/2/4/8 are `2.691980`, `2.573449`,
+`2.470110`, and `2.386206`. It beats the ungated RoPE geometry, ungated NoPE,
+and gated NoPE controls at every Cx. It also beats the first hybrid at Cx1,
+Cx4, and Cx8; at Cx2 it is `0.003461` worse.
 
-The gated-RoPE Cx1 curve is now complete. Its observed best is `1.6e-3`
-(quadratic visual-fit minimum about `1.4e-3`) at CE `2.691980`. This is
-`0.049064` below wide integration and `0.002661` below the first hybrid's Cx1
-observed best. Cx2/Cx4/Cx8 remain excluded from formal selection until all four
-points in each curve finish with complete final-250M-token windows.
+All six corrected Cx2 MB3 validation retries finished in
+[01KY09D3D872K0R03NHF5MGYD4](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY09D3D872K0R03NHF5MGYD4).
+The 32 NoPE/gated 275M backfills and both first-hybrid midtraining backfills
+also finished. The consolidated export now contains 91 complete targets with
+498 metrics each. The 16 newly finished gated-RoPE checkpoints are not in that
+manifest and now need a separate validation backfill.
 
 ## 275M active hybrid GDN (`expand_v=1`)
 
@@ -361,8 +361,8 @@ identity.
 
 | Model | Job | W&B | Status |
 |---|---|---|---|
-| 275M `expand_v=1` hybrid Cx8 | [r1 canceled](https://beaker.org/ex/01KXPEFSNRXYB5N3KAAEWJD2ZR) / r2 | [1keo2hz6](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/1keo2hz6) | finished; 100B; final `step95368`; validation pending |
-| 480M `expand_v=1` hybrid Cx8 | [01KXS955Q6RZQQM7PEGSWF3XDT](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXS955Q6RZQQM7PEGSWF3XDT?taskId=01KXS955QG0FG968ME9CAZ8RB2&jobId=01KXS955TSVZE9HEMCNDJP72QP) | [mnp9rv5l](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/mnp9rv5l) | finished; 100.001B; final `step95368`; validation pending |
+| 275M `expand_v=1` hybrid Cx8 | [r1 canceled](https://beaker.org/ex/01KXPEFSNRXYB5N3KAAEWJD2ZR) / r2 | [1keo2hz6](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/1keo2hz6) | finished; 100B; final `step95368`; validation finished |
+| 480M `expand_v=1` hybrid Cx8 | [01KXS955Q6RZQQM7PEGSWF3XDT](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXS955Q6RZQQM7PEGSWF3XDT?taskId=01KXS955QG0FG968ME9CAZ8RB2&jobId=01KXS955TSVZE9HEMCNDJP72QP) | [mnp9rv5l](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/mnp9rv5l) | finished; 100.001B; final `step95368`; validation finished |
 
 The 480M continuation loads the permanent first-hybrid Cx8 PT checkpoint
 `step81069` weight-only, starts a fresh optimizer at LR `8e-5`, and otherwise
@@ -506,27 +506,29 @@ subsequent production sweep reuses the gated-NoPE optimizer batches and launch
 shapes: Cx1/Cx2/Cx4 use four GPUs with MB8/12/16, while Cx8 uses eight GPUs
 with MB12. Every Cx runs `4e-4`, `8e-4`, `1.6e-3`, and `3.2e-3`; in-loop and
 on-finish evaluation are disabled, and validation will be backfilled after
-training. All 16 tasks are urgent unallocated Holmes work with `minRuntime: 0`
-and auto-resume enabled.
+training. All 16 urgent unallocated Holmes tasks finished cleanly. Observed
+best LRs at Cx1/2/4/8 are `1.6e-3`, `1.6e-3`, `8e-4`, and `1.6e-3`, with
+final-250M CEs `2.691980`, `2.573449`, `2.470110`, and `2.386206`,
+respectively.
 
 | Cx | LR | GPUs | MB | Job | W&B | Launch status |
 |---:|---:|---:|---:|---|---|---|
-| 1 | `4e-4` | 4 | 8 | [01KY0GVXCD6YC1WRZZEH4EWPJ6](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY0GVX8SM5998GFMGAKR3AQ6?taskId=01KY0GVX91YPCN1MKRYRX30QXK&jobId=01KY0GVXCD6YC1WRZZEH4EWPJ6) | [kd3fyszi](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/kd3fyszi) | running |
-| 1 | `8e-4` | 4 | 8 | [01KY0GVXGN7TFVS60S6KKBJZSW](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY0GVX8SM5998GFMGAKR3AQ6?taskId=01KY0GVXCJJZVWEA8TAN6X2R36&jobId=01KY0GVXGN7TFVS60S6KKBJZSW) | [ezdsfb9n](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/ezdsfb9n) | running |
-| 1 | `1.6e-3` | 4 | 8 | [01KY0GVXM1TX7J3X2ZJRCWNEJR](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY0GVX8SM5998GFMGAKR3AQ6?taskId=01KY0GVXGSENMC2XT3DA0F4ND1&jobId=01KY0GVXM1TX7J3X2ZJRCWNEJR) | [eo5bm8gw](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/eo5bm8gw) | running |
-| 1 | `3.2e-3` | 4 | 8 | [01KY0GVXQG9C9CD1FKJMY842JH](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY0GVX8SM5998GFMGAKR3AQ6?taskId=01KY0GVXM5H2W0P8X4SP124BPH&jobId=01KY0GVXQG9C9CD1FKJMY842JH) | [l4tp6qmo](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/l4tp6qmo) | running |
-| 2 | `4e-4` | 4 | 12 | [01KY0GVXTY4XCZ5QVCF5GMJBSY](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY0GVX8SM5998GFMGAKR3AQ6?taskId=01KY0GVXQMHYW38WYKWR3ENTWD&jobId=01KY0GVXTY4XCZ5QVCF5GMJBSY) | [7gmi969q](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/7gmi969q) | running |
-| 2 | `8e-4` | 4 | 12 | [01KY0GVXYJV563V32PGRHCB1SX](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY0GVX8SM5998GFMGAKR3AQ6?taskId=01KY0GVXV3C83J7JE9JT1R6Z7D&jobId=01KY0GVXYJV563V32PGRHCB1SX) | [0ovig11c](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/0ovig11c) | running |
-| 2 | `1.6e-3` | 4 | 12 | [01KY0GVY20SFVSGWB2TC5T2J06](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY0GVX8SM5998GFMGAKR3AQ6?taskId=01KY0GVXYNY7331H1KTRPRQ3CJ&jobId=01KY0GVY20SFVSGWB2TC5T2J06) | [8mkt4xpz](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/8mkt4xpz) | running |
-| 2 | `3.2e-3` | 4 | 12 | [01KY0GVY59R8FGMEZTBTKNG418](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY0GVX8SM5998GFMGAKR3AQ6?taskId=01KY0GVY22MEKVE40PVGA83HXN&jobId=01KY0GVY59R8FGMEZTBTKNG418) | [66u6ekx2](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/66u6ekx2) | running |
-| 4 | `4e-4` | 4 | 16 | [01KY0GVY97Y0EJEJ4Y5FBWF0SY](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY0GVX8SM5998GFMGAKR3AQ6?taskId=01KY0GVY5BTCKCYKJQ2PBCKXN7&jobId=01KY0GVY97Y0EJEJ4Y5FBWF0SY) | [o1p6n2v7](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/o1p6n2v7) | running |
-| 4 | `8e-4` | 4 | 16 | [01KY0GVYCDXS3B4WKQTM711VME](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY0GVX8SM5998GFMGAKR3AQ6?taskId=01KY0GVY980Z2S7X577M80N7DC&jobId=01KY0GVYCDXS3B4WKQTM711VME) | [iqxc5n9x](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/iqxc5n9x) | running |
-| 4 | `1.6e-3` | 4 | 16 | [01KY0GVYFXAK12CZ2FR2BHTMK8](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY0GVX8SM5998GFMGAKR3AQ6?taskId=01KY0GVYCEH9XY6FBEFMVDV8YD&jobId=01KY0GVYFXAK12CZ2FR2BHTMK8) | [n6suaxul](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/n6suaxul) | running |
-| 4 | `3.2e-3` | 4 | 16 | [01KY0GVYK3FQN3CY90B8BJ4TN1](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY0GVX8SM5998GFMGAKR3AQ6?taskId=01KY0GVYFYYMJSP2KDQ9N9J7F1&jobId=01KY0GVYK3FQN3CY90B8BJ4TN1) | [clfmsyx8](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/clfmsyx8) | running |
-| 8 | `4e-4` | 8 | 12 | [01KY0GVYPDNRZH73D3PV9945KD](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY0GVX8SM5998GFMGAKR3AQ6?taskId=01KY0GVYK43DFNPTYBR9BC34A5&jobId=01KY0GVYPDNRZH73D3PV9945KD) | [y1dh1cb5](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/y1dh1cb5) | running |
-| 8 | `8e-4` | 8 | 12 | [01KY0GVYSK43FX8NVFZ0BWCV02](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY0GVX8SM5998GFMGAKR3AQ6?taskId=01KY0GVYPEWRV03209HY9N6NVE&jobId=01KY0GVYSK43FX8NVFZ0BWCV02) | [65bsc0wk](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/65bsc0wk) | running |
-| 8 | `1.6e-3` | 8 | 12 | [01KY0GVYWZ962WAHMNH6TP3DKT](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY0GVX8SM5998GFMGAKR3AQ6?taskId=01KY0GVYSN9RQEPGQN05QXNCJD&jobId=01KY0GVYWZ962WAHMNH6TP3DKT) | [8rgf3myq](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/8rgf3myq) | running |
-| 8 | `3.2e-3` | 8 | 12 | [01KY0GVZ0776A482S2CJ2XNZ3H](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY0GVX8SM5998GFMGAKR3AQ6?taskId=01KY0GVYX0MDYP3X29ENBP97FY&jobId=01KY0GVZ0776A482S2CJ2XNZ3H) | [klgge8er](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/klgge8er) | running |
+| 1 | `4e-4` | 4 | 8 | [01KY0GVXCD6YC1WRZZEH4EWPJ6](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY0GVX8SM5998GFMGAKR3AQ6?taskId=01KY0GVX91YPCN1MKRYRX30QXK&jobId=01KY0GVXCD6YC1WRZZEH4EWPJ6) | [kd3fyszi](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/kd3fyszi) | finished |
+| 1 | `8e-4` | 4 | 8 | [01KY0GVXGN7TFVS60S6KKBJZSW](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY0GVX8SM5998GFMGAKR3AQ6?taskId=01KY0GVXCJJZVWEA8TAN6X2R36&jobId=01KY0GVXGN7TFVS60S6KKBJZSW) | [ezdsfb9n](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/ezdsfb9n) | finished |
+| 1 | `1.6e-3` | 4 | 8 | [01KY0GVXM1TX7J3X2ZJRCWNEJR](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY0GVX8SM5998GFMGAKR3AQ6?taskId=01KY0GVXGSENMC2XT3DA0F4ND1&jobId=01KY0GVXM1TX7J3X2ZJRCWNEJR) | [eo5bm8gw](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/eo5bm8gw) | finished; observed best |
+| 1 | `3.2e-3` | 4 | 8 | [01KY0GVXQG9C9CD1FKJMY842JH](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY0GVX8SM5998GFMGAKR3AQ6?taskId=01KY0GVXM5H2W0P8X4SP124BPH&jobId=01KY0GVXQG9C9CD1FKJMY842JH) | [l4tp6qmo](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/l4tp6qmo) | finished |
+| 2 | `4e-4` | 4 | 12 | [01KY0GVXTY4XCZ5QVCF5GMJBSY](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY0GVX8SM5998GFMGAKR3AQ6?taskId=01KY0GVXQMHYW38WYKWR3ENTWD&jobId=01KY0GVXTY4XCZ5QVCF5GMJBSY) | [7gmi969q](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/7gmi969q) | finished |
+| 2 | `8e-4` | 4 | 12 | [01KY0GVXYJV563V32PGRHCB1SX](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY0GVX8SM5998GFMGAKR3AQ6?taskId=01KY0GVXV3C83J7JE9JT1R6Z7D&jobId=01KY0GVXYJV563V32PGRHCB1SX) | [0ovig11c](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/0ovig11c) | finished |
+| 2 | `1.6e-3` | 4 | 12 | [01KY0GVY20SFVSGWB2TC5T2J06](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY0GVX8SM5998GFMGAKR3AQ6?taskId=01KY0GVXYNY7331H1KTRPRQ3CJ&jobId=01KY0GVY20SFVSGWB2TC5T2J06) | [8mkt4xpz](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/8mkt4xpz) | finished; observed best |
+| 2 | `3.2e-3` | 4 | 12 | [01KY0GVY59R8FGMEZTBTKNG418](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY0GVX8SM5998GFMGAKR3AQ6?taskId=01KY0GVY22MEKVE40PVGA83HXN&jobId=01KY0GVY59R8FGMEZTBTKNG418) | [66u6ekx2](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/66u6ekx2) | finished |
+| 4 | `4e-4` | 4 | 16 | [01KY0GVY97Y0EJEJ4Y5FBWF0SY](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY0GVX8SM5998GFMGAKR3AQ6?taskId=01KY0GVY5BTCKCYKJQ2PBCKXN7&jobId=01KY0GVY97Y0EJEJ4Y5FBWF0SY) | [o1p6n2v7](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/o1p6n2v7) | finished |
+| 4 | `8e-4` | 4 | 16 | [01KY0GVYCDXS3B4WKQTM711VME](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY0GVX8SM5998GFMGAKR3AQ6?taskId=01KY0GVY980Z2S7X577M80N7DC&jobId=01KY0GVYCDXS3B4WKQTM711VME) | [iqxc5n9x](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/iqxc5n9x) | finished; observed best |
+| 4 | `1.6e-3` | 4 | 16 | [01KY0GVYFXAK12CZ2FR2BHTMK8](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY0GVX8SM5998GFMGAKR3AQ6?taskId=01KY0GVYCEH9XY6FBEFMVDV8YD&jobId=01KY0GVYFXAK12CZ2FR2BHTMK8) | [n6suaxul](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/n6suaxul) | finished |
+| 4 | `3.2e-3` | 4 | 16 | [01KY0GVYK3FQN3CY90B8BJ4TN1](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY0GVX8SM5998GFMGAKR3AQ6?taskId=01KY0GVYFYYMJSP2KDQ9N9J7F1&jobId=01KY0GVYK3FQN3CY90B8BJ4TN1) | [clfmsyx8](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/clfmsyx8) | finished |
+| 8 | `4e-4` | 8 | 12 | [01KY0GVYPDNRZH73D3PV9945KD](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY0GVX8SM5998GFMGAKR3AQ6?taskId=01KY0GVYK43DFNPTYBR9BC34A5&jobId=01KY0GVYPDNRZH73D3PV9945KD) | [y1dh1cb5](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/y1dh1cb5) | finished |
+| 8 | `8e-4` | 8 | 12 | [01KY0GVYSK43FX8NVFZ0BWCV02](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY0GVX8SM5998GFMGAKR3AQ6?taskId=01KY0GVYPEWRV03209HY9N6NVE&jobId=01KY0GVYSK43FX8NVFZ0BWCV02) | [65bsc0wk](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/65bsc0wk) | finished |
+| 8 | `1.6e-3` | 8 | 12 | [01KY0GVYWZ962WAHMNH6TP3DKT](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY0GVX8SM5998GFMGAKR3AQ6?taskId=01KY0GVYSN9RQEPGQN05QXNCJD&jobId=01KY0GVYWZ962WAHMNH6TP3DKT) | [8rgf3myq](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/8rgf3myq) | finished; observed best |
+| 8 | `3.2e-3` | 8 | 12 | [01KY0GVZ0776A482S2CJ2XNZ3H](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY0GVX8SM5998GFMGAKR3AQ6?taskId=01KY0GVYX0MDYP3X29ENBP97FY&jobId=01KY0GVZ0776A482S2CJ2XNZ3H) | [klgge8er](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/klgge8er) | finished |
 
 ## Larger geometry + NoPE capacity smokes
 
@@ -575,7 +577,7 @@ LRs, Beaker IDs, ETAs, and estimated GPU-hours are in
 commit `fcf1c1b8828a3bddd0bad477a5c4055e63b0275f`, retain rolling ephemeral
 checkpoints every 500 steps, and disable in-loop/on-finish evaluators.
 
-Status at 2026-07-20 17:59 UTC: all 480M and 810M cells plus 1.2B Cx1/Cx2/Cx4
+Status at 2026-07-21 03:10 UTC: all 480M and 810M cells plus 1.2B Cx1/Cx2/Cx4
 are finished, for 11/12 completed cells. The 810M Cx8 has strict final-250M CE
 `2.119848`, versus `2.104939` for wide integration and `2.095585` for the
 first hybrid. The 1.2B Cx4 strict final-250M CE is `2.107767`. The
@@ -586,18 +588,20 @@ checkpoint, reached step 17,644, and failed for a third time on the same
 then reproduced a broad NaN at step 17,592: essentially every DP gradient was
 NaN on every rank. This is not an isolated tensor or one safely skippable step.
 For exact LR comparability, a new from-scratch reproduction with the identical
-32-GPU/EP8/MB3 layout and a distinct checkpoint directory is scheduled in
+32-GPU/EP8/MB3 layout and a distinct checkpoint directory is running in
 [01KY0CM4HKG0R4H352N2SQV6P1](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY0CM4HKG0R4H352N2SQV6P1).
-It is explicitly marked for collapse monitoring across steps 17,000--18,000.
+At this refresh it has reached 22.89B / 185.76B tokens (12.3%) at about 230
+TFLOPs/GPU. It is explicitly marked for collapse monitoring across steps
+17,000--18,000.
 
 The equivalent larger NoPE-plus-gated-attention launcher and complete 12-cell
 manifest were structurally and count validated, then submitted on 2026-07-18
 after the completed 275M gated sweep improved on ungated NoPE at all four Cx.
-At the 2026-07-20 17:59 UTC refresh, all 480M cells, all 810M cells, and 1.2B
+At the 2026-07-21 03:10 UTC refresh, all 480M cells, all 810M cells, and 1.2B
 Cx1/Cx4 are finished, for 10/12 completed cells. Strict final-250M CE is
 `2.191179` for 810M Cx4, `2.114516` for 810M Cx8, `2.273007` for 1.2B Cx1,
-and `2.108263` for 1.2B Cx4. The 1.2B Cx8 worker is at 112.14B / 187.44B
-(59.8%), about 315 TFLOPs/GPU. All four 1.2B cells were initially
+and `2.108263` for 1.2B Cx4. The 1.2B Cx8 worker is at 146.67B / 187.44B
+(78.2%), about 323 TFLOPs/GPU. All four 1.2B cells were initially
 rejected before training by the shared 6% active-parameter-delta guard: their
 audited gated delta is 6.1155%. The guard now permits up to 6.2% only for
 gated variants while leaving the 6% limit unchanged for ungated models. The
@@ -659,9 +663,13 @@ retains the identical 192-GPU peak layout and transferred LRs.
   [32 two-GPU NoPE/gated 275M tasks](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXZ1PVT69VQ0GBP9WWBAKWV0),
   [24 eight-GPU scale tasks](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXZ1Q0K8T9HM18534TQ405AR),
   and [two two-GPU midtraining tasks](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXZ1Q481A8VGT0EB9BX6JCCE).
-  At 06:12 UTC, 28/32 tasks in the first batch were running; the remaining
-  tasks were queued. Together these add 58 eligible final checkpoints to the
-  33 already-finished validation targets.
+  All 32 tasks in the first batch and both midtraining tasks finished. Six
+  Cx2 scale targets in the second batch failed before evaluation because rank
+  batch six was not divisible by MB4; all six corrected MB3 retries finished
+  in
+  [01KY09D3D872K0R03NHF5MGYD4](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY09D3D872K0R03NHF5MGYD4).
+  The consolidated export now contains all 91 registered targets with 498
+  metrics each.
 
 ## New wave template
 
