@@ -155,12 +155,14 @@ def main():
                          "--landmark-top-k-blocks is also set: attention mass reserved for "
                          "non-selected landmark blocks, in [0, 1). Unset keeps the checkpoint's "
                          "trained value.")
-    ap.add_argument("--landmark-group-selection", choices=["mean", "max"], default=None,
+    ap.add_argument("--landmark-group-selection", choices=["mean", "max", "inverse_mean"], default=None,
                     help="GQA compressive-landmark checkpoints only: share top-k landmark block "
                          "selection across each KV group's query heads instead of each head "
                          "retrieving independently. Omit (default) for independent per-head "
-                         "selection. The on-node runner auto-suffixes the results dir "
-                         "(_grp<mode>) so sweeping this never overwrites another mode's output.")
+                         "selection. 'inverse_mean' is an anti-selection SANITY CHECK (keeps the "
+                         "group's LEAST-attended blocks) -- not a real method. The on-node runner "
+                         "auto-suffixes the results dir (_grp<mode>) so sweeping this never "
+                         "overwrites another mode's output.")
     ap.add_argument("--dry-run", action="store_true", help="build + print the job, do NOT submit.")
     args = ap.parse_args()
 

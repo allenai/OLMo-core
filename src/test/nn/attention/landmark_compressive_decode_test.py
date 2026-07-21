@@ -307,6 +307,19 @@ def test_group_landmark_scores_mean_and_max_aggregate_within_kv_group():
     )
     assert attn_none._group_landmark_scores(lm_scores) is lm_scores  # off -> exact no-op
 
+    # inverse_mean: negated group mean, so a subsequent topk keeps the LEAST-attended block. It must
+    # be the exact ranking-reversal of "mean" within each group (argmax(inverse) == argmin(mean)).
+    attn_inv = _build_gqa(
+        mem_freq=15, head_dim=4, n_heads=4, n_kv_heads=2, group_landmark_selection="inverse_mean"
+    )
+    agg_inv = attn_inv._group_landmark_scores(lm_scores)
+    torch.testing.assert_close(agg_inv[0, 0, 0], -expected_g0_mean)
+    torch.testing.assert_close(agg_inv[0, 1, 0], -expected_g0_mean)
+    # mean's top block is landmark 0 (score 5.0); inverse_mean's top block is landmark 1 (mean 2.5,
+    # the lowest) -- the deliberate opposite pick.
+    assert int(agg_inv[0, 0, 0].argmax()) == 1
+    assert int(agg_inv[0, 0, 0].argmax()) == int(agg_mean[0, 0, 0].argmin())
+
 
 def test_group_landmark_scores_noop_for_mha():
     # No GQA grouping to do (n_heads == n_kv_heads) -> always a no-op regardless of the setting, so

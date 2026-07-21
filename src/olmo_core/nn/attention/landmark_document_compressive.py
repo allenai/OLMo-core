@@ -102,9 +102,9 @@ class DocumentCompressiveLandmarkAttention(DocumentLandmarkAttention):
                 f"nonselected_landmark_mass must be in [0, 1) (got {nonselected_landmark_mass})"
             )
         self.nonselected_landmark_mass = nonselected_landmark_mass
-        if group_landmark_selection not in (None, "mean", "max"):
+        if group_landmark_selection not in (None, "mean", "max", "inverse_mean"):
             raise OLMoConfigurationError(
-                "group_landmark_selection must be one of None/'mean'/'max' "
+                "group_landmark_selection must be one of None/'mean'/'max'/'inverse_mean' "
                 f"(got {group_landmark_selection!r})"
             )
         self.group_landmark_selection = group_landmark_selection
