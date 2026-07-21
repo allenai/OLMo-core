@@ -22,8 +22,15 @@
 
 set -uo pipefail
 REPO=/accounts/projects/berkeleynlp/prasann/projects/OLMo-core
-SRC=/data/prasann/single_task_ladders_20k
-OUT=/data/prasann/single_task_docchunk_v2
+SRC="${SRC:-/data/prasann/single_task_ladders_20k}"
+# Overridable so a REBUILD lands in a NEW root instead of silently redefining an existing one.
+# The shards under single_task_docchunk_v2/ were tokenized 2026-06-30, i.e. BEFORE
+# abccf2837 ("docchunk: fix FREE-token leak in chunk wrapping + drop titles by default"), so any
+# model trained on them learned with the `Document [N] (Title: ...)` label OUTSIDE the box (global
+# FREE role) while today's eval builds the label INSIDE the chunk -- a train/eval mismatch that
+# reads as a modeling result. Rebuild into e.g. single_task_docchunk_v2fix and re-point the
+# launcher's DOCCHUNK_DATA_ROOT rather than overwriting a path other runs already cite.
+OUT="${OUT:-/data/prasann/single_task_docchunk_v2}"
 CONV=$REPO/src/scripts/data/convert_unified_to_document_landmark.py
 TASKS="${TASKS:-contra nq oolong outlier}"
 echo "=== HOST=$(hostname) TASKS='$TASKS' START=$(date '+%F %T') ==="

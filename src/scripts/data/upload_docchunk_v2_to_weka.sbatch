@@ -16,8 +16,10 @@
 #SBATCH --output=/accounts/projects/berkeleynlp/prasann/projects/OLMo-core/.dcv2up_%x_%j.log
 
 set -uo pipefail
-OUT=/data/prasann/single_task_docchunk_v2
-S3=s3://ai2-llm/checkpoints/prasanns/single_task_docchunk_v2
+# Overridable so a rebuilt root (e.g. single_task_docchunk_v2fix) can be staged without redefining
+# a path that published runs already cite. Keep OUT and S3 pointing at the SAME root name.
+OUT="${OUT:-/data/prasann/single_task_docchunk_v2}"
+S3="${S3:-s3://ai2-llm/checkpoints/prasanns/single_task_docchunk_v2}"
 TASKS="${TASKS:-contra nq oolong outlier rerank}"
 export AWS_PROFILE=S3
 echo "=== HOST=$(hostname) upload TASKS='$TASKS' START=$(date '+%F %T') ==="
@@ -44,7 +46,11 @@ for name in $TASKS; do
   src="$OUT/${name}_dense"; dst="$S3/${name}_dense"
   [ -d "$src" ] || { echo "[$name] MISSING $src -- skip"; continue; }
   echo "=== upload $name -> $dst $(date '+%T') ==="
-  aws s3 sync "$src" "$dst" --exclude "*" --include "token_ids_part_*.npy" --include "labels_mask_*.npy"
+  # metadata.json is included deliberately: the pre-2026-07-06 single_task_docchunk_v2 shards have
+  # NO metadata on weka, which is exactly why their provenance (and the title-leak wrapping they were
+  # built with) could not be established without dating the files.
+  aws s3 sync "$src" "$dst" --exclude "*" --include "token_ids_part_*.npy" \
+    --include "labels_mask_*.npy" --include "metadata.json"
   echo "  sync rc=$? $(date '+%T')"
 done
 

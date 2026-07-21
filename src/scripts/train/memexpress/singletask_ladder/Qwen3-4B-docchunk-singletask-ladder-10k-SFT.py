@@ -163,6 +163,13 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
             BeakerEnvVar(name="STL_SUBSAMPLE", value=repr(SUBSAMPLE_FACTOR))
         )
         beaker_launch_config.env_vars.append(BeakerEnvVar(name="STL_EPOCHS", value=str(EPOCHS)))
+        # DOCCHUNK_DATA_ROOT must be propagated too: the Beaker job REBUILDS this config on-node, so
+        # a root resolved only on the launch host silently falls back to the module default and the
+        # job trains on the WRONG shards while reporting success. This is not hypothetical -- the
+        # default root's outlier shards predate the 2026-07-06 chunk-wrapping fix (abccf2837).
+        beaker_launch_config.env_vars.append(
+            BeakerEnvVar(name="DOCCHUNK_DATA_ROOT", value=DOCCHUNK_DATA_ROOT)
+        )
 
     tokenizer_config = TokenizerConfig.qwen3()
     # EOS-separated instances; qwen3 ties bos==eos, so drop BOS for document-boundary detection.
