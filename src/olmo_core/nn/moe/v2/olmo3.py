@@ -60,7 +60,8 @@ def build_olmo3_moe_config_from_hf_config(
         )
     if config.get("use_peri_ln", False):
         raise NotImplementedError("Olmo3Moe peri-LN is not supported by this factory.")
-    if config.get("rope_scaling") or config.get("rope_parameters"):
+    rope_parameters = config.get("rope_parameters") or config.get("rope_scaling") or {}
+    if rope_parameters and rope_parameters.get("rope_type", "default") != "default":
         raise NotImplementedError("Scaled RoPE is not supported by this stage-one factory.")
     if config.get("attention_bias", False):
         raise NotImplementedError("Biased Olmo3Moe attention is not supported.")
