@@ -63,6 +63,14 @@ class Olmo3MoeConfig(PretrainedConfig):
         use_peri_ln=False,
         **kwargs,
     ):
+        kwargs.setdefault(
+            "auto_map",
+            {
+                "AutoConfig": "configuration_olmo3moe.Olmo3MoeConfig",
+                "AutoModel": "modeling_olmo3moe.Olmo3MoeModel",
+                "AutoModelForCausalLM": "modeling_olmo3moe.Olmo3MoeForCausalLM",
+            },
+        )
         # Newer transformers pass RoPE settings as ``rope_parameters``; fall back to ``rope_scaling``.
         rope_parameters = kwargs.pop("rope_parameters", rope_scaling)
         super().__init__(

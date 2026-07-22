@@ -4,8 +4,9 @@ import torch
 transformers = pytest.importorskip("transformers")
 
 from olmo_core.nn.attention import AttentionBackendName
+from olmo_core.nn.hf.config import _register_olmo3moe_auto_classes
 from olmo_core.nn.moe.v2.hf.configuration_olmo3moe import Olmo3MoeConfig
-from olmo_core.nn.moe.v2.hf.modeling_olmo3moe import Olmo3MoeForCausalLM
+from olmo_core.nn.moe.v2.hf.modeling_olmo3moe import Olmo3MoeForCausalLM, Olmo3MoeModel
 from olmo_core.nn.moe.v2.olmo3 import (
     build_olmo3_moe_config_from_hf_config,
     gather_olmo3_moe_hf_state,
@@ -42,6 +43,14 @@ def test_factory_builds_all_moe_olmo_ddp_model():
     model = native_config.build(init_device="cpu")
     assert model.__class__.__name__ == "OLMoDDPModel"
     assert len(list(model.routed_blocks())) == 2
+
+
+def test_registers_base_model_for_transformers_auto_model():
+    _register_olmo3moe_auto_classes()
+    config = small_config()
+
+    assert config.auto_map["AutoModel"] == "modeling_olmo3moe.Olmo3MoeModel"
+    assert isinstance(transformers.AutoModel.from_config(config), Olmo3MoeModel)
 
 
 def test_factory_rejects_legacy_dense_layer_layout():
