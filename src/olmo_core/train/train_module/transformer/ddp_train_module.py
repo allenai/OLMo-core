@@ -2386,6 +2386,17 @@ class OLMoDDPTrainModule(TrainModule):
         flops_per_token = self.num_flops_per_token(seq_len=batch["input_ids"].shape[1])
         return flops_per_token * global_num_tokens
 
+    def train_microbatch_context(
+        self, micro_batch_idx: int, num_micro_batches: int
+    ) -> contextlib.AbstractContextManager[None]:
+        """Return the runtime-specific gradient synchronization context."""
+        return self._train_microbatch_context(micro_batch_idx, num_micro_batches)
+
+    def finalize_grad_sync(self) -> None:
+        """Finish pending gradient reductions after an accumulation window."""
+        for model in self.model_parts:
+            model.finalize_grad_reduce()
+
     @contextlib.contextmanager
     def _train_microbatch_context(
         self, micro_batch_idx: int, num_micro_batches: int
