@@ -3,6 +3,7 @@ import torch
 
 transformers = pytest.importorskip("transformers")
 
+from olmo_core.config import DType
 from olmo_core.nn.attention import AttentionBackendName
 from olmo_core.nn.moe.v2.hf.configuration_olmo3moe import Olmo3MoeConfig
 from olmo_core.nn.moe.v2.hf.modeling_olmo3moe import Olmo3MoeForCausalLM
@@ -54,7 +55,7 @@ def test_full_hf_state_load_and_gather_roundtrip_without_ep():
     hf_model = Olmo3MoeForCausalLM(config)
     hf_state = {name: value.detach().clone() for name, value in hf_model.state_dict().items()}
     native_config = build_olmo3_moe_config_from_hf_config(
-        config, attention_backend=AttentionBackendName.torch
+        config, dtype=DType.float32, attention_backend=AttentionBackendName.torch
     )
     native_model = native_config.build(init_device="cpu")
 
