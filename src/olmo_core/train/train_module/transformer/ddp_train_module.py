@@ -2255,12 +2255,12 @@ class OLMoDDPTrainModule(TrainModule):
             "labels": None if labels is None else self._debug_tensor_payload(labels),
             "loss": self._debug_tensor_payload(lm_output.loss),
             "ce_loss": self._debug_tensor_payload(lm_output.ce_loss),
-            "z_loss": None
-            if lm_output.z_loss is None
-            else self._debug_tensor_payload(lm_output.z_loss),
-            "logits": None
-            if lm_output.logits is None
-            else self._debug_tensor_payload(lm_output.logits),
+            "z_loss": (
+                None if lm_output.z_loss is None else self._debug_tensor_payload(lm_output.z_loss)
+            ),
+            "logits": (
+                None if lm_output.logits is None else self._debug_tensor_payload(lm_output.logits)
+            ),
         }
         torch.save(payload, self._debug_dump_path("logits", f"mb{micro_batch_idx:03d}"))
 

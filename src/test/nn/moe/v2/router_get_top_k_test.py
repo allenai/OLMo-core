@@ -62,9 +62,7 @@ def test_get_top_k_selects_true_topk(top_k: int):
 
     # Property 3 (WEIGHTS): the multiset of returned weights equals the true
     # top-k weights (order-invariant).
-    torch.testing.assert_close(
-        weights.sort(dim=-1).values, ref_weights.sort(dim=-1).values
-    )
+    torch.testing.assert_close(weights.sort(dim=-1).values, ref_weights.sort(dim=-1).values)
 
 
 def test_get_top_k_is_order_invariant_to_sorted_flag():

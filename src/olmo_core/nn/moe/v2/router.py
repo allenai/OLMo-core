@@ -1,6 +1,16 @@
 import contextlib
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Dict, Iterator, List, Optional, Sequence, Tuple, Union, cast
+from typing import (
+    TYPE_CHECKING,
+    Dict,
+    Iterator,
+    List,
+    Optional,
+    Sequence,
+    Tuple,
+    Union,
+    cast,
+)
 
 import torch
 import torch.distributed as dist
@@ -61,12 +71,16 @@ class MoERouterConfigV2(Config):
     )
     z_loss_weight: Optional[float] = None
     orth_loss_weight: Optional[float] = None
-    restore_weight_scale: bool = False  # if True, multiply the router weights by topK so that the scores have similar scale as dense models.
+    restore_weight_scale: bool = (
+        False  # if True, multiply the router weights by topK so that the scores have similar scale as dense models.
+    )
     expert_weight_scale: Optional[float] = None
-    original_top_k: Optional[
-        int
-    ] = None  # for restoring weight scales to match a model trained with a different top_k
-    use_recompute_fp32_cast: bool = False  # whether to use an OutputDiscardCheckpoint to save the fp32 cast of the router input for recomputation in backward, which can save memory at the cost of extra compute in backward.
+    original_top_k: Optional[int] = (
+        None  # for restoring weight scales to match a model trained with a different top_k
+    )
+    use_recompute_fp32_cast: bool = (
+        False  # whether to use an OutputDiscardCheckpoint to save the fp32 cast of the router input for recomputation in backward, which can save memory at the cost of extra compute in backward.
+    )
     score_correction_bias: bool = False
     n_group: Optional[int] = None
     topk_group: Optional[int] = None
