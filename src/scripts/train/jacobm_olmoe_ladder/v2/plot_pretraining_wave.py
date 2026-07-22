@@ -314,7 +314,7 @@ GEOMETRY_GDN_EV2_ROPE_GATED = Variant(
         RegisteredRun("480m", 8, 8e-4, "sd23pj27"),
         RegisteredRun("810m", 1, 6e-4, "lhwdegc8"),
         RegisteredRun("810m", 2, 5.6e-4, "lxbp2lhf"),
-        RegisteredRun("810m", 4, 4e-4, "gy61ourf"),
+        RegisteredRun("810m", 4, 4e-4, "05i2h85m"),
         RegisteredRun("810m", 8, 4e-4, "pwl3valx"),
         RegisteredRun("1p2b", 1, 4e-4, "yzrd8hnz"),
         RegisteredRun("1p2b", 2, 6e-4, "1kxlcvak"),
@@ -565,7 +565,7 @@ def _load_tail_history(
             keys=HISTORY_FIELDS,
             min_step=min_step,
             max_step=max_step,
-            page_size=max(100_000, max_step - min_step),
+            page_size=1_000,
         )
     ]
     write_tail_history_to_cache(

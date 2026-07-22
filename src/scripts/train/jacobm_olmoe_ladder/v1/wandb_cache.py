@@ -292,7 +292,7 @@ def scan_history_cached(
     refresh_stale_cache: bool = False,
     page_size: int = 1000,
     tail_window_tokens: int | None = None,
-    tail_page_size: int = 100_000,
+    tail_page_size: int = 1_000,
 ) -> list[dict[str, Any]]:
     tokens_key = _tokens_key(keys)
     if not refresh_cache and run.state == "finished":
@@ -331,7 +331,7 @@ def scan_history_cached(
                 keys=keys,
                 min_step=min_step,
                 max_step=max_step,
-                page_size=max(tail_page_size, max_step - min_step),
+                page_size=tail_page_size,
             )
         ]
         write_tail_history_to_cache(

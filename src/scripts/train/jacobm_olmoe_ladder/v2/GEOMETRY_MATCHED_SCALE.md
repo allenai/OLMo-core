@@ -248,8 +248,8 @@ record, including every task ID, is
 | 1.2B | 4 | `3e-4` | 32 | [01KXT0CKPC9NV36GKDXZH5SM17](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXT0CKPC9NV36GKDXZH5SM17) |
 | 1.2B | 8 | `4e-4` | 32 | [01KXT0CQBVT4T414SAZQYT1RAS](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXT0CQBVT4T414SAZQYT1RAS) |
 
-Status at 2026-07-21 20:40 UTC: all 480M and 810M cells plus 1.2B Cx1/Cx2/Cx4
-are finished, for 11/12 completed cells. Strict final-250M CE is `2.119848`
+Status at 2026-07-22 16:25 UTC: 11/12 original cells are finished. Strict
+final-250M CE is `2.119848`
 for 810M Cx8 and `2.107767` for the newly completed 1.2B Cx4. The user requeued the
 [Cx8 resume](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXW463APF8FT6RV8T8XZ2D6Q)
 in place. It resumed from the same checkpoint directory, reached step 17,644,
@@ -276,7 +276,7 @@ must explicitly watch steps 17,000--18,000, especially total gradient norm,
 step skips, and loss, because every original trajectory collapsed in that
 window. Do not substitute this run into the formal finished-only plot until it
 has crossed that window cleanly and ultimately finished. At this refresh it is
-at 69.90B / 185.76B tokens (37.6%), step 88,879. It crossed the original
+at 124.72B / 185.76B tokens (67.1%), step 158,589. It crossed the original
 step-17,000--18,000 collapse window cleanly and continues to be monitored
 through completion.
 
@@ -284,12 +284,11 @@ The gated-attention wave uses the identical GPU, EP, microbatch,
 checkpointing, and evaluator-free layout, with the same transferred
 wide-integration LR in every cell. It is urgent unallocated work on Holmes,
 pinned to commit `1a85227bdb8baeab2ad05555935aae78938bb0cd` for the initial
-submissions. At the 2026-07-21 20:40 UTC refresh, all 480M cells, all 810M
-cells, and 1.2B Cx1/Cx4/Cx8 are finished, for 11/12 completed cells. Strict
+submissions. At the 2026-07-22 16:25 UTC refresh, all 12 cells are finished. Strict
 final-250M CE is `2.191179` for 810M Cx4, `2.114516` for 810M Cx8,
-`2.273007` for 1.2B Cx1, `2.108263` for 1.2B Cx4, and `2.037147` for 1.2B
-Cx8. The 1.2B Cx2 continuation resumed normally from diagnostic `step21500`
-and is at 37.17B / 46.86B tokens (79.3%), step 94,539.
+`2.273007` for 1.2B Cx1, `2.188236` for 1.2B Cx2, `2.108263` for 1.2B Cx4,
+and `2.037147` for 1.2B Cx8. The 1.2B Cx2 continuation resumed normally from
+diagnostic `step21500` and finished cleanly.
 All four 1.2B cells initially failed before training
 because the common 6% active-parameter guard rejected their audited 6.1155%
 gated delta. The production entrypoint now uses a gated-only 6.2% cap while
@@ -373,13 +372,18 @@ Checkpointing
 retains rolling ephemeral saves every 500 steps plus the final checkpoint;
 all in-loop and on-finish evaluators are disabled for post-training backfill.
 
-Status at 2026-07-21 20:40 UTC: 480M Cx1/Cx2 and 810M Cx1 are finished, eight
-cells are running, and 1.2B Cx2 failed. The three finished strict final-250M
-CEs are `2.506239`, `2.402917`, and `2.368164`, respectively. The failed 1.2B
-Cx2 worker reached step 5,420, where `OLMoDDPOptimizer` asserted on a
-non-finite total gradient norm. Its later CUDA device assertion and NCCL
-watchdog output are secondary distributed-teardown failures. The run was not
-OOMing and saved a durable `step5000` checkpoint; no retry has been submitted.
+Status at 2026-07-22 16:25 UTC: seven cells are finished, four are running,
+and 1.2B Cx2 is failed. The finished strict final-250M CEs are `2.506239`,
+`2.402917`, `2.307792`, and `2.233177` for 480M Cx1/2/4/8; `2.368164` and
+`2.266516` for 810M Cx1/2; and `2.270124` for 1.2B Cx1. The 810M Cx4/Cx8 and
+1.2B Cx4/Cx8 cells are running at 39.23B, 52.58B, 54.79B, and 88.53B tokens,
+respectively. The failed 1.2B Cx2 worker reached step 5,420, where
+`OLMoDDPOptimizer` asserted on a non-finite total gradient norm. It auto-resumed
+from durable `step5000` and hit the same assertion again at step 6,582. Its
+later CUDA device assertion and NCCL watchdog output are secondary distributed
+teardown failures; this was not an OOM. The 810M Cx4 cell had one instance of
+the same assertion at step 29,107, then auto-resumed successfully and is now
+well past that point.
 
 The first 12 allocated work items were canceled before any execution job
 reached `started`, and no checkpoint directory was created. Their IDs are

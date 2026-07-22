@@ -40,15 +40,15 @@ plus NoPE with elementwise attention gating, along with the gated-RoPE
 interaction control.
 
 ```bash
-uv run --with wandb --with matplotlib python \
+uv run --isolated --with 'wandb==0.21.4' --with matplotlib python \
   src/scripts/train/jacobm_olmoe_ladder/v2/plot_pretraining_wave.py \
   --wave hybrid_gdn_ev1 --refresh-stale-cache
 
-uv run --with wandb --with matplotlib python \
+uv run --isolated --with 'wandb==0.21.4' --with matplotlib python \
   src/scripts/train/jacobm_olmoe_ladder/v2/plot_pretraining_wave.py \
   --wave geometry_gdn_ev2_nope_gated --refresh-stale-cache
 
-uv run --with wandb --with matplotlib python \
+uv run --isolated --with 'wandb==0.21.4' --with matplotlib python \
   src/scripts/train/jacobm_olmoe_ladder/v2/plot_pretraining_wave.py \
   --wave geometry_gdn_ev2_rope_gated --refresh-stale-cache
 ```
@@ -65,6 +65,10 @@ their LRs were transferred from wide rather than optimized for hybrid. The
 shared JSON/Markdown result table records both modes. W&B histories reuse the
 migrated v1 cache; `--include-running` remains available for diagnostic tables
 but running points never enter formal selection.
+
+Use the analysis-only W&B `0.21.4` pin shown above. W&B `0.28` materializes a
+run's full history before applying the requested tail range, which makes a
+finished-only refresh unnecessarily slow for the 100K--200K-step scale runs.
 
 The canonical window is fixed at 250M tokens. Regeneration verifies that each
 W&B history actually spans that complete interval and fails loudly rather than

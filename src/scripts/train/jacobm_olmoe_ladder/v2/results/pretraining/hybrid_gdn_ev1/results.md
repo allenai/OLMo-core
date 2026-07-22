@@ -1,6 +1,6 @@
 # Active hybrid GDN intervention
 
-Generated: `2026-07-21T20:26:11.146641+00:00`
+Generated: `2026-07-22T16:19:02.721643+00:00`
 
 Selection metric: final `250M`-token mean training CE. Only finished runs are eligible.
 The optimal-LR summary includes only bracketed 275M sweeps with a valid quadratic fit.
@@ -26,7 +26,7 @@ Fitted LR minima in the 275M U-plot are visual aids and are never used to select
 | 1p2b | Cx1 | fixed-LR transfer | finished | wide_integration: 2.273062 @ 0.0004 | 2.253953 (0.0004) | wide_integration: -0.019109 |
 | 1p2b | Cx2 | fixed-LR transfer | finished | wide_integration: 2.178332 @ 0.0006 | 2.163788 (0.0006) | wide_integration: -0.014545 |
 | 1p2b | Cx4 | fixed-LR transfer | finished | wide_integration: 2.094219 @ 0.0003 | 2.081180 (0.0003) | wide_integration: -0.013039 |
-| 1p2b | Cx8 | fixed-LR transfer | pending | wide_integration: 2.022641 @ 0.0004 | — | wide_integration: — |
+| 1p2b | Cx8 | fixed-LR transfer | finished | wide_integration: 2.022641 @ 0.0004 | 2.016369 (0.0004) | wide_integration: -0.006272 |
 
 ## Runs
 
@@ -84,4 +84,5 @@ Fitted LR minima in the 275M U-plot are visual aids and are never used to select
 | 1p2b | wide integration (SWA) | 2 | 0.0006 | finished | 42.835 | 2.178332 | — | [jfwntmwm](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/jfwntmwm) |
 | 1p2b | hybrid (GDN, expand_v=1) | 4 | 0.0003 | finished | 90.762 | 2.081180 | — | [vc3c6gj6](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/vc3c6gj6) |
 | 1p2b | wide integration (SWA) | 4 | 0.0003 | finished | 85.670 | 2.094219 | — | [u7ab1tpb](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/u7ab1tpb) |
+| 1p2b | hybrid (GDN, expand_v=1) | 8 | 0.0004 | finished | 181.524 | 2.016369 | 0 reset(s); 1 duplicate token sample(s) removed | [7eemhu7g](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/7eemhu7g) |
 | 1p2b | wide integration (SWA) | 8 | 0.0004 | finished | 171.340 | 2.022641 | — | [bqjzmiqi](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/bqjzmiqi) |

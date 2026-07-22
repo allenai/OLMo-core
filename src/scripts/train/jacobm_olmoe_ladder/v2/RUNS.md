@@ -4,7 +4,7 @@ Record post-migration experiment waves here. Per-run rows must include Beaker
 job IDs and W&B IDs once they exist. Detailed migration-era DDP jobs remain in
 [`../v1/DDP_RUNS.md`](../v1/DDP_RUNS.md).
 
-## Live status snapshot (2026-07-21 20:40 UTC)
+## Live status snapshot (2026-07-22 16:25 UTC)
 
 This is the current source of truth for active V2 work. The detailed sections
 below retain the full launch and retry history.
@@ -18,16 +18,16 @@ below retain the full launch and retry history.
 | pretraining | first hybrid 1.2B Cx1 | finished | final-250M CE `2.253953`; validation finished | [1d24xfx5](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/1d24xfx5) |
 | pretraining | first hybrid 1.2B Cx2 | finished | final-250M CE `2.163788` | [4k1bh4k2](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/4k1bh4k2) |
 | pretraining | first hybrid 1.2B Cx4 | finished | final-250M CE `2.081180` | [vc3c6gj6](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/vc3c6gj6) |
-| pretraining | first hybrid 1.2B Cx8 | running | 177.87B / 181.52B tokens (98.0%); step 226,169 / 230,820 | [7eemhu7g](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/7eemhu7g) |
+| pretraining | first hybrid 1.2B Cx8 | finished | final-250M CE `2.016369`; all 16 scale cells complete | [7eemhu7g](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/7eemhu7g) |
 | pretraining | aligned geometry + NoPE 275M sweep | finished | 16/16; observed best LR is `8e-4`, `1.6e-3`, `8e-4`, `8e-4` at Cx1/2/4/8 | [results](results/pretraining/geometry_gdn_ev2_nope/results.md) |
 | pretraining | aligned geometry + NoPE + gated attention 275M sweep | finished | 16/16; observed best LR is `8e-4`, `1.6e-3`, `8e-4`, `8e-4` at Cx1/2/4/8 | [results](results/pretraining/geometry_gdn_ev2_nope_gated/results.md) |
 | pretraining | aligned geometry + RoPE + gated attention 275M sweep | finished | 16/16; observed best LR is `1.6e-3`, `1.6e-3`, `8e-4`, `1.6e-3` at Cx1/2/4/8 | [results](results/pretraining/geometry_gdn_ev2_rope_gated/results.md) |
-| pretraining | larger aligned geometry + NoPE | 11 finished / fresh Cx8 reproduction running | new Cx8 is at 69.90B / 185.76B (37.6%); it crossed the original step-17k--18k collapse window cleanly | [Beaker](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY0CM4HKG0R4H352N2SQV6P1) |
-| pretraining | larger aligned geometry + NoPE + gated attention | 11 finished / Cx2 running | Cx2 resumed from diagnostic `step21500` and is at 37.17B / 46.86B (79.3%); finished Cx8 strict final-250M CE `2.037147` | [results](results/pretraining/geometry_gdn_ev2_nope_gated/results.md) |
-| pretraining | larger aligned geometry + RoPE + gated attention | 3 finished / 8 running / 1 failed | 480M Cx1/Cx2 and 810M Cx1 finished; 1.2B Cx2 failed at step 5,420 on a non-finite total gradient after saving `step5000` | [results](results/pretraining/geometry_gdn_ev2_rope_gated/results.md) |
+| pretraining | larger aligned geometry + NoPE | 11 finished / fresh Cx8 reproduction running | 124.72B / 185.76B tokens (67.1%); crossed the original collapse window cleanly | [Beaker](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY0CM4HKG0R4H352N2SQV6P1) |
+| pretraining | larger aligned geometry + NoPE + gated attention | finished | 12/12; newly finished 1.2B Cx2 strict final-250M CE `2.188236` | [results](results/pretraining/geometry_gdn_ev2_nope_gated/results.md) |
+| pretraining | larger aligned geometry + RoPE + gated attention | 7 finished / 4 running / 1 failed | running: 810M Cx4/Cx8 and 1.2B Cx4/Cx8; 1.2B Cx2 failed twice on non-finite total gradients at steps 5,420 and 6,582 | [results](results/pretraining/geometry_gdn_ev2_rope_gated/results.md) |
 | midtraining | first hybrid 275M Cx8 | finished | 100B; final checkpoint `step95368`; validation finished | [1keo2hz6](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/1keo2hz6) |
 | midtraining | first hybrid 480M Cx8 | finished | 100.001B; final checkpoint `step95368`; validation finished | [mnp9rv5l](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/mnp9rv5l) |
-| validation | V2 post-training backfills | registered targets complete; gated-RoPE newly eligible | 91/91 registered targets finished with 498 metrics each; 19 finished gated-RoPE checkpoints not yet queued (16 at 275M plus 3 scale points) | [results](results/validation/hybrid_full.md) |
+| validation | V2 post-training backfills | registered targets complete; new checkpoints eligible | 91/91 registered targets finished with 498 metrics each; 25 newly finished checkpoints are not yet queued | [results](results/validation/hybrid_full.md) |
 
 The formal pretraining results and plots use finished runs only and enforce a
 complete final-250M-token history. The gated-RoPE sweep is now complete. Its
@@ -40,17 +40,19 @@ All six corrected Cx2 MB3 validation retries finished in
 [01KY09D3D872K0R03NHF5MGYD4](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY09D3D872K0R03NHF5MGYD4).
 The 32 NoPE/gated 275M backfills and both first-hybrid midtraining backfills
 also finished. The consolidated export now contains 91 complete targets with
-498 metrics each. The 16 finished 275M gated-RoPE checkpoints and three newly
-finished gated-RoPE scale checkpoints are not in that manifest; those 19
-checkpoints need a future validation backfill.
+498 metrics each. The current backlog is 25 checkpoints: 16 finished 275M
+gated-RoPE points, seven finished gated-RoPE scale points, first-hybrid 1.2B
+Cx8, and gated-NoPE 1.2B Cx2.
 
-The newly finished larger gated-RoPE points have strict final-250M CEs of
-`2.506239` (480M Cx1), `2.402917` (480M Cx2), and `2.368164` (810M Cx1).
+The seven finished larger gated-RoPE points have strict final-250M CEs of
+`2.506239`, `2.402917`, `2.307792`, and `2.233177` for 480M Cx1/2/4/8;
+`2.368164` and `2.266516` for 810M Cx1/2; and `2.270124` for 1.2B Cx1.
 The 1.2B Cx2 failure is a training-path numerical failure, not an OOM: the
-optimizer asserted on a non-finite total gradient at step 5,420. The later
-CUDA device assertion and NCCL watchdog messages occurred during distributed
-teardown. A durable `step5000` checkpoint exists; no automatic retry was
-submitted during this status refresh.
+optimizer asserted on a non-finite total gradient at step 5,420, auto-resumed
+from durable `step5000`, and hit the same assertion again at step 6,582. The
+later CUDA device assertion and NCCL watchdog messages are distributed
+teardown effects. The 810M Cx4 cell had one identical assertion at step 29,107,
+then auto-resumed and has continued cleanly past 39.2B tokens.
 
 ## 275M active hybrid GDN (`expand_v=1`)
 
@@ -230,7 +232,7 @@ and data multiple.
 | 810M | 4 | `4e-4` | 524,288 | 8 | EP1 | 4 | 2 | [eval-enabled](https://beaker.org/ex/01KXKTT4G4QT56NGHKWSVXWEX6) / [no-eval resume](https://beaker.org/ex/01KXMPNYN9J377PP8F8YZ763NJ) | [eval-enabled](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/adi3mjy7) / [no-eval resume](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/bvlzu2c9) | running, 55.31B / 58.477B tokens (94.6%) |
 | 810M | 8 | `4e-4` | 786,432 | 8 | EP1 | 6 | 2 | [eval-enabled](https://beaker.org/ex/01KXKTT4KPQRMJ0E1DF5GPS26A) / [no-eval resume](https://beaker.org/ex/01KXMPNYRK51C80XFNZNAP337M) | [eval-enabled](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/sucwb1sc) / [no-eval resume](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/k1d1td9b) | running, 65.44B / 116.954B tokens (56.0%) |
 | 1.2B | 4 | `3e-4` | 524,288 | 8 | EP8 / `sync_1d` | 4 / 4 | 2 | [failed](https://beaker.org/ex/01KXKTT4R8MANSKM43DEJB02GC) / [eval-enabled retry](https://beaker.org/ex/01KXKY6SXD7DFDDJDGK83NGQDF) / [no-eval resume](https://beaker.org/ex/01KXMPNYVY6A2RMTNW2E27H9GR) | [failed](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/f9wybz72) / [eval-enabled retry](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/9c1fcuto) / [no-eval resume](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/h5ft97x1) | running, 29.29B / 90.754B tokens (32.3%) |
-| 1.2B | 8 | `4e-4` | 786,432 | 8 | EP8 / `sync_1d` | 6 / 6 | 2 | [failed](https://beaker.org/ex/01KXKTT4W01BXNZ5WRD40BT2QG) / [eval-enabled retry](https://beaker.org/ex/01KXKY6T9QR8PQDWRAN4Y76CVQ) / [no-eval resume](https://beaker.org/ex/01KXMPNYZ7Q1J3BXXD47KET92X) | [failed](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/n5v3vewn) / [eval-enabled retry](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/48b58zfx) / [no-eval resume](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/zyeib8rb) | running, 35.29B / 181.508B tokens (19.4%) |
+| 1.2B | 8 | `4e-4` | 786,432 | 8 | EP8 / `sync_1d` | 6 / 6 | 2 | [failed](https://beaker.org/ex/01KXKTT4W01BXNZ5WRD40BT2QG) / [eval-enabled retry](https://beaker.org/ex/01KXKY6T9QR8PQDWRAN4Y76CVQ) / [no-eval resume](https://beaker.org/ex/01KXMPNYZ7Q1J3BXXD47KET92X) | [final segment](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/7eemhu7g) | finished, final-250M CE `2.016369` |
 
 ### 480M Cx4/Cx8 completion runs
 
@@ -633,8 +635,7 @@ LRs, Beaker IDs, ETAs, and estimated GPU-hours are in
 commit `fcf1c1b8828a3bddd0bad477a5c4055e63b0275f`, retain rolling ephemeral
 checkpoints every 500 steps, and disable in-loop/on-finish evaluators.
 
-Status at 2026-07-21 20:40 UTC: all 480M and 810M cells plus 1.2B Cx1/Cx2/Cx4
-are finished, for 11/12 completed cells. The 810M Cx8 has strict final-250M CE
+Status at 2026-07-22 16:25 UTC: all 12 cells are finished. The 810M Cx8 has strict final-250M CE
 `2.119848`, versus `2.104939` for wide integration and `2.095585` for the
 first hybrid. The 1.2B Cx4 strict final-250M CE is `2.107767`. The
 user-requeued 1.2B Cx8 attempt resumed from the existing
@@ -646,19 +647,18 @@ NaN on every rank. This is not an isolated tensor or one safely skippable step.
 For exact LR comparability, a new from-scratch reproduction with the identical
 32-GPU/EP8/MB3 layout and a distinct checkpoint directory is running in
 [01KY0CM4HKG0R4H352N2SQV6P1](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY0CM4HKG0R4H352N2SQV6P1).
-At this refresh it has reached 69.90B / 185.76B tokens (37.6%), step 88,879.
+At this refresh it has reached 124.72B / 185.76B tokens (67.1%), step 158,589.
 It crossed the original step-17,000--18,000 collapse window cleanly and
 continues to be monitored through completion.
 
 The equivalent larger NoPE-plus-gated-attention launcher and complete 12-cell
 manifest were structurally and count validated, then submitted on 2026-07-18
 after the completed 275M gated sweep improved on ungated NoPE at all four Cx.
-At the 2026-07-21 20:40 UTC refresh, all 480M cells, all 810M cells, and 1.2B
-Cx1/Cx4/Cx8 are finished, for 11/12 completed cells. Strict final-250M CE is
-`2.191179` for 810M Cx4, `2.114516` for 810M Cx8, `2.273007` for 1.2B Cx1,
-`2.108263` for 1.2B Cx4, and `2.037147` for 1.2B Cx8. The 1.2B Cx2
-continuation resumed from diagnostic `step21500` and is at 37.17B / 46.86B
-tokens (79.3%), step 94,539. All four 1.2B cells were initially
+At the 2026-07-22 16:25 UTC refresh, all 12 cells are finished. Strict
+final-250M CE is `2.191179` for 810M Cx4, `2.114516` for 810M Cx8,
+`2.273007` for 1.2B Cx1, `2.188236` for 1.2B Cx2, `2.108263` for 1.2B Cx4,
+and `2.037147` for 1.2B Cx8. The 1.2B Cx2 continuation resumed from diagnostic
+`step21500` and finished cleanly. All four 1.2B cells were initially
 rejected before training by the shared 6% active-parameter-delta guard: their
 audited gated delta is 6.1155%. The guard now permits up to 6.2% only for
 gated variants while leaving the 6% limit unchanged for ungated models. The
