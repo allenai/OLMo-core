@@ -13,6 +13,7 @@ from .router import (
     MoERouterType,
 )
 
+
 def replay_routing(module, per_layer_indices):
     """Replay externally supplied selections on MoE-v2 routed-expert routers."""
     from .v2.router import replay_routing as replay_routing_v2

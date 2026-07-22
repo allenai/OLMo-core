@@ -216,7 +216,9 @@ def load_olmo3_moe_hf_state(
         raise RuntimeError(f"Converted Olmo3Moe state is missing parameters: {sorted(missing)}")
     unexpected = set(native_state) - set(parameters)
     if unexpected:
-        raise RuntimeError(f"Converted Olmo3Moe state has unexpected parameters: {sorted(unexpected)}")
+        raise RuntimeError(
+            f"Converted Olmo3Moe state has unexpected parameters: {sorted(unexpected)}"
+        )
 
     with torch.no_grad():
         for name, target in parameters.items():
