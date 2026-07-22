@@ -46,12 +46,14 @@ from olmo_core.data import (  # noqa: E402
     InstanceFilterConfig,
     NumpyDataLoaderConfig,
     NumpyFSLDatasetConfig,
+    TokenizerConfig,
 )
 from olmo_core.distributed.parallel import DataParallelType  # noqa: E402
 from olmo_core.distributed.parallel.pipeline_parallel import (  # noqa: E402
     PipelineP2PBackend,
     PipelineScheduleType,
 )
+from olmo_core.internal.common import get_work_dir  # noqa: E402
 from olmo_core.internal.experiment import (  # noqa: E402
     CliContext,
     CommonComponents,
@@ -715,15 +717,38 @@ def build_data_components(
     return DataComponents(dataset=dataset_config, data_loader=data_loader_config)
 
 
+def _build_common_components(
+    cli_context: CliContext,
+    *,
+    tokenizer: TokenizerConfig,
+    global_batch_size: int,
+    max_sequence_length: int,
+    **_,
+) -> CommonComponents:
+    # Resolve storage locally under WORK_DIR instead of the default cluster-based Beaker lookup,
+    # so the script only needs a run name (no cluster arg) and no Beaker access at config-build
+    # time. build_trainer_config sets the actual save_folder under WORK_DIR anyway.
+    return CommonComponents(
+        run_name=cli_context.run_name,
+        root_dir=WORK_DIR,
+        work_dir=get_work_dir(WORK_DIR),
+        save_folder=f"{WORK_DIR}/checkpoints/{cli_context.run_name}",
+        launch=None,
+        tokenizer=tokenizer,
+        max_sequence_length=max_sequence_length,
+        global_batch_size=global_batch_size,
+    )
+
+
 if __name__ == "__main__":
     # Generic-launcher style: train directly under torchrun (or the generic Beaker launcher,
-    # `python -m olmo_core.launch.beaker ... -- OLMoE3-dev-t001.py RUN_NAME CLUSTER`). No bespoke
+    # `python -m olmo_core.launch.beaker ... -- OLMoE3-dev-t001.py RUN_NAME`). No bespoke
     # launch/subcommand dispatch — the launcher handles Beaker submission and torchrun wrapping.
-    if len(sys.argv) < 3:
-        print(f"Usage: torchrun ... {sys.argv[0]} RUN_NAME CLUSTER [OVERRIDES...]")
+    if len(sys.argv) < 2:
+        print(f"Usage: torchrun ... {sys.argv[0]} RUN_NAME [OVERRIDES...]")
         sys.exit(1)
 
-    run_name, cluster, *overrides = sys.argv[1:]
+    run_name, *overrides = sys.argv[1:]
 
     prepare_training_environment()
     try:
@@ -731,11 +756,12 @@ if __name__ == "__main__":
             script=sys.argv[0],
             cmd=SubCmd.train,
             run_name=run_name,
-            cluster=cluster,
+            cluster="",
             overrides=list(overrides),
         )
         config = build_config(
             cli_context,
+            common_config_builder=_build_common_components,
             global_batch_size=GLOBAL_BATCH_SIZE,
             max_sequence_length=SEQUENCE_LENGTH,
             data_config_builder=build_data_components,
