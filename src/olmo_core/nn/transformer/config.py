@@ -1655,6 +1655,7 @@ class TransformerConfig(ModelConfig):
         compressive_gqa_grouped: bool = False,
         nonselected_landmark_mass: Optional[float] = None,
         group_landmark_selection: Optional[str] = None,
+        gate_temperature: Optional[bool] = None,
         shared_vector_landmark: bool = False,
         vec_dim: Optional[int] = None,
         sparse_landmark: bool = False,
@@ -1793,6 +1794,10 @@ class TransformerConfig(ModelConfig):
                 "'group_landmark_selection' is only valid with fast_compressive_landmark, "
                 "compressive_gqa_grouped, or document_compressive attention."
             )
+        if gate_temperature is not None and not fast_compressive_landmark:
+            raise OLMoConfigurationError(
+                "'gate_temperature' is only valid with fast_compressive_landmark attention."
+            )
         if vec_dim is not None and not uses_shared_vector_landmark:
             raise OLMoConfigurationError(
                 "'vec_dim' is only valid with shared_vector_landmark attention."
@@ -1924,6 +1929,7 @@ class TransformerConfig(ModelConfig):
                 group_landmark_selection=(
                     group_landmark_selection if uses_compressive_landmark else None
                 ),
+                gate_temperature=(gate_temperature if fast_compressive_landmark else None),
                 vec_dim=(vec_dim if uses_shared_vector_landmark else None),
                 cross_doc_mode=(
                     cross_doc_mode
