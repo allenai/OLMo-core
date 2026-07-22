@@ -434,7 +434,7 @@ class MoERouterV2(nn.Module):
         indices = self.replay_expert_indices
         if indices.shape[:-1] != reference.shape[:-1]:
             raise ValueError(
-                f"Replay indices leading shape {tuple(indices.shape[:-1])} does not match "
+                f"Replay indices leading dims {tuple(indices.shape[:-1])} do not match "
                 f"router input shape {tuple(reference.shape[:-1])}."
             )
         return indices.to(device=reference.device)
