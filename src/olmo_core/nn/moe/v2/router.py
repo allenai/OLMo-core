@@ -421,7 +421,7 @@ class MoERouterV2(nn.Module):
             max_index = int(expert_indices.max().item())
             if min_index < 0 or max_index >= self.num_experts:
                 raise ValueError(
-                    f"Replay indices must be in [0, {self.num_experts}), got "
+                    f"Replay indices out of range [0, {self.num_experts}), got "
                     f"min={min_index}, max={max_index}."
                 )
         self.replay_expert_indices = expert_indices.to(dtype=torch.long)
@@ -889,7 +889,7 @@ def replay_routing(
 
     if len(routers) != len(per_layer_indices):
         raise ValueError(
-            f"Received {len(per_layer_indices)} route tensors for "
+            f"Received {len(per_layer_indices)} index tensors for "
             f"{len(routers)} routed-expert routers."
         )
 
