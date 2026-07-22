@@ -153,8 +153,15 @@ def test_replay_topk_softmax_gating_path():
 
 def _two_router_module() -> nn.Module:
     holder = nn.Module()
-    holder.r0 = _build_router()
-    holder.r1 = _build_router()
+    holder.layer0 = nn.Module()
+    holder.layer0.routed_experts_router = _build_router()
+    holder.layer0.shared_experts_router = _build_router()
+    holder.layer1 = nn.Module()
+    holder.layer1.routed_experts_router = _build_router()
+    # Keep short aliases for assertions while discovery follows the model's
+    # explicit routed-expert ownership.
+    holder.r0 = holder.layer0.routed_experts_router
+    holder.r1 = holder.layer1.routed_experts_router
     return holder
 
 
@@ -173,6 +180,7 @@ def test_replay_routing_context_manager_arms_and_clears():
 
     assert holder.r0.replay_expert_indices is None
     assert holder.r1.replay_expert_indices is None
+    assert holder.layer0.shared_experts_router.replay_expert_indices is None
 
 
 def test_replay_routing_clears_on_exception():
@@ -185,6 +193,7 @@ def test_replay_routing_clears_on_exception():
 
     assert holder.r0.replay_expert_indices is None
     assert holder.r1.replay_expert_indices is None
+    assert holder.layer0.shared_experts_router.replay_expert_indices is None
 
 
 def test_replay_routing_clears_on_mid_arm_failure():
@@ -199,6 +208,7 @@ def test_replay_routing_clears_on_mid_arm_failure():
 
     assert holder.r0.replay_expert_indices is None
     assert holder.r1.replay_expert_indices is None
+    assert holder.layer0.shared_experts_router.replay_expert_indices is None
 
 
 def test_replay_routing_count_mismatch():
