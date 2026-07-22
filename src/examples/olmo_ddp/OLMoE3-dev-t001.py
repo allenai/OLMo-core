@@ -36,7 +36,6 @@ USE_NV_PROFILE = True
 if not USE_NV_PROFILE:
     os.environ["NVTX_DISABLE"] = "1"
 
-from functools import partial  # noqa: E402
 from typing import cast  # noqa: E402
 
 import torch  # noqa: E402
@@ -54,11 +53,13 @@ from olmo_core.distributed.parallel.pipeline_parallel import (  # noqa: E402
     PipelineScheduleType,
 )
 from olmo_core.internal.experiment import (  # noqa: E402
+    CliContext,
     CommonComponents,
     DataComponents,
     ExperimentConfig,
+    SubCmd,
     build_config,
-    main,
+    train,
 )
 from olmo_core.nn.lm_head import LMLossImplementation  # noqa: E402
 from olmo_core.nn.moe import (  # noqa: E402
@@ -84,7 +85,12 @@ from olmo_core.optim.scheduler import (  # noqa: E402
     ComposableSchedulerStageType,
     OverrideDecay,
 )
-from olmo_core.train import Duration, TrainerConfig  # noqa: E402
+from olmo_core.train import (  # noqa: E402
+    Duration,
+    TrainerConfig,
+    prepare_training_environment,
+    teardown_training_environment,
+)
 from olmo_core.train.callbacks import WandBCallback  # noqa: E402
 from olmo_core.train.callbacks import (  # noqa: E402
     CheckpointerCallback,
@@ -710,20 +716,37 @@ def build_data_components(
 
 
 if __name__ == "__main__":
-    config_builder = partial(
-        build_config,
-        global_batch_size=GLOBAL_BATCH_SIZE,
-        max_sequence_length=SEQUENCE_LENGTH,
-        data_config_builder=build_data_components,
-        model_config_builder=build_model_config,
-        train_module_config_builder=build_train_module_config,
-        trainer_config_builder=build_trainer_config,
-        flight_recorder=True,
-        include_instance_filter=True,
-        include_default_evals=False,
-        finalize_config=finalize_config,
-    )
+    # Generic-launcher style: train directly under torchrun (or the generic Beaker launcher,
+    # `python -m olmo_core.launch.beaker ... -- OLMoE3-dev-t001.py RUN_NAME CLUSTER`). No bespoke
+    # launch/subcommand dispatch — the launcher handles Beaker submission and torchrun wrapping.
+    if len(sys.argv) < 3:
+        print(f"Usage: torchrun ... {sys.argv[0]} RUN_NAME CLUSTER [OVERRIDES...]")
+        sys.exit(1)
 
-    main(
-        config_builder=config_builder,
-    )
+    run_name, cluster, *overrides = sys.argv[1:]
+
+    prepare_training_environment()
+    try:
+        cli_context = CliContext(
+            script=sys.argv[0],
+            cmd=SubCmd.train,
+            run_name=run_name,
+            cluster=cluster,
+            overrides=list(overrides),
+        )
+        config = build_config(
+            cli_context,
+            global_batch_size=GLOBAL_BATCH_SIZE,
+            max_sequence_length=SEQUENCE_LENGTH,
+            data_config_builder=build_data_components,
+            model_config_builder=build_model_config,
+            train_module_config_builder=build_train_module_config,
+            trainer_config_builder=build_trainer_config,
+            flight_recorder=True,
+            include_instance_filter=True,
+            include_default_evals=False,
+            finalize_config=finalize_config,
+        )
+        train(config)
+    finally:
+        teardown_training_environment()
