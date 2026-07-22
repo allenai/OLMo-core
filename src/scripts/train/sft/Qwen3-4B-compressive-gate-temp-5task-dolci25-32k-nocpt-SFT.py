@@ -1,11 +1,15 @@
 """
 32k-scale, context-parallel (Ulysses degree 8) Beaker/gantry SFT of the Qwen3-4B
-**FAST-COMPRESSIVE-LANDMARK** CPT model on a MIX of 5 long-context tasks (contradiction, nq, oolong,
-rerank, outlier), with the new **per-layer learnable gate temperature** enabled
-(``gate_temperature=True``, branch ``amandab/gate-softmax-temp``).
+**FAST-COMPRESSIVE-LANDMARK** CPT model on the SAME 75/25 blend used by the block-size sweep
+(``Qwen3-4B-compressive-block{16,32,64,128}-5task-dolci25-32k-nocpt-SFT.py``): 75% the 5-task mix
+(contradiction, nq, oolong, rerank, outlier) / 25% ``allenai/Dolci-Instruct-SFT``, with the new
+**per-layer learnable gate temperature** enabled (``gate_temperature=True``, branch
+``amandab/gate-softmax-temp``).
 
-This is an exact fork of ``Qwen3-4B-compressive-5task-32k-nocpt-SFT.py`` (same base checkpoint, data
-mix, budget, and optimizer settings) with exactly two differences, both required by the new feature:
+This is a fork of ``Qwen3-4B-compressive-block64-5task-dolci25-32k-nocpt-SFT.py``-style mixing (block
+64 / ``mem_freq=63``, matching the plain ``fast_compressive_landmark`` baseline this feature is being
+compared against) with three differences from that family, all required by the new feature or by
+using the newer nq pipeline:
 
   1. Model: ``gate_temperature=True`` adds a log-parameterized per-layer scalar
      (``log_gate_temp``) on ``FastCompressiveLandmarkAttention``'s cross-block gate softmax, applied
@@ -23,14 +27,20 @@ mix, budget, and optimizer settings) with exactly two differences, both required
      leaves it at its (no-op) initialized value, exactly the precedent in
      ``Qwen3-4B-base-shared-vector-landmark-dolma3longmino.py`` for the shared-vector landmark params.
 
+  3. Data: the 5-task group's ``nq`` source is ``single_task_ladders_p10/nq`` (10% hard negatives +
+     CE filter -- the standing directive), NOT the older ``cptmix_data_ladder40k/nq`` the block-size
+     sweep scripts use (those predate the nq fix). Everything else in the 5-task group -- roots,
+     internal weighting (contra 2x / rerank 1.5x / outlier 1.5x / nq 1x / oolong 1x), and the 75/25
+     top-level blend against Dolci-Instruct-SFT -- matches the block-size sweep exactly.
+
 Not yet done for this run (deliberately, to keep this a clean first comparison against the existing
 compressive baseline): no separate optimizer group / LR for ``log_gate_temp`` (it shares the default
 group; ``weight_decay=0.0`` for the whole run anyway, so no decay pressure on it either way).
 
-    PYTHONPATH=src python src/scripts/train/sft/Qwen3-4B-compressive-gate-temp-5task-32k-nocpt-SFT.py \\
-        dry_run q4b-comp-gate-temp-5task-32k
-    PYTHONPATH=src python src/scripts/train/sft/Qwen3-4B-compressive-gate-temp-5task-32k-nocpt-SFT.py \\
-        launch  q4b-comp-gate-temp-5task-32k ai2/jupiter --launch.num_nodes=2
+    PYTHONPATH=src python src/scripts/train/sft/Qwen3-4B-compressive-gate-temp-5task-dolci25-32k-nocpt-SFT.py \\
+        dry_run q4b-comp-gate-temp-5task-dolci25-32k
+    PYTHONPATH=src python src/scripts/train/sft/Qwen3-4B-compressive-gate-temp-5task-dolci25-32k-nocpt-SFT.py \\
+        launch  q4b-comp-gate-temp-5task-dolci25-32k ai2/jupiter --launch.num_nodes=2
 """
 
 from dataclasses import replace
@@ -83,20 +93,24 @@ CP_DEGREE = 8
 NUM_NODES = 2  # 2 nodes x 8 GPUs = 16 GPUs; cp_degree=8 -> NUM_NODES DP replicas (2 windows/step)
 
 # ---------------------------------------------------------------------------
-# Data (weka) -- ladder40k (rungs up to 32k context; max doc ~40k tokens). Identical to the baseline
-# compressive SFT script for an apples-to-apples comparison.
+# Data (weka) -- ladder40k (rungs up to 32k context; max doc ~40k tokens). Same 5-task roots as the
+# pure-5task baseline (including the p10-fixed nq); same 75/25 top-level blend against
+# Dolci-Instruct-SFT as the block-size sweep scripts (see module docstring point 3).
 # ---------------------------------------------------------------------------
 DATA_ROOT = "/weka/oe-training-default/ai2-llm/checkpoints/prasanns/single_task_ladders_v2"
 CONTRA_DATA_ROOT = f"{DATA_ROOT}/contradiction"
-# nq: p10 pipeline (hard-neg ~10% + CE filter), NOT the 98%-hard v2/nq (standing directive).
+# nq: p10 pipeline (hard-neg ~10% + CE filter), NOT the 98%-hard v2/nq (standing directive) -- NOTE
+# this differs from the block-size sweep scripts, which use the older cptmix_data_ladder40k/nq.
 NQ_DATA_ROOT = "/weka/oe-training-default/ai2-llm/checkpoints/prasanns/single_task_ladders_p10/nq"
 OOLONG_DATA_ROOT = f"{DATA_ROOT}/oolong"
 RERANK_DATA_ROOT = f"{DATA_ROOT}/rerank"
 OUTLIER_DATA_ROOT = f"{DATA_ROOT}/outlier"
-CPT_DATA_ROOT = (
-    "/weka/oe-training-default/ai2-llm/checkpoints/amandab/"
-    "dolma3_longmino_mix_sample15B_qwen"
-)
+
+# allenai/Dolci-Instruct-SFT, tokenized with the Qwen3 chat template (token_ids_part_*.npy +
+# labels_mask_*.npy, EOS-separated). Same source the block-size sweep scripts use. Note: the Tool Use
+# subset of Dolci-Instruct-SFT is silently dropped by the converter (Qwen3 template ignores the
+# 'environment' role) -- left as-is per prior user decision.
+DOLCI_DATA_ROOT = "/weka/oe-training-default/amandab/dolci-instruct-sft/qwen3"
 
 # Compressive-landmark CPT base (model+optim) on weka -- SAME base as the existing compressive SFT
 # baseline (predates gate_temperature; loaded non-strictly, see module docstring point 2).
@@ -106,19 +120,21 @@ BASE_CHECKPOINT = (
 )
 
 # ---------------------------------------------------------------------------
-# Mixing fractions. CPT = 85%; the 15% SFT budget is split contra 2x / rerank 1.5x / outlier 1.5x /
-# nq 1x / oolong 1x (sum 7). (Realised CPT is lower -- see baseline script's caveat: no-pack skips
-# long CPT docs.)
+# Mixing fractions WITHIN the 5-task group (sum to 1.0): contra 2x / rerank 1.5x / outlier 1.5x /
+# nq 1x / oolong 1x -- same weighting as the pure-5task baseline and the block-size sweep.
 # ---------------------------------------------------------------------------
-CPT_FRAC = 0.0  # NO-CPT variant: pure downstream FT on the 5 SFT tasks only
-SFT_BUDGET = 1.0 - CPT_FRAC
 _W = {"contra": 2.0, "rerank": 1.5, "outlier": 1.5, "nq": 1.0, "oolong": 1.0}
 _WSUM = sum(_W.values())
-NQ_FRAC = SFT_BUDGET * _W["nq"] / _WSUM
-OOLONG_FRAC = SFT_BUDGET * _W["oolong"] / _WSUM
-RERANK_FRAC = SFT_BUDGET * _W["rerank"] / _WSUM
-OUTLIER_FRAC = SFT_BUDGET * _W["outlier"] / _WSUM
-CONTRA_FRAC = max(0.0, 1.0 - CPT_FRAC - (NQ_FRAC + OOLONG_FRAC + RERANK_FRAC + OUTLIER_FRAC))
+NQ_FRAC = _W["nq"] / _WSUM
+OOLONG_FRAC = _W["oolong"] / _WSUM
+RERANK_FRAC = _W["rerank"] / _WSUM
+OUTLIER_FRAC = _W["outlier"] / _WSUM
+CONTRA_FRAC = max(0.0, 1.0 - (NQ_FRAC + OOLONG_FRAC + RERANK_FRAC + OUTLIER_FRAC))
+
+# Top-level blend: 75% the 5-task mix (internally weighted per _W above), 25% Dolci-Instruct-SFT.
+# No CPT source -- pure downstream FT (matches the block-size sweep).
+FIVE_TASK_FRAC = 0.75
+DOLCI_FRAC = 0.25
 
 # ---------------------------------------------------------------------------
 # Optimization / budget -- identical to the baseline compressive SFT run (token-matched comparison).
@@ -200,7 +216,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         max_grad_norm=1.0,
     )
 
-    # ---- N-way mixed document source: 5 SFT tasks + CPT ----
+    # ---- Two-way mixed document source: 5-task group + Dolci-Instruct-SFT (no CPT) ----
     def _sft_source(root: str) -> NumpyDocumentSourceConfig:
         r = root.rstrip("/")
         return NumpyDocumentSourceConfig(
@@ -210,14 +226,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
             expand_glob=True,
         )
 
-    cpt = CPT_DATA_ROOT.rstrip("/")
-    cpt_doc_source = NumpyDocumentSourceConfig(
-        source_paths=[f"{cpt}/part-*.npy"],
-        tokenizer=doc_tokenizer_config,
-        expand_glob=True,
-    )
-
-    specs = [
+    five_task_specs = [
         MixingDocumentSourceSpecConfig(
             source=_sft_source(CONTRA_DATA_ROOT), ratio=CONTRA_FRAC,
             max_repetition_factor=8.0, label="contradiction",
@@ -239,13 +248,22 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
             max_repetition_factor=8.0, label="outlier",
         ),
     ]
-    if CPT_FRAC > 1e-6:
-        specs.append(
-            MixingDocumentSourceSpecConfig(
-                source=cpt_doc_source, ratio=CPT_FRAC,
-                max_repetition_factor=3.0, label="cpt_longmino",
-            )
-        )
+
+    # Top-level blend: the whole 5-task mix (internally weighted per five_task_specs) at
+    # FIVE_TASK_FRAC, Dolci-Instruct-SFT at DOLCI_FRAC. No CPT source.
+    specs = [
+        MixingDocumentSourceSpecConfig(
+            source=MixingDocumentSourceConfig(source_specs=five_task_specs),
+            ratio=FIVE_TASK_FRAC,
+            label="five_task_mix",
+        ),
+        MixingDocumentSourceSpecConfig(
+            source=_sft_source(DOLCI_DATA_ROOT),
+            ratio=DOLCI_FRAC,
+            max_repetition_factor=8.0,
+            label="dolci_instruct_sft",
+        ),
+    ]
 
     # PACKED with intra-document masking: block-aligned greedy packing + per-doc landmarks. The
     # compressive fused kernel supports cu_doc_lens (DOC_MASK), so this uses the SAME data path as
