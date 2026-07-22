@@ -2,11 +2,9 @@
 Config builders for Qwen3-MoE (and Qwen3.5/3.6 linear-attention) models on the fused MoE stack.
 
 .. note::
-    These build an :class:`OLMoDDPModelConfig` with matching architecture/shapes. They do **not**
-    provide HuggingFace *checkpoint* interop: the fused MoE experts/router weight layout has no
-    conversion path in :mod:`olmo_core.nn.hf.convert` yet, so a config produced here cannot load a
-    HuggingFace Qwen-MoE checkpoint. :func:`build_qwen3_moe_config_from_hf_config` maps HF *config*
-    hyperparameters only.
+    These build an :class:`OLMoDDPModelConfig` with matching architecture/shapes. Qwen3-MoE
+    checkpoint conversion is supported for the all-MoE architecture used by the stage-one
+    Open Instruct integration.
 
     These builders are accessed via this module path (``olmo_core.nn.moe.v2.qwen``); they are not
     re-exported from the package namespace.
@@ -16,6 +14,8 @@ from __future__ import annotations
 
 from copy import deepcopy
 from typing import Any, Mapping, Sequence
+
+import torch
 
 from olmo_core.config import DType
 from olmo_core.nn.attention import (
@@ -93,6 +93,7 @@ def get_qwen3_moe_text_config_overrides(hf_config: Mapping[str, Any]) -> dict[st
         ),
         "num_experts": _num_experts(text_config),
         "num_experts_per_tok": text_config["num_experts_per_tok"],
+        "normalize_expert_weights": (1.0 if text_config.get("norm_topk_prob", True) else None),
         "moe_intermediate_size": text_config["moe_intermediate_size"],
         "rms_norm_eps": text_config["rms_norm_eps"],
         "router_aux_loss_weight": text_config.get("router_aux_loss_coef", 0.001),
@@ -309,6 +310,7 @@ def build_qwen3_moe_config(
     linear_conv_kernel_dim: int | None = 4,
     num_experts: int = 256,
     num_experts_per_tok: int = 8,
+    normalize_expert_weights: float | None = 1.0,
     moe_intermediate_size: int = 512,
     shared_expert_intermediate_size: int | None = 512,
     rms_norm_eps: float = 1e-6,
@@ -352,7 +354,7 @@ def build_qwen3_moe_config(
         num_experts=num_experts,
         top_k=num_experts_per_tok,
         gating_function=MoERouterGatingFunction.softmax,
-        normalize_expert_weights=1.0,
+        normalize_expert_weights=normalize_expert_weights,
         lb_loss_weight=router_aux_loss_weight,
         z_loss_weight=router_z_loss_weight,
         lb_loss_granularity=MoELoadBalancingLossGranularity.instance,
@@ -445,14 +447,9 @@ def build_qwen3_moe_config_from_hf_config(
     """
     Build an :class:`OLMoDDPModelConfig` from a HuggingFace Qwen3-MoE *config* (hyperparameters).
 
-    .. warning::
-        This maps config values only; it does **not** convert HuggingFace checkpoint weights. The
-        fused MoE experts/router layout has no converter in :mod:`olmo_core.nn.hf.convert`, so the
-        resulting config cannot load a HuggingFace Qwen-MoE checkpoint.
-
-    .. # TODO(qwen-moe-hf-checkpoint-convert): add a Qwen-MoE-aware HF state converter (router +
-        routed/shared experts + linear/full attention, reusing the +1 qwen_rms norm transform) and
-        a strict-load + logit-parity test, then drop this warning.
+    The standard all-MoE Qwen3 architecture can be loaded from and gathered back to a
+    HuggingFace checkpoint with :func:`olmo_core.nn.moe.v2.checkpoint.load_olmo_ddp_hf_state`
+    and :func:`olmo_core.nn.moe.v2.checkpoint.gather_olmo_ddp_hf_state`.
     """
     kwargs = get_qwen3_moe_text_config_overrides(hf_config)
     kwargs.update(overrides)
@@ -495,3 +492,107 @@ def build_debug_qwen3_moe_config(
         else QWEN3_MOE_LAYER_PATTERN,
         **kwargs,
     )
+
+
+def validate_qwen3_moe_checkpoint_config(config: Any) -> None:
+    if getattr(config, "model_type", None) != "qwen3_moe":
+        raise ValueError('Qwen3-MoE checkpoint conversion requires model_type="qwen3_moe".')
+    unsupported = []
+    if int(getattr(config, "decoder_sparse_step", 1)) != 1:
+        unsupported.append("decoder_sparse_step != 1")
+    if getattr(config, "mlp_only_layers", None):
+        unsupported.append("dense MLP layers")
+    if getattr(config, "shared_expert_intermediate_size", None) is not None:
+        unsupported.append("shared experts")
+    if bool(getattr(config, "attention_bias", False)):
+        unsupported.append("attention bias")
+    if getattr(config, "hidden_act", "silu") != "silu":
+        unsupported.append("non-SwiGLU experts")
+    if bool(getattr(config, "tie_word_embeddings", False)):
+        unsupported.append("tied word embeddings")
+    if unsupported:
+        raise NotImplementedError(
+            "Stage-one Qwen3-MoE checkpoint conversion does not support: " + ", ".join(unsupported)
+        )
+
+
+def convert_qwen3_moe_state_from_hf(config: Any, hf_state: Mapping[str, Any]) -> dict[str, Any]:
+    """Convert a Qwen3-MoE HF state into the unsharded fused OLMoDDP layout."""
+    validate_qwen3_moe_checkpoint_config(config)
+    n_layers = int(config.num_hidden_layers)
+    n_experts = int(getattr(config, "num_experts", config.num_local_experts))
+    hidden_size = int(config.moe_intermediate_size)
+    state: dict[str, Any] = {
+        "embeddings.weight": hf_state["model.embed_tokens.weight"],
+        "lm_head.norm.weight": hf_state["model.norm.weight"],
+        "lm_head.w_out.weight": hf_state.get(
+            "lm_head.weight", hf_state["model.embed_tokens.weight"]
+        ),
+    }
+    for layer_idx in range(n_layers):
+        hf_prefix = f"model.layers.{layer_idx}."
+        prefix = f"blocks.{layer_idx}."
+        for native_name, hf_name in (
+            ("attention.w_q.weight", "self_attn.q_proj.weight"),
+            ("attention.w_k.weight", "self_attn.k_proj.weight"),
+            ("attention.w_v.weight", "self_attn.v_proj.weight"),
+            ("attention.w_out.weight", "self_attn.o_proj.weight"),
+            ("attention.q_norm.weight", "self_attn.q_norm.weight"),
+            ("attention.k_norm.weight", "self_attn.k_norm.weight"),
+            ("attention_norm.weight", "input_layernorm.weight"),
+            ("feed_forward_norm.weight", "post_attention_layernorm.weight"),
+        ):
+            state[prefix + native_name] = hf_state[hf_prefix + hf_name]
+
+        state[prefix + "routed_experts_router.weight"] = hf_state[
+            hf_prefix + "mlp.gate.weight"
+        ].reshape(-1)
+        gate_up = hf_state[hf_prefix + "mlp.experts.gate_up_proj"].reshape(
+            n_experts, 2 * hidden_size, int(config.hidden_size)
+        )
+        gate, up = gate_up.chunk(2, dim=1)
+        state[prefix + "routed_experts.w_up_gate"] = torch.cat([up, gate], dim=1).contiguous()
+        state[prefix + "routed_experts.w_down"] = (
+            hf_state[hf_prefix + "mlp.experts.down_proj"].transpose(1, 2).contiguous()
+        )
+    return state
+
+
+def convert_qwen3_moe_state_to_hf(config: Any, olmo_state: Mapping[str, Any]) -> dict[str, Any]:
+    """Convert an unsharded fused OLMoDDP state into Qwen3-MoE HF layout."""
+    validate_qwen3_moe_checkpoint_config(config)
+    n_layers = int(config.num_hidden_layers)
+    n_experts = int(getattr(config, "num_experts", config.num_local_experts))
+    hidden_size = int(config.moe_intermediate_size)
+    state: dict[str, Any] = {
+        "model.embed_tokens.weight": olmo_state["embeddings.weight"],
+        "model.norm.weight": olmo_state["lm_head.norm.weight"],
+        "lm_head.weight": olmo_state["lm_head.w_out.weight"],
+    }
+    for layer_idx in range(n_layers):
+        hf_prefix = f"model.layers.{layer_idx}."
+        prefix = f"blocks.{layer_idx}."
+        for native_name, hf_name in (
+            ("attention.w_q.weight", "self_attn.q_proj.weight"),
+            ("attention.w_k.weight", "self_attn.k_proj.weight"),
+            ("attention.w_v.weight", "self_attn.v_proj.weight"),
+            ("attention.w_out.weight", "self_attn.o_proj.weight"),
+            ("attention.q_norm.weight", "self_attn.q_norm.weight"),
+            ("attention.k_norm.weight", "self_attn.k_norm.weight"),
+            ("attention_norm.weight", "input_layernorm.weight"),
+            ("feed_forward_norm.weight", "post_attention_layernorm.weight"),
+        ):
+            state[hf_prefix + hf_name] = olmo_state[prefix + native_name]
+
+        state[hf_prefix + "mlp.gate.weight"] = olmo_state[
+            prefix + "routed_experts_router.weight"
+        ].reshape(n_experts, int(config.hidden_size))
+        up_gate = olmo_state[prefix + "routed_experts.w_up_gate"].reshape(
+            n_experts, 2 * hidden_size, int(config.hidden_size)
+        )
+        up, gate = up_gate.chunk(2, dim=1)
+        state[hf_prefix + "mlp.experts.gate_up_proj"] = torch.cat([gate, up], dim=1).contiguous()
+        state[hf_prefix + "mlp.experts.down_proj"] = (
+            olmo_state[prefix + "routed_experts.w_down"].transpose(1, 2).contiguous()
+        )
+    return state

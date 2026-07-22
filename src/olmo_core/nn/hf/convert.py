@@ -985,14 +985,18 @@ def convert_state_from_hf(
     :param model_type: The model type of the HF model.
     """
 
-    converter = _get_converter_from_hf(model_type=model_type)
-
     if model_type in {"qwen3_5", "qwen3_5_text"}:
         return convert_qwen3_5_state_from_hf(config, hf_state)
+
+    if model_type == "qwen3_moe":
+        from olmo_core.nn.moe.v2.qwen import convert_qwen3_moe_state_from_hf
+
+        return convert_qwen3_moe_state_from_hf(config, hf_state)
 
     if model_type == "olmo3moe":
         return convert_olmo3moe_state_from_hf(config, hf_state)
 
+    converter = _get_converter_from_hf(model_type=model_type)
     converted_state = _convert_state(config, hf_state, converter)
 
     if model_type == "gemma3_text":
@@ -1067,6 +1071,11 @@ def convert_state_to_hf(
 
     if config.model_type == "olmo3moe":
         return convert_olmo3moe_state_to_hf(config, olmo_core_state)
+
+    if config.model_type == "qwen3_moe":
+        from olmo_core.nn.moe.v2.qwen import convert_qwen3_moe_state_to_hf
+
+        return convert_qwen3_moe_state_to_hf(config, olmo_core_state)
 
     converter = _get_converter_to_hf(config.model_type)
 
