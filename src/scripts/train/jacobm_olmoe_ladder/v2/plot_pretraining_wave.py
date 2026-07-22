@@ -934,7 +934,14 @@ def plot_fixed_lr_scale_comparison(
     handles, labels = axes[0][0].get_legend_handles_labels()
     legend_rows = 1
     if handles:
-        legend_columns = min(len(handles), 2 if len(models) == 1 else len(handles))
+        if len(models) == 1:
+            legend_columns = min(len(handles), 2)
+        elif len(handles) > 4:
+            # Keep variant-heavy scale plots from expanding horizontally just
+            # to fit a single long legend row.
+            legend_columns = math.ceil(len(handles) / 2)
+        else:
+            legend_columns = len(handles)
         legend_rows = math.ceil(len(handles) / legend_columns)
         fig.legend(
             handles,
