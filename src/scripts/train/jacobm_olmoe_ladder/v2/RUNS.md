@@ -733,8 +733,9 @@ retains the identical 192-GPU peak layout and transferred LRs.
   [16 two-GPU 275M tasks](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY85JPM1SE0XYX1RMFM5HXX7)
   and [10 eight-GPU larger-model tasks](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY85JY73XPE4223SKFNDDA7Y)
   were canceled before scheduling on 2026-07-23. They are superseded by
-  high-priority unallocated backfills on `jacobm/moe-v2-core` (links recorded
-  below after submission).
+  high-priority unallocated backfills on `jacobm/moe-v2-core`:
+  [16 two-GPU 275M tasks](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY8CJNZW98DWVW4282SEHKWT)
+  and [10 eight-GPU larger-model tasks](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY8CK6Q5BFTEX09ZKRHWCCC5).
   Both batches are allocated, urgent, and constrained to Holmes. The larger
   batch includes the newly finished 1.2B Cx8 `step238338`; 810M Cx8 remains
   deferred while training, and failed/partial 1.2B Cx2 is not evaluated.
