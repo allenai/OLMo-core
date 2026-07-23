@@ -1399,7 +1399,7 @@ class FastCompressiveLandmarkAttention(FastLandmarkAttention):
         self.gate_temperature = gate_temperature
         self.log_gate_temp = (
             nn.Parameter(
-                torch.zeros((), dtype=self.w_q.weight.dtype, device=self.w_q.weight.device)
+                torch.zeros((1,), dtype=self.w_q.weight.dtype, device=self.w_q.weight.device)
             )
             if gate_temperature
             else None
