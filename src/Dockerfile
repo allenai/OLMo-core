@@ -98,6 +98,18 @@ RUN if [ -z "${B300}" ]; then \
         rm -rf flash_attn_3-*; \
     fi
 
+# Install flash-attn 4 (the `flash_attn.cute` backend behind AttentionBackendName.flash_4).
+# Optional: skipped unless FLASH_ATTN_4_VERSION is set. Distributed as a prebuilt wheel, so it
+# installs for B300 too — use FLASH_ATTN_4_EXTRAS='[cu13]' for the CUDA-13 build. Constrained to
+# the installed torch so pip can't pull a different torch.
+ARG FLASH_ATTN_4_VERSION=
+ARG FLASH_ATTN_4_EXTRAS=""
+RUN if [ -n "${FLASH_ATTN_4_VERSION}" ]; then \
+        python -c "import torch; print('torch=='+torch.__version__)" > /tmp/torch-constraint.txt && \
+        python -m pip install --no-cache-dir -c /tmp/torch-constraint.txt "flash-attn-4${FLASH_ATTN_4_EXTRAS}==${FLASH_ATTN_4_VERSION}" && \
+        rm -f /tmp/torch-constraint.txt; \
+    fi
+
 # Install transformer-engine.
 ARG TE_VERSION=2.9
 RUN TORCH_CUDA_ARCH_LIST="${TORCH_CUDA_ARCH_LIST}" pip install --no-build-isolation --no-cache-dir transformer-engine[pytorch]==${TE_VERSION}

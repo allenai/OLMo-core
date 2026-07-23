@@ -62,6 +62,12 @@ FLASH_ATTN_VERSION = 2.8.2
 FLASH_ATTN_CUDA_ARCHS = 90;100
 FLASH_ATTN_3_SHA = "060c9188beec3a8b62b33a3bfa6d5d2d44975fab"
 FA3_MAX_JOBS = 64
+# flash-attn 4 provides the `flash_attn.cute` backend (AttentionBackendName.flash_4). Optional:
+# leave FLASH_ATTN_4_VERSION empty to skip it. When set, it's installed (as a prebuilt wheel) and
+# the image tag gets a '-fa4' suffix (see FA4_TAG). Use FLASH_ATTN_4_EXTRAS='[cu13]' for CUDA 13.
+# The 'beaker-image-b300-fa4' target enables it with the CUDA-13 wheel.
+FLASH_ATTN_4_VERSION =
+FLASH_ATTN_4_EXTRAS =
 TE_VERSION = 2.9
 RING_FLASH_ATTN_VERSION = 0.1.8
 LIGER_KERNEL_VERSION = 0.6.4
@@ -80,7 +86,9 @@ TRITON_PTXAS_PATH =
 VERSION = $(shell python src/olmo_core/version.py)
 VERSION_SHORT = $(shell python src/olmo_core/version.py short)
 IMAGE_SUFFIX = $(shell date "+%Y-%m-%d")
-IMAGE_TAG = tch$(TORCH_VERSION_SHORT)$(CUDA_VERSION_PATH)-$(IMAGE_SUFFIX)
+# '-fa4' marker in the tag when flash-attn 4 is baked in (empty otherwise; see FLASH_ATTN_4_VERSION).
+FA4_TAG = $(if $(FLASH_ATTN_4_VERSION),-fa4,)
+IMAGE_TAG = tch$(TORCH_VERSION_SHORT)$(CUDA_VERSION_PATH)$(FA4_TAG)-$(IMAGE_SUFFIX)
 
 # Imports the built image is smoke-tested against. The B300 targets override this to drop
 # flash_attn_3, which isn't built for B300 (see the 'beaker-image-b300' target).
@@ -102,6 +110,8 @@ docker-image :
 		--build-arg FLASH_ATTN_CUDA_ARCHS="$(FLASH_ATTN_CUDA_ARCHS)" \
 		--build-arg FLASH_ATTN_3_SHA=$(FLASH_ATTN_3_SHA) \
 		--build-arg FA3_MAX_JOBS=$(FA3_MAX_JOBS) \
+		--build-arg FLASH_ATTN_4_VERSION=$(FLASH_ATTN_4_VERSION) \
+		--build-arg FLASH_ATTN_4_EXTRAS="$(FLASH_ATTN_4_EXTRAS)" \
 		--build-arg TE_VERSION=$(TE_VERSION) \
 		--build-arg RING_FLASH_ATTN_VERSION=$(RING_FLASH_ATTN_VERSION) \
 		--build-arg LIGER_KERNEL_VERSION=$(LIGER_KERNEL_VERSION) \
@@ -153,6 +163,15 @@ B300_BUILD_ARGS = \
 	TRITON_PTXAS_PATH=/usr/local/bin/triton-ptxas \
 	DOCKER_VALIDATE_IMPORTS="import torch; import transformer_engine.pytorch; import flash_attn"
 
+# Optional flash-attn 4 layer for the B300 build: installs the CUDA-13 flash_attn.cute wheel
+# (AttentionBackendName.flash_4) and appends flash_attn.cute to the smoke test. Layered after
+# B300_BUILD_ARGS on the '-fa4' targets, so its DOCKER_VALIDATE_IMPORTS wins (last assignment).
+# Setting FLASH_ATTN_4_VERSION also adds the '-fa4' tag suffix (see FA4_TAG).
+B300_FA4_ARGS = \
+	FLASH_ATTN_4_VERSION=4.0.0b16 \
+	FLASH_ATTN_4_EXTRAS="[cu13]" \
+	DOCKER_VALIDATE_IMPORTS="import torch; import transformer_engine.pytorch; import flash_attn; import flash_attn.cute"
+
 # torch 2.11.0 (validated on B300 hardware). Produces 'olmo-core-tch2110cu130-<date>'.
 .PHONY : beaker-image-b300
 beaker-image-b300 :
@@ -168,6 +187,17 @@ beaker-image-b300-torch210 :
 .PHONY : ghcr-image-b300
 ghcr-image-b300 :
 	$(MAKE) ghcr-image TORCH_VERSION=2.11.0 $(B300_BUILD_ARGS)
+
+# B300 image with flash-attn 4 (flash_attn.cute) baked in. Same as beaker-image-b300 plus the
+# optional FA4 layer; produces 'olmo-core-tch2110cu130-fa4-<date>'.
+.PHONY : beaker-image-b300-fa4
+beaker-image-b300-fa4 :
+	$(MAKE) beaker-image TORCH_VERSION=2.11.0 $(B300_BUILD_ARGS) $(B300_FA4_ARGS)
+
+# GHCR variant of the FA4 B300 image. Pushes 'ghcr.io/allenai/olmo-core:tch2110cu130-fa4-<date>'.
+.PHONY : ghcr-image-b300-fa4
+ghcr-image-b300-fa4 :
+	$(MAKE) ghcr-image TORCH_VERSION=2.11.0 $(B300_BUILD_ARGS) $(B300_FA4_ARGS)
 
 # torch 2.10.0 (matches the default image's torch). Pushes 'ghcr.io/allenai/olmo-core:tch2100cu130-<date>'.
 .PHONY : ghcr-image-b300-torch210
