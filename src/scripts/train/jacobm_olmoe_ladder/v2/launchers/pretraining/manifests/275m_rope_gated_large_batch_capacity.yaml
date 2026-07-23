@@ -14,8 +14,8 @@ beaker:
   cluster: ai2/holmes
   priority: urgent
   shared_memory: 128 GiB
-  min_runtime: 10m
-  auto_resume: false
+  min_runtime: 0m
+  auto_resume: true
   timeout: 3h
   result_path: /results
 
@@ -52,19 +52,19 @@ training:
 # 1/2/4/8-GPU parallelism matrix is launched.
 runs:
   - task_name: b2m-gpu1-ep1-mb16
-    run_name: smoke-moe-v2-core-275m-rope-gated-b2m-gpu1-ep1-mb16-r1
+    run_name: smoke-moe-v2-core-275m-rope-gated-b2m-gpu1-ep1-mb16-r2
     gpu_count: 1
     expert_parallel_size: 1
     expert_parallel_path: sync_1d
     rank_microbatch_sequences: 16
   - task_name: b2m-gpu1-ep1-mb32
-    run_name: smoke-moe-v2-core-275m-rope-gated-b2m-gpu1-ep1-mb32-r1
+    run_name: smoke-moe-v2-core-275m-rope-gated-b2m-gpu1-ep1-mb32-r2
     gpu_count: 1
     expert_parallel_size: 1
     expert_parallel_path: sync_1d
     rank_microbatch_sequences: 32
   - task_name: b4m-gpu1-ep1-mb16
-    run_name: smoke-moe-v2-core-275m-rope-gated-b4m-gpu1-ep1-mb16-r1
+    run_name: smoke-moe-v2-core-275m-rope-gated-b4m-gpu1-ep1-mb16-r2
     global_batch_size: 4194304
     gpu_count: 1
     expert_parallel_size: 1

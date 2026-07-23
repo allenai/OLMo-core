@@ -8,5 +8,15 @@
       "b4m-gpu1-ep1-mb16"
     ],
     "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY8BWKJ790QVXFSE6ZEYVAK6"
+  },
+  {
+    "experiment_name": "jacobm-moe-v2-core-275m-large-batch-capacity-r2",
+    "experiment_id": "01KY8CBCG3BZZW6CR3616NQY57",
+    "tasks": [
+      "b2m-gpu1-ep1-mb16",
+      "b2m-gpu1-ep1-mb32",
+      "b4m-gpu1-ep1-mb16"
+    ],
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY8CBCG3BZZW6CR3616NQY57"
   }
 ]

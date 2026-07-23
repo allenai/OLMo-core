@@ -14,8 +14,8 @@ beaker:
   cluster: ai2/holmes
   priority: urgent
   shared_memory: 128 GiB
-  min_runtime: 10m
-  auto_resume: false
+  min_runtime: 0m
+  auto_resume: true
   timeout: 4h
   result_path: /results
 

@@ -8,7 +8,7 @@ args=(
   --manifest "${SCRIPT_DIR}/manifests/275m_rope_gated_large_batch_capacity.yaml"
   --output "${SCRIPT_DIR}/generated/275m_rope_gated_large_batch_capacity.yaml"
   --record "${SCRIPT_DIR}/generated/275m_rope_gated_large_batch_capacity_submissions.json"
-  --experiment-name jacobm-moe-v2-core-275m-large-batch-capacity-r1
+  --experiment-name jacobm-moe-v2-core-275m-large-batch-capacity-r2
 )
 
 if [[ ${1:-} == "--submit" ]]; then
