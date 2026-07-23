@@ -1,0 +1,12 @@
+{
+  "manifest_id": "pretraining/baseline/1p2b/cx8",
+  "source_checkpoint": "/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/olmoe3-moe-a0-1p2b-cx8-b768k-gpu32-ep1mb1-lr4e-4-r1/step216505",
+  "resolution": "archived_hf",
+  "origin_config": "/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/hf-checkpoints/olmoe3-moe-a0-1p2b-cx8-b768k-gpu32-ep1mb1-lr4e-4-r1/step216505/olmo_config.json",
+  "origin_config_sha256": "6bbd0ee51a44207492ad39a08bae3cc2d2c7fbdbf312fe28481a39999370b26d",
+  "materialized_config": "/weka/oe-adapt-default/jacobm/olmoe3/olmo-ddp-migration/OLMo-core/JACOBM_DDP_CONFIGS/pretraining/baseline/1p2b/cx8/config.json",
+  "materialized_config_sha256": "20065f86163d356659ff636366d9acc04c74a361e92fecdf298ed9a6af9c1e7d",
+  "model_config_sha256": "9a2f2d9bcd2c5a8f93fed1501921e142ac1594c045a425f67466e7161e7c324d",
+  "schema_validation": "LEGACY_CONFIG_SCHEMA_MATCH",
+  "reconstruction": null
+}

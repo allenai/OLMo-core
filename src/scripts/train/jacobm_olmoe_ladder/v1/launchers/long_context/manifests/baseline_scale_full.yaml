@@ -1,0 +1,72 @@
+schema_version: 1
+
+experiment:
+  description: Full 64k baseline continuations for 810M and 1.2B
+  checkpoint_root: /weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/olmo-ddp/long-context
+
+source:
+  repo: /weka/oe-adapt-default/jacobm/olmoe3/olmo-ddp-migration/OLMo-core
+  wrapper: src/scripts/train/jacobm_olmoe3_long_context_beaker.sh
+  image: 01KW8G8JC20H11Y60PPTE2VN4Q
+
+beaker:
+  workspace: ai2/OLMo-3-moe-experiments
+  cluster: ai2/holmes
+  priority: urgent
+  shared_memory: 128 GiB
+  min_runtime: 10m
+  timeout: 168h
+  result_path: /results
+  auto_resume: true
+
+secrets:
+  WANDB_API_KEY: jacobm_WANDB_API_KEY
+  BEAKER_TOKEN: jacobm_BEAKER_TOKEN
+  GANTRY_GOOGLE_CREDENTIALS: jacobm_GOOGLE_CREDENTIALS
+
+datasets:
+  - mount_path: /weka/oe-adapt-default
+    weka: oe-adapt-default
+  - mount_path: /weka/oe-training-default
+    weka: oe-training-default
+
+training:
+  work_dir: /weka/oe-training-default/ai2-llm/checkpoints/yashasbls/dataset-cache
+  sequence_length: 65536
+  global_batch_size: 4194304
+  max_tokens: 100000000000
+  learning_rate: "2e-5"
+  # Preserve the established v1 schedule for direct comparability.
+  warmup_steps: 2000
+  hard_stop_steps: 0
+  save_interval: 5000
+  ephemeral_save_interval: 1000
+  checkpoint_removal: ephemeral_only
+  compile: true
+  wandb: true
+  evals: false
+  eval_interval: 2000
+  eval_steps: 0
+  eval_task_set: fast
+  eval_on_finish: false
+
+runs:
+  - task_name: 810m-baseline
+    run_name: lc-810m-baseline-cx8-mt4e-5-lc2e-5-64k-r1
+    model_size: 810m
+    family: baseline
+    load_path: gs://ai2-llm/checkpoints/jacobm/olmoe3/olmo-ddp-converted/v1/midtraining/baseline/810m/cx8
+    gpu_count: 8
+    expert_parallel_size: 1
+    expert_parallel_path: sync_1d
+    rank_microbatch_sequences: 4
+
+  - task_name: 1p2b-baseline
+    run_name: lc-1p2b-baseline-cx8-mt4e-5-lc2e-5-64k-r1
+    model_size: 1p2b
+    family: baseline
+    load_path: gs://ai2-llm/checkpoints/jacobm/olmoe3/olmo-ddp-converted/v1/midtraining/baseline/1p2b/cx8
+    gpu_count: 8
+    expert_parallel_size: 1
+    expert_parallel_path: sync_1d
+    rank_microbatch_sequences: 2

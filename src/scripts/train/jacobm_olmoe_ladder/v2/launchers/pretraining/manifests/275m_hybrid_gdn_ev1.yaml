@@ -1,0 +1,72 @@
+schema_version: 1
+
+experiment:
+  key: 275m_hybrid_gdn_ev1
+  description: 275M active integration-wide hybrid GDN expand_v=1 pretraining sweep
+  run_prefix: pt-275m-intwide-hybrid-gdn-ev1
+  replica: 1
+  checkpoint_root: /weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/olmo-ddp/pretraining
+
+source:
+  repo: /weka/oe-adapt-default/jacobm/olmoe3/olmo-ddp-migration/OLMo-core-moe-v2-core
+  wrapper: src/scripts/train/jacobm_olmoe3_275m_hybrid_wide_beaker.sh
+  image: 01KW8G8JC20H11Y60PPTE2VN4Q
+
+beaker:
+  workspace: ai2/OLMo-3-moe-experiments
+  cluster: ai2/holmes
+  priority: urgent
+  gpu_count: 2
+  shared_memory: 64 GiB
+  min_runtime: 8h0m0s
+  timeout: 168h0m0s
+  result_path: /results
+
+secrets:
+  AWS_ACCESS_KEY_ID: AWS_ACCESS_KEY_ID
+  AWS_SECRET_ACCESS_KEY: AWS_SECRET_ACCESS_KEY
+  WANDB_API_KEY: jacobm_WANDB_API_KEY
+
+datasets:
+  - mount_path: /weka/oe-adapt-default
+    weka: oe-adapt-default
+  - mount_path: /weka/oe-training-default
+    weka: oe-training-default
+
+training:
+  sequence_length: 8192
+  world_size: 2
+  expert_parallel_size: 1
+  env_names:
+    run_name: OLMOE3_HYBRID_RUN_NAME
+    learning_rate: OLMOE3_HYBRID_LR
+    chinchilla_multiple: OLMOE3_HYBRID_CHINCHILLA_MULTIPLE
+    global_batch_size: OLMOE3_HYBRID_GLOBAL_BATCH_SIZE
+    world_size: OLMOE3_HYBRID_WORLD_SIZE
+    rank_microbatch_sequences: OLMOE3_HYBRID_RANK_MICROBATCH_SEQUENCES
+    sequence_length: OLMOE3_HYBRID_SEQUENCE_LENGTH
+  static_env:
+    OLMOE3_HYBRID_USE_COMPILE: "1"
+    OLMOE3_HYBRID_WANDB: "1"
+
+sweep:
+  1:
+    chinchilla_multiple: "1"
+    global_batch_size: 262144
+    rank_microbatch_sequences: 16
+    lrs: ["4e-4", "8e-4", "1.6e-3", "3.2e-3"]
+  2:
+    chinchilla_multiple: "2"
+    global_batch_size: 393216
+    rank_microbatch_sequences: 8
+    lrs: ["4e-4", "8e-4", "1.6e-3", "3.2e-3"]
+  4:
+    chinchilla_multiple: "4"
+    global_batch_size: 524288
+    rank_microbatch_sequences: 16
+    lrs: ["4e-4", "8e-4", "1.6e-3", "3.2e-3"]
+  8:
+    chinchilla_multiple: "8"
+    global_batch_size: 786432
+    rank_microbatch_sequences: 16
+    lrs: ["4e-4", "8e-4", "1.6e-3", "3.2e-3"]

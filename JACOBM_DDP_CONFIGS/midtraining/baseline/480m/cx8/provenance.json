@@ -1,0 +1,12 @@
+{
+  "manifest_id": "midtraining/baseline/480m/cx8",
+  "source_checkpoint": "/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/midtraining/mt-480m-baseline-cx8-lr8e-5-r1/step63579",
+  "resolution": "colocated",
+  "origin_config": "/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/midtraining/mt-480m-baseline-cx8-lr8e-5-r1/step63579/config.json",
+  "origin_config_sha256": "793644386794faff3be91ba33c009d48be21631c1b9246cd6863c0a545ea5672",
+  "materialized_config": "/weka/oe-adapt-default/jacobm/olmoe3/olmo-ddp-migration/OLMo-core/JACOBM_DDP_CONFIGS/midtraining/baseline/480m/cx8/config.json",
+  "materialized_config_sha256": "10de0114bae30cf073b085bdf0ab69411f393cd3777ab17674757ffcdffcc104",
+  "model_config_sha256": "d3f26d6f7c0ee5d552a511c0a8a1240722555af3e8a6bccdc8dff4e53fd3f188",
+  "schema_validation": "LEGACY_CONFIG_SCHEMA_MATCH",
+  "reconstruction": null
+}

@@ -1,0 +1,34 @@
+version: v2
+description: Strict 275M checkpoint/logit/routing parity gate for moe-v2-core f5376c184
+tasks:
+  - name: strict-275m-cx1-step16108
+    image:
+      beaker: 01KW8G8JC20H11Y60PPTE2VN4Q
+    command: [/bin/bash, -lc]
+    arguments:
+      - >-
+        bash /weka/oe-adapt-default/jacobm/olmoe3/olmo-ddp-migration/OLMo-core-moe-v2-core/src/scripts/train/jacobm_moe_v2_port_validation/run_strict_parity.sh
+    envVars:
+      - {name: BEAKER_TOKEN, secret: jacobm_BEAKER_TOKEN}
+    datasets:
+      - mountPath: /weka/oe-adapt-default
+        source:
+          weka: oe-adapt-default
+      - mountPath: /weka/oe-training-default
+        source:
+          weka: oe-training-default
+    result:
+      path: /results
+    resources:
+      gpuCount: 1
+      sharedMemory: 64 GiB
+    context:
+      priority: urgent
+      minRuntime: 0m
+      autoResume: true
+    constraints:
+      cluster: [ai2/holmes]
+    hostNetworking: true
+    propagateFailure: true
+    propagatePreemption: true
+    timeout: 4h

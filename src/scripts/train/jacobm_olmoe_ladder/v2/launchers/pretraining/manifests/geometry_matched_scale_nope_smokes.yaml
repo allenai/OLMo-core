@@ -1,0 +1,169 @@
+schema_version: 1
+
+experiment:
+  description: Checkpoint-free B300 capacity and scaling smokes for larger geometry NoPE models
+  checkpoint_root: /tmp/olmoe3-geometry-matched-gdn-ev2-nope-smokes
+
+source:
+  remote: https://github.com/allenai/OLMo-core
+  branch: jacobm/olmo-ddp
+  image: 01KW8G8JC20H11Y60PPTE2VN4Q
+
+beaker:
+  workspace: ai2/OLMo-3-moe-experiments
+  cluster: ai2/holmes
+  priority: urgent
+  shared_memory: 128GiB
+  min_runtime: 0m
+  preemptible: false
+  auto_resume: true
+  timeout: 4h
+
+secrets:
+  AWS_ACCESS_KEY_ID: AWS_ACCESS_KEY_ID
+  AWS_SECRET_ACCESS_KEY: AWS_SECRET_ACCESS_KEY
+  WANDB_API_KEY: jacobm_WANDB_API_KEY
+  BEAKER_TOKEN: jacobm_BEAKER_TOKEN
+
+weka:
+  - bucket: oe-adapt-default
+    mount: /weka/oe-adapt-default
+  - bucket: oe-training-default
+    mount: /weka/oe-training-default
+
+training:
+  model_variant: geometry_matched_gdn_ev2_nope
+  sequence_length: 8192
+  hard_stop_steps: 12
+  checkpoints: false
+  evals: false
+  compile: true
+  wandb: true
+
+# Wave 1 establishes the largest plausible per-rank microbatch on one node.
+# Wave 2 compares no-accumulation data-parallel shapes after its corresponding
+# Wave 1 microbatch has passed.
+runs:
+  - task_name: 480m-cx1-gpu4-mb8
+    wave: 1
+    run_name: smoke-480m-geometry-gdn-ev2-nope-cx1-gpu4-mb8-r2
+    model_size: 480m
+    cx: 1
+    learning_rate: "1.2e-3"
+    global_batch_size: 262144
+    num_nodes: 1
+    gpus_per_node: 4
+    expert_parallel_size: 1
+    rank_microbatch_sequences: 8
+
+  - task_name: 480m-cx8-gpu4-mb12
+    wave: 1
+    run_name: smoke-480m-geometry-gdn-ev2-nope-cx8-gpu4-mb12-r2
+    model_size: 480m
+    cx: 8
+    learning_rate: "8e-4"
+    global_batch_size: 786432
+    num_nodes: 1
+    gpus_per_node: 4
+    expert_parallel_size: 1
+    rank_microbatch_sequences: 12
+
+  - task_name: 810m-cx1-gpu8-mb4
+    wave: 1
+    run_name: smoke-810m-geometry-gdn-ev2-nope-cx1-gpu8-mb4-r3
+    model_size: 810m
+    cx: 1
+    learning_rate: "6e-4"
+    global_batch_size: 262144
+    num_nodes: 1
+    gpus_per_node: 8
+    expert_parallel_size: 1
+    rank_microbatch_sequences: 4
+
+  - task_name: 810m-cx8-gpu8-mb6
+    wave: 1
+    run_name: smoke-810m-geometry-gdn-ev2-nope-cx8-gpu8-mb6-r2
+    model_size: 810m
+    cx: 8
+    learning_rate: "4e-4"
+    global_batch_size: 786432
+    num_nodes: 1
+    gpus_per_node: 8
+    expert_parallel_size: 1
+    rank_microbatch_sequences: 6
+
+  - task_name: 1p2b-cx1-gpu8-mb4
+    wave: 1
+    run_name: smoke-1p2b-geometry-gdn-ev2-nope-cx1-gpu8-mb4-ep8-sync-r2
+    model_size: 1p2b
+    cx: 1
+    learning_rate: "4e-4"
+    global_batch_size: 262144
+    num_nodes: 1
+    gpus_per_node: 8
+    expert_parallel_size: 8
+    expert_parallel_path: sync_1d
+    rank_microbatch_sequences: 4
+
+  - task_name: 1p2b-cx8-gpu8-mb6
+    wave: 1
+    run_name: smoke-1p2b-geometry-gdn-ev2-nope-cx8-gpu8-mb6-ep8-sync-r2
+    model_size: 1p2b
+    cx: 8
+    learning_rate: "4e-4"
+    global_batch_size: 786432
+    num_nodes: 1
+    gpus_per_node: 8
+    expert_parallel_size: 8
+    expert_parallel_path: sync_1d
+    rank_microbatch_sequences: 6
+
+  - task_name: 480m-cx8-gpu8-mb12
+    wave: 2
+    run_name: smoke-480m-geometry-gdn-ev2-nope-cx8-gpu8-mb12-r1
+    model_size: 480m
+    cx: 8
+    learning_rate: "8e-4"
+    global_batch_size: 786432
+    num_nodes: 1
+    gpus_per_node: 8
+    expert_parallel_size: 1
+    rank_microbatch_sequences: 12
+
+  - task_name: 810m-cx8-gpu16-mb6
+    wave: 2
+    run_name: smoke-810m-geometry-gdn-ev2-nope-cx8-gpu16-mb6-r1
+    model_size: 810m
+    cx: 8
+    learning_rate: "4e-4"
+    global_batch_size: 786432
+    num_nodes: 2
+    gpus_per_node: 8
+    expert_parallel_size: 1
+    rank_microbatch_sequences: 6
+
+  - task_name: 1p2b-cx8-gpu16-mb6
+    wave: 2
+    run_name: smoke-1p2b-geometry-gdn-ev2-nope-cx8-gpu16-mb6-ep8-sync-r1
+    model_size: 1p2b
+    cx: 8
+    learning_rate: "4e-4"
+    global_batch_size: 786432
+    num_nodes: 2
+    gpus_per_node: 8
+    expert_parallel_size: 8
+    expert_parallel_path: sync_1d
+    rank_microbatch_sequences: 6
+
+  - task_name: 1p2b-cx8-gpu32-mb3
+    wave: 2
+    run_name: smoke-1p2b-geometry-gdn-ev2-nope-cx8-gpu32-mb3-ep8-sync-r1
+    model_size: 1p2b
+    cx: 8
+    learning_rate: "4e-4"
+    global_batch_size: 786432
+    num_nodes: 4
+    gpus_per_node: 8
+    expert_parallel_size: 8
+    expert_parallel_path: sync_1d
+    rank_microbatch_sequences: 3

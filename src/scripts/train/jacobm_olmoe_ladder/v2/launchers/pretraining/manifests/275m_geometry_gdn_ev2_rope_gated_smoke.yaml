@@ -1,0 +1,58 @@
+schema_version: 1
+
+experiment:
+  description: Checkpoint-free Cx4 capacity smoke for 275M geometry GDN expand_v=2 RoPE attention gating
+  checkpoint_root: /tmp/olmoe3-275m-geometry-gdn-ev2-rope-gated-smoke
+
+source:
+  repo: /weka/oe-adapt-default/jacobm/olmoe3/olmo-ddp-migration/OLMo-core-moe-v2-core
+  wrapper: src/scripts/train/jacobm_olmoe3_geometry_275m_rope_gated_beaker.sh
+  image: 01KW8G8JC20H11Y60PPTE2VN4Q
+
+beaker:
+  workspace: ai2/OLMo-3-moe-experiments
+  cluster: ai2/holmes
+  priority: urgent
+  shared_memory: 128 GiB
+  min_runtime: 0m
+  auto_resume: true
+  timeout: 2h
+  result_path: /results
+
+secrets:
+  AWS_ACCESS_KEY_ID: AWS_ACCESS_KEY_ID
+  AWS_SECRET_ACCESS_KEY: AWS_SECRET_ACCESS_KEY
+  WANDB_API_KEY: jacobm_WANDB_API_KEY
+  BEAKER_TOKEN: jacobm_BEAKER_TOKEN
+
+datasets:
+  - mount_path: /weka/oe-adapt-default
+    weka: oe-adapt-default
+  - mount_path: /weka/oe-training-default
+    weka: oe-training-default
+
+training:
+  sequence_length: 8192
+  hard_stop_steps: 11
+  checkpoints: false
+  save_interval: 999999999
+  ephemeral_save_interval: 999999999
+  checkpoint_removal: never
+  evals: false
+  eval_interval: 999999999
+  eval_steps: 0
+  eval_task_set: hellaswag
+  eval_on_finish: false
+  compile: true
+  wandb: false
+
+runs:
+  - task_name: cx4-mb16
+    run_name: smoke-275m-geometry-gdn-ev2-rope-gated-cx4-mb16-r1
+    model_size: 275m
+    cx: 4
+    learning_rate: "8e-4"
+    global_batch_size: 524288
+    gpu_count: 4
+    expert_parallel_size: 1
+    rank_microbatch_sequences: 16

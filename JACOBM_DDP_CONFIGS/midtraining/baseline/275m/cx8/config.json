@@ -1,0 +1,1231 @@
+{
+  "model": {
+    "d_model": 768,
+    "vocab_size": 100352,
+    "n_layers": 12,
+    "block": {
+      "sequence_mixer": {
+        "name": "default",
+        "n_heads": 8,
+        "n_kv_heads": 4,
+        "bias": false,
+        "rope": {
+          "name": "default",
+          "theta": 500000,
+          "full_precision": true,
+          "no_global_rope": false,
+          "_CLASS_": "olmo_core.nn.rope.RoPEConfig"
+        },
+        "qk_norm": {
+          "name": "rms",
+          "eps": 1e-06,
+          "bias": false,
+          "dtype": "float32",
+          "_CLASS_": "olmo_core.nn.layer_norm.LayerNormConfig"
+        },
+        "backend": "te",
+        "dtype": "float32",
+        "sliding_window": {
+          "pattern": [
+            2048,
+            -1
+          ],
+          "force_full_attention_on_first_layer": false,
+          "force_full_attention_on_last_layer": true,
+          "_CLASS_": "olmo_core.nn.attention.SlidingWindowAttentionConfig"
+        },
+        "use_head_qk_norm": true,
+        "d_attn": 1024,
+        "use_recompute_qkv_prep": false,
+        "_CLASS_": "olmo_core.nn.attention.AttentionConfig",
+        "type": "attention"
+      },
+      "attention_norm": {
+        "name": "rms",
+        "eps": 1e-06,
+        "bias": false,
+        "dtype": "float32",
+        "_CLASS_": "olmo_core.nn.layer_norm.LayerNormConfig"
+      },
+      "feed_forward_norm": {
+        "name": "rms",
+        "eps": 1e-06,
+        "bias": false,
+        "dtype": "float32",
+        "_CLASS_": "olmo_core.nn.layer_norm.LayerNormConfig"
+      },
+      "name": "moe_fused_v2",
+      "shared_experts": {
+        "d_model": 768,
+        "hidden_size": 384,
+        "num_experts": 1,
+        "bias": false,
+        "dtype": "float32",
+        "_CLASS_": "olmo_core.nn.moe.v2.shared_experts.SharedExpertsConfig"
+      },
+      "routed_experts": {
+        "d_model": 768,
+        "hidden_size": 768,
+        "num_experts": 48,
+        "bias": false,
+        "dtype": "float32",
+        "rowwise_fp8": {
+          "enabled": false,
+          "block_size": 32,
+          "scale_mode": "rceil",
+          "use_fast_accum": true,
+          "fp8_only_params": true,
+          "fused_autograd": true,
+          "fused_autograd_recompute_swiglu": true,
+          "_CLASS_": "olmo_core.nn.moe.v2.fp8.MoERowwiseFP8Config"
+        },
+        "_CLASS_": "olmo_core.nn.moe.v2.routed_experts.RoutedExpertsConfig"
+      },
+      "routed_experts_router": {
+        "d_model": 768,
+        "num_experts": 48,
+        "top_k": 4,
+        "normalize_expert_weights": 1.0,
+        "uniform_expert_assignment": false,
+        "random_expert_assignment": false,
+        "gating_function": "softmax",
+        "dtype": "float32",
+        "record_routing_batch_size": false,
+        "lb_loss_weight": 0.01,
+        "lb_loss_granularity": "instance",
+        "z_loss_weight": 1e-05,
+        "restore_weight_scale": true,
+        "use_recompute_fp32_cast": false,
+        "_CLASS_": "olmo_core.nn.moe.v2.router.MoERouterConfigV2"
+      },
+      "use_peri_norm": true,
+      "checkpoint_attn": false,
+      "checkpoint_permute_moe_unpermute": false,
+      "checkpoint_combined_ep_tbo": false,
+      "checkpoint_second_unpermute": false,
+      "ep_no_sync": true,
+      "ep_no_sync_use_2d_all_to_all": false,
+      "ep_no_sync_use_rowwise_all_to_all": true,
+      "ep_no_sync_rowwise_nblocks": 256,
+      "ep_no_sync_share_dispatch_out": false,
+      "ep_no_sync_capacity_factor": 1.25,
+      "ep_no_sync_shared_slots": 1,
+      "ep_no_sync_share_combine_out": false,
+      "ep_no_sync_major_align": 1,
+      "ep_no_sync_restore_unpermute_backend": "te_fused",
+      "rowwise_fp8": {
+        "enabled": false,
+        "block_size": 32,
+        "scale_mode": "rceil",
+        "use_fast_accum": true,
+        "fp8_only_params": true,
+        "fused_autograd": true,
+        "fused_autograd_recompute_swiglu": true,
+        "_CLASS_": "olmo_core.nn.moe.v2.fp8.MoERowwiseFP8Config"
+      },
+      "_CLASS_": "olmo_core.nn.moe.v2.block.MoEFusedV2TransformerBlockConfig"
+    },
+    "lm_head": {
+      "name": "default",
+      "layer_norm": {
+        "name": "rms",
+        "eps": 1e-06,
+        "bias": false,
+        "dtype": "float32",
+        "_CLASS_": "olmo_core.nn.layer_norm.LayerNormConfig"
+      },
+      "bias": false,
+      "dtype": "float32",
+      "loss_implementation": "default",
+      "_CLASS_": "olmo_core.nn.lm_head.LMHeadConfig"
+    },
+    "embedding_norm": {
+      "name": "rms",
+      "eps": 1e-06,
+      "bias": false,
+      "dtype": "float32",
+      "_CLASS_": "olmo_core.nn.layer_norm.LayerNormConfig"
+    },
+    "name": "moe_fused_v2",
+    "dtype": "float32",
+    "init_method": "normal",
+    "init_seed": 2026,
+    "init_std": 0.01,
+    "block_overrides": {
+      "0": {
+        "sequence_mixer": {
+          "name": "default",
+          "n_heads": 8,
+          "n_kv_heads": 4,
+          "bias": false,
+          "rope": {
+            "name": "default",
+            "theta": 500000,
+            "full_precision": true,
+            "no_global_rope": false,
+            "_CLASS_": "olmo_core.nn.rope.RoPEConfig"
+          },
+          "qk_norm": {
+            "name": "rms",
+            "eps": 1e-06,
+            "bias": false,
+            "dtype": "float32",
+            "_CLASS_": "olmo_core.nn.layer_norm.LayerNormConfig"
+          },
+          "backend": "te",
+          "dtype": "float32",
+          "use_head_qk_norm": true,
+          "d_attn": 1024,
+          "use_recompute_qkv_prep": false,
+          "_CLASS_": "olmo_core.nn.attention.AttentionConfig",
+          "type": "attention"
+        },
+        "attention_norm": {
+          "name": "rms",
+          "eps": 1e-06,
+          "bias": false,
+          "dtype": "float32",
+          "_CLASS_": "olmo_core.nn.layer_norm.LayerNormConfig"
+        },
+        "feed_forward_norm": {
+          "name": "rms",
+          "eps": 1e-06,
+          "bias": false,
+          "dtype": "float32",
+          "_CLASS_": "olmo_core.nn.layer_norm.LayerNormConfig"
+        },
+        "feed_forward": {
+          "hidden_size": 3456,
+          "name": "default",
+          "bias": false,
+          "activation": "silu",
+          "_CLASS_": "olmo_core.nn.feed_forward.FeedForwardConfig"
+        },
+        "name": "peri_norm",
+        "_CLASS_": "olmo_core.nn.transformer.config.TransformerBlockConfig"
+      }
+    },
+    "embed_scale": 27.712812921102035,
+    "two_batch_overlap": false,
+    "recompute_all_blocks_by_chunk": false,
+    "recompute_each_block": false,
+    "_CLASS_": "olmo_core.nn.transformer.config.MoEFusedV2TransformerConfig"
+  },
+  "dataset": {
+    "tokenizer": {
+      "vocab_size": 100278,
+      "eos_token_id": 100257,
+      "pad_token_id": 100277,
+      "identifier": "allenai/dolma2-tokenizer",
+      "_CLASS_": "olmo_core.data.tokenizer.TokenizerConfig"
+    },
+    "expand_glob": false,
+    "include_instance_metadata": true,
+    "instance_filter_config": {
+      "repetition_max_period": 13,
+      "repetition_min_period": 1,
+      "repetition_max_count": 32,
+      "_CLASS_": "olmo_core.data.numpy_dataset.InstanceFilterConfig"
+    },
+    "work_dir": "/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/midtraining/mt-275m-baseline-cx8-lr2e-4-r1",
+    "ignore_fingerprint_mismatch": false,
+    "sequence_length": 8192,
+    "generate_doc_lengths": false,
+    "source_mixture_config": {
+      "source_list": {
+        "sources": [
+          {
+            "source_name": "sponge",
+            "target_ratio": 0.05,
+            "paths": [
+              "gs://ai2-llm/preprocessed/sponge_63_mixes/eli5_60pct_filter-decon-2/**/allenai/dolma2-tokenizer/*.npy"
+            ],
+            "max_repetition_ratio": 1.0,
+            "max_source_fraction": 1.0,
+            "_CLASS_": "olmo_core.data.source_mixture.SourceMixtureConfig"
+          },
+          {
+            "source_name": "code_fim",
+            "target_ratio": 0.1,
+            "paths": [
+              "gs://ai2-llm/preprocessed/stack-edu/sample-fim-weighted-pl-edu-score-decon/**/**/*.npy"
+            ],
+            "max_repetition_ratio": 1.0,
+            "max_source_fraction": 1.0,
+            "_CLASS_": "olmo_core.data.source_mixture.SourceMixtureConfig"
+          },
+          {
+            "source_name": "swallowcode",
+            "target_ratio": 0.1,
+            "paths": [
+              "gs://ai2-llm/preprocessed/tokyotech-llm/swallowcode/scor_final_data-decon-sparkle-motion-with-ids-modelnamefilter2/allenai/dolma2-tokenizer/*.npy"
+            ],
+            "max_repetition_ratio": 1.0,
+            "max_source_fraction": 1.0,
+            "_CLASS_": "olmo_core.data.source_mixture.SourceMixtureConfig"
+          },
+          {
+            "source_name": "megamatt",
+            "target_ratio": 0.01726315213,
+            "paths": [
+              "gs://ai2-llm/preprocessed/megamath_web_pro_max/beaker_rewrites-decon-sparkle-motion-modelnamefilter2/**/allenai/dolma2-tokenizer/*.npy"
+            ],
+            "max_repetition_ratio": 1.0,
+            "max_source_fraction": 1.0,
+            "_CLASS_": "olmo_core.data.source_mixture.SourceMixtureConfig"
+          },
+          {
+            "source_name": "dolminos2math",
+            "target_ratio": 0.18273684787,
+            "paths": [
+              "gs://ai2-llm/preprocessed/tokyotech-llm/swallowmath/beaker_outputs-decon-sparkle-motion-withids-modelnamefilter2/allenai/dolma2-tokenizer/*.npy",
+              "gs://ai2-llm/preprocessed/midtraining-reasoning/flat_dolmino_math-decon-sparkle-motion-SCHEMAFIX-modelnamefilter2/allenai/dolma2-tokenizer/*.npy",
+              "gs://ai2-llm/preprocessed/midtraining-reasoning/OpenMathReasoning/OpenMathReasoning-rewrite-full-thoughts/jsonls-decon-sparkle-motion/allenai/dolma2-tokenizer/*.npy",
+              "gs://ai2-llm/preprocessed/midtraining-reasoning/tinyMATH/MIND/data/processed-decon-sparkle-motion/allenai/dolma2-tokenizer/*.npy",
+              "gs://ai2-llm/preprocessed/midtraining-reasoning/tinyMATH/PoT/processed_data/processed-decon-sparkle-motion/allenai/dolma2-tokenizer/*.npy"
+            ],
+            "max_repetition_ratio": 1.0,
+            "max_source_fraction": 1.0,
+            "_CLASS_": "olmo_core.data.source_mixture.SourceMixtureConfig"
+          },
+          {
+            "source_name": "reddit",
+            "target_ratio": 0.059,
+            "paths": [
+              "gs://ai2-llm/preprocessed/reddit-rewrites/densesub_highthresh_microanneal_4omini_rewrite/documents-decon-sparkle-motion/allenai/dolma2-tokenizer/*.npy",
+              "gs://ai2-llm/preprocessed/reddit-rewrites/densesub_lowthresh_4omini_rewrite/documents-decon-sparkle-motion/allenai/dolma2-tokenizer/*.npy"
+            ],
+            "max_repetition_ratio": 1.0,
+            "max_source_fraction": 1.0,
+            "_CLASS_": "olmo_core.data.source_mixture.SourceMixtureConfig"
+          },
+          {
+            "source_name": "rcqa",
+            "target_ratio": 0.03,
+            "paths": [
+              "gs://ai2-llm/preprocessed/wiki_psgqa_rewrites/psgqa_rewrites_v1-decon-sparkle-motion/allenai/dolma2-tokenizer/*.npy"
+            ],
+            "max_repetition_ratio": 1.0,
+            "max_source_fraction": 1.0,
+            "_CLASS_": "olmo_core.data.source_mixture.SourceMixtureConfig"
+          },
+          {
+            "source_name": "nemotron-synth-qa",
+            "target_ratio": 0.05,
+            "paths": [
+              "gs://ai2-llm/preprocessed/Nemotron-CC/v0/quality=high/kind=synthetic/kind2=diverse_qa_pairs-decon-sparkle-motion/allenai/dolma2-tokenizer/*.npy"
+            ],
+            "max_repetition_ratio": 1.0,
+            "max_source_fraction": 1.0,
+            "_CLASS_": "olmo_core.data.source_mixture.SourceMixtureConfig"
+          },
+          {
+            "source_name": "instruction-new-format",
+            "target_ratio": 0.011,
+            "paths": [
+              "gs://ai2-llm/preprocessed/ai2-llm/preprocessed/tulu-3-sft-for-olmo-3-midtraining/partitioned/v0-data-simple-concat-with-double-new-line-with-generation-prompt-decon-sparkle-motion-modelnamefilter2/allenai/dolma2-tokenizer/*.npy"
+            ],
+            "max_repetition_ratio": 1.0,
+            "max_source_fraction": 1.0,
+            "_CLASS_": "olmo_core.data.source_mixture.SourceMixtureConfig"
+          },
+          {
+            "source_name": "flan",
+            "target_ratio": 0.05,
+            "paths": [
+              "gs://ai2-llm/preprocessed/tulu_flan/v1-FULLDECON-HARD-TRAIN-60M-shots_all-upweight_1-dialog_false-sep_rulebased/documents-decon-sparkle-motion/allenai/dolma2-tokenizer/*.npy"
+            ],
+            "max_repetition_ratio": 1.0,
+            "max_source_fraction": 1.0,
+            "_CLASS_": "olmo_core.data.source_mixture.SourceMixtureConfig"
+          },
+          {
+            "source_name": "r1_reasoning",
+            "target_ratio": 0.01875,
+            "paths": [
+              "gs://ai2-llm/preprocessed/thinking-data/big-reasoning-traces-reformatted-keyword-filter-datecutoff-chinese-ngram-no-special-tokens-decon-sparkle-motion-modelnamefilter2/allenai/dolma2-tokenizer/*.npy"
+            ],
+            "max_repetition_ratio": 1.0,
+            "max_source_fraction": 1.0,
+            "_CLASS_": "olmo_core.data.source_mixture.SourceMixtureConfig"
+          },
+          {
+            "source_name": "qwq_reasoning",
+            "target_ratio": 0.01875,
+            "paths": [
+              "gs://ai2-llm/preprocessed/thinking-data/qwq-redo-reformatted-ngram-no-special-tokens-decon-sparkle-motion-modelnamefilter2/allenai/dolma2-tokenizer/*.npy"
+            ],
+            "max_repetition_ratio": 1.0,
+            "max_source_fraction": 1.0,
+            "_CLASS_": "olmo_core.data.source_mixture.SourceMixtureConfig"
+          },
+          {
+            "source_name": "gemini_reasoning",
+            "target_ratio": 0.00245738848,
+            "paths": [
+              "gs://ai2-llm/preprocessed/thinking-data/gemini-redo-reformatted-ngram-no-special-tokens-decon-sparkle-motion-modelnamefilter2/allenai/dolma2-tokenizer/*.npy"
+            ],
+            "max_repetition_ratio": 1.0,
+            "max_source_fraction": 1.0,
+            "_CLASS_": "olmo_core.data.source_mixture.SourceMixtureConfig"
+          },
+          {
+            "source_name": "llamanemotron_reasoning",
+            "target_ratio": 0.0125,
+            "paths": [
+              "gs://ai2-llm/preprocessed/thinking-data/llama-nemotron-processed-chinese-filtered-ngram-filtered-with-token-counts-decon-sparkle-motion-modelnamefilter2/allenai/dolma2-tokenizer/*.npy"
+            ],
+            "max_repetition_ratio": 1.0,
+            "max_source_fraction": 1.0,
+            "_CLASS_": "olmo_core.data.source_mixture.SourceMixtureConfig"
+          },
+          {
+            "source_name": "openthoughts2",
+            "target_ratio": 0.01254261152,
+            "paths": [
+              "gs://ai2-llm/preprocessed/thinking-data/openthoughts2-filtered-chinese-filtered-ngram-filtered-with-token-counts-stripped-decon-sparkle-motion-modelnamefilter2/allenai/dolma2-tokenizer/*.npy"
+            ],
+            "max_repetition_ratio": 1.0,
+            "max_source_fraction": 1.0,
+            "_CLASS_": "olmo_core.data.source_mixture.SourceMixtureConfig"
+          },
+          {
+            "source_name": "verifiable_41",
+            "target_ratio": 0.001323656354,
+            "paths": [
+              "gs://ai2-llm/preprocessed/midtraining-reasoning/verifiable/gpt-41/cleaned-documents-decon-2-decon-sparkle-motion/allenai/dolma2-tokenizer/*.npy"
+            ],
+            "max_repetition_ratio": 1.0,
+            "max_source_fraction": 1.0,
+            "_CLASS_": "olmo_core.data.source_mixture.SourceMixtureConfig"
+          },
+          {
+            "source_name": "verifiable_o4",
+            "target_ratio": 0.0002675179157,
+            "paths": [
+              "gs://ai2-llm/preprocessed/midtraining-reasoning/verifiable/o4-mini-high-decon-sparkle-motion/allenai/dolma2-tokenizer/*.npy"
+            ],
+            "max_repetition_ratio": 1.0,
+            "max_source_fraction": 1.0,
+            "_CLASS_": "olmo_core.data.source_mixture.SourceMixtureConfig"
+          },
+          {
+            "source_name": "math_meta",
+            "target_ratio": 0.00381286794,
+            "paths": [
+              "gs://ai2-llm/preprocessed/midtraining-reasoning/math-meta-reasoning-cleaned-latex-delim-randomly-cleaned-with-id-decon-sparkle-motion/allenai/dolma2-tokenizer/*.npy"
+            ],
+            "max_repetition_ratio": 1.0,
+            "max_source_fraction": 1.0,
+            "_CLASS_": "olmo_core.data.source_mixture.SourceMixtureConfig"
+          },
+          {
+            "source_name": "code_meta",
+            "target_ratio": 0.004596570853,
+            "paths": [
+              "gs://ai2-llm/preprocessed/midtraining-reasoning/code-meta-reasoning-cleaned-latex-delim-randomly-cleaned-with-id-decon-sparkle-motion-modelnamefilter2/allenai/dolma2-tokenizer/*.npy"
+            ],
+            "max_repetition_ratio": 1.0,
+            "max_source_fraction": 1.0,
+            "_CLASS_": "olmo_core.data.source_mixture.SourceMixtureConfig"
+          },
+          {
+            "source_name": "pdf-quality-art_design",
+            "target_ratio": 3.5e-05,
+            "paths": [
+              "gs://ai2-llm/preprocessed/s2pdf_dedupe_minhash_v1_with_no_pii_basic_quality_datadelve_norefs_mdtables_v2_denylisted_reshard_length-buckets_compression-decon-2_denyagain/length_2e12/art_design/allenai/dolma2-tokenizer/*.npy",
+              "gs://ai2-llm/preprocessed/s2pdf_dedupe_minhash_v1_with_no_pii_basic_quality_datadelve_norefs_mdtables_v2_denylisted_reshard_length-buckets_compression-decon-2_denyagain/length_2e13/art_design/allenai/dolma2-tokenizer/*.npy"
+            ],
+            "max_repetition_ratio": 1.0,
+            "max_source_fraction": 1.0,
+            "_CLASS_": "olmo_core.data.source_mixture.SourceMixtureConfig"
+          },
+          {
+            "source_name": "pdf-quality-crime_law",
+            "target_ratio": 0.000775,
+            "paths": [
+              "gs://ai2-llm/preprocessed/s2pdf_dedupe_minhash_v1_with_no_pii_basic_quality_datadelve_norefs_mdtables_v2_denylisted_reshard_length-buckets_compression-decon-2_denyagain/length_2e12/crime_law/allenai/dolma2-tokenizer/*.npy",
+              "gs://ai2-llm/preprocessed/s2pdf_dedupe_minhash_v1_with_no_pii_basic_quality_datadelve_norefs_mdtables_v2_denylisted_reshard_length-buckets_compression-decon-2_denyagain/length_2e13/crime_law/allenai/dolma2-tokenizer/*.npy"
+            ],
+            "max_repetition_ratio": 1.0,
+            "max_source_fraction": 1.0,
+            "_CLASS_": "olmo_core.data.source_mixture.SourceMixtureConfig"
+          },
+          {
+            "source_name": "pdf-quality-education_jobs",
+            "target_ratio": 0.00258,
+            "paths": [
+              "gs://ai2-llm/preprocessed/s2pdf_dedupe_minhash_v1_with_no_pii_basic_quality_datadelve_norefs_mdtables_v2_denylisted_reshard_length-buckets_compression-decon-2_denyagain/length_2e12/education_jobs/allenai/dolma2-tokenizer/*.npy",
+              "gs://ai2-llm/preprocessed/s2pdf_dedupe_minhash_v1_with_no_pii_basic_quality_datadelve_norefs_mdtables_v2_denylisted_reshard_length-buckets_compression-decon-2_denyagain/length_2e13/education_jobs/allenai/dolma2-tokenizer/*.npy"
+            ],
+            "max_repetition_ratio": 1.0,
+            "max_source_fraction": 1.0,
+            "_CLASS_": "olmo_core.data.source_mixture.SourceMixtureConfig"
+          },
+          {
+            "source_name": "pdf-quality-entertainment",
+            "target_ratio": 0.00011,
+            "paths": [
+              "gs://ai2-llm/preprocessed/s2pdf_dedupe_minhash_v1_with_no_pii_basic_quality_datadelve_norefs_mdtables_v2_denylisted_reshard_length-buckets_compression-decon-2_denyagain/length_2e12/entertainment/allenai/dolma2-tokenizer/*.npy",
+              "gs://ai2-llm/preprocessed/s2pdf_dedupe_minhash_v1_with_no_pii_basic_quality_datadelve_norefs_mdtables_v2_denylisted_reshard_length-buckets_compression-decon-2_denyagain/length_2e13/entertainment/allenai/dolma2-tokenizer/*.npy"
+            ],
+            "max_repetition_ratio": 1.0,
+            "max_source_fraction": 1.0,
+            "_CLASS_": "olmo_core.data.source_mixture.SourceMixtureConfig"
+          },
+          {
+            "source_name": "pdf-quality-finance_business",
+            "target_ratio": 0.0007,
+            "paths": [
+              "gs://ai2-llm/preprocessed/s2pdf_dedupe_minhash_v1_with_no_pii_basic_quality_datadelve_norefs_mdtables_v2_denylisted_reshard_length-buckets_compression-decon-2_denyagain/length_2e12/finance_business/allenai/dolma2-tokenizer/*.npy",
+              "gs://ai2-llm/preprocessed/s2pdf_dedupe_minhash_v1_with_no_pii_basic_quality_datadelve_norefs_mdtables_v2_denylisted_reshard_length-buckets_compression-decon-2_denyagain/length_2e13/finance_business/allenai/dolma2-tokenizer/*.npy"
+            ],
+            "max_repetition_ratio": 1.0,
+            "max_source_fraction": 1.0,
+            "_CLASS_": "olmo_core.data.source_mixture.SourceMixtureConfig"
+          },
+          {
+            "source_name": "pdf-quality-hardware",
+            "target_ratio": 0.00024,
+            "paths": [
+              "gs://ai2-llm/preprocessed/s2pdf_dedupe_minhash_v1_with_no_pii_basic_quality_datadelve_norefs_mdtables_v2_denylisted_reshard_length-buckets_compression-decon-2_denyagain/length_2e12/hardware/allenai/dolma2-tokenizer/*.npy",
+              "gs://ai2-llm/preprocessed/s2pdf_dedupe_minhash_v1_with_no_pii_basic_quality_datadelve_norefs_mdtables_v2_denylisted_reshard_length-buckets_compression-decon-2_denyagain/length_2e13/hardware/allenai/dolma2-tokenizer/*.npy"
+            ],
+            "max_repetition_ratio": 1.0,
+            "max_source_fraction": 1.0,
+            "_CLASS_": "olmo_core.data.source_mixture.SourceMixtureConfig"
+          },
+          {
+            "source_name": "pdf-quality-health",
+            "target_ratio": 0.005935,
+            "paths": [
+              "gs://ai2-llm/preprocessed/s2pdf_dedupe_minhash_v1_with_no_pii_basic_quality_datadelve_norefs_mdtables_v2_denylisted_reshard_length-buckets_compression-decon-2_denyagain/length_2e12/health/allenai/dolma2-tokenizer/*.npy",
+              "gs://ai2-llm/preprocessed/s2pdf_dedupe_minhash_v1_with_no_pii_basic_quality_datadelve_norefs_mdtables_v2_denylisted_reshard_length-buckets_compression-decon-2_denyagain/length_2e13/health/allenai/dolma2-tokenizer/*.npy"
+            ],
+            "max_repetition_ratio": 1.0,
+            "max_source_fraction": 1.0,
+            "_CLASS_": "olmo_core.data.source_mixture.SourceMixtureConfig"
+          },
+          {
+            "source_name": "pdf-quality-history",
+            "target_ratio": 0.00027,
+            "paths": [
+              "gs://ai2-llm/preprocessed/s2pdf_dedupe_minhash_v1_with_no_pii_basic_quality_datadelve_norefs_mdtables_v2_denylisted_reshard_length-buckets_compression-decon-2_denyagain/length_2e12/history/allenai/dolma2-tokenizer/*.npy",
+              "gs://ai2-llm/preprocessed/s2pdf_dedupe_minhash_v1_with_no_pii_basic_quality_datadelve_norefs_mdtables_v2_denylisted_reshard_length-buckets_compression-decon-2_denyagain/length_2e13/history/allenai/dolma2-tokenizer/*.npy"
+            ],
+            "max_repetition_ratio": 1.0,
+            "max_source_fraction": 1.0,
+            "_CLASS_": "olmo_core.data.source_mixture.SourceMixtureConfig"
+          },
+          {
+            "source_name": "pdf-quality-home_hobbies",
+            "target_ratio": 3.5e-05,
+            "paths": [
+              "gs://ai2-llm/preprocessed/s2pdf_dedupe_minhash_v1_with_no_pii_basic_quality_datadelve_norefs_mdtables_v2_denylisted_reshard_length-buckets_compression-decon-2_denyagain/length_2e12/home_hobbies/allenai/dolma2-tokenizer/*.npy",
+              "gs://ai2-llm/preprocessed/s2pdf_dedupe_minhash_v1_with_no_pii_basic_quality_datadelve_norefs_mdtables_v2_denylisted_reshard_length-buckets_compression-decon-2_denyagain/length_2e13/home_hobbies/allenai/dolma2-tokenizer/*.npy"
+            ],
+            "max_repetition_ratio": 1.0,
+            "max_source_fraction": 1.0,
+            "_CLASS_": "olmo_core.data.source_mixture.SourceMixtureConfig"
+          },
+          {
+            "source_name": "pdf-quality-industrial",
+            "target_ratio": 0.00269,
+            "paths": [
+              "gs://ai2-llm/preprocessed/s2pdf_dedupe_minhash_v1_with_no_pii_basic_quality_datadelve_norefs_mdtables_v2_denylisted_reshard_length-buckets_compression-decon-2_denyagain/length_2e12/industrial/allenai/dolma2-tokenizer/*.npy",
+              "gs://ai2-llm/preprocessed/s2pdf_dedupe_minhash_v1_with_no_pii_basic_quality_datadelve_norefs_mdtables_v2_denylisted_reshard_length-buckets_compression-decon-2_denyagain/length_2e13/industrial/allenai/dolma2-tokenizer/*.npy"
+            ],
+            "max_repetition_ratio": 1.0,
+            "max_source_fraction": 1.0,
+            "_CLASS_": "olmo_core.data.source_mixture.SourceMixtureConfig"
+          },
+          {
+            "source_name": "pdf-quality-literature",
+            "target_ratio": 0.00045,
+            "paths": [
+              "gs://ai2-llm/preprocessed/s2pdf_dedupe_minhash_v1_with_no_pii_basic_quality_datadelve_norefs_mdtables_v2_denylisted_reshard_length-buckets_compression-decon-2_denyagain/length_2e12/literature/allenai/dolma2-tokenizer/*.npy",
+              "gs://ai2-llm/preprocessed/s2pdf_dedupe_minhash_v1_with_no_pii_basic_quality_datadelve_norefs_mdtables_v2_denylisted_reshard_length-buckets_compression-decon-2_denyagain/length_2e13/literature/allenai/dolma2-tokenizer/*.npy"
+            ],
+            "max_repetition_ratio": 1.0,
+            "max_source_fraction": 1.0,
+            "_CLASS_": "olmo_core.data.source_mixture.SourceMixtureConfig"
+          },
+          {
+            "source_name": "pdf-quality-politics",
+            "target_ratio": 0.00092,
+            "paths": [
+              "gs://ai2-llm/preprocessed/s2pdf_dedupe_minhash_v1_with_no_pii_basic_quality_datadelve_norefs_mdtables_v2_denylisted_reshard_length-buckets_compression-decon-2_denyagain/length_2e12/politics/allenai/dolma2-tokenizer/*.npy",
+              "gs://ai2-llm/preprocessed/s2pdf_dedupe_minhash_v1_with_no_pii_basic_quality_datadelve_norefs_mdtables_v2_denylisted_reshard_length-buckets_compression-decon-2_denyagain/length_2e13/politics/allenai/dolma2-tokenizer/*.npy"
+            ],
+            "max_repetition_ratio": 1.0,
+            "max_source_fraction": 1.0,
+            "_CLASS_": "olmo_core.data.source_mixture.SourceMixtureConfig"
+          },
+          {
+            "source_name": "pdf-quality-religion",
+            "target_ratio": 0.00026,
+            "paths": [
+              "gs://ai2-llm/preprocessed/s2pdf_dedupe_minhash_v1_with_no_pii_basic_quality_datadelve_norefs_mdtables_v2_denylisted_reshard_length-buckets_compression-decon-2_denyagain/length_2e12/religion/allenai/dolma2-tokenizer/*.npy",
+              "gs://ai2-llm/preprocessed/s2pdf_dedupe_minhash_v1_with_no_pii_basic_quality_datadelve_norefs_mdtables_v2_denylisted_reshard_length-buckets_compression-decon-2_denyagain/length_2e13/religion/allenai/dolma2-tokenizer/*.npy"
+            ],
+            "max_repetition_ratio": 1.0,
+            "max_source_fraction": 1.0,
+            "_CLASS_": "olmo_core.data.source_mixture.SourceMixtureConfig"
+          },
+          {
+            "source_name": "pdf-quality-science_tech",
+            "target_ratio": 0.02976,
+            "paths": [
+              "gs://ai2-llm/preprocessed/s2pdf_dedupe_minhash_v1_with_no_pii_basic_quality_datadelve_norefs_mdtables_v2_denylisted_reshard_length-buckets_compression-decon-2_denyagain/length_2e12/science_tech/allenai/dolma2-tokenizer/*.npy",
+              "gs://ai2-llm/preprocessed/s2pdf_dedupe_minhash_v1_with_no_pii_basic_quality_datadelve_norefs_mdtables_v2_denylisted_reshard_length-buckets_compression-decon-2_denyagain/length_2e13/science_tech/allenai/dolma2-tokenizer/*.npy"
+            ],
+            "max_repetition_ratio": 1.0,
+            "max_source_fraction": 1.0,
+            "_CLASS_": "olmo_core.data.source_mixture.SourceMixtureConfig"
+          },
+          {
+            "source_name": "pdf-quality-software",
+            "target_ratio": 0.00059,
+            "paths": [
+              "gs://ai2-llm/preprocessed/s2pdf_dedupe_minhash_v1_with_no_pii_basic_quality_datadelve_norefs_mdtables_v2_denylisted_reshard_length-buckets_compression-decon-2_denyagain/length_2e12/software/allenai/dolma2-tokenizer/*.npy",
+              "gs://ai2-llm/preprocessed/s2pdf_dedupe_minhash_v1_with_no_pii_basic_quality_datadelve_norefs_mdtables_v2_denylisted_reshard_length-buckets_compression-decon-2_denyagain/length_2e13/software/allenai/dolma2-tokenizer/*.npy"
+            ],
+            "max_repetition_ratio": 1.0,
+            "max_source_fraction": 1.0,
+            "_CLASS_": "olmo_core.data.source_mixture.SourceMixtureConfig"
+          },
+          {
+            "source_name": "pdf-quality-software_dev",
+            "target_ratio": 0.00435,
+            "paths": [
+              "gs://ai2-llm/preprocessed/s2pdf_dedupe_minhash_v1_with_no_pii_basic_quality_datadelve_norefs_mdtables_v2_denylisted_reshard_length-buckets_compression-decon-2_denyagain/length_2e12/software_dev/allenai/dolma2-tokenizer/*.npy",
+              "gs://ai2-llm/preprocessed/s2pdf_dedupe_minhash_v1_with_no_pii_basic_quality_datadelve_norefs_mdtables_v2_denylisted_reshard_length-buckets_compression-decon-2_denyagain/length_2e13/software_dev/allenai/dolma2-tokenizer/*.npy"
+            ],
+            "max_repetition_ratio": 1.0,
+            "max_source_fraction": 1.0,
+            "_CLASS_": "olmo_core.data.source_mixture.SourceMixtureConfig"
+          },
+          {
+            "source_name": "pdf-quality-sports_fitness",
+            "target_ratio": 0.00019,
+            "paths": [
+              "gs://ai2-llm/preprocessed/s2pdf_dedupe_minhash_v1_with_no_pii_basic_quality_datadelve_norefs_mdtables_v2_denylisted_reshard_length-buckets_compression-decon-2_denyagain/length_2e12/sports_fitness/allenai/dolma2-tokenizer/*.npy",
+              "gs://ai2-llm/preprocessed/s2pdf_dedupe_minhash_v1_with_no_pii_basic_quality_datadelve_norefs_mdtables_v2_denylisted_reshard_length-buckets_compression-decon-2_denyagain/length_2e13/sports_fitness/allenai/dolma2-tokenizer/*.npy"
+            ],
+            "max_repetition_ratio": 1.0,
+            "max_source_fraction": 1.0,
+            "_CLASS_": "olmo_core.data.source_mixture.SourceMixtureConfig"
+          },
+          {
+            "source_name": "pdf-quality-transportation",
+            "target_ratio": 0.00011,
+            "paths": [
+              "gs://ai2-llm/preprocessed/s2pdf_dedupe_minhash_v1_with_no_pii_basic_quality_datadelve_norefs_mdtables_v2_denylisted_reshard_length-buckets_compression-decon-2_denyagain/length_2e12/transportation/allenai/dolma2-tokenizer/*.npy",
+              "gs://ai2-llm/preprocessed/s2pdf_dedupe_minhash_v1_with_no_pii_basic_quality_datadelve_norefs_mdtables_v2_denylisted_reshard_length-buckets_compression-decon-2_denyagain/length_2e13/transportation/allenai/dolma2-tokenizer/*.npy"
+            ],
+            "max_repetition_ratio": 1.0,
+            "max_source_fraction": 1.0,
+            "_CLASS_": "olmo_core.data.source_mixture.SourceMixtureConfig"
+          },
+          {
+            "source_name": "web-all_dressed-snazzy2-v18-v20--adult_content",
+            "target_ratio": 0.0002556935,
+            "paths": [
+              "gs://ai2-llm/preprocessed/all_dressed_v3_weborganizer_ft_dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/adult_content/allenai/dolma2-tokenizer/*.npy",
+              "gs://ai2-llm/preprocessed/all_dressed_v3_weborganizer_ft_dclm_plus2_vigintiles/vigintile_0020_subset-decon-2/adult_content/allenai/dolma2-tokenizer/*.npy"
+            ],
+            "max_repetition_ratio": 1.0,
+            "max_source_fraction": 1.0,
+            "_CLASS_": "olmo_core.data.source_mixture.SourceMixtureConfig"
+          },
+          {
+            "source_name": "web-all_dressed-snazzy2-v18-v20--art_and_design",
+            "target_ratio": 0.0028240385,
+            "paths": [
+              "gs://ai2-llm/preprocessed/all_dressed_v3_weborganizer_ft_dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/art_and_design/allenai/dolma2-tokenizer/*.npy",
+              "gs://ai2-llm/preprocessed/all_dressed_v3_weborganizer_ft_dclm_plus2_vigintiles/vigintile_0020_subset-decon-2/art_and_design/allenai/dolma2-tokenizer/*.npy"
+            ],
+            "max_repetition_ratio": 1.0,
+            "max_source_fraction": 1.0,
+            "_CLASS_": "olmo_core.data.source_mixture.SourceMixtureConfig"
+          },
+          {
+            "source_name": "web-all_dressed-snazzy2-v18-v20--crime_and_law",
+            "target_ratio": 0.0065884955,
+            "paths": [
+              "gs://ai2-llm/preprocessed/all_dressed_v3_weborganizer_ft_dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/crime_and_law/allenai/dolma2-tokenizer/*.npy",
+              "gs://ai2-llm/preprocessed/all_dressed_v3_weborganizer_ft_dclm_plus2_vigintiles/vigintile_0020_subset-decon-2/crime_and_law/allenai/dolma2-tokenizer/*.npy"
+            ],
+            "max_repetition_ratio": 1.0,
+            "max_source_fraction": 1.0,
+            "_CLASS_": "olmo_core.data.source_mixture.SourceMixtureConfig"
+          },
+          {
+            "source_name": "web-all_dressed-snazzy2-v18-v20--education_and_jobs",
+            "target_ratio": 0.009653949,
+            "paths": [
+              "gs://ai2-llm/preprocessed/all_dressed_v3_weborganizer_ft_dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/education_and_jobs/allenai/dolma2-tokenizer/*.npy",
+              "gs://ai2-llm/preprocessed/all_dressed_v3_weborganizer_ft_dclm_plus2_vigintiles/vigintile_0020_subset-decon-2/education_and_jobs/allenai/dolma2-tokenizer/*.npy"
+            ],
+            "max_repetition_ratio": 1.0,
+            "max_source_fraction": 1.0,
+            "_CLASS_": "olmo_core.data.source_mixture.SourceMixtureConfig"
+          },
+          {
+            "source_name": "web-all_dressed-snazzy2-v18-v20--electronics_and_hardware",
+            "target_ratio": 0.007793589,
+            "paths": [
+              "gs://ai2-llm/preprocessed/all_dressed_v3_weborganizer_ft_dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/electronics_and_hardware/allenai/dolma2-tokenizer/*.npy",
+              "gs://ai2-llm/preprocessed/all_dressed_v3_weborganizer_ft_dclm_plus2_vigintiles/vigintile_0020_subset-decon-2/electronics_and_hardware/allenai/dolma2-tokenizer/*.npy"
+            ],
+            "max_repetition_ratio": 1.0,
+            "max_source_fraction": 1.0,
+            "_CLASS_": "olmo_core.data.source_mixture.SourceMixtureConfig"
+          },
+          {
+            "source_name": "web-all_dressed-snazzy2-v18-v20--entertainment",
+            "target_ratio": 0.021607659,
+            "paths": [
+              "gs://ai2-llm/preprocessed/all_dressed_v3_weborganizer_ft_dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/entertainment/allenai/dolma2-tokenizer/*.npy",
+              "gs://ai2-llm/preprocessed/all_dressed_v3_weborganizer_ft_dclm_plus2_vigintiles/vigintile_0020_subset-decon-2/entertainment/allenai/dolma2-tokenizer/*.npy"
+            ],
+            "max_repetition_ratio": 1.0,
+            "max_source_fraction": 1.0,
+            "_CLASS_": "olmo_core.data.source_mixture.SourceMixtureConfig"
+          },
+          {
+            "source_name": "web-all_dressed-snazzy2-v18-v20--fashion_and_beauty",
+            "target_ratio": 2.867e-05,
+            "paths": [
+              "gs://ai2-llm/preprocessed/all_dressed_v3_weborganizer_ft_dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/fashion_and_beauty/allenai/dolma2-tokenizer/*.npy",
+              "gs://ai2-llm/preprocessed/all_dressed_v3_weborganizer_ft_dclm_plus2_vigintiles/vigintile_0020_subset-decon-2/fashion_and_beauty/allenai/dolma2-tokenizer/*.npy"
+            ],
+            "max_repetition_ratio": 1.0,
+            "max_source_fraction": 1.0,
+            "_CLASS_": "olmo_core.data.source_mixture.SourceMixtureConfig"
+          },
+          {
+            "source_name": "web-all_dressed-snazzy2-v18-v20--finance_and_business",
+            "target_ratio": 0.009142255,
+            "paths": [
+              "gs://ai2-llm/preprocessed/all_dressed_v3_weborganizer_ft_dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/finance_and_business/allenai/dolma2-tokenizer/*.npy",
+              "gs://ai2-llm/preprocessed/all_dressed_v3_weborganizer_ft_dclm_plus2_vigintiles/vigintile_0020_subset-decon-2/finance_and_business/allenai/dolma2-tokenizer/*.npy"
+            ],
+            "max_repetition_ratio": 1.0,
+            "max_source_fraction": 1.0,
+            "_CLASS_": "olmo_core.data.source_mixture.SourceMixtureConfig"
+          },
+          {
+            "source_name": "web-all_dressed-snazzy2-v18-v20--food_and_dining",
+            "target_ratio": 0.003163234,
+            "paths": [
+              "gs://ai2-llm/preprocessed/all_dressed_v3_weborganizer_ft_dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/food_and_dining/allenai/dolma2-tokenizer/*.npy",
+              "gs://ai2-llm/preprocessed/all_dressed_v3_weborganizer_ft_dclm_plus2_vigintiles/vigintile_0020_subset-decon-2/food_and_dining/allenai/dolma2-tokenizer/*.npy"
+            ],
+            "max_repetition_ratio": 1.0,
+            "max_source_fraction": 1.0,
+            "_CLASS_": "olmo_core.data.source_mixture.SourceMixtureConfig"
+          },
+          {
+            "source_name": "web-all_dressed-snazzy2-v18-v20--games",
+            "target_ratio": 0.0154939065,
+            "paths": [
+              "gs://ai2-llm/preprocessed/all_dressed_v3_weborganizer_ft_dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/games/allenai/dolma2-tokenizer/*.npy",
+              "gs://ai2-llm/preprocessed/all_dressed_v3_weborganizer_ft_dclm_plus2_vigintiles/vigintile_0020_subset-decon-2/games/allenai/dolma2-tokenizer/*.npy"
+            ],
+            "max_repetition_ratio": 1.0,
+            "max_source_fraction": 1.0,
+            "_CLASS_": "olmo_core.data.source_mixture.SourceMixtureConfig"
+          },
+          {
+            "source_name": "web-all_dressed-snazzy2-v18-v20--health",
+            "target_ratio": 0.0224049655,
+            "paths": [
+              "gs://ai2-llm/preprocessed/all_dressed_v3_weborganizer_ft_dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/health/allenai/dolma2-tokenizer/*.npy",
+              "gs://ai2-llm/preprocessed/all_dressed_v3_weborganizer_ft_dclm_plus2_vigintiles/vigintile_0020_subset-decon-2/health/allenai/dolma2-tokenizer/*.npy"
+            ],
+            "max_repetition_ratio": 1.0,
+            "max_source_fraction": 1.0,
+            "_CLASS_": "olmo_core.data.source_mixture.SourceMixtureConfig"
+          },
+          {
+            "source_name": "web-all_dressed-snazzy2-v18-v20--history_and_geography",
+            "target_ratio": 0.006118564,
+            "paths": [
+              "gs://ai2-llm/preprocessed/all_dressed_v3_weborganizer_ft_dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/history_and_geography/allenai/dolma2-tokenizer/*.npy",
+              "gs://ai2-llm/preprocessed/all_dressed_v3_weborganizer_ft_dclm_plus2_vigintiles/vigintile_0020_subset-decon-2/history_and_geography/allenai/dolma2-tokenizer/*.npy"
+            ],
+            "max_repetition_ratio": 1.0,
+            "max_source_fraction": 1.0,
+            "_CLASS_": "olmo_core.data.source_mixture.SourceMixtureConfig"
+          },
+          {
+            "source_name": "web-all_dressed-snazzy2-v18-v20--home_and_hobbies",
+            "target_ratio": 0.002058489,
+            "paths": [
+              "gs://ai2-llm/preprocessed/all_dressed_v3_weborganizer_ft_dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/home_and_hobbies/allenai/dolma2-tokenizer/*.npy",
+              "gs://ai2-llm/preprocessed/all_dressed_v3_weborganizer_ft_dclm_plus2_vigintiles/vigintile_0020_subset-decon-2/home_and_hobbies/allenai/dolma2-tokenizer/*.npy"
+            ],
+            "max_repetition_ratio": 1.0,
+            "max_source_fraction": 1.0,
+            "_CLASS_": "olmo_core.data.source_mixture.SourceMixtureConfig"
+          },
+          {
+            "source_name": "web-all_dressed-snazzy2-v18-v20--industrial",
+            "target_ratio": 0.0035336085,
+            "paths": [
+              "gs://ai2-llm/preprocessed/all_dressed_v3_weborganizer_ft_dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/industrial/allenai/dolma2-tokenizer/*.npy",
+              "gs://ai2-llm/preprocessed/all_dressed_v3_weborganizer_ft_dclm_plus2_vigintiles/vigintile_0020_subset-decon-2/industrial/allenai/dolma2-tokenizer/*.npy"
+            ],
+            "max_repetition_ratio": 1.0,
+            "max_source_fraction": 1.0,
+            "_CLASS_": "olmo_core.data.source_mixture.SourceMixtureConfig"
+          },
+          {
+            "source_name": "web-all_dressed-snazzy2-v18-v20--literature",
+            "target_ratio": 0.015340814,
+            "paths": [
+              "gs://ai2-llm/preprocessed/all_dressed_v3_weborganizer_ft_dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/literature/allenai/dolma2-tokenizer/*.npy",
+              "gs://ai2-llm/preprocessed/all_dressed_v3_weborganizer_ft_dclm_plus2_vigintiles/vigintile_0020_subset-decon-2/literature/allenai/dolma2-tokenizer/*.npy"
+            ],
+            "max_repetition_ratio": 1.0,
+            "max_source_fraction": 1.0,
+            "_CLASS_": "olmo_core.data.source_mixture.SourceMixtureConfig"
+          },
+          {
+            "source_name": "web-all_dressed-snazzy2-v18-v20--politics",
+            "target_ratio": 0.0048655335,
+            "paths": [
+              "gs://ai2-llm/preprocessed/all_dressed_v3_weborganizer_ft_dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/politics/allenai/dolma2-tokenizer/*.npy",
+              "gs://ai2-llm/preprocessed/all_dressed_v3_weborganizer_ft_dclm_plus2_vigintiles/vigintile_0020_subset-decon-2/politics/allenai/dolma2-tokenizer/*.npy"
+            ],
+            "max_repetition_ratio": 1.0,
+            "max_source_fraction": 1.0,
+            "_CLASS_": "olmo_core.data.source_mixture.SourceMixtureConfig"
+          },
+          {
+            "source_name": "web-all_dressed-snazzy2-v18-v20--religion",
+            "target_ratio": 0.0044465105,
+            "paths": [
+              "gs://ai2-llm/preprocessed/all_dressed_v3_weborganizer_ft_dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/religion/allenai/dolma2-tokenizer/*.npy",
+              "gs://ai2-llm/preprocessed/all_dressed_v3_weborganizer_ft_dclm_plus2_vigintiles/vigintile_0020_subset-decon-2/religion/allenai/dolma2-tokenizer/*.npy"
+            ],
+            "max_repetition_ratio": 1.0,
+            "max_source_fraction": 1.0,
+            "_CLASS_": "olmo_core.data.source_mixture.SourceMixtureConfig"
+          },
+          {
+            "source_name": "web-all_dressed-snazzy2-v18-v20--science_math_and_technology",
+            "target_ratio": 0.0473059895,
+            "paths": [
+              "gs://ai2-llm/preprocessed/all_dressed_v3_weborganizer_ft_dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/science_math_and_technology/allenai/dolma2-tokenizer/*.npy",
+              "gs://ai2-llm/preprocessed/all_dressed_v3_weborganizer_ft_dclm_plus2_vigintiles/vigintile_0020_subset-decon-2/science_math_and_technology/allenai/dolma2-tokenizer/*.npy"
+            ],
+            "max_repetition_ratio": 1.0,
+            "max_source_fraction": 1.0,
+            "_CLASS_": "olmo_core.data.source_mixture.SourceMixtureConfig"
+          },
+          {
+            "source_name": "web-all_dressed-snazzy2-v18-v20--social_life",
+            "target_ratio": 0.001035274,
+            "paths": [
+              "gs://ai2-llm/preprocessed/all_dressed_v3_weborganizer_ft_dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/social_life/allenai/dolma2-tokenizer/*.npy",
+              "gs://ai2-llm/preprocessed/all_dressed_v3_weborganizer_ft_dclm_plus2_vigintiles/vigintile_0020_subset-decon-2/social_life/allenai/dolma2-tokenizer/*.npy"
+            ],
+            "max_repetition_ratio": 1.0,
+            "max_source_fraction": 1.0,
+            "_CLASS_": "olmo_core.data.source_mixture.SourceMixtureConfig"
+          },
+          {
+            "source_name": "web-all_dressed-snazzy2-v18-v20--software_development",
+            "target_ratio": 0.010649571,
+            "paths": [
+              "gs://ai2-llm/preprocessed/all_dressed_v3_weborganizer_ft_dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/software_development/allenai/dolma2-tokenizer/*.npy",
+              "gs://ai2-llm/preprocessed/all_dressed_v3_weborganizer_ft_dclm_plus2_vigintiles/vigintile_0020_subset-decon-2/software_development/allenai/dolma2-tokenizer/*.npy"
+            ],
+            "max_repetition_ratio": 1.0,
+            "max_source_fraction": 1.0,
+            "_CLASS_": "olmo_core.data.source_mixture.SourceMixtureConfig"
+          },
+          {
+            "source_name": "web-all_dressed-snazzy2-v18-v20--software",
+            "target_ratio": 0.0250799635,
+            "paths": [
+              "gs://ai2-llm/preprocessed/all_dressed_v3_weborganizer_ft_dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/software/allenai/dolma2-tokenizer/*.npy",
+              "gs://ai2-llm/preprocessed/all_dressed_v3_weborganizer_ft_dclm_plus2_vigintiles/vigintile_0020_subset-decon-2/software/allenai/dolma2-tokenizer/*.npy"
+            ],
+            "max_repetition_ratio": 1.0,
+            "max_source_fraction": 1.0,
+            "_CLASS_": "olmo_core.data.source_mixture.SourceMixtureConfig"
+          },
+          {
+            "source_name": "web-all_dressed-snazzy2-v18-v20--sports_and_fitness",
+            "target_ratio": 0.0029238175,
+            "paths": [
+              "gs://ai2-llm/preprocessed/all_dressed_v3_weborganizer_ft_dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/sports_and_fitness/allenai/dolma2-tokenizer/*.npy",
+              "gs://ai2-llm/preprocessed/all_dressed_v3_weborganizer_ft_dclm_plus2_vigintiles/vigintile_0020_subset-decon-2/sports_and_fitness/allenai/dolma2-tokenizer/*.npy"
+            ],
+            "max_repetition_ratio": 1.0,
+            "max_source_fraction": 1.0,
+            "_CLASS_": "olmo_core.data.source_mixture.SourceMixtureConfig"
+          },
+          {
+            "source_name": "web-all_dressed-snazzy2-v18-v20--transportation",
+            "target_ratio": 0.0021929705,
+            "paths": [
+              "gs://ai2-llm/preprocessed/all_dressed_v3_weborganizer_ft_dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/transportation/allenai/dolma2-tokenizer/*.npy",
+              "gs://ai2-llm/preprocessed/all_dressed_v3_weborganizer_ft_dclm_plus2_vigintiles/vigintile_0020_subset-decon-2/transportation/allenai/dolma2-tokenizer/*.npy"
+            ],
+            "max_repetition_ratio": 1.0,
+            "max_source_fraction": 1.0,
+            "_CLASS_": "olmo_core.data.source_mixture.SourceMixtureConfig"
+          },
+          {
+            "source_name": "web-all_dressed-snazzy2-v18-v20--travel_and_tourism",
+            "target_ratio": 0.0004924385,
+            "paths": [
+              "gs://ai2-llm/preprocessed/all_dressed_v3_weborganizer_ft_dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/travel_and_tourism/allenai/dolma2-tokenizer/*.npy",
+              "gs://ai2-llm/preprocessed/all_dressed_v3_weborganizer_ft_dclm_plus2_vigintiles/vigintile_0020_subset-decon-2/travel_and_tourism/allenai/dolma2-tokenizer/*.npy"
+            ],
+            "max_repetition_ratio": 1.0,
+            "max_source_fraction": 1.0,
+            "_CLASS_": "olmo_core.data.source_mixture.SourceMixtureConfig"
+          }
+        ],
+        "_CLASS_": "olmo_core.data.source_mixture.SourceMixtureList"
+      },
+      "requested_tokens": 100000000000,
+      "global_batch_size": 1048576,
+      "processes": 16,
+      "seed": 2026,
+      "render_tables": true,
+      "quiet": false,
+      "_CLASS_": "olmo_core.data.source_mixture.SourceMixtureDatasetConfig"
+    },
+    "_CLASS_": "olmo_core.data.numpy_dataset.NumpyFSLDatasetConfig"
+  },
+  "data_loader": {
+    "global_batch_size": 1048576,
+    "seed": 2026,
+    "num_workers": 8,
+    "ignore_fingerprint_mismatch": false,
+    "_CLASS_": "olmo_core.data.data_loader.NumpyDataLoaderConfig",
+    "type": "numpy"
+  },
+  "train_module": {
+    "rank_microbatch_size": 65536,
+    "max_sequence_length": 8192,
+    "optim": {
+      "group_overrides": [
+        {
+          "params": [
+            "*embedding_norm.weight",
+            "*q_norm.weight",
+            "*k_norm.weight",
+            "*input_norm.weight",
+            "*lm_head.norm.weight",
+            "*attention_norm.weight",
+            "*feed_forward_norm.weight"
+          ],
+          "opts": {
+            "weight_decay": 0.0,
+            "use_muon": false
+          },
+          "_CLASS_": "olmo_core.optim.config.OptimGroupOverride"
+        },
+        {
+          "params": [
+            "*routed_experts.w_up_gate",
+            "*routed_experts.w_down"
+          ],
+          "opts": {
+            "lr": 0.0002,
+            "use_muon": false
+          },
+          "_CLASS_": "olmo_core.optim.config.OptimGroupOverride"
+        }
+      ],
+      "compile": true,
+      "fixed_fields": [
+        "initial_lr"
+      ],
+      "lr": 0.0002,
+      "betas": [
+        0.9,
+        0.95
+      ],
+      "eps": 1e-08,
+      "weight_decay": 0.1,
+      "dtype": "float32",
+      "muon_momentum": 0.95,
+      "muon_nesterov": true,
+      "muon_ns_coefficients": [
+        3.4445,
+        -4.775,
+        2.0315
+      ],
+      "muon_eps": 1e-07,
+      "muon_ns_steps": 5,
+      "rolling_interval_length": 128,
+      "sigma_factor": 12,
+      "max_grad_norm": 1.0,
+      "use_distributed": true,
+      "reset_optimizer_moments_on_load": false,
+      "_CLASS_": "olmo_core.optim.moe_optimizer.MoEFusedV2OptimizerConfig"
+    },
+    "max_grad_norm": 1.0,
+    "scheduler": {
+      "lr_field": "lr",
+      "initial_lr_field": "initial_lr",
+      "units": "steps",
+      "stages": [
+        {
+          "duration": 2000,
+          "shape": "linear",
+          "start_lr_fraction": 0.0,
+          "end_lr_fraction": 1.0,
+          "_CLASS_": "olmo_core.optim.scheduler.ComposableSchedulerStage"
+        }
+      ],
+      "_CLASS_": "olmo_core.optim.scheduler.ComposableScheduler",
+      "type": "composable"
+    },
+    "compile_model": true,
+    "dp_config": {
+      "name": "ddp",
+      "reduce_dtype": "float32",
+      "wrapping_strategy": "full",
+      "prefetch_factor": 0,
+      "only_allreduce_last_microbatch": true,
+      "reduce_grads_in_fp32": true,
+      "accumulate_grads_in_fp32": true,
+      "_CLASS_": "olmo_core.train.train_module.transformer.config.TransformerDataParallelConfig"
+    },
+    "z_loss_multiplier": 1e-05,
+    "reset_optimizer_states_on_load": false,
+    "label_ignore_index": -100,
+    "_CLASS_": "olmo_core.train.train_module.transformer.config.MoEV2TransformerTrainModuleConfig"
+  },
+  "trainer": {
+    "save_folder": "/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/midtraining/mt-275m-baseline-cx8-lr2e-4-r1",
+    "load_path": "/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/olmoe3-tiny-275m-cx8-b768k-gpu4-ep1mb8-lr1.6e-3-r2/step40971",
+    "load_strategy": "always",
+    "load_optim_state": false,
+    "load_trainer_state": false,
+    "checkpointer": {
+      "pre_download": false,
+      "save_thread_count": 3,
+      "load_thread_count": 2,
+      "throttle_uploads": true,
+      "_CLASS_": "olmo_core.train.checkpoint.CheckpointerConfig"
+    },
+    "save_overwrite": true,
+    "max_duration": {
+      "value": 100000000000,
+      "unit": "tokens",
+      "_CLASS_": "olmo_core.train.common.Duration"
+    },
+    "cancel_check_interval": 10,
+    "metrics_collect_interval": 2,
+    "callbacks": {
+      "checkpointer": {
+        "save_interval": 999999999,
+        "ephemeral_save_interval": 500,
+        "pre_train_checkpoint": false,
+        "save_async": false,
+        "remove": "ephemeral_only",
+        "enabled": true,
+        "_CLASS_": "olmo_core.train.callbacks.checkpointer.CheckpointerCallback"
+      },
+      "config_saver": {
+        "fname": "config.json",
+        "_CLASS_": "olmo_core.train.callbacks.config_saver.ConfigSaverCallback"
+      },
+      "wandb": {
+        "enabled": true,
+        "name": "mt-275m-baseline-cx8-lr2e-4-r1_0.28@1.13B_275m_eg48e4k_12L4K48N1S_midtrain-baseline-cx8-lr2e-4-r1",
+        "project": "jacobm-olmoe-ladder",
+        "entity": "ai2-llm",
+        "group": "mt-275m-baseline-cx8-lr2e-4-r1",
+        "tags": [
+          "exp_midtraining",
+          "275m",
+          "baseline-cx8",
+          "lr2e-4",
+          "b1024k-gpu4-ep1mb8",
+          "compile-on",
+          "weight-only-load",
+          "titan",
+          "midtraining"
+        ],
+        "cancel_tags": [
+          "cancel",
+          "canceled",
+          "cancelled"
+        ],
+        "cancel_check_interval": 10,
+        "_CLASS_": "olmo_core.train.callbacks.wandb.WandBCallback"
+      },
+      "profiler": {
+        "start": 1021,
+        "end": 1026,
+        "enabled": false,
+        "profile_ranks": [
+          0,
+          8,
+          16,
+          24,
+          32,
+          40,
+          48,
+          56
+        ],
+        "_CLASS_": "olmo_core.train.callbacks.profiler.NvidiaProfilerCallback"
+      },
+      "torch_mem_history": {
+        "start": 59161,
+        "end": 59164,
+        "enabled": false,
+        "profile_ranks": [
+          0,
+          8,
+          16,
+          24,
+          32,
+          40,
+          48,
+          56,
+          64,
+          72,
+          80,
+          88,
+          96,
+          104,
+          112,
+          120,
+          128,
+          136,
+          144,
+          152,
+          160,
+          168,
+          176,
+          184,
+          192,
+          200,
+          208,
+          216,
+          224,
+          232,
+          240,
+          248,
+          256,
+          264,
+          272,
+          280,
+          288,
+          296,
+          304,
+          312,
+          320,
+          328,
+          336,
+          344,
+          352,
+          360,
+          368,
+          376,
+          384,
+          392,
+          400,
+          408,
+          416,
+          424,
+          432,
+          440,
+          448,
+          456,
+          464,
+          472,
+          480,
+          488,
+          496,
+          504,
+          512,
+          520,
+          528,
+          536,
+          544,
+          552,
+          560,
+          568,
+          576,
+          584,
+          592,
+          600,
+          608,
+          616,
+          624,
+          632,
+          640,
+          648,
+          656,
+          664,
+          672,
+          680,
+          688,
+          696,
+          704,
+          712,
+          720,
+          728,
+          736,
+          744,
+          752,
+          760,
+          768,
+          776,
+          784,
+          792,
+          800,
+          808,
+          816,
+          824,
+          832,
+          840,
+          848,
+          856,
+          864,
+          872,
+          880,
+          888,
+          896,
+          904,
+          912,
+          920,
+          928,
+          936,
+          944,
+          952,
+          960,
+          968,
+          976,
+          984,
+          992,
+          1000,
+          1008,
+          1016
+        ],
+        "max_entries": 500000,
+        "output_dir": "/workspace/tmp",
+        "_CLASS_": "olmo_core.train.callbacks.profiler.TorchMemoryHistoryCallback"
+      }
+    },
+    "bookkeeping_soft_timeout": 30,
+    "no_checkpoints": false,
+    "no_evals": false,
+    "_CLASS_": "olmo_core.train.config.TrainerConfig"
+  },
+  "init_seed": 2026,
+  "_CLASS_": "moe_a0_ladder.ExperimentConfig"
+}

@@ -1,0 +1,93 @@
+version: v2
+description: Convert, exactly verify, and publish all 16 Jacob OLMoE3 shared_no_shared checkpoints
+tasks:
+  - name: shared-no-shared-family
+    image:
+      beaker: 01KW8G8JC20H11Y60PPTE2VN4Q
+    command: [/bin/bash, -lc]
+    arguments:
+      - |
+        set -euo pipefail
+
+        FAMILY=shared_no_shared
+        NEW_SOURCE=/weka/oe-adapt-default/jacobm/olmoe3/olmo-ddp-migration/OLMo-core
+        LEGACY_SOURCE=/weka/oe-adapt-default/jacobm/olmoe3/OLMo-core
+        NEW_REPO=/tmp/olmo-ddp-OLMo-core
+        LEGACY_REPO=/tmp/legacy-OLMo-core
+        STATUS_ROOT=/weka/oe-adapt-default/jacobm/olmoe3/olmo-ddp-migration/converted-checkpoints/_family_status
+
+        mkdir -p /results /tmp/google /tmp/olmo-ddp-family-work
+        rm -rf "${NEW_REPO}" "${LEGACY_REPO}"
+        mkdir -p "${NEW_REPO}/src" "${LEGACY_REPO}/src"
+        cp -a "${NEW_SOURCE}/src/olmo_core" "${NEW_REPO}/src/"
+        cp -a "${NEW_SOURCE}/src/scripts" "${NEW_REPO}/src/"
+        cp "${NEW_SOURCE}/JACOBM_DDP_PUBLICATION_MANIFEST.json" "${NEW_REPO}/"
+        cp -a "${NEW_SOURCE}/JACOBM_DDP_CONFIGS" "${NEW_REPO}/"
+        cp -a "${LEGACY_SOURCE}/src/olmo_core" "${LEGACY_REPO}/src/"
+
+        CREDENTIALS=/tmp/google/credentials.json
+        umask 077
+        printenv GANTRY_GOOGLE_CREDENTIALS > "${CREDENTIALS}"
+        export GOOGLE_APPLICATION_CREDENTIALS="${CREDENTIALS}"
+        unset GANTRY_GOOGLE_CREDENTIALS
+
+        export CUDA_SCALE_LAUNCH_QUEUES=4x
+        export OLMO_SHARED_FS=1
+        export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+        export OMP_NUM_THREADS=8
+
+        python --version | tee /results/python_version.txt
+        python - <<'PY' | tee /results/environment.txt
+        import torch
+        print("torch", torch.__version__)
+        print("cuda", torch.version.cuda)
+        print("cuda_available", torch.cuda.is_available())
+        print("device_count", torch.cuda.device_count())
+        print("device_0", torch.cuda.get_device_name(0))
+        PY
+        nvidia-smi | tee /results/nvidia_smi_before.txt
+
+        cd "${NEW_REPO}"
+        export PYTHONPATH="${NEW_REPO}/src"
+        python src/scripts/run_olmo_ddp_conversion_family.py \
+          --family "shared_no_shared" \
+          --manifest "${NEW_REPO}/JACOBM_DDP_PUBLICATION_MANIFEST.json" \
+          --config-root "${NEW_REPO}/JACOBM_DDP_CONFIGS" \
+          --legacy-repo "${LEGACY_REPO}" \
+          --new-repo "${NEW_REPO}" \
+          --status-root "${STATUS_ROOT}" \
+          --results-dir /results \
+          --sequence-length 128 \
+          --seed 6198 \
+          --load-thread-count 8 \
+          --save-thread-count 8 \
+          2>&1 | tee "/results/shared_no_shared_family.log"
+
+        grep -Fq '"status": "FAMILY_COMPLETE"' "/results/shared_no_shared_family_summary.json"
+        nvidia-smi | tee /results/nvidia_smi_after.txt
+    envVars:
+      - name: GANTRY_GOOGLE_CREDENTIALS
+        secret: jacobm_GOOGLE_CREDENTIALS
+    datasets:
+      - mountPath: /weka/oe-adapt-default
+        source:
+          weka: oe-adapt-default
+      - mountPath: /weka/oe-training-default
+        source:
+          weka: oe-training-default
+    result:
+      path: /results
+    resources:
+      gpuCount: 1
+      sharedMemory: 32 GiB
+    context:
+      priority: urgent
+      minRuntime: 8h0m0s
+      autoResume: false
+    constraints:
+      cluster:
+        - ai2/holmes
+    hostNetworking: true
+    propagateFailure: false
+    propagatePreemption: false
+    timeout: 48h0m0s

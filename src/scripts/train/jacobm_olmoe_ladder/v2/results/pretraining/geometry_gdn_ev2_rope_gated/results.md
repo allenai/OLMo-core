@@ -1,0 +1,185 @@
+# Geometry-matched RoPE gated-attention active hybrid GDN intervention
+
+Generated: `2026-07-23T17:09:14.229104+00:00`
+
+Selection metric: final `250M`-token mean training CE. Only finished runs are eligible.
+The optimal-LR summary includes only bracketed 275M sweeps with a valid quadratic fit.
+The all-size figure uses observed-optimal points for 275M and fixed wide-LR transfer points for larger sizes; pending hybrid cells are labeled explicitly.
+Fitted LR minima in the 275M U-plot are visual aids and are never used to select results.
+
+## Completed results
+
+| Model | Cx | Mode | Status | References (loss @ LR) | Intervention (loss @ LR) | Deltas vs references |
+|---|---:|---|---|---|---:|---|
+| 275m | Cx1 | LR sweep | complete | wide_integration: 2.741044 @ 0.0016; hybrid_gdn_ev1: 2.694642 @ 0.0016; geometry_gdn_ev2: 2.707881 @ 0.0016; geometry_gdn_ev2_nope: 2.712805 @ 0.0008; geometry_gdn_ev2_nope_gated: 2.711104 @ 0.0008 | 2.691980 (0.0016) | wide_integration: -0.049064; hybrid_gdn_ev1: -0.002661; geometry_gdn_ev2: -0.015901; geometry_gdn_ev2_nope: -0.020825; geometry_gdn_ev2_nope_gated: -0.019124 |
+| 275m | Cx2 | LR sweep | complete | wide_integration: 2.608295 @ 0.0016; hybrid_gdn_ev1: 2.569988 @ 0.0016; geometry_gdn_ev2: 2.578963 @ 0.0016; geometry_gdn_ev2_nope: 2.585179 @ 0.0016; geometry_gdn_ev2_nope_gated: 2.580768 @ 0.0016 | 2.573449 (0.0016) | wide_integration: -0.034847; hybrid_gdn_ev1: +0.003460; geometry_gdn_ev2: -0.005514; geometry_gdn_ev2_nope: -0.011730; geometry_gdn_ev2_nope_gated: -0.007319 |
+| 275m | Cx4 | LR sweep | complete | wide_integration: 2.506019 @ 0.0008; hybrid_gdn_ev1: 2.478165 @ 0.0016; geometry_gdn_ev2: 2.474631 @ 0.0016; geometry_gdn_ev2_nope: 2.477784 @ 0.0008; geometry_gdn_ev2_nope_gated: 2.476065 @ 0.0008 | 2.470110 (0.0008) | wide_integration: -0.035909; hybrid_gdn_ev1: -0.008055; geometry_gdn_ev2: -0.004521; geometry_gdn_ev2_nope: -0.007674; geometry_gdn_ev2_nope_gated: -0.005955 |
+| 275m | Cx8 | LR sweep | complete | wide_integration: 2.419273 @ 0.0008; hybrid_gdn_ev1: 2.396380 @ 0.0016; geometry_gdn_ev2: 2.389857 @ 0.0008; geometry_gdn_ev2_nope: 2.391953 @ 0.0008; geometry_gdn_ev2_nope_gated: 2.390397 @ 0.0008 | 2.386206 (0.0016) | wide_integration: -0.033068; hybrid_gdn_ev1: -0.010174; geometry_gdn_ev2: -0.003651; geometry_gdn_ev2_nope: -0.005747; geometry_gdn_ev2_nope_gated: -0.004191 |
+| 480m | Cx1 | fixed-LR transfer | finished | wide_integration: 2.543281 @ 0.0012; hybrid_gdn_ev1: 2.510874 @ 0.0012; geometry_gdn_ev2: —; geometry_gdn_ev2_nope: 2.526546 @ 0.0012; geometry_gdn_ev2_nope_gated: 2.519642 @ 0.0012 | 2.506239 (0.0012) | wide_integration: -0.037042; hybrid_gdn_ev1: -0.004635; geometry_gdn_ev2: —; geometry_gdn_ev2_nope: -0.020307; geometry_gdn_ev2_nope_gated: -0.013403 |
+| 480m | Cx2 | fixed-LR transfer | finished | wide_integration: 2.423888 @ 0.0009; hybrid_gdn_ev1: 2.412790 @ 0.0009; geometry_gdn_ev2: —; geometry_gdn_ev2_nope: 2.419441 @ 0.0009; geometry_gdn_ev2_nope_gated: 2.414718 @ 0.0009 | 2.402917 (0.0009) | wide_integration: -0.020971; hybrid_gdn_ev1: -0.009873; geometry_gdn_ev2: —; geometry_gdn_ev2_nope: -0.016524; geometry_gdn_ev2_nope_gated: -0.011801 |
+| 480m | Cx4 | fixed-LR transfer | finished | wide_integration: 2.329976 @ 0.0008; hybrid_gdn_ev1: 2.305996 @ 0.0008; geometry_gdn_ev2: —; geometry_gdn_ev2_nope: 2.323768 @ 0.0008; geometry_gdn_ev2_nope_gated: 2.315124 @ 0.0008 | 2.307792 (0.0008) | wide_integration: -0.022183; hybrid_gdn_ev1: +0.001797; geometry_gdn_ev2: —; geometry_gdn_ev2_nope: -0.015975; geometry_gdn_ev2_nope_gated: -0.007331 |
+| 480m | Cx8 | fixed-LR transfer | finished | wide_integration: 2.251305 @ 0.0008; hybrid_gdn_ev1: 2.236205 @ 0.0008; geometry_gdn_ev2: —; geometry_gdn_ev2_nope: 2.239326 @ 0.0008; geometry_gdn_ev2_nope_gated: 2.239297 @ 0.0008 | 2.233177 (0.0008) | wide_integration: -0.018128; hybrid_gdn_ev1: -0.003028; geometry_gdn_ev2: —; geometry_gdn_ev2_nope: -0.006149; geometry_gdn_ev2_nope_gated: -0.006121 |
+| 810m | Cx1 | fixed-LR transfer | finished | wide_integration: 2.373197 @ 0.0006; hybrid_gdn_ev1: 2.364345 @ 0.0006; geometry_gdn_ev2: —; geometry_gdn_ev2_nope: 2.377107 @ 0.0006; geometry_gdn_ev2_nope_gated: 2.373592 @ 0.0006 | 2.368164 (0.0006) | wide_integration: -0.005033; hybrid_gdn_ev1: +0.003819; geometry_gdn_ev2: —; geometry_gdn_ev2_nope: -0.008943; geometry_gdn_ev2_nope_gated: -0.005428 |
+| 810m | Cx2 | fixed-LR transfer | finished | wide_integration: 2.268948 @ 0.00056; hybrid_gdn_ev1: 2.247185 @ 0.00056; geometry_gdn_ev2: —; geometry_gdn_ev2_nope: 2.278701 @ 0.00056; geometry_gdn_ev2_nope_gated: 2.277253 @ 0.00056 | 2.266516 (0.00056) | wide_integration: -0.002431; hybrid_gdn_ev1: +0.019331; geometry_gdn_ev2: —; geometry_gdn_ev2_nope: -0.012185; geometry_gdn_ev2_nope_gated: -0.010736 |
+| 810m | Cx4 | fixed-LR transfer | finished | wide_integration: 2.192802 @ 0.0004; hybrid_gdn_ev1: 2.160440 @ 0.0004; geometry_gdn_ev2: —; geometry_gdn_ev2_nope: 2.191890 @ 0.0004; geometry_gdn_ev2_nope_gated: 2.191179 @ 0.0004 | 2.191042 (0.0004) | wide_integration: -0.001759; hybrid_gdn_ev1: +0.030602; geometry_gdn_ev2: —; geometry_gdn_ev2_nope: -0.000848; geometry_gdn_ev2_nope_gated: -0.000136 |
+| 810m | Cx8 | fixed-LR transfer | pending | wide_integration: 2.104939 @ 0.0004; hybrid_gdn_ev1: 2.095585 @ 0.0004; geometry_gdn_ev2: —; geometry_gdn_ev2_nope: 2.119848 @ 0.0004; geometry_gdn_ev2_nope_gated: 2.114516 @ 0.0004 | — | wide_integration: —; hybrid_gdn_ev1: —; geometry_gdn_ev2: —; geometry_gdn_ev2_nope: —; geometry_gdn_ev2_nope_gated: — |
+| 1p2b | Cx1 | fixed-LR transfer | finished | wide_integration: 2.273062 @ 0.0004; hybrid_gdn_ev1: 2.253953 @ 0.0004; geometry_gdn_ev2: —; geometry_gdn_ev2_nope: 2.274697 @ 0.0004; geometry_gdn_ev2_nope_gated: 2.273007 @ 0.0004 | 2.270124 (0.0004) | wide_integration: -0.002938; hybrid_gdn_ev1: +0.016172; geometry_gdn_ev2: —; geometry_gdn_ev2_nope: -0.004573; geometry_gdn_ev2_nope_gated: -0.002883 |
+| 1p2b | Cx2 | fixed-LR transfer | pending | wide_integration: 2.178332 @ 0.0006; hybrid_gdn_ev1: 2.163788 @ 0.0006; geometry_gdn_ev2: —; geometry_gdn_ev2_nope: 2.190998 @ 0.0006; geometry_gdn_ev2_nope_gated: 2.188236 @ 0.0006 | — | wide_integration: —; hybrid_gdn_ev1: —; geometry_gdn_ev2: —; geometry_gdn_ev2_nope: —; geometry_gdn_ev2_nope_gated: — |
+| 1p2b | Cx4 | fixed-LR transfer | finished | wide_integration: 2.094219 @ 0.0003; hybrid_gdn_ev1: 2.081180 @ 0.0003; geometry_gdn_ev2: —; geometry_gdn_ev2_nope: 2.107767 @ 0.0003; geometry_gdn_ev2_nope_gated: 2.108263 @ 0.0003 | 2.105145 (0.0003) | wide_integration: +0.010926; hybrid_gdn_ev1: +0.023965; geometry_gdn_ev2: —; geometry_gdn_ev2_nope: -0.002622; geometry_gdn_ev2_nope_gated: -0.003118 |
+| 1p2b | Cx8 | fixed-LR transfer | pending | wide_integration: 2.022641 @ 0.0004; hybrid_gdn_ev1: 2.016369 @ 0.0004; geometry_gdn_ev2: —; geometry_gdn_ev2_nope: 2.034305 @ 0.0004; geometry_gdn_ev2_nope_gated: 2.037147 @ 0.0004 | — | wide_integration: —; hybrid_gdn_ev1: —; geometry_gdn_ev2: —; geometry_gdn_ev2_nope: —; geometry_gdn_ev2_nope_gated: — |
+
+## Runs
+
+| Model | Variant | Cx | LR | State | Tokens (B) | Final-window CE | Replay handling | W&B |
+|---|---|---:|---:|---|---:|---:|---|---|
+| 275m | geometry-matched hybrid (GDN, expand_v=2) | 1 | 0.0004 | finished | 4.531 | 2.726539 | — | [sa70hegz](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/sa70hegz) |
+| 275m | geometry-matched hybrid (GDN, expand_v=2) | 1 | 0.0008 | finished | 4.531 | 2.709238 | — | [3ddxwqks](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/3ddxwqks) |
+| 275m | geometry-matched hybrid (GDN, expand_v=2) | 1 | 0.0016 | finished | 4.531 | 2.707881 | — | [8zx9zgnw](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/8zx9zgnw) |
+| 275m | geometry-matched hybrid (GDN, expand_v=2) | 1 | 0.0032 | finished | 4.531 | 2.717324 | — | [terfkng8](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/terfkng8) |
+| 275m | geometry-matched hybrid (GDN, expand_v=2, NoPE) | 1 | 0.0004 | finished | 4.531 | 2.727856 | — | [52ph1l67](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/52ph1l67) |
+| 275m | geometry-matched hybrid (GDN, expand_v=2, NoPE) | 1 | 0.0008 | finished | 4.531 | 2.712805 | — | [epdjswap](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/epdjswap) |
+| 275m | geometry-matched hybrid (GDN, expand_v=2, NoPE) | 1 | 0.0016 | finished | 4.531 | 2.713057 | — | [8mnuuecq](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/8mnuuecq) |
+| 275m | geometry-matched hybrid (GDN, expand_v=2, NoPE) | 1 | 0.0032 | finished | 4.531 | 2.757006 | — | [7gfls4r6](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/7gfls4r6) |
+| 275m | geometry-matched hybrid (GDN, expand_v=2, NoPE, gated attention) | 1 | 0.0004 | finished | 4.557 | 2.724486 | — | [lg619wiz](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/lg619wiz) |
+| 275m | geometry-matched hybrid (GDN, expand_v=2, NoPE, gated attention) | 1 | 0.0008 | finished | 4.557 | 2.711104 | — | [q81uxrxu](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/q81uxrxu) |
+| 275m | geometry-matched hybrid (GDN, expand_v=2, NoPE, gated attention) | 1 | 0.0016 | finished | 4.557 | 2.715845 | — | [sxuuwzzm](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/sxuuwzzm) |
+| 275m | geometry-matched hybrid (GDN, expand_v=2, NoPE, gated attention) | 1 | 0.0032 | finished | 4.557 | 2.730489 | — | [1pr3blts](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/1pr3blts) |
+| 275m | geometry-matched hybrid (GDN, expand_v=2, RoPE, gated attention) | 1 | 0.0004 | finished | 4.557 | 2.715839 | — | [kd3fyszi](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/kd3fyszi) |
+| 275m | geometry-matched hybrid (GDN, expand_v=2, RoPE, gated attention) | 1 | 0.0008 | finished | 4.557 | 2.697808 | — | [ezdsfb9n](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/ezdsfb9n) |
+| 275m | geometry-matched hybrid (GDN, expand_v=2, RoPE, gated attention) | 1 | 0.0016 | finished | 4.557 | 2.691980 | — | [eo5bm8gw](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/eo5bm8gw) |
+| 275m | geometry-matched hybrid (GDN, expand_v=2, RoPE, gated attention) | 1 | 0.0032 | finished | 4.557 | 2.703272 | — | [l4tp6qmo](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/l4tp6qmo) |
+| 275m | hybrid (GDN, expand_v=1) | 1 | 0.0004 | finished | 4.223 | 2.720016 | — | [fkm77yos](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/fkm77yos) |
+| 275m | hybrid (GDN, expand_v=1) | 1 | 0.0008 | finished | 4.223 | 2.700254 | — | [yo22u93q](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/yo22u93q) |
+| 275m | hybrid (GDN, expand_v=1) | 1 | 0.0016 | finished | 4.223 | 2.694642 | — | [moknw6oc](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/moknw6oc) |
+| 275m | hybrid (GDN, expand_v=1) | 1 | 0.0032 | finished | 4.223 | 2.710482 | — | [mettf0d3](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/mettf0d3) |
+| 275m | wide integration (SWA) | 1 | 0.0008 | finished | 4.063 | 2.749142 | — | [kfua3dcq](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/kfua3dcq) |
+| 275m | wide integration (SWA) | 1 | 0.0016 | finished | 4.063 | 2.741044 | — | [h86x1nv3](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/h86x1nv3) |
+| 275m | wide integration (SWA) | 1 | 0.0032 | finished | 4.063 | 2.749132 | — | [afxq80js](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/afxq80js) |
+| 275m | geometry-matched hybrid (GDN, expand_v=2) | 2 | 0.0004 | finished | 9.062 | 2.601221 | — | [oaazdm2h](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/oaazdm2h) |
+| 275m | geometry-matched hybrid (GDN, expand_v=2) | 2 | 0.0008 | finished | 9.062 | 2.582057 | — | [u4cinuz5](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/u4cinuz5) |
+| 275m | geometry-matched hybrid (GDN, expand_v=2) | 2 | 0.0016 | finished | 9.062 | 2.578963 | — | [3oqkg24h](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/3oqkg24h) |
+| 275m | geometry-matched hybrid (GDN, expand_v=2) | 2 | 0.0032 | finished | 9.062 | 2.595069 | — | [pz6377bu](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/pz6377bu) |
+| 275m | geometry-matched hybrid (GDN, expand_v=2, NoPE) | 2 | 0.0004 | finished | 9.062 | 2.602154 | — | [wpbz1ar9](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/wpbz1ar9) |
+| 275m | geometry-matched hybrid (GDN, expand_v=2, NoPE) | 2 | 0.0008 | finished | 9.062 | 2.586164 | — | [7u4epzt6](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/7u4epzt6) |
+| 275m | geometry-matched hybrid (GDN, expand_v=2, NoPE) | 2 | 0.0016 | finished | 9.062 | 2.585179 | — | [gjmz37ct](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/gjmz37ct) |
+| 275m | geometry-matched hybrid (GDN, expand_v=2, NoPE) | 2 | 0.0032 | finished | 9.062 | 2.611176 | — | [xahm1pbt](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/xahm1pbt) |
+| 275m | geometry-matched hybrid (GDN, expand_v=2, NoPE, gated attention) | 2 | 0.0004 | finished | 9.115 | 2.601429 | — | [sehjqtyk](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/sehjqtyk) |
+| 275m | geometry-matched hybrid (GDN, expand_v=2, NoPE, gated attention) | 2 | 0.0008 | finished | 9.115 | 2.584133 | — | [bttby9r8](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/bttby9r8) |
+| 275m | geometry-matched hybrid (GDN, expand_v=2, NoPE, gated attention) | 2 | 0.0016 | finished | 9.115 | 2.580768 | — | [ef4umox3](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/ef4umox3) |
+| 275m | geometry-matched hybrid (GDN, expand_v=2, NoPE, gated attention) | 2 | 0.0032 | finished | 9.115 | 2.597651 | — | [ofodwbzz](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/ofodwbzz) |
+| 275m | geometry-matched hybrid (GDN, expand_v=2, RoPE, gated attention) | 2 | 0.0004 | finished | 9.115 | 2.597840 | — | [7gmi969q](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/7gmi969q) |
+| 275m | geometry-matched hybrid (GDN, expand_v=2, RoPE, gated attention) | 2 | 0.0008 | finished | 9.115 | 2.579025 | — | [0ovig11c](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/0ovig11c) |
+| 275m | geometry-matched hybrid (GDN, expand_v=2, RoPE, gated attention) | 2 | 0.0016 | finished | 9.115 | 2.573449 | — | [8mkt4xpz](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/8mkt4xpz) |
+| 275m | geometry-matched hybrid (GDN, expand_v=2, RoPE, gated attention) | 2 | 0.0032 | finished | 9.115 | 2.589305 | — | [66u6ekx2](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/66u6ekx2) |
+| 275m | hybrid (GDN, expand_v=1) | 2 | 0.0004 | finished | 8.445 | 2.593894 | — | [s5qmhyb2](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/s5qmhyb2) |
+| 275m | hybrid (GDN, expand_v=1) | 2 | 0.0008 | finished | 8.445 | 2.577620 | — | [07qo96gy](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/07qo96gy) |
+| 275m | hybrid (GDN, expand_v=1) | 2 | 0.0016 | finished | 8.445 | 2.569988 | — | [j12fk559](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/j12fk559) |
+| 275m | hybrid (GDN, expand_v=1) | 2 | 0.0032 | finished | 8.445 | 2.585829 | — | [mem73c7g](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/mem73c7g) |
+| 275m | wide integration (SWA) | 2 | 0.0008 | finished | 8.126 | 2.612348 | — | [o2bdr3gw](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/o2bdr3gw) |
+| 275m | wide integration (SWA) | 2 | 0.0016 | finished | 8.126 | 2.608295 | — | [6porpbo2](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/6porpbo2) |
+| 275m | wide integration (SWA) | 2 | 0.0032 | finished | 8.126 | 2.614495 | — | [0f782vrw](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/0f782vrw) |
+| 275m | geometry-matched hybrid (GDN, expand_v=2) | 4 | 0.0004 | finished | 18.125 | 2.492137 | — | [7jzlrolc](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/7jzlrolc) |
+| 275m | geometry-matched hybrid (GDN, expand_v=2) | 4 | 0.0008 | finished | 18.125 | 2.474632 | — | [gwve4pn6](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/gwve4pn6) |
+| 275m | geometry-matched hybrid (GDN, expand_v=2) | 4 | 0.0016 | finished | 18.125 | 2.474631 | — | [hwjvw532](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/hwjvw532) |
+| 275m | geometry-matched hybrid (GDN, expand_v=2) | 4 | 0.0032 | finished | 18.125 | 2.496382 | — | [hmjkig0r](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/hmjkig0r) |
+| 275m | geometry-matched hybrid (GDN, expand_v=2, NoPE) | 4 | 0.0004 | finished | 18.125 | 2.494023 | — | [pmfco9gy](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/pmfco9gy) |
+| 275m | geometry-matched hybrid (GDN, expand_v=2, NoPE) | 4 | 0.0008 | finished | 18.125 | 2.477784 | — | [k5mjm4ev](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/k5mjm4ev) |
+| 275m | geometry-matched hybrid (GDN, expand_v=2, NoPE) | 4 | 0.0016 | finished | 18.125 | 2.479370 | — | [4x00n8lj](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/4x00n8lj) |
+| 275m | geometry-matched hybrid (GDN, expand_v=2, NoPE) | 4 | 0.0032 | finished | 18.125 | 2.503428 | — | [z1lw0z2i](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/z1lw0z2i) |
+| 275m | geometry-matched hybrid (GDN, expand_v=2, NoPE, gated attention) | 4 | 0.0004 | finished | 18.229 | 2.491557 | — | [fh9tl31v](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/fh9tl31v) |
+| 275m | geometry-matched hybrid (GDN, expand_v=2, NoPE, gated attention) | 4 | 0.0008 | finished | 18.229 | 2.476065 | — | [gwzx0ekc](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/gwzx0ekc) |
+| 275m | geometry-matched hybrid (GDN, expand_v=2, NoPE, gated attention) | 4 | 0.0016 | finished | 18.229 | 2.476188 | — | [jr74v01c](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/jr74v01c) |
+| 275m | geometry-matched hybrid (GDN, expand_v=2, NoPE, gated attention) | 4 | 0.0032 | finished | 18.229 | 2.496595 | — | [2s5s1yw0](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/2s5s1yw0) |
+| 275m | geometry-matched hybrid (GDN, expand_v=2, RoPE, gated attention) | 4 | 0.0004 | finished | 18.229 | 2.486140 | — | [o1p6n2v7](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/o1p6n2v7) |
+| 275m | geometry-matched hybrid (GDN, expand_v=2, RoPE, gated attention) | 4 | 0.0008 | finished | 18.229 | 2.470110 | — | [iqxc5n9x](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/iqxc5n9x) |
+| 275m | geometry-matched hybrid (GDN, expand_v=2, RoPE, gated attention) | 4 | 0.0016 | finished | 18.229 | 2.470261 | — | [n6suaxul](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/n6suaxul) |
+| 275m | geometry-matched hybrid (GDN, expand_v=2, RoPE, gated attention) | 4 | 0.0032 | finished | 18.229 | 2.490518 | — | [clfmsyx8](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/clfmsyx8) |
+| 275m | hybrid (GDN, expand_v=1) | 4 | 0.0004 | finished | 16.890 | 2.496429 | — | [socvue3a](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/socvue3a) |
+| 275m | hybrid (GDN, expand_v=1) | 4 | 0.0008 | finished | 16.890 | 2.479545 | — | [xvk92054](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/xvk92054) |
+| 275m | hybrid (GDN, expand_v=1) | 4 | 0.0016 | finished | 16.890 | 2.478165 | — | [uhw9wfed](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/uhw9wfed) |
+| 275m | hybrid (GDN, expand_v=1) | 4 | 0.0032 | finished | 16.890 | 2.496406 | — | [sr1jgmao](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/sr1jgmao) |
+| 275m | wide integration (SWA) | 4 | 0.0004 | finished | 16.251 | 2.520624 | — | [n1gjknwg](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/n1gjknwg) |
+| 275m | wide integration (SWA) | 4 | 0.0008 | finished | 16.251 | 2.506019 | — | [9n3xk8gs](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/9n3xk8gs) |
+| 275m | wide integration (SWA) | 4 | 0.0016 | finished | 16.251 | 2.508140 | — | [ttjquo05](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/ttjquo05) |
+| 275m | wide integration (SWA) | 4 | 0.0032 | finished | 16.251 | 2.522459 | — | [5u03fshf](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/5u03fshf) |
+| 275m | geometry-matched hybrid (GDN, expand_v=2) | 8 | 0.0004 | finished | 36.250 | 2.404090 | 1 reset(s); 502 duplicate token sample(s) removed | [7mlzc5x4](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/7mlzc5x4) / [9k8mo2q5](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/9k8mo2q5) |
+| 275m | geometry-matched hybrid (GDN, expand_v=2) | 8 | 0.0008 | finished | 36.250 | 2.389857 | 1 reset(s); 96 duplicate token sample(s) removed | [wo8raj1p](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/wo8raj1p) / [xdo7p86h](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/xdo7p86h) |
+| 275m | geometry-matched hybrid (GDN, expand_v=2) | 8 | 0.0016 | finished | 36.250 | 2.390902 | — | [0x3i869n](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/0x3i869n) |
+| 275m | geometry-matched hybrid (GDN, expand_v=2) | 8 | 0.0032 | finished | 36.250 | 2.412928 | — | [aholwcgr](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/aholwcgr) |
+| 275m | geometry-matched hybrid (GDN, expand_v=2, NoPE) | 8 | 0.0004 | finished | 36.250 | 2.406665 | — | [t76b5xjy](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/t76b5xjy) |
+| 275m | geometry-matched hybrid (GDN, expand_v=2, NoPE) | 8 | 0.0008 | finished | 36.250 | 2.391953 | — | [d29gx1x9](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/d29gx1x9) |
+| 275m | geometry-matched hybrid (GDN, expand_v=2, NoPE) | 8 | 0.0016 | finished | 36.250 | 2.394529 | — | [n8kkr1y8](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/n8kkr1y8) |
+| 275m | geometry-matched hybrid (GDN, expand_v=2, NoPE) | 8 | 0.0032 | finished | 36.250 | 2.418367 | — | [qhjvjwcu](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/qhjvjwcu) |
+| 275m | geometry-matched hybrid (GDN, expand_v=2, NoPE, gated attention) | 8 | 0.0004 | finished | 36.459 | 2.405406 | — | [qehufcr5](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/qehufcr5) |
+| 275m | geometry-matched hybrid (GDN, expand_v=2, NoPE, gated attention) | 8 | 0.0008 | finished | 36.459 | 2.390397 | — | [ouxblu4g](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/ouxblu4g) |
+| 275m | geometry-matched hybrid (GDN, expand_v=2, NoPE, gated attention) | 8 | 0.0016 | finished | 36.459 | 2.392762 | — | [3xjjt5sa](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/3xjjt5sa) |
+| 275m | geometry-matched hybrid (GDN, expand_v=2, NoPE, gated attention) | 8 | 0.0032 | finished | 36.459 | 2.413536 | — | [mbvin02a](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/mbvin02a) |
+| 275m | geometry-matched hybrid (GDN, expand_v=2, RoPE, gated attention) | 8 | 0.0004 | finished | 36.459 | 2.400511 | — | [y1dh1cb5](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/y1dh1cb5) |
+| 275m | geometry-matched hybrid (GDN, expand_v=2, RoPE, gated attention) | 8 | 0.0008 | finished | 36.459 | 2.387352 | — | [65bsc0wk](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/65bsc0wk) |
+| 275m | geometry-matched hybrid (GDN, expand_v=2, RoPE, gated attention) | 8 | 0.0016 | finished | 36.459 | 2.386206 | — | [8rgf3myq](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/8rgf3myq) |
+| 275m | geometry-matched hybrid (GDN, expand_v=2, RoPE, gated attention) | 8 | 0.0032 | finished | 36.459 | 2.408689 | — | [klgge8er](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/klgge8er) |
+| 275m | hybrid (GDN, expand_v=1) | 8 | 0.0004 | finished | 33.780 | 2.412233 | — | [b0z3qfmi](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/b0z3qfmi) |
+| 275m | hybrid (GDN, expand_v=1) | 8 | 0.0008 | finished | 33.780 | 2.397966 | — | [rkxojd03](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/rkxojd03) |
+| 275m | hybrid (GDN, expand_v=1) | 8 | 0.0016 | finished | 33.780 | 2.396380 | — | [66aja50m](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/66aja50m) |
+| 275m | hybrid (GDN, expand_v=1) | 8 | 0.0032 | finished | 33.780 | 2.414943 | — | [ntoo8vlo](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/ntoo8vlo) |
+| 275m | wide integration (SWA) | 8 | 0.0004 | finished | 32.502 | 2.435915 | — | [iv901lom](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/iv901lom) |
+| 275m | wide integration (SWA) | 8 | 0.0008 | finished | 32.502 | 2.419273 | — | [qe052lo4](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/qe052lo4) |
+| 275m | wide integration (SWA) | 8 | 0.0016 | finished | 32.502 | 2.423303 | — | [qu2zaxr7](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/qu2zaxr7) |
+| 275m | wide integration (SWA) | 8 | 0.0032 | finished | 32.502 | 2.441430 | — | [235ye5lg](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/235ye5lg) |
+| 480m | geometry-matched hybrid (GDN, expand_v=2, NoPE) | 1 | 0.0012 | finished | 8.481 | 2.526546 | — | [i2bij623](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/i2bij623) |
+| 480m | geometry-matched hybrid (GDN, expand_v=2, NoPE, gated attention) | 1 | 0.0012 | finished | 8.529 | 2.519642 | — | [9rltp47w](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/9rltp47w) |
+| 480m | geometry-matched hybrid (GDN, expand_v=2, RoPE, gated attention) | 1 | 0.0012 | finished | 8.529 | 2.506239 | — | [ms1r0qqa](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/ms1r0qqa) |
+| 480m | hybrid (GDN, expand_v=1) | 1 | 0.0012 | finished | 7.969 | 2.510874 | — | [wl8ebsd8](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/wl8ebsd8) |
+| 480m | wide integration (SWA) | 1 | 0.0012 | finished | 7.672 | 2.543281 | — | [z4wxvc6h](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/z4wxvc6h) |
+| 480m | geometry-matched hybrid (GDN, expand_v=2, NoPE) | 2 | 0.0009 | finished | 16.963 | 2.419441 | — | [2d1t07dn](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/2d1t07dn) |
+| 480m | geometry-matched hybrid (GDN, expand_v=2, NoPE, gated attention) | 2 | 0.0009 | finished | 17.057 | 2.414718 | — | [0crj05wz](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/0crj05wz) |
+| 480m | geometry-matched hybrid (GDN, expand_v=2, RoPE, gated attention) | 2 | 0.0009 | finished | 17.057 | 2.402917 | — | [68t7rt6l](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/68t7rt6l) |
+| 480m | hybrid (GDN, expand_v=1) | 2 | 0.0009 | finished | 15.939 | 2.412790 | — | [4vzmrld1](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/4vzmrld1) |
+| 480m | wide integration (SWA) | 2 | 0.0009 | finished | 15.344 | 2.423888 | — | [ywj13bkw](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/ywj13bkw) |
+| 480m | geometry-matched hybrid (GDN, expand_v=2, NoPE) | 4 | 0.0008 | finished | 33.926 | 2.323768 | — | [ke2n42cm](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/ke2n42cm) |
+| 480m | geometry-matched hybrid (GDN, expand_v=2, NoPE, gated attention) | 4 | 0.0008 | finished | 34.114 | 2.315124 | — | [ur7yonej](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/ur7yonej) |
+| 480m | geometry-matched hybrid (GDN, expand_v=2, RoPE, gated attention) | 4 | 0.0008 | finished | 34.114 | 2.307792 | 0 reset(s); 1 duplicate token sample(s) removed | [f582szym](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/f582szym) |
+| 480m | hybrid (GDN, expand_v=1) | 4 | 0.0008 | finished | 31.878 | 2.305996 | — | [h06m5ls2](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/h06m5ls2) |
+| 480m | wide integration (SWA) | 4 | 0.0008 | finished | 30.687 | 2.329976 | — | [rblv9hpr](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/rblv9hpr) |
+| 480m | geometry-matched hybrid (GDN, expand_v=2, NoPE) | 8 | 0.0008 | finished | 67.851 | 2.239326 | — | [pej34iwq](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/pej34iwq) |
+| 480m | geometry-matched hybrid (GDN, expand_v=2, NoPE, gated attention) | 8 | 0.0008 | finished | 68.228 | 2.239297 | — | [4737op7s](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/4737op7s) |
+| 480m | geometry-matched hybrid (GDN, expand_v=2, RoPE, gated attention) | 8 | 0.0008 | finished | 68.228 | 2.233177 | 0 reset(s); 1 duplicate token sample(s) removed | [sd23pj27](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/sd23pj27) |
+| 480m | hybrid (GDN, expand_v=1) | 8 | 0.0008 | finished | 63.755 | 2.236205 | — | [d34a9o4t](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/d34a9o4t) |
+| 480m | wide integration (SWA) | 8 | 0.0008 | finished | 61.375 | 2.251305 | — | [vdcrgfy0](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/vdcrgfy0) |
+| 810m | geometry-matched hybrid (GDN, expand_v=2, NoPE) | 1 | 0.0006 | finished | 15.110 | 2.377107 | — | [8z7txpf8](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/8z7txpf8) |
+| 810m | geometry-matched hybrid (GDN, expand_v=2, NoPE, gated attention) | 1 | 0.0006 | finished | 15.236 | 2.373592 | — | [027xoq0r](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/027xoq0r) |
+| 810m | geometry-matched hybrid (GDN, expand_v=2, RoPE, gated attention) | 1 | 0.0006 | finished | 15.236 | 2.368164 | — | [lhwdegc8](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/lhwdegc8) |
+| 810m | hybrid (GDN, expand_v=1) | 1 | 0.0006 | finished | 14.619 | 2.364345 | — | [h1rmcm2p](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/h1rmcm2p) |
+| 810m | wide integration (SWA) | 1 | 0.0006 | finished | 13.903 | 2.373197 | — | [w912irkq](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/w912irkq) |
+| 810m | geometry-matched hybrid (GDN, expand_v=2, NoPE) | 2 | 0.00056 | finished | 30.219 | 2.278701 | — | [upxsysuv](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/upxsysuv) |
+| 810m | geometry-matched hybrid (GDN, expand_v=2, NoPE, gated attention) | 2 | 0.00056 | finished | 30.471 | 2.277253 | — | [7ryj4klm](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/7ryj4klm) |
+| 810m | geometry-matched hybrid (GDN, expand_v=2, RoPE, gated attention) | 2 | 0.00056 | finished | 30.471 | 2.266516 | 0 reset(s); 1 duplicate token sample(s) removed | [lxbp2lhf](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/lxbp2lhf) |
+| 810m | hybrid (GDN, expand_v=1) | 2 | 0.00056 | finished | 29.238 | 2.247185 | — | [1d5gxgjv](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/1d5gxgjv) |
+| 810m | wide integration (SWA) | 2 | 0.00056 | finished | 27.805 | 2.268948 | — | [jpbqhfvc](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/jpbqhfvc) |
+| 810m | geometry-matched hybrid (GDN, expand_v=2, NoPE) | 4 | 0.0004 | finished | 60.438 | 2.191890 | — | [8ewnju8z](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/8ewnju8z) |
+| 810m | geometry-matched hybrid (GDN, expand_v=2, NoPE, gated attention) | 4 | 0.0004 | finished | 60.942 | 2.191179 | — | [l0u9gv52](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/l0u9gv52) |
+| 810m | geometry-matched hybrid (GDN, expand_v=2, RoPE, gated attention) | 4 | 0.0004 | finished | 60.942 | 2.191042 | 0 reset(s); 1 duplicate token sample(s) removed | [05i2h85m](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/05i2h85m) |
+| 810m | hybrid (GDN, expand_v=1) | 4 | 0.0004 | finished | 58.476 | 2.160440 | — | [kye1c19u](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/kye1c19u) |
+| 810m | wide integration (SWA) | 4 | 0.0004 | finished | 55.610 | 2.192802 | — | [58ftjxmw](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/58ftjxmw) |
+| 810m | geometry-matched hybrid (GDN, expand_v=2, NoPE) | 8 | 0.0004 | finished | 120.877 | 2.119848 | — | [bf0yrani](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/bf0yrani) |
+| 810m | geometry-matched hybrid (GDN, expand_v=2, NoPE, gated attention) | 8 | 0.0004 | finished | 121.884 | 2.114516 | — | [pvoq0dq6](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/pvoq0dq6) |
+| 810m | hybrid (GDN, expand_v=1) | 8 | 0.0004 | finished | 116.953 | 2.095585 | — | [s5gvyjiz](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/s5gvyjiz) |
+| 810m | wide integration (SWA) | 8 | 0.0004 | finished | 111.220 | 2.104939 | — | [kyti8h1y](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/kyti8h1y) |
+| 1p2b | geometry-matched hybrid (GDN, expand_v=2, NoPE) | 1 | 0.0004 | finished | 23.220 | 2.274697 | 0 reset(s); 5 duplicate token sample(s) removed | [dngmbyg2](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/dngmbyg2) / [lubri1f1](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/lubri1f1) |
+| 1p2b | geometry-matched hybrid (GDN, expand_v=2, NoPE, gated attention) | 1 | 0.0004 | finished | 23.430 | 2.273007 | — | [ojtvkjgk](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/ojtvkjgk) |
+| 1p2b | geometry-matched hybrid (GDN, expand_v=2, RoPE, gated attention) | 1 | 0.0004 | finished | 23.430 | 2.270124 | 0 reset(s); 1 duplicate token sample(s) removed | [yzrd8hnz](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/yzrd8hnz) |
+| 1p2b | hybrid (GDN, expand_v=1) | 1 | 0.0004 | finished | 22.691 | 2.253953 | — | [1d24xfx5](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/1d24xfx5) |
+| 1p2b | wide integration (SWA) | 1 | 0.0004 | finished | 21.417 | 2.273062 | — | [hww8eksq](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/hww8eksq) |
+| 1p2b | geometry-matched hybrid (GDN, expand_v=2, NoPE) | 2 | 0.0006 | finished | 46.440 | 2.190998 | — | [hd12kewt](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/hd12kewt) |
+| 1p2b | geometry-matched hybrid (GDN, expand_v=2, NoPE, gated attention) | 2 | 0.0006 | finished | 46.859 | 2.188236 | 1 reset(s); 131 duplicate token sample(s) removed | [kko6fe0y](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/kko6fe0y) / [ama4a8s0](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/ama4a8s0) / [u88pp5vm](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/u88pp5vm) |
+| 1p2b | hybrid (GDN, expand_v=1) | 2 | 0.0006 | finished | 45.381 | 2.163788 | — | [4k1bh4k2](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/4k1bh4k2) |
+| 1p2b | wide integration (SWA) | 2 | 0.0006 | finished | 42.835 | 2.178332 | — | [jfwntmwm](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/jfwntmwm) |
+| 1p2b | geometry-matched hybrid (GDN, expand_v=2, NoPE) | 4 | 0.0003 | finished | 92.880 | 2.107767 | — | [xxrj2oou](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/xxrj2oou) |
+| 1p2b | geometry-matched hybrid (GDN, expand_v=2, NoPE, gated attention) | 4 | 0.0003 | finished | 93.719 | 2.108263 | — | [bhr5mgpr](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/bhr5mgpr) |
+| 1p2b | geometry-matched hybrid (GDN, expand_v=2, RoPE, gated attention) | 4 | 0.0003 | finished | 93.719 | 2.105145 | 0 reset(s); 1 duplicate token sample(s) removed | [eg6zkszq](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/eg6zkszq) |
+| 1p2b | hybrid (GDN, expand_v=1) | 4 | 0.0003 | finished | 90.762 | 2.081180 | — | [vc3c6gj6](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/vc3c6gj6) |
+| 1p2b | wide integration (SWA) | 4 | 0.0003 | finished | 85.670 | 2.094219 | — | [u7ab1tpb](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/u7ab1tpb) |
+| 1p2b | geometry-matched hybrid (GDN, expand_v=2, NoPE) | 8 | 0.0004 | finished | 185.759 | 2.034305 | 0 reset(s); 1 duplicate token sample(s) removed | [hiokrpag](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/hiokrpag) |
+| 1p2b | geometry-matched hybrid (GDN, expand_v=2, NoPE, gated attention) | 8 | 0.0004 | finished | 187.437 | 2.037147 | — | [z4zmtqmu](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/z4zmtqmu) |
+| 1p2b | hybrid (GDN, expand_v=1) | 8 | 0.0004 | finished | 181.524 | 2.016369 | 0 reset(s); 1 duplicate token sample(s) removed | [7eemhu7g](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/7eemhu7g) |
+| 1p2b | wide integration (SWA) | 8 | 0.0004 | finished | 171.340 | 2.022641 | — | [bqjzmiqi](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/bqjzmiqi) |

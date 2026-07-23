@@ -1,0 +1,12 @@
+{
+  "manifest_id": "pretraining/sparsity_huge_192e_top4/275m/cx1",
+  "source_checkpoint": "/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/total_sparsity/sp-275m-cx1-sp192e4k-lr2e-3-r2/step15457",
+  "resolution": "archived_hf",
+  "origin_config": "/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/hf-checkpoints/sp-275m-cx1-sp192e4k-lr2e-3-r2/step15457/olmo_config.json",
+  "origin_config_sha256": "fc71dd8f25f858fa8ce9af18b08512652ae99f084e64e82c71bd1bd1a5c88f96",
+  "materialized_config": "/weka/oe-adapt-default/jacobm/olmoe3/olmo-ddp-migration/OLMo-core/JACOBM_DDP_CONFIGS/pretraining/sparsity_huge_192e_top4/275m/cx1/config.json",
+  "materialized_config_sha256": "7e8202e00b0ae8d81a39133ec8534b06de4dc4ec8bfda965f6c466b5d618eecc",
+  "model_config_sha256": "141cbf5e64558e5752b4b898f48c8baf8d28659abbef923fea12549ea0341379",
+  "schema_validation": "skipped",
+  "reconstruction": null
+}

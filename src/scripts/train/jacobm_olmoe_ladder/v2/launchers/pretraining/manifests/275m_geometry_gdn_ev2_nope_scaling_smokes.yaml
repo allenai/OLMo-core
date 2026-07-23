@@ -1,0 +1,107 @@
+schema_version: 1
+
+experiment:
+  description: 275M geometry GDN expand_v=2 NoPE DDP scaling smokes
+  checkpoint_root: /tmp/olmoe3-geometry-gdn-ev2-nope-smokes
+
+source:
+  repo: /weka/oe-adapt-default/jacobm/olmoe3/olmo-ddp-migration/OLMo-core-moe-v2-core
+  wrapper: src/scripts/train/jacobm_olmoe3_geometry_275m_nope_beaker.sh
+  image: 01KW8G8JC20H11Y60PPTE2VN4Q
+
+beaker:
+  workspace: ai2/OLMo-3-moe-experiments
+  cluster: ai2/holmes
+  priority: urgent
+  shared_memory: 128 GiB
+  # Explicitly authorized for these NoPE smokes on 2026-07-18.
+  min_runtime: 0m
+  auto_resume: true
+  timeout: 4h
+  result_path: /results
+
+secrets:
+  AWS_ACCESS_KEY_ID: AWS_ACCESS_KEY_ID
+  AWS_SECRET_ACCESS_KEY: AWS_SECRET_ACCESS_KEY
+  WANDB_API_KEY: jacobm_WANDB_API_KEY
+  BEAKER_TOKEN: jacobm_BEAKER_TOKEN
+
+datasets:
+  - mount_path: /weka/oe-adapt-default
+    weka: oe-adapt-default
+  - mount_path: /weka/oe-training-default
+    weka: oe-training-default
+
+training:
+  sequence_length: 8192
+  hard_stop_steps: 12
+  checkpoints: false
+  save_interval: 999999999
+  ephemeral_save_interval: 999999999
+  checkpoint_removal: never
+  evals: false
+  eval_interval: 999999999
+  eval_steps: 0
+  eval_task_set: hellaswag
+  eval_on_finish: false
+  compile: true
+  wandb: true
+
+# Cx1 and Cx8 are the low- and high-compute endpoints. The six tasks provide
+# apples-to-apples NoPE throughput measurements at 2/4/8-way DDP while keeping
+# each canonical global optimizer batch exact.
+runs:
+  - task_name: cx1-gpu2-mb16
+    run_name: smoke-275m-geometry-gdn-ev2-nope-cx1-gpu2-mb16-r1
+    model_size: 275m
+    cx: 1
+    learning_rate: "1.6e-3"
+    global_batch_size: 262144
+    gpu_count: 2
+    expert_parallel_size: 1
+    rank_microbatch_sequences: 16
+  - task_name: cx1-gpu4-mb8
+    run_name: smoke-275m-geometry-gdn-ev2-nope-cx1-gpu4-mb8-r1
+    model_size: 275m
+    cx: 1
+    learning_rate: "1.6e-3"
+    global_batch_size: 262144
+    gpu_count: 4
+    expert_parallel_size: 1
+    rank_microbatch_sequences: 8
+  - task_name: cx1-gpu8-mb4
+    run_name: smoke-275m-geometry-gdn-ev2-nope-cx1-gpu8-mb4-r1
+    model_size: 275m
+    cx: 1
+    learning_rate: "1.6e-3"
+    global_batch_size: 262144
+    gpu_count: 8
+    expert_parallel_size: 1
+    rank_microbatch_sequences: 4
+  - task_name: cx8-gpu2-mb16
+    run_name: smoke-275m-geometry-gdn-ev2-nope-cx8-gpu2-mb16-r1
+    model_size: 275m
+    cx: 8
+    learning_rate: "8e-4"
+    global_batch_size: 786432
+    gpu_count: 2
+    expert_parallel_size: 1
+    rank_microbatch_sequences: 16
+  - task_name: cx8-gpu4-mb12
+    run_name: smoke-275m-geometry-gdn-ev2-nope-cx8-gpu4-mb12-r1
+    model_size: 275m
+    cx: 8
+    learning_rate: "8e-4"
+    global_batch_size: 786432
+    gpu_count: 4
+    expert_parallel_size: 1
+    rank_microbatch_sequences: 12
+  - task_name: cx8-gpu8-mb12
+    run_name: smoke-275m-geometry-gdn-ev2-nope-cx8-gpu8-mb12-r1
+    model_size: 275m
+    cx: 8
+    learning_rate: "8e-4"
+    global_batch_size: 786432
+    gpu_count: 8
+    expert_parallel_size: 1
+    rank_microbatch_sequences: 12

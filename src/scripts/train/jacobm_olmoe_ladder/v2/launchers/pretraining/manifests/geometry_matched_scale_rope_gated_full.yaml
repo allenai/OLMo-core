@@ -1,0 +1,59 @@
+schema_version: 1
+
+experiment:
+  description: Larger geometry-matched expand_v=2 RoPE gated-attention production wave at transferred wide LRs
+  checkpoint_root: /weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/olmo-ddp/pretraining
+
+source:
+  remote: https://github.com/allenai/OLMo-core
+  branch: jacobm/olmo-ddp
+  image: 01KW8G8JC20H11Y60PPTE2VN4Q
+
+beaker:
+  workspace: ai2/OLMo-3-moe-experiments
+  cluster: ai2/holmes
+  priority: urgent
+  shared_memory: 128GiB
+  min_runtime: 0m
+  preemptible: false
+  auto_resume: true
+  timeout: 168h
+
+secrets:
+  AWS_ACCESS_KEY_ID: AWS_ACCESS_KEY_ID
+  AWS_SECRET_ACCESS_KEY: AWS_SECRET_ACCESS_KEY
+  WANDB_API_KEY: jacobm_WANDB_API_KEY
+  BEAKER_TOKEN: jacobm_BEAKER_TOKEN
+
+weka:
+  - {bucket: oe-adapt-default, mount: /weka/oe-adapt-default}
+  - {bucket: oe-training-default, mount: /weka/oe-training-default}
+
+training:
+  model_variant: geometry_matched_gdn_ev2_rope_gated
+  layout_profile: compact_v1
+  sequence_length: 8192
+  hard_stop_steps: 0
+  checkpoints: true
+  save_interval: 999999999
+  ephemeral_save_interval: 500
+  checkpoint_removal: ephemeral_only
+  evals: false
+  eval_interval: 999999999
+  compile: true
+  wandb: true
+
+# Submission order is deliberate: data multiple first, then ascending model size.
+runs:
+  - {task_name: 480m-cx1, run_name: pt-480m-geometry-gdn-ev2-rope-gated-cx1-lr1p2e-3-r1, model_size: 480m, cx: 1, learning_rate: "1.2e-3", global_batch_size: 262144, num_nodes: 1, gpus_per_node: 4, expert_parallel_size: 1, rank_microbatch_sequences: 8}
+  - {task_name: 810m-cx1, run_name: pt-810m-geometry-gdn-ev2-rope-gated-cx1-lr6e-4-r1, model_size: 810m, cx: 1, learning_rate: "6e-4", global_batch_size: 262144, num_nodes: 1, gpus_per_node: 8, expert_parallel_size: 1, rank_microbatch_sequences: 4}
+  - {task_name: 1p2b-cx1, run_name: pt-1p2b-geometry-gdn-ev2-rope-gated-cx1-lr4e-4-ep8-sync-r1, model_size: 1p2b, cx: 1, learning_rate: "4e-4", global_batch_size: 262144, num_nodes: 1, gpus_per_node: 8, expert_parallel_size: 8, expert_parallel_path: sync_1d, rank_microbatch_sequences: 4}
+  - {task_name: 480m-cx2, run_name: pt-480m-geometry-gdn-ev2-rope-gated-cx2-lr9e-4-r1, model_size: 480m, cx: 2, learning_rate: "9e-4", global_batch_size: 393216, num_nodes: 1, gpus_per_node: 4, expert_parallel_size: 1, rank_microbatch_sequences: 12}
+  - {task_name: 810m-cx2, run_name: pt-810m-geometry-gdn-ev2-rope-gated-cx2-lr5p6e-4-r1, model_size: 810m, cx: 2, learning_rate: "5.6e-4", global_batch_size: 393216, num_nodes: 1, gpus_per_node: 8, expert_parallel_size: 1, rank_microbatch_sequences: 6}
+  - {task_name: 1p2b-cx2, run_name: pt-1p2b-geometry-gdn-ev2-rope-gated-cx2-lr6e-4-ep8-sync-r1, model_size: 1p2b, cx: 2, learning_rate: "6e-4", global_batch_size: 393216, num_nodes: 2, gpus_per_node: 8, expert_parallel_size: 8, expert_parallel_path: sync_1d, rank_microbatch_sequences: 3}
+  - {task_name: 480m-cx4, run_name: pt-480m-geometry-gdn-ev2-rope-gated-cx4-lr8e-4-r1, model_size: 480m, cx: 4, learning_rate: "8e-4", global_batch_size: 524288, num_nodes: 1, gpus_per_node: 4, expert_parallel_size: 1, rank_microbatch_sequences: 8}
+  - {task_name: 810m-cx4, run_name: pt-810m-geometry-gdn-ev2-rope-gated-cx4-lr4e-4-r1, model_size: 810m, cx: 4, learning_rate: "4e-4", global_batch_size: 524288, num_nodes: 1, gpus_per_node: 8, expert_parallel_size: 1, rank_microbatch_sequences: 4}
+  - {task_name: 1p2b-cx4, run_name: pt-1p2b-geometry-gdn-ev2-rope-gated-cx4-lr3e-4-ep8-sync-r1, model_size: 1p2b, cx: 4, learning_rate: "3e-4", global_batch_size: 524288, num_nodes: 2, gpus_per_node: 8, expert_parallel_size: 8, expert_parallel_path: sync_1d, rank_microbatch_sequences: 4}
+  - {task_name: 480m-cx8, run_name: pt-480m-geometry-gdn-ev2-rope-gated-cx8-lr8e-4-r1, model_size: 480m, cx: 8, learning_rate: "8e-4", global_batch_size: 786432, num_nodes: 1, gpus_per_node: 8, expert_parallel_size: 1, rank_microbatch_sequences: 12}
+  - {task_name: 810m-cx8, run_name: pt-810m-geometry-gdn-ev2-rope-gated-cx8-lr4e-4-r1, model_size: 810m, cx: 8, learning_rate: "4e-4", global_batch_size: 786432, num_nodes: 1, gpus_per_node: 8, expert_parallel_size: 1, rank_microbatch_sequences: 6}
+  - {task_name: 1p2b-cx8, run_name: pt-1p2b-geometry-gdn-ev2-rope-gated-cx8-lr4e-4-ep8-sync-r1, model_size: 1p2b, cx: 8, learning_rate: "4e-4", global_batch_size: 786432, num_nodes: 4, gpus_per_node: 8, expert_parallel_size: 8, expert_parallel_path: sync_1d, rank_microbatch_sequences: 3}

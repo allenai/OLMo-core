@@ -1,0 +1,53 @@
+schema_version: 1
+
+experiment:
+  key: 275m_geometry_cx4_cx8_full_validation
+  description: Full final-checkpoint validation for geometry GDN Cx4/Cx8 runs
+  checkpoint_root: /weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/olmo-ddp/pretraining
+
+source:
+  repo: /weka/oe-adapt-default/jacobm/olmoe3/olmo-ddp-migration/OLMo-core-moe-v2-core
+  wrapper: src/scripts/train/jacobm_olmoe3_hybrid_scale_beaker.sh
+  image: 01KW8G8JC20H11Y60PPTE2VN4Q
+
+beaker:
+  workspace: ai2/OLMo-3-moe-experiments
+  cluster: ai2/holmes
+  priority: urgent
+  gpu_count: 2
+  shared_memory: 64 GiB
+  min_runtime: 10m
+  auto_resume: true
+  timeout: 24h0m0s
+  result_path: /results
+
+secrets:
+  AWS_ACCESS_KEY_ID: AWS_ACCESS_KEY_ID
+  AWS_SECRET_ACCESS_KEY: AWS_SECRET_ACCESS_KEY
+  WANDB_API_KEY: jacobm_WANDB_API_KEY
+  BEAKER_TOKEN: jacobm_BEAKER_TOKEN
+
+datasets:
+  - mount_path: /weka/oe-adapt-default
+    weka: oe-adapt-default
+  - mount_path: /weka/oe-training-default
+    weka: oe-training-default
+
+evaluation:
+  task_set: full
+  sequence_length: 8192
+  rank_microbatch_sequences: 4
+  save_root: /weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/olmo-ddp/eval-backfills/pretraining
+  batch_sizes:
+    4: 524288
+    8: 786432
+
+targets:
+  - {source_run: pt-275m-geometry-hybrid-gdn-ev2-cx4-lr4e-4-r1, variant: geometry_275m_gdn_ev2, cx: 4, lr: 4e-4, step: step34570}
+  - {source_run: pt-275m-geometry-hybrid-gdn-ev2-cx4-lr8e-4-r1, variant: geometry_275m_gdn_ev2, cx: 4, lr: 8e-4, step: step34570}
+  - {source_run: pt-275m-geometry-hybrid-gdn-ev2-cx4-lr1p6e-3-r1, variant: geometry_275m_gdn_ev2, cx: 4, lr: 1.6e-3, step: step34570}
+  - {source_run: pt-275m-geometry-hybrid-gdn-ev2-cx4-lr3p2e-3-r1, variant: geometry_275m_gdn_ev2, cx: 4, lr: 3.2e-3, step: step34570}
+  - {source_run: pt-275m-geometry-hybrid-gdn-ev2-cx8-lr4e-4-r1, variant: geometry_275m_gdn_ev2, cx: 8, lr: 4e-4, step: step46094}
+  - {source_run: pt-275m-geometry-hybrid-gdn-ev2-cx8-lr8e-4-r1, variant: geometry_275m_gdn_ev2, cx: 8, lr: 8e-4, step: step46094}
+  - {source_run: pt-275m-geometry-hybrid-gdn-ev2-cx8-lr1p6e-3-r1, variant: geometry_275m_gdn_ev2, cx: 8, lr: 1.6e-3, step: step46094}
+  - {source_run: pt-275m-geometry-hybrid-gdn-ev2-cx8-lr3p2e-3-r1, variant: geometry_275m_gdn_ev2, cx: 8, lr: 3.2e-3, step: step46094}

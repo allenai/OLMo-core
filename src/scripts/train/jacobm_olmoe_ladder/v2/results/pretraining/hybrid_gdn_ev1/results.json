@@ -1,0 +1,2217 @@
+{
+  "generated_at": "2026-07-22T16:19:02.721643+00:00",
+  "project": "ai2-llm/jacobm-olmoe-ladder",
+  "wave": "hybrid_gdn_ev1",
+  "models": [
+    "275m",
+    "480m",
+    "810m",
+    "1p2b"
+  ],
+  "architecture_note": "Integration-wide architecture at each size with every SWA layer replaced by GDN; full-attention layers are unchanged.",
+  "selection_metric": "mean train/CE loss over the final 250M observed tokens",
+  "selection_rule": "275M optimal-summary cells require an interior observed best and a valid quadratic fit. Larger sizes are fixed-LR transfer comparisons at the wide-optimal LR and are never reported as hybrid-optimal without an LR sweep.",
+  "baseline_active_parameters": {
+    "275m": 280207872,
+    "480m": 486348800,
+    "810m": 823569920,
+    "1p2b": 1225011712
+  },
+  "reference_variants": [
+    "wide_integration"
+  ],
+  "intervention_active_parameters": {
+    "275m": 288194512,
+    "480m": 501228784,
+    "810m": 859400792,
+    "1p2b": 1288662592
+  },
+  "active_parameter_delta_fraction": {
+    "275m": 0.028502553989632418,
+    "480m": 0.03059529292557106,
+    "810m": 0.04350677596384278,
+    "1p2b": 0.051959405266486236
+  },
+  "runs": [
+    {
+      "model": "275m",
+      "variant": "hybrid_gdn_ev1",
+      "variant_label": "hybrid (GDN, expand_v=1)",
+      "cx": 1,
+      "lr": 0.0004,
+      "lr_tag": "0.0004",
+      "loss": 2.7200160541374476,
+      "state": "finished",
+      "tokens_b": 4.222615552,
+      "run_id": "fkm77yos",
+      "name": "pt-275m-intwide-hybrid-gdn-ev1-cx1-lr4e-4-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/fkm77yos",
+      "segment_run_ids": [
+        "fkm77yos"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0
+    },
+    {
+      "model": "275m",
+      "variant": "hybrid_gdn_ev1",
+      "variant_label": "hybrid (GDN, expand_v=1)",
+      "cx": 1,
+      "lr": 0.0008,
+      "lr_tag": "0.0008",
+      "loss": 2.700253884247514,
+      "state": "finished",
+      "tokens_b": 4.222615552,
+      "run_id": "yo22u93q",
+      "name": "pt-275m-intwide-hybrid-gdn-ev1-cx1-lr8e-4-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/yo22u93q",
+      "segment_run_ids": [
+        "yo22u93q"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0
+    },
+    {
+      "model": "275m",
+      "variant": "hybrid_gdn_ev1",
+      "variant_label": "hybrid (GDN, expand_v=1)",
+      "cx": 1,
+      "lr": 0.0016,
+      "lr_tag": "0.0016",
+      "loss": 2.6946416231071426,
+      "state": "finished",
+      "tokens_b": 4.222615552,
+      "run_id": "moknw6oc",
+      "name": "pt-275m-intwide-hybrid-gdn-ev1-cx1-lr1p6e-3-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/moknw6oc",
+      "segment_run_ids": [
+        "moknw6oc"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0
+    },
+    {
+      "model": "275m",
+      "variant": "hybrid_gdn_ev1",
+      "variant_label": "hybrid (GDN, expand_v=1)",
+      "cx": 1,
+      "lr": 0.0032,
+      "lr_tag": "0.0032",
+      "loss": 2.7104822699628786,
+      "state": "finished",
+      "tokens_b": 4.222615552,
+      "run_id": "mettf0d3",
+      "name": "pt-275m-intwide-hybrid-gdn-ev1-cx1-lr3p2e-3-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/mettf0d3",
+      "segment_run_ids": [
+        "mettf0d3"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0
+    },
+    {
+      "model": "275m",
+      "variant": "wide_integration",
+      "variant_label": "wide integration (SWA)",
+      "cx": 1,
+      "lr": 0.0008,
+      "lr_tag": "0.0008",
+      "loss": 2.7491416776205257,
+      "state": "finished",
+      "tokens_b": 4.062969856,
+      "run_id": "kfua3dcq",
+      "name": "int-275m-cx1-intw256e8k-lr8e-4-r1_0.28@2.69B_275m_intw256e8k_12L8K256N1S_intw256e8k-cx1-lr8e-4-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/kfua3dcq",
+      "segment_run_ids": [
+        "kfua3dcq"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0
+    },
+    {
+      "model": "275m",
+      "variant": "wide_integration",
+      "variant_label": "wide integration (SWA)",
+      "cx": 1,
+      "lr": 0.0016,
+      "lr_tag": "0.0016",
+      "loss": 2.741044032998555,
+      "state": "finished",
+      "tokens_b": 4.062969856,
+      "run_id": "h86x1nv3",
+      "name": "int-275m-cx1-intw256e8k-lr1.6e-3-r1_0.28@2.69B_275m_intw256e8k_12L8K256N1S_intw256e8k-cx1-lr1.6e-3-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/h86x1nv3",
+      "segment_run_ids": [
+        "h86x1nv3"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0
+    },
+    {
+      "model": "275m",
+      "variant": "wide_integration",
+      "variant_label": "wide integration (SWA)",
+      "cx": 1,
+      "lr": 0.0032,
+      "lr_tag": "0.0032",
+      "loss": 2.7491320893949434,
+      "state": "finished",
+      "tokens_b": 4.062969856,
+      "run_id": "afxq80js",
+      "name": "int-275m-cx1-intw256e8k-lr3.2e-3-r1_0.28@2.69B_275m_intw256e8k_12L8K256N1S_intw256e8k-cx1-lr3.2e-3-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/afxq80js",
+      "segment_run_ids": [
+        "afxq80js"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0
+    },
+    {
+      "model": "275m",
+      "variant": "hybrid_gdn_ev1",
+      "variant_label": "hybrid (GDN, expand_v=1)",
+      "cx": 2,
+      "lr": 0.0004,
+      "lr_tag": "0.0004",
+      "loss": 2.5938938012662924,
+      "state": "finished",
+      "tokens_b": 8.445100032,
+      "run_id": "s5qmhyb2",
+      "name": "pt-275m-intwide-hybrid-gdn-ev1-cx2-lr4e-4-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/s5qmhyb2",
+      "segment_run_ids": [
+        "s5qmhyb2"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0
+    },
+    {
+      "model": "275m",
+      "variant": "hybrid_gdn_ev1",
+      "variant_label": "hybrid (GDN, expand_v=1)",
+      "cx": 2,
+      "lr": 0.0008,
+      "lr_tag": "0.0008",
+      "loss": 2.577619658701075,
+      "state": "finished",
+      "tokens_b": 8.445100032,
+      "run_id": "07qo96gy",
+      "name": "pt-275m-intwide-hybrid-gdn-ev1-cx2-lr8e-4-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/07qo96gy",
+      "segment_run_ids": [
+        "07qo96gy"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0
+    },
+    {
+      "model": "275m",
+      "variant": "hybrid_gdn_ev1",
+      "variant_label": "hybrid (GDN, expand_v=1)",
+      "cx": 2,
+      "lr": 0.0016,
+      "lr_tag": "0.0016",
+      "loss": 2.5699883129611707,
+      "state": "finished",
+      "tokens_b": 8.445100032,
+      "run_id": "j12fk559",
+      "name": "pt-275m-intwide-hybrid-gdn-ev1-cx2-lr1p6e-3-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/j12fk559",
+      "segment_run_ids": [
+        "j12fk559"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0
+    },
+    {
+      "model": "275m",
+      "variant": "hybrid_gdn_ev1",
+      "variant_label": "hybrid (GDN, expand_v=1)",
+      "cx": 2,
+      "lr": 0.0032,
+      "lr_tag": "0.0032",
+      "loss": 2.585828571199621,
+      "state": "finished",
+      "tokens_b": 8.445100032,
+      "run_id": "mem73c7g",
+      "name": "pt-275m-intwide-hybrid-gdn-ev1-cx2-lr3p2e-3-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/mem73c7g",
+      "segment_run_ids": [
+        "mem73c7g"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0
+    },
+    {
+      "model": "275m",
+      "variant": "wide_integration",
+      "variant_label": "wide integration (SWA)",
+      "cx": 2,
+      "lr": 0.0008,
+      "lr_tag": "0.0008",
+      "loss": 2.612347663948371,
+      "state": "finished",
+      "tokens_b": 8.12580864,
+      "run_id": "o2bdr3gw",
+      "name": "int-275m-cx2-intw256e8k-lr8e-4-r1_0.28@2.69B_275m_intw256e8k_12L8K256N1S_intw256e8k-cx2-lr8e-4-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/o2bdr3gw",
+      "segment_run_ids": [
+        "o2bdr3gw"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0
+    },
+    {
+      "model": "275m",
+      "variant": "wide_integration",
+      "variant_label": "wide integration (SWA)",
+      "cx": 2,
+      "lr": 0.0016,
+      "lr_tag": "0.0016",
+      "loss": 2.6082953424573696,
+      "state": "finished",
+      "tokens_b": 8.12580864,
+      "run_id": "6porpbo2",
+      "name": "int-275m-cx2-intw256e8k-lr1.6e-3-r1_0.28@2.69B_275m_intw256e8k_12L8K256N1S_intw256e8k-cx2-lr1.6e-3-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/6porpbo2",
+      "segment_run_ids": [
+        "6porpbo2"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0
+    },
+    {
+      "model": "275m",
+      "variant": "wide_integration",
+      "variant_label": "wide integration (SWA)",
+      "cx": 2,
+      "lr": 0.0032,
+      "lr_tag": "0.0032",
+      "loss": 2.614495221923732,
+      "state": "finished",
+      "tokens_b": 8.12580864,
+      "run_id": "0f782vrw",
+      "name": "int-275m-cx2-intw256e8k-lr3.2e-3-r1_0.28@2.69B_275m_intw256e8k_12L8K256N1S_intw256e8k-cx2-lr3.2e-3-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/0f782vrw",
+      "segment_run_ids": [
+        "0f782vrw"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0
+    },
+    {
+      "model": "275m",
+      "variant": "hybrid_gdn_ev1",
+      "variant_label": "hybrid (GDN, expand_v=1)",
+      "cx": 4,
+      "lr": 0.0004,
+      "lr_tag": "0.0004",
+      "loss": 2.496428757593567,
+      "state": "finished",
+      "tokens_b": 16.88993792,
+      "run_id": "socvue3a",
+      "name": "pt-275m-intwide-hybrid-gdn-ev1-cx4-lr4e-4-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/socvue3a",
+      "segment_run_ids": [
+        "socvue3a"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0
+    },
+    {
+      "model": "275m",
+      "variant": "hybrid_gdn_ev1",
+      "variant_label": "hybrid (GDN, expand_v=1)",
+      "cx": 4,
+      "lr": 0.0008,
+      "lr_tag": "0.0008",
+      "loss": 2.479545422320096,
+      "state": "finished",
+      "tokens_b": 16.88993792,
+      "run_id": "xvk92054",
+      "name": "pt-275m-intwide-hybrid-gdn-ev1-cx4-lr8e-4-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/xvk92054",
+      "segment_run_ids": [
+        "xvk92054"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0
+    },
+    {
+      "model": "275m",
+      "variant": "hybrid_gdn_ev1",
+      "variant_label": "hybrid (GDN, expand_v=1)",
+      "cx": 4,
+      "lr": 0.0016,
+      "lr_tag": "0.0016",
+      "loss": 2.4781652901407556,
+      "state": "finished",
+      "tokens_b": 16.88993792,
+      "run_id": "uhw9wfed",
+      "name": "pt-275m-intwide-hybrid-gdn-ev1-cx4-lr1p6e-3-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/uhw9wfed",
+      "segment_run_ids": [
+        "uhw9wfed"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0
+    },
+    {
+      "model": "275m",
+      "variant": "hybrid_gdn_ev1",
+      "variant_label": "hybrid (GDN, expand_v=1)",
+      "cx": 4,
+      "lr": 0.0032,
+      "lr_tag": "0.0032",
+      "loss": 2.496405915394269,
+      "state": "finished",
+      "tokens_b": 16.88993792,
+      "run_id": "sr1jgmao",
+      "name": "pt-275m-intwide-hybrid-gdn-ev1-cx4-lr3p2e-3-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/sr1jgmao",
+      "segment_run_ids": [
+        "sr1jgmao"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0
+    },
+    {
+      "model": "275m",
+      "variant": "wide_integration",
+      "variant_label": "wide integration (SWA)",
+      "cx": 4,
+      "lr": 0.0004,
+      "lr_tag": "0.0004",
+      "loss": 2.5206243741937153,
+      "state": "finished",
+      "tokens_b": 16.251355136,
+      "run_id": "n1gjknwg",
+      "name": "int-275m-cx4-intw256e8k-lr4e-4-r1_0.28@2.69B_275m_intw256e8k_12L8K256N1S_intw256e8k-275m-cx4-lr4e-4-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/n1gjknwg",
+      "segment_run_ids": [
+        "n1gjknwg"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0
+    },
+    {
+      "model": "275m",
+      "variant": "wide_integration",
+      "variant_label": "wide integration (SWA)",
+      "cx": 4,
+      "lr": 0.0008,
+      "lr_tag": "0.0008",
+      "loss": 2.506018567135249,
+      "state": "finished",
+      "tokens_b": 16.251355136,
+      "run_id": "9n3xk8gs",
+      "name": "int-275m-cx4-intw256e8k-lr8e-4-r1_0.28@2.69B_275m_intw256e8k_12L8K256N1S_intw256e8k-cx4-lr8e-4-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/9n3xk8gs",
+      "segment_run_ids": [
+        "9n3xk8gs"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0
+    },
+    {
+      "model": "275m",
+      "variant": "wide_integration",
+      "variant_label": "wide integration (SWA)",
+      "cx": 4,
+      "lr": 0.0016,
+      "lr_tag": "0.0016",
+      "loss": 2.508140056638098,
+      "state": "finished",
+      "tokens_b": 16.251355136,
+      "run_id": "ttjquo05",
+      "name": "int-275m-cx4-intw256e8k-lr1.6e-3-r1_0.28@2.69B_275m_intw256e8k_12L8K256N1S_intw256e8k-cx4-lr1.6e-3-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/ttjquo05",
+      "segment_run_ids": [
+        "ttjquo05"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0
+    },
+    {
+      "model": "275m",
+      "variant": "wide_integration",
+      "variant_label": "wide integration (SWA)",
+      "cx": 4,
+      "lr": 0.0032,
+      "lr_tag": "0.0032",
+      "loss": 2.5224591176214957,
+      "state": "finished",
+      "tokens_b": 16.251355136,
+      "run_id": "5u03fshf",
+      "name": "int-275m-cx4-intw256e8k-lr3.2e-3-r1_0.28@2.69B_275m_intw256e8k_12L8K256N1S_intw256e8k-cx4-lr3.2e-3-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/5u03fshf",
+      "segment_run_ids": [
+        "5u03fshf"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0
+    },
+    {
+      "model": "275m",
+      "variant": "hybrid_gdn_ev1",
+      "variant_label": "hybrid (GDN, expand_v=1)",
+      "cx": 8,
+      "lr": 0.0004,
+      "lr_tag": "0.0004",
+      "loss": 2.4122327251254387,
+      "state": "finished",
+      "tokens_b": 33.780400128,
+      "run_id": "b0z3qfmi",
+      "name": "pt-275m-intwide-hybrid-gdn-ev1-cx8-lr4e-4-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/b0z3qfmi",
+      "segment_run_ids": [
+        "b0z3qfmi"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0
+    },
+    {
+      "model": "275m",
+      "variant": "hybrid_gdn_ev1",
+      "variant_label": "hybrid (GDN, expand_v=1)",
+      "cx": 8,
+      "lr": 0.0008,
+      "lr_tag": "0.0008",
+      "loss": 2.3979656253970645,
+      "state": "finished",
+      "tokens_b": 33.780400128,
+      "run_id": "rkxojd03",
+      "name": "pt-275m-intwide-hybrid-gdn-ev1-cx8-lr8e-4-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/rkxojd03",
+      "segment_run_ids": [
+        "rkxojd03"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0
+    },
+    {
+      "model": "275m",
+      "variant": "hybrid_gdn_ev1",
+      "variant_label": "hybrid (GDN, expand_v=1)",
+      "cx": 8,
+      "lr": 0.0016,
+      "lr_tag": "0.0016",
+      "loss": 2.396379973903392,
+      "state": "finished",
+      "tokens_b": 33.780400128,
+      "run_id": "66aja50m",
+      "name": "pt-275m-intwide-hybrid-gdn-ev1-cx8-lr1p6e-3-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/66aja50m",
+      "segment_run_ids": [
+        "66aja50m"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0
+    },
+    {
+      "model": "275m",
+      "variant": "hybrid_gdn_ev1",
+      "variant_label": "hybrid (GDN, expand_v=1)",
+      "cx": 8,
+      "lr": 0.0032,
+      "lr_tag": "0.0032",
+      "loss": 2.414942778131497,
+      "state": "finished",
+      "tokens_b": 33.780400128,
+      "run_id": "ntoo8vlo",
+      "name": "pt-275m-intwide-hybrid-gdn-ev1-cx8-lr3p2e-3-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/ntoo8vlo",
+      "segment_run_ids": [
+        "ntoo8vlo"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0
+    },
+    {
+      "model": "275m",
+      "variant": "wide_integration",
+      "variant_label": "wide integration (SWA)",
+      "cx": 8,
+      "lr": 0.0004,
+      "lr_tag": "0.0004",
+      "loss": 2.4359147766101286,
+      "state": "finished",
+      "tokens_b": 32.502448128,
+      "run_id": "iv901lom",
+      "name": "int-275m-cx8-intw256e8k-lr4e-4-r1_0.28@2.69B_275m_intw256e8k_12L8K256N1S_intw256e8k-275m-cx8-lr4e-4-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/iv901lom",
+      "segment_run_ids": [
+        "iv901lom"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0
+    },
+    {
+      "model": "275m",
+      "variant": "wide_integration",
+      "variant_label": "wide integration (SWA)",
+      "cx": 8,
+      "lr": 0.0008,
+      "lr_tag": "0.0008",
+      "loss": 2.4192733682176604,
+      "state": "finished",
+      "tokens_b": 32.502448128,
+      "run_id": "qe052lo4",
+      "name": "int-275m-cx8-intw256e8k-lr8e-4-r1_0.28@2.69B_275m_intw256e8k_12L8K256N1S_intw256e8k-cx8-lr8e-4-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/qe052lo4",
+      "segment_run_ids": [
+        "qe052lo4"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0
+    },
+    {
+      "model": "275m",
+      "variant": "wide_integration",
+      "variant_label": "wide integration (SWA)",
+      "cx": 8,
+      "lr": 0.0016,
+      "lr_tag": "0.0016",
+      "loss": 2.423303321472504,
+      "state": "finished",
+      "tokens_b": 32.502448128,
+      "run_id": "qu2zaxr7",
+      "name": "int-275m-cx8-intw256e8k-lr1.6e-3-r1_0.28@2.69B_275m_intw256e8k_12L8K256N1S_intw256e8k-cx8-lr1.6e-3-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/qu2zaxr7",
+      "segment_run_ids": [
+        "qu2zaxr7"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0
+    },
+    {
+      "model": "275m",
+      "variant": "wide_integration",
+      "variant_label": "wide integration (SWA)",
+      "cx": 8,
+      "lr": 0.0032,
+      "lr_tag": "0.0032",
+      "loss": 2.4414304862232328,
+      "state": "finished",
+      "tokens_b": 32.502448128,
+      "run_id": "235ye5lg",
+      "name": "int-275m-cx8-intw256e8k-lr3.2e-3-r1_0.28@2.69B_275m_intw256e8k_12L8K256N1S_intw256e8k-cx8-lr3.2e-3-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/235ye5lg",
+      "segment_run_ids": [
+        "235ye5lg"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0
+    },
+    {
+      "model": "480m",
+      "variant": "hybrid_gdn_ev1",
+      "variant_label": "hybrid (GDN, expand_v=1)",
+      "cx": 1,
+      "lr": 0.0012,
+      "lr_tag": "0.0012",
+      "loss": 2.5108739282600037,
+      "state": "finished",
+      "tokens_b": 7.969439744,
+      "run_id": "wl8ebsd8",
+      "name": "480m-intwide-hybrid-gdn-ev1-cx1-lr1p2e-3",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/wl8ebsd8",
+      "segment_run_ids": [
+        "wl8ebsd8"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0
+    },
+    {
+      "model": "480m",
+      "variant": "wide_integration",
+      "variant_label": "wide integration (SWA)",
+      "cx": 1,
+      "lr": 0.0012,
+      "lr_tag": "0.0012",
+      "loss": 2.5432814229709297,
+      "state": "finished",
+      "tokens_b": 7.671906304,
+      "run_id": "z4wxvc6h",
+      "name": "int-480m-cx1-intw256e8k-lr1.2e-3-r1_0.49@6.34B_480m_intw256e8k_16L8K256N1S_intw256e8k-480m-cx1-lr1.2e-3-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/z4wxvc6h",
+      "segment_run_ids": [
+        "z4wxvc6h"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0
+    },
+    {
+      "model": "480m",
+      "variant": "hybrid_gdn_ev1",
+      "variant_label": "hybrid (GDN, expand_v=1)",
+      "cx": 2,
+      "lr": 0.0009,
+      "lr_tag": "0.0009",
+      "loss": 2.4127904765261046,
+      "state": "finished",
+      "tokens_b": 15.93901056,
+      "run_id": "4vzmrld1",
+      "name": "480m-intwide-hybrid-gdn-ev1-cx2-lr9e-4",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/4vzmrld1",
+      "segment_run_ids": [
+        "4vzmrld1"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0
+    },
+    {
+      "model": "480m",
+      "variant": "wide_integration",
+      "variant_label": "wide integration (SWA)",
+      "cx": 2,
+      "lr": 0.0009,
+      "lr_tag": "0.0009",
+      "loss": 2.423887829735594,
+      "state": "finished",
+      "tokens_b": 15.343681536,
+      "run_id": "ywj13bkw",
+      "name": "int-480m-cx2-intw256e8k-lr9e-4-r1_0.49@6.34B_480m_intw256e8k_16L8K256N1S_intw256e8k-480m-cx2-lr9e-4-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/ywj13bkw",
+      "segment_run_ids": [
+        "ywj13bkw"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0
+    },
+    {
+      "model": "480m",
+      "variant": "hybrid_gdn_ev1",
+      "variant_label": "hybrid (GDN, expand_v=1)",
+      "cx": 4,
+      "lr": 0.0008,
+      "lr_tag": "0.0008",
+      "loss": 2.305995657758893,
+      "state": "finished",
+      "tokens_b": 31.877758976,
+      "run_id": "h06m5ls2",
+      "name": "480m-intwide-hybrid-gdn-ev1-cx4-lr8e-4",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/h06m5ls2",
+      "segment_run_ids": [
+        "h06m5ls2"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0
+    },
+    {
+      "model": "480m",
+      "variant": "wide_integration",
+      "variant_label": "wide integration (SWA)",
+      "cx": 4,
+      "lr": 0.0008,
+      "lr_tag": "0.0008",
+      "loss": 2.3299758499273464,
+      "state": "finished",
+      "tokens_b": 30.687100928,
+      "run_id": "rblv9hpr",
+      "name": "int-480m-cx4-intw256e8k-lr8e-4-r1_0.49@6.34B_480m_intw256e8k_16L8K256N1S_intw256e8k-480m-cx4-lr8e-4-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/rblv9hpr",
+      "segment_run_ids": [
+        "rblv9hpr"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0
+    },
+    {
+      "model": "480m",
+      "variant": "hybrid_gdn_ev1",
+      "variant_label": "hybrid (GDN, expand_v=1)",
+      "cx": 8,
+      "lr": 0.0008,
+      "lr_tag": "0.0008",
+      "loss": 2.2362050320367395,
+      "state": "finished",
+      "tokens_b": 63.755255808,
+      "run_id": "d34a9o4t",
+      "name": "480m-intwide-hybrid-gdn-ev1-cx8-lr8e-4",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/d34a9o4t",
+      "segment_run_ids": [
+        "d34a9o4t"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0
+    },
+    {
+      "model": "480m",
+      "variant": "wide_integration",
+      "variant_label": "wide integration (SWA)",
+      "cx": 8,
+      "lr": 0.0008,
+      "lr_tag": "0.0008",
+      "loss": 2.25130458597867,
+      "state": "finished",
+      "tokens_b": 61.374726144,
+      "run_id": "vdcrgfy0",
+      "name": "int-480m-cx8-intw256e8k-lr8e-4-r1_0.49@6.34B_480m_intw256e8k_16L8K256N1S_intw256e8k-480m-cx8-lr8e-4-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/vdcrgfy0",
+      "segment_run_ids": [
+        "vdcrgfy0"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0
+    },
+    {
+      "model": "810m",
+      "variant": "hybrid_gdn_ev1",
+      "variant_label": "hybrid (GDN, expand_v=1)",
+      "cx": 1,
+      "lr": 0.0006,
+      "lr_tag": "0.0006",
+      "loss": 2.3643451459252858,
+      "state": "finished",
+      "tokens_b": 14.619246592,
+      "run_id": "h1rmcm2p",
+      "name": "810m-intwide-hybrid-gdn-ev1-cx1-lr6e-4",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/h1rmcm2p",
+      "segment_run_ids": [
+        "h1rmcm2p"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0
+    },
+    {
+      "model": "810m",
+      "variant": "wide_integration",
+      "variant_label": "wide integration (SWA)",
+      "cx": 1,
+      "lr": 0.0006,
+      "lr_tag": "0.0006",
+      "loss": 2.3731971408086254,
+      "state": "finished",
+      "tokens_b": 13.902544896,
+      "run_id": "w912irkq",
+      "name": "int-810m-cx1-intw256e8k-lr6e-4-r1_0.82@12.40B_810m_intw256e8k_20L8K256N1S_intw256e8k-810m-cx1-lr6e-4-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/w912irkq",
+      "segment_run_ids": [
+        "w912irkq"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0
+    },
+    {
+      "model": "810m",
+      "variant": "hybrid_gdn_ev1",
+      "variant_label": "hybrid (GDN, expand_v=1)",
+      "cx": 2,
+      "lr": 0.00056,
+      "lr_tag": "0.00056",
+      "loss": 2.247185260244885,
+      "state": "finished",
+      "tokens_b": 29.238362112,
+      "run_id": "1d5gxgjv",
+      "name": "810m-intwide-hybrid-gdn-ev1-cx2-lr5p6e-4",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/1d5gxgjv",
+      "segment_run_ids": [
+        "1d5gxgjv"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0
+    },
+    {
+      "model": "810m",
+      "variant": "wide_integration",
+      "variant_label": "wide integration (SWA)",
+      "cx": 2,
+      "lr": 0.00056,
+      "lr_tag": "0.00056",
+      "loss": 2.2689475194088318,
+      "state": "finished",
+      "tokens_b": 27.805089792,
+      "run_id": "jpbqhfvc",
+      "name": "int-810m-cx2-intw256e8k-lr5.6e-4-r1_0.82@12.40B_810m_intw256e8k_20L8K256N1S_intw256e8k-810m-cx2-lr5.6e-4-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/jpbqhfvc",
+      "segment_run_ids": [
+        "jpbqhfvc"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0
+    },
+    {
+      "model": "810m",
+      "variant": "hybrid_gdn_ev1",
+      "variant_label": "hybrid (GDN, expand_v=1)",
+      "cx": 4,
+      "lr": 0.0004,
+      "lr_tag": "0.0004",
+      "loss": 2.1604400080954753,
+      "state": "finished",
+      "tokens_b": 58.47646208,
+      "run_id": "kye1c19u",
+      "name": "810m-intwide-hybrid-gdn-ev1-cx4-lr4e-4",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/kye1c19u",
+      "segment_run_ids": [
+        "kye1c19u"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0
+    },
+    {
+      "model": "810m",
+      "variant": "wide_integration",
+      "variant_label": "wide integration (SWA)",
+      "cx": 4,
+      "lr": 0.0004,
+      "lr_tag": "0.0004",
+      "loss": 2.1928017916669384,
+      "state": "finished",
+      "tokens_b": 55.609655296,
+      "run_id": "58ftjxmw",
+      "name": "int-810m-cx4-intw256e8k-lr4e-4-r1_0.82@12.40B_810m_intw256e8k_20L8K256N1S_intw256e8k-810m-cx4-lr4e-4-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/58ftjxmw",
+      "segment_run_ids": [
+        "58ftjxmw"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0
+    },
+    {
+      "model": "810m",
+      "variant": "hybrid_gdn_ev1",
+      "variant_label": "hybrid (GDN, expand_v=1)",
+      "cx": 8,
+      "lr": 0.0004,
+      "lr_tag": "0.0004",
+      "loss": 2.0955850868105137,
+      "state": "finished",
+      "tokens_b": 116.952662016,
+      "run_id": "s5gvyjiz",
+      "name": "810m-intwide-hybrid-gdn-ev1-cx8-lr4e-4",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/s5gvyjiz",
+      "segment_run_ids": [
+        "s5gvyjiz"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0
+    },
+    {
+      "model": "810m",
+      "variant": "wide_integration",
+      "variant_label": "wide integration (SWA)",
+      "cx": 8,
+      "lr": 0.0004,
+      "lr_tag": "0.0004",
+      "loss": 2.1049388185986935,
+      "state": "finished",
+      "tokens_b": 111.219572736,
+      "run_id": "kyti8h1y",
+      "name": "int-810m-cx8-intw256e8k-lr4e-4-r1_0.82@12.40B_810m_intw256e8k_20L8K256N1S_intw256e8k-810m-cx8-lr4e-4-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/kyti8h1y",
+      "segment_run_ids": [
+        "kyti8h1y"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0
+    },
+    {
+      "model": "1p2b",
+      "variant": "hybrid_gdn_ev1",
+      "variant_label": "hybrid (GDN, expand_v=1)",
+      "cx": 1,
+      "lr": 0.0004,
+      "lr_tag": "0.0004",
+      "loss": 2.2539527250036,
+      "state": "finished",
+      "tokens_b": 22.690660352,
+      "run_id": "1d24xfx5",
+      "name": "1p2b-intwide-hybrid-gdn-ev1-cx1-lr4e-4-ep8-sync",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/1d24xfx5",
+      "segment_run_ids": [
+        "1d24xfx5"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0
+    },
+    {
+      "model": "1p2b",
+      "variant": "wide_integration",
+      "variant_label": "wide integration (SWA)",
+      "cx": 1,
+      "lr": 0.0004,
+      "lr_tag": "0.0004",
+      "loss": 2.273061833166726,
+      "state": "finished",
+      "tokens_b": 21.417426944,
+      "run_id": "hww8eksq",
+      "name": "int-1p2b-cx1-intw256e8k-lr4e-4-r2_1.23@19.66B_1p2b_intw256e8k_22L8K256N1S_intw256e8k-1p2b-cx1-lr4e-4-r2",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/hww8eksq",
+      "segment_run_ids": [
+        "hww8eksq"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0
+    },
+    {
+      "model": "1p2b",
+      "variant": "hybrid_gdn_ev1",
+      "variant_label": "hybrid (GDN, expand_v=1)",
+      "cx": 2,
+      "lr": 0.0006,
+      "lr_tag": "0.0006",
+      "loss": 2.1637875953185484,
+      "state": "finished",
+      "tokens_b": 45.38105856,
+      "run_id": "4k1bh4k2",
+      "name": "1p2b-intwide-hybrid-gdn-ev1-cx2-lr6e-4-ep8-sync",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/4k1bh4k2",
+      "segment_run_ids": [
+        "4k1bh4k2"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0
+    },
+    {
+      "model": "1p2b",
+      "variant": "wide_integration",
+      "variant_label": "wide integration (SWA)",
+      "cx": 2,
+      "lr": 0.0006,
+      "lr_tag": "0.0006",
+      "loss": 2.178332213335817,
+      "state": "finished",
+      "tokens_b": 42.83498496,
+      "run_id": "jfwntmwm",
+      "name": "int-1p2b-cx2-intw256e8k-lr6e-4-r2_1.23@19.66B_1p2b_intw256e8k_22L8K256N1S_intw256e8k-1p2b-cx2-lr6e-4-r2",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/jfwntmwm",
+      "segment_run_ids": [
+        "jfwntmwm"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0
+    },
+    {
+      "model": "1p2b",
+      "variant": "hybrid_gdn_ev1",
+      "variant_label": "hybrid (GDN, expand_v=1)",
+      "cx": 4,
+      "lr": 0.0003,
+      "lr_tag": "0.0003",
+      "loss": 2.081180188890773,
+      "state": "finished",
+      "tokens_b": 90.76211712,
+      "run_id": "vc3c6gj6",
+      "name": "1p2b-intwide-hybrid-gdn-ev1-cx4-lr3e-4-ep8-sync",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/vc3c6gj6",
+      "segment_run_ids": [
+        "vc3c6gj6"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0
+    },
+    {
+      "model": "1p2b",
+      "variant": "wide_integration",
+      "variant_label": "wide integration (SWA)",
+      "cx": 4,
+      "lr": 0.0003,
+      "lr_tag": "0.0003",
+      "loss": 2.094219446931995,
+      "state": "finished",
+      "tokens_b": 85.669707776,
+      "run_id": "u7ab1tpb",
+      "name": "int-1p2b-cx4-intw256e8k-lr3e-4-r2_1.23@19.66B_1p2b_intw256e8k_22L8K256N1S_intw256e8k-1p2b-cx4-lr3e-4-r2",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/u7ab1tpb",
+      "segment_run_ids": [
+        "u7ab1tpb"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0
+    },
+    {
+      "model": "1p2b",
+      "variant": "hybrid_gdn_ev1",
+      "variant_label": "hybrid (GDN, expand_v=1)",
+      "cx": 8,
+      "lr": 0.0004,
+      "lr_tag": "0.0004",
+      "loss": 2.016368677781063,
+      "state": "finished",
+      "tokens_b": 181.52423424,
+      "run_id": "7eemhu7g",
+      "name": "1p2b-intwide-hybrid-gdn-ev1-cx8-lr4e-4-ep8-sync",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/7eemhu7g",
+      "segment_run_ids": [
+        "7eemhu7g"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 1
+    },
+    {
+      "model": "1p2b",
+      "variant": "wide_integration",
+      "variant_label": "wide integration (SWA)",
+      "cx": 8,
+      "lr": 0.0004,
+      "lr_tag": "0.0004",
+      "loss": 2.0226406901137635,
+      "state": "finished",
+      "tokens_b": 171.33993984,
+      "run_id": "bqjzmiqi",
+      "name": "int-1p2b-cx8-intw256e8k-lr4e-4-r2_1.23@19.66B_1p2b_intw256e8k_22L8K256N1S_intw256e8k-1p2b-cx8-lr4e-4-r2",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/bqjzmiqi",
+      "segment_run_ids": [
+        "bqjzmiqi"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0
+    }
+  ],
+  "results": [
+    {
+      "model": "275m",
+      "cx": 1,
+      "mode": "lr_sweep",
+      "complete": true,
+      "optimal_summary_eligible": true,
+      "completed_intervention_runs": 4,
+      "expected_intervention_runs": 4,
+      "wide_reference": {
+        "model": "275m",
+        "variant": "wide_integration",
+        "variant_label": "wide integration (SWA)",
+        "cx": 1,
+        "lr": 0.0016,
+        "lr_tag": "0.0016",
+        "loss": 2.741044032998555,
+        "state": "finished",
+        "tokens_b": 4.062969856,
+        "run_id": "h86x1nv3",
+        "name": "int-275m-cx1-intw256e8k-lr1.6e-3-r1_0.28@2.69B_275m_intw256e8k_12L8K256N1S_intw256e8k-cx1-lr1.6e-3-r1",
+        "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/h86x1nv3",
+        "segment_run_ids": [
+          "h86x1nv3"
+        ],
+        "token_resets": 0,
+        "deduplicated_samples": 0
+      },
+      "references": {
+        "wide_integration": {
+          "model": "275m",
+          "variant": "wide_integration",
+          "variant_label": "wide integration (SWA)",
+          "cx": 1,
+          "lr": 0.0016,
+          "lr_tag": "0.0016",
+          "loss": 2.741044032998555,
+          "state": "finished",
+          "tokens_b": 4.062969856,
+          "run_id": "h86x1nv3",
+          "name": "int-275m-cx1-intw256e8k-lr1.6e-3-r1_0.28@2.69B_275m_intw256e8k_12L8K256N1S_intw256e8k-cx1-lr1.6e-3-r1",
+          "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/h86x1nv3",
+          "segment_run_ids": [
+            "h86x1nv3"
+          ],
+          "token_resets": 0,
+          "deduplicated_samples": 0
+        }
+      },
+      "intervention_result": {
+        "model": "275m",
+        "variant": "hybrid_gdn_ev1",
+        "variant_label": "hybrid (GDN, expand_v=1)",
+        "cx": 1,
+        "lr": 0.0016,
+        "lr_tag": "0.0016",
+        "loss": 2.6946416231071426,
+        "state": "finished",
+        "tokens_b": 4.222615552,
+        "run_id": "moknw6oc",
+        "name": "pt-275m-intwide-hybrid-gdn-ev1-cx1-lr1p6e-3-r1",
+        "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/moknw6oc",
+        "segment_run_ids": [
+          "moknw6oc"
+        ],
+        "token_resets": 0,
+        "deduplicated_samples": 0
+      },
+      "delta_intervention_minus_wide": -0.04640240989141242,
+      "delta_intervention_minus_reference": {
+        "wide_integration": -0.04640240989141242
+      }
+    },
+    {
+      "model": "275m",
+      "cx": 2,
+      "mode": "lr_sweep",
+      "complete": true,
+      "optimal_summary_eligible": true,
+      "completed_intervention_runs": 4,
+      "expected_intervention_runs": 4,
+      "wide_reference": {
+        "model": "275m",
+        "variant": "wide_integration",
+        "variant_label": "wide integration (SWA)",
+        "cx": 2,
+        "lr": 0.0016,
+        "lr_tag": "0.0016",
+        "loss": 2.6082953424573696,
+        "state": "finished",
+        "tokens_b": 8.12580864,
+        "run_id": "6porpbo2",
+        "name": "int-275m-cx2-intw256e8k-lr1.6e-3-r1_0.28@2.69B_275m_intw256e8k_12L8K256N1S_intw256e8k-cx2-lr1.6e-3-r1",
+        "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/6porpbo2",
+        "segment_run_ids": [
+          "6porpbo2"
+        ],
+        "token_resets": 0,
+        "deduplicated_samples": 0
+      },
+      "references": {
+        "wide_integration": {
+          "model": "275m",
+          "variant": "wide_integration",
+          "variant_label": "wide integration (SWA)",
+          "cx": 2,
+          "lr": 0.0016,
+          "lr_tag": "0.0016",
+          "loss": 2.6082953424573696,
+          "state": "finished",
+          "tokens_b": 8.12580864,
+          "run_id": "6porpbo2",
+          "name": "int-275m-cx2-intw256e8k-lr1.6e-3-r1_0.28@2.69B_275m_intw256e8k_12L8K256N1S_intw256e8k-cx2-lr1.6e-3-r1",
+          "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/6porpbo2",
+          "segment_run_ids": [
+            "6porpbo2"
+          ],
+          "token_resets": 0,
+          "deduplicated_samples": 0
+        }
+      },
+      "intervention_result": {
+        "model": "275m",
+        "variant": "hybrid_gdn_ev1",
+        "variant_label": "hybrid (GDN, expand_v=1)",
+        "cx": 2,
+        "lr": 0.0016,
+        "lr_tag": "0.0016",
+        "loss": 2.5699883129611707,
+        "state": "finished",
+        "tokens_b": 8.445100032,
+        "run_id": "j12fk559",
+        "name": "pt-275m-intwide-hybrid-gdn-ev1-cx2-lr1p6e-3-r1",
+        "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/j12fk559",
+        "segment_run_ids": [
+          "j12fk559"
+        ],
+        "token_resets": 0,
+        "deduplicated_samples": 0
+      },
+      "delta_intervention_minus_wide": -0.03830702949619891,
+      "delta_intervention_minus_reference": {
+        "wide_integration": -0.03830702949619891
+      }
+    },
+    {
+      "model": "275m",
+      "cx": 4,
+      "mode": "lr_sweep",
+      "complete": true,
+      "optimal_summary_eligible": true,
+      "completed_intervention_runs": 4,
+      "expected_intervention_runs": 4,
+      "wide_reference": {
+        "model": "275m",
+        "variant": "wide_integration",
+        "variant_label": "wide integration (SWA)",
+        "cx": 4,
+        "lr": 0.0008,
+        "lr_tag": "0.0008",
+        "loss": 2.506018567135249,
+        "state": "finished",
+        "tokens_b": 16.251355136,
+        "run_id": "9n3xk8gs",
+        "name": "int-275m-cx4-intw256e8k-lr8e-4-r1_0.28@2.69B_275m_intw256e8k_12L8K256N1S_intw256e8k-cx4-lr8e-4-r1",
+        "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/9n3xk8gs",
+        "segment_run_ids": [
+          "9n3xk8gs"
+        ],
+        "token_resets": 0,
+        "deduplicated_samples": 0
+      },
+      "references": {
+        "wide_integration": {
+          "model": "275m",
+          "variant": "wide_integration",
+          "variant_label": "wide integration (SWA)",
+          "cx": 4,
+          "lr": 0.0008,
+          "lr_tag": "0.0008",
+          "loss": 2.506018567135249,
+          "state": "finished",
+          "tokens_b": 16.251355136,
+          "run_id": "9n3xk8gs",
+          "name": "int-275m-cx4-intw256e8k-lr8e-4-r1_0.28@2.69B_275m_intw256e8k_12L8K256N1S_intw256e8k-cx4-lr8e-4-r1",
+          "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/9n3xk8gs",
+          "segment_run_ids": [
+            "9n3xk8gs"
+          ],
+          "token_resets": 0,
+          "deduplicated_samples": 0
+        }
+      },
+      "intervention_result": {
+        "model": "275m",
+        "variant": "hybrid_gdn_ev1",
+        "variant_label": "hybrid (GDN, expand_v=1)",
+        "cx": 4,
+        "lr": 0.0016,
+        "lr_tag": "0.0016",
+        "loss": 2.4781652901407556,
+        "state": "finished",
+        "tokens_b": 16.88993792,
+        "run_id": "uhw9wfed",
+        "name": "pt-275m-intwide-hybrid-gdn-ev1-cx4-lr1p6e-3-r1",
+        "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/uhw9wfed",
+        "segment_run_ids": [
+          "uhw9wfed"
+        ],
+        "token_resets": 0,
+        "deduplicated_samples": 0
+      },
+      "delta_intervention_minus_wide": -0.02785327699449347,
+      "delta_intervention_minus_reference": {
+        "wide_integration": -0.02785327699449347
+      }
+    },
+    {
+      "model": "275m",
+      "cx": 8,
+      "mode": "lr_sweep",
+      "complete": true,
+      "optimal_summary_eligible": true,
+      "completed_intervention_runs": 4,
+      "expected_intervention_runs": 4,
+      "wide_reference": {
+        "model": "275m",
+        "variant": "wide_integration",
+        "variant_label": "wide integration (SWA)",
+        "cx": 8,
+        "lr": 0.0008,
+        "lr_tag": "0.0008",
+        "loss": 2.4192733682176604,
+        "state": "finished",
+        "tokens_b": 32.502448128,
+        "run_id": "qe052lo4",
+        "name": "int-275m-cx8-intw256e8k-lr8e-4-r1_0.28@2.69B_275m_intw256e8k_12L8K256N1S_intw256e8k-cx8-lr8e-4-r1",
+        "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/qe052lo4",
+        "segment_run_ids": [
+          "qe052lo4"
+        ],
+        "token_resets": 0,
+        "deduplicated_samples": 0
+      },
+      "references": {
+        "wide_integration": {
+          "model": "275m",
+          "variant": "wide_integration",
+          "variant_label": "wide integration (SWA)",
+          "cx": 8,
+          "lr": 0.0008,
+          "lr_tag": "0.0008",
+          "loss": 2.4192733682176604,
+          "state": "finished",
+          "tokens_b": 32.502448128,
+          "run_id": "qe052lo4",
+          "name": "int-275m-cx8-intw256e8k-lr8e-4-r1_0.28@2.69B_275m_intw256e8k_12L8K256N1S_intw256e8k-cx8-lr8e-4-r1",
+          "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/qe052lo4",
+          "segment_run_ids": [
+            "qe052lo4"
+          ],
+          "token_resets": 0,
+          "deduplicated_samples": 0
+        }
+      },
+      "intervention_result": {
+        "model": "275m",
+        "variant": "hybrid_gdn_ev1",
+        "variant_label": "hybrid (GDN, expand_v=1)",
+        "cx": 8,
+        "lr": 0.0016,
+        "lr_tag": "0.0016",
+        "loss": 2.396379973903392,
+        "state": "finished",
+        "tokens_b": 33.780400128,
+        "run_id": "66aja50m",
+        "name": "pt-275m-intwide-hybrid-gdn-ev1-cx8-lr1p6e-3-r1",
+        "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/66aja50m",
+        "segment_run_ids": [
+          "66aja50m"
+        ],
+        "token_resets": 0,
+        "deduplicated_samples": 0
+      },
+      "delta_intervention_minus_wide": -0.02289339431426818,
+      "delta_intervention_minus_reference": {
+        "wide_integration": -0.02289339431426818
+      }
+    },
+    {
+      "model": "480m",
+      "cx": 1,
+      "mode": "fixed_lr_transfer",
+      "complete": true,
+      "optimal_summary_eligible": false,
+      "completed_intervention_runs": 1,
+      "expected_intervention_runs": 1,
+      "wide_reference": {
+        "model": "480m",
+        "variant": "wide_integration",
+        "variant_label": "wide integration (SWA)",
+        "cx": 1,
+        "lr": 0.0012,
+        "lr_tag": "0.0012",
+        "loss": 2.5432814229709297,
+        "state": "finished",
+        "tokens_b": 7.671906304,
+        "run_id": "z4wxvc6h",
+        "name": "int-480m-cx1-intw256e8k-lr1.2e-3-r1_0.49@6.34B_480m_intw256e8k_16L8K256N1S_intw256e8k-480m-cx1-lr1.2e-3-r1",
+        "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/z4wxvc6h",
+        "segment_run_ids": [
+          "z4wxvc6h"
+        ],
+        "token_resets": 0,
+        "deduplicated_samples": 0
+      },
+      "references": {
+        "wide_integration": {
+          "model": "480m",
+          "variant": "wide_integration",
+          "variant_label": "wide integration (SWA)",
+          "cx": 1,
+          "lr": 0.0012,
+          "lr_tag": "0.0012",
+          "loss": 2.5432814229709297,
+          "state": "finished",
+          "tokens_b": 7.671906304,
+          "run_id": "z4wxvc6h",
+          "name": "int-480m-cx1-intw256e8k-lr1.2e-3-r1_0.49@6.34B_480m_intw256e8k_16L8K256N1S_intw256e8k-480m-cx1-lr1.2e-3-r1",
+          "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/z4wxvc6h",
+          "segment_run_ids": [
+            "z4wxvc6h"
+          ],
+          "token_resets": 0,
+          "deduplicated_samples": 0
+        }
+      },
+      "intervention_result": {
+        "model": "480m",
+        "variant": "hybrid_gdn_ev1",
+        "variant_label": "hybrid (GDN, expand_v=1)",
+        "cx": 1,
+        "lr": 0.0012,
+        "lr_tag": "0.0012",
+        "loss": 2.5108739282600037,
+        "state": "finished",
+        "tokens_b": 7.969439744,
+        "run_id": "wl8ebsd8",
+        "name": "480m-intwide-hybrid-gdn-ev1-cx1-lr1p2e-3",
+        "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/wl8ebsd8",
+        "segment_run_ids": [
+          "wl8ebsd8"
+        ],
+        "token_resets": 0,
+        "deduplicated_samples": 0
+      },
+      "delta_intervention_minus_wide": -0.03240749471092608,
+      "delta_intervention_minus_reference": {
+        "wide_integration": -0.03240749471092608
+      }
+    },
+    {
+      "model": "480m",
+      "cx": 2,
+      "mode": "fixed_lr_transfer",
+      "complete": true,
+      "optimal_summary_eligible": false,
+      "completed_intervention_runs": 1,
+      "expected_intervention_runs": 1,
+      "wide_reference": {
+        "model": "480m",
+        "variant": "wide_integration",
+        "variant_label": "wide integration (SWA)",
+        "cx": 2,
+        "lr": 0.0009,
+        "lr_tag": "0.0009",
+        "loss": 2.423887829735594,
+        "state": "finished",
+        "tokens_b": 15.343681536,
+        "run_id": "ywj13bkw",
+        "name": "int-480m-cx2-intw256e8k-lr9e-4-r1_0.49@6.34B_480m_intw256e8k_16L8K256N1S_intw256e8k-480m-cx2-lr9e-4-r1",
+        "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/ywj13bkw",
+        "segment_run_ids": [
+          "ywj13bkw"
+        ],
+        "token_resets": 0,
+        "deduplicated_samples": 0
+      },
+      "references": {
+        "wide_integration": {
+          "model": "480m",
+          "variant": "wide_integration",
+          "variant_label": "wide integration (SWA)",
+          "cx": 2,
+          "lr": 0.0009,
+          "lr_tag": "0.0009",
+          "loss": 2.423887829735594,
+          "state": "finished",
+          "tokens_b": 15.343681536,
+          "run_id": "ywj13bkw",
+          "name": "int-480m-cx2-intw256e8k-lr9e-4-r1_0.49@6.34B_480m_intw256e8k_16L8K256N1S_intw256e8k-480m-cx2-lr9e-4-r1",
+          "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/ywj13bkw",
+          "segment_run_ids": [
+            "ywj13bkw"
+          ],
+          "token_resets": 0,
+          "deduplicated_samples": 0
+        }
+      },
+      "intervention_result": {
+        "model": "480m",
+        "variant": "hybrid_gdn_ev1",
+        "variant_label": "hybrid (GDN, expand_v=1)",
+        "cx": 2,
+        "lr": 0.0009,
+        "lr_tag": "0.0009",
+        "loss": 2.4127904765261046,
+        "state": "finished",
+        "tokens_b": 15.93901056,
+        "run_id": "4vzmrld1",
+        "name": "480m-intwide-hybrid-gdn-ev1-cx2-lr9e-4",
+        "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/4vzmrld1",
+        "segment_run_ids": [
+          "4vzmrld1"
+        ],
+        "token_resets": 0,
+        "deduplicated_samples": 0
+      },
+      "delta_intervention_minus_wide": -0.011097353209489569,
+      "delta_intervention_minus_reference": {
+        "wide_integration": -0.011097353209489569
+      }
+    },
+    {
+      "model": "480m",
+      "cx": 4,
+      "mode": "fixed_lr_transfer",
+      "complete": true,
+      "optimal_summary_eligible": false,
+      "completed_intervention_runs": 1,
+      "expected_intervention_runs": 1,
+      "wide_reference": {
+        "model": "480m",
+        "variant": "wide_integration",
+        "variant_label": "wide integration (SWA)",
+        "cx": 4,
+        "lr": 0.0008,
+        "lr_tag": "0.0008",
+        "loss": 2.3299758499273464,
+        "state": "finished",
+        "tokens_b": 30.687100928,
+        "run_id": "rblv9hpr",
+        "name": "int-480m-cx4-intw256e8k-lr8e-4-r1_0.49@6.34B_480m_intw256e8k_16L8K256N1S_intw256e8k-480m-cx4-lr8e-4-r1",
+        "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/rblv9hpr",
+        "segment_run_ids": [
+          "rblv9hpr"
+        ],
+        "token_resets": 0,
+        "deduplicated_samples": 0
+      },
+      "references": {
+        "wide_integration": {
+          "model": "480m",
+          "variant": "wide_integration",
+          "variant_label": "wide integration (SWA)",
+          "cx": 4,
+          "lr": 0.0008,
+          "lr_tag": "0.0008",
+          "loss": 2.3299758499273464,
+          "state": "finished",
+          "tokens_b": 30.687100928,
+          "run_id": "rblv9hpr",
+          "name": "int-480m-cx4-intw256e8k-lr8e-4-r1_0.49@6.34B_480m_intw256e8k_16L8K256N1S_intw256e8k-480m-cx4-lr8e-4-r1",
+          "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/rblv9hpr",
+          "segment_run_ids": [
+            "rblv9hpr"
+          ],
+          "token_resets": 0,
+          "deduplicated_samples": 0
+        }
+      },
+      "intervention_result": {
+        "model": "480m",
+        "variant": "hybrid_gdn_ev1",
+        "variant_label": "hybrid (GDN, expand_v=1)",
+        "cx": 4,
+        "lr": 0.0008,
+        "lr_tag": "0.0008",
+        "loss": 2.305995657758893,
+        "state": "finished",
+        "tokens_b": 31.877758976,
+        "run_id": "h06m5ls2",
+        "name": "480m-intwide-hybrid-gdn-ev1-cx4-lr8e-4",
+        "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/h06m5ls2",
+        "segment_run_ids": [
+          "h06m5ls2"
+        ],
+        "token_resets": 0,
+        "deduplicated_samples": 0
+      },
+      "delta_intervention_minus_wide": -0.023980192168453485,
+      "delta_intervention_minus_reference": {
+        "wide_integration": -0.023980192168453485
+      }
+    },
+    {
+      "model": "480m",
+      "cx": 8,
+      "mode": "fixed_lr_transfer",
+      "complete": true,
+      "optimal_summary_eligible": false,
+      "completed_intervention_runs": 1,
+      "expected_intervention_runs": 1,
+      "wide_reference": {
+        "model": "480m",
+        "variant": "wide_integration",
+        "variant_label": "wide integration (SWA)",
+        "cx": 8,
+        "lr": 0.0008,
+        "lr_tag": "0.0008",
+        "loss": 2.25130458597867,
+        "state": "finished",
+        "tokens_b": 61.374726144,
+        "run_id": "vdcrgfy0",
+        "name": "int-480m-cx8-intw256e8k-lr8e-4-r1_0.49@6.34B_480m_intw256e8k_16L8K256N1S_intw256e8k-480m-cx8-lr8e-4-r1",
+        "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/vdcrgfy0",
+        "segment_run_ids": [
+          "vdcrgfy0"
+        ],
+        "token_resets": 0,
+        "deduplicated_samples": 0
+      },
+      "references": {
+        "wide_integration": {
+          "model": "480m",
+          "variant": "wide_integration",
+          "variant_label": "wide integration (SWA)",
+          "cx": 8,
+          "lr": 0.0008,
+          "lr_tag": "0.0008",
+          "loss": 2.25130458597867,
+          "state": "finished",
+          "tokens_b": 61.374726144,
+          "run_id": "vdcrgfy0",
+          "name": "int-480m-cx8-intw256e8k-lr8e-4-r1_0.49@6.34B_480m_intw256e8k_16L8K256N1S_intw256e8k-480m-cx8-lr8e-4-r1",
+          "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/vdcrgfy0",
+          "segment_run_ids": [
+            "vdcrgfy0"
+          ],
+          "token_resets": 0,
+          "deduplicated_samples": 0
+        }
+      },
+      "intervention_result": {
+        "model": "480m",
+        "variant": "hybrid_gdn_ev1",
+        "variant_label": "hybrid (GDN, expand_v=1)",
+        "cx": 8,
+        "lr": 0.0008,
+        "lr_tag": "0.0008",
+        "loss": 2.2362050320367395,
+        "state": "finished",
+        "tokens_b": 63.755255808,
+        "run_id": "d34a9o4t",
+        "name": "480m-intwide-hybrid-gdn-ev1-cx8-lr8e-4",
+        "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/d34a9o4t",
+        "segment_run_ids": [
+          "d34a9o4t"
+        ],
+        "token_resets": 0,
+        "deduplicated_samples": 0
+      },
+      "delta_intervention_minus_wide": -0.0150995539419303,
+      "delta_intervention_minus_reference": {
+        "wide_integration": -0.0150995539419303
+      }
+    },
+    {
+      "model": "810m",
+      "cx": 1,
+      "mode": "fixed_lr_transfer",
+      "complete": true,
+      "optimal_summary_eligible": false,
+      "completed_intervention_runs": 1,
+      "expected_intervention_runs": 1,
+      "wide_reference": {
+        "model": "810m",
+        "variant": "wide_integration",
+        "variant_label": "wide integration (SWA)",
+        "cx": 1,
+        "lr": 0.0006,
+        "lr_tag": "0.0006",
+        "loss": 2.3731971408086254,
+        "state": "finished",
+        "tokens_b": 13.902544896,
+        "run_id": "w912irkq",
+        "name": "int-810m-cx1-intw256e8k-lr6e-4-r1_0.82@12.40B_810m_intw256e8k_20L8K256N1S_intw256e8k-810m-cx1-lr6e-4-r1",
+        "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/w912irkq",
+        "segment_run_ids": [
+          "w912irkq"
+        ],
+        "token_resets": 0,
+        "deduplicated_samples": 0
+      },
+      "references": {
+        "wide_integration": {
+          "model": "810m",
+          "variant": "wide_integration",
+          "variant_label": "wide integration (SWA)",
+          "cx": 1,
+          "lr": 0.0006,
+          "lr_tag": "0.0006",
+          "loss": 2.3731971408086254,
+          "state": "finished",
+          "tokens_b": 13.902544896,
+          "run_id": "w912irkq",
+          "name": "int-810m-cx1-intw256e8k-lr6e-4-r1_0.82@12.40B_810m_intw256e8k_20L8K256N1S_intw256e8k-810m-cx1-lr6e-4-r1",
+          "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/w912irkq",
+          "segment_run_ids": [
+            "w912irkq"
+          ],
+          "token_resets": 0,
+          "deduplicated_samples": 0
+        }
+      },
+      "intervention_result": {
+        "model": "810m",
+        "variant": "hybrid_gdn_ev1",
+        "variant_label": "hybrid (GDN, expand_v=1)",
+        "cx": 1,
+        "lr": 0.0006,
+        "lr_tag": "0.0006",
+        "loss": 2.3643451459252858,
+        "state": "finished",
+        "tokens_b": 14.619246592,
+        "run_id": "h1rmcm2p",
+        "name": "810m-intwide-hybrid-gdn-ev1-cx1-lr6e-4",
+        "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/h1rmcm2p",
+        "segment_run_ids": [
+          "h1rmcm2p"
+        ],
+        "token_resets": 0,
+        "deduplicated_samples": 0
+      },
+      "delta_intervention_minus_wide": -0.008851994883339653,
+      "delta_intervention_minus_reference": {
+        "wide_integration": -0.008851994883339653
+      }
+    },
+    {
+      "model": "810m",
+      "cx": 2,
+      "mode": "fixed_lr_transfer",
+      "complete": true,
+      "optimal_summary_eligible": false,
+      "completed_intervention_runs": 1,
+      "expected_intervention_runs": 1,
+      "wide_reference": {
+        "model": "810m",
+        "variant": "wide_integration",
+        "variant_label": "wide integration (SWA)",
+        "cx": 2,
+        "lr": 0.00056,
+        "lr_tag": "0.00056",
+        "loss": 2.2689475194088318,
+        "state": "finished",
+        "tokens_b": 27.805089792,
+        "run_id": "jpbqhfvc",
+        "name": "int-810m-cx2-intw256e8k-lr5.6e-4-r1_0.82@12.40B_810m_intw256e8k_20L8K256N1S_intw256e8k-810m-cx2-lr5.6e-4-r1",
+        "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/jpbqhfvc",
+        "segment_run_ids": [
+          "jpbqhfvc"
+        ],
+        "token_resets": 0,
+        "deduplicated_samples": 0
+      },
+      "references": {
+        "wide_integration": {
+          "model": "810m",
+          "variant": "wide_integration",
+          "variant_label": "wide integration (SWA)",
+          "cx": 2,
+          "lr": 0.00056,
+          "lr_tag": "0.00056",
+          "loss": 2.2689475194088318,
+          "state": "finished",
+          "tokens_b": 27.805089792,
+          "run_id": "jpbqhfvc",
+          "name": "int-810m-cx2-intw256e8k-lr5.6e-4-r1_0.82@12.40B_810m_intw256e8k_20L8K256N1S_intw256e8k-810m-cx2-lr5.6e-4-r1",
+          "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/jpbqhfvc",
+          "segment_run_ids": [
+            "jpbqhfvc"
+          ],
+          "token_resets": 0,
+          "deduplicated_samples": 0
+        }
+      },
+      "intervention_result": {
+        "model": "810m",
+        "variant": "hybrid_gdn_ev1",
+        "variant_label": "hybrid (GDN, expand_v=1)",
+        "cx": 2,
+        "lr": 0.00056,
+        "lr_tag": "0.00056",
+        "loss": 2.247185260244885,
+        "state": "finished",
+        "tokens_b": 29.238362112,
+        "run_id": "1d5gxgjv",
+        "name": "810m-intwide-hybrid-gdn-ev1-cx2-lr5p6e-4",
+        "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/1d5gxgjv",
+        "segment_run_ids": [
+          "1d5gxgjv"
+        ],
+        "token_resets": 0,
+        "deduplicated_samples": 0
+      },
+      "delta_intervention_minus_wide": -0.021762259163946585,
+      "delta_intervention_minus_reference": {
+        "wide_integration": -0.021762259163946585
+      }
+    },
+    {
+      "model": "810m",
+      "cx": 4,
+      "mode": "fixed_lr_transfer",
+      "complete": true,
+      "optimal_summary_eligible": false,
+      "completed_intervention_runs": 1,
+      "expected_intervention_runs": 1,
+      "wide_reference": {
+        "model": "810m",
+        "variant": "wide_integration",
+        "variant_label": "wide integration (SWA)",
+        "cx": 4,
+        "lr": 0.0004,
+        "lr_tag": "0.0004",
+        "loss": 2.1928017916669384,
+        "state": "finished",
+        "tokens_b": 55.609655296,
+        "run_id": "58ftjxmw",
+        "name": "int-810m-cx4-intw256e8k-lr4e-4-r1_0.82@12.40B_810m_intw256e8k_20L8K256N1S_intw256e8k-810m-cx4-lr4e-4-r1",
+        "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/58ftjxmw",
+        "segment_run_ids": [
+          "58ftjxmw"
+        ],
+        "token_resets": 0,
+        "deduplicated_samples": 0
+      },
+      "references": {
+        "wide_integration": {
+          "model": "810m",
+          "variant": "wide_integration",
+          "variant_label": "wide integration (SWA)",
+          "cx": 4,
+          "lr": 0.0004,
+          "lr_tag": "0.0004",
+          "loss": 2.1928017916669384,
+          "state": "finished",
+          "tokens_b": 55.609655296,
+          "run_id": "58ftjxmw",
+          "name": "int-810m-cx4-intw256e8k-lr4e-4-r1_0.82@12.40B_810m_intw256e8k_20L8K256N1S_intw256e8k-810m-cx4-lr4e-4-r1",
+          "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/58ftjxmw",
+          "segment_run_ids": [
+            "58ftjxmw"
+          ],
+          "token_resets": 0,
+          "deduplicated_samples": 0
+        }
+      },
+      "intervention_result": {
+        "model": "810m",
+        "variant": "hybrid_gdn_ev1",
+        "variant_label": "hybrid (GDN, expand_v=1)",
+        "cx": 4,
+        "lr": 0.0004,
+        "lr_tag": "0.0004",
+        "loss": 2.1604400080954753,
+        "state": "finished",
+        "tokens_b": 58.47646208,
+        "run_id": "kye1c19u",
+        "name": "810m-intwide-hybrid-gdn-ev1-cx4-lr4e-4",
+        "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/kye1c19u",
+        "segment_run_ids": [
+          "kye1c19u"
+        ],
+        "token_resets": 0,
+        "deduplicated_samples": 0
+      },
+      "delta_intervention_minus_wide": -0.03236178357146313,
+      "delta_intervention_minus_reference": {
+        "wide_integration": -0.03236178357146313
+      }
+    },
+    {
+      "model": "810m",
+      "cx": 8,
+      "mode": "fixed_lr_transfer",
+      "complete": true,
+      "optimal_summary_eligible": false,
+      "completed_intervention_runs": 1,
+      "expected_intervention_runs": 1,
+      "wide_reference": {
+        "model": "810m",
+        "variant": "wide_integration",
+        "variant_label": "wide integration (SWA)",
+        "cx": 8,
+        "lr": 0.0004,
+        "lr_tag": "0.0004",
+        "loss": 2.1049388185986935,
+        "state": "finished",
+        "tokens_b": 111.219572736,
+        "run_id": "kyti8h1y",
+        "name": "int-810m-cx8-intw256e8k-lr4e-4-r1_0.82@12.40B_810m_intw256e8k_20L8K256N1S_intw256e8k-810m-cx8-lr4e-4-r1",
+        "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/kyti8h1y",
+        "segment_run_ids": [
+          "kyti8h1y"
+        ],
+        "token_resets": 0,
+        "deduplicated_samples": 0
+      },
+      "references": {
+        "wide_integration": {
+          "model": "810m",
+          "variant": "wide_integration",
+          "variant_label": "wide integration (SWA)",
+          "cx": 8,
+          "lr": 0.0004,
+          "lr_tag": "0.0004",
+          "loss": 2.1049388185986935,
+          "state": "finished",
+          "tokens_b": 111.219572736,
+          "run_id": "kyti8h1y",
+          "name": "int-810m-cx8-intw256e8k-lr4e-4-r1_0.82@12.40B_810m_intw256e8k_20L8K256N1S_intw256e8k-810m-cx8-lr4e-4-r1",
+          "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/kyti8h1y",
+          "segment_run_ids": [
+            "kyti8h1y"
+          ],
+          "token_resets": 0,
+          "deduplicated_samples": 0
+        }
+      },
+      "intervention_result": {
+        "model": "810m",
+        "variant": "hybrid_gdn_ev1",
+        "variant_label": "hybrid (GDN, expand_v=1)",
+        "cx": 8,
+        "lr": 0.0004,
+        "lr_tag": "0.0004",
+        "loss": 2.0955850868105137,
+        "state": "finished",
+        "tokens_b": 116.952662016,
+        "run_id": "s5gvyjiz",
+        "name": "810m-intwide-hybrid-gdn-ev1-cx8-lr4e-4",
+        "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/s5gvyjiz",
+        "segment_run_ids": [
+          "s5gvyjiz"
+        ],
+        "token_resets": 0,
+        "deduplicated_samples": 0
+      },
+      "delta_intervention_minus_wide": -0.009353731788179775,
+      "delta_intervention_minus_reference": {
+        "wide_integration": -0.009353731788179775
+      }
+    },
+    {
+      "model": "1p2b",
+      "cx": 1,
+      "mode": "fixed_lr_transfer",
+      "complete": true,
+      "optimal_summary_eligible": false,
+      "completed_intervention_runs": 1,
+      "expected_intervention_runs": 1,
+      "wide_reference": {
+        "model": "1p2b",
+        "variant": "wide_integration",
+        "variant_label": "wide integration (SWA)",
+        "cx": 1,
+        "lr": 0.0004,
+        "lr_tag": "0.0004",
+        "loss": 2.273061833166726,
+        "state": "finished",
+        "tokens_b": 21.417426944,
+        "run_id": "hww8eksq",
+        "name": "int-1p2b-cx1-intw256e8k-lr4e-4-r2_1.23@19.66B_1p2b_intw256e8k_22L8K256N1S_intw256e8k-1p2b-cx1-lr4e-4-r2",
+        "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/hww8eksq",
+        "segment_run_ids": [
+          "hww8eksq"
+        ],
+        "token_resets": 0,
+        "deduplicated_samples": 0
+      },
+      "references": {
+        "wide_integration": {
+          "model": "1p2b",
+          "variant": "wide_integration",
+          "variant_label": "wide integration (SWA)",
+          "cx": 1,
+          "lr": 0.0004,
+          "lr_tag": "0.0004",
+          "loss": 2.273061833166726,
+          "state": "finished",
+          "tokens_b": 21.417426944,
+          "run_id": "hww8eksq",
+          "name": "int-1p2b-cx1-intw256e8k-lr4e-4-r2_1.23@19.66B_1p2b_intw256e8k_22L8K256N1S_intw256e8k-1p2b-cx1-lr4e-4-r2",
+          "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/hww8eksq",
+          "segment_run_ids": [
+            "hww8eksq"
+          ],
+          "token_resets": 0,
+          "deduplicated_samples": 0
+        }
+      },
+      "intervention_result": {
+        "model": "1p2b",
+        "variant": "hybrid_gdn_ev1",
+        "variant_label": "hybrid (GDN, expand_v=1)",
+        "cx": 1,
+        "lr": 0.0004,
+        "lr_tag": "0.0004",
+        "loss": 2.2539527250036,
+        "state": "finished",
+        "tokens_b": 22.690660352,
+        "run_id": "1d24xfx5",
+        "name": "1p2b-intwide-hybrid-gdn-ev1-cx1-lr4e-4-ep8-sync",
+        "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/1d24xfx5",
+        "segment_run_ids": [
+          "1d24xfx5"
+        ],
+        "token_resets": 0,
+        "deduplicated_samples": 0
+      },
+      "delta_intervention_minus_wide": -0.019109108163125832,
+      "delta_intervention_minus_reference": {
+        "wide_integration": -0.019109108163125832
+      }
+    },
+    {
+      "model": "1p2b",
+      "cx": 2,
+      "mode": "fixed_lr_transfer",
+      "complete": true,
+      "optimal_summary_eligible": false,
+      "completed_intervention_runs": 1,
+      "expected_intervention_runs": 1,
+      "wide_reference": {
+        "model": "1p2b",
+        "variant": "wide_integration",
+        "variant_label": "wide integration (SWA)",
+        "cx": 2,
+        "lr": 0.0006,
+        "lr_tag": "0.0006",
+        "loss": 2.178332213335817,
+        "state": "finished",
+        "tokens_b": 42.83498496,
+        "run_id": "jfwntmwm",
+        "name": "int-1p2b-cx2-intw256e8k-lr6e-4-r2_1.23@19.66B_1p2b_intw256e8k_22L8K256N1S_intw256e8k-1p2b-cx2-lr6e-4-r2",
+        "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/jfwntmwm",
+        "segment_run_ids": [
+          "jfwntmwm"
+        ],
+        "token_resets": 0,
+        "deduplicated_samples": 0
+      },
+      "references": {
+        "wide_integration": {
+          "model": "1p2b",
+          "variant": "wide_integration",
+          "variant_label": "wide integration (SWA)",
+          "cx": 2,
+          "lr": 0.0006,
+          "lr_tag": "0.0006",
+          "loss": 2.178332213335817,
+          "state": "finished",
+          "tokens_b": 42.83498496,
+          "run_id": "jfwntmwm",
+          "name": "int-1p2b-cx2-intw256e8k-lr6e-4-r2_1.23@19.66B_1p2b_intw256e8k_22L8K256N1S_intw256e8k-1p2b-cx2-lr6e-4-r2",
+          "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/jfwntmwm",
+          "segment_run_ids": [
+            "jfwntmwm"
+          ],
+          "token_resets": 0,
+          "deduplicated_samples": 0
+        }
+      },
+      "intervention_result": {
+        "model": "1p2b",
+        "variant": "hybrid_gdn_ev1",
+        "variant_label": "hybrid (GDN, expand_v=1)",
+        "cx": 2,
+        "lr": 0.0006,
+        "lr_tag": "0.0006",
+        "loss": 2.1637875953185484,
+        "state": "finished",
+        "tokens_b": 45.38105856,
+        "run_id": "4k1bh4k2",
+        "name": "1p2b-intwide-hybrid-gdn-ev1-cx2-lr6e-4-ep8-sync",
+        "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/4k1bh4k2",
+        "segment_run_ids": [
+          "4k1bh4k2"
+        ],
+        "token_resets": 0,
+        "deduplicated_samples": 0
+      },
+      "delta_intervention_minus_wide": -0.014544618017268807,
+      "delta_intervention_minus_reference": {
+        "wide_integration": -0.014544618017268807
+      }
+    },
+    {
+      "model": "1p2b",
+      "cx": 4,
+      "mode": "fixed_lr_transfer",
+      "complete": true,
+      "optimal_summary_eligible": false,
+      "completed_intervention_runs": 1,
+      "expected_intervention_runs": 1,
+      "wide_reference": {
+        "model": "1p2b",
+        "variant": "wide_integration",
+        "variant_label": "wide integration (SWA)",
+        "cx": 4,
+        "lr": 0.0003,
+        "lr_tag": "0.0003",
+        "loss": 2.094219446931995,
+        "state": "finished",
+        "tokens_b": 85.669707776,
+        "run_id": "u7ab1tpb",
+        "name": "int-1p2b-cx4-intw256e8k-lr3e-4-r2_1.23@19.66B_1p2b_intw256e8k_22L8K256N1S_intw256e8k-1p2b-cx4-lr3e-4-r2",
+        "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/u7ab1tpb",
+        "segment_run_ids": [
+          "u7ab1tpb"
+        ],
+        "token_resets": 0,
+        "deduplicated_samples": 0
+      },
+      "references": {
+        "wide_integration": {
+          "model": "1p2b",
+          "variant": "wide_integration",
+          "variant_label": "wide integration (SWA)",
+          "cx": 4,
+          "lr": 0.0003,
+          "lr_tag": "0.0003",
+          "loss": 2.094219446931995,
+          "state": "finished",
+          "tokens_b": 85.669707776,
+          "run_id": "u7ab1tpb",
+          "name": "int-1p2b-cx4-intw256e8k-lr3e-4-r2_1.23@19.66B_1p2b_intw256e8k_22L8K256N1S_intw256e8k-1p2b-cx4-lr3e-4-r2",
+          "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/u7ab1tpb",
+          "segment_run_ids": [
+            "u7ab1tpb"
+          ],
+          "token_resets": 0,
+          "deduplicated_samples": 0
+        }
+      },
+      "intervention_result": {
+        "model": "1p2b",
+        "variant": "hybrid_gdn_ev1",
+        "variant_label": "hybrid (GDN, expand_v=1)",
+        "cx": 4,
+        "lr": 0.0003,
+        "lr_tag": "0.0003",
+        "loss": 2.081180188890773,
+        "state": "finished",
+        "tokens_b": 90.76211712,
+        "run_id": "vc3c6gj6",
+        "name": "1p2b-intwide-hybrid-gdn-ev1-cx4-lr3e-4-ep8-sync",
+        "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/vc3c6gj6",
+        "segment_run_ids": [
+          "vc3c6gj6"
+        ],
+        "token_resets": 0,
+        "deduplicated_samples": 0
+      },
+      "delta_intervention_minus_wide": -0.013039258041221746,
+      "delta_intervention_minus_reference": {
+        "wide_integration": -0.013039258041221746
+      }
+    },
+    {
+      "model": "1p2b",
+      "cx": 8,
+      "mode": "fixed_lr_transfer",
+      "complete": true,
+      "optimal_summary_eligible": false,
+      "completed_intervention_runs": 1,
+      "expected_intervention_runs": 1,
+      "wide_reference": {
+        "model": "1p2b",
+        "variant": "wide_integration",
+        "variant_label": "wide integration (SWA)",
+        "cx": 8,
+        "lr": 0.0004,
+        "lr_tag": "0.0004",
+        "loss": 2.0226406901137635,
+        "state": "finished",
+        "tokens_b": 171.33993984,
+        "run_id": "bqjzmiqi",
+        "name": "int-1p2b-cx8-intw256e8k-lr4e-4-r2_1.23@19.66B_1p2b_intw256e8k_22L8K256N1S_intw256e8k-1p2b-cx8-lr4e-4-r2",
+        "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/bqjzmiqi",
+        "segment_run_ids": [
+          "bqjzmiqi"
+        ],
+        "token_resets": 0,
+        "deduplicated_samples": 0
+      },
+      "references": {
+        "wide_integration": {
+          "model": "1p2b",
+          "variant": "wide_integration",
+          "variant_label": "wide integration (SWA)",
+          "cx": 8,
+          "lr": 0.0004,
+          "lr_tag": "0.0004",
+          "loss": 2.0226406901137635,
+          "state": "finished",
+          "tokens_b": 171.33993984,
+          "run_id": "bqjzmiqi",
+          "name": "int-1p2b-cx8-intw256e8k-lr4e-4-r2_1.23@19.66B_1p2b_intw256e8k_22L8K256N1S_intw256e8k-1p2b-cx8-lr4e-4-r2",
+          "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/bqjzmiqi",
+          "segment_run_ids": [
+            "bqjzmiqi"
+          ],
+          "token_resets": 0,
+          "deduplicated_samples": 0
+        }
+      },
+      "intervention_result": {
+        "model": "1p2b",
+        "variant": "hybrid_gdn_ev1",
+        "variant_label": "hybrid (GDN, expand_v=1)",
+        "cx": 8,
+        "lr": 0.0004,
+        "lr_tag": "0.0004",
+        "loss": 2.016368677781063,
+        "state": "finished",
+        "tokens_b": 181.52423424,
+        "run_id": "7eemhu7g",
+        "name": "1p2b-intwide-hybrid-gdn-ev1-cx8-lr4e-4-ep8-sync",
+        "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/7eemhu7g",
+        "segment_run_ids": [
+          "7eemhu7g"
+        ],
+        "token_resets": 0,
+        "deduplicated_samples": 1
+      },
+      "delta_intervention_minus_wide": -0.00627201233270025,
+      "delta_intervention_minus_reference": {
+        "wide_integration": -0.00627201233270025
+      }
+    }
+  ]
+}

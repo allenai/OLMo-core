@@ -1,0 +1,568 @@
+{
+  "model": {
+    "d_model": 1024,
+    "vocab_size": 100352,
+    "n_layers": 22,
+    "block": {
+      "sequence_mixer": {
+        "name": "default",
+        "n_heads": 8,
+        "n_kv_heads": 4,
+        "bias": false,
+        "rope": {
+          "name": "default",
+          "theta": 500000,
+          "full_precision": true,
+          "no_global_rope": false,
+          "_CLASS_": "olmo_core.nn.rope.RoPEConfig"
+        },
+        "qk_norm": {
+          "name": "rms",
+          "eps": 1e-06,
+          "bias": false,
+          "dtype": "float32",
+          "_CLASS_": "olmo_core.nn.layer_norm.LayerNormConfig"
+        },
+        "backend": "te",
+        "dtype": "float32",
+        "sliding_window": {
+          "pattern": [
+            2048,
+            -1
+          ],
+          "force_full_attention_on_first_layer": false,
+          "force_full_attention_on_last_layer": true,
+          "_CLASS_": "olmo_core.nn.attention.SlidingWindowAttentionConfig"
+        },
+        "use_head_qk_norm": true,
+        "d_attn": 1024,
+        "use_recompute_qkv_prep": false,
+        "_CLASS_": "olmo_core.nn.attention.AttentionConfig",
+        "type": "attention"
+      },
+      "attention_norm": {
+        "name": "rms",
+        "eps": 1e-06,
+        "bias": false,
+        "dtype": "float32",
+        "_CLASS_": "olmo_core.nn.layer_norm.LayerNormConfig"
+      },
+      "feed_forward_norm": {
+        "name": "rms",
+        "eps": 1e-06,
+        "bias": false,
+        "dtype": "float32",
+        "_CLASS_": "olmo_core.nn.layer_norm.LayerNormConfig"
+      },
+      "name": "moe_fused_v2",
+      "routed_experts": {
+        "d_model": 1024,
+        "hidden_size": 384,
+        "num_experts": 128,
+        "bias": false,
+        "dtype": "float32",
+        "_CLASS_": "olmo_core.nn.moe.v2.routed_experts.RoutedExpertsConfig"
+      },
+      "routed_experts_router": {
+        "d_model": 1024,
+        "num_experts": 128,
+        "top_k": 8,
+        "normalize_expert_weights": 1.0,
+        "uniform_expert_assignment": false,
+        "random_expert_assignment": false,
+        "gating_function": "softmax",
+        "dtype": "float32",
+        "record_routing_batch_size": false,
+        "lb_loss_weight": 0.01,
+        "lb_loss_granularity": "instance",
+        "z_loss_weight": 1e-05,
+        "restore_weight_scale": true,
+        "use_recompute_fp32_cast": false,
+        "_CLASS_": "olmo_core.nn.moe.v2.router.MoERouterConfigV2"
+      },
+      "use_peri_norm": true,
+      "checkpoint_attn": false,
+      "checkpoint_permute_moe_unpermute": false,
+      "checkpoint_combined_ep_tbo": false,
+      "checkpoint_second_unpermute": false,
+      "ep_no_sync": true,
+      "ep_no_sync_use_2d_all_to_all": false,
+      "ep_no_sync_use_rowwise_all_to_all": true,
+      "ep_no_sync_rowwise_nblocks": 256,
+      "ep_no_sync_share_dispatch_out": false,
+      "ep_no_sync_capacity_factor": 1.25,
+      "ep_no_sync_shared_slots": 1,
+      "ep_no_sync_share_combine_out": false,
+      "ep_no_sync_major_align": 1,
+      "ep_no_sync_restore_unpermute_backend": "te_fused",
+      "rowwise_fp8": {
+        "enabled": false,
+        "block_size": 32,
+        "scale_mode": "rceil",
+        "use_fast_accum": true,
+        "fp8_only_params": true,
+        "fused_autograd": true,
+        "fused_autograd_recompute_swiglu": true,
+        "_CLASS_": "olmo_core.nn.moe.v2.fp8.MoERowwiseFP8Config"
+      },
+      "_CLASS_": "olmo_core.nn.moe.v2.block.MoEFusedV2TransformerBlockConfig"
+    },
+    "lm_head": {
+      "name": "default",
+      "layer_norm": {
+        "name": "rms",
+        "eps": 1e-06,
+        "bias": false,
+        "dtype": "float32",
+        "_CLASS_": "olmo_core.nn.layer_norm.LayerNormConfig"
+      },
+      "bias": false,
+      "dtype": "float32",
+      "loss_implementation": "default",
+      "_CLASS_": "olmo_core.nn.lm_head.LMHeadConfig"
+    },
+    "embedding_norm": {
+      "name": "rms",
+      "eps": 1e-06,
+      "bias": false,
+      "dtype": "float32",
+      "_CLASS_": "olmo_core.nn.layer_norm.LayerNormConfig"
+    },
+    "name": "moe_fused_v2",
+    "dtype": "float32",
+    "init_method": "normal",
+    "init_seed": 2026,
+    "init_std": 0.01,
+    "block_overrides": {},
+    "embed_scale": 32.0,
+    "two_batch_overlap": false,
+    "recompute_all_blocks_by_chunk": false,
+    "recompute_each_block": false,
+    "_CLASS_": "olmo_core.nn.transformer.config.MoEFusedV2TransformerConfig"
+  },
+  "dataset": {
+    "tokenizer": {
+      "vocab_size": 100278,
+      "eos_token_id": 100257,
+      "pad_token_id": 100277,
+      "identifier": "allenai/dolma2-tokenizer",
+      "_CLASS_": "olmo_core.data.tokenizer.TokenizerConfig"
+    },
+    "mix": "OLMo-mix-0925",
+    "mix_base_dir": "s3://ai2-llm",
+    "expand_glob": false,
+    "include_instance_metadata": true,
+    "instance_filter_config": {
+      "repetition_max_period": 13,
+      "repetition_min_period": 1,
+      "repetition_max_count": 32,
+      "_CLASS_": "olmo_core.data.numpy_dataset.InstanceFilterConfig"
+    },
+    "ignore_fingerprint_mismatch": false,
+    "sequence_length": 8192,
+    "max_target_sequence_length": 8192,
+    "generate_doc_lengths": false,
+    "_CLASS_": "olmo_core.data.numpy_dataset.NumpyFSLDatasetConfig"
+  },
+  "data_loader": {
+    "global_batch_size": 262144,
+    "seed": 34521,
+    "num_workers": 8,
+    "ignore_fingerprint_mismatch": false,
+    "_CLASS_": "olmo_core.data.data_loader.NumpyDataLoaderConfig",
+    "type": "numpy"
+  },
+  "train_module": {
+    "rank_microbatch_size": 8192,
+    "max_sequence_length": 8192,
+    "optim": {
+      "group_overrides": [
+        {
+          "params": [
+            "*embedding_norm.weight",
+            "*q_norm.weight",
+            "*k_norm.weight",
+            "*input_norm.weight",
+            "*lm_head.norm.weight",
+            "*attention_norm.weight",
+            "*feed_forward_norm.weight"
+          ],
+          "opts": {
+            "weight_decay": 0.0,
+            "use_muon": false
+          },
+          "_CLASS_": "olmo_core.optim.config.OptimGroupOverride"
+        },
+        {
+          "params": [
+            "*routed_experts.w_up_gate",
+            "*routed_experts.w_down"
+          ],
+          "opts": {
+            "lr": 0.0012,
+            "use_muon": false
+          },
+          "_CLASS_": "olmo_core.optim.config.OptimGroupOverride"
+        }
+      ],
+      "compile": true,
+      "fixed_fields": [
+        "initial_lr"
+      ],
+      "lr": 0.0012,
+      "betas": [
+        0.9,
+        0.95
+      ],
+      "eps": 1e-08,
+      "weight_decay": 0.1,
+      "dtype": "float32",
+      "muon_momentum": 0.95,
+      "muon_nesterov": true,
+      "muon_ns_coefficients": [
+        3.4445,
+        -4.775,
+        2.0315
+      ],
+      "muon_eps": 1e-07,
+      "muon_ns_steps": 5,
+      "rolling_interval_length": 128,
+      "sigma_factor": 12,
+      "max_grad_norm": 1.0,
+      "use_distributed": true,
+      "reset_optimizer_moments_on_load": false,
+      "_CLASS_": "olmo_core.optim.moe_optimizer.MoEFusedV2OptimizerConfig"
+    },
+    "max_grad_norm": 1.0,
+    "scheduler": {
+      "lr_field": "lr",
+      "initial_lr_field": "initial_lr",
+      "units": "tokens",
+      "stages": [
+        {
+          "duration": 764936192,
+          "shape": "linear",
+          "start_lr_fraction": 0.0,
+          "end_lr_fraction": 1.0,
+          "_CLASS_": "olmo_core.optim.scheduler.ComposableSchedulerStage"
+        },
+        {
+          "duration": 6886381568,
+          "shape": "cosine",
+          "end_lr_fraction": 0.1,
+          "_CLASS_": "olmo_core.optim.scheduler.ComposableSchedulerStage"
+        }
+      ],
+      "_CLASS_": "olmo_core.optim.scheduler.ComposableScheduler",
+      "type": "composable"
+    },
+    "compile_model": true,
+    "dp_config": {
+      "name": "ddp",
+      "reduce_dtype": "float32",
+      "wrapping_strategy": "full",
+      "prefetch_factor": 0,
+      "only_allreduce_last_microbatch": true,
+      "reduce_grads_in_fp32": true,
+      "accumulate_grads_in_fp32": true,
+      "_CLASS_": "olmo_core.train.train_module.transformer.config.TransformerDataParallelConfig"
+    },
+    "z_loss_multiplier": 1e-05,
+    "reset_optimizer_states_on_load": false,
+    "label_ignore_index": -100,
+    "_CLASS_": "olmo_core.train.train_module.transformer.config.MoEV2TransformerTrainModuleConfig"
+  },
+  "trainer": {
+    "save_folder": "/tmp/reconstructed-config-only",
+    "load_strategy": "if_available",
+    "checkpointer": {
+      "pre_download": false,
+      "save_thread_count": 3,
+      "load_thread_count": 2,
+      "throttle_uploads": true,
+      "_CLASS_": "olmo_core.train.checkpoint.CheckpointerConfig"
+    },
+    "save_overwrite": true,
+    "max_duration": {
+      "value": 7651317760,
+      "unit": "tokens",
+      "_CLASS_": "olmo_core.train.common.Duration"
+    },
+    "cancel_check_interval": 10,
+    "metrics_collect_interval": 2,
+    "callbacks": {
+      "checkpointer": {
+        "save_interval": 999999999,
+        "ephemeral_save_interval": 500,
+        "pre_train_checkpoint": false,
+        "save_async": false,
+        "remove": "ephemeral_only",
+        "enabled": true,
+        "_CLASS_": "olmo_core.train.callbacks.checkpointer.CheckpointerCallback"
+      },
+      "config_saver": {
+        "fname": "config.json",
+        "_CLASS_": "olmo_core.train.callbacks.config_saver.ConfigSaverCallback"
+      },
+      "speed_monitor": {
+        "_CLASS_": "olmo_core.train.callbacks.speed_monitor.SpeedMonitorCallback"
+      },
+      "wandb": {
+        "enabled": true,
+        "name": "q3-480m-cx1-q3td128e8k-lr1.2e-3-r1_0.49@3.60B_480m_q3td128e8k_22L8K128N0S_q3-480m-cx1-q3td128e8k-lr1.2e-3-r1",
+        "project": "jacobm-olmoe-ladder",
+        "entity": "ai2-llm",
+        "group": "q3-480m-cx1-q3td128e8k-lr1.2e-3-r1",
+        "tags": [],
+        "cancel_tags": [
+          "cancel",
+          "canceled",
+          "cancelled"
+        ],
+        "cancel_check_interval": 10,
+        "_CLASS_": "olmo_core.train.callbacks.wandb.WandBCallback"
+      },
+      "profiler": {
+        "start": 1021,
+        "end": 1026,
+        "enabled": false,
+        "profile_ranks": [
+          0,
+          8,
+          16,
+          24,
+          32,
+          40,
+          48,
+          56
+        ],
+        "_CLASS_": "olmo_core.train.callbacks.profiler.NvidiaProfilerCallback"
+      },
+      "torch_mem_history": {
+        "start": 59161,
+        "end": 59164,
+        "enabled": false,
+        "profile_ranks": [
+          0,
+          8,
+          16,
+          24,
+          32,
+          40,
+          48,
+          56,
+          64,
+          72,
+          80,
+          88,
+          96,
+          104,
+          112,
+          120,
+          128,
+          136,
+          144,
+          152,
+          160,
+          168,
+          176,
+          184,
+          192,
+          200,
+          208,
+          216,
+          224,
+          232,
+          240,
+          248,
+          256,
+          264,
+          272,
+          280,
+          288,
+          296,
+          304,
+          312,
+          320,
+          328,
+          336,
+          344,
+          352,
+          360,
+          368,
+          376,
+          384,
+          392,
+          400,
+          408,
+          416,
+          424,
+          432,
+          440,
+          448,
+          456,
+          464,
+          472,
+          480,
+          488,
+          496,
+          504,
+          512,
+          520,
+          528,
+          536,
+          544,
+          552,
+          560,
+          568,
+          576,
+          584,
+          592,
+          600,
+          608,
+          616,
+          624,
+          632,
+          640,
+          648,
+          656,
+          664,
+          672,
+          680,
+          688,
+          696,
+          704,
+          712,
+          720,
+          728,
+          736,
+          744,
+          752,
+          760,
+          768,
+          776,
+          784,
+          792,
+          800,
+          808,
+          816,
+          824,
+          832,
+          840,
+          848,
+          856,
+          864,
+          872,
+          880,
+          888,
+          896,
+          904,
+          912,
+          920,
+          928,
+          936,
+          944,
+          952,
+          960,
+          968,
+          976,
+          984,
+          992,
+          1000,
+          1008,
+          1016
+        ],
+        "max_entries": 500000,
+        "output_dir": "/workspace/tmp",
+        "_CLASS_": "olmo_core.train.callbacks.profiler.TorchMemoryHistoryCallback"
+      },
+      "downstream_evaluator": {
+        "tasks": [
+          "arc_challenge_test_bpb_5shot",
+          "arc_challenge_test_mc_5shot_fast",
+          "arc_easy_test_bpb_5shot",
+          "arc_easy_test_mc_5shot_fast",
+          "basic_skills_arithmetic_rc_5shot",
+          "basic_skills_coding_rc_5shot",
+          "basic_skills_common_knowledge_rc_5shot",
+          "basic_skills_logical_reasoning_rc_5shot",
+          "basic_skills_pattern_rc_5shot",
+          "basic_skills_string_operations_rc_5shot",
+          "codex_humaneval_gold_bpb_3shot",
+          "codex_mbpp_gold_bpb_3shot",
+          "copycolors_10way_fast",
+          "hellaswag_bpb_5shot",
+          "minerva_math_500_gold_bpb_0shot",
+          "mmlu_humanities_test_bpb_5shot",
+          "mmlu_humanities_test_mc_5shot_fast",
+          "mmlu_other_test_bpb_5shot",
+          "mmlu_other_test_mc_5shot_fast",
+          "mmlu_social_sciences_test_bpb_5shot",
+          "mmlu_social_sciences_test_mc_5shot_fast",
+          "mmlu_stem_test_bpb_5shot",
+          "mmlu_stem_test_mc_5shot_fast",
+          "mt_mbpp_cpp_gold_bpb_3shot",
+          "mt_mbpp_java_gold_bpb_3shot",
+          "mt_mbpp_rust_gold_bpb_3shot"
+        ],
+        "tokenizer": {
+          "vocab_size": 100278,
+          "eos_token_id": 100257,
+          "pad_token_id": 100277,
+          "identifier": "allenai/dolma2-tokenizer",
+          "_CLASS_": "olmo_core.data.tokenizer.TokenizerConfig"
+        },
+        "eval_interval": 2000,
+        "eval_duration": {
+          "value": 1,
+          "unit": "epochs",
+          "_CLASS_": "olmo_core.train.common.Duration"
+        },
+        "eval_on_startup": false,
+        "eval_on_finish": true,
+        "cancel_after_first_eval": false,
+        "log_interval": 5,
+        "lazy": false,
+        "enabled": true,
+        "_CLASS_": "olmo_core.train.callbacks.evaluator_callback.DownstreamEvaluatorCallbackConfig"
+      },
+      "lm_evaluator": {
+        "eval_dataset": {
+          "tokenizer": {
+            "vocab_size": 100278,
+            "eos_token_id": 100257,
+            "pad_token_id": 100277,
+            "identifier": "allenai/dolma2-tokenizer",
+            "_CLASS_": "olmo_core.data.tokenizer.TokenizerConfig"
+          },
+          "mix": "v3-small-ppl-validation",
+          "mix_base_dir": "s3://ai2-llm",
+          "expand_glob": false,
+          "include_instance_metadata": true,
+          "ignore_fingerprint_mismatch": false,
+          "sequence_length": 8192,
+          "_CLASS_": "olmo_core.data.numpy_dataset.NumpyPaddedFSLDatasetConfig"
+        },
+        "eval_interval": 2000,
+        "eval_on_startup": false,
+        "eval_on_finish": true,
+        "cancel_after_first_eval": false,
+        "eval_duration": {
+          "value": 1,
+          "unit": "epochs",
+          "_CLASS_": "olmo_core.train.common.Duration"
+        },
+        "log_interval": 5,
+        "deterministic": true,
+        "enabled": true,
+        "_CLASS_": "olmo_core.train.callbacks.evaluator_callback.LMEvaluatorCallbackConfig"
+      }
+    },
+    "bookkeeping_soft_timeout": 30,
+    "no_checkpoints": false,
+    "no_evals": false,
+    "_CLASS_": "olmo_core.train.config.TrainerConfig"
+  },
+  "init_seed": 2026,
+  "_CLASS_": "_legacy_config_pretraining_qwen_true_3d_480m_cx1.ExperimentConfig"
+}
