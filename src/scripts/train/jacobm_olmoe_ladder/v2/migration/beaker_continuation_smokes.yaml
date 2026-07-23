@@ -63,7 +63,7 @@ tasks:
       - {name: OLMOE3_LC_RANK_MICROBATCH_SEQUENCES, value: "4"}
       - {name: OLMOE3_LC_LR, value: "0.00008"}
       - {name: OLMOE3_LC_MAX_TOKENS, value: "4194304"}
-      - {name: OLMOE3_LC_DATA_GLOB, value: /weka/oe-training-default/ai2-llm/eval-data/perplexity/v3_small_dolma2-tokenizer/*/val/*.npy}
+      - {name: OLMOE3_LC_DATA_GLOB, value: /weka/oe-training-default/ai2-llm/eval-data/perplexity/v3_small_dolma2-tokenizer/**/val/*.npy}
       - {name: OLMOE3_LC_WARMUP_STEPS, value: "2000"}
       - {name: OLMOE3_LC_HARD_STOP_STEPS, value: "2"}
       - {name: OLMOE3_LC_USE_COMPILE, value: "1"}
