@@ -53,13 +53,33 @@ def test_registers_base_model_for_transformers_auto_model():
     assert isinstance(transformers.AutoModel.from_config(config), Olmo3MoeModel)
 
 
-def test_factory_rejects_legacy_dense_layer_layout():
-    with pytest.raises(NotImplementedError, match="dense_layers_indices"):
-        build_olmo3_moe_config_from_hf_config(small_config(dense_layers_indices=[0]))
+def test_factory_builds_mixed_dense_moe_peri_ln_model():
+    config = small_config(
+        dense_layers_indices=[0],
+        dense_mlp_intermediate_size=24,
+        use_peri_ln=True,
+    )
+    native_config = build_olmo3_moe_config_from_hf_config(
+        config, attention_backend=AttentionBackendName.torch
+    )
+    model = native_config.build(init_device="cpu")
+
+    blocks = list(model.blocks.values())
+    assert blocks[0].is_shared_only
+    assert blocks[0].shared_experts.hidden_size == 24
+    assert blocks[1].has_routed_experts
+    assert len(list(model.routed_blocks())) == 1
+    assert all(block.use_peri_norm for block in blocks)
+    assert all(block.attention_input_norm is not None for block in blocks)
+    assert all(block.feed_forward_input_norm is not None for block in blocks)
 
 
 def test_full_hf_state_load_and_gather_roundtrip_without_ep():
-    config = small_config()
+    config = small_config(
+        dense_layers_indices=[0],
+        dense_mlp_intermediate_size=24,
+        use_peri_ln=True,
+    )
     hf_model = Olmo3MoeForCausalLM(config)
     hf_state = {name: value.detach().clone() for name, value in hf_model.state_dict().items()}
     native_config = build_olmo3_moe_config_from_hf_config(

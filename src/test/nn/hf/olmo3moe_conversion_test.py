@@ -8,7 +8,6 @@ faithful bijection (including the fused ``w_up_gate`` split and the mixed dense/
 
 import types
 
-import pytest
 import torch
 
 from olmo_core.nn.hf.convert import (
@@ -28,7 +27,7 @@ def _fake_config():
         shared_expert_intermediate_size=4,
         dense_layers_indices=[0],
         embed_norm=True,
-        use_peri_ln=False,
+        use_peri_ln=True,
     )
 
 
@@ -55,6 +54,9 @@ def _synthetic_hf_state(config):
             hf[f"{p}self_attn.{norm}.weight"] = torch.randn(d)
         hf[f"{p}post_attention_layernorm.weight"] = torch.randn(d)
         hf[f"{p}post_feedforward_layernorm.weight"] = torch.randn(d)
+        if config.use_peri_ln:
+            hf[f"{p}pre_attention_layernorm.weight"] = torch.randn(d)
+            hf[f"{p}pre_feedforward_layernorm.weight"] = torch.randn(d)
         if layer in dense:
             hf[f"{p}mlp.gate_proj.weight"] = torch.randn(dense_h, d)
             hf[f"{p}mlp.up_proj.weight"] = torch.randn(dense_h, d)
@@ -83,8 +85,14 @@ def test_olmo3moe_hf_conversion_roundtrips():
         assert torch.equal(hf_roundtrip[key], tensor), f"roundtrip mismatch for '{key}'"
 
 
-def test_olmo3moe_conversion_rejects_peri_ln():
+def test_olmo3moe_conversion_supports_reordered_norm_without_peri_ln():
     config = _fake_config()
-    config.use_peri_ln = True
-    with pytest.raises(NotImplementedError, match="use_peri_ln"):
-        convert_olmo3moe_state_from_hf(config, {})
+    config.use_peri_ln = False
+    hf = _synthetic_hf_state(config)
+
+    olmo = convert_olmo3moe_state_from_hf(config, hf)
+    hf_roundtrip = convert_olmo3moe_state_to_hf(config, olmo)
+
+    assert set(hf_roundtrip) == set(hf)
+    for key, tensor in hf.items():
+        assert torch.equal(hf_roundtrip[key], tensor), f"roundtrip mismatch for '{key}'"

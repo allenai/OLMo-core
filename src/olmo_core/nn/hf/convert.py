@@ -689,12 +689,9 @@ def convert_qwen3_5_state_from_hf(
 # (:func:`convert_qwen3_5_state_from_hf`), olmo3moe uses dedicated functions.
 #
 # These mirror ``convert_checkpoint.py`` from the standalone MoE-v2 HF converter.
-# Norm handling only covers the default reordered-norm scheme (``use_peri_ln`` is
-# False): ``attention_norm`` -> ``post_attention_layernorm`` and
-# ``feed_forward_norm`` -> ``post_feedforward_layernorm``, uniformly across dense
-# and MoE layers. The peri-LN scheme is not supported here because it maps the
-# same OLMo-core norm key (``attention_norm``) to different HF keys depending on
-# whether the layer is dense or MoE, which cannot be expressed uniformly.
+# Norm handling covers both reordered norm and peri-LN. OLMoDDP uses explicit
+# ``*_input_norm`` parameters for peri-LN's additional pre-sublayer norms, so the
+# standalone converter can map all four HF norms directly.
 # ---------------------------------------------------------------------------
 
 
@@ -703,15 +700,6 @@ def _olmo3moe_dense_layer_indices(config: PretrainedConfig) -> set:
     if indices is None:
         return set()
     return set(indices)
-
-
-def _require_no_peri_ln(config: PretrainedConfig) -> None:
-    if getattr(config, "use_peri_ln", False):
-        raise NotImplementedError(
-            "olmo3moe checkpoint conversion does not support use_peri_ln=True: the peri-LN "
-            "scheme maps the same OLMo-core norm parameter to different HF layernorms depending "
-            "on whether a layer is dense or MoE, which the conversion framework cannot express."
-        )
 
 
 @beta_feature
@@ -728,8 +716,6 @@ def convert_olmo3moe_state_from_hf(
     :param config: The Hugging Face ``Olmo3MoeConfig``.
     :param hf_state: A model state dict in HF format.
     """
-    _require_no_peri_ln(config)
-
     n_layers: int = config.num_hidden_layers
     n_experts: int = config.n_routed_experts
     dense_indices = _olmo3moe_dense_layer_indices(config)
@@ -777,18 +763,25 @@ def convert_olmo3moe_state_from_hf(
         olmo_state[f"{olmo_prefix}feed_forward_norm.weight"] = hf_state[
             f"{prefix}post_feedforward_layernorm.weight"
         ]
+        if getattr(config, "use_peri_ln", False):
+            olmo_state[f"{olmo_prefix}attention_input_norm.weight"] = hf_state[
+                f"{prefix}pre_attention_layernorm.weight"
+            ]
+            olmo_state[f"{olmo_prefix}feed_forward_input_norm.weight"] = hf_state[
+                f"{prefix}pre_feedforward_layernorm.weight"
+            ]
 
         if layer_idx in dense_indices:
-            # Dense feed-forward.
-            olmo_state[f"{olmo_prefix}feed_forward.w1.weight"] = hf_state[
-                f"{prefix}mlp.gate_proj.weight"
-            ]
-            olmo_state[f"{olmo_prefix}feed_forward.w2.weight"] = hf_state[
-                f"{prefix}mlp.down_proj.weight"
-            ]
-            olmo_state[f"{olmo_prefix}feed_forward.w3.weight"] = hf_state[
-                f"{prefix}mlp.up_proj.weight"
-            ]
+            # OLMoDDP represents a dense MLP as one always-on shared expert.
+            dense_up = hf_state[f"{prefix}mlp.up_proj.weight"]
+            dense_gate = hf_state[f"{prefix}mlp.gate_proj.weight"]
+            olmo_state[f"{olmo_prefix}shared_experts.w_up_gate"] = torch.cat(
+                [dense_up.T, dense_gate.T], dim=1
+            ).contiguous()
+            dense_down = hf_state[f"{prefix}mlp.down_proj.weight"]
+            olmo_state[f"{olmo_prefix}shared_experts.w_down"] = dense_down.T.unsqueeze(
+                0
+            ).contiguous()
             continue
 
         # Router: HF gate weight is (E, D); OLMo-core stores it flattened (E * D,).
@@ -845,8 +838,6 @@ def convert_olmo3moe_state_to_hf(
     :param config: The Hugging Face ``Olmo3MoeConfig``.
     :param olmo_core_state: An unsharded OLMo-core model state dict.
     """
-    _require_no_peri_ln(config)
-
     n_layers: int = config.num_hidden_layers
     n_experts: int = config.n_routed_experts
     d_model: int = config.hidden_size
@@ -892,17 +883,23 @@ def convert_olmo3moe_state_to_hf(
         hf_state[f"{prefix}post_feedforward_layernorm.weight"] = olmo_core_state[
             f"{olmo_prefix}feed_forward_norm.weight"
         ]
+        if getattr(config, "use_peri_ln", False):
+            hf_state[f"{prefix}pre_attention_layernorm.weight"] = olmo_core_state[
+                f"{olmo_prefix}attention_input_norm.weight"
+            ]
+            hf_state[f"{prefix}pre_feedforward_layernorm.weight"] = olmo_core_state[
+                f"{olmo_prefix}feed_forward_input_norm.weight"
+            ]
 
         if layer_idx in dense_indices:
-            hf_state[f"{prefix}mlp.gate_proj.weight"] = olmo_core_state[
-                f"{olmo_prefix}feed_forward.w1.weight"
-            ]
-            hf_state[f"{prefix}mlp.down_proj.weight"] = olmo_core_state[
-                f"{olmo_prefix}feed_forward.w2.weight"
-            ]
-            hf_state[f"{prefix}mlp.up_proj.weight"] = olmo_core_state[
-                f"{olmo_prefix}feed_forward.w3.weight"
-            ]
+            dense_up_gate = olmo_core_state[f"{olmo_prefix}shared_experts.w_up_gate"]
+            dense_hidden = dense_up_gate.shape[1] // 2
+            dense_up = dense_up_gate[:, :dense_hidden]
+            dense_gate = dense_up_gate[:, dense_hidden:]
+            hf_state[f"{prefix}mlp.up_proj.weight"] = dense_up.T.contiguous()
+            hf_state[f"{prefix}mlp.gate_proj.weight"] = dense_gate.T.contiguous()
+            dense_down = olmo_core_state[f"{olmo_prefix}shared_experts.w_down"]
+            hf_state[f"{prefix}mlp.down_proj.weight"] = dense_down.squeeze(0).T.contiguous()
             continue
 
         # Router: OLMo-core stores it flattened (E * D,); HF gate weight is (E, D).
@@ -934,18 +931,18 @@ def convert_olmo3moe_state_to_hf(
             )
             shared_up = shared_up_gate[:, :shared_hidden]  # (D, H)
             shared_gate = shared_up_gate[:, shared_hidden:]  # (D, H)
-            hf_state[
-                f"{prefix}mlp.shared_expert.up_proj.weight"
-            ] = shared_up.T.contiguous()  # (H, D)
-            hf_state[
-                f"{prefix}mlp.shared_expert.gate_proj.weight"
-            ] = shared_gate.T.contiguous()  # (H, D)
+            hf_state[f"{prefix}mlp.shared_expert.up_proj.weight"] = (
+                shared_up.T.contiguous()
+            )  # (H, D)
+            hf_state[f"{prefix}mlp.shared_expert.gate_proj.weight"] = (
+                shared_gate.T.contiguous()
+            )  # (H, D)
             shared_down = olmo_core_state[f"{olmo_prefix}shared_experts.w_down"].reshape(
                 shared_hidden, d_model
             )
-            hf_state[
-                f"{prefix}mlp.shared_expert.down_proj.weight"
-            ] = shared_down.T.contiguous()  # (D, H)
+            hf_state[f"{prefix}mlp.shared_expert.down_proj.weight"] = (
+                shared_down.T.contiguous()
+            )  # (D, H)
 
     return hf_state
 
