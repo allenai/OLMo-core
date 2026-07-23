@@ -31,8 +31,13 @@ Checkpoint tensor names and values are not rewritten.
 - [x] Build all 20 active family/size/profile combinations with unchanged parameter counts.
 - [x] Dry-run 275M EP1 and 1.2B EP8 pretraining configs.
 - [x] Dry-run weight-only midtraining and 64K long-context continuation configs.
-- [ ] Rerun the strict tensor/logit/block/router checkpoint gate on the pinned upstream tip.
-  Submitted as Beaker experiment `01KY87GSERYVG92Q8D8Q8PMTJA`.
+- [x] Rerun the strict tensor/logit/block/router checkpoint gate on the pinned upstream tip.
+  Beaker experiment `01KY87GSERYVG92Q8D8Q8PMTJA` passed exactly on
+  2026-07-23. The report records `bitwise_equal=true` for all 216 checkpoint
+  tensors and 69 fixed-input output tensors, including full logits.
+- [ ] Rerun exact checkpoint gates for the current 275M geometry model, a 1.2B
+  EP8 model, and a completed 275M long-context model. Beaker experiment
+  `01KY87ZKBT2A54A15AQ47ESGKZ` is submitted and queued.
 - [ ] Run representative pretraining, EP8, midtraining, long-context, and eval smokes.
   The five-task, 19-GPU maximum-concurrency spec is prepared at
   `v2/migration/beaker_smokes.yaml` but remains gated on strict parity.

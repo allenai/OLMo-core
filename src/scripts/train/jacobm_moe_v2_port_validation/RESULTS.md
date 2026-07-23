@@ -1,5 +1,31 @@
 # moe-v2-core port validation results
 
+## Latest-upstream migration gate
+
+Validated upstream commit: `f5376c18424e3f7329fa6e39312c63b84c5f845a`.
+
+The final optimal 275M Cx1 checkpoint passed the strict gate again on
+2026-07-23:
+
+- source checkpoint: `pt-275m-intwide-hybrid-gdn-ev1-cx1-lr1p6e-3-r1/step16108`;
+- Beaker experiment: `01KY87GSERYVG92Q8D8Q8PMTJA`;
+- status: `STRICT_PORT_PARITY_PASS` with `bitwise_equal=true`;
+- all 216 checkpoint-main model tensors mapped one-to-one (2,701,754,320
+  serialized parameter elements);
+- fixed input IDs, full logits, all 12 block outputs, and all 55 router tensors
+  were exactly equal (`torch.equal`), for 69 tensor comparisons;
+- both full-logit artifacts have SHA256
+  `958fe9da3227aa3ace5b191b0dc0ae906a7e46c3cc67184ea88bb2eb605471d7`.
+
+The machine-readable report is stored at
+`/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/olmo-ddp/port-validation/f5376c184/parity/275m-cx1-step16108/strict_parity.json`.
+
+Representative exact checks for the current 275M geometry model, a 1.2B EP8
+checkpoint, and a completed 275M 64K checkpoint are submitted as Beaker
+experiment `01KY87ZKBT2A54A15AQ47ESGKZ`.
+
+## Historical candidate validation
+
 Validated candidate commit: `0cdcc8b813ab5ca582689edb80e4892891b03ae9`.
 
 ## Exact checkpoint gate
