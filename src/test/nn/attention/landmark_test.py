@@ -572,6 +572,41 @@ def test_landmark_instance_source_requires_multiple_of_mem_freq(tmp_path):
         LandmarkInstanceSource(content, mem_freq=3, mem_id=999, work_dir=tmp_path)
 
 
+def test_landmark_instance_source_multi_landmark(tmp_path):
+    mem_freq, mem_id, num_landmarks = 4, 999, 2  # block_size 6
+    # Content tokens 0..23 -> two content instances of length 12 (a multiple of mem_freq).
+    tokens = InMemoryTokenSource(tokens=list(range(24)), work_dir=tmp_path)
+    content = ConcatAndChunkInstanceSource(tokens, sequence_length=12, work_dir=tmp_path)
+    source = LandmarkInstanceSource(
+        content, mem_freq=mem_freq, mem_id=mem_id, num_landmarks=num_landmarks, work_dir=tmp_path
+    )
+
+    block_size = mem_freq + num_landmarks  # 6
+    assert source.block_size == block_size
+    assert source.sequence_length == 12 // mem_freq * block_size  # 18
+    assert len(source) == len(content) == 2
+
+    inst = source[0]
+    ids = list(inst["input_ids"])
+    mask = list(inst["label_mask"])
+    assert len(ids) == source.sequence_length == 18
+    # landmark tokens at the LAST num_landmarks positions of each block
+    landmark_positions = [i for i in range(18) if (i % block_size) >= (block_size - num_landmarks)]
+    assert landmark_positions == [4, 5, 10, 11, 16, 17]
+    for i in range(18):
+        if i in landmark_positions:
+            assert ids[i] == mem_id
+            assert mask[i] is False
+        else:
+            assert ids[i] != mem_id
+            assert mask[i] is True
+    # content tokens preserved in order
+    assert [t for t in ids if t != mem_id] == list(range(12))
+    # num_landmarks participates in the fingerprint (so caches aren't reused across counts)
+    single = LandmarkInstanceSource(content, mem_freq=mem_freq, mem_id=mem_id, work_dir=tmp_path)
+    assert single.fingerprint != source.fingerprint
+
+
 def test_landmark_instance_source_exclude_landmark_predictors(tmp_path):
     from olmo_core.data.utils import get_labels
 

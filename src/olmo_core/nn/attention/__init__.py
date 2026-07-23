@@ -86,6 +86,7 @@ __all__ = [
     "FastLandmarkAttention",
     "FastCompressiveLandmarkAttention",
     "CompressiveGQAGroupedAttention",
+    "MultiCompressiveLandmarkAttention",
     "SparseLandmarkAttention",
     "DocumentLandmarkAttention",
     "DocumentCompressiveLandmarkAttention",
@@ -220,6 +221,14 @@ class AttentionType(StrEnum):
     GQA group's query heads share one block rescaling; within-block + local stay per-head)
     """
 
+    multi_compressive_landmark = "multi_compressive_landmark"
+    """
+    ➡️ :class:`MultiCompressiveLandmarkAttention` (compressive landmark attention with multiple
+    landmark tokens per block; each block's cross-block gate is a ``landmark_gate_pool`` -- ``"mean"``
+    or ``"max"`` -- pool over its landmark scores, and every landmark folds its value into the block's
+    within-block summary. ``block_size = mem_freq + num_landmarks`` is held to a power of two)
+    """
+
     sparse_landmark = "sparse_landmark"
     """
     ➡️ :class:`SparseLandmarkAttention` (sparse landmark-only-across-chunks attention)
@@ -322,6 +331,7 @@ _LANDMARK_ATTENTION_TYPES = (
     AttentionType.fast_landmark,
     AttentionType.fast_compressive_landmark,
     AttentionType.compressive_gqa_grouped,
+    AttentionType.multi_compressive_landmark,
     AttentionType.sparse_landmark,
     AttentionType.shared_vector_landmark,
     AttentionType.document_landmark,
@@ -336,6 +346,7 @@ _NUM_LANDMARKS_TYPES = (
     AttentionType.sparse_landmark,
     AttentionType.multi_landmark,
     AttentionType.document_multi_landmark,
+    AttentionType.multi_compressive_landmark,
 )
 _MULTI_LANDMARK_TYPES = (
     AttentionType.multi_landmark,
@@ -391,14 +402,23 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
     """
     Number of landmark tokens per block/chunk (the last ``num_landmarks`` tokens). Supported by
     :class:`SparseLandmarkAttention` (``name="sparse_landmark"``), :class:`MultiLandmarkAttention`
-    (``name="multi_landmark"``), and :class:`DocumentMultiLandmarkAttention`
-    (``name="document_multi_landmark"``). Defaults to 1.
+    (``name="multi_landmark"``), :class:`DocumentMultiLandmarkAttention`
+    (``name="document_multi_landmark"``), and :class:`MultiCompressiveLandmarkAttention`
+    (``name="multi_compressive_landmark"``). Defaults to 1.
     """
     landmark_pool: Optional[str] = None
     """
     For the multi-landmark variants (``name="multi_landmark"`` / ``"document_multi_landmark"``) only:
     how to pool a block's landmark probabilities into its gate -- ``"sum"`` (marginal mass, the
-    default) or ``"max"`` (best-matching landmark). See :class:`MultiLandmarkAttention`.
+    default) or ``"max"`` (best-matching landmark). See :class:`MultiLandmarkAttention`. This pools
+    *post-softmax probabilities*; the compressive variant uses ``landmark_gate_pool`` instead, which
+    pools the pre-softmax *logits*.
+    """
+    landmark_gate_pool: Optional[str] = None
+    """
+    For :class:`MultiCompressiveLandmarkAttention` (``name="multi_compressive_landmark"``) only: how
+    to pool a block's landmark *logits* into its cross-block gate -- ``"mean"`` (average affinity, the
+    default) or ``"max"`` (best-matching landmark). See :class:`MultiCompressiveLandmarkAttention`.
     """
     nonselected_landmark_mass: Optional[float] = None
     """
@@ -592,6 +612,7 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
         landmark_use_kernel = kwargs.pop("landmark_use_kernel", None)
         num_landmarks = kwargs.pop("num_landmarks", None)
         landmark_pool = kwargs.pop("landmark_pool", None)
+        landmark_gate_pool = kwargs.pop("landmark_gate_pool", None)
         nonselected_landmark_mass = kwargs.pop("nonselected_landmark_mass", None)
         group_landmark_selection = kwargs.pop("group_landmark_selection", None)
         gate_temperature = kwargs.pop("gate_temperature", None)
@@ -626,8 +647,16 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
             )
         if num_landmarks is not None and not (possible_types & set(_NUM_LANDMARKS_TYPES)):
             raise OLMoConfigurationError(
-                "'num_landmarks' is only supported with sparse_landmark, multi_landmark, or "
-                f"document_multi_landmark attention (got name='{self.name}')"
+                "'num_landmarks' is only supported with sparse_landmark, multi_landmark, "
+                "document_multi_landmark, or multi_compressive_landmark attention "
+                f"(got name='{self.name}')"
+            )
+        if landmark_gate_pool is not None and not (
+            possible_types & {AttentionType.multi_compressive_landmark}
+        ):
+            raise OLMoConfigurationError(
+                "'landmark_gate_pool' is only supported with multi_compressive_landmark attention "
+                f"(got name='{self.name}')"
             )
         if landmark_pool is not None and not (possible_types & set(_MULTI_LANDMARK_TYPES)):
             raise OLMoConfigurationError(
@@ -668,18 +697,19 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
             AttentionType.fast_compressive_landmark,
             AttentionType.document_compressive_landmark,
             AttentionType.compressive_gqa_grouped,
+            AttentionType.multi_compressive_landmark,
         }
         if nonselected_landmark_mass is not None and not (possible_types & _COMPRESSIVE_TYPES):
             raise OLMoConfigurationError(
                 "'nonselected_landmark_mass' is only supported with the compressive landmark variants "
-                "(fast_compressive_landmark, document_compressive_landmark, compressive_gqa_grouped); "
-                f"got name='{self.name}'"
+                "(fast_compressive_landmark, document_compressive_landmark, compressive_gqa_grouped, "
+                f"multi_compressive_landmark); got name='{self.name}'"
             )
         if group_landmark_selection is not None and not (possible_types & _COMPRESSIVE_TYPES):
             raise OLMoConfigurationError(
                 "'group_landmark_selection' is only supported with the compressive landmark variants "
-                "(fast_compressive_landmark, document_compressive_landmark, compressive_gqa_grouped); "
-                f"got name='{self.name}'"
+                "(fast_compressive_landmark, document_compressive_landmark, compressive_gqa_grouped, "
+                f"multi_compressive_landmark); got name='{self.name}'"
             )
         if gate_temperature is not None and not (
             possible_types & {AttentionType.fast_compressive_landmark}
@@ -741,6 +771,20 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
                 if landmark_use_kernel is not None:
                     kwargs["use_kernel"] = landmark_use_kernel
                 return CompressiveGQAGroupedAttention(mem_freq=mem_freq, **kwargs)
+            elif effective_name == "multi_compressive_landmark":
+                if mem_freq is None:
+                    raise OLMoConfigurationError(
+                        "multi_compressive_landmark attention requires 'mem_freq' to be set"
+                    )
+                if num_landmarks is not None:
+                    kwargs["num_landmarks"] = num_landmarks
+                if landmark_gate_pool is not None:
+                    kwargs["landmark_gate_pool"] = landmark_gate_pool
+                if nonselected_landmark_mass is not None:
+                    kwargs["nonselected_landmark_mass"] = nonselected_landmark_mass
+                if group_landmark_selection is not None:
+                    kwargs["group_landmark_selection"] = group_landmark_selection
+                return MultiCompressiveLandmarkAttention(mem_freq=mem_freq, **kwargs)
             elif effective_name == "sparse_landmark":
                 if mem_freq is None:
                     raise OLMoConfigurationError(
@@ -2209,6 +2253,9 @@ from .landmark_fast import FastLandmarkAttention  # noqa: E402
 from .landmark_multi import (  # noqa: E402
     DocumentMultiLandmarkAttention,
     MultiLandmarkAttention,
+)
+from .landmark_multi_compressive import (  # noqa: E402
+    MultiCompressiveLandmarkAttention,
 )
 from .landmark_shared_vector import SharedVectorLandmarkAttention  # noqa: E402
 from .landmark_sparse import SparseLandmarkAttention  # noqa: E402

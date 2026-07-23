@@ -1653,6 +1653,8 @@ class TransformerConfig(ModelConfig):
         fast_landmark: bool = False,
         fast_compressive_landmark: bool = False,
         compressive_gqa_grouped: bool = False,
+        multi_compressive_landmark: bool = False,
+        landmark_gate_pool: Optional[str] = None,
         nonselected_landmark_mass: Optional[float] = None,
         group_landmark_selection: Optional[str] = None,
         gate_temperature: Optional[bool] = None,
@@ -1726,6 +1728,7 @@ class TransformerConfig(ModelConfig):
                     fast_landmark,
                     fast_compressive_landmark,
                     compressive_gqa_grouped,
+                    multi_compressive_landmark,
                     shared_vector_landmark,
                     sparse_landmark,
                     document_landmark,
@@ -1736,8 +1739,8 @@ class TransformerConfig(ModelConfig):
         ):
             raise OLMoConfigurationError(
                 "Only one of 'landmark', 'fast_landmark', 'fast_compressive_landmark', "
-                "'compressive_gqa_grouped', 'shared_vector_landmark', 'sparse_landmark', "
-                "'document_landmark', 'document_compressive' may be set."
+                "'compressive_gqa_grouped', 'multi_compressive_landmark', 'shared_vector_landmark', "
+                "'sparse_landmark', 'document_landmark', 'document_compressive' may be set."
             )
 
         uses_uniform_landmark = (
@@ -1745,6 +1748,7 @@ class TransformerConfig(ModelConfig):
             or fast_landmark
             or fast_compressive_landmark
             or compressive_gqa_grouped
+            or multi_compressive_landmark
             or shared_vector_landmark
             or sparse_landmark
             or document_landmark
@@ -1780,6 +1784,7 @@ class TransformerConfig(ModelConfig):
         uses_compressive_landmark = (
             fast_compressive_landmark
             or compressive_gqa_grouped
+            or multi_compressive_landmark
             or document_compressive
             or pattern_has_compressive_landmark
         )
@@ -1787,16 +1792,22 @@ class TransformerConfig(ModelConfig):
         if nonselected_landmark_mass is not None and not uses_compressive_landmark:
             raise OLMoConfigurationError(
                 "'nonselected_landmark_mass' is only valid with fast_compressive_landmark, "
-                "compressive_gqa_grouped, or document_compressive attention."
+                "compressive_gqa_grouped, multi_compressive_landmark, or document_compressive "
+                "attention."
             )
         if group_landmark_selection is not None and not uses_compressive_landmark:
             raise OLMoConfigurationError(
                 "'group_landmark_selection' is only valid with fast_compressive_landmark, "
-                "compressive_gqa_grouped, or document_compressive attention."
+                "compressive_gqa_grouped, multi_compressive_landmark, or document_compressive "
+                "attention."
             )
         if gate_temperature is not None and not fast_compressive_landmark:
             raise OLMoConfigurationError(
                 "'gate_temperature' is only valid with fast_compressive_landmark attention."
+            )
+        if landmark_gate_pool is not None and not multi_compressive_landmark:
+            raise OLMoConfigurationError(
+                "'landmark_gate_pool' is only valid with multi_compressive_landmark attention."
             )
         if vec_dim is not None and not uses_shared_vector_landmark:
             raise OLMoConfigurationError(
@@ -1847,6 +1858,8 @@ class TransformerConfig(ModelConfig):
                 att_type = AttentionType.fast_compressive_landmark
             elif compressive_gqa_grouped:
                 att_type = AttentionType.compressive_gqa_grouped
+            elif multi_compressive_landmark:
+                att_type = AttentionType.multi_compressive_landmark
             elif shared_vector_landmark:
                 att_type = AttentionType.shared_vector_landmark
             elif sparse_landmark:
@@ -1855,9 +1868,10 @@ class TransformerConfig(ModelConfig):
                 att_type = AttentionType.document_compressive_landmark
             else:
                 att_type = AttentionType.document_landmark
-            if num_landmarks is not None and not sparse_landmark:
+            if num_landmarks is not None and not (sparse_landmark or multi_compressive_landmark):
                 raise OLMoConfigurationError(
-                    "'num_landmarks' is only valid when 'sparse_landmark=True'."
+                    "'num_landmarks' is only valid when 'sparse_landmark=True' or "
+                    "'multi_compressive_landmark=True'."
                 )
             if cross_doc_mode is not None and not (document_landmark or document_compressive):
                 raise OLMoConfigurationError(
@@ -1921,8 +1935,13 @@ class TransformerConfig(ModelConfig):
                     else None
                 ),
                 num_landmarks=(
-                    num_landmarks if (sparse_landmark or pattern_has_sparse_landmark) else None
+                    num_landmarks
+                    if (
+                        sparse_landmark or pattern_has_sparse_landmark or multi_compressive_landmark
+                    )
+                    else None
                 ),
+                landmark_gate_pool=(landmark_gate_pool if multi_compressive_landmark else None),
                 nonselected_landmark_mass=(
                     nonselected_landmark_mass if uses_compressive_landmark else None
                 ),

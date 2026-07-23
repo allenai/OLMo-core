@@ -15,10 +15,15 @@ class LandmarkInstanceSourceConfig(InstanceSourceConfig):
 
     :param source: The upstream instance source providing *content* instances (without landmark
         tokens). Its ``sequence_length`` must be a multiple of ``mem_freq``.
-    :param mem_freq: The number of regular tokens between landmark tokens. The landmark block size
-        is ``mem_freq + 1``.
+    :param mem_freq: The number of regular tokens between landmark blocks. Together with
+        ``num_landmarks`` this sets the landmark block size ``mem_freq + num_landmarks``.
     :param mem_id: The token ID to insert as the landmark token. This should be a reserved ID in
         the model's vocabulary whose embedding is learned during training.
+    :param num_landmarks: The number of landmark tokens appended to each block of ``mem_freq``
+        content tokens (default ``1``, the single-landmark layout). ``> 1`` is used by
+        :class:`~olmo_core.nn.attention.landmark_multi_compressive.MultiCompressiveLandmarkAttention`,
+        which pools each block's several landmark scores into one gate; the block size then becomes
+        ``mem_freq + num_landmarks``.
     :param exclude_landmark_predictors: If ``True``, also exclude landmark tokens as loss
         *predictors* (not just as targets), matching reference implementations that drop landmark
         logits entirely. See :class:`LandmarkInstanceSource` for details. Defaults to ``False``.
@@ -27,6 +32,7 @@ class LandmarkInstanceSourceConfig(InstanceSourceConfig):
     source: InstanceSourceConfig
     mem_freq: int
     mem_id: int
+    num_landmarks: int = 1
     exclude_landmark_predictors: bool = False
 
     def build(self, work_dir: PathOrStr) -> "LandmarkInstanceSource":
@@ -34,6 +40,7 @@ class LandmarkInstanceSourceConfig(InstanceSourceConfig):
             self.source.build(work_dir),
             mem_freq=self.mem_freq,
             mem_id=self.mem_id,
+            num_landmarks=self.num_landmarks,
             exclude_landmark_predictors=self.exclude_landmark_predictors,
             work_dir=work_dir,
         )
@@ -46,11 +53,13 @@ class LandmarkInstanceSource(InstanceSource):
     :class:`~olmo_core.nn.attention.LandmarkAttention`.
 
     Each upstream content instance of length ``C`` (a multiple of ``mem_freq``) is divided into
-    ``C // mem_freq`` blocks of ``mem_freq`` tokens; a landmark token is appended to each block, so
-    the emitted instance has length ``C // mem_freq * (mem_freq + 1)`` with landmark tokens at the
-    fixed periodic positions ``pos % block_size == block_size - 1``.
+    ``C // mem_freq`` blocks of ``mem_freq`` tokens; ``num_landmarks`` landmark tokens are appended
+    to each block, so the emitted instance has length ``C // mem_freq * (mem_freq + num_landmarks)``
+    with landmark tokens at the last ``num_landmarks`` positions of every block
+    (``pos % block_size >= block_size - num_landmarks``). ``num_landmarks == 1`` (the default) is the
+    original single-landmark layout with landmarks at ``pos % block_size == block_size - 1``.
 
-    The emitted ``label_mask`` is ``False`` at landmark positions (so they are excluded from the
+    The emitted ``label_mask`` is ``False`` at every landmark position (so they are excluded from the
     loss) and otherwise preserves the upstream ``label_mask`` (defaulting to ``True`` for content
     tokens when the upstream source has none).
 
@@ -74,11 +83,14 @@ class LandmarkInstanceSource(InstanceSource):
         mem_freq: int,
         mem_id: int,
         work_dir: PathOrStr,
+        num_landmarks: int = 1,
         exclude_landmark_predictors: bool = False,
     ):
         if mem_freq < 1:
             raise OLMoConfigurationError(f"'mem_freq' must be >= 1 (got {mem_freq}).")
-        block_size = mem_freq + 1
+        if num_landmarks < 1:
+            raise OLMoConfigurationError(f"'num_landmarks' must be >= 1 (got {num_landmarks}).")
+        block_size = mem_freq + num_landmarks
         if source.sequence_length % mem_freq != 0:
             raise OLMoConfigurationError(
                 f"The upstream source 'sequence_length' ({source.sequence_length}) must be a "
@@ -98,6 +110,7 @@ class LandmarkInstanceSource(InstanceSource):
         self._source = source
         self.mem_freq = mem_freq
         self.mem_id = mem_id
+        self.num_landmarks = num_landmarks
         self.block_size = block_size
         self.exclude_landmark_predictors = exclude_landmark_predictors
 
@@ -117,6 +130,7 @@ class LandmarkInstanceSource(InstanceSource):
                 f"class={self.__class__.__name__},"
                 f"{self.mem_freq=},"
                 f"{self.mem_id=},"
+                f"{self.num_landmarks=},"
                 f"{self.exclude_landmark_predictors=},"
                 f"source={self.source.fingerprint},"
             ).encode()
@@ -145,18 +159,22 @@ class LandmarkInstanceSource(InstanceSource):
         for start in range(0, content_len, self.mem_freq):
             block = input_ids[start : start + self.mem_freq]
             new_ids.extend(block)
-            new_ids.append(mem_token)
+            new_ids.extend([mem_token] * self.num_landmarks)
             if label_mask is not None:
                 new_mask.extend(label_mask[start : start + self.mem_freq])
             else:
                 new_mask.extend([True] * self.mem_freq)
-            new_mask.append(False)  # landmark tokens are excluded from the loss (as targets)
+            # All landmark tokens are excluded from the loss (as targets).
+            new_mask.extend([False] * self.num_landmarks)
 
         if self.exclude_landmark_predictors:
             # Also exclude landmark tokens as loss *predictors*. With left-shifted labels, the loss
-            # term at a landmark position ``p`` predicts token ``p + 1`` (the next block's first
-            # content token), so masking that token's ``label_mask`` drops the term. Landmark
-            # positions are at ``p % block_size == block_size - 1``; mask each ``p + 1`` that exists.
+            # term at a landmark position ``p`` predicts token ``p + 1``, so masking that token's
+            # ``label_mask`` drops the term. Only the *last* landmark of each block (at
+            # ``p % block_size == block_size - 1``) is followed by a content token (the next block's
+            # first); interior landmarks are followed by another landmark whose ``label_mask`` is
+            # already ``False``, so masking that single ``p + 1`` per block excludes every landmark
+            # predictor.
             for p in range(self.block_size - 1, len(new_mask) - 1, self.block_size):
                 new_mask[p + 1] = False
 
