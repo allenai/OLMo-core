@@ -729,8 +729,12 @@ retains the identical 192-GPU peak layout and transferred LRs.
   The consolidated export now contains all 91 registered targets with 498
   metrics each.
 - On 2026-07-23, full-suite validation was submitted for every completed
-  RoPE-gated checkpoint: [16 two-GPU 275M tasks](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY85JPM1SE0XYX1RMFM5HXX7)
-  and [10 eight-GPU larger-model tasks](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY85JY73XPE4223SKFNDDA7Y).
+  RoPE-gated checkpoint: the initial allocated old-worktree submissions
+  [16 two-GPU 275M tasks](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY85JPM1SE0XYX1RMFM5HXX7)
+  and [10 eight-GPU larger-model tasks](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY85JY73XPE4223SKFNDDA7Y)
+  were canceled before scheduling on 2026-07-23. They are superseded by
+  high-priority unallocated backfills on `jacobm/moe-v2-core` (links recorded
+  below after submission).
   Both batches are allocated, urgent, and constrained to Holmes. The larger
   batch includes the newly finished 1.2B Cx8 `step238338`; 810M Cx8 remains
   deferred while training, and failed/partial 1.2B Cx2 is not evaluated.
