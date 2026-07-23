@@ -1,6 +1,6 @@
 # Geometry-matched NoPE active hybrid GDN intervention
 
-Generated: `2026-07-21T20:26:59.214635+00:00`
+Generated: `2026-07-23T17:10:45.222849+00:00`
 
 Selection metric: final `250M`-token mean training CE. Only finished runs are eligible.
 The optimal-LR summary includes only bracketed 275M sweeps with a valid quadratic fit.
@@ -26,7 +26,7 @@ Fitted LR minima in the 275M U-plot are visual aids and are never used to select
 | 1p2b | Cx1 | fixed-LR transfer | finished | wide_integration: 2.273062 @ 0.0004; hybrid_gdn_ev1: 2.253953 @ 0.0004; geometry_gdn_ev2: — | 2.274697 (0.0004) | wide_integration: +0.001635; hybrid_gdn_ev1: +0.020744; geometry_gdn_ev2: — |
 | 1p2b | Cx2 | fixed-LR transfer | finished | wide_integration: 2.178332 @ 0.0006; hybrid_gdn_ev1: 2.163788 @ 0.0006; geometry_gdn_ev2: — | 2.190998 (0.0006) | wide_integration: +0.012665; hybrid_gdn_ev1: +0.027210; geometry_gdn_ev2: — |
 | 1p2b | Cx4 | fixed-LR transfer | finished | wide_integration: 2.094219 @ 0.0003; hybrid_gdn_ev1: 2.081180 @ 0.0003; geometry_gdn_ev2: — | 2.107767 (0.0003) | wide_integration: +0.013548; hybrid_gdn_ev1: +0.026587; geometry_gdn_ev2: — |
-| 1p2b | Cx8 | fixed-LR transfer | pending | wide_integration: 2.022641 @ 0.0004; hybrid_gdn_ev1: —; geometry_gdn_ev2: — | — | wide_integration: —; hybrid_gdn_ev1: —; geometry_gdn_ev2: — |
+| 1p2b | Cx8 | fixed-LR transfer | finished | wide_integration: 2.022641 @ 0.0004; hybrid_gdn_ev1: 2.016369 @ 0.0004; geometry_gdn_ev2: — | 2.034305 (0.0004) | wide_integration: +0.011664; hybrid_gdn_ev1: +0.017936; geometry_gdn_ev2: — |
 
 ## Runs
 
@@ -78,8 +78,8 @@ Fitted LR minima in the 275M U-plot are visual aids and are never used to select
 | 275m | wide integration (SWA) | 4 | 0.0008 | finished | 16.251 | 2.506019 | — | [9n3xk8gs](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/9n3xk8gs) |
 | 275m | wide integration (SWA) | 4 | 0.0016 | finished | 16.251 | 2.508140 | — | [ttjquo05](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/ttjquo05) |
 | 275m | wide integration (SWA) | 4 | 0.0032 | finished | 16.251 | 2.522459 | — | [5u03fshf](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/5u03fshf) |
-| 275m | geometry-matched hybrid (GDN, expand_v=2) | 8 | 0.0004 | finished | 36.250 | 2.404090 | 1 reset(s); 498 duplicate token sample(s) removed | [7mlzc5x4](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/7mlzc5x4) / [9k8mo2q5](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/9k8mo2q5) |
-| 275m | geometry-matched hybrid (GDN, expand_v=2) | 8 | 0.0008 | finished | 36.250 | 2.389857 | 1 reset(s); 92 duplicate token sample(s) removed | [wo8raj1p](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/wo8raj1p) / [xdo7p86h](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/xdo7p86h) |
+| 275m | geometry-matched hybrid (GDN, expand_v=2) | 8 | 0.0004 | finished | 36.250 | 2.404090 | 1 reset(s); 502 duplicate token sample(s) removed | [7mlzc5x4](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/7mlzc5x4) / [9k8mo2q5](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/9k8mo2q5) |
+| 275m | geometry-matched hybrid (GDN, expand_v=2) | 8 | 0.0008 | finished | 36.250 | 2.389857 | 1 reset(s); 96 duplicate token sample(s) removed | [wo8raj1p](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/wo8raj1p) / [xdo7p86h](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/xdo7p86h) |
 | 275m | geometry-matched hybrid (GDN, expand_v=2) | 8 | 0.0016 | finished | 36.250 | 2.390902 | — | [0x3i869n](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/0x3i869n) |
 | 275m | geometry-matched hybrid (GDN, expand_v=2) | 8 | 0.0032 | finished | 36.250 | 2.412928 | — | [aholwcgr](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/aholwcgr) |
 | 275m | geometry-matched hybrid (GDN, expand_v=2, NoPE) | 8 | 0.0004 | finished | 36.250 | 2.406665 | — | [t76b5xjy](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/t76b5xjy) |
@@ -118,7 +118,7 @@ Fitted LR minima in the 275M U-plot are visual aids and are never used to select
 | 810m | geometry-matched hybrid (GDN, expand_v=2, NoPE) | 8 | 0.0004 | finished | 120.877 | 2.119848 | — | [bf0yrani](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/bf0yrani) |
 | 810m | hybrid (GDN, expand_v=1) | 8 | 0.0004 | finished | 116.953 | 2.095585 | — | [s5gvyjiz](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/s5gvyjiz) |
 | 810m | wide integration (SWA) | 8 | 0.0004 | finished | 111.220 | 2.104939 | — | [kyti8h1y](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/kyti8h1y) |
-| 1p2b | geometry-matched hybrid (GDN, expand_v=2, NoPE) | 1 | 0.0004 | finished | 23.220 | 2.274697 | — | [dngmbyg2](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/dngmbyg2) / [lubri1f1](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/lubri1f1) |
+| 1p2b | geometry-matched hybrid (GDN, expand_v=2, NoPE) | 1 | 0.0004 | finished | 23.220 | 2.274697 | 0 reset(s); 5 duplicate token sample(s) removed | [dngmbyg2](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/dngmbyg2) / [lubri1f1](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/lubri1f1) |
 | 1p2b | hybrid (GDN, expand_v=1) | 1 | 0.0004 | finished | 22.691 | 2.253953 | — | [1d24xfx5](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/1d24xfx5) |
 | 1p2b | wide integration (SWA) | 1 | 0.0004 | finished | 21.417 | 2.273062 | — | [hww8eksq](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/hww8eksq) |
 | 1p2b | geometry-matched hybrid (GDN, expand_v=2, NoPE) | 2 | 0.0006 | finished | 46.440 | 2.190998 | — | [hd12kewt](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/hd12kewt) |
@@ -127,4 +127,6 @@ Fitted LR minima in the 275M U-plot are visual aids and are never used to select
 | 1p2b | geometry-matched hybrid (GDN, expand_v=2, NoPE) | 4 | 0.0003 | finished | 92.880 | 2.107767 | — | [xxrj2oou](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/xxrj2oou) |
 | 1p2b | hybrid (GDN, expand_v=1) | 4 | 0.0003 | finished | 90.762 | 2.081180 | — | [vc3c6gj6](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/vc3c6gj6) |
 | 1p2b | wide integration (SWA) | 4 | 0.0003 | finished | 85.670 | 2.094219 | — | [u7ab1tpb](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/u7ab1tpb) |
+| 1p2b | geometry-matched hybrid (GDN, expand_v=2, NoPE) | 8 | 0.0004 | finished | 185.759 | 2.034305 | 0 reset(s); 1 duplicate token sample(s) removed | [hiokrpag](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/hiokrpag) |
+| 1p2b | hybrid (GDN, expand_v=1) | 8 | 0.0004 | finished | 181.524 | 2.016369 | 0 reset(s); 1 duplicate token sample(s) removed | [7eemhu7g](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/7eemhu7g) |
 | 1p2b | wide integration (SWA) | 8 | 0.0004 | finished | 171.340 | 2.022641 | — | [bqjzmiqi](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/bqjzmiqi) |

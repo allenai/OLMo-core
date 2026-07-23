@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-07-22T16:41:25.581821+00:00",
+  "generated_at": "2026-07-23T17:11:21.142948+00:00",
   "project": "ai2-llm/jacobm-olmoe-ladder",
   "wave": "geometry_gdn_ev2_nope_gated",
   "models": [
@@ -2361,6 +2361,25 @@
     },
     {
       "model": "1p2b",
+      "variant": "geometry_gdn_ev2_nope",
+      "variant_label": "geometry-matched hybrid (GDN, expand_v=2, NoPE)",
+      "cx": 8,
+      "lr": 0.0004,
+      "lr_tag": "0.0004",
+      "loss": 2.0343050548115618,
+      "state": "finished",
+      "tokens_b": 185.75917056,
+      "run_id": "hiokrpag",
+      "name": "pt-1p2b-geometry-gdn-ev2-nope-cx8-lr4e-4-ep8-sync-r1-collapse-monitor-r2",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/hiokrpag",
+      "segment_run_ids": [
+        "hiokrpag"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 1
+    },
+    {
+      "model": "1p2b",
       "variant": "geometry_gdn_ev2_nope_gated",
       "variant_label": "geometry-matched hybrid (GDN, expand_v=2, NoPE, gated attention)",
       "cx": 8,
@@ -4271,7 +4290,25 @@
           "deduplicated_samples": 1
         },
         "geometry_gdn_ev2": null,
-        "geometry_gdn_ev2_nope": null
+        "geometry_gdn_ev2_nope": {
+          "model": "1p2b",
+          "variant": "geometry_gdn_ev2_nope",
+          "variant_label": "geometry-matched hybrid (GDN, expand_v=2, NoPE)",
+          "cx": 8,
+          "lr": 0.0004,
+          "lr_tag": "0.0004",
+          "loss": 2.0343050548115618,
+          "state": "finished",
+          "tokens_b": 185.75917056,
+          "run_id": "hiokrpag",
+          "name": "pt-1p2b-geometry-gdn-ev2-nope-cx8-lr4e-4-ep8-sync-r1-collapse-monitor-r2",
+          "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/hiokrpag",
+          "segment_run_ids": [
+            "hiokrpag"
+          ],
+          "token_resets": 0,
+          "deduplicated_samples": 1
+        }
       },
       "intervention_result": {
         "model": "1p2b",
@@ -4297,7 +4334,7 @@
         "wide_integration": 0.014506783875279261,
         "hybrid_gdn_ev1": 0.02077879620797951,
         "geometry_gdn_ev2": null,
-        "geometry_gdn_ev2_nope": null
+        "geometry_gdn_ev2_nope": 0.0028424191774809593
       }
     }
   ]

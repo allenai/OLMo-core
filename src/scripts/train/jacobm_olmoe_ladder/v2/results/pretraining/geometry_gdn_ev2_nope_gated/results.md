@@ -1,6 +1,6 @@
 # Geometry-matched NoPE gated-attention active hybrid GDN intervention
 
-Generated: `2026-07-22T16:41:25.581821+00:00`
+Generated: `2026-07-23T17:11:21.142948+00:00`
 
 Selection metric: final `250M`-token mean training CE. Only finished runs are eligible.
 The optimal-LR summary includes only bracketed 275M sweeps with a valid quadratic fit.
@@ -26,7 +26,7 @@ Fitted LR minima in the 275M U-plot are visual aids and are never used to select
 | 1p2b | Cx1 | fixed-LR transfer | finished | wide_integration: 2.273062 @ 0.0004; hybrid_gdn_ev1: 2.253953 @ 0.0004; geometry_gdn_ev2: —; geometry_gdn_ev2_nope: 2.274697 @ 0.0004 | 2.273007 (0.0004) | wide_integration: -0.000055; hybrid_gdn_ev1: +0.019054; geometry_gdn_ev2: —; geometry_gdn_ev2_nope: -0.001690 |
 | 1p2b | Cx2 | fixed-LR transfer | finished | wide_integration: 2.178332 @ 0.0006; hybrid_gdn_ev1: 2.163788 @ 0.0006; geometry_gdn_ev2: —; geometry_gdn_ev2_nope: 2.190998 @ 0.0006 | 2.188236 (0.0006) | wide_integration: +0.009904; hybrid_gdn_ev1: +0.024449; geometry_gdn_ev2: —; geometry_gdn_ev2_nope: -0.002761 |
 | 1p2b | Cx4 | fixed-LR transfer | finished | wide_integration: 2.094219 @ 0.0003; hybrid_gdn_ev1: 2.081180 @ 0.0003; geometry_gdn_ev2: —; geometry_gdn_ev2_nope: 2.107767 @ 0.0003 | 2.108263 (0.0003) | wide_integration: +0.014043; hybrid_gdn_ev1: +0.027082; geometry_gdn_ev2: —; geometry_gdn_ev2_nope: +0.000495 |
-| 1p2b | Cx8 | fixed-LR transfer | finished | wide_integration: 2.022641 @ 0.0004; hybrid_gdn_ev1: 2.016369 @ 0.0004; geometry_gdn_ev2: —; geometry_gdn_ev2_nope: — | 2.037147 (0.0004) | wide_integration: +0.014507; hybrid_gdn_ev1: +0.020779; geometry_gdn_ev2: —; geometry_gdn_ev2_nope: — |
+| 1p2b | Cx8 | fixed-LR transfer | finished | wide_integration: 2.022641 @ 0.0004; hybrid_gdn_ev1: 2.016369 @ 0.0004; geometry_gdn_ev2: —; geometry_gdn_ev2_nope: 2.034305 @ 0.0004 | 2.037147 (0.0004) | wide_integration: +0.014507; hybrid_gdn_ev1: +0.020779; geometry_gdn_ev2: —; geometry_gdn_ev2_nope: +0.002842 |
 
 ## Runs
 
@@ -154,6 +154,7 @@ Fitted LR minima in the 275M U-plot are visual aids and are never used to select
 | 1p2b | geometry-matched hybrid (GDN, expand_v=2, NoPE, gated attention) | 4 | 0.0003 | finished | 93.719 | 2.108263 | — | [bhr5mgpr](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/bhr5mgpr) |
 | 1p2b | hybrid (GDN, expand_v=1) | 4 | 0.0003 | finished | 90.762 | 2.081180 | — | [vc3c6gj6](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/vc3c6gj6) |
 | 1p2b | wide integration (SWA) | 4 | 0.0003 | finished | 85.670 | 2.094219 | — | [u7ab1tpb](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/u7ab1tpb) |
+| 1p2b | geometry-matched hybrid (GDN, expand_v=2, NoPE) | 8 | 0.0004 | finished | 185.759 | 2.034305 | 0 reset(s); 1 duplicate token sample(s) removed | [hiokrpag](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/hiokrpag) |
 | 1p2b | geometry-matched hybrid (GDN, expand_v=2, NoPE, gated attention) | 8 | 0.0004 | finished | 187.437 | 2.037147 | — | [z4zmtqmu](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/z4zmtqmu) |
 | 1p2b | hybrid (GDN, expand_v=1) | 8 | 0.0004 | finished | 181.524 | 2.016369 | 0 reset(s); 1 duplicate token sample(s) removed | [7eemhu7g](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/7eemhu7g) |
 | 1p2b | wide integration (SWA) | 8 | 0.0004 | finished | 171.340 | 2.022641 | — | [bqjzmiqi](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/bqjzmiqi) |

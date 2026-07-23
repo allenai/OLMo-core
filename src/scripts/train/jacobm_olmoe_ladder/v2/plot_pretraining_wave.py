@@ -235,13 +235,7 @@ GEOMETRY_GDN_EV2_NOPE = Variant(
         RegisteredRun("1p2b", 1, 4e-4, "lubri1f1", predecessor_run_ids=("dngmbyg2",)),
         RegisteredRun("1p2b", 2, 6e-4, "hd12kewt"),
         RegisteredRun("1p2b", 4, 3e-4, "xxrj2oou"),
-        RegisteredRun(
-            "1p2b",
-            8,
-            4e-4,
-            "ye0zt4nm",
-            predecessor_run_ids=("i4z9h3jn", "h8u9xosq"),
-        ),
+        RegisteredRun("1p2b", 8, 4e-4, "hiokrpag"),
     ),
 )
 

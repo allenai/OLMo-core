@@ -248,8 +248,8 @@ record, including every task ID, is
 | 1.2B | 4 | `3e-4` | 32 | [01KXT0CKPC9NV36GKDXZH5SM17](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXT0CKPC9NV36GKDXZH5SM17) |
 | 1.2B | 8 | `4e-4` | 32 | [01KXT0CQBVT4T414SAZQYT1RAS](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXT0CQBVT4T414SAZQYT1RAS) |
 
-Status at 2026-07-22 16:25 UTC: 11/12 original cells are finished. Strict
-final-250M CE is `2.119848`
+Status at 2026-07-23 17:16 UTC: the clean 1.2B Cx8 replacement completed, so
+all 12 formal cells now have finished results. Strict final-250M CE is `2.119848`
 for 810M Cx8 and `2.107767` for the newly completed 1.2B Cx4. The user requeued the
 [Cx8 resume](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXW463APF8FT6RV8T8XZ2D6Q)
 in place. It resumed from the same checkpoint directory, reached step 17,644,
@@ -274,17 +274,16 @@ layout but writes to the new run/checkpoint directory
 This is a fresh optimizer and data stream, not a continuation. Status refreshes
 must explicitly watch steps 17,000--18,000, especially total gradient norm,
 step skips, and loss, because every original trajectory collapsed in that
-window. Do not substitute this run into the formal finished-only plot until it
-has crossed that window cleanly and ultimately finished. At this refresh it is
-at 124.72B / 185.76B tokens (67.1%), step 158,589. It crossed the original
-step-17,000--18,000 collapse window cleanly and continues to be monitored
-through completion.
+window. It finished all 185.759B tokens at step 236,205 without reproducing
+the collapse. Its strict final-250M CE is `2.034305`. The formal results
+registry now points to this clean run rather than the failed original
+trajectory.
 
 The gated-attention wave uses the identical GPU, EP, microbatch,
 checkpointing, and evaluator-free layout, with the same transferred
 wide-integration LR in every cell. It is urgent unallocated work on Holmes,
 pinned to commit `1a85227bdb8baeab2ad05555935aae78938bb0cd` for the initial
-submissions. At the 2026-07-22 16:25 UTC refresh, all 12 cells are finished. Strict
+submissions. At the 2026-07-23 17:16 UTC refresh, all 12 cells are finished. Strict
 final-250M CE is `2.191179` for 810M Cx4, `2.114516` for 810M Cx8,
 `2.273007` for 1.2B Cx1, `2.188236` for 1.2B Cx2, `2.108263` for 1.2B Cx4,
 and `2.037147` for 1.2B Cx8. The 1.2B Cx2 continuation resumed normally from
@@ -372,12 +371,13 @@ Checkpointing
 retains rolling ephemeral saves every 500 steps plus the final checkpoint;
 all in-loop and on-finish evaluators are disabled for post-training backfill.
 
-Status at 2026-07-22 16:25 UTC: seven cells are finished, four are running,
+Status at 2026-07-23 17:16 UTC: nine cells are finished, two are running,
 and 1.2B Cx2 is failed. The finished strict final-250M CEs are `2.506239`,
 `2.402917`, `2.307792`, and `2.233177` for 480M Cx1/2/4/8; `2.368164` and
-`2.266516` for 810M Cx1/2; and `2.270124` for 1.2B Cx1. The 810M Cx4/Cx8 and
-1.2B Cx4/Cx8 cells are running at 39.23B, 52.58B, 54.79B, and 88.53B tokens,
-respectively. The failed 1.2B Cx2 worker reached step 5,420, where
+`2.266516` for 810M Cx1/2, `2.191042` for 810M Cx4, `2.270124` for 1.2B Cx1,
+and `2.105145` for 1.2B Cx4. The 810M Cx8 and 1.2B Cx8 cells are running at
+104.3B / 121.9B (85%) and 182.1B / 187.4B (97%), respectively. The failed
+1.2B Cx2 worker reached step 5,420, where
 `OLMoDDPOptimizer` asserted on a non-finite total gradient norm. It auto-resumed
 from durable `step5000` and hit the same assertion again at step 6,582. Its
 later CUDA device assertion and NCCL watchdog output are secondary distributed
