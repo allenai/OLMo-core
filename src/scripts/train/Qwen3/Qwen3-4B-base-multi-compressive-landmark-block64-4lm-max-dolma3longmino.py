@@ -177,7 +177,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         .with_callback(
             "checkpointer",
             CheckpointerCallback(
-                save_interval=1000,
+                save_interval=500,
                 ephemeral_save_interval=None,
                 max_checkpoints=3,
                 save_async=True,
