@@ -67,7 +67,7 @@ optimizer, compile mode, and selected microbatch fixed within each comparison,
 and report steady-state TFLOPs/GPU, TPS/GPU, aggregate TPS, step time, peak
 memory, and skipped updates.
 
-### Matched SWA throughput control (TODO)
+### Matched SWA throughput control
 
 Repeat the complete capacity and parallelism study with a one-variable
 sequence-mixer control named `geometry_275m_swa_rope_gated`. Keep `d_model=640`,
@@ -85,9 +85,8 @@ Run this in the same stages as the GDN study:
 1. Validate the resolved mixer pattern and parameter counts, then run one
    checkpoint-free functional smoke.
 2. Repeat the one-GPU 2 Mi MB16, 4 Mi MB16, and 2 Mi MB32 capacity gate.
-3. Repeat the MB17--MB20, 16-accumulation fine boundary cells even if the SWA
-   model has a different capacity ceiling; extend beyond MB32 only as a
-   separate follow-up if MB32 fits.
+3. Do not repeat the MB17--MB20 fine boundary sweep for SWA or future variants;
+   the GDN sweep already answered the one-GPU capacity-envelope question.
 4. Select MB16 for the paired throughput comparison and repeat the full 2 Mi /
    4 Mi, 1/2/4/8-GPU EP1, upstream-default EP2/4/8, and DDP reduce-scatter
    matrix with otherwise identical Beaker settings.
@@ -126,7 +125,18 @@ headroom and experienced several wall-clock stalls before recovering to about
 446.5 TFLOPs/GPU over the final ten samples. MB17 is the best fine-sweep
 efficiency point, but these deliberately non-production batches measure the
 capacity curve only. Use MB16 for the follow-on paired 2 Mi / 4 Mi parallelism
-matrix; that matrix has not yet been submitted.
+matrix.
+
+The GDN MB16 parallelism matrix was submitted as urgent unallocated work
+`01KY8GWR68YYNQ15Q46F4D998V`: 16 tasks / 80 maximum concurrent GPUs, split
+evenly between the 2 Mi- and 4 Mi-token batches.
+
+The audited SWA control resolves to 265,665,280 active parameters, 201,440,000
+active non-embedding parameters, and 3,111,197,440 total parameters. Its mixer
+pattern is 2,048-token SWA at layers 0--3 and 5--8, with gated global attention
+at layers 4 and 9. This is 26,427,520 fewer active parameters than the matched
+GDN model; retain both TFLOPs/GPU and MFU in the report, but use raw TPS and
+step time for the direct wall-clock comparison.
 
 ## Functional gate results
 

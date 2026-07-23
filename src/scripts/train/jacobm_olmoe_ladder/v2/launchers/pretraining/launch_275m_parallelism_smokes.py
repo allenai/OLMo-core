@@ -20,7 +20,10 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 DEFAULT_MANIFEST = SCRIPT_DIR / "manifests" / "275m_rope_gated_parallelism_smokes.yaml"
 DEFAULT_OUTPUT = SCRIPT_DIR / "generated" / "275m_rope_gated_parallelism_smokes.yaml"
 DEFAULT_RECORD = SCRIPT_DIR / "generated" / "275m_rope_gated_parallelism_submissions.json"
-EXPECTED_VARIANT = "geometry_275m_gdn_ev2_rope_gated"
+ALLOWED_VARIANTS = {
+    "geometry_275m_gdn_ev2_rope_gated",
+    "geometry_275m_swa_rope_gated",
+}
 EXPECTED_SEQUENCE_LENGTH = 8_192
 ALLOWED_GLOBAL_BATCHES = {
     262_144,
@@ -49,8 +52,8 @@ def load_manifest(path: Path) -> dict[str, Any]:
 
 def validate(manifest: dict[str, Any]) -> list[dict[str, Any]]:
     training = manifest["training"]
-    if str(training["model_variant"]) != EXPECTED_VARIANT:
-        raise ValueError(f"expected model variant {EXPECTED_VARIANT}")
+    if str(training["model_variant"]) not in ALLOWED_VARIANTS:
+        raise ValueError(f"expected one of the audited model variants {sorted(ALLOWED_VARIANTS)}")
     if int(training["sequence_length"]) != EXPECTED_SEQUENCE_LENGTH:
         raise ValueError("parallelism study must preserve the 8,192-token sequence length")
     if int(training["global_batch_size"]) not in ALLOWED_GLOBAL_BATCHES:

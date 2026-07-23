@@ -182,6 +182,16 @@ def model_config():
                 "The geometry_275m_gdn_ev2_rope_gated variant only supports MODEL_SIZE=275m"
             )
         model = build_geometry_matched_model_config("geometry_rope_gated")
+    elif MODEL_VARIANT == "geometry_275m_swa_rope_gated":
+        from scripts.train.jacobm_olmoe_ladder.v2.models.geometry_matched_275m import (
+            build_geometry_matched_swa_model_config,
+        )
+
+        if MODEL_SIZE != "275m":
+            raise ValueError(
+                "The geometry_275m_swa_rope_gated variant only supports MODEL_SIZE=275m"
+            )
+        model = build_geometry_matched_swa_model_config()
     elif MODEL_VARIANT == "geometry_matched_gdn_ev2":
         from scripts.train.jacobm_olmoe_ladder.v2.models.geometry_matched_scale import (
             build_geometry_matched_scale_model_config,
@@ -411,6 +421,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         "geometry_275m_gdn_ev2_nope",
         "geometry_275m_gdn_ev2_nope_gated",
         "geometry_275m_gdn_ev2_rope_gated",
+        "geometry_275m_swa_rope_gated",
         "geometry_matched_gdn_ev2",
         "geometry_matched_gdn_ev2_nope",
         "geometry_matched_gdn_ev2_nope_gated",
@@ -418,6 +429,8 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
     }
     if MODEL_VARIANT == "geometry_275m_gdn_ev2_rope_gated":
         variant_group = "olmoe3-275m-geometry-gdn-ev2-rope-gated"
+    elif MODEL_VARIANT == "geometry_275m_swa_rope_gated":
+        variant_group = "olmoe3-275m-geometry-swa-rope-gated-throughput"
     elif MODEL_VARIANT == "geometry_275m_gdn_ev2_nope_gated":
         variant_group = "olmoe3-275m-geometry-gdn-ev2-nope-gated"
     elif MODEL_VARIANT == "geometry_275m_gdn_ev2_nope":
@@ -453,6 +466,8 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             "geometry_matched_gdn_ev2_rope_gated",
         }:
             variant_tags.append("attention-gate")
+        if MODEL_VARIANT == "geometry_275m_swa_rope_gated":
+            variant_tags = ["geometry-matched", "swa", "rope", "attention-gate"]
     else:
         variant_tags = ["integration-wide", "expand-v-1", "rope"]
     trainer = (
@@ -499,8 +514,8 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                     "pretraining",
                     MODEL_SIZE,
                     *variant_tags,
-                    "hybrid",
-                    "gdn",
+                    "hybrid" if "gdn" in MODEL_VARIANT else "swa-control",
+                    "gdn" if "gdn" in MODEL_VARIANT else "swa",
                     "olmo-ddp",
                     f"ep{EP_SIZE}",
                     (

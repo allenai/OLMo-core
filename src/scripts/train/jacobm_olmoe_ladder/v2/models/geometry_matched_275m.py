@@ -24,7 +24,12 @@ from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, cast
 
-from olmo_core.nn.attention import AttentionConfig, GateConfig, GateGranularity
+from olmo_core.nn.attention import (
+    AttentionConfig,
+    GateConfig,
+    GateGranularity,
+    SlidingWindowAttentionConfig,
+)
 from olmo_core.nn.attention.recurrent import GatedDeltaNetConfig
 from olmo_core.nn.ddp import OLMoDDPTransformerBlockConfig
 from olmo_core.nn.transformer import OLMoDDPModelConfig
@@ -40,6 +45,7 @@ HEAD_DIM = 128
 FULL_ATTENTION_LAYERS = (4, 9)
 GDN_LAYERS = tuple(i for i in range(N_LAYERS) if i not in FULL_ATTENTION_LAYERS)
 TOP_K = 8
+SWA_WINDOW_SIZE = 2_048
 
 # Checked-in dense-ladder 275M reference values.
 DENSE_REFERENCE_ACTIVE_PARAMS = 275_493_760
@@ -113,6 +119,7 @@ EXPECTED_PROFILE_COUNTS = {
     "geometry_rope_gated": (292_092_800, 227_867_520, 3_137_624_960),
     "dense_attention": (290_638_720, 226_413_440, 3_067_603_840),
 }
+EXPECTED_SWA_COUNTS = (265_665_280, 201_440_000, 3_111_197_440)
 
 
 def _resize_moe_block(block: OLMoDDPTransformerBlockConfig, expert_hidden_size: int) -> None:
@@ -262,6 +269,89 @@ def build_geometry_matched_model_config(
         raise ValueError(
             f"unexpected {profile_name} parameter counts: expected "
             f"{EXPECTED_PROFILE_COUNTS[profile_name]}, found {actual_counts}"
+        )
+
+    return candidate
+
+
+def build_geometry_matched_swa_model_config() -> OLMoDDPModelConfig:
+    """Replace only the geometry RoPE-gated profile's GDN mixers with SWA."""
+
+    candidate = build_geometry_matched_model_config("geometry_rope_gated")
+    resolved = candidate.resolved_block_configs
+
+    # The same pattern is attached to every restored attention mixer. It gives
+    # layers 0--3 and 5--8 a 2,048-token window while layers 4 and 9 remain the
+    # separately configured global-attention overrides.
+    sliding_window = SlidingWindowAttentionConfig(
+        pattern=[SWA_WINDOW_SIZE, SWA_WINDOW_SIZE, SWA_WINDOW_SIZE, SWA_WINDOW_SIZE, -1],
+        force_full_attention_on_first_layer=False,
+        force_full_attention_on_last_layer=True,
+    )
+    attention_template = deepcopy(
+        cast(AttentionConfig, resolved[FULL_ATTENTION_LAYERS[0]].sequence_mixer)
+    )
+    attention_template.gate = None
+    attention_template.sliding_window = sliding_window
+
+    default_block = deepcopy(resolved[1])
+    default_block.sequence_mixer = deepcopy(attention_template)
+    dense_first = deepcopy(resolved[0])
+    dense_first.sequence_mixer = deepcopy(attention_template)
+    candidate.block = default_block
+    candidate.block_overrides = {
+        0: dense_first,
+        **{layer_idx: deepcopy(resolved[layer_idx]) for layer_idx in FULL_ATTENTION_LAYERS},
+    }
+    candidate.validate()
+
+    actual_swa: list[int] = []
+    actual_full: list[int] = []
+    for layer_idx, block in enumerate(candidate.resolved_block_configs):
+        attention = cast(AttentionConfig, block.sequence_mixer)
+        if attention.sliding_window is not None and attention.sliding_window.should_use_swa(
+            layer_idx, candidate.n_layers
+        ):
+            actual_swa.append(layer_idx)
+        else:
+            actual_full.append(layer_idx)
+    if tuple(actual_swa) != GDN_LAYERS or tuple(actual_full) != FULL_ATTENTION_LAYERS:
+        raise ValueError(
+            f"unexpected SWA mixer pattern: SWA={tuple(actual_swa)}, full={tuple(actual_full)}"
+        )
+    if candidate.resolved_block_configs[0].routed_experts is not None:
+        raise ValueError("SWA control must retain the dense-first layer-0 FFN")
+    for layer_idx in actual_swa:
+        attention = cast(
+            AttentionConfig, candidate.resolved_block_configs[layer_idx].sequence_mixer
+        )
+        if attention.gate is not None:
+            raise ValueError(f"restored SWA layer {layer_idx} must remain ungated")
+        if attention.rope is None:
+            raise ValueError(f"restored SWA layer {layer_idx} must retain RoPE")
+        assert attention.sliding_window is not None
+        if attention.sliding_window.get_window_size(layer_idx, candidate.n_layers) != SWA_WINDOW_SIZE:
+            raise ValueError(f"restored SWA layer {layer_idx} must use a 2,048-token window")
+    for layer_idx in actual_full:
+        attention = cast(
+            AttentionConfig, candidate.resolved_block_configs[layer_idx].sequence_mixer
+        )
+        if (
+            attention.gate is None
+            or attention.gate.granularity != GateGranularity.elementwise
+            or not attention.gate.full_precision
+        ):
+            raise ValueError(f"global-attention layer {layer_idx} must retain its elementwise gate")
+
+    actual_counts = (
+        candidate.num_active_params,
+        candidate.num_active_non_embedding_params,
+        candidate.num_params,
+    )
+    if actual_counts != EXPECTED_SWA_COUNTS:
+        raise ValueError(
+            f"unexpected SWA-control parameter counts: expected {EXPECTED_SWA_COUNTS}, "
+            f"found {actual_counts}"
         )
 
     return candidate
