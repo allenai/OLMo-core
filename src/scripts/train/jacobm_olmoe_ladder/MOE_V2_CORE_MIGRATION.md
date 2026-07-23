@@ -67,13 +67,53 @@ optimizer, compile mode, and selected microbatch fixed within each comparison,
 and report steady-state TFLOPs/GPU, TPS/GPU, aggregate TPS, step time, peak
 memory, and skipped updates.
 
+### Matched SWA throughput control (TODO)
+
+Repeat the complete capacity and parallelism study with a one-variable
+sequence-mixer control named `geometry_275m_swa_rope_gated`. Keep `d_model=640`,
+10 layers, the dense-first FFN at layer 0, every MoE width/router setting, 8 Q / 4
+KV heads, head dimension 128, RoPE, initialization, norms, optimizer settings,
+and elementwise gating on the two global-attention layers fixed. Replace only
+the eight GDN mixers at layers 0--3 and 5--8 with 2,048-token sliding-window
+attention; retain global attention at layers 4 and 9. The replacement SWA
+layers should use the integration-wide attention template without adding an
+extra attention gate, so the comparison does not introduce a second gating
+intervention.
+
+Run this in the same stages as the GDN study:
+
+1. Validate the resolved mixer pattern and parameter counts, then run one
+   checkpoint-free functional smoke.
+2. Repeat the one-GPU 2 Mi MB16, 4 Mi MB16, and 2 Mi MB32 capacity gate.
+3. Repeat the MB17--MB20, 16-accumulation fine boundary cells even if the SWA
+   model has a different capacity ceiling; extend beyond MB32 only as a
+   separate follow-up if MB32 fits.
+4. Select MB16 for the paired throughput comparison and repeat the full 2 Mi /
+   4 Mi, 1/2/4/8-GPU EP1, upstream-default EP2/4/8, and DDP reduce-scatter
+   matrix with otherwise identical Beaker settings.
+
+Use raw TPS/GPU, aggregate TPS, and optimizer-step time as the primary GDN/SWA
+comparison because the two mixers have different FLOP definitions and active
+parameter counts. Record TFLOPs/GPU and MFU within each family, plus active and
+reserved memory, accumulation, skipped updates, node, and exit status. Run all
+cells urgent and unallocated on Holmes with checkpoints and evals disabled.
+
 The initial allocated capacity submission `01KY8BWKJ790QVXFSE6ZEYVAK6` was
 canceled before scheduling. Its unallocated replacement was submitted at
 urgent priority in the MoE workspace as Beaker work
 `01KY8CBCG3BZZW6CR3616NQY57` (`minRuntime=0`, `autoResume=true`). The prepared
 follow-on manifest uses the same unallocated settings and contains 16 tasks /
-80 maximum concurrent GPUs across the 2 Mi- and 4 Mi-token batches; render it
-with the capacity-winning MB16 or MB32 before submission.
+80 maximum concurrent GPUs across the 2 Mi- and 4 Mi-token batches.
+
+The one-GPU capacity gate established MB16 as the largest tested production
+microbatch: the 2 Mi- and 4 Mi-token controls completed 50 steps at about 453.6
+and 445.1 TFLOPs/GPU with 221.5 GiB active memory, while MB32 OOMed in the
+compiled dry run at 267.6 / 267.7 GiB. A finer MB17--MB20 boundary sweep was
+submitted as unallocated urgent work `01KY8DZZFWDJAFX754AP373DMP`. Each cell
+uses a per-run optimizer batch equal to exactly 16 microbatches, and disables
+checkpoints and evals. These deliberately non-production batches measure the
+capacity boundary only; the follow-on parallelism matrix remains fixed at
+MB16 and has not yet been submitted.
 
 ## Functional gate results
 

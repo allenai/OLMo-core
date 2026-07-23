@@ -22,7 +22,15 @@ DEFAULT_OUTPUT = SCRIPT_DIR / "generated" / "275m_rope_gated_parallelism_smokes.
 DEFAULT_RECORD = SCRIPT_DIR / "generated" / "275m_rope_gated_parallelism_submissions.json"
 EXPECTED_VARIANT = "geometry_275m_gdn_ev2_rope_gated"
 EXPECTED_SEQUENCE_LENGTH = 8_192
-ALLOWED_GLOBAL_BATCHES = {262_144, 2_097_152, 4_194_304}
+ALLOWED_GLOBAL_BATCHES = {
+    262_144,
+    2_097_152,
+    2_228_224,  # MB17 x 16 accumulation x 8,192 tokens.
+    2_359_296,  # MB18 x 16 accumulation x 8,192 tokens.
+    2_490_368,  # MB19 x 16 accumulation x 8,192 tokens.
+    2_621_440,  # MB20 x 16 accumulation x 8,192 tokens.
+    4_194_304,
+}
 ALLOWED_EP_PATHS = {"sync_1d", "rowwise_nvshmem"}
 
 

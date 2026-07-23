@@ -1,0 +1,13 @@
+[
+  {
+    "experiment_name": "jacobm-moe-v2-core-275m-large-batch-capacity-fine-r1",
+    "experiment_id": "01KY8DZZFWDJAFX754AP373DMP",
+    "tasks": [
+      "mb17-acc16",
+      "mb18-acc16",
+      "mb19-acc16",
+      "mb20-acc16"
+    ],
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY8DZZFWDJAFX754AP373DMP"
+  }
+]
