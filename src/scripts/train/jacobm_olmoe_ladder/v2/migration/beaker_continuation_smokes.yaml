@@ -1,0 +1,81 @@
+version: v2
+description: Bounded MT and 64K LC load/training gates for moe-v2-core f5376c184
+tasks:
+  - name: midtrain-weight-load
+    image: &image {beaker: 01KW8G8JC20H11Y60PPTE2VN4Q}
+    command: &command [/bin/bash, -lc]
+    arguments:
+      - bash /weka/oe-adapt-default/jacobm/olmoe3/olmo-ddp-migration/OLMo-core-moe-v2-core/src/scripts/train/jacobm_olmoe3_hybrid_midtraining_beaker.sh
+    envVars:
+      - {name: AWS_ACCESS_KEY_ID, secret: AWS_ACCESS_KEY_ID}
+      - {name: AWS_SECRET_ACCESS_KEY, secret: AWS_SECRET_ACCESS_KEY}
+      - {name: GANTRY_GOOGLE_CREDENTIALS, secret: jacobm_GOOGLE_CREDENTIALS}
+      - {name: BEAKER_TOKEN, secret: jacobm_BEAKER_TOKEN}
+      - {name: OLMOE3_HYBRID_RUN_NAME, value: port-smoke-f5376c184-midtrain-load-r3}
+      - {name: OLMOE3_HYBRID_MODEL_SIZE, value: 275m}
+      - {name: OLMOE3_HYBRID_MODEL_VARIANT, value: integration_wide_gdn_ev1}
+      - {name: OLMOE3_HYBRID_SEQUENCE_LENGTH, value: "8192"}
+      - {name: OLMOE3_HYBRID_GLOBAL_BATCH_SIZE, value: "262144"}
+      - {name: OLMOE3_HYBRID_WORLD_SIZE, value: "1"}
+      - {name: OLMOE3_HYBRID_NUM_NODES, value: "1"}
+      - {name: OLMOE3_HYBRID_EP_SIZE, value: "1"}
+      - {name: OLMOE3_HYBRID_EP_PATH, value: sync_1d}
+      - {name: OLMOE3_HYBRID_RANK_MICROBATCH_SEQUENCES, value: "16"}
+      - {name: OLMOE3_HYBRID_LR, value: "0.00016"}
+      - {name: OLMOE3_HYBRID_HARD_STOP_STEPS, value: "5"}
+      - {name: OLMOE3_HYBRID_USE_COMPILE, value: "1"}
+      - {name: OLMOE3_HYBRID_WANDB, value: "0"}
+      - {name: OLMOE3_HYBRID_CHECKPOINTS, value: "0"}
+      - {name: OLMOE3_HYBRID_EVALS, value: "0"}
+      - {name: OLMOE3_MT_LOAD_PATH, value: /weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/olmo-ddp/pretraining/pt-275m-intwide-hybrid-gdn-ev1-cx8-lr1p6e-3-r1/step42954}
+      - {name: OLMOE3_MT_MAX_TOKENS, value: "1310720"}
+      - {name: OLMOE3_MT_WARMUP_STEPS, value: "2000"}
+    datasets: &datasets
+      - {mountPath: /weka/oe-adapt-default, source: {weka: oe-adapt-default}}
+      - {mountPath: /weka/oe-training-default, source: {weka: oe-training-default}}
+    result: {path: /results}
+    resources: {gpuCount: 1, sharedMemory: 64 GiB}
+    context: &context {priority: urgent, minRuntime: 0m, autoResume: true}
+    constraints: &constraints {cluster: [ai2/holmes]}
+    hostNetworking: true
+    propagateFailure: false
+    propagatePreemption: false
+    timeout: 2h
+
+  - name: long-context-weight-load
+    image: *image
+    command: *command
+    arguments:
+      - bash /weka/oe-adapt-default/jacobm/olmoe3/olmo-ddp-migration/OLMo-core-moe-v2-core/src/scripts/train/jacobm_olmoe3_long_context_beaker.sh
+    envVars:
+      - {name: AWS_ACCESS_KEY_ID, secret: AWS_ACCESS_KEY_ID}
+      - {name: AWS_SECRET_ACCESS_KEY, secret: AWS_SECRET_ACCESS_KEY}
+      - {name: BEAKER_TOKEN, secret: jacobm_BEAKER_TOKEN}
+      - {name: OLMOE3_LC_RUN_NAME, value: port-smoke-f5376c184-long-context-load-r3}
+      - {name: OLMOE3_LC_LOAD_PATH, value: /weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/olmo-ddp/midtraining/mt-275m-intwide-hybrid-gdn-ev1-cx8-lr1p6e-4-r1/step95368}
+      - {name: OLMOE3_LC_MODEL_SIZE, value: 275m}
+      - {name: OLMOE3_LC_FAMILY, value: hybrid_gdn_ev1}
+      - {name: OLMOE3_LC_SEQUENCE_LENGTH, value: "65536"}
+      - {name: OLMOE3_LC_GLOBAL_BATCH_SIZE, value: "2097152"}
+      - {name: OLMOE3_LC_WORLD_SIZE, value: "8"}
+      - {name: OLMOE3_LC_EP_SIZE, value: "1"}
+      - {name: OLMOE3_LC_EP_PATH, value: sync_1d}
+      - {name: OLMOE3_LC_RANK_MICROBATCH_SEQUENCES, value: "4"}
+      - {name: OLMOE3_LC_LR, value: "0.00008"}
+      - {name: OLMOE3_LC_MAX_TOKENS, value: "4194304"}
+      - {name: OLMOE3_LC_DATA_GLOB, value: /weka/oe-training-default/ai2-llm/eval-data/perplexity/v3_small_dolma2-tokenizer/*/val/*.npy}
+      - {name: OLMOE3_LC_WARMUP_STEPS, value: "2000"}
+      - {name: OLMOE3_LC_HARD_STOP_STEPS, value: "2"}
+      - {name: OLMOE3_LC_USE_COMPILE, value: "1"}
+      - {name: OLMOE3_LC_WANDB, value: "0"}
+      - {name: OLMOE3_LC_CHECKPOINTS, value: "0"}
+      - {name: OLMOE3_LC_EVALS, value: "0"}
+    datasets: *datasets
+    result: {path: /results}
+    resources: {gpuCount: 8, sharedMemory: 64 GiB}
+    context: *context
+    constraints: *constraints
+    hostNetworking: true
+    propagateFailure: false
+    propagatePreemption: false
+    timeout: 4h
