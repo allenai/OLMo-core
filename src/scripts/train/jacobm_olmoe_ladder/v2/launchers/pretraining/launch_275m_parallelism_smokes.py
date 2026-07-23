@@ -22,6 +22,7 @@ DEFAULT_OUTPUT = SCRIPT_DIR / "generated" / "275m_rope_gated_parallelism_smokes.
 DEFAULT_RECORD = SCRIPT_DIR / "generated" / "275m_rope_gated_parallelism_submissions.json"
 ALLOWED_VARIANTS = {
     "geometry_275m_gdn_ev2_rope_gated",
+    "geometry_275m_gdn2_ev2_rope_gated",
     "geometry_275m_swa_rope_gated",
 }
 EXPECTED_SEQUENCE_LENGTH = 8_192

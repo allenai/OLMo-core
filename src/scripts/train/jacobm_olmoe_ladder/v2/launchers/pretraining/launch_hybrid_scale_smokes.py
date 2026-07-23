@@ -110,6 +110,13 @@ def build_task(
         [
             env_var("OLMOE3_HYBRID_RUN_NAME", row["run_name"]),
             env_var("OLMOE3_HYBRID_MODEL_SIZE", row["model_size"]),
+            env_var(
+                "OLMOE3_HYBRID_MODEL_VARIANT",
+                row.get(
+                    "model_variant",
+                    training.get("model_variant", "integration_wide_gdn_ev1"),
+                ),
+            ),
             env_var("OLMOE3_HYBRID_LR", row["learning_rate"]),
             env_var("OLMOE3_HYBRID_CHINCHILLA_MULTIPLE", row["cx"]),
             env_var("OLMOE3_HYBRID_GLOBAL_BATCH_SIZE", row["global_batch_size"]),

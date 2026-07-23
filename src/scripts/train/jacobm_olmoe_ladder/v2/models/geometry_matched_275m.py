@@ -28,6 +28,7 @@ from olmo_core.nn.attention import (
     AttentionConfig,
     GateConfig,
     GateGranularity,
+    GatedDeltaNet2Config,
     SlidingWindowAttentionConfig,
 )
 from olmo_core.nn.attention.recurrent import GatedDeltaNetConfig
@@ -120,6 +121,7 @@ EXPECTED_PROFILE_COUNTS = {
     "dense_attention": (290_638_720, 226_413_440, 3_067_603_840),
 }
 EXPECTED_SWA_COUNTS = (265_665_280, 201_440_000, 3_111_197_440)
+EXPECTED_GDN2_COUNTS = (306_191_168, 241_965_888, 3_151_723_328)
 
 
 def _resize_moe_block(block: OLMoDDPTransformerBlockConfig, expert_hidden_size: int) -> None:
@@ -271,6 +273,67 @@ def build_geometry_matched_model_config(
             f"{EXPECTED_PROFILE_COUNTS[profile_name]}, found {actual_counts}"
         )
 
+    return candidate
+
+
+def build_geometry_matched_gdn2_model_config() -> OLMoDDPModelConfig:
+    """Swap GDN1 for GDN2 in the 275M RoPE-gated geometry candidate.
+
+    All geometry, MoE, full-attention, initialization, and optimization-facing
+    settings remain unchanged. ``allow_neg_eigval`` is retained from GDN1 so
+    the mixer generation is the only architectural intervention.
+    """
+
+    candidate = build_geometry_matched_model_config("geometry_rope_gated")
+    resolved = candidate.resolved_block_configs
+    old_gdn = cast(GatedDeltaNetConfig, resolved[1].sequence_mixer)
+    gdn2 = GatedDeltaNet2Config(
+        n_heads=old_gdn.n_heads,
+        n_v_heads=old_gdn.n_v_heads,
+        head_dim=old_gdn.head_dim,
+        expand_v=old_gdn.expand_v,
+        allow_neg_eigval=old_gdn.allow_neg_eigval,
+        conv_size=old_gdn.conv_size,
+        conv_bias=old_gdn.conv_bias,
+        norm_eps=old_gdn.norm_eps,
+        dtype=old_gdn.dtype,
+    )
+
+    default_block = deepcopy(resolved[1])
+    default_block.sequence_mixer = deepcopy(gdn2)
+    dense_first = deepcopy(resolved[0])
+    dense_first.sequence_mixer = deepcopy(gdn2)
+    candidate.block = default_block
+    candidate.block_overrides = {
+        0: dense_first,
+        **{layer_idx: deepcopy(resolved[layer_idx]) for layer_idx in FULL_ATTENTION_LAYERS},
+    }
+    candidate.validate()
+
+    actual_gdn2 = tuple(
+        layer_idx
+        for layer_idx, block in enumerate(candidate.resolved_block_configs)
+        if isinstance(block.sequence_mixer, GatedDeltaNet2Config)
+    )
+    actual_full = tuple(
+        layer_idx
+        for layer_idx, block in enumerate(candidate.resolved_block_configs)
+        if isinstance(block.sequence_mixer, AttentionConfig)
+    )
+    if actual_gdn2 != GDN_LAYERS or actual_full != FULL_ATTENTION_LAYERS:
+        raise ValueError(f"unexpected mixer pattern: GDN2={actual_gdn2}, full={actual_full}")
+    if candidate.resolved_block_configs[0].routed_experts is not None:
+        raise ValueError("GDN2 candidate must retain the dense-first layer-0 FFN")
+    actual_counts = (
+        candidate.num_active_params,
+        candidate.num_active_non_embedding_params,
+        candidate.num_params,
+    )
+    if actual_counts != EXPECTED_GDN2_COUNTS:
+        raise ValueError(
+            f"unexpected GDN2 parameter counts: expected {EXPECTED_GDN2_COUNTS}, "
+            f"found {actual_counts}"
+        )
     return candidate
 
 

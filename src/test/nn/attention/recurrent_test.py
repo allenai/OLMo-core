@@ -15,6 +15,7 @@ from olmo_core.distributed.utils import get_full_tensor, get_rank, get_world_siz
 from olmo_core.nn.attention import (
     AttentionConfig,
     GatedDeltaNetConfig,
+    GatedDeltaNet2Config,
     NemotronMamba2Config,
 )
 from olmo_core.nn.attention.recurrent import GatedDeltaNet
@@ -93,6 +94,46 @@ def test_gated_delta_net_num_flops_per_token():
 
     assert gdn_flops == linear_flops + conv_flops + recurrent_flops
     assert 0 < gdn_flops < attn_flops
+
+
+@requires_fla
+@pytest.mark.parametrize(
+    "recurrent_config",
+    [
+        pytest.param(GatedDeltaNet2Config(n_heads=8), id="default"),
+        pytest.param(GatedDeltaNet2Config(n_heads=8, n_v_heads=16), id="GVA"),
+        pytest.param(GatedDeltaNet2Config(n_heads=8, head_dim=32), id="head_dim=32"),
+        pytest.param(GatedDeltaNet2Config(n_heads=8, expand_v=2.0), id="expand_v=2.0"),
+        pytest.param(
+            GatedDeltaNet2Config(n_heads=8, conv_size=8, conv_bias=True), id="conv_bias"
+        ),
+        pytest.param(
+            GatedDeltaNet2Config(n_heads=8, allow_neg_eigval=True),
+            id="allow_neg_eigval=True",
+        ),
+    ],
+)
+def test_gated_delta_net_2_config_num_params(recurrent_config: GatedDeltaNet2Config):
+    d_model = 512
+    module = recurrent_config.build(d_model, layer_idx=0, n_layers=12, init_device="meta")
+    assert recurrent_config.num_params(d_model) == sum(p.numel() for p in module.parameters())
+
+
+@requires_fla
+@requires_gpu
+def test_gated_delta_net_2_fwd_bwd():
+    device = "cuda"
+    dtype = torch.bfloat16
+    d_model, seq_len, batch_size = 256, 128, 2
+    config = GatedDeltaNet2Config(n_heads=8, head_dim=32, expand_v=2.0)
+    module = config.build(d_model, layer_idx=0, n_layers=12, init_device=device)
+    x = torch.randn(batch_size, seq_len, d_model, device=device, dtype=dtype, requires_grad=True)
+
+    with torch.autocast(device_type=device, dtype=dtype):
+        y = module(x)
+        assert y.shape == x.shape
+        y.sum().backward()
+    assert x.grad is not None
 
 
 def _run_context_parallel_gdn_ulysses(

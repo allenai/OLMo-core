@@ -84,6 +84,9 @@ torch.set_float32_matmul_precision("high")
 # at 6%, but allow these explicitly audited profiles up to 6.2% rather than
 # rejecting them before training starts.
 GATED_MAX_ACTIVE_PARAMETER_DELTA_FRACTION = 0.062
+# The audited 275M GDN2 mixer adds 14.10M active parameters without changing
+# the MoE, attention, or model geometry. Admit that exact additive variant.
+GDN2_MAX_ACTIVE_PARAMETER_DELTA_FRACTION = 0.093
 
 
 def env_bool(name: str, default: bool) -> bool:
@@ -182,6 +185,16 @@ def model_config():
                 "The geometry_275m_gdn_ev2_rope_gated variant only supports MODEL_SIZE=275m"
             )
         model = build_geometry_matched_model_config("geometry_rope_gated")
+    elif MODEL_VARIANT == "geometry_275m_gdn2_ev2_rope_gated":
+        from scripts.train.jacobm_olmoe_ladder.v2.models.geometry_matched_275m import (
+            build_geometry_matched_gdn2_model_config,
+        )
+
+        if MODEL_SIZE != "275m":
+            raise ValueError(
+                "The geometry_275m_gdn2_ev2_rope_gated variant only supports MODEL_SIZE=275m"
+            )
+        model = build_geometry_matched_gdn2_model_config()
     elif MODEL_VARIANT == "geometry_275m_swa_rope_gated":
         from scripts.train.jacobm_olmoe_ladder.v2.models.geometry_matched_275m import (
             build_geometry_matched_swa_model_config,
@@ -421,6 +434,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         "geometry_275m_gdn_ev2_nope",
         "geometry_275m_gdn_ev2_nope_gated",
         "geometry_275m_gdn_ev2_rope_gated",
+        "geometry_275m_gdn2_ev2_rope_gated",
         "geometry_275m_swa_rope_gated",
         "geometry_matched_gdn_ev2",
         "geometry_matched_gdn_ev2_nope",
@@ -429,6 +443,8 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
     }
     if MODEL_VARIANT == "geometry_275m_gdn_ev2_rope_gated":
         variant_group = "olmoe3-275m-geometry-gdn-ev2-rope-gated"
+    elif MODEL_VARIANT == "geometry_275m_gdn2_ev2_rope_gated":
+        variant_group = "olmoe3-275m-geometry-gdn2-ev2-rope-gated"
     elif MODEL_VARIANT == "geometry_275m_swa_rope_gated":
         variant_group = "olmoe3-275m-geometry-swa-rope-gated-throughput"
     elif MODEL_VARIANT == "geometry_275m_gdn_ev2_nope_gated":
@@ -463,9 +479,12 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         variant_tags = ["geometry-matched", "expand-v-2", "rope"]
         if MODEL_VARIANT in {
             "geometry_275m_gdn_ev2_rope_gated",
+            "geometry_275m_gdn2_ev2_rope_gated",
             "geometry_matched_gdn_ev2_rope_gated",
         }:
             variant_tags.append("attention-gate")
+        if MODEL_VARIANT == "geometry_275m_gdn2_ev2_rope_gated":
+            variant_tags.append("gdn2")
         if MODEL_VARIANT == "geometry_275m_swa_rope_gated":
             variant_tags = ["geometry-matched", "swa", "rope", "attention-gate"]
     else:
@@ -594,14 +613,15 @@ def finalize_config(config: ExperimentConfig) -> None:
     delta_fraction = (
         config.model.num_active_params - base.num_active_params
     ) / base.num_active_params
-    max_active_parameter_delta_fraction = (
-        GATED_MAX_ACTIVE_PARAMETER_DELTA_FRACTION
-        if MODEL_VARIANT in {
-            "geometry_matched_gdn_ev2_nope_gated",
-            "geometry_matched_gdn_ev2_rope_gated",
-        }
-        else MAX_ACTIVE_PARAMETER_DELTA_FRACTION
-    )
+    if MODEL_VARIANT == "geometry_275m_gdn2_ev2_rope_gated":
+        max_active_parameter_delta_fraction = GDN2_MAX_ACTIVE_PARAMETER_DELTA_FRACTION
+    elif MODEL_VARIANT in {
+        "geometry_matched_gdn_ev2_nope_gated",
+        "geometry_matched_gdn_ev2_rope_gated",
+    }:
+        max_active_parameter_delta_fraction = GATED_MAX_ACTIVE_PARAMETER_DELTA_FRACTION
+    else:
+        max_active_parameter_delta_fraction = MAX_ACTIVE_PARAMETER_DELTA_FRACTION
     if abs(delta_fraction) > max_active_parameter_delta_fraction:
         raise ValueError(
             "Hybrid active-parameter delta is too large: "
