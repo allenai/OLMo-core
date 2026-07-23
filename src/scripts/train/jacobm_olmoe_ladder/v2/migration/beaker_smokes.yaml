@@ -7,6 +7,8 @@ tasks:
     arguments:
       - bash /weka/oe-adapt-default/jacobm/olmoe3/olmo-ddp-migration/OLMo-core-moe-v2-core/src/scripts/train/jacobm_olmoe3_hybrid_scale_beaker.sh
     envVars:
+      - {name: AWS_ACCESS_KEY_ID, secret: AWS_ACCESS_KEY_ID}
+      - {name: AWS_SECRET_ACCESS_KEY, secret: AWS_SECRET_ACCESS_KEY}
       - {name: BEAKER_TOKEN, secret: jacobm_BEAKER_TOKEN}
       - {name: OLMOE3_HYBRID_RUN_NAME, value: port-smoke-f5376c184-275m-rope-gated}
       - {name: OLMOE3_HYBRID_MODEL_SIZE, value: 275m}
@@ -20,6 +22,7 @@ tasks:
       - {name: OLMOE3_HYBRID_RANK_MICROBATCH_SEQUENCES, value: "16"}
       - {name: OLMOE3_HYBRID_LR, value: "0.0016"}
       - {name: OLMOE3_HYBRID_CHINCHILLA_MULTIPLE, value: "1"}
+      - {name: OLMOE3_HYBRID_MAX_TOKENS, value: "1310720"}
       - {name: OLMOE3_HYBRID_HARD_STOP_STEPS, value: "5"}
       - {name: OLMOE3_HYBRID_USE_COMPILE, value: "1"}
       - {name: OLMOE3_HYBRID_WANDB, value: "0"}
@@ -43,6 +46,8 @@ tasks:
     arguments:
       - bash /weka/oe-adapt-default/jacobm/olmoe3/olmo-ddp-migration/OLMo-core-moe-v2-core/src/scripts/train/jacobm_olmoe3_hybrid_scale_beaker.sh
     envVars:
+      - {name: AWS_ACCESS_KEY_ID, secret: AWS_ACCESS_KEY_ID}
+      - {name: AWS_SECRET_ACCESS_KEY, secret: AWS_SECRET_ACCESS_KEY}
       - {name: BEAKER_TOKEN, secret: jacobm_BEAKER_TOKEN}
       - {name: OLMOE3_HYBRID_RUN_NAME, value: port-smoke-f5376c184-1p2b-ep8}
       - {name: OLMOE3_HYBRID_MODEL_SIZE, value: 1p2b}
@@ -56,6 +61,7 @@ tasks:
       - {name: OLMOE3_HYBRID_RANK_MICROBATCH_SEQUENCES, value: "4"}
       - {name: OLMOE3_HYBRID_LR, value: "0.0004"}
       - {name: OLMOE3_HYBRID_CHINCHILLA_MULTIPLE, value: "1"}
+      - {name: OLMOE3_HYBRID_MAX_TOKENS, value: "1310720"}
       - {name: OLMOE3_HYBRID_HARD_STOP_STEPS, value: "5"}
       - {name: OLMOE3_HYBRID_USE_COMPILE, value: "1"}
       - {name: OLMOE3_HYBRID_WANDB, value: "0"}
@@ -77,6 +83,8 @@ tasks:
     arguments:
       - bash /weka/oe-adapt-default/jacobm/olmoe3/olmo-ddp-migration/OLMo-core-moe-v2-core/src/scripts/train/jacobm_olmoe3_hybrid_midtraining_beaker.sh
     envVars:
+      - {name: AWS_ACCESS_KEY_ID, secret: AWS_ACCESS_KEY_ID}
+      - {name: AWS_SECRET_ACCESS_KEY, secret: AWS_SECRET_ACCESS_KEY}
       - {name: BEAKER_TOKEN, secret: jacobm_BEAKER_TOKEN}
       - {name: OLMOE3_HYBRID_RUN_NAME, value: port-smoke-f5376c184-midtrain-load}
       - {name: OLMOE3_HYBRID_MODEL_SIZE, value: 275m}
@@ -95,7 +103,7 @@ tasks:
       - {name: OLMOE3_HYBRID_CHECKPOINTS, value: "0"}
       - {name: OLMOE3_HYBRID_EVALS, value: "0"}
       - {name: OLMOE3_MT_LOAD_PATH, value: /weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/olmo-ddp/pretraining/pt-275m-intwide-hybrid-gdn-ev1-cx8-lr1p6e-3-r1/step42954}
-      - {name: OLMOE3_MT_MAX_TOKENS, value: "100000000000"}
+      - {name: OLMOE3_MT_MAX_TOKENS, value: "1310720"}
       - {name: OLMOE3_MT_WARMUP_STEPS, value: "2000"}
     datasets: *datasets
     result: {path: /results}
@@ -113,6 +121,8 @@ tasks:
     arguments:
       - bash /weka/oe-adapt-default/jacobm/olmoe3/olmo-ddp-migration/OLMo-core-moe-v2-core/src/scripts/train/jacobm_olmoe3_long_context_beaker.sh
     envVars:
+      - {name: AWS_ACCESS_KEY_ID, secret: AWS_ACCESS_KEY_ID}
+      - {name: AWS_SECRET_ACCESS_KEY, secret: AWS_SECRET_ACCESS_KEY}
       - {name: BEAKER_TOKEN, secret: jacobm_BEAKER_TOKEN}
       - {name: OLMOE3_LC_RUN_NAME, value: port-smoke-f5376c184-long-context-load}
       - {name: OLMOE3_LC_LOAD_PATH, value: /weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/olmo-ddp/midtraining/mt-275m-intwide-hybrid-gdn-ev1-cx8-lr1p6e-4-r1/step95368}
@@ -125,7 +135,7 @@ tasks:
       - {name: OLMOE3_LC_EP_PATH, value: sync_1d}
       - {name: OLMOE3_LC_RANK_MICROBATCH_SEQUENCES, value: "4"}
       - {name: OLMOE3_LC_LR, value: "0.00008"}
-      - {name: OLMOE3_LC_MAX_TOKENS, value: "100000000000"}
+      - {name: OLMOE3_LC_MAX_TOKENS, value: "4194304"}
       - {name: OLMOE3_LC_WARMUP_STEPS, value: "2000"}
       - {name: OLMOE3_LC_HARD_STOP_STEPS, value: "2"}
       - {name: OLMOE3_LC_USE_COMPILE, value: "1"}
@@ -148,6 +158,8 @@ tasks:
     arguments:
       - bash /weka/oe-adapt-default/jacobm/olmoe3/olmo-ddp-migration/OLMo-core-moe-v2-core/src/scripts/train/jacobm_olmoe3_hybrid_scale_beaker.sh
     envVars:
+      - {name: AWS_ACCESS_KEY_ID, secret: AWS_ACCESS_KEY_ID}
+      - {name: AWS_SECRET_ACCESS_KEY, secret: AWS_SECRET_ACCESS_KEY}
       - {name: BEAKER_TOKEN, secret: jacobm_BEAKER_TOKEN}
       - {name: OLMOE3_HYBRID_RUN_NAME, value: port-smoke-f5376c184-eval-load}
       - {name: OLMOE3_HYBRID_MODEL_SIZE, value: 275m}
@@ -170,6 +182,7 @@ tasks:
       - {name: OLMOE3_HYBRID_RANK_MICROBATCH_SEQUENCES, value: "2"}
       - {name: OLMOE3_HYBRID_LR, value: "0.0016"}
       - {name: OLMOE3_HYBRID_CHINCHILLA_MULTIPLE, value: "1"}
+      - {name: OLMOE3_HYBRID_MAX_TOKENS, value: "262144"}
     datasets: *datasets
     result: {path: /results}
     resources: {gpuCount: 1, sharedMemory: 64 GiB}
