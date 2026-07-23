@@ -1,0 +1,27 @@
+[
+  {
+    "experiment_name": "jacobm-moe-v2-core-275m-rope-gated-bucket-sweep-r1",
+    "experiment_id": "01KY8K2XA8SZJK19NM4AQHAWPF",
+    "tasks": [
+      "b2m-gpu2-bucket25",
+      "b2m-gpu2-bucket100",
+      "b2m-gpu2-bucket500",
+      "b2m-gpu4-bucket25",
+      "b2m-gpu4-bucket100",
+      "b2m-gpu4-bucket500",
+      "b2m-gpu8-bucket25",
+      "b2m-gpu8-bucket100",
+      "b2m-gpu8-bucket500",
+      "b4m-gpu2-bucket25",
+      "b4m-gpu2-bucket100",
+      "b4m-gpu2-bucket500",
+      "b4m-gpu4-bucket25",
+      "b4m-gpu4-bucket100",
+      "b4m-gpu4-bucket500",
+      "b4m-gpu8-bucket25",
+      "b4m-gpu8-bucket100",
+      "b4m-gpu8-bucket500"
+    ],
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY8K2XA8SZJK19NM4AQHAWPF"
+  }
+]

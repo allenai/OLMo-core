@@ -47,7 +47,7 @@ Checkpoint tensor names and values are not rewritten.
   `01KY89W2PBDS597FH1KHWM52A3` (64K long context). Every result-bearing task
   exited 0. The earlier aggregate smoke exposed harness-only source-mixture,
   credential, and glob issues; it did not expose a model/checkpoint mismatch.
-- [ ] Run the 275M throughput matrix only after the functional gates pass.
+- [x] Run the 275M GDN and matched-SWA throughput matrices after the functional gates pass.
 - [ ] Make this branch canonical and mark `jacobm/olmo-ddp` read-only.
 
 The first throughput stage is prepared in
@@ -147,6 +147,48 @@ and 2 Mi MB32). Once the production MB16 cell completed its full compiled dry
 run, the 16-task / 80-GPU SWA parallelism matrix was released as work
 `01KY8HPSW7XAEP6D9VZN1STGVZ` without waiting for MB32 or the 50-step capacity
 cells to finish. No SWA MB17--MB20 jobs were launched.
+
+Both production matrices are complete: GDN work
+`01KY8GWR68YYNQ15Q46F4D998V` and SWA work
+`01KY8HPSW7XAEP6D9VZN1STGVZ` each passed 16/16 cells with no skipped optimizer
+updates. The separate SWA capacity work passed both MB16 controls; MB32 was a
+genuine compiled-dry-run OOM while attempting a 49 GiB allocation with 26.4
+GiB free. The complete machine-readable results, including Beaker and W&B IDs,
+memory, aggregate TPS, and stable step time, are in
+[`v2/results/throughput/275m_gdn_swa_large_batch_parallelism.csv`](v2/results/throughput/275m_gdn_swa_large_batch_parallelism.csv).
+
+The compact comparison below reports final-ten median TFLOPs/GPU and TPS/GPU
+in thousands. All rows use MB16; the unlisted code-default EP cells were
+uniformly slower than EP1.
+
+| Mixer | Batch | 1 GPU EP1 | 2 GPU EP1 | 4 GPU EP1 | 4 GPU RS | 8 GPU EP1 | 8 GPU RS |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| GDN | 2 Mi | 453.6 / 298.8 | 440.8 / 290.4 | 432.3 / 284.7 | 432.4 / 284.8 | 418.1 / 275.4 | 415.4 / 273.6 |
+| GDN | 4 Mi | 445.3 / 293.3 | 442.1 / 291.2 | 435.7 / 287.0 | 432.7 / 285.0 | 429.1 / 282.7 | 427.5 / 281.6 |
+| SWA | 2 Mi | 603.7 / 406.5 | 583.0 / 392.5 | 556.4 / 374.6 | 574.6 / 386.8 | 548.2 / 369.1 | 540.4 / 363.8 |
+| SWA | 4 Mi | 570.5 / 384.1 | 588.3 / 396.0 | 566.4 / 381.3 | 581.4 / 391.4 | 563.6 / 379.5 | 541.3 / 364.4 |
+
+The systems result is clear. EP1 is the correct 275M setting: full EP loses
+roughly 15--18% of GDN TPS and 17--25% of SWA TPS. Reduce-scatter is neutral to
+slightly negative for GDN and at eight GPUs, but improves SWA by 3.3% at four
+GPUs for the 2 Mi batch and 2.6% for 4 Mi. SWA reaches the 600 TFLOPs/GPU target
+on the one-GPU 2 Mi control and reaches 588.3 on the two-GPU 4 Mi cell. GDN's
+best result is 453.6 TFLOPs/GPU; parallelism alone therefore does not explain
+or recover its gap. At eight GPUs and 4 Mi, SWA processes 3.04M tokens/s versus
+2.26M for GDN, a 34% wall-clock advantage.
+
+### DDP bucket-cap follow-up
+
+The next parallelism-only wave holds MB16, EP1/all-reduce, model, optimizer,
+compile mode, and both global batches fixed, and varies only the gradient
+bucket cap. The completed matrix is the upstream-default 250 MiB control; the
+follow-up probes 25 MiB (conventional small-bucket overlap), 100 MiB (the
+legacy OLMo transformer setting), and 500 MiB (lower collective-launch
+overhead) at 2/4/8 GPUs for both GDN and SWA. This is 18 tasks / 84 GPUs per
+mixer, all urgent and unallocated on Holmes with checkpoints and evals off.
+The sweeps were submitted as GDN work `01KY8K2XA8SZJK19NM4AQHAWPF` and SWA
+work `01KY8K2V3MF4MY2ZHZ18Q6JXQB`; both contain 18 validated tasks and began
+scheduling immediately.
 
 ## Functional gate results
 

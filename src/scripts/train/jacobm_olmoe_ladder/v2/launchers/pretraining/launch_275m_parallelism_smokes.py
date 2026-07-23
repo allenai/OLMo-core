@@ -35,6 +35,7 @@ ALLOWED_GLOBAL_BATCHES = {
     4_194_304,
 }
 ALLOWED_EP_PATHS = {"sync_1d", "rowwise_nvshmem"}
+ALLOWED_BUCKET_CAPS_MB = {25, 100, 250, 500}
 
 
 class NoAliasDumper(yaml.SafeDumper):
@@ -99,6 +100,12 @@ def validate(manifest: dict[str, Any]) -> list[dict[str, Any]]:
         if ep_size > 1 and ep_path is None and not use_code_defaults:
             raise ValueError(
                 f"{task_name}: EP>1 requires a path or expert_parallel_use_code_defaults=true"
+            )
+        bucket_cap = row.get("data_parallel_bucket_cap_mb")
+        if bucket_cap is not None and int(bucket_cap) not in ALLOWED_BUCKET_CAPS_MB:
+            raise ValueError(
+                f"{task_name}: unsupported DDP bucket cap {bucket_cap}; expected one of "
+                f"{sorted(ALLOWED_BUCKET_CAPS_MB)} MiB"
             )
         global_batch_size = int(row.get("global_batch_size", training["global_batch_size"]))
         if global_batch_size not in ALLOWED_GLOBAL_BATCHES:
