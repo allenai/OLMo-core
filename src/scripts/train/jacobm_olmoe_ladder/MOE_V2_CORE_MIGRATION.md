@@ -109,11 +109,24 @@ The one-GPU capacity gate established MB16 as the largest tested production
 microbatch: the 2 Mi- and 4 Mi-token controls completed 50 steps at about 453.6
 and 445.1 TFLOPs/GPU with 221.5 GiB active memory, while MB32 OOMed in the
 compiled dry run at 267.6 / 267.7 GiB. A finer MB17--MB20 boundary sweep was
-submitted as unallocated urgent work `01KY8DZZFWDJAFX754AP373DMP`. Each cell
-uses a per-run optimizer batch equal to exactly 16 microbatches, and disables
-checkpoints and evals. These deliberately non-production batches measure the
-capacity boundary only; the follow-on parallelism matrix remains fixed at
-MB16 and has not yet been submitted.
+completed as unallocated urgent work `01KY8DZZFWDJAFX754AP373DMP`. Each cell
+used a per-run optimizer batch equal to exactly 16 microbatches, and disabled
+checkpoints and evals. All four cells completed 50 steps without a skipped
+update:
+
+| MB | Optimizer tokens | Final-10 median TFLOPs/GPU | Final-10 median TPS/GPU | Final-10 median MFU | Stable step time | Final actual-average TPS/GPU | Active / reserved GiB | W&B |
+|---:|---:|---:|---:|---:|---:|---:|---:|---|
+| 17 | 2,228,224 | 456.0 | 300,359 | 20.27% | 7.42s | 300,622 | 229.1 / 232.9 | [8673vgnj](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/8673vgnj) |
+| 18 | 2,359,296 | 450.9 | 297,009 | 20.04% | 7.94s | 296,608 | 239.4 / 243.9 | [ob1u80gq](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/ob1u80gq) |
+| 19 | 2,490,368 | 446.2 | 293,901 | 19.83% | 8.47s | 294,154 | 249.8 / 253.9 | [5ckd8rrz](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/5ckd8rrz) |
+| 20 | 2,621,440 | 446.5 | 294,129 | 19.85% | 8.91s | 272,252 | 260.2 / 264.6 | [b22cuic5](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/b22cuic5) |
+
+MB20 is the measured fit boundary but has only about 3.1 GiB of reserved-memory
+headroom and experienced several wall-clock stalls before recovering to about
+446.5 TFLOPs/GPU over the final ten samples. MB17 is the best fine-sweep
+efficiency point, but these deliberately non-production batches measure the
+capacity curve only. Use MB16 for the follow-on paired 2 Mi / 4 Mi parallelism
+matrix; that matrix has not yet been submitted.
 
 ## Functional gate results
 
