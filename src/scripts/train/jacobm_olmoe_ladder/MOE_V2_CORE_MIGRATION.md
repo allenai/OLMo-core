@@ -58,14 +58,19 @@ checkpoints and evals, and runs up to 50 steps. The MB16 controls use 2 Mi- and
 microbatch divisor and determines whether the previous B300 capacity ceiling
 changed on this branch. All three cells need only one GPU on one Holmes node.
 
-After that capacity gate, compare 1/2/4/8-GPU EP1, synchronized EP, and
-`rowwise_nvshmem` EP on a single eight-GPU node. For rowwise, explicitly test
-valid per-collective block counts at or below the B300 launch ceiling rather
-than inheriting the legacy 256-block setting. Separately compare DDP all-reduce
-with the upstream reduce-scatter option. Hold model, sequence length, global
-batch, optimizer, compile mode, and selected microbatch fixed within each
-comparison, and report steady-state TFLOPs/GPU, TPS/GPU, aggregate TPS, step
-time, peak memory, and skipped updates.
+After that capacity gate, compare 1/2/4/8-GPU EP1 and EP2/4/8 using an untouched
+upstream `ExpertParallelConfig()` on a single eight-GPU node. Do not select an
+EP path or tune rowwise block counts: this gate is specifically intended to
+exercise the codebase defaults. Separately compare DDP all-reduce with the
+upstream reduce-scatter option. Hold model, sequence length, global batch,
+optimizer, compile mode, and selected microbatch fixed within each comparison,
+and report steady-state TFLOPs/GPU, TPS/GPU, aggregate TPS, step time, peak
+memory, and skipped updates.
+
+The capacity experiment was submitted at urgent priority in the MoE workspace
+as Beaker work `01KY8BWKJ790QVXFSE6ZEYVAK6`. The prepared follow-on manifest
+contains 16 tasks / 80 maximum concurrent GPUs across the 2 Mi- and 4 Mi-token
+batches; render it with the capacity-winning MB16 or MB32 before submission.
 
 ## Functional gate results
 

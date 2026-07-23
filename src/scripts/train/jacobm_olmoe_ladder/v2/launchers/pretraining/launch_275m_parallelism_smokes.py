@@ -72,13 +72,23 @@ def validate(manifest: dict[str, Any]) -> list[dict[str, Any]]:
 
         world_size = int(row["gpu_count"])
         ep_size = int(row["expert_parallel_size"])
-        ep_path = str(row["expert_parallel_path"])
+        use_code_defaults = bool(row.get("expert_parallel_use_code_defaults", False))
+        ep_path_value = row.get("expert_parallel_path")
+        ep_path = None if ep_path_value is None else str(ep_path_value)
         if world_size not in {1, 2, 4, 8}:
             raise ValueError(f"{task_name}: only 1-, 2-, 4-, and 8-GPU cells are permitted")
         if ep_size < 1 or world_size % ep_size:
             raise ValueError(f"{task_name}: EP={ep_size} must divide world={world_size}")
-        if ep_path not in ALLOWED_EP_PATHS:
+        if ep_path is not None and ep_path not in ALLOWED_EP_PATHS:
             raise ValueError(f"{task_name}: unsupported EP path {ep_path!r}")
+        if use_code_defaults and ep_path is not None:
+            raise ValueError(
+                f"{task_name}: code-default EP must not specify expert_parallel_path"
+            )
+        if ep_size > 1 and ep_path is None and not use_code_defaults:
+            raise ValueError(
+                f"{task_name}: EP>1 requires a path or expert_parallel_use_code_defaults=true"
+            )
         global_batch_size = int(row.get("global_batch_size", training["global_batch_size"]))
         if global_batch_size not in ALLOWED_GLOBAL_BATCHES:
             raise ValueError(
@@ -102,6 +112,7 @@ def validate(manifest: dict[str, Any]) -> list[dict[str, Any]]:
                 f"{task_name}: rank batch {rank_sequences} does not divide MB{rank_microbatch}"
             )
         row["world_size"] = world_size
+        row["resolved_ep_path"] = "code-default" if use_code_defaults else (ep_path or "n/a")
         row["global_batch_size"] = global_batch_size
         row["rank_sequences"] = rank_sequences
         row["effective_rank_microbatch"] = rank_microbatch
@@ -139,7 +150,6 @@ def build_task(manifest: dict[str, Any], row: dict[str, Any], source_repo: str) 
             env_value("OLMOE3_HYBRID_WORLD_SIZE", row["world_size"]),
             env_value("OLMOE3_HYBRID_NUM_NODES", 1),
             env_value("OLMOE3_HYBRID_EP_SIZE", row["expert_parallel_size"]),
-            env_value("OLMOE3_HYBRID_EP_PATH", row["expert_parallel_path"]),
             env_value(
                 "OLMOE3_HYBRID_RANK_MICROBATCH_SEQUENCES",
                 row["effective_rank_microbatch"],
@@ -161,6 +171,10 @@ def build_task(manifest: dict[str, Any], row: dict[str, Any], source_repo: str) 
         ]
     )
     optional_env = {
+        "OLMOE3_HYBRID_EP_PATH": row.get("expert_parallel_path"),
+        "OLMOE3_HYBRID_EP_USE_CODE_DEFAULTS": int(
+            bool(row.get("expert_parallel_use_code_defaults", False))
+        ),
         "OLMOE3_HYBRID_EP_ROWWISE_GET_NBLOCKS": row.get("rowwise_get_nblocks"),
         "OLMOE3_HYBRID_EP_ROWWISE_PUT_NBLOCKS": row.get("rowwise_put_nblocks"),
         "OLMOE3_HYBRID_EP_ROWWISE_WEIGHTED_PUT_NBLOCKS": row.get(
@@ -209,6 +223,8 @@ def main() -> None:
     parser.add_argument("--task", action="append", default=[])
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--record", type=Path, default=DEFAULT_RECORD)
+    parser.add_argument("--rank-microbatch-sequences", type=int)
+    parser.add_argument("--hard-stop-steps", type=int)
     parser.add_argument("--submit", action="store_true")
     parser.add_argument(
         "--experiment-name",
@@ -217,6 +233,10 @@ def main() -> None:
     args = parser.parse_args()
 
     manifest = load_manifest(args.manifest.resolve())
+    if args.rank_microbatch_sequences is not None:
+        manifest["training"]["rank_microbatch_sequences"] = args.rank_microbatch_sequences
+    if args.hard_stop_steps is not None:
+        manifest["training"]["hard_stop_steps"] = args.hard_stop_steps
     rows = validate(manifest)
     if args.task:
         wanted = set(args.task)
@@ -235,7 +255,7 @@ def main() -> None:
     for row in rows:
         print(
             f"{row['task_name']:<20} {row['global_batch_size']:>7} {row['gpu_count']:>3} "
-            f"{row['expert_parallel_size']:>2} {row['expert_parallel_path']:<17} "
+            f"{row['expert_parallel_size']:>2} {row['resolved_ep_path']:<17} "
             f"{row['rank_sequences']:>8} {row['effective_rank_microbatch']:>2} "
             f"{row['accumulation_steps']:>5} {row['run_name']}"
         )

@@ -45,7 +45,7 @@ from olmo_core.internal.experiment import (
     build_config,
     main,
 )
-from olmo_core.nn.moe.v2.ep_config import ExpertParallelPath
+from olmo_core.nn.moe.v2.ep_config import ExpertParallelConfig, ExpertParallelPath
 from olmo_core.optim import OLMoDDPOptimizerConfig, OptimGroupOverride, SchedulerUnits
 from olmo_core.optim.scheduler import (
     ComposableScheduler,
@@ -103,6 +103,7 @@ EP_SIZE = int(os.environ.get("OLMOE3_HYBRID_EP_SIZE", "1"))
 EP_PATH = ExpertParallelPath(
     os.environ.get("OLMOE3_HYBRID_EP_PATH", ExpertParallelPath.rowwise_nvshmem.value)
 )
+EP_USE_CODE_DEFAULTS = env_bool("OLMOE3_HYBRID_EP_USE_CODE_DEFAULTS", False)
 EP_ROWWISE_GET_NBLOCKS = os.environ.get("OLMOE3_HYBRID_EP_ROWWISE_GET_NBLOCKS")
 EP_ROWWISE_PUT_NBLOCKS = os.environ.get("OLMOE3_HYBRID_EP_ROWWISE_PUT_NBLOCKS")
 EP_ROWWISE_WEIGHTED_PUT_NBLOCKS = os.environ.get(
@@ -216,8 +217,23 @@ def model_config():
     else:
         raise ValueError(f"Unknown model variant {MODEL_VARIANT!r}")
     if EP_SIZE > 1:
+        if EP_USE_CODE_DEFAULTS and any(
+            value is not None
+            for value in (
+                EP_ROWWISE_GET_NBLOCKS,
+                EP_ROWWISE_PUT_NBLOCKS,
+                EP_ROWWISE_WEIGHTED_PUT_NBLOCKS,
+            )
+        ):
+            raise ValueError(
+                "OLMOE3_HYBRID_EP_USE_CODE_DEFAULTS cannot be combined with rowwise "
+                "block-count overrides"
+            )
         for block in (model.block, *(model.block_overrides or {}).values()):
             if block.ep is None:
+                continue
+            if EP_USE_CODE_DEFAULTS:
+                block.ep = ExpertParallelConfig()
                 continue
             block.ep.path = EP_PATH
             if EP_ROWWISE_GET_NBLOCKS is not None:
