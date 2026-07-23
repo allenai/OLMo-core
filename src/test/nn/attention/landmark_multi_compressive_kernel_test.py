@@ -181,20 +181,16 @@ def test_kernel_backward_matches_eager(block_size, num_landmarks, agg):
 @pytest.mark.parametrize("agg", ["mean", "max"])
 def test_kernel_docmask_forward_matches_eager(agg):
     device = "cuda"
-    from olmo_core.nn.attention.landmark import build_block_doc_id
-
     block_size, num_landmarks = 32, 4
     B, H, d = 2, 2, 64
     n_blocks = 6
     T = n_blocks * block_size
     q, k, v = _rand_qkv(B, H, T, d, torch.bfloat16, device)
     is_mem = _multi_is_mem(T, block_size, num_landmarks, device)
-    # cu_doc_lens per batch element, block-aligned document boundaries.
-    cu = [
-        torch.tensor([0, 2 * block_size, T], device=device),
-        torch.tensor([0, 3 * block_size, T], device=device),
-    ]
-    doc_id = torch.stack([build_block_doc_id(c, T, block_size) for c in cu], dim=0)
+    # Per-block document id (B, n_blocks): each row's blocks split into doc 0 then doc 1 at a
+    # (block-aligned) boundary.
+    blk = torch.arange(n_blocks, device=device)
+    doc_id = torch.stack([(blk >= 2).to(torch.int32), (blk >= 3).to(torch.int32)], dim=0)
     out = fused_multi_compressive_landmark_attention(
         q,
         k,
@@ -246,7 +242,7 @@ def test_kernel_num_landmarks_1_matches_single_landmark_kernel(agg):
         torch.testing.assert_close(a, b, rtol=1e-4, atol=1e-5)
 
 
-def _build_multi(*, mem_freq, num_landmarks, landmark_gate_pool, head_dim, device):
+def _build_multi(*, mem_freq, num_landmarks, landmark_gate_pool, head_dim, d_model, device):
     attn = AttentionConfig(
         name=AttentionType.multi_compressive_landmark,
         n_heads=2,
@@ -258,7 +254,7 @@ def _build_multi(*, mem_freq, num_landmarks, landmark_gate_pool, head_dim, devic
         landmark_gate_pool=landmark_gate_pool,
         qk_norm=LayerNormConfig(name="rms", eps=1e-6, bias=False),
         use_head_qk_norm=True,
-    ).build(head_dim, layer_idx=0, n_layers=1, init_device=device)
+    ).build(d_model, layer_idx=0, n_layers=1, init_device=device)
     return attn
 
 
@@ -274,13 +270,14 @@ def test_module_num_landmarks_1_matches_fast_compressive(landmark_gate_pool):
     device = "cuda"
     mem_freq = 31  # block_size = 32
     head_dim = 64
-    d_model = 128
+    d_model = 128  # n_heads (2) * head_dim (64)
 
     multi = _build_multi(
         mem_freq=mem_freq,
         num_landmarks=1,
         landmark_gate_pool=landmark_gate_pool,
         head_dim=head_dim,
+        d_model=d_model,
         device=device,
     )
     single = AttentionConfig(
@@ -292,7 +289,7 @@ def test_module_num_landmarks_1_matches_fast_compressive(landmark_gate_pool):
         mem_freq=mem_freq,
         qk_norm=LayerNormConfig(name="rms", eps=1e-6, bias=False),
         use_head_qk_norm=True,
-    ).build(head_dim, layer_idx=0, n_layers=1, init_device=device)
+    ).build(d_model, layer_idx=0, n_layers=1, init_device=device)
 
     single.load_state_dict(multi.state_dict())
 
