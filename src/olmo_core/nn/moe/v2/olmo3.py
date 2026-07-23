@@ -49,17 +49,10 @@ def build_olmo3_moe_config_from_hf_config(
     router_z_loss_weight: float | None = None,
     init_seed: int = 2026,
 ) -> OLMoDDPModelConfig:
-    """Build the stage-one OLMoDDP model for an all-MoE Olmo3Moe checkpoint."""
+    """Build an OLMoDDP model from a supported Olmo3Moe checkpoint config."""
     config = _as_mapping(hf_config)
     if config.get("model_type") != "olmo3moe":
         raise ValueError(f"Expected model_type='olmo3moe', got {config.get('model_type')!r}.")
-    if config.get("dense_layers_indices"):
-        raise NotImplementedError(
-            "Stage-one OLMoDDP Olmo3Moe loading requires dense_layers_indices=[]; "
-            "dense Olmo3Moe layers use a different native parameter layout."
-        )
-    if config.get("use_peri_ln", False):
-        raise NotImplementedError("Olmo3Moe peri-LN is not supported by this factory.")
     rope_parameters = config.get("rope_parameters") or config.get("rope_scaling") or {}
     if rope_parameters and rope_parameters.get("rope_type", "default") != "default":
         raise NotImplementedError("Scaled RoPE is not supported by this stage-one factory.")
@@ -71,6 +64,17 @@ def build_olmo3_moe_config_from_hf_config(
         raise NotImplementedError("Olmo3Moe conversion requires head-wise QK norm.")
 
     n_layers = int(config["num_hidden_layers"])
+    dense_layers = {int(idx) for idx in config.get("dense_layers_indices") or ()}
+    invalid_dense_layers = sorted(idx for idx in dense_layers if idx < 0 or idx >= n_layers)
+    if invalid_dense_layers:
+        raise ValueError(
+            f"dense_layers_indices must be in [0, {n_layers}), got {invalid_dense_layers}."
+        )
+    dense_hidden = config.get("dense_mlp_intermediate_size")
+    if dense_layers and dense_hidden is None:
+        raise ValueError(
+            "dense_mlp_intermediate_size must be set when dense_layers_indices is non-empty."
+        )
     layer_types = tuple(config.get("layer_types") or (OLMO3_FULL_ATTENTION,) * n_layers)
     if len(layer_types) != n_layers:
         raise ValueError(f"Expected {n_layers} layer_types, got {len(layer_types)}.")
@@ -123,17 +127,24 @@ def build_olmo3_moe_config_from_hf_config(
     common = dict(
         name=TransformerBlockType.moe_fused_v2,
         use_pre_norm=False,
-        use_peri_norm=False,
-        ep=ep,
+        use_peri_norm=bool(config.get("use_peri_ln", False)),
         layer_norm=layer_norm,
-        routed_experts=routed_experts,
-        routed_experts_router=routed_router,
-        shared_experts=shared_experts,
         shared_experts_router=None,
     )
 
-    def make_block(sliding: bool) -> OLMoDDPTransformerBlockConfig:
+    def make_block(sliding: bool, *, dense: bool) -> OLMoDDPTransformerBlockConfig:
         window = int(config["sliding_window"]) - 1
+        block_shared_experts = (
+            SharedExpertsConfig(
+                d_model=d_model,
+                hidden_size=int(dense_hidden),
+                num_experts=1,
+                bias=False,
+                dtype=dtype,
+            )
+            if dense
+            else shared_experts
+        )
         return OLMoDDPTransformerBlockConfig(
             sequence_mixer=AttentionConfig(
                 name=AttentionType.default,
@@ -161,21 +172,35 @@ def build_olmo3_moe_config_from_hf_config(
                     else None
                 ),
             ),
+            ep=None if dense else ep,
+            routed_experts=None if dense else routed_experts,
+            routed_experts_router=None if dense else routed_router,
+            shared_experts=block_shared_experts,
             **{key: deepcopy(value) for key, value in common.items()},
         )
 
-    blocks = {
-        OLMO3_FULL_ATTENTION: make_block(False),
-        OLMO3_SLIDING_ATTENTION: make_block(True),
-    }
+    def block_name(layer_type: str, *, dense: bool) -> str:
+        return f"{layer_type}_dense" if dense else layer_type
+
+    block_pattern = [
+        block_name(layer_type, dense=layer_idx in dense_layers)
+        for layer_idx, layer_type in enumerate(layer_types)
+    ]
+    blocks = {}
+    for layer_idx, layer_type in enumerate(layer_types):
+        dense = layer_idx in dense_layers
+        name = block_name(layer_type, dense=dense)
+        if name not in blocks:
+            blocks[name] = make_block(layer_type == OLMO3_SLIDING_ATTENTION, dense=dense)
+
     block: TransformerBlockConfig | dict[str, TransformerBlockConfig]
-    block_pattern: list[str] | None
-    if len(set(layer_types)) == 1:
-        block = blocks[layer_types[0]]
-        block_pattern = None
+    resolved_block_pattern: list[str] | None
+    if len(blocks) == 1:
+        block = next(iter(blocks.values()))
+        resolved_block_pattern = None
     else:
         block = dict(blocks)
-        block_pattern = list(layer_types)
+        resolved_block_pattern = block_pattern
 
     model_config = OLMoDDPModelConfig(
         init_seed=init_seed,
@@ -184,7 +209,7 @@ def build_olmo3_moe_config_from_hf_config(
         vocab_size=int(config["vocab_size"]),
         n_layers=n_layers,
         block=block,
-        block_pattern=block_pattern,
+        block_pattern=resolved_block_pattern,
         embedding_norm=layer_norm if config.get("embed_norm", False) else None,
         embed_scale=float(config.get("embed_scale", 1.0)),
         tie_word_embeddings=bool(config.get("tie_word_embeddings", False)),
