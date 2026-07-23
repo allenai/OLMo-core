@@ -6,7 +6,7 @@ experiment:
 
 source:
   remote: https://github.com/allenai/OLMo-core
-  branch: jacobm/olmo-ddp
+  branch: jacobm/moe-v2-core
   image: 01KW8G8JC20H11Y60PPTE2VN4Q
 
 beaker:
