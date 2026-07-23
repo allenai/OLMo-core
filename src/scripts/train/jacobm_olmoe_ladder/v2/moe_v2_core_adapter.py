@@ -142,6 +142,13 @@ def adapt_model_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
                 )
             mixer["head_dim"] = head_dim
 
+        scaling = (mixer.get("rope") or {}).get("scaling")
+        if scaling is not None and "truncate" in scaling:
+            # This upstream revision always floors/ceils the YaRN correction
+            # bounds, which is exactly the later branch's truncate=true mode.
+            if not scaling.pop("truncate"):
+                raise ValueError("moe-v2-core cannot represent YaRN truncate=false")
+
     return model
 
 

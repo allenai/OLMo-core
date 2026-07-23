@@ -1,0 +1,59 @@
+version: v2
+description: Representative exact checkpoint gates for moe-v2-core f5376c184
+tasks:
+  - name: geometry-rope-gated-275m
+    image: &image {beaker: 01KW8G8JC20H11Y60PPTE2VN4Q}
+    command: &command [/bin/bash, -lc]
+    arguments: &arguments
+      - bash /weka/oe-adapt-default/jacobm/olmoe3/olmo-ddp-migration/OLMo-core-moe-v2-core/src/scripts/train/jacobm_moe_v2_port_validation/run_strict_parity.sh
+    envVars:
+      - {name: CHECKPOINT, value: /weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/olmo-ddp/pretraining/pt-275m-geometry-hybrid-gdn-ev2-rope-gated-cx1-lr1p6e-3-r1/step17385}
+      - {name: ARTIFACT_ROOT, value: /weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/olmo-ddp/port-validation/f5376c184/parity/275m-geometry-rope-gated-step17385}
+      - {name: SEQUENCE_LENGTH, value: "128"}
+    datasets: &datasets
+      - {mountPath: /weka/oe-adapt-default, source: {weka: oe-adapt-default}}
+      - {mountPath: /weka/oe-training-default, source: {weka: oe-training-default}}
+    result: {path: /results}
+    resources: &resources {gpuCount: 1, sharedMemory: 64 GiB}
+    context: &context {priority: urgent, minRuntime: 0m, autoResume: true}
+    constraints: &constraints {cluster: [ai2/holmes]}
+    hostNetworking: true
+    propagateFailure: false
+    propagatePreemption: false
+    timeout: 6h
+
+  - name: first-hybrid-1p2b-ep8-checkpoint
+    image: *image
+    command: *command
+    arguments: *arguments
+    envVars:
+      - {name: CHECKPOINT, value: /weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/olmo-ddp/pretraining/1p2b-intwide-hybrid-gdn-ev1-cx1-lr4e-4-ep8-sync/step86558}
+      - {name: ARTIFACT_ROOT, value: /weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/olmo-ddp/port-validation/f5376c184/parity/1p2b-first-hybrid-step86558}
+      - {name: SEQUENCE_LENGTH, value: "128"}
+    datasets: *datasets
+    result: {path: /results}
+    resources: *resources
+    context: *context
+    constraints: *constraints
+    hostNetworking: true
+    propagateFailure: false
+    propagatePreemption: false
+    timeout: 12h
+
+  - name: long-context-275m
+    image: *image
+    command: *command
+    arguments: *arguments
+    envVars:
+      - {name: CHECKPOINT, value: /weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/olmo-ddp/long-context/lc-275m-baseline-cx8-mt2e-4-lc1e-4-64k-r2/step47684}
+      - {name: ARTIFACT_ROOT, value: /weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/olmo-ddp/port-validation/f5376c184/parity/275m-long-context-step47684}
+      - {name: SEQUENCE_LENGTH, value: "128"}
+    datasets: *datasets
+    result: {path: /results}
+    resources: *resources
+    context: *context
+    constraints: *constraints
+    hostNetworking: true
+    propagateFailure: false
+    propagatePreemption: false
+    timeout: 6h
