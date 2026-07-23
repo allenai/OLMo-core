@@ -85,6 +85,7 @@ tasks:
     envVars:
       - {name: AWS_ACCESS_KEY_ID, secret: AWS_ACCESS_KEY_ID}
       - {name: AWS_SECRET_ACCESS_KEY, secret: AWS_SECRET_ACCESS_KEY}
+      - {name: GANTRY_GOOGLE_CREDENTIALS, secret: jacobm_GOOGLE_CREDENTIALS}
       - {name: BEAKER_TOKEN, secret: jacobm_BEAKER_TOKEN}
       - {name: OLMOE3_HYBRID_RUN_NAME, value: port-smoke-f5376c184-midtrain-load}
       - {name: OLMOE3_HYBRID_MODEL_SIZE, value: 275m}
@@ -136,6 +137,7 @@ tasks:
       - {name: OLMOE3_LC_RANK_MICROBATCH_SEQUENCES, value: "4"}
       - {name: OLMOE3_LC_LR, value: "0.00008"}
       - {name: OLMOE3_LC_MAX_TOKENS, value: "4194304"}
+      - {name: OLMOE3_LC_DATA_GLOB, value: /weka/oe-training-default/ai2-llm/eval-data/perplexity/v3_small_dolma2-tokenizer/*/val/*.npy}
       - {name: OLMOE3_LC_WARMUP_STEPS, value: "2000"}
       - {name: OLMOE3_LC_HARD_STOP_STEPS, value: "2"}
       - {name: OLMOE3_LC_USE_COMPILE, value: "1"}
