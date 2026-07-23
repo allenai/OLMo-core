@@ -1,0 +1,181 @@
+version: v2
+description: Post-parity functional gates for Jacob's migration to moe-v2-core f5376c184
+tasks:
+  - name: pretrain-275m-rope-gated
+    image: {beaker: 01KW8G8JC20H11Y60PPTE2VN4Q}
+    command: [/bin/bash, -lc]
+    arguments:
+      - bash /weka/oe-adapt-default/jacobm/olmoe3/olmo-ddp-migration/OLMo-core-moe-v2-core/src/scripts/train/jacobm_olmoe3_hybrid_scale_beaker.sh
+    envVars:
+      - {name: BEAKER_TOKEN, secret: jacobm_BEAKER_TOKEN}
+      - {name: OLMOE3_HYBRID_RUN_NAME, value: port-smoke-f5376c184-275m-rope-gated}
+      - {name: OLMOE3_HYBRID_MODEL_SIZE, value: 275m}
+      - {name: OLMOE3_HYBRID_MODEL_VARIANT, value: geometry_275m_gdn_ev2_rope_gated}
+      - {name: OLMOE3_HYBRID_SEQUENCE_LENGTH, value: "8192"}
+      - {name: OLMOE3_HYBRID_GLOBAL_BATCH_SIZE, value: "262144"}
+      - {name: OLMOE3_HYBRID_WORLD_SIZE, value: "1"}
+      - {name: OLMOE3_HYBRID_NUM_NODES, value: "1"}
+      - {name: OLMOE3_HYBRID_EP_SIZE, value: "1"}
+      - {name: OLMOE3_HYBRID_EP_PATH, value: sync_1d}
+      - {name: OLMOE3_HYBRID_RANK_MICROBATCH_SEQUENCES, value: "16"}
+      - {name: OLMOE3_HYBRID_LR, value: "0.0016"}
+      - {name: OLMOE3_HYBRID_CHINCHILLA_MULTIPLE, value: "1"}
+      - {name: OLMOE3_HYBRID_HARD_STOP_STEPS, value: "5"}
+      - {name: OLMOE3_HYBRID_USE_COMPILE, value: "1"}
+      - {name: OLMOE3_HYBRID_WANDB, value: "0"}
+      - {name: OLMOE3_HYBRID_CHECKPOINTS, value: "0"}
+      - {name: OLMOE3_HYBRID_EVALS, value: "0"}
+    datasets: &datasets
+      - {mountPath: /weka/oe-adapt-default, source: {weka: oe-adapt-default}}
+      - {mountPath: /weka/oe-training-default, source: {weka: oe-training-default}}
+    result: {path: /results}
+    resources: {gpuCount: 1, sharedMemory: 64 GiB}
+    context: &context {priority: urgent, minRuntime: 0m, autoResume: true}
+    constraints: &constraints {cluster: [ai2/holmes]}
+    hostNetworking: true
+    propagateFailure: false
+    propagatePreemption: false
+    timeout: 2h
+
+  - name: pretrain-1p2b-ep8
+    image: {beaker: 01KW8G8JC20H11Y60PPTE2VN4Q}
+    command: [/bin/bash, -lc]
+    arguments:
+      - bash /weka/oe-adapt-default/jacobm/olmoe3/olmo-ddp-migration/OLMo-core-moe-v2-core/src/scripts/train/jacobm_olmoe3_hybrid_scale_beaker.sh
+    envVars:
+      - {name: BEAKER_TOKEN, secret: jacobm_BEAKER_TOKEN}
+      - {name: OLMOE3_HYBRID_RUN_NAME, value: port-smoke-f5376c184-1p2b-ep8}
+      - {name: OLMOE3_HYBRID_MODEL_SIZE, value: 1p2b}
+      - {name: OLMOE3_HYBRID_MODEL_VARIANT, value: integration_wide_gdn_ev1}
+      - {name: OLMOE3_HYBRID_SEQUENCE_LENGTH, value: "8192"}
+      - {name: OLMOE3_HYBRID_GLOBAL_BATCH_SIZE, value: "262144"}
+      - {name: OLMOE3_HYBRID_WORLD_SIZE, value: "8"}
+      - {name: OLMOE3_HYBRID_NUM_NODES, value: "1"}
+      - {name: OLMOE3_HYBRID_EP_SIZE, value: "8"}
+      - {name: OLMOE3_HYBRID_EP_PATH, value: sync_1d}
+      - {name: OLMOE3_HYBRID_RANK_MICROBATCH_SEQUENCES, value: "4"}
+      - {name: OLMOE3_HYBRID_LR, value: "0.0004"}
+      - {name: OLMOE3_HYBRID_CHINCHILLA_MULTIPLE, value: "1"}
+      - {name: OLMOE3_HYBRID_HARD_STOP_STEPS, value: "5"}
+      - {name: OLMOE3_HYBRID_USE_COMPILE, value: "1"}
+      - {name: OLMOE3_HYBRID_WANDB, value: "0"}
+      - {name: OLMOE3_HYBRID_CHECKPOINTS, value: "0"}
+      - {name: OLMOE3_HYBRID_EVALS, value: "0"}
+    datasets: *datasets
+    result: {path: /results}
+    resources: {gpuCount: 8, sharedMemory: 64 GiB}
+    context: *context
+    constraints: *constraints
+    hostNetworking: true
+    propagateFailure: false
+    propagatePreemption: false
+    timeout: 2h
+
+  - name: midtrain-weight-load
+    image: {beaker: 01KW8G8JC20H11Y60PPTE2VN4Q}
+    command: [/bin/bash, -lc]
+    arguments:
+      - bash /weka/oe-adapt-default/jacobm/olmoe3/olmo-ddp-migration/OLMo-core-moe-v2-core/src/scripts/train/jacobm_olmoe3_hybrid_midtraining_beaker.sh
+    envVars:
+      - {name: BEAKER_TOKEN, secret: jacobm_BEAKER_TOKEN}
+      - {name: OLMOE3_HYBRID_RUN_NAME, value: port-smoke-f5376c184-midtrain-load}
+      - {name: OLMOE3_HYBRID_MODEL_SIZE, value: 275m}
+      - {name: OLMOE3_HYBRID_MODEL_VARIANT, value: integration_wide_gdn_ev1}
+      - {name: OLMOE3_HYBRID_SEQUENCE_LENGTH, value: "8192"}
+      - {name: OLMOE3_HYBRID_GLOBAL_BATCH_SIZE, value: "262144"}
+      - {name: OLMOE3_HYBRID_WORLD_SIZE, value: "1"}
+      - {name: OLMOE3_HYBRID_NUM_NODES, value: "1"}
+      - {name: OLMOE3_HYBRID_EP_SIZE, value: "1"}
+      - {name: OLMOE3_HYBRID_EP_PATH, value: sync_1d}
+      - {name: OLMOE3_HYBRID_RANK_MICROBATCH_SEQUENCES, value: "16"}
+      - {name: OLMOE3_HYBRID_LR, value: "0.00016"}
+      - {name: OLMOE3_HYBRID_HARD_STOP_STEPS, value: "5"}
+      - {name: OLMOE3_HYBRID_USE_COMPILE, value: "1"}
+      - {name: OLMOE3_HYBRID_WANDB, value: "0"}
+      - {name: OLMOE3_HYBRID_CHECKPOINTS, value: "0"}
+      - {name: OLMOE3_HYBRID_EVALS, value: "0"}
+      - {name: OLMOE3_MT_LOAD_PATH, value: /weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/olmo-ddp/pretraining/pt-275m-intwide-hybrid-gdn-ev1-cx8-lr1p6e-3-r1/step42954}
+      - {name: OLMOE3_MT_MAX_TOKENS, value: "100000000000"}
+      - {name: OLMOE3_MT_WARMUP_STEPS, value: "2000"}
+    datasets: *datasets
+    result: {path: /results}
+    resources: {gpuCount: 1, sharedMemory: 64 GiB}
+    context: *context
+    constraints: *constraints
+    hostNetworking: true
+    propagateFailure: false
+    propagatePreemption: false
+    timeout: 2h
+
+  - name: long-context-weight-load
+    image: {beaker: 01KW8G8JC20H11Y60PPTE2VN4Q}
+    command: [/bin/bash, -lc]
+    arguments:
+      - bash /weka/oe-adapt-default/jacobm/olmoe3/olmo-ddp-migration/OLMo-core-moe-v2-core/src/scripts/train/jacobm_olmoe3_long_context_beaker.sh
+    envVars:
+      - {name: BEAKER_TOKEN, secret: jacobm_BEAKER_TOKEN}
+      - {name: OLMOE3_LC_RUN_NAME, value: port-smoke-f5376c184-long-context-load}
+      - {name: OLMOE3_LC_LOAD_PATH, value: /weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/olmo-ddp/midtraining/mt-275m-intwide-hybrid-gdn-ev1-cx8-lr1p6e-4-r1/step95368}
+      - {name: OLMOE3_LC_MODEL_SIZE, value: 275m}
+      - {name: OLMOE3_LC_FAMILY, value: hybrid_gdn_ev1}
+      - {name: OLMOE3_LC_SEQUENCE_LENGTH, value: "65536"}
+      - {name: OLMOE3_LC_GLOBAL_BATCH_SIZE, value: "2097152"}
+      - {name: OLMOE3_LC_WORLD_SIZE, value: "8"}
+      - {name: OLMOE3_LC_EP_SIZE, value: "1"}
+      - {name: OLMOE3_LC_EP_PATH, value: sync_1d}
+      - {name: OLMOE3_LC_RANK_MICROBATCH_SEQUENCES, value: "4"}
+      - {name: OLMOE3_LC_LR, value: "0.00008"}
+      - {name: OLMOE3_LC_MAX_TOKENS, value: "100000000000"}
+      - {name: OLMOE3_LC_WARMUP_STEPS, value: "2000"}
+      - {name: OLMOE3_LC_HARD_STOP_STEPS, value: "2"}
+      - {name: OLMOE3_LC_USE_COMPILE, value: "1"}
+      - {name: OLMOE3_LC_WANDB, value: "0"}
+      - {name: OLMOE3_LC_CHECKPOINTS, value: "0"}
+      - {name: OLMOE3_LC_EVALS, value: "0"}
+    datasets: *datasets
+    result: {path: /results}
+    resources: {gpuCount: 8, sharedMemory: 64 GiB}
+    context: *context
+    constraints: *constraints
+    hostNetworking: true
+    propagateFailure: false
+    propagatePreemption: false
+    timeout: 4h
+
+  - name: eval-checkpoint-load
+    image: {beaker: 01KW8G8JC20H11Y60PPTE2VN4Q}
+    command: [/bin/bash, -lc]
+    arguments:
+      - bash /weka/oe-adapt-default/jacobm/olmoe3/olmo-ddp-migration/OLMo-core-moe-v2-core/src/scripts/train/jacobm_olmoe3_hybrid_scale_beaker.sh
+    envVars:
+      - {name: BEAKER_TOKEN, secret: jacobm_BEAKER_TOKEN}
+      - {name: OLMOE3_HYBRID_RUN_NAME, value: port-smoke-f5376c184-eval-load}
+      - {name: OLMOE3_HYBRID_MODEL_SIZE, value: 275m}
+      - {name: OLMOE3_HYBRID_MODEL_VARIANT, value: geometry_275m_gdn_ev2_rope_gated}
+      - {name: OLMOE3_HYBRID_SUBCOMMAND, value: eval_checkpoints}
+      - {name: OLMOE3_HYBRID_EVAL_CHECKPOINT, value: /weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/olmo-ddp/pretraining/pt-275m-geometry-hybrid-gdn-ev2-rope-gated-cx1-lr1p6e-3-r1/step17385}
+      - {name: OLMOE3_HYBRID_EVAL_TASK_SET, value: hellaswag}
+      - {name: OLMOE3_HYBRID_EVAL_STEPS, value: "1"}
+      - {name: OLMOE3_HYBRID_EVALS, value: "1"}
+      - {name: OLMOE3_HYBRID_EVAL_ON_FINISH, value: "0"}
+      - {name: OLMOE3_HYBRID_CHECKPOINTS, value: "0"}
+      - {name: OLMOE3_HYBRID_USE_COMPILE, value: "0"}
+      - {name: OLMOE3_HYBRID_WANDB, value: "0"}
+      - {name: OLMOE3_HYBRID_SEQUENCE_LENGTH, value: "8192"}
+      - {name: OLMOE3_HYBRID_GLOBAL_BATCH_SIZE, value: "262144"}
+      - {name: OLMOE3_HYBRID_WORLD_SIZE, value: "1"}
+      - {name: OLMOE3_HYBRID_NUM_NODES, value: "1"}
+      - {name: OLMOE3_HYBRID_EP_SIZE, value: "1"}
+      - {name: OLMOE3_HYBRID_EP_PATH, value: sync_1d}
+      - {name: OLMOE3_HYBRID_RANK_MICROBATCH_SEQUENCES, value: "2"}
+      - {name: OLMOE3_HYBRID_LR, value: "0.0016"}
+      - {name: OLMOE3_HYBRID_CHINCHILLA_MULTIPLE, value: "1"}
+    datasets: *datasets
+    result: {path: /results}
+    resources: {gpuCount: 1, sharedMemory: 64 GiB}
+    context: *context
+    constraints: *constraints
+    hostNetworking: true
+    propagateFailure: false
+    propagatePreemption: false
+    timeout: 2h

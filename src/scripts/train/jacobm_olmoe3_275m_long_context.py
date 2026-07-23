@@ -124,6 +124,7 @@ WARMUP_STEPS = int(cast(str, lc_env("WARMUP_STEPS", "2000")))
 HARD_STOP_STEPS = int(cast(str, lc_env("HARD_STOP_STEPS", "0")))
 USE_COMPILE = lc_bool("USE_COMPILE", True)
 WANDB_ENABLED = lc_bool("WANDB", True)
+CHECKPOINTS_ENABLED = lc_bool("CHECKPOINTS", True)
 EVALS_ENABLED = lc_bool("EVALS", False)
 EVAL_INTERVAL = int(cast(str, lc_env("EVAL_INTERVAL", "1000")))
 EVAL_STEPS = int(cast(str, lc_env("EVAL_STEPS", "0")))
@@ -324,7 +325,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         load_trainer_state=False,
         load_optim_state=False,
         save_overwrite=False,
-        no_checkpoints=EVAL_BACKFILL,
+        no_checkpoints=EVAL_BACKFILL or not CHECKPOINTS_ENABLED,
         checkpoints_to_eval=[EVAL_CHECKPOINT] if EVAL_CHECKPOINT is not None else None,
         checkpointer=CheckpointerConfig(
             save_thread_count=3,
@@ -340,7 +341,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         max_duration=Duration.tokens(MAX_TOKENS),
         hard_stop=Duration.steps(HARD_STOP_STEPS) if HARD_STOP_STEPS else None,
     )
-    if not EVAL_BACKFILL:
+    if not EVAL_BACKFILL and CHECKPOINTS_ENABLED:
         trainer = trainer.with_callback(
             "checkpointer",
             CheckpointerCallback(

@@ -32,7 +32,10 @@ Checkpoint tensor names and values are not rewritten.
 - [x] Dry-run 275M EP1 and 1.2B EP8 pretraining configs.
 - [x] Dry-run weight-only midtraining and 64K long-context continuation configs.
 - [ ] Rerun the strict tensor/logit/block/router checkpoint gate on the pinned upstream tip.
+  Submitted as Beaker experiment `01KY87GSERYVG92Q8D8Q8PMTJA`.
 - [ ] Run representative pretraining, EP8, midtraining, long-context, and eval smokes.
+  The five-task, 19-GPU maximum-concurrency spec is prepared at
+  `v2/migration/beaker_smokes.yaml` but remains gated on strict parity.
 - [ ] Run the 275M throughput matrix only after the functional gates pass.
 - [ ] Make this branch canonical and mark `jacobm/olmo-ddp` read-only.
 
