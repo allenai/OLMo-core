@@ -21,8 +21,19 @@ The machine-readable report is stored at
 `/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/olmo-ddp/port-validation/f5376c184/parity/275m-cx1-step16108/strict_parity.json`.
 
 Representative exact checks for the current 275M geometry model, a 1.2B EP8
-checkpoint, and a completed 275M 64K checkpoint are submitted as Beaker
-experiment `01KY87ZKBT2A54A15AQ47ESGKZ`.
+checkpoint, and a completed 275M 64K checkpoint all passed in Beaker experiment
+`01KY87ZKBT2A54A15AQ47ESGKZ`:
+
+| Checkpoint | Model tensors | Serialized elements | Output checks | Result |
+|---|---:|---:|---:|---|
+| 275M geometry RoPE + gated | 209 | 3,137,624,960 | 57 | exact |
+| 1.2B first hybrid, trained EP8 | 401 | 19,719,482,944 | 129 | exact |
+| 275M completed 64K LC | 181 | 1,134,875,136 | 69 | exact |
+
+Every row requires one-to-one checkpoint tensor equality and `torch.equal` for
+fixed input IDs, full logits, block outputs, and captured router tensors. The
+machine-readable reports live under
+`.../olmo-ddp/port-validation/f5376c184/parity/`.
 
 ## Historical candidate validation
 

@@ -23,6 +23,60 @@ from olmo_core.nn.transformer import OLMoDDPModelConfig
 
 
 EP_CONFIG_CLASS = "olmo_core.nn.moe.v2.ep_config.ExpertParallelConfig"
+MODEL_CONFIG_CLASS = "olmo_core.nn.transformer.config.OLMoDDPModelConfig"
+BLOCK_CONFIG_CLASS = "olmo_core.nn.ddp.block.OLMoDDPTransformerBlockConfig"
+SHARED_EXPERTS_CONFIG_CLASS = "olmo_core.nn.moe.v2.shared_experts.SharedExpertsConfig"
+
+
+def _convert_legacy_dense_block(
+    block: Mapping[str, Any], *, d_model: int
+) -> dict[str, Any]:
+    """Represent a legacy dense FFN as an equivalent shared-only DDP block."""
+
+    feed_forward = block.get("feed_forward")
+    if feed_forward is None:
+        raise ValueError("Expected a legacy dense block with feed_forward")
+    if block.get("name") != "peri_norm":
+        raise ValueError(
+            f"Only legacy peri_norm dense blocks are supported, got {block.get('name')!r}"
+        )
+    if feed_forward.get("bias", True):
+        raise ValueError("Dense checkpoint conversion requires bias=false")
+    if feed_forward.get("activation", "silu") != "silu":
+        raise ValueError("Dense checkpoint conversion requires SwiGLU/SILU")
+    if block.get("dropout", 0.0) not in (None, 0.0):
+        raise ValueError("Dense checkpoint conversion requires dropout=0")
+    for alpha_name in ("attention_residual_alpha", "feed_forward_residual_alpha"):
+        if block.get(alpha_name, 1.0) not in (None, 1.0):
+            raise ValueError(f"Dense checkpoint conversion requires {alpha_name}=1")
+    for norm_name in ("attention_norm", "feed_forward_norm"):
+        if block[norm_name].get("bias", False):
+            raise ValueError("Dense checkpoint conversion does not support norm bias tensors")
+
+    dtype = feed_forward.get("dtype")
+    if dtype is None:
+        dtype = block["sequence_mixer"].get("dtype", "float32")
+
+    return {
+        "sequence_mixer": copy.deepcopy(block["sequence_mixer"]),
+        "attention_norm": copy.deepcopy(block["attention_norm"]),
+        "feed_forward_norm": copy.deepcopy(block["feed_forward_norm"]),
+        "name": "moe_fused_v2",
+        "shared_experts": {
+            "d_model": d_model,
+            "hidden_size": int(feed_forward["hidden_size"]),
+            "num_experts": 1,
+            "bias": False,
+            "dtype": dtype,
+            "activation": "swiglu",
+            "_CLASS_": SHARED_EXPERTS_CONFIG_CLASS,
+        },
+        "use_peri_norm": True,
+        "checkpoint_attn": False,
+        "checkpoint_permute_moe_unpermute": False,
+        "checkpoint_second_unpermute": False,
+        "_CLASS_": BLOCK_CONFIG_CLASS,
+    }
 
 
 def _adapt_legacy_ep_config(block: dict[str, Any], *, tbo: bool) -> None:
@@ -106,6 +160,23 @@ def adapt_model_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
     """Translate an ``olmo-ddp`` model payload without changing semantics."""
 
     model = copy.deepcopy(dict(payload))
+    d_model = int(model["d_model"])
+    if model["block"].get("feed_forward") is not None:
+        model["block"] = _convert_legacy_dense_block(model["block"], d_model=d_model)
+    else:
+        model["block"]["name"] = "moe_fused_v2"
+        model["block"]["_CLASS_"] = BLOCK_CONFIG_CLASS
+
+    overrides = model.get("block_overrides") or {}
+    for layer_idx, block in tuple(overrides.items()):
+        if block.get("feed_forward") is not None:
+            overrides[layer_idx] = _convert_legacy_dense_block(block, d_model=d_model)
+        else:
+            block["name"] = "moe_fused_v2"
+            block["_CLASS_"] = BLOCK_CONFIG_CLASS
+    model["block_overrides"] = overrides or None
+    model["_CLASS_"] = MODEL_CONFIG_CLASS
+
     blocks = [model["block"], *(model.get("block_overrides") or {}).values()]
     for block in blocks:
         _adapt_legacy_ep_config(block, tbo=bool(model.get("two_batch_overlap", False)))
@@ -128,6 +199,10 @@ def adapt_model_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
 
         mixer = block["sequence_mixer"]
         mixer.pop("type", None)
+        if mixer.get("_CLASS_", "").endswith("AttentionConfig"):
+            # The source branch recorded this as a concrete false default; the
+            # upstream API made it optional, where None also disables it.
+            mixer.setdefault("mxfp8_save_qkv_for_backward", False)
         d_attn = mixer.pop("d_attn", None)
         if d_attn is not None:
             d_attn = int(d_attn)

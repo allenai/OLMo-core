@@ -35,12 +35,13 @@ Checkpoint tensor names and values are not rewritten.
   Beaker experiment `01KY87GSERYVG92Q8D8Q8PMTJA` passed exactly on
   2026-07-23. The report records `bitwise_equal=true` for all 216 checkpoint
   tensors and 69 fixed-input output tensors, including full logits.
-- [ ] Rerun exact checkpoint gates for the current 275M geometry model, a 1.2B
-  EP8 model, and a completed 275M long-context model. Beaker experiment
-  `01KY87ZKBT2A54A15AQ47ESGKZ` is submitted and queued.
-- [ ] Run representative pretraining, EP8, midtraining, long-context, and eval smokes.
-  The five-task, 19-GPU maximum-concurrency spec is prepared at
-  `v2/migration/beaker_smokes.yaml` but remains gated on strict parity.
+- [x] Rerun exact checkpoint gates for the current 275M geometry model, a 1.2B
+  EP8 model, and a completed 275M long-context model. All three tasks in Beaker
+  experiment `01KY87ZKBT2A54A15AQ47ESGKZ` passed exactly on 2026-07-23.
+- [ ] Run representative pretraining, EP8, midtraining, long-context, and eval
+  smokes. The five-task, 19-GPU maximum-concurrency Beaker experiment
+  `01KY88DDKPPW4B1MH1RGAMAM2E` is submitted from
+  `v2/migration/beaker_smokes.yaml`.
 - [ ] Run the 275M throughput matrix only after the functional gates pass.
 - [ ] Make this branch canonical and mark `jacobm/olmo-ddp` read-only.
 
