@@ -68,6 +68,9 @@ FA3_MAX_JOBS = 64
 # The 'beaker-image-b300-fa4' target enables it with the CUDA-13 wheel.
 FLASH_ATTN_4_VERSION =
 FLASH_ATTN_4_EXTRAS =
+# Pin for nvidia-cutlass-dsl (FA4's DSL dep). FA4 betas pin it loosely, so pip can float to a
+# version whose API dropped symbols the wheel needs (4.6.x removed ThrMma, breaking 4.0.0b16).
+FLASH_ATTN_4_CUTLASS_DSL_VERSION =
 TE_VERSION = 2.9
 RING_FLASH_ATTN_VERSION = 0.1.8
 LIGER_KERNEL_VERSION = 0.6.4
@@ -112,6 +115,7 @@ docker-image :
 		--build-arg FA3_MAX_JOBS=$(FA3_MAX_JOBS) \
 		--build-arg FLASH_ATTN_4_VERSION=$(FLASH_ATTN_4_VERSION) \
 		--build-arg FLASH_ATTN_4_EXTRAS="$(FLASH_ATTN_4_EXTRAS)" \
+		--build-arg FLASH_ATTN_4_CUTLASS_DSL_VERSION=$(FLASH_ATTN_4_CUTLASS_DSL_VERSION) \
 		--build-arg TE_VERSION=$(TE_VERSION) \
 		--build-arg RING_FLASH_ATTN_VERSION=$(RING_FLASH_ATTN_VERSION) \
 		--build-arg LIGER_KERNEL_VERSION=$(LIGER_KERNEL_VERSION) \
@@ -170,6 +174,7 @@ B300_BUILD_ARGS = \
 B300_FA4_ARGS = \
 	FLASH_ATTN_4_VERSION=4.0.0b16 \
 	FLASH_ATTN_4_EXTRAS="[cu13]" \
+	FLASH_ATTN_4_CUTLASS_DSL_VERSION=4.5.3 \
 	DOCKER_VALIDATE_IMPORTS="import torch; import transformer_engine.pytorch; import flash_attn; import flash_attn.cute"
 
 # torch 2.11.0 (validated on B300 hardware). Produces 'olmo-core-tch2110cu130-<date>'.

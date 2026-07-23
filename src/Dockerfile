@@ -102,11 +102,23 @@ RUN if [ -z "${B300}" ]; then \
 # Optional: skipped unless FLASH_ATTN_4_VERSION is set. Distributed as a prebuilt wheel, so it
 # installs for B300 too — use FLASH_ATTN_4_EXTRAS='[cu13]' for the CUDA-13 build. Constrained to
 # the installed torch so pip can't pull a different torch.
+#
+# FLASH_ATTN_4_CUTLASS_DSL_VERSION pins nvidia-cutlass-dsl. Needed because the FA4 betas pin it
+# loosely (e.g. 4.0.0b16 requires 'nvidia-cutlass-dsl>=4.5.2'), so pip floats to the newest release
+# — and cutlass-dsl 4.6.x removed `cutlass.cute.core.ThrMma`, which the 4.5-era wheel calls
+# (AttributeError at import). Pinning to a 4.5.x here keeps the wheel and its DSL API in sync. It's
+# installed in the same command so the resolver satisfies both constraints at once.
 ARG FLASH_ATTN_4_VERSION=
 ARG FLASH_ATTN_4_EXTRAS=""
+ARG FLASH_ATTN_4_CUTLASS_DSL_VERSION=
 RUN if [ -n "${FLASH_ATTN_4_VERSION}" ]; then \
         python -c "import torch; print('torch=='+torch.__version__)" > /tmp/torch-constraint.txt && \
-        python -m pip install --no-cache-dir -c /tmp/torch-constraint.txt "flash-attn-4${FLASH_ATTN_4_EXTRAS}==${FLASH_ATTN_4_VERSION}" && \
+        cutlass_spec=""; \
+        if [ -n "${FLASH_ATTN_4_CUTLASS_DSL_VERSION}" ]; then \
+            cutlass_spec="nvidia-cutlass-dsl${FLASH_ATTN_4_EXTRAS}==${FLASH_ATTN_4_CUTLASS_DSL_VERSION}"; \
+        fi && \
+        python -m pip install --no-cache-dir -c /tmp/torch-constraint.txt \
+            "flash-attn-4${FLASH_ATTN_4_EXTRAS}==${FLASH_ATTN_4_VERSION}" ${cutlass_spec} && \
         rm -f /tmp/torch-constraint.txt; \
     fi
 
