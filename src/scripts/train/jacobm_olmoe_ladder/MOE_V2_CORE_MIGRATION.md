@@ -17,8 +17,10 @@ not merge or copy the old branch's `src/olmo_core` implementation.
 
 1. identical `attention_norm` and `feed_forward_norm` configs to `layer_norm`;
 2. `d_attn / n_heads` to `head_dim`;
-3. flat legacy expert-parallel controls to `ExpertParallelConfig`; and
-4. Muon-only optimizer controls only after requiring `use_muon=false`.
+3. flat legacy expert-parallel controls to `ExpertParallelConfig`;
+4. legacy dense first layers to equivalent shared-only DDP blocks;
+5. YaRN `truncate=true` to the upstream representation; and
+6. Muon-only optimizer controls only after requiring `use_muon=false`.
 
 Checkpoint tensor names and values are not rewritten.
 
@@ -38,12 +40,30 @@ Checkpoint tensor names and values are not rewritten.
 - [x] Rerun exact checkpoint gates for the current 275M geometry model, a 1.2B
   EP8 model, and a completed 275M long-context model. All three tasks in Beaker
   experiment `01KY87ZKBT2A54A15AQ47ESGKZ` passed exactly on 2026-07-23.
-- [ ] Run representative pretraining, EP8, midtraining, long-context, and eval
-  smokes. The five-task, 19-GPU maximum-concurrency Beaker experiment
-  `01KY88DDKPPW4B1MH1RGAMAM2E` is submitted from
-  `v2/migration/beaker_smokes.yaml`.
+- [x] Run representative pretraining, EP8, midtraining, long-context, and eval
+  smokes. The result-bearing experiments are `01KY88T80JBGCHSF86MM7VM0QD`
+  (275M pretraining, 1.2B EP8, checkpoint-backed eval),
+  `01KY8AFCNMG03JD6XPRC9BS94K` (weight-only midtraining), and
+  `01KY89W2PBDS597FH1KHWM52A3` (64K long context). Every result-bearing task
+  exited 0. The earlier aggregate smoke exposed harness-only source-mixture,
+  credential, and glob issues; it did not expose a model/checkpoint mismatch.
 - [ ] Run the 275M throughput matrix only after the functional gates pass.
 - [ ] Make this branch canonical and mark `jacobm/olmo-ddp` read-only.
+
+## Functional gate results
+
+| Gate | GPUs / EP | Work | Result |
+|---|---|---|---|
+| 275M geometry RoPE + gated pretraining | 1 / EP1 | `01KY88T80JBGCHSF86MM7VM0QD` | 5 optimizer steps; exit 0 |
+| 1.2B first-hybrid pretraining | 8 / EP8 `sync_1d` | `01KY88T80JBGCHSF86MM7VM0QD` | 5 optimizer steps; exit 0 |
+| Checkpoint-backed validation | 1 / EP1 | `01KY88T80JBGCHSF86MM7VM0QD` | load + eval step; exit 0 |
+| 275M weight-only midtraining | 1 / EP1 | `01KY8AFCNMG03JD6XPRC9BS94K` | fresh optimizer, 5 steps / 1,310,720 tokens; exit 0 |
+| 275M 64K long context | 8 / EP1 | `01KY89W2PBDS597FH1KHWM52A3` | 2 steps / 4,194,304 tokens; exit 0 |
+
+The continuation smokes use explicit bounded data globs so the migration gate
+tests model loading, optimizer reset, compile, and training instead of spending
+the GPU allocation scanning or packing the full production corpus. Production
+MT and LC defaults are unchanged unless the explicit smoke override is set.
 
 ## Checkpoint policy
 

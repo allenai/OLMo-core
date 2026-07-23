@@ -1,14 +1,17 @@
 """Compatibility helpers for Jacob's ``olmo-ddp`` experiment artifacts.
 
-The upstreamable ``moe-v2-core`` branch deliberately represents two model
+The upstreamable ``moe-v2-core`` branch deliberately represents several model
 settings differently from the branch that produced our recorded configs:
 
 * one block-level ``layer_norm`` replaces the two identical norm configs; and
-* attention records ``head_dim`` instead of the aggregate ``d_attn`` width.
+* attention records ``head_dim`` instead of the aggregate ``d_attn`` width;
+* expert-parallel controls live in ``ExpertParallelConfig``; and
+* a legacy dense first block is represented as a shared-only DDP block.
 
-These helpers adapt only those representation changes. Checkpoint tensor names
-and values are not rewritten. The optimizer helper similarly removes Muon-only
-controls only after proving they were disabled for every parameter group.
+These helpers adapt only those representation changes (plus the equivalent
+``truncate=true`` YaRN representation). Checkpoint tensor names and values are
+not rewritten. The optimizer helper similarly removes Muon-only controls only
+after proving they were disabled for every parameter group.
 """
 
 from __future__ import annotations

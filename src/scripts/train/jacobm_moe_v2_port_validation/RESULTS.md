@@ -35,6 +35,25 @@ fixed input IDs, full logits, block outputs, and captured router tensors. The
 machine-readable reports live under
 `.../olmo-ddp/port-validation/f5376c184/parity/`.
 
+## Functional migration gates
+
+After exact parity passed, the imported experiment layer was exercised with
+compiled forward/backward on Holmes B300s:
+
+| Gate | Beaker work | Result |
+|---|---|---|
+| 275M geometry RoPE + gated pretraining | `01KY88T80JBGCHSF86MM7VM0QD` | 5 optimizer steps, exit 0 |
+| 1.2B first-hybrid EP8 pretraining | `01KY88T80JBGCHSF86MM7VM0QD` | 5 optimizer steps, exit 0 |
+| Checkpoint-backed validation | `01KY88T80JBGCHSF86MM7VM0QD` | checkpoint load + eval step, exit 0 |
+| 275M weight-only midtraining | `01KY8AFCNMG03JD6XPRC9BS94K` | fresh optimizer, 5 steps / 1,310,720 tokens, exit 0 |
+| 275M 64K long context | `01KY89W2PBDS597FH1KHWM52A3` | 2 steps / 4,194,304 tokens, exit 0 |
+
+The 64K gate used eight GPUs, EP1, and a 2,097,152-token global batch. Its
+second step reported 790.8 TFLOPs/GPU. The bounded midtraining gate used one
+GPU and a 262,144-token global batch; steps 3--5 reported 555.2, 574.9, and
+555.4 TFLOPs/GPU. These short-gate rates establish execution health, not a
+production throughput recommendation.
+
 ## Historical candidate validation
 
 Validated candidate commit: `0cdcc8b813ab5ca582689edb80e4892891b03ae9`.
