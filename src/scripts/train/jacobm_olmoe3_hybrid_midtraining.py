@@ -39,6 +39,7 @@ LOAD_PATH = os.environ.get("OLMOE3_MT_LOAD_PATH")
 MAX_TOKENS = int(os.environ.get("OLMOE3_MT_MAX_TOKENS", "100000000000"))
 WARMUP_STEPS = int(os.environ.get("OLMOE3_MT_WARMUP_STEPS", "2000"))
 SOURCE_MIX_PROCESSES = int(os.environ.get("OLMOE3_MT_SOURCE_PROCESSES", "16"))
+DATA_GLOB = os.environ.get("OLMOE3_MT_DATA_GLOB")
 SOURCE_MIX_YAML = os.environ.get(
     "OLMOE3_MT_SOURCE_MIX_YAML",
     str(
@@ -57,18 +58,7 @@ def build_train_module_config(common: CommonComponents) -> OLMoDDPTrainModuleCon
 
 
 def build_data_components(common: CommonComponents) -> DataComponents:
-    source_list = SourceMixtureList.from_yaml(SOURCE_MIX_YAML)
-    source_list.validate()
-    dataset = NumpyFSLDatasetConfig.from_src_mix(
-        src_mix=SourceMixtureDatasetConfig(
-            source_list=source_list,
-            requested_tokens=MAX_TOKENS,
-            global_batch_size=common.global_batch_size,
-            processes=SOURCE_MIX_PROCESSES,
-            seed=SEED,
-            render_tables=False,
-            quiet=True,
-        ),
+    dataset_kwargs = dict(
         tokenizer=common.tokenizer,
         work_dir=common.work_dir,
         sequence_length=common.max_sequence_length,
@@ -80,6 +70,27 @@ def build_data_components(common: CommonComponents) -> DataComponents:
             repetition_max_count=32,
         ),
     )
+    if DATA_GLOB is None:
+        source_list = SourceMixtureList.from_yaml(SOURCE_MIX_YAML)
+        source_list.validate()
+        dataset = NumpyFSLDatasetConfig.from_src_mix(
+            src_mix=SourceMixtureDatasetConfig(
+                source_list=source_list,
+                requested_tokens=MAX_TOKENS,
+                global_batch_size=common.global_batch_size,
+                processes=SOURCE_MIX_PROCESSES,
+                seed=SEED,
+                render_tables=False,
+                quiet=True,
+            ),
+            **dataset_kwargs,
+        )
+    else:
+        log.warning(
+            "Using explicit OLMOE3_MT_DATA_GLOB=%s instead of the production source mixture",
+            DATA_GLOB,
+        )
+        dataset = NumpyFSLDatasetConfig.glob(DATA_GLOB, **dataset_kwargs)
     return DataComponents(
         dataset=dataset,
         data_loader=NumpyDataLoaderConfig(
