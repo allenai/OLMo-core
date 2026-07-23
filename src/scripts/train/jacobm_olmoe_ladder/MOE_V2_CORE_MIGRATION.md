@@ -138,6 +138,16 @@ at layers 4 and 9. This is 26,427,520 fewer active parameters than the matched
 GDN model; retain both TFLOPs/GPU and MFU in the report, but use raw TPS and
 step time for the direct wall-clock comparison.
 
+The one-GPU SWA functional gate completed its compiled dry run and all 12
+optimizer steps without a skipped update as work `01KY8H9NCGBJ5A3P1TGB66BNA2`.
+At MB16 it used about 198.0 GiB active / 198.6 GiB reserved memory and had a
+final-10 median near 576.9 TFLOPs/GPU. The three standard capacity cells were
+then submitted as work `01KY8HJDPSSBJ85767BJ9KSV4B` (2 Mi MB16, 4 Mi MB16,
+and 2 Mi MB32). Once the production MB16 cell completed its full compiled dry
+run, the 16-task / 80-GPU SWA parallelism matrix was released as work
+`01KY8HPSW7XAEP6D9VZN1STGVZ` without waiting for MB32 or the 50-step capacity
+cells to finish. No SWA MB17--MB20 jobs were launched.
+
 ## Functional gate results
 
 | Gate | GPUs / EP | Work | Result |

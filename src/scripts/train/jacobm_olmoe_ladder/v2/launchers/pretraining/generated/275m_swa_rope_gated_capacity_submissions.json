@@ -1,0 +1,12 @@
+[
+  {
+    "experiment_name": "jacobm-moe-v2-core-275m-swa-rope-gated-capacity-r1",
+    "experiment_id": "01KY8HJDPSSBJ85767BJ9KSV4B",
+    "tasks": [
+      "b2m-gpu1-ep1-mb16",
+      "b2m-gpu1-ep1-mb32",
+      "b4m-gpu1-ep1-mb16"
+    ],
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY8HJDPSSBJ85767BJ9KSV4B"
+  }
+]

@@ -1,0 +1,10 @@
+[
+  {
+    "experiment_name": "jacobm-moe-v2-core-275m-swa-rope-gated-functional-r1",
+    "experiment_id": "01KY8H9NCGBJ5A3P1TGB66BNA2",
+    "tasks": [
+      "swa-functional-gpu1-mb16"
+    ],
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY8H9NCGBJ5A3P1TGB66BNA2"
+  }
+]
