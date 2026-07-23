@@ -87,6 +87,7 @@ from olmo_core.optim.scheduler import (  # noqa: E402
     ComposableSchedulerStageType,
     OverrideDecay,
 )
+from olmo_core.distributed.utils import get_local_rank  # noqa: E402
 from olmo_core.train import (  # noqa: E402
     Duration,
     TrainerConfig,
@@ -773,6 +774,14 @@ if __name__ == "__main__":
             include_default_evals=False,
             finalize_config=finalize_config,
         )
+        if get_local_rank() == 0:
+            print(config)
+            print(
+                f"Total parameters:         {config.model.num_params:,d} "
+                f"({config.model.num_active_params:,d} active)\n"
+                f"Non-embedding parameters: {config.model.num_non_embedding_params:,d} "
+                f"({config.model.num_active_non_embedding_params:,d} active)"
+            )
         train(config)
     finally:
         teardown_training_environment()
