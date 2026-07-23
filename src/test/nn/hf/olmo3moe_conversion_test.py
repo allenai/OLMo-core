@@ -14,6 +14,7 @@ from olmo_core.nn.hf.convert import (
     convert_olmo3moe_state_from_hf,
     convert_olmo3moe_state_to_hf,
 )
+from olmo_core.nn.moe.v2.weight_stream import iter_olmo3moe_tensor_to_hf
 
 
 def _fake_config():
@@ -96,3 +97,17 @@ def test_olmo3moe_conversion_supports_reordered_norm_without_peri_ln():
     assert set(hf_roundtrip) == set(hf)
     for key, tensor in hf.items():
         assert torch.equal(hf_roundtrip[key], tensor), f"roundtrip mismatch for '{key}'"
+
+
+def test_olmo3moe_streaming_tensor_conversion_matches_full_conversion():
+    config = _fake_config()
+    olmo = convert_olmo3moe_state_from_hf(config, _synthetic_hf_state(config))
+
+    streamed = {}
+    for name, value in olmo.items():
+        streamed.update(iter_olmo3moe_tensor_to_hf(config, name, value))
+    full = convert_olmo3moe_state_to_hf(config, olmo)
+
+    assert streamed.keys() == full.keys()
+    for name, value in full.items():
+        torch.testing.assert_close(streamed[name], value)
