@@ -34,6 +34,16 @@ Targets may override `model_size`, `expert_parallel_size`,
 eval-only launcher cover the larger hybrid checkpoints while preserving the
 simple 275M EP1 defaults.
 
+The RoPE-gated family is split into two manifests so small-model validation
+does not reserve eight GPUs unnecessarily:
+
+- `manifests/275m_rope_gated_full.yaml`: 16 two-GPU tasks;
+- `manifests/rope_gated_scale_completed_full.yaml`: 10 eight-GPU tasks for
+  the currently finished 480M, 810M, and 1.2B checkpoints.
+
+The latter intentionally excludes still-running 810M Cx8 and failed/partial
+1.2B Cx2. Add them only after permanent final checkpoints exist.
+
 Collect every registered W&B validation summary into a compact coverage page
 and a complete JSON metric export with:
 

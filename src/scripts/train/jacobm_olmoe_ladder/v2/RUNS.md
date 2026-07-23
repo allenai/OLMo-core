@@ -4,7 +4,7 @@ Record post-migration experiment waves here. Per-run rows must include Beaker
 job IDs and W&B IDs once they exist. Detailed migration-era DDP jobs remain in
 [`../v1/DDP_RUNS.md`](../v1/DDP_RUNS.md).
 
-## Live status snapshot (2026-07-23 17:16 UTC)
+## Live status snapshot (2026-07-23 19:00 UTC)
 
 This is the current source of truth for active V2 work. The detailed sections
 below retain the full launch and retry history.
@@ -24,10 +24,10 @@ below retain the full launch and retry history.
 | pretraining | aligned geometry + RoPE + gated attention 275M sweep | finished | 16/16; observed best LR is `1.6e-3`, `1.6e-3`, `8e-4`, `1.6e-3` at Cx1/2/4/8 | [results](results/pretraining/geometry_gdn_ev2_rope_gated/results.md) |
 | pretraining | larger aligned geometry + NoPE | finished | 12/12 formal cells; clean 1.2B Cx8 reproduction finished with final-250M CE `2.034305` | [results](results/pretraining/geometry_gdn_ev2_nope/results.md) |
 | pretraining | larger aligned geometry + NoPE + gated attention | finished | 12/12; newly finished 1.2B Cx2 strict final-250M CE `2.188236` | [results](results/pretraining/geometry_gdn_ev2_nope_gated/results.md) |
-| pretraining | larger aligned geometry + RoPE + gated attention | 9 finished / 2 running / 1 failed | 810M Cx8 is at 104.3B / 121.9B (85%); 1.2B Cx8 is at 182.1B / 187.4B (97%); 1.2B Cx2 remains failed | [results](results/pretraining/geometry_gdn_ev2_rope_gated/results.md) |
+| pretraining | larger aligned geometry + RoPE + gated attention | 10 finished / 1 running / 1 failed | 1.2B Cx8 finished at 187.437B tokens with final `step238338`; 810M Cx8 is still running; 1.2B Cx2 remains failed | [results](results/pretraining/geometry_gdn_ev2_rope_gated/results.md) |
 | midtraining | first hybrid 275M Cx8 | finished | 100B; final checkpoint `step95368`; validation finished | [1keo2hz6](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/1keo2hz6) |
 | midtraining | first hybrid 480M Cx8 | finished | 100.001B; final checkpoint `step95368`; validation finished | [mnp9rv5l](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/mnp9rv5l) |
-| validation | V2 post-training backfills | registered targets complete; new checkpoints eligible | 91/91 registered targets finished with 498 metrics each; 28 newly finished checkpoints are not yet queued | [results](results/validation/hybrid_full.md) |
+| validation | V2 post-training backfills | 91 complete; 26 RoPE-gated queued | Full-suite backfills submitted for all 16 finished 275M sweep cells and 10 finished larger cells | [results](results/validation/hybrid_full.md) |
 
 The formal pretraining results and plots use finished runs only and enforce a
 complete final-250M-token history. The gated-RoPE sweep is now complete. Its
@@ -728,6 +728,12 @@ retains the identical 192-GPU peak layout and transferred LRs.
   [01KY09D3D872K0R03NHF5MGYD4](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY09D3D872K0R03NHF5MGYD4).
   The consolidated export now contains all 91 registered targets with 498
   metrics each.
+- On 2026-07-23, full-suite validation was submitted for every completed
+  RoPE-gated checkpoint: [16 two-GPU 275M tasks](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY85JPM1SE0XYX1RMFM5HXX7)
+  and [10 eight-GPU larger-model tasks](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY85JY73XPE4223SKFNDDA7Y).
+  Both batches are allocated, urgent, and constrained to Holmes. The larger
+  batch includes the newly finished 1.2B Cx8 `step238338`; 810M Cx8 remains
+  deferred while training, and failed/partial 1.2B Cx2 is not evaluated.
 
 ## New wave template
 
