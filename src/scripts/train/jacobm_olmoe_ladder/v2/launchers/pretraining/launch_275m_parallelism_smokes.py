@@ -21,9 +21,8 @@ DEFAULT_MANIFEST = SCRIPT_DIR / "manifests" / "275m_rope_gated_parallelism_smoke
 DEFAULT_OUTPUT = SCRIPT_DIR / "generated" / "275m_rope_gated_parallelism_smokes.yaml"
 DEFAULT_RECORD = SCRIPT_DIR / "generated" / "275m_rope_gated_parallelism_submissions.json"
 EXPECTED_VARIANT = "geometry_275m_gdn_ev2_rope_gated"
-EXPECTED_GLOBAL_BATCH = 262_144
 EXPECTED_SEQUENCE_LENGTH = 8_192
-EXPECTED_RANK_MICROBATCH = 8
+ALLOWED_GLOBAL_BATCHES = {262_144, 2_097_152, 4_194_304}
 ALLOWED_EP_PATHS = {"sync_1d", "rowwise_nvshmem"}
 
 
@@ -46,10 +45,13 @@ def validate(manifest: dict[str, Any]) -> list[dict[str, Any]]:
         raise ValueError(f"expected model variant {EXPECTED_VARIANT}")
     if int(training["sequence_length"]) != EXPECTED_SEQUENCE_LENGTH:
         raise ValueError("parallelism study must preserve the 8,192-token sequence length")
-    if int(training["global_batch_size"]) != EXPECTED_GLOBAL_BATCH:
-        raise ValueError("parallelism study must preserve the 262,144-token optimizer batch")
-    if int(training["rank_microbatch_sequences"]) != EXPECTED_RANK_MICROBATCH:
-        raise ValueError("the fixed-parallelism study must default to rank microbatch MB8")
+    if int(training["global_batch_size"]) not in ALLOWED_GLOBAL_BATCHES:
+        raise ValueError(
+            "parallelism study global batch must be one of "
+            f"{sorted(ALLOWED_GLOBAL_BATCHES)} tokens"
+        )
+    if int(training["rank_microbatch_sequences"]) < 1:
+        raise ValueError("rank microbatch must be positive")
     if bool(training.get("checkpoints", True)):
         raise ValueError("parallelism smokes must disable checkpoints")
     if bool(training.get("evals", True)):
@@ -60,7 +62,6 @@ def validate(manifest: dict[str, Any]) -> list[dict[str, Any]]:
     rows = manifest["runs"]
     task_names: set[str] = set()
     run_names: set[str] = set()
-    global_sequences = EXPECTED_GLOBAL_BATCH // EXPECTED_SEQUENCE_LENGTH
     for row in rows:
         task_name = str(row["task_name"])
         run_name = str(row["run_name"])
@@ -72,12 +73,19 @@ def validate(manifest: dict[str, Any]) -> list[dict[str, Any]]:
         world_size = int(row["gpu_count"])
         ep_size = int(row["expert_parallel_size"])
         ep_path = str(row["expert_parallel_path"])
-        if world_size not in {1, 2, 4}:
-            raise ValueError(f"{task_name}: only 1-, 2-, and 4-GPU cells are permitted")
+        if world_size not in {1, 2, 4, 8}:
+            raise ValueError(f"{task_name}: only 1-, 2-, 4-, and 8-GPU cells are permitted")
         if ep_size < 1 or world_size % ep_size:
             raise ValueError(f"{task_name}: EP={ep_size} must divide world={world_size}")
         if ep_path not in ALLOWED_EP_PATHS:
             raise ValueError(f"{task_name}: unsupported EP path {ep_path!r}")
+        global_batch_size = int(row.get("global_batch_size", training["global_batch_size"]))
+        if global_batch_size not in ALLOWED_GLOBAL_BATCHES:
+            raise ValueError(
+                f"{task_name}: unsupported global batch {global_batch_size}; expected one of "
+                f"{sorted(ALLOWED_GLOBAL_BATCHES)}"
+            )
+        global_sequences = global_batch_size // EXPECTED_SEQUENCE_LENGTH
         if global_sequences % world_size:
             raise ValueError(f"{task_name}: global sequence batch does not divide world size")
         rank_sequences = global_sequences // world_size
@@ -94,6 +102,7 @@ def validate(manifest: dict[str, Any]) -> list[dict[str, Any]]:
                 f"{task_name}: rank batch {rank_sequences} does not divide MB{rank_microbatch}"
             )
         row["world_size"] = world_size
+        row["global_batch_size"] = global_batch_size
         row["rank_sequences"] = rank_sequences
         row["effective_rank_microbatch"] = rank_microbatch
         row["accumulation_steps"] = rank_sequences // rank_microbatch
@@ -126,7 +135,7 @@ def build_task(manifest: dict[str, Any], row: dict[str, Any], source_repo: str) 
             env_value("OLMOE3_HYBRID_MODEL_VARIANT", training["model_variant"]),
             env_value("OLMOE3_HYBRID_LR", training["learning_rate"]),
             env_value("OLMOE3_HYBRID_CHINCHILLA_MULTIPLE", training["chinchilla_multiple"]),
-            env_value("OLMOE3_HYBRID_GLOBAL_BATCH_SIZE", training["global_batch_size"]),
+            env_value("OLMOE3_HYBRID_GLOBAL_BATCH_SIZE", row["global_batch_size"]),
             env_value("OLMOE3_HYBRID_WORLD_SIZE", row["world_size"]),
             env_value("OLMOE3_HYBRID_NUM_NODES", 1),
             env_value("OLMOE3_HYBRID_EP_SIZE", row["expert_parallel_size"]),
@@ -136,7 +145,10 @@ def build_task(manifest: dict[str, Any], row: dict[str, Any], source_repo: str) 
                 row["effective_rank_microbatch"],
             ),
             env_value("OLMOE3_HYBRID_SEQUENCE_LENGTH", training["sequence_length"]),
-            env_value("OLMOE3_HYBRID_HARD_STOP_STEPS", training["hard_stop_steps"]),
+            env_value(
+                "OLMOE3_HYBRID_HARD_STOP_STEPS",
+                row.get("hard_stop_steps", training["hard_stop_steps"]),
+            ),
             env_value("OLMOE3_HYBRID_CHECKPOINTS", int(bool(training["checkpoints"]))),
             env_value("OLMOE3_HYBRID_SAVE_INTERVAL", 999_999_999),
             env_value("OLMOE3_HYBRID_EPHEMERAL_SAVE_INTERVAL", 999_999_999),
@@ -147,6 +159,20 @@ def build_task(manifest: dict[str, Any], row: dict[str, Any], source_repo: str) 
             env_value("OLMOE3_HYBRID_WANDB", int(bool(training["wandb"]))),
             env_value("OLMOE3_HYBRID_SAVE_ROOT", manifest["experiment"]["checkpoint_root"]),
         ]
+    )
+    optional_env = {
+        "OLMOE3_HYBRID_EP_ROWWISE_GET_NBLOCKS": row.get("rowwise_get_nblocks"),
+        "OLMOE3_HYBRID_EP_ROWWISE_PUT_NBLOCKS": row.get("rowwise_put_nblocks"),
+        "OLMOE3_HYBRID_EP_ROWWISE_WEIGHTED_PUT_NBLOCKS": row.get(
+            "rowwise_weighted_put_nblocks"
+        ),
+        "OLMOE3_HYBRID_DP_USE_REDUCE_SCATTER": int(
+            bool(row.get("data_parallel_use_reduce_scatter", False))
+        ),
+        "OLMOE3_HYBRID_DP_BUCKET_CAP_MB": row.get("data_parallel_bucket_cap_mb"),
+    }
+    env_vars.extend(
+        env_value(name, value) for name, value in optional_env.items() if value is not None
     )
     datasets = [
         {"mountPath": str(item["mount_path"]), "source": {"weka": str(item["weka"])}}
@@ -205,10 +231,10 @@ def main() -> None:
     if not wrapper.is_file():
         raise ValueError(f"source wrapper is missing: {wrapper}")
 
-    print("task                 GPU EP path              rank_seq MB accum run")
+    print("task                 batch GPU EP path              rank_seq MB accum run")
     for row in rows:
         print(
-            f"{row['task_name']:<20} {row['gpu_count']:>3} "
+            f"{row['task_name']:<20} {row['global_batch_size']:>7} {row['gpu_count']:>3} "
             f"{row['expert_parallel_size']:>2} {row['expert_parallel_path']:<17} "
             f"{row['rank_sequences']:>8} {row['effective_rank_microbatch']:>2} "
             f"{row['accumulation_steps']:>5} {row['run_name']}"

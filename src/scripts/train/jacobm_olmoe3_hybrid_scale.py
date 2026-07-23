@@ -103,6 +103,11 @@ EP_SIZE = int(os.environ.get("OLMOE3_HYBRID_EP_SIZE", "1"))
 EP_PATH = ExpertParallelPath(
     os.environ.get("OLMOE3_HYBRID_EP_PATH", ExpertParallelPath.rowwise_nvshmem.value)
 )
+EP_ROWWISE_GET_NBLOCKS = os.environ.get("OLMOE3_HYBRID_EP_ROWWISE_GET_NBLOCKS")
+EP_ROWWISE_PUT_NBLOCKS = os.environ.get("OLMOE3_HYBRID_EP_ROWWISE_PUT_NBLOCKS")
+EP_ROWWISE_WEIGHTED_PUT_NBLOCKS = os.environ.get(
+    "OLMOE3_HYBRID_EP_ROWWISE_WEIGHTED_PUT_NBLOCKS"
+)
 RANK_MICROBATCH_SEQUENCES = int(os.environ.get("OLMOE3_HYBRID_RANK_MICROBATCH_SEQUENCES", "16"))
 LEARNING_RATE = float(os.environ.get("OLMOE3_HYBRID_LR", "1.6e-3"))
 CHINCHILLA_MULTIPLE = float(os.environ.get("OLMOE3_HYBRID_CHINCHILLA_MULTIPLE", "1"))
@@ -112,6 +117,8 @@ USE_COMPILE = env_bool("OLMOE3_HYBRID_USE_COMPILE", True)
 WANDB_ENABLED = env_bool("OLMOE3_HYBRID_WANDB", True)
 CHECKPOINTS_ENABLED = env_bool("OLMOE3_HYBRID_CHECKPOINTS", True)
 EVALS_ENABLED = env_bool("OLMOE3_HYBRID_EVALS", False)
+DP_USE_REDUCE_SCATTER = env_bool("OLMOE3_HYBRID_DP_USE_REDUCE_SCATTER", False)
+DP_BUCKET_CAP_MB = os.environ.get("OLMOE3_HYBRID_DP_BUCKET_CAP_MB")
 EVAL_INTERVAL = int(os.environ.get("OLMOE3_HYBRID_EVAL_INTERVAL", "1000"))
 EVAL_STEPS = int(os.environ.get("OLMOE3_HYBRID_EVAL_STEPS", "0"))
 EVAL_TASK_SET = os.environ.get("OLMOE3_HYBRID_EVAL_TASK_SET", "hellaswag")
@@ -209,11 +216,18 @@ def model_config():
     else:
         raise ValueError(f"Unknown model variant {MODEL_VARIANT!r}")
     if EP_SIZE > 1:
-        if model.block.ep is not None:
-            model.block.ep.path = EP_PATH
-        for block in (model.block_overrides or {}).values():
-            if block.ep is not None:
-                block.ep.path = EP_PATH
+        for block in (model.block, *(model.block_overrides or {}).values()):
+            if block.ep is None:
+                continue
+            block.ep.path = EP_PATH
+            if EP_ROWWISE_GET_NBLOCKS is not None:
+                block.ep.rowwise_get_nblocks = int(EP_ROWWISE_GET_NBLOCKS)
+            if EP_ROWWISE_PUT_NBLOCKS is not None:
+                block.ep.rowwise_put_nblocks = int(EP_ROWWISE_PUT_NBLOCKS)
+            if EP_ROWWISE_WEIGHTED_PUT_NBLOCKS is not None:
+                block.ep.rowwise_weighted_put_nblocks = int(
+                    EP_ROWWISE_WEIGHTED_PUT_NBLOCKS
+                )
         model.validate()
     return model
 
@@ -293,6 +307,8 @@ def build_train_module_config(common: CommonComponents) -> OLMoDDPTrainModuleCon
             name=DataParallelType.ddp,
             reduce_grads_in_fp32=True,
             accumulate_grads_in_fp32=True,
+            bucket_cap_mb=None if DP_BUCKET_CAP_MB is None else int(DP_BUCKET_CAP_MB),
+            use_reduce_scatter=DP_USE_REDUCE_SCATTER,
         ),
         ep_config=TransformerExpertParallelConfig(degree=EP_SIZE) if EP_SIZE > 1 else None,
         pp_config=None,

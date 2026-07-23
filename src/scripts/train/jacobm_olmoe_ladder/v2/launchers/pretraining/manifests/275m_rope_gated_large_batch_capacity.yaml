@@ -1,0 +1,72 @@
+schema_version: 1
+
+experiment:
+  description: Checkpoint-free 275M gated-RoPE large-batch microbatch-capacity gate
+  checkpoint_root: /tmp/olmoe3-275m-rope-gated-large-batch-capacity
+
+source:
+  repo: /weka/oe-adapt-default/jacobm/olmoe3/olmo-ddp-migration/OLMo-core-moe-v2-core
+  wrapper: src/scripts/train/jacobm_olmoe3_hybrid_scale_beaker.sh
+  image: 01KW8G8JC20H11Y60PPTE2VN4Q
+
+beaker:
+  workspace: ai2/OLMo-3-moe-experiments
+  cluster: ai2/holmes
+  priority: urgent
+  shared_memory: 128 GiB
+  min_runtime: 10m
+  auto_resume: false
+  timeout: 3h
+  result_path: /results
+
+secrets:
+  AWS_ACCESS_KEY_ID: AWS_ACCESS_KEY_ID
+  AWS_SECRET_ACCESS_KEY: AWS_SECRET_ACCESS_KEY
+  WANDB_API_KEY: jacobm_WANDB_API_KEY
+  BEAKER_TOKEN: jacobm_BEAKER_TOKEN
+
+datasets:
+  - mount_path: /weka/oe-adapt-default
+    weka: oe-adapt-default
+  - mount_path: /weka/oe-training-default
+    weka: oe-training-default
+
+training:
+  model_size: 275m
+  model_variant: geometry_275m_gdn_ev2_rope_gated
+  sequence_length: 8192
+  global_batch_size: 2097152
+  rank_microbatch_sequences: 16
+  learning_rate: "8e-4"
+  chinchilla_multiple: 1
+  hard_stop_steps: 50
+  checkpoints: false
+  evals: false
+  compile: true
+  wandb: true
+
+# At 8,192 tokens/sequence, the 2 Mi-token batch has 256 sequences and the
+# 4 Mi-token batch has 512. MB16 is the prior maximum; MB32 is the only larger
+# legal divisor of the 2 Mi-token one-rank batch and previously OOMed. These
+# cells establish capacity and the accumulation-only effect before the wider
+# 1/2/4/8-GPU parallelism matrix is launched.
+runs:
+  - task_name: b2m-gpu1-ep1-mb16
+    run_name: smoke-moe-v2-core-275m-rope-gated-b2m-gpu1-ep1-mb16-r1
+    gpu_count: 1
+    expert_parallel_size: 1
+    expert_parallel_path: sync_1d
+    rank_microbatch_sequences: 16
+  - task_name: b2m-gpu1-ep1-mb32
+    run_name: smoke-moe-v2-core-275m-rope-gated-b2m-gpu1-ep1-mb32-r1
+    gpu_count: 1
+    expert_parallel_size: 1
+    expert_parallel_path: sync_1d
+    rank_microbatch_sequences: 32
+  - task_name: b4m-gpu1-ep1-mb16
+    run_name: smoke-moe-v2-core-275m-rope-gated-b4m-gpu1-ep1-mb16-r1
+    global_batch_size: 4194304
+    gpu_count: 1
+    expert_parallel_size: 1
+    expert_parallel_path: sync_1d
+    rank_microbatch_sequences: 16
