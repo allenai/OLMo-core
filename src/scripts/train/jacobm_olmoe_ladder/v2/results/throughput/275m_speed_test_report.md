@@ -43,6 +43,55 @@ model work and half is lower kernel/memory efficiency.
 - More GPUs reduce wall time but generally lower per-GPU efficiency for this
   small model. Use the fewest GPUs compatible with the desired job duration.
 
+## 1:1 attention-ratio follow-up
+
+The 2026-07-24 follow-up changes only depth and mixer placement. Every model
+strictly alternates a recurrent/local mixer on even layers with gated global
+RoPE attention on odd layers. Model width, head geometry, `expand_v`, MoE
+dimensions/counts, dense-first placement, initialization, and all other mixer
+settings are unchanged. Layer count is selected to come as close as possible
+to the original GDN1 speed model's 292,092,800 active parameters while retaining
+an exact 1:1 ratio.
+
+| Mixer | Layers | Recurrent/local | Global attention | Active params | Active non-embedding | Total params | Active delta vs old GDN1 |
+|---|---:|---|---|---:|---:|---:|---:|
+| SWA | 12 | 0/2/4/6/8/10 | 1/3/5/7/9/11 | 295,500,032 | 231,274,752 | 3,773,372,672 | +1.17% |
+| GDN1 | 10 | 0/2/4/6/8 | 1/3/5/7/9 | 284,148,560 | 219,923,280 | 3,129,680,720 | -2.72% |
+| GDN2 | 10 | 0/2/4/6/8 | 1/3/5/7/9 | 292,960,040 | 228,734,760 | 3,138,492,200 | +0.30% |
+
+The 12-layer SWA model has more *total* parameters because adding depth adds
+two full routed-expert banks; active parameters are the matching axis used for
+the ladder and throughput comparison.
+
+Each model ran two urgent, unallocated, single-B300 Holmes cells: 2 Mi and 4 Mi
+global batches, MB16, EP1/all-reduce, 8,192-token sequences, 50 optimizer
+steps, compile enabled, and no checkpoints or evals. All six cells finished
+successfully with zero skipped optimizer updates. Results below use the same
+final-ten medians and memory checks as the original matrix. TPS/GPU is in
+thousands.
+
+| Global batch | Mixer | TFLOPs/GPU | TPS/GPU | MFU | Peak active / reserved |
+|---:|---|---:|---:|---:|---:|
+| 2 Mi | SWA 1:1 | 592.15 | 325.1k | 26.32% | 234.2 / 237.6 GiB |
+| 2 Mi | GDN1 1:1 | 499.00 | 311.4k | 22.18% | 215.4 / 219.1 GiB |
+| 2 Mi | GDN2 1:1 | 479.35 | 288.2k | 21.31% | 240.0 / 243.0 GiB |
+| 4 Mi | SWA 1:1 | 573.30 | 314.7k | 25.48% | 234.2 / 237.7 GiB |
+| 4 Mi | GDN1 1:1 | 500.00 | 312.0k | 22.23% | 215.4 / 219.6 GiB |
+| 4 Mi | GDN2 1:1 | 472.95 | 284.4k | 21.02% | 240.0 / 243.5 GiB |
+
+Relative to the original 4:1 mixer/full-attention controls, the 1:1 GDN1
+model improves raw TPS by 4.2% at 2 Mi and 6.4% at 4 Mi; GDN2 improves by
+10.7% and 11.0%. GDN2 remains 7.4--8.9% slower in raw TPS than GDN1 at 1:1,
+narrower than the original 11.1--13.4% gap. The deeper active-matched SWA
+model is 20.0% and 18.1% slower than its ten-layer 4:1 control. Consequently,
+SWA is only 4.4% faster than GDN1 at 2 Mi and 0.9% faster at 4 Mi in this
+active-matched 1:1 comparison.
+
+- [GDN1 1:1 work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY8YWHCPGVB40W51W7G69VM5)
+- [GDN2 1:1 work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY8YWJQEKHCBKQS9QYBHCY7T)
+- [SWA 1:1 work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY8YWKZE3QCZ4SCXD224D5RY)
+- [Machine-readable 1:1 results](275m_gdn_gdn2_swa_1to1_single_gpu.csv)
+
 ## Artifacts
 
 - [Machine-readable 54-cell results](275m_gdn_gdn2_swa_large_batch_parallelism.csv)

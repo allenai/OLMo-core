@@ -1,0 +1,7 @@
+family,batch_tokens,gpus,path,rank_microbatch_sequences,final10_median_tflops_gpu,final10_median_tps_gpu,aggregate_tps,stable_step_seconds,final10_median_mfu_pct,peak_active_gib,peak_reserved_gib,max_skipped_steps,beaker_job,wandb_url
+GDN1-1to1,2097152,1,EP1/all-reduce,16,499.00,311375.5,311375.5,6.7351,22.175,215.40,219.10,0,01KY8YWHH35FQPMEH0QYZZGWKA,https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/jfu2wju8
+GDN1-1to1,4194304,1,EP1/all-reduce,16,500.00,312011.0,312011.0,13.4428,22.225,215.40,219.60,0,01KY8YWHN21ZDHTBTRCR8GK66B,https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/mxqsb9zy
+GDN2-1to1,2097152,1,EP1/all-reduce,16,479.35,288215.0,288215.0,7.2763,21.305,240.00,243.00,0,01KY8YWJVY5FXH0YP3FHFY3EYD,https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/co8fqb4c
+GDN2-1to1,4194304,1,EP1/all-reduce,16,472.95,284368.0,284368.0,14.7496,21.020,240.00,243.50,0,01KY8YWJZVWTB6X35RDV09N3BA,https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/tuoe8yuw
+SWA-1to1,2097152,1,EP1/all-reduce,16,592.15,325078.5,325078.5,6.4512,26.320,234.20,237.60,0,01KY8YWM2X9NTBVC9HRCCW5YR6,https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/klrczpgl
+SWA-1to1,4194304,1,EP1/all-reduce,16,573.30,314725.0,314725.0,13.3269,25.480,234.20,237.70,0,01KY8YWM64BAKS65VK6G0KKRBA,https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/jlsdgst5
