@@ -36,6 +36,7 @@ USE_NV_PROFILE = False
 if not USE_NV_PROFILE:
     os.environ["NVTX_DISABLE"] = "1"
 
+
 from typing import cast  # noqa: E402
 
 import torch  # noqa: E402
@@ -112,6 +113,7 @@ from olmo_core.train.train_module.transformer import (  # noqa: E402
 
 
 log = logging.getLogger(__name__)
+log = logging.getLogger(__name__)
 
 
 def _get_split_points(original_num_layers: int, num_stages: int, minus_last_stage: int):
@@ -171,7 +173,7 @@ PP_DIM = 2
 
 # ref
 REF_NUM_NODES = 16
-TAG = "rep"
+TAG = f"rep"
 
 LR_ALPHA = 0.53
 
@@ -261,15 +263,16 @@ EP_NO_SYNC_CAPACITY_FACTOR = 1.1875
 # import torch._functorch.config  # Force initialization by accessing dynamo first
 # torch._functorch.config.activation_memory_budget = 0.1
 
+if RANDOM_ASSIGN:
+    TAG += "-R"
 
+from olmo_core.nn.lm_head import LMHeadConfig, LMHeadType  # noqa: E402
+from olmo_core.nn.rope import RoPEConfig, RoPEScalingConfig, RoPEType  # noqa: E402
 from olmo_core.nn.attention import AttentionConfig, AttentionType  # noqa: E402
-from olmo_core.nn.layer_norm import LayerNormConfig, LayerNormType  # noqa: E402
-from olmo_core.nn.lm_head import LMHeadConfig  # noqa: E402
-from olmo_core.nn.rope import RoPEConfig, RoPEType  # noqa: E402
+from olmo_core.nn.layer_norm import LayerNormType, LayerNormConfig  # noqa: E402
 
 
 def build_model_config(common: CommonComponents) -> OLMoDDPModelConfig:
-    from olmo_core.nn.attention.backend import AttentionBackendName
     from olmo_core.nn.ddp.block import OLMoDDPTransformerBlockConfig
     from olmo_core.nn.moe.v2.ep_config import (
         ExpertParallelConfig,
@@ -277,6 +280,7 @@ def build_model_config(common: CommonComponents) -> OLMoDDPModelConfig:
         ExpertParallelSchedule,
     )
     from olmo_core.nn.moe.v2.fp8 import MoERowwiseFP8Config
+    from olmo_core.nn.attention.backend import AttentionBackendName
 
     d_model = D_MODEL
     dtype = DType.float32
@@ -370,7 +374,7 @@ def build_model_config(common: CommonComponents) -> OLMoDDPModelConfig:
                 gating_function=MoERouterGatingFunction.softmax,
                 uniform_expert_assignment=UNIFORM_ASSIGN,
                 random_expert_assignment=RANDOM_ASSIGN,
-                lb_loss_weight=0.01,
+                lb_loss_weight=0.005,
                 z_loss_weight=2e-4,
                 lb_loss_granularity=MoELoadBalancingLossGranularity.local_batch,
                 dtype=dtype,
@@ -470,7 +474,7 @@ def build_model_config(common: CommonComponents) -> OLMoDDPModelConfig:
     # First block will be a regular transformer block (no MoE component).
     config.block_overrides = {
         0: deepcopy(dense_block_config),
-        # 1: deepcopy(dense_block_config),
+        1: deepcopy(dense_block_config),
         # also make last layer dense
         # NUM_LAYERS-1: deepcopy(dense_block_config),
     }
@@ -613,7 +617,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             checkpointer=CheckpointerConfig(
                 save_thread_count=3, load_thread_count=2, throttle_uploads=True
             ),
-            metrics_collect_interval=10,
+            metrics_collect_interval=20,
             cancel_check_interval=cancel_check_interval,
             max_duration=Duration.tokens(MAX_DURATION),
             # steps_to_skip=[StepSkipRange(start=41312, stop=41329)]
@@ -645,7 +649,10 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         .with_callback(
             "profiler",
             NvidiaProfilerCallback(
-                enabled=USE_NV_PROFILE, profile_ranks=list(range(0, 8 * 32, 8)), start=11, end=15
+                enabled=USE_NV_PROFILE,
+                profile_ranks=list(range(0, 8 * 32, 8)),
+                start=21 if RANDOM_ASSIGN else 151,
+                end=25 if RANDOM_ASSIGN else 155,
             ),
         )
         .with_callback(
