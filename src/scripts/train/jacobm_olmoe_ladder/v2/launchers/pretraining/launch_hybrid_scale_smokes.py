@@ -92,7 +92,11 @@ def validate(manifest: dict[str, Any], source_repo: Path) -> list[dict[str, Any]
 
 
 def build_task(
-    manifest: dict[str, Any], row: dict[str, Any], *, source_repo: Path
+    manifest: dict[str, Any],
+    row: dict[str, Any],
+    *,
+    source_repo: Path,
+    debug_gradients: bool = False,
 ) -> dict[str, Any]:
     source = manifest["source"]
     beaker = manifest["beaker"]
@@ -166,12 +170,25 @@ def build_task(
             env_var("OLMOE3_HYBRID_SAVE_ROOT", manifest["experiment"]["checkpoint_root"]),
         ]
     )
+    if debug_gradients:
+        env_vars.extend(
+            [
+                env_var("OLMO_DDP_DEBUG_NONFINITE_GRAD", 1),
+                env_var("OLMO_DDP_DEBUG_NONFINITE_GRAD_RANKS", "all"),
+                env_var("OLMO_DDP_DEBUG_NONFINITE_GRAD_TOPK", 50),
+                env_var("OLMO_DDP_DEBUG_GRAD_NORMS", 20),
+                env_var("OLMO_DDP_DEBUG_GRAD_NORMS_RANKS", "all"),
+                env_var("OLMO_DDP_DEBUG_GRAD_NORMS_MIN", 100),
+            ]
+        )
     datasets = [
         {"mountPath": item["mount_path"], "source": {"weka": item["weka"]}}
         for item in manifest.get("datasets", [])
     ]
     return {
-        "name": row["task_name"],
+        "name": (
+            f"{row['task_name']}-grad-debug-r1" if debug_gradients else row["task_name"]
+        ),
         "image": {"beaker": str(source["image"])},
         "command": ["/bin/bash", "-lc"],
         "arguments": [arguments],
@@ -217,6 +234,11 @@ def main() -> None:
         action="store_true",
         help="Allow submission when selected run checkpoint directories already exist",
     )
+    parser.add_argument(
+        "--debug-gradients",
+        action="store_true",
+        help="Enable all-rank non-finite and large-gradient diagnostics on a resume.",
+    )
     args = parser.parse_args()
 
     manifest = load_manifest(args.manifest.resolve())
@@ -231,8 +253,19 @@ def main() -> None:
         rows = [row for row in rows if str(row["task_name"]) in wanted]
     spec = {
         "version": "v2",
-        "description": f"{manifest['experiment']['description']} ({len(rows)} tasks)",
-        "tasks": [build_task(manifest, row, source_repo=source_repo) for row in rows],
+        "description": (
+            f"{manifest['experiment']['description']} ({len(rows)} tasks)"
+            + (" (gradient-debug resume)" if args.debug_gradients else "")
+        ),
+        "tasks": [
+            build_task(
+                manifest,
+                row,
+                source_repo=source_repo,
+                debug_gradients=args.debug_gradients,
+            )
+            for row in rows
+        ],
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)
     with args.output.open("w") as file:
@@ -263,6 +296,8 @@ def main() -> None:
         return
     if not args.experiment_name:
         parser.error("--experiment-name is required with --submit")
+    if args.debug_gradients and not args.resume_existing:
+        parser.error("--debug-gradients requires --resume-existing")
     root = Path(str(manifest["experiment"]["checkpoint_root"]))
     existing = [
         root / str(row["run_name"]) for row in rows if (root / str(row["run_name"])).exists()
@@ -300,6 +335,7 @@ def main() -> None:
             "experiment_name": args.experiment_name,
             "experiment_id": experiment_id,
             "tasks": [str(row["task_name"]) for row in rows],
+            "debug_gradients": args.debug_gradients,
             "url": (
                 f"https://beaker.org/orgs/{organization}/workspaces/{workspace_name}/work/"
                 f"{experiment_id}"
