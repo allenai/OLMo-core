@@ -311,6 +311,14 @@ def build_model_config(opts: argparse.Namespace) -> TransformerConfig:
     qwen_kwargs: Dict[str, Any] = dict(
         vocab_size=opts.vocab_size, attn_backend=AttentionBackendName(opts.attn_backend)
     )
+    # RoPE theta override (NTK-style context extension): raise the base rope_theta so the model's
+    # RoPE frequencies cover the longer context. A plain factory param (applies to the base block,
+    # no block_overrides), so it unambiguously takes effect at runtime -- unlike YaRN, whose
+    # with_rope_scaling path writes per-layer overrides. For Qwen3-4B (native 32k, theta 1M) at
+    # 256k, the NTK-aware value is ~8M. Off by default (0). Prefer this over --rope-yarn-factor
+    # for large (>=8x) extensions where YaRN was found to plateau.
+    if opts.rope_theta and opts.rope_theta > 0:
+        qwen_kwargs["rope_theta"] = opts.rope_theta
     if opts.variant != "full":
         # Chunked mask on the full-attention blocks only; GDN blocks ignore chunk_ids.
         qwen_kwargs["document_chunked"] = True
@@ -919,6 +927,14 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=32768,
         help="base native context length for YaRN scaling (Qwen3 = 32768).",
+    )
+    ap.add_argument(
+        "--rope-theta",
+        type=float,
+        default=0.0,
+        help="override base rope_theta for NTK-style context extension (0 = factory default). "
+        "For Qwen3-4B (native 32k) at 256k use ~8e6. Cleaner + more robust than --rope-yarn-factor "
+        "for large extensions; do not combine with --rope-yarn-factor.",
     )
     ap.add_argument(
         "--pack",

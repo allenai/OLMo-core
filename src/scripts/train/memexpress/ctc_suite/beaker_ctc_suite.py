@@ -83,6 +83,12 @@ def parse_args() -> argparse.Namespace:
     )
     ap.add_argument("--rope-old-context", type=int, default=32768)
     ap.add_argument(
+        "--rope-theta",
+        type=float,
+        default=0.0,
+        help="override base rope_theta (NTK ext; ~8e6 for Qwen3-4B@256k)",
+    )
+    ap.add_argument(
         "--pack",
         action="store_true",
         help="bin-pack whole examples (needed for a mixed 8k..256k shard)",
@@ -207,6 +213,8 @@ def main() -> None:
             "--rope-old-context",
             str(opts.rope_old_context),
         ]
+    if opts.rope_theta:
+        cmd += ["--rope-theta", str(opts.rope_theta)]
     if opts.pack:
         cmd += ["--pack"]
     if opts.activation_checkpointing:
