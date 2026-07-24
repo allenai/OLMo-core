@@ -230,6 +230,14 @@ def main() -> None:
     )
     parser.add_argument("--submit", action="store_true")
     parser.add_argument(
+        "--run-suffix",
+        default="",
+        help=(
+            "Append a validated suffix to task and run names for a clean "
+            "from-scratch launch with a distinct checkpoint directory."
+        ),
+    )
+    parser.add_argument(
         "--resume-existing",
         action="store_true",
         help="Allow submission when selected run checkpoint directories already exist",
@@ -251,6 +259,25 @@ def main() -> None:
         if missing:
             raise ValueError(f"Unknown --task values: {sorted(missing)}")
         rows = [row for row in rows if str(row["task_name"]) in wanted]
+    if args.run_suffix:
+        if not re.fullmatch(r"-[a-z0-9][a-z0-9-]*", args.run_suffix):
+            parser.error(
+                "--run-suffix must start with '-' and contain only lowercase "
+                "letters, digits, and hyphens"
+            )
+        if args.resume_existing or args.debug_gradients:
+            parser.error(
+                "--run-suffix is only for a clean from-scratch launch; do not "
+                "combine it with --resume-existing or --debug-gradients"
+            )
+        rows = [
+            {
+                **row,
+                "task_name": f"{row['task_name']}{args.run_suffix}",
+                "run_name": f"{row['run_name']}{args.run_suffix}",
+            }
+            for row in rows
+        ]
     spec = {
         "version": "v2",
         "description": (
@@ -336,6 +363,7 @@ def main() -> None:
             "experiment_id": experiment_id,
             "tasks": [str(row["task_name"]) for row in rows],
             "debug_gradients": args.debug_gradients,
+            "run_suffix": args.run_suffix or None,
             "url": (
                 f"https://beaker.org/orgs/{organization}/workspaces/{workspace_name}/work/"
                 f"{experiment_id}"
