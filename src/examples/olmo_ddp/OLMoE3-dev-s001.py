@@ -113,7 +113,6 @@ from olmo_core.train.train_module.transformer import (  # noqa: E402
 
 
 log = logging.getLogger(__name__)
-log = logging.getLogger(__name__)
 
 
 def _get_split_points(original_num_layers: int, num_stages: int, minus_last_stage: int):

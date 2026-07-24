@@ -36,6 +36,7 @@ USE_NV_PROFILE = False
 if not USE_NV_PROFILE:
     os.environ["NVTX_DISABLE"] = "1"
 
+
 from typing import cast  # noqa: E402
 
 import torch  # noqa: E402
@@ -63,7 +64,6 @@ from olmo_core.internal.experiment import (  # noqa: E402
     build_config,
     train,
 )
-from olmo_core.nn.attention import SlidingWindowAttentionConfig  # noqa: E402
 from olmo_core.nn.lm_head import LMLossImplementation  # noqa: E402
 from olmo_core.nn.moe import (  # noqa: E402
     MoELoadBalancingLossGranularity,
@@ -156,7 +156,9 @@ NUM_HEAD = D_ATTN // HEAD_DIM
 NUM_KV_HEAD = NUM_HEAD // 4
 MOE_HIDDEN_SIZE = 4 * 1024
 NUM_SHARED_EXPERTS = 1  # Number of shared experts in the shared MLP
-SHARED_MLP_HIDDEN_SIZE = 4 * 1024   # Hidden size for shared MLP (or dense branch MLP in arctic) in MoE blocks
+SHARED_MLP_HIDDEN_SIZE = (
+    4 * 1024
+)  # Hidden size for shared MLP (or dense branch MLP in arctic) in MoE blocks
 
 EFFECTIVE_MLP = MOE_HIDDEN_SIZE * TOP_K + SHARED_MLP_HIDDEN_SIZE * NUM_SHARED_EXPERTS
 MLP_RATIO = EFFECTIVE_MLP / D_MODEL
@@ -170,7 +172,7 @@ PP_DIM = 4
 
 # ref
 REF_NUM_NODES = 64
-TAG = f'rep'
+TAG = f"rep"
 
 LR_ALPHA = 0.53
 
@@ -178,7 +180,7 @@ LR_ALPHA = 0.53
 MAX_DURATION = int(200e9)
 MICRO_BSZ = 1
 GLOBAL_BATCH_SIZE_SEQ = (8 * 8) * 2 * 32
-LR = 1.8e-4  # the LR is set for stable stage
+LR = 1.2e-4  # the LR is set for stable stage
 LR_REF_BSZ_IN_M = 8
 USE_FP8 = False
 
@@ -260,15 +262,16 @@ EP_NO_SYNC_CAPACITY_FACTOR = 1.1875
 # import torch._functorch.config  # Force initialization by accessing dynamo first
 # torch._functorch.config.activation_memory_budget = 0.1
 
+if RANDOM_ASSIGN:
+    TAG += "-R"
 
+from olmo_core.nn.lm_head import LMHeadConfig, LMHeadType  # noqa: E402
+from olmo_core.nn.rope import RoPEConfig, RoPEScalingConfig, RoPEType  # noqa: E402
 from olmo_core.nn.attention import AttentionConfig, AttentionType  # noqa: E402
-from olmo_core.nn.layer_norm import LayerNormConfig, LayerNormType  # noqa: E402
-from olmo_core.nn.lm_head import LMHeadConfig  # noqa: E402
-from olmo_core.nn.rope import RoPEConfig, RoPEType  # noqa: E402
+from olmo_core.nn.layer_norm import LayerNormType, LayerNormConfig  # noqa: E402
 
 
 def build_model_config(common: CommonComponents) -> OLMoDDPModelConfig:
-    from olmo_core.nn.attention.backend import AttentionBackendName
     from olmo_core.nn.ddp.block import OLMoDDPTransformerBlockConfig
     from olmo_core.nn.moe.v2.ep_config import (
         ExpertParallelConfig,
@@ -276,6 +279,7 @@ def build_model_config(common: CommonComponents) -> OLMoDDPModelConfig:
         ExpertParallelSchedule,
     )
     from olmo_core.nn.moe.v2.fp8 import MoERowwiseFP8Config
+    from olmo_core.nn.attention.backend import AttentionBackendName
 
     d_model = D_MODEL
     dtype = DType.float32
@@ -369,7 +373,7 @@ def build_model_config(common: CommonComponents) -> OLMoDDPModelConfig:
                 gating_function=MoERouterGatingFunction.softmax,
                 uniform_expert_assignment=UNIFORM_ASSIGN,
                 random_expert_assignment=RANDOM_ASSIGN,
-                lb_loss_weight=0.01,
+                lb_loss_weight=0.005,
                 z_loss_weight=2e-4,
                 lb_loss_granularity=MoELoadBalancingLossGranularity.local_batch,
                 dtype=dtype,
@@ -415,12 +419,12 @@ def build_model_config(common: CommonComponents) -> OLMoDDPModelConfig:
 
     # config.lm_head.loss_implementation = LMLossImplementation.fused_linear
     config.lm_head.loss_implementation = LMLossImplementation.default
-    WINDOW_SIZE = 2048
-    config.block.sequence_mixer.sliding_window = SlidingWindowAttentionConfig(
-        force_full_attention_on_first_layer=False,
-        force_full_attention_on_last_layer=True,
-        pattern=[WINDOW_SIZE, -1],
-    )
+    # WINDOW_SIZE=2048
+    # config.block.sequence_mixer.sliding_window = SlidingWindowAttentionConfig(
+    #     force_full_attention_on_first_layer=False,
+    #     force_full_attention_on_last_layer=True,
+    #     pattern=[WINDOW_SIZE, -1]
+    # )
 
     dense_block_config = OLMoDDPTransformerBlockConfig(
         name=TransformerBlockType.moe_fused_v2,
@@ -612,7 +616,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             checkpointer=CheckpointerConfig(
                 save_thread_count=3, load_thread_count=2, throttle_uploads=True
             ),
-            metrics_collect_interval=10,
+            metrics_collect_interval=20,
             cancel_check_interval=cancel_check_interval,
             max_duration=Duration.tokens(MAX_DURATION),
             # steps_to_skip=[StepSkipRange(start=41312, stop=41329)]
@@ -644,7 +648,10 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         .with_callback(
             "profiler",
             NvidiaProfilerCallback(
-                enabled=USE_NV_PROFILE, profile_ranks=list(range(0, 8 * 32, 8)), start=11, end=15
+                enabled=USE_NV_PROFILE,
+                profile_ranks=list(range(0, 8 * 32, 8)),
+                start=21 if RANDOM_ASSIGN else 151,
+                end=25 if RANDOM_ASSIGN else 155,
             ),
         )
         .with_callback(
