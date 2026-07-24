@@ -274,3 +274,31 @@ several in-place attempts after repeated non-finite-gradient assertions around
 step 4662 and is now past step 11,900. At snapshot time, 480M Cx4/Cx8, 810M
 Cx1/Cx4/Cx8, and 1.2B Cx4/Cx8 were running; 810M Cx2 and 1.2B Cx1/Cx2 were
 queued or starting.
+
+At the 2026-07-24 20:43 UTC audit, five cells had failed again after the prior
+resume: 810M Cx1/Cx2 at steps 10,039/56,755 and 1.2B Cx1/Cx4/Cx8 at steps
+8,029/8,456/7,125. Their durable checkpoints are `step10000`, `step56500`,
+`step8000`, `step8000`, and `step7000`, respectively. Every failure is still
+an explicit non-finite loss or total-gradient assertion rather than an OOM or
+configuration failure.
+
+Those five cells were stopped and relaunched from the same run names and
+checkpoint directories at commit `e267bb23e`. Changing environment variables
+requires a new Beaker experiment specification; an in-place Beaker retry would
+reuse the old frozen environment. The diagnostic continuations are urgent,
+unallocated Holmes jobs:
+
+| Cell | Resume checkpoint | Diagnostic Beaker |
+|---|---:|---|
+| 810M Cx1 | `step10000` | [01KYAXSHTRHNHW1RR34B23RD61](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYAXSHTRHNHW1RR34B23RD61) |
+| 810M Cx2 | `step56500` | [01KYAXSMKACHN3S9G81J9Q0QKT](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYAXSMKACHN3S9G81J9Q0QKT) |
+| 1.2B Cx1 | `step8000` | [01KYAXSQ8S38PT84B7H9S7GCYT](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYAXSQ8S38PT84B7H9S7GCYT) |
+| 1.2B Cx4 | `step8000` | [01KYAXSTD8W8ZDSC6RC377TPVM](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYAXSTD8W8ZDSC6RC377TPVM) |
+| 1.2B Cx8 | `step7000` | [01KYAXSXACNR214DEBRSQ8X671](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYAXSXACNR214DEBRSQ8X671) |
+
+The launcher passes `OLMO_DDP_DEBUG_NONFINITE_GRAD=1`, all-rank reporting,
+top-50 offending parameters, gradient-norm checks every 20 steps on every rank,
+and a warning threshold of 100. The branch also fixes the optimizer diagnostic
+step label and wires the previously incomplete large-gradient warning path.
+The other five unfinished production cells—480M Cx4/Cx8, 810M Cx4/Cx8, and
+1.2B Cx2—remain running without a new failure in this audit.
