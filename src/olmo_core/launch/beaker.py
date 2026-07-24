@@ -1027,6 +1027,15 @@ def _build_config(opts: argparse.Namespace, command: list[str]) -> BeakerLaunchC
     pre_setup = _chain(*[preset.pre_setup for preset in presets], opts.pre_setup)
     post_setup = _chain(*[preset.post_setup for preset in presets], opts.post_setup)
 
+    # Image precedence: explicit --beaker-image > preset > stable default. --beaker-image defaults
+    # to the stable image, so treat "still equal to stable" as "not explicitly set" and let a
+    # preset's image win; an explicit non-stable value always wins.
+    beaker_image = opts.beaker_image
+    if beaker_image == OLMoCoreBeakerImage.stable:
+        for preset in presets:
+            if preset.beaker_image:
+                beaker_image = preset.beaker_image
+
     return BeakerLaunchConfig(
         name=f"{opts.name}-{generate_uuid()[:8]}",
         budget=opts.budget,
@@ -1042,7 +1051,7 @@ def _build_config(opts: argparse.Namespace, command: list[str]) -> BeakerLaunchC
         num_gpus=opts.gpus,
         preemptible=opts.preemptible,
         priority=opts.priority,
-        beaker_image=opts.beaker_image,
+        beaker_image=beaker_image,
         slack_notifications=opts.slack_notifications,
         workspace=opts.workspace,
         allow_dirty=opts.allow_dirty,
