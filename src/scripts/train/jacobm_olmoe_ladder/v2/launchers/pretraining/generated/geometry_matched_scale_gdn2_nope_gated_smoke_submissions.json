@@ -1,0 +1,34 @@
+[
+  {
+    "task_name": "480m-mb8-w8",
+    "run_name": "smoke-480m-geometry-gdn2-ev2-nope-gated-mb8-w8-r1",
+    "commit": "4212d267b0ff05f7694ab513ddd69e7d3213877f",
+    "experiment_id": "01KY9GKF3MDHPFTKM9NJ9A0W81",
+    "task_ids": [
+      "01KY9GKF3WZEVY47VPJCVAQR7R"
+    ],
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY9GKF3MDHPFTKM9NJ9A0W81"
+  },
+  {
+    "task_name": "480m-mb6-w16",
+    "run_name": "smoke-480m-geometry-gdn2-ev2-nope-gated-mb6-w16-r1",
+    "commit": "4212d267b0ff05f7694ab513ddd69e7d3213877f",
+    "experiment_id": "01KY9GKJ0BJ6ED4DKSKD3BHD3Y",
+    "task_ids": [
+      "01KY9GKJ0NMM75XJYQRJN8M5DQ",
+      "01KY9GKJ44D5ZDPST49E2REBCZ"
+    ],
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY9GKJ0BJ6ED4DKSKD3BHD3Y"
+  },
+  {
+    "task_name": "810m-mb6-w16",
+    "run_name": "smoke-810m-geometry-gdn2-ev2-nope-gated-mb6-w16-r1",
+    "commit": "4212d267b0ff05f7694ab513ddd69e7d3213877f",
+    "experiment_id": "01KY9GKP0A1BW8XSF8C3W6G4J0",
+    "task_ids": [
+      "01KY9GKP0J9FDSHKE8TKY1W6HS",
+      "01KY9GKP41NJCZMCZZDF2HJEFV"
+    ],
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY9GKP0A1BW8XSF8C3W6G4J0"
+  }
+]

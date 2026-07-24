@@ -199,13 +199,22 @@ Those times extrapolate the matching GDN1 production runs using the measured
 planning estimates, not measurements. The 12 jobs require 200 GPUs concurrently
 and roughly 6.0K GPU-hours if every cell runs cleanly.
 
-Before launch, run checkpoint-free compiled capacity/throughput smokes at the
-three maximum intended per-rank microbatches: 480M MB8 on 8 GPUs, 810M MB6 on
-16 GPUs, and 1.2B MB3 under both its 16- and 32-GPU EP8 layouts. Record peak
-active/reserved memory, median final-step TFLOPs/GPU and TPS/GPU, aggregate TPS,
-step time, MFU, and skipped steps. If 480M MB8 or 810M MB6 does not fit, lower
-the affected rank MB to its next exact divisor; do not change global batches or
-model settings. The candidate manifest is deliberately submission-locked until
-this qualification is recorded:
+The 480M and 810M checkpoint-free compiled qualification completed successfully
+on 2026-07-24. All five Beaker replicas exited 0, all three W&B runs finalized,
+and every run completed 50 optimizer steps with finite loss/gradients and zero
+skipped steps.
+
+| Model / layout | Final-10 TFLOPs/GPU | Final-10 TPS/GPU | Aggregate TPS | Active / reserved memory |
+|---|---:|---:|---:|---:|
+| 480M MB8, 8 GPU EP1 | 335.9 | 114.1K | 912.5K | 190.4 / 196.9 GiB |
+| 480M MB6, 16 GPU EP1 | 287.4 | 97.6K | 1.562M | 150.4 / 155.3 GiB |
+| 810M MB6, 16 GPU EP1 | 358.0 | 66.8K | 1.069M | 224.5 / 234.1 GiB |
+
+The qualification works are
+[480M MB8/8 GPU](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY9GKF3MDHPFTKM9NJ9A0W81),
+[480M MB6/16 GPU](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY9GKJ0BJ6ED4DKSKD3BHD3Y),
+and [810M MB6/16 GPU](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY9GKP0A1BW8XSF8C3W6G4J0).
+The 480M and 810M production cells are qualified. Before any 1.2B launch, run
+the still-pending MB3 checks under both its 16- and 32-GPU EP8 layouts. The
+launcher enforces this per-size qualification in:
 `launchers/pretraining/manifests/geometry_matched_scale_gdn2_nope_gated_full_candidate.yaml`.
-No larger-scale job has been launched.

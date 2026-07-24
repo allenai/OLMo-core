@@ -451,11 +451,17 @@ def main() -> None:
     if not args.submit:
         print("Dry run only; pass --submit to launch.")
         return
-    if bool(manifest["training"].get("capacity_qualification_required", False)):
+    qualified_model_sizes = {
+        str(model_size)
+        for model_size in manifest["training"].get("capacity_qualified_model_sizes", [])
+    }
+    unqualified_model_sizes = {
+        str(row["model_size"]) for row in rows
+    } - qualified_model_sizes
+    if unqualified_model_sizes:
         raise RuntimeError(
-            "This candidate manifest is locked pending checkpoint-free capacity and "
-            "throughput qualification; set capacity_qualification_required: false only "
-            "after recording those results."
+            "Submission is locked for model sizes without recorded checkpoint-free "
+            f"capacity qualification: {sorted(unqualified_model_sizes)}"
         )
 
     checkpoint_root = Path(str(manifest["experiment"]["checkpoint_root"]))

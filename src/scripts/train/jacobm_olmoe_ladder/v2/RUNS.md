@@ -110,6 +110,24 @@ All tasks are urgent and unallocated on Holmes. Status/progress below is the
 | 8 | `1.6e-3` | `01KY8TKFX02JSHWGT8X467S5E5` | [n48z3vh8](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/n48z3vh8) | running; 26.769B / 38.715B tokens (69.2%) |
 | 8 | `3.2e-3` | `01KY8TKG0AJ8706NGJZN9GQC66` | [e6n5iscu](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/e6n5iscu) | running; 26.463B / 38.715B tokens (68.4%) |
 
+## Larger gated-NoPE GDN2 qualification
+
+All three checkpoint-free 50-step production-layout smokes passed on
+2026-07-24 at commit `4212d267b`. All five replicas exited 0 with finite
+loss/gradients and zero skipped steps.
+
+| Model / layout | Beaker | W&B | Final-10 TFLOPs/GPU | Final-10 TPS/GPU | Active / reserved GiB |
+|---|---|---|---:|---:|---:|
+| 480M MB8, 8 GPU EP1 | [01KY9GKF3MDHPFTKM9NJ9A0W81](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY9GKF3MDHPFTKM9NJ9A0W81) | [k9sw3u2k](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/k9sw3u2k) | 335.9 | 114.1K | 190.4 / 196.9 |
+| 480M MB6, 16 GPU EP1 | [01KY9GKJ0BJ6ED4DKSKD3BHD3Y](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY9GKJ0BJ6ED4DKSKD3BHD3Y) | [db06dpbg](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/db06dpbg) | 287.4 | 97.6K | 150.4 / 155.3 |
+| 810M MB6, 16 GPU EP1 | [01KY9GKP0A1BW8XSF8C3W6G4J0](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY9GKP0A1BW8XSF8C3W6G4J0) | [fcuou24g](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/fcuou24g) | 358.0 | 66.8K | 224.5 / 234.1 |
+
+The smoke submission ledger is
+`launchers/pretraining/generated/geometry_matched_scale_gdn2_nope_gated_smoke_submissions.json`.
+480M and 810M are approved for the eight-cell transferred-wide-LR production
+wave. The 1.2B cells remain submission-locked pending separate MB3 capacity
+qualification.
+
 ## 275M active hybrid GDN (`expand_v=1`)
 
 - Manifest: [`launchers/pretraining/manifests/275m_hybrid_gdn_ev1.yaml`](launchers/pretraining/manifests/275m_hybrid_gdn_ev1.yaml)
