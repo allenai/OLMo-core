@@ -4,7 +4,7 @@ Record post-migration experiment waves here. Per-run rows must include Beaker
 job IDs and W&B IDs once they exist. Detailed migration-era DDP jobs remain in
 [`../v1/DDP_RUNS.md`](../v1/DDP_RUNS.md).
 
-## Live status snapshot (2026-07-24 22:10 UTC)
+## Live status snapshot (2026-07-24 23:06 UTC)
 
 This is the current source of truth for active V2 work. The detailed sections
 below retain the full launch and retry history.
@@ -25,21 +25,20 @@ below retain the full launch and retry history.
 | pretraining | larger aligned geometry + NoPE | finished | 12/12 formal cells; clean 1.2B Cx8 reproduction finished with final-250M CE `2.034305` | [results](results/pretraining/geometry_gdn_ev2_nope/results.md) |
 | pretraining | larger aligned geometry + NoPE + gated attention | finished | 12/12; newly finished 1.2B Cx2 strict final-250M CE `2.188236` | [results](results/pretraining/geometry_gdn_ev2_nope_gated/results.md) |
 | pretraining | larger aligned geometry + RoPE + gated attention | 11 finished / 1 failed | newly collected strict final-250M CE: 810M Cx8 `2.104806`, 1.2B Cx8 `2.029514`; 1.2B Cx2 remains failed | [results](results/pretraining/geometry_gdn_ev2_rope_gated/results.md) |
-| pretraining | 275M geometry + NoPE + gated attention + GDN2 | 15 finished / 1 deterministic failure + clean reproduction queued | Cx8 `1.6e-3` remains stopped at step 36,768; its distinct `-fresh-r2` trajectory is pending capacity | [results](results/pretraining/geometry_gdn2_ev2_nope_gated/results.md) |
-| pretraining | larger geometry + NoPE + gated attention + GDN2 | 2 formal finished / 10 active | Six continuations and four clean reproductions are running or queued; no duplicate logical cells are active | [results](results/pretraining/geometry_gdn2_ev2_nope_gated/results.md) |
+| pretraining | 275M geometry + NoPE + gated attention + GDN2 | 15 finished / 1 deterministic failure + clean reproduction running | Cx8 `1.6e-3` remains stopped at step 36,768; its distinct `-fresh-r2` trajectory is at step 4,539/49,229 | [results](results/pretraining/geometry_gdn2_ev2_nope_gated/results.md) |
+| pretraining | larger geometry + NoPE + gated attention + GDN2 | 2 formal finished / 7 active / 3 newly stopped | The fresh 810M Cx2 failed at step 3,418; 1.2B Cx4/Cx8 exactly reproduced failures at steps 9,059/7,125; the remaining four production and three fresh cells are running | [results](results/pretraining/geometry_gdn2_ev2_nope_gated/results.md) |
 | throughput | 275M 1:1 10-layer SWA depth control | finished | one B300, 2 Mi batch, MB16: 578.75 TFLOPs/GPU and 365.8K TPS/GPU; zero skipped steps | [work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYADSYYRHPYQCRVWJ27KV4KQ) |
 | midtraining | first hybrid 275M Cx8 | finished | 100B; final checkpoint `step95368`; validation finished | [1keo2hz6](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/1keo2hz6) |
 | midtraining | first hybrid 480M Cx8 | finished | 100.001B; final checkpoint `step95368`; validation finished | [mnp9rv5l](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/mnp9rv5l) |
-| validation | V2 post-training backfills | 116 complete / 1 queued; 1 new checkpoint pending | The latest 1.2B gated-RoPE Cx8 attempt was preempted at evaluator step 225/771 and is queued again in place; newly finished 810M Cx8 still needs a separate backfill | [results](results/validation/hybrid_full.md) |
+| validation | V2 post-training backfills | 116 complete / 1 running; 1 new checkpoint pending | The 1.2B gated-RoPE Cx8 retry is running at evaluator step 325/771; newly finished 810M Cx8 still needs a separate backfill | [results](results/validation/hybrid_full.md) |
 
-The live Beaker footprint is eight running training experiments using 128 B300s
-and four queued experiments requesting 48 more. Running are 480M Cx4/Cx8,
-810M Cx4/Cx8, the 1.2B Cx4/Cx8 varying-step continuations, and the fresh 810M
-Cx1 and 1.2B Cx1 reproductions. Queued are the fresh 275M Cx8, 810M Cx2, and
-1.2B Cx2 reproductions plus the 1.2B gated-RoPE Cx8 validation backfill. All
-training is urgent and unallocated; the validation retry is high and
-unallocated. No v1 pretraining, midtraining, long-context training, or RULER
-job is active.
+The live Beaker footprint is eight running training experiments using 104
+B300s plus one eight-GPU validation experiment. Running training consists of
+480M Cx4/Cx8, 810M Cx4/Cx8, and the fresh 275M Cx8, 810M Cx1, 1.2B Cx1, and
+1.2B Cx2 reproductions. There is no queued work and no duplicate logical cell.
+All training is urgent and unallocated. The running validation retry is still
+high and unallocated. No v1 pretraining, midtraining, long-context training,
+or RULER job is active.
 
 The formal pretraining results and plots use finished runs only and enforce a
 complete final-250M-token history. The gated-RoPE sweep is now complete. Its
@@ -58,8 +57,8 @@ completed its full suite and finalized W&B successfully; its Beaker worker
 then exited 127 on a post-eval wrapper typo, so the evaluation itself does not
 need a retry. The only registered unfinished validation is the 1.2B
 gated-RoPE Cx8 target. Its evaluator has been preempted repeatedly; the most
-recent attempt reached step 225/771 and exited 143, and another high-priority
-attempt is queued in the same Beaker experiment. This is scheduler preemption,
+recent attempt reached step 225/771 and exited 143; its next high-priority
+attempt is now running. This is scheduler preemption,
 not a model or evaluator failure. The 810M Cx8
 training completion happened after the larger validation manifest was
 submitted, so that checkpoint still needs a separate validation backfill.

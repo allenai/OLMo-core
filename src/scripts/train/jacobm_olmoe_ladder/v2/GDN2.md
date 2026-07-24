@@ -383,5 +383,20 @@ reproductions do not enable the additional gradient-debug environment.
 | 1.2B Cx2 | 16 | [01KYB24AT084W023T5JY0Q02G9](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYB24AT084W023T5JY0Q02G9) |
 
 The wave requests 64 urgent unallocated Holmes GPUs at full concurrency. The
-redundant scheduled continuation of the old 810M Cx1 trajectory was stopped;
-the varying-step 1.2B Cx4/Cx8 continuations remain active.
+redundant scheduled continuation of the old 810M Cx1 trajectory was stopped.
+
+At 2026-07-24 23:01 UTC, the fresh 810M Cx2 trajectory failed on a non-finite
+total gradient at the update after step 3,417. It had a new optimizer, run
+identity, checkpoint directory, and data position beginning at step 0. This
+rules out inherited optimizer state as a necessary cause for that cell's
+instability, although the canonical fresh run did not include the additional
+per-parameter diagnostics. It remains stopped.
+
+The latest checkpoint-local 1.2B continuations also failed again: Cx4 exactly
+reproduced its non-finite total gradient at step 9,059, and Cx8 exactly
+reproduced its failure at step 7,125. On every rank the diagnostic observed a
+NaN total norm and broadly contaminated gradients (`481/481` bad entries on
+rank 0 and `478/481` on the other ranks). These exact replays are no longer
+classified as trajectory-varying and should not receive another ordinary
+checkpoint-local restart. The fresh 275M Cx8, 810M Cx1, 1.2B Cx1, and 1.2B
+Cx2 reproductions remain active at this snapshot.
