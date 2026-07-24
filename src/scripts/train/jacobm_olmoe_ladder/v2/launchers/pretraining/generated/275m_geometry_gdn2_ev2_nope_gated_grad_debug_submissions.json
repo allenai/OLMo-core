@@ -1,0 +1,11 @@
+[
+  {
+    "experiment_name": "pt-275m-gdn2-nope-gated-cx8-lr1p6e-3-grad-debug-r1",
+    "experiment_id": "01KYAY2X46RDRM00YEQT7E0VBS",
+    "tasks": [
+      "cx8-lr1p6e-3"
+    ],
+    "debug_gradients": true,
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYAY2X46RDRM00YEQT7E0VBS"
+  }
+]

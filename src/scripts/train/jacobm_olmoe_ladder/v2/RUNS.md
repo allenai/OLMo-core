@@ -25,7 +25,7 @@ below retain the full launch and retry history.
 | pretraining | larger aligned geometry + NoPE | finished | 12/12 formal cells; clean 1.2B Cx8 reproduction finished with final-250M CE `2.034305` | [results](results/pretraining/geometry_gdn_ev2_nope/results.md) |
 | pretraining | larger aligned geometry + NoPE + gated attention | finished | 12/12; newly finished 1.2B Cx2 strict final-250M CE `2.188236` | [results](results/pretraining/geometry_gdn_ev2_nope_gated/results.md) |
 | pretraining | larger aligned geometry + RoPE + gated attention | 11 finished / 1 failed | newly collected strict final-250M CE: 810M Cx8 `2.104806`, 1.2B Cx8 `2.029514`; 1.2B Cx2 remains failed | [results](results/pretraining/geometry_gdn_ev2_rope_gated/results.md) |
-| pretraining | 275M geometry + NoPE + gated attention + GDN2 | 15 finished / 1 failed | Cx1/Cx2/Cx4 are complete and bracketed; Cx8 has 3/4 strict results, while `1.6e-3` stopped on non-finite loss at step 36,768 with durable `step36500` | [results](results/pretraining/geometry_gdn2_ev2_nope_gated/results.md) |
+| pretraining | 275M geometry + NoPE + gated attention + GDN2 | 15 finished / 1 diagnostic resume queued | Cx1/Cx2/Cx4 are complete and bracketed; Cx8 `1.6e-3` failed four times deterministically at step 36,768 and is queued from durable `step36500` with gradient diagnostics | [results](results/pretraining/geometry_gdn2_ev2_nope_gated/results.md) |
 | pretraining | larger geometry + NoPE + gated attention + GDN2 | 2 finished / 5 running / 5 diagnostic resumes scheduled or queued | five recurrently failing cells were relaunched from the same durable checkpoints with all-rank non-finite and large-gradient diagnostics | [results](results/pretraining/geometry_gdn2_ev2_nope_gated/results.md) |
 | throughput | 275M 1:1 10-layer SWA depth control | finished | one B300, 2 Mi batch, MB16: 578.75 TFLOPs/GPU and 365.8K TPS/GPU; zero skipped steps | [work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYADSYYRHPYQCRVWJ27KV4KQ) |
 | midtraining | first hybrid 275M Cx8 | finished | 100B; final checkpoint `step95368`; validation finished | [1keo2hz6](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/1keo2hz6) |
@@ -114,6 +114,16 @@ All tasks are urgent and unallocated on Holmes. Status/progress below is the
 | 8 | `8e-4` | `01KY8TKFST2JN575ZCHDXSRXG6` | [1lpz9reu](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/1lpz9reu) | finished; CE `2.356985`; current observed best |
 | 8 | `1.6e-3` | `01KY8TKFX02JSHWGT8X467S5E5` | [n48z3vh8](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/n48z3vh8) | stopped at step 36,768 on non-finite loss; durable `step36500` |
 | 8 | `3.2e-3` | `01KY8TKG0AJ8706NGJZN9GQC66` | [e6n5iscu](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/e6n5iscu) | finished; CE `2.380649` |
+
+The Cx8 `1.6e-3` cell was retried four times from durable `step36500`; every
+attempt failed deterministically on a non-finite loss at step 36,768. A fifth,
+diagnostic continuation was queued urgent and unallocated on 2026-07-24 in
+[01KYAY2X46RDRM00YEQT7E0VBS](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYAY2X46RDRM00YEQT7E0VBS).
+It preserves the original run name and checkpoint directory and enables the
+same all-rank non-finite and pre-failure gradient-norm diagnostics as the larger
+GDN2 retries. If it reproduces without a preceding gradient warning, the next
+diagnostic should target the loss/forward activations rather than performing
+another blind checkpoint retry.
 
 ## Larger gated-NoPE GDN2 qualification
 
