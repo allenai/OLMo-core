@@ -24,6 +24,9 @@ ALLOWED_VARIANTS = {
     "geometry_275m_gdn_ev2_rope_gated",
     "geometry_275m_gdn2_ev2_rope_gated",
     "geometry_275m_swa_rope_gated",
+    "geometry_275m_gdn_ev2_rope_gated_1to1",
+    "geometry_275m_gdn2_ev2_rope_gated_1to1",
+    "geometry_275m_swa_rope_gated_1to1",
 }
 EXPECTED_SEQUENCE_LENGTH = 8_192
 ALLOWED_GLOBAL_BATCHES = {
@@ -58,7 +61,10 @@ def validate(manifest: dict[str, Any]) -> list[dict[str, Any]]:
         raise ValueError(f"expected one of the audited model variants {sorted(ALLOWED_VARIANTS)}")
     if bool(training.get("gdn2_disable_recompute", False)) and str(
         training["model_variant"]
-    ) != "geometry_275m_gdn2_ev2_rope_gated":
+    ) not in {
+        "geometry_275m_gdn2_ev2_rope_gated",
+        "geometry_275m_gdn2_ev2_rope_gated_1to1",
+    }:
         raise ValueError("gdn2_disable_recompute is only valid for the GDN2 model variant")
     if int(training["sequence_length"]) != EXPECTED_SEQUENCE_LENGTH:
         raise ValueError("parallelism study must preserve the 8,192-token sequence length")

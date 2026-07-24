@@ -22,13 +22,13 @@ import json
 import math
 from copy import deepcopy
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 from olmo_core.nn.attention import (
     AttentionConfig,
     GateConfig,
-    GateGranularity,
     GatedDeltaNet2Config,
+    GateGranularity,
     SlidingWindowAttentionConfig,
 )
 from olmo_core.nn.attention.recurrent import GatedDeltaNetConfig
@@ -122,6 +122,22 @@ EXPECTED_PROFILE_COUNTS = {
 }
 EXPECTED_SWA_COUNTS = (265_665_280, 201_440_000, 3_111_197_440)
 EXPECTED_GDN2_COUNTS = (306_191_168, 241_965_888, 3_151_723_328)
+
+# A strict 1:1 hybrid alternates a recurrent/local mixer at even layers with
+# gated global attention at odd layers. Layer count is the only sizing knob:
+# all widths, heads, MoE dimensions, initialization, and mixer settings remain
+# identical to the existing gated-RoPE systems comparison. Ten layers is the
+# closest even-depth match for GDN1/GDN2; twelve layers is the closest for SWA.
+ONE_TO_ONE_N_LAYERS = {
+    "gdn1": 10,
+    "gdn2": 10,
+    "swa": 12,
+}
+EXPECTED_ONE_TO_ONE_COUNTS = {
+    "gdn1": (284_148_560, 219_923_280, 3_129_680_720),
+    "gdn2": (292_960_040, 228_734_760, 3_138_492_200),
+    "swa": (295_500_032, 231_274_752, 3_773_372_672),
+}
 
 
 def _resize_moe_block(block: OLMoDDPTransformerBlockConfig, expert_hidden_size: int) -> None:
@@ -427,6 +443,151 @@ def build_geometry_matched_swa_model_config() -> OLMoDDPModelConfig:
         raise ValueError(
             f"unexpected SWA-control parameter counts: expected {EXPECTED_SWA_COUNTS}, "
             f"found {actual_counts}"
+        )
+
+    return candidate
+
+
+def build_geometry_matched_one_to_one_model_config(
+    mixer: Literal["gdn1", "gdn2", "swa"],
+    *,
+    gdn2_disable_recompute: bool = False,
+) -> OLMoDDPModelConfig:
+    """Build the gated-RoPE geometry with a strict 1:1 mixer/attention ratio.
+
+    The model alternates a recurrent or local-attention layer at even indices
+    with gated global RoPE attention at odd indices. Only ``n_layers`` and the
+    resulting layer placement differ from the existing throughput controls.
+    """
+
+    if mixer not in ONE_TO_ONE_N_LAYERS:
+        raise ValueError(f"unknown 1:1 mixer {mixer!r}")
+
+    source = build_geometry_matched_model_config("geometry_rope_gated")
+    source_resolved = source.resolved_block_configs
+    n_layers = ONE_TO_ONE_N_LAYERS[mixer]
+    full_attention_layers = tuple(range(1, n_layers, 2))
+    hybrid_layers = tuple(range(0, n_layers, 2))
+    if len(full_attention_layers) != len(hybrid_layers):
+        raise ValueError(f"1:1 layout requires an even layer count, got {n_layers}")
+
+    candidate = deepcopy(source)
+    candidate.n_layers = n_layers
+    default_block = deepcopy(source_resolved[1])
+    dense_first = deepcopy(source_resolved[0])
+    full_attention = deepcopy(source_resolved[FULL_ATTENTION_LAYERS[0]])
+
+    if mixer == "gdn2":
+        old_gdn = cast(GatedDeltaNetConfig, default_block.sequence_mixer)
+        recurrent = GatedDeltaNet2Config(
+            n_heads=old_gdn.n_heads,
+            n_v_heads=old_gdn.n_v_heads,
+            head_dim=old_gdn.head_dim,
+            expand_v=old_gdn.expand_v,
+            allow_neg_eigval=old_gdn.allow_neg_eigval,
+            conv_size=old_gdn.conv_size,
+            conv_bias=old_gdn.conv_bias,
+            disable_recompute=gdn2_disable_recompute,
+            norm_eps=old_gdn.norm_eps,
+            dtype=old_gdn.dtype,
+        )
+        default_block.sequence_mixer = deepcopy(recurrent)
+        dense_first.sequence_mixer = deepcopy(recurrent)
+    elif mixer == "swa":
+        sliding_window = SlidingWindowAttentionConfig(
+            pattern=[SWA_WINDOW_SIZE, -1],
+            force_full_attention_on_first_layer=False,
+            force_full_attention_on_last_layer=True,
+        )
+        local_attention = deepcopy(cast(AttentionConfig, full_attention.sequence_mixer))
+        local_attention.gate = None
+        local_attention.sliding_window = sliding_window
+        default_block.sequence_mixer = deepcopy(local_attention)
+        dense_first.sequence_mixer = deepcopy(local_attention)
+
+    candidate.block = default_block
+    candidate.block_overrides = {
+        0: dense_first,
+        **{layer_idx: deepcopy(full_attention) for layer_idx in full_attention_layers},
+    }
+    candidate.validate()
+
+    resolved = candidate.resolved_block_configs
+    actual_full: list[int] = []
+    actual_hybrid: list[int] = []
+    for layer_idx, block in enumerate(resolved):
+        sequence_mixer = block.sequence_mixer
+        if isinstance(sequence_mixer, AttentionConfig):
+            if (
+                sequence_mixer.sliding_window is not None
+                and sequence_mixer.sliding_window.should_use_swa(layer_idx, n_layers)
+            ):
+                actual_hybrid.append(layer_idx)
+            else:
+                actual_full.append(layer_idx)
+        elif isinstance(sequence_mixer, (GatedDeltaNetConfig, GatedDeltaNet2Config)):
+            actual_hybrid.append(layer_idx)
+        else:
+            raise TypeError(
+                f"unexpected {mixer} sequence mixer at layer {layer_idx}: "
+                f"{type(sequence_mixer).__name__}"
+            )
+
+    if tuple(actual_hybrid) != hybrid_layers or tuple(actual_full) != full_attention_layers:
+        raise ValueError(
+            f"unexpected {mixer} 1:1 pattern: hybrid={tuple(actual_hybrid)}, "
+            f"full={tuple(actual_full)}"
+        )
+    if resolved[0].routed_experts is not None:
+        raise ValueError(f"{mixer} 1:1 model must retain the dense-first layer-0 FFN")
+    if candidate.init_std != source.init_std:
+        raise ValueError(f"{mixer} 1:1 model changed initialization")
+
+    for layer_idx in full_attention_layers:
+        attention = cast(AttentionConfig, resolved[layer_idx].sequence_mixer)
+        if attention.sliding_window is not None or attention.rope is None:
+            raise ValueError(f"{mixer} layer {layer_idx} must use global RoPE attention")
+        if (
+            attention.gate is None
+            or attention.gate.granularity != GateGranularity.elementwise
+            or not attention.gate.full_precision
+        ):
+            raise ValueError(
+                f"{mixer} layer {layer_idx} must retain full-precision elementwise gating"
+            )
+
+    if mixer == "gdn1" and any(
+        not isinstance(resolved[layer_idx].sequence_mixer, GatedDeltaNetConfig)
+        for layer_idx in hybrid_layers
+    ):
+        raise ValueError("GDN1 1:1 model contains a non-GDN1 hybrid layer")
+    if mixer == "gdn2" and any(
+        not isinstance(resolved[layer_idx].sequence_mixer, GatedDeltaNet2Config)
+        for layer_idx in hybrid_layers
+    ):
+        raise ValueError("GDN2 1:1 model contains a non-GDN2 hybrid layer")
+    if mixer == "swa":
+        for layer_idx in hybrid_layers:
+            attention = cast(AttentionConfig, resolved[layer_idx].sequence_mixer)
+            if attention.gate is not None or attention.rope is None:
+                raise ValueError(
+                    f"SWA layer {layer_idx} must retain ungated local RoPE attention"
+                )
+            assert attention.sliding_window is not None
+            if attention.sliding_window.get_window_size(layer_idx, n_layers) != SWA_WINDOW_SIZE:
+                raise ValueError(
+                    f"SWA layer {layer_idx} must use a {SWA_WINDOW_SIZE}-token window"
+                )
+
+    actual_counts = (
+        candidate.num_active_params,
+        candidate.num_active_non_embedding_params,
+        candidate.num_params,
+    )
+    if actual_counts != EXPECTED_ONE_TO_ONE_COUNTS[mixer]:
+        raise ValueError(
+            f"unexpected {mixer} 1:1 parameter counts: expected "
+            f"{EXPECTED_ONE_TO_ONE_COUNTS[mixer]}, found {actual_counts}"
         )
 
     return candidate
