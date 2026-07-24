@@ -1,5 +1,5 @@
 {
-  "generated_at_utc": "2026-07-24T19:35:21.493899+00:00",
+  "generated_at_utc": "2026-07-24T22:08:48.608421+00:00",
   "manifests": [
     "/weka/oe-adapt-default/jacobm/olmoe3/olmo-ddp-migration/OLMo-core-moe-v2-core/src/scripts/train/jacobm_olmoe_ladder/v2/launchers/validation/manifests/275m_hybrid_geometry_full.yaml",
     "/weka/oe-adapt-default/jacobm/olmoe3/olmo-ddp-migration/OLMo-core-moe-v2-core/src/scripts/train/jacobm_olmoe_ladder/v2/launchers/validation/manifests/275m_geometry_cx4_cx8_full.yaml",
@@ -59646,15 +59646,15 @@
       "manifest": "/weka/oe-adapt-default/jacobm/olmoe3/olmo-ddp-migration/OLMo-core-moe-v2-core/src/scripts/train/jacobm_olmoe_ladder/v2/launchers/validation/manifests/rope_gated_scale_completed_full.yaml",
       "model_size": "1p2b",
       "source_run": "pt-1p2b-geometry-gdn-ev2-rope-gated-cx8-lr4e-4-ep8-sync-r1",
-      "state": "running",
+      "state": "crashed",
       "variant": "geometry_matched_gdn_ev2_rope_gated",
-      "wandb_id": "fv7eg95i",
-      "wandb_url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/fv7eg95i"
+      "wandb_id": "cdgtguir",
+      "wandb_url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/cdgtguir"
     }
   ],
   "states": {
-    "finished": 116,
-    "running": 1
+    "crashed": 1,
+    "finished": 116
   },
   "target_count": 117
 }
