@@ -88,6 +88,22 @@ GDN2_WALLCLOCK_CANDIDATE_LAYOUT = {
     ("1p2b", 4): (4, 8, 8, "sync_1d", 2),
     ("1p2b", 8): (4, 8, 8, "sync_1d", 3),
 }
+GDN2_BALANCED_LAYOUT = {
+    # Preserve the qualified smaller-model layouts, while using the
+    # resource-balanced 8/16/16/32-GPU 1.2B allocation. This matches the
+    # whole-wave wall time of the 96-GPU candidate because Cx8 remains the
+    # critical path, but saves 24 concurrent GPUs.
+    # (nodes, GPUs/node, EP, EP path, rank microbatch sequences)
+    **{
+        key: value
+        for key, value in GDN2_WALLCLOCK_CANDIDATE_LAYOUT.items()
+        if key[0] != "1p2b"
+    },
+    ("1p2b", 1): (1, 8, 8, "sync_1d", 4),
+    ("1p2b", 2): (2, 8, 8, "sync_1d", 3),
+    ("1p2b", 4): (2, 8, 8, "sync_1d", 4),
+    ("1p2b", 8): (4, 8, 8, "sync_1d", 3),
+}
 COMPACT_V1_LAYOUT = {
     # Reuse the demonstrated first-hybrid layouts for 480M/810M, then retain
     # extra nodes only for the larger 1.2B data-multiple cells.
@@ -109,6 +125,7 @@ LAYOUT_PROFILES = {
     "accelerated": ACCELERATED_LAYOUT,
     "compact_v1": COMPACT_V1_LAYOUT,
     "gdn2_wallclock_candidate": GDN2_WALLCLOCK_CANDIDATE_LAYOUT,
+    "gdn2_balanced": GDN2_BALANCED_LAYOUT,
 }
 MODEL_VARIANTS = {
     "geometry_matched_gdn_ev2_nope": {
