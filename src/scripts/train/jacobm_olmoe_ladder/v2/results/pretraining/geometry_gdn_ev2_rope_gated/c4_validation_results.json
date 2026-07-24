@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-07-24T16:07:25.794416+00:00",
+  "generated_at": "2026-07-24T19:35:23.373188+00:00",
   "metric": "eval/lm/c4_en-validation/CE loss",
   "selection_rule": "Use the same checkpoints selected by the final-250M training-loss comparison: observed-best learning rates at 275M and wide-optimal transferred learning rates at larger sizes. Never substitute a partial or running validation result.",
   "variants": [
@@ -1352,8 +1352,8 @@
       "learning_rate": 0.0004,
       "c4_validation_ce": null,
       "validation_state": "running",
-      "validation_run_id": "g7ur9ibf",
-      "validation_url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/g7ur9ibf"
+      "validation_run_id": "fv7eg95i",
+      "validation_url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/fv7eg95i"
     }
   ]
 }

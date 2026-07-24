@@ -252,3 +252,25 @@ gradient), 810M Cx1 at 3,524 (total gradient), 810M Cx2 at 43,979 (loss), and
 810M Cx8 at 14,994 (loss). These are neither config failures nor OOMs; durable
 checkpoints exist at steps 4,000, 4,000, 3,500, 43,500, and 14,500,
 respectively. No automatic relaunch was performed during the refresh.
+
+At the 2026-07-24 19:36 UTC refresh, the two completed results are unchanged:
+480M Cx1/Cx2 have strict final-250M CEs `2.468555` and `2.359149`. Every other
+production cell is running or queued under its original Beaker experiment ID.
+The retry operation is `beaker experiment resume <experiment-id>`, which is the
+CLI equivalent of the UI restart button: it creates another attempt for the
+existing task and preserves the experiment ID, configuration, and checkpoint
+path. It does not submit a duplicate experiment.
+For a multi-task experiment it retries every failed task, so redundant attempts
+must be canceled individually with `beaker job cancel <job-id>` when one task
+has a nonzero wrapper exit despite already producing complete results.
+
+Five stopped cells were restarted this way during the refresh: 480M Cx8 from
+durable `step9500`, 810M Cx1 from `step10000`, 810M Cx2 from `step56500`, 1.2B
+Cx1 from `step6500`, and 1.2B Cx2 from `step2500`. The latest failures were all
+the same GDN2 numerical-instability family seen previously—an explicit
+non-finite loss or total-gradient assertion followed by CUDA/NCCL teardown—not
+configuration errors, OOMs, or infrastructure failures. 480M Cx4 also crossed
+several in-place attempts after repeated non-finite-gradient assertions around
+step 4662 and is now past step 11,900. At snapshot time, 480M Cx4/Cx8, 810M
+Cx1/Cx4/Cx8, and 1.2B Cx4/Cx8 were running; 810M Cx2 and 1.2B Cx1/Cx2 were
+queued or starting.
