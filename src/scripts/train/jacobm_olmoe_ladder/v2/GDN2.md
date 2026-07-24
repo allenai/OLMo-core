@@ -302,3 +302,38 @@ and a warning threshold of 100. The branch also fixes the optimizer diagnostic
 step label and wires the previously incomplete large-gradient warning path.
 The other five unfinished production cells—480M Cx4/Cx8, 810M Cx4/Cx8, and
 1.2B Cx2—remain running without a new failure in this audit.
+
+The first diagnostic attempts produced results by 2026-07-24 21:10 UTC. 810M
+Cx1 and 1.2B Cx1 reproduced non-finite total gradients at steps 10,039 and
+8,029. On rank 0, every optimizer-visible parameter gradient was NaN
+(`361/361` and `481/481`); the other ranks reported `358/361` and `478/481`.
+For 810M Cx1 both replicated and sharded dense/DP components were NaN. For
+1.2B Cx1 the dense/DP and expert-sharded components were NaN. The last logged
+finite metrics were ordinary: CE/total-grad-norm `2.954/0.1952` at step 10,030
+and `2.808/0.3100` at step 8,020.
+
+810M Cx2 and 275M Cx8 failed earlier in the optimizer on non-finite reduced
+loss at steps 56,755 and 36,768, so the per-parameter gradient diagnostic did
+not run. Their last logged finite CE/grad-norm pairs were `2.296/0.1712` at
+step 56,750 and `2.408/0.0901` at step 36,760. None of the four jobs emitted a
+large-gradient warning at the configured threshold of 100; the transition is
+abrupt rather than a visible gradual norm explosion.
+
+These reports are collected after loss and gradient all-reduces, so a NaN from
+one local rank contaminates every rank and nearly every parameter before the
+current diagnostic observes it. The reports therefore rule out an isolated
+optimizer parameter but do not identify the originating rank or layer. The
+next useful deterministic replay needs per-rank checks before loss reduction
+for the loss failures and pre-DDP-reduction activation/backward checks around
+the GDN2 layers for the gradient failures. No further retry should be launched
+until that instrumentation exists. The 1.2B Cx4 diagnostic crossed its prior
+failure step 8,456 and reached step 8,690; 1.2B Cx8 was still starting from
+`step7000` at this snapshot.
+
+The non-diagnostic 1.2B Cx2 continuation also failed during this audit at step
+5,097 on non-finite total gradients, with durable `step5000`. Its earlier
+failure was at step 2,724, so unlike the checkpoint-deterministic Cx1 and loss
+failures, this cell advanced through one unstable point and later encountered
+another. It has no per-parameter report because it was launched before the
+diagnostic environment was added. It should join the pre-reduction diagnostic
+set rather than receive another ordinary retry.
