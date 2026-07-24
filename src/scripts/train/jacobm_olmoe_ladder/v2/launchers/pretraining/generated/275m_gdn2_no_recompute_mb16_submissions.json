@@ -1,0 +1,10 @@
+[
+  {
+    "experiment_name": "jacobm-moe-v2-core-275m-gdn2-no-recompute-mb16-r1",
+    "experiment_id": "01KY8RRSFNTBCVHJCEC439GW11",
+    "tasks": [
+      "b2m-gpu1-ep1-mb16-no-recompute"
+    ],
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY8RRSFNTBCVHJCEC439GW11"
+  }
+]

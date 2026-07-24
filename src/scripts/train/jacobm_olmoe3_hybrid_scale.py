@@ -123,6 +123,7 @@ CHECKPOINTS_ENABLED = env_bool("OLMOE3_HYBRID_CHECKPOINTS", True)
 EVALS_ENABLED = env_bool("OLMOE3_HYBRID_EVALS", False)
 DP_USE_REDUCE_SCATTER = env_bool("OLMOE3_HYBRID_DP_USE_REDUCE_SCATTER", False)
 DP_BUCKET_CAP_MB = os.environ.get("OLMOE3_HYBRID_DP_BUCKET_CAP_MB")
+GDN2_DISABLE_RECOMPUTE = env_bool("OLMOE3_HYBRID_GDN2_DISABLE_RECOMPUTE", False)
 EVAL_INTERVAL = int(os.environ.get("OLMOE3_HYBRID_EVAL_INTERVAL", "1000"))
 EVAL_STEPS = int(os.environ.get("OLMOE3_HYBRID_EVAL_STEPS", "0"))
 EVAL_TASK_SET = os.environ.get("OLMOE3_HYBRID_EVAL_TASK_SET", "hellaswag")
@@ -144,6 +145,11 @@ WORK_DIR = os.environ.get(
 )
 DATA_ROOT = os.environ.get("OLMOE3_HYBRID_DATA_ROOT", "s3://ai2-llm")
 EVAL_DATA_ROOT = os.environ.get("OLMOE3_HYBRID_EVAL_DATA_ROOT", "/weka/oe-training-default/ai2-llm")
+
+if GDN2_DISABLE_RECOMPUTE and MODEL_VARIANT != "geometry_275m_gdn2_ev2_rope_gated":
+    raise ValueError(
+        "OLMOE3_HYBRID_GDN2_DISABLE_RECOMPUTE is only valid for the GDN2 variant"
+    )
 
 
 def model_config():
@@ -194,7 +200,9 @@ def model_config():
             raise ValueError(
                 "The geometry_275m_gdn2_ev2_rope_gated variant only supports MODEL_SIZE=275m"
             )
-        model = build_geometry_matched_gdn2_model_config()
+        model = build_geometry_matched_gdn2_model_config(
+            disable_recompute=GDN2_DISABLE_RECOMPUTE
+        )
     elif MODEL_VARIANT == "geometry_275m_swa_rope_gated":
         from scripts.train.jacobm_olmoe_ladder.v2.models.geometry_matched_275m import (
             build_geometry_matched_swa_model_config,
@@ -485,6 +493,8 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             variant_tags.append("attention-gate")
         if MODEL_VARIANT == "geometry_275m_gdn2_ev2_rope_gated":
             variant_tags.append("gdn2")
+            if GDN2_DISABLE_RECOMPUTE:
+                variant_tags.append("gdn2-no-recompute")
         if MODEL_VARIANT == "geometry_275m_swa_rope_gated":
             variant_tags = ["geometry-matched", "swa", "rope", "attention-gate"]
     else:

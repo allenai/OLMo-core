@@ -85,3 +85,44 @@ step time, MFU, memory, Beaker job IDs, and W&B links, are in
 `results/throughput/275m_gdn_gdn2_swa_large_batch_parallelism.csv`. Re-run
 `results/throughput/collect_275m_throughput.py` to merge finalized Beaker work
 idempotently.
+
+### Backward recomputation diagnostic
+
+FLA's opt-in `disable_recompute=True` path retains forward WY/state
+intermediates to avoid reconstructing them in the backward. The exact one-GPU,
+2 Mi-token, MB16 A/B work
+[01KY8RRSFNTBCVHJCEC439GW11](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY8RRSFNTBCVHJCEC439GW11)
+did not fit. After compiling the first dry-run microbatch, the second attempted
+a 24.50 GiB allocation with only 17.70 GiB free; PyTorch already held 245.55
+GiB allocated. This was a real capacity failure, not fragmentation (only 0.37
+GiB was reserved but unallocated).
+
+The earlier MB20 fit boundary belonged to GDN1. GDN2 with normal recomputation
+already peaks at 253.7 GiB active / 257.0 GiB reserved at MB16. Keep
+`disable_recompute=False` for production and the first LR sweep. The opt-in
+flag remains available for a separate smaller-MB kernel diagnostic but must
+not be enabled implicitly.
+
+## Planned 275M LR sweep
+
+The first GDN2 quality experiment should exactly mirror the completed 275M
+geometry-matched GDN1 gated-RoPE sweep. It remains unlaunched pending explicit
+approval. Use normal backward recomputation, EP1, compile enabled, no in-loop
+evals, and the established four-LR grid `4e-4`, `8e-4`, `1.6e-3`, `3.2e-3` at
+every Cx. The GDN1 observed optima were `1.6e-3` at Cx1/Cx2/Cx8 and `8e-4` at
+Cx4, so this grid is both directly comparable and already bracketed.
+
+| Cx | Target tokens | Approx. steps | Global batch | GPUs | Rank MB | Approx. wall time/run |
+|---:|---:|---:|---:|---:|---:|---:|
+| 1 | 4.839B | 18,461 | 262,144 | 4 | 8 | 1.4--1.6 h |
+| 2 | 9.679B | 24,615 | 393,216 | 4 | 12 | 2.7--3.0 h |
+| 4 | 19.357B | 36,922 | 524,288 | 4 | 16 | 5.4--5.8 h |
+| 8 | 38.715B | 49,229 | 786,432 | 8 | 12 | 5.6--6.0 h |
+
+This is 16 jobs and 80 concurrent GPUs, approximately 340--350 GPU-hours if
+all cells run cleanly. Token budgets follow the usual `20 * active
+non-embedding parameters * Cx` rule and are therefore about 6.2% larger than
+the GDN1 gated-RoPE budgets. Use the ordinary 10%-of-tokens warmup followed by
+cosine decay to 0.1x peak LR, the established ephemeral-checkpoint policy, and
+out-of-loop validation. Plot one GDN2 U-curve per Cx and compare the observed
+optima against wide integration, first hybrid, and GDN1 gated-RoPE geometry.

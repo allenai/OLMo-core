@@ -111,6 +111,10 @@ def test_gated_delta_net_num_flops_per_token():
             GatedDeltaNet2Config(n_heads=8, allow_neg_eigval=True),
             id="allow_neg_eigval=True",
         ),
+        pytest.param(
+            GatedDeltaNet2Config(n_heads=8, disable_recompute=True),
+            id="disable_recompute=True",
+        ),
     ],
 )
 def test_gated_delta_net_2_config_num_params(recurrent_config: GatedDeltaNet2Config):

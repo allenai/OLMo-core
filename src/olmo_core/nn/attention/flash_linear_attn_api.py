@@ -53,6 +53,7 @@ def dispatch_chunk_gdn2(
     initial_state: torch.Tensor | None = None,
     output_final_state: bool = False,
     use_qk_l2norm_in_kernel: bool = False,
+    disable_recompute: bool = False,
     cu_seqlens: torch.LongTensor | torch.Tensor | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor | None]:
     """Dispatch the pinned FLA Gated DeltaNet 2 training kernel lazily."""
@@ -70,6 +71,7 @@ def dispatch_chunk_gdn2(
         initial_state=initial_state,
         output_final_state=output_final_state,
         use_qk_l2norm_in_kernel=use_qk_l2norm_in_kernel,
+        disable_recompute=disable_recompute,
         cu_seqlens=cu_seqlens,
     )
 

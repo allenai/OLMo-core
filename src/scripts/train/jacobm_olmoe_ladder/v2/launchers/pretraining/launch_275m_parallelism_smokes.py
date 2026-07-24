@@ -56,6 +56,10 @@ def validate(manifest: dict[str, Any]) -> list[dict[str, Any]]:
     training = manifest["training"]
     if str(training["model_variant"]) not in ALLOWED_VARIANTS:
         raise ValueError(f"expected one of the audited model variants {sorted(ALLOWED_VARIANTS)}")
+    if bool(training.get("gdn2_disable_recompute", False)) and str(
+        training["model_variant"]
+    ) != "geometry_275m_gdn2_ev2_rope_gated":
+        raise ValueError("gdn2_disable_recompute is only valid for the GDN2 model variant")
     if int(training["sequence_length"]) != EXPECTED_SEQUENCE_LENGTH:
         raise ValueError("parallelism study must preserve the 8,192-token sequence length")
     if int(training["global_batch_size"]) not in ALLOWED_GLOBAL_BATCHES:
@@ -203,6 +207,11 @@ def build_task(manifest: dict[str, Any], row: dict[str, Any], source_repo: str) 
             bool(row.get("data_parallel_use_reduce_scatter", False))
         ),
         "OLMOE3_HYBRID_DP_BUCKET_CAP_MB": row.get("data_parallel_bucket_cap_mb"),
+        "OLMOE3_HYBRID_GDN2_DISABLE_RECOMPUTE": (
+            int(bool(training.get("gdn2_disable_recompute", False)))
+            if "gdn2_disable_recompute" in training
+            else None
+        ),
     }
     env_vars.extend(
         env_value(name, value) for name, value in optional_env.items() if value is not None

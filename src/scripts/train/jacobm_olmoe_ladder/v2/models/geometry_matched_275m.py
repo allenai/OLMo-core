@@ -276,7 +276,9 @@ def build_geometry_matched_model_config(
     return candidate
 
 
-def build_geometry_matched_gdn2_model_config() -> OLMoDDPModelConfig:
+def build_geometry_matched_gdn2_model_config(
+    *, disable_recompute: bool = False
+) -> OLMoDDPModelConfig:
     """Swap GDN1 for GDN2 in the 275M RoPE-gated geometry candidate.
 
     All geometry, MoE, full-attention, initialization, and optimization-facing
@@ -295,6 +297,7 @@ def build_geometry_matched_gdn2_model_config() -> OLMoDDPModelConfig:
         allow_neg_eigval=old_gdn.allow_neg_eigval,
         conv_size=old_gdn.conv_size,
         conv_bias=old_gdn.conv_bias,
+        disable_recompute=disable_recompute,
         norm_eps=old_gdn.norm_eps,
         dtype=old_gdn.dtype,
     )

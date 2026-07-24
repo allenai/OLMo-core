@@ -44,6 +44,7 @@ class GatedDeltaNet2(SequenceMixer):
         allow_neg_eigval: bool = False,
         conv_size: int = 4,
         conv_bias: bool = False,
+        disable_recompute: bool = False,
         norm_eps: float = 1e-5,
         dtype: torch.dtype = torch.float32,
         init_device: str = "cpu",
@@ -60,6 +61,7 @@ class GatedDeltaNet2(SequenceMixer):
         self.expand_v = expand_v
         self.allow_neg_eigval = allow_neg_eigval
         self.conv_size = conv_size
+        self.disable_recompute = disable_recompute
 
         self.head_k_dim = self.head_dim
         self.head_v_dim = int(self.head_dim * expand_v)
@@ -170,6 +172,7 @@ class GatedDeltaNet2(SequenceMixer):
             b=b,
             w=w,
             use_qk_l2norm_in_kernel=True,
+            disable_recompute=self.disable_recompute,
             cu_seqlens=cu_doc_lens,
         )
         output_gate = self.g_proj_2(self.g_proj_1(x)).view(
@@ -291,6 +294,7 @@ class GatedDeltaNet2Config(SequenceMixerConfig[GatedDeltaNet2]):
     allow_neg_eigval: bool = False
     conv_size: int = 4
     conv_bias: bool = False
+    disable_recompute: bool = False
     norm_eps: float = 1e-5
     dtype: DType = DType.float32
 
@@ -335,6 +339,7 @@ class GatedDeltaNet2Config(SequenceMixerConfig[GatedDeltaNet2]):
             allow_neg_eigval=self.allow_neg_eigval,
             conv_size=self.conv_size,
             conv_bias=self.conv_bias,
+            disable_recompute=self.disable_recompute,
             norm_eps=self.norm_eps,
             dtype=self.dtype.as_pt(),
             init_device=init_device,
