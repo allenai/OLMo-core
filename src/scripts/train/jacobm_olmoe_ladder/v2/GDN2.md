@@ -106,12 +106,17 @@ not be enabled implicitly.
 ## 275M LR sweep
 
 The first GDN2 quality experiment mirrors the completed 275M geometry-matched
-GDN1 gated-RoPE sweep. It was submitted as 16 urgent, unallocated Holmes tasks
-in [work 01KY8SY728GAJN9MZ5B9VGZNP2](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY8SY728GAJN9MZ5B9VGZNP2).
+GDN1 gated-NoPE sweep. It was submitted as 16 urgent, unallocated Holmes tasks
+in [work 01KY8TKEBSZHYBZYEC5NFB92YK](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY8TKEBSZHYBZYEC5NFB92YK).
 It uses normal backward recomputation, EP1, compile, no in-loop evals, and the
-established four-LR grid `4e-4`, `8e-4`, `1.6e-3`, `3.2e-3` at every Cx. The
-GDN1 observed optima were `1.6e-3` at Cx1/Cx2/Cx8 and `8e-4` at Cx4, so the
-grid is both directly comparable and already bracketed.
+established four-LR grid `4e-4`, `8e-4`, `1.6e-3`, `3.2e-3` at every Cx.
+The model has NoPE on global-attention layers 4 and 9; every other model and
+training setting matches the audited GDN2 gated-RoPE systems recipe.
+
+The initially submitted gated-RoPE work
+[01KY8SY728GAJN9MZ5B9VGZNP2](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY8SY728GAJN9MZ5B9VGZNP2)
+was canceled during compilation/dry-run, before its first optimizer step or
+checkpoint, and is superseded by the gated-NoPE work above.
 
 | Cx | Target tokens | Approx. steps | Global batch | GPUs | Rank MB | Approx. wall time/run |
 |---:|---:|---:|---:|---:|---:|---:|
@@ -123,7 +128,7 @@ grid is both directly comparable and already bracketed.
 This is 16 jobs and 80 concurrent GPUs, approximately 340--350 GPU-hours if
 all cells run cleanly. Token budgets follow the usual `20 * active
 non-embedding parameters * Cx` rule and are therefore about 6.2% larger than
-the GDN1 gated-RoPE budgets. Use the ordinary 10%-of-tokens warmup followed by
+the GDN1 gated-NoPE budgets. Use the ordinary 10%-of-tokens warmup followed by
 cosine decay to 0.1x peak LR, the established ephemeral-checkpoint policy, and
 out-of-loop validation. Plot one GDN2 U-curve per Cx and compare the observed
-optima against wide integration, first hybrid, and GDN1 gated-RoPE geometry.
+optima against wide integration, first hybrid, and GDN1 gated-NoPE geometry.

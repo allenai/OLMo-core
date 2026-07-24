@@ -93,6 +93,8 @@ def parse_targets(manifest: dict[str, Any], source_runs: set[str] | None = None)
             "geometry_275m_gdn_ev2_nope",
             "geometry_275m_gdn_ev2_nope_gated",
             "geometry_275m_gdn_ev2_rope_gated",
+            "geometry_275m_gdn2_ev2_nope_gated",
+            "geometry_275m_gdn2_ev2_rope_gated",
             "geometry_matched_gdn_ev2",
             "geometry_matched_gdn_ev2_nope",
             "geometry_matched_gdn_ev2_nope_gated",

@@ -277,16 +277,18 @@ def build_geometry_matched_model_config(
 
 
 def build_geometry_matched_gdn2_model_config(
-    *, disable_recompute: bool = False
+    *, rope: bool = True, disable_recompute: bool = False
 ) -> OLMoDDPModelConfig:
-    """Swap GDN1 for GDN2 in the 275M RoPE-gated geometry candidate.
+    """Swap GDN1 for GDN2 in a 275M gated geometry candidate.
 
     All geometry, MoE, full-attention, initialization, and optimization-facing
-    settings remain unchanged. ``allow_neg_eigval`` is retained from GDN1 so
-    the mixer generation is the only architectural intervention.
+    settings remain unchanged. ``rope=False`` selects the corresponding gated
+    NoPE parent. ``allow_neg_eigval`` is retained from GDN1 so the mixer
+    generation is the only other architectural intervention.
     """
 
-    candidate = build_geometry_matched_model_config("geometry_rope_gated")
+    profile_name = "geometry_rope_gated" if rope else "geometry_nope_gated"
+    candidate = build_geometry_matched_model_config(profile_name)
     resolved = candidate.resolved_block_configs
     old_gdn = cast(GatedDeltaNetConfig, resolved[1].sequence_mixer)
     gdn2 = GatedDeltaNet2Config(
@@ -327,6 +329,13 @@ def build_geometry_matched_gdn2_model_config(
         raise ValueError(f"unexpected mixer pattern: GDN2={actual_gdn2}, full={actual_full}")
     if candidate.resolved_block_configs[0].routed_experts is not None:
         raise ValueError("GDN2 candidate must retain the dense-first layer-0 FFN")
+    if any(
+        (cast(AttentionConfig, candidate.resolved_block_configs[layer_idx].sequence_mixer).rope
+         is None)
+        != (not rope)
+        for layer_idx in FULL_ATTENTION_LAYERS
+    ):
+        raise ValueError(f"GDN2 {profile_name} positional encoding does not match rope={rope}")
     actual_counts = (
         candidate.num_active_params,
         candidate.num_active_non_embedding_params,

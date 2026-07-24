@@ -1,7 +1,7 @@
 [
   {
-    "experiment_name": "jacobm-moe-v2-core-275m-gdn2-rope-gated-lr-sweep-r1",
-    "experiment_id": "01KY8SY728GAJN9MZ5B9VGZNP2",
+    "experiment_name": "jacobm-moe-v2-core-275m-gdn2-nope-gated-lr-sweep-r1",
+    "experiment_id": "01KY8TKEBSZHYBZYEC5NFB92YK",
     "tasks": [
       "cx1-lr4e-4",
       "cx1-lr8e-4",
@@ -20,8 +20,8 @@
       "cx8-lr1p6e-3",
       "cx8-lr3p2e-3"
     ],
-    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY8SY728GAJN9MZ5B9VGZNP2",
-    "status": "canceled-before-first-optimizer-step",
-    "replaced_by": "01KY8TKEBSZHYBZYEC5NFB92YK"
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY8TKEBSZHYBZYEC5NFB92YK",
+    "status": "submitted",
+    "replaces": "01KY8SY728GAJN9MZ5B9VGZNP2"
   }
 ]

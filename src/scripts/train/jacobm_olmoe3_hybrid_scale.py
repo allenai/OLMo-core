@@ -146,7 +146,10 @@ WORK_DIR = os.environ.get(
 DATA_ROOT = os.environ.get("OLMOE3_HYBRID_DATA_ROOT", "s3://ai2-llm")
 EVAL_DATA_ROOT = os.environ.get("OLMOE3_HYBRID_EVAL_DATA_ROOT", "/weka/oe-training-default/ai2-llm")
 
-if GDN2_DISABLE_RECOMPUTE and MODEL_VARIANT != "geometry_275m_gdn2_ev2_rope_gated":
+if GDN2_DISABLE_RECOMPUTE and MODEL_VARIANT not in {
+    "geometry_275m_gdn2_ev2_nope_gated",
+    "geometry_275m_gdn2_ev2_rope_gated",
+}:
     raise ValueError(
         "OLMOE3_HYBRID_GDN2_DISABLE_RECOMPUTE is only valid for the GDN2 variant"
     )
@@ -202,6 +205,18 @@ def model_config():
             )
         model = build_geometry_matched_gdn2_model_config(
             disable_recompute=GDN2_DISABLE_RECOMPUTE
+        )
+    elif MODEL_VARIANT == "geometry_275m_gdn2_ev2_nope_gated":
+        from scripts.train.jacobm_olmoe_ladder.v2.models.geometry_matched_275m import (
+            build_geometry_matched_gdn2_model_config,
+        )
+
+        if MODEL_SIZE != "275m":
+            raise ValueError(
+                "The geometry_275m_gdn2_ev2_nope_gated variant only supports MODEL_SIZE=275m"
+            )
+        model = build_geometry_matched_gdn2_model_config(
+            rope=False, disable_recompute=GDN2_DISABLE_RECOMPUTE
         )
     elif MODEL_VARIANT == "geometry_275m_swa_rope_gated":
         from scripts.train.jacobm_olmoe_ladder.v2.models.geometry_matched_275m import (
@@ -442,6 +457,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         "geometry_275m_gdn_ev2_nope",
         "geometry_275m_gdn_ev2_nope_gated",
         "geometry_275m_gdn_ev2_rope_gated",
+        "geometry_275m_gdn2_ev2_nope_gated",
         "geometry_275m_gdn2_ev2_rope_gated",
         "geometry_275m_swa_rope_gated",
         "geometry_matched_gdn_ev2",
@@ -453,6 +469,8 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         variant_group = "olmoe3-275m-geometry-gdn-ev2-rope-gated"
     elif MODEL_VARIANT == "geometry_275m_gdn2_ev2_rope_gated":
         variant_group = "olmoe3-275m-geometry-gdn2-ev2-rope-gated"
+    elif MODEL_VARIANT == "geometry_275m_gdn2_ev2_nope_gated":
+        variant_group = "olmoe3-275m-geometry-gdn2-ev2-nope-gated"
     elif MODEL_VARIANT == "geometry_275m_swa_rope_gated":
         variant_group = "olmoe3-275m-geometry-swa-rope-gated-throughput"
     elif MODEL_VARIANT == "geometry_275m_gdn_ev2_nope_gated":
@@ -474,15 +492,21 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
     if MODEL_VARIANT in {
         "geometry_275m_gdn_ev2_nope_gated",
         "geometry_275m_gdn_ev2_nope",
+        "geometry_275m_gdn2_ev2_nope_gated",
         "geometry_matched_gdn_ev2_nope",
         "geometry_matched_gdn_ev2_nope_gated",
     }:
         variant_tags = ["geometry-matched", "expand-v-2", "nope"]
         if MODEL_VARIANT in {
             "geometry_275m_gdn_ev2_nope_gated",
+            "geometry_275m_gdn2_ev2_nope_gated",
             "geometry_matched_gdn_ev2_nope_gated",
         }:
             variant_tags.append("attention-gate")
+        if MODEL_VARIANT == "geometry_275m_gdn2_ev2_nope_gated":
+            variant_tags.append("gdn2")
+            if GDN2_DISABLE_RECOMPUTE:
+                variant_tags.append("gdn2-no-recompute")
     elif geometry_variant:
         variant_tags = ["geometry-matched", "expand-v-2", "rope"]
         if MODEL_VARIANT in {
@@ -623,7 +647,10 @@ def finalize_config(config: ExperimentConfig) -> None:
     delta_fraction = (
         config.model.num_active_params - base.num_active_params
     ) / base.num_active_params
-    if MODEL_VARIANT == "geometry_275m_gdn2_ev2_rope_gated":
+    if MODEL_VARIANT in {
+        "geometry_275m_gdn2_ev2_nope_gated",
+        "geometry_275m_gdn2_ev2_rope_gated",
+    }:
         max_active_parameter_delta_fraction = GDN2_MAX_ACTIVE_PARAMETER_DELTA_FRACTION
     elif MODEL_VARIANT in {
         "geometry_matched_gdn_ev2_nope_gated",
