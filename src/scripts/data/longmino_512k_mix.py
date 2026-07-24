@@ -5,7 +5,7 @@ Expresses the target composition as :class:`MixingInstanceSource` ratios over th
 ``part-*.npy`` trees written by ``tokenize_longmino_512k.py``. Because the proportions live here
 rather than being baked into the tokenized files, re-weighting the mix costs nothing.
 
-Target composition::
+Nominal composition::
 
     midtrain (short-context reasoning)                       66.1%
     long context                                             33.9%
@@ -18,10 +18,11 @@ Target composition::
         128k-256k (2e17, real s2pdf, from pool)               15%
         256k-512k (2e18, real s2pdf, from pool)               15%
 
-Leaving ``num_tokens`` unset yields the largest mix that matches these ratios exactly without
-repeating any data (``max_repetition_factor`` stays at its default of 1.0, so an over-large
-``num_tokens`` raises rather than silently upsampling). Given the tokens available in each stratum
-that maximum is ~49.6B, bound by the 16k-32k bucket.
+Those ratios alone cap the mix at whichever stratum runs out first -- the 16k-32k bucket -- which
+leaves ``midtrain`` and ``8k-16k`` partially consumed. :data:`FULL_USE` names the strata that
+should instead be taken in their entirety. Every other stratum keeps exactly the token count the
+nominal ratios gave it; only the two topped-up strata change size, so the mix grows slightly and
+their shares rise to match. See :func:`plan_tokens`.
 
 Inspect the realized mix::
 
@@ -29,6 +30,7 @@ Inspect the realized mix::
 """
 
 import argparse
+import json
 import os
 import sys
 
@@ -67,6 +69,10 @@ REAL_VS_SYNTH = 0.50
 REX_RATIO = 0.758
 CWE_RATIO = 0.242
 
+#: Strata to consume in full rather than at their nominal share. Everything else keeps the token
+#: count the nominal ratios assign it.
+FULL_USE = ("midtrain", "lc_8_16k")
+
 #: Stratum label -> glob under the tokenized tree.
 STRATUM_GLOBS = {
     "midtrain": "midtrain/*/part-*.npy",
@@ -80,13 +86,27 @@ STRATUM_GLOBS = {
     "lc_256_512k": "lc/real_s2pdf/2e18/part-*.npy",
 }
 
+#: Tokens available per stratum in the *source* datasets, from the dolma3 dataset cards (dolma2
+#: tokenizer). Used only when a tokenized tree isn't built yet; once ``token_counts.json`` exists
+#: we use the measured numbers instead.
+PUBLISHED_AVAILABLE = {
+    "midtrain": 33.00e9,
+    "lc_8_16k": 2.27e9,
+    "lc_16_32k": 1.85e9,
+    "lc_32_64k_real": 4.81e9,
+    "lc_32_64k_rex": 6.08e9,
+    "lc_32_64k_cwe": 1.94e9,
+    "lc_64_128k": 3.35e9,
+    "lc_128_256k": 3.35e9,
+    "lc_256_512k": 3.35e9,
+}
 
-def effective_ratios() -> dict:
+
+def nominal_ratios() -> dict:
     """
-    The share of the *whole* mix each leaf stratum accounts for.
+    The share of the *whole* mix each leaf stratum accounts for under the nominal ratios.
 
-    Useful for sanity-checking the tree and for computing how large the mix can be before a
-    stratum runs out. Values sum to 1.0.
+    Values sum to 1.0.
     """
     lc = LONG_CONTEXT_RATIO
     r32 = lc * LC_RATIOS["lc_32_64k"]
@@ -103,31 +123,12 @@ def effective_ratios() -> dict:
     }
 
 
-#: Tokens available per stratum in the *source* datasets, from the dolma3 dataset cards (dolma2
-#: tokenizer). Used only for the feasibility estimate below when a tokenized tree isn't built yet;
-#: once ``token_counts.json`` exists we use the measured numbers instead.
-PUBLISHED_AVAILABLE = {
-    "midtrain": 33.00e9,
-    "lc_8_16k": 2.27e9,
-    "lc_16_32k": 1.85e9,
-    "lc_32_64k_real": 4.81e9,
-    "lc_32_64k_rex": 6.08e9,
-    "lc_32_64k_cwe": 1.94e9,
-    "lc_64_128k": 3.35e9,
-    "lc_128_256k": 3.35e9,
-    "lc_256_512k": 3.35e9,
-}
-
-
 def measured_available(root: str, tree: str) -> dict:
     """
     Read per-stratum token counts from a tokenized tree's ``token_counts.json``.
 
-    :returns: Mapping of the labels in :func:`effective_ratios` to token counts, or ``{}`` if the
-        tree has not been built yet.
+    :returns: Mapping of stratum label to token count, or ``{}`` if the tree isn't built yet.
     """
-    import json
-
     path = os.path.join(root, tree, "token_counts.json")
     if not os.path.exists(path):
         return {}
@@ -150,26 +151,27 @@ def measured_available(root: str, tree: str) -> dict:
     }
 
 
-def feasibility(available: dict) -> dict:
+def plan_tokens(available: dict) -> dict:
     """
-    Largest ratio-exact mix the given per-stratum token counts support, and what binds it.
+    Target tokens per stratum.
 
-    With ``max_repetition_factor`` at its default of 1.0 no stratum may be repeated, so the mix is
-    capped by whichever stratum runs out first: ``min(available[s] / effective_ratio[s])``.
+    First size the mix under the nominal ratios: with no repetition allowed, that is capped by
+    ``min(available[s] / nominal_ratio[s])``, i.e. by whichever stratum runs out first. Then the
+    strata in :data:`FULL_USE` are raised to their full availability. Every other stratum keeps the
+    count the nominal ratios gave it, so the mix simply grows by the topped-up amount.
+
+    :param available: Tokens on disk per stratum.
+
+    :returns: Mapping of stratum label to target token count.
     """
-    eff = effective_ratios()
-    caps = {s: available[s] / eff[s] for s in eff if available.get(s)}
-    if not caps:
-        return {}
-    binding = min(caps, key=lambda s: caps[s])
-    total = caps[binding]
-    return {
-        "total_tokens": total,
-        "binding_stratum": binding,
-        "caps": caps,
-        "per_stratum": {s: total * eff[s] for s in eff},
-        "utilization": {s: (total * eff[s]) / available[s] for s in eff if available.get(s)},
-    }
+    nominal = nominal_ratios()
+    caps = {s: available[s] / nominal[s] for s in nominal if available.get(s)}
+    base_total = min(caps.values())
+    target = {s: base_total * nominal[s] for s in nominal}
+    for s in FULL_USE:
+        if available.get(s):
+            target[s] = float(available[s])
+    return target
 
 
 def build_longmino_512k_mix(
@@ -179,10 +181,14 @@ def build_longmino_512k_mix(
     tree: str = "qwen3",
     root: str = WEKA_ROOT,
     seed: int = 1234,
-    num_tokens: int = None,  # type: ignore[assignment]
+    available: dict = None,  # type: ignore[assignment]
 ) -> MixingInstanceSourceConfig:
     """
     Build the longmino-512k mix.
+
+    Ratios are passed as raw target token counts at each level of the tree;
+    :class:`MixingInstanceSource` normalizes ratios within each node, so this reproduces the
+    intended proportions exactly without having to hand-convert them to nested fractions.
 
     :param tokenizer: Tokenizer config matching ``tree`` -- :meth:`TokenizerConfig.qwen3` for
         ``qwen3``, :meth:`TokenizerConfig.qwen3_5` for ``qwen35``.
@@ -191,11 +197,16 @@ def build_longmino_512k_mix(
     :param root: Root of the dataset on weka.
     :param seed: Sampling seed. Set explicitly -- passing ``seed=None`` to a sampling source makes
         it take a *prefix* of each source rather than a random subset.
-    :param num_tokens: Optional target size. Leave unset for the largest ratio-exact mix.
+    :param available: Per-stratum token counts. Defaults to the tree's ``token_counts.json``,
+        falling back to :data:`PUBLISHED_AVAILABLE`.
 
     :returns: A :class:`MixingInstanceSourceConfig` ready to hand to a
         :class:`ComposableDataLoaderConfig`.
     """
+    if available is None:
+        available = measured_available(root, tree) or PUBLISHED_AVAILABLE
+    target = plan_tokens(available)
+
     base = os.path.join(root, tree)
     sources = NumpyDocumentSourceConfig.from_source_groups(
         {label: [os.path.join(base, glob)] for label, glob in STRATUM_GLOBS.items()},
@@ -215,43 +226,46 @@ def build_longmino_512k_mix(
 
     synth_32_64k = MixingInstanceSourceConfig(
         source_specs=[
-            spec(chunked("lc_32_64k_rex"), REX_RATIO, "lc_32_64k_rex"),
-            spec(chunked("lc_32_64k_cwe"), CWE_RATIO, "lc_32_64k_cwe"),
+            spec(chunked("lc_32_64k_rex"), target["lc_32_64k_rex"], "lc_32_64k_rex"),
+            spec(chunked("lc_32_64k_cwe"), target["lc_32_64k_cwe"], "lc_32_64k_cwe"),
         ],
         seed=seed,
         label="lc_32_64k_synth",
     )
+    synth_total = target["lc_32_64k_rex"] + target["lc_32_64k_cwe"]
 
     bucket_32_64k = MixingInstanceSourceConfig(
         source_specs=[
-            spec(chunked("lc_32_64k_real"), REAL_VS_SYNTH, "lc_32_64k_real"),
-            spec(synth_32_64k, 1 - REAL_VS_SYNTH, "lc_32_64k_synth"),
+            spec(chunked("lc_32_64k_real"), target["lc_32_64k_real"], "lc_32_64k_real"),
+            spec(synth_32_64k, synth_total, "lc_32_64k_synth"),
         ],
         seed=seed,
         label="lc_32_64k",
     )
+    bucket_32_64k_total = target["lc_32_64k_real"] + synth_total
 
     long_context = MixingInstanceSourceConfig(
         source_specs=[
-            spec(chunked("lc_8_16k"), LC_RATIOS["lc_8_16k"], "lc_8_16k"),
-            spec(chunked("lc_16_32k"), LC_RATIOS["lc_16_32k"], "lc_16_32k"),
-            spec(bucket_32_64k, LC_RATIOS["lc_32_64k"], "lc_32_64k"),
-            spec(chunked("lc_64_128k"), LC_RATIOS["lc_64_128k"], "lc_64_128k"),
-            spec(chunked("lc_128_256k"), LC_RATIOS["lc_128_256k"], "lc_128_256k"),
-            spec(chunked("lc_256_512k"), LC_RATIOS["lc_256_512k"], "lc_256_512k"),
+            spec(chunked("lc_8_16k"), target["lc_8_16k"], "lc_8_16k"),
+            spec(chunked("lc_16_32k"), target["lc_16_32k"], "lc_16_32k"),
+            spec(bucket_32_64k, bucket_32_64k_total, "lc_32_64k"),
+            spec(chunked("lc_64_128k"), target["lc_64_128k"], "lc_64_128k"),
+            spec(chunked("lc_128_256k"), target["lc_128_256k"], "lc_128_256k"),
+            spec(chunked("lc_256_512k"), target["lc_256_512k"], "lc_256_512k"),
         ],
         seed=seed,
         label="long_context",
     )
+    lc_total = sum(v for k, v in target.items() if k != "midtrain")
 
     return MixingInstanceSourceConfig(
         source_specs=[
-            spec(chunked("midtrain"), MIDTRAIN_RATIO, "midtrain"),
-            spec(long_context, LONG_CONTEXT_RATIO, "long_context"),
+            spec(chunked("midtrain"), target["midtrain"], "midtrain"),
+            spec(long_context, lc_total, "long_context"),
         ],
         seed=seed,
         label="longmino_512k",
-        num_tokens=num_tokens,
+        num_tokens=int(sum(target.values())),
     )
 
 
@@ -261,32 +275,42 @@ def main() -> None:
     parser.add_argument("--tree", default="qwen3", choices=["qwen3", "qwen35"])
     parser.add_argument("--sequence-length", type=int, default=65536)
     parser.add_argument("--seed", type=int, default=1234)
-    parser.add_argument("--num-tokens", type=int, default=None)
     parser.add_argument("--work-dir", default="/tmp/longmino512k-workdir")
     parser.add_argument(
         "--ratios-only", action="store_true", help="Print the ratio table without touching data."
     )
     args = parser.parse_args()
 
-    eff = effective_ratios()
-    available = measured_available(args.root, args.tree)
-    source = "measured (token_counts.json)" if available else "published dataset-card counts"
-    if not available:
-        available = PUBLISHED_AVAILABLE
-    fez = feasibility(available)
+    measured = measured_available(args.root, args.tree)
+    source = "measured (token_counts.json)" if measured else "published dataset-card counts"
+    available = measured or PUBLISHED_AVAILABLE
+    target = plan_tokens(available)
+    total = sum(target.values())
+    lc_total = sum(v for k, v in target.items() if k != "midtrain")
 
     print(f"stratum sizing -- availability from {source}\n")
-    print(f"{'stratum':20s} {'share':>8s} {'available':>12s} {'in mix':>12s} {'used':>7s}")
-    for label, ratio in eff.items():
+    print(f"{'stratum':20s} {'available':>11s} {'in mix':>11s} {'used':>7s} {'share':>8s}")
+    for label in target:
         avail = available.get(label, 0)
-        want = fez["per_stratum"][label]
+        want = target[label]
+        flag = "  <- full" if label in FULL_USE else ""
         print(
-            f"  {label:18s} {100 * ratio:7.3f}% {avail / 1e9:10.2f}B {want / 1e9:10.2f}B "
-            f"{100 * want / avail if avail else 0:6.1f}%"
+            f"  {label:18s} {avail / 1e9:9.2f}B {want / 1e9:9.2f}B "
+            f"{100 * want / avail if avail else 0:6.1f}% {100 * want / total:7.3f}%{flag}"
         )
+    print(f"\n  total: {total / 1e9:.2f}B tokens")
     print(
-        f"\n  total: {fez['total_tokens'] / 1e9:.2f}B tokens "
-        f"(capped by '{fez['binding_stratum']}')"
+        f"  midtrain {100 * target['midtrain'] / total:.2f}%  /  "
+        f"long context {100 * lc_total / total:.2f}%"
+    )
+    print(
+        "  within long context: "
+        + ", ".join(
+            f"{k.replace('lc_', '')} {100 * v / lc_total:.2f}%"
+            for k, v in target.items()
+            if k != "midtrain" and not k.startswith("lc_32_64k_")
+        )
+        + f", 32_64k {100 * sum(v for k, v in target.items() if k.startswith('lc_32_64k_')) / lc_total:.2f}%"
     )
     if args.ratios_only:
         return
@@ -298,7 +322,7 @@ def main() -> None:
         tree=args.tree,
         root=args.root,
         seed=args.seed,
-        num_tokens=args.num_tokens,
+        available=available,
     )
     print(f"\nbuilding mix from {os.path.join(args.root, args.tree)} ...\n")
     mix = cfg.build(args.work_dir)

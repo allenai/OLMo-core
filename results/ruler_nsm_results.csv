@@ -4,3 +4,5 @@ q4b-base-fast-compressive-landmark-8node_step2385_tk64_nsm0p4,92.77,54.39,48.92,
 q4b-base-fast-compressive-landmark-8node_step2385_tk64_nsm0p0,92.77,88.83,82.14,68.83,-
 q4b-base-fast-compressive-landmark-8node_step2385_tk64_nsm0p1,92.77,88.24,81.66,69.01,-
 q4b-base-fast-compressive-landmark-8node_step2385_tk64_nsm0p05,92.77,88.48,81.85,68.88,-
+qwen3-4b-fclm-partialrope-d3lm15b_step2385_tk64_nsm0p0,91.60,81.48,73.65,66.29,55.00
+qwen3-4b-fclm-blocklocal-d3lm15b_step2385_tk64_nsm0p0,87.90,76.69,68.39,55.92,50.31
