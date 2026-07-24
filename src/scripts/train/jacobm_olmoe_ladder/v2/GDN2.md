@@ -346,3 +346,19 @@ diagnostic experiments retain their existing all-rank debug environment:
 experiment was restarted from `step5000`; because it predates the diagnostic
 launches, this attempt does not have the new environment. All five new Beaker
 attempts were accepted at urgent priority under the existing experiment IDs.
+
+The 2026-07-24 21:50 UTC retry audit separated checkpoint-local failures from
+trajectory-varying ones. 810M Cx2 reproduced the non-finite loss at step
+56,755, 1.2B Cx1 reproduced the broad non-finite gradient at step 8,029, and
+275M Cx8 `1.6e-3` reproduced the non-finite loss at step 36,768. The older
+1.2B Cx2 attempt again failed on the update immediately after logged step
+5,097. These four were left stopped.
+
+Three attempts were safe to retry in place. The 810M Cx1 retry never entered
+training: one replica missed rendezvous and the leader timed out after 901
+seconds with only one of two clients joined. The 1.2B Cx4 diagnostic advanced
+past its prior step-8,456 failure and failed at step 9,059, leaving durable
+`step9000`. The 1.2B Cx8 diagnostic failed at step 7,073 rather than its prior
+step 7,125 and remains on durable `step7000`. Those three existing Beaker
+experiments were resumed at urgent priority; no new experiment IDs or
+checkpoint directories were created.

@@ -4,7 +4,7 @@ Record post-migration experiment waves here. Per-run rows must include Beaker
 job IDs and W&B IDs once they exist. Detailed migration-era DDP jobs remain in
 [`../v1/DDP_RUNS.md`](../v1/DDP_RUNS.md).
 
-## Live status snapshot (2026-07-24 21:17 UTC)
+## Live status snapshot (2026-07-24 21:50 UTC)
 
 This is the current source of truth for active V2 work. The detailed sections
 below retain the full launch and retry history.
@@ -25,8 +25,8 @@ below retain the full launch and retry history.
 | pretraining | larger aligned geometry + NoPE | finished | 12/12 formal cells; clean 1.2B Cx8 reproduction finished with final-250M CE `2.034305` | [results](results/pretraining/geometry_gdn_ev2_nope/results.md) |
 | pretraining | larger aligned geometry + NoPE + gated attention | finished | 12/12; newly finished 1.2B Cx2 strict final-250M CE `2.188236` | [results](results/pretraining/geometry_gdn_ev2_nope_gated/results.md) |
 | pretraining | larger aligned geometry + RoPE + gated attention | 11 finished / 1 failed | newly collected strict final-250M CE: 810M Cx8 `2.104806`, 1.2B Cx8 `2.029514`; 1.2B Cx2 remains failed | [results](results/pretraining/geometry_gdn_ev2_rope_gated/results.md) |
-| pretraining | 275M geometry + NoPE + gated attention + GDN2 | 15 finished / 1 diagnostic retry pending | Cx8 `1.6e-3` reproduced non-finite loss at step 36,768 with no preceding gradient spike; explicitly retried from durable `step36500` while pre-reduction diagnostics are planned | [results](results/pretraining/geometry_gdn2_ev2_nope_gated/results.md) |
-| pretraining | larger geometry + NoPE + gated attention + GDN2 | 2 finished / 10 active | 810M Cx1/Cx2, 1.2B Cx1, and 1.2B Cx2 were restarted in place from their latest durable checkpoints; 1.2B Cx4/Cx8 diagnostics and 480M/810M Cx4/Cx8 production jobs continue | [results](results/pretraining/geometry_gdn2_ev2_nope_gated/results.md) |
+| pretraining | 275M geometry + NoPE + gated attention + GDN2 | 15 finished / 1 deterministic failure | Cx8 `1.6e-3` reproduced non-finite loss at step 36,768 yet again from durable `step36500`; left stopped | [results](results/pretraining/geometry_gdn2_ev2_nope_gated/results.md) |
+| pretraining | larger geometry + NoPE + gated attention + GDN2 | 2 finished / 7 active / 3 deterministic failures | 810M Cx2, 1.2B Cx1, and 1.2B Cx2 reproduced checkpoint-local failures and remain stopped; 810M Cx1 had only a rendezvous failure, while 1.2B Cx4/Cx8 failed at changed steps, so those three were restarted in place | [results](results/pretraining/geometry_gdn2_ev2_nope_gated/results.md) |
 | throughput | 275M 1:1 10-layer SWA depth control | finished | one B300, 2 Mi batch, MB16: 578.75 TFLOPs/GPU and 365.8K TPS/GPU; zero skipped steps | [work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYADSYYRHPYQCRVWJ27KV4KQ) |
 | midtraining | first hybrid 275M Cx8 | finished | 100B; final checkpoint `step95368`; validation finished | [1keo2hz6](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/1keo2hz6) |
 | midtraining | first hybrid 480M Cx8 | finished | 100.001B; final checkpoint `step95368`; validation finished | [mnp9rv5l](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/mnp9rv5l) |
