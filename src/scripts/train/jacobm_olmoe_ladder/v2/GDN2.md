@@ -103,16 +103,15 @@ already peaks at 253.7 GiB active / 257.0 GiB reserved at MB16. Keep
 flag remains available for a separate smaller-MB kernel diagnostic but must
 not be enabled implicitly.
 
-## Planned 275M LR sweep
+## 275M LR sweep
 
-The first GDN2 quality experiment should exactly mirror the completed 275M
-geometry-matched GDN1 gated-RoPE sweep. It remains unlaunched pending explicit
-approval. Use normal backward recomputation, EP1, compile enabled, no in-loop
-evals, and the established four-LR grid `4e-4`, `8e-4`, `1.6e-3`, `3.2e-3` at
-every Cx. The GDN1 observed optima were `1.6e-3` at Cx1/Cx2/Cx8 and `8e-4` at
-Cx4, so this grid is both directly comparable and already bracketed.
-When approved, submit the wave as urgent unallocated work in
-`ai2/OLMo-3-moe-experiments` on `ai2/holmes`.
+The first GDN2 quality experiment mirrors the completed 275M geometry-matched
+GDN1 gated-RoPE sweep. It was submitted as 16 urgent, unallocated Holmes tasks
+in [work 01KY8SY728GAJN9MZ5B9VGZNP2](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY8SY728GAJN9MZ5B9VGZNP2).
+It uses normal backward recomputation, EP1, compile, no in-loop evals, and the
+established four-LR grid `4e-4`, `8e-4`, `1.6e-3`, `3.2e-3` at every Cx. The
+GDN1 observed optima were `1.6e-3` at Cx1/Cx2/Cx8 and `8e-4` at Cx4, so the
+grid is both directly comparable and already bracketed.
 
 | Cx | Target tokens | Approx. steps | Global batch | GPUs | Rank MB | Approx. wall time/run |
 |---:|---:|---:|---:|---:|---:|---:|

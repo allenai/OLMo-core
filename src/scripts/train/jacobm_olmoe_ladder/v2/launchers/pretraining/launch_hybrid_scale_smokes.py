@@ -4,7 +4,9 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -204,6 +206,11 @@ def main() -> None:
         help="Render one exact task_name; repeat to select multiple tasks",
     )
     parser.add_argument("--experiment-name")
+    parser.add_argument(
+        "--record",
+        type=Path,
+        help="Append the submitted Beaker experiment and task names to this JSON ledger",
+    )
     parser.add_argument("--submit", action="store_true")
     parser.add_argument(
         "--resume-existing",
@@ -279,7 +286,34 @@ def main() -> None:
         args.experiment_name,
     ]
     print(f"Submitting: {' '.join(command)}")
-    subprocess.run(command, check=True)
+    result = subprocess.run(command, check=True, text=True, capture_output=True)
+    print(result.stdout, end="")
+    print(result.stderr, end="")
+    ids = re.findall(r"\b01[A-Z0-9]{24}\b", result.stdout + "\n" + result.stderr)
+    if not ids:
+        raise RuntimeError("Beaker created the experiment but its ID was not found in CLI output")
+    experiment_id = ids[-1]
+    if args.record is not None:
+        workspace = str(manifest["beaker"]["workspace"])
+        organization, workspace_name = workspace.split("/", maxsplit=1)
+        record = {
+            "experiment_name": args.experiment_name,
+            "experiment_id": experiment_id,
+            "tasks": [str(row["task_name"]) for row in rows],
+            "url": (
+                f"https://beaker.org/orgs/{organization}/workspaces/{workspace_name}/work/"
+                f"{experiment_id}"
+            ),
+        }
+        args.record.parent.mkdir(parents=True, exist_ok=True)
+        records: list[dict[str, Any]] = []
+        if args.record.is_file():
+            records = json.loads(args.record.read_text())
+        if any(item.get("experiment_id") == experiment_id for item in records):
+            raise RuntimeError(f"Duplicate experiment ID in submission ledger: {experiment_id}")
+        records.append(record)
+        args.record.write_text(json.dumps(records, indent=2) + "\n")
+        print(f"Recorded submission in {args.record}")
 
 
 if __name__ == "__main__":
