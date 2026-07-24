@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-07-21T20:26:28.152451+00:00",
+  "generated_at": "2026-07-24T06:33:49.508775+00:00",
   "project": "ai2-llm/jacobm-olmoe-ladder",
   "wave": "geometry_gdn_ev2",
   "models": [
@@ -39,7 +39,7 @@
         "sa70hegz"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -58,7 +58,7 @@
         "3ddxwqks"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -77,7 +77,7 @@
         "8zx9zgnw"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -96,7 +96,7 @@
         "terfkng8"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -115,7 +115,7 @@
         "fkm77yos"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -134,7 +134,7 @@
         "yo22u93q"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -153,7 +153,7 @@
         "moknw6oc"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -172,7 +172,7 @@
         "mettf0d3"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -191,7 +191,7 @@
         "kfua3dcq"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -210,7 +210,7 @@
         "h86x1nv3"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -229,7 +229,7 @@
         "afxq80js"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -248,7 +248,7 @@
         "oaazdm2h"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -267,7 +267,7 @@
         "u4cinuz5"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -286,7 +286,7 @@
         "3oqkg24h"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -305,7 +305,7 @@
         "pz6377bu"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -324,7 +324,7 @@
         "s5qmhyb2"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -343,7 +343,7 @@
         "07qo96gy"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -362,7 +362,7 @@
         "j12fk559"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -381,7 +381,7 @@
         "mem73c7g"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -400,7 +400,7 @@
         "o2bdr3gw"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -419,7 +419,7 @@
         "6porpbo2"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -438,7 +438,7 @@
         "0f782vrw"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -457,7 +457,7 @@
         "7jzlrolc"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -476,7 +476,7 @@
         "gwve4pn6"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -495,7 +495,7 @@
         "hwjvw532"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -514,7 +514,7 @@
         "hmjkig0r"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -533,7 +533,7 @@
         "socvue3a"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -552,7 +552,7 @@
         "xvk92054"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -571,7 +571,7 @@
         "uhw9wfed"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -590,7 +590,7 @@
         "sr1jgmao"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -609,7 +609,7 @@
         "n1gjknwg"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -628,7 +628,7 @@
         "9n3xk8gs"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -647,7 +647,7 @@
         "ttjquo05"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -666,7 +666,7 @@
         "5u03fshf"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -686,7 +686,7 @@
         "9k8mo2q5"
       ],
       "token_resets": 1,
-      "deduplicated_samples": 498
+      "deduplicated_samples": 502
     },
     {
       "model": "275m",
@@ -706,7 +706,7 @@
         "xdo7p86h"
       ],
       "token_resets": 1,
-      "deduplicated_samples": 92
+      "deduplicated_samples": 96
     },
     {
       "model": "275m",
@@ -725,7 +725,7 @@
         "0x3i869n"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -744,7 +744,7 @@
         "aholwcgr"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -763,7 +763,7 @@
         "b0z3qfmi"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -782,7 +782,7 @@
         "rkxojd03"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -801,7 +801,7 @@
         "66aja50m"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -820,7 +820,7 @@
         "ntoo8vlo"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -839,7 +839,7 @@
         "iv901lom"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -858,7 +858,7 @@
         "qe052lo4"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -877,7 +877,7 @@
         "qu2zaxr7"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -896,7 +896,7 @@
         "235ye5lg"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     }
   ],
   "results": [
@@ -925,7 +925,7 @@
           "h86x1nv3"
         ],
         "token_resets": 0,
-        "deduplicated_samples": 0
+        "deduplicated_samples": 1
       },
       "references": {
         "wide_integration": {
@@ -945,7 +945,7 @@
             "h86x1nv3"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 0
+          "deduplicated_samples": 1
         },
         "hybrid_gdn_ev1": {
           "model": "275m",
@@ -964,7 +964,7 @@
             "moknw6oc"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 0
+          "deduplicated_samples": 1
         }
       },
       "intervention_result": {
@@ -984,7 +984,7 @@
           "8zx9zgnw"
         ],
         "token_resets": 0,
-        "deduplicated_samples": 0
+        "deduplicated_samples": 1
       },
       "delta_intervention_minus_wide": -0.03316297871011864,
       "delta_intervention_minus_reference": {
@@ -1017,7 +1017,7 @@
           "6porpbo2"
         ],
         "token_resets": 0,
-        "deduplicated_samples": 0
+        "deduplicated_samples": 1
       },
       "references": {
         "wide_integration": {
@@ -1037,7 +1037,7 @@
             "6porpbo2"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 0
+          "deduplicated_samples": 1
         },
         "hybrid_gdn_ev1": {
           "model": "275m",
@@ -1056,7 +1056,7 @@
             "j12fk559"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 0
+          "deduplicated_samples": 1
         }
       },
       "intervention_result": {
@@ -1076,7 +1076,7 @@
           "3oqkg24h"
         ],
         "token_resets": 0,
-        "deduplicated_samples": 0
+        "deduplicated_samples": 1
       },
       "delta_intervention_minus_wide": -0.029332707513053613,
       "delta_intervention_minus_reference": {
@@ -1109,7 +1109,7 @@
           "9n3xk8gs"
         ],
         "token_resets": 0,
-        "deduplicated_samples": 0
+        "deduplicated_samples": 1
       },
       "references": {
         "wide_integration": {
@@ -1129,7 +1129,7 @@
             "9n3xk8gs"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 0
+          "deduplicated_samples": 1
         },
         "hybrid_gdn_ev1": {
           "model": "275m",
@@ -1148,7 +1148,7 @@
             "uhw9wfed"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 0
+          "deduplicated_samples": 1
         }
       },
       "intervention_result": {
@@ -1168,7 +1168,7 @@
           "hwjvw532"
         ],
         "token_resets": 0,
-        "deduplicated_samples": 0
+        "deduplicated_samples": 1
       },
       "delta_intervention_minus_wide": -0.03138782843103938,
       "delta_intervention_minus_reference": {
@@ -1201,7 +1201,7 @@
           "qe052lo4"
         ],
         "token_resets": 0,
-        "deduplicated_samples": 0
+        "deduplicated_samples": 1
       },
       "references": {
         "wide_integration": {
@@ -1221,7 +1221,7 @@
             "qe052lo4"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 0
+          "deduplicated_samples": 1
         },
         "hybrid_gdn_ev1": {
           "model": "275m",
@@ -1240,7 +1240,7 @@
             "66aja50m"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 0
+          "deduplicated_samples": 1
         }
       },
       "intervention_result": {
@@ -1261,7 +1261,7 @@
           "xdo7p86h"
         ],
         "token_resets": 1,
-        "deduplicated_samples": 92
+        "deduplicated_samples": 96
       },
       "delta_intervention_minus_wide": -0.029416770305273676,
       "delta_intervention_minus_reference": {

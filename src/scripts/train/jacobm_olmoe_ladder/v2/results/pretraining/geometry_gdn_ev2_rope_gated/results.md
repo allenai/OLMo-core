@@ -1,6 +1,6 @@
 # Geometry-matched RoPE gated-attention active hybrid GDN intervention
 
-Generated: `2026-07-24T01:38:00.691520+00:00`
+Generated: `2026-07-24T06:36:26.624562+00:00`
 
 Selection metric: final `250M`-token mean training CE. Only finished runs are eligible.
 The optimal-LR summary includes only bracketed 275M sweeps with a valid quadratic fit.

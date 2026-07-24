@@ -497,14 +497,15 @@ WAVES = {
             "The 275M geometry-matched expand_v=2 gated-NoPE architecture with "
             "only its eight recurrent mixers changed from GDN1 to GDN2. Per "
             "project direction, the plot compares only against original wide "
-            "integration and the geometry-matched gated-RoPE GDN1 model."
+            "integration and the otherwise-matching geometry-matched gated-NoPE "
+            "GDN1 model."
         ),
         models=("275m",),
         lr_sweep_models=("275m",),
         active_parameters={"275m": 306_191_168},
         baseline_active_parameters={"275m": 280_207_872},
         baseline=WIDE_INTEGRATION,
-        additional_baselines=(GEOMETRY_GDN_EV2_ROPE_GATED,),
+        additional_baselines=(GEOMETRY_GDN_EV2_NOPE_GATED,),
         intervention=GEOMETRY_GDN2_EV2_NOPE_GATED,
         uplot_baselines=True,
     ),
@@ -786,11 +787,10 @@ def plot_intervention_uplot(
             color=wave.intervention.color,
             label=f"Cx{cx}",
         )
-        fit = (
-            _fit_minimum(group)
-            if len(group) == _expected_count(wave.intervention, model, cx)
-            else None
-        )
+        # A missing sweep point does not invalidate a fit when the remaining
+        # finished points already bracket an interior observed minimum. The
+        # fitted LR is visual-only; formal selection remains the observed best.
+        fit = _fit_minimum(group)
         if fit is not None:
             fit_lr, fit_loss = fit
             ax.axvline(fit_lr, color=line.get_color(), linestyle=":", linewidth=1.2, alpha=0.75)
@@ -808,7 +808,7 @@ def plot_intervention_uplot(
                 f"Cx{cx} fit3: {fit_lr:.2g}",
                 (fit_lr, fit_loss),
                 textcoords="offset points",
-                xytext=(6, -14),
+                xytext=(6, 8),
                 ha="left",
                 fontsize=8,
                 color=line.get_color(),
@@ -867,9 +867,7 @@ def plot_optimal_summary(points: list[Point], wave: Wave, output_path: Path, win
         (model, cx)
         for model in wave.lr_sweep_models
         for cx in (1, 2, 4, 8)
-        if len(_finished(points, wave.intervention.key, model, cx))
-        == _expected_count(wave.intervention, model, cx)
-        and _fit_minimum(_finished(points, wave.intervention.key, model, cx)) is not None
+        if _fit_minimum(_finished(points, wave.intervention.key, model, cx)) is not None
     }
     eligible_points = [point for point in points if (point.model, point.cx) in eligible_keys]
     reference_linestyles = ("--", ":", "-.", (0, (3, 1, 1, 1)))
@@ -1050,7 +1048,6 @@ def write_results(
                 "complete": complete_count == expected_count,
                 "optimal_summary_eligible": (
                     mode == "lr_sweep"
-                    and complete_count == expected_count
                     and _fit_minimum(finished) is not None
                 ),
                 "completed_intervention_runs": complete_count,

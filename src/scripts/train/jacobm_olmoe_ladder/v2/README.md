@@ -55,6 +55,9 @@ uv run --isolated --with 'wandb==0.21.4' --with matplotlib python \
 uv run --isolated --with 'wandb==0.21.4' --with matplotlib python \
   src/scripts/train/jacobm_olmoe_ladder/v2/plot_pretraining_wave.py \
   --wave geometry_gdn2_ev2_nope_gated --refresh-stale-cache
+
+PYTHONPATH=src uv run --with matplotlib python \
+  src/scripts/train/jacobm_olmoe_ladder/v2/plot_c4_validation_scale.py
 ```
 
 The script writes each selected wave into one matching artifact directory and
@@ -69,6 +72,12 @@ their LRs were transferred from wide rather than optimized for hybrid. The
 shared JSON/Markdown result table records both modes. W&B histories reuse the
 migrated v1 cache; `--include-running` remains available for diagnostic tables
 but running points never enter formal selection.
+
+`plot_c4_validation_scale.py` renders the C4 validation-CE analogue of the
+gated-RoPE fixed-LR scale plot. It preserves the exact checkpoint selection
+made by the training-loss plot (observed-best at 275M and transferred wide LR
+at larger sizes) and leaves running, missing, or unregistered evaluations
+blank rather than substituting partial metrics.
 
 Use the analysis-only W&B `0.21.4` pin shown above. W&B `0.28` materializes a
 run's full history before applying the requested tail range, which makes a

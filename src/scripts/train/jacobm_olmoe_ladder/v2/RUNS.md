@@ -4,7 +4,7 @@ Record post-migration experiment waves here. Per-run rows must include Beaker
 job IDs and W&B IDs once they exist. Detailed migration-era DDP jobs remain in
 [`../v1/DDP_RUNS.md`](../v1/DDP_RUNS.md).
 
-## Live status snapshot (2026-07-24 06:21 UTC)
+## Live status snapshot (2026-07-24 06:36 UTC)
 
 This is the current source of truth for active V2 work. The detailed sections
 below retain the full launch and retry history.
@@ -25,7 +25,7 @@ below retain the full launch and retry history.
 | pretraining | larger aligned geometry + NoPE | finished | 12/12 formal cells; clean 1.2B Cx8 reproduction finished with final-250M CE `2.034305` | [results](results/pretraining/geometry_gdn_ev2_nope/results.md) |
 | pretraining | larger aligned geometry + NoPE + gated attention | finished | 12/12; newly finished 1.2B Cx2 strict final-250M CE `2.188236` | [results](results/pretraining/geometry_gdn_ev2_nope_gated/results.md) |
 | pretraining | larger aligned geometry + RoPE + gated attention | 11 finished / 1 failed | newly collected strict final-250M CE: 810M Cx8 `2.104806`, 1.2B Cx8 `2.029514`; 1.2B Cx2 remains failed | [results](results/pretraining/geometry_gdn_ev2_rope_gated/results.md) |
-| pretraining | 275M geometry + NoPE + gated attention + GDN2 | 7 finished / 9 running | Cx1 4/4 and Cx2 3/4 finished; Cx2 `1.6e-3` resumed from `step4500` and is healthy past its original failure point; all Cx4/Cx8 cells running | [results](results/pretraining/geometry_gdn2_ev2_nope_gated/results.md) |
+| pretraining | 275M geometry + NoPE + gated attention + GDN2 | 7 finished / 9 running | Cx1 4/4 and Cx2 3/4 finished; Cx2 `1.6e-3` hit a second non-finite gradient at step 5,975 and auto-resumed again from durable `step5500`; all Cx4/Cx8 cells running | [results](results/pretraining/geometry_gdn2_ev2_nope_gated/results.md) |
 | midtraining | first hybrid 275M Cx8 | finished | 100B; final checkpoint `step95368`; validation finished | [1keo2hz6](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/1keo2hz6) |
 | midtraining | first hybrid 480M Cx8 | finished | 100.001B; final checkpoint `step95368`; validation finished | [mnp9rv5l](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/mnp9rv5l) |
 | validation | V2 post-training backfills | 115 complete / 2 running; 1 new checkpoint pending | 1.2B gated-RoPE Cx4 completed all 498 metrics; Cx1/Cx8 are running; newly finished 810M Cx8 still needs backfill | [results](results/validation/hybrid_full.md) |
@@ -50,13 +50,25 @@ gated-RoPE Cx1 and Cx8 targets. The 810M Cx8 training completion happened
 after the larger validation manifest was submitted, so that checkpoint still
 needs a separate validation backfill.
 
+The gated-RoPE scale comparison now also has a C4 validation-CE view at
+[`plots/pretraining/geometry_gdn_ev2_rope_gated/c4_validation_fixed_lr_scale_comparison.png`](plots/pretraining/geometry_gdn_ev2_rope_gated/c4_validation_fixed_lr_scale_comparison.png),
+with the underlying values and coverage states in
+[`results/pretraining/geometry_gdn_ev2_rope_gated/c4_validation_results.md`](results/pretraining/geometry_gdn_ev2_rope_gated/c4_validation_results.md).
+It uses exactly the checkpoints selected by the training-loss plot and leaves
+unfinished evaluation cells blank.
+
 The first formal GDN2 results use the same strict final-250M-token statistic.
 Cx1 is complete and bracketed: its observed best is `1.6e-3` with CE
-`2.646730`, versus `2.691980` for matching gated-RoPE GDN1 and `2.741044` for
+`2.646730`, versus `2.711104` for matching gated-NoPE GDN1 and `2.741044` for
 wide at their respective observed-best LRs. Cx2 is still provisional because
-the resumed `1.6e-3` point is missing; among the three finished points, `8e-4`
-currently leads with CE `2.544136`. The GDN2 artifacts compare only against
-wide and matching gated-RoPE GDN1, as requested.
+the `1.6e-3` point is missing; among the three finished points, `8e-4` currently
+leads with CE `2.544136`. Its first attempt failed on a non-finite total gradient
+at step 4,675. The resume passed that point, then hit the same assertion at step
+5,975 and automatically resumed again from durable `step5500`. The remaining
+three points already bracket an interior minimum, so Cx2 retains its quadratic
+fit and enters the best-of summary at its observed-best LR; the predicted LR is
+only a U-plot annotation. Both GDN2 plots compare only against wide and matching
+gated-NoPE GDN1, as corrected.
 
 The 11 finished larger gated-RoPE points have strict final-250M CEs of
 `2.506239`, `2.402917`, `2.307792`, and `2.233177` for 480M Cx1/2/4/8;
@@ -77,7 +89,7 @@ then auto-resumed and finished cleanly.
   and [`results/pretraining/geometry_gdn2_ev2_nope_gated/results.md`](results/pretraining/geometry_gdn2_ev2_nope_gated/results.md)
 
 All tasks are urgent and unallocated on Holmes. Status/progress below is the
-2026-07-24 06:13 UTC snapshot.
+2026-07-24 06:36 UTC snapshot.
 
 | Cx | LR | Current job | W&B | State / strict result |
 |---:|---:|---|---|---|
@@ -87,16 +99,16 @@ All tasks are urgent and unallocated on Holmes. Status/progress below is the
 | 1 | `3.2e-3` | `01KY8TKESHR6VS04WT0EXR8Z43` | [j2t5c2jb](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/j2t5c2jb) | finished; CE `2.661486` |
 | 2 | `4e-4` | `01KY8TKEWX8RE3HZNRKEBRAYR5` | [7yh4rfi1](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/7yh4rfi1) | finished; CE `2.564391` |
 | 2 | `8e-4` | `01KY8TKF05JSXDAH47206QWNV4` | [2egeqyvo](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/2egeqyvo) | finished; CE `2.544136` |
-| 2 | `1.6e-3` | `01KY9BPK6ECS6S5B7P63ABWM2G` | [resume 8agi9zte](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/8agi9zte) | running from `step4500`; healthy at step 4,896 past the first attempt's step-4,675 assertion |
+| 2 | `1.6e-3` | `01KY9D9YN7SHRMKQ1DMB5P9V8W` | [resume 8agi9zte](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/8agi9zte) | running from durable `step5500`; preceding resume failed with the same non-finite-gradient assertion at step 5,975 |
 | 2 | `3.2e-3` | `01KY8TKF6N03DQD0FPM3A360HJ` | [xwtxd1pv](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/xwtxd1pv) | finished; CE `2.548521` |
-| 4 | `4e-4` | `01KY8TKF9T8ZR612Z1418THVWY` | [6b0vighm](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/6b0vighm) | running; 12.692B / 19.357B tokens (65.6%) |
-| 4 | `8e-4` | `01KY8TKFD1EPRHEY7TE4XSZNS4` | [yq4mi5o0](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/yq4mi5o0) | running; 12.677B / 19.357B tokens (65.5%) |
-| 4 | `1.6e-3` | `01KY8TKFG8HGZRF8PYTEA89SMY` | [0w6ezwgx](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/0w6ezwgx) | running; 13.358B / 19.357B tokens (69.0%) |
-| 4 | `3.2e-3` | `01KY8TKFKCY8PWKN156K0YG3J6` | [kcig30ty](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/kcig30ty) | running; 13.505B / 19.357B tokens (69.8%) |
-| 8 | `4e-4` | `01KY8TKFPMKP9MCCVNQM3P6KS9` | [jewjx6yq](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/jewjx6yq) | running; 24.772B / 38.715B tokens (64.0%) |
-| 8 | `8e-4` | `01KY8TKFST2JN575ZCHDXSRXG6` | [1lpz9reu](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/1lpz9reu) | running; 24.772B / 38.715B tokens (64.0%) |
-| 8 | `1.6e-3` | `01KY8TKFX02JSHWGT8X467S5E5` | [n48z3vh8](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/n48z3vh8) | running; 25.086B / 38.715B tokens (64.8%) |
-| 8 | `3.2e-3` | `01KY8TKG0AJ8706NGJZN9GQC66` | [e6n5iscu](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/e6n5iscu) | running; 24.772B / 38.715B tokens (64.0%) |
+| 4 | `4e-4` | `01KY8TKF9T8ZR612Z1418THVWY` | [6b0vighm](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/6b0vighm) | running; 13.589B / 19.357B tokens (70.2%) |
+| 4 | `8e-4` | `01KY8TKFD1EPRHEY7TE4XSZNS4` | [yq4mi5o0](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/yq4mi5o0) | running; 13.579B / 19.357B tokens (70.1%) |
+| 4 | `1.6e-3` | `01KY8TKFG8HGZRF8PYTEA89SMY` | [0w6ezwgx](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/0w6ezwgx) | running; 14.302B / 19.357B tokens (73.9%) |
+| 4 | `3.2e-3` | `01KY8TKFKCY8PWKN156K0YG3J6` | [kcig30ty](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/kcig30ty) | running; 14.444B / 19.357B tokens (74.6%) |
+| 8 | `4e-4` | `01KY8TKFPMKP9MCCVNQM3P6KS9` | [jewjx6yq](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/jewjx6yq) | running; 26.463B / 38.715B tokens (68.4%) |
+| 8 | `8e-4` | `01KY8TKFST2JN575ZCHDXSRXG6` | [1lpz9reu](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/1lpz9reu) | running; 26.573B / 38.715B tokens (68.6%) |
+| 8 | `1.6e-3` | `01KY8TKFX02JSHWGT8X467S5E5` | [n48z3vh8](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/n48z3vh8) | running; 26.769B / 38.715B tokens (69.2%) |
+| 8 | `3.2e-3` | `01KY8TKG0AJ8706NGJZN9GQC66` | [e6n5iscu](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/e6n5iscu) | running; 26.463B / 38.715B tokens (68.4%) |
 
 ## 275M active hybrid GDN (`expand_v=1`)
 
