@@ -30,18 +30,36 @@ def _load_cuda_extension():
     }
     build_backend = os.getenv("OLMO_SYMM_VDEV2D_BUILD_BACKEND", "cmake")
     if auto_build:
-        try:
-            from .build_symm_mem_vdev2d_ext import build_extension
+        from olmo_core.distributed.utils import barrier, get_local_rank, is_distributed
 
-            build_extension(
-                inplace=True,
-                verbose=False,
-                force=False,
-                backend=build_backend,
-            )
-        except Exception as e:
-            _CUDA_EXTENSION_ERROR = e
-            raise RuntimeError(f"Failed to auto-build CUDA symm_mem_vdev2d extension: {e}") from e
+        from .build_symm_mem_vdev2d_ext import build_extension
+
+        # The build writes into a shared build dir and installs the .so into the (node-local)
+        # package dir, so only one process per node may build — otherwise concurrent ranks rmtree
+        # and compile in the same directory and race (getcwd()/missing-tmp CMake failures). Build on
+        # local rank 0 only; the barrier makes the other ranks wait until the .so exists before they
+        # import it below. Global barrier is fine: every node's local rank 0 builds in parallel.
+        distributed = is_distributed()
+        build_error: Optional[Exception] = None
+        if not distributed or get_local_rank() == 0:
+            try:
+                build_extension(
+                    inplace=True,
+                    verbose=False,
+                    force=False,
+                    backend=build_backend,
+                )
+            except Exception as e:  # noqa: BLE001 - re-raised after the barrier below
+                build_error = e
+        if distributed:
+            # Ensure non-builders don't race ahead to the import before the build finishes (and
+            # don't deadlock waiting on a builder that already failed).
+            barrier()
+        if build_error is not None:
+            _CUDA_EXTENSION_ERROR = build_error
+            raise RuntimeError(
+                f"Failed to auto-build CUDA symm_mem_vdev2d extension: {build_error}"
+            ) from build_error
 
     try:
         _CUDA_EXTENSION = importlib.import_module(_EXTENSION_MODULE_NAME)
