@@ -81,6 +81,17 @@ QUACK_VERSION = ""
 # to bake in the B300-only fixes (see that target and the Dockerfile release stage).
 B300 =
 TRITON_PTXAS_PATH =
+# symm-mem / RMA image switches. Empty for the default image; set by the '-rma' targets so the
+# symm_mem_vdev2d (rowwise EP) and nccl_rma_p2p (custom PP) extensions can JIT-build at runtime.
+UBUNTU_VERSION = 22.04
+# Release-stage base. Default plain Ubuntu; the RMA targets override with a CUDA 'devel' base so the
+# runtime ships nvcc + CUDA headers those extensions need to compile.
+BASE_IMAGE = ubuntu:$(UBUNTU_VERSION)
+# NCCL exposing the RMA one-sided window signal API (ncclPutSignal / ncclWaitSignal) for nccl_rma_p2p.
+NCCL_RMA_VERSION = 2.29.7
+# NCCL / NVSHMEM install specs passed to the Dockerfile. Empty = torch's bundled NCCL, no NVSHMEM.
+NCCL_PIP_SPEC =
+NVSHMEM_PIP_SPEC =
 
 #--------------#
 # Build naming #
@@ -105,6 +116,10 @@ docker-image :
 		--build-arg CUDA_VERSION=$(CUDA_VERSION) \
 		--build-arg CUDA_VERSION_PATH=$(CUDA_VERSION_PATH) \
 		--build-arg PYTHON_VERSION=$(PYTHON_VERSION) \
+		--build-arg UBUNTU_VERSION=$(UBUNTU_VERSION) \
+		--build-arg BASE_IMAGE=$(BASE_IMAGE) \
+		--build-arg NCCL_PIP_SPEC="$(NCCL_PIP_SPEC)" \
+		--build-arg NVSHMEM_PIP_SPEC="$(NVSHMEM_PIP_SPEC)" \
 		--build-arg TORCH_VERSION=$(TORCH_VERSION) \
 		--build-arg TORCH_CUDA_ARCH_LIST="$(TORCH_CUDA_ARCH_LIST)" \
 		--build-arg INSTALL_CHANNEL=$(INSTALL_CHANNEL) \
@@ -203,6 +218,27 @@ beaker-image-b300-fa4 :
 .PHONY : ghcr-image-b300-fa4
 ghcr-image-b300-fa4 :
 	$(MAKE) ghcr-image TORCH_VERSION=2.11.0 $(B300_BUILD_ARGS) $(B300_FA4_ARGS)
+
+# symm-mem / RMA layer for the B300 build: a CUDA-13 'devel' release base (ships nvcc + headers) plus
+# NVSHMEM and an RMA-capable NCCL, so the symm_mem_vdev2d (rowwise EP) and nccl_rma_p2p (custom PP)
+# extensions can JIT-build at runtime. Required for EP>1 / rowwise runs (e.g. OLMoE3-dev-t002);
+# t001 (EP=1) does not need it. IMAGE_SUFFIX gets an 'rma-' prefix to distinguish the tag.
+B300_RMA_ARGS = \
+	BASE_IMAGE=nvidia/cuda:13.0.1-cudnn-devel-ubuntu$(UBUNTU_VERSION) \
+	NVSHMEM_PIP_SPEC=nvidia-nvshmem-cu13 \
+	NCCL_PIP_SPEC=nvidia-nccl-cu13==$(NCCL_RMA_VERSION) \
+	IMAGE_SUFFIX=rma-$(IMAGE_SUFFIX)
+
+# B300 image with symm-mem/RMA support. Produces 'olmo-core-tch2110cu130-rma-<date>'.
+.PHONY : beaker-image-b300-rma
+beaker-image-b300-rma :
+	$(MAKE) beaker-image TORCH_VERSION=2.11.0 $(B300_BUILD_ARGS) $(B300_RMA_ARGS)
+
+# B300 image with BOTH flash-attn 4 and symm-mem/RMA (what OLMoE3-dev-t002 needs: flash_4 attention
+# + rowwise EP). Produces 'olmo-core-tch2110cu130-fa4-rma-<date>'.
+.PHONY : beaker-image-b300-fa4-rma
+beaker-image-b300-fa4-rma :
+	$(MAKE) beaker-image TORCH_VERSION=2.11.0 $(B300_BUILD_ARGS) $(B300_FA4_ARGS) $(B300_RMA_ARGS)
 
 # torch 2.10.0 (matches the default image's torch). Pushes 'ghcr.io/allenai/olmo-core:tch2100cu130-<date>'.
 .PHONY : ghcr-image-b300-torch210

@@ -48,6 +48,16 @@ ARG INSTALL_CHANNEL=whl
 RUN pip install --no-cache-dir --index-url https://download.pytorch.org/${INSTALL_CHANNEL}/${CUDA_VERSION_PATH}/ \
     torch==${TORCH_VERSION} torchvision torchaudio
 
+# Optionally install NVSHMEM. The symm_mem_vdev2d rowwise-EP extension links NVSHMEM's host + device
+# libs and headers; the RMA image targets install it so `python -m
+# olmo_core.kernels.build_symm_mem_vdev2d_ext` can compile the extension at runtime (the package
+# source is cloned at launch, so the ext can't be prebuilt into the image). '_find_nvshmem_paths'
+# discovers it under conda site-packages. '--no-deps' keeps pip off torch's pinned CUDA stack.
+# Empty by default. NOTE: needs a CUDA 'devel' release base (see BASE_IMAGE) so the runtime has nvcc.
+ARG NVSHMEM_PIP_SPEC=""
+RUN if [ -n "${NVSHMEM_PIP_SPEC}" ]; then \
+        pip install --no-cache-dir --no-deps "${NVSHMEM_PIP_SPEC}"; fi
+
 # Compute capabilities the from-source CUDA extensions (grouped-gemm, transformer-engine) are built
 # for. Include "10.3" (B300 / Blackwell Ultra, sm_103) only when building with CUDA >= 12.9 (see the
 # 'beaker-image-b300' target). Passed inline per-tool rather than as a global ENV so it doesn't reach
@@ -146,6 +156,16 @@ COPY src/olmo_core/version.py src/olmo_core/version.py
 RUN pip install --no-cache-dir '.[all]' && \
     pip uninstall -y ai2-olmo-core && \
     rm -rf *
+
+# Pin NCCL to an RMA-capable build (>= 2.29.7) exposing the one-sided window signal API
+# (ncclPutSignal / ncclWaitSignal) that the nccl_rma_p2p transport compiles against.
+# MUST be the last install: torch's wheels and NVSHMEM both depend on nvidia-nccl-cu*, so any
+# earlier pin gets re-resolved back down (dropping the RMA symbols) by later `pip install` steps.
+# '_find_nccl_paths' discovers it under conda site-packages. Empty by default, so standard images
+# keep torch's bundled NCCL.
+ARG NCCL_PIP_SPEC=""
+RUN if [ -n "${NCCL_PIP_SPEC}" ]; then \
+        pip install --no-cache-dir --no-deps --force-reinstall "${NCCL_PIP_SPEC}"; fi
 
 #########################################################################
 # Release image
