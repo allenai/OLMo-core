@@ -398,6 +398,25 @@ def resolve_shard_degree(opts: argparse.Namespace, world_size: int) -> int:
     return world_size if opts.model_scale in _LARGE_SCALES else 1
 
 
+def _build_ac_config(ac_mode: str, ac_budget: float):
+    """Build the activation-checkpointing config for the resolved mode.
+
+    ``full`` = checkpoint every block (most memory-frugal, but breaks under compile+CP -- see
+    build_train_module_config). ``budget`` = FLOP-optimal checkpointing to hit ``ac_budget`` (the
+    compile+CP-safe path, from the proven long-context recipe). ``none`` = no AC.
+    """
+    if ac_mode == "full":
+        return TransformerActivationCheckpointingConfig(
+            mode=TransformerActivationCheckpointingMode.full
+        )
+    if ac_mode == "budget":
+        return TransformerActivationCheckpointingConfig(
+            mode=TransformerActivationCheckpointingMode.budget,
+            activation_memory_budget=ac_budget,
+        )
+    return None
+
+
 def build_train_module_config(
     opts: argparse.Namespace, world_size: int
 ) -> TransformerTrainModuleConfig:
@@ -445,16 +464,13 @@ def build_train_module_config(
             shard_degree=shard_degree,
         ),
         cp_config=cp_config,
-        # FULL-block AC needed for 4B/9B at seq_len=40960 on 80GB H100s (same rationale as the
-        # proven docchunk 5task Beaker scripts: FFN-only AC leaves attention activations resident
-        # and still OOMs). 0.8B fits without it on 141GB H200s, so leave it off there by default.
-        ac_config=(
-            TransformerActivationCheckpointingConfig(
-                mode=TransformerActivationCheckpointingMode.full
-            )
-            if ac_mode == "full"
-            else None
-        ),
+        # Activation checkpointing. FULL-block AC fits 4B/9B at seq_len=40960 on 80GB H100s.
+        # BUT full-block AC is INCOMPATIBLE with torch.compile + Ulysses CP: the block boundary
+        # straddles the CP all-to-all, so the recomputed activation has a different shape/dtype
+        # than the saved one ("recomputed metadata != saved metadata" crash at the dry-run). The
+        # proven long-context CP recipe (sft_longctx/Qwen3-4B-dense-longctx-SFT.py) uses BUDGET AC
+        # instead, which places checkpoints FLOP-optimally and avoids the all-to-all boundary.
+        ac_config=_build_ac_config(ac_mode, opts.ac_budget),
         float8_config=Float8Config(enabled=False),
         z_loss_multiplier=None,
         max_grad_norm=1.0,
@@ -862,11 +878,18 @@ def parse_args() -> argparse.Namespace:
     )
     ap.add_argument(
         "--activation-checkpointing",
-        choices=["auto", "full", "none"],
+        choices=["auto", "full", "budget", "none"],
         default="auto",
-        help="full-block activation checkpointing. auto (default) = full for 4b/9b (needed to "
-        "fit seq_len=40960 on an 80GB H100; proven OOM otherwise), none for 0.8b (already fits "
-        "at 141GB H200 without it). full is safe at every scale if you want to force it.",
+        help="activation checkpointing. auto (default) = full for 4b/9b, none for 0.8b. "
+        "USE 'budget' for context-parallel (--cp-degree) runs: full-block AC is incompatible with "
+        "compile+CP (recompute-metadata mismatch at the dry-run); budget is the proven CP recipe.",
+    )
+    ap.add_argument(
+        "--ac-budget",
+        type=float,
+        default=0.7,
+        help="activation-memory budget for --activation-checkpointing budget (proven CP value 0.7; "
+        "lower = more checkpointing / less memory if a long-context run OOMs).",
     )
     ap.add_argument(
         "--shard-degree",

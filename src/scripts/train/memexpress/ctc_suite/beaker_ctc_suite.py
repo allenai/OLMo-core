@@ -87,7 +87,12 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="bin-pack whole examples (needed for a mixed 8k..256k shard)",
     )
-    ap.add_argument("--activation-checkpointing", default=None, choices=["auto", "full", "none"])
+    ap.add_argument(
+        "--activation-checkpointing", default=None, choices=["auto", "full", "budget", "none"]
+    )
+    ap.add_argument(
+        "--ac-budget", type=float, default=None, help="budget for --activation-checkpointing budget"
+    )
     ap.add_argument(
         "--shard-degree", type=int, default=0, help="FSDP shard_degree override (0=auto)"
     )
@@ -206,6 +211,8 @@ def main() -> None:
         cmd += ["--pack"]
     if opts.activation_checkpointing:
         cmd += ["--activation-checkpointing", opts.activation_checkpointing]
+    if opts.ac_budget is not None:
+        cmd += ["--ac-budget", str(opts.ac_budget)]
     if opts.shard_degree:
         cmd += ["--shard-degree", str(opts.shard_degree)]
 
