@@ -178,19 +178,19 @@ class OLMoDDPTrainModule(TrainModule):
         self.pp_final_stage_rank = 0  # default 0
 
         if tp_config is not None:
-            assert (
-                tp_config.degree > 1
-            ), "Tensor parallelism requires a degree > 1, otherwise use None"
+            assert tp_config.degree > 1, (
+                "Tensor parallelism requires a degree > 1, otherwise use None"
+            )
             raise NotImplementedError("Tensor parallelism is not implemented")
         if pp_config is not None:
-            assert (
-                pp_config.degree > 1
-            ), "Pipeline parallelism requires a degree > 1, otherwise use None"
+            assert pp_config.degree > 1, (
+                "Pipeline parallelism requires a degree > 1, otherwise use None"
+            )
             # raise NotImplementedError("Pipeline parallelism is not implemented")
         if cp_config is not None:
-            assert (
-                cp_config.degree > 1
-            ), "Context parallelism requires a degree > 1, otherwise use None"
+            assert cp_config.degree > 1, (
+                "Context parallelism requires a degree > 1, otherwise use None"
+            )
             if getattr(model, "tbo", False):
                 raise OLMoConfigurationError(
                     "OLMoDDPTrainModule does not support context parallelism with "
@@ -393,9 +393,9 @@ class OLMoDDPTrainModule(TrainModule):
         else:
             # if the model has implemented `cast_to_fwd_bwd_precision` method, call it.
             if hasattr(model, "_cast_to_fwd_bwd_precision"):
-                assert callable(
-                    model._cast_to_fwd_bwd_precision
-                ), "model._cast_to_fwd_bwd_precision must be callable"
+                assert callable(model._cast_to_fwd_bwd_precision), (
+                    "model._cast_to_fwd_bwd_precision must be callable"
+                )
                 model._cast_to_fwd_bwd_precision()
             else:
                 # if the model doesn't have `cast_to_fwd_bwd_precision`, we need to cast the parameters directly.
@@ -828,7 +828,7 @@ class OLMoDDPTrainModule(TrainModule):
                 requested = int(normalized)
             except ValueError as exc:
                 raise OLMoConfigurationError(
-                    "OLMO_PP_DRY_RUN_MICROBATCHES must be a positive integer, " "'0', or 'full'"
+                    "OLMO_PP_DRY_RUN_MICROBATCHES must be a positive integer, '0', or 'full'"
                 ) from exc
             if requested <= 0:
                 return full_num_microbatches
@@ -860,7 +860,7 @@ class OLMoDDPTrainModule(TrainModule):
         }:
             return "reduced_true_pp"
         raise OLMoConfigurationError(
-            "OLMO_PP_DRY_RUN_MODE must be one of: independent, full/true_pp, " "or reduced_true_pp"
+            "OLMO_PP_DRY_RUN_MODE must be one of: independent, full/true_pp, or reduced_true_pp"
         )
 
     def _pp_full_num_microbatches(self) -> int:
@@ -1500,8 +1500,7 @@ class OLMoDDPTrainModule(TrainModule):
         if get_rank() == 0:
             elapsed, total = self._dry_run_progress_timing()
             print(
-                f"[dry-run] {mode} complete "
-                f"(+{elapsed:.2f}s since last log, {total:.2f}s total)",
+                f"[dry-run] {mode} complete (+{elapsed:.2f}s since last log, {total:.2f}s total)",
                 flush=True,
             )
 
@@ -2004,9 +2003,9 @@ class OLMoDDPTrainModule(TrainModule):
                 _alloc_storage(param._mp_param, param.size())
                 with torch.no_grad():
                     # assert param.data == param._fp_param, "param.data should point to param._fp_param before copy"
-                    assert (
-                        param.data.dtype == torch.float32
-                    ), "param.data should be float32 before copy"
+                    assert param.data.dtype == torch.float32, (
+                        "param.data should be float32 before copy"
+                    )
                     param._mp_param.copy_(param.data)
 
     def run_pipeline(
@@ -2048,7 +2047,7 @@ class OLMoDDPTrainModule(TrainModule):
             or self._debug_dump_optim_grad_norms
             or self._debug_log_optim_grad_norms
         ):
-            setattr(optim, "_olmo_debug_global_step", self.trainer.global_step)
+            setattr(optim, "_debug_global_step", self.trainer.global_step)
 
         # dist.barrier()
         # if dist.get_rank() == 0:
@@ -2406,8 +2405,7 @@ class OLMoDDPTrainModule(TrainModule):
             elif self.dp_config.name == DataParallelType.ddp:  # temp fix
                 if (
                     # If specified, only synchronize at the last microbatch.
-                    not is_last_mb
-                    and self.dp_config.only_allreduce_last_microbatch
+                    not is_last_mb and self.dp_config.only_allreduce_last_microbatch
                 ):
                     stack.enter_context(
                         self.ddp_no_sync(self.model_parts)
@@ -2527,9 +2525,9 @@ class OLMoDDPTrainModule(TrainModule):
             raise NotImplementedError("TP not supported yet")
 
         if pp_config is not None:
-            assert (
-                self.world_mesh["dense"] is not None
-            ), "Dense mesh must be built before applying pipeline parallelism"
+            assert self.world_mesh["dense"] is not None, (
+                "Dense mesh must be built before applying pipeline parallelism"
+            )
             self.pp_mesh = self.world_mesh["dense"]["pp"]
             self.pp_group = self.pp_mesh.get_group()
             self.pp_group_rank = get_rank(self.pp_group)
@@ -2538,21 +2536,21 @@ class OLMoDDPTrainModule(TrainModule):
             self.pp_next_rank = (self.pp_group_rank + 1) % self.pp_group_size
             self.pp_final_stage_rank = pp_config.final_stage_rank()
             log.info(
-                "Creating pipeline P2P process groups " "(global_rank=%d, pp_rank=%d/%d)",
+                "Creating pipeline P2P process groups (global_rank=%d, pp_rank=%d/%d)",
                 dist.get_rank(),
                 self.pp_group_rank,
                 self.pp_group_size,
             )
             pp_p2p_group = pp_config.build_p2p_process_group(self.world_mesh["dense"])
             log.info(
-                "Created pipeline P2P process groups " "(global_rank=%d, pp_rank=%d/%d)",
+                "Created pipeline P2P process groups (global_rank=%d, pp_rank=%d/%d)",
                 dist.get_rank(),
                 self.pp_group_rank,
                 self.pp_group_size,
             )
             if is_distributed():
                 log.info(
-                    "Synchronizing after pipeline P2P process-group creation " "(global_rank=%d)",
+                    "Synchronizing after pipeline P2P process-group creation (global_rank=%d)",
                     dist.get_rank(),
                 )
                 dist.barrier()
@@ -2581,12 +2579,12 @@ class OLMoDDPTrainModule(TrainModule):
             )
 
             # TODO: chunk layers into stages (I don't understand this TODO)
-            assert (
-                self.world_mesh is not None
-            ), "World mesh must be built before applying expert parallelism"
-            assert (
-                self.world_mesh["dense"] is not None
-            ), "Dense mesh must be built before applying expert parallelism"
+            assert self.world_mesh is not None, (
+                "World mesh must be built before applying expert parallelism"
+            )
+            assert self.world_mesh["dense"] is not None, (
+                "Dense mesh must be built before applying expert parallelism"
+            )
 
             for m in model_parts:
                 m.apply_pp(self.pp_mesh)
@@ -2616,15 +2614,15 @@ class OLMoDDPTrainModule(TrainModule):
             # EP-DP combined
             # for the dense part, replicate over DP pg
             # for the moe part, replicate over EP-DP pg
-            assert (
-                self.world_mesh is not None
-            ), "World mesh must be built before applying expert parallelism"
-            assert (
-                self.world_mesh["moe"] is not None
-            ), "MoE mesh must be built before applying expert parallelism"
-            assert (
-                self.world_mesh["dense"] is not None
-            ), "Dense mesh must be built before applying expert parallelism"
+            assert self.world_mesh is not None, (
+                "World mesh must be built before applying expert parallelism"
+            )
+            assert self.world_mesh["moe"] is not None, (
+                "MoE mesh must be built before applying expert parallelism"
+            )
+            assert self.world_mesh["dense"] is not None, (
+                "Dense mesh must be built before applying expert parallelism"
+            )
             ep_mesh = self.world_mesh["moe"]
             dp_mesh = self.world_mesh["dense"]["dp"]
             dense_param_group = self.dense_dp_cp_group
@@ -2648,7 +2646,7 @@ class OLMoDDPTrainModule(TrainModule):
                 # still buys useful overlap on current NCCL/torch versions.
                 nccl_opts = dist.ProcessGroupNCCL.Options(is_high_priority_stream=True)
                 log.info(
-                    "Creating high-priority NCCL EP-MP process groups " "(global_rank=%d)",
+                    "Creating high-priority NCCL EP-MP process groups (global_rank=%d)",
                     dist.get_rank(),
                 )
                 ep_mp_group, ep_mp_groups = dist.new_subgroups_by_enumeration(
@@ -2725,12 +2723,12 @@ class OLMoDDPTrainModule(TrainModule):
         else:
             # Pure DP (no EP)
             pass
-            assert (
-                self.world_mesh is not None
-            ), "World mesh must be built before applying expert parallelism"
-            assert (
-                self.world_mesh["dense"] is not None
-            ), "Dense mesh must be built before applying expert parallelism"
+            assert self.world_mesh is not None, (
+                "World mesh must be built before applying expert parallelism"
+            )
+            assert self.world_mesh["dense"] is not None, (
+                "Dense mesh must be built before applying expert parallelism"
+            )
             # param_dtype = dp_config.param_dtype.as_pt() if dp_config.param_dtype is not None else None
             dp_mesh = self.world_mesh["dense"]["dp"]
             ep_mesh = None
@@ -3015,7 +3013,7 @@ class OLMoDDPTrainModule(TrainModule):
                 owner_totals.items(), key=lambda item: item[1], reverse=True
             ):
                 lines.append(
-                    f"    {owner}: {self._gib(nbytes):.4f} GiB " f"({owner_counts[owner]} tensors)"
+                    f"    {owner}: {self._gib(nbytes):.4f} GiB ({owner_counts[owner]} tensors)"
                 )
 
             try:
@@ -3141,9 +3139,9 @@ class OLMoDDPTrainModule(TrainModule):
         # # print(f'{get_rank()} (pp group rank {self.pp_group_rank}) got {x.item()}')
         # return x
 
-        assert (
-            self.pp_enabled and self._pp_config is not None
-        ), "reduce_send_recv is only valid when PP is enabled"
+        assert self.pp_enabled and self._pp_config is not None, (
+            "reduce_send_recv is only valid when PP is enabled"
+        )
         if self.pp_group_rank == self.pp_final_stage_rank:
             assert x is not None
             # Reduce across the parameter replica group for dense weights. With CP this includes

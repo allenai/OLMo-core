@@ -25,6 +25,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 DEFAULT_MANIFEST = SCRIPT_DIR / "manifests" / "geometry_matched_scale_nope_full.yaml"
 DEFAULT_RECORD = SCRIPT_DIR / "generated" / "geometry_matched_scale_full_submissions.json"
 DIAGNOSTIC_RECORD = SCRIPT_DIR / "generated" / "nonfinite_diagnostic_submissions.json"
+GRAD_DEBUG_RECORD = SCRIPT_DIR / "generated" / "gradient_debug_resume_submissions.json"
 DIAGNOSTIC_DUMP_ROOT = Path(
     "/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/olmo-ddp/debug/nonfinite-grad"
 )
@@ -94,11 +95,7 @@ GDN2_BALANCED_LAYOUT = {
     # whole-wave wall time of the 96-GPU candidate because Cx8 remains the
     # critical path, but saves 24 concurrent GPUs.
     # (nodes, GPUs/node, EP, EP path, rank microbatch sequences)
-    **{
-        key: value
-        for key, value in GDN2_WALLCLOCK_CANDIDATE_LAYOUT.items()
-        if key[0] != "1p2b"
-    },
+    **{key: value for key, value in GDN2_WALLCLOCK_CANDIDATE_LAYOUT.items() if key[0] != "1p2b"},
     ("1p2b", 1): (1, 8, 8, "sync_1d", 4),
     ("1p2b", 2): (2, 8, 8, "sync_1d", 3),
     ("1p2b", 4): (2, 8, 8, "sync_1d", 4),
@@ -267,6 +264,7 @@ def recipe_for(
     *,
     commit: str,
     diagnose_nonfinite: bool = False,
+    debug_gradients: bool = False,
     diagnostic_stop_step: int | None = None,
 ) -> Recipe:
     source = manifest["source"]
@@ -332,18 +330,35 @@ def recipe_for(
                 ("OLMO_DEBUG_RUN_ID", f"{row['run_name']}-diagnostic-r1"),
             ]
         )
+    if debug_gradients:
+        env_vars.extend(
+            [
+                ("OLMO_DDP_DEBUG_NONFINITE_GRAD", "1"),
+                ("OLMO_DDP_DEBUG_NONFINITE_GRAD_RANKS", "all"),
+                ("OLMO_DDP_DEBUG_NONFINITE_GRAD_TOPK", "50"),
+                ("OLMO_DDP_DEBUG_GRAD_NORMS", "20"),
+                ("OLMO_DDP_DEBUG_GRAD_NORMS_RANKS", "all"),
+                ("OLMO_DDP_DEBUG_GRAD_NORMS_MIN", "100"),
+            ]
+        )
     env_secrets = [(str(name), str(secret)) for name, secret in manifest.get("secrets", {}).items()]
     weka = [(str(item["bucket"]), str(item["mount"])) for item in manifest.get("weka", [])]
     git_repo = GitRepoState.from_env(ref=commit, branch=str(source["branch"]))
     num_nodes = int(row["num_nodes"])
-    recipe_suffix = "-nonfinite-diagnostic-r1" if diagnose_nonfinite else ""
+    recipe_suffix = (
+        "-nonfinite-diagnostic-r1"
+        if diagnose_nonfinite
+        else "-grad-debug-r1"
+        if debug_gradients
+        else ""
+    )
     pre_setup = "unset S3_PROFILE"
     if is_gdn2:
         pre_setup += (
             f"\nrm -rf {GDN2_FLA_OVERLAY}"
             f"\npython -m pip install --target {GDN2_FLA_OVERLAY} --no-deps "
             f"--no-build-isolation '{GDN2_FLA_SPEC}'"
-            f"\nPYTHONPATH={GDN2_FLA_OVERLAY} python -c \"import fla; "
+            f'\nPYTHONPATH={GDN2_FLA_OVERLAY} python -c "import fla; '
             "from fla.ops.gdn2 import chunk_gdn2; assert fla.__version__ == '0.5.2'\""
         )
     return Recipe(
@@ -357,7 +372,11 @@ def recipe_for(
         description=(
             f"{manifest['experiment']['description']} (non-finite gradient diagnostic)"
             if diagnose_nonfinite
-            else str(manifest["experiment"]["description"])
+            else (
+                f"{manifest['experiment']['description']} (gradient-debug resume)"
+                if debug_gradients
+                else str(manifest["experiment"]["description"])
+            )
         ),
         workspace=str(beaker["workspace"]),
         task_name=f"{row['task_name']}{recipe_suffix}",
@@ -407,6 +426,11 @@ def main() -> None:
         action="store_true",
         help="Resume a known unstable cell with non-finite gradient dumps and a short hard stop.",
     )
+    parser.add_argument(
+        "--debug-gradients",
+        action="store_true",
+        help="Resume a production cell with non-finite and large-gradient diagnostics enabled.",
+    )
     parser.add_argument("--record", type=Path, default=DEFAULT_RECORD)
     args = parser.parse_args()
 
@@ -425,7 +449,7 @@ def main() -> None:
                 "--run-suffix must start with '-' and contain only lowercase "
                 "letters, digits, and hyphens"
             )
-        if args.resume_existing or args.diagnose_nonfinite:
+        if args.resume_existing or args.diagnose_nonfinite or args.debug_gradients:
             raise ValueError(
                 "--run-suffix is only for a clean from-scratch launch; do not "
                 "combine it with --resume-existing or --diagnose-nonfinite"
@@ -441,6 +465,13 @@ def main() -> None:
 
     variant = str(manifest["training"]["model_variant"])
     diagnostic_stops: dict[str, int] = {}
+    if args.debug_gradients:
+        if not args.resume_existing:
+            raise ValueError("--debug-gradients requires --resume-existing")
+        if args.diagnose_nonfinite:
+            raise ValueError("--debug-gradients and --diagnose-nonfinite are mutually exclusive")
+        if args.record == DEFAULT_RECORD:
+            args.record = GRAD_DEBUG_RECORD
     if args.diagnose_nonfinite:
         if not args.resume_existing:
             raise ValueError("--diagnose-nonfinite requires --resume-existing")
@@ -472,9 +503,7 @@ def main() -> None:
         str(model_size)
         for model_size in manifest["training"].get("capacity_qualified_model_sizes", [])
     }
-    unqualified_model_sizes = {
-        str(row["model_size"]) for row in rows
-    } - qualified_model_sizes
+    unqualified_model_sizes = {str(row["model_size"]) for row in rows} - qualified_model_sizes
     if unqualified_model_sizes:
         raise RuntimeError(
             "Submission is locked for model sizes without recorded checkpoint-free "
@@ -504,6 +533,7 @@ def main() -> None:
             row,
             commit=commit,
             diagnose_nonfinite=args.diagnose_nonfinite,
+            debug_gradients=args.debug_gradients,
             diagnostic_stop_step=diagnostic_stops.get(task_name),
         ).launch(show_logs=False)
         experiment = workload.experiment
@@ -514,6 +544,7 @@ def main() -> None:
             "run_suffix": args.run_suffix or None,
             "commit": commit,
             "diagnose_nonfinite": args.diagnose_nonfinite,
+            "debug_gradients": args.debug_gradients,
             "diagnostic_stop_step": diagnostic_stops.get(task_name),
             "diagnostic_dump_root": (
                 str(DIAGNOSTIC_DUMP_ROOT) if args.diagnose_nonfinite else None

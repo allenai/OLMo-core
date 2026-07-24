@@ -38,7 +38,7 @@ from torch.distributed.tensor._utils import (
 
 from olmo_core._nvtx import maybe_nvtx_annotate
 from olmo_core.nn.fp8_weight import FP8WeightStore
-from olmo_core.utils import env_bool, get_default_device, move_to_device
+from olmo_core.utils import env_bool, get_default_device, move_to_device, rank_matches_filter
 
 from ..config import Config, DType
 from ..exceptions import OLMoConfigurationError
@@ -639,9 +639,9 @@ class OLMoDDPOptimizer:
                     main_param = self._distribute_tensor(main_param, device_mesh)
                     self.states[f"{name}.main"] = main_param
                 else:
-                    assert (
-                        param.dtype == torch.float32
-                    ), "Expect fp32 param when should_maintain_fp32_main_param is False"
+                    assert param.dtype == torch.float32, (
+                        "Expect fp32 param when should_maintain_fp32_main_param is False"
+                    )
                     # wrap in DTensor so it works with rest of the code
                     self.states[f"{name}.main"] = DTensor.from_local(
                         param.data.view(-1), device_mesh=device_mesh, placements=[Replicate()]
@@ -735,7 +735,7 @@ class OLMoDDPOptimizer:
             )
 
         def to_str_N_B_GB(num):
-            return f"{num:,} | {num/1000**3:.4} Billion | {num * 4 /1024**3:.4} GB"
+            return f"{num:,} | {num / 1000**3:.4} Billion | {num * 4 / 1024**3:.4} GB"
 
         def info_str(tag: str, stat: Tuple[int, int, int, int, int, int]):
             info_str = ""
@@ -1072,6 +1072,13 @@ class OLMoDDPOptimizer:
             ep_dp_grads_replicated,
             ep_dp_grads_sharded,
         )
+        self._maybe_debug_large_grad_norm(
+            total_grad_norm,
+            dp_grads_replicated,
+            dp_grads_sharded,
+            ep_dp_grads_replicated,
+            ep_dp_grads_sharded,
+        )
         if self.check_nan_inf_grad:
             _assert_finite_async(total_grad_norm, "total grad norm")
 
@@ -1192,6 +1199,59 @@ class OLMoDDPOptimizer:
                     continue
                 placements = ",".join(str(p) for p in self.states[f"{name}.main"].placements)
                 yield name, param_group["pg"], placements, local_grad
+
+    def _maybe_debug_large_grad_norm(
+        self,
+        total_grad_norm: torch.Tensor,
+        dp_grads_replicated: List[torch.Tensor],
+        dp_grads_sharded: List[torch.Tensor],
+        ep_dp_grads_replicated: List[torch.Tensor],
+        ep_dp_grads_sharded: List[torch.Tensor],
+    ) -> None:
+        """Periodically report unusually large finite gradient norms when requested."""
+        raw_interval = os.getenv("OLMO_DDP_DEBUG_GRAD_NORMS")
+        if raw_interval is None:
+            return
+        try:
+            interval = max(1, int(raw_interval))
+        except ValueError:
+            interval = 20
+        step = int(getattr(self, "_debug_global_step", -1))
+        if step < 0 or step % interval != 0:
+            return
+
+        rank = dist.get_rank() if dist.is_available() and dist.is_initialized() else 0
+        if not rank_matches_filter(os.getenv("OLMO_DDP_DEBUG_GRAD_NORMS_RANKS", "all"), rank):
+            return
+        try:
+            min_norm = float(os.getenv("OLMO_DDP_DEBUG_GRAD_NORMS_MIN", "0"))
+        except ValueError:
+            min_norm = 0.0
+        total = float(_to_local_tensor(total_grad_norm.detach()).float().item())
+        if math.isfinite(total) and total < min_norm:
+            return
+
+        components = {
+            "dp_replicated_local": float(
+                self._local_total_norm(dp_grads_replicated).detach().float().item()
+            ),
+            "dp_sharded_local": float(
+                self._local_total_norm(dp_grads_sharded).detach().float().item()
+            ),
+            "ep_dp_replicated_local": float(
+                self._local_total_norm(ep_dp_grads_replicated).detach().float().item()
+            ),
+            "ep_dp_sharded_local": float(
+                self._local_total_norm(ep_dp_grads_sharded).detach().float().item()
+            ),
+        }
+        log.warning(
+            "Large grad norm diagnostic on rank %s step %s: total=%s components=%s",
+            rank,
+            step,
+            total,
+            components,
+        )
 
     def _combine_norm(self, n1, n2) -> torch.Tensor:
         return torch.sqrt(n1.square() + n2.square())
@@ -1393,12 +1453,12 @@ class OLMoDDPOptimizer:
             ckpt_local = ckpt_state
 
         ckpt_local = ckpt_local.reshape(state_dt.to_local().shape)
-        assert (
-            ckpt_state.shape == state_dt.shape
-        ), f"Global shape mismatch for {state_key}: {ckpt_state.shape} vs {state_dt.shape}"
-        assert (
-            ckpt_local.shape == state_dt.to_local().shape
-        ), f"Local shape mismatch for {state_key}: {ckpt_local.shape} vs {state_dt.to_local().shape}"
+        assert ckpt_state.shape == state_dt.shape, (
+            f"Global shape mismatch for {state_key}: {ckpt_state.shape} vs {state_dt.shape}"
+        )
+        assert ckpt_local.shape == state_dt.to_local().shape, (
+            f"Local shape mismatch for {state_key}: {ckpt_local.shape} vs {state_dt.to_local().shape}"
+        )
         state_dt.to_local().copy_(ckpt_local)
 
     @maybe_nvtx_annotate("OLMoDDPOptimizer._reduce_scatter_model_grads")
@@ -2078,9 +2138,7 @@ class OLMoDDPOptimizer:
 
             exp_avgs_original: list[
                 torch.Tensor
-            ] = (
-                []
-            )  # if states_dtype is bf16, we need to keep a reference to the original bf16 tensors
+            ] = []  # if states_dtype is bf16, we need to keep a reference to the original bf16 tensors
             exp_avg_sqs_original: list[torch.Tensor] = []
 
             steps_list: list[torch.Tensor] = []
@@ -2105,7 +2163,15 @@ class OLMoDDPOptimizer:
                 )
 
             def reset_chunk_buffers():
-                nonlocal main_params, grads, exp_avgs, exp_avg_sqs, steps_list, running_elems, exp_avgs_original, exp_avg_sqs_original
+                nonlocal \
+                    main_params, \
+                    grads, \
+                    exp_avgs, \
+                    exp_avg_sqs, \
+                    steps_list, \
+                    running_elems, \
+                    exp_avgs_original, \
+                    exp_avg_sqs_original
                 # reset for next chunk
                 main_params = []
                 grads = []
@@ -2263,9 +2329,9 @@ class OLMoDDPOptimizer:
                         state_dt = self.states[f"{name}.{suffix}"]
                         sd[f"{name}.{suffix}"] = state_dt
 
-        assert set(sd.keys()) == set(
-            self.states.keys()
-        ), f"State dict keys do not match live states: {set(sd.keys()) ^ set(self.states.keys())}"
+        assert set(sd.keys()) == set(self.states.keys()), (
+            f"State dict keys do not match live states: {set(sd.keys()) ^ set(self.states.keys())}"
+        )
 
         # Store rolling skip-step statistics as plain lists so they can be checkpointed as a single BYTE_IO entry.
         sd[self.LOSSES_STATE_DICT_KEY] = [float(v.detach().cpu().item()) for v in self._losses]
@@ -2371,12 +2437,12 @@ class OLMoDDPOptimizer:
                         else:
                             ckpt_local = ckpt_state.to_local()
                             live_state = self._ensure_local_state_storage(state_key)
-                            assert (
-                                ckpt_state.shape == live_state.shape
-                            ), f"Global shape mismatch {name}.{suffix}: {ckpt_state.shape} vs {live_state.shape}"
-                            assert (
-                                ckpt_local.shape == live_state.to_local().shape
-                            ), f"Local shape mismatch {name}.{suffix}: {ckpt_local.shape} vs {live_state.to_local().shape}"
+                            assert ckpt_state.shape == live_state.shape, (
+                                f"Global shape mismatch {name}.{suffix}: {ckpt_state.shape} vs {live_state.shape}"
+                            )
+                            assert ckpt_local.shape == live_state.to_local().shape, (
+                                f"Local shape mismatch {name}.{suffix}: {ckpt_local.shape} vs {live_state.to_local().shape}"
+                            )
                             live_state.to_local().copy_(ckpt_local)
 
         self._losses = self._restore_rolling_stats(loaded_losses)
