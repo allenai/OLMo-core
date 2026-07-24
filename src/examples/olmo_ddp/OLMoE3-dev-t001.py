@@ -338,6 +338,7 @@ def build_model_config(common: CommonComponents) -> OLMoDDPModelConfig:
                 name=AttentionType.fused_v2,
                 # name=AttentionType.default,
                 n_heads=NUM_HEAD,
+                head_dim=HEAD_DIM,  # attn dim = n_heads*head_dim (was d_attn; d_attn field is gone in moe-v2-core)
                 n_kv_heads=NUM_KV_HEAD,
                 bias=False,
                 rope=RoPEConfig(
@@ -432,6 +433,7 @@ def build_model_config(common: CommonComponents) -> OLMoDDPModelConfig:
             name=AttentionType.fused_v2,
             # name=AttentionType.default,
             n_heads=NUM_HEAD,
+            head_dim=HEAD_DIM,  # attn dim = n_heads*head_dim (was d_attn; d_attn field is gone in moe-v2-core)
             n_kv_heads=NUM_KV_HEAD,
             bias=False,
             rope=RoPEConfig(
