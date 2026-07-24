@@ -50,17 +50,17 @@ from olmo_core.config import DType
 from olmo_core.data import TokenizerConfig
 from olmo_core.data.composable import (
     ComposableDataLoaderConfig,
+    PackingInstanceSourceConfig,
     PadToLengthInstanceSourceConfig,
 )
-from olmo_core.data.document_chunk_landmark import (
-    RESERVED_IDS,  # canonical ids -- never retype
-)
+from olmo_core.data.document_chunk_landmark import RESERVED_IDS  # canonical ids -- never retype
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.distributed.utils import get_rank, get_world_size
 from olmo_core.float8 import Float8Config
 from olmo_core.nn.attention import AttentionBackendName
 from olmo_core.nn.attention.chunked_mask import mask_mix_standard_prob
 from olmo_core.nn.lm_head import LMLossImplementation
+from olmo_core.nn.rope import YaRNRoPEScalingConfig
 from olmo_core.nn.transformer import (
     TransformerActivationCheckpointingMode,
     TransformerConfig,
@@ -80,23 +80,76 @@ from olmo_core.train.callbacks import (
 )
 from olmo_core.train.train_module import (
     TransformerActivationCheckpointingConfig,
+    TransformerContextParallelConfig,
     TransformerDataParallelConfig,
     TransformerDataParallelWrappingStrategy,
     TransformerTrainModuleConfig,
 )
 from olmo_core.utils import seed_all
 
-MARKER_FAMILY = "qwen3_5"
-IDS = RESERVED_IDS[MARKER_FAMILY]  # doc_start=248049, doc_end=248050, eos=248044
-
-#: Qwen3.5 embedding-matrix size (rows), shared across the 0.8B/4B/9B bases.
-VOCAB_SIZE = 248320
-
-MODEL_FACTORIES = {
-    "0.8b": TransformerConfig.qwen3_5_0_8B,
-    "4b": TransformerConfig.qwen3_5_4B,
-    "9b": TransformerConfig.qwen3_5_9B,
+#: Supported model families. The trainer is family-agnostic: everything below (marker ids,
+#: embedding size, tokenizer, model factory) is keyed on the family, which is auto-detected from
+#: the shard's ``marker_set`` (or forced via ``--model-family``). ``qwen3_5`` is the GDN+attn
+#: hybrid; ``qwen3`` is the plain dense/causal family. A shard built for one family MUST train with
+#: that family -- a wrong-tokenizer shard produces plausible numbers, not a crash.
+#: Per-family embedding-matrix size (rows), i.e. the converted base checkpoint's embedding size.
+FAMILY_VOCAB_SIZE = {
+    "qwen3_5": 248320,  # Qwen3.5-{0.8B,4B,9B}-Base embedding size
+    "qwen3": 151936,  # Qwen3-{0.6B,1.7B,4B,8B}-Base embedding size
 }
+
+#: Per-family HF tokenizer identifier (all sizes within a family share one tokenizer).
+FAMILY_TOKENIZER = {
+    "qwen3_5": "Qwen/Qwen3.5-0.8B-Base",
+    "qwen3": "Qwen/Qwen3-4B",
+}
+
+#: Per-family model factories, keyed by ``--model-scale``.
+MODEL_FACTORIES = {
+    "qwen3_5": {
+        "0.8b": TransformerConfig.qwen3_5_0_8B,
+        "4b": TransformerConfig.qwen3_5_4B,
+        "9b": TransformerConfig.qwen3_5_9B,
+    },
+    "qwen3": {
+        "0.6b": TransformerConfig.qwen3_0_6B,
+        "1.7b": TransformerConfig.qwen3_1_7B,
+        "4b": TransformerConfig.qwen3_4B,
+        "8b": TransformerConfig.qwen3_8B,
+    },
+}
+
+
+def resolve_family(opts: argparse.Namespace) -> str:
+    """Resolve the model family: explicit ``--model-family`` or auto-detect from the shard.
+
+    Auto-detection reads ``metadata.json:marker_set`` (written by
+    ``convert_unified_to_document_landmark.py --marker-set ...``), so the tokenizer that built the
+    shard picks the model/marker ids that train on it -- they cannot silently mismatch. Falls back
+    to ``qwen3_5`` only when the shard predates the ``marker_set`` field (all current shards write
+    it), preserving the original Qwen3.5-only behavior.
+
+    :param opts: Parsed CLI options (uses ``model_family`` and ``data``).
+
+    :returns: A key of :data:`MODEL_FACTORIES` (``"qwen3_5"`` or ``"qwen3"``).
+
+    :raises SystemExit: If the resolved family is unknown.
+    """
+    fam = opts.model_family
+    if fam == "auto":
+        fam = "qwen3_5"
+        meta_path = os.path.join(opts.data, "metadata.json")
+        if os.path.exists(meta_path):
+            ms = json.load(open(meta_path)).get("marker_set")
+            if ms:
+                fam = ms
+    if fam not in MODEL_FACTORIES:
+        raise SystemExit(
+            f"unknown model family {fam!r}; known: {sorted(MODEL_FACTORIES)}. "
+            "Pass --model-family explicitly or rebuild the shard with a known --marker-set."
+        )
+    return fam
+
 
 # Per-scale converted olmo distcp bases (model-only). Only 0.8B exists today; 4B/9B must be passed
 # explicitly (--base-checkpoint / BASE_SRC) once converted -- repeat the marker audit first (§4).
@@ -112,17 +165,19 @@ NUM_EPOCHS = 3
 WANDB_PROJECT = "memory-networks"
 
 
-def read_shard_metadata(data_dir: str, seq_len: int) -> Dict[str, Any]:
+def read_shard_metadata(data_dir: str, seq_len: int, family: str) -> Dict[str, Any]:
     """Read and validate the shard's ``metadata.json``.
 
     :param data_dir: Shard dir from ``convert_unified_to_document_landmark.py``.
     :param seq_len: The training sequence length, checked against ``max_example_len``.
+    :param family: The resolved model family; the shard's ``marker_set`` must match it.
 
     :returns: The parsed metadata dict.
 
-    :raises SystemExit: If the metadata is missing, the marker set is not ``qwen3_5``, or
+    :raises SystemExit: If the metadata is missing, the marker set disagrees with ``family``, or
         ``seq_len`` is too short for the shard.
     """
+    ids = RESERVED_IDS[family]
     meta_path = os.path.join(data_dir, "metadata.json")
     if not os.path.exists(meta_path):
         raise SystemExit(
@@ -131,16 +186,16 @@ def read_shard_metadata(data_dir: str, seq_len: int) -> Dict[str, Any]:
         )
     meta = json.load(open(meta_path))
     shard_marker_set = meta.get("marker_set")
-    if shard_marker_set is not None and shard_marker_set != MARKER_FAMILY:
+    if shard_marker_set is not None and shard_marker_set != family:
         raise SystemExit(
-            f"shard {data_dir} was built with --marker-set {shard_marker_set!r}, but this trainer "
-            f"is Qwen3.5-only ({MARKER_FAMILY!r}). A wrong-tokenizer shard produces plausible "
-            "numbers, not a crash -- rebuild the shard, do not override."
+            f"shard {data_dir} was built with --marker-set {shard_marker_set!r}, but this run "
+            f"resolved to family {family!r}. A wrong-tokenizer shard produces plausible numbers, "
+            "not a crash -- rebuild the shard or pass the matching --model-family, do not override."
         )
-    for key, want in [("doc_start_id", IDS.doc_start), ("doc_end_id", IDS.doc_end)]:
+    for key, want in [("doc_start_id", ids.doc_start), ("doc_end_id", ids.doc_end)]:
         got = meta.get(key)
         if got is not None and int(got) != want:
-            raise SystemExit(f"shard metadata {key}={got} != canonical {want} ({MARKER_FAMILY})")
+            raise SystemExit(f"shard metadata {key}={got} != canonical {want} ({family})")
     if meta.get("max_example_len", 0) > seq_len:
         raise SystemExit(
             f"--seq-len={seq_len} < max example length {meta['max_example_len']} "
@@ -239,13 +294,14 @@ def derive_mask_mix_curriculum(
 
 
 def build_model_config(opts: argparse.Namespace) -> TransformerConfig:
-    """Build the per-scale Qwen3.5 :class:`TransformerConfig` for the requested variant.
+    """Build the per-scale :class:`TransformerConfig` for the requested family/variant.
 
-    :param opts: Parsed CLI options (``model_scale``, ``variant``, mix knobs).
+    :param opts: Parsed CLI options (``model_family``, ``model_scale``, ``variant``, mix knobs).
 
     :returns: The model config, with ``document_chunk_attention`` set for the chunked arms.
     """
-    factory = MODEL_FACTORIES[opts.model_scale]
+    ids = RESERVED_IDS[opts.model_family]
+    factory = MODEL_FACTORIES[opts.model_family][opts.model_scale]
     # Pin flash_2 by default so the saved config.json supports KV-cached generation at eval (the
     # qwen3_5 factories default attn_backend=None otherwise; matches the source attn_explore
     # scripts). ``--attn-backend torch`` is an escape hatch for clusters where flash-attn isn't
@@ -260,6 +316,28 @@ def build_model_config(opts: argparse.Namespace) -> TransformerConfig:
         qwen_kwargs["document_chunked"] = True
         qwen_kwargs["cross_doc_mode"] = "chunked"
     model_config = factory(**qwen_kwargs)
+    # YaRN RoPE context extension for long-context runs (base native ctx is 32k for Qwen3; the
+    # 256k rung needs factor ~8). Off by default (--rope-yarn-factor 0) so short-rung runs are
+    # byte-identical. Mirrors sft_longctx/Qwen3-4B-dense-longctx-SFT.py (factor=2 for 64k).
+    if opts.rope_yarn_factor and opts.rope_yarn_factor > 1:
+        if opts.model_family == "qwen3_5":
+            # with_rope_scaling refuses hybrid (named-block) models; the GDN-hybrid needs a
+            # per-block/theta-based extension instead. Skip here and warn -- the hybrid's RoPE
+            # extension to >native is a separate (open) modeling choice; the SFT still adapts.
+            print(
+                "[ctc-suite] WARNING: --rope-yarn-factor ignored for qwen3_5 hybrid "
+                "(with_rope_scaling unsupported for named-block models); training at native RoPE.",
+                flush=True,
+            )
+        else:
+            model_config = model_config.with_rope_scaling(
+                YaRNRoPEScalingConfig(
+                    factor=float(opts.rope_yarn_factor),
+                    beta_fast=32,
+                    beta_slow=1,
+                    old_context_len=opts.rope_old_context,
+                )
+            )
     # Fused-linear CE: never materialize float logits over the full 248k vocab. At seq-len
     # 40960 the unfused path needs ~38 GiB per rank just for logits.float() and OOMs H200s
     # (same setting as the proven 40k-seq sft_docchunk Beaker scripts).
@@ -275,9 +353,9 @@ def build_model_config(opts: argparse.Namespace) -> TransformerConfig:
                 mix_log_interval=opts.mix_log_interval,
             )
         model_config.document_chunk_attention = {
-            "doc_start_id": IDS.doc_start,
-            "doc_end_id": IDS.doc_end,
-            "eos_id": IDS.eos,
+            "doc_start_id": ids.doc_start,
+            "doc_end_id": ids.doc_end,
+            "eos_id": ids.eos,
             "mode": "chunked",
             **mix_keys,
         }
@@ -334,7 +412,18 @@ def build_train_module_config(
     :returns: The train-module config, unbuilt (no CUDA needed to construct it).
     """
     ac_mode = resolve_activation_checkpointing(opts)
-    shard_degree = resolve_shard_degree(opts, world_size)
+    # Context parallelism (long-context arms): CP shards the SEQUENCE/activations across cp_degree
+    # ranks; params/optimizer are sharded by the FSDP dp dimension, which is world_size//cp_degree.
+    # Ulysses only (ring flash-attn isn't guaranteed in the image, and GDN blocks reject ring), so
+    # cp_degree is bounded by n_kv_heads (dense=8, hybrid=4). Off by default (--cp-degree 0/1).
+    cp_degree = opts.cp_degree if opts.cp_degree and opts.cp_degree > 1 else 1
+    if world_size % cp_degree != 0:
+        raise SystemExit(f"world_size {world_size} not divisible by --cp-degree {cp_degree}")
+    dp_world_size = world_size // cp_degree
+    shard_degree = resolve_shard_degree(opts, dp_world_size)
+    cp_config = (
+        TransformerContextParallelConfig.ulysses(degree=cp_degree) if cp_degree > 1 else None
+    )
     return TransformerTrainModuleConfig(
         rank_microbatch_size=opts.micro_batch_instances * opts.seq_len,
         max_sequence_length=opts.seq_len,
@@ -349,12 +438,13 @@ def build_train_module_config(
         scheduler=LinearWithWarmup(warmup_fraction=0.03, alpha_f=0.0),
         compile_model=opts.compile,
         dp_config=TransformerDataParallelConfig(
-            name=DataParallelType.fsdp,
+            name=DataParallelType.hsdp if cp_degree > 1 else DataParallelType.fsdp,
             param_dtype=DType.bfloat16,
             reduce_dtype=DType.float32,
             wrapping_strategy=TransformerDataParallelWrappingStrategy.full,
             shard_degree=shard_degree,
         ),
+        cp_config=cp_config,
         # FULL-block AC needed for 4B/9B at seq_len=40960 on 80GB H100s (same rationale as the
         # proven docchunk 5task Beaker scripts: FFN-only AC leaves attention activations resident
         # and still OOMs). 0.8B fits without it on 141GB H200s, so leave it off there by default.
@@ -392,9 +482,10 @@ def build_provenance(opts: argparse.Namespace, world_size: int) -> Dict[str, Any
         "git_commit": git_commit or "unknown",
         "task": opts.task,
         "variant": opts.variant,
+        "model_family": opts.model_family,
         "model_scale": opts.model_scale,
         "data": os.path.abspath(opts.data),
-        "marker_set": {"family": MARKER_FAMILY, **IDS._asdict()},
+        "marker_set": {"family": opts.model_family, **RESERVED_IDS[opts.model_family]._asdict()},
         "world_size": world_size,
         "start_time": os.environ.get("CTC_LAUNCH_TS")
         or datetime.datetime.now().isoformat(timespec="seconds"),
@@ -431,42 +522,64 @@ def resolve_plan(opts: argparse.Namespace, world_size: int) -> Dict[str, Any]:
     :returns: Dict with ``meta``, ``n_examples``, ``per_rank``, ``curriculum`` (or None),
         ``model_config``, ``instance_source_config``, ``data_loader_config``.
     """
-    meta = read_shard_metadata(opts.data, opts.seq_len)
+    ids = RESERVED_IDS[opts.model_family]
+    meta = read_shard_metadata(opts.data, opts.seq_len, opts.model_family)
     n_examples = int(opts.dry_run_n_examples or meta["num_instances"])
     if meta.get("task") and meta["task"] != opts.task:
         print(
             f"[ctc-suite] WARNING: --task {opts.task} != shard metadata task {meta['task']!r}",
             flush=True,
         )
-    per_rank = derive_batch_geometry(opts.global_batch, world_size, opts.micro_batch_instances)
+    # Under context parallelism, instances are distributed over the DP dimension (world_size/cp),
+    # not all ranks -- each CP group cooperatively processes ONE instance's sequence.
+    cp_degree = opts.cp_degree if opts.cp_degree and opts.cp_degree > 1 else 1
+    dp_world_size = world_size // cp_degree
+    per_rank = derive_batch_geometry(opts.global_batch, dp_world_size, opts.micro_batch_instances)
     curriculum: Optional[Dict[str, Any]] = None
     if opts.variant == "chunked-mix":
         curriculum = derive_mask_mix_curriculum(
             n_examples=n_examples,
             epochs=opts.epochs,
             global_batch=opts.global_batch,
-            world_size=world_size,
+            world_size=dp_world_size,
             micro_batch_instances=opts.micro_batch_instances,
             mix_start_p=opts.mix_start_p,
             mix_end_p=opts.mix_end_p,
         )
         opts._mix_total_forwards = curriculum["mix_total_forwards"]
 
-    # Qwen3.5 tokenizer (its OWN vocab; NOT TokenizerConfig.qwen3()); pad == eos.
+    # Family-specific tokenizer (its OWN vocab; pad == eos). The Qwen3.5 path keeps its own vocab
+    # (NOT TokenizerConfig.qwen3()); the plain-Qwen3 path uses the Qwen3 vocab/eos.
     tokenizer_config = TokenizerConfig(
         vocab_size=opts.vocab_size,
-        eos_token_id=IDS.eos,
-        pad_token_id=IDS.eos,
+        eos_token_id=ids.eos,
+        pad_token_id=ids.eos,
         bos_token_id=None,
-        identifier="Qwen/Qwen3.5-0.8B-Base",
+        identifier=FAMILY_TOKENIZER[opts.model_family],
     )
-    instance_source_config = PadToLengthInstanceSourceConfig.from_npy(
-        f"{opts.data}/token_ids_part_*.npy",
-        tokenizer=tokenizer_config,
-        sequence_length=opts.seq_len,
-        label_mask_paths=[f"{opts.data}/labels_mask_*.npy"],
-        expand_glob=True,
-    )
+    # Instance source. Default (--no-pack): one example per instance, padded to seq_len (the proven
+    # short-rung path). With --pack: greedily bin-pack WHOLE examples into seq_len windows (no
+    # cross-example splitting) and emit cu_doc_lens for intra-example masking -- the only tractable
+    # option for a mixed 8k..256k length distribution, where padding every short example up to a
+    # 256k seq_len would be a ~32x compute waste. Packing composes with CP (proven in the
+    # sft_longctx -packed- scripts: "Packing is supported under CP"). Same npy format either way.
+    if opts.pack:
+        instance_source_config = PackingInstanceSourceConfig.from_npy(
+            f"{opts.data}/token_ids_part_*.npy",
+            tokenizer=tokenizer_config,
+            sequence_length=opts.seq_len,
+            max_sequence_length=opts.seq_len,
+            label_mask_paths=[f"{opts.data}/labels_mask_*.npy"],
+            expand_glob=True,
+        )
+    else:
+        instance_source_config = PadToLengthInstanceSourceConfig.from_npy(
+            f"{opts.data}/token_ids_part_*.npy",
+            tokenizer=tokenizer_config,
+            sequence_length=opts.seq_len,
+            label_mask_paths=[f"{opts.data}/labels_mask_*.npy"],
+            expand_glob=True,
+        )
     data_loader_config = ComposableDataLoaderConfig(
         tokenizer=tokenizer_config,
         work_dir=opts.work_dir or WORK_DIR,
@@ -504,12 +617,14 @@ def dry_run(opts: argparse.Namespace) -> None:
             else " (metadata)"
         )
     )
+    ids = RESERVED_IDS[opts.model_family]
     print(
-        f"  marker_set={MARKER_FAMILY} doc_start={IDS.doc_start} doc_end={IDS.doc_end} "
-        f"eos={IDS.eos}"
+        f"  family={opts.model_family} marker_set={opts.model_family} "
+        f"doc_start={ids.doc_start} doc_end={ids.doc_end} eos={ids.eos} "
+        f"vocab_size={opts.vocab_size}"
     )
     print(
-        f"  model: qwen3_5_{opts.model_scale} n_layers={model_config.n_layers} "
+        f"  model: {opts.model_family}_{opts.model_scale} n_layers={model_config.n_layers} "
         f"params={model_config.num_params:,} "
         f"document_chunk_attention={model_config.document_chunk_attention}"
     )
@@ -677,7 +792,19 @@ def parse_args() -> argparse.Namespace:
         help="shard dir from convert_unified_to_document_landmark.py --marker-set qwen3_5 "
         "(token_ids_part_*.npy + labels_mask_*.npy + metadata.json)",
     )
-    ap.add_argument("--model-scale", choices=sorted(MODEL_FACTORIES), default="0.8b")
+    ap.add_argument(
+        "--model-family",
+        choices=["auto", *sorted(MODEL_FACTORIES)],
+        default="auto",
+        help="auto (default) = detect from the shard's metadata marker_set; or force qwen3 "
+        "(plain dense/causal) / qwen3_5 (GDN+attn hybrid). Determines the model factory, marker "
+        "ids, tokenizer, and embedding size.",
+    )
+    ap.add_argument(
+        "--model-scale",
+        default="0.8b",
+        help="scale key within the resolved family: qwen3_5={0.8b,4b,9b}; qwen3={0.6b,1.7b,4b,8b}",
+    )
     ap.add_argument(
         "--variant",
         choices=["full", "chunked", "chunked-mix"],
@@ -726,7 +853,13 @@ def parse_args() -> argparse.Namespace:
     )
     ap.add_argument("--num-workers", type=int, default=2, help="dataloader workers per rank")
     ap.add_argument("--max-steps", type=int, default=0, help="hard-stop after N steps (0 = full)")
-    ap.add_argument("--vocab-size", type=int, default=VOCAB_SIZE)
+    ap.add_argument(
+        "--vocab-size",
+        type=int,
+        default=None,
+        help="embedding-matrix size; default is the resolved family's base size "
+        "(qwen3_5=248320, qwen3=151936). Override only to match a non-standard base.",
+    )
     ap.add_argument(
         "--activation-checkpointing",
         choices=["auto", "full", "none"],
@@ -741,7 +874,35 @@ def parse_args() -> argparse.Namespace:
         default=0,
         help="FSDP shard_degree. 0 (default/auto) = 1 for 0.8b (proven working), world_size for "
         "4b/9b (full parameter sharding, needed to fit seq_len=40960 on an 80GB H100). Override "
-        "to force a specific value.",
+        "to force a specific value. Under CP this shards over the dp dimension (world_size/cp).",
+    )
+    ap.add_argument(
+        "--cp-degree",
+        type=int,
+        default=0,
+        help="context-parallel (Ulysses) degree for long-context arms. 0/1 = no CP (default). "
+        "Shards the sequence over cp_degree GPUs; bounded by n_kv_heads (dense qwen3=8, hybrid "
+        "qwen3_5=4). world_size must be divisible by it; the dp/FSDP dim becomes world_size/cp.",
+    )
+    ap.add_argument(
+        "--rope-yarn-factor",
+        type=float,
+        default=0.0,
+        help="YaRN RoPE context-extension factor (0/1 = off). E.g. 8 extends Qwen3's native 32k "
+        "to 256k; 2 for 64k. Required whenever --seq-len exceeds the base's native context.",
+    )
+    ap.add_argument(
+        "--rope-old-context",
+        type=int,
+        default=32768,
+        help="base native context length for YaRN scaling (Qwen3 = 32768).",
+    )
+    ap.add_argument(
+        "--pack",
+        action="store_true",
+        help="bin-pack whole examples into seq_len windows (PackingInstanceSource) instead of one "
+        "padded example per instance. Required for a mixed-length (e.g. 8k..256k) shard so short "
+        "examples don't waste compute padded up to the max seq_len. Composes with CP.",
     )
     ap.add_argument(
         "--attn-backend",
@@ -786,6 +947,16 @@ def parse_args() -> argparse.Namespace:
     )
     opts = ap.parse_args()
     opts._mix_total_forwards = 0
+    # Resolve the model family (explicit or auto from the shard) and rebind opts.model_family to
+    # the concrete family, so every downstream function keys off it deterministically.
+    opts.model_family = resolve_family(opts)
+    if opts.model_scale not in MODEL_FACTORIES[opts.model_family]:
+        ap.error(
+            f"--model-scale {opts.model_scale!r} is not defined for family "
+            f"{opts.model_family!r}; choose from {sorted(MODEL_FACTORIES[opts.model_family])}"
+        )
+    if opts.vocab_size is None:
+        opts.vocab_size = FAMILY_VOCAB_SIZE[opts.model_family]
     if not opts.dry_run and opts.dry_run_n_examples:
         ap.error("--dry-run-n-examples is only valid with --dry-run")
     if opts.variant == "chunked-mix" and opts.compile:

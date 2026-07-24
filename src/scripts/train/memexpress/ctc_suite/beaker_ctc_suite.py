@@ -46,24 +46,66 @@ NUM_GPUS = 8
 
 
 def parse_args() -> argparse.Namespace:
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     ap.add_argument("--task", required=True, help="suite task name, e.g. outlier / grouping")
     ap.add_argument(
-        "--variant", required=True, choices=["full", "chunked", "chunked-mix"],
+        "--variant",
+        required=True,
+        choices=["full", "chunked", "chunked-mix"],
     )
-    ap.add_argument("--model-scale", required=True, choices=["4b", "9b"], help="Beaker family is 4B/9B only; 0.8B trains locally")
-    ap.add_argument("--run-name", required=True, help="fresh name per config -- silent auto-resume trap")
+    ap.add_argument(
+        "--model-scale",
+        required=True,
+        choices=["4b", "9b"],
+        help="Beaker family is 4B/9B only; 0.8B trains locally",
+    )
+    ap.add_argument(
+        "--model-family",
+        default="qwen3_5",
+        choices=["qwen3_5", "qwen3"],
+        help="qwen3_5 (GDN hybrid, default) or qwen3 (dense). Selects the default base checkpoint "
+        "and is passed through to the trainer (which also auto-detects it from the shard).",
+    )
+    ap.add_argument(
+        "--run-name", required=True, help="fresh name per config -- silent auto-resume trap"
+    )
+    # Long-context arms (256k): context parallelism + YaRN + packing, all passed to the trainer.
+    ap.add_argument(
+        "--cp-degree", type=int, default=0, help="Ulysses CP degree (dense<=8, hybrid<=4); 0=off"
+    )
+    ap.add_argument(
+        "--rope-yarn-factor",
+        type=float,
+        default=0.0,
+        help="YaRN factor (e.g. 8 for 32k->256k); dense only",
+    )
+    ap.add_argument("--rope-old-context", type=int, default=32768)
+    ap.add_argument(
+        "--pack",
+        action="store_true",
+        help="bin-pack whole examples (needed for a mixed 8k..256k shard)",
+    )
+    ap.add_argument("--activation-checkpointing", default=None, choices=["auto", "full", "none"])
+    ap.add_argument(
+        "--shard-degree", type=int, default=0, help="FSDP shard_degree override (0=auto)"
+    )
     ap.add_argument("--cluster", default="ai2/jupiter-cirrascale-2")
     ap.add_argument("--num-nodes", type=int, default=2, help="2 nodes for 4B, 4 for 9B per plan §4")
     ap.add_argument("--epochs", type=int, default=1, help="plan directive: 1 epoch at 20k examples")
     ap.add_argument("--seq-len", type=int, default=40960)
     ap.add_argument("--lr", type=float, default=5e-5)
     ap.add_argument(
-        "--global-batch", type=int, default=None,
+        "--global-batch",
+        type=int,
+        default=None,
         help="instances/optimizer-step across all ranks; default = num_nodes*8 (1 instance/GPU, grad-accum 1)",
     )
     ap.add_argument("--micro-batch-instances", type=int, default=1)
-    ap.add_argument("--max-steps", type=int, default=0, help="0 = full (epoch-bounded); set for smoke tests")
+    ap.add_argument(
+        "--max-steps", type=int, default=0, help="0 = full (epoch-bounded); set for smoke tests"
+    )
     ap.add_argument(
         "--data-root",
         default=None,
@@ -78,7 +120,10 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--wandb-group", default=None, help="default: ctc-suite-<task>")
     ap.add_argument("--priority", default="urgent", help="ALWAYS urgent per project directive")
     ap.add_argument(
-        "--no-allow-dirty", dest="allow_dirty", action="store_false", default=True,
+        "--no-allow-dirty",
+        dest="allow_dirty",
+        action="store_false",
+        default=True,
         help="require a clean tree (default: allow_dirty=True, matching _docchunk_5task_32k_nocpt_common.py -- "
         "this checkout is a shared working tree actively modified by concurrent jobs and is rarely clean; "
         "gantry always clones the PUSHED commit regardless of local dirtiness)",
@@ -93,10 +138,17 @@ def main() -> None:
     root_dir = get_root_dir(opts.cluster)  # -> /weka/oe-training-default/ai2-llm on jupiter
     work_dir = get_work_dir(root_dir)
 
-    data_root = opts.data_root or f"{root_dir}/checkpoints/prasanns/ctc_suite/shards/{opts.task}_train"
-    base_checkpoint = opts.base_checkpoint or (
-        f"{root_dir}/checkpoints/prasanns/ctc_suite/bases/q35-{opts.model_scale}-base-modelonly/model_and_optim"
+    data_root = (
+        opts.data_root or f"{root_dir}/checkpoints/prasanns/ctc_suite/shards/{opts.task}_train"
     )
+    # Per-family default base: qwen3_5 = the converted hybrid base already on weka; qwen3 = the
+    # trained-marker-repaired dense base (staged for the qwen3-vs-qwen3.5 contradiction comparison).
+    if opts.base_checkpoint:
+        base_checkpoint = opts.base_checkpoint
+    elif opts.model_family == "qwen3_5":
+        base_checkpoint = f"{root_dir}/checkpoints/prasanns/ctc_suite/bases/q35-{opts.model_scale}-base-modelonly/model_and_optim"
+    else:
+        base_checkpoint = f"{root_dir}/checkpoints/prasanns/ctc_suite/bases/qwen3-{opts.model_scale}-base-trainedmark/model_and_optim"
     run_name = f"{opts.run_name}-{datetime.now().astimezone().strftime('%Y%m%dT%H%M%S%z')}"
     save_folder = f"{root_dir}/checkpoints/prasanns/ctc_suite/ckpts/{run_name}"
     wandb_group = opts.wandb_group or f"ctc-suite-{opts.task}"
@@ -105,25 +157,57 @@ def main() -> None:
 
     cmd = [
         "src/scripts/train/memexpress/ctc_suite/train_ctc_suite.py",
-        "--task", opts.task,
-        "--data", data_root,
-        "--variant", opts.variant,
-        "--model-scale", opts.model_scale,
-        "--seq-len", str(opts.seq_len),
-        "--epochs", str(opts.epochs),
-        "--lr", str(opts.lr),
-        "--global-batch", str(global_batch),
-        "--micro-batch-instances", str(opts.micro_batch_instances),
-        "--base-checkpoint", base_checkpoint,
-        "--work-dir", f"{work_dir}-ctc-suite",
-        "--save-folder", save_folder,
-        "--run-name", run_name,
-        "--wandb-group", wandb_group,
-        "--wandb-entity", WANDB_ENTITY,
+        "--task",
+        opts.task,
+        "--data",
+        data_root,
+        "--variant",
+        opts.variant,
+        "--model-scale",
+        opts.model_scale,
+        "--seq-len",
+        str(opts.seq_len),
+        "--epochs",
+        str(opts.epochs),
+        "--lr",
+        str(opts.lr),
+        "--global-batch",
+        str(global_batch),
+        "--micro-batch-instances",
+        str(opts.micro_batch_instances),
+        "--base-checkpoint",
+        base_checkpoint,
+        "--work-dir",
+        f"{work_dir}-ctc-suite",
+        "--save-folder",
+        save_folder,
+        "--run-name",
+        run_name,
+        "--wandb-group",
+        wandb_group,
+        "--wandb-entity",
+        WANDB_ENTITY,
+        "--model-family",
+        opts.model_family,
         "--save-checkpoint",
     ]
     if opts.max_steps:
         cmd += ["--max-steps", str(opts.max_steps)]
+    if opts.cp_degree:
+        cmd += ["--cp-degree", str(opts.cp_degree)]
+    if opts.rope_yarn_factor:
+        cmd += [
+            "--rope-yarn-factor",
+            str(opts.rope_yarn_factor),
+            "--rope-old-context",
+            str(opts.rope_old_context),
+        ]
+    if opts.pack:
+        cmd += ["--pack"]
+    if opts.activation_checkpointing:
+        cmd += ["--activation-checkpointing", opts.activation_checkpointing]
+    if opts.shard_degree:
+        cmd += ["--shard-degree", str(opts.shard_degree)]
 
     launch_config = build_launch_config(
         name=run_name,
@@ -145,13 +229,17 @@ def main() -> None:
         BeakerEnvVar(name="PYTORCH_CUDA_ALLOC_CONF", value="expandable_segments:True")
     )
 
-    print(f"[beaker_ctc_suite] task={opts.task} variant={opts.variant} scale={opts.model_scale} "
-          f"run_name={run_name} nodes={opts.num_nodes} world_size={world_size} "
-          f"global_batch={global_batch} epochs={opts.epochs} max_steps={opts.max_steps or 'full'}")
+    print(
+        f"[beaker_ctc_suite] task={opts.task} variant={opts.variant} scale={opts.model_scale} "
+        f"run_name={run_name} nodes={opts.num_nodes} world_size={world_size} "
+        f"global_batch={global_batch} epochs={opts.epochs} max_steps={opts.max_steps or 'full'}"
+    )
     print(f"[beaker_ctc_suite] data={data_root}")
     print(f"[beaker_ctc_suite] base_checkpoint={base_checkpoint}")
     print(f"[beaker_ctc_suite] save_folder={save_folder}")
-    print(f"[beaker_ctc_suite] wandb: https://wandb.ai/{WANDB_ENTITY}/{WANDB_PROJECT}/groups/{wandb_group}")
+    print(
+        f"[beaker_ctc_suite] wandb: https://wandb.ai/{WANDB_ENTITY}/{WANDB_PROJECT}/groups/{wandb_group}"
+    )
     print(f"[beaker_ctc_suite] cmd={' '.join(cmd)}")
 
     if opts.mode == "dry_run":

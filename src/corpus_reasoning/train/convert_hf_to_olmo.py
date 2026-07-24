@@ -102,10 +102,15 @@ def main():
     print(f"[convert] {args.base_model} -> builder={spec.builder} vocab={spec.vocab_size}",
           flush=True)
 
-    local = snapshot_download(args.base_model)
+    # Accept a local model directory (offline-safe) as well as a hub repo id. The hub-cache
+    # offline resolver in transformers can fail to find a fully-cached repo by id on air-gapped
+    # compute nodes; pointing --base-model at the on-disk snapshot dir sidesteps it entirely.
+    local = (
+        args.base_model if _os.path.isdir(args.base_model) else snapshot_download(args.base_model)
+    )
     print(f"[convert] HF snapshot: {local}", flush=True)
 
-    tok = AutoTokenizer.from_pretrained(args.base_model, trust_remote_code=True)
+    tok = AutoTokenizer.from_pretrained(local, trust_remote_code=True)
     eos = tok.eos_token_id
     pad = tok.pad_token_id if tok.pad_token_id is not None else eos
     bos = tok.bos_token_id  # may be None for Qwen3 base

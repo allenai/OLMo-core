@@ -1,0 +1,28 @@
+=== qwen3 (marker qwen3) seq_len=5632 ===
+marker set 'qwen3': doc_start=151648 doc_end=151649 eos=151643 landmark=151860 pad=151863
+loaded 5000 examples (task=contradiction, emit=dense, chunk_by=document); tokenizing -> /scratch/users/prasann/ctc_qwen_compare/contra_2k_qwen3_n77_5k
+metadata.json -> /scratch/users/prasann/ctc_qwen_compare/contra_2k_qwen3_n77_5k/metadata.json (num_instances=5000, max_example_len=4560, num_loss_tokens=146400)
+length tokens: min 2916 / p50 3581 / p90 3872 / max 4560
+done: kept 5000, dropped 0 (too long / reserved collision). shards: 1
+=== qwen3.5 (marker qwen3_5) seq_len=5632 ===
+marker set 'qwen3_5': doc_start=248049 doc_end=248050 eos=248044 landmark=248200 pad=248203
+loaded 5000 examples (task=contradiction, emit=dense, chunk_by=document); tokenizing -> /scratch/users/prasann/ctc_qwen_compare/contra_2k_qwen35_n77_5k
+metadata.json -> /scratch/users/prasann/ctc_qwen_compare/contra_2k_qwen35_n77_5k/metadata.json (num_instances=5000, max_example_len=4555, num_loss_tokens=136400)
+length tokens: min 2910 / p50 3577 / p90 3865 / max 4555
+done: kept 5000, dropped 0 (too long / reserved collision). shards: 1
+=== metadata ===
+--- contra_2k_qwen3_n77_5k ---
+  "marker_set": "qwen3",
+  "eos_token_id": 151643,
+  "num_instances": 5000,
+  "num_dropped": 0,
+  "max_example_len": 4560,
+  "min_example_len": 2916
+--- contra_2k_qwen35_n77_5k ---
+  "marker_set": "qwen3_5",
+  "eos_token_id": 248044,
+  "num_instances": 5000,
+  "num_dropped": 0,
+  "max_example_len": 4555,
+  "min_example_len": 2910
+RETOKENIZE DONE

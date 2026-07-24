@@ -9,7 +9,7 @@
 # NFS-safe; staging via cp can drop the hidden .metadata -> silent train-from-scratch, guarded).
 #
 # Knobs (env): TASK DATA_SRC VARIANT SCALE RUN EPOCHS SEQ_LEN LR GLOBAL_BATCH MICRO_BATCH
-#              BASE_SRC WANDB_GROUP MAX_STEPS NGPU SEED
+#              BASE_SRC WANDB_GROUP MAX_STEPS NGPU SEED ACT_CKPT SHARD_DEGREE
 # Placement (env, applied ONLY when this file is executed directly -- it then self-submits):
 #              PARTITION (default berkeleynlp) QOS (optional) NODE (optional -w) TIME (default
 #              06:00:00) ACCOUNT (optional; jsteinhardt needs ACCOUNT=site QOS=preemptive_high)
@@ -64,6 +64,9 @@ TASK="${TASK:?set TASK=<suite task name> (e.g. contradiction)}"
 DATA_SRC="${DATA_SRC:?set DATA_SRC=<qwen3_5 shard dir on /scratch>}"
 VARIANT="${VARIANT:?set VARIANT=full|chunked|chunked-mix}"
 SCALE="${SCALE:-0.8b}"
+# Model family: empty -> train_ctc_suite.py auto-detects from the shard's metadata marker_set
+# (qwen3 plain-dense vs qwen3_5 GDN hybrid). Set explicitly (qwen3|qwen3_5) to force it.
+MODEL_FAMILY="${MODEL_FAMILY:-}"
 SEQ_LEN="${SEQ_LEN:-40960}"
 EPOCHS="${EPOCHS:-3}"
 LR="${LR:-5e-5}"
@@ -71,6 +74,15 @@ GLOBAL_BATCH="${GLOBAL_BATCH:-8}"
 MICRO_BATCH="${MICRO_BATCH:-1}"
 MAX_STEPS="${MAX_STEPS:-0}"
 SEED="${SEED:-0}"
+# Optional activation-checkpointing / FSDP shard-degree overrides (mirrors run_ctc_lambda.sbatch).
+# Empty by default -> trainer default (auto / no override), so existing callers are unaffected.
+ACT_CKPT="${ACT_CKPT:-}"          # full | none | auto
+SHARD_DEGREE="${SHARD_DEGREE:-}"  # FSDP shard_degree
+# Optional mask-mix curriculum overrides (chunked-mix variant only). Empty -> train_ctc_suite.py
+# defaults (0.80 -> 0.0 anneal). Set BOTH equal for a CONSTANT p (e.g. MIX_START_P=0.5 MIX_END_P=0.5
+# to match the paper's fixed p=0.5 instead of the anneal-to-pure-chunked default).
+MIX_START_P="${MIX_START_P:-}"
+MIX_END_P="${MIX_END_P:-}"
 RUN="${RUN:-ctc-${TASK}-${VARIANT}-${SCALE}}"
 WANDB_GROUP="${WANDB_GROUP:-ctc-suite-${TASK}}"
 # Per-scale converted base (model-only distcp). 0.8B default; 4b/9b MUST pass BASE_SRC (audited).
@@ -87,10 +99,27 @@ export TOKENIZERS_PARALLELISM=false
 export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
 export PYTHONWARNINGS=ignore
 export PYTHONUNBUFFERED=1
+# FLA/Triton JIT cache MUST be node-local. It defaults to $HOME/.triton, but $HOME is /accounts
+# NFS here; Triton guards each kernel compile with a FileLock, and that lock DEADLOCKS over NFS.
+# Two cold-compile jobs on a node (e.g. the synth+baseline arms launched together) then wedge at
+# the first forward/backward -- 167 threads stuck in futex_wait, 0% GPU, looks like a dead trainer
+# but is really the compile lock. Same class as the flashinfer HOME->NFS wedge, and run_ctc_lambda
+# .sbatch already fixes it the same way. A node-local (ext4) FileLock serializes compiles correctly.
+export TRITON_CACHE_DIR="${TRITON_CACHE_DIR:-/data/prasann/triton_cache}"
+mkdir -p "$TRITON_CACHE_DIR" 2>/dev/null || true
 
-mapfile -t CLEAN < <(nvidia-smi --query-gpu=memory.used,uuid --format=csv,noheader,nounits | awk -F', ' '$1+0 < 2000 {print $2}')
-export CUDA_VISIBLE_DEVICES=$(IFS=,; echo "${CLEAN[*]:0:$NGPU}")
-echo "CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES"
+# GPU selection: RESPECT the SLURM allocation when present. On a shared node SLURM's cgroup gives
+# us specific devices (CUDA_VISIBLE_DEVICES / SLURM_JOB_GPUS); the old "pick idle GPUs by nvidia-smi
+# memory" heuristic can grab devices OUTSIDE our cgroup -> "CUDA driver initialization failed" on the
+# extra rank (observed on lorax, which does not index-isolate like thidwick). The clean-pick is kept
+# ONLY as a fallback for a bare (non-SLURM-gres) node where nothing set the visibility for us.
+if [ -n "${CUDA_VISIBLE_DEVICES:-}" ] || [ -n "${SLURM_JOB_GPUS:-}" ] || [ -n "${SLURM_STEP_GPUS:-}" ]; then
+  echo "CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-<slurm-managed>} (respecting SLURM allocation)"
+else
+  mapfile -t CLEAN < <(nvidia-smi --query-gpu=memory.used,uuid --format=csv,noheader,nounits | awk -F', ' '$1+0 < 2000 {print $2}')
+  export CUDA_VISIBLE_DEVICES=$(IFS=,; echo "${CLEAN[*]:0:$NGPU}")
+  echo "CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES (clean-pick fallback, no SLURM gres)"
+fi
 
 # ---- base: read the shared distcp directly from /scratch; guard the .metadata marker ----
 ROOT=/data/prasann/ctc_suite
@@ -112,14 +141,22 @@ echo "BASE_CKPT=$BASE_CKPT DATA_LOCAL=$DATA_LOCAL SAVE=$SAVE_LOCAL"
 cd "$REPO"
 MAXARG=""; [ "$MAX_STEPS" -gt 0 ] && MAXARG="--max-steps $MAX_STEPS"
 MASTER_PORT=$((29000 + RANDOM % 1000))
+# Optional: disable wandb (e.g. no WANDB_API_KEY in the env). Set NOWANDB=1.
+# Backward-compatible: empty by default, so existing online-wandb runs are unchanged.
+WANDBARG=""; [ -n "${NOWANDB:-}" ] && WANDBARG="--no-wandb"
 
 torchrun --nproc_per_node="$NGPU" --master_port="$MASTER_PORT" \
   src/scripts/train/memexpress/ctc_suite/train_ctc_suite.py \
   --task "$TASK" --variant "$VARIANT" --model-scale "$SCALE" \
+  ${MODEL_FAMILY:+--model-family "$MODEL_FAMILY"} \
   --run-name "$RUN" --wandb-group "$WANDB_GROUP" --base-checkpoint "$BASE_CKPT" \
   --data "$DATA_LOCAL" --work-dir "$WORK_LOCAL" --save-folder "$SAVE_LOCAL" \
   --seq-len "$SEQ_LEN" --epochs "$EPOCHS" --lr "$LR" \
   --global-batch "$GLOBAL_BATCH" --micro-batch-instances "$MICRO_BATCH" --seed "$SEED" \
-  --save-checkpoint --no-compile \
+  ${ACT_CKPT:+--activation-checkpointing "$ACT_CKPT"} \
+  ${SHARD_DEGREE:+--shard-degree "$SHARD_DEGREE"} \
+  ${MIX_START_P:+--mix-start-p "$MIX_START_P"} \
+  ${MIX_END_P:+--mix-end-p "$MIX_END_P"} \
+  --save-checkpoint --no-compile $WANDBARG \
   $MAXARG
 echo "=== DONE $(date '+%F %T')  rc=$? ==="
