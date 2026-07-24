@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-07-24T06:30:38.958325+00:00",
+  "generated_at": "2026-07-24T16:07:25.794416+00:00",
   "metric": "eval/lm/c4_en-validation/CE loss",
   "selection_rule": "Use the same checkpoints selected by the final-250M training-loss comparison: observed-best learning rates at 275M and wide-optimal transferred learning rates at larger sizes. Never substitute a partial or running validation result.",
   "variants": [
@@ -1098,10 +1098,10 @@
       "source_training_run_id": "yzrd8hnz",
       "source_training_run_name": "pt-1p2b-geometry-gdn-ev2-rope-gated-cx1-lr4e-4-ep8-sync-r1",
       "learning_rate": 0.0004,
-      "c4_validation_ce": null,
-      "validation_state": "running",
-      "validation_run_id": "uvsfm10s",
-      "validation_url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/uvsfm10s"
+      "c4_validation_ce": 2.8658933639526367,
+      "validation_state": "finished",
+      "validation_run_id": "yjs5dt2d",
+      "validation_url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/yjs5dt2d"
     },
     {
       "model": "1p2b",
@@ -1352,8 +1352,8 @@
       "learning_rate": 0.0004,
       "c4_validation_ce": null,
       "validation_state": "running",
-      "validation_run_id": "60szyzh7",
-      "validation_url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/60szyzh7"
+      "validation_run_id": "g7ur9ibf",
+      "validation_url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/g7ur9ibf"
     }
   ]
 }

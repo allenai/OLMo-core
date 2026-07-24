@@ -5,3 +5,4 @@ GDN2-1to1,2097152,1,EP1/all-reduce,16,479.35,288215.0,288215.0,7.2763,21.305,240
 GDN2-1to1,4194304,1,EP1/all-reduce,16,472.95,284368.0,284368.0,14.7496,21.020,240.00,243.50,0,01KY8YWJZVWTB6X35RDV09N3BA,https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/tuoe8yuw
 SWA-1to1,2097152,1,EP1/all-reduce,16,592.15,325078.5,325078.5,6.4512,26.320,234.20,237.60,0,01KY8YWM2X9NTBVC9HRCCW5YR6,https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/klrczpgl
 SWA-1to1,4194304,1,EP1/all-reduce,16,573.30,314725.0,314725.0,13.3269,25.480,234.20,237.70,0,01KY8YWM64BAKS65VK6G0KKRBA,https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/jlsdgst5
+SWA-1to1-10L,2097152,1,EP1/all-reduce,16,578.75,365833.0,365833.0,5.7325,25.725,202.30,205.30,0,01KYADSZ9WYQDW9G5102N0DRXD,https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/dxodj908

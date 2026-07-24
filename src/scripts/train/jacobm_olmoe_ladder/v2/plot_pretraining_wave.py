@@ -332,8 +332,8 @@ GEOMETRY_GDN2_EV2_NOPE_GATED = Variant(
             "275m",
             2,
             1.6e-3,
-            "8agi9zte",
-            predecessor_run_ids=("gat5rtub",),
+            "jhcmk80f",
+            predecessor_run_ids=("gat5rtub", "8agi9zte"),
         ),
         RegisteredRun("275m", 2, 3.2e-3, "xwtxd1pv"),
         RegisteredRun("275m", 4, 4e-4, "6b0vighm"),
@@ -344,6 +344,14 @@ GEOMETRY_GDN2_EV2_NOPE_GATED = Variant(
         RegisteredRun("275m", 8, 8e-4, "1lpz9reu"),
         RegisteredRun("275m", 8, 1.6e-3, "n48z3vh8"),
         RegisteredRun("275m", 8, 3.2e-3, "e6n5iscu"),
+        RegisteredRun("480m", 1, 1.2e-3, "6r2blwru"),
+        RegisteredRun("480m", 2, 9e-4, "07rx8ez4"),
+        RegisteredRun("480m", 4, 8e-4, "arcv5xir"),
+        RegisteredRun("480m", 8, 8e-4, "lppc6rra"),
+        RegisteredRun("810m", 1, 6e-4, "90l8s4ps"),
+        RegisteredRun("810m", 2, 5.6e-4, "j5i5vhgh"),
+        RegisteredRun("810m", 4, 4e-4, "dzffl1jy"),
+        RegisteredRun("810m", 8, 4e-4, "2o59z9y3"),
     ),
 )
 
@@ -500,10 +508,18 @@ WAVES = {
             "integration and the otherwise-matching geometry-matched gated-NoPE "
             "GDN1 model."
         ),
-        models=("275m",),
+        models=("275m", "480m", "810m"),
         lr_sweep_models=("275m",),
-        active_parameters={"275m": 306_191_168},
-        baseline_active_parameters={"275m": 280_207_872},
+        active_parameters={
+            "275m": 306_191_168,
+            "480m": 526_979_424,
+            "810m": 914_540_480,
+        },
+        baseline_active_parameters={
+            "275m": 280_207_872,
+            "480m": 486_348_800,
+            "810m": 823_569_920,
+        },
         baseline=WIDE_INTEGRATION,
         additional_baselines=(GEOMETRY_GDN_EV2_NOPE_GATED,),
         intervention=GEOMETRY_GDN2_EV2_NOPE_GATED,

@@ -4,7 +4,7 @@ Record post-migration experiment waves here. Per-run rows must include Beaker
 job IDs and W&B IDs once they exist. Detailed migration-era DDP jobs remain in
 [`../v1/DDP_RUNS.md`](../v1/DDP_RUNS.md).
 
-## Live status snapshot (2026-07-24 06:36 UTC)
+## Live status snapshot (2026-07-24 16:10 UTC)
 
 This is the current source of truth for active V2 work. The detailed sections
 below retain the full launch and retry history.
@@ -25,10 +25,12 @@ below retain the full launch and retry history.
 | pretraining | larger aligned geometry + NoPE | finished | 12/12 formal cells; clean 1.2B Cx8 reproduction finished with final-250M CE `2.034305` | [results](results/pretraining/geometry_gdn_ev2_nope/results.md) |
 | pretraining | larger aligned geometry + NoPE + gated attention | finished | 12/12; newly finished 1.2B Cx2 strict final-250M CE `2.188236` | [results](results/pretraining/geometry_gdn_ev2_nope_gated/results.md) |
 | pretraining | larger aligned geometry + RoPE + gated attention | 11 finished / 1 failed | newly collected strict final-250M CE: 810M Cx8 `2.104806`, 1.2B Cx8 `2.029514`; 1.2B Cx2 remains failed | [results](results/pretraining/geometry_gdn_ev2_rope_gated/results.md) |
-| pretraining | 275M geometry + NoPE + gated attention + GDN2 | 7 finished / 9 running | Cx1 4/4 and Cx2 3/4 finished; Cx2 `1.6e-3` hit a second non-finite gradient at step 5,975 and auto-resumed again from durable `step5500`; all Cx4/Cx8 cells running | [results](results/pretraining/geometry_gdn2_ev2_nope_gated/results.md) |
+| pretraining | 275M geometry + NoPE + gated attention + GDN2 | 15 finished / 1 failed | Cx1/Cx2/Cx4 are complete and bracketed; Cx8 has 3/4 strict results, while `1.6e-3` stopped on non-finite loss at step 36,768 with durable `step36500` | [results](results/pretraining/geometry_gdn2_ev2_nope_gated/results.md) |
+| pretraining | larger geometry + NoPE + gated attention + GDN2 | 2 finished / 1 running / 5 stopped | 480M Cx1/Cx2 finished; 810M Cx4 is at 21.04B / 64.94B tokens; the other five cells stopped on explicit non-finite optimizer assertions and have durable checkpoints | [results](results/pretraining/geometry_gdn2_ev2_nope_gated/results.md) |
+| throughput | 275M 1:1 10-layer SWA depth control | finished | one B300, 2 Mi batch, MB16: 578.75 TFLOPs/GPU and 365.8K TPS/GPU; zero skipped steps | [work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYADSYYRHPYQCRVWJ27KV4KQ) |
 | midtraining | first hybrid 275M Cx8 | finished | 100B; final checkpoint `step95368`; validation finished | [1keo2hz6](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/1keo2hz6) |
 | midtraining | first hybrid 480M Cx8 | finished | 100.001B; final checkpoint `step95368`; validation finished | [mnp9rv5l](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/mnp9rv5l) |
-| validation | V2 post-training backfills | 115 complete / 2 running; 1 new checkpoint pending | 1.2B gated-RoPE Cx4 completed all 498 metrics; Cx1/Cx8 are running; newly finished 810M Cx8 still needs backfill | [results](results/validation/hybrid_full.md) |
+| validation | V2 post-training backfills | 116 complete / 1 running; 1 new checkpoint pending | 1.2B gated-RoPE Cx1/Cx4 completed all 498 metrics; Cx8 is running; newly finished 810M Cx8 still needs a separate backfill | [results](results/validation/hybrid_full.md) |
 
 The formal pretraining results and plots use finished runs only and enforce a
 complete final-250M-token history. The gated-RoPE sweep is now complete. Its
@@ -58,17 +60,15 @@ It uses exactly the checkpoints selected by the training-loss plot and leaves
 unfinished evaluation cells blank.
 
 The first formal GDN2 results use the same strict final-250M-token statistic.
-Cx1 is complete and bracketed: its observed best is `1.6e-3` with CE
-`2.646730`, versus `2.711104` for matching gated-NoPE GDN1 and `2.741044` for
-wide at their respective observed-best LRs. Cx2 is still provisional because
-the `1.6e-3` point is missing; among the three finished points, `8e-4` currently
-leads with CE `2.544136`. Its first attempt failed on a non-finite total gradient
-at step 4,675. The resume passed that point, then hit the same assertion at step
-5,975 and automatically resumed again from durable `step5500`. The remaining
-three points already bracket an interior minimum, so Cx2 retains its quadratic
-fit and enters the best-of summary at its observed-best LR; the predicted LR is
-only a U-plot annotation. Both GDN2 plots compare only against wide and matching
-gated-NoPE GDN1, as corrected.
+Cx1/Cx2/Cx4 are complete and bracketed. Their observed best results are
+`2.646730 @ 1.6e-3`, `2.534116 @ 1.6e-3`, and `2.443132 @ 1.6e-3`, respectively.
+The completed Cx2 value combines its failed and final W&B segments and retains
+the full final 250M-token window. Cx8 has three finished points and remains
+provisional because `1.6e-3` stopped on a non-finite loss at step 36,768; its
+current observed best is `2.356985 @ 8e-4`. The scale plot now includes the
+finished 480M Cx1/Cx2 results, `2.468555` and `2.359149`, improving over the
+matching GDN1 cells by `0.051087` and `0.055569`. Both GDN2 plots compare only
+against wide and matching gated-NoPE GDN1, as intended.
 
 The 11 finished larger gated-RoPE points have strict final-250M CEs of
 `2.506239`, `2.402917`, `2.307792`, and `2.233177` for 480M Cx1/2/4/8;
@@ -89,7 +89,7 @@ then auto-resumed and finished cleanly.
   and [`results/pretraining/geometry_gdn2_ev2_nope_gated/results.md`](results/pretraining/geometry_gdn2_ev2_nope_gated/results.md)
 
 All tasks are urgent and unallocated on Holmes. Status/progress below is the
-2026-07-24 06:36 UTC snapshot.
+2026-07-24 16:10 UTC snapshot.
 
 | Cx | LR | Current job | W&B | State / strict result |
 |---:|---:|---|---|---|
@@ -99,16 +99,16 @@ All tasks are urgent and unallocated on Holmes. Status/progress below is the
 | 1 | `3.2e-3` | `01KY8TKESHR6VS04WT0EXR8Z43` | [j2t5c2jb](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/j2t5c2jb) | finished; CE `2.661486` |
 | 2 | `4e-4` | `01KY8TKEWX8RE3HZNRKEBRAYR5` | [7yh4rfi1](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/7yh4rfi1) | finished; CE `2.564391` |
 | 2 | `8e-4` | `01KY8TKF05JSXDAH47206QWNV4` | [2egeqyvo](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/2egeqyvo) | finished; CE `2.544136` |
-| 2 | `1.6e-3` | `01KY9D9YN7SHRMKQ1DMB5P9V8W` | [resume 8agi9zte](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/8agi9zte) | running from durable `step5500`; preceding resume failed with the same non-finite-gradient assertion at step 5,975 |
+| 2 | `1.6e-3` | `01KY9D9YN7SHRMKQ1DMB5P9V8W` | [final segment jhcmk80f](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/jhcmk80f) | finished; combined strict CE `2.534116` |
 | 2 | `3.2e-3` | `01KY8TKF6N03DQD0FPM3A360HJ` | [xwtxd1pv](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/xwtxd1pv) | finished; CE `2.548521` |
-| 4 | `4e-4` | `01KY8TKF9T8ZR612Z1418THVWY` | [6b0vighm](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/6b0vighm) | running; 13.589B / 19.357B tokens (70.2%) |
-| 4 | `8e-4` | `01KY8TKFD1EPRHEY7TE4XSZNS4` | [yq4mi5o0](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/yq4mi5o0) | running; 13.579B / 19.357B tokens (70.1%) |
-| 4 | `1.6e-3` | `01KY8TKFG8HGZRF8PYTEA89SMY` | [0w6ezwgx](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/0w6ezwgx) | running; 14.302B / 19.357B tokens (73.9%) |
-| 4 | `3.2e-3` | `01KY8TKFKCY8PWKN156K0YG3J6` | [kcig30ty](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/kcig30ty) | running; 14.444B / 19.357B tokens (74.6%) |
-| 8 | `4e-4` | `01KY8TKFPMKP9MCCVNQM3P6KS9` | [jewjx6yq](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/jewjx6yq) | running; 26.463B / 38.715B tokens (68.4%) |
-| 8 | `8e-4` | `01KY8TKFST2JN575ZCHDXSRXG6` | [1lpz9reu](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/1lpz9reu) | running; 26.573B / 38.715B tokens (68.6%) |
-| 8 | `1.6e-3` | `01KY8TKFX02JSHWGT8X467S5E5` | [n48z3vh8](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/n48z3vh8) | running; 26.769B / 38.715B tokens (69.2%) |
-| 8 | `3.2e-3` | `01KY8TKG0AJ8706NGJZN9GQC66` | [e6n5iscu](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/e6n5iscu) | running; 26.463B / 38.715B tokens (68.4%) |
+| 4 | `4e-4` | `01KY8TKF9T8ZR612Z1418THVWY` | [6b0vighm](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/6b0vighm) | finished; CE `2.462028` |
+| 4 | `8e-4` | `01KY8TKFD1EPRHEY7TE4XSZNS4` | [yq4mi5o0](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/yq4mi5o0) | finished; CE `2.446822` |
+| 4 | `1.6e-3` | `01KY8TKFG8HGZRF8PYTEA89SMY` | [0w6ezwgx](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/0w6ezwgx) | finished; CE `2.443132`; observed best |
+| 4 | `3.2e-3` | `01KY8TKFKCY8PWKN156K0YG3J6` | [kcig30ty](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/kcig30ty) | finished; CE `2.461867` |
+| 8 | `4e-4` | `01KY8TKFPMKP9MCCVNQM3P6KS9` | [jewjx6yq](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/jewjx6yq) | finished; CE `2.372393` |
+| 8 | `8e-4` | `01KY8TKFST2JN575ZCHDXSRXG6` | [1lpz9reu](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/1lpz9reu) | finished; CE `2.356985`; current observed best |
+| 8 | `1.6e-3` | `01KY8TKFX02JSHWGT8X467S5E5` | [n48z3vh8](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/n48z3vh8) | stopped at step 36,768 on non-finite loss; durable `step36500` |
+| 8 | `3.2e-3` | `01KY8TKG0AJ8706NGJZN9GQC66` | [e6n5iscu](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/e6n5iscu) | finished; CE `2.380649` |
 
 ## Larger gated-NoPE GDN2 qualification
 
@@ -831,11 +831,11 @@ retains the identical 192-GPU peak layout and transferred LRs.
   high-priority unallocated backfills on `jacobm/moe-v2-core`:
   [16 two-GPU 275M tasks](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY8CJNZW98DWVW4282SEHKWT)
   and [10 eight-GPU larger-model tasks](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY8CK6Q5BFTEX09ZKRHWCCC5).
-  The 275M batch finished 16/16. The larger batch has seven finished tasks and
-  three running 1.2B tasks (Cx1/Cx4/Cx8). The
-  consolidated collector now exports 114 finished targets with 498 metrics
-  each. The newly finished 810M Cx8 is not part of that original submission;
-  failed/partial 1.2B Cx2 is not evaluated.
+  The 275M batch finished 16/16. In the larger batch, 1.2B Cx1 and Cx4 are now
+  complete and Cx8 is still running. The consolidated collector exports 116
+  finished targets with 498 metrics each and one running target. The newly
+  finished 810M Cx8 is not part of that original submission; failed/partial
+  1.2B Cx2 is not evaluated.
 
 ## New wave template
 

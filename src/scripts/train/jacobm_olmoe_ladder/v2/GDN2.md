@@ -134,17 +134,15 @@ out-of-loop validation. Per the corrected final comparison decision, plot one
 GDN2 U-curve per Cx and its observed-best summary against only original wide
 integration and the otherwise-matching geometry-matched gated-NoPE GDN1 model.
 
-Status at 2026-07-24 06:36 UTC: all four Cx1 points and the `4e-4`, `8e-4`,
-and `3.2e-3` Cx2 points finished. Cx2 `1.6e-3` asserted on a non-finite total
-gradient at step 4,675 and auto-resumed from durable `step4500`. That resume
-passed the original failure point but hit the same assertion again at step
-5,975; Beaker automatically resumed it again from durable `step5500`. The
-remaining three points already bracket an interior minimum, so the plot keeps
-the visual three-point quadratic fit and reports `8e-4` as the observed best.
-All four Cx4 points are at 70.1--74.6% and all four Cx8 points are at
-68.4--69.2%; all eight remain healthy and running.
+Status at 2026-07-24 16:10 UTC: Cx1/Cx2/Cx4 are complete and bracketed. Their
+observed best LRs are `1.6e-3` at all three multiples, with strict final-250M
+CEs `2.646730`, `2.534116`, and `2.443132`. The final Cx2 result combines the
+failed and resumed W&B segments. Three Cx8 points finished; `8e-4` currently
+leads with CE `2.356985`. Cx8 `1.6e-3` stopped on an explicit non-finite-loss
+assertion at step 36,768 and has durable `step36500`, so Cx8 remains marked
+provisional pending a resume.
 
-## Planned larger-scale transfer (not launched)
+## Larger-scale transfer
 
 The 480M, 810M, and 1.2B candidates inherit the corresponding gated-NoPE GDN1
 geometry exactly and replace only recurrent GDN1 mixers with GDN2. In
@@ -226,3 +224,13 @@ backward recomputation, rolling ephemeral checkpoints, and no in-loop evals.
 The submission ledger is
 `launchers/pretraining/generated/geometry_matched_scale_gdn2_nope_gated_480m_810m_submissions.json`.
 The four 1.2B cells were not submitted.
+
+At the 2026-07-24 16:10 UTC refresh, 480M Cx1/Cx2 finished with strict
+final-250M CEs `2.468555` and `2.359149`. 810M Cx4 is running at 21.04B / 64.94B
+tokens with an approximately 16-hour ETA. The remaining five cells stopped on
+the optimizer's explicit non-finite checks after successful multi-thousand-step
+training: 480M Cx4 at step 4,497 (total gradient), 480M Cx8 at 4,064 (total
+gradient), 810M Cx1 at 3,524 (total gradient), 810M Cx2 at 43,979 (loss), and
+810M Cx8 at 14,994 (loss). These are neither config failures nor OOMs; durable
+checkpoints exist at steps 4,000, 4,000, 3,500, 43,500, and 14,500,
+respectively. No automatic relaunch was performed during the refresh.

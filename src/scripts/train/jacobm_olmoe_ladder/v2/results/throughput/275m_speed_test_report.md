@@ -56,6 +56,7 @@ an exact 1:1 ratio.
 | Mixer | Layers | Recurrent/local | Global attention | Active params | Active non-embedding | Total params | Active delta vs old GDN1 |
 |---|---:|---|---|---:|---:|---:|---:|
 | SWA | 12 | 0/2/4/6/8/10 | 1/3/5/7/9/11 | 295,500,032 | 231,274,752 | 3,773,372,672 | +1.17% |
+| SWA (depth control) | 10 | 0/2/4/6/8 | 1/3/5/7/9 | 267,631,360 | 203,406,080 | 3,113,163,520 | -8.37% |
 | GDN1 | 10 | 0/2/4/6/8 | 1/3/5/7/9 | 284,148,560 | 219,923,280 | 3,129,680,720 | -2.72% |
 | GDN2 | 10 | 0/2/4/6/8 | 1/3/5/7/9 | 292,960,040 | 228,734,760 | 3,138,492,200 | +0.30% |
 
@@ -63,16 +64,18 @@ The 12-layer SWA model has more *total* parameters because adding depth adds
 two full routed-expert banks; active parameters are the matching axis used for
 the ladder and throughput comparison.
 
-Each model ran two urgent, unallocated, single-B300 Holmes cells: 2 Mi and 4 Mi
-global batches, MB16, EP1/all-reduce, 8,192-token sequences, 50 optimizer
-steps, compile enabled, and no checkpoints or evals. All six cells finished
-successfully with zero skipped optimizer updates. Results below use the same
-final-ten medians and memory checks as the original matrix. TPS/GPU is in
-thousands.
+The three active-matched models each ran two urgent, unallocated, single-B300
+Holmes cells: 2 Mi and 4 Mi global batches. The explicit 10-layer SWA depth
+control ran the requested 2 Mi cell. All use MB16, EP1/all-reduce, 8,192-token
+sequences, 50 optimizer steps, compile enabled, and no checkpoints or evals.
+All seven cells finished successfully with zero skipped optimizer updates.
+Results below use the same final-ten medians and memory checks as the original
+matrix. TPS/GPU is in thousands.
 
 | Global batch | Mixer | TFLOPs/GPU | TPS/GPU | MFU | Peak active / reserved |
 |---:|---|---:|---:|---:|---:|
 | 2 Mi | SWA 1:1 | 592.15 | 325.1k | 26.32% | 234.2 / 237.6 GiB |
+| 2 Mi | SWA 1:1, 10 layers | 578.75 | 365.8k | 25.73% | 202.3 / 205.3 GiB |
 | 2 Mi | GDN1 1:1 | 499.00 | 311.4k | 22.18% | 215.4 / 219.1 GiB |
 | 2 Mi | GDN2 1:1 | 479.35 | 288.2k | 21.31% | 240.0 / 243.0 GiB |
 | 4 Mi | SWA 1:1 | 573.30 | 314.7k | 25.48% | 234.2 / 237.7 GiB |
@@ -87,9 +90,18 @@ model is 20.0% and 18.1% slower than its ten-layer 4:1 control. Consequently,
 SWA is only 4.4% faster than GDN1 at 2 Mi and 0.9% faster at 4 Mi in this
 active-matched 1:1 comparison.
 
+The additional 10-layer SWA control changes only the original SWA 1:1
+control's depth from 12 to 10 layers, retaining the exact 640 width, five
+local/five full-attention 1:1 layout, heads, MoE dimensions, RoPE, gating,
+batch, MB16, and single-B300 protocol. It has 267.63M active parameters rather
+than the 12-layer control's 295.50M. Its 365.8K TPS is 12.5% above the 12-layer
+SWA row and 17.5% above the 10-layer GDN1 row; reported TFLOPs are 2.3% below
+the 12-layer SWA row because the model executes fewer modeled FLOPs per token.
+
 - [GDN1 1:1 work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY8YWHCPGVB40W51W7G69VM5)
 - [GDN2 1:1 work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY8YWJQEKHCBKQS9QYBHCY7T)
 - [SWA 1:1 work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY8YWKZE3QCZ4SCXD224D5RY)
+- [SWA 1:1 10-layer work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYADSYYRHPYQCRVWJ27KV4KQ)
 - [Machine-readable 1:1 results](275m_gdn_gdn2_swa_1to1_single_gpu.csv)
 - [1:1 architecture and 2 Mi throughput plot](../../plots/throughput/275m_1to1_2m_comparison.png)
 

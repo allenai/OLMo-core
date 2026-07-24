@@ -1,6 +1,6 @@
 # C4 validation comparison for selected gated-RoPE checkpoints
 
-Generated: `2026-07-24T06:30:38.958325+00:00`
+Generated: `2026-07-24T16:07:25.794416+00:00`
 
 Metric: `eval/lm/c4_en-validation/CE loss` (lower is better).
 
@@ -87,7 +87,7 @@ Running, missing, and unregistered validation cells remain pending.
 | 1p2b | Cx1 | geometry-matched GDN (expand_v=2) | wide_lr_transfer | — | — | training_result_missing | — |
 | 1p2b | Cx1 | geometry-matched GDN + NoPE | wide_lr_transfer | 0.0004 | 2.869484 | finished | [va83vuvo](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/va83vuvo) |
 | 1p2b | Cx1 | geometry-matched GDN + NoPE + gated attention | wide_lr_transfer | 0.0004 | 2.868846 | finished | [4vj2v7nx](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/4vj2v7nx) |
-| 1p2b | Cx1 | geometry-matched GDN + RoPE + gated attention | wide_lr_transfer | 0.0004 | — | running | [uvsfm10s](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/uvsfm10s) |
+| 1p2b | Cx1 | geometry-matched GDN + RoPE + gated attention | wide_lr_transfer | 0.0004 | 2.865893 | finished | [yjs5dt2d](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/yjs5dt2d) |
 | 1p2b | Cx2 | wide integration (SWA) | wide_lr_transfer | 0.0006 | 2.781616 | finished | [jfwntmwm](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/jfwntmwm) |
 | 1p2b | Cx2 | hybrid (GDN, expand_v=1) | wide_lr_transfer | 0.0006 | 2.760263 | finished | [3f780ayn](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/3f780ayn) |
 | 1p2b | Cx2 | geometry-matched GDN (expand_v=2) | wide_lr_transfer | — | — | training_result_missing | — |
@@ -105,4 +105,4 @@ Running, missing, and unregistered validation cells remain pending.
 | 1p2b | Cx8 | geometry-matched GDN (expand_v=2) | wide_lr_transfer | — | — | training_result_missing | — |
 | 1p2b | Cx8 | geometry-matched GDN + NoPE | wide_lr_transfer | 0.0004 | — | not_registered | — |
 | 1p2b | Cx8 | geometry-matched GDN + NoPE + gated attention | wide_lr_transfer | 0.0004 | — | not_registered | — |
-| 1p2b | Cx8 | geometry-matched GDN + RoPE + gated attention | wide_lr_transfer | 0.0004 | — | running | [60szyzh7](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/60szyzh7) |
+| 1p2b | Cx8 | geometry-matched GDN + RoPE + gated attention | wide_lr_transfer | 0.0004 | — | running | [g7ur9ibf](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/g7ur9ibf) |

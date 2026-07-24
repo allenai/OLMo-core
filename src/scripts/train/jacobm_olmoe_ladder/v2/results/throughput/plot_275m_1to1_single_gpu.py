@@ -25,9 +25,17 @@ FAMILIES: tuple[dict[str, Any], ...] = (
     {
         "csv_family": "SWA-1to1",
         "mixer": "swa",
-        "label": "SWA",
+        "label": "SWA\n12L",
         "mixer_label": "SWA (local)",
         "color": "#4C78A8",
+    },
+    {
+        "csv_family": "SWA-1to1-10L",
+        "mixer": "swa",
+        "swa_n_layers": 10,
+        "label": "SWA\n10L",
+        "mixer_label": "SWA (local)",
+        "color": "#72A5CF",
     },
     {
         "csv_family": "GDN1-1to1",
@@ -81,7 +89,10 @@ def main() -> None:
     rows = load_rows(args.input)
     records: list[dict[str, Any]] = []
     for family in FAMILIES:
-        model = build_geometry_matched_one_to_one_model_config(str(family["mixer"]))
+        model = build_geometry_matched_one_to_one_model_config(
+            str(family["mixer"]),
+            swa_n_layers=family.get("swa_n_layers"),
+        )
         row = rows[str(family["csv_family"])]
         hybrid_layers = tuple(range(0, model.n_layers, 2))
         full_layers = tuple(range(1, model.n_layers, 2))
@@ -93,7 +104,7 @@ def main() -> None:
                 "layers": model.n_layers,
                 "hybrid_layers": len(hybrid_layers),
                 "full_layers": len(full_layers),
-                "total_params_b": model.num_params / 1e9,
+                "active_params_m": model.num_active_params / 1e6,
                 "tflops": float(row["final10_median_tflops_gpu"]),
                 "tps_k": float(row["final10_median_tps_gpu"]) / 1e3,
             }
@@ -173,19 +184,19 @@ def main() -> None:
     params_axis = axes[0, 1]
     params_bars = params_axis.bar(
         labels,
-        [record["total_params_b"] for record in records],
+        [record["active_params_m"] for record in records],
         color=colors,
         width=0.62,
     )
-    params_axis.set_ylim(0, 4.2)
-    params_axis.set_ylabel("Total parameters (billions)")
-    params_axis.set_title("Stored model parameters", loc="left")
+    params_axis.set_ylim(0, 330)
+    params_axis.set_ylabel("Active parameters (millions)")
+    params_axis.set_title("Active model parameters", loc="left")
     params_axis.yaxis.grid(True, alpha=0.18)
     params_axis.set_axisbelow(True)
     label_bars(
         params_axis,
         params_bars,
-        [f"{record['total_params_b']:.3f}B" for record in records],
+        [f"{record['active_params_m']:.1f}M" for record in records],
     )
 
     tflops_axis = axes[1, 0]
@@ -213,7 +224,7 @@ def main() -> None:
         color=colors,
         width=0.62,
     )
-    tps_axis.set_ylim(0, 365)
+    tps_axis.set_ylim(0, 400)
     tps_axis.set_ylabel("Tokens/s/GPU (thousands)")
     tps_axis.set_title("Raw token throughput", loc="left")
     tps_axis.yaxis.grid(True, alpha=0.18)
