@@ -237,6 +237,12 @@ The submission ledger is
 `launchers/pretraining/generated/geometry_matched_scale_gdn2_nope_gated_480m_810m_submissions.json`.
 At this point the four 1.2B cells were not yet submitted.
 
+After the balanced qualification passed, the four 1.2B production cells were
+submitted urgent and unallocated on Holmes from commit `cd40c04a5`. They use
+8/16/16/32 GPUs for Cx1/2/4/8, EP8 `sync_1d`, MB4/3/4/3, accumulation one,
+and the transferred LRs `4e-4`/`6e-4`/`3e-4`/`4e-4`. Their submission ledger is
+`launchers/pretraining/generated/geometry_matched_scale_gdn2_nope_gated_1p2b_submissions.json`.
+
 At the 2026-07-24 16:10 UTC refresh, 480M Cx1/Cx2 finished with strict
 final-250M CEs `2.468555` and `2.359149`. 810M Cx4 is running at 21.04B / 64.94B
 tokens with an approximately 16-hour ETA. The remaining five cells stopped on

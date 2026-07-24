@@ -1,0 +1,67 @@
+[
+  {
+    "model_variant": "geometry_matched_gdn2_ev2_nope_gated",
+    "task_name": "1p2b-cx1",
+    "run_name": "pt-1p2b-geometry-hybrid-gdn2-ev2-nope-gated-cx1-lr4e-4-ep8-sync-r1",
+    "run_suffix": null,
+    "commit": "cd40c04a517efa0824d3189589bd4ce68e3e4465",
+    "diagnose_nonfinite": false,
+    "diagnostic_stop_step": null,
+    "diagnostic_dump_root": null,
+    "experiment_id": "01KYAHJQC03QE92ZBQ1202EN8H",
+    "task_ids": [
+      "01KYAHJQC8MTS5NBMNM0ACNPZH"
+    ],
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYAHJQC03QE92ZBQ1202EN8H"
+  },
+  {
+    "model_variant": "geometry_matched_gdn2_ev2_nope_gated",
+    "task_name": "1p2b-cx2",
+    "run_name": "pt-1p2b-geometry-hybrid-gdn2-ev2-nope-gated-cx2-lr6e-4-ep8-sync-r1",
+    "run_suffix": null,
+    "commit": "cd40c04a517efa0824d3189589bd4ce68e3e4465",
+    "diagnose_nonfinite": false,
+    "diagnostic_stop_step": null,
+    "diagnostic_dump_root": null,
+    "experiment_id": "01KYAHJTGPBX4S7FSE51AVWNX8",
+    "task_ids": [
+      "01KYAHJTGZ58ZJPKN7F1J6683E",
+      "01KYAHJTMHDRM7SRDD2JHZQD68"
+    ],
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYAHJTGPBX4S7FSE51AVWNX8"
+  },
+  {
+    "model_variant": "geometry_matched_gdn2_ev2_nope_gated",
+    "task_name": "1p2b-cx4",
+    "run_name": "pt-1p2b-geometry-hybrid-gdn2-ev2-nope-gated-cx4-lr3e-4-ep8-sync-r1",
+    "run_suffix": null,
+    "commit": "cd40c04a517efa0824d3189589bd4ce68e3e4465",
+    "diagnose_nonfinite": false,
+    "diagnostic_stop_step": null,
+    "diagnostic_dump_root": null,
+    "experiment_id": "01KYAHJX8M013RG4VT5AVFAKEK",
+    "task_ids": [
+      "01KYAHJX8WTMDTBBBFJTCT48RT",
+      "01KYAHJXQMFT3BSGH2S43Y8MVM"
+    ],
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYAHJX8M013RG4VT5AVFAKEK"
+  },
+  {
+    "model_variant": "geometry_matched_gdn2_ev2_nope_gated",
+    "task_name": "1p2b-cx8",
+    "run_name": "pt-1p2b-geometry-hybrid-gdn2-ev2-nope-gated-cx8-lr4e-4-ep8-sync-r1",
+    "run_suffix": null,
+    "commit": "cd40c04a517efa0824d3189589bd4ce68e3e4465",
+    "diagnose_nonfinite": false,
+    "diagnostic_stop_step": null,
+    "diagnostic_dump_root": null,
+    "experiment_id": "01KYAHK0MCQ9EPJP0QZVAXMDN7",
+    "task_ids": [
+      "01KYAHK0MKEWC8W3Z0BQMXASV6",
+      "01KYAHK0R4F346VYBRG4AH44TP",
+      "01KYAHK0VP10MGCQRM917W7AVF",
+      "01KYAHK0Z2XFTRGHKGGK87K5RX"
+    ],
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYAHK0MCQ9EPJP0QZVAXMDN7"
+  }
+]

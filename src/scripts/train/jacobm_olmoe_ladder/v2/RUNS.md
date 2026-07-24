@@ -26,7 +26,7 @@ below retain the full launch and retry history.
 | pretraining | larger aligned geometry + NoPE + gated attention | finished | 12/12; newly finished 1.2B Cx2 strict final-250M CE `2.188236` | [results](results/pretraining/geometry_gdn_ev2_nope_gated/results.md) |
 | pretraining | larger aligned geometry + RoPE + gated attention | 11 finished / 1 failed | newly collected strict final-250M CE: 810M Cx8 `2.104806`, 1.2B Cx8 `2.029514`; 1.2B Cx2 remains failed | [results](results/pretraining/geometry_gdn_ev2_rope_gated/results.md) |
 | pretraining | 275M geometry + NoPE + gated attention + GDN2 | 15 finished / 1 failed | Cx1/Cx2/Cx4 are complete and bracketed; Cx8 has 3/4 strict results, while `1.6e-3` stopped on non-finite loss at step 36,768 with durable `step36500` | [results](results/pretraining/geometry_gdn2_ev2_nope_gated/results.md) |
-| pretraining | larger geometry + NoPE + gated attention + GDN2 | 2 finished / 1 running / 5 stopped | 480M Cx1/Cx2 finished; 810M Cx4 is at 21.04B / 64.94B tokens; the other five cells stopped on explicit non-finite optimizer assertions and have durable checkpoints | [results](results/pretraining/geometry_gdn2_ev2_nope_gated/results.md) |
+| pretraining | larger geometry + NoPE + gated attention + GDN2 | 2 finished / 6 resumed or running / 4 newly queued | five interrupted 480M/810M cells were restarted from durable checkpoints; all four balanced 1.2B cells were submitted after passing capacity qualification | [results](results/pretraining/geometry_gdn2_ev2_nope_gated/results.md) |
 | throughput | 275M 1:1 10-layer SWA depth control | finished | one B300, 2 Mi batch, MB16: 578.75 TFLOPs/GPU and 365.8K TPS/GPU; zero skipped steps | [work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYADSYYRHPYQCRVWJ27KV4KQ) |
 | midtraining | first hybrid 275M Cx8 | finished | 100B; final checkpoint `step95368`; validation finished | [1keo2hz6](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/1keo2hz6) |
 | midtraining | first hybrid 480M Cx8 | finished | 100.001B; final checkpoint `step95368`; validation finished | [mnp9rv5l](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/mnp9rv5l) |
@@ -134,10 +134,10 @@ sizes are approved for the transferred-wide-LR production wave.
 ### Larger gated-NoPE GDN2 production wave
 
 The eight qualified 480M/810M cells were submitted on 2026-07-24 from commit
-`ed7accc25`. All are urgent, unallocated Holmes work; the 1.2B cells were not
-submitted. Every cell uses accumulation factor 1, the transferred wide LR,
-normal backward recomputation, rolling ephemeral checkpoints, and out-of-loop
-evaluation.
+`ed7accc25`. The four balanced 1.2B cells were subsequently submitted from
+commit `cd40c04a5`. All are urgent, unallocated Holmes work. Every cell uses
+accumulation factor 1, the transferred wide LR, normal backward recomputation,
+rolling ephemeral checkpoints, and out-of-loop evaluation.
 
 | Cell | GPUs | Rank MB | LR | Beaker |
 |---|---:|---:|---:|---|
@@ -149,9 +149,15 @@ evaluation.
 | 810M Cx2 | 16 | 3 | `5.6e-4` | [01KY9HQFHP2D56FEBNMSMYQ6BT](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY9HQFHP2D56FEBNMSMYQ6BT) |
 | 810M Cx4 | 16 | 4 | `4e-4` | [01KY9HQJY6G36KKDPSEFTVWCSB](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY9HQJY6G36KKDPSEFTVWCSB) |
 | 810M Cx8 | 16 | 6 | `4e-4` | [01KY9HQNN4KG4C5FYG5JKB463K](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY9HQNN4KG4C5FYG5JKB463K) |
+| 1.2B Cx1 | 8 | 4 | `4e-4` | [01KYAHJQC03QE92ZBQ1202EN8H](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYAHJQC03QE92ZBQ1202EN8H) |
+| 1.2B Cx2 | 16 | 3 | `6e-4` | [01KYAHJTGPBX4S7FSE51AVWNX8](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYAHJTGPBX4S7FSE51AVWNX8) |
+| 1.2B Cx4 | 16 | 4 | `3e-4` | [01KYAHJX8M013RG4VT5AVFAKEK](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYAHJX8M013RG4VT5AVFAKEK) |
+| 1.2B Cx8 | 32 | 3 | `4e-4` | [01KYAHK0MCQ9EPJP0QZVAXMDN7](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYAHK0MCQ9EPJP0QZVAXMDN7) |
 
 Submission ledger:
 `launchers/pretraining/generated/geometry_matched_scale_gdn2_nope_gated_480m_810m_submissions.json`.
+The 1.2B ledger is
+`launchers/pretraining/generated/geometry_matched_scale_gdn2_nope_gated_1p2b_submissions.json`.
 
 ## 275M active hybrid GDN (`expand_v=1`)
 
