@@ -1,0 +1,12 @@
+[
+  {
+    "experiment_name": "pt-275m-gdn2-nope-gated-cx8-lr1p6e-3-fresh-r2",
+    "experiment_id": "01KYB24JRNAWPGENK6HWYG7SWW",
+    "tasks": [
+      "cx8-lr1p6e-3-fresh-r2"
+    ],
+    "debug_gradients": false,
+    "run_suffix": "-fresh-r2",
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYB24JRNAWPGENK6HWYG7SWW"
+  }
+]

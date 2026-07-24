@@ -1,0 +1,69 @@
+[
+  {
+    "model_variant": "geometry_matched_gdn2_ev2_nope_gated",
+    "task_name": "810m-cx1-fresh-r2",
+    "run_name": "pt-810m-geometry-hybrid-gdn2-ev2-nope-gated-cx1-lr6e-4-r1-fresh-r2",
+    "run_suffix": "-fresh-r2",
+    "commit": "598f55d50e50d56537cd799d107786b5cf1a5048",
+    "diagnose_nonfinite": false,
+    "debug_gradients": false,
+    "diagnostic_stop_step": null,
+    "diagnostic_dump_root": null,
+    "experiment_id": "01KYB2418FHP29RYRSJDDRBXX1",
+    "task_ids": [
+      "01KYB2418Q8F3ERB825R4A5Y4P",
+      "01KYB241C56X4PDD1XATVCF9EB"
+    ],
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYB2418FHP29RYRSJDDRBXX1"
+  },
+  {
+    "model_variant": "geometry_matched_gdn2_ev2_nope_gated",
+    "task_name": "810m-cx2-fresh-r2",
+    "run_name": "pt-810m-geometry-hybrid-gdn2-ev2-nope-gated-cx2-lr5p6e-4-r1-fresh-r2",
+    "run_suffix": "-fresh-r2",
+    "commit": "598f55d50e50d56537cd799d107786b5cf1a5048",
+    "diagnose_nonfinite": false,
+    "debug_gradients": false,
+    "diagnostic_stop_step": null,
+    "diagnostic_dump_root": null,
+    "experiment_id": "01KYB244APYP8V8QZHCN2DXNRT",
+    "task_ids": [
+      "01KYB244AXB09ZGREY3E0EW1RF",
+      "01KYB244EM1PVXE67QBBC94BEK"
+    ],
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYB244APYP8V8QZHCN2DXNRT"
+  },
+  {
+    "model_variant": "geometry_matched_gdn2_ev2_nope_gated",
+    "task_name": "1p2b-cx1-fresh-r2",
+    "run_name": "pt-1p2b-geometry-hybrid-gdn2-ev2-nope-gated-cx1-lr4e-4-ep8-sync-r1-fresh-r2",
+    "run_suffix": "-fresh-r2",
+    "commit": "598f55d50e50d56537cd799d107786b5cf1a5048",
+    "diagnose_nonfinite": false,
+    "debug_gradients": false,
+    "diagnostic_stop_step": null,
+    "diagnostic_dump_root": null,
+    "experiment_id": "01KYB2473SPB4E7P3YBY6G3M5P",
+    "task_ids": [
+      "01KYB2473YJFYB3T8XK1EBH8A4"
+    ],
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYB2473SPB4E7P3YBY6G3M5P"
+  },
+  {
+    "model_variant": "geometry_matched_gdn2_ev2_nope_gated",
+    "task_name": "1p2b-cx2-fresh-r2",
+    "run_name": "pt-1p2b-geometry-hybrid-gdn2-ev2-nope-gated-cx2-lr6e-4-ep8-sync-r1-fresh-r2",
+    "run_suffix": "-fresh-r2",
+    "commit": "598f55d50e50d56537cd799d107786b5cf1a5048",
+    "diagnose_nonfinite": false,
+    "debug_gradients": false,
+    "diagnostic_stop_step": null,
+    "diagnostic_dump_root": null,
+    "experiment_id": "01KYB24AT084W023T5JY0Q02G9",
+    "task_ids": [
+      "01KYB24AT5AR3EVTD5ZYY41926",
+      "01KYB24AXJ04DB1FZD0S5ZADZ8"
+    ],
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYB24AT084W023T5JY0Q02G9"
+  }
+]

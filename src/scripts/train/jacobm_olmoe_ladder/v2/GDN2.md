@@ -325,8 +325,9 @@ current diagnostic observes it. The reports therefore rule out an isolated
 optimizer parameter but do not identify the originating rank or layer. The
 next useful deterministic replay needs per-rank checks before loss reduction
 for the loss failures and pre-DDP-reduction activation/backward checks around
-the GDN2 layers for the gradient failures. No further retry should be launched
-until that instrumentation exists. The 1.2B Cx4 diagnostic crossed its prior
+the GDN2 layers for the gradient failures. At this point, another
+checkpoint-local retry was not recommended until that instrumentation existed.
+The 1.2B Cx4 diagnostic crossed its prior
 failure step 8,456 and reached step 8,690; 1.2B Cx8 was still starting from
 `step7000` at this snapshot.
 
@@ -362,3 +363,25 @@ past its prior step-8,456 failure and failed at step 9,059, leaving durable
 step 7,125 and remains on durable `step7000`. Those three existing Beaker
 experiments were resumed at urgent priority; no new experiment IDs or
 checkpoint directories were created.
+
+### Fresh-optimizer reproductions
+
+At 2026-07-24 21:58 UTC, the five checkpoint-local failures were also
+submitted as clean `-fresh-r2` trajectories to test whether the inherited
+optimizer state is responsible. Each starts at step 0 under a new run name,
+W&B identity, checkpoint directory, optimizer, and data position. Architecture,
+initialization/configured seeds, LR, token budget, global batch, microbatch,
+parallelism, and checkpoint policy are unchanged. These canonical-path
+reproductions do not enable the additional gradient-debug environment.
+
+| Cell | GPUs | Fresh Beaker |
+|---|---:|---|
+| 275M Cx8, `1.6e-3` | 8 | [01KYB24JRNAWPGENK6HWYG7SWW](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYB24JRNAWPGENK6HWYG7SWW) |
+| 810M Cx1 | 16 | [01KYB2418FHP29RYRSJDDRBXX1](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYB2418FHP29RYRSJDDRBXX1) |
+| 810M Cx2 | 16 | [01KYB244APYP8V8QZHCN2DXNRT](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYB244APYP8V8QZHCN2DXNRT) |
+| 1.2B Cx1 | 8 | [01KYB2473SPB4E7P3YBY6G3M5P](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYB2473SPB4E7P3YBY6G3M5P) |
+| 1.2B Cx2 | 16 | [01KYB24AT084W023T5JY0Q02G9](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYB24AT084W023T5JY0Q02G9) |
+
+The wave requests 64 urgent unallocated Holmes GPUs at full concurrency. The
+redundant scheduled continuation of the old 810M Cx1 trajectory was stopped;
+the varying-step 1.2B Cx4/Cx8 continuations remain active.
