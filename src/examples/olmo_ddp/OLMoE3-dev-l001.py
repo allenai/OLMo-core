@@ -148,17 +148,15 @@ SAVE_INTERVAL = 2000
 NUM_EXPERTS = 128
 TOP_K = 4
 ORIGINAL_TOP_K = None
-D_MODEL = 6 * 1024
-D_ATTN = 8 * 1024
+D_MODEL = 4 * 1024
+D_ATTN = 5 * 1024
 
 HEAD_DIM = 128
 NUM_HEAD = D_ATTN // HEAD_DIM
 NUM_KV_HEAD = NUM_HEAD // 4
-MOE_HIDDEN_SIZE = 8 * 1024
+MOE_HIDDEN_SIZE = 4 * 1024
 NUM_SHARED_EXPERTS = 1  # Number of shared experts in the shared MLP
-SHARED_MLP_HIDDEN_SIZE = (
-    6 * 1024
-)  # Hidden size for shared MLP (or dense branch MLP in arctic) in MoE blocks
+SHARED_MLP_HIDDEN_SIZE = 4 * 1024   # Hidden size for shared MLP (or dense branch MLP in arctic) in MoE blocks
 
 EFFECTIVE_MLP = MOE_HIDDEN_SIZE * TOP_K + SHARED_MLP_HIDDEN_SIZE * NUM_SHARED_EXPERTS
 MLP_RATIO = EFFECTIVE_MLP / D_MODEL
@@ -168,21 +166,21 @@ DENSE_LAYER_MLP = TOP_K * MOE_HIDDEN_SIZE + SHARED_MLP_HIDDEN_SIZE * NUM_SHARED_
 
 # DP_DIM=2
 EP_DIM = 8
-PP_DIM = 8
+PP_DIM = 4
 
 # ref
-REF_NUM_NODES = 16
-TAG = "p2"
+REF_NUM_NODES = 64
+TAG = f'rep'
 
 LR_ALPHA = 0.53
 
 # stage 1 - xM -
 MAX_DURATION = int(200e9)
 MICRO_BSZ = 1
-GLOBAL_BATCH_SIZE_SEQ = (8 * 8) * 2 * 8
+GLOBAL_BATCH_SIZE_SEQ = (8 * 8) * 2 * 32
 LR = 1.8e-4  # the LR is set for stable stage
-LR_REF_BSZ_IN_M = 4
-USE_FP8 = True
+LR_REF_BSZ_IN_M = 8
+USE_FP8 = False
 
 
 GLOBAL_BATCH_SIZE = (GLOBAL_BATCH_SIZE_SEQ) * SEQUENCE_LENGTH
@@ -208,7 +206,7 @@ EXPERT_LR = LR
 # EXPERT_LR = LR * math.sqrt(TOP_K / NUM_EXPERTS)  # scale lr for expert params, # 1/4.8989 = 0.204
 # EXPERT_LR = LR * 0.5  # scale lr for expert params, empirical choice
 
-ORIGINAL_NUM_LAYERS = 64
+ORIGINAL_NUM_LAYERS = 48
 MINUS_LAST_STAGE = 1
 NUM_LAYERS = ORIGINAL_NUM_LAYERS - MINUS_LAST_STAGE
 
@@ -233,7 +231,7 @@ if IN_EVAL_MODE:
 USE_COMPILE = True
 USE_NO_SYNC_EP = True
 # USE_AC=False
-PER_LAYER_RECOMPUTE = True
+PER_LAYER_RECOMPUTE = False
 USE_TBO = False
 GRAD_ACC_IN_FP32 = True
 GRAD_REDUCE_IN_FP32 = True
@@ -256,7 +254,7 @@ ROWWISE_A2A_NBLOCKS = (
 SEED = 2026
 USE_MUON = False
 USE_PERI_NORM = True
-PRODUCTION_RUN = False
+PRODUCTION_RUN = True
 EP_NO_SYNC_CAPACITY_FACTOR = 1.1875
 # save a little bit of memory
 # import torch._functorch.config  # Force initialization by accessing dynamo first

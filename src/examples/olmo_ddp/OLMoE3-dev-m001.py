@@ -144,7 +144,7 @@ if len(sys.argv) > 1 and sys.argv[1] == "eval_checkpoints":
 EVAL_INTERVAL = 2000
 SAVE_INTERVAL = 2000
 
-NUM_EXPERTS = 64
+NUM_EXPERTS = 96
 TOP_K = 4
 ORIGINAL_TOP_K = None
 D_MODEL = 3 * 1024
@@ -170,15 +170,15 @@ EP_DIM = 8
 PP_DIM = 2
 
 # ref
-REF_NUM_NODES = 2
+REF_NUM_NODES = 16
 TAG = "rep"
 
 LR_ALPHA = 0.53
 
 # stage 1 - xM -
 MAX_DURATION = int(200e9)
-MICRO_BSZ = 4
-GLOBAL_BATCH_SIZE_SEQ = (8 * 8) * 2 * 8
+MICRO_BSZ = 2
+GLOBAL_BATCH_SIZE_SEQ = (8 * 8) * 2 * 24
 LR = 1.8e-4  # the LR is set for stable stage
 LR_REF_BSZ_IN_M = 8
 USE_FP8 = False

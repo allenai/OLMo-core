@@ -170,15 +170,15 @@ EP_DIM = 8
 PP_DIM = 1
 
 # ref
-REF_NUM_NODES = 2
+REF_NUM_NODES = 16
 TAG = "rep"
 
 LR_ALPHA = 0.53
 
 # stage 1 - xM -
 MAX_DURATION = int(200e9)
-MICRO_BSZ = 4
-GLOBAL_BATCH_SIZE_SEQ = (8 * 8) * 2 * 8
+MICRO_BSZ = 3
+GLOBAL_BATCH_SIZE_SEQ = (8 * 8) * 2 * 24
 LR = 1.8e-4  # the LR is set for stable stage
 LR_REF_BSZ_IN_M = 8
 USE_FP8 = False
@@ -237,7 +237,7 @@ USE_TBO = False
 GRAD_ACC_IN_FP32 = True
 GRAD_REDUCE_IN_FP32 = True
 UNIFORM_ASSIGN = False
-RANDOM_ASSIGN = True
+RANDOM_ASSIGN = False
 USE_ROWWISE_A2A = True
 
 USE_FP8_ATTN_QKV = USE_FP8
