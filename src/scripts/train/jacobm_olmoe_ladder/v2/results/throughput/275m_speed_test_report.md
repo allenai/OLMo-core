@@ -91,6 +91,7 @@ active-matched 1:1 comparison.
 - [GDN2 1:1 work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY8YWJQEKHCBKQS9QYBHCY7T)
 - [SWA 1:1 work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY8YWKZE3QCZ4SCXD224D5RY)
 - [Machine-readable 1:1 results](275m_gdn_gdn2_swa_1to1_single_gpu.csv)
+- [1:1 architecture and 2 Mi throughput plot](../../plots/throughput/275m_1to1_2m_comparison.png)
 
 ## Artifacts
 
