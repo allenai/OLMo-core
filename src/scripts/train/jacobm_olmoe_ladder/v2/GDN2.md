@@ -130,5 +130,12 @@ all cells run cleanly. Token budgets follow the usual `20 * active
 non-embedding parameters * Cx` rule and are therefore about 6.2% larger than
 the GDN1 gated-NoPE budgets. Use the ordinary 10%-of-tokens warmup followed by
 cosine decay to 0.1x peak LR, the established ephemeral-checkpoint policy, and
-out-of-loop validation. Plot one GDN2 U-curve per Cx and compare the observed
-optima against wide integration, first hybrid, and GDN1 gated-NoPE geometry.
+out-of-loop validation. Per the final comparison decision, plot one GDN2
+U-curve per Cx against only original wide integration and the geometry-matched
+gated-RoPE GDN1 model.
+
+Status at 2026-07-24 06:21 UTC: all four Cx1 points and the `4e-4`, `8e-4`,
+and `3.2e-3` Cx2 points finished. Cx2 `1.6e-3` asserted on a non-finite total
+gradient at step 4,675 and auto-resumed from durable `step4500`; the resume is
+healthy past the original failure point at step 4,896. All four Cx4 and all
+four Cx8 points remain healthy and running.

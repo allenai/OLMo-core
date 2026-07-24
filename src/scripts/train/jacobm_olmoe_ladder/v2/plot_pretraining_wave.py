@@ -317,6 +317,36 @@ GEOMETRY_GDN_EV2_ROPE_GATED = Variant(
     ),
 )
 
+GEOMETRY_GDN2_EV2_NOPE_GATED = Variant(
+    key="geometry_gdn2_ev2_nope_gated",
+    label="geometry-matched hybrid (GDN2, expand_v=2, NoPE, gated attention)",
+    color="#0f766e",
+    runs=(
+        RegisteredRun("275m", 1, 4e-4, "rsxmn720"),
+        RegisteredRun("275m", 1, 8e-4, "pqrdvu63"),
+        RegisteredRun("275m", 1, 1.6e-3, "5uzr9dva"),
+        RegisteredRun("275m", 1, 3.2e-3, "j2t5c2jb"),
+        RegisteredRun("275m", 2, 4e-4, "7yh4rfi1"),
+        RegisteredRun("275m", 2, 8e-4, "2egeqyvo"),
+        RegisteredRun(
+            "275m",
+            2,
+            1.6e-3,
+            "8agi9zte",
+            predecessor_run_ids=("gat5rtub",),
+        ),
+        RegisteredRun("275m", 2, 3.2e-3, "xwtxd1pv"),
+        RegisteredRun("275m", 4, 4e-4, "6b0vighm"),
+        RegisteredRun("275m", 4, 8e-4, "yq4mi5o0"),
+        RegisteredRun("275m", 4, 1.6e-3, "0w6ezwgx"),
+        RegisteredRun("275m", 4, 3.2e-3, "kcig30ty"),
+        RegisteredRun("275m", 8, 4e-4, "jewjx6yq"),
+        RegisteredRun("275m", 8, 8e-4, "1lpz9reu"),
+        RegisteredRun("275m", 8, 1.6e-3, "n48z3vh8"),
+        RegisteredRun("275m", 8, 3.2e-3, "e6n5iscu"),
+    ),
+)
+
 WAVES = {
     "hybrid_gdn_ev1": Wave(
         key="hybrid_gdn_ev1",
@@ -455,6 +485,27 @@ WAVES = {
             GEOMETRY_GDN_EV2_NOPE_GATED,
         ),
         intervention=GEOMETRY_GDN_EV2_ROPE_GATED,
+        uplot_baselines=True,
+    ),
+    "geometry_gdn2_ev2_nope_gated": Wave(
+        key="geometry_gdn2_ev2_nope_gated",
+        title="Geometry-matched NoPE gated-attention GDN2 intervention",
+        intervention_label=(
+            "geometry-matched hybrid GDN2 (expand_v=2, NoPE, gated attention)"
+        ),
+        architecture_note=(
+            "The 275M geometry-matched expand_v=2 gated-NoPE architecture with "
+            "only its eight recurrent mixers changed from GDN1 to GDN2. Per "
+            "project direction, the plot compares only against original wide "
+            "integration and the geometry-matched gated-RoPE GDN1 model."
+        ),
+        models=("275m",),
+        lr_sweep_models=("275m",),
+        active_parameters={"275m": 306_191_168},
+        baseline_active_parameters={"275m": 280_207_872},
+        baseline=WIDE_INTEGRATION,
+        additional_baselines=(GEOMETRY_GDN_EV2_ROPE_GATED,),
+        intervention=GEOMETRY_GDN2_EV2_NOPE_GATED,
         uplot_baselines=True,
     ),
 }
@@ -735,7 +786,11 @@ def plot_intervention_uplot(
             color=wave.intervention.color,
             label=f"Cx{cx}",
         )
-        fit = _fit_minimum(group)
+        fit = (
+            _fit_minimum(group)
+            if len(group) == _expected_count(wave.intervention, model, cx)
+            else None
+        )
         if fit is not None:
             fit_lr, fit_loss = fit
             ax.axvline(fit_lr, color=line.get_color(), linestyle=":", linewidth=1.2, alpha=0.75)
@@ -812,7 +867,9 @@ def plot_optimal_summary(points: list[Point], wave: Wave, output_path: Path, win
         (model, cx)
         for model in wave.lr_sweep_models
         for cx in (1, 2, 4, 8)
-        if _fit_minimum(_finished(points, wave.intervention.key, model, cx)) is not None
+        if len(_finished(points, wave.intervention.key, model, cx))
+        == _expected_count(wave.intervention, model, cx)
+        and _fit_minimum(_finished(points, wave.intervention.key, model, cx)) is not None
     }
     eligible_points = [point for point in points if (point.model, point.cx) in eligible_keys]
     reference_linestyles = ("--", ":", "-.", (0, (3, 1, 1, 1)))
@@ -992,7 +1049,9 @@ def write_results(
                 "mode": mode,
                 "complete": complete_count == expected_count,
                 "optimal_summary_eligible": (
-                    mode == "lr_sweep" and _fit_minimum(finished) is not None
+                    mode == "lr_sweep"
+                    and complete_count == expected_count
+                    and _fit_minimum(finished) is not None
                 ),
                 "completed_intervention_runs": complete_count,
                 "expected_intervention_runs": expected_count,

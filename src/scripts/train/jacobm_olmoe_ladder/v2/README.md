@@ -51,6 +51,10 @@ uv run --isolated --with 'wandb==0.21.4' --with matplotlib python \
 uv run --isolated --with 'wandb==0.21.4' --with matplotlib python \
   src/scripts/train/jacobm_olmoe_ladder/v2/plot_pretraining_wave.py \
   --wave geometry_gdn_ev2_rope_gated --refresh-stale-cache
+
+uv run --isolated --with 'wandb==0.21.4' --with matplotlib python \
+  src/scripts/train/jacobm_olmoe_ladder/v2/plot_pretraining_wave.py \
+  --wave geometry_gdn2_ev2_nope_gated --refresh-stale-cache
 ```
 
 The script writes each selected wave into one matching artifact directory and
