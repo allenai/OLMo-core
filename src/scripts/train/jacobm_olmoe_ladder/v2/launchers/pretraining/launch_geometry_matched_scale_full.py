@@ -16,6 +16,7 @@ from scripts.train.jacobm_olmoe_ladder.v2.launchers.pretraining.launch_geometry_
     validate_remote_commit,
 )
 from scripts.train.jacobm_olmoe_ladder.v2.models.geometry_matched_scale import (
+    build_geometry_matched_scale_gdn2_model_config,
     build_geometry_matched_scale_model_config,
 )
 
@@ -26,6 +27,11 @@ DEFAULT_RECORD = SCRIPT_DIR / "generated" / "geometry_matched_scale_full_submiss
 DIAGNOSTIC_RECORD = SCRIPT_DIR / "generated" / "nonfinite_diagnostic_submissions.json"
 DIAGNOSTIC_DUMP_ROOT = Path(
     "/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/olmo-ddp/debug/nonfinite-grad"
+)
+GDN2_FLA_OVERLAY = "/tmp/fla-gdn2-cbb0a72"
+GDN2_FLA_SPEC = (
+    "flash-linear-attention[cuda] @ git+https://github.com/fla-org/"
+    "flash-linear-attention.git@cbb0a72efb55c18ca0ef4f298298317573ad2cb3"
 )
 
 GLOBAL_BATCHES = {
@@ -63,6 +69,25 @@ ACCELERATED_LAYOUT = {
     ("1p2b", 4): (4, 8, 8, "sync_1d", 2),
     ("1p2b", 8): (4, 8, 8, "sync_1d", 3),
 }
+GDN2_WALLCLOCK_CANDIDATE_LAYOUT = {
+    # GDN2 carries more activation memory than GDN1. Keep the established
+    # accumulation-free layout, but split 480M Cx8 across two nodes so its
+    # per-rank microbatch can fall from 12 to 6. This remains locked behind
+    # capacity qualification in the candidate manifest.
+    # (nodes, GPUs/node, EP, EP path, rank microbatch sequences)
+    ("480m", 1): (1, 8, 1, "rowwise_nvshmem", 4),
+    ("480m", 2): (1, 8, 1, "rowwise_nvshmem", 6),
+    ("480m", 4): (1, 8, 1, "rowwise_nvshmem", 8),
+    ("480m", 8): (2, 8, 1, "rowwise_nvshmem", 6),
+    ("810m", 1): (2, 8, 1, "rowwise_nvshmem", 2),
+    ("810m", 2): (2, 8, 1, "rowwise_nvshmem", 3),
+    ("810m", 4): (2, 8, 1, "rowwise_nvshmem", 4),
+    ("810m", 8): (2, 8, 1, "rowwise_nvshmem", 6),
+    ("1p2b", 1): (2, 8, 8, "sync_1d", 2),
+    ("1p2b", 2): (2, 8, 8, "sync_1d", 3),
+    ("1p2b", 4): (4, 8, 8, "sync_1d", 2),
+    ("1p2b", 8): (4, 8, 8, "sync_1d", 3),
+}
 COMPACT_V1_LAYOUT = {
     # Reuse the demonstrated first-hybrid layouts for 480M/810M, then retain
     # extra nodes only for the larger 1.2B data-multiple cells.
@@ -83,11 +108,29 @@ COMPACT_V1_LAYOUT = {
 LAYOUT_PROFILES = {
     "accelerated": ACCELERATED_LAYOUT,
     "compact_v1": COMPACT_V1_LAYOUT,
+    "gdn2_wallclock_candidate": GDN2_WALLCLOCK_CANDIDATE_LAYOUT,
 }
 MODEL_VARIANTS = {
-    "geometry_matched_gdn_ev2_nope": {"rope": False, "attention_gate": False},
-    "geometry_matched_gdn_ev2_nope_gated": {"rope": False, "attention_gate": True},
-    "geometry_matched_gdn_ev2_rope_gated": {"rope": True, "attention_gate": True},
+    "geometry_matched_gdn_ev2_nope": {
+        "rope": False,
+        "attention_gate": False,
+        "gdn2": False,
+    },
+    "geometry_matched_gdn_ev2_nope_gated": {
+        "rope": False,
+        "attention_gate": True,
+        "gdn2": False,
+    },
+    "geometry_matched_gdn_ev2_rope_gated": {
+        "rope": True,
+        "attention_gate": True,
+        "gdn2": False,
+    },
+    "geometry_matched_gdn2_ev2_nope_gated": {
+        "rope": False,
+        "attention_gate": True,
+        "gdn2": True,
+    },
 }
 NONFINITE_DIAGNOSTIC_STOPS = {
     ("geometry_matched_gdn_ev2_nope", "1p2b-cx8"): 18_500,
@@ -183,7 +226,12 @@ def validate(manifest: dict[str, Any]) -> list[dict[str, Any]]:
         row["accumulation_steps"] = rank_sequences // microbatch
 
     for model_size in ("480m", "810m", "1p2b"):
-        model = build_geometry_matched_scale_model_config(
+        builder = (
+            build_geometry_matched_scale_gdn2_model_config
+            if bool(profile["gdn2"])
+            else build_geometry_matched_scale_model_config
+        )
+        model = builder(
             model_size,
             rope=bool(profile["rope"]),
             attention_gate=bool(profile["attention_gate"]),
@@ -207,8 +255,9 @@ def recipe_for(
     source = manifest["source"]
     beaker = manifest["beaker"]
     training = manifest["training"]
+    is_gdn2 = bool(MODEL_VARIANTS[str(training["model_variant"])]["gdn2"])
     env_vars = [
-        ("PYTHONPATH", "src"),
+        ("PYTHONPATH", f"{GDN2_FLA_OVERLAY}:src" if is_gdn2 else "src"),
         ("PYTHONUNBUFFERED", "1"),
         ("CUDA_SCALE_LAUNCH_QUEUES", "4x"),
         ("OLMO_SHARED_FS", "1"),
@@ -271,6 +320,15 @@ def recipe_for(
     git_repo = GitRepoState.from_env(ref=commit, branch=str(source["branch"]))
     num_nodes = int(row["num_nodes"])
     recipe_suffix = "-nonfinite-diagnostic-r1" if diagnose_nonfinite else ""
+    pre_setup = "unset S3_PROFILE"
+    if is_gdn2:
+        pre_setup += (
+            f"\nrm -rf {GDN2_FLA_OVERLAY}"
+            f"\npython -m pip install --target {GDN2_FLA_OVERLAY} --no-deps "
+            f"--no-build-isolation '{GDN2_FLA_SPEC}'"
+            f"\nPYTHONPATH={GDN2_FLA_OVERLAY} python -c \"import fla; "
+            "from fla.ops.gdn2 import chunk_gdn2; assert fla.__version__ == '0.5.2'\""
+        )
     return Recipe(
         args=[
             "src/scripts/train/jacobm_olmoe3_hybrid_scale.py",
@@ -309,7 +367,7 @@ def recipe_for(
         synchronized_start_timeout="90m" if num_nodes > 1 else None,
         torchrun=True,
         no_python=True,
-        pre_setup="unset S3_PROFILE",
+        pre_setup=pre_setup,
     )
 
 
@@ -393,6 +451,12 @@ def main() -> None:
     if not args.submit:
         print("Dry run only; pass --submit to launch.")
         return
+    if bool(manifest["training"].get("capacity_qualification_required", False)):
+        raise RuntimeError(
+            "This candidate manifest is locked pending checkpoint-free capacity and "
+            "throughput qualification; set capacity_qualification_required: false only "
+            "after recording those results."
+        )
 
     checkpoint_root = Path(str(manifest["experiment"]["checkpoint_root"]))
     existing = [

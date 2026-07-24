@@ -13,7 +13,9 @@ import yaml
 from gantry.api import GitRepoState, Recipe
 
 from scripts.train.jacobm_olmoe_ladder.v2.models.geometry_matched_scale import (
+    EXPECTED_GDN2_GATED_NOPE_COUNTS,
     GEOMETRIES,
+    build_geometry_matched_scale_gdn2_model_config,
     build_geometry_matched_scale_model_config,
 )
 
@@ -21,6 +23,12 @@ from scripts.train.jacobm_olmoe_ladder.v2.models.geometry_matched_scale import (
 SCRIPT_DIR = Path(__file__).resolve().parent
 DEFAULT_MANIFEST = SCRIPT_DIR / "manifests" / "geometry_matched_scale_nope_smokes.yaml"
 DEFAULT_RECORD = SCRIPT_DIR / "generated" / "geometry_matched_scale_nope_smoke_submissions.json"
+GDN2_VARIANT = "geometry_matched_gdn2_ev2_nope_gated"
+GDN2_FLA_OVERLAY = "/tmp/fla-gdn2-cbb0a72"
+GDN2_FLA_SPEC = (
+    "flash-linear-attention[cuda] @ git+https://github.com/fla-org/"
+    "flash-linear-attention.git@cbb0a72efb55c18ca0ef4f298298317573ad2cb3"
+)
 
 
 def load_manifest(path: Path) -> dict[str, Any]:
@@ -57,8 +65,9 @@ def validate(manifest: dict[str, Any]) -> list[dict[str, Any]]:
         raise ValueError("Smoke manifest must set training.evals: false")
     if int(training["hard_stop_steps"]) <= 0:
         raise ValueError("Smoke manifest must set a positive hard_stop_steps")
-    if training["model_variant"] != "geometry_matched_gdn_ev2_nope":
-        raise ValueError("Smoke manifest must select the larger-geometry NoPE variant")
+    model_variant = str(training["model_variant"])
+    if model_variant not in {"geometry_matched_gdn_ev2_nope", GDN2_VARIANT}:
+        raise ValueError("Smoke manifest must select a supported larger-geometry NoPE variant")
 
     sequence_length = int(training["sequence_length"])
     task_names: set[str] = set()
@@ -103,17 +112,21 @@ def validate(manifest: dict[str, Any]) -> list[dict[str, Any]]:
         row["accumulation_steps"] = rank_sequences // microbatch
 
     for model_size in sorted({str(row["model_size"]) for row in rows}):
-        model = build_geometry_matched_scale_model_config(model_size, rope=False)
-        expected = GEOMETRIES[model_size]
+        if model_variant == GDN2_VARIANT:
+            model = build_geometry_matched_scale_gdn2_model_config(model_size)
+            expected_counts = EXPECTED_GDN2_GATED_NOPE_COUNTS[model_size]
+        else:
+            model = build_geometry_matched_scale_model_config(model_size, rope=False)
+            expected = GEOMETRIES[model_size]
+            expected_counts = (
+                expected.expected_active_params,
+                expected.expected_active_non_embedding_params,
+                expected.expected_total_params,
+            )
         counts = (
             model.num_active_params,
             model.num_active_non_embedding_params,
             model.num_params,
-        )
-        expected_counts = (
-            expected.expected_active_params,
-            expected.expected_active_non_embedding_params,
-            expected.expected_total_params,
         )
         if counts != expected_counts:
             raise ValueError(
@@ -135,8 +148,9 @@ def recipe_for(
     source = manifest["source"]
     beaker = manifest["beaker"]
     training = manifest["training"]
+    is_gdn2 = str(training["model_variant"]) == GDN2_VARIANT
     env_vars = [
-        ("PYTHONPATH", "src"),
+        ("PYTHONPATH", f"{GDN2_FLA_OVERLAY}:src" if is_gdn2 else "src"),
         ("PYTHONUNBUFFERED", "1"),
         ("CUDA_SCALE_LAUNCH_QUEUES", "4x"),
         ("OLMO_SHARED_FS", "1"),
@@ -179,6 +193,15 @@ def recipe_for(
         ref=commit,
         branch=str(source["branch"]),
     )
+    pre_setup = "unset S3_PROFILE"
+    if is_gdn2:
+        pre_setup += (
+            f"\nrm -rf {GDN2_FLA_OVERLAY}"
+            f"\npython -m pip install --target {GDN2_FLA_OVERLAY} --no-deps "
+            f"--no-build-isolation '{GDN2_FLA_SPEC}'"
+            f"\nPYTHONPATH={GDN2_FLA_OVERLAY} python -c \"import fla; "
+            "from fla.ops.gdn2 import chunk_gdn2; assert fla.__version__ == '0.5.2'\""
+        )
     return Recipe(
         args=[
             "src/scripts/train/jacobm_olmoe3_hybrid_scale.py",
@@ -216,7 +239,7 @@ def recipe_for(
         # Gantry install this checkout into it, which can replace CUDA Python
         # packages underneath the image's prebuilt TransformerEngine binary.
         no_python=True,
-        pre_setup="unset S3_PROFILE",
+        pre_setup=pre_setup,
     )
 
 

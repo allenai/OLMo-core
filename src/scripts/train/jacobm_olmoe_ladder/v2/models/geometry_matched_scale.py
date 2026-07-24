@@ -19,7 +19,12 @@ from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, cast
 
-from olmo_core.nn.attention import AttentionConfig, GateConfig, GateGranularity
+from olmo_core.nn.attention import (
+    AttentionConfig,
+    GateConfig,
+    GatedDeltaNet2Config,
+    GateGranularity,
+)
 from olmo_core.nn.attention.recurrent import GatedDeltaNetConfig
 from olmo_core.nn.ddp import OLMoDDPTransformerBlockConfig
 from olmo_core.nn.transformer import OLMoDDPModelConfig
@@ -115,6 +120,15 @@ GEOMETRIES = {
         dense_reference_active_params=1_422_110_720,
         dense_reference_active_non_embedding_params=1_293_660_160,
     ),
+}
+
+# GDN2 changes only the recurrent mixer generation. These exact counts are the
+# gated-NoPE GDN1 counts plus the per-mixer GDN2 parameter delta at each size.
+EXPECTED_GDN2_GATED_NOPE_COUNTS = {
+    "275m": (306_191_168, 241_965_888, 3_151_723_328),
+    "480m": (526_979_424, 449_909_088, 7_246_549_344),
+    "810m": (914_540_480, 811_780_032, 11_921_835_968),
+    "1p2b": (1_376_964_352, 1_248_513_792, 18_602_528_512),
 }
 
 
@@ -431,6 +445,126 @@ def build_geometry_matched_scale_model_config(
     return candidate
 
 
+def build_geometry_matched_scale_gdn2_model_config(
+    model_size: str,
+    *,
+    rope: bool = False,
+    attention_gate: bool = True,
+    disable_recompute: bool = False,
+) -> OLMoDDPModelConfig:
+    """Replace only GDN1 with GDN2 in a geometry-matched scale model."""
+
+    parent = build_geometry_matched_scale_model_config(
+        model_size,
+        rope=rope,
+        attention_gate=attention_gate,
+    )
+    geometry = _geometry(model_size)
+    resolved = parent.resolved_block_configs
+    old_gdn = cast(GatedDeltaNetConfig, resolved[geometry.gdn_layers[0]].sequence_mixer)
+    gdn2 = GatedDeltaNet2Config(
+        n_heads=old_gdn.n_heads,
+        n_v_heads=old_gdn.n_v_heads,
+        head_dim=old_gdn.head_dim,
+        expand_v=old_gdn.expand_v,
+        allow_neg_eigval=old_gdn.allow_neg_eigval,
+        conv_size=old_gdn.conv_size,
+        conv_bias=old_gdn.conv_bias,
+        disable_recompute=disable_recompute,
+        norm_eps=old_gdn.norm_eps,
+        dtype=old_gdn.dtype,
+    )
+
+    candidate = deepcopy(parent)
+    default_block = deepcopy(resolved[next(i for i in geometry.gdn_layers if i != 0)])
+    default_block.sequence_mixer = deepcopy(gdn2)
+    dense_first = deepcopy(resolved[0])
+    dense_first.sequence_mixer = deepcopy(gdn2)
+    candidate.block = default_block
+    candidate.block_overrides = {
+        0: dense_first,
+        **{
+            layer_idx: deepcopy(resolved[layer_idx])
+            for layer_idx in geometry.full_attention_layers
+        },
+    }
+    candidate.validate()
+
+    candidate_resolved = candidate.resolved_block_configs
+    actual_gdn2_layers = tuple(
+        layer_idx
+        for layer_idx, block in enumerate(candidate_resolved)
+        if isinstance(block.sequence_mixer, GatedDeltaNet2Config)
+    )
+    actual_full_attention_layers = tuple(
+        layer_idx
+        for layer_idx, block in enumerate(candidate_resolved)
+        if isinstance(block.sequence_mixer, AttentionConfig)
+    )
+    if actual_gdn2_layers != geometry.gdn_layers:
+        raise ValueError(
+            f"unexpected {model_size} GDN2 layers: expected {geometry.gdn_layers}, "
+            f"found {actual_gdn2_layers}"
+        )
+    if actual_full_attention_layers != geometry.full_attention_layers:
+        raise ValueError(
+            f"unexpected {model_size} full-attention layers: expected "
+            f"{geometry.full_attention_layers}, found {actual_full_attention_layers}"
+        )
+    if candidate_resolved[0].routed_experts is not None:
+        raise ValueError("GDN2 scale model must retain the dense-first layer-0 FFN")
+
+    # Normalize GDN2 back to GDN1 and demand exact config equality. This proves
+    # that width/depth, MoE, attention, positional encoding, norms, and init did
+    # not change as a side effect of the mixer swap.
+    normalized = deepcopy(candidate)
+    normalized_default = deepcopy(default_block)
+    normalized_default.sequence_mixer = deepcopy(old_gdn)
+    normalized_dense = deepcopy(dense_first)
+    normalized_dense.sequence_mixer = deepcopy(old_gdn)
+    normalized.block = normalized_default
+    normalized.block_overrides = {
+        0: normalized_dense,
+        **{
+            layer_idx: deepcopy(resolved[layer_idx])
+            for layer_idx in geometry.full_attention_layers
+        },
+    }
+    if normalized.as_dict() != parent.as_dict():
+        raise ValueError(f"{model_size} GDN2 conversion changed fields beyond the mixer")
+
+    actual_counts = (
+        candidate.num_active_params,
+        candidate.num_active_non_embedding_params,
+        candidate.num_params,
+    )
+    if not rope and attention_gate:
+        expected_counts = EXPECTED_GDN2_GATED_NOPE_COUNTS[model_size]
+        if actual_counts != expected_counts:
+            raise ValueError(
+                f"unexpected {model_size} gated-NoPE GDN2 counts: expected "
+                f"{expected_counts}, found {actual_counts}"
+            )
+    else:
+        parent_counts = (
+            parent.num_active_params,
+            parent.num_active_non_embedding_params,
+            parent.num_params,
+        )
+        expected_delta = (
+            gdn2.num_params(geometry.d_model) - old_gdn.num_params(geometry.d_model)
+        ) * len(geometry.gdn_layers)
+        if any(
+            actual != base + expected_delta
+            for actual, base in zip(actual_counts, parent_counts, strict=True)
+        ):
+            raise ValueError(
+                f"unexpected {model_size} GDN2 parameter delta: expected "
+                f"{expected_delta:,}, parent={parent_counts}, found={actual_counts}"
+            )
+    return candidate
+
+
 def parameter_summary(
     model_size: str,
     *,
@@ -484,6 +618,51 @@ def parameter_summary(
     }
 
 
+def gdn2_parameter_summary(model_size: str) -> dict[str, Any]:
+    """Return the audited gated-NoPE GDN2 scale configuration."""
+
+    geometry = _geometry(model_size)
+    parent = build_geometry_matched_scale_model_config(
+        model_size,
+        rope=False,
+        attention_gate=True,
+    )
+    candidate = build_geometry_matched_scale_gdn2_model_config(model_size)
+    return {
+        "model_size": model_size,
+        "dense_geometry_rung": geometry.dense_rung,
+        "d_model": geometry.d_model,
+        "n_layers": geometry.n_layers,
+        "gdn2_layers": list(geometry.gdn_layers),
+        "full_attention_layers": list(geometry.full_attention_layers),
+        "dense_ffn_layers": [0],
+        "n_heads": geometry.n_heads,
+        "n_kv_heads": geometry.n_kv_heads,
+        "head_dim": HEAD_DIM,
+        "expert_hidden_size": geometry.expert_hidden_size,
+        "dense_first_hidden_size": (TOP_K + 1) * geometry.expert_hidden_size,
+        "num_experts": 256,
+        "top_k": TOP_K,
+        "shared_experts": 1,
+        "gdn_expand_v": GDN_EXPAND_V,
+        "rope": False,
+        "attention_gate": True,
+        "attention_gate_granularity": "elementwise",
+        "attention_gate_full_precision": True,
+        "gdn2_disable_recompute": False,
+        "init_std": candidate.init_std,
+        "active_params": candidate.num_active_params,
+        "active_non_embedding_params": candidate.num_active_non_embedding_params,
+        "total_params": candidate.num_params,
+        "delta_vs_gdn1_active": candidate.num_active_params - parent.num_active_params,
+        "delta_vs_gdn1_active_non_embedding": (
+            candidate.num_active_non_embedding_params
+            - parent.num_active_non_embedding_params
+        ),
+        "delta_vs_gdn1_total": candidate.num_params - parent.num_params,
+    }
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model-size", choices=MODEL_SIZES, action="append")
@@ -497,15 +676,24 @@ def main() -> None:
         action="store_true",
         help="Add the isolated elementwise attention gate to the selected RoPE/NoPE profile",
     )
+    parser.add_argument(
+        "--gdn2",
+        action="store_true",
+        help="Audit the gated-NoPE GDN2 swap at the selected sizes",
+    )
     args = parser.parse_args()
     model_sizes = args.model_size or list(MODEL_SIZES)
     print(
         json.dumps(
             [
-                parameter_summary(
-                    size,
-                    rope=not args.nope,
-                    attention_gate=args.attention_gate,
+                (
+                    gdn2_parameter_summary(size)
+                    if args.gdn2
+                    else parameter_summary(
+                        size,
+                        rope=not args.nope,
+                        attention_gate=args.attention_gate,
+                    )
                 )
                 for size in model_sizes
             ],

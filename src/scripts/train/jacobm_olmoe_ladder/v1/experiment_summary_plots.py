@@ -72,6 +72,7 @@ def plot_observed_best_summary(
     title: str,
     variants: Sequence[SummaryVariant],
     window_m: int,
+    provisional_points: set[tuple[str, int, str]] | None = None,
 ) -> bool:
     """Plot best observed finished loss by model/Cx/variant.
 
@@ -82,6 +83,7 @@ def plot_observed_best_summary(
     """
 
     best = _best_observed(points, variants)
+    provisional_points = provisional_points or set()
     experiment_keys = {(model, cx) for (model, cx, variant) in best if variant != BASELINE_KEY}
     if not experiment_keys:
         _write_placeholder(out_path, title)
@@ -97,10 +99,12 @@ def plot_observed_best_summary(
         model_keys = {cx for model_name, cx in experiment_keys if model_name == model}
         handles = []
         labels = []
+        provisional_legend_added = False
         for summary_variant in variants:
             xs: list[int] = []
             ys: list[float] = []
             point_labels: list[str] = []
+            provisional: list[bool] = []
             for cx in CX_ORDER:
                 if cx not in model_keys:
                     continue
@@ -109,7 +113,9 @@ def plot_observed_best_summary(
                     continue
                 xs.append(cx)
                 ys.append(point.loss)
-                point_labels.append(point.lr_tag)
+                is_provisional = (model, cx, summary_variant.key) in provisional_points
+                point_labels.append(f"{point.lr_tag}†" if is_provisional else point.lr_tag)
+                provisional.append(is_provisional)
             if not xs:
                 continue
             (line,) = ax.plot(
@@ -124,7 +130,9 @@ def plot_observed_best_summary(
             )
             handles.append(line)
             labels.append(summary_variant.label)
-            for x, y, lr_tag in zip(xs, ys, point_labels):
+            for x, y, lr_tag, is_provisional in zip(
+                xs, ys, point_labels, provisional, strict=True
+            ):
                 ax.annotate(
                     lr_tag,
                     (x, y),
@@ -135,6 +143,23 @@ def plot_observed_best_summary(
                     color=line.get_color(),
                     alpha=0.9,
                 )
+                if is_provisional:
+                    ax.scatter(
+                        [x],
+                        [y],
+                        marker="D",
+                        s=75,
+                        facecolors="none",
+                        edgecolors="#d97706",
+                        linewidths=1.5,
+                        zorder=5,
+                        label=(
+                            "† bracketed; sweep incomplete"
+                            if not provisional_legend_added
+                            else "_nolegend_"
+                        ),
+                    )
+                    provisional_legend_added = True
         ax.set_xscale("log", base=2)
         ax.set_xticks(CX_ORDER)
         ax.set_xticklabels([f"Cx{cx}" for cx in CX_ORDER])

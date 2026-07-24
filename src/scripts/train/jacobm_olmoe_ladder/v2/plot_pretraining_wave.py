@@ -870,6 +870,12 @@ def plot_optimal_summary(points: list[Point], wave: Wave, output_path: Path, win
         if _fit_minimum(_finished(points, wave.intervention.key, model, cx)) is not None
     }
     eligible_points = [point for point in points if (point.model, point.cx) in eligible_keys]
+    provisional_points = {
+        (model, cx, wave.intervention.key)
+        for model, cx in eligible_keys
+        if len(_finished(points, wave.intervention.key, model, cx))
+        < _expected_count(wave.intervention, model, cx)
+    }
     reference_linestyles = ("--", ":", "-.", (0, (3, 1, 1, 1)))
     summary_variants = tuple(
         SummaryVariant(
@@ -895,6 +901,7 @@ def plot_optimal_summary(points: list[Point], wave: Wave, output_path: Path, win
             ),
         ),
         window_m=window_m,
+        provisional_points=provisional_points,
     )
     return output_path
 

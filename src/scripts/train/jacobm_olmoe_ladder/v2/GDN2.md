@@ -143,3 +143,69 @@ remaining three points already bracket an interior minimum, so the plot keeps
 the visual three-point quadratic fit and reports `8e-4` as the observed best.
 All four Cx4 points are at 70.1--74.6% and all four Cx8 points are at
 68.4--69.2%; all eight remain healthy and running.
+
+## Planned larger-scale transfer (not launched)
+
+The 480M, 810M, and 1.2B candidates inherit the corresponding gated-NoPE GDN1
+geometry exactly and replace only recurrent GDN1 mixers with GDN2. In
+particular, dimensions, layer count and placement, MoE widths, dense-first FFN,
+GQA, full-attention gates, NoPE, initialization, data, and optimizer recipe are
+unchanged. Normal backward recomputation remains enabled.
+
+| Size | Width | Layers | GDN2 / full | Q / KV | Expert hidden | Active | Active non-emb. | Total |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| 480M | 768 | 15 | 12 / 3 | 8 / 4 | 840 | 526,979,424 | 449,909,088 | 7,246,549,344 |
+| 810M | 1,024 | 15 | 12 / 3 | 16 / 8 | 1,032 | 914,540,480 | 811,780,032 | 11,921,835,968 |
+| 1.2B | 1,280 | 20 | 16 / 4 | 16 / 8 | 952 | 1,376,964,352 | 1,248,513,792 | 18,602,528,512 |
+
+The full-attention layers are 4/9/14 for 480M and 810M and 4/9/14/19 for
+1.2B. All other layers use GDN2 with `expand_v=2`; layer 0 retains the dense
+FFN. The exact active increase over matching gated-NoPE GDN1 is 23.48M, 50.01M,
+and 77.04M, respectively. The builder audits exact parameter counts and proves
+that normalizing GDN2 back to GDN1 reproduces the parent config exactly through
+`as_dict()`.
+
+The proposed production transfer is one run per size/Cx at the observed wide
+integration LR for that same cell:
+
+| Size | Cx1 | Cx2 | Cx4 | Cx8 |
+|---|---:|---:|---:|---:|
+| 480M | `1.2e-3` | `9e-4` | `8e-4` | `8e-4` |
+| 810M | `6e-4` | `5.6e-4` | `4e-4` | `4e-4` |
+| 1.2B | `4e-4` | `6e-4` | `3e-4` | `4e-4` |
+
+Token budgets continue to use `20 * active_non_embedding * Cx` and are rounded
+up only to the next whole optimizer batch:
+
+| Size | Cx1 tokens / steps | Cx2 tokens / steps | Cx4 tokens / steps | Cx8 tokens / steps |
+|---|---:|---:|---:|---:|
+| 480M | 8.998B / 34,326 | 17.996B / 45,768 | 35.993B / 68,651 | 71.985B / 91,535 |
+| 810M | 16.236B / 61,934 | 32.471B / 82,579 | 64.942B / 123,868 | 129.885B / 165,158 |
+| 1.2B | 24.970B / 95,255 | 49.941B / 127,006 | 99.881B / 190,509 | 199.762B / 254,011 |
+
+The wall-clock candidate preserves the established accumulation-free scale
+layout. It uses 8 GPUs for 480M Cx1/2/4, 16 for 480M Cx8, 16 for every 810M
+cell, 16 for 1.2B Cx1/2, and 32 for 1.2B Cx4/8. EP stays at 1 except for the
+1.2B cells, which retain EP8 with `sync_1d`.
+
+| Size / Cx | GPUs | Rank MB | Global batch | Approx. time |
+|---|---:|---:|---:|---:|
+| 480M Cx1 / Cx2 / Cx4 / Cx8 | 8 / 8 / 8 / 16 | 4 / 6 / 8 / 6 | 262K / 393K / 524K / 786K | 5 / 8 / 14 / 14 h |
+| 810M Cx1 / Cx2 / Cx4 / Cx8 | 16 / 16 / 16 / 16 | 2 / 3 / 4 / 6 | 262K / 393K / 524K / 786K | 10 / 15 / 26 / 42 h |
+| 1.2B Cx1 / Cx2 / Cx4 / Cx8 | 16 / 16 / 32 / 32 | 2 / 3 / 2 / 3 | 262K / 393K / 524K / 786K | 28 / 27 / 42 / 61 h |
+
+Those times extrapolate the matching GDN1 production runs using the measured
+275M GDN2 token-throughput penalty and the larger GDN2 token budgets; they are
+planning estimates, not measurements. The 12 jobs require 200 GPUs concurrently
+and roughly 6.0K GPU-hours if every cell runs cleanly.
+
+Before launch, run checkpoint-free compiled capacity/throughput smokes at the
+three maximum intended per-rank microbatches: 480M MB8 on 8 GPUs, 810M MB6 on
+16 GPUs, and 1.2B MB3 under both its 16- and 32-GPU EP8 layouts. Record peak
+active/reserved memory, median final-step TFLOPs/GPU and TPS/GPU, aggregate TPS,
+step time, MFU, and skipped steps. If 480M MB8 or 810M MB6 does not fit, lower
+the affected rank MB to its next exact divisor; do not change global batches or
+model settings. The candidate manifest is deliberately submission-locked until
+this qualification is recorded:
+`launchers/pretraining/manifests/geometry_matched_scale_gdn2_nope_gated_full_candidate.yaml`.
+No larger-scale job has been launched.

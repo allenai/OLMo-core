@@ -84,9 +84,15 @@ torch.set_float32_matmul_precision("high")
 # at 6%, but allow these explicitly audited profiles up to 6.2% rather than
 # rejecting them before training starts.
 GATED_MAX_ACTIVE_PARAMETER_DELTA_FRACTION = 0.062
-# The audited 275M GDN2 mixer adds 14.10M active parameters without changing
-# the MoE, attention, or model geometry. Admit that exact additive variant.
-GDN2_MAX_ACTIVE_PARAMETER_DELTA_FRACTION = 0.093
+# GDN2 adds mixer parameters without changing the MoE, attention, or model
+# geometry. These size-specific ceilings admit the exact audited configs while
+# retaining a narrow guard against accidentally changing another dimension.
+GDN2_MAX_ACTIVE_PARAMETER_DELTA_FRACTIONS = {
+    "275m": 0.093,
+    "480m": 0.084,
+    "810m": 0.111,
+    "1p2b": 0.125,
+}
 
 
 def env_bool(name: str, default: bool) -> bool:
@@ -150,6 +156,7 @@ if GDN2_DISABLE_RECOMPUTE and MODEL_VARIANT not in {
     "geometry_275m_gdn2_ev2_nope_gated",
     "geometry_275m_gdn2_ev2_rope_gated",
     "geometry_275m_gdn2_ev2_rope_gated_1to1",
+    "geometry_matched_gdn2_ev2_nope_gated",
 }:
     raise ValueError(
         "OLMOE3_HYBRID_GDN2_DISABLE_RECOMPUTE is only valid for the GDN2 variant"
@@ -280,6 +287,17 @@ def model_config():
             MODEL_SIZE,
             rope=True,
             attention_gate=True,
+        )
+    elif MODEL_VARIANT == "geometry_matched_gdn2_ev2_nope_gated":
+        from scripts.train.jacobm_olmoe_ladder.v2.models.geometry_matched_scale import (
+            build_geometry_matched_scale_gdn2_model_config,
+        )
+
+        model = build_geometry_matched_scale_gdn2_model_config(
+            MODEL_SIZE,
+            rope=False,
+            attention_gate=True,
+            disable_recompute=GDN2_DISABLE_RECOMPUTE,
         )
     else:
         raise ValueError(f"Unknown model variant {MODEL_VARIANT!r}")
@@ -488,6 +506,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         "geometry_matched_gdn_ev2_nope",
         "geometry_matched_gdn_ev2_nope_gated",
         "geometry_matched_gdn_ev2_rope_gated",
+        "geometry_matched_gdn2_ev2_nope_gated",
     }
     if MODEL_VARIANT == "geometry_275m_gdn_ev2_rope_gated":
         variant_group = "olmoe3-275m-geometry-gdn-ev2-rope-gated"
@@ -517,6 +536,8 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         variant_group = "olmoe3-geometry-matched-gdn-ev2-rope-gated-scale"
     elif MODEL_VARIANT == "geometry_matched_gdn_ev2_nope":
         variant_group = "olmoe3-geometry-matched-gdn-ev2-nope-scale"
+    elif MODEL_VARIANT == "geometry_matched_gdn2_ev2_nope_gated":
+        variant_group = "olmoe3-geometry-matched-gdn2-ev2-nope-gated-scale"
     else:
         variant_group = "olmoe3-integration-wide-hybrid-scale"
     if MODEL_VARIANT in {
@@ -525,15 +546,20 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         "geometry_275m_gdn2_ev2_nope_gated",
         "geometry_matched_gdn_ev2_nope",
         "geometry_matched_gdn_ev2_nope_gated",
+        "geometry_matched_gdn2_ev2_nope_gated",
     }:
         variant_tags = ["geometry-matched", "expand-v-2", "nope"]
         if MODEL_VARIANT in {
             "geometry_275m_gdn_ev2_nope_gated",
             "geometry_275m_gdn2_ev2_nope_gated",
             "geometry_matched_gdn_ev2_nope_gated",
+            "geometry_matched_gdn2_ev2_nope_gated",
         }:
             variant_tags.append("attention-gate")
-        if MODEL_VARIANT == "geometry_275m_gdn2_ev2_nope_gated":
+        if MODEL_VARIANT in {
+            "geometry_275m_gdn2_ev2_nope_gated",
+            "geometry_matched_gdn2_ev2_nope_gated",
+        }:
             variant_tags.append("gdn2")
             if GDN2_DISABLE_RECOMPUTE:
                 variant_tags.append("gdn2-no-recompute")
@@ -699,8 +725,11 @@ def finalize_config(config: ExperimentConfig) -> None:
         "geometry_275m_gdn2_ev2_nope_gated",
         "geometry_275m_gdn2_ev2_rope_gated",
         "geometry_275m_gdn2_ev2_rope_gated_1to1",
+        "geometry_matched_gdn2_ev2_nope_gated",
     }:
-        max_active_parameter_delta_fraction = GDN2_MAX_ACTIVE_PARAMETER_DELTA_FRACTION
+        max_active_parameter_delta_fraction = GDN2_MAX_ACTIVE_PARAMETER_DELTA_FRACTIONS[
+            MODEL_SIZE
+        ]
     elif MODEL_VARIANT in {
         "geometry_matched_gdn_ev2_nope_gated",
         "geometry_matched_gdn_ev2_rope_gated",

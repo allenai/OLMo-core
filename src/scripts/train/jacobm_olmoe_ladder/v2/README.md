@@ -66,7 +66,11 @@ v1 LR-selection contract: an intervention-only U-plot and an observed-best
 summary against wide. A Cx enters that summary only when its finished points
 support a valid quadratic fit with the observed best strictly inside the swept
 LR range; the label is still the actual observed-best LR, never the fitted
-prediction. The separate scale-transfer plot adds 480M/810M/1.2B cells as their
+prediction. If the available points already bracket a valid curve but one or
+more planned runs are unfinished, the observed point is shown with a hollow
+orange diamond and a dagger on its LR label. This is a provisional-data marker,
+not a substitution of the predicted minimum. The separate scale-transfer plot
+adds 480M/810M/1.2B cells as their
 registered runs finish, but explicitly labels them fixed-LR comparisons because
 their LRs were transferred from wide rather than optimized for hybrid. The
 shared JSON/Markdown result table records both modes. W&B histories reuse the
