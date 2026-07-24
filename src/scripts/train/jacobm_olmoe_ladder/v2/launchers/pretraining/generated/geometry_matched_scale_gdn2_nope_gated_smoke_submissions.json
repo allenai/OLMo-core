@@ -30,5 +30,39 @@
       "01KY9GKP41NJCZMCZZDF2HJEFV"
     ],
     "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY9GKP0A1BW8XSF8C3W6G4J0"
+  },
+  {
+    "task_name": "1p2b-mb4-w8-ep8-sync",
+    "run_name": "smoke-1p2b-geometry-gdn2-ev2-nope-gated-mb4-w8-ep8-sync-r1",
+    "commit": "f886c7b79adcbe7d57d4f5e23aeb4f9f522c9412",
+    "experiment_id": "01KYAGA7P0W3HKZ8FDDGT80GEP",
+    "task_ids": [
+      "01KYAGA7P73AJSMNC7GNTTQX6P"
+    ],
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYAGA7P0W3HKZ8FDDGT80GEP"
+  },
+  {
+    "task_name": "1p2b-mb4-w16-ep8-sync",
+    "run_name": "smoke-1p2b-geometry-gdn2-ev2-nope-gated-mb4-w16-ep8-sync-r1",
+    "commit": "f886c7b79adcbe7d57d4f5e23aeb4f9f522c9412",
+    "experiment_id": "01KYAGAASYT6FHRJ86DB2NRQPK",
+    "task_ids": [
+      "01KYAGAAT6GBZ4HY8GV1GE54J6",
+      "01KYAGABVV1KN7VVVE3GNEAKBA"
+    ],
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYAGAASYT6FHRJ86DB2NRQPK"
+  },
+  {
+    "task_name": "1p2b-mb3-w32-ep8-sync",
+    "run_name": "smoke-1p2b-geometry-gdn2-ev2-nope-gated-mb3-w32-ep8-sync-r1",
+    "commit": "f886c7b79adcbe7d57d4f5e23aeb4f9f522c9412",
+    "experiment_id": "01KYAGAERF6G60VSQQYNN8KR7X",
+    "task_ids": [
+      "01KYAGAERMR39944G61TPZPXP7",
+      "01KYAGAEW82JD3J4FY8AB1Y3QY",
+      "01KYAGAEZJSET5JSEA0S5DW00W",
+      "01KYAGAF2R4RBE2WFXK3X5KXKC"
+    ],
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYAGAERF6G60VSQQYNN8KR7X"
   }
 ]

@@ -212,9 +212,21 @@ The qualification works are
 [480M MB8/8 GPU](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY9GKF3MDHPFTKM9NJ9A0W81),
 [480M MB6/16 GPU](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY9GKJ0BJ6ED4DKSKD3BHD3Y),
 and [810M MB6/16 GPU](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY9GKP0A1BW8XSF8C3W6G4J0).
-The 480M and 810M production cells are qualified. Before any 1.2B launch, run
-the still-pending MB3 checks under both its 16- and 32-GPU EP8 layouts. The
-launcher enforces this per-size qualification in:
+The balanced 1.2B qualification also passed on 2026-07-24 at commit
+`f886c7b79`. All seven replicas exited 0 after 50 finite optimizer steps with
+zero skipped steps:
+
+| 1.2B layout | Final-10 TFLOPs/GPU | Final-10 TPS/GPU | Aggregate TPS | Active / reserved memory |
+|---|---:|---:|---:|---:|
+| MB4, 8 GPU, EP8 `sync_1d` | 367.2 | 45.1K | 360.7K | 189.7 / 198.8 GiB |
+| MB4, 16 GPU, EP8 `sync_1d` | 358.2 | 44.0K | 703.8K | 176.5 / 185.7 GiB |
+| MB3, 32 GPU, EP8 `sync_1d` | 286.3 | 35.2K | 1.125M | 133.5 / 140.6 GiB |
+
+The qualification works are
+[8 GPU](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYAGA7P0W3HKZ8FDDGT80GEP),
+[16 GPU](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYAGAASYT6FHRJ86DB2NRQPK),
+and [32 GPU](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYAGAERF6G60VSQQYNN8KR7X).
+All model sizes are now capacity-qualified. The launcher enforces this in:
 `launchers/pretraining/manifests/geometry_matched_scale_gdn2_nope_gated_full_candidate.yaml`.
 
 The eight qualified 480M/810M production cells were submitted on 2026-07-24
@@ -223,7 +235,7 @@ transferred wide LRs in the table above, accumulation factor 1, normal GDN2
 backward recomputation, rolling ephemeral checkpoints, and no in-loop evals.
 The submission ledger is
 `launchers/pretraining/generated/geometry_matched_scale_gdn2_nope_gated_480m_810m_submissions.json`.
-The four 1.2B cells were not submitted.
+At this point the four 1.2B cells were not yet submitted.
 
 At the 2026-07-24 16:10 UTC refresh, 480M Cx1/Cx2 finished with strict
 final-250M CEs `2.468555` and `2.359149`. 810M Cx4 is running at 21.04B / 64.94B

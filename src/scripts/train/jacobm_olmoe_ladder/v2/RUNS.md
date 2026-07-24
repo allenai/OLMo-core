@@ -121,12 +121,15 @@ loss/gradients and zero skipped steps.
 | 480M MB8, 8 GPU EP1 | [01KY9GKF3MDHPFTKM9NJ9A0W81](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY9GKF3MDHPFTKM9NJ9A0W81) | [k9sw3u2k](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/k9sw3u2k) | 335.9 | 114.1K | 190.4 / 196.9 |
 | 480M MB6, 16 GPU EP1 | [01KY9GKJ0BJ6ED4DKSKD3BHD3Y](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY9GKJ0BJ6ED4DKSKD3BHD3Y) | [db06dpbg](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/db06dpbg) | 287.4 | 97.6K | 150.4 / 155.3 |
 | 810M MB6, 16 GPU EP1 | [01KY9GKP0A1BW8XSF8C3W6G4J0](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY9GKP0A1BW8XSF8C3W6G4J0) | [fcuou24g](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/fcuou24g) | 358.0 | 66.8K | 224.5 / 234.1 |
+| 1.2B MB4, 8 GPU EP8 `sync_1d` | [01KYAGA7P0W3HKZ8FDDGT80GEP](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYAGA7P0W3HKZ8FDDGT80GEP) | [f14cy64l](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/f14cy64l) | 367.2 | 45.1K | 189.7 / 198.8 |
+| 1.2B MB4, 16 GPU EP8 `sync_1d` | [01KYAGAASYT6FHRJ86DB2NRQPK](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYAGAASYT6FHRJ86DB2NRQPK) | [qi7b76ad](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/qi7b76ad) | 358.2 | 44.0K | 176.5 / 185.7 |
+| 1.2B MB3, 32 GPU EP8 `sync_1d` | [01KYAGAERF6G60VSQQYNN8KR7X](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYAGAERF6G60VSQQYNN8KR7X) | [eqmvumxk](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/eqmvumxk) | 286.3 | 35.2K | 133.5 / 140.6 |
 
 The smoke submission ledger is
 `launchers/pretraining/generated/geometry_matched_scale_gdn2_nope_gated_smoke_submissions.json`.
-480M and 810M are approved for the eight-cell transferred-wide-LR production
-wave. The 1.2B cells remain submission-locked pending separate MB3 capacity
-qualification.
+All three balanced 1.2B layouts passed at commit `f886c7b79`; all seven
+replicas exited 0 after 50 finite steps with zero skipped steps. All model
+sizes are approved for the transferred-wide-LR production wave.
 
 ### Larger gated-NoPE GDN2 production wave
 
