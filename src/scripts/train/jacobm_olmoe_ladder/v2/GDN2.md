@@ -400,3 +400,12 @@ rank 0 and `478/481` on the other ranks). These exact replays are no longer
 classified as trajectory-varying and should not receive another ordinary
 checkpoint-local restart. The fresh 275M Cx8, 810M Cx1, 1.2B Cx1, and 1.2B
 Cx2 reproductions remain active at this snapshot.
+
+At 2026-07-24 23:10 UTC, the user explicitly requested one more in-place retry
+of the three newly stopped experiments. The existing Beaker experiments were
+resumed without changing run identities or checkpoint paths: diagnostic 1.2B
+Cx4 from durable `step9000`, diagnostic 1.2B Cx8 from `step7000`, and fresh
+810M Cx2 from `step3000`. All retained urgent priority, zero minimum runtime,
+unallocated scheduling, and their existing debug/environment settings. The
+Cx4 attempt was scheduled immediately; Cx8 and 810M Cx2 were queued at the
+23:11 UTC snapshot.
