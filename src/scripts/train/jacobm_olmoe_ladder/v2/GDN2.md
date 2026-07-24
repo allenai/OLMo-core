@@ -111,6 +111,8 @@ approval. Use normal backward recomputation, EP1, compile enabled, no in-loop
 evals, and the established four-LR grid `4e-4`, `8e-4`, `1.6e-3`, `3.2e-3` at
 every Cx. The GDN1 observed optima were `1.6e-3` at Cx1/Cx2/Cx8 and `8e-4` at
 Cx4, so this grid is both directly comparable and already bracketed.
+When approved, submit the wave as urgent unallocated work in
+`ai2/OLMo-3-moe-experiments` on `ai2/holmes`.
 
 | Cx | Target tokens | Approx. steps | Global batch | GPUs | Rank MB | Approx. wall time/run |
 |---:|---:|---:|---:|---:|---:|---:|
