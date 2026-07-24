@@ -218,3 +218,11 @@ The 480M and 810M production cells are qualified. Before any 1.2B launch, run
 the still-pending MB3 checks under both its 16- and 32-GPU EP8 layouts. The
 launcher enforces this per-size qualification in:
 `launchers/pretraining/manifests/geometry_matched_scale_gdn2_nope_gated_full_candidate.yaml`.
+
+The eight qualified 480M/810M production cells were submitted on 2026-07-24
+from commit `ed7accc25`, urgent and unallocated on Holmes. They use the
+transferred wide LRs in the table above, accumulation factor 1, normal GDN2
+backward recomputation, rolling ephemeral checkpoints, and no in-loop evals.
+The submission ledger is
+`launchers/pretraining/generated/geometry_matched_scale_gdn2_nope_gated_480m_810m_submissions.json`.
+The four 1.2B cells were not submitted.

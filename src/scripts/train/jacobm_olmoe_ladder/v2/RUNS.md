@@ -128,6 +128,28 @@ The smoke submission ledger is
 wave. The 1.2B cells remain submission-locked pending separate MB3 capacity
 qualification.
 
+### Larger gated-NoPE GDN2 production wave
+
+The eight qualified 480M/810M cells were submitted on 2026-07-24 from commit
+`ed7accc25`. All are urgent, unallocated Holmes work; the 1.2B cells were not
+submitted. Every cell uses accumulation factor 1, the transferred wide LR,
+normal backward recomputation, rolling ephemeral checkpoints, and out-of-loop
+evaluation.
+
+| Cell | GPUs | Rank MB | LR | Beaker |
+|---|---:|---:|---:|---|
+| 480M Cx1 | 8 | 4 | `1.2e-3` | [01KY9HQ0GHV1P6NYWVJRVQ39CH](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY9HQ0GHV1P6NYWVJRVQ39CH) |
+| 480M Cx2 | 8 | 6 | `9e-4` | [01KY9HQ3EGGYYX1VDQP4SP3799](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY9HQ3EGGYYX1VDQP4SP3799) |
+| 480M Cx4 | 8 | 8 | `8e-4` | [01KY9HQ67F0JPW80EK1WZHKJ9K](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY9HQ67F0JPW80EK1WZHKJ9K) |
+| 480M Cx8 | 16 | 6 | `8e-4` | [01KY9HQ946E92SYPNWBMS697JY](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY9HQ946E92SYPNWBMS697JY) |
+| 810M Cx1 | 16 | 2 | `6e-4` | [01KY9HQC8J0THDSVCN8YJDQA1V](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY9HQC8J0THDSVCN8YJDQA1V) |
+| 810M Cx2 | 16 | 3 | `5.6e-4` | [01KY9HQFHP2D56FEBNMSMYQ6BT](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY9HQFHP2D56FEBNMSMYQ6BT) |
+| 810M Cx4 | 16 | 4 | `4e-4` | [01KY9HQJY6G36KKDPSEFTVWCSB](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY9HQJY6G36KKDPSEFTVWCSB) |
+| 810M Cx8 | 16 | 6 | `4e-4` | [01KY9HQNN4KG4C5FYG5JKB463K](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY9HQNN4KG4C5FYG5JKB463K) |
+
+Submission ledger:
+`launchers/pretraining/generated/geometry_matched_scale_gdn2_nope_gated_480m_810m_submissions.json`.
+
 ## 275M active hybrid GDN (`expand_v=1`)
 
 - Manifest: [`launchers/pretraining/manifests/275m_hybrid_gdn_ev1.yaml`](launchers/pretraining/manifests/275m_hybrid_gdn_ev1.yaml)
