@@ -27,6 +27,7 @@ ALLOWED_VARIANTS = {
     "geometry_275m_gdn_ev2_rope_gated_1to1",
     "geometry_275m_gdn2_ev2_rope_gated_1to1",
     "geometry_275m_swa_rope_gated_1to1",
+    "geometry_275m_swa_rope_gated_1to1_10l",
 }
 EXPECTED_SEQUENCE_LENGTH = 8_192
 ALLOWED_GLOBAL_BATCHES = {

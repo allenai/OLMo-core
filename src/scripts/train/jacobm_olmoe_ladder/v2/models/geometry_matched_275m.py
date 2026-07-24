@@ -137,6 +137,7 @@ EXPECTED_ONE_TO_ONE_COUNTS = {
     "gdn1": (284_148_560, 219_923_280, 3_129_680_720),
     "gdn2": (292_960_040, 228_734_760, 3_138_492_200),
     "swa": (295_500_032, 231_274_752, 3_773_372_672),
+    "swa_10l": (267_631_360, 203_406_080, 3_113_163_520),
 }
 
 
@@ -452,6 +453,7 @@ def build_geometry_matched_one_to_one_model_config(
     mixer: Literal["gdn1", "gdn2", "swa"],
     *,
     gdn2_disable_recompute: bool = False,
+    swa_n_layers: Literal[10, 12] | None = None,
 ) -> OLMoDDPModelConfig:
     """Build the gated-RoPE geometry with a strict 1:1 mixer/attention ratio.
 
@@ -465,7 +467,9 @@ def build_geometry_matched_one_to_one_model_config(
 
     source = build_geometry_matched_model_config("geometry_rope_gated")
     source_resolved = source.resolved_block_configs
-    n_layers = ONE_TO_ONE_N_LAYERS[mixer]
+    if swa_n_layers is not None and mixer != "swa":
+        raise ValueError("swa_n_layers is only valid for the SWA 1:1 control")
+    n_layers = swa_n_layers if swa_n_layers is not None else ONE_TO_ONE_N_LAYERS[mixer]
     full_attention_layers = tuple(range(1, n_layers, 2))
     hybrid_layers = tuple(range(0, n_layers, 2))
     if len(full_attention_layers) != len(hybrid_layers):
@@ -584,10 +588,11 @@ def build_geometry_matched_one_to_one_model_config(
         candidate.num_active_non_embedding_params,
         candidate.num_params,
     )
-    if actual_counts != EXPECTED_ONE_TO_ONE_COUNTS[mixer]:
+    expected_counts_key = "swa_10l" if mixer == "swa" and n_layers == 10 else mixer
+    if actual_counts != EXPECTED_ONE_TO_ONE_COUNTS[expected_counts_key]:
         raise ValueError(
             f"unexpected {mixer} 1:1 parameter counts: expected "
-            f"{EXPECTED_ONE_TO_ONE_COUNTS[mixer]}, found {actual_counts}"
+            f"{EXPECTED_ONE_TO_ONE_COUNTS[expected_counts_key]}, found {actual_counts}"
         )
 
     return candidate

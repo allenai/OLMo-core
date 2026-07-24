@@ -240,6 +240,7 @@ def model_config():
         "geometry_275m_gdn_ev2_rope_gated_1to1",
         "geometry_275m_gdn2_ev2_rope_gated_1to1",
         "geometry_275m_swa_rope_gated_1to1",
+        "geometry_275m_swa_rope_gated_1to1_10l",
     }:
         from scripts.train.jacobm_olmoe_ladder.v2.models.geometry_matched_275m import (
             build_geometry_matched_one_to_one_model_config,
@@ -251,10 +252,14 @@ def model_config():
             "geometry_275m_gdn_ev2_rope_gated_1to1": "gdn1",
             "geometry_275m_gdn2_ev2_rope_gated_1to1": "gdn2",
             "geometry_275m_swa_rope_gated_1to1": "swa",
+            "geometry_275m_swa_rope_gated_1to1_10l": "swa",
         }[MODEL_VARIANT]
         model = build_geometry_matched_one_to_one_model_config(
             mixer,
             gdn2_disable_recompute=GDN2_DISABLE_RECOMPUTE,
+            swa_n_layers=(
+                10 if MODEL_VARIANT == "geometry_275m_swa_rope_gated_1to1_10l" else None
+            ),
         )
     elif MODEL_VARIANT == "geometry_matched_gdn_ev2":
         from scripts.train.jacobm_olmoe_ladder.v2.models.geometry_matched_scale import (
@@ -502,6 +507,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         "geometry_275m_gdn_ev2_rope_gated_1to1",
         "geometry_275m_gdn2_ev2_rope_gated_1to1",
         "geometry_275m_swa_rope_gated_1to1",
+        "geometry_275m_swa_rope_gated_1to1_10l",
         "geometry_matched_gdn_ev2",
         "geometry_matched_gdn_ev2_nope",
         "geometry_matched_gdn_ev2_nope_gated",
@@ -520,7 +526,10 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         variant_group = "olmoe3-275m-geometry-gdn-ev2-rope-gated-1to1-throughput"
     elif MODEL_VARIANT == "geometry_275m_gdn2_ev2_rope_gated_1to1":
         variant_group = "olmoe3-275m-geometry-gdn2-ev2-rope-gated-1to1-throughput"
-    elif MODEL_VARIANT == "geometry_275m_swa_rope_gated_1to1":
+    elif MODEL_VARIANT in {
+        "geometry_275m_swa_rope_gated_1to1",
+        "geometry_275m_swa_rope_gated_1to1_10l",
+    }:
         variant_group = "olmoe3-275m-geometry-swa-rope-gated-1to1-throughput"
     elif MODEL_VARIANT == "geometry_275m_gdn_ev2_nope_gated":
         variant_group = "olmoe3-275m-geometry-gdn-ev2-nope-gated"
@@ -581,13 +590,17 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             "geometry_275m_gdn_ev2_rope_gated_1to1",
             "geometry_275m_gdn2_ev2_rope_gated_1to1",
             "geometry_275m_swa_rope_gated_1to1",
+            "geometry_275m_swa_rope_gated_1to1_10l",
         }:
             variant_tags.append("attention-1to1")
         if MODEL_VARIANT == "geometry_275m_gdn_ev2_rope_gated_1to1":
             variant_tags.append("attention-gate")
         if MODEL_VARIANT == "geometry_275m_gdn2_ev2_rope_gated_1to1":
             variant_tags.extend(["attention-gate", "gdn2"])
-        if MODEL_VARIANT == "geometry_275m_swa_rope_gated_1to1":
+        if MODEL_VARIANT in {
+            "geometry_275m_swa_rope_gated_1to1",
+            "geometry_275m_swa_rope_gated_1to1_10l",
+        }:
             variant_tags = [
                 "geometry-matched",
                 "swa",
