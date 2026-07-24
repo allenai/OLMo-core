@@ -41,7 +41,7 @@ adds 1,762,296 parameters per recurrent mixer.
 | GDN2 gated-RoPE geometry | 306,191,168 | 241,965,888 | 3,151,723,328 |
 | Difference | +14,098,368 | +14,098,368 | +14,098,368 |
 
-## Functional gate and throughput plan
+## Functional gate and throughput results
 
 The compiled one-GPU MB1 smoke passed its 8,192-token forward/backward dry run
 and six real optimizer steps with finite loss and gradients, zero skipped
@@ -49,7 +49,7 @@ updates, and exit code zero. Steady active/reserved memory was approximately
 64.4/65.4 GiB. The result-bearing work is
 [01KY8MNNDVT0BMFD20F7ZSS95P](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY8MNNDVT0BMFD20F7ZSS95P).
 
-The full systems comparison follows the completed GDN1/SWA protocol:
+The full systems comparison followed the completed GDN1/SWA protocol:
 
 1. qualify MB8 and MB16 on one GPU at both 2 Mi and 4 Mi optimizer batches;
 2. if MB16 passes, run the exact 16-cell 2/4/8-GPU EP1, code-default EP, and
@@ -58,5 +58,30 @@ The full systems comparison follows the completed GDN1/SWA protocol:
    TPS/GPU, aggregate TPS, step time, MFU, peak active/reserved memory, and
    skipped-step count alongside the GDN1 and SWA rows.
 
-The four-cell capacity work is
-[01KY8N6V09MWSNSY51BBWD4X33](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY8N6V09MWSNSY51BBWD4X33).
+The four-cell capacity work
+[01KY8N6V09MWSNSY51BBWD4X33](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY8N6V09MWSNSY51BBWD4X33)
+passed 4/4 tasks. MB16 fit at both optimizer batches, peaking at approximately
+253.7 GiB active and 257.0 GiB reserved memory. The full matrix work
+[01KY8NMMR9AETXTGWR11Y51QWQ](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY8NMMR9AETXTGWR11Y51QWQ)
+passed 16/16 tasks. All 20 jobs completed with zero skipped optimizer updates.
+
+The table reports final-ten median TFLOPs/GPU and thousands of tokens/s. All
+cells use MB16.
+
+| Batch | 1 GPU EP1 | 2 GPU EP1 | 4 GPU EP1 | 4 GPU RS | 8 GPU EP1 | 8 GPU RS |
+|---:|---:|---:|---:|---:|---:|
+| 2 Mi | 420.4 / 260.3 | 407.0 / 252.0 | 404.3 / 250.3 | 402.6 / 249.3 | 385.1 / 238.4 | 387.8 / 240.1 |
+| 4 Mi | 413.9 / 256.3 | 413.7 / 256.2 | 407.5 / 252.3 | 409.0 / 253.3 | 404.0 / 250.1 | 399.5 / 247.3 |
+
+Across these matched cells, GDN2 processes 11.1--13.4% fewer tokens/s than
+GDN1 and 32.1--36.0% fewer than SWA. Its reported TFLOPs/GPU are 5.5--7.9%
+below GDN1, a smaller gap than raw throughput because GDN2 performs more
+modeled work per token. Code-default full EP is 12.6--17.6% slower than EP1 at
+the same world size. Reduce-scatter ranges from 1.1% slower to 0.7% faster, so
+it does not offer a consistent benefit. EP1/all-reduce remains the default.
+
+The complete machine-readable GDN1/GDN2/SWA results, including aggregate TPS,
+step time, MFU, memory, Beaker job IDs, and W&B links, are in
+`results/throughput/275m_gdn_gdn2_swa_large_batch_parallelism.csv`. Re-run
+`results/throughput/collect_275m_throughput.py` to merge finalized Beaker work
+idempotently.

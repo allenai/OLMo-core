@@ -148,14 +148,15 @@ run, the 16-task / 80-GPU SWA parallelism matrix was released as work
 `01KY8HPSW7XAEP6D9VZN1STGVZ` without waiting for MB32 or the 50-step capacity
 cells to finish. No SWA MB17--MB20 jobs were launched.
 
-Both production matrices are complete: GDN work
-`01KY8GWR68YYNQ15Q46F4D998V` and SWA work
-`01KY8HPSW7XAEP6D9VZN1STGVZ` each passed 16/16 cells with no skipped optimizer
-updates. The separate SWA capacity work passed both MB16 controls; MB32 was a
-genuine compiled-dry-run OOM while attempting a 49 GiB allocation with 26.4
-GiB free. The complete machine-readable results, including Beaker and W&B IDs,
-memory, aggregate TPS, and stable step time, are in
-[`v2/results/throughput/275m_gdn_swa_large_batch_parallelism.csv`](v2/results/throughput/275m_gdn_swa_large_batch_parallelism.csv).
+All three production matrices are complete: GDN work
+`01KY8GWR68YYNQ15Q46F4D998V`, SWA work `01KY8HPSW7XAEP6D9VZN1STGVZ`, and GDN2
+work `01KY8NMMR9AETXTGWR11Y51QWQ` each passed 16/16 cells with no skipped
+optimizer updates. GDN2 capacity work `01KY8N6V09MWSNSY51BBWD4X33` also passed
+4/4 MB8/MB16 cells. The separate SWA capacity work passed both MB16 controls;
+MB32 was a genuine compiled-dry-run OOM while attempting a 49 GiB allocation
+with 26.4 GiB free. The complete machine-readable results, including Beaker
+and W&B IDs, memory, aggregate TPS, and stable step time, are in
+[`v2/results/throughput/275m_gdn_gdn2_swa_large_batch_parallelism.csv`](v2/results/throughput/275m_gdn_gdn2_swa_large_batch_parallelism.csv).
 
 The compact comparison below reports final-ten median TFLOPs/GPU and TPS/GPU
 in thousands. All rows use MB16; the unlisted code-default EP cells were
@@ -165,6 +166,8 @@ uniformly slower than EP1.
 |---|---:|---:|---:|---:|---:|---:|---:|
 | GDN | 2 Mi | 453.6 / 298.8 | 440.8 / 290.4 | 432.3 / 284.7 | 432.4 / 284.8 | 418.1 / 275.4 | 415.4 / 273.6 |
 | GDN | 4 Mi | 445.3 / 293.3 | 442.1 / 291.2 | 435.7 / 287.0 | 432.7 / 285.0 | 429.1 / 282.7 | 427.5 / 281.6 |
+| GDN2 | 2 Mi | 420.4 / 260.3 | 407.0 / 252.0 | 404.3 / 250.3 | 402.6 / 249.3 | 385.1 / 238.4 | 387.8 / 240.1 |
+| GDN2 | 4 Mi | 413.9 / 256.3 | 413.7 / 256.2 | 407.5 / 252.3 | 409.0 / 253.3 | 404.0 / 250.1 | 399.5 / 247.3 |
 | SWA | 2 Mi | 603.7 / 406.5 | 583.0 / 392.5 | 556.4 / 374.6 | 574.6 / 386.8 | 548.2 / 369.1 | 540.4 / 363.8 |
 | SWA | 4 Mi | 570.5 / 384.1 | 588.3 / 396.0 | 566.4 / 381.3 | 581.4 / 391.4 | 563.6 / 379.5 | 541.3 / 364.4 |
 
@@ -174,8 +177,11 @@ slightly negative for GDN and at eight GPUs, but improves SWA by 3.3% at four
 GPUs for the 2 Mi batch and 2.6% for 4 Mi. SWA reaches the 600 TFLOPs/GPU target
 on the one-GPU 2 Mi control and reaches 588.3 on the two-GPU 4 Mi cell. GDN's
 best result is 453.6 TFLOPs/GPU; parallelism alone therefore does not explain
-or recover its gap. At eight GPUs and 4 Mi, SWA processes 3.04M tokens/s versus
-2.26M for GDN, a 34% wall-clock advantage.
+or recover its gap. GDN2 is slower again: across matched cells it processes
+11.1--13.4% fewer tokens/s than GDN and 32.1--36.0% fewer than SWA. Full EP
+costs GDN2 12.6--17.6% against same-size EP1, while reduce-scatter changes its
+TPS by only -1.1% to +0.7%. At eight GPUs and 4 Mi, aggregate throughput is
+3.04M tokens/s for SWA, 2.26M for GDN, and 2.00M for GDN2.
 
 ### DDP bucket-cap follow-up
 

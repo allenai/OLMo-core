@@ -1,0 +1,25 @@
+[
+  {
+    "experiment_name": "jacobm-moe-v2-core-275m-gdn2-rope-gated-parallelism-r1",
+    "experiment_id": "01KY8NMMR9AETXTGWR11Y51QWQ",
+    "tasks": [
+      "b2m-gpu2-ep1",
+      "b2m-gpu4-ep1",
+      "b2m-gpu8-ep1",
+      "b2m-gpu2-ep2-default",
+      "b2m-gpu4-ep4-default",
+      "b2m-gpu8-ep8-default",
+      "b2m-gpu4-ep1-rs",
+      "b2m-gpu8-ep1-rs",
+      "b4m-gpu2-ep1",
+      "b4m-gpu4-ep1",
+      "b4m-gpu8-ep1",
+      "b4m-gpu2-ep2-default",
+      "b4m-gpu4-ep4-default",
+      "b4m-gpu8-ep8-default",
+      "b4m-gpu4-ep1-rs",
+      "b4m-gpu8-ep1-rs"
+    ],
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY8NMMR9AETXTGWR11Y51QWQ"
+  }
+]
