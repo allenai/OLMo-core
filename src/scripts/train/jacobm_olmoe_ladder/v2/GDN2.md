@@ -337,3 +337,12 @@ failures, this cell advanced through one unstable point and later encountered
 another. It has no per-parameter report because it was launched before the
 diagnostic environment was added. It should join the pre-reduction diagnostic
 set rather than receive another ordinary retry.
+
+At 2026-07-24 21:16 UTC, the five newly failed cells were explicitly restarted
+in place to test whether they can advance to another durable checkpoint. The
+diagnostic experiments retain their existing all-rank debug environment:
+810M Cx1 from `step10000`, 810M Cx2 from `step56500`, 1.2B Cx1 from
+`step8000`, and 275M Cx8 `1.6e-3` from `step36500`. The older 1.2B Cx2
+experiment was restarted from `step5000`; because it predates the diagnostic
+launches, this attempt does not have the new environment. All five new Beaker
+attempts were accepted at urgent priority under the existing experiment IDs.
