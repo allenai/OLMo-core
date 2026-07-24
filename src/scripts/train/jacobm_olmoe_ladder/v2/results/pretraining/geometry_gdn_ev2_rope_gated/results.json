@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-07-23T17:09:14.229104+00:00",
+  "generated_at": "2026-07-24T01:38:00.691520+00:00",
   "project": "ai2-llm/jacobm-olmoe-ladder",
   "wave": "geometry_gdn_ev2_rope_gated",
   "models": [
@@ -54,7 +54,7 @@
         "sa70hegz"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -73,7 +73,7 @@
         "3ddxwqks"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -92,7 +92,7 @@
         "8zx9zgnw"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -111,7 +111,7 @@
         "terfkng8"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -130,7 +130,7 @@
         "52ph1l67"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -149,7 +149,7 @@
         "epdjswap"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -168,7 +168,7 @@
         "8mnuuecq"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -187,7 +187,7 @@
         "7gfls4r6"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -206,7 +206,7 @@
         "lg619wiz"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -225,7 +225,7 @@
         "q81uxrxu"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -244,7 +244,7 @@
         "sxuuwzzm"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -263,7 +263,7 @@
         "1pr3blts"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -282,7 +282,7 @@
         "kd3fyszi"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -301,7 +301,7 @@
         "ezdsfb9n"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -320,7 +320,7 @@
         "eo5bm8gw"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -339,7 +339,7 @@
         "l4tp6qmo"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -358,7 +358,7 @@
         "fkm77yos"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -377,7 +377,7 @@
         "yo22u93q"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -396,7 +396,7 @@
         "moknw6oc"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -415,7 +415,7 @@
         "mettf0d3"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -434,7 +434,7 @@
         "kfua3dcq"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -453,7 +453,7 @@
         "h86x1nv3"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -472,7 +472,7 @@
         "afxq80js"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -491,7 +491,7 @@
         "oaazdm2h"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -510,7 +510,7 @@
         "u4cinuz5"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -529,7 +529,7 @@
         "3oqkg24h"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -548,7 +548,7 @@
         "pz6377bu"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -567,7 +567,7 @@
         "wpbz1ar9"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -586,7 +586,7 @@
         "7u4epzt6"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -605,7 +605,7 @@
         "gjmz37ct"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -624,7 +624,7 @@
         "xahm1pbt"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -643,7 +643,7 @@
         "sehjqtyk"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -662,7 +662,7 @@
         "bttby9r8"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -681,7 +681,7 @@
         "ef4umox3"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -700,7 +700,7 @@
         "ofodwbzz"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -719,7 +719,7 @@
         "7gmi969q"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -738,7 +738,7 @@
         "0ovig11c"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -757,7 +757,7 @@
         "8mkt4xpz"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -776,7 +776,7 @@
         "66u6ekx2"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -795,7 +795,7 @@
         "s5qmhyb2"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -814,7 +814,7 @@
         "07qo96gy"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -833,7 +833,7 @@
         "j12fk559"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -852,7 +852,7 @@
         "mem73c7g"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -871,7 +871,7 @@
         "o2bdr3gw"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -890,7 +890,7 @@
         "6porpbo2"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -909,7 +909,7 @@
         "0f782vrw"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -928,7 +928,7 @@
         "7jzlrolc"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -947,7 +947,7 @@
         "gwve4pn6"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -966,7 +966,7 @@
         "hwjvw532"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -985,7 +985,7 @@
         "hmjkig0r"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -1004,7 +1004,7 @@
         "pmfco9gy"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -1023,7 +1023,7 @@
         "k5mjm4ev"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -1042,7 +1042,7 @@
         "4x00n8lj"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -1061,7 +1061,7 @@
         "z1lw0z2i"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -1080,7 +1080,7 @@
         "fh9tl31v"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -1099,7 +1099,7 @@
         "gwzx0ekc"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -1118,7 +1118,7 @@
         "jr74v01c"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -1137,7 +1137,7 @@
         "2s5s1yw0"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -1156,7 +1156,7 @@
         "o1p6n2v7"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -1175,7 +1175,7 @@
         "iqxc5n9x"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -1194,7 +1194,7 @@
         "n6suaxul"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -1213,7 +1213,7 @@
         "clfmsyx8"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -1232,7 +1232,7 @@
         "socvue3a"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -1251,7 +1251,7 @@
         "xvk92054"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -1270,7 +1270,7 @@
         "uhw9wfed"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -1289,7 +1289,7 @@
         "sr1jgmao"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -1308,7 +1308,7 @@
         "n1gjknwg"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -1327,7 +1327,7 @@
         "9n3xk8gs"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -1346,7 +1346,7 @@
         "ttjquo05"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -1365,7 +1365,7 @@
         "5u03fshf"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -1424,7 +1424,7 @@
         "0x3i869n"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -1443,7 +1443,7 @@
         "aholwcgr"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -1462,7 +1462,7 @@
         "t76b5xjy"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -1481,7 +1481,7 @@
         "d29gx1x9"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -1500,7 +1500,7 @@
         "n8kkr1y8"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -1519,7 +1519,7 @@
         "qhjvjwcu"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -1538,7 +1538,7 @@
         "qehufcr5"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -1557,7 +1557,7 @@
         "ouxblu4g"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -1576,7 +1576,7 @@
         "3xjjt5sa"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -1595,7 +1595,7 @@
         "mbvin02a"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -1614,7 +1614,7 @@
         "y1dh1cb5"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -1633,7 +1633,7 @@
         "65bsc0wk"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -1652,7 +1652,7 @@
         "8rgf3myq"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -1671,7 +1671,7 @@
         "klgge8er"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -1690,7 +1690,7 @@
         "b0z3qfmi"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -1709,7 +1709,7 @@
         "rkxojd03"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -1728,7 +1728,7 @@
         "66aja50m"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -1747,7 +1747,7 @@
         "ntoo8vlo"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -1766,7 +1766,7 @@
         "iv901lom"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -1785,7 +1785,7 @@
         "qe052lo4"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -1804,7 +1804,7 @@
         "qu2zaxr7"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "275m",
@@ -1823,7 +1823,7 @@
         "235ye5lg"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "480m",
@@ -1842,7 +1842,7 @@
         "i2bij623"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "480m",
@@ -1861,7 +1861,7 @@
         "9rltp47w"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "480m",
@@ -1880,7 +1880,7 @@
         "ms1r0qqa"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "480m",
@@ -1899,7 +1899,7 @@
         "wl8ebsd8"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "480m",
@@ -1918,7 +1918,7 @@
         "z4wxvc6h"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "480m",
@@ -1937,7 +1937,7 @@
         "2d1t07dn"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "480m",
@@ -1956,7 +1956,7 @@
         "0crj05wz"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "480m",
@@ -1975,7 +1975,7 @@
         "68t7rt6l"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "480m",
@@ -1994,7 +1994,7 @@
         "4vzmrld1"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "480m",
@@ -2013,7 +2013,7 @@
         "ywj13bkw"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "480m",
@@ -2032,7 +2032,7 @@
         "ke2n42cm"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "480m",
@@ -2051,7 +2051,7 @@
         "ur7yonej"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "480m",
@@ -2089,7 +2089,7 @@
         "h06m5ls2"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "480m",
@@ -2108,7 +2108,7 @@
         "rblv9hpr"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "480m",
@@ -2127,7 +2127,7 @@
         "pej34iwq"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "480m",
@@ -2146,7 +2146,7 @@
         "4737op7s"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "480m",
@@ -2184,7 +2184,7 @@
         "d34a9o4t"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "480m",
@@ -2203,7 +2203,7 @@
         "vdcrgfy0"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "810m",
@@ -2222,7 +2222,7 @@
         "8z7txpf8"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "810m",
@@ -2241,7 +2241,7 @@
         "027xoq0r"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "810m",
@@ -2260,7 +2260,7 @@
         "lhwdegc8"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "810m",
@@ -2279,7 +2279,7 @@
         "h1rmcm2p"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "810m",
@@ -2298,7 +2298,7 @@
         "w912irkq"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "810m",
@@ -2317,7 +2317,7 @@
         "upxsysuv"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "810m",
@@ -2336,7 +2336,7 @@
         "7ryj4klm"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "810m",
@@ -2374,7 +2374,7 @@
         "1d5gxgjv"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "810m",
@@ -2393,7 +2393,7 @@
         "jpbqhfvc"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "810m",
@@ -2412,7 +2412,7 @@
         "8ewnju8z"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "810m",
@@ -2431,7 +2431,7 @@
         "l0u9gv52"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "810m",
@@ -2469,7 +2469,7 @@
         "kye1c19u"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "810m",
@@ -2488,7 +2488,7 @@
         "58ftjxmw"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "810m",
@@ -2507,7 +2507,7 @@
         "bf0yrani"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "810m",
@@ -2526,7 +2526,26 @@
         "pvoq0dq6"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
+    },
+    {
+      "model": "810m",
+      "variant": "geometry_gdn_ev2_rope_gated",
+      "variant_label": "geometry-matched hybrid (GDN, expand_v=2, RoPE, gated attention)",
+      "cx": 8,
+      "lr": 0.0004,
+      "lr_tag": "0.0004",
+      "loss": 2.1048055917212047,
+      "state": "finished",
+      "tokens_b": 121.883590656,
+      "run_id": "pwl3valx",
+      "name": "pt-810m-geometry-gdn-ev2-rope-gated-cx8-lr4e-4-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/pwl3valx",
+      "segment_run_ids": [
+        "pwl3valx"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 1
     },
     {
       "model": "810m",
@@ -2545,7 +2564,7 @@
         "s5gvyjiz"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "810m",
@@ -2564,7 +2583,7 @@
         "kyti8h1y"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "1p2b",
@@ -2584,7 +2603,7 @@
         "lubri1f1"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 5
+      "deduplicated_samples": 6
     },
     {
       "model": "1p2b",
@@ -2603,7 +2622,7 @@
         "ojtvkjgk"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "1p2b",
@@ -2641,7 +2660,7 @@
         "1d24xfx5"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "1p2b",
@@ -2660,7 +2679,7 @@
         "hww8eksq"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "1p2b",
@@ -2679,7 +2698,7 @@
         "hd12kewt"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "1p2b",
@@ -2719,7 +2738,7 @@
         "4k1bh4k2"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "1p2b",
@@ -2738,7 +2757,7 @@
         "jfwntmwm"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "1p2b",
@@ -2757,7 +2776,7 @@
         "xxrj2oou"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "1p2b",
@@ -2776,7 +2795,7 @@
         "bhr5mgpr"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "1p2b",
@@ -2814,7 +2833,7 @@
         "vc3c6gj6"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "1p2b",
@@ -2833,7 +2852,7 @@
         "u7ab1tpb"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     },
     {
       "model": "1p2b",
@@ -2871,7 +2890,26 @@
         "z4zmtqmu"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
+    },
+    {
+      "model": "1p2b",
+      "variant": "geometry_gdn_ev2_rope_gated",
+      "variant_label": "geometry-matched hybrid (GDN, expand_v=2, RoPE, gated attention)",
+      "cx": 8,
+      "lr": 0.0004,
+      "lr_tag": "0.0004",
+      "loss": 2.0295137496864273,
+      "state": "finished",
+      "tokens_b": 187.436630016,
+      "run_id": "1147k891",
+      "name": "pt-1p2b-geometry-gdn-ev2-rope-gated-cx8-lr4e-4-ep8-sync-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/1147k891",
+      "segment_run_ids": [
+        "1147k891"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 1
     },
     {
       "model": "1p2b",
@@ -2909,7 +2947,7 @@
         "bqjzmiqi"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 1
     }
   ],
   "results": [
@@ -2938,7 +2976,7 @@
           "h86x1nv3"
         ],
         "token_resets": 0,
-        "deduplicated_samples": 0
+        "deduplicated_samples": 1
       },
       "references": {
         "wide_integration": {
@@ -2958,7 +2996,7 @@
             "h86x1nv3"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 0
+          "deduplicated_samples": 1
         },
         "hybrid_gdn_ev1": {
           "model": "275m",
@@ -2977,7 +3015,7 @@
             "moknw6oc"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 0
+          "deduplicated_samples": 1
         },
         "geometry_gdn_ev2": {
           "model": "275m",
@@ -2996,7 +3034,7 @@
             "8zx9zgnw"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 0
+          "deduplicated_samples": 1
         },
         "geometry_gdn_ev2_nope": {
           "model": "275m",
@@ -3015,7 +3053,7 @@
             "epdjswap"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 0
+          "deduplicated_samples": 1
         },
         "geometry_gdn_ev2_nope_gated": {
           "model": "275m",
@@ -3034,7 +3072,7 @@
             "q81uxrxu"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 0
+          "deduplicated_samples": 1
         }
       },
       "intervention_result": {
@@ -3054,7 +3092,7 @@
           "eo5bm8gw"
         ],
         "token_resets": 0,
-        "deduplicated_samples": 0
+        "deduplicated_samples": 1
       },
       "delta_intervention_minus_wide": -0.049063632823136416,
       "delta_intervention_minus_reference": {
@@ -3090,7 +3128,7 @@
           "6porpbo2"
         ],
         "token_resets": 0,
-        "deduplicated_samples": 0
+        "deduplicated_samples": 1
       },
       "references": {
         "wide_integration": {
@@ -3110,7 +3148,7 @@
             "6porpbo2"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 0
+          "deduplicated_samples": 1
         },
         "hybrid_gdn_ev1": {
           "model": "275m",
@@ -3129,7 +3167,7 @@
             "j12fk559"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 0
+          "deduplicated_samples": 1
         },
         "geometry_gdn_ev2": {
           "model": "275m",
@@ -3148,7 +3186,7 @@
             "3oqkg24h"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 0
+          "deduplicated_samples": 1
         },
         "geometry_gdn_ev2_nope": {
           "model": "275m",
@@ -3167,7 +3205,7 @@
             "gjmz37ct"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 0
+          "deduplicated_samples": 1
         },
         "geometry_gdn_ev2_nope_gated": {
           "model": "275m",
@@ -3186,7 +3224,7 @@
             "ef4umox3"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 0
+          "deduplicated_samples": 1
         }
       },
       "intervention_result": {
@@ -3206,7 +3244,7 @@
           "8mkt4xpz"
         ],
         "token_resets": 0,
-        "deduplicated_samples": 0
+        "deduplicated_samples": 1
       },
       "delta_intervention_minus_wide": -0.03484657088165788,
       "delta_intervention_minus_reference": {
@@ -3242,7 +3280,7 @@
           "9n3xk8gs"
         ],
         "token_resets": 0,
-        "deduplicated_samples": 0
+        "deduplicated_samples": 1
       },
       "references": {
         "wide_integration": {
@@ -3262,7 +3300,7 @@
             "9n3xk8gs"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 0
+          "deduplicated_samples": 1
         },
         "hybrid_gdn_ev1": {
           "model": "275m",
@@ -3281,7 +3319,7 @@
             "uhw9wfed"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 0
+          "deduplicated_samples": 1
         },
         "geometry_gdn_ev2": {
           "model": "275m",
@@ -3300,7 +3338,7 @@
             "hwjvw532"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 0
+          "deduplicated_samples": 1
         },
         "geometry_gdn_ev2_nope": {
           "model": "275m",
@@ -3319,7 +3357,7 @@
             "k5mjm4ev"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 0
+          "deduplicated_samples": 1
         },
         "geometry_gdn_ev2_nope_gated": {
           "model": "275m",
@@ -3338,7 +3376,7 @@
             "gwzx0ekc"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 0
+          "deduplicated_samples": 1
         }
       },
       "intervention_result": {
@@ -3358,7 +3396,7 @@
           "iqxc5n9x"
         ],
         "token_resets": 0,
-        "deduplicated_samples": 0
+        "deduplicated_samples": 1
       },
       "delta_intervention_minus_wide": -0.03590869153820497,
       "delta_intervention_minus_reference": {
@@ -3394,7 +3432,7 @@
           "qe052lo4"
         ],
         "token_resets": 0,
-        "deduplicated_samples": 0
+        "deduplicated_samples": 1
       },
       "references": {
         "wide_integration": {
@@ -3414,7 +3452,7 @@
             "qe052lo4"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 0
+          "deduplicated_samples": 1
         },
         "hybrid_gdn_ev1": {
           "model": "275m",
@@ -3433,7 +3471,7 @@
             "66aja50m"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 0
+          "deduplicated_samples": 1
         },
         "geometry_gdn_ev2": {
           "model": "275m",
@@ -3472,7 +3510,7 @@
             "d29gx1x9"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 0
+          "deduplicated_samples": 1
         },
         "geometry_gdn_ev2_nope_gated": {
           "model": "275m",
@@ -3491,7 +3529,7 @@
             "ouxblu4g"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 0
+          "deduplicated_samples": 1
         }
       },
       "intervention_result": {
@@ -3511,7 +3549,7 @@
           "8rgf3myq"
         ],
         "token_resets": 0,
-        "deduplicated_samples": 0
+        "deduplicated_samples": 1
       },
       "delta_intervention_minus_wide": -0.03306751131261665,
       "delta_intervention_minus_reference": {
@@ -3547,7 +3585,7 @@
           "z4wxvc6h"
         ],
         "token_resets": 0,
-        "deduplicated_samples": 0
+        "deduplicated_samples": 1
       },
       "references": {
         "wide_integration": {
@@ -3567,7 +3605,7 @@
             "z4wxvc6h"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 0
+          "deduplicated_samples": 1
         },
         "hybrid_gdn_ev1": {
           "model": "480m",
@@ -3586,7 +3624,7 @@
             "wl8ebsd8"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 0
+          "deduplicated_samples": 1
         },
         "geometry_gdn_ev2": null,
         "geometry_gdn_ev2_nope": {
@@ -3606,7 +3644,7 @@
             "i2bij623"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 0
+          "deduplicated_samples": 1
         },
         "geometry_gdn_ev2_nope_gated": {
           "model": "480m",
@@ -3625,7 +3663,7 @@
             "9rltp47w"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 0
+          "deduplicated_samples": 1
         }
       },
       "intervention_result": {
@@ -3645,7 +3683,7 @@
           "ms1r0qqa"
         ],
         "token_resets": 0,
-        "deduplicated_samples": 0
+        "deduplicated_samples": 1
       },
       "delta_intervention_minus_wide": -0.03704210747212988,
       "delta_intervention_minus_reference": {
@@ -3681,7 +3719,7 @@
           "ywj13bkw"
         ],
         "token_resets": 0,
-        "deduplicated_samples": 0
+        "deduplicated_samples": 1
       },
       "references": {
         "wide_integration": {
@@ -3701,7 +3739,7 @@
             "ywj13bkw"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 0
+          "deduplicated_samples": 1
         },
         "hybrid_gdn_ev1": {
           "model": "480m",
@@ -3720,7 +3758,7 @@
             "4vzmrld1"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 0
+          "deduplicated_samples": 1
         },
         "geometry_gdn_ev2": null,
         "geometry_gdn_ev2_nope": {
@@ -3740,7 +3778,7 @@
             "2d1t07dn"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 0
+          "deduplicated_samples": 1
         },
         "geometry_gdn_ev2_nope_gated": {
           "model": "480m",
@@ -3759,7 +3797,7 @@
             "0crj05wz"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 0
+          "deduplicated_samples": 1
         }
       },
       "intervention_result": {
@@ -3779,7 +3817,7 @@
           "68t7rt6l"
         ],
         "token_resets": 0,
-        "deduplicated_samples": 0
+        "deduplicated_samples": 1
       },
       "delta_intervention_minus_wide": -0.020970780519569576,
       "delta_intervention_minus_reference": {
@@ -3815,7 +3853,7 @@
           "rblv9hpr"
         ],
         "token_resets": 0,
-        "deduplicated_samples": 0
+        "deduplicated_samples": 1
       },
       "references": {
         "wide_integration": {
@@ -3835,7 +3873,7 @@
             "rblv9hpr"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 0
+          "deduplicated_samples": 1
         },
         "hybrid_gdn_ev1": {
           "model": "480m",
@@ -3854,7 +3892,7 @@
             "h06m5ls2"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 0
+          "deduplicated_samples": 1
         },
         "geometry_gdn_ev2": null,
         "geometry_gdn_ev2_nope": {
@@ -3874,7 +3912,7 @@
             "ke2n42cm"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 0
+          "deduplicated_samples": 1
         },
         "geometry_gdn_ev2_nope_gated": {
           "model": "480m",
@@ -3893,7 +3931,7 @@
             "ur7yonej"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 0
+          "deduplicated_samples": 1
         }
       },
       "intervention_result": {
@@ -3949,7 +3987,7 @@
           "vdcrgfy0"
         ],
         "token_resets": 0,
-        "deduplicated_samples": 0
+        "deduplicated_samples": 1
       },
       "references": {
         "wide_integration": {
@@ -3969,7 +4007,7 @@
             "vdcrgfy0"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 0
+          "deduplicated_samples": 1
         },
         "hybrid_gdn_ev1": {
           "model": "480m",
@@ -3988,7 +4026,7 @@
             "d34a9o4t"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 0
+          "deduplicated_samples": 1
         },
         "geometry_gdn_ev2": null,
         "geometry_gdn_ev2_nope": {
@@ -4008,7 +4046,7 @@
             "pej34iwq"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 0
+          "deduplicated_samples": 1
         },
         "geometry_gdn_ev2_nope_gated": {
           "model": "480m",
@@ -4027,7 +4065,7 @@
             "4737op7s"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 0
+          "deduplicated_samples": 1
         }
       },
       "intervention_result": {
@@ -4083,7 +4121,7 @@
           "w912irkq"
         ],
         "token_resets": 0,
-        "deduplicated_samples": 0
+        "deduplicated_samples": 1
       },
       "references": {
         "wide_integration": {
@@ -4103,7 +4141,7 @@
             "w912irkq"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 0
+          "deduplicated_samples": 1
         },
         "hybrid_gdn_ev1": {
           "model": "810m",
@@ -4122,7 +4160,7 @@
             "h1rmcm2p"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 0
+          "deduplicated_samples": 1
         },
         "geometry_gdn_ev2": null,
         "geometry_gdn_ev2_nope": {
@@ -4142,7 +4180,7 @@
             "8z7txpf8"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 0
+          "deduplicated_samples": 1
         },
         "geometry_gdn_ev2_nope_gated": {
           "model": "810m",
@@ -4161,7 +4199,7 @@
             "027xoq0r"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 0
+          "deduplicated_samples": 1
         }
       },
       "intervention_result": {
@@ -4181,7 +4219,7 @@
           "lhwdegc8"
         ],
         "token_resets": 0,
-        "deduplicated_samples": 0
+        "deduplicated_samples": 1
       },
       "delta_intervention_minus_wide": -0.0050328426391073044,
       "delta_intervention_minus_reference": {
@@ -4217,7 +4255,7 @@
           "jpbqhfvc"
         ],
         "token_resets": 0,
-        "deduplicated_samples": 0
+        "deduplicated_samples": 1
       },
       "references": {
         "wide_integration": {
@@ -4237,7 +4275,7 @@
             "jpbqhfvc"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 0
+          "deduplicated_samples": 1
         },
         "hybrid_gdn_ev1": {
           "model": "810m",
@@ -4256,7 +4294,7 @@
             "1d5gxgjv"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 0
+          "deduplicated_samples": 1
         },
         "geometry_gdn_ev2": null,
         "geometry_gdn_ev2_nope": {
@@ -4276,7 +4314,7 @@
             "upxsysuv"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 0
+          "deduplicated_samples": 1
         },
         "geometry_gdn_ev2_nope_gated": {
           "model": "810m",
@@ -4295,7 +4333,7 @@
             "7ryj4klm"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 0
+          "deduplicated_samples": 1
         }
       },
       "intervention_result": {
@@ -4351,7 +4389,7 @@
           "58ftjxmw"
         ],
         "token_resets": 0,
-        "deduplicated_samples": 0
+        "deduplicated_samples": 1
       },
       "references": {
         "wide_integration": {
@@ -4371,7 +4409,7 @@
             "58ftjxmw"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 0
+          "deduplicated_samples": 1
         },
         "hybrid_gdn_ev1": {
           "model": "810m",
@@ -4390,7 +4428,7 @@
             "kye1c19u"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 0
+          "deduplicated_samples": 1
         },
         "geometry_gdn_ev2": null,
         "geometry_gdn_ev2_nope": {
@@ -4410,7 +4448,7 @@
             "8ewnju8z"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 0
+          "deduplicated_samples": 1
         },
         "geometry_gdn_ev2_nope_gated": {
           "model": "810m",
@@ -4429,7 +4467,7 @@
             "l0u9gv52"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 0
+          "deduplicated_samples": 1
         }
       },
       "intervention_result": {
@@ -4464,9 +4502,9 @@
       "model": "810m",
       "cx": 8,
       "mode": "fixed_lr_transfer",
-      "complete": false,
+      "complete": true,
       "optimal_summary_eligible": false,
-      "completed_intervention_runs": 0,
+      "completed_intervention_runs": 1,
       "expected_intervention_runs": 1,
       "wide_reference": {
         "model": "810m",
@@ -4485,7 +4523,7 @@
           "kyti8h1y"
         ],
         "token_resets": 0,
-        "deduplicated_samples": 0
+        "deduplicated_samples": 1
       },
       "references": {
         "wide_integration": {
@@ -4505,7 +4543,7 @@
             "kyti8h1y"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 0
+          "deduplicated_samples": 1
         },
         "hybrid_gdn_ev1": {
           "model": "810m",
@@ -4524,7 +4562,7 @@
             "s5gvyjiz"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 0
+          "deduplicated_samples": 1
         },
         "geometry_gdn_ev2": null,
         "geometry_gdn_ev2_nope": {
@@ -4544,7 +4582,7 @@
             "bf0yrani"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 0
+          "deduplicated_samples": 1
         },
         "geometry_gdn_ev2_nope_gated": {
           "model": "810m",
@@ -4563,17 +4601,35 @@
             "pvoq0dq6"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 0
+          "deduplicated_samples": 1
         }
       },
-      "intervention_result": null,
-      "delta_intervention_minus_wide": null,
+      "intervention_result": {
+        "model": "810m",
+        "variant": "geometry_gdn_ev2_rope_gated",
+        "variant_label": "geometry-matched hybrid (GDN, expand_v=2, RoPE, gated attention)",
+        "cx": 8,
+        "lr": 0.0004,
+        "lr_tag": "0.0004",
+        "loss": 2.1048055917212047,
+        "state": "finished",
+        "tokens_b": 121.883590656,
+        "run_id": "pwl3valx",
+        "name": "pt-810m-geometry-gdn-ev2-rope-gated-cx8-lr4e-4-r1",
+        "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/pwl3valx",
+        "segment_run_ids": [
+          "pwl3valx"
+        ],
+        "token_resets": 0,
+        "deduplicated_samples": 1
+      },
+      "delta_intervention_minus_wide": -0.00013322687748873463,
       "delta_intervention_minus_reference": {
-        "wide_integration": null,
-        "hybrid_gdn_ev1": null,
+        "wide_integration": -0.00013322687748873463,
+        "hybrid_gdn_ev1": 0.00922050491069104,
         "geometry_gdn_ev2": null,
-        "geometry_gdn_ev2_nope": null,
-        "geometry_gdn_ev2_nope_gated": null
+        "geometry_gdn_ev2_nope": -0.01504209956283109,
+        "geometry_gdn_ev2_nope_gated": -0.009710630905703344
       }
     },
     {
@@ -4601,7 +4657,7 @@
           "hww8eksq"
         ],
         "token_resets": 0,
-        "deduplicated_samples": 0
+        "deduplicated_samples": 1
       },
       "references": {
         "wide_integration": {
@@ -4621,7 +4677,7 @@
             "hww8eksq"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 0
+          "deduplicated_samples": 1
         },
         "hybrid_gdn_ev1": {
           "model": "1p2b",
@@ -4640,7 +4696,7 @@
             "1d24xfx5"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 0
+          "deduplicated_samples": 1
         },
         "geometry_gdn_ev2": null,
         "geometry_gdn_ev2_nope": {
@@ -4661,7 +4717,7 @@
             "lubri1f1"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 5
+          "deduplicated_samples": 6
         },
         "geometry_gdn_ev2_nope_gated": {
           "model": "1p2b",
@@ -4680,7 +4736,7 @@
             "ojtvkjgk"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 0
+          "deduplicated_samples": 1
         }
       },
       "intervention_result": {
@@ -4736,7 +4792,7 @@
           "jfwntmwm"
         ],
         "token_resets": 0,
-        "deduplicated_samples": 0
+        "deduplicated_samples": 1
       },
       "references": {
         "wide_integration": {
@@ -4756,7 +4812,7 @@
             "jfwntmwm"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 0
+          "deduplicated_samples": 1
         },
         "hybrid_gdn_ev1": {
           "model": "1p2b",
@@ -4775,7 +4831,7 @@
             "4k1bh4k2"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 0
+          "deduplicated_samples": 1
         },
         "geometry_gdn_ev2": null,
         "geometry_gdn_ev2_nope": {
@@ -4795,7 +4851,7 @@
             "hd12kewt"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 0
+          "deduplicated_samples": 1
         },
         "geometry_gdn_ev2_nope_gated": {
           "model": "1p2b",
@@ -4854,7 +4910,7 @@
           "u7ab1tpb"
         ],
         "token_resets": 0,
-        "deduplicated_samples": 0
+        "deduplicated_samples": 1
       },
       "references": {
         "wide_integration": {
@@ -4874,7 +4930,7 @@
             "u7ab1tpb"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 0
+          "deduplicated_samples": 1
         },
         "hybrid_gdn_ev1": {
           "model": "1p2b",
@@ -4893,7 +4949,7 @@
             "vc3c6gj6"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 0
+          "deduplicated_samples": 1
         },
         "geometry_gdn_ev2": null,
         "geometry_gdn_ev2_nope": {
@@ -4913,7 +4969,7 @@
             "xxrj2oou"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 0
+          "deduplicated_samples": 1
         },
         "geometry_gdn_ev2_nope_gated": {
           "model": "1p2b",
@@ -4932,7 +4988,7 @@
             "bhr5mgpr"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 0
+          "deduplicated_samples": 1
         }
       },
       "intervention_result": {
@@ -4967,9 +5023,9 @@
       "model": "1p2b",
       "cx": 8,
       "mode": "fixed_lr_transfer",
-      "complete": false,
+      "complete": true,
       "optimal_summary_eligible": false,
-      "completed_intervention_runs": 0,
+      "completed_intervention_runs": 1,
       "expected_intervention_runs": 1,
       "wide_reference": {
         "model": "1p2b",
@@ -4988,7 +5044,7 @@
           "bqjzmiqi"
         ],
         "token_resets": 0,
-        "deduplicated_samples": 0
+        "deduplicated_samples": 1
       },
       "references": {
         "wide_integration": {
@@ -5008,7 +5064,7 @@
             "bqjzmiqi"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 0
+          "deduplicated_samples": 1
         },
         "hybrid_gdn_ev1": {
           "model": "1p2b",
@@ -5066,17 +5122,35 @@
             "z4zmtqmu"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 0
+          "deduplicated_samples": 1
         }
       },
-      "intervention_result": null,
-      "delta_intervention_minus_wide": null,
+      "intervention_result": {
+        "model": "1p2b",
+        "variant": "geometry_gdn_ev2_rope_gated",
+        "variant_label": "geometry-matched hybrid (GDN, expand_v=2, RoPE, gated attention)",
+        "cx": 8,
+        "lr": 0.0004,
+        "lr_tag": "0.0004",
+        "loss": 2.0295137496864273,
+        "state": "finished",
+        "tokens_b": 187.436630016,
+        "run_id": "1147k891",
+        "name": "pt-1p2b-geometry-gdn-ev2-rope-gated-cx8-lr4e-4-ep8-sync-r1",
+        "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/1147k891",
+        "segment_run_ids": [
+          "1147k891"
+        ],
+        "token_resets": 0,
+        "deduplicated_samples": 1
+      },
+      "delta_intervention_minus_wide": 0.00687305957266382,
       "delta_intervention_minus_reference": {
-        "wide_integration": null,
-        "hybrid_gdn_ev1": null,
+        "wide_integration": 0.00687305957266382,
+        "hybrid_gdn_ev1": 0.01314507190536407,
         "geometry_gdn_ev2": null,
-        "geometry_gdn_ev2_nope": null,
-        "geometry_gdn_ev2_nope_gated": null
+        "geometry_gdn_ev2_nope": -0.004791305125134482,
+        "geometry_gdn_ev2_nope_gated": -0.007633724302615441
       }
     }
   ]

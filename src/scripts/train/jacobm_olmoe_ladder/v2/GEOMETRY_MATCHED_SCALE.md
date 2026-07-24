@@ -371,19 +371,18 @@ Checkpointing
 retains rolling ephemeral saves every 500 steps plus the final checkpoint;
 all in-loop and on-finish evaluators are disabled for post-training backfill.
 
-Status at 2026-07-23 17:16 UTC: nine cells are finished, two are running,
-and 1.2B Cx2 is failed. The finished strict final-250M CEs are `2.506239`,
+Status at 2026-07-24 01:38 UTC: 11 cells are finished and 1.2B Cx2 is failed.
+The finished strict final-250M CEs are `2.506239`,
 `2.402917`, `2.307792`, and `2.233177` for 480M Cx1/2/4/8; `2.368164` and
-`2.266516` for 810M Cx1/2, `2.191042` for 810M Cx4, `2.270124` for 1.2B Cx1,
-and `2.105145` for 1.2B Cx4. The 810M Cx8 and 1.2B Cx8 cells are running at
-104.3B / 121.9B (85%) and 182.1B / 187.4B (97%), respectively. The failed
+`2.266516` for 810M Cx1/2, `2.191042` for 810M Cx4, `2.104806` for 810M Cx8,
+`2.270124` for 1.2B Cx1, `2.105145` for 1.2B Cx4, and `2.029514` for 1.2B Cx8.
+The failed
 1.2B Cx2 worker reached step 5,420, where
 `OLMoDDPOptimizer` asserted on a non-finite total gradient norm. It auto-resumed
 from durable `step5000` and hit the same assertion again at step 6,582. Its
 later CUDA device assertion and NCCL watchdog output are secondary distributed
 teardown failures; this was not an OOM. The 810M Cx4 cell had one instance of
-the same assertion at step 29,107, then auto-resumed successfully and is now
-well past that point.
+the same assertion at step 29,107, then auto-resumed and finished successfully.
 
 The first 12 allocated work items were canceled before any execution job
 reached `started`, and no checkpoint directory was created. Their IDs are

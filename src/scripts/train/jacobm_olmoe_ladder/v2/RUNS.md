@@ -4,7 +4,7 @@ Record post-migration experiment waves here. Per-run rows must include Beaker
 job IDs and W&B IDs once they exist. Detailed migration-era DDP jobs remain in
 [`../v1/DDP_RUNS.md`](../v1/DDP_RUNS.md).
 
-## Live status snapshot (2026-07-23 19:00 UTC)
+## Live status snapshot (2026-07-24 01:38 UTC)
 
 This is the current source of truth for active V2 work. The detailed sections
 below retain the full launch and retry history.
@@ -24,10 +24,10 @@ below retain the full launch and retry history.
 | pretraining | aligned geometry + RoPE + gated attention 275M sweep | finished | 16/16; observed best LR is `1.6e-3`, `1.6e-3`, `8e-4`, `1.6e-3` at Cx1/2/4/8 | [results](results/pretraining/geometry_gdn_ev2_rope_gated/results.md) |
 | pretraining | larger aligned geometry + NoPE | finished | 12/12 formal cells; clean 1.2B Cx8 reproduction finished with final-250M CE `2.034305` | [results](results/pretraining/geometry_gdn_ev2_nope/results.md) |
 | pretraining | larger aligned geometry + NoPE + gated attention | finished | 12/12; newly finished 1.2B Cx2 strict final-250M CE `2.188236` | [results](results/pretraining/geometry_gdn_ev2_nope_gated/results.md) |
-| pretraining | larger aligned geometry + RoPE + gated attention | 10 finished / 1 running / 1 failed | 1.2B Cx8 finished at 187.437B tokens with final `step238338`; 810M Cx8 is still running; 1.2B Cx2 remains failed | [results](results/pretraining/geometry_gdn_ev2_rope_gated/results.md) |
+| pretraining | larger aligned geometry + RoPE + gated attention | 11 finished / 1 failed | newly collected strict final-250M CE: 810M Cx8 `2.104806`, 1.2B Cx8 `2.029514`; 1.2B Cx2 remains failed | [results](results/pretraining/geometry_gdn_ev2_rope_gated/results.md) |
 | midtraining | first hybrid 275M Cx8 | finished | 100B; final checkpoint `step95368`; validation finished | [1keo2hz6](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/1keo2hz6) |
 | midtraining | first hybrid 480M Cx8 | finished | 100.001B; final checkpoint `step95368`; validation finished | [mnp9rv5l](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/mnp9rv5l) |
-| validation | V2 post-training backfills | 91 complete; 26 RoPE-gated queued | Full-suite backfills submitted for all 16 finished 275M sweep cells and 10 finished larger cells | [results](results/validation/hybrid_full.md) |
+| validation | V2 post-training backfills | 114 complete / 3 running; 1 new checkpoint pending | All 16 gated-RoPE 275M and seven larger gated-RoPE backfills finished; the three 1.2B gated-RoPE backfills are running; newly finished 810M Cx8 still needs backfill | [results](results/validation/hybrid_full.md) |
 
 The formal pretraining results and plots use finished runs only and enforce a
 complete final-250M-token history. The gated-RoPE sweep is now complete. Its
@@ -39,21 +39,24 @@ Cx4, and Cx8; at Cx2 it is `0.003461` worse.
 All six corrected Cx2 MB3 validation retries finished in
 [01KY09D3D872K0R03NHF5MGYD4](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY09D3D872K0R03NHF5MGYD4).
 The 32 NoPE/gated 275M backfills and both first-hybrid midtraining backfills
-also finished. The consolidated export now contains 91 complete targets with
-498 metrics each. The current backlog is 28 checkpoints: 16 finished 275M
-gated-RoPE points, nine finished gated-RoPE scale points, first-hybrid 1.2B
-Cx8, gated-NoPE 1.2B Cx2, and the clean ungated-NoPE 1.2B Cx8 reproduction.
+also finished. The consolidated validation export now contains 114 finished
+targets with 498 metrics each. All 16 gated-RoPE 275M backfills and seven
+larger gated-RoPE backfills are complete. The only registered unfinished
+validations are the three gated-RoPE 1.2B targets: Cx4/Cx8 are running and Cx1
+has now started its retry. The 810M Cx8 training completion happened after the
+larger validation manifest was submitted, so that checkpoint still needs a
+separate validation backfill.
 
-The nine finished larger gated-RoPE points have strict final-250M CEs of
+The 11 finished larger gated-RoPE points have strict final-250M CEs of
 `2.506239`, `2.402917`, `2.307792`, and `2.233177` for 480M Cx1/2/4/8;
-`2.368164`, `2.266516`, and `2.191042` for 810M Cx1/2/4; and `2.270124` and
-`2.105145` for 1.2B Cx1/4.
+`2.368164`, `2.266516`, `2.191042`, and `2.104806` for 810M Cx1/2/4/8; and
+`2.270124`, `2.105145`, and `2.029514` for 1.2B Cx1/4/8.
 The 1.2B Cx2 failure is a training-path numerical failure, not an OOM: the
 optimizer asserted on a non-finite total gradient at step 5,420, auto-resumed
 from durable `step5000`, and hit the same assertion again at step 6,582. The
 later CUDA device assertion and NCCL watchdog messages are distributed
 teardown effects. The 810M Cx4 cell had one identical assertion at step 29,107,
-then auto-resumed and has continued cleanly past 39.2B tokens.
+then auto-resumed and finished cleanly.
 
 ## 275M active hybrid GDN (`expand_v=1`)
 
@@ -566,23 +569,23 @@ gated-NoPE counterpart only by restoring RoPE to full-attention layers.
 The compact layout requests 124 GPUs. The 480M and 810M models use EP1; all
 1.2B models use EP8 with `sync_1d`. Training retains rolling ephemeral
 checkpoints every 500 steps and the final checkpoint. In-loop and on-finish
-evaluation are disabled; validation will be backfilled after training. W&B
-IDs will be added to the plotting registry after the queued jobs initialize.
+evaluation are disabled; validation will be backfilled after training. All
+initialized W&B IDs are registered in the plotting collector.
 
 | Cx | Size | LR | GPUs | EP | MB | Accum | Beaker work | State |
 |---:|---:|---:|---:|---:|---:|---:|---|---|
-| 1 | 480M | `1.2e-3` | 4 | 1 | 8 | 1 | [01KY1DKVJJ0ECA4QS0SENKH49E](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY1DKVJJ0ECA4QS0SENKH49E) | queued |
-| 1 | 810M | `6e-4` | 8 | 1 | 4 | 1 | [01KY1DKYH8Q1HAX2922D7AJA4E](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY1DKYH8Q1HAX2922D7AJA4E) | queued |
-| 1 | 1.2B | `4e-4` | 8 | 8 | 4 | 1 | [01KY1DM1J6C028TJNQART75FY1](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY1DM1J6C028TJNQART75FY1) | queued |
-| 2 | 480M | `9e-4` | 4 | 1 | 12 | 1 | [01KY1DM576YRXHEVF13MTVN9VJ](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY1DM576YRXHEVF13MTVN9VJ) | queued |
-| 2 | 810M | `5.6e-4` | 8 | 1 | 6 | 1 | [01KY1DM89PS7K4BCYTX0QFVFXE](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY1DM89PS7K4BCYTX0QFVFXE) | queued |
-| 2 | 1.2B | `6e-4` | 16 | 8 | 3 | 1 | [01KY1DMBM1CBJTPK3W3W372B56](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY1DMBM1CBJTPK3W3W372B56) | queued |
-| 4 | 480M | `8e-4` | 4 | 1 | 8 | 2 | [01KY1DMF80H4S3G45RCDE5D1TR](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY1DMF80H4S3G45RCDE5D1TR) | queued |
-| 4 | 810M | `4e-4` | 8 | 1 | 4 | 2 | [01KY1DMJG0DPAN2M8E9YHEQPZT](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY1DMJG0DPAN2M8E9YHEQPZT) | queued |
-| 4 | 1.2B | `3e-4` | 16 | 8 | 4 | 1 | [01KY1DMNKHZ8AND4FYA9WFHRYA](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY1DMNKHZ8AND4FYA9WFHRYA) | queued |
-| 8 | 480M | `8e-4` | 8 | 1 | 12 | 1 | [01KY1DMRSHXB5RTZGD39NXD2G4](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY1DMRSHXB5RTZGD39NXD2G4) | queued |
-| 8 | 810M | `4e-4` | 8 | 1 | 6 | 2 | [01KY1DMW31S6YVCDN479XYRE7S](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY1DMW31S6YVCDN479XYRE7S) | queued |
-| 8 | 1.2B | `4e-4` | 32 | 8 | 3 | 1 | [01KY1DN08V4T6HMJDDCPPKHGSN](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY1DN08V4T6HMJDDCPPKHGSN) | queued |
+| 1 | 480M | `1.2e-3` | 4 | 1 | 8 | 1 | [01KY1DKVJJ0ECA4QS0SENKH49E](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY1DKVJJ0ECA4QS0SENKH49E) | finished |
+| 1 | 810M | `6e-4` | 8 | 1 | 4 | 1 | [01KY1DKYH8Q1HAX2922D7AJA4E](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY1DKYH8Q1HAX2922D7AJA4E) | finished |
+| 1 | 1.2B | `4e-4` | 8 | 8 | 4 | 1 | [01KY1DM1J6C028TJNQART75FY1](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY1DM1J6C028TJNQART75FY1) | finished |
+| 2 | 480M | `9e-4` | 4 | 1 | 12 | 1 | [01KY1DM576YRXHEVF13MTVN9VJ](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY1DM576YRXHEVF13MTVN9VJ) | finished |
+| 2 | 810M | `5.6e-4` | 8 | 1 | 6 | 1 | [01KY1DM89PS7K4BCYTX0QFVFXE](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY1DM89PS7K4BCYTX0QFVFXE) | finished |
+| 2 | 1.2B | `6e-4` | 16 | 8 | 3 | 1 | [01KY1DMBM1CBJTPK3W3W372B56](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY1DMBM1CBJTPK3W3W372B56) | failed |
+| 4 | 480M | `8e-4` | 4 | 1 | 8 | 2 | [01KY1DMF80H4S3G45RCDE5D1TR](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY1DMF80H4S3G45RCDE5D1TR) | finished |
+| 4 | 810M | `4e-4` | 8 | 1 | 4 | 2 | [01KY1DMJG0DPAN2M8E9YHEQPZT](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY1DMJG0DPAN2M8E9YHEQPZT) | finished |
+| 4 | 1.2B | `3e-4` | 16 | 8 | 4 | 1 | [01KY1DMNKHZ8AND4FYA9WFHRYA](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY1DMNKHZ8AND4FYA9WFHRYA) | finished |
+| 8 | 480M | `8e-4` | 8 | 1 | 12 | 1 | [01KY1DMRSHXB5RTZGD39NXD2G4](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY1DMRSHXB5RTZGD39NXD2G4) | finished |
+| 8 | 810M | `4e-4` | 8 | 1 | 6 | 2 | [01KY1DMW31S6YVCDN479XYRE7S](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY1DMW31S6YVCDN479XYRE7S) | finished; final-250M CE `2.104806` |
+| 8 | 1.2B | `4e-4` | 32 | 8 | 3 | 1 | [01KY1DN08V4T6HMJDDCPPKHGSN](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY1DN08V4T6HMJDDCPPKHGSN) | finished; final-250M CE `2.029514` |
 
 The initial allocated submission was canceled on 2026-07-21 before any job
 reached `started`; no checkpoint directory was created. Its 12 IDs remain in
@@ -736,9 +739,11 @@ retains the identical 192-GPU peak layout and transferred LRs.
   high-priority unallocated backfills on `jacobm/moe-v2-core`:
   [16 two-GPU 275M tasks](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY8CJNZW98DWVW4282SEHKWT)
   and [10 eight-GPU larger-model tasks](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY8CK6Q5BFTEX09ZKRHWCCC5).
-  Both batches are allocated, urgent, and constrained to Holmes. The larger
-  batch includes the newly finished 1.2B Cx8 `step238338`; 810M Cx8 remains
-  deferred while training, and failed/partial 1.2B Cx2 is not evaluated.
+  The 275M batch finished 16/16. The larger batch has seven finished tasks and
+  three running 1.2B tasks (Cx1/Cx4/Cx8). The
+  consolidated collector now exports 114 finished targets with 498 metrics
+  each. The newly finished 810M Cx8 is not part of that original submission;
+  failed/partial 1.2B Cx2 is not evaluated.
 
 ## New wave template
 
