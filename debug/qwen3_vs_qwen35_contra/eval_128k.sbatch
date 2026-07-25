@@ -23,8 +23,19 @@
 set -uo pipefail
 REPO=/accounts/projects/berkeleynlp/prasann/projects/OLMo-core
 VDIR=$REPO/debug/ctc_vllm_validation
-export PYTHONPATH="/scratch/users/prasann/tf_qwen35_target:$REPO/src"
-export HF_HOME=/data/prasann/hf_cache
+# Prefer node-local copies of the transformers shadow and the HF cache. Both were on /scratch,
+# and the first 128k run wedged the export in `nfs_wait_bit_killable` (D state, 0.4% CPU, 12 min,
+# no output) -- the same NFS failure mode as the flashinfer cache, just via a different path.
+# HF_HOME must point at a cache that actually HAS the base snapshot, because the hybrid export
+# calls snapshot_download() under HF_HUB_OFFLINE=1; a missing cache is a hard failure, not a
+# fallback, so the first EXISTING candidate wins rather than a hardcoded one.
+TFSHADOW=/data/prasann/tf_qwen35_target
+[ -d "$TFSHADOW" ] || TFSHADOW=/scratch/users/prasann/tf_qwen35_target
+export PYTHONPATH="$TFSHADOW:$REPO/src"
+for C in /data/prasann/hf_cache /data/prasann/huggingface-cache /scratch/users/prasann/huggingface-cache; do
+  [ -d "$C" ] && { export HF_HOME=$C; break; }
+done
+export HF_HOME="${HF_HOME:-/scratch/users/prasann/huggingface-cache}"
 export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 TOKENIZERS_PARALLELISM=false
 export PYTHONWARNINGS=ignore PYTHONUNBUFFERED=1
 export CUDA_HOME=/usr/local/cuda-12.8
@@ -35,7 +46,11 @@ export FLASHINFER_CACHE_DIR=/data/prasann/flashinfer_cache
 export TRITON_CACHE_DIR=/data/prasann/triton_cache
 mkdir -p "$FLASHINFER_CACHE_DIR" "$TRITON_CACHE_DIR" 2>/dev/null || true
 
-PY=/scratch/users/prasann/conda/envs/corpus-reasoning-olmo/bin/python   # export/tokenize/grade
+# Node-local env first: running the interpreter itself off /scratch drags every .so through NFS,
+# which is what stalled the export (see the HF_HOME note above). run_ctc_local.sbatch already
+# does this; the eval path had not caught up.
+PY=/data/prasann/conda/envs/corpus-reasoning-olmo/bin/python             # export/tokenize/grade
+[ -x "$PY" ] || PY=/scratch/users/prasann/conda/envs/corpus-reasoning-olmo/bin/python
 VLLM_PY=/data/prasann/ctc_vllm_venv/bin/python                          # generation only
 MODEL="${MODEL:?set MODEL=qwen3|qwen35}"
 CKPT="${CKPT:?set CKPT=<olmo save folder containing step<N>/ or model_and_optim>}"
@@ -76,14 +91,21 @@ else
   ROPE_ARGS="--rope-theta 4e6 --max-position-embeddings 131072"
 fi
 
+# Export from the LOCAL snapshot dir when we have one. The hub id would send export_olmo_to_hf
+# through snapshot_download() under HF_HUB_OFFLINE=1, and no HF cache on these nodes holds
+# Qwen3.5-4B-Base -- the 2k eval never hit this because it evaluated an already-exported model.
+EXPORT_BASE="$BASE_ID"
+[ -d "$BASE_SNAP" ] && EXPORT_BASE="$BASE_SNAP"
+
 echo "=== eval MODEL=$MODEL family=$FAMILY rung=$RUNG ckpt=$CKPT maxsamp=$MAXSAMP $(date '+%F %T') ==="
 echo "    rope args: $ROPE_ARGS"
+echo "    PY=$PY  HF_HOME=$HF_HOME  export base=$EXPORT_BASE"
 
 # ---- 1) olmo distcp -> HF (idempotent) ----
 if [ ! -f "$HF_EXPORT/config.json" ]; then
   echo "=== export -> HF $(date '+%F %T') ==="
   $PY "$REPO/src/corpus_reasoning/train/export_olmo_to_hf.py" \
-    --save-folder "$CKPT" --hf-out "$HF_EXPORT" --base-model "$BASE_ID" $ROPE_ARGS \
+    --save-folder "$CKPT" --hf-out "$HF_EXPORT" --base-model "$EXPORT_BASE" $ROPE_ARGS \
     || { echo "!!! EXPORT FAILED"; exit 3; }
 else
   echo "HF export exists: $HF_EXPORT"

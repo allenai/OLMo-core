@@ -129,7 +129,11 @@ def main():
         import glob as _glob, json as _json, types as _types
         from huggingface_hub import snapshot_download
         from corpus_reasoning.lib.qwen35_to_hf import convert_qwen3_5_state_to_hf
-        snap = snapshot_download(args.base_model)
+        # Accept a local snapshot DIRECTORY as well as a hub id. On the Berkeley cluster the base
+        # is staged node-local (/data/.../Qwen3.5-4B-Base) and is often absent from the HF cache
+        # entirely, where snapshot_download() under HF_HUB_OFFLINE=1 either fails or stalls on NFS.
+        # Every other from_pretrained() call here already accepts a path; only this one did not.
+        snap = args.base_model if os.path.isdir(args.base_model) else snapshot_download(args.base_model)
         raw = _json.load(open(os.path.join(snap, "config.json")))
         text_ns = _types.SimpleNamespace(**raw["text_config"])
         print(f"[export] qwen3_5 inverse-convert {len(olmo_state)} tensors -> HF text decoder", flush=True)

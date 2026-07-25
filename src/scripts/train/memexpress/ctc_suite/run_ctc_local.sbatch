@@ -76,8 +76,16 @@ MAX_STEPS="${MAX_STEPS:-0}"
 SEED="${SEED:-0}"
 # Optional activation-checkpointing / FSDP shard-degree overrides (mirrors run_ctc_lambda.sbatch).
 # Empty by default -> trainer default (auto / no override), so existing callers are unaffected.
-ACT_CKPT="${ACT_CKPT:-}"          # full | none | auto
+ACT_CKPT="${ACT_CKPT:-}"          # full | budget | none | auto
 SHARD_DEGREE="${SHARD_DEGREE:-}"  # FSDP shard_degree
+# Long-context knobs (empty -> off, so existing callers unaffected). CP_DEGREE = Ulysses degree
+# (hybrid<=4, dense<=8); PACK=1 bin-packs whole examples (mixed 8k..256k); AC_BUDGET = budget for
+# ACT_CKPT=budget; ROPE_YARN = YaRN factor (dense only).
+CP_DEGREE="${CP_DEGREE:-}"
+PACK="${PACK:-}"
+AC_BUDGET="${AC_BUDGET:-}"
+ROPE_YARN="${ROPE_YARN:-}"
+ROPE_THETA="${ROPE_THETA:-}"   # NTK context-extension theta (e.g. ~2e6 for Qwen3-4B@64k, ~8e6@256k)
 # Optional mask-mix curriculum overrides (chunked-mix variant only). Empty -> train_ctc_suite.py
 # defaults (0.80 -> 0.0 anneal). Set BOTH equal for a CONSTANT p (e.g. MIX_START_P=0.5 MIX_END_P=0.5
 # to match the paper's fixed p=0.5 instead of the anneal-to-pure-chunked default).
@@ -107,6 +115,22 @@ export PYTHONUNBUFFERED=1
 # .sbatch already fixes it the same way. A node-local (ext4) FileLock serializes compiles correctly.
 export TRITON_CACHE_DIR="${TRITON_CACHE_DIR:-/data/prasann/triton_cache}"
 mkdir -p "$TRITON_CACHE_DIR" 2>/dev/null || true
+
+# wandb: olmo-core hard-requires the WANDB_API_KEY *env var* and dies with
+# `OLMoEnvironmentError: missing env var 'WANDB_API_KEY'` if it is unset -- but it does so only
+# AFTER the base checkpoint load and mesh build (~10 min at 128k), and only rank 0 raises, so the
+# other ranks spin at 100% GPU in the NCCL collective and SLURM still reports RUNNING. That looks
+# exactly like a healthy long-loading job while it burns the whole node. `wandb login` writes the
+# key to ~/.netrc but NOT to the env, so a launch from a shell that never exported it hits this.
+# Backfill from ~/.netrc (or set NOWANDB=1 to skip wandb entirely).
+if [ -z "${WANDB_API_KEY:-}" ] && [ -z "${NOWANDB:-}" ] && [ -r "$HOME/.netrc" ]; then
+  WANDB_API_KEY=$(awk '/machine[[:space:]]+api\.wandb\.ai/{f=1} f&&/password/{print $2; exit}' "$HOME/.netrc")
+  [ -n "$WANDB_API_KEY" ] && export WANDB_API_KEY && echo "WANDB_API_KEY: backfilled from ~/.netrc"
+fi
+if [ -z "${WANDB_API_KEY:-}" ] && [ -z "${NOWANDB:-}" ]; then
+  echo "FATAL: WANDB_API_KEY unset and not in ~/.netrc -> olmo-core would crash ~10min in with"
+  echo "       all ranks hung. Export it, or set NOWANDB=1 to train without wandb."; exit 4
+fi
 
 # GPU selection: RESPECT the SLURM allocation when present. On a shared node SLURM's cgroup gives
 # us specific devices (CUDA_VISIBLE_DEVICES / SLURM_JOB_GPUS); the old "pick idle GPUs by nvidia-smi
@@ -144,6 +168,10 @@ MASTER_PORT=$((29000 + RANDOM % 1000))
 # Optional: disable wandb (e.g. no WANDB_API_KEY in the env). Set NOWANDB=1.
 # Backward-compatible: empty by default, so existing online-wandb runs are unchanged.
 WANDBARG=""; [ -n "${NOWANDB:-}" ] && WANDBARG="--no-wandb"
+# Compile: OFF by default (backward-compat; the mask-mix coin isn't compilable anyway). Set
+# COMPILE=1 to enable torch.compile -- REQUIRED for --activation-checkpointing budget (which
+# olmo-core refuses without compile), and the proven CP recipe (compile + budget AC).
+COMPILEARG="--no-compile"; [ -n "${COMPILE:-}" ] && COMPILEARG=""
 
 torchrun --nproc_per_node="$NGPU" --master_port="$MASTER_PORT" \
   src/scripts/train/memexpress/ctc_suite/train_ctc_suite.py \
@@ -155,8 +183,13 @@ torchrun --nproc_per_node="$NGPU" --master_port="$MASTER_PORT" \
   --global-batch "$GLOBAL_BATCH" --micro-batch-instances "$MICRO_BATCH" --seed "$SEED" \
   ${ACT_CKPT:+--activation-checkpointing "$ACT_CKPT"} \
   ${SHARD_DEGREE:+--shard-degree "$SHARD_DEGREE"} \
+  ${CP_DEGREE:+--cp-degree "$CP_DEGREE"} \
+  ${PACK:+--pack} \
+  ${AC_BUDGET:+--ac-budget "$AC_BUDGET"} \
+  ${ROPE_YARN:+--rope-yarn-factor "$ROPE_YARN"} \
+  ${ROPE_THETA:+--rope-theta "$ROPE_THETA"} \
   ${MIX_START_P:+--mix-start-p "$MIX_START_P"} \
   ${MIX_END_P:+--mix-end-p "$MIX_END_P"} \
-  --save-checkpoint --no-compile $WANDBARG \
+  --save-checkpoint $COMPILEARG $WANDBARG \
   $MAXARG
 echo "=== DONE $(date '+%F %T')  rc=$? ==="
