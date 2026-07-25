@@ -45,6 +45,26 @@ python -c "import fla" 2>/dev/null || {
     || { echo "FATAL: fla still not importable -- GDN export cannot build"; exit 2; }
 }
 
+# transformers SHADOW for the qwen3_5 export. The container ships transformers 4.57.x, which has no
+# `qwen3_5` model type, so AutoConfig on the Qwen3.5 base raises "Transformers does not recognize
+# this architecture". Rather than upgrade transformers in place (4.57 -> 5.14 is a major jump that
+# olmo_core also imports through), install 5.14.1 into a SEPARATE dir and prepend it to PYTHONPATH
+# for the export only -- exactly the shadow trick the local pipeline uses
+# (PYTHONPATH=/scratch/.../tf_qwen35_target). torch is NOT shadowed, so the training/export stack
+# is otherwise untouched.
+TFSHADOW=/root/tf_shadow
+if ! python -c "import transformers.models.qwen3_5" 2>/dev/null; then
+  if [ ! -d "$TFSHADOW" ]; then
+    echo "=== installing transformers 5.14.1 shadow (qwen3_5 support) $(date '+%F %T') ==="
+    pip install -q --target "$TFSHADOW" "transformers==5.14.1" 2>&1 | tail -5
+  fi
+  export PYTHONPATH="$TFSHADOW:$PYTHONPATH"
+  python -c "
+import transformers, transformers.models.qwen3_5
+print('shadow transformers', transformers.__version__, '(qwen3_5 OK)')" \
+    || { echo "FATAL: transformers shadow still lacks qwen3_5"; exit 2; }
+fi
+
 # JIT caches MUST be container-local, never on a shared FS: concurrent arms compiling the same
 # flashinfer/triton kernels into one shared cache dir deadlock on the lock file.
 export HOME=/root
