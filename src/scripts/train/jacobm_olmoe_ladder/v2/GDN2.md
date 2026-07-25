@@ -513,12 +513,18 @@ full concurrency; the complete logical sweep including the reused cell is 160
 GPUs. Exact works and job IDs are recorded in `RUNS.md` and
 `launchers/pretraining/generated/275m_canonical_gdn2_kda_lr_sweep_submissions.json`.
 
-Status at 2026-07-25 16:44 UTC: canonical GDN2 is 14/16 complete with no
-failed attempt. Cx1/Cx2/Cx4 are fully bracketed; each selects observed LR
-`1.6e-3`, with strict final-250M CEs `2.677515`, `2.557597`, and `2.467207`.
-Cx8 has finished `4e-4` and the reused `1.6e-3` control; `8e-4` and `3.2e-3`
-are the only remaining training jobs and are in their final 2.5--5.6%.
-Canonical Cx8 remains excluded from the shared best-of plot until both finish.
+Final status at 2026-07-25 17:22 UTC: canonical GDN2 completed all 16/16
+points without a failed attempt. Every Cx curve is bracketed and selects
+observed LR `1.6e-3`, with strict final-250M CEs `2.677515`, `2.557597`,
+`2.467207`, and `2.389725`. The completed Cx8 quadratic predicts approximately
+`1.21e-3`; formal selection remains the observed `1.6e-3` point.
+
+The canonical larger-scale transfer was submitted later that day using the
+wide-integration LRs and the balanced 176-GPU layout. It covers all 12
+480M/810M/1.2B by Cx1/2/4/8 cells, ordered longest-first. The scale builder
+audits exact `expand_v=1`, nonnegative mixer settings and active counts of
+`489,954,144`, `823,189,952`, and `1,228,949,248`. Exact Beaker works and the
+immutable submission ledger are recorded in `RUNS.md`.
 
 ### Production-shape kernel reference validation
 

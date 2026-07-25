@@ -29,6 +29,7 @@ below retain the full launch and retry history.
 | pretraining | 275M GDN2 stability 2x2 | 3/3 finished | Fresh Cx8/LR `1.6e-3` ev1+negative, ev2+nonnegative, and canonical ev1+nonnegative controls all completed | [work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYBVM2N2D3DM67S8HWARJP6C) |
 | pretraining | canonical GDN2 (`expand_v=1`, nonnegative) 275M sweep | 16/16 finished | All four Cx curves are complete and bracketed; observed-best LR is `1.6e-3` at every Cx | [results](results/pretraining/canonical_gdn2_kda/results.md) |
 | pretraining | canonical KDA 275M sweep | 16/16 finished | All four Cx curves are complete and bracketed; observed-best LR is `1.6e-3` at every Cx | [results](results/pretraining/canonical_gdn2_kda/results.md) |
+| pretraining | canonical GDN2 larger-scale transfer | 12/12 submitted | Balanced 176-GPU layout; urgent/unallocated; longest cells submitted first | [launch table](#canonical-gdn2-larger-scale-transfer) |
 | diagnostic | GDN2 production-shape PyTorch reference 2x2 | finished | All four `expand_v`/negative-eigenvalue cells passed forward, final-state, backward, packed-document, and recompute/retain comparisons | [work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYBY8DXT5BVM85WYKAT5TXQN) |
 | diagnostic | Matched KDA/GDN2 numerical audit | finished | All 40 one/four-chunk output/state comparisons passed; GDN2 is broadly KDA-like, with localized 3.80% `A_log` relative-L2 error at T256/V256/negative eigvals | [work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYBZX8MHJ611ZSJD43SYS9HZ) / [results](results/diagnostics/matched_kda_gdn2_numerics.md) |
 | diagnostic | KDA reference + 50-step MB16 qualification | finished | Reference/packed checks passed; zero skipped steps; steady-state 404.7 TFLOPs/GPU and 290.5K TPS on one B300 | [work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYBX6WX46F9B3HV3W59G368R) / [3s14s676](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/3s14s676) |
@@ -139,13 +140,49 @@ predicts approximately `1.21e-3`; formal selection remains the observed
 fully completed, non-provisional curve.
 
 The paired plotting entry point is `plot_canonical_gdn2_kda.py`. It resolves
-planned runs by exact W&B display name, currently finding 19/32 logical cells;
-the other 13 have not initialized. Duplicate exact names fail closed. Once
-runs finish, one command produces separate baseline-free U-plots for canonical
+all 32 logical cells by exact W&B display name; duplicate exact names fail
+closed. One command produces separate baseline-free U-plots for canonical
 GDN2 and KDA plus a single strict observed-best plot against wide integration,
-matching gated-NoPE GDN1, and original `expand_v=2` GDN2. Every plotted point
-must have a bracketed quadratic curve; incomplete-but-bracketed points receive
-the existing provisional marker.
+matching gated-NoPE GDN1, and original `expand_v=2` GDN2. Every selected point
+has a completed, bracketed quadratic curve.
+
+## Canonical GDN2 larger-scale transfer
+
+Submitted 2026-07-25 as 12 distinct urgent, unallocated Holmes experiments
+from commit `504872eae`. These are the canonical `expand_v=1`, nonnegative
+GDN2 models with gated full attention and NoPE, not the earlier `expand_v=2`,
+negative-eigenvalue family. All cells use their corresponding transferred wide
+integration LR, normal backward recomputation, accumulation factor one,
+rolling ephemeral checkpoints, and out-of-loop evaluation.
+
+The manifest deliberately submits the longest cells first: 810M Cx8, 1.2B
+Cx4/Cx8, all 480M cells, 810M Cx1/Cx2/Cx4, then 1.2B Cx1/Cx2. The balanced
+layouts request 176 GPUs at full concurrency. The larger `expand_v=2` profile
+already passed every reused capacity layout; canonical `expand_v=1` has lower
+active counts and recurrent value-state memory.
+
+| Submission | Cell | GPUs | EP | Rank MB | LR | Beaker |
+|---:|---|---:|---:|---:|---:|---|
+| 1 | 810M Cx8 | 16 | 1 | 6 | `4e-4` | [01KYD5XE46SZT0V03YD9K7BT93](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYD5XE46SZT0V03YD9K7BT93) |
+| 2 | 1.2B Cx4 | 16 | 8 `sync_1d` | 4 | `3e-4` | [01KYD5XHT0PE00Q17A7MVVMMME](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYD5XHT0PE00Q17A7MVVMMME) |
+| 3 | 1.2B Cx8 | 32 | 8 `sync_1d` | 3 | `4e-4` | [01KYD5XN1HVE5T6JRQG0XWD3WE](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYD5XN1HVE5T6JRQG0XWD3WE) |
+| 4 | 480M Cx1 | 8 | 1 | 4 | `1.2e-3` | [01KYD5XR1Y35K6FA0KS9RPA6CW](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYD5XR1Y35K6FA0KS9RPA6CW) |
+| 5 | 480M Cx2 | 8 | 1 | 6 | `9e-4` | [01KYD5XTYN7T4BEFMMT5946C9C](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYD5XTYN7T4BEFMMT5946C9C) |
+| 6 | 480M Cx4 | 8 | 1 | 8 | `8e-4` | [01KYD5XY0PTA050SVGPKSB7NXE](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYD5XY0PTA050SVGPKSB7NXE) |
+| 7 | 480M Cx8 | 16 | 1 | 6 | `8e-4` | [01KYD5Y0R1R166QDZXHK6FMVTZ](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYD5Y0R1R166QDZXHK6FMVTZ) |
+| 8 | 810M Cx1 | 16 | 1 | 2 | `6e-4` | [01KYD5Y3WK8BFTVC5WD5ZA31QD](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYD5Y3WK8BFTVC5WD5ZA31QD) |
+| 9 | 810M Cx2 | 16 | 1 | 3 | `5.6e-4` | [01KYD5Y77MP9JJ8PN7PS22XRT9](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYD5Y77MP9JJ8PN7PS22XRT9) |
+| 10 | 810M Cx4 | 16 | 1 | 4 | `4e-4` | [01KYD5YBRDK3NWK0EDER5G7YY7](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYD5YBRDK3NWK0EDER5G7YY7) |
+| 11 | 1.2B Cx1 | 8 | 8 `sync_1d` | 4 | `4e-4` | [01KYD5YEFCH20J94SKFH7YW435](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYD5YEFCH20J94SKFH7YW435) |
+| 12 | 1.2B Cx2 | 16 | 8 `sync_1d` | 3 | `6e-4` | [01KYD5YK5YFKSJT0N3Y2HZ36W7](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYD5YK5YFKSJT0N3Y2HZ36W7) |
+
+At the immediate post-submit audit, nine experiments were scheduled and three
+were created/queued; none had failed. The submitted specs were checked across
+all 22 replicas for the exact source commit, canonical model variant, urgent
+priority, zero minimum runtime, Holmes-only placement, disabled in-loop evals,
+and rolling ephemeral checkpoint policy. The complete immutable submission
+ledger is
+[`launchers/pretraining/generated/geometry_matched_scale_gdn2_ev1_noneg_nope_gated_balanced_submissions.json`](launchers/pretraining/generated/geometry_matched_scale_gdn2_ev1_noneg_nope_gated_balanced_submissions.json).
 
 ## 275M geometry-matched gated-NoPE GDN2 sweep
 
