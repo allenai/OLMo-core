@@ -504,3 +504,31 @@ directories. The launch manifest is
 `launchers/pretraining/manifests/275m_gdn2_stability_ablation.yaml`. A possible
 later KDA 275M LR sweep remains planning-only until these stability results and
 the kernel investigation are reviewed.
+
+### Production-shape kernel reference validation
+
+On 2026-07-25, a one-B300
+[reference-validation job](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYBY8DXT5BVM85WYKAT5TXQN)
+compared the pinned FLA GDN2 chunk kernel with
+`fla.ops.gdn2.naive.naive_recurrent_gdn2`. The test used the production eight
+heads and 128-dimensional keys in BF16, exercised both 128- and
+256-dimensional values, and multiplied the erase gate into `[0, 2]` for the
+negative-eigenvalue cells. It propagated independent gradients through the
+output and final recurrent state into Q, K, V, raw decay, raw erase, raw write,
+`A_log`, `dt_bias`, and the initial state.
+
+| `expand_v` | Negative eigenvalues | Max output abs diff | Max state abs diff | Largest gradient abs diff | Packed output abs diff |
+|---:|---:|---:|---:|---:|---:|
+| 1 | no | 1.75e-4 | 1.20e-3 | 1.56e-2 (`dV`) | 1.42e-4 |
+| 1 | yes | 2.05e-4 | 1.66e-3 | 1.56e-2 (`dV`) | 1.73e-4 |
+| 2 | no | 1.57e-4 | 1.63e-3 | 1.23e-2 (`dA_log`) | 1.89e-4 |
+| 2 | yes | 1.91e-4 | 1.14e-3 | 1.56e-2 (`dV`) | 2.18e-4 |
+
+All comparisons passed FLA's established combined absolute/relative
+tolerances. Retaining forward intermediates (`disable_recompute=True`) and
+normal backward recomputation produced the same numerical differences in
+every cell. Packed `[64, 64]` documents also matched independent recurrent
+references in forward and backward. This rules out an immediate algebraic or
+production-shape mismatch tied to `expand_v`, negative eigenvalues, packed
+documents, or recomputation; it does not rule out a data- or state-dependent
+failure that appears only later in training.

@@ -16,6 +16,7 @@ from olmo_core.nn.attention import (
     AttentionConfig,
     GatedDeltaNetConfig,
     GatedDeltaNet2Config,
+    KimiDeltaAttentionConfig,
     NemotronMamba2Config,
 )
 from olmo_core.nn.attention.recurrent import GatedDeltaNet
@@ -138,6 +139,42 @@ def test_gated_delta_net_2_fwd_bwd():
         assert y.shape == x.shape
         y.sum().backward()
     assert x.grad is not None
+
+
+@requires_fla
+@pytest.mark.parametrize(
+    "recurrent_config",
+    [
+        pytest.param(KimiDeltaAttentionConfig(n_heads=8), id="default"),
+        pytest.param(KimiDeltaAttentionConfig(n_heads=8, head_dim=32), id="head_dim=32"),
+        pytest.param(KimiDeltaAttentionConfig(n_heads=8, conv_size=8), id="conv_size=8"),
+    ],
+)
+def test_kimi_delta_attention_config_num_params(
+    recurrent_config: KimiDeltaAttentionConfig,
+):
+    d_model = 512
+    module = recurrent_config.build(d_model, layer_idx=0, n_layers=12, init_device="meta")
+    assert recurrent_config.num_params(d_model) == sum(p.numel() for p in module.parameters())
+
+
+@requires_fla
+@requires_gpu
+def test_kimi_delta_attention_fwd_bwd():
+    device = "cuda"
+    dtype = torch.bfloat16
+    d_model, seq_len, batch_size = 256, 128, 1
+    config = KimiDeltaAttentionConfig(n_heads=2, head_dim=128)
+    module = config.build(d_model, layer_idx=0, n_layers=12, init_device=device)
+    x = torch.randn(batch_size, seq_len, d_model, device=device, dtype=dtype, requires_grad=True)
+    cu_doc_lens = torch.tensor([0, 64, 128], dtype=torch.int32, device=device)
+
+    with torch.autocast(device_type=device, dtype=dtype):
+        y = module(x, cu_doc_lens=cu_doc_lens)
+        assert y.shape == x.shape
+        y.square().mean().backward()
+    assert x.grad is not None
+    assert torch.isfinite(x.grad).all()
 
 
 def _run_context_parallel_gdn_ulysses(

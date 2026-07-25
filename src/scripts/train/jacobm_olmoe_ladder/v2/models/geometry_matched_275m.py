@@ -29,6 +29,7 @@ from olmo_core.nn.attention import (
     GateConfig,
     GatedDeltaNet2Config,
     GateGranularity,
+    KimiDeltaAttentionConfig,
     SlidingWindowAttentionConfig,
 )
 from olmo_core.nn.attention.recurrent import GatedDeltaNetConfig
@@ -125,6 +126,7 @@ EXPECTED_GDN2_COUNTS_BY_EXPAND_V = {
     1.0: (284_915_520, 220_690_240, 3_130_447_680),
     2.0: (306_191_168, 241_965_888, 3_151_723_328),
 }
+EXPECTED_KDA_COUNTS = (274_470_720, 210_245_440, 3_120_002_880)
 
 # A strict 1:1 hybrid alternates a recurrent/local mixer at even layers with
 # gated global attention at odd layers. Layer count is the only sizing knob:
@@ -377,6 +379,89 @@ def build_geometry_matched_gdn2_model_config(
     if actual_counts != expected_counts:
         raise ValueError(
             f"unexpected GDN2 parameter counts: expected {expected_counts}, "
+            f"found {actual_counts}"
+        )
+    return candidate
+
+
+def build_geometry_matched_kda_model_config() -> OLMoDDPModelConfig:
+    """Replace GDN1 with canonical KDA in the gated-NoPE 275M geometry.
+
+    The KDA mixers follow the released Kimi-Linear configuration: 128-d heads,
+    ``expand_v=1``, nonnegative eigenvalues, and four-token short convolutions.
+    Full attention, MoE geometry, dense-first placement, and initialization are
+    inherited unchanged from the matching GDN1 gated-NoPE model.
+    """
+
+    candidate = build_geometry_matched_model_config("geometry_nope_gated")
+    resolved = candidate.resolved_block_configs
+    old_gdn = cast(GatedDeltaNetConfig, resolved[1].sequence_mixer)
+    kda = KimiDeltaAttentionConfig(
+        n_heads=old_gdn.n_heads,
+        n_v_heads=old_gdn.n_heads,
+        head_dim=old_gdn.head_dim,
+        expand_v=1.0,
+        allow_neg_eigval=False,
+        conv_size=old_gdn.conv_size,
+        conv_bias=old_gdn.conv_bias,
+        norm_eps=old_gdn.norm_eps,
+        dtype=old_gdn.dtype,
+    )
+
+    default_block = deepcopy(resolved[1])
+    default_block.sequence_mixer = deepcopy(kda)
+    dense_first = deepcopy(resolved[0])
+    dense_first.sequence_mixer = deepcopy(kda)
+    candidate.block = default_block
+    candidate.block_overrides = {
+        0: dense_first,
+        **{layer_idx: deepcopy(resolved[layer_idx]) for layer_idx in FULL_ATTENTION_LAYERS},
+    }
+    candidate.validate()
+
+    actual_kda = tuple(
+        layer_idx
+        for layer_idx, block in enumerate(candidate.resolved_block_configs)
+        if isinstance(block.sequence_mixer, KimiDeltaAttentionConfig)
+    )
+    actual_full = tuple(
+        layer_idx
+        for layer_idx, block in enumerate(candidate.resolved_block_configs)
+        if isinstance(block.sequence_mixer, AttentionConfig)
+    )
+    if actual_kda != GDN_LAYERS or actual_full != FULL_ATTENTION_LAYERS:
+        raise ValueError(f"unexpected mixer pattern: KDA={actual_kda}, full={actual_full}")
+    if candidate.resolved_block_configs[0].routed_experts is not None:
+        raise ValueError("KDA candidate must retain the dense-first layer-0 FFN")
+    for layer_idx in FULL_ATTENTION_LAYERS:
+        attention = cast(AttentionConfig, candidate.resolved_block_configs[layer_idx].sequence_mixer)
+        if attention.rope is not None:
+            raise ValueError(f"KDA candidate full-attention layer {layer_idx} must use NoPE")
+        if (
+            attention.gate is None
+            or attention.gate.granularity != GateGranularity.elementwise
+            or not attention.gate.full_precision
+        ):
+            raise ValueError(
+                f"KDA candidate full-attention layer {layer_idx} must retain elementwise gating"
+            )
+    if any(
+        cast(KimiDeltaAttentionConfig, candidate.resolved_block_configs[i].sequence_mixer).expand_v
+        != 1.0
+        or cast(
+            KimiDeltaAttentionConfig, candidate.resolved_block_configs[i].sequence_mixer
+        ).allow_neg_eigval
+        for i in GDN_LAYERS
+    ):
+        raise ValueError("KDA candidate must use expand_v=1 and nonnegative eigenvalues")
+    actual_counts = (
+        candidate.num_active_params,
+        candidate.num_active_non_embedding_params,
+        candidate.num_params,
+    )
+    if actual_counts != EXPECTED_KDA_COUNTS:
+        raise ValueError(
+            f"unexpected KDA parameter counts: expected {EXPECTED_KDA_COUNTS}, "
             f"found {actual_counts}"
         )
     return candidate

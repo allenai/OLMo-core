@@ -1,0 +1,68 @@
+# Kimi Delta Attention
+
+## Dependency and kernel choice
+
+KDA training uses the FLA `0.4.1` package already present in the standard
+pre-GDN2 image. This is the version pinned by OLMo-core's `fla` dependency
+extra and is deliberately separate from the temporary FLA `0.5.2` overlay
+used only by GDN2 jobs.
+
+FLA `0.4.1` contains Moonshot's released Triton KDA forward and backward
+kernels. The KDA Beaker wrapper asserts `fla.__version__ == "0.4.1"` and the
+presence of `fla.ops.kda.chunk_kda` before training. It installs nothing and
+therefore leaves GDN1 and GDN2 environments unchanged.
+
+MoonshotAI/FlashKDA is a trusted official implementation, but it currently
+exposes only a forward kernel and requires `torch.inference_mode()`. It cannot
+train the model or run an LR sweep. It may be evaluated separately for
+inference and RULER after the training architecture is selected. The unrelated
+`Itssshikhar/Flash-Flash-KDA` H100 fork is not used.
+
+## Audited 275M candidate
+
+`geometry_275m_kda_ev1_noneg_nope_gated` changes only the eight recurrent
+mixers in the existing geometry-matched gated-NoPE model. It retains 640 model
+width, ten layers, global attention at layers 4 and 9, the dense-first FFN,
+all MoE dimensions, attention gating, GQA, NoPE, and initialization.
+
+The KDA layers match FLA `0.4.1`'s released Kimi configuration:
+
+- eight 128-dimensional recurrent heads;
+- `expand_v=1`;
+- nonnegative eigenvalues;
+- per-key-channel decay and one scalar delta gate per head;
+- four-token unbiased short convolutions; and
+- the canonical low-rank decay and sigmoid output-gate projections.
+
+| Variant | Active params | Active non-embedding | Total params |
+|---|---:|---:|---:|
+| KDA gated-NoPE geometry | 274,470,720 | 210,245,440 | 3,120,002,880 |
+
+The candidate's default Cx1 token budget is 4,204,908,800 tokens under the
+usual `20 * active_non_embedding_params * Cx` rule.
+
+## Qualification and sweep
+
+The qualification wrapper first compares the Triton kernel's output and all
+input/parameter gradients with FLA's sequential Torch KDA recurrence. It then
+checks that packed document boundaries match independent per-document calls.
+Only after those checks pass does it run the compiled model for 50 optimizer
+steps at 8K, MB16, and a 2 Mi-token optimizer batch on one B300. It writes no
+checkpoint and runs no evals.
+
+The qualification passed on 2026-07-25 in
+[Beaker experiment `01KYBX6WX46F9B3HV3W59G368R`](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYBX6WX46F9B3HV3W59G368R).
+The maximum output absolute difference against the sequential reference was
+`4.88e-4`; gradient differences were at most `1.70e-3`, and packed-document
+output matched independent documents exactly. The subsequent 50-step training
+smoke completed with zero skipped steps. Its steady-state actual averages were
+404.7 TFLOPs/GPU and 290,450 tokens/s on one B300; active and reserved memory
+were 214.6 GiB and 226.4 GiB respectively. The W&B run is
+[`3s14s676`](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/3s14s676).
+
+The four-LR Cx1/Cx2/Cx4/Cx8 sweep is rendered but must not be submitted until
+the active GDN2 stability controls have been reviewed. It uses `4e-4`, `8e-4`,
+`1.6e-3`, and `3.2e-3` at every Cx, EP1,
+ordinary 10%-of-token warmup and cosine decay, rolling ephemeral checkpoints,
+no in-loop evals, urgent priority, and unallocated Holmes scheduling. The
+fully concurrent sweep is 16 tasks / 80 GPUs.

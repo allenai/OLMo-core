@@ -100,6 +100,7 @@ GDN2_275M_NOPE_SETTINGS = {
     "geometry_275m_gdn2_ev2_noneg_nope_gated": (2.0, False),
     "geometry_275m_gdn2_ev1_noneg_nope_gated": (1.0, False),
 }
+KDA_275M_VARIANT = "geometry_275m_kda_ev1_noneg_nope_gated"
 
 
 def env_bool(name: str, default: bool) -> bool:
@@ -240,6 +241,14 @@ def model_config():
             allow_neg_eigval=allow_neg_eigval,
             disable_recompute=GDN2_DISABLE_RECOMPUTE,
         )
+    elif MODEL_VARIANT == KDA_275M_VARIANT:
+        from scripts.train.jacobm_olmoe_ladder.v2.models.geometry_matched_275m import (
+            build_geometry_matched_kda_model_config,
+        )
+
+        if MODEL_SIZE != "275m":
+            raise ValueError(f"The {KDA_275M_VARIANT} variant only supports MODEL_SIZE=275m")
+        model = build_geometry_matched_kda_model_config()
     elif MODEL_VARIANT == "geometry_275m_swa_rope_gated":
         from scripts.train.jacobm_olmoe_ladder.v2.models.geometry_matched_275m import (
             build_geometry_matched_swa_model_config,
@@ -517,6 +526,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         "geometry_275m_gdn_ev2_nope_gated",
         "geometry_275m_gdn_ev2_rope_gated",
         *GDN2_275M_NOPE_SETTINGS,
+        KDA_275M_VARIANT,
         "geometry_275m_gdn2_ev2_rope_gated",
         "geometry_275m_swa_rope_gated",
         "geometry_275m_gdn_ev2_rope_gated_1to1",
@@ -539,6 +549,8 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         variant_group = (
             f"olmoe3-275m-geometry-gdn2-ev{expand_v:g}-{eigval_tag}-nope-gated"
         )
+    elif MODEL_VARIANT == KDA_275M_VARIANT:
+        variant_group = "olmoe3-275m-geometry-kda-ev1-noneg-nope-gated"
     elif MODEL_VARIANT == "geometry_275m_swa_rope_gated":
         variant_group = "olmoe3-275m-geometry-swa-rope-gated-throughput"
     elif MODEL_VARIANT == "geometry_275m_gdn_ev2_rope_gated_1to1":
@@ -572,15 +584,21 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         "geometry_275m_gdn_ev2_nope_gated",
         "geometry_275m_gdn_ev2_nope",
         *GDN2_275M_NOPE_SETTINGS,
+        KDA_275M_VARIANT,
         "geometry_matched_gdn_ev2_nope",
         "geometry_matched_gdn_ev2_nope_gated",
         "geometry_matched_gdn2_ev2_nope_gated",
     }:
-        expand_v = GDN2_275M_NOPE_SETTINGS.get(MODEL_VARIANT, (2.0, True))[0]
+        expand_v = (
+            1.0
+            if MODEL_VARIANT == KDA_275M_VARIANT
+            else GDN2_275M_NOPE_SETTINGS.get(MODEL_VARIANT, (2.0, True))[0]
+        )
         variant_tags = ["geometry-matched", f"expand-v-{expand_v:g}", "nope"]
         if MODEL_VARIANT in {
             "geometry_275m_gdn_ev2_nope_gated",
             *GDN2_275M_NOPE_SETTINGS,
+            KDA_275M_VARIANT,
             "geometry_matched_gdn_ev2_nope_gated",
             "geometry_matched_gdn2_ev2_nope_gated",
         }:
@@ -597,6 +615,8 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 )
             if GDN2_DISABLE_RECOMPUTE:
                 variant_tags.append("gdn2-no-recompute")
+        if MODEL_VARIANT == KDA_275M_VARIANT:
+            variant_tags.extend(["kda", "nonnegative-eigenvalues"])
     elif geometry_variant:
         variant_tags = ["geometry-matched", "expand-v-2", "rope"]
         if MODEL_VARIANT in {
@@ -679,8 +699,16 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                     "pretraining",
                     MODEL_SIZE,
                     *variant_tags,
-                    "hybrid" if "gdn" in MODEL_VARIANT else "swa-control",
-                    "gdn" if "gdn" in MODEL_VARIANT else "swa",
+                    (
+                        "hybrid"
+                        if "gdn" in MODEL_VARIANT or "kda" in MODEL_VARIANT
+                        else "swa-control"
+                    ),
+                    (
+                        "kda"
+                        if "kda" in MODEL_VARIANT
+                        else ("gdn" if "gdn" in MODEL_VARIANT else "swa")
+                    ),
                     "olmo-ddp",
                     f"ep{EP_SIZE}",
                     (

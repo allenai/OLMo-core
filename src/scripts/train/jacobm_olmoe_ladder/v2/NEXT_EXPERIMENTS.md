@@ -5,13 +5,13 @@ operational rules in `EXPERIMENT_RULES.md` govern every item below. All isolated
 tests train from scratch at Cx1/Cx2/Cx4/Cx8 and compare against the 275M-active
 wide v1 integration model.
 
-After the current gated-RoPE wave, the near-term priorities are GDN2 and
+After the current gated-RoPE wave, the near-term priorities are GDN2, KDA, and
 LatentMoE. Test each independently before considering a combined recipe.
 
 Within GDN2, first resolve the current FLA stability failures. The active
 diagnostics are the `expand_v`/negative-eigenvalue 275M two-by-two comparison
-and a kernel investigation. A 275M KDA LR sweep is a possible follow-up, but it
-is not yet implemented or launched.
+and a kernel investigation. The 275M KDA adapter and sweep are implemented;
+qualification passed and the sweep is not yet launched.
 
 | Order | Experiment | Change from parent recipe | State |
 |---:|---|---|---|
@@ -20,13 +20,14 @@ is not yet implemented or launched.
 | 3 | NoPE | On the aligned-geometry recipe, remove RoPE only from global-attention layers and train from initialization. | 275M sweep and all 12 formal larger cells complete; the clean 1.2B Cx8 replacement finished without reproducing the original collapse. |
 | 4 | Full-attention gating, then exact head geometry | First add only the dense ladder's elementwise full-precision gate to the 275M NoPE model while retaining 8-Q/4-KV GQA. If useful, separately test the dense 8-Q/8-KV attention shape. | 275M gated sweep and all 12 larger cells complete. Exact KV-head geometry remains deferred. |
 | 5 | RoPE × attention-gating interaction | Starting from the gated NoPE geometry model, restore RoPE only on full-attention layers 4 and 9. Keep GQA, gating, geometry, initialization, data, and optimization fixed. | 275M sweep complete. Larger wave has 9 finished, 2 running, and 1 repeatedly failed 1.2B Cx2 cell. |
-| 6 | Gated DeltaNet 2 (GDN2) | Starting from the geometry-matched gated-NoPE parent, replace only GDN v1 with GDN2. Hold attention geometry, MoE, optimization, `expand_v`, convolution, and other model settings fixed; audit the active-parameter increase before launch. | Native adapter and isolated pinned-FLA overlay implemented. Functional smoke, 4/4 MB8/MB16 capacity cells, and the 16/16 GDN1/SWA-matched gated-RoPE throughput matrix passed. GDN2 is 11--13% slower in raw TPS than GDN1. The initial gated-RoPE quality sweep was canceled before its first optimizer step and replaced by the 16-cell gated-NoPE Cx1/2/4/8 LR sweep in Beaker experiment `01KY8TKEBSZHYBZYEC5NFB92YK`; 7 cells are finished, 8 are running, and the auto-resumed Cx2 `1.6e-3` cell is running from `step4500`. It keeps normal recomputation because retained intermediates OOM at MB16. |
-| 7 | LatentMoE | Add the coworker's LatentMoE implementation to the promoted hybrid recipe and test it as an isolated MoE intervention before composition. | Next priority alongside GDN2; wait for the coworker's implementation to be available and verified in this branch. |
-| 8 | Initialization | On the promoted control, change only initialization standard deviation from 0.01 to 0.02. | Optional/planned. |
-| 9 | Remove QK norm | On the promoted control, remove per-head RMSNorm from Q and K in global-attention layers only. Keep GDN's internal output norm and every other norm unchanged. | Deferred isolated architecture ablation. This intentionally departs from the dense ladder, which uses QK norm. |
-| 10 | FP8 training | Hold the promoted architecture fixed and compare an explicitly selected OLMo-core FP8 training mode against the BF16 control, recording loss, stability, memory, tokens/s, and TFLOPs/GPU. | Deferred precision/systems ablation; choose and smoke the exact FP8 mode after the architecture is stable. |
-| 11 | Combined 275M pilot | Combine only interventions whose isolated evidence is neutral-to-positive. | Blocked on isolated results. |
-| 12 | Promote combined recipe | Run the full pretraining ladder, then midtraining, then 8K-to-65K long-context adaptation. | Blocked on the combined pilot. |
+| 6 | Gated DeltaNet 2 (GDN2) | Starting from the geometry-matched gated-NoPE parent, replace only GDN v1 with GDN2. Hold attention geometry, MoE, optimization, `expand_v`, convolution, and other model settings fixed; audit the active-parameter increase before launch. | Native adapter and isolated pinned-FLA overlay implemented. Functional smoke, throughput matrix, and the exact production-shape 2x2 PyTorch-reference validation passed. GDN2 is 11--13% slower in raw TPS than GDN1. The initial gated-RoPE quality sweep was replaced by the gated-NoPE scale sweep, which has exhibited late non-finite-gradient failures; the active 275M stability runs isolate `expand_v` and negative eigenvalues. Retained-intermediate backward is numerically equivalent in the short reference test but OOMs at production MB16. |
+| 7 | Kimi Delta Attention (KDA) | Starting from the geometry-matched gated-NoPE parent, replace GDN with canonical KDA using the pre-GDN2 FLA `0.4.1` Triton training kernel, `expand_v=1`, and nonnegative eigenvalues. | Native adapter and audited 275M config implemented. Reference numerics, packed documents, and the 50-step MB16 training smoke passed; the 16-cell LR sweep is rendered but unsubmitted pending review of the stability evidence. |
+| 8 | LatentMoE | Add the coworker's LatentMoE implementation to the promoted hybrid recipe and test it as an isolated MoE intervention before composition. | Next priority alongside GDN2; wait for the coworker's implementation to be available and verified in this branch. |
+| 9 | Initialization | On the promoted control, change only initialization standard deviation from 0.01 to 0.02. | Optional/planned. |
+| 10 | Remove QK norm | On the promoted control, remove per-head RMSNorm from Q and K in global-attention layers only. Keep GDN's internal output norm and every other norm unchanged. | Deferred isolated architecture ablation. This intentionally departs from the dense ladder, which uses QK norm. |
+| 11 | FP8 training | Hold the promoted architecture fixed and compare an explicitly selected OLMo-core FP8 training mode against the BF16 control, recording loss, stability, memory, tokens/s, and TFLOPs/GPU. | Deferred precision/systems ablation; choose and smoke the exact FP8 mode after the architecture is stable. |
+| 12 | Combined 275M pilot | Combine only interventions whose isolated evidence is neutral-to-positive. | Blocked on isolated results. |
+| 13 | Promote combined recipe | Run the full pretraining ladder, then midtraining, then 8K-to-65K long-context adaptation. | Blocked on the combined pilot. |
 
 ## Dense-hybrid alignment target
 

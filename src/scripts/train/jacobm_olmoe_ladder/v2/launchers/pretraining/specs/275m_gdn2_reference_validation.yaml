@@ -1,0 +1,35 @@
+version: v2
+description: GDN2 production-shape reference validation across expand-v and eigenvalue settings
+tasks:
+  - name: gdn2-reference-2x2
+    image:
+      beaker: 01KW8G8JC20H11Y60PPTE2VN4Q
+    command:
+      - /bin/bash
+      - -lc
+    arguments:
+      - >-
+        set -euo pipefail;
+        SOURCE_REPO=/weka/oe-adapt-default/jacobm/olmoe3/olmo-ddp-migration/OLMo-core-moe-v2-core;
+        export SOURCE_REPO;
+        bash "${SOURCE_REPO}/src/scripts/train/jacobm_olmoe3_gdn2_reference_beaker.sh"
+    datasets:
+      - mountPath: /weka/oe-adapt-default
+        source:
+          weka: oe-adapt-default
+    result:
+      path: /results
+    resources:
+      gpuCount: 1
+      sharedMemory: 64 GiB
+    context:
+      priority: urgent
+      minRuntime: 0m
+      autoResume: false
+    constraints:
+      cluster:
+        - ai2/holmes
+    hostNetworking: true
+    propagateFailure: false
+    propagatePreemption: false
+    timeout: 2h

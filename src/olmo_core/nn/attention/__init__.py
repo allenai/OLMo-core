@@ -19,6 +19,7 @@ from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.nn.attention.base import SequenceMixer, SequenceMixerConfig
 from olmo_core.nn.attention.gdn2 import GatedDeltaNet2, GatedDeltaNet2Config
+from olmo_core.nn.attention.kda import KimiDeltaAttention, KimiDeltaAttentionConfig
 from olmo_core.nn.attention.kv_cache import KVCacheManager
 from olmo_core.nn.attention.recurrent import (
     GatedDeltaNet,
@@ -91,6 +92,8 @@ __all__ = [
     "GatedDeltaNet",
     "GatedDeltaNet2Config",
     "GatedDeltaNet2",
+    "KimiDeltaAttentionConfig",
+    "KimiDeltaAttention",
     "NemotronMamba2Config",
     "NemotronMamba2Mixer",
 ]
