@@ -142,9 +142,7 @@ def build_olmo3_moe_hf_config_from_native_config(
         raise NotImplementedError("Olmo3Moe export only supports SwiGLU experts.")
 
     shared_hidden_sizes = {
-        block.shared_experts.hidden_size
-        for block in moe_blocks
-        if block.shared_experts is not None
+        block.shared_experts.hidden_size for block in moe_blocks if block.shared_experts is not None
     }
     if any(block.shared_experts is None for block in moe_blocks) and shared_hidden_sizes:
         raise ValueError("Shared experts must be present in either every or no MoE layer.")
@@ -170,8 +168,7 @@ def build_olmo3_moe_hf_config_from_native_config(
         if block.shared_experts is not None
     }
     if dense_blocks and (
-        len(dense_hidden_sizes) != 1
-        or any(block.shared_experts is None for block in dense_blocks)
+        len(dense_hidden_sizes) != 1 or any(block.shared_experts is None for block in dense_blocks)
     ):
         raise ValueError("Dense Olmo3Moe layers must have one consistent shared-expert width.")
     if any(
@@ -199,7 +196,9 @@ def build_olmo3_moe_hf_config_from_native_config(
         else:
             layer_types.append(OLMO3_FULL_ATTENTION)
     if len(window_sizes) > 1:
-        raise ValueError(f"Olmo3Moe HF export supports one sliding window size, got {window_sizes}.")
+        raise ValueError(
+            f"Olmo3Moe HF export supports one sliding window size, got {window_sizes}."
+        )
 
     head_dim = attention.head_dim or model_config.d_model // attention.n_heads
     return Olmo3MoeConfig(
@@ -234,9 +233,7 @@ def build_olmo3_moe_hf_config_from_native_config(
         attention_bias=False,
         attention_dropout=attention.dropout or 0.0,
         rms_norm_eps=representative.layer_norm.eps,
-        sliding_window=(
-            next(iter(window_sizes)) + 1 if window_sizes else max_position_embeddings
-        ),
+        sliding_window=(next(iter(window_sizes)) + 1 if window_sizes else max_position_embeddings),
         use_head_qk_norm=True,
         layer_types=layer_types,
         dense_layers_indices=dense_layers_indices,
@@ -255,6 +252,7 @@ def build_olmo3_moe_config_from_hf_config(
     *,
     dtype: DType = DType.bfloat16,
     attention_backend: AttentionBackendName = AttentionBackendName.flash_4,
+    attention_type: AttentionType = AttentionType.default,
     ep_path: ExpertParallelPath | str = ExpertParallelPath.sync_1d,
     ep_capacity_factor: float = 1.25,
     router_aux_loss_weight: float | None = None,
@@ -274,6 +272,10 @@ def build_olmo3_moe_config_from_hf_config(
         raise NotImplementedError("Only SwiGLU Olmo3Moe experts are supported.")
     if not config.get("use_head_qk_norm", False):
         raise NotImplementedError("Olmo3Moe conversion requires head-wise QK norm.")
+    if attention_type not in (AttentionType.default, AttentionType.fused_v2):
+        raise NotImplementedError(
+            f"Olmo3Moe conversion does not support attention type {attention_type!r}."
+        )
 
     n_layers = int(config["num_hidden_layers"])
     dense_layers = {int(idx) for idx in config.get("dense_layers_indices") or ()}
@@ -362,7 +364,7 @@ def build_olmo3_moe_config_from_hf_config(
         )
         return OLMoDDPTransformerBlockConfig(
             sequence_mixer=AttentionConfig(
-                name=AttentionType.default,
+                name=attention_type,
                 n_heads=int(config["num_attention_heads"]),
                 n_kv_heads=int(config["num_key_value_heads"]),
                 head_dim=int(config["head_dim"]),
@@ -451,6 +453,18 @@ def load_olmo3_moe_hf_state(
     model = _unwrap_model(model)
     native_state = convert_state_from_hf(hf_config, dict(hf_state), model_type="olmo3moe")
     parameters = dict(model.named_parameters())
+    for layer_idx in range(hf_config.num_hidden_layers):
+        prefix = f"blocks.{layer_idx}.attention."
+        fused_key = f"{prefix}w_qkv.weight"
+        if fused_key in parameters:
+            native_state[fused_key] = torch.cat(
+                [
+                    native_state.pop(f"{prefix}w_q.weight"),
+                    native_state.pop(f"{prefix}w_k.weight"),
+                    native_state.pop(f"{prefix}w_v.weight"),
+                ],
+                dim=0,
+            ).contiguous()
     missing = set(parameters) - set(native_state)
     if missing:
         raise RuntimeError(f"Converted Olmo3Moe state is missing parameters: {sorted(missing)}")
@@ -493,4 +507,16 @@ def gather_olmo3_moe_hf_state(
             dist.all_gather(gathered, local.contiguous(), group=group)
             local = torch.cat(gathered, dim=0)
         native_state[name] = local
+
+    q_dim = hf_config.num_attention_heads * hf_config.head_dim
+    kv_dim = hf_config.num_key_value_heads * hf_config.head_dim
+    for layer_idx in range(hf_config.num_hidden_layers):
+        prefix = f"blocks.{layer_idx}.attention."
+        fused_key = f"{prefix}w_qkv.weight"
+        if fused_key in native_state:
+            q, k, v = native_state.pop(fused_key).split((q_dim, kv_dim, kv_dim), dim=0)
+            native_state[f"{prefix}w_q.weight"] = q
+            native_state[f"{prefix}w_k.weight"] = k
+            native_state[f"{prefix}w_v.weight"] = v
+
     return convert_state_to_hf(hf_config, native_state)
