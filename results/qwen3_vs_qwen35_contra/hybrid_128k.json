@@ -1,0 +1,67 @@
+{
+  "experiment": "qwen3_vs_qwen35_contra_128k",
+  "arm": "hybrid",
+  "model": "Qwen3.5-4B-Base (GDN hybrid)",
+  "task": "contradiction",
+  "cot_mode": "no-cot",
+  "eval_backend": "vllm",
+  "eval_size": 500,
+  "rung_name": 131072,
+  "rung_actual_prompt_tokens": {
+    "min": 133793,
+    "median": 139630,
+    "max": 146582
+  },
+  "trained_seq_len": 131072,
+  "note": "rung_131072 tokenizes to 133793-146582 tokens, i.e. up to 12% BEYOND the trained 131072. For this arm that is interpolation (Qwen3.5 is native 262k); for the dense arm the same rung is extrapolation past its NTK theta=4e6 design point, so the two arms are NOT symmetric on this axis.",
+  "metrics": {
+    "f1": 0.73,
+    "precision": 0.731,
+    "recall": 0.7293333333333333,
+    "exact_match": 0.336,
+    "parse_rate": 1.0,
+    "binomial_se": 0.019854470529329156
+  },
+  "reference_2k": {
+    "hybrid_f1": 0.865,
+    "dense_f1": 0.843,
+    "eval_size": 500
+  },
+  "training_run": {
+    "name": "q35-4b-contra-128k-local",
+    "slurm_job": 3353323,
+    "steps": 664,
+    "final_ce": 0.0146,
+    "seq_len": 131072,
+    "cp_degree": 4,
+    "activation_checkpointing": "full",
+    "compile": false,
+    "rope": "native (no extension)",
+    "global_batch": 8,
+    "gpus": "1 node x 8 H200"
+  },
+  "eval_run": {
+    "slurm_job": 3361394,
+    "node": "sneetches",
+    "gpus": 1,
+    "generate_seconds": 10238,
+    "seconds_per_example": 20,
+    "peak_input_tok_per_s": 27195,
+    "max_model_len": 147350,
+    "max_position_embeddings": 262144
+  },
+  "doc_id_digit_check": {
+    "eval_n_docs": 2503,
+    "train_n_docs_range": [
+      175,
+      2700
+    ],
+    "verdict": "CLEAN -- 4-digit ids are inside the training distribution"
+  },
+  "provenance": {
+    "git_commit": "79237d5e496507502108380141b25af87590d968",
+    "branch": "prasann/landmark",
+    "eval_script": "debug/qwen3_vs_qwen35_contra/eval_128k.sbatch",
+    "date": "2026-07-25"
+  }
+}

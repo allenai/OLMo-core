@@ -3,6 +3,33 @@
 **Last updated 2026-07-25 ~10:30 PDT** (progressive-extension result added at the top; the
 2026-07-24 ~13:30 body below is unchanged and still current for everything else)
 
+# ══════════ ✅ HYBRID 128k RESULT: f1 = 0.730 ± 0.020 ══════════
+
+`q35-4b-contra-128k-local` (664 steps, final CE 0.0146) on the 128k contradiction rung, vLLM,
+**eval_size 500**:
+
+| metric | value |
+|---|---|
+| **f1** | **0.730** (binomial SE ±0.020) |
+| precision / recall | 0.731 / 0.729 |
+| exact_match | 0.336 |
+| parse_rate | 1.000 |
+
+Against the 2k sanity (hybrid 0.865): **0.865 → 0.730 across a 64× context increase.** The GDN
+hybrid trains natively at 128k and holds most of its task ability there.
+
+⚠ **Quote this as a ~147k number, not a 128k one** — the rung tokenizes to 133,793–146,582 tokens
+(see the trap below). For this arm that is still interpolation (Qwen3.5 is native 262k).
+✅ Doc-id digit range checked clean (eval 2503 docs, training 175–2700).
+
+Cost: 10,238 s generate for 500 examples (20 s/example), peak 27,195 input tok/s, 1×H200.
+Result JSON with full provenance: `results/qwen3_vs_qwen35_contra/hybrid_128k.json`.
+
+**The dense arm has no comparable number yet**, and the comparison cannot be made until it does:
+arm J never converged (CE plateau 1.07), so the only candidate is the progressive-extension
+checkpoint below — which must be evaluated with `MAXPOS` ≥ 147350 and reported with the
+extrapolation caveat, since the same rung is *not* symmetric between the two arms.
+
 # ══════════ PROGRESSIVE EXTENSION WORKS — the barrier is the JUMP, not the LENGTH ══════════
 
 **This revises the headline.** The earlier conclusion was "dense Qwen3-4B cannot reach 4× native
