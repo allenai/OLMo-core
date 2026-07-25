@@ -52,11 +52,20 @@ emitted a 4-digit id in training and one collapsed run emitted them at 6.7% agai
 128k eval rung is 2503 docs, so 4-digit ids are well inside the training distribution. Verified,
 not assumed. Re-check this whenever a rung or a data build changes.
 
-## ⚠ TRAP: the "128k" eval rung is really a ~140k eval — 9% BEYOND the trained context
-The timing probe shows `rung_131072.jsonl` tokenizes to prompts of **136,320–142,374 tokens**
-(median 139,522), because 131072 is the *target corpus* size and the instructions, doc markers and
-2503 chunk wrappers land on top. vLLM auto-raises `max_model_len` to 143,142 and the hybrid absorbs
-it (native 262k), so this passes silently.
+## ⚠ TRAP: the "128k" eval rung is really a ~147k eval — 12% BEYOND the trained context
+Over the full 500, `rung_131072.jsonl` tokenizes to prompts of **133,793–146,582 tokens** (median
+139,630), because 131072 is the *target corpus* size and the instructions, doc markers and 2503
+chunk wrappers land on top. vLLM auto-raises `max_model_len` to 147,350.
+
+⚠ **Do not size `MAXPOS` from a probe:** the 20-example probe topped out at 142,374 and suggested
+147456 was enough; the full set needs 147,350, clearing that by 106 tokens. The dense default is
+now 163840.
+
+This does **not** pass silently in either direction — it killed the first two hybrid attempts,
+because the script stamped `max_position_embeddings=131072` and vLLM refuses to start when
+`max_model_len` exceeds it. **And a vLLM engine-init failure leaves the DRIVER polling forever**,
+so the job burns its entire time limit looking like a slow model load with the real error 90
+minutes up the log. `eval_128k.sbatch` now fails fast right after the prefills instead.
 
 It does **not** pass silently for the dense arm, and it biases the comparison:
 - Both arms trained at `seq_len 131072`, so *both* are being evaluated ~9% past their training

@@ -93,10 +93,12 @@ else
   # max_position_embeddings=32768 and rebuild inv_freq from the stale theta -> the model evals
   # with RoPE it never trained on and looks like it collapsed at long context. Must match the
   # run's --rope-theta exactly.
-  # The rung tokenizes to ~142k, so 131072 is BELOW the actual prompt and vLLM would refuse to
-  # start. 147456 covers it. ⚠ This is real extrapolation past the θ=4e6 design point on top of an
+  # The rung tokenizes to ~147k over the full 500 (the 20-example probe only reached 142k, so do
+  # not size this from a probe), and 131072 is BELOW the actual prompt -- vLLM would refuse to
+  # start. 163840 leaves real headroom; 147456 cleared the observed requirement by 106 tokens,
+  # which is not a margin. ⚠ This is genuine extrapolation past the θ=4e6 design point on top of an
   # already-4× extension -- see the trap section in HANDOFF_128k.md before quoting a dense number.
-  MAXPOS=${MAXPOS:-147456}
+  MAXPOS=${MAXPOS:-163840}
   ROPE_ARGS="--rope-theta 4e6 --max-position-embeddings $MAXPOS"
 fi
 
