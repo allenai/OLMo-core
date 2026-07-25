@@ -39,6 +39,16 @@ scores near chance while CE stays ~0.3, the CE was task prior. Checkpoints land 
 `/data/prasann/ctc_suite/ckpts/q3-4b-contra-128k-prog/` on **horton**; eval with
 `eval_128k.sbatch MODEL=qwen3` (which already passes the required `--rope-theta 4e6`).
 
+## ✅ CHECKED CLEAN: doc-id digit range (the flaw that wrecked the length-mix 32k column)
+The length-mix experiment's 32k rung turned out to be an out-of-distribution test on *id
+magnitude*: its training pools capped at 697 docs while the eval had 1423, so the model never
+emitted a 4-digit id in training and one collapsed run emitted them at 6.7% against gold's 29.5%
+(see `debug/length_mix_scaling/STATUS.md`, and memory `eval-id-digit-range-mismatch`).
+
+**This comparison is NOT exposed to it.** 128k training data is `--n-min 175 --n-max 2700` and the
+128k eval rung is 2503 docs, so 4-digit ids are well inside the training distribution. Verified,
+not assumed. Re-check this whenever a rung or a data build changes.
+
 ## ⚠ TRAP: the "128k" eval rung is really a ~140k eval — 9% BEYOND the trained context
 The timing probe shows `rung_131072.jsonl` tokenizes to prompts of **136,320–142,374 tokens**
 (median 139,522), because 131072 is the *target corpus* size and the instructions, doc markers and
