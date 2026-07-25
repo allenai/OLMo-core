@@ -459,3 +459,20 @@ before loading past durable `step5000`; this attempt is infrastructure-only,
 not another model-numerics event. All six experiments were restarted in place
 from the latest durable checkpoints with unchanged identities, paths, urgent
 priority, zero minimum runtime, and unallocated Holmes scheduling.
+
+### Deterministic backward-recomputation replay
+
+On 2026-07-25, a targeted
+[1.2B Cx4 replay](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYBSTMNAV4R6333677FFG8T0)
+was submitted to test whether FLA's backward recomputation path causes the
+repeatable step-9,059 failure. It loads the canonical model, optimizer, trainer,
+RNG, and data state from `step9000`, sets `disable_recompute=True`, reduces the
+rank microbatch from 4 to 1 (four accumulation steps), and stops at step 9,075.
+It retains the all-rank non-finite and gradient-norm diagnostics.
+
+The replay is deliberately read-only with respect to the canonical checkpoint
+directory: checkpoint discovery/loading remains enabled, but the checkpointer
+callback has writes disabled. W&B is also disabled so this diagnostic cannot
+alter the production training curve. Passing step 9,059 would implicate either
+the recomputation path or microbatch-sensitive numerical behavior; reproducing
+the failure would rule out recomputation as a sufficient explanation.

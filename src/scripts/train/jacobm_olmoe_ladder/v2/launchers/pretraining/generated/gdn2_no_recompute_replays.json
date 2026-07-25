@@ -1,0 +1,23 @@
+[
+  {
+    "task_name": "1p2b-cx4",
+    "run_name": "pt-1p2b-geometry-hybrid-gdn2-ev2-nope-gated-cx4-lr3e-4-ep8-sync-r1",
+    "commit": "ba6ec89381bc2aa4bb40f57bf8eeea68d7e78ccd",
+    "source_checkpoint": "/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/olmo-ddp/pretraining/pt-1p2b-geometry-hybrid-gdn2-ev2-nope-gated-cx4-lr3e-4-ep8-sync-r1/step9000",
+    "expected_failure_step": 9059,
+    "hard_stop_step": 9075,
+    "rank_microbatch_sequences": 1,
+    "global_batch_size": 524288,
+    "world_size": 16,
+    "expert_parallel_size": 8,
+    "disable_recompute": true,
+    "checkpoint_writes": false,
+    "wandb": false,
+    "experiment_id": "01KYBSTMNAV4R6333677FFG8T0",
+    "task_ids": [
+      "01KYBSTMNHA2224VBZ3ACBKD4A",
+      "01KYBSTMS16J1BAGQSM9B98A4X"
+    ],
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYBSTMNAV4R6333677FFG8T0"
+  }
+]
