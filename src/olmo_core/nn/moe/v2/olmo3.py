@@ -6,9 +6,12 @@ from copy import deepcopy
 from typing import Any, Mapping
 
 import torch
+import torch.distributed as dist
+from torch.distributed.tensor import DTensor
 from transformers import PretrainedConfig
 
 from olmo_core.config import DType
+from olmo_core.distributed.utils import get_local_tensor
 from olmo_core.nn.attention import (
     AttentionBackendName,
     AttentionConfig,
@@ -16,13 +19,10 @@ from olmo_core.nn.attention import (
     SlidingWindowAttentionConfig,
 )
 from olmo_core.nn.ddp.block import OLMoDDPTransformerBlockConfig
+from olmo_core.nn.hf.convert import convert_state_from_hf, convert_state_to_hf
 from olmo_core.nn.layer_norm import LayerNormConfig, LayerNormType
 from olmo_core.nn.lm_head import LMHeadConfig, LMLossImplementation
 from olmo_core.nn.moe import MoELoadBalancingLossGranularity, MoERouterGatingFunction
-from olmo_core.nn.moe.v2.checkpoint import (
-    gather_olmo_ddp_hf_state,
-    load_olmo_ddp_hf_state,
-)
 from olmo_core.nn.moe.v2.ep_config import ExpertParallelConfig, ExpertParallelPath
 from olmo_core.nn.moe.v2.hf.configuration_olmo3moe import Olmo3MoeConfig
 from olmo_core.nn.moe.v2.routed_experts import RoutedExpertsConfig
@@ -142,9 +142,7 @@ def build_olmo3_moe_hf_config_from_native_config(
         raise NotImplementedError("Olmo3Moe export only supports SwiGLU experts.")
 
     shared_hidden_sizes = {
-        block.shared_experts.hidden_size
-        for block in moe_blocks
-        if block.shared_experts is not None
+        block.shared_experts.hidden_size for block in moe_blocks if block.shared_experts is not None
     }
     if any(block.shared_experts is None for block in moe_blocks) and shared_hidden_sizes:
         raise ValueError("Shared experts must be present in either every or no MoE layer.")
@@ -170,8 +168,7 @@ def build_olmo3_moe_hf_config_from_native_config(
         if block.shared_experts is not None
     }
     if dense_blocks and (
-        len(dense_hidden_sizes) != 1
-        or any(block.shared_experts is None for block in dense_blocks)
+        len(dense_hidden_sizes) != 1 or any(block.shared_experts is None for block in dense_blocks)
     ):
         raise ValueError("Dense Olmo3Moe layers must have one consistent shared-expert width.")
     if any(
@@ -199,7 +196,9 @@ def build_olmo3_moe_hf_config_from_native_config(
         else:
             layer_types.append(OLMO3_FULL_ATTENTION)
     if len(window_sizes) > 1:
-        raise ValueError(f"Olmo3Moe HF export supports one sliding window size, got {window_sizes}.")
+        raise ValueError(
+            f"Olmo3Moe HF export supports one sliding window size, got {window_sizes}."
+        )
 
     head_dim = attention.head_dim or model_config.d_model // attention.n_heads
     return Olmo3MoeConfig(
@@ -234,9 +233,7 @@ def build_olmo3_moe_hf_config_from_native_config(
         attention_bias=False,
         attention_dropout=attention.dropout or 0.0,
         rms_norm_eps=representative.layer_norm.eps,
-        sliding_window=(
-            next(iter(window_sizes)) + 1 if window_sizes else max_position_embeddings
-        ),
+        sliding_window=(next(iter(window_sizes)) + 1 if window_sizes else max_position_embeddings),
         use_head_qk_norm=True,
         layer_types=layer_types,
         dense_layers_indices=dense_layers_indices,
@@ -255,6 +252,7 @@ def build_olmo3_moe_config_from_hf_config(
     *,
     dtype: DType = DType.bfloat16,
     attention_backend: AttentionBackendName = AttentionBackendName.flash_4,
+    attention_type: AttentionType = AttentionType.default,
     ep_path: ExpertParallelPath | str = ExpertParallelPath.sync_1d,
     ep_capacity_factor: float = 1.25,
     router_aux_loss_weight: float | None = None,
@@ -274,6 +272,10 @@ def build_olmo3_moe_config_from_hf_config(
         raise NotImplementedError("Only SwiGLU Olmo3Moe experts are supported.")
     if not config.get("use_head_qk_norm", False):
         raise NotImplementedError("Olmo3Moe conversion requires head-wise QK norm.")
+    if attention_type not in (AttentionType.default, AttentionType.fused_v2):
+        raise NotImplementedError(
+            f"Olmo3Moe conversion does not support attention type {attention_type!r}."
+        )
 
     n_layers = int(config["num_hidden_layers"])
     dense_layers = {int(idx) for idx in config.get("dense_layers_indices") or ()}
@@ -362,7 +364,7 @@ def build_olmo3_moe_config_from_hf_config(
         )
         return OLMoDDPTransformerBlockConfig(
             sequence_mixer=AttentionConfig(
-                name=AttentionType.default,
+                name=attention_type,
                 n_heads=int(config["num_attention_heads"]),
                 n_kv_heads=int(config["num_key_value_heads"]),
                 head_dim=int(config["head_dim"]),
@@ -439,15 +441,82 @@ def build_olmo3_moe_config_from_hf_config(
     return model_config
 
 
+def _unwrap_model(model: torch.nn.Module) -> torch.nn.Module:
+    wrapped = getattr(model, "module", None)
+    return wrapped if isinstance(wrapped, torch.nn.Module) else model
+
+
 def load_olmo3_moe_hf_state(
     model: torch.nn.Module, hf_config: PretrainedConfig, hf_state: Mapping[str, torch.Tensor]
 ) -> None:
-    """Backward-compatible Olmo3Moe wrapper for :func:`load_olmo_ddp_hf_state`."""
-    load_olmo_ddp_hf_state(model, hf_config, hf_state)
+    """Load a full HF state into an unsharded or EP-sharded OLMoDDP model."""
+    model = _unwrap_model(model)
+    native_state = convert_state_from_hf(hf_config, dict(hf_state), model_type="olmo3moe")
+    parameters = dict(model.named_parameters())
+    for layer_idx in range(hf_config.num_hidden_layers):
+        prefix = f"blocks.{layer_idx}.attention."
+        fused_key = f"{prefix}w_qkv.weight"
+        if fused_key in parameters:
+            native_state[fused_key] = torch.cat(
+                [
+                    native_state.pop(f"{prefix}w_q.weight"),
+                    native_state.pop(f"{prefix}w_k.weight"),
+                    native_state.pop(f"{prefix}w_v.weight"),
+                ],
+                dim=0,
+            ).contiguous()
+    missing = set(parameters) - set(native_state)
+    if missing:
+        raise RuntimeError(f"Converted Olmo3Moe state is missing parameters: {sorted(missing)}")
+    unexpected = set(native_state) - set(parameters)
+    if unexpected:
+        raise RuntimeError(
+            f"Converted Olmo3Moe state has unexpected parameters: {sorted(unexpected)}"
+        )
+
+    with torch.no_grad():
+        for name, target in parameters.items():
+            source = native_state[name]
+            owner_name = name.rsplit(".", 1)[0]
+            owner = model.get_submodule(owner_name)
+            if getattr(owner, "_ep_sharded", False):
+                local_experts = int(owner.num_local_experts)
+                start = int(owner.ep_rank) * local_experts
+                source = source[start : start + local_experts]
+            if tuple(source.shape) != tuple(target.shape):
+                raise RuntimeError(
+                    f"Shape mismatch for {name}: converted={tuple(source.shape)}, "
+                    f"model={tuple(target.shape)}"
+                )
+            target.copy_(source.to(device=target.device, dtype=target.dtype))
 
 
 def gather_olmo3_moe_hf_state(
     model: torch.nn.Module, hf_config: PretrainedConfig
 ) -> dict[str, torch.Tensor]:
-    """Backward-compatible Olmo3Moe wrapper for :func:`gather_olmo_ddp_hf_state`."""
-    return gather_olmo_ddp_hf_state(model, hf_config)
+    """Collect an EP-sharded OLMoDDP model and return a full HF state on every rank."""
+    model = _unwrap_model(model)
+    native_state: dict[str, torch.Tensor] = {}
+    for name, value in model.state_dict().items():
+        local = get_local_tensor(value) if isinstance(value, DTensor) else value
+        owner_name = name.rsplit(".", 1)[0]
+        owner = model.get_submodule(owner_name)
+        if getattr(owner, "_ep_sharded", False):
+            group = owner.ep_mesh["ep_mp"].get_group()
+            gathered = [torch.empty_like(local) for _ in range(dist.get_world_size(group))]
+            dist.all_gather(gathered, local.contiguous(), group=group)
+            local = torch.cat(gathered, dim=0)
+        native_state[name] = local
+
+    q_dim = hf_config.num_attention_heads * hf_config.head_dim
+    kv_dim = hf_config.num_key_value_heads * hf_config.head_dim
+    for layer_idx in range(hf_config.num_hidden_layers):
+        prefix = f"blocks.{layer_idx}.attention."
+        fused_key = f"{prefix}w_qkv.weight"
+        if fused_key in native_state:
+            q, k, v = native_state.pop(fused_key).split((q_dim, kv_dim, kv_dim), dim=0)
+            native_state[f"{prefix}w_q.weight"] = q
+            native_state[f"{prefix}w_k.weight"] = k
+            native_state[f"{prefix}w_v.weight"] = v
+
+    return convert_state_to_hf(hf_config, native_state)

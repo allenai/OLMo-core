@@ -1,15 +1,16 @@
-# ruff: noqa: E402
 import pytest
 import torch
 
 transformers = pytest.importorskip("transformers")
 
-from olmo_core.config import DType
-from olmo_core.nn.attention import AttentionBackendName
-from olmo_core.nn.hf.config import _register_olmo3moe_auto_classes
-from olmo_core.nn.moe.v2.hf.configuration_olmo3moe import Olmo3MoeConfig
-from olmo_core.nn.moe.v2.hf.modeling_olmo3moe import Olmo3MoeForCausalLM, Olmo3MoeModel
-from olmo_core.nn.moe.v2.olmo3 import (
+from olmo_core.nn.attention import AttentionBackendName, AttentionType  # noqa: E402
+from olmo_core.nn.hf.config import _register_olmo3moe_auto_classes  # noqa: E402
+from olmo_core.nn.moe.v2.hf.configuration_olmo3moe import Olmo3MoeConfig  # noqa: E402
+from olmo_core.nn.moe.v2.hf.modeling_olmo3moe import (  # noqa: E402
+    Olmo3MoeForCausalLM,
+    Olmo3MoeModel,
+)
+from olmo_core.nn.moe.v2.olmo3 import (  # noqa: E402
     build_olmo3_moe_config_from_hf_config,
     build_olmo3_moe_hf_config_from_native_config,
     gather_olmo3_moe_hf_state,
@@ -124,16 +125,17 @@ def test_native_and_hf_config_roundtrip_preserves_mixed_architecture():
         assert getattr(roundtrip, field) == getattr(config, field)
 
 
-def test_full_hf_state_load_and_gather_roundtrip_without_ep():
+@pytest.mark.parametrize("attention_type", [AttentionType.default, AttentionType.fused_v2])
+def test_full_hf_state_load_and_gather_roundtrip_without_ep(attention_type):
     config = small_config(
         dense_layers_indices=[0],
         dense_mlp_intermediate_size=24,
         use_peri_ln=True,
     )
-    hf_model = Olmo3MoeForCausalLM(config)
+    hf_model = Olmo3MoeForCausalLM(config).to(dtype=torch.bfloat16)
     hf_state = {name: value.detach().clone() for name, value in hf_model.state_dict().items()}
     native_config = build_olmo3_moe_config_from_hf_config(
-        config, dtype=DType.float32, attention_backend=AttentionBackendName.torch
+        config, attention_backend=AttentionBackendName.torch, attention_type=attention_type
     )
     native_model = native_config.build(init_device="cpu")
 
