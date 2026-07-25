@@ -75,8 +75,13 @@ if [ "$MODEL" = "qwen35" ]; then
   [ -d "$BASE_SNAP" ] || BASE_SNAP=/scratch/users/prasann/hf_models/Qwen3.5-4B-Base
   IDS="--doc-start-id 248049 --doc-end-id 248050 --eos-token-id 248044"
   FAMILY=qwen3_5
-  # Hybrid is NATIVE 262k -- no NTK theta override, only the context bound.
-  ROPE_ARGS="--max-position-embeddings 131072"
+  # Hybrid is NATIVE 262k -- no NTK theta override, only the context bound. Do NOT clamp this to
+  # 131072: the rung tokenizes to ~142k, run_vllm_eval raises max_model_len to cover the longest
+  # prefill, and vLLM then refuses to start because max_model_len > max_position_embeddings. That
+  # is what killed the first two attempts -- and the engine-init failure leaves the DRIVER polling
+  # forever, so the job burns its whole time limit looking like a slow load. Use the native bound.
+  MAXPOS=${MAXPOS:-262144}
+  ROPE_ARGS="--max-position-embeddings $MAXPOS"
 else
   BASE_ID="Qwen/Qwen3-4B-Base"
   BASE_SNAP=/data/prasann/hf_models/Qwen3-4B-Base
@@ -88,7 +93,11 @@ else
   # max_position_embeddings=32768 and rebuild inv_freq from the stale theta -> the model evals
   # with RoPE it never trained on and looks like it collapsed at long context. Must match the
   # run's --rope-theta exactly.
-  ROPE_ARGS="--rope-theta 4e6 --max-position-embeddings 131072"
+  # The rung tokenizes to ~142k, so 131072 is BELOW the actual prompt and vLLM would refuse to
+  # start. 147456 covers it. ⚠ This is real extrapolation past the θ=4e6 design point on top of an
+  # already-4× extension -- see the trap section in HANDOFF_128k.md before quoting a dense number.
+  MAXPOS=${MAXPOS:-147456}
+  ROPE_ARGS="--rope-theta 4e6 --max-position-embeddings $MAXPOS"
 fi
 
 # Export from the LOCAL snapshot dir when we have one. The hub id would send export_olmo_to_hf
@@ -138,14 +147,14 @@ if [ "$FAMILY" = "qwen3_5" ]; then
   fi
   # make_vllm_serving_copy rebuilds the wrapper config from the BASE snapshot, which would undo
   # the max_position_embeddings override inside text_config. Re-stamp it on the serving copy.
-  $PY - "$SERVE" <<'EOF' || exit 4
+  $PY - "$SERVE" "$MAXPOS" <<'EOF' || exit 4
 import json, sys
-p = f"{sys.argv[1]}/config.json"; cfg = json.load(open(p))
+p = f"{sys.argv[1]}/config.json"; want = int(sys.argv[2]); cfg = json.load(open(p))
 tc = cfg.get("text_config", cfg)
-if tc.get("max_position_embeddings", 0) < 131072:
-    tc["max_position_embeddings"] = 131072
+if tc.get("max_position_embeddings", 0) < want:
+    tc["max_position_embeddings"] = want
     json.dump(cfg, open(p, "w"))
-    print("[check] re-stamped serving-copy max_position_embeddings -> 131072")
+    print(f"[check] re-stamped serving-copy max_position_embeddings -> {want}")
 else:
     print(f"[check] serving copy max_position_embeddings={tc.get('max_position_embeddings')} OK")
 EOF
@@ -161,10 +170,16 @@ $PY -u "$VDIR/build_prefills.py" \
   --max-test-samples "$MAXSAMP" --cot-mode none $IDS --out "$PREFILLS" \
   || { echo "!!! PREFILLS FAILED"; exit 5; }
 $PY -c "
-import json; p=json.load(open('$PREFILLS')); r=p['rows']
+import json,sys; p=json.load(open('$PREFILLS')); r=p['rows']
 L=[len(x['prefill']) for x in r]
+need=max(L)+512+256
 print(f'[prefills] eval_size={len(r)} tok min={min(L)} med={sorted(L)[len(L)//2]} max={max(L)}')
-"
+print(f'[prefills] vLLM will need max_model_len>={need}; config allows $MAXPOS')
+if need > $MAXPOS:
+    sys.exit(f'FATAL: longest prefill {max(L)} + 512 gen + 256 = {need} > max_position_embeddings $MAXPOS. '
+             'vLLM refuses to start AND leaves the driver polling a dead engine forever (burns the '
+             'whole time limit looking like a slow load). Raise MAXPOS or shorten the rung.')
+" || exit 5
 
 # ---- 4) generate ----
 # max-model-len is a FLOOR: run_vllm_eval bumps it to (longest prefill + gen + 256) automatically.
