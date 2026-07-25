@@ -70,6 +70,10 @@ src/scripts/train/jacobm_olmoe_ladder/v2/launchers/pretraining/launch_hybrid_sca
 
 # Inspect the 480M Cx4/Cx8 completion jobs.
 src/scripts/train/jacobm_olmoe_ladder/v2/launchers/pretraining/launch_hybrid_scale_480m_cx4_cx8.sh
+
+# Render the canonical GDN2 and KDA sweeps in Cx1/Cx2/Cx4/Cx8 order. The
+# launcher reuses, and therefore omits, the existing GDN2 Cx8/1.6e-3 cell.
+src/scripts/train/jacobm_olmoe_ladder/v2/launchers/pretraining/launch_275m_canonical_gdn2_kda_lr_sweeps.sh
 ```
 
 The scale launcher copies the Beaker wrapper to node-local `/tmp` before
@@ -82,8 +86,9 @@ optimizer checkpoint.
 
 Only explicitly designated geometry/`expand_v=2` work uses Beaker's
 unallocated queue (`minRuntime: 0m`, `autoResume: true`). This currently
-includes the 275M geometry, NoPE, and gated-attention sweeps plus the larger
-NoPE production wave. Do not copy that scheduling exception into other
+includes the 275M geometry, NoPE, gated-attention, canonical GDN2, and KDA
+sweeps plus the larger NoPE production wave. Do not copy that scheduling
+exception into other
 intervention manifests without an explicit decision. Gantry receives
 `preemptible=False`; it omits the deprecated Beaker field while retaining the
 requested non-preemptible behavior.

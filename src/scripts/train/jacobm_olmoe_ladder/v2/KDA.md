@@ -66,9 +66,12 @@ tested KDA at the same H=2, K=128, V=128/256, T=64/256, initial states, and
 separate output/state losses used for GDN2. KDA's worst gradient relative-L2
 error ranged from 0.39% to 1.76%, with zero tolerance violations.
 
-The four-LR Cx1/Cx2/Cx4/Cx8 sweep is rendered but must not be submitted until
-the active GDN2 stability controls have been reviewed. It uses `4e-4`, `8e-4`,
-`1.6e-3`, and `3.2e-3` at every Cx, EP1,
+The four-LR Cx1/Cx2/Cx4/Cx8 sweep was submitted on 2026-07-25 in four
+Cx-first works: [Cx1](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYC1F615GDDN5Z9W48W072CQ),
+[Cx2](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYC1F92YYNMSPH3SAQD5NXDJ),
+[Cx4](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYC1FBW5T3GC4XHEK0SHJG5J),
+and [Cx8](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYC1FER04GND05GA5F6EFH1N).
+It uses `4e-4`, `8e-4`, `1.6e-3`, and `3.2e-3` at every Cx, EP1,
 ordinary 10%-of-token warmup and cosine decay, rolling ephemeral checkpoints,
 no in-loop evals, urgent priority, and unallocated Holmes scheduling. The
 fully concurrent sweep is 16 tasks / 80 GPUs.

@@ -1,0 +1,105 @@
+[
+  {
+    "experiment_name": "jacobm-275m-kda-canonical-cx1-lr-sweep",
+    "experiment_id": "01KYC1F615GDDN5Z9W48W072CQ",
+    "tasks": [
+      "cx1-lr4e-4",
+      "cx1-lr8e-4",
+      "cx1-lr1p6e-3",
+      "cx1-lr3p2e-3"
+    ],
+    "debug_gradients": false,
+    "run_suffix": null,
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYC1F615GDDN5Z9W48W072CQ"
+  },
+  {
+    "experiment_name": "jacobm-275m-gdn2-canonical-cx1-lr-sweep",
+    "experiment_id": "01KYC1F7M7WWPG9TYV0F019ERB",
+    "tasks": [
+      "cx1-lr4e-4",
+      "cx1-lr8e-4",
+      "cx1-lr1p6e-3",
+      "cx1-lr3p2e-3"
+    ],
+    "debug_gradients": false,
+    "run_suffix": null,
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYC1F7M7WWPG9TYV0F019ERB"
+  },
+  {
+    "experiment_name": "jacobm-275m-kda-canonical-cx2-lr-sweep",
+    "experiment_id": "01KYC1F92YYNMSPH3SAQD5NXDJ",
+    "tasks": [
+      "cx2-lr4e-4",
+      "cx2-lr8e-4",
+      "cx2-lr1p6e-3",
+      "cx2-lr3p2e-3"
+    ],
+    "debug_gradients": false,
+    "run_suffix": null,
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYC1F92YYNMSPH3SAQD5NXDJ"
+  },
+  {
+    "experiment_name": "jacobm-275m-gdn2-canonical-cx2-lr-sweep",
+    "experiment_id": "01KYC1FAG4R32BXSPBB57PVR2A",
+    "tasks": [
+      "cx2-lr4e-4",
+      "cx2-lr8e-4",
+      "cx2-lr1p6e-3",
+      "cx2-lr3p2e-3"
+    ],
+    "debug_gradients": false,
+    "run_suffix": null,
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYC1FAG4R32BXSPBB57PVR2A"
+  },
+  {
+    "experiment_name": "jacobm-275m-kda-canonical-cx4-lr-sweep",
+    "experiment_id": "01KYC1FBW5T3GC4XHEK0SHJG5J",
+    "tasks": [
+      "cx4-lr4e-4",
+      "cx4-lr8e-4",
+      "cx4-lr1p6e-3",
+      "cx4-lr3p2e-3"
+    ],
+    "debug_gradients": false,
+    "run_suffix": null,
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYC1FBW5T3GC4XHEK0SHJG5J"
+  },
+  {
+    "experiment_name": "jacobm-275m-gdn2-canonical-cx4-lr-sweep",
+    "experiment_id": "01KYC1FDDGC1RY528K4TZ776BV",
+    "tasks": [
+      "cx4-lr4e-4",
+      "cx4-lr8e-4",
+      "cx4-lr1p6e-3",
+      "cx4-lr3p2e-3"
+    ],
+    "debug_gradients": false,
+    "run_suffix": null,
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYC1FDDGC1RY528K4TZ776BV"
+  },
+  {
+    "experiment_name": "jacobm-275m-kda-canonical-cx8-lr-sweep",
+    "experiment_id": "01KYC1FER04GND05GA5F6EFH1N",
+    "tasks": [
+      "cx8-lr4e-4",
+      "cx8-lr8e-4",
+      "cx8-lr1p6e-3",
+      "cx8-lr3p2e-3"
+    ],
+    "debug_gradients": false,
+    "run_suffix": null,
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYC1FER04GND05GA5F6EFH1N"
+  },
+  {
+    "experiment_name": "jacobm-275m-gdn2-canonical-cx8-lr-sweep",
+    "experiment_id": "01KYC1FG3M4MCQT65NHW2FRKSY",
+    "tasks": [
+      "cx8-lr4e-4",
+      "cx8-lr8e-4",
+      "cx8-lr3p2e-3"
+    ],
+    "debug_gradients": false,
+    "run_suffix": null,
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYC1FG3M4MCQT65NHW2FRKSY"
+  }
+]

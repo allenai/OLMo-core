@@ -27,6 +27,8 @@ below retain the full launch and retry history.
 | pretraining | larger aligned geometry + RoPE + gated attention | 11 finished / 1 failed | newly collected strict final-250M CE: 810M Cx8 `2.104806`, 1.2B Cx8 `2.029514`; 1.2B Cx2 remains failed | [results](results/pretraining/geometry_gdn_ev2_rope_gated/results.md) |
 | pretraining | 275M geometry + NoPE + gated attention + GDN2 | 15 finished / 1 deterministic failure + clean reproduction running | Cx8 `1.6e-3` remains stopped at step 36,768; its distinct `-fresh-r2` trajectory is at step 26,375/49,229 | [results](results/pretraining/geometry_gdn2_ev2_nope_gated/results.md) |
 | pretraining | 275M GDN2 stability 2x2 | 3 scheduled | Fresh Cx8/LR `1.6e-3` runs test ev1+negative, ev2+nonnegative, and reference-like ev1+nonnegative; 24 urgent unallocated GPUs | [work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYBVM2N2D3DM67S8HWARJP6C) |
+| pretraining | canonical GDN2 (`expand_v=1`, nonnegative) 275M sweep | submitted | 15 new jobs plus the reused running Cx8/`1.6e-3` stability cell; urgent, unallocated, Cx-first order | [details](#canonical-gdn2-and-kda-275m-lr-sweeps) |
+| pretraining | canonical KDA 275M sweep | submitted | 16 new jobs; urgent, unallocated, Cx-first order | [details](#canonical-gdn2-and-kda-275m-lr-sweeps) |
 | diagnostic | GDN2 production-shape PyTorch reference 2x2 | finished | All four `expand_v`/negative-eigenvalue cells passed forward, final-state, backward, packed-document, and recompute/retain comparisons | [work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYBY8DXT5BVM85WYKAT5TXQN) |
 | diagnostic | Matched KDA/GDN2 numerical audit | finished | All 40 one/four-chunk output/state comparisons passed; GDN2 is broadly KDA-like, with localized 3.80% `A_log` relative-L2 error at T256/V256/negative eigvals | [work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYBZX8MHJ611ZSJD43SYS9HZ) / [results](results/diagnostics/matched_kda_gdn2_numerics.md) |
 | diagnostic | KDA reference + 50-step MB16 qualification | finished | Reference/packed checks passed; zero skipped steps; steady-state 404.7 TFLOPs/GPU and 290.5K TPS on one B300 | [work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYBX6WX46F9B3HV3W59G368R) / [3s14s676](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/3s14s676) |
@@ -101,6 +103,32 @@ from durable `step5000`, and hit the same assertion again at step 6,582. The
 later CUDA device assertion and NCCL watchdog messages are distributed
 teardown effects. The 810M Cx4 cell had one identical assertion at step 29,107,
 then auto-resumed and finished cleanly.
+
+## Canonical GDN2 and KDA 275M LR sweeps
+
+Submitted 2026-07-25 as eight urgent, unallocated Holmes works in Cx1, Cx2,
+Cx4, Cx8 order. Each architecture/Cx work contains the four LRs `4e-4`,
+`8e-4`, `1.6e-3`, and `3.2e-3`, except the new GDN2 Cx8 work, which omits
+`1.6e-3` and reuses the already-running canonical stability job
+`01KYBVM3KP7NRWB21ZFGNK2K75`. KDA uses FLA 0.4.1; GDN2 uses the isolated
+pinned FLA 0.5.2 overlay. All jobs use EP1, compilation, rolling ephemeral
+checkpoints, and no in-loop evals. W&B IDs are pending job initialization.
+
+| Architecture | Cx | Work | Job IDs in LR order (`4e-4`, `8e-4`, `1.6e-3`, `3.2e-3`) | State at launch |
+|---|---:|---|---|---|
+| KDA | 1 | [01KYC1F615GDDN5Z9W48W072CQ](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYC1F615GDDN5Z9W48W072CQ) | `01KYC1F64PN9B31DPS8BFJRWP6`, `01KYC1F688KMC4N9SYC0JS4VV2`, `01KYC1F6BMPXZPF4ZKXQDDCQ1G`, `01KYC1F6EWY0EMM8S318DC4F2Z` | scheduled |
+| GDN2 | 1 | [01KYC1F7M7WWPG9TYV0F019ERB](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYC1F7M7WWPG9TYV0F019ERB) | `01KYC1F7RFXNKP07Z41JWEB2WC`, `01KYC1F7VZHPNHRSXN8M0D9TCE`, `01KYC1F7Z9Z8MX5MJ1CSG6PYCB`, `01KYC1F82NW9PPKAAEAKZ24NSS` | scheduled |
+| KDA | 2 | [01KYC1F92YYNMSPH3SAQD5NXDJ](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYC1F92YYNMSPH3SAQD5NXDJ) | `01KYC1F96WKK9H6MH3MB6NBM33`, `01KYC1F9AH8029CKBSAXQW6A5E`, `01KYC1F9DS9GJYR5C8C02ZGV3B`, `01KYC1F9H0PM5RJGN14JXBW53R` | scheduled |
+| GDN2 | 2 | [01KYC1FAG4R32BXSPBB57PVR2A](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYC1FAG4R32BXSPBB57PVR2A) | `01KYC1FAMB0WC7SPHHDKAGJB9T`, `01KYC1FAQWE7SGG5PZ936T6QDF`, `01KYC1FAVA3AWT1RQY1D90QYM4`, `01KYC1FAYNJNNW3VHZ816B6VND` | scheduled/queued |
+| KDA | 4 | [01KYC1FBW5T3GC4XHEK0SHJG5J](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYC1FBW5T3GC4XHEK0SHJG5J) | `01KYC1FBZKF4QH5FDZ6ZQPX128`, `01KYC1FC31H2BK0TNSQVP06BEY`, `01KYC1FC6CN5RA4QSRFMTFNPNX`, `01KYC1FC9MH4EYA56PGB1VXH8E` | queued |
+| GDN2 | 4 | [01KYC1FDDGC1RY528K4TZ776BV](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYC1FDDGC1RY528K4TZ776BV) | `01KYC1FDGV4XHKY0XQ0VYAW5ZY`, `01KYC1FDMBXM7573GFR0YC3MC0`, `01KYC1FDQTB4SGNPXRR4AQMQY6`, `01KYC1FDV9K59XBSAB4E2R85XZ` | queued |
+| KDA | 8 | [01KYC1FER04GND05GA5F6EFH1N](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYC1FER04GND05GA5F6EFH1N) | `01KYC1FEVJ6076DS4F1M47EZH8`, `01KYC1FEYY3ZHP8N27BTDAZC07`, `01KYC1FF2A02YE62ZNTMK1M2X3`, `01KYC1FF5HRJR8S7ZZD1Z59RVP` | queued |
+| GDN2 | 8 | [01KYC1FG3M4MCQT65NHW2FRKSY](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYC1FG3M4MCQT65NHW2FRKSY) | `01KYC1FG71AFWY17128KY9P1W3`, `01KYC1FGAFMNS4766MKHX80S8J`, reused `01KYBVM3KP7NRWB21ZFGNK2K75`, `01KYC1FGDRX9QHX0FR6XC9ARSR` | 3 queued + 1 running |
+
+The submission ledger is
+[`launchers/pretraining/generated/275m_canonical_gdn2_kda_lr_sweep_submissions.json`](launchers/pretraining/generated/275m_canonical_gdn2_kda_lr_sweep_submissions.json).
+The 31 new jobs request 152 GPUs; the complete 32-cell comparison including
+the reused eight-GPU cell is 160 GPUs.
 
 ## 275M geometry-matched gated-NoPE GDN2 sweep
 

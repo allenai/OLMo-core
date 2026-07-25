@@ -501,9 +501,17 @@ checkpoint policy, and urgent unallocated Holmes scheduling.
 
 All three start from step zero with distinct W&B identities and checkpoint
 directories. The launch manifest is
-`launchers/pretraining/manifests/275m_gdn2_stability_ablation.yaml`. A possible
-later KDA 275M LR sweep remains planning-only until these stability results and
-the kernel investigation are reviewed.
+`launchers/pretraining/manifests/275m_gdn2_stability_ablation.yaml`.
+The canonical `ev1-noneg` cell is also the Cx8/`1.6e-3` point in the full
+canonical GDN2 sweep and is reused rather than trained twice.
+
+On 2026-07-25, the canonical GDN2 and KDA 275M sweeps were submitted in
+Cx1, Cx2, Cx4, Cx8 order. Both cover `4e-4`, `8e-4`, `1.6e-3`, and `3.2e-3`.
+There are 31 new jobs because the already-running GDN2 Cx8/`1.6e-3` cell
+supplies the thirty-second logical point. The new jobs request 152 GPUs at
+full concurrency; the complete logical sweep including the reused cell is 160
+GPUs. Exact works and job IDs are recorded in `RUNS.md` and
+`launchers/pretraining/generated/275m_canonical_gdn2_kda_lr_sweep_submissions.json`.
 
 ### Production-shape kernel reference validation
 
