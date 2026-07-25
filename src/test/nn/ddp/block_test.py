@@ -2,7 +2,7 @@
 
 import pytest
 
-from olmo_core.config import DType
+from olmo_core.config import Config, DType
 from olmo_core.nn.attention import AttentionConfig, AttentionType
 from olmo_core.nn.ddp.block import (
     OLMoDDPTransformerBlock,
@@ -40,6 +40,19 @@ def _build_block(config: OLMoDDPTransformerBlockConfig) -> OLMoDDPTransformerBlo
     block = config.build(d_model=D_MODEL, block_idx=0, n_layers=1, init_device="cpu")
     assert isinstance(block, OLMoDDPTransformerBlock)
     return block
+
+
+def test_old_split_norm_config_migrates_to_layer_norm():
+    data = _block_config().as_dict(include_class_name=True)
+    layer_norm = data.pop("layer_norm")
+    data["attention_norm"] = layer_norm
+    data["feed_forward_norm"] = layer_norm
+
+    config = Config.from_dict(data)
+
+    assert isinstance(config, OLMoDDPTransformerBlockConfig)
+    assert config.layer_norm == _block_config().layer_norm
+    _build_block(config)
 
 
 @pytest.mark.parametrize("use_peri_norm", [False, True])
