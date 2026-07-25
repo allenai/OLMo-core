@@ -1,6 +1,50 @@
 # Qwen3 vs Qwen3.5 contradiction — 128k run — HANDOFF
 
-**Last updated 2026-07-24 ~13:30 PDT** (supersedes the 2026-07-24 ~13:04 version)
+**Last updated 2026-07-25 ~10:30 PDT** (progressive-extension result added at the top; the
+2026-07-24 ~13:30 body below is unchanged and still current for everything else)
+
+# ══════════ PROGRESSIVE EXTENSION WORKS — the barrier is the JUMP, not the LENGTH ══════════
+
+**This revises the headline.** The earlier conclusion was "dense Qwen3-4B cannot reach 4× native
+(128k) by NTK extension at all." That is too strong. It cannot reach 4× **in one jump from the
+base**. Staged through 2×, it gets there.
+
+Run `q3-4b-contra-128k-prog` (slurm 3360744, horton, 2×H200): continue from the 64k iso
+checkpoint `step750` (θ=2e6, CE≈0.25 at 64k) into **131072 with θ=4e6**, same
+`contra_mix_qwen3_10k_128k` data arm J used. `cp=2`, `gb=2`, full-AC, no-compile, `--pack`.
+
+| run | context | CE |
+|---|---|---|
+| iso 64k, first 12 steps (from plain base) | 64k = 2× | mean 2.17 |
+| iso 64k **at step 750** — the weights this run starts from | 64k = 2× | mean 0.253, median 0.250 |
+| **progressive 64k→128k, θ=4e6** (13 steps) | 128k = **4×** | mean 0.363, **median 0.325**, range 0.19–0.81 |
+| arm J, dense 128k **direct from base**, θ=4e6 (281 pts, 148M tok) | 128k = 4× | 2.81 → plateau **1.07** |
+
+Every one of the 13 points — including the worst, 0.81 — is below J's *converged* plateau, so the
+~3× gap is not batch noise. At `gb=2` a single step is 2 packed instances and the per-step CE
+swings 0.19→0.81, which is why the first point (0.1933) is worthless on its own; use the median.
+
+**What this does and does not establish.** The two comparisons differ in what they control:
+- **iso@64k (0.250) vs progressive@128k (0.325)** is the clean one — same weight lineage, only the
+  context length and θ change. CE barely moves, so the 2× adaptation survived the move to 4×.
+  (Not perfectly controlled: the 128k mix has longer, harder examples than the 64k iso data, so
+  some of the 0.250→0.325 rise is the data, not the length.)
+- **vs arm J (1.07)** is confounded: this run's starting checkpoint already had 750 steps of
+  contradiction training, J's base had none. Since CE is measured on the answer tokens, task
+  competence alone could produce a low CE. **So this is not yet evidence of 128k retrieval.**
+
+**The eval settles it**, and must be run before this is quoted as a capability claim: if the
+checkpoint scores well on the 128k contradiction rung it really does retrieve across 128k; if it
+scores near chance while CE stays ~0.3, the CE was task prior. Checkpoints land every 250 steps at
+`/data/prasann/ctc_suite/ckpts/q3-4b-contra-128k-prog/` on **horton**; eval with
+`eval_128k.sbatch MODEL=qwen3` (which already passes the required `--rope-theta 4e6`).
+
+Data note: the dense 128k shards were NOT on /scratch — `build_128k_data.sbatch` wrote them to the
+build node's `/data` and copied only `metadata.json` out, so the /scratch dir looks valid and holds
+zero token parts. `stage_128k_dense_data.sbatch` pulls the 2.62 GB from S3 and verifies
+`bytes == 4 × num_tokens` before declaring success.
+
+# ═══════════════════════════════════════════════════
 
 ## Goal
 Compare **Qwen3-4B (dense)** vs **Qwen3.5-4B (GDN-hybrid)** on `contradiction`, full-attention SFT,
