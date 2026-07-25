@@ -45,6 +45,9 @@ def build_olmo3_moe_hf_config_from_native_config(
     eos_token_id: int | list[int] | None,
 ) -> Olmo3MoeConfig:
     """Build an exact serving config from a supported native OLMoDDP Olmo3MoE config."""
+    from olmo_core.nn.hf.config import _register_olmo3moe_auto_classes
+
+    _register_olmo3moe_auto_classes()
     blocks = model_config.resolved_block_configs
     if not blocks:
         raise ValueError("An Olmo3Moe model must contain at least one transformer block.")
