@@ -35,6 +35,15 @@ python -c "import dataclass_extensions" 2>/dev/null || {
   python -c "import dataclass_extensions, olmo_core; print('olmo_core importable')" \
     || { echo "FATAL: olmo_core still not importable after install"; exit 2; }
 }
+# The Qwen3.5 hybrid's GatedDeltaNet blocks `assert has_fla()` at construction, and the export
+# BUILDS the olmo skeleton before loading weights -- so fla is required to export even though vLLM
+# inference does not need it (which is why the vLLM load recipe never hit this).
+python -c "import fla" 2>/dev/null || {
+  echo "=== installing flash-linear-attention (GDN blocks require it) $(date '+%F %T') ==="
+  pip install -q "flash-linear-attention==0.4.1" 2>&1 | tail -5
+  python -c "import fla; print('fla', fla.__version__)" \
+    || { echo "FATAL: fla still not importable -- GDN export cannot build"; exit 2; }
+}
 
 # JIT caches MUST be container-local, never on a shared FS: concurrent arms compiling the same
 # flashinfer/triton kernels into one shared cache dir deadlock on the lock file.
