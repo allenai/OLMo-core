@@ -24,6 +24,7 @@ from olmo_core.nn.moe.v2.checkpoint import (
     load_olmo_ddp_hf_state,
 )
 from olmo_core.nn.moe.v2.ep_config import ExpertParallelConfig, ExpertParallelPath
+from olmo_core.nn.moe.v2.hf.configuration_olmo3moe import Olmo3MoeConfig
 from olmo_core.nn.moe.v2.routed_experts import RoutedExpertsConfig
 from olmo_core.nn.moe.v2.router import MoERouterConfigV2
 from olmo_core.nn.moe.v2.shared_experts import SharedExpertsConfig
@@ -33,6 +34,213 @@ from olmo_core.nn.transformer.config import OLMoDDPModelConfig, TransformerBlock
 
 OLMO3_FULL_ATTENTION = "full_attention"
 OLMO3_SLIDING_ATTENTION = "sliding_attention"
+
+
+def build_olmo3_moe_hf_config_from_native_config(
+    model_config: OLMoDDPModelConfig,
+    *,
+    max_position_embeddings: int,
+    pad_token_id: int | None,
+    bos_token_id: int | None,
+    eos_token_id: int | list[int] | None,
+) -> Olmo3MoeConfig:
+    """Build an exact serving config from a supported native OLMoDDP Olmo3MoE config."""
+    blocks = model_config.resolved_block_configs
+    if not blocks:
+        raise ValueError("An Olmo3Moe model must contain at least one transformer block.")
+    if not all(isinstance(block, OLMoDDPTransformerBlockConfig) for block in blocks):
+        raise NotImplementedError("Olmo3Moe export requires OLMoDDP transformer blocks.")
+
+    typed_blocks = [block for block in blocks if isinstance(block, OLMoDDPTransformerBlockConfig)]
+    moe_blocks = [block for block in typed_blocks if block.routed_experts is not None]
+    dense_layers_indices = [
+        idx for idx, block in enumerate(typed_blocks) if block.routed_experts is None
+    ]
+    if not moe_blocks:
+        raise NotImplementedError("Olmo3Moe export requires at least one routed MoE block.")
+
+    representative = moe_blocks[0]
+    attention = representative.sequence_mixer
+    router = representative.routed_experts_router
+    routed_experts = representative.routed_experts
+    if not isinstance(attention, AttentionConfig):
+        raise NotImplementedError("Olmo3Moe export requires attention sequence mixers.")
+    if router is None or routed_experts is None:
+        raise NotImplementedError("Olmo3Moe blocks require routed experts and a router.")
+    if representative.layer_norm is None:
+        raise NotImplementedError("Olmo3Moe export requires RMS layer norms.")
+    if attention.rope is None or attention.rope.scaling is not None:
+        raise NotImplementedError("Olmo3Moe export requires unscaled RoPE.")
+    if attention.bias:
+        raise NotImplementedError("Olmo3Moe export does not support attention bias.")
+    if not attention.use_head_qk_norm or attention.qk_norm is None:
+        raise NotImplementedError("Olmo3Moe export requires head-wise QK norm.")
+    if any(block.use_pre_norm for block in typed_blocks):
+        raise NotImplementedError("Olmo3Moe export does not support pre-norm blocks.")
+    use_peri_ln = representative.use_peri_norm
+    if any(block.use_peri_norm != use_peri_ln for block in typed_blocks):
+        raise ValueError("All Olmo3Moe blocks must use the same peri-norm setting.")
+
+    def architecture_signature(block: OLMoDDPTransformerBlockConfig) -> tuple[Any, ...]:
+        block_attention = block.sequence_mixer
+        if not isinstance(block_attention, AttentionConfig):
+            raise NotImplementedError("Olmo3Moe export requires attention sequence mixers.")
+        return (
+            block_attention.n_heads,
+            block_attention.n_kv_heads,
+            block_attention.head_dim,
+            block_attention.bias,
+            block_attention.dropout,
+            block_attention.use_head_qk_norm,
+            block_attention.rope.theta if block_attention.rope is not None else None,
+            block.layer_norm.eps if block.layer_norm is not None else None,
+        )
+
+    expected_attention = architecture_signature(representative)
+    if any(architecture_signature(block) != expected_attention for block in typed_blocks):
+        raise ValueError("Olmo3Moe attention architecture must be consistent across layers.")
+
+    routed_signature = (
+        routed_experts.hidden_size,
+        routed_experts.num_experts,
+        routed_experts.bias,
+        routed_experts.activation,
+        router.num_experts,
+        router.top_k,
+        router.bias,
+        router.gating_function,
+        router.normalize_expert_weights,
+        router.restore_weight_scale,
+        router.original_top_k,
+    )
+    for block in moe_blocks[1:]:
+        block_router = block.routed_experts_router
+        block_experts = block.routed_experts
+        if block_router is None or block_experts is None:
+            raise ValueError("Every MoE block must have routed experts and a router.")
+        if (
+            block_experts.hidden_size,
+            block_experts.num_experts,
+            block_experts.bias,
+            block_experts.activation,
+            block_router.num_experts,
+            block_router.top_k,
+            block_router.bias,
+            block_router.gating_function,
+            block_router.normalize_expert_weights,
+            block_router.restore_weight_scale,
+            block_router.original_top_k,
+        ) != routed_signature:
+            raise ValueError("Routed expert architecture must be consistent across MoE layers.")
+
+    if routed_experts.bias or router.bias:
+        raise NotImplementedError("Olmo3Moe export does not support expert or router bias.")
+    if routed_experts.activation.value != "swiglu":
+        raise NotImplementedError("Olmo3Moe export only supports SwiGLU experts.")
+
+    shared_hidden_sizes = {
+        block.shared_experts.hidden_size
+        for block in moe_blocks
+        if block.shared_experts is not None
+    }
+    if any(block.shared_experts is None for block in moe_blocks) and shared_hidden_sizes:
+        raise ValueError("Shared experts must be present in either every or no MoE layer.")
+    if len(shared_hidden_sizes) > 1:
+        raise ValueError("Shared expert width must be consistent across MoE layers.")
+    if any(
+        block.shared_experts is not None
+        and (
+            block.shared_experts.num_experts != 1
+            or block.shared_experts.bias
+            or block.shared_experts.activation.value != "swiglu"
+        )
+        for block in moe_blocks
+    ):
+        raise NotImplementedError(
+            "Olmo3Moe export supports one bias-free SwiGLU shared expert per MoE layer."
+        )
+
+    dense_blocks = [block for block in typed_blocks if block.routed_experts is None]
+    dense_hidden_sizes = {
+        block.shared_experts.hidden_size
+        for block in dense_blocks
+        if block.shared_experts is not None
+    }
+    if dense_blocks and (
+        len(dense_hidden_sizes) != 1
+        or any(block.shared_experts is None for block in dense_blocks)
+    ):
+        raise ValueError("Dense Olmo3Moe layers must have one consistent shared-expert width.")
+    if any(
+        block.shared_experts is not None
+        and (
+            block.shared_experts.num_experts != 1
+            or block.shared_experts.bias
+            or block.shared_experts.activation.value != "swiglu"
+        )
+        for block in dense_blocks
+    ):
+        raise NotImplementedError(
+            "Dense Olmo3Moe layers require one bias-free SwiGLU shared expert."
+        )
+
+    layer_types: list[str] = []
+    window_sizes: set[int] = set()
+    for layer_idx, block in enumerate(typed_blocks):
+        block_attention = block.sequence_mixer
+        assert isinstance(block_attention, AttentionConfig)
+        sliding = block_attention.sliding_window
+        if sliding is not None and sliding.should_use_swa(layer_idx, model_config.n_layers):
+            layer_types.append(OLMO3_SLIDING_ATTENTION)
+            window_sizes.add(sliding.get_window_size(layer_idx, model_config.n_layers))
+        else:
+            layer_types.append(OLMO3_FULL_ATTENTION)
+    if len(window_sizes) > 1:
+        raise ValueError(f"Olmo3Moe HF export supports one sliding window size, got {window_sizes}.")
+
+    head_dim = attention.head_dim or model_config.d_model // attention.n_heads
+    return Olmo3MoeConfig(
+        vocab_size=model_config.vocab_size,
+        hidden_size=model_config.d_model,
+        attention_hidden_size=attention.n_heads * head_dim,
+        head_dim=head_dim,
+        dense_mlp_intermediate_size=(
+            next(iter(dense_hidden_sizes)) if dense_hidden_sizes else None
+        ),
+        moe_intermediate_size=routed_experts.hidden_size,
+        shared_expert_intermediate_size=(
+            next(iter(shared_hidden_sizes)) if shared_hidden_sizes else None
+        ),
+        n_routed_experts=routed_experts.num_experts,
+        num_experts_per_tok=router.top_k,
+        original_num_experts_per_tok=router.original_top_k,
+        num_hidden_layers=model_config.n_layers,
+        num_attention_heads=attention.n_heads,
+        num_key_value_heads=attention.n_kv_heads,
+        hidden_act="silu",
+        gating_function=str(router.gating_function),
+        normalize_expert_weights=router.normalize_expert_weights,
+        restore_weight_scale=router.restore_weight_scale,
+        max_position_embeddings=max_position_embeddings,
+        initializer_range=model_config.init_std,
+        pad_token_id=pad_token_id,
+        bos_token_id=bos_token_id,
+        eos_token_id=eos_token_id,
+        tie_word_embeddings=model_config.tie_word_embeddings,
+        rope_theta=attention.rope.theta,
+        attention_bias=False,
+        attention_dropout=attention.dropout or 0.0,
+        rms_norm_eps=representative.layer_norm.eps,
+        sliding_window=(
+            next(iter(window_sizes)) + 1 if window_sizes else max_position_embeddings
+        ),
+        use_head_qk_norm=True,
+        layer_types=layer_types,
+        dense_layers_indices=dense_layers_indices,
+        embed_scale=(model_config.embed_scale if model_config.embed_scale is not None else 1.0),
+        embed_norm=model_config.embedding_norm is not None,
+        use_peri_ln=use_peri_ln,
+    )
 
 
 def _as_mapping(config: PretrainedConfig | Mapping[str, Any]) -> Mapping[str, Any]:

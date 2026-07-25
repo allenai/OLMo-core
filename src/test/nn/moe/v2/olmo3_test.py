@@ -11,6 +11,7 @@ from olmo_core.nn.moe.v2.hf.configuration_olmo3moe import Olmo3MoeConfig
 from olmo_core.nn.moe.v2.hf.modeling_olmo3moe import Olmo3MoeForCausalLM, Olmo3MoeModel
 from olmo_core.nn.moe.v2.olmo3 import (
     build_olmo3_moe_config_from_hf_config,
+    build_olmo3_moe_hf_config_from_native_config,
     gather_olmo3_moe_hf_state,
     load_olmo3_moe_hf_state,
 )
@@ -75,6 +76,52 @@ def test_factory_builds_mixed_dense_moe_peri_ln_model():
     assert all(block.use_peri_norm for block in blocks)
     assert all(block.attention_input_norm is not None for block in blocks)
     assert all(block.feed_forward_input_norm is not None for block in blocks)
+
+
+def test_native_and_hf_config_roundtrip_preserves_mixed_architecture():
+    config = small_config(
+        attention_hidden_size=64,
+        head_dim=16,
+        dense_layers_indices=[0],
+        dense_mlp_intermediate_size=24,
+        use_peri_ln=True,
+        layer_types=["full_attention", "sliding_attention"],
+        sliding_window=16,
+        max_position_embeddings=128,
+        pad_token_id=1,
+        eos_token_id=2,
+    )
+    native_config = build_olmo3_moe_config_from_hf_config(
+        config, attention_backend=AttentionBackendName.torch
+    )
+    roundtrip = build_olmo3_moe_hf_config_from_native_config(
+        native_config,
+        max_position_embeddings=config.max_position_embeddings,
+        pad_token_id=config.pad_token_id,
+        bos_token_id=config.bos_token_id,
+        eos_token_id=config.eos_token_id,
+    )
+
+    for field in (
+        "vocab_size",
+        "hidden_size",
+        "attention_hidden_size",
+        "head_dim",
+        "dense_mlp_intermediate_size",
+        "moe_intermediate_size",
+        "shared_expert_intermediate_size",
+        "n_routed_experts",
+        "num_experts_per_tok",
+        "num_hidden_layers",
+        "num_attention_heads",
+        "num_key_value_heads",
+        "max_position_embeddings",
+        "sliding_window",
+        "layer_types",
+        "dense_layers_indices",
+        "use_peri_ln",
+    ):
+        assert getattr(roundtrip, field) == getattr(config, field)
 
 
 def test_full_hf_state_load_and_gather_roundtrip_without_ep():
