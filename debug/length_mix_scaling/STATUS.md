@@ -3,7 +3,72 @@
 **Updated 2026-07-24 22:30 PDT.** Autonomous overnight loop (dynamic self-pacing).
 Scope per user: **hybrid Qwen3.5-4B only** (no dense variant).
 
-## ★ ROUND 1 RESULT (2026-07-25 00:05) — an interior optimum, and a length-specific collapse
+## ★★ ROUND 1 COMPLETE (2026-07-25 00:35) — all 10 arms
+
+f1@32k, vLLM, eval_size 500 (SE ±0.022 at f1≈0.5, ±0.011 at ≈0.07):
+
+| arm | long | short | steps | 2k | 8k | **32k** |
+|---|---|---|---|---|---|---|
+| A0 | 35.2M | 0 | 67 | 0.000 | 0.000 | **0.000** |
+| A1 | 35.2M | 20.0M | 105 | 0.912 | 0.739 | **0.452** |
+| A2 | 35.2M | 41.5M | 146 | 0.929 | 0.794 | **0.512** |
+| A3 | 35.2M | 84.5M | 228 | 0.921 | 0.794 | **0.514** |
+| A4 | 35.2M | 148.7M | 351 | 0.921 | 0.796 | **0.249** |
+| B0 | 20.2M | 0 | 39 | 0.000 | 0.000 | **0.000** |
+| B2 | 20.2M | 21.5M | 80 | 0.742 | 0.364 | **0.068** |
+| B4 | 20.2M | 84.5M | 200 | 0.902 | 0.778 | **0.541** ← best overall |
+| C3 | uniform (=A3 budget) | — | 228 | 0.929 | 0.788 | **0.257** |
+| C4 | uniform (=A4 budget) | — | 349 | 0.934 | 0.803 | **0.447** |
+
+### The headline: a fixed-long + short mix BEATS the uniform production mix at equal cost
+**A3 0.514 vs C3 0.257** at identical steps and token budget — a 0.257 gap, ~9 SE. That is the
+direct answer to "can a better length composition get better 32k numbers at the same wall-clock?"
+**Yes, and by a lot.**
+
+But it **crosses over**: at the larger budget, A4 0.249 **loses** to C4 0.447. C3/A3 and C4/A4 are
+step-matched, so composition — not training length — drives both directions.
+
+### Optimum, and a length-specific collapse past it
+Row A f1@32k: 0.000 → 0.452 → 0.512 → **0.514** → 0.249. Interior optimum at S/L ≈ 1–2; the
+saturating-exponential form in `fit_law.py` does **not** fit (SSE 0.047) — report argmax +
+degradation instead. The A3→A4 collapse (~9 SE) is **length-specific**: A4's 2k/8k are as good as
+any arm (0.921/0.796), only 32k dies. Every Row A arm sees the identical long pool exactly once, so
+the sole variable is added short data → interference, not undertraining.
+
+### Long vs short interact — neither alone is sufficient
+- **Short data is necessary**: A0/B0 (long-only) score 0.000 at every rung, parse_rate 1.0 — they
+  learn the output format but not the task. (Verified not a harness bug: same harness gives C4
+  0.934/0.803/0.447; index conventions and converter args checked.)
+- **Long data is critical when short data is scarce**: same ~20M short, A1 (full long) 0.452 vs
+  B2 (half long) **0.068**.
+- **…but stops mattering once short data is plentiful**: at 84.5M short, A3 (full long) 0.514 vs
+  B4 (half long) 0.541 — a tie within ~1.2 SE.
+- **B4 is the best and cheapest good arm**: 0.541 at 104.7M tokens / 200 steps, beating A3's 0.514
+  at 119.7M / 228 steps with *half* the long data.
+
+### ★ What drives the collapse — three candidates ruled out from round-1 data alone
+| candidate | ruled out by |
+|---|---|
+| short/long **ratio** | A4 ratio 4.22 collapses (0.249); B4 ratio 4.18 is fine (0.541) — same ratio, opposite outcome |
+| **total steps / total tokens** | C4 matches A4 almost exactly (349 vs 351 steps, 182.9M vs 183.9M tok) yet scores 0.447 |
+| **long fraction** | A4 and B4 are both ~19% long; one collapses, one does not |
+
+**What survives: the collapse accumulates with STEPS on a short-dominated mix.** B4 (200 steps) has
+not eroded; A4 (351 steps) has. Progressive catastrophic forgetting of long-context ability, with
+short-context ability untouched.
+
+**A4e (launched 00:36) tests exactly this**: A4's *identical* data stopped at 200 steps (B4's step
+count). Prediction — if the mechanism is progressive erosion, A4e ≈ 0.5, not A4's 0.249. Costs no
+new data and isolates duration from composition.
+
+### Round 2 (launched 00:38): bracket the cliff
+A30 (105.9M short) and A35 (127.4M short) fill the gap between the peak (84.5M) and the collapse
+(148.7M). A25 was dropped — short-part granularity (~10.7M) made it identical to A30.
+**Open question for round 3**: does the half-long row collapse too? B4 (84.5M short) is healthy;
+a half-long arm at ~148.7M short would say whether the collapse tracks absolute short tokens or the
+short/long ratio.
+
+## ROUND 1 (partial, superseded by the table above)
 
 f1@32k, vLLM, eval_size 500 (binomial SE ±0.022 at f1≈0.5, ±0.019 at ≈0.25):
 

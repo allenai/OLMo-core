@@ -104,27 +104,57 @@ def main():
         xs, ys = [p[0] for p in pts], [p[1] for p in pts]
         print(f"\n--- Row {row} ---")
         print("   short_tokens(M) -> f1@32k : " + ", ".join(f"{x:.0f}->{y:.3f}" for x, y in pts))
-        f = fit_exp(xs, ys)
+        # The round-1 curve is NON-MONOTONIC (rises to an optimum, then collapses), so a
+        # saturating-exponential is the wrong model for the whole row -- fitting it across the
+        # turnover reports a meaningless tau. Locate the argmax first, fit only the RISING part,
+        # and report the degradation past the peak separately.
+        peak_i = max(range(len(ys)), key=lambda i: ys[i])
+        print(f"   PEAK: f1={ys[peak_i]:.3f} at {xs[peak_i]:.0f}M short tokens")
+        if peak_i < len(ys) - 1:
+            drop = ys[peak_i] - ys[-1]
+            se = math.sqrt(max(ys[peak_i], 1e-9) * (1 - ys[peak_i]) / 500) + \
+                 math.sqrt(max(ys[-1], 1e-9) * (1 - ys[-1]) / 500)
+            print(f"   DEGRADATION past peak: {ys[peak_i]:.3f} -> {ys[-1]:.3f} "
+                  f"({drop:+.3f}, ~{drop/se:.1f} SE) by {xs[-1]:.0f}M short tokens")
+            print("   => monotone-saturation model does NOT apply; this row has an interior optimum")
+        rise_x, rise_y = xs[:peak_i + 1], ys[:peak_i + 1]
+        f = fit_exp(rise_x, rise_y)
         if f is None:
-            slope = (ys[-1] - ys[0]) / (xs[-1] - xs[0]) if xs[-1] != xs[0] else float("nan")
-            print(f"   <4 points: linear slope only = {slope*100:.4f} f1 per 100M short tokens")
+            if len(rise_x) >= 2 and rise_x[-1] != rise_x[0]:
+                slope = (rise_y[-1] - rise_y[0]) / (rise_x[-1] - rise_x[0])
+                print(f"   rising part ({len(rise_x)} pts, too few to fit): linear slope "
+                      f"= {slope*100:.4f} f1 per 100M short tokens")
             continue
         sse, f_inf, tau, f0 = f
         marg = (f_inf - f0) / tau
-        print(f"   fit: f0={f0:.3f}  f_inf={f_inf:.3f}  tau={tau:.1f}M short tokens  (SSE={sse:.5f})")
+        print(f"   rising-part fit: f0={f0:.3f}  f_inf={f_inf:.3f}  tau={tau:.1f}M  (SSE={sse:.5f})")
         print(f"   marginal value at N_S=0 : {marg*100:.4f} f1 per 100M short tokens")
-        print(f"   saturation (3*tau)      : ~{3*tau:.0f}M short tokens")
 
-    a_gain = (res["A4"]["f1"] - res["A0"]["f1"]) if "A4" in res and "A0" in res else None
-    b_gain = (res["B4"]["f1"] - res["B0"]["f1"]) if "B4" in res and "B0" in res else None
-    if a_gain is not None and b_gain is not None:
-        print(f"\n--- substitute vs complement ---")
-        print(f"   Row A gain (0 -> 4x short): {a_gain:+.3f}")
-        print(f"   Row B gain (0 -> 4x short): {b_gain:+.3f}   [half the long data]")
-        print("   => short data SUBSTITUTES for long data" if b_gain > a_gain + 0.02 else
-              "   => short data COMPLEMENTS long data (helps regardless of long budget)"
-              if abs(b_gain - a_gain) <= 0.02 else
-              "   => short data helps LESS when long data is scarce (needs long data to exploit)")
+    # Compare rows at their PEAKS, not their endpoints. Row A's endpoint is the collapsed arm, so an
+    # endpoint comparison pits a healthy arm against a broken one and reports nonsense.
+    def peak_of(arms):
+        pts = [(ARM_TOKENS[a][1], res[a]["f1"], a) for a in arms if a in res]
+        return max(pts, key=lambda p: p[1]) if pts else None
+    pa = peak_of(["A0", "A1", "A2", "A3", "A4"])
+    pb = peak_of(["B0", "B2", "B4"])
+    if pa and pb:
+        print(f"\n--- substitute vs complement (compared at each row's PEAK) ---")
+        print(f"   Row A peak: f1={pa[1]:.3f} ({pa[2]}, {pa[0]:.0f}M short on the FULL long pool)")
+        print(f"   Row B peak: f1={pb[1]:.3f} ({pb[2]}, {pb[0]:.0f}M short on HALF the long pool)")
+        se = math.sqrt(pa[1] * (1 - pa[1]) / 500) + math.sqrt(pb[1] * (1 - pb[1]) / 500)
+        d = pb[1] - pa[1]
+        if abs(d) <= 2 * se:
+            print(f"   delta={d:+.3f} +/-{se:.3f} -> TIE: halving the long pool costs nothing once "
+                  "short data is plentiful => short data SUBSTITUTES for long data at the optimum")
+        elif d < 0:
+            print(f"   delta={d:+.3f} +/-{se:.3f} -> long data still needed: halving it hurts even "
+                  "at the optimum => COMPLEMENT")
+        else:
+            print(f"   delta={d:+.3f} +/-{se:.3f} -> less long data is BETTER at the optimum")
+        # the low-short end tells the opposite story, and that contrast is the real finding
+        if "A1" in res and "B2" in res:
+            print(f"   BUT at ~20M short: A1 (full long) {res['A1']['f1']:.3f} vs "
+                  f"B2 (half long) {res['B2']['f1']:.3f} -> long data is CRITICAL when short is scarce")
 
     print("\n--- Row C: equal-token uniform reference (the 'is it cheaper?' test) ---")
     for c, a in (("C3", "A3"), ("C4", "A4")):
