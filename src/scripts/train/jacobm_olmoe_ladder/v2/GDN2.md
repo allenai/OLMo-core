@@ -409,3 +409,20 @@ Cx4 from durable `step9000`, diagnostic 1.2B Cx8 from `step7000`, and fresh
 unallocated scheduling, and their existing debug/environment settings. The
 Cx4 attempt was scheduled immediately; Cx8 and 810M Cx2 were queued at the
 23:11 UTC snapshot.
+
+At the 2026-07-25 00:55 UTC refresh, six canonical attempts had stopped. The
+production 810M Cx8 encountered non-finite loss after logged step 46,711 and
+left durable `step46500`. Fresh 810M Cx2 encountered non-finite total gradients
+after step 4,345 and left `step4000`; this advanced beyond its first fresh-run
+failure at step 3,418. Fresh 1.2B Cx1 and Cx2 encountered non-finite total
+gradients after steps 4,875 and 3,978, leaving `step4500` and `step3500`.
+Diagnostic 1.2B Cx4 and Cx8 again exactly reproduced broad non-finite gradients
+at steps 9,059 and 7,125, leaving `step9000` and `step7000`. These are model
+numerics failures, not configuration errors or OOMs.
+
+At the user's request, all six existing Beaker experiments were resumed in
+place from those durable checkpoints. No experiment identity, W&B identity,
+checkpoint path, or training setting was changed. Every retry retained urgent
+priority, zero minimum runtime, and unallocated Holmes scheduling. At the
+snapshot, 810M Cx8, fresh 810M Cx2 and 1.2B Cx1, and diagnostic 1.2B Cx4 were
+scheduled; fresh 1.2B Cx2 and diagnostic 1.2B Cx8 were queued.
