@@ -3,7 +3,39 @@
 **Updated 2026-07-24 22:30 PDT.** Autonomous overnight loop (dynamic self-pacing).
 Scope per user: **hybrid Qwen3.5-4B only** (no dense variant).
 
-## ★★★ CURRENT BEST PICTURE (2026-07-25 01:40, round 2 landing)
+## ✅ RETRACTED (2026-07-25 02:20): the "~0.2 run-to-run variance" alarm was WRONG — A4e is confounded
+
+I briefly concluded from A4e vs B4 (near-identical data consumption, 0.207 apart) that run-to-run
+variance was ~0.2 and that most of the curve was noise. **That was wrong.** The gap has a mundane
+cause:
+
+`--max-steps` is wired to the trainer's **`hard_stop`**, but the LR schedule is derived from
+**`max_duration`** (`trainer.py:475`, `max_steps = _get_max_steps(self.max_duration)`), and
+`hard_stop`'s own docstring says it exists to stop early *without* changing `max_duration` — i.e.
+**without affecting the schedule**.
+
+- **A4e**: schedule built for its 351-step epoch, hard-stopped at 200 → LR frozen at ~43% of peak,
+  **never annealed**. `LinearWithWarmup(alpha_f=0.0)` means a proper run ends at LR 0.
+- **B4**: `max_duration` = its own 200-step epoch → **fully annealed**.
+
+An unannealed LR at stop time easily costs ~0.2 f1. So A4e measures "stopped mid-schedule", not
+"trained for fewer steps", and is **excluded from the curve**.
+
+**Every other arm is clean**: for A0–A4, B*, C* I set `max_steps` = the arm's own epoch length, so
+`hard_stop` coincides with `max_duration` and each annealed correctly. The curve's conclusions stand.
+
+**The duration question is answered without A4e**, by two properly-annealed runs at the same ratio:
+A4 (ratio 4.22, 351 steps) **0.249** vs B4 (ratio 4.18, 200 steps) **0.541**. Longer training at a
+short-dominated ratio does hurt.
+
+**Seed replicates are still running and still worth it** — A4s2 / A30s2 / A3s2 give a real variance
+estimate, which is needed regardless to know whether the plateau's fine structure (0.512 / 0.514 /
+0.561 / 0.518) is meaningful.
+
+⚠ **Lesson for any future arm**: never set `--max-steps` below an arm's epoch length expecting a
+clean "shorter training" comparison — you get an unannealed LR instead. Build a smaller dataset.
+
+## CURRENT BEST PICTURE (2026-07-25 01:40, round 2 landing) — subject to the variance caveat above
 
 Row A f1@32k vs short tokens (long pool FIXED at 35.2M):
 
