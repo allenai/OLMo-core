@@ -27,7 +27,7 @@ below retain the full launch and retry history.
 | pretraining | larger aligned geometry + RoPE + gated attention | 11 finished / 1 failed | newly collected strict final-250M CE: 810M Cx8 `2.104806`, 1.2B Cx8 `2.029514`; 1.2B Cx2 remains failed | [results](results/pretraining/geometry_gdn_ev2_rope_gated/results.md) |
 | pretraining | 275M geometry + NoPE + gated attention + original GDN2 | 15/16 formal cells finished; clean independent reproduction finished | The original Cx8 `1.6e-3` trajectory remains a deterministic failure at step 36,768, but its distinct `-fresh-r2` reproduction completed | [results](results/pretraining/geometry_gdn2_ev2_nope_gated/results.md) |
 | pretraining | 275M GDN2 stability 2x2 | 3/3 finished | Fresh Cx8/LR `1.6e-3` ev1+negative, ev2+nonnegative, and canonical ev1+nonnegative controls all completed | [work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYBVM2N2D3DM67S8HWARJP6C) |
-| pretraining | canonical GDN2 (`expand_v=1`, nonnegative) 275M sweep | 14/16 finished, 2 running | Cx1/Cx2/Cx4 are complete and bracketed; Cx8 `8e-4` and `3.2e-3` are in their final 2.5--5.6% | [results](results/pretraining/canonical_gdn2_kda/results.md) |
+| pretraining | canonical GDN2 (`expand_v=1`, nonnegative) 275M sweep | 16/16 finished | All four Cx curves are complete and bracketed; observed-best LR is `1.6e-3` at every Cx | [results](results/pretraining/canonical_gdn2_kda/results.md) |
 | pretraining | canonical KDA 275M sweep | 16/16 finished | All four Cx curves are complete and bracketed; observed-best LR is `1.6e-3` at every Cx | [results](results/pretraining/canonical_gdn2_kda/results.md) |
 | diagnostic | GDN2 production-shape PyTorch reference 2x2 | finished | All four `expand_v`/negative-eigenvalue cells passed forward, final-state, backward, packed-document, and recompute/retain comparisons | [work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYBY8DXT5BVM85WYKAT5TXQN) |
 | diagnostic | Matched KDA/GDN2 numerical audit | finished | All 40 one/four-chunk output/state comparisons passed; GDN2 is broadly KDA-like, with localized 3.80% `A_log` relative-L2 error at T256/V256/negative eigvals | [work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYBZX8MHJ611ZSJD43SYS9HZ) / [results](results/diagnostics/matched_kda_gdn2_numerics.md) |
@@ -128,15 +128,15 @@ The submission ledger is
 The 31 new jobs request 152 GPUs; the complete 32-cell comparison including
 the reused eight-GPU cell is 160 GPUs.
 
-Status at 2026-07-25 16:44 UTC: KDA finished all 16/16 jobs without a failed
+Final status at 2026-07-25 17:22 UTC: KDA finished all 16/16 jobs without a failed
 attempt. All four curves are bracketed and choose observed LR `1.6e-3`, with
 strict final-250M CEs `2.717057`, `2.587990`, `2.486896`, and `2.405198` at
-Cx1/2/4/8. Canonical GDN2 is 14/16 finished with no failed attempt: Cx1/Cx2/Cx4
-are bracketed and choose `1.6e-3`, at CEs `2.677515`, `2.557597`, and
-`2.467207`. Its Cx8 `8e-4` and `3.2e-3` jobs are the only live training jobs,
-at steps 43,814 and 42,397 of 44,900 respectively; `4e-4` and the reused
-`1.6e-3` cell are finished. The shared best-of plot correctly withholds the
-canonical GDN2 Cx8 point until both remaining jobs finish.
+Cx1/2/4/8. Canonical GDN2 also finished all 16/16 jobs without a failed
+attempt. Every curve selects observed LR `1.6e-3`, with strict final-250M CEs
+`2.677515`, `2.557597`, `2.467207`, and `2.389725`. The completed Cx8 fit
+predicts approximately `1.21e-3`; formal selection remains the observed
+`1.6e-3` point. The shared best-of plot now includes canonical GDN2 Cx8 as a
+fully completed, non-provisional curve.
 
 The paired plotting entry point is `plot_canonical_gdn2_kda.py`. It resolves
 planned runs by exact W&B display name, currently finding 19/32 logical cells;
