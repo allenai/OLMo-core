@@ -148,6 +148,36 @@ def select_pool_shards(
     return selection
 
 
+def snapshot_with_retry(repo: str, local_dir: str, workers: int, attempts: int = 12):
+    """
+    ``snapshot_download`` the whole repo, retrying on transient hub errors.
+
+    A single failed file (HF's Xet CAS returns 429 under sustained parallel load) aborts the entire
+    ``snapshot_download`` call, which would otherwise throw away hours of progress. Each retry
+    resumes: already-downloaded files are skipped, so every round only fetches what is left.
+    """
+    from huggingface_hub import snapshot_download
+
+    for attempt in range(attempts):
+        try:
+            snapshot_download(
+                repo,
+                repo_type="dataset",
+                local_dir=local_dir,
+                allow_patterns=["data/**", "README.md"],
+                max_workers=workers,
+            )
+            return
+        except Exception as e:  # noqa: BLE001
+            wait = min(300, 10 * 2**attempt)
+            log.warning(
+                f"snapshot_download attempt {attempt + 1}/{attempts} failed: {e}; "
+                f"resuming in {wait}s"
+            )
+            time.sleep(wait)
+    raise RuntimeError(f"snapshot_download of {repo} failed after {attempts} attempts")
+
+
 def download_files(repo: str, paths: List[str], local_dir: str, workers: int, retries: int = 5):
     """Download ``paths`` from ``repo`` into ``local_dir``, preserving repo-relative layout."""
     from huggingface_hub import hf_hub_download
@@ -223,17 +253,9 @@ def main() -> None:
 
     # ------------------------------------------------------------------------- A1: snapshot mix
     if not args.skip_mix and not args.plan_only:
-        from huggingface_hub import snapshot_download
-
         mix_dir = os.path.join(raw, "mix")
         log.info(f"A1: snapshotting {MIX_DATASET} -> {mix_dir} (~83 GB, resumable)")
-        snapshot_download(
-            MIX_DATASET,
-            repo_type="dataset",
-            local_dir=mix_dir,
-            allow_patterns=["data/**", "README.md"],
-            max_workers=args.workers,
-        )
+        snapshot_with_retry(MIX_DATASET, mix_dir, args.workers)
         log.info("A1: done")
 
     # --------------------------------------------------------------------- A2: sampled pool pull
