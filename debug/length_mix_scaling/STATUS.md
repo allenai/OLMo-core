@@ -51,6 +51,45 @@ result is the saturation constant plus the warning that **32k evaluations here n
   from a collapsed run (`eval_results/*.responses.json`) — that is the highest-value next step.
 - `A25` was composed but never run (short-part granularity made it identical to A30).
 
+# ══════════ INSTABILITY DIAGNOSIS — IN FLIGHT (2026-07-25 09:55) ══════════
+
+Acting on the "diagnose the instability" item above.
+
+**The generations from the collapsed runs do not exist.** `A4` and `C3` were evaluated in round 1,
+*before* `eval_arm_beaker.sh` started persisting `*_rung*.responses.json` to weka. Only the later
+arms (`A3s2 A30s2 A35 A4e A4s2 C3s2`) have text on disk — and every one of those is a *healthy*
+run. `diagnose_collapse.py` therefore found nothing to compare (Beaker `01KYD2HDZ1YRPZ2SJ9XZ89R536`,
+exit 0 with all six rung pairs SKIPped).
+
+**So the collapsed checkpoints are being re-evaluated instead**, which is strictly better than a
+generations dump would have been: it answers a question the dump could not.
+
+| job | arm | checkpoint |
+|---|---|---|
+| `01KYD2T1NDCH3R663MRSB5BG7S` | `A4rr` | `lm3-A4-20260724T202830-0700` (measured 0.249) |
+| `01KYD2T60H4PENVHZXKFE6A417` | `C3rr` | `lm3-C3-20260724T202858-0700` (measured 0.257) |
+
+New arm names + explicit `CKPT` so the round-1 records are not overwritten.
+
+**Pre-committed reading**, so this is not decided after the fact:
+- `A4rr` ≈ 0.25 and `C3rr` ≈ 0.26 → the collapse is in the **weights**. It is a training-seed
+  effect, and `diagnose_collapse.py` on the fresh responses then says *how* the weights fail.
+- Either comes back ≈ 0.55 → the collapse was in the **evaluation**, not the model, and the whole
+  "seed instability" headline is wrong in an interesting way: the withdrawn claims would have been
+  withdrawn for the wrong reason, and round 1's f1s are not trustworthy point measurements.
+
+**One failure mode is already ruled out, from `A4e`'s existing log:** precision ≡ recall ≡ f1 at
+every rung (0.904 / 0.720 / 0.334), i.e. the model always emits exactly as many pairs as gold.
+Whatever the collapse is, it is not over- or under-prediction — it picks the wrong pairs. That
+leaves positional truncation (can't retrieve from far back), degeneration (near-constant answer),
+and plain under-convergence.
+
+`A4e` is also the natural control for that last one: it is the same data with 200 of 351 steps and
+no LR anneal, and it lands at **0.334** — between collapsed (0.249) and healthy (0.585). So the
+diagnosis runs `--pairs A4rr:A4s2,C3rr:C3s2,A4e:A4s2`. If a collapsed seed's positional signature
+matches `A4e`'s, the mechanism is under-convergence of the long-context ability specifically; if it
+differs, it is something else.
+
 # ═══════════════════════════════════════════════════
 
 **Updated 2026-07-24 22:30 PDT.** Autonomous overnight loop (dynamic self-pacing).
