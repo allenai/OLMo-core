@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Plot the canonical 275M GDN2 and KDA LR sweeps.
+"""Plot the canonical GDN2/KDA sweeps and GDN2 scale transfer.
 
 Run IDs are resolved from an exact, checked-in list of W&B display names. This
 lets queued jobs initialize after this file is committed while preserving the
@@ -35,15 +35,44 @@ from plot_pretraining_wave import (
     _finished,
     _fit_minimum,
     load_points,
+    plot_fixed_lr_scale_comparison,
     plot_intervention_uplot,
     plot_observed_best_summary,
+    write_results,
 )
 
 CXS = (1, 2, 4, 8)
 LRS = (4e-4, 8e-4, 1.6e-3, 3.2e-3)
+MODELS = ("275m", "480m", "810m", "1p2b")
 GDN2_KEY = "geometry_gdn2_ev1_noneg_nope_gated"
 KDA_KEY = "geometry_kda_ev1_noneg_nope_gated"
 EXPECTED_SWEEP_POINTS = 4
+SCALE_LRS = {
+    ("480m", 1): 1.2e-3,
+    ("480m", 2): 9e-4,
+    ("480m", 4): 8e-4,
+    ("480m", 8): 8e-4,
+    ("810m", 1): 6e-4,
+    ("810m", 2): 5.6e-4,
+    ("810m", 4): 4e-4,
+    ("810m", 8): 4e-4,
+    ("1p2b", 1): 4e-4,
+    ("1p2b", 2): 6e-4,
+    ("1p2b", 4): 3e-4,
+    ("1p2b", 8): 4e-4,
+}
+CANONICAL_GDN2_ACTIVE_PARAMETERS = {
+    "275m": 284_915_520,
+    "480m": 489_954_144,
+    "810m": 823_189_952,
+    "1p2b": 1_228_949_248,
+}
+WIDE_ACTIVE_PARAMETERS = {
+    "275m": 280_207_872,
+    "480m": 486_348_800,
+    "810m": 823_569_920,
+    "1p2b": 1_225_011_712,
+}
 
 
 def _lr_name(lr: float) -> str:
@@ -55,13 +84,26 @@ def _lr_name(lr: float) -> str:
     }[lr]
 
 
-def _planned_display_names() -> dict[str, list[tuple[int, float, str]]]:
+def _scale_lr_name(lr: float) -> str:
+    return {
+        1.2e-3: "1p2e-3",
+        9e-4: "9e-4",
+        8e-4: "8e-4",
+        6e-4: "6e-4",
+        5.6e-4: "5p6e-4",
+        4e-4: "4e-4",
+        3e-4: "3e-4",
+    }[lr]
+
+
+def _planned_display_names() -> dict[str, list[tuple[str, int, float, str]]]:
     planned = {GDN2_KEY: [], KDA_KEY: []}
     for cx in CXS:
         for lr in LRS:
             tag = _lr_name(lr)
             planned[GDN2_KEY].append(
                 (
+                    "275m",
                     cx,
                     lr,
                     f"pt-275m-geometry-hybrid-gdn2-ev1-noneg-nope-gated-cx{cx}-lr{tag}-r1",
@@ -69,11 +111,25 @@ def _planned_display_names() -> dict[str, list[tuple[int, float, str]]]:
             )
             planned[KDA_KEY].append(
                 (
+                    "275m",
                     cx,
                     lr,
                     f"pt-275m-geometry-kda-ev1-noneg-nope-gated-cx{cx}-lr{tag}",
                 )
             )
+    for (model, cx), lr in SCALE_LRS.items():
+        ep_suffix = "-ep8-sync" if model == "1p2b" else ""
+        planned[GDN2_KEY].append(
+            (
+                model,
+                cx,
+                lr,
+                (
+                    f"pt-{model}-geometry-hybrid-gdn2-ev1-noneg-nope-gated-"
+                    f"cx{cx}-lr{_scale_lr_name(lr)}{ep_suffix}-r1"
+                ),
+            )
+        )
     return planned
 
 
@@ -81,7 +137,7 @@ def resolve_interventions(api: Any, project: str) -> tuple[Variant, Variant, dic
     """Resolve exact W&B names once and reject ambiguous histories."""
 
     planned = _planned_display_names()
-    display_names = [name for rows in planned.values() for _, _, name in rows]
+    display_names = [name for rows in planned.values() for _, _, _, name in rows]
     matches = list(
         api.runs(
             project,
@@ -98,7 +154,7 @@ def resolve_interventions(api: Any, project: str) -> tuple[Variant, Variant, dic
 
     def build_variant(key: str, label: str, color: str) -> Variant:
         registered: list[RegisteredRun] = []
-        for cx, lr, display_name in planned[key]:
+        for model, cx, lr, display_name in planned[key]:
             exact = by_name[display_name]
             if not exact:
                 unresolved[key].append(display_name)
@@ -109,7 +165,7 @@ def resolve_interventions(api: Any, project: str) -> tuple[Variant, Variant, dic
                     f"{display_name!r} resolved to multiple W&B runs ({ids}); "
                     "register the intended run and predecessor segments explicitly"
                 )
-            registered.append(RegisteredRun("275m", cx, lr, exact[0].id))
+            registered.append(RegisteredRun(model, cx, lr, exact[0].id))
         return Variant(key=key, label=label, color=color, runs=tuple(registered))
 
     canonical_gdn2 = build_variant(
@@ -151,10 +207,34 @@ def comparison_wave(canonical_gdn2: Variant, canonical_kda: Variant) -> Wave:
     )
 
 
-def _variant_expected_count(variant: Variant, cx: int) -> int:
-    if variant.key in {GDN2_KEY, KDA_KEY}:
+def canonical_scale_wave(canonical_gdn2: Variant) -> Wave:
+    return Wave(
+        key="canonical_gdn2_scale",
+        title="Canonical GDN2 fixed-LR scale transfer",
+        intervention_label="canonical GDN2 (expand_v=1, nonnegative)",
+        architecture_note=(
+            "The canonical expand_v=1, nonnegative GDN2 gated-NoPE geometry. "
+            "The 275M panel uses its observed-optimal LR sweep; 480M, 810M, "
+            "and 1.2B use the corresponding transferred wide-integration LR."
+        ),
+        models=MODELS,
+        lr_sweep_models=("275m",),
+        active_parameters=CANONICAL_GDN2_ACTIVE_PARAMETERS,
+        baseline_active_parameters=WIDE_ACTIVE_PARAMETERS,
+        baseline=WIDE_INTEGRATION,
+        additional_baselines=(
+            GEOMETRY_GDN_EV2_NOPE_GATED,
+            GEOMETRY_GDN2_EV2_NOPE_GATED,
+        ),
+        intervention=canonical_gdn2,
+        uplot_baselines=False,
+    )
+
+
+def _variant_expected_count(variant: Variant, model: str, cx: int) -> int:
+    if model == "275m" and variant.key in {GDN2_KEY, KDA_KEY}:
         return EXPECTED_SWEEP_POINTS
-    return _expected_count(variant, "275m", cx)
+    return _expected_count(variant, model, cx)
 
 
 def plot_shared_best_of(
@@ -181,7 +261,8 @@ def plot_shared_best_of(
         ("275m", cx, variant.key)
         for variant in variants
         for cx in eligible[variant.key]
-        if len(_finished(points, variant.key, "275m", cx)) < _variant_expected_count(variant, cx)
+        if len(_finished(points, variant.key, "275m", cx))
+        < _variant_expected_count(variant, "275m", cx)
     }
     linestyles = ("--", ":", "-.", "-", "-")
     summary_variants = tuple(
@@ -219,7 +300,7 @@ def write_comparison_results(
             finished = _finished(points, variant.key, "275m", cx)
             fit = _fit_minimum(finished)
             best = min(finished, key=lambda point: point.loss) if finished else None
-            expected = _variant_expected_count(variant, cx)
+            expected = _variant_expected_count(variant, "275m", cx)
             rows.append(
                 {
                     "variant": variant.key,
@@ -304,15 +385,26 @@ def main() -> None:
     api = wandb.Api(timeout=90)
     canonical_gdn2, canonical_kda, unresolved = resolve_interventions(api, args.project)
     discovered = len(canonical_gdn2.runs) + len(canonical_kda.runs)
-    print(f"Resolved {discovered}/32 planned runs by exact W&B display name.")
+    planned = sum(len(rows) for rows in _planned_display_names().values())
+    print(f"Resolved {discovered}/{planned} planned runs by exact W&B display name.")
     for key, names in unresolved.items():
         print(f"  {key}: {len(names)} pending")
     if args.resolve_only:
         return
 
     wave = comparison_wave(canonical_gdn2, canonical_kda)
+    scale_wave = canonical_scale_wave(canonical_gdn2)
     points = load_points(
         wave,
+        project=args.project,
+        cache_dir=args.cache_dir,
+        window_m=FINAL_WINDOW_M,
+        include_running=False,
+        refresh_cache=args.refresh_cache,
+        refresh_stale_cache=args.refresh_stale_cache,
+    )
+    scale_points = load_points(
+        scale_wave,
         project=args.project,
         cache_dir=args.cache_dir,
         window_m=FINAL_WINDOW_M,
@@ -364,8 +456,26 @@ def main() -> None:
             (canonical_gdn2, canonical_kda),
             output_dir / "summary_observed_best.png",
         ),
+        plot_fixed_lr_scale_comparison(
+            scale_points,
+            scale_wave,
+            output_dir / "gdn2_fixed_lr_scale_comparison.png",
+            FINAL_WINDOW_M,
+        ),
     ]
-    result_paths = write_comparison_results(points, variants, unresolved, results_path)
+    sweep_unresolved = {
+        key: [name for name in names if name.startswith("pt-275m-")]
+        for key, names in unresolved.items()
+    }
+    result_paths = (
+        *write_comparison_results(points, variants, sweep_unresolved, results_path),
+        *write_results(
+            scale_points,
+            scale_wave,
+            results_path.with_name("scale_results"),
+            FINAL_WINDOW_M,
+        ),
+    )
     print("\nWrote:")
     for path in (*paths, *result_paths):
         print(path)

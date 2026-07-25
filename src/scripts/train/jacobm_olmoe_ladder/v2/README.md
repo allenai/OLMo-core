@@ -71,11 +71,11 @@ uv run --isolated --with 'wandb==0.21.4' --with matplotlib python \
 without reference points, then one shared observed-best plot containing only
 bracketed curves for wide integration, matching gated-NoPE GDN1 geometry,
 original `expand_v=2` GDN2, canonical `expand_v=1`/nonnegative GDN2, and
-canonical KDA. It resolves the 32 planned jobs by exact W&B display name, so
-queued jobs can initialize without a registry edit; duplicate exact names fail
-closed and require an explicit resume-segment decision. Pass `--resolve-only`
-while training is active to audit registration without publishing partial
-plots.
+canonical KDA. It resolves the 32 paired 275M sweep jobs plus the 12 canonical
+GDN2 scale-transfer jobs by exact W&B display name, so queued jobs can
+initialize without a registry edit; duplicate exact names fail closed and
+require an explicit resume-segment decision. Pass `--resolve-only` while
+training is active to audit registration without publishing partial plots.
 
 The script writes each selected wave into one matching artifact directory and
 uses the final-250M-token mean training CE. The 275M outputs follow the strict
@@ -86,13 +86,15 @@ LR range; the label is still the actual observed-best LR, never the fitted
 prediction. If the available points already bracket a valid curve but one or
 more planned runs are unfinished, the observed point is shown with a hollow
 orange diamond and a dagger on its LR label. This is a provisional-data marker,
-not a substitution of the predicted minimum. The separate scale-transfer plot
-adds 480M/810M/1.2B cells as their
-registered runs finish, but explicitly labels them fixed-LR comparisons because
-their LRs were transferred from wide rather than optimized for hybrid. The
-shared JSON/Markdown result table records both modes. W&B histories reuse the
-migrated v1 cache; `--include-running` remains available for diagnostic tables
-but running points never enter formal selection.
+not a substitution of the predicted minimum. The separate
+`gdn2_fixed_lr_scale_comparison.png` scale-transfer plot adds
+480M/810M/1.2B cells as their registered runs finish, but explicitly labels
+them fixed-LR comparisons because their LRs were transferred from wide rather
+than optimized for hybrid. Missing or live canonical cells remain visibly
+pending. `scale_results.json` and `scale_results.md` record all four sizes;
+the original result pair remains the detailed 275M comparison. W&B histories
+reuse the migrated v1 cache; `--include-running` remains available for
+diagnostic tables but running points never enter formal selection.
 
 `plot_c4_validation_scale.py` renders the C4 validation-CE analogue of the
 gated-RoPE fixed-LR scale plot. It preserves the exact checkpoint selection

@@ -140,11 +140,12 @@ predicts approximately `1.21e-3`; formal selection remains the observed
 fully completed, non-provisional curve.
 
 The paired plotting entry point is `plot_canonical_gdn2_kda.py`. It resolves
-all 32 logical cells by exact W&B display name; duplicate exact names fail
-closed. One command produces separate baseline-free U-plots for canonical
-GDN2 and KDA plus a single strict observed-best plot against wide integration,
-matching gated-NoPE GDN1, and original `expand_v=2` GDN2. Every selected point
-has a completed, bracketed quadratic curve.
+all 32 paired 275M sweep cells and the 12 canonical GDN2 scale-transfer cells
+by exact W&B display name; duplicate exact names fail closed. One command
+produces separate baseline-free U-plots for canonical GDN2 and KDA plus a
+single strict observed-best plot against wide integration, matching gated-NoPE
+GDN1, and original `expand_v=2` GDN2. Every selected 275M point has a completed,
+bracketed quadratic curve.
 
 ## Canonical GDN2 larger-scale transfer
 
@@ -183,6 +184,16 @@ priority, zero minimum runtime, Holmes-only placement, disabled in-loop evals,
 and rolling ephemeral checkpoint policy. The complete immutable submission
 ledger is
 [`launchers/pretraining/generated/geometry_matched_scale_gdn2_ev1_noneg_nope_gated_balanced_submissions.json`](launchers/pretraining/generated/geometry_matched_scale_gdn2_ev1_noneg_nope_gated_balanced_submissions.json).
+
+The same plotting entry point maintains the finished-only four-size comparison
+at
+[`plots/pretraining/canonical_gdn2_kda/gdn2_fixed_lr_scale_comparison.png`](plots/pretraining/canonical_gdn2_kda/gdn2_fixed_lr_scale_comparison.png)
+and its machine-/human-readable ledgers at
+[`results/pretraining/canonical_gdn2_kda/scale_results.json`](results/pretraining/canonical_gdn2_kda/scale_results.json)
+and
+[`scale_results.md`](results/pretraining/canonical_gdn2_kda/scale_results.md).
+Live, queued, or unresolved canonical cells are labeled pending; only finished
+runs with a complete strict final-250M-token window enter the plotted series.
 
 ## 275M geometry-matched gated-NoPE GDN2 sweep
 
