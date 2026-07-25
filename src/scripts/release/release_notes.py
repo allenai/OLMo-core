@@ -1,11 +1,8 @@
-# encoding: utf-8
-
 """
 Prepares markdown release notes for GitHub releases.
 """
 
 import os
-from typing import List, Optional
 
 import packaging.version
 
@@ -19,7 +16,7 @@ REMOVED_HEADER = "### Removed 👋"
 
 def get_change_log_notes() -> str:
     in_current_section = False
-    current_section_notes: List[str] = []
+    current_section_notes: list[str] = []
     with open("CHANGELOG.md") as changelog:
         for line in changelog:
             if line.startswith("## "):
@@ -55,7 +52,7 @@ def get_commit_history() -> str:
     # Out of `all_tags`, find the latest previous version so that we can collect all
     # commits between that version and the new version we're about to publish.
     # Note that we ignore pre-releases unless the new version is also a pre-release.
-    last_tag: Optional[str] = None
+    last_tag: str | None = None
     for tag in all_tags:
         if not tag.strip():  # could be blank line
             continue

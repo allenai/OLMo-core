@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import Any, Dict, Optional, Tuple
+from typing import Any
 
 import torch
 
@@ -198,7 +198,7 @@ class MetricMergeStrategy(StrEnum):
 
 def reshape_inputs_for_loss(
     logits: torch.Tensor, labels: torch.Tensor
-) -> Tuple[torch.Tensor, torch.Tensor]:
+) -> tuple[torch.Tensor, torch.Tensor]:
     # shape: (B * S, V)
     logits_for_loss = logits.view(-1, logits.size(-1))
     # shape: (B, S) -> (B * S,)
@@ -207,8 +207,8 @@ def reshape_inputs_for_loss(
 
 
 def get_inputs_for_loss(
-    batch: Dict[str, Any], logits: torch.Tensor, label_ignore_index: int = -100
-) -> Tuple[torch.Tensor, torch.Tensor]:
+    batch: dict[str, Any], logits: torch.Tensor, label_ignore_index: int = -100
+) -> tuple[torch.Tensor, torch.Tensor]:
     return reshape_inputs_for_loss(
         logits, batch.get("labels", get_labels(batch, label_ignore_index=label_ignore_index))
     )
@@ -220,27 +220,27 @@ class TrainingProgress:
     """
     The current training step.
     """
-    current_tokens: Optional[int] = None
+    current_tokens: int | None = None
     """
     The current number of tokens processed during training.
     """
-    total_steps: Optional[int] = None
+    total_steps: int | None = None
     """
     The step that training will stop at.
     """
-    time_remaining: Optional[timedelta] = None
+    time_remaining: timedelta | None = None
     """
     Estimated time remaining.
     """
-    bps: Optional[float] = None
+    bps: float | None = None
     """
     The average training speed in batches per second.
     """
-    tps: Optional[float] = None
+    tps: float | None = None
     """
     The average training speed in tokens per second per device.
     """
-    mfu: Optional[float] = None
+    mfu: float | None = None
     """
     The average model flops utilization (MFU) percentage.
     """

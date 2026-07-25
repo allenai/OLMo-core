@@ -14,16 +14,16 @@ from .router import (
 )
 
 __all__ = [
-    "MoEBase",
     "DroplessMoE",
-    "MoEConfig",
-    "MoEType",
-    "MoEMLP",
     "DroplessMoEMLP",
-    "MoERouter",
+    "MoEBase",
+    "MoEConfig",
     "MoELinearRouter",
-    "MoERouterConfig",
-    "MoERouterType",
-    "MoERouterGatingFunction",
     "MoELoadBalancingLossGranularity",
+    "MoEMLP",
+    "MoERouter",
+    "MoERouterConfig",
+    "MoERouterGatingFunction",
+    "MoERouterType",
+    "MoEType",
 ]

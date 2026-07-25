@@ -1,7 +1,7 @@
 import json
 import logging
 from dataclasses import dataclass
-from typing import Any, Dict, Optional
+from typing import Any
 
 from olmo_core.aliases import PathOrStr
 from olmo_core.data import NumpyDataLoaderBase
@@ -29,20 +29,20 @@ class ConfigSaverCallback(Callback):
     """
 
     fname: str = "config.json"
-    save_data_paths: Optional[bool] = None
-    data_paths_fname: Optional[str] = None
+    save_data_paths: bool | None = None
+    data_paths_fname: str | None = None
 
-    _config: Optional[Dict[str, Any]] = None
+    _config: dict[str, Any] | None = None
 
     @property
-    def config(self) -> Optional[Dict[str, Any]]:
+    def config(self) -> dict[str, Any] | None:
         """
         The JSON config dictionary to record.
         """
         return self._config
 
     @config.setter
-    def config(self, config: Dict[str, Any]):
+    def config(self, config: dict[str, Any]):
         self._config = config
         for callback_name, callback in self.trainer.callbacks.items():
             if (

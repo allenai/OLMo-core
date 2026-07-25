@@ -8,7 +8,6 @@ import logging
 import os
 import sys
 from dataclasses import dataclass
-from typing import List
 
 import torch
 import torch.distributed as dist
@@ -94,7 +93,7 @@ class BenchmarkConfig(Config):
     launch: BeakerLaunchConfig
 
 
-def build_config(script: str, run_name: str, cluster: str, overrides: List[str]) -> BenchmarkConfig:
+def build_config(script: str, run_name: str, cluster: str, overrides: list[str]) -> BenchmarkConfig:
     launch_config = BeakerLaunchConfig(
         name=f"{run_name}-{generate_uuid()[:8]}",
         budget="ai2/oe-other",

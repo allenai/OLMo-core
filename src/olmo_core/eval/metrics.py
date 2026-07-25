@@ -1,5 +1,4 @@
 from abc import ABCMeta, abstractmethod
-from typing import Optional, Union
 
 import torch
 import torch.distributed as dist
@@ -7,7 +6,7 @@ import torch.distributed as dist
 from ..distributed.utils import all_reduce_value
 from ..utils import get_default_device
 
-__all__ = ["Metric", "MeanMetric"]
+__all__ = ["MeanMetric", "Metric"]
 
 
 class Metric(metaclass=ABCMeta):
@@ -17,8 +16,8 @@ class Metric(metaclass=ABCMeta):
 
     def __init__(
         self,
-        device: Optional[torch.device] = None,
-        process_group: Optional[dist.ProcessGroup] = None,
+        device: torch.device | None = None,
+        process_group: dist.ProcessGroup | None = None,
     ):
         self.device = device if device is not None else get_default_device()
         self.process_group = process_group
@@ -44,7 +43,7 @@ class Metric(metaclass=ABCMeta):
         """
         raise NotImplementedError
 
-    def as_tensor(self, value: Union[float, torch.Tensor]) -> torch.Tensor:
+    def as_tensor(self, value: float | torch.Tensor) -> torch.Tensor:
         if not isinstance(value, torch.Tensor):
             value = torch.tensor(value, dtype=torch.float32)
         return value.to(device=self.device, non_blocking=self.device.type != "cpu")
@@ -57,16 +56,14 @@ class MeanMetric(Metric):
 
     def __init__(
         self,
-        device: Optional[torch.device] = None,
-        process_group: Optional[dist.ProcessGroup] = None,
+        device: torch.device | None = None,
+        process_group: dist.ProcessGroup | None = None,
     ):
         super().__init__(device=device, process_group=process_group)
         self.weighted_sum = torch.tensor(0.0, device=self.device)
         self.weight = torch.tensor(0.0, device=self.device)
 
-    def update(
-        self, value: Union[float, torch.Tensor], weight: Union[float, torch.Tensor] = 1.0
-    ) -> None:
+    def update(self, value: float | torch.Tensor, weight: float | torch.Tensor = 1.0) -> None:
         """
         :param value: The latest value to update the metric with. Could be a tensor of values.
         :param weight: The corresponding weight(s) for the value. Should be the same shape as ``value``.

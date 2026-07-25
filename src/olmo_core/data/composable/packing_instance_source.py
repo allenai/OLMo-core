@@ -3,14 +3,14 @@ import functools as ft
 import hashlib
 import logging
 import typing
+from collections.abc import Generator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Generator, List, Optional, Sequence, Tuple
 
 import numpy as np
 
 import olmo_core.distributed.utils as dist_utils
-import olmo_core.io as io
+from olmo_core import io
 from olmo_core.aliases import PathOrStr
 from olmo_core.exceptions import OLMoConfigurationError
 
@@ -35,13 +35,13 @@ log = logging.getLogger(__name__)
 class PackingInstanceSourceConfig(InstanceSourceConfig):
     """Config for :class:`PackingInstanceSource`."""
 
-    sources: List[DocumentSourceConfig]
+    sources: list[DocumentSourceConfig]
     sequence_length: int
     tokenizer: TokenizerConfig
-    max_sequence_length: Optional[int] = None
+    max_sequence_length: int | None = None
     long_doc_strategy: LongDocStrategy = LongDocStrategy.truncate
     source_group_size: int = 1
-    label: Optional[str] = None
+    label: str | None = None
 
     @classmethod
     def from_npy(
@@ -49,13 +49,13 @@ class PackingInstanceSourceConfig(InstanceSourceConfig):
         *npy_paths: str,
         tokenizer: TokenizerConfig,
         sequence_length: int,
-        max_sequence_length: Optional[int] = None,
-        dtype: Optional[NumpyDatasetDType] = None,
-        source_permutation_seed: Optional[int] = None,
+        max_sequence_length: int | None = None,
+        dtype: NumpyDatasetDType | None = None,
+        source_permutation_seed: int | None = None,
         source_group_size: int = 1,
-        label_mask_paths: Optional[List[str]] = None,
-        expand_glob: Optional[bool] = None,
-        label: Optional[str] = None,
+        label_mask_paths: list[str] | None = None,
+        expand_glob: bool | None = None,
+        label: str | None = None,
         long_doc_strategy: LongDocStrategy = LongDocStrategy.truncate,
     ) -> "PackingInstanceSourceConfig":
         """
@@ -126,10 +126,10 @@ class PackingInstanceSource(InstanceSource):
         sequence_length: int,
         work_dir: PathOrStr,
         tokenizer: TokenizerConfig,
-        max_sequence_length: Optional[int] = None,
+        max_sequence_length: int | None = None,
         long_doc_strategy: LongDocStrategy = LongDocStrategy.truncate,
         source_group_size: int = 1,
-        label: Optional[str] = None,
+        label: str | None = None,
     ):
         super().__init__(
             sequence_length=sequence_length,
@@ -154,7 +154,7 @@ class PackingInstanceSource(InstanceSource):
         dist_utils.barrier()
 
     @property
-    def sources(self) -> Tuple[DocumentSource, ...]:
+    def sources(self) -> tuple[DocumentSource, ...]:
         return self._sources
 
     @property
@@ -170,11 +170,11 @@ class PackingInstanceSource(InstanceSource):
         return self._source_group_size
 
     @property
-    def source_groups(self) -> Tuple[Tuple[DocumentSource, ...], ...]:
+    def source_groups(self) -> tuple[tuple[DocumentSource, ...], ...]:
         return self._source_groups
 
     @ft.cached_property
-    def source_group_instance_offsets(self) -> Tuple[Tuple[int, int], ...]:
+    def source_group_instance_offsets(self) -> tuple[tuple[int, int], ...]:
         item_size = np.uint64(0).itemsize
         num_instances_per_group = path_map(
             lambda path: io.get_file_size(path) // (item_size * 2),
@@ -216,9 +216,9 @@ class PackingInstanceSource(InstanceSource):
         idx = self.validate_index(idx)
 
         # The index of the source group.
-        source_group_index: Optional[int] = None
+        source_group_index: int | None = None
         # The instance index within the source group.
-        instance_index: Optional[int] = None
+        instance_index: int | None = None
         for i, (instance_offset_start, instance_offset_end) in enumerate(
             self.source_group_instance_offsets
         ):
@@ -253,8 +253,8 @@ class PackingInstanceSource(InstanceSource):
         ).tolist()
 
         # Load token IDs and label masks for each document.
-        document_token_ids: List[np.ndarray] = []
-        document_label_masks: List[np.ndarray] = []
+        document_token_ids: list[np.ndarray] = []
+        document_label_masks: list[np.ndarray] = []
         for document_id in document_ids:
             document_indices = load_array_slice_into_tensor(
                 document_indices_path, document_id * 2, document_id * 2 + 2, np.uint64
@@ -315,7 +315,7 @@ class PackingInstanceSource(InstanceSource):
     def _get_docs_by_instance_path(self, *sources: DocumentSource) -> Path:
         return self._get_indices_path("documents-by-instance", *sources)
 
-    def _pack_documents_into_instances(self, *sources: DocumentSource) -> Tuple[int, int]:
+    def _pack_documents_into_instances(self, *sources: DocumentSource) -> tuple[int, int]:
         document_indices_path = self._get_document_indices_path(*sources)
         instance_offsets_path = self._get_instance_offsets_path(*sources)
         docs_by_instance_path = self._get_docs_by_instance_path(*sources)
@@ -346,8 +346,8 @@ class PackingInstanceSource(InstanceSource):
         instances, document_indices, total_tokens = instance_packer.pack_documents(document_indices)
 
         instance_start_offset = 0
-        instance_offsets_list: List[int] = []
-        documents_by_instance_list: List[int] = []
+        instance_offsets_list: list[int] = []
+        documents_by_instance_list: list[int] = []
         for instance in instances:
             instance_offsets_list.append(instance_start_offset)
             instance_offsets_list.append(instance_start_offset + len(instance))
@@ -367,7 +367,7 @@ class PackingInstanceSource(InstanceSource):
 
     def _pack_all_documents_into_instances(self):
         # Collect all sources that need to be packed (no cache hit).
-        sources_needed: List[Tuple[DocumentSource, ...]] = []
+        sources_needed: list[tuple[DocumentSource, ...]] = []
         for sources in self.source_groups:
             document_indices_path = self._get_document_indices_path(*sources)
             instance_offsets_path = self._get_instance_offsets_path(*sources)

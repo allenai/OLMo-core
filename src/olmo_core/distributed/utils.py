@@ -6,8 +6,9 @@ import logging
 import math
 import os
 import socket
+from collections.abc import Callable
 from datetime import timedelta
-from typing import Callable, List, Optional, TypeVar, Union, cast
+from typing import TypeVar, cast
 
 import torch
 import torch.distributed as dist
@@ -72,7 +73,7 @@ def _bootstrap_single_process_distributed_env() -> None:
 def init_distributed(
     backend: str = "nccl",
     timeout: timedelta = timedelta(minutes=30),
-    shared_filesytem: Optional[bool] = True,
+    shared_filesytem: bool | None = True,
     **kwargs,
 ):
     """
@@ -238,7 +239,7 @@ def is_distributed() -> bool:
     return dist.is_available() and dist.is_initialized()
 
 
-def barrier(group: Optional[dist.ProcessGroup] = None) -> None:
+def barrier(group: dist.ProcessGroup | None = None) -> None:
     """
     Wait for all ranks in the group.
     """
@@ -246,7 +247,7 @@ def barrier(group: Optional[dist.ProcessGroup] = None) -> None:
         dist.barrier(group)
 
 
-def get_rank(group: Optional[dist.ProcessGroup] = None) -> int:
+def get_rank(group: dist.ProcessGroup | None = None) -> int:
     """
     Get the rank within the process group.
     """
@@ -256,7 +257,7 @@ def get_rank(group: Optional[dist.ProcessGroup] = None) -> int:
         return 0
 
 
-def get_global_rank(group_rank: int, group: Optional[dist.ProcessGroup] = None) -> int:
+def get_global_rank(group_rank: int, group: dist.ProcessGroup | None = None) -> int:
     """
     Translate a rank within a group into it's global rank.
     """
@@ -282,7 +283,7 @@ def get_local_rank() -> int:
         return 0
 
 
-def get_fs_local_rank(group: Optional[dist.ProcessGroup] = None) -> int:
+def get_fs_local_rank(group: dist.ProcessGroup | None = None) -> int:
     """
     Get the local rank per filesystem, meaning that, regardless of the number of nodes,
     if all ranks share the same filesystem then :func:`get_fs_local_rank()` will be equivalent
@@ -306,7 +307,7 @@ def get_fs_local_rank(group: Optional[dist.ProcessGroup] = None) -> int:
         return int(os.environ.get(OLMO_FS_LOCAL_RANK_ENV_VAR) or get_local_rank())
 
 
-def get_world_size(group: Optional[dist.ProcessGroup] = None) -> int:
+def get_world_size(group: dist.ProcessGroup | None = None) -> int:
     """
     Get the world size of the default distributed process group.
 
@@ -357,7 +358,7 @@ V = TypeVar("V", bool, int, float, torch.Tensor)
 
 
 def synchronize_value(
-    value: V, device: torch.device, src: int = 0, group: Optional[dist.ProcessGroup] = None
+    value: V, device: torch.device, src: int = 0, group: dist.ProcessGroup | None = None
 ) -> V:
     """
     Synchronize a value across the distributed process group.
@@ -376,7 +377,7 @@ def synchronize_value(
 
 
 def synchronize_flag(
-    flag: bool, device: torch.device, group: Optional[dist.ProcessGroup] = None
+    flag: bool, device: torch.device, group: dist.ProcessGroup | None = None
 ) -> bool:
     """
     Synchronize a boolean across the distributed process group.
@@ -385,7 +386,7 @@ def synchronize_flag(
 
 
 def all_reduce_value(
-    value: V, device: torch.device, op=dist.ReduceOp.SUM, group: Optional[dist.ProcessGroup] = None
+    value: V, device: torch.device, op=dist.ReduceOp.SUM, group: dist.ProcessGroup | None = None
 ) -> V:
     """
     All reduce a value across the distributed process group.
@@ -406,7 +407,7 @@ def all_reduce_value(
 T = TypeVar("T")
 
 
-def broadcast_object(obj: T, src: int = 0, group: Optional[dist.ProcessGroup] = None) -> T:
+def broadcast_object(obj: T, src: int = 0, group: dist.ProcessGroup | None = None) -> T:
     """
     Broadcast an object using pickle to all ranks in the process group.
     """
@@ -418,9 +419,7 @@ def broadcast_object(obj: T, src: int = 0, group: Optional[dist.ProcessGroup] = 
     return object_list[0]
 
 
-def all_gather(
-    tensor: torch.Tensor, group: Optional[dist.ProcessGroup] = None
-) -> List[torch.Tensor]:
+def all_gather(tensor: torch.Tensor, group: dist.ProcessGroup | None = None) -> list[torch.Tensor]:
     """
     All-gather tensors from the whole group into a list.
     """
@@ -435,7 +434,7 @@ def all_gather(
     return output_list
 
 
-def all_gather_object(obj: T, group: Optional[dist.ProcessGroup] = None) -> List[T]:
+def all_gather_object(obj: T, group: dist.ProcessGroup | None = None) -> list[T]:
     """
     All-gather an object using pickle to all ranks in a process group.
     """
@@ -447,7 +446,7 @@ def all_gather_object(obj: T, group: Optional[dist.ProcessGroup] = None) -> List
     return output_list
 
 
-def get_mesh_coordinates(mesh: "DeviceMesh", rank: Optional[int] = None) -> Optional[List[int]]:
+def get_mesh_coordinates(mesh: "DeviceMesh", rank: int | None = None) -> list[int] | None:
     """
     Calculate the coordinates of a global rank on a device mesh.
 
@@ -462,7 +461,7 @@ def get_mesh_coordinates(mesh: "DeviceMesh", rank: Optional[int] = None) -> Opti
     return rank_coords[0].tolist() if rank_coords.size(0) > 0 else None
 
 
-def backend_supports_cuda(backend: Optional[str] = None) -> bool:
+def backend_supports_cuda(backend: str | None = None) -> bool:
     """
     Check if a distributed backend supports CUDA tensors.
     """
@@ -470,13 +469,10 @@ def backend_supports_cuda(backend: Optional[str] = None) -> bool:
         return torch.cuda.is_available()
 
     backend = backend or dist.get_backend()
-    if "nccl" in backend:
-        return True
-    else:
-        return False
+    return "nccl" in backend
 
 
-def backend_supports_cpu(backend: Optional[str] = None) -> bool:
+def backend_supports_cpu(backend: str | None = None) -> bool:
     """
     Check if a distributed backend supports CPU tensors.
     """
@@ -484,10 +480,7 @@ def backend_supports_cpu(backend: Optional[str] = None) -> bool:
         return True
 
     backend = backend or dist.get_backend()
-    if "gloo" in backend or "mpi" in backend:
-        return True
-    else:
-        return False
+    return bool("gloo" in backend or "mpi" in backend)
 
 
 def get_reduce_divide_factor(world_size: int) -> float:
@@ -534,10 +527,10 @@ def distribute_like(source: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
 def do_n_at_a_time(
     f: Callable[[], T],
     *,
-    n: Optional[int] = None,
-    process_group: Optional[dist.ProcessGroup] = None,
-    world_size: Optional[int] = None,
-    local_rank: Optional[int] = None,
+    n: int | None = None,
+    process_group: dist.ProcessGroup | None = None,
+    world_size: int | None = None,
+    local_rank: int | None = None,
 ) -> T:
     """
     Call a function ``f`` in a distributed context from at most ``n`` ranks at a time.
@@ -556,7 +549,7 @@ def do_n_at_a_time(
     n = n if n is not None else get_num_nodes()
     group_count = math.ceil(world_size / n)
     group_rank = local_rank % group_count
-    result: Optional[T] = None
+    result: T | None = None
     for active_group in range(group_count):
         if group_rank == active_group:
             result = f()
@@ -580,7 +573,7 @@ def hide_from_torch(x: torch.Tensor) -> _HiddenTensor:
     return _HiddenTensor(x)
 
 
-def unhide_from_torch(x: Union[torch.Tensor, _HiddenTensor]) -> torch.Tensor:
+def unhide_from_torch(x: torch.Tensor | _HiddenTensor) -> torch.Tensor:
     if isinstance(x, _HiddenTensor):
         return x.x
     else:

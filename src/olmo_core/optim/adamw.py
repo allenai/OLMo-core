@@ -1,5 +1,4 @@
 from dataclasses import dataclass
-from typing import Optional, Tuple, Type, Union
 
 import torch
 
@@ -14,7 +13,7 @@ def adamw_step(
     grad: torch.Tensor,
     *,
     lr: float,
-    betas: Tuple[float, float],
+    betas: tuple[float, float],
     eps: float,
     weight_decay: float,
     exp_avg: torch.Tensor,
@@ -55,7 +54,7 @@ def foreach_adamw_step(
     steps: list[torch.Tensor],
     *,
     lr: float,
-    betas: Tuple[float, float],
+    betas: tuple[float, float],
     eps: float,
     weight_decay: float,
     step_factor: torch.Tensor,
@@ -111,18 +110,18 @@ class SkipStepAdamW(SkipStepOptimizer):
         self,
         params,
         lr: float = 1e-3,
-        betas: Tuple[float, float] = (0.9, 0.999),
+        betas: tuple[float, float] = (0.9, 0.999),
         eps: float = 1e-8,
         weight_decay: float = 1e-2,
         rolling_interval_length: int = 128,
         sigma_factor: int = 6,
-        dtype: Optional[Union[torch.dtype, DType]] = None,
+        dtype: torch.dtype | DType | None = None,
         foreach: bool = False,
         step_increment_bugfix: bool = True,
     ) -> None:
         assert lr >= 0.0
-        assert all([0.0 <= beta <= 1.0 for beta in betas])
-        defaults = dict(lr=lr, betas=betas, eps=eps, weight_decay=weight_decay)
+        assert all(0.0 <= beta <= 1.0 for beta in betas)
+        defaults = {"lr": lr, "betas": betas, "eps": eps, "weight_decay": weight_decay}
         super().__init__(
             params,
             defaults,
@@ -134,7 +133,7 @@ class SkipStepAdamW(SkipStepOptimizer):
         self.dtype = dtype
         self.foreach = foreach
         self.stepfix = step_increment_bugfix
-        self._step_skipped: Optional[torch.Tensor] = None
+        self._step_skipped: torch.Tensor | None = None
 
     @property
     def step_skipped(self) -> torch.Tensor:
@@ -238,14 +237,14 @@ class AdamWConfig(OptimConfig[torch.optim.AdamW]):
     """
 
     lr: float = 1e-3
-    betas: Tuple[float, float] = (0.9, 0.999)
+    betas: tuple[float, float] = (0.9, 0.999)
     eps: float = 1e-8
     weight_decay: float = 1e-2
-    foreach: Optional[bool] = None
-    fused: Optional[bool] = None
+    foreach: bool | None = None
+    fused: bool | None = None
 
     @classmethod
-    def optimizer(cls) -> Type[torch.optim.AdamW]:
+    def optimizer(cls) -> type[torch.optim.AdamW]:
         return torch.optim.AdamW
 
 
@@ -257,10 +256,10 @@ class SkipStepAdamWConfig(OptimConfig[SkipStepAdamW]):
     """
 
     lr: float = 1e-3
-    betas: Tuple[float, float] = (0.9, 0.999)
+    betas: tuple[float, float] = (0.9, 0.999)
     eps: float = 1e-8
     weight_decay: float = 1e-2
-    dtype: Optional[DType] = None
+    dtype: DType | None = None
     foreach: bool = True
     """
     Whether to use multi-tensor (*foreach*) kernels for the AdamW update.
@@ -287,5 +286,5 @@ class SkipStepAdamWConfig(OptimConfig[SkipStepAdamW]):
     """
 
     @classmethod
-    def optimizer(cls) -> Type[SkipStepAdamW]:
+    def optimizer(cls) -> type[SkipStepAdamW]:
         return SkipStepAdamW

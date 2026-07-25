@@ -1,7 +1,7 @@
-from typing import TYPE_CHECKING, Optional, Union, cast
+from typing import TYPE_CHECKING, cast
 
 import torch
-import torch.nn as nn
+from torch import nn
 from torch.distributed.tensor import DTensor
 
 from olmo_core.config import StrEnum
@@ -28,7 +28,7 @@ def _apply_init(init_fun, x: torch.Tensor, *args, **kwargs):
 
 
 def init_linear(
-    m: nn.Linear | nn.Conv1d, *, std: float = 0.02, generator: Optional[torch.Generator] = None
+    m: nn.Linear | nn.Conv1d, *, std: float = 0.02, generator: torch.Generator | None = None
 ):
     _apply_init(
         nn.init.trunc_normal_,
@@ -81,9 +81,9 @@ class InitMethod(StrEnum):
         m: nn.Embedding,
         *,
         d_model: int,
-        embed_scale: Optional[float] = None,
+        embed_scale: float | None = None,
         std: float = 0.02,
-        generator: Optional[torch.Generator] = None,
+        generator: torch.Generator | None = None,
     ):
         if self in (InitMethod.llama, InitMethod.llama_depth):
             _apply_init(nn.init.normal_, m.weight, generator=generator)
@@ -110,7 +110,7 @@ class InitMethod(StrEnum):
         *,
         d_model: int,
         std: float = 0.02,
-        generator: Optional[torch.Generator] = None,
+        generator: torch.Generator | None = None,
     ):
         if self in (
             InitMethod.llama,
@@ -129,7 +129,7 @@ class InitMethod(StrEnum):
         block_idx: int,
         num_blocks: int,
         std: float = 0.02,
-        generator: Optional[torch.Generator] = None,
+        generator: torch.Generator | None = None,
     ):
         m.init_weights(
             init_method=self,
@@ -148,7 +148,7 @@ class InitMethod(StrEnum):
         block_idx: int,
         num_blocks: int,
         std: float = 0.02,
-        generator: Optional[torch.Generator] = None,
+        generator: torch.Generator | None = None,
     ):
         # Compute std for w1 initialization
         if self == InitMethod.fan_in:
@@ -187,7 +187,7 @@ class InitMethod(StrEnum):
         block_idx: int,
         num_blocks: int,
         std: float = 0.02,
-        generator: Optional[torch.Generator] = None,
+        generator: torch.Generator | None = None,
     ):
         from ..moe import DroplessMoEMLP, MoELinearRouter, MoEMLP
 
@@ -209,7 +209,7 @@ class InitMethod(StrEnum):
             generator=generator,
         )
 
-        mlp = cast(Union[MoEMLP, DroplessMoEMLP], m.experts.mlp)
+        mlp = cast(MoEMLP | DroplessMoEMLP, m.experts.mlp)
 
         # Initialize w1 (maps d_model -> hidden_size, fan-in = d_model)
         if self == InitMethod.fan_in:

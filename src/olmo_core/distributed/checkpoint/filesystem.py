@@ -6,6 +6,7 @@ import os
 import pickle
 import tempfile
 import traceback
+from collections.abc import Sequence
 from concurrent.futures import (
     Executor,
     ProcessPoolExecutor,
@@ -16,7 +17,7 @@ from contextlib import ExitStack
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Tuple, cast
+from typing import cast
 
 import torch
 import torch.distributed as dist
@@ -78,14 +79,14 @@ def _item_size(item: WriteItem) -> int:
     return size * get_element_size(dtype)
 
 
-def _split_by_size_and_type(bins: int, items: List[WriteItem]) -> List[List[WriteItem]]:
+def _split_by_size_and_type(bins: int, items: list[WriteItem]) -> list[list[WriteItem]]:
     if bins == 1:
         return [items]
 
     bytes_w = [wi for wi in items if wi.type == WriteItemType.BYTE_IO]
     tensor_w = [wi for wi in items if wi.type != WriteItemType.BYTE_IO]
 
-    buckets: List[List[WriteItem]] = [[] for _ in range(bins)]
+    buckets: list[list[WriteItem]] = [[] for _ in range(bins)]
     bucket_sizes = [0 for _ in range(bins)]
 
     tensor_w.sort(key=_item_size, reverse=True)
@@ -103,11 +104,11 @@ def _split_by_size_and_type(bins: int, items: List[WriteItem]) -> List[List[Writ
 
 
 def _write_items(
-    path: str, storage_key: str, items: List[WriteItem], planner: SavePlanner
-) -> List[WriteResult]:
-    results: List[WriteResult] = []
+    path: str, storage_key: str, items: list[WriteItem], planner: SavePlanner
+) -> list[WriteResult]:
+    results: list[WriteResult] = []
 
-    tmp_file = tempfile.NamedTemporaryFile(
+    tmp_file = tempfile.NamedTemporaryFile(  # noqa: SIM115
         mode="w+b", suffix=".distcp", dir=None if is_url(path) else Path(path).parent, delete=False
     )
     tmp_path = Path(tmp_file.name)
@@ -161,9 +162,9 @@ def _write_items(
 
 
 def _write_buckets(
-    buckets: List[List[WriteItem]], paths: List[str], planner: dist_cp.SavePlanner
-) -> List[WriteResult]:
-    results: List[WriteResult] = []
+    buckets: list[list[WriteItem]], paths: list[str], planner: dist_cp.SavePlanner
+) -> list[WriteResult]:
+    results: list[WriteResult] = []
     for bucket, path in zip(buckets, paths):
         key = os.path.basename(path)
         try:
@@ -201,9 +202,9 @@ class RemoteFileSystemWriter(dist_cp.StorageWriter):
     def __init__(
         self,
         path: PathOrStr,
-        thread_count: Optional[int] = None,
-        process_count: Optional[int] = None,
-        process_group: Optional[dist.ProcessGroup] = None,
+        thread_count: int | None = None,
+        process_count: int | None = None,
+        process_group: dist.ProcessGroup | None = None,
         throttle_uploads: bool = False,
     ) -> None:
         super().__init__()
@@ -216,7 +217,7 @@ class RemoteFileSystemWriter(dist_cp.StorageWriter):
         self.throttle_uploads = throttle_uploads
         self.save_id = generate_uuid()
 
-    def reset(self, checkpoint_id: Optional[PathOrStr] = None) -> None:
+    def reset(self, checkpoint_id: PathOrStr | None = None) -> None:
         if checkpoint_id:
             self.path = normalize_path(checkpoint_id)
         self.save_id = generate_uuid()
@@ -230,7 +231,7 @@ class RemoteFileSystemWriter(dist_cp.StorageWriter):
             path.mkdir(exist_ok=True, parents=True)
         return plan
 
-    def prepare_global_plan(self, plans: List[SavePlan]) -> List[SavePlan]:
+    def prepare_global_plan(self, plans: list[SavePlan]) -> list[SavePlan]:
         new_plans = [
             dataclasses.replace(plan, storage_data=_StoragePrefix(f"__{i}_"))
             for i, plan in enumerate(plans)
@@ -241,7 +242,7 @@ class RemoteFileSystemWriter(dist_cp.StorageWriter):
         self,
         plan: dist_cp.SavePlan,
         planner: dist_cp.SavePlanner,
-    ) -> Future[List[WriteResult]]:
+    ) -> Future[list[WriteResult]]:
         if is_url(self.path):
             # Create the global S3 client up front to work around a threading issue in boto.
             init_client(self.path)
@@ -255,7 +256,7 @@ class RemoteFileSystemWriter(dist_cp.StorageWriter):
             file_count += 1
             return f"{self.path}/{file_name}"
 
-        results: List[WriteResult]
+        results: list[WriteResult]
         if self.throttle_uploads and is_url(self.path):
             buckets = _split_by_size_and_type(1, plan.items)
             paths = [gen_file_name() for _ in buckets]
@@ -287,18 +288,18 @@ class RemoteFileSystemWriter(dist_cp.StorageWriter):
                 for f in as_completed(futures):
                     results.extend(f.result())
 
-        fut: Future[List[WriteResult]] = Future()
+        fut: Future[list[WriteResult]] = Future()
         fut.set_result(results)
         return fut
 
-    def finish(self, metadata: Metadata, results: List[List[WriteResult]]) -> None:
-        storage_md = dict()
+    def finish(self, metadata: Metadata, results: list[list[WriteResult]]) -> None:
+        storage_md = {}
         for wr_list in results:
             storage_md.update({wr.index: wr.storage_data for wr in wr_list})
         metadata.storage_data = storage_md
         metadata.storage_meta = self.storage_meta()
 
-        tmp_file = tempfile.NamedTemporaryFile(
+        tmp_file = tempfile.NamedTemporaryFile(  # noqa: SIM115
             mode="w+b",
             suffix=".tmp",
             dir=None if is_url(self.metadata_path) else Path(self.metadata_path).parent,
@@ -323,7 +324,7 @@ class RemoteFileSystemWriter(dist_cp.StorageWriter):
             tmp_file.close()
             tmp_path.unlink(missing_ok=True)
 
-    def storage_meta(self) -> Optional[StorageMeta]:
+    def storage_meta(self) -> StorageMeta | None:
         return StorageMeta(checkpoint_id=self.checkpoint_id, save_id=self.save_id)
 
     @property
@@ -353,9 +354,9 @@ class RemoteFileSystemReader(dist_cp.StorageReader):
         self,
         path: PathOrStr,
         *,
-        thread_count: Optional[int] = None,
+        thread_count: int | None = None,
         pre_download: bool = False,
-        work_dir: Optional[PathOrStr] = None,
+        work_dir: PathOrStr | None = None,
     ):
         super().__init__()
         if thread_count is not None and thread_count <= 0:
@@ -364,9 +365,9 @@ class RemoteFileSystemReader(dist_cp.StorageReader):
         self.thread_count = thread_count or get_default_thread_count()
         self.pre_download = pre_download
         self.work_dir = normalize_path(work_dir) if work_dir is not None else None
-        self.storage_data: Dict[MetadataIndex, _StorageInfo] = dict()
+        self.storage_data: dict[MetadataIndex, _StorageInfo] = {}
         self.load_id = generate_uuid()
-        self._metadata: Optional[Metadata] = None
+        self._metadata: Metadata | None = None
 
     def _get_bytes(self, relative_path: str, offset: int, length: int) -> bytes:
         if self.pre_download:
@@ -375,7 +376,7 @@ class RemoteFileSystemReader(dist_cp.StorageReader):
             full_path = f"{self.path}/{relative_path}"
         return get_bytes_range(full_path, offset, length)
 
-    def _get_content_for_read(self, read_item: ReadItem) -> Tuple[ReadItem, bytes]:
+    def _get_content_for_read(self, read_item: ReadItem) -> tuple[ReadItem, bytes]:
         try:
             sinfo = self.storage_data[read_item.storage_index]
             content = self._get_bytes(sinfo.relative_path, sinfo.offset, sinfo.length)
@@ -386,8 +387,8 @@ class RemoteFileSystemReader(dist_cp.StorageReader):
             # sure we're raising a simple error type that can be pickled.
             raise OLMoCheckpointError(f"Original error:\n{traceback.format_exc()}")
 
-    def reset(self, checkpoint_id: Optional[PathOrStr] = None) -> None:
-        self.storage_data = dict()
+    def reset(self, checkpoint_id: PathOrStr | None = None) -> None:
+        self.storage_data = {}
         if checkpoint_id:
             self.path = normalize_path(checkpoint_id)
         self.load_id = generate_uuid()
@@ -467,7 +468,7 @@ class RemoteFileSystemReader(dist_cp.StorageReader):
     def prepare_local_plan(self, plan: dist_cp.LoadPlan) -> dist_cp.LoadPlan:
         return plan
 
-    def prepare_global_plan(self, global_plan: List[dist_cp.LoadPlan]) -> List[dist_cp.LoadPlan]:
+    def prepare_global_plan(self, global_plan: list[dist_cp.LoadPlan]) -> list[dist_cp.LoadPlan]:
         return global_plan
 
     @property

@@ -33,6 +33,6 @@ def test_concat_and_chunk_instance_source_varying_seq_len(tmp_path: Path):
     assert instances1.fingerprint == instances2.fingerprint
     assert len(instances1) == 3
     assert len(instances2) == 6
-    assert set([x for instance in instances1 for x in instance["input_ids"]]) == set(
-        [x for instance in instances2 for x in instance["input_ids"]]
-    )
+    assert {x for instance in instances1 for x in instance["input_ids"]} == {
+        x for instance in instances2 for x in instance["input_ids"]
+    }

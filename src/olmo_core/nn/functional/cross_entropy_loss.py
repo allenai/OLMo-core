@@ -1,5 +1,6 @@
 import logging
-from typing import Callable, Literal, Optional, Tuple
+from collections.abc import Callable
+from typing import Literal
 
 import torch
 import torch.nn.functional as F
@@ -17,7 +18,7 @@ def cross_entropy_loss(
     reduction: Literal["mean", "sum", "none"] = "mean",
     compute_z_loss: bool = False,
     z_loss_multiplier: float = 1e-4,
-) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+) -> tuple[torch.Tensor, torch.Tensor | None]:
     """
     Cross entropy loss that optionally computes the softmax auxiliary loss (z-loss) as well.
 
@@ -50,7 +51,7 @@ def cross_entropy_loss(
     return loss, z_loss
 
 
-_fused_linear_cross_entropy_loss: Optional[Callable] = None
+_fused_linear_cross_entropy_loss: Callable | None = None
 
 try:
     from liger_kernel.ops.fused_linear_cross_entropy import (  # type: ignore
@@ -70,16 +71,16 @@ def fused_linear_cross_entropy_loss(
     weight: torch.Tensor,
     labels: torch.Tensor,
     *,
-    bias: Optional[torch.Tensor] = None,
+    bias: torch.Tensor | None = None,
     ignore_index: int = -100,
     reduction: Literal["mean", "sum", "none"] = "mean",
     compute_z_loss: bool = False,
     z_loss_multiplier: float = 1e-4,
-    ce_weight: Optional[torch.Tensor] = None,
+    ce_weight: torch.Tensor | None = None,
     label_smoothing: float = 0.0,
-    softcap: Optional[float] = None,
-    accum_dtype: Optional[torch.dtype] = None,
-) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+    softcap: float | None = None,
+    accum_dtype: torch.dtype | None = None,
+) -> tuple[torch.Tensor, torch.Tensor | None]:
     """
     Cross entropy loss fused with the linear layer that computes the logits, which avoids materialization
     of the large logits tensor. Additionally, this function computes gradients during the forward pass,

@@ -1,4 +1,4 @@
-from typing import Any, List, Optional, Tuple, Union
+from typing import Any
 
 import torch
 import torch.distributed as dist
@@ -19,7 +19,7 @@ def _cast(x, dtype):
     elif isinstance(x, dict):
         return {_cast(k, dtype): _cast(v, dtype) for k, v in x.items()}
     elif isinstance(x, (list, tuple)):
-        return type(x)(map(lambda y: _cast(y, dtype), x))
+        return type(x)(_cast(y, dtype) for y in x)
     return x
 
 
@@ -67,7 +67,7 @@ class ScatterOp(torch.autograd.Function):
         x: torch.Tensor,
         indices: torch.Tensor,
         bin_ids: torch.Tensor,
-        weights: Optional[torch.Tensor],
+        weights: torch.Tensor | None,
         bins: torch.Tensor,
         top_k: int,
     ) -> torch.Tensor:
@@ -116,7 +116,7 @@ def scatter(
     x: torch.Tensor,
     indices: torch.Tensor,
     bin_ids: torch.Tensor,
-    weights: Optional[torch.Tensor],
+    weights: torch.Tensor | None,
     bins: torch.Tensor,
     top_k: int,
 ) -> torch.Tensor:
@@ -162,7 +162,7 @@ class BinnedScatterOp(torch.autograd.Function):
         ctx: Any,
         x: torch.Tensor,
         indices: torch.Tensor,
-        weights: Optional[torch.Tensor],
+        weights: torch.Tensor | None,
         bins: torch.Tensor,
         top_k: int,
     ):
@@ -208,15 +208,15 @@ class BinnedScatterOp(torch.autograd.Function):
 def binned_scatter(
     x: torch.Tensor,
     indices: torch.Tensor,
-    weights: Optional[torch.Tensor],
+    weights: torch.Tensor | None,
     bins: torch.Tensor,
     top_k: int,
 ) -> torch.Tensor:
     return BinnedScatterOp.apply(x, indices, weights, bins, top_k)  # type: ignore
 
 
-def repeat(x: torch.Tensor, tiling: Union[torch.Size, Tuple[int, ...]]) -> torch.Tensor:
-    if all((t == 1 for t in tiling)):
+def repeat(x: torch.Tensor, tiling: torch.Size | tuple[int, ...]) -> torch.Tensor:
+    if all(t == 1 for t in tiling):
         return x
     return x.repeat(*tiling)
 
@@ -266,11 +266,11 @@ class AllToAllOp(torch.autograd.Function):
 
 def all_to_all(
     x: torch.Tensor,
-    output_split_sizes: Optional[List[int]] = None,
-    input_split_sizes: Optional[List[int]] = None,
-    group: Optional[dist.ProcessGroup] = None,
+    output_split_sizes: list[int] | None = None,
+    input_split_sizes: list[int] | None = None,
+    group: dist.ProcessGroup | None = None,
     async_op: bool = False,
-) -> Tuple[torch.Tensor, dist.Work]:
+) -> tuple[torch.Tensor, dist.Work]:
     return AllToAllOp.apply(  # type: ignore
         x,
         output_split_sizes,

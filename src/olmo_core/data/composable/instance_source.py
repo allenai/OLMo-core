@@ -1,12 +1,13 @@
 import functools as ft
 import hashlib
 from abc import abstractmethod
+from collections.abc import Generator, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Generator, List, Optional, Sequence, Tuple, TypedDict
+from typing import TYPE_CHECKING, TypedDict
 
 from typing_extensions import NotRequired
 
-import olmo_core.io as io
+from olmo_core import io
 from olmo_core.aliases import PathOrStr
 from olmo_core.config import Config
 from olmo_core.exceptions import OLMoConfigurationError
@@ -53,8 +54,8 @@ class InstanceSource(SourceABC):
         *,
         work_dir: PathOrStr,
         sequence_length: int,
-        max_sequence_length: Optional[int] = None,
-        label: Optional[str] = None,
+        max_sequence_length: int | None = None,
+        label: str | None = None,
     ):
         super().__init__(work_dir=work_dir, label=label)
         if io.is_url(work_dir):
@@ -134,9 +135,9 @@ class InstanceSource(SourceABC):
     def sample(
         self,
         *,
-        max_tokens: Optional[int] = None,
-        max_instances: Optional[int] = None,
-        seed: Optional[int] = SEED_NOT_SET,
+        max_tokens: int | None = None,
+        max_instances: int | None = None,
+        seed: int | None = SEED_NOT_SET,
     ) -> "SamplingInstanceSource":
         """
         Sample instances from this source.
@@ -162,7 +163,7 @@ class InstanceSource(SourceABC):
             work_dir=self.common_work_dir,
         )
 
-    def resize(self, factor: float, seed: Optional[int] = SEED_NOT_SET) -> "SamplingInstanceSource":
+    def resize(self, factor: float, seed: int | None = SEED_NOT_SET) -> "SamplingInstanceSource":
         """
         Re-size this source by a given factor by sampling instances from it.
 
@@ -177,8 +178,8 @@ class InstanceSource(SourceABC):
         return self.sample(max_tokens=int(self.num_tokens * factor), seed=seed)
 
     def split(
-        self, ratio: float, seed: Optional[int] = None
-    ) -> Tuple["SlicedInstanceSource", "SlicedInstanceSource"]:
+        self, ratio: float, seed: int | None = None
+    ) -> tuple["SlicedInstanceSource", "SlicedInstanceSource"]:
         """
         Split this source into two disjoint sources according to the given ratio.
 
@@ -205,7 +206,7 @@ class InstanceSource(SourceABC):
 
     def random_split(
         self, ratio: float, seed: int = SEED_NOT_SET
-    ) -> Tuple["SlicedInstanceSource", "SlicedInstanceSource"]:
+    ) -> tuple["SlicedInstanceSource", "SlicedInstanceSource"]:
         """
         Like :meth:`split()` but always a random split.
         """
@@ -251,9 +252,9 @@ class InstanceSourceConfig(Config):
     def sample(
         self,
         *,
-        max_tokens: Optional[int] = None,
-        max_instances: Optional[int] = None,
-        seed: Optional[int] = SEED_NOT_SET,
+        max_tokens: int | None = None,
+        max_instances: int | None = None,
+        seed: int | None = SEED_NOT_SET,
     ) -> "SamplingInstanceSourceConfig":
         """
         Sample instances from this source.
@@ -275,7 +276,7 @@ class InstanceSourceConfig(Config):
         )
 
     def resize(
-        self, factor: float, seed: Optional[int] = SEED_NOT_SET
+        self, factor: float, seed: int | None = SEED_NOT_SET
     ) -> "SamplingInstanceSourceConfig":
         """
         Re-size this source by a given factor by sampling instances from it.
@@ -293,8 +294,8 @@ class InstanceSourceConfig(Config):
         )
 
     def split(
-        self, ratio: float, seed: Optional[int] = None
-    ) -> Tuple["SplitInstanceSourceConfig", "SplitInstanceSourceConfig"]:
+        self, ratio: float, seed: int | None = None
+    ) -> tuple["SplitInstanceSourceConfig", "SplitInstanceSourceConfig"]:
         """
         Split this source into two disjoint sources according to the given ratio.
 
@@ -312,7 +313,7 @@ class InstanceSourceConfig(Config):
 
     def random_split(
         self, ratio: float, seed: int = SEED_NOT_SET
-    ) -> Tuple["SplitInstanceSourceConfig", "SplitInstanceSourceConfig"]:
+    ) -> tuple["SplitInstanceSourceConfig", "SplitInstanceSourceConfig"]:
         """
         Like :meth:`split()` but always a random split.
         """
@@ -326,7 +327,7 @@ class SplitInstanceSourceConfig(InstanceSourceConfig):
     source: InstanceSourceConfig
     ratio: float
     idx: int
-    seed: Optional[int] = None
+    seed: int | None = None
 
     def __post_init__(self):
         assert 0 < self.ratio < 1
@@ -353,7 +354,7 @@ class SplitInstanceSourceConfig(InstanceSourceConfig):
 class ConcatenatedInstanceSourceConfig(InstanceSourceConfig):
     """A config for a :class:`ConcatenatedInstanceSource`."""
 
-    sources: List[InstanceSourceConfig]
+    sources: list[InstanceSourceConfig]
 
     def build(self, work_dir: PathOrStr) -> "ConcatenatedInstanceSource":
         return ConcatenatedInstanceSource(
@@ -375,7 +376,7 @@ class ConcatenatedInstanceSource(InstanceSource):
         self,
         *sources: InstanceSource,
         work_dir: PathOrStr,
-        label: Optional[str] = None,
+        label: str | None = None,
     ):
         if len(sources) == 0:
             raise OLMoConfigurationError("At least one source must be provided.")
@@ -395,7 +396,7 @@ class ConcatenatedInstanceSource(InstanceSource):
             label=label,
         )
 
-        unraveled_sources: List[InstanceSource] = []
+        unraveled_sources: list[InstanceSource] = []
         for source in sources:
             if isinstance(source, ConcatenatedInstanceSource):
                 unraveled_sources.extend(source.sources)
@@ -404,7 +405,7 @@ class ConcatenatedInstanceSource(InstanceSource):
         self._sources = tuple(unraveled_sources)
 
     @property
-    def sources(self) -> Tuple[InstanceSource, ...]:
+    def sources(self) -> tuple[InstanceSource, ...]:
         return self._sources
 
     @ft.cached_property

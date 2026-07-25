@@ -1,7 +1,7 @@
 import logging
 import time
 from dataclasses import dataclass
-from typing import Any, ClassVar, Dict, Optional
+from typing import Any, ClassVar
 
 import torch
 
@@ -27,9 +27,9 @@ class SpeedMonitorCallback(Callback):
 
     priority: ClassVar[int] = -2
 
-    num_flops_per_token: Optional[int] = None
-    num_params: Optional[int] = None
-    device_peak_flops_per_second: Optional[int] = None
+    num_flops_per_token: int | None = None
+    num_params: int | None = None
+    device_peak_flops_per_second: int | None = None
 
     _total_steps: int = 0
     _total_tokens: int = 0
@@ -43,27 +43,27 @@ class SpeedMonitorCallback(Callback):
     _step_seq_len: int = 0
     _step_flops: int = 0
     _parallel_degree: int = 1
-    _bps_avg: Optional[float] = None
-    _tps_avg: Optional[float] = None
-    _mfu_avg: Optional[float] = None
+    _bps_avg: float | None = None
+    _tps_avg: float | None = None
+    _mfu_avg: float | None = None
 
     def reset(self):
         self._first_step = True
         self._bps_avg = None
 
     @property
-    def bps_avg(self) -> Optional[float]:
+    def bps_avg(self) -> float | None:
         return self._bps_avg
 
     @property
-    def tps_avg(self) -> Optional[float]:
+    def tps_avg(self) -> float | None:
         return self._tps_avg
 
     @property
-    def mfu_avg(self) -> Optional[float]:
+    def mfu_avg(self) -> float | None:
         return self._mfu_avg
 
-    def _get_num_flops_per_token(self, seq_len: int) -> Optional[int]:
+    def _get_num_flops_per_token(self, seq_len: int) -> int | None:
         if self.num_flops_per_token is not None:
             return self.num_flops_per_token
         elif isinstance(self.trainer.train_module, TransformerTrainModule):
@@ -118,7 +118,7 @@ class SpeedMonitorCallback(Callback):
     def pre_load_batch(self):
         self._batch_load_start = time.perf_counter()
 
-    def pre_step(self, batch: Dict[str, Any]):
+    def pre_step(self, batch: dict[str, Any]):
         self._batch_load_time = time.perf_counter() - self._batch_load_start
 
         if self._first_step:
@@ -177,8 +177,8 @@ class SpeedMonitorCallback(Callback):
                     self.trainer.global_train_tokens_seen / (20 * self.num_params),
                 )
 
-        flops_ps: Optional[float] = None
-        flops_ps_avg: Optional[float] = None
+        flops_ps: float | None = None
+        flops_ps_avg: float | None = None
         if self._step_flops and self._total_flops:
             flops_ps = self._step_flops / step_time
             flops_ps_avg = self._total_flops / total_time

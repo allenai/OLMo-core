@@ -1,7 +1,7 @@
-from typing import Literal, Optional
+from typing import Literal
 
 import torch
-import torch.nn as nn
+from torch import nn
 from torch.distributed.device_mesh import DeviceMesh
 
 from olmo_core.nn.attention.flash_linear_attn_api import dispatch_causal_conv1d
@@ -53,7 +53,7 @@ class CausalConv1d(nn.Conv1d):
     def forward(  # type: ignore[override]
         self,
         x: torch.Tensor,
-        cu_seqlens: Optional[torch.Tensor] = None,
+        cu_seqlens: torch.Tensor | None = None,
     ) -> torch.Tensor:
         """
         :param x: Input tensor of shape ``(batch_size, seq_len, hidden_size)``.

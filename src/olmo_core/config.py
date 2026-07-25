@@ -1,22 +1,10 @@
 import copy
 import dataclasses
 import json
+from collections.abc import Callable, Collection, Generator, Sequence
 from dataclasses import dataclass
 from enum import Enum
-from typing import (
-    Any,
-    Callable,
-    ClassVar,
-    Collection,
-    Dict,
-    Generator,
-    List,
-    Optional,
-    Sequence,
-    Tuple,
-    Type,
-    TypeVar,
-)
+from typing import Any, ClassVar, TypeVar
 
 import torch
 import yaml
@@ -28,11 +16,11 @@ from .aliases import PathOrStr
 from .exceptions import OLMoConfigurationError
 
 __all__ = [
+    "UNSET",
     "Config",
     "DType",
-    "StrEnum",
-    "UNSET",
     "Registrable",  # re-exported for convenience
+    "StrEnum",
 ]
 
 
@@ -46,7 +34,7 @@ class StrEnum(str, Enum):
         return self.value
 
     def __repr__(self) -> str:
-        return f"'{str(self)}'"
+        return f"'{self!s}'"
 
 
 C = TypeVar("C", bound="Config")
@@ -76,7 +64,7 @@ class Config:
     :meth:`as_config_dict()`.
     """
 
-    _IGNORE_FIELDS: ClassVar[Tuple[str, ...]] = ()
+    _IGNORE_FIELDS: ClassVar[tuple[str, ...]] = ()
     """
     Fields to ignore when loading from config (for backwards compatibility).
     """
@@ -86,12 +74,12 @@ class Config:
         *,
         exclude_none: bool = False,
         exclude_private_fields: bool = False,
-        exclude: Optional[Collection[str]] = None,
+        exclude: Collection[str] | None = None,
         include_class_name: bool = False,
         include_registered_name: bool = False,
         json_safe: bool = False,
         recurse: bool = True,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Convert into a regular Python dictionary.
 
@@ -107,14 +95,17 @@ class Config:
 
         exclude_set = set(exclude) if exclude is not None else set()
 
-        def iter_fields(d) -> Generator[Tuple[str, Any], None, None]:
+        def iter_fields(d) -> Generator[tuple[str, Any], None, None]:
             for field in dataclasses.fields(d):
                 if field.name in exclude_set or not field.init:
                     continue
                 value = getattr(d, field.name)
-                if exclude_none and value is None:
-                    continue
-                elif exclude_private_fields and field.name.startswith("_"):
+                if (
+                    exclude_none
+                    and value is None
+                    or exclude_private_fields
+                    and field.name.startswith("_")
+                ):
                     continue
                 else:
                     yield (field.name, value)
@@ -140,7 +131,7 @@ class Config:
                 if json_safe:
                     return [as_dict(x) for x in d]
                 else:
-                    return d.__class__((as_dict(x) for x in d))
+                    return d.__class__(as_dict(x) for x in d)
             elif d is None or isinstance(d, (float, int, bool, str)):
                 return d
             elif json_safe:
@@ -150,7 +141,7 @@ class Config:
 
         return as_dict(self, recurse=recurse)
 
-    def as_config_dict(self) -> Dict[str, Any]:
+    def as_config_dict(self) -> dict[str, Any]:
         """
         A convenience wrapper around :meth:`as_dict()` for creating JSON-safe dictionaries suitable
         for recording the config.
@@ -192,9 +183,8 @@ class Config:
         """
         Validate fields in ``self``. This may modify ``self`` in-place.
         """
-        pass
 
-    def merge(self, dotlist: List[str], prefix: Optional[str] = None, strict: bool = True) -> Self:
+    def merge(self, dotlist: list[str], prefix: str | None = None, strict: bool = True) -> Self:
         """
         Merge self with fields from a "dotlist", creating a new object.
 
@@ -212,11 +202,11 @@ class Config:
             ]
 
         if not strict:
-            field_names = set(f.name for f in dataclasses.fields(self))
+            field_names = {f.name for f in dataclasses.fields(self)}
             overrides = [
                 (k, v)
                 for k, v in overrides
-                if any([k == name or k.startswith(f"{name}.") for name in field_names])
+                if any(k == name or k.startswith(f"{name}.") for name in field_names)
             ]
 
         merged_data = self.as_dict(include_class_name=True, include_registered_name=True)
@@ -237,7 +227,7 @@ class Config:
         return copy.deepcopy(self) if deep else copy.copy(self)
 
     @classmethod
-    def from_dict(cls: Type[C], data: Dict[str, Any], overrides: Optional[List[str]] = None) -> C:
+    def from_dict(cls, data: dict[str, Any], overrides: list[str] | None = None) -> Self:
         """
         Initialize from a regular Python dictionary.
 
@@ -246,7 +236,7 @@ class Config:
         """
         from importlib import import_module
 
-        def resolve_cls(cls_name: str) -> Optional[Any]:
+        def resolve_cls(cls_name: str) -> Any | None:
             if "." in cls_name:
                 *modules, cls_name = cls_name.split(".")
                 module_name = ".".join(modules)
@@ -305,7 +295,7 @@ class Config:
             return decode(cls, decoded)
 
     @classmethod
-    def from_file(cls: Type[C], path: PathOrStr, overrides: Optional[List[str]] = None) -> C:
+    def from_file(cls, path: PathOrStr, overrides: list[str] | None = None) -> Self:
         path_str = str(path)
         if path_str.endswith((".yml", ".yaml")):
             return cls.from_yaml(path, overrides=overrides)
@@ -315,13 +305,13 @@ class Config:
             raise OLMoConfigurationError(f"Unsupported config file type: {path}")
 
     @classmethod
-    def from_json(cls: Type[C], path: PathOrStr, overrides: Optional[List[str]] = None) -> C:
+    def from_json(cls, path: PathOrStr, overrides: list[str] | None = None) -> Self:
         with cached_path(path).open() as f:
             config_dict = json.load(f)
         return cls.from_dict(config_dict, overrides=overrides)
 
     @classmethod
-    def from_yaml(cls: Type[C], path: PathOrStr, overrides: Optional[List[str]] = None) -> C:
+    def from_yaml(cls, path: PathOrStr, overrides: list[str] | None = None) -> Self:
         with cached_path(path).open() as f:
             config_dict = yaml.safe_load(f)
         return cls.from_dict(config_dict, overrides=overrides)

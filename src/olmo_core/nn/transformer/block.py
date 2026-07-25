@@ -1,9 +1,9 @@
 import math
 from abc import abstractmethod
-from typing import TYPE_CHECKING, Dict, Optional, Tuple, Union, cast
+from typing import TYPE_CHECKING, Optional, cast
 
 import torch
-import torch.nn as nn
+from torch import nn
 from torch.distributed import DeviceMesh
 from torch.distributed.fsdp import FSDPModule, fully_shard
 from torch.distributed.tensor import Placement, Shard
@@ -47,7 +47,7 @@ class TransformerBlockBase(nn.Module):
         self,
         x: torch.Tensor,
         *,
-        loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
+        loss_div_factor: torch.Tensor | float | None = None,
         **kwargs,
     ) -> torch.Tensor:
         """
@@ -70,8 +70,8 @@ class TransformerBlockBase(nn.Module):
     def apply_cp(
         self,
         cp_mesh: DeviceMesh,
-        ring: Optional[RingContextParallelStyle] = None,
-        uly: Optional[UlyssesContextParallelStyle] = None,
+        ring: RingContextParallelStyle | None = None,
+        uly: UlyssesContextParallelStyle | None = None,
     ):
         raise NotImplementedError
 
@@ -81,7 +81,7 @@ class TransformerBlockBase(nn.Module):
     @abstractmethod
     def apply_fsdp(
         self,
-        dp_mesh: Optional[DeviceMesh] = None,
+        dp_mesh: DeviceMesh | None = None,
         prefetch_factor: int = 0,
         wrapping_strategy: TransformerDataParallelWrappingStrategy = TransformerDataParallelWrappingStrategy.full,
         **fsdp_kwargs,
@@ -119,7 +119,7 @@ class TransformerBlock(TransformerBlockBase):
         attention_residual_alpha: float = 1.0,
         feed_forward_residual_alpha: float = 1.0,
         init_device: str = "cpu",
-        cache: Optional[BufferCache] = None,
+        cache: BufferCache | None = None,
     ):
         super().__init__(n_layers=n_layers)
         self.d_model = d_model
@@ -145,7 +145,7 @@ class TransformerBlock(TransformerBlockBase):
         self,
         x: torch.Tensor,
         *,
-        loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
+        loss_div_factor: torch.Tensor | float | None = None,
         **kwargs,
     ) -> torch.Tensor:
         del loss_div_factor
@@ -201,14 +201,14 @@ class TransformerBlock(TransformerBlockBase):
     def apply_cp(
         self,
         cp_mesh: DeviceMesh,
-        ring: Optional[RingContextParallelStyle] = None,
-        uly: Optional[UlyssesContextParallelStyle] = None,
+        ring: RingContextParallelStyle | None = None,
+        uly: UlyssesContextParallelStyle | None = None,
     ):
         self.attention.apply_cp(cp_mesh, ring=ring, uly=uly)
 
     def apply_fsdp(
         self,
-        dp_mesh: Optional[DeviceMesh] = None,
+        dp_mesh: DeviceMesh | None = None,
         prefetch_factor: int = 0,
         wrapping_strategy: TransformerDataParallelWrappingStrategy = TransformerDataParallelWrappingStrategy.full,
         **fsdp_kwargs,
@@ -253,7 +253,7 @@ class LayerNormScaledTransformerBlock(TransformerBlock):
         attention_residual_alpha: float = 1.0,
         feed_forward_residual_alpha: float = 1.0,
         init_device: str = "cpu",
-        cache: Optional[BufferCache] = None,
+        cache: BufferCache | None = None,
     ):
         super().__init__(
             d_model=d_model,
@@ -277,7 +277,7 @@ class LayerNormScaledTransformerBlock(TransformerBlock):
         self,
         x: torch.Tensor,
         *,
-        loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
+        loss_div_factor: torch.Tensor | float | None = None,
         **kwargs,
     ) -> torch.Tensor:
         del loss_div_factor
@@ -301,7 +301,7 @@ class ReorderedNormTransformerBlock(TransformerBlock):
         self,
         x: torch.Tensor,
         *,
-        loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
+        loss_div_factor: torch.Tensor | float | None = None,
         **kwargs,
     ) -> torch.Tensor:
         del loss_div_factor
@@ -327,7 +327,7 @@ class PeriNormTransformerBlock(TransformerBlock):
         attention_residual_alpha: float = 1.0,
         feed_forward_residual_alpha: float = 1.0,
         init_device: str = "cpu",
-        cache: Optional[BufferCache] = None,
+        cache: BufferCache | None = None,
     ):
         super().__init__(
             d_model=d_model,
@@ -349,7 +349,7 @@ class PeriNormTransformerBlock(TransformerBlock):
         self,
         x: torch.Tensor,
         *,
-        loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
+        loss_div_factor: torch.Tensor | float | None = None,
         **kwargs,
     ) -> torch.Tensor:
         del loss_div_factor
@@ -388,7 +388,7 @@ class NormalizedTransformerBlock(TransformerBlockBase):
         sequence_mixer: SequenceMixerConfig,
         feed_forward: FeedForwardConfig,
         init_device: str = "cpu",
-        cache: Optional[BufferCache] = None,
+        cache: BufferCache | None = None,
     ):
         super().__init__(n_layers=n_layers)
         self.d_model = d_model
@@ -424,7 +424,7 @@ class NormalizedTransformerBlock(TransformerBlockBase):
         self,
         x: torch.Tensor,
         *,
-        loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
+        loss_div_factor: torch.Tensor | float | None = None,
         **kwargs,
     ) -> torch.Tensor:
         del loss_div_factor
@@ -458,14 +458,14 @@ class NormalizedTransformerBlock(TransformerBlockBase):
     def apply_cp(
         self,
         cp_mesh: DeviceMesh,
-        ring: Optional[RingContextParallelStyle] = None,
-        uly: Optional[UlyssesContextParallelStyle] = None,
+        ring: RingContextParallelStyle | None = None,
+        uly: UlyssesContextParallelStyle | None = None,
     ):
         self.attention.apply_cp(cp_mesh, ring=ring, uly=uly)
 
     def apply_fsdp(
         self,
-        dp_mesh: Optional[DeviceMesh] = None,
+        dp_mesh: DeviceMesh | None = None,
         prefetch_factor: int = 0,
         wrapping_strategy: TransformerDataParallelWrappingStrategy = TransformerDataParallelWrappingStrategy.full,
         **fsdp_kwargs,
@@ -526,7 +526,7 @@ class MoETransformerBlock(TransformerBlockBase):
         layer_norm: LayerNormConfig,
         dropout: float = 0.0,
         init_device: str = "cpu",
-        cache: Optional[BufferCache] = None,
+        cache: BufferCache | None = None,
     ):
         super().__init__(n_layers=n_layers)
         self.d_model = d_model
@@ -556,7 +556,7 @@ class MoETransformerBlock(TransformerBlockBase):
         return self.feed_forward_moe.router
 
     @property
-    def shared_mlp(self) -> Optional[FeedForward]:
+    def shared_mlp(self) -> FeedForward | None:
         return self.feed_forward_moe.shared_mlp
 
     @property
@@ -577,7 +577,7 @@ class MoETransformerBlock(TransformerBlockBase):
 
     def compute_metrics(
         self, reset: bool = True
-    ) -> Dict[str, Tuple[torch.Tensor, Optional["ReduceType"]]]:
+    ) -> dict[str, tuple[torch.Tensor, Optional["ReduceType"]]]:
         return self.feed_forward_moe.compute_metrics(reset=reset)
 
     def reset_metrics(self):
@@ -587,7 +587,7 @@ class MoETransformerBlock(TransformerBlockBase):
         self,
         x: torch.Tensor,
         *,
-        loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
+        loss_div_factor: torch.Tensor | float | None = None,
         **kwargs,
     ) -> torch.Tensor:
         h = x + self.dropout(self.attention(self.attention_norm(x), **kwargs))
@@ -645,15 +645,15 @@ class MoETransformerBlock(TransformerBlockBase):
     def apply_cp(
         self,
         cp_mesh: DeviceMesh,
-        ring: Optional[RingContextParallelStyle] = None,
-        uly: Optional[UlyssesContextParallelStyle] = None,
+        ring: RingContextParallelStyle | None = None,
+        uly: UlyssesContextParallelStyle | None = None,
     ):
         self.attention.apply_cp(cp_mesh, ring=ring, uly=uly)
         self.feed_forward_moe.apply_cp(cp_mesh)
 
     def apply_fsdp(
         self,
-        dp_mesh: Optional[DeviceMesh] = None,
+        dp_mesh: DeviceMesh | None = None,
         prefetch_factor: int = 0,
         wrapping_strategy: TransformerDataParallelWrappingStrategy = TransformerDataParallelWrappingStrategy.full,
         **fsdp_kwargs,
@@ -688,7 +688,7 @@ class MoEReorderedNormTransformerBlock(MoETransformerBlock):
         self,
         x: torch.Tensor,
         *,
-        loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
+        loss_div_factor: torch.Tensor | float | None = None,
         **kwargs,
     ) -> torch.Tensor:
         h = x + self.dropout(self.attention_norm(self.attention(x, **kwargs)))
@@ -698,7 +698,7 @@ class MoEReorderedNormTransformerBlock(MoETransformerBlock):
 
     def apply_fsdp(
         self,
-        dp_mesh: Optional[DeviceMesh] = None,
+        dp_mesh: DeviceMesh | None = None,
         prefetch_factor: int = 0,
         wrapping_strategy: TransformerDataParallelWrappingStrategy = TransformerDataParallelWrappingStrategy.full,
         **fsdp_kwargs,
@@ -739,16 +739,13 @@ class MoEHybridTransformerBlockBase(MoETransformerBlock):
         )
         self.feed_forward = feed_forward.build(d_model=d_model, init_device=init_device)
         self.feed_forward_moe_norm = layer_norm.build(d_model, init_device=init_device)
-        self._use_combined_forward: Optional[bool] = None
+        self._use_combined_forward: bool | None = None
 
     @property
     def use_combined_forward(self) -> bool:
         if self._use_combined_forward is not None:
             return self._use_combined_forward
-        elif not self.ep_enabled and not self.tp_enabled:
-            return False
-        else:
-            return True
+        return not (not self.ep_enabled and not self.tp_enabled)
 
     @use_combined_forward.setter
     def use_combined_forward(self, should_use: bool):
@@ -764,7 +761,7 @@ class MoEHybridTransformerBlockBase(MoETransformerBlock):
 
     @abstractmethod
     def sparse_forward(
-        self, x: torch.Tensor, *, loss_div_factor: Optional[Union[torch.Tensor, float]] = None
+        self, x: torch.Tensor, *, loss_div_factor: torch.Tensor | float | None = None
     ) -> torch.Tensor:
         raise NotImplementedError
 
@@ -773,7 +770,7 @@ class MoEHybridTransformerBlockBase(MoETransformerBlock):
         self,
         x: torch.Tensor,
         *,
-        loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
+        loss_div_factor: torch.Tensor | float | None = None,
         **kwargs,
     ) -> torch.Tensor:
         raise NotImplementedError
@@ -782,7 +779,7 @@ class MoEHybridTransformerBlockBase(MoETransformerBlock):
         self,
         x: torch.Tensor,
         *,
-        loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
+        loss_div_factor: torch.Tensor | float | None = None,
         **kwargs,
     ) -> torch.Tensor:
         if not self.use_combined_forward:
@@ -819,7 +816,7 @@ class MoEHybridTransformerBlockBase(MoETransformerBlock):
 
     def apply_fsdp(
         self,
-        dp_mesh: Optional[DeviceMesh] = None,
+        dp_mesh: DeviceMesh | None = None,
         prefetch_factor: int = 0,
         wrapping_strategy: TransformerDataParallelWrappingStrategy = TransformerDataParallelWrappingStrategy.full,
         **fsdp_kwargs,
@@ -890,7 +887,7 @@ class MoEHybridTransformerBlock(MoEHybridTransformerBlockBase):
         return h + self.dropout(self.feed_forward(self.feed_forward_norm(h)))
 
     def sparse_forward(
-        self, x: torch.Tensor, *, loss_div_factor: Optional[Union[torch.Tensor, float]] = None
+        self, x: torch.Tensor, *, loss_div_factor: torch.Tensor | float | None = None
     ) -> torch.Tensor:
         return self.dropout(
             self.feed_forward_moe(self.feed_forward_moe_norm(x), loss_div_factor=loss_div_factor)
@@ -900,7 +897,7 @@ class MoEHybridTransformerBlock(MoEHybridTransformerBlockBase):
         self,
         x: torch.Tensor,
         *,
-        loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
+        loss_div_factor: torch.Tensor | float | None = None,
         **kwargs,
     ) -> torch.Tensor:
         # NOTE: this follows the same code path as the MoE's forward pass, except that we run
@@ -950,7 +947,7 @@ class MoEHybridTransformerBlock(MoEHybridTransformerBlockBase):
         h = x + self.dropout(self.attention(self.attention_norm(x), **kwargs))
 
         # Maybe compute MoE shared out while all-to-all is in progress.
-        moe_shared_out: Optional[torch.Tensor] = None
+        moe_shared_out: torch.Tensor | None = None
         if self.shared_mlp is not None:
             # NOTE: -1 on seq dim in case of TP
             moe_shared_out = self.shared_mlp(x_moe.view(B, -1, D))
@@ -996,7 +993,7 @@ class MoEHybridReorderedNormTransformerBlock(MoEHybridTransformerBlockBase):
         return h + self.dropout(self.feed_forward_norm(self.feed_forward(h)))
 
     def sparse_forward(
-        self, x: torch.Tensor, *, loss_div_factor: Optional[Union[torch.Tensor, float]] = None
+        self, x: torch.Tensor, *, loss_div_factor: torch.Tensor | float | None = None
     ) -> torch.Tensor:
         return self.dropout(
             self.feed_forward_moe_norm(self.feed_forward_moe(x, loss_div_factor=loss_div_factor))
@@ -1006,7 +1003,7 @@ class MoEHybridReorderedNormTransformerBlock(MoEHybridTransformerBlockBase):
         self,
         x: torch.Tensor,
         *,
-        loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
+        loss_div_factor: torch.Tensor | float | None = None,
         **kwargs,
     ) -> torch.Tensor:
         # NOTE: this follows the same code path as the MoE's forward pass, except that we run
@@ -1056,7 +1053,7 @@ class MoEHybridReorderedNormTransformerBlock(MoEHybridTransformerBlockBase):
         h = x + self.dropout(self.attention_norm(self.attention(x, **kwargs)))
 
         # Maybe compute MoE shared out while all-to-all is in progress.
-        moe_shared_out: Optional[torch.Tensor] = None
+        moe_shared_out: torch.Tensor | None = None
         if self.shared_mlp is not None:
             # NOTE: -1 on seq dim in case of TP
             moe_shared_out = self.shared_mlp(x_moe.view(B, -1, D))

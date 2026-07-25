@@ -1,10 +1,10 @@
 import uuid
+from collections.abc import Generator
 from functools import partial
-from typing import Generator
 
 import pytest
 import torch
-import torch.nn as nn
+from torch import nn
 
 from olmo_core.io import clear_directory
 

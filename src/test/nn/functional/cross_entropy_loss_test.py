@@ -15,10 +15,10 @@ def test_cross_entropy_loss(device, reduction):
     labels = torch.randint(0, vocab_size, (N,), device=device)
 
     ce_loss, z_loss = cross_entropy_loss(logits, labels, reduction=reduction, compute_z_loss=True)
-    assert ce_loss.shape == tuple()
+    assert ce_loss.shape == ()
     assert ce_loss.numel() == 1
     assert z_loss is not None
-    assert z_loss.shape == tuple()
+    assert z_loss.shape == ()
     assert z_loss.numel() == 1
 
     # Now add some masked values to logits and labels and make sure we get the same result.

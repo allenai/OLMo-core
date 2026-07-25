@@ -9,7 +9,7 @@ Launch this with torchrun:
 import os
 import sys
 from dataclasses import dataclass
-from typing import List, cast
+from typing import cast
 
 from olmo_core.config import Config, DType
 from olmo_core.data import NumpyDataLoaderConfig, NumpyFSLDatasetConfig, TokenizerConfig
@@ -67,7 +67,7 @@ class ExperimentConfig(Config):
     init_seed: int = 12536
 
 
-def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
+def build_config(run_name: str, overrides: list[str]) -> ExperimentConfig:
     tokenizer_config = TokenizerConfig.gpt2()
 
     model_config = TransformerConfig.ngpt_271M(
@@ -153,7 +153,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
     ).merge(overrides)
 
 
-def main(run_name: str, overrides: List[str]):
+def main(run_name: str, overrides: list[str]):
     config = build_config(run_name, overrides)
 
     # Set RNG states on all devices.

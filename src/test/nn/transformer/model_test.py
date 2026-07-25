@@ -1,12 +1,12 @@
 import logging
 from dataclasses import replace
 from test.nn.attention.attention_test import BF16_ATOL, BF16_RTOL
-from typing import Optional, cast
+from typing import cast
 
 import pytest
 import torch
 import torch.distributed as dist
-import torch.nn as nn
+from torch import nn
 from torch.distributed.tensor import DTensor, Shard, init_device_mesh
 
 from olmo_core.config import DType
@@ -174,8 +174,8 @@ def test_ngpt_with_fsdp2():
 def get_transformer_config(
     architecture: str,
     dtype: torch.dtype = torch.float32,
-    attn_backend: Optional[AttentionBackendName] = None,
-    swa: Optional[SlidingWindowAttentionConfig] = None,
+    attn_backend: AttentionBackendName | None = None,
+    swa: SlidingWindowAttentionConfig | None = None,
 ) -> TransformerConfig:
     config: TransformerConfig
     if architecture == "olmo2":
@@ -336,7 +336,7 @@ def test_context_parallel_transformer_ring(architecture: str, tmp_path):
 
 
 def run_context_parallel_transformer_ulysses(
-    checkpoint_dir, outputs_path, architecture: str, backend_name: Optional[AttentionBackendName]
+    checkpoint_dir, outputs_path, architecture: str, backend_name: AttentionBackendName | None
 ):
     device = get_default_device()
     config = get_transformer_config(architecture, dtype=torch.bfloat16, attn_backend=backend_name)
@@ -374,7 +374,7 @@ def run_context_parallel_transformer_ulysses(
     ],
 )
 def test_context_parallel_transformer_ulysses(
-    architecture: str, backend_name: Optional[AttentionBackendName], tmp_path
+    architecture: str, backend_name: AttentionBackendName | None, tmp_path
 ):
     seed_all(0)
     device = torch.device("cuda")

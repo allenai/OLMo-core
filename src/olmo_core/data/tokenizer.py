@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import List, Optional, Protocol
+from typing import Protocol
 
 from ..config import Config, StrEnum
 
@@ -13,7 +13,7 @@ __all__ = [
 class TokenizerLike(Protocol):
     eos_token_id: int
 
-    def encode(self, text: str, add_special_tokens: bool = False) -> List[int]:
+    def encode(self, text: str, add_special_tokens: bool = False) -> list[int]:
         ...
 
 
@@ -64,12 +64,12 @@ class TokenizerConfig(Config):
     The padding token ID.
     """
 
-    bos_token_id: Optional[int] = None
+    bos_token_id: int | None = None
     """
     The begin-of-sentence token ID.
     """
 
-    identifier: Optional[str] = None
+    identifier: str | None = None
     """
     The identifier of the tokenizer. Could be a path or HuggingFace identifier.
     """

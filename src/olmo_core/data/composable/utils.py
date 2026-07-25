@@ -1,11 +1,12 @@
 import concurrent.futures
 import warnings
-from typing import Callable, List, Literal, Optional, Sequence, Type, TypeVar, Union
+from collections.abc import Callable, Sequence
+from typing import Literal, TypeVar
 
 import numpy as np
 import torch
 
-import olmo_core.io as io
+from olmo_core import io
 from olmo_core.aliases import PathOrStr
 from olmo_core.exceptions import OLMoConfigurationError, OLMoEnvironmentError
 
@@ -42,9 +43,9 @@ def path_map(
     func: Callable[[PathOrStr], T],
     paths: Sequence[PathOrStr],
     *,
-    max_workers: Optional[int] = None,
+    max_workers: int | None = None,
     method: Literal["threads", "processes"] = "threads",
-) -> List[T]:
+) -> list[T]:
     """
     Call a function on each path, returning a list of the results, in order.
 
@@ -58,9 +59,8 @@ def path_map(
     if max_workers == 0 or len(paths) <= 1:
         return [func(path) for path in paths]
 
-    executor_class: Union[
-        Type[concurrent.futures.ThreadPoolExecutor],
-        Type[concurrent.futures.ProcessPoolExecutor],
+    executor_class: type[
+        concurrent.futures.ThreadPoolExecutor | concurrent.futures.ProcessPoolExecutor
     ]
     if method == "threads":
         _warmup_clients(paths)
@@ -98,7 +98,7 @@ def format_token_count(n: int) -> str:
         return str(n)
 
 
-def as_ndarray(array: Union[Sequence[int], Sequence[bool]]) -> np.ndarray:
+def as_ndarray(array: Sequence[int] | Sequence[bool]) -> np.ndarray:
     if isinstance(array, np.ndarray):
         return array
     elif isinstance(array, torch.Tensor):
@@ -107,7 +107,7 @@ def as_ndarray(array: Union[Sequence[int], Sequence[bool]]) -> np.ndarray:
         return np.array(array)
 
 
-def as_tensor(array: Union[Sequence[int], Sequence[bool]]) -> torch.Tensor:
+def as_tensor(array: Sequence[int] | Sequence[bool]) -> torch.Tensor:
     if isinstance(array, torch.Tensor):
         return array
     elif isinstance(array, np.ndarray):
@@ -123,8 +123,8 @@ def calculate_sample_sizes(
     source_sizes: Sequence[int],
     target_ratios: Sequence[float],
     max_repetition_factors: Sequence[float],
-    target_size: Optional[int] = None,
-    labels: Optional[Sequence[str]] = None,
+    target_size: int | None = None,
+    labels: Sequence[str] | None = None,
     unit: str = "tokens",
 ) -> np.ndarray:
     """
@@ -230,7 +230,7 @@ def build_global_indices(
     *,
     sequence_length: int,
     max_sequence_length: int,
-    seed: Optional[int],
+    seed: int | None,
     dtype: NumpyUIntTypes = np.uint32,
 ) -> np.ndarray:
     """
@@ -275,14 +275,13 @@ SEED_NOT_SET = _NOT_SET_INT_TYPE()
 A placeholder for the default seed, which can be changed by calling :func:`set_composable_seed()`.
 """
 
-_SEED_RNG: Optional[np.random.Generator] = None
+_SEED_RNG: np.random.Generator | None = None
 
 
-S = TypeVar("S", int, None, Optional[int])
+S = TypeVar("S", int, None, int | None)
 
 
 def resolve_seed(default: S) -> S:
-    global _SEED_RNG
     if default is SEED_NOT_SET:
         if _SEED_RNG is None:
             return 0  # type: ignore[return-type]

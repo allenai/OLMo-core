@@ -1,7 +1,6 @@
 import functools as ft
 import hashlib
 from dataclasses import dataclass
-from typing import List, Optional, Tuple
 
 from olmo_core.aliases import PathOrStr
 
@@ -19,10 +18,10 @@ class ConcatAndChunkInstanceSourceConfig(InstanceSourceConfig):
     Config for :class:`ConcatAndChunkInstanceSource`.
     """
 
-    sources: List[TokenSourceConfig]
+    sources: list[TokenSourceConfig]
     sequence_length: int
-    max_sequence_length: Optional[int] = None
-    label: Optional[str] = None
+    max_sequence_length: int | None = None
+    label: str | None = None
 
     @classmethod
     def from_npy(
@@ -30,13 +29,13 @@ class ConcatAndChunkInstanceSourceConfig(InstanceSourceConfig):
         *npy_paths: str,
         tokenizer: TokenizerConfig,
         sequence_length: int,
-        max_sequence_length: Optional[int] = None,
-        dtype: Optional[NumpyDatasetDType] = None,
-        source_permutation_seed: Optional[int] = None,
+        max_sequence_length: int | None = None,
+        dtype: NumpyDatasetDType | None = None,
+        source_permutation_seed: int | None = None,
         source_group_size: int = 1,
-        label_mask_paths: Optional[List[str]] = None,
-        expand_glob: Optional[bool] = None,
-        label: Optional[str] = None,
+        label_mask_paths: list[str] | None = None,
+        expand_glob: bool | None = None,
+        label: str | None = None,
     ) -> "ConcatAndChunkInstanceSourceConfig":
         """
         Create a :class:`ConcatAndChunkInstanceSourceConfig` from one or more tokenized ``.npy`` source files.
@@ -82,8 +81,8 @@ class ConcatAndChunkInstanceSource(InstanceSource):
         *sources: TokenSource,
         sequence_length: int,
         work_dir: PathOrStr,
-        max_sequence_length: Optional[int] = None,
-        label: Optional[str] = None,
+        max_sequence_length: int | None = None,
+        label: str | None = None,
     ):
         super().__init__(
             sequence_length=sequence_length,
@@ -94,17 +93,15 @@ class ConcatAndChunkInstanceSource(InstanceSource):
         self._sources = sources
 
     @property
-    def sources(self) -> Tuple[TokenSource, ...]:
+    def sources(self) -> tuple[TokenSource, ...]:
         return self._sources
 
     @ft.cached_property
     def num_instances(self) -> int:
         return sum(
-            (
-                (source.num_tokens // self.max_sequence_length)
-                * (self.max_sequence_length // self.sequence_length)
-                for source in self.sources
-            )
+            (source.num_tokens // self.max_sequence_length)
+            * (self.max_sequence_length // self.sequence_length)
+            for source in self.sources
         )
 
     @ft.cached_property

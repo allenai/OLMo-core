@@ -1,9 +1,8 @@
 from dataclasses import dataclass
-from typing import Optional
 
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
+from torch import nn
 
 from olmo_core.config import DType, StrEnum
 from olmo_core.nn.config import ModuleConfig
@@ -12,8 +11,8 @@ from olmo_core.nn.vision.config import VisionEncoderConfig
 __all__ = [
     "ImagePoolingType",
     "ImageProjectorType",
-    "VisionConnectorConfig",
     "VisionConnector",
+    "VisionConnectorConfig",
 ]
 
 
@@ -105,7 +104,7 @@ class _PoolingCrossAttention(nn.Module):
         self,
         query: torch.Tensor,
         context: torch.Tensor,
-        attn_mask: Optional[torch.Tensor] = None,
+        attn_mask: torch.Tensor | None = None,
     ) -> torch.Tensor:
         """
         :param query: ``(B, 1, input_dim)`` — mean of the group's patch features.
@@ -222,7 +221,7 @@ class VisionConnectorConfig(ModuleConfig):
     projector_type: ImageProjectorType = ImageProjectorType.mlp
     """Projection architecture."""
 
-    mlp_hidden_size: Optional[int] = None
+    mlp_hidden_size: int | None = None
     """
     Hidden size for the SwiGLU MLP projector. Defaults to
     ``4 * image_emb_dim`` when ``None``.
@@ -305,7 +304,7 @@ class VisionConnector(nn.Module):
         self.cfg = cfg
         dtype = cfg.dtype.as_pt()
 
-        self.pooling: Optional[_PoolingCrossAttention] = None
+        self.pooling: _PoolingCrossAttention | None = None
         if cfg.pooling_type == ImagePoolingType.attention_meanq:
             self.pooling = _PoolingCrossAttention(
                 input_dim=cfg.pooling_input_dim,
@@ -387,7 +386,7 @@ class VisionConnector(nn.Module):
             assert self.pooling is not None
             # Flatten group dim into the cross-attention batch.
             flat = to_pool.reshape(B * n_pooled, pool_size, dim)
-            attn_mask: Optional[torch.Tensor] = None
+            attn_mask: torch.Tensor | None = None
             if cfg.pooling_attention_mask:
                 attn_mask = valid.reshape(B * n_pooled, 1, 1, pool_size)
                 # Build query as masked mean over valid slots only.

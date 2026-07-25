@@ -2,8 +2,9 @@
 
 import logging
 import math
+from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Sequence
+from typing import Any
 
 from ..common import OPTIM_GRAD_NORM_METRIC, TRAIN_CE_LOSS_METRIC
 from .callback import Callback
@@ -42,13 +43,13 @@ class StabilityMonitorCallback(Callback):
     grad_norm_metric_name: str = OPTIM_GRAD_NORM_METRIC
 
     # Internal state
-    _loss_history: List[float] = field(default_factory=list, repr=False)
-    _grad_norm_history: List[float] = field(default_factory=list, repr=False)
-    _spike_history: List[bool] = field(default_factory=list, repr=False)
+    _loss_history: list[float] = field(default_factory=list, repr=False)
+    _grad_norm_history: list[float] = field(default_factory=list, repr=False)
+    _spike_history: list[bool] = field(default_factory=list, repr=False)
     _total_spike_count: int = 0
     _total_step_count: int = 0
 
-    def state_dict(self) -> Dict[str, Any]:
+    def state_dict(self) -> dict[str, Any]:
         """Save state for checkpoint resumption."""
         return {
             "loss_history": self._loss_history,
@@ -58,7 +59,7 @@ class StabilityMonitorCallback(Callback):
             "total_step_count": self._total_step_count,
         }
 
-    def load_state_dict(self, state_dict: Dict[str, Any]):
+    def load_state_dict(self, state_dict: dict[str, Any]):
         """Restore state from checkpoint."""
         self._loss_history = state_dict.get("loss_history", [])
         self._grad_norm_history = state_dict.get("grad_norm_history", [])
@@ -66,13 +67,13 @@ class StabilityMonitorCallback(Callback):
         self._total_spike_count = state_dict.get("total_spike_count", 0)
         self._total_step_count = state_dict.get("total_step_count", 0)
 
-    def _append_to_history(self, history: List, value, max_size: int) -> None:
+    def _append_to_history(self, history: list, value, max_size: int) -> None:
         """Append value to history, removing oldest if over max_size."""
         history.append(value)
         if len(history) > max_size:
             history.pop(0)
 
-    def pre_log_metrics(self, step: int, metrics: Dict[str, float]):
+    def pre_log_metrics(self, step: int, metrics: dict[str, float]):
         """Check for spikes and record spike score metrics."""
         if not self.enabled:
             return

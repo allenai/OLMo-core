@@ -1,4 +1,4 @@
-from typing import Any, Dict, Type
+from typing import Any
 
 import pytest
 import torch
@@ -22,11 +22,11 @@ from olmo_core.utils import get_default_device, seed_all
 
 
 def _build_block(
-    block_cls: Type[TransformerBlock],
+    block_cls: type[TransformerBlock],
     *,
     d_model: int,
     init_device: str,
-    attn_kwargs: Dict[str, Any],
+    attn_kwargs: dict[str, Any],
 ) -> TransformerBlock:
     attn_cfg = AttentionConfig(**attn_kwargs)
     ff_cfg = FeedForwardConfig(hidden_size=4 * d_model)
@@ -46,9 +46,9 @@ def _run_tensor_parallel_block(
     checkpoint_dir: str,
     inputs_path: str,
     outputs_path: str,
-    block_cls: Type[TransformerBlock],
+    block_cls: type[TransformerBlock],
     d_model: int,
-    attn_kwargs: Dict[str, Any],
+    attn_kwargs: dict[str, Any],
 ):
     device = get_default_device()
     mesh = init_device_mesh(device.type, (get_world_size(),), mesh_dim_names=("tp",))
@@ -79,15 +79,15 @@ def _run_tensor_parallel_block(
 @pytest.mark.parametrize(
     "attn_kwargs",
     [
-        pytest.param(dict(n_heads=8), id="default"),
-        pytest.param(dict(n_heads=8, rope=None, bias=False), id="no-bias"),
+        pytest.param({"n_heads": 8}, id="default"),
+        pytest.param({"n_heads": 8, "rope": None, "bias": False}, id="no-bias"),
     ],
 )
 @pytest.mark.parametrize(
     "block_cls", [TransformerBlock, ReorderedNormTransformerBlock, PeriNormTransformerBlock]
 )
 def test_tensor_parallel_transformer_block(
-    backend: str, block_cls: Type[TransformerBlock], attn_kwargs: Dict[str, Any], tmp_path
+    backend: str, block_cls: type[TransformerBlock], attn_kwargs: dict[str, Any], tmp_path
 ):
     device = torch.device("cuda") if "nccl" in backend else torch.device("cpu")
 

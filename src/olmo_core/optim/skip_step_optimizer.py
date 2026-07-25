@@ -1,12 +1,12 @@
-from typing import Any, Dict, Iterable, List, Optional, Union
+from collections.abc import Iterable
+from typing import Any, TypeAlias
 
 import torch
 from torch.optim.optimizer import Optimizer
-from typing_extensions import TypeAlias
 
 from olmo_core.utils import get_default_device, move_to_device
 
-ParamsT: TypeAlias = Union[Iterable[torch.Tensor], Iterable[Dict[str, Any]]]
+ParamsT: TypeAlias = Iterable[torch.Tensor] | Iterable[dict[str, Any]]
 
 
 class SkipStepOptimizer(Optimizer):
@@ -33,16 +33,16 @@ class SkipStepOptimizer(Optimizer):
     def __init__(
         self,
         params: ParamsT,
-        defaults: Dict[str, Any],
+        defaults: dict[str, Any],
         rolling_interval_length: int = 128,
         sigma_factor: int = 6,
     ) -> None:
         super().__init__(params, defaults)
         self.rolling_interval_length = rolling_interval_length
         self.sigma_factor = sigma_factor
-        self._losses: List[torch.Tensor] = []
-        self._grad_norms: List[torch.Tensor] = []
-        self._device: Optional[torch.device] = None
+        self._losses: list[torch.Tensor] = []
+        self._grad_norms: list[torch.Tensor] = []
+        self._device: torch.device | None = None
 
     @property
     def device(self) -> torch.device:
@@ -57,7 +57,7 @@ class SkipStepOptimizer(Optimizer):
         return self._device
 
     @property
-    def latest_loss(self) -> Optional[torch.Tensor]:
+    def latest_loss(self) -> torch.Tensor | None:
         if not self._losses:
             return None
         else:
@@ -70,7 +70,7 @@ class SkipStepOptimizer(Optimizer):
             self._losses.pop(0)
 
     @property
-    def latest_grad_norm(self) -> Optional[torch.Tensor]:
+    def latest_grad_norm(self) -> torch.Tensor | None:
         if not self._grad_norms:
             return None
         else:

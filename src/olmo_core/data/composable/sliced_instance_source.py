@@ -1,6 +1,5 @@
 import functools as ft
 import hashlib
-from typing import Optional
 
 from olmo_core.aliases import PathOrStr
 from olmo_core.exceptions import OLMoConfigurationError
@@ -19,7 +18,7 @@ class SlicedInstanceSource(InstanceSource):
         source: InstanceSource,
         source_slice: slice,
         *,
-        seed: Optional[int] = None,
+        seed: int | None = None,
         work_dir: PathOrStr,
     ):
         super().__init__(
@@ -52,7 +51,7 @@ class SlicedInstanceSource(InstanceSource):
         return self._slice
 
     @property
-    def seed(self) -> Optional[int]:
+    def seed(self) -> int | None:
         return self._seed
 
     @property

@@ -1,7 +1,7 @@
 import logging
 import os
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any
 
 from olmo_core.distributed.utils import get_rank
 from olmo_core.exceptions import OLMoEnvironmentError
@@ -35,42 +35,42 @@ class WandBCallback(Callback):
     Set to false to disable this callback.
     """
 
-    name: Optional[str] = None
+    name: str | None = None
     """
     The name to give the W&B run.
     """
 
-    project: Optional[str] = None
+    project: str | None = None
     """
     The W&B project to use.
     """
 
-    entity: Optional[str] = None
+    entity: str | None = None
     """
     The W&B entity to use.
     """
 
-    group: Optional[str] = None
+    group: str | None = None
     """
     The W&B group to use.
     """
 
-    tags: Optional[List[str]] = None
+    tags: list[str] | None = None
     """
     Tags to assign the run.
     """
 
-    notes: Optional[str] = None
+    notes: str | None = None
     """
     A note/description of the run.
     """
 
-    config: Optional[Dict[str, Any]] = None
+    config: dict[str, Any] | None = None
     """
     The config to load to W&B.
     """
 
-    cancel_tags: Optional[List[str]] = field(
+    cancel_tags: list[str] | None = field(
         default_factory=lambda: ["cancel", "canceled", "cancelled"]
     )
     """
@@ -78,7 +78,7 @@ class WandBCallback(Callback):
     Defaults to ``["cancel", "canceled", "cancelled"]``.
     """
 
-    cancel_check_interval: Optional[int] = None
+    cancel_check_interval: int | None = None
     """
     Check for cancel tags every this many steps. Defaults to
     :data:`olmo_core.train.Trainer.cancel_check_interval`.
@@ -122,7 +122,7 @@ class WandBCallback(Callback):
             if WANDB_API_KEY_ENV_VAR not in os.environ:
                 raise OLMoEnvironmentError(f"missing env var '{WANDB_API_KEY_ENV_VAR}'")
 
-            self.wandb
+            self.wandb  # noqa: B018
             wandb_dir = self.trainer.work_dir / "wandb"
             wandb_dir.mkdir(parents=True, exist_ok=True)
             self.wandb.init(
@@ -137,7 +137,7 @@ class WandBCallback(Callback):
             )
             self._run_path = self.run.path  # type: ignore
 
-    def log_metrics(self, step: int, metrics: Dict[str, float]):
+    def log_metrics(self, step: int, metrics: dict[str, float]):
         if self.enabled and get_rank() == 0:
             self.wandb.log(metrics, step=step)
 

@@ -1,14 +1,15 @@
 import contextlib
 import logging
 import math
+from collections.abc import Generator
 from dataclasses import replace
 from functools import cached_property, lru_cache, partial
-from typing import Any, Dict, Generator, List, Optional, Tuple, Union, cast
+from typing import Any, cast
 
 import torch
 import torch.distributed as dist
 import torch.distributed.checkpoint.state_dict as dist_cp_sd
-import torch.nn as nn
+from torch import nn
 from torch.distributed.checkpoint.metadata import Metadata
 from torch.distributed.pipelining import PipelineStage
 from torch.distributed.tensor import DTensor
@@ -111,20 +112,20 @@ class TransformerPipelineTrainModule(TrainModule):
         max_sequence_length: int,
         pp_config: TransformerPipelineParallelConfig,
         compile_model: bool = False,
-        float8_config: Optional[Float8Config] = None,
-        dp_config: Optional[TransformerDataParallelConfig] = None,
-        tp_config: Optional[TransformerTensorParallelConfig] = None,
-        cp_config: Optional[TransformerContextParallelConfig] = None,
-        ep_config: Optional[TransformerExpertParallelConfig] = None,
-        ac_config: Optional[TransformerActivationCheckpointingConfig] = None,
-        z_loss_multiplier: Optional[float] = None,
-        autocast_precision: Optional[torch.dtype] = None,
-        max_grad_norm: Optional[float] = None,
-        scheduler: Optional[Scheduler] = None,
-        device: Optional[torch.device] = None,
-        state_dict_save_opts: Optional[dist_cp_sd.StateDictOptions] = None,
-        state_dict_load_opts: Optional[dist_cp_sd.StateDictOptions] = None,
-        load_key_mapping: Optional[Dict[str, str]] = None,
+        float8_config: Float8Config | None = None,
+        dp_config: TransformerDataParallelConfig | None = None,
+        tp_config: TransformerTensorParallelConfig | None = None,
+        cp_config: TransformerContextParallelConfig | None = None,
+        ep_config: TransformerExpertParallelConfig | None = None,
+        ac_config: TransformerActivationCheckpointingConfig | None = None,
+        z_loss_multiplier: float | None = None,
+        autocast_precision: torch.dtype | None = None,
+        max_grad_norm: float | None = None,
+        scheduler: Scheduler | None = None,
+        device: torch.device | None = None,
+        state_dict_save_opts: dist_cp_sd.StateDictOptions | None = None,
+        state_dict_load_opts: dist_cp_sd.StateDictOptions | None = None,
+        load_key_mapping: dict[str, str] | None = None,
         label_ignore_index: int = -100,
     ):
         super().__init__()
@@ -147,8 +148,8 @@ class TransformerPipelineTrainModule(TrainModule):
         self._pp_config = pp_config
         # We'll initialize this lazily when the trainer is attached, since we need to know
         # the global batch size in order to determine the number of pipeline micro-batches.
-        self._train_pp_schedule: Optional[PipelineSchedule] = None
-        self._pp_stages: Optional[List[PipelineStage]] = None
+        self._train_pp_schedule: PipelineSchedule | None = None
+        self._pp_stages: list[PipelineStage] | None = None
         self.pp_mesh = get_pp_mesh(self.world_mesh)
         self.pp_group = self.pp_mesh.get_group()
         self.pp_group_rank = get_rank(self.pp_group)
@@ -171,7 +172,7 @@ class TransformerPipelineTrainModule(TrainModule):
         )
 
         # Parallelize model parts.
-        self.model_parts: List[Transformer] = parallelize_model(
+        self.model_parts: list[Transformer] = parallelize_model(
             model_parts,
             world_mesh=self.world_mesh,
             device=self.device,
@@ -208,12 +209,12 @@ class TransformerPipelineTrainModule(TrainModule):
 
         # Build optimizer(s).
         log.info("Building optimizer(s)...")
-        self.optimizers: List[Optimizer] = [
+        self.optimizers: list[Optimizer] = [
             optim.build(model, strict=False) for model in self.model_parts
         ]
 
     @property
-    def dp_process_group(self) -> Optional[dist.ProcessGroup]:
+    def dp_process_group(self) -> dist.ProcessGroup | None:
         return get_dp_process_group(self.world_mesh)
 
     @property
@@ -240,7 +241,7 @@ class TransformerPipelineTrainModule(TrainModule):
 
     @property
     def train_pp_schedule(self) -> PipelineSchedule:
-        self.trainer  # make sure trainer has been attached before trying to access this
+        self.trainer  # noqa: B018 -- make sure trainer has been attached before trying to access this
         assert self._train_pp_schedule is not None
         return self._train_pp_schedule
 
@@ -281,16 +282,16 @@ class TransformerPipelineTrainModule(TrainModule):
             num_microbatches=num_microbatches,
         )
 
-    def state_dict(self, *, optim: Optional[bool] = None) -> Dict[str, Any]:
+    def state_dict(self, *, optim: bool | None = None) -> dict[str, Any]:
         if optim is None:
             optim = True
         return self._get_state_dict(self.state_dict_save_opts, optim=optim)
 
     def state_dict_to_load(
-        self, metadata: Metadata, *, optim: Optional[bool] = None
-    ) -> Dict[str, Any]:
+        self, metadata: Metadata, *, optim: bool | None = None
+    ) -> dict[str, Any]:
         has_optim_state: bool = False
-        for key in metadata.state_dict_metadata.keys():
+        for key in metadata.state_dict_metadata:
             if key.startswith("optim."):
                 has_optim_state = True
                 break
@@ -340,12 +341,12 @@ class TransformerPipelineTrainModule(TrainModule):
 
         return state_dict
 
-    def state_dict_to_save(self, *, optim: Optional[bool] = None) -> Dict[str, Any]:
+    def state_dict_to_save(self, *, optim: bool | None = None) -> dict[str, Any]:
         if optim is None:
             optim = True
         return self._get_state_dict(self.state_dict_save_opts, optim=optim)
 
-    def load_state_dict(self, state_dict: Dict[str, Any]) -> None:
+    def load_state_dict(self, state_dict: dict[str, Any]) -> None:
         load_optim = "optim" in state_dict
 
         if self.load_key_mapping is not None:
@@ -379,7 +380,7 @@ class TransformerPipelineTrainModule(TrainModule):
                 )
                 gc_cuda()
 
-    def train_batch(self, batch: Dict[str, Any], dry_run: bool = False):
+    def train_batch(self, batch: dict[str, Any], dry_run: bool = False):
         # Set model to train mode if it isn't already.
         for model in self.model_parts:
             model.train()
@@ -462,7 +463,7 @@ class TransformerPipelineTrainModule(TrainModule):
                     merge_strategy=merge_strategy,
                 )
 
-    def reduce_send_recv(self, x: Optional[torch.Tensor] = None) -> torch.Tensor:
+    def reduce_send_recv(self, x: torch.Tensor | None = None) -> torch.Tensor:
         if self.pp_group_rank == self.pp_final_stage_rank:
             assert x is not None
             # Reduce across DP process group.
@@ -482,7 +483,7 @@ class TransformerPipelineTrainModule(TrainModule):
             None if local_index == (len(ordered_ranks) - 1) else ordered_ranks[local_index + 1]
         )
 
-        ops: List[dist.P2POp] = []
+        ops: list[dist.P2POp] = []
         if src_rank is not None:
             log.debug(
                 f"Rank {get_rank()} (pp group rank {self.pp_group_rank}) receiving from rank "
@@ -503,7 +504,7 @@ class TransformerPipelineTrainModule(TrainModule):
 
         return x
 
-    def eval_batch(self, batch: Dict[str, Any], labels: Optional[torch.Tensor] = None) -> Any:
+    def eval_batch(self, batch: dict[str, Any], labels: torch.Tensor | None = None) -> Any:
         del batch, labels
         raise RuntimeError(f"{self.__class__.__name__} does not support inference")
 
@@ -553,19 +554,19 @@ class TransformerPipelineTrainModule(TrainModule):
         self,
         input_ids: torch.Tensor,
         labels: torch.Tensor,
-        batch_num_tokens_for_loss: Union[int, float],
+        batch_num_tokens_for_loss: float,
         **kwargs,
-    ) -> Tuple[Optional[torch.Tensor], Optional[torch.Tensor]]:
+    ) -> tuple[torch.Tensor | None, torch.Tensor | None]:
         """
         Run the pipeline, returning the losses captured.
         """
 
-        ce_batch_loss: Optional[torch.Tensor] = None
-        z_batch_loss: Optional[torch.Tensor] = None
+        ce_batch_loss: torch.Tensor | None = None
+        z_batch_loss: torch.Tensor | None = None
 
         def capture_losses(
-            model: Transformer, args: Tuple[torch.Tensor, ...], output: Any
-        ) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
+            model: Transformer, args: tuple[torch.Tensor, ...], output: Any
+        ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
             del args
             nonlocal ce_batch_loss
             nonlocal z_batch_loss
@@ -608,15 +609,15 @@ class TransformerPipelineTrainModule(TrainModule):
 
         return ce_batch_loss, z_batch_loss
 
-    @lru_cache
-    def num_flops_per_token(self, seq_len: int) -> Optional[int]:
+    @lru_cache  # noqa: B019
+    def num_flops_per_token(self, seq_len: int) -> int | None:
         try:
             return self._full_model_num_flops_per_token(seq_len)
         except NotImplementedError as ex:
             warn_once(f"Unable to estimate num flops per token: {ex}")
             return None
 
-    def global_num_flops_in_batch(self, batch: Dict[str, Any]) -> Optional[int]:
+    def global_num_flops_in_batch(self, batch: dict[str, Any]) -> int | None:
         global_num_tokens = self.trainer.data_loader.global_num_tokens_in_batch(batch)
         if global_num_tokens is None:
             return None
@@ -632,8 +633,8 @@ class TransformerPipelineTrainModule(TrainModule):
 
     def _get_state_dict(
         self, sd_options: dist_cp_sd.StateDictOptions, optim: bool = True
-    ) -> Dict[str, Any]:
-        state_dict: Dict[str, Any] = {
+    ) -> dict[str, Any]:
+        state_dict: dict[str, Any] = {
             "model": {
                 k: v
                 for sd in map(
@@ -656,7 +657,7 @@ class TransformerPipelineTrainModule(TrainModule):
         return state_dict
 
     def _clip_grad_norm(
-        self, max_grad_norm: float, norm_type: float = 2.0, foreach: Optional[bool] = None
+        self, max_grad_norm: float, norm_type: float = 2.0, foreach: bool | None = None
     ) -> torch.Tensor:
         # Adapted from https://github.com/pytorch/torchtitan/blob/2a4437014e66bcf88a3f0419b816266e6326d539/torchtitan/utils.py#L348
 
@@ -689,11 +690,11 @@ class TransformerPipelineTrainModule(TrainModule):
         return total_norm
 
     def _prepare_batch(
-        self, batch: Dict[str, Any], labels: Optional[torch.Tensor] = None
-    ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Dict[str, Any]]:
+        self, batch: dict[str, Any], labels: torch.Tensor | None = None
+    ) -> tuple[torch.Tensor, torch.Tensor | None, dict[str, Any]]:
         input_ids = batch.pop("input_ids")
         labels = labels if labels is not None else batch.pop("labels", None)
-        kwargs: Dict[str, Any] = {}
+        kwargs: dict[str, Any] = {}
         if "doc_lens" in batch and "max_doc_lens" in batch:
             log_once(log, "intra-document masking enabled")
             kwargs["doc_lens"] = batch["doc_lens"]

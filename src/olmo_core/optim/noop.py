@@ -1,5 +1,4 @@
 from dataclasses import dataclass
-from typing import Optional, Type
 
 import torch
 
@@ -23,14 +22,14 @@ class NoOpOptimizer(SkipStepOptimizer):
         rolling_interval_length: int = 128,
         sigma_factor: int = 6,
     ) -> None:
-        defaults = dict(lr=lr)
+        defaults = {"lr": lr}
         super().__init__(
             params,
             defaults,
             rolling_interval_length=rolling_interval_length,
             sigma_factor=sigma_factor,
         )
-        self._step_skipped: Optional[torch.Tensor] = None
+        self._step_skipped: torch.Tensor | None = None
 
     @property
     def step_skipped(self) -> torch.Tensor:
@@ -90,5 +89,5 @@ class NoOpConfig(OptimConfig[NoOpOptimizer]):
     """
 
     @classmethod
-    def optimizer(cls) -> Type[NoOpOptimizer]:
+    def optimizer(cls) -> type[NoOpOptimizer]:
         return NoOpOptimizer

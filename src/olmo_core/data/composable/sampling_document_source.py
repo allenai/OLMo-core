@@ -4,13 +4,13 @@ import hashlib
 import logging
 import typing
 import warnings
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
-from typing import Iterable, List, Optional, Sequence
 
 import numpy as np
 
 import olmo_core.distributed.utils as dist_utils
-import olmo_core.io as io
+from olmo_core import io
 from olmo_core.aliases import PathOrStr
 from olmo_core.exceptions import OLMoConfigurationError
 
@@ -32,17 +32,17 @@ class SamplingDocumentSourceConfig(DocumentSourceConfig):
     A config for building a :class:`SamplingDocumentSource`.
     """
 
-    sources: List[DocumentSourceConfig]
-    max_tokens: Optional[int] = None
-    factor: Optional[float] = None
-    seed: Optional[int] = dataclasses.field(default_factory=lambda: resolve_seed(SEED_NOT_SET))
-    label: Optional[str] = None
+    sources: list[DocumentSourceConfig]
+    max_tokens: int | None = None
+    factor: float | None = None
+    seed: int | None = dataclasses.field(default_factory=lambda: resolve_seed(SEED_NOT_SET))
+    label: str | None = None
 
     def __post_init__(self):
         if (self.max_tokens is None) == (self.factor is None):
             raise OLMoConfigurationError("Exactly one of 'max_tokens' or 'factor' must be set.")
 
-    def build(self, work_dir: PathOrStr) -> List["SamplingDocumentSource"]:  # type: ignore[override]
+    def build(self, work_dir: PathOrStr) -> list["SamplingDocumentSource"]:  # type: ignore[override]
         sources = [s for source in self.sources for s in source.build(work_dir=work_dir)]
         max_tokens = self.max_tokens
         if max_tokens is None:
@@ -87,9 +87,9 @@ class SamplingDocumentSource(DocumentSource):
         self,
         *sources: DocumentSource,
         max_tokens: int,
-        seed: Optional[int] = SEED_NOT_SET,
+        seed: int | None = SEED_NOT_SET,
         work_dir: PathOrStr,
-        label: Optional[str] = None,
+        label: str | None = None,
     ):
         assert max_tokens > 0
         if not sources:
@@ -195,7 +195,7 @@ class SamplingDocumentSource(DocumentSource):
         )
 
     @property
-    def seed(self) -> Optional[int]:
+    def seed(self) -> int | None:
         return self._seed
 
     @ft.cached_property
@@ -233,8 +233,8 @@ class SamplingDocumentSource(DocumentSource):
         ).reshape(-1, 2)
 
         # Finally, we iterate over the OG document offsets and load the corresponding ranges.
-        document_input_ids: List[np.ndarray] = []
-        document_label_masks: List[np.ndarray] = []
+        document_input_ids: list[np.ndarray] = []
+        document_label_masks: list[np.ndarray] = []
         tokens_remaining = end_idx - start_idx
         for doc_idx, (doc_start, doc_end) in enumerate(og_doc_offsets):
             if doc_idx == 0:

@@ -1,10 +1,10 @@
 import math
 from abc import abstractmethod
 from dataclasses import dataclass
-from typing import ClassVar, Optional, Tuple
+from typing import ClassVar
 
 import torch
-import torch.nn as nn
+from torch import nn
 
 from ..config import Config, StrEnum
 from ..exceptions import OLMoConfigurationError
@@ -12,17 +12,17 @@ from .buffer_cache import BufferCache
 from .config import ModuleConfig
 
 __all__ = [
-    "RoPEType",
+    "ABFRoPEScalingConfig",
+    "ComplexRotaryEmbedding",
+    "FusedRotaryEmbedding",
+    "PIRoPEScalingConfig",
     "RoPEConfig",
     "RoPEScalingConfig",
-    "ABFRoPEScalingConfig",
-    "PIRoPEScalingConfig",
+    "RoPEType",
+    "RotaryEmbedding",
+    "RotaryEmbeddingBase",
     "StepwiseRoPEScalingConfig",
     "YaRNRoPEScalingConfig",
-    "RotaryEmbeddingBase",
-    "RotaryEmbedding",
-    "FusedRotaryEmbedding",
-    "ComplexRotaryEmbedding",
 ]
 
 
@@ -244,7 +244,7 @@ class YaRNRoPEScalingConfig(RoPEScalingConfig):
     old_context_len: int = 8192
     """Maximum sequence length that the *base* model was originally trained with."""
 
-    _IGNORE_FIELDS: ClassVar[Tuple[str, ...]] = ("attention_rescale_factor",)
+    _IGNORE_FIELDS: ClassVar[tuple[str, ...]] = ("attention_rescale_factor",)
 
     def compute_scaled_inv_freq(
         self, theta: int, dim: int, device: torch.device
@@ -264,8 +264,8 @@ class YaRNRoPEScalingConfig(RoPEScalingConfig):
                 / (2.0 * math.log(theta))
             )
 
-        low = max(int(math.floor(_dim_from_rot(self.beta_fast))), 0)
-        high = min(int(math.ceil(_dim_from_rot(self.beta_slow))), half_dim - 1)
+        low = max(math.floor(_dim_from_rot(self.beta_fast)), 0)
+        high = min(math.ceil(_dim_from_rot(self.beta_slow)), half_dim - 1)
         span = max(high - low, 1e-3)  # avoid division-by-zero
         ramp = ((idx - low) / span).clamp_(0, 1)  # 0 → extrapolation, 1 → interpolation
 
@@ -312,7 +312,7 @@ class RoPEConfig(ModuleConfig):
     no_global_rope: bool = False
     """Whether to disable RoPE on global (non-SWA) attention layers."""
 
-    scaling: Optional[RoPEScalingConfig] = None
+    scaling: RoPEScalingConfig | None = None
     """The scaling config to apply to RoPE."""
 
     partial_rotary_factor: float = 1.0
@@ -325,7 +325,7 @@ class RoPEConfig(ModuleConfig):
     def build(
         self,
         head_size: int,
-        cache: Optional[BufferCache] = None,
+        cache: BufferCache | None = None,
     ) -> "RotaryEmbeddingBase":
         """
         Construct the corresponding RoPE class.
@@ -354,13 +354,13 @@ class RoPEConfig(ModuleConfig):
 
 @dataclass
 class RoPEBuffers:
-    pos_sin: Optional[torch.Tensor] = None
+    pos_sin: torch.Tensor | None = None
     """Precomputed sine positional embeddings for RoPE."""
 
-    pos_cos: Optional[torch.Tensor] = None
+    pos_cos: torch.Tensor | None = None
     """Precomputed cosine positional embeddings for RoPE."""
 
-    freqs_cis: Optional[torch.Tensor] = None
+    freqs_cis: torch.Tensor | None = None
     """Precomputed complex frequency tensor (used by complex RoPE implementations)."""
 
 
@@ -375,8 +375,8 @@ class RotaryEmbeddingBase(nn.Module):
         head_size: int,
         theta: int = 500_000,
         full_precision: bool = True,
-        cache: Optional[BufferCache] = None,
-        scaling: Optional[RoPEScalingConfig] = None,
+        cache: BufferCache | None = None,
+        scaling: RoPEScalingConfig | None = None,
         partial_rotary_factor: float = 1.0,
     ):
         super().__init__()
@@ -386,7 +386,7 @@ class RotaryEmbeddingBase(nn.Module):
         self.full_precision = full_precision
         self.scaling = scaling
         self._cache = (cache or BufferCache()).with_namespace(
-            f"RoPE_theta={self.theta}_partial={partial_rotary_factor}_scaling={repr(self.scaling)}"
+            f"RoPE_theta={self.theta}_partial={partial_rotary_factor}_scaling={self.scaling!r}"
         )
 
     @abstractmethod
@@ -427,7 +427,7 @@ class RotaryEmbedding(RotaryEmbeddingBase):
 
     def _get_rotary_embedding(
         self, seq_len: int, device: torch.device
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         """
         :returns: The sine and cosine positional embeddings of shape ``(seq_len, head_size)``.
         """
@@ -488,12 +488,12 @@ class RotaryEmbedding(RotaryEmbeddingBase):
         q: torch.Tensor,
         k: torch.Tensor,
         head_first: bool = True,
-        start_pos: Optional[int] = None,
-        pos_sin: Optional[torch.Tensor] = None,
-        pos_cos: Optional[torch.Tensor] = None,
-        freqs_cis: Optional[torch.Tensor] = None,
-        cu_doc_lens: Optional[torch.Tensor] = None,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        start_pos: int | None = None,
+        pos_sin: torch.Tensor | None = None,
+        pos_cos: torch.Tensor | None = None,
+        freqs_cis: torch.Tensor | None = None,
+        cu_doc_lens: torch.Tensor | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Apply RoPE to query (``q``) and key (``k``) matrices.
 
@@ -597,8 +597,8 @@ class FusedRotaryEmbedding(RotaryEmbeddingBase):
         head_size: int,
         theta: int = 500_000,
         full_precision: bool = True,
-        cache: Optional[BufferCache] = None,
-        scaling: Optional[RoPEScalingConfig] = None,
+        cache: BufferCache | None = None,
+        scaling: RoPEScalingConfig | None = None,
         partial_rotary_factor: float = 1.0,
     ):
         from flash_attn.layers.rotary import apply_rotary_emb_qkv_  # type: ignore
@@ -627,7 +627,7 @@ class FusedRotaryEmbedding(RotaryEmbeddingBase):
 
     def _get_rotary_embedding(
         self, seq_len: int, device: torch.device
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         """
         :returns: The sine and cosine positional embeddings of shape ``(seq_len, head_size // 2)``.
         """
@@ -668,10 +668,10 @@ class FusedRotaryEmbedding(RotaryEmbeddingBase):
     def forward(
         self,
         qkv: torch.Tensor,
-        start_pos: Optional[int] = None,
-        pos_sin: Optional[torch.Tensor] = None,
-        pos_cos: Optional[torch.Tensor] = None,
-        freqs_cis: Optional[torch.Tensor] = None,
+        start_pos: int | None = None,
+        pos_sin: torch.Tensor | None = None,
+        pos_cos: torch.Tensor | None = None,
+        freqs_cis: torch.Tensor | None = None,
     ) -> torch.Tensor:
         """
         Apply RoPE to ``qkv``.
@@ -721,8 +721,8 @@ class ComplexRotaryEmbedding(RotaryEmbeddingBase):
         head_size: int,
         theta: int = 500_000,
         full_precision: bool = True,
-        cache: Optional[BufferCache] = None,
-        scaling: Optional[RoPEScalingConfig] = None,
+        cache: BufferCache | None = None,
+        scaling: RoPEScalingConfig | None = None,
         partial_rotary_factor: float = 1.0,
     ):
         if scaling is not None:
@@ -778,7 +778,7 @@ class ComplexRotaryEmbedding(RotaryEmbeddingBase):
         q_len: int,
         k_len: int,
         freqs_cis: torch.Tensor,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         if self.rotary_dim < self.dim:
             q_rot, q_pass = q[..., : self.rotary_dim], q[..., self.rotary_dim :]
             k_rot, k_pass = k[..., : self.rotary_dim], k[..., self.rotary_dim :]
@@ -813,11 +813,11 @@ class ComplexRotaryEmbedding(RotaryEmbeddingBase):
         q: torch.Tensor,
         k: torch.Tensor,
         head_first: bool = True,
-        start_pos: Optional[int] = None,
-        pos_sin: Optional[torch.Tensor] = None,
-        pos_cos: Optional[torch.Tensor] = None,
-        freqs_cis: Optional[torch.Tensor] = None,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        start_pos: int | None = None,
+        pos_sin: torch.Tensor | None = None,
+        pos_cos: torch.Tensor | None = None,
+        freqs_cis: torch.Tensor | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Apply RoPE to query (``q``) and key (``k``) matrices.
 

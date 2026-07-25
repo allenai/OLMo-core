@@ -1,5 +1,4 @@
 import logging
-from typing import Optional, Tuple
 
 import torch
 import torch.distributed as dist
@@ -74,16 +73,16 @@ def dispatch_flash_attn(
     k: torch.Tensor,
     v: torch.Tensor,
     *,
-    cu_seqlens: Optional[torch.Tensor] = None,
-    cu_seqlens_q: Optional[torch.Tensor] = None,
-    cu_seqlens_k: Optional[torch.Tensor] = None,
-    max_seqlen: Optional[int] = None,
-    max_seqlen_q: Optional[int] = None,
-    max_seqlen_k: Optional[int] = None,
+    cu_seqlens: torch.Tensor | None = None,
+    cu_seqlens_q: torch.Tensor | None = None,
+    cu_seqlens_k: torch.Tensor | None = None,
+    max_seqlen: int | None = None,
+    max_seqlen_q: int | None = None,
+    max_seqlen_k: int | None = None,
     dropout_p: float = 0.0,
-    softmax_scale: Optional[float] = None,
+    softmax_scale: float | None = None,
     causal: bool = False,
-    window_size: Tuple[int, int] = (-1, -1),
+    window_size: tuple[int, int] = (-1, -1),
 ) -> torch.Tensor:
     if flash_attn_2 is None:
         raise RuntimeError("flash-attn 2 is required!")
@@ -128,15 +127,15 @@ def dispatch_flash_attn_3(
     k: torch.Tensor,
     v: torch.Tensor,
     *,
-    cu_seqlens: Optional[torch.Tensor] = None,
-    cu_seqlens_q: Optional[torch.Tensor] = None,
-    cu_seqlens_k: Optional[torch.Tensor] = None,
-    max_seqlen: Optional[int] = None,
-    max_seqlen_q: Optional[int] = None,
-    max_seqlen_k: Optional[int] = None,
-    softmax_scale: Optional[float] = None,
+    cu_seqlens: torch.Tensor | None = None,
+    cu_seqlens_q: torch.Tensor | None = None,
+    cu_seqlens_k: torch.Tensor | None = None,
+    max_seqlen: int | None = None,
+    max_seqlen_q: int | None = None,
+    max_seqlen_k: int | None = None,
+    softmax_scale: float | None = None,
     causal: bool = False,
-    window_size: Tuple[int, int] = (-1, -1),
+    window_size: tuple[int, int] = (-1, -1),
 ) -> torch.Tensor:
     if flash_attn_3 is None:
         raise RuntimeError("flash-attn 3 is required!")
@@ -177,12 +176,12 @@ def dispatch_flash_attn_3(
 def dispatch_flash_attn_qkvpacked(
     qkv: torch.Tensor,
     *,
-    cu_seqlens: Optional[torch.Tensor] = None,
-    max_seqlen: Optional[int] = None,
+    cu_seqlens: torch.Tensor | None = None,
+    max_seqlen: int | None = None,
     dropout_p: float = 0.0,
-    softmax_scale: Optional[float] = None,
+    softmax_scale: float | None = None,
     causal: bool = False,
-    window_size: Tuple[int, int] = (-1, -1),
+    window_size: tuple[int, int] = (-1, -1),
 ) -> torch.Tensor:
     if flash_attn_2 is None:
         raise RuntimeError("flash-attn 2 is required!")
@@ -210,11 +209,11 @@ def dispatch_flash_attn_qkvpacked(
 def dispatch_flash_attn_3_qkvpacked(
     qkv: torch.Tensor,
     *,
-    cu_seqlens: Optional[torch.Tensor] = None,
-    max_seqlen: Optional[int] = None,
-    softmax_scale: Optional[float] = None,
+    cu_seqlens: torch.Tensor | None = None,
+    max_seqlen: int | None = None,
+    softmax_scale: float | None = None,
     causal: bool = False,
-    window_size: Tuple[int, int] = (-1, -1),
+    window_size: tuple[int, int] = (-1, -1),
 ) -> torch.Tensor:
     if flash_attn_3 is None:
         raise RuntimeError("flash-attn 3 is required!")
@@ -242,13 +241,13 @@ def dispatch_flash_attn_with_kvcache(
     q: torch.Tensor,
     k_cache: torch.Tensor,
     v_cache: torch.Tensor,
-    k: Optional[torch.Tensor] = None,
-    v: Optional[torch.Tensor] = None,
-    cache_seqlens: Optional[torch.Tensor] = None,
-    cache_leftpad: Optional[torch.Tensor] = None,
-    softmax_scale: Optional[float] = None,
+    k: torch.Tensor | None = None,
+    v: torch.Tensor | None = None,
+    cache_seqlens: torch.Tensor | None = None,
+    cache_leftpad: torch.Tensor | None = None,
+    softmax_scale: float | None = None,
     causal: bool = False,
-    window_size: Tuple[int, int] = (-1, -1),
+    window_size: tuple[int, int] = (-1, -1),
 ) -> torch.Tensor:
     if flash_attn_2 is None:
         raise RuntimeError("flash-attn 2 is required!")
@@ -272,13 +271,13 @@ def dispatch_flash_attn_3_with_kvcache(
     q: torch.Tensor,
     k_cache: torch.Tensor,
     v_cache: torch.Tensor,
-    k: Optional[torch.Tensor] = None,
-    v: Optional[torch.Tensor] = None,
-    cache_seqlens: Optional[torch.Tensor] = None,
-    cache_leftpad: Optional[torch.Tensor] = None,
-    softmax_scale: Optional[float] = None,
+    k: torch.Tensor | None = None,
+    v: torch.Tensor | None = None,
+    cache_seqlens: torch.Tensor | None = None,
+    cache_leftpad: torch.Tensor | None = None,
+    softmax_scale: float | None = None,
     causal: bool = False,
-    window_size: Tuple[int, int] = (-1, -1),
+    window_size: tuple[int, int] = (-1, -1),
 ) -> torch.Tensor:
     if flash_attn_3 is None:
         raise RuntimeError("flash-attn 3 is required!")
@@ -305,18 +304,18 @@ def dispatch_ring_flash_attn(
     *,
     group: dist.ProcessGroup,
     strategy: RingAttentionLoadBalancerType,
-    cu_seqlens: Optional[torch.Tensor] = None,
-    cu_seqlens_q: Optional[torch.Tensor] = None,
-    cu_seqlens_k: Optional[torch.Tensor] = None,
-    max_seqlen: Optional[int] = None,
-    max_seqlen_q: Optional[int] = None,
-    max_seqlen_k: Optional[int] = None,
-    heads_k_stride: Optional[int] = None,
-    local_k_slice: Optional[slice] = None,
+    cu_seqlens: torch.Tensor | None = None,
+    cu_seqlens_q: torch.Tensor | None = None,
+    cu_seqlens_k: torch.Tensor | None = None,
+    max_seqlen: int | None = None,
+    max_seqlen_q: int | None = None,
+    max_seqlen_k: int | None = None,
+    heads_k_stride: int | None = None,
+    local_k_slice: slice | None = None,
     dropout_p: float = 0.0,
-    softmax_scale: Optional[float] = None,
+    softmax_scale: float | None = None,
     causal: bool = False,
-    window_size: Tuple[int, int] = (-1, -1),
+    window_size: tuple[int, int] = (-1, -1),
 ) -> torch.Tensor:
     if ring_flash_attn is None:
         raise RuntimeError("flash-attn and ring-flash-attn are required!")
@@ -408,12 +407,12 @@ def dispatch_ring_flash_attn_qkvpacked(
     *,
     group: dist.ProcessGroup,
     strategy: RingAttentionLoadBalancerType,
-    cu_seqlens: Optional[torch.Tensor] = None,
-    max_seqlen: Optional[int],
+    cu_seqlens: torch.Tensor | None = None,
+    max_seqlen: int | None,
     dropout_p: float = 0.0,
-    softmax_scale: Optional[float] = None,
+    softmax_scale: float | None = None,
     causal: bool = False,
-    window_size: Tuple[int, int] = (-1, -1),
+    window_size: tuple[int, int] = (-1, -1),
 ) -> torch.Tensor:
     if ring_flash_attn is None:
         raise RuntimeError("flash-attn and ring-flash-attn are required!")
@@ -451,16 +450,16 @@ def dispatch_flash_attn_4(
     k: torch.Tensor,
     v: torch.Tensor,
     *,
-    cu_seqlens: Optional[torch.Tensor] = None,
-    cu_seqlens_q: Optional[torch.Tensor] = None,
-    cu_seqlens_k: Optional[torch.Tensor] = None,
-    max_seqlen: Optional[int] = None,
-    max_seqlen_q: Optional[int] = None,
-    max_seqlen_k: Optional[int] = None,
-    softmax_scale: Optional[float] = None,
+    cu_seqlens: torch.Tensor | None = None,
+    cu_seqlens_q: torch.Tensor | None = None,
+    cu_seqlens_k: torch.Tensor | None = None,
+    max_seqlen: int | None = None,
+    max_seqlen_q: int | None = None,
+    max_seqlen_k: int | None = None,
+    softmax_scale: float | None = None,
     causal: bool = False,
-    window_size: Tuple[int, int] = (-1, -1),
-    seqused_k: Optional[torch.Tensor] = None,
+    window_size: tuple[int, int] = (-1, -1),
+    seqused_k: torch.Tensor | None = None,
 ) -> torch.Tensor:
     if flash_attn_4 is None:
         raise RuntimeError("flash-attn 4 (CUTE implementation) is required!")

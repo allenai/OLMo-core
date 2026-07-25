@@ -1,8 +1,7 @@
 from dataclasses import dataclass
-from typing import Optional, Tuple, Type
 
 import torch
-import torch.nn as nn
+from torch import nn
 from torch.optim.optimizer import Optimizer
 
 from .config import OptimConfig
@@ -15,7 +14,7 @@ def lion_step(
     lr: float,
     weight_decay: float,
     exp_avg: torch.Tensor,
-    betas: Tuple[float, float],
+    betas: tuple[float, float],
     step_factor: torch.Tensor,
 ):
     if p.grad is None:
@@ -45,12 +44,12 @@ class Lion(Optimizer):
         self,
         params,
         lr: float = 1e-4,
-        betas: Tuple[float, float] = (0.9, 0.99),
+        betas: tuple[float, float] = (0.9, 0.99),
         weight_decay: float = 0.0,
     ):
         assert lr > 0.0
-        assert all([0.0 <= beta <= 1.0 for beta in betas])
-        defaults = dict(lr=lr, betas=betas, weight_decay=weight_decay)
+        assert all(0.0 <= beta <= 1.0 for beta in betas)
+        defaults = {"lr": lr, "betas": betas, "weight_decay": weight_decay}
         super().__init__(params, defaults)
 
     @torch.no_grad()
@@ -88,21 +87,21 @@ class SkipStepLion(SkipStepOptimizer):
         self,
         params,
         lr: float = 1e-4,
-        betas: Tuple[float, float] = (0.9, 0.99),
+        betas: tuple[float, float] = (0.9, 0.99),
         weight_decay: float = 0.0,
         rolling_interval_length: int = 128,
         sigma_factor: int = 6,
     ) -> None:
         assert lr > 0.0
-        assert all([0.0 <= beta <= 1.0 for beta in betas])
-        defaults = dict(lr=lr, betas=betas, weight_decay=weight_decay)
+        assert all(0.0 <= beta <= 1.0 for beta in betas)
+        defaults = {"lr": lr, "betas": betas, "weight_decay": weight_decay}
         super().__init__(
             params,
             defaults,
             rolling_interval_length=rolling_interval_length,
             sigma_factor=sigma_factor,
         )
-        self._step_skipped: Optional[torch.Tensor] = None
+        self._step_skipped: torch.Tensor | None = None
 
     @property
     def step_skipped(self) -> torch.Tensor:
@@ -146,11 +145,11 @@ class LionConfig(OptimConfig[Lion]):
     """
 
     lr: float = 1e-4
-    betas: Tuple[float, float] = (0.9, 0.99)
+    betas: tuple[float, float] = (0.9, 0.99)
     weight_decay: float = 0.0
 
     @classmethod
-    def optimizer(cls) -> Type[Lion]:
+    def optimizer(cls) -> type[Lion]:
         return Lion
 
 
@@ -162,11 +161,11 @@ class SkipStepLionConfig(OptimConfig[SkipStepLion]):
     """
 
     lr: float = 1e-4
-    betas: Tuple[float, float] = (0.9, 0.99)
+    betas: tuple[float, float] = (0.9, 0.99)
     weight_decay: float = 0.0
     rolling_interval_length: int = 128
     sigma_factor: int = 6
 
     @classmethod
-    def optimizer(cls) -> Type[SkipStepLion]:
+    def optimizer(cls) -> type[SkipStepLion]:
         return SkipStepLion

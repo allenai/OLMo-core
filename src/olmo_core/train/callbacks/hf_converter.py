@@ -4,7 +4,7 @@ Callback for converting the final checkpoint to HuggingFace format at the end of
 
 import logging
 from dataclasses import dataclass
-from typing import Any, ClassVar, Dict, Optional
+from typing import Any, ClassVar
 
 import torch
 import torch.distributed.checkpoint.state_dict as dist_cp_sd
@@ -43,13 +43,13 @@ class HFConverterCallback(Callback):
     Whether this callback is enabled. Set to ``False`` to disable HF conversion.
     """
 
-    output_folder: Optional[str] = None
+    output_folder: str | None = None
     """
     The folder to save the HuggingFace checkpoint to. If not specified, defaults to
     ``{checkpoint_path}-hf`` where ``checkpoint_path`` is the final checkpoint path.
     """
 
-    dtype: Optional[DType] = DType.bfloat16
+    dtype: DType | None = DType.bfloat16
     """
     The dtype to save the HuggingFace model weights as. Defaults to bfloat16.
     """
@@ -66,36 +66,36 @@ class HFConverterCallback(Callback):
     Only has an effect if ``validate`` is ``True``.
     """
 
-    tokenizer_id: Optional[str] = None
+    tokenizer_id: str | None = None
     """
     The HuggingFace tokenizer identifier to save with the model.
     If not specified, uses the tokenizer from the experiment config.
     """
 
-    max_sequence_length: Optional[int] = None
+    max_sequence_length: int | None = None
     """
     The maximum sequence length for the model. If not specified, uses the tokenizer's
     default max length.
     """
 
-    device: Optional[str] = None
+    device: str | None = None
     """
     The device to use for conversion. Defaults to CPU.
     """
 
-    moe_capacity_factor: Optional[float] = None
+    moe_capacity_factor: float | None = None
     """
     The MoE capacity factor. Higher values can decrease validation false negatives
     but may cause OOM errors. Only relevant for MoE models.
     """
 
-    def _get_checkpointer_callback(self) -> Optional[CheckpointerCallback]:
+    def _get_checkpointer_callback(self) -> CheckpointerCallback | None:
         for callback in self.trainer.callbacks.values():
             if isinstance(callback, CheckpointerCallback):
                 return callback
         return None
 
-    def _get_latest_checkpoint_path(self) -> Optional[str]:
+    def _get_latest_checkpoint_path(self) -> str | None:
         checkpointer = self._get_checkpointer_callback()
         if checkpointer is None:
             log.warning("CheckpointerCallback not found, cannot determine latest checkpoint path")
@@ -109,7 +109,7 @@ class HFConverterCallback(Callback):
 
         return None
 
-    def _get_full_model_state_dict(self) -> Dict[str, Any]:
+    def _get_full_model_state_dict(self) -> dict[str, Any]:
         """
         Get the full model state dict from the trainer's model.
 
@@ -148,7 +148,7 @@ class HFConverterCallback(Callback):
             barrier()
             return
 
-        experiment_config: Optional[dict] = None
+        experiment_config: dict | None = None
         if get_rank() == 0:
             try:
                 experiment_config = load_config(checkpoint_path)

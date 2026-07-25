@@ -1,7 +1,7 @@
 import copy
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union, cast
+from typing import TYPE_CHECKING, Any, Union, cast
 
 import torch
 import torch.distributed.checkpoint.state_dict as dist_cp_sd
@@ -47,7 +47,7 @@ class TransformerPipelineParallelConfig(PipelineParallelConfig):
     Transformer-specific pipeline parallel config.
     """
 
-    split_points: Optional[List[int]] = None
+    split_points: list[int] | None = None
     """
     A list of unique, increasing block indices that define how to split the model into stages.
 
@@ -58,7 +58,7 @@ class TransformerPipelineParallelConfig(PipelineParallelConfig):
     If not specified the split points are determined automatically based on the schedule type.
     """
 
-    def get_split_points(self, n_layers: int) -> List[int]:
+    def get_split_points(self, n_layers: int) -> list[int]:
         if self.split_points is not None:
             return self.split_points
 
@@ -73,7 +73,7 @@ class TransformerPipelineParallelConfig(PipelineParallelConfig):
         base_interval = num_layers // total_stages
         extra_layers = num_layers % total_stages
 
-        splits: List[int] = []
+        splits: list[int] = []
         current_layer = 0
         for i in range(total_stages - 1):
             if i == 0:
@@ -91,7 +91,7 @@ class TransformerPipelineParallelConfig(PipelineParallelConfig):
 
     def split_model(
         self, model: Transformer, *, pp_mesh: DeviceMesh, device: torch.device
-    ) -> Tuple[List[PipelineStage], List[Transformer]]:
+    ) -> tuple[list[PipelineStage], list[Transformer]]:
         split_points = self.get_split_points(model.n_layers)
         num_stages = len(split_points) + 1
 
@@ -106,11 +106,11 @@ class TransformerPipelineParallelConfig(PipelineParallelConfig):
 
         def build_stage(
             stage_idx: int,
-            start_layer: Optional[int],
-            stop_layer: Optional[int],
+            start_layer: int | None,
+            stop_layer: int | None,
             is_first: bool = False,
             is_last: bool = False,
-        ) -> Tuple[PipelineStage, Transformer]:
+        ) -> tuple[PipelineStage, Transformer]:
             model_chunk = copy.deepcopy(model)
             if not is_first:
                 model_chunk.embeddings = None  # type: ignore
@@ -249,18 +249,18 @@ class TransformerActivationCheckpointingConfig(Config):
     The activation checkpointing mode.
     """
 
-    block_interval: Optional[int] = None
+    block_interval: int | None = None
     """
     Required when :data:`mode` is "selected_blocks". Determines which blocks are wrapped.
     """
 
-    modules: Optional[List[str]] = None
+    modules: list[str] | None = None
     """
     Required when :data:`mode` is "selected_modules". A list of modules names to wrap for
     activation checkpointing. Globs are supported.
     """
 
-    activation_memory_budget: Optional[float] = None
+    activation_memory_budget: float | None = None
     """
     Required when :data:`mode` is "budget". Memory budget for activation checkpointing in range [0, 1].
     0 = recompute all activations, 1 = recompute none (default). Requires compilation to be enabled.
@@ -309,39 +309,39 @@ class TransformerTrainModuleConfig(TrainModuleConfig):
     # Optimizer settings.
 
     optim: OptimConfig
-    max_grad_norm: Optional[float] = None
-    scheduler: Optional[Scheduler] = None
+    max_grad_norm: float | None = None
+    scheduler: Scheduler | None = None
 
     # Model settings.
 
     compile_model: bool = False
-    float8_config: Optional[Float8Config] = None
-    pp_config: Optional[TransformerPipelineParallelConfig] = None
-    dp_config: Optional[TransformerDataParallelConfig] = None
-    tp_config: Optional[TransformerTensorParallelConfig] = None
-    cp_config: Optional[TransformerContextParallelConfig] = None
-    ep_config: Optional[TransformerExpertParallelConfig] = None
-    ac_config: Optional[TransformerActivationCheckpointingConfig] = None
+    float8_config: Float8Config | None = None
+    pp_config: TransformerPipelineParallelConfig | None = None
+    dp_config: TransformerDataParallelConfig | None = None
+    tp_config: TransformerTensorParallelConfig | None = None
+    cp_config: TransformerContextParallelConfig | None = None
+    ep_config: TransformerExpertParallelConfig | None = None
+    ac_config: TransformerActivationCheckpointingConfig | None = None
 
     # Loss function settings.
 
-    z_loss_multiplier: Optional[float] = None
+    z_loss_multiplier: float | None = None
 
     # Checkpoint settings.
 
-    state_dict_save_opts: Optional[Dict[str, Any]] = None
-    state_dict_load_opts: Optional[Dict[str, Any]] = None
-    load_key_mapping: Optional[Dict[str, str]] = None
+    state_dict_save_opts: dict[str, Any] | None = None
+    state_dict_load_opts: dict[str, Any] | None = None
+    load_key_mapping: dict[str, str] | None = None
 
     # Other train settings.
 
-    autocast_precision: Optional[DType] = None
+    autocast_precision: DType | None = None
     label_ignore_index: int = -100
 
     def build(
         self,
         model: Transformer,
-        device: Optional[torch.device] = None,
+        device: torch.device | None = None,
     ) -> Union["TransformerTrainModule", "TransformerPipelineTrainModule"]:
         """
         Build the corresponding :class:`TransformerTrainModule` or :class:`TransformerPipelineTrainModule.

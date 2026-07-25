@@ -1,5 +1,5 @@
 import logging
-from typing import List, Optional, TypeVar, cast
+from typing import TypeVar, cast
 
 import torch
 from torch.distributed import DeviceMesh
@@ -28,28 +28,28 @@ from .config import (
 log = logging.getLogger(__name__)
 
 
-M = TypeVar("M", Transformer, List[Transformer])
+M = TypeVar("M", Transformer, list[Transformer])
 
 
 def parallelize_model(
     model: M,
     *,
-    world_mesh: Optional[DeviceMesh],
+    world_mesh: DeviceMesh | None,
     device: torch.device,
-    max_sequence_length: Optional[int] = None,
-    rank_microbatch_size: Optional[int] = None,
+    max_sequence_length: int | None = None,
+    rank_microbatch_size: int | None = None,
     compile_model: bool = False,
-    float8_config: Optional[Float8Config] = None,
-    dp_config: Optional[TransformerDataParallelConfig] = None,
-    tp_config: Optional[TransformerTensorParallelConfig] = None,
-    cp_config: Optional[TransformerContextParallelConfig] = None,
-    ep_config: Optional[TransformerExpertParallelConfig] = None,
-    ac_config: Optional[TransformerActivationCheckpointingConfig] = None,
+    float8_config: Float8Config | None = None,
+    dp_config: TransformerDataParallelConfig | None = None,
+    tp_config: TransformerTensorParallelConfig | None = None,
+    cp_config: TransformerContextParallelConfig | None = None,
+    ep_config: TransformerExpertParallelConfig | None = None,
+    ac_config: TransformerActivationCheckpointingConfig | None = None,
     pp_enabled: bool = False,
 ) -> M:
-    model_parts: List[Transformer] = [model] if isinstance(model, Transformer) else model
+    model_parts: list[Transformer] = [model] if isinstance(model, Transformer) else model
 
-    pp_mesh: Optional[DeviceMesh] = None
+    pp_mesh: DeviceMesh | None = None
     if pp_enabled:
         assert world_mesh is not None
         pp_mesh = get_pp_mesh(world_mesh)

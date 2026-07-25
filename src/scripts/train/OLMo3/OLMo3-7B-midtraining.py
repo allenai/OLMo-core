@@ -1,5 +1,4 @@
 from datetime import datetime
-from typing import Optional
 
 from olmo_core.data import NumpyDataLoaderConfig, NumpyFSLDatasetConfig, TokenizerConfig
 from olmo_core.data.source_mixture import SourceMixtureDatasetConfig, SourceMixtureList
@@ -27,7 +26,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     work_dir = get_work_dir(root_dir)
     save_dir = f"{root_dir}/checkpoints/{cli_context.run_name}"
 
-    beaker_launch_config: Optional[BeakerLaunchConfig] = build_launch_config(
+    beaker_launch_config: BeakerLaunchConfig | None = build_launch_config(
         name=cli_context.run_name,
         cmd=cli_context.remote_cmd,
         cluster=cli_context.cluster,

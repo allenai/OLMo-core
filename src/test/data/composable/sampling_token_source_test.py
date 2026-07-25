@@ -95,7 +95,7 @@ def test_sampling_token_source_with_repetition(tmp_path: Path):
         seed=None,
     )
     assert source.num_tokens == 24
-    assert list(source[:]["input_ids"]) == list(range(10)) + list(range(0, 2)) + list(
+    assert list(source[:]["input_ids"]) == list(range(10)) + list(range(2)) + list(
         range(10, 20)
     ) + list(range(10, 12))
 
@@ -110,7 +110,7 @@ def test_sampling_token_source_with_random_sampling(tmp_path: Path, seed: int):
         seed=seed,
     )
     assert source.num_tokens == 16
-    assert 0 <= list(source[:8]["input_ids"])[0] < 4
+    assert 0 <= next(iter(source[:8]["input_ids"])) < 4
     assert 7 <= list(source[:8]["input_ids"])[-1] < 10
-    assert 10 <= list(source[8:]["input_ids"])[0] < 14
+    assert 10 <= next(iter(source[8:]["input_ids"])) < 14
     assert 17 <= list(source[8:]["input_ids"])[-1] < 20

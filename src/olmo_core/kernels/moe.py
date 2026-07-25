@@ -1,6 +1,5 @@
 # Adapted from https://github.com/databricks/megablocks/blob/main/megablocks/backend/kernels.py
 
-from typing import Optional
 
 import torch
 import triton  # type: ignore
@@ -105,7 +104,7 @@ def gather(
     x: torch.Tensor,
     indices: torch.Tensor,
     bin_ids: torch.Tensor,
-    weights: Optional[torch.Tensor],
+    weights: torch.Tensor | None,
     bins: torch.Tensor,
     top_k: int,
 ) -> torch.Tensor:
@@ -144,7 +143,7 @@ def padded_scatter(
     x: torch.Tensor,
     indices: torch.Tensor,
     bin_ids: torch.Tensor,
-    weights: Optional[torch.Tensor],
+    weights: torch.Tensor | None,
     bins: torch.Tensor,
     padded_bins: torch.Tensor,
     top_k: int,
@@ -185,7 +184,7 @@ def scatter(
     x: torch.Tensor,
     indices: torch.Tensor,
     bin_ids: torch.Tensor,
-    weights: Optional[torch.Tensor],
+    weights: torch.Tensor | None,
     bins: torch.Tensor,
     top_k: int,
 ):
@@ -379,7 +378,7 @@ def _binned_copy(
 def binned_gather(
     x: torch.Tensor,
     indices: torch.Tensor,
-    weights: Optional[torch.Tensor],
+    weights: torch.Tensor | None,
     bins: torch.Tensor,
     expert_capacity: int,
     top_k: int,
@@ -414,7 +413,7 @@ def binned_gather(
 def binned_scatter(
     x: torch.Tensor,
     indices: torch.Tensor,
-    weights: Optional[torch.Tensor],
+    weights: torch.Tensor | None,
     bins: torch.Tensor,
     top_k: int,
 ) -> torch.Tensor:

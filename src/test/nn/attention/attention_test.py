@@ -1,4 +1,4 @@
-from typing import Any, Dict, Optional, Tuple
+from typing import Any
 
 import pytest
 import torch
@@ -74,8 +74,8 @@ def test_attention_backend(
     backend_name: AttentionBackendName,
     head_dim: int,
     n_heads: int,
-    n_kv_heads: Optional[int],
-    window_size: Tuple[int, int],
+    n_kv_heads: int | None,
+    window_size: tuple[int, int],
     dtype: torch.dtype = torch.bfloat16,
 ):
     try:
@@ -138,9 +138,9 @@ def test_attention(
     attention_cls,
     dtype: torch.dtype,
     device: torch.device,
-    n_kv_heads: Optional[int],
+    n_kv_heads: int | None,
     backend: str,
-    kwargs: Dict[str, Any],
+    kwargs: dict[str, Any],
 ):
     if backend in ("flash_2", "flash_3", "flash_4") and dtype == torch.float32:
         pytest.skip("flash-attn requires a low precision dtype")
@@ -213,7 +213,7 @@ def test_sdpa(
     device: torch.device,
     dtype: torch.dtype,
     backend_name: AttentionBackendName,
-    window_size: Optional[int],
+    window_size: int | None,
     intra_doc_masking: bool,
 ):
     if (
@@ -246,12 +246,12 @@ def test_sdpa(
         max_doc_len = None
         cu_doc_lens = None
 
-    kwargs: Dict[str, Any] = dict(
-        d_model=d_model,
-        n_heads=8,
-        init_device=device.type,
-        window_size=window_size,
-    )
+    kwargs: dict[str, Any] = {
+        "d_model": d_model,
+        "n_heads": 8,
+        "init_device": device.type,
+        "window_size": window_size,
+    }
 
     attention = Attention(backend=backend_name, **kwargs)
 
@@ -327,11 +327,11 @@ def test_fused_attention_against_non_fused(dtype: torch.dtype, use_flash: bool):
     d_model = 128
     seq_len = 32
     batch_size = 2
-    kwargs: Dict[str, Any] = dict(
-        d_model=d_model,
-        n_heads=8,
-        init_device="cuda",
-    )
+    kwargs: dict[str, Any] = {
+        "d_model": d_model,
+        "n_heads": 8,
+        "init_device": "cuda",
+    }
 
     attention = Attention(use_flash=use_flash, **kwargs)
     fused_att = FusedAttention(**kwargs)
@@ -446,7 +446,7 @@ def test_attention_with_intra_document_masking():
 )
 def test_attention_kv_caching(
     batch_size: int,
-    n_kv_heads: Optional[int],
+    n_kv_heads: int | None,
     use_rope: bool,
     backend_name: AttentionBackendName,
 ):
@@ -560,8 +560,8 @@ def test_attention_kv_cache_update(backend_name: AttentionBackendName):
     with torch.no_grad(), torch.autocast("cuda", dtype=dtype):
         attention(prefill_input, cache_leftpad=cache_leftpad)
 
-    k_at_prev_write_pos: Optional[torch.Tensor] = None
-    v_at_prev_write_pos: Optional[torch.Tensor] = None
+    k_at_prev_write_pos: torch.Tensor | None = None
+    v_at_prev_write_pos: torch.Tensor | None = None
 
     for step in range(decode_steps):
         # Store cache state before the decode step.
@@ -903,9 +903,7 @@ def test_attention_builder_config(attn_config: AttentionConfig):
         pytest.param(None, True, id="no_global_rope-default-enables"),
     ],
 )
-def test_no_global_rope_on_global_layers(
-    no_global_rope: Optional[bool], expected_rope_enabled: bool
-):
+def test_no_global_rope_on_global_layers(no_global_rope: bool | None, expected_rope_enabled: bool):
     """Test that no_global_rope controls RoPE on global (non-SWA) layers."""
     d_model = 128
     rope_config = (
@@ -1064,7 +1062,7 @@ def test_attention_gating(
 
 
 def _run_tensor_parallel_attention(
-    checkpoint_dir: str, inputs_path: str, outputs_path: str, attn_kwargs: Dict[str, Any]
+    checkpoint_dir: str, inputs_path: str, outputs_path: str, attn_kwargs: dict[str, Any]
 ):
     device = get_default_device()
     mesh = init_device_mesh(device.type, (get_world_size(),), mesh_dim_names=("tp",))
@@ -1111,7 +1109,7 @@ def _run_tensor_parallel_attention(
         ),
     ],
 )
-def test_tensor_parallel_attention(backend: str, attn_kwargs: Dict[str, Any], tmp_path):
+def test_tensor_parallel_attention(backend: str, attn_kwargs: dict[str, Any], tmp_path):
     device = torch.device("cuda") if "nccl" in backend else torch.device("cpu")
 
     seed_all(0)
@@ -1141,7 +1139,7 @@ def _run_context_parallel_attention_ring(
     checkpoint_dir: str,
     inputs_path: str,
     outputs_path: str,
-    attn_kwargs: Dict[str, Any],
+    attn_kwargs: dict[str, Any],
     load_balancer_type,
     head_stride: int,
 ):
@@ -1186,7 +1184,7 @@ def test_context_parallel_attention(load_balancer_type, head_stride: int, tmp_pa
     device = torch.device("cuda")
 
     # CP requires flash-attn and low precision dtypes.
-    attn_kwargs: Dict[str, Any] = {"d_model": 128, "n_heads": 8, "use_flash": True}
+    attn_kwargs: dict[str, Any] = {"d_model": 128, "n_heads": 8, "use_flash": True}
     attn = Attention(init_device=device.type, **attn_kwargs)
 
     bs, seq_len = 2, 64
@@ -1220,7 +1218,7 @@ def _run_context_parallel_attention_ulysses(
     checkpoint_dir: str,
     inputs_path: str,
     outputs_path: str,
-    attn_kwargs: Dict[str, Any],
+    attn_kwargs: dict[str, Any],
 ):
     device = get_default_device()
     mesh = init_device_mesh(device.type, (get_world_size(),), mesh_dim_names=("cp",))
@@ -1275,7 +1273,7 @@ def test_context_parallel_attention_ulysses(tmp_path, attn_backend: AttentionBac
     device = get_default_device()
 
     # n_heads must be divisible by CP degree (world_size).
-    attn_kwargs: Dict[str, Any] = {"d_model": 128, "n_heads": 8, "backend": attn_backend}
+    attn_kwargs: dict[str, Any] = {"d_model": 128, "n_heads": 8, "backend": attn_backend}
     attn = Attention(init_device=device.type, **attn_kwargs)
     if device.type == "cpu":
         attn = attn.to(dtype=torch.bfloat16)
@@ -1314,9 +1312,9 @@ def test_attention_num_flops_per_token():
 
     def _flops_per_token(
         *,
-        n_kv_heads: Optional[int],
-        window_size: Optional[int],
-        gate: Optional[GateConfig],
+        n_kv_heads: int | None,
+        window_size: int | None,
+        gate: GateConfig | None,
     ) -> int:
         attn = Attention(
             d_model=d_model,

@@ -9,7 +9,7 @@ Launch this with torchrun:
 import os
 import sys
 from dataclasses import dataclass
-from typing import List, cast
+from typing import cast
 
 from olmo_core.config import Config, DType
 from olmo_core.data import NumpyDataLoaderConfig, NumpyFSLDatasetConfig, TokenizerConfig
@@ -72,7 +72,7 @@ class ExperimentConfig(Config):
     init_seed: int = 12536
 
 
-def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
+def build_config(run_name: str, overrides: list[str]) -> ExperimentConfig:
     skip_step_optim = False
     try:
         overrides.remove("--skip_step_optim")
@@ -106,7 +106,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         optim=AdamWConfig(
             lr=1e-3,
             group_overrides=[
-                OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
+                OptimGroupOverride(params=["embeddings.weight"], opts={"weight_decay": 0.0})
             ],
             fused=True,
         )
@@ -114,7 +114,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         else SkipStepAdamWConfig(
             lr=1e-3,
             group_overrides=[
-                OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
+                OptimGroupOverride(params=["embeddings.weight"], opts={"weight_decay": 0.0})
             ],
             compile=True,
         ),
@@ -175,7 +175,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
     ).merge(overrides)
 
 
-def main(run_name: str, overrides: List[str]):
+def main(run_name: str, overrides: list[str]):
     config = build_config(run_name, overrides)
 
     # Set RNG states on all devices.

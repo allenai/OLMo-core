@@ -4,7 +4,7 @@ from collections.abc import Callable
 from dataclasses import InitVar, dataclass, field
 from fnmatch import fnmatch
 from itertools import cycle, islice
-from typing import TYPE_CHECKING, Dict, List, Optional, cast
+from typing import TYPE_CHECKING, cast
 
 from olmo_core.config import UNSET, DType, StrEnum
 from olmo_core.doc_utils import beta_feature
@@ -158,21 +158,21 @@ class TransformerBlockConfig(ModuleConfig):
     """
     The sequence mixer config (e.g. attention, recurrent, convolution, etc.).
     """
-    attention: InitVar[Optional[AttentionConfig]] = None
+    attention: InitVar[AttentionConfig | None] = None
     """
     .. deprecated::
         Use :data:`sequence_mixer` instead. This field is only kept for backwards compatibility
         with old configs that used ``attention: AttentionConfig``.
     """
-    layer_norm: Optional[LayerNormConfig] = None
+    layer_norm: LayerNormConfig | None = None
     """
     The layer norm config.
     """
-    feed_forward: Optional[FeedForwardConfig] = None
+    feed_forward: FeedForwardConfig | None = None
     """
     The feed-forward config, required for non-MoE blocks.
     """
-    feed_forward_moe: Optional[MoEConfig] = None
+    feed_forward_moe: MoEConfig | None = None
     """
     The config for the MoE feed-forward layer. Required for MoE blocks.
     """
@@ -180,20 +180,20 @@ class TransformerBlockConfig(ModuleConfig):
     """
     The block type.
     """
-    dropout: Optional[float] = None
+    dropout: float | None = None
     """
     Dropout probability.
     """
-    attention_residual_alpha: Optional[float] = None
+    attention_residual_alpha: float | None = None
     """
     A scaling factor applied to the attention/recurrent output before adding it to the residual stream.
     """
-    feed_forward_residual_alpha: Optional[float] = None
+    feed_forward_residual_alpha: float | None = None
     """
     A scaling factor applied to the feed-forward (MLP) output before adding it to the residual stream.
     """
 
-    def __post_init__(self, attention: Optional[AttentionConfig] = None):
+    def __post_init__(self, attention: AttentionConfig | None):
         # Handle backwards compatibility: old configs used `attention` instead of `sequence_mixer`.
         if attention is not None:
             if self.sequence_mixer is not UNSET:
@@ -214,7 +214,7 @@ class TransformerBlockConfig(ModuleConfig):
         block_idx: int,
         n_layers: int,
         init_device: str = "cpu",
-        cache: Optional[BufferCache] = None,
+        cache: BufferCache | None = None,
     ) -> "TransformerBlockBase":
         from .block import (
             LayerNormScaledTransformerBlock,
@@ -319,17 +319,17 @@ class TransformerConfig(ModelConfig):
     n_layers: int
     block: TransformerBlockConfig | dict[str, TransformerBlockConfig]
     lm_head: LMHeadConfig
-    embedding_norm: Optional[LayerNormConfig] = None
+    embedding_norm: LayerNormConfig | None = None
     name: TransformerType = TransformerType.default
     dtype: DType = DType.float32
     init_method: InitMethod = InitMethod.normal
     init_seed: int = 0
     init_std: float = 0.02
-    embedding_init_std: Optional[float] = None
-    freeze_params: Optional[List[str]] = None
-    block_pattern: Optional[List[str]] = None
-    block_overrides: Optional[Dict[int, TransformerBlockConfig]] = None
-    embed_scale: Optional[float] = None
+    embedding_init_std: float | None = None
+    freeze_params: list[str] | None = None
+    block_pattern: list[str] | None = None
+    block_overrides: dict[int, TransformerBlockConfig] | None = None
+    embed_scale: float | None = None
     tie_word_embeddings: bool = False
 
     def __post_init__(self):
@@ -1554,8 +1554,8 @@ class TransformerConfig(ModelConfig):
         partial_rotary_factor: float = 0.25,
         layer_norm_eps: float = 1e-6,
         fused_ops: bool = False,
-        use_flash: Optional[bool] = None,
-        attn_backend: Optional[AttentionBackendName] = None,
+        use_flash: bool | None = None,
+        attn_backend: AttentionBackendName | None = None,
         dtype: DType = DType.float32,
         **kwargs,
     ) -> "TransformerConfig":
@@ -1635,31 +1635,30 @@ class TransformerConfig(ModelConfig):
         vocab_size: int,
         n_layers: int,
         n_heads: int,
-        n_kv_heads: Optional[int] = None,
-        head_dim: Optional[int] = None,
-        gate: Optional[GateConfig] = None,
+        n_kv_heads: int | None = None,
+        head_dim: int | None = None,
+        gate: GateConfig | None = None,
         qk_norm: bool = False,
         use_head_qk_norm: bool = False,
         layer_norm_eps: float = 1e-5,
-        layer_norm_name: Optional[LayerNormType] = None,
+        layer_norm_name: LayerNormType | None = None,
         rope_theta: int = 500_000,
-        rope_type: Optional[RoPEType] = None,
+        rope_type: RoPEType | None = None,
         rope_full_precision: bool = True,
         no_global_rope: bool = False,
         hidden_size_multiple_of: int = 256,
-        hidden_size_multiplier: Optional[float] = None,
+        hidden_size_multiplier: float | None = None,
         fused_ops: bool = False,
-        use_flash: Optional[bool] = None,
-        attn_backend: Optional[AttentionBackendName] = None,
-        sliding_window: Optional[SlidingWindowAttentionConfig] = None,
+        use_flash: bool | None = None,
+        attn_backend: AttentionBackendName | None = None,
+        sliding_window: SlidingWindowAttentionConfig | None = None,
         block_name: TransformerBlockType = TransformerBlockType.default,
-        block_mods: Optional[
-            Dict[int, Callable[[TransformerBlockConfig], TransformerBlockConfig]]
-        ] = None,
+        block_mods: dict[int, Callable[[TransformerBlockConfig], TransformerBlockConfig]]
+        | None = None,
         dtype: DType = DType.float32,
-        rope_scaling: Optional[RoPEScalingConfig] = None,
-        feed_forward: Optional[FeedForwardConfig] = None,
-        feed_forward_moe: Optional[MoEConfig] = None,
+        rope_scaling: RoPEScalingConfig | None = None,
+        feed_forward: FeedForwardConfig | None = None,
+        feed_forward_moe: MoEConfig | None = None,
         **kwargs,
     ) -> "TransformerConfig":
         """
@@ -1763,11 +1762,11 @@ class TransformerConfig(ModelConfig):
         num_experts: int,
         top_k: int,
         expert_hidden_size: int,
-        shared_expert_hidden_size: Optional[int] = None,
+        shared_expert_hidden_size: int | None = None,
         dropless: bool = False,
-        capacity_factor: Optional[float] = None,
+        capacity_factor: float | None = None,
         lb_loss_weight: float = 0.01,
-        z_loss_weight: Optional[float] = 0.001,
+        z_loss_weight: float | None = 0.001,
         reordered_norm: bool = False,
         hybrid: bool = False,
         **kwargs,
@@ -1812,11 +1811,11 @@ class TransformerConfig(ModelConfig):
         vocab_size: int,
         n_layers: int,
         n_heads: int,
-        n_kv_heads: Optional[int] = None,
+        n_kv_heads: int | None = None,
         qk_norm: bool = True,
         rope_theta: int = 500_000,
         hidden_size_multiple_of: int = 256,
-        hidden_size_multiplier: Optional[float] = None,
+        hidden_size_multiplier: float | None = None,
         use_flash: bool = False,
         dtype: DType = DType.float32,
         **kwargs,
@@ -1869,8 +1868,8 @@ class TransformerConfig(ModelConfig):
         n_heads: int,
         n_kv_heads: int,
         hidden_size: int,
-        head_dim: Optional[int] = None,
-        gate: Optional[GateConfig] = None,
+        head_dim: int | None = None,
+        gate: GateConfig | None = None,
         activation: ActivationFunction = ActivationFunction.gelu_tanh,
         local_window_size: int = 1024,
         local_rope_theta: int = 10_000,
@@ -1878,8 +1877,8 @@ class TransformerConfig(ModelConfig):
         global_layer_interval: int = 6,
         layer_norm_eps: float = 1e-6,
         fused_ops: bool = False,
-        use_flash: Optional[bool] = None,
-        attn_backend: Optional[AttentionBackendName] = None,
+        use_flash: bool | None = None,
+        attn_backend: AttentionBackendName | None = None,
         dtype: DType = DType.float32,
         **kwargs,
     ) -> "TransformerConfig":
@@ -1989,7 +1988,7 @@ class TransformerConfig(ModelConfig):
 
         # Add rope scaling only to layers that do not use sliding window attention
         # We supply "block_overrides" for the layers we want to scale.
-        overrides: Dict[int, TransformerBlockConfig] = {}
+        overrides: dict[int, TransformerBlockConfig] = {}
         for i in range(new_config.n_layers):
             sliding_window_cfg = new_config.block.sequence_mixer.sliding_window
             if sliding_window_cfg and sliding_window_cfg.should_use_swa(i, new_config.n_layers):

@@ -1,4 +1,4 @@
-from typing import Any, Dict
+from typing import Any
 
 import pytest
 import torch
@@ -15,7 +15,7 @@ from olmo_core.utils import get_default_device, record_flops, seed_all
 
 
 def _run_tensor_parallel_feed_forward(
-    checkpoint_dir: str, inputs_path: str, outputs_path: str, ff_kwargs: Dict[str, Any]
+    checkpoint_dir: str, inputs_path: str, outputs_path: str, ff_kwargs: dict[str, Any]
 ):
     device = get_default_device()
     mesh = init_device_mesh(device.type, (get_world_size(),), mesh_dim_names=("tp",))
@@ -47,7 +47,7 @@ def test_tensor_parallel_feed_forward(backend: str, tmp_path):
     seed_all(0)
     d_model = 128
     hidden = 4 * d_model
-    ff_kwargs: Dict[str, Any] = {"d_model": d_model, "hidden_size": hidden}
+    ff_kwargs: dict[str, Any] = {"d_model": d_model, "hidden_size": hidden}
     ff = FeedForward(init_device=device.type, **ff_kwargs)
 
     bs, seq_len = 2, 64

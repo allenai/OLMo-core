@@ -4,9 +4,8 @@ Utilities for training in Float8 via `torchao <https://github.com/pytorch/ao>`_.
 
 import logging
 from dataclasses import dataclass
-from typing import List, Optional, Set
 
-import torch.nn as nn
+from torch import nn
 
 from olmo_core.utils import has_compute_capability
 
@@ -14,7 +13,7 @@ from ..config import Config
 from ..exceptions import OLMoConfigurationError
 from .ao import AOFloat8LinearConfig, AOFloat8LinearRecipe, AOMXLinearConfig
 
-__all__ = ["Float8Config", "AOFloat8LinearConfig", "AOFloat8LinearRecipe", "AOMXLinearConfig"]
+__all__ = ["AOFloat8LinearConfig", "AOFloat8LinearRecipe", "AOMXLinearConfig", "Float8Config"]
 
 log = logging.getLogger(__name__)
 
@@ -30,11 +29,11 @@ class Float8Config(Config):
     :param enabled: If ``False`` this will be a no-op.
     """
 
-    ao: Optional[AOFloat8LinearConfig] = None
-    ao_recipe: Optional[AOFloat8LinearRecipe] = None
-    ao_mx: Optional[AOMXLinearConfig] = None
+    ao: AOFloat8LinearConfig | None = None
+    ao_recipe: AOFloat8LinearRecipe | None = None
+    ao_mx: AOMXLinearConfig | None = None
 
-    modules_to_ignore: Optional[List[str]] = None
+    modules_to_ignore: list[str] | None = None
     """A set of fully-qualified module names to ignore for Float8 conversion."""
 
     enabled: bool = True
@@ -61,9 +60,7 @@ class Float8Config(Config):
         ).to_ao_type()
         return float8_linear_config.enable_fsdp_float8_all_gather
 
-    def apply_float8_linear(
-        self, model: nn.Module, *, modules_to_ignore: Optional[Set[str]] = None
-    ):
+    def apply_float8_linear(self, model: nn.Module, *, modules_to_ignore: set[str] | None = None):
         """
         This method converts the linear layers of ``model`` to ``Float8Linear`` or ``MXLinear``.
 
@@ -102,14 +99,12 @@ class Float8Config(Config):
             if modules_to_ignore is not None and fqn in modules_to_ignore:
                 ignored_modules_found.add(fqn)
                 return False
-            if isinstance(m, torch.nn.Linear) and hasattr(m, "weight"):
-                return True
-            return False
+            return bool(isinstance(m, torch.nn.Linear) and hasattr(m, "weight"))
 
         # NOTE: there's a bug with `Float8Linear.from_float()` where it will override `requires_grad=False`
         # when `enable_fsdp_float8_all_gather=True`. So we have to reset frozen params after the fact.
         # https://github.com/pytorch/ao/issues/1871
-        frozen_params: Set[str] = set()
+        frozen_params: set[str] = set()
         for n, p in model.named_parameters():
             if not p.requires_grad:
                 frozen_params.add(n)

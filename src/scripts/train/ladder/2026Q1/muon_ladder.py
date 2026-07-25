@@ -2,7 +2,7 @@ import argparse
 import logging
 from dataclasses import dataclass
 
-import olmo_core.io as io
+from olmo_core import io
 from olmo_core.data import DataMix, TokenizerConfig
 from olmo_core.data.composable import *
 from olmo_core.exceptions import OLMoConfigurationError

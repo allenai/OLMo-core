@@ -1,14 +1,14 @@
 import os
 from abc import abstractmethod
+from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Generator, List, Tuple
 
 from olmo_core.config import StrEnum
 
 from ..tokenizer import TokenizerName
 
-__all__ = ["DataMixBase", "DataMix"]
+__all__ = ["DataMix", "DataMixBase"]
 
 
 class DataMixBase(StrEnum):
@@ -17,7 +17,7 @@ class DataMixBase(StrEnum):
     """
 
     @abstractmethod
-    def build(self, base_dir: str, tokenizer: str) -> Tuple[List[str], List[str]]:
+    def build(self, base_dir: str, tokenizer: str) -> tuple[list[str], list[str]]:
         """
         Construct the data mix.
 
@@ -77,7 +77,7 @@ class DataMix(DataMixBase):
                     return member
         return None
 
-    def build(self, base_dir: str, tokenizer: str) -> Tuple[List[str], List[str]]:
+    def build(self, base_dir: str, tokenizer: str) -> tuple[list[str], list[str]]:
         if not base_dir.endswith("/"):
             base_dir = base_dir + "/"
 
@@ -111,18 +111,17 @@ class DataMix(DataMixBase):
 
         paths = []
         labels = []
-        with _get_data_mix_path(self) as mix_path:
-            with mix_path.open() as f:
-                for line_num, line in enumerate(f):
-                    line = line.strip()
-                    if not line or line.startswith("#"):
-                        continue
-                    label, path = line.split(",")
-                    if "{TOKENIZER}" not in path:
-                        raise ValueError(f"line {line_num + 1} in data mix '{self}' is invalid")
-                    path = path.replace("{TOKENIZER}", tokenizer_id)
-                    paths.append(f"{base_dir}{path}")
-                    labels.append(label)
+        with _get_data_mix_path(self) as mix_path, mix_path.open() as f:
+            for line_num, line in enumerate(f):
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                label, path = line.split(",")
+                if "{TOKENIZER}" not in path:
+                    raise ValueError(f"line {line_num + 1} in data mix '{self}' is invalid")
+                path = path.replace("{TOKENIZER}", tokenizer_id)
+                paths.append(f"{base_dir}{path}")
+                labels.append(label)
         return paths, labels
 
 

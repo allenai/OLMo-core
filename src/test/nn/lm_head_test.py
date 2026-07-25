@@ -1,5 +1,4 @@
 from pathlib import Path
-from typing import Optional
 
 import pytest
 import torch
@@ -151,7 +150,7 @@ def test_lm_head_tp(
     tmp_path: Path,
     head_type: LMHeadType,
     loss_implementation: LMLossImplementation,
-    layer_norm: Optional[LayerNormConfig],
+    layer_norm: LayerNormConfig | None,
     d_model: int,
     vocab_size: int,
     loss_reduction: str,
@@ -188,21 +187,21 @@ def test_lm_head_tp(
         run_lm_head_tp,
         backend="nccl",
         start_method="spawn",
-        func_kwargs=dict(
-            checkpoint_dir=checkpoint_dir,
-            config=config,
-            d_model=d_model,
-            vocab_size=vocab_size,
-            loss_reduction=loss_reduction,
-            loss_div_factor=loss_div_factor,
-            z_loss_multiplier=z_loss_multiplier,
-            inputs=inputs.detach().cpu(),
-            labels=labels.detach().cpu(),
-            loss=loss.detach().cpu(),
-            ce_loss=ce_loss.detach().cpu(),
-            z_loss=z_loss.detach().cpu(),
-            grad=inputs.grad.detach().cpu(),
-        ),
+        func_kwargs={
+            "checkpoint_dir": checkpoint_dir,
+            "config": config,
+            "d_model": d_model,
+            "vocab_size": vocab_size,
+            "loss_reduction": loss_reduction,
+            "loss_div_factor": loss_div_factor,
+            "z_loss_multiplier": z_loss_multiplier,
+            "inputs": inputs.detach().cpu(),
+            "labels": labels.detach().cpu(),
+            "loss": loss.detach().cpu(),
+            "ce_loss": ce_loss.detach().cpu(),
+            "z_loss": z_loss.detach().cpu(),
+            "grad": inputs.grad.detach().cpu(),
+        },
     )
 
 

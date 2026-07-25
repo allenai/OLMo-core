@@ -1,10 +1,8 @@
-from typing import Type, Union
-
 import numpy as np
 
 from olmo_core.config import StrEnum
 
-NumpyUIntTypes = Union[Type[np.uint8], Type[np.uint16], Type[np.uint32], Type[np.uint64]]
+NumpyUIntTypes = type[np.uint8] | type[np.uint16] | type[np.uint32] | type[np.uint64]
 
 
 class LongDocStrategy(StrEnum):

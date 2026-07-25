@@ -1,6 +1,6 @@
 import pytest
 import torch
-import torch.nn as nn
+from torch import nn
 
 from olmo_core.optim import LionConfig
 from olmo_core.testing import DEVICES

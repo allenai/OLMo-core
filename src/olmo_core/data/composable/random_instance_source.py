@@ -2,8 +2,8 @@ import dataclasses
 import functools as ft
 import hashlib
 import typing
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Optional, Sequence
 
 import numpy as np
 
@@ -25,10 +25,10 @@ class RandomInstanceSourceConfig(InstanceSourceConfig):
     sequence_length: int
     avg_document_length: int
     seed: int = dataclasses.field(default_factory=lambda: resolve_seed(SEED_NOT_SET))
-    num_instances: Optional[int] = None
-    num_tokens: Optional[int] = None
-    max_sequence_length: Optional[int] = None
-    label: Optional[str] = None
+    num_instances: int | None = None
+    num_tokens: int | None = None
+    max_sequence_length: int | None = None
+    label: str | None = None
 
     def build(self, work_dir: PathOrStr) -> "RandomInstanceSource":
         return RandomInstanceSource(
@@ -53,10 +53,10 @@ class RandomInstanceSource(InstanceSource):
         sequence_length: int,
         avg_document_length: int,
         seed: int = SEED_NOT_SET,
-        num_instances: Optional[int] = None,
-        num_tokens: Optional[int] = None,
-        max_sequence_length: Optional[int] = None,
-        label: Optional[str] = None,
+        num_instances: int | None = None,
+        num_tokens: int | None = None,
+        max_sequence_length: int | None = None,
+        label: str | None = None,
         work_dir: PathOrStr,
     ):
         if (num_tokens is None) == (num_instances is None):
@@ -98,7 +98,7 @@ class RandomInstanceSource(InstanceSource):
         return self._tokenizer.eos_token_id
 
     @property
-    def bos_token_id(self) -> Optional[int]:
+    def bos_token_id(self) -> int | None:
         return self._tokenizer.bos_token_id
 
     @property

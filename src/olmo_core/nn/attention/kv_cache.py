@@ -1,9 +1,8 @@
 import gc
 import logging
-from typing import Optional
 
 import torch
-import torch.nn as nn
+from torch import nn
 
 log = logging.getLogger(__name__)
 
@@ -51,7 +50,7 @@ class KVCacheManager(nn.Module):
             persistent=False,
         )
 
-    def record_leftpad(self, leftpad: Optional[torch.Tensor]):
+    def record_leftpad(self, leftpad: torch.Tensor | None):
         if leftpad is not None:
             self.cache_leftpad.copy_(leftpad)
 

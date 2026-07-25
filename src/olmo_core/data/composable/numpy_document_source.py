@@ -3,13 +3,13 @@ import hashlib
 import logging
 import random
 import typing
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
-from typing import Dict, Iterable, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
 
 import olmo_core.distributed.utils as dist_utils
-import olmo_core.io as io
+from olmo_core import io
 from olmo_core.aliases import PathOrStr
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.utils import log_once
@@ -35,15 +35,15 @@ class NumpyDocumentSourceConfigBase(DocumentSourceConfig):
 
     tokenizer: TokenizerConfig
     """The config of the tokenizer that was used to tokenize the source files."""
-    dtype: Optional[NumpyDatasetDType] = None
+    dtype: NumpyDatasetDType | None = None
     """The numpy datatype of the token ID arrays in the source paths."""
-    source_permutation_seed: Optional[int] = None
+    source_permutation_seed: int | None = None
     """Used to shuffle the source files before grouping/building the document sources."""
     source_group_size: int = 1
     """The number of npy source files to group together into a single source."""
-    label: Optional[str] = None
+    label: str | None = None
     """An optional to assign for logging and debugging."""
-    max_document_length: Optional[int] = None
+    max_document_length: int | None = None
     """
     The maximum document length to use when iterating over documents.
     If not ``None``, documents longer than this will either be fragmented or truncated depending
@@ -80,23 +80,23 @@ class NumpyDocumentSourceConfigBase(DocumentSourceConfig):
 class NumpyDocumentSourceConfig(NumpyDocumentSourceConfigBase):
     """Config class for building one or more :class:`NumpyDocumentSource` directly from source paths."""
 
-    source_paths: List[str]
+    source_paths: list[str]
     """The paths/URLs to the numpy token ID arrays."""
-    label_mask_paths: Optional[List[str]] = None
+    label_mask_paths: list[str] | None = None
     """The paths/URLs to numpy bool files indicating which tokens should be masked."""
-    expand_glob: Optional[bool] = None
+    expand_glob: bool | None = None
     """If true, treat source/label paths as glob patterns and expand them when building the sources."""
 
     @classmethod
     def from_source_groups(
         cls,
-        source_path_groups: Dict[str, List[PathOrStr]],
+        source_path_groups: dict[str, list[PathOrStr]],
         *,
         tokenizer: TokenizerConfig,
-        label_mask_path_groups: Optional[Dict[str, List[PathOrStr]]] = None,
-        expand_glob: Optional[bool] = None,
+        label_mask_path_groups: dict[str, list[PathOrStr]] | None = None,
+        expand_glob: bool | None = None,
         **kwargs,
-    ) -> Dict[str, "NumpyDocumentSourceConfig"]:
+    ) -> dict[str, "NumpyDocumentSourceConfig"]:
         """
         A more efficient way to create multiple configs from groups of source paths.
         This will use a thread pool to expand all globs concurrently, which can be substantially
@@ -111,16 +111,14 @@ class NumpyDocumentSourceConfig(NumpyDocumentSourceConfigBase):
         if label_mask_path_groups is not None:
             assert len(source_path_groups) == len(label_mask_path_groups)
             assert set(source_path_groups.keys()) == set(label_mask_path_groups.keys())
-            for k in source_path_groups.keys():
-                assert len(source_path_groups[k]) == len(label_mask_path_groups[k])
+            for k, source_paths in source_path_groups.items():
+                assert len(source_paths) == len(label_mask_path_groups[k])
 
         if expand_glob is None:
-            expand_glob = any(
-                ["*" in str(p) for group in source_path_groups.values() for p in group]
-            )
+            expand_glob = any("*" in str(p) for group in source_path_groups.values() for p in group)
 
-        source_paths_to_use: Dict[str, List[str]] = {}
-        mask_paths_to_use: Optional[Dict[str, List[str]]] = None
+        source_paths_to_use: dict[str, list[str]] = {}
+        mask_paths_to_use: dict[str, list[str]] | None = None
         if expand_glob:
             _, src_pattern_to_expanded = cls._expand_globs(
                 [p for group in source_path_groups.values() for p in group]
@@ -150,7 +148,7 @@ class NumpyDocumentSourceConfig(NumpyDocumentSourceConfigBase):
                     k: [str(p) for p in group] for k, group in label_mask_path_groups.items()
                 }
 
-        configs: Dict[str, NumpyDocumentSourceConfig] = {}
+        configs: dict[str, NumpyDocumentSourceConfig] = {}
         for k, src_group in source_paths_to_use.items():
             configs[k] = cls(
                 source_paths=src_group,
@@ -168,7 +166,7 @@ class NumpyDocumentSourceConfig(NumpyDocumentSourceConfigBase):
         source_sizes = path_map(lambda p: io.get_file_size(p) // item_size, self.source_paths)
         return sum(source_sizes)
 
-    def build(self, work_dir: PathOrStr) -> List["NumpyDocumentSource"]:  # type: ignore[override]
+    def build(self, work_dir: PathOrStr) -> list["NumpyDocumentSource"]:  # type: ignore[override]
         """
         Build the sources.
 
@@ -187,7 +185,7 @@ class NumpyDocumentSourceConfig(NumpyDocumentSourceConfigBase):
 
         expand_glob = self.expand_glob
         if self.expand_glob is None:
-            expand_glob = any(["*" in p for p in self.source_paths])
+            expand_glob = any("*" in p for p in self.source_paths)
 
         if expand_glob:
             source_paths, _ = self._expand_globs(self.source_paths)
@@ -228,17 +226,17 @@ class NumpyDocumentSourceConfig(NumpyDocumentSourceConfigBase):
     @classmethod
     def _expand_globs(
         cls, patterns: Sequence[PathOrStr]
-    ) -> Tuple[List[str], Dict[PathOrStr, List[str]]]:
+    ) -> tuple[list[str], dict[PathOrStr, list[str]]]:
         log.info("Expanding globs...")
-        results: List[List[str]] = []
+        results: list[list[str]] = []
         if dist_utils.get_rank() == 0:
             results = path_map(cls._expand_glob, patterns)
         else:
             results = []
         results = dist_utils.broadcast_object(results)
 
-        expanded: List[str] = []
-        pattern_to_expanded: Dict[PathOrStr, List[str]] = {}
+        expanded: list[str] = []
+        pattern_to_expanded: dict[PathOrStr, list[str]] = {}
         for pattern, matches in zip(patterns, results):
             if not matches:
                 raise FileNotFoundError(pattern)
@@ -261,7 +259,7 @@ class NumpyDocumentSourceConfig(NumpyDocumentSourceConfigBase):
         return expanded, pattern_to_expanded
 
     @classmethod
-    def _expand_glob(cls, pattern: PathOrStr) -> List[str]:
+    def _expand_glob(cls, pattern: PathOrStr) -> list[str]:
         pattern = str(pattern)
         if "*" in pattern:
             return io.deterministic_glob_directory(pattern)
@@ -273,12 +271,12 @@ class NumpyDocumentSourceConfig(NumpyDocumentSourceConfigBase):
 class NumpyDocumentSourceMixConfig(NumpyDocumentSourceConfigBase):
     """Config class for building one or more :class:`NumpyDocumentSource` from a predefined source mix."""
 
-    mix: Union[str, DataMixBase]
+    mix: str | DataMixBase
     """The name of a data mix (e.g. ``"dolma17"``)."""
     mix_base_dir: str
     """The base directory of the data mix."""
 
-    def build(self, work_dir: PathOrStr) -> List["NumpyDocumentSource"]:  # type: ignore[override]
+    def build(self, work_dir: PathOrStr) -> list["NumpyDocumentSource"]:  # type: ignore[override]
         """
         Build the sources.
 
@@ -333,12 +331,12 @@ class NumpyDocumentSource(DocumentSource):
         dtype: NumpyUIntTypes,
         work_dir: PathOrStr,
         tokenizer: TokenizerConfig,
-        label_mask_paths: Optional[Sequence[PathOrStr]] = None,
-        label: Optional[str] = None,
-        max_document_length: Optional[int] = None,
+        label_mask_paths: Sequence[PathOrStr] | None = None,
+        label: str | None = None,
+        max_document_length: int | None = None,
         long_doc_strategy: LongDocStrategy = LongDocStrategy.truncate,
-        _source_sizes: Optional[Sequence[int]] = None,
-        _label_mask_sizes: Optional[Sequence[int]] = None,
+        _source_sizes: Sequence[int] | None = None,
+        _label_mask_sizes: Sequence[int] | None = None,
     ):
         super().__init__(work_dir=work_dir, label=label)
 
@@ -350,11 +348,11 @@ class NumpyDocumentSource(DocumentSource):
                 "'label_mask_paths' should have the same length as 'source_paths'."
             )
 
-        self._source_paths = tuple((io.normalize_path(p) for p in source_paths))
+        self._source_paths = tuple(io.normalize_path(p) for p in source_paths)
         self._label_mask_paths = (
             None
             if label_mask_paths is None
-            else tuple((io.normalize_path(p) for p in label_mask_paths))
+            else tuple(io.normalize_path(p) for p in label_mask_paths)
         )
         self._dtype = dtype
         self._tokenizer = tokenizer
@@ -376,7 +374,7 @@ class NumpyDocumentSource(DocumentSource):
         assert len(source_sizes) == len(self.source_paths)
         self._source_sizes = tuple(source_sizes)
 
-        self._label_mask_sizes: Optional[Tuple[int, ...]] = None
+        self._label_mask_sizes: tuple[int, ...] | None = None
         if self.label_mask_paths is not None:
             label_mask_sizes: Sequence[int]
             if _label_mask_sizes is not None:
@@ -404,19 +402,19 @@ class NumpyDocumentSource(DocumentSource):
                     )
 
     @property
-    def source_paths(self) -> Tuple[str, ...]:
+    def source_paths(self) -> tuple[str, ...]:
         return self._source_paths
 
     @property
-    def source_sizes(self) -> Tuple[int, ...]:
+    def source_sizes(self) -> tuple[int, ...]:
         return self._source_sizes
 
     @property
-    def label_mask_paths(self) -> Optional[Tuple[str, ...]]:
+    def label_mask_paths(self) -> tuple[str, ...] | None:
         return self._label_mask_paths
 
     @property
-    def label_mask_sizes(self) -> Optional[Tuple[int, ...]]:
+    def label_mask_sizes(self) -> tuple[int, ...] | None:
         return self._label_mask_sizes
 
     @property
@@ -432,11 +430,11 @@ class NumpyDocumentSource(DocumentSource):
         return self.tokenizer.eos_token_id
 
     @property
-    def bos_token_id(self) -> Optional[int]:
+    def bos_token_id(self) -> int | None:
         return self.tokenizer.bos_token_id
 
     @property
-    def max_document_length(self) -> Optional[int]:
+    def max_document_length(self) -> int | None:
         return self._max_document_length
 
     @property
@@ -475,7 +473,7 @@ class NumpyDocumentSource(DocumentSource):
     def __repr__(self) -> str:
         return f"{self.__class__.__name__}{self.source_paths}"
 
-    def split_by_source(self, group_size: int = 1) -> List["NumpyDocumentSource"]:
+    def split_by_source(self, group_size: int = 1) -> list["NumpyDocumentSource"]:
         """
         Split the source up into multiple smaller sources from groups of source files.
         """
@@ -514,8 +512,8 @@ class NumpyDocumentSource(DocumentSource):
     def get_token_range(self, start_idx: int, end_idx: int) -> TokenRange:
         start_idx, end_idx = self.validate_indices(start_idx, end_idx)
 
-        token_chunks: List[np.ndarray] = []
-        mask_chunks: List[np.ndarray] = []
+        token_chunks: list[np.ndarray] = []
+        mask_chunks: list[np.ndarray] = []
         source_start_offset = 0
         for i, (source_path, source_size) in enumerate(zip(self.source_paths, self.source_sizes)):
             source_end_offset = source_start_offset + source_size

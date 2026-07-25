@@ -1,6 +1,5 @@
 from collections import defaultdict
 from collections.abc import MutableMapping
-from typing import Dict, Optional
 
 import torch
 
@@ -23,7 +22,7 @@ class BufferCache(MutableMapping[str, torch.Tensor]):
     """
 
     def __init__(self, namespace: str = ""):
-        self._data: Dict[str, Dict[str, torch.Tensor]] = defaultdict(dict)
+        self._data: dict[str, dict[str, torch.Tensor]] = defaultdict(dict)
         self._namespace = namespace
 
     def __getitem__(self, key: str) -> torch.Tensor:
@@ -41,7 +40,7 @@ class BufferCache(MutableMapping[str, torch.Tensor]):
     def __len__(self) -> int:
         return len(self._data[self._namespace])
 
-    def get_for_device(self, key: str, device: torch.device) -> Optional[torch.Tensor]:
+    def get_for_device(self, key: str, device: torch.device) -> torch.Tensor | None:
         if (tensor := self.get(key)) is not None:
             if tensor.device != device:
                 tensor = move_to_device(tensor, device)

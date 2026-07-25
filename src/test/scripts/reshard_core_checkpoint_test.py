@@ -8,7 +8,6 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
-from typing import Optional
 
 import pytest
 import torch
@@ -31,7 +30,7 @@ RESHARD_SCRIPT = Path("src/scripts/reshard_core_checkpoint.py")
 def create_test_checkpoint(
     checkpoint_dir: Path,
     model_config: TransformerConfig,
-    optim_config: Optional[AdamWConfig] = None,
+    optim_config: AdamWConfig | None = None,
     world_size: int = 1,
     include_optimizer: bool = True,
 ) -> None:
@@ -146,7 +145,7 @@ def checkpoint_has_optimizer_state(checkpoint_dir: Path) -> bool:
 
     # Check if any optimizer-related keys are in the metadata
     # Optimizer state keys typically start with "optim."
-    return any(key.startswith("optim.") for key in checkpoint_meta.state_dict_metadata.keys())
+    return any(key.startswith("optim.") for key in checkpoint_meta.state_dict_metadata)
 
 
 def run_reshard_cli(
@@ -167,7 +166,7 @@ def run_reshard_cli(
     if skip_optimizer:
         args.append("--skip-optimizer-state")
 
-    result = subprocess.run(args, capture_output=True, text=True)
+    result = subprocess.run(args, capture_output=True, text=True, check=False)
     assert (
         result.returncode == 0
     ), f"Resharding failed with exit code {result.returncode}:\nSTDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}"
@@ -459,7 +458,7 @@ def test_reshard_preserves_model_state(tmp_path):
 
     # Compare states
     assert set(original_state.keys()) == set(final_state.keys())
-    for key in original_state.keys():
+    for key in original_state:
         torch.testing.assert_close(
             original_state[key],
             final_state[key],
@@ -575,7 +574,7 @@ def test_reshard_roundtrip(tmp_path):
 
     # Compare initial and final model states
     assert set(initial_state.keys()) == set(final_state.keys())
-    for key in initial_state.keys():
+    for key in initial_state:
         torch.testing.assert_close(
             initial_state[key],
             final_state[key],

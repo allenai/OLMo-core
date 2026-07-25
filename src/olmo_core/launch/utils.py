@@ -1,6 +1,6 @@
 import os
 from dataclasses import dataclass
-from typing import Optional, Tuple
+from typing import Optional
 
 import requests
 
@@ -11,7 +11,7 @@ GIT_REF_ENV_VAR = "GIT_REF"
 GIT_BRANCH_ENV_VAR = "GIT_BRANCH"
 
 
-def parse_git_remote_url(url: str) -> Tuple[str, str]:
+def parse_git_remote_url(url: str) -> tuple[str, str]:
     """
     Parse a git remote URL into a GitHub (account, repo) pair.
 
@@ -30,7 +30,7 @@ def parse_git_remote_url(url: str) -> Tuple[str, str]:
 class GitConfig(Config):
     repo_url: str
     ref: str
-    branch: Optional[str] = None
+    branch: str | None = None
 
     @property
     def is_dirty(self) -> bool:

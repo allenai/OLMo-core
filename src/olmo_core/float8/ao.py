@@ -1,6 +1,6 @@
 from abc import abstractmethod
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Dict, Generic, Optional, Type, TypeVar
+from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
 from ..config import Config, DType, StrEnum
 
@@ -27,12 +27,12 @@ T = TypeVar("T")
 class _AOTypePlaceholder(Generic[T]):
     @property
     @abstractmethod
-    def ao_type(self) -> Type[T]:
+    def ao_type(self) -> type[T]:
         raise NotImplementedError
 
     def to_ao_type(self) -> T:
         if isinstance(self, Config):
-            kwargs: Dict[str, Any] = {}
+            kwargs: dict[str, Any] = {}
             for k, v in self.as_dict(exclude_none=True, recurse=False).items():
                 if isinstance(v, _AOTypePlaceholder):
                     v = v.to_ao_type()
@@ -45,8 +45,7 @@ class _AOTypePlaceholder(Generic[T]):
             for option in self.ao_type:  # type: ignore
                 if option.value == self:
                     return option
-            else:
-                raise ValueError(self)
+            raise ValueError(self)
         else:
             raise NotImplementedError
 
@@ -56,7 +55,7 @@ class AOScalingType(_AOTypePlaceholder["ScalingType"], StrEnum):
     disabled = "disabled"
 
     @property
-    def ao_type(self) -> Type["ScalingType"]:
+    def ao_type(self) -> type["ScalingType"]:
         from torchao.float8.config import ScalingType
 
         return ScalingType
@@ -67,7 +66,7 @@ class AOScalingGranularity(_AOTypePlaceholder["ScalingGranularity"], StrEnum):
     axiswise = "axiswise"
 
     @property
-    def ao_type(self) -> Type["ScalingGranularity"]:
+    def ao_type(self) -> type["ScalingGranularity"]:
         from torchao.float8.config import ScalingGranularity
 
         return ScalingGranularity
@@ -75,12 +74,12 @@ class AOScalingGranularity(_AOTypePlaceholder["ScalingGranularity"], StrEnum):
 
 @dataclass
 class AOCastConfig(Config, _AOTypePlaceholder["CastConfig"]):
-    scaling_type: Optional[AOScalingType] = None
-    scaling_granularity: Optional[AOScalingGranularity] = None
-    target_dtype: Optional[DType] = None
+    scaling_type: AOScalingType | None = None
+    scaling_granularity: AOScalingGranularity | None = None
+    target_dtype: DType | None = None
 
     @property
-    def ao_type(self) -> Type["CastConfig"]:
+    def ao_type(self) -> type["CastConfig"]:
         from torchao.float8.config import CastConfig
 
         return CastConfig
@@ -88,10 +87,10 @@ class AOCastConfig(Config, _AOTypePlaceholder["CastConfig"]):
 
 @dataclass
 class AOFloat8GemmConfig(Config, _AOTypePlaceholder["Float8GemmConfig"]):
-    use_fast_accum: Optional[bool] = False
+    use_fast_accum: bool | None = False
 
     @property
-    def ao_type(self) -> Type["Float8GemmConfig"]:
+    def ao_type(self) -> type["Float8GemmConfig"]:
         from torchao.float8.config import Float8GemmConfig
 
         return Float8GemmConfig
@@ -103,7 +102,7 @@ class AOFloat8LinearRecipe(_AOTypePlaceholder["Float8LinearRecipeName"], StrEnum
     rowwise_with_gw_hp = "rowwise_with_gw_hp"
 
     @property
-    def ao_type(self) -> Type["Float8LinearRecipeName"]:
+    def ao_type(self) -> type["Float8LinearRecipeName"]:
         from torchao.float8.config import Float8LinearRecipeName
 
         return Float8LinearRecipeName
@@ -116,7 +115,7 @@ class AOKernelPreference(_AOTypePlaceholder["KernelPreference"], StrEnum):
     torch = "torch"
 
     @property
-    def ao_type(self) -> Type["KernelPreference"]:
+    def ao_type(self) -> type["KernelPreference"]:
         from torchao.quantization.quantize_.common.kernel_preference import (
             KernelPreference,
         )
@@ -130,7 +129,7 @@ class AOMXFP8Dim1CastKernelChoice(_AOTypePlaceholder["MXFP8Dim1CastKernelChoice"
     triton = "triton"
 
     @property
-    def ao_type(self) -> Type["MXFP8Dim1CastKernelChoice"]:
+    def ao_type(self) -> type["MXFP8Dim1CastKernelChoice"]:
         from torchao.prototype.mx_formats.config import MXFP8Dim1CastKernelChoice
 
         return MXFP8Dim1CastKernelChoice
@@ -143,7 +142,7 @@ class AOScaleCalculationMode(_AOTypePlaceholder["ScaleCalculationMode"], StrEnum
     even = "even"
 
     @property
-    def ao_type(self) -> Type["ScaleCalculationMode"]:
+    def ao_type(self) -> type["ScaleCalculationMode"]:
         from torchao.prototype.mx_formats.config import ScaleCalculationMode
 
         return ScaleCalculationMode
@@ -155,20 +154,20 @@ class AOFloat8LinearConfig(Config, _AOTypePlaceholder["Float8LinearConfig"]):
     This matches the config from torchao.
     """
 
-    cast_config_input: Optional[AOCastConfig] = None
-    cast_config_input_for_grad_weight: Optional[AOCastConfig] = None
-    cast_config_weight: Optional[AOCastConfig] = None
-    cast_config_weight_for_grad_input: Optional[AOCastConfig] = None
-    cast_config_grad_output: Optional[AOCastConfig] = None
-    cast_config_grad_output_for_grad_weight: Optional[AOCastConfig] = None
-    gemm_config_output: Optional[AOFloat8GemmConfig] = None
-    gemm_config_grad_input: Optional[AOFloat8GemmConfig] = None
-    gemm_config_grad_weight: Optional[AOFloat8GemmConfig] = None
-    enable_fsdp_float8_all_gather: Optional[bool] = None
-    pad_inner_dim: Optional[bool] = None
-    emulate: Optional[bool] = None
-    force_recompute_fp8_weight_in_bwd: Optional[bool] = None  # deprecated, no effect
-    round_scales_to_power_of_2: Optional[bool] = None
+    cast_config_input: AOCastConfig | None = None
+    cast_config_input_for_grad_weight: AOCastConfig | None = None
+    cast_config_weight: AOCastConfig | None = None
+    cast_config_weight_for_grad_input: AOCastConfig | None = None
+    cast_config_grad_output: AOCastConfig | None = None
+    cast_config_grad_output_for_grad_weight: AOCastConfig | None = None
+    gemm_config_output: AOFloat8GemmConfig | None = None
+    gemm_config_grad_input: AOFloat8GemmConfig | None = None
+    gemm_config_grad_weight: AOFloat8GemmConfig | None = None
+    enable_fsdp_float8_all_gather: bool | None = None
+    pad_inner_dim: bool | None = None
+    emulate: bool | None = None
+    force_recompute_fp8_weight_in_bwd: bool | None = None  # deprecated, no effect
+    round_scales_to_power_of_2: bool | None = None
 
     @staticmethod
     def recommended(**kwargs: Any) -> "AOFloat8LinearConfig":
@@ -180,7 +179,7 @@ class AOFloat8LinearConfig(Config, _AOTypePlaceholder["Float8LinearConfig"]):
         )
 
     @property
-    def ao_type(self) -> Type["Float8LinearConfig"]:
+    def ao_type(self) -> type["Float8LinearConfig"]:
         from torchao.float8.config import Float8LinearConfig
 
         return Float8LinearConfig
@@ -196,25 +195,25 @@ class AOMXLinearConfig(Config, _AOTypePlaceholder["MXLinearConfig"]):
     Useful reference for MXFP8 training: https://docs.nvidia.com/deeplearning/transformer-engine/user-guide/examples/fp8_primer.html
     """
 
-    block_size: Optional[int] = None
+    block_size: int | None = None
     """block size, defaults to 32 if not specified"""
-    elem_dtype: Optional[DType] = None
+    elem_dtype: DType | None = None
     """element dtype, used for activations, weights and gradients, defaults to e4m3fn if not specified"""
-    elem_dtype_weight_override: Optional[DType] = None
+    elem_dtype_weight_override: DType | None = None
     """optional element dtype override for weights"""
-    elem_dtype_grad_output_override: Optional[DType] = None
+    elem_dtype_grad_output_override: DType | None = None
     """
     optional element dtype override for gradients.
     note that e4m3 is thought to be fine here because of the block-wise nature of MXFP8.
     """
-    kernel_preference: Optional[AOKernelPreference] = None
+    kernel_preference: AOKernelPreference | None = None
     """if the preferred kernel is not supported on the given hardware an exception will be thrown"""
-    mxfp8_cast_kernel_choice: Optional[AOMXFP8Dim1CastKernelChoice] = None
+    mxfp8_cast_kernel_choice: AOMXFP8Dim1CastKernelChoice | None = None
     """
     which kernel to use for the mx fp8 cast along dim1 (dim0 is always torch).
     torch is slow. cuda is fastest. triton only supports "floor" scale calculation mode.
     """
-    scale_calculation_mode: Optional[AOScaleCalculationMode] = None
+    scale_calculation_mode: AOScaleCalculationMode | None = None
     """
     how to calculate the mx block scaling factors.
     * floor [default]: strightforward method but most prone to overflow / bad for gradient calculation (dont use)
@@ -233,7 +232,7 @@ class AOMXLinearConfig(Config, _AOTypePlaceholder["MXLinearConfig"]):
         )
 
     @property
-    def ao_type(self) -> Type["MXLinearConfig"]:
+    def ao_type(self) -> type["MXLinearConfig"]:
         from torchao.prototype.mx_formats import MXLinearConfig
 
         return MXLinearConfig

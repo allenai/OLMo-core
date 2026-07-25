@@ -3,11 +3,12 @@ import logging
 import os
 import re
 import tempfile
+from collections.abc import Generator
 from concurrent.futures import Future
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, ClassVar, Dict, Generator, Optional, Tuple, Union
+from typing import Any, ClassVar
 
 import torch
 import torch.distributed as dist
@@ -53,15 +54,15 @@ class CheckpointerConfig(Config):
     A configuration class for building :class:`Checkpointer` instances.
     """
 
-    work_dir: Optional[str] = None
-    save_overwrite: Optional[bool] = None
+    work_dir: str | None = None
+    save_overwrite: bool | None = None
     pre_download: bool = False
-    save_thread_count: Optional[int] = None
-    load_thread_count: Optional[int] = None
+    save_thread_count: int | None = None
+    load_thread_count: int | None = None
     #  save_process_count: Optional[int] = None
     throttle_uploads: bool = False
 
-    def build(self, process_group: Optional[dist.ProcessGroup] = None, **kwargs) -> "Checkpointer":
+    def build(self, process_group: dist.ProcessGroup | None = None, **kwargs) -> "Checkpointer":
         kwargs = {**self.as_dict(exclude_none=True, recurse=False), **kwargs}
         work_dir = kwargs.pop("work_dir", None)
         if work_dir is None:
@@ -71,7 +72,7 @@ class CheckpointerConfig(Config):
 
 @dataclass
 class CheckpointMetadata(Config):
-    ephemeral: Optional[bool] = None
+    ephemeral: bool | None = None
     version: str = VERSION
 
 
@@ -88,9 +89,9 @@ class Checkpointer:
     work_dir: Path
     save_overwrite: bool = False
     pre_download: bool = False
-    process_group: Optional[dist.ProcessGroup] = None
-    save_thread_count: Optional[int] = None
-    load_thread_count: Optional[int] = None
+    process_group: dist.ProcessGroup | None = None
+    save_thread_count: int | None = None
+    load_thread_count: int | None = None
     #  save_process_count: Optional[int] = None  # TODO: leads to some MP issues, needs more investigating.
     throttle_uploads: bool = False
 
@@ -103,7 +104,7 @@ class Checkpointer:
         self,
         dir: PathOrStr,
         train_module: TrainModule,
-        train_state: Dict[str, Any],
+        train_state: dict[str, Any],
         ephemeral: bool = False,
     ):
         """
@@ -137,7 +138,7 @@ class Checkpointer:
         self,
         dir: PathOrStr,
         train_module: TrainModule,
-        train_state: Dict[str, Any],
+        train_state: dict[str, Any],
         ephemeral: bool = False,
     ) -> Future[None]:
         """
@@ -185,9 +186,9 @@ class Checkpointer:
         dir: PathOrStr,
         train_module: TrainModule,
         *,
-        load_trainer_state: Optional[bool] = None,
-        load_optim_state: Optional[bool] = None,
-    ) -> Optional[Dict[str, Any]]:
+        load_trainer_state: bool | None = None,
+        load_optim_state: bool | None = None,
+    ) -> dict[str, Any] | None:
         """
         Load model, optim, and other training state from a local or remote checkpoint directory
         created via :meth:`save()` or :meth:`save_async()`.
@@ -195,7 +196,7 @@ class Checkpointer:
         dir = normalize_path(dir)
 
         # Maybe load trainer state.
-        trainer_state: Optional[Dict[str, Any]] = None
+        trainer_state: dict[str, Any] | None = None
         if load_trainer_state is not False:
             # Try loading the given rank's state first, then fall back to rank 0 train state if it
             # doesn't exist, which can happen when we're restoring a checkpoint with a different world size.
@@ -211,7 +212,7 @@ class Checkpointer:
 
         # Load train module state.
         train_module_dir = f"{dir}/model_and_optim"
-        metadata: Optional[Metadata] = None
+        metadata: Metadata | None = None
         if get_rank(self.process_group) == 0:
             try:
                 metadata = get_checkpoint_metadata(train_module_dir)
@@ -241,7 +242,7 @@ class Checkpointer:
 
         return trainer_state
 
-    def write_file(self, dir: PathOrStr, fname: str, contents: Union[str, bytes]) -> PathOrStr:
+    def write_file(self, dir: PathOrStr, fname: str, contents: str | bytes) -> PathOrStr:
         """
         Write something to a file in a local or remote directory.
 
@@ -258,7 +259,7 @@ class Checkpointer:
             Path(dir).mkdir(exist_ok=True, parents=True)
 
         mode = "wb" if isinstance(contents, bytes) else "wt"
-        tmp_file = tempfile.NamedTemporaryFile(
+        tmp_file = tempfile.NamedTemporaryFile(  # noqa: SIM115
             mode=mode, delete=False, dir=None if is_url(dir) else dir
         )
         tmp_path = Path(tmp_file.name)
@@ -311,8 +312,8 @@ class Checkpointer:
 
     @classmethod
     def find_checkpoints(
-        cls, dir: PathOrStr, ephemeral: Optional[bool] = None
-    ) -> Generator[Tuple[int, str], None, None]:
+        cls, dir: PathOrStr, ephemeral: bool | None = None
+    ) -> Generator[tuple[int, str], None, None]:
         """
         Find checkpoints within a directory.
         """
@@ -362,8 +363,8 @@ class Checkpointer:
         :raises FileNotFoundError: If no checkpoints are found.
         """
         dir = normalize_path(dir)
-        latest_step: Optional[int] = None
-        latest_checkpoint: Optional[str] = None
+        latest_step: int | None = None
+        latest_checkpoint: str | None = None
         for step, path in cls.find_checkpoints(dir):
             if latest_step is None or step > latest_step:
                 latest_step = step
@@ -374,7 +375,7 @@ class Checkpointer:
         else:
             return latest_checkpoint
 
-    def _save_train_state(self, dir: PathOrStr, wd: Path, train_state: Dict[str, Any]):
+    def _save_train_state(self, dir: PathOrStr, wd: Path, train_state: dict[str, Any]):
         train_dir = wd / "train"
         # NOTE: if 'dir' is a URL, the 'wd' will be a different temp dir for each rank.
         if is_url(dir) or get_fs_local_rank() == 0:

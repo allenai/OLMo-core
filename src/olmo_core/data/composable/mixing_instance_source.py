@@ -4,7 +4,7 @@ import hashlib
 import logging
 import typing
 from dataclasses import dataclass
-from typing import ClassVar, List, Optional, Tuple, Type
+from typing import ClassVar
 
 from olmo_core.aliases import PathOrStr
 from olmo_core.config import Config
@@ -34,7 +34,7 @@ class MixingInstanceSourceSpecConfig(Config):
     source: InstanceSourceConfig
     ratio: float
     max_repetition_factor: float = 1.0
-    label: Optional[str] = None
+    label: str | None = None
 
     def __post_init__(self):
         if self.ratio <= 0:
@@ -55,15 +55,15 @@ class MixingInstanceSourceSpecConfig(Config):
 class MixingInstanceSourceConfig(InstanceSourceConfig):
     """A config for :class:`MixingInstanceSource`."""
 
-    source_specs: List[MixingInstanceSourceSpecConfig]
+    source_specs: list[MixingInstanceSourceSpecConfig]
     """Mixing source specs."""
-    seed: Optional[int] = dataclasses.field(default_factory=lambda: resolve_seed(SEED_NOT_SET))
+    seed: int | None = dataclasses.field(default_factory=lambda: resolve_seed(SEED_NOT_SET))
     """A random seed for sampling."""
-    label: Optional[str] = None
+    label: str | None = None
     """An optional label for this source."""
-    num_tokens: Optional[int] = None
+    num_tokens: int | None = None
     """An optional target number of tokens for the mixed source."""
-    num_instances: Optional[int] = None
+    num_instances: int | None = None
     """An optional target number of instances for the mixed source."""
 
     def build(self, work_dir: PathOrStr) -> "MixingInstanceSource":  # type: ignore[override]
@@ -82,7 +82,7 @@ class MixingInstanceSourceConfig(InstanceSourceConfig):
 class MixingInstanceSourceSpec:
     """Defines a source and its associated mixing ratio for :class:`MixingInstanceSource`."""
 
-    Config: ClassVar[Type["MixingInstanceSourceSpecConfig"]] = MixingInstanceSourceSpecConfig
+    Config: ClassVar[type["MixingInstanceSourceSpecConfig"]] = MixingInstanceSourceSpecConfig
     """The config class for this spec."""
 
     source: InstanceSource
@@ -98,7 +98,7 @@ class MixingInstanceSourceSpec:
     A factor of 1.0 means no repetition is allowed. A factor of 2.0 means each instance could be
     repeated at most once (i.e., seen twice).
     """
-    label: Optional[str] = None
+    label: str | None = None
     """An optional label for this source."""
 
     def __post_init__(self):
@@ -139,7 +139,7 @@ class MixingInstanceSource(InstanceSource):
         Mutually exclusive with ``num_tokens``.
     """
 
-    Config: ClassVar[Type[MixingInstanceSourceConfig]] = MixingInstanceSourceConfig
+    Config: ClassVar[type[MixingInstanceSourceConfig]] = MixingInstanceSourceConfig
     """The config class for this source."""
 
     Spec = MixingInstanceSourceSpec
@@ -151,10 +151,10 @@ class MixingInstanceSource(InstanceSource):
         self,
         *source_specs: MixingInstanceSourceSpec,
         work_dir: PathOrStr,
-        seed: Optional[int] = SEED_NOT_SET,
-        label: Optional[str] = None,
-        num_tokens: Optional[int] = None,
-        num_instances: Optional[int] = None,
+        seed: int | None = SEED_NOT_SET,
+        label: str | None = None,
+        num_tokens: int | None = None,
+        num_instances: int | None = None,
     ):
         if not source_specs:
             raise OLMoConfigurationError("At least one source spec must be provided.")
@@ -197,7 +197,7 @@ class MixingInstanceSource(InstanceSource):
 
         # Sample instances from each source.
         seed = resolve_seed(seed)
-        sampled_sources: List[SamplingInstanceSource] = []
+        sampled_sources: list[SamplingInstanceSource] = []
         for i, (spec, sample_size) in enumerate(zip(source_specs, sample_sizes)):
             sampled_sources.append(
                 SamplingInstanceSource(
@@ -226,8 +226,8 @@ class MixingInstanceSource(InstanceSource):
         log.info(f"Created instance mixture consisting of:\n{summary}")
 
     @property
-    def sampled_sources(self) -> Tuple[SamplingInstanceSource, ...]:
-        return typing.cast(Tuple[SamplingInstanceSource, ...], self._source.sources)
+    def sampled_sources(self) -> tuple[SamplingInstanceSource, ...]:
+        return typing.cast(tuple[SamplingInstanceSource, ...], self._source.sources)
 
     def children(self):
         return self.sampled_sources

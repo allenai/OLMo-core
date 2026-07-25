@@ -3,7 +3,6 @@ import tempfile
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Dict, List, Optional
 
 import torch
 import torch.distributed as dist
@@ -33,25 +32,25 @@ class TrainerConfig(Config):
 
     save_folder: str
 
-    work_dir: Optional[str] = None
-    load_path: Optional[str] = None
+    work_dir: str | None = None
+    load_path: str | None = None
     load_strategy: LoadStrategy = LoadStrategy.if_available
-    load_optim_state: Optional[bool] = None
-    load_trainer_state: Optional[bool] = None
+    load_optim_state: bool | None = None
+    load_trainer_state: bool | None = None
     checkpointer: CheckpointerConfig = field(default_factory=CheckpointerConfig)
 
-    device: Optional[str] = None
+    device: str | None = None
     save_overwrite: bool = False
     max_duration: Duration = field(default_factory=lambda: Duration.epochs(1))
     cancel_check_interval: int = 25
-    hard_stop: Optional[Duration] = None
+    hard_stop: Duration | None = None
     metrics_collect_interval: int = 5
-    callbacks: Dict[str, Callback] = field(default_factory=dict)
-    async_bookkeeping: Optional[bool] = None
+    callbacks: dict[str, Callback] = field(default_factory=dict)
+    async_bookkeeping: bool | None = None
     bookkeeping_soft_timeout: int = 30
     no_checkpoints: bool = False
     no_evals: bool = False
-    steps_to_skip: Optional[List[StepSkipRange]] = None
+    steps_to_skip: list[StepSkipRange] | None = None
 
     def add_callback(self, name: str, callback: Callback):
         """
@@ -61,7 +60,7 @@ class TrainerConfig(Config):
             raise OLMoConfigurationError(f"A callback with name '{name}' already exists")
         self.callbacks[name] = callback
 
-    def add_callbacks(self, callbacks: Dict[str, Callback]):
+    def add_callbacks(self, callbacks: dict[str, Callback]):
         """
         Add a set of callbacks.
         """
@@ -79,7 +78,7 @@ class TrainerConfig(Config):
         out.add_callback(name, callback)
         return out
 
-    def with_callbacks(self, callbacks: Dict[str, Callback]) -> "TrainerConfig":
+    def with_callbacks(self, callbacks: dict[str, Callback]) -> "TrainerConfig":
         """
         Return a new trainer config with additional callbacks.
 
@@ -144,8 +143,8 @@ class TrainerConfig(Config):
         train_module: TrainModule,
         data_loader: DataLoaderBase,
         *,
-        dp_process_group: Optional[dist.ProcessGroup] = None,
-        checkpointer_pg: Optional[dist.ProcessGroup] = None,
+        dp_process_group: dist.ProcessGroup | None = None,
+        checkpointer_pg: dist.ProcessGroup | None = None,
     ) -> Trainer:
         """
         Build the corresponding trainer.

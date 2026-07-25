@@ -7,7 +7,6 @@ checkpoints were combined into a souped model. This script is ingredient 1
 """
 
 import argparse
-from typing import List
 
 from olmo_core.config import DType
 from olmo_core.data import (
@@ -55,7 +54,7 @@ SEED = 1337  # ingredient 1
 REMOVE_HEADS = 2
 
 
-def build_config(opts: argparse.Namespace, overrides: List[str]) -> ExperimentConfig:
+def build_config(opts: argparse.Namespace, overrides: list[str]) -> ExperimentConfig:
     sequence_length = opts.sequence_length or DEFAULT_SEQUENCE_LENGTH
     tokenizer_config = TokenizerConfig.dolma2()
 
@@ -119,7 +118,7 @@ def build_config(opts: argparse.Namespace, overrides: List[str]) -> ExperimentCo
             weight_decay=0.1,
             betas=(0.9, 0.95),
             group_overrides=[
-                OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
+                OptimGroupOverride(params=["embeddings.weight"], opts={"weight_decay": 0.0})
             ],
         ),
         scheduler=LinearWithWarmup(warmup=0, alpha_f=0.0),

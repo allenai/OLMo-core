@@ -1,5 +1,5 @@
 from test.nn.attention.attention_test import BF16_ATOL, BF16_RTOL
-from typing import Any, Dict
+from typing import Any
 
 import pytest
 import torch
@@ -85,7 +85,7 @@ def _run_context_parallel_gdn_ulysses(
     checkpoint_dir: str,
     inputs_path: str,
     outputs_path: str,
-    gdn_kwargs: Dict[str, Any],
+    gdn_kwargs: dict[str, Any],
 ):
     device = get_default_device()
     mesh = init_device_mesh(device.type, (get_world_size(),), mesh_dim_names=("cp",))
@@ -118,7 +118,7 @@ def test_context_parallel_gdn_ulysses(tmp_path):
     device = get_default_device()
 
     # n_heads must be divisible by CP degree (world_size=2).
-    gdn_kwargs: Dict[str, Any] = {"d_model": 128, "n_heads": 8}
+    gdn_kwargs: dict[str, Any] = {"d_model": 128, "n_heads": 8}
     gdn = GatedDeltaNet(init_device=device.type, **gdn_kwargs)
 
     bs, seq_len = 2, 64

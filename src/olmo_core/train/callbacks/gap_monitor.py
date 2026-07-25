@@ -4,11 +4,11 @@ import logging
 import math
 import typing
 from dataclasses import dataclass
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Literal
 
 import torch
-import torch.nn as nn
 from safetensors.torch import save_file
+from torch import nn
 from torch.distributed.tensor import DTensor
 
 from olmo_core.distributed.checkpoint import save_state_dict
@@ -36,32 +36,32 @@ class GAPMonitorCallback(Callback):
     enabled: bool = True
     """Master switch. When ``False``, all monitoring and gradient dumping is disabled."""
 
-    monitor: Optional[bool] = None
+    monitor: bool | None = None
     """Whether to run GAP monitoring (forward/backward hooks, per-tensor stats).
     Only takes effect when ``enabled=True``. Defaults to ``True`` when ``enabled=True``."""
 
     interval: int = 1
     """How often (in steps) to measure statistics. Default is every step."""
 
-    dump_gradients: Optional[bool] = None
+    dump_gradients: bool | None = None
     """Whether to dump raw gradient tensors to disk for offline analysis.
     Only takes effect when ``enabled=True``. Defaults to ``False`` when ``enabled=True``."""
 
     dump_gradients_start_step: int = 0
     """Step at which to begin dumping gradients. Inclusive."""
 
-    dump_gradients_end_step: Optional[int] = None
+    dump_gradients_end_step: int | None = None
     """Step at which to stop dumping gradients. Inclusive. If ``None``, runs until training ends."""
 
     dump_gradients_step_interval: int = 1
     """How often (in steps) to dump gradients. Must be positive."""
 
-    dump_gradients_save_first_n: Optional[int] = None
+    dump_gradients_save_first_n: int | None = None
     """If set, gather the full gradient to rank 0 and save only the first N elements of each
     dimension, storing as a single safetensors file. If ``None``, saves the full distributed
     gradient via distributed checkpoint. Must be positive if set."""
 
-    _handles: Optional[list] = dataclasses.field(default=None, repr=False)
+    _handles: list | None = dataclasses.field(default=None, repr=False)
     _local_batch_size_instances: int = dataclasses.field(default=1, repr=False)
     _dry_run_complete: bool = dataclasses.field(default=False, repr=False)
 
@@ -107,7 +107,7 @@ class GAPMonitorCallback(Callback):
         if not self.enabled:
             return
         if not isinstance(self.trainer.train_module, TransformerTrainModule):
-            raise ValueError(f"{type(self).__name__} only works with the TransformerTrainModule.")
+            raise TypeError(f"{type(self).__name__} only works with the TransformerTrainModule.")
 
     def pre_train(self):
         if not self.enabled or not self.monitor:
@@ -115,7 +115,7 @@ class GAPMonitorCallback(Callback):
 
         assert isinstance(self.trainer.train_module, TransformerTrainModule)
         self._reset()
-        handles: List[torch.utils.hooks.RemovableHandle] = []
+        handles: list[torch.utils.hooks.RemovableHandle] = []
         for n, m in self.trainer.train_module.model.named_modules():
             m = typing.cast(nn.Module, m)
             if n == "":
@@ -128,7 +128,7 @@ class GAPMonitorCallback(Callback):
             handles.append(h)
         self._handles = handles  # type: ignore[assignment]
 
-    def pre_step(self, batch: Dict[str, Any]):
+    def pre_step(self, batch: dict[str, Any]):
         if not self.enabled or not self.monitor:
             return
 
@@ -260,7 +260,7 @@ class GAPMonitorCallback(Callback):
         step_dir = self.trainer.work_dir / "gradients" / f"step{self.step}"
         step_dir.mkdir(exist_ok=True, parents=True)
 
-        model = getattr(self.trainer.train_module, "model")
+        model = self.trainer.train_module.model
 
         if self.dump_gradients_save_first_n is None:
             # Save full gradients using distributed checkpoint
@@ -328,7 +328,7 @@ class GAPMonitorCallback(Callback):
             self._handles = None
 
 
-def var_mean(tensor: torch.Tensor, dim: Optional[int] = None) -> tuple[torch.Tensor, torch.Tensor]:
+def var_mean(tensor: torch.Tensor, dim: int | None = None) -> tuple[torch.Tensor, torch.Tensor]:
     if not isinstance(tensor, DTensor):
         return torch.var_mean(tensor, dim=dim)
     else:

@@ -1,6 +1,6 @@
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any
 
 import torch
 import torch.distributed as dist
@@ -34,26 +34,26 @@ class TransformerGenerationModuleConfig(Config):
     generation_config: GenerationConfig
     # Model settings.
     compile_model: bool = False
-    float8_config: Optional[Float8Config] = None
-    dp_config: Optional[TransformerDataParallelConfig] = None
+    float8_config: Float8Config | None = None
+    dp_config: TransformerDataParallelConfig | None = None
 
     # Checkpoint settings.
-    state_dict_load_opts: Optional[Dict[str, Any]] = None
-    load_key_mapping: Optional[Dict[str, str]] = None
+    state_dict_load_opts: dict[str, Any] | None = None
+    load_key_mapping: dict[str, str] | None = None
 
     # Other settings.
-    dtype: Optional[DType] = None
+    dtype: DType | None = None
     """The dtype to build the model in."""
 
     def build(
         self,
-        checkpoint_dir: PathOrStr | List[PathOrStr],
-        transformer_config: Optional[TransformerConfig] = None,
-        device: Optional[torch.device] = None,
-        process_group: Optional[dist.ProcessGroup] = None,
-        work_dir: Optional[PathOrStr] = None,
+        checkpoint_dir: PathOrStr | list[PathOrStr],
+        transformer_config: TransformerConfig | None = None,
+        device: torch.device | None = None,
+        process_group: dist.ProcessGroup | None = None,
+        work_dir: PathOrStr | None = None,
         pre_download: bool = True,
-        load_thread_count: Optional[int] = None,
+        load_thread_count: int | None = None,
     ) -> "TransformerGenerationModule":
         """
         Build the corresponding :class:`TransformerGenerationModule`.

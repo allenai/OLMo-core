@@ -26,17 +26,18 @@ API Reference
 from __future__ import annotations
 
 import logging
+from collections.abc import Generator, Iterable
 from concurrent.futures import Future
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Generator, Iterable, List, Optional, Set, Tuple
+from typing import Any
 
 import torch
 import torch.distributed as dist
 import torch.distributed.checkpoint as dist_cp
 import torch.distributed.checkpoint.state_dict as dist_cp_sd
-import torch.nn as nn
 from rich.progress import track
+from torch import nn
 from torch.distributed.checkpoint.default_planner import DefaultSavePlanner
 from torch.distributed.checkpoint.metadata import Metadata, TensorStorageMetadata
 
@@ -49,20 +50,20 @@ from ..utils import barrier, get_fs_local_rank, is_distributed
 from .filesystem import RemoteFileSystemReader, RemoteFileSystemWriter
 
 __all__ = [
-    "save_state_dict",
-    "async_save_state_dict",
-    "load_state_dict",
-    "save_model_and_optim_state",
-    "async_save_model_and_optim_state",
-    "load_model_and_optim_state",
-    "unshard_checkpoint",
-    "load_keys",
-    "get_checkpoint_metadata",
     "UnshardStrategy",
     "UnshardStrategyType",
-    "swap_param_keys",
-    "prune_state_dict",
+    "async_save_model_and_optim_state",
+    "async_save_state_dict",
+    "get_checkpoint_metadata",
+    "load_keys",
+    "load_model_and_optim_state",
+    "load_state_dict",
     "merge_state_dicts",
+    "prune_state_dict",
+    "save_model_and_optim_state",
+    "save_state_dict",
+    "swap_param_keys",
+    "unshard_checkpoint",
 ]
 
 log = logging.getLogger(__name__)
@@ -71,12 +72,12 @@ log = logging.getLogger(__name__)
 @torch.no_grad()
 def save_state_dict(
     dir: PathOrStr,
-    state_dict: Dict[str, Any],
+    state_dict: dict[str, Any],
     *,
-    process_group: Optional[dist.ProcessGroup] = None,
+    process_group: dist.ProcessGroup | None = None,
     save_overwrite: bool = False,
-    thread_count: Optional[int] = None,
-    process_count: Optional[int] = None,
+    thread_count: int | None = None,
+    process_count: int | None = None,
     throttle_uploads: bool = False,
     enable_plan_caching: bool = False,
     _skip_prepare: bool = False,
@@ -121,12 +122,12 @@ def save_state_dict(
 @torch.no_grad()
 def async_save_state_dict(
     dir: PathOrStr,
-    state_dict: Dict[str, Any],
+    state_dict: dict[str, Any],
     *,
-    process_group: Optional[dist.ProcessGroup] = None,
+    process_group: dist.ProcessGroup | None = None,
     save_overwrite: bool = False,
-    thread_count: Optional[int] = None,
-    process_count: Optional[int] = None,
+    thread_count: int | None = None,
+    process_count: int | None = None,
     throttle_uploads: bool = False,
     enable_plan_caching: bool = False,
     _skip_prepare: bool = False,
@@ -158,12 +159,12 @@ def async_save_state_dict(
 @torch.no_grad()
 def load_state_dict(
     dir: PathOrStr,
-    state_dict: Dict[str, Any],
+    state_dict: dict[str, Any],
     *,
-    process_group: Optional[dist.ProcessGroup] = None,
+    process_group: dist.ProcessGroup | None = None,
     pre_download: bool = False,
-    work_dir: Optional[PathOrStr] = None,
-    thread_count: Optional[int] = None,
+    work_dir: PathOrStr | None = None,
+    thread_count: int | None = None,
 ):
     """
     Load an arbitrary state dict in-place from a checkpoint saved with :func:`save_state_dict()`.
@@ -189,13 +190,13 @@ def load_state_dict(
 def save_model_and_optim_state(
     dir: PathOrStr,
     model: nn.Module,
-    optim: Optional[torch.optim.Optimizer] = None,
+    optim: torch.optim.Optimizer | None = None,
     *,
-    process_group: Optional[dist.ProcessGroup] = None,
+    process_group: dist.ProcessGroup | None = None,
     save_overwrite: bool = False,
     flatten_optimizer_state: bool = False,
-    thread_count: Optional[int] = None,
-    process_count: Optional[int] = None,
+    thread_count: int | None = None,
+    process_count: int | None = None,
     throttle_uploads: bool = False,
     enable_plan_caching: bool = False,
 ) -> None:
@@ -259,13 +260,13 @@ def save_model_and_optim_state(
 def async_save_model_and_optim_state(
     dir: PathOrStr,
     model: nn.Module,
-    optim: Optional[torch.optim.Optimizer] = None,
+    optim: torch.optim.Optimizer | None = None,
     *,
-    process_group: Optional[dist.ProcessGroup] = None,
+    process_group: dist.ProcessGroup | None = None,
     save_overwrite: bool = False,
     flatten_optimizer_state: bool = False,
-    thread_count: Optional[int] = None,
-    process_count: Optional[int] = None,
+    thread_count: int | None = None,
+    process_count: int | None = None,
     throttle_uploads: bool = False,
     enable_plan_caching: bool = False,
 ) -> Future[None]:
@@ -302,15 +303,15 @@ def async_save_model_and_optim_state(
 def load_model_and_optim_state(
     dir: PathOrStr,
     model: nn.Module,
-    optim: Optional[torch.optim.Optimizer] = None,
+    optim: torch.optim.Optimizer | None = None,
     *,
-    process_group: Optional[dist.ProcessGroup] = None,
-    key_mapping: Optional[Dict[str, str]] = None,
+    process_group: dist.ProcessGroup | None = None,
+    key_mapping: dict[str, str] | None = None,
     pre_download: bool = False,
-    work_dir: Optional[PathOrStr] = None,
+    work_dir: PathOrStr | None = None,
     strict: bool = True,
     flatten_optimizer_state: bool = False,
-    thread_count: Optional[int] = None,
+    thread_count: int | None = None,
 ):
     """
     Load model and optimizer state in-place from a checkpoint saved via :func:`save_model_and_optim_state()`.
@@ -429,7 +430,7 @@ class UnshardStrategy:
     The strategy type.
     """
 
-    chunk_size_bytes: Optional[int] = None
+    chunk_size_bytes: int | None = None
     """
     The approximate max chunk size (per file size), in bytes, for the :data:`UnshardStrategyType.chunks` strategy.
     """
@@ -441,21 +442,21 @@ class UnshardStrategy:
             raise ValueError("'chunk_size_bytes' is only valid for the 'chunks' strategy")
 
     @classmethod
-    def one_file(cls) -> "UnshardStrategy":
+    def one_file(cls) -> UnshardStrategy:
         """
         Use the :data:`UnshardStrategy.one_file` strategy.
         """
         return cls(name=UnshardStrategyType.one_file)
 
     @classmethod
-    def one_file_per_tensor(cls) -> "UnshardStrategy":
+    def one_file_per_tensor(cls) -> UnshardStrategy:
         """
         Use the :data:`UnshardStrategy.one_file_per_tensor` strategy.
         """
         return cls(name=UnshardStrategyType.one_file_per_tensor)
 
     @classmethod
-    def chunks(cls, chunk_size_in_bytes: int) -> "UnshardStrategy":
+    def chunks(cls, chunk_size_in_bytes: int) -> UnshardStrategy:
         """
         Use the :data:`UnshardStrategy.chunks` strategy.
         """
@@ -466,14 +467,14 @@ def unshard_checkpoint(
     dir: PathOrStr,
     target_dir: PathOrStr,
     *,
-    optim: Optional[bool] = None,
+    optim: bool | None = None,
     save_overwrite: bool = False,
     use_safetensors: bool = False,
-    unshard_strategy: Optional[UnshardStrategy] = None,
+    unshard_strategy: UnshardStrategy | None = None,
     pre_download: bool = False,
-    work_dir: Optional[PathOrStr] = None,
+    work_dir: PathOrStr | None = None,
     quiet: bool = False,
-) -> Tuple[Path, Optional[Path]]:
+) -> tuple[Path, Path | None]:
     """
     Convert a checkpoint saved via :func:`save_model_and_optim_state()` into unsharded
     model and optimizer checkpoint files that can be loaded directly with :func:`torch.load()`
@@ -536,7 +537,7 @@ def unshard_checkpoint(
     ext = "pt" if not use_safetensors else "safetensors"
     metadata = get_checkpoint_metadata(dir)
 
-    def save(state_dict: Dict[str, Any], path: Path):
+    def save(state_dict: dict[str, Any], path: Path):
         if path.is_file() and not save_overwrite:
             raise FileExistsError(
                 f"'{path}' already exists, use `save_overwrite=True` to overwrite it"
@@ -551,7 +552,7 @@ def unshard_checkpoint(
         else:
             torch.save(state_dict, path)
 
-    def get_chunks(prefix: str) -> Tuple[Path, List[Tuple[Path, List[str]]]]:
+    def get_chunks(prefix: str) -> tuple[Path, list[tuple[Path, list[str]]]]:
         assert unshard_strategy is not None
         assert isinstance(target_dir, Path)
 
@@ -561,7 +562,7 @@ def unshard_checkpoint(
         elif unshard_strategy.name == UnshardStrategyType.one_file_per_tensor:
             path = target_dir / prefix
             chunks = []
-            for key in metadata.state_dict_metadata.keys():
+            for key in metadata.state_dict_metadata:
                 if key.startswith(f"{prefix}."):
                     chunks.append((path / f"{key.replace('.', '-')}.{ext}", [key]))
             return path, chunks
@@ -570,7 +571,7 @@ def unshard_checkpoint(
             path = target_dir / prefix
             chunks = []
             current_size = 0
-            current_keys: List[str] = []
+            current_keys: list[str] = []
             for key, meta in metadata.state_dict_metadata.items():
                 if key.startswith(f"{prefix}."):
                     if isinstance(meta, TensorStorageMetadata):
@@ -591,8 +592,8 @@ def unshard_checkpoint(
         else:
             raise NotImplementedError(unshard_strategy.name)
 
-    def unshard_chunk(prefix: str, path: Path, keys: List[str]):
-        state_dict: Dict[str, Any] = _load_unsharded_keys(
+    def unshard_chunk(prefix: str, path: Path, keys: list[str]):
+        state_dict: dict[str, Any] = _load_unsharded_keys(
             dir, keys, pre_download=pre_download, work_dir=work_dir
         )
         if not state_dict:
@@ -608,7 +609,7 @@ def unshard_checkpoint(
     ):
         unshard_chunk("model", chunk_path, chunk_keys)
 
-    optim_path: Optional[Path] = None
+    optim_path: Path | None = None
     if optim:
         optim_path, optim_chunks = get_chunks("optim")
         for chunk_path, chunk_keys in track(
@@ -624,7 +625,7 @@ def load_keys(
     keys: Iterable[str],
     *,
     pre_download: bool = False,
-    work_dir: Optional[PathOrStr] = None,
+    work_dir: PathOrStr | None = None,
 ) -> Generator[Any, None, None]:
     """
     Load specific keys from a checkpoint.
@@ -667,7 +668,7 @@ def get_checkpoint_metadata(dir: PathOrStr) -> Metadata:
 
 def _prepare_env_for_save(
     dir: PathOrStr,
-    process_group: Optional[dist.ProcessGroup] = None,
+    process_group: dist.ProcessGroup | None = None,
     save_overwrite: bool = False,
 ) -> str:
     dir = normalize_path(dir)
@@ -701,10 +702,10 @@ def _prepare_env_for_save(
 
 def _prepare_state_dict(
     model: nn.Module,
-    optim: Optional[torch.optim.Optimizer] = None,
-    process_group: Optional[dist.ProcessGroup] = None,
+    optim: torch.optim.Optimizer | None = None,
+    process_group: dist.ProcessGroup | None = None,
     flatten_optimizer_state: bool = False,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     del process_group  # I feel like these torch functions should take a process group argument.
     sd_options = dist_cp_sd.StateDictOptions(
         full_state_dict=False,
@@ -712,7 +713,7 @@ def _prepare_state_dict(
         flatten_optimizer_state_dict=flatten_optimizer_state,
     )
 
-    state_dict: Dict[str, Any] = {
+    state_dict: dict[str, Any] = {
         "model": dist_cp_sd.get_model_state_dict(model, options=sd_options)
     }
     if optim is not None:
@@ -722,9 +723,9 @@ def _prepare_state_dict(
 
 
 def swap_param_keys(
-    state_dict: Dict[str, Any],
-    key_mapping: Dict[str, str],
-    metadata: Optional[Metadata] = None,
+    state_dict: dict[str, Any],
+    key_mapping: dict[str, str],
+    metadata: Metadata | None = None,
     reverse: bool = False,
     quiet: bool = False,
 ):
@@ -769,15 +770,15 @@ def swap_param_keys(
 
 def _load_unsharded_keys(
     dir: PathOrStr,
-    keys: List[str],
+    keys: list[str],
     *,
     pre_download: bool = False,
-    work_dir: Optional[PathOrStr] = None,
-) -> Dict[str, Any]:
+    work_dir: PathOrStr | None = None,
+) -> dict[str, Any]:
     from torch.distributed.checkpoint.default_planner import _EmptyStateDictLoadPlanner
     from torch.distributed.checkpoint.state_dict_loader import _load_state_dict
 
-    state_dict: Dict[str, Any] = {}
+    state_dict: dict[str, Any] = {}
     _load_state_dict(
         state_dict,
         storage_reader=RemoteFileSystemReader(dir, pre_download=pre_download, work_dir=work_dir),
@@ -787,7 +788,7 @@ def _load_unsharded_keys(
     return state_dict
 
 
-def _get_key(state_dict: Dict[str, Any], key: str, pop: bool = False) -> Any:
+def _get_key(state_dict: dict[str, Any], key: str, pop: bool = False) -> Any:
     if key in state_dict:
         if pop:
             return state_dict.pop(key)
@@ -804,8 +805,8 @@ def _get_key(state_dict: Dict[str, Any], key: str, pop: bool = False) -> Any:
     return _get_key(state_dict[root], key, pop=pop)
 
 
-def _set_key(state_dict: Dict[str, Any], key: str, value: Any):
-    if "." not in key or all(["." in k for k in state_dict.keys()]):
+def _set_key(state_dict: dict[str, Any], key: str, value: Any):
+    if "." not in key or all("." in k for k in state_dict):
         state_dict[key] = value
         return
 
@@ -816,7 +817,7 @@ def _set_key(state_dict: Dict[str, Any], key: str, value: Any):
     return _set_key(state_dict[root], key, value=value)
 
 
-def _iter_flat_keys(state_dict: Dict[str, Any], prefix: str = "") -> Generator[str, None, None]:
+def _iter_flat_keys(state_dict: dict[str, Any], prefix: str = "") -> Generator[str, None, None]:
     for key, item in state_dict.items():
         if isinstance(item, dict):
             yield from _iter_flat_keys(item, prefix=key + ".")
@@ -824,7 +825,7 @@ def _iter_flat_keys(state_dict: Dict[str, Any], prefix: str = "") -> Generator[s
             yield prefix + key
 
 
-def prune_state_dict(state_dict: Dict[str, Any], allowed_keys: Set[str]) -> Set[str]:
+def prune_state_dict(state_dict: dict[str, Any], allowed_keys: set[str]) -> set[str]:
     """
     Prune a state dict by removing all keys not in ``allowed_keys``.
 
@@ -839,7 +840,7 @@ def prune_state_dict(state_dict: Dict[str, Any], allowed_keys: Set[str]) -> Set[
     return pruned_keys
 
 
-def merge_state_dicts(lhs: Dict[str, Any], rhs: Dict[str, Any]):
+def merge_state_dicts(lhs: dict[str, Any], rhs: dict[str, Any]):
     """
     Merge ``rhs`` state dict into ``lhs``.
     """

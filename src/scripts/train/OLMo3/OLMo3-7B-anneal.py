@@ -4,7 +4,6 @@ import logging
 import sys
 from math import ceil
 from pathlib import Path
-from typing import Dict, Optional
 
 import torch
 
@@ -85,7 +84,7 @@ $ [i]python {sys.argv[0]} {SubCmd.launch} gs://ai2-llm/checkpoints/OLMo25/step23
     # determine last learning rate
     param = "embeddings.weight"
     key = f"optim.param_groups.{param}.lr"
-    state_dict: Dict[str, Optional[float]] = {key: None}
+    state_dict: dict[str, float | None] = {key: None}
     load_state_dict(join_path(original_checkpoint, "model_and_optim"), state_dict)
     assert state_dict[key] is not None
     lr = float(state_dict[key])  # type: ignore

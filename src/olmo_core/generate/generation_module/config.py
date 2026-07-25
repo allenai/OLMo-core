@@ -1,10 +1,6 @@
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, List, Optional
 
 from olmo_core.config import Config
-
-if TYPE_CHECKING:
-    pass
 
 
 @dataclass
@@ -17,10 +13,10 @@ class GenerationConfig(Config):
     eos_token_id: int
     """End of sequence token ID."""
 
-    max_length: Optional[int] = None
+    max_length: int | None = None
     """Maximum length of input + newly generated tokens."""
 
-    max_new_tokens: Optional[int] = None
+    max_new_tokens: int | None = None
     """Maximum number of new tokens to generate. If provided, this takes precedence over max_length."""
 
     do_sample: bool = True
@@ -38,7 +34,7 @@ class GenerationConfig(Config):
     use_cache: bool = True
     """Whether to use an inference cache (e.g. a kv-cache) for generation."""
 
-    stop_token_ids: Optional[List[int]] = None
+    stop_token_ids: list[int] | None = None
     """Tokens to stop generation at. If provided, the generation will stop when any of these tokens are generated."""
 
     def __post_init__(self):

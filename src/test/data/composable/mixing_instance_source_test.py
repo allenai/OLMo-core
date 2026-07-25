@@ -29,7 +29,7 @@ def test_mixing_instance_source(tmp_path: Path):
         seed=None,
     )
     assert len(source) == 16
-    assert list(source[0]["input_ids"]) == list(range(0, 8))
+    assert list(source[0]["input_ids"]) == list(range(8))
     assert list(source[8]["input_ids"]) == list(range(64, 64 + 8))
 
 

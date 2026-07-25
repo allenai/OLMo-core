@@ -1,10 +1,10 @@
 from os import PathLike
 from pathlib import Path
-from typing import Any, List, Tuple, Type, Union
+from typing import Any
 
 import numpy as np
 
-Mmaps = List[Tuple[Union[Path, PathLike[Any], str], Any]]
+Mmaps = list[tuple[Path | PathLike[Any] | str, Any]]
 
 
 def mk_mmaps(
@@ -12,7 +12,7 @@ def mk_mmaps(
     prefix: str,
     num_files: int,
     size: int,
-    dtype: Union[Type[np.uint8], Type[np.uint16], Type[np.uint32], Type[np.uint64]] = np.uint32,
+    dtype: type[np.uint8] | type[np.uint16] | type[np.uint32] | type[np.uint64] = np.uint32,
     eos: int = 0,
     seq_length: int = 4,
     seed: int = 42,

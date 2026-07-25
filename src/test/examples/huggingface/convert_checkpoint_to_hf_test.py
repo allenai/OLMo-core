@@ -111,9 +111,7 @@ def _get_expected_hf_config(
         # Generate layer types based on swa pattern
         layer_types = []
         for i in range(n_layers):
-            if i == 0 and force_first:
-                layer_types.append("full_attention")
-            elif i == n_layers - 1 and force_last:
+            if i == 0 and force_first or i == n_layers - 1 and force_last:
                 layer_types.append("full_attention")
             else:
                 window = pattern[i % len(pattern)]

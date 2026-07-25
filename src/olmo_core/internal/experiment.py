@@ -1,7 +1,8 @@
 import logging
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable, Dict, List, Optional, cast
+from typing import cast
 
 import torch
 import torch.distributed as dist
@@ -58,10 +59,10 @@ class CliContext(Config):
     cmd: "SubCmd"
     run_name: str
     cluster: str
-    overrides: List[str]
+    overrides: list[str]
 
     @property
-    def remote_cmd(self) -> List[str]:
+    def remote_cmd(self) -> list[str]:
         return [
             self.script,
             self.cmd.post_launch_subcmd(),
@@ -79,7 +80,7 @@ class CommonComponents(Config):
     work_dir: str
     save_folder: str
 
-    launch: Optional[BeakerLaunchConfig]
+    launch: BeakerLaunchConfig | None
 
     tokenizer: TokenizerConfig
     max_sequence_length: int
@@ -88,21 +89,21 @@ class CommonComponents(Config):
 
 @dataclass
 class DataComponents(Config):
-    dataset: NumpyDatasetConfig | List[InstanceSourceConfig]
+    dataset: NumpyDatasetConfig | list[InstanceSourceConfig]
     data_loader: DataLoaderConfig
 
 
 @dataclass
 class ExperimentConfig(Config):
     run_name: str
-    launch: Optional[BeakerLaunchConfig]
+    launch: BeakerLaunchConfig | None
     model: TransformerConfig
-    dataset: NumpyDatasetConfig | List[InstanceSourceConfig]
+    dataset: NumpyDatasetConfig | list[InstanceSourceConfig]
     data_loader: DataLoaderConfig
     train_module: TrainModuleConfig
     trainer: TrainerConfig
     init_seed: int = 12536
-    backend: Optional[str] = "cpu:gloo,cuda:nccl"
+    backend: str | None = "cpu:gloo,cuda:nccl"
 
 
 class SubCmd(StrEnum):
@@ -183,13 +184,13 @@ def build_common_components(
     beaker_image: str = OLMoCoreBeakerImage.stable,
     num_nodes: int = 1,
     beaker_workspace: str = "ai2/OLMo-core",
-    num_execution_units: Optional[int] = None,
+    num_execution_units: int | None = None,
     flight_recorder: bool = False,
 ) -> CommonComponents:
     root_dir = get_root_dir(cli_context.cluster)
     beaker_user = get_beaker_username()
 
-    launch_config: Optional[BeakerLaunchConfig] = None
+    launch_config: BeakerLaunchConfig | None = None
     if beaker_user is not None:
         cmd_to_launch = cli_context.cmd.post_launch_subcmd()
         launch_config = build_launch_config(
@@ -255,7 +256,7 @@ def build_default_data_components(
     return DataComponents(dataset=dataset_config, data_loader=data_loader_config)
 
 
-def _build_required_callbacks(common: CommonComponents) -> Dict[str, Callback]:
+def _build_required_callbacks(common: CommonComponents) -> dict[str, Callback]:
     callbacks = {
         "config_saver": ConfigSaverCallback(),
         "profiler": ProfilerCallback(enabled=False),
@@ -270,7 +271,7 @@ def _build_required_callbacks(common: CommonComponents) -> Dict[str, Callback]:
     return callbacks
 
 
-def _build_default_eval_callbacks(common: CommonComponents) -> Dict[str, Callback]:
+def _build_default_eval_callbacks(common: CommonComponents) -> dict[str, Callback]:
     return {
         "lm_evaluator": LMEvaluatorCallbackConfig(
             eval_dataset=NumpyPaddedFSLDatasetConfig.from_data_mix(
@@ -330,8 +331,8 @@ def build_config(
     model_config_builder: Callable[[CommonComponents], TransformerConfig],
     train_module_config_builder: Callable[[CommonComponents], TransformerTrainModuleConfig],
     trainer_config_builder: Callable[[CommonComponents], TrainerConfig],
-    finalize_config: Optional[Callable[[ExperimentConfig], None]] = None,
-    tokenizer: TokenizerConfig = TokenizerConfig.dolma2(),
+    finalize_config: Callable[[ExperimentConfig], None] | None = None,
+    tokenizer: TokenizerConfig | None = None,
     global_batch_size: int,
     max_sequence_length: int = 4096,
     beaker_image: str = OLMoCoreBeakerImage.stable,
@@ -339,7 +340,7 @@ def build_config(
     beaker_workspace: str = "ai2/OLMo-core",
     #  use_hostname_constraints: bool = False,
     flight_recorder: bool = False,
-    num_execution_units: Optional[int] = None,
+    num_execution_units: int | None = None,
     include_default_evals: bool = False,
     **data_kwargs,
 ) -> ExperimentConfig:
@@ -373,6 +374,8 @@ def build_config(
     :param data_kwargs: Additional keyword arguments to pass to the data config builder.
     :returns: The complete ``ExperimentConfig``.
     """
+    if tokenizer is None:
+        tokenizer = TokenizerConfig.dolma2()
 
     common = common_config_builder(
         cli_context,
@@ -426,7 +429,7 @@ def launch(config: ExperimentConfig):
 
 
 def _build_data_loader(
-    config: ExperimentConfig, dp_process_group: Optional[dist.ProcessGroup] = None
+    config: ExperimentConfig, dp_process_group: dist.ProcessGroup | None = None
 ) -> DataLoaderBase:
     if isinstance(config.data_loader, NumpyDataLoaderConfig):
         assert isinstance(config.dataset, NumpyDatasetConfig)
@@ -436,7 +439,7 @@ def _build_data_loader(
         assert isinstance(config.dataset, list)
         work_dir = config.data_loader.work_dir
         assert work_dir is not None, "Please set 'work_dir' on data loader config"
-        sources: List[InstanceSource] = []
+        sources: list[InstanceSource] = []
         for source in config.dataset:
             assert isinstance(source, InstanceSourceConfig)
             sources.append(source.build(work_dir))

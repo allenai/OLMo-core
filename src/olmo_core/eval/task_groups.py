@@ -1,5 +1,3 @@
-from typing import Dict, List
-
 # For training runs where we don't expect the model to acquire MC (e.g., 1B-5xC, short 7B training runs)
 FULL_TASKS_SMALL_COMPUTE = [
     # OLMES Core 9(-ish) RC
@@ -162,7 +160,7 @@ FAST_TASKS = [
 ]
 
 
-TASK_GROUPS: Dict[str, List[str]] = {
+TASK_GROUPS: dict[str, list[str]] = {
     "full__small_compute": FULL_TASKS_SMALL_COMPUTE,
     "full__large_compute": FULL_TASKS_LARGE_COMPUTE,
     "full": FULL_TASKS,

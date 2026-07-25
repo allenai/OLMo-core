@@ -6,7 +6,7 @@ Run this script without any arguments to see its usage.
 import logging
 import sys
 from dataclasses import dataclass
-from typing import List, Optional, cast
+from typing import cast
 
 from olmo_core.config import Config, DType
 from olmo_core.data import NumpyDataLoaderConfig, NumpyFSLDatasetConfig, TokenizerConfig
@@ -52,12 +52,12 @@ log = logging.getLogger(__name__)
 
 # Set this if you want to start training a new run from an existing checkpoint (like for annealing).
 # NOTE: You do NOT need to set this on a restart of the same run as long as the trainer's 'save_folder' hasn't changed.
-CHECKPOINT: Optional[str] = None
+CHECKPOINT: str | None = None
 
 # Data configuration.
 SEQUENCE_LENGTH = 4096
 TOKENIZER_CONFIG = TokenizerConfig.dolma2()
-DATA_PATHS: List[str] = []  # paths or URLs to your '.npy' tokenized training data files.
+DATA_PATHS: list[str] = []  # paths or URLs to your '.npy' tokenized training data files.
 GLOBAL_BATCH_SIZE = 1024 * SEQUENCE_LENGTH
 RANK_MICROBATCH_SIZE = 8 * SEQUENCE_LENGTH
 INTRA_DOCUMENT_MASKING = False
@@ -73,8 +73,8 @@ BEAKER_WORKSPACE = "ai2/OLMo-core"
 BEAKER_BUDGET = "ai2/oe-other"
 
 # Logging.
-COMET_PROJECT: Optional[str] = None  # set this to enable Comet logging
-WANDB_PROJECT: Optional[str] = None  # set this to enable W&B logging
+COMET_PROJECT: str | None = None  # set this to enable Comet logging
+WANDB_PROJECT: str | None = None  # set this to enable W&B logging
 
 ###########################
 #### END CONFIGURATION ####
@@ -94,7 +94,7 @@ class ExperimentConfig(Config):
     init_seed: int = 12536
 
 
-def build_config(script: str, run_name: str, overrides: List[str]) -> ExperimentConfig:
+def build_config(script: str, run_name: str, overrides: list[str]) -> ExperimentConfig:
     root_dir = get_root_dir(BEAKER_CLUSTER)
     work_dir = get_work_dir(BEAKER_CLUSTER)
     beaker_user = get_beaker_username()
@@ -122,7 +122,7 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
             weight_decay=0.1,
             betas=(0.9, 0.95),
             group_overrides=[
-                OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
+                OptimGroupOverride(params=["embeddings.weight"], opts={"weight_decay": 0.0})
             ],
             fused=True,
         ),

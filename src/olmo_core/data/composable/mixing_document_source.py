@@ -3,8 +3,9 @@ import functools as ft
 import hashlib
 import logging
 import typing
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import ClassVar, Iterable, List, Optional, Tuple, Type
+from typing import ClassVar
 
 from olmo_core.aliases import PathOrStr
 from olmo_core.config import Config
@@ -34,7 +35,7 @@ class MixingDocumentSourceSpecConfig(Config):
     source: DocumentSourceConfig
     ratio: float
     max_repetition_factor: float = 1.0
-    label: Optional[str] = None
+    label: str | None = None
 
     def __post_init__(self):
         if self.ratio <= 0:
@@ -61,16 +62,16 @@ class MixingDocumentSourceSpecConfig(Config):
 class MixingDocumentSourceConfig(DocumentSourceConfig):
     """A config for :class:`MixingDocumentSource`."""
 
-    source_specs: List[MixingDocumentSourceSpecConfig]
+    source_specs: list[MixingDocumentSourceSpecConfig]
     """Mixing source specs."""
-    seed: Optional[int] = dataclasses.field(default_factory=lambda: resolve_seed(SEED_NOT_SET))
+    seed: int | None = dataclasses.field(default_factory=lambda: resolve_seed(SEED_NOT_SET))
     """A random seed for sampling."""
-    label: Optional[str] = None
+    label: str | None = None
     """An optional label for this source."""
-    num_tokens: Optional[int] = None
+    num_tokens: int | None = None
     """An optional target number of tokens for the mixed source."""
 
-    def build(self, work_dir: PathOrStr) -> List["MixingDocumentSource"]:  # type: ignore[override]
+    def build(self, work_dir: PathOrStr) -> list["MixingDocumentSource"]:  # type: ignore[override]
         source_specs = [spec.build(work_dir) for spec in self.source_specs]
         return [
             MixingDocumentSource(
@@ -87,7 +88,7 @@ class MixingDocumentSourceConfig(DocumentSourceConfig):
 class MixingDocumentSourceSpec:
     """Defines a source and its associated mixing ratio for :class:`MixingDocumentSource`."""
 
-    Config: ClassVar[Type["MixingDocumentSourceSpecConfig"]] = MixingDocumentSourceSpecConfig
+    Config: ClassVar[type["MixingDocumentSourceSpecConfig"]] = MixingDocumentSourceSpecConfig
     """The config class for this spec."""
 
     source: DocumentSource
@@ -103,7 +104,7 @@ class MixingDocumentSourceSpec:
     A factor of 1.0 means no repetition is allowed. A factor of 2.0 means each document could be
     repeated at most once (i.e., seen twice).
     """
-    label: Optional[str] = None
+    label: str | None = None
     """An optional label for this source."""
 
     def __post_init__(self):
@@ -153,9 +154,9 @@ class MixingDocumentSource(DocumentSource):
         self,
         *source_specs: MixingDocumentSourceSpec,
         work_dir: PathOrStr,
-        seed: Optional[int] = SEED_NOT_SET,
-        label: Optional[str] = None,
-        num_tokens: Optional[int] = None,
+        seed: int | None = SEED_NOT_SET,
+        label: str | None = None,
+        num_tokens: int | None = None,
     ):
         if not source_specs:
             raise OLMoConfigurationError("At least one source spec must be provided.")
@@ -177,7 +178,7 @@ class MixingDocumentSource(DocumentSource):
 
         # Sample documents from each source.
         seed = resolve_seed(seed)
-        sampled_sources: List[SamplingDocumentSource] = []
+        sampled_sources: list[SamplingDocumentSource] = []
         for i, (spec, sample_size) in enumerate(zip(source_specs, sample_sizes)):
             sampled_sources.append(
                 SamplingDocumentSource(
@@ -203,8 +204,8 @@ class MixingDocumentSource(DocumentSource):
         log.info(f"Created document mixture consisting of:\n{summary}")
 
     @property
-    def sampled_sources(self) -> Tuple[SamplingDocumentSource, ...]:
-        return typing.cast(Tuple[SamplingDocumentSource, ...], self._source.sources)
+    def sampled_sources(self) -> tuple[SamplingDocumentSource, ...]:
+        return typing.cast(tuple[SamplingDocumentSource, ...], self._source.sources)
 
     @ft.cached_property
     def fingerprint(self) -> str:

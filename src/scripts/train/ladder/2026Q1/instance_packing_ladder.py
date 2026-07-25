@@ -1,7 +1,7 @@
 import argparse
 import logging
 
-import olmo_core.io as io
+from olmo_core import io
 from olmo_core.data import DataMix, TokenizerConfig
 from olmo_core.data.composable import *
 from olmo_core.internal.common import get_gpu_type, get_root_dir

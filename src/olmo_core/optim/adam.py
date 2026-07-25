@@ -1,5 +1,4 @@
 from dataclasses import dataclass
-from typing import Optional, Tuple, Type
 
 import torch
 
@@ -14,11 +13,11 @@ class AdamConfig(OptimConfig[torch.optim.Adam]):
     """
 
     lr: float = 1e-3
-    betas: Tuple[float, float] = (0.9, 0.999)
+    betas: tuple[float, float] = (0.9, 0.999)
     eps: float = 1e-8
-    foreach: Optional[bool] = None
-    fused: Optional[bool] = None
+    foreach: bool | None = None
+    fused: bool | None = None
 
     @classmethod
-    def optimizer(cls) -> Type[torch.optim.Adam]:
+    def optimizer(cls) -> type[torch.optim.Adam]:
         return torch.optim.Adam

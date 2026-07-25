@@ -4,7 +4,6 @@ Official annealing script for OLMo-2-0325-32B.
 
 import argparse
 import logging
-from typing import List, Tuple
 
 from olmo_core.config import DType
 from olmo_core.data import (
@@ -57,7 +56,7 @@ class AnnealingDataMix(DataMixBase):
     dolmino300 = "dolmino300"
     jallyrun = "jallyrun"
 
-    def build(self, base_dir: str, tokenizer: str) -> Tuple[List[str], List[str]]:
+    def build(self, base_dir: str, tokenizer: str) -> tuple[list[str], list[str]]:
         if not base_dir.endswith("/"):
             base_dir = base_dir + "/"
 
@@ -76,7 +75,7 @@ class AnnealingDataMix(DataMixBase):
         return paths, labels
 
 
-def build_config(opts: argparse.Namespace, overrides: List[str]) -> ExperimentConfig:
+def build_config(opts: argparse.Namespace, overrides: list[str]) -> ExperimentConfig:
     sequence_length = opts.sequence_length or DEFAULT_SEQUENCE_LENGTH
     tokenizer_config = TokenizerConfig.dolma2()
 
@@ -109,7 +108,7 @@ def build_config(opts: argparse.Namespace, overrides: List[str]) -> ExperimentCo
                 weight_decay=0.1,
                 betas=(0.9, 0.95),
                 group_overrides=[
-                    OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
+                    OptimGroupOverride(params=["embeddings.weight"], opts={"weight_decay": 0.0})
                 ],
                 compile=True,
             ),

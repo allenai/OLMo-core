@@ -1,6 +1,6 @@
 import logging
 import re
-from typing import Any, Dict, List
+from typing import Any
 
 import torch
 from transformers import PretrainedConfig
@@ -27,7 +27,7 @@ EXPERT = TemplatePlaceholder.EXPERT
 #: or mappings that require additional manipulation of state, see
 #: :data:`HF_TO_OLMO_CORE_TEMPLATE_MAPPINGS`. If a given HF key can refer to different OLMo Core
 #: states depending on the HF model, see :data:`MODEL_TYPE_SPECIFIC_HF_TO_OLMO_CORE_WEIGHT_MAPPINGS`.
-HF_TO_OLMO_CORE_WEIGHT_MAPPINGS: Dict[str, str] = {
+HF_TO_OLMO_CORE_WEIGHT_MAPPINGS: dict[str, str] = {
     "model.embed_tokens.weight": "embeddings.weight",
     "model.norm.weight": "lm_head.norm.weight",
     "lm_head.weight": "lm_head.w_out.weight",
@@ -62,7 +62,7 @@ HF_TO_OLMO_CORE_WEIGHT_MAPPINGS: Dict[str, str] = {
 #: or mappings that require additional manipulation of state, see
 #: :data:`HF_TO_OLMO_CORE_TEMPLATE_MAPPINGS`. If a given HF key can refer to different OLMo Core
 #: states depending on the HF model, see :data:`MODEL_TYPE_SPECIFIC_HF_TO_OLMO_CORE_MODULE_MAPPINGS`.
-HF_TO_OLMO_CORE_MODULE_MAPPINGS: Dict[str, str] = {
+HF_TO_OLMO_CORE_MODULE_MAPPINGS: dict[str, str] = {
     "model.embed_tokens": "embeddings",
     "model.norm": "lm_head.norm",
     "lm_head": "lm_head.w_out",
@@ -98,7 +98,7 @@ HF_TO_OLMO_CORE_MODULE_MAPPINGS: Dict[str, str] = {
 #: one-to-one mappings in :data:`HF_TO_OLMO_CORE_WEIGHT_MAPPINGS`, in case a given HF key can refer to
 #: different OLMo Core states depending on the HF model architecture. You may configure this to change
 #: how HF state maps to OLMo Core state.
-MODEL_TYPE_SPECIFIC_HF_TO_OLMO_CORE_WEIGHT_MAPPINGS: Dict[str, Dict[str, str]] = {
+MODEL_TYPE_SPECIFIC_HF_TO_OLMO_CORE_WEIGHT_MAPPINGS: dict[str, dict[str, str]] = {
     "llama": {
         f"model.layers.{LAYER}.post_attention_layernorm.weight": f"blocks.{LAYER}.feed_forward_norm.weight"
     },
@@ -119,7 +119,7 @@ MODEL_TYPE_SPECIFIC_HF_TO_OLMO_CORE_WEIGHT_MAPPINGS: Dict[str, Dict[str, str]] =
 #: one-to-one mappings in :data:`HF_TO_OLMO_CORE_MODULE_MAPPINGS`, in case a given HF key can refer to
 #: different OLMo Core states depending on the HF model architecture. You may configure this to change
 #: how HF state maps to OLMo Core state.
-MODEL_TYPE_SPECIFIC_HF_TO_OLMO_CORE_MODULE_MAPPINGS: Dict[str, Dict[str, str]] = {
+MODEL_TYPE_SPECIFIC_HF_TO_OLMO_CORE_MODULE_MAPPINGS: dict[str, dict[str, str]] = {
     "llama": {
         f"model.layers.{LAYER}.post_attention_layernorm": f"blocks.{LAYER}.feed_forward_norm"
     },
@@ -145,7 +145,7 @@ MODEL_TYPE_SPECIFIC_HF_TO_OLMO_CORE_MODULE_MAPPINGS: Dict[str, Dict[str, str]] =
 #: additional manipulation of state (e.g. merging dimensions).
 #: For simple one-to-one mappings from HF to OLMo Core, see
 #: :data:`HF_TO_OLMO_CORE_MAPPINGS`.
-HF_TO_OLMO_CORE_TEMPLATE_MAPPINGS: Dict[str, StateMappingTemplate] = {
+HF_TO_OLMO_CORE_TEMPLATE_MAPPINGS: dict[str, StateMappingTemplate] = {
     f"model.layers.{LAYER}.mlp.experts.{EXPERT}.gate_proj.weight": StateMappingTemplate(
         f"model.layers.{LAYER}.mlp.experts.{EXPERT}.gate_proj.weight",
         f"blocks.{LAYER}.feed_forward_moe.experts.mlp.w1",
@@ -180,7 +180,7 @@ HF_TO_OLMO_CORE_TEMPLATE_MAPPINGS: Dict[str, StateMappingTemplate] = {
 #:
 #: This map only captures one-to-one mappings from OLMo Core to HF. For many-to-many mappings
 #: or mappings that require additional manipulation of state, see :data:`OLMO_CORE_TO_HF_TEMPLATE_MAPPINGS`.
-OLMO_CORE_TO_HF_WEIGHT_MAPPINGS: Dict[str, str] = {
+OLMO_CORE_TO_HF_WEIGHT_MAPPINGS: dict[str, str] = {
     "embeddings.weight": "model.embed_tokens.weight",
     "lm_head.norm.weight": "model.norm.weight",
     "lm_head.w_out.weight": "lm_head.weight",
@@ -211,7 +211,7 @@ OLMO_CORE_TO_HF_WEIGHT_MAPPINGS: Dict[str, str] = {
 #:
 #: This map only captures one-to-one mappings from OLMo Core to HF. For many-to-many mappings
 #: or mappings that require additional manipulation of state, see :data:`OLMO_CORE_TO_HF_TEMPLATE_MAPPINGS`.
-OLMO_CORE_TO_HF_MODULE_MAPPINGS: Dict[str, str] = {
+OLMO_CORE_TO_HF_MODULE_MAPPINGS: dict[str, str] = {
     "embeddings": "model.embed_tokens",
     "lm_head.norm": "model.norm",
     "lm_head.w_out": "lm_head",
@@ -250,7 +250,7 @@ OLMO_CORE_TO_HF_MODULE_MAPPINGS: Dict[str, str] = {
 #: additional manipulation of state (e.g. merging dimensions).
 #: For simple one-to-one mappings from OLMo Core to HF, see
 #: :data:`OLMO_CORE_TO_HF_MAPPINGS`.
-OLMO_CORE_TO_HF_TEMPLATE_MAPPINGS: Dict[str, StateMappingTemplate] = {
+OLMO_CORE_TO_HF_TEMPLATE_MAPPINGS: dict[str, StateMappingTemplate] = {
     f"blocks.{LAYER}.feed_forward_moe.experts.mlp.w1": StateMappingTemplate(
         f"blocks.{LAYER}.feed_forward_moe.experts.mlp.w1",
         f"model.layers.{LAYER}.mlp.experts.{EXPERT}.gate_proj.weight",
@@ -285,8 +285,8 @@ OLMO_CORE_TO_HF_TEMPLATE_MAPPINGS: Dict[str, StateMappingTemplate] = {
 #: :data:`OLMO_CORE_TO_HF_TEMPLATE_MAPPINGS`, in case a given OLMo Core key can refer to
 #: different HF states depending on the HF model. You may configure this to change how OLMo Core
 #: state maps to HF state.
-MODEL_TYPE_SPECIFIC_OLMO_CORE_TO_HF_TEMPLATE_MAPPINGS: Dict[
-    str, Dict[str, StateMappingTemplate]
+MODEL_TYPE_SPECIFIC_OLMO_CORE_TO_HF_TEMPLATE_MAPPINGS: dict[
+    str, dict[str, StateMappingTemplate]
 ] = {
     "flex_olmo": {
         f"blocks.{LAYER}.feed_forward_moe.experts.mlp.w1": StateMappingTemplate(
@@ -367,7 +367,7 @@ MODEL_TYPE_SPECIFIC_OLMO_CORE_TO_HF_TEMPLATE_MAPPINGS: Dict[
 
 def _get_hf_model_to_olmo_core_one_to_one_templates(
     model_type: str | None = None,
-) -> List[StateMappingTemplate]:
+) -> list[StateMappingTemplate]:
     mapping_templates = {
         hf_key: StateMappingTemplate(hf_key, olmo_core_key, state_type=StateType.weight)
         for hf_key, olmo_core_key in HF_TO_OLMO_CORE_WEIGHT_MAPPINGS.items()
@@ -410,7 +410,7 @@ def get_converter_from_hf(model_type: str | None = None) -> StateConverter:
     return _get_converter_from_hf(model_type=model_type)
 
 
-def _apply_gemma3_norm_transform(state: Dict[str, Any]) -> Dict[str, Any]:
+def _apply_gemma3_norm_transform(state: dict[str, Any]) -> dict[str, Any]:
     """
     Transform Gemma 3 norm weights from HF format to OLMo format.
 
@@ -430,14 +430,13 @@ def _apply_gemma3_norm_transform(state: Dict[str, Any]) -> Dict[str, Any]:
     ]
 
     for key, value in state.items():
-        if any(pattern in key for pattern in norm_patterns):
-            if isinstance(value, torch.Tensor):
-                state[key] = value + 1.0
+        if any(pattern in key for pattern in norm_patterns) and isinstance(value, torch.Tensor):
+            state[key] = value + 1.0
 
     return state
 
 
-def _apply_qwen3_5_norm_transform(state: Dict[str, Any]) -> Dict[str, Any]:
+def _apply_qwen3_5_norm_transform(state: dict[str, Any]) -> dict[str, Any]:
     """
     Transform Qwen3.5 norm weights from HF format to OLMo format.
 
@@ -453,9 +452,8 @@ def _apply_qwen3_5_norm_transform(state: Dict[str, Any]) -> Dict[str, Any]:
     ]
 
     for key, value in state.items():
-        if any(pattern in key for pattern in norm_patterns):
-            if isinstance(value, torch.Tensor):
-                state[key] = value + 1.0
+        if any(pattern in key for pattern in norm_patterns) and isinstance(value, torch.Tensor):
+            state[key] = value + 1.0
 
     return state
 
@@ -467,7 +465,7 @@ def _get_qwen3_5_text_config(config: PretrainedConfig) -> PretrainedConfig:
     return config
 
 
-def _get_hf_state_value(hf_state: Dict[str, Any], *keys: str) -> Any:
+def _get_hf_state_value(hf_state: dict[str, Any], *keys: str) -> Any:
     """
     Return the first matching value from *keys*, raising if none are present.
     """
@@ -477,7 +475,7 @@ def _get_hf_state_value(hf_state: Dict[str, Any], *keys: str) -> Any:
     raise KeyError(keys[0])
 
 
-def _normalize_qwen3_5_hf_state(hf_state: Dict[str, Any]) -> Dict[str, Any]:
+def _normalize_qwen3_5_hf_state(hf_state: dict[str, Any]) -> dict[str, Any]:
     """
     Normalize HF state dict keys to ``model.layers.*`` / shared text-model keys.
 
@@ -487,7 +485,7 @@ def _normalize_qwen3_5_hf_state(hf_state: Dict[str, Any]) -> Dict[str, Any]:
     Also aliases legacy GDN key names (``o_proj`` / ``o_norm``) to the names used by
     recent Hugging Face checkpoints (``out_proj`` / ``norm``).
     """
-    normalized: Dict[str, Any] = {}
+    normalized: dict[str, Any] = {}
     text_suffixes = (
         "embed_tokens.weight",
         "norm.weight",
@@ -523,14 +521,14 @@ def _normalize_qwen3_5_hf_state(hf_state: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _convert_qwen3_5_gdn_layer(
-    hf_state: Dict[str, Any],
+    hf_state: dict[str, Any],
     layer_idx: int,
     key_dim: int,
     value_dim: int,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     prefix = f"model.layers.{layer_idx}."
     olmo_prefix = f"blocks.{layer_idx}."
-    state: Dict[str, Any] = {}
+    state: dict[str, Any] = {}
 
     in_proj_qkv = hf_state[f"{prefix}linear_attn.in_proj_qkv.weight"]
     state[f"{olmo_prefix}attention.w_q.weight"] = in_proj_qkv[:key_dim]
@@ -589,14 +587,14 @@ def _split_qwen3_5_q_proj(
 
 
 def _convert_qwen3_5_attn_layer(
-    hf_state: Dict[str, Any],
+    hf_state: dict[str, Any],
     layer_idx: int,
     n_heads: int,
     head_dim: int,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     prefix = f"model.layers.{layer_idx}."
     olmo_prefix = f"blocks.{layer_idx}."
-    state: Dict[str, Any] = {}
+    state: dict[str, Any] = {}
 
     q_proj = hf_state[f"{prefix}self_attn.q_proj.weight"]
     w_q, w_g = _split_qwen3_5_q_proj(q_proj, n_heads, head_dim)
@@ -623,8 +621,8 @@ def _convert_qwen3_5_attn_layer(
 @beta_feature
 def convert_qwen3_5_state_from_hf(
     config: PretrainedConfig,
-    hf_state: Dict[str, Any],
-) -> Dict[str, Any]:
+    hf_state: dict[str, Any],
+) -> dict[str, Any]:
     """
     Convert a Hugging Face Qwen3.5 text model state dict to OLMo-core format.
 
@@ -637,7 +635,7 @@ def convert_qwen3_5_state_from_hf(
     text_config = _get_qwen3_5_text_config(config)
     hf_state = _normalize_qwen3_5_hf_state(hf_state)
 
-    layer_types: List[str] = list(text_config.layer_types)
+    layer_types: list[str] = list(text_config.layer_types)
     n_layers: int = text_config.num_hidden_layers
 
     key_dim = text_config.linear_num_key_heads * text_config.linear_key_head_dim
@@ -645,7 +643,7 @@ def convert_qwen3_5_state_from_hf(
     head_dim: int = text_config.head_dim
     n_heads: int = text_config.num_attention_heads
 
-    olmo_state: Dict[str, Any] = {}
+    olmo_state: dict[str, Any] = {}
     if "model.embed_tokens.weight" in hf_state:
         olmo_state["embeddings.weight"] = hf_state["model.embed_tokens.weight"]
     if "model.norm.weight" in hf_state:
@@ -671,9 +669,9 @@ def convert_qwen3_5_state_from_hf(
 
 def _convert_state(
     config: PretrainedConfig,
-    state: Dict[str, Any],
+    state: dict[str, Any],
     converter: StateConverter,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     if not hasattr(config, "num_hidden_layers"):
         raise ValueError(f"Number of hidden layers missing in HF config: {config}")
     n_layers: int = config.num_hidden_layers
@@ -691,10 +689,10 @@ def _convert_state(
 @beta_feature
 def convert_state_from_hf(
     config: PretrainedConfig,
-    hf_state: Dict[str, Any],
+    hf_state: dict[str, Any],
     *,
     model_type: str | None = None,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Converts a model state dict in Hugging Face transformers format into an unsharded state dict of
     OLMo Core format.
@@ -746,7 +744,7 @@ def get_converter_to_hf(model_type: str | None = None) -> StateConverter:
     return _get_converter_to_hf(model_type)
 
 
-def _apply_gemma3_norm_inverse_transform(state: Dict[str, Any]) -> Dict[str, Any]:
+def _apply_gemma3_norm_inverse_transform(state: dict[str, Any]) -> dict[str, Any]:
     """
     Inverse of :func:`_apply_gemma3_norm_transform`: subtracts 1 from norm weights
     so that an OLMo-core checkpoint can be exported back into HF Gemma 3 format.
@@ -762,17 +760,16 @@ def _apply_gemma3_norm_inverse_transform(state: Dict[str, Any]) -> Dict[str, Any
     ]
 
     for key, value in state.items():
-        if any(pattern in key for pattern in norm_patterns):
-            if isinstance(value, torch.Tensor):
-                state[key] = value - 1.0
+        if any(pattern in key for pattern in norm_patterns) and isinstance(value, torch.Tensor):
+            state[key] = value - 1.0
 
     return state
 
 
 @beta_feature
 def convert_state_to_hf(
-    config: PretrainedConfig, olmo_core_state: Dict[str, Any]
-) -> Dict[str, Any]:
+    config: PretrainedConfig, olmo_core_state: dict[str, Any]
+) -> dict[str, Any]:
     """
     Converts an *unsharded* model state dict of OLMo Core format into Hugging Face transformers format.
 
@@ -801,7 +798,7 @@ def convert_state_to_hf(
 
 #: GDN layers: OLMo-core ``blocks.{i}.attention.*`` -> HF ``model.layers.{i}.linear_attn.*``.
 #: These layers use pre-norm in HF (input_layernorm before the sequence mixer).
-HYBRID_GDN_LAYER_KEY_MAP: Dict[str, str] = {
+HYBRID_GDN_LAYER_KEY_MAP: dict[str, str] = {
     "attention.w_q.weight": "linear_attn.q_proj.weight",
     "attention.w_k.weight": "linear_attn.k_proj.weight",
     "attention.w_v.weight": "linear_attn.v_proj.weight",
@@ -824,7 +821,7 @@ HYBRID_GDN_LAYER_KEY_MAP: Dict[str, str] = {
 
 #: Attention layers: OLMo-core ``blocks.{i}.attention.*`` -> HF ``model.layers.{i}.self_attn.*``.
 #: These layers use post-norm in HF (layernorm after the sequence mixer and after the MLP).
-HYBRID_ATTN_LAYER_KEY_MAP: Dict[str, str] = {
+HYBRID_ATTN_LAYER_KEY_MAP: dict[str, str] = {
     "attention.w_q.weight": "self_attn.q_proj.weight",
     "attention.w_k.weight": "self_attn.k_proj.weight",
     "attention.w_v.weight": "self_attn.v_proj.weight",
@@ -839,7 +836,7 @@ HYBRID_ATTN_LAYER_KEY_MAP: Dict[str, str] = {
 }
 
 #: Non-block keys shared across all hybrid models.
-HYBRID_SHARED_KEY_MAP: Dict[str, str] = {
+HYBRID_SHARED_KEY_MAP: dict[str, str] = {
     "embeddings.weight": "model.embed_tokens.weight",
     "lm_head.norm.weight": "model.norm.weight",
     "lm_head.w_out.weight": "lm_head.weight",
@@ -850,9 +847,9 @@ _HYBRID_BLOCK_KEY_RE = re.compile(r"^blocks\.(\d+)\.(.+)$")
 
 @beta_feature
 def convert_hybrid_state_to_hf(
-    state_dict: Dict[str, Any],
-    layer_types: List[str],
-) -> Dict[str, Any]:
+    state_dict: dict[str, Any],
+    layer_types: list[str],
+) -> dict[str, Any]:
     """
     Convert an OLMo-core hybrid state dict to HF ``olmo_hybrid`` format.
 
@@ -863,7 +860,7 @@ def convert_hybrid_state_to_hf(
     :param state_dict: An unsharded OLMo-core model state dict.
     :param layer_types: Per-layer type list (``"linear_attention"`` or ``"full_attention"``).
     """
-    hf_state: Dict[str, Any] = {}
+    hf_state: dict[str, Any] = {}
 
     for olmo_key, value in state_dict.items():
         # Try shared (non-block) keys first.

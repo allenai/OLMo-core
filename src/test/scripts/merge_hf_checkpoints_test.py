@@ -5,7 +5,7 @@ import gc
 import importlib.util
 import json
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import pytest
 import torch
@@ -103,7 +103,7 @@ def create_hf_checkpoint_with_seed(
         json.dump(tokenizer_config, f, indent=2)
 
     # Create a minimal tokenizer.json for PreTrainedTokenizerFast
-    tokenizer_json: Dict[str, Any] = {
+    tokenizer_json: dict[str, Any] = {
         "version": "1.0",
         "truncation": None,
         "padding": None,
@@ -173,9 +173,9 @@ def create_hf_checkpoint_with_seed(
 
 
 def run_merge_hf_cli(
-    model_paths: List[str],
+    model_paths: list[str],
     output_path: str,
-    revisions: Optional[List[str]] = None,
+    revisions: list[str] | None = None,
     device: str = "cpu",
 ):
     """
@@ -232,7 +232,7 @@ def load_hf_checkpoint(checkpoint_dir: Path) -> tuple:
 
 def verify_averaged_weights_hf(
     merged_checkpoint: Path,
-    source_checkpoints: List[Path],
+    source_checkpoints: list[Path],
     tolerance: float = 1e-5,
 ) -> None:
     """
@@ -256,7 +256,7 @@ def verify_averaged_weights_hf(
         gc.collect()
 
     # Verify each parameter is correctly averaged
-    for param_name in merged_state_dict.keys():
+    for param_name in merged_state_dict:
         merged_value = merged_state_dict[param_name]
 
         # Compute expected average

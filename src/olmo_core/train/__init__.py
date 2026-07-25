@@ -64,18 +64,18 @@ from .config import TrainerConfig
 from .trainer import Trainer
 
 __all__ = [
-    "prepare_training_environment",
-    "teardown_training_environment",
-    "TrainerConfig",
-    "Trainer",
-    "CheckpointerConfig",
     "Checkpointer",
-    "LoadStrategy",
+    "CheckpointerConfig",
     "Duration",
     "DurationUnit",
-    "ReduceType",
+    "LoadStrategy",
     "MetricMergeStrategy",
+    "ReduceType",
     "StepSkipRange",
+    "Trainer",
+    "TrainerConfig",
+    "prepare_training_environment",
+    "teardown_training_environment",
 ]
 
 
@@ -84,11 +84,11 @@ log = logging.getLogger(__name__)
 
 def prepare_training_environment(
     *,
-    seed: Optional[int] = None,
-    backend: Optional[str] = "cpu:gloo,cuda:nccl",
+    seed: int | None = None,
+    backend: str | None = "cpu:gloo,cuda:nccl",
     timeout: timedelta = timedelta(minutes=15),
-    log_filter_type: Optional[LogFilterType] = None,
-    shared_filesystem: Optional[bool] = None,
+    log_filter_type: LogFilterType | None = None,
+    shared_filesystem: bool | None = None,
 ):
     """
     Prepare the environment for training, including setting up the distributed process group

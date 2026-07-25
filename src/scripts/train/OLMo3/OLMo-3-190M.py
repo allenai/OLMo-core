@@ -1,5 +1,4 @@
 from datetime import datetime
-from typing import Optional
 
 from olmo_core.config import DType
 from olmo_core.data import (
@@ -57,7 +56,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     work_dir = get_work_dir(root_dir)
     save_dir = f"{root_dir}/checkpoints/{cli_context.run_name}"
 
-    beaker_launch_config: Optional[BeakerLaunchConfig] = build_launch_config(
+    beaker_launch_config: BeakerLaunchConfig | None = build_launch_config(
         name=cli_context.run_name,
         cmd=cli_context.remote_cmd,
         cluster=cli_context.cluster,
@@ -85,7 +84,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
             weight_decay=0.1,
             betas=(0.9, 0.95),
             group_overrides=[
-                OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
+                OptimGroupOverride(params=["embeddings.weight"], opts={"weight_decay": 0.0})
             ],
         ),
         compile_model=True,

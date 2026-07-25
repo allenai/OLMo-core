@@ -1,5 +1,6 @@
 from abc import ABCMeta, abstractmethod
-from typing import Any, Callable, Dict, Iterable, Iterator, Optional
+from collections.abc import Callable, Iterable, Iterator
+from typing import Any
 
 import torch
 
@@ -35,9 +36,9 @@ class Evaluator(metaclass=ABCMeta):
         self,
         *,
         name: str,
-        batches: Optional[Iterable[Dict[str, Any]]] = None,
-        batches_factory: Optional[Callable[[], Iterable[Dict[str, Any]]]] = None,
-        device: Optional[torch.device] = None,
+        batches: Iterable[dict[str, Any]] | None = None,
+        batches_factory: Callable[[], Iterable[dict[str, Any]]] | None = None,
+        device: torch.device | None = None,
         deterministic: bool = True,
     ):
         if batches is None:
@@ -54,7 +55,7 @@ class Evaluator(metaclass=ABCMeta):
         self.device = device
         self.deterministic = deterministic
 
-    def __iter__(self) -> Iterator[Dict[str, Any]]:
+    def __iter__(self) -> Iterator[dict[str, Any]]:
         """
         Iterator over the evaluator's batches.
         """
@@ -69,8 +70,7 @@ class Evaluator(metaclass=ABCMeta):
                 self.batches.reshuffle(epoch=1, in_memory=True)
             else:
                 self.batches.reshuffle(in_memory=True)
-        for batch in self.batches:
-            yield batch
+        yield from self.batches
         if isinstance(self.batches, DataLoaderBase):
             self.batches.reset()
 
@@ -79,7 +79,7 @@ class Evaluator(metaclass=ABCMeta):
         return self.name
 
     @property
-    def total_batches(self) -> Optional[int]:
+    def total_batches(self) -> int | None:
         """
         Get the total number of batches in an eval loop if it's known ahead of time.
         """
@@ -90,7 +90,7 @@ class Evaluator(metaclass=ABCMeta):
 
     @abstractmethod
     def update_metrics(
-        self, batch: Dict[str, Any], ce_loss: Optional[torch.Tensor], logits: Optional[torch.Tensor]
+        self, batch: dict[str, Any], ce_loss: torch.Tensor | None, logits: torch.Tensor | None
     ) -> None:
         """
         Update metrics with from the ``batch`` just processed and the corresponding ``logits``.
@@ -103,7 +103,7 @@ class Evaluator(metaclass=ABCMeta):
         raise NotImplementedError
 
     @abstractmethod
-    def compute_metrics(self) -> Dict[str, torch.Tensor]:
+    def compute_metrics(self) -> dict[str, torch.Tensor]:
         """
         Compute the final value of the metrics for the current evaluation loop.
         The metrics returned should already be reduced, if needed.

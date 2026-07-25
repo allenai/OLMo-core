@@ -1,6 +1,5 @@
 import math
 from pathlib import Path
-from typing import List
 
 import numpy as np
 import pytest
@@ -580,7 +579,7 @@ def test_numpy_fsl_mixture_dataset_with_repetition(
         ), f"Instance {idx} has incorrect length: {len(instance['input_ids'])} != {sequence_length}"
 
 
-def write_data_file(data: List[int], path: Path, dtype, eos_token_id: int):
+def write_data_file(data: list[int], path: Path, dtype, eos_token_id: int):
     path.parent.mkdir(exist_ok=True, parents=True)
     mmap = np.memmap(path, mode="w+", dtype=dtype, shape=(len(data),))
     mmap[:] = data

@@ -1,25 +1,13 @@
 import logging
 from abc import ABCMeta, abstractmethod
 from collections import OrderedDict
+from collections.abc import Iterable
 from dataclasses import dataclass
 from fnmatch import fnmatch
-from typing import (
-    Any,
-    Dict,
-    Generic,
-    Iterable,
-    List,
-    Optional,
-    Set,
-    Tuple,
-    Type,
-    TypeVar,
-    Union,
-    cast,
-)
+from typing import Any, Generic, TypeVar, cast
 
 import torch
-import torch.nn as nn
+from torch import nn
 
 from olmo_core.nn.transformer import Transformer
 
@@ -42,12 +30,12 @@ INITIAL_LR_FIELD = "initial_lr"
 
 @dataclass
 class OptimGroupOverride(Config):
-    params: List[str]
+    params: list[str]
     """
     A list of fully qualified parameter names (FQNs) or wild card to match FQNs.
     """
 
-    opts: Dict[str, Any]
+    opts: dict[str, Any]
     """
     Options to set in the corresponding param group.
     """
@@ -59,7 +47,7 @@ class OptimConfig(Config, Registrable, Generic[Opt], metaclass=ABCMeta):
     Base class for :class:`~torch.optim.Optimizer` configs.
     """
 
-    group_overrides: Optional[List[OptimGroupOverride]] = None
+    group_overrides: list[OptimGroupOverride] | None = None
     """
     Use this to pull out groups parameters into a separate param groups with their own options.
     """
@@ -75,7 +63,7 @@ class OptimConfig(Config, Registrable, Generic[Opt], metaclass=ABCMeta):
         due to the LR being restored to a float instead of a tensor.
     """
 
-    fixed_fields: Tuple[str, ...] = (INITIAL_LR_FIELD,)
+    fixed_fields: tuple[str, ...] = (INITIAL_LR_FIELD,)
     """
     These are fields that should not be overridden by the value in a checkpoint after
     loading optimizer state.
@@ -88,12 +76,12 @@ class OptimConfig(Config, Registrable, Generic[Opt], metaclass=ABCMeta):
     def _expand_param_globs(
         self,
         go: OptimGroupOverride,
-        all_params: Dict[str, Any],
-        frozen_param_names: Set[str],
+        all_params: dict[str, Any],
+        frozen_param_names: set[str],
         g_idx: int,
         strict: bool = True,
     ) -> OptimGroupOverride:
-        param_names: List[str] = []
+        param_names: list[str] = []
         for pattern in go.params:
             matches = 0
             for name in list(all_params.keys()):
@@ -119,7 +107,7 @@ class OptimConfig(Config, Registrable, Generic[Opt], metaclass=ABCMeta):
 
     def build_groups(
         self, model: nn.Module, strict: bool = True
-    ) -> Union[Iterable[torch.Tensor], List[Dict[str, Any]]]:
+    ) -> Iterable[torch.Tensor] | list[dict[str, Any]]:
         """
         Build parameters groups.
 
@@ -127,7 +115,7 @@ class OptimConfig(Config, Registrable, Generic[Opt], metaclass=ABCMeta):
         :param strict: If ``True`` an error is raised if a pattern in ``group_overrides`` doesn't
             match any parameter.
         """
-        all_params: Dict[str, torch.Tensor] = OrderedDict()
+        all_params: dict[str, torch.Tensor] = OrderedDict()
         frozen_params: set = set()
         for n, p in model.named_parameters():
             if p.requires_grad:
@@ -143,7 +131,7 @@ class OptimConfig(Config, Registrable, Generic[Opt], metaclass=ABCMeta):
         # Treat no overrides as its own override group
         overridden_param_names = {name for go in group_overrides for name in go.params}
         default_override = OptimGroupOverride(
-            [name for name in all_params.keys() if name not in overridden_param_names], {}
+            [name for name in all_params if name not in overridden_param_names], {}
         )
         group_overrides.append(default_override)
 
@@ -155,7 +143,7 @@ class OptimConfig(Config, Registrable, Generic[Opt], metaclass=ABCMeta):
 
     @classmethod
     @abstractmethod
-    def optimizer(cls) -> Type[Opt]:
+    def optimizer(cls) -> type[Opt]:
         """
         Get the optimizer class associated with this config.
         """
@@ -179,9 +167,9 @@ class OptimConfig(Config, Registrable, Generic[Opt], metaclass=ABCMeta):
         )
 
         # Set 'lr' and 'initial_lr' in each group if needed.
-        fixed_fields_per_group: List[Dict[str, Any]] = [{} for _ in optim.param_groups]
+        fixed_fields_per_group: list[dict[str, Any]] = [{} for _ in optim.param_groups]
         for fixed_fields, group in zip(fixed_fields_per_group, optim.param_groups):
-            lr: Optional[float] = None
+            lr: float | None = None
             if LR_FIELD in group:
                 lr = group[LR_FIELD]
             elif hasattr(self, LR_FIELD):
@@ -234,10 +222,10 @@ class MatrixAwareOptimConfig(OptimConfig, Generic[Opt]):
     """
 
     @classmethod
-    def optimizer(cls) -> Type[Opt]:
+    def optimizer(cls) -> type[Opt]:
         raise NotImplementedError
 
-    def categorize_parameters(self, model: nn.Module) -> Dict[str, List[str]]:
+    def categorize_parameters(self, model: nn.Module) -> dict[str, list[str]]:
         assert isinstance(model, Transformer)
 
         embed_params = [
@@ -276,7 +264,7 @@ class MatrixAwareOptimConfig(OptimConfig, Generic[Opt]):
             "lm_head": lm_head_params,
         }
 
-    def default_group_overrides(self, model: nn.Module) -> List[OptimGroupOverride]:
+    def default_group_overrides(self, model: nn.Module) -> list[OptimGroupOverride]:
         """
         Default group overrides for matrix-aware optimizers.
         """
@@ -284,7 +272,7 @@ class MatrixAwareOptimConfig(OptimConfig, Generic[Opt]):
 
     def build_groups(
         self, model: torch.nn.Module, strict: bool = True
-    ) -> Union[Iterable[torch.Tensor], list[dict[str, Any]]]:
+    ) -> Iterable[torch.Tensor] | list[dict[str, Any]]:
         """
         Build parameters groups.
 
@@ -314,7 +302,7 @@ class MatrixAwareOptimConfig(OptimConfig, Generic[Opt]):
         # Treat no overrides as its own override group
         overridden_param_names = {name for go in group_overrides for name in go.params}
         default_override = OptimGroupOverride(
-            [name for name in all_params.keys() if name not in overridden_param_names], {}
+            [name for name in all_params if name not in overridden_param_names], {}
         )
         group_overrides.append(default_override)
 

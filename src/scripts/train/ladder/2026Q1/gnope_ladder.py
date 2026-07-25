@@ -16,9 +16,9 @@ def configure_model(args: argparse.Namespace) -> TransformerModelConfigurator:
         rank_microbatch_size=None
         if args.rank_mbz is None
         else args.rank_mbz * args.sequence_length,
-        model_construction_kwargs=dict(
-            no_global_rope=True,
-        ),
+        model_construction_kwargs={
+            "no_global_rope": True,
+        },
     )
 
 

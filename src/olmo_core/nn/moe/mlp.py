@@ -1,12 +1,11 @@
 import logging
 import math
 import warnings
-from typing import List, Optional
 
 import torch
 import torch.distributed as dist
-import torch.nn as nn
 import torch.nn.functional as F
+from torch import nn
 from torch.distributed import DeviceMesh
 from torch.distributed.fsdp import fully_shard
 from torch.distributed.tensor import Placement, Shard, distribute_tensor
@@ -23,7 +22,7 @@ try:
 except ImportError:
     gmm = None
 
-__all__ = ["MoEMLP", "DroplessMoEMLP"]
+__all__ = ["DroplessMoEMLP", "MoEMLP"]
 
 
 log = logging.getLogger(__name__)
@@ -44,8 +43,8 @@ class MoEMLPBase(nn.Module):
 
         self.num_local_experts = num_experts
         self.hidden_sharding_degree = 1
-        self.ep_mesh: Optional[DeviceMesh] = None
-        self.ep_pg: Optional[dist.ProcessGroup] = None
+        self.ep_mesh: DeviceMesh | None = None
+        self.ep_pg: dist.ProcessGroup | None = None
 
     def apply_ep(self, ep_mesh: DeviceMesh):
         """
@@ -79,7 +78,7 @@ class MoEMLPBase(nn.Module):
         self.ep_pg = mesh.get_group()
         self.num_local_experts = self.num_experts // num_shards
 
-        placements: List[Placement] = [Shard(0)]
+        placements: list[Placement] = [Shard(0)]
         self.register_parameter("w1", nn.Parameter(distribute_tensor(self.w1, mesh, placements)))  # type: ignore
         self.register_parameter("w2", nn.Parameter(distribute_tensor(self.w2, mesh, placements)))  # type: ignore
         self.register_parameter("w3", nn.Parameter(distribute_tensor(self.w3, mesh, placements)))  # type: ignore
@@ -117,7 +116,6 @@ class MoEMLPBase(nn.Module):
         """
         # TODO: do we need to do anything special here like with FSDP?
         del world_mesh
-        pass
 
 
 class MoEMLP(MoEMLPBase):

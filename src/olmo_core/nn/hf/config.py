@@ -1,5 +1,5 @@
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from transformers import Olmo2Config, PretrainedConfig
 
@@ -267,25 +267,25 @@ def is_olmo_hybrid_model(model: Transformer) -> bool:
 
 
 @beta_feature
-def get_hybrid_layer_types(model: Transformer) -> List[str]:
+def get_hybrid_layer_types(model: Transformer) -> list[str]:
     """
     Return a per-layer type list for a hybrid model.
 
     Each entry is ``"linear_attention"`` (GDN) or ``"full_attention"`` (standard attention),
     matching the HF ``olmo_hybrid`` config format.
     """
-    layer_types: List[str] = []
+    layer_types: list[str] = []
     for idx, block in model.blocks.items():
         if isinstance(block.attention, GatedDeltaNet):
             layer_types.append("linear_attention")
         elif isinstance(block.attention, Attention):
             layer_types.append("full_attention")
         else:
-            raise ValueError(f"Unknown sequence mixer type at layer {idx}: {type(block.attention)}")
+            raise TypeError(f"Unknown sequence mixer type at layer {idx}: {type(block.attention)}")
     return layer_types
 
 
-def _get_hybrid_rope_scaling(model: Transformer, layer_types: List[str]) -> Optional[dict]:
+def _get_hybrid_rope_scaling(model: Transformer, layer_types: list[str]) -> dict | None:
     """
     Extract the RoPE scaling config from attention blocks.  GDN layers are skipped
     because they don't use RoPE.
@@ -317,9 +317,9 @@ def _get_hybrid_rope_scaling(model: Transformer, layer_types: List[str]) -> Opti
 @beta_feature
 def get_hybrid_hf_config(
     model: Transformer,
-    layer_types: List[str],
+    layer_types: list[str],
     max_seq_len: int = 65536,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Build the ``config.json`` dict for a HF ``olmo_hybrid`` model.
 
@@ -332,8 +332,8 @@ def get_hybrid_hf_config(
     """
     blocks = list(model.blocks.values())
 
-    attn_block: Optional[TransformerBlock] = None
-    gdn_block: Optional[TransformerBlock] = None
+    attn_block: TransformerBlock | None = None
+    gdn_block: TransformerBlock | None = None
     for lt, block in zip(layer_types, blocks):
         if lt == "full_attention" and attn_block is None:
             attn_block = block
@@ -349,7 +349,7 @@ def get_hybrid_hf_config(
     gdn: GatedDeltaNet = gdn_block.attention
 
     # RoPE (from attention blocks only)
-    rope_parameters: Optional[dict] = None
+    rope_parameters: dict | None = None
     if attn.rope is not None:
         rope_theta = float(attn.rope.theta)
         rope_scaling = _get_hybrid_rope_scaling(model, layer_types)
@@ -370,7 +370,7 @@ def get_hybrid_hf_config(
             "outputs may not match exactly."
         )
 
-    config: Dict[str, Any] = {
+    config: dict[str, Any] = {
         "model_type": "olmo_hybrid",
         "architectures": ["OlmoHybridForCausalLM"],
         # Standard transformer fields

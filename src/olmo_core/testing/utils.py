@@ -4,8 +4,7 @@ import os
 import pytest
 import torch
 
-import olmo_core.nn.attention.flash_attn_api as flash_attn_api
-import olmo_core.nn.attention.flash_linear_attn_api as flash_linear_attn_api
+from olmo_core.nn.attention import flash_attn_api, flash_linear_attn_api
 
 log = logging.getLogger(__name__)
 

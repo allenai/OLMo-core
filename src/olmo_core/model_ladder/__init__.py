@@ -13,15 +13,15 @@ from .transformer_model_configurator import (
 from .wsds_chinchilla_run_configurator import WSDSChinchillaRunConfigurator
 
 __all__ = [
+    "DeviceMeshSpec",
+    "ModelConfigurator",
     # Base classes.
     "ModelLadder",
-    "ModelConfigurator",
-    "RunConfigurator",
+    "Olmo3ModelConfigurator",
     "RunCheckpointInfo",
-    "DeviceMeshSpec",
+    "RunConfigurator",
+    "TransformerModelConfigurator",
+    "TransformerSize",
     # Concrete implementations.
     "WSDSChinchillaRunConfigurator",
-    "TransformerModelConfigurator",
-    "Olmo3ModelConfigurator",
-    "TransformerSize",
 ]

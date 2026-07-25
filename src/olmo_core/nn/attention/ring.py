@@ -1,6 +1,6 @@
 from abc import ABCMeta, abstractmethod
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any
 
 import torch
 import torch.nn.functional as F
@@ -62,11 +62,11 @@ class RingAttentionLoadBalancer(metaclass=ABCMeta):
     def batch_shard(
         self,
         *,
-        inputs: List[torch.Tensor],
-        seq_dims: List[int],
-        pad_values: Optional[List[Union[int, float]]] = None,
-        length_multiple: Optional[int] = None,
-    ) -> List[torch.Tensor]:
+        inputs: list[torch.Tensor],
+        seq_dims: list[int],
+        pad_values: list[int | float] | None = None,
+        length_multiple: int | None = None,
+    ) -> list[torch.Tensor]:
         """
         Shard inputs on their sequence dimension, optionally adding padding if needed.
 
@@ -81,12 +81,12 @@ class RingAttentionLoadBalancer(metaclass=ABCMeta):
     def batch_shard_by_document(
         self,
         *,
-        inputs: List[torch.Tensor],
-        seq_dims: List[int],
+        inputs: list[torch.Tensor],
+        seq_dims: list[int],
         cu_doc_lens: torch.Tensor,
-        pad_values: Optional[List[Union[int, float]]] = None,
-        length_multiple: Optional[int] = None,
-    ) -> Tuple[List[torch.Tensor], Dict[str, Any]]:
+        pad_values: list[int | float] | None = None,
+        length_multiple: int | None = None,
+    ) -> tuple[list[torch.Tensor], dict[str, Any]]:
         """
         Same as :meth:`batch_shard` but for strategies that support intra-document masking.
 
@@ -104,13 +104,13 @@ class RingAttentionZigZagLoadBalancer(RingAttentionLoadBalancer):
     def batch_shard(
         self,
         *,
-        inputs: List[torch.Tensor],
-        seq_dims: List[int],
-        pad_values: Optional[List[Union[int, float]]] = None,
-        length_multiple: Optional[int] = None,
-    ) -> List[torch.Tensor]:
+        inputs: list[torch.Tensor],
+        seq_dims: list[int],
+        pad_values: list[int | float] | None = None,
+        length_multiple: int | None = None,
+    ) -> list[torch.Tensor]:
         assert len(inputs) == len(seq_dims)
-        assert len(set(x.shape[seq_dim] for x, seq_dim in zip(inputs, seq_dims))) == 1
+        assert len({x.shape[seq_dim] for x, seq_dim in zip(inputs, seq_dims)}) == 1
         if pad_values is not None:
             assert len(inputs) == len(pad_values)
 
@@ -149,14 +149,14 @@ class RingAttentionZigZagLoadBalancer(RingAttentionLoadBalancer):
     def batch_shard_by_document(
         self,
         *,
-        inputs: List[torch.Tensor],
-        seq_dims: List[int],
+        inputs: list[torch.Tensor],
+        seq_dims: list[int],
         cu_doc_lens: torch.Tensor,
-        pad_values: Optional[List[Union[int, float]]] = None,
-        length_multiple: Optional[int] = None,
-    ) -> Tuple[List[torch.Tensor], Dict[str, Any]]:
+        pad_values: list[int | float] | None = None,
+        length_multiple: int | None = None,
+    ) -> tuple[list[torch.Tensor], dict[str, Any]]:
         assert len(inputs) == len(seq_dims)
-        assert len(set(x.shape[seq_dim] for x, seq_dim in zip(inputs, seq_dims))) == 1
+        assert len({x.shape[seq_dim] for x, seq_dim in zip(inputs, seq_dims)}) == 1
         if pad_values is not None:
             assert len(inputs) == len(pad_values)
 
@@ -169,7 +169,7 @@ class RingAttentionZigZagLoadBalancer(RingAttentionLoadBalancer):
 
         out = []
         padding_added = [0 for _ in range(len(cu_doc_lens) - 1)]
-        final_padding: Optional[int] = None if length_multiple is None else 0
+        final_padding: int | None = None if length_multiple is None else 0
         for x, seq_dim, pad_value in zip(
             inputs,
             seq_dims,
@@ -229,15 +229,15 @@ class RingAttentionZigZagLoadBalancer(RingAttentionLoadBalancer):
 
         local_max_doc_len = (local_cu_doc_lens[1:] - local_cu_doc_lens[:-1]).max().item()
 
-        return out, dict(cu_doc_lens=local_cu_doc_lens, max_doc_len=local_max_doc_len)
+        return out, {"cu_doc_lens": local_cu_doc_lens, "max_doc_len": local_max_doc_len}
 
     def pad(
         self,
         x: torch.Tensor,
         seq_dim: int,
-        value: Union[int, float],
-        length_multiple: Optional[int] = None,
-    ) -> Tuple[torch.Tensor, int]:
+        value: float,
+        length_multiple: int | None = None,
+    ) -> tuple[torch.Tensor, int]:
         if length_multiple is None:
             length_multiple = 2 * self.cp_world_size
         pad_to = ensure_multiple_of(x.shape[seq_dim], length_multiple)
@@ -270,11 +270,11 @@ class RingAttentionLlama3LoadBalancer(RingAttentionLoadBalancer):
     def batch_shard(
         self,
         *,
-        inputs: List[torch.Tensor],
-        seq_dims: List[int],
-        pad_values: Optional[List[Union[int, float]]] = None,
-        length_multiple: Optional[int] = None,
-    ) -> List[torch.Tensor]:
+        inputs: list[torch.Tensor],
+        seq_dims: list[int],
+        pad_values: list[int | float] | None = None,
+        length_multiple: int | None = None,
+    ) -> list[torch.Tensor]:
         del inputs, seq_dims, pad_values, length_multiple
         raise NotImplementedError(
             f"{self.__class__.__name__} should only be used with intra-document masking. "
@@ -284,12 +284,12 @@ class RingAttentionLlama3LoadBalancer(RingAttentionLoadBalancer):
     def batch_shard_by_document(
         self,
         *,
-        inputs: List[torch.Tensor],
-        seq_dims: List[int],
+        inputs: list[torch.Tensor],
+        seq_dims: list[int],
         cu_doc_lens: torch.Tensor,
-        pad_values: Optional[List[Union[int, float]]] = None,
-        length_multiple: Optional[int] = None,
-    ) -> Tuple[List[torch.Tensor], Dict[str, Any]]:
+        pad_values: list[int | float] | None = None,
+        length_multiple: int | None = None,
+    ) -> tuple[list[torch.Tensor], dict[str, Any]]:
         try:
             from ring_flash_attn import llama3_flash_attn_prepare_cu_seqlens
         except ImportError as e:
@@ -369,21 +369,21 @@ class RingAttentionLlama3LoadBalancer(RingAttentionLoadBalancer):
             world_size=self.cp_world_size,
         )
 
-        return out, dict(
-            cu_doc_lens_q=cu_doc_lens_q,
-            cu_doc_lens_k=cu_doc_lens_k,
-            max_doc_len_q=max_doc_len_q,
-            max_doc_len_k=max_doc_len_k,
-            local_k_slice=local_k_slice,
-        )
+        return out, {
+            "cu_doc_lens_q": cu_doc_lens_q,
+            "cu_doc_lens_k": cu_doc_lens_k,
+            "max_doc_len_q": max_doc_len_q,
+            "max_doc_len_k": max_doc_len_k,
+            "local_k_slice": local_k_slice,
+        }
 
     def pad(
         self,
         x: torch.Tensor,
         seq_dim: int,
         padding_to_add: int,
-        value: Union[int, float],
-    ) -> Tuple[torch.Tensor, int]:
+        value: float,
+    ) -> tuple[torch.Tensor, int]:
         padding = (0, 0) * (x.ndim - seq_dim - 1) + (0, padding_to_add)
         return F.pad(x, padding, value=value), padding_to_add
 
@@ -400,13 +400,13 @@ class UlyssesLoadBalancer(RingAttentionLoadBalancer):
     def batch_shard(
         self,
         *,
-        inputs: List[torch.Tensor],
-        seq_dims: List[int],
-        pad_values: Optional[List[Union[int, float]]] = None,
-        length_multiple: Optional[int] = None,
-    ) -> List[torch.Tensor]:
+        inputs: list[torch.Tensor],
+        seq_dims: list[int],
+        pad_values: list[int | float] | None = None,
+        length_multiple: int | None = None,
+    ) -> list[torch.Tensor]:
         assert len(inputs) == len(seq_dims)
-        assert len(set(x.shape[seq_dim] for x, seq_dim in zip(inputs, seq_dims))) == 1
+        assert len({x.shape[seq_dim] for x, seq_dim in zip(inputs, seq_dims)}) == 1
         if pad_values is not None:
             assert len(inputs) == len(pad_values)
 
@@ -450,12 +450,12 @@ class UlyssesLoadBalancer(RingAttentionLoadBalancer):
     def batch_shard_by_document(
         self,
         *,
-        inputs: List[torch.Tensor],
-        seq_dims: List[int],
+        inputs: list[torch.Tensor],
+        seq_dims: list[int],
         cu_doc_lens: torch.Tensor,
-        pad_values: Optional[List[Union[int, float]]] = None,
-        length_multiple: Optional[int] = None,
-    ) -> Tuple[List[torch.Tensor], Dict[str, Any]]:
+        pad_values: list[int | float] | None = None,
+        length_multiple: int | None = None,
+    ) -> tuple[list[torch.Tensor], dict[str, Any]]:
         # Ulysses reconstructs full sequences via all-to-all, so we don't shard cu_doc_lens.
         # We just shard the inputs and pass through the original document boundaries.
         assert len(inputs) == len(seq_dims)
@@ -502,15 +502,15 @@ class UlyssesLoadBalancer(RingAttentionLoadBalancer):
 
         # Pass through the (possibly padded) cu_doc_lens and max_doc_len
         # since Ulysses reconstructs full sequences before attention
-        return out, dict(cu_doc_lens=cu_doc_lens, max_doc_len=max_doc_len)
+        return out, {"cu_doc_lens": cu_doc_lens, "max_doc_len": max_doc_len}
 
     def pad(
         self,
         x: torch.Tensor,
         seq_dim: int,
-        value: Union[int, float],
-        length_multiple: Optional[int] = None,
-    ) -> Tuple[torch.Tensor, int]:
+        value: float,
+        length_multiple: int | None = None,
+    ) -> tuple[torch.Tensor, int]:
         if length_multiple is None:
             length_multiple = self.cp_world_size
         pad_to = ensure_multiple_of(x.shape[seq_dim], length_multiple)

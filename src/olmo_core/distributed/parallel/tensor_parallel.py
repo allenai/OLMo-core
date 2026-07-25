@@ -1,10 +1,9 @@
 import logging
 from dataclasses import dataclass
 from functools import partial
-from typing import Optional
 
 import torch
-import torch.nn as nn
+from torch import nn
 from torch.distributed import DeviceMesh
 from torch.distributed.tensor import Placement, Shard, distribute_module
 from torch.distributed.tensor.parallel import SequenceParallel as _SequenceParallel
@@ -46,7 +45,7 @@ class SequenceParallel(_SequenceParallel):
         *,
         sequence_dim: int = 1,
         use_local_output: bool = False,
-        output_layouts: Optional[Placement] = None,
+        output_layouts: Placement | None = None,
     ):
         super().__init__(sequence_dim=sequence_dim, use_local_output=use_local_output)
         self.output_layouts = (output_layouts or Shard(sequence_dim),)

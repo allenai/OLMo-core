@@ -21,7 +21,7 @@ from argparse import ArgumentParser
 from functools import partial
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Any, Dict, Optional, Tuple
+from typing import Any
 
 import rich
 import torch
@@ -110,8 +110,8 @@ def _get_tokenizer_config(tokenizer_id: str) -> TokenizerConfig:
 def convert_checkpoint_from_hf(
     hf_checkpoint_path: str | Path,
     output_path: str | Path,
-    transformer_config_dict: Dict[str, Any],
-    tokenizer_config_dict: Dict[str, Any],
+    transformer_config_dict: dict[str, Any],
+    tokenizer_config_dict: dict[str, Any],
     *,
     hf_revision: str = "main",
     validate: bool = True,
@@ -130,14 +130,10 @@ def convert_checkpoint_from_hf(
         tokenizer_config_dict: Dictionary form of OLMo core tokenizer config
     """
     # Remove deprecated transformer config options
-    if "compile" in transformer_config_dict:
-        del transformer_config_dict["compile"]
-    if "dp_config" in transformer_config_dict:
-        del transformer_config_dict["dp_config"]
-    if "tp_config" in transformer_config_dict:
-        del transformer_config_dict["tp_config"]
-    if "float8_config" in transformer_config_dict:
-        del transformer_config_dict["float8_config"]
+    transformer_config_dict.pop("compile", None)
+    transformer_config_dict.pop("dp_config", None)
+    transformer_config_dict.pop("tp_config", None)
+    transformer_config_dict.pop("float8_config", None)
 
     model_config = TransformerConfig.from_dict(transformer_config_dict)
     rich.print(model_config)
@@ -227,8 +223,8 @@ def convert_checkpoint_from_hf(
                     # We need to reshape the w1 and w3 weights for the dropless MoE because conversion
                     # can't distinguish between dropless and regular MoE, and dropless MoE
                     # weights are shaped differently to regular MoE.
-                    if k.endswith(".feed_forward_moe.experts.mlp.w1") or k.endswith(
-                        ".feed_forward_moe.experts.mlp.w3"
+                    if k.endswith(
+                        (".feed_forward_moe.experts.mlp.w1", ".feed_forward_moe.experts.mlp.w3")
                     ):
                         assert isinstance(v, torch.Tensor), (k, v)
                         model_state_dict[k] = (
@@ -283,11 +279,11 @@ def convert_checkpoint_from_hf(
 def _register_debug_hooks(hf_model: torch.nn.Module, model: Transformer):
     MAX_DIM_SIZE = 1_000_000
 
-    olmo_core_debug_state: Dict[str, Tuple[int, torch.Tensor]] = {}
-    hf_debug_state: Dict[str, Tuple[int, torch.Tensor]] = {}
+    olmo_core_debug_state: dict[str, tuple[int, torch.Tensor]] = {}
+    hf_debug_state: dict[str, tuple[int, torch.Tensor]] = {}
 
     def module_hook(
-        debug_state: Dict[str, Tuple[int, torch.Tensor]],
+        debug_state: dict[str, tuple[int, torch.Tensor]],
         model_type: str,
         name: str,
         _: torch.nn.Module,
@@ -434,7 +430,7 @@ def validate_conversion(
         if n_experts:
             placeholder_bounds[TemplatePlaceholder.EXPERT] = n_experts
 
-        hf_debug_empty_state = {key.split("|")[0]: None for key in hf_state.keys()}
+        hf_debug_empty_state = {key.split("|")[0]: None for key in hf_state}
         state_mapping = state_converter.get_mappings(
             hf_debug_empty_state, placeholder_bounds, state_type=StateType.module
         )
@@ -516,7 +512,7 @@ def validate_conversion(
     )
 
 
-def load_config(config_path: PathOrStr) -> Optional[dict]:
+def load_config(config_path: PathOrStr) -> dict | None:
     if not file_exists(config_path):
         log.warning(f"Config file not found at {config_path}")
         return None

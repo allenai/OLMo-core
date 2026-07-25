@@ -1,6 +1,6 @@
 import os
 
-import olmo_core.fs_cache as fs_cache
+from olmo_core import fs_cache
 
 
 def test_fs_cache(tmp_path):

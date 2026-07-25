@@ -1,5 +1,4 @@
 from pathlib import Path
-from typing import Type, Union
 
 import numpy as np
 
@@ -16,7 +15,7 @@ from .utils import mk_mmaps
 
 def get_fsl_mixture(
     tmp_path: Path,
-    dtype: Union[Type[np.uint8], Type[np.uint16], Type[np.uint32], Type[np.uint64]] = np.uint32,
+    dtype: type[np.uint8] | type[np.uint16] | type[np.uint32] | type[np.uint64] = np.uint32,
     seed: int = 42,
     sequence_length: int = 4,
     num_tokens: int = 20 * 1000,

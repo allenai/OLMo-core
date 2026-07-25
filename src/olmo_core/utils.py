@@ -8,13 +8,14 @@ import sys
 import time
 import uuid
 import warnings
+from collections.abc import Callable, Sequence
 from contextlib import contextmanager
 from datetime import datetime, timedelta
 from functools import lru_cache
 from itertools import cycle, islice
 from queue import Queue
 from threading import Thread
-from typing import Any, Callable, Dict, List, Optional, Sequence, TypeVar, Union, cast
+from typing import Any, TypeVar, cast
 
 import rich
 import torch
@@ -33,7 +34,7 @@ LOG_FILTER_TYPE_ENV_VAR = "LOG_FILTER_TYPE"
 RICH_LOGGING_ENV_VAR = "OLMO_RICH_LOGGING"
 
 
-_log_extra_fields: Dict[str, Any] = {}
+_log_extra_fields: dict[str, Any] = {}
 _LOGGING_CONFIGURED: bool = False
 log = logging.getLogger(__name__)
 
@@ -95,7 +96,7 @@ def apply_to_tensors(fn, container: Any) -> None:
 T = TypeVar("T")
 
 
-def move_to_device(o: T, device: torch.device, non_blocking: Optional[bool] = None) -> T:
+def move_to_device(o: T, device: torch.device, non_blocking: bool | None = None) -> T:
     """
     Move a tensor or container of tensors to the given device.
 
@@ -111,13 +112,13 @@ def move_to_device(o: T, device: torch.device, non_blocking: Optional[bool] = No
     elif isinstance(o, list):
         return [move_to_device(x, device) for x in o]  # type: ignore[return-value]
     elif isinstance(o, tuple):
-        return tuple((move_to_device(x, device) for x in o))  # type: ignore[return-value]
+        return tuple(move_to_device(x, device) for x in o)  # type: ignore[return-value]
     else:
         return o
 
 
 @torch.compiler.disable
-def mark_dynamic(x: torch.Tensor, dim: Union[int, Sequence[int]], strict: bool = True):
+def mark_dynamic(x: torch.Tensor, dim: int | Sequence[int], strict: bool = True):
     """
     Mark a tensor as having dynamic sizes for ``torch.compile()``.
     """
@@ -183,8 +184,8 @@ def same_storage(x: torch.Tensor, y: torch.Tensor) -> bool:
     """
     Check if two tensors share the same storage.
     """
-    x_ptrs = set(e.data_ptr() for e in x.view(-1))
-    y_ptrs = set(e.data_ptr() for e in y.view(-1))
+    x_ptrs = {e.data_ptr() for e in x.view(-1)}
+    y_ptrs = {e.data_ptr() for e in y.view(-1)}
     return (x_ptrs <= y_ptrs) or (y_ptrs <= x_ptrs)
 
 
@@ -271,10 +272,8 @@ def log_extra_field(field_name: str, field_value: Any) -> None:
     :param field_name: The name of the field to attach.
     :param field_value: The value of the field to attach.
     """
-    global _log_extra_fields
     if field_value is None:
-        if field_name in _log_extra_fields:
-            del _log_extra_fields[field_name]
+        _log_extra_fields.pop(field_name, None)
     else:
         _log_extra_fields[field_name] = field_value
 
@@ -476,7 +475,7 @@ def set_env_variables():
     set_env_var("TOKENIZERS_PARALLELISM", "false")
 
 
-def prepare_cli_environment(log_filter_type: Optional[LogFilterType] = None):
+def prepare_cli_environment(log_filter_type: LogFilterType | None = None):
     """
     Prepare the environment for a script/CLI.
     This should be called at the very beginning of the script/command, like at the top
@@ -522,8 +521,8 @@ class _RichHandler(logging.Handler):
     def __init__(
         self,
         *,
-        level: Union[int, str] = logging.NOTSET,
-        console: Optional[Console] = None,
+        level: int | str = logging.NOTSET,
+        console: Console | None = None,
         markup: bool = False,
     ) -> None:
         super().__init__(level=level)
@@ -563,7 +562,7 @@ class _RichHandler(logging.Handler):
         return message_text
 
     def get_time_text(self, record: logging.LogRecord) -> Text:
-        log_time = datetime.fromtimestamp(record.created)
+        log_time = datetime.fromtimestamp(record.created)  # noqa: DTZ006
         time_str = log_time.strftime("[%Y-%m-%d %X]")
         return Text(time_str, style="log.time", end=" ")
 
@@ -580,7 +579,7 @@ class _RichHandler(logging.Handler):
         return Text(text, style="log.path")
 
 
-def threaded_generator(g, maxsize: int = 16, thread_name: Optional[str] = None):
+def threaded_generator(g, maxsize: int = 16, thread_name: str | None = None):
     """
     Wraps a generator ``g`` and runs it in a thread.
     """
@@ -626,8 +625,8 @@ def roundrobin(*iterables):
             nexts = cycle(islice(nexts, num_active))
 
 
-def powers_of_2(x: int) -> List[int]:
-    powers: List[int] = []
+def powers_of_2(x: int) -> list[int]:
+    powers: list[int] = []
     i = 1
     while i <= x:
         if i & x:
@@ -636,7 +635,7 @@ def powers_of_2(x: int) -> List[int]:
     return powers
 
 
-def capped_powers_of_2(x: int, cap: int) -> List[int]:
+def capped_powers_of_2(x: int, cap: int) -> list[int]:
     powers = []
     for i in powers_of_2(x):
         if i > cap:
@@ -723,13 +722,13 @@ def format_timedelta(td: timedelta) -> str:
         return "0s"
 
 
-def flatten_dict(d: Dict[str, Any]) -> Dict[str, Any]:
+def flatten_dict(d: dict[str, Any]) -> dict[str, Any]:
     """
     Flatten a nested dictionary with strings keys using dot notation.
     """
     out = {}
 
-    def add_sub_dict(prefix: str, sub_dict: Dict[str, Any]):
+    def add_sub_dict(prefix: str, sub_dict: dict[str, Any]):
         for k, v in sub_dict.items():
             if isinstance(v, dict):
                 add_sub_dict(f"{prefix}.{k}", v)
@@ -746,11 +745,11 @@ def flatten_dict(d: Dict[str, Any]) -> Dict[str, Any]:
 
 
 @contextmanager
-def cuda_sync_debug_mode(debug_mode: Union[int, str]):
+def cuda_sync_debug_mode(debug_mode: int | str):
     """
     A context manager for temporarily setting the CUDA sync debug mode.
     """
-    current_mode: Optional[int] = None
+    current_mode: int | None = None
 
     try:
         if torch.cuda.is_available():
@@ -802,14 +801,13 @@ def min_value_of_dtype(dtype: torch.dtype):
     return info_value_of_dtype(dtype).min
 
 
-_CUDA_STREAMS: Dict[str, torch.cuda.Stream] = {}
+_CUDA_STREAMS: dict[str, torch.cuda.Stream] = {}
 
 
 def get_or_init_stream(id: str, priority: int = 0) -> torch.cuda.Stream:
     # NOTE: pri_idx = std::clamp(-priority, 0, max_stream_priorities - 1)
     # pytorch/c10/cuda/CUDAStream.cpp
     # it turns out priority>=0 is the same as default priority=0
-    global _CUDA_STREAMS
     if id in _CUDA_STREAMS:
         return _CUDA_STREAMS[id]
     else:
@@ -820,7 +818,7 @@ def get_or_init_stream(id: str, priority: int = 0) -> torch.cuda.Stream:
 
 def record_flops(
     model: torch.nn.Module,
-    inp: Union[torch.Tensor, tuple],
+    inp: torch.Tensor | tuple,
     with_backward: bool = False,
     display: bool = False,
 ) -> int:

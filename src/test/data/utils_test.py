@@ -47,7 +47,7 @@ def test_segment_documents_into_instances(tmp_path):
             )
         )
 
-    assert all([r[1] == 2 for r in results])
+    assert all(r[1] == 2 for r in results)
 
 
 def test_iter_document_indices(tmp_path):

@@ -11,7 +11,7 @@ import json
 import logging
 import pickle
 import sys
-from typing import Any, Dict, List
+from typing import Any
 
 import torch
 from cached_path import cached_path
@@ -29,28 +29,28 @@ from olmo_core.io import normalize_path
 log = logging.getLogger(__name__)
 
 
-def load_checkpoint_config(checkpoint_dir: str) -> Dict[str, Any]:
+def load_checkpoint_config(checkpoint_dir: str) -> dict[str, Any]:
     """Load config.json from checkpoint directory."""
     config_path = f"{checkpoint_dir}/config.json"
     with open(cached_path(config_path)) as f:
         return json.load(f)
 
 
-def load_data_paths(checkpoint_dir: str) -> List[str]:
+def load_data_paths(checkpoint_dir: str) -> list[str]:
     """Load data_paths.txt from checkpoint directory."""
     data_paths_file = f"{checkpoint_dir}/data_paths.txt"
     with open(cached_path(data_paths_file)) as f:
         return [line.strip() for line in f if line.strip()]
 
 
-def load_trainer_state(checkpoint_dir: str) -> Dict[str, Any]:
+def load_trainer_state(checkpoint_dir: str) -> dict[str, Any]:
     """Load train/rank0.pt from checkpoint directory."""
     trainer_state_path = f"{checkpoint_dir}/train/rank0.pt"
     return torch.load(cached_path(trainer_state_path), weights_only=False)
 
 
 def verify_paths_match_mix(
-    data_paths: List[str], mix_name: str, tokenizer: TokenizerConfig, mix_base_dir: str
+    data_paths: list[str], mix_name: str, tokenizer: TokenizerConfig, mix_base_dir: str
 ) -> bool:
     """Verify that data_paths.txt matches the paths from the mix in config.json."""
     mix = DataMix(mix_name)

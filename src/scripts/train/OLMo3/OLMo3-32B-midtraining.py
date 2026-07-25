@@ -1,5 +1,4 @@
 from datetime import datetime
-from typing import Optional
 
 from olmo_core.data import (
     InstanceFilterConfig,
@@ -38,7 +37,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         save_folder_run_name = cli_context.run_name
     save_dir = f"{root_dir}/checkpoints/{save_folder_run_name}"
 
-    beaker_launch_config: Optional[BeakerLaunchConfig] = build_launch_config(
+    beaker_launch_config: BeakerLaunchConfig | None = build_launch_config(
         name=cli_context.run_name,
         cmd=cli_context.remote_cmd,
         cluster=cli_context.cluster,

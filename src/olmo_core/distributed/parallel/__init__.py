@@ -1,5 +1,4 @@
 import logging
-from typing import List, Optional, Tuple
 
 from torch.distributed import DeviceMesh, ProcessGroup, init_device_mesh
 
@@ -20,29 +19,29 @@ from .pipeline_parallel import (
 from .tensor_parallel import TensorParallelConfig
 
 __all__ = [
-    "build_world_mesh",
-    "get_world_mesh",
-    "build_expert_parallel_mesh",
-    "MeshDimName",
-    "get_dp_model_mesh",
-    "get_dp_mesh",
-    "get_tp_mesh",
-    "get_cp_mesh",
-    "get_pp_mesh",
-    "get_pp_stage_mesh",
-    "get_ep_mesh",
-    "get_dp_process_group",
-    "get_device_mesh_info",
-    "flatten_mesh",
-    "DataParallelType",
-    "DataParallelConfig",
     "DPMeshDimName",
-    "TensorParallelConfig",
+    "DataParallelConfig",
+    "DataParallelType",
     "ExpertParallelConfig",
+    "MeshDimName",
     "PipelineParallelConfig",
+    "PipelineSchedule",
     "PipelineScheduleType",
     "PipelineSplitStyle",
-    "PipelineSchedule",
+    "TensorParallelConfig",
+    "build_expert_parallel_mesh",
+    "build_world_mesh",
+    "flatten_mesh",
+    "get_cp_mesh",
+    "get_device_mesh_info",
+    "get_dp_mesh",
+    "get_dp_model_mesh",
+    "get_dp_process_group",
+    "get_ep_mesh",
+    "get_pp_mesh",
+    "get_pp_stage_mesh",
+    "get_tp_mesh",
+    "get_world_mesh",
 ]
 
 log = logging.getLogger(__name__)
@@ -96,25 +95,24 @@ class MeshDimName(StrEnum):
     dp_cp = "dp_cp"
 
 
-_WORLD_MESH: Optional[DeviceMesh] = None
+_WORLD_MESH: DeviceMesh | None = None
 
 
-def get_world_mesh() -> Optional[DeviceMesh]:
+def get_world_mesh() -> DeviceMesh | None:
     """
     Get the global world mesh built with :meth:`build_world_mesh()`.
     """
-    global _WORLD_MESH
     return _WORLD_MESH
 
 
 def build_world_mesh(
     *,
-    dp: Optional[DataParallelConfig] = None,
-    tp: Optional[TensorParallelConfig] = None,
-    cp: Optional[ContextParallelConfig] = None,
-    pp: Optional[PipelineParallelConfig] = None,
-    ep: Optional[ExpertParallelConfig] = None,
-    device_type: Optional[str] = None,
+    dp: DataParallelConfig | None = None,
+    tp: TensorParallelConfig | None = None,
+    cp: ContextParallelConfig | None = None,
+    pp: PipelineParallelConfig | None = None,
+    ep: ExpertParallelConfig | None = None,
+    device_type: str | None = None,
 ) -> DeviceMesh:
     """
     Build a :class:`~torch.distributed.device_mesh.DeviceMesh` suitable for the given parallel strategies.
@@ -200,8 +198,8 @@ def build_world_mesh(
             )
 
     # Build up mesh dimensions.
-    names: List[str] = []
-    dims: List[int] = []
+    names: list[str] = []
+    dims: list[int] = []
 
     # Pipeline parallel first.
     if pp is not None:
@@ -216,13 +214,11 @@ def build_world_mesh(
         names.append(MeshDimName.dp_shard)
         dims.append(shard_degree)
 
-        # Expert parallel.
-        if ep is not None:
-            # We just reuse the 'dp_shard' dimension for expert sharding.
-            if ep.degree >= 0 and ep.degree != shard_degree:
-                raise OLMoConfigurationError(
-                    "expert parallelism + HSDP requires the same sharding degree"
-                )
+        # Expert parallel. We just reuse the 'dp_shard' dimension for expert sharding.
+        if ep is not None and ep.degree >= 0 and ep.degree != shard_degree:
+            raise OLMoConfigurationError(
+                "expert parallelism + HSDP requires the same sharding degree"
+            )
     else:
         names.append(MeshDimName.dp)
         dims.append(dp_world_size)
@@ -272,14 +268,14 @@ def get_device_mesh_info(device_mesh: DeviceMesh) -> str:
 
 
 def build_expert_parallel_mesh(
-    ep_config: ExpertParallelConfig, device_type: Optional[str] = None
+    ep_config: ExpertParallelConfig, device_type: str | None = None
 ) -> DeviceMesh:
     device_type = device_type or get_default_device().type
     world_size = get_world_size()
 
     # Build up mesh dimensions.
-    names: List[str] = []
-    dims: List[int] = []
+    names: list[str] = []
+    dims: list[int] = []
 
     ep_degree = ep_config.degree
     if ep_degree < 0:
@@ -302,7 +298,7 @@ def build_expert_parallel_mesh(
     return mesh
 
 
-def _get_model_mesh(device_mesh: DeviceMesh) -> Tuple[DeviceMesh, Tuple[str, ...]]:
+def _get_model_mesh(device_mesh: DeviceMesh) -> tuple[DeviceMesh, tuple[str, ...]]:
     if (dim_names := device_mesh.mesh_dim_names) is None:
         raise RuntimeError("could not determine DP model sub-mesh without dimension names")
 
@@ -522,7 +518,7 @@ def get_pp_mesh(device_mesh: DeviceMesh) -> DeviceMesh:
         )
 
 
-def get_pp_stage_mesh(device_mesh: DeviceMesh, pp_mesh: Optional[DeviceMesh] = None) -> DeviceMesh:
+def get_pp_stage_mesh(device_mesh: DeviceMesh, pp_mesh: DeviceMesh | None = None) -> DeviceMesh:
     """
     Get the sub-mesh for a single pipeline stage.
 
@@ -545,9 +541,9 @@ def get_pp_stage_mesh(device_mesh: DeviceMesh, pp_mesh: Optional[DeviceMesh] = N
 def _flatten_dims(
     device_mesh: DeviceMesh,
     *dims: str,
-    name: Optional[str] = None,
-    dim_names: Optional[Tuple[str, ...]] = None,
-) -> Tuple[DeviceMesh, Tuple[str, ...]]:
+    name: str | None = None,
+    dim_names: tuple[str, ...] | None = None,
+) -> tuple[DeviceMesh, tuple[str, ...]]:
     """
     Flatten *dims* into a single dimension called *name*.
 
@@ -596,7 +592,7 @@ def _flatten_dims(
     return device_mesh, new_names
 
 
-def flatten_mesh(device_mesh: DeviceMesh, name: Optional[str] = None) -> DeviceMesh:
+def flatten_mesh(device_mesh: DeviceMesh, name: str | None = None) -> DeviceMesh:
     """
     Flatten a multi-dimensional ``DeviceMesh`` into a 1D ``DeviceMesh``.
 

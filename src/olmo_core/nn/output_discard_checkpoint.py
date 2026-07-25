@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import threading
 import warnings
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Optional, cast
+from typing import Any, cast
 
 import torch
 from torch.utils.checkpoint import detach_variable
@@ -30,7 +31,7 @@ class _SharedStorageLoader:
     """
 
     _ext: Any = None
-    _build_error: Optional[Exception] = None
+    _build_error: Exception | None = None
     _fallback_warned: bool = False
     _lock: Any = field(default_factory=threading.Lock)
 
@@ -40,7 +41,7 @@ class _SharedStorageLoader:
         else:
             self._fallback(dst, src)
 
-    def _load(self) -> Optional[Callable[[torch.Tensor, torch.Tensor], None]]:
+    def _load(self) -> Callable[[torch.Tensor, torch.Tensor], None] | None:
         if self._ext is not None:
             return self._ext.share_storage
         if self._build_error is not None:
@@ -124,7 +125,7 @@ class _OutputDiscardCheckpointFunction(torch.autograd.Function):
     def forward(  # type: ignore[override]
         ctx: Any,
         run_function: Callable[..., Any],
-        checkpoint_obj: "OutputDiscardCheckpoint",
+        checkpoint_obj: OutputDiscardCheckpoint,
         *args: Any,
     ):
         with torch.no_grad():
@@ -163,7 +164,7 @@ class _OutputDiscardCheckpointFunction(torch.autograd.Function):
 
         tensor_inputs = cast(tuple[torch.Tensor, ...], ctx.inputs)
         tensor_input_iter = iter(tensor_inputs)
-        grads: list[Optional[torch.Tensor]] = []
+        grads: list[torch.Tensor | None] = []
         for is_tensor in cast(tuple[bool, ...], ctx.arg_is_tensor):
             if is_tensor:
                 inp = next(tensor_input_iter)
@@ -236,10 +237,10 @@ class OutputDiscardCheckpoint:
     """
 
     def __init__(self):
-        self.run_function: Optional[Callable[..., Any]] = None
-        self._ctx: Optional[Any] = None
-        self.outputs: Optional[tuple[torch.Tensor, ...]] = None
-        self._hook_handle: Optional[torch.utils.hooks.RemovableHandle] = None
+        self.run_function: Callable[..., Any] | None = None
+        self._ctx: Any | None = None
+        self.outputs: tuple[torch.Tensor, ...] | None = None
+        self._hook_handle: torch.utils.hooks.RemovableHandle | None = None
 
     def checkpoint(self, fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
         """
