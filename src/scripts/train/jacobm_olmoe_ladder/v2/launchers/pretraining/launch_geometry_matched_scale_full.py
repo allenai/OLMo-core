@@ -266,6 +266,9 @@ def recipe_for(
     diagnose_nonfinite: bool = False,
     debug_gradients: bool = False,
     diagnostic_stop_step: int | None = None,
+    runtime_env_overrides: dict[str, str] | None = None,
+    recipe_suffix_override: str | None = None,
+    description_suffix: str | None = None,
 ) -> Recipe:
     source = manifest["source"]
     beaker = manifest["beaker"]
@@ -341,16 +344,25 @@ def recipe_for(
                 ("OLMO_DDP_DEBUG_GRAD_NORMS_MIN", "100"),
             ]
         )
+    if runtime_env_overrides:
+        override_names = set(runtime_env_overrides)
+        env_vars = [(name, value) for name, value in env_vars if name not in override_names]
+        env_vars.extend(runtime_env_overrides.items())
     env_secrets = [(str(name), str(secret)) for name, secret in manifest.get("secrets", {}).items()]
     weka = [(str(item["bucket"]), str(item["mount"])) for item in manifest.get("weka", [])]
     git_repo = GitRepoState.from_env(ref=commit, branch=str(source["branch"]))
     num_nodes = int(row["num_nodes"])
-    recipe_suffix = (
+    default_recipe_suffix = (
         "-nonfinite-diagnostic-r1"
         if diagnose_nonfinite
         else "-grad-debug-r1"
         if debug_gradients
         else ""
+    )
+    recipe_suffix = (
+        recipe_suffix_override
+        if recipe_suffix_override is not None
+        else default_recipe_suffix
     )
     pre_setup = "unset S3_PROFILE"
     if is_gdn2:
@@ -370,12 +382,16 @@ def recipe_for(
         ],
         name=f"{row['run_name']}{recipe_suffix}",
         description=(
-            f"{manifest['experiment']['description']} (non-finite gradient diagnostic)"
-            if diagnose_nonfinite
+            f"{manifest['experiment']['description']} ({description_suffix})"
+            if description_suffix is not None
             else (
-                f"{manifest['experiment']['description']} (gradient-debug resume)"
-                if debug_gradients
-                else str(manifest["experiment"]["description"])
+                f"{manifest['experiment']['description']} (non-finite gradient diagnostic)"
+                if diagnose_nonfinite
+                else (
+                    f"{manifest['experiment']['description']} (gradient-debug resume)"
+                    if debug_gradients
+                    else str(manifest["experiment"]["description"])
+                )
             )
         ),
         workspace=str(beaker["workspace"]),

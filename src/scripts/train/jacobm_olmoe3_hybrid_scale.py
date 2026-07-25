@@ -126,6 +126,9 @@ HARD_STOP_STEPS = int(os.environ.get("OLMOE3_HYBRID_HARD_STOP_STEPS", "0"))
 USE_COMPILE = env_bool("OLMOE3_HYBRID_USE_COMPILE", True)
 WANDB_ENABLED = env_bool("OLMOE3_HYBRID_WANDB", True)
 CHECKPOINTS_ENABLED = env_bool("OLMOE3_HYBRID_CHECKPOINTS", True)
+CHECKPOINT_WRITES_ENABLED = env_bool(
+    "OLMOE3_HYBRID_CHECKPOINT_WRITES", CHECKPOINTS_ENABLED
+)
 EVALS_ENABLED = env_bool("OLMOE3_HYBRID_EVALS", False)
 DP_USE_REDUCE_SCATTER = env_bool("OLMOE3_HYBRID_DP_USE_REDUCE_SCATTER", False)
 DP_BUCKET_CAP_MB = os.environ.get("OLMOE3_HYBRID_DP_BUCKET_CAP_MB")
@@ -494,6 +497,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 save_async=False,
                 pre_train_checkpoint=False,
                 remove=CHECKPOINT_REMOVAL,
+                enabled=CHECKPOINT_WRITES_ENABLED,
             ),
         )
     geometry_variant = MODEL_VARIANT in {
@@ -697,6 +701,12 @@ def finalize_config(config: ExperimentConfig) -> None:
         raise ValueError(f"Unknown model size {MODEL_SIZE!r}; choose one of {MODEL_SIZES}")
     if HARD_STOP_STEPS and not CHECKPOINTS_ENABLED:
         log.info("Smoke checkpointing is disabled; no final hard-stop checkpoint will be written")
+    if CHECKPOINT_WRITES_ENABLED and not CHECKPOINTS_ENABLED:
+        raise ValueError(
+            "OLMOE3_HYBRID_CHECKPOINT_WRITES=1 requires OLMOE3_HYBRID_CHECKPOINTS=1"
+        )
+    if CHECKPOINTS_ENABLED and not CHECKPOINT_WRITES_ENABLED:
+        log.info("Checkpoint loading is enabled, but all checkpoint writes are disabled")
     if EVAL_BACKFILL:
         if CHECKPOINTS_ENABLED:
             raise ValueError("Eval-only backfills must set OLMOE3_HYBRID_CHECKPOINTS=0")
