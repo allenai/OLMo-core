@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import warnings
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import ClassVar, Optional, Tuple
 
 from olmo_core.config import Config, StrEnum
 from olmo_core.exceptions import OLMoConfigurationError
@@ -82,6 +82,15 @@ class DeepEPConfig(Config):
 
 @dataclass
 class ExpertParallelConfig(Config):
+    _IGNORE_FIELDS: ClassVar[Tuple[str, ...]] = (
+        "tma_ibgda_num_sms",
+        "tma_ibgda_dispatch_num_sms",
+        "tma_ibgda_combine_num_sms",
+        "tma_ibgda_preprocess_num_sms",
+        "tma_ibgda_symmetric_expert_out",
+        "wave_use_bf16_persistent_mega_forward",
+    )
+
     path: ExpertParallelPath = ExpertParallelPath.sync_1d
     schedule: ExpertParallelSchedule = ExpertParallelSchedule.normal
 
