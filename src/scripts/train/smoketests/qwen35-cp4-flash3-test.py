@@ -148,7 +148,11 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
             metrics_collect_interval=1,  # per-step metrics; this run is only 20 steps
             cancel_check_interval=1,
             max_duration=Duration.steps(MAX_STEPS),
-            no_checkpoints=True,
+            # NB: do *not* set no_checkpoints=True here. It gates loading as well as saving
+            # (trainer.py guards the load block with `not self.no_checkpoints`), so the run would
+            # silently start from randomly initialized weights -- visible only as an implausibly
+            # high starting CE loss. Saving is suppressed by giving the checkpointer no save
+            # interval instead.
         )
         .with_callback(
             "wandb",
