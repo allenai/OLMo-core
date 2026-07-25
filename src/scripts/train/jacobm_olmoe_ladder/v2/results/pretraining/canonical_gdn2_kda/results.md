@@ -1,6 +1,6 @@
 # Canonical GDN2 and KDA 275M comparison
 
-Generated: `2026-07-25T16:41:04.562692+00:00`
+Generated: `2026-07-25T17:22:23.387283+00:00`
 
 Only bracketed curves enter the shared best-of plot. Every label is the observed-best LR; fitted minima are never substituted.
 
@@ -21,7 +21,7 @@ Only bracketed curves enter the shared best-of plot. Every label is the observed
 | canonical GDN2 (expand_v=1, nonnegative) | Cx1 | 4/4 | bracketed | 2.677515 @ 0.0016 | 2.677328 @ 0.0018 |
 | canonical GDN2 (expand_v=1, nonnegative) | Cx2 | 4/4 | bracketed | 2.557597 @ 0.0016 | 2.557577 @ 0.0017 |
 | canonical GDN2 (expand_v=1, nonnegative) | Cx4 | 4/4 | bracketed | 2.467207 @ 0.0016 | 2.466300 @ 0.0013 |
-| canonical GDN2 (expand_v=1, nonnegative) | Cx8 | 2/4 | — | 2.389725 @ 0.0016 | — |
+| canonical GDN2 (expand_v=1, nonnegative) | Cx8 | 4/4 | bracketed | 2.389725 @ 0.0016 | 2.388192 @ 0.0012 |
 | canonical KDA (expand_v=1, nonnegative) | Cx1 | 4/4 | bracketed | 2.717057 @ 0.0016 | 2.717047 @ 0.0016 |
 | canonical KDA (expand_v=1, nonnegative) | Cx2 | 4/4 | bracketed | 2.587990 @ 0.0016 | 2.587878 @ 0.0015 |
 | canonical KDA (expand_v=1, nonnegative) | Cx4 | 4/4 | bracketed | 2.486896 @ 0.0016 | 2.485703 @ 0.0013 |

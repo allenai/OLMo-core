@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-07-25T16:41:04.562692+00:00",
+  "generated_at": "2026-07-25T17:22:23.387283+00:00",
   "project": "ai2-llm/jacobm-olmoe-ladder",
   "selection_metric": "mean train/CE loss over the final 250M tokens",
   "selection_rule": "The best-of plot shows the observed best LR only after that variant/Cx has an interior observed minimum and a valid local quadratic fit. Predicted minima are visual aids and are not selected results.",
@@ -1136,6 +1136,25 @@
       "variant": "geometry_gdn2_ev1_noneg_nope_gated",
       "variant_label": "canonical GDN2 (expand_v=1, nonnegative)",
       "cx": 8,
+      "lr": 0.0008,
+      "lr_tag": "0.0008",
+      "loss": 2.3916979450849616,
+      "state": "finished",
+      "tokens_b": 35.3107968,
+      "run_id": "p2n3w891",
+      "name": "pt-275m-geometry-hybrid-gdn2-ev1-noneg-nope-gated-cx8-lr8e-4-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/p2n3w891",
+      "segment_run_ids": [
+        "p2n3w891"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 1
+    },
+    {
+      "model": "275m",
+      "variant": "geometry_gdn2_ev1_noneg_nope_gated",
+      "variant_label": "canonical GDN2 (expand_v=1, nonnegative)",
+      "cx": 8,
       "lr": 0.0016,
       "lr_tag": "0.0016",
       "loss": 2.389725222527606,
@@ -1146,6 +1165,25 @@
       "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/rzqjmgtu",
       "segment_run_ids": [
         "rzqjmgtu"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 1
+    },
+    {
+      "model": "275m",
+      "variant": "geometry_gdn2_ev1_noneg_nope_gated",
+      "variant_label": "canonical GDN2 (expand_v=1, nonnegative)",
+      "cx": 8,
+      "lr": 0.0032,
+      "lr_tag": "0.0032",
+      "loss": 2.4071069633435904,
+      "state": "finished",
+      "tokens_b": 35.3107968,
+      "run_id": "hsc710bv",
+      "name": "pt-275m-geometry-hybrid-gdn2-ev1-noneg-nope-gated-cx8-lr3p2e-3-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/hsc710bv",
+      "segment_run_ids": [
+        "hsc710bv"
       ],
       "token_resets": 0,
       "deduplicated_samples": 1
@@ -1893,9 +1931,9 @@
       "variant": "geometry_gdn2_ev1_noneg_nope_gated",
       "variant_label": "canonical GDN2 (expand_v=1, nonnegative)",
       "cx": 8,
-      "finished_points": 2,
+      "finished_points": 4,
       "expected_points": 4,
-      "bracketed": false,
+      "bracketed": true,
       "provisional": false,
       "observed_best": {
         "model": "275m",
@@ -1916,8 +1954,8 @@
         "token_resets": 0,
         "deduplicated_samples": 1
       },
-      "predicted_fit_lr": null,
-      "predicted_fit_loss": null
+      "predicted_fit_lr": 0.0012141931005885075,
+      "predicted_fit_loss": 2.3881917400492068
     },
     {
       "variant": "geometry_kda_ev1_noneg_nope_gated",

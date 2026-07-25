@@ -73,6 +73,7 @@ def plot_observed_best_summary(
     variants: Sequence[SummaryVariant],
     window_m: int,
     provisional_points: set[tuple[str, int, str]] | None = None,
+    legend_columns: int | None = None,
 ) -> bool:
     """Plot best observed finished loss by model/Cx/variant.
 
@@ -176,15 +177,18 @@ def plot_observed_best_summary(
         for handle, label in zip(*ax.get_legend_handles_labels()):
             unique.setdefault(label, handle)
     if unique:
+        ncol = min(len(unique), legend_columns or 4)
         fig.legend(
             unique.values(),
             unique.keys(),
             loc="lower center",
-            ncol=min(len(unique), 4),
+            ncol=ncol,
             bbox_to_anchor=(0.5, -0.02),
             frameon=False,
         )
-    fig.tight_layout(rect=(0, 0.08, 1, 0.94))
+    legend_rows = (len(unique) + ncol - 1) // ncol if unique else 0
+    bottom_margin = 0.08 + 0.055 * max(0, legend_rows - 1)
+    fig.tight_layout(rect=(0, bottom_margin, 1, 0.94))
     out_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_path, dpi=180, bbox_inches="tight")
     plt.close(fig)

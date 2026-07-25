@@ -201,6 +201,7 @@ def plot_shared_best_of(
         variants=summary_variants,
         window_m=FINAL_WINDOW_M,
         provisional_points=provisional,
+        legend_columns=2,
     )
     return output_path
 
