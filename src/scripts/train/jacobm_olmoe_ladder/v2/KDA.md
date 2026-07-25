@@ -60,6 +60,12 @@ smoke completed with zero skipped steps. Its steady-state actual averages were
 were 214.6 GiB and 226.4 GiB respectively. The W&B run is
 [`3s14s676`](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/3s14s676).
 
+The later
+[matched KDA/GDN2 numerical audit](results/diagnostics/matched_kda_gdn2_numerics.md)
+tested KDA at the same H=2, K=128, V=128/256, T=64/256, initial states, and
+separate output/state losses used for GDN2. KDA's worst gradient relative-L2
+error ranged from 0.39% to 1.76%, with zero tolerance violations.
+
 The four-LR Cx1/Cx2/Cx4/Cx8 sweep is rendered but must not be submitted until
 the active GDN2 stability controls have been reviewed. It uses `4e-4`, `8e-4`,
 `1.6e-3`, and `3.2e-3` at every Cx, EP1,

@@ -532,3 +532,13 @@ references in forward and backward. This rules out an immediate algebraic or
 production-shape mismatch tied to `expand_v`, negative eigenvalues, packed
 documents, or recomputation; it does not rule out a data- or state-dependent
 failure that appears only later in training.
+
+A subsequent
+[matched KDA/GDN2 audit](results/diagnostics/matched_kda_gdn2_numerics.md)
+separated output-only and final-state-only losses and added four-chunk
+sequences. It showed that the earlier large maximum absolute `dV` difference
+was primarily a scale/test-design artifact: common GDN2 gradients are usually
+within 0.3--0.9% relative-L2 of the reference, comparable to KDA. The exception
+is `A_log` under the T=256, V=256 output loss: GDN2 reaches 1.93% without
+negative eigenvalues and 3.80% with them, versus 0.67% for matched KDA. All
+elements still pass tolerance and all gradient cosines exceed `0.99984`.
