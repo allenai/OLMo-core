@@ -69,6 +69,41 @@ def test_rewrite_config_dict_maps_all_legacy_paths():
     assert ".moe.v2." not in json.dumps(new)
 
 
+def test_rewrite_config_dict_maps_canonical_module_aliases():
+    # Aliases that lived in the *canonical* modules (not the moe.v2 shim paths) must also be
+    # rewritten — otherwise the alias name would be left dangling once it's removed.
+    config = {
+        "_CLASS_": "olmo_core.nn.ddp.model.MoEFusedV2Transformer",
+        "block": {"_CLASS_": "olmo_core.nn.ddp.block.MoEFusedV2TransformerBlockConfig"},
+        "train_module": {
+            "_CLASS_": (
+                "olmo_core.train.train_module.transformer.ddp_train_module."
+                "MoEV2TransformerTrainModule"
+            ),
+        },
+    }
+    new, changes = convert_module.rewrite_config_dict(config)
+    assert new["_CLASS_"] == "olmo_core.nn.ddp.model.OLMoDDPModel"
+    assert new["block"]["_CLASS_"] == "olmo_core.nn.ddp.block.OLMoDDPTransformerBlockConfig"
+    assert (
+        new["train_module"]["_CLASS_"]
+        == "olmo_core.train.train_module.transformer.ddp_train_module.OLMoDDPTrainModule"
+    )
+    assert len(changes) == 3
+    assert "MoEFusedV2" not in json.dumps(new)
+    assert "MoEV2" not in json.dumps(new)
+
+
+def test_all_rewrite_targets_are_importable():
+    # Every canonical target must actually resolve, so a migrated config loads.
+    import importlib
+
+    for target in set(convert_module.CLASS_PATH_REWRITES.values()):
+        module_path, _, class_name = target.rpartition(".")
+        module = importlib.import_module(module_path)
+        assert hasattr(module, class_name), f"{target} does not resolve"
+
+
 def test_rewrite_config_dict_noop_on_canonical():
     canonical = {"_CLASS_": "olmo_core.nn.ddp.model.OLMoDDPModel", "d_model": 64}
     new, changes = convert_module.rewrite_config_dict(canonical)

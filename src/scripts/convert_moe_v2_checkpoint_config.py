@@ -8,17 +8,17 @@ unaffected — the rename preserved the same class objects, so parameter names a
 ``config.json`` serialized under the old names records stale ``_CLASS_`` values that no longer
 resolve. This script rewrites just those ``_CLASS_`` strings in place so the checkpoint loads again.
 
-Usage::
+Usage (run by file path from the repo root — ``src/scripts`` is not an importable module)::
 
     # Rewrite one or more checkpoints (a checkpoint dir or a config.json, local or remote).
-    python -m scripts.convert_moe_v2_checkpoint_config /path/to/checkpoint/step10000
-    python -m scripts.convert_moe_v2_checkpoint_config s3://bucket/run/step10000/config.json
+    python src/scripts/convert_moe_v2_checkpoint_config.py /path/to/checkpoint/step10000
+    python src/scripts/convert_moe_v2_checkpoint_config.py s3://bucket/run/step10000/config.json
 
     # Preview the changes without writing.
-    python -m scripts.convert_moe_v2_checkpoint_config --dry-run /path/to/checkpoint/step10000
+    python src/scripts/convert_moe_v2_checkpoint_config.py --dry-run /path/to/checkpoint/step10000
 
     # Write the migrated config to a different location instead of in place.
-    python -m scripts.convert_moe_v2_checkpoint_config \
+    python src/scripts/convert_moe_v2_checkpoint_config.py \
         --output /tmp/config.json /path/to/checkpoint/step10000
 """
 
@@ -45,15 +45,24 @@ log = logging.getLogger(__name__)
 
 CONFIG_FILENAME = "config.json"
 
-#: Maps every legacy ``_CLASS_`` value to its canonical replacement. Covers both the renamed-symbol
-#: aliases (``MoEFusedV2*`` / ``MoEV2*``) and the relocated-but-canonically-named entries under the
-#: former ``olmo_core.nn.moe.v2.*`` / ``moe_train_module`` module paths.
+#: Maps every legacy ``_CLASS_`` value to its canonical replacement. Covers all three ways an old
+#: name could have been recorded: renamed-symbol aliases (``MoEFusedV2*`` / ``MoEV2*``) that lived in
+#: the *canonical* module, the same aliases under the former ``olmo_core.nn.moe.v2.*`` /
+#: ``moe_train_module`` module paths, and canonically-named entries under those former module paths.
 CLASS_PATH_REWRITES: Dict[str, str] = {
-    # Model config (same module, renamed symbol).
+    # --- Model config ---
     "olmo_core.nn.transformer.config.MoEFusedV2TransformerConfig": (
         "olmo_core.nn.transformer.config.OLMoDDPModelConfig"
     ),
-    # Block config/class (renamed symbol and/or relocated module path).
+    # --- Block config/class ---
+    # Aliases that lived in the canonical module (olmo_core.nn.ddp.block).
+    "olmo_core.nn.ddp.block.MoEFusedV2TransformerBlockConfig": (
+        "olmo_core.nn.ddp.block.OLMoDDPTransformerBlockConfig"
+    ),
+    "olmo_core.nn.ddp.block.MoEFusedV2TransformerBlock": (
+        "olmo_core.nn.ddp.block.OLMoDDPTransformerBlock"
+    ),
+    # Former moe.v2.block module path (both the alias and canonical names).
     "olmo_core.nn.moe.v2.block.MoEFusedV2TransformerBlockConfig": (
         "olmo_core.nn.ddp.block.OLMoDDPTransformerBlockConfig"
     ),
@@ -66,21 +75,29 @@ CLASS_PATH_REWRITES: Dict[str, str] = {
     "olmo_core.nn.moe.v2.block.OLMoDDPTransformerBlock": (
         "olmo_core.nn.ddp.block.OLMoDDPTransformerBlock"
     ),
-    # Model class (renamed symbol and/or relocated module path).
+    # --- Model class ---
+    # Alias that lived in the canonical module (olmo_core.nn.ddp.model).
+    "olmo_core.nn.ddp.model.MoEFusedV2Transformer": "olmo_core.nn.ddp.model.OLMoDDPModel",
+    # Former moe.v2.model module path (both the alias and canonical names).
     "olmo_core.nn.moe.v2.model.MoEFusedV2Transformer": "olmo_core.nn.ddp.model.OLMoDDPModel",
     "olmo_core.nn.moe.v2.model.OLMoDDPModel": "olmo_core.nn.ddp.model.OLMoDDPModel",
-    # Optimizer config/class (same module, renamed symbol).
+    # --- Optimizer config/class (same module, renamed symbol) ---
     "olmo_core.optim.moe_optimizer.MoEFusedV2OptimizerConfig": (
         "olmo_core.optim.moe_optimizer.OLMoDDPOptimizerConfig"
     ),
     "olmo_core.optim.moe_optimizer.MoEFusedV2Optimizer": (
         "olmo_core.optim.moe_optimizer.OLMoDDPOptimizer"
     ),
-    # Train-module config (same module, renamed symbol).
+    # --- Train-module config (same module, renamed symbol) ---
     "olmo_core.train.train_module.transformer.config.MoEV2TransformerTrainModuleConfig": (
         "olmo_core.train.train_module.transformer.config.OLMoDDPTrainModuleConfig"
     ),
-    # Train-module class (renamed symbol and relocated module path).
+    # --- Train-module class ---
+    # Alias that lived in the canonical module (ddp_train_module).
+    "olmo_core.train.train_module.transformer.ddp_train_module.MoEV2TransformerTrainModule": (
+        "olmo_core.train.train_module.transformer.ddp_train_module.OLMoDDPTrainModule"
+    ),
+    # Former moe_train_module module path.
     "olmo_core.train.train_module.transformer.moe_train_module.MoEV2TransformerTrainModule": (
         "olmo_core.train.train_module.transformer.ddp_train_module.OLMoDDPTrainModule"
     ),
