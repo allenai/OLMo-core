@@ -12,7 +12,10 @@ echo "=== ARM=$ARM HOST=$(hostname) START=$(date '+%F %T') ==="
 nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
 
 LM=/weka/oe-training-default/ai2-llm/checkpoints/prasanns/ctc_length_mix
-VENV=/weka/oe-training-default/ai2-llm/checkpoints/prasanns/shared/vllm_venv_0251
+# vllm_venv_fix pins the cu129 triad (torch 2.11.0). The first venv ended at torch 2.13.0+cu130 --
+# flashinfer drags torch upward, and vllm 0.25.1's compiled extensions are built against the
+# 2.11.0 ABI, so imports succeed but model load does not. Override with VENV=... if needed.
+VENV=${VENV:-/weka/oe-training-default/ai2-llm/checkpoints/prasanns/shared/vllm_venv_fix}
 BASE_SNAP=$LM/base_snap_small
 OUT=$LM/eval_results; mkdir -p "$OUT"
 REPO=$(find / -maxdepth 3 -iname pyproject.toml 2>/dev/null | grep -v /opt/conda | grep -v cache | head -1 | xargs -r dirname)
@@ -20,6 +23,18 @@ REPO=$(find / -maxdepth 3 -iname pyproject.toml 2>/dev/null | grep -v /opt/conda
 export PYTHONPATH="$REPO/src:${PYTHONPATH:-}"
 VDIR=$REPO/debug/ctc_vllm_validation
 echo "REPO=$REPO"
+
+# gantry --no-python skips the usual `pip install -e .`, so the container python has olmo-core's
+# transitive deps only if the image happens to ship them -- this one is missing
+# dataclass_extensions, which killed the export 4 s in. Install the package (deps already present
+# are satisfied instantly). Only the EXPORT uses this interpreter; vLLM runs from its own venv, so
+# nothing here can perturb the inference stack.
+python -c "import dataclass_extensions" 2>/dev/null || {
+  echo "=== installing olmo-core deps for the export step $(date '+%F %T') ==="
+  pip install -q -e "$REPO" 2>&1 | tail -5
+  python -c "import dataclass_extensions, olmo_core; print('olmo_core importable')" \
+    || { echo "FATAL: olmo_core still not importable after install"; exit 2; }
+}
 
 # JIT caches MUST be container-local, never on a shared FS: concurrent arms compiling the same
 # flashinfer/triton kernels into one shared cache dir deadlock on the lock file.
