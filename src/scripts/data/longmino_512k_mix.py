@@ -75,9 +75,10 @@ FULL_USE = ("midtrain", "lc_8_16k")
 
 #: Stratum label -> glob under the tokenized tree.
 STRATUM_GLOBS = {
-    # ``**`` (not ``*``) for the family level: olmo_core.io.glob_directory only recurses into
-    # subdirectories when the pattern contains ``**``, and a single ``*`` translates to ``[^/]*``,
-    # which cannot match across a path separator.
+    # ``**`` (not ``*``) for the family level. The pattern regex would match either way -- ``*``
+    # becomes ``[^/]*``, which does match a family name -- but olmo_core.io.glob_directory only
+    # passes ``recurse=True`` to list_directory when the pattern contains ``**``. Without it the
+    # listing stops at the family directories and never yields the part files inside them.
     "midtrain": "midtrain/**/part-*.npy",
     "lc_8_16k": "lc/real_s2pdf/2e13/part-*.npy",
     "lc_16_32k": "lc/real_s2pdf/2e14/part-*.npy",
