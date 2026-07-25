@@ -17,12 +17,15 @@ checkpoint `step750` (θ=2e6, CE≈0.25 at 64k) into **131072 with θ=4e6**, sam
 |---|---|---|
 | iso 64k, first 12 steps (from plain base) | 64k = 2× | mean 2.17 |
 | iso 64k **at step 750** — the weights this run starts from | 64k = 2× | mean 0.253, median 0.250 |
-| **progressive 64k→128k, θ=4e6** (13 steps) | 128k = **4×** | mean 0.363, **median 0.325**, range 0.19–0.81 |
+| **progressive 64k→128k, θ=4e6** (62 steps) | 128k = **4×** | mean 0.312, **median 0.288**, range 0.13–0.81 |
 | arm J, dense 128k **direct from base**, θ=4e6 (281 pts, 148M tok) | 128k = 4× | 2.81 → plateau **1.07** |
 
-Every one of the 13 points — including the worst, 0.81 — is below J's *converged* plateau, so the
-~3× gap is not batch noise. At `gb=2` a single step is 2 packed instances and the per-step CE
-swings 0.19→0.81, which is why the first point (0.1933) is worthless on its own; use the median.
+Every one of the 62 points — including the worst, 0.81 — is below J's *converged* plateau, so the
+~3.7× gap is not batch noise. At `gb=2` a single step is 2 packed instances and the per-step CE
+swings 0.13→0.81, which is why the first point (0.1933) is worthless on its own; use the median.
+
+It is a stable level, not a transient: consecutive 20-step medians run 0.327 / 0.269 / 0.285. It is
+not descending because there is little left to learn — the 64k adaptation arrived nearly intact.
 
 **What this does and does not establish.** The two comparisons differ in what they control:
 - **iso@64k (0.250) vs progressive@128k (0.325)** is the clean one — same weight lineage, only the
