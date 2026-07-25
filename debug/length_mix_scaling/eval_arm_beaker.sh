@@ -60,11 +60,31 @@ HF=$LM/hf_exports/$ARM
 SERVE=$LM/serving/$ARM
 mkdir -p "$LM/hf_exports" "$LM/serving"
 
+# Resolve the save folder by GLOB rather than trusting a hand-built path. The Beaker experiment
+# name is "<run_name>-<hash>" but the save folder is just "<run_name>" -- building CKPT from the
+# experiment name silently points at a directory that does not exist, and export then reports the
+# confusing "no step<N> checkpoint dir" instead of "no such path".
+CKROOT=/weka/oe-training-default/ai2-llm/checkpoints/prasanns/ctc_suite/ckpts
+if [ ! -d "${CKPT:-/nonexistent}" ]; then
+  CAND=$(ls -d "$CKROOT"/${CKPT_PREFIX:-lm3}-${ARM}-* 2>/dev/null | sort | tail -1)
+  [ -n "$CAND" ] && { echo "resolved CKPT by glob: $CAND"; CKPT="$CAND"; }
+fi
+[ -d "$CKPT" ] || { echo "FATAL: no checkpoint dir for arm $ARM under $CKROOT"; ls -d "$CKROOT"/*${ARM}* 2>/dev/null | head; exit 2; }
+# Prefer the post-fit MODEL-ONLY checkpoint written at $CKPT/model_and_optim (what eval wants) over
+# a mid-run step<N>/ dir; pass it via --ckpt so export does not go looking for step dirs at all.
+if [ -d "$CKPT/model_and_optim" ]; then
+  CKPT_ARG="--ckpt $CKPT"
+  echo "using post-fit model-only checkpoint: $CKPT/model_and_optim"
+else
+  CKPT_ARG=""
+  echo "no top-level model_and_optim; falling back to latest step<N> under $CKPT"
+fi
+
 # --- 1) olmo distcp -> HF (container conda python has olmo_core + torch) ---
 if [ ! -f "$HF/config.json" ]; then
   echo "=== [$ARM] export -> HF $(date '+%F %T') ==="
   python "$REPO/src/corpus_reasoning/train/export_olmo_to_hf.py" \
-    --save-folder "$CKPT" --hf-out "$HF" --base-model Qwen/Qwen3.5-4B-Base \
+    --save-folder "$CKPT" $CKPT_ARG --hf-out "$HF" --base-model Qwen/Qwen3.5-4B-Base \
     || { echo "!!! [$ARM] EXPORT FAILED"; exit 3; }
 else echo "[$ARM] HF export exists"; fi
 
