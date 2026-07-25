@@ -45,6 +45,7 @@ def build_olmo3_moe_config_from_hf_config(
     dtype: DType = DType.bfloat16,
     attention_backend: AttentionBackendName = AttentionBackendName.flash_4,
     ep_path: ExpertParallelPath | str = ExpertParallelPath.sync_1d,
+    ep_capacity_factor: float = 1.25,
     router_aux_loss_weight: float | None = None,
     router_z_loss_weight: float | None = None,
     init_seed: int = 2026,
@@ -122,7 +123,10 @@ def build_olmo3_moe_config_from_hf_config(
             dtype=dtype,
         )
     )
-    ep = ExpertParallelConfig(path=ExpertParallelPath(ep_path))
+    ep = ExpertParallelConfig(
+        path=ExpertParallelPath(ep_path),
+        capacity_factor=ep_capacity_factor,
+    )
     ep.validate()
     common = dict(
         name=TransformerBlockType.moe_fused_v2,
@@ -241,7 +245,9 @@ def load_olmo3_moe_hf_state(
         raise RuntimeError(f"Converted Olmo3Moe state is missing parameters: {sorted(missing)}")
     unexpected = set(native_state) - set(parameters)
     if unexpected:
-        raise RuntimeError(f"Converted Olmo3Moe state has unexpected parameters: {sorted(unexpected)}")
+        raise RuntimeError(
+            f"Converted Olmo3Moe state has unexpected parameters: {sorted(unexpected)}"
+        )
 
     with torch.no_grad():
         for name, target in parameters.items():

@@ -3,11 +3,11 @@ import torch
 
 transformers = pytest.importorskip("transformers")
 
-from olmo_core.nn.attention import AttentionBackendName
-from olmo_core.nn.hf.config import _register_olmo3moe_auto_classes
-from olmo_core.nn.moe.v2.hf.configuration_olmo3moe import Olmo3MoeConfig
-from olmo_core.nn.moe.v2.hf.modeling_olmo3moe import Olmo3MoeForCausalLM, Olmo3MoeModel
-from olmo_core.nn.moe.v2.olmo3 import (
+from olmo_core.nn.attention import AttentionBackendName  # noqa: E402
+from olmo_core.nn.hf.config import _register_olmo3moe_auto_classes  # noqa: E402
+from olmo_core.nn.moe.v2.hf.configuration_olmo3moe import Olmo3MoeConfig  # noqa: E402
+from olmo_core.nn.moe.v2.hf.modeling_olmo3moe import Olmo3MoeForCausalLM, Olmo3MoeModel  # noqa: E402
+from olmo_core.nn.moe.v2.olmo3 import (  # noqa: E402
     build_olmo3_moe_config_from_hf_config,
     gather_olmo3_moe_hf_state,
     load_olmo3_moe_hf_state,
@@ -38,11 +38,12 @@ def small_config(**kwargs):
 
 def test_factory_builds_all_moe_olmo_ddp_model():
     native_config = build_olmo3_moe_config_from_hf_config(
-        small_config(), attention_backend=AttentionBackendName.torch
+        small_config(), ep_capacity_factor=2.0, attention_backend=AttentionBackendName.torch
     )
     model = native_config.build(init_device="cpu")
     assert model.__class__.__name__ == "OLMoDDPModel"
     assert len(list(model.routed_blocks())) == 2
+    assert all(block.ep.capacity_factor == 2.0 for block in native_config.resolved_block_configs)
 
 
 def test_registers_base_model_for_transformers_auto_model():
@@ -80,7 +81,7 @@ def test_full_hf_state_load_and_gather_roundtrip_without_ep():
         dense_mlp_intermediate_size=24,
         use_peri_ln=True,
     )
-    hf_model = Olmo3MoeForCausalLM(config)
+    hf_model = Olmo3MoeForCausalLM(config).to(dtype=torch.bfloat16)
     hf_state = {name: value.detach().clone() for name, value in hf_model.state_dict().items()}
     native_config = build_olmo3_moe_config_from_hf_config(
         config, attention_backend=AttentionBackendName.torch
