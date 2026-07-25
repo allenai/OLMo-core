@@ -1,5 +1,58 @@
 # Length-mix scaling law — STATUS
 
+# ══════════ FINAL VERDICT (2026-07-25 05:10) ══════════
+
+## The dominant finding is METHODOLOGICAL: this regime is seed-unstable at 32k
+
+Five points were replicated at seed 1. **Two of five had a seed that collapsed:**
+
+| point | seed 0 | seed 1 | spread | |
+|---|---|---|---|---|
+| A3 (84.5M short) | 0.514 | 0.495 | 0.018 | stable |
+| A30 (106M short) | 0.561 | 0.591 | 0.030 | stable |
+| **A4 (149M short)** | **0.249** | **0.585** | **0.337** | **unstable** |
+| **C3 (uniform, =A3 budget)** | **0.257** | **0.528** | **0.271** | **unstable** |
+
+**A collapsed seed looks completely normal at 2k/8k and fails only at 32k.** A4: 0.921/0.796/0.249.
+C3: 0.929/0.788/0.257. C3s2: 0.925/0.786/**0.528** — the short rungs are identical to 3 decimal
+places while 32k moves by 0.27. Short-context metrics give **no warning**.
+
+⇒ **Any single-seed comparison of length mixes at 32k is unreliable.** Both headline claims this
+experiment originally produced were artifacts of one unlucky run each.
+
+## What SURVIVES (gaps exceed the largest observed spread, 0.337)
+1. **Short data is necessary.** Zero short data ⇒ f1@32k **0.000** at every rung (A0, B0), with
+   parse_rate 1.0 — the model learns the answer format but not the task. Gap to ~0.5 is decisive.
+2. **The rise is fast, then flat.** `f1@32k ≈ 0.536·(1 − e^(−N_S/11.3M))` on the rising part
+   (SSE 0.0013): **τ ≈ 11M short tokens**, so ~30M captures most of the benefit; plateau ~0.50–0.59
+   from 42M onward.
+3. **Long data is critical only when short data is scarce.** At ~20M short: full long 0.452 vs half
+   long **0.068**. At 84.5M short: 0.514 vs 0.541 — a tie. Short data substitutes for long once
+   plentiful.
+4. **The 106M peak is real** (both points stable): A30 mean **0.576** vs A3 mean **0.505**, gap
+   0.071 against spreads of 0.018/0.030.
+
+## What is WITHDRAWN
+- ~~"Length-specific collapse past the optimum"~~ — A4's second seed hit **0.585**, the highest
+  value in the experiment. It is **instability**, not a systematic effect.
+- ~~"Fixed-long+short beats step-matched uniform at equal cost (A3 0.514 vs C3 0.257)"~~ — C3's
+  second seed hit **0.528**. Two-seed means are A3 **0.505** vs C3 **0.393**, but C3's own spread is
+  0.271, so **the two compositions are not distinguishable at equal cost** on this evidence.
+
+## Practical answer to the original question
+Adding short-context data to a fixed long-context pool **does** lift 32k performance enormously
+(0.000 → ~0.55), and it saturates fast (τ ≈ 11M). But **it does not demonstrably beat the uniform
+production mix at equal token cost** — the apparent win was one unlucky uniform run. The actionable
+result is the saturation constant plus the warning that **32k evaluations here need ≥2 seeds**.
+
+## If continuing
+- Replicate **every** curve point at ≥2 seeds (only 5 of 11 are replicated).
+- Diagnose the instability itself: collapsed seeds pass 2k/8k and fail 32k, so dump generations
+  from a collapsed run (`eval_results/*.responses.json`) — that is the highest-value next step.
+- `A25` was composed but never run (short-part granularity made it identical to A30).
+
+# ═══════════════════════════════════════════════════
+
 **Updated 2026-07-24 22:30 PDT.** Autonomous overnight loop (dynamic self-pacing).
 Scope per user: **hybrid Qwen3.5-4B only** (no dense variant).
 
