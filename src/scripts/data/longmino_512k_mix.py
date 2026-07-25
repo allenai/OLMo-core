@@ -33,6 +33,7 @@ import argparse
 import json
 import os
 import sys
+from typing import Optional
 
 from olmo_core.data import TokenizerConfig
 from olmo_core.data.composable import (
@@ -186,6 +187,7 @@ def build_longmino_512k_mix(
     root: str = WEKA_ROOT,
     seed: int = 1234,
     available: dict = None,  # type: ignore[assignment]
+    num_tokens: Optional[int] = None,
 ) -> MixingInstanceSourceConfig:
     """
     Build the longmino-512k mix.
@@ -269,7 +271,13 @@ def build_longmino_512k_mix(
         ],
         seed=seed,
         label="longmino_512k",
-        num_tokens=int(sum(target.values())),
+        # Deliberately unset by default. Passing the exact arithmetic sum of the per-stratum targets
+        # is unsatisfiable: MixingInstanceSource allocates whole *instances*, so each source floors
+        # to a multiple of sequence_length and comes up a few million tokens short of the real-valued
+        # target, which raises OLMoConfigurationError. With num_tokens=None the mixer instead takes
+        # the largest size that matches the ratios without repeating data -- the same mix, rounded
+        # down to whole instances. Run length is set by the trainer's max_duration anyway.
+        num_tokens=num_tokens,
     )
 
 
