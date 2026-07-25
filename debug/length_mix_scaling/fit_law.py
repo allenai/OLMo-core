@@ -73,6 +73,22 @@ def fit_exp(xs, ys):
     return best
 
 
+def seed_spreads(res):
+    """|seed1 - seed0| per point, from '<arm>' vs '<arm>s2' pairs.
+
+    Exists because a MEAN-based verdict is invalid when a point is bimodal: A4's two seeds were
+    0.249 and 0.585, and averaging them to 0.417 made a non-reproducible outlier look like a
+    systematic 'collapse'. Report the spread and let it veto any claim it swamps.
+    """
+    out = {}
+    for arm in list(res):
+        if arm.endswith("s2"):
+            base = arm[:-2]
+            if base in res:
+                out[base] = (res[base]["f1"], res[arm]["f1"], abs(res[arm]["f1"] - res[base]["f1"]))
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--results", required=True)
@@ -157,6 +173,20 @@ def main():
         if "A1" in res and "B2" in res:
             print(f"   BUT at ~20M short: A1 (full long) {res['A1']['f1']:.3f} vs "
                   f"B2 (half long) {res['B2']['f1']:.3f} -> long data is CRITICAL when short is scarce")
+
+    # --- seed reproducibility: printed BEFORE any verdict, because a large spread vetoes claims ---
+    sp = seed_spreads(res)
+    if sp:
+        print("\n--- seed reproducibility (|seed1 - seed0| per point) ---")
+        for arm, (a, b, d) in sorted(sp.items()):
+            flag = "  <-- UNSTABLE, >10x the others" if d > 0.15 else ""
+            print(f"   {arm:5s} {a:.3f} / {b:.3f}   spread {d:.3f}{flag}")
+        worst = max(sp.values(), key=lambda t: t[2])[2]
+        print(f"   max spread {worst:.3f}. A claim is only safe if the gap it rests on EXCEEDS this.")
+        for arm, (a, b, d) in sp.items():
+            if d > 0.15:
+                print(f"   !! {arm} is bimodal -- do NOT average its seeds into a verdict; the mean "
+                      f"({(a+b)/2:.3f}) just inherits the anomalous run.")
 
     print("\n--- Row C: equal-token uniform reference (the 'is it cheaper?' test) ---")
     for c, a in (("C3", "A3"), ("C4", "A4")):

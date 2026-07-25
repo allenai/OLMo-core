@@ -3,6 +3,48 @@
 **Updated 2026-07-24 22:30 PDT.** Autonomous overnight loop (dynamic self-pacing).
 Scope per user: **hybrid Qwen3.5-4B only** (no dense variant).
 
+## ⚠ THE "COLLAPSE" IS NOT REPRODUCIBLE — it is INSTABILITY (2026-07-25 03:35)
+
+| point | seed 0 | seed 1 | spread |
+|---|---|---|---|
+| A3 (84.5M short, 228 steps) | 0.514 | 0.495 | **0.018** |
+| A30 (105.9M short, 269 steps) | 0.561 | 0.591 | **0.030** |
+| **A4 (148.7M short, 351 steps)** | **0.249** | **0.585** | **0.337** |
+
+A4's second seed reached **0.585 — the highest single value in the entire experiment**. Its spread
+is >10× that of every other point. So the earlier "length-specific collapse at 149M short" is
+**withdrawn as a systematic effect**: one seed trained fine, one fell apart.
+
+**Revised claim: at the largest short-data budget, training becomes UNSTABLE**, not reliably worse.
+That is a materially different recommendation — "this ratio is risky" rather than "this ratio is bad".
+
+⚠ **A mean-based verdict is wrong here.** `fit_law.py` printed "collapse ESTABLISHED" by comparing
+2-seed means (0.576 vs 0.417) against a 0.15 threshold; with a bimodal point the mean is just
+dragged down by the anomalous run. Fixed to report per-point spread and refuse a verdict when a
+point's spread exceeds the between-point differences.
+
+⚠ **This also puts the headline equal-cost claim in question.** A3 0.514 vs C3 0.257 rests on a
+**single-seed C3**, and we have now seen a single seed swing by 0.337. C3 (0.257) is also
+suspiciously far below C4 (0.447) despite the same composition. **C3s2 launched** (seed 1) — the
+claim cannot stand until it lands.
+
+## ★ SEED REPLICATES (measuring run-to-run variance directly)
+
+| point | seed 0 | seed 1 | \|diff\| | verdict |
+|---|---|---|---|---|
+| A3 (84.5M short, 228 steps) — plateau | 0.514 | **0.495** | **0.018** | small — within eval noise (±0.045) |
+| A30 (105.9M short, 269 steps) — peak | 0.561 | **0.591** | **0.030** | small |
+| A4 (148.7M short, 351 steps) — cliff | 0.249 | *pending* | | |
+
+**Measured seed spread ≈ 0.02–0.03, not ~0.2.** That independently confirms the retraction below:
+the A4e/B4 gap really was the unannealed LR schedule, not seed variance.
+
+**The peak is real.** Two-seed means: A30 (106M short) **0.576** vs A3 (84.5M) **0.505** — a ~0.07
+gap on 2 seeds each, well outside the measured spread. 106M short tokens genuinely beats 84.5M.
+
+Replicates are stored in `eval_results/` but deliberately kept out of `ARM_TOKENS`, so they do not
+enter the Row A fit as if they were new x-points.
+
 ## ✅ RETRACTED (2026-07-25 02:20): the "~0.2 run-to-run variance" alarm was WRONG — A4e is confounded
 
 I briefly concluded from A4e vs B4 (near-identical data consumption, 0.207 apart) that run-to-run
