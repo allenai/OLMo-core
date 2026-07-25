@@ -52,6 +52,15 @@ def iter_olmo3moe_tensor_to_hf(
         "attention_input_norm.weight": "pre_attention_layernorm.weight",
         "feed_forward_input_norm.weight": "pre_feedforward_layernorm.weight",
     }
+    if suffix == "attention.w_qkv.weight":
+        q_dim = int(config.num_attention_heads) * int(config.head_dim)
+        kv_dim = int(config.num_key_value_heads) * int(config.head_dim)
+        q, k, v = value.split((q_dim, kv_dim, kv_dim), dim=0)
+        yield f"{prefix}self_attn.q_proj.weight", q
+        yield f"{prefix}self_attn.k_proj.weight", k
+        yield f"{prefix}self_attn.v_proj.weight", v
+        return
+
     if suffix in layer_mapping:
         yield f"{prefix}{layer_mapping[suffix]}", value
         return

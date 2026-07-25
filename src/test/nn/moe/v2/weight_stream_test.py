@@ -30,6 +30,29 @@ class _FakeEPModel(torch.nn.Module):
         return self.owner
 
 
+def test_fused_qkv_streams_hf_attention_weights_for_dense_layer():
+    config = SimpleNamespace(
+        num_attention_heads=4,
+        num_key_value_heads=2,
+        head_dim=3,
+        dense_layers_indices=[0],
+    )
+    fused = torch.arange(24 * 5, dtype=torch.float32).reshape(24, 5)
+
+    weights = list(
+        weight_stream.iter_olmo3moe_tensor_to_hf(config, "blocks.0.attention.w_qkv.weight", fused)
+    )
+
+    assert [name for name, _ in weights] == [
+        "model.layers.0.self_attn.q_proj.weight",
+        "model.layers.0.self_attn.k_proj.weight",
+        "model.layers.0.self_attn.v_proj.weight",
+    ]
+    torch.testing.assert_close(weights[0][1], fused[:12])
+    torch.testing.assert_close(weights[1][1], fused[12:18])
+    torch.testing.assert_close(weights[2][1], fused[18:])
+
+
 def test_ep_weights_use_single_output_all_gather_and_stream_hf_experts(monkeypatch):
     group = object()
     local = torch.arange(24, dtype=torch.float32).reshape(2, 3, 4)
