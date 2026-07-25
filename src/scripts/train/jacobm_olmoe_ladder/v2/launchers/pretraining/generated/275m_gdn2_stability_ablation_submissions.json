@@ -1,0 +1,14 @@
+[
+  {
+    "experiment_name": "pt-275m-gdn2-stability-ablation-cx8-lr1p6e-3-r1",
+    "experiment_id": "01KYBVM2N2D3DM67S8HWARJP6C",
+    "tasks": [
+      "ev1-neg-cx8-lr1p6e-3",
+      "ev2-noneg-cx8-lr1p6e-3",
+      "ev1-noneg-cx8-lr1p6e-3"
+    ],
+    "debug_gradients": false,
+    "run_suffix": null,
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYBVM2N2D3DM67S8HWARJP6C"
+  }
+]

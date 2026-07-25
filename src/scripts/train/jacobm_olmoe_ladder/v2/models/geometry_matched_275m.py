@@ -121,7 +121,10 @@ EXPECTED_PROFILE_COUNTS = {
     "dense_attention": (290_638_720, 226_413_440, 3_067_603_840),
 }
 EXPECTED_SWA_COUNTS = (265_665_280, 201_440_000, 3_111_197_440)
-EXPECTED_GDN2_COUNTS = (306_191_168, 241_965_888, 3_151_723_328)
+EXPECTED_GDN2_COUNTS_BY_EXPAND_V = {
+    1.0: (284_915_520, 220_690_240, 3_130_447_680),
+    2.0: (306_191_168, 241_965_888, 3_151_723_328),
+}
 
 # A strict 1:1 hybrid alternates a recurrent/local mixer at even layers with
 # gated global attention at odd layers. Layer count is the only sizing knob:
@@ -294,15 +297,28 @@ def build_geometry_matched_model_config(
 
 
 def build_geometry_matched_gdn2_model_config(
-    *, rope: bool = True, disable_recompute: bool = False
+    *,
+    rope: bool = True,
+    expand_v: float = 2.0,
+    allow_neg_eigval: bool = True,
+    disable_recompute: bool = False,
 ) -> OLMoDDPModelConfig:
     """Swap GDN1 for GDN2 in a 275M gated geometry candidate.
 
     All geometry, MoE, full-attention, initialization, and optimization-facing
     settings remain unchanged. ``rope=False`` selects the corresponding gated
-    NoPE parent. ``allow_neg_eigval`` is retained from GDN1 so the mixer
-    generation is the only other architectural intervention.
+    NoPE parent. The defaults retain GDN1's ``expand_v=2`` and
+    ``allow_neg_eigval=True`` settings; explicit overrides support isolated
+    stability ablations without changing any surrounding model geometry.
     """
+
+    try:
+        expected_counts = EXPECTED_GDN2_COUNTS_BY_EXPAND_V[expand_v]
+    except KeyError as exc:
+        raise ValueError(
+            f"unsupported audited GDN2 expand_v={expand_v}; expected one of "
+            f"{tuple(EXPECTED_GDN2_COUNTS_BY_EXPAND_V)}"
+        ) from exc
 
     profile_name = "geometry_rope_gated" if rope else "geometry_nope_gated"
     candidate = build_geometry_matched_model_config(profile_name)
@@ -312,8 +328,8 @@ def build_geometry_matched_gdn2_model_config(
         n_heads=old_gdn.n_heads,
         n_v_heads=old_gdn.n_v_heads,
         head_dim=old_gdn.head_dim,
-        expand_v=old_gdn.expand_v,
-        allow_neg_eigval=old_gdn.allow_neg_eigval,
+        expand_v=expand_v,
+        allow_neg_eigval=allow_neg_eigval,
         conv_size=old_gdn.conv_size,
         conv_bias=old_gdn.conv_bias,
         disable_recompute=disable_recompute,
@@ -358,9 +374,9 @@ def build_geometry_matched_gdn2_model_config(
         candidate.num_active_non_embedding_params,
         candidate.num_params,
     )
-    if actual_counts != EXPECTED_GDN2_COUNTS:
+    if actual_counts != expected_counts:
         raise ValueError(
-            f"unexpected GDN2 parameter counts: expected {EXPECTED_GDN2_COUNTS}, "
+            f"unexpected GDN2 parameter counts: expected {expected_counts}, "
             f"found {actual_counts}"
         )
     return candidate

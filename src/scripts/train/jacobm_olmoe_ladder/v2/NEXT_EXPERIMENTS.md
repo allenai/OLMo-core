@@ -8,6 +8,11 @@ wide v1 integration model.
 After the current gated-RoPE wave, the near-term priorities are GDN2 and
 LatentMoE. Test each independently before considering a combined recipe.
 
+Within GDN2, first resolve the current FLA stability failures. The active
+diagnostics are the `expand_v`/negative-eigenvalue 275M two-by-two comparison
+and a kernel investigation. A 275M KDA LR sweep is a possible follow-up, but it
+is not yet implemented or launched.
+
 | Order | Experiment | Change from parent recipe | State |
 |---:|---|---|---|
 | 1 | GDN hybrid | On wide, replace sliding-attention layers with GatedDeltaNet; keep geometry, global-attention placement, RoPE, initialization, and `expand_v=1` fixed. | Complete at 275M and across all 16 larger scale cells. |

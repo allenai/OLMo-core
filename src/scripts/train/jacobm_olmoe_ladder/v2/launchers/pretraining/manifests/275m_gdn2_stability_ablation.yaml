@@ -1,0 +1,87 @@
+schema_version: 1
+
+experiment:
+  description: 275M Cx8 GDN2 expand-v and negative-eigenvalue stability ablation
+  checkpoint_root: /weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/olmo-ddp/pretraining
+
+source:
+  repo: /weka/oe-adapt-default/jacobm/olmoe3/olmo-ddp-migration/OLMo-core-moe-v2-core
+  wrapper: src/scripts/train/jacobm_olmoe3_gdn2_beaker.sh
+  image: 01KW8G8JC20H11Y60PPTE2VN4Q
+
+beaker:
+  workspace: ai2/OLMo-3-moe-experiments
+  cluster: ai2/holmes
+  priority: urgent
+  shared_memory: 128 GiB
+  min_runtime: 0m
+  auto_resume: true
+  timeout: 168h
+  result_path: /results
+
+secrets:
+  AWS_ACCESS_KEY_ID: AWS_ACCESS_KEY_ID
+  AWS_SECRET_ACCESS_KEY: AWS_SECRET_ACCESS_KEY
+  WANDB_API_KEY: jacobm_WANDB_API_KEY
+  BEAKER_TOKEN: jacobm_BEAKER_TOKEN
+
+datasets:
+  - mount_path: /weka/oe-adapt-default
+    weka: oe-adapt-default
+  - mount_path: /weka/oe-training-default
+    weka: oe-training-default
+
+training:
+  sequence_length: 8192
+  hard_stop_steps: 0
+  checkpoints: true
+  save_interval: 999999999
+  ephemeral_save_interval: 500
+  checkpoint_removal: ephemeral_only
+  evals: false
+  eval_interval: 999999999
+  eval_steps: 0
+  eval_task_set: hellaswag
+  eval_on_finish: false
+  compile: true
+  wandb: true
+
+# Match the repeatedly failing 275M Cx8, LR=1.6e-3 production cell exactly
+# except for the one or two GDN2 settings named by each model variant. All
+# runs start from scratch under distinct checkpoint and W&B identities.
+runs:
+  - task_name: ev1-neg-cx8-lr1p6e-3
+    run_name: pt-275m-geometry-hybrid-gdn2-ev1-neg-nope-gated-cx8-lr1p6e-3-r1
+    model_variant: geometry_275m_gdn2_ev1_neg_nope_gated
+    model_size: 275m
+    cx: 8
+    learning_rate: "1.6e-3"
+    global_batch_size: 786432
+    gpu_count: 8
+    expert_parallel_size: 1
+    expert_parallel_path: rowwise_nvshmem
+    rank_microbatch_sequences: 12
+
+  - task_name: ev2-noneg-cx8-lr1p6e-3
+    run_name: pt-275m-geometry-hybrid-gdn2-ev2-noneg-nope-gated-cx8-lr1p6e-3-r1
+    model_variant: geometry_275m_gdn2_ev2_noneg_nope_gated
+    model_size: 275m
+    cx: 8
+    learning_rate: "1.6e-3"
+    global_batch_size: 786432
+    gpu_count: 8
+    expert_parallel_size: 1
+    expert_parallel_path: rowwise_nvshmem
+    rank_microbatch_sequences: 12
+
+  - task_name: ev1-noneg-cx8-lr1p6e-3
+    run_name: pt-275m-geometry-hybrid-gdn2-ev1-noneg-nope-gated-cx8-lr1p6e-3-r1
+    model_variant: geometry_275m_gdn2_ev1_noneg_nope_gated
+    model_size: 275m
+    cx: 8
+    learning_rate: "1.6e-3"
+    global_batch_size: 786432
+    gpu_count: 8
+    expert_parallel_size: 1
+    expert_parallel_path: rowwise_nvshmem
+    rank_microbatch_sequences: 12

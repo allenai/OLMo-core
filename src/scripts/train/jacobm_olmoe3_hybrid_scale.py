@@ -94,6 +94,13 @@ GDN2_MAX_ACTIVE_PARAMETER_DELTA_FRACTIONS = {
     "1p2b": 0.125,
 }
 
+GDN2_275M_NOPE_SETTINGS = {
+    "geometry_275m_gdn2_ev2_nope_gated": (2.0, True),
+    "geometry_275m_gdn2_ev1_neg_nope_gated": (1.0, True),
+    "geometry_275m_gdn2_ev2_noneg_nope_gated": (2.0, False),
+    "geometry_275m_gdn2_ev1_noneg_nope_gated": (1.0, False),
+}
+
 
 def env_bool(name: str, default: bool) -> bool:
     value = os.environ.get(name)
@@ -156,7 +163,7 @@ DATA_ROOT = os.environ.get("OLMOE3_HYBRID_DATA_ROOT", "s3://ai2-llm")
 EVAL_DATA_ROOT = os.environ.get("OLMOE3_HYBRID_EVAL_DATA_ROOT", "/weka/oe-training-default/ai2-llm")
 
 if GDN2_DISABLE_RECOMPUTE and MODEL_VARIANT not in {
-    "geometry_275m_gdn2_ev2_nope_gated",
+    *GDN2_275M_NOPE_SETTINGS,
     "geometry_275m_gdn2_ev2_rope_gated",
     "geometry_275m_gdn2_ev2_rope_gated_1to1",
     "geometry_matched_gdn2_ev2_nope_gated",
@@ -217,17 +224,21 @@ def model_config():
         model = build_geometry_matched_gdn2_model_config(
             disable_recompute=GDN2_DISABLE_RECOMPUTE
         )
-    elif MODEL_VARIANT == "geometry_275m_gdn2_ev2_nope_gated":
+    elif MODEL_VARIANT in GDN2_275M_NOPE_SETTINGS:
         from scripts.train.jacobm_olmoe_ladder.v2.models.geometry_matched_275m import (
             build_geometry_matched_gdn2_model_config,
         )
 
         if MODEL_SIZE != "275m":
             raise ValueError(
-                "The geometry_275m_gdn2_ev2_nope_gated variant only supports MODEL_SIZE=275m"
+                f"The {MODEL_VARIANT} variant only supports MODEL_SIZE=275m"
             )
+        expand_v, allow_neg_eigval = GDN2_275M_NOPE_SETTINGS[MODEL_VARIANT]
         model = build_geometry_matched_gdn2_model_config(
-            rope=False, disable_recompute=GDN2_DISABLE_RECOMPUTE
+            rope=False,
+            expand_v=expand_v,
+            allow_neg_eigval=allow_neg_eigval,
+            disable_recompute=GDN2_DISABLE_RECOMPUTE,
         )
     elif MODEL_VARIANT == "geometry_275m_swa_rope_gated":
         from scripts.train.jacobm_olmoe_ladder.v2.models.geometry_matched_275m import (
@@ -505,7 +516,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         "geometry_275m_gdn_ev2_nope",
         "geometry_275m_gdn_ev2_nope_gated",
         "geometry_275m_gdn_ev2_rope_gated",
-        "geometry_275m_gdn2_ev2_nope_gated",
+        *GDN2_275M_NOPE_SETTINGS,
         "geometry_275m_gdn2_ev2_rope_gated",
         "geometry_275m_swa_rope_gated",
         "geometry_275m_gdn_ev2_rope_gated_1to1",
@@ -522,8 +533,12 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         variant_group = "olmoe3-275m-geometry-gdn-ev2-rope-gated"
     elif MODEL_VARIANT == "geometry_275m_gdn2_ev2_rope_gated":
         variant_group = "olmoe3-275m-geometry-gdn2-ev2-rope-gated"
-    elif MODEL_VARIANT == "geometry_275m_gdn2_ev2_nope_gated":
-        variant_group = "olmoe3-275m-geometry-gdn2-ev2-nope-gated"
+    elif MODEL_VARIANT in GDN2_275M_NOPE_SETTINGS:
+        expand_v, allow_neg_eigval = GDN2_275M_NOPE_SETTINGS[MODEL_VARIANT]
+        eigval_tag = "neg" if allow_neg_eigval else "noneg"
+        variant_group = (
+            f"olmoe3-275m-geometry-gdn2-ev{expand_v:g}-{eigval_tag}-nope-gated"
+        )
     elif MODEL_VARIANT == "geometry_275m_swa_rope_gated":
         variant_group = "olmoe3-275m-geometry-swa-rope-gated-throughput"
     elif MODEL_VARIANT == "geometry_275m_gdn_ev2_rope_gated_1to1":
@@ -556,24 +571,30 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
     if MODEL_VARIANT in {
         "geometry_275m_gdn_ev2_nope_gated",
         "geometry_275m_gdn_ev2_nope",
-        "geometry_275m_gdn2_ev2_nope_gated",
+        *GDN2_275M_NOPE_SETTINGS,
         "geometry_matched_gdn_ev2_nope",
         "geometry_matched_gdn_ev2_nope_gated",
         "geometry_matched_gdn2_ev2_nope_gated",
     }:
-        variant_tags = ["geometry-matched", "expand-v-2", "nope"]
+        expand_v = GDN2_275M_NOPE_SETTINGS.get(MODEL_VARIANT, (2.0, True))[0]
+        variant_tags = ["geometry-matched", f"expand-v-{expand_v:g}", "nope"]
         if MODEL_VARIANT in {
             "geometry_275m_gdn_ev2_nope_gated",
-            "geometry_275m_gdn2_ev2_nope_gated",
+            *GDN2_275M_NOPE_SETTINGS,
             "geometry_matched_gdn_ev2_nope_gated",
             "geometry_matched_gdn2_ev2_nope_gated",
         }:
             variant_tags.append("attention-gate")
         if MODEL_VARIANT in {
-            "geometry_275m_gdn2_ev2_nope_gated",
+            *GDN2_275M_NOPE_SETTINGS,
             "geometry_matched_gdn2_ev2_nope_gated",
         }:
             variant_tags.append("gdn2")
+            if MODEL_VARIANT in GDN2_275M_NOPE_SETTINGS:
+                allow_neg_eigval = GDN2_275M_NOPE_SETTINGS[MODEL_VARIANT][1]
+                variant_tags.append(
+                    "negative-eigenvalues" if allow_neg_eigval else "nonnegative-eigenvalues"
+                )
             if GDN2_DISABLE_RECOMPUTE:
                 variant_tags.append("gdn2-no-recompute")
     elif geometry_variant:
@@ -745,7 +766,7 @@ def finalize_config(config: ExperimentConfig) -> None:
         config.model.num_active_params - base.num_active_params
     ) / base.num_active_params
     if MODEL_VARIANT in {
-        "geometry_275m_gdn2_ev2_nope_gated",
+        *GDN2_275M_NOPE_SETTINGS,
         "geometry_275m_gdn2_ev2_rope_gated",
         "geometry_275m_gdn2_ev2_rope_gated_1to1",
         "geometry_matched_gdn2_ev2_nope_gated",

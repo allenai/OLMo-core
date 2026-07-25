@@ -476,3 +476,31 @@ callback has writes disabled. W&B is also disabled so this diagnostic cannot
 alter the production training curve. Passing step 9,059 would implicate either
 the recomputation path or microbatch-sensitive numerical behavior; reproducing
 the failure would rule out recomputation as a sufficient explanation.
+
+The replay reproduced the same broad non-finite gradient failure at step 9,059
+with `disable_recompute=True` and MB1. Its later CUDA device-side assertion was
+secondary failure handling after the NaNs had already been reported. Backward
+recomputation is therefore not a sufficient explanation, and lowering the
+microbatch from four to one did not avoid the checkpoint-local failure.
+
+### GDN2 stability hyperparameter ablation
+
+Three fresh 275M Cx8 runs were submitted in
+[Beaker experiment `01KYBVM2N2D3DM67S8HWARJP6C`](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYBVM2N2D3DM67S8HWARJP6C)
+to complete a two-by-two test with the existing `expand_v=2`, negative-
+eigenvalue-enabled run. Every non-model setting exactly matches its clean
+`-fresh-r2` reproduction: LR `1.6e-3`, 8 GPUs, EP1, MB12, 786,432-token global
+batch, Cx8 token budget, normal recomputation, compilation, data order/seed,
+checkpoint policy, and urgent unallocated Holmes scheduling.
+
+| New run | `expand_v` | Negative eigenvalues | Active parameters |
+|---|---:|---:|---:|
+| `ev1-neg-cx8-lr1p6e-3` | 1 | yes | 284,915,520 |
+| `ev2-noneg-cx8-lr1p6e-3` | 2 | no | 306,191,168 |
+| `ev1-noneg-cx8-lr1p6e-3` | 1 | no | 284,915,520 |
+
+All three start from step zero with distinct W&B identities and checkpoint
+directories. The launch manifest is
+`launchers/pretraining/manifests/275m_gdn2_stability_ablation.yaml`. A possible
+later KDA 275M LR sweep remains planning-only until these stability results and
+the kernel investigation are reviewed.
