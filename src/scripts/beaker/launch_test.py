@@ -3,7 +3,6 @@ Launch tests on Beaker.
 """
 
 import sys
-from typing import List
 
 from rich import print
 
@@ -15,7 +14,7 @@ from olmo_core.launch.beaker import (
 from olmo_core.utils import generate_uuid, prepare_cli_environment
 
 
-def build_config(command: List[str], overrides: List[str]) -> BeakerLaunchConfig:
+def build_config(command: list[str], overrides: list[str]) -> BeakerLaunchConfig:
     return BeakerLaunchConfig(
         name=f"olmo-core-test-{generate_uuid()[:8]}",
         budget="ai2/oe-other",

@@ -2,10 +2,10 @@ import logging
 import math
 import warnings
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING
 
 import torch
-import torch.nn as nn
+from torch import nn
 from torch.distributed import DeviceMesh
 from torch.distributed.tensor import Placement, Replicate, Shard
 from torch.distributed.tensor.parallel import parallelize_module
@@ -53,30 +53,30 @@ if TYPE_CHECKING:
     from olmo_core.nn.transformer.init import InitMethod
 
 __all__ = [
-    "SlidingWindowAttentionConfig",
-    "GateGranularity",
-    "GateConfig",
-    "AttentionType",
-    "AttentionBackendName",
+    "Attention",
     "AttentionBackend",
-    "TorchAttentionBackend",
+    "AttentionBackendName",
+    "AttentionConfig",
+    "AttentionType",
     "FlashAttention2Backend",
     "FlashAttention3Backend",
     "FlashAttention4Backend",
-    "TEAttentionBackend",
-    "AttentionConfig",
-    "Attention",
     "FusedAttention",
-    "NormalizedAttention",
-    "RingAttentionLoadBalancerType",
-    "RingAttentionLoadBalancer",
-    "RingAttentionZigZagLoadBalancer",
-    "RingAttentionLlama3LoadBalancer",
-    "UlyssesLoadBalancer",
-    "RingContextParallelStyle",
-    "UlyssesContextParallelStyle",
-    "GatedDeltaNetConfig",
+    "GateConfig",
+    "GateGranularity",
     "GatedDeltaNet",
+    "GatedDeltaNetConfig",
+    "NormalizedAttention",
+    "RingAttentionLlama3LoadBalancer",
+    "RingAttentionLoadBalancer",
+    "RingAttentionLoadBalancerType",
+    "RingAttentionZigZagLoadBalancer",
+    "RingContextParallelStyle",
+    "SlidingWindowAttentionConfig",
+    "TEAttentionBackend",
+    "TorchAttentionBackend",
+    "UlyssesContextParallelStyle",
+    "UlyssesLoadBalancer",
 ]
 
 log = logging.getLogger(__name__)
@@ -99,7 +99,7 @@ class GateConfig(Config):
 
 @dataclass
 class SlidingWindowAttentionConfig(Config):
-    pattern: List[int]
+    pattern: list[int]
     """
     The pattern of window sizes to use for attention, repeated to cover all layers.
     A value of -1 indicates full attention. For example, a pattern of ``[4096, 4096, 4096, -1]``
@@ -188,19 +188,19 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
     The name of the implementation.
     """
     n_heads: int = 16
-    n_kv_heads: Optional[int] = None
-    head_dim: Optional[int] = None
-    bias: Optional[bool] = None
-    gate: Optional[GateConfig] = None
-    rope: Optional[RoPEConfig] = None
-    clip_qkv: Optional[float] = None
-    qk_norm: Optional[LayerNormConfig] = None
-    dropout: Optional[float] = None
-    use_flash: Optional[bool] = None
-    backend: Optional[AttentionBackendName] = None
+    n_kv_heads: int | None = None
+    head_dim: int | None = None
+    bias: bool | None = None
+    gate: GateConfig | None = None
+    rope: RoPEConfig | None = None
+    clip_qkv: float | None = None
+    qk_norm: LayerNormConfig | None = None
+    dropout: float | None = None
+    use_flash: bool | None = None
+    backend: AttentionBackendName | None = None
     dtype: DType = DType.float32
-    sliding_window: Optional[SlidingWindowAttentionConfig] = None
-    use_head_qk_norm: Optional[bool] = None
+    sliding_window: SlidingWindowAttentionConfig | None = None
+    use_head_qk_norm: bool | None = None
 
     def num_params(self, d_model: int) -> int:
         """
@@ -263,7 +263,7 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
         layer_idx: int,
         n_layers: int,
         init_device: str = "cpu",
-        cache: Optional[BufferCache] = None,
+        cache: BufferCache | None = None,
     ) -> "SequenceMixer":
         """
         Build the corresponding attention module.
@@ -274,7 +274,7 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
         kwargs = self.as_dict(exclude_none=True, recurse=False)
         kwargs.pop("name")
 
-        sliding_window_config: Optional[SlidingWindowAttentionConfig] = kwargs.pop(
+        sliding_window_config: SlidingWindowAttentionConfig | None = kwargs.pop(
             "sliding_window", None
         )
         if sliding_window_config is not None and sliding_window_config.should_use_swa(
@@ -282,7 +282,7 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
         ):
             kwargs["window_size"] = sliding_window_config.get_window_size(layer_idx, n_layers)
         else:  # global (non-SWA) layer
-            rope_config: Optional[RoPEConfig] = kwargs.get("rope")
+            rope_config: RoPEConfig | None = kwargs.get("rope")
             if rope_config is not None and rope_config.no_global_rope:
                 kwargs["rope"] = None
 
@@ -349,21 +349,21 @@ class Attention(SequenceMixer):
         *,
         d_model: int,
         n_heads: int,
-        n_kv_heads: Optional[int] = None,
-        head_dim: Optional[int] = None,
+        n_kv_heads: int | None = None,
+        head_dim: int | None = None,
         bias: bool = True,
-        gate: Optional[GateConfig] = None,
-        rope: Optional[RoPEConfig] = None,
-        clip_qkv: Optional[float] = None,
-        qk_norm: Optional[LayerNormConfig] = None,
+        gate: GateConfig | None = None,
+        rope: RoPEConfig | None = None,
+        clip_qkv: float | None = None,
+        qk_norm: LayerNormConfig | None = None,
         dropout: float = 0.0,
-        softmax_scale: Optional[float] = None,
-        use_flash: Optional[bool] = None,
-        backend: Optional[AttentionBackendName] = None,
-        window_size: Optional[int] = None,
+        softmax_scale: float | None = None,
+        use_flash: bool | None = None,
+        backend: AttentionBackendName | None = None,
+        window_size: int | None = None,
         dtype: torch.dtype = torch.float32,
         init_device: str = "cpu",
-        cache: Optional[BufferCache] = None,
+        cache: BufferCache | None = None,
         use_head_qk_norm: bool = False,
     ):
         super().__init__()
@@ -390,7 +390,7 @@ class Attention(SequenceMixer):
         )
 
         self.gate = gate
-        self.w_g: Optional[nn.Linear] = None
+        self.w_g: nn.Linear | None = None
         if gate is not None:
             if gate.granularity == GateGranularity.headwise:
                 self.w_g = nn.Linear(
@@ -408,8 +408,8 @@ class Attention(SequenceMixer):
         self.clip_qkv = clip_qkv
         self.use_head_qk_norm = use_head_qk_norm
 
-        self.q_norm: Optional[LayerNorm] = None
-        self.k_norm: Optional[LayerNorm] = None
+        self.q_norm: LayerNorm | None = None
+        self.k_norm: LayerNorm | None = None
         if qk_norm is not None:
             if use_head_qk_norm:
                 self.q_norm = qk_norm.build(size=self.head_dim, init_device=init_device)
@@ -420,7 +420,7 @@ class Attention(SequenceMixer):
                     size=self.n_kv_heads * self.head_dim, init_device=init_device
                 )
 
-        self.rope: Optional[Union[RotaryEmbedding, ComplexRotaryEmbedding]] = None
+        self.rope: RotaryEmbedding | ComplexRotaryEmbedding | None = None
         if rope is not None:
             if rope.name == "fused":
                 raise OLMoConfigurationError(
@@ -446,7 +446,7 @@ class Attention(SequenceMixer):
 
         # Translate window size so that we only look left, not right.
         self.window_size = window_size
-        window_size_tuple: Tuple[int, int] = (-1, -1)
+        window_size_tuple: tuple[int, int] = (-1, -1)
         if window_size is not None:
             if window_size <= 0:
                 raise OLMoConfigurationError(f"'window_size' must be positive (got {window_size})")
@@ -478,7 +478,7 @@ class Attention(SequenceMixer):
             window_size=window_size_tuple,
             cache=cache,
         )
-        self.kv_cache_manager: Optional[KVCacheManager] = None
+        self.kv_cache_manager: KVCacheManager | None = None
 
     @property
     def cp_enabled(self) -> bool:
@@ -489,14 +489,14 @@ class Attention(SequenceMixer):
         q: torch.Tensor,
         k: torch.Tensor,
         v: torch.Tensor,
-        cu_doc_lens: Optional[torch.Tensor] = None,
-        cu_doc_lens_q: Optional[torch.Tensor] = None,
-        cu_doc_lens_k: Optional[torch.Tensor] = None,
-        max_doc_len: Optional[int] = None,
-        max_doc_len_q: Optional[int] = None,
-        max_doc_len_k: Optional[int] = None,
-        local_k_slice: Optional[slice] = None,
-        cache_leftpad: Optional[torch.Tensor] = None,
+        cu_doc_lens: torch.Tensor | None = None,
+        cu_doc_lens_q: torch.Tensor | None = None,
+        cu_doc_lens_k: torch.Tensor | None = None,
+        max_doc_len: int | None = None,
+        max_doc_len_q: int | None = None,
+        max_doc_len_k: int | None = None,
+        local_k_slice: slice | None = None,
+        cache_leftpad: torch.Tensor | None = None,
     ) -> torch.Tensor:
         if self.kv_cache_manager is not None:
             self.kv_cache_manager.record_leftpad(cache_leftpad)
@@ -520,12 +520,12 @@ class Attention(SequenceMixer):
         self,
         q: torch.Tensor,
         k: torch.Tensor,
-        start_pos: Optional[int],
-        pos_sin: Optional[torch.Tensor],
-        pos_cos: Optional[torch.Tensor],
-        freqs_cis: Optional[torch.Tensor],
-        cu_doc_lens: Optional[torch.Tensor],
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        start_pos: int | None,
+        pos_sin: torch.Tensor | None,
+        pos_cos: torch.Tensor | None,
+        freqs_cis: torch.Tensor | None,
+        cu_doc_lens: torch.Tensor | None,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         assert self.rope is not None
         rope_kwargs = {}
         if cu_doc_lens is not None:
@@ -549,17 +549,17 @@ class Attention(SequenceMixer):
     def forward(
         self,
         x: torch.Tensor,
-        cu_doc_lens: Optional[torch.Tensor] = None,
-        cu_doc_lens_q: Optional[torch.Tensor] = None,
-        cu_doc_lens_k: Optional[torch.Tensor] = None,
-        max_doc_len: Optional[int] = None,
-        max_doc_len_q: Optional[int] = None,
-        max_doc_len_k: Optional[int] = None,
-        local_k_slice: Optional[slice] = None,
-        pos_sin: Optional[torch.Tensor] = None,
-        pos_cos: Optional[torch.Tensor] = None,
-        freqs_cis: Optional[torch.Tensor] = None,
-        cache_leftpad: Optional[torch.Tensor] = None,
+        cu_doc_lens: torch.Tensor | None = None,
+        cu_doc_lens_q: torch.Tensor | None = None,
+        cu_doc_lens_k: torch.Tensor | None = None,
+        max_doc_len: int | None = None,
+        max_doc_len_q: int | None = None,
+        max_doc_len_k: int | None = None,
+        local_k_slice: slice | None = None,
+        pos_sin: torch.Tensor | None = None,
+        pos_cos: torch.Tensor | None = None,
+        freqs_cis: torch.Tensor | None = None,
+        cache_leftpad: torch.Tensor | None = None,
     ) -> torch.Tensor:
         """
         Apply attention to the input.
@@ -656,8 +656,8 @@ class Attention(SequenceMixer):
     def apply_tp(
         self,
         tp_mesh: DeviceMesh,
-        input_layout: Optional[Placement] = None,
-        output_layout: Optional[Placement] = None,
+        input_layout: Placement | None = None,
+        output_layout: Placement | None = None,
         use_local_output: bool = True,
         float8_enabled: bool = False,
     ):
@@ -709,8 +709,8 @@ class Attention(SequenceMixer):
     def apply_cp(
         self,
         cp_mesh: DeviceMesh,
-        ring: Optional[RingContextParallelStyle] = None,
-        uly: Optional[UlyssesContextParallelStyle] = None,
+        ring: RingContextParallelStyle | None = None,
+        uly: UlyssesContextParallelStyle | None = None,
     ):
         """
         Prepare the module for context-parallelism (ring attention).
@@ -732,7 +732,7 @@ class Attention(SequenceMixer):
         block_idx: int,
         num_blocks: int,
         std: float = 0.02,
-        generator: Optional[torch.Generator] = None,
+        generator: torch.Generator | None = None,
     ) -> None:
         from olmo_core.nn.transformer.init import InitMethod, init_linear
 
@@ -820,14 +820,14 @@ class NormalizedAttention(Attention):
         *,
         d_model: int,
         n_heads: int,
-        n_kv_heads: Optional[int] = None,
-        rope: Optional[RoPEConfig] = None,
-        qk_norm: Optional[LayerNormConfig] = None,
-        use_flash: Optional[bool] = None,
-        backend: Optional[AttentionBackendName] = None,
+        n_kv_heads: int | None = None,
+        rope: RoPEConfig | None = None,
+        qk_norm: LayerNormConfig | None = None,
+        use_flash: bool | None = None,
+        backend: AttentionBackendName | None = None,
         dtype: torch.dtype = torch.float32,
         init_device: str = "cpu",
-        cache: Optional[BufferCache] = None,
+        cache: BufferCache | None = None,
     ):
         super().__init__(
             d_model=d_model,
@@ -868,17 +868,17 @@ class NormalizedAttention(Attention):
     def forward(
         self,
         x: torch.Tensor,
-        cu_doc_lens: Optional[torch.Tensor] = None,
-        cu_doc_lens_q: Optional[torch.Tensor] = None,
-        cu_doc_lens_k: Optional[torch.Tensor] = None,
-        max_doc_len: Optional[int] = None,
-        max_doc_len_q: Optional[int] = None,
-        max_doc_len_k: Optional[int] = None,
-        local_k_slice: Optional[slice] = None,
-        pos_sin: Optional[torch.Tensor] = None,
-        pos_cos: Optional[torch.Tensor] = None,
-        freqs_cis: Optional[torch.Tensor] = None,
-        cache_leftpad: Optional[torch.Tensor] = None,
+        cu_doc_lens: torch.Tensor | None = None,
+        cu_doc_lens_q: torch.Tensor | None = None,
+        cu_doc_lens_k: torch.Tensor | None = None,
+        max_doc_len: int | None = None,
+        max_doc_len_q: int | None = None,
+        max_doc_len_k: int | None = None,
+        local_k_slice: slice | None = None,
+        pos_sin: torch.Tensor | None = None,
+        pos_cos: torch.Tensor | None = None,
+        freqs_cis: torch.Tensor | None = None,
+        cache_leftpad: torch.Tensor | None = None,
     ) -> torch.Tensor:
         if cache_leftpad:
             raise NotImplementedError(
@@ -943,8 +943,8 @@ class NormalizedAttention(Attention):
     def apply_tp(
         self,
         tp_mesh: DeviceMesh,
-        input_layout: Optional[Placement] = None,
-        output_layout: Optional[Placement] = None,
+        input_layout: Placement | None = None,
+        output_layout: Placement | None = None,
         use_local_output: bool = True,
         float8_enabled: bool = False,
     ):
@@ -997,13 +997,13 @@ class FusedAttention(SequenceMixer):
         d_model: int,
         n_heads: int,
         bias: bool = True,
-        rope: Optional[RoPEConfig] = None,
-        clip_qkv: Optional[float] = None,
+        rope: RoPEConfig | None = None,
+        clip_qkv: float | None = None,
         dropout: float = 0.0,
         dtype: torch.dtype = torch.float32,
-        backend: Optional[AttentionBackendName] = None,
+        backend: AttentionBackendName | None = None,
         init_device: str = "cpu",
-        cache: Optional[BufferCache] = None,
+        cache: BufferCache | None = None,
     ):
         super().__init__()
 
@@ -1012,7 +1012,7 @@ class FusedAttention(SequenceMixer):
         self.w_qkv = nn.Linear(d_model, 3 * d_model, bias=bias, dtype=dtype, device=init_device)
         self.w_out = nn.Linear(d_model, d_model, bias=bias, dtype=dtype, device=init_device)
         self.clip_qkv = clip_qkv
-        self.rope: Optional[FusedRotaryEmbedding] = None
+        self.rope: FusedRotaryEmbedding | None = None
         if rope is not None:
             if rope.name != "fused":
                 raise OLMoConfigurationError(f"{self.__class__.__name__} requires fused RoPE")
@@ -1039,12 +1039,12 @@ class FusedAttention(SequenceMixer):
     def forward(
         self,
         x: torch.Tensor,
-        max_doc_len: Optional[int] = None,
-        cu_doc_lens: Optional[torch.Tensor] = None,
-        pos_sin: Optional[torch.Tensor] = None,
-        pos_cos: Optional[torch.Tensor] = None,
-        freqs_cis: Optional[torch.Tensor] = None,
-        cache_leftpad: Optional[torch.Tensor] = None,
+        max_doc_len: int | None = None,
+        cu_doc_lens: torch.Tensor | None = None,
+        pos_sin: torch.Tensor | None = None,
+        pos_cos: torch.Tensor | None = None,
+        freqs_cis: torch.Tensor | None = None,
+        cache_leftpad: torch.Tensor | None = None,
     ) -> torch.Tensor:
         """
         Apply attention to the input.
@@ -1099,8 +1099,8 @@ class FusedAttention(SequenceMixer):
     def apply_tp(
         self,
         tp_mesh: DeviceMesh,
-        input_layout: Optional[Placement] = None,
-        output_layout: Optional[Placement] = None,
+        input_layout: Placement | None = None,
+        output_layout: Placement | None = None,
         use_local_output: bool = True,
         float8_enabled: bool = False,
     ):
@@ -1111,8 +1111,8 @@ class FusedAttention(SequenceMixer):
     def apply_cp(
         self,
         cp_mesh: DeviceMesh,
-        ring: Optional[RingContextParallelStyle] = None,
-        uly: Optional[UlyssesContextParallelStyle] = None,
+        ring: RingContextParallelStyle | None = None,
+        uly: UlyssesContextParallelStyle | None = None,
     ):
         self.backend.apply_cp(cp_mesh, ring=ring, uly=uly)
 
@@ -1124,7 +1124,7 @@ class FusedAttention(SequenceMixer):
         block_idx: int,
         num_blocks: int,
         std: float = 0.02,
-        generator: Optional[torch.Generator] = None,
+        generator: torch.Generator | None = None,
     ) -> None:
         from olmo_core.nn.transformer.init import InitMethod, init_linear
 

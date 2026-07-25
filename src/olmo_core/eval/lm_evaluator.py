@@ -1,4 +1,5 @@
-from typing import Any, Dict, Iterable, Optional, Sequence, Set
+from collections.abc import Iterable, Sequence
+from typing import Any
 
 import torch
 import torch.distributed as dist
@@ -30,9 +31,9 @@ class LMEvaluator(Evaluator):
         self,
         *,
         name: str,
-        batches: Iterable[Dict[str, Any]],
+        batches: Iterable[dict[str, Any]],
         labels: Sequence[str],
-        device: Optional[torch.device] = None,
+        device: torch.device | None = None,
         deterministic: bool = True,
     ):
         super().__init__(name=name, batches=batches, device=device, deterministic=deterministic)
@@ -46,18 +47,18 @@ class LMEvaluator(Evaluator):
         name: str,
         global_batch_size: int,
         collator: DataCollator,
-        device: Optional[torch.device] = None,
-        dp_process_group: Optional[dist.ProcessGroup] = None,
+        device: torch.device | None = None,
+        dp_process_group: dist.ProcessGroup | None = None,
         seed: int = 0,
-        num_threads: Optional[int] = None,
+        num_threads: int | None = None,
         num_workers: int = 0,
-        prefetch_factor: Optional[int] = None,
+        prefetch_factor: int | None = None,
         deterministic: bool = True,
     ) -> "LMEvaluator":
         """
         Initialize an :class:`LMEvaluator` from a :class:`~olmo_core.data.numpy_dataset.NumpyPaddedFSLDataset`.
         """
-        labels: Set[str] = set()
+        labels: set[str] = set()
         for path, metadata in zip(dataset.paths, dataset.metadata):
             if "label" not in metadata:
                 raise OLMoConfigurationError(
@@ -92,7 +93,7 @@ class LMEvaluator(Evaluator):
         )
 
     def update_metrics(
-        self, batch: Dict[str, Any], ce_loss: Optional[torch.Tensor], logits: Optional[torch.Tensor]
+        self, batch: dict[str, Any], ce_loss: torch.Tensor | None, logits: torch.Tensor | None
     ) -> None:
         # ``logits`` may be ``None`` when context parallelism (CP) or tensor parallelism (TP) is
         # enabled, since gathering the full logits across ranks is unnecessary for perplexity.
@@ -106,8 +107,8 @@ class LMEvaluator(Evaluator):
                 tokens_loss = tokens_loss.masked_select(batch["label_mask"][idx])
             metric.update(tokens_loss)
 
-    def compute_metrics(self) -> Dict[str, torch.Tensor]:
-        out: Dict[str, torch.Tensor] = {}
+    def compute_metrics(self) -> dict[str, torch.Tensor]:
+        out: dict[str, torch.Tensor] = {}
         for label in sorted(self.metrics.keys()):
             metric = self.metrics[label]
             # In this case we probably haven't called '.update()' on this metric yet,

@@ -3,7 +3,7 @@ import math
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from itertools import chain
-from typing import Dict, List, Optional, Tuple, cast
+from typing import cast
 
 import numpy as np
 from rich.console import Console
@@ -19,8 +19,8 @@ from olmo_core.io import deterministic_glob_directory, file_exists, get_file_siz
 
 __all__ = [
     "SourceMixtureConfig",
-    "SourceMixtureList",
     "SourceMixtureDatasetConfig",
+    "SourceMixtureList",
 ]
 
 log = logging.getLogger(__name__)
@@ -45,7 +45,7 @@ class SourceMixtureConfig(Config):
     """
     The target ratio of the source in the mixture.
     """
-    paths: List[str]
+    paths: list[str]
     """
     A list of paths to the source data.
     """
@@ -59,7 +59,7 @@ class SourceMixtureConfig(Config):
     The maximum ratio of the source data to include in the mixture.
     """
 
-    _resolved_paths: Optional[List[str]] = None
+    _resolved_paths: list[str] | None = None
 
     def validate(self):
         if self.target_ratio:
@@ -78,7 +78,7 @@ class SourceMixtureConfig(Config):
             raise OLMoConfigurationError("max_source_fraction must be in the range [0, 1]")
 
     @property
-    def resolved_paths(self) -> List[str]:
+    def resolved_paths(self) -> list[str]:
         """
         Resolve the paths, expanding any globs and validating existence.
         Caches the result after the first access.
@@ -86,7 +86,7 @@ class SourceMixtureConfig(Config):
         if self._resolved_paths is not None:
             return self._resolved_paths
 
-        resolved: List[str] = []
+        resolved: list[str] = []
         for path in self.paths:
             path_str = str(path)
             if "*" in path_str:
@@ -136,7 +136,7 @@ class SourceMixtureList(Config):
     specify parameters like requested_tokens, global_batch_size, or processes.
     """
 
-    sources: List[SourceMixtureConfig]
+    sources: list[SourceMixtureConfig]
 
     def validate(self):
         if not self.sources:
@@ -167,7 +167,7 @@ class SourceTokenDetails:
     The number of tokens to select for the source.
     """
 
-    def for_table(self, requested_tokens: int) -> Dict:
+    def for_table(self, requested_tokens: int) -> dict:
         return {
             "source_name": self.config.source_name,
             "source_population": f"{self.population}",
@@ -193,7 +193,7 @@ class SourceMixtureOutcome:
     """
     The name of the source.
     """
-    path_tokens: List[SourcePathTokens]
+    path_tokens: list[SourcePathTokens]
     """
     A list of paths and the associated token counts.
     """
@@ -209,12 +209,12 @@ class SourceMixtureDataset:  # Note: "dataset" naming is a bit inconsistent with
     consumer of this dataset.
     """
 
-    sources: List[SourceMixtureOutcome]
+    sources: list[SourceMixtureOutcome]
     """
     A list of sources and their associated paths and token counts.
     """
 
-    def to_index(self) -> Dict[Tuple[str, int], int]:
+    def to_index(self) -> dict[tuple[str, int], int]:
         """
         Convert the dataset to an indexed array of dict((int, path), int).
         """
@@ -225,7 +225,7 @@ class SourceMixtureDataset:  # Note: "dataset" naming is a bit inconsistent with
             )
         }
 
-    def to_paths(self) -> List[PathOrStr]:
+    def to_paths(self) -> list[PathOrStr]:
         """
         Convert the dataset to a list of paths while maintaining stable ordering.
         """
@@ -287,7 +287,7 @@ class SourceMixtureDatasetConfig(Config):
 
     def build(self, *, npdtype: NumpyUIntTypes, sequence_length: int) -> SourceMixtureDataset:
         self.validate()
-        available_tokens_by_source: Dict[str, int] = {}
+        available_tokens_by_source: dict[str, int] = {}
 
         log.info("---------------------------------------------------------")
         log.info("Generating a source mixture from configurations:")
@@ -297,13 +297,13 @@ class SourceMixtureDatasetConfig(Config):
         for source_config in self.source_list.sources:
             log.info(f"Counting tokens for source: {source_config.source_name}")
             available_tokens_by_source[source_config.source_name] = self._count_tokens_for_paths(
-                paths=cast(List[PathOrStr], source_config.resolved_paths),
+                paths=cast(list[PathOrStr], source_config.resolved_paths),
                 source=source_config.source_name,
                 npdtype=npdtype,
             )
 
-        tokens_details_by_source: List[SourceTokenDetails] = []
-        max_tokens_cap_by_source: Dict[str, int] = {}
+        tokens_details_by_source: list[SourceTokenDetails] = []
+        max_tokens_cap_by_source: dict[str, int] = {}
 
         # Calculate the number of tokens available and to include for each source
         for source_config in self.source_list.sources:
@@ -330,8 +330,8 @@ class SourceMixtureDatasetConfig(Config):
                 )
             )
 
-        completed: List[SourceMixtureOutcome] = []
-        tokens_per_path_per_source: Dict[str, List[SourcePathTokens]] = {}
+        completed: list[SourceMixtureOutcome] = []
+        tokens_per_path_per_source: dict[str, list[SourcePathTokens]] = {}
         for source in tokens_details_by_source:
             source_path_tokens = self.get_paths_and_tokens_for_source(
                 source_config=source.config, token_details=source, npdtype=npdtype
@@ -347,7 +347,7 @@ class SourceMixtureDatasetConfig(Config):
         num_instances_per_batch = self.global_batch_size // sequence_length
         requested_instances = training_steps * num_instances_per_batch
 
-        all_path_tokens: List[SourcePathTokens] = []
+        all_path_tokens: list[SourcePathTokens] = []
         for source_path_tokens in tokens_per_path_per_source.values():
             all_path_tokens.extend(source_path_tokens)
 
@@ -381,7 +381,7 @@ class SourceMixtureDatasetConfig(Config):
 
             if eligible_indices:
                 # Distribute base amount evenly among eligible paths
-                base, leftover = divmod(additional_instances_needed, len(eligible_indices))
+                base, _leftover = divmod(additional_instances_needed, len(eligible_indices))
                 if base:
                     for idx in eligible_indices:
                         max_instances = all_path_tokens[idx].max_tokens // sequence_length
@@ -414,7 +414,7 @@ class SourceMixtureDatasetConfig(Config):
                 path_token.tokens = final_tokens_per_path[idx]
                 idx += 1
 
-        final_token_distribution: Dict[str, float] = {}
+        final_token_distribution: dict[str, float] = {}
         for source_name, source_path_tokens in tokens_per_path_per_source.items():
             completed.append(
                 SourceMixtureOutcome(
@@ -459,12 +459,12 @@ class SourceMixtureDatasetConfig(Config):
         source_config: SourceMixtureConfig,
         token_details: SourceTokenDetails,
         npdtype: NumpyUIntTypes,
-    ) -> List[SourcePathTokens]:
+    ) -> list[SourcePathTokens]:
         """
         Get the paths and resulting token count for a source.
         """
         take_ratio = token_details.num_selected / token_details.population
-        path_tokens: List[SourcePathTokens] = []
+        path_tokens: list[SourcePathTokens] = []
 
         resolved_paths = source_config.resolved_paths
         token_counts_by_path = {
@@ -484,7 +484,7 @@ class SourceMixtureDatasetConfig(Config):
             for ratio in take_ratios:
                 for path in resolved_paths:
                     available_tokens = token_counts_by_path[path]
-                    tokens_to_keep = int(math.ceil(available_tokens * ratio))
+                    tokens_to_keep = math.ceil(available_tokens * ratio)
                     path_tokens.append(
                         SourcePathTokens(
                             path=path,
@@ -497,7 +497,7 @@ class SourceMixtureDatasetConfig(Config):
 
         for path in resolved_paths:
             available_tokens = token_counts_by_path[path]
-            tokens_to_keep = int(math.ceil(available_tokens * take_ratio))
+            tokens_to_keep = math.ceil(available_tokens * take_ratio)
             path_tokens.append(
                 SourcePathTokens(
                     path=path,
@@ -509,7 +509,7 @@ class SourceMixtureDatasetConfig(Config):
         return path_tokens
 
     def _count_tokens_for_paths(
-        self, paths: List[PathOrStr], source: Optional[str], npdtype: NumpyUIntTypes
+        self, paths: list[PathOrStr], source: str | None, npdtype: NumpyUIntTypes
     ) -> int:
         """
         Count the number of tokens for a set of source files in parallel.
@@ -544,9 +544,9 @@ class SourceMixtureDatasetConfig(Config):
         """
         Convert bytes to tokens based on the dtype.
         """
-        return num_bytes // npdtype(int(0)).itemsize
+        return num_bytes // npdtype(0).itemsize
 
-    def render_mixture_outcome_tables(self, results: List[SourceTokenDetails]) -> None:
+    def render_mixture_outcome_tables(self, results: list[SourceTokenDetails]) -> None:
         """
         Render tables enumerating the global and per-source mixture outcomes.
         """

@@ -2,8 +2,8 @@ import pytest
 import safetensors.torch
 import torch
 import torch.distributed as dist
-import torch.nn as nn
 import torch.nn.functional as F
+from torch import nn
 from torch.distributed.tensor import init_device_mesh
 from torch.distributed.tensor.parallel import (
     ColwiseParallel,
@@ -59,7 +59,7 @@ def run_save_and_load_torch_fsdp_model(dir, model_factory, model_data_factory, u
         torch.testing.assert_close(
             optim.state[p1],
             optim2.state[p2],
-            msg=lambda m: f"State for '{p1_name}' does not match. {m}",
+            msg=lambda m, p1_name=p1_name: f"State for '{p1_name}' does not match. {m}",
         )
 
 

@@ -1,7 +1,8 @@
 import logging
+from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Dict, Generator, Optional
+from typing import Any
 
 import torch
 import torch.distributed as dist
@@ -43,13 +44,13 @@ log = logging.getLogger(__name__)
 @beta_feature
 def load_hf_model(
     model_name_or_path: PathOrStr,
-    model_state_dict: Dict[str, Any],
+    model_state_dict: dict[str, Any],
     *,
     revision: str = "main",
-    model_id: Optional[str] = None,
-    num_embeddings: Optional[int] = None,
-    process_group: Optional[dist.ProcessGroup] = None,
-    work_dir: Optional[PathOrStr] = None,
+    model_id: str | None = None,
+    num_embeddings: int | None = None,
+    process_group: dist.ProcessGroup | None = None,
+    work_dir: PathOrStr | None = None,
 ):
     """
     Loads an OLMo Core model state dict using a model in Hugging Face transformers format.
@@ -108,7 +109,7 @@ def load_hf_model(
     log.info(f"Loaded hf model: {hf_model}")
     hf_model.resize_token_embeddings(num_embeddings)
 
-    converted_state_dict: Dict[str, torch.Tensor] = convert_state_from_hf(
+    converted_state_dict: dict[str, torch.Tensor] = convert_state_from_hf(
         hf_model.config,
         hf_model.state_dict(),
         model_type=getattr(hf_model.config, "model_type", None),
@@ -133,14 +134,14 @@ def load_hf_model(
 @beta_feature
 def save_hf_model(
     save_dir: PathOrStr,
-    model_state_dict: Dict[str, Any],
+    model_state_dict: dict[str, Any],
     model: Transformer,
-    huggingface_tokenizer: Optional[AutoTokenizer] = None,
+    huggingface_tokenizer: AutoTokenizer | None = None,
     *,
-    dtype: Optional[DType] = None,
-    vocab_size: Optional[int] = None,
-    process_group: Optional[dist.ProcessGroup] = None,
-    work_dir: Optional[PathOrStr] = None,
+    dtype: DType | None = None,
+    vocab_size: int | None = None,
+    process_group: dist.ProcessGroup | None = None,
+    work_dir: PathOrStr | None = None,
     save_overwrite: bool = False,
 ):
     """
@@ -164,7 +165,7 @@ def save_hf_model(
             key: state.to(dtype=dtype.as_pt()) for key, state in model_state_dict.items()
         }
 
-    hf_state_dict: Dict[str, torch.Tensor] = convert_state_to_hf(hf_config, model_state_dict)
+    hf_state_dict: dict[str, torch.Tensor] = convert_state_to_hf(hf_config, model_state_dict)
 
     # model.save_pretrained fails says `tensor.reshape()` should be used instead of `tensor.view()`
     # if we do not make the state contiguous. Unfortunately this is bad for perf.
@@ -204,11 +205,11 @@ def save_hf_model(
 @beta_feature
 def save_hf_hybrid_model(
     save_dir: PathOrStr,
-    model_state_dict: Dict[str, Any],
+    model_state_dict: dict[str, Any],
     model: Transformer,
     *,
-    dtype: Optional[DType] = None,
-    vocab_size: Optional[int] = None,
+    dtype: DType | None = None,
+    vocab_size: int | None = None,
     max_sequence_length: int = 65536,
 ) -> None:
     """

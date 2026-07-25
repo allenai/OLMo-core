@@ -1,5 +1,3 @@
-from typing import List, Optional
-
 import rich
 
 from .source_abc import SourceABC
@@ -19,11 +17,11 @@ def visualize_source(source, icons: bool = True):
         source_cls,
         *,
         tokens: int,
-        label: Optional[str],
-        indent_spec: List[bool],
+        label: str | None,
+        indent_spec: list[bool],
         is_leaf: bool,
         count: int = 1,
-        fingerprint: Optional[str] = None,
+        fingerprint: str | None = None,
     ) -> str:
         del is_leaf
         indents = []
@@ -42,7 +40,7 @@ def visualize_source(source, icons: bool = True):
             f"[green]{token_str}[/] tokens[magenta]{label_str}[/]"
         )
 
-    def _visualize_source(source: SourceABC, indent_spec: List[bool]) -> str:
+    def _visualize_source(source: SourceABC, indent_spec: list[bool]) -> str:
         lines = [
             _format_source(
                 type(source),
@@ -72,7 +70,7 @@ def visualize_source(source, icons: bool = True):
             and children_are_leafs
         ):
             total_child_tokens = sum(child.num_tokens for child in children)
-            label = list(children_labels)[0]
+            label = next(iter(children_labels))
             lines.append(
                 _format_source(
                     children[0].__class__,

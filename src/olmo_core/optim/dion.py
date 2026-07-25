@@ -1,7 +1,6 @@
 import logging
 import math
 from dataclasses import dataclass
-from typing import Tuple
 
 import torch
 from torch.distributed.device_mesh import DeviceMesh
@@ -55,7 +54,7 @@ class DionConfig(MatrixAwareOptimConfig):
     mu: float = 0.95
     """Momentum for Dion"""
 
-    betas: Tuple[float, float] = (0.9, 0.95)
+    betas: tuple[float, float] = (0.9, 0.95)
     """Betas for AdamW"""
 
     weight_decay: float = 0.1
@@ -85,17 +84,17 @@ class DionConfig(MatrixAwareOptimConfig):
         model_dim = lm_head_out.weight.shape[1]
 
         # Matrix parameters are optimized with Dion.
-        matrix_override = OptimGroupOverride(params=params["matrix"], opts=dict(algorithm="dion"))
+        matrix_override = OptimGroupOverride(params=params["matrix"], opts={"algorithm": "dion"})
 
         # Vector, embedding, and lm_head parameters are optimized with AdamW.
         embed_override = OptimGroupOverride(
-            params=params["embed"], opts=dict(algorithm="adamw", weight_decay=0.0)
+            params=params["embed"], opts={"algorithm": "adamw", "weight_decay": 0.0}
         )
-        vector_override = OptimGroupOverride(params=params["vector"], opts=dict(algorithm="adamw"))
+        vector_override = OptimGroupOverride(params=params["vector"], opts={"algorithm": "adamw"})
         lm_head_override = OptimGroupOverride(
             params=params["lm_head"],
             # lr scaled by sqrt(model_dim) for lm_head as suggested in the paper
-            opts=dict(algorithm="adamw", lr=self.lr / math.sqrt(model_dim)),
+            opts={"algorithm": "adamw", "lr": self.lr / math.sqrt(model_dim)},
         )
 
         return [matrix_override, vector_override, embed_override, lm_head_override]

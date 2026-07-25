@@ -16,7 +16,6 @@ Example usage:
 import gc
 import logging
 from pathlib import Path
-from typing import Dict, List, Optional
 
 import click
 import torch
@@ -28,8 +27,8 @@ log = logging.getLogger(__name__)
 
 
 def merge_checkpoints(
-    model_name_or_paths: List[str],
-    revisions: Optional[List[Optional[str]]],
+    model_name_or_paths: list[str],
+    revisions: list[str | None] | None,
     output_dir: str,
     device: str = "cpu",
 ) -> None:
@@ -60,7 +59,7 @@ def merge_checkpoints(
     log.info(f"Merging {n_checkpoints} checkpoints...")
 
     # Track original dtype per tensor from first checkpoint
-    original_dtypes: Dict[str, torch.dtype] = {}
+    original_dtypes: dict[str, torch.dtype] = {}
     accumulated_state_dict = {}
 
     # Disable gradient computation - we're only doing inference/merging, no training
@@ -214,8 +213,8 @@ def main(
         --model /path/to/checkpoint2 \\
         --output ./merged_checkpoint
     """
-    model_list: List[str] = list(model_name_or_paths)
-    revisions_list: Optional[List[Optional[str]]] = list(revisions) if revisions else None
+    model_list: list[str] = list(model_name_or_paths)
+    revisions_list: list[str | None] | None = list(revisions) if revisions else None
 
     # If only one model is specified but multiple revisions, expand model list
     if revisions_list and len(model_list) == 1 and len(revisions_list) > 1:

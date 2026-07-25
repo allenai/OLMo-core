@@ -1,5 +1,4 @@
 from collections import defaultdict
-from typing import Dict, Tuple, Type
 
 import torch
 from torch.distributed.tensor.parallel import (
@@ -9,7 +8,7 @@ from torch.distributed.tensor.parallel import (
 )
 
 
-def _get_custom_checkpoint_policy(meta: Dict[str, int]):
+def _get_custom_checkpoint_policy(meta: dict[str, int]):
     # Adapted from
     # https://github.com/pytorch/torchtitan/blob/main/torchtitan/parallelisms/parallelize_llama.py
     from torch.utils.checkpoint import CheckpointPolicy
@@ -43,13 +42,13 @@ def _get_custom_checkpoint_policy(meta: Dict[str, int]):
 def selective_checkpointing_context_fn():
     from torch.utils.checkpoint import create_selective_checkpoint_contexts
 
-    meta: Dict[str, int] = defaultdict(int)
+    meta: dict[str, int] = defaultdict(int)
     return create_selective_checkpoint_contexts(_get_custom_checkpoint_policy(meta))
 
 
 def get_tp_wrappers(
     float8_enabled: bool,
-) -> Tuple[Type[RowwiseParallel], Type[ColwiseParallel], Type[PrepareModuleInput]]:
+) -> tuple[type[RowwiseParallel], type[ColwiseParallel], type[PrepareModuleInput]]:
     if not float8_enabled:
         return (
             RowwiseParallel,

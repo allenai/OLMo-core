@@ -1,5 +1,6 @@
 import random
-from typing import Any, Dict, Iterable, List, Optional
+from collections.abc import Iterable
+from typing import Any
 
 import torch
 
@@ -38,25 +39,25 @@ class CustomDataLoader(TextDataLoaderBase):
         self.vocab_size = vocab_size
         self.seed = seed
         self._total_batches = total_batches
-        self._dataset: Optional[List[torch.Tensor]]
+        self._dataset: list[torch.Tensor] | None
 
     @property
     def total_batches(self) -> int:
         return self._total_batches
 
-    def state_dict(self) -> Dict[str, Any]:
+    def state_dict(self) -> dict[str, Any]:
         return {
             "batches_processed": self.batches_processed,
             "seed": self.seed,
             "epoch": self._epoch,
         }
 
-    def load_state_dict(self, state_dict: Dict[str, Any]):
+    def load_state_dict(self, state_dict: dict[str, Any]):
         self.batches_processed = state_dict["batches_processed"]
         self.seed = state_dict["seed"]
         self._epoch = state_dict["epoch"]
 
-    def reshuffle(self, epoch: Optional[int] = None, **kwargs):
+    def reshuffle(self, epoch: int | None = None, **kwargs):
         del kwargs  # unused
 
         # Set current epoch.
@@ -76,12 +77,12 @@ class CustomDataLoader(TextDataLoaderBase):
             )
         ]
 
-    def get_mock_batch(self) -> Dict[str, Any]:
+    def get_mock_batch(self) -> dict[str, Any]:
         num_instances = self.rank_batch_size // self.sequence_length
         input_ids = torch.randint(0, self.vocab_size, (num_instances, self.sequence_length))
         return {"input_ids": input_ids}
 
-    def _iter_batches(self) -> Iterable[Dict[str, Any]]:
+    def _iter_batches(self) -> Iterable[dict[str, Any]]:
         assert self._dataset is not None, "did you forget to call 'reshuffle()'?"
 
         # Get global batch instance indices. Shape: (total batches, instances per batch)

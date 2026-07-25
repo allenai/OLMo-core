@@ -7,7 +7,6 @@ in a 3:1 ratio. RoPE embeddings are disabled (as in the long-context extension).
 """
 
 import argparse
-from typing import List
 
 from olmo_core.config import DType
 from olmo_core.data import (
@@ -60,7 +59,7 @@ DATASET_PATH = (
 REMOVE_HEADS = 2
 
 
-def build_config(opts: argparse.Namespace, overrides: List[str]) -> ExperimentConfig:
+def build_config(opts: argparse.Namespace, overrides: list[str]) -> ExperimentConfig:
     sequence_length = opts.sequence_length or DEFAULT_SEQUENCE_LENGTH
     tokenizer_config = TokenizerConfig.dolma2()
 

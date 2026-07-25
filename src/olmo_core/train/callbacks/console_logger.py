@@ -1,7 +1,6 @@
 import logging
 from dataclasses import dataclass, field
 from fnmatch import fnmatch
-from typing import Dict, List, Optional
 
 from olmo_core.utils import format_float, format_timedelta
 
@@ -25,12 +24,12 @@ class ConsoleLoggerCallback(Callback):
     How often, in steps, to log progress to the console.
     """
 
-    metrics_log_interval: Optional[int] = None
+    metrics_log_interval: int | None = None
     """
     How often, in steps, to log metrics to the console. If not set, defaults to :data:`log_interval`.
     """
 
-    metrics: List[str] = field(
+    metrics: list[str] = field(
         default_factory=lambda: [
             "train/CE loss",
             "train/PPL",
@@ -60,7 +59,7 @@ class ConsoleLoggerCallback(Callback):
 
         log.info(self._get_progress_marker(self.step))
 
-    def log_metrics(self, step: int, metrics: Dict[str, float]):
+    def log_metrics(self, step: int, metrics: dict[str, float]):
         if not self._should_log_metrics(step):
             return
 
@@ -87,7 +86,4 @@ class ConsoleLoggerCallback(Callback):
 
     def _should_log_metrics(self, step: int) -> bool:
         metrics_log_interval = self.metrics_log_interval or self.log_interval
-        if step == 1 or (step > 1 and step % metrics_log_interval == 0):
-            return True
-        else:
-            return False
+        return bool(step == 1 or step > 1 and step % metrics_log_interval == 0)

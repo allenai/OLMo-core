@@ -1,7 +1,6 @@
 import logging
 from functools import lru_cache
 from pathlib import Path
-from typing import List, Optional, Union
 
 import torch
 from beaker import BeakerGpuType
@@ -22,8 +21,8 @@ from olmo_core.utils import generate_uuid
 log = logging.getLogger(__name__)
 
 
-@lru_cache()
-def get_beaker_username() -> Optional[str]:
+@lru_cache
+def get_beaker_username() -> str | None:
     try:
         with get_beaker_client() as beaker:
             return beaker.user_name
@@ -56,21 +55,21 @@ def get_work_dir(root_dir: str) -> str:
 def build_launch_config(
     *,
     name: str,
-    cmd: List[str],
+    cmd: list[str],
     cluster: str,
-    root_dir: Optional[str] = None,
+    root_dir: str | None = None,
     task_name: str = "train",
     workspace: str = "ai2/OLMo-core",
     budget: str = "ai2/oe-other",
-    nccl_debug: Union[bool, str] = False,
+    nccl_debug: bool | str = False,
     flight_recorder: bool = False,
     beaker_image: str = OLMoCoreBeakerImage.stable,
     num_nodes: int = 1,
-    num_execution_units: Optional[int] = None,
-    step_timeout: Optional[int] = None,
-    step_soft_timeout: Optional[int] = 10 * 60,
+    num_execution_units: int | None = None,
+    step_timeout: int | None = None,
+    step_soft_timeout: int | None = 10 * 60,
 ) -> BeakerLaunchConfig:
-    weka_buckets: List[BeakerWekaBucket] = []
+    weka_buckets: list[BeakerWekaBucket] = []
 
     default_root_dir = get_root_dir(cluster)
     if root_dir is None:
@@ -123,7 +122,7 @@ def build_launch_config(
         ),
     ]
 
-    env_vars: List[BeakerEnvVar] = []
+    env_vars: list[BeakerEnvVar] = []
     if isinstance(nccl_debug, str):
         env_vars.append(BeakerEnvVar(name="NCCL_DEBUG", value=nccl_debug))
     else:
@@ -179,8 +178,7 @@ def get_gpu_type(cluster: str) -> str:
             for node in beaker.node.list(cluster=cl, limit=1):
                 if (gpu_type := node.node_resources.gpu_type) > 0:
                     return BeakerGpuType(gpu_type).name.replace("_", " ")
-            else:
-                raise RuntimeError(f"Could not determine GPU type for cluster '{cluster}'")
+            raise RuntimeError(f"Could not determine GPU type for cluster '{cluster}'")
     elif cluster == "local":
         return torch.get_default_device().type
     else:

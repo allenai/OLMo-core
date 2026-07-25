@@ -2,18 +2,9 @@ import functools as ft
 import hashlib
 import typing
 from abc import abstractmethod
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
-from typing import (
-    TYPE_CHECKING,
-    ClassVar,
-    Iterable,
-    List,
-    Optional,
-    Sequence,
-    Tuple,
-    TypedDict,
-    Union,
-)
+from typing import TYPE_CHECKING, ClassVar, TypedDict
 
 import numpy as np
 from typing_extensions import NotRequired
@@ -73,7 +64,7 @@ class TokenSource(SourceABC):
         """
         raise NotImplementedError
 
-    def __getitem__(self, key: Union[int, slice]) -> TokenRange:
+    def __getitem__(self, key: int | slice) -> TokenRange:
         """
         Get a range of tokens using either an integer index (for a singular token range) or a slice.
         """
@@ -91,7 +82,7 @@ class TokenSource(SourceABC):
                 key = self.num_tokens + key
             return self.get_token_range(key, key + 1)
 
-    def validate_indices(self, start_idx: int, end_idx: int) -> Tuple[int, int]:
+    def validate_indices(self, start_idx: int, end_idx: int) -> tuple[int, int]:
         start_idx, end_idx = int(start_idx), int(end_idx)
         if start_idx < 0:
             start_idx = self.num_tokens + start_idx
@@ -133,7 +124,7 @@ class TokenSource(SourceABC):
         self,
         *,
         max_tokens: int,
-        seed: Optional[int] = SEED_NOT_SET,
+        seed: int | None = SEED_NOT_SET,
     ) -> "SamplingTokenSource":
         """
         Sample a contiguous chunk of tokens from this source.
@@ -153,7 +144,7 @@ class TokenSource(SourceABC):
             work_dir=self.common_work_dir,
         )
 
-    def resize(self, factor: float, seed: Optional[int] = SEED_NOT_SET) -> "SamplingTokenSource":
+    def resize(self, factor: float, seed: int | None = SEED_NOT_SET) -> "SamplingTokenSource":
         """
         Re-size this source by a given factor by sampling a contiguous chunk of tokens from it.
 
@@ -167,7 +158,7 @@ class TokenSource(SourceABC):
         assert factor > 0
         return self.sample(max_tokens=int(self.num_tokens * factor), seed=seed)
 
-    def split(self, ratio: float) -> Tuple["SlicedTokenSource", "SlicedTokenSource"]:
+    def split(self, ratio: float) -> tuple["SlicedTokenSource", "SlicedTokenSource"]:
         """
         Split this source into two disjoint sources according to the given ratio.
 
@@ -196,8 +187,8 @@ class InMemoryTokenSource(TokenSource):
         tokens: Sequence[int],
         *,
         work_dir: PathOrStr,
-        label_mask: Optional[Sequence[bool]] = None,
-        label: Optional[str] = None,
+        label_mask: Sequence[bool] | None = None,
+        label: str | None = None,
     ):
         super().__init__(work_dir=work_dir, label=label)
         self._tokens = as_ndarray(tokens)
@@ -245,7 +236,7 @@ class DocumentSource(TokenSource):
         self,
         *,
         max_tokens: int,
-        seed: Optional[int] = SEED_NOT_SET,
+        seed: int | None = SEED_NOT_SET,
     ) -> "SamplingDocumentSource":
         """
         Sample documents from this source.
@@ -267,7 +258,7 @@ class DocumentSource(TokenSource):
         )
 
     def resize_by_docs(
-        self, factor: float, seed: Optional[int] = SEED_NOT_SET
+        self, factor: float, seed: int | None = SEED_NOT_SET
     ) -> "SamplingDocumentSource":
         """
         Re-size this source by a given factor by sampling documents from it.
@@ -300,8 +291,8 @@ class InMemoryDocumentSource(InMemoryTokenSource, DocumentSource):
         *,
         tokenizer: TokenizerConfig,
         work_dir: PathOrStr,
-        label_mask: Optional[Sequence[bool]] = None,
-        label: Optional[str] = None,
+        label_mask: Sequence[bool] | None = None,
+        label: str | None = None,
     ):
         super().__init__(tokens=tokens, work_dir=work_dir, label_mask=label_mask, label=label)
         self._tokenizer = tokenizer
@@ -311,7 +302,7 @@ class InMemoryDocumentSource(InMemoryTokenSource, DocumentSource):
         return self._tokenizer.eos_token_id
 
     @property
-    def bos_token_id(self) -> Optional[int]:
+    def bos_token_id(self) -> int | None:
         return self._tokenizer.bos_token_id
 
     @ft.cached_property
@@ -359,7 +350,7 @@ class TokenSourceConfig(Config):
     """A base config class for configuring and building a :class:`TokenSource`."""
 
     @abstractmethod
-    def build(self, work_dir: PathOrStr) -> List[TokenSource]:
+    def build(self, work_dir: PathOrStr) -> list[TokenSource]:
         """Build the token source."""
         raise NotImplementedError
 
@@ -387,7 +378,7 @@ class TokenSourceConfig(Config):
         self,
         *,
         max_tokens: int,
-        seed: Optional[int] = SEED_NOT_SET,
+        seed: int | None = SEED_NOT_SET,
     ) -> "SamplingTokenSourceConfig":
         """
         Sample a contiguous chunk of tokens from this source.
@@ -403,9 +394,7 @@ class TokenSourceConfig(Config):
             seed=resolve_seed(seed),
         )
 
-    def resize(
-        self, factor: float, seed: Optional[int] = SEED_NOT_SET
-    ) -> "SamplingTokenSourceConfig":
+    def resize(self, factor: float, seed: int | None = SEED_NOT_SET) -> "SamplingTokenSourceConfig":
         """
         Re-size this source by a given factor by sampling a contiguous chunk of tokens from it.
 
@@ -422,7 +411,7 @@ class TokenSourceConfig(Config):
             seed=resolve_seed(seed),
         )
 
-    def split(self, ratio: float) -> Tuple["SplitTokenSourceConfig", "SplitTokenSourceConfig"]:
+    def split(self, ratio: float) -> tuple["SplitTokenSourceConfig", "SplitTokenSourceConfig"]:
         """
         Split this source into two disjoint sources according to the given ratio.
 
@@ -446,7 +435,7 @@ class SplitTokenSourceConfig(TokenSourceConfig):
         assert 0 < self.ratio < 1
         assert self.idx in (0, 1)
 
-    def build(self, work_dir: PathOrStr) -> List["SlicedTokenSource"]:  # type: ignore[override]
+    def build(self, work_dir: PathOrStr) -> list["SlicedTokenSource"]:  # type: ignore[override]
         from .sliced_token_source import SlicedTokenSource
 
         sources = self.source.build(work_dir)
@@ -468,10 +457,10 @@ class SplitTokenSourceConfig(TokenSourceConfig):
 class ConcatenatedTokenSourceConfig(TokenSourceConfig):
     """A base config class for configuring and building a :class:`ConcatenatedTokenSource`."""
 
-    sources: List[TokenSourceConfig]
-    label: Optional[str] = None
+    sources: list[TokenSourceConfig]
+    label: str | None = None
 
-    def build(self, work_dir: PathOrStr) -> List["ConcatenatedTokenSource"]:  # type: ignore[override]
+    def build(self, work_dir: PathOrStr) -> list["ConcatenatedTokenSource"]:  # type: ignore[override]
         sources = [
             source for source_config in self.sources for source in source_config.build(work_dir)
         ]
@@ -493,9 +482,9 @@ class ConcatenatedTokenSource(TokenSource):
 
     DISPLAY_ICON = "\uf51e"
 
-    def __init__(self, *sources: TokenSource, work_dir: PathOrStr, label: Optional[str] = None):
+    def __init__(self, *sources: TokenSource, work_dir: PathOrStr, label: str | None = None):
         super().__init__(work_dir=work_dir, label=label)
-        unraveled_sources: List[TokenSource] = []
+        unraveled_sources: list[TokenSource] = []
         for source in sources:
             if isinstance(source, ConcatenatedTokenSource):
                 unraveled_sources.extend(source.sources)
@@ -507,7 +496,7 @@ class ConcatenatedTokenSource(TokenSource):
         return f"{self.__class__.__name__}{self.sources}"
 
     @property
-    def sources(self) -> Tuple[TokenSource, ...]:
+    def sources(self) -> tuple[TokenSource, ...]:
         return self._sources
 
     def children(self):
@@ -528,8 +517,8 @@ class ConcatenatedTokenSource(TokenSource):
     def get_token_range(self, start_idx: int, end_idx: int) -> TokenRange:
         start_idx, end_idx = self.validate_indices(start_idx, end_idx)
 
-        token_chunks: List[np.ndarray] = []
-        mask_chunks: List[np.ndarray] = []
+        token_chunks: list[np.ndarray] = []
+        mask_chunks: list[np.ndarray] = []
         source_start_offset = 0
         for source in self.sources:
             source_size = source.num_tokens
@@ -564,7 +553,7 @@ class DocumentSourceConfig(TokenSourceConfig):
     """A base config class for configuring and building a :class:`DocumentSource`."""
 
     @abstractmethod
-    def build(self, work_dir: PathOrStr) -> List[DocumentSource]:  # type: ignore[override]
+    def build(self, work_dir: PathOrStr) -> list[DocumentSource]:  # type: ignore[override]
         """Build the document source."""
         raise NotImplementedError
 
@@ -572,7 +561,7 @@ class DocumentSourceConfig(TokenSourceConfig):
         self,
         *,
         max_tokens: int,
-        seed: Optional[int] = SEED_NOT_SET,
+        seed: int | None = SEED_NOT_SET,
     ) -> "SamplingDocumentSourceConfig":
         """
         Sample documents from this source.
@@ -595,7 +584,7 @@ class DocumentSourceConfig(TokenSourceConfig):
     def resize_by_docs(
         self,
         factor: float,
-        seed: Optional[int] = SEED_NOT_SET,
+        seed: int | None = SEED_NOT_SET,
     ) -> "SamplingDocumentSourceConfig":
         """
         Re-size this source by a given factor by sampling documents from it.
@@ -622,10 +611,10 @@ class DocumentSourceConfig(TokenSourceConfig):
 class ConcatenatedDocumentSourceConfig(DocumentSourceConfig):
     """A base config class for configuring and building a :class:`ConcatenatedDocumentSource`."""
 
-    sources: List[DocumentSourceConfig]
-    label: Optional[str] = None
+    sources: list[DocumentSourceConfig]
+    label: str | None = None
 
-    def build(self, work_dir: PathOrStr) -> List["ConcatenatedDocumentSource"]:  # type: ignore[override]
+    def build(self, work_dir: PathOrStr) -> list["ConcatenatedDocumentSource"]:  # type: ignore[override]
         sources = [
             source for source_config in self.sources for source in source_config.build(work_dir)
         ]
@@ -645,15 +634,15 @@ class ConcatenatedDocumentSource(ConcatenatedTokenSource, DocumentSource):
 
     Config = ConcatenatedDocumentSourceConfig  # type: ignore[assignment]
 
-    def __init__(self, *sources: DocumentSource, work_dir: PathOrStr, label: Optional[str] = None):
+    def __init__(self, *sources: DocumentSource, work_dir: PathOrStr, label: str | None = None):
         super().__init__(*sources, work_dir=work_dir, label=label)
 
     def __repr__(self) -> str:
         return f"{self.__class__.__name__}{self.sources}"
 
     @property
-    def sources(self) -> Tuple[DocumentSource, ...]:
-        return typing.cast(Tuple[DocumentSource, ...], self._sources)
+    def sources(self) -> tuple[DocumentSource, ...]:
+        return typing.cast(tuple[DocumentSource, ...], self._sources)
 
     def get_document_offsets(self) -> Iterable[tuple[int, int]]:
         start_offset = 0

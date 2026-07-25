@@ -1,8 +1,7 @@
 from dataclasses import dataclass
-from typing import List, Optional, Tuple, Union
 
 import torch
-import torch.nn as nn
+from torch import nn
 
 from olmo_core.config import Config
 from olmo_core.nn.lm_head import LMOutputWithLoss
@@ -11,8 +10,8 @@ from olmo_core.nn.vision.config import VisionEncoderConfig
 from olmo_core.nn.vision.connector import VisionConnectorConfig
 
 __all__ = [
-    "MultimodalLMConfig",
     "MultimodalLM",
+    "MultimodalLMConfig",
 ]
 
 
@@ -56,7 +55,7 @@ class MultimodalLMConfig(Config):
     of pooled image features the connector produces.
     """
 
-    vit_layers: Tuple[int, ...] = (-1,)
+    vit_layers: tuple[int, ...] = (-1,)
     """
     Indices of the ViT hidden-state layers to extract and concatenate before
     the connector. Negative indices count from the last layer. For example,
@@ -117,7 +116,7 @@ class MultimodalLM(nn.Module):
         B, T, N, _ = images.shape
 
         # Flatten crop dim into batch dim for the ViT.
-        hidden_states: List[torch.Tensor] = self.vision(images.reshape(B * T, N, -1))
+        hidden_states: list[torch.Tensor] = self.vision(images.reshape(B * T, N, -1))
 
         # Select configured layers and concat along feature dim.
         selected = [hidden_states[i] for i in self.cfg.vit_layers]
@@ -137,11 +136,11 @@ class MultimodalLM(nn.Module):
     def forward(
         self,
         input_ids: torch.Tensor,
-        images: Optional[torch.Tensor] = None,
-        pooled_patches_idx: Optional[torch.Tensor] = None,
-        labels: Optional[torch.Tensor] = None,
+        images: torch.Tensor | None = None,
+        pooled_patches_idx: torch.Tensor | None = None,
+        labels: torch.Tensor | None = None,
         **kwargs,
-    ) -> Union[torch.Tensor, LMOutputWithLoss]:
+    ) -> torch.Tensor | LMOutputWithLoss:
         """
         Run the vision-language forward pass.
 

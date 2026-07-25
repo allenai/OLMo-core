@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, Dict, Optional, Sequence, Union
+from typing import Any
 
 import torch
 import torch.nn.functional as F
@@ -37,16 +38,14 @@ class DataCollator:
     pad_token_id: int
     pad_direction: PaddingDirection = PaddingDirection.right
     label_ignore_index: int = -100
-    vocab_size: Optional[int] = None
+    vocab_size: int | None = None
 
-    def __call__(
-        self, items: Union[Sequence[Dict[str, Any]], Sequence[torch.Tensor]]
-    ) -> Dict[str, Any]:
+    def __call__(self, items: Sequence[dict[str, Any]] | Sequence[torch.Tensor]) -> dict[str, Any]:
         """
         Create a batch from a sequence of instances.
         """
         assert items
-        max_len = max((len(x["input_ids"] if isinstance(x, dict) else x) for x in items))
+        max_len = max(len(x["input_ids"] if isinstance(x, dict) else x) for x in items)
         all_input_ids = []
         all_attention_mask = []
         all_attention_bias = []
@@ -57,7 +56,7 @@ class DataCollator:
         all_doc_lens = []
         all_max_doc_lens = []
         max_docs = max(
-            (len(x["doc_lens"]) if isinstance(x, dict) and "doc_lens" in x else 0 for x in items)
+            len(x["doc_lens"]) if isinstance(x, dict) and "doc_lens" in x else 0 for x in items
         )
 
         for x in items:
@@ -145,7 +144,7 @@ class DataCollator:
             if metadata is not None:
                 all_metadata.append(metadata)
 
-        out: Dict[str, Any] = {"input_ids": torch.stack(all_input_ids)}
+        out: dict[str, Any] = {"input_ids": torch.stack(all_input_ids)}
 
         if self.vocab_size is not None:
             input_ids_batch = out["input_ids"]

@@ -12,7 +12,6 @@ Run GPU test:
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, Optional, Set
 
 import pytest
 import torch
@@ -45,8 +44,8 @@ DATA_PATH = "http://olmo-data.org/examples/c4-en/gpt2/c4-train.00000-00099.npy"
 class WeightCaptureCallback(Callback):
     """Test callback that captures model weights at specified steps."""
 
-    capture_steps: Set[int] = field(default_factory=set)
-    captured_weights: Dict[int, Dict[str, torch.Tensor]] = field(default_factory=dict)
+    capture_steps: set[int] = field(default_factory=set)
+    captured_weights: dict[int, dict[str, torch.Tensor]] = field(default_factory=dict)
 
     def post_train_batch(self):
         if self.step in self.capture_steps:
@@ -109,7 +108,7 @@ def train(config: ExperimentConfig):
 
     # Extract loaded local shards and verify they match the expected average
     captured_list = list(weight_capture.captured_weights.values())
-    for key in captured_list[0].keys():
+    for key in captured_list[0]:
         stacked = torch.stack([w[key] for w in captured_list])
         expected = stacked.mean(dim=0)
         param = trainer.train_module.model.get_parameter(key)
@@ -135,7 +134,7 @@ def train(config: ExperimentConfig):
 
 
 def build_config(
-    save_folder: Path, work_dir: Path, dp_config: Optional[TransformerDataParallelConfig] = None
+    save_folder: Path, work_dir: Path, dp_config: TransformerDataParallelConfig | None = None
 ) -> ExperimentConfig:
     max_steps = 5
     merge_last_n_steps = 3
@@ -385,13 +384,13 @@ def test_overlapping_merge_windows(tmp_path):
 
         # Load merged checkpoint
         model_and_optim_path = save_folder / f"step{ms}-merged" / "model_and_optim"
-        merged_state: Dict[str, Dict[str, torch.Tensor]] = {"model": {}, "optim": {}}
-        for key in captured[window_steps[0]].keys():
+        merged_state: dict[str, dict[str, torch.Tensor]] = {"model": {}, "optim": {}}
+        for key in captured[window_steps[0]]:
             merged_state["model"][key] = torch.empty_like(captured[window_steps[0]][key])
         load_state_dict(str(model_and_optim_path), merged_state)
 
         # Compute expected average from captured weights
-        for key in captured[window_steps[0]].keys():
+        for key in captured[window_steps[0]]:
             stacked = torch.stack([captured[s][key] for s in window_steps])
             expected = stacked.mean(dim=0)
             actual = merged_state["model"][key].float()

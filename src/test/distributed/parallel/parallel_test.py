@@ -37,7 +37,7 @@ def _get_expected_dp_world_size(world_size, tp_degree, cp_degree, pp_degree, ep_
     if pp_degree > 0:
         divisor *= pp_degree
     # For HSDP expert parallel shares the dp_shard dimension, so do not divide by ep_degree.
-    if ep_degree > 0 and not (dp_type == DataParallelType.hsdp):
+    if ep_degree > 0 and dp_type != DataParallelType.hsdp:
         divisor *= ep_degree
     expected_dp_world = world_size // divisor
     return expected_dp_world
@@ -168,9 +168,7 @@ def test_build_world_mesh_gpu(
 ):
     if torch.cuda.device_count() < world_size:
         pytest.skip(
-            "Not enough GPUs available for this test (req: {}, avail: {})".format(
-                world_size, torch.cuda.device_count()
-            )
+            f"Not enough GPUs available for this test (req: {world_size}, avail: {torch.cuda.device_count()})"
         )
 
     run_distributed_test(

@@ -27,9 +27,9 @@ def run_checkpointer(base_dir, work_dir, model_factory):
     checkpointer.save(dir, train_module, {"rank": get_rank()})
     barrier()
 
-    assert file_exists((f"{dir}/train/rank0.pt"))
-    assert file_exists((f"{dir}/train/rank1.pt"))
-    assert not dir_is_empty((f"{dir}/model_and_optim"))
+    assert file_exists(f"{dir}/train/rank0.pt")
+    assert file_exists(f"{dir}/train/rank1.pt")
+    assert not dir_is_empty(f"{dir}/model_and_optim")
     assert checkpointer.dir_is_checkpoint(dir)
     assert list(checkpointer.find_checkpoints(base_dir)) == [(10, dir)]
     assert checkpointer.latest_checkpoint(base_dir) == dir
@@ -95,9 +95,9 @@ def run_async_checkpointer(dir, work_dir, model_factory):
     time.sleep(0.1)  # allow done callback to run.
     barrier()
 
-    assert file_exists((f"{dir}/train/rank0.pt"))
-    assert file_exists((f"{dir}/train/rank1.pt"))
-    assert not dir_is_empty((f"{dir}/model_and_optim"))
+    assert file_exists(f"{dir}/train/rank0.pt")
+    assert file_exists(f"{dir}/train/rank1.pt")
+    assert not dir_is_empty(f"{dir}/model_and_optim")
     assert checkpointer.dir_is_checkpoint(dir)
 
     # Load checkpoint.

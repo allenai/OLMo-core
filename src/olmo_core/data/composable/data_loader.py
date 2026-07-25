@@ -2,10 +2,11 @@ import dataclasses
 import functools as ft
 import logging
 import math
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from itertools import islice
 from pathlib import Path
-from typing import Any, Dict, Iterable, Iterator, Optional, Tuple
+from typing import Any
 
 import numpy as np
 import torch
@@ -72,19 +73,19 @@ class ComposableDataLoaderConfig(DataLoaderConfig["ComposableDataLoader"]):
     A configuration class for building :class:`ComposableDataLoader` data loaders.
     """
 
-    tokenizer: Optional[TokenizerConfig] = None
-    global_batch_size: Optional[int] = None
+    tokenizer: TokenizerConfig | None = None
+    global_batch_size: int | None = None
     seed: int = dataclasses.field(default_factory=lambda: resolve_seed(SEED_NOT_SET))
-    work_dir: Optional[str] = None
+    work_dir: str | None = None
     shuffle: bool = True
-    shuffle_strategy: Optional[ShuffleStrategy] = None
+    shuffle_strategy: ShuffleStrategy | None = None
     sources_per_epoch: int = -1
-    num_threads: Optional[int] = None
+    num_threads: int | None = None
     num_workers: int = 0
-    prefetch_factor: Optional[int] = None
-    target_device_type: Optional[str] = None
+    prefetch_factor: int | None = None
+    target_device_type: str | None = None
     generate_doc_lengths: bool = False
-    instance_filter_config: Optional[InstanceFilterConfig] = None
+    instance_filter_config: InstanceFilterConfig | None = None
     display_source_visualization: bool = True
 
     def __post_init__(self, *args):
@@ -99,12 +100,12 @@ class ComposableDataLoaderConfig(DataLoaderConfig["ComposableDataLoader"]):
     def build(
         self,
         *sources: InstanceSource,
-        collator: Optional[DataCollator] = None,
-        work_dir: Optional[PathOrStr] = None,
-        mesh: Optional[dist.DeviceMesh] = None,
-        dp_process_group: Optional[dist.ProcessGroup] = None,
-        tokenizer: Optional[TokenizerConfig] = None,
-        global_batch_size: Optional[int] = None,
+        collator: DataCollator | None = None,
+        work_dir: PathOrStr | None = None,
+        mesh: dist.DeviceMesh | None = None,
+        dp_process_group: dist.ProcessGroup | None = None,
+        tokenizer: TokenizerConfig | None = None,
+        global_batch_size: int | None = None,
     ) -> "ComposableDataLoader":
         """
         Construct the :class:`ComposableDataLoader`.
@@ -204,17 +205,17 @@ class ComposableDataLoader(TextDataLoaderBase):
         global_batch_size: int,
         dp_world_size: int = 1,
         dp_rank: int = 0,
-        fs_local_rank: Optional[int] = None,
+        fs_local_rank: int | None = None,
         seed: int = SEED_NOT_SET,
         shuffle: bool = True,
-        shuffle_strategy: Optional[ShuffleStrategy] = None,
+        shuffle_strategy: ShuffleStrategy | None = None,
         sources_per_epoch: int = -1,
-        num_threads: Optional[int] = None,
+        num_threads: int | None = None,
         num_workers: int = 0,
-        prefetch_factor: Optional[int] = None,
+        prefetch_factor: int | None = None,
         target_device_type: str = "cpu",
         generate_doc_lengths: bool = False,
-        instance_filter_config: Optional[InstanceFilterConfig] = None,
+        instance_filter_config: InstanceFilterConfig | None = None,
         display_source_visualization: bool = True,
     ):
         if not sources:
@@ -264,18 +265,20 @@ class ComposableDataLoader(TextDataLoaderBase):
                 raise OLMoConfigurationError(
                     "All sources must have the same 'max_sequence_length'."
                 )
-            if source.sequence_length != source.max_sequence_length:
-                # NOTE: To guarantee the same data order with `self.max_sequence_length` fixed but `self.sequence_length`
-                # changing, we need `len(source) // (source.max_sequence_length // source.sequence_length)` to remain constant.
-                # For example, if `sequence_length` is half of `max_sequence_length`, then `len(source)`
-                # should double. This check wouldn't catch all possible violations, but should catch some.
-                if len(source) % (source.max_sequence_length // source.sequence_length) != 0:
-                    raise OLMoConfigurationError(
-                        "Each source must have a number of instances that is a multiple of "
-                        "'max_sequence_length // sequence_length' when 'sequence_length' != "
-                        "'max_sequence_length'. "
-                        f"Source {i} does not meet this condition: {source}"
-                    )
+            # NOTE: To guarantee the same data order with `self.max_sequence_length` fixed but `self.sequence_length`
+            # changing, we need `len(source) // (source.max_sequence_length // source.sequence_length)` to remain constant.
+            # For example, if `sequence_length` is half of `max_sequence_length`, then `len(source)`
+            # should double. This check wouldn't catch all possible violations, but should catch some.
+            if (
+                source.sequence_length != source.max_sequence_length
+                and len(source) % (source.max_sequence_length // source.sequence_length) != 0
+            ):
+                raise OLMoConfigurationError(
+                    "Each source must have a number of instances that is a multiple of "
+                    "'max_sequence_length // sequence_length' when 'sequence_length' != "
+                    "'max_sequence_length'. "
+                    f"Source {i} does not meet this condition: {source}"
+                )
         if self.max_sequence_length % self.sequence_length != 0:
             raise OLMoConfigurationError(
                 "'max_sequence_length' must be a multiple of 'sequence_length'."
@@ -290,7 +293,7 @@ class ComposableDataLoader(TextDataLoaderBase):
         self.target_device_type = target_device_type
         self.generate_doc_lengths = generate_doc_lengths
         self.instance_filter_config = instance_filter_config
-        self._global_indices: Optional[np.ndarray] = None
+        self._global_indices: np.ndarray | None = None
 
         if display_source_visualization and dist_utils.get_rank() == 0:
             print()
@@ -299,10 +302,10 @@ class ComposableDataLoader(TextDataLoaderBase):
                 print()
 
     @property
-    def sources_for_this_epoch(self) -> Tuple[InstanceSource, ...]:
+    def sources_for_this_epoch(self) -> tuple[InstanceSource, ...]:
         return self.sources_for_epoch(self._epoch or 1)
 
-    def sources_for_epoch(self, epoch: int) -> Tuple[InstanceSource, ...]:
+    def sources_for_epoch(self, epoch: int) -> tuple[InstanceSource, ...]:
         assert self.sources_per_epoch > 0
         assert len(self.sources) % self.sources_per_epoch == 0
         num_groups = len(self.sources) // self.sources_per_epoch
@@ -310,7 +313,7 @@ class ComposableDataLoader(TextDataLoaderBase):
         return self.sources[start_offset : start_offset + self.sources_per_epoch]
 
     @ft.cached_property
-    def source_fingerprints(self) -> Tuple[str, ...]:
+    def source_fingerprints(self) -> tuple[str, ...]:
         return tuple(source.fingerprint for source in self.sources)
 
     @property
@@ -333,32 +336,32 @@ class ComposableDataLoader(TextDataLoaderBase):
         return self.total_instances * self.sequence_length
 
     @property
-    def total_batches(self) -> Optional[int]:
+    def total_batches(self) -> int | None:
         return self.batches_in_epoch(self._epoch or 1)
 
-    def batches_in_epoch(self, epoch: int) -> Optional[int]:
+    def batches_in_epoch(self, epoch: int) -> int | None:
         return self.instances_in_epoch(epoch) // (self.global_batch_size // self.sequence_length)
 
     @property
     def worker_info(self):
         return torch.utils.data.get_worker_info()
 
-    def state_dict(self) -> Dict[str, Any]:
-        return dict(
-            source_fingerprints=self.source_fingerprints,
-            batches_processed=self.batches_processed,
-            tokens_processed=self.tokens_processed,
-            global_batch_size=self.global_batch_size,
-            sequence_length=self.sequence_length,
-            max_sequence_length=self.max_sequence_length,
-            shuffle=self.shuffle,
-            shuffle_strategy=self.shuffle_strategy,
-            sources_per_epoch=self.sources_per_epoch,
-            seed=self.seed,
-            epoch=self._epoch,
-        )
+    def state_dict(self) -> dict[str, Any]:
+        return {
+            "source_fingerprints": self.source_fingerprints,
+            "batches_processed": self.batches_processed,
+            "tokens_processed": self.tokens_processed,
+            "global_batch_size": self.global_batch_size,
+            "sequence_length": self.sequence_length,
+            "max_sequence_length": self.max_sequence_length,
+            "shuffle": self.shuffle,
+            "shuffle_strategy": self.shuffle_strategy,
+            "sources_per_epoch": self.sources_per_epoch,
+            "seed": self.seed,
+            "epoch": self._epoch,
+        }
 
-    def load_state_dict(self, state_dict: Dict[str, Any]):
+    def load_state_dict(self, state_dict: dict[str, Any]):
         if state_dict["sources_per_epoch"] != self.sources_per_epoch:
             raise RuntimeError(
                 "Restoring data loader state with a different 'sources_per_epoch' is not supported!"
@@ -417,7 +420,7 @@ class ComposableDataLoader(TextDataLoaderBase):
             f"based on batch size of {self.global_batch_size:,d} tokens"
         )
 
-    def reshuffle(self, epoch: Optional[int] = None, **kwargs):
+    def reshuffle(self, epoch: int | None = None, **kwargs):
         del kwargs
         if epoch is None:
             epoch = 1 if self._epoch is None else self._epoch + 1
@@ -426,7 +429,7 @@ class ComposableDataLoader(TextDataLoaderBase):
         self._epoch = epoch
         self.build_and_save_global_indices()
 
-    def _iter_batches(self) -> Iterable[Dict[str, Any]]:
+    def _iter_batches(self) -> Iterable[dict[str, Any]]:
         # If we're already at the end of epoch we can skip creating the iterator.
         if self.total_batches is not None and self.batches_processed >= self.total_batches:
             yield from ()
@@ -459,14 +462,14 @@ class ComposableDataLoader(TextDataLoaderBase):
                 current_global_batch_size = self.global_batch_size
                 batch_iterator = _build_batch_iterator()
 
-    def get_mock_batch(self) -> Dict[str, Any]:
+    def get_mock_batch(self) -> dict[str, Any]:
         rng = get_rng(self.seed + self.dp_rank)
         num_instances = self.rank_batch_size // self.sequence_length
         indices = rng.integers(0, self.total_instances, num_instances)
         instances = [self.get_instance(idx) for idx in indices]
         return self.collator(instances)
 
-    def get_instance(self, idx: int) -> Dict[str, Any]:
+    def get_instance(self, idx: int) -> dict[str, Any]:
         if idx < 0:
             idx = self.total_instances + idx
         source_start_offset = 0
@@ -474,7 +477,7 @@ class ComposableDataLoader(TextDataLoaderBase):
             source_end_offset = source_start_offset + len(source)
 
             if source_start_offset <= idx < source_end_offset:
-                out: Dict[str, Any] = {"index": idx}
+                out: dict[str, Any] = {"index": idx}
                 if source.label is not None:
                     out["metadata"] = {"source": source.label}
 
@@ -627,11 +630,11 @@ class ComposableDataLoader(TextDataLoaderBase):
             raise RuntimeError("shouldn't get here")
 
 
-class _IterableDataLoaderWrapper(torch.utils.data.IterableDataset[Dict[str, Any]]):
+class _IterableDataLoaderWrapper(torch.utils.data.IterableDataset[dict[str, Any]]):
     def __init__(self, data_loader: ComposableDataLoader):
         self.data_loader = data_loader
 
-    def __iter__(self) -> Iterator[Dict[str, Any]]:
+    def __iter__(self) -> Iterator[dict[str, Any]]:
         """
         Iterate over the local rank+worker instances.
         """
@@ -642,7 +645,7 @@ class _IterableDataLoaderWrapper(torch.utils.data.IterableDataset[Dict[str, Any]
             num_threads = 4
 
         # Potentially slice by threads.
-        instance_iterator: Iterator[Dict[str, Any]]
+        instance_iterator: Iterator[dict[str, Any]]
         if num_threads:
             # In order to stay ahead of training the total queue size (sum across all threads)
             # should be bigger than the maximum number of instances per batch locally.

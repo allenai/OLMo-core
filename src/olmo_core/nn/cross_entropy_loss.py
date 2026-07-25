@@ -1,8 +1,8 @@
 import logging
-from typing import Literal, Optional, Tuple
+from typing import Literal
 
 import torch
-import torch.nn as nn
+from torch import nn
 from torch.distributed import DeviceMesh
 from torch.distributed.tensor import Placement, Replicate, Shard
 from torch.distributed.tensor.parallel import (
@@ -23,7 +23,7 @@ class _CELossFnWrapper(nn.Module):
         self,
         ignore_index: int = -100,
         reduction: Literal["mean", "sum", "none"] = "mean",
-        z_loss_multiplier: Optional[float] = None,
+        z_loss_multiplier: float | None = None,
     ):
         super().__init__()
         self.ignore_index = ignore_index
@@ -36,7 +36,7 @@ class _CELossFnWrapper(nn.Module):
         self,
         logits: torch.Tensor,
         labels: torch.Tensor,
-    ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+    ) -> tuple[torch.Tensor, torch.Tensor | None]:
         if logits.shape[:-1] != labels.shape:
             raise RuntimeError(
                 f"expected labels to have shape {logits.shape[:-1]}, but found {tuple(labels.shape)} instead"
@@ -79,7 +79,7 @@ class CrossEntropyLoss(nn.Module):
         *,
         ignore_index: int = -100,
         reduction: Literal["mean", "sum", "none"] = "mean",
-        z_loss_multiplier: Optional[float] = None,
+        z_loss_multiplier: float | None = None,
         compile: bool = False,
     ):
         super().__init__()
@@ -120,8 +120,8 @@ class CrossEntropyLoss(nn.Module):
         self,
         logits: torch.Tensor,
         labels: torch.Tensor,
-        div_factor: Optional[torch.Tensor] = None,
-    ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+        div_factor: torch.Tensor | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor | None]:
         """
         Compute the CE loss and optionally Z-loss.
 
@@ -154,12 +154,12 @@ class CrossEntropyLoss(nn.Module):
     def apply_tp(
         self,
         tp_mesh: DeviceMesh,
-        input_layouts: Optional[Tuple[Placement, ...]] = None,
+        input_layouts: tuple[Placement, ...] | None = None,
         shard_dimension: int = 1,
-        output_layout: Optional[Placement] = None,
+        output_layout: Placement | None = None,
         use_local_output: bool = False,
     ):
-        desired_input_layouts: Tuple[Placement, ...]
+        desired_input_layouts: tuple[Placement, ...]
         if input_layouts is None or len(input_layouts) == 3:
             desired_input_layouts = (Shard(shard_dimension), Shard(shard_dimension), Replicate())
         elif len(input_layouts) == 2:

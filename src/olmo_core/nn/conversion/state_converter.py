@@ -1,6 +1,6 @@
 import itertools
 from dataclasses import dataclass
-from typing import Any, Dict, List
+from typing import Any
 
 import torch
 
@@ -20,26 +20,26 @@ class StateConverter:
     A class for converting state from one format to another format (e.g. OLMo Core to HF).
     """
 
-    mapping_templates: List[StateMappingTemplate]
+    mapping_templates: list[StateMappingTemplate]
 
     def _fill_placeholders(
         self,
         mapping: StateMappingTemplate,
-        placeholder_values: Dict[TemplatePlaceholder, int | None],
-        placeholder_bounds: Dict[TemplatePlaceholder, int],
+        placeholder_values: dict[TemplatePlaceholder, int | None],
+        placeholder_bounds: dict[TemplatePlaceholder, int],
     ) -> StateMapping | None:
         return mapping.to_mapping(placeholder_values, placeholder_bounds)
 
     def _get_mappings(
         self,
-        state_dict: Dict[str, Any],
-        placeholder_bounds: Dict[TemplatePlaceholder, int],
+        state_dict: dict[str, Any],
+        placeholder_bounds: dict[TemplatePlaceholder, int],
         state_type: StateType = StateType.weight,
-    ) -> List[StateMapping]:
+    ) -> list[StateMapping]:
         # We consider all combinations of placeholders, including allowing each placeholder to not be set.
         # If a placeholder is set when not need, the combination will be treated as invalid
         # and so ignored.
-        placeholder_value_combinations: List[Dict[TemplatePlaceholder, int | None]] = list(
+        placeholder_value_combinations: list[dict[TemplatePlaceholder, int | None]] = list(
             map(
                 dict,
                 itertools.product(
@@ -75,10 +75,10 @@ class StateConverter:
 
     def get_mappings(
         self,
-        state_dict: Dict[str, Any],
-        placeholder_bounds: Dict[TemplatePlaceholder, int],
+        state_dict: dict[str, Any],
+        placeholder_bounds: dict[TemplatePlaceholder, int],
         state_type: StateType = StateType.weight,
-    ) -> List[StateMapping]:
+    ) -> list[StateMapping]:
         """
         Gets the state mapping from the given state dict to the converted format,
         without performing conversion.
@@ -93,10 +93,10 @@ class StateConverter:
 
     def convert(
         self,
-        state_dict: Dict[str, Any],
-        placeholder_bounds: Dict[TemplatePlaceholder, int],
+        state_dict: dict[str, Any],
+        placeholder_bounds: dict[TemplatePlaceholder, int],
         state_type: StateType = StateType.weight,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Converts a state dict to another format. This currently only supports tensor values.
 
@@ -132,7 +132,7 @@ class StateConverter:
                 for hf_key, state_chunk in zip(converted_keys, state_chunks):
                     converted_state_dict[hf_key] = state_chunk.contiguous()
             else:
-                raise RuntimeError(
+                raise RuntimeError(  # noqa: TRY004
                     f"Attempting to map {len(original_keys)} non-tensor states to {len(converted_keys)} keys"
                 )
 

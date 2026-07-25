@@ -2,7 +2,6 @@ import dataclasses
 import logging
 import math
 from dataclasses import dataclass
-from typing import List, Optional
 
 import torch
 
@@ -26,12 +25,12 @@ class BatchSizeSchedulerCallback(Callback):
     ``sqrt(new_batch_size / current_batch_size)``.
     """
 
-    batch_sizes: List[int] = dataclasses.field(default_factory=list)
+    batch_sizes: list[int] = dataclasses.field(default_factory=list)
     """
     Defines the batch sizes to apply, in order.
     """
 
-    schedule: List[Duration] = dataclasses.field(default_factory=list)
+    schedule: list[Duration] = dataclasses.field(default_factory=list)
     """
     Defines the schedule at which to apply each batch size.
     """
@@ -88,10 +87,10 @@ class BatchSizeSchedulerCallback(Callback):
         if not self.schedule:
             return
 
-        scheduler: Optional[Scheduler] = None
-        if isinstance(self.trainer.train_module, TransformerTrainModule):
-            scheduler = self.trainer.train_module.scheduler
-        elif isinstance(self.trainer.train_module, TransformerPipelineTrainModule):
+        scheduler: Scheduler | None = None
+        if isinstance(
+            self.trainer.train_module, (TransformerTrainModule, TransformerPipelineTrainModule)
+        ):
             scheduler = self.trainer.train_module.scheduler
 
         # If we have an LR scheduler, we need to make sure that the value it uses for `t_max`
@@ -156,8 +155,8 @@ class BatchSizeSchedulerCallback(Callback):
         lr_adjustment_factor = math.sqrt(ratio)
         self.trainer.data_loader.global_batch_size = batch_size
 
-        optimizers: Optional[List[torch.optim.Optimizer]] = None
-        scheduler: Optional[Scheduler] = None
+        optimizers: list[torch.optim.Optimizer] | None = None
+        scheduler: Scheduler | None = None
         if isinstance(self.trainer.train_module, TransformerTrainModule):
             optimizers = [self.trainer.train_module.optim]
             scheduler = self.trainer.train_module.scheduler

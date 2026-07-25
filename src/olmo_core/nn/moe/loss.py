@@ -1,5 +1,3 @@
-from typing import Optional, Union
-
 import torch
 import torch.distributed as dist
 from torch.distributed.tensor import DTensor, Replicate, Shard
@@ -34,9 +32,9 @@ def load_balancing_loss(
     batch_size_per_expert: torch.Tensor,
     batched_batch_size_per_expert: torch.Tensor,
     granularity: MoELoadBalancingLossGranularity,
-    loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
-    tp_mesh: Optional[dist.DeviceMesh] = None,
-    cp_mesh: Optional[dist.DeviceMesh] = None,
+    loss_div_factor: torch.Tensor | float | None = None,
+    tp_mesh: dist.DeviceMesh | None = None,
+    cp_mesh: dist.DeviceMesh | None = None,
 ) -> torch.Tensor:
     expert_scores, batch_size_per_expert, batched_batch_size_per_expert = (
         get_local_tensor(expert_scores),
@@ -114,9 +112,9 @@ def load_balancing_loss(
 def router_z_loss(
     *,
     expert_logits: torch.Tensor,
-    loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
-    tp_mesh: Optional[dist.DeviceMesh] = None,
-    cp_mesh: Optional[dist.DeviceMesh] = None,
+    loss_div_factor: torch.Tensor | float | None = None,
+    tp_mesh: dist.DeviceMesh | None = None,
+    cp_mesh: dist.DeviceMesh | None = None,
 ) -> torch.Tensor:
     expert_logits = get_local_tensor(expert_logits)
     B, S, _ = expert_logits.shape

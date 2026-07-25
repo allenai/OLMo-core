@@ -23,7 +23,7 @@ def test_sampling_instance_source(tmp_path: Path):
     assert source.source_sample_sizes == (4, 4)
     assert len(source) == 8
 
-    assert list(source[0]["input_ids"]) == list(range(0, 8))
+    assert list(source[0]["input_ids"]) == list(range(8))
     assert list(source[4]["input_ids"]) == list(range(64, 64 + 8))
 
 
@@ -46,7 +46,7 @@ def test_sampling_instance_source_with_oversampling(tmp_path: Path):
     )
     assert source.source_sample_sizes == (12, 12)
     assert len(source) == 24
-    assert list(source[0]["input_ids"]) == list(range(0, 8))
+    assert list(source[0]["input_ids"]) == list(range(8))
     assert list(source[12]["input_ids"]) == list(range(64, 64 + 8))
 
 

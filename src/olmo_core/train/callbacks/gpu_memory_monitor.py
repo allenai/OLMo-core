@@ -1,6 +1,6 @@
 import logging
 from dataclasses import dataclass
-from typing import ClassVar, Optional
+from typing import ClassVar
 
 import torch
 
@@ -16,7 +16,7 @@ class GPUMemoryMonitorCallback(Callback):
     """
 
     priority: ClassVar[int] = -1
-    device_id: Optional[int] = None
+    device_id: int | None = None
     _num_alloc_retries: int = 0
 
     @property

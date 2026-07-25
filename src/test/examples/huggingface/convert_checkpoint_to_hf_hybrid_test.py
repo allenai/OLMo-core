@@ -226,7 +226,7 @@ def test_get_hybrid_hf_config_gdn_fields(hybrid_model: Transformer):
     hf_config = get_hybrid_hf_config(hybrid_model, layer_types, max_seq_len=256)
 
     # GDN-specific fields should be extracted from the first GDN block.
-    gdn: GatedDeltaNet = list(hybrid_model.blocks.values())[0].attention
+    gdn: GatedDeltaNet = next(iter(hybrid_model.blocks.values())).attention
     assert hf_config["linear_num_key_heads"] == gdn.n_heads
     assert hf_config["linear_num_value_heads"] == gdn.n_v_heads
     assert hf_config["linear_key_head_dim"] == gdn.head_k_dim

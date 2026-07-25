@@ -8,7 +8,6 @@ import argparse
 import math
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Dict, List, Optional, Tuple
 
 from olmo_core.config import DType, StrEnum
 from olmo_core.data import (
@@ -310,7 +309,7 @@ class GemmaLikeTransformerConfig(TransformerConfig):
             )
 
         # Override every `global_layer_interval`-th layer with full global attention.
-        block_overrides: Dict[int, TransformerBlockConfig] = {}
+        block_overrides: dict[int, TransformerBlockConfig] = {}
         for layer_idx in range(n_layers):
             if layer_idx % global_layer_interval == (global_layer_interval - 1):
                 global_block = TransformerBlockConfig(
@@ -512,7 +511,7 @@ class GemmaLikeOlmoV2(StrEnum):
 
     def get_settings(
         self, vocab_size: int, use_gdn: bool = False
-    ) -> Tuple[TransformerConfig, _ModelSizeSettings]:
+    ) -> tuple[TransformerConfig, _ModelSizeSettings]:
         """Get the model config and all settings for this model size."""
         # Mapping: (size, num_nodes, round_nearest, activation_memory_budget)
         settings_map = {
@@ -562,8 +561,8 @@ def handle_custom_args(
     )
 
     # Extract argument names from parser (both value-based and boolean flags)
-    arg_prefixes: List[str] = []
-    boolean_flags: List[str] = []
+    arg_prefixes: list[str] = []
+    boolean_flags: list[str] = []
     for action in parser._actions:
         if isinstance(action, argparse._StoreAction):
             arg_prefixes.extend(action.option_strings)
@@ -692,7 +691,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     print(f"Parsed model size: {model} from run name: {cli_context.run_name}")
 
     # Add timestamp to run name
-    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")  # noqa: DTZ005
     run_name_with_timestamp = f"{cli_context.run_name}-{timestamp}"
 
     # Extract convenience multipliers from overrides (remove them from override list)
@@ -742,7 +741,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
             f"Applied LR multiplier: {lr_multiplier}, LR: {learning_rate} -> {adjusted_learning_rate}"
         )
 
-    beaker_launch_config: Optional[BeakerLaunchConfig] = None
+    beaker_launch_config: BeakerLaunchConfig | None = None
     if not no_beaker_launch:
         beaker_launch_config = build_launch_config(
             name=cli_context.run_name,
@@ -779,7 +778,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
             weight_decay=0.1,
             betas=(0.9, 0.95),
             group_overrides=[
-                OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
+                OptimGroupOverride(params=["embeddings.weight"], opts={"weight_decay": 0.0})
             ],
         ),
         scheduler=CosWithWarmupAndLinearDecay(

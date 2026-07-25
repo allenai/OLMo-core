@@ -4,7 +4,7 @@ import hashlib
 import logging
 import typing
 from dataclasses import dataclass
-from typing import ClassVar, List, Optional, Tuple, Type
+from typing import ClassVar
 
 from olmo_core.aliases import PathOrStr
 from olmo_core.config import Config
@@ -34,7 +34,7 @@ class MixingTokenSourceSpecConfig(Config):
     source: TokenSourceConfig
     ratio: float
     max_repetition_factor: float = 1.0
-    label: Optional[str] = None
+    label: str | None = None
 
     def __post_init__(self):
         if self.ratio <= 0:
@@ -61,16 +61,16 @@ class MixingTokenSourceSpecConfig(Config):
 class MixingTokenSourceConfig(TokenSourceConfig):
     """A config for :class:`MixingTokenSource`."""
 
-    source_specs: List[MixingTokenSourceSpecConfig]
+    source_specs: list[MixingTokenSourceSpecConfig]
     """Mixing source specs."""
-    seed: Optional[int] = dataclasses.field(default_factory=lambda: resolve_seed(SEED_NOT_SET))
+    seed: int | None = dataclasses.field(default_factory=lambda: resolve_seed(SEED_NOT_SET))
     """A random seed for sampling."""
-    label: Optional[str] = None
+    label: str | None = None
     """An optional label for this source."""
-    num_tokens: Optional[int] = None
+    num_tokens: int | None = None
     """An optional target number of tokens for the mixed source."""
 
-    def build(self, work_dir: PathOrStr) -> List["MixingTokenSource"]:  # type: ignore[override]
+    def build(self, work_dir: PathOrStr) -> list["MixingTokenSource"]:  # type: ignore[override]
         source_specs = [spec.build(work_dir) for spec in self.source_specs]
         return [
             MixingTokenSource(
@@ -87,7 +87,7 @@ class MixingTokenSourceConfig(TokenSourceConfig):
 class MixingTokenSourceSpec:
     """Defines a source and its associated mixing ratio for :class:`MixingTokenSource`."""
 
-    Config: ClassVar[Type["MixingTokenSourceSpecConfig"]] = MixingTokenSourceSpecConfig
+    Config: ClassVar[type["MixingTokenSourceSpecConfig"]] = MixingTokenSourceSpecConfig
     """The config class for this spec."""
 
     source: TokenSource
@@ -103,7 +103,7 @@ class MixingTokenSourceSpec:
     A factor of 1.0 means no repetition is allowed. A factor of 2.0 means each token could be
     repeated at most once (i.e., seen twice).
     """
-    label: Optional[str] = None
+    label: str | None = None
     """An optional label for this source."""
 
     def __post_init__(self):
@@ -157,9 +157,9 @@ class MixingTokenSource(TokenSource):
         self,
         *source_specs: MixingTokenSourceSpec,
         work_dir: PathOrStr,
-        seed: Optional[int] = SEED_NOT_SET,
-        label: Optional[str] = None,
-        num_tokens: Optional[int] = None,
+        seed: int | None = SEED_NOT_SET,
+        label: str | None = None,
+        num_tokens: int | None = None,
     ):
         if not source_specs:
             raise OLMoConfigurationError("At least one source spec must be provided.")
@@ -181,7 +181,7 @@ class MixingTokenSource(TokenSource):
 
         # Sample tokens from each source.
         seed = resolve_seed(seed)
-        sampled_sources: List[SamplingTokenSource] = []
+        sampled_sources: list[SamplingTokenSource] = []
         for i, (spec, sample_size) in enumerate(zip(source_specs, sample_sizes)):
             sampled_sources.append(
                 SamplingTokenSource(
@@ -207,8 +207,8 @@ class MixingTokenSource(TokenSource):
         log.info(f"Created token mixture consisting of:\n{summary}")
 
     @property
-    def sampled_sources(self) -> Tuple[SamplingTokenSource, ...]:
-        return typing.cast(Tuple[SamplingTokenSource, ...], self._source.sources)
+    def sampled_sources(self) -> tuple[SamplingTokenSource, ...]:
+        return typing.cast(tuple[SamplingTokenSource, ...], self._source.sources)
 
     @ft.cached_property
     def fingerprint(self) -> str:

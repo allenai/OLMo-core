@@ -1,6 +1,5 @@
 import logging
 from dataclasses import dataclass, field
-from typing import List, Optional, Set
 
 from .checkpointer import CheckpointerCallback
 
@@ -29,9 +28,9 @@ class ListCheckpointerCallback(CheckpointerCallback):
     save_interval: int = 1_000_000_000
 
     # user-provided exact steps to save at
-    save_steps: Optional[List[int]] = None
+    save_steps: list[int] | None = None
 
-    _save_steps_set: Set[int] = field(
+    _save_steps_set: set[int] = field(
         default_factory=set, init=False, repr=False, metadata={"omegaconf_ignore": True}
     )
     _last_saved_step: int = field(default=-1, init=False, repr=False)

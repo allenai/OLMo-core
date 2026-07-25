@@ -2,12 +2,12 @@ import argparse
 import logging
 import sys
 import textwrap
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable, Type
 
 import rich
 
-import olmo_core.io as io
+from olmo_core import io
 from olmo_core.data import DataMix, TokenizerConfig
 from olmo_core.data.composable import *
 from olmo_core.exceptions import OLMoConfigurationError
@@ -33,7 +33,7 @@ LADDER_STORAGE_ROOTS = [
 def parse_args(
     configure_ladder: Callable[[argparse.Namespace], ModelLadder],
     *,
-    size_enum: Type[TransformerSize] = TransformerSize,
+    size_enum: type[TransformerSize] = TransformerSize,
     add_additional_args: Callable[[str, argparse.ArgumentParser], None] | None = None,
 ) -> argparse.Namespace:
     formatter_class = type(
@@ -55,8 +55,8 @@ def parse_args(
             examples:
             • See a description of all options for a certain command:
               ❯ python {sys.argv[0]} dry-run --help
-            • Run a dry run for the {list(size_enum)[0]} model size:
-              ❯ python {sys.argv[0]} dry-run --size={list(size_enum)[0]}
+            • Run a dry run for the {next(iter(size_enum))} model size:
+              ❯ python {sys.argv[0]} dry-run --size={next(iter(size_enum))}
             """
         ),
         epilog=textwrap.dedent(
@@ -377,10 +377,10 @@ def get_default_ladder_factory(
 
 
 def main(
-    configure_ladder: Callable[[argparse.Namespace], ModelLadder] | None | None = None,
+    configure_ladder: Callable[[argparse.Namespace], ModelLadder] | None = None,
     configure_model: Callable[[argparse.Namespace], ModelConfigurator] | None = None,
     configure_run: Callable[[argparse.Namespace], RunConfigurator] | None = None,
-    size_enum: Type[TransformerSize] = TransformerSize,
+    size_enum: type[TransformerSize] = TransformerSize,
     add_additional_args: Callable[[str, argparse.ArgumentParser], None] | None = None,
 ):
     if configure_ladder is None:

@@ -5,7 +5,8 @@ import random
 import socket
 import sys
 from collections import deque
-from typing import Any, Callable, Dict, Optional, Tuple
+from collections.abc import Callable
+from typing import Any
 
 import torch.distributed as dist
 import torch.multiprocessing as mp
@@ -40,7 +41,6 @@ def _port_in_use(host: str, port: int) -> bool:
 
 
 def _get_next_port() -> int:
-    global _PORTS
     port = _PORTS[0]
     _PORTS.rotate()
     return port
@@ -63,8 +63,8 @@ def _init_process(
     backend: str,
     log_from_all_ranks: bool,
     func: Callable,
-    func_args: Optional[Tuple[Any, ...]] = None,
-    func_kwargs: Optional[Dict[str, Any]] = None,
+    func_args: tuple[Any, ...] | None = None,
+    func_kwargs: dict[str, Any] | None = None,
     primary_addr: str = "127.0.0.1",
     primary_port: int = 29500,
 ):
@@ -86,7 +86,7 @@ def _init_process(
 
     def log_record_factory(*args, **kwargs) -> logging.LogRecord:
         record = old_log_record_factory(*args, **kwargs)
-        setattr(record, "local_rank", dist.get_rank())
+        record.local_rank = dist.get_rank()
         return record
 
     handler = logging.StreamHandler(sys.stderr)
@@ -113,11 +113,11 @@ def run_distributed_test(
     world_size: int = 2,
     log_from_all_ranks: bool = False,
     backend: str = "gloo",
-    start_method: Optional[str] = None,
-    func_args: Optional[Tuple[Any, ...]] = None,
-    func_kwargs: Optional[Dict[str, Any]] = None,
+    start_method: str | None = None,
+    func_args: tuple[Any, ...] | None = None,
+    func_kwargs: dict[str, Any] | None = None,
     primary_addr: str = "127.0.0.1",
-    primary_port: Optional[int] = None,
+    primary_port: int | None = None,
 ):
     """
     This runs the `func` in a simulated distributed environment.

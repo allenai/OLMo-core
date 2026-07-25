@@ -1,11 +1,11 @@
 import functools
 import math
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable, Optional
 
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
+from torch import nn
 from torch.distributed import DeviceMesh
 from torch.distributed.tensor.parallel import parallelize_module
 from torch.distributed.tensor.placement_types import Placement, Replicate
@@ -19,9 +19,9 @@ from .utils import get_tp_wrappers
 
 __all__ = [
     "ActivationFunction",
-    "FeedForwardType",
-    "FeedForwardConfig",
     "FeedForward",
+    "FeedForwardConfig",
+    "FeedForwardType",
     "NormalizedFeedForward",
 ]
 
@@ -77,8 +77,8 @@ class FeedForwardConfig(ModuleConfig):
     """
     The name of the implementation.
     """
-    bias: Optional[bool] = None
-    dtype: Optional[DType] = None
+    bias: bool | None = None
+    dtype: DType | None = None
     activation: ActivationFunction = ActivationFunction.silu
     """
     The activation function to use. See :class:`ActivationFunction` for options.
@@ -105,7 +105,7 @@ class FeedForwardConfig(ModuleConfig):
         return params
 
     def build(
-        self, d_model: int, *, dtype: Optional[torch.dtype] = None, init_device: str = "cpu"
+        self, d_model: int, *, dtype: torch.dtype | None = None, init_device: str = "cpu"
     ) -> "FeedForward":
         """
         Build the corresponding feed-forward module.
@@ -173,8 +173,8 @@ class FeedForward(nn.Module):
     def apply_tp(
         self,
         tp_mesh: DeviceMesh,
-        input_layout: Optional[Placement] = None,
-        output_layout: Optional[Placement] = None,
+        input_layout: Placement | None = None,
+        output_layout: Placement | None = None,
         use_local_output: bool = True,
         float8_enabled: bool = False,
     ):
@@ -258,8 +258,8 @@ class NormalizedFeedForward(FeedForward):
     def apply_tp(
         self,
         tp_mesh: DeviceMesh,
-        input_layout: Optional[Placement] = None,
-        output_layout: Optional[Placement] = None,
+        input_layout: Placement | None = None,
+        output_layout: Placement | None = None,
         use_local_output: bool = True,
         float8_enabled: bool = False,
     ):

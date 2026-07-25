@@ -6,7 +6,6 @@ import shutil
 import socket
 from datetime import timedelta
 from tempfile import TemporaryDirectory
-from typing import Dict, Tuple
 
 import click
 import torch
@@ -60,7 +59,7 @@ def _find_open_port(host: str = "127.0.0.1") -> int:
     return port
 
 
-def load_config(checkpoint_input_dir: PathOrStr) -> Dict:
+def load_config(checkpoint_input_dir: PathOrStr) -> dict:
     if not file_exists(f"{checkpoint_input_dir}/config.json"):
         raise RuntimeError(f"Config file not found at {checkpoint_input_dir}")
 
@@ -70,7 +69,7 @@ def load_config(checkpoint_input_dir: PathOrStr) -> Dict:
     return config_dict
 
 
-def config_dicts_from_path(model_path: str) -> Tuple[Dict, Dict, Dict]:
+def config_dicts_from_path(model_path: str) -> tuple[dict, dict, dict]:
     # Load and preprocess configs
     experiment_config = load_config(model_path)
 
@@ -91,7 +90,7 @@ def config_dicts_from_path(model_path: str) -> Tuple[Dict, Dict, Dict]:
     return transformer_config_dict, tokenizer_config_dict, optim_config_dict
 
 
-def model_and_optim_config_from_path(model_path: str) -> Tuple[TransformerConfig, OptimConfig]:
+def model_and_optim_config_from_path(model_path: str) -> tuple[TransformerConfig, OptimConfig]:
     transformer_config_dict, _, optim_config_dict = config_dicts_from_path(model_path)
     model_config = TransformerConfig.from_dict(transformer_config_dict)
     print(optim_config_dict)
@@ -168,7 +167,7 @@ def _worker_process(
         if optim is not None:
             checkpoint_meta = get_checkpoint_metadata(model_and_optim_dir)
             flatten_optimizer_state = (
-                "optim.param_groups.0.params" not in checkpoint_meta.state_dict_metadata.keys()
+                "optim.param_groups.0.params" not in checkpoint_meta.state_dict_metadata
             )
 
         log.info(f"Loading checkpoint from '{model_and_optim_dir}'")

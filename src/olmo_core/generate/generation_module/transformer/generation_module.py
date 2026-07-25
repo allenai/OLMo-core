@@ -3,7 +3,7 @@ import logging
 import tempfile
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Optional, Tuple, cast
+from typing import Any, Literal, cast
 
 import torch
 import torch.distributed as dist
@@ -51,18 +51,18 @@ class TransformerGenerationModule(GenerationModule):
         model: Transformer,
         generation_config: GenerationConfig,
         compile_model: bool = False,
-        float8_config: Optional[Float8Config] = None,
-        dp_config: Optional[TransformerDataParallelConfig] = None,
-        device: Optional[torch.device] = None,
-        state_dict_load_opts: Optional[dist_cp_sd.StateDictOptions] = None,
-        state_dict_save_opts: Optional[dist_cp_sd.StateDictOptions] = None,
-        load_key_mapping: Optional[Dict[str, str]] = None,
+        float8_config: Float8Config | None = None,
+        dp_config: TransformerDataParallelConfig | None = None,
+        device: torch.device | None = None,
+        state_dict_load_opts: dist_cp_sd.StateDictOptions | None = None,
+        state_dict_save_opts: dist_cp_sd.StateDictOptions | None = None,
+        load_key_mapping: dict[str, str] | None = None,
     ):
         super().__init__()
 
         self.device = device or get_default_device()
 
-        self.world_mesh: Optional[DeviceMesh] = None
+        self.world_mesh: DeviceMesh | None = None
         if is_distributed():
             self.world_mesh = build_world_mesh(dp=dp_config, device_type=self.device.type)
         elif dp_config is not None:
@@ -79,7 +79,7 @@ class TransformerGenerationModule(GenerationModule):
             float8_config=float8_config,
             dp_config=dp_config,
         )
-        self._model_mode: Optional[Literal["train", "eval"]] = None
+        self._model_mode: Literal["train", "eval"] | None = None
 
         self._dp_config = dp_config
         self.state_dict_save_opts = state_dict_save_opts or dist_cp_sd.StateDictOptions(strict=True)
@@ -88,19 +88,19 @@ class TransformerGenerationModule(GenerationModule):
         self._generation_config = generation_config
 
     @property
-    def dp_process_group(self) -> Optional[dist.ProcessGroup]:
+    def dp_process_group(self) -> dist.ProcessGroup | None:
         return None if self.world_mesh is None else get_dp_process_group(self.world_mesh)
 
     @property
     def world_size(self) -> int:
         return get_world_size()
 
-    def state_dict(self) -> Dict[str, Any]:
+    def state_dict(self) -> dict[str, Any]:
         return {
             "model": dist_cp_sd.get_model_state_dict(self.model, options=self.state_dict_save_opts),
         }
 
-    def load_state_dict(self, state_dict: Dict[str, Any]) -> None:
+    def load_state_dict(self, state_dict: dict[str, Any]) -> None:
         dist_cp_sd.set_model_state_dict(
             self.model, state_dict["model"], options=self.state_dict_load_opts
         )
@@ -143,13 +143,13 @@ class TransformerGenerationModule(GenerationModule):
         self,
         input_ids: torch.Tensor,
         *,
-        attention_mask: Optional[torch.Tensor] = None,
+        attention_mask: torch.Tensor | None = None,
         return_logits: bool = False,
         return_logprobs: bool = False,
         completions_only: bool = False,
         log_timing: bool = True,
         **generation_kwargs,
-    ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor]]:
+    ) -> tuple[torch.Tensor, torch.Tensor | None, torch.Tensor | None]:
         """
         Generate text with autoregressive decoding.
 
@@ -186,8 +186,8 @@ class TransformerGenerationModule(GenerationModule):
 
         # Output containers
         generated = input_ids
-        all_logits: Optional[List[torch.Tensor]] = [] if return_logits else None
-        all_logprobs: Optional[List[torch.Tensor]] = [] if return_logprobs else None
+        all_logits: list[torch.Tensor] | None = [] if return_logits else None
+        all_logprobs: list[torch.Tensor] | None = [] if return_logprobs else None
 
         # Timing stats
         time_to_first_token = None
@@ -331,9 +331,9 @@ class TransformerGenerationModule(GenerationModule):
         self,
         checkpoint_dir: PathOrStr,
         work_dir: PathOrStr,
-        process_group: Optional[ProcessGroup] = None,
+        process_group: ProcessGroup | None = None,
         pre_download: bool = True,
-        load_thread_count: Optional[int] = None,
+        load_thread_count: int | None = None,
     ):
         """
         Load model checkpoint.
@@ -355,7 +355,7 @@ class TransformerGenerationModule(GenerationModule):
 
         checkpoint_dir = normalize_path(checkpoint_dir)
         train_module_dir = join_path(checkpoint_dir, "model_and_optim")
-        metadata: Optional[Metadata] = None
+        metadata: Metadata | None = None
         if get_rank(process_group) == 0:
             try:
                 metadata = get_checkpoint_metadata(train_module_dir)
@@ -391,14 +391,14 @@ class TransformerGenerationModule(GenerationModule):
         cls,
         checkpoint_dir: PathOrStr,
         *,
-        transformer_config: Optional[TransformerConfig] = None,
-        generation_config: Optional[GenerationConfig] = None,
-        process_group: Optional[ProcessGroup] = None,
-        work_dir: Optional[PathOrStr] = None,
+        transformer_config: TransformerConfig | None = None,
+        generation_config: GenerationConfig | None = None,
+        process_group: ProcessGroup | None = None,
+        work_dir: PathOrStr | None = None,
         pre_download: bool = True,
-        load_thread_count: Optional[int] = None,
-        dtype: Optional[DType] = None,
-        attention_backend: Optional[AttentionBackendName] = None,
+        load_thread_count: int | None = None,
+        dtype: DType | None = None,
+        attention_backend: AttentionBackendName | None = None,
         **kwargs,
     ) -> "TransformerGenerationModule":
         """
@@ -492,7 +492,7 @@ class TransformerGenerationModule(GenerationModule):
                 if mixer is None and hasattr(c, "backend"):
                     mixer = c
                 if mixer is not None and hasattr(mixer, "backend"):
-                    setattr(mixer, "backend", attention_backend)
+                    mixer.backend = attention_backend
 
             transformer_config.apply(set_attention_backend)
 
@@ -516,8 +516,8 @@ class TransformerGenerationModule(GenerationModule):
     @torch.no_grad()
     def from_checkpoints(
         cls,
-        checkpoint_dirs: List[PathOrStr],
-        dtype: Optional[DType] = None,
+        checkpoint_dirs: list[PathOrStr],
+        dtype: DType | None = None,
         **kwargs,
     ) -> "TransformerGenerationModule":
         if len(checkpoint_dirs) == 1:
@@ -554,7 +554,7 @@ class TransformerGenerationModule(GenerationModule):
             del next_generation_module
 
             # Average the weights
-            for key in merged_state_dict["model"].keys():
+            for key in merged_state_dict["model"]:
                 target_tensor = merged_state_dict["model"][key]
                 if torch.is_tensor(target_tensor) and torch.is_floating_point(target_tensor):
                     source_tensor = next_state_dict["model"].pop(key)
@@ -585,7 +585,7 @@ class TransformerGenerationModule(GenerationModule):
         assert merged_state_dict["model"].keys() == final_state_dict["model"].keys()
 
         # Convert merged state dict to the target dtype
-        for key in merged_state_dict["model"].keys():
+        for key in merged_state_dict["model"]:
             merged_state_dict_tensor = merged_state_dict["model"][key]
             if not torch.is_tensor(merged_state_dict_tensor):
                 continue

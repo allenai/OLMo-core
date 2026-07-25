@@ -12,9 +12,7 @@ import rich
 from cached_path import cached_path
 
 import olmo_core.distributed.utils as dist_utils
-import olmo_core.eval.task_groups as task_groups
-import olmo_core.io as io
-import olmo_core.train.callbacks as callbacks
+from olmo_core import io
 from olmo_core.aliases import PathOrStr
 from olmo_core.config import Config
 from olmo_core.data import DataMix, NumpyPaddedFSLDatasetConfig, TokenizerConfig
@@ -23,6 +21,7 @@ from olmo_core.data.composable import (
     InstanceSourceConfig,
     set_composable_seed,
 )
+from olmo_core.eval import task_groups
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.nn.config import ModelConfig
 from olmo_core.optim import OptimConfig, Scheduler
@@ -31,6 +30,7 @@ from olmo_core.train import (
     Duration,
     DurationUnit,
     TrainerConfig,
+    callbacks,
     prepare_training_environment,
     teardown_training_environment,
 )

@@ -1,10 +1,9 @@
 from abc import abstractmethod
-from typing import Optional, Tuple, Type, Union
 
 import torch
 import torch.distributed as dist
-import torch.nn as nn
 import torch.nn.functional as F
+from torch import nn
 from torch.distributed import DeviceMesh
 
 from olmo_core.config import StrEnum
@@ -74,7 +73,7 @@ class AttentionBackendName(StrEnum):
     ➡️ :class:`TEAttentionBackend`.
     """
 
-    def get_class(self) -> Type["AttentionBackend"]:
+    def get_class(self) -> type["AttentionBackend"]:
         if self == self.torch:
             return TorchAttentionBackend
         elif self in self.flash_2:
@@ -93,11 +92,11 @@ class AttentionBackendName(StrEnum):
         *,
         head_dim: int,
         n_heads: int,
-        n_kv_heads: Optional[int] = None,
-        scale: Optional[float] = None,
+        n_kv_heads: int | None = None,
+        scale: float | None = None,
         dropout_p: float = 0.0,
-        window_size: Tuple[int, int] = (-1, -1),
-        cache: Optional[BufferCache] = None,
+        window_size: tuple[int, int] = (-1, -1),
+        cache: BufferCache | None = None,
     ) -> "AttentionBackend":
         return self.get_class()(
             head_dim=head_dim,
@@ -138,11 +137,11 @@ class AttentionBackend(nn.Module):
         *,
         head_dim: int,
         n_heads: int,
-        n_kv_heads: Optional[int] = None,
-        scale: Optional[float] = None,
+        n_kv_heads: int | None = None,
+        scale: float | None = None,
         dropout_p: float = 0.0,
-        window_size: Tuple[int, int] = (-1, -1),
-        cache: Optional[BufferCache] = None,
+        window_size: tuple[int, int] = (-1, -1),
+        cache: BufferCache | None = None,
     ):
         self.assert_supported()
         if window_size != (-1, -1):
@@ -155,7 +154,7 @@ class AttentionBackend(nn.Module):
         self.dropout_p = dropout_p
         self.window_size = window_size
         self.cache = cache
-        self.cp_pg: Optional[dist.ProcessGroup] = None
+        self.cp_pg: dist.ProcessGroup | None = None
         self.cp_enabled = False
         self.head_stride: int = 1
 
@@ -166,7 +165,6 @@ class AttentionBackend(nn.Module):
         Validates that this backend is supported on the current system.
         Raises an error if not supported.
         """
-        pass
 
     @classmethod
     @abstractmethod
@@ -175,7 +173,6 @@ class AttentionBackend(nn.Module):
         Validates that this backend supports sliding window attention (SWA).
         Raises an error if not supported.
         """
-        pass
 
     @classmethod
     @abstractmethod
@@ -184,7 +181,6 @@ class AttentionBackend(nn.Module):
         Validates that this backend supports ring context parallelism.
         Raises an error if not supported.
         """
-        pass
 
     @classmethod
     @abstractmethod
@@ -193,7 +189,6 @@ class AttentionBackend(nn.Module):
         Validates that this backend supports ulysses context parallelism.
         Raises an error if not supported.
         """
-        pass
 
     @classmethod
     @abstractmethod
@@ -202,7 +197,6 @@ class AttentionBackend(nn.Module):
         Validates that this backend supports taking QKV as a single packed tensor.
         Raises an error if not supported.
         """
-        pass
 
     @classmethod
     @abstractmethod
@@ -211,7 +205,6 @@ class AttentionBackend(nn.Module):
         Validates that this backend supports KV caching.
         Raises an error if not supported.
         """
-        pass
 
     def warmup_cache(self, max_seq_len: int, device: torch.device):
         """
@@ -222,15 +215,15 @@ class AttentionBackend(nn.Module):
     @abstractmethod
     def forward(
         self,
-        qkv: Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor, torch.Tensor]],
-        cu_doc_lens: Optional[torch.Tensor] = None,
-        cu_doc_lens_q: Optional[torch.Tensor] = None,
-        cu_doc_lens_k: Optional[torch.Tensor] = None,
-        max_doc_len: Optional[int] = None,
-        max_doc_len_q: Optional[int] = None,
-        max_doc_len_k: Optional[int] = None,
-        local_k_slice: Optional[slice] = None,
-        kv_cache_manager: Optional[KVCacheManager] = None,
+        qkv: torch.Tensor | tuple[torch.Tensor, torch.Tensor, torch.Tensor],
+        cu_doc_lens: torch.Tensor | None = None,
+        cu_doc_lens_q: torch.Tensor | None = None,
+        cu_doc_lens_k: torch.Tensor | None = None,
+        max_doc_len: int | None = None,
+        max_doc_len_q: int | None = None,
+        max_doc_len_k: int | None = None,
+        local_k_slice: slice | None = None,
+        kv_cache_manager: KVCacheManager | None = None,
     ) -> torch.Tensor:
         """
         Run the attention operation.
@@ -240,8 +233,8 @@ class AttentionBackend(nn.Module):
     def apply_cp(
         self,
         cp_mesh: DeviceMesh,
-        ring: Optional[RingContextParallelStyle] = None,
-        uly: Optional[UlyssesContextParallelStyle] = None,
+        ring: RingContextParallelStyle | None = None,
+        uly: UlyssesContextParallelStyle | None = None,
     ):
         """
         Apply context parallelism if supported by the backend.
@@ -298,27 +291,27 @@ class TorchAttentionBackend(AttentionBackend):
 
     def forward(
         self,
-        qkv: Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor, torch.Tensor]],
-        cu_doc_lens: Optional[torch.Tensor] = None,
-        cu_doc_lens_q: Optional[torch.Tensor] = None,
-        cu_doc_lens_k: Optional[torch.Tensor] = None,
-        max_doc_len: Optional[int] = None,
-        max_doc_len_q: Optional[int] = None,
-        max_doc_len_k: Optional[int] = None,
-        local_k_slice: Optional[slice] = None,
-        kv_cache_manager: Optional[KVCacheManager] = None,
+        qkv: torch.Tensor | tuple[torch.Tensor, torch.Tensor, torch.Tensor],
+        cu_doc_lens: torch.Tensor | None = None,
+        cu_doc_lens_q: torch.Tensor | None = None,
+        cu_doc_lens_k: torch.Tensor | None = None,
+        max_doc_len: int | None = None,
+        max_doc_len_q: int | None = None,
+        max_doc_len_k: int | None = None,
+        local_k_slice: slice | None = None,
+        kv_cache_manager: KVCacheManager | None = None,
     ) -> torch.Tensor:
         del local_k_slice
 
         if isinstance(qkv, torch.Tensor):
-            raise RuntimeError(f"'{self.__class__.__name__}' doesn't support packed QKV")
+            raise TypeError(f"'{self.__class__.__name__}' doesn't support packed QKV")
 
         q, k, v = qkv
 
         if kv_cache_manager is not None:
             raise RuntimeError(f"'{self.__class__.__name__}' doesn't support KV caching")
 
-        attn_mask: Optional[torch.Tensor] = None
+        attn_mask: torch.Tensor | None = None
         if self.window_size != (-1, -1):
             attn_mask = self._get_sliding_window_mask(
                 seq_len_q=q.shape[1],
@@ -388,7 +381,7 @@ class TorchAttentionBackend(AttentionBackend):
         seq_len_q: int,
         seq_len_kv: int,
         device: torch.device,
-        window_size: Tuple[int, int],
+        window_size: tuple[int, int],
     ) -> torch.Tensor:
         key = f"seq_len_q={seq_len_q},seq_len_kv={seq_len_kv},window_size={window_size}"
         if self.cache is not None:
@@ -418,7 +411,7 @@ class TorchAttentionBackend(AttentionBackend):
         seq_len_q: int,
         seq_len_kv: int,
         device: torch.device,
-        window_size: Tuple[int, int],
+        window_size: tuple[int, int],
     ) -> torch.Tensor:
         causal_mask = torch.tril(torch.ones(seq_len_q, seq_len_kv, device=device, dtype=torch.bool))
 
@@ -481,15 +474,15 @@ class FlashAttention2Backend(AttentionBackend):
 
     def forward(
         self,
-        qkv: Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor, torch.Tensor]],
-        cu_doc_lens: Optional[torch.Tensor] = None,
-        cu_doc_lens_q: Optional[torch.Tensor] = None,
-        cu_doc_lens_k: Optional[torch.Tensor] = None,
-        max_doc_len: Optional[int] = None,
-        max_doc_len_q: Optional[int] = None,
-        max_doc_len_k: Optional[int] = None,
-        local_k_slice: Optional[slice] = None,
-        kv_cache_manager: Optional[KVCacheManager] = None,
+        qkv: torch.Tensor | tuple[torch.Tensor, torch.Tensor, torch.Tensor],
+        cu_doc_lens: torch.Tensor | None = None,
+        cu_doc_lens_q: torch.Tensor | None = None,
+        cu_doc_lens_k: torch.Tensor | None = None,
+        max_doc_len: int | None = None,
+        max_doc_len_q: int | None = None,
+        max_doc_len_k: int | None = None,
+        local_k_slice: slice | None = None,
+        kv_cache_manager: KVCacheManager | None = None,
     ) -> torch.Tensor:
         if isinstance(qkv, torch.Tensor):
             if kv_cache_manager is not None:
@@ -658,11 +651,11 @@ class FlashAttention3Backend(AttentionBackend):
         *,
         head_dim: int,
         n_heads: int,
-        n_kv_heads: Optional[int] = None,
-        scale: Optional[float] = None,
+        n_kv_heads: int | None = None,
+        scale: float | None = None,
         dropout_p: float = 0.0,
-        window_size: Tuple[int, int] = (-1, -1),
-        cache: Optional[BufferCache] = None,
+        window_size: tuple[int, int] = (-1, -1),
+        cache: BufferCache | None = None,
     ):
         if dropout_p > 0.0:
             raise RuntimeError("dropout_p > 0.0 is not supported for flash-attn 3")
@@ -705,15 +698,15 @@ class FlashAttention3Backend(AttentionBackend):
 
     def forward(
         self,
-        qkv: Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor, torch.Tensor]],
-        cu_doc_lens: Optional[torch.Tensor] = None,
-        cu_doc_lens_q: Optional[torch.Tensor] = None,
-        cu_doc_lens_k: Optional[torch.Tensor] = None,
-        max_doc_len: Optional[int] = None,
-        max_doc_len_q: Optional[int] = None,
-        max_doc_len_k: Optional[int] = None,
-        local_k_slice: Optional[slice] = None,
-        kv_cache_manager: Optional[KVCacheManager] = None,
+        qkv: torch.Tensor | tuple[torch.Tensor, torch.Tensor, torch.Tensor],
+        cu_doc_lens: torch.Tensor | None = None,
+        cu_doc_lens_q: torch.Tensor | None = None,
+        cu_doc_lens_k: torch.Tensor | None = None,
+        max_doc_len: int | None = None,
+        max_doc_len_q: int | None = None,
+        max_doc_len_k: int | None = None,
+        local_k_slice: slice | None = None,
+        kv_cache_manager: KVCacheManager | None = None,
     ) -> torch.Tensor:
         if isinstance(qkv, torch.Tensor):
             if kv_cache_manager is not None:
@@ -854,11 +847,11 @@ class FlashAttention4Backend(AttentionBackend):
         *,
         head_dim: int,
         n_heads: int,
-        n_kv_heads: Optional[int] = None,
-        scale: Optional[float] = None,
+        n_kv_heads: int | None = None,
+        scale: float | None = None,
         dropout_p: float = 0.0,
-        window_size: Tuple[int, int] = (-1, -1),
-        cache: Optional[BufferCache] = None,
+        window_size: tuple[int, int] = (-1, -1),
+        cache: BufferCache | None = None,
     ):
         if dropout_p > 0.0:
             raise RuntimeError("dropout_p > 0.0 is not supported for flash-attn 4")
@@ -901,15 +894,15 @@ class FlashAttention4Backend(AttentionBackend):
 
     def forward(
         self,
-        qkv: Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor, torch.Tensor]],
-        cu_doc_lens: Optional[torch.Tensor] = None,
-        cu_doc_lens_q: Optional[torch.Tensor] = None,
-        cu_doc_lens_k: Optional[torch.Tensor] = None,
-        max_doc_len: Optional[int] = None,
-        max_doc_len_q: Optional[int] = None,
-        max_doc_len_k: Optional[int] = None,
-        local_k_slice: Optional[slice] = None,
-        kv_cache_manager: Optional[KVCacheManager] = None,
+        qkv: torch.Tensor | tuple[torch.Tensor, torch.Tensor, torch.Tensor],
+        cu_doc_lens: torch.Tensor | None = None,
+        cu_doc_lens_q: torch.Tensor | None = None,
+        cu_doc_lens_k: torch.Tensor | None = None,
+        max_doc_len: int | None = None,
+        max_doc_len_q: int | None = None,
+        max_doc_len_k: int | None = None,
+        local_k_slice: slice | None = None,
+        kv_cache_manager: KVCacheManager | None = None,
     ) -> torch.Tensor:
         assert isinstance(qkv, tuple), f"'{self.__class__.__name__}' requires unpacked QKV"
         assert local_k_slice is None, f"'{self.__class__.__name__}' doesn't support local_k_slice"
@@ -998,11 +991,11 @@ class TEAttentionBackend(AttentionBackend):
         *,
         head_dim: int,
         n_heads: int,
-        n_kv_heads: Optional[int] = None,
-        scale: Optional[float] = None,
+        n_kv_heads: int | None = None,
+        scale: float | None = None,
         dropout_p: float = 0.0,
-        window_size: Tuple[int, int] = (-1, -1),
-        cache: Optional[BufferCache] = None,
+        window_size: tuple[int, int] = (-1, -1),
+        cache: BufferCache | None = None,
     ):
         super().__init__(
             head_dim=head_dim,
@@ -1053,8 +1046,8 @@ class TEAttentionBackend(AttentionBackend):
     def apply_cp(
         self,
         cp_mesh: DeviceMesh,
-        ring: Optional[RingContextParallelStyle] = None,
-        uly: Optional[UlyssesContextParallelStyle] = None,
+        ring: RingContextParallelStyle | None = None,
+        uly: UlyssesContextParallelStyle | None = None,
     ):
         super().apply_cp(cp_mesh, ring=ring, uly=uly)
         if self.ring is not None:
@@ -1088,15 +1081,15 @@ class TEAttentionBackend(AttentionBackend):
     )
     def forward(
         self,
-        qkv: Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor, torch.Tensor]],
-        cu_doc_lens: Optional[torch.Tensor] = None,
-        cu_doc_lens_q: Optional[torch.Tensor] = None,
-        cu_doc_lens_k: Optional[torch.Tensor] = None,
-        max_doc_len: Optional[int] = None,
-        max_doc_len_q: Optional[int] = None,
-        max_doc_len_k: Optional[int] = None,
-        local_k_slice: Optional[slice] = None,
-        kv_cache_manager: Optional[KVCacheManager] = None,
+        qkv: torch.Tensor | tuple[torch.Tensor, torch.Tensor, torch.Tensor],
+        cu_doc_lens: torch.Tensor | None = None,
+        cu_doc_lens_q: torch.Tensor | None = None,
+        cu_doc_lens_k: torch.Tensor | None = None,
+        max_doc_len: int | None = None,
+        max_doc_len_q: int | None = None,
+        max_doc_len_k: int | None = None,
+        local_k_slice: slice | None = None,
+        kv_cache_manager: KVCacheManager | None = None,
     ) -> torch.Tensor:
         del local_k_slice
 
@@ -1104,7 +1097,7 @@ class TEAttentionBackend(AttentionBackend):
             raise RuntimeError(f"'{self.__class__.__name__}' doesn't support KV caching")
 
         if isinstance(qkv, torch.Tensor):
-            raise RuntimeError(f"'{self.__class__.__name__}' doesn't support packed QKV")
+            raise TypeError(f"'{self.__class__.__name__}' doesn't support packed QKV")
 
         if any(
             opt is not None

@@ -1,7 +1,6 @@
 import gc
 import logging
 from dataclasses import dataclass
-from typing import Optional
 
 from ...aliases import PathOrStr
 from .callback import Callback
@@ -23,7 +22,7 @@ class GarbageCollectorCallback(Callback):
 
     gc_interval: int = 1000
     enabled: bool = True
-    _start_state: Optional[bool] = None
+    _start_state: bool | None = None
 
     def pre_train(self):
         if not self.enabled:

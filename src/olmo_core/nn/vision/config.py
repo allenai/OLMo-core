@@ -1,17 +1,16 @@
 from dataclasses import dataclass, field
-from typing import Tuple
 
-import torch.nn as nn
+from torch import nn
 from typing_extensions import Self
 
 from olmo_core.config import DType, StrEnum
 from olmo_core.nn.config import ModuleConfig
 
 __all__ = [
-    "VisionEncoderType",
-    "VisionBlockType",
     "VisionBlockConfig",
+    "VisionBlockType",
     "VisionEncoderConfig",
+    "VisionEncoderType",
 ]
 
 
@@ -121,7 +120,7 @@ class VisionEncoderConfig(ModuleConfig):
     name: VisionEncoderType = VisionEncoderType.openai
     """The vision encoder architecture."""
 
-    image_default_input_size: Tuple[int, int] = (336, 336)
+    image_default_input_size: tuple[int, int] = (336, 336)
     """Default (height, width) of input images in pixels."""
 
     image_patch_size: int = 14
@@ -198,7 +197,7 @@ class VisionEncoderConfig(ModuleConfig):
     """Default parameter dtype."""
 
     @property
-    def image_num_patch(self) -> Tuple[int, int]:
+    def image_num_patch(self) -> tuple[int, int]:
         """Number of patches along (height, width) for the default input size."""
         h, w = self.image_default_input_size
         return h // self.image_patch_size, w // self.image_patch_size

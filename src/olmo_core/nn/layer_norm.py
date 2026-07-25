@@ -1,9 +1,8 @@
 from dataclasses import dataclass
-from typing import Optional
 
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
+from torch import nn
 
 from ..config import DType, StrEnum
 from ..exceptions import OLMoConfigurationError
@@ -11,14 +10,14 @@ from .config import ModuleConfig
 from .functional import l2_normalize
 
 __all__ = [
-    "LayerNormType",
-    "LayerNormConfig",
-    "LayerNorm",
-    "RMSNorm",
-    "QwenRMSNorm",
     "CuTeRMSNorm",
     "FusedRMSNorm",
     "L2Norm",
+    "LayerNorm",
+    "LayerNormConfig",
+    "LayerNormType",
+    "QwenRMSNorm",
+    "RMSNorm",
 ]
 
 
@@ -65,11 +64,11 @@ class LayerNormConfig(ModuleConfig):
     """
     The name of the implementation.
     """
-    eps: Optional[float] = None
-    elementwise_affine: Optional[bool] = None
-    bias: Optional[bool] = None
-    full_precision: Optional[bool] = None
-    dtype: Optional[DType] = None
+    eps: float | None = None
+    elementwise_affine: bool | None = None
+    bias: bool | None = None
+    full_precision: bool | None = None
+    dtype: DType | None = None
 
     def num_params(self, size: int) -> int:
         """

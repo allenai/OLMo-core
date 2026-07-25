@@ -1,21 +1,10 @@
 import logging
 from collections import defaultdict
 from functools import cached_property
-from typing import (
-    TYPE_CHECKING,
-    Any,
-    Dict,
-    List,
-    Literal,
-    Optional,
-    Set,
-    Tuple,
-    Union,
-    cast,
-)
+from typing import TYPE_CHECKING, Any, Literal, Optional, cast
 
 import torch
-import torch.nn as nn
+from torch import nn
 from torch.distributed import DeviceMesh
 from torch.distributed.fsdp import FSDPModule, MixedPrecisionPolicy, fully_shard
 from torch.distributed.tensor import Replicate, Shard
@@ -68,11 +57,11 @@ if TYPE_CHECKING:
     from olmo_core.train.common import ReduceType
 
 __all__ = [
-    "Transformer",
-    "NormalizedTransformer",
     "MoETransformer",
-    "TransformerDataParallelWrappingStrategy",
+    "NormalizedTransformer",
+    "Transformer",
     "TransformerActivationCheckpointingMode",
+    "TransformerDataParallelWrappingStrategy",
 ]
 
 
@@ -107,16 +96,16 @@ class Transformer(nn.Module):
         n_layers: int,
         block: TransformerBlockConfig | dict[str, TransformerBlockConfig],
         lm_head: LMHeadConfig,
-        embedding_norm: Optional[LayerNormConfig] = None,
+        embedding_norm: LayerNormConfig | None = None,
         dtype: torch.dtype = torch.float32,
         init_method: InitMethod = InitMethod.normal,
         init_device: str = "cpu",
         init_seed: int = 0,
         init_std: float = 0.02,
-        embedding_init_std: Optional[float] = None,
-        block_overrides: Optional[Dict[int, TransformerBlockConfig]] = None,
-        block_pattern: Optional[List[str]] = None,
-        embed_scale: Optional[float] = None,
+        embedding_init_std: float | None = None,
+        block_overrides: dict[int, TransformerBlockConfig] | None = None,
+        block_pattern: list[str] | None = None,
+        embed_scale: float | None = None,
         tie_word_embeddings: bool = False,
     ):
         super().__init__()
@@ -139,7 +128,7 @@ class Transformer(nn.Module):
             )
         )
 
-        block_configs: List[TransformerBlockConfig] = resolve_block_configs(
+        block_configs: list[TransformerBlockConfig] = resolve_block_configs(
             n_layers=n_layers,
             block=block,
             block_pattern=block_pattern,
@@ -177,16 +166,16 @@ class Transformer(nn.Module):
         self._fp8_enabled = False
         self._precompute_float8_dynamic_scale_for_fsdp = False
         self._compile_enabled = False
-        self._device: Optional[torch.device] = None
-        self._cp_load_balancer: Optional[RingAttentionLoadBalancer] = None
+        self._device: torch.device | None = None
+        self._cp_load_balancer: RingAttentionLoadBalancer | None = None
         self._tp_enabled = False
-        self._tp_mesh: Optional[DeviceMesh] = None
+        self._tp_mesh: DeviceMesh | None = None
         self._fsdp_enabled = False
 
         # Cache the value of these properties up-front in case the parameters are removed
         # later, like for pipeline parallelism.
-        self.num_params
-        self.num_non_embedding_params
+        self.num_params  # noqa: B018
+        self.num_non_embedding_params  # noqa: B018
 
     def _tie_weights(self) -> None:
         if self.embeddings is None or self.lm_head is None:
@@ -202,7 +191,7 @@ class Transformer(nn.Module):
 
     def compute_auxiliary_metrics(
         self, reset: bool = True
-    ) -> Dict[str, Tuple[torch.Tensor, Optional["ReduceType"]]]:
+    ) -> dict[str, tuple[torch.Tensor, Optional["ReduceType"]]]:
         del reset
         return {}
 
@@ -245,8 +234,8 @@ class Transformer(nn.Module):
         return self._compile_enabled
 
     def get_rope_buffers(
-        self, seq_len: int, device: Optional[torch.device] = None
-    ) -> Dict[int, Optional[RoPEBuffers]]:
+        self, seq_len: int, device: torch.device | None = None
+    ) -> dict[int, RoPEBuffers | None]:
         """
         Get the RoPE buffers to pass to each layer.
         """
@@ -255,7 +244,7 @@ class Transformer(nn.Module):
         rope_buffers = {}
         for key, block in self.blocks.items():
             if isinstance(block.attention, (Attention, FusedAttention)):
-                rope = cast(Optional[RotaryEmbeddingBase], block.attention.rope)
+                rope = cast(RotaryEmbeddingBase | None, block.attention.rope)
                 rope_buffers[int(key)] = None if rope is None else rope.get_buffers(seq_len, device)
             else:
                 rope_buffers[int(key)] = None
@@ -265,10 +254,10 @@ class Transformer(nn.Module):
     def init_weights(
         self,
         *,
-        max_seq_len: Optional[int] = None,
-        max_local_microbatch_size: Optional[int] = None,
-        device: Optional[torch.device] = None,
-        world_mesh: Optional[DeviceMesh] = None,
+        max_seq_len: int | None = None,
+        max_local_microbatch_size: int | None = None,
+        device: torch.device | None = None,
+        world_mesh: DeviceMesh | None = None,
         model_part_idx: int = 0,
     ) -> torch.Generator:
         """
@@ -376,35 +365,35 @@ class Transformer(nn.Module):
     def _prepare_inputs(
         self,
         input_ids: torch.Tensor,
-        labels: Optional[torch.Tensor] = None,
+        labels: torch.Tensor | None = None,
         *,
         ignore_index: int = -100,
         loss_reduction: Literal["mean", "sum", "none"] = "mean",
-        z_loss_multiplier: Optional[float] = None,
-        loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
-        return_logits: Optional[bool] = None,
-        logits_to_keep: Union[int, torch.Tensor] = 0,
+        z_loss_multiplier: float | None = None,
+        loss_div_factor: torch.Tensor | float | None = None,
+        return_logits: bool | None = None,
+        logits_to_keep: int | torch.Tensor = 0,
         **kwargs,
-    ) -> Tuple[
+    ) -> tuple[
         torch.Tensor,
-        Optional[torch.Tensor],
-        Dict[str, Any],
-        Dict[int, Dict[str, Any]],
-        Dict[str, Any],
+        torch.Tensor | None,
+        dict[str, Any],
+        dict[int, dict[str, Any]],
+        dict[str, Any],
     ]:
         # NOTE: with pipeline parallelism input_ids might actually be an intermediate output,
         # so we have to be careful here.
         B, S = input_ids.shape[:2]
 
-        all_block_kwargs: Dict[str, Any] = {}
-        per_block_kwargs: Dict[int, Dict[str, Any]] = defaultdict(dict)
-        lm_head_kwargs: Dict[str, Any] = dict(
-            ignore_index=ignore_index,
-            loss_reduction=loss_reduction,
-            z_loss_multiplier=z_loss_multiplier,
-            return_logits=return_logits,
-            logits_to_keep=logits_to_keep,
-        )
+        all_block_kwargs: dict[str, Any] = {}
+        per_block_kwargs: dict[int, dict[str, Any]] = defaultdict(dict)
+        lm_head_kwargs: dict[str, Any] = {
+            "ignore_index": ignore_index,
+            "loss_reduction": loss_reduction,
+            "z_loss_multiplier": z_loss_multiplier,
+            "return_logits": return_logits,
+            "logits_to_keep": logits_to_keep,
+        }
 
         if loss_div_factor is not None:
             loss_div_factor = move_to_device(loss_div_factor, self.device)
@@ -412,10 +401,10 @@ class Transformer(nn.Module):
             all_block_kwargs["loss_div_factor"] = loss_div_factor
 
         # Prepare document length inputs.
-        max_doc_len: Optional[int] = None
-        cu_doc_lens: Optional[torch.Tensor] = None
-        doc_lens: Optional[torch.Tensor] = None
-        cache_leftpad: Optional[torch.Tensor] = kwargs.pop("cache_leftpad", None)
+        max_doc_len: int | None = None
+        cu_doc_lens: torch.Tensor | None = None
+        doc_lens: torch.Tensor | None = None
+        cache_leftpad: torch.Tensor | None = kwargs.pop("cache_leftpad", None)
 
         if (doc_lens := kwargs.pop("doc_lens", None)) is not None and (
             max_doc_lens := kwargs.pop("max_doc_lens", None)
@@ -427,7 +416,7 @@ class Transformer(nn.Module):
         if (cp_load_balancer := self._cp_load_balancer) is not None:
             inputs = [input_ids]
             seq_dims = [1]
-            pad_values: List[Union[int, float]] = [0]
+            pad_values: list[int | float] = [0]
             keys = ["input_ids"]
 
             # NOTE: initialize buffer(s) on CPU to avoid possible host-device sync when sharding.
@@ -524,16 +513,16 @@ class Transformer(nn.Module):
         self,
         input_ids: torch.Tensor,
         *,
-        input_embeddings: Optional[torch.Tensor] = None,
-        labels: Optional[torch.Tensor] = None,
+        input_embeddings: torch.Tensor | None = None,
+        labels: torch.Tensor | None = None,
         ignore_index: int = -100,
         loss_reduction: Literal["mean", "sum", "none"] = "mean",
-        z_loss_multiplier: Optional[float] = None,
-        loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
-        return_logits: Optional[bool] = None,
-        logits_to_keep: Union[int, torch.Tensor] = 0,
+        z_loss_multiplier: float | None = None,
+        loss_div_factor: torch.Tensor | float | None = None,
+        return_logits: bool | None = None,
+        logits_to_keep: int | torch.Tensor = 0,
         **kwargs,
-    ) -> Union[torch.Tensor, LMOutputWithLoss]:
+    ) -> torch.Tensor | LMOutputWithLoss:
         """
         Run the transformer on the token input IDs.
 
@@ -644,7 +633,7 @@ class Transformer(nn.Module):
         self._pp_enabled = True
         self._pp_group_size = pp_mesh.size()
 
-    def apply_tp(self, tp_mesh: DeviceMesh, float8_enabled: Optional[bool] = None):
+    def apply_tp(self, tp_mesh: DeviceMesh, float8_enabled: bool | None = None):
         """
         Apply tensor parallelism to the model.
 
@@ -726,9 +715,9 @@ class Transformer(nn.Module):
     def apply_activation_checkpointing(
         self,
         mode: TransformerActivationCheckpointingMode,
-        block_interval: Optional[int] = None,
-        modules: Optional[List[str]] = None,
-        activation_memory_budget: Optional[float] = None,
+        block_interval: int | None = None,
+        modules: list[str] | None = None,
+        activation_memory_budget: float | None = None,
         determinism_check: str = "default",
     ):
         """
@@ -775,7 +764,7 @@ class Transformer(nn.Module):
             from fnmatch import fnmatch
 
             assert modules is not None
-            wrapped_modules: Set[str] = set()
+            wrapped_modules: set[str] = set()
             for name, module in self.named_modules():
                 for pattern in modules:
                     if fnmatch(name, pattern):
@@ -858,8 +847,8 @@ class Transformer(nn.Module):
 
     def apply_fsdp(
         self,
-        dp_mesh: Optional[DeviceMesh] = None,
-        param_dtype: Optional[torch.dtype] = None,
+        dp_mesh: DeviceMesh | None = None,
+        param_dtype: torch.dtype | None = None,
         reduce_dtype: torch.dtype = torch.float32,
         pp_enabled: bool = False,
         prefetch_factor: int = 0,
@@ -883,10 +872,10 @@ class Transformer(nn.Module):
         mp_policy = MixedPrecisionPolicy(
             param_dtype=param_dtype or self.dtype, reduce_dtype=reduce_dtype
         )
-        fsdp_config = dict(mesh=dp_mesh, mp_policy=mp_policy)
+        fsdp_config = {"mesh": dp_mesh, "mp_policy": mp_policy}
         # For PP, do not reshard after forward to avoid per-microbatch all-gathers,
         # which can be expensive and non-overlapped
-        reshard_after_forward = False if pp_enabled else True
+        reshard_after_forward = not pp_enabled
 
         for block in self.blocks.values():
             block = cast(TransformerBlockBase, block)
@@ -924,7 +913,7 @@ class Transformer(nn.Module):
         )
 
         if prefetch_factor > 0:
-            blocks = cast(List[FSDPModule], list(self.blocks.values()))
+            blocks = cast(list[FSDPModule], list(self.blocks.values()))
             for i in range(len(blocks)):
                 block = blocks[i]
                 if i + 1 < len(blocks):
@@ -936,8 +925,8 @@ class Transformer(nn.Module):
 
     def apply_ddp(
         self,
-        dp_mesh: Optional[DeviceMesh] = None,
-        param_dtype: Optional[torch.dtype] = None,
+        dp_mesh: DeviceMesh | None = None,
+        param_dtype: torch.dtype | None = None,
         compile_enabled: bool = False,
         autograd_compile_enabled: bool = False,
     ):
@@ -985,7 +974,7 @@ class Transformer(nn.Module):
         does not account for wasted flops due to padding, recomputation, etc.
         """
         flops_per_token = 0
-        blocks = cast(List[TransformerBlockBase], list(self.blocks.values()))
+        blocks = cast(list[TransformerBlockBase], list(self.blocks.values()))
         for block in blocks:
             flops_per_token += block.num_flops_per_token(seq_len)
         if self.lm_head is not None:
@@ -1028,9 +1017,9 @@ class NormalizedTransformer(Transformer):
         init_device: str = "cpu",
         init_seed: int = 0,
         init_std: float = 0.02,
-        embedding_init_std: Optional[float] = None,
-        block_overrides: Optional[Dict[int, TransformerBlockConfig]] = None,
-        block_pattern: Optional[List[str]] = None,
+        embedding_init_std: float | None = None,
+        block_overrides: dict[int, TransformerBlockConfig] | None = None,
+        block_pattern: list[str] | None = None,
     ):
         super().__init__(
             d_model=d_model,
@@ -1083,7 +1072,7 @@ class NormalizedTransformer(Transformer):
     def apply_tp(
         self,
         tp_mesh: DeviceMesh,
-        float8_enabled: Optional[bool] = None,
+        float8_enabled: bool | None = None,
     ):
         del tp_mesh, float8_enabled
 
@@ -1113,7 +1102,7 @@ class MoETransformer(Transformer):
 
     def compute_auxiliary_metrics(
         self, reset: bool = True
-    ) -> Dict[str, Tuple[torch.Tensor, Optional["ReduceType"]]]:
+    ) -> dict[str, tuple[torch.Tensor, Optional["ReduceType"]]]:
         from olmo_core.train.common import ReduceType
 
         mean_offset = 1.0
@@ -1121,7 +1110,7 @@ class MoETransformer(Transformer):
             # Change the divisor to 'world_size // pp_group_size'
             mean_offset = self._pp_group_size
 
-        out: Dict[str, Tuple[torch.Tensor, Optional["ReduceType"]]] = {}
+        out: dict[str, tuple[torch.Tensor, ReduceType | None]] = {}
         for block_idx, block in self.blocks.items():
             if not block.is_moe:
                 continue
@@ -1168,7 +1157,7 @@ class MoETransformer(Transformer):
     def prepare_experts_for_fsdp(
         self,
         world_mesh: DeviceMesh,
-        param_dtype: Optional[torch.dtype] = None,
+        param_dtype: torch.dtype | None = None,
         reduce_dtype: torch.dtype = torch.float32,
         pp_enabled: bool = False,
     ):
@@ -1203,14 +1192,14 @@ class MoETransformer(Transformer):
             block.feed_forward_moe.post_batch(dry_run=dry_run)
 
 
-def _hide_cpu_inputs_from_torch(m, args, kwargs) -> Optional[Tuple[Any, Dict[str, Any]]]:
+def _hide_cpu_inputs_from_torch(m, args, kwargs) -> tuple[Any, dict[str, Any]] | None:
     del m
     if (doc_lens := kwargs.get("doc_lens")) is not None:
         kwargs["doc_lens"] = hide_from_torch(doc_lens)
     return (args, kwargs)
 
 
-def _unhide_cpu_inputs_from_torch(m, args, kwargs) -> Optional[Tuple[Any, Dict[str, Any]]]:
+def _unhide_cpu_inputs_from_torch(m, args, kwargs) -> tuple[Any, dict[str, Any]] | None:
     del m
     if (doc_lens := kwargs.get("doc_lens")) is not None:
         kwargs["doc_lens"] = unhide_from_torch(doc_lens)

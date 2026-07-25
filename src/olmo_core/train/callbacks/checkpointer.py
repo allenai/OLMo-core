@@ -2,7 +2,7 @@ import logging
 from concurrent.futures import Future
 from dataclasses import dataclass, field
 from datetime import timedelta
-from typing import ClassVar, List, Optional, Tuple
+from typing import ClassVar
 
 import torch.distributed as dist
 
@@ -60,12 +60,12 @@ class CheckpointerCallback(Callback):
 
     priority: ClassVar[int] = 1
 
-    save_interval: Optional[int] = 250
+    save_interval: int | None = 250
     """
     The interval, in steps, with which to save permanent checkoints.
     """
 
-    ephemeral_save_interval: Optional[int] = None
+    ephemeral_save_interval: int | None = None
     """
     The interval, in steps, with which to save temporary checkpoints. These checkpoints are removed
     each time a new checkpoint is saved.
@@ -73,12 +73,12 @@ class CheckpointerCallback(Callback):
     It can be useful to set this to a relatively frequent interval for preemptible jobs.
     """
 
-    pre_train_checkpoint: Optional[bool] = None
+    pre_train_checkpoint: bool | None = None
     """
     Save a pretrain checkpoint. Defaults to ``True`` unless the trainer resumes from a checkpoint.
     """
 
-    save_async: Optional[bool] = None
+    save_async: bool | None = None
     """
     Save checkpoints asynchronously. Requires a separate CPU-only backend.
     Defaults to ``True`` if there is one.
@@ -89,17 +89,17 @@ class CheckpointerCallback(Callback):
     The strategy for removing old checkpoints found in the save folder.
     """
 
-    ephemeral_cooldown: Optional[int] = None
+    ephemeral_cooldown: int | None = None
     """
     The number of steps to wait after saving a checkpoint before saving another ephemeral one is allowed.
     """
 
-    fixed_steps: Optional[List[int]] = None
+    fixed_steps: list[int] | None = None
     """
     A list of fixed steps at which to save additional permanent checkpoints.
     """
 
-    max_checkpoints: Optional[int] = 3
+    max_checkpoints: int | None = 3
     """
     Maximum number of permanent checkpoints to keep. When a new permanent checkpoint
     is saved and the count exceeds this limit, the oldest is removed.
@@ -118,9 +118,9 @@ class CheckpointerCallback(Callback):
     _future = None
     _latest_checkpoint_step: int = -1
     _latest_checkpoint_path: str = ""
-    _checkpoints: List[str] = field(default_factory=list)
-    _ephemeral_checkpoints: List[str] = field(default_factory=list)
-    _checkpoints_to_remove: List[str] = field(default_factory=list)
+    _checkpoints: list[str] = field(default_factory=list)
+    _ephemeral_checkpoints: list[str] = field(default_factory=list)
+    _checkpoints_to_remove: list[str] = field(default_factory=list)
 
     def __post_init__(self):
         if self.save_interval is not None and self.save_interval < 1:
@@ -150,22 +150,21 @@ class CheckpointerCallback(Callback):
     def checkpoint_pending(self) -> bool:
         return self._future is not None
 
-    def _await_last_checkpoint(self, blocking: bool = True) -> Optional[Future]:
-        if (fut := self._future) is not None:
-            # Wait for last async checkpoint to finish.
-            if blocking or fut.done():
-                fut.result()
-                if get_rank() == 0:
-                    # Just to be safe, make sure the checkpointer has finalized the checkpoint.
-                    wait_for(
-                        lambda: self.checkpointer.dir_is_checkpoint(self._latest_checkpoint_path),
-                        "waiting to finalize checkpoint",
-                    )
-                self._future = None
-                return fut
+    def _await_last_checkpoint(self, blocking: bool = True) -> Future | None:
+        # Wait for last async checkpoint to finish.
+        if (fut := self._future) is not None and (blocking or fut.done()):
+            fut.result()
+            if get_rank() == 0:
+                # Just to be safe, make sure the checkpointer has finalized the checkpoint.
+                wait_for(
+                    lambda: self.checkpointer.dir_is_checkpoint(self._latest_checkpoint_path),
+                    "waiting to finalize checkpoint",
+                )
+            self._future = None
+            return fut
         return None
 
-    def _save_checkpoint(self, save_async: Optional[bool] = None, ephemeral: bool = False) -> str:
+    def _save_checkpoint(self, save_async: bool | None = None, ephemeral: bool = False) -> str:
         save_async = save_async if save_async is not None else self.save_async
         self._await_last_checkpoint()
         if save_async:
@@ -240,7 +239,7 @@ class CheckpointerCallback(Callback):
 
         # Collect existing ephemeral checkpoints from previous runs.
         if self.remove != CheckpointRemovalStrategy.never:
-            ephemeral_checkpoints: List[Tuple[int, str]] = []
+            ephemeral_checkpoints: list[tuple[int, str]] = []
 
             # Only search from rank 0 to avoid hammering remote file stores with requests.
             if get_rank() == 0:
@@ -287,11 +286,12 @@ class CheckpointerCallback(Callback):
         if not self.checkpoint_pending:
             self._remove_old_checkpoints()
 
-        if self.fixed_steps is not None and self.step in self.fixed_steps:
-            # Save permanent checkpoint.
-            self._checkpoints.append(self._save_checkpoint())
-            self._trim_checkpoints()
-        elif self.save_interval is not None and self.step % self.save_interval == 0:
+        if (
+            self.fixed_steps is not None
+            and self.step in self.fixed_steps
+            or self.save_interval is not None
+            and self.step % self.save_interval == 0
+        ):
             # Save permanent checkpoint.
             self._checkpoints.append(self._save_checkpoint())
             self._trim_checkpoints()

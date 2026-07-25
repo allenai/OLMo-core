@@ -11,7 +11,7 @@ import logging
 import os
 import sys
 from dataclasses import dataclass
-from typing import List, Optional, cast
+from typing import cast
 
 import rich
 
@@ -96,7 +96,7 @@ class ExperimentConfig(Config):
     """Train module config. Contains settings for optimizer."""
     init_seed: int = 12536
     """Random seed to initialize model weights."""
-    load_path: Optional[str] = None
+    load_path: str | None = None
     """Path to load checkpoint from if no checkpoint is found in the save folder.
     Mainly used when you want to fine-tune from a pretrained model."""
     load_trainer_state: bool = False
@@ -140,7 +140,7 @@ def train(config: ExperimentConfig):
     trainer.fit()
 
 
-def build_config(opts, overrides: List[str]) -> ExperimentConfig:
+def build_config(opts, overrides: list[str]) -> ExperimentConfig:
     save_folder = opts.save_folder
     if not save_folder:
         save_folder = f"/tmp/{opts.run_name}"
@@ -181,7 +181,7 @@ def build_config(opts, overrides: List[str]) -> ExperimentConfig:
         optim=AdamWConfig(
             lr=1e-3,
             group_overrides=[
-                OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
+                OptimGroupOverride(params=["embeddings.weight"], opts={"weight_decay": 0.0})
             ],
         ),
         compile_model=True,

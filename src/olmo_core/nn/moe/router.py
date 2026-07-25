@@ -1,12 +1,13 @@
 import logging
 from abc import abstractmethod
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Callable, Dict, Optional, Tuple, Union, cast
+from typing import TYPE_CHECKING, Any, Optional, cast
 
 import torch
 import torch.distributed as dist
-import torch.nn as nn
 import torch.nn.functional as F
+from torch import nn
 from torch.distributed import DeviceMesh
 from torch.distributed.tensor import Replicate, Shard, distribute_tensor
 from torch.distributed.tensor.parallel import PrepareModuleInput, parallelize_module
@@ -31,11 +32,11 @@ if TYPE_CHECKING:
     from olmo_core.train.common import ReduceType
 
 __all__ = [
-    "MoERouter",
     "MoELinearRouter",
+    "MoERouter",
     "MoERouterConfig",
-    "MoERouterType",
     "MoERouterGatingFunction",
+    "MoERouterType",
 ]
 
 
@@ -87,12 +88,12 @@ class MoERouterConfig(ModuleConfig):
     The name of the implementation.
     """
     top_k: int = 1
-    jitter_eps: Optional[float] = None
-    normalize_expert_weights: Optional[float] = None
+    jitter_eps: float | None = None
+    normalize_expert_weights: float | None = None
     uniform_expert_assignment: bool = False
-    bias_gamma: Optional[float] = None
+    bias_gamma: float | None = None
     gating_function: MoERouterGatingFunction = MoERouterGatingFunction.softmax
-    dtype: Optional[DType] = None
+    dtype: DType | None = None
 
     def num_params(self, d_model: int, num_experts: int) -> int:
         """
@@ -113,10 +114,10 @@ class MoERouterConfig(ModuleConfig):
         d_model: int,
         num_experts,
         *,
-        lb_loss_weight: Optional[float] = None,
+        lb_loss_weight: float | None = None,
         lb_loss_granularity: MoELoadBalancingLossGranularity = MoELoadBalancingLossGranularity.local_batch,
-        z_loss_weight: Optional[float] = None,
-        dtype: Optional[torch.dtype] = None,
+        z_loss_weight: float | None = None,
+        dtype: torch.dtype | None = None,
         init_device: str = "cpu",
     ) -> "MoERouter":
         """
@@ -174,14 +175,14 @@ class MoERouter(nn.Module):
         d_model: int,
         num_experts: int,
         top_k: int = 1,
-        jitter_eps: Optional[float] = None,
-        normalize_expert_weights: Optional[float] = None,
+        jitter_eps: float | None = None,
+        normalize_expert_weights: float | None = None,
         uniform_expert_assignment: bool = False,
-        bias_gamma: Optional[float] = None,
+        bias_gamma: float | None = None,
         gating_function: MoERouterGatingFunction = MoERouterGatingFunction.softmax,
-        lb_loss_weight: Optional[float] = None,
+        lb_loss_weight: float | None = None,
         lb_loss_granularity: MoELoadBalancingLossGranularity = MoELoadBalancingLossGranularity.local_batch,
-        z_loss_weight: Optional[float] = None,
+        z_loss_weight: float | None = None,
         init_device: str = "cpu",
     ):
         super().__init__()
@@ -196,9 +197,9 @@ class MoERouter(nn.Module):
         self.lb_loss_weight = lb_loss_weight
         self.lb_loss_granularity = lb_loss_granularity
         self.z_loss_weight = z_loss_weight
-        self.group: Optional[dist.ProcessGroup] = None
-        self.cp_mesh: Optional[dist.DeviceMesh] = None
-        self.tp_mesh: Optional[dist.DeviceMesh] = None
+        self.group: dist.ProcessGroup | None = None
+        self.cp_mesh: dist.DeviceMesh | None = None
+        self.tp_mesh: dist.DeviceMesh | None = None
 
         if self.bias_gamma is not None:
             assert self.bias_gamma > 0
@@ -212,9 +213,9 @@ class MoERouter(nn.Module):
         self._batch_size_per_expert = hide_from_torch(
             torch.zeros(self.num_experts, device=init_device)
         )
-        self._score_bias_batch_size_per_expert: Optional[_HiddenTensor] = None
-        self._load_balancing_loss: Optional[_HiddenTensor] = None
-        self._z_loss: Optional[_HiddenTensor] = None
+        self._score_bias_batch_size_per_expert: _HiddenTensor | None = None
+        self._load_balancing_loss: _HiddenTensor | None = None
+        self._z_loss: _HiddenTensor | None = None
 
     def reset_parameters(self):
         self._batch_size_per_expert = hide_from_torch(
@@ -240,7 +241,7 @@ class MoERouter(nn.Module):
         return get_default_device()
 
     @property
-    def score_bias_batch_size_per_expert(self) -> Optional[torch.Tensor]:
+    def score_bias_batch_size_per_expert(self) -> torch.Tensor | None:
         if self.bias_gamma is not None:
             if self._score_bias_batch_size_per_expert is None:
                 self._score_bias_batch_size_per_expert = hide_from_torch(
@@ -271,7 +272,7 @@ class MoERouter(nn.Module):
         self._batch_size_per_expert = hide_from_torch(value)
 
     @property
-    def load_balancing_loss(self) -> Optional[torch.Tensor]:
+    def load_balancing_loss(self) -> torch.Tensor | None:
         if self.lb_loss_weight is not None:
             if self._load_balancing_loss is None:
                 self._load_balancing_loss = hide_from_torch(torch.zeros([], device=self.device))
@@ -288,7 +289,7 @@ class MoERouter(nn.Module):
         self._load_balancing_loss = hide_from_torch(value)
 
     @property
-    def z_loss(self) -> Optional[torch.Tensor]:
+    def z_loss(self) -> torch.Tensor | None:
         if self.z_loss_weight is not None:
             if self._z_loss is None:
                 self._z_loss = hide_from_torch(torch.zeros([], device=self.device))
@@ -336,7 +337,7 @@ class MoERouter(nn.Module):
             noise = torch.rand_like(x)
             return x * (low + noise * (high - low))
 
-    def get_top_k(self, scores: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+    def get_top_k(self, scores: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         expert_weights: torch.Tensor
         expert_indices: torch.Tensor
         if self.bias_gamma is None:
@@ -370,10 +371,10 @@ class MoERouter(nn.Module):
     @torch.no_grad()
     def compute_metrics(
         self, reset: bool = True
-    ) -> Dict[str, Tuple[torch.Tensor, Optional["ReduceType"]]]:
+    ) -> dict[str, tuple[torch.Tensor, Optional["ReduceType"]]]:
         from olmo_core.train.common import ReduceType
 
-        out: Dict[str, Tuple[torch.Tensor, Optional["ReduceType"]]] = {}
+        out: dict[str, tuple[torch.Tensor, ReduceType | None]] = {}
 
         # Load imbalance.
         batch_size_per_expert = self.batch_size_per_expert
@@ -417,8 +418,8 @@ class MoERouter(nn.Module):
         self,
         x: torch.Tensor,
         *,
-        loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
+        loss_div_factor: torch.Tensor | float | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor | None]:
         """
         Given the input ``x`` of shape ``(B, S, d_model)``, compute the experts assignment.
 
@@ -464,7 +465,7 @@ class MoERouter(nn.Module):
             batch_size_per_expert = batched_batch_size_per_expert.sum(dim=0)
 
         # Maybe compute auxiliary losses and accumulate metrics.
-        aux_loss: Optional[torch.Tensor] = None
+        aux_loss: torch.Tensor | None = None
         if self.training and torch.is_grad_enabled():
             with torch.autocast(enabled=False, device_type=x.device.type):
                 if self.lb_loss_weight is not None:

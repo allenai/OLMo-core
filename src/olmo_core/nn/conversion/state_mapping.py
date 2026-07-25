@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Any, Dict, Optional, Set, Tuple
+from typing import Any, Optional
 
 from olmo_core.config import StrEnum
 
@@ -48,11 +48,11 @@ class StateMappingTemplate:
     manipulations of state like permuting dimensions.
     """
 
-    source_template_keys: str | Tuple[str, ...]
+    source_template_keys: str | tuple[str, ...]
     """
     The key or keys of the state(s) being mapping from.
     """
-    dest_template_keys: str | Tuple[str, ...]
+    dest_template_keys: str | tuple[str, ...]
     """
     The key or keys of the state(s) being mapping to.
     """
@@ -80,18 +80,18 @@ class StateMappingTemplate:
     """
     When many states are being mapping from, this specifies the dimension on which to combine them.
     """
-    unflatten_dim: Tuple[int, Tuple[TemplatePlaceholder | int, ...]] | None = None
+    unflatten_dim: tuple[int, tuple[TemplatePlaceholder | int, ...]] | None = None
     """
     This specifies that the given dimension (``unflatten_dim[0]``) should be unflattened using the shape
     given in ``unflatten_dim[1]``. A placeholder can be given instead of a number, to represent its
     corresponding upper bound (e.g. ``TemplatePlaceholder.EXPERT`` represents the number of experts). 
     """
-    dims_permutation: Tuple[int, ...] | None = None
+    dims_permutation: tuple[int, ...] | None = None
     """
     This specifies the permutation that should be applied to the dimensions of the state after any
     unflattening from :data:`unflatten_dim` has occurred.
     """
-    flatten_dims: Tuple[int, int] | None = None
+    flatten_dims: tuple[int, int] | None = None
     """
     This specifies that all the dimensions between the 2 given dimensions (inclusive) should be flattened,
     after any permutations from :data:`dims_permutation` have been applied.
@@ -114,11 +114,11 @@ class StateMappingTemplate:
 
     def _templates_to_keys(
         self,
-        placeholder_values: Dict[TemplatePlaceholder, Any],
-        placeholder_bounds: Dict[TemplatePlaceholder, int],
+        placeholder_values: dict[TemplatePlaceholder, Any],
+        placeholder_bounds: dict[TemplatePlaceholder, int],
         *,
         source: bool,
-    ) -> Tuple[str, ...] | None:
+    ) -> tuple[str, ...] | None:
         if source:
             templates = self.source_template_keys
             key_per_placeholder = self.source_key_per_placeholder
@@ -179,10 +179,10 @@ class StateMappingTemplate:
 
     def to_mapping(
         self,
-        placeholder_values: Dict[TemplatePlaceholder, int | None],
-        placeholder_bounds: Dict[TemplatePlaceholder, int],
+        placeholder_values: dict[TemplatePlaceholder, int | None],
+        placeholder_bounds: dict[TemplatePlaceholder, int],
     ) -> Optional["StateMapping"]:
-        required_placeholders: Set[TemplatePlaceholder | None] = set()
+        required_placeholders: set[TemplatePlaceholder | None] = set()
         if self.source_key_per_placeholder:
             required_placeholders.add(self.source_key_per_placeholder)
         if self.dest_key_per_placeholder:
@@ -243,12 +243,12 @@ class StateMapping:
     manipulations of state like permuting dimensions.
     """
 
-    source_keys: Tuple[str, ...]
+    source_keys: tuple[str, ...]
     """
     The key(s) of the state(s) being mapping from.
     """
 
-    dest_keys: Tuple[str, ...]
+    dest_keys: tuple[str, ...]
     """
     The key or keys of the state(s) being mapping to.
     """
@@ -259,17 +259,17 @@ class StateMapping:
     """
     When many states are being mapping from, this specifies the dimension on which to combine them.
     """
-    unflatten_dim: Tuple[int, Tuple[int, ...]] | None = None
+    unflatten_dim: tuple[int, tuple[int, ...]] | None = None
     """
     This specifies that the given dimension (``unflatten_dim[0]``) should be unflattened using the shape
     given in ``unflatten_dim[1]``.
     """
-    dims_permutation: Tuple[int, ...] | None = None
+    dims_permutation: tuple[int, ...] | None = None
     """
     This specifies the permutation that should be applied to the dimensions of the state after any
     unflattening from :data:`unflatten_dim` has occurred.
     """
-    flatten_dims: Tuple[int, int] | None = None
+    flatten_dims: tuple[int, int] | None = None
     """
     This specifies that all the dimensions between the 2 given dimensions (inclusive) should be flattened,
     after any permutations from :data:`dims_permutation` have been applied.

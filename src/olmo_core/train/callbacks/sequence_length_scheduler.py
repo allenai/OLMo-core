@@ -1,7 +1,7 @@
 import logging
 import math
 from dataclasses import dataclass
-from typing import Any, Dict, Optional
+from typing import Any
 
 from olmo_core.data import NumpyFSLDataLoader, NumpyFSLDataset
 from olmo_core.data.utils import melt_batch, truncate_batch
@@ -47,8 +47,8 @@ class SequenceLengthSchedulerCallback(Callback):
     keep_multiple_of: int = 128
     enabled: bool = True
 
-    _og_rank_microbatch_size: Optional[int] = None
-    _last_seq_len: Optional[int] = None
+    _og_rank_microbatch_size: int | None = None
+    _last_seq_len: int | None = None
 
     def pre_train(self):
         if not self.enabled:
@@ -70,7 +70,7 @@ class SequenceLengthSchedulerCallback(Callback):
 
         if self.truncate and (
             dataset.sequence_length % self.min_sequence_length != 0
-            or (math.log(dataset.sequence_length // self.min_sequence_length, 2) % 1 != 0)
+            or (math.log2(dataset.sequence_length // self.min_sequence_length) % 1 != 0)
         ):
             raise OLMoConfigurationError(
                 "train sequence length must be a multiple of 'min_sequence_length' by a power of 2 "
@@ -83,7 +83,7 @@ class SequenceLengthSchedulerCallback(Callback):
 
         self._og_rank_microbatch_size = self.trainer.train_module.rank_microbatch_size
 
-    def pre_step(self, batch: Dict[str, Any]):
+    def pre_step(self, batch: dict[str, Any]):
         if not self.enabled:
             return
 
@@ -155,7 +155,7 @@ def _get_split_sequence_length(
         + (max_sequence_length - min_sequence_length) * min(step, warmup_steps) / warmup_steps
     )
 
-    n = math.floor(math.log(seq_len // min_sequence_length, 2))
+    n = math.floor(math.log2(seq_len // min_sequence_length))
     return min_sequence_length * 2**n
 
 

@@ -9,7 +9,7 @@ import logging
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Optional, Tuple, cast
+from typing import cast
 from urllib.parse import urlparse
 
 from rich import print
@@ -79,7 +79,7 @@ class BatchSizeConfig:
     rank_microbatch_size_tokens: int = field(init=False)
     rank_microbatch_size_sequences: int = field(init=False)
     grad_accum_steps: int = field(init=False)
-    cp_degree: Optional[int] = None
+    cp_degree: int | None = None
 
     def __post_init__(self):
         assert self.global_batch_size_tokens > 0, "global_batch_size_tokens must be positive"
@@ -150,7 +150,7 @@ class BatchSizeConfig:
         )
 
 
-def _separate_prefix_and_glob(prefix: str) -> Tuple[str, str]:
+def _separate_prefix_and_glob(prefix: str) -> tuple[str, str]:
     if any(char in prefix for char in ["*", "?", "[", "]"]):
         parts = prefix.split("/")
         base_parts = []
@@ -169,7 +169,7 @@ def _separate_prefix_and_glob(prefix: str) -> Tuple[str, str]:
     return new_prefix, glob_str.lstrip("/")
 
 
-def glob_remote_dataset(prefix: str) -> List[str]:
+def glob_remote_dataset(prefix: str) -> list[str]:
     parsed_path = urlparse(prefix)
     scheme, bucket, parsed_prefix = (
         parsed_path.scheme,
@@ -179,7 +179,7 @@ def glob_remote_dataset(prefix: str) -> List[str]:
     parsed_prefix_pre_glob, glob_str = _separate_prefix_and_glob(parsed_prefix)
     base_prefix_without_scheme = Path(f"{bucket}/{parsed_prefix_pre_glob}")
 
-    paths: List[str] = []
+    paths: list[str] = []
 
     for path in list_directory(f"{scheme}://{base_prefix_without_scheme}"):
         parsed_path = urlparse(path)
@@ -236,7 +236,7 @@ class SFTConfig(Config):
 
     launch: BeakerLaunchConfig
     model: TransformerConfig
-    dataset: Optional[NumpyPackedFSLDatasetConfig]
+    dataset: NumpyPackedFSLDatasetConfig | None
     data_loader: NumpyDataLoaderConfig
     train_module: TransformerTrainModuleConfig
     trainer: TrainerConfig
@@ -254,7 +254,7 @@ class SFTConfig(Config):
         global_batch_size: int,
         checkpoint: str,
         cluster: str,
-        overrides: List[str],
+        overrides: list[str],
         workspace: str,
         budget: str,
         init_seed: int = 33333,

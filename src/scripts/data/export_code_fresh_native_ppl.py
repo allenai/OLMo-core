@@ -1,8 +1,8 @@
 #!/usr/bin/env python
 import argparse
 import multiprocessing
+from collections.abc import Iterable, Sequence
 from pathlib import Path
-from typing import Iterable, Sequence
 
 from olmo_core.data.misc.code_fresh_export import (
     CODE_FRESH_LANGUAGES,

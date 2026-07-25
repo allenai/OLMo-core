@@ -7,7 +7,7 @@ import json
 import logging
 import sys
 from dataclasses import dataclass
-from typing import List, Tuple, cast
+from typing import cast
 
 import rich
 import torch
@@ -73,7 +73,7 @@ class AnnealingDataMix(DataMixBase):
     dolmino300 = "dolmino300"
     jallyrun = "jallyrun"
 
-    def build(self, base_dir: str, tokenizer: str) -> Tuple[List[str], List[str]]:
+    def build(self, base_dir: str, tokenizer: str) -> tuple[list[str], list[str]]:
         if not base_dir.endswith("/"):
             base_dir = base_dir + "/"
 
@@ -120,7 +120,7 @@ class AnnealingConfig(Config):
         run_name: str,
         checkpoint: str,
         cluster: str,
-        overrides: List[str],
+        overrides: list[str],
     ) -> "AnnealingConfig":
         root_dir = get_root_dir(cluster)
 
@@ -179,9 +179,7 @@ class AnnealingConfig(Config):
                     weight_decay=0.1,
                     betas=(0.9, 0.95),
                     group_overrides=[
-                        OptimGroupOverride(
-                            params=["embeddings.weight"], opts=dict(weight_decay=0.0)
-                        )
+                        OptimGroupOverride(params=["embeddings.weight"], opts={"weight_decay": 0.0})
                     ],
                     compile=True,
                 ),

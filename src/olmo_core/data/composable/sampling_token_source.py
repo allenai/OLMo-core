@@ -4,8 +4,8 @@ import hashlib
 import logging
 import typing
 from collections import deque
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import List, Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -25,17 +25,17 @@ class SamplingTokenSourceConfig(TokenSourceConfig):
     A config for building a :class:`SamplingTokenSource`.
     """
 
-    sources: List[TokenSourceConfig]
-    max_tokens: Optional[int] = None
-    factor: Optional[float] = None
-    seed: Optional[int] = dataclasses.field(default_factory=lambda: resolve_seed(SEED_NOT_SET))
-    label: Optional[str] = None
+    sources: list[TokenSourceConfig]
+    max_tokens: int | None = None
+    factor: float | None = None
+    seed: int | None = dataclasses.field(default_factory=lambda: resolve_seed(SEED_NOT_SET))
+    label: str | None = None
 
     def __post_init__(self):
         if (self.max_tokens is None) == (self.factor is None):
             raise OLMoConfigurationError("Exactly one of 'max_tokens' or 'factor' must be set.")
 
-    def build(self, work_dir: PathOrStr) -> List["SamplingTokenSource"]:  # type: ignore[override]
+    def build(self, work_dir: PathOrStr) -> list["SamplingTokenSource"]:  # type: ignore[override]
         sources = [s for source in self.sources for s in source.build(work_dir=work_dir)]
         max_tokens = self.max_tokens
         if max_tokens is None:
@@ -80,9 +80,9 @@ class SamplingTokenSource(TokenSource):
         self,
         *sources: TokenSource,
         max_tokens: int,
-        seed: Optional[int] = SEED_NOT_SET,
+        seed: int | None = SEED_NOT_SET,
         work_dir: PathOrStr,
-        label: Optional[str] = None,
+        label: str | None = None,
     ):
         from .mixing_token_source import MixingTokenSource
         from .sliced_token_source import SlicedTokenSource
@@ -102,7 +102,7 @@ class SamplingTokenSource(TokenSource):
         total_tokens = sum(source.num_tokens for source in sources)
         seed = resolve_seed(seed)
         rng = None if seed is None else get_rng(seed)
-        final_sources: List[TokenSource] = []
+        final_sources: list[TokenSource] = []
         while frontier:
             source = frontier.popleft()
 
@@ -143,7 +143,7 @@ class SamplingTokenSource(TokenSource):
         self._seed = seed
 
     @property
-    def sources(self) -> Tuple[TokenSource, ...]:
+    def sources(self) -> tuple[TokenSource, ...]:
         return self._sources
 
     @ft.cached_property
@@ -159,14 +159,14 @@ class SamplingTokenSource(TokenSource):
         return sha256_hash.hexdigest()
 
     @property
-    def seed(self) -> Optional[int]:
+    def seed(self) -> int | None:
         return self._seed
 
     def get_token_range(self, start_idx: int, end_idx: int) -> TokenRange:
         start_idx, end_idx = self.validate_indices(start_idx, end_idx)
 
-        token_chunks: List[np.ndarray] = []
-        mask_chunks: List[np.ndarray] = []
+        token_chunks: list[np.ndarray] = []
+        mask_chunks: list[np.ndarray] = []
         source_start_offset = 0
         for source in self.sources:
             source_end_offset = source_start_offset + len(source)

@@ -1,8 +1,8 @@
 import argparse
 import logging
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable, List, Optional, Tuple
 
 import rich
 import torch
@@ -33,7 +33,7 @@ class ExperimentConfig(Config):
     train_module: TransformerTrainModuleConfig
     trainer: TrainerConfig
     init_seed: int = 12536
-    load_path: Optional[str] = None
+    load_path: str | None = None
 
 
 def get_cli_parser() -> argparse.ArgumentParser:
@@ -92,8 +92,8 @@ def get_cli_parser() -> argparse.ArgumentParser:
 
 
 def _parse_args(
-    parser: Optional[argparse.ArgumentParser] = None,
-) -> Tuple[argparse.Namespace, List[str]]:
+    parser: argparse.ArgumentParser | None = None,
+) -> tuple[argparse.Namespace, list[str]]:
     parser = parser if parser is not None else get_cli_parser()
     opts, overrides = parser.parse_known_args()
     if opts.work_dir is None:
@@ -105,8 +105,8 @@ def _parse_args(
 
 
 def main(
-    config_builder: Callable[[argparse.Namespace, List[str]], ExperimentConfig],
-    parser: Optional[argparse.ArgumentParser] = None,
+    config_builder: Callable[[argparse.Namespace, list[str]], ExperimentConfig],
+    parser: argparse.ArgumentParser | None = None,
 ) -> None:
     opts, overrides = _parse_args(parser)
     if opts.dry_run:
@@ -170,7 +170,7 @@ def main(
 
 
 def get_lr_from_checkpoint(
-    path: PathOrStr, param: Optional[str] = None, param_group: Optional[int] = None
+    path: PathOrStr, param: str | None = None, param_group: int | None = None
 ) -> float:
     path = normalize_path(path)
     if not path.endswith("/model_and_optim"):

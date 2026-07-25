@@ -6,8 +6,9 @@ import os
 import pickle
 import tempfile
 import typing
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable, TypeVar
+from typing import TypeVar
 
 from dataclass_extensions import encode
 from filelock import FileLock
@@ -21,9 +22,9 @@ F = TypeVar("F", bound=Callable[..., object])
 
 
 def maybe_cache(*, condition: Callable[..., bool] | None = None) -> Callable[[F], F]:
-    f"""
+    """
     Similar ``functools.cache``, but uses a persistent cache on the filesystem when the env var
-    '{CACHE_DIR_ENV_VAR}' is set, otherwise caching is disabled.
+    :data:`CACHE_DIR_ENV_VAR` is set, otherwise caching is disabled.
 
     Arguments must be JSON-serializable. The result must be pickle-able.
     """
@@ -58,7 +59,7 @@ def maybe_cache(*, condition: Callable[..., bool] | None = None) -> Callable[[F]
                             user_function.__qualname__,
                         )
                         result = user_function(*args, **kwargs)
-                        tmp_file = tempfile.NamedTemporaryFile(
+                        tmp_file = tempfile.NamedTemporaryFile(  # noqa: SIM115
                             mode="wb", dir=cache_dir, prefix=key, suffix=".tmp", delete=False
                         )
                         tmp_path = Path(tmp_file.name)

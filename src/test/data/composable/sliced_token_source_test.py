@@ -38,7 +38,7 @@ def test_sliced_token_source_none_start(tmp_path: Path):
     source = InMemoryTokenSource(list(range(10)), work_dir=tmp_path)
     sliced = SlicedTokenSource(source, slice(None, 5), work_dir=tmp_path)
     assert len(sliced) == 5
-    assert list(sliced[:]["input_ids"]) == list(range(0, 5))
+    assert list(sliced[:]["input_ids"]) == list(range(5))
 
 
 def test_sliced_token_source_none_end(tmp_path: Path):

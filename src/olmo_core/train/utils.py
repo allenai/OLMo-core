@@ -4,7 +4,7 @@ import random
 import sys
 from collections import OrderedDict, defaultdict
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any
 
 import numpy as np
 import torch
@@ -29,7 +29,7 @@ log = logging.getLogger(__name__)
 
 @dataclass
 class LibRngState:
-    version: Tuple[int, int]
+    version: tuple[int, int]
     state: Any
 
 
@@ -38,7 +38,7 @@ class EnvRngStates(Config):
     python: LibRngState
     numpy: LibRngState
     torch: LibRngState
-    cuda: Optional[LibRngState] = None
+    cuda: LibRngState | None = None
 
     def restore(self) -> bool:
         all_restored = True
@@ -74,15 +74,13 @@ class EnvRngStates(Config):
         python_rng = LibRngState(version=_get_python_version(), state=random.getstate())
         numpy_rng = LibRngState(version=_get_numpy_version(), state=np.random.get_state())
         torch_rng = LibRngState(version=_get_torch_version(), state=torch.random.get_rng_state())
-        cuda_rng: Optional[LibRngState] = None
+        cuda_rng: LibRngState | None = None
         if (cuda_version := _get_cuda_version()) is not None:
             cuda_rng = LibRngState(version=cuda_version, state=torch.cuda.get_rng_state())
         return cls(python=python_rng, numpy=numpy_rng, torch=torch_rng, cuda=cuda_rng)
 
     @classmethod
-    def from_dict(
-        cls, data: Dict[str, Any], overrides: Optional[List[str]] = None
-    ) -> "EnvRngStates":
+    def from_dict(cls, data: dict[str, Any], overrides: list[str] | None = None) -> "EnvRngStates":
         # overriding this from the base class since omegaconf doesn't like whatever objects
         # we get for the states, like numpy ndarrays.
         assert overrides is None
@@ -94,21 +92,21 @@ class EnvRngStates(Config):
         )
 
 
-def _get_python_version() -> Tuple[int, int]:
+def _get_python_version() -> tuple[int, int]:
     return sys.version_info[0:2]
 
 
-def _get_numpy_version() -> Tuple[int, int]:
+def _get_numpy_version() -> tuple[int, int]:
     version = parse_version(np.version.short_version)
     return (version.major, version.minor)
 
 
-def _get_torch_version() -> Tuple[int, int]:
+def _get_torch_version() -> tuple[int, int]:
     version = parse_version(torch.__version__)
     return (version.major, version.minor)
 
 
-def _get_cuda_version() -> Optional[Tuple[int, int]]:
+def _get_cuda_version() -> tuple[int, int] | None:
     if torch.cuda.is_available() and torch.cuda.is_initialized():
         assert torch.version.cuda is not None
         version = parse_version(torch.version.cuda)
@@ -119,9 +117,9 @@ def _get_cuda_version() -> Optional[Tuple[int, int]]:
 
 @torch.no_grad()
 def move_metrics(
-    source: Dict[int, Dict[str, torch.Tensor]],
+    source: dict[int, dict[str, torch.Tensor]],
     device: torch.device,
-) -> Dict[int, Dict[str, torch.Tensor]]:
+) -> dict[int, dict[str, torch.Tensor]]:
     # Collate all metrics together, then transfer to device all at once.
     metrics_to_move_list = [
         get_local_tensor(m)
@@ -131,14 +129,14 @@ def move_metrics(
         # even when both point to the same physical device.
         if m.device.type != device.type
     ]
-    metrics_to_move: Optional[torch.Tensor] = None
+    metrics_to_move: torch.Tensor | None = None
     if metrics_to_move_list:
         # NOTE: this is a known host-device sync (potentially) so we don't need the warning
         with cuda_sync_debug_mode(0):
             metrics_to_move = move_to_device(torch.stack(metrics_to_move_list), device)
 
     # Collect output with moved tensors.
-    target: Dict[int, Dict[str, torch.Tensor]] = OrderedDict()
+    target: dict[int, dict[str, torch.Tensor]] = OrderedDict()
     idx = 0
     for step, step_metrics in source.items():
         for name, m in step_metrics.items():
@@ -154,14 +152,14 @@ def move_metrics(
 
 
 def get_metrics_reduce_type_by_step(
-    metrics: Dict[int, Dict[str, torch.Tensor]],
-    metrics_reduce_type: Dict[str, Optional[ReduceType]],
-    process_group: Optional[dist.ProcessGroup] = None,
-) -> Dict[int, Dict[str, Optional[ReduceType]]]:
+    metrics: dict[int, dict[str, torch.Tensor]],
+    metrics_reduce_type: dict[str, ReduceType | None],
+    process_group: dist.ProcessGroup | None = None,
+) -> dict[int, dict[str, ReduceType | None]]:
     all_ranks_metrics_reduce_type = all_gather_object(metrics_reduce_type, group=process_group)
 
-    out: Dict[int, Dict[str, Optional[ReduceType]]] = defaultdict(dict)
-    for step in metrics.keys():
+    out: dict[int, dict[str, ReduceType | None]] = defaultdict(dict)
+    for step in metrics:
         for rank_metrics_reduce_type in all_ranks_metrics_reduce_type:
             for metric_name, reduce_type in rank_metrics_reduce_type.items():
                 out[step][metric_name] = reduce_type
@@ -170,28 +168,28 @@ def get_metrics_reduce_type_by_step(
 
 
 def get_metric_world_sizes_by_step(
-    metrics: Dict[int, Dict[str, torch.Tensor]],
-    metrics_reduce_type: Dict[str, Optional[ReduceType]],
-    process_group: Optional[dist.ProcessGroup] = None,
-) -> Dict[int, Dict[str, int]]:
-    all_ranks_metrics_reduce_type: List[Dict[str, Optional[ReduceType]]] = all_gather_object(
+    metrics: dict[int, dict[str, torch.Tensor]],
+    metrics_reduce_type: dict[str, ReduceType | None],
+    process_group: dist.ProcessGroup | None = None,
+) -> dict[int, dict[str, int]]:
+    all_ranks_metrics_reduce_type: list[dict[str, ReduceType | None]] = all_gather_object(
         metrics_reduce_type, group=process_group
     )
 
-    all_steps_world_sizes: Dict[int, Dict[str, int]] = defaultdict(lambda: defaultdict(int))
-    for step in metrics.keys():
+    all_steps_world_sizes: dict[int, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+    for step in metrics:
         for rank_metrics_reduce_type in all_ranks_metrics_reduce_type:
-            for metric_name in rank_metrics_reduce_type.keys():
+            for metric_name in rank_metrics_reduce_type:
                 all_steps_world_sizes[step][metric_name] += 1
 
     return all_steps_world_sizes
 
 
 def check_metrics_consistent(
-    metrics_reduce_type: Dict[str, Optional[ReduceType]],
-    process_group: Optional[dist.ProcessGroup] = None,
+    metrics_reduce_type: dict[str, ReduceType | None],
+    process_group: dist.ProcessGroup | None = None,
 ) -> bool:
-    metrics_to_reduce: Set[str] = set(k for k, v in metrics_reduce_type.items() if v is not None)
+    metrics_to_reduce: set[str] = {k for k, v in metrics_reduce_type.items() if v is not None}
     all_ranks_metrics_to_reduce = all_gather_object(metrics_to_reduce, group=process_group)
     for rank in range(get_world_size(process_group)):
         if metrics_to_reduce != all_ranks_metrics_to_reduce[rank]:
@@ -201,14 +199,14 @@ def check_metrics_consistent(
 
 @torch.no_grad()
 def reduce_metrics(
-    metrics: Dict[int, Dict[str, torch.Tensor]],
-    metrics_reduce_type: Dict[str, Optional[ReduceType]],
+    metrics: dict[int, dict[str, torch.Tensor]],
+    metrics_reduce_type: dict[str, ReduceType | None],
     device: torch.device,
-    process_group: Optional[dist.ProcessGroup] = None,
+    process_group: dist.ProcessGroup | None = None,
     metrics_consistent: bool = True,
-) -> Dict[int, Dict[str, float]]:
+) -> dict[int, dict[str, float]]:
     metrics = move_metrics(metrics, device)
-    out: Dict[int, Dict[str, float]] = defaultdict(dict)
+    out: dict[int, dict[str, float]] = defaultdict(dict)
 
     if not is_distributed():
         for step, step_metrics in metrics.items():
@@ -218,8 +216,8 @@ def reduce_metrics(
 
     world_size = get_world_size(process_group)
     divide_factor = get_reduce_divide_factor(world_size)
-    all_steps_metric_world_sizes: Dict[int, Dict[str, int]] = {}
-    all_steps_metrics_reduce_type: Dict[int, Dict[str, Optional[ReduceType]]] = {}
+    all_steps_metric_world_sizes: dict[int, dict[str, int]] = {}
+    all_steps_metrics_reduce_type: dict[int, dict[str, ReduceType | None]] = {}
     if not metrics_consistent:
         all_steps_metric_world_sizes = get_metric_world_sizes_by_step(
             metrics,
@@ -233,23 +231,23 @@ def reduce_metrics(
         )
 
     # Flattened metrics by step and reduce type.
-    sum_metric_names: List[List[str]] = []
-    sum_metric_values: List[torch.Tensor] = []
-    max_metric_names: List[List[str]] = []
-    max_metric_values: List[torch.Tensor] = []
+    sum_metric_names: list[list[str]] = []
+    sum_metric_values: list[torch.Tensor] = []
+    max_metric_names: list[list[str]] = []
+    max_metric_values: list[torch.Tensor] = []
 
     for step in sorted(metrics.keys()):
-        step_metrics_reduce_type: Dict[
-            str, Optional[ReduceType]
-        ] = all_steps_metrics_reduce_type.get(step, metrics_reduce_type)
-        step_sum_metric_names: List[str] = []
-        step_sum_metric_values: List[torch.Tensor] = []
-        step_max_metric_names: List[str] = []
-        step_max_metric_values: List[torch.Tensor] = []
+        step_metrics_reduce_type: dict[str, ReduceType | None] = all_steps_metrics_reduce_type.get(
+            step, metrics_reduce_type
+        )
+        step_sum_metric_names: list[str] = []
+        step_sum_metric_values: list[torch.Tensor] = []
+        step_max_metric_names: list[str] = []
+        step_max_metric_values: list[torch.Tensor] = []
 
         step_metrics = metrics[step]
 
-        sorted_metric_names: List[str]
+        sorted_metric_names: list[str]
         if not metrics_consistent:
             sorted_metric_names = sorted(all_steps_metric_world_sizes[step].keys())
         else:

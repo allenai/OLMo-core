@@ -1,9 +1,9 @@
 from abc import abstractmethod
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Generic, Optional, TypeVar
+from typing import TYPE_CHECKING, Generic, TypeVar
 
 import torch
-import torch.nn as nn
+from torch import nn
 from torch.distributed import DeviceMesh
 from torch.distributed.tensor import Placement
 
@@ -26,8 +26,8 @@ class SequenceMixer(nn.Module):
     def apply_tp(
         self,
         tp_mesh: DeviceMesh,
-        input_layout: Optional[Placement] = None,
-        output_layout: Optional[Placement] = None,
+        input_layout: Placement | None = None,
+        output_layout: Placement | None = None,
         use_local_output: bool = True,
         float8_enabled: bool = False,
     ):
@@ -37,8 +37,8 @@ class SequenceMixer(nn.Module):
     def apply_cp(
         self,
         cp_mesh: DeviceMesh,
-        ring: Optional[RingContextParallelStyle] = None,
-        uly: Optional[UlyssesContextParallelStyle] = None,
+        ring: RingContextParallelStyle | None = None,
+        uly: UlyssesContextParallelStyle | None = None,
     ):
         raise NotImplementedError
 
@@ -55,7 +55,7 @@ class SequenceMixer(nn.Module):
         block_idx: int,
         num_blocks: int,
         std: float = 0.02,
-        generator: Optional[torch.Generator] = None,
+        generator: torch.Generator | None = None,
     ) -> None:
         raise NotImplementedError
 
@@ -75,6 +75,6 @@ class SequenceMixerConfig(ModuleConfig, Registrable, Generic[SeqMixer]):
         layer_idx: int,
         n_layers: int,
         init_device: str = "cpu",
-        cache: Optional[BufferCache] = None,
+        cache: BufferCache | None = None,
     ) -> SeqMixer:
         raise NotImplementedError

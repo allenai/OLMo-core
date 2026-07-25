@@ -2,11 +2,11 @@
 # It has since changed substantially.
 
 from abc import abstractmethod
-from typing import List, NamedTuple, Optional, Tuple
+from typing import NamedTuple
 
 import torch
 import torch.distributed as dist
-import torch.nn as nn
+from torch import nn
 from torch.distributed import DeviceMesh
 
 from olmo_core.distributed.utils import get_local_tensor, get_world_size
@@ -16,17 +16,17 @@ from olmo_core.utils import ensure_multiple_of, get_default_device, move_to_devi
 from ..buffer_cache import BufferCache
 from .mlp import DroplessMoEMLP, MoEMLP, MoEMLPBase
 
-__all__ = ["ParallelMLPBase", "ParallelMLP", "ParallelDroplessMLP"]
+__all__ = ["ParallelDroplessMLP", "ParallelMLP", "ParallelMLPBase"]
 
 
 class PermutedAllToAllOutput(NamedTuple):
     parallel_x: torch.Tensor
     parallel_indices: torch.Tensor
-    parallel_bin_ids: Optional[torch.Tensor]
+    parallel_bin_ids: torch.Tensor | None
     parallel_bins: torch.Tensor
     parallel_batch_size_per_expert: torch.Tensor
-    recv_counts: Optional[List[int]]
-    send_counts: Optional[List[int]]
+    recv_counts: list[int] | None
+    send_counts: list[int] | None
     expert_capacity: int
     handle: dist.Work
 
@@ -36,7 +36,7 @@ class ParallelMLPBase(nn.Module):
     Wraps an MoE MLP layer to coordinate the routing and expert parallelism.
     """
 
-    def __init__(self, *, mlp: MoEMLPBase, top_k: int, cache: Optional[BufferCache] = None):
+    def __init__(self, *, mlp: MoEMLPBase, top_k: int, cache: BufferCache | None = None):
         super().__init__()
         self.mlp = mlp
         self.top_k = top_k
@@ -70,7 +70,7 @@ class ParallelMLPBase(nn.Module):
             return 1
 
     @property
-    def ep_pg(self) -> Optional[dist.ProcessGroup]:
+    def ep_pg(self) -> dist.ProcessGroup | None:
         return self.mlp.ep_pg
 
     def apply_ep(self, ep_mesh: DeviceMesh, **kwargs):
@@ -103,7 +103,7 @@ class ParallelMLPBase(nn.Module):
         self,
         expert_indices: torch.Tensor,
         batch_size_per_expert: torch.Tensor,
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         :param expert_indices: A 1D tensor.
         :param batch_size_per_expert: A 1D tensor.
@@ -302,7 +302,7 @@ class ParallelMLPBase(nn.Module):
         parallel_x,
         *,
         parallel_indices: torch.Tensor,
-        parallel_bin_ids: Optional[torch.Tensor],
+        parallel_bin_ids: torch.Tensor | None,
         parallel_bins: torch.Tensor,
         parallel_batch_size_per_expert: torch.Tensor,
         expert_capacity: int,
@@ -314,9 +314,9 @@ class ParallelMLPBase(nn.Module):
         self,
         parallel_x: torch.Tensor,
         *,
-        send_counts: Optional[List[int]],
-        recv_counts: Optional[List[int]],
-    ) -> Tuple[torch.Tensor, dist.Work]:
+        send_counts: list[int] | None,
+        recv_counts: list[int] | None,
+    ) -> tuple[torch.Tensor, dist.Work]:
         raise NotImplementedError
 
     @abstractmethod
@@ -354,8 +354,8 @@ class ParallelMLP(ParallelMLPBase):
         mlp: MoEMLP,
         top_k: int,
         capacity_factor: float,
-        cache: Optional[BufferCache] = None,
-        max_local_microbatch_size: Optional[int] = None,
+        cache: BufferCache | None = None,
+        max_local_microbatch_size: int | None = None,
     ):
         super().__init__(mlp=mlp, top_k=top_k, cache=cache)
         self.capacity_factor = capacity_factor
@@ -409,7 +409,7 @@ class ParallelMLP(ParallelMLPBase):
     @torch.no_grad()
     def _get_parallel_indices_and_bins(
         self, *, expert_capacity: int, local_expert_capacity: int, device: torch.device
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         indices_cache_key = f"moe_par_expert_indices_{expert_capacity}_{local_expert_capacity}"
         bins_cache_key = f"moe_par_expert_bins_{expert_capacity}_{local_expert_capacity}"
 
@@ -548,7 +548,7 @@ class ParallelMLP(ParallelMLPBase):
         parallel_x,
         *,
         parallel_indices: torch.Tensor,
-        parallel_bin_ids: Optional[torch.Tensor],
+        parallel_bin_ids: torch.Tensor | None,
         parallel_bins: torch.Tensor,
         parallel_batch_size_per_expert: torch.Tensor,
         expert_capacity: int,
@@ -572,9 +572,9 @@ class ParallelMLP(ParallelMLPBase):
         self,
         parallel_x: torch.Tensor,
         *,
-        send_counts: Optional[List[int]],
-        recv_counts: Optional[List[int]],
-    ) -> Tuple[torch.Tensor, dist.Work]:
+        send_counts: list[int] | None,
+        recv_counts: list[int] | None,
+    ) -> tuple[torch.Tensor, dist.Work]:
         assert send_counts is None
         assert recv_counts is None
 
@@ -610,7 +610,7 @@ class ParallelMLP(ParallelMLPBase):
         x: torch.Tensor,
         *,
         indices: torch.Tensor,
-        expert_weights: Optional[torch.Tensor],
+        expert_weights: torch.Tensor | None,
         bins: torch.Tensor,
         expert_capacity: int,
         top_k: int,
@@ -639,7 +639,7 @@ class ParallelDroplessMLP(ParallelMLPBase):
         When expert parallelism is enabled the forward pass involves a host-device sync.
     """
 
-    def __init__(self, *, mlp: DroplessMoEMLP, top_k: int, cache: Optional[BufferCache] = None):
+    def __init__(self, *, mlp: DroplessMoEMLP, top_k: int, cache: BufferCache | None = None):
         super().__init__(mlp=mlp, top_k=top_k, cache=cache)
 
     def forward_once(
@@ -786,7 +786,7 @@ class ParallelDroplessMLP(ParallelMLPBase):
         parallel_x,
         *,
         parallel_indices: torch.Tensor,
-        parallel_bin_ids: Optional[torch.Tensor],
+        parallel_bin_ids: torch.Tensor | None,
         parallel_bins: torch.Tensor,
         parallel_batch_size_per_expert: torch.Tensor,
         expert_capacity: int,
@@ -811,9 +811,9 @@ class ParallelDroplessMLP(ParallelMLPBase):
         self,
         parallel_x: torch.Tensor,
         *,
-        send_counts: Optional[List[int]],
-        recv_counts: Optional[List[int]],
-    ) -> Tuple[torch.Tensor, dist.Work]:
+        send_counts: list[int] | None,
+        recv_counts: list[int] | None,
+    ) -> tuple[torch.Tensor, dist.Work]:
         assert send_counts is not None
         assert recv_counts is not None
 
@@ -855,7 +855,7 @@ class ParallelDroplessMLP(ParallelMLPBase):
         batch_size_per_expert: torch.Tensor,
         indices: torch.Tensor,
         bin_ids: torch.Tensor,
-        expert_weights: Optional[torch.Tensor],
+        expert_weights: torch.Tensor | None,
         bins: torch.Tensor,
         top_k: int,
     ) -> torch.Tensor:

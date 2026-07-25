@@ -1,6 +1,5 @@
 import functools as ft
 import hashlib
-from typing import Optional
 
 from olmo_core.aliases import PathOrStr
 from olmo_core.exceptions import OLMoConfigurationError
@@ -19,7 +18,7 @@ class SlicedTokenSource(TokenSource):
         source_slice: slice,
         *,
         work_dir: PathOrStr,
-        label: Optional[str] = None,
+        label: str | None = None,
     ):
         if source_slice.step is not None and source_slice.step != 1:
             raise OLMoConfigurationError(

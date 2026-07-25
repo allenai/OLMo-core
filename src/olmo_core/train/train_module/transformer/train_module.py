@@ -1,13 +1,14 @@
 import contextlib
 import logging
+from collections.abc import Generator
 from dataclasses import replace
 from functools import cached_property, lru_cache
-from typing import Any, Dict, Generator, Literal, Optional, Tuple, Union
+from typing import Any, Literal
 
 import torch
 import torch.distributed as dist
 import torch.distributed.checkpoint.state_dict as dist_cp_sd
-import torch.nn as nn
+from torch import nn
 from torch.distributed import DeviceMesh
 from torch.distributed.checkpoint.metadata import Metadata
 from torch.distributed.fsdp import FSDPModule
@@ -106,20 +107,20 @@ class TransformerTrainModule(TrainModule):
         rank_microbatch_size: int,
         max_sequence_length: int,
         compile_model: bool = False,
-        float8_config: Optional[Float8Config] = None,
-        dp_config: Optional[TransformerDataParallelConfig] = None,
-        tp_config: Optional[TransformerTensorParallelConfig] = None,
-        cp_config: Optional[TransformerContextParallelConfig] = None,
-        ep_config: Optional[TransformerExpertParallelConfig] = None,
-        ac_config: Optional[TransformerActivationCheckpointingConfig] = None,
-        z_loss_multiplier: Optional[float] = None,
-        autocast_precision: Optional[torch.dtype] = None,
-        max_grad_norm: Optional[float] = None,
-        scheduler: Optional[Scheduler] = None,
-        device: Optional[torch.device] = None,
-        state_dict_save_opts: Optional[dist_cp_sd.StateDictOptions] = None,
-        state_dict_load_opts: Optional[dist_cp_sd.StateDictOptions] = None,
-        load_key_mapping: Optional[Dict[str, str]] = None,
+        float8_config: Float8Config | None = None,
+        dp_config: TransformerDataParallelConfig | None = None,
+        tp_config: TransformerTensorParallelConfig | None = None,
+        cp_config: TransformerContextParallelConfig | None = None,
+        ep_config: TransformerExpertParallelConfig | None = None,
+        ac_config: TransformerActivationCheckpointingConfig | None = None,
+        z_loss_multiplier: float | None = None,
+        autocast_precision: torch.dtype | None = None,
+        max_grad_norm: float | None = None,
+        scheduler: Scheduler | None = None,
+        device: torch.device | None = None,
+        state_dict_save_opts: dist_cp_sd.StateDictOptions | None = None,
+        state_dict_load_opts: dist_cp_sd.StateDictOptions | None = None,
+        load_key_mapping: dict[str, str] | None = None,
         label_ignore_index: int = -100,
     ):
         super().__init__()
@@ -133,7 +134,7 @@ class TransformerTrainModule(TrainModule):
 
         # Build world mesh.
         self.device = device or get_default_device()
-        self.world_mesh: Optional[DeviceMesh] = None
+        self.world_mesh: DeviceMesh | None = None
         if is_distributed():
             self.world_mesh = build_world_mesh(
                 dp=dp_config, tp=tp_config, cp=cp_config, ep=ep_config, device_type=self.device.type
@@ -173,7 +174,7 @@ class TransformerTrainModule(TrainModule):
             ep_config=ep_config,
             ac_config=ac_config,
         )
-        self._model_mode: Optional[Literal["train", "eval"]] = None
+        self._model_mode: Literal["train", "eval"] | None = None
 
         self._dp_config = dp_config
         self._cp_config = cp_config
@@ -199,7 +200,7 @@ class TransformerTrainModule(TrainModule):
         self.optim: Optimizer = optim.build(self.model, strict=True)
 
     @property
-    def dp_process_group(self) -> Optional[dist.ProcessGroup]:
+    def dp_process_group(self) -> dist.ProcessGroup | None:
         return None if self.world_mesh is None else get_dp_process_group(self.world_mesh)
 
     @property
@@ -211,7 +212,7 @@ class TransformerTrainModule(TrainModule):
         )
 
     @property
-    def dp_config(self) -> Optional[TransformerDataParallelConfig]:
+    def dp_config(self) -> TransformerDataParallelConfig | None:
         return self._dp_config
 
     @property
@@ -245,16 +246,16 @@ class TransformerTrainModule(TrainModule):
                 f"micro-batch size ({self.rank_microbatch_size:,d}) x DP world size ({dp_ws})"
             )
 
-    def state_dict(self, *, optim: Optional[bool] = None) -> Dict[str, Any]:
+    def state_dict(self, *, optim: bool | None = None) -> dict[str, Any]:
         if optim is None:
             optim = True
         return self._get_state_dict(self.state_dict_save_opts, optim=optim)
 
     def state_dict_to_load(
-        self, metadata: Metadata, *, optim: Optional[bool] = None
-    ) -> Dict[str, Any]:
+        self, metadata: Metadata, *, optim: bool | None = None
+    ) -> dict[str, Any]:
         has_optim_state: bool = False
-        for key in metadata.state_dict_metadata.keys():
+        for key in metadata.state_dict_metadata:
             if key.startswith("optim."):
                 has_optim_state = True
                 break
@@ -304,12 +305,12 @@ class TransformerTrainModule(TrainModule):
 
         return state_dict
 
-    def state_dict_to_save(self, *, optim: Optional[bool] = None) -> Dict[str, Any]:
+    def state_dict_to_save(self, *, optim: bool | None = None) -> dict[str, Any]:
         if optim is None:
             optim = True
         return self._get_state_dict(self.state_dict_save_opts, optim=optim)
 
-    def load_state_dict(self, state_dict: Dict[str, Any]) -> None:
+    def load_state_dict(self, state_dict: dict[str, Any]) -> None:
         load_optim = "optim" in state_dict
 
         if self.load_key_mapping is not None:
@@ -342,7 +343,7 @@ class TransformerTrainModule(TrainModule):
             )
             gc_cuda()
 
-    def train_batch(self, batch: Dict[str, Any], dry_run: bool = False):
+    def train_batch(self, batch: dict[str, Any], dry_run: bool = False):
         # Set model to train mode if it isn't already.
         self._set_model_mode("train")
 
@@ -381,7 +382,7 @@ class TransformerTrainModule(TrainModule):
 
         # Batch losses to record.
         ce_batch_loss = move_to_device(torch.tensor(0.0), self.device)
-        z_batch_loss: Optional[torch.Tensor] = None
+        z_batch_loss: torch.Tensor | None = None
         if self.z_loss_multiplier is not None:
             z_batch_loss = move_to_device(torch.tensor(0.0), self.device)
 
@@ -468,8 +469,8 @@ class TransformerTrainModule(TrainModule):
             )
 
     def eval_batch(
-        self, batch: Dict[str, Any], labels: Optional[torch.Tensor] = None
-    ) -> Union[torch.Tensor, LMOutputWithLoss]:
+        self, batch: dict[str, Any], labels: torch.Tensor | None = None
+    ) -> torch.Tensor | LMOutputWithLoss:
         # CP and TP are supported for PPL evals (LMEvaluator) since they only need per-token
         # CE loss. Downstream evals that require full logits will fail naturally if attempted
         # with CP or TP.
@@ -539,23 +540,23 @@ class TransformerTrainModule(TrainModule):
         self.optim.zero_grad(set_to_none=True)
 
     def model_forward(
-        self, input_ids: torch.Tensor, labels: Optional[torch.Tensor] = None, **kwargs
-    ) -> Union[torch.Tensor, LMOutputWithLoss]:
+        self, input_ids: torch.Tensor, labels: torch.Tensor | None = None, **kwargs
+    ) -> torch.Tensor | LMOutputWithLoss:
         """
         Run a forward pass on a micro-batch, returning the logits.
         """
         with self._model_forward_context():
             return self.model(input_ids, labels=labels, **kwargs)
 
-    @lru_cache
-    def num_flops_per_token(self, seq_len: int) -> Optional[int]:
+    @lru_cache  # noqa: B019
+    def num_flops_per_token(self, seq_len: int) -> int | None:
         try:
             return self.model.num_flops_per_token(seq_len)
         except NotImplementedError as ex:
             warn_once(f"Unable to estimate num flops per token: {ex}")
             return None
 
-    def global_num_flops_in_batch(self, batch: Dict[str, Any]) -> Optional[int]:
+    def global_num_flops_in_batch(self, batch: dict[str, Any]) -> int | None:
         global_num_tokens = self.trainer.data_loader.global_num_tokens_in_batch(batch)
         if global_num_tokens is None:
             return None
@@ -598,8 +599,8 @@ class TransformerTrainModule(TrainModule):
 
     def _get_state_dict(
         self, sd_options: dist_cp_sd.StateDictOptions, optim: bool = True
-    ) -> Dict[str, Any]:
-        state_dict: Dict[str, Any] = {
+    ) -> dict[str, Any]:
+        state_dict: dict[str, Any] = {
             "model": dist_cp_sd.get_model_state_dict(self.model, options=sd_options),
         }
         if optim:
@@ -609,7 +610,7 @@ class TransformerTrainModule(TrainModule):
         return state_dict
 
     def _clip_grad_norm(
-        self, max_grad_norm: float, norm_type: float = 2.0, foreach: Optional[bool] = None
+        self, max_grad_norm: float, norm_type: float = 2.0, foreach: bool | None = None
     ) -> torch.Tensor:
         if isinstance(self.model, FSDP):
             return self.model.clip_grad_norm_(max_grad_norm)
@@ -638,8 +639,8 @@ class TransformerTrainModule(TrainModule):
         return total_norm
 
     def _prepare_batch(
-        self, batch: Dict[str, Any], labels: Optional[torch.Tensor] = None
-    ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Dict[str, Any]]:
+        self, batch: dict[str, Any], labels: torch.Tensor | None = None
+    ) -> tuple[torch.Tensor, torch.Tensor | None, dict[str, Any]]:
         input_ids = batch.pop("input_ids")
         labels = labels if labels is not None else batch.pop("labels", None)
         if "doc_lens" in batch and "max_doc_lens" in batch:

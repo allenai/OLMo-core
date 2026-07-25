@@ -1,7 +1,6 @@
 import logging
 import os
 from dataclasses import dataclass
-from typing import Optional
 
 import requests
 
@@ -47,7 +46,7 @@ class SlackNotificationSetting(StrEnum):
 
 @dataclass
 class SlackNotifierCallback(Callback):
-    name: Optional[str] = None
+    name: str | None = None
     """
     A name to give the run.
     """
@@ -62,7 +61,7 @@ class SlackNotifierCallback(Callback):
     Set to false to disable this callback.
     """
 
-    webhook_url: Optional[str] = None
+    webhook_url: str | None = None
     """
     The webhook URL to post. If not set, will check the environment variable ``SLACK_WEBHOOK_URL``.
     """
@@ -146,5 +145,5 @@ class SlackNotifierCallback(Callback):
 
         try:
             requests.post(webhook_url, json={"text": msg})
-        except Exception as e:
-            log.exception(f"Failed to send Slack notification: {e}")
+        except Exception:
+            log.exception("Failed to send Slack notification")

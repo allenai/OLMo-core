@@ -48,7 +48,7 @@ class WSDSChinchillaRunConfigurator(RunConfigurator):
     """
 
     def __post_init__(self):
-        if self.chinchilla_multiple < 0.5 or not math.log(self.chinchilla_multiple, 2).is_integer():
+        if self.chinchilla_multiple < 0.5 or not math.log2(self.chinchilla_multiple).is_integer():
             raise OLMoConfigurationError(
                 "'chinchilla_multiple' must be at least 0.5 and a power of 2"
             )
@@ -86,7 +86,7 @@ class WSDSChinchillaRunConfigurator(RunConfigurator):
             weight_decay=0.1,
             betas=(0.9, beta2),
             group_overrides=[
-                OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
+                OptimGroupOverride(params=["embeddings.weight"], opts={"weight_decay": 0.0})
             ],
         )
 
@@ -96,7 +96,7 @@ class WSDSChinchillaRunConfigurator(RunConfigurator):
 
         # Generate Chinchilla (decay) periods as multiples of two, but at least the minimum.
         chinchilla_periods: list[float] = []
-        max_pow = math.log(self.chinchilla_multiple, 2)
+        max_pow = math.log2(self.chinchilla_multiple)
         assert max_pow.is_integer()  # checked in `__post_init__()` as well.
         for p in range(-1, int(max_pow) + 1):
             period = 2**p

@@ -1,5 +1,3 @@
-from typing import Dict
-
 import pytest
 
 from olmo_core.nn.conversion.state_mapping import (
@@ -21,7 +19,7 @@ def test_template_to_mapping_one_to_one():
 
 def test_template_to_mapping_one_to_one_with_place_holders():
     mapping_template = StateMappingTemplate(f"a.{LAYER}", f"b.{LAYER}")
-    placeholder_values: Dict[TemplatePlaceholder, int | None] = {LAYER: 1}
+    placeholder_values: dict[TemplatePlaceholder, int | None] = {LAYER: 1}
     placeholder_bounds = {LAYER: 2}
     mapping = mapping_template.to_mapping(placeholder_values, placeholder_bounds)
     assert mapping is not None

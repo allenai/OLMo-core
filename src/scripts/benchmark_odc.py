@@ -37,12 +37,12 @@ from __future__ import annotations
 
 import argparse
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable, List, Tuple
 
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
+from torch import nn
 from torch.utils.checkpoint import checkpoint as torch_checkpoint
 
 from olmo_core.nn import output_discard_checkpoint as odc_module
@@ -230,7 +230,7 @@ def _time_step(
     runner: Callable[[Stack, torch.Tensor], torch.Tensor],
     model: Stack,
     x: torch.Tensor,
-) -> Tuple[float, float, float]:
+) -> tuple[float, float, float]:
     torch.cuda.synchronize()
     fwd_start = torch.cuda.Event(enable_timing=True)
     fwd_end = torch.cuda.Event(enable_timing=True)
@@ -265,9 +265,9 @@ def _benchmark_one(
             x.grad = None
         _time_step(runner, model, x)
 
-    peak_mbs: List[float] = []
-    fwd_mss: List[float] = []
-    bwd_mss: List[float] = []
+    peak_mbs: list[float] = []
+    fwd_mss: list[float] = []
+    bwd_mss: list[float] = []
     for _ in range(timed_iters):
         for p in model.parameters():
             if p.grad is not None:
@@ -296,7 +296,7 @@ def _force_python_fallback() -> Callable[[], None]:
     return lambda: setattr(loader, "_load", original)
 
 
-def _print_table(results: List[Result], baseline: Result) -> None:
+def _print_table(results: list[Result], baseline: Result) -> None:
     print(
         f"  {'config':<28} "
         f"{'peak (MB)':>12} {'fwd (ms)':>10} {'bwd (ms)':>10} {'total (ms)':>12}"
@@ -320,7 +320,7 @@ def _print_table(results: List[Result], baseline: Result) -> None:
 # by blocks that don't need it.
 def _block_registry(
     dtype: torch.dtype, device: torch.device
-) -> List[Tuple[str, str, Callable[[int, int], BenchBlock]]]:
+) -> list[tuple[str, str, Callable[[int, int], BenchBlock]]]:
     return [
         (
             "fp32_cast",
@@ -376,13 +376,13 @@ def run_block(
     model = Stack(lambda: factory(d_model, d_ff), n_layers).to(device)
     x = torch.randn(batch, seq, d_model, dtype=dtype, device=device, requires_grad=True)
 
-    runners: List[Tuple[str, Callable[[Stack, torch.Tensor], torch.Tensor]]] = [
+    runners: list[tuple[str, Callable[[Stack, torch.Tensor], torch.Tensor]]] = [
         ("baseline", Stack.forward_baseline),
         ("torch.utils.checkpoint", Stack.forward_torch_ckpt),
         ("ODC (C++ if available)", Stack.forward_odc),
     ]
 
-    results: List[Result] = []
+    results: list[Result] = []
     for name, method in runners:
         results.append(_benchmark_one(name, method, model, x, timed_iters))
 

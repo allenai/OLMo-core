@@ -6,7 +6,6 @@ import importlib.util
 import json
 import tempfile
 from pathlib import Path
-from typing import List, Optional
 
 import pytest
 import torch
@@ -36,7 +35,7 @@ def create_test_checkpoint_with_seed(
     checkpoint_dir: Path,
     model_config: TransformerConfig,
     seed: int,
-    optim_config: Optional[AdamWConfig] = None,
+    optim_config: AdamWConfig | None = None,
     include_optimizer: bool = True,
 ) -> None:
     """
@@ -93,7 +92,7 @@ def create_test_checkpoint_with_seed(
 
 
 def run_merge_cli(
-    model_paths: List[str],
+    model_paths: list[str],
     output_path: str,
     skip_optimizer: bool = False,
 ):
@@ -142,7 +141,7 @@ def checkpoint_has_optimizer_state(checkpoint_dir: Path) -> bool:
 
     metadata = get_checkpoint_metadata(model_and_optim_dir)
     # Check if any keys start with "optim."
-    return any(key.startswith("optim.") for key in metadata.state_dict_metadata.keys())
+    return any(key.startswith("optim.") for key in metadata.state_dict_metadata)
 
 
 def load_checkpoint_state_dict(checkpoint_dir: Path, model_config: TransformerConfig) -> dict:
@@ -171,7 +170,7 @@ def load_checkpoint_state_dict(checkpoint_dir: Path, model_config: TransformerCo
 
 def verify_averaged_weights(
     merged_checkpoint: Path,
-    source_checkpoints: List[Path],
+    source_checkpoints: list[Path],
     model_config: TransformerConfig,
     tolerance: float = 1e-5,
 ) -> None:
@@ -191,7 +190,7 @@ def verify_averaged_weights(
     source_states = [load_checkpoint_state_dict(ckpt, model_config) for ckpt in source_checkpoints]
 
     # Verify each parameter is correctly averaged
-    for param_name in merged_state.keys():
+    for param_name in merged_state:
         merged_value = merged_state[param_name]
 
         # Compute expected average

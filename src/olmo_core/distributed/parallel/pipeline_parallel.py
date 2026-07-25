@@ -1,9 +1,10 @@
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from functools import cached_property
-from typing import Any, Callable, Iterable, List, Optional, Tuple
+from typing import Any
 
 import torch
-import torch.nn as nn
+from torch import nn
 from torch.distributed import DeviceMesh
 from torch.distributed.pipelining import PipelineStage
 from torch.distributed.pipelining.schedules import (
@@ -76,7 +77,7 @@ class PipelineParallelConfig(Config):
     The name of the schedule.
     """
 
-    style: Optional[PipelineSplitStyle] = None
+    style: PipelineSplitStyle | None = None
     """
     The split style.
     """
@@ -108,7 +109,7 @@ class PipelineParallelConfig(Config):
         else:
             raise NotImplementedError(style)
 
-    def stage_ids_this_rank(self, pp_rank: int, num_stages: int) -> Tuple[int, ...]:
+    def stage_ids_this_rank(self, pp_rank: int, num_stages: int) -> tuple[int, ...]:
         """
         Compute the stage ids for the stages that will run on this pp rank for either a looped or
         V style schedule.
@@ -146,12 +147,12 @@ class PipelineSchedule:
     def __init__(
         self,
         *,
-        model_parts: List[nn.Module],
-        stages: List[PipelineStage],
+        model_parts: list[nn.Module],
+        stages: list[PipelineStage],
         pp_mesh: DeviceMesh,
         schedule_name: PipelineScheduleType,
-        loss_fn: Optional[Callable[[Any, torch.Tensor], torch.Tensor]] = None,
-        num_microbatches: Optional[int] = None,
+        loss_fn: Callable[[Any, torch.Tensor], torch.Tensor] | None = None,
+        num_microbatches: int | None = None,
     ):
         self.model_parts = model_parts
         self.stages = stages
@@ -204,14 +205,14 @@ class PipelineSchedule:
     def step(
         self,
         *args,
-        target: Optional[torch.Tensor] = None,
+        target: torch.Tensor | None = None,
         **kwargs,
-    ) -> Tuple[Any, Optional[torch.Tensor]]:
+    ) -> tuple[Any, torch.Tensor | None]:
         """
         :param args: Only passed to first stage.
         :param kwargs: Passed to all stages.
         """
-        losses: Optional[List[torch.Tensor]] = None
+        losses: list[torch.Tensor] | None = None
         if self.has_last_stage and self.loss_fn is not None:
             losses = []
         else:

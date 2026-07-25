@@ -1,6 +1,6 @@
 from abc import abstractmethod
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, ClassVar, Dict, Optional
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from torch.distributed.checkpoint.stateful import Stateful
 
@@ -44,13 +44,13 @@ class Callback(Stateful):
     def step(self) -> int:
         return self.trainer.global_step
 
-    def state_dict(self) -> Dict[str, Any]:
+    def state_dict(self) -> dict[str, Any]:
         """
         Get the state dict to save.
         """
         return {}
 
-    def load_state_dict(self, state_dict: Dict[str, Any]):
+    def load_state_dict(self, state_dict: dict[str, Any]):
         """
         Load a state dict.
         """
@@ -72,7 +72,6 @@ class Callback(Stateful):
         """
         Called right after the callback is attached to the :class:`~olmo_core.train.Trainer`.
         """
-        pass
 
     def post_checkpoint_loaded(self, path: PathOrStr):
         """
@@ -86,21 +85,18 @@ class Callback(Stateful):
         """
         Runs before the training loop starts.
         """
-        pass
 
     def pre_epoch(self):
         """
         Runs before the start of a new epoch.
         """
-        pass
 
     def pre_load_batch(self):
         """
         Runs right before the next batch is fetched from the data loader.
         """
-        pass
 
-    def pre_step(self, batch: Dict[str, Any]):
+    def pre_step(self, batch: dict[str, Any]):
         """
         Runs right before a training batch is processed.
         """
@@ -110,19 +106,16 @@ class Callback(Stateful):
         """
         Runs right after the forward-backward passes, right before the optimizer step.
         """
-        pass
 
     def post_train_batch(self):
         """
         Runs after a training batch is processed.
         """
-        pass
 
     def post_step(self):
         """
         Runs after a complete step (potentially including evals and checkpointing).
         """
-        pass
 
     def post_checkpoint_saved(self, path: PathOrStr):
         """
@@ -132,7 +125,7 @@ class Callback(Stateful):
         """
         del path
 
-    def pre_log_metrics(self, step: int, metrics: Dict[str, float]):
+    def pre_log_metrics(self, step: int, metrics: dict[str, float]):
         """
         Called when metrics have been gathered for a given step (possibly a previous step),
         but right before :meth:`log_metrics()`. This can used to modify, add, or remove metrics
@@ -140,7 +133,7 @@ class Callback(Stateful):
         """
         del step, metrics
 
-    def log_metrics(self, step: int, metrics: Dict[str, float]):
+    def log_metrics(self, step: int, metrics: dict[str, float]):
         """
         Called when metrics have been gathered for a given step (possibly a previous step).
         """
@@ -150,13 +143,11 @@ class Callback(Stateful):
         """
         Runs at the end of a complete epoch.
         """
-        pass
 
     def post_train(self):
         """
         Runs after the training loop successfully completes.
         """
-        pass
 
     def on_error(self, exc: BaseException):
         """
@@ -168,7 +159,6 @@ class Callback(Stateful):
         """
         Always called right before `Trainer.fit()` exits, even on an error.
         """
-        pass
 
 
 @dataclass
@@ -178,7 +168,7 @@ class CallbackConfig(Callback, Config):
     """
 
     @abstractmethod
-    def build(self, trainer: "Trainer") -> Optional[Callback]:
+    def build(self, trainer: "Trainer") -> Callback | None:
         """
         Build the actual :class:`Callback`.
         """

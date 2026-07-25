@@ -1,7 +1,7 @@
 from abc import ABCMeta, abstractmethod
 from dataclasses import dataclass
 
-import torch.nn as nn
+from torch import nn
 
 from ..config import Config
 

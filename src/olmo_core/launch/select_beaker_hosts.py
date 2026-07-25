@@ -4,7 +4,6 @@ import logging
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, Tuple
 
 import google.auth
 from beaker import Beaker, BeakerJob, BeakerJobPriority, BeakerNode
@@ -38,7 +37,7 @@ class HostMetadata:
 
 
 def get_hosts_metadata_from_gcp(
-    zone: str, *, credentials_path: Optional[Path] = None
+    zone: str, *, credentials_path: Path | None = None
 ) -> dict[str, HostMetadata]:
     if credentials_path:
         credentials, project_id = google.auth.load_credentials_from_file(str(credentials_path))
@@ -66,7 +65,7 @@ def get_hosts_metadata_from_gcp(
 
 def node_is_occupied(
     beaker: Beaker, node: BeakerNode, beaker_priority: BeakerJobPriority
-) -> Tuple[BeakerNode, bool]:
+) -> tuple[BeakerNode, bool]:
     jobs = beaker.job.list(scheduled_on_node=node)
     for job in jobs:
         if (
@@ -134,7 +133,7 @@ def get_hostname_constraints(
     num_execution_units: int,
     num_hosts_per_task: int,
     num_tasks: int,
-    occupied_hosts: Optional[set[str]] = None,
+    occupied_hosts: set[str] | None = None,
 ) -> list[list[str]]:
     if num_hosts_per_task % num_execution_units != 0:
         raise ValueError(
@@ -218,8 +217,8 @@ def get_beaker_hostname_constraints(
     *,
     beaker_cluster: str,
     beaker_priority: BeakerJobPriority,
-    gcp_credentials_path: Optional[Path] = None,
-    hosts_metadata: Optional[dict[str, HostMetadata]] = None,
+    gcp_credentials_path: Path | None = None,
+    hosts_metadata: dict[str, HostMetadata] | None = None,
 ) -> list[list[str]]:
     if beaker_cluster != "ai2/augusta":
         raise ValueError(

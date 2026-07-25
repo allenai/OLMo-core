@@ -28,7 +28,7 @@ def main() -> None:
     lines.insert(
         insert_index + 1,
         f"## [v{VERSION}](https://github.com/allenai/OLMo-core/releases/tag/v{VERSION}) - "
-        f"{datetime.now().strftime('%Y-%m-%d')}\n",
+        f"{datetime.now().strftime('%Y-%m-%d')}\n",  # noqa: DTZ005
     )
 
     with changelog.open("w") as f:

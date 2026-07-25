@@ -8,29 +8,18 @@ import os
 import random
 import tempfile
 from abc import ABC, abstractmethod
+from collections.abc import Callable, Sequence
 from copy import deepcopy
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
-from typing import (
-    Any,
-    Callable,
-    Dict,
-    List,
-    Literal,
-    Optional,
-    Sequence,
-    Tuple,
-    Type,
-    TypeVar,
-    Union,
-    cast,
-)
+from typing import Any, Literal, TypeVar, cast
 
 import numpy as np
 import torch
 import torch.nn.functional as F
 from torch.utils.data import Dataset
+from typing_extensions import Self
 
 from olmo_core.exceptions import OLMoConfigurationError, OLMoEnvironmentError
 
@@ -67,26 +56,26 @@ from .utils import (
 
 __all__ = [
     "NumpyDatasetBase",
-    "NumpyFSLDatasetBase",
-    "NumpyFSLDataset",
-    "NumpyFSLDatasetMixture",
-    "NumpyPaddedFSLDataset",
-    "NumpyPackedFSLDataset",
-    "NumpyInterleavedFSLDataset",
-    "VSLCurriculum",
-    "VSLNaturalCurriculum",
-    "VSLGrowthCurriculum",
-    "VSLGrowP2Curriculum",
-    "VSLGrowLinearCurriculum",
-    "NumpyVSLDataset",
     "NumpyDatasetConfig",
+    "NumpyFSLDataset",
+    "NumpyFSLDatasetBase",
     "NumpyFSLDatasetConfig",
-    "NumpyPaddedFSLDatasetConfig",
-    "NumpyPackedFSLDatasetConfig",
+    "NumpyFSLDatasetMixture",
+    "NumpyInterleavedFSLDataset",
     "NumpyInterleavedFSLDatasetConfig",
+    "NumpyPackedFSLDataset",
+    "NumpyPackedFSLDatasetConfig",
+    "NumpyPaddedFSLDataset",
+    "NumpyPaddedFSLDatasetConfig",
+    "NumpyVSLDataset",
     "NumpyVSLDatasetConfig",
-    "VSLCurriculumType",
+    "VSLCurriculum",
     "VSLCurriculumConfig",
+    "VSLCurriculumType",
+    "VSLGrowLinearCurriculum",
+    "VSLGrowP2Curriculum",
+    "VSLGrowthCurriculum",
+    "VSLNaturalCurriculum",
 ]
 
 
@@ -129,7 +118,7 @@ class NumpyDatasetBase(ABC):
         eos_token_id: int,
         vocab_size: int,
         dtype: NumpyUIntTypes = np.uint16,
-        bos_token_id: Optional[int] = None,
+        bos_token_id: int | None = None,
     ):
         if not paths:
             raise OLMoConfigurationError("At least one path is required")
@@ -141,9 +130,9 @@ class NumpyDatasetBase(ABC):
         self._vocab_size = vocab_size
         self._dtype = dtype
         self._fs_local_rank = get_fs_local_rank()
-        self._work_dir: Optional[Path] = None
+        self._work_dir: Path | None = None
         self._work_dir_set = False
-        self._array_file_sizes: Optional[Tuple[int, ...]] = None
+        self._array_file_sizes: tuple[int, ...] | None = None
 
     @property
     @abstractmethod
@@ -154,14 +143,14 @@ class NumpyDatasetBase(ABC):
         raise NotImplementedError
 
     @property
-    def paths(self) -> Tuple[PathOrStr, ...]:
+    def paths(self) -> tuple[PathOrStr, ...]:
         """
         Paths and/or URLs to the numpy arrays.
         """
         return self._array_paths
 
     @property
-    def file_sizes(self) -> Tuple[int, ...]:
+    def file_sizes(self) -> tuple[int, ...]:
         """
         The size, in bytes, of each numpy array.
         """
@@ -178,7 +167,7 @@ class NumpyDatasetBase(ABC):
         return self._eos_token_id
 
     @property
-    def bos_token_id(self) -> Optional[int]:
+    def bos_token_id(self) -> int | None:
         return self._bos_token_id
 
     @property
@@ -202,7 +191,7 @@ class NumpyDatasetBase(ABC):
         return "v2.0"
 
     @property
-    def fingerprint_fields(self) -> Tuple[str, ...]:
+    def fingerprint_fields(self) -> tuple[str, ...]:
         """
         Extra values to include when calculating the data contents :data:`fingerprint`.
         """
@@ -289,10 +278,10 @@ class NumpyDatasetBase(ABC):
         self,
         func: Callable[[PathOrStr, int], T],
         *,
-        max_workers: Optional[int] = None,
+        max_workers: int | None = None,
         method: Literal["threads", "processes"] = "threads",
-        _paths: Optional[Sequence[PathOrStr]] = None,
-    ) -> List[T]:
+        _paths: Sequence[PathOrStr] | None = None,
+    ) -> list[T]:
         """
         Call a function on each path in the dataset, returning a list of the results, in order.
 
@@ -308,9 +297,8 @@ class NumpyDatasetBase(ABC):
         if max_workers == 0:
             return [func(path, idx) for idx, path in enumerate(paths)]
 
-        executor_class: Union[
-            Type[concurrent.futures.ThreadPoolExecutor],
-            Type[concurrent.futures.ProcessPoolExecutor],
+        executor_class: type[
+            concurrent.futures.ThreadPoolExecutor | concurrent.futures.ProcessPoolExecutor
         ]
         if method == "threads":
             self._warmup_clients()
@@ -333,7 +321,6 @@ class NumpyDatasetBase(ABC):
             Be sure to set :data:`work_dir` properly before calling this and only call this from the
             main process (not a worker process).
         """
-        pass
 
     @abstractmethod
     def __len__(self) -> int:
@@ -343,7 +330,7 @@ class NumpyDatasetBase(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def __getitem__(self, index: int) -> Dict[str, Any]:
+    def __getitem__(self, index: int) -> dict[str, Any]:
         """
         Get an instance from the dataset. At a minimum this will contain the field "input_ids", a
         integer tensor of token IDs.
@@ -363,7 +350,7 @@ class NumpyDatasetBase(ABC):
         return True
 
 
-class NumpyFSLDatasetBase(NumpyDatasetBase, Dataset[Dict[str, Any]]):
+class NumpyFSLDatasetBase(NumpyDatasetBase, Dataset[dict[str, Any]]):
     """
     A base class for fixed sequence length (FSL) numpy array-backed datasets.
     """
@@ -376,12 +363,12 @@ class NumpyFSLDatasetBase(NumpyDatasetBase, Dataset[Dict[str, Any]]):
         eos_token_id: int,
         vocab_size: int,
         dtype: NumpyUIntTypes = np.uint16,
-        metadata: Optional[Union[List[Dict[str, Any]], Dict[str, Any]]] = None,
-        include_instance_metadata: Optional[bool] = None,
+        metadata: list[dict[str, Any]] | dict[str, Any] | None = None,
+        include_instance_metadata: bool | None = None,
         generate_doc_lengths: bool = False,
-        bos_token_id: Optional[int] = None,
-        instance_filter_config: Optional[InstanceFilterConfig] = None,
-        label_mask_paths: Optional[List[PathOrStr]] = None,
+        bos_token_id: int | None = None,
+        instance_filter_config: InstanceFilterConfig | None = None,
+        label_mask_paths: list[PathOrStr] | None = None,
     ):
         if include_instance_metadata is None and metadata:
             include_instance_metadata = True
@@ -413,7 +400,7 @@ class NumpyFSLDatasetBase(NumpyDatasetBase, Dataset[Dict[str, Any]]):
         self._generate_doc_lengths = generate_doc_lengths
         self.instance_filter_config = instance_filter_config
         self._label_mask_paths = label_mask_paths
-        self._label_mask_path_to_source_path: Dict[PathOrStr, PathOrStr] = {}
+        self._label_mask_path_to_source_path: dict[PathOrStr, PathOrStr] = {}
         if self._label_mask_paths:
             for label_mask_path, source_path in zip(self._label_mask_paths, self._array_paths):
                 self._label_mask_path_to_source_path[label_mask_path] = source_path
@@ -427,11 +414,11 @@ class NumpyFSLDatasetBase(NumpyDatasetBase, Dataset[Dict[str, Any]]):
         return self.sequence_length
 
     @property
-    def max_target_sequence_length(self) -> Optional[int]:
+    def max_target_sequence_length(self) -> int | None:
         return None
 
     def _get_indices_path(
-        self, name: str, *source_paths: PathOrStr, extra_ids: Optional[Sequence[str]] = None
+        self, name: str, *source_paths: PathOrStr, extra_ids: Sequence[str] | None = None
     ) -> Path:
         sha256_hash = hashlib.sha256()
         for source_path in source_paths:
@@ -493,13 +480,13 @@ class NumpyFSLDataset(NumpyFSLDatasetBase):
         eos_token_id: int,
         vocab_size: int,
         dtype: NumpyUIntTypes = np.uint16,
-        metadata: Optional[Union[List[Dict[str, Any]], Dict[str, Any]]] = None,
-        include_instance_metadata: Optional[bool] = None,
+        metadata: list[dict[str, Any]] | dict[str, Any] | None = None,
+        include_instance_metadata: bool | None = None,
         generate_doc_lengths: bool = False,
-        bos_token_id: Optional[int] = None,
-        max_target_sequence_length: Optional[int] = None,
-        instance_filter_config: Optional[InstanceFilterConfig] = None,
-        label_mask_paths: Optional[List[PathOrStr]] = None,
+        bos_token_id: int | None = None,
+        max_target_sequence_length: int | None = None,
+        instance_filter_config: InstanceFilterConfig | None = None,
+        label_mask_paths: list[PathOrStr] | None = None,
     ):
         super().__init__(
             *paths,
@@ -525,11 +512,11 @@ class NumpyFSLDataset(NumpyFSLDatasetBase):
             )
 
         self._max_target_sequence_length = max_target_sequence_length
-        self._array_offsets: Optional[Tuple[Tuple[int, int], ...]] = None
-        self._num_instances: Optional[int] = None
+        self._array_offsets: tuple[tuple[int, int], ...] | None = None
+        self._num_instances: int | None = None
 
     @property
-    def fingerprint_fields(self) -> Tuple[str, ...]:
+    def fingerprint_fields(self) -> tuple[str, ...]:
         return (
             "vocab_size",
             "pad_token_id",
@@ -552,25 +539,25 @@ class NumpyFSLDataset(NumpyFSLDatasetBase):
         return self.sequence_length
 
     @property
-    def max_target_sequence_length(self) -> Optional[int]:
+    def max_target_sequence_length(self) -> int | None:
         return self._max_target_sequence_length
 
     @property
-    def file_sizes(self) -> Tuple[int, ...]:
+    def file_sizes(self) -> tuple[int, ...]:
         """
         The size, in bytes, of each numpy array.
         """
         return self._sizes_and_offsets[0]
 
     @property
-    def offsets(self) -> Tuple[Tuple[int, int], ...]:
+    def offsets(self) -> tuple[tuple[int, int], ...]:
         """
         Gives the global start and end instance indices for each data file in the dataset.
         """
         return self._sizes_and_offsets[1]
 
     @property
-    def metadata(self) -> Tuple[Dict[str, Any], ...]:
+    def metadata(self) -> tuple[dict[str, Any], ...]:
         return self._metadata
 
     def prepare(self):
@@ -581,14 +568,14 @@ class NumpyFSLDataset(NumpyFSLDatasetBase):
             self._num_instances = self.offsets[-1][1]
         return self._num_instances
 
-    def __getitem__(self, index: int) -> Dict[str, Any]:
+    def __getitem__(self, index: int) -> dict[str, Any]:
         index = int(index)  # in case this is a numpy int type.
         pos_index = index if index >= 0 else len(self) + index
 
         # The index of the array within 'self.paths'.
-        array_index: Optional[int] = None
+        array_index: int | None = None
         # The index within the corresponding array.
-        array_local_index: Optional[int] = None
+        array_local_index: int | None = None
         for i, (offset_start, offset_end) in enumerate(self.offsets):
             if offset_start <= pos_index < offset_end:
                 array_index = i
@@ -600,7 +587,7 @@ class NumpyFSLDataset(NumpyFSLDatasetBase):
 
         # Read the data from file.
         input_ids = self._read_chunk_from_array(self.paths[array_index], array_local_index)
-        out: Dict[str, Any] = {"input_ids": input_ids}
+        out: dict[str, Any] = {"input_ids": input_ids}
 
         if self._label_mask_paths is not None:
             label_mask = self._read_chunk_from_array(
@@ -623,11 +610,11 @@ class NumpyFSLDataset(NumpyFSLDatasetBase):
         return out
 
     @property
-    def _sizes_and_offsets(self) -> Tuple[Tuple[int, ...], Tuple[Tuple[int, int], ...]]:
+    def _sizes_and_offsets(self) -> tuple[tuple[int, ...], tuple[tuple[int, int], ...]]:
         if self._array_offsets is None or self._array_file_sizes is None:
-            array_sizes: List[int] = []
-            array_offsets: List[Tuple[int, int]] = []
-            array_file_sizes: List[int] = []
+            array_sizes: list[int] = []
+            array_offsets: list[tuple[int, int]] = []
+            array_file_sizes: list[int] = []
             item_size = self.dtype(0).itemsize
 
             start_offset = 0
@@ -667,7 +654,7 @@ class NumpyFSLDataset(NumpyFSLDatasetBase):
             dtype or self.dtype,
         )
 
-    def _get_file_size_and_length(self, path: PathOrStr, idx: int, dtype=None) -> Tuple[int, int]:
+    def _get_file_size_and_length(self, path: PathOrStr, idx: int, dtype=None) -> tuple[int, int]:
         del idx
         dtype = dtype or self.dtype
         item_size = dtype(0).itemsize
@@ -697,19 +684,19 @@ class NumpyFSLDatasetMixture(NumpyFSLDataset):
     def __init__(
         self,
         *paths: PathOrStr,
-        path_offset_index: Dict[Tuple[str, int], int],
+        path_offset_index: dict[tuple[str, int], int],
         seed: int,
         sequence_length: int,
         pad_token_id: int,
         eos_token_id: int,
         vocab_size: int,
         dtype: NumpyUIntTypes = np.uint16,
-        metadata: Optional[Union[List[Dict[str, Any]], Dict[str, Any]]] = None,
-        include_instance_metadata: Optional[bool] = None,
+        metadata: list[dict[str, Any]] | dict[str, Any] | None = None,
+        include_instance_metadata: bool | None = None,
         generate_doc_lengths: bool = False,
-        bos_token_id: Optional[int] = None,
-        max_target_sequence_length: Optional[int] = None,
-        instance_filter_config: Optional[InstanceFilterConfig] = None,
+        bos_token_id: int | None = None,
+        max_target_sequence_length: int | None = None,
+        instance_filter_config: InstanceFilterConfig | None = None,
     ):
         if max_target_sequence_length is not None and (
             max_target_sequence_length < sequence_length
@@ -733,10 +720,10 @@ class NumpyFSLDatasetMixture(NumpyFSLDataset):
             max_target_sequence_length=max_target_sequence_length,
             instance_filter_config=instance_filter_config,
         )
-        self._num_instances: Optional[int] = None
-        self._array_offsets: Optional[Tuple[Tuple[int, int], ...]] = None
-        self._lengths_dtype: Optional[NumpyUIntTypes] = None
-        self._instances_per_bucket: Optional[Tuple[Tuple[int, int], ...]] = None
+        self._num_instances: int | None = None
+        self._array_offsets: tuple[tuple[int, int], ...] | None = None
+        self._lengths_dtype: NumpyUIntTypes | None = None
+        self._instances_per_bucket: tuple[tuple[int, int], ...] | None = None
         self._path_offset_index = path_offset_index
         self._seed = seed
 
@@ -759,7 +746,7 @@ class NumpyFSLDatasetMixture(NumpyFSLDataset):
         )
 
     def _write_document_indices(self):
-        paths_needed: List[Tuple[PathOrStr, int]] = []
+        paths_needed: list[tuple[PathOrStr, int]] = []
         for idx, path in enumerate(self.paths):
             indices_path = self._get_instance_indices_path(path)
             if indices_path.is_file():
@@ -813,7 +800,7 @@ class NumpyFSLDatasetMixture(NumpyFSLDataset):
     #     data = load_array_slice_into_tensor(path, int(start_idx), int(end_idx), self.dtype)
     #     return data
 
-    def _get_file_size_and_length(self, path: PathOrStr, idx: int, dtype=None) -> Tuple[int, int]:
+    def _get_file_size_and_length(self, path: PathOrStr, idx: int, dtype=None) -> tuple[int, int]:
         dtype = dtype or self.dtype
         item_size = dtype(0).itemsize
         file_size = self._get_size_from_offset_index((path, idx))
@@ -832,7 +819,7 @@ class NumpyFSLDatasetMixture(NumpyFSLDataset):
         else:
             raise RuntimeError("invalid 'max_target_sequence_length' or 'sequence_length'")
 
-    def _get_size_from_offset_index(self, path_index: Tuple[PathOrStr, int]) -> int:
+    def _get_size_from_offset_index(self, path_index: tuple[PathOrStr, int]) -> int:
         try:
             path, idx = path_index
             # Get size in bytes from tokens in the supplied index * itemsize
@@ -855,11 +842,11 @@ class NumpyPaddedFSLDataset(NumpyFSLDataset):
         eos_token_id: int,
         vocab_size: int,
         dtype: NumpyUIntTypes = np.uint16,
-        bos_token_id: Optional[int] = None,
-        metadata: Optional[Union[List[Dict[str, Any]], Dict[str, Any]]] = None,
-        include_instance_metadata: Optional[bool] = None,
-        instance_filter_config: Optional[InstanceFilterConfig] = None,
-        label_mask_paths: Optional[List[PathOrStr]] = None,
+        bos_token_id: int | None = None,
+        metadata: list[dict[str, Any]] | dict[str, Any] | None = None,
+        include_instance_metadata: bool | None = None,
+        instance_filter_config: InstanceFilterConfig | None = None,
+        label_mask_paths: list[PathOrStr] | None = None,
     ):
         super().__init__(
             *paths,
@@ -874,10 +861,10 @@ class NumpyPaddedFSLDataset(NumpyFSLDataset):
             instance_filter_config=instance_filter_config,
             label_mask_paths=label_mask_paths,
         )
-        self._array_instance_offsets: Optional[Tuple[Tuple[int, int], ...]] = None
+        self._array_instance_offsets: tuple[tuple[int, int], ...] | None = None
 
     @property
-    def fingerprint_fields(self) -> Tuple[str, ...]:
+    def fingerprint_fields(self) -> tuple[str, ...]:
         return (
             "vocab_size",
             "pad_token_id",
@@ -889,7 +876,7 @@ class NumpyPaddedFSLDataset(NumpyFSLDataset):
         )
 
     @property
-    def offsets(self) -> Tuple[Tuple[int, int], ...]:
+    def offsets(self) -> tuple[tuple[int, int], ...]:
         if self._array_instance_offsets is None:
             item_size = self.indices_dtype(0).itemsize
             num_instances_per_path = self.map(
@@ -917,7 +904,7 @@ class NumpyPaddedFSLDataset(NumpyFSLDataset):
         barrier()
         len(self)
 
-    def __getitem__(self, index: int) -> Dict[str, Any]:
+    def __getitem__(self, index: int) -> dict[str, Any]:
         item = super().__getitem__(index)
         pad_shape = (0, self.sequence_length - len(item["input_ids"]))
         if "label_mask" in item:
@@ -942,7 +929,7 @@ class NumpyPaddedFSLDataset(NumpyFSLDataset):
         return self._get_indices_path("instance-indices", source_path)
 
     def _write_instance_indices(self):
-        paths_needed: List[PathOrStr] = []
+        paths_needed: list[PathOrStr] = []
         for path in self.paths:
             indices_path = self._get_instance_indices_path(path)
             if indices_path.is_file():
@@ -1006,12 +993,12 @@ class NumpyPackedFSLDataset(NumpyFSLDatasetBase):
         eos_token_id: int,
         vocab_size: int,
         dtype: NumpyUIntTypes = np.uint16,
-        metadata: Optional[Union[List[Dict[str, Any]], Dict[str, Any]]] = None,
-        include_instance_metadata: Optional[bool] = None,
+        metadata: list[dict[str, Any]] | dict[str, Any] | None = None,
+        include_instance_metadata: bool | None = None,
         generate_doc_lengths: bool = False,
-        bos_token_id: Optional[int] = None,
-        instance_filter_config: Optional[InstanceFilterConfig] = None,
-        label_mask_paths: Optional[List[PathOrStr]] = None,
+        bos_token_id: int | None = None,
+        instance_filter_config: InstanceFilterConfig | None = None,
+        label_mask_paths: list[PathOrStr] | None = None,
         long_doc_strategy: LongDocStrategy = LongDocStrategy.truncate,
         source_group_size: int = 1,
     ):
@@ -1036,7 +1023,7 @@ class NumpyPackedFSLDataset(NumpyFSLDatasetBase):
         self._source_group_size = source_group_size
 
         self._source_path_groups = list(chunked(self.paths, self.source_group_size))
-        self._label_mask_path_groups: Optional[List[List[PathOrStr]]] = None
+        self._label_mask_path_groups: list[list[PathOrStr]] | None = None
         self._metadata_groups = list(chunked(self._metadata, self.source_group_size))
 
         if self._label_mask_paths:
@@ -1044,14 +1031,14 @@ class NumpyPackedFSLDataset(NumpyFSLDatasetBase):
                 chunked(self._label_mask_paths, self.source_group_size)
             )
 
-        self._source_sizes: Optional[List[int]] = None
-        self._source_size_groups: Optional[List[List[int]]] = None
-        self._source_instance_offsets: Optional[Tuple[Tuple[int, int], ...]] = None
-        self._num_instances: Optional[int] = None
+        self._source_sizes: list[int] | None = None
+        self._source_size_groups: list[list[int]] | None = None
+        self._source_instance_offsets: tuple[tuple[int, int], ...] | None = None
+        self._num_instances: int | None = None
 
     @property
-    def fingerprint_fields(self) -> Tuple[str, ...]:
-        fields: Tuple[str, ...] = (
+    def fingerprint_fields(self) -> tuple[str, ...]:
+        fields: tuple[str, ...] = (
             "vocab_size",
             "pad_token_id",
             "eos_token_id",
@@ -1080,7 +1067,7 @@ class NumpyPackedFSLDataset(NumpyFSLDatasetBase):
         return np.uint64
 
     @property
-    def source_instance_offsets(self) -> Tuple[Tuple[int, int], ...]:
+    def source_instance_offsets(self) -> tuple[tuple[int, int], ...]:
         if self._source_instance_offsets is None:
             item_size = self.indices_dtype(0).itemsize
             num_instances_per_group = self.map(
@@ -1099,14 +1086,14 @@ class NumpyPackedFSLDataset(NumpyFSLDatasetBase):
         return self._source_instance_offsets
 
     @property
-    def source_sizes(self) -> List[int]:
+    def source_sizes(self) -> list[int]:
         if self._source_sizes is None:
             item_size = self.dtype(0).itemsize
             self._source_sizes = self.map(lambda path, _: get_file_size(path) // item_size)
         return self._source_sizes
 
     @property
-    def source_size_groups(self) -> List[List[int]]:
+    def source_size_groups(self) -> list[list[int]]:
         if self._source_size_groups is None:
             self._source_size_groups = list(chunked(self.source_sizes, self.source_group_size))
         return self._source_size_groups
@@ -1123,14 +1110,14 @@ class NumpyPackedFSLDataset(NumpyFSLDatasetBase):
             self._num_instances = self.source_instance_offsets[-1][1]
         return self._num_instances
 
-    def __getitem__(self, index: int) -> Dict[str, Any]:
+    def __getitem__(self, index: int) -> dict[str, Any]:
         index = int(index)  # in case this is a numpy int type.
         index = index if index >= 0 else len(self) + index
 
         # The index of the source group.
-        source_group_index: Optional[int] = None
+        source_group_index: int | None = None
         # The instance index within the source group.
-        instance_index: Optional[int] = None
+        instance_index: int | None = None
         for i, (instance_offset_start, instance_offset_end) in enumerate(
             self.source_instance_offsets
         ):
@@ -1175,10 +1162,8 @@ class NumpyPackedFSLDataset(NumpyFSLDatasetBase):
         ).tolist()
 
         # Load token IDs and maybe label masks for each document.
-        document_token_ids: List[torch.Tensor] = []
-        document_label_masks: Optional[List[torch.Tensor]] = (
-            None if label_mask_paths is None else []
-        )
+        document_token_ids: list[torch.Tensor] = []
+        document_label_masks: list[torch.Tensor] | None = None if label_mask_paths is None else []
         for document_id in document_ids:
             document_indices = load_array_slice_into_tensor(
                 document_indices_path, document_id * 2, document_id * 2 + 2, self.indices_dtype
@@ -1187,8 +1172,8 @@ class NumpyPackedFSLDataset(NumpyFSLDatasetBase):
 
             # Pick out the right source file from the source group by comparing the starting
             # index (in tokens) of the document to the starting index of each source within the group.
-            source_path: Optional[PathOrStr] = None
-            label_mask_path: Optional[PathOrStr] = None
+            source_path: PathOrStr | None = None
+            label_mask_path: PathOrStr | None = None
             source_start = 0
             for i, (source_path, source_size) in enumerate(zip(source_paths, source_sizes)):
                 if source_start <= document_start < (source_start + source_size):
@@ -1227,7 +1212,7 @@ class NumpyPackedFSLDataset(NumpyFSLDatasetBase):
         input_ids = F.pad(input_ids, pad_shape, value=self.pad_token_id)
 
         # Prepare final output.
-        out: Dict[str, Any] = {"input_ids": input_ids, "label_mask": label_mask}
+        out: dict[str, Any] = {"input_ids": input_ids, "label_mask": label_mask}
         if self.instance_filter_config is not None:
             out["instance_mask"] = self._validate_instance(input_ids, self.instance_filter_config)
         if self._include_instance_metadata:
@@ -1262,7 +1247,7 @@ class NumpyPackedFSLDataset(NumpyFSLDatasetBase):
 
     def _pack_documents_from_source_into_instances(
         self, *source_paths: PathOrStr
-    ) -> Tuple[int, int]:
+    ) -> tuple[int, int]:
         document_indices_path = self._get_document_indices_path(*source_paths)
         instance_offsets_path = self._get_instance_offsets_path(*source_paths)
         docs_by_instance_path = self._get_docs_by_instance_path(*source_paths)
@@ -1279,8 +1264,8 @@ class NumpyPackedFSLDataset(NumpyFSLDatasetBase):
         document_indices = document_indices.reshape(-1)
 
         instance_start_offset = 0
-        instance_offsets_list: List[int] = []
-        documents_by_instance_list: List[int] = []
+        instance_offsets_list: list[int] = []
+        documents_by_instance_list: list[int] = []
         for instance in instances:
             instance_offsets_list.append(instance_start_offset)
             instance_offsets_list.append(instance_start_offset + len(instance))
@@ -1300,7 +1285,7 @@ class NumpyPackedFSLDataset(NumpyFSLDatasetBase):
 
     def _pack_all_documents_into_instances(self):
         # Collect all sources that need to be packed (no cache hit).
-        sources_needed: List[List[PathOrStr]] = []
+        sources_needed: list[list[PathOrStr]] = []
         for source_paths in chunked(self.paths, self.source_group_size):
             document_indices_path = self._get_document_indices_path(*source_paths)
             instance_offsets_path = self._get_instance_offsets_path(*source_paths)
@@ -1357,12 +1342,12 @@ class NumpyInterleavedFSLDataset(NumpyPaddedFSLDataset):
         docs_per_instance: int,
         chunks_per_doc: int,
         dtype: NumpyUIntTypes = np.uint16,
-        metadata: Optional[Union[List[Dict[str, Any]], Dict[str, Any]]] = None,
-        include_instance_metadata: Optional[bool] = None,
-        instance_filter_config: Optional[InstanceFilterConfig] = None,
-        label_mask_paths: Optional[List[PathOrStr]] = None,
-        bos_token_id: Optional[int] = None,
-        interleaving_exempt_paths: Optional[List[PathOrStr]] = None,
+        metadata: list[dict[str, Any]] | dict[str, Any] | None = None,
+        include_instance_metadata: bool | None = None,
+        instance_filter_config: InstanceFilterConfig | None = None,
+        label_mask_paths: list[PathOrStr] | None = None,
+        bos_token_id: int | None = None,
+        interleaving_exempt_paths: list[PathOrStr] | None = None,
     ):
         if sequence_length % docs_per_instance != 0:
             raise OLMoConfigurationError(
@@ -1388,11 +1373,11 @@ class NumpyInterleavedFSLDataset(NumpyPaddedFSLDataset):
         self._chunks_per_doc = chunks_per_doc
         self._seed = seed
         self._interleaving_exempt_paths = interleaving_exempt_paths
-        self._num_interleaving_exempt_instances: Optional[int] = None
-        self._num_interleavable_instances: Optional[int] = None
+        self._num_interleaving_exempt_instances: int | None = None
+        self._num_interleavable_instances: int | None = None
 
     @property
-    def fingerprint_fields(self) -> Tuple[str, ...]:
+    def fingerprint_fields(self) -> tuple[str, ...]:
         return (
             "vocab_size",
             "pad_token_id",
@@ -1482,10 +1467,10 @@ class NumpyInterleavedFSLDataset(NumpyPaddedFSLDataset):
 
     def _remove_special_tokens_and_interleave(
         self,
-        tensors: List[torch.Tensor],
-        tensors_non_special_indices: List[Tuple[torch.Tensor, ...]],
+        tensors: list[torch.Tensor],
+        tensors_non_special_indices: list[tuple[torch.Tensor, ...]],
     ) -> torch.Tensor:
-        cleaned_tensors: List[torch.Tensor] = [
+        cleaned_tensors: list[torch.Tensor] = [
             tensor[non_special_indices]
             for tensor, non_special_indices in zip(tensors, tensors_non_special_indices)
         ]
@@ -1501,7 +1486,7 @@ class NumpyInterleavedFSLDataset(NumpyPaddedFSLDataset):
             ]
         )
 
-    def __getitem__(self, index: int) -> Dict[str, Any]:
+    def __getitem__(self, index: int) -> dict[str, Any]:
         index = int(index)  # in case this is a numpy int type.
         pos_index = index if index >= 0 else len(self) + index
 
@@ -1529,7 +1514,7 @@ class NumpyInterleavedFSLDataset(NumpyPaddedFSLDataset):
             self.indices_dtype,
         ).tolist()
 
-        docs: List[Dict[str, Any]] = []
+        docs: list[dict[str, Any]] = []
         for doc_index in interleaving_indices:
             doc = super().__getitem__(doc_index)
 
@@ -1545,7 +1530,7 @@ class NumpyInterleavedFSLDataset(NumpyPaddedFSLDataset):
                     f"Trying to interleave documents when dataset docs have different keys: {docs[0].keys()}, {doc.keys()}."
                 )
 
-        item: Dict[str, Any] = {}
+        item: dict[str, Any] = {}
 
         docs_non_special_token_indices = []
         for doc in docs:
@@ -1585,7 +1570,7 @@ class NumpyInterleavedFSLDataset(NumpyPaddedFSLDataset):
         item["label_mask"] = F.pad(item["label_mask"], pad_shape, value=False)
 
         if "instance_mask" in docs[0]:
-            item["instance_mask"] = all([doc["instance_mask"] for doc in docs])
+            item["instance_mask"] = all(doc["instance_mask"] for doc in docs)
 
         if "metadata" in docs[0]:
             metadata = docs[0]["metadata"]
@@ -1626,23 +1611,23 @@ class VSLCurriculum:
     @abstractmethod
     def batches_per_bucket(
         self, dataset: NumpyVSLDataset, global_batch_size: int
-    ) -> List[Tuple[int, int]]:
+    ) -> list[tuple[int, int]]:
         raise NotImplementedError
 
     @abstractmethod
     def get_batch_indices(
-        self, batches_per_bucket: Sequence[Tuple[int, int]], seed: int
+        self, batches_per_bucket: Sequence[tuple[int, int]], seed: int
     ) -> np.ndarray:
         raise NotImplementedError
 
-    def get_total_batches(self, batches_per_bucket: Sequence[Tuple[int, int]]) -> int:
+    def get_total_batches(self, batches_per_bucket: Sequence[tuple[int, int]]) -> int:
         return sum([batches for _, batches in batches_per_bucket])
 
     def log_buckets(
         self,
         dataset: NumpyVSLDataset,
         global_batch_size: int,
-        batches_per_bucket: Sequence[Tuple[int, int]],
+        batches_per_bucket: Sequence[tuple[int, int]],
     ):
         natural_batches_per_bucket = VSLNaturalCurriculum().batches_per_bucket(
             dataset, global_batch_size
@@ -1678,7 +1663,7 @@ class VSLNaturalCurriculum(VSLCurriculum):
 
     def batches_per_bucket(
         self, dataset: NumpyVSLDataset, global_batch_size: int
-    ) -> List[Tuple[int, int]]:
+    ) -> list[tuple[int, int]]:
         batches_per_bucket = []
         for seq_len, num_instances in dataset.instances_per_bucket:
             instances_per_batch = global_batch_size // seq_len
@@ -1687,7 +1672,7 @@ class VSLNaturalCurriculum(VSLCurriculum):
         return batches_per_bucket
 
     def get_batch_indices(
-        self, batches_per_bucket: Sequence[Tuple[int, int]], seed: int
+        self, batches_per_bucket: Sequence[tuple[int, int]], seed: int
     ) -> np.ndarray:
         total_batches = self.get_total_batches(batches_per_bucket)
         batch_indices = np.arange(total_batches, dtype=np.uint32)
@@ -1725,7 +1710,7 @@ class VSLGrowthCurriculum(VSLCurriculum):
 
     def batches_per_bucket(
         self, dataset: NumpyVSLDataset, global_batch_size: int
-    ) -> List[Tuple[int, int]]:
+    ) -> list[tuple[int, int]]:
         actual_batches_per_bucket = VSLNaturalCurriculum().batches_per_bucket(
             dataset, global_batch_size
         )
@@ -1740,11 +1725,11 @@ class VSLGrowthCurriculum(VSLCurriculum):
             ]
 
     def get_cycle_distribution(
-        self, indices: np.ndarray, batches_per_bucket: Sequence[Tuple[int, int]], cycle: int = 0
-    ) -> List[List[int]]:
+        self, indices: np.ndarray, batches_per_bucket: Sequence[tuple[int, int]], cycle: int = 0
+    ) -> list[list[int]]:
         cycle_length = indices.shape[0] // self.num_cycles
         cycle_indices = indices[cycle * cycle_length : (cycle * cycle_length) + cycle_length]
-        distribution: List[List[int]] = []
+        distribution: list[list[int]] = []
         for subcycle in np.array_split(cycle_indices, len(batches_per_bucket)):
             distribution.append([])
             bucket_offset_start = 0
@@ -1757,7 +1742,7 @@ class VSLGrowthCurriculum(VSLCurriculum):
         return distribution
 
     def get_batch_indices(
-        self, batches_per_bucket: Sequence[Tuple[int, int]], seed: int
+        self, batches_per_bucket: Sequence[tuple[int, int]], seed: int
     ) -> np.ndarray:
         # Shortest sequence length first.
         assert batches_per_bucket[0][0] < batches_per_bucket[-1][0]
@@ -1767,13 +1752,13 @@ class VSLGrowthCurriculum(VSLCurriculum):
 
         log.info(f"Constructing {self.__class__.__name__} curriculum with {num_buckets} buckets")
 
-        cycles: List[np.ndarray] = []
+        cycles: list[np.ndarray] = []
         for cycle in range(self.num_cycles):
             # Now we need to chunk the batch indices *within* each bucket in this cycle into the batch
             # indices for each sub-cycle.
             # At the same time we'll translate those *within* bucket indices into global batch indices
             # by adding the right offset for each bucket.
-            all_bucket_subcycle_batches: List[List[np.ndarray]] = []
+            all_bucket_subcycle_batches: list[list[np.ndarray]] = []
             for bucket in range(num_buckets):
                 # This is how many batches we'll pull from this bucket for each cycle.
                 batch_counts_per_cycle_this_bucket = divide_into_buckets(
@@ -1795,9 +1780,9 @@ class VSLGrowthCurriculum(VSLCurriculum):
 
             # Now we'll build each full syb-cycle by concatenating all of the bucket sub-cycle batches
             # together and shuffling.
-            all_subsycles: List[np.ndarray] = []
+            all_subsycles: list[np.ndarray] = []
             for subcycle in range(num_buckets):
-                subsycle_batches: List[np.ndarray] = []
+                subsycle_batches: list[np.ndarray] = []
                 for bucket in range(num_buckets):
                     subsycle_batches.append(all_bucket_subcycle_batches[bucket][subcycle])
                 res = np.concatenate(subsycle_batches)
@@ -1825,13 +1810,13 @@ class VSLGrowthCurriculum(VSLCurriculum):
 
     @classmethod
     @abstractmethod
-    def _get_bucket_odds_for_cycle(cls, bucket_idx: int, num_buckets: int) -> List[int]:
+    def _get_bucket_odds_for_cycle(cls, bucket_idx: int, num_buckets: int) -> list[int]:
         raise NotImplementedError
 
     @classmethod
     def _get_num_bucket_batches_for_cycle(
         cls, bucket_idx: int, num_buckets: int, num_batches: int
-    ) -> List[int]:
+    ) -> list[int]:
         odds = cls._get_bucket_odds_for_cycle(bucket_idx, num_buckets)
         divisor = sum(odds)
         props = [o / divisor for o in odds]
@@ -1855,7 +1840,7 @@ class VSLGrowP2Curriculum(VSLGrowthCurriculum):
     """
 
     @classmethod
-    def _get_bucket_odds_for_cycle(cls, bucket_idx: int, num_buckets: int) -> List[int]:
+    def _get_bucket_odds_for_cycle(cls, bucket_idx: int, num_buckets: int) -> list[int]:
         all_odds = []
         start_odds = num_buckets - bucket_idx
         for cycle in range(num_buckets):
@@ -1881,7 +1866,7 @@ class VSLGrowLinearCurriculum(VSLGrowthCurriculum):
     """
 
     @classmethod
-    def _get_bucket_odds_for_cycle(cls, bucket_idx: int, num_buckets: int) -> List[int]:
+    def _get_bucket_odds_for_cycle(cls, bucket_idx: int, num_buckets: int) -> list[int]:
         all_odds = []
         start_odds = num_buckets - bucket_idx
         for cycle in range(num_buckets):
@@ -1898,7 +1883,7 @@ class VSLGrowLinearCurriculum(VSLGrowthCurriculum):
         return f"vsl-grow-linear-{self.num_cycles}-cycle{'-balanced' if self.balanced else ''}"
 
 
-class NumpyVSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
+class NumpyVSLDataset(NumpyDatasetBase, Dataset[dict[str, Any]]):
     """
     A variable sequence length (VSL) numpy array-backed dataset. This is used to inject a sequence
     length-based curriculum during training as introduced in
@@ -1935,16 +1920,16 @@ class NumpyVSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
         vocab_size: int,
         max_sequence_length: int,
         min_sequence_length: int = 256,
-        curriculum: Optional[VSLCurriculum] = None,
+        curriculum: VSLCurriculum | None = None,
         dtype: NumpyUIntTypes = np.uint16,
-        metadata: Optional[Union[List[Dict[str, Any]], Dict[str, Any]]] = None,
-        include_instance_metadata: Optional[bool] = None,
-        instance_filter_config: Optional[InstanceFilterConfig] = None,
+        metadata: list[dict[str, Any]] | dict[str, Any] | None = None,
+        include_instance_metadata: bool | None = None,
+        instance_filter_config: InstanceFilterConfig | None = None,
     ):
-        if math.log(max_sequence_length, 2) % 1 != 0:
+        if math.log2(max_sequence_length) % 1 != 0:
             raise OLMoConfigurationError("'max_sequence_length' must be a power of 2")
 
-        if math.log(min_sequence_length, 2) % 1 != 0:
+        if math.log2(min_sequence_length) % 1 != 0:
             raise OLMoConfigurationError("'min_sequence_length' must be a power of 2")
 
         if max_sequence_length <= min_sequence_length:
@@ -1975,14 +1960,14 @@ class NumpyVSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
         self._max_sequence_length = max_sequence_length
         self._min_sequence_length = min_sequence_length
         self._curriculum = curriculum or VSLNaturalCurriculum()
-        self._num_instances: Optional[int] = None
-        self._array_offsets: Optional[Tuple[Tuple[int, int], ...]] = None
-        self._lengths_dtype: Optional[NumpyUIntTypes] = None
-        self._instances_per_bucket: Optional[Tuple[Tuple[int, int], ...]] = None
+        self._num_instances: int | None = None
+        self._array_offsets: tuple[tuple[int, int], ...] | None = None
+        self._lengths_dtype: NumpyUIntTypes | None = None
+        self._instances_per_bucket: tuple[tuple[int, int], ...] | None = None
         self.instance_filter_config = instance_filter_config
 
     @property
-    def fingerprint_fields(self) -> Tuple[str, ...]:
+    def fingerprint_fields(self) -> tuple[str, ...]:
         """
         Extra values to include when calculating the data contents :data:`fingerprint`.
         """
@@ -2009,13 +1994,13 @@ class NumpyVSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
         return self._curriculum
 
     @property
-    def all_sequence_lengths(self) -> List[int]:
-        min_exp = int(math.log(self.min_sequence_length, 2))
-        max_exp = int(math.log(self.max_sequence_length, 2))
+    def all_sequence_lengths(self) -> list[int]:
+        min_exp = int(math.log2(self.min_sequence_length))
+        max_exp = int(math.log2(self.max_sequence_length))
         return [2**exp for exp in range(min_exp, max_exp + 1)]
 
     @property
-    def offsets(self) -> Tuple[Tuple[int, int], ...]:
+    def offsets(self) -> tuple[tuple[int, int], ...]:
         """
         Gives the global start and end instance indices for each data file in the dataset.
         """
@@ -2046,14 +2031,14 @@ class NumpyVSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
             self._num_instances = self.offsets[-1][1]
         return self._num_instances
 
-    def __getitem__(self, index: int) -> Dict[str, Any]:
+    def __getitem__(self, index: int) -> dict[str, Any]:
         index = int(index)  # in case this is a numpy int type.
         pos_index = index if index >= 0 else len(self) + index
 
         # The index of the array within 'self.paths'.
-        array_index: Optional[int] = None
+        array_index: int | None = None
         # The index within the corresponding array.
-        array_local_index: Optional[int] = None
+        array_local_index: int | None = None
         for i, (offset_start, offset_end) in enumerate(self.offsets):
             if offset_start <= pos_index < offset_end:
                 array_index = i
@@ -2065,7 +2050,7 @@ class NumpyVSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
 
         # Read the data from file.
         input_ids = self._read_chunk_from_array(self.paths[array_index], array_local_index)
-        out: Dict[str, Any] = {"input_ids": input_ids}
+        out: dict[str, Any] = {"input_ids": input_ids}
 
         if self.instance_filter_config is not None:
             out["instance_mask"] = self._validate_instance(input_ids, self.instance_filter_config)
@@ -2101,7 +2086,7 @@ class NumpyVSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
         return self.work_dir / f"dataset-{self.fingerprint}" / f"bucket{seq_len}-indices.npy"
 
     def _write_document_indices(self):
-        paths_needed: List[PathOrStr] = []
+        paths_needed: list[PathOrStr] = []
         for path in self.paths:
             indices_path = self._get_document_indices_path(path)
             if indices_path.is_file():
@@ -2189,7 +2174,7 @@ class NumpyVSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
             self._get_instance_bucket_path(seq_len), dtype=self.indices_dtype, mode="r"
         )
 
-    def get_instance_buckets(self) -> List[Tuple[int, np.ndarray]]:
+    def get_instance_buckets(self) -> list[tuple[int, np.ndarray]]:
         """
         Get the buckets of instance indices that all have the same length.
         The buckets will be sorted from smallest sequence length to longest.
@@ -2200,7 +2185,7 @@ class NumpyVSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
         return buckets
 
     @property
-    def instances_per_bucket(self) -> Tuple[Tuple[int, int], ...]:
+    def instances_per_bucket(self) -> tuple[tuple[int, int], ...]:
         """
         The number of instances in each bucket.
         """
@@ -2258,8 +2243,8 @@ class VSLCurriculumType(StrEnum):
 @dataclass
 class VSLCurriculumConfig(Config):
     name: VSLCurriculumType = VSLCurriculumType.natural
-    num_cycles: Optional[int] = None
-    balanced: Optional[bool] = None
+    num_cycles: int | None = None
+    balanced: bool | None = None
 
     def validate(self):
         if self.name == VSLCurriculumType.natural:
@@ -2315,15 +2300,15 @@ class NumpyDatasetConfig(Config, ABC):
     """
     The tokenizer config.
     """
-    paths: Optional[List[str]] = None
+    paths: list[str] | None = None
     """
     The paths/URLs to the numpy token ID arrays.
     """
-    mix: Optional[Union[str, DataMixBase]] = None
+    mix: str | DataMixBase | None = None
     """
     The name of a data mix (e.g. ``"dolma17"``).
     """
-    mix_base_dir: Optional[str] = None
+    mix_base_dir: str | None = None
     """
     The base directory of the data mix.
     """
@@ -2331,11 +2316,11 @@ class NumpyDatasetConfig(Config, ABC):
     """
     If True, treat the :data:`paths` as globs.
     """
-    dtype: Optional[NumpyDatasetDType] = None
+    dtype: NumpyDatasetDType | None = None
     """
     The numpy datatype of the token ID arrays.
     """
-    metadata: Optional[List[Dict[str, Any]]] = None
+    metadata: list[dict[str, Any]] | None = None
     """
     Metadata for the numpy arrays.
     """
@@ -2344,16 +2329,16 @@ class NumpyDatasetConfig(Config, ABC):
     Whether or not to include the :data:`metadata` in the instances returned from
     :meth:`NumpyDatasetBase.__getitem__()`.
     """
-    instance_filter_config: Optional[InstanceFilterConfig] = None
+    instance_filter_config: InstanceFilterConfig | None = None
     """
     The instance filter config (aka the "ngram filter") that will be applied to the dataset. This
     can be used to filter out instances with too many repeated token ngrams.
     """
-    source_permutation_seed: Optional[int] = None
+    source_permutation_seed: int | None = None
     """
     Used to shuffle the source files before handing off to the dataset class.
     """
-    work_dir: Optional[str] = None
+    work_dir: str | None = None
     """
     The dataset working directory. This is used to cache working files like shuffled indices,
     instance buckets, etc.
@@ -2393,8 +2378,8 @@ class NumpyDatasetConfig(Config, ABC):
 
         raise ValueError("vocab size too big!")
 
-    def _expand_globs(self, patterns: Sequence[str]) -> List[str]:
-        expanded: List[str] = []
+    def _expand_globs(self, patterns: Sequence[str]) -> list[str]:
+        expanded: list[str] = []
         for pattern in patterns:
             log.info(f"Expanding '{pattern}'...")
             matches = deterministic_glob_directory(pattern)
@@ -2419,13 +2404,13 @@ class NumpyDatasetConfig(Config, ABC):
         self,
         *,
         allow_mix: bool,
-        label_mask_paths: Optional[Sequence[PathOrStr]] = None,
-    ) -> Tuple[List[str], Optional[List[Dict[str, Any]]], Optional[List[PathOrStr]]]:
+        label_mask_paths: Sequence[PathOrStr] | None = None,
+    ) -> tuple[list[str], list[dict[str, Any]] | None, list[PathOrStr] | None]:
         if self.paths is not None and self.mix is not None:
             raise OLMoConfigurationError("Only one of 'paths' or 'mix' can be set")
 
-        metadata: Optional[List[Dict[str, Any]]] = self.metadata
-        resolved_label_masks: Optional[List[PathOrStr]] = None
+        metadata: list[dict[str, Any]] | None = self.metadata
+        resolved_label_masks: list[PathOrStr] | None = None
 
         if self.paths is not None:
             raw_paths = [str(path) for path in self.paths]
@@ -2480,9 +2465,7 @@ class NumpyDatasetConfig(Config, ABC):
         return dataset
 
     @classmethod
-    def glob(
-        cls: Type[NumpyDatasetConfigT], *glob_paths: str, **kwargs: Any
-    ) -> NumpyDatasetConfigT:
+    def glob(cls, *glob_paths: str, **kwargs: Any) -> Self:
         """
         Initialize a dataset config with glob paths.
 
@@ -2498,12 +2481,12 @@ class NumpyDatasetConfig(Config, ABC):
 
     @classmethod
     def from_data_mix(
-        cls: Type[NumpyDatasetConfigT],
-        mix: Union[str, DataMixBase],
+        cls,
+        mix: str | DataMixBase,
         *,
         tokenizer: TokenizerConfig,
         **kwargs: Any,
-    ) -> NumpyDatasetConfigT:
+    ) -> Self:
         """
         Initialize a dataset config from an official data mix.
 
@@ -2524,7 +2507,7 @@ class NumpyFSLDatasetConfig(NumpyDatasetConfig):
     """
     The length of a single instance. Generally this should correspond to your model's maximum input length.
     """
-    max_target_sequence_length: Optional[int] = None
+    max_target_sequence_length: int | None = None
     """
     Optional upper bound used when precomputing cached offsets.
 
@@ -2539,11 +2522,11 @@ class NumpyFSLDatasetConfig(NumpyDatasetConfig):
     Include individual document lengths in the instances returned from
     :meth:`NumpyDatasetBase.__getitem__()`.
     """
-    label_mask_paths: Optional[List[str]] = None
+    label_mask_paths: list[str] | None = None
     """
     The paths/URLs to numpy bool files indicating which tokens should be masked.
     """
-    source_mixture_config: Optional[SourceMixtureDatasetConfig] = None
+    source_mixture_config: SourceMixtureDatasetConfig | None = None
     """
     A source mixture dataset config. If set, the dataset will be built from a mixture of sources.
     """
@@ -2626,7 +2609,7 @@ class NumpyPaddedFSLDatasetConfig(NumpyDatasetConfig):
     """
     The length of a single instance. Generally this should correspond to your model's maximum input length.
     """
-    label_mask_paths: Optional[List[str]] = None
+    label_mask_paths: list[str] | None = None
     """
     The paths/URLs to numpy bool files indicating which tokens should be masked.
     """
@@ -2667,7 +2650,7 @@ class NumpyPackedFSLDatasetConfig(NumpyDatasetConfig):
     Include individual document lengths in the instances returned from
     :meth:`NumpyDatasetBase.__getitem__()`.
     """
-    label_mask_paths: Optional[List[str]] = None
+    label_mask_paths: list[str] | None = None
     """
     The paths/URLs to numpy bool files indicating which tokens should be masked.
     """
@@ -2730,11 +2713,11 @@ class NumpyInterleavedFSLDatasetConfig(NumpyDatasetConfig):
     """
     The seed to use for the random number generator.
     """
-    label_mask_paths: Optional[List[str]] = None
+    label_mask_paths: list[str] | None = None
     """
     The paths/URLs to numpy bool files indicating which tokens should be masked.
     """
-    interleaving_exempt_paths: Optional[List[str]] = None
+    interleaving_exempt_paths: list[str] | None = None
     """
     The paths/URLs to numpy bool files indicating which tokens should be exempt from interleaving.
     """
@@ -2754,7 +2737,7 @@ class NumpyInterleavedFSLDatasetConfig(NumpyDatasetConfig):
             allow_mix=True, label_mask_paths=self.label_mask_paths
         )
 
-        interleaving_exempt_paths = cast(Optional[List[PathOrStr]], self.interleaving_exempt_paths)
+        interleaving_exempt_paths = cast(list[PathOrStr] | None, self.interleaving_exempt_paths)
 
         dataset = NumpyInterleavedFSLDataset(
             *paths,
@@ -2786,7 +2769,7 @@ class NumpyVSLDatasetConfig(NumpyDatasetConfig):
     """
     The minimum sequence length.
     """
-    vsl_curriculum: Optional[VSLCurriculumConfig] = None
+    vsl_curriculum: VSLCurriculumConfig | None = None
     """
     The VSL curriculum config.
     """

@@ -1,6 +1,6 @@
 import math
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 import torch
 from torch import nn
@@ -135,7 +135,7 @@ class GatedDeltaNet(SequenceMixer):
     def forward(
         self,
         x: torch.Tensor,
-        cu_doc_lens: Optional[torch.Tensor] = None,
+        cu_doc_lens: torch.Tensor | None = None,
         **kwargs,
     ) -> torch.Tensor:
         """
@@ -199,8 +199,8 @@ class GatedDeltaNet(SequenceMixer):
     def apply_tp(
         self,
         tp_mesh: DeviceMesh,
-        input_layout: Optional[Placement] = None,
-        output_layout: Optional[Placement] = None,
+        input_layout: Placement | None = None,
+        output_layout: Placement | None = None,
         use_local_output: bool = True,
         float8_enabled: bool = False,
     ):
@@ -210,8 +210,8 @@ class GatedDeltaNet(SequenceMixer):
     def apply_cp(
         self,
         cp_mesh: DeviceMesh,
-        ring: Optional[RingContextParallelStyle] = None,
-        uly: Optional[UlyssesContextParallelStyle] = None,
+        ring: RingContextParallelStyle | None = None,
+        uly: UlyssesContextParallelStyle | None = None,
     ):
         if ring is not None:
             raise NotImplementedError("Ring context parallelism is not supported for GatedDeltaNet")
@@ -246,7 +246,7 @@ class GatedDeltaNet(SequenceMixer):
         block_idx: int,
         num_blocks: int,
         std: float = 0.02,
-        generator: Optional[torch.Generator] = None,
+        generator: torch.Generator | None = None,
     ) -> None:
         from olmo_core.nn.transformer.init import InitMethod, init_linear
 
@@ -332,7 +332,7 @@ class GatedDeltaNetConfig(SequenceMixerConfig[GatedDeltaNet]):
     """
     The number of attention heads.
     """
-    n_v_heads: Optional[int] = None
+    n_v_heads: int | None = None
     """
     The number of value heads. If ``None``, defaults to ``n_heads``.
     If ``n_v_heads`` > ``n_heads``, GVA (Grouped Value Attention) is applied.
@@ -345,7 +345,7 @@ class GatedDeltaNetConfig(SequenceMixerConfig[GatedDeltaNet]):
     capacity to compress long-range context. Increasing ``n_v_heads`` directly
     increases this fixed state size.
     """
-    head_dim: Optional[int] = None
+    head_dim: int | None = None
     """
     The dimension of each head. If ``None``, defaults to ``d_model // n_heads``.
     """
@@ -425,7 +425,7 @@ class GatedDeltaNetConfig(SequenceMixerConfig[GatedDeltaNet]):
         layer_idx: int,
         n_layers: int,
         init_device: str = "cpu",
-        cache: Optional[BufferCache] = None,
+        cache: BufferCache | None = None,
     ) -> GatedDeltaNet:
         """
         Build the GatedDeltaNet module.

@@ -1,7 +1,7 @@
 import logging
 import os
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from olmo_core.config import StrEnum
 from olmo_core.distributed.utils import get_rank
@@ -62,32 +62,32 @@ class CometCallback(Callback):
     Set to false to disable this callback.
     """
 
-    name: Optional[str] = None
+    name: str | None = None
     """
     The name to give the Comet.ml experiment.
     """
 
-    project: Optional[str] = None
+    project: str | None = None
     """
     The Comet.ml project to use.
     """
 
-    workspace: Optional[str] = None
+    workspace: str | None = None
     """
     The name of the Comet.ml workspace to use.
     """
 
-    tags: Optional[List[str]] = None
+    tags: list[str] | None = None
     """
     Tags to assign the experiment.
     """
 
-    config: Optional[Dict[str, Any]] = None
+    config: dict[str, Any] | None = None
     """
     The config to save to Comet.ml.
     """
 
-    cancel_tags: Optional[List[str]] = field(
+    cancel_tags: list[str] | None = field(
         default_factory=lambda: ["cancel", "canceled", "cancelled"]
     )
     """
@@ -95,7 +95,7 @@ class CometCallback(Callback):
     Defaults to ``["cancel", "canceled", "cancelled"]``.
     """
 
-    cancel_check_interval: Optional[int] = None
+    cancel_check_interval: int | None = None
     """
     Check for cancel tags every this many steps. Defaults to
     :data:`olmo_core.train.Trainer.cancel_check_interval`.
@@ -118,7 +118,7 @@ class CometCallback(Callback):
     """
 
     _exp = None
-    _exp_key: Optional[str] = None
+    _exp_key: str | None = None
     _finalized: bool = False
 
     @property
@@ -133,10 +133,10 @@ class CometCallback(Callback):
     def finalized(self) -> bool:
         return self._finalized
 
-    def state_dict(self) -> Dict[str, Any]:
+    def state_dict(self) -> dict[str, Any]:
         return {"experiment_key": self._exp_key, "name": self.name}
 
-    def load_state_dict(self, state_dict: Dict[str, Any]):
+    def load_state_dict(self, state_dict: dict[str, Any]):
         if self.auto_resume and self.name == state_dict.get("name"):
             self._exp_key = state_dict.get("experiment_key")
 
@@ -193,7 +193,7 @@ class CometCallback(Callback):
                     status="started",
                 )
 
-    def log_metrics(self, step: int, metrics: Dict[str, float]):
+    def log_metrics(self, step: int, metrics: dict[str, float]):
         if self.enabled and get_rank() == 0:
             self.exp.log_metrics(metrics, step=step)
 
@@ -246,8 +246,8 @@ class CometCallback(Callback):
                 exp = api.get_experiment_by_key(self.exp.get_key())
                 assert exp is not None
                 tags = exp.get_tags()
-            except Exception as exc:
-                log.exception(exc)
+            except Exception:
+                log.exception("Failed to check if experiment is canceled")
                 return
 
             for tag in tags or []:

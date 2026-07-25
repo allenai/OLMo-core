@@ -2,7 +2,7 @@ import logging
 import time
 from dataclasses import dataclass, field
 from functools import cache
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set
+from typing import TYPE_CHECKING, Any, ClassVar
 
 import torch
 import torch.distributed as dist
@@ -48,17 +48,17 @@ class EvaluatorCallback(Callback):
     periodically during training.
     """
 
-    evaluators: List[Evaluator] = field(default_factory=list)
+    evaluators: list[Evaluator] = field(default_factory=list)
     """
     The evaluators to run.
     """
 
-    eval_interval: Optional[int] = 1000
+    eval_interval: int | None = 1000
     """
     The interval (in steps) with which to run the evaluators.
     """
 
-    fixed_steps: Optional[List[int]] = None
+    fixed_steps: list[int] | None = None
     """
     A list of fixed steps at which to run the evaluators.
     """
@@ -220,8 +220,8 @@ class EvaluatorCallback(Callback):
 @dataclass
 class LMEvaluatorCallbackConfig(CallbackConfig):
     eval_dataset: NumpyDatasetConfig
-    eval_interval: Optional[int] = 1000
-    fixed_steps: Optional[List[int]] = None
+    eval_interval: int | None = 1000
+    fixed_steps: list[int] | None = None
     eval_on_startup: bool = False
     eval_on_finish: bool = False
     cancel_after_first_eval: bool = False
@@ -230,7 +230,7 @@ class LMEvaluatorCallbackConfig(CallbackConfig):
     deterministic: bool = True
     enabled: bool = True
 
-    def build(self, trainer: "Trainer") -> Optional[Callback]:
+    def build(self, trainer: "Trainer") -> Callback | None:
         if not self.enabled:
             return None
 
@@ -298,14 +298,14 @@ class LMEvaluatorCallbackConfig(CallbackConfig):
 
 
 @cache
-def _all_tasks() -> Set[str]:
+def _all_tasks() -> set[str]:
     from olmo_eval import list_tasks
 
     return set(list_tasks())
 
 
 class DownstreamEvaluator(Evaluator):
-    metric_type_to_label = {
+    metric_type_to_label: ClassVar[dict[str, str]] = {
         "f1_v1": "F1 score",
         "acc_v1": "accuracy",
         "len_norm_v1": "length-normalized accuracy",
@@ -331,8 +331,8 @@ class DownstreamEvaluator(Evaluator):
         task: str,
         batch_spec: EvalBatchSpec,
         tokenizer: "HFTokenizer",
-        device: Optional[torch.device] = None,
-        dp_process_group: Optional[dist.ProcessGroup] = None,
+        device: torch.device | None = None,
+        dp_process_group: dist.ProcessGroup | None = None,
         lazy: bool = False,
     ):
         from olmo_eval import ICLMetric
@@ -345,7 +345,7 @@ class DownstreamEvaluator(Evaluator):
         self.tokenizer = tokenizer
         self.device = device  # set here for _build_data_loader() to use
         self.dp_process_group = dp_process_group
-        self.metric: Optional[ICLMetric] = None
+        self.metric: ICLMetric | None = None
         if lazy:
             log.info(f"Initializing lazy DownstreamEvaluator for task '{self.label}'")
 
@@ -384,7 +384,7 @@ class DownstreamEvaluator(Evaluator):
         self.metric = ICLMetric(metric_type=task_dataset.metric_type).to(
             self.device or get_default_device()
         )
-        sampler: Optional[DistributedSampler] = None
+        sampler: DistributedSampler | None = None
         if is_distributed():
             sampler = DistributedSampler(
                 task_dataset,  # type: ignore
@@ -440,7 +440,7 @@ class DownstreamEvaluator(Evaluator):
         )
 
     def update_metrics(
-        self, batch: Dict[str, Any], ce_loss: Optional[torch.Tensor], logits: Optional[torch.Tensor]
+        self, batch: dict[str, Any], ce_loss: torch.Tensor | None, logits: torch.Tensor | None
     ) -> None:
         del ce_loss
         assert self.metric is not None
@@ -452,7 +452,7 @@ class DownstreamEvaluator(Evaluator):
             )
         self.metric.update(batch, logits)
 
-    def compute_metrics(self) -> Dict[str, torch.Tensor]:
+    def compute_metrics(self) -> dict[str, torch.Tensor]:
         assert self.metric is not None
         metric_type_to_value = self.metric.compute()
         outputs = {}
@@ -468,10 +468,10 @@ class DownstreamEvaluator(Evaluator):
 
 @dataclass
 class DownstreamEvaluatorCallbackConfig(CallbackConfig):
-    tasks: List[str]
+    tasks: list[str]
     tokenizer: TokenizerConfig
-    eval_interval: Optional[int] = 1000
-    fixed_steps: Optional[List[int]] = None
+    eval_interval: int | None = 1000
+    fixed_steps: list[int] | None = None
     eval_duration: Duration = field(default_factory=lambda: Duration.epochs(1))
     eval_on_startup: bool = False
     eval_on_finish: bool = False
@@ -480,7 +480,7 @@ class DownstreamEvaluatorCallbackConfig(CallbackConfig):
     lazy: bool = False
     enabled: bool = True
 
-    def build(self, trainer: "Trainer") -> Optional[Callback]:
+    def build(self, trainer: "Trainer") -> Callback | None:
         if not self.enabled:
             return None
 
@@ -498,7 +498,7 @@ class DownstreamEvaluatorCallbackConfig(CallbackConfig):
             bos_token_id=self.tokenizer.bos_token_id,
         )
 
-        evaluators: List[Evaluator] = []
+        evaluators: list[Evaluator] = []
         for task in sorted(self.tasks):
             evaluators.append(
                 DownstreamEvaluator(

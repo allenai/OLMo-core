@@ -3,7 +3,6 @@ import functools as ft
 import hashlib
 import warnings
 from dataclasses import dataclass
-from typing import List, Optional, Tuple
 
 import numpy as np
 
@@ -20,12 +19,12 @@ from .utils import SEED_NOT_SET, build_global_indices, resolve_seed
 class SamplingInstanceSourceConfig(InstanceSourceConfig):
     """Config for :class:`SamplingInstanceSource`."""
 
-    sources: List[InstanceSourceConfig]
-    max_tokens: Optional[int] = None
-    max_instances: Optional[int] = None
-    factor: Optional[float] = None
-    seed: Optional[int] = dataclasses.field(default_factory=lambda: resolve_seed(SEED_NOT_SET))
-    label: Optional[str] = None
+    sources: list[InstanceSourceConfig]
+    max_tokens: int | None = None
+    max_instances: int | None = None
+    factor: float | None = None
+    seed: int | None = dataclasses.field(default_factory=lambda: resolve_seed(SEED_NOT_SET))
+    label: str | None = None
 
     def __post_init__(self):
         if (
@@ -88,11 +87,11 @@ class SamplingInstanceSource(InstanceSource):
     def __init__(
         self,
         *sources: InstanceSource,
-        max_tokens: Optional[int] = None,
-        max_instances: Optional[int] = None,
+        max_tokens: int | None = None,
+        max_instances: int | None = None,
         work_dir: PathOrStr,
-        seed: Optional[int] = SEED_NOT_SET,
-        label: Optional[str] = None,
+        seed: int | None = SEED_NOT_SET,
+        label: str | None = None,
     ):
         if not sources:
             raise OLMoConfigurationError("At least one source must be provided.")
@@ -133,7 +132,7 @@ class SamplingInstanceSource(InstanceSource):
         # Determine how many instances to sample from each source.
         total_instances = sum(len(source) for source in sources)
         chunk_size = self.max_sequence_length // self.sequence_length
-        source_sample_sizes: List[int] = []
+        source_sample_sizes: list[int] = []
         for source in sources:
             if source.sequence_length != sequence_length:
                 raise OLMoConfigurationError("All sources must have the same sequence length.")
@@ -151,7 +150,7 @@ class SamplingInstanceSource(InstanceSource):
         self._source_sample_sizes = tuple(source_sample_sizes)
 
         # Sample indices from each source.
-        source_sample_paths: List[PathOrStr] = []
+        source_sample_paths: list[PathOrStr] = []
         for i, (source, sample_size) in enumerate(zip(self.sources, source_sample_sizes)):
             source_sample_path = (
                 self.work_dir / f"{self.fingerprint}-{source.fingerprint}-indices.npy"
@@ -176,7 +175,7 @@ class SamplingInstanceSource(InstanceSource):
         dist_utils.barrier()
 
     @property
-    def sources(self) -> Tuple[InstanceSource, ...]:
+    def sources(self) -> tuple[InstanceSource, ...]:
         return self._sources
 
     @property
@@ -184,11 +183,11 @@ class SamplingInstanceSource(InstanceSource):
         return self._max_instances
 
     @property
-    def seed(self) -> Optional[int]:
+    def seed(self) -> int | None:
         return self._seed
 
     @property
-    def source_sample_sizes(self) -> Tuple[int, ...]:
+    def source_sample_sizes(self) -> tuple[int, ...]:
         return self._source_sample_sizes
 
     @ft.cached_property

@@ -1,6 +1,5 @@
 import logging
 from dataclasses import dataclass
-from typing import Optional, Tuple
 
 from olmo_core.config import Config, DType, StrEnum
 from olmo_core.distributed.utils import get_num_nodes
@@ -33,12 +32,12 @@ class DataParallelType(StrEnum):
 @dataclass
 class DataParallelConfig(Config):
     name: DataParallelType
-    param_dtype: Optional[DType] = None
+    param_dtype: DType | None = None
     reduce_dtype: DType = DType.float32
-    num_replicas: Optional[int] = None
-    shard_degree: Optional[int] = None
+    num_replicas: int | None = None
+    shard_degree: int | None = None
 
-    def get_replicate_and_shard_degree(self, dp_world_size: int) -> Tuple[int, int]:
+    def get_replicate_and_shard_degree(self, dp_world_size: int) -> tuple[int, int]:
         """
         Defaults to one replica per node, with the shard degree set to the number of gpus per node.
 

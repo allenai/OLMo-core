@@ -1,10 +1,9 @@
 import copy
 from itertools import product
-from typing import Optional
 
 import pytest
 import torch
-import torch.nn as nn
+from torch import nn
 
 from olmo_core.config import DType
 from olmo_core.distributed.checkpoint import (
@@ -44,7 +43,7 @@ def test_adamw_config_to_optim():
 
 def test_adamw_config_to_optim_with_group_overrides():
     config = AdamWConfig(
-        group_overrides=[OptimGroupOverride(params=["wte.*"], opts=dict(weight_decay=0.0))]
+        group_overrides=[OptimGroupOverride(params=["wte.*"], opts={"weight_decay": 0.0})]
     )
 
     model = MyModel()
@@ -86,7 +85,7 @@ def test_adamw(device: torch.device, tmp_path):
 
 @pytest.mark.parametrize("device", DEVICES)
 @pytest.mark.parametrize("dtype", [None, DType.bfloat16])
-def test_skip_step_adamw(device: torch.device, dtype: Optional[DType]):
+def test_skip_step_adamw(device: torch.device, dtype: DType | None):
     if dtype == DType.bfloat16 and device.type == "cpu":
         pytest.skip("bfloat16 dtype requires cuda")
 
@@ -105,7 +104,7 @@ def test_skip_step_adamw(device: torch.device, dtype: Optional[DType]):
 
 @pytest.mark.parametrize("device", DEVICES)
 @pytest.mark.parametrize("dtype", [None, DType.bfloat16])
-def test_skip_step_adamw_foreach(device: torch.device, dtype: Optional[DType]):
+def test_skip_step_adamw_foreach(device: torch.device, dtype: DType | None):
     if dtype == DType.bfloat16 and device.type == "cpu":
         pytest.skip("bfloat16 dtype requires cuda")
 
@@ -145,12 +144,12 @@ def test_adamw_equivalence(
 
     group_overrides = [OptimGroupOverride(params=["wte.*"], opts={"weight_decay": 0.0})]
 
-    cfg_common = dict(
-        lr=lr,
-        betas=betas,
-        weight_decay=wd,
-        group_overrides=group_overrides,
-    )
+    cfg_common = {
+        "lr": lr,
+        "betas": betas,
+        "weight_decay": wd,
+        "group_overrides": group_overrides,
+    }
 
     optim1 = AdamWConfig(foreach=False, **cfg_common).build(model1)  # type: ignore[arg-type]
     optim2 = SkipStepAdamWConfig(foreach=True, **cfg_common).build(model2)  # type: ignore[arg-type]

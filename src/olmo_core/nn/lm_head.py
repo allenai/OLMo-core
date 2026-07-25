@@ -1,10 +1,10 @@
 import logging
 import math
 from dataclasses import dataclass
-from typing import Literal, NamedTuple, Optional, Tuple, Union
+from typing import Literal, NamedTuple
 
 import torch
-import torch.nn as nn
+from torch import nn
 from torch.distributed import DeviceMesh
 from torch.distributed.tensor import DTensor, Replicate, Shard
 from torch.distributed.tensor.parallel import (
@@ -29,12 +29,12 @@ from .functional import (
 from .layer_norm import LayerNormConfig
 
 __all__ = [
+    "LMHead",
+    "LMHeadConfig",
     "LMHeadType",
     "LMLossImplementation",
-    "LMHeadConfig",
-    "LMHead",
-    "NormalizedLMHead",
     "LMOutputWithLoss",
+    "NormalizedLMHead",
 ]
 
 
@@ -86,8 +86,8 @@ class LMHeadConfig(ModuleConfig):
     """
     The name of the implementation.
     """
-    layer_norm: Optional[LayerNormConfig] = None
-    bias: Optional[bool] = None
+    layer_norm: LayerNormConfig | None = None
+    bias: bool | None = None
     dtype: DType = DType.float32
     loss_implementation: LMLossImplementation = LMLossImplementation.default
 
@@ -141,13 +141,13 @@ class LMHeadConfig(ModuleConfig):
 
 
 class LMOutputWithLoss(NamedTuple):
-    logits: Optional[torch.Tensor]
+    logits: torch.Tensor | None
     """The LM logits."""
     loss: torch.Tensor
     """The loss to optimize for."""
     ce_loss: torch.Tensor
     """The CE loss (for logging only)."""
-    z_loss: Optional[torch.Tensor]
+    z_loss: torch.Tensor | None
     """The Z loss (for logging only)."""
 
 
@@ -161,7 +161,7 @@ class LMHead(nn.Module):
         *,
         d_model: int,
         vocab_size: int,
-        layer_norm: Optional[LayerNormConfig] = None,
+        layer_norm: LayerNormConfig | None = None,
         dtype: torch.dtype = torch.float32,
         bias: bool = True,
         init_device: str = "cpu",
@@ -175,8 +175,8 @@ class LMHead(nn.Module):
         self._d_model = d_model
         self._vocab_size = vocab_size
         self._loss_implementation = loss_implementation
-        self._tp_mesh: Optional[DeviceMesh] = None
-        self._cp_mesh: Optional[DeviceMesh] = None
+        self._tp_mesh: DeviceMesh | None = None
+        self._cp_mesh: DeviceMesh | None = None
 
     @property
     def d_model(self) -> int:
@@ -202,14 +202,14 @@ class LMHead(nn.Module):
         self,
         x: torch.Tensor,
         *,
-        labels: Optional[torch.Tensor] = None,
+        labels: torch.Tensor | None = None,
         ignore_index: int = -100,
         loss_reduction: Literal["mean", "sum", "none"] = "mean",
-        z_loss_multiplier: Optional[float] = None,
-        loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
-        return_logits: Optional[bool] = None,
-        logits_to_keep: Union[int, torch.Tensor] = 0,
-    ) -> Union[torch.Tensor, LMOutputWithLoss]:
+        z_loss_multiplier: float | None = None,
+        loss_div_factor: torch.Tensor | float | None = None,
+        return_logits: bool | None = None,
+        logits_to_keep: int | torch.Tensor = 0,
+    ) -> torch.Tensor | LMOutputWithLoss:
         """
         Applies the language modeling (LM) head to the input hidden states.
 
@@ -245,10 +245,10 @@ class LMHead(nn.Module):
                 raise RuntimeError("'return_logits=False' is only valid when 'labels' is provided")
             return self.w_out(h)
 
-        logits: Optional[torch.Tensor]
+        logits: torch.Tensor | None
         loss: torch.Tensor
         ce_loss: torch.Tensor
-        z_loss: Optional[torch.Tensor]
+        z_loss: torch.Tensor | None
         if self.loss_implementation == LMLossImplementation.default:
             logits = self.w_out(h)
             assert logits is not None
@@ -322,8 +322,8 @@ class LMHead(nn.Module):
         B: int,
         *,
         loss_reduction: str,
-        loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
-        reduce_across_tp_group: Optional[bool] = None,
+        loss_div_factor: torch.Tensor | float | None = None,
+        reduce_across_tp_group: bool | None = None,
     ) -> torch.Tensor:
         if reduce_across_tp_group is None:
             reduce_across_tp_group = self.tp_enabled
@@ -366,7 +366,7 @@ class LMHead(nn.Module):
     def apply_tp(
         self,
         tp_mesh: DeviceMesh,
-        input_layouts: Optional[Tuple[Placement, Placement]] = None,
+        input_layouts: tuple[Placement, Placement] | None = None,
     ):
         # NOTE: there's a few cases to consider...
         # 1. If we're not using 'fused_linear' loss and we have a norm, then we do sequence-parallel through
@@ -466,14 +466,14 @@ class NormalizedLMHead(LMHead):
         self,
         x: torch.Tensor,
         *,
-        labels: Optional[torch.Tensor] = None,
+        labels: torch.Tensor | None = None,
         ignore_index: int = -100,
         loss_reduction: Literal["mean", "sum", "none"] = "mean",
-        z_loss_multiplier: Optional[float] = None,
-        loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
-        return_logits: Optional[bool] = None,
-        logits_to_keep: Union[int, torch.Tensor] = 0,
-    ) -> Union[torch.Tensor, LMOutputWithLoss]:
+        z_loss_multiplier: float | None = None,
+        loss_div_factor: torch.Tensor | float | None = None,
+        return_logits: bool | None = None,
+        logits_to_keep: int | torch.Tensor = 0,
+    ) -> torch.Tensor | LMOutputWithLoss:
         B = x.shape[0]
 
         if isinstance(logits_to_keep, int):
@@ -496,7 +496,7 @@ class NormalizedLMHead(LMHead):
 
         loss: torch.Tensor
         ce_loss: torch.Tensor
-        z_loss: Optional[torch.Tensor]
+        z_loss: torch.Tensor | None
         if self.loss_implementation == LMLossImplementation.default:
             ce_loss, z_loss = cross_entropy_loss(
                 get_local_tensor(logits).view(-1, self.vocab_size),
@@ -548,7 +548,7 @@ class NormalizedLMHead(LMHead):
     def apply_tp(
         self,
         tp_mesh: DeviceMesh,
-        input_layouts: Optional[Tuple[Placement, Placement]] = None,
+        input_layouts: tuple[Placement, Placement] | None = None,
     ):
         del tp_mesh, input_layouts
 

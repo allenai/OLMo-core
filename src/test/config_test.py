@@ -1,5 +1,4 @@
 from dataclasses import dataclass
-from typing import List, Optional, Set, Tuple
 
 from olmo_core.config import Config
 
@@ -8,11 +7,11 @@ def test_simple_config_as_dict():
     @dataclass
     class MockConfig(Config):
         name: str = "default"
-        x: Optional[int] = None
+        x: int | None = None
 
     c = MockConfig()
-    assert c.as_dict() == dict(name="default", x=None)
-    assert c.as_dict(exclude_none=True) == dict(name="default")
+    assert c.as_dict() == {"name": "default", "x": None}
+    assert c.as_dict(exclude_none=True) == {"name": "default"}
 
 
 def test_nested_configs():
@@ -56,9 +55,9 @@ def test_nested_configs():
 def test_json_safe_dump():
     @dataclass
     class Foo(Config):
-        x_list: List[int]
-        x_tuple: Tuple[int, ...]
-        x_set: Set[str]
+        x_list: list[int]
+        x_tuple: tuple[int, ...]
+        x_set: set[str]
 
     foo = Foo(x_list=[0, 1], x_tuple=(0, 1), x_set={"a"})
     assert foo.as_config_dict() == {

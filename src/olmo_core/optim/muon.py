@@ -2,7 +2,7 @@ import logging
 from collections import OrderedDict
 from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Any, Tuple, Union
+from typing import Any
 
 import torch
 from torch.distributed.device_mesh import DeviceMesh
@@ -66,7 +66,7 @@ class MuonConfig(MatrixAwareOptimConfig):
     mu: float = 0.95
     """Momentum for Muon"""
 
-    betas: Tuple[float, float] = (0.9, 0.95)
+    betas: tuple[float, float] = (0.9, 0.95)
     """Betas for AdamW"""
 
     weight_decay: float = 0.1
@@ -105,22 +105,20 @@ class MuonConfig(MatrixAwareOptimConfig):
         params = self.categorize_parameters(model)
 
         # Matrix parameters are optimized with Muon.
-        matrix_override = OptimGroupOverride(params=params["matrix"], opts=dict())
+        matrix_override = OptimGroupOverride(params=params["matrix"], opts={})
 
         # Vector, embedding, and lm_head parameters are optimized with AdamW.
         embed_override = OptimGroupOverride(
-            params=params["embed"], opts=dict(algorithm="adamw", weight_decay=0.0)
+            params=params["embed"], opts={"algorithm": "adamw", "weight_decay": 0.0}
         )
-        vector_override = OptimGroupOverride(params=params["vector"], opts=dict(algorithm="adamw"))
-        lm_head_override = OptimGroupOverride(
-            params=params["lm_head"], opts=dict(algorithm="adamw")
-        )
+        vector_override = OptimGroupOverride(params=params["vector"], opts={"algorithm": "adamw"})
+        lm_head_override = OptimGroupOverride(params=params["lm_head"], opts={"algorithm": "adamw"})
 
         return [matrix_override, vector_override, embed_override, lm_head_override]
 
     def build_groups(
         self, model: torch.nn.Module, strict: bool = True
-    ) -> Union[Iterable[torch.Tensor], list[dict[str, Any]]]:
+    ) -> Iterable[torch.Tensor] | list[dict[str, Any]]:
         """
         Build parameters groups.
 
@@ -149,7 +147,7 @@ class MuonConfig(MatrixAwareOptimConfig):
         # Treat no overrides as its own override group
         overridden_param_names = {name for go in group_overrides for name in go.params}
         default_override = OptimGroupOverride(
-            [name for name in all_params.keys() if name not in overridden_param_names], {}
+            [name for name in all_params if name not in overridden_param_names], {}
         )
         group_overrides.append(default_override)
 

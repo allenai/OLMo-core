@@ -372,9 +372,9 @@ def test_dataset_mixture_build_duplicate_paths(tmp_path: Path):
     index = mixture.to_index()
     paths = mixture.to_paths()
     assert paths == expected
-    assert len(index) == 6, "Expected 6 unique paths in the index, but got {}".format(len(index))
+    assert len(index) == 6, f"Expected 6 unique paths in the index, but got {len(index)}"
     assert isinstance(mixture, SourceMixtureDataset)
-    assert len(mixture.sources) == 3, "Expected 3 sources, but got {}".format(len(mixture.sources))
+    assert len(mixture.sources) == 3, f"Expected 3 sources, but got {len(mixture.sources)}"
     requested_instances = math.ceil(max_tokens / global_batch_size) * int(
         global_batch_size / sequence_length
     )

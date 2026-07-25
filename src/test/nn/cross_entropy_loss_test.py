@@ -1,4 +1,4 @@
-from typing import Literal, Optional
+from typing import Literal
 
 import pytest
 import torch
@@ -24,7 +24,7 @@ def compute_loss(
         loss += z_loss
 
     if loss_fn.reduction != "none":
-        assert loss.shape == tuple(), f"{loss}"
+        assert loss.shape == (), f"{loss}"
     else:
         assert loss.shape == labels.shape
         loss = loss.sum()
@@ -35,7 +35,7 @@ def compute_loss(
 def run_cross_entropy_loss_parallel(
     compile: bool,
     reduction: Literal["sum", "mean", "none"],
-    z_loss_multiplier: Optional[float],
+    z_loss_multiplier: float | None,
     logits: torch.Tensor,
     labels: torch.Tensor,
     batch_num_tokens_for_loss: torch.Tensor,
@@ -91,7 +91,7 @@ def run_cross_entropy_loss_parallel(
 def test_cross_entropy_loss_parallel(
     compile: bool,
     reduction: Literal["sum", "mean", "none"],
-    z_loss_multiplier: Optional[float] = None,
+    z_loss_multiplier: float | None = None,
 ):
     B, S, V = 4, 16, 256
 

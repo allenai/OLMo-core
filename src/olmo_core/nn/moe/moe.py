@@ -1,10 +1,10 @@
 import logging
 from abc import abstractmethod
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Dict, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Optional
 
 import torch
-import torch.nn as nn
+from torch import nn
 from torch.distributed import DeviceMesh
 from torch.distributed.tensor import Placement, Replicate, Shard
 from torch.distributed.tensor.parallel import (
@@ -33,7 +33,7 @@ from .router import MoERouterConfig
 if TYPE_CHECKING:
     from olmo_core.train.common import ReduceType
 
-__all__ = ["MoEBase", "MoE", "DroplessMoE", "MoEConfig", "MoEType"]
+__all__ = ["DroplessMoE", "MoE", "MoEBase", "MoEConfig", "MoEType"]
 
 
 log = logging.getLogger(__name__)
@@ -63,14 +63,14 @@ class MoEConfig(ModuleConfig):
     """
     num_experts: int = 1
     hidden_size: int = 256
-    capacity_factor: Optional[float] = None
+    capacity_factor: float | None = None
     router: MoERouterConfig = field(default_factory=MoERouterConfig)
-    shared_mlp: Optional[FeedForwardConfig] = None
-    lb_loss_weight: Optional[float] = 0.01
+    shared_mlp: FeedForwardConfig | None = None
+    lb_loss_weight: float | None = 0.01
     lb_loss_granularity: MoELoadBalancingLossGranularity = (
         MoELoadBalancingLossGranularity.local_batch
     )
-    z_loss_weight: Optional[float] = None
+    z_loss_weight: float | None = None
     scale_loss_by_num_layers: bool = True
     dtype: DType = DType.float32
 
@@ -95,7 +95,7 @@ class MoEConfig(ModuleConfig):
         *,
         n_layers: int = 1,
         init_device: str = "cpu",
-        cache: Optional[BufferCache] = None,
+        cache: BufferCache | None = None,
     ) -> "MoEBase":
         kwargs = self.as_dict(exclude_none=True, recurse=False)
         kwargs.pop("name")
@@ -132,15 +132,15 @@ class MoEBase(nn.Module):
         num_experts: int,
         hidden_size: int,
         router: MoERouterConfig,
-        shared_mlp: Optional[FeedForwardConfig] = None,
+        shared_mlp: FeedForwardConfig | None = None,
         init_device: str = "cpu",
-        lb_loss_weight: Optional[float] = None,
+        lb_loss_weight: float | None = None,
         lb_loss_granularity: MoELoadBalancingLossGranularity = MoELoadBalancingLossGranularity.local_batch,
-        z_loss_weight: Optional[float] = None,
+        z_loss_weight: float | None = None,
         n_layers: int = 1,
         scale_loss_by_num_layers: bool = True,
         dtype: torch.dtype = torch.float32,
-        cache: Optional[BufferCache] = None,
+        cache: BufferCache | None = None,
         **kwargs,
     ):
         super().__init__()
@@ -192,7 +192,7 @@ class MoEBase(nn.Module):
 
     def compute_metrics(
         self, reset: bool = True
-    ) -> Dict[str, Tuple[torch.Tensor, Optional["ReduceType"]]]:
+    ) -> dict[str, tuple[torch.Tensor, Optional["ReduceType"]]]:
         return self.router.compute_metrics(reset=reset)
 
     def reset_metrics(self):
@@ -221,7 +221,7 @@ class MoEBase(nn.Module):
         self,
         x: torch.Tensor,
         *,
-        loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
+        loss_div_factor: torch.Tensor | float | None = None,
     ) -> torch.Tensor:
         """
         Run the MoE on the input ``x`` of shape ``(*, d_model)``.
@@ -238,7 +238,7 @@ class MoEBase(nn.Module):
         if router_aux_loss is not None:
             x = attach_auxiliary_loss(x, router_aux_loss)
 
-        shared_out: Optional[torch.Tensor] = None
+        shared_out: torch.Tensor | None = None
         if self.shared_mlp is not None:
             shared_out = self.shared_mlp(x)
 
@@ -282,8 +282,8 @@ class MoEBase(nn.Module):
     def apply_tp(
         self,
         tp_mesh: DeviceMesh,
-        input_layout: Optional[Placement] = None,
-        output_layout: Optional[Placement] = None,
+        input_layout: Placement | None = None,
+        output_layout: Placement | None = None,
         use_local_output: bool = True,
         float8_enabled: bool = False,
     ):
@@ -345,16 +345,16 @@ class MoE(MoEBase):
         num_experts: int,
         hidden_size: int,
         router: MoERouterConfig,
-        shared_mlp: Optional[FeedForwardConfig] = None,
+        shared_mlp: FeedForwardConfig | None = None,
         capacity_factor: float = 1.2,
         init_device: str = "cpu",
-        lb_loss_weight: Optional[float] = None,
+        lb_loss_weight: float | None = None,
         lb_loss_granularity: MoELoadBalancingLossGranularity = MoELoadBalancingLossGranularity.local_batch,
-        z_loss_weight: Optional[float] = None,
+        z_loss_weight: float | None = None,
         scale_loss_by_num_layers: bool = True,
         n_layers: int = 1,
         dtype: torch.dtype = torch.float32,
-        cache: Optional[BufferCache] = None,
+        cache: BufferCache | None = None,
     ):
         super().__init__(
             d_model=d_model,
@@ -382,7 +382,7 @@ class MoE(MoEBase):
         capacity_factor: float,
         dtype: torch.dtype = torch.float32,
         init_device: str = "cpu",
-        cache: Optional[BufferCache] = None,
+        cache: BufferCache | None = None,
     ) -> ParallelMLP:
         return ParallelMLP(
             mlp=MoEMLP(
@@ -411,7 +411,7 @@ class DroplessMoE(MoEBase):
         hidden_size: int,
         dtype: torch.dtype = torch.float32,
         init_device: str = "cpu",
-        cache: Optional[BufferCache] = None,
+        cache: BufferCache | None = None,
     ) -> ParallelDroplessMLP:
         return ParallelDroplessMLP(
             mlp=DroplessMoEMLP(

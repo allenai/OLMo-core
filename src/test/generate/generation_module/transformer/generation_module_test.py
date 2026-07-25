@@ -1,5 +1,4 @@
 from pathlib import Path
-from typing import Optional
 
 import pytest
 import torch
@@ -377,10 +376,10 @@ def run_distributed_generation(
     checkpoint_dir: Path,
     transformer_config: TransformerConfig,
     generation_config: GenerationConfig,
-    dp_config: Optional[TransformerDataParallelConfig],
+    dp_config: TransformerDataParallelConfig | None,
     input_ids: torch.Tensor,
     expected_shape: tuple,
-    attention_mask: Optional[torch.Tensor] = None,
+    attention_mask: torch.Tensor | None = None,
 ):
     seed_all(0)
 
@@ -519,7 +518,7 @@ def test_from_checkpoints_single_checkpoint(tmp_path: Path):
     direct_state = model_direct.model.state_dict()
 
     assert set(merged_state.keys()) == set(direct_state.keys())
-    for key in merged_state.keys():
+    for key in merged_state:
         torch.testing.assert_close(merged_state[key], direct_state[key])
 
 
@@ -551,7 +550,7 @@ def test_from_checkpoints_weight_averaging(tmp_path: Path):
     assert set(merged_state.keys()) == set(state_dicts[0].keys())
 
     # Check that all tensors are correctly averaged with proper shapes and dtypes
-    for key in merged_state.keys():
+    for key in merged_state:
         # Verify shapes match across all checkpoints and merged model
         for state_dict in state_dicts:
             assert state_dict[key].shape == merged_state[key].shape, f"Shape mismatch for {key}"

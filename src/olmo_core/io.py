@@ -7,10 +7,11 @@ import shutil
 import ssl
 import time
 from collections import deque
+from collections.abc import Callable, Generator
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import wraps
 from pathlib import Path
-from typing import Any, Callable, Generator, List, Optional, Tuple, Type, Union
+from typing import Any
 
 try:
     from functools import cache
@@ -81,7 +82,7 @@ def get_parent(path: PathOrStr) -> PathOrStr:
         return Path(normalize_path(path)).parent
 
 
-def resource_path(folder: PathOrStr, fname: str, local_cache: Optional[PathOrStr] = None) -> Path:
+def resource_path(folder: PathOrStr, fname: str, local_cache: PathOrStr | None = None) -> Path:
     """
     Returns an actual path for local or remote file, potentially downloading it if a copy doesn't
     exist locally yet.
@@ -241,7 +242,7 @@ def copy_dir(
     source: PathOrStr,
     target: PathOrStr,
     save_overwrite: bool = False,
-    num_threads: Optional[int] = None,
+    num_threads: int | None = None,
     quiet: bool = False,
 ):
     """
@@ -494,7 +495,7 @@ def glob_directory(pattern: str) -> Generator[str, None, None]:
 
 
 @maybe_cache(condition=is_url)
-def deterministic_glob_directory(pattern: str) -> List[str]:
+def deterministic_glob_directory(pattern: str) -> list[str]:
     """
     Like :func:`glob_directory` but returns a sorted list for deterministic ordering.
 
@@ -552,7 +553,7 @@ def _wait_before_retry(attempt: int):
     time.sleep(min(0.5 * 2**attempt, 3.0))
 
 
-def _format_bytes(num: Union[int, float], suffix="B") -> str:
+def _format_bytes(num: float, suffix="B") -> str:
     for unit in ("", "Ki", "Mi", "Gi", "Ti", "Pi", "Ei", "Zi"):
         if abs(num) < 1024.0:
             return f"{num:3.1f}{unit}{suffix}"
@@ -562,12 +563,12 @@ def _format_bytes(num: Union[int, float], suffix="B") -> str:
 
 def retriable(
     max_attempts: int = 3,
-    retriable_errors: Tuple[Type[Exception], ...] = (
+    retriable_errors: tuple[type[Exception], ...] = (
         requests.exceptions.ConnectionError,
         requests.exceptions.Timeout,
         requests.exceptions.ChunkedEncodingError,
     ),
-    retry_condition: Optional[Callable[[Exception], bool]] = None,
+    retry_condition: Callable[[Exception], bool] | None = None,
 ):
     def decorator(func):
         @wraps(func)
@@ -884,7 +885,7 @@ def _get_s3_client(scheme: str):
     )
 
 
-def _get_s3_profile_name(scheme: str) -> Optional[str]:
+def _get_s3_profile_name(scheme: str) -> str | None:
     if scheme == "s3":
         # For backwards compatibility, we assume S3 uses the default profile if S3_PROFILE is not set.
         return os.environ.get("S3_PROFILE")
@@ -908,7 +909,7 @@ def _get_s3_profile_name(scheme: str) -> Optional[str]:
     raise NotImplementedError(f"Cannot get profile name for scheme {scheme}")
 
 
-def _get_s3_endpoint_url(scheme: str) -> Optional[str]:
+def _get_s3_endpoint_url(scheme: str) -> str | None:
     if scheme == "s3":
         return None
     if scheme == "r2":
@@ -1100,18 +1101,17 @@ class _WekaClient(SchemeClient):
         self.object_info = None
 
     @staticmethod
-    def _split_cloud_path(url: str, provider: str) -> Tuple[str, str]:
+    def _split_cloud_path(url: str, provider: str) -> tuple[str, str]:
         """Split a full s3 path into the bucket name and path."""
         from urllib.parse import urlparse
 
         parsed = urlparse(url)
         if not parsed.netloc or not parsed.path:
-            raise ValueError("bad {} path {}".format(provider, url))
+            raise ValueError(f"bad {provider} path {url}")
         bucket_name = parsed.netloc
         provider_path = parsed.path
         # Remove '/' at beginning of path.
-        if provider_path.startswith("/"):
-            provider_path = provider_path[1:]
+        provider_path = provider_path.removeprefix("/")
         return bucket_name, provider_path
 
     def _ensure_object_info(self):
@@ -1123,14 +1123,14 @@ class _WekaClient(SchemeClient):
             except boto_exceptions.ClientError as e:
                 if e.response["ResponseMetadata"]["HTTPStatusCode"] == 404:
                     raise FileNotFoundError(f"weka://{self.bucket_name}/{self.path}") from e
-                raise e
+                raise
 
-    def get_etag(self) -> Optional[str]:
+    def get_etag(self) -> str | None:
         self._ensure_object_info()
         assert self.object_info is not None
         return self.object_info.get("ETag")
 
-    def get_size(self) -> Optional[int]:
+    def get_size(self) -> int | None:
         self._ensure_object_info()
         assert self.object_info is not None
         return self.object_info.get("ContentLength")

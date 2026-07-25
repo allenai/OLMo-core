@@ -2,16 +2,16 @@ import gzip
 import json
 import multiprocessing
 import os
+from collections.abc import Iterable, Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from tempfile import NamedTemporaryFile
-from typing import Iterable, List, Optional, Sequence, Tuple
 
 import numpy as np
 
 from ..tokenizer import TokenizerLike
 
-CODE_FRESH_LANGUAGES: Tuple[str, ...] = (
+CODE_FRESH_LANGUAGES: tuple[str, ...] = (
     "blade",
     "c",
     "clojure",
@@ -72,7 +72,7 @@ def process_code_fresh_file_contents(
     tokenizer: TokenizerLike,
     *,
     max_doc_tokens_before_eos: int = 8191,
-) -> Optional[np.ndarray]:
+) -> np.ndarray | None:
     text = file_contents.strip()
     token_ids = tokenizer.encode(text, add_special_tokens=False)
     if not token_ids:
@@ -91,8 +91,8 @@ def build_documents_and_stats(
     *,
     language: str,
     max_doc_tokens_before_eos: int = 8191,
-) -> Tuple[List[np.ndarray], ExportStats]:
-    docs: List[np.ndarray] = []
+) -> tuple[list[np.ndarray], ExportStats]:
+    docs: list[np.ndarray] = []
     stats = ExportStats(language=language)
     for row in rows:
         doc = process_code_fresh_file_contents(
@@ -126,7 +126,7 @@ def write_memmap(path: Path, arr: np.ndarray) -> None:
         tmp_path.unlink(missing_ok=True)
 
 
-def write_document_metadata(path: Path, offsets: Sequence[Tuple[int, int]]) -> None:
+def write_document_metadata(path: Path, offsets: Sequence[tuple[int, int]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with NamedTemporaryFile(dir=path.parent, suffix=".tmp", delete=False) as tmp:
         tmp_path = Path(tmp.name)
@@ -151,8 +151,8 @@ def write_stats(path: Path, stats: ExportStats) -> None:
         tmp_path.unlink(missing_ok=True)
 
 
-def flatten_documents(docs: Sequence[np.ndarray]) -> Tuple[np.ndarray, List[Tuple[int, int]]]:
-    offsets: List[Tuple[int, int]] = []
+def flatten_documents(docs: Sequence[np.ndarray]) -> tuple[np.ndarray, list[tuple[int, int]]]:
+    offsets: list[tuple[int, int]] = []
     start = 0
     for doc in docs:
         end = start + len(doc)

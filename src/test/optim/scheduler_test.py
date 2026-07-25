@@ -1,5 +1,4 @@
 import math
-from typing import List, Tuple, Type
 
 import pytest
 
@@ -257,7 +256,7 @@ def test_sequential_scheduler_override_decay_inside_first_segment():
     assert scheduler.get_lr(initial_lr, 10_000, max_steps) == pytest.approx(2.0)
 
 
-_PARITY_CASES: List[Tuple[ComposableSchedulerStageType, Type[Scheduler], float]] = [
+_PARITY_CASES: list[tuple[ComposableSchedulerStageType, type[Scheduler], float]] = [
     (ComposableSchedulerStageType.linear, LinearWithWarmup, 0.0),
     (ComposableSchedulerStageType.linear, LinearWithWarmup, 0.1),
     (ComposableSchedulerStageType.cosine, CosWithWarmup, 0.0),
@@ -690,7 +689,7 @@ def test_exponential_scheduler_integration(tiny_model):
     """Integration test: ExponentialScheduler with actual optimizer and training steps."""
     from unittest.mock import Mock
 
-    import torch.optim as optim
+    from torch import optim
 
     from olmo_core.train import Trainer
 

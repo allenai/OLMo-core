@@ -19,7 +19,6 @@ import argparse
 import json
 import logging
 import sys
-from typing import Optional
 
 from cached_path import cached_path
 from rich.columns import Columns
@@ -162,7 +161,7 @@ def load_tokenizer(tokenizer_config: TokenizerConfig):
     return AutoTokenizer.from_pretrained(tokenizer_config.identifier)
 
 
-def load_tokenizer_config_from_checkpoint(checkpoint_dir: PathOrStr) -> Optional[TokenizerConfig]:
+def load_tokenizer_config_from_checkpoint(checkpoint_dir: PathOrStr) -> TokenizerConfig | None:
     """Load tokenizer config from checkpoint's config.json."""
     checkpoint_dir = normalize_path(checkpoint_dir)
     config_path = join_path(checkpoint_dir, "config.json")
@@ -301,12 +300,9 @@ Examples:
 
     try:
         tokenizer = load_tokenizer(tokenizer_config)
-    except Exception as e:
-        log.error(
-            f"Failed to load tokenizer from identifier '{tokenizer_config.identifier}': {e}",
-            exc_info=True,
-        )
-        raise e
+    except Exception:
+        log.exception(f"Failed to load tokenizer from identifier '{tokenizer_config.identifier}'")
+        raise
 
     # Display tokenizer info
     console.print(render_tokenizer_info(tokenizer_config, tokenizer, args.chat_template))
@@ -341,8 +337,8 @@ Examples:
             dtype=dtype,
             attention_backend=attention_backend,
         )
-    except Exception as e:
-        log.error(f"Failed to load checkpoint: {e}", exc_info=True)
+    except Exception:
+        log.exception("Failed to load checkpoint")
         sys.exit(1)
 
     console.print("[bold green]✓ Model loaded successfully![/bold green]")
@@ -453,7 +449,7 @@ Examples:
 
     except Exception as e:
         console.print(f"[bold red]Unexpected error:[/bold red] {e}")
-        log.error(f"Unexpected error: {e}", exc_info=True)
+        log.exception("Unexpected error")
         sys.exit(1)
 
 

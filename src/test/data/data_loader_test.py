@@ -1,5 +1,4 @@
 from pathlib import Path
-from typing import List
 
 import numpy as np
 import pytest
@@ -43,8 +42,8 @@ def test_fsl_data_loader(
     mmap[:] = list(range(num_tokens))
     mmap.flush()
 
-    def get_all_batches() -> List[List[int]]:
-        all_batches: List[List[int]] = [[] for _ in range(num_batches)]
+    def get_all_batches() -> list[list[int]]:
+        all_batches: list[list[int]] = [[] for _ in range(num_batches)]
         dataset = NumpyFSLDataset(
             tmp_path / "tokens.npy",
             sequence_length=sequence_length,
@@ -200,7 +199,7 @@ def test_fsl_data_loader_with_seq_len_warmup(tmp_path: Path, shuffle: bool):
     mmap2.flush()
     del mmap1, mmap2
 
-    def get_all_tokens(seq_len: int, tokens_processed: int = 0) -> List[int]:
+    def get_all_tokens(seq_len: int, tokens_processed: int = 0) -> list[int]:
         dataset = NumpyFSLDataset(
             tmp_path / "tokens1.npy",
             tmp_path / "tokens2.npy",

@@ -1,12 +1,12 @@
 from abc import ABCMeta, abstractmethod
 from dataclasses import dataclass
 from functools import lru_cache
-from typing import TYPE_CHECKING, Any, Dict, Optional, Union
+from typing import TYPE_CHECKING, Any
 
 import torch
 import torch.distributed as dist
 import torch.distributed.checkpoint.state_dict as dist_cp_sd
-import torch.nn as nn
+from torch import nn
 from torch.distributed.checkpoint.metadata import Metadata
 from torch.distributed.checkpoint.stateful import Stateful
 from torch.optim import Optimizer
@@ -53,7 +53,7 @@ class EvalBatchSpec:
     """
     The unit for the :data:`rank_batch_size`.
     """
-    max_sequence_length: Optional[int] = None
+    max_sequence_length: int | None = None
     """
     The maximum allowed sequence length.
     """
@@ -85,7 +85,7 @@ class TrainModule(Stateful, metaclass=ABCMeta):
     """
 
     def __init__(self):
-        self._trainer: Optional["Trainer"] = None
+        self._trainer: Trainer | None = None
 
     @property
     def trainer(self) -> "Trainer":
@@ -100,7 +100,7 @@ class TrainModule(Stateful, metaclass=ABCMeta):
         return self._trainer
 
     @property
-    def dp_process_group(self) -> Optional[dist.ProcessGroup]:
+    def dp_process_group(self) -> dist.ProcessGroup | None:
         """
         Should return the data parallel process group if it's anything other than the default
         process group.
@@ -129,7 +129,7 @@ class TrainModule(Stateful, metaclass=ABCMeta):
         """
 
     @abstractmethod
-    def state_dict(self, *, optim: Optional[bool] = None) -> Dict[str, Any]:
+    def state_dict(self, *, optim: bool | None = None) -> dict[str, Any]:
         """
         Get the state dict to save or load.
 
@@ -137,7 +137,7 @@ class TrainModule(Stateful, metaclass=ABCMeta):
         """
         raise NotImplementedError
 
-    def state_dict_to_save(self, *, optim: Optional[bool] = None) -> Dict[str, Any]:
+    def state_dict_to_save(self, *, optim: bool | None = None) -> dict[str, Any]:
         """
         Can be overridden if the state dict to save should be different from the state dict to load.
         By default just returns :func:`state_dict()`.
@@ -147,8 +147,8 @@ class TrainModule(Stateful, metaclass=ABCMeta):
         return self.state_dict(optim=optim)
 
     def state_dict_to_load(
-        self, metadata: Metadata, *, optim: Optional[bool] = None
-    ) -> Dict[str, Any]:
+        self, metadata: Metadata, *, optim: bool | None = None
+    ) -> dict[str, Any]:
         """
         Can be overridden if the state dict to load should be different from the state dict to save.
         By default just returns :func:`state_dict()`.
@@ -159,21 +159,21 @@ class TrainModule(Stateful, metaclass=ABCMeta):
         return self.state_dict(optim=optim)
 
     @abstractmethod
-    def load_state_dict(self, state_dict: Dict[str, Any]) -> None:
+    def load_state_dict(self, state_dict: dict[str, Any]) -> None:
         """
         Load a state dict.
         """
         raise NotImplementedError
 
     @abstractmethod
-    def train_batch(self, batch: Dict[str, Any], dry_run: bool = False):
+    def train_batch(self, batch: dict[str, Any], dry_run: bool = False):
         """
         Run a forward and backward pass on a training batch.
         """
         raise NotImplementedError
 
     @abstractmethod
-    def eval_batch(self, batch: Dict[str, Any], labels: Optional[Any] = None) -> Any:
+    def eval_batch(self, batch: dict[str, Any], labels: Any | None = None) -> Any:
         """
         Run a forward pass on a eval batch.
         """
@@ -194,8 +194,8 @@ class TrainModule(Stateful, metaclass=ABCMeta):
         raise NotImplementedError
 
     @abstractmethod
-    @lru_cache
-    def num_flops_per_token(self, seq_len: int) -> Optional[int]:
+    @lru_cache  # noqa: B019
+    def num_flops_per_token(self, seq_len: int) -> int | None:
         """
         Returns the number of flops per token for the given sequence length, or ``None`` if flops
         estimation is not supported.
@@ -203,7 +203,7 @@ class TrainModule(Stateful, metaclass=ABCMeta):
         raise NotImplementedError
 
     @abstractmethod
-    def global_num_flops_in_batch(self, batch: Dict[str, Any]) -> Optional[int]:
+    def global_num_flops_in_batch(self, batch: dict[str, Any]) -> int | None:
         """
         Return the total (global) number of flops in the batch, or ``None`` if flops estimation
         is not supported.
@@ -213,9 +213,9 @@ class TrainModule(Stateful, metaclass=ABCMeta):
     def record_metric(
         self,
         name: str,
-        value: Union[float, torch.Tensor],
-        reduce_type: Optional[ReduceType] = None,
-        namespace: Optional[str] = None,
+        value: float | torch.Tensor,
+        reduce_type: ReduceType | None = None,
+        namespace: str | None = None,
         merge_strategy: MetricMergeStrategy = MetricMergeStrategy.warn,
     ):
         """
@@ -229,9 +229,7 @@ class TrainModule(Stateful, metaclass=ABCMeta):
             name, value, reduce_type=reduce_type, namespace=namespace, merge_strategy=merge_strategy
         )
 
-    def record_ce_loss(
-        self, value: Union[float, torch.Tensor], reduce_type: Optional[ReduceType] = None
-    ):
+    def record_ce_loss(self, value: float | torch.Tensor, reduce_type: ReduceType | None = None):
         """
         Record the cross-entropy loss metric specifically.
         """
@@ -263,7 +261,7 @@ class BasicTrainModule(TrainModule):
         model: nn.Module,
         optim: Optimizer,
         rank_microbatch_size: int,
-        max_grad_norm: Optional[float] = None,
+        max_grad_norm: float | None = None,
         label_ignore_index: int = -100,
     ):
         super().__init__()
@@ -290,9 +288,9 @@ class BasicTrainModule(TrainModule):
                 f"micro-batch size ({self.rank_microbatch_size:,d}) x DP world size ({ws})"
             )
 
-    def state_dict(self, *, optim: Optional[bool] = None) -> Dict[str, Any]:
+    def state_dict(self, *, optim: bool | None = None) -> dict[str, Any]:
         sd_options = dist_cp_sd.StateDictOptions(full_state_dict=False, cpu_offload=True)
-        state_dict: Dict[str, Any] = {
+        state_dict: dict[str, Any] = {
             "model": dist_cp_sd.get_model_state_dict(self.model, options=sd_options),
         }
         if optim is not False:
@@ -301,7 +299,7 @@ class BasicTrainModule(TrainModule):
             )
         return state_dict
 
-    def load_state_dict(self, state_dict: Dict[str, Any]) -> None:
+    def load_state_dict(self, state_dict: dict[str, Any]) -> None:
         dist_cp_sd.set_model_state_dict(
             self.model, state_dict["model"], options=dist_cp_sd.StateDictOptions(strict=True)
         )
@@ -313,7 +311,7 @@ class BasicTrainModule(TrainModule):
                 options=dist_cp_sd.StateDictOptions(strict=True),
             )
 
-    def train_batch(self, batch: Dict[str, Any], dry_run: bool = False):
+    def train_batch(self, batch: dict[str, Any], dry_run: bool = False):
         self.model.train()
 
         # Move tensors to the right device.
@@ -372,12 +370,12 @@ class BasicTrainModule(TrainModule):
         # Record loss metrics.
         self.record_ce_loss(ce_batch_loss, ReduceType.mean)
 
-    def eval_batch(self, batch: Dict[str, Any], labels: Optional[torch.Tensor] = None) -> Any:
+    def eval_batch(self, batch: dict[str, Any], labels: torch.Tensor | None = None) -> Any:
         self.model.eval()
         batch = move_to_device(batch, self.trainer.device)
         with torch.no_grad():
             logits = self.model_forward(batch)
-        loss: Optional[torch.Tensor] = None
+        loss: torch.Tensor | None = None
         if labels is not None:
             loss, _ = self.loss_fn(
                 logits,
@@ -402,12 +400,12 @@ class BasicTrainModule(TrainModule):
     def zero_grads(self):
         self.optim.zero_grad(set_to_none=True)
 
-    def model_forward(self, micro_batch: Dict[str, Any]) -> torch.Tensor:
+    def model_forward(self, micro_batch: dict[str, Any]) -> torch.Tensor:
         return self.model(input_ids=micro_batch["input_ids"])
 
-    @lru_cache
-    def num_flops_per_token(self, seq_len: int) -> Optional[int]:
+    @lru_cache  # noqa: B019
+    def num_flops_per_token(self, seq_len: int) -> int | None:
         raise NotImplementedError
 
-    def global_num_flops_in_batch(self, batch: Dict[str, Any]) -> Optional[int]:
+    def global_num_flops_in_batch(self, batch: dict[str, Any]) -> int | None:
         raise NotImplementedError

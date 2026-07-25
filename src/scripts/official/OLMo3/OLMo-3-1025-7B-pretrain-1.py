@@ -5,7 +5,6 @@ Part 1 of 2. See OLMo-3-1025-7B-pretrain-2.py for part 2.
 """
 
 import argparse
-from typing import List
 
 from olmo_core.config import DType
 from olmo_core.data import (
@@ -42,7 +41,7 @@ GLOBAL_BATCH_SIZE = 8192 * 512  # ~4M tokens
 LR = 3e-4
 
 
-def build_config(opts: argparse.Namespace, overrides: List[str]) -> ExperimentConfig:
+def build_config(opts: argparse.Namespace, overrides: list[str]) -> ExperimentConfig:
     sequence_length = opts.sequence_length or DEFAULT_SEQUENCE_LENGTH
     tokenizer_config = TokenizerConfig.dolma2()
 
@@ -74,7 +73,7 @@ def build_config(opts: argparse.Namespace, overrides: List[str]) -> ExperimentCo
             weight_decay=0.1,
             betas=(0.9, 0.95),
             group_overrides=[
-                OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
+                OptimGroupOverride(params=["embeddings.weight"], opts={"weight_decay": 0.0})
             ],
         ),
         scheduler=CosWithWarmup(warmup_steps=2000),
@@ -98,7 +97,7 @@ def build_config(opts: argparse.Namespace, overrides: List[str]) -> ExperimentCo
             cancel_check_interval=10,
             max_duration=Duration.tokens(int(5e12)),  # Originally scheduled for 5T
             hard_stop=Duration.steps(  # But at this step we decided to extend schedule to 7T. See OLMo-3-1025-7B-pretrain-2.py
-                int(597046)
+                597046
             ),
         )
         .with_callback("monkey_patcher", MonkeyPatcherCallback())

@@ -1,9 +1,10 @@
 from abc import ABCMeta, abstractmethod
+from collections.abc import Iterable
 from pathlib import Path
-from typing import ClassVar, Iterable, Optional
+from typing import ClassVar
 
 import olmo_core.distributed.utils as dist_utils
-import olmo_core.io as io
+from olmo_core import io
 from olmo_core.aliases import PathOrStr
 from olmo_core.exceptions import OLMoConfigurationError
 
@@ -19,7 +20,7 @@ class SourceABC(metaclass=ABCMeta):
 
     DISPLAY_ICON: ClassVar[str] = ""  # Nerd Font icon for visualizations
 
-    def __init__(self, *, work_dir: PathOrStr, label: Optional[str] = None):
+    def __init__(self, *, work_dir: PathOrStr, label: str | None = None):
         if io.is_url(work_dir):
             raise OLMoConfigurationError(
                 f"'work_dir' should be a local path, not a URL ('{work_dir}')."
@@ -64,7 +65,7 @@ class SourceABC(metaclass=ABCMeta):
         return self._rank
 
     @property
-    def label(self) -> Optional[str]:
+    def label(self) -> str | None:
         """The label assigned to this source."""
         return self._label
 

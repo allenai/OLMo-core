@@ -3,7 +3,7 @@ import warnings
 from abc import ABCMeta, abstractmethod
 from dataclasses import dataclass, field
 from math import cos, pi, sqrt
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import torch
@@ -35,15 +35,15 @@ class Scheduler(Config, Registrable, metaclass=ABCMeta):
 
     @abstractmethod
     def get_lr(
-        self, initial_lr: Union[float, torch.Tensor], current: int, t_max: int
-    ) -> Union[float, torch.Tensor]:
+        self, initial_lr: float | torch.Tensor, current: int, t_max: int
+    ) -> float | torch.Tensor:
         """
         Get the learning rate given the initial/max learning rate, current step/token count, and the maximum
         number of steps/tokens.
         """
         raise NotImplementedError
 
-    def set_lr(self, group: Dict[str, Any], trainer: "Trainer") -> Union[float, torch.Tensor]:
+    def set_lr(self, group: dict[str, Any], trainer: "Trainer") -> float | torch.Tensor:
         """
         Set the learning rate on an optimizer param group given a trainer's state.
         """
@@ -104,8 +104,8 @@ class ConstantScheduler(Scheduler):
     """
 
     def get_lr(
-        self, initial_lr: Union[float, torch.Tensor], current: int, t_max: int
-    ) -> Union[float, torch.Tensor]:
+        self, initial_lr: float | torch.Tensor, current: int, t_max: int
+    ) -> float | torch.Tensor:
         del current, t_max
         return initial_lr
 
@@ -117,9 +117,9 @@ class ConstantWithWarmup(Scheduler):
     Constant learning rate schedule with a warmup.
     """
 
-    warmup: Optional[int] = None
-    warmup_steps: Optional[int] = None  # deprecated, use 'warmup' instead.
-    warmup_fraction: Optional[float] = None
+    warmup: int | None = None
+    warmup_steps: int | None = None  # deprecated, use 'warmup' instead.
+    warmup_fraction: float | None = None
     warmup_min_lr: float = 0.0
 
     def __post_init__(self, *args):
@@ -141,8 +141,8 @@ class ConstantWithWarmup(Scheduler):
             raise OLMoConfigurationError("'warmup_fraction' must be between 0 and 1.")
 
     def get_lr(
-        self, initial_lr: Union[float, torch.Tensor], current: int, t_max: int
-    ) -> Union[float, torch.Tensor]:
+        self, initial_lr: float | torch.Tensor, current: int, t_max: int
+    ) -> float | torch.Tensor:
         if self.warmup is None:
             assert self.warmup_fraction is not None
             warmup = round(t_max * self.warmup_fraction)
@@ -162,12 +162,12 @@ class WSD(Scheduler):
     Warmup-stable-decay scheduler
     """
 
-    warmup: Optional[int] = None
-    warmup_steps: Optional[int] = None  # deprecated, use 'warmup' instead.
-    warmup_fraction: Optional[float] = None
-    decay: Optional[int] = None
-    decay_steps: Optional[int] = None  # deprecated, use 'decay' instead.
-    decay_fraction: Optional[float] = 0.1
+    warmup: int | None = None
+    warmup_steps: int | None = None  # deprecated, use 'warmup' instead.
+    warmup_fraction: float | None = None
+    decay: int | None = None
+    decay_steps: int | None = None  # deprecated, use 'decay' instead.
+    decay_fraction: float | None = 0.1
     warmup_min_lr: float = 0.0
     decay_min_lr: float = 0.0
 
@@ -206,8 +206,8 @@ class WSD(Scheduler):
             raise OLMoConfigurationError("decay_fraction must be between 0 and 1.")
 
     def get_lr(
-        self, initial_lr: Union[float, torch.Tensor], current: int, t_max: int
-    ) -> Union[float, torch.Tensor]:
+        self, initial_lr: float | torch.Tensor, current: int, t_max: int
+    ) -> float | torch.Tensor:
         if self.warmup is None:
             assert self.warmup_fraction is not None
             warmup = round(t_max * self.warmup_fraction)
@@ -253,14 +253,14 @@ class PowerLR(Scheduler):
     """
 
     b: float = -0.51  # power‑law exponent (negative)
-    warmup: Optional[int] = None
-    warmup_steps: Optional[int] = None  # deprecated alias
-    warmup_fraction: Optional[float] = None
+    warmup: int | None = None
+    warmup_steps: int | None = None  # deprecated alias
+    warmup_fraction: float | None = None
     warmup_min_lr: float = 0.0
 
-    decay: Optional[int] = None
-    decay_steps: Optional[int] = None  # deprecated alias
-    decay_fraction: Optional[float] = 0.1
+    decay: int | None = None
+    decay_steps: int | None = None  # deprecated alias
+    decay_fraction: float | None = 0.1
     decay_min_lr: float = 0.0
 
     def __post_init__(self, *args):
@@ -303,8 +303,8 @@ class PowerLR(Scheduler):
     # Core scheduling logic
     # -------------------------------------------------------------------------
     def get_lr(
-        self, initial_lr: Union[float, torch.Tensor], current: int, t_max: int
-    ) -> Union[float, torch.Tensor]:
+        self, initial_lr: float | torch.Tensor, current: int, t_max: int
+    ) -> float | torch.Tensor:
         """
         Compute the learning rate for the given *current* step/token count.
 
@@ -353,10 +353,10 @@ class LinearWithWarmup(Scheduler):
     """
 
     alpha_f: float = 0.1
-    t_max: Optional[int] = None
-    warmup: Optional[int] = None
-    warmup_steps: Optional[int] = None  # deprecated, use 'warmup' instead.
-    warmup_fraction: Optional[float] = None
+    t_max: int | None = None
+    warmup: int | None = None
+    warmup_steps: int | None = None  # deprecated, use 'warmup' instead.
+    warmup_fraction: float | None = None
     warmup_min_lr: float = 0.0
 
     def __post_init__(self, *args):
@@ -378,8 +378,8 @@ class LinearWithWarmup(Scheduler):
             raise OLMoConfigurationError("warmup_fraction must be between 0 and 1.")
 
     def get_lr(
-        self, initial_lr: Union[float, torch.Tensor], current: int, t_max: int
-    ) -> Union[float, torch.Tensor]:
+        self, initial_lr: float | torch.Tensor, current: int, t_max: int
+    ) -> float | torch.Tensor:
         t_max = t_max if self.t_max is None else self.t_max
         eta_min = initial_lr * self.alpha_f
 
@@ -407,9 +407,9 @@ class InvSqrtWithWarmup(Scheduler):
     """
 
     alpha_f: float = 0.1
-    warmup: Optional[int] = None
-    warmup_steps: Optional[int] = None  # deprecated, use 'warmup' instead.
-    warmup_fraction: Optional[float] = None
+    warmup: int | None = None
+    warmup_steps: int | None = None  # deprecated, use 'warmup' instead.
+    warmup_fraction: float | None = None
     warmup_min_lr: float = 0.0
 
     def __post_init__(self, *args):
@@ -431,8 +431,8 @@ class InvSqrtWithWarmup(Scheduler):
             raise OLMoConfigurationError("warmup_fraction must be between 0 and 1.")
 
     def get_lr(
-        self, initial_lr: Union[float, torch.Tensor], current: int, t_max: int
-    ) -> Union[float, torch.Tensor]:
+        self, initial_lr: float | torch.Tensor, current: int, t_max: int
+    ) -> float | torch.Tensor:
         if self.warmup is None:
             assert self.warmup_fraction is not None
             warmup = round(t_max * self.warmup_fraction)
@@ -453,11 +453,11 @@ class CosWithWarmup(Scheduler):
     Cosine learning rate schedule with a warmup.
     """
 
-    warmup: Optional[int] = None
-    warmup_steps: Optional[int] = None  # deprecated, use 'warmup' instead.
-    warmup_fraction: Optional[float] = None
+    warmup: int | None = None
+    warmup_steps: int | None = None  # deprecated, use 'warmup' instead.
+    warmup_fraction: float | None = None
     alpha_f: float = 0.1
-    t_max: Optional[int] = None
+    t_max: int | None = None
     warmup_min_lr: float = 0.0
 
     def __post_init__(self, *args):
@@ -479,8 +479,8 @@ class CosWithWarmup(Scheduler):
             raise OLMoConfigurationError("warmup_fraction must be between 0 and 1.")
 
     def get_lr(
-        self, initial_lr: Union[float, torch.Tensor], current: int, t_max: int
-    ) -> Union[float, torch.Tensor]:
+        self, initial_lr: float | torch.Tensor, current: int, t_max: int
+    ) -> float | torch.Tensor:
         t_max = t_max if self.t_max is None else self.t_max
         eta_min = initial_lr * self.alpha_f
 
@@ -508,11 +508,11 @@ class HalfCosWithWarmup(Scheduler):
     Note: This assumes that the peak LR set is for the full cosine schedule.
     """
 
-    warmup: Optional[int] = None
-    warmup_steps: Optional[int] = None  # deprecated, use 'warmup' instead.
-    warmup_fraction: Optional[float] = None
+    warmup: int | None = None
+    warmup_steps: int | None = None  # deprecated, use 'warmup' instead.
+    warmup_fraction: float | None = None
     alpha_f: float = 0.1
-    t_max: Optional[int] = None
+    t_max: int | None = None
     warmup_min_lr: float = 0.0
 
     def __post_init__(self, *args):
@@ -534,8 +534,8 @@ class HalfCosWithWarmup(Scheduler):
             raise OLMoConfigurationError("warmup_fraction must be between 0 and 1.")
 
     def get_lr(
-        self, initial_lr: Union[float, torch.Tensor], current: int, t_max: int
-    ) -> Union[float, torch.Tensor]:
+        self, initial_lr: float | torch.Tensor, current: int, t_max: int
+    ) -> float | torch.Tensor:
         t_max = t_max if self.t_max is None else self.t_max
         eta_min = initial_lr * self.alpha_f
 
@@ -565,9 +565,9 @@ class CosWithWarmupAndLinearDecay(CosWithWarmup):
     Cosine learning rate schedule with a warmup, cut short at the end and followed by a linear decay.
     """
 
-    decay: Optional[int] = None
-    decay_steps: Optional[int] = None  # deprecated, use 'decay' instead.
-    decay_fraction: Optional[float] = 0.1
+    decay: int | None = None
+    decay_steps: int | None = None  # deprecated, use 'decay' instead.
+    decay_fraction: float | None = 0.1
     decay_min_lr: float = 0.0
 
     def __post_init__(self, *args):
@@ -589,8 +589,8 @@ class CosWithWarmupAndLinearDecay(CosWithWarmup):
             raise OLMoConfigurationError("'decay_fraction' must be between 0 and 1.")
 
     def get_lr(
-        self, initial_lr: Union[float, torch.Tensor], current: int, t_max: int
-    ) -> Union[float, torch.Tensor]:
+        self, initial_lr: float | torch.Tensor, current: int, t_max: int
+    ) -> float | torch.Tensor:
         if self.decay is None:
             assert self.decay_fraction is not None
             decay = round(t_max * self.decay_fraction)
@@ -618,11 +618,11 @@ class ComposableSchedulerStage(Config):
     duration: int
     shape: ComposableSchedulerStageType = ComposableSchedulerStageType.linear
 
-    start_lr: Optional[float] = None
-    start_lr_fraction: Optional[float] = None
+    start_lr: float | None = None
+    start_lr_fraction: float | None = None
 
-    end_lr: Optional[float] = None
-    end_lr_fraction: Optional[float] = None
+    end_lr: float | None = None
+    end_lr_fraction: float | None = None
 
     def __post_init__(self):
         if self.duration <= 0:
@@ -665,8 +665,8 @@ class OverrideDecay(Config):
     duration: int
     shape: ComposableSchedulerStageType = ComposableSchedulerStageType.linear
 
-    end_lr: Optional[float] = None
-    end_lr_fraction: Optional[float] = None
+    end_lr: float | None = None
+    end_lr_fraction: float | None = None
 
     def __post_init__(self):
         if self.start < 0:
@@ -702,8 +702,8 @@ class ComposableScheduler(Scheduler):
       so it does not rescale to fit the trainer's max horizon.
     """
 
-    stages: List[ComposableSchedulerStage] = field(default_factory=list)
-    override_decay: Optional[OverrideDecay] = None
+    stages: list[ComposableSchedulerStage] = field(default_factory=list)
+    override_decay: OverrideDecay | None = None
 
     _warned_t_max_ignored: bool = field(default=False, init=False, repr=False)
 
@@ -715,19 +715,19 @@ class ComposableScheduler(Scheduler):
     def _resolve_stage_start(
         self,
         stage: ComposableSchedulerStage,
-        initial_lr: Union[float, torch.Tensor],
-        previous_end_lr: Union[float, torch.Tensor],
-    ) -> Union[float, torch.Tensor]:
+        initial_lr: float | torch.Tensor,
+        previous_end_lr: float | torch.Tensor,
+    ) -> float | torch.Tensor:
         if stage.start_lr is None and stage.start_lr_fraction is None:
             return previous_end_lr
         return _resolve_lr_from_initial(initial_lr, stage.start_lr, stage.start_lr_fraction)
 
     def _main_schedule_lr(
-        self, initial_lr: Union[float, torch.Tensor], current: int
-    ) -> Union[float, torch.Tensor]:
+        self, initial_lr: float | torch.Tensor, current: int
+    ) -> float | torch.Tensor:
         current = max(current, 0)
         stage_start = 0
-        previous_end_lr: Union[float, torch.Tensor] = initial_lr
+        previous_end_lr: float | torch.Tensor = initial_lr
         for stage in self.stages:
             start_lr = self._resolve_stage_start(stage, initial_lr, previous_end_lr)
             end_lr = _resolve_lr_from_initial(initial_lr, stage.end_lr, stage.end_lr_fraction)
@@ -749,8 +749,8 @@ class ComposableScheduler(Scheduler):
         return previous_end_lr
 
     def get_lr(
-        self, initial_lr: Union[float, torch.Tensor], current: int, t_max: int
-    ) -> Union[float, torch.Tensor]:
+        self, initial_lr: float | torch.Tensor, current: int, t_max: int
+    ) -> float | torch.Tensor:
         """
         Compute the LR at ``current``.
 
@@ -793,10 +793,10 @@ class ComposableScheduler(Scheduler):
 
 
 def _resolve_lr_from_initial(
-    initial_lr: Union[float, torch.Tensor],
-    value: Optional[float],
-    fraction: Optional[float],
-) -> Union[float, torch.Tensor]:
+    initial_lr: float | torch.Tensor,
+    value: float | None,
+    fraction: float | None,
+) -> float | torch.Tensor:
     if value is not None:
         return value
     assert fraction is not None
@@ -805,8 +805,8 @@ def _resolve_lr_from_initial(
 
 def _resolve_override_decay_end(
     override_decay: OverrideDecay,
-    initial_lr: Union[float, torch.Tensor],
-) -> Union[float, torch.Tensor]:
+    initial_lr: float | torch.Tensor,
+) -> float | torch.Tensor:
     return _resolve_lr_from_initial(
         initial_lr, override_decay.end_lr, override_decay.end_lr_fraction
     )
@@ -814,11 +814,11 @@ def _resolve_override_decay_end(
 
 def _interpolate_lr(
     shape: ComposableSchedulerStageType,
-    start_lr: Union[float, torch.Tensor],
-    end_lr: Union[float, torch.Tensor],
+    start_lr: float | torch.Tensor,
+    end_lr: float | torch.Tensor,
     current: int,
     duration: int,
-) -> Union[float, torch.Tensor]:
+) -> float | torch.Tensor:
     if shape == ComposableSchedulerStageType.linear:
         return start_lr + (end_lr - start_lr) * current / duration
     elif shape == ComposableSchedulerStageType.cosine:
@@ -828,19 +828,19 @@ def _interpolate_lr(
 
 
 def _linear_warmup(
-    initial_lr: Union[float, torch.Tensor], current: int, warmup: int, warmup_min_lr: float = 0.0
-) -> Union[float, torch.Tensor]:
+    initial_lr: float | torch.Tensor, current: int, warmup: int, warmup_min_lr: float = 0.0
+) -> float | torch.Tensor:
     if isinstance(initial_lr, float):  # not worth the potential host-device sync if it's a tensor
         assert 0 <= warmup_min_lr < initial_lr
     return warmup_min_lr + (initial_lr - warmup_min_lr) * min(current, warmup) / warmup
 
 
 def _linear_decay(
-    initial_lr: Union[float, torch.Tensor],
+    initial_lr: float | torch.Tensor,
     step_from_end: int,
     decay: int,
     decay_min_lr: float = 0.0,
-) -> Union[float, torch.Tensor]:
+) -> float | torch.Tensor:
     if isinstance(initial_lr, float):  # not worth the potential host-device sync if it's a tensor
         assert 0 <= decay_min_lr < initial_lr
 
@@ -856,15 +856,15 @@ class SequentialScheduler(Scheduler):
     previous scheduler.
     """
 
-    schedulers: List[Scheduler] = field(default_factory=lambda: [ConstantWithWarmup()])
-    schedulers_max: Optional[List[int]] = None
+    schedulers: list[Scheduler] = field(default_factory=lambda: [ConstantWithWarmup()])
+    schedulers_max: list[int] | None = None
     """
     A list of the steps or token counts for which each scheduler runs.
     The last scheduler is assumed to run until the end of training, so any value provided for it is ignored.
     """
-    schedulers_max_steps: Optional[List[int]] = None  # deprecated, use 'schedulers_max' instead.
+    schedulers_max_steps: list[int] | None = None  # deprecated, use 'schedulers_max' instead.
 
-    override_decay: Optional[OverrideDecay] = None
+    override_decay: OverrideDecay | None = None
     """
     Optional late-stage override. When ``current >= override_decay.start``, the
     sub-scheduler sequence is bypassed and the LR decays from "whatever the main
@@ -905,8 +905,8 @@ class SequentialScheduler(Scheduler):
             )
 
     def _sequential_lr(
-        self, initial_lr: Union[float, torch.Tensor], current: int, t_max: int
-    ) -> Union[float, torch.Tensor]:
+        self, initial_lr: float | torch.Tensor, current: int, t_max: int
+    ) -> float | torch.Tensor:
         assert self.schedulers_max is not None
 
         # Call schedulers sequentially until the current step/token count is within the max steps/token count
@@ -925,8 +925,8 @@ class SequentialScheduler(Scheduler):
         return self.schedulers[-1].get_lr(initial_lr, current, t_max)
 
     def get_lr(
-        self, initial_lr: Union[float, torch.Tensor], current: int, t_max: int
-    ) -> Union[float, torch.Tensor]:
+        self, initial_lr: float | torch.Tensor, current: int, t_max: int
+    ) -> float | torch.Tensor:
         assert 0 <= current <= t_max
 
         if self.override_decay is None or current < self.override_decay.start:
@@ -967,21 +967,21 @@ class WSDS(Scheduler):
     Reference: https://arxiv.org/abs/2410.05192
     """
 
-    period_lengths: List[int] = field(default_factory=list)
-    period_lr_multipliers: Optional[List[float]] = None
+    period_lengths: list[int] = field(default_factory=list)
+    period_lr_multipliers: list[float] | None = None
 
-    warmup: Optional[int] = None
-    warmup_fraction: Optional[float] = None
+    warmup: int | None = None
+    warmup_fraction: float | None = None
 
-    decay: Optional[int] = None
-    decay_fraction: Optional[float] = None
+    decay: int | None = None
+    decay_fraction: float | None = None
 
     warmup_min_lr: float = 0.0
     decay_min_lr: float = 0.0
 
-    _cum_period_end: List[int] = field(default_factory=list, init=False, repr=False)
+    _cum_period_end: list[int] = field(default_factory=list, init=False, repr=False)
     _warmup_steps: int = field(default=0, init=False, repr=False)
-    _adjusted_period_lengths: List[int] = field(default_factory=list, init=False, repr=False)
+    _adjusted_period_lengths: list[int] = field(default_factory=list, init=False, repr=False)
 
     def __post_init__(self, *args):
         del args
@@ -1021,7 +1021,7 @@ class WSDS(Scheduler):
             self._warmup_steps = int(self.warmup)
         else:
             assert self.warmup_fraction is not None
-            self._warmup_steps = int(round(self.warmup_fraction * L0))
+            self._warmup_steps = round(self.warmup_fraction * L0)
 
         # Validate first period: warmup + decay <= L0
         D0 = self._resolve_decay(L0)
@@ -1050,7 +1050,7 @@ class WSDS(Scheduler):
             return int(self.decay)
         else:
             assert self.decay_fraction is not None
-            return int(round(self.decay_fraction * Li))
+            return round(self.decay_fraction * Li)
 
     def _find_period(self, x: int) -> int:
         for idx, end in enumerate(self._cum_period_end):
@@ -1058,17 +1058,15 @@ class WSDS(Scheduler):
                 return idx
         return len(self._cum_period_end) - 1
 
-    def _get_peak_lr(
-        self, initial_lr: Union[float, torch.Tensor], pidx: int
-    ) -> Union[float, torch.Tensor]:
+    def _get_peak_lr(self, initial_lr: float | torch.Tensor, pidx: int) -> float | torch.Tensor:
         if self.period_lr_multipliers is None:
             return initial_lr
         else:
             return initial_lr * self.period_lr_multipliers[pidx]
 
     def get_lr(
-        self, initial_lr: Union[float, torch.Tensor], current: int, t_max: int
-    ) -> Union[float, torch.Tensor]:
+        self, initial_lr: float | torch.Tensor, current: int, t_max: int
+    ) -> float | torch.Tensor:
         del t_max
         if current < self._warmup_steps:
             return _linear_warmup(
@@ -1113,8 +1111,8 @@ class ExponentialScheduler(Scheduler):
             raise OLMoConfigurationError("'lr_min' must be positive.")
 
     def get_lr(
-        self, initial_lr: Union[float, torch.Tensor], current: int, t_max: int
-    ) -> Union[float, torch.Tensor]:
+        self, initial_lr: float | torch.Tensor, current: int, t_max: int
+    ) -> float | torch.Tensor:
         if current >= t_max:
             return initial_lr
 

@@ -6,20 +6,11 @@ import functools
 import logging
 import math
 from abc import ABC, abstractmethod
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 from itertools import islice
 from pathlib import Path
-from typing import (
-    Any,
-    Callable,
-    Dict,
-    Generic,
-    Iterable,
-    Iterator,
-    Optional,
-    Tuple,
-    TypeVar,
-)
+from typing import Any, Generic, TypeVar
 
 import bettermap
 import numpy as np
@@ -41,11 +32,11 @@ from .utils import get_rng, iter_batched, load_array_slice, memmap_to_write
 
 __all__ = [
     "DataLoaderBase",
-    "TextDataLoaderBase",
     "NumpyDataLoaderBase",
+    "NumpyDataLoaderConfig",
     "NumpyFSLDataLoader",
     "NumpyVSLDataLoader",
-    "NumpyDataLoaderConfig",
+    "TextDataLoaderBase",
 ]
 
 log = logging.getLogger(__name__)
@@ -88,7 +79,7 @@ class DataLoaderBase(ABC):
         global_batch_size: int,
         dp_world_size: int = 1,
         dp_rank: int = 0,
-        fs_local_rank: Optional[int] = None,
+        fs_local_rank: int | None = None,
     ):
         if is_url(work_dir):
             raise OLMoConfigurationError(
@@ -106,7 +97,7 @@ class DataLoaderBase(ABC):
         The total number of batches processed so far in the current epoch.
         """
 
-        self._epoch: Optional[int] = None
+        self._epoch: int | None = None
 
     @property
     def global_batch_size(self) -> int:
@@ -155,14 +146,14 @@ class DataLoaderBase(ABC):
 
     @property
     @abstractmethod
-    def total_batches(self) -> Optional[int]:
+    def total_batches(self) -> int | None:
         """
         The total number of batches that the dataset will produce over the course of the current epoch, if known.
         Otherwise this should return ``None``.
         """
         raise NotImplementedError
 
-    def batches_in_epoch(self, epoch: int) -> Optional[int]:
+    def batches_in_epoch(self, epoch: int) -> int | None:
         """
         By default this is the same as :meth:`total_batches`, though some data loaders might generate
         a different number of batches per epoch.
@@ -182,7 +173,7 @@ class DataLoaderBase(ABC):
                 f"total length (number of batches) is unknown for {self.__class__.__name__}"
             )
 
-    def __iter__(self) -> Iterator[Dict[str, Any]]:
+    def __iter__(self) -> Iterator[dict[str, Any]]:
         """
         Iterate over the local rank batches.
         """
@@ -190,7 +181,7 @@ class DataLoaderBase(ABC):
             self.batches_processed += 1
             yield batch
 
-    def __getitem__(self, index: int) -> Dict[str, Any]:
+    def __getitem__(self, index: int) -> dict[str, Any]:
         """
         Get a single batch if possible, otherwise :class:`TypeError` is raised.
         """
@@ -205,21 +196,21 @@ class DataLoaderBase(ABC):
         return self.global_batch_size // self.dp_world_size
 
     @abstractmethod
-    def state_dict(self) -> Dict[str, Any]:
+    def state_dict(self) -> dict[str, Any]:
         """
         Get a state dictionary for checkpointing.
         """
         raise NotImplementedError
 
     @abstractmethod
-    def load_state_dict(self, state_dict: Dict[str, Any]):
+    def load_state_dict(self, state_dict: dict[str, Any]):
         """
         Load a state dict from :meth:`state_dict()` to restore the data loader's state.
         """
         raise NotImplementedError
 
     @abstractmethod
-    def reshuffle(self, epoch: Optional[int] = None, **kwargs):
+    def reshuffle(self, epoch: int | None = None, **kwargs):
         """
         Reshuffle for a new epoch. Should be called before starting the epoch, regardless
         of whether or not you've called :meth:`load_state_dict()`.
@@ -229,7 +220,7 @@ class DataLoaderBase(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def _iter_batches(self) -> Iterable[Dict[str, Any]]:
+    def _iter_batches(self) -> Iterable[dict[str, Any]]:
         """
         Returns an iterable over all batches in the epoch.
 
@@ -249,14 +240,14 @@ class DataLoaderBase(ABC):
         self.batches_processed = 0
 
     @abstractmethod
-    def get_mock_batch(self) -> Dict[str, Any]:
+    def get_mock_batch(self) -> dict[str, Any]:
         """
         Return a batch with arbitrary data. This can just be random data as it's only used by the
         trainer to do a dry-run of the forward and backward pass before training officially starts.
         """
         raise NotImplementedError
 
-    def global_num_tokens_in_batch(self, batch: Dict[str, Any]) -> Optional[int]:
+    def global_num_tokens_in_batch(self, batch: dict[str, Any]) -> int | None:
         """
         For text-based data loaders this should return the total (global) number of tokens
         in the batch. This is used by the trainer for bookkeeping.
@@ -285,7 +276,7 @@ class TextDataLoaderBase(DataLoaderBase):
         global_batch_size: int,
         dp_world_size: int = 1,
         dp_rank: int = 0,
-        fs_local_rank: Optional[int] = None,
+        fs_local_rank: int | None = None,
     ):
         super().__init__(
             work_dir=work_dir,
@@ -303,7 +294,7 @@ class TextDataLoaderBase(DataLoaderBase):
         The total number of tokens processed so far in the current epoch.
         """
 
-    def __iter__(self) -> Iterator[Dict[str, Any]]:
+    def __iter__(self) -> Iterator[dict[str, Any]]:
         for batch in super().__iter__():
             if batch["input_ids"].numel() != self.rank_batch_size:
                 raise RuntimeError(
@@ -317,7 +308,7 @@ class TextDataLoaderBase(DataLoaderBase):
         super().reset()
         self.tokens_processed = 0
 
-    def global_num_tokens_in_batch(self, batch: Dict[str, Any]) -> Optional[int]:
+    def global_num_tokens_in_batch(self, batch: dict[str, Any]) -> int | None:
         del batch
         return self.global_batch_size
 
@@ -358,13 +349,13 @@ class NumpyDataLoaderBase(TextDataLoaderBase):
         work_dir: PathOrStr,
         seed: int = 0,
         shuffle: bool = True,
-        num_threads: Optional[int] = None,
+        num_threads: int | None = None,
         num_workers: int = 0,
-        prefetch_factor: Optional[int] = None,
+        prefetch_factor: int | None = None,
         target_device_type: str = "cpu",
         dp_world_size: int = 1,
         dp_rank: int = 0,
-        fs_local_rank: Optional[int] = None,
+        fs_local_rank: int | None = None,
         ignore_fingerprint_mismatch: bool = False,
     ):
         super().__init__(
@@ -382,7 +373,7 @@ class NumpyDataLoaderBase(TextDataLoaderBase):
         self.num_workers = num_workers
         self.prefetch_factor = prefetch_factor
         self.target_device_type = target_device_type
-        self._global_indices: Optional[np.ndarray] = None
+        self._global_indices: np.ndarray | None = None
         self.ignore_fingerprint_mismatch = ignore_fingerprint_mismatch
 
     @classmethod
@@ -392,14 +383,14 @@ class NumpyDataLoaderBase(TextDataLoaderBase):
         *,
         global_batch_size: int,
         collator: DataCollator,
-        work_dir: Optional[PathOrStr] = None,
+        work_dir: PathOrStr | None = None,
         seed: int = 0,
         dp_world_size: int = 1,
         dp_rank: int = 0,
-        fs_local_rank: Optional[int] = None,
-        num_threads: Optional[int] = None,
+        fs_local_rank: int | None = None,
+        num_threads: int | None = None,
         num_workers: int = 0,
-        prefetch_factor: Optional[int] = None,
+        prefetch_factor: int | None = None,
         target_device_type: str = "cpu",
         shuffle: bool = True,
         ignore_fingerprint_mismatch: bool = False,
@@ -409,21 +400,21 @@ class NumpyDataLoaderBase(TextDataLoaderBase):
 
         :param dataset: The dataset to wrap.
         """
-        kwargs = dict(
-            global_batch_size=global_batch_size,
-            collator=collator,
-            work_dir=work_dir or dataset.work_dir,
-            dp_world_size=dp_world_size,
-            dp_rank=dp_rank,
-            fs_local_rank=fs_local_rank,
-            seed=seed,
-            num_threads=num_threads,
-            num_workers=num_workers,
-            prefetch_factor=prefetch_factor,
-            target_device_type=target_device_type,
-            shuffle=shuffle,
-            ignore_fingerprint_mismatch=ignore_fingerprint_mismatch,
-        )
+        kwargs = {
+            "global_batch_size": global_batch_size,
+            "collator": collator,
+            "work_dir": work_dir or dataset.work_dir,
+            "dp_world_size": dp_world_size,
+            "dp_rank": dp_rank,
+            "fs_local_rank": fs_local_rank,
+            "seed": seed,
+            "num_threads": num_threads,
+            "num_workers": num_workers,
+            "prefetch_factor": prefetch_factor,
+            "target_device_type": target_device_type,
+            "shuffle": shuffle,
+            "ignore_fingerprint_mismatch": ignore_fingerprint_mismatch,
+        }
         data_loader: DataLoaderBase
         if isinstance(dataset, NumpyFSLDatasetBase):
             data_loader = NumpyFSLDataLoader(dataset, **kwargs)  # type: ignore
@@ -438,7 +429,7 @@ class NumpyDataLoaderBase(TextDataLoaderBase):
 
         return data_loader
 
-    def state_dict(self) -> Dict[str, Any]:
+    def state_dict(self) -> dict[str, Any]:
         return {
             "dataset_fingerprint_version": self.dataset.fingerprint_version,
             "dataset_fingerprint": self.dataset.fingerprint,
@@ -448,7 +439,7 @@ class NumpyDataLoaderBase(TextDataLoaderBase):
             "epoch": self._epoch,
         }
 
-    def load_state_dict(self, state_dict: Dict[str, Any]):
+    def load_state_dict(self, state_dict: dict[str, Any]):
         if state_dict["dataset_fingerprint_version"] != self.dataset.fingerprint_version:
             log.warning(
                 "Dataset fingerprint version does not match the version in the checkpoint, "
@@ -532,7 +523,7 @@ class NumpyDataLoaderBase(TextDataLoaderBase):
                     log.info(f"Global data order indices saved to:\n'{self._global_indices_file}'")
         barrier()
 
-    def reshuffle(self, epoch: Optional[int] = None, in_memory: bool = False, **kwargs):
+    def reshuffle(self, epoch: int | None = None, in_memory: bool = False, **kwargs):
         del kwargs
         if epoch is None:
             epoch = 1 if self._epoch is None else self._epoch + 1
@@ -541,7 +532,7 @@ class NumpyDataLoaderBase(TextDataLoaderBase):
         self._epoch = epoch
         self.build_and_save_global_indices(in_memory=in_memory)
 
-    def get_mock_batch(self) -> Dict[str, Any]:
+    def get_mock_batch(self) -> dict[str, Any]:
         device = torch.device("cpu")
         rng = torch.Generator(device=device)
         rng.manual_seed(self.seed + self.dp_rank)
@@ -553,7 +544,7 @@ class NumpyDataLoaderBase(TextDataLoaderBase):
             generator=rng,
             device=device,
         )
-        out: Dict[str, Any] = {"input_ids": input_ids}
+        out: dict[str, Any] = {"input_ids": input_ids}
         if isinstance(self.dataset, NumpyFSLDatasetBase) and self.dataset._generate_doc_lengths:
             splits = torch.randint(
                 2,
@@ -568,7 +559,7 @@ class NumpyDataLoaderBase(TextDataLoaderBase):
             out["max_doc_lens"] = torch.max(out["doc_lens"], dim=-1).values.tolist()
         return out
 
-    def _iter_batches(self) -> Iterable[Dict[str, Any]]:
+    def _iter_batches(self) -> Iterable[dict[str, Any]]:
         # If we're already at the end of epoch we can skip creating the iterator.
         if self.total_batches is not None and self.batches_processed >= self.total_batches:
             yield from ()
@@ -600,7 +591,7 @@ class NumpyDataLoaderBase(TextDataLoaderBase):
                 current_global_batch_size = self.global_batch_size
                 batch_iterator = _build_batch_iterator()
 
-    def _get_dataset_item(self, idx: int) -> Dict[str, Any]:
+    def _get_dataset_item(self, idx: int) -> dict[str, Any]:
         item = self.dataset[idx]
         if isinstance(item, dict):
             return dict(**item, index=idx)
@@ -667,7 +658,7 @@ class NumpyFSLDataLoader(NumpyDataLoaderBase):
     def _build_global_indices(self) -> np.ndarray:
         assert len(self.dataset) < np.iinfo(np.uint32).max
 
-        rng: Optional[np.random.Generator] = None
+        rng: np.random.Generator | None = None
         if self.shuffle:
             # Deterministically shuffle based on epoch and seed
             rng = get_rng(self.seed + self.epoch)
@@ -689,7 +680,7 @@ class NumpyFSLDataLoader(NumpyDataLoaderBase):
 
         return indices
 
-    def __getitem__(self, index: int) -> Dict[str, Any]:
+    def __getitem__(self, index: int) -> dict[str, Any]:
         # NOTE: Make sure the logic here matches that in '_get_local_instance_indices()'
 
         # NOTE: 'indices' are global instance indices.
@@ -746,7 +737,7 @@ class NumpyFSLDataLoader(NumpyDataLoaderBase):
 
         return indices
 
-    def state_dict(self) -> Dict[str, Any]:
+    def state_dict(self) -> dict[str, Any]:
         state_dict = super().state_dict()
         assert isinstance(self.dataset, NumpyFSLDatasetBase)
         state_dict["dataset_type"] = "fsl"
@@ -754,7 +745,7 @@ class NumpyFSLDataLoader(NumpyDataLoaderBase):
         state_dict["max_target_sequence_length"] = self.dataset.max_target_sequence_length
         return state_dict
 
-    def load_state_dict(self, state_dict: Dict[str, Any]):
+    def load_state_dict(self, state_dict: dict[str, Any]):
         super().load_state_dict(state_dict)
         # Account for change in batch size / sequence length.
         self.batches_processed = self.tokens_processed // self.global_batch_size
@@ -792,9 +783,9 @@ class NumpyVSLDataLoader(NumpyDataLoaderBase):
         **kwargs,
     ):
         super().__init__(dataset, **kwargs)
-        self._batches_per_bucket: Optional[Tuple[Tuple[int, int], ...]] = None
-        self._buckets: Optional[Tuple[int, ...]] = None
-        self._bucket_indices: Optional[Dict[int, np.ndarray]] = None
+        self._batches_per_bucket: tuple[tuple[int, int], ...] | None = None
+        self._buckets: tuple[int, ...] | None = None
+        self._bucket_indices: dict[int, np.ndarray] | None = None
         if not self.shuffle:
             log.warning("VSL curriculum will be ignored since shuffle=False")
         if self.rank_batch_size < max(self.buckets):
@@ -804,13 +795,13 @@ class NumpyVSLDataLoader(NumpyDataLoaderBase):
             )
 
     @property
-    def buckets(self) -> Tuple[int, ...]:
+    def buckets(self) -> tuple[int, ...]:
         if self._buckets is None:
             self._buckets = tuple([seq_len for seq_len, _ in self.batches_per_bucket])
         return self._buckets
 
     @property
-    def batches_per_bucket(self) -> Tuple[Tuple[int, int], ...]:
+    def batches_per_bucket(self) -> tuple[tuple[int, int], ...]:
         if self._batches_per_bucket is None:
             assert isinstance(self.dataset, NumpyVSLDataset)
             self._batches_per_bucket = tuple(
@@ -914,7 +905,7 @@ class NumpyVSLDataLoader(NumpyDataLoaderBase):
         else:
             return np.arange(self.total_batches, dtype=np.uint32)
 
-    def __getitem__(self, index: int) -> Dict[str, Any]:
+    def __getitem__(self, index: int) -> dict[str, Any]:
         # NOTE: Make sure the logic here matches that in '_get_local_instance_indices()'
 
         # NOTE: 'indices' are global *batch* indices.
@@ -943,8 +934,7 @@ class NumpyVSLDataLoader(NumpyDataLoaderBase):
             indices = indices[worker_info.id :: worker_info.num_workers]
 
         for batch_index in indices:
-            for instance_index in self._batch_index_to_local_instance_indices(batch_index):
-                yield instance_index
+            yield from self._batch_index_to_local_instance_indices(batch_index)
 
     def _batch_index_to_local_instance_indices(self, batch_index: int) -> np.ndarray:
         bucket_seq_len, bucket_batch_index = self._batch_index_to_bucket_batch_index(batch_index)
@@ -973,7 +963,7 @@ class NumpyVSLDataLoader(NumpyDataLoaderBase):
 
         return local_instance_indices
 
-    def _batch_index_to_bucket_batch_index(self, batch_index: int) -> Tuple[int, int]:
+    def _batch_index_to_bucket_batch_index(self, batch_index: int) -> tuple[int, int]:
         bucket_start_offset = 0
         bucket_end_offset = 0
         for seq_len, num_batches in self.batches_per_bucket:
@@ -983,7 +973,7 @@ class NumpyVSLDataLoader(NumpyDataLoaderBase):
             bucket_start_offset += num_batches
         raise IndexError(f"Batch index '{batch_index}' out of bounds")
 
-    def state_dict(self) -> Dict[str, Any]:
+    def state_dict(self) -> dict[str, Any]:
         state_dict = super().state_dict()
         assert isinstance(self.dataset, NumpyVSLDataset)
         state_dict["dataset_type"] = "vsl"
@@ -992,7 +982,7 @@ class NumpyVSLDataLoader(NumpyDataLoaderBase):
         state_dict["min_sequence_length"] = self.dataset.min_sequence_length
         return state_dict
 
-    def load_state_dict(self, state_dict: Dict[str, Any]):
+    def load_state_dict(self, state_dict: dict[str, Any]):
         super().load_state_dict(state_dict)
         log.info(
             f"Data loader will resume from batch {self.batches_processed}/{self.total_batches}"
@@ -1018,7 +1008,7 @@ class NumpyVSLDataLoader(NumpyDataLoaderBase):
             )
 
 
-class _IterableDatasetWrapper(torch.utils.data.IterableDataset[Dict[str, Any]]):
+class _IterableDatasetWrapper(torch.utils.data.IterableDataset[dict[str, Any]]):
     def __init__(self, data_loader: NumpyDataLoaderBase):
         self.data_loader = data_loader
 
@@ -1030,7 +1020,7 @@ class _IterableDatasetWrapper(torch.utils.data.IterableDataset[Dict[str, Any]]):
     def worker_info(self):
         return torch.utils.data.get_worker_info()
 
-    def __iter__(self) -> Iterator[Dict[str, Any]]:
+    def __iter__(self) -> Iterator[dict[str, Any]]:
         """
         Iterate over the local rank+worker instances.
         """
@@ -1043,7 +1033,7 @@ class _IterableDatasetWrapper(torch.utils.data.IterableDataset[Dict[str, Any]]):
             num_threads = 4
 
         # Potentially slice by threads.
-        instance_iterator: Iterator[Dict[str, Any]]
+        instance_iterator: Iterator[dict[str, Any]]
         if num_threads:
             # In order to stay ahead of training the total queue size (sum across all threads)
             # should be bigger than the maximum number of instances per batch locally.
@@ -1111,20 +1101,20 @@ class NumpyDataLoaderConfig(DataLoaderConfig[NumpyDataLoaderBase]):
 
     global_batch_size: int
     seed: int
-    work_dir: Optional[str] = None
-    num_threads: Optional[int] = None
+    work_dir: str | None = None
+    num_threads: int | None = None
     num_workers: int = 0
-    prefetch_factor: Optional[int] = None
-    target_device_type: Optional[str] = None
+    prefetch_factor: int | None = None
+    target_device_type: str | None = None
     ignore_fingerprint_mismatch: bool = False
 
     def build(
         self,
         dataset: NumpyDatasetBase,
         *,
-        collator: Optional[DataCollator] = None,
-        mesh: Optional[DeviceMesh] = None,
-        dp_process_group: Optional[dist.ProcessGroup] = None,
+        collator: DataCollator | None = None,
+        mesh: DeviceMesh | None = None,
+        dp_process_group: dist.ProcessGroup | None = None,
     ) -> NumpyDataLoaderBase:
         """
         Construct the :class:`NumpyDataLoaderBase`.

@@ -6,26 +6,12 @@ import time
 import uuid
 import warnings
 from collections import OrderedDict, defaultdict
+from collections.abc import Callable, Generator, Iterable
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import timedelta
 from pathlib import Path
-from typing import (
-    Any,
-    Callable,
-    Dict,
-    Generator,
-    Iterable,
-    List,
-    Optional,
-    Set,
-    Tuple,
-    Type,
-    TypedDict,
-    TypeVar,
-    Union,
-    cast,
-)
+from typing import Any, TypedDict, TypeVar, cast
 
 import torch
 import torch.distributed as dist
@@ -88,12 +74,12 @@ class TrainerStateDict(TypedDict):
     global_step: int
     global_train_tokens_seen: int
     global_train_petaflops: float
-    max_steps: Optional[int]
-    data_loader: Dict[str, Any]
+    max_steps: int | None
+    data_loader: dict[str, Any]
     epoch: int
     world_size: int
-    rng: Dict[str, Any]
-    callbacks: Dict[str, Dict[str, Any]]
+    rng: dict[str, Any]
+    callbacks: dict[str, dict[str, Any]]
 
 
 @dataclass
@@ -150,7 +136,7 @@ class Trainer:
     state from a train checkpoint after the fact.
     """
 
-    callbacks: Dict[str, Callback]
+    callbacks: dict[str, Callback]
     """
     Trainer callbacks.
     """
@@ -172,7 +158,7 @@ class Trainer:
     Whether to overwrite existing files/checkpoints in the :data:`save_folder`.
     """
 
-    load_path: Optional[PathOrStr] = None
+    load_path: PathOrStr | None = None
     """
     An alternative location to load a checkpoint from if no checkpoint is found in the current :data:`save_folder`.
 
@@ -185,13 +171,13 @@ class Trainer:
     The strategy for loading a checkpoint prior to training.
     """
 
-    load_trainer_state: Optional[bool] = None
+    load_trainer_state: bool | None = None
     """
     Whether to load the trainer state (including dataloader state). If ``None``, this will attempt
     to load the trainer state if it exists in the checkpoint, but will will not error if it doesn't.
     """
 
-    load_optim_state: Optional[bool] = None
+    load_optim_state: bool | None = None
     """
     Whether to load the optimizer state. If ``None``, this will attempt to load the optimizer state
     if it exists in the checkpoint, but will not error if it doesn't.
@@ -216,7 +202,7 @@ class Trainer:
         sync.
     """
 
-    dp_process_group: Optional[dist.ProcessGroup] = None
+    dp_process_group: dist.ProcessGroup | None = None
     """
     The distributed process group for all data parallel ranks.
     """
@@ -251,14 +237,14 @@ class Trainer:
     training throughput.
     """
 
-    hard_stop: Optional[Duration] = None
+    hard_stop: Duration | None = None
     """
     Set a hard stopping point for the trainer. This is useful for ablations when you you don't
     want to do a complete training run, but you don't want to change :data:`max_duration` as to
     not affect the learning rate schedule.
     """
 
-    async_bookkeeping: Optional[bool] = None
+    async_bookkeeping: bool | None = None
     """
     Do collective bookkeeping operations like reducing metrics asynchronously.
     This requires a separate CPU-only backend, and will default to ``True`` if one is available.
@@ -284,31 +270,31 @@ class Trainer:
     This is useful for benchmarking.
     """
 
-    steps_to_skip: Optional[List[StepSkipRange]] = None
+    steps_to_skip: list[StepSkipRange] | None = None
     """
     Ranges of steps to completely skip training on.
     """
 
     # Internal bookkeeping
 
-    _metrics: Dict[int, Dict[str, torch.Tensor]] = field(default_factory=OrderedDict)
-    _metrics_reduce_type: Dict[str, Optional[ReduceType]] = field(default_factory=dict)
+    _metrics: dict[int, dict[str, torch.Tensor]] = field(default_factory=OrderedDict)
+    _metrics_reduce_type: dict[str, ReduceType | None] = field(default_factory=dict)
     _canceled: bool = False
-    _cancel_reason: Optional[str] = None
-    _canceling_rank: Optional[int] = None
-    _error: Optional[BaseException] = None
-    _rank_batch_size: Optional[int] = None
-    _multi_thread_pool: Optional[ThreadPoolExecutor] = None
-    _single_thread_pool: Optional[ThreadPoolExecutor] = None
+    _cancel_reason: str | None = None
+    _canceling_rank: int | None = None
+    _error: BaseException | None = None
+    _rank_batch_size: int | None = None
+    _multi_thread_pool: ThreadPoolExecutor | None = None
+    _single_thread_pool: ThreadPoolExecutor | None = None
     # maps bookkeeping operation name to an ordereddict of operation ID to operation Future
-    _bookkeeping_queue: Dict[str, Dict[str, Future]] = field(
+    _bookkeeping_queue: dict[str, dict[str, Future]] = field(
         default_factory=lambda: defaultdict(OrderedDict)
     )
-    _bookkeeping_pg: Optional[dist.ProcessGroup] = None
-    _blocking_ephemeral_checkpoints: Set[str] = field(repr=False, default_factory=set)
+    _bookkeeping_pg: dist.ProcessGroup | None = None
+    _blocking_ephemeral_checkpoints: set[str] = field(repr=False, default_factory=set)
     """Callbacks that are blocking ephemeral checkpoints."""
     _checkpoint_loaded: bool = False
-    _metrics_consistent: Optional[bool] = None
+    _metrics_consistent: bool | None = None
 
     def __post_init__(self):
         self.save_folder = normalize_path(self.save_folder)
@@ -429,14 +415,12 @@ class Trainer:
         ):
             self.check_if_canceled()
 
-        if self.is_canceled:
-            return True
-        elif self._duration_due(self.max_duration):
-            return True
-        elif self.hard_stop is not None and self._duration_due(self.hard_stop):
-            return True
-        else:
-            return False
+        return bool(
+            self.is_canceled
+            or self._duration_due(self.max_duration)
+            or self.hard_stop is not None
+            and self._duration_due(self.hard_stop)
+        )
 
     @property
     def is_canceled(self) -> bool:
@@ -452,14 +436,14 @@ class Trainer:
         return self.global_batch_size
 
     @property
-    def steps_per_epoch(self) -> Optional[int]:
+    def steps_per_epoch(self) -> int | None:
         """
         The total number of training steps in an epoch, if known.
         """
         return self.data_loader.total_batches
 
     @property
-    def tokens_per_epoch(self) -> Optional[int]:
+    def tokens_per_epoch(self) -> int | None:
         """
         The total number of tokens in the training dataset, minus left-overs.
         """
@@ -469,14 +453,14 @@ class Trainer:
             return None
 
     @property
-    def max_steps(self) -> Optional[int]:
+    def max_steps(self) -> int | None:
         """
         The maximum number of steps to train for, as determined by :data:`max_duration`.
         """
         return self._get_max_steps(self.max_duration)
 
     @property
-    def max_tokens(self) -> Optional[int]:
+    def max_tokens(self) -> int | None:
         """
         The maximum number of tokens to train for, as determined by :data:`max_duration`.
         """
@@ -498,7 +482,7 @@ class Trainer:
         else:
             raise NotImplementedError(f"Unsupported duration unit: {duration.unit}")
 
-    def _get_max_steps(self, duration: Duration) -> Optional[int]:
+    def _get_max_steps(self, duration: Duration) -> int | None:
         if duration.unit == DurationUnit.steps:
             return duration.value
         elif duration.unit == DurationUnit.epochs:
@@ -528,7 +512,7 @@ class Trainer:
         else:
             raise NotImplementedError
 
-    def _get_max_tokens(self, duration: Duration) -> Optional[int]:
+    def _get_max_tokens(self, duration: Duration) -> int | None:
         if duration.unit == DurationUnit.tokens:
             return duration.value
         else:
@@ -551,7 +535,7 @@ class Trainer:
             return self.device
 
     @property
-    def bookkeeping_pg(self) -> Optional[dist.ProcessGroup]:
+    def bookkeeping_pg(self) -> dist.ProcessGroup | None:
         """
         The process group used for bookkeeping collectives.
 
@@ -600,9 +584,9 @@ class Trainer:
             total_steps = max(total_steps, self.global_step)
 
         # Get current speed in batches per second.
-        bps: Optional[float] = None
-        tps: Optional[float] = None
-        mfu: Optional[float] = None
+        bps: float | None = None
+        tps: float | None = None
+        mfu: float | None = None
         for callback in self._iter_callbacks():
             if isinstance(callback, SpeedMonitorCallback):
                 bps = callback.bps_avg
@@ -611,7 +595,7 @@ class Trainer:
                 break
 
         # Estimate the remaining time.
-        time_remaining: Optional[timedelta] = None
+        time_remaining: timedelta | None = None
         if (
             bps is not None
             and total_steps is not None
@@ -851,8 +835,8 @@ class Trainer:
         self,
         dir: PathOrStr,
         *,
-        load_trainer_state: Optional[bool] = None,
-        load_optim_state: Optional[bool] = None,
+        load_trainer_state: bool | None = None,
+        load_optim_state: bool | None = None,
     ):
         """
         Load a checkpoint.
@@ -884,8 +868,8 @@ class Trainer:
 
         # NOTE: to avoid making a ton of client requests (S3 or otherwise) we only make those
         # requests from rank 0 then scatter the result to the other ranks.
-        dir_to_scatter: Optional[PathOrStr] = dir
-        error: Optional[Exception] = None
+        dir_to_scatter: PathOrStr | None = dir
+        error: Exception | None = None
         if get_rank() == 0 and not self.checkpointer.dir_is_checkpoint(dir):
             # Try to find the latest checkpoint in the directory.
             try:
@@ -924,10 +908,10 @@ class Trainer:
 
     def maybe_load_checkpoint(
         self,
-        dir: Optional[PathOrStr] = None,
+        dir: PathOrStr | None = None,
         *,
-        load_trainer_state: Optional[bool] = None,
-        load_optim_state: Optional[bool] = None,
+        load_trainer_state: bool | None = None,
+        load_optim_state: bool | None = None,
     ) -> bool:
         """
         Like :meth:`load_checkpoint()` but is a no-op if there is no checkpoint in the ``dir`` provided.
@@ -977,7 +961,7 @@ class Trainer:
         self.checkpointer.save(
             path,
             self.train_module,
-            cast(Dict[str, Any], self.state_dict()),
+            cast(dict[str, Any], self.state_dict()),
             ephemeral=ephemeral,
         )
         self.record_metric(
@@ -990,7 +974,7 @@ class Trainer:
         log.info("Checkpoint saved")
         return path
 
-    def save_checkpoint_async(self, ephemeral: bool = False) -> Tuple[PathOrStr, Future]:
+    def save_checkpoint_async(self, ephemeral: bool = False) -> tuple[PathOrStr, Future]:
         """
         Save a checkpoint for the current step to the :data:`save_folder` asynchronously.
 
@@ -1015,7 +999,7 @@ class Trainer:
         fut = self.checkpointer.save_async(
             path,
             self.train_module,
-            cast(Dict[str, Any], self.state_dict()),
+            cast(dict[str, Any], self.state_dict()),
             ephemeral=ephemeral,
         )
 
@@ -1037,9 +1021,9 @@ class Trainer:
     def record_metric(
         self,
         name: str,
-        value: Union[float, torch.Tensor],
-        reduce_type: Optional[ReduceType] = None,
-        namespace: Optional[str] = None,
+        value: float | torch.Tensor,
+        reduce_type: ReduceType | None = None,
+        namespace: str | None = None,
         merge_strategy: MetricMergeStrategy = MetricMergeStrategy.warn,
     ):
         """
@@ -1096,15 +1080,13 @@ class Trainer:
             )
         self._metrics_reduce_type[name] = reduce_type
 
-    def record_ce_loss(
-        self, value: Union[float, torch.Tensor], reduce_type: Optional[ReduceType] = None
-    ):
+    def record_ce_loss(self, value: float | torch.Tensor, reduce_type: ReduceType | None = None):
         """
         Record the cross-entropy loss metric specifically.
         """
         return self.record_metric(TRAIN_CE_LOSS_METRIC, value, reduce_type=reduce_type)
 
-    def get_metric(self, name: str, namespace: Optional[str] = None) -> Optional[torch.Tensor]:
+    def get_metric(self, name: str, namespace: str | None = None) -> torch.Tensor | None:
         """
         Get the value of a metric recorded during the current step.
 
@@ -1125,7 +1107,7 @@ class Trainer:
         return self._metrics[self.global_step].get(name)
 
     def write_file(
-        self, name: str, contents: Union[str, bytes], dir: Optional[PathOrStr] = None
+        self, name: str, contents: str | bytes, dir: PathOrStr | None = None
     ) -> PathOrStr:
         """
         Write a file to the :data:`save_folder` or ``dir``, if provided.
@@ -1197,7 +1179,7 @@ class Trainer:
         self._sort_callbacks()
         callback.post_attach()
 
-    def has_callback(self, cb_class: Type[Callback]) -> bool:
+    def has_callback(self, cb_class: type[Callback]) -> bool:
         """
         Check if the trainer already has a registered instance of the given callback class.
         """
@@ -1234,7 +1216,7 @@ class Trainer:
     def _handle_os_signal(self, signalnum, stack_frame):
         del stack_frame
 
-        signame: Optional[str] = None
+        signame: str | None = None
         if signalnum == signal.SIGTERM:
             signame = "SIGTERM"
         elif signalnum == signal.SIGINT:
@@ -1253,11 +1235,11 @@ class Trainer:
         self,
         op: Callable[..., T],
         *args,
-        cb: Optional[Callable[[T], None]] = None,
-        op_name: Optional[str] = None,
-        cancel_in_progress: Optional[bool] = None,  # deprecated
+        cb: Callable[[T], None] | None = None,
+        op_name: str | None = None,
+        cancel_in_progress: bool | None = None,  # deprecated
         allow_multiple: bool = True,
-        soft_timeout: Optional[int] = None,
+        soft_timeout: int | None = None,
         distributed: bool = True,
         **kwargs,
     ):
@@ -1341,7 +1323,7 @@ class Trainer:
                 try:
                     fut.result()  # re-raise any exception from the op or cb
                 except BaseException as e:
-                    log.exception(e)
+                    log.exception("Error in bookkeeping op or callback")
                     self._error = e
                 finally:
                     # Remove the completed op from the queue.
@@ -1352,11 +1334,11 @@ class Trainer:
         else:
             wrapped_op(*args, **kwargs)
 
-    def _join_bookkeeping_ops(self, timeout: Optional[float] = None):
+    def _join_bookkeeping_ops(self, timeout: float | None = None):
         """
         Block until all queued bookkeeping operations are done.
         """
-        futures: List[Future] = []
+        futures: list[Future] = []
         for op_name, futures_dict in self._bookkeeping_queue.items():
             if futures_dict:
                 log.info(
@@ -1427,7 +1409,7 @@ class Trainer:
             cb=self._check_and_pass_on_metrics,
         )
 
-    def _check_and_pass_on_metrics(self, metrics: Dict[int, Dict[str, float]]):
+    def _check_and_pass_on_metrics(self, metrics: dict[int, dict[str, float]]):
         for step in sorted(metrics.keys()):
             # Check for nan/inf loss and add perplexity.
             if (ce_loss := metrics[step].get(TRAIN_CE_LOSS_METRIC)) is not None:
@@ -1440,7 +1422,7 @@ class Trainer:
             for callback in self._iter_callbacks():
                 callback.log_metrics(step, metrics[step])
 
-    def _iter_batches(self) -> Generator[Dict[str, Any], None, None]:
+    def _iter_batches(self) -> Generator[dict[str, Any], None, None]:
         data_iterator = iter(self.data_loader)
 
         while True:

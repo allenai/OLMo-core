@@ -3,7 +3,7 @@ import logging
 import os
 import shutil
 import time
-from typing import Any, Dict, List
+from typing import Any
 
 import click
 import torch
@@ -22,7 +22,7 @@ log = logging.getLogger(__name__)
 
 
 def merge_checkpoints(
-    model_paths: List[str],
+    model_paths: list[str],
     output_path: str,
     skip_optimizer_state: bool = False,
 ) -> None:
@@ -52,12 +52,12 @@ def merge_checkpoints(
                 extra_in_current = current_keys - first_keys
                 error_msg = f"Checkpoint {i} has different keys than checkpoint 0:\n"
                 if missing_in_current:
-                    error_msg += f"  Missing keys: {sorted(list(missing_in_current))[:5]}...\n"
+                    error_msg += f"  Missing keys: {sorted(missing_in_current)[:5]}...\n"
                 if extra_in_current:
-                    error_msg += f"  Extra keys: {sorted(list(extra_in_current))[:5]}...\n"
+                    error_msg += f"  Extra keys: {sorted(extra_in_current)[:5]}...\n"
                 raise ValueError(error_msg)
 
-    merged_state_dict: Dict[str, Any] = {}
+    merged_state_dict: dict[str, Any] = {}
     for i, (path, metadata) in enumerate(zip(checkpoint_paths, checkpoint_metadata)):
         # Separate non-tensor and tensor keys upfront
         non_tensor_keys = []
@@ -73,7 +73,7 @@ def merge_checkpoints(
 
         # Load all non-tensor keys in one chunk
         if non_tensor_keys:
-            non_tensor_batch_dict: Dict[str, Any] = {}
+            non_tensor_batch_dict: dict[str, Any] = {}
             for key, meta in non_tensor_keys:
                 if key in merged_state_dict:
                     log.info(
@@ -87,8 +87,8 @@ def merge_checkpoints(
                     f"Loading {len(non_tensor_batch_dict)} non-tensor keys from checkpoint {i}..."
                 )
                 load_state_dict(path, non_tensor_batch_dict)
-                for key in non_tensor_batch_dict:
-                    merged_state_dict[key] = non_tensor_batch_dict[key]
+                for key, value in non_tensor_batch_dict.items():
+                    merged_state_dict[key] = value
 
         # Process tensor keys in batches of 128
         total_tensor_keys = len(tensor_keys)

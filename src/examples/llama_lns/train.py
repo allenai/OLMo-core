@@ -12,7 +12,7 @@ Launch this with torchrun:
 import os
 import sys
 from dataclasses import dataclass
-from typing import List, cast
+from typing import cast
 
 from olmo_core.config import Config, DType
 from olmo_core.data import (
@@ -83,7 +83,7 @@ class ExperimentConfig(Config):
     init_seed: int = 12536
 
 
-def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
+def build_config(run_name: str, overrides: list[str]) -> ExperimentConfig:
     tokenizer_config = TokenizerConfig.gpt2()
 
     model_config = TransformerConfig.llama2_271M(
@@ -114,7 +114,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         optim=AdamWConfig(
             lr=1e-3,
             group_overrides=[
-                OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
+                OptimGroupOverride(params=["embeddings.weight"], opts={"weight_decay": 0.0})
             ],
         ),
         compile_model=True,
@@ -192,7 +192,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
     ).merge(overrides)
 
 
-def main(run_name: str, overrides: List[str]):
+def main(run_name: str, overrides: list[str]):
     config = build_config(run_name, overrides)
 
     # Set RNG states on all devices.

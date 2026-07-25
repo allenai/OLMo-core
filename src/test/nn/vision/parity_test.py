@@ -10,7 +10,6 @@ package and the checkpoints to be available locally (or downloadable) —
 otherwise the tests skip.
 """
 
-from typing import Dict
 
 import pytest
 import torch
@@ -54,9 +53,9 @@ def _patchify(image: torch.Tensor, patch_size: int) -> torch.Tensor:
     return x.reshape(B, (H // p) * (W // p), C * p * p)
 
 
-def _convert_clip_state_dict(hf_sd: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+def _convert_clip_state_dict(hf_sd: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
     """Map a HuggingFace ``CLIPVisionTransformer`` state dict to ours."""
-    out: Dict[str, torch.Tensor] = {}
+    out: dict[str, torch.Tensor] = {}
     out["class_embedding"] = hf_sd["embeddings.class_embedding"]
     # Conv2d (D, 3, p, p) → Linear (D, 3*p*p), C-major flatten.
     out["patch_embedding.weight"] = hf_sd["embeddings.patch_embedding.weight"].reshape(
@@ -67,9 +66,7 @@ def _convert_clip_state_dict(hf_sd: Dict[str, torch.Tensor]) -> Dict[str, torch.
     out["pre_ln.bias"] = hf_sd["pre_layrnorm.bias"]
 
     # Per-layer projections.
-    n_layers = (
-        max(int(k.split(".")[2]) for k in hf_sd.keys() if k.startswith("encoder.layers.")) + 1
-    )
+    n_layers = max(int(k.split(".")[2]) for k in hf_sd if k.startswith("encoder.layers.")) + 1
     for i in range(n_layers):
         src = f"encoder.layers.{i}"
         dst = f"blocks.{i}"
@@ -93,22 +90,20 @@ def _convert_clip_state_dict(hf_sd: Dict[str, torch.Tensor]) -> Dict[str, torch.
     return out
 
 
-def _convert_siglip_state_dict(hf_sd: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+def _convert_siglip_state_dict(hf_sd: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
     """Map a HuggingFace ``SiglipVisionTransformer`` state dict to ours.
 
     Skips ``post_layernorm`` and ``head.*`` since we compare at the
     pre-``post_layernorm`` boundary and don't model the pooling head.
     """
-    out: Dict[str, torch.Tensor] = {}
+    out: dict[str, torch.Tensor] = {}
     out["patch_embedding.weight"] = hf_sd["embeddings.patch_embedding.weight"].reshape(
         hf_sd["embeddings.patch_embedding.weight"].shape[0], -1
     )
     out["patch_embedding.bias"] = hf_sd["embeddings.patch_embedding.bias"]
     out["positional_embedding"] = hf_sd["embeddings.position_embedding.weight"]
 
-    n_layers = (
-        max(int(k.split(".")[2]) for k in hf_sd.keys() if k.startswith("encoder.layers.")) + 1
-    )
+    n_layers = max(int(k.split(".")[2]) for k in hf_sd if k.startswith("encoder.layers.")) + 1
     for i in range(n_layers):
         src = f"encoder.layers.{i}"
         dst = f"blocks.{i}"
@@ -142,11 +137,11 @@ def _try_load_hf(model_cls, model_id: str):
     """
     try:
         return model_cls.from_pretrained(model_id, local_files_only=True).eval()
-    except Exception:  # noqa: BLE001  # not cached locally; fall back to download
+    except Exception:  # noqa: S110  # not cached locally; fall back to download
         pass
     try:
         return model_cls.from_pretrained(model_id).eval()
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         pytest.skip(f"could not load {model_id}: {e}")
 
 

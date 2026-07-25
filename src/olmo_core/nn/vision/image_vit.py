@@ -1,16 +1,16 @@
 import math
-from typing import Callable, Dict, List, Optional, Tuple
+from collections.abc import Callable
 
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
+from torch import nn
 
 from olmo_core.nn.vision.config import VisionEncoderConfig
 
 __all__ = [
     "ViTAttention",
-    "ViTMLP",
     "ViTBlock",
+    "ViTMLP",
     "VisionTransformer",
 ]
 
@@ -23,7 +23,7 @@ def _quick_gelu(x: torch.Tensor) -> torch.Tensor:
 # Activations used by the supported vision encoders, implemented with plain
 # PyTorch ops. Names follow the HF convention so configs map directly onto
 # HF checkpoint configs.
-_ACTIVATIONS: Dict[str, Callable[[torch.Tensor], torch.Tensor]] = {
+_ACTIVATIONS: dict[str, Callable[[torch.Tensor], torch.Tensor]] = {
     "quick_gelu": _quick_gelu,
     "gelu_pytorch_tanh": lambda x: F.gelu(x, approximate="tanh"),
     "gelu": F.gelu,
@@ -87,7 +87,7 @@ class ViTAttention(nn.Module):
             nn.init.normal_(w.weight, std=self.initializer_range)
             nn.init.zeros_(w.bias)
 
-    def forward(self, x: torch.Tensor, kv: Optional[torch.Tensor] = None) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, kv: torch.Tensor | None = None) -> torch.Tensor:
         B, N, _ = x.shape
         src = x if kv is None else kv
 
@@ -168,7 +168,7 @@ class ViTBlock(nn.Module):
 
 def _interpolate_pos_emb(
     pos_emb: torch.Tensor,  # (num_pos, emb_dim)
-    target_patch_num: Tuple[int, int],
+    target_patch_num: tuple[int, int],
     num_prefix: int = 1,
 ) -> torch.Tensor:
     """Bicubic-interpolate positional embeddings to a different spatial resolution."""
@@ -233,7 +233,7 @@ class VisionTransformer(nn.Module):
         )
 
         # Optional prepended CLS / prefix token (CLIP-style).
-        self.class_embedding: Optional[nn.Parameter] = None
+        self.class_embedding: nn.Parameter | None = None
         if cfg.use_cls_token:
             self.class_embedding = nn.Parameter(
                 torch.zeros(cfg.image_emb_dim, device=init_device, dtype=dtype)
@@ -244,7 +244,7 @@ class VisionTransformer(nn.Module):
         )
 
         # Optional pre-LayerNorm applied before the blocks (CLIP-style).
-        self.pre_ln: Optional[nn.LayerNorm] = None
+        self.pre_ln: nn.LayerNorm | None = None
         if cfg.use_pre_ln:
             self.pre_ln = nn.LayerNorm(
                 cfg.image_emb_dim, eps=cfg.image_norm_eps, device=init_device, dtype=dtype
@@ -270,15 +270,15 @@ class VisionTransformer(nn.Module):
         for block in self.blocks:
             block.reset_parameters()
 
-    def _add_pos_emb(self, x: torch.Tensor, patch_num: Tuple[int, int]) -> torch.Tensor:
+    def _add_pos_emb(self, x: torch.Tensor, patch_num: tuple[int, int]) -> torch.Tensor:
         pos_emb = _interpolate_pos_emb(
             self.positional_embedding, patch_num, num_prefix=self.num_prefix_tokens
         )
         return x + pos_emb[None, :, :].to(x.dtype)
 
     def forward(
-        self, x: torch.Tensor, patch_num: Optional[Tuple[int, int]] = None
-    ) -> List[torch.Tensor]:
+        self, x: torch.Tensor, patch_num: tuple[int, int] | None = None
+    ) -> list[torch.Tensor]:
         """
         Encode pre-patchified images.
 
@@ -291,7 +291,7 @@ class VisionTransformer(nn.Module):
         if patch_num is None:
             patch_num = self.cfg.image_num_patch
 
-        B, N, _ = x.shape
+        B, _N, _ = x.shape
         x = self.patch_embedding(x)
 
         # Prepend CLS / prefix token when configured.
@@ -304,7 +304,7 @@ class VisionTransformer(nn.Module):
         if self.pre_ln is not None:
             x = self.pre_ln(x)
 
-        hidden_states: List[torch.Tensor] = []
+        hidden_states: list[torch.Tensor] = []
         for block in self.blocks:
             x = block(x)
             hidden_states.append(x)

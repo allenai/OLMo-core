@@ -1,7 +1,7 @@
 import logging
 import os
 from dataclasses import dataclass, field
-from typing import ClassVar, Dict, List, Optional, Set, Union
+from typing import ClassVar
 
 import torch
 
@@ -36,10 +36,10 @@ class ModelMergeCallback(Callback):
     # Run before CheckpointerCallback to block ephemeral checkpoints during merge windows
     priority: ClassVar[int] = 2
 
-    merge_step: Union[int, List[int]] = field(default_factory=list)  # type: ignore[assignment]
+    merge_step: int | list[int] = field(default_factory=list)  # type: ignore[assignment]
     """The step(s) at which to save merged checkpoint(s)."""
 
-    merge_interval: Optional[int] = None
+    merge_interval: int | None = None
     """Merge every N steps. Alternative to explicit merge_step."""
 
     merge_last_n_steps: int = 500
@@ -51,10 +51,10 @@ class ModelMergeCallback(Callback):
     enabled: bool = False
 
     # Internal state (not checkpointed)
-    _accumulators: Dict[int, Dict[str, torch.Tensor]] = field(default_factory=dict, repr=False)
-    _accumulator_counts: Dict[int, int] = field(default_factory=dict, repr=False)
-    _merge_steps: List[int] = field(default_factory=list, repr=False)
-    _completed_merges: Set[int] = field(default_factory=set, repr=False)
+    _accumulators: dict[int, dict[str, torch.Tensor]] = field(default_factory=dict, repr=False)
+    _accumulator_counts: dict[int, int] = field(default_factory=dict, repr=False)
+    _merge_steps: list[int] = field(default_factory=list, repr=False)
+    _completed_merges: set[int] = field(default_factory=set, repr=False)
 
     def __post_init__(self):
         if not self.enabled:
@@ -98,7 +98,7 @@ class ModelMergeCallback(Callback):
     def _window_start(self, merge_step: int) -> int:
         return max(0, merge_step - self.merge_last_n_steps + 1)
 
-    def _active_windows(self) -> List[int]:
+    def _active_windows(self) -> list[int]:
         """Return merge steps whose windows include the current step."""
         current = self.step
         return [
@@ -216,7 +216,7 @@ class ModelMergeCallback(Callback):
         else:
             self.unblock_ephemeral_checkpoints()
 
-    def _accumulate_weights(self, merge_step: int, model_state: Dict[str, torch.Tensor]):
+    def _accumulate_weights(self, merge_step: int, model_state: dict[str, torch.Tensor]):
         if merge_step not in self._accumulators:
             log.info(
                 f"Starting weight accumulation for merge step {merge_step} at step {self.step}"
@@ -247,7 +247,7 @@ class ModelMergeCallback(Callback):
 
         log.info(f"Saving merged checkpoint (average of {count} steps) at step {merge_step}")
 
-        averaged_state: Dict[str, torch.Tensor] = {
+        averaged_state: dict[str, torch.Tensor] = {
             key: acc_val / count for key, acc_val in accumulator.items()
         }
 
@@ -324,11 +324,11 @@ class ModelMergeCallback(Callback):
 
 # Utility functions for computing merge steps and required checkpoint steps for merge windows
 def compute_merge_steps_from_decay_schedule(
-    period_lengths: List[int],
+    period_lengths: list[int],
     tokens_per_step: int,
-    decay: Optional[int] = None,
-    decay_fraction: Optional[float] = None,
-) -> List[int]:
+    decay: int | None = None,
+    decay_fraction: float | None = None,
+) -> list[int]:
     """
     Compute merge steps from a decay schedule with one or more periods.
     """
@@ -345,7 +345,7 @@ def compute_merge_steps_from_decay_schedule(
             decay_tokens = decay
         else:
             assert decay_fraction is not None
-            decay_tokens = int(round(decay_fraction * period_length))
+            decay_tokens = round(decay_fraction * period_length)
 
         pre_decay_tokens = cumulative_tokens - decay_tokens
         pre_decay_step = pre_decay_tokens // tokens_per_step
@@ -355,9 +355,9 @@ def compute_merge_steps_from_decay_schedule(
 
 
 def compute_merge_window_starts(
-    merge_steps: List[int],
+    merge_steps: list[int],
     merge_last_n_steps: int,
-) -> List[int]:
+) -> list[int]:
     """
     Compute the checkpoint steps needed at the start of each merge window.
 
@@ -371,7 +371,7 @@ def compute_merge_window_starts(
     if not merge_steps:
         return []
 
-    required_starts: List[int] = []
+    required_starts: list[int] = []
     prev_merge_step = -1
 
     for ms in sorted(merge_steps):
