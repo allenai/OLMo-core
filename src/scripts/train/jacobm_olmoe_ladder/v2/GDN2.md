@@ -426,3 +426,20 @@ checkpoint path, or training setting was changed. Every retry retained urgent
 priority, zero minimum runtime, and unallocated Holmes scheduling. At the
 snapshot, 810M Cx8, fresh 810M Cx2 and 1.2B Cx1, and diagnostic 1.2B Cx4 were
 scheduled; fresh 1.2B Cx2 and diagnostic 1.2B Cx8 were queued.
+
+At the 2026-07-25 01:25 UTC refresh, two checkpoint continuations exactly
+replayed their preceding failures. Fresh 810M Cx2 again encountered non-finite
+total gradients immediately after logged step 4,345 from durable `step4000`.
+Diagnostic 1.2B Cx4 again reported broadly non-finite gradients at step 9,059
+from `step9000`. Neither attempt advanced by a single training step beyond the
+previous failure. This confirms both continuations are deterministic with the
+current checkpoint, optimizer/data state, and code. They were nevertheless
+restarted in place once more at the user's request so the repeated behavior is
+tracked explicitly.
+
+Fresh 1.2B Cx1 stopped during the same audit, but did not replay its preceding
+failure. It crossed the prior step-4,875 failure, encountered non-finite total
+gradients after logged step 5,413, and left durable `step5000`. Its existing
+experiment was restarted from `step5000`. All three retries retained their
+identities, paths, urgent priority, zero minimum runtime, and unallocated
+Holmes scheduling.
