@@ -39,6 +39,24 @@ scores near chance while CE stays ~0.3, the CE was task prior. Checkpoints land 
 `/data/prasann/ctc_suite/ckpts/q3-4b-contra-128k-prog/` on **horton**; eval with
 `eval_128k.sbatch MODEL=qwen3` (which already passes the required `--rope-theta 4e6`).
 
+## ⚠ TRAP: the "128k" eval rung is really a ~140k eval — 9% BEYOND the trained context
+The timing probe shows `rung_131072.jsonl` tokenizes to prompts of **136,320–142,374 tokens**
+(median 139,522), because 131072 is the *target corpus* size and the instructions, doc markers and
+2503 chunk wrappers land on top. vLLM auto-raises `max_model_len` to 143,142 and the hybrid absorbs
+it (native 262k), so this passes silently.
+
+It does **not** pass silently for the dense arm, and it biases the comparison:
+- Both arms trained at `seq_len 131072`, so *both* are being evaluated ~9% past their training
+  length. For the hybrid that is interpolation inside a 262k native window; for the dense arm it is
+  extrapolation past the NTK θ=4e6 design point on top of an already-4× extension.
+- `eval_128k.sbatch` stamps `--max-position-embeddings 131072`. For MODEL=qwen3 that is **below the
+  actual prompt length** — raise it to ≥143k (and expect the θ=4e6 RoPE to be stretched further
+  than the run ever saw) before quoting a dense 128k number.
+
+Cleanest fix if the dense number matters: rebuild the rung with a token budget that lands the
+*tokenized prompt* at ≤131072, rather than the corpus. Otherwise report it as a ~140k eval and say
+so next to the number.
+
 Data note: the dense 128k shards were NOT on /scratch — `build_128k_data.sbatch` wrote them to the
 build node's `/data` and copied only `metadata.json` out, so the /scratch dir looks valid and holds
 zero token parts. `stage_128k_dense_data.sbatch` pulls the 2.62 GB from S3 and verifies
