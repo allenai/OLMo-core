@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-07-25T02:28:05.818219+00:00",
+  "generated_at": "2026-07-25T16:42:12.589467+00:00",
   "project": "ai2-llm/jacobm-olmoe-ladder",
   "wave": "geometry_gdn2_ev2_nope_gated",
   "models": [
@@ -1003,6 +1003,25 @@
     },
     {
       "model": "480m",
+      "variant": "geometry_gdn2_ev2_nope_gated",
+      "variant_label": "geometry-matched hybrid (GDN2, expand_v=2, NoPE, gated attention)",
+      "cx": 4,
+      "lr": 0.0008,
+      "lr_tag": "0.0008",
+      "loss": 2.276454029343163,
+      "state": "finished",
+      "tokens_b": 35.992895488,
+      "run_id": "9u4z0e36",
+      "name": "pt-480m-geometry-hybrid-gdn2-ev2-nope-gated-cx4-lr8e-4-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/9u4z0e36",
+      "segment_run_ids": [
+        "9u4z0e36"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 1
+    },
+    {
+      "model": "480m",
       "variant": "geometry_gdn_ev2_nope_gated",
       "variant_label": "geometry-matched hybrid (GDN, expand_v=2, NoPE, gated attention)",
       "cx": 4,
@@ -1041,6 +1060,25 @@
     },
     {
       "model": "480m",
+      "variant": "geometry_gdn2_ev2_nope_gated",
+      "variant_label": "geometry-matched hybrid (GDN2, expand_v=2, NoPE, gated attention)",
+      "cx": 8,
+      "lr": 0.0008,
+      "lr_tag": "0.0008",
+      "loss": 2.2043156428906903,
+      "state": "finished",
+      "tokens_b": 71.98605312,
+      "run_id": "7p8q3v6p",
+      "name": "pt-480m-geometry-hybrid-gdn2-ev2-nope-gated-cx8-lr8e-4-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/7p8q3v6p",
+      "segment_run_ids": [
+        "7p8q3v6p"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 1
+    },
+    {
+      "model": "480m",
       "variant": "geometry_gdn_ev2_nope_gated",
       "variant_label": "geometry-matched hybrid (GDN, expand_v=2, NoPE, gated attention)",
       "cx": 8,
@@ -1073,6 +1111,25 @@
       "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/vdcrgfy0",
       "segment_run_ids": [
         "vdcrgfy0"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 1
+    },
+    {
+      "model": "810m",
+      "variant": "geometry_gdn2_ev2_nope_gated",
+      "variant_label": "geometry-matched hybrid (GDN2, expand_v=2, NoPE, gated attention)",
+      "cx": 1,
+      "lr": 0.0006,
+      "lr_tag": "0.0006",
+      "loss": 2.3235049827543692,
+      "state": "finished",
+      "tokens_b": 16.235626496,
+      "run_id": "3wukvwyl",
+      "name": "pt-810m-geometry-hybrid-gdn2-ev2-nope-gated-cx1-lr6e-4-r1-fresh-r2",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/3wukvwyl",
+      "segment_run_ids": [
+        "3wukvwyl"
       ],
       "token_resets": 0,
       "deduplicated_samples": 1
@@ -1149,6 +1206,25 @@
       "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/jpbqhfvc",
       "segment_run_ids": [
         "jpbqhfvc"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 1
+    },
+    {
+      "model": "810m",
+      "variant": "geometry_gdn2_ev2_nope_gated",
+      "variant_label": "geometry-matched hybrid (GDN2, expand_v=2, NoPE, gated attention)",
+      "cx": 4,
+      "lr": 0.0004,
+      "lr_tag": "0.0004",
+      "loss": 2.1523817455243766,
+      "state": "finished",
+      "tokens_b": 64.942505984,
+      "run_id": "dzffl1jy",
+      "name": "pt-810m-geometry-hybrid-gdn2-ev2-nope-gated-cx4-lr4e-4-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/dzffl1jy",
+      "segment_run_ids": [
+        "dzffl1jy"
       ],
       "token_resets": 0,
       "deduplicated_samples": 1
@@ -1789,9 +1865,9 @@
       "model": "480m",
       "cx": 4,
       "mode": "fixed_lr_transfer",
-      "complete": false,
+      "complete": true,
       "optimal_summary_eligible": false,
-      "completed_intervention_runs": 0,
+      "completed_intervention_runs": 1,
       "expected_intervention_runs": 1,
       "wide_reference": {
         "model": "480m",
@@ -1852,20 +1928,38 @@
           "deduplicated_samples": 1
         }
       },
-      "intervention_result": null,
-      "delta_intervention_minus_wide": null,
+      "intervention_result": {
+        "model": "480m",
+        "variant": "geometry_gdn2_ev2_nope_gated",
+        "variant_label": "geometry-matched hybrid (GDN2, expand_v=2, NoPE, gated attention)",
+        "cx": 4,
+        "lr": 0.0008,
+        "lr_tag": "0.0008",
+        "loss": 2.276454029343163,
+        "state": "finished",
+        "tokens_b": 35.992895488,
+        "run_id": "9u4z0e36",
+        "name": "pt-480m-geometry-hybrid-gdn2-ev2-nope-gated-cx4-lr8e-4-r1",
+        "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/9u4z0e36",
+        "segment_run_ids": [
+          "9u4z0e36"
+        ],
+        "token_resets": 0,
+        "deduplicated_samples": 1
+      },
+      "delta_intervention_minus_wide": -0.0535218205841832,
       "delta_intervention_minus_reference": {
-        "wide_integration": null,
-        "geometry_gdn_ev2_nope_gated": null
+        "wide_integration": -0.0535218205841832,
+        "geometry_gdn_ev2_nope_gated": -0.038669794610461494
       }
     },
     {
       "model": "480m",
       "cx": 8,
       "mode": "fixed_lr_transfer",
-      "complete": false,
+      "complete": true,
       "optimal_summary_eligible": false,
-      "completed_intervention_runs": 0,
+      "completed_intervention_runs": 1,
       "expected_intervention_runs": 1,
       "wide_reference": {
         "model": "480m",
@@ -1926,20 +2020,38 @@
           "deduplicated_samples": 1
         }
       },
-      "intervention_result": null,
-      "delta_intervention_minus_wide": null,
+      "intervention_result": {
+        "model": "480m",
+        "variant": "geometry_gdn2_ev2_nope_gated",
+        "variant_label": "geometry-matched hybrid (GDN2, expand_v=2, NoPE, gated attention)",
+        "cx": 8,
+        "lr": 0.0008,
+        "lr_tag": "0.0008",
+        "loss": 2.2043156428906903,
+        "state": "finished",
+        "tokens_b": 71.98605312,
+        "run_id": "7p8q3v6p",
+        "name": "pt-480m-geometry-hybrid-gdn2-ev2-nope-gated-cx8-lr8e-4-r1",
+        "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/7p8q3v6p",
+        "segment_run_ids": [
+          "7p8q3v6p"
+        ],
+        "token_resets": 0,
+        "deduplicated_samples": 1
+      },
+      "delta_intervention_minus_wide": -0.04698894308797952,
       "delta_intervention_minus_reference": {
-        "wide_integration": null,
-        "geometry_gdn_ev2_nope_gated": null
+        "wide_integration": -0.04698894308797952,
+        "geometry_gdn_ev2_nope_gated": -0.03498156790463414
       }
     },
     {
       "model": "810m",
       "cx": 1,
       "mode": "fixed_lr_transfer",
-      "complete": false,
+      "complete": true,
       "optimal_summary_eligible": false,
-      "completed_intervention_runs": 0,
+      "completed_intervention_runs": 1,
       "expected_intervention_runs": 1,
       "wide_reference": {
         "model": "810m",
@@ -2000,11 +2112,29 @@
           "deduplicated_samples": 1
         }
       },
-      "intervention_result": null,
-      "delta_intervention_minus_wide": null,
+      "intervention_result": {
+        "model": "810m",
+        "variant": "geometry_gdn2_ev2_nope_gated",
+        "variant_label": "geometry-matched hybrid (GDN2, expand_v=2, NoPE, gated attention)",
+        "cx": 1,
+        "lr": 0.0006,
+        "lr_tag": "0.0006",
+        "loss": 2.3235049827543692,
+        "state": "finished",
+        "tokens_b": 16.235626496,
+        "run_id": "3wukvwyl",
+        "name": "pt-810m-geometry-hybrid-gdn2-ev2-nope-gated-cx1-lr6e-4-r1-fresh-r2",
+        "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/3wukvwyl",
+        "segment_run_ids": [
+          "3wukvwyl"
+        ],
+        "token_resets": 0,
+        "deduplicated_samples": 1
+      },
+      "delta_intervention_minus_wide": -0.0496921580542562,
       "delta_intervention_minus_reference": {
-        "wide_integration": null,
-        "geometry_gdn_ev2_nope_gated": null
+        "wide_integration": -0.0496921580542562,
+        "geometry_gdn_ev2_nope_gated": -0.050087302985681426
       }
     },
     {
@@ -2085,9 +2215,9 @@
       "model": "810m",
       "cx": 4,
       "mode": "fixed_lr_transfer",
-      "complete": false,
+      "complete": true,
       "optimal_summary_eligible": false,
-      "completed_intervention_runs": 0,
+      "completed_intervention_runs": 1,
       "expected_intervention_runs": 1,
       "wide_reference": {
         "model": "810m",
@@ -2148,11 +2278,29 @@
           "deduplicated_samples": 1
         }
       },
-      "intervention_result": null,
-      "delta_intervention_minus_wide": null,
+      "intervention_result": {
+        "model": "810m",
+        "variant": "geometry_gdn2_ev2_nope_gated",
+        "variant_label": "geometry-matched hybrid (GDN2, expand_v=2, NoPE, gated attention)",
+        "cx": 4,
+        "lr": 0.0004,
+        "lr_tag": "0.0004",
+        "loss": 2.1523817455243766,
+        "state": "finished",
+        "tokens_b": 64.942505984,
+        "run_id": "dzffl1jy",
+        "name": "pt-810m-geometry-hybrid-gdn2-ev2-nope-gated-cx4-lr4e-4-r1",
+        "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/dzffl1jy",
+        "segment_run_ids": [
+          "dzffl1jy"
+        ],
+        "token_resets": 0,
+        "deduplicated_samples": 1
+      },
+      "delta_intervention_minus_wide": -0.040420046142561894,
       "delta_intervention_minus_reference": {
-        "wide_integration": null,
-        "geometry_gdn_ev2_nope_gated": null
+        "wide_integration": -0.040420046142561894,
+        "geometry_gdn_ev2_nope_gated": -0.03879704115525717
       }
     },
     {

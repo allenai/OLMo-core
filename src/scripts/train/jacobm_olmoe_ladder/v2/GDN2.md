@@ -513,6 +513,13 @@ full concurrency; the complete logical sweep including the reused cell is 160
 GPUs. Exact works and job IDs are recorded in `RUNS.md` and
 `launchers/pretraining/generated/275m_canonical_gdn2_kda_lr_sweep_submissions.json`.
 
+Status at 2026-07-25 16:44 UTC: canonical GDN2 is 14/16 complete with no
+failed attempt. Cx1/Cx2/Cx4 are fully bracketed; each selects observed LR
+`1.6e-3`, with strict final-250M CEs `2.677515`, `2.557597`, and `2.467207`.
+Cx8 has finished `4e-4` and the reused `1.6e-3` control; `8e-4` and `3.2e-3`
+are the only remaining training jobs and are in their final 2.5--5.6%.
+Canonical Cx8 remains excluded from the shared best-of plot until both finish.
+
 ### Production-shape kernel reference validation
 
 On 2026-07-25, a one-B300

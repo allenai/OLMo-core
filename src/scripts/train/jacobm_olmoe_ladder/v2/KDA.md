@@ -81,3 +81,11 @@ KDA U-plot, one canonical-GDN2 U-plot, and one shared observed-best plot against
 wide integration, matching gated-NoPE GDN1, and original `expand_v=2` GDN2.
 Only bracketed curves enter the shared plot, and labels remain observed-best
 LRs rather than predicted minima.
+
+Status at 2026-07-25 16:44 UTC: all 16 KDA jobs finished successfully without
+a failed attempt. Every Cx curve is bracketed and its observed best is
+`1.6e-3`. The strict final-250M-token CEs at Cx1/2/4/8 are `2.717057`,
+`2.587990`, `2.486896`, and `2.405198`. The generated U-plot and shared
+comparison live under `plots/pretraining/canonical_gdn2_kda/`; the complete
+machine-readable and Markdown summaries are under
+`results/pretraining/canonical_gdn2_kda/`.

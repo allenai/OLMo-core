@@ -4,7 +4,7 @@ Record post-migration experiment waves here. Per-run rows must include Beaker
 job IDs and W&B IDs once they exist. Detailed migration-era DDP jobs remain in
 [`../v1/DDP_RUNS.md`](../v1/DDP_RUNS.md).
 
-## Live status snapshot (2026-07-25 02:28 UTC)
+## Live status snapshot (2026-07-25 16:44 UTC)
 
 This is the current source of truth for active V2 work. The detailed sections
 below retain the full launch and retry history.
@@ -25,29 +25,25 @@ below retain the full launch and retry history.
 | pretraining | larger aligned geometry + NoPE | finished | 12/12 formal cells; clean 1.2B Cx8 reproduction finished with final-250M CE `2.034305` | [results](results/pretraining/geometry_gdn_ev2_nope/results.md) |
 | pretraining | larger aligned geometry + NoPE + gated attention | finished | 12/12; newly finished 1.2B Cx2 strict final-250M CE `2.188236` | [results](results/pretraining/geometry_gdn_ev2_nope_gated/results.md) |
 | pretraining | larger aligned geometry + RoPE + gated attention | 11 finished / 1 failed | newly collected strict final-250M CE: 810M Cx8 `2.104806`, 1.2B Cx8 `2.029514`; 1.2B Cx2 remains failed | [results](results/pretraining/geometry_gdn_ev2_rope_gated/results.md) |
-| pretraining | 275M geometry + NoPE + gated attention + GDN2 | 15 finished / 1 deterministic failure + clean reproduction running | Cx8 `1.6e-3` remains stopped at step 36,768; its distinct `-fresh-r2` trajectory is at step 26,375/49,229 | [results](results/pretraining/geometry_gdn2_ev2_nope_gated/results.md) |
-| pretraining | 275M GDN2 stability 2x2 | 3 scheduled | Fresh Cx8/LR `1.6e-3` runs test ev1+negative, ev2+nonnegative, and reference-like ev1+nonnegative; 24 urgent unallocated GPUs | [work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYBVM2N2D3DM67S8HWARJP6C) |
-| pretraining | canonical GDN2 (`expand_v=1`, nonnegative) 275M sweep | submitted | 15 new jobs plus the reused running Cx8/`1.6e-3` stability cell; urgent, unallocated, Cx-first order | [details](#canonical-gdn2-and-kda-275m-lr-sweeps) |
-| pretraining | canonical KDA 275M sweep | submitted | 16 new jobs; urgent, unallocated, Cx-first order | [details](#canonical-gdn2-and-kda-275m-lr-sweeps) |
+| pretraining | 275M geometry + NoPE + gated attention + original GDN2 | 15/16 formal cells finished; clean independent reproduction finished | The original Cx8 `1.6e-3` trajectory remains a deterministic failure at step 36,768, but its distinct `-fresh-r2` reproduction completed | [results](results/pretraining/geometry_gdn2_ev2_nope_gated/results.md) |
+| pretraining | 275M GDN2 stability 2x2 | 3/3 finished | Fresh Cx8/LR `1.6e-3` ev1+negative, ev2+nonnegative, and canonical ev1+nonnegative controls all completed | [work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYBVM2N2D3DM67S8HWARJP6C) |
+| pretraining | canonical GDN2 (`expand_v=1`, nonnegative) 275M sweep | 14/16 finished, 2 running | Cx1/Cx2/Cx4 are complete and bracketed; Cx8 `8e-4` and `3.2e-3` are in their final 2.5--5.6% | [results](results/pretraining/canonical_gdn2_kda/results.md) |
+| pretraining | canonical KDA 275M sweep | 16/16 finished | All four Cx curves are complete and bracketed; observed-best LR is `1.6e-3` at every Cx | [results](results/pretraining/canonical_gdn2_kda/results.md) |
 | diagnostic | GDN2 production-shape PyTorch reference 2x2 | finished | All four `expand_v`/negative-eigenvalue cells passed forward, final-state, backward, packed-document, and recompute/retain comparisons | [work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYBY8DXT5BVM85WYKAT5TXQN) |
 | diagnostic | Matched KDA/GDN2 numerical audit | finished | All 40 one/four-chunk output/state comparisons passed; GDN2 is broadly KDA-like, with localized 3.80% `A_log` relative-L2 error at T256/V256/negative eigvals | [work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYBZX8MHJ611ZSJD43SYS9HZ) / [results](results/diagnostics/matched_kda_gdn2_numerics.md) |
 | diagnostic | KDA reference + 50-step MB16 qualification | finished | Reference/packed checks passed; zero skipped steps; steady-state 404.7 TFLOPs/GPU and 290.5K TPS on one B300 | [work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYBX6WX46F9B3HV3W59G368R) / [3s14s676](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/3s14s676) |
-| pretraining | larger geometry + NoPE + gated attention + GDN2 | 2 formal finished / 10 active | Six stopped attempts were restarted: three advanced to new numerical failures, two repeated known failure steps, and fresh 1.2B Cx1 had a pre-training OpenSSL segfault | [results](results/pretraining/geometry_gdn2_ev2_nope_gated/results.md) |
+| pretraining | larger geometry + NoPE + gated attention + original GDN2 | 6 finished / 5 numerical failures / 1 canceled | 480M is 4/4; 810M Cx1/Cx4 finished while Cx2/Cx8 failed; 1.2B Cx1/Cx2/Cx8 failed and Cx4 is stopped | [results](results/pretraining/geometry_gdn2_ev2_nope_gated/results.md) |
 | throughput | 275M 1:1 10-layer SWA depth control | finished | one B300, 2 Mi batch, MB16: 578.75 TFLOPs/GPU and 365.8K TPS/GPU; zero skipped steps | [work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYADSYYRHPYQCRVWJ27KV4KQ) |
 | midtraining | first hybrid 275M Cx8 | finished | 100B; final checkpoint `step95368`; validation finished | [1keo2hz6](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/1keo2hz6) |
 | midtraining | first hybrid 480M Cx8 | finished | 100.001B; final checkpoint `step95368`; validation finished | [mnp9rv5l](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/mnp9rv5l) |
-| validation | V2 post-training backfills | 116 complete / 1 queued; 1 new checkpoint pending | The 1.2B gated-RoPE Cx8 retry reached downstream evaluator step 3/3, was preempted again, and is automatically queued; newly finished GDN1 810M Cx8 still needs a separate backfill | [results](results/validation/hybrid_full.md) |
+| validation | V2 post-training backfills | 116 complete / 1 running; 1 new checkpoint pending | The 1.2B gated-RoPE Cx8 retry is running at downstream step 115/295; newly finished GDN1 810M Cx8 still needs a separate backfill | [results](results/validation/hybrid_full.md) |
 
-The live Beaker footprint is five running, two scheduled, and four queued
-training experiments. The running jobs use 64 B300s; all 11 experiments
-request 168 GPUs at full concurrency. Running training consists of 480M
-Cx4/Cx8, 810M Cx4, and fresh 275M Cx8 and 810M Cx1. Diagnostic 1.2B Cx4/Cx8
-are scheduled; 810M Cx8, fresh 810M Cx2, and fresh 1.2B Cx1/Cx2 are queued.
-One eight-GPU validation experiment is also queued after preemption. There is
-no duplicate logical cell.
-All training is urgent and unallocated. The running validation retry is still
-high and unallocated. No v1 pretraining, midtraining, long-context training,
-or RULER job is active.
+The live Beaker footprint is exactly three running jobs and zero queued or
+scheduled jobs: canonical GDN2 Cx8 at `8e-4` and `3.2e-3` (16 B300s total),
+plus the eight-GPU 1.2B gated-RoPE Cx8 validation retry. Both training jobs are
+urgent and unallocated. Validation remains high and unallocated. There is no
+duplicate logical cell, and no v1 pretraining, midtraining, long-context
+training, or RULER job is active.
 
 The formal pretraining results and plots use finished runs only and enforce a
 complete final-250M-token history. The gated-RoPE sweep is now complete. Its
@@ -88,10 +84,11 @@ Cx1/Cx2/Cx4 are complete and bracketed. Their observed best results are
 The completed Cx2 value combines its failed and final W&B segments and retains
 the full final 250M-token window. Cx8 has three finished points and remains
 provisional because `1.6e-3` stopped on a non-finite loss at step 36,768; its
-current observed best is `2.356985 @ 8e-4`. The scale plot now includes the
-finished 480M Cx1/Cx2 results, `2.468555` and `2.359149`, improving over the
-matching GDN1 cells by `0.051087` and `0.055569`. Both GDN2 plots compare only
-against wide and matching gated-NoPE GDN1, as intended.
+current observed best is `2.356985 @ 8e-4`. The scale plot now includes all
+four 480M results plus 810M Cx1/Cx4. Their strict final-window CEs are
+`2.468555`, `2.359149`, `2.276454`, and `2.204316` for 480M Cx1/2/4/8, and
+`2.323505` / `2.152382` for 810M Cx1/Cx4. The GDN2 plots compare only against
+wide and matching gated-NoPE GDN1, as intended.
 
 The 11 finished larger gated-RoPE points have strict final-250M CEs of
 `2.506239`, `2.402917`, `2.307792`, and `2.233177` for 480M Cx1/2/4/8;
@@ -112,7 +109,8 @@ Cx4, Cx8 order. Each architecture/Cx work contains the four LRs `4e-4`,
 `1.6e-3` and reuses the already-running canonical stability job
 `01KYBVM3KP7NRWB21ZFGNK2K75`. KDA uses FLA 0.4.1; GDN2 uses the isolated
 pinned FLA 0.5.2 overlay. All jobs use EP1, compilation, rolling ephemeral
-checkpoints, and no in-loop evals. W&B IDs are pending job initialization.
+checkpoints, and no in-loop evals. All 32 planned W&B identities initialized
+uniquely and are resolved by exact display name in the collector.
 
 | Architecture | Cx | Work | Job IDs in LR order (`4e-4`, `8e-4`, `1.6e-3`, `3.2e-3`) | State at launch |
 |---|---:|---|---|---|
@@ -130,14 +128,15 @@ The submission ledger is
 The 31 new jobs request 152 GPUs; the complete 32-cell comparison including
 the reused eight-GPU cell is 160 GPUs.
 
-Status at 2026-07-25 07:48 UTC: 18 new jobs are running and 13 remain queued;
-none has failed. All eight Cx1 jobs are 27--29% complete with reported ETAs of
-1h12m--1h16m. All eight Cx2 jobs are running: KDA is 15--16% complete and
-GDN2 is 6--15% complete, with reported ETAs of 2h20m--2h49m. Two KDA Cx4
-jobs have started and are about 3.6% complete; the remaining Cx4 and all new
-Cx8 jobs are queued. Every inspected training log is clean. The reused
-canonical GDN2 Cx8/`1.6e-3` job is at 15,560/44,900 steps (34.7%) with a
-reported 4h05m ETA. The other two stability controls are also running.
+Status at 2026-07-25 16:44 UTC: KDA finished all 16/16 jobs without a failed
+attempt. All four curves are bracketed and choose observed LR `1.6e-3`, with
+strict final-250M CEs `2.717057`, `2.587990`, `2.486896`, and `2.405198` at
+Cx1/2/4/8. Canonical GDN2 is 14/16 finished with no failed attempt: Cx1/Cx2/Cx4
+are bracketed and choose `1.6e-3`, at CEs `2.677515`, `2.557597`, and
+`2.467207`. Its Cx8 `8e-4` and `3.2e-3` jobs are the only live training jobs,
+at steps 43,814 and 42,397 of 44,900 respectively; `4e-4` and the reused
+`1.6e-3` cell are finished. The shared best-of plot correctly withholds the
+canonical GDN2 Cx8 point until both remaining jobs finish.
 
 The paired plotting entry point is `plot_canonical_gdn2_kda.py`. It resolves
 planned runs by exact W&B display name, currently finding 19/32 logical cells;
