@@ -32,6 +32,13 @@ ARMS = [
     ("B0", 0.5, 0.0),
     ("B2", 0.5, 1.0),
     ("B4", 0.5, 4.0),
+    # Round 2 refinement. Round 1 found f1@32k peaking at S/L 1-2 (A2 .512, A3 .514) and then
+    # COLLAPSING to .249 at S/L 4 -- a ~9 SE drop that hits 32k only (A4's 2k/8k are untouched).
+    # These three bracket the cliff between A3 (84.5M short) and A4 (148.7M) to locate where the
+    # long-context ability starts being destroyed.
+    ("A25", 1.0, 2.5),
+    ("A30", 1.0, 3.0),
+    ("A35", 1.0, 3.5),
 ]
 
 # Row C: the iso-token reference. Same UNIFORM 2k-32k composition the production mix uses, drawn

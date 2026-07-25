@@ -3,6 +3,36 @@
 **Updated 2026-07-24 22:30 PDT.** Autonomous overnight loop (dynamic self-pacing).
 Scope per user: **hybrid Qwen3.5-4B only** (no dense variant).
 
+## ★ ROUND 1 RESULT (2026-07-25 00:05) — an interior optimum, and a length-specific collapse
+
+f1@32k, vLLM, eval_size 500 (binomial SE ±0.022 at f1≈0.5, ±0.019 at ≈0.25):
+
+| arm | short tok | 2k | 8k | **32k** |
+|---|---|---|---|---|
+| A0 | 0 | 0.000 | 0.000 | **0.000** |
+| A1 | 20.0M | 0.912 | 0.739 | **0.452** |
+| A2 | 41.5M | 0.929 | 0.794 | **0.512** |
+| A3 | 84.5M | 0.921 | 0.794 | **0.514** |
+| A4 | 148.7M | 0.921 | 0.796 | **0.249** |
+| C4 | uniform (=A4 budget) | 0.934 | 0.803 | **0.447** |
+
+**Findings:**
+1. **Short data is necessary.** A0 (long-only, 1500 ex, 67 steps) scores 0.000 at *every* rung with
+   parse_rate 1.0 — it learned the output format but not the task. Genuine undertraining, not a
+   harness bug: index conventions and converter args were verified, and C4 on the identical harness
+   scores 0.934/0.803/0.447.
+2. **There is an interior optimum at S/L ≈ 1–2** (A2 0.512, A3 0.514 — tied within SE), NOT a
+   monotone saturation. `fit_law.py`'s saturating-exponential form does **not** fit (SSE 0.047);
+   report argmax + degradation instead.
+3. **Overshooting destroys long-context ability.** A3→A4 (84.5M→148.7M short) drops 0.514→0.249,
+   ~9 SE. And it is **length-specific**: A4's 2k/8k are as good as any arm (0.921/0.796); only 32k
+   collapses. Every Row A arm sees the identical long pool exactly once (351 steps × 524k tok =
+   184M = 1 epoch), so the sole variable is the short data piled on top → clean interference.
+4. **Equal-cost vs uniform:** A4 (0.249) LOSES to C4 (0.447); A3 (0.514) BEATS C4 (0.447). C3 (the
+   properly matched control for A3) still running.
+
+**Still running:** B0/B2/B4 (substitute-vs-complement) and C3.
+
 ## The question
 Holding the long-context training pool **fixed**, does adding progressively more short-context data
 improve **f1@32k**? And does that beat the uniform production mix at **equal token cost**?
@@ -12,7 +42,7 @@ improve **f1@32k**? And does that beat the uniform production mix at **equal tok
 ⚠ vLLM ONLY. The native backend reads 0.571/0.219/0.038 on the *same* checkpoint — a degraded
 harness, not a model property. Mixing backends fabricates results.
 
-## Round 1 — TRAINING COMPLETE (9/10, B2 rerunning)
+## Round 1 — TRAINING COMPLETE (10/10)
 
 | arm | long tok | short tok | total | steps | train CE (last10) |
 |---|---|---|---|---|---|
@@ -22,7 +52,7 @@ harness, not a model property. Mixing backends fabricates results.
 | A3 | 35.2M | 84.5M | 119.7M | 228 | 0.0095 |
 | A4 | 35.2M | 148.7M | 183.9M | 351 | 0.0019 |
 | B0 | 20.2M | 0 | 20.2M | 39 | 1.0729 |
-| B2 | 20.2M | 21.5M | 41.7M | 80 | *rerunning* |
+| B2 | 20.2M | 21.5M | 41.7M | 80 | 0.4833 |
 | B4 | 20.2M | 84.5M | 104.7M | 200 | 0.0085 |
 | C3 | uniform | — | 119.7M (=A3) | 228 | 0.0238 |
 | C4 | uniform | — | 182.9M (≈A4) | 349 | 0.0119 |
@@ -31,6 +61,30 @@ harness, not a model property. Mixing backends fabricates results.
 measured on its *own* data distribution — short-heavy arms are dominated by easier short examples —
 and arms differ in optimizer-step count by design (67 vs 351). The only comparable numbers are
 **f1 at fixed eval rungs**.
+
+## Eval chain: what the pilot has proven so far (5 attempts, 5 distinct gaps)
+Piloting ONE arm before the 10-way fan-out has paid for itself repeatedly — every failure below
+would have been 10 simultaneous failures. Each was strictly further along the chain:
+
+| # | failure | fix |
+|---|---|---|
+| 1 | `No module named dataclass_extensions` | gantry `--no-python` skips `pip install -e .` → install the package for the export step |
+| 2 | torch pin drift (2.13.0 vs required 2.11.0) | `PIP_CONSTRAINT` + explicit triad pin |
+| 3 | `no step<N> checkpoint dir` | CKPT was built from the Beaker **experiment name** (`<run>-<hash>`); the save folder is just `<run>` → resolve by glob, use post-fit `model_and_optim` |
+| 4 | `assert has_fla()` | GDN blocks need `flash-linear-attention` to *export* (vLLM inference does not — why the load recipe never hit it) |
+| 5 | `model type qwen3_5` unknown | container transformers is 4.57.x → 5.14.1 **shadow** dir, scoped to export only |
+| 6 | torch cu130 vs torchvision cu129 | version pin ignored the CUDA **tag**; pin explicit `+cu129` on all three and assert on tags |
+
+**NOW WORKING:** export ✓, serving copy ✓, prefills ✓ (500 rows/rung), venv triad coherent
+(`torch/torchvision/torchaudio 2.11.0+cu129`, `vllm import OK`). Untested: vLLM generation itself.
+
+⚠ **A job graded 0/3 rungs and still exited 0** — the per-rung `continue` masked total failure.
+Fixed: the script now tracks graded rungs and exits 5 if none succeeded. A silently-empty success
+would have poisoned the fan-out with missing data that looked fine.
+
+⚠ **32k rung prompts are much longer than the rung name suggests**: min/mean/max =
+**31k / 59k / 214k** tokens. `run_vllm_eval` auto-raises `max_model_len`, but a 214k prompt on one
+H100 is tight — that rung may need tensor-parallel or a bigger GPU even though 2k/8k are fine.
 
 ## ⚠ vLLM venv: torch-pin trap (first build is suspect, corrected build in flight)
 `lm-vllm-venv` completed but ended at **torch 2.13.0+cu130**, with pip itself warning

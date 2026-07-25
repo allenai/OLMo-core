@@ -1,0 +1,24 @@
+{
+ "arm": "C4",
+ "eval_backend": "vllm",
+ "rungs": {
+  "2048": {
+   "f1": 0.934,
+   "parse_rate": 1.0,
+   "eval_size": 500,
+   "binomial_se": 0.01110351295761841
+  },
+  "8192": {
+   "f1": 0.8026666667,
+   "parse_rate": 1.0,
+   "eval_size": 500,
+   "binomial_se": 0.017798476837567374
+  },
+  "32768": {
+   "f1": 0.4467333333,
+   "parse_rate": 1.0,
+   "eval_size": 500,
+   "binomial_se": 0.0222334280855954
+  }
+ }
+}
