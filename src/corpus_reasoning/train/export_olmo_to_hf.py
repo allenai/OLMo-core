@@ -36,6 +36,28 @@ def latest_step_dir(save_folder: str) -> str:
     return max(steps)[1]
 
 
+def apply_rope_overrides(cfg, rope_theta: float, max_pos: int, label: str):
+    """Stamp train-time RoPE/context overrides onto an HF config in place.
+
+    The exported config is built from the *base* HF model, so a run that trained with an NTK
+    ``rope_theta`` override (or beyond the base's ``max_position_embeddings``) would otherwise
+    export with the base's values -- a silent train/eval RoPE mismatch.
+
+    :param cfg: The HF config object to mutate.
+    :param rope_theta: The run's ``--rope-theta``; 0 leaves the base value alone.
+    :param max_pos: The run's context length; 0 leaves the base value alone.
+    :param label: Config name used in the log line.
+    """
+    if rope_theta and rope_theta > 0:
+        print(f"[export] {label}: rope_theta {getattr(cfg, 'rope_theta', None)} -> {rope_theta}",
+              flush=True)
+        cfg.rope_theta = rope_theta
+    if max_pos and max_pos > 0:
+        print(f"[export] {label}: max_position_embeddings "
+              f"{getattr(cfg, 'max_position_embeddings', None)} -> {max_pos}", flush=True)
+        cfg.max_position_embeddings = max_pos
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--save-folder", required=True, help="olmo-core SFT save folder (contains step<N>/)")
@@ -46,6 +68,18 @@ def main():
     ap.add_argument("--peft-out", default=None,
                     help="for LoRA runs: also write a standalone PEFT adapter here "
                          "(default <hf-out>_adapter). Ignored for full-FT checkpoints.")
+    # The HF config is built from --base-model, so any RoPE/context knob the RUN overrode at
+    # train time (train_ctc_suite.py --rope-theta, the NTK context extension) is silently lost
+    # here -- and `inv_freq` is recomputed from the stale theta, so the exported model's RoPE
+    # would not match the one it was trained with. Long-context evals then read as a modeling
+    # failure. Pass the SAME values the run trained with.
+    ap.add_argument("--rope-theta", type=float, default=0.0,
+                    help="override rope_theta in the exported HF config; MUST match the run's "
+                         "--rope-theta (NTK context extension). 0 = keep the base value.")
+    ap.add_argument("--max-position-embeddings", type=int, default=0,
+                    help="override max_position_embeddings in the exported HF config; set to the "
+                         "run's --seq-len for long-context checkpoints (the base caps at 32k, "
+                         "which makes vLLM refuse/truncate longer prompts). 0 = keep the base.")
     args = ap.parse_args()
 
     ckpt = args.ckpt or latest_step_dir(args.save_folder)
@@ -106,6 +140,8 @@ def main():
         # olmo w_out) and DON'T tie: tie_weights() would copy embed_tokens over the trained
         # head. Mark the config untied so the eval-time load also keeps the trained head.
         TextCfg.tie_word_embeddings = False
+        apply_rope_overrides(TextCfg, args.rope_theta, args.max_position_embeddings,
+                             "qwen3_5 text_config")
         hf_model = transformers.Qwen3_5ForCausalLM(TextCfg)
         missing, unexpected = hf_model.load_state_dict(hf_state, strict=False)
         missing = [m for m in missing if "rotary" not in m and "inv_freq" not in m]
@@ -119,6 +155,9 @@ def main():
 
     # 2) Real Qwen3 HF config (model_type='qwen3' -> selects the qwen3 olmo->hf weight mapping).
     hf_config = AutoConfig.from_pretrained(args.base_model)
+    # Before any weight mapping: the rotary `inv_freq` buffer is built from hf_config at
+    # from_config() time below, so the override has to land here, not after.
+    apply_rope_overrides(hf_config, args.rope_theta, args.max_position_embeddings, "hf_config")
     print(f"[export] converting {len(olmo_state)} tensors olmo-core -> HF (model_type={hf_config.model_type})", flush=True)
     hf_state = convert_state_to_hf(hf_config, olmo_state)
 

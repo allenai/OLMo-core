@@ -97,6 +97,15 @@ def parse_args() -> argparse.Namespace:
         "--activation-checkpointing", default=None, choices=["auto", "full", "budget", "none"]
     )
     ap.add_argument(
+        "--no-compile",
+        action="store_true",
+        help="disable torch.compile (the trainer compiles by DEFAULT, so every Beaker run has so "
+        "far been compiled). Needed to reproduce the frugal local recipe -- full activation "
+        "checkpointing + no compile -- which the local launcher uses to avoid the "
+        "full-AC + CP + compile recompute-metadata mismatch. NOTE: --activation-checkpointing "
+        "budget REQUIRES compile, so pass 'full' alongside this.",
+    )
+    ap.add_argument(
         "--ac-budget", type=float, default=None, help="budget for --activation-checkpointing budget"
     )
     ap.add_argument(
@@ -217,6 +226,8 @@ def main() -> None:
         cmd += ["--rope-theta", str(opts.rope_theta)]
     if opts.pack:
         cmd += ["--pack"]
+    if opts.no_compile:
+        cmd += ["--no-compile"]
     if opts.activation_checkpointing:
         cmd += ["--activation-checkpointing", opts.activation_checkpointing]
     if opts.ac_budget is not None:

@@ -83,6 +83,17 @@ def truncate_generic(gen_ids, tok, newline_id, stop_rule):
     if "</think>" in text:
         text = text.split("</think>", 1)[1]
     if stop_rule == "newline":
+        # NEWLINE_ROBUST=1 (opt-in, off by default so every already-validated grid task stays
+        # byte-identical): some checkpoints emit a LEADING blank line (or an unclosed <think>\n)
+        # before the real answer. The default vLLM `stop=["\n"]` then fires on that first newline
+        # and returns EMPTY -- measured 61.8% empty on helmet_qa dense, halving token_f1. With the
+        # flag set we drop the vLLM newline stop (below) and here keep the first NON-EMPTY line
+        # instead of the literal first line, recovering the leading-newline-clobbered answers.
+        if os.environ.get("NEWLINE_ROBUST") == "1":
+            for ln in text.split("\n"):
+                if ln.strip():
+                    return ln
+            return ""
         return text.split("\n", 1)[0]  # single-line answer: keep only the first line
     if stop_rule == "oolong":
         # keep through the first newline AFTER the templated "answer:" line has appeared
@@ -111,6 +122,19 @@ def main():
     ap.add_argument("--max-model-len", type=int, default=3072)
     ap.add_argument("--gpu-mem-util", type=float, default=0.6,
                     help="vLLM gpu_memory_utilization; long rungs need more KV cache")
+    ap.add_argument(
+        "--model-family",
+        default="qwen3_5",
+        choices=["qwen3_5", "qwen3"],
+        help="qwen3_5 (default, unchanged): apply the GDN-hybrid serving recipe -- the "
+        "Qwen3_5ForCausalLM architecture override and limit_mm_per_prompt=0 that make vLLM load "
+        "only the language model of the multimodal wrapper. qwen3: PLAIN DENSE -- a normal "
+        "single-arch causal LM with no VL wrapper and no vision tower, so those two overrides "
+        "are wrong for it (they would name an architecture the config does not have). Needed "
+        "for the dense arm of the qwen3-vs-qwen3.5 comparison.",
+    )
+    ap.add_argument("--tensor-parallel-size", type=int, default=1,
+                    help="vLLM TP degree; >1 shards a long-context KV cache across GPUs")
     ap.add_argument("--out", required=True)
     args = ap.parse_args()
 
@@ -183,22 +207,26 @@ def main():
             max_num_batched_tokens=2048,
             max_num_seqs=8,
         )
+    # The two overrides below exist ONLY to serve the multimodal Qwen3.5 wrapper as text-only.
+    # A plain dense Qwen3 export has no VL wrapper and no vision tower, so naming
+    # Qwen3_5ForCausalLM would point at an architecture its config does not declare. Drop both
+    # for --model-family qwen3 and let vLLM use the config's own architecture.
+    if args.model_family == "qwen3_5":
+        extra.update(
+            hf_overrides={"architectures": ["Qwen3_5ForCausalLM"]},
+            limit_mm_per_prompt={"image": 0, "video": 0},
+        )
     llm = LLM(
         model=args.hf_model,
         max_model_len=args.max_model_len,
         gpu_memory_utilization=args.gpu_mem_util,
+        tensor_parallel_size=args.tensor_parallel_size,
         enforce_eager=True,
-        # Match corpus_reasoning's canonical Qwen3.5 recipe (lib/vllm_utils.load_model):
-        # overriding architectures to the text class makes vLLM load ONLY the language
-        # model of the multimodal Qwen3_5 wrapper (skips the vision tower + its weights),
-        # and lets get_hf_config resolve the wrapper Qwen3_5Config in the serving copy.
-        hf_overrides={"architectures": ["Qwen3_5ForCausalLM"]},
-        # Text-only serving of the multimodal Qwen3.5 wrapper: no image/video inputs, so
-        # vLLM skips the vision-encoder profiling forward (which hangs on the dummy visual
-        # weights) and never routes text through the (unused) vision tower.
-        limit_mm_per_prompt={"image": 0, "video": 0},
         # NOTE: no gdn_prefill_backend override — the forced "triton" path needs fla +
         # causal_conv1d (absent in this venv); vLLM 0.25.1's default GDN backend works.
+        # `extra` carries the qwen3_5-only hf_overrides/limit_mm_per_prompt set above (see the
+        # canonical Qwen3.5 recipe in corpus_reasoning lib/vllm_utils.load_model), plus the
+        # chunked-mode KV page caps.
         **extra,
         # Hybrid Qwen3.5: FlexAttention's flex_attn_kv_block_size MUST divide the model's
         # KV-cache page size (block_size). For this GDN-hybrid the attention page is 528
@@ -226,7 +254,14 @@ def main():
     # text-level first-line is still the correctness backstop. (`stop` strings are excluded from
     # the output text by vLLM, which is fine -- we re-derive the answer from token_ids + truncate.)
     stop_token_ids = [eos_id]
-    stop_strings = ["\n"] if (not is_contra and stop_rule == "newline") else None
+    # NEWLINE_ROBUST=1: drop the vLLM-level newline stop string entirely (EOS-only stop) so the
+    # model can generate past a leading blank line / unclosed <think> to reach the real answer;
+    # truncate_generic then extracts the first non-empty line post-hoc. Off by default -> the
+    # standard newline tasks keep their proven `stop=["\n"]` early-stop behavior unchanged.
+    newline_robust = os.environ.get("NEWLINE_ROBUST") == "1"
+    stop_strings = (
+        ["\n"] if (not is_contra and stop_rule == "newline" and not newline_robust) else None
+    )
     sp = SamplingParams(
         temperature=0.0,
         max_tokens=args.max_new_tokens,
@@ -240,12 +275,16 @@ def main():
     print(f"[driver] generated {len(outputs)} in {gen_s:.1f}s", flush=True)
 
     responses = {}
+    raw_responses = {}  # untruncated decode, only saved when DUMP_RAW_GENS=1 (diagnostics)
+    dump_raw = os.environ.get("DUMP_RAW_GENS") == "1"
     for r, o in zip(rows, outputs):
         gen_ids = list(o.outputs[0].token_ids)
         # vLLM includes the matched stop token id in token_ids sometimes;
         # native excludes EOS — drop it defensively.
         if gen_ids and gen_ids[-1] == eos_id:
             gen_ids = gen_ids[:-1]
+        if dump_raw:
+            raw_responses[str(r["idx"])] = tok.decode(gen_ids, skip_special_tokens=True)
         if is_contra:
             responses[str(r["idx"])] = truncate_like_native(
                 gen_ids, tok, newline_id, cot_mode=pack["cot_mode"])
@@ -275,6 +314,7 @@ def main():
             "gen_seconds": gen_s,
             "patch_debug": debug,
             "responses": responses,
+            **({"raw_responses": raw_responses} if dump_raw else {}),
         }, f)
     print(f"[driver] wrote -> {args.out}", flush=True)
 
