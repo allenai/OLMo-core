@@ -78,6 +78,27 @@ New arm names + explicit `CKPT` so the round-1 records are not overwritten.
   "seed instability" headline is wrong in an interesting way: the withdrawn claims would have been
   withdrawn for the wrong reason, and round 1's f1s are not trustworthy point measurements.
 
+### ✅ ANSWER (2026-07-25 10:25): the collapse is in the WEIGHTS. Both re-evals reproduce exactly.
+
+| arm | 2k orig / re-eval | 8k orig / re-eval | **32k orig / re-eval** |
+|---|---|---|---|
+| A4 | 0.9213 / 0.921 | 0.7963 / 0.796 | **0.2485 / 0.249** |
+| C3 | 0.9288 / 0.929 | 0.7880 / 0.787 | **0.2568 / 0.257** |
+
+Agreement to three decimals at every rung. The eval path is deterministic, so:
+
+1. **The seed-instability finding stands.** Two seeds on identical data really do give 0.249 vs
+   0.585 (A4) and 0.257 vs 0.528 (C3). Both endpoints are stable, reproducible checkpoints — one
+   is simply bad at 32k.
+2. **Round-1 f1s are trustworthy as point measurements.** They measure an unstable *training*
+   process, not a noisy *evaluation*. Nothing in the round-1 table needs re-measuring; what needs
+   more seeds is the inference drawn from it.
+3. Precision ≡ recall at every rung for the collapsed runs too (0.249/0.249/0.248), reconfirming
+   the pair-count is always right — see the ruled-out failure mode above.
+
+Fresh responses now exist for both, so `diagnose_collapse.py` runs on
+`A4rr:A4s2,C3rr:C3s2,A4e:A4s2` (Beaker `01KYD4SZKZBX5FE7YJNVG32EMW`).
+
 **One failure mode is already ruled out, from `A4e`'s existing log:** precision ≡ recall ≡ f1 at
 every rung (0.904 / 0.720 / 0.334), i.e. the model always emits exactly as many pairs as gold.
 Whatever the collapse is, it is not over- or under-prediction — it picks the wrong pairs. That
