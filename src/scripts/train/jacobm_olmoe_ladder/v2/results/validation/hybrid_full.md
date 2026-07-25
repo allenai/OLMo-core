@@ -1,6 +1,6 @@
 # V2 Post-Training Validation Results
 
-Generated: 2026-07-25 01:25 UTC
+Generated: 2026-07-25 02:28 UTC
 
 Each finished W&B run used the full post-training validation task set. The complete metric dictionary is retained in the adjacent JSON file.
 
@@ -13,7 +13,7 @@ Coverage: finished=116, running=1
 | 1p2b | `geometry_matched_gdn_ev2_nope_gated` | Cx1 | 0.0004 | `step89377` | finished | 498 | [4vj2v7nx](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/4vj2v7nx) |
 | 1p2b | `geometry_matched_gdn_ev2_rope_gated` | Cx1 | 0.0004 | `step89377` | finished | 498 | [yjs5dt2d](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/yjs5dt2d) |
 | 1p2b | `geometry_matched_gdn_ev2_rope_gated` | Cx4 | 0.0003 | `step178754` | finished | 498 | [h7n70dsq](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/h7n70dsq) |
-| 1p2b | `geometry_matched_gdn_ev2_rope_gated` | Cx8 | 0.0004 | `step238338` | running | 0 | [4yjgrdnr](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/4yjgrdnr) |
+| 1p2b | `geometry_matched_gdn_ev2_rope_gated` | Cx8 | 0.0004 | `step238338` | running | 0 | [rnb9qkyk](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/rnb9qkyk) |
 | 1p2b | `integration_wide_gdn_ev1` | Cx1 | 4e-4 | `step86558` | finished | 498 | [nrkr62f1](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/nrkr62f1) |
 | 1p2b | `integration_wide_gdn_ev1` | Cx2 | 0.0006 | `step115410` | finished | 498 | [3f780ayn](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/3f780ayn) |
 | 1p2b | `integration_wide_gdn_ev1` | Cx4 | 0.0003 | `step173115` | finished | 498 | [4thd7tl1](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/4thd7tl1) |

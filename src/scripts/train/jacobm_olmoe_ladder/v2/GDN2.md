@@ -443,3 +443,19 @@ gradients after logged step 5,413, and left durable `step5000`. Its existing
 experiment was restarted from `step5000`. All three retries retained their
 identities, paths, urgent priority, zero minimum runtime, and unallocated
 Holmes scheduling.
+
+At the 2026-07-25 02:28 UTC refresh, six attempts were stopped again. Three
+advanced beyond their preceding numerical failure: production 810M Cx8 moved
+from step 46,711 to a non-finite total-gradient failure after step 48,852 and
+left `step48500`; fresh 810M Cx2 moved from 4,345 to 4,544 and left `step4500`;
+fresh 1.2B Cx2 moved from 3,978 to 4,544 and left `step4500`. Diagnostic 1.2B
+Cx4 again failed at exactly step 9,059 from `step9000`. Diagnostic 1.2B Cx8
+failed at step 7,073 from `step7000`, matching one of its two previously
+observed replay points (7,073 and 7,125).
+
+Fresh 1.2B Cx1 did not enter training on its latest attempt. Rank 6 segfaulted
+inside the OpenSSL certificate-chain handshake while initializing remote data,
+before loading past durable `step5000`; this attempt is infrastructure-only,
+not another model-numerics event. All six experiments were restarted in place
+from the latest durable checkpoints with unchanged identities, paths, urgent
+priority, zero minimum runtime, and unallocated Holmes scheduling.

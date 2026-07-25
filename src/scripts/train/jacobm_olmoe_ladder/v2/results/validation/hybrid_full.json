@@ -1,5 +1,5 @@
 {
-  "generated_at_utc": "2026-07-25T01:25:04.613667+00:00",
+  "generated_at_utc": "2026-07-25T02:28:12.991423+00:00",
   "manifests": [
     "/weka/oe-adapt-default/jacobm/olmoe3/olmo-ddp-migration/OLMo-core-moe-v2-core/src/scripts/train/jacobm_olmoe_ladder/v2/launchers/validation/manifests/275m_hybrid_geometry_full.yaml",
     "/weka/oe-adapt-default/jacobm/olmoe3/olmo-ddp-migration/OLMo-core-moe-v2-core/src/scripts/train/jacobm_olmoe_ladder/v2/launchers/validation/manifests/275m_geometry_cx4_cx8_full.yaml",
@@ -59648,8 +59648,8 @@
       "source_run": "pt-1p2b-geometry-gdn-ev2-rope-gated-cx8-lr4e-4-ep8-sync-r1",
       "state": "running",
       "variant": "geometry_matched_gdn_ev2_rope_gated",
-      "wandb_id": "4yjgrdnr",
-      "wandb_url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/4yjgrdnr"
+      "wandb_id": "rnb9qkyk",
+      "wandb_url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/rnb9qkyk"
     }
   ],
   "states": {
