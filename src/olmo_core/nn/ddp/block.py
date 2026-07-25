@@ -1,7 +1,7 @@
 import os
 import threading
 import weakref
-from dataclasses import dataclass
+from dataclasses import InitVar, dataclass
 from typing import TYPE_CHECKING, Dict, Iterator, Optional, Tuple, Union, cast
 
 import torch
@@ -26,6 +26,7 @@ from olmo_core.nn.transformer.config import TransformerBlockConfig, TransformerB
 from olmo_core.ops import attach_auxiliary_loss
 from olmo_core.utils import get_or_init_stream
 
+from ..attention import AttentionConfig
 from ..attention.base import SequenceMixerConfig
 from ..buffer_cache import BufferCache
 from ..layer_norm import LayerNorm, LayerNormConfig
@@ -116,6 +117,9 @@ class OLMoDDPTransformerBlockConfig(TransformerBlockConfig):
     attention and feed-forward norms.
     """
 
+    attention_norm: InitVar[Optional[LayerNormConfig]] = None
+    feed_forward_norm: InitVar[Optional[LayerNormConfig]] = None
+
     shared_experts: Optional[SharedExpertsConfig] = None
     """
     The optional shared (always-on) experts applied to every token.
@@ -183,6 +187,29 @@ class OLMoDDPTransformerBlockConfig(TransformerBlockConfig):
     """
     Optional rowwise-FP8 configuration for the experts (beta).
     """
+
+    def __post_init__(
+        self,
+        attention: Optional[AttentionConfig] = None,
+        attention_norm: Optional[LayerNormConfig] = None,
+        feed_forward_norm: Optional[LayerNormConfig] = None,
+    ) -> None:
+        super().__post_init__(attention)
+        if attention_norm is None and feed_forward_norm is None:
+            return
+        if attention_norm is None or feed_forward_norm is None:
+            raise OLMoConfigurationError(
+                "Deprecated 'attention_norm' and 'feed_forward_norm' must be specified together"
+            )
+        if attention_norm != feed_forward_norm:
+            raise OLMoConfigurationError(
+                "Deprecated 'attention_norm' and 'feed_forward_norm' must be identical"
+            )
+        if self.layer_norm is not None and self.layer_norm != attention_norm:
+            raise OLMoConfigurationError(
+                "'layer_norm' conflicts with deprecated 'attention_norm'/'feed_forward_norm'"
+            )
+        self.layer_norm = attention_norm
 
     def build(
         self,
