@@ -133,9 +133,44 @@ The raw f1s remain the correct scores for these checkpoints (the model really di
 strings), but as *measurements of retrieval* C3's 0.257 understates it badly — C3's two seeds read
 0.438/0.528 on ability versus 0.257/0.528 on score.
 
-**Worth acting on:** a 4-digit id-emission deficit is a plausible failure for any task whose corpus
-crosses 1000 documents, and it is invisible below that threshold. Any CTC-suite task with n>1000
-should be checked for it before its long-rung numbers are trusted.
+### ☠ ROOT CAUSE: the 32k rung is OUT OF DISTRIBUTION — training never has 4-digit ids
+
+Measured directly, not inferred:
+
+| rung | docs/example | id digits |
+|---|---|---|
+| eval 2k | 77 | 2 |
+| eval 8k | 346 | 3 |
+| **eval 32k** | **1423, in 100% of 500 examples** | **4** |
+| **training pools — long, short AND uniform** | **`--n-max 697`** | **3, never 4** |
+
+`build_pools.sh` caps every pool at `--n-max 697` (long 349–697, short 44–174) and
+`build_uniform_pool.sh` at 44–697. Gold answers are document ids, so **the model never emits a
+4-digit id anywhere in training**. The 32k eval asks for one in ~30% of gold slots.
+
+**The 32k column therefore measures length generalization AND an unseen-id-magnitude extrapolation
+at the same time.** That is a data-design flaw, and it explains every feature of the "instability":
+
+- why it is invisible at 2k/8k — those rungs are in-distribution (77 and 346 docs);
+- why it is bimodal rather than graded — extrapolating to a new digit-length either takes or does
+  not, per seed (A4s2 emits 38% 4-digit ids, C3rr 6.7%, against 29.5% demanded);
+- why C3rr's repair recovers two thirds of its gap — the retrieval was there, the rendering was not.
+
+**Consequence for the results.** The 2k/8k numbers stand. Every 32k number — which is every number
+the experiment concluded from — is depressed by an id-rendering problem unrelated to retrieval, by
+an amount that varies per seed. The *shape* results (short data necessary; saturation at τ≈11M) may
+well survive, since they are relative comparisons across arms with the same handicap, but the
+absolute 32k f1s understate retrieval and the seed spread is inflated by a mechanism that has
+nothing to do with context length.
+
+**Fix before re-running anything at 32k:** rebuild the training pools with `--n-max` at or above the
+eval's 1423 (or rebuild the eval rung at ≤697 docs) so the id ranges match. Cheap, and it turns the
+32k rung back into the length test it was meant to be.
+
+**Wider risk — check before trusting other long-rung numbers.** A 4-digit id-emission deficit is
+invisible below 1000 documents and applies to any id-emitting task. Any CTC-suite task whose eval
+ladder crosses 1000 docs while its training data does not is exposed to exactly this, and would
+present as "the model gets worse at long context."
 
 **One failure mode is already ruled out, from `A4e`'s existing log:** precision ≡ recall ≡ f1 at
 every rung (0.904 / 0.720 / 0.334), i.e. the model always emits exactly as many pairs as gold.
