@@ -99,6 +99,44 @@ Agreement to three decimals at every rung. The eval path is deterministic, so:
 Fresh responses now exist for both, so `diagnose_collapse.py` runs on
 `A4rr:A4s2,C3rr:C3s2,A4e:A4s2` (Beaker `01KYD4SZKZBX5FE7YJNVG32EMW`).
 
+### ✅ MECHANISM: there is no single mechanism — the two collapsed runs fail DIFFERENTLY
+
+`diagnose_collapse.py` ruled out over/under-prediction (pairs-per-example 3.10 and 3.00 vs gold
+3.00) and degeneration (500/500 distinct predictions). Its sample dump then showed the collapsed
+generations finding the right document and dropping the LAST DIGIT of 4-digit ids
+(`[83,1170]`→`[83,117]`, `[692,1409]`→`[692,140]`, `[54,1136]`→`[54,113]`). 32k is the **only** rung
+whose corpus exceeds 1000 documents, so it is the only rung with 4-digit ids — which would explain
+the 32k-only signature exactly.
+
+`check_digit_truncation.py` (Beaker `01KYD52Z6JD3NCR84TSXDN9CSZ`) tested that on all 500 and it
+holds for only ONE of the two:
+
+| arm | f1 | 4-digit ids emitted (gold 29.5%) | missed golds emitted truncated (chance) | f1 repaired | gap closed |
+|---|---|---|---|---|---|
+| **C3rr** | 0.257 | **6.7%** | **20.6%** (0.6%) | **0.438** | **67%** |
+| C3s2 | 0.528 | 35.8% | 2.5% (0.3%) | 0.529 | — |
+| **A4rr** | 0.249 | 28.2% (normal) | 4.6% (0.9%) | 0.264 | **4.8%** |
+| A4s2 | 0.585 | 38.0% | 4.1% (1.0%) | 0.598 | — |
+| A4e | 0.334 | 37.9% | 3.8% (0.6%) | 0.341 | — |
+
+- **C3rr is a RENDERING failure, not a retrieval failure.** It emits 4-digit ids at 6.7% when the
+  task demands 29.5%; undoing the truncation recovers two thirds of its gap to its healthy twin.
+  Its long-context ability was largely intact — it could not write the answer down.
+- **A4rr is a genuine retrieval failure.** Normal digit distribution, repair moves it 0.016.
+
+⚠ **Do not generalise from the sample dump.** The vivid truncation examples were all C3's; the same
+pattern does not hold for A4. "The collapse is a digit bug" is false as a general statement.
+
+**What this changes.** "32k seed instability" is not one phenomenon but at least two unrelated
+failure modes, and one of them is an output-formatting bug with no bearing on long-context ability.
+The raw f1s remain the correct scores for these checkpoints (the model really did emit wrong
+strings), but as *measurements of retrieval* C3's 0.257 understates it badly — C3's two seeds read
+0.438/0.528 on ability versus 0.257/0.528 on score.
+
+**Worth acting on:** a 4-digit id-emission deficit is a plausible failure for any task whose corpus
+crosses 1000 documents, and it is invisible below that threshold. Any CTC-suite task with n>1000
+should be checked for it before its long-rung numbers are trusted.
+
 **One failure mode is already ruled out, from `A4e`'s existing log:** precision ≡ recall ≡ f1 at
 every rung (0.904 / 0.720 / 0.334), i.e. the model always emits exactly as many pairs as gold.
 Whatever the collapse is, it is not over- or under-prediction — it picks the wrong pairs. That
