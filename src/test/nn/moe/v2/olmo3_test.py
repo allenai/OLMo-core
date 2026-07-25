@@ -40,11 +40,12 @@ def small_config(**kwargs):
 
 def test_factory_builds_all_moe_olmo_ddp_model():
     native_config = build_olmo3_moe_config_from_hf_config(
-        small_config(), attention_backend=AttentionBackendName.torch
+        small_config(), ep_capacity_factor=2.0, attention_backend=AttentionBackendName.torch
     )
     model = native_config.build(init_device="cpu")
     assert model.__class__.__name__ == "OLMoDDPModel"
     assert len(list(model.routed_blocks())) == 2
+    assert all(block.ep.capacity_factor == 2.0 for block in native_config.resolved_block_configs)
 
 
 def test_registers_base_model_for_transformers_auto_model():
