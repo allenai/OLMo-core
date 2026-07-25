@@ -130,6 +130,24 @@ The submission ledger is
 The 31 new jobs request 152 GPUs; the complete 32-cell comparison including
 the reused eight-GPU cell is 160 GPUs.
 
+Status at 2026-07-25 07:48 UTC: 18 new jobs are running and 13 remain queued;
+none has failed. All eight Cx1 jobs are 27--29% complete with reported ETAs of
+1h12m--1h16m. All eight Cx2 jobs are running: KDA is 15--16% complete and
+GDN2 is 6--15% complete, with reported ETAs of 2h20m--2h49m. Two KDA Cx4
+jobs have started and are about 3.6% complete; the remaining Cx4 and all new
+Cx8 jobs are queued. Every inspected training log is clean. The reused
+canonical GDN2 Cx8/`1.6e-3` job is at 15,560/44,900 steps (34.7%) with a
+reported 4h05m ETA. The other two stability controls are also running.
+
+The paired plotting entry point is `plot_canonical_gdn2_kda.py`. It resolves
+planned runs by exact W&B display name, currently finding 19/32 logical cells;
+the other 13 have not initialized. Duplicate exact names fail closed. Once
+runs finish, one command produces separate baseline-free U-plots for canonical
+GDN2 and KDA plus a single strict observed-best plot against wide integration,
+matching gated-NoPE GDN1, and original `expand_v=2` GDN2. Every plotted point
+must have a bracketed quadratic curve; incomplete-but-bracketed points receive
+the existing provisional marker.
+
 ## 275M geometry-matched gated-NoPE GDN2 sweep
 
 - Manifest: [`launchers/pretraining/manifests/275m_geometry_gdn2_ev2_nope_gated.yaml`](launchers/pretraining/manifests/275m_geometry_gdn2_ev2_nope_gated.yaml)

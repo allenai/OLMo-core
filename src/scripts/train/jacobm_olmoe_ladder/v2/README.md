@@ -61,7 +61,21 @@ uv run --isolated --with 'wandb==0.21.4' --with matplotlib python \
 
 PYTHONPATH=src uv run --with matplotlib python \
   src/scripts/train/jacobm_olmoe_ladder/v2/plot_c4_validation_scale.py
+
+uv run --isolated --with 'wandb==0.21.4' --with matplotlib python \
+  src/scripts/train/jacobm_olmoe_ladder/v2/plot_canonical_gdn2_kda.py \
+  --refresh-stale-cache
 ```
+
+`plot_canonical_gdn2_kda.py` produces separate canonical GDN2 and KDA U-plots
+without reference points, then one shared observed-best plot containing only
+bracketed curves for wide integration, matching gated-NoPE GDN1 geometry,
+original `expand_v=2` GDN2, canonical `expand_v=1`/nonnegative GDN2, and
+canonical KDA. It resolves the 32 planned jobs by exact W&B display name, so
+queued jobs can initialize without a registry edit; duplicate exact names fail
+closed and require an explicit resume-segment decision. Pass `--resolve-only`
+while training is active to audit registration without publishing partial
+plots.
 
 The script writes each selected wave into one matching artifact directory and
 uses the final-250M-token mean training CE. The 275M outputs follow the strict

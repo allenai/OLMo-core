@@ -75,3 +75,9 @@ It uses `4e-4`, `8e-4`, `1.6e-3`, and `3.2e-3` at every Cx, EP1,
 ordinary 10%-of-token warmup and cosine decay, rolling ephemeral checkpoints,
 no in-loop evals, urgent priority, and unallocated Holmes scheduling. The
 fully concurrent sweep is 16 tasks / 80 GPUs.
+
+The paired plotting entry point is `plot_canonical_gdn2_kda.py`. It writes one
+KDA U-plot, one canonical-GDN2 U-plot, and one shared observed-best plot against
+wide integration, matching gated-NoPE GDN1, and original `expand_v=2` GDN2.
+Only bracketed curves enter the shared plot, and labels remain observed-best
+LRs rather than predicted minima.
