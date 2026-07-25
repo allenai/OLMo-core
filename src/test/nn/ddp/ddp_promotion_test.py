@@ -1,7 +1,7 @@
 """
-The MoE-v2 stack was promoted/renamed to the canonical ``OLMoDDP*`` names. These tests pin the
-back-compat aliases (old ``MoEFusedV2*`` / ``MoEV2*`` names resolve to the same objects) and that
-configs serialized under the old ``_CLASS_`` paths still deserialize.
+The MoE-v2 stack was promoted/renamed to the canonical ``OLMoDDP*`` names. These tests pin that the
+canonical names resolve to the same objects across their import paths and that configs serialized
+under the former ``olmo_core.nn.moe.v2.*`` module paths still deserialize.
 """
 
 from olmo_core.config import Config
@@ -15,32 +15,24 @@ from olmo_core.nn.ddp.block import (
     OLMoDDPTransformerBlockConfig,
 )
 from olmo_core.nn.ddp.model import OLMoDDPModel as OLMoDDPModelFromCanonicalModule
-from olmo_core.nn.moe.v2.block import (
-    MoEFusedV2TransformerBlock,
-    MoEFusedV2TransformerBlockConfig,
-)
 from olmo_core.nn.moe.v2.block import MoERouterConfigV2 as MoERouterConfigV2FromOldBlock
+from olmo_core.nn.moe.v2.block import (
+    OLMoDDPTransformerBlock as OLMoDDPTransformerBlockFromOldBlock,
+)
 from olmo_core.nn.moe.v2.block import (
     RoutedExpertsConfig as RoutedExpertsConfigFromOldBlock,
 )
 from olmo_core.nn.moe.v2.block import (
     SharedExpertsConfig as SharedExpertsConfigFromOldBlock,
 )
-from olmo_core.nn.moe.v2.model import MoEFusedV2Transformer, OLMoDDPModel
+from olmo_core.nn.moe.v2.model import OLMoDDPModel as OLMoDDPModelFromOldModel
 from olmo_core.nn.moe.v2.qwen import build_debug_qwen3_moe_config
 from olmo_core.nn.moe.v2.routed_experts import RoutedExpertsConfig
 from olmo_core.nn.moe.v2.router import MoERouterConfigV2
 from olmo_core.nn.moe.v2.shared_experts import SharedExpertsConfig
-from olmo_core.nn.transformer import MoEFusedV2TransformerConfig, OLMoDDPModelConfig
-from olmo_core.optim import (
-    MoEFusedV2Optimizer,
-    MoEFusedV2OptimizerConfig,
-    OLMoDDPOptimizer,
-    OLMoDDPOptimizerConfig,
-)
+from olmo_core.nn.transformer import OLMoDDPModelConfig
+from olmo_core.optim import OLMoDDPOptimizer, OLMoDDPOptimizerConfig
 from olmo_core.train.train_module.transformer import (
-    MoEV2TransformerTrainModule,
-    MoEV2TransformerTrainModuleConfig,
     OLMoDDPTrainModule,
     OLMoDDPTrainModuleConfig,
 )
@@ -48,39 +40,31 @@ from olmo_core.train.train_module.transformer.ddp_train_module import (
     OLMoDDPTrainModule as OLMoDDPTrainModuleFromBridge,
 )
 from olmo_core.train.train_module.transformer.moe_train_module import (
-    MoEV2TransformerTrainModule as MoEV2TransformerTrainModuleFromOldModule,
+    OLMoDDPTrainModule as OLMoDDPTrainModuleFromOldModule,
 )
 
+# Reference the optimizer symbols so they're covered by the import checks below.
+_ = (OLMoDDPOptimizer, OLMoDDPTrainModule, OLMoDDPTrainModuleConfig)
 
-def test_olmo_ddp_promoted_names_keep_moe_v2_compatibility():
-    assert MoEFusedV2Transformer is OLMoDDPModel
-    assert OLMoDDPModelFromCanonicalModule is OLMoDDPModel
-    assert OLMoDDPModelFromDDP is OLMoDDPModel
-    assert MoEFusedV2TransformerConfig is OLMoDDPModelConfig
-    assert MoEFusedV2TransformerBlock is OLMoDDPTransformerBlock
-    assert MoEFusedV2TransformerBlockConfig is OLMoDDPTransformerBlockConfig
+
+def test_olmo_ddp_canonical_names_resolve_across_import_paths():
+    assert OLMoDDPModelFromCanonicalModule is OLMoDDPModelFromDDP
+    assert OLMoDDPModelFromOldModel is OLMoDDPModelFromDDP
     assert OLMoDDPTransformerBlockFromDDP is OLMoDDPTransformerBlock
+    assert OLMoDDPTransformerBlockFromOldBlock is OLMoDDPTransformerBlock
     assert OLMoDDPTransformerBlockConfigFromDDP is OLMoDDPTransformerBlockConfig
     assert MoERouterConfigV2FromOldBlock is MoERouterConfigV2
     assert RoutedExpertsConfigFromOldBlock is RoutedExpertsConfig
     assert SharedExpertsConfigFromOldBlock is SharedExpertsConfig
-    assert MoEV2TransformerTrainModule is OLMoDDPTrainModule
-    assert MoEV2TransformerTrainModuleFromOldModule is OLMoDDPTrainModule
-    assert MoEV2TransformerTrainModuleConfig is OLMoDDPTrainModuleConfig
     assert OLMoDDPTrainModuleFromBridge is OLMoDDPTrainModule
-    assert MoEFusedV2OptimizerConfig is OLMoDDPOptimizerConfig
-    assert MoEFusedV2Optimizer is OLMoDDPOptimizer
+    assert OLMoDDPTrainModuleFromOldModule is OLMoDDPTrainModule
 
 
-def test_olmo_ddp_promoted_config_names_round_trip():
+def test_olmo_ddp_config_names_round_trip():
     model_config = build_debug_qwen3_moe_config(vocab_size=128)
     model_config_dict = model_config.as_config_dict()
     assert model_config_dict["_CLASS_"] == "olmo_core.nn.transformer.config.OLMoDDPModelConfig"
     assert isinstance(Config.from_dict(model_config_dict), OLMoDDPModelConfig)
-
-    old_model_config_dict = dict(model_config_dict)
-    old_model_config_dict["_CLASS_"] = "olmo_core.nn.transformer.config.MoEFusedV2TransformerConfig"
-    assert isinstance(Config.from_dict(old_model_config_dict), OLMoDDPModelConfig)
 
     block_config = build_debug_qwen3_moe_config(vocab_size=128, n_layers=1).block
     assert isinstance(block_config, OLMoDDPTransformerBlockConfig)
@@ -88,21 +72,14 @@ def test_olmo_ddp_promoted_config_names_round_trip():
     assert block_config_dict["_CLASS_"] == "olmo_core.nn.ddp.block.OLMoDDPTransformerBlockConfig"
     assert isinstance(Config.from_dict(block_config_dict), OLMoDDPTransformerBlockConfig)
 
+    # Configs serialized under the former ``olmo_core.nn.moe.v2.block`` module path still resolve.
     old_path_block_config_dict = dict(block_config_dict)
     old_path_block_config_dict[
         "_CLASS_"
     ] = "olmo_core.nn.moe.v2.block.OLMoDDPTransformerBlockConfig"
     assert isinstance(Config.from_dict(old_path_block_config_dict), OLMoDDPTransformerBlockConfig)
 
-    old_block_config_dict = dict(block_config_dict)
-    old_block_config_dict["_CLASS_"] = "olmo_core.nn.moe.v2.block.MoEFusedV2TransformerBlockConfig"
-    assert isinstance(Config.from_dict(old_block_config_dict), OLMoDDPTransformerBlockConfig)
-
     optim_config = OLMoDDPOptimizerConfig()
     optim_config_dict = optim_config.as_config_dict()
     assert optim_config_dict["_CLASS_"] == "olmo_core.optim.moe_optimizer.OLMoDDPOptimizerConfig"
     assert isinstance(Config.from_dict(optim_config_dict), OLMoDDPOptimizerConfig)
-
-    old_optim_config_dict = dict(optim_config_dict)
-    old_optim_config_dict["_CLASS_"] = "olmo_core.optim.moe_optimizer.MoEFusedV2OptimizerConfig"
-    assert isinstance(Config.from_dict(old_optim_config_dict), OLMoDDPOptimizerConfig)

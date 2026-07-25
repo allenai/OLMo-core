@@ -562,7 +562,3 @@ class OLMoDDPTrainModuleConfig(TrainModuleConfig):
             eval_only=eval_only,
             **kwargs,
         )
-
-
-# Back-compat alias for the former name of the fused MoE-v2 train-module config.
-MoEV2TransformerTrainModuleConfig = OLMoDDPTrainModuleConfig

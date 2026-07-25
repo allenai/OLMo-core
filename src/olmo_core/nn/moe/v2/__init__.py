@@ -7,14 +7,11 @@ from typing import Any
 from ...output_discard_checkpoint import OutputDiscardCheckpoint
 
 _BLOCK_EXPORTS = {
-    "MoEFusedV2TransformerBlock",
-    "MoEFusedV2TransformerBlockConfig",
     "OLMoDDPTransformerBlock",
     "OLMoDDPTransformerBlockConfig",
 }
 
 _MODEL_EXPORTS = {
-    "MoEFusedV2Transformer",
     "OLMoDDPModel",
 }
 
@@ -37,10 +34,7 @@ def __getattr__(name: str) -> Any:
 
 __all__ = [
     "OutputDiscardCheckpoint",
-    "MoEFusedV2TransformerBlock",
-    "MoEFusedV2TransformerBlockConfig",
     "OLMoDDPTransformerBlock",
     "OLMoDDPTransformerBlockConfig",
-    "MoEFusedV2Transformer",
     "OLMoDDPModel",
 ]

@@ -9,12 +9,7 @@ from .config import (
 )
 from .dion import DionConfig
 from .lion import Lion, LionConfig, SkipStepLion, SkipStepLionConfig
-from .moe_optimizer import (
-    MoEFusedV2Optimizer,
-    MoEFusedV2OptimizerConfig,
-    OLMoDDPOptimizer,
-    OLMoDDPOptimizerConfig,
-)
+from .moe_optimizer import OLMoDDPOptimizer, OLMoDDPOptimizerConfig
 from .muon import MuonConfig, NorMuonConfig
 from .noop import NoOpConfig, NoOpOptimizer
 from .scheduler import (
@@ -50,8 +45,6 @@ __all__ = [
     "NorMuonConfig",
     "OLMoDDPOptimizer",
     "OLMoDDPOptimizerConfig",
-    "MoEFusedV2Optimizer",
-    "MoEFusedV2OptimizerConfig",
     "DionConfig",
     "SkipStepLionConfig",
     "SkipStepLion",

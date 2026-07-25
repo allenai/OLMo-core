@@ -120,7 +120,7 @@ class OLMoDDPOptimizerConfig(Config):
     Configuration for :class:`OLMoDDPOptimizer`.
 
     Builds the distributed fused optimizer for the
-    :class:`~olmo_core.nn.moe.v2.model.MoEFusedV2Transformer` from AdamW settings
+    :class:`~olmo_core.nn.ddp.model.OLMoDDPModel` from AdamW settings
     (:data:`lr`, :data:`betas`, :data:`eps`, :data:`weight_decay`) and skip-step spike-detection
     settings (:data:`rolling_interval_length`,
     :data:`sigma_factor`, :data:`max_grad_norm`), plus optional per-parameter-group overrides.
@@ -329,10 +329,10 @@ class OLMoDDPOptimizerConfig(Config):
         :param strict: If ``True`` an error is raised if a pattern in ``group_overrides`` doesn't
             match any parameter.
         """
-        from ..nn.moe.v2.model import MoEFusedV2Transformer
+        from ..nn.ddp.model import OLMoDDPModel
 
         assert train_module is not None, "OLMoDDPOptimizerConfig.build requires a train_module"
-        model_parts = cast(List[MoEFusedV2Transformer], model_parts)
+        model_parts = cast(List[OLMoDDPModel], model_parts)
         train_module = cast("OLMoDDPTrainModule", train_module)
 
         # not used: train_module (was); now used to pass process groups
@@ -478,7 +478,7 @@ class _FlatModelParamSyncGroup:
 class OLMoDDPOptimizer:
     """
     Distributed fused optimizer for the
-    :class:`~olmo_core.nn.moe.v2.model.MoEFusedV2Transformer`.
+    :class:`~olmo_core.nn.ddp.model.OLMoDDPModel`.
 
     Keeps fp32 master copies of the parameters, reduce-scatters gradients and gathers updated
     parameters across the data-parallel and expert-parallel data-parallel process groups (DTensor-
@@ -2460,8 +2460,3 @@ def coalesced_all_gather(
         gathered_outputs.append(gathered)
 
     return gathered_outputs
-
-
-# Back-compat aliases (canonical names are the OLMoDDP* ones above).
-MoEFusedV2OptimizerConfig = OLMoDDPOptimizerConfig
-MoEFusedV2Optimizer = OLMoDDPOptimizer

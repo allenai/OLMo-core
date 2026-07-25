@@ -1,11 +1,8 @@
 """
-Back-compat shim. The fused MoE-v2 transformer moved to :mod:`olmo_core.nn.ddp.model` and was
-renamed ``MoEFusedV2Transformer`` -> :class:`~olmo_core.nn.ddp.model.OLMoDDPModel`. The old name
-remains importable from here as an alias.
+Compatibility re-export. The fused MoE-v2 transformer moved to :mod:`olmo_core.nn.ddp.model`
+(:class:`~olmo_core.nn.ddp.model.OLMoDDPModel`); it remains importable from this former module path.
 """
 
 from olmo_core.nn.ddp.model import OLMoDDPModel
 
-MoEFusedV2Transformer = OLMoDDPModel
-
-__all__ = ["OLMoDDPModel", "MoEFusedV2Transformer"]
+__all__ = ["OLMoDDPModel"]

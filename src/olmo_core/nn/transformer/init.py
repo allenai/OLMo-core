@@ -265,15 +265,15 @@ class InitMethod(StrEnum):
         ep_generator: Optional[torch.Generator] = None,
     ):
         """
-        Initialize the weights of a :class:`~olmo_core.nn.moe.v2.block.MoEFusedV2TransformerBlock`.
+        Initialize the weights of an :class:`~olmo_core.nn.ddp.block.OLMoDDPTransformerBlock`.
 
         :param ep_generator: An optional separate generator for expert-parallel-sharded weights
             (the routed expert weights). Falls back to ``generator`` when expert parallelism is
             not enabled.
         """
-        from ..moe.v2.block import MoEFusedV2TransformerBlock
+        from ..ddp.block import OLMoDDPTransformerBlock
 
-        b = cast(MoEFusedV2TransformerBlock, b)
+        b = cast(OLMoDDPTransformerBlock, b)
         if self == InitMethod.llama:
             std = std / (2 * num_blocks) ** 0.5
         elif self == InitMethod.llama_depth:
