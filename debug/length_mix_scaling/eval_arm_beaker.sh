@@ -58,12 +58,16 @@ if ! python -c "import transformers.models.qwen3_5" 2>/dev/null; then
     echo "=== installing transformers 5.14.1 shadow (qwen3_5 support) $(date '+%F %T') ==="
     pip install -q --target "$TFSHADOW" "transformers==5.14.1" 2>&1 | tail -5
   fi
-  export PYTHONPATH="$TFSHADOW:$PYTHONPATH"
-  python -c "
+  # SCOPED, not exported: a global PYTHONPATH leaks the shadow into the vLLM venv's python, which
+  # then imports the shadow's transformers (and its torchvision) instead of its own -- that is how
+  # a transformers fix turned into a torch/torchvision CUDA-version crash inside vLLM.
+  EXPORT_PP="$TFSHADOW:$PYTHONPATH"
+  PYTHONPATH="$EXPORT_PP" python -c "
 import transformers, transformers.models.qwen3_5
 print('shadow transformers', transformers.__version__, '(qwen3_5 OK)')" \
     || { echo "FATAL: transformers shadow still lacks qwen3_5"; exit 2; }
 fi
+EXPORT_PP="${EXPORT_PP:-$PYTHONPATH}"
 
 # JIT caches MUST be container-local, never on a shared FS: concurrent arms compiling the same
 # flashinfer/triton kernels into one shared cache dir deadlock on the lock file.
@@ -112,7 +116,7 @@ fi
 # --- 1) olmo distcp -> HF (container conda python has olmo_core + torch) ---
 if [ ! -f "$HF/config.json" ]; then
   echo "=== [$ARM] export -> HF $(date '+%F %T') ==="
-  python "$REPO/src/corpus_reasoning/train/export_olmo_to_hf.py" \
+  PYTHONPATH="$EXPORT_PP" python "$REPO/src/corpus_reasoning/train/export_olmo_to_hf.py" \
     --save-folder "$CKPT" $CKPT_ARG --hf-out "$HF" --base-model Qwen/Qwen3.5-4B-Base \
     || { echo "!!! [$ARM] EXPORT FAILED"; exit 3; }
 else echo "[$ARM] HF export exists"; fi
@@ -120,22 +124,23 @@ else echo "[$ARM] HF export exists"; fi
 # --- 2) vLLM serving copy (Qwen3.5 VL-wrapper recipe) ---
 if [ ! -f "$SERVE/preprocessor_config.json" ]; then
   echo "=== [$ARM] serving copy $(date '+%F %T') ==="
-  python "$VDIR/make_vllm_serving_copy.py" --hf-export "$HF" --base-snapshot "$BASE_SNAP" --out "$SERVE" \
+  PYTHONPATH="$EXPORT_PP" python "$VDIR/make_vllm_serving_copy.py" --hf-export "$HF" --base-snapshot "$BASE_SNAP" --out "$SERVE" \
     || { echo "!!! [$ARM] SERVING COPY FAILED"; exit 4; }
-  python "$VDIR/make_vl_weights.py" --hf-export "$HF" --base-snapshot "$BASE_SNAP" --out-dir "$SERVE" \
+  PYTHONPATH="$EXPORT_PP" python "$VDIR/make_vl_weights.py" --hf-export "$HF" --base-snapshot "$BASE_SNAP" --out-dir "$SERVE" \
     || { echo "!!! [$ARM] VL WEIGHTS FAILED"; exit 4; }
 else echo "[$ARM] serving copy exists"; fi
 
 # --- 3) per-rung: prefills -> vLLM generate -> grade ---
 IDS="--doc-start-id 248049 --doc-end-id 248050 --eos-token-id 248044"
 RES=$OUT/${ARM}.json
+OK_RUNGS=0
 echo "{\"arm\": \"$ARM\", \"ckpt\": \"$CKPT\", \"rungs\": {}}" > "$RES.tmp"
 for RUNG in 2048 8192 32768; do
   echo "=== [$ARM] rung $RUNG $(date '+%F %T') ==="
   PF=/root/prefills_${ARM}_${RUNG}.json
   RS=/root/resp_${ARM}_${RUNG}.json
   GR=$OUT/${ARM}_rung${RUNG}.grade.json
-  python "$VDIR/build_prefills.py" --tokenizer "$BASE_SNAP" \
+  PYTHONPATH="$EXPORT_PP" python "$VDIR/build_prefills.py" --tokenizer "$BASE_SNAP" \
     --contra-data "$LM/eval_rungs/rung_${RUNG}.jsonl" --max-test-samples 100000 \
     --cot-mode none $IDS --out "$PF" || { echo "!!! [$ARM] rung $RUNG prefills FAILED"; continue; }
   # max-model-len is a floor; run_vllm_eval raises it to (longest prefill + gen + 256).
@@ -145,6 +150,7 @@ for RUNG in 2048 8192 32768; do
   python "$VDIR/grade_responses.py" --responses "$RS" \
     --contra-data "$LM/eval_rungs/rung_${RUNG}.jsonl" --max-test-samples 100000 --out "$GR" \
     || { echo "!!! [$ARM] rung $RUNG GRADE FAILED"; continue; }
+  OK_RUNGS=$((OK_RUNGS+1))
   echo "--- [$ARM] rung $RUNG ---"; cat "$GR"
 done
 
@@ -167,4 +173,11 @@ json.dump(res, open(f"{out}/{arm}.json", "w"), indent=1)
 print(json.dumps(res, indent=1))
 PY
 rm -f "$RES.tmp"
-echo "=== [$ARM] EVAL DONE $(date '+%F %T') ==="
+# A job that produced NO graded rungs must not report success. The per-rung `continue` above keeps
+# one bad rung from killing the other two, but without this the whole job exits 0 having written
+# nothing -- which is how the first successful-looking pilot silently produced zero results.
+if [ "$OK_RUNGS" -eq 0 ]; then
+  echo "!!! [$ARM] FAILED: 0/3 rungs graded -- see the per-rung errors above"
+  exit 5
+fi
+echo "=== [$ARM] EVAL DONE ($OK_RUNGS/3 rungs graded) $(date '+%F %T') ==="
