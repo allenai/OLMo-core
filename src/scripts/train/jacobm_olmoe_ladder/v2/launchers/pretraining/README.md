@@ -74,6 +74,11 @@ src/scripts/train/jacobm_olmoe_ladder/v2/launchers/pretraining/launch_hybrid_sca
 # Render the canonical GDN2 and KDA sweeps in Cx1/Cx2/Cx4/Cx8 order. The
 # launcher reuses, and therefore omits, the existing GDN2 Cx8/1.6e-3 cell.
 src/scripts/train/jacobm_olmoe_ladder/v2/launchers/pretraining/launch_275m_canonical_gdn2_kda_lr_sweeps.sh
+
+# Inspect the canonical expand_v=1, nonnegative GDN2 scale transfer. The
+# checked-in manifest preserves the approved longest-first submission order
+# and uses the balanced 176-GPU layout at full concurrency.
+src/scripts/train/jacobm_olmoe_ladder/v2/launchers/pretraining/launch_geometry_matched_scale_gdn2_canonical_full.sh
 ```
 
 The scale launcher copies the Beaker wrapper to node-local `/tmp` before

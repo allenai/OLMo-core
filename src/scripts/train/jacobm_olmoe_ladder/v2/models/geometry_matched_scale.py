@@ -130,6 +130,16 @@ EXPECTED_GDN2_GATED_NOPE_COUNTS = {
     "810m": (914_540_480, 811_780_032, 11_921_835_968),
     "1p2b": (1_376_964_352, 1_248_513_792, 18_602_528_512),
 }
+EXPECTED_CANONICAL_GDN2_GATED_NOPE_COUNTS = {
+    "275m": (284_915_520, 220_690_240, 3_130_447_680),
+    "480m": (489_954_144, 412_883_808, 7_209_524_064),
+    "810m": (823_189_952, 720_429_504, 11_830_485_440),
+    "1p2b": (1_228_949_248, 1_100_498_688, 18_454_513_408),
+}
+EXPECTED_GDN2_GATED_NOPE_COUNTS_BY_EXPAND_V = {
+    1.0: EXPECTED_CANONICAL_GDN2_GATED_NOPE_COUNTS,
+    2.0: EXPECTED_GDN2_GATED_NOPE_COUNTS,
+}
 
 
 def _geometry(model_size: str) -> Geometry:
@@ -450,9 +460,17 @@ def build_geometry_matched_scale_gdn2_model_config(
     *,
     rope: bool = False,
     attention_gate: bool = True,
+    expand_v: float = 2.0,
+    allow_neg_eigval: bool = True,
     disable_recompute: bool = False,
 ) -> OLMoDDPModelConfig:
     """Replace only GDN1 with GDN2 in a geometry-matched scale model."""
+
+    if expand_v not in EXPECTED_GDN2_GATED_NOPE_COUNTS_BY_EXPAND_V:
+        raise ValueError(
+            f"unsupported audited GDN2 expand_v={expand_v}; expected one of "
+            f"{tuple(EXPECTED_GDN2_GATED_NOPE_COUNTS_BY_EXPAND_V)}"
+        )
 
     parent = build_geometry_matched_scale_model_config(
         model_size,
@@ -466,8 +484,8 @@ def build_geometry_matched_scale_gdn2_model_config(
         n_heads=old_gdn.n_heads,
         n_v_heads=old_gdn.n_v_heads,
         head_dim=old_gdn.head_dim,
-        expand_v=old_gdn.expand_v,
-        allow_neg_eigval=old_gdn.allow_neg_eigval,
+        expand_v=expand_v,
+        allow_neg_eigval=allow_neg_eigval,
         conv_size=old_gdn.conv_size,
         conv_bias=old_gdn.conv_bias,
         disable_recompute=disable_recompute,
@@ -513,6 +531,15 @@ def build_geometry_matched_scale_gdn2_model_config(
         )
     if candidate_resolved[0].routed_experts is not None:
         raise ValueError("GDN2 scale model must retain the dense-first layer-0 FFN")
+    for layer_idx in geometry.gdn_layers:
+        layer_gdn2 = cast(GatedDeltaNet2Config, candidate_resolved[layer_idx].sequence_mixer)
+        if (
+            layer_gdn2.expand_v != expand_v
+            or layer_gdn2.allow_neg_eigval != allow_neg_eigval
+        ):
+            raise ValueError(
+                f"unexpected GDN2 stability settings at {model_size} layer {layer_idx}"
+            )
 
     # Normalize GDN2 back to GDN1 and demand exact config equality. This proves
     # that width/depth, MoE, attention, positional encoding, norms, and init did
@@ -539,10 +566,11 @@ def build_geometry_matched_scale_gdn2_model_config(
         candidate.num_params,
     )
     if not rope and attention_gate:
-        expected_counts = EXPECTED_GDN2_GATED_NOPE_COUNTS[model_size]
+        expected_counts = EXPECTED_GDN2_GATED_NOPE_COUNTS_BY_EXPAND_V[expand_v][model_size]
         if actual_counts != expected_counts:
             raise ValueError(
-                f"unexpected {model_size} gated-NoPE GDN2 counts: expected "
+                f"unexpected {model_size} gated-NoPE GDN2 expand_v={expand_v:g} "
+                f"counts: expected "
                 f"{expected_counts}, found {actual_counts}"
             )
     else:

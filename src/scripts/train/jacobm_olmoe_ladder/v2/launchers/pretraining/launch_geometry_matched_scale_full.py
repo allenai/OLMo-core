@@ -144,6 +144,15 @@ MODEL_VARIANTS = {
         "rope": False,
         "attention_gate": True,
         "gdn2": True,
+        "expand_v": 2.0,
+        "allow_neg_eigval": True,
+    },
+    "geometry_matched_gdn2_ev1_noneg_nope_gated": {
+        "rope": False,
+        "attention_gate": True,
+        "gdn2": True,
+        "expand_v": 1.0,
+        "allow_neg_eigval": False,
     },
 }
 NONFINITE_DIAGNOSTIC_STOPS = {
@@ -240,16 +249,20 @@ def validate(manifest: dict[str, Any]) -> list[dict[str, Any]]:
         row["accumulation_steps"] = rank_sequences // microbatch
 
     for model_size in ("480m", "810m", "1p2b"):
-        builder = (
-            build_geometry_matched_scale_gdn2_model_config
-            if bool(profile["gdn2"])
-            else build_geometry_matched_scale_model_config
-        )
-        model = builder(
-            model_size,
-            rope=bool(profile["rope"]),
-            attention_gate=bool(profile["attention_gate"]),
-        )
+        if bool(profile["gdn2"]):
+            model = build_geometry_matched_scale_gdn2_model_config(
+                model_size,
+                rope=bool(profile["rope"]),
+                attention_gate=bool(profile["attention_gate"]),
+                expand_v=float(profile["expand_v"]),
+                allow_neg_eigval=bool(profile["allow_neg_eigval"]),
+            )
+        else:
+            model = build_geometry_matched_scale_model_config(
+                model_size,
+                rope=bool(profile["rope"]),
+                attention_gate=bool(profile["attention_gate"]),
+            )
         print(
             f"{model_size}: active={model.num_active_params:,} "
             f"active_non_embedding={model.num_active_non_embedding_params:,} "
