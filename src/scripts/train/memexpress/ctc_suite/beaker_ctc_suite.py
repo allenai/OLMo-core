@@ -97,6 +97,13 @@ def parse_args() -> argparse.Namespace:
         "--activation-checkpointing", default=None, choices=["auto", "full", "budget", "none"]
     )
     ap.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help="training seed passthrough. Needed to test whether a result reproduces across seeds -- "
+             "a single run per configuration cannot distinguish a real effect from seed variance.",
+    )
+    ap.add_argument(
         "--no-compile",
         action="store_true",
         help="disable torch.compile (the trainer compiles by DEFAULT, so every Beaker run has so "
@@ -228,6 +235,8 @@ def main() -> None:
         cmd += ["--pack"]
     if opts.no_compile:
         cmd += ["--no-compile"]
+    if opts.seed is not None:
+        cmd += ["--seed", str(opts.seed)]
     if opts.activation_checkpointing:
         cmd += ["--activation-checkpointing", opts.activation_checkpointing]
     if opts.ac_budget is not None:

@@ -3,7 +3,39 @@
 **Updated 2026-07-24 22:30 PDT.** Autonomous overnight loop (dynamic self-pacing).
 Scope per user: **hybrid Qwen3.5-4B only** (no dense variant).
 
-## ★★ ROUND 1 COMPLETE (2026-07-25 00:35) — all 10 arms
+## ★★★ CURRENT BEST PICTURE (2026-07-25 01:40, round 2 landing)
+
+Row A f1@32k vs short tokens (long pool FIXED at 35.2M):
+
+| short (M) | 0 | 20 | 42 | 84 | **106** | 127 | 149 |
+|---|---|---|---|---|---|---|---|
+| **f1@32k** | 0.000 | 0.452 | 0.512 | 0.514 | **0.561** | 0.518 | **0.249** |
+| steps | 67 | 105 | 146 | 228 | 269 | 310 | 351 |
+
+**Shape: a broad PLATEAU then an abrupt CLIFF.** 42M→127M is flat within ~2 SE (0.512/0.514/0.561/
+0.518); the entire 0.269 drop happens in the narrow 127M→149M window — only **41 training steps**
+apart (310 → 351).
+
+⚠ **The cliff rests on ONE run (A4).** Eval noise cannot explain a 6.5 SE drop, but *seed* variance
+can — one run per configuration cannot distinguish a real threshold from an unlucky draw, and an
+abrupt collapse after an 85M-token plateau is exactly the shape a fluke would take.
+**A4s2 launched** (A4's identical data + 351 steps, `--seed 1`) to test reproducibility. This
+required adding a `--seed` passthrough to `beaker_ctc_suite.py`, which had none.
+Do not report the cliff as established until A4s2 lands.
+
+- **PEAK 0.561 at 106M short tokens** (A30) — round 2 moved the optimum right of A3.
+- **Cliff between 106M and 149M**: 0.561 → 0.249, ~7.5 SE. Steeper than round 1 suggested.
+- Rising-part law: `f1@32k = 0.536·(1 − e^(−N_S/11.3M))`, SSE 0.0013 → **τ ≈ 11M**, i.e. short data
+  buys most of its value in the first ~30M tokens.
+- Best arm overall is now **A30: 0.561** (vs production uniform baseline 0.335).
+- Substitute-vs-complement at the peaks: A30 0.561 (full long) vs B4 0.541 (half long) → **tie**
+  within noise, so long data is redundant once short data is plentiful — but at ~20M short it is
+  decisive (A1 0.452 vs B2 0.068).
+
+**Still evaluating:** A35 (127.4M short — lands inside the cliff) and A4e (A4's data at 200 steps
+instead of 351 — the duration-vs-composition test; predict ~0.5 not 0.249).
+
+## ROUND 1 COMPLETE (2026-07-25 00:35) — all 10 arms
 
 f1@32k, vLLM, eval_size 500 (SE ±0.022 at f1≈0.5, ±0.011 at ≈0.07):
 

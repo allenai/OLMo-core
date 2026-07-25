@@ -30,6 +30,8 @@ import os
 ARM_TOKENS = {  # (long_tokens, short_tokens) as composed; filled from arm metadata when available
     "A0": (35.2, 0.0), "A1": (35.2, 20.0), "A2": (35.2, 41.5), "A3": (35.2, 84.5),
     "A4": (35.2, 148.7), "B0": (20.2, 0.0), "B2": (20.2, 21.5), "B4": (20.2, 84.5),
+    "A25": (35.2, 105.9), "A30": (35.2, 105.9), "A35": (35.2, 127.4),
+    "A4e": (35.2, 148.7),   # A4 data, 200 steps instead of 351
     "C3": (None, None), "C4": (None, None),
 }
 
@@ -95,7 +97,7 @@ def main():
         if d["parse"] is not None and d["parse"] < 0.5:
             print(f"     !! {arm} parse_rate {d['parse']:.2f} -- DUMP GENERATIONS before believing this")
 
-    for row, arms in (("A (full long pool)", ["A0", "A1", "A2", "A3", "A4"]),
+    for row, arms in (("A (full long pool)", ["A0", "A1", "A2", "A3", "A30", "A35", "A4"]),
                       ("B (half long pool)", ["B0", "B2", "B4"])):
         pts = [(ARM_TOKENS[a][1], res[a]["f1"]) for a in arms if a in res]
         if len(pts) < 2:
@@ -135,7 +137,7 @@ def main():
     def peak_of(arms):
         pts = [(ARM_TOKENS[a][1], res[a]["f1"], a) for a in arms if a in res]
         return max(pts, key=lambda p: p[1]) if pts else None
-    pa = peak_of(["A0", "A1", "A2", "A3", "A4"])
+    pa = peak_of(["A0", "A1", "A2", "A3", "A30", "A35", "A4"])
     pb = peak_of(["B0", "B2", "B4"])
     if pa and pb:
         print(f"\n--- substitute vs complement (compared at each row's PEAK) ---")
