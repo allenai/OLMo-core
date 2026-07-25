@@ -138,7 +138,8 @@ echo "{\"arm\": \"$ARM\", \"ckpt\": \"$CKPT\", \"rungs\": {}}" > "$RES.tmp"
 for RUNG in 2048 8192 32768; do
   echo "=== [$ARM] rung $RUNG $(date '+%F %T') ==="
   PF=/root/prefills_${ARM}_${RUNG}.json
-  RS=/root/resp_${ARM}_${RUNG}.json
+  RS=$OUT/${ARM}_rung${RUNG}.responses.json   # persist to weka: a 0.000-at-parse-1.0
+                                              # result is undiagnosable without them
   GR=$OUT/${ARM}_rung${RUNG}.grade.json
   PYTHONPATH="$EXPORT_PP" python "$VDIR/build_prefills.py" --tokenizer "$BASE_SNAP" \
     --contra-data "$LM/eval_rungs/rung_${RUNG}.jsonl" --max-test-samples 100000 \
