@@ -123,6 +123,11 @@ def _load_case(case: Case) -> tuple[dict[str, Any], dict[str, Any]]:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--case", action="append", choices=sorted(CASES), default=[])
+    parser.add_argument(
+        "--allocated",
+        action="store_true",
+        help="request a short allocated reservation instead of the zero-minimum unallocated pool",
+    )
     parser.add_argument("--submit", action="store_true")
     args = parser.parse_args()
 
@@ -152,6 +157,8 @@ def main() -> None:
         return
 
     for case, manifest, row, checkpoint_dir in prepared:
+        if args.allocated:
+            manifest["beaker"]["min_runtime"] = "10m"
         source = manifest["source"]
         commit = validate_remote_commit(str(source["remote"]), str(source["branch"]))
         debug_steps = ",".join(str(step) for step in range(case.start_step, case.stop_step + 1))
@@ -196,6 +203,7 @@ def main() -> None:
             "rank_microbatch_sequences": row["rank_microbatch_sequences"],
             "checkpoint_writes": False,
             "wandb": False,
+            "allocated": args.allocated,
             "dump_dir": str(DUMP_ROOT / case.name),
             "experiment_id": experiment.id,
             "task_ids": [task.id for task in experiment.tasks],
