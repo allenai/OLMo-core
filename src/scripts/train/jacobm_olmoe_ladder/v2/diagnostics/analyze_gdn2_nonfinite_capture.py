@@ -129,7 +129,14 @@ def post_process(module: GatedDeltaNet2, x: torch.Tensor, recurrent: torch.Tenso
     output_gate = module.g_proj_2(module.g_proj_1(x)).view(
         batch_size, seq_len, module.n_v_heads, module.head_v_dim
     )
-    return module.w_out(module.o_norm(recurrent, output_gate).view(batch_size, seq_len, -1))
+    # FLA's token-by-token reference intentionally retains its recurrent output
+    # in FP32, whereas the production chunk op returns the value-projection
+    # dtype. Preserve FP32 for the raw/state comparisons below, but cast at the
+    # same normalization/output-projection boundary used by the trained module.
+    recurrent_for_projection = recurrent.to(output_gate.dtype)
+    return module.w_out(
+        module.o_norm(recurrent_for_projection, output_gate).view(batch_size, seq_len, -1)
+    )
 
 
 def main() -> None:
