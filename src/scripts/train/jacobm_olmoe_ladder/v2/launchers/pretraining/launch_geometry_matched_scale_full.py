@@ -17,6 +17,7 @@ from scripts.train.jacobm_olmoe_ladder.v2.launchers.pretraining.launch_geometry_
 )
 from scripts.train.jacobm_olmoe_ladder.v2.models.geometry_matched_scale import (
     build_geometry_matched_scale_gdn2_model_config,
+    build_geometry_matched_scale_kda_model_config,
     build_geometry_matched_scale_model_config,
 )
 
@@ -101,6 +102,9 @@ GDN2_BALANCED_LAYOUT = {
     ("1p2b", 4): (2, 8, 8, "sync_1d", 4),
     ("1p2b", 8): (4, 8, 8, "sync_1d", 3),
 }
+KDA_480M_LAYOUT = {
+    key: value for key, value in GDN2_BALANCED_LAYOUT.items() if key[0] == "480m"
+}
 COMPACT_V1_LAYOUT = {
     # Reuse the demonstrated first-hybrid layouts for 480M/810M, then retain
     # extra nodes only for the larger 1.2B data-multiple cells.
@@ -123,6 +127,7 @@ LAYOUT_PROFILES = {
     "compact_v1": COMPACT_V1_LAYOUT,
     "gdn2_wallclock_candidate": GDN2_WALLCLOCK_CANDIDATE_LAYOUT,
     "gdn2_balanced": GDN2_BALANCED_LAYOUT,
+    "kda_480m": KDA_480M_LAYOUT,
 }
 MODEL_VARIANTS = {
     "geometry_matched_gdn_ev2_nope": {
@@ -153,6 +158,12 @@ MODEL_VARIANTS = {
         "gdn2": True,
         "expand_v": 1.0,
         "allow_neg_eigval": False,
+    },
+    "geometry_matched_kda_ev1_noneg_nope_gated": {
+        "rope": False,
+        "attention_gate": True,
+        "gdn2": False,
+        "kda": True,
     },
 }
 NONFINITE_DIAGNOSTIC_STOPS = {
@@ -186,7 +197,7 @@ def validate(manifest: dict[str, Any]) -> list[dict[str, Any]]:
     keys = {(str(row["model_size"]), int(row["cx"])) for row in rows}
     if keys != set(selected_layout):
         raise ValueError(
-            f"manifest must contain the complete 12-cell layout; missing="
+            f"manifest must contain the complete selected layout; missing="
             f"{sorted(set(selected_layout) - keys)}, extra={sorted(keys - set(selected_layout))}"
         )
     if len(rows) != len(keys):
@@ -248,8 +259,10 @@ def validate(manifest: dict[str, Any]) -> list[dict[str, Any]]:
         row["rank_sequences"] = rank_sequences
         row["accumulation_steps"] = rank_sequences // microbatch
 
-    for model_size in ("480m", "810m", "1p2b"):
-        if bool(profile["gdn2"]):
+    for model_size in sorted({str(row["model_size"]) for row in rows}):
+        if bool(profile.get("kda", False)):
+            model = build_geometry_matched_scale_kda_model_config(model_size)
+        elif bool(profile["gdn2"]):
             model = build_geometry_matched_scale_gdn2_model_config(
                 model_size,
                 rope=bool(profile["rope"]),

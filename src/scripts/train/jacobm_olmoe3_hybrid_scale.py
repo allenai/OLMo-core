@@ -105,6 +105,7 @@ GDN2_SCALE_NOPE_SETTINGS = {
     "geometry_matched_gdn2_ev1_noneg_nope_gated": (1.0, False),
 }
 KDA_275M_VARIANT = "geometry_275m_kda_ev1_noneg_nope_gated"
+KDA_SCALE_VARIANT = "geometry_matched_kda_ev1_noneg_nope_gated"
 
 
 def env_bool(name: str, default: bool) -> bool:
@@ -334,6 +335,12 @@ def model_config():
             allow_neg_eigval=allow_neg_eigval,
             disable_recompute=GDN2_DISABLE_RECOMPUTE,
         )
+    elif MODEL_VARIANT == KDA_SCALE_VARIANT:
+        from scripts.train.jacobm_olmoe_ladder.v2.models.geometry_matched_scale import (
+            build_geometry_matched_scale_kda_model_config,
+        )
+
+        model = build_geometry_matched_scale_kda_model_config(MODEL_SIZE)
     else:
         raise ValueError(f"Unknown model variant {MODEL_VARIANT!r}")
     if EP_SIZE > 1:
@@ -545,6 +552,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         "geometry_matched_gdn_ev2_nope_gated",
         "geometry_matched_gdn_ev2_rope_gated",
         *GDN2_SCALE_NOPE_SETTINGS,
+        KDA_SCALE_VARIANT,
     }
     if MODEL_VARIANT == "geometry_275m_gdn_ev2_rope_gated":
         variant_group = "olmoe3-275m-geometry-gdn-ev2-rope-gated"
@@ -589,6 +597,8 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         variant_group = (
             f"olmoe3-geometry-matched-gdn2-ev{expand_v:g}-{eigval_tag}-nope-gated-scale"
         )
+    elif MODEL_VARIANT == KDA_SCALE_VARIANT:
+        variant_group = "olmoe3-geometry-matched-kda-ev1-noneg-nope-gated-scale"
     else:
         variant_group = "olmoe3-integration-wide-hybrid-scale"
     if MODEL_VARIANT in {
@@ -596,13 +606,14 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         "geometry_275m_gdn_ev2_nope",
         *GDN2_275M_NOPE_SETTINGS,
         KDA_275M_VARIANT,
+        KDA_SCALE_VARIANT,
         "geometry_matched_gdn_ev2_nope",
         "geometry_matched_gdn_ev2_nope_gated",
         *GDN2_SCALE_NOPE_SETTINGS,
     }:
         expand_v = (
             1.0
-            if MODEL_VARIANT == KDA_275M_VARIANT
+            if MODEL_VARIANT in {KDA_275M_VARIANT, KDA_SCALE_VARIANT}
             else {
                 **GDN2_275M_NOPE_SETTINGS,
                 **GDN2_SCALE_NOPE_SETTINGS,
@@ -613,6 +624,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             "geometry_275m_gdn_ev2_nope_gated",
             *GDN2_275M_NOPE_SETTINGS,
             KDA_275M_VARIANT,
+            KDA_SCALE_VARIANT,
             "geometry_matched_gdn_ev2_nope_gated",
             *GDN2_SCALE_NOPE_SETTINGS,
         }:
@@ -633,7 +645,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 )
             if GDN2_DISABLE_RECOMPUTE:
                 variant_tags.append("gdn2-no-recompute")
-        if MODEL_VARIANT == KDA_275M_VARIANT:
+        if MODEL_VARIANT in {KDA_275M_VARIANT, KDA_SCALE_VARIANT}:
             variant_tags.extend(["kda", "nonnegative-eigenvalues"])
     elif geometry_variant:
         variant_tags = ["geometry-matched", "expand-v-2", "rope"]
