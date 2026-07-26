@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 from pathlib import Path
 from typing import Any
 
@@ -66,6 +67,72 @@ def difference_summary(actual: torch.Tensor, expected: torch.Tensor) -> dict[str
             ).item()
         ),
     }
+
+
+def token_repetition_summary(token_ids: torch.Tensor) -> dict[str, Any]:
+    """Summarize repetition in the exact sequence that drove the bad activation."""
+    tokens = token_ids.detach().cpu().reshape(-1).to(torch.int64)
+    length = int(tokens.numel())
+    values, counts = torch.unique(tokens, return_counts=True)
+    order = torch.argsort(counts, descending=True)
+    top_tokens = [
+        {
+            "token_id": int(values[idx].item()),
+            "count": int(counts[idx].item()),
+            "fraction": float(counts[idx].item() / max(length, 1)),
+        }
+        for idx in order[:10]
+    ]
+    probabilities = counts.double() / max(length, 1)
+    entropy_bits = float(-(probabilities * probabilities.log2()).sum().item())
+
+    max_lag = min(2_048, length - 1)
+    lag_matches: list[tuple[int, int, float]] = []
+    for lag in range(1, max_lag + 1):
+        matches = int((tokens[lag:] == tokens[:-lag]).sum().item())
+        lag_matches.append((lag, matches, matches / (length - lag)))
+    strongest = sorted(lag_matches, key=lambda item: (item[2], item[1]), reverse=True)[:10]
+
+    longest_run = 0
+    if length:
+        boundaries = torch.cat(
+            [
+                torch.tensor([True]),
+                tokens[1:] != tokens[:-1],
+                torch.tensor([True]),
+            ]
+        ).nonzero().flatten()
+        longest_run = int((boundaries[1:] - boundaries[:-1]).max().item())
+
+    by_lag = {lag: (matches, fraction) for lag, matches, fraction in lag_matches}
+    selected_lags = {}
+    for lag in (1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1_024, 2_048):
+        if lag in by_lag:
+            matches, fraction = by_lag[lag]
+            selected_lags[str(lag)] = {"matches": matches, "fraction": fraction}
+    return {
+        "length": length,
+        "unique_tokens": int(values.numel()),
+        "entropy_bits": entropy_bits,
+        "perplexity_from_unigram_entropy": float(math.exp2(entropy_bits)),
+        "longest_identical_run": longest_run,
+        "top_tokens": top_tokens,
+        "selected_lag_matches": selected_lags,
+        "strongest_lag_matches": [
+            {"lag": lag, "matches": matches, "fraction": fraction}
+            for lag, matches, fraction in strongest
+        ],
+    }
+
+
+def find_local_loss_capture(
+    activation_capture: Path, payload: dict[str, Any], explicit: Path | None
+) -> Path | None:
+    if explicit is not None:
+        return explicit
+    pattern = f"step{int(payload['step']):06d}_mb*_local_loss.pt"
+    candidates = sorted(activation_capture.parent.glob(pattern))
+    return candidates[0] if len(candidates) == 1 else None
 
 
 def _dtype(config: dict[str, Any]) -> torch.dtype:
@@ -233,6 +300,11 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("capture", type=Path)
     parser.add_argument("--output", type=Path)
+    parser.add_argument(
+        "--local-loss-capture",
+        type=Path,
+        help="matching local-loss dump containing the exact token IDs (auto-detected when unique)",
+    )
     args = parser.parse_args()
 
     if not torch.cuda.is_available():
@@ -318,6 +390,18 @@ def main() -> None:
         "chunk_output": actual_output,
         "reference_output": expected_output,
     }
+    local_loss_capture = find_local_loss_capture(
+        args.capture, payload, args.local_loss_capture
+    )
+    exact_sequence = None
+    token_stats = None
+    if local_loss_capture is not None:
+        local_loss = torch.load(local_loss_capture, map_location="cpu", weights_only=False)
+        input_ids = local_loss.get("input_ids")
+        bad_batch_idx = int(payload["bad_batch_idx"])
+        if isinstance(input_ids, torch.Tensor) and bad_batch_idx < input_ids.shape[0]:
+            exact_sequence = input_ids[bad_batch_idx]
+            token_stats = token_repetition_summary(exact_sequence)
     result = {
         "capture": str(args.capture),
         "rank": payload["rank"],
@@ -325,6 +409,17 @@ def main() -> None:
         "module_name": payload["module_name"],
         "module_type": payload["module_type"],
         "recurrent_config": recurrent_config,
+        "dataset_metadata": (
+            payload.get("batch", {}).get("metadata", [])[int(payload["bad_batch_idx"])]
+            if isinstance(payload.get("batch"), dict)
+            and int(payload["bad_batch_idx"])
+            < len(payload.get("batch", {}).get("metadata", []))
+            else None
+        ),
+        "local_loss_capture": (
+            str(local_loss_capture) if local_loss_capture is not None else None
+        ),
+        "token_repetition": token_stats,
         "summaries": {name: tensor_summary(tensor) for name, tensor in tensors.items()},
         "differences": {
             "captured_vs_recomputed_chunk": difference_summary(saved_output, actual_output),
