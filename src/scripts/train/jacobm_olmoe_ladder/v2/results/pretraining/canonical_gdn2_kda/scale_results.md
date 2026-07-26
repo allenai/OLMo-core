@@ -1,6 +1,6 @@
 # Canonical GDN2 fixed-LR scale transfer
 
-Generated: `2026-07-26T03:03:17.299483+00:00`
+Generated: `2026-07-26T05:52:08.528539+00:00`
 
 Selection metric: final `250M`-token mean training CE. Only finished runs are eligible.
 The optimal-LR summary includes only bracketed 275M sweeps with a valid quadratic fit.
@@ -17,7 +17,7 @@ Fitted LR minima in the 275M U-plot are visual aids and are never used to select
 | 275m | Cx8 | LR sweep | complete | wide_integration: 2.419273 @ 0.0008; geometry_gdn_ev2_nope_gated: 2.390397 @ 0.0008; geometry_gdn2_ev2_nope_gated: 2.356985 @ 0.0008 | 2.389725 (0.0016) | wide_integration: -0.029548; geometry_gdn_ev2_nope_gated: -0.000672; geometry_gdn2_ev2_nope_gated: +0.032740 |
 | 480m | Cx1 | fixed-LR transfer | finished | wide_integration: 2.543281 @ 0.0012; geometry_gdn_ev2_nope_gated: 2.519642 @ 0.0012; geometry_gdn2_ev2_nope_gated: 2.468555 @ 0.0012 | 2.492882 (0.0012) | wide_integration: -0.050400; geometry_gdn_ev2_nope_gated: -0.026760; geometry_gdn2_ev2_nope_gated: +0.024326 |
 | 480m | Cx2 | fixed-LR transfer | pending | wide_integration: 2.423888 @ 0.0009; geometry_gdn_ev2_nope_gated: 2.414718 @ 0.0009; geometry_gdn2_ev2_nope_gated: 2.359149 @ 0.0009 | — | wide_integration: —; geometry_gdn_ev2_nope_gated: —; geometry_gdn2_ev2_nope_gated: — |
-| 480m | Cx4 | fixed-LR transfer | pending | wide_integration: 2.329976 @ 0.0008; geometry_gdn_ev2_nope_gated: 2.315124 @ 0.0008; geometry_gdn2_ev2_nope_gated: 2.276454 @ 0.0008 | — | wide_integration: —; geometry_gdn_ev2_nope_gated: —; geometry_gdn2_ev2_nope_gated: — |
+| 480m | Cx4 | fixed-LR transfer | finished | wide_integration: 2.329976 @ 0.0008; geometry_gdn_ev2_nope_gated: 2.315124 @ 0.0008; geometry_gdn2_ev2_nope_gated: 2.276454 @ 0.0008 | 2.293165 (0.0008) | wide_integration: -0.036811; geometry_gdn_ev2_nope_gated: -0.021959; geometry_gdn2_ev2_nope_gated: +0.016711 |
 | 480m | Cx8 | fixed-LR transfer | pending | wide_integration: 2.251305 @ 0.0008; geometry_gdn_ev2_nope_gated: 2.239297 @ 0.0008; geometry_gdn2_ev2_nope_gated: 2.204316 @ 0.0008 | — | wide_integration: —; geometry_gdn_ev2_nope_gated: —; geometry_gdn2_ev2_nope_gated: — |
 | 810m | Cx1 | fixed-LR transfer | finished | wide_integration: 2.373197 @ 0.0006; geometry_gdn_ev2_nope_gated: 2.373592 @ 0.0006; geometry_gdn2_ev2_nope_gated: 2.323505 @ 0.0006 | 2.346904 (0.0006) | wide_integration: -0.026293; geometry_gdn_ev2_nope_gated: -0.026689; geometry_gdn2_ev2_nope_gated: +0.023399 |
 | 810m | Cx2 | fixed-LR transfer | pending | wide_integration: 2.268948 @ 0.00056; geometry_gdn_ev2_nope_gated: 2.277253 @ 0.00056; geometry_gdn2_ev2_nope_gated: — | — | wide_integration: —; geometry_gdn_ev2_nope_gated: —; geometry_gdn2_ev2_nope_gated: — |
@@ -100,6 +100,7 @@ Fitted LR minima in the 275M U-plot are visual aids and are never used to select
 | 480m | geometry-matched hybrid (GDN2, expand_v=2, NoPE, gated attention) | 2 | 0.0009 | finished | 17.997 | 2.359149 | 0 reset(s); 1 duplicate token sample(s) removed | [07rx8ez4](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/07rx8ez4) |
 | 480m | geometry-matched hybrid (GDN, expand_v=2, NoPE, gated attention) | 2 | 0.0009 | finished | 17.057 | 2.414718 | 0 reset(s); 1 duplicate token sample(s) removed | [0crj05wz](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/0crj05wz) |
 | 480m | wide integration (SWA) | 2 | 0.0009 | finished | 15.344 | 2.423888 | 0 reset(s); 1 duplicate token sample(s) removed | [ywj13bkw](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/ywj13bkw) |
+| 480m | canonical GDN2 (expand_v=1, nonnegative) | 4 | 0.0008 | finished | 33.031 | 2.293165 | 0 reset(s); 1 duplicate token sample(s) removed | [pex4fe3k](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/pex4fe3k) |
 | 480m | geometry-matched hybrid (GDN2, expand_v=2, NoPE, gated attention) | 4 | 0.0008 | finished | 35.993 | 2.276454 | 0 reset(s); 1 duplicate token sample(s) removed | [9u4z0e36](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/9u4z0e36) |
 | 480m | geometry-matched hybrid (GDN, expand_v=2, NoPE, gated attention) | 4 | 0.0008 | finished | 34.114 | 2.315124 | 0 reset(s); 1 duplicate token sample(s) removed | [ur7yonej](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/ur7yonej) |
 | 480m | wide integration (SWA) | 4 | 0.0008 | finished | 30.687 | 2.329976 | 0 reset(s); 1 duplicate token sample(s) removed | [rblv9hpr](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/rblv9hpr) |

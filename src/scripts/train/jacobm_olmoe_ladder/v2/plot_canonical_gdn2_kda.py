@@ -79,6 +79,7 @@ EXPLICIT_RESUME_CHAINS = {
         "tjmfr7de",
         "2140i574",
         "w9d4rof7",
+        "kzug2rko",
     ),
     "pt-1p2b-geometry-hybrid-gdn2-ev1-noneg-nope-gated-cx1-lr4e-4-ep8-sync-r1": (
         "1odf2b6k",
@@ -87,6 +88,7 @@ EXPLICIT_RESUME_CHAINS = {
         "0lfktqhf",
         "aknoel8q",
         "8lmvitbp",
+        "ji0e0rcg",
     ),
 }
 

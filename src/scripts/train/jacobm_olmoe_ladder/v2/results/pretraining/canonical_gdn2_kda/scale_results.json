@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-07-26T03:03:17.299483+00:00",
+  "generated_at": "2026-07-26T05:52:08.528539+00:00",
   "project": "ai2-llm/jacobm-olmoe-ladder",
   "wave": "canonical_gdn2_scale",
   "models": [
@@ -1331,6 +1331,25 @@
     },
     {
       "model": "480m",
+      "variant": "geometry_gdn2_ev1_noneg_nope_gated",
+      "variant_label": "canonical GDN2 (expand_v=1, nonnegative)",
+      "cx": 4,
+      "lr": 0.0008,
+      "lr_tag": "0.0008",
+      "loss": 2.293164935501866,
+      "state": "finished",
+      "tokens_b": 33.031192576,
+      "run_id": "pex4fe3k",
+      "name": "pt-480m-geometry-hybrid-gdn2-ev1-noneg-nope-gated-cx4-lr8e-4-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/pex4fe3k",
+      "segment_run_ids": [
+        "pex4fe3k"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 1
+    },
+    {
+      "model": "480m",
       "variant": "geometry_gdn2_ev2_nope_gated",
       "variant_label": "geometry-matched hybrid (GDN2, expand_v=2, NoPE, gated attention)",
       "cx": 4,
@@ -2468,9 +2487,9 @@
       "model": "480m",
       "cx": 4,
       "mode": "fixed_lr_transfer",
-      "complete": false,
+      "complete": true,
       "optimal_summary_eligible": false,
-      "completed_intervention_runs": 0,
+      "completed_intervention_runs": 1,
       "expected_intervention_runs": 1,
       "wide_reference": {
         "model": "480m",
@@ -2550,12 +2569,30 @@
           "deduplicated_samples": 1
         }
       },
-      "intervention_result": null,
-      "delta_intervention_minus_wide": null,
+      "intervention_result": {
+        "model": "480m",
+        "variant": "geometry_gdn2_ev1_noneg_nope_gated",
+        "variant_label": "canonical GDN2 (expand_v=1, nonnegative)",
+        "cx": 4,
+        "lr": 0.0008,
+        "lr_tag": "0.0008",
+        "loss": 2.293164935501866,
+        "state": "finished",
+        "tokens_b": 33.031192576,
+        "run_id": "pex4fe3k",
+        "name": "pt-480m-geometry-hybrid-gdn2-ev1-noneg-nope-gated-cx4-lr8e-4-r1",
+        "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/pex4fe3k",
+        "segment_run_ids": [
+          "pex4fe3k"
+        ],
+        "token_resets": 0,
+        "deduplicated_samples": 1
+      },
+      "delta_intervention_minus_wide": -0.036810914425480235,
       "delta_intervention_minus_reference": {
-        "wide_integration": null,
-        "geometry_gdn_ev2_nope_gated": null,
-        "geometry_gdn2_ev2_nope_gated": null
+        "wide_integration": -0.036810914425480235,
+        "geometry_gdn_ev2_nope_gated": -0.02195888845175853,
+        "geometry_gdn2_ev2_nope_gated": 0.016710906158702965
       }
     },
     {

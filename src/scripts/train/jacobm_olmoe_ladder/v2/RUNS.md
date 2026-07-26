@@ -29,7 +29,7 @@ below retain the full launch and retry history.
 | pretraining | 275M GDN2 stability 2x2 | 3/3 finished | Fresh Cx8/LR `1.6e-3` ev1+negative, ev2+nonnegative, and canonical ev1+nonnegative controls all completed | [work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYBVM2N2D3DM67S8HWARJP6C) |
 | pretraining | canonical GDN2 (`expand_v=1`, nonnegative) 275M sweep | 16/16 finished | All four Cx curves are complete and bracketed; observed-best LR is `1.6e-3` at every Cx | [results](results/pretraining/canonical_gdn2_kda/results.md) |
 | pretraining | canonical KDA 275M sweep | 16/16 finished | All four Cx curves are complete and bracketed; observed-best LR is `1.6e-3` at every Cx | [results](results/pretraining/canonical_gdn2_kda/results.md) |
-| pretraining | canonical GDN2 larger-scale transfer | 2 finished / 8 running / 2 queued | 480M Cx1 and 810M Cx1 collected; failed 480M Cx2 and 1.2B Cx1 attempts restarted in place | [results](results/pretraining/canonical_gdn2_kda/scale_results.md) |
+| pretraining | canonical GDN2 larger-scale transfer | 3 finished / 7 running / 2 queued | 480M Cx1/Cx4 and 810M Cx1 collected; 1.2B Cx1 retry advanced past its earlier failure | [results](results/pretraining/canonical_gdn2_kda/scale_results.md) |
 | diagnostic | GDN2 production-shape PyTorch reference 2x2 | finished | All four `expand_v`/negative-eigenvalue cells passed forward, final-state, backward, packed-document, and recompute/retain comparisons | [work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYBY8DXT5BVM85WYKAT5TXQN) |
 | diagnostic | Matched KDA/GDN2 numerical audit | finished | All 40 one/four-chunk output/state comparisons passed; GDN2 is broadly KDA-like, with localized 3.80% `A_log` relative-L2 error at T256/V256/negative eigvals | [work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYBZX8MHJ611ZSJD43SYS9HZ) / [results](results/diagnostics/matched_kda_gdn2_numerics.md) |
 | diagnostic | KDA reference + 50-step MB16 qualification | finished | Reference/packed checks passed; zero skipped steps; steady-state 404.7 TFLOPs/GPU and 290.5K TPS on one B300 | [work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYBX6WX46F9B3HV3W59G368R) / [3s14s676](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/3s14s676) |
@@ -195,13 +195,13 @@ and
 Live, queued, or unresolved canonical cells are labeled pending; only finished
 runs with a complete strict final-250M-token window enter the plotted series.
 
-Status at 2026-07-26 03:03 UTC: 480M Cx1 and 810M Cx1 finished with strict
-final-250M CEs `2.492882` and `2.346904`. Seven cells are running. The failed
-480M Cx2 and 1.2B Cx1 tasks were restarted in place, preserving their experiment
-IDs and checkpoint paths; 480M Cx2 is running and 1.2B Cx1 is waiting to
-schedule. 1.2B Cx2 is also still waiting to schedule. The collector explicitly
-registers the W&B resume segments for the two restarted cells and continues to
-fail closed if a new, unregistered segment appears.
+Status at 2026-07-26 05:52 UTC: 480M Cx1/Cx4 and 810M Cx1 finished with strict
+final-250M CEs `2.492882`, `2.293165`, and `2.346904`. Seven cells are running;
+480M Cx8 is at 98%, while the 1.2B Cx1 retry reached step 16,270, past its prior
+step-8,190 failure. The user-restarted 480M Cx2 attempt and the not-yet-started
+1.2B Cx2 cell are queued/created. Restarts preserve experiment IDs and
+checkpoint paths. The collector explicitly registers all observed W&B resume
+segments and continues to fail closed if a new, unregistered segment appears.
 
 ## 275M geometry-matched gated-NoPE GDN2 sweep
 
