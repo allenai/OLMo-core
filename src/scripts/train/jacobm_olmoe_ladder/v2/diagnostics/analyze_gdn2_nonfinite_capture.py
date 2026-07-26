@@ -542,6 +542,13 @@ def main() -> None:
             < len(payload.get("batch", {}).get("metadata", []))
             else None
         ),
+        "instance_mask": (
+            bool(payload["batch"]["instance_mask"][int(payload["bad_batch_idx"])].item())
+            if isinstance(payload.get("batch"), dict)
+            and isinstance(payload["batch"].get("instance_mask"), torch.Tensor)
+            and int(payload["bad_batch_idx"]) < payload["batch"]["instance_mask"].numel()
+            else None
+        ),
         "local_loss_capture": (
             str(local_loss_capture) if local_loss_capture is not None else None
         ),
