@@ -1,0 +1,15 @@
+[
+  {
+    "experiment_name": "jacobm-kda-ev2-neg-nope-gated-275m-transfer",
+    "experiment_id": "01KYG9M9694N3TDCPM13KHCM8S",
+    "tasks": [
+      "275m-kda-ev2-neg-cx1",
+      "275m-kda-ev2-neg-cx2",
+      "275m-kda-ev2-neg-cx4",
+      "275m-kda-ev2-neg-cx8"
+    ],
+    "debug_gradients": false,
+    "run_suffix": null,
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYG9M9694N3TDCPM13KHCM8S"
+  }
+]

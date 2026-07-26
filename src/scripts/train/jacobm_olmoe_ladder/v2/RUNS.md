@@ -31,6 +31,7 @@ below retain the full launch and retry history.
 | pretraining | canonical KDA 275M sweep | 16/16 finished | All four Cx curves are complete and bracketed; observed-best LR is `1.6e-3` at every Cx | [results](results/pretraining/canonical_gdn2_kda/results.md) |
 | pretraining | canonical GDN2 larger-scale transfer | 5 finished / 5 running / 2 failed | 810M Cx2 newly finished at strict final-250M CE `2.260980`; 480M Cx2 and 1.2B Cx2 are repeatable numerical failures | [results](results/pretraining/canonical_gdn2_kda/scale_results.md) |
 | pretraining | canonical KDA 480M stability transfer | 2 finished / 2 running | Cx1/Cx2 strict final-250M CEs are `2.517826` / `2.412884`; Cx4/Cx8 are healthy | [launches](#canonical-kda-480m-stability-transfer) |
+| pretraining | KDA `expand_v=2`, negative-eigenvalue transfer (275M/480M) | 8 submitted | Distinct fixed-LR family: matching-GDN1 LRs at 275M and transferred-wide LRs at 480M; 60 GPUs at full concurrency | [launches](#kda-expand_v2-negative-eigenvalue-transfer) |
 | diagnostic | GDN2 production-shape PyTorch reference 2x2 | finished | All four `expand_v`/negative-eigenvalue cells passed forward, final-state, backward, packed-document, and recompute/retain comparisons | [work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYBY8DXT5BVM85WYKAT5TXQN) |
 | diagnostic | Matched KDA/GDN2 numerical audit | finished | All 40 one/four-chunk output/state comparisons passed; GDN2 is broadly KDA-like, with localized 3.80% `A_log` relative-L2 error at T256/V256/negative eigvals | [work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYBZX8MHJ611ZSJD43SYS9HZ) / [results](results/diagnostics/matched_kda_gdn2_numerics.md) |
 | diagnostic | KDA reference + 50-step MB16 qualification | finished | Reference/packed checks passed; zero skipped steps; steady-state 404.7 TFLOPs/GPU and 290.5K TPS on one B300 | [work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYBX6WX46F9B3HV3W59G368R) / [3s14s676](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/3s14s676) |
@@ -240,6 +241,37 @@ exact display names are registered in `plot_canonical_gdn2_kda.py`. The
 four-size fixed-LR comparison includes canonical KDA as a finished-only
 series alongside wide integration, matching GDN1, original GDN2, and
 canonical GDN2.
+
+## KDA `expand_v=2`, negative-eigenvalue transfer
+
+Submitted 2026-07-26 from commit `6af7b95f2` as eight urgent, unallocated
+Holmes tasks. This family is explicitly named `kda-ev2-neg-nope-gated` in
+Beaker, W&B, checkpoints, manifests, and plots so it cannot be merged with
+canonical `expand_v=1`, nonnegative KDA.
+
+All cells use EP1, accumulation factor one, compilation, rolling 500-step
+ephemeral checkpoints, no in-loop evals, and out-of-loop validation after
+training. The 275M cells use matching-GDN1 observed-best LRs; the 480M cells
+use the usual transferred-wide LRs.
+
+| Model | Cx | LR | GPUs | Rank MB | Beaker |
+|---|---:|---:|---:|---:|---|
+| 275M | 1 | `8e-4` | 4 | 8 | [work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYG9M9694N3TDCPM13KHCM8S) |
+| 275M | 2 | `1.6e-3` | 4 | 12 | [work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYG9M9694N3TDCPM13KHCM8S) |
+| 275M | 4 | `8e-4` | 4 | 16 | [work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYG9M9694N3TDCPM13KHCM8S) |
+| 275M | 8 | `8e-4` | 8 | 12 | [work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYG9M9694N3TDCPM13KHCM8S) |
+| 480M | 1 | `1.2e-3` | 8 | 4 | [work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYG9MQY83B794ZX1N0B9G336) |
+| 480M | 2 | `9e-4` | 8 | 6 | [work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYG9MTKF140YDTHSB3EN5CNS) |
+| 480M | 4 | `8e-4` | 8 | 8 | [work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYG9MX5723AQN3R2AH5G69B2) |
+| 480M | 8 | `8e-4` | 16 | 6 | [work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYG9MZW2S5FP6PZQ15MW2YRY) |
+
+The immutable launch ledgers are
+[`275m_kda_ev2_neg_nope_gated_transfer_submissions.json`](launchers/pretraining/generated/275m_kda_ev2_neg_nope_gated_transfer_submissions.json)
+and
+[`480m_geometry_kda_ev2_neg_nope_gated_submissions.json`](launchers/pretraining/generated/480m_geometry_kda_ev2_neg_nope_gated_submissions.json).
+The dedicated finished-only plot is
+`plots/pretraining/canonical_gdn2_kda/kda_ev2_neg_fixed_lr_scale_comparison.png`;
+its result ledgers are kept separate from the canonical KDA LR sweep.
 
 ## 275M geometry-matched gated-NoPE GDN2 sweep
 
