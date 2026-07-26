@@ -1,0 +1,67 @@
+[
+  {
+    "model_variant": "geometry_matched_kda_ev1_noneg_nope_gated",
+    "task_name": "480m-kda-cx1",
+    "run_name": "pt-480m-geometry-hybrid-kda-ev1-noneg-nope-gated-cx1-lr1p2e-3-r1",
+    "run_suffix": null,
+    "commit": "65fee545b5654be35688601f78880fe30f499a30",
+    "diagnose_nonfinite": false,
+    "debug_gradients": false,
+    "diagnostic_stop_step": null,
+    "diagnostic_dump_root": null,
+    "experiment_id": "01KYEG1B2V572PFM8VD04ZAR58",
+    "task_ids": [
+      "01KYEG1B32P7SDMSM1KHNA746R"
+    ],
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYEG1B2V572PFM8VD04ZAR58"
+  },
+  {
+    "model_variant": "geometry_matched_kda_ev1_noneg_nope_gated",
+    "task_name": "480m-kda-cx2",
+    "run_name": "pt-480m-geometry-hybrid-kda-ev1-noneg-nope-gated-cx2-lr9e-4-r1",
+    "run_suffix": null,
+    "commit": "65fee545b5654be35688601f78880fe30f499a30",
+    "diagnose_nonfinite": false,
+    "debug_gradients": false,
+    "diagnostic_stop_step": null,
+    "diagnostic_dump_root": null,
+    "experiment_id": "01KYEG1DQVF32TQ06K0DSH60RT",
+    "task_ids": [
+      "01KYEG1DQZ23F7E2CXVK5MJ02R"
+    ],
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYEG1DQVF32TQ06K0DSH60RT"
+  },
+  {
+    "model_variant": "geometry_matched_kda_ev1_noneg_nope_gated",
+    "task_name": "480m-kda-cx4",
+    "run_name": "pt-480m-geometry-hybrid-kda-ev1-noneg-nope-gated-cx4-lr8e-4-r1",
+    "run_suffix": null,
+    "commit": "65fee545b5654be35688601f78880fe30f499a30",
+    "diagnose_nonfinite": false,
+    "debug_gradients": false,
+    "diagnostic_stop_step": null,
+    "diagnostic_dump_root": null,
+    "experiment_id": "01KYEG1GAEDVYM5P7HVTTYJ2SE",
+    "task_ids": [
+      "01KYEG1GAKYCY2C6YV2B4J01ZT"
+    ],
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYEG1GAEDVYM5P7HVTTYJ2SE"
+  },
+  {
+    "model_variant": "geometry_matched_kda_ev1_noneg_nope_gated",
+    "task_name": "480m-kda-cx8",
+    "run_name": "pt-480m-geometry-hybrid-kda-ev1-noneg-nope-gated-cx8-lr8e-4-r1",
+    "run_suffix": null,
+    "commit": "65fee545b5654be35688601f78880fe30f499a30",
+    "diagnose_nonfinite": false,
+    "debug_gradients": false,
+    "diagnostic_stop_step": null,
+    "diagnostic_dump_root": null,
+    "experiment_id": "01KYEG1JXY3XD7WR0Z7RBDMFHS",
+    "task_ids": [
+      "01KYEG1JY4T0NZZXF0T3XR1T38",
+      "01KYEG1K1SHATRARWDCXFYJ57Y"
+    ],
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYEG1JXY3XD7WR0Z7RBDMFHS"
+  }
+]

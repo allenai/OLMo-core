@@ -30,6 +30,7 @@ below retain the full launch and retry history.
 | pretraining | canonical GDN2 (`expand_v=1`, nonnegative) 275M sweep | 16/16 finished | All four Cx curves are complete and bracketed; observed-best LR is `1.6e-3` at every Cx | [results](results/pretraining/canonical_gdn2_kda/results.md) |
 | pretraining | canonical KDA 275M sweep | 16/16 finished | All four Cx curves are complete and bracketed; observed-best LR is `1.6e-3` at every Cx | [results](results/pretraining/canonical_gdn2_kda/results.md) |
 | pretraining | canonical GDN2 larger-scale transfer | 3 finished / 7 running / 2 queued | 480M Cx1/Cx4 and 810M Cx1 collected; 1.2B Cx1 retry advanced past its earlier failure | [results](results/pretraining/canonical_gdn2_kda/scale_results.md) |
+| pretraining | canonical KDA 480M stability transfer | 4 submitted | Cx1/2/4/8 mirror the canonical GDN2 LR, batch, and GPU layouts exactly; 40 GPUs total | [launches](#canonical-kda-480m-stability-transfer) |
 | diagnostic | GDN2 production-shape PyTorch reference 2x2 | finished | All four `expand_v`/negative-eigenvalue cells passed forward, final-state, backward, packed-document, and recompute/retain comparisons | [work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYBY8DXT5BVM85WYKAT5TXQN) |
 | diagnostic | Matched KDA/GDN2 numerical audit | finished | All 40 one/four-chunk output/state comparisons passed; GDN2 is broadly KDA-like, with localized 3.80% `A_log` relative-L2 error at T256/V256/negative eigvals | [work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYBZX8MHJ611ZSJD43SYS9HZ) / [results](results/diagnostics/matched_kda_gdn2_numerics.md) |
 | diagnostic | KDA reference + 50-step MB16 qualification | finished | Reference/packed checks passed; zero skipped steps; steady-state 404.7 TFLOPs/GPU and 290.5K TPS on one B300 | [work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYBX6WX46F9B3HV3W59G368R) / [3s14s676](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/3s14s676) |
@@ -194,6 +195,30 @@ and
 [`scale_results.md`](results/pretraining/canonical_gdn2_kda/scale_results.md).
 Live, queued, or unresolved canonical cells are labeled pending; only finished
 runs with a complete strict final-250M-token window enter the plotted series.
+
+## Canonical KDA 480M stability transfer
+
+Submitted 2026-07-26 from commit `65fee545b` as four urgent, unallocated
+Holmes experiments. This wave changes only the recurrent mixer from canonical
+GDN2 to canonical KDA: the 15-layer geometry, 12:3 recurrent/full-attention
+ratio, dense-first FFN, gated NoPE attention, MoE layout, transferred LR,
+global batch, GPU count, and rank microbatch all match the corresponding 480M
+canonical GDN2 cells. The KDA configuration uses `expand_v=1`, nonnegative
+eigenvalues, and the base image's FLA 0.4.1 KDA kernel. The audited config has
+471,153,504 active parameters, 394,083,168 active non-embedding parameters,
+and 7,190,723,424 total parameters.
+
+| Cell | LR | Global batch | GPUs | EP | Rank MB | Beaker |
+|---|---:|---:|---:|---:|---:|---|
+| 480M Cx1 | `1.2e-3` | 262,144 | 8 | 1 | 4 | [01KYEG1B2V572PFM8VD04ZAR58](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYEG1B2V572PFM8VD04ZAR58) |
+| 480M Cx2 | `9e-4` | 393,216 | 8 | 1 | 6 | [01KYEG1DQVF32TQ06K0DSH60RT](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYEG1DQVF32TQ06K0DSH60RT) |
+| 480M Cx4 | `8e-4` | 524,288 | 8 | 1 | 8 | [01KYEG1GAEDVYM5P7HVTTYJ2SE](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYEG1GAEDVYM5P7HVTTYJ2SE) |
+| 480M Cx8 | `8e-4` | 786,432 | 16 | 1 | 6 | [01KYEG1JXY3XD7WR0Z7RBDMFHS](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYEG1JXY3XD7WR0Z7RBDMFHS) |
+
+All four cells use accumulation factor one, rolling 500-step ephemeral
+checkpoints, no in-loop evaluation, and distinct checkpoint/W&B identities.
+The immutable submission ledger is
+[`launchers/pretraining/generated/480m_geometry_kda_ev1_noneg_nope_gated_submissions.json`](launchers/pretraining/generated/480m_geometry_kda_ev1_noneg_nope_gated_submissions.json).
 
 Status at 2026-07-26 05:52 UTC: 480M Cx1/Cx4 and 810M Cx1 finished with strict
 final-250M CEs `2.492882`, `2.293165`, and `2.346904`. Seven cells are running;

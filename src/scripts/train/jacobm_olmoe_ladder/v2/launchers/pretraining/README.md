@@ -75,6 +75,9 @@ src/scripts/train/jacobm_olmoe_ladder/v2/launchers/pretraining/launch_hybrid_sca
 # launcher reuses, and therefore omits, the existing GDN2 Cx8/1.6e-3 cell.
 src/scripts/train/jacobm_olmoe_ladder/v2/launchers/pretraining/launch_275m_canonical_gdn2_kda_lr_sweeps.sh
 
+# Render the four-cell 480M canonical-KDA stability transfer; add --submit to launch.
+src/scripts/train/jacobm_olmoe_ladder/v2/launchers/pretraining/launch_480m_geometry_kda_full.sh
+
 # Inspect the canonical expand_v=1, nonnegative GDN2 scale transfer. The
 # checked-in manifest preserves the approved longest-first submission order
 # and uses the balanced 176-GPU layout at full concurrency.
