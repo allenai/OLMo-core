@@ -70,6 +70,106 @@ def test_block_aligned_doc_lens_and_landmarks(tmp_path: Path, tokenizer: Tokeniz
     assert mask[12:16] == [False, False, False, False]
 
 
+@pytest.mark.parametrize("num_landmarks", [2, 3])
+def test_multi_landmark_blocks(tmp_path: Path, tokenizer: TokenizerConfig, num_landmarks: int):
+    """``num_landmarks`` landmark tokens per block, matching MultiCompressiveLandmarkAttention."""
+    eos, pad, mem = tokenizer.eos_token_id, tokenizer.pad_token_id, 50
+    mem_freq = 3
+    block_size = mem_freq + num_landmarks
+    seq_len = 4 * block_size
+    # Doc A: 3 content (+EOS=4) -> ceil(4/3)=2 blocks. Doc B: 2 content (+EOS=3) -> 1 block.
+    tokens = [1, 2, 3, eos] + [4, 5, eos]
+    src = _packed(
+        tokens,
+        tmp_path,
+        tokenizer,
+        sequence_length=seq_len,
+        mem_freq=mem_freq,
+        mem_id=mem,
+        num_landmarks=num_landmarks,
+    )
+
+    assert len(src) == 1
+    inst = src[0]
+    ids, mask, doc_lens = (
+        list(inst["input_ids"]),
+        list(inst["label_mask"]),
+        list(inst["doc_lens"]),
+    )
+
+    assert len(ids) == seq_len
+    assert sum(doc_lens) == seq_len
+    # Doc A (2 blocks) + Doc B (1 block) + tail pad (1 block).
+    assert doc_lens == [2 * block_size, block_size, block_size]
+
+    # The last ``num_landmarks`` positions of every block are landmark tokens, loss-free.
+    for p in range(seq_len):
+        if p % block_size >= mem_freq:
+            assert ids[p] == mem, p
+            assert mask[p] is False, p
+        else:
+            assert ids[p] != mem, p
+
+    lm = [mem] * num_landmarks
+    lm_mask = [False] * num_landmarks
+    assert ids[: 2 * block_size] == [1, 2, 3] + lm + [eos, pad, pad] + lm
+    assert mask[: 2 * block_size] == [True, True, True] + lm_mask + [True, False, False] + lm_mask
+    assert ids[2 * block_size : 3 * block_size] == [4, 5, eos] + lm
+    assert ids[3 * block_size :] == [pad] * mem_freq + lm
+    assert mask[3 * block_size :] == [False] * block_size
+
+
+def test_multi_landmark_doc_lens_consumable_as_cu_doc_lens(
+    tmp_path: Path, tokenizer: TokenizerConfig
+):
+    """Multi-landmark doc_lens stay aligned to the model's block_size = mem_freq + num_landmarks."""
+    import torch
+
+    from olmo_core.data.utils import get_cumulative_document_lengths
+    from olmo_core.nn.attention.landmark import build_block_doc_id
+
+    eos = tokenizer.eos_token_id
+    mem_freq, num_landmarks = 3, 2
+    block_size = mem_freq + num_landmarks  # 5
+    seq_len = 4 * block_size  # 20
+    src = _packed(
+        [1, 2, 3, eos] + [4, 5, eos],
+        tmp_path,
+        tokenizer,
+        sequence_length=seq_len,
+        mem_freq=mem_freq,
+        mem_id=50,
+        num_landmarks=num_landmarks,
+    )
+    doc_lens = torch.tensor([list(src[0]["doc_lens"])], dtype=torch.int32)
+    cu = get_cumulative_document_lengths(doc_lens)
+    assert cu[-1].item() == seq_len
+    doc_id = build_block_doc_id(cu, batch_size=1, seq_len=seq_len, block_size=block_size)
+    assert doc_id.tolist() == [[0, 0, 1, 2]]  # blocks: docA, docA, docB, tail-pad
+
+
+def test_rejects_bad_num_landmarks(tmp_path: Path, tokenizer: TokenizerConfig):
+    with pytest.raises(OLMoConfigurationError):
+        _packed(
+            [1, 2, 3, tokenizer.eos_token_id],
+            tmp_path,
+            tokenizer,
+            sequence_length=16,
+            mem_freq=3,
+            num_landmarks=0,
+        )
+    # sequence_length must be a multiple of mem_freq + num_landmarks (= 5), not mem_freq + 1.
+    with pytest.raises(OLMoConfigurationError):
+        _packed(
+            [1, 2, 3, tokenizer.eos_token_id],
+            tmp_path,
+            tokenizer,
+            sequence_length=16,
+            mem_freq=3,
+            num_landmarks=2,
+        )
+
+
 def test_greedy_packing_opens_new_window(tmp_path: Path, tokenizer: TokenizerConfig):
     eos = tokenizer.eos_token_id
     # Each doc: 3 content (+EOS=4) -> 2 blocks -> 8 landmark tokens. seq_len=16 fits exactly 2 docs.

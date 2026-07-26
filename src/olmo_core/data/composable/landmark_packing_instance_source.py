@@ -21,9 +21,14 @@ class LandmarkPackingInstanceSourceConfig(InstanceSourceConfig):
     :param source: The upstream *document* source (one document = one example, with its own
         ``label_mask``). Document boundaries come from :meth:`DocumentSource.get_document_offsets`.
     :param sequence_length: The length (in landmark-token space, i.e. *after* landmark insertion) of
-        each emitted instance. Must be a multiple of ``block_size = mem_freq + 1``.
-    :param mem_freq: Regular tokens between landmark tokens; block size is ``mem_freq + 1``.
+        each emitted instance. Must be a multiple of ``block_size = mem_freq + num_landmarks``.
+    :param mem_freq: Regular tokens between landmark runs; block size is
+        ``mem_freq + num_landmarks``.
     :param mem_id: The landmark (memory) token id.
+    :param num_landmarks: Number of landmark tokens appended to each block. Must match the model's
+        ``num_landmarks`` (see
+        :class:`~olmo_core.nn.attention.landmark_multi_compressive.MultiCompressiveLandmarkAttention`).
+        The default of 1 reproduces the single-landmark geometry.
     :param pad_id: Token id used to pad a document's last partial block up to a multiple of
         ``mem_freq``, and to fill the tail of a packed window. Padding never contributes to the loss.
     :param exclude_landmark_predictors: Also drop the loss term *at* each landmark position (see
@@ -37,6 +42,7 @@ class LandmarkPackingInstanceSourceConfig(InstanceSourceConfig):
     mem_freq: int
     mem_id: int
     pad_id: int
+    num_landmarks: int = 1
     exclude_landmark_predictors: bool = False
     warn_drop_fraction: float = 0.01
     label: Optional[str] = None
@@ -61,6 +67,7 @@ class LandmarkPackingInstanceSourceConfig(InstanceSourceConfig):
             sequence_length=self.sequence_length,
             mem_freq=self.mem_freq,
             mem_id=self.mem_id,
+            num_landmarks=self.num_landmarks,
             pad_id=self.pad_id,
             exclude_landmark_predictors=self.exclude_landmark_predictors,
             warn_drop_fraction=self.warn_drop_fraction,
@@ -77,10 +84,11 @@ class LandmarkPackingInstanceSource(InstanceSource):
     Unlike ``ConcatAndChunk -> LandmarkInstanceSource`` (which concatenates documents *before*
     inserting landmarks, so document boundaries land at arbitrary, non-block-aligned positions), this
     source inserts landmarks **per document**: each document's content is padded to a multiple of
-    ``mem_freq`` and a landmark token is appended to every block, so the document occupies a whole
-    number of landmark blocks. Documents are then greedily concatenated (next-fit) into windows of
-    ``sequence_length`` tokens, and the tail of each window is padded. Because every document (and the
-    tail pad) is a whole number of blocks, every document boundary is a multiple of ``block_size`` --
+    ``mem_freq`` and ``num_landmarks`` landmark tokens are appended to every block, so the document
+    occupies a whole number of landmark blocks. Documents are then greedily concatenated (next-fit)
+    into windows of ``sequence_length`` tokens, and the tail of each window is padded. Because every
+    document (and the tail pad) is a whole number of blocks, every document boundary is a multiple of
+    ``block_size`` --
     exactly the alignment :class:`~olmo_core.nn.attention.LandmarkAttention` (and the fast/sparse
     variants) require for packed masking.
 
@@ -113,17 +121,20 @@ class LandmarkPackingInstanceSource(InstanceSource):
         mem_id: int,
         pad_id: int,
         work_dir: PathOrStr,
+        num_landmarks: int = 1,
         exclude_landmark_predictors: bool = False,
         warn_drop_fraction: float = 0.01,
         label=None,
     ):
         if mem_freq < 1:
             raise OLMoConfigurationError(f"'mem_freq' must be >= 1 (got {mem_freq}).")
-        block_size = mem_freq + 1
+        if num_landmarks < 1:
+            raise OLMoConfigurationError(f"'num_landmarks' must be >= 1 (got {num_landmarks}).")
+        block_size = mem_freq + num_landmarks
         if sequence_length % block_size != 0:
             raise OLMoConfigurationError(
                 f"'sequence_length' ({sequence_length}) must be a multiple of the landmark block "
-                f"size (mem_freq + 1 = {block_size})."
+                f"size (mem_freq + num_landmarks = {block_size})."
             )
         super().__init__(
             sequence_length=sequence_length,
@@ -134,6 +145,7 @@ class LandmarkPackingInstanceSource(InstanceSource):
         self._source = source
         self.mem_freq = mem_freq
         self.mem_id = mem_id
+        self.num_landmarks = num_landmarks
         self.pad_id = pad_id
         self.block_size = block_size
         self.exclude_landmark_predictors = exclude_landmark_predictors
@@ -203,6 +215,7 @@ class LandmarkPackingInstanceSource(InstanceSource):
                 f"{self.sequence_length=},"
                 f"{self.mem_freq=},"
                 f"{self.mem_id=},"
+                f"{self.num_landmarks=},"
                 f"{self.pad_id=},"
                 f"{self.exclude_landmark_predictors=},"
                 f"source={self._source.fingerprint},"
@@ -214,7 +227,7 @@ class LandmarkPackingInstanceSource(InstanceSource):
         return self.num_instances
 
     def _emit_document(self, content: List[int], mask: List[bool]) -> Tuple[List[int], List[bool]]:
-        """Pad content to a multiple of ``mem_freq`` and insert a landmark after each block."""
+        """Pad content to a multiple of ``mem_freq`` and append ``num_landmarks`` per block."""
         pad = (-len(content)) % self.mem_freq
         if pad:
             content = content + [self.pad_id] * pad
@@ -223,11 +236,13 @@ class LandmarkPackingInstanceSource(InstanceSource):
         new_mask: List[bool] = []
         for start in range(0, len(content), self.mem_freq):
             ids.extend(content[start : start + self.mem_freq])
-            ids.append(self.mem_id)
+            ids.extend([self.mem_id] * self.num_landmarks)
             new_mask.extend(mask[start : start + self.mem_freq])
-            new_mask.append(False)  # landmark excluded from loss
+            new_mask.extend([False] * self.num_landmarks)  # landmarks excluded from loss
         if self.exclude_landmark_predictors:
-            # Drop the loss term at each landmark position (predicts the next block's first token).
+            # Drop the loss term at each landmark position (the *last* landmark of a block predicts
+            # the next block's first content token; the earlier landmarks predict other landmarks,
+            # whose mask is already False).
             for p in range(self.block_size - 1, len(new_mask) - 1, self.block_size):
                 new_mask[p + 1] = False
         return ids, new_mask
@@ -251,8 +266,8 @@ class LandmarkPackingInstanceSource(InstanceSource):
             doc_lens.append(len(ids))
 
         # Pad the tail of the window to ``sequence_length`` as a final (loss-free) document. The tail
-        # is a whole number of blocks, and we keep the periodic ``is_mem`` invariant by placing a
-        # landmark token at the end of each pad block (the pad document is isolated by the document
+        # is a whole number of blocks, and we keep the periodic ``is_mem`` invariant by placing the
+        # landmark tokens at the end of each pad block (the pad document is isolated by the document
         # mask and contributes no loss, so its content is irrelevant -- this is just for tidiness).
         tail = self.sequence_length - len(input_ids)
         if tail < 0:
@@ -262,7 +277,7 @@ class LandmarkPackingInstanceSource(InstanceSource):
             )
         if tail > 0:
             for _ in range(tail // self.block_size):
-                input_ids.extend([self.pad_id] * self.mem_freq + [self.mem_id])
+                input_ids.extend([self.pad_id] * self.mem_freq + [self.mem_id] * self.num_landmarks)
                 label_mask.extend([False] * self.block_size)
             doc_lens.append(tail)
 
