@@ -50,8 +50,10 @@ def difference_summary(actual: torch.Tensor, expected: torch.Tensor) -> dict[str
     finite = torch.isfinite(actual) & torch.isfinite(expected)
     if not finite.any():
         return {"finite_overlap": 0, "max_abs": None, "relative_l2": None, "cosine": None}
-    actual_f = actual[finite].float()
-    expected_f = expected[finite].float()
+    # FP32 norm reductions can overflow long before an individual recurrent
+    # activation does, obscuring the comparison with NaNs in the report.
+    actual_f = actual[finite].double()
+    expected_f = expected[finite].double()
     delta = actual_f - expected_f
     actual_norm = torch.linalg.vector_norm(actual_f)
     expected_norm = torch.linalg.vector_norm(expected_f)
@@ -66,6 +68,124 @@ def difference_summary(actual: torch.Tensor, expected: torch.Tensor) -> dict[str
                 torch.dot(actual_f, expected_f) / (actual_norm * expected_norm).clamp_min(1e-12)
             ).item()
         ),
+    }
+
+
+def _first_threshold_crossings(values: list[float]) -> dict[str, int | None]:
+    thresholds = (1e2, 1e4, 1e8, 1e12, 1e20, 1e30, 1e38, 1e50, 1e100, 1e200)
+    return {
+        f"{threshold:.0e}": next(
+            (idx for idx, value in enumerate(values) if value >= threshold), None
+        )
+        for threshold in thresholds
+    }
+
+
+def _longest_true_run(values: list[bool]) -> int:
+    longest = current = 0
+    for value in values:
+        current = current + 1 if value else 0
+        longest = max(longest, current)
+    return longest
+
+
+@torch.inference_mode()
+def gdn2_lane_growth(
+    q: torch.Tensor,
+    k: torch.Tensor,
+    v: torch.Tensor,
+    g: torch.Tensor,
+    b: torch.Tensor,
+    w: torch.Tensor,
+    recurrent_output: torch.Tensor,
+) -> dict[str, Any]:
+    """Replay the first failing state column in FP64 and trace its growth."""
+    bad = (~torch.isfinite(recurrent_output)).nonzero()
+    if not bad.numel():
+        return {"available": False, "reason": "recurrent output is finite"}
+    _, first_bad_token, head, value_channel = [int(item) for item in bad[0].tolist()]
+    qh = F.normalize(q[0, :, head].double(), p=2, dim=-1)
+    kh = F.normalize(k[0, :, head].double(), p=2, dim=-1)
+    gh = g[0, :, head].double()
+    bh = b[0, :, head].double()
+    vh = v[0, :, head, value_channel].double()
+    wh = w[0, :, head, value_channel].double()
+    state = torch.zeros(kh.shape[-1], device=q.device, dtype=torch.float64)
+    state_abs_max: list[float] = []
+    homogeneous_gains: list[float] = []
+    outputs: list[float] = []
+    for token in range(kh.shape[0]):
+        previous_norm = float(torch.linalg.vector_norm(state).item())
+        decayed = state * gh[token].exp()
+        homogeneous = decayed - kh[token] * torch.dot(bh[token] * kh[token], decayed)
+        homogeneous_norm = float(torch.linalg.vector_norm(homogeneous).item())
+        homogeneous_gains.append(
+            homogeneous_norm / previous_norm if previous_norm > 0 else 0.0
+        )
+        state = homogeneous + kh[token] * (wh[token] * vh[token])
+        state_abs_max.append(float(state.abs().max().item()))
+        outputs.append(float(torch.dot(qh[token] * kh.shape[-1] ** -0.5, state).item()))
+    growing = [gain > 1.0 for gain in homogeneous_gains]
+    return {
+        "available": True,
+        "first_nonfinite_token_in_production_chunk": first_bad_token,
+        "head": head,
+        "value_channel": value_channel,
+        "fp64_state_abs_max": max(state_abs_max),
+        "fp64_output_abs_max": max(abs(value) for value in outputs),
+        "first_state_threshold_crossings": _first_threshold_crossings(state_abs_max),
+        "homogeneous_gain_max_on_visited_state": max(homogeneous_gains),
+        "homogeneous_gain_gt_1_count": sum(growing),
+        "homogeneous_gain_gt_1_longest_run": _longest_true_run(growing),
+    }
+
+
+@torch.inference_mode()
+def gdn1_lane_growth(
+    q: torch.Tensor,
+    k: torch.Tensor,
+    v: torch.Tensor,
+    g: torch.Tensor,
+    beta: torch.Tensor,
+    recurrent_output: torch.Tensor,
+) -> dict[str, Any]:
+    """Replay the first failing GDN1 state column in FP64 and trace its growth."""
+    bad = (~torch.isfinite(recurrent_output)).nonzero()
+    if not bad.numel():
+        return {"available": False, "reason": "recurrent output is finite"}
+    _, first_bad_token, head, value_channel = [int(item) for item in bad[0].tolist()]
+    qh = F.normalize(q[0, :, head].double(), p=2, dim=-1)
+    kh = F.normalize(k[0, :, head].double(), p=2, dim=-1)
+    gh = g[0, :, head].double()
+    vh = v[0, :, head, value_channel].double()
+    betah = beta[0, :, head].double()
+    state = torch.zeros(kh.shape[-1], device=q.device, dtype=torch.float64)
+    state_abs_max: list[float] = []
+    homogeneous_gains: list[float] = []
+    outputs: list[float] = []
+    for token in range(kh.shape[0]):
+        previous_norm = float(torch.linalg.vector_norm(state).item())
+        decayed = state * gh[token].exp()
+        homogeneous = decayed - kh[token] * betah[token] * torch.dot(kh[token], decayed)
+        homogeneous_norm = float(torch.linalg.vector_norm(homogeneous).item())
+        homogeneous_gains.append(
+            homogeneous_norm / previous_norm if previous_norm > 0 else 0.0
+        )
+        state = homogeneous + kh[token] * (betah[token] * vh[token])
+        state_abs_max.append(float(state.abs().max().item()))
+        outputs.append(float(torch.dot(qh[token] * kh.shape[-1] ** -0.5, state).item()))
+    growing = [gain > 1.0 for gain in homogeneous_gains]
+    return {
+        "available": True,
+        "first_nonfinite_token_in_production_chunk": first_bad_token,
+        "head": head,
+        "value_channel": value_channel,
+        "fp64_state_abs_max": max(state_abs_max),
+        "fp64_output_abs_max": max(abs(value) for value in outputs),
+        "first_state_threshold_crossings": _first_threshold_crossings(state_abs_max),
+        "homogeneous_gain_max_on_visited_state": max(homogeneous_gains),
+        "homogeneous_gain_gt_1_count": sum(growing),
+        "homogeneous_gain_gt_1_longest_run": _longest_true_run(growing),
     }
 
 
@@ -352,6 +472,7 @@ def main() -> None:
         expected_output = gdn2_post_process(module, x, expected_raw)
         recurrent_tensors = {"b": b, "w": w}
         recurrent_config = payload["gdn2_config"]
+        lane_growth = gdn2_lane_growth(q, k, v, g, b, w, actual_raw)
     else:
         if cu_doc_lens is not None:
             raise ValueError("GDN1 sequential capture analysis does not yet support packed resets")
@@ -372,6 +493,7 @@ def main() -> None:
         expected_output = gdn1_post_process(module, x, expected_raw)
         recurrent_tensors = {"beta": beta}
         recurrent_config = payload["gdn1_config"]
+        lane_growth = gdn1_lane_growth(q, k, v, g, beta, actual_raw)
     assert actual_state is not None and expected_state is not None
     torch.cuda.synchronize()
 
@@ -420,6 +542,7 @@ def main() -> None:
             str(local_loss_capture) if local_loss_capture is not None else None
         ),
         "token_repetition": token_stats,
+        "first_failing_lane_growth": lane_growth,
         "summaries": {name: tensor_summary(tensor) for name, tensor in tensors.items()},
         "differences": {
             "captured_vs_recomputed_chunk": difference_summary(saved_output, actual_output),
