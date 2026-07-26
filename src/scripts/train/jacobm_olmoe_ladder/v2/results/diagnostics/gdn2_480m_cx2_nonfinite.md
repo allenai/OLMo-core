@@ -81,9 +81,12 @@ longer repeated structure is not filtered.
 2. A synchronized skip-step can safely get a run past this isolated batch
    because the non-finite is detected before the optimizer update, but it is a
    mitigation rather than an architectural fix and similar examples may recur.
-3. Test the least invasive data mitigation independently: extend the
-   repetition filter to longer periods (at least 64) or explicitly reject this
-   extreme instance, then replay from `step24500` and verify the trajectory.
+3. Test the least invasive data mitigation independently: resample or replace
+   filtered instances *before forward*, and extend the repetition filter to
+   longer periods (at least 64), then replay from `step24500` and verify the
+   trajectory. Label-only `instance_mask` handling is not sufficient: the
+   cross-case 1.2B replay later showed that an already-masked period-2 sample
+   can still make the recurrent forward state non-finite.
 4. In parallel, discuss an architectural stability guard for GDN2 (bounded or
    normalized recurrent state/update). This needs a controlled 275M sweep;
    arbitrary state clamping should not be inserted into current results.
