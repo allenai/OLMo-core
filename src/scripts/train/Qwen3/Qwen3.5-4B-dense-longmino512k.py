@@ -54,14 +54,14 @@ from longmino_512k_mix import build_longmino_512k_mix  # noqa: E402
 #                 "no CP available" and fell back to shard_degree=8 at 64k. CP=4 is supported and
 #                 covered by test_context_parallel_gdn_ulysses.)
 # So: cp=4, tp=1, dp=16 on 64 GPUs.
-SEQUENCE_LENGTH = 524288  # 512k
+SEQUENCE_LENGTH = 262144  # 256k
 CP_DEGREE = 4  # max allowed: n_kv_heads=4
 NUM_NODES = 8  # 8 x 8 = 64 GPUs -> DP = 64 / 4 = 16
 
 # 1 sequence per DP rank per micro-step; DP=16 -> the smallest global batch reachable at 512k.
-GLOBAL_BATCH_SIZE = SEQUENCE_LENGTH * 16  # ~8.4M tokens
-MAX_TOKENS = 10_000_000_000  # 10B -> ~1192 steps
-LR = 3.2e-4  # NB: carried over from the 64k/4M-batch runs; batch here is ~2x, so revisit.
+GLOBAL_BATCH_SIZE = SEQUENCE_LENGTH * 16  # ~4.2M tokens
+MAX_TOKENS = 10_000_000_000  # 10B -> ~2384 steps
+LR = 3.2e-4  # matches the 64k runs, whose ~4M batch this now also matches
 
 DATA_ROOT = "/weka/oe-training-default/amandab/longmino_512k"
 
@@ -128,9 +128,9 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
                 OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
             ],
         ),
-        # ~1192 steps at this batch size (vs ~2500 at 64k/4M), so warmup is scaled down to keep it
-        # at a comparable fraction of the run.
-        scheduler=LinearWithWarmup(warmup=200, alpha_f=0.0),
+        # ~2384 steps at this batch size, so the 64k runs' warmup=400 is again the right
+        # fraction of the run.
+        scheduler=LinearWithWarmup(warmup=400, alpha_f=0.0),
         # GatedDeltaNet layers use custom kernels; compile stays off. This also rules out 'budget'
         # activation checkpointing, which only sets torch._functorch.config.activation_memory_budget
         # and is a no-op without compile.
@@ -145,11 +145,11 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
             shard_degree=16,
         ),
         cp_config=TransformerContextParallelConfig.ulysses(degree=CP_DEGREE),
-        # Full AC. Estimated peak ~45GB of 80: 21.5GB of block-input checkpoints (32 blocks x 131072
-        # tokens x 2560 x 2B) + ~13.5GB for the one block being recomputed + ~4GB optimizer shard +
-        # LM head and comm buffers. The remaining headroom cannot be spent usefully: un-checkpointing
-        # even one block costs ~13GB (a GDN block's activation set is ~99KB/token at this width), and
-        # the finer-grained 'budget' mode needs compile.
+        # Full AC. Measured, not estimated: at 512k this model peaked at ~74.7GB allocated and
+        # OOMed on an 80GB H100 even with fragmentation eliminated, which is why this runs at 256k.
+        # Halving the sequence halves the activation terms, landing around ~40GB. Note the levers
+        # are otherwise exhausted -- CP is capped at 4 by n_kv_heads, rank_microbatch_size is
+        # already one sequence, and 'budget' AC needs compile, which GDN's custom kernels rule out.
         ac_config=TransformerActivationCheckpointingConfig(
             mode=TransformerActivationCheckpointingMode.full,
         ),
@@ -189,7 +189,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         .with_callback(
             "checkpointer",
             CheckpointerCallback(
-                save_interval=250,  # ~1192 steps total, so 1000 would checkpoint once
+                save_interval=250,  # ~2384 steps total
                 ephemeral_save_interval=None,
                 max_checkpoints=3,
                 save_async=True,

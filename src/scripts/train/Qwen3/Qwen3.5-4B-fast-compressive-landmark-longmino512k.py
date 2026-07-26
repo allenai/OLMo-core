@@ -59,8 +59,8 @@ from longmino_512k_mix import build_longmino_512k_mix  # noqa: E402
 # landmark path never touches self.backend, running its own Triton kernel instead.
 MEM_FREQ = 63
 BLOCK_SIZE = MEM_FREQ + 1  # 64
-SEQUENCE_LENGTH = 524288  # 512k (divisible by BLOCK_SIZE: 524288 / 64 = 8192)
-CONTENT_SEQUENCE_LENGTH = SEQUENCE_LENGTH // BLOCK_SIZE * MEM_FREQ  # 516096
+SEQUENCE_LENGTH = 262144  # 256k (divisible by BLOCK_SIZE: 262144 / 64 = 4096)
+CONTENT_SEQUENCE_LENGTH = SEQUENCE_LENGTH // BLOCK_SIZE * MEM_FREQ  # 258048
 
 LANDMARK_TOKEN_ID = 248200  # Qwen3.5 unused embedding row (vocab 248320)
 
@@ -69,9 +69,9 @@ NUM_NODES = 8  # 8 x 8 = 64 GPUs -> DP = 64 / 4 = 16
 
 # Batch is counted in *model* tokens (landmarks included), matching the dense script's step size.
 # Content per step is 63/64 of this: ~8.26M tokens.
-GLOBAL_BATCH_SIZE = SEQUENCE_LENGTH * 16  # ~8.4M tokens
-MAX_TOKENS = 10_000_000_000  # 10B -> ~1192 steps
-LR = 3.2e-4  # NB: carried over from the 64k/4M-batch runs; batch here is ~2x, so revisit.
+GLOBAL_BATCH_SIZE = SEQUENCE_LENGTH * 16  # ~4.2M tokens
+MAX_TOKENS = 10_000_000_000  # 10B -> ~2384 steps
+LR = 3.2e-4  # matches the 64k runs, whose ~4M batch this now also matches
 
 DATA_ROOT = "/weka/oe-training-default/amandab/longmino_512k"
 
@@ -138,8 +138,8 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
                 OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
             ],
         ),
-        # ~1192 steps at this batch size (vs ~2500 at 64k/4M), so warmup is scaled to match.
-        scheduler=LinearWithWarmup(warmup=200, alpha_f=0.0),
+        # ~2384 steps at this batch size, matching the 64k runs' warmup fraction.
+        scheduler=LinearWithWarmup(warmup=400, alpha_f=0.0),
         # GatedDeltaNet custom kernels; compile off, which also rules out 'budget' AC.
         compile_model=False,
         dp_config=TransformerDataParallelConfig(
@@ -200,7 +200,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         .with_callback(
             "checkpointer",
             CheckpointerCallback(
-                save_interval=250,  # ~1192 steps total
+                save_interval=250,  # ~2384 steps total
                 ephemeral_save_interval=None,
                 max_checkpoints=3,
                 save_async=True,
