@@ -1,6 +1,7 @@
 import torch
 
 from olmo_core.nn.moe import utils
+from olmo_core.nn.moe.v2 import routed_experts
 
 
 def test_moe_permutation_torch_fallback(monkeypatch):
@@ -38,3 +39,25 @@ def test_moe_permutation_torch_fallback(monkeypatch):
     torch.testing.assert_close(restored, inp)
     restored.sum().backward()
     torch.testing.assert_close(inp.grad, torch.ones_like(inp))
+
+
+def test_grouped_mm_torch_fallback(monkeypatch):
+    monkeypatch.setattr(routed_experts, "grouped_gemm", None)
+
+    inp = torch.tensor([[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]], requires_grad=True)
+    weights = torch.tensor(
+        [
+            [[1.0], [2.0]],
+            [[3.0], [4.0]],
+        ],
+        requires_grad=True,
+    )
+    batch_sizes = torch.tensor([2, 1])
+
+    actual = routed_experts.gmm_no_compile(inp, weights, batch_sizes)
+    expected = torch.cat((inp[:2] @ weights[0], inp[2:] @ weights[1]))
+    torch.testing.assert_close(actual, expected)
+
+    actual.sum().backward()
+    assert inp.grad is not None
+    assert weights.grad is not None
