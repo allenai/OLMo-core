@@ -1,0 +1,23 @@
+[
+  {
+    "task_name": "480m-cx2",
+    "run_name": "pt-480m-geometry-hybrid-gdn2-ev1-noneg-nope-gated-cx2-lr9e-4-r1",
+    "commit": "6e23564ff0c03b225073e3342be16ee626ca10c8",
+    "source_checkpoint": "/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/olmo-ddp/pretraining/pt-480m-geometry-hybrid-gdn2-ev1-noneg-nope-gated-cx2-lr9e-4-r1/step24500",
+    "expected_failure_step": 24668,
+    "localize_start_step": 24640,
+    "hard_stop_step": 24750,
+    "rank_microbatch_sequences": 6,
+    "global_batch_size": 393216,
+    "world_size": 8,
+    "expert_parallel_size": 1,
+    "checkpoint_writes": false,
+    "wandb": false,
+    "dump_dir": "/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/olmo-ddp/debug/gdn2-480m-cx2-localizer/canonical-gdn2-480m-cx2-step24668-r1",
+    "experiment_id": "01KYFSKK0582424EVT7YAY1WHK",
+    "task_ids": [
+      "01KYFSKK0C848F6R5QQB10E417"
+    ],
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYFSKK0582424EVT7YAY1WHK"
+  }
+]
