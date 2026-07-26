@@ -18,8 +18,8 @@ lag-64 matches.
 | Case | Prior symptom | Exact source | Diagnostic |
 |---|---|---|---|
 | Original GDN2 expand_v=2, 1.2B Cx4 | Step 9059; first failure is rank 5, block-0 GDN2 forward at token 4992; broad gradients are downstream; reproduced with backward recomputation disabled | step9000 | [01KYFWDECQSBGYCH5WFP5QDE30](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYFWDECQSBGYCH5WFP5QDE30) |
-| Original GDN2 expand_v=2, 275M Cx8, LR 1.6e-3 | Step 36768; non-finite loss on every rank | step36500 | [01KYFWDJ18MZ20F88JA7CF52M4](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYFWDJ18MZ20F88JA7CF52M4) |
-| GDN1 expand_v=2, 1.2B Cx8 | Step 17592; broad all-rank NaN gradients | step17500 | [01KYFWFR4Z1EJSNAQNX1HTDDG0](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYFWFR4Z1EJSNAQNX1HTDDG0) |
+| Original GDN2 expand_v=2, 275M Cx8, LR 1.6e-3 | Did not reproduce: exact step36500 resume remained finite through step36780, crossing the old step36768 loss failure | step36500 | [01KYFWDJ18MZ20F88JA7CF52M4](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYFWDJ18MZ20F88JA7CF52M4) |
+| GDN1 expand_v=2, 1.2B Cx8 | Step 17592; broad all-rank NaN gradients; exact phase replay queued | step17500 | [01KYFY1K9799Z47CAFT9M1R8EK](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYFY1K9799Z47CAFT9M1R8EK) |
 
 All replays are read-only: checkpoint loading is enabled, but checkpoint
 writes, pruning, W&B, and eval callbacks are disabled. The localizer checks
@@ -59,6 +59,26 @@ For a recurrent model, loss masking cannot protect the forward state from a
 non-finite. Any data mitigation therefore needs to resample or replace filtered
 input IDs before forward, not merely extend the filter and preserve the current
 label-only mask behavior.
+
+### Original GDN2 275M Cx8, old step 36768
+
+This case did **not** reproduce. The read-only replay loaded exact `step36500`,
+enabled all forward/backward/local-loss checks for steps 36750--36780, and
+completed the hard-stop step with finite loss and gradients. No recurrent-layer
+capture was emitted. The historical gradient-debug attempt did fail immediately
+after step 36767 with non-finite loss on all eight ranks, so the old symptom is
+real, but it is not deterministic from the saved checkpoint under the current
+pinned source.
+
+There is an important provenance limitation: the old full-sweep and first
+gradient-debug jobs installed the pinned FLA GDN2 commit, but copied OLMo-core
+from a mutable Weka checkout rather than recording a source Git SHA in their
+Beaker specs. We therefore cannot reconstruct their exact OLMo-core code from
+the job metadata. The non-reproduction rules out a permanently poisoned
+checkpoint/optimizer state. It leaves a historical source difference or a
+runtime/kernel/hardware-sensitive event as plausible explanations, but provides
+no evidence that this particular event was the deterministic recurrent-growth
+mechanism seen in the 480M and 1.2B cases.
 
 ## Working mechanism
 
@@ -110,7 +130,6 @@ GDN1 replay is intended to distinguish those mechanisms.
 
 ## Pending results
 
-- First failing rank, block, phase, sequence, token, head, and channel for each replay.
-- Whether FP32 sequential recurrence also diverges.
-- Repetition/periodicity statistics for each exact failing sequence.
-- Cross-case mitigation recommendations.
+- Exact GDN1 step-17592 phase replay and, if it reproduces in forward, its
+  production-versus-sequential reference comparison.
+- Final cross-case mitigation recommendations after that GDN1 result.

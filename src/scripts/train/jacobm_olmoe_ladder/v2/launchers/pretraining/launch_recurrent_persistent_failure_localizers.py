@@ -128,23 +128,41 @@ def main() -> None:
         action="store_true",
         help="request a short allocated reservation instead of the zero-minimum unallocated pool",
     )
+    parser.add_argument(
+        "--gdn1-8gpu-accum",
+        action="store_true",
+        help=(
+            "replay the GDN1 case on one EP=8 node with four accumulation "
+            "microbatches, preserving its 96-sequence global batch"
+        ),
+    )
     parser.add_argument("--submit", action="store_true")
     args = parser.parse_args()
 
     selected = [CASES[name] for name in args.case] if args.case else list(CASES.values())
-    prepared: list[tuple[Case, dict[str, Any], dict[str, Any], Path]] = []
+    prepared: list[tuple[Case, str, dict[str, Any], dict[str, Any], Path]] = []
     for case in selected:
         manifest, row = _load_case(case)
+        run_case_name = case.name
+        if args.gdn1_8gpu_accum:
+            if case.name != "gdn1-1p2b-cx8-step17592":
+                raise ValueError("--gdn1-8gpu-accum is only valid for the GDN1 case")
+            row["num_nodes"] = 1
+            row["gpus_per_node"] = 8
+            row["world_size"] = 8
+            row["rank_sequences"] = 12
+            row["accumulation_steps"] = 4
+            run_case_name = f"{case.name}-8gpu-accum4"
         checkpoint_dir = Path(manifest["experiment"]["checkpoint_root"]) / str(row["run_name"])
         checkpoints = sorted(path.name for path in checkpoint_dir.glob("step*") if path.is_dir())
         if checkpoints != [case.checkpoint]:
             raise RuntimeError(
                 f"{case.name}: expected only {case.checkpoint} in {checkpoint_dir}, found {checkpoints}"
             )
-        output_dir = DUMP_ROOT / case.name
+        output_dir = DUMP_ROOT / run_case_name
         if output_dir.exists() and any(output_dir.iterdir()):
             raise RuntimeError(f"{case.name}: refusing to overwrite {output_dir}")
-        prepared.append((case, manifest, row, checkpoint_dir))
+        prepared.append((case, run_case_name, manifest, row, checkpoint_dir))
         print(
             f"{case.name}: {row['run_name']} {case.checkpoint} -> failure={case.failure_step} "
             f"window={case.start_step}..{case.stop_step} world={row['world_size']} "
@@ -156,7 +174,7 @@ def main() -> None:
         print("Dry run only; pass --submit to launch.")
         return
 
-    for case, manifest, row, checkpoint_dir in prepared:
+    for case, run_case_name, manifest, row, checkpoint_dir in prepared:
         if args.allocated:
             manifest["beaker"]["min_runtime"] = "10m"
         source = manifest["source"]
@@ -176,13 +194,13 @@ def main() -> None:
                 "OLMOE3_HYBRID_GDN2_LOCALIZE_START_STEP": str(case.start_step),
                 "OLMOE3_HYBRID_GDN2_LOCALIZE_END_STEP": str(case.stop_step),
                 "OLMOE3_HYBRID_GDN2_LOCALIZE_DUMP_ROOT": str(DUMP_ROOT),
-                "OLMOE3_HYBRID_GDN2_LOCALIZE_RUN_ID": case.name,
+                "OLMOE3_HYBRID_GDN2_LOCALIZE_RUN_ID": run_case_name,
                 "OLMO_DEBUG_CHECK_LOCAL_LOSS": "1",
                 "OLMO_DEBUG_DUMP_DIR": str(DUMP_ROOT),
-                "OLMO_DEBUG_RUN_ID": case.name,
+                "OLMO_DEBUG_RUN_ID": run_case_name,
                 "OLMO_DEBUG_DUMP_STEPS": debug_steps,
             },
-            recipe_suffix_override=f"-{case.name}-localizer-r1",
+            recipe_suffix_override=f"-{run_case_name}-localizer-r1",
             description_suffix=(
                 f"read-only exact recurrent failure replay; {case.kind}; forward, "
                 "backward-input, backward-output, and pre-reduction loss localization"
@@ -190,7 +208,7 @@ def main() -> None:
         ).launch(show_logs=False)
         experiment = workload.experiment
         record = {
-            "case": case.name,
+            "case": run_case_name,
             "kind": case.kind,
             "run_name": row["run_name"],
             "commit": commit,
@@ -204,7 +222,7 @@ def main() -> None:
             "checkpoint_writes": False,
             "wandb": False,
             "allocated": args.allocated,
-            "dump_dir": str(DUMP_ROOT / case.name),
+            "dump_dir": str(DUMP_ROOT / run_case_name),
             "experiment_id": experiment.id,
             "task_ids": [task.id for task in experiment.tasks],
             "url": (
@@ -218,7 +236,7 @@ def main() -> None:
         existing.append(record)
         RECORD.parent.mkdir(parents=True, exist_ok=True)
         RECORD.write_text(json.dumps(existing, indent=2) + "\n")
-        print(f"Submitted {case.name}: {record['url']}")
+        print(f"Submitted {run_case_name}: {record['url']}")
         print(f"Recorded submission in {RECORD}")
 
 
