@@ -73,6 +73,22 @@ WIDE_ACTIVE_PARAMETERS = {
     "810m": 823_569_920,
     "1p2b": 1_225_011_712,
 }
+EXPLICIT_RESUME_CHAINS = {
+    "pt-480m-geometry-hybrid-gdn2-ev1-noneg-nope-gated-cx2-lr9e-4-r1": (
+        "2ui4npyk",
+        "tjmfr7de",
+        "2140i574",
+        "w9d4rof7",
+    ),
+    "pt-1p2b-geometry-hybrid-gdn2-ev1-noneg-nope-gated-cx1-lr4e-4-ep8-sync-r1": (
+        "1odf2b6k",
+        "cqvqih3h",
+        "lvx2cb1m",
+        "0lfktqhf",
+        "aknoel8q",
+        "8lmvitbp",
+    ),
+}
 
 
 def _lr_name(lr: float) -> str:
@@ -159,8 +175,27 @@ def resolve_interventions(api: Any, project: str) -> tuple[Variant, Variant, dic
             if not exact:
                 unresolved[key].append(display_name)
                 continue
+            exact_ids = {run.id for run in exact}
+            resume_chain = EXPLICIT_RESUME_CHAINS.get(display_name)
+            if resume_chain is not None:
+                if exact_ids != set(resume_chain):
+                    ids = ", ".join(sorted(exact_ids))
+                    raise RuntimeError(
+                        f"{display_name!r} resume-chain registry is stale; "
+                        f"W&B currently resolves ({ids})"
+                    )
+                registered.append(
+                    RegisteredRun(
+                        model,
+                        cx,
+                        lr,
+                        resume_chain[-1],
+                        predecessor_run_ids=resume_chain[:-1],
+                    )
+                )
+                continue
             if len(exact) != 1:
-                ids = ", ".join(sorted(run.id for run in exact))
+                ids = ", ".join(sorted(exact_ids))
                 raise RuntimeError(
                     f"{display_name!r} resolved to multiple W&B runs ({ids}); "
                     "register the intended run and predecessor segments explicitly"
