@@ -232,7 +232,16 @@ class _SwiGLUQuantizeRowsFromMXFP8Autograd(torch.autograd.Function):
 
 @torch.compiler.disable
 def gmm_no_compile(a, b, batch_sizes, trans_b=False):
-    return grouped_gemm.ops.gmm(a, b, batch_sizes, trans_b)
+    if grouped_gemm is not None:
+        return grouped_gemm.ops.gmm(a, b, batch_sizes, trans_b)
+
+    split_sizes = batch_sizes.to(device="cpu", dtype=torch.int64).tolist()
+    inputs = torch.split(a, split_sizes, dim=0)
+    outputs = [
+        expert_input @ (expert_weight.transpose(-2, -1) if trans_b else expert_weight)
+        for expert_input, expert_weight in zip(inputs, b)
+    ]
+    return torch.cat(outputs, dim=0)
 
 
 def gmm(
@@ -854,9 +863,9 @@ class RoutedExperts(nn.Module):
         `batch_size_per_expert` specifies the number of tokens in x for each expert.
         """
 
-        assert isinstance(
-            batch_size_per_expert, torch.Tensor
-        ), "only accept Tensor for batch_size_per_expert"
+        assert isinstance(batch_size_per_expert, torch.Tensor), (
+            "only accept Tensor for batch_size_per_expert"
+        )
 
         if (down_proj_out is not None or row_weights is not None) and (
             self.b_up_gate is not None or self.b_down is not None
@@ -873,16 +882,16 @@ class RoutedExperts(nn.Module):
             # CPU-side split sizes are required by grouped_gemm cublas mode.
             # grouped_gemm CUTLASS mode can accept device-side split sizes, but it is slow.
             # Always assume grouped_gemm runs in cublas mode.
-            assert (
-                batch_size_per_expert.device.type == "cpu"
-            ), "batch_size_per_expert must be on cpu"
+            assert batch_size_per_expert.device.type == "cpu", (
+                "batch_size_per_expert must be on cpu"
+            )
             batch_size_per_expert_tensor = batch_size_per_expert.to(
                 dtype=torch.int64
             )  # int64 required for grouped_gemm
         else:
-            assert (
-                batch_size_per_expert.device.type == "cuda"
-            ), "batch_size_per_expert expected to be on GPU"
+            assert batch_size_per_expert.device.type == "cuda", (
+                "batch_size_per_expert expected to be on GPU"
+            )
             # grouped_mm expects int32 offsets derived from split sizes.
             batch_size_per_expert_tensor = batch_size_per_expert.to(dtype=torch.int32)
 
@@ -1115,9 +1124,9 @@ class RoutedExperts(nn.Module):
         self.ep_dim = ep_mesh["ep_mp"].size()
         self.ep_rank = ep_mesh["ep_mp"].get_local_rank()
 
-        assert (
-            self.num_experts % self.ep_dim == 0
-        ), "num_experts must be divisible by the number of expert partitions"
+        assert self.num_experts % self.ep_dim == 0, (
+            "num_experts must be divisible by the number of expert partitions"
+        )
         self.num_local_experts = self.num_experts // self.ep_dim
 
         up_factor = (
