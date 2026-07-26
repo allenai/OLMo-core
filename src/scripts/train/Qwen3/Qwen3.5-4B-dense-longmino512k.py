@@ -10,7 +10,11 @@ from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.float8 import Float8Config
 from olmo_core.internal.common import build_launch_config, get_root_dir, get_work_dir
 from olmo_core.internal.experiment import CliContext, ExperimentConfig, main
-from olmo_core.launch.beaker import BeakerLaunchConfig, OLMoCoreBeakerImage
+from olmo_core.launch.beaker import (
+    BeakerEnvVar,
+    BeakerLaunchConfig,
+    OLMoCoreBeakerImage,
+)
 from olmo_core.nn.attention import AttentionBackendName
 from olmo_core.nn.lm_head import LMLossImplementation
 from olmo_core.nn.transformer import (
@@ -87,6 +91,12 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     )
     if beaker_launch_config is not None:
         beaker_launch_config.priority = "urgent"
+        # At 512k the allocator fragments badly: the first attempt OOMed with 58.2 GiB actually
+        # allocated but 15.5 GiB reserved-and-unusable, i.e. ~20% of the card lost to fragmentation.
+        # Expandable segments lets the allocator grow existing segments instead of stranding them.
+        beaker_launch_config.env_vars.append(
+            BeakerEnvVar(name="PYTORCH_CUDA_ALLOC_CONF", value="expandable_segments:True")
+        )
 
     tokenizer_config = TokenizerConfig.qwen3_5()
 
