@@ -17,6 +17,8 @@ from olmo_core.kernels.moe_unpermute_bwd import (
 )
 from olmo_core.utils import get_or_init_stream
 
+transformer_engine_import_error: ImportError | None = None
+
 try:
     import transformer_engine_torch as tex
     from transformer_engine.pytorch.constants import TE_DType
@@ -25,7 +27,8 @@ try:
         moe_sort_chunks_by_index,
         moe_unpermute,
     )
-except ImportError:
+except ImportError as exc:
+    transformer_engine_import_error = exc
     tex = None  # type: ignore[assignment]
     TE_DType = None  # type: ignore[assignment]
     moe_permute = None  # type: ignore[assignment]
@@ -103,11 +106,21 @@ def wait_event_no_compile(stream: torch.cuda.Stream, event: torch.cuda.Event):
 
 @torch.compiler.disable
 def moe_permute_no_compile(*args, **kwargs):
+    if moe_permute is None:
+        raise ImportError(
+            "OLMo-core MoE token permutation requires Transformer Engine; "
+            "install transformer-engine[pytorch]."
+        ) from transformer_engine_import_error
     return moe_permute(*args, **kwargs)
 
 
 @torch.compiler.disable
 def moe_unpermute_no_compile(*args, **kwargs):
+    if moe_unpermute is None:
+        raise ImportError(
+            "OLMo-core MoE token unpermutation requires Transformer Engine; "
+            "install transformer-engine[pytorch]."
+        ) from transformer_engine_import_error
     return moe_unpermute(*args, **kwargs)
 
 
@@ -513,9 +526,9 @@ class _TEUnpermuteIndexMapMaskedAutograd(torch.autograd.Function):
                     == inp.untyped_storage().data_ptr()
                 )
                 if not (ctx.needs_input_grad[2] and input_aliases_buffer):
-                    assert (
-                        grad_inp_uses_buffer
-                    ), "Expected moe_unpermute_bwd to write to backward_grad_input_buffer"
+                    assert grad_inp_uses_buffer, (
+                        "Expected moe_unpermute_bwd to write to backward_grad_input_buffer"
+                    )
 
         if not ctx.needs_input_grad[0]:
             grad_inp = None
