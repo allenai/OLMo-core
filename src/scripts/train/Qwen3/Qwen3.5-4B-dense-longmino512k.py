@@ -94,9 +94,12 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         # At 512k the allocator fragments badly: the first attempt OOMed with 58.2 GiB actually
         # allocated but 15.5 GiB reserved-and-unusable, i.e. ~20% of the card lost to fragmentation.
         # Expandable segments lets the allocator grow existing segments instead of stranding them.
-        beaker_launch_config.env_vars.append(
-            BeakerEnvVar(name="PYTORCH_CUDA_ALLOC_CONF", value="expandable_segments:True")
-        )
+        # Both spellings: torch 2.9 renamed this to PYTORCH_ALLOC_CONF and warns on the old
+        # name, but the old one is what older images honour.
+        for _var in ("PYTORCH_ALLOC_CONF", "PYTORCH_CUDA_ALLOC_CONF"):
+            beaker_launch_config.env_vars.append(
+                BeakerEnvVar(name=_var, value="expandable_segments:True")
+            )
 
     tokenizer_config = TokenizerConfig.qwen3_5()
 
