@@ -17,8 +17,6 @@ from olmo_core.kernels.moe_unpermute_bwd import (
 )
 from olmo_core.utils import get_or_init_stream
 
-transformer_engine_import_error: ImportError | None = None
-
 try:
     import transformer_engine_torch as tex
     from transformer_engine.pytorch.constants import TE_DType
@@ -27,8 +25,7 @@ try:
         moe_sort_chunks_by_index,
         moe_unpermute,
     )
-except ImportError as exc:
-    transformer_engine_import_error = exc
+except ImportError:
     tex = None  # type: ignore[assignment]
     TE_DType = None  # type: ignore[assignment]
     moe_permute = None  # type: ignore[assignment]
@@ -104,23 +101,97 @@ def wait_event_no_compile(stream: torch.cuda.Stream, event: torch.cuda.Event):
     stream.wait_event(event)
 
 
+def _moe_permute_torch_fallback(
+    inp: torch.Tensor,
+    routing_map: torch.Tensor,
+    num_out_tokens: Optional[int] = None,
+    map_type: str = "index",
+    **_: object,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    if map_type != "index":
+        raise ValueError(
+            f"Torch MoE permutation fallback only supports map_type='index', got {map_type!r}"
+        )
+    if inp.ndim != 2 or routing_map.ndim != 2:
+        raise ValueError(
+            f"Expected inp [tokens, hidden] and routing_map [tokens, top_k], got "
+            f"{tuple(inp.shape)} and {tuple(routing_map.shape)}"
+        )
+    if routing_map.shape[0] != inp.shape[0]:
+        raise ValueError("routing_map and inp must have the same token dimension")
+
+    num_routes = routing_map.numel()
+    if num_out_tokens is None:
+        num_out_tokens = num_routes
+    if not 0 <= num_out_tokens <= num_routes:
+        raise ValueError(f"num_out_tokens must be in [0, {num_routes}], got {num_out_tokens}")
+
+    route_order = torch.argsort(routing_map.reshape(-1).to(torch.long), stable=True)[
+        :num_out_tokens
+    ]
+    token_indices = torch.div(route_order, routing_map.shape[1], rounding_mode="floor")
+    output = inp.index_select(0, token_indices)
+
+    row_id_map = torch.full((num_routes,), -1, dtype=torch.int32, device=inp.device)
+    row_id_map.index_copy_(
+        0,
+        route_order,
+        torch.arange(num_out_tokens, dtype=torch.int32, device=inp.device),
+    )
+    return output, row_id_map
+
+
+def _moe_unpermute_torch_fallback(
+    inp: torch.Tensor,
+    row_id_map: torch.Tensor,
+    merging_probs: Optional[torch.Tensor] = None,
+    restore_shape: Optional[torch.Size] = None,
+    map_type: str = "index",
+    **_: object,
+) -> torch.Tensor:
+    if map_type != "index":
+        raise ValueError(
+            f"Torch MoE unpermutation fallback only supports map_type='index', got {map_type!r}"
+        )
+    if inp.ndim != 2 or row_id_map.ndim != 1:
+        raise ValueError(
+            f"Expected inp [routes, hidden] and row_id_map [routes], got "
+            f"{tuple(inp.shape)} and {tuple(row_id_map.shape)}"
+        )
+
+    row_id_map_long = row_id_map.to(torch.long)
+    valid = (row_id_map_long >= 0) & (row_id_map_long < inp.shape[0])
+    safe_row_ids = torch.where(valid, row_id_map_long, torch.zeros_like(row_id_map_long))
+    restored_routes = inp.index_select(0, safe_row_ids)
+    restored_routes = torch.where(
+        valid.unsqueeze(-1), restored_routes, torch.zeros_like(restored_routes)
+    )
+
+    if merging_probs is not None:
+        if merging_probs.numel() != row_id_map.numel():
+            raise ValueError("merging_probs and row_id_map must describe the same number of routes")
+        restored = (
+            restored_routes.view(*merging_probs.shape, inp.shape[-1]) * merging_probs.unsqueeze(-1)
+        ).sum(dim=-2)
+    else:
+        restored = restored_routes
+
+    if restore_shape is not None:
+        restored = restored.view(restore_shape)
+    return restored
+
+
 @torch.compiler.disable
 def moe_permute_no_compile(*args, **kwargs):
     if moe_permute is None:
-        raise ImportError(
-            "OLMo-core MoE token permutation requires Transformer Engine; "
-            "install transformer-engine[pytorch]."
-        ) from transformer_engine_import_error
+        return _moe_permute_torch_fallback(*args, **kwargs)
     return moe_permute(*args, **kwargs)
 
 
 @torch.compiler.disable
 def moe_unpermute_no_compile(*args, **kwargs):
     if moe_unpermute is None:
-        raise ImportError(
-            "OLMo-core MoE token unpermutation requires Transformer Engine; "
-            "install transformer-engine[pytorch]."
-        ) from transformer_engine_import_error
+        return _moe_unpermute_torch_fallback(*args, **kwargs)
     return moe_unpermute(*args, **kwargs)
 
 
