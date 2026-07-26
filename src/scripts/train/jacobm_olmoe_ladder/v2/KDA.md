@@ -91,8 +91,8 @@ machine-readable and Markdown summaries are under
 `results/pretraining/canonical_gdn2_kda/`.
 
 The matched 480M stability transfer uses the same four wide-transfer LRs and
-resource layouts as canonical GDN2. At the 2026-07-26 17:34 UTC refresh, Cx1
-and Cx2 had finished cleanly with strict final-250M CEs `2.517826` and
-`2.412884`; Cx4 and Cx8 were running at 53,060/60,133 and 51,460/80,177
-steps. Finished KDA transfer points are included automatically in
-`gdn2_fixed_lr_scale_comparison.png`; live cells remain explicitly pending.
+resource layouts as canonical GDN2. At the 2026-07-26 22:05 UTC refresh, all
+four cells had finished cleanly without a failed attempt. Their strict
+final-250M CEs at Cx1/2/4/8 are `2.517826`, `2.412884`, `2.323228`, and
+`2.237558`. All four KDA transfer points are included in
+`gdn2_fixed_lr_scale_comparison.png`.

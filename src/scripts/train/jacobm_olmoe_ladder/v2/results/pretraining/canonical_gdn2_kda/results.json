@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-07-26T17:32:31.576031+00:00",
+  "generated_at": "2026-07-26T22:05:46.850876+00:00",
   "project": "ai2-llm/jacobm-olmoe-ladder",
   "selection_metric": "mean train/CE loss over the final 250M tokens",
   "selection_rule": "The best-of plot shows the observed best LR only after that variant/Cx has an interior observed minimum and a valid local quadratic fit. Predicted minima are visual aids and are not selected results.",
@@ -1502,8 +1502,8 @@
         "token_resets": 0,
         "deduplicated_samples": 1
       },
-      "predicted_fit_lr": 0.00160032852374093,
-      "predicted_fit_loss": 2.7410440322885616
+      "predicted_fit_lr": 0.0016003285237409185,
+      "predicted_fit_loss": 2.741044032288562
     },
     {
       "variant": "wide_integration",
@@ -1532,8 +1532,8 @@
         "token_resets": 0,
         "deduplicated_samples": 1
       },
-      "predicted_fit_lr": 0.0014879597168701577,
-      "predicted_fit_loss": 2.608239110565351
+      "predicted_fit_lr": 0.0014879597168701562,
+      "predicted_fit_loss": 2.608239110565352
     },
     {
       "variant": "wide_integration",
@@ -1562,8 +1562,8 @@
         "token_resets": 0,
         "deduplicated_samples": 1
       },
-      "predicted_fit_lr": 0.0010361579266395398,
-      "predicted_fit_loss": 2.5048538676853234
+      "predicted_fit_lr": 0.0010361579266395537,
+      "predicted_fit_loss": 2.5048538676853243
     },
     {
       "variant": "wide_integration",
@@ -1592,8 +1592,8 @@
         "token_resets": 0,
         "deduplicated_samples": 1
       },
-      "predicted_fit_lr": 0.000988366800311887,
-      "predicted_fit_loss": 2.4183115979953955
+      "predicted_fit_lr": 0.000988366800311895,
+      "predicted_fit_loss": 2.4183115979953964
     },
     {
       "variant": "geometry_gdn_ev2_nope_gated",
@@ -1622,8 +1622,8 @@
         "token_resets": 0,
         "deduplicated_samples": 1
       },
-      "predicted_fit_lr": 0.0009437439526054201,
-      "predicted_fit_loss": 2.7105893729454245
+      "predicted_fit_lr": 0.0009437439526054327,
+      "predicted_fit_loss": 2.710589372945425
     },
     {
       "variant": "geometry_gdn_ev2_nope_gated",
@@ -1652,8 +1652,8 @@
         "token_resets": 0,
         "deduplicated_samples": 1
       },
-      "predicted_fit_lr": 0.0012695100203376456,
-      "predicted_fit_loss": 2.5796398002745677
+      "predicted_fit_lr": 0.0012695100203376248,
+      "predicted_fit_loss": 2.579639800274567
     },
     {
       "variant": "geometry_gdn_ev2_nope_gated",
@@ -1682,8 +1682,8 @@
         "token_resets": 0,
         "deduplicated_samples": 1
       },
-      "predicted_fit_lr": 0.0011251871838921631,
-      "predicted_fit_loss": 2.4741741461495987
+      "predicted_fit_lr": 0.0011251871838921712,
+      "predicted_fit_loss": 2.4741741461495996
     },
     {
       "variant": "geometry_gdn_ev2_nope_gated",
@@ -1712,8 +1712,8 @@
         "token_resets": 0,
         "deduplicated_samples": 1
       },
-      "predicted_fit_lr": 0.001029501332076756,
-      "predicted_fit_loss": 2.389246636061631
+      "predicted_fit_lr": 0.0010295013320767718,
+      "predicted_fit_loss": 2.389246636061632
     },
     {
       "variant": "geometry_gdn2_ev2_nope_gated",
@@ -1742,8 +1742,8 @@
         "token_resets": 0,
         "deduplicated_samples": 1
       },
-      "predicted_fit_lr": 0.00150490184390676,
-      "predicted_fit_loss": 2.6466318661955315
+      "predicted_fit_lr": 0.0015049018439067506,
+      "predicted_fit_loss": 2.6466318661955297
     },
     {
       "variant": "geometry_gdn2_ev2_nope_gated",
@@ -1774,8 +1774,8 @@
         "token_resets": 1,
         "deduplicated_samples": 79
       },
-      "predicted_fit_lr": 0.0015034825557659291,
-      "predicted_fit_loss": 2.5340173603795324
+      "predicted_fit_lr": 0.0015034825557659246,
+      "predicted_fit_loss": 2.534017360379533
     },
     {
       "variant": "geometry_gdn2_ev2_nope_gated",
@@ -1804,8 +1804,8 @@
         "token_resets": 0,
         "deduplicated_samples": 1
       },
-      "predicted_fit_lr": 0.0012680465282576452,
-      "predicted_fit_loss": 2.4418701289869658
+      "predicted_fit_lr": 0.0012680465282576283,
+      "predicted_fit_loss": 2.441870128986965
     },
     {
       "variant": "geometry_gdn2_ev2_nope_gated",
@@ -1834,7 +1834,7 @@
         "token_resets": 0,
         "deduplicated_samples": 1
       },
-      "predicted_fit_lr": 0.001018552537318106,
+      "predicted_fit_lr": 0.0010185525373180842,
       "predicted_fit_loss": 2.355882892695095
     },
     {
@@ -1865,7 +1865,7 @@
         "deduplicated_samples": 1
       },
       "predicted_fit_lr": 0.001761538139717686,
-      "predicted_fit_loss": 2.677327511402282
+      "predicted_fit_loss": 2.6773275114022828
     },
     {
       "variant": "geometry_gdn2_ev1_noneg_nope_gated",
@@ -1895,7 +1895,7 @@
         "deduplicated_samples": 1
       },
       "predicted_fit_lr": 0.001650086233391421,
-      "predicted_fit_loss": 2.557577085435481
+      "predicted_fit_loss": 2.5575770854354807
     },
     {
       "variant": "geometry_gdn2_ev1_noneg_nope_gated",
@@ -1924,7 +1924,7 @@
         "token_resets": 0,
         "deduplicated_samples": 1
       },
-      "predicted_fit_lr": 0.0012953805783751245,
+      "predicted_fit_lr": 0.0012953805783751152,
       "predicted_fit_loss": 2.4663003739387817
     },
     {
@@ -1954,8 +1954,8 @@
         "token_resets": 0,
         "deduplicated_samples": 1
       },
-      "predicted_fit_lr": 0.0012141931005885222,
-      "predicted_fit_loss": 2.3881917400492054
+      "predicted_fit_lr": 0.0012141931005885075,
+      "predicted_fit_loss": 2.3881917400492068
     },
     {
       "variant": "geometry_kda_ev1_noneg_nope_gated",
@@ -1984,8 +1984,8 @@
         "token_resets": 0,
         "deduplicated_samples": 1
       },
-      "predicted_fit_lr": 0.0016333982447321442,
-      "predicted_fit_loss": 2.7170473597673346
+      "predicted_fit_lr": 0.001633398244732114,
+      "predicted_fit_loss": 2.7170473597673355
     },
     {
       "variant": "geometry_kda_ev1_noneg_nope_gated",
@@ -2014,8 +2014,8 @@
         "token_resets": 0,
         "deduplicated_samples": 1
       },
-      "predicted_fit_lr": 0.0014900027410670725,
-      "predicted_fit_loss": 2.5878779768517486
+      "predicted_fit_lr": 0.0014900027410670634,
+      "predicted_fit_loss": 2.587877976851749
     },
     {
       "variant": "geometry_kda_ev1_noneg_nope_gated",
@@ -2044,7 +2044,7 @@
         "token_resets": 0,
         "deduplicated_samples": 1
       },
-      "predicted_fit_lr": 0.0012755470497115154,
+      "predicted_fit_lr": 0.0012755470497115232,
       "predicted_fit_loss": 2.4857028994508084
     },
     {
@@ -2074,7 +2074,7 @@
         "token_resets": 0,
         "deduplicated_samples": 1
       },
-      "predicted_fit_lr": 0.0011882896591566326,
+      "predicted_fit_lr": 0.0011882896591566205,
       "predicted_fit_loss": 2.403329850470114
     }
   ]
