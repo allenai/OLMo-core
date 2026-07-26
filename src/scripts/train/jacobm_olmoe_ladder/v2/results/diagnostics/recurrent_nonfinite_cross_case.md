@@ -66,10 +66,10 @@ For normalized keys, GDN2's exact key-axis transition is
 
 `A_t = (I - k_t (b_t * k_t)^T) Diag(exp(g_t))`.
 
-Its nontrivial eigenvalue is bounded when `b` is bounded, but `b_t * k_t` is
-generally not parallel to `k_t`. The transition is therefore non-normal. Bounds
-on one transition's eigenvalues do not bound its singular values or a long
-product of changing, non-commuting transitions.
+The erase factor's nontrivial eigenvalue is bounded when `b` is bounded, but
+`b_t * k_t` is generally not parallel to `k_t`. The full decayed transition is
+therefore non-normal. Bounds on the erase eigenvalue do not bound its singular
+values or a long product of changing, non-commuting transitions.
 Repeated inputs can coherently excite the same state direction for thousands of
 tokens, producing large transient amplification; the additive value write then
 feeds the amplified direction. This remains possible with `expand_v=1` and
