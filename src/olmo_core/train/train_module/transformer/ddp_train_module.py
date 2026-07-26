@@ -2828,18 +2828,14 @@ class OLMoDDPTrainModule(TrainModule):
         max_sequence_length: int,
         rank_microbatch_size: int,
     ):
-        from olmo_core.nn.ddp import OLMoDDPModel
-
         # Materialize and init parameters.
         log.info("Initializing model weights...")
         for model_part_idx, m in enumerate(model_parts):
-            m = cast(OLMoDDPModel, m)
-            m.init_weights(
-                max_seq_len=max_sequence_length,
-                max_local_microbatch_size=rank_microbatch_size,
-                device=self.device,
-                world_mesh=self.world_mesh,  # only PP mesh is used, should be fine
+            self.init_model_part_weights(
+                cast(OLMoDDPModel, m),
                 model_part_idx=model_part_idx,
+                max_sequence_length=max_sequence_length,
+                rank_microbatch_size=rank_microbatch_size,
             )
             # for n, p in m.named_parameters():
             #     print(f'{n} {p.shape}: mean={p.data.mean().item()}, std={p.data.std().item()}')
@@ -2856,6 +2852,23 @@ class OLMoDDPTrainModule(TrainModule):
             m.refresh_rowwise_fp8_cache()
 
         return
+
+    def init_model_part_weights(
+        self,
+        model: OLMoDDPModel,
+        *,
+        model_part_idx: int,
+        max_sequence_length: int,
+        rank_microbatch_size: int,
+    ) -> None:
+        """Materialize and initialize one local model part before DDP wrapping."""
+        model.init_weights(
+            max_seq_len=max_sequence_length,
+            max_local_microbatch_size=rank_microbatch_size,
+            device=self.device,
+            world_mesh=self.world_mesh,
+            model_part_idx=model_part_idx,
+        )
 
     def _cp_local_rank_microbatch_size(self, rank_microbatch_size: int) -> int:
         if self._cp_config is None:

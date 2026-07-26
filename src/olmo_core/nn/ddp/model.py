@@ -868,6 +868,7 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
         device: Optional[torch.device] = None,
         world_mesh: Optional[Dict[str, Optional[DeviceMesh]]] = None,
         model_part_idx: int = 0,
+        initialize_parameters: bool = True,
     ) -> torch.Generator:
         """
         Initialize the model weights.
@@ -879,6 +880,9 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
         :param device: The device the local copy of the model will be trained on.
         :param world_mesh: The parallel meshes; required only when pipeline or expert parallelism
             is enabled (used to derive per-rank init seeds). Optional for standalone/non-parallel init.
+        :param initialize_parameters: If ``False``, materialize the model and warm its caches
+            without assigning initial parameter values. This is intended for callers that load a
+            complete checkpoint immediately afterwards.
         """
         from olmo_core.nn.attention import Attention, FusedAttention
 
@@ -887,9 +891,10 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
         # cast as apply_dp(); replace with an explicit precision policy.
         self.to(torch.bfloat16)
         self.to_empty(device=device)
-        for _, module in self.named_modules():
-            if hasattr(module, "reset_parameters"):
-                module.reset_parameters()  # type: ignore
+        if initialize_parameters:
+            for _, module in self.named_modules():
+                if hasattr(module, "reset_parameters"):
+                    module.reset_parameters()  # type: ignore
 
         seed = self.init_seed
 
@@ -914,7 +919,7 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
 
         generator = torch.Generator(device).manual_seed(seed)
 
-        if self.embeddings is not None:
+        if initialize_parameters and self.embeddings is not None:
             self.init_method.init_embeddings(
                 self.embeddings,
                 d_model=self.d_model,
@@ -930,25 +935,26 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
             # v2 MoE/shared-only DDP blocks.
             att = cast(Union[Attention, FusedAttention], block.attention)
 
-            # Attention weights.
-            self.init_method.init_attention(
-                att,
-                d_model=self.d_model,
-                block_idx=block.block_idx,
-                num_blocks=self.n_layers,
-                std=self.init_std,
-                generator=generator,
-            )
-            # MoE/shared-expert weights.
-            self.init_method.init_moe_v2(
-                block,
-                d_model=self.d_model,
-                block_idx=block.block_idx,
-                num_blocks=self.n_layers,
-                std=self.init_std,
-                generator=generator,
-                ep_generator=ep_generator,
-            )
+            if initialize_parameters:
+                # Attention weights.
+                self.init_method.init_attention(
+                    att,
+                    d_model=self.d_model,
+                    block_idx=block.block_idx,
+                    num_blocks=self.n_layers,
+                    std=self.init_std,
+                    generator=generator,
+                )
+                # MoE/shared-expert weights.
+                self.init_method.init_moe_v2(
+                    block,
+                    d_model=self.d_model,
+                    block_idx=block.block_idx,
+                    num_blocks=self.n_layers,
+                    std=self.init_std,
+                    generator=generator,
+                    ep_generator=ep_generator,
+                )
 
             # Warm up RoPE cache for attention-like sequence mixers. Recurrent
             # mixers such as GDN do not have RoPE.
@@ -956,7 +962,7 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
             if max_seq_len is not None and rope is not None:
                 rope.warmup_cache(max_seq_len, device)
 
-        if self.lm_head is not None:
+        if initialize_parameters and self.lm_head is not None:
             self.init_method.init_final_w_out(
                 self.lm_head.w_out, d_model=self.d_model, std=self.init_std, generator=generator
             )

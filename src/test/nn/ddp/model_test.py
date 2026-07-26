@@ -1,6 +1,7 @@
 """Tests for ``OLMoDDPModel`` construction and FLOP accounting."""
 
 import pytest
+import torch
 
 from olmo_core.config import DType
 from olmo_core.exceptions import OLMoConfigurationError
@@ -52,6 +53,19 @@ def test_moe_v2_model_builds():
     assert len(model.blocks) == 2
     assert any(p.numel() > 0 for p in model.parameters())
     assert model.num_flops_per_token(seq_len=512) > 0
+
+
+def test_moe_v2_model_can_materialize_without_initializing(monkeypatch):
+    model = _build_model_config(n_layers=2).build(init_device="meta")
+
+    def fail_initialization(*args, **kwargs):
+        raise AssertionError("parameter initialization should be skipped")
+
+    monkeypatch.setattr(torch.nn.init, "trunc_normal_", fail_initialization)
+    model.init_weights(device=torch.device("cpu"), initialize_parameters=False)
+
+    assert all(parameter.device.type == "cpu" for parameter in model.parameters())
+    assert all(not parameter.is_meta for parameter in model.parameters())
 
 
 def test_deepep_rejects_chunk_recompute():
