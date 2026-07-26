@@ -8,9 +8,11 @@ qwen3-4b-mcl-block64-2lm-mean/step2385 -- geometry MUST match, and is taken from
 _mcl_block64_5task_dolci25_32k_nocpt_common.py's ``_ARMS["2lm-mean"]`` for both the model and the
 data pipeline. Content capacity is 39680 tokens per 40960-token window.
 
-Data: 75% the 5 long-context tasks / 25% Dolci-Instruct-SFT, no raw CPT text -- identical to
+Data: 75% the 5 long-context tasks / 25% Dolci-Instruct-SFT, no raw CPT text -- following
 Qwen3-4B-compressive-block64-5task-dolci25-32k-nocpt-SFT.py (the single-landmark block-64 arm), so
-this is directly comparable to the block64 row of results/block_sweep_sft_5task.csv.
+this is comparable to the block64 row of results/block_sweep_sft_5task.csv on the four non-NQ tasks.
+NQ uses the p10 pipeline (standing directive) rather than the block sweep's 98%-hard-negative nq, so
+the NQ column is instead comparable to gate-temp / dense-dolci25 / sharedvec / gqa-grouped.
 
 See _mcl_block64_5task_dolci25_32k_nocpt_common.py for all the shared config.
 

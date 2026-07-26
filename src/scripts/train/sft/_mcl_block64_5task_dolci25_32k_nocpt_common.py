@@ -16,13 +16,15 @@ data pipeline (:class:`~olmo_core.data.composable.LandmarkPackingInstanceSourceC
 landmark geometry is guaranteed to match the geometry the checkpoint was CPT'd with. Getting these out
 of sync would silently mis-place the landmark tokens relative to the kernel's block tiling.
 
-The recipe is otherwise an exact clone of
+The recipe otherwise follows
 ``Qwen3-4B-compressive-block64-5task-dolci25-32k-nocpt-SFT.py`` (the single-landmark block-64 arm of
-the block-size sweep) so these four are directly comparable to the ``block64`` row in
-``results/block_sweep_sft_5task.csv``:
+the block-size sweep), so these four are comparable to the ``block64`` row in
+``results/block_sweep_sft_5task.csv`` on the four non-NQ tasks -- see the ``NQ_DATA_ROOT`` note below
+for the one deliberate departure:
 
   * Data: 75% the 5 long-context tasks (contra 2x / rerank 1.5x / outlier 1.5x / nq 1x / oolong 1x
-    from ``prasanns/cptmix_data_ladder40k``) + 25% ``allenai/Dolci-Instruct-SFT``. No raw CPT text.
+    from ``prasanns/cptmix_data_ladder40k``, except nq which uses the p10 pipeline) + 25%
+    ``allenai/Dolci-Instruct-SFT``. No raw CPT text.
   * Layout: ``LandmarkPackingInstanceSource`` (block-aligned greedy packing, per-document landmarks,
     intra-document ``cu_doc_lens`` -> ``DOC_MASK`` in the fused multi-landmark kernel).
   * Budget: LR 1e-5, TARGET_STEPS=8550 (~700M tokens at GLOBAL_BATCH_SIZE=NUM_NODES*40960),
@@ -102,7 +104,13 @@ NUM_NODES = 2  # 2 nodes x 8 GPUs, cp_degree=8 -> NUM_NODES DP replicas
 # ---------------------------------------------------------------------------
 DATA_ROOT = "/weka/oe-training-default/ai2-llm/checkpoints/prasanns/cptmix_data_ladder40k"
 CONTRA_DATA_ROOT = f"{DATA_ROOT}/contradiction"
-NQ_DATA_ROOT = f"{DATA_ROOT}/nq"
+# nq: the p10 pipeline (hard-neg ~10% + cross-encoder gold filter), NOT the 98%-hard-negative
+# ``cptmix_data_ladder40k/nq`` the block-size sweep trained on -- the standing directive, and the same
+# swap ``*-fixnq-*`` and the gate-temp script make. All runs are *evaluated* on the p10 ladder, so
+# this puts NQ in the same train/eval regime as gate-temp / dense-dolci25 / sharedvec / gqa-grouped.
+# Consequence: the NQ column is NOT comparable to the block64 single-landmark control (which trained
+# on the old nq); the other four tasks still are.
+NQ_DATA_ROOT = "/weka/oe-training-default/ai2-llm/checkpoints/prasanns/single_task_ladders_p10/nq"
 OOLONG_DATA_ROOT = f"{DATA_ROOT}/oolong"
 RERANK_DATA_ROOT = f"{DATA_ROOT}/rerank"
 OUTLIER_DATA_ROOT = f"{DATA_ROOT}/outlier"
