@@ -214,13 +214,24 @@ def build_longmino_512k_mix(
     target = plan_tokens(available)
 
     base = os.path.join(root, tree)
-    sources = NumpyDocumentSourceConfig.from_source_groups(
-        {label: [os.path.join(base, glob)] for label, glob in STRATUM_GLOBS.items()},
-        tokenizer=tokenizer,
-        expand_glob=True,
-        max_document_length=None,  # never truncate long documents
-        source_permutation_seed=seed,
-    )
+    # Construct the per-stratum configs directly rather than via
+    # NumpyDocumentSourceConfig.from_source_groups. from_source_groups expands the globs *eagerly*,
+    # inside this function -- which runs locally when you invoke the `launch`/`dry_run` subcommands,
+    # so it fails with FileNotFoundError anywhere weka isn't mounted. The plain constructor defers
+    # expansion to .build(), which happens on the cluster, matching every other training script in
+    # this repo and keeping `launch` runnable from a laptop. from_source_groups' thread-pooled
+    # expansion only pays off for cloud-storage URLs; these are local weka paths.
+    sources = {
+        label: NumpyDocumentSourceConfig(
+            source_paths=[os.path.join(base, glob)],
+            tokenizer=tokenizer,
+            expand_glob=True,
+            max_document_length=None,  # never truncate long documents
+            source_permutation_seed=seed,
+            label=label,
+        )
+        for label, glob in STRATUM_GLOBS.items()
+    }
 
     def chunked(label: str) -> InstanceSourceConfig:
         return ConcatAndChunkInstanceSourceConfig(
