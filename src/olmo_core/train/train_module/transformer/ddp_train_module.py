@@ -1597,6 +1597,12 @@ class OLMoDDPTrainModule(TrainModule):
                             return_logits=debug_dump_logits,
                             **model_kwargs,
                         )
+                        self._debug_check_local_lm_output(
+                            lm_output,
+                            input_ids=input_ids,
+                            labels=labels,
+                            micro_batch_idx=micro_batch_idx,
+                        )
                         if debug_dump_logits:
                             self._debug_dump_lm_output(
                                 lm_output,
@@ -2157,6 +2163,10 @@ class OLMoDDPTrainModule(TrainModule):
         raw_kind = os.getenv(f"OLMO_DEBUG_DUMP_{kind.upper()}", "0").strip().lower()
         return raw_kind in {"1", "true", "yes", "on"}
 
+    @cached_property
+    def _debug_check_local_loss_enabled(self) -> bool:
+        return self._debug_env_flag("OLMO_DEBUG_CHECK_LOCAL_LOSS", False)
+
     def _debug_should_dump(self, kind: str) -> bool:
         if self._debug_dump_dir() is None:
             return False
@@ -2166,6 +2176,69 @@ class OLMoDDPTrainModule(TrainModule):
         if steps is None:
             return True
         return self.trainer.global_step in steps
+
+    @torch.no_grad()
+    def _debug_check_local_lm_output(
+        self,
+        lm_output: Union[torch.Tensor, LMOutputWithLoss],
+        *,
+        input_ids: torch.Tensor,
+        labels: Optional[torch.Tensor],
+        micro_batch_idx: int,
+    ) -> None:
+        """Capture a local loss failure before the batch loss all-reduce.
+
+        This is intentionally separate from the optimizer's ordinary finite
+        assertion, which sees the already-reduced loss and therefore cannot
+        identify the originating rank or microbatch.
+        """
+
+        if not self._debug_check_local_loss_enabled:
+            return
+        if self._debug_dump_dir() is None:
+            raise RuntimeError("OLMO_DEBUG_CHECK_LOCAL_LOSS requires OLMO_DEBUG_DUMP_DIR")
+        steps = self._debug_dump_steps
+        if steps is not None and self.trainer.global_step not in steps:
+            return
+        if not isinstance(lm_output, LMOutputWithLoss):
+            return
+
+        ce_loss = get_local_tensor(lm_output.ce_loss.detach())
+        loss = get_local_tensor(lm_output.loss.detach())
+        ce_finite = bool(torch.isfinite(ce_loss).all().item())
+        loss_finite = bool(torch.isfinite(loss).all().item())
+        if ce_finite and loss_finite:
+            return
+
+        rank = get_rank() if is_distributed() else 0
+        payload: Dict[str, Any] = {
+            "kind": "local_nonfinite_loss",
+            "rank": rank,
+            "step": self.trainer.global_step,
+            "micro_batch_idx": micro_batch_idx,
+            "ce_loss": ce_loss.float().cpu(),
+            "loss": loss.float().cpu(),
+            "z_loss": (
+                None
+                if lm_output.z_loss is None
+                else get_local_tensor(lm_output.z_loss.detach()).float().cpu()
+            ),
+            "input_ids": get_local_tensor(input_ids.detach()).cpu(),
+            "labels": (
+                None if labels is None else get_local_tensor(labels.detach()).cpu()
+            ),
+        }
+        path = self._debug_dump_path("local_loss", f"mb{micro_batch_idx:03d}")
+        torch.save(payload, path)
+        log.error(
+            "LOCAL_NONFINITE_LOSS rank=%s step=%s microbatch=%s ce=%s loss=%s path=%s",
+            rank,
+            self.trainer.global_step,
+            micro_batch_idx,
+            ce_loss,
+            loss,
+            path,
+        )
 
     def _debug_rank_in_filter(self, env_name: str) -> bool:
         raw = os.getenv(env_name, "all").strip().lower()

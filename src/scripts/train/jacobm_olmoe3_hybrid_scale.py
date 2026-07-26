@@ -146,6 +146,20 @@ EVALS_ENABLED = env_bool("OLMOE3_HYBRID_EVALS", False)
 DP_USE_REDUCE_SCATTER = env_bool("OLMOE3_HYBRID_DP_USE_REDUCE_SCATTER", False)
 DP_BUCKET_CAP_MB = os.environ.get("OLMOE3_HYBRID_DP_BUCKET_CAP_MB")
 GDN2_DISABLE_RECOMPUTE = env_bool("OLMOE3_HYBRID_GDN2_DISABLE_RECOMPUTE", False)
+GDN2_LOCALIZE_NONFINITE = env_bool("OLMOE3_HYBRID_GDN2_LOCALIZE_NONFINITE", False)
+GDN2_LOCALIZE_START_STEP = int(
+    os.environ.get("OLMOE3_HYBRID_GDN2_LOCALIZE_START_STEP", "0")
+)
+GDN2_LOCALIZE_END_STEP = int(
+    os.environ.get("OLMOE3_HYBRID_GDN2_LOCALIZE_END_STEP", "0")
+)
+GDN2_LOCALIZE_DUMP_ROOT = os.environ.get(
+    "OLMOE3_HYBRID_GDN2_LOCALIZE_DUMP_ROOT",
+    "/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/olmo-ddp/debug/gdn2-localizer",
+)
+GDN2_LOCALIZE_RUN_ID = os.environ.get(
+    "OLMOE3_HYBRID_GDN2_LOCALIZE_RUN_ID", "gdn2-localizer"
+)
 EVAL_INTERVAL = int(os.environ.get("OLMOE3_HYBRID_EVAL_INTERVAL", "1000"))
 EVAL_STEPS = int(os.environ.get("OLMOE3_HYBRID_EVAL_STEPS", "0"))
 EVAL_TASK_SET = os.environ.get("OLMOE3_HYBRID_EVAL_TASK_SET", "hellaswag")
@@ -750,6 +764,20 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             ),
         )
     )
+    if GDN2_LOCALIZE_NONFINITE:
+        from scripts.train.jacobm_olmoe_ladder.v2.diagnostics.gdn2_nonfinite_localizer import (
+            GDN2NonfiniteLocalizerCallback,
+        )
+
+        trainer = trainer.with_callback(
+            "gdn2_nonfinite_localizer",
+            GDN2NonfiniteLocalizerCallback(
+                start_step=GDN2_LOCALIZE_START_STEP,
+                end_step=GDN2_LOCALIZE_END_STEP,
+                dump_root=GDN2_LOCALIZE_DUMP_ROOT,
+                run_id=GDN2_LOCALIZE_RUN_ID,
+            ),
+        )
     return trainer
 
 
@@ -786,6 +814,17 @@ def finalize_config(config: ExperimentConfig) -> None:
         )
     if CHECKPOINTS_ENABLED and not CHECKPOINT_WRITES_ENABLED:
         log.info("Checkpoint loading is enabled, but all checkpoint writes are disabled")
+    if GDN2_LOCALIZE_NONFINITE:
+        if MODEL_VARIANT not in {*GDN2_275M_NOPE_SETTINGS, *GDN2_SCALE_NOPE_SETTINGS}:
+            raise ValueError("GDN2 non-finite localization requires a GDN2 model variant")
+        if not (0 < GDN2_LOCALIZE_START_STEP <= GDN2_LOCALIZE_END_STEP):
+            raise ValueError(
+                "GDN2 localization requires a positive, ordered start/end step window"
+            )
+        if CHECKPOINT_WRITES_ENABLED or WANDB_ENABLED:
+            raise ValueError(
+                "GDN2 localization must disable checkpoint writes and W&B"
+            )
     if EVAL_BACKFILL:
         if CHECKPOINTS_ENABLED:
             raise ValueError("Eval-only backfills must set OLMOE3_HYBRID_CHECKPOINTS=0")
