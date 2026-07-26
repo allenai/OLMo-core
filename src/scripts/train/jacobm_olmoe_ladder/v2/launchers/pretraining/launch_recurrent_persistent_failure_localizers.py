@@ -86,6 +86,10 @@ def _load_case(case: Case) -> tuple[dict[str, Any], dict[str, Any]]:
     manifest = load_manifest(MANIFEST_DIR / case.manifest)
     if not case.small_manifest:
         rows = validate(manifest)
+        # All diagnostic hooks live on the migration branch, including replays
+        # of checkpoints originally produced by the older GDN1 branch.
+        manifest["source"]["remote"] = REMOTE
+        manifest["source"]["branch"] = BRANCH
         return manifest, next(row for row in rows if str(row["task_name"]) == case.task_name)
 
     # The original 275M sweep predates the Gantry production manifests. Adapt
@@ -147,7 +151,6 @@ def main() -> None:
         print("Dry run only; pass --submit to launch.")
         return
 
-    records: list[dict[str, Any]] = []
     for case, manifest, row, checkpoint_dir in prepared:
         source = manifest["source"]
         commit = validate_remote_commit(str(source["remote"]), str(source["branch"]))
@@ -201,16 +204,14 @@ def main() -> None:
                 f"OLMo-3-moe-experiments/work/{experiment.id}"
             ),
         }
-        records.append(record)
+        existing: list[dict[str, Any]] = []
+        if RECORD.is_file():
+            existing = json.loads(RECORD.read_text())
+        existing.append(record)
+        RECORD.parent.mkdir(parents=True, exist_ok=True)
+        RECORD.write_text(json.dumps(existing, indent=2) + "\n")
         print(f"Submitted {case.name}: {record['url']}")
-
-    existing: list[dict[str, Any]] = []
-    if RECORD.is_file():
-        existing = json.loads(RECORD.read_text())
-    existing.extend(records)
-    RECORD.parent.mkdir(parents=True, exist_ok=True)
-    RECORD.write_text(json.dumps(existing, indent=2) + "\n")
-    print(f"Recorded {len(records)} submissions in {RECORD}")
+        print(f"Recorded submission in {RECORD}")
 
 
 if __name__ == "__main__":

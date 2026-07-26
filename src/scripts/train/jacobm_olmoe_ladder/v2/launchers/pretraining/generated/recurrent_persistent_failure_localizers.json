@@ -1,0 +1,45 @@
+[
+  {
+    "case": "original-gdn2-1p2b-cx4-step9059",
+    "kind": "GDN2 expand_v=2 negative-eigenvalues; broad all-rank NaN gradients",
+    "run_name": "pt-1p2b-geometry-hybrid-gdn2-ev2-nope-gated-cx4-lr3e-4-ep8-sync-r1",
+    "commit": "c6db65ec41640975dbbb6f9ea1e156caaa04cd92",
+    "source_checkpoint": "/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/olmo-ddp/pretraining/pt-1p2b-geometry-hybrid-gdn2-ev2-nope-gated-cx4-lr3e-4-ep8-sync-r1/step9000",
+    "expected_failure_step": 9059,
+    "localize_start_step": 9050,
+    "hard_stop_step": 9070,
+    "world_size": 16,
+    "expert_parallel_size": 8,
+    "rank_microbatch_sequences": 4,
+    "checkpoint_writes": false,
+    "wandb": false,
+    "dump_dir": "/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/olmo-ddp/debug/recurrent-persistent-failure-localizers/original-gdn2-1p2b-cx4-step9059",
+    "experiment_id": "01KYFWDECQSBGYCH5WFP5QDE30",
+    "task_ids": [
+      "01KYFWDECYAH5J3FY5BT8730RD",
+      "01KYFWDEGDC4HZ05Y560GSDEPS"
+    ],
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYFWDECQSBGYCH5WFP5QDE30"
+  },
+  {
+    "case": "original-gdn2-275m-cx8-step36768",
+    "kind": "GDN2 expand_v=2 negative-eigenvalues; non-finite loss",
+    "run_name": "pt-275m-geometry-hybrid-gdn2-ev2-nope-gated-cx8-lr1p6e-3-r1",
+    "commit": "c6db65ec41640975dbbb6f9ea1e156caaa04cd92",
+    "source_checkpoint": "/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/olmo-ddp/pretraining/pt-275m-geometry-hybrid-gdn2-ev2-nope-gated-cx8-lr1p6e-3-r1/step36500",
+    "expected_failure_step": 36768,
+    "localize_start_step": 36750,
+    "hard_stop_step": 36780,
+    "world_size": 8,
+    "expert_parallel_size": 1,
+    "rank_microbatch_sequences": 12,
+    "checkpoint_writes": false,
+    "wandb": false,
+    "dump_dir": "/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/olmo-ddp/debug/recurrent-persistent-failure-localizers/original-gdn2-275m-cx8-step36768",
+    "experiment_id": "01KYFWDJ18MZ20F88JA7CF52M4",
+    "task_ids": [
+      "01KYFWDJ1EFP84F3ZENJ6DC89B"
+    ],
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYFWDJ18MZ20F88JA7CF52M4"
+  }
+]
