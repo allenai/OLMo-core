@@ -1,0 +1,55 @@
+schema_version: 1
+
+experiment:
+  description: 275M KDA expand_v=2 negative-eigenvalue gated-NoPE transfer at GDN1-optimal LRs
+  checkpoint_root: /weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/olmo-ddp/pretraining
+
+source:
+  repo: /weka/oe-adapt-default/jacobm/olmoe3/olmo-ddp-migration/OLMo-core-moe-v2-core
+  wrapper: src/scripts/train/jacobm_olmoe3_kda_beaker.sh
+  image: 01KW8G8JC20H11Y60PPTE2VN4Q
+
+beaker:
+  workspace: ai2/OLMo-3-moe-experiments
+  cluster: ai2/holmes
+  priority: urgent
+  shared_memory: 128 GiB
+  min_runtime: 0m
+  auto_resume: true
+  timeout: 168h
+  result_path: /results
+
+secrets:
+  AWS_ACCESS_KEY_ID: AWS_ACCESS_KEY_ID
+  AWS_SECRET_ACCESS_KEY: AWS_SECRET_ACCESS_KEY
+  WANDB_API_KEY: jacobm_WANDB_API_KEY
+  BEAKER_TOKEN: jacobm_BEAKER_TOKEN
+
+datasets:
+  - mount_path: /weka/oe-adapt-default
+    weka: oe-adapt-default
+  - mount_path: /weka/oe-training-default
+    weka: oe-training-default
+
+training:
+  sequence_length: 8192
+  hard_stop_steps: 0
+  checkpoints: true
+  save_interval: 999999999
+  ephemeral_save_interval: 500
+  checkpoint_removal: ephemeral_only
+  evals: false
+  eval_interval: 999999999
+  eval_steps: 0
+  eval_task_set: hellaswag
+  eval_on_finish: false
+  compile: true
+  wandb: true
+
+# One fixed-LR transfer per data multiple, using the observed-best LRs from
+# the matching expand_v=2 gated-NoPE GDN1 family.
+runs:
+  - {task_name: 275m-kda-ev2-neg-cx1, run_name: pt-275m-geometry-hybrid-kda-ev2-neg-nope-gated-cx1-lr8e-4-r1, model_variant: geometry_275m_kda_ev2_neg_nope_gated, model_size: 275m, cx: 1, learning_rate: "8e-4", global_batch_size: 262144, gpu_count: 4, expert_parallel_size: 1, expert_parallel_path: rowwise_nvshmem, rank_microbatch_sequences: 8}
+  - {task_name: 275m-kda-ev2-neg-cx2, run_name: pt-275m-geometry-hybrid-kda-ev2-neg-nope-gated-cx2-lr1p6e-3-r1, model_variant: geometry_275m_kda_ev2_neg_nope_gated, model_size: 275m, cx: 2, learning_rate: "1.6e-3", global_batch_size: 393216, gpu_count: 4, expert_parallel_size: 1, expert_parallel_path: rowwise_nvshmem, rank_microbatch_sequences: 12}
+  - {task_name: 275m-kda-ev2-neg-cx4, run_name: pt-275m-geometry-hybrid-kda-ev2-neg-nope-gated-cx4-lr8e-4-r1, model_variant: geometry_275m_kda_ev2_neg_nope_gated, model_size: 275m, cx: 4, learning_rate: "8e-4", global_batch_size: 524288, gpu_count: 4, expert_parallel_size: 1, expert_parallel_path: rowwise_nvshmem, rank_microbatch_sequences: 16}
+  - {task_name: 275m-kda-ev2-neg-cx8, run_name: pt-275m-geometry-hybrid-kda-ev2-neg-nope-gated-cx8-lr8e-4-r1, model_variant: geometry_275m_kda_ev2_neg_nope_gated, model_size: 275m, cx: 8, learning_rate: "8e-4", global_batch_size: 786432, gpu_count: 8, expert_parallel_size: 1, expert_parallel_path: rowwise_nvshmem, rank_microbatch_sequences: 12}

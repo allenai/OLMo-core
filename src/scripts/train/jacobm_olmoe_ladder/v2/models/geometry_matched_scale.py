@@ -328,17 +328,12 @@ def _build_geometry_matched_scale_model_config(
                 or attention.gate.granularity != GateGranularity.elementwise
                 or not attention.gate.full_precision
             ):
-                raise ValueError(
-                    f"unexpected attention gate at {model_size} layer {layer_idx}"
-                )
+                raise ValueError(f"unexpected attention gate at {model_size} layer {layer_idx}")
         elif attention.gate is not None:
             raise ValueError(f"{model_size} layer {layer_idx} must remain ungated")
 
     gate_params = (
-        geometry.d_model
-        * geometry.n_heads
-        * HEAD_DIM
-        * len(geometry.full_attention_layers)
+        geometry.d_model * geometry.n_heads * HEAD_DIM * len(geometry.full_attention_layers)
         if attention_gate
         else 0
     )
@@ -438,14 +433,10 @@ def build_geometry_matched_scale_model_config(
                 or attention.gate.granularity != GateGranularity.elementwise
                 or not attention.gate.full_precision
             ):
-                raise ValueError(
-                    f"{model_size} layer {layer_idx} does not have the expected gate"
-                )
+                raise ValueError(f"{model_size} layer {layer_idx} does not have the expected gate")
             attention.gate = None
         if normalized.as_dict() != ungated.as_dict():
-            raise ValueError(
-                f"{model_size} gated profile changed fields other than attention.gate"
-            )
+            raise ValueError(f"{model_size} gated profile changed fields other than attention.gate")
         if rope:
             gated_nope = _build_geometry_matched_scale_model_config(
                 model_size,
@@ -503,8 +494,7 @@ def build_geometry_matched_scale_gdn2_model_config(
     candidate.block_overrides = {
         0: dense_first,
         **{
-            layer_idx: deepcopy(resolved[layer_idx])
-            for layer_idx in geometry.full_attention_layers
+            layer_idx: deepcopy(resolved[layer_idx]) for layer_idx in geometry.full_attention_layers
         },
     }
     candidate.validate()
@@ -534,10 +524,7 @@ def build_geometry_matched_scale_gdn2_model_config(
         raise ValueError("GDN2 scale model must retain the dense-first layer-0 FFN")
     for layer_idx in geometry.gdn_layers:
         layer_gdn2 = cast(GatedDeltaNet2Config, candidate_resolved[layer_idx].sequence_mixer)
-        if (
-            layer_gdn2.expand_v != expand_v
-            or layer_gdn2.allow_neg_eigval != allow_neg_eigval
-        ):
+        if layer_gdn2.expand_v != expand_v or layer_gdn2.allow_neg_eigval != allow_neg_eigval:
             raise ValueError(
                 f"unexpected GDN2 stability settings at {model_size} layer {layer_idx}"
             )
@@ -554,8 +541,7 @@ def build_geometry_matched_scale_gdn2_model_config(
     normalized.block_overrides = {
         0: normalized_dense,
         **{
-            layer_idx: deepcopy(resolved[layer_idx])
-            for layer_idx in geometry.full_attention_layers
+            layer_idx: deepcopy(resolved[layer_idx]) for layer_idx in geometry.full_attention_layers
         },
     }
     if normalized.as_dict() != parent.as_dict():
@@ -596,15 +582,21 @@ def build_geometry_matched_scale_gdn2_model_config(
 
 def build_geometry_matched_scale_kda_model_config(
     model_size: str,
+    *,
+    expand_v: float = 1.0,
+    allow_neg_eigval: bool = False,
 ) -> OLMoDDPModelConfig:
-    """Replace only GDN1 with canonical KDA in the gated-NoPE scale geometry."""
+    """Replace only GDN1 with KDA in the gated-NoPE scale geometry."""
 
     if model_size == "275m":
         from scripts.train.jacobm_olmoe_ladder.v2.models.geometry_matched_275m import (
             build_geometry_matched_kda_model_config,
         )
 
-        return build_geometry_matched_kda_model_config()
+        return build_geometry_matched_kda_model_config(
+            expand_v=expand_v,
+            allow_neg_eigval=allow_neg_eigval,
+        )
 
     parent = build_geometry_matched_scale_model_config(
         model_size,
@@ -618,8 +610,8 @@ def build_geometry_matched_scale_kda_model_config(
         n_heads=old_gdn.n_heads,
         n_v_heads=old_gdn.n_heads,
         head_dim=old_gdn.head_dim,
-        expand_v=1.0,
-        allow_neg_eigval=False,
+        expand_v=expand_v,
+        allow_neg_eigval=allow_neg_eigval,
         conv_size=old_gdn.conv_size,
         conv_bias=old_gdn.conv_bias,
         norm_eps=old_gdn.norm_eps,
@@ -636,8 +628,7 @@ def build_geometry_matched_scale_kda_model_config(
     candidate.block_overrides = {
         0: dense_first,
         **{
-            layer_idx: deepcopy(resolved[layer_idx])
-            for layer_idx in geometry.full_attention_layers
+            layer_idx: deepcopy(resolved[layer_idx]) for layer_idx in geometry.full_attention_layers
         },
     }
     candidate.validate()
@@ -674,10 +665,10 @@ def build_geometry_matched_scale_kda_model_config(
             layer_kda.n_heads != geometry.n_heads
             or layer_kda.n_v_heads != geometry.n_heads
             or layer_kda.head_dim != HEAD_DIM
-            or layer_kda.expand_v != 1.0
-            or layer_kda.allow_neg_eigval
+            or layer_kda.expand_v != expand_v
+            or layer_kda.allow_neg_eigval != allow_neg_eigval
         ):
-            raise ValueError(f"unexpected canonical KDA settings at {model_size} layer {layer_idx}")
+            raise ValueError(f"unexpected KDA settings at {model_size} layer {layer_idx}")
 
     # Normalize KDA back to GDN1 and require byte-for-byte config equality.
     # This catches any accidental change to geometry, MoE, full attention,
@@ -691,8 +682,7 @@ def build_geometry_matched_scale_kda_model_config(
     normalized.block_overrides = {
         0: normalized_dense,
         **{
-            layer_idx: deepcopy(resolved[layer_idx])
-            for layer_idx in geometry.full_attention_layers
+            layer_idx: deepcopy(resolved[layer_idx]) for layer_idx in geometry.full_attention_layers
         },
     }
     if normalized.as_dict() != parent.as_dict():
@@ -813,8 +803,7 @@ def gdn2_parameter_summary(model_size: str) -> dict[str, Any]:
         "total_params": candidate.num_params,
         "delta_vs_gdn1_active": candidate.num_active_params - parent.num_active_params,
         "delta_vs_gdn1_active_non_embedding": (
-            candidate.num_active_non_embedding_params
-            - parent.num_active_non_embedding_params
+            candidate.num_active_non_embedding_params - parent.num_active_non_embedding_params
         ),
         "delta_vs_gdn1_total": candidate.num_params - parent.num_params,
     }

@@ -126,7 +126,10 @@ EXPECTED_GDN2_COUNTS_BY_EXPAND_V = {
     1.0: (284_915_520, 220_690_240, 3_130_447_680),
     2.0: (306_191_168, 241_965_888, 3_151_723_328),
 }
-EXPECTED_KDA_COUNTS = (274_470_720, 210_245_440, 3_120_002_880)
+EXPECTED_KDA_COUNTS_BY_SETTINGS = {
+    (1.0, False): (274_470_720, 210_245_440, 3_120_002_880),
+    (2.0, True): (290_503_488, 226_278_208, 3_136_035_648),
+}
 
 # A strict 1:1 hybrid alternates a recurrent/local mixer at even layers with
 # gated global attention at odd layers. Layer count is the only sizing knob:
@@ -259,18 +262,17 @@ def build_geometry_matched_model_config(
     ):
         raise ValueError(f"geometry candidate must use expand_v={profile.gdn_expand_v:g}")
     if profile.rope:
-        if any(
-            cast(AttentionConfig, resolved[i].sequence_mixer).rope is None for i in actual_full
-        ):
+        if any(cast(AttentionConfig, resolved[i].sequence_mixer).rope is None for i in actual_full):
             raise ValueError(f"{profile_name} must retain RoPE")
-    elif any(cast(AttentionConfig, resolved[i].sequence_mixer).rope is not None for i in actual_full):
+    elif any(
+        cast(AttentionConfig, resolved[i].sequence_mixer).rope is not None for i in actual_full
+    ):
         raise ValueError(f"{profile_name} must use NoPE")
     for layer_idx in actual_full:
         attention = cast(AttentionConfig, resolved[layer_idx].sequence_mixer)
         if attention.n_kv_heads != profile.n_kv_heads:
             raise ValueError(
-                f"{profile_name} layer {layer_idx} must use "
-                f"{profile.n_kv_heads} KV heads"
+                f"{profile_name} layer {layer_idx} must use {profile.n_kv_heads} KV heads"
             )
         if profile.attention_gate:
             if (
@@ -365,8 +367,10 @@ def build_geometry_matched_gdn2_model_config(
     if candidate.resolved_block_configs[0].routed_experts is not None:
         raise ValueError("GDN2 candidate must retain the dense-first layer-0 FFN")
     if any(
-        (cast(AttentionConfig, candidate.resolved_block_configs[layer_idx].sequence_mixer).rope
-         is None)
+        (
+            cast(AttentionConfig, candidate.resolved_block_configs[layer_idx].sequence_mixer).rope
+            is None
+        )
         != (not rope)
         for layer_idx in FULL_ATTENTION_LAYERS
     ):
@@ -378,20 +382,29 @@ def build_geometry_matched_gdn2_model_config(
     )
     if actual_counts != expected_counts:
         raise ValueError(
-            f"unexpected GDN2 parameter counts: expected {expected_counts}, "
-            f"found {actual_counts}"
+            f"unexpected GDN2 parameter counts: expected {expected_counts}, found {actual_counts}"
         )
     return candidate
 
 
-def build_geometry_matched_kda_model_config() -> OLMoDDPModelConfig:
-    """Replace GDN1 with canonical KDA in the gated-NoPE 275M geometry.
+def build_geometry_matched_kda_model_config(
+    *,
+    expand_v: float = 1.0,
+    allow_neg_eigval: bool = False,
+) -> OLMoDDPModelConfig:
+    """Replace GDN1 with KDA in the gated-NoPE 275M geometry.
 
-    The KDA mixers follow the released Kimi-Linear configuration: 128-d heads,
-    ``expand_v=1``, nonnegative eigenvalues, and four-token short convolutions.
-    Full attention, MoE geometry, dense-first placement, and initialization are
-    inherited unchanged from the matching GDN1 gated-NoPE model.
+    The defaults follow the released Kimi-Linear configuration. The audited
+    ``expand_v=2`` / negative-eigenvalue profile matches the recurrent settings
+    of the original geometry-matched GDN1 family. Full attention, MoE geometry,
+    dense-first placement, and initialization are inherited unchanged.
     """
+
+    settings = (float(expand_v), bool(allow_neg_eigval))
+    try:
+        expected_counts = EXPECTED_KDA_COUNTS_BY_SETTINGS[settings]
+    except KeyError as exc:
+        raise ValueError(f"unsupported audited KDA settings: {settings}") from exc
 
     candidate = build_geometry_matched_model_config("geometry_nope_gated")
     resolved = candidate.resolved_block_configs
@@ -400,8 +413,8 @@ def build_geometry_matched_kda_model_config() -> OLMoDDPModelConfig:
         n_heads=old_gdn.n_heads,
         n_v_heads=old_gdn.n_heads,
         head_dim=old_gdn.head_dim,
-        expand_v=1.0,
-        allow_neg_eigval=False,
+        expand_v=expand_v,
+        allow_neg_eigval=allow_neg_eigval,
         conv_size=old_gdn.conv_size,
         conv_bias=old_gdn.conv_bias,
         norm_eps=old_gdn.norm_eps,
@@ -434,7 +447,9 @@ def build_geometry_matched_kda_model_config() -> OLMoDDPModelConfig:
     if candidate.resolved_block_configs[0].routed_experts is not None:
         raise ValueError("KDA candidate must retain the dense-first layer-0 FFN")
     for layer_idx in FULL_ATTENTION_LAYERS:
-        attention = cast(AttentionConfig, candidate.resolved_block_configs[layer_idx].sequence_mixer)
+        attention = cast(
+            AttentionConfig, candidate.resolved_block_configs[layer_idx].sequence_mixer
+        )
         if attention.rope is not None:
             raise ValueError(f"KDA candidate full-attention layer {layer_idx} must use NoPE")
         if (
@@ -447,22 +462,24 @@ def build_geometry_matched_kda_model_config() -> OLMoDDPModelConfig:
             )
     if any(
         cast(KimiDeltaAttentionConfig, candidate.resolved_block_configs[i].sequence_mixer).expand_v
-        != 1.0
+        != expand_v
         or cast(
             KimiDeltaAttentionConfig, candidate.resolved_block_configs[i].sequence_mixer
         ).allow_neg_eigval
+        != allow_neg_eigval
         for i in GDN_LAYERS
     ):
-        raise ValueError("KDA candidate must use expand_v=1 and nonnegative eigenvalues")
+        raise ValueError(
+            f"KDA candidate must use expand_v={expand_v:g} and allow_neg_eigval={allow_neg_eigval}"
+        )
     actual_counts = (
         candidate.num_active_params,
         candidate.num_active_non_embedding_params,
         candidate.num_params,
     )
-    if actual_counts != EXPECTED_KDA_COUNTS:
+    if actual_counts != expected_counts:
         raise ValueError(
-            f"unexpected KDA parameter counts: expected {EXPECTED_KDA_COUNTS}, "
-            f"found {actual_counts}"
+            f"unexpected KDA parameter counts: expected {expected_counts}, found {actual_counts}"
         )
     return candidate
 
@@ -523,7 +540,10 @@ def build_geometry_matched_swa_model_config() -> OLMoDDPModelConfig:
         if attention.rope is None:
             raise ValueError(f"restored SWA layer {layer_idx} must retain RoPE")
         assert attention.sliding_window is not None
-        if attention.sliding_window.get_window_size(layer_idx, candidate.n_layers) != SWA_WINDOW_SIZE:
+        if (
+            attention.sliding_window.get_window_size(layer_idx, candidate.n_layers)
+            != SWA_WINDOW_SIZE
+        ):
             raise ValueError(f"restored SWA layer {layer_idx} must use a 2,048-token window")
     for layer_idx in actual_full:
         attention = cast(
@@ -675,14 +695,10 @@ def build_geometry_matched_one_to_one_model_config(
         for layer_idx in hybrid_layers:
             attention = cast(AttentionConfig, resolved[layer_idx].sequence_mixer)
             if attention.gate is not None or attention.rope is None:
-                raise ValueError(
-                    f"SWA layer {layer_idx} must retain ungated local RoPE attention"
-                )
+                raise ValueError(f"SWA layer {layer_idx} must retain ungated local RoPE attention")
             assert attention.sliding_window is not None
             if attention.sliding_window.get_window_size(layer_idx, n_layers) != SWA_WINDOW_SIZE:
-                raise ValueError(
-                    f"SWA layer {layer_idx} must use a {SWA_WINDOW_SIZE}-token window"
-                )
+                raise ValueError(f"SWA layer {layer_idx} must use a {SWA_WINDOW_SIZE}-token window")
 
     actual_counts = (
         candidate.num_active_params,

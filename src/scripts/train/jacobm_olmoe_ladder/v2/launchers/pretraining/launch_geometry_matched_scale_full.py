@@ -102,9 +102,7 @@ GDN2_BALANCED_LAYOUT = {
     ("1p2b", 4): (2, 8, 8, "sync_1d", 4),
     ("1p2b", 8): (4, 8, 8, "sync_1d", 3),
 }
-KDA_480M_LAYOUT = {
-    key: value for key, value in GDN2_BALANCED_LAYOUT.items() if key[0] == "480m"
-}
+KDA_480M_LAYOUT = {key: value for key, value in GDN2_BALANCED_LAYOUT.items() if key[0] == "480m"}
 COMPACT_V1_LAYOUT = {
     # Reuse the demonstrated first-hybrid layouts for 480M/810M, then retain
     # extra nodes only for the larger 1.2B data-multiple cells.
@@ -173,6 +171,16 @@ MODEL_VARIANTS = {
         "attention_gate": True,
         "gdn2": False,
         "kda": True,
+        "expand_v": 1.0,
+        "allow_neg_eigval": False,
+    },
+    "geometry_matched_kda_ev2_neg_nope_gated": {
+        "rope": False,
+        "attention_gate": True,
+        "gdn2": False,
+        "kda": True,
+        "expand_v": 2.0,
+        "allow_neg_eigval": True,
     },
 }
 NONFINITE_DIAGNOSTIC_STOPS = {
@@ -270,7 +278,11 @@ def validate(manifest: dict[str, Any]) -> list[dict[str, Any]]:
 
     for model_size in sorted({str(row["model_size"]) for row in rows}):
         if bool(profile.get("kda", False)):
-            model = build_geometry_matched_scale_kda_model_config(model_size)
+            model = build_geometry_matched_scale_kda_model_config(
+                model_size,
+                expand_v=float(profile["expand_v"]),
+                allow_neg_eigval=bool(profile["allow_neg_eigval"]),
+            )
         elif bool(profile["gdn2"]):
             model = build_geometry_matched_scale_gdn2_model_config(
                 model_size,
@@ -395,9 +407,7 @@ def recipe_for(
         else ""
     )
     recipe_suffix = (
-        recipe_suffix_override
-        if recipe_suffix_override is not None
-        else default_recipe_suffix
+        recipe_suffix_override if recipe_suffix_override is not None else default_recipe_suffix
     )
     pre_setup = "unset S3_PROFILE"
     if is_gdn2:

@@ -78,6 +78,10 @@ src/scripts/train/jacobm_olmoe_ladder/v2/launchers/pretraining/launch_275m_canon
 # Render the four-cell 480M canonical-KDA stability transfer; add --submit to launch.
 src/scripts/train/jacobm_olmoe_ladder/v2/launchers/pretraining/launch_480m_geometry_kda_full.sh
 
+# Render the distinct KDA expand_v=2 + negative-eigenvalue fixed-LR transfers.
+src/scripts/train/jacobm_olmoe_ladder/v2/launchers/pretraining/launch_275m_kda_ev2_neg_transfer.sh
+src/scripts/train/jacobm_olmoe_ladder/v2/launchers/pretraining/launch_480m_kda_ev2_neg_transfer.sh
+
 # Inspect the canonical expand_v=1, nonnegative GDN2 scale transfer. The
 # checked-in manifest preserves the approved longest-first submission order
 # and uses the balanced 176-GPU layout at full concurrency.

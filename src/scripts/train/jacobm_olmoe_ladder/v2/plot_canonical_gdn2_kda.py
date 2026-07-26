@@ -46,6 +46,7 @@ LRS = (4e-4, 8e-4, 1.6e-3, 3.2e-3)
 MODELS = ("275m", "480m", "810m", "1p2b")
 GDN2_KEY = "geometry_gdn2_ev1_noneg_nope_gated"
 KDA_KEY = "geometry_kda_ev1_noneg_nope_gated"
+KDA_EV2_NEG_KEY = "geometry_kda_ev2_neg_nope_gated"
 EXPECTED_SWEEP_POINTS = 4
 SCALE_LRS = {
     ("480m", 1): 1.2e-3,
@@ -66,6 +67,10 @@ CANONICAL_GDN2_ACTIVE_PARAMETERS = {
     "480m": 489_954_144,
     "810m": 823_189_952,
     "1p2b": 1_228_949_248,
+}
+KDA_EV2_NEG_ACTIVE_PARAMETERS = {
+    "275m": 290_503_488,
+    "480m": 498_741_600,
 }
 WIDE_ACTIVE_PARAMETERS = {
     "275m": 280_207_872,
@@ -106,6 +111,7 @@ def _lr_name(lr: float) -> str:
 
 def _scale_lr_name(lr: float) -> str:
     return {
+        1.6e-3: "1p6e-3",
         1.2e-3: "1p2e-3",
         9e-4: "9e-4",
         8e-4: "8e-4",
@@ -117,7 +123,7 @@ def _scale_lr_name(lr: float) -> str:
 
 
 def _planned_display_names() -> dict[str, list[tuple[str, int, float, str]]]:
-    planned = {GDN2_KEY: [], KDA_KEY: []}
+    planned = {GDN2_KEY: [], KDA_KEY: [], KDA_EV2_NEG_KEY: []}
     for cx in CXS:
         for lr in LRS:
             tag = _lr_name(lr)
@@ -162,10 +168,39 @@ def _planned_display_names() -> dict[str, list[tuple[str, int, float, str]]]:
                     ),
                 )
             )
+    gdn1_275m_lrs = {1: 8e-4, 2: 1.6e-3, 4: 8e-4, 8: 8e-4}
+    for cx, lr in gdn1_275m_lrs.items():
+        planned[KDA_EV2_NEG_KEY].append(
+            (
+                "275m",
+                cx,
+                lr,
+                (
+                    f"pt-275m-geometry-hybrid-kda-ev2-neg-nope-gated-"
+                    f"cx{cx}-lr{_scale_lr_name(lr)}-r1"
+                ),
+            )
+        )
+    for cx in CXS:
+        lr = SCALE_LRS[("480m", cx)]
+        planned[KDA_EV2_NEG_KEY].append(
+            (
+                "480m",
+                cx,
+                lr,
+                (
+                    f"pt-480m-geometry-hybrid-kda-ev2-neg-nope-gated-"
+                    f"cx{cx}-lr{_scale_lr_name(lr)}-r1"
+                ),
+            )
+        )
     return planned
 
 
-def resolve_interventions(api: Any, project: str) -> tuple[Variant, Variant, dict[str, list[str]]]:
+def resolve_interventions(
+    api: Any,
+    project: str,
+) -> tuple[Variant, Variant, Variant, dict[str, list[str]]]:
     """Resolve exact W&B names once and reject ambiguous histories."""
 
     planned = _planned_display_names()
@@ -182,7 +217,11 @@ def resolve_interventions(api: Any, project: str) -> tuple[Variant, Variant, dic
         if run.display_name in by_name:
             by_name[run.display_name].append(run)
 
-    unresolved: dict[str, list[str]] = {GDN2_KEY: [], KDA_KEY: []}
+    unresolved: dict[str, list[str]] = {
+        GDN2_KEY: [],
+        KDA_KEY: [],
+        KDA_EV2_NEG_KEY: [],
+    }
 
     def build_variant(key: str, label: str, color: str) -> Variant:
         registered: list[RegisteredRun] = []
@@ -229,7 +268,12 @@ def resolve_interventions(api: Any, project: str) -> tuple[Variant, Variant, dic
         "canonical KDA (expand_v=1, nonnegative)",
         "#2563eb",
     )
-    return canonical_gdn2, canonical_kda, unresolved
+    kda_ev2_neg = build_variant(
+        KDA_EV2_NEG_KEY,
+        "KDA (expand_v=2, negative eigenvalues)",
+        "#d97706",
+    )
+    return canonical_gdn2, canonical_kda, kda_ev2_neg, unresolved
 
 
 def comparison_wave(canonical_gdn2: Variant, canonical_kda: Variant) -> Wave:
@@ -280,6 +324,38 @@ def canonical_scale_wave(canonical_gdn2: Variant, canonical_kda: Variant) -> Wav
             canonical_kda,
         ),
         intervention=canonical_gdn2,
+        uplot_baselines=False,
+    )
+
+
+def kda_ev2_neg_scale_wave(
+    canonical_gdn2: Variant,
+    canonical_kda: Variant,
+    kda_ev2_neg: Variant,
+) -> Wave:
+    return Wave(
+        key="kda_ev2_neg_scale",
+        title="KDA expand_v=2 negative-eigenvalue fixed-LR transfer",
+        intervention_label=kda_ev2_neg.label,
+        architecture_note=(
+            "KDA uses the matching gated-NoPE geometry with expand_v=2 and "
+            "negative eigenvalues. The 275M cells use the observed-best LRs "
+            "from matching GDN1; 480M uses transferred wide-integration LRs."
+        ),
+        models=("275m", "480m"),
+        lr_sweep_models=(),
+        active_parameters=KDA_EV2_NEG_ACTIVE_PARAMETERS,
+        baseline_active_parameters={
+            model: WIDE_ACTIVE_PARAMETERS[model] for model in ("275m", "480m")
+        },
+        baseline=WIDE_INTEGRATION,
+        additional_baselines=(
+            GEOMETRY_GDN_EV2_NOPE_GATED,
+            GEOMETRY_GDN2_EV2_NOPE_GATED,
+            canonical_gdn2,
+            canonical_kda,
+        ),
+        intervention=kda_ev2_neg,
         uplot_baselines=False,
     )
 
@@ -436,8 +512,11 @@ def main() -> None:
     args = parser.parse_args()
 
     api = wandb.Api(timeout=90)
-    canonical_gdn2, canonical_kda, unresolved = resolve_interventions(api, args.project)
-    discovered = len(canonical_gdn2.runs) + len(canonical_kda.runs)
+    canonical_gdn2, canonical_kda, kda_ev2_neg, unresolved = resolve_interventions(
+        api,
+        args.project,
+    )
+    discovered = len(canonical_gdn2.runs) + len(canonical_kda.runs) + len(kda_ev2_neg.runs)
     planned = sum(len(rows) for rows in _planned_display_names().values())
     print(f"Resolved {discovered}/{planned} planned runs by exact W&B display name.")
     for key, names in unresolved.items():
@@ -447,6 +526,11 @@ def main() -> None:
 
     wave = comparison_wave(canonical_gdn2, canonical_kda)
     scale_wave = canonical_scale_wave(canonical_gdn2, canonical_kda)
+    kda_ev2_neg_wave = kda_ev2_neg_scale_wave(
+        canonical_gdn2,
+        canonical_kda,
+        kda_ev2_neg,
+    )
     points = load_points(
         wave,
         project=args.project,
@@ -458,6 +542,15 @@ def main() -> None:
     )
     scale_points = load_points(
         scale_wave,
+        project=args.project,
+        cache_dir=args.cache_dir,
+        window_m=FINAL_WINDOW_M,
+        include_running=False,
+        refresh_cache=args.refresh_cache,
+        refresh_stale_cache=args.refresh_stale_cache,
+    )
+    kda_ev2_neg_points = load_points(
+        kda_ev2_neg_wave,
         project=args.project,
         cache_dir=args.cache_dir,
         window_m=FINAL_WINDOW_M,
@@ -515,10 +608,17 @@ def main() -> None:
             output_dir / "gdn2_fixed_lr_scale_comparison.png",
             FINAL_WINDOW_M,
         ),
+        plot_fixed_lr_scale_comparison(
+            kda_ev2_neg_points,
+            kda_ev2_neg_wave,
+            output_dir / "kda_ev2_neg_fixed_lr_scale_comparison.png",
+            FINAL_WINDOW_M,
+        ),
     ]
     sweep_unresolved = {
         key: [name for name in names if name.startswith("pt-275m-")]
         for key, names in unresolved.items()
+        if key in {GDN2_KEY, KDA_KEY}
     }
     result_paths = (
         *write_comparison_results(points, variants, sweep_unresolved, results_path),
@@ -526,6 +626,12 @@ def main() -> None:
             scale_points,
             scale_wave,
             results_path.with_name("scale_results"),
+            FINAL_WINDOW_M,
+        ),
+        *write_results(
+            kda_ev2_neg_points,
+            kda_ev2_neg_wave,
+            results_path.with_name("kda_ev2_neg_scale_results"),
             FINAL_WINDOW_M,
         ),
     )

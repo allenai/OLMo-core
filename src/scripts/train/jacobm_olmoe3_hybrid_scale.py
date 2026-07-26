@@ -104,8 +104,14 @@ GDN2_SCALE_NOPE_SETTINGS = {
     "geometry_matched_gdn2_ev2_nope_gated": (2.0, True),
     "geometry_matched_gdn2_ev1_noneg_nope_gated": (1.0, False),
 }
-KDA_275M_VARIANT = "geometry_275m_kda_ev1_noneg_nope_gated"
-KDA_SCALE_VARIANT = "geometry_matched_kda_ev1_noneg_nope_gated"
+KDA_275M_NOPE_SETTINGS = {
+    "geometry_275m_kda_ev1_noneg_nope_gated": (1.0, False),
+    "geometry_275m_kda_ev2_neg_nope_gated": (2.0, True),
+}
+KDA_SCALE_NOPE_SETTINGS = {
+    "geometry_matched_kda_ev1_noneg_nope_gated": (1.0, False),
+    "geometry_matched_kda_ev2_neg_nope_gated": (2.0, True),
+}
 
 
 def env_bool(name: str, default: bool) -> bool:
@@ -128,9 +134,7 @@ EP_PATH = ExpertParallelPath(
 EP_USE_CODE_DEFAULTS = env_bool("OLMOE3_HYBRID_EP_USE_CODE_DEFAULTS", False)
 EP_ROWWISE_GET_NBLOCKS = os.environ.get("OLMOE3_HYBRID_EP_ROWWISE_GET_NBLOCKS")
 EP_ROWWISE_PUT_NBLOCKS = os.environ.get("OLMOE3_HYBRID_EP_ROWWISE_PUT_NBLOCKS")
-EP_ROWWISE_WEIGHTED_PUT_NBLOCKS = os.environ.get(
-    "OLMOE3_HYBRID_EP_ROWWISE_WEIGHTED_PUT_NBLOCKS"
-)
+EP_ROWWISE_WEIGHTED_PUT_NBLOCKS = os.environ.get("OLMOE3_HYBRID_EP_ROWWISE_WEIGHTED_PUT_NBLOCKS")
 RANK_MICROBATCH_SEQUENCES = int(os.environ.get("OLMOE3_HYBRID_RANK_MICROBATCH_SEQUENCES", "16"))
 LEARNING_RATE = float(os.environ.get("OLMOE3_HYBRID_LR", "1.6e-3"))
 CHINCHILLA_MULTIPLE = float(os.environ.get("OLMOE3_HYBRID_CHINCHILLA_MULTIPLE", "1"))
@@ -139,27 +143,19 @@ HARD_STOP_STEPS = int(os.environ.get("OLMOE3_HYBRID_HARD_STOP_STEPS", "0"))
 USE_COMPILE = env_bool("OLMOE3_HYBRID_USE_COMPILE", True)
 WANDB_ENABLED = env_bool("OLMOE3_HYBRID_WANDB", True)
 CHECKPOINTS_ENABLED = env_bool("OLMOE3_HYBRID_CHECKPOINTS", True)
-CHECKPOINT_WRITES_ENABLED = env_bool(
-    "OLMOE3_HYBRID_CHECKPOINT_WRITES", CHECKPOINTS_ENABLED
-)
+CHECKPOINT_WRITES_ENABLED = env_bool("OLMOE3_HYBRID_CHECKPOINT_WRITES", CHECKPOINTS_ENABLED)
 EVALS_ENABLED = env_bool("OLMOE3_HYBRID_EVALS", False)
 DP_USE_REDUCE_SCATTER = env_bool("OLMOE3_HYBRID_DP_USE_REDUCE_SCATTER", False)
 DP_BUCKET_CAP_MB = os.environ.get("OLMOE3_HYBRID_DP_BUCKET_CAP_MB")
 GDN2_DISABLE_RECOMPUTE = env_bool("OLMOE3_HYBRID_GDN2_DISABLE_RECOMPUTE", False)
 GDN2_LOCALIZE_NONFINITE = env_bool("OLMOE3_HYBRID_GDN2_LOCALIZE_NONFINITE", False)
-GDN2_LOCALIZE_START_STEP = int(
-    os.environ.get("OLMOE3_HYBRID_GDN2_LOCALIZE_START_STEP", "0")
-)
-GDN2_LOCALIZE_END_STEP = int(
-    os.environ.get("OLMOE3_HYBRID_GDN2_LOCALIZE_END_STEP", "0")
-)
+GDN2_LOCALIZE_START_STEP = int(os.environ.get("OLMOE3_HYBRID_GDN2_LOCALIZE_START_STEP", "0"))
+GDN2_LOCALIZE_END_STEP = int(os.environ.get("OLMOE3_HYBRID_GDN2_LOCALIZE_END_STEP", "0"))
 GDN2_LOCALIZE_DUMP_ROOT = os.environ.get(
     "OLMOE3_HYBRID_GDN2_LOCALIZE_DUMP_ROOT",
     "/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/olmo-ddp/debug/gdn2-localizer",
 )
-GDN2_LOCALIZE_RUN_ID = os.environ.get(
-    "OLMOE3_HYBRID_GDN2_LOCALIZE_RUN_ID", "gdn2-localizer"
-)
+GDN2_LOCALIZE_RUN_ID = os.environ.get("OLMOE3_HYBRID_GDN2_LOCALIZE_RUN_ID", "gdn2-localizer")
 EVAL_INTERVAL = int(os.environ.get("OLMOE3_HYBRID_EVAL_INTERVAL", "1000"))
 EVAL_STEPS = int(os.environ.get("OLMOE3_HYBRID_EVAL_STEPS", "0"))
 EVAL_TASK_SET = os.environ.get("OLMOE3_HYBRID_EVAL_TASK_SET", "hellaswag")
@@ -188,9 +184,7 @@ if GDN2_DISABLE_RECOMPUTE and MODEL_VARIANT not in {
     "geometry_275m_gdn2_ev2_rope_gated",
     "geometry_275m_gdn2_ev2_rope_gated_1to1",
 }:
-    raise ValueError(
-        "OLMOE3_HYBRID_GDN2_DISABLE_RECOMPUTE is only valid for the GDN2 variant"
-    )
+    raise ValueError("OLMOE3_HYBRID_GDN2_DISABLE_RECOMPUTE is only valid for the GDN2 variant")
 
 
 def model_config():
@@ -241,18 +235,14 @@ def model_config():
             raise ValueError(
                 "The geometry_275m_gdn2_ev2_rope_gated variant only supports MODEL_SIZE=275m"
             )
-        model = build_geometry_matched_gdn2_model_config(
-            disable_recompute=GDN2_DISABLE_RECOMPUTE
-        )
+        model = build_geometry_matched_gdn2_model_config(disable_recompute=GDN2_DISABLE_RECOMPUTE)
     elif MODEL_VARIANT in GDN2_275M_NOPE_SETTINGS:
         from scripts.train.jacobm_olmoe_ladder.v2.models.geometry_matched_275m import (
             build_geometry_matched_gdn2_model_config,
         )
 
         if MODEL_SIZE != "275m":
-            raise ValueError(
-                f"The {MODEL_VARIANT} variant only supports MODEL_SIZE=275m"
-            )
+            raise ValueError(f"The {MODEL_VARIANT} variant only supports MODEL_SIZE=275m")
         expand_v, allow_neg_eigval = GDN2_275M_NOPE_SETTINGS[MODEL_VARIANT]
         model = build_geometry_matched_gdn2_model_config(
             rope=False,
@@ -260,14 +250,18 @@ def model_config():
             allow_neg_eigval=allow_neg_eigval,
             disable_recompute=GDN2_DISABLE_RECOMPUTE,
         )
-    elif MODEL_VARIANT == KDA_275M_VARIANT:
+    elif MODEL_VARIANT in KDA_275M_NOPE_SETTINGS:
         from scripts.train.jacobm_olmoe_ladder.v2.models.geometry_matched_275m import (
             build_geometry_matched_kda_model_config,
         )
 
         if MODEL_SIZE != "275m":
-            raise ValueError(f"The {KDA_275M_VARIANT} variant only supports MODEL_SIZE=275m")
-        model = build_geometry_matched_kda_model_config()
+            raise ValueError(f"The {MODEL_VARIANT} variant only supports MODEL_SIZE=275m")
+        expand_v, allow_neg_eigval = KDA_275M_NOPE_SETTINGS[MODEL_VARIANT]
+        model = build_geometry_matched_kda_model_config(
+            expand_v=expand_v,
+            allow_neg_eigval=allow_neg_eigval,
+        )
     elif MODEL_VARIANT == "geometry_275m_swa_rope_gated":
         from scripts.train.jacobm_olmoe_ladder.v2.models.geometry_matched_275m import (
             build_geometry_matched_swa_model_config,
@@ -299,9 +293,7 @@ def model_config():
         model = build_geometry_matched_one_to_one_model_config(
             mixer,
             gdn2_disable_recompute=GDN2_DISABLE_RECOMPUTE,
-            swa_n_layers=(
-                10 if MODEL_VARIANT == "geometry_275m_swa_rope_gated_1to1_10l" else None
-            ),
+            swa_n_layers=(10 if MODEL_VARIANT == "geometry_275m_swa_rope_gated_1to1_10l" else None),
         )
     elif MODEL_VARIANT == "geometry_matched_gdn_ev2":
         from scripts.train.jacobm_olmoe_ladder.v2.models.geometry_matched_scale import (
@@ -349,12 +341,17 @@ def model_config():
             allow_neg_eigval=allow_neg_eigval,
             disable_recompute=GDN2_DISABLE_RECOMPUTE,
         )
-    elif MODEL_VARIANT == KDA_SCALE_VARIANT:
+    elif MODEL_VARIANT in KDA_SCALE_NOPE_SETTINGS:
         from scripts.train.jacobm_olmoe_ladder.v2.models.geometry_matched_scale import (
             build_geometry_matched_scale_kda_model_config,
         )
 
-        model = build_geometry_matched_scale_kda_model_config(MODEL_SIZE)
+        expand_v, allow_neg_eigval = KDA_SCALE_NOPE_SETTINGS[MODEL_VARIANT]
+        model = build_geometry_matched_scale_kda_model_config(
+            MODEL_SIZE,
+            expand_v=expand_v,
+            allow_neg_eigval=allow_neg_eigval,
+        )
     else:
         raise ValueError(f"Unknown model variant {MODEL_VARIANT!r}")
     if EP_SIZE > 1:
@@ -382,9 +379,7 @@ def model_config():
             if EP_ROWWISE_PUT_NBLOCKS is not None:
                 block.ep.rowwise_put_nblocks = int(EP_ROWWISE_PUT_NBLOCKS)
             if EP_ROWWISE_WEIGHTED_PUT_NBLOCKS is not None:
-                block.ep.rowwise_weighted_put_nblocks = int(
-                    EP_ROWWISE_WEIGHTED_PUT_NBLOCKS
-                )
+                block.ep.rowwise_weighted_put_nblocks = int(EP_ROWWISE_WEIGHTED_PUT_NBLOCKS)
         model.validate()
     return model
 
@@ -554,7 +549,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         "geometry_275m_gdn_ev2_nope_gated",
         "geometry_275m_gdn_ev2_rope_gated",
         *GDN2_275M_NOPE_SETTINGS,
-        KDA_275M_VARIANT,
+        *KDA_275M_NOPE_SETTINGS,
         "geometry_275m_gdn2_ev2_rope_gated",
         "geometry_275m_swa_rope_gated",
         "geometry_275m_gdn_ev2_rope_gated_1to1",
@@ -566,7 +561,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         "geometry_matched_gdn_ev2_nope_gated",
         "geometry_matched_gdn_ev2_rope_gated",
         *GDN2_SCALE_NOPE_SETTINGS,
-        KDA_SCALE_VARIANT,
+        *KDA_SCALE_NOPE_SETTINGS,
     }
     if MODEL_VARIANT == "geometry_275m_gdn_ev2_rope_gated":
         variant_group = "olmoe3-275m-geometry-gdn-ev2-rope-gated"
@@ -575,11 +570,11 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
     elif MODEL_VARIANT in GDN2_275M_NOPE_SETTINGS:
         expand_v, allow_neg_eigval = GDN2_275M_NOPE_SETTINGS[MODEL_VARIANT]
         eigval_tag = "neg" if allow_neg_eigval else "noneg"
-        variant_group = (
-            f"olmoe3-275m-geometry-gdn2-ev{expand_v:g}-{eigval_tag}-nope-gated"
-        )
-    elif MODEL_VARIANT == KDA_275M_VARIANT:
-        variant_group = "olmoe3-275m-geometry-kda-ev1-noneg-nope-gated"
+        variant_group = f"olmoe3-275m-geometry-gdn2-ev{expand_v:g}-{eigval_tag}-nope-gated"
+    elif MODEL_VARIANT in KDA_275M_NOPE_SETTINGS:
+        expand_v, allow_neg_eigval = KDA_275M_NOPE_SETTINGS[MODEL_VARIANT]
+        eigval_tag = "neg" if allow_neg_eigval else "noneg"
+        variant_group = f"olmoe3-275m-geometry-kda-ev{expand_v:g}-{eigval_tag}-nope-gated"
     elif MODEL_VARIANT == "geometry_275m_swa_rope_gated":
         variant_group = "olmoe3-275m-geometry-swa-rope-gated-throughput"
     elif MODEL_VARIANT == "geometry_275m_gdn_ev2_rope_gated_1to1":
@@ -608,37 +603,36 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
     elif MODEL_VARIANT in GDN2_SCALE_NOPE_SETTINGS:
         expand_v, allow_neg_eigval = GDN2_SCALE_NOPE_SETTINGS[MODEL_VARIANT]
         eigval_tag = "neg" if allow_neg_eigval else "noneg"
-        variant_group = (
-            f"olmoe3-geometry-matched-gdn2-ev{expand_v:g}-{eigval_tag}-nope-gated-scale"
-        )
-    elif MODEL_VARIANT == KDA_SCALE_VARIANT:
-        variant_group = "olmoe3-geometry-matched-kda-ev1-noneg-nope-gated-scale"
+        variant_group = f"olmoe3-geometry-matched-gdn2-ev{expand_v:g}-{eigval_tag}-nope-gated-scale"
+    elif MODEL_VARIANT in KDA_SCALE_NOPE_SETTINGS:
+        expand_v, allow_neg_eigval = KDA_SCALE_NOPE_SETTINGS[MODEL_VARIANT]
+        eigval_tag = "neg" if allow_neg_eigval else "noneg"
+        variant_group = f"olmoe3-geometry-matched-kda-ev{expand_v:g}-{eigval_tag}-nope-gated-scale"
     else:
         variant_group = "olmoe3-integration-wide-hybrid-scale"
     if MODEL_VARIANT in {
         "geometry_275m_gdn_ev2_nope_gated",
         "geometry_275m_gdn_ev2_nope",
         *GDN2_275M_NOPE_SETTINGS,
-        KDA_275M_VARIANT,
-        KDA_SCALE_VARIANT,
+        *KDA_275M_NOPE_SETTINGS,
+        *KDA_SCALE_NOPE_SETTINGS,
         "geometry_matched_gdn_ev2_nope",
         "geometry_matched_gdn_ev2_nope_gated",
         *GDN2_SCALE_NOPE_SETTINGS,
     }:
-        expand_v = (
-            1.0
-            if MODEL_VARIANT in {KDA_275M_VARIANT, KDA_SCALE_VARIANT}
-            else {
-                **GDN2_275M_NOPE_SETTINGS,
-                **GDN2_SCALE_NOPE_SETTINGS,
-            }.get(MODEL_VARIANT, (2.0, True))[0]
-        )
+        recurrent_settings = {
+            **GDN2_275M_NOPE_SETTINGS,
+            **GDN2_SCALE_NOPE_SETTINGS,
+            **KDA_275M_NOPE_SETTINGS,
+            **KDA_SCALE_NOPE_SETTINGS,
+        }
+        expand_v = recurrent_settings.get(MODEL_VARIANT, (2.0, True))[0]
         variant_tags = ["geometry-matched", f"expand-v-{expand_v:g}", "nope"]
         if MODEL_VARIANT in {
             "geometry_275m_gdn_ev2_nope_gated",
             *GDN2_275M_NOPE_SETTINGS,
-            KDA_275M_VARIANT,
-            KDA_SCALE_VARIANT,
+            *KDA_275M_NOPE_SETTINGS,
+            *KDA_SCALE_NOPE_SETTINGS,
             "geometry_matched_gdn_ev2_nope_gated",
             *GDN2_SCALE_NOPE_SETTINGS,
         }:
@@ -659,8 +653,18 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 )
             if GDN2_DISABLE_RECOMPUTE:
                 variant_tags.append("gdn2-no-recompute")
-        if MODEL_VARIANT in {KDA_275M_VARIANT, KDA_SCALE_VARIANT}:
-            variant_tags.extend(["kda", "nonnegative-eigenvalues"])
+        kda_settings = {**KDA_275M_NOPE_SETTINGS, **KDA_SCALE_NOPE_SETTINGS}
+        if MODEL_VARIANT in kda_settings:
+            variant_tags.extend(
+                [
+                    "kda",
+                    (
+                        "negative-eigenvalues"
+                        if kda_settings[MODEL_VARIANT][1]
+                        else "nonnegative-eigenvalues"
+                    ),
+                ]
+            )
     elif geometry_variant:
         variant_tags = ["geometry-matched", "expand-v-2", "rope"]
         if MODEL_VARIANT in {
@@ -809,22 +813,16 @@ def finalize_config(config: ExperimentConfig) -> None:
     if HARD_STOP_STEPS and not CHECKPOINTS_ENABLED:
         log.info("Smoke checkpointing is disabled; no final hard-stop checkpoint will be written")
     if CHECKPOINT_WRITES_ENABLED and not CHECKPOINTS_ENABLED:
-        raise ValueError(
-            "OLMOE3_HYBRID_CHECKPOINT_WRITES=1 requires OLMOE3_HYBRID_CHECKPOINTS=1"
-        )
+        raise ValueError("OLMOE3_HYBRID_CHECKPOINT_WRITES=1 requires OLMOE3_HYBRID_CHECKPOINTS=1")
     if CHECKPOINTS_ENABLED and not CHECKPOINT_WRITES_ENABLED:
         log.info("Checkpoint loading is enabled, but all checkpoint writes are disabled")
     if GDN2_LOCALIZE_NONFINITE:
         if "gdn" not in MODEL_VARIANT:
             raise ValueError("Recurrent non-finite localization requires a GDN model variant")
         if not (0 < GDN2_LOCALIZE_START_STEP <= GDN2_LOCALIZE_END_STEP):
-            raise ValueError(
-                "GDN2 localization requires a positive, ordered start/end step window"
-            )
+            raise ValueError("GDN2 localization requires a positive, ordered start/end step window")
         if CHECKPOINT_WRITES_ENABLED or WANDB_ENABLED:
-            raise ValueError(
-                "GDN2 localization must disable checkpoint writes and W&B"
-            )
+            raise ValueError("GDN2 localization must disable checkpoint writes and W&B")
     if EVAL_BACKFILL:
         if CHECKPOINTS_ENABLED:
             raise ValueError("Eval-only backfills must set OLMOE3_HYBRID_CHECKPOINTS=0")
@@ -868,9 +866,7 @@ def finalize_config(config: ExperimentConfig) -> None:
         "geometry_275m_gdn2_ev2_rope_gated",
         "geometry_275m_gdn2_ev2_rope_gated_1to1",
     }:
-        max_active_parameter_delta_fraction = GDN2_MAX_ACTIVE_PARAMETER_DELTA_FRACTIONS[
-            MODEL_SIZE
-        ]
+        max_active_parameter_delta_fraction = GDN2_MAX_ACTIVE_PARAMETER_DELTA_FRACTIONS[MODEL_SIZE]
     elif MODEL_VARIANT in {
         "geometry_matched_gdn_ev2_nope_gated",
         "geometry_matched_gdn_ev2_rope_gated",

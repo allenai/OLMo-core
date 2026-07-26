@@ -36,7 +36,8 @@ The KDA layers match FLA `0.4.1`'s released Kimi configuration:
 
 | Variant | Active params | Active non-embedding | Total params |
 |---|---:|---:|---:|
-| KDA gated-NoPE geometry | 274,470,720 | 210,245,440 | 3,120,002,880 |
+| Canonical KDA (`expand_v=1`, nonnegative) | 274,470,720 | 210,245,440 | 3,120,002,880 |
+| GDN1-settings KDA (`expand_v=2`, negative eigenvalues) | 290,503,488 | 226,278,208 | 3,136,035,648 |
 
 The candidate's default Cx1 token budget is 4,204,908,800 tokens under the
 usual `20 * active_non_embedding_params * Cx` rule.
@@ -96,3 +97,21 @@ four cells had finished cleanly without a failed attempt. Their strict
 final-250M CEs at Cx1/2/4/8 are `2.517826`, `2.412884`, `2.323228`, and
 `2.237558`. All four KDA transfer points are included in
 `gdn2_fixed_lr_scale_comparison.png`.
+
+## GDN1-settings KDA transfer
+
+The separately named `geometry_*_kda_ev2_neg_nope_gated` family tests KDA
+with the recurrent settings used by matching GDN1: `expand_v=2` and negative
+eigenvalues enabled. It otherwise retains the same gated-NoPE geometry and
+FLA 0.4.1 KDA kernel as canonical KDA.
+
+The fixed-LR transfer covers 275M and 480M at Cx1/2/4/8. The 275M LRs are the
+observed-best matching-GDN1 values (`8e-4`, `1.6e-3`, `8e-4`, `8e-4`); 480M
+uses the standard transferred wide LRs (`1.2e-3`, `9e-4`, `8e-4`, `8e-4`).
+The two sizes request 20 and 40 GPUs respectively, use accumulation one, and
+write distinct W&B/checkpoint identities containing `kda-ev2-neg`.
+
+`plot_canonical_gdn2_kda.py` registers these identities separately and writes
+`kda_ev2_neg_fixed_lr_scale_comparison.png` plus its own JSON/Markdown result
+ledger. These fixed-LR points do not enter the canonical 275M LR-sweep U-plots
+or observed-optimal summary.
