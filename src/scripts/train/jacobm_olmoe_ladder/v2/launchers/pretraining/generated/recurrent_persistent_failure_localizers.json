@@ -65,5 +65,30 @@
       "01KYFWFRFB641XHEX33F96MR2D"
     ],
     "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYFWFR4Z1EJSNAQNX1HTDDG0"
+  },
+  {
+    "case": "gdn1-1p2b-cx8-step17592",
+    "kind": "GDN1 expand_v=2 negative-eigenvalues; broad all-rank NaN gradients",
+    "run_name": "pt-1p2b-geometry-gdn-ev2-nope-cx8-lr4e-4-ep8-sync-r1",
+    "commit": "75d73eb268ecb1e9a4bf412dd620ba917fc4de98",
+    "source_checkpoint": "/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/olmo-ddp/pretraining/pt-1p2b-geometry-gdn-ev2-nope-cx8-lr4e-4-ep8-sync-r1/step17500",
+    "expected_failure_step": 17592,
+    "localize_start_step": 17580,
+    "hard_stop_step": 17605,
+    "world_size": 32,
+    "expert_parallel_size": 8,
+    "rank_microbatch_sequences": 3,
+    "checkpoint_writes": false,
+    "wandb": false,
+    "allocated": true,
+    "dump_dir": "/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/olmo-ddp/debug/recurrent-persistent-failure-localizers/gdn1-1p2b-cx8-step17592",
+    "experiment_id": "01KYFY1K9799Z47CAFT9M1R8EK",
+    "task_ids": [
+      "01KYFY1K9F35JK1RSG6CGFJHP1",
+      "01KYFY1KCXPFZE342C4T5PXJC9",
+      "01KYFY1KGAEJZBF4EE7RC7Q7TF",
+      "01KYFY1KKK59B0GJ3ABMFX9WT9"
+    ],
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYFY1K9799Z47CAFT9M1R8EK"
   }
 ]
