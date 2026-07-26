@@ -152,6 +152,15 @@ MODEL_VARIANTS = {
         "expand_v": 2.0,
         "allow_neg_eigval": True,
     },
+    # Same architecture as above, but routed through the exact 275M geometry
+    # builder. This alias is also useful for read-only checkpoint diagnostics.
+    "geometry_275m_gdn2_ev2_nope_gated": {
+        "rope": False,
+        "attention_gate": True,
+        "gdn2": True,
+        "expand_v": 2.0,
+        "allow_neg_eigval": True,
+    },
     "geometry_matched_gdn2_ev1_noneg_nope_gated": {
         "rope": False,
         "attention_gate": True,

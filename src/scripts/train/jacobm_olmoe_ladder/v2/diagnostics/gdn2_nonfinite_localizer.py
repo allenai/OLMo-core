@@ -1,4 +1,4 @@
-"""Read-only hooks for localizing a deterministic GDN2 non-finite failure.
+"""Read-only hooks for localizing deterministic recurrent-attention non-finites.
 
 The callback is deliberately opt-in and attaches its hooks only shortly before
 the expected failure.  This keeps the long checkpoint replay on the ordinary
@@ -21,6 +21,7 @@ from torch import nn
 
 from olmo_core.distributed.utils import get_local_tensor, get_rank
 from olmo_core.nn.attention.gdn2 import GatedDeltaNet2
+from olmo_core.nn.attention.recurrent import GatedDeltaNet
 from olmo_core.nn.ddp.block import OLMoDDPTransformerBlock
 from olmo_core.train.callbacks import Callback
 
@@ -99,6 +100,9 @@ class GDN2NonfiniteLocalizerCallback(Callback):
     _active: bool = field(default=False, init=False, repr=False)
     _captured: bool = field(default=False, init=False, repr=False)
     _batch: dict[str, Any] | None = field(default=None, init=False, repr=False)
+    _forward_context: dict[str, tuple[tuple[Any, ...], dict[str, Any]]] = field(
+        default_factory=dict, init=False, repr=False
+    )
 
     def __post_init__(self) -> None:
         if self.start_step < 1 or self.end_step < self.start_step:
@@ -128,6 +132,7 @@ class GDN2NonfiniteLocalizerCallback(Callback):
     def pre_step(self, batch: dict[str, Any]) -> None:
         self._active = self.start_step <= self.step <= self.end_step
         self._batch = batch if self._active else None
+        self._forward_context.clear()
         if self._active and not self._hooks_attached:
             self._attach_hooks()
             log.info(
@@ -139,6 +144,7 @@ class GDN2NonfiniteLocalizerCallback(Callback):
 
     def post_step(self) -> None:
         self._batch = None
+        self._forward_context.clear()
         if self.step >= self.end_step:
             self._active = False
 
@@ -148,6 +154,7 @@ class GDN2NonfiniteLocalizerCallback(Callback):
         self._handles.clear()
         self._hooks_attached = False
         self._batch = None
+        self._forward_context.clear()
 
     def _attach_hooks(self) -> None:
         if self._hooks_attached:
@@ -164,7 +171,12 @@ class GDN2NonfiniteLocalizerCallback(Callback):
                     with_kwargs=True,
                 )
             )
-            self._handles.append(module.register_full_backward_pre_hook(self._backward_hook(name)))
+            self._handles.append(
+                module.register_full_backward_pre_hook(self._backward_pre_hook(name))
+            )
+            self._handles.append(
+                module.register_full_backward_hook(self._backward_post_hook(name))
+            )
         if selected == 0:
             raise RuntimeError("GDN2 localizer found no modules to monitor")
         self._hooks_attached = True
@@ -173,7 +185,7 @@ class GDN2NonfiniteLocalizerCallback(Callback):
     def _should_monitor(name: str, module: nn.Module) -> bool:
         if name == "":
             return True
-        if isinstance(module, (GatedDeltaNet2, OLMoDDPTransformerBlock)):
+        if isinstance(module, (GatedDeltaNet, GatedDeltaNet2, OLMoDDPTransformerBlock)):
             return True
         return name.endswith("lm_head")
 
@@ -182,6 +194,11 @@ class GDN2NonfiniteLocalizerCallback(Callback):
         def hook(module: nn.Module, args: tuple[Any, ...], kwargs: dict[str, Any], output: Any):
             if not self._active:
                 return
+            if isinstance(module, (GatedDeltaNet, GatedDeltaNet2)):
+                # These references do not copy the activations. Autograd already
+                # retains them, and they let a backward-only failure save the
+                # exact recurrent input that created the bad gradient.
+                self._forward_context[module_name] = (args, kwargs)
             self._inspect(
                 phase="forward",
                 module_name=module_name or "<model>",
@@ -193,18 +210,41 @@ class GDN2NonfiniteLocalizerCallback(Callback):
 
         return hook
 
-    def _backward_hook(self, module_name: str):
+    def _backward_pre_hook(self, module_name: str):
         @torch._dynamo.disable(reason="diagnostic local finite check")
         def hook(module: nn.Module, grad_output: tuple[Any, ...]):
             if not self._active:
                 return
+            args, kwargs = self._forward_context.get(module_name, ((), {}))
             self._inspect(
-                phase="backward",
+                phase="backward_pre",
                 module_name=module_name or "<model>",
                 module=module,
                 values=grad_output,
-                args=(),
-                kwargs={},
+                args=args,
+                kwargs=kwargs,
+            )
+
+        return hook
+
+    def _backward_post_hook(self, module_name: str):
+        @torch._dynamo.disable(reason="diagnostic local finite check")
+        def hook(
+            module: nn.Module,
+            grad_input: tuple[Any, ...],
+            grad_output: tuple[Any, ...],
+        ):
+            if not self._active:
+                return
+            args, kwargs = self._forward_context.get(module_name, ((), {}))
+            self._inspect(
+                phase="backward_post",
+                module_name=module_name or "<model>",
+                module=module,
+                values=grad_input,
+                args=args,
+                kwargs=kwargs,
+                auxiliary={"grad_output": grad_output},
             )
 
         return hook
@@ -218,6 +258,7 @@ class GDN2NonfiniteLocalizerCallback(Callback):
         values: Any,
         args: tuple[Any, ...],
         kwargs: dict[str, Any],
+        auxiliary: dict[str, Any] | None = None,
     ) -> None:
         bad: list[tuple[str, dict[str, Any], torch.Tensor]] = []
         for tensor_name, tensor in _iter_tensors(values):
@@ -246,6 +287,7 @@ class GDN2NonfiniteLocalizerCallback(Callback):
             args=args,
             kwargs=kwargs,
             bad=bad,
+            auxiliary=auxiliary,
         )
 
     @torch.no_grad()
@@ -258,6 +300,7 @@ class GDN2NonfiniteLocalizerCallback(Callback):
         args: tuple[Any, ...],
         kwargs: dict[str, Any],
         bad: list[tuple[str, dict[str, Any], torch.Tensor]],
+        auxiliary: dict[str, Any] | None,
     ) -> None:
         rank = get_rank()
         rank_dir = self.output_dir / f"rank{rank:03d}"
@@ -287,10 +330,11 @@ class GDN2NonfiniteLocalizerCallback(Callback):
                 else first_bad_tensor
             ),
             "batch": _cpu_copy(self._batch) if self._batch is not None else None,
+            "auxiliary": _cpu_copy(auxiliary) if auxiliary is not None else None,
         }
-        if isinstance(module, GatedDeltaNet2):
+        if isinstance(module, (GatedDeltaNet, GatedDeltaNet2)):
             x = args[0] if args and isinstance(args[0], torch.Tensor) else None
-            payload["gdn2_config"] = {
+            recurrent_config = {
                 "d_model": module.d_model,
                 "n_heads": module.n_heads,
                 "n_v_heads": module.n_v_heads,
@@ -298,9 +342,13 @@ class GDN2NonfiniteLocalizerCallback(Callback):
                 "expand_v": module.expand_v,
                 "allow_neg_eigval": module.allow_neg_eigval,
                 "conv_size": module.conv_size,
-                "disable_recompute": module.disable_recompute,
                 "dtype": str(module.w_q.weight.dtype),
             }
+            if isinstance(module, GatedDeltaNet2):
+                recurrent_config["disable_recompute"] = module.disable_recompute
+                payload["gdn2_config"] = recurrent_config
+            else:
+                payload["gdn1_config"] = recurrent_config
             payload["module_state"] = {
                 name: _cpu_copy(tensor) for name, tensor in module.state_dict().items()
             }

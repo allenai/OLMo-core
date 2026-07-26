@@ -815,8 +815,8 @@ def finalize_config(config: ExperimentConfig) -> None:
     if CHECKPOINTS_ENABLED and not CHECKPOINT_WRITES_ENABLED:
         log.info("Checkpoint loading is enabled, but all checkpoint writes are disabled")
     if GDN2_LOCALIZE_NONFINITE:
-        if MODEL_VARIANT not in {*GDN2_275M_NOPE_SETTINGS, *GDN2_SCALE_NOPE_SETTINGS}:
-            raise ValueError("GDN2 non-finite localization requires a GDN2 model variant")
+        if "gdn" not in MODEL_VARIANT:
+            raise ValueError("Recurrent non-finite localization requires a GDN model variant")
         if not (0 < GDN2_LOCALIZE_START_STEP <= GDN2_LOCALIZE_END_STEP):
             raise ValueError(
                 "GDN2 localization requires a positive, ordered start/end step window"
