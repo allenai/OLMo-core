@@ -47,6 +47,9 @@ FP32 recurrence became non-finite at token 4980 in the same head/value channel
 representable but reached `1.22e64`, crossing `1e38` at token 4890 and `1e50`
 at token 6408. The homogeneous transition amplified the visited state on 4087
 tokens (maximum one-step gain 1.042), matching the alternating input structure.
+Across the long growth interval, the observed state magnitude compounds by
+about 1.037 per two-token cycle (1.018 per token geometrically), which is
+enough to turn ordinary values into FP32 overflow over thousands of repeats.
 This independently reproduces the canonical finding: the optimized kernel is
 accurately exposing an unstable learned recurrence, not creating the failure.
 
