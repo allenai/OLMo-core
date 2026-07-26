@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Plot the canonical GDN2/KDA sweeps and GDN2 scale transfer.
+"""Plot the canonical GDN2/KDA sweeps and recurrent-mixer scale transfers.
 
 Run IDs are resolved from an exact, checked-in list of W&B display names. This
 lets queued jobs initialize after this file is committed while preserving the
@@ -80,6 +80,7 @@ EXPLICIT_RESUME_CHAINS = {
         "2140i574",
         "w9d4rof7",
         "kzug2rko",
+        "u1qy19e5",
     ),
     "pt-1p2b-geometry-hybrid-gdn2-ev1-noneg-nope-gated-cx1-lr4e-4-ep8-sync-r1": (
         "1odf2b6k",
@@ -148,6 +149,18 @@ def _planned_display_names() -> dict[str, list[tuple[str, int, float, str]]]:
                 ),
             )
         )
+        if model == "480m":
+            planned[KDA_KEY].append(
+                (
+                    model,
+                    cx,
+                    lr,
+                    (
+                        f"pt-{model}-geometry-hybrid-kda-ev1-noneg-nope-gated-"
+                        f"cx{cx}-lr{_scale_lr_name(lr)}-r1"
+                    ),
+                )
+            )
     return planned
 
 
@@ -244,15 +257,16 @@ def comparison_wave(canonical_gdn2: Variant, canonical_kda: Variant) -> Wave:
     )
 
 
-def canonical_scale_wave(canonical_gdn2: Variant) -> Wave:
+def canonical_scale_wave(canonical_gdn2: Variant, canonical_kda: Variant) -> Wave:
     return Wave(
         key="canonical_gdn2_scale",
-        title="Canonical GDN2 fixed-LR scale transfer",
+        title="Canonical GDN2 and KDA fixed-LR scale comparison",
         intervention_label="canonical GDN2 (expand_v=1, nonnegative)",
         architecture_note=(
-            "The canonical expand_v=1, nonnegative GDN2 gated-NoPE geometry. "
-            "The 275M panel uses its observed-optimal LR sweep; 480M, 810M, "
-            "and 1.2B use the corresponding transferred wide-integration LR."
+            "Canonical expand_v=1, nonnegative GDN2 and KDA in the matching "
+            "gated-NoPE geometry. The 275M panel uses each architecture's "
+            "observed-optimal LR sweep; larger models use the corresponding "
+            "transferred wide-integration LR. KDA is currently planned at 480M."
         ),
         models=MODELS,
         lr_sweep_models=("275m",),
@@ -262,6 +276,7 @@ def canonical_scale_wave(canonical_gdn2: Variant) -> Wave:
         additional_baselines=(
             GEOMETRY_GDN_EV2_NOPE_GATED,
             GEOMETRY_GDN2_EV2_NOPE_GATED,
+            canonical_kda,
         ),
         intervention=canonical_gdn2,
         uplot_baselines=False,
@@ -430,7 +445,7 @@ def main() -> None:
         return
 
     wave = comparison_wave(canonical_gdn2, canonical_kda)
-    scale_wave = canonical_scale_wave(canonical_gdn2)
+    scale_wave = canonical_scale_wave(canonical_gdn2, canonical_kda)
     points = load_points(
         wave,
         project=args.project,
