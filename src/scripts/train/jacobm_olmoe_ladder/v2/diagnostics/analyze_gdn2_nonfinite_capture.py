@@ -104,8 +104,10 @@ def gdn2_lane_growth(
     if not bad.numel():
         return {"available": False, "reason": "recurrent output is finite"}
     _, first_bad_token, head, value_channel = [int(item) for item in bad[0].tolist()]
-    qh = F.normalize(q[0, :, head].double(), p=2, dim=-1)
-    kh = F.normalize(k[0, :, head].double(), p=2, dim=-1)
+    # Match the FP32-normalize -> model-dtype boundary used by the FLA
+    # reference, then use FP64 only for the recurrent state arithmetic.
+    qh = F.normalize(q[0, :, head].float(), p=2, dim=-1).to(q.dtype).double()
+    kh = F.normalize(k[0, :, head].float(), p=2, dim=-1).to(k.dtype).double()
     gh = g[0, :, head].double()
     bh = b[0, :, head].double()
     vh = v[0, :, head, value_channel].double()
@@ -154,8 +156,10 @@ def gdn1_lane_growth(
     if not bad.numel():
         return {"available": False, "reason": "recurrent output is finite"}
     _, first_bad_token, head, value_channel = [int(item) for item in bad[0].tolist()]
-    qh = F.normalize(q[0, :, head].double(), p=2, dim=-1)
-    kh = F.normalize(k[0, :, head].double(), p=2, dim=-1)
+    q_head = q[0, :, head].float()
+    k_head = k[0, :, head].float()
+    qh = (q_head / torch.sqrt(q_head.square().sum(dim=-1, keepdim=True) + 1e-6)).double()
+    kh = (k_head / torch.sqrt(k_head.square().sum(dim=-1, keepdim=True) + 1e-6)).double()
     gh = g[0, :, head].double()
     vh = v[0, :, head, value_channel].double()
     betah = beta[0, :, head].double()
