@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-07-26T06:39:24.814384+00:00",
+  "generated_at": "2026-07-26T17:32:31.586331+00:00",
   "project": "ai2-llm/jacobm-olmoe-ladder",
   "wave": "canonical_gdn2_scale",
   "models": [
@@ -1560,6 +1560,25 @@
     },
     {
       "model": "480m",
+      "variant": "geometry_kda_ev1_noneg_nope_gated",
+      "variant_label": "canonical KDA (expand_v=1, nonnegative)",
+      "cx": 1,
+      "lr": 0.0012,
+      "lr_tag": "0.0012",
+      "loss": 2.5178263172413566,
+      "state": "finished",
+      "tokens_b": 7.881883648,
+      "run_id": "udjn8rwa",
+      "name": "pt-480m-geometry-hybrid-kda-ev1-noneg-nope-gated-cx1-lr1p2e-3-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/udjn8rwa",
+      "segment_run_ids": [
+        "udjn8rwa"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 1
+    },
+    {
+      "model": "480m",
       "variant": "wide_integration",
       "variant_label": "wide integration (SWA)",
       "cx": 1,
@@ -1611,6 +1630,25 @@
       "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/0crj05wz",
       "segment_run_ids": [
         "0crj05wz"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 1
+    },
+    {
+      "model": "480m",
+      "variant": "geometry_kda_ev1_noneg_nope_gated",
+      "variant_label": "canonical KDA (expand_v=1, nonnegative)",
+      "cx": 2,
+      "lr": 0.0009,
+      "lr_tag": "0.0009",
+      "loss": 2.412883978219902,
+      "state": "finished",
+      "tokens_b": 15.763636224,
+      "run_id": "c0kdnkyq",
+      "name": "pt-480m-geometry-hybrid-kda-ev1-noneg-nope-gated-cx2-lr9e-4-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/c0kdnkyq",
+      "segment_run_ids": [
+        "c0kdnkyq"
       ],
       "token_resets": 0,
       "deduplicated_samples": 1
@@ -1858,6 +1896,25 @@
       "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/w912irkq",
       "segment_run_ids": [
         "w912irkq"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 1
+    },
+    {
+      "model": "810m",
+      "variant": "geometry_gdn2_ev1_noneg_nope_gated",
+      "variant_label": "canonical GDN2 (expand_v=1, nonnegative)",
+      "cx": 2,
+      "lr": 0.00056,
+      "lr_tag": "0.00056",
+      "loss": 2.2609802870630467,
+      "state": "finished",
+      "tokens_b": 28.817227776,
+      "run_id": "geoqui5p",
+      "name": "pt-810m-geometry-hybrid-gdn2-ev1-noneg-nope-gated-cx2-lr5p6e-4-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/geoqui5p",
+      "segment_run_ids": [
+        "geoqui5p"
       ],
       "token_resets": 0,
       "deduplicated_samples": 1
@@ -2766,7 +2823,25 @@
           "token_resets": 0,
           "deduplicated_samples": 1
         },
-        "geometry_kda_ev1_noneg_nope_gated": null
+        "geometry_kda_ev1_noneg_nope_gated": {
+          "model": "480m",
+          "variant": "geometry_kda_ev1_noneg_nope_gated",
+          "variant_label": "canonical KDA (expand_v=1, nonnegative)",
+          "cx": 1,
+          "lr": 0.0012,
+          "lr_tag": "0.0012",
+          "loss": 2.5178263172413566,
+          "state": "finished",
+          "tokens_b": 7.881883648,
+          "run_id": "udjn8rwa",
+          "name": "pt-480m-geometry-hybrid-kda-ev1-noneg-nope-gated-cx1-lr1p2e-3-r1",
+          "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/udjn8rwa",
+          "segment_run_ids": [
+            "udjn8rwa"
+          ],
+          "token_resets": 0,
+          "deduplicated_samples": 1
+        }
       },
       "intervention_result": {
         "model": "480m",
@@ -2792,7 +2867,7 @@
         "wide_integration": -0.050399531358443106,
         "geometry_gdn_ev2_nope_gated": -0.026760262013481473,
         "geometry_gdn2_ev2_nope_gated": 0.024326393439334737,
-        "geometry_kda_ev1_noneg_nope_gated": null
+        "geometry_kda_ev1_noneg_nope_gated": -0.024944425628870004
       }
     },
     {
@@ -2880,7 +2955,25 @@
           "token_resets": 0,
           "deduplicated_samples": 1
         },
-        "geometry_kda_ev1_noneg_nope_gated": null
+        "geometry_kda_ev1_noneg_nope_gated": {
+          "model": "480m",
+          "variant": "geometry_kda_ev1_noneg_nope_gated",
+          "variant_label": "canonical KDA (expand_v=1, nonnegative)",
+          "cx": 2,
+          "lr": 0.0009,
+          "lr_tag": "0.0009",
+          "loss": 2.412883978219902,
+          "state": "finished",
+          "tokens_b": 15.763636224,
+          "run_id": "c0kdnkyq",
+          "name": "pt-480m-geometry-hybrid-kda-ev1-noneg-nope-gated-cx2-lr9e-4-r1",
+          "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/c0kdnkyq",
+          "segment_run_ids": [
+            "c0kdnkyq"
+          ],
+          "token_resets": 0,
+          "deduplicated_samples": 1
+        }
       },
       "intervention_result": null,
       "delta_intervention_minus_wide": null,
@@ -3237,9 +3330,9 @@
       "model": "810m",
       "cx": 2,
       "mode": "fixed_lr_transfer",
-      "complete": false,
+      "complete": true,
       "optimal_summary_eligible": false,
-      "completed_intervention_runs": 0,
+      "completed_intervention_runs": 1,
       "expected_intervention_runs": 1,
       "wide_reference": {
         "model": "810m",
@@ -3302,11 +3395,29 @@
         "geometry_gdn2_ev2_nope_gated": null,
         "geometry_kda_ev1_noneg_nope_gated": null
       },
-      "intervention_result": null,
-      "delta_intervention_minus_wide": null,
+      "intervention_result": {
+        "model": "810m",
+        "variant": "geometry_gdn2_ev1_noneg_nope_gated",
+        "variant_label": "canonical GDN2 (expand_v=1, nonnegative)",
+        "cx": 2,
+        "lr": 0.00056,
+        "lr_tag": "0.00056",
+        "loss": 2.2609802870630467,
+        "state": "finished",
+        "tokens_b": 28.817227776,
+        "run_id": "geoqui5p",
+        "name": "pt-810m-geometry-hybrid-gdn2-ev1-noneg-nope-gated-cx2-lr5p6e-4-r1",
+        "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/geoqui5p",
+        "segment_run_ids": [
+          "geoqui5p"
+        ],
+        "token_resets": 0,
+        "deduplicated_samples": 1
+      },
+      "delta_intervention_minus_wide": -0.007967232345785114,
       "delta_intervention_minus_reference": {
-        "wide_integration": null,
-        "geometry_gdn_ev2_nope_gated": null,
+        "wide_integration": -0.007967232345785114,
+        "geometry_gdn_ev2_nope_gated": -0.01627225321043957,
         "geometry_gdn2_ev2_nope_gated": null,
         "geometry_kda_ev1_noneg_nope_gated": null
       }

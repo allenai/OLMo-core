@@ -4,7 +4,7 @@ Record post-migration experiment waves here. Per-run rows must include Beaker
 job IDs and W&B IDs once they exist. Detailed migration-era DDP jobs remain in
 [`../v1/DDP_RUNS.md`](../v1/DDP_RUNS.md).
 
-## Live status snapshot (2026-07-25 16:44 UTC)
+## Live status snapshot (2026-07-26 17:34 UTC)
 
 This is the current source of truth for active V2 work. The detailed sections
 below retain the full launch and retry history.
@@ -29,8 +29,8 @@ below retain the full launch and retry history.
 | pretraining | 275M GDN2 stability 2x2 | 3/3 finished | Fresh Cx8/LR `1.6e-3` ev1+negative, ev2+nonnegative, and canonical ev1+nonnegative controls all completed | [work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYBVM2N2D3DM67S8HWARJP6C) |
 | pretraining | canonical GDN2 (`expand_v=1`, nonnegative) 275M sweep | 16/16 finished | All four Cx curves are complete and bracketed; observed-best LR is `1.6e-3` at every Cx | [results](results/pretraining/canonical_gdn2_kda/results.md) |
 | pretraining | canonical KDA 275M sweep | 16/16 finished | All four Cx curves are complete and bracketed; observed-best LR is `1.6e-3` at every Cx | [results](results/pretraining/canonical_gdn2_kda/results.md) |
-| pretraining | canonical GDN2 larger-scale transfer | 4 finished / 7 running / 1 queued | 480M Cx1/Cx4/Cx8 and 810M Cx1 have strict final-250M results | [results](results/pretraining/canonical_gdn2_kda/scale_results.md) |
-| pretraining | canonical KDA 480M stability transfer | 1 running / 3 queued | Cx1 initialized cleanly; all four cells are registered in the shared scale plot | [launches](#canonical-kda-480m-stability-transfer) |
+| pretraining | canonical GDN2 larger-scale transfer | 5 finished / 5 running / 2 failed | 810M Cx2 newly finished at strict final-250M CE `2.260980`; 480M Cx2 and 1.2B Cx2 are repeatable numerical failures | [results](results/pretraining/canonical_gdn2_kda/scale_results.md) |
+| pretraining | canonical KDA 480M stability transfer | 2 finished / 2 running | Cx1/Cx2 strict final-250M CEs are `2.517826` / `2.412884`; Cx4/Cx8 are healthy | [launches](#canonical-kda-480m-stability-transfer) |
 | diagnostic | GDN2 production-shape PyTorch reference 2x2 | finished | All four `expand_v`/negative-eigenvalue cells passed forward, final-state, backward, packed-document, and recompute/retain comparisons | [work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYBY8DXT5BVM85WYKAT5TXQN) |
 | diagnostic | Matched KDA/GDN2 numerical audit | finished | All 40 one/four-chunk output/state comparisons passed; GDN2 is broadly KDA-like, with localized 3.80% `A_log` relative-L2 error at T256/V256/negative eigvals | [work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYBZX8MHJ611ZSJD43SYS9HZ) / [results](results/diagnostics/matched_kda_gdn2_numerics.md) |
 | diagnostic | KDA reference + 50-step MB16 qualification | finished | Reference/packed checks passed; zero skipped steps; steady-state 404.7 TFLOPs/GPU and 290.5K TPS on one B300 | [work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYBX6WX46F9B3HV3W59G368R) / [3s14s676](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/3s14s676) |
@@ -38,14 +38,15 @@ below retain the full launch and retry history.
 | throughput | 275M 1:1 10-layer SWA depth control | finished | one B300, 2 Mi batch, MB16: 578.75 TFLOPs/GPU and 365.8K TPS/GPU; zero skipped steps | [work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYADSYYRHPYQCRVWJ27KV4KQ) |
 | midtraining | first hybrid 275M Cx8 | finished | 100B; final checkpoint `step95368`; validation finished | [1keo2hz6](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/1keo2hz6) |
 | midtraining | first hybrid 480M Cx8 | finished | 100.001B; final checkpoint `step95368`; validation finished | [mnp9rv5l](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/mnp9rv5l) |
-| validation | V2 post-training backfills | 116 complete / 1 running; 1 new checkpoint pending | The 1.2B gated-RoPE Cx8 retry is running at downstream step 115/295; newly finished GDN1 810M Cx8 still needs a separate backfill | [results](results/validation/hybrid_full.md) |
+| validation | V2 post-training backfills | 116 complete / 1 running; 1 new checkpoint pending | The 1.2B gated-RoPE Cx8 retry is actively progressing through the full suite; newly finished GDN1 810M Cx8 still needs a separate backfill | [results](results/validation/hybrid_full.md) |
 
-The live Beaker footprint is exactly three running jobs and zero queued or
-scheduled jobs: canonical GDN2 Cx8 at `8e-4` and `3.2e-3` (16 B300s total),
-plus the eight-GPU 1.2B gated-RoPE Cx8 validation retry. Both training jobs are
-urgent and unallocated. Validation remains high and unallocated. There is no
-duplicate logical cell, and no v1 pretraining, midtraining, long-context
-training, or RULER job is active.
+The live Beaker footprint is eight logical running jobs and zero queued jobs:
+five canonical GDN2 transfers (88 B300s), KDA 480M Cx4/Cx8 (24 B300s), and
+the eight-GPU 1.2B gated-RoPE Cx8 validation retry. Training is urgent and
+unallocated; validation is high and unallocated. There is no duplicate logical
+cell, and no v1 pretraining, midtraining, long-context training, or RULER job
+is active. Canonical GDN2 480M Cx2 and 1.2B Cx2 are terminal failures and are
+not counted as live.
 
 The formal pretraining results and plots use finished runs only and enforce a
 complete final-250M-token history. The gated-RoPE sweep is now complete. Its
@@ -57,16 +58,16 @@ Cx4, and Cx8; at Cx2 it is `0.003461` worse.
 All six corrected Cx2 MB3 validation retries finished in
 [01KY09D3D872K0R03NHF5MGYD4](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY09D3D872K0R03NHF5MGYD4).
 The 32 NoPE/gated 275M backfills and both first-hybrid midtraining backfills
-also finished. The consolidated validation export now contains 116 finished
+also finished. The consolidated validation export contains 116 finished
 targets with 498 metrics each. All 16 gated-RoPE 275M backfills and eight
 larger gated-RoPE backfills are complete. The 1.2B gated-RoPE Cx4 evaluator
 completed its full suite and finalized W&B successfully; its Beaker worker
 then exited 127 on a post-eval wrapper typo, so the evaluation itself does not
 need a retry. The only registered unfinished validation is the 1.2B
-gated-RoPE Cx8 target. Its evaluator has been preempted repeatedly; the most
-recent attempt reached step 225/771 and exited 143; its next high-priority
-attempt is now running. This is scheduler preemption,
-not a model or evaluator failure. The 810M Cx8
+gated-RoPE Cx8 target. Its current high-priority attempt is healthy and was
+actively advancing through MMLU social-sciences tasks at the 2026-07-26 17:34
+UTC audit. Earlier attempts were repeatedly preempted with exit 143; this is
+scheduler preemption, not a model or evaluator failure. The 810M Cx8
 training completion happened after the larger validation manifest was
 submitted, so that checkpoint still needs a separate validation backfill.
 Because experiment-level resume also retried the already-complete Cx4 task
@@ -196,11 +197,17 @@ and
 Live, queued, or unresolved canonical cells are labeled pending; only finished
 runs with a complete strict final-250M-token window enter the plotted series.
 
-Status at 2026-07-26 06:39 UTC: 480M Cx1/Cx4/Cx8 and 810M Cx1 have strict
-final-250M CEs `2.492882`, `2.293165`, `2.226409`, and `2.346904`. Seven cells
-are running and the user-restarted 480M Cx2 attempt is created/queued. The
-collector now registers its newest W&B segment but will not report that cell
-until a finished continuation supplies the complete strict window.
+Status at 2026-07-26 17:34 UTC: 480M Cx1/Cx4/Cx8 and 810M Cx1/Cx2 have strict
+final-250M CEs `2.492882`, `2.293165`, `2.226409`, `2.346904`, and `2.260980`.
+Five cells are running: 810M Cx4/Cx8 and 1.2B Cx1/Cx4/Cx8. Their latest
+progress is 87,600/109,929, 105,390/146,572, 59,500/83,962,
+90,000/167,923, and 104,000/223,898 steps, respectively. The 480M Cx2 retry
+again failed on non-finite loss at step 24,668, essentially the same point as
+its earlier failures around step 24,659. The collector registers the complete
+explicit W&B resume chain but keeps the cell pending because no attempt
+finished. The 1.2B Cx2 cell failed on a non-finite total gradient norm at step
+5,560; subsequent NCCL/device assertions are teardown effects. Neither failed
+cell was restarted during this read-only refresh.
 
 ## Canonical KDA 480M stability transfer
 
@@ -226,11 +233,13 @@ checkpoints, no in-loop evaluation, and distinct checkpoint/W&B identities.
 The immutable submission ledger is
 [`launchers/pretraining/generated/480m_geometry_kda_ev1_noneg_nope_gated_submissions.json`](launchers/pretraining/generated/480m_geometry_kda_ev1_noneg_nope_gated_submissions.json).
 
-Status at 2026-07-26 06:39 UTC: Cx1 is running and has initialized W&B run
-`udjn8rwa`; Cx2/Cx4/Cx8 remain created/queued. All four exact display names are
-registered in `plot_canonical_gdn2_kda.py`. The existing four-size fixed-LR
-comparison now includes canonical KDA as a finished-only series, alongside
-wide integration, matching GDN1, original GDN2, and canonical GDN2.
+Status at 2026-07-26 17:34 UTC: Cx1 and Cx2 finished cleanly, with strict
+final-250M CEs `2.517826` and `2.412884`. Cx4 is at 53,060/60,133 steps with
+an ETA near 1h16m; Cx8 is at 51,460/80,177 with an ETA near 4h7m. All four
+exact display names are registered in `plot_canonical_gdn2_kda.py`. The
+four-size fixed-LR comparison includes canonical KDA as a finished-only
+series alongside wide integration, matching GDN1, original GDN2, and
+canonical GDN2.
 
 ## 275M geometry-matched gated-NoPE GDN2 sweep
 
