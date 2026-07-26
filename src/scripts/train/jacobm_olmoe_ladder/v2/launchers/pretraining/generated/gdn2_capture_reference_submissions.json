@@ -18,5 +18,16 @@
       "01KYFV6TYTVABP21JVDV31DX15"
     ],
     "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYFV6TYHTH55BQJC2G6XJAME"
+  },
+  {
+    "commit": "f0c6087ff9b28e9ff260750515ff13acc5e8878b",
+    "module_type": "GatedDeltaNet2",
+    "capture": "/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/olmo-ddp/debug/recurrent-persistent-failure-localizers/original-gdn2-1p2b-cx4-step9059/rank005/step009059_forward_module_blocks_0_attention.pt",
+    "output": "/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/olmo-ddp/debug/recurrent-persistent-failure-localizers/original-gdn2-1p2b-cx4-step9059/rank005/step009059_forward_module_blocks_0_attention_reference.json",
+    "experiment_id": "01KYFXQ01DNQGGHBPT8YSE7RE0",
+    "task_ids": [
+      "01KYFXQ01K15HVW0QK9MZMJVP6"
+    ],
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYFXQ01DNQGGHBPT8YSE7RE0"
   }
 ]
