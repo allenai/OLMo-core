@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare an exact failing GDN2 activation with FLA's recurrent reference."""
+"""Compare an exact failing GDN activation with a sequential FP32 reference."""
 
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ import torch
 from torch.nn import functional as F
 
 from olmo_core.nn.attention.gdn2 import GatedDeltaNet2
+from olmo_core.nn.attention.recurrent import GatedDeltaNet
 
 
 def tensor_summary(tensor: torch.Tensor) -> dict[str, Any]:
@@ -67,33 +68,54 @@ def difference_summary(actual: torch.Tensor, expected: torch.Tensor) -> dict[str
     }
 
 
-def build_module(payload: dict[str, Any], device: torch.device) -> GatedDeltaNet2:
-    config = payload["gdn2_config"]
+def _dtype(config: dict[str, Any]) -> torch.dtype:
     dtype_name = str(config["dtype"])
     if dtype_name == "torch.bfloat16":
-        dtype = torch.bfloat16
+        return torch.bfloat16
     elif dtype_name == "torch.float32":
-        dtype = torch.float32
+        return torch.float32
+    raise ValueError(f"unsupported captured GDN dtype {dtype_name}")
+
+
+def build_module(
+    payload: dict[str, Any], device: torch.device
+) -> GatedDeltaNet | GatedDeltaNet2:
+    module_type = payload["module_type"]
+    if module_type == "GatedDeltaNet2":
+        config = payload["gdn2_config"]
+        module: GatedDeltaNet | GatedDeltaNet2 = GatedDeltaNet2(
+            d_model=int(config["d_model"]),
+            n_heads=int(config["n_heads"]),
+            n_v_heads=int(config["n_v_heads"]),
+            head_dim=int(config["head_dim"]),
+            expand_v=float(config["expand_v"]),
+            allow_neg_eigval=bool(config["allow_neg_eigval"]),
+            conv_size=int(config["conv_size"]),
+            disable_recompute=bool(config["disable_recompute"]),
+            dtype=_dtype(config),
+            init_device="cpu",
+        )
+    elif module_type == "GatedDeltaNet":
+        config = payload["gdn1_config"]
+        module = GatedDeltaNet(
+            d_model=int(config["d_model"]),
+            n_heads=int(config["n_heads"]),
+            n_v_heads=int(config["n_v_heads"]),
+            head_dim=int(config["head_dim"]),
+            expand_v=float(config["expand_v"]),
+            allow_neg_eigval=bool(config["allow_neg_eigval"]),
+            conv_size=int(config["conv_size"]),
+            dtype=_dtype(config),
+            init_device="cpu",
+        )
     else:
-        raise ValueError(f"unsupported captured GDN2 dtype {dtype_name}")
-    module = GatedDeltaNet2(
-        d_model=int(config["d_model"]),
-        n_heads=int(config["n_heads"]),
-        n_v_heads=int(config["n_v_heads"]),
-        head_dim=int(config["head_dim"]),
-        expand_v=float(config["expand_v"]),
-        allow_neg_eigval=bool(config["allow_neg_eigval"]),
-        conv_size=int(config["conv_size"]),
-        disable_recompute=bool(config["disable_recompute"]),
-        dtype=dtype,
-        init_device="cpu",
-    )
+        raise ValueError(f"capture is from {module_type}, not a supported GDN boundary")
     module.load_state_dict(payload["module_state"], strict=True)
     return module.to(device).eval()
 
 
 @torch.inference_mode()
-def recurrent_inputs(
+def gdn2_recurrent_inputs(
     module: GatedDeltaNet2,
     x: torch.Tensor,
     cu_doc_lens: torch.Tensor | None,
@@ -124,7 +146,9 @@ def recurrent_inputs(
 
 
 @torch.inference_mode()
-def post_process(module: GatedDeltaNet2, x: torch.Tensor, recurrent: torch.Tensor) -> torch.Tensor:
+def gdn2_post_process(
+    module: GatedDeltaNet2, x: torch.Tensor, recurrent: torch.Tensor
+) -> torch.Tensor:
     batch_size, seq_len, _ = x.shape
     output_gate = module.g_proj_2(module.g_proj_1(x)).view(
         batch_size, seq_len, module.n_v_heads, module.head_v_dim
@@ -139,6 +163,72 @@ def post_process(module: GatedDeltaNet2, x: torch.Tensor, recurrent: torch.Tenso
     )
 
 
+@torch.inference_mode()
+def gdn1_recurrent_inputs(
+    module: GatedDeltaNet,
+    x: torch.Tensor,
+    cu_doc_lens: torch.Tensor | None,
+) -> tuple[torch.Tensor, ...]:
+    batch_size, seq_len, _ = x.shape
+    q = module.q_conv1d(x=module.w_q(x), cu_seqlens=cu_doc_lens)
+    k = module.k_conv1d(x=module.w_k(x), cu_seqlens=cu_doc_lens)
+    v = module.v_conv1d(x=module.w_v(x), cu_seqlens=cu_doc_lens)
+    beta = module.w_b(x).sigmoid()
+    if module.allow_neg_eigval:
+        beta = beta * 2.0
+    g = -module.A_log.float().exp() * F.softplus(module.w_a(x).float() + module.dt_bias)
+    q = q.view(batch_size, seq_len, module.n_heads, module.head_k_dim)
+    k = k.view(batch_size, seq_len, module.n_heads, module.head_k_dim)
+    v = v.view(batch_size, seq_len, module.n_v_heads, module.head_v_dim)
+    if module.n_v_heads > module.n_heads:
+        repeat_factor = module.n_v_heads // module.n_heads
+        q = q.repeat_interleave(repeat_factor, dim=-2)
+        k = k.repeat_interleave(repeat_factor, dim=-2)
+    return q, k, v, g, beta
+
+
+@torch.inference_mode()
+def sequential_gdn1(
+    q: torch.Tensor,
+    k: torch.Tensor,
+    v: torch.Tensor,
+    g: torch.Tensor,
+    beta: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    if q.shape[0] != 1:
+        raise ValueError("captured recurrent comparisons require one selected sequence")
+    qf = q.float() / torch.sqrt(q.float().square().sum(dim=-1, keepdim=True) + 1e-6)
+    kf = k.float() / torch.sqrt(k.float().square().sum(dim=-1, keepdim=True) + 1e-6)
+    vf, gf, betaf = v.float(), g.float(), beta.float()
+    _, seq_len, n_heads, key_dim = q.shape
+    value_dim = v.shape[-1]
+    state = torch.zeros(n_heads, key_dim, value_dim, device=q.device, dtype=torch.float32)
+    outputs = []
+    scale = key_dim**-0.5
+    for token in range(seq_len):
+        state = state * gf[0, token, :, None, None].exp()
+        prediction = torch.einsum("hkv,hk->hv", state, kf[0, token])
+        delta = betaf[0, token, :, None] * (vf[0, token] - prediction)
+        state = state + torch.einsum("hk,hv->hkv", kf[0, token], delta)
+        outputs.append(torch.einsum("hkv,hk->hv", state, qf[0, token] * scale))
+    return torch.stack(outputs, dim=0).unsqueeze(0), state.unsqueeze(0)
+
+
+@torch.inference_mode()
+def gdn1_post_process(
+    module: GatedDeltaNet, x: torch.Tensor, recurrent: torch.Tensor
+) -> torch.Tensor:
+    batch_size, seq_len, _ = x.shape
+    output_gate = module.w_g(x).view(
+        batch_size, seq_len, module.n_v_heads, module.head_v_dim
+    )
+    return module.w_out(
+        module.o_norm(recurrent.to(output_gate.dtype), output_gate).view(
+            batch_size, seq_len, -1
+        )
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("capture", type=Path)
@@ -148,10 +238,8 @@ def main() -> None:
     if not torch.cuda.is_available():
         raise RuntimeError("the exact GDN2 comparison requires a CUDA device")
     payload = torch.load(args.capture, map_location="cpu", weights_only=False)
-    if payload.get("module_type") != "GatedDeltaNet2":
-        raise ValueError(
-            f"capture is from {payload.get('module_type')}, not a GatedDeltaNet2 boundary"
-        )
+    if payload.get("module_type") not in {"GatedDeltaNet", "GatedDeltaNet2"}:
+        raise ValueError(f"capture is from unsupported boundary {payload.get('module_type')}")
     if payload.get("phase") != "forward":
         raise ValueError(f"expected a forward capture, found {payload.get('phase')}")
 
@@ -162,35 +250,57 @@ def main() -> None:
     if cu_doc_lens is not None:
         cu_doc_lens = cu_doc_lens.to(device)
     saved_output = payload["bad_output"].to(device)
-    q, k, v, g, b, w = recurrent_inputs(module, x, cu_doc_lens)
+    if isinstance(module, GatedDeltaNet2):
+        q, k, v, g, b, w = gdn2_recurrent_inputs(module, x, cu_doc_lens)
+        from fla.ops.gdn2 import chunk_gdn2
+        from fla.ops.gdn2.naive import naive_recurrent_gdn2
 
-    from fla.ops.gdn2 import chunk_gdn2
-    from fla.ops.gdn2.naive import naive_recurrent_gdn2
+        actual_raw, actual_state = chunk_gdn2(
+            q=q,
+            k=k,
+            v=v,
+            g=g,
+            b=b,
+            w=w,
+            output_final_state=True,
+            use_qk_l2norm_in_kernel=True,
+            disable_recompute=module.disable_recompute,
+            cu_seqlens=cu_doc_lens,
+        )
+        expected_raw, expected_state = naive_recurrent_gdn2(
+            q=F.normalize(q.float(), p=2, dim=-1).to(q.dtype),
+            k=F.normalize(k.float(), p=2, dim=-1).to(k.dtype),
+            v=v,
+            g=g,
+            b=b,
+            w=w,
+            output_final_state=True,
+        )
+        actual_output = gdn2_post_process(module, x, actual_raw)
+        expected_output = gdn2_post_process(module, x, expected_raw)
+        recurrent_tensors = {"b": b, "w": w}
+        recurrent_config = payload["gdn2_config"]
+    else:
+        if cu_doc_lens is not None:
+            raise ValueError("GDN1 sequential capture analysis does not yet support packed resets")
+        q, k, v, g, beta = gdn1_recurrent_inputs(module, x, cu_doc_lens)
+        from fla.ops.gated_delta_rule import chunk_gated_delta_rule
 
-    actual_raw, actual_state = chunk_gdn2(
-        q=q,
-        k=k,
-        v=v,
-        g=g,
-        b=b,
-        w=w,
-        output_final_state=True,
-        use_qk_l2norm_in_kernel=True,
-        disable_recompute=module.disable_recompute,
-        cu_seqlens=cu_doc_lens,
-    )
-    expected_raw, expected_state = naive_recurrent_gdn2(
-        q=F.normalize(q.float(), p=2, dim=-1).to(q.dtype),
-        k=F.normalize(k.float(), p=2, dim=-1).to(k.dtype),
-        v=v,
-        g=g,
-        b=b,
-        w=w,
-        output_final_state=True,
-    )
+        actual_raw, actual_state = chunk_gated_delta_rule(
+            q=q,
+            k=k,
+            v=v,
+            g=g,
+            beta=beta,
+            output_final_state=True,
+            use_qk_l2norm_in_kernel=True,
+        )
+        expected_raw, expected_state = sequential_gdn1(q, k, v, g, beta)
+        actual_output = gdn1_post_process(module, x, actual_raw)
+        expected_output = gdn1_post_process(module, x, expected_raw)
+        recurrent_tensors = {"beta": beta}
+        recurrent_config = payload["gdn1_config"]
     assert actual_state is not None and expected_state is not None
-    actual_output = post_process(module, x, actual_raw)
-    expected_output = post_process(module, x, expected_raw)
     torch.cuda.synchronize()
 
     tensors = {
@@ -199,8 +309,7 @@ def main() -> None:
         "k": k,
         "v": v,
         "g": g,
-        "b": b,
-        "w": w,
+        **recurrent_tensors,
         "captured_output": saved_output,
         "chunk_raw": actual_raw,
         "reference_raw": expected_raw,
@@ -214,7 +323,8 @@ def main() -> None:
         "rank": payload["rank"],
         "step": payload["step"],
         "module_name": payload["module_name"],
-        "gdn2_config": payload["gdn2_config"],
+        "module_type": payload["module_type"],
+        "recurrent_config": recurrent_config,
         "summaries": {name: tensor_summary(tensor) for name, tensor in tensors.items()},
         "differences": {
             "captured_vs_recomputed_chunk": difference_summary(saved_output, actual_output),

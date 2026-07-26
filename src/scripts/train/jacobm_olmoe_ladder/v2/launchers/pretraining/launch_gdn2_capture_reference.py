@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare a localized production GDN2 failure with the recurrent reference."""
+"""Compare a localized production GDN1/GDN2 failure with a recurrent reference."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ import argparse
 import json
 from pathlib import Path
 
+import torch
 from gantry.api import GitRepoState, Recipe
 
 from scripts.train.jacobm_olmoe_ladder.v2.launchers.pretraining.launch_geometry_matched_scale_nope_smokes import (
@@ -32,6 +33,10 @@ def main() -> None:
     capture = args.capture.resolve()
     if not capture.is_file():
         raise FileNotFoundError(capture)
+    payload = torch.load(capture, map_location="cpu", weights_only=False)
+    module_type = str(payload.get("module_type"))
+    if module_type not in {"GatedDeltaNet", "GatedDeltaNet2"}:
+        raise ValueError(f"capture is from unsupported boundary {module_type}")
     output = (args.output or capture.with_name(capture.stem + "_reference.json")).resolve()
     if output.exists():
         raise FileExistsError(f"Refusing to overwrite {output}")
@@ -47,19 +52,28 @@ def main() -> None:
         return
 
     commit = validate_remote_commit(str(source["remote"]), str(source["branch"]))
-    pre_setup = (
-        "unset S3_PROFILE"
-        f"\nrm -rf {GDN2_FLA_OVERLAY}"
-        f"\npython -m pip install --target {GDN2_FLA_OVERLAY} --no-deps "
-        f"--no-build-isolation '{GDN2_FLA_SPEC}'"
-        f'\nPYTHONPATH={GDN2_FLA_OVERLAY} python -c "import fla; '
-        "from fla.ops.gdn2 import chunk_gdn2; assert fla.__version__ == '0.5.2'\""
-    )
+    if module_type == "GatedDeltaNet2":
+        pre_setup = (
+            "unset S3_PROFILE"
+            f"\nrm -rf {GDN2_FLA_OVERLAY}"
+            f"\npython -m pip install --target {GDN2_FLA_OVERLAY} --no-deps "
+            f"--no-build-isolation '{GDN2_FLA_SPEC}'"
+            f'\nPYTHONPATH={GDN2_FLA_OVERLAY} python -c "import fla; '
+            "from fla.ops.gdn2 import chunk_gdn2; assert fla.__version__ == '0.5.2'\""
+        )
+        pythonpath = f"{GDN2_FLA_OVERLAY}:src"
+    else:
+        pre_setup = (
+            "unset S3_PROFILE"
+            '\npython -c "import fla; from fla.ops.gated_delta_rule import '
+            "chunk_gated_delta_rule; print(fla.__version__)\""
+        )
+        pythonpath = "src"
     recipe = Recipe(
         args=[ANALYZER, str(capture), "--output", str(output)],
-        name=f"gdn2-reference-{capture.parent.name}-{capture.stem}",
+        name=f"gdn-reference-{capture.parent.name}-{capture.stem}",
         description=(
-            "Exact production GDN2 activation/state comparison: chunk kernel versus "
+            f"Exact production {module_type} activation/state comparison: chunk kernel versus "
             "sequential recurrent reference"
         ),
         workspace=str(beaker["workspace"]),
@@ -72,7 +86,7 @@ def main() -> None:
         shared_memory="128GiB",
         beaker_image=str(source["image"]),
         env_vars=[
-            ("PYTHONPATH", f"{GDN2_FLA_OVERLAY}:src"),
+            ("PYTHONPATH", pythonpath),
             ("PYTHONUNBUFFERED", "1"),
             ("OLMO_SHARED_FS", "1"),
             ("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True"),
@@ -91,6 +105,7 @@ def main() -> None:
     experiment = workload.experiment
     record = {
         "commit": commit,
+        "module_type": module_type,
         "capture": str(capture),
         "output": str(output),
         "experiment_id": experiment.id,
