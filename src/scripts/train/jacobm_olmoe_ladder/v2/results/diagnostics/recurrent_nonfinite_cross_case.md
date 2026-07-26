@@ -1,6 +1,6 @@
 # Cross-case GDN non-finite analysis
 
-Status: in progress (2026-07-26)
+Status: cross-case replay complete (2026-07-26)
 
 ## Established canonical-GDN2 result
 
@@ -19,7 +19,7 @@ lag-64 matches.
 |---|---|---|---|
 | Original GDN2 expand_v=2, 1.2B Cx4 | Step 9059; first failure is rank 5, block-0 GDN2 forward at token 4992; broad gradients are downstream; reproduced with backward recomputation disabled | step9000 | [01KYFWDECQSBGYCH5WFP5QDE30](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYFWDECQSBGYCH5WFP5QDE30) |
 | Original GDN2 expand_v=2, 275M Cx8, LR 1.6e-3 | Did not reproduce: exact step36500 resume remained finite through step36780, crossing the old step36768 loss failure | step36500 | [01KYFWDJ18MZ20F88JA7CF52M4](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYFWDJ18MZ20F88JA7CF52M4) |
-| GDN1 expand_v=2, 1.2B Cx8 | Step 17592; broad all-rank NaN gradients; exact phase replay queued | step17500 | [01KYFY1K9799Z47CAFT9M1R8EK](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYFY1K9799Z47CAFT9M1R8EK) |
+| GDN1 expand_v=2, 1.2B Cx8 | Did not reproduce in compact replay: finite through step17605; old 32-rank diagnostic had broad all-rank NaN gradients at step17592 | step17500 | [01KYFYV602MA89GK67TXM0WNYS](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYFYV602MA89GK67TXM0WNYS) |
 
 All replays are read-only: checkpoint loading is enabled, but checkpoint
 writes, pruning, W&B, and eval callbacks are disabled. The localizer checks
@@ -80,6 +80,35 @@ runtime/kernel/hardware-sensitive event as plausible explanations, but provides
 no evidence that this particular event was the deterministic recurrent-growth
 mechanism seen in the 480M and 1.2B cases.
 
+### GDN1 1.2B Cx8, old step 17592
+
+The historical 32-rank diagnostic definitely produced a different signature
+from the deterministic GDN2 cases: at step 17592, 388--413 of 413 local
+gradient entries were NaN on each rank, while the last completed step had
+ordinary loss and gradients. It did not have module-phase hooks, however, so
+the broad optimizer dump alone cannot prove whether the first non-finite was in
+a GDN1 backward kernel or a forward value that only became visible during
+backward.
+
+The compact replay loaded exact `step17500`, passed a full finite-parameter
+audit, and preserved the 96-sequence global batch on one EP=8 node by using
+four MB3 accumulation microbatches. It completed steps 17580--17605 with finite
+forward outputs, incoming gradients, module-created gradients, local loss, and
+optimizer gradients. No capture was emitted. Thus this event is not a
+deterministic function of the checkpoint and global sample set under the
+current implementation.
+
+This negative result has two limitations. It changes the original per-rank
+microbatch grouping and DP reduction topology from 32 ranks/one microbatch to
+8 ranks/four accumulated microbatches. More importantly, the historical
+diagnostic pinned OLMo-core commit `45b2c821a`, whereas the replay uses the
+post-migration code path; attention, DDP, optimizer, and MoE infrastructure all
+changed substantially between those commits. The evidence therefore points to
+a source/topology-sensitive or low-level nondeterministic numerical event, but
+does not identify which one. It does rule out the persistent checkpoint poison
+hypothesis and does not support assigning this GDN1 event to GDN2's proven
+non-normal forward-state growth.
+
 ## Working mechanism
 
 For normalized keys, GDN2's exact key-axis transition is
@@ -128,8 +157,40 @@ GDN1 replay is intended to distinguish those mechanisms.
   ordinarily accurate but occasionally enters an extreme state trajectory on
   long, structured inputs.
 
-## Pending results
+## Conclusions and mitigations
 
-- Exact GDN1 step-17592 phase replay and, if it reproduces in forward, its
-  production-versus-sequential reference comparison.
-- Final cross-case mitigation recommendations after that GDN1 result.
+The two persistently reproducible GDN2 cases share the same root mechanism:
+long, highly periodic sequences coherently amplify a learned non-normal
+recurrent state until FP32 overflow. The production chunk kernel and
+token-by-token recurrence agree on the failing lane and nearly the same token;
+FP64 only postpones overflow and reveals the enormous finite trajectory. These
+are architectural state-stability failures exposed by data, not a general FLA
+forward/backward correctness bug.
+
+By contrast, neither the original 275M GDN2 event nor the representative GDN1
+event reproduced under the pinned current path. The historical GDN1 signature
+may still be a chunk-WY backward/conditioning problem--repeated nearly
+collinear keys are a plausible stressor--but that remains a hypothesis. No
+persistently reproducible backward-only failure has yet been demonstrated.
+
+Recommended actions, in order:
+
+1. Resample or replace filtered input sequences **before** model forward. The
+   existing label-only instance mask cannot protect recurrent state. Extend
+   repetition detection beyond trivial period 1, but do not treat filtering as
+   a proof of architectural stability.
+2. Keep synchronized non-finite step skipping as a training-continuity guard.
+   It avoids poisoning optimizer state but cannot make the failed batch useful
+   or repair the recurrence.
+3. Evaluate a GDN2 stability constraint on a controlled 275M sweep: constrain
+   transition singular gain, normalize/bound recurrent state or update norm,
+   or reduce the channel-wise erase freedom toward the scalar-gate GDN1/KDA
+   special case. `expand_v=1` and disabling negative eigenvalues reduce risk
+   but do not eliminate it.
+4. Treat GDN1 as a separate numerical investigation. If historical fidelity
+   matters, port the phase hooks onto commit `45b2c821a` and replay with the
+   original 32-rank/DP topology; compare the production chunk/WY backward with
+   a sequential reference only if that exact setup reproduces.
+5. Pin the exact OLMo-core commit in every future training and diagnostic job.
+   Historical jobs that copied a mutable Weka checkout cannot be reconstructed
+   precisely from their Beaker specs.
