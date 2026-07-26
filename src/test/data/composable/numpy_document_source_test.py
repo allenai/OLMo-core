@@ -5,6 +5,7 @@ import numpy as np
 from olmo_core.data.composable import ConcatenatedDocumentSource
 from olmo_core.data.composable.numpy_document_source import NumpyDocumentSource
 from olmo_core.data.tokenizer import TokenizerConfig
+from olmo_core.data.types import NumpyDatasetDType
 
 
 def _write_mmap(path, data, dtype):
@@ -125,4 +126,39 @@ def test_numpy_document_source_concatenated(tmp_path: Path):
             )
             for (start_idx, end_idx) in source.sources[3].get_document_offsets()
         ]
+    )
+
+
+def test_deferred_glob_expansion_keeps_every_file(tmp_path: Path):
+    """
+    A glob expanded at build time must contribute all of its files, even when
+    ``source_permutation_seed`` is set.
+
+    Regression test: the permutation used to be built from ``len(self.source_paths)``, which for a
+    deferred glob is 1 (the unexpanded pattern), so every source silently collapsed to its first
+    matching file.
+    """
+    dtype = np.uint16
+    tokenizer = TokenizerConfig(vocab_size=32_000, eos_token_id=0, pad_token_id=-1)
+
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    num_files, tokens_per_file = 8, 10
+    for i in range(num_files):
+        _write_mmap(data_dir / f"part-{i:05d}.npy", [i + 1] * (tokens_per_file - 1) + [0], dtype)
+
+    config = NumpyDocumentSource.Config(
+        source_paths=[str(data_dir / "part-*.npy")],
+        tokenizer=tokenizer,
+        dtype=NumpyDatasetDType.uint16,
+        expand_glob=True,
+        source_permutation_seed=1234,
+    )
+    sources = config.build(tmp_path / "work_dir")
+
+    assert len(sources) == num_files
+    assert sum(source.num_tokens for source in sources) == num_files * tokens_per_file
+    # Every file is present exactly once, in some order.
+    assert sorted(p for source in sources for p in source.source_paths) == sorted(
+        str(data_dir / f"part-{i:05d}.npy") for i in range(num_files)
     )

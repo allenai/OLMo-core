@@ -201,7 +201,11 @@ class NumpyDocumentSourceConfig(NumpyDocumentSourceConfigBase):
             mask_paths = self.label_mask_paths
 
         if self.source_permutation_seed is not None:
-            source_order = list(range(len(self.source_paths)))
+            # NOTE: permute over the *resolved* paths, not 'self.source_paths'. When globs are
+            # expanded here rather than in the config, 'self.source_paths' holds the unexpanded
+            # patterns, so indexing by its length silently truncates the source list to its first
+            # few files.
+            source_order = list(range(len(source_paths)))
             rng = random.Random(self.source_permutation_seed)
             rng.shuffle(source_order)
             source_paths = [source_paths[i] for i in source_order]
