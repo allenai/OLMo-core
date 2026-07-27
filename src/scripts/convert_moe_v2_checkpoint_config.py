@@ -91,6 +91,11 @@ _CANONICAL_BY_LEAF_NAME: Dict[str, str] = {
     "OLMoDDPTrainModule": (
         "olmo_core.train.train_module.transformer.ddp_train_module.OLMoDDPTrainModule"
     ),
+    # MoE sub-configs that the deleted moe.v2.block shim re-exported. Their names are unchanged;
+    # only the module path needs normalizing off the removed shim to the defining module.
+    "MoERouterConfigV2": "olmo_core.nn.moe.v2.router.MoERouterConfigV2",
+    "RoutedExpertsConfig": "olmo_core.nn.moe.v2.routed_experts.RoutedExpertsConfig",
+    "SharedExpertsConfig": "olmo_core.nn.moe.v2.shared_experts.SharedExpertsConfig",
 }
 
 

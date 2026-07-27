@@ -120,6 +120,25 @@ def test_rewrite_config_dict_maps_package_level_export_paths():
     assert "MoEV2" not in json.dumps(new)
 
 
+def test_rewrite_config_dict_maps_shim_exported_moe_subconfigs():
+    # The deleted moe.v2.block shim re-exported these MoE sub-configs; a config recorded under that
+    # module path must be normalized to their defining modules.
+    config = {
+        "router": {"_CLASS_": "olmo_core.nn.moe.v2.block.MoERouterConfigV2"},
+        "routed_experts": {"_CLASS_": "olmo_core.nn.moe.v2.block.RoutedExpertsConfig"},
+        "shared_experts": {"_CLASS_": "olmo_core.nn.moe.v2.block.SharedExpertsConfig"},
+    }
+    new, changes = convert_module.rewrite_config_dict(config)
+    assert new["router"]["_CLASS_"] == "olmo_core.nn.moe.v2.router.MoERouterConfigV2"
+    assert (
+        new["routed_experts"]["_CLASS_"] == "olmo_core.nn.moe.v2.routed_experts.RoutedExpertsConfig"
+    )
+    assert (
+        new["shared_experts"]["_CLASS_"] == "olmo_core.nn.moe.v2.shared_experts.SharedExpertsConfig"
+    )
+    assert len(changes) == 3
+
+
 def test_all_rewrite_targets_are_importable():
     # Every canonical target must actually resolve, so a migrated config loads.
     import importlib
