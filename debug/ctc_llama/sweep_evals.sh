@@ -26,8 +26,11 @@ PORT=29200
 for RUNG in 2048 4096 8192 16384; do
   PORT=$((PORT + 17))
   EVAL_JSONL=/scratch/users/prasann/ctc_suite_staged/eval_rungs/$RUNGDIR/rung_${RUNG}.jsonl
-  # MAXLEN >= rung + task max_new + 512 (the driver enforces this too); give plenty of head-room.
-  MAXLEN=$((RUNG + 4096))
+  # MAXLEN >= rung + task max_new + 512 (the driver enforces this too), PLUS 25% slack: the rung
+  # labels were calibrated on the Qwen tokenizer, and the same text tokenizes longer under Llama's
+  # 128k BPE. Without the slack the 16k rung's prompts get skipped as too long and are scored as
+  # empty -- metric 0.000 at parse_rate 1.0, which reads as a model failure (maxlen-truncation trap).
+  MAXLEN=$((RUNG + RUNG / 4 + 3072))
   sbatch --nodelist="$NODE" --gres=gpu:H200:$GPUS --job-name="ev-${TASK}-${ARM}-${RUNG}" \
     --export=ALL,CKPT="$CKPT",TASK="$TASK",VARIANT="$VARIANT",ARM="$ARM",RUNG="$RUNG",\
 EVAL_JSONL="$EVAL_JSONL",NGPU="$GPUS",MAXLEN="$MAXLEN",MASTER_PORT="$PORT" \
