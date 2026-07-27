@@ -7,7 +7,6 @@ from functools import partial
 from moe_8l_common import (
     BETAS,
     CAPACITY_FACTOR,
-    D_ATTN,
     D_MODEL,
     DENSE_LAYER_MLP,
     EP_PATH_NAME,

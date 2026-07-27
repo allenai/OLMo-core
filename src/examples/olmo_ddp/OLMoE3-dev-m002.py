@@ -172,7 +172,7 @@ PP_DIM = 4
 
 # ref
 REF_NUM_NODES = 16
-TAG = f"rep"
+TAG = "rep"
 
 LR_ALPHA = 0.53
 
@@ -265,13 +265,14 @@ EP_NO_SYNC_CAPACITY_FACTOR = 1.1875
 if RANDOM_ASSIGN:
     TAG += "-R"
 
-from olmo_core.nn.lm_head import LMHeadConfig, LMHeadType  # noqa: E402
-from olmo_core.nn.rope import RoPEConfig, RoPEScalingConfig, RoPEType  # noqa: E402
 from olmo_core.nn.attention import AttentionConfig, AttentionType  # noqa: E402
-from olmo_core.nn.layer_norm import LayerNormType, LayerNormConfig  # noqa: E402
+from olmo_core.nn.layer_norm import LayerNormConfig, LayerNormType  # noqa: E402
+from olmo_core.nn.lm_head import LMHeadConfig  # noqa: E402
+from olmo_core.nn.rope import RoPEConfig, RoPEType  # noqa: E402
 
 
 def build_model_config(common: CommonComponents) -> OLMoDDPModelConfig:
+    from olmo_core.nn.attention.backend import AttentionBackendName
     from olmo_core.nn.ddp.block import OLMoDDPTransformerBlockConfig
     from olmo_core.nn.moe.v2.ep_config import (
         ExpertParallelConfig,
@@ -279,7 +280,6 @@ def build_model_config(common: CommonComponents) -> OLMoDDPModelConfig:
         ExpertParallelSchedule,
     )
     from olmo_core.nn.moe.v2.fp8 import MoERowwiseFP8Config
-    from olmo_core.nn.attention.backend import AttentionBackendName
 
     d_model = D_MODEL
     dtype = DType.float32

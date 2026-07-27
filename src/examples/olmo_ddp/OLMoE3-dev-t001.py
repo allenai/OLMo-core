@@ -53,6 +53,7 @@ from olmo_core.distributed.parallel.pipeline_parallel import (  # noqa: E402
     PipelineP2PBackend,
     PipelineScheduleType,
 )
+from olmo_core.distributed.utils import get_local_rank  # noqa: E402
 from olmo_core.internal.common import get_work_dir  # noqa: E402
 from olmo_core.internal.experiment import (  # noqa: E402
     CliContext,
@@ -87,7 +88,6 @@ from olmo_core.optim.scheduler import (  # noqa: E402
     ComposableSchedulerStageType,
     OverrideDecay,
 )
-from olmo_core.distributed.utils import get_local_rank  # noqa: E402
 from olmo_core.train import (  # noqa: E402
     Duration,
     TrainerConfig,
