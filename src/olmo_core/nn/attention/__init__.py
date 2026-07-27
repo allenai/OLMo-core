@@ -1283,6 +1283,7 @@ class Attention(SequenceMixer):
         pos_cos: Optional[torch.Tensor] = None,
         freqs_cis: Optional[torch.Tensor] = None,
         cache_leftpad: Optional[torch.Tensor] = None,
+        chunk_ids: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """
         Apply attention to the input.
@@ -1294,9 +1295,18 @@ class Attention(SequenceMixer):
             Required together with ``max_doc_len`` when using intra-document masking.
         :param max_doc_len: The maximum document length in the input ``x``.
             Required together with ``cu_doc_lens`` when using intra-document masking.
+        :param chunk_ids: **Accepted and ignored.** When a model enables document-chunked
+            attention, :class:`~olmo_core.nn.transformer.Transformer` threads ``chunk_ids`` to
+            *every* block, so a model that mixes chunked and non-chunked sequence mixers requires
+            the non-chunked ones to tolerate it -- exactly as
+            :class:`~olmo_core.nn.attention.recurrent.GatedDeltaNet` already does via ``**kwargs``
+            for the Qwen3.5 hybrid. Plain attention has no chunked mask, so the roles carry no
+            meaning here. This is what lets Olmo 3's sliding-window layers stay untouched while its
+            full-attention layers carry the document-chunk mask.
 
         :returns: The output of attention with shape ``(batch_size, seq_len, d_model)``.
         """
+        del chunk_ids  # not applicable to plain attention; see the parameter docs above
         B, T, _ = x.shape
 
         # shape: (batch_size, seq_len, n_heads (local), head_dim),
