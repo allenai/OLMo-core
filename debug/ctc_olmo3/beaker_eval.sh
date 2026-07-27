@@ -60,7 +60,8 @@ echo "=== relay results to S3 ==="
 mkdir -p ~/.aws
 printf "%s" "$AWS_CREDS" > ~/.aws/credentials
 printf "%s" "$AWS_CFG" > ~/.aws/config
-AWS=$(command -v aws || echo /opt/conda/bin/aws)
+command -v aws >/dev/null 2>&1 || python -m pip install -q awscli
+AWS=$(command -v aws)
 AWS_PROFILE=S3 "$AWS" s3 sync "$OUT" s3://ai2-llm/checkpoints/prasanns/ctc_olmo3/results --only-show-errors
 echo "EVAL_LADDER_DONE rc=$RC_ALL"
 '

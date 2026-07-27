@@ -1,30 +1,30 @@
 {
   "arm": "chunked-mix",
   "aux": {
-    "generations_path": "/accounts/projects/berkeleynlp/prasann/projects/OLMo-core/results/ctc_suite/contradiction/qwen3.5-0.8b_chunked-mix/rung_2048.generations.json",
+    "generations_path": "/accounts/projects/berkeleynlp/prasann/projects/OLMo-core/results/ctc_suite/contradiction/qwen3.5-4b_chunked-mix/rung_2048.generations.json",
     "max_length": 4096,
     "max_new_tokens": 512,
     "nproc": 1,
-    "raw_eval_json": "/accounts/projects/berkeleynlp/prasann/projects/OLMo-core/results/ctc_suite/contradiction/qwen3.5-0.8b_chunked-mix/rung_2048.raw.json"
+    "raw_eval_json": "/accounts/projects/berkeleynlp/prasann/projects/OLMo-core/results/ctc_suite/contradiction/qwen3.5-4b_chunked-mix/rung_2048.raw.json"
   },
   "aux_metrics": {
-    "eval_seconds": 247.6,
-    "exact_match": 0.0,
-    "f1": 0.036,
+    "eval_seconds": 4837.8,
+    "exact_match": 0.052,
+    "f1": 0.3348,
     "parse_rate": 1.0,
-    "precision": 0.036,
-    "recall": 0.036
+    "precision": 0.336,
+    "recall": 0.334
   },
   "complexity_class": "N2",
   "cot_label": "no-cot",
   "eval_size": 500,
   "metric_name": "set_f1",
-  "metric_value": 0.036,
-  "model": "qwen3.5-0.8b",
+  "metric_value": 0.3348,
+  "model": "qwen3.5-4b",
   "provenance": {
-    "ckpt_path": "/data/prasann/ctc_suite/ckpts/ctc-smoke-contra-3ep",
+    "ckpt_path": "/data/prasann/ctc_suite/ckpts_4b/ctc-s5-contra-cmix-4b",
     "data_path": "/scratch/users/prasann/ctc_suite_staged/eval_rungs/contradiction/rung_2048.jsonl",
-    "date": "2026-07-20T11:04:33",
+    "date": "2026-07-20T09:04:50",
     "eval_backend": "native",
     "evaluator": "src/corpus_reasoning/eval/eval_lc_native_docchunk_contra.py",
     "evaluator_variant": "dense",

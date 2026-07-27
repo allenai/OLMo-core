@@ -6293,3 +6293,2520 @@ internally at /pytorch/c10/cuda/CUDAFunctions.cpp:162.)
     throughput/device/data loading (%)=0.0143
     throughput/device/data loading (s)=0.0006
     train/PPL=4.472
+[2;36m[2026-07-27 08:55:07][0m [34mINFO    [0m 
+[2m[olmo_core.train.callbacks.console_logger:68, f1ef336a6d41, rank=0][0m 
+[step=165/1109,epoch=1,eta=1h11m]
+    gpu_memory/GPU active mem (%)=31.23
+    gpu_memory/GPU active mem (GiB)=24.73
+    gpu_memory/GPU reserved mem (%)=36.78
+    gpu_memory/GPU reserved mem (GiB)=29.12
+    optim/LR (group 0)=8.77E-06
+    optim/LR (group 1)=8.77E-06
+    optim/step skipped=0.0
+    optim/total grad norm=3.414
+    throughput/chinchilla multiple=0.0002
+    throughput/device/BPS=0.2207
+    throughput/device/BPS (actual avg)=0.2231
+    throughput/device/MFU=33.58
+    throughput/device/MFU (actual avg)=33.95
+    throughput/device/TPS=4,519
+    throughput/device/TPS (actual avg)=4,568
+    throughput/device/flopsPS=332.3T
+    throughput/device/flopsPS (actual avg)=336.0T
+    throughput/total petaflops=1,987
+    throughput/total tokens=27,033,600
+    train/CE loss=1.558
+    throughput/device/data loading (%)=0.0155
+    throughput/device/data loading (s)=0.0007
+    train/PPL=4.747
+[2;36m[2026-07-27 08:55:11][0m [34mINFO    [0m 
+[2m[olmo_core.train.callbacks.console_logger:68, f1ef336a6d41, rank=0][0m 
+[step=166/1109,epoch=1,eta=1h11m]
+    gpu_memory/GPU active mem (%)=31.23
+    gpu_memory/GPU active mem (GiB)=24.73
+    gpu_memory/GPU reserved mem (%)=36.78
+    gpu_memory/GPU reserved mem (GiB)=29.12
+    optim/LR (group 0)=8.76E-06
+    optim/LR (group 1)=8.76E-06
+    optim/step skipped=0.0
+    optim/total grad norm=3.529
+    throughput/chinchilla multiple=0.0002
+    throughput/device/BPS=0.2223
+    throughput/device/BPS (actual avg)=0.2231
+    throughput/device/MFU=33.84
+    throughput/device/MFU (actual avg)=33.95
+    throughput/device/TPS=4,553
+    throughput/device/TPS (actual avg)=4,568
+    throughput/device/flopsPS=334.8T
+    throughput/device/flopsPS (actual avg)=336.0T
+    throughput/total petaflops=1,999
+    throughput/total tokens=27,197,440
+    train/CE loss=1.441
+    throughput/device/data loading (%)=0.0155
+    throughput/device/data loading (s)=0.0007
+    train/PPL=4.227
+[2;36m[2026-07-27 08:55:16][0m [34mINFO    [0m 
+[2m[olmo_core.train.callbacks.console_logger:68, f1ef336a6d41, rank=0][0m 
+[step=167/1109,epoch=1,eta=1h11m]
+    gpu_memory/GPU active mem (%)=31.23
+    gpu_memory/GPU active mem (GiB)=24.73
+    gpu_memory/GPU reserved mem (%)=36.78
+    gpu_memory/GPU reserved mem (GiB)=29.12
+    optim/LR (group 0)=8.75E-06
+    optim/LR (group 1)=8.75E-06
+    optim/step skipped=0.0
+    optim/total grad norm=3.349
+    throughput/chinchilla multiple=0.0002
+    throughput/device/BPS=0.2233
+    throughput/device/BPS (actual avg)=0.2231
+    throughput/device/MFU=33.98
+    throughput/device/MFU (actual avg)=33.95
+    throughput/device/TPS=4,572
+    throughput/device/TPS (actual avg)=4,568
+    throughput/device/flopsPS=336.3T
+    throughput/device/flopsPS (actual avg)=336.0T
+    throughput/total petaflops=2,012
+    throughput/total tokens=27,361,280
+    train/CE loss=1.384
+    throughput/device/data loading (%)=0.0105
+    throughput/device/data loading (s)=0.0005
+    train/PPL=3.990
+[2;36m[2026-07-27 08:55:20][0m [34mINFO    [0m 
+[2m[olmo_core.train.callbacks.console_logger:68, f1ef336a6d41, rank=0][0m 
+[step=168/1109,epoch=1,eta=1h11m]
+    gpu_memory/GPU active mem (%)=31.23
+    gpu_memory/GPU active mem (GiB)=24.73
+    gpu_memory/GPU reserved mem (%)=36.78
+    gpu_memory/GPU reserved mem (GiB)=29.12
+    optim/LR (group 0)=8.75E-06
+    optim/LR (group 1)=8.75E-06
+    optim/step skipped=0.0
+    optim/total grad norm=3.486
+    throughput/chinchilla multiple=0.0002
+    throughput/device/BPS=0.2219
+    throughput/device/BPS (actual avg)=0.2231
+    throughput/device/MFU=33.77
+    throughput/device/MFU (actual avg)=33.95
+    throughput/device/TPS=4,544
+    throughput/device/TPS (actual avg)=4,568
+    throughput/device/flopsPS=334.2T
+    throughput/device/flopsPS (actual avg)=335.9T
+    throughput/total petaflops=2,024
+    throughput/total tokens=27,525,120
+    train/CE loss=1.537
+    throughput/device/data loading (%)=0.0106
+    throughput/device/data loading (s)=0.0005
+    train/PPL=4.650
+[2;36m[2026-07-27 08:55:24][0m [34mINFO    [0m 
+[2m[olmo_core.train.callbacks.console_logger:68, f1ef336a6d41, rank=0][0m 
+[step=169/1109,epoch=1,eta=1h11m]
+    gpu_memory/GPU active mem (%)=31.23
+    gpu_memory/GPU active mem (GiB)=24.73
+    gpu_memory/GPU reserved mem (%)=36.78
+    gpu_memory/GPU reserved mem (GiB)=29.12
+    optim/LR (group 0)=8.74E-06
+    optim/LR (group 1)=8.74E-06
+    optim/step skipped=0.0
+    optim/total grad norm=3.652
+    throughput/chinchilla multiple=0.0002
+    throughput/device/BPS=0.2263
+    throughput/device/BPS (actual avg)=0.2231
+    throughput/device/MFU=34.45
+    throughput/device/MFU (actual avg)=33.95
+    throughput/device/TPS=4,635
+    throughput/device/TPS (actual avg)=4,568
+    throughput/device/flopsPS=340.8T
+    throughput/device/flopsPS (actual avg)=336.0T
+    throughput/total petaflops=2,036
+    throughput/total tokens=27,688,960
+    train/CE loss=1.383
+    throughput/device/data loading (%)=0.0123
+    throughput/device/data loading (s)=0.0005
+    train/PPL=3.985
+[2;36m[2026-07-27 08:55:29][0m [34mINFO    [0m 
+[2m[olmo_core.train.callbacks.console_logger:68, f1ef336a6d41, rank=0][0m 
+[step=170/1109,epoch=1,eta=1h11m]
+    gpu_memory/GPU active mem (%)=31.23
+    gpu_memory/GPU active mem (GiB)=24.73
+    gpu_memory/GPU reserved mem (%)=36.78
+    gpu_memory/GPU reserved mem (GiB)=29.12
+    optim/LR (group 0)=8.73E-06
+    optim/LR (group 1)=8.73E-06
+    optim/step skipped=0.0
+    optim/total grad norm=3.728
+    throughput/chinchilla multiple=0.0002
+    throughput/device/BPS=0.2210
+    throughput/device/BPS (actual avg)=0.2231
+    throughput/device/MFU=33.63
+    throughput/device/MFU (actual avg)=33.95
+    throughput/device/TPS=4,525
+    throughput/device/TPS (actual avg)=4,568
+    throughput/device/flopsPS=332.8T
+    throughput/device/flopsPS (actual avg)=336.0T
+    throughput/total petaflops=2,048
+    throughput/total tokens=27,852,800
+    train/CE loss=1.491
+    throughput/device/data loading (%)=0.0134
+    throughput/device/data loading (s)=0.0006
+    train/PPL=4.442
+[2;36m[2026-07-27 08:55:33][0m [34mINFO    [0m 
+[2m[olmo_core.train.callbacks.console_logger:68, f1ef336a6d41, rank=0][0m 
+[step=171/1109,epoch=1,eta=1h11m]
+    gpu_memory/GPU active mem (%)=31.23
+    gpu_memory/GPU active mem (GiB)=24.73
+    gpu_memory/GPU reserved mem (%)=36.78
+    gpu_memory/GPU reserved mem (GiB)=29.12
+    optim/LR (group 0)=8.72E-06
+    optim/LR (group 1)=8.72E-06
+    optim/step skipped=0.0
+    optim/total grad norm=3.587
+    throughput/chinchilla multiple=0.0002
+    throughput/device/BPS=0.2245
+    throughput/device/BPS (actual avg)=0.2231
+    throughput/device/MFU=34.17
+    throughput/device/MFU (actual avg)=33.95
+    throughput/device/TPS=4,598
+    throughput/device/TPS (actual avg)=4,568
+    throughput/device/flopsPS=338.2T
+    throughput/device/flopsPS (actual avg)=336.0T
+    throughput/total petaflops=2,060
+    throughput/total tokens=28,016,640
+    train/CE loss=1.372
+    throughput/device/data loading (%)=0.0123
+    throughput/device/data loading (s)=0.0005
+    train/PPL=3.944
+[2;36m[2026-07-27 08:55:38][0m [34mINFO    [0m 
+[2m[olmo_core.train.callbacks.console_logger:68, f1ef336a6d41, rank=0][0m 
+[step=172/1109,epoch=1,eta=1h10m]
+    gpu_memory/GPU active mem (%)=31.23
+    gpu_memory/GPU active mem (GiB)=24.73
+    gpu_memory/GPU reserved mem (%)=36.78
+    gpu_memory/GPU reserved mem (GiB)=29.12
+    optim/LR (group 0)=8.71E-06
+    optim/LR (group 1)=8.71E-06
+    optim/step skipped=0.0
+    optim/total grad norm=3.398
+    throughput/chinchilla multiple=0.0002
+    throughput/device/BPS=0.2236
+    throughput/device/BPS (actual avg)=0.2231
+    throughput/device/MFU=34.03
+    throughput/device/MFU (actual avg)=33.95
+    throughput/device/TPS=4,579
+    throughput/device/TPS (actual avg)=4,568
+    throughput/device/flopsPS=336.8T
+    throughput/device/flopsPS (actual avg)=336.0T
+    throughput/total petaflops=2,072
+    throughput/total tokens=28,180,480
+    train/CE loss=1.498
+    throughput/device/data loading (%)=0.0139
+    throughput/device/data loading (s)=0.0006
+    train/PPL=4.474
+[2;36m[2026-07-27 08:55:43][0m [34mINFO    [0m 
+[2m[olmo_core.train.callbacks.console_logger:68, f1ef336a6d41, rank=0][0m 
+[step=173/1109,epoch=1,eta=1h10m]
+    gpu_memory/GPU active mem (%)=31.23
+    gpu_memory/GPU active mem (GiB)=24.73
+    gpu_memory/GPU reserved mem (%)=36.78
+    gpu_memory/GPU reserved mem (GiB)=29.12
+    optim/LR (group 0)=8.70E-06
+    optim/LR (group 1)=8.70E-06
+    optim/step skipped=0.0
+    optim/total grad norm=3.550
+    throughput/chinchilla multiple=0.0002
+    throughput/device/BPS=0.2188
+    throughput/device/BPS (actual avg)=0.2231
+    throughput/device/MFU=33.31
+    throughput/device/MFU (actual avg)=33.95
+    throughput/device/TPS=4,481
+    throughput/device/TPS (actual avg)=4,568
+    throughput/device/flopsPS=329.6T
+    throughput/device/flopsPS (actual avg)=335.9T
+    throughput/total petaflops=2,084
+    throughput/total tokens=28,344,320
+    train/CE loss=1.461
+    throughput/device/data loading (%)=0.0160
+    throughput/device/data loading (s)=0.0007
+    train/PPL=4.310
+[2;36m[2026-07-27 08:55:47][0m [34mINFO    [0m 
+[2m[olmo_core.train.callbacks.console_logger:68, f1ef336a6d41, rank=0][0m 
+[step=174/1109,epoch=1,eta=1h10m]
+    gpu_memory/GPU active mem (%)=31.23
+    gpu_memory/GPU active mem (GiB)=24.73
+    gpu_memory/GPU reserved mem (%)=36.78
+    gpu_memory/GPU reserved mem (GiB)=29.12
+    optim/LR (group 0)=8.69E-06
+    optim/LR (group 1)=8.69E-06
+    optim/step skipped=0.0
+    optim/total grad norm=3.396
+    throughput/chinchilla multiple=0.0002
+    throughput/device/BPS=0.2202
+    throughput/device/BPS (actual avg)=0.2230
+    throughput/device/MFU=33.51
+    throughput/device/MFU (actual avg)=33.95
+    throughput/device/TPS=4,509
+    throughput/device/TPS (actual avg)=4,567
+    throughput/device/flopsPS=331.6T
+    throughput/device/flopsPS (actual avg)=335.9T
+    throughput/total petaflops=2,096
+    throughput/total tokens=28,508,160
+    train/CE loss=1.483
+    throughput/device/data loading (%)=0.0165
+    throughput/device/data loading (s)=0.0007
+    train/PPL=4.405
+[2;36m[2026-07-27 08:55:51][0m [34mINFO    [0m 
+[2m[olmo_core.train.callbacks.console_logger:68, f1ef336a6d41, rank=0][0m 
+[step=175/1109,epoch=1,eta=1h10m]
+    gpu_memory/GPU active mem (%)=31.23
+    gpu_memory/GPU active mem (GiB)=24.73
+    gpu_memory/GPU reserved mem (%)=36.78
+    gpu_memory/GPU reserved mem (GiB)=29.12
+    optim/LR (group 0)=8.68E-06
+    optim/LR (group 1)=8.68E-06
+    optim/step skipped=0.0
+    optim/total grad norm=3.597
+    throughput/chinchilla multiple=0.0002
+    throughput/device/BPS=0.2256
+    throughput/device/BPS (actual avg)=0.2231
+    throughput/device/MFU=34.33
+    throughput/device/MFU (actual avg)=33.95
+    throughput/device/TPS=4,619
+    throughput/device/TPS (actual avg)=4,568
+    throughput/device/flopsPS=339.7T
+    throughput/device/flopsPS (actual avg)=335.9T
+    throughput/total petaflops=2,108
+    throughput/total tokens=28,672,000
+    train/CE loss=1.368
+    throughput/device/data loading (%)=0.0134
+    throughput/device/data loading (s)=0.0006
+    train/PPL=3.927
+[2;36m[2026-07-27 08:55:56][0m [34mINFO    [0m 
+[2m[olmo_core.train.callbacks.console_logger:68, f1ef336a6d41, rank=0][0m 
+[step=176/1109,epoch=1,eta=1h10m]
+    gpu_memory/GPU active mem (%)=31.23
+    gpu_memory/GPU active mem (GiB)=24.73
+    gpu_memory/GPU reserved mem (%)=36.78
+    gpu_memory/GPU reserved mem (GiB)=29.12
+    optim/LR (group 0)=8.67E-06
+    optim/LR (group 1)=8.67E-06
+    optim/step skipped=0.0
+    optim/total grad norm=3.689
+    throughput/chinchilla multiple=0.0002
+    throughput/device/BPS=0.2227
+    throughput/device/BPS (actual avg)=0.2231
+    throughput/device/MFU=33.90
+    throughput/device/MFU (actual avg)=33.95
+    throughput/device/TPS=4,561
+    throughput/device/TPS (actual avg)=4,568
+    throughput/device/flopsPS=335.5T
+    throughput/device/flopsPS (actual avg)=335.9T
+    throughput/total petaflops=2,120
+    throughput/total tokens=28,835,840
+    train/CE loss=1.519
+    throughput/device/data loading (%)=0.0091
+    throughput/device/data loading (s)=0.0004
+    train/PPL=4.566
+[2;36m[2026-07-27 08:56:00][0m [34mINFO    [0m 
+[2m[olmo_core.train.callbacks.console_logger:68, f1ef336a6d41, rank=0][0m 
+[step=177/1109,epoch=1,eta=1h10m]
+    gpu_memory/GPU active mem (%)=31.23
+    gpu_memory/GPU active mem (GiB)=24.73
+    gpu_memory/GPU reserved mem (%)=36.78
+    gpu_memory/GPU reserved mem (GiB)=29.12
+    optim/LR (group 0)=8.66E-06
+    optim/LR (group 1)=8.66E-06
+    optim/step skipped=0.0
+    optim/total grad norm=3.428
+    throughput/chinchilla multiple=0.0002
+    throughput/device/BPS=0.2231
+    throughput/device/BPS (actual avg)=0.2231
+    throughput/device/MFU=33.96
+    throughput/device/MFU (actual avg)=33.95
+    throughput/device/TPS=4,569
+    throughput/device/TPS (actual avg)=4,568
+    throughput/device/flopsPS=336.0T
+    throughput/device/flopsPS (actual avg)=335.9T
+    throughput/total petaflops=2,132
+    throughput/total tokens=28,999,680
+    train/CE loss=1.527
+    throughput/device/data loading (%)=0.0161
+    throughput/device/data loading (s)=0.0007
+    train/PPL=4.606
+[2;36m[2026-07-27 08:56:05][0m [34mINFO    [0m 
+[2m[olmo_core.train.callbacks.console_logger:68, f1ef336a6d41, rank=0][0m 
+[step=178/1109,epoch=1,eta=1h10m]
+    gpu_memory/GPU active mem (%)=31.23
+    gpu_memory/GPU active mem (GiB)=24.73
+    gpu_memory/GPU reserved mem (%)=36.78
+    gpu_memory/GPU reserved mem (GiB)=29.12
+    optim/LR (group 0)=8.65E-06
+    optim/LR (group 1)=8.65E-06
+    optim/step skipped=0.0
+    optim/total grad norm=3.296
+    throughput/chinchilla multiple=0.0002
+    throughput/device/BPS=0.2249
+    throughput/device/BPS (actual avg)=0.2231
+    throughput/device/MFU=34.24
+    throughput/device/MFU (actual avg)=33.95
+    throughput/device/TPS=4,606
+    throughput/device/TPS (actual avg)=4,568
+    throughput/device/flopsPS=338.8T
+    throughput/device/flopsPS (actual avg)=335.9T
+    throughput/total petaflops=2,144
+    throughput/total tokens=29,163,520
+    train/CE loss=1.351
+    throughput/device/data loading (%)=0.0163
+    throughput/device/data loading (s)=0.0007
+    train/PPL=3.860
+[2;36m[2026-07-27 08:56:09][0m [34mINFO    [0m 
+[2m[olmo_core.train.callbacks.console_logger:68, f1ef336a6d41, rank=0][0m 
+[step=179/1109,epoch=1,eta=1h10m]
+    gpu_memory/GPU active mem (%)=31.23
+    gpu_memory/GPU active mem (GiB)=24.73
+    gpu_memory/GPU reserved mem (%)=36.78
+    gpu_memory/GPU reserved mem (GiB)=29.12
+    optim/LR (group 0)=8.64E-06
+    optim/LR (group 1)=8.64E-06
+    optim/step skipped=0.0
+    optim/total grad norm=3.373
+    throughput/chinchilla multiple=0.0002
+    throughput/device/BPS=0.2254
+    throughput/device/BPS (actual avg)=0.2231
+    throughput/device/MFU=34.30
+    throughput/device/MFU (actual avg)=33.95
+    throughput/device/TPS=4,616
+    throughput/device/TPS (actual avg)=4,568
+    throughput/device/flopsPS=339.4T
+    throughput/device/flopsPS (actual avg)=336.0T
+    throughput/total petaflops=2,156
+    throughput/total tokens=29,327,360
+    train/CE loss=1.354
+    throughput/device/data loading (%)=0.0131
+    throughput/device/data loading (s)=0.0006
+    train/PPL=3.874
+[2;36m[2026-07-27 08:56:14][0m [34mINFO    [0m 
+[2m[olmo_core.train.callbacks.console_logger:68, f1ef336a6d41, rank=0][0m 
+[step=180/1109,epoch=1,eta=1h10m]
+    gpu_memory/GPU active mem (%)=31.23
+    gpu_memory/GPU active mem (GiB)=24.73
+    gpu_memory/GPU reserved mem (%)=36.78
+    gpu_memory/GPU reserved mem (GiB)=29.12
+    optim/LR (group 0)=8.63E-06
+    optim/LR (group 1)=8.63E-06
+    optim/step skipped=0.0
+    optim/total grad norm=3.460
+    throughput/chinchilla multiple=0.0002
+    throughput/device/BPS=0.2226
+    throughput/device/BPS (actual avg)=0.2231
+    throughput/device/MFU=33.88
+    throughput/device/MFU (actual avg)=33.95
+    throughput/device/TPS=4,558
+    throughput/device/TPS (actual avg)=4,568
+    throughput/device/flopsPS=335.2T
+    throughput/device/flopsPS (actual avg)=336.0T
+    throughput/total petaflops=2,168
+    throughput/total tokens=29,491,200
+    train/CE loss=1.499
+    throughput/device/data loading (%)=0.0118
+    throughput/device/data loading (s)=0.0005
+    train/PPL=4.478
+[2;36m[2026-07-27 08:56:18][0m [34mINFO    [0m 
+[2m[olmo_core.train.callbacks.console_logger:68, f1ef336a6d41, rank=0][0m 
+[step=181/1109,epoch=1,eta=1h10m]
+    gpu_memory/GPU active mem (%)=31.23
+    gpu_memory/GPU active mem (GiB)=24.73
+    gpu_memory/GPU reserved mem (%)=36.78
+    gpu_memory/GPU reserved mem (GiB)=29.12
+    optim/LR (group 0)=8.62E-06
+    optim/LR (group 1)=8.62E-06
+    optim/step skipped=0.0
+    optim/total grad norm=3.377
+    throughput/chinchilla multiple=0.0002
+    throughput/device/BPS=0.2214
+    throughput/device/BPS (actual avg)=0.2231
+    throughput/device/MFU=33.70
+    throughput/device/MFU (actual avg)=33.95
+    throughput/device/TPS=4,534
+    throughput/device/TPS (actual avg)=4,568
+    throughput/device/flopsPS=333.5T
+    throughput/device/flopsPS (actual avg)=335.9T
+    throughput/total petaflops=2,180
+    throughput/total tokens=29,655,040
+    train/CE loss=1.525
+    throughput/device/data loading (%)=0.0143
+    throughput/device/data loading (s)=0.0006
+    train/PPL=4.594
+W0727 08:56:20.787000 7 
+site-packages/torch/distributed/elastic/agent/server/api.py:725] Received 15 
+death signal, shutting down workers
+W0727 08:56:20.788000 7 
+site-packages/torch/distributed/elastic/multiprocessing/api.py:908] Sending 
+process 557 closing signal SIGTERM
+W0727 08:56:20.789000 7 
+site-packages/torch/distributed/elastic/multiprocessing/api.py:908] Sending 
+process 558 closing signal SIGTERM
+W0727 08:56:20.789000 7 
+site-packages/torch/distributed/elastic/multiprocessing/api.py:908] Sending 
+process 559 closing signal SIGTERM
+W0727 08:56:20.790000 7 
+site-packages/torch/distributed/elastic/multiprocessing/api.py:908] Sending 
+process 560 closing signal SIGTERM
+W0727 08:56:20.790000 7 
+site-packages/torch/distributed/elastic/multiprocessing/api.py:908] Sending 
+process 561 closing signal SIGTERM
+W0727 08:56:20.791000 7 
+site-packages/torch/distributed/elastic/multiprocessing/api.py:908] Sending 
+process 562 closing signal SIGTERM
+W0727 08:56:20.791000 7 
+site-packages/torch/distributed/elastic/multiprocessing/api.py:908] Sending 
+process 563 closing signal SIGTERM
+W0727 08:56:20.792000 7 
+site-packages/torch/distributed/elastic/multiprocessing/api.py:908] Sending 
+process 564 closing signal SIGTERM
+[2;36m[2026-07-27 08:56:22][0m [33mWARNING [0m [2m[olmo_core.train.trainer:1248,
+f1ef336a6d41, rank=2][0m SIGTERM received
+[2;36m[2026-07-27 08:56:22][0m [33mWARNING [0m [2m[olmo_core.train.trainer:1248,
+f1ef336a6d41, rank=5][0m SIGTERM received
+[2;36m[2026-07-27 08:56:22][0m [33mWARNING [0m [2m[olmo_core.train.trainer:1248,
+f1ef336a6d41, rank=4][0m SIGTERM received
+[2;36m[2026-07-27 08:56:22][0m [33mWARNING [0m [2m[olmo_core.train.trainer:1248,
+f1ef336a6d41, rank=0][0m SIGTERM received
+[2;36m[2026-07-27 08:56:22][0m [1;31mERROR   [0m 
+[2m[olmo_core.train.trainer:745, f1ef336a6d41, rank=2][0m Training failed due 
+to:
+RuntimeError: DataLoader worker (pid 1594) is killed by signal: Terminated. 
+[2;36m[2026-07-27 08:56:22][0m [1;31mERROR   [0m 
+[2m[olmo_core.train.trainer:745, f1ef336a6d41, rank=5][0m Training failed due 
+to:
+RuntimeError: DataLoader worker (pid 1591) is killed by signal: Terminated. 
+[2;36m[2026-07-27 08:56:22][0m [33mWARNING [0m [2m[olmo_core.train.trainer:1248,
+f1ef336a6d41, rank=7][0m SIGTERM received
+[2;36m[2026-07-27 08:56:22][0m [1;31mERROR   [0m 
+[2m[olmo_core.train.trainer:745, f1ef336a6d41, rank=0][0m Training failed due 
+to:
+RuntimeError: DataLoader worker (pid 1588) is killed by signal: Terminated. 
+[2;36m[2026-07-27 08:56:22][0m [1;31mERROR   [0m 
+[2m[olmo_core.train.trainer:745, f1ef336a6d41, rank=4][0m Training failed due 
+to:
+RuntimeError: DataLoader worker (pid 1590) is killed by signal: Terminated. 
+[2;36m[2026-07-27 08:56:22][0m [33mWARNING [0m 
+[2m[olmo_core.train.callbacks.wandb:114, f1ef336a6d41, rank=0][0m Finalizing 
+failed W&B run...
+wandb: WARNING The `quiet` argument to `wandb.run.finish()` is deprecated, use 
+`wandb.Settings(quiet=...)` to set this instead.
+[2;36m[2026-07-27 08:56:22][0m [1;31mERROR   [0m 
+[2m[olmo_core.train.trainer:745, f1ef336a6d41, rank=7][0m Training failed due 
+to:
+RuntimeError: DataLoader worker (pid 1593) is killed by signal: Terminated. 
+[2;36m[2026-07-27 08:56:22][0m [33mWARNING [0m [2m[olmo_core.train.trainer:1248,
+f1ef336a6d41, rank=6][0m SIGTERM received
+[2;36m[2026-07-27 08:56:22][0m [33mWARNING [0m [2m[olmo_core.train.trainer:1248,
+f1ef336a6d41, rank=1][0m SIGTERM received
+[2;36m[2026-07-27 08:56:22][0m [1;31mERROR   [0m 
+[2m[olmo_core.train.trainer:745, f1ef336a6d41, rank=6][0m Training failed due 
+to:
+RuntimeError: DataLoader worker (pid 1595) is killed by signal: Terminated. 
+[2;36m[2026-07-27 08:56:22][0m [33mWARNING [0m [2m[olmo_core.train.trainer:1248,
+f1ef336a6d41, rank=3][0m SIGTERM received
+[2;36m[2026-07-27 08:56:22][0m [1;31mERROR   [0m 
+[2m[olmo_core.train.trainer:745, f1ef336a6d41, rank=1][0m Training failed due 
+to:
+RuntimeError: DataLoader worker (pid 1592) is killed by signal: Terminated. 
+[2;36m[2026-07-27 08:56:22][0m [1;31mERROR   [0m 
+[2m[olmo_core.train.trainer:745, f1ef336a6d41, rank=3][0m Training failed due 
+to:
+RuntimeError: DataLoader worker (pid 1589) is killed by signal: Terminated. 
+wandb: updating run metadata
+wandb: uploading config.yaml
+wandb: uploading history steps 180-181, summary, console lines 4325-4353
+wandb: 
+wandb: Run history:
+wandb:        checkpoint/load_duration_s ▁
+wandb:     gpu_memory/GPU active mem (%) 
+▁▁▁▁▂▂▂▂▃▃▃▃▃▄▄▄▄▅▅▅▆▆▆▆▇███████████████
+wandb:   gpu_memory/GPU active mem (GiB) 
+▁▁▁▁▁▂▂▂▃▃▃▃▃▄▄▅▅▅▅▅▆▆▆▆▇▇██████████████
+wandb:   gpu_memory/GPU reserved mem (%) 
+▁███████████████████████████████████████
+wandb: gpu_memory/GPU reserved mem (GiB) 
+▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁
+wandb:                optim/LR (group 0) 
+▁▂▅▅▆▇▇██████████▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇
+wandb:                optim/LR (group 1) 
+▁▃▄▅▅▇▇██████████████████▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇
+wandb:                optim/step skipped 
+▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁
+wandb:             optim/total grad norm 
+█▆▂▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁
+wandb:    throughput/chinchilla multiple 
+▁▁▁▁▂▂▂▂▂▂▃▃▃▃▃▃▄▄▄▄▄▅▅▅▅▅▅▅▆▆▆▆▆▇▇▇▇▇▇█
+wandb:                               +15 ...
+wandb: 
+wandb: Run summary:
+wandb:        checkpoint/load_duration_s 30.59021
+wandb:     gpu_memory/GPU active mem (%) 31.22955
+wandb:   gpu_memory/GPU active mem (GiB) 24.73055
+wandb:   gpu_memory/GPU reserved mem (%) 36.77883
+wandb: gpu_memory/GPU reserved mem (GiB) 29.125
+wandb:                optim/LR (group 0) 1e-05
+wandb:                optim/LR (group 1) 1e-05
+wandb:                optim/step skipped 0
+wandb:             optim/total grad norm 3.3768
+wandb:    throughput/chinchilla multiple 0.00022
+wandb:                               +15 ...
+wandb: 
+wandb: 🚀 View run ctc-olmo3-7b-contra-full-lr1e5-20260727T013922-0700 at: 
+https://wandb.ai/prasanns-allen-institute-for-ai/memory-networks/runs/s802g2tf
+wandb: ⭐️ View project at: 
+https://wandb.ai/prasanns-allen-institute-for-ai/memory-networks
+wandb: Synced 5 W&B file(s), 0 media file(s), 0 artifact file(s) and 0 other 
+file(s)
+wandb: Find logs at: 
+/weka/oe-training-default/ai2-llm/checkpoints/prasanns/ctc_suite/ckpts/ctc-olmo3
+-7b-contra-full-lr1e5-20260727T013922-0700/wandb/wandb/run-20260727_084227-s802g
+2tf/logs
+Traceback (most recent call last):
+  File 
+"/gantry-runtime/src/scripts/train/memexpress/ctc_suite/train_ctc_suite.py", 
+line 1119, in <module>
+    main()
+  File 
+"/gantry-runtime/src/scripts/train/memexpress/ctc_suite/train_ctc_suite.py", 
+line 1113, in main
+    build_and_fit(opts)
+  File 
+"/gantry-runtime/src/scripts/train/memexpress/ctc_suite/train_ctc_suite.py", 
+line 873, in build_and_fit
+    trainer.fit()
+  File "/opt/conda/lib/python3.12/site-packages/olmo_core/train/trainer.py", 
+line 742, in fit
+    self._fit_epoch()
+  File "/opt/conda/lib/python3.12/site-packages/olmo_core/train/trainer.py", 
+line 1490, in _fit_epoch
+    self.train_module.train_batch(batch)
+  File 
+"/opt/conda/lib/python3.12/site-packages/olmo_core/train/train_module/transforme
+r/train_module.py", line 422, in train_batch
+    loss.backward()
+  File "/opt/conda/lib/python3.12/site-packages/torch/_tensor.py", line 625, in 
+backward
+    torch.autograd.backward(
+  File "/opt/conda/lib/python3.12/site-packages/torch/autograd/__init__.py", 
+line 354, in backward
+    _engine_run_backward(
+  File "/opt/conda/lib/python3.12/site-packages/torch/autograd/graph.py", line 
+841, in _engine_run_backward
+    return Variable._execution_engine.run_backward(  # Calls into the C++ engine
+to run the backward pass
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^^^^^^
+  File 
+"/opt/conda/lib/python3.12/site-packages/torch/utils/data/_utils/signal_handling
+.py", line 73, in handler
+    _error_if_any_worker_fails()
+RuntimeError: DataLoader worker (pid 1588) is killed by signal: Terminated. 
+[2;36m[2026-07-27 08:56:42][0m [1;7;31mCRITICAL[0m [2m[olmo_core.utils:400,
+f1ef336a6d41, rank=7][0m Uncaught RuntimeError: DataLoader worker (pid 1593) is
+killed by signal: Terminated. 
+[31m╭─[0m[31m──────────────────────────────[0m[31m [0m[1;31mTraceback 
+[0m[1;2;31m(most recent call last)[0m[31m 
+[0m[31m───────────────────────────────[0m[31m─╮[0m
+[31m│[0m 
+[2;33m/gantry-runtime/src/scripts/train/memexpress/ctc_suite/[0m[1;33mtrain_ctc_
+suite.py[0m:[94m1119[0m in [92m<module>[0m       [31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m   [2m1116 [0m                                                      
+[31m│[0m
+[31m│[0m   [2m1117 [0m                                                      
+[31m│[0m
+[31m│[0m   [2m1118 [0m[94mif[0m [91m__name__[0m == 
+[33m"[0m[33m__main__[0m[33m"[0m:                                          
+[31m│[0m
+[31m│[0m [31m❱ [0m1119 [2m│   [0m[1;4mmain()[0m                         
+[31m│[0m
+[31m│[0m   [2m1120 [0m                                                      
+[31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m 
+[2;33m/gantry-runtime/src/scripts/train/memexpress/ctc_suite/[0m[1;33mtrain_ctc_
+suite.py[0m:[94m1113[0m in [92mmain[0m           [31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m   [2m1110 [0m[2m│   │   [0m[94mreturn[0m                       
+[31m│[0m
+[31m│[0m   [2m1111 [0m[2m│   [0mprepare_training_environment()            
+[31m│[0m
+[31m│[0m   [2m1112 [0m[2m│   [0m[94mtry[0m:                             
+[31m│[0m
+[31m│[0m [31m❱ [0m1113 [2m│   │   [0mbuild_and_fit(opts)                  
+[31m│[0m
+[31m│[0m   [2m1114 [0m[2m│   [0m[94mfinally[0m:                         
+[31m│[0m
+[31m│[0m   [2m1115 [0m[2m│   │   [0m[1;4mteardown_training_environment()[0m
+[31m│[0m
+[31m│[0m   [2m1116 [0m                                                      
+[31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m 
+[2;33m/gantry-runtime/src/scripts/train/memexpress/ctc_suite/[0m[1;33mtrain_ctc_
+suite.py[0m:[94m873[0m in [92mbuild_and_fit[0m   [31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m   [2m 870 [0m[2m│   │   [0msource, 
+dp_process_group=train_module.dp_process_group                            
+[31m│[0m
+[31m│[0m   [2m 871 [0m[2m│   [0m)                                         
+[31m│[0m
+[31m│[0m   [2m 872 [0m[2m│   [0mtrainer = trainer_config.build(train_module,
+data_loader)                             [31m│[0m
+[31m│[0m [31m❱ [0m 873 [2m│   [0m[1;4mtrainer.fit()[0m                  
+[31m│[0m
+[31m│[0m   [2m 874 [0m[2m│   [0m                                          
+[31m│[0m
+[31m│[0m   [2m 875 [0m[2m│   [0m[2m# Save a model-only checkpoint in the eval
+loader's expected layout (config.json +[0m    [31m│[0m
+[31m│[0m   [2m 876 [0m[2m│   [0m[2m# model_and_optim/) so the docchunk eval
+scripts load it directly.[0m                    [31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m 
+[2;33m/opt/conda/lib/python3.12/site-packages/olmo_core/train/[0m[1;33mtrainer.p
+y[0m:[94m742[0m in [92mfit[0m                    [31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m   [2m 739 [0m[2m│   │   │   [0m                                  
+[31m│[0m
+[31m│[0m   [2m 740 [0m[2m│   │   │   [0m[2m# Iterate over epochs until done.[0m
+[31m│[0m
+[31m│[0m   [2m 741 [0m[2m│   │   │   [0m[94mwhile[0m [95mnot[0m 
+[96mself[0m.training_complete:                                             
+[31m│[0m
+[31m│[0m [31m❱ [0m 742 [2m│   │   │   │   [0m[96mself[0m._fit_epoch()   
+[31m│[0m
+[31m│[0m   [2m 743 [0m[2m│   │   [0m[94mexcept[0m [96mBaseException[0m [94mas[0m
+exc:                                                      [31m│[0m
+[31m│[0m   [2m 744 [0m[2m│   │   │   [0m[96mself[0m._error = exc        
+[31m│[0m
+[31m│[0m   [2m 745 [0m[2m│   │   │   [0mlog.error([33mf[0m[33m"[0m[33mTraining
+failed due to:[0m[33m\n[0m[33m{[0m[96mtype[0m(exc).[91m__name__[0m[33m}[0m[33m:
+[0m[33m{[0mexc[33m}[0m[33m"[0m)            [31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m 
+[2;33m/opt/conda/lib/python3.12/site-packages/olmo_core/train/[0m[1;33mtrainer.p
+y[0m:[94m1490[0m in [92m_fit_epoch[0m            [31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m   [2m1487 [0m[2m│   │   │   [0m[94mif[0m should_skip:          
+[31m│[0m
+[31m│[0m   [2m1488 [0m[2m│   │   │   │   
+[0mlog.warning([33mf[0m[33m"[0m[33mSkipping training on step 
+[0m[33m{[0m[96mself[0m.global_step[33m:[0m[33m,d[0m[33m}[0m[33m intentional[0m
+[31m│[0m
+[31m│[0m   [2m1489 [0m[2m│   │   │   [0m[94melse[0m:                    
+[31m│[0m
+[31m│[0m [31m❱ [0m1490 [2m│   │   │   │   
+[0m[1;4;96mself[0m[1;4m.train_module.train_batch(batch)[0m                 
+[31m│[0m
+[31m│[0m   [2m1491 [0m[2m│   │   │   │   [0m                              
+[31m│[0m
+[31m│[0m   [2m1492 [0m[2m│   │   │   │   [0m[94mfor[0m callback [95min[0m
+[96mself[0m._iter_callbacks():                                   [31m│[0m
+[31m│[0m   [2m1493 [0m[2m│   │   │   │   │   [0mcallback.pre_optim_step() 
+[31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m 
+[2;33m/opt/conda/lib/python3.12/site-packages/olmo_core/train/train_module/trans
+former/[0m[1;33mtrain_module.py[0m [31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m   [2m419 [0m[2m│   │   │   │   │   [0m[94mdel[0m z_loss        
+[31m│[0m
+[31m│[0m   [2m420 [0m[2m│   │   │   │   [0m                               
+[31m│[0m
+[31m│[0m   [2m421 [0m[2m│   │   │   │   [0m[2m# Run backward pass.[0m   
+[31m│[0m
+[31m│[0m [31m❱ [0m422 [2m│   │   │   │   [0m[1;4mloss.backward()[0m     
+[31m│[0m
+[31m│[0m   [2m423 [0m[2m│   │   [0m                                       
+[31m│[0m
+[31m│[0m   [2m424 [0m[2m│   │   [0m[94mdel[0m batch  [2m# In case this helps
+with memory utilization.[0m                           [31m│[0m
+[31m│[0m   [2m425 [0m                                                       
+[31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m 
+[2;33m/opt/conda/lib/python3.12/site-packages/torch/[0m[1;33m_tensor.py[0m:[94m6
+25[0m in [92mbackward[0m                         [31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m   [2m 622 [0m[2m│   │   │   │   [0mcreate_graph=create_graph,    
+[31m│[0m
+[31m│[0m   [2m 623 [0m[2m│   │   │   │   [0minputs=inputs,                
+[31m│[0m
+[31m│[0m   [2m 624 [0m[2m│   │   │   [0m)                                 
+[31m│[0m
+[31m│[0m [31m❱ [0m 625 [2m│   │   [0m[1;4mtorch.autograd.backward([0m   
+[31m│[0m
+[31m│[0m   [2m 626 [0m[1;2;4m│   │   │   [0m[1;4;96mself[0m[1;4m, gradient,
+retain_graph, create_graph, inputs=inputs[0m                     [31m│[0m
+[31m│[0m   [2m 627 [0m[1;2;4m│   │   [0m[1;4m)[0m                       
+[31m│[0m
+[31m│[0m   [2m 628 [0m                                                      
+[31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m 
+[2;33m/opt/conda/lib/python3.12/site-packages/torch/autograd/[0m[1;33m__init__.p
+y[0m:[94m354[0m in [92mbackward[0m               [31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m   [2m351 [0m[2m│   [0m[2m# The reason we repeat the same comment below
+is that[0m                                  [31m│[0m
+[31m│[0m   [2m352 [0m[2m│   [0m[2m# some Python versions print out the first
+line of a multi-line function[0m               [31m│[0m
+[31m│[0m   [2m353 [0m[2m│   [0m[2m# calls in the traceback and some print out
+the last line[0m                              [31m│[0m
+[31m│[0m [31m❱ [0m354 [2m│   [0m_engine_run_backward(                     
+[31m│[0m
+[31m│[0m   [2m355 [0m[2m│   │   [0mtensors,                               
+[31m│[0m
+[31m│[0m   [2m356 [0m[2m│   │   [0mgrad_tensors_,                         
+[31m│[0m
+[31m│[0m   [2m357 [0m[2m│   │   [0mretain_graph,                          
+[31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m 
+[2;33m/opt/conda/lib/python3.12/site-packages/torch/autograd/[0m[1;33mgraph.py[0
+m:[94m841[0m in [92m_engine_run_backward[0m      [31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m   [2m838 [0m[2m│   [0m[94mif[0m attach_logging_hooks:          
+[31m│[0m
+[31m│[0m   [2m839 [0m[2m│   │   [0munregister_hooks = 
+_register_logging_hooks_on_whole_graph(t_outputs)               [31m│[0m
+[31m│[0m   [2m840 [0m[2m│   [0m[94mtry[0m:                              
+[31m│[0m
+[31m│[0m [31m❱ [0m841 [2m│   │   [0m[94mreturn[0m 
+Variable._execution_engine.run_backward(  [2m# Calls into the C++ engine to 
+ru[0m [31m│[0m
+[31m│[0m   [2m842 [0m[2m│   │   │   [0mt_outputs, *args, **kwargs         
+[31m│[0m
+[31m│[0m   [2m843 [0m[2m│   │   [0m)  [2m# Calls into the C++ engine to run the
+backward pass[0m                            [31m│[0m
+[31m│[0m   [2m844 [0m[2m│   [0m[94mfinally[0m:                          
+[31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m 
+[2;33m/opt/conda/lib/python3.12/site-packages/torch/utils/data/_utils/[0m[1;33ms
+ignal_handling.py[0m:[94m73[0m in [92mhandler[0m [31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m   [2m70 [0m[2m│   [0m[94mdef[0m[90m [0m[92mhandler[0m(signum, frame):
+[31m│[0m
+[31m│[0m   [2m71 [0m[2m│   │   [0m[2m# This following call uses `waitid` with
+WNOHANG from C side. Therefore,[0m            [31m│[0m
+[31m│[0m   [2m72 [0m[2m│   │   [0m[2m# Python can still get and update the
+process status successfully.[0m                  [31m│[0m
+[31m│[0m [31m❱ [0m73 [2m│   │   [0m[1;4m_error_if_any_worker_fails()[0m 
+[31m│[0m
+[31m│[0m   [2m74 [0m[2m│   │   [0m[94mif[0m previous_handler [95mis[0m
+[95mnot[0m [94mNone[0m:                                                    
+[31m│[0m
+[31m│[0m   [2m75 [0m[2m│   │   │   [0m[94massert[0m 
+[96mcallable[0m(previous_handler)                                             
+[31m│[0m
+[31m│[0m   [2m76 [0m[2m│   │   │   [0mprevious_handler(signum, frame)     
+[31m│[0m
+[31m╰───────────────────────────────────────────────────────────────────────────
+───────────────────────╯[0m
+[1;91mRuntimeError: [0mDataLoader worker [1m([0mpid [1;36m1593[0m[1m)[0m is
+killed by signal: Terminated. 
+[2;36m[2026-07-27 08:56:42][0m [1;7;31mCRITICAL[0m [2m[olmo_core.utils:400,
+f1ef336a6d41, rank=6][0m Uncaught RuntimeError: DataLoader worker (pid 1595) is
+killed by signal: Terminated. 
+[31m╭─[0m[31m──────────────────────────────[0m[31m [0m[1;31mTraceback 
+[0m[1;2;31m(most recent call last)[0m[31m 
+[0m[31m───────────────────────────────[0m[31m─╮[0m
+[31m│[0m 
+[2;33m/gantry-runtime/src/scripts/train/memexpress/ctc_suite/[0m[1;33mtrain_ctc_
+suite.py[0m:[94m1119[0m in [92m<module>[0m       [31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m   [2m1116 [0m                                                      
+[31m│[0m
+[31m│[0m   [2m1117 [0m                                                      
+[31m│[0m
+[31m│[0m   [2m1118 [0m[94mif[0m [91m__name__[0m == 
+[33m"[0m[33m__main__[0m[33m"[0m:                                          
+[31m│[0m
+[31m│[0m [31m❱ [0m1119 [2m│   [0m[1;4mmain()[0m                         
+[31m│[0m
+[31m│[0m   [2m1120 [0m                                                      
+[31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m 
+[2;33m/gantry-runtime/src/scripts/train/memexpress/ctc_suite/[0m[1;33mtrain_ctc_
+suite.py[0m:[94m1113[0m in [92mmain[0m           [31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m   [2m1110 [0m[2m│   │   [0m[94mreturn[0m                       
+[31m│[0m
+[31m│[0m   [2m1111 [0m[2m│   [0mprepare_training_environment()            
+[31m│[0m
+[31m│[0m   [2m1112 [0m[2m│   [0m[94mtry[0m:                             
+[31m│[0m
+[31m│[0m [31m❱ [0m1113 [2m│   │   [0mbuild_and_fit(opts)                  
+[31m│[0m
+[31m│[0m   [2m1114 [0m[2m│   [0m[94mfinally[0m:                         
+[31m│[0m
+[31m│[0m   [2m1115 [0m[2m│   │   [0m[1;4mteardown_training_environment()[0m
+[31m│[0m
+[31m│[0m   [2m1116 [0m                                                      
+[31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m 
+[2;33m/gantry-runtime/src/scripts/train/memexpress/ctc_suite/[0m[1;33mtrain_ctc_
+suite.py[0m:[94m873[0m in [92mbuild_and_fit[0m   [31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m   [2m 870 [0m[2m│   │   [0msource, 
+dp_process_group=train_module.dp_process_group                            
+[31m│[0m
+[31m│[0m   [2m 871 [0m[2m│   [0m)                                         
+[31m│[0m
+[31m│[0m   [2m 872 [0m[2m│   [0mtrainer = trainer_config.build(train_module,
+data_loader)                             [31m│[0m
+[31m│[0m [31m❱ [0m 873 [2m│   [0m[1;4mtrainer.fit()[0m                  
+[31m│[0m
+[31m│[0m   [2m 874 [0m[2m│   [0m                                          
+[31m│[0m
+[31m│[0m   [2m 875 [0m[2m│   [0m[2m# Save a model-only checkpoint in the eval
+loader's expected layout (config.json +[0m    [31m│[0m
+[31m│[0m   [2m 876 [0m[2m│   [0m[2m# model_and_optim/) so the docchunk eval
+scripts load it directly.[0m                    [31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m 
+[2;33m/opt/conda/lib/python3.12/site-packages/olmo_core/train/[0m[1;33mtrainer.p
+y[0m:[94m742[0m in [92mfit[0m                    [31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m   [2m 739 [0m[2m│   │   │   [0m                                  
+[31m│[0m
+[31m│[0m   [2m 740 [0m[2m│   │   │   [0m[2m# Iterate over epochs until done.[0m
+[31m│[0m
+[31m│[0m   [2m 741 [0m[2m│   │   │   [0m[94mwhile[0m [95mnot[0m 
+[96mself[0m.training_complete:                                             
+[31m│[0m
+[31m│[0m [31m❱ [0m 742 [2m│   │   │   │   [0m[96mself[0m._fit_epoch()   
+[31m│[0m
+[31m│[0m   [2m 743 [0m[2m│   │   [0m[94mexcept[0m [96mBaseException[0m [94mas[0m
+exc:                                                      [31m│[0m
+[31m│[0m   [2m 744 [0m[2m│   │   │   [0m[96mself[0m._error = exc        
+[31m│[0m
+[31m│[0m   [2m 745 [0m[2m│   │   │   [0mlog.error([33mf[0m[33m"[0m[33mTraining
+failed due to:[0m[33m\n[0m[33m{[0m[96mtype[0m(exc).[91m__name__[0m[33m}[0m[33m:
+[0m[33m{[0mexc[33m}[0m[33m"[0m)            [31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m 
+[2;33m/opt/conda/lib/python3.12/site-packages/olmo_core/train/[0m[1;33mtrainer.p
+y[0m:[94m1490[0m in [92m_fit_epoch[0m            [31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m   [2m1487 [0m[2m│   │   │   [0m[94mif[0m should_skip:          
+[31m│[0m
+[31m│[0m   [2m1488 [0m[2m│   │   │   │   
+[0mlog.warning([33mf[0m[33m"[0m[33mSkipping training on step 
+[0m[33m{[0m[96mself[0m.global_step[33m:[0m[33m,d[0m[33m}[0m[33m intentional[0m
+[31m│[0m
+[31m│[0m   [2m1489 [0m[2m│   │   │   [0m[94melse[0m:                    
+[31m│[0m
+[31m│[0m [31m❱ [0m1490 [2m│   │   │   │   
+[0m[1;4;96mself[0m[1;4m.train_module.train_batch(batch)[0m                 
+[31m│[0m
+[31m│[0m   [2m1491 [0m[2m│   │   │   │   [0m                              
+[31m│[0m
+[31m│[0m   [2m1492 [0m[2m│   │   │   │   [0m[94mfor[0m callback [95min[0m
+[96mself[0m._iter_callbacks():                                   [31m│[0m
+[31m│[0m   [2m1493 [0m[2m│   │   │   │   │   [0mcallback.pre_optim_step() 
+[31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m 
+[2;33m/opt/conda/lib/python3.12/site-packages/olmo_core/train/train_module/trans
+former/[0m[1;33mtrain_module.py[0m [31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m   [2m419 [0m[2m│   │   │   │   │   [0m[94mdel[0m z_loss        
+[31m│[0m
+[31m│[0m   [2m420 [0m[2m│   │   │   │   [0m                               
+[31m│[0m
+[31m│[0m   [2m421 [0m[2m│   │   │   │   [0m[2m# Run backward pass.[0m   
+[31m│[0m
+[31m│[0m [31m❱ [0m422 [2m│   │   │   │   [0m[1;4mloss.backward()[0m     
+[31m│[0m
+[31m│[0m   [2m423 [0m[2m│   │   [0m                                       
+[31m│[0m
+[31m│[0m   [2m424 [0m[2m│   │   [0m[94mdel[0m batch  [2m# In case this helps
+with memory utilization.[0m                           [31m│[0m
+[31m│[0m   [2m425 [0m                                                       
+[31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m 
+[2;33m/opt/conda/lib/python3.12/site-packages/torch/[0m[1;33m_tensor.py[0m:[94m6
+25[0m in [92mbackward[0m                         [31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m   [2m 622 [0m[2m│   │   │   │   [0mcreate_graph=create_graph,    
+[31m│[0m
+[31m│[0m   [2m 623 [0m[2m│   │   │   │   [0minputs=inputs,                
+[31m│[0m
+[31m│[0m   [2m 624 [0m[2m│   │   │   [0m)                                 
+[31m│[0m
+[31m│[0m [31m❱ [0m 625 [2m│   │   [0m[1;4mtorch.autograd.backward([0m   
+[31m│[0m
+[31m│[0m   [2m 626 [0m[1;2;4m│   │   │   [0m[1;4;96mself[0m[1;4m, gradient,
+retain_graph, create_graph, inputs=inputs[0m                     [31m│[0m
+[31m│[0m   [2m 627 [0m[1;2;4m│   │   [0m[1;4m)[0m                       
+[31m│[0m
+[31m│[0m   [2m 628 [0m                                                      
+[31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m 
+[2;33m/opt/conda/lib/python3.12/site-packages/torch/autograd/[0m[1;33m__init__.p
+y[0m:[94m354[0m in [92mbackward[0m               [31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m   [2m351 [0m[2m│   [0m[2m# The reason we repeat the same comment below
+is that[0m                                  [31m│[0m
+[31m│[0m   [2m352 [0m[2m│   [0m[2m# some Python versions print out the first
+line of a multi-line function[0m               [31m│[0m
+[31m│[0m   [2m353 [0m[2m│   [0m[2m# calls in the traceback and some print out
+the last line[0m                              [31m│[0m
+[31m│[0m [31m❱ [0m354 [2m│   [0m_engine_run_backward(                     
+[31m│[0m
+[31m│[0m   [2m355 [0m[2m│   │   [0mtensors,                               
+[31m│[0m
+[31m│[0m   [2m356 [0m[2m│   │   [0mgrad_tensors_,                         
+[31m│[0m
+[31m│[0m   [2m357 [0m[2m│   │   [0mretain_graph,                          
+[31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m 
+[2;33m/opt/conda/lib/python3.12/site-packages/torch/autograd/[0m[1;33mgraph.py[0
+m:[94m841[0m in [92m_engine_run_backward[0m      [31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m   [2m838 [0m[2m│   [0m[94mif[0m attach_logging_hooks:          
+[31m│[0m
+[31m│[0m   [2m839 [0m[2m│   │   [0munregister_hooks = 
+_register_logging_hooks_on_whole_graph(t_outputs)               [31m│[0m
+[31m│[0m   [2m840 [0m[2m│   [0m[94mtry[0m:                              
+[31m│[0m
+[31m│[0m [31m❱ [0m841 [2m│   │   [0m[94mreturn[0m 
+Variable._execution_engine.run_backward(  [2m# Calls into the C++ engine to 
+ru[0m [31m│[0m
+[31m│[0m   [2m842 [0m[2m│   │   │   [0mt_outputs, *args, **kwargs         
+[31m│[0m
+[31m│[0m   [2m843 [0m[2m│   │   [0m)  [2m# Calls into the C++ engine to run the
+backward pass[0m                            [31m│[0m
+[31m│[0m   [2m844 [0m[2m│   [0m[94mfinally[0m:                          
+[31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m 
+[2;33m/opt/conda/lib/python3.12/site-packages/torch/utils/data/_utils/[0m[1;33ms
+ignal_handling.py[0m:[94m73[0m in [92mhandler[0m [31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m   [2m70 [0m[2m│   [0m[94mdef[0m[90m [0m[92mhandler[0m(signum, frame):
+[31m│[0m
+[31m│[0m   [2m71 [0m[2m│   │   [0m[2m# This following call uses `waitid` with
+WNOHANG from C side. Therefore,[0m            [31m│[0m
+[31m│[0m   [2m72 [0m[2m│   │   [0m[2m# Python can still get and update the
+process status successfully.[0m                  [31m│[0m
+[31m│[0m [31m❱ [0m73 [2m│   │   [0m[1;4m_error_if_any_worker_fails()[0m 
+[31m│[0m
+[31m│[0m   [2m74 [0m[2m│   │   [0m[94mif[0m previous_handler [95mis[0m
+[95mnot[0m [94mNone[0m:                                                    
+[31m│[0m
+[31m│[0m   [2m75 [0m[2m│   │   │   [0m[94massert[0m 
+[96mcallable[0m(previous_handler)                                             
+[31m│[0m
+[31m│[0m   [2m76 [0m[2m│   │   │   [0mprevious_handler(signum, frame)     
+[31m│[0m
+[31m╰───────────────────────────────────────────────────────────────────────────
+───────────────────────╯[0m
+[1;91mRuntimeError: [0mDataLoader worker [1m([0mpid [1;36m1595[0m[1m)[0m is
+killed by signal: Terminated. 
+[2;36m[2026-07-27 08:56:42][0m [1;7;31mCRITICAL[0m [2m[olmo_core.utils:400,
+f1ef336a6d41, rank=5][0m Uncaught RuntimeError: DataLoader worker (pid 1591) is
+killed by signal: Terminated. 
+[31m╭─[0m[31m──────────────────────────────[0m[31m [0m[1;31mTraceback 
+[0m[1;2;31m(most recent call last)[0m[31m 
+[0m[31m───────────────────────────────[0m[31m─╮[0m
+[31m│[0m 
+[2;33m/gantry-runtime/src/scripts/train/memexpress/ctc_suite/[0m[1;33mtrain_ctc_
+suite.py[0m:[94m1119[0m in [92m<module>[0m       [31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m   [2m1116 [0m                                                      
+[31m│[0m
+[31m│[0m   [2m1117 [0m                                                      
+[31m│[0m
+[31m│[0m   [2m1118 [0m[94mif[0m [91m__name__[0m == 
+[33m"[0m[33m__main__[0m[33m"[0m:                                          
+[31m│[0m
+[31m│[0m [31m❱ [0m1119 [2m│   [0m[1;4mmain()[0m                         
+[31m│[0m
+[31m│[0m   [2m1120 [0m                                                      
+[31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m 
+[2;33m/gantry-runtime/src/scripts/train/memexpress/ctc_suite/[0m[1;33mtrain_ctc_
+suite.py[0m:[94m1113[0m in [92mmain[0m           [31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m   [2m1110 [0m[2m│   │   [0m[94mreturn[0m                       
+[31m│[0m
+[31m│[0m   [2m1111 [0m[2m│   [0mprepare_training_environment()            
+[31m│[0m
+[31m│[0m   [2m1112 [0m[2m│   [0m[94mtry[0m:                             
+[31m│[0m
+[31m│[0m [31m❱ [0m1113 [2m│   │   [0mbuild_and_fit(opts)                  
+[31m│[0m
+[31m│[0m   [2m1114 [0m[2m│   [0m[94mfinally[0m:                         
+[31m│[0m
+[31m│[0m   [2m1115 [0m[2m│   │   [0m[1;4mteardown_training_environment()[0m
+[31m│[0m
+[31m│[0m   [2m1116 [0m                                                      
+[31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m 
+[2;33m/gantry-runtime/src/scripts/train/memexpress/ctc_suite/[0m[1;33mtrain_ctc_
+suite.py[0m:[94m873[0m in [92mbuild_and_fit[0m   [31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m   [2m 870 [0m[2m│   │   [0msource, 
+dp_process_group=train_module.dp_process_group                            
+[31m│[0m
+[31m│[0m   [2m 871 [0m[2m│   [0m)                                         
+[31m│[0m
+[31m│[0m   [2m 872 [0m[2m│   [0mtrainer = trainer_config.build(train_module,
+data_loader)                             [31m│[0m
+[31m│[0m [31m❱ [0m 873 [2m│   [0m[1;4mtrainer.fit()[0m                  
+[31m│[0m
+[31m│[0m   [2m 874 [0m[2m│   [0m                                          
+[31m│[0m
+[31m│[0m   [2m 875 [0m[2m│   [0m[2m# Save a model-only checkpoint in the eval
+loader's expected layout (config.json +[0m    [31m│[0m
+[31m│[0m   [2m 876 [0m[2m│   [0m[2m# model_and_optim/) so the docchunk eval
+scripts load it directly.[0m                    [31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m 
+[2;33m/opt/conda/lib/python3.12/site-packages/olmo_core/train/[0m[1;33mtrainer.p
+y[0m:[94m742[0m in [92mfit[0m                    [31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m   [2m 739 [0m[2m│   │   │   [0m                                  
+[31m│[0m
+[31m│[0m   [2m 740 [0m[2m│   │   │   [0m[2m# Iterate over epochs until done.[0m
+[31m│[0m
+[31m│[0m   [2m 741 [0m[2m│   │   │   [0m[94mwhile[0m [95mnot[0m 
+[96mself[0m.training_complete:                                             
+[31m│[0m
+[31m│[0m [31m❱ [0m 742 [2m│   │   │   │   [0m[96mself[0m._fit_epoch()   
+[31m│[0m
+[31m│[0m   [2m 743 [0m[2m│   │   [0m[94mexcept[0m [96mBaseException[0m [94mas[0m
+exc:                                                      [31m│[0m
+[31m│[0m   [2m 744 [0m[2m│   │   │   [0m[96mself[0m._error = exc        
+[31m│[0m
+[31m│[0m   [2m 745 [0m[2m│   │   │   [0mlog.error([33mf[0m[33m"[0m[33mTraining
+failed due to:[0m[33m\n[0m[33m{[0m[96mtype[0m(exc).[91m__name__[0m[33m}[0m[33m:
+[0m[33m{[0mexc[33m}[0m[33m"[0m)            [31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m 
+[2;33m/opt/conda/lib/python3.12/site-packages/olmo_core/train/[0m[1;33mtrainer.p
+y[0m:[94m1490[0m in [92m_fit_epoch[0m            [31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m   [2m1487 [0m[2m│   │   │   [0m[94mif[0m should_skip:          
+[31m│[0m
+[31m│[0m   [2m1488 [0m[2m│   │   │   │   
+[0mlog.warning([33mf[0m[33m"[0m[33mSkipping training on step 
+[0m[33m{[0m[96mself[0m.global_step[33m:[0m[33m,d[0m[33m}[0m[33m intentional[0m
+[31m│[0m
+[31m│[0m   [2m1489 [0m[2m│   │   │   [0m[94melse[0m:                    
+[31m│[0m
+[31m│[0m [31m❱ [0m1490 [2m│   │   │   │   
+[0m[1;4;96mself[0m[1;4m.train_module.train_batch(batch)[0m                 
+[31m│[0m
+[31m│[0m   [2m1491 [0m[2m│   │   │   │   [0m                              
+[31m│[0m
+[31m│[0m   [2m1492 [0m[2m│   │   │   │   [0m[94mfor[0m callback [95min[0m
+[96mself[0m._iter_callbacks():                                   [31m│[0m
+[31m│[0m   [2m1493 [0m[2m│   │   │   │   │   [0mcallback.pre_optim_step() 
+[31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m 
+[2;33m/opt/conda/lib/python3.12/site-packages/olmo_core/train/train_module/trans
+former/[0m[1;33mtrain_module.py[0m [31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m   [2m419 [0m[2m│   │   │   │   │   [0m[94mdel[0m z_loss        
+[31m│[0m
+[31m│[0m   [2m420 [0m[2m│   │   │   │   [0m                               
+[31m│[0m
+[31m│[0m   [2m421 [0m[2m│   │   │   │   [0m[2m# Run backward pass.[0m   
+[31m│[0m
+[31m│[0m [31m❱ [0m422 [2m│   │   │   │   [0m[1;4mloss.backward()[0m     
+[31m│[0m
+[31m│[0m   [2m423 [0m[2m│   │   [0m                                       
+[31m│[0m
+[31m│[0m   [2m424 [0m[2m│   │   [0m[94mdel[0m batch  [2m# In case this helps
+with memory utilization.[0m                           [31m│[0m
+[31m│[0m   [2m425 [0m                                                       
+[31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m 
+[2;33m/opt/conda/lib/python3.12/site-packages/torch/[0m[1;33m_tensor.py[0m:[94m6
+25[0m in [92mbackward[0m                         [31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m   [2m 622 [0m[2m│   │   │   │   [0mcreate_graph=create_graph,    
+[31m│[0m
+[31m│[0m   [2m 623 [0m[2m│   │   │   │   [0minputs=inputs,                
+[31m│[0m
+[31m│[0m   [2m 624 [0m[2m│   │   │   [0m)                                 
+[31m│[0m
+[31m│[0m [31m❱ [0m 625 [2m│   │   [0m[1;4mtorch.autograd.backward([0m   
+[31m│[0m
+[31m│[0m   [2m 626 [0m[1;2;4m│   │   │   [0m[1;4;96mself[0m[1;4m, gradient,
+retain_graph, create_graph, inputs=inputs[0m                     [31m│[0m
+[31m│[0m   [2m 627 [0m[1;2;4m│   │   [0m[1;4m)[0m                       
+[31m│[0m
+[31m│[0m   [2m 628 [0m                                                      
+[31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m 
+[2;33m/opt/conda/lib/python3.12/site-packages/torch/autograd/[0m[1;33m__init__.p
+y[0m:[94m354[0m in [92mbackward[0m               [31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m   [2m351 [0m[2m│   [0m[2m# The reason we repeat the same comment below
+is that[0m                                  [31m│[0m
+[31m│[0m   [2m352 [0m[2m│   [0m[2m# some Python versions print out the first
+line of a multi-line function[0m               [31m│[0m
+[31m│[0m   [2m353 [0m[2m│   [0m[2m# calls in the traceback and some print out
+the last line[0m                              [31m│[0m
+[31m│[0m [31m❱ [0m354 [2m│   [0m_engine_run_backward(                     
+[31m│[0m
+[31m│[0m   [2m355 [0m[2m│   │   [0mtensors,                               
+[31m│[0m
+[31m│[0m   [2m356 [0m[2m│   │   [0mgrad_tensors_,                         
+[31m│[0m
+[31m│[0m   [2m357 [0m[2m│   │   [0mretain_graph,                          
+[31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m 
+[2;33m/opt/conda/lib/python3.12/site-packages/torch/autograd/[0m[1;33mgraph.py[0
+m:[94m841[0m in [92m_engine_run_backward[0m      [31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m   [2m838 [0m[2m│   [0m[94mif[0m attach_logging_hooks:          
+[31m│[0m
+[31m│[0m   [2m839 [0m[2m│   │   [0munregister_hooks = 
+_register_logging_hooks_on_whole_graph(t_outputs)               [31m│[0m
+[31m│[0m   [2m840 [0m[2m│   [0m[94mtry[0m:                              
+[31m│[0m
+[31m│[0m [31m❱ [0m841 [2m│   │   [0m[94mreturn[0m 
+Variable._execution_engine.run_backward(  [2m# Calls into the C++ engine to 
+ru[0m [31m│[0m
+[31m│[0m   [2m842 [0m[2m│   │   │   [0mt_outputs, *args, **kwargs         
+[31m│[0m
+[31m│[0m   [2m843 [0m[2m│   │   [0m)  [2m# Calls into the C++ engine to run the
+backward pass[0m                            [31m│[0m
+[31m│[0m   [2m844 [0m[2m│   [0m[94mfinally[0m:                          
+[31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m 
+[2;33m/opt/conda/lib/python3.12/site-packages/torch/utils/data/_utils/[0m[1;33ms
+ignal_handling.py[0m:[94m73[0m in [92mhandler[0m [31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m   [2m70 [0m[2m│   [0m[94mdef[0m[90m [0m[92mhandler[0m(signum, frame):
+[31m│[0m
+[31m│[0m   [2m71 [0m[2m│   │   [0m[2m# This following call uses `waitid` with
+WNOHANG from C side. Therefore,[0m            [31m│[0m
+[31m│[0m   [2m72 [0m[2m│   │   [0m[2m# Python can still get and update the
+process status successfully.[0m                  [31m│[0m
+[31m│[0m [31m❱ [0m73 [2m│   │   [0m[1;4m_error_if_any_worker_fails()[0m 
+[31m│[0m
+[31m│[0m   [2m74 [0m[2m│   │   [0m[94mif[0m previous_handler [95mis[0m
+[95mnot[0m [94mNone[0m:                                                    
+[31m│[0m
+[31m│[0m   [2m75 [0m[2m│   │   │   [0m[94massert[0m 
+[96mcallable[0m(previous_handler)                                             
+[31m│[0m
+[31m│[0m   [2m76 [0m[2m│   │   │   [0mprevious_handler(signum, frame)     
+[31m│[0m
+[31m╰───────────────────────────────────────────────────────────────────────────
+───────────────────────╯[0m
+[1;91mRuntimeError: [0mDataLoader worker [1m([0mpid [1;36m1591[0m[1m)[0m is
+killed by signal: Terminated. 
+[2;36m[2026-07-27 08:56:42][0m [1;7;31mCRITICAL[0m [2m[olmo_core.utils:400,
+f1ef336a6d41, rank=3][0m Uncaught RuntimeError: DataLoader worker (pid 1589) is
+killed by signal: Terminated. 
+[31m╭─[0m[31m──────────────────────────────[0m[31m [0m[1;31mTraceback 
+[0m[1;2;31m(most recent call last)[0m[31m 
+[0m[31m───────────────────────────────[0m[31m─╮[0m
+[31m│[0m 
+[2;33m/gantry-runtime/src/scripts/train/memexpress/ctc_suite/[0m[1;33mtrain_ctc_
+suite.py[0m:[94m1119[0m in [92m<module>[0m       [31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m   [2m1116 [0m                                                      
+[31m│[0m
+[31m│[0m   [2m1117 [0m                                                      
+[31m│[0m
+[31m│[0m   [2m1118 [0m[94mif[0m [91m__name__[0m == 
+[33m"[0m[33m__main__[0m[33m"[0m:                                          
+[31m│[0m
+[31m│[0m [31m❱ [0m1119 [2m│   [0m[1;4mmain()[0m                         
+[31m│[0m
+[31m│[0m   [2m1120 [0m                                                      
+[31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m 
+[2;33m/gantry-runtime/src/scripts/train/memexpress/ctc_suite/[0m[1;33mtrain_ctc_
+suite.py[0m:[94m1113[0m in [92mmain[0m           [31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m   [2m1110 [0m[2m│   │   [0m[94mreturn[0m                       
+[31m│[0m
+[31m│[0m   [2m1111 [0m[2m│   [0mprepare_training_environment()            
+[31m│[0m
+[31m│[0m   [2m1112 [0m[2m│   [0m[94mtry[0m:                             
+[31m│[0m
+[31m│[0m [31m❱ [0m1113 [2m│   │   [0mbuild_and_fit(opts)                  
+[31m│[0m
+[31m│[0m   [2m1114 [0m[2m│   [0m[94mfinally[0m:                         
+[31m│[0m
+[31m│[0m   [2m1115 [0m[2m│   │   [0m[1;4mteardown_training_environment()[0m
+[31m│[0m
+[31m│[0m   [2m1116 [0m                                                      
+[31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m 
+[2;33m/gantry-runtime/src/scripts/train/memexpress/ctc_suite/[0m[1;33mtrain_ctc_
+suite.py[0m:[94m873[0m in [92mbuild_and_fit[0m   [31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m   [2m 870 [0m[2m│   │   [0msource, 
+dp_process_group=train_module.dp_process_group                            
+[31m│[0m
+[31m│[0m   [2m 871 [0m[2m│   [0m)                                         
+[31m│[0m
+[31m│[0m   [2m 872 [0m[2m│   [0mtrainer = trainer_config.build(train_module,
+data_loader)                             [31m│[0m
+[31m│[0m [31m❱ [0m 873 [2m│   [0m[1;4mtrainer.fit()[0m                  
+[31m│[0m
+[31m│[0m   [2m 874 [0m[2m│   [0m                                          
+[31m│[0m
+[31m│[0m   [2m 875 [0m[2m│   [0m[2m# Save a model-only checkpoint in the eval
+loader's expected layout (config.json +[0m    [31m│[0m
+[31m│[0m   [2m 876 [0m[2m│   [0m[2m# model_and_optim/) so the docchunk eval
+scripts load it directly.[0m                    [31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m 
+[2;33m/opt/conda/lib/python3.12/site-packages/olmo_core/train/[0m[1;33mtrainer.p
+y[0m:[94m742[0m in [92mfit[0m                    [31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m   [2m 739 [0m[2m│   │   │   [0m                                  
+[31m│[0m
+[31m│[0m   [2m 740 [0m[2m│   │   │   [0m[2m# Iterate over epochs until done.[0m
+[31m│[0m
+[31m│[0m   [2m 741 [0m[2m│   │   │   [0m[94mwhile[0m [95mnot[0m 
+[96mself[0m.training_complete:                                             
+[31m│[0m
+[31m│[0m [31m❱ [0m 742 [2m│   │   │   │   [0m[96mself[0m._fit_epoch()   
+[31m│[0m
+[31m│[0m   [2m 743 [0m[2m│   │   [0m[94mexcept[0m [96mBaseException[0m [94mas[0m
+exc:                                                      [31m│[0m
+[31m│[0m   [2m 744 [0m[2m│   │   │   [0m[96mself[0m._error = exc        
+[31m│[0m
+[31m│[0m   [2m 745 [0m[2m│   │   │   [0mlog.error([33mf[0m[33m"[0m[33mTraining
+failed due to:[0m[33m\n[0m[33m{[0m[96mtype[0m(exc).[91m__name__[0m[33m}[0m[33m:
+[0m[33m{[0mexc[33m}[0m[33m"[0m)            [31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m 
+[2;33m/opt/conda/lib/python3.12/site-packages/olmo_core/train/[0m[1;33mtrainer.p
+y[0m:[94m1490[0m in [92m_fit_epoch[0m            [31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m   [2m1487 [0m[2m│   │   │   [0m[94mif[0m should_skip:          
+[31m│[0m
+[31m│[0m   [2m1488 [0m[2m│   │   │   │   
+[0mlog.warning([33mf[0m[33m"[0m[33mSkipping training on step 
+[0m[33m{[0m[96mself[0m.global_step[33m:[0m[33m,d[0m[33m}[0m[33m intentional[0m
+[31m│[0m
+[31m│[0m   [2m1489 [0m[2m│   │   │   [0m[94melse[0m:                    
+[31m│[0m
+[31m│[0m [31m❱ [0m1490 [2m│   │   │   │   
+[0m[1;4;96mself[0m[1;4m.train_module.train_batch(batch)[0m                 
+[31m│[0m
+[31m│[0m   [2m1491 [0m[2m│   │   │   │   [0m                              
+[31m│[0m
+[31m│[0m   [2m1492 [0m[2m│   │   │   │   [0m[94mfor[0m callback [95min[0m
+[96mself[0m._iter_callbacks():                                   [31m│[0m
+[31m│[0m   [2m1493 [0m[2m│   │   │   │   │   [0mcallback.pre_optim_step() 
+[31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m 
+[2;33m/opt/conda/lib/python3.12/site-packages/olmo_core/train/train_module/trans
+former/[0m[1;33mtrain_module.py[0m [31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m   [2m419 [0m[2m│   │   │   │   │   [0m[94mdel[0m z_loss        
+[31m│[0m
+[31m│[0m   [2m420 [0m[2m│   │   │   │   [0m                               
+[31m│[0m
+[31m│[0m   [2m421 [0m[2m│   │   │   │   [0m[2m# Run backward pass.[0m   
+[31m│[0m
+[31m│[0m [31m❱ [0m422 [2m│   │   │   │   [0m[1;4mloss.backward()[0m     
+[31m│[0m
+[31m│[0m   [2m423 [0m[2m│   │   [0m                                       
+[31m│[0m
+[31m│[0m   [2m424 [0m[2m│   │   [0m[94mdel[0m batch  [2m# In case this helps
+with memory utilization.[0m                           [31m│[0m
+[31m│[0m   [2m425 [0m                                                       
+[31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m 
+[2;33m/opt/conda/lib/python3.12/site-packages/torch/[0m[1;33m_tensor.py[0m:[94m6
+25[0m in [92mbackward[0m                         [31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m   [2m 622 [0m[2m│   │   │   │   [0mcreate_graph=create_graph,    
+[31m│[0m
+[31m│[0m   [2m 623 [0m[2m│   │   │   │   [0minputs=inputs,                
+[31m│[0m
+[31m│[0m   [2m 624 [0m[2m│   │   │   [0m)                                 
+[31m│[0m
+[31m│[0m [31m❱ [0m 625 [2m│   │   [0m[1;4mtorch.autograd.backward([0m   
+[31m│[0m
+[31m│[0m   [2m 626 [0m[1;2;4m│   │   │   [0m[1;4;96mself[0m[1;4m, gradient,
+retain_graph, create_graph, inputs=inputs[0m                     [31m│[0m
+[31m│[0m   [2m 627 [0m[1;2;4m│   │   [0m[1;4m)[0m                       
+[31m│[0m
+[31m│[0m   [2m 628 [0m                                                      
+[31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m 
+[2;33m/opt/conda/lib/python3.12/site-packages/torch/autograd/[0m[1;33m__init__.p
+y[0m:[94m354[0m in [92mbackward[0m               [31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m   [2m351 [0m[2m│   [0m[2m# The reason we repeat the same comment below
+is that[0m                                  [31m│[0m
+[31m│[0m   [2m352 [0m[2m│   [0m[2m# some Python versions print out the first
+line of a multi-line function[0m               [31m│[0m
+[31m│[0m   [2m353 [0m[2m│   [0m[2m# calls in the traceback and some print out
+the last line[0m                              [31m│[0m
+[31m│[0m [31m❱ [0m354 [2m│   [0m_engine_run_backward(                     
+[31m│[0m
+[31m│[0m   [2m355 [0m[2m│   │   [0mtensors,                               
+[31m│[0m
+[31m│[0m   [2m356 [0m[2m│   │   [0mgrad_tensors_,                         
+[31m│[0m
+[31m│[0m   [2m357 [0m[2m│   │   [0mretain_graph,                          
+[31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m 
+[2;33m/opt/conda/lib/python3.12/site-packages/torch/autograd/[0m[1;33mgraph.py[0
+m:[94m841[0m in [92m_engine_run_backward[0m      [31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m   [2m838 [0m[2m│   [0m[94mif[0m attach_logging_hooks:          
+[31m│[0m
+[31m│[0m   [2m839 [0m[2m│   │   [0munregister_hooks = 
+_register_logging_hooks_on_whole_graph(t_outputs)               [31m│[0m
+[31m│[0m   [2m840 [0m[2m│   [0m[94mtry[0m:                              
+[31m│[0m
+[31m│[0m [31m❱ [0m841 [2m│   │   [0m[94mreturn[0m 
+Variable._execution_engine.run_backward(  [2m# Calls into the C++ engine to 
+ru[0m [31m│[0m
+[31m│[0m   [2m842 [0m[2m│   │   │   [0mt_outputs, *args, **kwargs         
+[31m│[0m
+[31m│[0m   [2m843 [0m[2m│   │   [0m)  [2m# Calls into the C++ engine to run the
+backward pass[0m                            [31m│[0m
+[31m│[0m   [2m844 [0m[2m│   [0m[94mfinally[0m:                          
+[31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m 
+[2;33m/opt/conda/lib/python3.12/site-packages/torch/utils/data/_utils/[0m[1;33ms
+ignal_handling.py[0m:[94m73[0m in [92mhandler[0m [31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m   [2m70 [0m[2m│   [0m[94mdef[0m[90m [0m[92mhandler[0m(signum, frame):
+[31m│[0m
+[31m│[0m   [2m71 [0m[2m│   │   [0m[2m# This following call uses `waitid` with
+WNOHANG from C side. Therefore,[0m            [31m│[0m
+[31m│[0m   [2m72 [0m[2m│   │   [0m[2m# Python can still get and update the
+process status successfully.[0m                  [31m│[0m
+[31m│[0m [31m❱ [0m73 [2m│   │   [0m[1;4m_error_if_any_worker_fails()[0m 
+[31m│[0m
+[31m│[0m   [2m74 [0m[2m│   │   [0m[94mif[0m previous_handler [95mis[0m
+[95mnot[0m [94mNone[0m:                                                    
+[31m│[0m
+[31m│[0m   [2m75 [0m[2m│   │   │   [0m[94massert[0m 
+[96mcallable[0m(previous_handler)                                             
+[31m│[0m
+[31m│[0m   [2m76 [0m[2m│   │   │   [0mprevious_handler(signum, frame)     
+[31m│[0m
+[31m╰───────────────────────────────────────────────────────────────────────────
+───────────────────────╯[0m
+[1;91mRuntimeError: [0mDataLoader worker [1m([0mpid [1;36m1589[0m[1m)[0m is
+killed by signal: Terminated. 
+[2;36m[2026-07-27 08:56:42][0m [1;7;31mCRITICAL[0m [2m[olmo_core.utils:400,
+f1ef336a6d41, rank=2][0m Uncaught RuntimeError: DataLoader worker (pid 1594) is
+killed by signal: Terminated. 
+[31m╭─[0m[31m──────────────────────────────[0m[31m [0m[1;31mTraceback 
+[0m[1;2;31m(most recent call last)[0m[31m 
+[0m[31m───────────────────────────────[0m[31m─╮[0m
+[31m│[0m 
+[2;33m/gantry-runtime/src/scripts/train/memexpress/ctc_suite/[0m[1;33mtrain_ctc_
+suite.py[0m:[94m1119[0m in [92m<module>[0m       [31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m   [2m1116 [0m                                                      
+[31m│[0m
+[31m│[0m   [2m1117 [0m                                                      
+[31m│[0m
+[31m│[0m   [2m1118 [0m[94mif[0m [91m__name__[0m == 
+[33m"[0m[33m__main__[0m[33m"[0m:                                          
+[31m│[0m
+[31m│[0m [31m❱ [0m1119 [2m│   [0m[1;4mmain()[0m                         
+[31m│[0m
+[31m│[0m   [2m1120 [0m                                                      
+[31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m 
+[2;33m/gantry-runtime/src/scripts/train/memexpress/ctc_suite/[0m[1;33mtrain_ctc_
+suite.py[0m:[94m1113[0m in [92mmain[0m           [31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m   [2m1110 [0m[2m│   │   [0m[94mreturn[0m                       
+[31m│[0m
+[31m│[0m   [2m1111 [0m[2m│   [0mprepare_training_environment()            
+[31m│[0m
+[31m│[0m   [2m1112 [0m[2m│   [0m[94mtry[0m:                             
+[31m│[0m
+[31m│[0m [31m❱ [0m1113 [2m│   │   [0mbuild_and_fit(opts)                  
+[31m│[0m
+[31m│[0m   [2m1114 [0m[2m│   [0m[94mfinally[0m:                         
+[31m│[0m
+[31m│[0m   [2m1115 [0m[2m│   │   [0m[1;4mteardown_training_environment()[0m
+[31m│[0m
+[31m│[0m   [2m1116 [0m                                                      
+[31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m 
+[2;33m/gantry-runtime/src/scripts/train/memexpress/ctc_suite/[0m[1;33mtrain_ctc_
+suite.py[0m:[94m873[0m in [92mbuild_and_fit[0m   [31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m   [2m 870 [0m[2m│   │   [0msource, 
+dp_process_group=train_module.dp_process_group                            
+[31m│[0m
+[31m│[0m   [2m 871 [0m[2m│   [0m)                                         
+[31m│[0m
+[31m│[0m   [2m 872 [0m[2m│   [0mtrainer = trainer_config.build(train_module,
+data_loader)                             [31m│[0m
+[31m│[0m [31m❱ [0m 873 [2m│   [0m[1;4mtrainer.fit()[0m                  
+[31m│[0m
+[31m│[0m   [2m 874 [0m[2m│   [0m                                          
+[31m│[0m
+[31m│[0m   [2m 875 [0m[2m│   [0m[2m# Save a model-only checkpoint in the eval
+loader's expected layout (config.json +[0m    [31m│[0m
+[31m│[0m   [2m 876 [0m[2m│   [0m[2m# model_and_optim/) so the docchunk eval
+scripts load it directly.[0m                    [31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m 
+[2;33m/opt/conda/lib/python3.12/site-packages/olmo_core/train/[0m[1;33mtrainer.p
+y[0m:[94m742[0m in [92mfit[0m                    [31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m   [2m 739 [0m[2m│   │   │   [0m                                  
+[31m│[0m
+[31m│[0m   [2m 740 [0m[2m│   │   │   [0m[2m# Iterate over epochs until done.[0m
+[31m│[0m
+[31m│[0m   [2m 741 [0m[2m│   │   │   [0m[94mwhile[0m [95mnot[0m 
+[96mself[0m.training_complete:                                             
+[31m│[0m
+[31m│[0m [31m❱ [0m 742 [2m│   │   │   │   [0m[96mself[0m._fit_epoch()   
+[31m│[0m
+[31m│[0m   [2m 743 [0m[2m│   │   [0m[94mexcept[0m [96mBaseException[0m [94mas[0m
+exc:                                                      [31m│[0m
+[31m│[0m   [2m 744 [0m[2m│   │   │   [0m[96mself[0m._error = exc        
+[31m│[0m
+[31m│[0m   [2m 745 [0m[2m│   │   │   [0mlog.error([33mf[0m[33m"[0m[33mTraining
+failed due to:[0m[33m\n[0m[33m{[0m[96mtype[0m(exc).[91m__name__[0m[33m}[0m[33m:
+[0m[33m{[0mexc[33m}[0m[33m"[0m)            [31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m 
+[2;33m/opt/conda/lib/python3.12/site-packages/olmo_core/train/[0m[1;33mtrainer.p
+y[0m:[94m1490[0m in [92m_fit_epoch[0m            [31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m   [2m1487 [0m[2m│   │   │   [0m[94mif[0m should_skip:          
+[31m│[0m
+[31m│[0m   [2m1488 [0m[2m│   │   │   │   
+[0mlog.warning([33mf[0m[33m"[0m[33mSkipping training on step 
+[0m[33m{[0m[96mself[0m.global_step[33m:[0m[33m,d[0m[33m}[0m[33m intentional[0m
+[31m│[0m
+[31m│[0m   [2m1489 [0m[2m│   │   │   [0m[94melse[0m:                    
+[31m│[0m
+[31m│[0m [31m❱ [0m1490 [2m│   │   │   │   
+[0m[1;4;96mself[0m[1;4m.train_module.train_batch(batch)[0m                 
+[31m│[0m
+[31m│[0m   [2m1491 [0m[2m│   │   │   │   [0m                              
+[31m│[0m
+[31m│[0m   [2m1492 [0m[2m│   │   │   │   [0m[94mfor[0m callback [95min[0m
+[96mself[0m._iter_callbacks():                                   [31m│[0m
+[31m│[0m   [2m1493 [0m[2m│   │   │   │   │   [0mcallback.pre_optim_step() 
+[31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m 
+[2;33m/opt/conda/lib/python3.12/site-packages/olmo_core/train/train_module/trans
+former/[0m[1;33mtrain_module.py[0m [31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m   [2m419 [0m[2m│   │   │   │   │   [0m[94mdel[0m z_loss        
+[31m│[0m
+[31m│[0m   [2m420 [0m[2m│   │   │   │   [0m                               
+[31m│[0m
+[31m│[0m   [2m421 [0m[2m│   │   │   │   [0m[2m# Run backward pass.[0m   
+[31m│[0m
+[31m│[0m [31m❱ [0m422 [2m│   │   │   │   [0m[1;4mloss.backward()[0m     
+[31m│[0m
+[31m│[0m   [2m423 [0m[2m│   │   [0m                                       
+[31m│[0m
+[31m│[0m   [2m424 [0m[2m│   │   [0m[94mdel[0m batch  [2m# In case this helps
+with memory utilization.[0m                           [31m│[0m
+[31m│[0m   [2m425 [0m                                                       
+[31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m 
+[2;33m/opt/conda/lib/python3.12/site-packages/torch/[0m[1;33m_tensor.py[0m:[94m6
+25[0m in [92mbackward[0m                         [31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m   [2m 622 [0m[2m│   │   │   │   [0mcreate_graph=create_graph,    
+[31m│[0m
+[31m│[0m   [2m 623 [0m[2m│   │   │   │   [0minputs=inputs,                
+[31m│[0m
+[31m│[0m   [2m 624 [0m[2m│   │   │   [0m)                                 
+[31m│[0m
+[31m│[0m [31m❱ [0m 625 [2m│   │   [0m[1;4mtorch.autograd.backward([0m   
+[31m│[0m
+[31m│[0m   [2m 626 [0m[1;2;4m│   │   │   [0m[1;4;96mself[0m[1;4m, gradient,
+retain_graph, create_graph, inputs=inputs[0m                     [31m│[0m
+[31m│[0m   [2m 627 [0m[1;2;4m│   │   [0m[1;4m)[0m                       
+[31m│[0m
+[31m│[0m   [2m 628 [0m                                                      
+[31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m 
+[2;33m/opt/conda/lib/python3.12/site-packages/torch/autograd/[0m[1;33m__init__.p
+y[0m:[94m354[0m in [92mbackward[0m               [31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m   [2m351 [0m[2m│   [0m[2m# The reason we repeat the same comment below
+is that[0m                                  [31m│[0m
+[31m│[0m   [2m352 [0m[2m│   [0m[2m# some Python versions print out the first
+line of a multi-line function[0m               [31m│[0m
+[31m│[0m   [2m353 [0m[2m│   [0m[2m# calls in the traceback and some print out
+the last line[0m                              [31m│[0m
+[31m│[0m [31m❱ [0m354 [2m│   [0m_engine_run_backward(                     
+[31m│[0m
+[31m│[0m   [2m355 [0m[2m│   │   [0mtensors,                               
+[31m│[0m
+[31m│[0m   [2m356 [0m[2m│   │   [0mgrad_tensors_,                         
+[31m│[0m
+[31m│[0m   [2m357 [0m[2m│   │   [0mretain_graph,                          
+[31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m 
+[2;33m/opt/conda/lib/python3.12/site-packages/torch/autograd/[0m[1;33mgraph.py[0
+m:[94m841[0m in [92m_engine_run_backward[0m      [31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m   [2m838 [0m[2m│   [0m[94mif[0m attach_logging_hooks:          
+[31m│[0m
+[31m│[0m   [2m839 [0m[2m│   │   [0munregister_hooks = 
+_register_logging_hooks_on_whole_graph(t_outputs)               [31m│[0m
+[31m│[0m   [2m840 [0m[2m│   [0m[94mtry[0m:                              
+[31m│[0m
+[31m│[0m [31m❱ [0m841 [2m│   │   [0m[94mreturn[0m 
+Variable._execution_engine.run_backward(  [2m# Calls into the C++ engine to 
+ru[0m [31m│[0m
+[31m│[0m   [2m842 [0m[2m│   │   │   [0mt_outputs, *args, **kwargs         
+[31m│[0m
+[31m│[0m   [2m843 [0m[2m│   │   [0m)  [2m# Calls into the C++ engine to run the
+backward pass[0m                            [31m│[0m
+[31m│[0m   [2m844 [0m[2m│   [0m[94mfinally[0m:                          
+[31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m 
+[2;33m/opt/conda/lib/python3.12/site-packages/torch/utils/data/_utils/[0m[1;33ms
+ignal_handling.py[0m:[94m73[0m in [92mhandler[0m [31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m   [2m70 [0m[2m│   [0m[94mdef[0m[90m [0m[92mhandler[0m(signum, frame):
+[31m│[0m
+[31m│[0m   [2m71 [0m[2m│   │   [0m[2m# This following call uses `waitid` with
+WNOHANG from C side. Therefore,[0m            [31m│[0m
+[31m│[0m   [2m72 [0m[2m│   │   [0m[2m# Python can still get and update the
+process status successfully.[0m                  [31m│[0m
+[31m│[0m [31m❱ [0m73 [2m│   │   [0m[1;4m_error_if_any_worker_fails()[0m 
+[31m│[0m
+[31m│[0m   [2m74 [0m[2m│   │   [0m[94mif[0m previous_handler [95mis[0m
+[95mnot[0m [94mNone[0m:                                                    
+[31m│[0m
+[31m│[0m   [2m75 [0m[2m│   │   │   [0m[94massert[0m 
+[96mcallable[0m(previous_handler)                                             
+[31m│[0m
+[31m│[0m   [2m76 [0m[2m│   │   │   [0mprevious_handler(signum, frame)     
+[31m│[0m
+[31m╰───────────────────────────────────────────────────────────────────────────
+───────────────────────╯[0m
+[1;91mRuntimeError: [0mDataLoader worker [1m([0mpid [1;36m1594[0m[1m)[0m is
+killed by signal: Terminated. 
+[2;36m[2026-07-27 08:56:42][0m [1;7;31mCRITICAL[0m [2m[olmo_core.utils:400,
+f1ef336a6d41, rank=4][0m Uncaught RuntimeError: DataLoader worker (pid 1590) is
+killed by signal: Terminated. 
+[31m╭─[0m[31m──────────────────────────────[0m[31m [0m[1;31mTraceback 
+[0m[1;2;31m(most recent call last)[0m[31m 
+[0m[31m───────────────────────────────[0m[31m─╮[0m
+[31m│[0m 
+[2;33m/gantry-runtime/src/scripts/train/memexpress/ctc_suite/[0m[1;33mtrain_ctc_
+suite.py[0m:[94m1119[0m in [92m<module>[0m       [31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m   [2m1116 [0m                                                      
+[31m│[0m
+[31m│[0m   [2m1117 [0m                                                      
+[31m│[0m
+[31m│[0m   [2m1118 [0m[94mif[0m [91m__name__[0m == 
+[33m"[0m[33m__main__[0m[33m"[0m:                                          
+[31m│[0m
+[31m│[0m [31m❱ [0m1119 [2m│   [0m[1;4mmain()[0m                         
+[31m│[0m
+[31m│[0m   [2m1120 [0m                                                      
+[31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m 
+[2;33m/gantry-runtime/src/scripts/train/memexpress/ctc_suite/[0m[1;33mtrain_ctc_
+suite.py[0m:[94m1113[0m in [92mmain[0m           [31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m   [2m1110 [0m[2m│   │   [0m[94mreturn[0m                       
+[31m│[0m
+[31m│[0m   [2m1111 [0m[2m│   [0mprepare_training_environment()            
+[31m│[0m
+[31m│[0m   [2m1112 [0m[2m│   [0m[94mtry[0m:                             
+[31m│[0m
+[31m│[0m [31m❱ [0m1113 [2m│   │   [0mbuild_and_fit(opts)                  
+[31m│[0m
+[31m│[0m   [2m1114 [0m[2m│   [0m[94mfinally[0m:                         
+[31m│[0m
+[31m│[0m   [2m1115 [0m[2m│   │   [0m[1;4mteardown_training_environment()[0m
+[31m│[0m
+[31m│[0m   [2m1116 [0m                                                      
+[31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m 
+[2;33m/gantry-runtime/src/scripts/train/memexpress/ctc_suite/[0m[1;33mtrain_ctc_
+suite.py[0m:[94m873[0m in [92mbuild_and_fit[0m   [31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m   [2m 870 [0m[2m│   │   [0msource, 
+dp_process_group=train_module.dp_process_group                            
+[31m│[0m
+[31m│[0m   [2m 871 [0m[2m│   [0m)                                         
+[31m│[0m
+[31m│[0m   [2m 872 [0m[2m│   [0mtrainer = trainer_config.build(train_module,
+data_loader)                             [31m│[0m
+[31m│[0m [31m❱ [0m 873 [2m│   [0m[1;4mtrainer.fit()[0m                  
+[31m│[0m
+[31m│[0m   [2m 874 [0m[2m│   [0m                                          
+[31m│[0m
+[31m│[0m   [2m 875 [0m[2m│   [0m[2m# Save a model-only checkpoint in the eval
+loader's expected layout (config.json +[0m    [31m│[0m
+[31m│[0m   [2m 876 [0m[2m│   [0m[2m# model_and_optim/) so the docchunk eval
+scripts load it directly.[0m                    [31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m 
+[2;33m/opt/conda/lib/python3.12/site-packages/olmo_core/train/[0m[1;33mtrainer.p
+y[0m:[94m742[0m in [92mfit[0m                    [31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m   [2m 739 [0m[2m│   │   │   [0m                                  
+[31m│[0m
+[31m│[0m   [2m 740 [0m[2m│   │   │   [0m[2m# Iterate over epochs until done.[0m
+[31m│[0m
+[31m│[0m   [2m 741 [0m[2m│   │   │   [0m[94mwhile[0m [95mnot[0m 
+[96mself[0m.training_complete:                                             
+[31m│[0m
+[31m│[0m [31m❱ [0m 742 [2m│   │   │   │   [0m[96mself[0m._fit_epoch()   
+[31m│[0m
+[31m│[0m   [2m 743 [0m[2m│   │   [0m[94mexcept[0m [96mBaseException[0m [94mas[0m
+exc:                                                      [31m│[0m
+[31m│[0m   [2m 744 [0m[2m│   │   │   [0m[96mself[0m._error = exc        
+[31m│[0m
+[31m│[0m   [2m 745 [0m[2m│   │   │   [0mlog.error([33mf[0m[33m"[0m[33mTraining
+failed due to:[0m[33m\n[0m[33m{[0m[96mtype[0m(exc).[91m__name__[0m[33m}[0m[33m:
+[0m[33m{[0mexc[33m}[0m[33m"[0m)            [31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m 
+[2;33m/opt/conda/lib/python3.12/site-packages/olmo_core/train/[0m[1;33mtrainer.p
+y[0m:[94m1490[0m in [92m_fit_epoch[0m            [31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m   [2m1487 [0m[2m│   │   │   [0m[94mif[0m should_skip:          
+[31m│[0m
+[31m│[0m   [2m1488 [0m[2m│   │   │   │   
+[0mlog.warning([33mf[0m[33m"[0m[33mSkipping training on step 
+[0m[33m{[0m[96mself[0m.global_step[33m:[0m[33m,d[0m[33m}[0m[33m intentional[0m
+[31m│[0m
+[31m│[0m   [2m1489 [0m[2m│   │   │   [0m[94melse[0m:                    
+[31m│[0m
+[31m│[0m [31m❱ [0m1490 [2m│   │   │   │   
+[0m[1;4;96mself[0m[1;4m.train_module.train_batch(batch)[0m                 
+[31m│[0m
+[31m│[0m   [2m1491 [0m[2m│   │   │   │   [0m                              
+[31m│[0m
+[31m│[0m   [2m1492 [0m[2m│   │   │   │   [0m[94mfor[0m callback [95min[0m
+[96mself[0m._iter_callbacks():                                   [31m│[0m
+[31m│[0m   [2m1493 [0m[2m│   │   │   │   │   [0mcallback.pre_optim_step() 
+[31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m 
+[2;33m/opt/conda/lib/python3.12/site-packages/olmo_core/train/train_module/trans
+former/[0m[1;33mtrain_module.py[0m [31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m   [2m419 [0m[2m│   │   │   │   │   [0m[94mdel[0m z_loss        
+[31m│[0m
+[31m│[0m   [2m420 [0m[2m│   │   │   │   [0m                               
+[31m│[0m
+[31m│[0m   [2m421 [0m[2m│   │   │   │   [0m[2m# Run backward pass.[0m   
+[31m│[0m
+[31m│[0m [31m❱ [0m422 [2m│   │   │   │   [0m[1;4mloss.backward()[0m     
+[31m│[0m
+[31m│[0m   [2m423 [0m[2m│   │   [0m                                       
+[31m│[0m
+[31m│[0m   [2m424 [0m[2m│   │   [0m[94mdel[0m batch  [2m# In case this helps
+with memory utilization.[0m                           [31m│[0m
+[31m│[0m   [2m425 [0m                                                       
+[31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m 
+[2;33m/opt/conda/lib/python3.12/site-packages/torch/[0m[1;33m_tensor.py[0m:[94m6
+25[0m in [92mbackward[0m                         [31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m   [2m 622 [0m[2m│   │   │   │   [0mcreate_graph=create_graph,    
+[31m│[0m
+[31m│[0m   [2m 623 [0m[2m│   │   │   │   [0minputs=inputs,                
+[31m│[0m
+[31m│[0m   [2m 624 [0m[2m│   │   │   [0m)                                 
+[31m│[0m
+[31m│[0m [31m❱ [0m 625 [2m│   │   [0m[1;4mtorch.autograd.backward([0m   
+[31m│[0m
+[31m│[0m   [2m 626 [0m[1;2;4m│   │   │   [0m[1;4;96mself[0m[1;4m, gradient,
+retain_graph, create_graph, inputs=inputs[0m                     [31m│[0m
+[31m│[0m   [2m 627 [0m[1;2;4m│   │   [0m[1;4m)[0m                       
+[31m│[0m
+[31m│[0m   [2m 628 [0m                                                      
+[31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m 
+[2;33m/opt/conda/lib/python3.12/site-packages/torch/autograd/[0m[1;33m__init__.p
+y[0m:[94m354[0m in [92mbackward[0m               [31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m   [2m351 [0m[2m│   [0m[2m# The reason we repeat the same comment below
+is that[0m                                  [31m│[0m
+[31m│[0m   [2m352 [0m[2m│   [0m[2m# some Python versions print out the first
+line of a multi-line function[0m               [31m│[0m
+[31m│[0m   [2m353 [0m[2m│   [0m[2m# calls in the traceback and some print out
+the last line[0m                              [31m│[0m
+[31m│[0m [31m❱ [0m354 [2m│   [0m_engine_run_backward(                     
+[31m│[0m
+[31m│[0m   [2m355 [0m[2m│   │   [0mtensors,                               
+[31m│[0m
+[31m│[0m   [2m356 [0m[2m│   │   [0mgrad_tensors_,                         
+[31m│[0m
+[31m│[0m   [2m357 [0m[2m│   │   [0mretain_graph,                          
+[31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m 
+[2;33m/opt/conda/lib/python3.12/site-packages/torch/autograd/[0m[1;33mgraph.py[0
+m:[94m841[0m in [92m_engine_run_backward[0m      [31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m   [2m838 [0m[2m│   [0m[94mif[0m attach_logging_hooks:          
+[31m│[0m
+[31m│[0m   [2m839 [0m[2m│   │   [0munregister_hooks = 
+_register_logging_hooks_on_whole_graph(t_outputs)               [31m│[0m
+[31m│[0m   [2m840 [0m[2m│   [0m[94mtry[0m:                              
+[31m│[0m
+[31m│[0m [31m❱ [0m841 [2m│   │   [0m[94mreturn[0m 
+Variable._execution_engine.run_backward(  [2m# Calls into the C++ engine to 
+ru[0m [31m│[0m
+[31m│[0m   [2m842 [0m[2m│   │   │   [0mt_outputs, *args, **kwargs         
+[31m│[0m
+[31m│[0m   [2m843 [0m[2m│   │   [0m)  [2m# Calls into the C++ engine to run the
+backward pass[0m                            [31m│[0m
+[31m│[0m   [2m844 [0m[2m│   [0m[94mfinally[0m:                          
+[31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m 
+[2;33m/opt/conda/lib/python3.12/site-packages/torch/utils/data/_utils/[0m[1;33ms
+ignal_handling.py[0m:[94m73[0m in [92mhandler[0m [31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m   [2m70 [0m[2m│   [0m[94mdef[0m[90m [0m[92mhandler[0m(signum, frame):
+[31m│[0m
+[31m│[0m   [2m71 [0m[2m│   │   [0m[2m# This following call uses `waitid` with
+WNOHANG from C side. Therefore,[0m            [31m│[0m
+[31m│[0m   [2m72 [0m[2m│   │   [0m[2m# Python can still get and update the
+process status successfully.[0m                  [31m│[0m
+[31m│[0m [31m❱ [0m73 [2m│   │   [0m[1;4m_error_if_any_worker_fails()[0m 
+[31m│[0m
+[31m│[0m   [2m74 [0m[2m│   │   [0m[94mif[0m previous_handler [95mis[0m
+[95mnot[0m [94mNone[0m:                                                    
+[31m│[0m
+[31m│[0m   [2m75 [0m[2m│   │   │   [0m[94massert[0m 
+[96mcallable[0m(previous_handler)                                             
+[31m│[0m
+[31m│[0m   [2m76 [0m[2m│   │   │   [0mprevious_handler(signum, frame)     
+[31m│[0m
+[31m╰───────────────────────────────────────────────────────────────────────────
+───────────────────────╯[0m
+[1;91mRuntimeError: [0mDataLoader worker [1m([0mpid [1;36m1590[0m[1m)[0m is
+killed by signal: Terminated. 
+[2;36m[2026-07-27 08:56:42][0m [1;7;31mCRITICAL[0m [2m[olmo_core.utils:400,
+f1ef336a6d41, rank=1][0m Uncaught RuntimeError: DataLoader worker (pid 1592) is
+killed by signal: Terminated. 
+[31m╭─[0m[31m──────────────────────────────[0m[31m [0m[1;31mTraceback 
+[0m[1;2;31m(most recent call last)[0m[31m 
+[0m[31m───────────────────────────────[0m[31m─╮[0m
+[31m│[0m 
+[2;33m/gantry-runtime/src/scripts/train/memexpress/ctc_suite/[0m[1;33mtrain_ctc_
+suite.py[0m:[94m1119[0m in [92m<module>[0m       [31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m   [2m1116 [0m                                                      
+[31m│[0m
+[31m│[0m   [2m1117 [0m                                                      
+[31m│[0m
+[31m│[0m   [2m1118 [0m[94mif[0m [91m__name__[0m == 
+[33m"[0m[33m__main__[0m[33m"[0m:                                          
+[31m│[0m
+[31m│[0m [31m❱ [0m1119 [2m│   [0m[1;4mmain()[0m                         
+[31m│[0m
+[31m│[0m   [2m1120 [0m                                                      
+[31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m 
+[2;33m/gantry-runtime/src/scripts/train/memexpress/ctc_suite/[0m[1;33mtrain_ctc_
+suite.py[0m:[94m1113[0m in [92mmain[0m           [31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m   [2m1110 [0m[2m│   │   [0m[94mreturn[0m                       
+[31m│[0m
+[31m│[0m   [2m1111 [0m[2m│   [0mprepare_training_environment()            
+[31m│[0m
+[31m│[0m   [2m1112 [0m[2m│   [0m[94mtry[0m:                             
+[31m│[0m
+[31m│[0m [31m❱ [0m1113 [2m│   │   [0mbuild_and_fit(opts)                  
+[31m│[0m
+[31m│[0m   [2m1114 [0m[2m│   [0m[94mfinally[0m:                         
+[31m│[0m
+[31m│[0m   [2m1115 [0m[2m│   │   [0m[1;4mteardown_training_environment()[0m
+[31m│[0m
+[31m│[0m   [2m1116 [0m                                                      
+[31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m 
+[2;33m/gantry-runtime/src/scripts/train/memexpress/ctc_suite/[0m[1;33mtrain_ctc_
+suite.py[0m:[94m873[0m in [92mbuild_and_fit[0m   [31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m   [2m 870 [0m[2m│   │   [0msource, 
+dp_process_group=train_module.dp_process_group                            
+[31m│[0m
+[31m│[0m   [2m 871 [0m[2m│   [0m)                                         
+[31m│[0m
+[31m│[0m   [2m 872 [0m[2m│   [0mtrainer = trainer_config.build(train_module,
+data_loader)                             [31m│[0m
+[31m│[0m [31m❱ [0m 873 [2m│   [0m[1;4mtrainer.fit()[0m                  
+[31m│[0m
+[31m│[0m   [2m 874 [0m[2m│   [0m                                          
+[31m│[0m
+[31m│[0m   [2m 875 [0m[2m│   [0m[2m# Save a model-only checkpoint in the eval
+loader's expected layout (config.json +[0m    [31m│[0m
+[31m│[0m   [2m 876 [0m[2m│   [0m[2m# model_and_optim/) so the docchunk eval
+scripts load it directly.[0m                    [31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m 
+[2;33m/opt/conda/lib/python3.12/site-packages/olmo_core/train/[0m[1;33mtrainer.p
+y[0m:[94m742[0m in [92mfit[0m                    [31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m   [2m 739 [0m[2m│   │   │   [0m                                  
+[31m│[0m
+[31m│[0m   [2m 740 [0m[2m│   │   │   [0m[2m# Iterate over epochs until done.[0m
+[31m│[0m
+[31m│[0m   [2m 741 [0m[2m│   │   │   [0m[94mwhile[0m [95mnot[0m 
+[96mself[0m.training_complete:                                             
+[31m│[0m
+[31m│[0m [31m❱ [0m 742 [2m│   │   │   │   [0m[96mself[0m._fit_epoch()   
+[31m│[0m
+[31m│[0m   [2m 743 [0m[2m│   │   [0m[94mexcept[0m [96mBaseException[0m [94mas[0m
+exc:                                                      [31m│[0m
+[31m│[0m   [2m 744 [0m[2m│   │   │   [0m[96mself[0m._error = exc        
+[31m│[0m
+[31m│[0m   [2m 745 [0m[2m│   │   │   [0mlog.error([33mf[0m[33m"[0m[33mTraining
+failed due to:[0m[33m\n[0m[33m{[0m[96mtype[0m(exc).[91m__name__[0m[33m}[0m[33m:
+[0m[33m{[0mexc[33m}[0m[33m"[0m)            [31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m 
+[2;33m/opt/conda/lib/python3.12/site-packages/olmo_core/train/[0m[1;33mtrainer.p
+y[0m:[94m1490[0m in [92m_fit_epoch[0m            [31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m   [2m1487 [0m[2m│   │   │   [0m[94mif[0m should_skip:          
+[31m│[0m
+[31m│[0m   [2m1488 [0m[2m│   │   │   │   
+[0mlog.warning([33mf[0m[33m"[0m[33mSkipping training on step 
+[0m[33m{[0m[96mself[0m.global_step[33m:[0m[33m,d[0m[33m}[0m[33m intentional[0m
+[31m│[0m
+[31m│[0m   [2m1489 [0m[2m│   │   │   [0m[94melse[0m:                    
+[31m│[0m
+[31m│[0m [31m❱ [0m1490 [2m│   │   │   │   
+[0m[1;4;96mself[0m[1;4m.train_module.train_batch(batch)[0m                 
+[31m│[0m
+[31m│[0m   [2m1491 [0m[2m│   │   │   │   [0m                              
+[31m│[0m
+[31m│[0m   [2m1492 [0m[2m│   │   │   │   [0m[94mfor[0m callback [95min[0m
+[96mself[0m._iter_callbacks():                                   [31m│[0m
+[31m│[0m   [2m1493 [0m[2m│   │   │   │   │   [0mcallback.pre_optim_step() 
+[31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m 
+[2;33m/opt/conda/lib/python3.12/site-packages/olmo_core/train/train_module/trans
+former/[0m[1;33mtrain_module.py[0m [31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m   [2m419 [0m[2m│   │   │   │   │   [0m[94mdel[0m z_loss        
+[31m│[0m
+[31m│[0m   [2m420 [0m[2m│   │   │   │   [0m                               
+[31m│[0m
+[31m│[0m   [2m421 [0m[2m│   │   │   │   [0m[2m# Run backward pass.[0m   
+[31m│[0m
+[31m│[0m [31m❱ [0m422 [2m│   │   │   │   [0m[1;4mloss.backward()[0m     
+[31m│[0m
+[31m│[0m   [2m423 [0m[2m│   │   [0m                                       
+[31m│[0m
+[31m│[0m   [2m424 [0m[2m│   │   [0m[94mdel[0m batch  [2m# In case this helps
+with memory utilization.[0m                           [31m│[0m
+[31m│[0m   [2m425 [0m                                                       
+[31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m 
+[2;33m/opt/conda/lib/python3.12/site-packages/torch/[0m[1;33m_tensor.py[0m:[94m6
+25[0m in [92mbackward[0m                         [31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m   [2m 622 [0m[2m│   │   │   │   [0mcreate_graph=create_graph,    
+[31m│[0m
+[31m│[0m   [2m 623 [0m[2m│   │   │   │   [0minputs=inputs,                
+[31m│[0m
+[31m│[0m   [2m 624 [0m[2m│   │   │   [0m)                                 
+[31m│[0m
+[31m│[0m [31m❱ [0m 625 [2m│   │   [0m[1;4mtorch.autograd.backward([0m   
+[31m│[0m
+[31m│[0m   [2m 626 [0m[1;2;4m│   │   │   [0m[1;4;96mself[0m[1;4m, gradient,
+retain_graph, create_graph, inputs=inputs[0m                     [31m│[0m
+[31m│[0m   [2m 627 [0m[1;2;4m│   │   [0m[1;4m)[0m                       
+[31m│[0m
+[31m│[0m   [2m 628 [0m                                                      
+[31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m 
+[2;33m/opt/conda/lib/python3.12/site-packages/torch/autograd/[0m[1;33m__init__.p
+y[0m:[94m354[0m in [92mbackward[0m               [31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m   [2m351 [0m[2m│   [0m[2m# The reason we repeat the same comment below
+is that[0m                                  [31m│[0m
+[31m│[0m   [2m352 [0m[2m│   [0m[2m# some Python versions print out the first
+line of a multi-line function[0m               [31m│[0m
+[31m│[0m   [2m353 [0m[2m│   [0m[2m# calls in the traceback and some print out
+the last line[0m                              [31m│[0m
+[31m│[0m [31m❱ [0m354 [2m│   [0m_engine_run_backward(                     
+[31m│[0m
+[31m│[0m   [2m355 [0m[2m│   │   [0mtensors,                               
+[31m│[0m
+[31m│[0m   [2m356 [0m[2m│   │   [0mgrad_tensors_,                         
+[31m│[0m
+[31m│[0m   [2m357 [0m[2m│   │   [0mretain_graph,                          
+[31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m 
+[2;33m/opt/conda/lib/python3.12/site-packages/torch/autograd/[0m[1;33mgraph.py[0
+m:[94m841[0m in [92m_engine_run_backward[0m      [31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m   [2m838 [0m[2m│   [0m[94mif[0m attach_logging_hooks:          
+[31m│[0m
+[31m│[0m   [2m839 [0m[2m│   │   [0munregister_hooks = 
+_register_logging_hooks_on_whole_graph(t_outputs)               [31m│[0m
+[31m│[0m   [2m840 [0m[2m│   [0m[94mtry[0m:                              
+[31m│[0m
+[31m│[0m [31m❱ [0m841 [2m│   │   [0m[94mreturn[0m 
+Variable._execution_engine.run_backward(  [2m# Calls into the C++ engine to 
+ru[0m [31m│[0m
+[31m│[0m   [2m842 [0m[2m│   │   │   [0mt_outputs, *args, **kwargs         
+[31m│[0m
+[31m│[0m   [2m843 [0m[2m│   │   [0m)  [2m# Calls into the C++ engine to run the
+backward pass[0m                            [31m│[0m
+[31m│[0m   [2m844 [0m[2m│   [0m[94mfinally[0m:                          
+[31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m 
+[2;33m/opt/conda/lib/python3.12/site-packages/torch/utils/data/_utils/[0m[1;33ms
+ignal_handling.py[0m:[94m73[0m in [92mhandler[0m [31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m   [2m70 [0m[2m│   [0m[94mdef[0m[90m [0m[92mhandler[0m(signum, frame):
+[31m│[0m
+[31m│[0m   [2m71 [0m[2m│   │   [0m[2m# This following call uses `waitid` with
+WNOHANG from C side. Therefore,[0m            [31m│[0m
+[31m│[0m   [2m72 [0m[2m│   │   [0m[2m# Python can still get and update the
+process status successfully.[0m                  [31m│[0m
+[31m│[0m [31m❱ [0m73 [2m│   │   [0m[1;4m_error_if_any_worker_fails()[0m 
+[31m│[0m
+[31m│[0m   [2m74 [0m[2m│   │   [0m[94mif[0m previous_handler [95mis[0m
+[95mnot[0m [94mNone[0m:                                                    
+[31m│[0m
+[31m│[0m   [2m75 [0m[2m│   │   │   [0m[94massert[0m 
+[96mcallable[0m(previous_handler)                                             
+[31m│[0m
+[31m│[0m   [2m76 [0m[2m│   │   │   [0mprevious_handler(signum, frame)     
+[31m│[0m
+[31m╰───────────────────────────────────────────────────────────────────────────
+───────────────────────╯[0m
+[1;91mRuntimeError: [0mDataLoader worker [1m([0mpid [1;36m1592[0m[1m)[0m is
+killed by signal: Terminated. 
+[2;36m[2026-07-27 08:56:42][0m [1;7;31mCRITICAL[0m [2m[olmo_core.utils:400,
+f1ef336a6d41, rank=0][0m Uncaught RuntimeError: DataLoader worker (pid 1588) is
+killed by signal: Terminated. 
+[31m╭─[0m[31m──────────────────────────────[0m[31m [0m[1;31mTraceback 
+[0m[1;2;31m(most recent call last)[0m[31m 
+[0m[31m───────────────────────────────[0m[31m─╮[0m
+[31m│[0m 
+[2;33m/gantry-runtime/src/scripts/train/memexpress/ctc_suite/[0m[1;33mtrain_ctc_
+suite.py[0m:[94m1119[0m in [92m<module>[0m       [31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m   [2m1116 [0m                                                      
+[31m│[0m
+[31m│[0m   [2m1117 [0m                                                      
+[31m│[0m
+[31m│[0m   [2m1118 [0m[94mif[0m [91m__name__[0m == 
+[33m"[0m[33m__main__[0m[33m"[0m:                                          
+[31m│[0m
+[31m│[0m [31m❱ [0m1119 [2m│   [0m[1;4mmain()[0m                         
+[31m│[0m
+[31m│[0m   [2m1120 [0m                                                      
+[31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m 
+[2;33m/gantry-runtime/src/scripts/train/memexpress/ctc_suite/[0m[1;33mtrain_ctc_
+suite.py[0m:[94m1113[0m in [92mmain[0m           [31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m   [2m1110 [0m[2m│   │   [0m[94mreturn[0m                       
+[31m│[0m
+[31m│[0m   [2m1111 [0m[2m│   [0mprepare_training_environment()            
+[31m│[0m
+[31m│[0m   [2m1112 [0m[2m│   [0m[94mtry[0m:                             
+[31m│[0m
+[31m│[0m [31m❱ [0m1113 [2m│   │   [0mbuild_and_fit(opts)                  
+[31m│[0m
+[31m│[0m   [2m1114 [0m[2m│   [0m[94mfinally[0m:                         
+[31m│[0m
+[31m│[0m   [2m1115 [0m[2m│   │   [0m[1;4mteardown_training_environment()[0m
+[31m│[0m
+[31m│[0m   [2m1116 [0m                                                      
+[31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m 
+[2;33m/gantry-runtime/src/scripts/train/memexpress/ctc_suite/[0m[1;33mtrain_ctc_
+suite.py[0m:[94m873[0m in [92mbuild_and_fit[0m   [31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m   [2m 870 [0m[2m│   │   [0msource, 
+dp_process_group=train_module.dp_process_group                            
+[31m│[0m
+[31m│[0m   [2m 871 [0m[2m│   [0m)                                         
+[31m│[0m
+[31m│[0m   [2m 872 [0m[2m│   [0mtrainer = trainer_config.build(train_module,
+data_loader)                             [31m│[0m
+[31m│[0m [31m❱ [0m 873 [2m│   [0m[1;4mtrainer.fit()[0m                  
+[31m│[0m
+[31m│[0m   [2m 874 [0m[2m│   [0m                                          
+[31m│[0m
+[31m│[0m   [2m 875 [0m[2m│   [0m[2m# Save a model-only checkpoint in the eval
+loader's expected layout (config.json +[0m    [31m│[0m
+[31m│[0m   [2m 876 [0m[2m│   [0m[2m# model_and_optim/) so the docchunk eval
+scripts load it directly.[0m                    [31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m 
+[2;33m/opt/conda/lib/python3.12/site-packages/olmo_core/train/[0m[1;33mtrainer.p
+y[0m:[94m742[0m in [92mfit[0m                    [31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m   [2m 739 [0m[2m│   │   │   [0m                                  
+[31m│[0m
+[31m│[0m   [2m 740 [0m[2m│   │   │   [0m[2m# Iterate over epochs until done.[0m
+[31m│[0m
+[31m│[0m   [2m 741 [0m[2m│   │   │   [0m[94mwhile[0m [95mnot[0m 
+[96mself[0m.training_complete:                                             
+[31m│[0m
+[31m│[0m [31m❱ [0m 742 [2m│   │   │   │   [0m[96mself[0m._fit_epoch()   
+[31m│[0m
+[31m│[0m   [2m 743 [0m[2m│   │   [0m[94mexcept[0m [96mBaseException[0m [94mas[0m
+exc:                                                      [31m│[0m
+[31m│[0m   [2m 744 [0m[2m│   │   │   [0m[96mself[0m._error = exc        
+[31m│[0m
+[31m│[0m   [2m 745 [0m[2m│   │   │   [0mlog.error([33mf[0m[33m"[0m[33mTraining
+failed due to:[0m[33m\n[0m[33m{[0m[96mtype[0m(exc).[91m__name__[0m[33m}[0m[33m:
+[0m[33m{[0mexc[33m}[0m[33m"[0m)            [31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m 
+[2;33m/opt/conda/lib/python3.12/site-packages/olmo_core/train/[0m[1;33mtrainer.p
+y[0m:[94m1490[0m in [92m_fit_epoch[0m            [31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m   [2m1487 [0m[2m│   │   │   [0m[94mif[0m should_skip:          
+[31m│[0m
+[31m│[0m   [2m1488 [0m[2m│   │   │   │   
+[0mlog.warning([33mf[0m[33m"[0m[33mSkipping training on step 
+[0m[33m{[0m[96mself[0m.global_step[33m:[0m[33m,d[0m[33m}[0m[33m intentional[0m
+[31m│[0m
+[31m│[0m   [2m1489 [0m[2m│   │   │   [0m[94melse[0m:                    
+[31m│[0m
+[31m│[0m [31m❱ [0m1490 [2m│   │   │   │   
+[0m[1;4;96mself[0m[1;4m.train_module.train_batch(batch)[0m                 
+[31m│[0m
+[31m│[0m   [2m1491 [0m[2m│   │   │   │   [0m                              
+[31m│[0m
+[31m│[0m   [2m1492 [0m[2m│   │   │   │   [0m[94mfor[0m callback [95min[0m
+[96mself[0m._iter_callbacks():                                   [31m│[0m
+[31m│[0m   [2m1493 [0m[2m│   │   │   │   │   [0mcallback.pre_optim_step() 
+[31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m 
+[2;33m/opt/conda/lib/python3.12/site-packages/olmo_core/train/train_module/trans
+former/[0m[1;33mtrain_module.py[0m [31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m   [2m419 [0m[2m│   │   │   │   │   [0m[94mdel[0m z_loss        
+[31m│[0m
+[31m│[0m   [2m420 [0m[2m│   │   │   │   [0m                               
+[31m│[0m
+[31m│[0m   [2m421 [0m[2m│   │   │   │   [0m[2m# Run backward pass.[0m   
+[31m│[0m
+[31m│[0m [31m❱ [0m422 [2m│   │   │   │   [0m[1;4mloss.backward()[0m     
+[31m│[0m
+[31m│[0m   [2m423 [0m[2m│   │   [0m                                       
+[31m│[0m
+[31m│[0m   [2m424 [0m[2m│   │   [0m[94mdel[0m batch  [2m# In case this helps
+with memory utilization.[0m                           [31m│[0m
+[31m│[0m   [2m425 [0m                                                       
+[31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m 
+[2;33m/opt/conda/lib/python3.12/site-packages/torch/[0m[1;33m_tensor.py[0m:[94m6
+25[0m in [92mbackward[0m                         [31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m   [2m 622 [0m[2m│   │   │   │   [0mcreate_graph=create_graph,    
+[31m│[0m
+[31m│[0m   [2m 623 [0m[2m│   │   │   │   [0minputs=inputs,                
+[31m│[0m
+[31m│[0m   [2m 624 [0m[2m│   │   │   [0m)                                 
+[31m│[0m
+[31m│[0m [31m❱ [0m 625 [2m│   │   [0m[1;4mtorch.autograd.backward([0m   
+[31m│[0m
+[31m│[0m   [2m 626 [0m[1;2;4m│   │   │   [0m[1;4;96mself[0m[1;4m, gradient,
+retain_graph, create_graph, inputs=inputs[0m                     [31m│[0m
+[31m│[0m   [2m 627 [0m[1;2;4m│   │   [0m[1;4m)[0m                       
+[31m│[0m
+[31m│[0m   [2m 628 [0m                                                      
+[31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m 
+[2;33m/opt/conda/lib/python3.12/site-packages/torch/autograd/[0m[1;33m__init__.p
+y[0m:[94m354[0m in [92mbackward[0m               [31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m   [2m351 [0m[2m│   [0m[2m# The reason we repeat the same comment below
+is that[0m                                  [31m│[0m
+[31m│[0m   [2m352 [0m[2m│   [0m[2m# some Python versions print out the first
+line of a multi-line function[0m               [31m│[0m
+[31m│[0m   [2m353 [0m[2m│   [0m[2m# calls in the traceback and some print out
+the last line[0m                              [31m│[0m
+[31m│[0m [31m❱ [0m354 [2m│   [0m_engine_run_backward(                     
+[31m│[0m
+[31m│[0m   [2m355 [0m[2m│   │   [0mtensors,                               
+[31m│[0m
+[31m│[0m   [2m356 [0m[2m│   │   [0mgrad_tensors_,                         
+[31m│[0m
+[31m│[0m   [2m357 [0m[2m│   │   [0mretain_graph,                          
+[31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m 
+[2;33m/opt/conda/lib/python3.12/site-packages/torch/autograd/[0m[1;33mgraph.py[0
+m:[94m841[0m in [92m_engine_run_backward[0m      [31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m   [2m838 [0m[2m│   [0m[94mif[0m attach_logging_hooks:          
+[31m│[0m
+[31m│[0m   [2m839 [0m[2m│   │   [0munregister_hooks = 
+_register_logging_hooks_on_whole_graph(t_outputs)               [31m│[0m
+[31m│[0m   [2m840 [0m[2m│   [0m[94mtry[0m:                              
+[31m│[0m
+[31m│[0m [31m❱ [0m841 [2m│   │   [0m[94mreturn[0m 
+Variable._execution_engine.run_backward(  [2m# Calls into the C++ engine to 
+ru[0m [31m│[0m
+[31m│[0m   [2m842 [0m[2m│   │   │   [0mt_outputs, *args, **kwargs         
+[31m│[0m
+[31m│[0m   [2m843 [0m[2m│   │   [0m)  [2m# Calls into the C++ engine to run the
+backward pass[0m                            [31m│[0m
+[31m│[0m   [2m844 [0m[2m│   [0m[94mfinally[0m:                          
+[31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m 
+[2;33m/opt/conda/lib/python3.12/site-packages/torch/utils/data/_utils/[0m[1;33ms
+ignal_handling.py[0m:[94m73[0m in [92mhandler[0m [31m│[0m
+[31m│[0m                                                                      
+[31m│[0m
+[31m│[0m   [2m70 [0m[2m│   [0m[94mdef[0m[90m [0m[92mhandler[0m(signum, frame):
+[31m│[0m
+[31m│[0m   [2m71 [0m[2m│   │   [0m[2m# This following call uses `waitid` with
+WNOHANG from C side. Therefore,[0m            [31m│[0m
+[31m│[0m   [2m72 [0m[2m│   │   [0m[2m# Python can still get and update the
+process status successfully.[0m                  [31m│[0m
+[31m│[0m [31m❱ [0m73 [2m│   │   [0m[1;4m_error_if_any_worker_fails()[0m 
+[31m│[0m
+[31m│[0m   [2m74 [0m[2m│   │   [0m[94mif[0m previous_handler [95mis[0m
+[95mnot[0m [94mNone[0m:                                                    
+[31m│[0m
+[31m│[0m   [2m75 [0m[2m│   │   │   [0m[94massert[0m 
+[96mcallable[0m(previous_handler)                                             
+[31m│[0m
+[31m│[0m   [2m76 [0m[2m│   │   │   [0mprevious_handler(signum, frame)     
+[31m│[0m
+[31m╰───────────────────────────────────────────────────────────────────────────
+───────────────────────╯[0m
+[1;91mRuntimeError: [0mDataLoader worker [1m([0mpid [1;36m1588[0m[1m)[0m is
+killed by signal: Terminated. 
+[W727 08:56:43.450488924 AllocatorConfig.cpp:28] Warning: 
+PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function 
+operator())
+[W727 08:56:43.450504322 AllocatorConfig.cpp:28] Warning: 
+PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function 
+operator())
+[W727 08:56:43.459161278 AllocatorConfig.cpp:28] Warning: 
+PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function 
+operator())
+[W727 08:56:44.464765829 AllocatorConfig.cpp:28] Warning: 
+PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function 
+operator())
+[W727 08:56:44.468917744 AllocatorConfig.cpp:28] Warning: 
+PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function 
+operator())
+[W727 08:56:44.472150787 AllocatorConfig.cpp:28] Warning: 
+PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function 
+operator())
+[W727 08:56:44.472626792 AllocatorConfig.cpp:28] Warning: 
+PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function 
+operator())
+[W727 08:56:44.481984626 AllocatorConfig.cpp:28] Warning: 
+PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function 
+operator())
+Traceback (most recent call last):
+  File "/opt/conda/bin/torchrun", line 33, in <module>
+    sys.exit(load_entry_point('torch==2.9.1+cu128', 'console_scripts', 
+'torchrun')())
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+^^^^
+  File 
+"/opt/conda/lib/python3.12/site-packages/torch/distributed/elastic/multiprocessi
+ng/errors/__init__.py", line 357, in wrapper
+    return f(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^
+  File "/opt/conda/lib/python3.12/site-packages/torch/distributed/run.py", line 
+936, in main
+    run(args)
+  File "/opt/conda/lib/python3.12/site-packages/torch/distributed/run.py", line 
+927, in run
+    elastic_launch(
+  File 
+"/opt/conda/lib/python3.12/site-packages/torch/distributed/launcher/api.py", 
+line 156, in __call__
+    return launch_agent(self._config, self._entrypoint, list(args))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File 
+"/opt/conda/lib/python3.12/site-packages/torch/distributed/launcher/api.py", 
+line 284, in launch_agent
+    result = agent.run()
+             ^^^^^^^^^^^
+  File 
+"/opt/conda/lib/python3.12/site-packages/torch/distributed/elastic/metrics/api.p
+y", line 138, in wrapper
+    result = f(*args, **kwargs)
+             ^^^^^^^^^^^^^^^^^^
+  File 
+"/opt/conda/lib/python3.12/site-packages/torch/distributed/elastic/agent/server/
+api.py", line 717, in run
+    result = self._invoke_run(role)
+             ^^^^^^^^^^^^^^^^^^^^^^
+  File 
+"/opt/conda/lib/python3.12/site-packages/torch/distributed/elastic/agent/server/
+api.py", line 881, in _invoke_run
+    time.sleep(monitor_interval)
+  File 
+"/opt/conda/lib/python3.12/site-packages/torch/distributed/elastic/multiprocessi
+ng/api.py", line 85, in _terminate_process_handler
+    raise SignalException(f"Process {os.getpid()} got signal: {sigval}", 
+sigval=sigval)
+torch.distributed.elastic.multiprocessing.api.SignalException: Process 7 got 
+signal: 15
+[W727 08:56:45.043942316 AllocatorConfig.cpp:28] Warning: 
+PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function 
+operator())
+
+─────────────────────────────────── End logs ───────────────────────────────────
+
+Experiment: 
+prasanns/ctc-olmo3-7b-contra-full-lr1e5-20260727T013922-0700-15945527 → 
+https://beaker.org/ex/01KYHBN7G7NC0VJZ6V771C4B2Q
+Workspace: ai2/flex2 → https://beaker.org/ws/ai2/flex2
+Commit: 7be08a2 ctc_olmo3: results pull + per-rung table for the … → 
+https://github.com/allenai/OLMo-core/commit/7be08a2
+Branch: prasann/landmark → 
+https://github.com/allenai/OLMo-core/tree/prasann/landmark
+Results: https://beaker.org/ds/01KYHBN7GFAJGAWPK9GSEEEKEK
+Runtime: 15 minutes, 16 seconds
+
+Traceback (most recent call last):
+  File "/accounts/projects/berkeleynlp/prasann/projects/OLMo-core/src/olmo_core/launch/beaker.py", line 550, in launch
+    return recipe.launch(
+           ^^^^^^^^^^^^^^
+  File "/scratch/users/prasann/conda/envs/corpus-reasoning-olmo/lib/python3.12/site-packages/gantry/recipe.py", line 178, in launch
+    workload = launch_experiment(
+               ^^^^^^^^^^^^^^^^^^
+  File "/scratch/users/prasann/conda/envs/corpus-reasoning-olmo/lib/python3.12/site-packages/gantry/launch.py", line 652, in launch_experiment
+    beaker_utils.display_results(
+  File "/scratch/users/prasann/conda/envs/corpus-reasoning-olmo/lib/python3.12/site-packages/gantry/beaker_utils.py", line 579, in display_results
+    raise ExperimentFailedError(
+gantry.exceptions.ExperimentFailedError: Job canceled, see https://beaker.org/ex/01KYHBN7G7NC0VJZ6V771C4B2Q for details
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/accounts/projects/berkeleynlp/prasann/projects/OLMo-core/src/scripts/train/memexpress/ctc_suite/beaker_ctc_suite.py", line 291, in <module>
+    sys.exit(main())
+             ^^^^^^
+  File "/accounts/projects/berkeleynlp/prasann/projects/OLMo-core/src/scripts/train/memexpress/ctc_suite/beaker_ctc_suite.py", line 286, in main
+    workload = launch_config.launch(follow=True)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/accounts/projects/berkeleynlp/prasann/projects/OLMo-core/src/olmo_core/launch/beaker.py", line 555, in launch
+    raise OLMoBeakerExperimentFailedError(str(exc))
+olmo_core.exceptions.OLMoBeakerExperimentFailedError: Job canceled, see https://beaker.org/ex/01KYHBN7G7NC0VJZ6V771C4B2Q for details

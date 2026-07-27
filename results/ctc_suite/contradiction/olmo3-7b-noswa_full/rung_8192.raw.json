@@ -1,0 +1,15 @@
+{
+  "model_path": "/data/prasann/ctc_suite/ckpts/ctc-olmo3-7b-contra-full",
+  "variant": "full",
+  "contra_data": "/scratch/users/prasann/ctc_suite_staged/eval_rungs/contradiction/rung_8192.jsonl",
+  "eval_size": 500,
+  "landmark_top_k_blocks": null,
+  "landmark_top_k_fraction": null,
+  "contradiction": {
+    "precision": 0.0,
+    "recall": 0.0,
+    "f1": 0.0,
+    "exact_match": 0.0,
+    "parse_rate": 1.0
+  }
+}

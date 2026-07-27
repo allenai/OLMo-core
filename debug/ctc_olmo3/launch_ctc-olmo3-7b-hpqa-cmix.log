@@ -33580,3 +33580,2195 @@ forward=1185 p_standard=0.042 collapsed_forwards=511
     throughput/device/data loading (%)=0.0227
     throughput/device/data loading (s)=0.0007
     train/PPL=1.004
+[2;36m[2026-07-27 08:55:04][0m [34mINFO    [0m 
+[2m[olmo_core.train.callbacks.console_logger:68, 135e0d92e7da, rank=0][0m 
+[step=1186/1250,epoch=1,eta=3m]
+    gpu_memory/GPU active mem (%)=30.03
+    gpu_memory/GPU active mem (GiB)=23.78
+    gpu_memory/GPU reserved mem (%)=33.94
+    gpu_memory/GPU reserved mem (GiB)=26.88
+    optim/LR (group 0)=2.64E-06
+    optim/LR (group 1)=2.64E-06
+    optim/step skipped=0.0
+    optim/total grad norm=1.800
+    throughput/chinchilla multiple=0.0011
+    throughput/device/BPS=0.3919
+    throughput/device/BPS (actual avg)=0.3672
+    throughput/device/MFU=43.54
+    throughput/device/MFU (actual avg)=40.79
+    throughput/device/TPS=6,420
+    throughput/device/TPS (actual avg)=6,015
+    throughput/device/flopsPS=430.8T
+    throughput/device/flopsPS (actual avg)=403.6T
+    throughput/total petaflops=10,429
+    throughput/total tokens=155,451,392
+    train/CE loss=0.1113
+    throughput/device/data loading (%)=0.0150
+    throughput/device/data loading (s)=0.0004
+    train/PPL=1.118
+[2;36m[2026-07-27 08:55:07][0m [34mINFO    [0m 
+[2m[olmo_core.train.callbacks.console_logger:68, 135e0d92e7da, rank=0][0m 
+[step=1187/1250,epoch=1,eta=3m]
+    gpu_memory/GPU active mem (%)=30.03
+    gpu_memory/GPU active mem (GiB)=23.78
+    gpu_memory/GPU reserved mem (%)=33.94
+    gpu_memory/GPU reserved mem (GiB)=26.88
+    optim/LR (group 0)=2.60E-06
+    optim/LR (group 1)=2.60E-06
+    optim/step skipped=0.0
+    optim/total grad norm=1.257
+    throughput/chinchilla multiple=0.0011
+    throughput/device/BPS=0.4060
+    throughput/device/BPS (actual avg)=0.3672
+    throughput/device/MFU=45.11
+    throughput/device/MFU (actual avg)=40.79
+    throughput/device/TPS=6,652
+    throughput/device/TPS (actual avg)=6,016
+    throughput/device/flopsPS=446.3T
+    throughput/device/flopsPS (actual avg)=403.6T
+    throughput/total petaflops=10,438
+    throughput/total tokens=155,582,464
+    train/CE loss=0.0545
+    throughput/device/data loading (%)=0.0229
+    throughput/device/data loading (s)=0.0006
+    train/PPL=1.056
+[2;36m[2026-07-27 08:55:09][0m [34mINFO    [0m 
+[2m[olmo_core.nn.transformer.model:642, 135e0d92e7da, rank=0][0m [curriculum] 
+forward=1190 p_standard=0.039 collapsed_forwards=512
+[2;36m[2026-07-27 08:55:09][0m [34mINFO    [0m 
+[2m[olmo_core.train.callbacks.console_logger:68, 135e0d92e7da, rank=0][0m 
+[step=1188/1250,epoch=1,eta=3m]
+    gpu_memory/GPU active mem (%)=30.03
+    gpu_memory/GPU active mem (GiB)=23.78
+    gpu_memory/GPU reserved mem (%)=33.94
+    gpu_memory/GPU reserved mem (GiB)=26.88
+    optim/LR (group 0)=2.56E-06
+    optim/LR (group 1)=2.56E-06
+    optim/step skipped=0.0
+    optim/total grad norm=2.020
+    throughput/chinchilla multiple=0.0011
+    throughput/device/BPS=0.3895
+    throughput/device/BPS (actual avg)=0.3672
+    throughput/device/MFU=43.27
+    throughput/device/MFU (actual avg)=40.80
+    throughput/device/TPS=6,381
+    throughput/device/TPS (actual avg)=6,016
+    throughput/device/flopsPS=428.1T
+    throughput/device/flopsPS (actual avg)=403.7T
+    throughput/total petaflops=10,447
+    throughput/total tokens=155,713,536
+    train/CE loss=0.0995
+    throughput/device/data loading (%)=0.0174
+    throughput/device/data loading (s)=0.0004
+    train/PPL=1.105
+[2;36m[2026-07-27 08:55:12][0m [34mINFO    [0m 
+[2m[olmo_core.train.callbacks.console_logger:68, 135e0d92e7da, rank=0][0m 
+[step=1189/1250,epoch=1,eta=3m]
+    gpu_memory/GPU active mem (%)=30.03
+    gpu_memory/GPU active mem (GiB)=23.78
+    gpu_memory/GPU reserved mem (%)=33.94
+    gpu_memory/GPU reserved mem (GiB)=26.88
+    optim/LR (group 0)=2.52E-06
+    optim/LR (group 1)=2.52E-06
+    optim/step skipped=0.0
+    optim/total grad norm=2.430
+    throughput/chinchilla multiple=0.0011
+    throughput/device/BPS=0.3918
+    throughput/device/BPS (actual avg)=0.3672
+    throughput/device/MFU=43.53
+    throughput/device/MFU (actual avg)=40.80
+    throughput/device/TPS=6,419
+    throughput/device/TPS (actual avg)=6,016
+    throughput/device/flopsPS=430.7T
+    throughput/device/flopsPS (actual avg)=403.7T
+    throughput/total petaflops=10,456
+    throughput/total tokens=155,844,608
+    train/CE loss=0.1366
+    throughput/device/data loading (%)=0.0246
+    throughput/device/data loading (s)=0.0006
+    train/PPL=1.146
+[2;36m[2026-07-27 08:55:14][0m [34mINFO    [0m 
+[2m[olmo_core.train.callbacks.console_logger:68, 135e0d92e7da, rank=0][0m 
+[step=1190/1250,epoch=1,eta=3m]
+    gpu_memory/GPU active mem (%)=30.03
+    gpu_memory/GPU active mem (GiB)=23.78
+    gpu_memory/GPU reserved mem (%)=33.94
+    gpu_memory/GPU reserved mem (GiB)=26.88
+    optim/LR (group 0)=2.48E-06
+    optim/LR (group 1)=2.48E-06
+    optim/step skipped=0.0
+    optim/total grad norm=2.458
+    throughput/chinchilla multiple=0.0011
+    throughput/device/BPS=0.3865
+    throughput/device/BPS (actual avg)=0.3673
+    throughput/device/MFU=42.94
+    throughput/device/MFU (actual avg)=40.80
+    throughput/device/TPS=6,333
+    throughput/device/TPS (actual avg)=6,017
+    throughput/device/flopsPS=424.9T
+    throughput/device/flopsPS (actual avg)=403.7T
+    throughput/total petaflops=10,464
+    throughput/total tokens=155,975,680
+    train/CE loss=0.1334
+    throughput/device/data loading (%)=0.0349
+    throughput/device/data loading (s)=0.0009
+    train/PPL=1.143
+[2;36m[2026-07-27 08:55:17][0m [34mINFO    [0m 
+[2m[olmo_core.train.callbacks.console_logger:68, 135e0d92e7da, rank=0][0m 
+[step=1191/1250,epoch=1,eta=3m]
+    gpu_memory/GPU active mem (%)=30.03
+    gpu_memory/GPU active mem (GiB)=23.78
+    gpu_memory/GPU reserved mem (%)=33.94
+    gpu_memory/GPU reserved mem (GiB)=26.88
+    optim/LR (group 0)=2.43E-06
+    optim/LR (group 1)=2.43E-06
+    optim/step skipped=0.0
+    optim/total grad norm=1.066
+    throughput/chinchilla multiple=0.0011
+    throughput/device/BPS=0.3886
+    throughput/device/BPS (actual avg)=0.3673
+    throughput/device/MFU=43.17
+    throughput/device/MFU (actual avg)=40.80
+    throughput/device/TPS=6,367
+    throughput/device/TPS (actual avg)=6,017
+    throughput/device/flopsPS=427.2T
+    throughput/device/flopsPS (actual avg)=403.7T
+    throughput/total petaflops=10,473
+    throughput/total tokens=156,106,752
+    train/CE loss=0.0777
+    throughput/device/data loading (%)=0.0306
+    throughput/device/data loading (s)=0.0008
+    train/PPL=1.081
+[2;36m[2026-07-27 08:55:19][0m [34mINFO    [0m 
+[2m[olmo_core.train.callbacks.console_logger:68, 135e0d92e7da, rank=0][0m 
+[step=1192/1250,epoch=1,eta=3m]
+    gpu_memory/GPU active mem (%)=30.03
+    gpu_memory/GPU active mem (GiB)=23.78
+    gpu_memory/GPU reserved mem (%)=33.94
+    gpu_memory/GPU reserved mem (GiB)=26.88
+    optim/LR (group 0)=2.39E-06
+    optim/LR (group 1)=2.39E-06
+    optim/step skipped=0.0
+    optim/total grad norm=2.052
+    throughput/chinchilla multiple=0.0011
+    throughput/device/BPS=0.3889
+    throughput/device/BPS (actual avg)=0.3673
+    throughput/device/MFU=43.20
+    throughput/device/MFU (actual avg)=40.80
+    throughput/device/TPS=6,371
+    throughput/device/TPS (actual avg)=6,017
+    throughput/device/flopsPS=427.5T
+    throughput/device/flopsPS (actual avg)=403.7T
+    throughput/total petaflops=10,482
+    throughput/total tokens=156,237,824
+    train/CE loss=0.1715
+    throughput/device/data loading (%)=0.0286
+    throughput/device/data loading (s)=0.0007
+    train/PPL=1.187
+[2;36m[2026-07-27 08:55:22][0m [34mINFO    [0m 
+[2m[olmo_core.nn.transformer.model:642, 135e0d92e7da, rank=0][0m [curriculum] 
+forward=1195 p_standard=0.036 collapsed_forwards=512
+[2;36m[2026-07-27 08:55:22][0m [34mINFO    [0m 
+[2m[olmo_core.train.callbacks.console_logger:68, 135e0d92e7da, rank=0][0m 
+[step=1193/1250,epoch=1,eta=3m]
+    gpu_memory/GPU active mem (%)=30.03
+    gpu_memory/GPU active mem (GiB)=23.78
+    gpu_memory/GPU reserved mem (%)=33.94
+    gpu_memory/GPU reserved mem (GiB)=26.88
+    optim/LR (group 0)=2.35E-06
+    optim/LR (group 1)=2.35E-06
+    optim/step skipped=0.0
+    optim/total grad norm=1.875
+    throughput/chinchilla multiple=0.0011
+    throughput/device/BPS=0.3866
+    throughput/device/BPS (actual avg)=0.3673
+    throughput/device/MFU=42.95
+    throughput/device/MFU (actual avg)=40.80
+    throughput/device/TPS=6,334
+    throughput/device/TPS (actual avg)=6,017
+    throughput/device/flopsPS=425.0T
+    throughput/device/flopsPS (actual avg)=403.8T
+    throughput/total petaflops=10,491
+    throughput/total tokens=156,368,896
+    train/CE loss=0.1720
+    throughput/device/data loading (%)=0.0185
+    throughput/device/data loading (s)=0.0005
+    train/PPL=1.188
+[2;36m[2026-07-27 08:55:25][0m [34mINFO    [0m 
+[2m[olmo_core.train.callbacks.console_logger:68, 135e0d92e7da, rank=0][0m 
+[step=1194/1250,epoch=1,eta=3m]
+    gpu_memory/GPU active mem (%)=30.03
+    gpu_memory/GPU active mem (GiB)=23.78
+    gpu_memory/GPU reserved mem (%)=33.94
+    gpu_memory/GPU reserved mem (GiB)=26.88
+    optim/LR (group 0)=2.31E-06
+    optim/LR (group 1)=2.31E-06
+    optim/step skipped=0.0
+    optim/total grad norm=1.621
+    throughput/chinchilla multiple=0.0011
+    throughput/device/BPS=0.3920
+    throughput/device/BPS (actual avg)=0.3673
+    throughput/device/MFU=43.55
+    throughput/device/MFU (actual avg)=40.81
+    throughput/device/TPS=6,422
+    throughput/device/TPS (actual avg)=6,018
+    throughput/device/flopsPS=430.9T
+    throughput/device/flopsPS (actual avg)=403.8T
+    throughput/total petaflops=10,500
+    throughput/total tokens=156,499,968
+    train/CE loss=0.1390
+    throughput/device/data loading (%)=0.0216
+    throughput/device/data loading (s)=0.0006
+    train/PPL=1.149
+[2;36m[2026-07-27 08:55:27][0m [34mINFO    [0m 
+[2m[olmo_core.train.callbacks.console_logger:68, 135e0d92e7da, rank=0][0m 
+[step=1195/1250,epoch=1,eta=3m]
+    gpu_memory/GPU active mem (%)=30.03
+    gpu_memory/GPU active mem (GiB)=23.78
+    gpu_memory/GPU reserved mem (%)=33.94
+    gpu_memory/GPU reserved mem (GiB)=26.88
+    optim/LR (group 0)=2.27E-06
+    optim/LR (group 1)=2.27E-06
+    optim/step skipped=0.0
+    optim/total grad norm=2.745
+    throughput/chinchilla multiple=0.0011
+    throughput/device/BPS=0.3868
+    throughput/device/BPS (actual avg)=0.3673
+    throughput/device/MFU=42.97
+    throughput/device/MFU (actual avg)=40.81
+    throughput/device/TPS=6,337
+    throughput/device/TPS (actual avg)=6,018
+    throughput/device/flopsPS=425.2T
+    throughput/device/flopsPS (actual avg)=403.8T
+    throughput/total petaflops=10,508
+    throughput/total tokens=156,631,040
+    train/CE loss=0.1068
+    throughput/device/data loading (%)=0.0235
+    throughput/device/data loading (s)=0.0006
+    train/PPL=1.113
+[2;36m[2026-07-27 08:55:30][0m [34mINFO    [0m 
+[2m[olmo_core.train.callbacks.console_logger:68, 135e0d92e7da, rank=0][0m 
+[step=1196/1250,epoch=1,eta=3m]
+    gpu_memory/GPU active mem (%)=30.03
+    gpu_memory/GPU active mem (GiB)=23.78
+    gpu_memory/GPU reserved mem (%)=33.94
+    gpu_memory/GPU reserved mem (GiB)=26.88
+    optim/LR (group 0)=2.23E-06
+    optim/LR (group 1)=2.23E-06
+    optim/step skipped=0.0
+    optim/total grad norm=3.912
+    throughput/chinchilla multiple=0.0011
+    throughput/device/BPS=0.3869
+    throughput/device/BPS (actual avg)=0.3674
+    throughput/device/MFU=42.98
+    throughput/device/MFU (actual avg)=40.81
+    throughput/device/TPS=6,338
+    throughput/device/TPS (actual avg)=6,018
+    throughput/device/flopsPS=425.3T
+    throughput/device/flopsPS (actual avg)=403.8T
+    throughput/total petaflops=10,517
+    throughput/total tokens=156,762,112
+    train/CE loss=0.1884
+    throughput/device/data loading (%)=0.0185
+    throughput/device/data loading (s)=0.0005
+    train/PPL=1.207
+[2;36m[2026-07-27 08:55:32][0m [34mINFO    [0m 
+[2m[olmo_core.train.callbacks.console_logger:68, 135e0d92e7da, rank=0][0m 
+[step=1197/1250,epoch=1,eta=3m]
+    gpu_memory/GPU active mem (%)=30.03
+    gpu_memory/GPU active mem (GiB)=23.78
+    gpu_memory/GPU reserved mem (%)=33.94
+    gpu_memory/GPU reserved mem (GiB)=26.88
+    optim/LR (group 0)=2.19E-06
+    optim/LR (group 1)=2.19E-06
+    optim/step skipped=0.0
+    optim/total grad norm=1.519
+    throughput/chinchilla multiple=0.0011
+    throughput/device/BPS=0.3900
+    throughput/device/BPS (actual avg)=0.3674
+    throughput/device/MFU=43.32
+    throughput/device/MFU (actual avg)=40.81
+    throughput/device/TPS=6,389
+    throughput/device/TPS (actual avg)=6,018
+    throughput/device/flopsPS=428.7T
+    throughput/device/flopsPS (actual avg)=403.8T
+    throughput/total petaflops=10,526
+    throughput/total tokens=156,893,184
+    train/CE loss=0.0571
+    throughput/device/data loading (%)=0.0209
+    throughput/device/data loading (s)=0.0005
+    train/PPL=1.059
+[2;36m[2026-07-27 08:55:35][0m [34mINFO    [0m 
+[2m[olmo_core.nn.transformer.model:642, 135e0d92e7da, rank=0][0m [curriculum] 
+forward=1200 p_standard=0.033 collapsed_forwards=512
+[2;36m[2026-07-27 08:55:35][0m [34mINFO    [0m 
+[2m[olmo_core.train.callbacks.console_logger:68, 135e0d92e7da, rank=0][0m 
+[step=1198/1250,epoch=1,eta=3m]
+    gpu_memory/GPU active mem (%)=30.03
+    gpu_memory/GPU active mem (GiB)=23.78
+    gpu_memory/GPU reserved mem (%)=33.94
+    gpu_memory/GPU reserved mem (GiB)=26.88
+    optim/LR (group 0)=2.15E-06
+    optim/LR (group 1)=2.15E-06
+    optim/step skipped=0.0
+    optim/total grad norm=1.499
+    throughput/chinchilla multiple=0.0011
+    throughput/device/BPS=0.3902
+    throughput/device/BPS (actual avg)=0.3674
+    throughput/device/MFU=43.35
+    throughput/device/MFU (actual avg)=40.81
+    throughput/device/TPS=6,393
+    throughput/device/TPS (actual avg)=6,019
+    throughput/device/flopsPS=429.0T
+    throughput/device/flopsPS (actual avg)=403.9T
+    throughput/total petaflops=10,535
+    throughput/total tokens=157,024,256
+    train/CE loss=0.0958
+    throughput/device/data loading (%)=0.0208
+    throughput/device/data loading (s)=0.0005
+    train/PPL=1.101
+[2;36m[2026-07-27 08:55:37][0m [34mINFO    [0m 
+[2m[olmo_core.train.callbacks.console_logger:68, 135e0d92e7da, rank=0][0m 
+[step=1199/1250,epoch=1,eta=3m]
+    gpu_memory/GPU active mem (%)=30.03
+    gpu_memory/GPU active mem (GiB)=23.78
+    gpu_memory/GPU reserved mem (%)=33.94
+    gpu_memory/GPU reserved mem (GiB)=26.88
+    optim/LR (group 0)=2.10E-06
+    optim/LR (group 1)=2.10E-06
+    optim/step skipped=0.0
+    optim/total grad norm=2.081
+    throughput/chinchilla multiple=0.0011
+    throughput/device/BPS=0.3866
+    throughput/device/BPS (actual avg)=0.3674
+    throughput/device/MFU=42.95
+    throughput/device/MFU (actual avg)=40.82
+    throughput/device/TPS=6,334
+    throughput/device/TPS (actual avg)=6,019
+    throughput/device/flopsPS=425.0T
+    throughput/device/flopsPS (actual avg)=403.9T
+    throughput/total petaflops=10,544
+    throughput/total tokens=157,155,328
+    train/CE loss=0.1817
+    throughput/device/data loading (%)=0.0197
+    throughput/device/data loading (s)=0.0005
+    train/PPL=1.199
+[2;36m[2026-07-27 08:55:40][0m [34mINFO    [0m 
+[2m[olmo_core.train.callbacks.console_logger:68, 135e0d92e7da, rank=0][0m 
+[step=1200/1250,epoch=1,eta=3m]
+    gpu_memory/GPU active mem (%)=30.03
+    gpu_memory/GPU active mem (GiB)=23.78
+    gpu_memory/GPU reserved mem (%)=33.94
+    gpu_memory/GPU reserved mem (GiB)=26.88
+    optim/LR (group 0)=2.06E-06
+    optim/LR (group 1)=2.06E-06
+    optim/step skipped=0.0
+    optim/total grad norm=2.438
+    throughput/chinchilla multiple=0.0011
+    throughput/device/BPS=0.3878
+    throughput/device/BPS (actual avg)=0.3674
+    throughput/device/MFU=43.08
+    throughput/device/MFU (actual avg)=40.82
+    throughput/device/TPS=6,353
+    throughput/device/TPS (actual avg)=6,019
+    throughput/device/flopsPS=426.3T
+    throughput/device/flopsPS (actual avg)=403.9T
+    throughput/total petaflops=10,552
+    throughput/total tokens=157,286,400
+    train/CE loss=0.2207
+    throughput/device/data loading (%)=0.0299
+    throughput/device/data loading (s)=0.0008
+    train/PPL=1.247
+[2;36m[2026-07-27 08:55:43][0m [34mINFO    [0m 
+[2m[olmo_core.train.callbacks.console_logger:68, 135e0d92e7da, rank=0][0m 
+[step=1201/1250,epoch=1,eta=3m]
+    gpu_memory/GPU active mem (%)=30.03
+    gpu_memory/GPU active mem (GiB)=23.78
+    gpu_memory/GPU reserved mem (%)=33.94
+    gpu_memory/GPU reserved mem (GiB)=26.88
+    optim/LR (group 0)=2.02E-06
+    optim/LR (group 1)=2.02E-06
+    optim/step skipped=0.0
+    optim/total grad norm=1.635
+    throughput/chinchilla multiple=0.0011
+    throughput/device/BPS=0.3872
+    throughput/device/BPS (actual avg)=0.3674
+    throughput/device/MFU=43.01
+    throughput/device/MFU (actual avg)=40.82
+    throughput/device/TPS=6,343
+    throughput/device/TPS (actual avg)=6,020
+    throughput/device/flopsPS=425.6T
+    throughput/device/flopsPS (actual avg)=403.9T
+    throughput/total petaflops=10,561
+    throughput/total tokens=157,417,472
+    train/CE loss=0.1695
+    throughput/device/data loading (%)=0.0189
+    throughput/device/data loading (s)=0.0005
+    train/PPL=1.185
+[2;36m[2026-07-27 08:55:45][0m [34mINFO    [0m 
+[2m[olmo_core.train.callbacks.console_logger:68, 135e0d92e7da, rank=0][0m 
+[step=1202/1250,epoch=1,eta=3m]
+    gpu_memory/GPU active mem (%)=30.03
+    gpu_memory/GPU active mem (GiB)=23.78
+    gpu_memory/GPU reserved mem (%)=33.94
+    gpu_memory/GPU reserved mem (GiB)=26.88
+    optim/LR (group 0)=1.98E-06
+    optim/LR (group 1)=1.98E-06
+    optim/step skipped=0.0
+    optim/total grad norm=1.597
+    throughput/chinchilla multiple=0.0011
+    throughput/device/BPS=0.3890
+    throughput/device/BPS (actual avg)=0.3675
+    throughput/device/MFU=43.22
+    throughput/device/MFU (actual avg)=40.82
+    throughput/device/TPS=6,374
+    throughput/device/TPS (actual avg)=6,020
+    throughput/device/flopsPS=427.7T
+    throughput/device/flopsPS (actual avg)=403.9T
+    throughput/total petaflops=10,570
+    throughput/total tokens=157,548,544
+    train/CE loss=0.0699
+    throughput/device/data loading (%)=0.0248
+    throughput/device/data loading (s)=0.0006
+    train/PPL=1.072
+[2;36m[2026-07-27 08:55:48][0m [34mINFO    [0m 
+[2m[olmo_core.nn.transformer.model:642, 135e0d92e7da, rank=0][0m [curriculum] 
+forward=1205 p_standard=0.029 collapsed_forwards=512
+[2;36m[2026-07-27 08:55:48][0m [34mINFO    [0m 
+[2m[olmo_core.train.callbacks.console_logger:68, 135e0d92e7da, rank=0][0m 
+[step=1203/1250,epoch=1,eta=3m]
+    gpu_memory/GPU active mem (%)=30.03
+    gpu_memory/GPU active mem (GiB)=23.78
+    gpu_memory/GPU reserved mem (%)=33.94
+    gpu_memory/GPU reserved mem (GiB)=26.88
+    optim/LR (group 0)=1.94E-06
+    optim/LR (group 1)=1.94E-06
+    optim/step skipped=0.0
+    optim/total grad norm=1.830
+    throughput/chinchilla multiple=0.0011
+    throughput/device/BPS=0.4042
+    throughput/device/BPS (actual avg)=0.3675
+    throughput/device/MFU=44.90
+    throughput/device/MFU (actual avg)=40.82
+    throughput/device/TPS=6,622
+    throughput/device/TPS (actual avg)=6,020
+    throughput/device/flopsPS=444.3T
+    throughput/device/flopsPS (actual avg)=404.0T
+    throughput/total petaflops=10,579
+    throughput/total tokens=157,679,616
+    train/CE loss=0.0770
+    throughput/device/data loading (%)=0.0223
+    throughput/device/data loading (s)=0.0006
+    train/PPL=1.080
+[2;36m[2026-07-27 08:55:50][0m [34mINFO    [0m 
+[2m[olmo_core.train.callbacks.console_logger:68, 135e0d92e7da, rank=0][0m 
+[step=1204/1250,epoch=1,eta=3m]
+    gpu_memory/GPU active mem (%)=30.03
+    gpu_memory/GPU active mem (GiB)=23.78
+    gpu_memory/GPU reserved mem (%)=33.94
+    gpu_memory/GPU reserved mem (GiB)=26.88
+    optim/LR (group 0)=1.90E-06
+    optim/LR (group 1)=1.90E-06
+    optim/step skipped=0.0
+    optim/total grad norm=2.158
+    throughput/chinchilla multiple=0.0011
+    throughput/device/BPS=0.3850
+    throughput/device/BPS (actual avg)=0.3675
+    throughput/device/MFU=42.77
+    throughput/device/MFU (actual avg)=40.83
+    throughput/device/TPS=6,307
+    throughput/device/TPS (actual avg)=6,021
+    throughput/device/flopsPS=423.2T
+    throughput/device/flopsPS (actual avg)=404.0T
+    throughput/total petaflops=10,588
+    throughput/total tokens=157,810,688
+    train/CE loss=0.1785
+    throughput/device/data loading (%)=0.0237
+    throughput/device/data loading (s)=0.0006
+    train/PPL=1.195
+[2;36m[2026-07-27 08:55:53][0m [34mINFO    [0m 
+[2m[olmo_core.train.callbacks.console_logger:68, 135e0d92e7da, rank=0][0m 
+[step=1205/1250,epoch=1,eta=2m]
+    gpu_memory/GPU active mem (%)=30.03
+    gpu_memory/GPU active mem (GiB)=23.78
+    gpu_memory/GPU reserved mem (%)=33.94
+    gpu_memory/GPU reserved mem (GiB)=26.88
+    optim/LR (group 0)=1.86E-06
+    optim/LR (group 1)=1.86E-06
+    optim/step skipped=0.0
+    optim/total grad norm=2.272
+    throughput/chinchilla multiple=0.0011
+    throughput/device/BPS=0.4053
+    throughput/device/BPS (actual avg)=0.3675
+    throughput/device/MFU=45.02
+    throughput/device/MFU (actual avg)=40.83
+    throughput/device/TPS=6,639
+    throughput/device/TPS (actual avg)=6,021
+    throughput/device/flopsPS=445.5T
+    throughput/device/flopsPS (actual avg)=404.0T
+    throughput/total petaflops=10,596
+    throughput/total tokens=157,941,760
+    train/CE loss=0.1112
+    throughput/device/data loading (%)=0.0278
+    throughput/device/data loading (s)=0.0007
+    train/PPL=1.118
+[2;36m[2026-07-27 08:55:55][0m [34mINFO    [0m 
+[2m[olmo_core.train.callbacks.console_logger:68, 135e0d92e7da, rank=0][0m 
+[step=1206/1250,epoch=1,eta=2m]
+    gpu_memory/GPU active mem (%)=30.03
+    gpu_memory/GPU active mem (GiB)=23.78
+    gpu_memory/GPU reserved mem (%)=33.94
+    gpu_memory/GPU reserved mem (GiB)=26.88
+    optim/LR (group 0)=1.82E-06
+    optim/LR (group 1)=1.82E-06
+    optim/step skipped=0.0
+    optim/total grad norm=3.712
+    throughput/chinchilla multiple=0.0011
+    throughput/device/BPS=0.3894
+    throughput/device/BPS (actual avg)=0.3675
+    throughput/device/MFU=43.25
+    throughput/device/MFU (actual avg)=40.83
+    throughput/device/TPS=6,379
+    throughput/device/TPS (actual avg)=6,021
+    throughput/device/flopsPS=428.0T
+    throughput/device/flopsPS (actual avg)=404.0T
+    throughput/total petaflops=10,605
+    throughput/total tokens=158,072,832
+    train/CE loss=0.1863
+    throughput/device/data loading (%)=0.0164
+    throughput/device/data loading (s)=0.0004
+    train/PPL=1.205
+[2;36m[2026-07-27 08:55:58][0m [34mINFO    [0m 
+[2m[olmo_core.train.callbacks.console_logger:68, 135e0d92e7da, rank=0][0m 
+[step=1207/1250,epoch=1,eta=2m]
+    gpu_memory/GPU active mem (%)=30.03
+    gpu_memory/GPU active mem (GiB)=23.78
+    gpu_memory/GPU reserved mem (%)=33.94
+    gpu_memory/GPU reserved mem (GiB)=26.88
+    optim/LR (group 0)=1.77E-06
+    optim/LR (group 1)=1.77E-06
+    optim/step skipped=0.0
+    optim/total grad norm=2.805
+    throughput/chinchilla multiple=0.0011
+    throughput/device/BPS=0.3859
+    throughput/device/BPS (actual avg)=0.3676
+    throughput/device/MFU=42.87
+    throughput/device/MFU (actual avg)=40.83
+    throughput/device/TPS=6,322
+    throughput/device/TPS (actual avg)=6,022
+    throughput/device/flopsPS=424.2T
+    throughput/device/flopsPS (actual avg)=404.0T
+    throughput/total petaflops=10,614
+    throughput/total tokens=158,203,904
+    train/CE loss=0.2484
+    throughput/device/data loading (%)=0.0146
+    throughput/device/data loading (s)=0.0004
+    train/PPL=1.282
+[2;36m[2026-07-27 08:56:00][0m [34mINFO    [0m 
+[2m[olmo_core.nn.transformer.model:642, 135e0d92e7da, rank=0][0m [curriculum] 
+forward=1210 p_standard=0.026 collapsed_forwards=512
+[2;36m[2026-07-27 08:56:00][0m [34mINFO    [0m 
+[2m[olmo_core.train.callbacks.console_logger:68, 135e0d92e7da, rank=0][0m 
+[step=1208/1250,epoch=1,eta=2m]
+    gpu_memory/GPU active mem (%)=30.03
+    gpu_memory/GPU active mem (GiB)=23.78
+    gpu_memory/GPU reserved mem (%)=33.94
+    gpu_memory/GPU reserved mem (GiB)=26.88
+    optim/LR (group 0)=1.73E-06
+    optim/LR (group 1)=1.73E-06
+    optim/step skipped=0.0
+    optim/total grad norm=3.332
+    throughput/chinchilla multiple=0.0011
+    throughput/device/BPS=0.3884
+    throughput/device/BPS (actual avg)=0.3676
+    throughput/device/MFU=43.15
+    throughput/device/MFU (actual avg)=40.83
+    throughput/device/TPS=6,364
+    throughput/device/TPS (actual avg)=6,022
+    throughput/device/flopsPS=427.0T
+    throughput/device/flopsPS (actual avg)=404.1T
+    throughput/total petaflops=10,623
+    throughput/total tokens=158,334,976
+    train/CE loss=0.1808
+    throughput/device/data loading (%)=0.0257
+    throughput/device/data loading (s)=0.0007
+    train/PPL=1.198
+[2;36m[2026-07-27 08:56:03][0m [34mINFO    [0m 
+[2m[olmo_core.train.callbacks.console_logger:68, 135e0d92e7da, rank=0][0m 
+[step=1209/1250,epoch=1,eta=2m]
+    gpu_memory/GPU active mem (%)=30.03
+    gpu_memory/GPU active mem (GiB)=23.78
+    gpu_memory/GPU reserved mem (%)=33.94
+    gpu_memory/GPU reserved mem (GiB)=26.88
+    optim/LR (group 0)=1.69E-06
+    optim/LR (group 1)=1.69E-06
+    optim/step skipped=0.0
+    optim/total grad norm=1.791
+    throughput/chinchilla multiple=0.0012
+    throughput/device/BPS=0.3867
+    throughput/device/BPS (actual avg)=0.3676
+    throughput/device/MFU=42.96
+    throughput/device/MFU (actual avg)=40.84
+    throughput/device/TPS=6,335
+    throughput/device/TPS (actual avg)=6,022
+    throughput/device/flopsPS=425.1T
+    throughput/device/flopsPS (actual avg)=404.1T
+    throughput/total petaflops=10,632
+    throughput/total tokens=158,466,048
+    train/CE loss=0.1710
+    throughput/device/data loading (%)=0.0156
+    throughput/device/data loading (s)=0.0004
+    train/PPL=1.186
+[2;36m[2026-07-27 08:56:06][0m [34mINFO    [0m 
+[2m[olmo_core.train.callbacks.console_logger:68, 135e0d92e7da, rank=0][0m 
+[step=1210/1250,epoch=1,eta=2m]
+    gpu_memory/GPU active mem (%)=30.03
+    gpu_memory/GPU active mem (GiB)=23.78
+    gpu_memory/GPU reserved mem (%)=33.94
+    gpu_memory/GPU reserved mem (GiB)=26.88
+    optim/LR (group 0)=1.65E-06
+    optim/LR (group 1)=1.65E-06
+    optim/step skipped=0.0
+    optim/total grad norm=1.019
+    throughput/chinchilla multiple=0.0012
+    throughput/device/BPS=0.3887
+    throughput/device/BPS (actual avg)=0.3676
+    throughput/device/MFU=43.18
+    throughput/device/MFU (actual avg)=40.84
+    throughput/device/TPS=6,368
+    throughput/device/TPS (actual avg)=6,022
+    throughput/device/flopsPS=427.3T
+    throughput/device/flopsPS (actual avg)=404.1T
+    throughput/total petaflops=10,640
+    throughput/total tokens=158,597,120
+    train/CE loss=0.0531
+    throughput/device/data loading (%)=0.0430
+    throughput/device/data loading (s)=0.0011
+    train/PPL=1.054
+[2;36m[2026-07-27 08:56:08][0m [34mINFO    [0m 
+[2m[olmo_core.train.callbacks.console_logger:68, 135e0d92e7da, rank=0][0m 
+[step=1211/1250,epoch=1,eta=2m]
+    gpu_memory/GPU active mem (%)=30.03
+    gpu_memory/GPU active mem (GiB)=23.78
+    gpu_memory/GPU reserved mem (%)=33.94
+    gpu_memory/GPU reserved mem (GiB)=26.88
+    optim/LR (group 0)=1.61E-06
+    optim/LR (group 1)=1.61E-06
+    optim/step skipped=0.0
+    optim/total grad norm=1.918
+    throughput/chinchilla multiple=0.0012
+    throughput/device/BPS=0.3857
+    throughput/device/BPS (actual avg)=0.3676
+    throughput/device/MFU=42.85
+    throughput/device/MFU (actual avg)=40.84
+    throughput/device/TPS=6,319
+    throughput/device/TPS (actual avg)=6,023
+    throughput/device/flopsPS=424.0T
+    throughput/device/flopsPS (actual avg)=404.1T
+    throughput/total petaflops=10,649
+    throughput/total tokens=158,728,192
+    train/CE loss=0.1743
+    throughput/device/data loading (%)=0.0252
+    throughput/device/data loading (s)=0.0007
+    train/PPL=1.190
+[2;36m[2026-07-27 08:56:11][0m [34mINFO    [0m 
+[2m[olmo_core.train.callbacks.console_logger:68, 135e0d92e7da, rank=0][0m 
+[step=1212/1250,epoch=1,eta=2m]
+    gpu_memory/GPU active mem (%)=30.03
+    gpu_memory/GPU active mem (GiB)=23.78
+    gpu_memory/GPU reserved mem (%)=33.94
+    gpu_memory/GPU reserved mem (GiB)=26.88
+    optim/LR (group 0)=1.57E-06
+    optim/LR (group 1)=1.57E-06
+    optim/step skipped=0.0
+    optim/total grad norm=3.286
+    throughput/chinchilla multiple=0.0012
+    throughput/device/BPS=0.3883
+    throughput/device/BPS (actual avg)=0.3676
+    throughput/device/MFU=43.14
+    throughput/device/MFU (actual avg)=40.84
+    throughput/device/TPS=6,362
+    throughput/device/TPS (actual avg)=6,023
+    throughput/device/flopsPS=426.9T
+    throughput/device/flopsPS (actual avg)=404.1T
+    throughput/total petaflops=10,658
+    throughput/total tokens=158,859,264
+    train/CE loss=0.0960
+    throughput/device/data loading (%)=0.0220
+    throughput/device/data loading (s)=0.0006
+    train/PPL=1.101
+[2;36m[2026-07-27 08:56:13][0m [34mINFO    [0m 
+[2m[olmo_core.nn.transformer.model:642, 135e0d92e7da, rank=0][0m [curriculum] 
+forward=1215 p_standard=0.023 collapsed_forwards=512
+[2;36m[2026-07-27 08:56:13][0m [34mINFO    [0m 
+[2m[olmo_core.train.callbacks.console_logger:68, 135e0d92e7da, rank=0][0m 
+[step=1213/1250,epoch=1,eta=2m]
+    gpu_memory/GPU active mem (%)=30.03
+    gpu_memory/GPU active mem (GiB)=23.78
+    gpu_memory/GPU reserved mem (%)=33.94
+    gpu_memory/GPU reserved mem (GiB)=26.88
+    optim/LR (group 0)=1.53E-06
+    optim/LR (group 1)=1.53E-06
+    optim/step skipped=0.0
+    optim/total grad norm=1.311
+    throughput/chinchilla multiple=0.0012
+    throughput/device/BPS=0.3912
+    throughput/device/BPS (actual avg)=0.3677
+    throughput/device/MFU=43.45
+    throughput/device/MFU (actual avg)=40.84
+    throughput/device/TPS=6,408
+    throughput/device/TPS (actual avg)=6,023
+    throughput/device/flopsPS=430.0T
+    throughput/device/flopsPS (actual avg)=404.1T
+    throughput/total petaflops=10,667
+    throughput/total tokens=158,990,336
+    train/CE loss=0.0999
+    throughput/device/data loading (%)=0.0227
+    throughput/device/data loading (s)=0.0006
+    train/PPL=1.105
+[2;36m[2026-07-27 08:56:16][0m [34mINFO    [0m 
+[2m[olmo_core.train.callbacks.console_logger:68, 135e0d92e7da, rank=0][0m 
+[step=1214/1250,epoch=1,eta=2m]
+    gpu_memory/GPU active mem (%)=30.03
+    gpu_memory/GPU active mem (GiB)=23.78
+    gpu_memory/GPU reserved mem (%)=33.94
+    gpu_memory/GPU reserved mem (GiB)=26.88
+    optim/LR (group 0)=1.49E-06
+    optim/LR (group 1)=1.49E-06
+    optim/step skipped=0.0
+    optim/total grad norm=2.140
+    throughput/chinchilla multiple=0.0012
+    throughput/device/BPS=0.3889
+    throughput/device/BPS (actual avg)=0.3677
+    throughput/device/MFU=43.21
+    throughput/device/MFU (actual avg)=40.85
+    throughput/device/TPS=6,372
+    throughput/device/TPS (actual avg)=6,023
+    throughput/device/flopsPS=427.5T
+    throughput/device/flopsPS (actual avg)=404.2T
+    throughput/total petaflops=10,676
+    throughput/total tokens=159,121,408
+    train/CE loss=0.1654
+    throughput/device/data loading (%)=0.0216
+    throughput/device/data loading (s)=0.0006
+    train/PPL=1.180
+[2;36m[2026-07-27 08:56:18][0m [34mINFO    [0m 
+[2m[olmo_core.train.callbacks.console_logger:68, 135e0d92e7da, rank=0][0m 
+[step=1215/1250,epoch=1,eta=2m]
+    gpu_memory/GPU active mem (%)=30.03
+    gpu_memory/GPU active mem (GiB)=23.78
+    gpu_memory/GPU reserved mem (%)=33.94
+    gpu_memory/GPU reserved mem (GiB)=26.88
+    optim/LR (group 0)=1.44E-06
+    optim/LR (group 1)=1.44E-06
+    optim/step skipped=0.0
+    optim/total grad norm=2.392
+    throughput/chinchilla multiple=0.0012
+    throughput/device/BPS=0.3878
+    throughput/device/BPS (actual avg)=0.3677
+    throughput/device/MFU=43.09
+    throughput/device/MFU (actual avg)=40.85
+    throughput/device/TPS=6,354
+    throughput/device/TPS (actual avg)=6,024
+    throughput/device/flopsPS=426.3T
+    throughput/device/flopsPS (actual avg)=404.2T
+    throughput/total petaflops=10,684
+    throughput/total tokens=159,252,480
+    train/CE loss=0.2075
+    throughput/device/data loading (%)=0.0197
+    throughput/device/data loading (s)=0.0005
+    train/PPL=1.231
+[2;36m[2026-07-27 08:56:21][0m [34mINFO    [0m 
+[2m[olmo_core.train.callbacks.console_logger:68, 135e0d92e7da, rank=0][0m 
+[step=1216/1250,epoch=1,eta=2m]
+    gpu_memory/GPU active mem (%)=30.03
+    gpu_memory/GPU active mem (GiB)=23.78
+    gpu_memory/GPU reserved mem (%)=33.94
+    gpu_memory/GPU reserved mem (GiB)=26.88
+    optim/LR (group 0)=1.40E-06
+    optim/LR (group 1)=1.40E-06
+    optim/step skipped=0.0
+    optim/total grad norm=1.739
+    throughput/chinchilla multiple=0.0012
+    throughput/device/BPS=0.4041
+    throughput/device/BPS (actual avg)=0.3677
+    throughput/device/MFU=44.90
+    throughput/device/MFU (actual avg)=40.85
+    throughput/device/TPS=6,621
+    throughput/device/TPS (actual avg)=6,024
+    throughput/device/flopsPS=444.2T
+    throughput/device/flopsPS (actual avg)=404.2T
+    throughput/total petaflops=10,693
+    throughput/total tokens=159,383,552
+    train/CE loss=0.1098
+    throughput/device/data loading (%)=0.0202
+    throughput/device/data loading (s)=0.0005
+    train/PPL=1.116
+[2;36m[2026-07-27 08:56:24][0m [34mINFO    [0m 
+[2m[olmo_core.train.callbacks.console_logger:68, 135e0d92e7da, rank=0][0m 
+[step=1217/1250,epoch=1,eta=2m]
+    gpu_memory/GPU active mem (%)=30.03
+    gpu_memory/GPU active mem (GiB)=23.78
+    gpu_memory/GPU reserved mem (%)=33.94
+    gpu_memory/GPU reserved mem (GiB)=26.88
+    optim/LR (group 0)=1.36E-06
+    optim/LR (group 1)=1.36E-06
+    optim/step skipped=0.0
+    optim/total grad norm=2.001
+    throughput/chinchilla multiple=0.0012
+    throughput/device/BPS=0.3886
+    throughput/device/BPS (actual avg)=0.3677
+    throughput/device/MFU=43.18
+    throughput/device/MFU (actual avg)=40.85
+    throughput/device/TPS=6,367
+    throughput/device/TPS (actual avg)=6,024
+    throughput/device/flopsPS=427.2T
+    throughput/device/flopsPS (actual avg)=404.2T
+    throughput/total petaflops=10,702
+    throughput/total tokens=159,514,624
+    train/CE loss=0.0824
+    throughput/device/data loading (%)=0.0299
+    throughput/device/data loading (s)=0.0008
+    train/PPL=1.086
+[2;36m[2026-07-27 08:56:26][0m [34mINFO    [0m 
+[2m[olmo_core.nn.transformer.model:642, 135e0d92e7da, rank=0][0m [curriculum] 
+forward=1220 p_standard=0.020 collapsed_forwards=512
+[2;36m[2026-07-27 08:56:26][0m [34mINFO    [0m 
+[2m[olmo_core.train.callbacks.console_logger:68, 135e0d92e7da, rank=0][0m 
+[step=1218/1250,epoch=1,eta=2m]
+    gpu_memory/GPU active mem (%)=30.03
+    gpu_memory/GPU active mem (GiB)=23.78
+    gpu_memory/GPU reserved mem (%)=33.94
+    gpu_memory/GPU reserved mem (GiB)=26.88
+    optim/LR (group 0)=1.32E-06
+    optim/LR (group 1)=1.32E-06
+    optim/step skipped=0.0
+    optim/total grad norm=1.083
+    throughput/chinchilla multiple=0.0012
+    throughput/device/BPS=0.3870
+    throughput/device/BPS (actual avg)=0.3677
+    throughput/device/MFU=42.99
+    throughput/device/MFU (actual avg)=40.85
+    throughput/device/TPS=6,340
+    throughput/device/TPS (actual avg)=6,025
+    throughput/device/flopsPS=425.4T
+    throughput/device/flopsPS (actual avg)=404.2T
+    throughput/total petaflops=10,711
+    throughput/total tokens=159,645,696
+    train/CE loss=0.0748
+    throughput/device/data loading (%)=0.0284
+    throughput/device/data loading (s)=0.0007
+    train/PPL=1.078
+[2;36m[2026-07-27 08:56:29][0m [34mINFO    [0m 
+[2m[olmo_core.train.callbacks.console_logger:68, 135e0d92e7da, rank=0][0m 
+[step=1219/1250,epoch=1,eta=2m]
+    gpu_memory/GPU active mem (%)=30.03
+    gpu_memory/GPU active mem (GiB)=23.78
+    gpu_memory/GPU reserved mem (%)=33.94
+    gpu_memory/GPU reserved mem (GiB)=26.88
+    optim/LR (group 0)=1.28E-06
+    optim/LR (group 1)=1.28E-06
+    optim/step skipped=0.0
+    optim/total grad norm=2.371
+    throughput/chinchilla multiple=0.0012
+    throughput/device/BPS=0.3903
+    throughput/device/BPS (actual avg)=0.3678
+    throughput/device/MFU=43.36
+    throughput/device/MFU (actual avg)=40.86
+    throughput/device/TPS=6,394
+    throughput/device/TPS (actual avg)=6,025
+    throughput/device/flopsPS=429.0T
+    throughput/device/flopsPS (actual avg)=404.3T
+    throughput/total petaflops=10,720
+    throughput/total tokens=159,776,768
+    train/CE loss=0.1987
+    throughput/device/data loading (%)=0.0175
+    throughput/device/data loading (s)=0.0004
+    train/PPL=1.220
+[2;36m[2026-07-27 08:56:31][0m [34mINFO    [0m 
+[2m[olmo_core.train.callbacks.console_logger:68, 135e0d92e7da, rank=0][0m 
+[step=1220/1250,epoch=1,eta=2m]
+    gpu_memory/GPU active mem (%)=30.03
+    gpu_memory/GPU active mem (GiB)=23.78
+    gpu_memory/GPU reserved mem (%)=33.94
+    gpu_memory/GPU reserved mem (GiB)=26.88
+    optim/LR (group 0)=1.24E-06
+    optim/LR (group 1)=1.24E-06
+    optim/step skipped=0.0
+    optim/total grad norm=2.165
+    throughput/chinchilla multiple=0.0012
+    throughput/device/BPS=0.3889
+    throughput/device/BPS (actual avg)=0.3678
+    throughput/device/MFU=43.20
+    throughput/device/MFU (actual avg)=40.86
+    throughput/device/TPS=6,371
+    throughput/device/TPS (actual avg)=6,025
+    throughput/device/flopsPS=427.5T
+    throughput/device/flopsPS (actual avg)=404.3T
+    throughput/total petaflops=10,728
+    throughput/total tokens=159,907,840
+    train/CE loss=0.1451
+    throughput/device/data loading (%)=0.0217
+    throughput/device/data loading (s)=0.0006
+    train/PPL=1.156
+[2;36m[2026-07-27 08:56:34][0m [34mINFO    [0m 
+[2m[olmo_core.train.callbacks.console_logger:68, 135e0d92e7da, rank=0][0m 
+[step=1221/1250,epoch=1,eta=2m]
+    gpu_memory/GPU active mem (%)=30.03
+    gpu_memory/GPU active mem (GiB)=23.78
+    gpu_memory/GPU reserved mem (%)=33.94
+    gpu_memory/GPU reserved mem (GiB)=26.88
+    optim/LR (group 0)=1.20E-06
+    optim/LR (group 1)=1.20E-06
+    optim/step skipped=0.0
+    optim/total grad norm=4.187
+    throughput/chinchilla multiple=0.0012
+    throughput/device/BPS=0.3899
+    throughput/device/BPS (actual avg)=0.3678
+    throughput/device/MFU=43.31
+    throughput/device/MFU (actual avg)=40.86
+    throughput/device/TPS=6,387
+    throughput/device/TPS (actual avg)=6,025
+    throughput/device/flopsPS=428.6T
+    throughput/device/flopsPS (actual avg)=404.3T
+    throughput/total petaflops=10,737
+    throughput/total tokens=160,038,912
+    train/CE loss=0.2151
+    throughput/device/data loading (%)=0.0298
+    throughput/device/data loading (s)=0.0008
+    train/PPL=1.240
+[2;36m[2026-07-27 08:56:36][0m [34mINFO    [0m 
+[2m[olmo_core.train.callbacks.console_logger:68, 135e0d92e7da, rank=0][0m 
+[step=1222/1250,epoch=1,eta=2m]
+    gpu_memory/GPU active mem (%)=30.03
+    gpu_memory/GPU active mem (GiB)=23.78
+    gpu_memory/GPU reserved mem (%)=33.94
+    gpu_memory/GPU reserved mem (GiB)=26.88
+    optim/LR (group 0)=1.16E-06
+    optim/LR (group 1)=1.16E-06
+    optim/step skipped=0.0
+    optim/total grad norm=1.838
+    throughput/chinchilla multiple=0.0012
+    throughput/device/BPS=0.4153
+    throughput/device/BPS (actual avg)=0.3678
+    throughput/device/MFU=46.14
+    throughput/device/MFU (actual avg)=40.86
+    throughput/device/TPS=6,804
+    throughput/device/TPS (actual avg)=6,026
+    throughput/device/flopsPS=456.5T
+    throughput/device/flopsPS (actual avg)=404.3T
+    throughput/total petaflops=10,746
+    throughput/total tokens=160,169,984
+    train/CE loss=0.0747
+    throughput/device/data loading (%)=0.0227
+    throughput/device/data loading (s)=0.0005
+    train/PPL=1.078
+[2;36m[2026-07-27 08:56:39][0m [34mINFO    [0m 
+[2m[olmo_core.nn.transformer.model:642, 135e0d92e7da, rank=0][0m [curriculum] 
+forward=1225 p_standard=0.017 collapsed_forwards=512
+[2;36m[2026-07-27 08:56:39][0m [34mINFO    [0m 
+[2m[olmo_core.train.callbacks.console_logger:68, 135e0d92e7da, rank=0][0m 
+[step=1223/1250,epoch=1,eta=2m]
+    gpu_memory/GPU active mem (%)=30.03
+    gpu_memory/GPU active mem (GiB)=23.78
+    gpu_memory/GPU reserved mem (%)=33.94
+    gpu_memory/GPU reserved mem (GiB)=26.88
+    optim/LR (group 0)=1.11E-06
+    optim/LR (group 1)=1.11E-06
+    optim/step skipped=0.0
+    optim/total grad norm=1.807
+    throughput/chinchilla multiple=0.0012
+    throughput/device/BPS=0.3870
+    throughput/device/BPS (actual avg)=0.3678
+    throughput/device/MFU=42.99
+    throughput/device/MFU (actual avg)=40.86
+    throughput/device/TPS=6,340
+    throughput/device/TPS (actual avg)=6,026
+    throughput/device/flopsPS=425.4T
+    throughput/device/flopsPS (actual avg)=404.4T
+    throughput/total petaflops=10,755
+    throughput/total tokens=160,301,056
+    train/CE loss=0.1653
+    throughput/device/data loading (%)=0.0219
+    throughput/device/data loading (s)=0.0006
+    train/PPL=1.180
+[2;36m[2026-07-27 08:56:41][0m [34mINFO    [0m 
+[2m[olmo_core.train.callbacks.console_logger:68, 135e0d92e7da, rank=0][0m 
+[step=1224/1250,epoch=1,eta=2m]
+    gpu_memory/GPU active mem (%)=30.03
+    gpu_memory/GPU active mem (GiB)=23.78
+    gpu_memory/GPU reserved mem (%)=33.94
+    gpu_memory/GPU reserved mem (GiB)=26.88
+    optim/LR (group 0)=1.07E-06
+    optim/LR (group 1)=1.07E-06
+    optim/step skipped=0.0
+    optim/total grad norm=3.356
+    throughput/chinchilla multiple=0.0012
+    throughput/device/BPS=0.3866
+    throughput/device/BPS (actual avg)=0.3679
+    throughput/device/MFU=42.95
+    throughput/device/MFU (actual avg)=40.87
+    throughput/device/TPS=6,333
+    throughput/device/TPS (actual avg)=6,026
+    throughput/device/flopsPS=425.0T
+    throughput/device/flopsPS (actual avg)=404.4T
+    throughput/total petaflops=10,763
+    throughput/total tokens=160,432,128
+    train/CE loss=0.2002
+    throughput/device/data loading (%)=0.0320
+    throughput/device/data loading (s)=0.0008
+    train/PPL=1.222
+[2;36m[2026-07-27 08:56:44][0m [34mINFO    [0m 
+[2m[olmo_core.train.callbacks.console_logger:68, 135e0d92e7da, rank=0][0m 
+[step=1225/1250,epoch=1,eta=2m]
+    gpu_memory/GPU active mem (%)=30.03
+    gpu_memory/GPU active mem (GiB)=23.78
+    gpu_memory/GPU reserved mem (%)=33.94
+    gpu_memory/GPU reserved mem (GiB)=26.88
+    optim/LR (group 0)=1.03E-06
+    optim/LR (group 1)=1.03E-06
+    optim/step skipped=0.0
+    optim/total grad norm=2.708
+    throughput/chinchilla multiple=0.0012
+    throughput/device/BPS=0.3891
+    throughput/device/BPS (actual avg)=0.3679
+    throughput/device/MFU=43.22
+    throughput/device/MFU (actual avg)=40.87
+    throughput/device/TPS=6,374
+    throughput/device/TPS (actual avg)=6,027
+    throughput/device/flopsPS=427.7T
+    throughput/device/flopsPS (actual avg)=404.4T
+    throughput/total petaflops=10,772
+    throughput/total tokens=160,563,200
+    train/CE loss=0.0849
+    throughput/device/data loading (%)=0.0223
+    throughput/device/data loading (s)=0.0006
+    train/PPL=1.089
+[2;36m[2026-07-27 08:56:47][0m [34mINFO    [0m 
+[2m[olmo_core.train.callbacks.console_logger:68, 135e0d92e7da, rank=0][0m 
+[step=1226/1250,epoch=1,eta=2m]
+    gpu_memory/GPU active mem (%)=30.03
+    gpu_memory/GPU active mem (GiB)=23.78
+    gpu_memory/GPU reserved mem (%)=33.94
+    gpu_memory/GPU reserved mem (GiB)=26.88
+    optim/LR (group 0)=9.90E-07
+    optim/LR (group 1)=9.90E-07
+    optim/step skipped=0.0
+    optim/total grad norm=5.380
+    throughput/chinchilla multiple=0.0012
+    throughput/device/BPS=0.3893
+    throughput/device/BPS (actual avg)=0.3679
+    throughput/device/MFU=43.25
+    throughput/device/MFU (actual avg)=40.87
+    throughput/device/TPS=6,378
+    throughput/device/TPS (actual avg)=6,027
+    throughput/device/flopsPS=428.0T
+    throughput/device/flopsPS (actual avg)=404.4T
+    throughput/total petaflops=10,781
+    throughput/total tokens=160,694,272
+    train/CE loss=0.1362
+    throughput/device/data loading (%)=0.0235
+    throughput/device/data loading (s)=0.0006
+    train/PPL=1.146
+[2;36m[2026-07-27 08:56:49][0m [34mINFO    [0m 
+[2m[olmo_core.train.callbacks.console_logger:68, 135e0d92e7da, rank=0][0m 
+[step=1227/1250,epoch=1,eta=1m]
+    gpu_memory/GPU active mem (%)=30.03
+    gpu_memory/GPU active mem (GiB)=23.78
+    gpu_memory/GPU reserved mem (%)=33.94
+    gpu_memory/GPU reserved mem (GiB)=26.88
+    optim/LR (group 0)=9.49E-07
+    optim/LR (group 1)=9.49E-07
+    optim/step skipped=0.0
+    optim/total grad norm=1.769
+    throughput/chinchilla multiple=0.0012
+    throughput/device/BPS=0.3853
+    throughput/device/BPS (actual avg)=0.3679
+    throughput/device/MFU=42.81
+    throughput/device/MFU (actual avg)=40.87
+    throughput/device/TPS=6,313
+    throughput/device/TPS (actual avg)=6,027
+    throughput/device/flopsPS=423.6T
+    throughput/device/flopsPS (actual avg)=404.4T
+    throughput/total petaflops=10,790
+    throughput/total tokens=160,825,344
+    train/CE loss=0.1189
+    throughput/device/data loading (%)=0.0245
+    throughput/device/data loading (s)=0.0006
+    train/PPL=1.126
+[2;36m[2026-07-27 08:56:52][0m [34mINFO    [0m 
+[2m[olmo_core.nn.transformer.model:642, 135e0d92e7da, rank=0][0m [curriculum] 
+forward=1230 p_standard=0.013 collapsed_forwards=512
+[2;36m[2026-07-27 08:56:52][0m [34mINFO    [0m 
+[2m[olmo_core.train.callbacks.console_logger:68, 135e0d92e7da, rank=0][0m 
+[step=1228/1250,epoch=1,eta=1m]
+    gpu_memory/GPU active mem (%)=30.03
+    gpu_memory/GPU active mem (GiB)=23.78
+    gpu_memory/GPU reserved mem (%)=33.94
+    gpu_memory/GPU reserved mem (GiB)=26.88
+    optim/LR (group 0)=9.08E-07
+    optim/LR (group 1)=9.08E-07
+    optim/step skipped=0.0
+    optim/total grad norm=2.449
+    throughput/chinchilla multiple=0.0012
+    throughput/device/BPS=0.3840
+    throughput/device/BPS (actual avg)=0.3679
+    throughput/device/MFU=42.66
+    throughput/device/MFU (actual avg)=40.87
+    throughput/device/TPS=6,292
+    throughput/device/TPS (actual avg)=6,027
+    throughput/device/flopsPS=422.2T
+    throughput/device/flopsPS (actual avg)=404.4T
+    throughput/total petaflops=10,799
+    throughput/total tokens=160,956,416
+    train/CE loss=0.2197
+    throughput/device/data loading (%)=0.0225
+    throughput/device/data loading (s)=0.0006
+    train/PPL=1.246
+[2;36m[2026-07-27 08:56:54][0m [34mINFO    [0m 
+[2m[olmo_core.train.callbacks.console_logger:68, 135e0d92e7da, rank=0][0m 
+[step=1229/1250,epoch=1,eta=1m]
+    gpu_memory/GPU active mem (%)=30.03
+    gpu_memory/GPU active mem (GiB)=23.78
+    gpu_memory/GPU reserved mem (%)=33.94
+    gpu_memory/GPU reserved mem (GiB)=26.88
+    optim/LR (group 0)=8.66E-07
+    optim/LR (group 1)=8.66E-07
+    optim/step skipped=0.0
+    optim/total grad norm=2.730
+    throughput/chinchilla multiple=0.0012
+    throughput/device/BPS=0.3892
+    throughput/device/BPS (actual avg)=0.3679
+    throughput/device/MFU=43.24
+    throughput/device/MFU (actual avg)=40.87
+    throughput/device/TPS=6,377
+    throughput/device/TPS (actual avg)=6,028
+    throughput/device/flopsPS=427.9T
+    throughput/device/flopsPS (actual avg)=404.5T
+    throughput/total petaflops=10,807
+    throughput/total tokens=161,087,488
+    train/CE loss=0.2129
+    throughput/device/data loading (%)=0.0154
+    throughput/device/data loading (s)=0.0004
+    train/PPL=1.237
+[2;36m[2026-07-27 08:56:57][0m [34mINFO    [0m 
+[2m[olmo_core.train.callbacks.console_logger:68, 135e0d92e7da, rank=0][0m 
+[step=1230/1250,epoch=1,eta=1m]
+    gpu_memory/GPU active mem (%)=30.03
+    gpu_memory/GPU active mem (GiB)=23.78
+    gpu_memory/GPU reserved mem (%)=33.94
+    gpu_memory/GPU reserved mem (GiB)=26.88
+    optim/LR (group 0)=8.25E-07
+    optim/LR (group 1)=8.25E-07
+    optim/step skipped=0.0
+    optim/total grad norm=1.604
+    throughput/chinchilla multiple=0.0012
+    throughput/device/BPS=0.4076
+    throughput/device/BPS (actual avg)=0.3680
+    throughput/device/MFU=45.28
+    throughput/device/MFU (actual avg)=40.88
+    throughput/device/TPS=6,677
+    throughput/device/TPS (actual avg)=6,028
+    throughput/device/flopsPS=448.0T
+    throughput/device/flopsPS (actual avg)=404.5T
+    throughput/total petaflops=10,816
+    throughput/total tokens=161,218,560
+    train/CE loss=0.1010
+    throughput/device/data loading (%)=0.0272
+    throughput/device/data loading (s)=0.0007
+    train/PPL=1.106
+[2;36m[2026-07-27 08:56:59][0m [34mINFO    [0m 
+[2m[olmo_core.train.callbacks.console_logger:68, 135e0d92e7da, rank=0][0m 
+[step=1231/1250,epoch=1,eta=1m]
+    gpu_memory/GPU active mem (%)=30.03
+    gpu_memory/GPU active mem (GiB)=23.78
+    gpu_memory/GPU reserved mem (%)=33.94
+    gpu_memory/GPU reserved mem (GiB)=26.88
+    optim/LR (group 0)=7.84E-07
+    optim/LR (group 1)=7.84E-07
+    optim/step skipped=0.0
+    optim/total grad norm=1.566
+    throughput/chinchilla multiple=0.0012
+    throughput/device/BPS=0.3880
+    throughput/device/BPS (actual avg)=0.3680
+    throughput/device/MFU=43.11
+    throughput/device/MFU (actual avg)=40.88
+    throughput/device/TPS=6,357
+    throughput/device/TPS (actual avg)=6,028
+    throughput/device/flopsPS=426.5T
+    throughput/device/flopsPS (actual avg)=404.5T
+    throughput/total petaflops=10,825
+    throughput/total tokens=161,349,632
+    train/CE loss=0.1211
+    throughput/device/data loading (%)=0.0233
+    throughput/device/data loading (s)=0.0006
+    train/PPL=1.129
+[2;36m[2026-07-27 08:57:02][0m [34mINFO    [0m 
+[2m[olmo_core.train.callbacks.console_logger:68, 135e0d92e7da, rank=0][0m 
+[step=1232/1250,epoch=1,eta=1m]
+    gpu_memory/GPU active mem (%)=30.03
+    gpu_memory/GPU active mem (GiB)=23.78
+    gpu_memory/GPU reserved mem (%)=33.94
+    gpu_memory/GPU reserved mem (GiB)=26.88
+    optim/LR (group 0)=7.43E-07
+    optim/LR (group 1)=7.43E-07
+    optim/step skipped=0.0
+    optim/total grad norm=2.132
+    throughput/chinchilla multiple=0.0012
+    throughput/device/BPS=0.3867
+    throughput/device/BPS (actual avg)=0.3680
+    throughput/device/MFU=42.96
+    throughput/device/MFU (actual avg)=40.88
+    throughput/device/TPS=6,336
+    throughput/device/TPS (actual avg)=6,029
+    throughput/device/flopsPS=425.1T
+    throughput/device/flopsPS (actual avg)=404.5T
+    throughput/total petaflops=10,834
+    throughput/total tokens=161,480,704
+    train/CE loss=0.1888
+    throughput/device/data loading (%)=0.0190
+    throughput/device/data loading (s)=0.0005
+    train/PPL=1.208
+[2;36m[2026-07-27 08:57:04][0m [34mINFO    [0m 
+[2m[olmo_core.nn.transformer.model:642, 135e0d92e7da, rank=0][0m [curriculum] 
+forward=1235 p_standard=0.010 collapsed_forwards=512
+[2;36m[2026-07-27 08:57:04][0m [34mINFO    [0m 
+[2m[olmo_core.train.callbacks.console_logger:68, 135e0d92e7da, rank=0][0m 
+[step=1233/1250,epoch=1,eta=1m]
+    gpu_memory/GPU active mem (%)=30.03
+    gpu_memory/GPU active mem (GiB)=23.78
+    gpu_memory/GPU reserved mem (%)=33.94
+    gpu_memory/GPU reserved mem (GiB)=26.88
+    optim/LR (group 0)=7.01E-07
+    optim/LR (group 1)=7.01E-07
+    optim/step skipped=0.0
+    optim/total grad norm=2.282
+    throughput/chinchilla multiple=0.0012
+    throughput/device/BPS=0.3871
+    throughput/device/BPS (actual avg)=0.3680
+    throughput/device/MFU=43.00
+    throughput/device/MFU (actual avg)=40.88
+    throughput/device/TPS=6,341
+    throughput/device/TPS (actual avg)=6,029
+    throughput/device/flopsPS=425.5T
+    throughput/device/flopsPS (actual avg)=404.5T
+    throughput/total petaflops=10,843
+    throughput/total tokens=161,611,776
+    train/CE loss=0.1540
+    throughput/device/data loading (%)=0.0259
+    throughput/device/data loading (s)=0.0007
+    train/PPL=1.167
+[2;36m[2026-07-27 08:57:07][0m [34mINFO    [0m 
+[2m[olmo_core.train.callbacks.console_logger:68, 135e0d92e7da, rank=0][0m 
+[step=1234/1250,epoch=1,eta=1m]
+    gpu_memory/GPU active mem (%)=30.03
+    gpu_memory/GPU active mem (GiB)=23.78
+    gpu_memory/GPU reserved mem (%)=33.94
+    gpu_memory/GPU reserved mem (GiB)=26.88
+    optim/LR (group 0)=6.60E-07
+    optim/LR (group 1)=6.60E-07
+    optim/step skipped=0.0
+    optim/total grad norm=2.002
+    throughput/chinchilla multiple=0.0012
+    throughput/device/BPS=0.3870
+    throughput/device/BPS (actual avg)=0.3680
+    throughput/device/MFU=43.00
+    throughput/device/MFU (actual avg)=40.88
+    throughput/device/TPS=6,341
+    throughput/device/TPS (actual avg)=6,029
+    throughput/device/flopsPS=425.5T
+    throughput/device/flopsPS (actual avg)=404.6T
+    throughput/total petaflops=10,851
+    throughput/total tokens=161,742,848
+    train/CE loss=0.1642
+    throughput/device/data loading (%)=0.0239
+    throughput/device/data loading (s)=0.0006
+    train/PPL=1.178
+[2;36m[2026-07-27 08:57:10][0m [34mINFO    [0m 
+[2m[olmo_core.train.callbacks.console_logger:68, 135e0d92e7da, rank=0][0m 
+[step=1235/1250,epoch=1,eta=1m]
+    gpu_memory/GPU active mem (%)=30.03
+    gpu_memory/GPU active mem (GiB)=23.78
+    gpu_memory/GPU reserved mem (%)=33.94
+    gpu_memory/GPU reserved mem (GiB)=26.88
+    optim/LR (group 0)=6.19E-07
+    optim/LR (group 1)=6.19E-07
+    optim/step skipped=0.0
+    optim/total grad norm=3.189
+    throughput/chinchilla multiple=0.0012
+    throughput/device/BPS=0.3873
+    throughput/device/BPS (actual avg)=0.3680
+    throughput/device/MFU=43.03
+    throughput/device/MFU (actual avg)=40.89
+    throughput/device/TPS=6,346
+    throughput/device/TPS (actual avg)=6,029
+    throughput/device/flopsPS=425.8T
+    throughput/device/flopsPS (actual avg)=404.6T
+    throughput/total petaflops=10,860
+    throughput/total tokens=161,873,920
+    train/CE loss=0.2172
+    throughput/device/data loading (%)=0.0225
+    throughput/device/data loading (s)=0.0006
+    train/PPL=1.243
+[2;36m[2026-07-27 08:57:12][0m [34mINFO    [0m 
+[2m[olmo_core.train.callbacks.console_logger:68, 135e0d92e7da, rank=0][0m 
+[step=1236/1250,epoch=1,eta=1m]
+    gpu_memory/GPU active mem (%)=30.03
+    gpu_memory/GPU active mem (GiB)=23.78
+    gpu_memory/GPU reserved mem (%)=33.94
+    gpu_memory/GPU reserved mem (GiB)=26.88
+    optim/LR (group 0)=5.78E-07
+    optim/LR (group 1)=5.78E-07
+    optim/step skipped=0.0
+    optim/total grad norm=1.989
+    throughput/chinchilla multiple=0.0012
+    throughput/device/BPS=0.4074
+    throughput/device/BPS (actual avg)=0.3681
+    throughput/device/MFU=45.26
+    throughput/device/MFU (actual avg)=40.89
+    throughput/device/TPS=6,674
+    throughput/device/TPS (actual avg)=6,030
+    throughput/device/flopsPS=447.8T
+    throughput/device/flopsPS (actual avg)=404.6T
+    throughput/total petaflops=10,869
+    throughput/total tokens=162,004,992
+    train/CE loss=0.1060
+    throughput/device/data loading (%)=0.0228
+    throughput/device/data loading (s)=0.0006
+    train/PPL=1.112
+[2;36m[2026-07-27 08:57:15][0m [34mINFO    [0m 
+[2m[olmo_core.train.callbacks.console_logger:68, 135e0d92e7da, rank=0][0m 
+[step=1237/1250,epoch=1,eta=1m]
+    gpu_memory/GPU active mem (%)=30.03
+    gpu_memory/GPU active mem (GiB)=23.78
+    gpu_memory/GPU reserved mem (%)=33.94
+    gpu_memory/GPU reserved mem (GiB)=26.88
+    optim/LR (group 0)=5.36E-07
+    optim/LR (group 1)=5.36E-07
+    optim/step skipped=0.0
+    optim/total grad norm=1.933
+    throughput/chinchilla multiple=0.0012
+    throughput/device/BPS=0.3893
+    throughput/device/BPS (actual avg)=0.3681
+    throughput/device/MFU=43.25
+    throughput/device/MFU (actual avg)=40.89
+    throughput/device/TPS=6,378
+    throughput/device/TPS (actual avg)=6,030
+    throughput/device/flopsPS=427.9T
+    throughput/device/flopsPS (actual avg)=404.6T
+    throughput/total petaflops=10,878
+    throughput/total tokens=162,136,064
+    train/CE loss=0.1603
+    throughput/device/data loading (%)=0.0226
+    throughput/device/data loading (s)=0.0006
+    train/PPL=1.174
+[2;36m[2026-07-27 08:57:17][0m [34mINFO    [0m 
+[2m[olmo_core.nn.transformer.model:642, 135e0d92e7da, rank=0][0m [curriculum] 
+forward=1240 p_standard=0.007 collapsed_forwards=512
+[2;36m[2026-07-27 08:57:17][0m [34mINFO    [0m 
+[2m[olmo_core.train.callbacks.console_logger:68, 135e0d92e7da, rank=0][0m 
+[step=1238/1250,epoch=1,eta=1m]
+    gpu_memory/GPU active mem (%)=30.03
+    gpu_memory/GPU active mem (GiB)=23.78
+    gpu_memory/GPU reserved mem (%)=33.94
+    gpu_memory/GPU reserved mem (GiB)=26.88
+    optim/LR (group 0)=4.95E-07
+    optim/LR (group 1)=4.95E-07
+    optim/step skipped=0.0
+    optim/total grad norm=1.354
+    throughput/chinchilla multiple=0.0012
+    throughput/device/BPS=0.3907
+    throughput/device/BPS (actual avg)=0.3681
+    throughput/device/MFU=43.41
+    throughput/device/MFU (actual avg)=40.89
+    throughput/device/TPS=6,401
+    throughput/device/TPS (actual avg)=6,030
+    throughput/device/flopsPS=429.5T
+    throughput/device/flopsPS (actual avg)=404.6T
+    throughput/total petaflops=10,887
+    throughput/total tokens=162,267,136
+    train/CE loss=0.1118
+    throughput/device/data loading (%)=0.0199
+    throughput/device/data loading (s)=0.0005
+    train/PPL=1.118
+[2;36m[2026-07-27 08:57:20][0m [34mINFO    [0m 
+[2m[olmo_core.train.callbacks.console_logger:68, 135e0d92e7da, rank=0][0m 
+[step=1239/1250,epoch=1,eta=1m]
+    gpu_memory/GPU active mem (%)=30.03
+    gpu_memory/GPU active mem (GiB)=23.78
+    gpu_memory/GPU reserved mem (%)=33.94
+    gpu_memory/GPU reserved mem (GiB)=26.88
+    optim/LR (group 0)=4.54E-07
+    optim/LR (group 1)=4.54E-07
+    optim/step skipped=0.0
+    optim/total grad norm=2.178
+    throughput/chinchilla multiple=0.0012
+    throughput/device/BPS=0.3873
+    throughput/device/BPS (actual avg)=0.3681
+    throughput/device/MFU=43.02
+    throughput/device/MFU (actual avg)=40.89
+    throughput/device/TPS=6,344
+    throughput/device/TPS (actual avg)=6,031
+    throughput/device/flopsPS=425.7T
+    throughput/device/flopsPS (actual avg)=404.7T
+    throughput/total petaflops=10,895
+    throughput/total tokens=162,398,208
+    train/CE loss=0.2141
+    throughput/device/data loading (%)=0.0265
+    throughput/device/data loading (s)=0.0007
+    train/PPL=1.239
+[2;36m[2026-07-27 08:57:22][0m [34mINFO    [0m 
+[2m[olmo_core.train.callbacks.console_logger:68, 135e0d92e7da, rank=0][0m 
+[step=1240/1250,epoch=1,eta=1m]
+    gpu_memory/GPU active mem (%)=30.03
+    gpu_memory/GPU active mem (GiB)=23.78
+    gpu_memory/GPU reserved mem (%)=33.94
+    gpu_memory/GPU reserved mem (GiB)=26.88
+    optim/LR (group 0)=4.13E-07
+    optim/LR (group 1)=4.13E-07
+    optim/step skipped=0.0
+    optim/total grad norm=1.701
+    throughput/chinchilla multiple=0.0012
+    throughput/device/BPS=0.3861
+    throughput/device/BPS (actual avg)=0.3681
+    throughput/device/MFU=42.89
+    throughput/device/MFU (actual avg)=40.90
+    throughput/device/TPS=6,325
+    throughput/device/TPS (actual avg)=6,031
+    throughput/device/flopsPS=424.4T
+    throughput/device/flopsPS (actual avg)=404.7T
+    throughput/total petaflops=10,904
+    throughput/total tokens=162,529,280
+    train/CE loss=0.1884
+    throughput/device/data loading (%)=0.0189
+    throughput/device/data loading (s)=0.0005
+    train/PPL=1.207
+[2;36m[2026-07-27 08:57:25][0m [34mINFO    [0m 
+[2m[olmo_core.train.callbacks.console_logger:68, 135e0d92e7da, rank=0][0m 
+[step=1241/1250,epoch=1,eta=1m]
+    gpu_memory/GPU active mem (%)=30.03
+    gpu_memory/GPU active mem (GiB)=23.78
+    gpu_memory/GPU reserved mem (%)=33.94
+    gpu_memory/GPU reserved mem (GiB)=26.88
+    optim/LR (group 0)=3.71E-07
+    optim/LR (group 1)=3.71E-07
+    optim/step skipped=0.0
+    optim/total grad norm=2.462
+    throughput/chinchilla multiple=0.0012
+    throughput/device/BPS=0.3905
+    throughput/device/BPS (actual avg)=0.3681
+    throughput/device/MFU=43.38
+    throughput/device/MFU (actual avg)=40.90
+    throughput/device/TPS=6,397
+    throughput/device/TPS (actual avg)=6,031
+    throughput/device/flopsPS=429.2T
+    throughput/device/flopsPS (actual avg)=404.7T
+    throughput/total petaflops=10,913
+    throughput/total tokens=162,660,352
+    train/CE loss=0.1224
+    throughput/device/data loading (%)=0.0227
+    throughput/device/data loading (s)=0.0006
+    train/PPL=1.130
+[2;36m[2026-07-27 08:57:28][0m [34mINFO    [0m 
+[2m[olmo_core.train.callbacks.console_logger:68, 135e0d92e7da, rank=0][0m 
+[step=1242/1250,epoch=1,eta=1m]
+    gpu_memory/GPU active mem (%)=30.03
+    gpu_memory/GPU active mem (GiB)=23.78
+    gpu_memory/GPU reserved mem (%)=33.94
+    gpu_memory/GPU reserved mem (GiB)=26.88
+    optim/LR (group 0)=3.30E-07
+    optim/LR (group 1)=3.30E-07
+    optim/step skipped=0.0
+    optim/total grad norm=1.753
+    throughput/chinchilla multiple=0.0012
+    throughput/device/BPS=0.3884
+    throughput/device/BPS (actual avg)=0.3682
+    throughput/device/MFU=43.15
+    throughput/device/MFU (actual avg)=40.90
+    throughput/device/TPS=6,363
+    throughput/device/TPS (actual avg)=6,031
+    throughput/device/flopsPS=426.9T
+    throughput/device/flopsPS (actual avg)=404.7T
+    throughput/total petaflops=10,922
+    throughput/total tokens=162,791,424
+    train/CE loss=0.1191
+    throughput/device/data loading (%)=0.0211
+    throughput/device/data loading (s)=0.0005
+    train/PPL=1.126
+[2;36m[2026-07-27 08:57:30][0m [34mINFO    [0m 
+[2m[olmo_core.nn.transformer.model:642, 135e0d92e7da, rank=0][0m [curriculum] 
+forward=1245 p_standard=0.004 collapsed_forwards=512
+[2;36m[2026-07-27 08:57:30][0m [34mINFO    [0m 
+[2m[olmo_core.train.callbacks.console_logger:68, 135e0d92e7da, rank=0][0m 
+[step=1243/1250,epoch=1,eta=1m]
+    gpu_memory/GPU active mem (%)=30.03
+    gpu_memory/GPU active mem (GiB)=23.78
+    gpu_memory/GPU reserved mem (%)=33.94
+    gpu_memory/GPU reserved mem (GiB)=26.88
+    optim/LR (group 0)=2.89E-07
+    optim/LR (group 1)=2.89E-07
+    optim/step skipped=0.0
+    optim/total grad norm=2.380
+    throughput/chinchilla multiple=0.0012
+    throughput/device/BPS=0.3851
+    throughput/device/BPS (actual avg)=0.3682
+    throughput/device/MFU=42.79
+    throughput/device/MFU (actual avg)=40.90
+    throughput/device/TPS=6,310
+    throughput/device/TPS (actual avg)=6,032
+    throughput/device/flopsPS=423.4T
+    throughput/device/flopsPS (actual avg)=404.7T
+    throughput/total petaflops=10,931
+    throughput/total tokens=162,922,496
+    train/CE loss=0.1623
+    throughput/device/data loading (%)=0.0312
+    throughput/device/data loading (s)=0.0008
+    train/PPL=1.176
+[2;36m[2026-07-27 08:57:33][0m [34mINFO    [0m 
+[2m[olmo_core.train.callbacks.console_logger:68, 135e0d92e7da, rank=0][0m 
+[step=1244/1250,epoch=1,eta=1m]
+    gpu_memory/GPU active mem (%)=30.03
+    gpu_memory/GPU active mem (GiB)=23.78
+    gpu_memory/GPU reserved mem (%)=33.94
+    gpu_memory/GPU reserved mem (GiB)=26.88
+    optim/LR (group 0)=2.48E-07
+    optim/LR (group 1)=2.48E-07
+    optim/step skipped=0.0
+    optim/total grad norm=5.334
+    throughput/chinchilla multiple=0.0012
+    throughput/device/BPS=0.3869
+    throughput/device/BPS (actual avg)=0.3682
+    throughput/device/MFU=42.98
+    throughput/device/MFU (actual avg)=40.90
+    throughput/device/TPS=6,339
+    throughput/device/TPS (actual avg)=6,032
+    throughput/device/flopsPS=425.3T
+    throughput/device/flopsPS (actual avg)=404.7T
+    throughput/total petaflops=10,939
+    throughput/total tokens=163,053,568
+    train/CE loss=0.1267
+    throughput/device/data loading (%)=0.0237
+    throughput/device/data loading (s)=0.0006
+    train/PPL=1.135
+[2;36m[2026-07-27 08:57:35][0m [34mINFO    [0m 
+[2m[olmo_core.train.callbacks.console_logger:68, 135e0d92e7da, rank=0][0m 
+[step=1245/1250,epoch=1,eta=1m]
+    gpu_memory/GPU active mem (%)=30.03
+    gpu_memory/GPU active mem (GiB)=23.78
+    gpu_memory/GPU reserved mem (%)=33.94
+    gpu_memory/GPU reserved mem (GiB)=26.88
+    optim/LR (group 0)=2.06E-07
+    optim/LR (group 1)=2.06E-07
+    optim/step skipped=0.0
+    optim/total grad norm=1.819
+    throughput/chinchilla multiple=0.0012
+    throughput/device/BPS=0.4052
+    throughput/device/BPS (actual avg)=0.3682
+    throughput/device/MFU=45.02
+    throughput/device/MFU (actual avg)=40.91
+    throughput/device/TPS=6,639
+    throughput/device/TPS (actual avg)=6,032
+    throughput/device/flopsPS=445.5T
+    throughput/device/flopsPS (actual avg)=404.8T
+    throughput/total petaflops=10,948
+    throughput/total tokens=163,184,640
+    train/CE loss=0.0594
+    throughput/device/data loading (%)=0.0259
+    throughput/device/data loading (s)=0.0006
+    train/PPL=1.061
+[2;36m[2026-07-27 08:57:38][0m [34mINFO    [0m 
+[2m[olmo_core.train.callbacks.console_logger:68, 135e0d92e7da, rank=0][0m 
+[step=1246/1250,epoch=1,eta=1m]
+    gpu_memory/GPU active mem (%)=30.03
+    gpu_memory/GPU active mem (GiB)=23.78
+    gpu_memory/GPU reserved mem (%)=33.94
+    gpu_memory/GPU reserved mem (GiB)=26.88
+    optim/LR (group 0)=1.65E-07
+    optim/LR (group 1)=1.65E-07
+    optim/step skipped=0.0
+    optim/total grad norm=2.217
+    throughput/chinchilla multiple=0.0012
+    throughput/device/BPS=0.3898
+    throughput/device/BPS (actual avg)=0.3682
+    throughput/device/MFU=43.31
+    throughput/device/MFU (actual avg)=40.91
+    throughput/device/TPS=6,386
+    throughput/device/TPS (actual avg)=6,033
+    throughput/device/flopsPS=428.5T
+    throughput/device/flopsPS (actual avg)=404.8T
+    throughput/total petaflops=10,957
+    throughput/total tokens=163,315,712
+    train/CE loss=0.1325
+    throughput/device/data loading (%)=0.0302
+    throughput/device/data loading (s)=0.0008
+    train/PPL=1.142
+[2;36m[2026-07-27 08:57:40][0m [34mINFO    [0m 
+[2m[olmo_core.train.callbacks.console_logger:68, 135e0d92e7da, rank=0][0m 
+[step=1247/1250,epoch=1,eta=1m]
+    gpu_memory/GPU active mem (%)=30.03
+    gpu_memory/GPU active mem (GiB)=23.78
+    gpu_memory/GPU reserved mem (%)=33.94
+    gpu_memory/GPU reserved mem (GiB)=26.88
+    optim/LR (group 0)=1.24E-07
+    optim/LR (group 1)=1.24E-07
+    optim/step skipped=0.0
+    optim/total grad norm=1.683
+    throughput/chinchilla multiple=0.0012
+    throughput/device/BPS=0.3896
+    throughput/device/BPS (actual avg)=0.3682
+    throughput/device/MFU=43.28
+    throughput/device/MFU (actual avg)=40.91
+    throughput/device/TPS=6,382
+    throughput/device/TPS (actual avg)=6,033
+    throughput/device/flopsPS=428.2T
+    throughput/device/flopsPS (actual avg)=404.8T
+    throughput/total petaflops=10,966
+    throughput/total tokens=163,446,784
+    train/CE loss=0.1125
+    throughput/device/data loading (%)=0.0152
+    throughput/device/data loading (s)=0.0004
+    train/PPL=1.119
+[2;36m[2026-07-27 08:57:43][0m [34mINFO    [0m 
+[2m[olmo_core.nn.transformer.model:642, 135e0d92e7da, rank=0][0m [curriculum] 
+forward=1250 p_standard=0.001 collapsed_forwards=512
+[2;36m[2026-07-27 08:57:43][0m [34mINFO    [0m 
+[2m[olmo_core.train.callbacks.console_logger:68, 135e0d92e7da, rank=0][0m 
+[step=1248/1250,epoch=1,eta=1m]
+    gpu_memory/GPU active mem (%)=30.03
+    gpu_memory/GPU active mem (GiB)=23.78
+    gpu_memory/GPU reserved mem (%)=33.94
+    gpu_memory/GPU reserved mem (GiB)=26.88
+    optim/LR (group 0)=8.25E-08
+    optim/LR (group 1)=8.25E-08
+    optim/step skipped=0.0
+    optim/total grad norm=2.266
+    throughput/chinchilla multiple=0.0012
+    throughput/device/BPS=0.3897
+    throughput/device/BPS (actual avg)=0.3683
+    throughput/device/MFU=43.29
+    throughput/device/MFU (actual avg)=40.91
+    throughput/device/TPS=6,384
+    throughput/device/TPS (actual avg)=6,033
+    throughput/device/flopsPS=428.3T
+    throughput/device/flopsPS (actual avg)=404.8T
+    throughput/total petaflops=10,975
+    throughput/total tokens=163,577,856
+    train/CE loss=0.1172
+    throughput/device/data loading (%)=0.0309
+    throughput/device/data loading (s)=0.0008
+    train/PPL=1.124
+[2;36m[2026-07-27 08:57:45][0m [34mINFO    [0m 
+[2m[olmo_core.train.callbacks.console_logger:68, 135e0d92e7da, rank=0][0m 
+[step=1249/1250,epoch=1]
+    gpu_memory/GPU active mem (%)=30.03
+    gpu_memory/GPU active mem (GiB)=23.78
+    gpu_memory/GPU reserved mem (%)=33.94
+    gpu_memory/GPU reserved mem (GiB)=26.88
+    optim/LR (group 0)=4.13E-08
+    optim/LR (group 1)=4.13E-08
+    optim/step skipped=0.0
+    optim/total grad norm=2.425
+    throughput/chinchilla multiple=0.0012
+    throughput/device/BPS=0.3856
+    throughput/device/BPS (actual avg)=0.3683
+    throughput/device/MFU=42.84
+    throughput/device/MFU (actual avg)=40.91
+    throughput/device/TPS=6,318
+    throughput/device/TPS (actual avg)=6,033
+    throughput/device/flopsPS=423.9T
+    throughput/device/flopsPS (actual avg)=404.8T
+    throughput/total petaflops=10,983
+    throughput/total tokens=163,708,928
+    train/CE loss=0.1647
+    throughput/device/data loading (%)=0.0248
+    throughput/device/data loading (s)=0.0006
+    train/PPL=1.179
+[2;36m[2026-07-27 08:57:48][0m [34mINFO    [0m 
+[2m[olmo_core.train.callbacks.console_logger:68, 135e0d92e7da, rank=0][0m 
+[step=1250/1250,epoch=1]
+    gpu_memory/GPU active mem (%)=30.03
+    gpu_memory/GPU active mem (GiB)=23.78
+    gpu_memory/GPU reserved mem (%)=33.94
+    gpu_memory/GPU reserved mem (GiB)=26.88
+    optim/LR (group 0)=0.0
+    optim/LR (group 1)=0.0
+    optim/step skipped=0.0
+    optim/total grad norm=1.774
+    throughput/chinchilla multiple=0.0012
+    throughput/device/BPS=0.3864
+    throughput/device/BPS (actual avg)=0.3683
+    throughput/device/MFU=42.92
+    throughput/device/MFU (actual avg)=40.91
+    throughput/device/TPS=6,330
+    throughput/device/TPS (actual avg)=6,034
+    throughput/device/flopsPS=424.7T
+    throughput/device/flopsPS (actual avg)=404.8T
+    throughput/total petaflops=10,992
+    throughput/total tokens=163,840,000
+    train/CE loss=0.1765
+    throughput/device/data loading (%)=0.0226
+    throughput/device/data loading (s)=0.0006
+    train/PPL=1.193
+[W727 08:57:49.093378395 AllocatorConfig.cpp:28] Warning: 
+PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function 
+operator())
+[W727 08:57:49.110451086 AllocatorConfig.cpp:28] Warning: 
+PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function 
+operator())
+[W727 08:57:49.192519346 AllocatorConfig.cpp:28] Warning: 
+PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function 
+operator())
+[W727 08:57:49.192519298 AllocatorConfig.cpp:28] Warning: 
+PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function 
+operator())
+[W727 08:57:49.193152400 AllocatorConfig.cpp:28] Warning: 
+PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function 
+operator())
+[W727 08:57:49.194004026 AllocatorConfig.cpp:28] Warning: 
+PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function 
+operator())
+[W727 08:57:49.228105499 AllocatorConfig.cpp:28] Warning: 
+PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function 
+operator())
+[W727 08:57:49.228105462 AllocatorConfig.cpp:28] Warning: 
+PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function 
+operator())
+[W727 08:57:49.230554498 AllocatorConfig.cpp:28] Warning: 
+PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function 
+operator())
+[W727 08:57:49.230948321 AllocatorConfig.cpp:28] Warning: 
+PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function 
+operator())
+[W727 08:57:49.231862993 AllocatorConfig.cpp:28] Warning: 
+PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function 
+operator())
+[W727 08:57:49.232711671 AllocatorConfig.cpp:28] Warning: 
+PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function 
+operator())
+[W727 08:57:49.233563923 AllocatorConfig.cpp:28] Warning: 
+PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function 
+operator())
+[W727 08:57:49.234833625 AllocatorConfig.cpp:28] Warning: 
+PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function 
+operator())
+[W727 08:57:49.239318411 AllocatorConfig.cpp:28] Warning: 
+PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function 
+operator())
+[W727 08:57:50.498043777 AllocatorConfig.cpp:28] Warning: 
+PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function 
+operator())
+[2;36m[2026-07-27 08:57:50][0m [34mINFO    [0m [2m[olmo_core.train.trainer:1520,
+135e0d92e7da, rank=0][0m Epoch complete
+[2;36m[2026-07-27 08:57:50][0m [34mINFO    [0m [2m[olmo_core.train.trainer:969,
+135e0d92e7da, rank=0][0m Saving checkpoint for step 1250 to 
+'/weka/oe-training-default/ai2-llm/checkpoints/prasanns/ctc_suite/ckpts/ctc-olmo
+3-7b-hpqa-cmix-20260727T002152-0700/step1250'...
+[2;36m[2026-07-27 08:57:50][0m [34mINFO    [0m [2m[olmo_core.train.trainer:1361,
+135e0d92e7da, rank=0][0m Waiting for bookkeeping ops to finish: 'reduce_metrics'
+(2 ops)...
+[2;36m[2026-07-27 08:57:50][0m [34mINFO    [0m [2m[olmo_core.train.trainer:1361,
+135e0d92e7da, rank=0][0m Waiting for bookkeeping ops to finish: 
+'Trainer._check_if_canceled' (1 ops)...
+[2;36m[2026-07-27 08:57:50][0m [34mINFO    [0m [2m[olmo_core.train.trainer:1366,
+135e0d92e7da, rank=0][0m All bookkeeping ops complete
+[2;36m[2026-07-27 08:57:50][0m [33mWARNING [0m [2m[py.warnings:112, 
+135e0d92e7da, rank=0][0m 
+/opt/conda/lib/python3.12/site-packages/torch/distributed/_state_dict_utils.py:1
+83: UserWarning: called a synchronizing CUDA operation (Triggered internally at 
+/pytorch/c10/cuda/CUDAFunctions.cpp:162.)
+  ret = ret.to(cpu_device)
+
+[2;36m[2026-07-27 08:57:50][0m [33mWARNING [0m [2m[py.warnings:112, 
+135e0d92e7da, rank=5][0m 
+/opt/conda/lib/python3.12/site-packages/torch/distributed/_state_dict_utils.py:1
+83: UserWarning: called a synchronizing CUDA operation (Triggered internally at 
+/pytorch/c10/cuda/CUDAFunctions.cpp:162.)
+  ret = ret.to(cpu_device)
+
+[2;36m[2026-07-27 08:57:50][0m [33mWARNING [0m [2m[py.warnings:112, 
+135e0d92e7da, rank=1][0m 
+/opt/conda/lib/python3.12/site-packages/torch/distributed/_state_dict_utils.py:1
+83: UserWarning: called a synchronizing CUDA operation (Triggered internally at 
+/pytorch/c10/cuda/CUDAFunctions.cpp:162.)
+  ret = ret.to(cpu_device)
+
+[2;36m[2026-07-27 08:57:50][0m [33mWARNING [0m [2m[py.warnings:112, 
+135e0d92e7da, rank=6][0m 
+/opt/conda/lib/python3.12/site-packages/torch/distributed/_state_dict_utils.py:1
+83: UserWarning: called a synchronizing CUDA operation (Triggered internally at 
+/pytorch/c10/cuda/CUDAFunctions.cpp:162.)
+  ret = ret.to(cpu_device)
+
+[2;36m[2026-07-27 08:57:50][0m [33mWARNING [0m [2m[py.warnings:112, 
+135e0d92e7da, rank=2][0m 
+/opt/conda/lib/python3.12/site-packages/torch/distributed/_state_dict_utils.py:1
+83: UserWarning: called a synchronizing CUDA operation (Triggered internally at 
+/pytorch/c10/cuda/CUDAFunctions.cpp:162.)
+  ret = ret.to(cpu_device)
+
+[2;36m[2026-07-27 08:57:50][0m [33mWARNING [0m [2m[py.warnings:112, 
+135e0d92e7da, rank=4][0m 
+/opt/conda/lib/python3.12/site-packages/torch/distributed/_state_dict_utils.py:1
+83: UserWarning: called a synchronizing CUDA operation (Triggered internally at 
+/pytorch/c10/cuda/CUDAFunctions.cpp:162.)
+  ret = ret.to(cpu_device)
+
+[2;36m[2026-07-27 08:57:50][0m [33mWARNING [0m [2m[py.warnings:112, 
+135e0d92e7da, rank=3][0m 
+/opt/conda/lib/python3.12/site-packages/torch/distributed/_state_dict_utils.py:1
+83: UserWarning: called a synchronizing CUDA operation (Triggered internally at 
+/pytorch/c10/cuda/CUDAFunctions.cpp:162.)
+  ret = ret.to(cpu_device)
+
+[2;36m[2026-07-27 08:57:50][0m [33mWARNING [0m [2m[py.warnings:112, 
+135e0d92e7da, rank=7][0m 
+/opt/conda/lib/python3.12/site-packages/torch/distributed/_state_dict_utils.py:1
+83: UserWarning: called a synchronizing CUDA operation (Triggered internally at 
+/pytorch/c10/cuda/CUDAFunctions.cpp:162.)
+  ret = ret.to(cpu_device)
+
+[2;36m[2026-07-27 08:58:29][0m [33mWARNING [0m 
+[2m[olmo_core.train.callbacks.config_saver:62, 135e0d92e7da, rank=0][0m Config
+not set on ConfigSaverCallback, doing nothing
+[2;36m[2026-07-27 08:58:31][0m [34mINFO    [0m [2m[olmo_core.train.trainer:989,
+135e0d92e7da, rank=0][0m Checkpoint saved
+[2;36m[2026-07-27 08:58:31][0m [34mINFO    [0m [2m[olmo_core.train.trainer:1361,
+135e0d92e7da, rank=0][0m Waiting for bookkeeping ops to finish: 'reduce_metrics'
+(1 ops)...
+[2;36m[2026-07-27 08:58:31][0m [34mINFO    [0m 
+[2m[olmo_core.train.callbacks.console_logger:68, 135e0d92e7da, rank=0][0m 
+[step=1250/1250,epoch=2]
+    checkpoint/save_duration_s=40.17
+[2;36m[2026-07-27 08:58:31][0m [34mINFO    [0m [2m[olmo_core.train.trainer:1366,
+135e0d92e7da, rank=0][0m All bookkeeping ops complete
+[2;36m[2026-07-27 08:58:31][0m [34mINFO    [0m 
+[2m[olmo_core.train.callbacks.wandb:116, 135e0d92e7da, rank=0][0m Finalizing 
+successful W&B run...
+wandb: WARNING The `quiet` argument to `wandb.run.finish()` is deprecated, use 
+`wandb.Settings(quiet=...)` to set this instead.
+wandb: uploading data; updating run metadata
+wandb: uploading data; uploading output.log; uploading wandb-summary.json
+wandb: uploading data
+wandb: 
+wandb: Run history:
+wandb:        checkpoint/load_duration_s ▁
+wandb:        checkpoint/save_duration_s ▁
+wandb:     gpu_memory/GPU active mem (%) 
+▁▂▃▄▅▇██████████████████████████████████
+wandb:   gpu_memory/GPU active mem (GiB) 
+▁▅▅▇████████████████████████████████████
+wandb:   gpu_memory/GPU reserved mem (%) 
+▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁
+wandb: gpu_memory/GPU reserved mem (GiB) 
+▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁
+wandb:                optim/LR (group 0) 
+████▇▇▆▆▆▆▆▆▆▆▆▅▅▅▅▅▅▅▅▅▅▄▄▄▄▄▃▃▃▃▂▂▂▂▂▁
+wandb:                optim/LR (group 1) 
+▂▄███▇▇▆▆▆▆▆▅▅▅▅▅▄▄▄▄▄▄▄▄▄▄▄▃▃▃▃▃▂▂▂▂▁▁▁
+wandb:                optim/step skipped 
+▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁
+wandb:             optim/total grad norm 
+▂▃▃▄▂▁▂█▂▁▁▂▁▂▂▂▂▁▂▄▂▁▁▂▁▃▂▂▂▂▂▂▂▂▁▂▂▂▁▂
+wandb:                               +16 ...
+wandb: 
+wandb: Run summary:
+wandb:        checkpoint/load_duration_s 24.37033
+wandb:        checkpoint/save_duration_s 40.17119
+wandb:     gpu_memory/GPU active mem (%) 30.0288
+wandb:   gpu_memory/GPU active mem (GiB) 23.77967
+wandb:   gpu_memory/GPU reserved mem (%) 33.94248
+wandb: gpu_memory/GPU reserved mem (GiB) 26.87891
+wandb:                optim/LR (group 0) 0
+wandb:                optim/LR (group 1) 0
+wandb:                optim/step skipped 0
+wandb:             optim/total grad norm 1.77358
+wandb:                               +16 ...
+wandb: 
+wandb: 🚀 View run ctc-olmo3-7b-hpqa-cmix-20260727T002152-0700 at: 
+https://wandb.ai/prasanns-allen-institute-for-ai/memory-networks/runs/70jqle74
+wandb: ⭐️ View project at: 
+https://wandb.ai/prasanns-allen-institute-for-ai/memory-networks
+wandb: Synced 5 W&B file(s), 0 media file(s), 0 artifact file(s) and 0 other 
+file(s)
+wandb: Find logs at: 
+/weka/oe-training-default/ai2-llm/checkpoints/prasanns/ctc_suite/ckpts/ctc-olmo3
+-7b-hpqa-cmix-20260727T002152-0700/wandb/wandb/run-20260727_080051-70jqle74/logs
+[2;36m[2026-07-27 08:59:32][0m [34mINFO    [0m [2m[olmo_core.train.trainer:763,
+135e0d92e7da, rank=0][0m Training complete
+[ctc-suite] saved model-only checkpoint -> 
+/weka/oe-training-default/ai2-llm/checkpoints/prasanns/ctc_suite/ckpts/ctc-olmo3
+-7b-hpqa-cmix-20260727T002152-0700
+[W727 08:59:47.381345309 AllocatorConfig.cpp:28] Warning: 
+PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function 
+operator())
+[W727 08:59:47.390814576 AllocatorConfig.cpp:28] Warning: 
+PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function 
+operator())
+[W727 08:59:48.453405572 AllocatorConfig.cpp:28] Warning: 
+PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function 
+operator())
+[W727 08:59:48.488975644 AllocatorConfig.cpp:28] Warning: 
+PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function 
+operator())
+[W727 08:59:48.499025527 AllocatorConfig.cpp:28] Warning: 
+PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function 
+operator())
+[W727 08:59:48.674810934 AllocatorConfig.cpp:28] Warning: 
+PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function 
+operator())
+[W727 08:59:48.679086848 AllocatorConfig.cpp:28] Warning: 
+PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function 
+operator())
+[W727 08:59:48.144503276 AllocatorConfig.cpp:28] Warning: 
+PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function 
+operator())
+[W727 08:59:49.094253502 AllocatorConfig.cpp:28] Warning: 
+PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function 
+operator())
+
+─────────────────────────────────── End logs ───────────────────────────────────
+
+✓ prasanns/ctc-olmo3-7b-hpqa-cmix-20260727T002152-0700-786940bf 
+(01KYH779DAY72V4X7YWZM5VK09) completed successfully.
+
+Experiment: prasanns/ctc-olmo3-7b-hpqa-cmix-20260727T002152-0700-786940bf → 
+https://beaker.org/ex/01KYH779DAY72V4X7YWZM5VK09
+Workspace: ai2/flex2 → https://beaker.org/ws/ai2/flex2
+Commit: bdb1c03 ctc_suite/olmo3: resolve the marker tokenizer per… → 
+https://github.com/allenai/OLMo-core/commit/bdb1c03
+Branch: prasann/landmark → 
+https://github.com/allenai/OLMo-core/tree/prasann/landmark
+Results: https://beaker.org/ds/01KYH779DFGX02BRQ6GQFSE8WG
+Runtime: 59 minutes, 50 seconds
+[beaker_ctc_suite] launched: experiment {
+  id: "01KYH779DAY72V4X7YWZM5VK09"
+  name: "ctc-olmo3-7b-hpqa-cmix-20260727T002152-0700-786940bf"
+  author_id: "01K31JPADAHRBWED2VT05703Z0"
+  workspace_id: "01K1DJ083DM56DQTHPR4JWS7DD"
+  tasks {
+    id: "01KYH779DEM5PBHS25S0VHW7Q1"
+    experiment_id: "01KYH779DAY72V4X7YWZM5VK09"
+    name: "train"
+    author_id: "01K31JPADAHRBWED2VT05703Z0"
+    created {
+      seconds: 1785136915
+      nanos: 882019000
+    }
+    container_spec {
+      resource_request {
+        cpu_count: 0
+        gpu_count: 8
+        shared_memory_bytes: 10737418240
+      }
+      image_id: "01KAY1JXJFCPQ1J5W61E2D2Q8V"
+      command: "bash"
+      command: "/gantry/entrypoint.sh"
+      arguments: "python"
+      arguments: "src/scripts/train/memexpress/ctc_suite/train_ctc_suite.py"
+      arguments: "--task"
+      arguments: "qdmatch"
+      arguments: "--data"
+      arguments: "/weka/oe-training-default/ai2-llm/checkpoints/prasanns/ctc_olmo3/shards/qdmatch_hpqa_train"
+      arguments: "--variant"
+      arguments: "chunked-mix"
+      arguments: "--model-scale"
+      arguments: "7b"
+      arguments: "--seq-len"
+      arguments: "16384"
+      arguments: "--epochs"
+      arguments: "1"
+      arguments: "--lr"
+      arguments: "5e-05"
+      arguments: "--global-batch"
+      arguments: "8"
+      arguments: "--micro-batch-instances"
+      arguments: "1"
+      arguments: "--base-checkpoint"
+      arguments: "/weka/oe-training-default/ai2-llm/checkpoints/prasanns/ctc_olmo3/bases/olmo3-7b-base-fixmark/model_and_optim"
+      arguments: "--work-dir"
+      arguments: "/weka/oe-training-default/ai2-llm/checkpoints/prasanns/dataset-cache-ctc-suite"
+      arguments: "--save-folder"
+      arguments: "/weka/oe-training-default/ai2-llm/checkpoints/prasanns/ctc_suite/ckpts/ctc-olmo3-7b-hpqa-cmix-20260727T002152-0700"
+      arguments: "--run-name"
+      arguments: "ctc-olmo3-7b-hpqa-cmix-20260727T002152-0700"
+      arguments: "--wandb-group"
+      arguments: "ctc-olmo3-qdmatch"
+      arguments: "--wandb-entity"
+      arguments: "prasanns-allen-institute-for-ai"
+      arguments: "--model-family"
+      arguments: "olmo3"
+      arguments: "--save-checkpoint"
+      arguments: "--no-compile"
+      arguments: "--activation-checkpointing"
+      arguments: "full"
+      arguments: "--shard-degree"
+      arguments: "8"
+      environment_variables {
+        name: "GANTRY_VERSION"
+        literal: "3.7.0"
+      }
+      environment_variables {
+        name: "GITHUB_REPO"
+        literal: "allenai/OLMo-core"
+      }
+      environment_variables {
+        name: "GIT_REF"
+        literal: "bdb1c03bad4ab73ef8c73d1e6a4993ffb039208b"
+      }
+      environment_variables {
+        name: "GANTRY_TASK_NAME"
+        literal: "train"
+      }
+      environment_variables {
+        name: "RESULTS_DIR"
+        literal: "/results"
+      }
+      environment_variables {
+        name: "GANTRY_RUNTIME_DIR"
+        literal: "/gantry-runtime"
+      }
+      environment_variables {
+        name: "GANTRY_EXEC_METHOD"
+        literal: "exec"
+      }
+      environment_variables {
+        name: "GANTRY_USE_TORCHRUN"
+        literal: "1"
+      }
+      environment_variables {
+        name: "GIT_BRANCH"
+        literal: "prasann/landmark"
+      }
+      environment_variables {
+        name: "GANTRY_DEFAULT_PYTHON_VERSION"
+        literal: "3.12"
+      }
+      environment_variables {
+        name: "GANTRY_USE_SYSTEM_PYTHON"
+        literal: "1"
+      }
+      environment_variables {
+        name: "GANTRY_PYTHON_MANAGER"
+        literal: "uv"
+      }
+      environment_variables {
+        name: "GANTRY_UV_ALL_EXTRAS"
+        literal: "1"
+      }
+      environment_variables {
+        name: "NCCL_DEBUG"
+        literal: "WARN"
+      }
+      environment_variables {
+        name: "PYTORCH_CUDA_ALLOC_CONF"
+        literal: "expandable_segments:True"
+      }
+      environment_variables {
+        name: "LOG_FILTER_TYPE"
+        literal: "local_rank0_only"
+      }
+      environment_variables {
+        name: "OMP_NUM_THREADS"
+        literal: "8"
+      }
+      environment_variables {
+        name: "R2_PROFILE"
+        literal: "R2"
+      }
+      environment_variables {
+        name: "S3_PROFILE"
+        literal: "S3"
+      }
+      environment_variables {
+        name: "WEKA_PROFILE"
+        literal: "WEKA"
+      }
+      environment_variables {
+        name: "NUM_NODES"
+        literal: "1"
+      }
+      environment_variables {
+        name: "OLMO_CORE_VERSION"
+        literal: "2.5.0"
+      }
+      environment_variables {
+        name: "FORCE_COLOR"
+        literal: "1"
+      }
+      environment_variables {
+        name: "TORCH_LOGS"
+        literal: "recompiles,graph_breaks"
+      }
+      environment_variables {
+        name: "PYTORCH_KERNEL_CACHE_PATH"
+        literal: "/root/.cache/torch/kernels"
+      }
+      environment_variables {
+        name: "OLMO_SHARED_FS"
+        literal: "1"
+      }
+      environment_variables {
+        name: "BEAKER_TOKEN"
+        secret_reference: "PRASANNS_BEAKER_TOKEN"
+      }
+      environment_variables {
+        name: "WANDB_API_KEY"
+        secret_reference: "PRASANNS_WANDB_API_KEY"
+      }
+      environment_variables {
+        name: "R2_ENDPOINT_URL"
+        secret_reference: "R2_ENDPOINT_URL"
+      }
+      environment_variables {
+        name: "WEKA_ENDPOINT_URL"
+        secret_reference: "WEKA_ENDPOINT_URL"
+      }
+      environment_variables {
+        name: "SLACK_WEBHOOK_URL"
+        secret_reference: "SLACK_WEBHOOK_URL"
+      }
+      environment_variables {
+        name: "GANTRY_AWS_CONFIG"
+        secret_reference: "PRASANNS_AWS_CONFIG"
+      }
+      environment_variables {
+        name: "GANTRY_AWS_CREDENTIALS"
+        secret_reference: "PRASANNS_AWS_CREDENTIALS"
+      }
+      environment_variables {
+        name: "GANTRY_GOOGLE_CREDENTIALS"
+        secret_reference: "GOOGLE_CREDENTIALS"
+      }
+      mounts {
+        mount_path: "/gantry"
+        dataset_id: "01KNQSJ27JZEM2Z9KQ191P0JJY"
+      }
+      mounts {
+        mount_path: "/weka/oe-training-default"
+        weka: "oe-training-default"
+      }
+      result_path: "/results"
+      identity {
+        type: JOB_IDENTITY_TYPE_NONE
+      }
+    }
+    system_details {
+      priority: JOB_PRIORITY_URGENT
+      placement_constraints {
+        type: JOB_PLACEMENT_CONSTRAINT_TYPE_CLUSTER
+        values: "ai2/jupiter"
+      }
+      min_runtime {
+      }
+      auto_resume: true
+    }
+    status: STATUS_QUEUED
+  }
+  created {
+    seconds: 1785136915
+    nanos: 882019000
+  }
+}
+status: STATUS_QUEUED
+budget_id: "01KP6SET80STGTCC9EFRPAE2R6"
+
