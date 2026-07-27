@@ -21,7 +21,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from fnmatch import fnmatch
-from typing import Any, Dict, List, Optional, Tuple, cast
+from typing import Any, Dict, List, Literal, Optional, Tuple, cast
 
 import torch
 import torch.distributed as dist
@@ -34,7 +34,7 @@ from olmo_core.distributed.parallel import (
     build_world_mesh,
     get_dp_model_mesh,
 )
-from olmo_core.distributed.utils import get_local_tensor, get_world_size, is_distributed
+from olmo_core.distributed.utils import get_local_tensor, get_rank, get_world_size, is_distributed
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.nn.functional import weighted_cross_entropy_loss
 from olmo_core.optim import OptimConfig
@@ -117,8 +117,10 @@ class MultimodalTransformerTrainModule(TransformerTrainModule):
 
         model.to(self.device)
         if compile_model:
-            log.info("Compiling model.lm ...")
-            model.lm = torch.compile(model.lm)  # type: ignore[assignment]
+            # Compile per block (not the whole LM) so dynamic multimodal attention masks
+            # (or_mask / and_mask) don't trip full-graph compile on the outer forward.
+            log.info("Compiling model.lm blocks ...")
+            model.lm.apply_compile()
         self.model = model
         self._model_mode = None
 
@@ -212,6 +214,12 @@ class MultimodalTransformerTrainModule(TransformerTrainModule):
         loss_masks = batch.pop("loss_masks")
         return input_ids, labels, loss_masks, batch
 
+    def _set_model_mode(self, mode: Literal["train", "eval"]):
+        super()._set_model_mode(mode)
+        # Frozen vision should stay in eval mode (mm_olmo trains the ViT; stage-1 freezes it).
+        if mode == "train" and any(fnmatch(n, "vision.*") for n in self.freeze_params):
+            self._multimodal.vision.eval()
+
     # -- training step -----------------------------------------------------------
 
     def train_batch(self, batch: Dict[str, Any], dry_run: bool = False):
@@ -272,9 +280,22 @@ class MultimodalTransformerTrainModule(TransformerTrainModule):
                     flat_labels,
                     flat_weights,
                     ignore_index=self.label_ignore_index,
-                    compute_z_loss=self.z_loss_multiplier is not None,
+                    compute_z_loss=self.z_loss_multiplier is not None and not dry_run,
                     z_loss_multiplier=self.z_loss_multiplier or 1e-4,
                 )
+
+                if not torch.isfinite(ce_loss):
+                    n_im_patch = int((input_ids == self._multimodal.cfg.image_patch_token_id).sum())
+                    raise RuntimeError(
+                        f"Non-finite CE loss on rank {get_rank()}: ce={ce_loss.item()}, "
+                        f"local_weight={local_weight.item():.4f}, "
+                        f"logits_nan={bool(torch.isnan(logits).any())}, "
+                        f"logits_inf={bool(torch.isinf(logits).any())}, "
+                        f"im_patch_tokens={n_im_patch}, seq_len={input_ids.shape[1]}"
+                    )
+
+                if dry_run:
+                    continue
 
                 loss = ce_loss / div_factor
                 if z_loss is not None:

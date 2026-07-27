@@ -51,7 +51,7 @@ TRANSCRIPT_PROMPTS = (
     "Create a transcript of a human describing this image out load",
 )
 
-_MODES = ("caption", "transcript", "transcript_and_caption")
+_MODES = ("caption", "transcript", "transcript_and_caption", "sft_demo")
 
 # mm_olmo's ``system_prompt='style_and_length_v2'`` (data_formatter.py): every response
 # branch is preceded, in its user turn, by a ``"<style>[ <bucket>]:"`` length-conditioning
@@ -109,6 +109,11 @@ class PixMoCapDataset:
         self.tokenizer = tokenizer
         self._rows: Optional[List[Dict[str, Any]]] = None
         self._hf = None
+        self._sft_formatter = None
+        if config.mode == "sft_demo":
+            from .sft_formatter import SftFormatter
+
+            self._sft_formatter = SftFormatter(seed=config.seed)
 
         path = config.dataset_path
         if path == "synthetic":
@@ -118,9 +123,9 @@ class PixMoCapDataset:
             self._rows = self._load_jsonl(path)
         else:
             self._kind = "arrow"
-            from datasets import load_from_disk
+            from .dataset_compat import load_from_disk_compat
 
-            ds = load_from_disk(path)
+            ds = load_from_disk_compat(path)
             self._hf = ds[config.split] if config.split in ds else ds
 
         self._eos_id = tokenizer.eos_token_id
@@ -231,6 +236,9 @@ class PixMoCapDataset:
         return self.tokenizer.encode(text, add_special_tokens=False)
 
     def __getitem__(self, index: int) -> Dict[str, np.ndarray]:
+        if self.config.mode == "sft_demo":
+            return self._getitem_sft_demo(index)
+
         from olmo_core.nn.vision.molmo2_image_processor import preprocess_image_molmo2
 
         cfg = self.config
@@ -289,6 +297,27 @@ class PixMoCapDataset:
         seq["images"] = images
         seq["pooled_patches_idx"] = pooled
         return seq
+
+    def _getitem_sft_demo(self, index: int) -> Dict[str, np.ndarray]:
+        from .message_sequence import encode_sft_example
+
+        row = self._get_row(index)
+        pil = self._load_image(row)
+        formatted = {
+            "style": "long_caption",
+            "caption": row.get("caption", ""),
+            "text": row.get("caption", ""),
+        }
+        assert self._sft_formatter is not None
+        turns = self._sft_formatter.format_turns(formatted, index=index)
+        return encode_sft_example(
+            self.tokenizer,
+            pil,
+            turns,
+            max_crops=self.config.max_crops,
+            loss_token_weighting="root_subsegments_root_tokens",
+            seed=self.config.seed + index,
+        )
 
 
 def _truncate(seq: Dict[str, np.ndarray], max_len: int) -> Dict[str, np.ndarray]:

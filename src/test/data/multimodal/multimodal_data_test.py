@@ -163,6 +163,30 @@ def _img_example(n_text: int, n_crops: int, tag: int):
     )
 
 
+def _text_example(n_text=4, tag=3):
+    L = n_text
+    return dict(
+        input_ids=np.array([1] + [tag] * (L - 1), dtype=np.int64),
+        labels=np.full(L, tag, dtype=np.int64),
+        loss_masks=np.ones(L, dtype=np.float32),
+        position_ids=np.arange(L, dtype=np.int64),
+        token_type_ids=np.zeros(L, dtype=np.int64),
+        images=np.zeros((0, 729, _PATCH_DIM), dtype=np.float32),
+        pooled_patches_idx=np.full((0, 4), -1, dtype=np.int64),
+    )
+
+
+def test_iter_packs_homogeneous_image_text():
+    """Text-only and image examples must not share a pack (stage-1 NLP + vision)."""
+    img = _img_example(n_text=2, n_crops=1, tag=5)  # len 4
+    txt = _text_example(n_text=3, tag=9)  # len 3
+    packs = list(iter_packs([txt, img, txt], seq_len=16))
+    assert len(packs) == 3
+    assert len(packs[0]["input_ids"]) == 3
+    assert len(packs[1]["input_ids"]) == 4  # image example alone
+    assert len(packs[2]["input_ids"]) == 3
+
+
 def test_greedy_pack_indices():
     # next-fit: [3,3]->ok(6), +5 overflows 8 -> new group, +2 fits(7)
     assert greedy_pack_indices([3, 3, 5, 2], seq_len=8) == [[0, 1], [2, 3]]

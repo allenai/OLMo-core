@@ -101,9 +101,11 @@ CONNECTOR_WARMUP = 200
 LLM_WARMUP = 2000
 ALPHA_F = 0.1
 
+from olmo_core.data.multimodal.paths import PIXMO_DATASETS
+
 # Data: the canonical PixMoCap "cap" dataset (HF DatasetDict, load_from_disk). Override as needed.
-DATASET_PATH = "/weka/oe-training-default/mm-olmo/torch_datasets/pixmo_datasets/cap"
-MAX_STEPS = 4000
+DATASET_PATH = f"{PIXMO_DATASETS}/cap"
+MAX_STEPS = 32000
 
 # Stage-1 mixture rates (mm_olmo train_captioner --pointing/--nlp). Caption gets the
 # remainder (1 - POINTING_RATE - NLP_RATE). Set both to 0.0 for a caption-only run.
@@ -142,6 +144,12 @@ class ExperimentConfig(Config):
     global_batch_size: int = GLOBAL_BATCH_SIZE
     """Global batch in *tokens* (= global instances × seq len). Override to scale the batch;
     pair with ``--train_module.rank_microbatch_size`` to set sequences/forward (GEMM size)."""
+    pointing_rate: float = POINTING_RATE
+    """Fraction of mixture samples from pointing/counting sources (mm_olmo ``--pointing``)."""
+    nlp_rate: float = NLP_RATE
+    """Fraction of mixture samples from Tulu4 NLP SFT (mm_olmo ``--nlp``)."""
+    pack_sequences: bool = PACK_SEQUENCES
+    """Pack several short examples per sequence (mm_olmo dynamic packer)."""
 
 
 def _build_model_config() -> MultimodalLMConfig:
@@ -312,11 +320,11 @@ def _init_weights_from_hf(model: MultimodalLM, model_cfg: MultimodalLMConfig) ->
 
 def _build_mixture_sources(tokenizer, config: ExperimentConfig):
     """Build the caption + pointing + NLP sources and their sampling weights (mm_olmo
-    SubMixture): caption gets ``1 - POINTING_RATE - NLP_RATE``; the pointing group shares
-    ``POINTING_RATE`` split by sqrt(size); NLP gets ``NLP_RATE``."""
+    SubMixture): caption gets ``1 - pointing_rate - nlp_rate``; the pointing group shares
+    ``pointing_rate`` split by sqrt(size); NLP gets ``nlp_rate``."""
     import numpy as np
 
-    p, n = POINTING_RATE, NLP_RATE
+    p, n = config.pointing_rate, config.nlp_rate
     datasets: List = [config.dataset.build(tokenizer)]  # caption
     weights: List[float] = [max(1.0 - p - n, 0.0)]
 
@@ -359,7 +367,7 @@ def train(config: ExperimentConfig):
     dp_pg = train_module.dp_process_group
     dp_world_size, dp_rank = get_world_size(dp_pg), get_rank(dp_pg)
 
-    if POINTING_RATE > 0 or NLP_RATE > 0:
+    if config.pointing_rate > 0 or config.nlp_rate > 0:
         datasets, weights = _build_mixture_sources(tokenizer, config)
         data_loader = MixtureDataLoader(
             datasets,
@@ -368,7 +376,7 @@ def train(config: ExperimentConfig):
             work_dir=config.trainer.save_folder,
             global_batch_size=config.global_batch_size,
             seed=config.data_seed,
-            pack=PACK_SEQUENCES,
+            pack=config.pack_sequences,
             prefetch_workers=DATA_PREFETCH_WORKERS,
             dp_world_size=dp_world_size,
             dp_rank=dp_rank,

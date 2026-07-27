@@ -19,11 +19,9 @@ import numpy as np
 from olmo_core.config import Config
 from olmo_core.nn.vision.molmo2_tokens import N_PATCHES_SQ, PATCH_DIM, POOL_H, POOL_W
 
-__all__ = ["Tulu4DatasetConfig", "Tulu4Dataset"]
+from .paths import TULU4_DATA
 
-_DATA = (
-    "/weka/oe-training-default/mm-olmo/torch_datasets/olmo-3-instruct-sft-no-tools-classified-v3"
-)
+__all__ = ["Tulu4DatasetConfig", "Tulu4Dataset"]
 
 
 def _format_messages(parts: List[Dict[str, str]]) -> Optional[List[Dict[str, str]]]:
@@ -60,6 +58,9 @@ class Tulu4DatasetConfig(Config):
     """``tulu4_max_2304``: filtered multi-turn text SFT."""
 
     max_first_msg_len: int = 2304
+    max_sequence_length: int = 4096
+    """Truncate the full tokenized conversation to this length (Tulu can exceed
+    ``max_first_msg_len`` when it has many turns)."""
     use_code: bool = False
     use_non_english: bool = False
     use_reasoning: bool = False
@@ -77,9 +78,9 @@ class Tulu4Dataset:
         self._data = self._load_filtered()
 
     def _load_filtered(self):
-        from datasets import load_from_disk
+        from .dataset_compat import load_from_disk_compat
 
-        ds = load_from_disk(_DATA)
+        ds = load_from_disk_compat(TULU4_DATA)
         ds = ds["train"] if hasattr(ds, "keys") and "train" in ds else ds
         cfg = self.config
 
@@ -165,4 +166,8 @@ class Tulu4Dataset:
                 {"role": "user", "content": "Hello"},
                 {"role": "assistant", "content": "Hi."},
             ]
-        return self._text_sequence(messages)
+        seq = self._text_sequence(messages)
+        max_len = self.config.max_sequence_length
+        if max_len and len(seq["input_ids"]) > max_len:
+            seq = {k: (v[:max_len] if v.ndim == 1 and len(v) > max_len else v) for k, v in seq.items()}
+        return seq

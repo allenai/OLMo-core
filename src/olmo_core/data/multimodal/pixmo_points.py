@@ -40,7 +40,7 @@ __all__ = [
     "CoSynPointDataset",
 ]
 
-_B = "/weka/oe-training-default/mm-olmo/torch_datasets/pixmo_datasets"
+from .paths import PIXMO_DATASETS
 
 
 def _build_user_turn(tokenizer, question: str) -> List[int]:
@@ -68,6 +68,8 @@ def _build_example(
     *,
     max_crops: int,
     loss_token_weighting: str,
+    message_weight: float | None = None,
+    p_high_res: float = 0.0,
 ) -> Dict[str, np.ndarray]:
     """Preprocess the image and assemble a (possibly multi-branch) pointing example.
 
@@ -77,19 +79,35 @@ def _build_example(
 
     from olmo_core.nn.vision.molmo2_image_processor import preprocess_image_molmo2
 
+    rng = np.random.RandomState(hash((id(branches_text), p_high_res)) % (2**31))
     images_t, pooling_t, image_grid = preprocess_image_molmo2(
-        pil_image, dtype=torch.float32, device=torch.device("cpu"), max_crops=max_crops
+        pil_image,
+        dtype=torch.float32,
+        device=torch.device("cpu"),
+        max_crops=max_crops,
+        p_high_res=p_high_res,
+        is_training=True,
+        rng=rng,
     )
     prefix = _image_prefix(tokenizer, image_grid)
     branches = [
         (_build_user_turn(tokenizer, q), tokenizer.encode(a, add_special_tokens=False))
         for q, a in branches_text
     ]
+    from olmo_core.data.multimodal.message_weight import apply_message_weight_to_loss_masks
+
     seq = build_branched_sequence(
         prefix,
         branches,
         eos_id=tokenizer.eos_token_id,
         loss_token_weighting=loss_token_weighting,
+    )
+    subsegment_ids = seq.get("subsegment_ids")
+    from olmo_core.data.multimodal.message_weight import MessageWeight
+
+    mw = MessageWeight.from_string(loss_token_weighting).with_overrides(message_weight)
+    seq["loss_masks"] = apply_message_weight_to_loss_masks(
+        seq["loss_masks"], subsegment_ids, mw
     )
     seq["images"] = images_t[0].numpy()
     seq["pooled_patches_idx"] = pooling_t[0].numpy()
@@ -97,9 +115,9 @@ def _build_example(
 
 
 def _load_split(path: str, split: str):
-    from datasets import load_from_disk
+    from .dataset_compat import load_from_disk_compat
 
-    ds = load_from_disk(path)
+    ds = load_from_disk_compat(path)
     return ds[split] if hasattr(ds, "keys") and split in ds else ds
 
 
@@ -124,6 +142,8 @@ class PixMoPointsDatasetConfig(Config):
     max_total_points_per_example: int = 60
     max_crops: int = 8
     loss_token_weighting: str = "root_subsegments"
+    message_weight: float | None = None
+    p_high_res: float = 0.0
     seed: int = 0
 
     def build(self, tokenizer) -> "PixMoPointsDataset":
@@ -139,7 +159,7 @@ class PixMoPointsDataset:
         )
         from datasets import concatenate_datasets
 
-        self._data = concatenate_datasets([_load_split(f"{_B}/{s}", "train") for s in sub])
+        self._data = concatenate_datasets([_load_split(f"{PIXMO_DATASETS}/{s}", "train") for s in sub])
         # Pre-split each row's labels into sub-batches with <= max_total_points (mm_olmo).
         self._index = self._build_sub_index()
 
@@ -189,6 +209,8 @@ class PixMoPointsDataset:
             branches,
             max_crops=self.config.max_crops,
             loss_token_weighting=self.config.loss_token_weighting,
+            message_weight=self.config.message_weight,
+            p_high_res=self.config.p_high_res,
         )
 
 
@@ -202,6 +224,8 @@ class PixMoCountDatasetConfig(Config):
     counting: str = "both"  # "both" interleaves point_count (even) / pointing (odd)
     max_crops: int = 8
     loss_token_weighting: str = "root_subsegments"
+    message_weight: float | None = None
+    p_high_res: float = 0.0
     seed: int = 0
 
     def build(self, tokenizer) -> "PixMoCountDataset":
@@ -212,7 +236,7 @@ class PixMoCountDataset:
     def __init__(self, config: PixMoCountDatasetConfig, tokenizer):
         self.config = config
         self.tokenizer = tokenizer
-        self._data = _load_split(f"{_B}/count", "train")
+        self._data = _load_split(f"{PIXMO_DATASETS}/count", "train")
         self._n = len(self._data)
 
     def __len__(self) -> int:
@@ -240,6 +264,8 @@ class PixMoCountDataset:
             [(prompt, answer)],
             max_crops=self.config.max_crops,
             loss_token_weighting=self.config.loss_token_weighting,
+            message_weight=self.config.message_weight,
+            p_high_res=self.config.p_high_res,
         )
 
 
@@ -252,6 +278,8 @@ class PixMoCountDataset:
 class CoSynPointDatasetConfig(Config):
     max_crops: int = 8
     loss_token_weighting: str = "root_subsegments"
+    message_weight: float | None = None
+    p_high_res: float = 0.0
     seed: int = 0
 
     def build(self, tokenizer) -> "CoSynPointDataset":
@@ -262,7 +290,7 @@ class CoSynPointDataset:
     def __init__(self, config: CoSynPointDatasetConfig, tokenizer):
         self.config = config
         self.tokenizer = tokenizer
-        self._data = _load_split(f"{_B}/cosyn-point", "train")
+        self._data = _load_split(f"{PIXMO_DATASETS}/cosyn-point", "train")
 
     def __len__(self) -> int:
         return len(self._data)
@@ -282,4 +310,6 @@ class CoSynPointDataset:
             branches,
             max_crops=self.config.max_crops,
             loss_token_weighting=self.config.loss_token_weighting,
+            message_weight=self.config.message_weight,
+            p_high_res=self.config.p_high_res,
         )
