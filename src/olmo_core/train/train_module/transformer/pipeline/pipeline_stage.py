@@ -347,7 +347,6 @@ class CustomPipelineStage:
             # stage_output is no longer used in the last stage for backward and only needed
             # to return to the user in merge_output_chunks, therefore
             # this should be detached to release autograd graph context and free memory earlier
-            # TODO: what?
             for t in stage_output:
                 if not t._is_view():  # views are not detachable in-place
                     t.detach_()
@@ -713,8 +712,9 @@ class CustomPipelineStage:
         return grads, param_groups
 
     def clear_runtime_states(self) -> None:
+        # TODO: no-op today; determine whether any per-step runtime state (buffers/caches) needs
+        # clearing here between steps.
         pass
-        # TODO: anything to clear?
 
     def clear_step_info(self):
         self._step_global_batch_size = None

@@ -630,8 +630,8 @@ class MoERouterV2(nn.Module):
             # shape: (batch_size, seq_len, top_k)
             expert_weights, expert_indices = self.get_top_k(scores)
 
-        # TODO: check
-        # WARN: does not work with PP
+        # TODO: verify the recompute-index cache is correct under activation checkpointing;
+        # known-broken under pipeline parallelism (the cached indices don't survive PP microbatching).
         if self.use_recompute_cache:
             if self._recompute_cache is None:  # first forward
                 if torch.is_grad_enabled():
