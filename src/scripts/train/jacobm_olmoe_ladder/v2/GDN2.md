@@ -608,3 +608,24 @@ first non-finite was again rank 5, block-0 GDN2 forward, local sequence 1,
 token 4992; it then propagated through later blocks, local loss, backward, and
 all-rank gradients. Therefore FLA `v0.5.2` is environment-compatible, but its
 kernel update does **not** fix the persistent GDN2 recurrence overflow.
+
+The follow-up original-only replay matrix covered every other checkpoint that
+had repeatedly failed at the same saved-state-relative step. Each replay used
+the actual release commit, original model/optimizer/data state and distributed
+topology, with checkpoint writes, W&B, and evals disabled.
+
+| Original checkpoint | Historical point | Actual-release result | First non-finite boundary |
+|---|---:|---|---|
+| 275M Cx8, LR `1.6e-3`, `step36500` | 36768 | [Crossed through 37000](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYJTMTS631KAFF2S7H10AEDH) | None; the old failure is not reproducible under the current source/runtime |
+| 810M Cx1, `step10000` | 10039 | [Reproduced at 10039](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYJXNYZR28BVW80Z5RYRRTK8) | Rank 6, block-10 GDN2 forward, local sequence 0, token 3072 |
+| 810M Cx2, `step56500` | 56755 | [Reproduced at 56755](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYJXP1VWCX32JGJJ36R0QY73) | Rank 0, block-5 GDN2 forward, local sequence 1, token 5376 |
+| 1.2B Cx1, `step8000` | 8029 | [Crossed through 8045](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYJXP4X2HX91V3BYM8F6FMDW) | None in the replay window |
+| 1.2B Cx4, `step9000` | 9059 | [Reproduced at 9059](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYJVPMPT2ZCP9XF5YB4FDZQX) | Rank 5, block-0 GDN2 forward, local sequence 1, token 4992 |
+| 1.2B Cx8, `step7000` | 7073 or 7125 | [Reproduced at 7125](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYJXP82K2602JQCCVHSMY69C) | Rank 23, block-0 GDN2 forward, local sequence 1, token 7424 |
+
+Thus four of six original checkpoint-local failures reproduce exactly with the
+released kernel. The two crossings show that not every historical failure is
+deterministic under the current source/runtime; they are not evidence that the
+release fixed those trajectories. The three newly localized reproductions all
+begin in a GDN2 forward output before local loss or backward becomes
+non-finite, consistent with the already reference-verified 1.2B Cx4 mechanism.

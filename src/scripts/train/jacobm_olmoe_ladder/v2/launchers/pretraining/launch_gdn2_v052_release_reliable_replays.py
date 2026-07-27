@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Replay every remaining reliably failing GDN2 checkpoint with FLA v0.5.2."""
+"""Replay every remaining reliably failing original-GDN2 checkpoint with FLA v0.5.2."""
 
 from __future__ import annotations
 
@@ -46,24 +46,15 @@ class Case:
     evidence: str
 
 
-# These cases repeatedly failed from the same saved checkpoint under the old
-# pinned FLA commit. The 275M Cx8 and 1.2B Cx4 cases are omitted because their
-# actual-release replays were already submitted separately. Moving failures
-# (for example original 1.2B Cx2 and fresh 810M Cx2 at its latest checkpoint)
-# are deliberately not classified as reliable checkpoint replays.
+# These original expand_v=2/negative-eigenvalue cases repeatedly failed from
+# the same saved checkpoint under the old pinned FLA commit. The original 275M
+# Cx8 and 1.2B Cx4 cases are omitted because their actual-release replays were
+# already submitted separately. Moving failures (for example original 1.2B
+# Cx2 and fresh 810M Cx2 at its latest checkpoint) are deliberately not
+# classified as reliable checkpoint replays.
 CASES = {
     case.name: case
     for case in (
-        Case(
-            name="canonical-480m-cx2-step24668",
-            manifest="geometry_matched_scale_gdn2_ev1_noneg_nope_gated_full.yaml",
-            task_name="480m-cx2",
-            checkpoint="step24500",
-            expected_failure_steps=(24_668,),
-            localize_start_step=24_640,
-            hard_stop_step=24_690,
-            evidence="failed at step24668 in seven resumes and the exact localizer",
-        ),
         Case(
             name="original-810m-cx1-step10039",
             manifest="geometry_matched_scale_gdn2_nope_gated_full_candidate.yaml",

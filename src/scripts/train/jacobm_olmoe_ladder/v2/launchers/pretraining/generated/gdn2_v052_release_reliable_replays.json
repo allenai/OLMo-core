@@ -1,0 +1,135 @@
+[
+  {
+    "case": "original-810m-cx1-step10039",
+    "run_name": "pt-810m-geometry-hybrid-gdn2-ev2-nope-gated-cx1-lr6e-4-r1",
+    "source_checkpoint": "/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/olmo-ddp/pretraining/pt-810m-geometry-hybrid-gdn2-ev2-nope-gated-cx1-lr6e-4-r1/step10000",
+    "source_commit": "372faa8f75852592413c090e165cbccb114bf49d",
+    "fla_tag": "v0.5.2",
+    "fla_commit": "9c8e42e762fce087c27b673af4922795d9edb85e",
+    "previous_fla_commit": "cbb0a72efb55c18ca0ef4f298298317573ad2cb3",
+    "prior_evidence": "production and diagnostic attempts both failed at step10039",
+    "expected_failure_steps": [
+      10039
+    ],
+    "localize_start_step": 10025,
+    "hard_stop_step": 10055,
+    "world_size": 16,
+    "expert_parallel_size": 1,
+    "rank_microbatch_sequences": 2,
+    "checkpoint_writes": false,
+    "wandb": false,
+    "dump_dir": "/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/olmo-ddp/debug/gdn2-v052-release-reliable-replays/original-810m-cx1-step10039",
+    "experiment_id": "01KYJXNYZR28BVW80Z5RYRRTK8",
+    "task_ids": [
+      "01KYJXNZ01P2GH5GWC1MMGNDFR",
+      "01KYJXNZ3JA7C6DFVM16P1BN0C"
+    ],
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYJXNYZR28BVW80Z5RYRRTK8",
+    "result": "reproduced_failure",
+    "observed_failure_step": 10039,
+    "first_bad_rank": 6,
+    "first_bad_module": "module.blocks.10.attention",
+    "first_bad_phase": "forward",
+    "first_bad_local_sequence": 0,
+    "first_bad_token": 3072
+  },
+  {
+    "case": "original-810m-cx2-step56755",
+    "run_name": "pt-810m-geometry-hybrid-gdn2-ev2-nope-gated-cx2-lr5p6e-4-r1",
+    "source_checkpoint": "/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/olmo-ddp/pretraining/pt-810m-geometry-hybrid-gdn2-ev2-nope-gated-cx2-lr5p6e-4-r1/step56500",
+    "source_commit": "372faa8f75852592413c090e165cbccb114bf49d",
+    "fla_tag": "v0.5.2",
+    "fla_commit": "9c8e42e762fce087c27b673af4922795d9edb85e",
+    "previous_fla_commit": "cbb0a72efb55c18ca0ef4f298298317573ad2cb3",
+    "prior_evidence": "multiple checkpoint-local attempts failed at step56755",
+    "expected_failure_steps": [
+      56755
+    ],
+    "localize_start_step": 56735,
+    "hard_stop_step": 56775,
+    "world_size": 16,
+    "expert_parallel_size": 1,
+    "rank_microbatch_sequences": 3,
+    "checkpoint_writes": false,
+    "wandb": false,
+    "dump_dir": "/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/olmo-ddp/debug/gdn2-v052-release-reliable-replays/original-810m-cx2-step56755",
+    "experiment_id": "01KYJXP1VWCX32JGJJ36R0QY73",
+    "task_ids": [
+      "01KYJXP1W1633YWDSAHJNTE1E4",
+      "01KYJXP23DFSV7R3J73DKH95MD"
+    ],
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYJXP1VWCX32JGJJ36R0QY73",
+    "result": "reproduced_failure",
+    "observed_failure_step": 56755,
+    "first_bad_rank": 0,
+    "first_bad_module": "module.blocks.5.attention",
+    "first_bad_phase": "forward",
+    "first_bad_local_sequence": 1,
+    "first_bad_token": 5376
+  },
+  {
+    "case": "original-1p2b-cx1-step8029",
+    "run_name": "pt-1p2b-geometry-hybrid-gdn2-ev2-nope-gated-cx1-lr4e-4-ep8-sync-r1",
+    "source_checkpoint": "/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/olmo-ddp/pretraining/pt-1p2b-geometry-hybrid-gdn2-ev2-nope-gated-cx1-lr4e-4-ep8-sync-r1/step8000",
+    "source_commit": "372faa8f75852592413c090e165cbccb114bf49d",
+    "fla_tag": "v0.5.2",
+    "fla_commit": "9c8e42e762fce087c27b673af4922795d9edb85e",
+    "previous_fla_commit": "cbb0a72efb55c18ca0ef4f298298317573ad2cb3",
+    "prior_evidence": "production and diagnostic attempts both failed at step8029",
+    "expected_failure_steps": [
+      8029
+    ],
+    "localize_start_step": 8015,
+    "hard_stop_step": 8045,
+    "world_size": 8,
+    "expert_parallel_size": 8,
+    "rank_microbatch_sequences": 4,
+    "checkpoint_writes": false,
+    "wandb": false,
+    "dump_dir": "/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/olmo-ddp/debug/gdn2-v052-release-reliable-replays/original-1p2b-cx1-step8029",
+    "experiment_id": "01KYJXP4X2HX91V3BYM8F6FMDW",
+    "task_ids": [
+      "01KYJXP4X7ZMCVYRW7WD42FJF5"
+    ],
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYJXP4X2HX91V3BYM8F6FMDW",
+    "result": "crossed_historical_failure",
+    "last_completed_step": 8045
+  },
+  {
+    "case": "original-1p2b-cx8-step7073-or7125",
+    "run_name": "pt-1p2b-geometry-hybrid-gdn2-ev2-nope-gated-cx8-lr4e-4-ep8-sync-r1",
+    "source_checkpoint": "/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/olmo-ddp/pretraining/pt-1p2b-geometry-hybrid-gdn2-ev2-nope-gated-cx8-lr4e-4-ep8-sync-r1/step7000",
+    "source_commit": "372faa8f75852592413c090e165cbccb114bf49d",
+    "fla_tag": "v0.5.2",
+    "fla_commit": "9c8e42e762fce087c27b673af4922795d9edb85e",
+    "previous_fla_commit": "cbb0a72efb55c18ca0ef4f298298317573ad2cb3",
+    "prior_evidence": "every checkpoint-local retry failed at one of two repeat points, step7073 or step7125",
+    "expected_failure_steps": [
+      7073,
+      7125
+    ],
+    "localize_start_step": 7060,
+    "hard_stop_step": 7140,
+    "world_size": 32,
+    "expert_parallel_size": 8,
+    "rank_microbatch_sequences": 3,
+    "checkpoint_writes": false,
+    "wandb": false,
+    "dump_dir": "/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/olmo-ddp/debug/gdn2-v052-release-reliable-replays/original-1p2b-cx8-step7073-or7125",
+    "experiment_id": "01KYJXP82K2602JQCCVHSMY69C",
+    "task_ids": [
+      "01KYJXP82R0RGJ17ZTE1M44MJM",
+      "01KYJXP865B662JBEWP4JPG74W",
+      "01KYJXP89FQFTNVP1YSJ029AVQ",
+      "01KYJXP8CRSB01QGRGVDTBAM26"
+    ],
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYJXP82K2602JQCCVHSMY69C",
+    "result": "reproduced_failure",
+    "observed_failure_step": 7125,
+    "first_bad_rank": 23,
+    "first_bad_module": "module.blocks.0.attention",
+    "first_bad_phase": "forward",
+    "first_bad_local_sequence": 1,
+    "first_bad_token": 7424
+  }
+]

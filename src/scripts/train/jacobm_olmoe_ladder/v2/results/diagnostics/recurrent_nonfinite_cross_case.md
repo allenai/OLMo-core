@@ -71,6 +71,39 @@ the same failure at step 9059: rank 5, block-0 GDN2 forward, local sequence 1,
 token 4992. The actual release therefore does not change the established root
 cause or mitigate this persistent recurrence overflow.
 
+#### Original-checkpoint v0.5.2 release matrix
+
+The release follow-up replayed all six original `expand_v=2`,
+negative-eigenvalue GDN2 checkpoints that had repeated at the same
+checkpoint-relative step. The canonical configuration is intentionally outside
+this matrix. All jobs loaded the exact model, optimizer, and data state with the
+original distributed topology, and disabled checkpoint writes, W&B, and evals.
+
+| Original checkpoint | Historical failure | Actual `v0.5.2` result | Earliest non-finite |
+|---|---:|---|---|
+| 275M Cx8 `step36500` | 36768 | [Finite through 37000](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYJTMTS631KAFF2S7H10AEDH) | None |
+| 810M Cx1 `step10000` | 10039 | [Exact recurrence](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYJXNYZR28BVW80Z5RYRRTK8) | Rank 6, block-10 attention forward, sequence 0/token 3072 |
+| 810M Cx2 `step56500` | 56755 | [Exact recurrence](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYJXP1VWCX32JGJJ36R0QY73) | Rank 0, block-5 attention forward, sequence 1/token 5376 |
+| 1.2B Cx1 `step8000` | 8029 | [Finite through 8045](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYJXP4X2HX91V3BYM8F6FMDW) | None |
+| 1.2B Cx4 `step9000` | 9059 | [Exact recurrence](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYJVPMPT2ZCP9XF5YB4FDZQX) | Rank 5, block-0 attention forward, sequence 1/token 4992 |
+| 1.2B Cx8 `step7000` | 7073 or 7125 | [Recurred at 7125](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYJXP82K2602JQCCVHSMY69C) | Rank 23, block-0 attention forward, sequence 1/token 7424 |
+
+The Cx8 replay crossed its alternate step-7073 point but reproduced at its
+other historical repeat point, step 7125. Its block-0 output contains NaNs from
+token 7424 through the end of that local sequence, after which later blocks,
+local loss, backward, and the optimizer become non-finite. Likewise, both 810M
+replays first become non-finite in a GDN2 attention forward output. These three
+new captures match the phase signature of the reference-verified 1.2B Cx4
+failure, although token-by-token FP32/FP64 references have not yet been run on
+the 810M and Cx8 captures.
+
+The 275M and 1.2B Cx1 crossings mean those two historical failures are not
+deterministic under the current source/runtime. Because the older source cannot
+always be reconstructed exactly and an older-kernel 275M replay also crossed,
+these crossings must not be interpreted as release fixes. Overall, four of six
+original checkpoint-local failures reproduce with the actual release, so FLA
+`v0.5.2` does not resolve the original GDN2 stability problem.
+
 ### Original GDN2 275M Cx8, old step 36768
 
 This case did **not** reproduce. The read-only replay loaded exact `step36500`,
