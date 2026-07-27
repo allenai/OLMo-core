@@ -575,3 +575,36 @@ within 0.3--0.9% relative-L2 of the reference, comparable to KDA. The exception
 is `A_log` under the T=256, V=256 output loss: GDN2 reaches 1.93% without
 negative eigenvalues and 3.80% with them, versus 0.67% for matched KDA. All
 elements still pass tolerance and all gradient cosines exceed `0.99984`.
+
+### FLA v0.5.2 release qualification
+
+The original GDN2 environment used commit
+`cbb0a72efb55c18ca0ef4f298298317573ad2cb3`, whose package metadata also
+reported version `0.5.2`. That commit is not the released `v0.5.2` tag. The
+actual tag resolves to `9c8e42e762fce087c27b673af4922795d9edb85e`
+and includes the later migration of four GDN2 Triton kernels away from
+`tl.make_block_ptr` / `tl.advance`.
+
+On 2026-07-27, an isolated one-B300
+[release qualification](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYJSQRXFW1XH1Y1EQPEXVGM6)
+installed the tag itself and asserted the resolved VCS commit from installed
+package metadata. The full production-shape four-setting reference suite
+passed for `expand_v=1/2`, negative eigenvalues on/off, recomputed/retained
+backward, final recurrent state, and packed documents. Its numerical errors
+were effectively unchanged from the older pinned commit.
+
+A read-only
+[275M Cx8 replay](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYJTMTS631KAFF2S7H10AEDH)
+loaded the exact `step36500` model, optimizer, and data position and completed
+through step 37000, crossing the historical step-36768 failure. This is only
+weak evidence because a prior replay with the older pinned kernel had also
+crossed that boundary.
+
+The decisive
+[1.2B Cx4 replay](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYJVPMPT2ZCP9XF5YB4FDZQX)
+loaded exact `step9000` with the original 16-GPU, EP8, MB4, 524288-token-batch
+topology. The actual release reproduced the failure at exactly step 9059. The
+first non-finite was again rank 5, block-0 GDN2 forward, local sequence 1,
+token 4992; it then propagated through later blocks, local loss, backward, and
+all-rank gradients. Therefore FLA `v0.5.2` is environment-compatible, but its
+kernel update does **not** fix the persistent GDN2 recurrence overflow.

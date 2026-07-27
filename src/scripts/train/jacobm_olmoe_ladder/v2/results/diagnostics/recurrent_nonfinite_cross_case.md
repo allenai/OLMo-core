@@ -60,6 +60,17 @@ non-finite. Any data mitigation therefore needs to resample or replace filtered
 input IDs before forward, not merely extend the filter and preserve the current
 label-only mask behavior.
 
+#### Actual FLA v0.5.2 release replay
+
+The released `v0.5.2` tag is commit `9c8e42e`, not the older pinned
+`cbb0a72` commit that also identifies its package version as `0.5.2`. A
+[release-tag replay](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYJVPMPT2ZCP9XF5YB4FDZQX)
+asserted the installed VCS commit and repeated this exact checkpoint, optimizer,
+data position, 16-GPU/EP8/MB4 topology, and localization window. It reproduced
+the same failure at step 9059: rank 5, block-0 GDN2 forward, local sequence 1,
+token 4992. The actual release therefore does not change the established root
+cause or mitigate this persistent recurrence overflow.
+
 ### Original GDN2 275M Cx8, old step 36768
 
 This case did **not** reproduce. The read-only replay loaded exact `step36500`,

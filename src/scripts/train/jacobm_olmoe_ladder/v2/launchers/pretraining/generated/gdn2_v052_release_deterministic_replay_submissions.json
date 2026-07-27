@@ -1,0 +1,26 @@
+[
+  {
+    "task_name": "1p2b-cx4",
+    "run_name": "pt-1p2b-geometry-hybrid-gdn2-ev2-nope-gated-cx4-lr3e-4-ep8-sync-r1",
+    "source_checkpoint": "/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/olmo-ddp/pretraining/pt-1p2b-geometry-hybrid-gdn2-ev2-nope-gated-cx4-lr3e-4-ep8-sync-r1/step9000",
+    "source_commit": "0123bd400ca2aad5d48c24866f8b6a1a84b93107",
+    "fla_tag": "v0.5.2",
+    "fla_commit": "9c8e42e762fce087c27b673af4922795d9edb85e",
+    "previous_fla_commit": "cbb0a72efb55c18ca0ef4f298298317573ad2cb3",
+    "expected_failure_step": 9059,
+    "localize_start_step": 9050,
+    "hard_stop_step": 9075,
+    "world_size": 16,
+    "expert_parallel_size": 8,
+    "rank_microbatch_sequences": 4,
+    "checkpoint_writes": false,
+    "wandb": false,
+    "dump_dir": "/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/olmo-ddp/debug/gdn2-v052-release-deterministic-replay/1p2b-gdn2-ev2-neg-cx4-step9059-v052-release-r1",
+    "experiment_id": "01KYJVPMPT2ZCP9XF5YB4FDZQX",
+    "task_ids": [
+      "01KYJVPMQ13S62MFVSCVZ69R2X",
+      "01KYJVPMZFW7E6RYWWF81NSBPW"
+    ],
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYJVPMPT2ZCP9XF5YB4FDZQX"
+  }
+]
