@@ -13,13 +13,16 @@ LOGDIR=/scratch/users/prasann/ctc_llama_logs
 RAW=$REPO/debug/ctc_multifamily/hpqa_raw
 say() { echo "[drive_hpqa $(date '+%F %T')] $*"; }
 
-# ---- 1. wait for the raw pool (generated on the LOGIN node: pyserini's JVM coredumps on the
-#         compute nodes here). Done = the generator processes are gone AND files exist. ----
+# ---- 1. wait for the raw pool. The generator is owned by the coordinator and may run EITHER as a
+#         login-node process OR as a slurm job (job name gen-hpqa-*), so wait on both: a bare
+#         file-exists check would fire on a partially written pool (the loop appends one n-bucket
+#         at a time) and silently train on a fraction of the ladder. ----
 say "waiting for raw hotpotqa pool in $RAW"
 while true; do
   n_files=$(ls "$RAW"/*.jsonl 2>/dev/null | wc -l)
-  running=$(pgrep -u "$USER" -f generate_hotpotqa_data.py | wc -l)
-  if [ "$n_files" -gt 0 ] && [ "$running" -eq 0 ]; then break; fi
+  running_local=$(pgrep -u "$USER" -f generate_hotpotqa_data.py | wc -l)
+  running_slurm=$(squeue -u "$USER" -h -o '%j' 2>/dev/null | grep -c 'gen-hpqa')
+  if [ "$n_files" -gt 0 ] && [ "$running_local" -eq 0 ] && [ "$running_slurm" -eq 0 ]; then break; fi
   sleep 60
 done
 say "raw pool ready: $(ls "$RAW"/*.jsonl | wc -l) files, $(cat "$RAW"/*.jsonl | wc -l) lines"

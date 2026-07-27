@@ -37,6 +37,13 @@ DOC_START_ID="${DOC_START_ID:-128002}"; DOC_END_ID="${DOC_END_ID:-128003}"; EOS_
 OUTROOT="${OUTROOT:-$REPO/results/ctc_suite_llama}"
 MAXLEN="${MAXLEN:-}"
 MASTER_PORT="${MASTER_PORT:-$((29100 + RANDOM % 800))}"
+# ALLOW_SHORT=1 -> pass --allow-short-max-length. run_rung_eval now hard-fails when the requested
+# max_length cannot fit the longest prompt in the rung file. That guard is right by default, but the
+# contradiction rungs have a very long tail (16k rung: p50 29k, max 101k tokens under the Llama
+# tokenizer) and fitting the max would cost a ~100k-token KV cache per example. When one arm has
+# ALREADY been scored at a given budget, the matched choice is to score the other arm at the SAME
+# budget so both lose the SAME examples; the skipped count is recorded in the result JSON.
+ALLOWARG=""; [ -n "${ALLOW_SHORT:-}" ] && ALLOWARG="--allow-short-max-length"
 
 ENV=/data/prasann/conda/envs/corpus-reasoning-olmo
 [ -d "$ENV" ] || ENV=/scratch/users/prasann/conda/envs/corpus-reasoning-olmo
@@ -56,6 +63,6 @@ python -m scripts.eval.ctc_suite.run_rung_eval \
   --doc-start-id "$DOC_START_ID" --doc-end-id "$DOC_END_ID" --eos-token-id "$EOS_ID" \
   ${MAXLEN:+--max-length "$MAXLEN"} \
   --trained-ctx "2k-16k-joint-uniform" \
-  --batch-size 1 --master-port "$MASTER_PORT" \
+  --batch-size 1 --master-port "$MASTER_PORT" $ALLOWARG \
   --out-root "$OUTROOT" --small-eval-ok --nproc "$NGPU"
 echo "=== DONE $(date '+%F %T') rc=$? ==="
