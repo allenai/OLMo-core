@@ -2173,7 +2173,3 @@ def resolve_block_configs(
 
     assert len(block_configs) == n_layers
     return block_configs
-
-
-# Back-compat alias (canonical name is OLMoDDPModelConfig).
-MoEFusedV2TransformerConfig = OLMoDDPModelConfig

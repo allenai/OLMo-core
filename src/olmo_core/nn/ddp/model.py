@@ -1379,10 +1379,7 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
         return out
 
 
-# Compatibility name for existing configs, scripts, and imports.
-MoEFusedV2Transformer = OLMoDDPModel
-
-__all__ = ["OLMoDDPModel", "MoEFusedV2Transformer"]
+__all__ = ["OLMoDDPModel"]
 
 
 def _hide_cpu_inputs_from_torch(m, args, kwargs) -> Optional[Tuple[Any, Dict[str, Any]]]:

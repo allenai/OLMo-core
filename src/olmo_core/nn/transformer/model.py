@@ -403,9 +403,9 @@ class Transformer(nn.Module):
                 )
 
             # Fused MoE-v2 weights.
-            from ..moe.v2.block import MoEFusedV2TransformerBlock
+            from ..ddp.block import OLMoDDPTransformerBlock
 
-            if isinstance(block, MoEFusedV2TransformerBlock):
+            if isinstance(block, OLMoDDPTransformerBlock):
                 self.init_method.init_moe_v2(
                     block,
                     d_model=self.d_model,

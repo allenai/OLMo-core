@@ -23,13 +23,13 @@ from olmo_core.nn.transformer.model import (
 log = logging.getLogger(__name__)
 
 try:
+    from olmo_core.nn.ddp.model import OLMoDDPModel  # type: ignore
     from olmo_core.nn.moe.v2.hf.configuration_olmo3moe import (
         Olmo3MoeConfig,  # type: ignore
     )
-    from olmo_core.nn.moe.v2.model import MoEFusedV2Transformer  # type: ignore
 except ImportError:
     Olmo3MoeConfig = None  # type: ignore[assignment,misc]
-    MoEFusedV2Transformer = None  # type: ignore[assignment,misc]
+    OLMoDDPModel = None  # type: ignore[assignment,misc]
 
 try:
     from transformers import FlexOlmoConfig  # type: ignore
@@ -121,8 +121,8 @@ def _register_olmo3moe_auto_classes() -> None:
     Olmo3MoeForCausalLM.register_for_auto_class("AutoModelForCausalLM")
 
 
-def _get_olmo3moe_config(model: "MoEFusedV2Transformer") -> PretrainedConfig:
-    from olmo_core.nn.moe.v2.block import MoEFusedV2TransformerBlock
+def _get_olmo3moe_config(model: "OLMoDDPModel") -> PretrainedConfig:
+    from olmo_core.nn.ddp.block import OLMoDDPTransformerBlock
 
     if Olmo3MoeConfig is None:
         raise RuntimeError(
@@ -136,10 +136,10 @@ def _get_olmo3moe_config(model: "MoEFusedV2Transformer") -> PretrainedConfig:
 
     # Identify the dense (non-MoE) layers and pick a representative MoE and dense block.
     dense_layers_indices: List[int] = []
-    moe_block: Optional[MoEFusedV2TransformerBlock] = None
+    moe_block: Optional[OLMoDDPTransformerBlock] = None
     dense_block: Optional[TransformerBlock] = None
     for idx, block in enumerate(blocks):
-        if isinstance(block, MoEFusedV2TransformerBlock):
+        if isinstance(block, OLMoDDPTransformerBlock):
             if moe_block is None:
                 moe_block = block
         else:
@@ -156,7 +156,7 @@ def _get_olmo3moe_config(model: "MoEFusedV2Transformer") -> PretrainedConfig:
 
     if moe_block is None:
         raise NotImplementedError(
-            f"No {MoEFusedV2TransformerBlock.__name__} found, unable to build HF config for "
+            f"No {OLMoDDPTransformerBlock.__name__} found, unable to build HF config for "
             f"{model.__class__.__name__}"
         )
 
@@ -335,7 +335,7 @@ def _get_olmo3moe_config(model: "MoEFusedV2Transformer") -> PretrainedConfig:
 
 @beta_feature
 def get_hf_config(model: Transformer) -> PretrainedConfig:
-    if MoEFusedV2Transformer is not None and isinstance(model, MoEFusedV2Transformer):
+    if OLMoDDPModel is not None and isinstance(model, OLMoDDPModel):
         return _get_olmo3moe_config(model)
 
     if isinstance(model, NormalizedTransformer):

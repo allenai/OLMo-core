@@ -1432,12 +1432,7 @@ class OLMoDDPTransformerBlock(olmo_core.nn.transformer.block.TransformerBlockBas
             self.routed_experts_router.post_batch(dry_run=dry_run)
 
 
-MoEFusedV2TransformerBlockConfig = OLMoDDPTransformerBlockConfig
-MoEFusedV2TransformerBlock = OLMoDDPTransformerBlock
-
 __all__ = [
     "OLMoDDPTransformerBlock",
     "OLMoDDPTransformerBlockConfig",
-    "MoEFusedV2TransformerBlock",
-    "MoEFusedV2TransformerBlockConfig",
 ]

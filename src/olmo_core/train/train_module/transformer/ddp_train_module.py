@@ -3195,7 +3195,4 @@ class OLMoDDPTrainModule(TrainModule):
         return x
 
 
-# Compatibility name for existing configs, scripts, and imports.
-MoEV2TransformerTrainModule = OLMoDDPTrainModule
-
-__all__ = ["OLMoDDPTrainModule", "MoEV2TransformerTrainModule"]
+__all__ = ["OLMoDDPTrainModule"]
