@@ -72,10 +72,13 @@ without reference points, then one shared observed-best plot containing only
 bracketed curves for wide integration, matching gated-NoPE GDN1 geometry,
 original `expand_v=2` GDN2, canonical `expand_v=1`/nonnegative GDN2, and
 canonical KDA. It resolves the 32 paired 275M sweep jobs plus the 12 canonical
-GDN2 scale-transfer jobs by exact W&B display name, so queued jobs can
-initialize without a registry edit; duplicate exact names fail closed and
-require an explicit resume-segment decision. Pass `--resolve-only` while
-training is active to audit registration without publishing partial plots.
+GDN2 scale-transfer jobs, four canonical-KDA 480M jobs, and eight separately
+named KDA `expand_v=2`/negative-eigenvalue transfers by exact W&B display name.
+The latter family gets its own fixed-LR plot and result ledgers rather than
+entering the canonical U-plots. Queued jobs can initialize without a registry
+edit; duplicate exact names fail closed and require an explicit resume-segment
+decision. Pass `--resolve-only` while training is active to audit registration
+without publishing partial plots.
 
 The script writes each selected wave into one matching artifact directory and
 uses the final-250M-token mean training CE. The 275M outputs follow the strict

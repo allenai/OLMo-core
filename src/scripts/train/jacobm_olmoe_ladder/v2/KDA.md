@@ -115,3 +115,10 @@ write distinct W&B/checkpoint identities containing `kda-ev2-neg`.
 `kda_ev2_neg_fixed_lr_scale_comparison.png` plus its own JSON/Markdown result
 ledger. These fixed-LR points do not enter the canonical 275M LR-sweep U-plots
 or observed-optimal summary.
+
+At the 2026-07-27 04:31 UTC refresh, 275M Cx1/Cx2 and 480M Cx1 had finished
+with strict final-250M CEs `2.692695`, `2.562520`, and `2.492283`; the other
+five cells were running without a failed attempt. At the two completed 275M
+points, `expand_v=2` + negative-eigenvalue KDA improves over both matching
+GDN1 and canonical KDA. The 480M Cx1 result is effectively tied with canonical
+GDN2 (`-0.000599` CE) and improves over canonical KDA by `0.025544`.

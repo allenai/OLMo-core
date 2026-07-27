@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-07-26T22:05:46.850876+00:00",
+  "generated_at": "2026-07-27T04:33:31.709904+00:00",
   "project": "ai2-llm/jacobm-olmoe-ladder",
   "selection_metric": "mean train/CE loss over the final 250M tokens",
   "selection_rule": "The best-of plot shows the observed best LR only after that variant/Cx has an interior observed minimum and a valid local quadratic fit. Predicted minima are visual aids and are not selected results.",

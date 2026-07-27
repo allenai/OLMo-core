@@ -357,6 +357,10 @@ def kda_ev2_neg_scale_wave(
         ),
         intervention=kda_ev2_neg,
         uplot_baselines=False,
+        model_mode_labels={
+            "275m": "GDN1-LR transfer",
+            "480m": "wide-LR transfer",
+        },
     )
 
 

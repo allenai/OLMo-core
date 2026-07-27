@@ -4,10 +4,11 @@ Record post-migration experiment waves here. Per-run rows must include Beaker
 job IDs and W&B IDs once they exist. Detailed migration-era DDP jobs remain in
 [`../v1/DDP_RUNS.md`](../v1/DDP_RUNS.md).
 
-## Live status snapshot (2026-07-26 17:34 UTC)
+## Rolling status ledger
 
-This is the current source of truth for active V2 work. The detailed sections
-below retain the full launch and retry history.
+Rows are updated as their corresponding collectors run; detailed sections
+retain the full launch and retry history. The canonical GDN2/KDA and new KDA
+transfer rows were refreshed at 2026-07-27 04:31 UTC.
 
 | Stage | Family / cell | State | Progress / result | Current W&B |
 |---|---|---|---|---|
@@ -29,9 +30,9 @@ below retain the full launch and retry history.
 | pretraining | 275M GDN2 stability 2x2 | 3/3 finished | Fresh Cx8/LR `1.6e-3` ev1+negative, ev2+nonnegative, and canonical ev1+nonnegative controls all completed | [work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYBVM2N2D3DM67S8HWARJP6C) |
 | pretraining | canonical GDN2 (`expand_v=1`, nonnegative) 275M sweep | 16/16 finished | All four Cx curves are complete and bracketed; observed-best LR is `1.6e-3` at every Cx | [results](results/pretraining/canonical_gdn2_kda/results.md) |
 | pretraining | canonical KDA 275M sweep | 16/16 finished | All four Cx curves are complete and bracketed; observed-best LR is `1.6e-3` at every Cx | [results](results/pretraining/canonical_gdn2_kda/results.md) |
-| pretraining | canonical GDN2 larger-scale transfer | 5 finished / 5 running / 2 failed | 810M Cx2 newly finished at strict final-250M CE `2.260980`; 480M Cx2 and 1.2B Cx2 are repeatable numerical failures | [results](results/pretraining/canonical_gdn2_kda/scale_results.md) |
-| pretraining | canonical KDA 480M stability transfer | 2 finished / 2 running | Cx1/Cx2 strict final-250M CEs are `2.517826` / `2.412884`; Cx4/Cx8 are healthy | [launches](#canonical-kda-480m-stability-transfer) |
-| pretraining | KDA `expand_v=2`, negative-eigenvalue transfer (275M/480M) | 8 submitted | Distinct fixed-LR family: matching-GDN1 LRs at 275M and transferred-wide LRs at 480M; 60 GPUs at full concurrency | [launches](#kda-expand_v2-negative-eigenvalue-transfer) |
+| pretraining | canonical GDN2 larger-scale transfer | 8 finished / 2 running / 2 failed | 810M Cx4/Cx8 and 1.2B Cx1 newly collected at strict final-250M CE `2.181919` / `2.109020` / `2.253605`; 480M Cx2 and 1.2B Cx2 remain failed | [results](results/pretraining/canonical_gdn2_kda/scale_results.md) |
+| pretraining | canonical KDA 480M stability transfer | 4/4 finished | Cx1/2/4/8 strict final-250M CEs are `2.517826`, `2.412884`, `2.323228`, and `2.237558` | [launches](#canonical-kda-480m-stability-transfer) |
+| pretraining | KDA `expand_v=2`, negative-eigenvalue transfer (275M/480M) | 3 finished / 5 running | Strict final-250M CE: 275M Cx1 `2.692695`, 275M Cx2 `2.562520`, 480M Cx1 `2.492283`; no failures | [results](results/pretraining/canonical_gdn2_kda/kda_ev2_neg_scale_results.md) |
 | diagnostic | GDN2 production-shape PyTorch reference 2x2 | finished | All four `expand_v`/negative-eigenvalue cells passed forward, final-state, backward, packed-document, and recompute/retain comparisons | [work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYBY8DXT5BVM85WYKAT5TXQN) |
 | diagnostic | Matched KDA/GDN2 numerical audit | finished | All 40 one/four-chunk output/state comparisons passed; GDN2 is broadly KDA-like, with localized 3.80% `A_log` relative-L2 error at T256/V256/negative eigvals | [work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYBZX8MHJ611ZSJD43SYS9HZ) / [results](results/diagnostics/matched_kda_gdn2_numerics.md) |
 | diagnostic | KDA reference + 50-step MB16 qualification | finished | Reference/packed checks passed; zero skipped steps; steady-state 404.7 TFLOPs/GPU and 290.5K TPS on one B300 | [work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYBX6WX46F9B3HV3W59G368R) / [3s14s676](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/3s14s676) |
@@ -41,13 +42,10 @@ below retain the full launch and retry history.
 | midtraining | first hybrid 480M Cx8 | finished | 100.001B; final checkpoint `step95368`; validation finished | [mnp9rv5l](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/mnp9rv5l) |
 | validation | V2 post-training backfills | 116 complete / 1 running; 1 new checkpoint pending | The 1.2B gated-RoPE Cx8 retry is actively progressing through the full suite; newly finished GDN1 810M Cx8 still needs a separate backfill | [results](results/validation/hybrid_full.md) |
 
-The live Beaker footprint is eight logical running jobs and zero queued jobs:
-five canonical GDN2 transfers (88 B300s), KDA 480M Cx4/Cx8 (24 B300s), and
-the eight-GPU 1.2B gated-RoPE Cx8 validation retry. Training is urgent and
-unallocated; validation is high and unallocated. There is no duplicate logical
-cell, and no v1 pretraining, midtraining, long-context training, or RULER job
-is active. Canonical GDN2 480M Cx2 and 1.2B Cx2 are terminal failures and are
-not counted as live.
+Within the families refreshed at 2026-07-27 04:31 UTC, five new KDA transfer
+cells and canonical GDN2 1.2B Cx4/Cx8 remain running. None of the new KDA cells
+has failed. Canonical GDN2 480M Cx2 and 1.2B Cx2 remain terminal numerical
+failures and are not counted as live.
 
 The formal pretraining results and plots use finished runs only and enforce a
 complete final-250M-token history. The gated-RoPE sweep is now complete. Its
@@ -198,17 +196,13 @@ and
 Live, queued, or unresolved canonical cells are labeled pending; only finished
 runs with a complete strict final-250M-token window enter the plotted series.
 
-Status at 2026-07-26 17:34 UTC: 480M Cx1/Cx4/Cx8 and 810M Cx1/Cx2 have strict
-final-250M CEs `2.492882`, `2.293165`, `2.226409`, `2.346904`, and `2.260980`.
-Five cells are running: 810M Cx4/Cx8 and 1.2B Cx1/Cx4/Cx8. Their latest
-progress is 87,600/109,929, 105,390/146,572, 59,500/83,962,
-90,000/167,923, and 104,000/223,898 steps, respectively. The 480M Cx2 retry
-again failed on non-finite loss at step 24,668, essentially the same point as
-its earlier failures around step 24,659. The collector registers the complete
-explicit W&B resume chain but keeps the cell pending because no attempt
-finished. The 1.2B Cx2 cell failed on a non-finite total gradient norm at step
-5,560; subsequent NCCL/device assertions are teardown effects. Neither failed
-cell was restarted during this read-only refresh.
+Status at 2026-07-27 04:31 UTC: 480M Cx1/Cx4/Cx8 have strict final-250M CEs
+`2.492882`, `2.293165`, and `2.226409`. All four 810M cells are now finished at
+`2.346904`, `2.260980`, `2.181919`, and `2.109020`. The 1.2B Cx1 explicit
+resume chain also finished at `2.253605`; Cx4/Cx8 remain running. The 480M Cx2
+and 1.2B Cx2 repeatable numerical failures remain pending. The collector
+registers the complete explicit W&B chains and enforces the full final-250M
+window before admitting any result.
 
 ## Canonical KDA 480M stability transfer
 
@@ -234,13 +228,12 @@ checkpoints, no in-loop evaluation, and distinct checkpoint/W&B identities.
 The immutable submission ledger is
 [`launchers/pretraining/generated/480m_geometry_kda_ev1_noneg_nope_gated_submissions.json`](launchers/pretraining/generated/480m_geometry_kda_ev1_noneg_nope_gated_submissions.json).
 
-Status at 2026-07-26 17:34 UTC: Cx1 and Cx2 finished cleanly, with strict
-final-250M CEs `2.517826` and `2.412884`. Cx4 is at 53,060/60,133 steps with
-an ETA near 1h16m; Cx8 is at 51,460/80,177 with an ETA near 4h7m. All four
-exact display names are registered in `plot_canonical_gdn2_kda.py`. The
-four-size fixed-LR comparison includes canonical KDA as a finished-only
-series alongside wide integration, matching GDN1, original GDN2, and
-canonical GDN2.
+Status at 2026-07-27 04:31 UTC: all four cells finished cleanly without a
+failed attempt. Their strict final-250M CEs at Cx1/2/4/8 are `2.517826`,
+`2.412884`, `2.323228`, and `2.237558`. All exact display names are registered
+in `plot_canonical_gdn2_kda.py`, and the fixed-LR comparison includes canonical
+KDA as a finished-only series alongside wide integration, matching GDN1,
+original GDN2, and canonical GDN2.
 
 ## KDA `expand_v=2`, negative-eigenvalue transfer
 
@@ -272,6 +265,12 @@ and
 The dedicated finished-only plot is
 `plots/pretraining/canonical_gdn2_kda/kda_ev2_neg_fixed_lr_scale_comparison.png`;
 its result ledgers are kept separate from the canonical KDA LR sweep.
+
+Status at 2026-07-27 04:31 UTC: 275M Cx1/Cx2 and 480M Cx1 finished with strict
+final-250M CEs `2.692695`, `2.562520`, and `2.492283`. The remaining five cells
+are running and none has failed. The new setting beats matching GDN1 and
+canonical KDA at both completed 275M cells. At 480M Cx1 it is within `0.000599`
+CE of canonical GDN2 and improves on canonical KDA by `0.025544`.
 
 ## 275M geometry-matched gated-NoPE GDN2 sweep
 

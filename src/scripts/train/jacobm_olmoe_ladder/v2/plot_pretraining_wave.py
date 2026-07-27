@@ -78,6 +78,7 @@ class Wave:
     intervention: Variant
     additional_baselines: tuple[Variant, ...] = ()
     uplot_baselines: bool = False
+    model_mode_labels: dict[str, str] | None = None
 
 
 @dataclass(frozen=True)
@@ -995,7 +996,10 @@ def plot_fixed_lr_scale_comparison(
                 ha="left",
                 va="bottom",
             )
-        mode = "observed-optimal LR" if model in wave.lr_sweep_models else "wide-LR transfer"
+        default_mode = (
+            "observed-optimal LR" if model in wave.lr_sweep_models else "wide-LR transfer"
+        )
+        mode = (wave.model_mode_labels or {}).get(model, default_mode)
         ax.set_xscale("log", base=2)
         ax.set_xticks((1, 2, 4, 8))
         ax.set_xticklabels(("Cx1", "Cx2", "Cx4", "Cx8"))
