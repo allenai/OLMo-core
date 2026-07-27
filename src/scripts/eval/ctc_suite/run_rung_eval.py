@@ -24,9 +24,12 @@ The driver shells out via ``torchrun``, parses the evaluator's summary JSON, and
 record through :mod:`results_io` (per-rung JSON + ``all_results.jsonl``), keeping the raw evaluator
 JSON and the generations dump next to the rung file. Known traps enforced:
 
-* ``--max-length`` defaults to ``rung_tokens + 2048`` and is bumped/refused whenever it cannot fit
-  prompt + decode budget (maxlen-truncation trap: an undersized max-length truncates the prompt and
-  silently produces metric=0 at parse_rate=1).
+* ``--max-length`` is sized from the ACTUAL tokenized prompt distribution (a pre-flight audit of the
+  eval file), not from the rung label, and the run HARD-FAILS if any example would be skipped.
+  The rung label does not bound prompt length -- these files fix the corpus size and let per-document
+  length vary -- so a label-derived budget silently skipped 354/500 contradiction examples per rung,
+  scoring them 0 at parse_rate=1.0 in both arms and manufacturing a "no gap" result. Disable with
+  ``--no-prompt-audit`` only if the budget was verified some other way.
 * metric==0.0 at parse_rate==1.0 -> nonzero exit with a loud "dump generations" message.
 * wall-clock per rung recorded into ``aux_metrics.eval_seconds``.
 
@@ -56,6 +59,79 @@ except ImportError:  # pragma: no cover
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 EVAL_DIR = REPO_ROOT / "src" / "corpus_reasoning" / "eval"
+
+#: Safety margin (tokens) added on top of the longest measured prompt + the decode budget when
+#: auto-sizing ``--max-length``. Covers chat-template/BOS drift between this preflight and the
+#: evaluator's own rendering.
+MAXLEN_MARGIN = 128
+
+
+def measure_prompt_lengths(
+    eval_jsonl: str,
+    task: str,
+    tokenizer: str,
+    cot_mode: str,
+    doc_start_id: int,
+    doc_end_id: int,
+    limit: int = 0,
+):
+    """Tokenize the eval file's prompts and return their lengths, longest first.
+
+    Renders through the SAME ``segment_prompt_to_chunks`` + ``emit_document_chunk_dense`` path the
+    evaluators use, so the numbers are the ones that will actually be compared against
+    ``max_length - max_new`` at eval time.
+
+    This exists because a rung's LABEL does not bound its prompt length. The rung files fix the
+    corpus size (e.g. contradiction: 77/167/346/705 claims) while per-document length varies, so at
+    "rung 4096" real prompts ranged 3,457-23,796 tokens. Prompts over budget are silently skipped
+    and scored 0 while ``parse_rate`` still reports 1.0.
+
+    :param eval_jsonl: The per-rung eval JSONL.
+    :param task: Canonical task key (selects the segmentation config).
+    :param tokenizer: HF tokenizer id or local dir.
+    :param cot_mode: Must match the training shard.
+    :param doc_start_id: ``<|box_start|>`` id for this family.
+    :param doc_end_id: ``<|box_end|>`` id for this family.
+    :param limit: If > 0, only measure this many examples (sampling makes the audit unsound --
+        use only for a quick smoke check).
+
+    :returns: ``(lengths_sorted_desc, n_examples)``.
+    """
+    sys.path.insert(0, str(REPO_ROOT / "src"))
+    from transformers import AutoTokenizer
+
+    from olmo_core.data.document_chunk_landmark import (
+        emit_document_chunk_dense,
+        segment_prompt_to_chunks,
+    )
+
+    chunk_by = "line" if task == "oolong" else "document"
+    tok = AutoTokenizer.from_pretrained(tokenizer)
+    lengths = []
+    with open(eval_jsonl) as f:
+        for i, line in enumerate(f):
+            if limit and i >= limit:
+                break
+            line = line.strip()
+            if not line:
+                continue
+            segs, _, _ = segment_prompt_to_chunks(
+                tok,
+                json.loads(line),
+                task,
+                query_position="both",
+                cot_mode=cot_mode,
+                chunk_by=chunk_by,
+                item_regex=r"\|\|",
+                include_answer=False,
+                doc_start_id=doc_start_id,
+                doc_end_id=doc_end_id,
+            )
+            ids, _ = emit_document_chunk_dense(segs)
+            lengths.append(len(ids))
+    lengths.sort(reverse=True)
+    return lengths, len(lengths)
+
 
 #: Complexity class per canonical ``--task`` name (plan §3 table). ``N`` = O(N), ``NM`` = O(NM),
 #: ``N2`` = O(N^2), ``N3`` = O(N^3).
@@ -295,6 +371,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="cap on eval examples (default: all; the evaluators' own default is 100, "
         "which would silently shrink the eval)",
     )
+    ap.add_argument(
+        "--no-prompt-audit",
+        action="store_true",
+        help="skip the pre-flight prompt-length audit. The audit tokenizes the eval file once "
+        "(seconds to a couple of minutes) and is what sizes --max-length correctly and hard-fails "
+        "instead of silently scoring skipped examples 0. Only skip it if you have already verified "
+        "the budget some other way.",
+    )
     ap.add_argument("--nproc", type=int, default=8, help="torchrun --nproc_per_node")
     ap.add_argument(
         "--batch-size",
@@ -373,29 +457,72 @@ def resolve(args: argparse.Namespace):
 
     # ---- maxlen-truncation trap ----
     # The evaluators skip any prompt longer than (max_length - max_new) and score it as empty --
-    # i.e. an undersized max-length reads as a perfectly-parsed 0.0. Default to rung + 2048 and
-    # bump until the decode budget fits; refuse an explicit undersized value.
-    need = args.rung_tokens + max_new + 512
+    # i.e. an undersized max-length reads as a perfectly-parsed 0.0.
+    #
+    # The rung LABEL does not bound prompt length. These rung files fix the CORPUS SIZE and let
+    # per-document length vary, so measured prompts at "rung 4096" spanned 3,457-23,796 tokens
+    # against a label-derived budget of 5,632 -- 354/500 examples silently scored 0, in both arms,
+    # which read as "no dense-vs-chunked gap". So the budget is sized from the ACTUAL tokenized
+    # prompt distribution, and any example that would be skipped is a hard failure, not a 0.
+    prompt_lengths = None
+    if not args.no_prompt_audit:
+        prompt_lengths, n_measured = measure_prompt_lengths(
+            args.eval_jsonl,
+            task,
+            args.tokenizer,
+            cot_mode,
+            args.doc_start_id,
+            args.doc_end_id,
+        )
+        print(
+            f"[run_rung_eval] prompt audit ({n_measured} examples): max={prompt_lengths[0]} "
+            f"p50={prompt_lengths[len(prompt_lengths) // 2]} min={prompt_lengths[-1]} "
+            f"(rung label {args.rung_tokens})",
+            flush=True,
+        )
+
+    if prompt_lengths is not None:
+        need = prompt_lengths[0] + max_new + MAXLEN_MARGIN
+    else:
+        need = args.rung_tokens + max_new + 512
+
     if args.max_length is None:
-        max_length = args.rung_tokens + 2048
-        if max_length < need:
+        max_length = max(args.rung_tokens + 2048, need)
+        if prompt_lengths is not None:
             print(
-                f"[run_rung_eval] NOTE: default max_length {max_length} cannot fit rung "
-                f"{args.rung_tokens} + max_new {max_new}; bumping to {need} "
-                "(maxlen-truncation trap).",
+                f"[run_rung_eval] auto-sized --max-length {max_length} from the measured prompt "
+                f"distribution (label-derived default would have been {args.rung_tokens + 2048})",
                 flush=True,
             )
-            max_length = need
     else:
         max_length = args.max_length
-        if max_length < need and not args.allow_short_max_length:
+
+    if prompt_lengths is not None:
+        budget = max_length - max_new
+        skipped = sum(1 for L in prompt_lengths if L > budget)
+        if skipped and not args.allow_short_max_length:
             raise SystemExit(
-                f"--max-length {max_length} < rung_tokens {args.rung_tokens} + max_new {max_new} "
-                f"+ 512 = {need}: prompts would be truncated/skipped and the eval would silently "
-                "report metric=0 at parse_rate=1 (see the goldgrad maxlen-truncation record). "
-                "Raise --max-length (or pass --allow-short-max-length if the prompts are truly "
-                "shorter than the rung label)."
+                f"--max-length {max_length} would SKIP {skipped}/{len(prompt_lengths)} examples "
+                f"(prompt budget = max_length - max_new = {budget}; longest prompt "
+                f"{prompt_lengths[0]}). Those examples are scored 0 while parse_rate still reports "
+                f"1.0, so the run would look complete and be wrong. Use --max-length "
+                f"{prompt_lengths[0] + max_new + MAXLEN_MARGIN} (or accept the loss explicitly with "
+                "--allow-short-max-length, which records the skipped count in the result JSON)."
             )
+        if skipped:
+            print(
+                f"[run_rung_eval] WARNING: --allow-short-max-length set; {skipped}/"
+                f"{len(prompt_lengths)} examples exceed the prompt budget and will score 0.",
+                flush=True,
+            )
+    elif args.max_length is not None and max_length < need and not args.allow_short_max_length:
+        raise SystemExit(
+            f"--max-length {max_length} < rung_tokens {args.rung_tokens} + max_new {max_new} "
+            f"+ 512 = {need}: prompts would be truncated/skipped and the eval would silently "
+            "report metric=0 at parse_rate=1 (see the goldgrad maxlen-truncation record). "
+            "Raise --max-length (or pass --allow-short-max-length if the prompts are truly "
+            "shorter than the rung label)."
+        )
 
     out_dir = os.path.join(
         args.out_root,
