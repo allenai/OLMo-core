@@ -134,11 +134,7 @@ SEQUENCE_LENGTH = 8192
 
 torch.set_float32_matmul_precision("high")
 
-IN_EVAL_MODE = False
 import sys  # noqa: E402
-
-if len(sys.argv) > 1 and sys.argv[1] == "eval_checkpoints":
-    IN_EVAL_MODE = True
 
 
 EVAL_INTERVAL = 2000
@@ -218,12 +214,6 @@ if PP_DIM > 1:
 else:
     SPLIT_POINTS = None
 
-
-if IN_EVAL_MODE:
-    MICRO_BSZ = 4
-    EP_DIM = 1
-    PP_DIM = 1
-    NUM_LAYERS = 31
 
 ############
 
@@ -603,8 +593,6 @@ WORK_DIR = "/workspace"
 def build_trainer_config(common: CommonComponents) -> TrainerConfig:
     cancel_check_interval = 10
 
-    cluster = "ai2/jupiter"
-    # cluster = 'cirrascale'
     from olmo_core.train.checkpoint import CheckpointerConfig
 
     config = (
@@ -664,10 +652,6 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             ),
         )
     )
-    if IN_EVAL_MODE:
-        config = config.with_recommended_evals(
-            common.tokenizer, SEQUENCE_LENGTH, cluster, task_set="fast", eval_interval=EVAL_INTERVAL
-        )
 
     return config
 

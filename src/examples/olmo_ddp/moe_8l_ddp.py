@@ -149,22 +149,13 @@ def build_model_config(common: CommonComponents) -> OLMoDDPModelConfig:
     layer_norm = _layer_norm()
     ep_path = _expert_parallel_path()
     if TWO_BATCH_OVERLAP:
-        if RECOMPUTE_EACH_BLOCK:
-            raise ValueError(
-                "TECH_REPORT_TWO_BATCH_OVERLAP=1 cannot be combined with "
-                "TECH_REPORT_RECOMPUTE_EACH_BLOCK=1"
-            )
-        if ep_path != ExpertParallelPath.rowwise_nvshmem:
-            raise ValueError(
-                "TECH_REPORT_TWO_BATCH_OVERLAP=1 requires "
-                "TECH_REPORT_EP_PATH=rowwise_nvshmem (or auto with EP > 1)"
-            )
-        if RANK_MICROBATCH_SEQUENCES % 2 != 0:
-            raise ValueError(
-                "TECH_REPORT_TWO_BATCH_OVERLAP=1 requires an even "
-                "TECH_REPORT_RANK_MICROBATCH_SEQUENCES; got "
-                f"{RANK_MICROBATCH_SEQUENCES}"
-            )
+        # The EP 'tbo' schedule selected below is not yet wired into the core block/train dispatch
+        # (ExpertParallelConfig.validate rejects it), so enabling two-batch overlap would fail
+        # during model construction. Reject it up front with a clear message until that path lands.
+        raise ValueError(
+            "TECH_REPORT_TWO_BATCH_OVERLAP=1 is not supported yet: the EP 'tbo' schedule is not "
+            "wired into the core dispatch. Run without two-batch overlap."
+        )
     if MXFP8_MLP and ep_path != ExpertParallelPath.rowwise_nvshmem:
         raise ValueError(
             "TECH_REPORT_MXFP8_MLP currently requires "
