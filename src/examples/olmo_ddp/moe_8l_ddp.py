@@ -3,6 +3,7 @@
 import math
 from copy import deepcopy
 from functools import partial
+from typing import Any
 
 from moe_8l_common import (
     BETAS,
@@ -99,7 +100,7 @@ def _attention(layer_norm: LayerNormConfig) -> AttentionConfig:
     # both configs. The benchmark is about sparse-model distribution, not an
     # attention-kernel comparison.
     use_mxfp8 = MXFP8_ATTN_QKV or MXFP8_ATTN_OUT or MXFP8_ATTN_SAVE_QKV
-    mxfp8_options = {}
+    mxfp8_options: dict[str, Any] = {}
     if use_mxfp8:
         # MXFP8 projection support is implemented by the fused-v2 attention
         # module. Do not pass these module-specific options to default

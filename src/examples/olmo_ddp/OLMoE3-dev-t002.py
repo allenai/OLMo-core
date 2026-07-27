@@ -481,7 +481,7 @@ def build_model_config(common: CommonComponents) -> OLMoDDPModelConfig:
 
 
 # patch
-MONKEY_PATCH_DECAY_START_TOKENS = None  # None for disabled, or int((1000e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE) for starting at 1T tokens
+MONKEY_PATCH_DECAY_START_TOKENS: int | None = None  # None for disabled, or int((1000e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE) for starting at 1T tokens
 MONKEY_PATCH_DECAY_DURATION_TOKENS = int((200e9 // GLOBAL_BATCH_SIZE) * GLOBAL_BATCH_SIZE)
 MONKEY_PATCH_DECAY_END_FRACTION = SCHED_FINAL_FRACTION
 MONKEY_PATCH_DECAY_SHAPE = ComposableSchedulerStageType.cosine

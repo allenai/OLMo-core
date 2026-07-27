@@ -44,7 +44,7 @@ from olmo_core.train.callbacks import (
     ProfilerCallback,
     SlackNotifierCallback,
 )
-from olmo_core.train.train_module import TrainModuleConfig, TransformerTrainModuleConfig
+from olmo_core.train.train_module import TrainModuleConfig
 from olmo_core.utils import prepare_cli_environment, seed_all
 
 from .common import build_launch_config, get_beaker_username, get_root_dir, get_work_dir
@@ -334,7 +334,7 @@ def build_config(
     common_config_builder: Callable[..., CommonComponents] = build_common_components,
     data_config_builder: Callable[..., DataComponents] = build_default_data_components,
     model_config_builder: Callable[[CommonComponents], TransformerConfig],
-    train_module_config_builder: Callable[[CommonComponents], TransformerTrainModuleConfig],
+    train_module_config_builder: Callable[[CommonComponents], TrainModuleConfig],
     trainer_config_builder: Callable[[CommonComponents], TrainerConfig],
     finalize_config: Optional[Callable[[ExperimentConfig], None]] = None,
     tokenizer: TokenizerConfig = TokenizerConfig.dolma2(),
@@ -361,7 +361,7 @@ def build_config(
     :param model_config_builder: Function to build the transformer model configuration. This should accept a
         ``CommonComponents`` instance and return a ``TransformerConfig`` instance.
     :param train_module_config_builder: Function to build the training module configuration. This should accept a
-        ``CommonComponents`` instance and return a ``TransformerTrainModuleConfig`` instance.
+        ``CommonComponents`` instance and return a ``TrainModuleConfig`` instance.
     :param trainer_config_builder: Function to build the trainer configuration. This should accept a
         ``CommonComponents`` instance and return a ``TrainerConfig`` instance.
     :param finalize_config: Optional function to finalize the configuration. This should accept an
