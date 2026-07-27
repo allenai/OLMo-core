@@ -101,7 +101,7 @@ def build_config(opts: argparse.Namespace, overrides: List[str]) -> ExperimentCo
         TrainerConfig(
             save_folder=opts.save_folder,
             save_overwrite=True,
-            load_path="https://storage.googleapis.com/ai2-llm/checkpoints/OLMo25/step596047/",
+            load_path="https://huggingface.co/buckets/allenai/ai2-llm/resolve/checkpoints/OLMo25/step596047/",
             load_strategy=LoadStrategy.always,
             load_trainer_state=True,
             load_optim_state=True,
