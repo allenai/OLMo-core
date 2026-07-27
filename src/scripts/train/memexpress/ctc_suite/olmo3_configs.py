@@ -27,6 +27,8 @@ comparison stays internally valid:
 Neither change touches any parameter shape, so the converted distcp base loads unchanged.
 """
 
+import os
+
 from olmo_core.nn.rope import YaRNRoPEScalingConfig
 from olmo_core.nn.transformer import TransformerConfig
 
@@ -37,7 +39,31 @@ __all__ = ["OLMO3_MARKER_TOKENIZER", "OLMO3_VOCAB_SIZE", "olmo3_7B_ctc"]
 #: ``<|box_end|>`` spellings, which the document-chunk converter and the native eval harness wrap
 #: documents with and verify against ``tok.convert_tokens_to_ids``. Stock ``allenai/dolma2-tokenizer``
 #: has no such tokens, so pointing at it instead makes the converter's marker-id check fail.
-OLMO3_MARKER_TOKENIZER = "/scratch/users/prasann/hf_models/Olmo-3-1025-7B-docchunk"
+#: Resolution order: ``$OLMO3_MARKER_TOKENIZER`` -> the Berkeley ``/scratch`` copy -> the Beaker
+#: weka copy. The same runs execute on both clusters and neither path exists on the other, so a
+#: single hardcoded absolute path would break whichever side it was not written for.
+_OLMO3_TOKENIZER_CANDIDATES = (
+    "/scratch/users/prasann/hf_models/Olmo-3-1025-7B-docchunk",
+    "/weka/oe-training-default/ai2-llm/checkpoints/prasanns/ctc_olmo3/tokenizer",
+)
+
+
+def _resolve_marker_tokenizer() -> str:
+    """Pick the first marker-tokenizer copy that exists on this host.
+
+    :returns: A path to the patched tokenizer dir (falls back to the Berkeley path so the error
+        message names a real location if neither is present).
+    """
+    override = os.environ.get("OLMO3_MARKER_TOKENIZER")
+    if override:
+        return override
+    for path in _OLMO3_TOKENIZER_CANDIDATES:
+        if os.path.isdir(path):
+            return path
+    return _OLMO3_TOKENIZER_CANDIDATES[0]
+
+
+OLMO3_MARKER_TOKENIZER = _resolve_marker_tokenizer()
 
 #: olmo-core's padded dolma2 embedding size (100278 real ids -> 100352 rows). This is what
 #: ``convert_checkpoint_from_hf.py --model-arch olmo3_7b --tokenizer dolma2`` writes, so the model
