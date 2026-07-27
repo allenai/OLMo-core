@@ -1,0 +1,13 @@
+[
+  {
+    "experiment_name": "jacobm-275m-kda-672-fa4-mxfp8-grid-r1",
+    "experiment_id": "01KYJM4P6ZDD3QQRC6HWR4PCPN",
+    "tasks": [
+      "fusedv2-te-bf16",
+      "fusedv2-fa4-bf16",
+      "fusedv2-fa4-attention-mxfp8",
+      "fusedv2-fa4-full-mxfp8"
+    ],
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYJM4P6ZDD3QQRC6HWR4PCPN"
+  }
+]

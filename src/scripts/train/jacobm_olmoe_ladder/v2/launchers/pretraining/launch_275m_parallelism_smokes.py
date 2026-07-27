@@ -28,6 +28,8 @@ ALLOWED_VARIANTS = {
     "geometry_275m_gdn2_ev2_rope_gated_1to1",
     "geometry_275m_swa_rope_gated_1to1",
     "geometry_275m_swa_rope_gated_1to1_10l",
+    "geometry_275m_kda_ev2_neg_nope_gated",
+    "geometry_275m_kda_ev2_neg_nope_gated_mxfp8_672",
 }
 EXPECTED_SEQUENCE_LENGTH = 8_192
 ALLOWED_GLOBAL_BATCHES = {
@@ -99,6 +101,23 @@ def validate(manifest: dict[str, Any]) -> list[dict[str, Any]]:
         use_code_defaults = bool(row.get("expert_parallel_use_code_defaults", False))
         ep_path_value = row.get("expert_parallel_path")
         ep_path = None if ep_path_value is None else str(ep_path_value)
+        attention_impl = str(row.get("attention_impl", training.get("attention_impl", "default")))
+        attention_backend = str(
+            row.get("attention_backend", training.get("attention_backend", "te"))
+        )
+        mxfp8_experts = bool(
+            row.get(
+                "mxfp8_experts",
+                row.get("mxfp8", training.get("mxfp8_experts", training.get("mxfp8", False))),
+            )
+        )
+        mxfp8_attention = bool(
+            row.get("mxfp8_attention", training.get("mxfp8_attention", False))
+        )
+        if attention_impl not in {"default", "fused_v2"}:
+            raise ValueError(f"{task_name}: unsupported attention implementation {attention_impl}")
+        if attention_backend not in {"te", "flash_4"}:
+            raise ValueError(f"{task_name}: unsupported attention backend {attention_backend}")
         if world_size not in {1, 2, 4, 8}:
             raise ValueError(f"{task_name}: only 1-, 2-, 4-, and 8-GPU cells are permitted")
         if ep_size < 1 or world_size % ep_size:
@@ -113,6 +132,14 @@ def validate(manifest: dict[str, Any]) -> list[dict[str, Any]]:
             raise ValueError(
                 f"{task_name}: EP>1 requires a path or expert_parallel_use_code_defaults=true"
             )
+        if mxfp8_experts and ep_size > 1 and (
+            use_code_defaults or ep_path != "rowwise_nvshmem"
+        ):
+            raise ValueError(
+                f"{task_name}: MXFP8 with EP>1 requires explicit rowwise_nvshmem"
+            )
+        if mxfp8_attention and attention_impl != "fused_v2":
+            raise ValueError(f"{task_name}: attention MXFP8 requires fused_v2")
         bucket_cap = row.get("data_parallel_bucket_cap_mb")
         if bucket_cap is not None and int(bucket_cap) not in ALLOWED_BUCKET_CAPS_MB:
             raise ValueError(
@@ -147,6 +174,10 @@ def validate(manifest: dict[str, Any]) -> list[dict[str, Any]]:
         row["rank_sequences"] = rank_sequences
         row["effective_rank_microbatch"] = rank_microbatch
         row["accumulation_steps"] = rank_sequences // rank_microbatch
+        row["attention_impl"] = attention_impl
+        row["attention_backend"] = attention_backend
+        row["mxfp8_experts"] = mxfp8_experts
+        row["mxfp8_attention"] = mxfp8_attention
 
     return rows
 
@@ -197,6 +228,10 @@ def build_task(manifest: dict[str, Any], row: dict[str, Any], source_repo: str) 
             env_value("OLMOE3_HYBRID_EVAL_ON_FINISH", 0),
             env_value("OLMOE3_HYBRID_USE_COMPILE", int(bool(training["compile"]))),
             env_value("OLMOE3_HYBRID_WANDB", int(bool(training["wandb"]))),
+            env_value("OLMOE3_HYBRID_ATTENTION_IMPL", row["attention_impl"]),
+            env_value("OLMOE3_HYBRID_ATTENTION_BACKEND", row["attention_backend"]),
+            env_value("OLMOE3_HYBRID_MXFP8_EXPERTS", int(bool(row["mxfp8_experts"]))),
+            env_value("OLMOE3_HYBRID_MXFP8_ATTENTION", int(bool(row["mxfp8_attention"]))),
             env_value("OLMOE3_HYBRID_SAVE_ROOT", manifest["experiment"]["checkpoint_root"]),
         ]
     )
@@ -219,6 +254,11 @@ def build_task(manifest: dict[str, Any], row: dict[str, Any], source_repo: str) 
             if "gdn2_disable_recompute" in training
             else None
         ),
+        # The guide's recommended MXFP8 scaling behavior is resolved once at
+        # olmo_core import time, so it must be present in the task environment.
+        "OLMO_MXFP8_SCALE_MODE": (
+            "rceil" if row["mxfp8_experts"] or row["mxfp8_attention"] else None
+        ),
     }
     env_vars.extend(
         env_value(name, value) for name, value in optional_env.items() if value is not None
@@ -227,6 +267,13 @@ def build_task(manifest: dict[str, Any], row: dict[str, Any], source_repo: str) 
         {"mountPath": str(item["mount_path"]), "source": {"weka": str(item["weka"])}}
         for item in manifest.get("datasets", [])
     ]
+    context = {
+        "priority": str(beaker["priority"]),
+        "minRuntime": str(beaker["min_runtime"]),
+        "autoResume": bool(beaker["auto_resume"]),
+    }
+    if "preemptible" in beaker:
+        context["preemptible"] = bool(beaker["preemptible"])
     return {
         "name": str(row["task_name"]),
         "image": {"beaker": str(source["image"])},
@@ -239,11 +286,7 @@ def build_task(manifest: dict[str, Any], row: dict[str, Any], source_repo: str) 
             "gpuCount": int(row["gpu_count"]),
             "sharedMemory": str(beaker["shared_memory"]),
         },
-        "context": {
-            "priority": str(beaker["priority"]),
-            "minRuntime": str(beaker["min_runtime"]),
-            "autoResume": bool(beaker["auto_resume"]),
-        },
+        "context": context,
         "constraints": {"cluster": [str(beaker["cluster"])]},
         "hostNetworking": True,
         "propagateFailure": False,
@@ -286,13 +329,19 @@ def main() -> None:
     if not wrapper.is_file():
         raise ValueError(f"source wrapper is missing: {wrapper}")
 
-    print("task                 batch GPU EP path              rank_seq MB accum run")
+    print(
+        "task                 batch GPU EP path              "
+        "rank_seq MB accum attn     backend EFP8 AFP8 run"
+    )
     for row in rows:
         print(
             f"{row['task_name']:<20} {row['global_batch_size']:>7} {row['gpu_count']:>3} "
             f"{row['expert_parallel_size']:>2} {row['resolved_ep_path']:<17} "
             f"{row['rank_sequences']:>8} {row['effective_rank_microbatch']:>2} "
-            f"{row['accumulation_steps']:>5} {row['run_name']}"
+            f"{row['accumulation_steps']:>5} {row['attention_impl']:<8} "
+            f"{row['attention_backend']:<7} "
+            f"{str(row['mxfp8_experts']):>4} {str(row['mxfp8_attention']):>4} "
+            f"{row['run_name']}"
         )
     print(f"\n{len(rows)} tasks; {sum(int(row['gpu_count']) for row in rows)} concurrent GPUs")
 

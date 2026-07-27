@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-07-27T16:54:49.773013+00:00",
+  "generated_at": "2026-07-27T21:27:02.393555+00:00",
   "project": "ai2-llm/jacobm-olmoe-ladder",
   "wave": "kda_ev2_neg_scale",
   "models": [
@@ -2146,6 +2146,25 @@
     },
     {
       "model": "810m",
+      "variant": "geometry_kda_ev2_neg_nope_gated",
+      "variant_label": "KDA (expand_v=2, negative eigenvalues)",
+      "cx": 2,
+      "lr": 0.00056,
+      "lr_tag": "0.00056",
+      "loss": 2.241872620657555,
+      "state": "finished",
+      "tokens_b": 29.459349504,
+      "run_id": "1e7z0xar",
+      "name": "pt-810m-geometry-hybrid-kda-ev2-neg-nope-gated-cx2-lr5p6e-4-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/1e7z0xar",
+      "segment_run_ids": [
+        "1e7z0xar"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 1
+    },
+    {
+      "model": "810m",
       "variant": "wide_integration",
       "variant_label": "wide integration (SWA)",
       "cx": 2,
@@ -3636,9 +3655,9 @@
       "model": "810m",
       "cx": 2,
       "mode": "fixed_lr_transfer",
-      "complete": false,
+      "complete": true,
       "optimal_summary_eligible": false,
-      "completed_intervention_runs": 0,
+      "completed_intervention_runs": 1,
       "expected_intervention_runs": 1,
       "wide_reference": {
         "model": "810m",
@@ -3720,13 +3739,31 @@
         },
         "geometry_kda_ev1_noneg_nope_gated": null
       },
-      "intervention_result": null,
-      "delta_intervention_minus_wide": null,
+      "intervention_result": {
+        "model": "810m",
+        "variant": "geometry_kda_ev2_neg_nope_gated",
+        "variant_label": "KDA (expand_v=2, negative eigenvalues)",
+        "cx": 2,
+        "lr": 0.00056,
+        "lr_tag": "0.00056",
+        "loss": 2.241872620657555,
+        "state": "finished",
+        "tokens_b": 29.459349504,
+        "run_id": "1e7z0xar",
+        "name": "pt-810m-geometry-hybrid-kda-ev2-neg-nope-gated-cx2-lr5p6e-4-r1",
+        "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/1e7z0xar",
+        "segment_run_ids": [
+          "1e7z0xar"
+        ],
+        "token_resets": 0,
+        "deduplicated_samples": 1
+      },
+      "delta_intervention_minus_wide": -0.027074898751276777,
       "delta_intervention_minus_reference": {
-        "wide_integration": null,
-        "geometry_gdn_ev2_nope_gated": null,
+        "wide_integration": -0.027074898751276777,
+        "geometry_gdn_ev2_nope_gated": -0.03537991961593123,
         "geometry_gdn2_ev2_nope_gated": null,
-        "geometry_gdn2_ev1_noneg_nope_gated": null,
+        "geometry_gdn2_ev1_noneg_nope_gated": -0.019107666405491663,
         "geometry_kda_ev1_noneg_nope_gated": null
       }
     },

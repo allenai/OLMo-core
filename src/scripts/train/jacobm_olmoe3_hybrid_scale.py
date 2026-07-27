@@ -45,7 +45,9 @@ from olmo_core.internal.experiment import (
     build_config,
     main,
 )
+from olmo_core.nn.attention import AttentionBackendName, AttentionConfig, AttentionType
 from olmo_core.nn.moe.v2.ep_config import ExpertParallelConfig, ExpertParallelPath
+from olmo_core.nn.moe.v2.fp8 import MoERowwiseFP8Config
 from olmo_core.optim import OLMoDDPOptimizerConfig, OptimGroupOverride, SchedulerUnits
 from olmo_core.optim.scheduler import (
     ComposableScheduler,
@@ -105,12 +107,20 @@ GDN2_SCALE_NOPE_SETTINGS = {
     "geometry_matched_gdn2_ev1_noneg_nope_gated": (1.0, False),
 }
 KDA_275M_NOPE_SETTINGS = {
-    "geometry_275m_kda_ev1_noneg_nope_gated": (1.0, False),
-    "geometry_275m_kda_ev2_neg_nope_gated": (2.0, True),
+    "geometry_275m_kda_ev1_noneg_nope_gated": (1.0, False, 664),
+    "geometry_275m_kda_ev2_neg_nope_gated": (2.0, True, 664),
+    "geometry_275m_kda_ev2_neg_nope_gated_mxfp8_672": (2.0, True, 672),
 }
 KDA_SCALE_NOPE_SETTINGS = {
     "geometry_matched_kda_ev1_noneg_nope_gated": (1.0, False),
     "geometry_matched_kda_ev2_neg_nope_gated": (2.0, True),
+}
+KDA_SCALE_MXFP8_SETTINGS = {
+    "geometry_matched_kda_ev2_neg_nope_gated_mxfp8_aligned": (2.0, True),
+}
+KDA_SCALE_ALL_SETTINGS = {
+    **KDA_SCALE_NOPE_SETTINGS,
+    **KDA_SCALE_MXFP8_SETTINGS,
 }
 
 
@@ -141,6 +151,20 @@ CHINCHILLA_MULTIPLE = float(os.environ.get("OLMOE3_HYBRID_CHINCHILLA_MULTIPLE", 
 MAX_TOKENS_OVERRIDE = os.environ.get("OLMOE3_HYBRID_MAX_TOKENS")
 HARD_STOP_STEPS = int(os.environ.get("OLMOE3_HYBRID_HARD_STOP_STEPS", "0"))
 USE_COMPILE = env_bool("OLMOE3_HYBRID_USE_COMPILE", True)
+ATTENTION_IMPL = AttentionType(
+    os.environ.get("OLMOE3_HYBRID_ATTENTION_IMPL", AttentionType.default.value)
+)
+ATTENTION_BACKEND = AttentionBackendName(
+    os.environ.get("OLMOE3_HYBRID_ATTENTION_BACKEND", AttentionBackendName.te.value)
+)
+# Preserve the original expert-only flag as a compatibility alias while
+# exposing the expert and attention surfaces independently for controlled
+# comparisons.
+MXFP8_EXPERTS_ENABLED = env_bool(
+    "OLMOE3_HYBRID_MXFP8_EXPERTS",
+    env_bool("OLMOE3_HYBRID_MXFP8", False),
+)
+MXFP8_ATTENTION_ENABLED = env_bool("OLMOE3_HYBRID_MXFP8_ATTENTION", False)
 WANDB_ENABLED = env_bool("OLMOE3_HYBRID_WANDB", True)
 CHECKPOINTS_ENABLED = env_bool("OLMOE3_HYBRID_CHECKPOINTS", True)
 CHECKPOINT_WRITES_ENABLED = env_bool("OLMOE3_HYBRID_CHECKPOINT_WRITES", CHECKPOINTS_ENABLED)
@@ -185,6 +209,102 @@ if GDN2_DISABLE_RECOMPUTE and MODEL_VARIANT not in {
     "geometry_275m_gdn2_ev2_rope_gated_1to1",
 }:
     raise ValueError("OLMOE3_HYBRID_GDN2_DISABLE_RECOMPUTE is only valid for the GDN2 variant")
+
+
+def configure_attention_and_mxfp8(model):
+    """Configure packed attention and the independently controlled MXFP8 surfaces."""
+
+    if MXFP8_EXPERTS_ENABLED:
+        if EP_SIZE > 1 and (
+            EP_USE_CODE_DEFAULTS or EP_PATH != ExpertParallelPath.rowwise_nvshmem
+        ):
+            raise ValueError("MXFP8 expert training requires explicit rowwise_nvshmem EP")
+    if MXFP8_ATTENTION_ENABLED and ATTENTION_IMPL != AttentionType.fused_v2:
+        raise ValueError("MXFP8 attention projections require attention_impl=fused_v2")
+
+    configured_blocks = (model.block, *(model.block_overrides or {}).values())
+    if MXFP8_EXPERTS_ENABLED:
+        for block_idx, block in enumerate(configured_blocks):
+            for expert_kind, experts in (
+                ("shared", block.shared_experts),
+                ("routed", block.routed_experts),
+            ):
+                if experts is None:
+                    continue
+                incompatible = {
+                    name: value
+                    for name, value in (
+                        ("d_model", experts.d_model),
+                        ("hidden_size", experts.hidden_size),
+                    )
+                    if value % 32 != 0
+                }
+                if incompatible:
+                    dimensions = ", ".join(
+                        f"{name}={value}" for name, value in incompatible.items()
+                    )
+                    raise ValueError(
+                        "MXFP8 expert projections require dimensions divisible by 32; "
+                        f"config block {block_idx} {expert_kind} experts have {dimensions}"
+                    )
+    for block in configured_blocks:
+        if MXFP8_EXPERTS_ENABLED and (
+            block.shared_experts is not None or block.routed_experts is not None
+        ):
+            block.rowwise_fp8 = MoERowwiseFP8Config(enabled=True)
+        mixer = block.sequence_mixer
+        if isinstance(mixer, AttentionConfig):
+            mixer.name = ATTENTION_IMPL
+            mixer.backend = ATTENTION_BACKEND
+            mixer.mxfp8_qkv_projection = MXFP8_ATTENTION_ENABLED
+            mixer.mxfp8_out_projection = MXFP8_ATTENTION_ENABLED
+            mixer.mxfp8_save_qkv_for_backward = False
+
+    model.validate()
+
+    resolved = model.resolved_block_configs
+    rowwise_layers = tuple(
+        layer_idx
+        for layer_idx, block in enumerate(resolved)
+        if block.rowwise_fp8 is not None and block.rowwise_fp8.enabled
+    )
+    attention_layers = tuple(
+        layer_idx
+        for layer_idx, block in enumerate(resolved)
+        if isinstance(block.sequence_mixer, AttentionConfig)
+    )
+    recurrent_layers = tuple(
+        layer_idx
+        for layer_idx, block in enumerate(resolved)
+        if not isinstance(block.sequence_mixer, AttentionConfig)
+    )
+    expected_rowwise_layers = tuple(range(model.n_layers)) if MXFP8_EXPERTS_ENABLED else ()
+    if rowwise_layers != expected_rowwise_layers:
+        raise ValueError(
+            f"unexpected MXFP8 FFN layers: expected {expected_rowwise_layers}, got {rowwise_layers}"
+        )
+    for layer_idx in attention_layers:
+        mixer = resolved[layer_idx].sequence_mixer
+        assert isinstance(mixer, AttentionConfig)
+        if mixer.name != ATTENTION_IMPL:
+            raise ValueError(f"attention implementation mismatch at layer {layer_idx}")
+        if mixer.backend != ATTENTION_BACKEND:
+            raise ValueError(f"attention backend mismatch at layer {layer_idx}")
+        if bool(mixer.mxfp8_qkv_projection) != MXFP8_ATTENTION_ENABLED:
+            raise ValueError(f"MXFP8 QKV projection mismatch at layer {layer_idx}")
+        if bool(mixer.mxfp8_out_projection) != MXFP8_ATTENTION_ENABLED:
+            raise ValueError(f"MXFP8 output projection mismatch at layer {layer_idx}")
+    log.info(
+        "Configured attention_impl=%s backend=%s; MXFP8 FFN layers=%s; "
+        "MXFP8 attention=%s on layers=%s; "
+        "recurrent mixer layers remain BF16=%s",
+        ATTENTION_IMPL.value,
+        ATTENTION_BACKEND.value,
+        rowwise_layers,
+        MXFP8_ATTENTION_ENABLED,
+        attention_layers,
+        recurrent_layers,
+    )
 
 
 def model_config():
@@ -257,10 +377,11 @@ def model_config():
 
         if MODEL_SIZE != "275m":
             raise ValueError(f"The {MODEL_VARIANT} variant only supports MODEL_SIZE=275m")
-        expand_v, allow_neg_eigval = KDA_275M_NOPE_SETTINGS[MODEL_VARIANT]
+        expand_v, allow_neg_eigval, expert_hidden_size = KDA_275M_NOPE_SETTINGS[MODEL_VARIANT]
         model = build_geometry_matched_kda_model_config(
             expand_v=expand_v,
             allow_neg_eigval=allow_neg_eigval,
+            expert_hidden_size=expert_hidden_size,
         )
     elif MODEL_VARIANT == "geometry_275m_swa_rope_gated":
         from scripts.train.jacobm_olmoe_ladder.v2.models.geometry_matched_275m import (
@@ -341,16 +462,22 @@ def model_config():
             allow_neg_eigval=allow_neg_eigval,
             disable_recompute=GDN2_DISABLE_RECOMPUTE,
         )
-    elif MODEL_VARIANT in KDA_SCALE_NOPE_SETTINGS:
+    elif MODEL_VARIANT in KDA_SCALE_ALL_SETTINGS:
         from scripts.train.jacobm_olmoe_ladder.v2.models.geometry_matched_scale import (
+            MXFP8_ALIGNED_EXPERT_HIDDEN_SIZES,
             build_geometry_matched_scale_kda_model_config,
         )
 
-        expand_v, allow_neg_eigval = KDA_SCALE_NOPE_SETTINGS[MODEL_VARIANT]
+        expand_v, allow_neg_eigval = KDA_SCALE_ALL_SETTINGS[MODEL_VARIANT]
         model = build_geometry_matched_scale_kda_model_config(
             MODEL_SIZE,
             expand_v=expand_v,
             allow_neg_eigval=allow_neg_eigval,
+            expert_hidden_size=(
+                MXFP8_ALIGNED_EXPERT_HIDDEN_SIZES[MODEL_SIZE]
+                if MODEL_VARIANT in KDA_SCALE_MXFP8_SETTINGS
+                else None
+            ),
         )
     else:
         raise ValueError(f"Unknown model variant {MODEL_VARIANT!r}")
@@ -374,6 +501,13 @@ def model_config():
                 block.ep = ExpertParallelConfig()
                 continue
             block.ep.path = EP_PATH
+            # Recorded v1 configs carry the deprecated aggregate
+            # ``rowwise_nblocks`` field. Leaving it set makes validation copy
+            # the legacy value (256) over every per-collective setting,
+            # including the new B300-safe weighted-put default of 128. Clear
+            # the compatibility field so this branch's current per-collective
+            # defaults remain authoritative unless explicitly overridden.
+            block.ep.rowwise_nblocks = None
             if EP_ROWWISE_GET_NBLOCKS is not None:
                 block.ep.rowwise_get_nblocks = int(EP_ROWWISE_GET_NBLOCKS)
             if EP_ROWWISE_PUT_NBLOCKS is not None:
@@ -381,6 +515,7 @@ def model_config():
             if EP_ROWWISE_WEIGHTED_PUT_NBLOCKS is not None:
                 block.ep.rowwise_weighted_put_nblocks = int(EP_ROWWISE_WEIGHTED_PUT_NBLOCKS)
         model.validate()
+    configure_attention_and_mxfp8(model)
     return model
 
 
@@ -561,7 +696,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         "geometry_matched_gdn_ev2_nope_gated",
         "geometry_matched_gdn_ev2_rope_gated",
         *GDN2_SCALE_NOPE_SETTINGS,
-        *KDA_SCALE_NOPE_SETTINGS,
+        *KDA_SCALE_ALL_SETTINGS,
     }
     if MODEL_VARIANT == "geometry_275m_gdn_ev2_rope_gated":
         variant_group = "olmoe3-275m-geometry-gdn-ev2-rope-gated"
@@ -572,9 +707,13 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         eigval_tag = "neg" if allow_neg_eigval else "noneg"
         variant_group = f"olmoe3-275m-geometry-gdn2-ev{expand_v:g}-{eigval_tag}-nope-gated"
     elif MODEL_VARIANT in KDA_275M_NOPE_SETTINGS:
-        expand_v, allow_neg_eigval = KDA_275M_NOPE_SETTINGS[MODEL_VARIANT]
+        expand_v, allow_neg_eigval, expert_hidden_size = KDA_275M_NOPE_SETTINGS[MODEL_VARIANT]
         eigval_tag = "neg" if allow_neg_eigval else "noneg"
-        variant_group = f"olmoe3-275m-geometry-kda-ev{expand_v:g}-{eigval_tag}-nope-gated"
+        width_tag = f"-h{expert_hidden_size}" if expert_hidden_size != 664 else ""
+        variant_group = (
+            f"olmoe3-275m-geometry-kda-ev{expand_v:g}-{eigval_tag}"
+            f"-nope-gated{width_tag}"
+        )
     elif MODEL_VARIANT == "geometry_275m_swa_rope_gated":
         variant_group = "olmoe3-275m-geometry-swa-rope-gated-throughput"
     elif MODEL_VARIANT == "geometry_275m_gdn_ev2_rope_gated_1to1":
@@ -604,10 +743,16 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         expand_v, allow_neg_eigval = GDN2_SCALE_NOPE_SETTINGS[MODEL_VARIANT]
         eigval_tag = "neg" if allow_neg_eigval else "noneg"
         variant_group = f"olmoe3-geometry-matched-gdn2-ev{expand_v:g}-{eigval_tag}-nope-gated-scale"
-    elif MODEL_VARIANT in KDA_SCALE_NOPE_SETTINGS:
-        expand_v, allow_neg_eigval = KDA_SCALE_NOPE_SETTINGS[MODEL_VARIANT]
+    elif MODEL_VARIANT in KDA_SCALE_ALL_SETTINGS:
+        expand_v, allow_neg_eigval = KDA_SCALE_ALL_SETTINGS[MODEL_VARIANT]
         eigval_tag = "neg" if allow_neg_eigval else "noneg"
-        variant_group = f"olmoe3-geometry-matched-kda-ev{expand_v:g}-{eigval_tag}-nope-gated-scale"
+        precision_tag = (
+            "-mxfp8-aligned" if MODEL_VARIANT in KDA_SCALE_MXFP8_SETTINGS else ""
+        )
+        variant_group = (
+            f"olmoe3-geometry-matched-kda-ev{expand_v:g}-{eigval_tag}"
+            f"-nope-gated{precision_tag}-scale"
+        )
     else:
         variant_group = "olmoe3-integration-wide-hybrid-scale"
     if MODEL_VARIANT in {
@@ -615,7 +760,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         "geometry_275m_gdn_ev2_nope",
         *GDN2_275M_NOPE_SETTINGS,
         *KDA_275M_NOPE_SETTINGS,
-        *KDA_SCALE_NOPE_SETTINGS,
+        *KDA_SCALE_ALL_SETTINGS,
         "geometry_matched_gdn_ev2_nope",
         "geometry_matched_gdn_ev2_nope_gated",
         *GDN2_SCALE_NOPE_SETTINGS,
@@ -624,7 +769,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             **GDN2_275M_NOPE_SETTINGS,
             **GDN2_SCALE_NOPE_SETTINGS,
             **KDA_275M_NOPE_SETTINGS,
-            **KDA_SCALE_NOPE_SETTINGS,
+            **KDA_SCALE_ALL_SETTINGS,
         }
         expand_v = recurrent_settings.get(MODEL_VARIANT, (2.0, True))[0]
         variant_tags = ["geometry-matched", f"expand-v-{expand_v:g}", "nope"]
@@ -632,7 +777,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             "geometry_275m_gdn_ev2_nope_gated",
             *GDN2_275M_NOPE_SETTINGS,
             *KDA_275M_NOPE_SETTINGS,
-            *KDA_SCALE_NOPE_SETTINGS,
+            *KDA_SCALE_ALL_SETTINGS,
             "geometry_matched_gdn_ev2_nope_gated",
             *GDN2_SCALE_NOPE_SETTINGS,
         }:
@@ -653,7 +798,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 )
             if GDN2_DISABLE_RECOMPUTE:
                 variant_tags.append("gdn2-no-recompute")
-        kda_settings = {**KDA_275M_NOPE_SETTINGS, **KDA_SCALE_NOPE_SETTINGS}
+        kda_settings = {**KDA_275M_NOPE_SETTINGS, **KDA_SCALE_ALL_SETTINGS}
         if MODEL_VARIANT in kda_settings:
             variant_tags.extend(
                 [
@@ -665,6 +810,21 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                     ),
                 ]
             )
+            if MODEL_VARIANT in KDA_275M_NOPE_SETTINGS:
+                expert_hidden_size = KDA_275M_NOPE_SETTINGS[MODEL_VARIANT][2]
+                if expert_hidden_size != 664:
+                    variant_tags.append(f"expert-hidden-{expert_hidden_size}")
+            elif MODEL_VARIANT in KDA_SCALE_MXFP8_SETTINGS:
+                from scripts.train.jacobm_olmoe_ladder.v2.models.geometry_matched_scale import (
+                    MXFP8_ALIGNED_EXPERT_HIDDEN_SIZES,
+                )
+
+                variant_tags.extend(
+                    [
+                        f"expert-hidden-{MXFP8_ALIGNED_EXPERT_HIDDEN_SIZES[MODEL_SIZE]}",
+                        "aggressive-mxfp8",
+                    ]
+                )
     elif geometry_variant:
         variant_tags = ["geometry-matched", "expand-v-2", "rope"]
         if MODEL_VARIANT in {

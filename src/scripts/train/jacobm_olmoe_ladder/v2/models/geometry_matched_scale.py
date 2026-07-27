@@ -142,6 +142,22 @@ EXPECTED_GDN2_GATED_NOPE_COUNTS_BY_EXPAND_V = {
     2.0: EXPECTED_GDN2_GATED_NOPE_COUNTS,
 }
 
+# Nearest 32-aligned expert widths for aggressive MXFP8 training. The
+# dense-first hidden size is always (TOP_K + 1) times this width and is
+# therefore also 32-aligned.
+MXFP8_ALIGNED_EXPERT_HIDDEN_SIZES = {
+    "275m": 672,
+    "480m": 832,
+    "810m": 1024,
+    "1p2b": 960,
+}
+EXPECTED_KDA_MXFP8_ALIGNED_COUNTS = {
+    "275m": (291_885_888, 227_660_608, 3_171_701_568),
+    "480m": (496_253_280, 419_182_944, 7_151_827_296),
+    "810m": (835_921_856, 733_161_408, 11_757_889_472),
+    "1p2b": (1_256_992_512, 1_128_541_952, 18_627_309_312),
+}
+
 
 def _geometry(model_size: str) -> Geometry:
     try:
@@ -183,6 +199,28 @@ def _dense_first_block(
     dense.ep = None
     dense.rowwise_fp8 = None
     return dense
+
+
+def _resize_model_experts(
+    model: OLMoDDPModelConfig,
+    *,
+    expert_hidden_size: int,
+) -> OLMoDDPModelConfig:
+    """Resize only shared/routed expert projections in an assembled model."""
+
+    if expert_hidden_size % 32:
+        raise ValueError("MXFP8 expert hidden size must be divisible by 32")
+    candidate = deepcopy(model)
+    for block in (candidate.block, *(candidate.block_overrides or {}).values()):
+        if block.shared_experts is None:
+            raise ValueError("expected every geometry block to retain a shared FFN")
+        if block.routed_experts is None:
+            block.shared_experts.hidden_size = (TOP_K + 1) * expert_hidden_size
+        else:
+            block.shared_experts.hidden_size = expert_hidden_size
+            block.routed_experts.hidden_size = expert_hidden_size
+    candidate.validate()
+    return candidate
 
 
 def _full_attention_block(
@@ -585,6 +623,7 @@ def build_geometry_matched_scale_kda_model_config(
     *,
     expand_v: float = 1.0,
     allow_neg_eigval: bool = False,
+    expert_hidden_size: int | None = None,
 ) -> OLMoDDPModelConfig:
     """Replace only GDN1 with KDA in the gated-NoPE scale geometry."""
 
@@ -596,6 +635,11 @@ def build_geometry_matched_scale_kda_model_config(
         return build_geometry_matched_kda_model_config(
             expand_v=expand_v,
             allow_neg_eigval=allow_neg_eigval,
+            expert_hidden_size=(
+                GEOMETRIES[model_size].expert_hidden_size
+                if expert_hidden_size is None
+                else expert_hidden_size
+            ),
         )
 
     parent = build_geometry_matched_scale_model_config(
@@ -604,6 +648,17 @@ def build_geometry_matched_scale_kda_model_config(
         attention_gate=True,
     )
     geometry = _geometry(model_size)
+    if expert_hidden_size is not None:
+        expected_hidden_size = MXFP8_ALIGNED_EXPERT_HIDDEN_SIZES[model_size]
+        if expert_hidden_size != expected_hidden_size:
+            raise ValueError(
+                f"unsupported {model_size} MXFP8 expert width {expert_hidden_size}; "
+                f"expected {expected_hidden_size}"
+            )
+        parent = _resize_model_experts(
+            parent,
+            expert_hidden_size=expert_hidden_size,
+        )
     resolved = parent.resolved_block_configs
     old_gdn = cast(GatedDeltaNetConfig, resolved[geometry.gdn_layers[0]].sequence_mixer)
     kda = KimiDeltaAttentionConfig(
@@ -709,6 +764,35 @@ def build_geometry_matched_scale_kda_model_config(
             f"unexpected {model_size} KDA parameter delta: expected {expected_delta:,}, "
             f"parent={parent_counts}, found={actual_counts}"
         )
+    if expert_hidden_size is not None:
+        expected_counts = EXPECTED_KDA_MXFP8_ALIGNED_COUNTS[model_size]
+        if actual_counts != expected_counts:
+            raise ValueError(
+                f"unexpected {model_size} MXFP8-aligned KDA counts: expected "
+                f"{expected_counts}, found {actual_counts}"
+            )
+        for layer_idx, block in enumerate(candidate_resolved):
+            if block.shared_experts is None:
+                raise ValueError(f"MXFP8-aligned KDA layer {layer_idx} lacks a shared FFN")
+            for dimension in (
+                block.shared_experts.d_model,
+                block.shared_experts.hidden_size,
+            ):
+                if dimension % 32:
+                    raise ValueError(
+                        f"MXFP8-aligned KDA layer {layer_idx} shared dimension "
+                        f"{dimension} is not divisible by 32"
+                    )
+            if block.routed_experts is not None:
+                for dimension in (
+                    block.routed_experts.d_model,
+                    block.routed_experts.hidden_size,
+                ):
+                    if dimension % 32:
+                        raise ValueError(
+                            f"MXFP8-aligned KDA layer {layer_idx} routed dimension "
+                            f"{dimension} is not divisible by 32"
+                        )
     return candidate
 
 

@@ -1,0 +1,78 @@
+schema_version: 1
+
+experiment:
+  description: Runnable packed-QKV and attention-MXFP8 isolation grid for 275M KDA ev2 negative-eigenvalue NoPE gated
+  checkpoint_root: /tmp/olmoe3-275m-kda-ev2-neg-mxfp8-grid
+
+source:
+  repo: /weka/oe-adapt-default/jacobm/olmoe3/olmo-ddp-migration/OLMo-core-moe-v2-core
+  wrapper: src/scripts/train/jacobm_olmoe3_hybrid_scale_beaker.sh
+  image: 01KW8G8JC20H11Y60PPTE2VN4Q
+
+beaker:
+  workspace: ai2/OLMo-3-moe-experiments
+  cluster: ai2/holmes
+  priority: urgent
+  shared_memory: 128 GiB
+  min_runtime: 0m
+  auto_resume: false
+  timeout: 3h
+  result_path: /results
+
+secrets:
+  AWS_ACCESS_KEY_ID: AWS_ACCESS_KEY_ID
+  AWS_SECRET_ACCESS_KEY: AWS_SECRET_ACCESS_KEY
+  WANDB_API_KEY: jacobm_WANDB_API_KEY
+  BEAKER_TOKEN: jacobm_BEAKER_TOKEN
+
+datasets:
+  - mount_path: /weka/oe-adapt-default
+    weka: oe-adapt-default
+  - mount_path: /weka/oe-training-default
+    weka: oe-training-default
+
+training:
+  model_size: 275m
+  model_variant: geometry_275m_kda_ev2_neg_nope_gated
+  sequence_length: 8192
+  global_batch_size: 2097152
+  rank_microbatch_sequences: 16
+  learning_rate: "8e-4"
+  chinchilla_multiple: 1
+  hard_stop_steps: 50
+  checkpoints: false
+  evals: false
+  compile: true
+  wandb: true
+
+# Every cell holds model geometry, KDA, seed, data, topology, optimizer batch,
+# rank microbatch, and accumulation fixed. KDA remains BF16 throughout.
+# Expert MXFP8 is intentionally absent: this model's expert hidden size is 664,
+# which is not divisible by the required MXFP8 block size of 32.
+runs:
+  - task_name: default-bf16
+    run_name: smoke-275m-kda-ev2-neg-nope-gated-default-bf16-ep4-rowwise-8gpu-mb16-2m-r2
+    gpu_count: 8
+    expert_parallel_size: 4
+    expert_parallel_path: rowwise_nvshmem
+    attention_impl: default
+    mxfp8_experts: false
+    mxfp8_attention: false
+
+  - task_name: fusedv2-bf16
+    run_name: smoke-275m-kda-ev2-neg-nope-gated-fusedv2-bf16-ep4-rowwise-8gpu-mb16-2m-r2
+    gpu_count: 8
+    expert_parallel_size: 4
+    expert_parallel_path: rowwise_nvshmem
+    attention_impl: fused_v2
+    mxfp8_experts: false
+    mxfp8_attention: false
+
+  - task_name: fusedv2-mxfp8-attention
+    run_name: smoke-275m-kda-ev2-neg-nope-gated-fusedv2-mxfp8-attention-ep4-rowwise-8gpu-mb16-2m-r3
+    gpu_count: 8
+    expert_parallel_size: 4
+    expert_parallel_path: rowwise_nvshmem
+    attention_impl: fused_v2
+    mxfp8_experts: false
+    mxfp8_attention: true

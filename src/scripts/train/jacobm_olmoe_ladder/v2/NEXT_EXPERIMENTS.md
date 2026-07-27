@@ -26,9 +26,51 @@ has only two Cx8 cells remaining.
 | 8 | LatentMoE | Add the coworker's LatentMoE implementation to the promoted hybrid recipe and test it as an isolated MoE intervention before composition. | Next priority alongside GDN2; wait for the coworker's implementation to be available and verified in this branch. |
 | 9 | Initialization | On the promoted control, change only initialization standard deviation from 0.01 to 0.02. | Optional/planned. |
 | 10 | Remove QK norm | On the promoted control, remove per-head RMSNorm from Q and K in global-attention layers only. Keep GDN's internal output norm and every other norm unchanged. | Deferred isolated architecture ablation. This intentionally departs from the dense ladder, which uses QK norm. |
-| 11 | FP8 training | Hold the promoted architecture fixed and compare an explicitly selected OLMo-core FP8 training mode against the BF16 control, recording loss, stability, memory, tokens/s, and TFLOPs/GPU. | Deferred precision/systems ablation; choose and smoke the exact FP8 mode after the architecture is stable. |
+| 11 | FP8 training | Hold the promoted architecture fixed and test the aggressive OLMo-core MXFP8 recipe, recording loss, stability, memory, tokens/s, and TFLOPs/GPU. | 275M KDA 672-expert-width EP1 qualification complete. The 16-cell 275M Cx1/2/4/8 LR sweep is submitted; 480M/810M/1.2B 32-aligned configs are audited but not launched. Larger-scale throughput remains open and exact BF16 controls are deferred to save compute. |
 | 12 | Combined 275M pilot | Combine only interventions whose isolated evidence is neutral-to-positive. | Blocked on isolated results. |
 | 13 | Promote combined recipe | Run the full pretraining ladder, then midtraining, then 8K-to-65K long-context adaptation. | Blocked on the combined pilot. |
+
+## MXFP8 and fused-attention qualification
+
+The first MXFP8 candidate should be the 275M KDA `expand_v=2`,
+negative-eigenvalue, gated-NoPE recipe with only its expert hidden width changed
+from 664 to 672. The dense-first FFN consequently changes from 5,976 to 6,048.
+This makes `d_model=640`, the routed/shared expert width, and the dense-first
+width all divisible by 32 without changing depth, attention geometry, mixer
+settings, or expert counts. The candidate has 291,885,888 active parameters,
+227,660,608 active non-embedding parameters, and 3,171,701,568 stored
+parameters. Relative to its exact 664-wide parent, this is +1,382,400 active
+parameters (+0.476%) and +35,665,920 stored parameters (+1.137%).
+
+The completed qualification compares the current TE-backed
+full-attention control against `fused_v2` with FlashAttention-4 in BF16 and
+with MXFP8 QKV/output projections. KDA remains BF16; expert MXFP8 is enabled
+only for the new 672-wide candidate. Hold every other training and parallelism
+setting fixed and record loss, skipped/nonfinite steps, peak active/reserved
+memory, tokens/s/GPU, and TFLOPs/GPU.
+
+All six EP1 cells completed 50 steps with zero skipped updates. `fused_v2`,
+FA4, and attention-projection MXFP8 are within 0.3% of their matched BF16
+controls. Expert MXFP8 is 9.9--10.3% slower and peak active memory remains
+236.6--237.0 GiB across all cells. The exact table and machine-readable output
+are in `results/throughput/275m_speed_test_report.md` and
+`results/throughput/275m_kda_672_ep1_fa4_mxfp8.csv`.
+
+Treat checkpoint and Hugging Face conversion as a separate promotion gate.
+`fused_v2` stores packed QKV parameters instead of the legacy separate Q/K/V
+layout, and the 672-wide expert tensors differ from existing 664-wide
+checkpoints. Audit and extend the converter to split/repack fused QKV weights,
+support the selected recurrent mixer, and verify strict tensor/logit parity
+before relying on HF/vLLM evaluation or serving. Do not silently load a
+664-wide checkpoint into the 672-wide model.
+
+The next quality-derisk step is the aggressive 275M LR sweep specified in
+[`MXFP8_LADDER.md`](MXFP8_LADDER.md). It uses the 672 expert width,
+`moe_fused_v2`, FlashAttention-4, MXFP8 attention projections, and MXFP8
+routed/shared FFNs across all four Cx values and four LRs. This deliberately
+tests broader pretraining quantization than Kimi K3's routed-expert-only
+post-training QAT recipe. It was submitted on 2026-07-27 as Beaker experiment
+`01KYJPTZ3J4VHGBH0FSVAQRDGC`; larger MXFP8 jobs remain unlaunched.
 
 ## Dense-hybrid alignment target
 

@@ -98,6 +98,46 @@ than the 12-layer control's 295.50M. Its 365.8K TPS is 12.5% above the 12-layer
 SWA row and 17.5% above the 10-layer GDN1 row; reported TFLOPs are 2.3% below
 the 12-layer SWA row because the model executes fewer modeled FLOPs per token.
 
+## KDA 672-wide EP1, fused attention, and MXFP8 qualification
+
+The 2026-07-27 qualification uses the 10-layer, four-KDA/one-full-attention
+gated-NoPE `expand_v=2`, negative-eigenvalue model. Only the expert hidden
+width changes from 664 to 672 so every expert projection dimension is divisible
+by the MXFP8 block size. The candidate has 291,885,888 active parameters,
+227,660,608 active non-embedding parameters, and 3,171,701,568 stored
+parameters. Every cell uses one Holmes B300, EP1, a 2 Mi-token global batch,
+MB16, 50 optimizer steps, compile, and no checkpoints or evals. KDA itself
+remains BF16 in every cell.
+
+| Attention | Expert precision | Attention projection precision | TFLOPs/GPU | TPS/GPU | MFU | Peak active / reserved | Skipped |
+|---|---|---|---:|---:|---:|---:|---:|
+| default + TE | BF16 | BF16 | 398.00 | 260.3k | 17.69% | 236.8 / 241.2 GiB | 0 |
+| default + TE | MXFP8 | BF16 | 358.55 | 234.5k | 15.94% | 236.6 / 243.0 GiB | 0 |
+| fused_v2 + TE | BF16 | BF16 | 398.95 | 260.9k | 17.74% | 237.0 / 240.4 GiB | 0 |
+| fused_v2 + FA4 | BF16 | BF16 | 398.90 | 260.8k | 17.73% | 236.8 / 240.2 GiB | 0 |
+| fused_v2 + FA4 | BF16 | MXFP8 | 397.90 | 260.2k | 17.69% | 237.0 / 240.4 GiB | 0 |
+| fused_v2 + FA4 | MXFP8 | MXFP8 | 357.05 | 233.5k | 15.87% | 236.6 / 243.0 GiB | 0 |
+
+The no-EP path now explicitly forwards the existing rowwise expert-MXFP8
+configuration to both shared and routed local experts. Both expert-MXFP8 cells
+completed compiled forward/backward and all 50 optimizer updates with finite
+loss and zero skipped steps, so EP1 is functionally supported; no expert mesh
+or hidden EP degree is involved.
+
+The performance decision is equally clear. `fused_v2` changes TPS by +0.25%
+relative to default attention, FA4 changes it by -0.03% relative to fused-v2
+TE, and attention-projection MXFP8 changes it by -0.25% relative to FA4 BF16.
+Those are operational ties for a model with only two full-attention layers.
+Enabling expert MXFP8 costs 9.9--10.3% TPS in both attention configurations and
+does not reduce peak MB16 training memory. Keep EP1, `fused_v2`, FA4, and
+attention MXFP8 available, but retain BF16 experts for this model unless a
+larger-model or memory-constrained qualification demonstrates a different
+tradeoff.
+
+- [EP1 BF16/expert-MXFP8 qualification](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYJK6WM1C9A8PQ273XYV22T4)
+- [Fused-v2/FA4/MXFP8 grid](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYJM4P6ZDD3QQRC6HWR4PCPN)
+- [Machine-readable six-cell results](275m_kda_672_ep1_fa4_mxfp8.csv)
+
 - [GDN1 1:1 work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY8YWHCPGVB40W51W7G69VM5)
 - [GDN2 1:1 work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY8YWJQEKHCBKQS9QYBHCY7T)
 - [SWA 1:1 work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KY8YWKZE3QCZ4SCXD224D5RY)

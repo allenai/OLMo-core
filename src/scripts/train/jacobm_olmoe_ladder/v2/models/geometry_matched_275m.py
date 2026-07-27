@@ -127,8 +127,11 @@ EXPECTED_GDN2_COUNTS_BY_EXPAND_V = {
     2.0: (306_191_168, 241_965_888, 3_151_723_328),
 }
 EXPECTED_KDA_COUNTS_BY_SETTINGS = {
-    (1.0, False): (274_470_720, 210_245_440, 3_120_002_880),
-    (2.0, True): (290_503_488, 226_278_208, 3_136_035_648),
+    (1.0, False, 664): (274_470_720, 210_245_440, 3_120_002_880),
+    (2.0, True, 664): (290_503_488, 226_278_208, 3_136_035_648),
+    # First production-shaped MXFP8 candidate. Changing only the expert width
+    # from 664 to 672 also changes the dense-first FFN from 5,976 to 6,048.
+    (2.0, True, 672): (291_885_888, 227_660_608, 3_171_701_568),
 }
 
 # A strict 1:1 hybrid alternates a recurrent/local mixer at even layers with
@@ -391,6 +394,7 @@ def build_geometry_matched_kda_model_config(
     *,
     expand_v: float = 1.0,
     allow_neg_eigval: bool = False,
+    expert_hidden_size: int = 664,
 ) -> OLMoDDPModelConfig:
     """Replace GDN1 with KDA in the gated-NoPE 275M geometry.
 
@@ -400,7 +404,7 @@ def build_geometry_matched_kda_model_config(
     dense-first placement, and initialization are inherited unchanged.
     """
 
-    settings = (float(expand_v), bool(allow_neg_eigval))
+    settings = (float(expand_v), bool(allow_neg_eigval), int(expert_hidden_size))
     try:
         expected_counts = EXPECTED_KDA_COUNTS_BY_SETTINGS[settings]
     except KeyError as exc:
@@ -423,12 +427,20 @@ def build_geometry_matched_kda_model_config(
 
     default_block = deepcopy(resolved[1])
     default_block.sequence_mixer = deepcopy(kda)
+    _resize_moe_block(default_block, expert_hidden_size)
     dense_first = deepcopy(resolved[0])
     dense_first.sequence_mixer = deepcopy(kda)
+    assert dense_first.shared_experts is not None
+    dense_first.shared_experts.hidden_size = (TOP_K + 1) * expert_hidden_size
+    full_attention_blocks = {
+        layer_idx: deepcopy(resolved[layer_idx]) for layer_idx in FULL_ATTENTION_LAYERS
+    }
+    for block in full_attention_blocks.values():
+        _resize_moe_block(block, expert_hidden_size)
     candidate.block = default_block
     candidate.block_overrides = {
         0: dense_first,
-        **{layer_idx: deepcopy(resolved[layer_idx]) for layer_idx in FULL_ATTENTION_LAYERS},
+        **full_attention_blocks,
     }
     candidate.validate()
 
@@ -446,6 +458,19 @@ def build_geometry_matched_kda_model_config(
         raise ValueError(f"unexpected mixer pattern: KDA={actual_kda}, full={actual_full}")
     if candidate.resolved_block_configs[0].routed_experts is not None:
         raise ValueError("KDA candidate must retain the dense-first layer-0 FFN")
+    if candidate.resolved_block_configs[0].shared_experts.hidden_size != (
+        TOP_K + 1
+    ) * expert_hidden_size:
+        raise ValueError("KDA candidate has an unexpected dense-first FFN width")
+    for layer_idx in range(1, candidate.n_layers):
+        block = candidate.resolved_block_configs[layer_idx]
+        if block.shared_experts is None or block.routed_experts is None:
+            raise ValueError(f"KDA candidate layer {layer_idx} must retain MoE experts")
+        if (
+            block.shared_experts.hidden_size != expert_hidden_size
+            or block.routed_experts.hidden_size != expert_hidden_size
+        ):
+            raise ValueError(f"KDA candidate layer {layer_idx} has an unexpected expert width")
     for layer_idx in FULL_ATTENTION_LAYERS:
         attention = cast(
             AttentionConfig, candidate.resolved_block_configs[layer_idx].sequence_mixer

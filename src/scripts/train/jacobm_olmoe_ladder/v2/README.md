@@ -13,6 +13,8 @@ The v2 operating entry points are now:
 - [`ADAPTATION_RECIPE_WIP.md`](ADAPTATION_RECIPE_WIP.md): provisional
   dense-ladder-aligned MT/LCE learning-rate, token-budget, and evaluation
   policy, including unresolved items that block implementation.
+- [`MXFP8_LADDER.md`](MXFP8_LADDER.md): aggressive 275M MXFP8 LR-sweep plan,
+  exact architecture/precision deltas, resource layout, and promotion gates.
 - [`PRETRAINING_LAUNCH_SETTINGS.md`](PRETRAINING_LAUNCH_SETTINGS.md): collected
   larger-size Cx1/Cx2 settings and the pending B300 microbatch study.
 - [`GEOMETRY_MATCHED_SCALE.md`](GEOMETRY_MATCHED_SCALE.md): exact

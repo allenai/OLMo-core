@@ -1,0 +1,32 @@
+[
+  {
+    "experiment_name": "jacobm-275m-kda-ev2-neg-mxfp8-grid-r2",
+    "experiment_id": "01KYJFMH0S6RA0J0KYMATAV3S5",
+    "tasks": [
+      "default-bf16",
+      "fusedv2-bf16",
+      "fusedv2-mxfp8-experts",
+      "fusedv2-mxfp8-full"
+    ],
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYJFMH0S6RA0J0KYMATAV3S5"
+  },
+  {
+    "experiment_name": "jacobm-275m-kda-ev2-neg-mxfp8-grid-r3",
+    "experiment_id": "01KYJFZSRMYZXVTH7SA4TEE1NA",
+    "tasks": [
+      "default-bf16",
+      "fusedv2-bf16",
+      "fusedv2-mxfp8-experts",
+      "fusedv2-mxfp8-full"
+    ],
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYJFZSRMYZXVTH7SA4TEE1NA"
+  },
+  {
+    "experiment_name": "jacobm-275m-kda-ev2-neg-mxfp8-attention-r4",
+    "experiment_id": "01KYJGB4MK7NED8VRHRSS57HG9",
+    "tasks": [
+      "fusedv2-mxfp8-attention"
+    ],
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYJGB4MK7NED8VRHRSS57HG9"
+  }
+]

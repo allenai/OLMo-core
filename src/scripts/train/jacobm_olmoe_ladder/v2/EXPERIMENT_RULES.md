@@ -60,7 +60,7 @@ tuned only if their product preserves it.
 | Cx | Global tokens | Global sequences | Validated GPUs | Rank microbatch | Accumulation |
 |---:|---:|---:|---:|---:|---:|
 | 1 | 262,144 | 32 | 2 B300 | 16 sequences | 1 |
-| 2 | 393,216 | 48 | 2 B300 | 8 sequences | 3 |
+| 2 | 393,216 | 48 | 2 B300 | 12 sequences | 2 |
 | 4 | 524,288 | 64 | 2 B300 | 16 sequences | 2 |
 | 8 | 786,432 | 96 | 2 B300 | 16 sequences | 3 |
 

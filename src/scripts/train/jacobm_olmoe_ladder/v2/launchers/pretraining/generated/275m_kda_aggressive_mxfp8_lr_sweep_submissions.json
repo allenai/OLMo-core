@@ -1,0 +1,25 @@
+[
+  {
+    "experiment_name": "jacobm-275m-kda-aggressive-mxfp8-lr-sweep",
+    "experiment_id": "01KYJPTZ3J4VHGBH0FSVAQRDGC",
+    "tasks": [
+      "cx1-lr4e-4",
+      "cx1-lr8e-4",
+      "cx1-lr1p6e-3",
+      "cx1-lr3p2e-3",
+      "cx2-lr4e-4",
+      "cx2-lr8e-4",
+      "cx2-lr1p6e-3",
+      "cx2-lr3p2e-3",
+      "cx4-lr4e-4",
+      "cx4-lr8e-4",
+      "cx4-lr1p6e-3",
+      "cx4-lr3p2e-3",
+      "cx8-lr4e-4",
+      "cx8-lr8e-4",
+      "cx8-lr1p6e-3",
+      "cx8-lr3p2e-3"
+    ],
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYJPTZ3J4VHGBH0FSVAQRDGC"
+  }
+]

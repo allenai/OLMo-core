@@ -116,8 +116,9 @@ accumulation one and write distinct W&B/checkpoint identities containing
 ledger. These fixed-LR points do not enter the canonical 275M LR-sweep U-plots
 or observed-optimal summary.
 
-At the 2026-07-27 16:56 UTC refresh, all 275M/480M cells and 810M Cx1 had
+At the 2026-07-27 21:29 UTC refresh, all 275M/480M cells and 810M Cx1/Cx2 had
 finished without a failed attempt. The 275M Cx1/2/4/8 strict final-250M CEs
 are `2.692695`, `2.562520`, `2.464247`, and `2.380273`; the 480M values are
-`2.492283`, `2.382695`, `2.291179`, and `2.216501`; 810M Cx1 is `2.352304`.
-The other three 810M cells remain healthy and running.
+`2.492283`, `2.382695`, `2.291179`, and `2.216501`; 810M Cx1/Cx2 are
+`2.352304` and `2.241873`. Cx4 is healthy at 72% with an approximately 5h48m
+ETA, while Cx8 is healthy at 27% with an approximately 1d2h ETA.

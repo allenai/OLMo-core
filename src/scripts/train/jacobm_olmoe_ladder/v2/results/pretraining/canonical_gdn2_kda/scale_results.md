@@ -1,6 +1,6 @@
 # Canonical GDN2 and KDA fixed-LR scale comparison
 
-Generated: `2026-07-27T16:54:49.763339+00:00`
+Generated: `2026-07-27T21:27:02.379511+00:00`
 
 Selection metric: final `250M`-token mean training CE. Only finished runs are eligible.
 The optimal-LR summary includes only bracketed 275M sweeps with a valid quadratic fit.

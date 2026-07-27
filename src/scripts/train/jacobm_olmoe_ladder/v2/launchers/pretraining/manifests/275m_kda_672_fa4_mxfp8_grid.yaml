@@ -1,0 +1,86 @@
+schema_version: 1
+
+experiment:
+  description: EP1 fused-v2 FlashAttention-4 and MXFP8 grid for the 672-wide 275M KDA model
+  checkpoint_root: /tmp/olmoe3-275m-kda-672-fa4-mxfp8-grid
+
+source:
+  repo: /weka/oe-adapt-default/jacobm/olmoe3/olmo-ddp-migration/OLMo-core-moe-v2-core
+  wrapper: src/scripts/train/jacobm_olmoe3_hybrid_scale_beaker.sh
+  image: 01KW8G8JC20H11Y60PPTE2VN4Q
+
+beaker:
+  workspace: ai2/OLMo-3-moe-experiments
+  cluster: ai2/holmes
+  priority: urgent
+  shared_memory: 128 GiB
+  min_runtime: 0m
+  auto_resume: false
+  timeout: 3h
+  result_path: /results
+
+secrets:
+  AWS_ACCESS_KEY_ID: AWS_ACCESS_KEY_ID
+  AWS_SECRET_ACCESS_KEY: AWS_SECRET_ACCESS_KEY
+  WANDB_API_KEY: jacobm_WANDB_API_KEY
+  BEAKER_TOKEN: jacobm_BEAKER_TOKEN
+
+datasets:
+  - mount_path: /weka/oe-adapt-default
+    weka: oe-adapt-default
+  - mount_path: /weka/oe-training-default
+    weka: oe-training-default
+
+training:
+  model_size: 275m
+  model_variant: geometry_275m_kda_ev2_neg_nope_gated_mxfp8_672
+  sequence_length: 8192
+  global_batch_size: 2097152
+  rank_microbatch_sequences: 16
+  learning_rate: "8e-4"
+  chinchilla_multiple: 1
+  hard_stop_steps: 50
+  checkpoints: false
+  evals: false
+  compile: true
+  wandb: true
+
+# All cells use one B300 with EP=1. The default-attention/TE/BF16 baseline is
+# supplied by the preceding EP1 qualification experiment, so this manifest
+# launches only the four additional isolation cells.
+runs:
+  - task_name: fusedv2-te-bf16
+    run_name: smoke-275m-kda-672-ep1-fusedv2-te-bf16-mb16-2m-r1
+    gpu_count: 1
+    expert_parallel_size: 1
+    attention_impl: fused_v2
+    attention_backend: te
+    mxfp8_experts: false
+    mxfp8_attention: false
+
+  - task_name: fusedv2-fa4-bf16
+    run_name: smoke-275m-kda-672-ep1-fusedv2-fa4-bf16-mb16-2m-r1
+    gpu_count: 1
+    expert_parallel_size: 1
+    attention_impl: fused_v2
+    attention_backend: flash_4
+    mxfp8_experts: false
+    mxfp8_attention: false
+
+  - task_name: fusedv2-fa4-attention-mxfp8
+    run_name: smoke-275m-kda-672-ep1-fusedv2-fa4-attention-mxfp8-mb16-2m-r1
+    gpu_count: 1
+    expert_parallel_size: 1
+    attention_impl: fused_v2
+    attention_backend: flash_4
+    mxfp8_experts: false
+    mxfp8_attention: true
+
+  - task_name: fusedv2-fa4-full-mxfp8
+    run_name: smoke-275m-kda-672-ep1-fusedv2-fa4-full-mxfp8-mb16-2m-r1
+    gpu_count: 1
+    expert_parallel_size: 1
+    attention_impl: fused_v2
+    attention_backend: flash_4
+    mxfp8_experts: true
+    mxfp8_attention: true

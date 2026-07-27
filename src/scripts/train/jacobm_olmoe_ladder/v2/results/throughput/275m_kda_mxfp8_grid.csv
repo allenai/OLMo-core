@@ -1,0 +1,4 @@
+family,batch_tokens,gpus,path,rank_microbatch_sequences,final10_median_tflops_gpu,final10_median_tps_gpu,aggregate_tps,stable_step_seconds,final10_median_mfu_pct,peak_active_gib,peak_reserved_gib,max_skipped_steps,beaker_job,wandb_url
+default-bf16,2097152,8,EP4/rowwise_nvshmem,16,329.10,216380.0,1731040.0,1.2115,14.625,198.80,216.40,0,01KYJFZSW7YMB36MR0RSE0B9VM,https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/lqb7n5ag
+fusedv2-bf16,2097152,8,EP4/rowwise_nvshmem,16,328.20,215766.0,1726128.0,1.2149,14.585,199.10,216.60,0,01KYJFZSZVDDQQ18RVSGJZTN55,https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/rkcn7v5s
+fusedv2-mxfp8-attention,2097152,8,EP4/rowwise_nvshmem,16,326.80,214891.0,1719128.0,1.2199,14.530,197.30,215.40,0,01KYJGB4R4F5E19SA05GWGJSFG,https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/q9qiy5sb
