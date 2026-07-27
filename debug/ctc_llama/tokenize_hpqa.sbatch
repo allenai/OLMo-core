@@ -36,10 +36,24 @@ TOK=/scratch/users/prasann/hf_models/Llama-3.2-3B-marker-tok
 SEQ_LEN=${SEQ_LEN:-28672}
 mkdir -p "$LOGDIR" "$WORK"
 echo "=== HOST=$(hostname) START=$(date '+%F %T') SEQ_LEN=$SEQ_LEN ==="
+# Prefer the ALREADY-MATERIALISED 10k subsample on shared storage. A cross-family comparison on
+# different training data is not a comparison, and "same seed" is NOT sufficient to guarantee the
+# same draw: the sibling used a single Random(42) with rng.sample() across the 5 bucket files,
+# while a fresh Random(42) per bucket (or shuffle-then-head) selects a DIFFERENT subset from the
+# identical pool at the identical seed. Consuming the sibling's emitted file removes the question
+# entirely -- both families read byte-identical examples. subsample_hpqa_pool.py remains only as
+# the fallback for regenerating the ladder from scratch if that file is ever lost.
+SHARED10K=${SHARED10K:-/scratch/users/prasann/ctc_suite_staged/hpqa_tmp/hotpotqa_10k.jsonl}
 rm -f "$WORK"/*.jsonl
-python "$REPO/debug/ctc_llama/subsample_hpqa_pool.py" \
-  --pool /scratch/users/prasann/ctc_suite_staged/hpqa_pool \
-  --out "$WORK" --per-bucket 2000 --seed 42 || exit 2
+if [ -s "$SHARED10K" ]; then
+  echo "SOURCE: shared 10k subsample $SHARED10K ($(wc -l < "$SHARED10K") lines, md5 $(md5sum "$SHARED10K" | cut -d' ' -f1))"
+  ln -sf "$SHARED10K" "$WORK/hotpotqa_10k.jsonl"
+else
+  echo "SOURCE: FALLBACK -- regenerating the subsample from the pool ($SHARED10K missing)"
+  python "$REPO/debug/ctc_llama/subsample_hpqa_pool.py" \
+    --pool /scratch/users/prasann/ctc_suite_staged/hpqa_pool \
+    --out "$WORK" --per-bucket 2000 --seed 42 || exit 2
+fi
 ls -la "$WORK"
 rm -rf "$OUTDIR"; mkdir -p "$OUTDIR"
 cd "$REPO"
