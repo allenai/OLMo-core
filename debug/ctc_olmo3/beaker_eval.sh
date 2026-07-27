@@ -19,6 +19,15 @@ VARIANT="${2:?dense|chunked}"
 ARM="${3:?full|chunked-mix}"
 TASK="${4:-contradiction}"
 EVALDIR="${5:-contradiction}"
+# Explicit max_length (env MAXLEN), because the driver's default of rung_tokens + 2048 is far too
+# small for these rung files. The contradiction rungs hold a FIXED corpus size but wildly varying
+# claim lengths, so at "rung 4096" the median prompt is 6,969 tokens and the longest is 23,796. Any
+# prompt over (max_length - max_new) is skipped and scored 0 while parse_rate still reads 1.0 --
+# that silently zeroed 354/500 examples at every rung >= 4k on the first pass, which is what made
+# the two arms look tied. MAXLEN=32768 covers 500/500 at 2k/4k and 489/500 at 8k/16k.
+MAXLEN="${MAXLEN:-}"
+MAXLEN_ARG=""
+[ -n "$MAXLEN" ] && MAXLEN_ARG="--max-length $MAXLEN"
 NAME="olmo3-eval-$(echo "$ARM-$TASK" | tr '_' '-')-$(date +%H%M%S)"
 
 WORK='
@@ -52,7 +61,7 @@ for RUNG in 2048 4096 8192 16384; do
     --model-scale olmo3-7b --nproc 8 --master-port $PORT \
     --tokenizer $WK/tokenizer \
     --doc-start-id 100266 --doc-end-id 100267 --eos-token-id 100257 \
-    --small-eval-ok --out-root "$OUT"
+    --small-eval-ok MAXLEN_SUB --out-root "$OUT"
   RC=$?; echo "---- rung $RUNG rc=$RC ----"
   [ $RC -ne 0 ] && RC_ALL=$RC
 done
@@ -70,6 +79,7 @@ WORK="${WORK//VARIANT_SUB/$VARIANT}"
 WORK="${WORK//ARM_SUB/$ARM}"
 WORK="${WORK//TASK_SUB/$TASK}"
 WORK="${WORK//EVALDIR_SUB/$EVALDIR}"
+WORK="${WORK//MAXLEN_SUB/$MAXLEN_ARG}"
 
 # NOTE the REAL `--install`, not the `--install true` no-op that beaker.md recommends for baked
 # images: this image predates olmo-core's `dataclass_extensions` dependency, so the no-op path dies

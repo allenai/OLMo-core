@@ -1,0 +1,38 @@
+{
+  "arm": "full",
+  "aux": {
+    "generations_path": "/weka/oe-training-default/ai2-llm/checkpoints/prasanns/ctc_olmo3/results/contradiction/olmo3-7b_full/rung_8192.generations.json",
+    "max_length": 10240,
+    "max_new_tokens": 512,
+    "nproc": 8,
+    "raw_eval_json": "/weka/oe-training-default/ai2-llm/checkpoints/prasanns/ctc_olmo3/results/contradiction/olmo3-7b_full/rung_8192.raw.json"
+  },
+  "aux_metrics": {
+    "eval_seconds": 95.0,
+    "exact_match": 0.09,
+    "f1": 0.21226666666666666,
+    "parse_rate": 1.0,
+    "precision": 0.21266666666666667,
+    "recall": 0.212
+  },
+  "complexity_class": "N2",
+  "cot_label": "no-cot",
+  "eval_size": 500,
+  "metric_name": "set_f1",
+  "metric_value": 0.21226666666666666,
+  "model": "olmo3-7b-maxlen-truncated",
+  "provenance": {
+    "ckpt_path": "/weka/oe-training-default/ai2-llm/checkpoints/prasanns/ctc_suite/ckpts/ctc-olmo3-7b-contra-full-swa-20260727T020006-0700",
+    "data_path": "/weka/oe-training-default/ai2-llm/checkpoints/prasanns/ctc_olmo3/eval_rungs/contradiction/rung_8192.jsonl",
+    "date": "2026-07-27T10:18:05",
+    "eval_backend": "native",
+    "evaluator": "src/corpus_reasoning/eval/eval_lc_native_docchunk_contra.py",
+    "evaluator_variant": "full",
+    "git_commit": "4fb685c87f196c88fdbee6185a768f3de833d64a",
+    "launcher": "src/scripts/eval/ctc_suite/run_rung_eval.py",
+    "note": "INVALID measurement, kept only as a record of the trap. run_rung_eval's default max_length = rung_tokens + 2048 is far too small for these rung files: corpus size is fixed per rung but claim length varies enormously, so at rung 4096 the median prompt is 6969 tokens and the longest is 23796. Prompts over (max_length - max_new) are skipped and scored 0 while parse_rate still reports 1.0. Exactly 354/500 examples were zeroed at every rung >= 4096 (answered <=> fits-in-limit agreement was 500/500), which depressed both arms onto each other and hid any real gap. Re-run with --max-length 32768."
+  },
+  "rung_tokens": 8192,
+  "task": "contradiction",
+  "trained_ctx": "2k-32k-joint-uniform"
+}
