@@ -58,15 +58,16 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument(
         "--model-scale",
         required=True,
-        choices=["4b", "9b"],
-        help="Beaker family is 4B/9B only; 0.8B trains locally",
+        choices=["4b", "9b", "7b"],
+        help="Beaker family is 4B/9B for Qwen; 7b is the OLMo-3 scale. 0.8B trains locally",
     )
     ap.add_argument(
         "--model-family",
         default="qwen3_5",
-        choices=["qwen3_5", "qwen3"],
-        help="qwen3_5 (GDN hybrid, default) or qwen3 (dense). Selects the default base checkpoint "
-        "and is passed through to the trainer (which also auto-detects it from the shard).",
+        choices=["qwen3_5", "qwen3", "olmo3"],
+        help="qwen3_5 (GDN hybrid, default), qwen3 (dense), or olmo3 (OLMo 3 7B dense). Selects the "
+        "default base checkpoint and is passed through to the trainer (which also auto-detects it "
+        "from the shard). ``olmo3`` has no default base -- pass --base-checkpoint explicitly.",
     )
     ap.add_argument(
         "--run-name", required=True, help="fresh name per config -- silent auto-resume trap"

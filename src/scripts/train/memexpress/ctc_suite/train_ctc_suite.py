@@ -100,6 +100,22 @@ except ImportError:  # pragma: no cover
     _sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     from llama_configs import LLAMA_MARKER_TOKENIZER, llama3_2_3B  # type: ignore[no-redef]
 
+try:  # package import (PYTHONPATH=src) or same-directory fallback (torchrun on the file path)
+    from scripts.train.memexpress.ctc_suite.olmo3_configs import (
+        OLMO3_MARKER_TOKENIZER,
+        OLMO3_VOCAB_SIZE,
+        olmo3_7B_ctc,
+    )
+except ImportError:  # pragma: no cover
+    import sys as _sys
+
+    _sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from olmo3_configs import (  # type: ignore[no-redef]
+        OLMO3_MARKER_TOKENIZER,
+        OLMO3_VOCAB_SIZE,
+        olmo3_7B_ctc,
+    )
+
 #: Supported model families. The trainer is family-agnostic: everything below (marker ids,
 #: embedding size, tokenizer, model factory) is keyed on the family, which is auto-detected from
 #: the shard's ``marker_set`` (or forced via ``--model-family``). ``qwen3_5`` is the GDN+attn
@@ -111,6 +127,7 @@ FAMILY_VOCAB_SIZE = {
     "qwen3": 151936,  # Qwen3-{0.6B,1.7B,4B,8B}-Base embedding size
     "gemma": 262208,  # Gemma-3-{1B,4B,12B,27B} embedding size (262144 real ids + 64 padding rows)
     "llama": 128256,  # Llama-3.x embedding size (no padding rows: vocab == matrix rows)
+    "olmo3": OLMO3_VOCAB_SIZE,  # dolma2 padded embedding size (100278 real ids + 74 padding rows)
 }
 
 #: Per-family HF tokenizer identifier (all sizes within a family share one tokenizer).
@@ -123,6 +140,10 @@ FAMILY_TOKENIZER = {
     # built by ``src/scripts/data/make_llama_marker_tokenizer.py``. Point at the patched copy, not
     # the stock repo, or the converter's marker-id verification fails.
     "llama": LLAMA_MARKER_TOKENIZER,
+    # Same story for OLMo: dolma2 has no ``<|box_start|>``/``<|box_end|>``, so the suite uses a
+    # local copy in which the unused ``<|extra_id_1|>``/``<|extra_id_2|>`` slots (100266/100267)
+    # are RENAMED to those strings, ids unchanged.
+    "olmo3": OLMO3_MARKER_TOKENIZER,
 }
 
 #: Per-family model factories, keyed by ``--model-scale``.
@@ -156,6 +177,13 @@ MODEL_FACTORIES = {
     # own config.json, and hard-asserts the resulting parameter count against it.
     "llama": {
         "3b": llama3_2_3B,
+    },
+    # OLMo 3 (``allenai/Olmo-3-1025-7B``), this repo's native family. ``olmo3_configs`` wraps the
+    # stock ``olmo3_7B`` factory to disable sliding-window attention (DocumentChunkedAttention
+    # refuses it, so the chunked arm cannot have it -- disabled in BOTH arms to keep the mask the
+    # only manipulated variable) and to apply the checkpoint's YaRN scaling to every layer.
+    "olmo3": {
+        "7b": olmo3_7B_ctc,
     },
 }
 
