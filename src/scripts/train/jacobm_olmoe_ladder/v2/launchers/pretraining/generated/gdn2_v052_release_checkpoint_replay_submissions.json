@@ -1,0 +1,21 @@
+[
+  {
+    "run_name": "pt-275m-geometry-hybrid-gdn2-ev2-nope-gated-cx8-lr1p6e-3-r1",
+    "source_checkpoint": "/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/olmo-ddp/pretraining/pt-275m-geometry-hybrid-gdn2-ev2-nope-gated-cx8-lr1p6e-3-r1/step36500",
+    "source_commit": "b76fbadbd9696b1616b2c94b05559595cf433775",
+    "fla_tag": "v0.5.2",
+    "fla_commit": "9c8e42e762fce087c27b673af4922795d9edb85e",
+    "previous_fla_commit": "cbb0a72efb55c18ca0ef4f298298317573ad2cb3",
+    "expected_failure_step": 36768,
+    "localize_start_step": 36740,
+    "hard_stop_step": 37000,
+    "checkpoint_writes": false,
+    "wandb": false,
+    "dump_dir": "/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/olmo-ddp/debug/gdn2-v052-release-replay/275m-gdn2-ev2-neg-cx8-lr1p6e3-step36768-v052-release-r1",
+    "experiment_id": "01KYJTMTS631KAFF2S7H10AEDH",
+    "task_ids": [
+      "01KYJTMTSCRYYXVWA45CP3TFR0"
+    ],
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYJTMTS631KAFF2S7H10AEDH"
+  }
+]
