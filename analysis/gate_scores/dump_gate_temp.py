@@ -13,7 +13,9 @@ i.e. the gate logits are the ordinary attention logits divided by a temperature
 so the printed values are exactly how far SFT moved each layer off that init.
 
 This reads the parameters straight out of the distributed checkpoint -- no model build, no forward
-pass, CPU only.
+pass, CPU only. It deliberately uses ``torch.distributed.checkpoint`` directly rather than
+:mod:`olmo_core.distributed.checkpoint` so it runs in a bare image without the package installed
+(the checkpoint is a local weka path, so no remote-filesystem reader is needed).
 
 Usage::
 
@@ -25,10 +27,31 @@ import math
 import os
 import re
 import sys
+from typing import Any, Dict, List
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
+import torch.distributed.checkpoint as dcp
+from torch.distributed.checkpoint.default_planner import _EmptyStateDictLoadPlanner
+from torch.distributed.checkpoint.state_dict_loader import _load_state_dict
 
-from olmo_core.distributed.checkpoint import get_checkpoint_metadata, load_keys  # noqa: E402
+
+def _load_keys(ckpt: str, keys: List[str]) -> Dict[str, Any]:
+    """Load just ``keys`` (unsharded) out of a DCP checkpoint, single-process."""
+    state_dict: Dict[str, Any] = {}
+    _load_state_dict(
+        state_dict,
+        storage_reader=dcp.FileSystemReader(ckpt),
+        planner=_EmptyStateDictLoadPlanner(keys=keys),
+        no_dist=True,
+    )
+    return state_dict
+
+
+def _get_key(state_dict: Dict[str, Any], key: str) -> Any:
+    """Fetch a dotted key. The empty-planner load may return it flat or nested, so handle both."""
+    if key in state_dict:
+        return state_dict[key]
+    root, rest = key.split(".", 1)
+    return _get_key(state_dict[root], rest)
 
 
 def _model_dir(path: str) -> str:
@@ -63,7 +86,7 @@ def main():
     print(f"checkpoint: {ckpt}", flush=True)
 
     # Config context (softmax_scale / block size / gate_temperature flag), if the run saved one.
-    for cfg_name in ("config.json", os.path.join("..", "config.json")):
+    for cfg_name in ("config.json", "../config.json", "../../config.json"):
         cfg_path = os.path.join(ckpt, cfg_name)
         if os.path.exists(cfg_path):
             with open(cfg_path) as f:
@@ -73,7 +96,7 @@ def main():
                     print(f"config: {field} = {m.group(1).strip()}")
             break
 
-    md = get_checkpoint_metadata(ckpt)
+    md = dcp.FileSystemReader(ckpt).read_metadata()
     keys = sorted(
         (
             k
@@ -92,9 +115,10 @@ def main():
     print(f"{'layer':>5}  {'log_gate_temp':>14}  {'T=exp(log)':>11}  {'1/T':>8}  key")
     print("-" * 92)
 
+    loaded = _load_keys(ckpt, keys)
     rows = []
-    for key, tensor in zip(keys, load_keys(ckpt, keys)):
-        vals = tensor.float().flatten().tolist()
+    for key in keys:
+        vals = _get_key(loaded, key).float().flatten().tolist()
         for i, v in enumerate(vals):
             layer = _layer_idx(key)
             t = math.exp(v)
