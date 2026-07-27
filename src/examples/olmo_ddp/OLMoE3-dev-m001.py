@@ -137,7 +137,6 @@ torch.set_float32_matmul_precision("high")
 
 import sys  # noqa: E402
 
-
 EVAL_INTERVAL = 2000
 SAVE_INTERVAL = 2000
 
