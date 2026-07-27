@@ -12,11 +12,10 @@
 #     src/scripts/data/ctc_suite/convert_hpqa_olmo3_cubbins.sbatch
 #SBATCH --job-name=hpqa-olmo3-conv
 #SBATCH --nodes=1
-#SBATCH --gres=gpu:0
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=64G
 #SBATCH --time=03:00:00
-#SBATCH --output=/data/prasann/joblogs/hpqa_olmo3_conv_%j.log
+#SBATCH --output=/scratch/users/prasann/ctc_suite_logs/hpqa_olmo3_conv_%j.log
 
 set -uo pipefail
 MIRROR=/scratch/users/prasann/ctc_suite_logs
@@ -36,10 +35,25 @@ export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
 export HOME=/data/prasann/home_cache
 mkdir -p "$HOME" 2>/dev/null || true
 
-RAW=${RAW:-/accounts/projects/berkeleynlp/prasann/projects/OLMo-core/debug/ctc_multifamily/hpqa_raw}
+# Source selection, in order:
+#  1. the shared family-agnostic JSONL the coordinator generates (preferred -- identical data for
+#     every family), if it exists and is non-empty;
+#  2. the pre-existing BUILD_MATRIX-§2 pool on cubbins /data, generated with the SAME recipe
+#     (n in 11/24/50/100/205, bridge, hard-negs n/10, seed 42) for the Qwen arm, hard negatives
+#     already mined.
+# (2) matters because regenerating requires pyserini to mine BM25 hard negatives, and pyserini's
+# JVM is documented to hang on jsteinhardt compute nodes -- the coordinator's generation job produced
+# nothing in 32 minutes before being cancelled. The pool avoids the JVM entirely.
+SHARED=${SHARED:-/accounts/projects/berkeleynlp/prasann/projects/OLMo-core/debug/ctc_multifamily/hpqa_raw}
+POOL=${POOL:-/scratch/users/prasann/ctc_suite_staged/hpqa_pool}
+if [ -n "$(ls "$SHARED"/*.jsonl 2>/dev/null)" ]; then
+  RAW="$SHARED"; echo "SOURCE: shared family-agnostic JSONL ($RAW)"
+else
+  RAW="$POOL";   echo "SOURCE: pre-existing BUILD_MATRIX pool ($RAW) -- shared dir empty"
+fi
 TOKENIZER=/scratch/users/prasann/hf_models/Olmo-3-1025-7B-docchunk
 OUT=/scratch/users/prasann/ctc_suite_staged/shards_olmo3/hotpotqa_train
-TMP=/data/prasann/ctc_suite_olmo3_tmp
+TMP=${TMP:-/scratch/users/prasann/ctc_suite_staged/hpqa_tmp}
 CONV=$REPO/src/scripts/data/convert_unified_to_document_landmark.py
 mkdir -p "$OUT" "$TMP"
 PER_N=${PER_N:-2000}

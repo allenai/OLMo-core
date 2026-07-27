@@ -20,14 +20,13 @@ printf "%s" "$AWS_CFG" > ~/.aws/config
 export AWS_PROFILE=S3
 S3=s3://ai2-llm/checkpoints/prasanns/ctc_olmo3
 WK=/weka/oe-training-default/ai2-llm/checkpoints/prasanns/ctc_olmo3
-for d in bases/olmo3-7b-base-fixmark shards/contradiction_train shards/qdmatch_hpqa_train tokenizer eval_rungs; do
+for d in bases/olmo3-7b-base-fixmark shards tokenizer eval_rungs; do
   echo "=== sync $d ==="
   "$AWS" s3 sync "$S3/$d" "$WK/$d"
 done
 echo "=== verify ==="
 ls -l "$WK/bases/olmo3-7b-base-fixmark/model_and_optim/.metadata" && echo OLMO3_BASE_OK
-echo "contradiction shard files: $(ls "$WK/shards/contradiction_train" | wc -l)"
-echo "qdmatch shard files: $(ls "$WK/shards/qdmatch_hpqa_train" | wc -l)"
+for sh in "$WK"/shards/*/; do echo "shard $(basename "$sh"): $(ls "$sh" | wc -l) files"; done
 echo "tokenizer files: $(ls "$WK/tokenizer" | wc -l)"
 echo "eval rungs: $(find "$WK/eval_rungs" -name "*.jsonl" | wc -l)"
 echo "WEKA_SYNC_DONE"
