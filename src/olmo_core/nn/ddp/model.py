@@ -231,7 +231,8 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
         return True
 
     def num_flops_per_token(self, seq_len: int) -> int:
-        # TODO: check if it works with PP, does it compute one model part only? or the full model?
+        # TODO: under PP this returns full-model FLOPs/token via super(); confirm that's what the
+        # speed monitor expects rather than the per-stage count.
         return super().num_flops_per_token(seq_len)
 
     def compute_auxiliary_metrics(
@@ -619,7 +620,8 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
         if target_dtype != self.dtype:
             self.to(dtype=target_dtype)
 
-        # TODO: check if this is needed
+        # TODO: decide whether the commented-out torch._dynamo optimize_ddp setting below is needed
+        # for compiled DDP; left disabled for now.
         # Adapted from
         # https://github.com/pytorch/torchtitan/blob/90c889e972b56b9faadebbb78fc985dedc537ed9/torchtitan/parallelisms/parallelize_llama.py#L328
         # if compile_enabled:
@@ -852,8 +854,10 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
         )
 
     def prepare_experts_for_ddp(self, world_mesh: DeviceMesh):
+        # TODO: no-op today; confirm routed-expert blocks need no DDP-specific setup here
+        # (unlike the FSDP path, which shards the experts).
         for block in self.routed_blocks():
-            pass  # TODO: Anything to do here?
+            pass
 
     def post_batch(self, dry_run: bool = False):
         for block in self.ddp_blocks():
