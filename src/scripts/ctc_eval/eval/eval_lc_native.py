@@ -238,7 +238,30 @@ def main():
         RR = args.rerank_root
         # n>=500 eval at the goal-critical rungs (8k/16k/32k) from cpt_data/eval500; 64k dropped
         # (beyond the 32k goal, saves GPU). 2k/3k base + oolong (capped ~80) keep their files.
-        E5 = os.environ.get("EVAL500_ROOT", "/scratch/users/prasann/cpt_data/eval500")
+        #
+        # Bundle resolution. The old default was the **v1** `cpt_data/eval500` directory even when
+        # --ladder-version v2 (the default) was selected, so forgetting to export EVAL500_ROOT
+        # silently resolved v2 rung filenames against a v1 tree and produced mostly-missing rungs.
+        # Now: explicit env wins; otherwise pick the first bundle that actually EXISTS for the
+        # selected ladder version -- the weka 2k..256k bundle (mounted on Beaker) before the
+        # Berkeley-local /scratch copies.
+        # ⚠ The two v2 bundles are NOT equivalent at the long end. The weka bundle carries the
+        # 2k..256k ladder rebuilt at eval_size=500 (plus oolong 2k/4k); the Berkeley-local
+        # eval500_v2 still holds the ORIGINAL xlong rungs at eval_size=300, which the --xlong glob
+        # will happily pick up. If you are quoting 64k/128k/256k numbers from a Berkeley run,
+        # point EVAL500_ROOT at the weka bundle (or a copy of it) rather than relying on this
+        # fallback, or the rungs are 300 examples and need an inline eval_size warning.
+        _V2_BUNDLES = [
+            "/weka/oe-training-default/ai2-llm/checkpoints/prasanns/xlong5_2k256k_qwen35/eval",
+            "/scratch/users/prasann/cpt_data/eval500_v2",
+        ]
+        _V1_BUNDLES = ["/scratch/users/prasann/cpt_data/eval500"]
+        E5 = os.environ.get("EVAL500_ROOT")
+        if not E5:
+            _cands = _V2_BUNDLES if args.ladder_version == "v2" else _V1_BUNDLES
+            E5 = next((p for p in _cands if os.path.isdir(p)), _cands[-1])
+            print(f"[ladder] EVAL500_ROOT unset -> {E5} (ladder_version={args.ladder_version})",
+                  flush=True)
         if args.ladder_version == "v2":
             # v2: every rung of a task shares the SAME >=500 questions/answers; only the
             # distractor documents differ (built by build_v2_eval_ladders.py). ALL rungs live
@@ -381,6 +404,21 @@ def main():
                     if os.path.exists(_p):
                         LADDERS["oolong"].append((_s, _p))
             print(f"[xlong] appended ultra-long rungs where files exist under {E5}", flush=True)
+
+        # ---- Resolve check: a missing rung file must not pass silently ----
+        # The rungs are literal paths; if the bundle is the wrong version (or not staged) the
+        # runner would otherwise skip rungs and report a partial ladder as if it were complete.
+        _missing = [(t, lab, p) for t, rl in LADDERS.items() for lab, p in rl
+                    if not os.path.exists(p)]
+        if _missing:
+            print(f"[ladder] WARNING: {len(_missing)} rung file(s) MISSING under {E5}:", flush=True)
+            for _t, _lab, _p in _missing[:20]:
+                print(f"    {_t:>14} {_lab:>5}  {_p}", flush=True)
+            print("[ladder] set EVAL500_ROOT to a bundle containing these rungs, or restrict with "
+                  "--ladder-tasks / --ladder-rungs.", flush=True)
+            LADDERS = {t: [(lab, p) for lab, p in rl if os.path.exists(p)]
+                       for t, rl in LADDERS.items()}
+            LADDERS = {t: rl for t, rl in LADDERS.items() if rl}
         LSPEC = {
             "contradiction": ("contradiction", _eval_contradiction, "f1", 200),
             "nq": ("retrieval", _eval_retrieval, "f1", 64),
