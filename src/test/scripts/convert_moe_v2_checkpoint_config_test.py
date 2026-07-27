@@ -94,11 +94,37 @@ def test_rewrite_config_dict_maps_canonical_module_aliases():
     assert "MoEV2" not in json.dumps(new)
 
 
+def test_rewrite_config_dict_maps_package_level_export_paths():
+    # Configs could record the class under a package-level ``__init__`` re-export path rather than
+    # the concrete module. Leaf-name matching handles those too.
+    config = {
+        "optim": {"_CLASS_": "olmo_core.optim.MoEFusedV2OptimizerConfig"},
+        "train_module": {
+            "_CLASS_": (
+                "olmo_core.train.train_module.transformer.MoEV2TransformerTrainModuleConfig"
+            ),
+        },
+        "model": {"_CLASS_": "olmo_core.nn.moe.v2.MoEFusedV2Transformer"},
+        "model_config": {"_CLASS_": "olmo_core.nn.transformer.MoEFusedV2TransformerConfig"},
+    }
+    new, changes = convert_module.rewrite_config_dict(config)
+    assert new["optim"]["_CLASS_"] == "olmo_core.optim.moe_optimizer.OLMoDDPOptimizerConfig"
+    assert (
+        new["train_module"]["_CLASS_"]
+        == "olmo_core.train.train_module.transformer.config.OLMoDDPTrainModuleConfig"
+    )
+    assert new["model"]["_CLASS_"] == "olmo_core.nn.ddp.model.OLMoDDPModel"
+    assert new["model_config"]["_CLASS_"] == "olmo_core.nn.transformer.config.OLMoDDPModelConfig"
+    assert len(changes) == 4
+    assert "MoEFusedV2" not in json.dumps(new)
+    assert "MoEV2" not in json.dumps(new)
+
+
 def test_all_rewrite_targets_are_importable():
     # Every canonical target must actually resolve, so a migrated config loads.
     import importlib
 
-    for target in set(convert_module.CLASS_PATH_REWRITES.values()):
+    for target in set(convert_module._CANONICAL_BY_LEAF_NAME.values()):
         module_path, _, class_name = target.rpartition(".")
         module = importlib.import_module(module_path)
         assert hasattr(module, class_name), f"{target} does not resolve"

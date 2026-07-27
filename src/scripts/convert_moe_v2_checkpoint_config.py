@@ -8,30 +8,38 @@ unaffected — the rename preserved the same class objects, so parameter names a
 ``config.json`` serialized under the old names records stale ``_CLASS_`` values that no longer
 resolve. This script rewrites just those ``_CLASS_`` strings in place so the checkpoint loads again.
 
-Run it by file path with ``src`` on the import path so ``olmo_core`` resolves. If the package is
-already installed (``pip install -e .``), the ``PYTHONPATH=src`` prefix is unnecessary::
+Run it by file path from the repo root::
 
     # Rewrite one or more checkpoints (a checkpoint dir or a config.json, local or remote).
-    PYTHONPATH=src python src/scripts/convert_moe_v2_checkpoint_config.py /path/to/checkpoint/step10000
-    PYTHONPATH=src python src/scripts/convert_moe_v2_checkpoint_config.py s3://bucket/run/step10000/config.json
+    python src/scripts/convert_moe_v2_checkpoint_config.py /path/to/checkpoint/step10000
+    python src/scripts/convert_moe_v2_checkpoint_config.py s3://bucket/run/step10000/config.json
 
     # Preview the changes without writing.
-    PYTHONPATH=src python src/scripts/convert_moe_v2_checkpoint_config.py --dry-run /path/to/checkpoint/step10000
+    python src/scripts/convert_moe_v2_checkpoint_config.py --dry-run /path/to/checkpoint/step10000
 
     # Write the migrated config to a different location instead of in place.
-    PYTHONPATH=src python src/scripts/convert_moe_v2_checkpoint_config.py \
+    python src/scripts/convert_moe_v2_checkpoint_config.py \
         --output /tmp/config.json /path/to/checkpoint/step10000
 """
 
 import json
 import logging
+import sys
+from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any, Dict, List, Tuple
 
 import click
 
-from olmo_core.config import Config
-from olmo_core.io import (
+# Ensure ``olmo_core`` is importable when this file is run directly from a source checkout: Python
+# puts this script's own directory (``src/scripts``) on ``sys.path`` rather than ``src``. This is a
+# no-op when the package is installed (``pip install -e .``).
+_SRC_ROOT = Path(__file__).resolve().parent.parent
+if str(_SRC_ROOT) not in sys.path:
+    sys.path.insert(0, str(_SRC_ROOT))
+
+from olmo_core.config import Config  # noqa: E402
+from olmo_core.io import (  # noqa: E402
     file_exists,
     get_bytes_range,
     get_file_size,
@@ -40,69 +48,62 @@ from olmo_core.io import (
     normalize_path,
     upload,
 )
-from olmo_core.utils import prepare_cli_environment
+from olmo_core.utils import prepare_cli_environment  # noqa: E402
 
 log = logging.getLogger(__name__)
 
 CONFIG_FILENAME = "config.json"
 
-#: Maps every legacy ``_CLASS_`` value to its canonical replacement. Covers all three ways an old
-#: name could have been recorded: renamed-symbol aliases (``MoEFusedV2*`` / ``MoEV2*``) that lived in
-#: the *canonical* module, the same aliases under the former ``olmo_core.nn.moe.v2.*`` /
-#: ``moe_train_module`` module paths, and canonically-named entries under those former module paths.
-CLASS_PATH_REWRITES: Dict[str, str] = {
-    # --- Model config ---
-    "olmo_core.nn.transformer.config.MoEFusedV2TransformerConfig": (
-        "olmo_core.nn.transformer.config.OLMoDDPModelConfig"
-    ),
-    # --- Block config/class ---
-    # Aliases that lived in the canonical module (olmo_core.nn.ddp.block).
-    "olmo_core.nn.ddp.block.MoEFusedV2TransformerBlockConfig": (
-        "olmo_core.nn.ddp.block.OLMoDDPTransformerBlockConfig"
-    ),
-    "olmo_core.nn.ddp.block.MoEFusedV2TransformerBlock": (
-        "olmo_core.nn.ddp.block.OLMoDDPTransformerBlock"
-    ),
-    # Former moe.v2.block module path (both the alias and canonical names).
-    "olmo_core.nn.moe.v2.block.MoEFusedV2TransformerBlockConfig": (
-        "olmo_core.nn.ddp.block.OLMoDDPTransformerBlockConfig"
-    ),
-    "olmo_core.nn.moe.v2.block.MoEFusedV2TransformerBlock": (
-        "olmo_core.nn.ddp.block.OLMoDDPTransformerBlock"
-    ),
-    "olmo_core.nn.moe.v2.block.OLMoDDPTransformerBlockConfig": (
-        "olmo_core.nn.ddp.block.OLMoDDPTransformerBlockConfig"
-    ),
-    "olmo_core.nn.moe.v2.block.OLMoDDPTransformerBlock": (
-        "olmo_core.nn.ddp.block.OLMoDDPTransformerBlock"
-    ),
-    # --- Model class ---
-    # Alias that lived in the canonical module (olmo_core.nn.ddp.model).
-    "olmo_core.nn.ddp.model.MoEFusedV2Transformer": "olmo_core.nn.ddp.model.OLMoDDPModel",
-    # Former moe.v2.model module path (both the alias and canonical names).
-    "olmo_core.nn.moe.v2.model.MoEFusedV2Transformer": "olmo_core.nn.ddp.model.OLMoDDPModel",
-    "olmo_core.nn.moe.v2.model.OLMoDDPModel": "olmo_core.nn.ddp.model.OLMoDDPModel",
-    # --- Optimizer config/class (same module, renamed symbol) ---
-    "olmo_core.optim.moe_optimizer.MoEFusedV2OptimizerConfig": (
-        "olmo_core.optim.moe_optimizer.OLMoDDPOptimizerConfig"
-    ),
-    "olmo_core.optim.moe_optimizer.MoEFusedV2Optimizer": (
-        "olmo_core.optim.moe_optimizer.OLMoDDPOptimizer"
-    ),
-    # --- Train-module config (same module, renamed symbol) ---
-    "olmo_core.train.train_module.transformer.config.MoEV2TransformerTrainModuleConfig": (
+#: Maps a class's leaf name (the part after the last ``.``) to its canonical fully-qualified
+#: ``_CLASS_`` path. Keying on the leaf name — rather than the full module path — makes the rewrite
+#: robust to *every* way an old name could have been recorded: the renamed-symbol aliases
+#: (``MoEFusedV2*`` / ``MoEV2*``), the former ``olmo_core.nn.moe.v2.*`` / ``moe_train_module`` module
+#: paths, and the package-level re-export paths (e.g. ``olmo_core.optim.MoEFusedV2OptimizerConfig``).
+#: The canonical names are included too, so a config recorded under a now-removed module path but the
+#: canonical name is normalized to the canonical module. These leaf names are unique in the codebase.
+_CANONICAL_BY_LEAF_NAME: Dict[str, str] = {
+    # Model config.
+    "MoEFusedV2TransformerConfig": "olmo_core.nn.transformer.config.OLMoDDPModelConfig",
+    "OLMoDDPModelConfig": "olmo_core.nn.transformer.config.OLMoDDPModelConfig",
+    # Block config/class.
+    "MoEFusedV2TransformerBlockConfig": "olmo_core.nn.ddp.block.OLMoDDPTransformerBlockConfig",
+    "OLMoDDPTransformerBlockConfig": "olmo_core.nn.ddp.block.OLMoDDPTransformerBlockConfig",
+    "MoEFusedV2TransformerBlock": "olmo_core.nn.ddp.block.OLMoDDPTransformerBlock",
+    "OLMoDDPTransformerBlock": "olmo_core.nn.ddp.block.OLMoDDPTransformerBlock",
+    # Model class.
+    "MoEFusedV2Transformer": "olmo_core.nn.ddp.model.OLMoDDPModel",
+    "OLMoDDPModel": "olmo_core.nn.ddp.model.OLMoDDPModel",
+    # Optimizer config/class.
+    "MoEFusedV2OptimizerConfig": "olmo_core.optim.moe_optimizer.OLMoDDPOptimizerConfig",
+    "OLMoDDPOptimizerConfig": "olmo_core.optim.moe_optimizer.OLMoDDPOptimizerConfig",
+    "MoEFusedV2Optimizer": "olmo_core.optim.moe_optimizer.OLMoDDPOptimizer",
+    "OLMoDDPOptimizer": "olmo_core.optim.moe_optimizer.OLMoDDPOptimizer",
+    # Train-module config/class.
+    "MoEV2TransformerTrainModuleConfig": (
         "olmo_core.train.train_module.transformer.config.OLMoDDPTrainModuleConfig"
     ),
-    # --- Train-module class ---
-    # Alias that lived in the canonical module (ddp_train_module).
-    "olmo_core.train.train_module.transformer.ddp_train_module.MoEV2TransformerTrainModule": (
+    "OLMoDDPTrainModuleConfig": (
+        "olmo_core.train.train_module.transformer.config.OLMoDDPTrainModuleConfig"
+    ),
+    "MoEV2TransformerTrainModule": (
         "olmo_core.train.train_module.transformer.ddp_train_module.OLMoDDPTrainModule"
     ),
-    # Former moe_train_module module path.
-    "olmo_core.train.train_module.transformer.moe_train_module.MoEV2TransformerTrainModule": (
+    "OLMoDDPTrainModule": (
         "olmo_core.train.train_module.transformer.ddp_train_module.OLMoDDPTrainModule"
     ),
 }
+
+
+def _canonical_class_path(value: str) -> str | None:
+    """
+    Return the canonical ``_CLASS_`` path for a legacy/relocated one, or ``None`` to leave it as-is.
+
+    Matches on the leaf class name so any module path an old alias could have been recorded under —
+    concrete module, former ``moe.v2.*`` shim, or package-level re-export — maps to the canonical
+    fully-qualified path.
+    """
+    leaf = value.rpartition(".")[2]
+    return _CANONICAL_BY_LEAF_NAME.get(leaf)
 
 
 def rewrite_config_dict(data: Any, _path: str = "") -> Tuple[Any, List[Tuple[str, str, str]]]:
@@ -119,14 +120,16 @@ def rewrite_config_dict(data: Any, _path: str = "") -> Tuple[Any, List[Tuple[str
         new: Dict[str, Any] = {}
         for key, value in data.items():
             child_path = f"{_path}.{key}" if _path else key
-            if (
-                key == Config.CLASS_NAME_FIELD
-                and isinstance(value, str)
-                and value in CLASS_PATH_REWRITES
-            ):
-                new_value = CLASS_PATH_REWRITES[value]
-                changes.append((child_path, value, new_value))
-                new[key] = new_value
+            canonical = (
+                _canonical_class_path(value)
+                if key == Config.CLASS_NAME_FIELD and isinstance(value, str)
+                else None
+            )
+            if canonical is not None and canonical != value:
+                changes.append((child_path, value, canonical))
+                new[key] = canonical
+            elif canonical is not None:
+                new[key] = value
             else:
                 new[key], child_changes = rewrite_config_dict(value, child_path)
                 changes.extend(child_changes)
