@@ -105,6 +105,7 @@ try:  # package import (PYTHONPATH=src) or same-directory fallback (torchrun on 
         OLMO3_MARKER_TOKENIZER,
         OLMO3_VOCAB_SIZE,
         olmo3_7B_ctc,
+        olmo3_7B_ctc_swa,
     )
 except ImportError:  # pragma: no cover
     import sys as _sys
@@ -114,6 +115,7 @@ except ImportError:  # pragma: no cover
         OLMO3_MARKER_TOKENIZER,
         OLMO3_VOCAB_SIZE,
         olmo3_7B_ctc,
+        olmo3_7B_ctc_swa,
     )
 
 #: Supported model families. The trainer is family-agnostic: everything below (marker ids,
@@ -183,7 +185,12 @@ MODEL_FACTORIES = {
     # refuses it, so the chunked arm cannot have it -- disabled in BOTH arms to keep the mask the
     # only manipulated variable) and to apply the checkpoint's YaRN scaling to every layer.
     "olmo3": {
-        "7b": olmo3_7B_ctc,
+        # Keeps Olmo 3's native 3:1 sliding:full backbone and chunks ONLY the 8 full-attention
+        # layers -- the exact counterpart of chunking Qwen3.5's non-GDN blocks.
+        "7b": olmo3_7B_ctc_swa,
+        # Superseded no-sliding-window variant: disabling the windows costs the base model ~41x CE
+        # before training (olmo3_swa_ablation.py). Kept so the first wave of runs reproduces.
+        "7b-noswa": olmo3_7B_ctc,
     },
 }
 
