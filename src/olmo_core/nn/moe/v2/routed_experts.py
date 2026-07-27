@@ -869,7 +869,8 @@ class RoutedExperts(nn.Module):
                 "(down_proj_out / row_weights); use bias-free routed experts there."
             )
 
-        if requires_host_side_split_sizes():
+        use_rowwise_fp8_runtime = self._use_rowwise_fp8(x, enabled=use_rowwise_fp8)
+        if requires_host_side_split_sizes() and not use_rowwise_fp8_runtime:
             # CPU-side split sizes are required by grouped_gemm cublas mode.
             # grouped_gemm CUTLASS mode can accept device-side split sizes, but it is slow.
             # Always assume grouped_gemm runs in cublas mode.
@@ -891,7 +892,7 @@ class RoutedExperts(nn.Module):
                 return down_proj_out
             return x
 
-        if self._use_rowwise_fp8(x, enabled=use_rowwise_fp8):
+        if use_rowwise_fp8_runtime:
             if row_weights is not None:
                 raise RuntimeError(
                     "row_weights are not supported with rowwise FP8 routed experts yet"

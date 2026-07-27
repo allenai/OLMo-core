@@ -1,3 +1,5 @@
+from typing import Optional
+
 import torch
 
 from olmo_core.config import DType
@@ -10,6 +12,7 @@ from olmo_core.nn.layer_norm import LayerNormConfig, LayerNormType
 from olmo_core.nn.lm_head import LMHeadConfig
 from olmo_core.nn.moe import MoERouterGatingFunction
 from olmo_core.nn.moe.v2.ep_config import ExpertParallelConfig, ExpertParallelPath
+from olmo_core.nn.moe.v2.fp8 import MoERowwiseFP8Config
 from olmo_core.nn.moe.v2.routed_experts import RoutedExpertsConfig
 from olmo_core.nn.moe.v2.router import MoERouterConfigV2
 from olmo_core.nn.transformer import (
@@ -18,6 +21,7 @@ from olmo_core.nn.transformer import (
     TransformerType,
 )
 from olmo_core.testing import requires_gpu, requires_grouped_gemm
+from olmo_core.testing.utils import requires_compute_capability
 
 
 def test_v2_no_ep_module_names_importable():
@@ -35,6 +39,7 @@ def _build_block(
     num_experts: int = 4,
     top_k: int = 1,
     uniform_expert_assignment: bool = True,
+    rowwise_fp8: Optional[MoERowwiseFP8Config] = None,
     init_device: str = "cuda",
 ) -> OLMoDDPTransformerBlock:
     layer_norm = LayerNormConfig(
@@ -77,6 +82,7 @@ def _build_block(
         ),
         feed_forward_norm=layer_norm,
         ep=ExpertParallelConfig(path=ExpertParallelPath.sync_1d, major_align=1),
+        rowwise_fp8=rowwise_fp8,
         init_device=init_device,
     )
 
@@ -147,6 +153,39 @@ def test_v2_no_ep_forward_backward_smoke():
     for p in block.parameters():
         if p.grad is not None:
             assert torch.isfinite(p.grad).all()
+
+
+@requires_gpu
+@requires_compute_capability(min_cc=10)
+def test_v2_no_ep_rowwise_fp8_forward_backward_smoke():
+    block = _build_block(
+        d_model=128,
+        hidden_size=256,
+        num_experts=4,
+        top_k=1,
+        rowwise_fp8=MoERowwiseFP8Config(),
+        init_device="cuda",
+    )
+    _init_block_params(block)
+    _install_forced_router(block)
+    block.train()
+
+    # The training optimizer normally refreshes these stores before every
+    # forward. Do it explicitly for this direct block-level smoke test.
+    block.refresh_rowwise_fp8_cache()
+    x = torch.randn(1, 8, block.d_model, device="cuda", dtype=torch.float32, requires_grad=True)
+    y = block(x)
+
+    assert y.shape == x.shape
+    assert torch.isfinite(y).all()
+
+    y.square().mean().backward()
+
+    assert x.grad is not None
+    assert torch.isfinite(x.grad).all()
+    assert block.routed_experts is not None
+    assert block.routed_experts._rowwise_fp8_up_gate_weight.grad_bf16 is not None
+    assert block.routed_experts._rowwise_fp8_down_weight.grad_bf16 is not None
 
 
 @requires_gpu
