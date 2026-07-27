@@ -33,7 +33,7 @@ transfer, and MXFP8 rows were refreshed at 2026-07-27 21:29 UTC.
 | pretraining | canonical GDN2 larger-scale transfer | 9 loss-collected / 1 checkpoint-complete with tracking gap / 2 failed | 1.2B Cx8 reached step 223898 and saved its final checkpoint, but a W&B filestream-capacity failure stopped remote history at 156.48B/176.08B tokens, so strict final-250M CE remains unpublished; 480M Cx2 and 1.2B Cx2 remain failed | [results](results/pretraining/canonical_gdn2_kda/scale_results.md) |
 | pretraining | canonical KDA 480M stability transfer | 4/4 finished | Cx1/2/4/8 strict final-250M CEs are `2.517826`, `2.412884`, `2.323228`, and `2.237558` | [launches](#canonical-kda-480m-stability-transfer) |
 | pretraining | KDA `expand_v=2`, negative-eigenvalue transfer (275M/480M/810M) | 10 finished / 2 running | 810M Cx2 newly finished with strict final-250M CE `2.241873`; Cx4 is 72% complete and Cx8 is 27% complete; no KDA cell has failed | [results](results/pretraining/canonical_gdn2_kda/kda_ev2_neg_scale_results.md) |
-| pretraining | aggressive MXFP8 KDA 275M LR sweep | 16/16 running | All Cx1/2/4/8 by four-LR tasks passed initialization and reached real optimizer steps; zero failures | [work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYJPTZ3J4VHGBH0FSVAQRDGC) / [plan](MXFP8_LADDER.md) |
+| pretraining | aggressive MXFP8 KDA 275M LR sweep | 16/16 started: 9 stepping / 7 compiling | Nine Cx1/Cx2/Cx8 tasks reached real optimizer steps; the remaining seven were still compiling; zero failures | [work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYJPTZ3J4VHGBH0FSVAQRDGC) / [plan](MXFP8_LADDER.md) |
 | diagnostic | GDN2 production-shape PyTorch reference 2x2 | finished | All four `expand_v`/negative-eigenvalue cells passed forward, final-state, backward, packed-document, and recompute/retain comparisons | [work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYBY8DXT5BVM85WYKAT5TXQN) |
 | diagnostic | Matched KDA/GDN2 numerical audit | finished | All 40 one/four-chunk output/state comparisons passed; GDN2 is broadly KDA-like, with localized 3.80% `A_log` relative-L2 error at T256/V256/negative eigvals | [work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYBZX8MHJ611ZSJD43SYS9HZ) / [results](results/diagnostics/matched_kda_gdn2_numerics.md) |
 | diagnostic | KDA reference + 50-step MB16 qualification | finished | Reference/packed checks passed; zero skipped steps; steady-state 404.7 TFLOPs/GPU and 290.5K TPS on one B300 | [work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYBX6WX46F9B3HV3W59G368R) / [3s14s676](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/3s14s676) |
@@ -1079,9 +1079,9 @@ retains the identical 192-GPU peak layout and transferred LRs.
 - Training: Cx1/2/4/8 at `4e-4`, `8e-4`, `1.6e-3`, and `3.2e-3`; canonical
   global batches; MB16/12/16/16 with accumulation 1/2/2/3; rolling ephemeral
   checkpoints every 500 steps; no in-loop or on-finish evaluation
-- Latest post-submission status on 2026-07-27: all 16 tasks passed compilation
-  and reached real optimizer steps; no task had failed or created a duplicate
-  checkpoint directory
+- Latest post-submission status on 2026-07-27: all 16 tasks started, nine had
+  reached real optimizer steps, and seven remained in kernel compilation; no
+  task had failed or created a duplicate checkpoint directory
 
 The exact architecture delta, parameter counts, token budgets, promotion
 gates, and audited larger-size configurations are recorded in

@@ -104,8 +104,9 @@ Proposed run-name prefix:
 
 The 16 jobs were submitted as urgent unallocated Holmes work in
 [Beaker experiment `01KYJPTZ3J4VHGBH0FSVAQRDGC`](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYJPTZ3J4VHGBH0FSVAQRDGC).
-At the latest post-submission check, all 16 tasks had completed initial kernel
-compilation and reached real optimizer steps; none had failed.
+At the latest post-submission check, all 16 tasks had started: nine had reached
+real optimizer steps and seven remained in initial kernel compilation. None
+had failed.
 
 ## Audited larger-size configurations
 
