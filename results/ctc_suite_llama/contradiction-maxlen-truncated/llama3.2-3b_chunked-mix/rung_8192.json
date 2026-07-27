@@ -1,0 +1,37 @@
+{
+  "arm": "chunked-mix",
+  "aux": {
+    "generations_path": "/accounts/projects/berkeleynlp/prasann/projects/OLMo-core/results/ctc_suite_llama/contradiction/llama3.2-3b_chunked-mix/rung_8192.generations.json",
+    "max_length": 13312,
+    "max_new_tokens": 512,
+    "nproc": 2,
+    "raw_eval_json": "/accounts/projects/berkeleynlp/prasann/projects/OLMo-core/results/ctc_suite_llama/contradiction/llama3.2-3b_chunked-mix/rung_8192.raw.json"
+  },
+  "aux_metrics": {
+    "eval_seconds": 1068.1,
+    "exact_match": 0.0,
+    "f1": 0.059992887991937006,
+    "parse_rate": 1.0,
+    "precision": 0.04196225098285913,
+    "recall": 0.1633333333333333
+  },
+  "complexity_class": "N2",
+  "cot_label": "no-cot",
+  "eval_size": 500,
+  "metric_name": "set_f1",
+  "metric_value": 0.059992887991937006,
+  "model": "llama3.2-3b",
+  "provenance": {
+    "ckpt_path": "/data/prasann/ctc_suite/ckpts/llama32-3b-contra-chunked-mix",
+    "data_path": "/scratch/users/prasann/ctc_suite_staged/eval_rungs/contradiction/rung_8192.jsonl",
+    "date": "2026-07-27T09:59:09",
+    "eval_backend": "native",
+    "evaluator": "src/corpus_reasoning/eval/eval_lc_native_docchunk_contra.py",
+    "evaluator_variant": "dense",
+    "git_commit": "73ede37b117766807bc91c54da5cbe8bf9bcd343",
+    "launcher": "src/scripts/eval/ctc_suite/run_rung_eval.py"
+  },
+  "rung_tokens": 8192,
+  "task": "contradiction",
+  "trained_ctx": "2k-16k-joint-uniform"
+}
