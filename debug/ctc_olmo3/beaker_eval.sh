@@ -29,8 +29,17 @@ WK=/weka/oe-training-default/ai2-llm/checkpoints/prasanns/ctc_olmo3
 OUT=$WK/results
 mkdir -p "$OUT"
 echo "ckpt=CKPT_SUB variant=VARIANT_SUB arm=ARM_SUB task=TASK_SUB"
-ls -d CKPT_SUB || { echo "FATAL: checkpoint MISSING"; exit 3; }
-ls CKPT_SUB/config.json || { echo "FATAL: config.json MISSING"; exit 3; }
+# The eval job is submitted while its training run is still going, so the jupiter queue wait
+# overlaps the remaining training. train_ctc_suite.py writes config.json LAST (after
+# save_model_and_optim_state), so it is the correct "checkpoint is complete" sentinel.
+WAITED=0
+while [ ! -f CKPT_SUB/config.json ]; do
+  if [ $WAITED -ge 5400 ]; then echo "FATAL: checkpoint never appeared after ${WAITED}s"; exit 3; fi
+  [ $((WAITED % 300)) -eq 0 ] && echo "waiting for checkpoint... ${WAITED}s"
+  sleep 60; WAITED=$((WAITED + 60))
+done
+echo "checkpoint present after ${WAITED}s"
+ls -l CKPT_SUB/config.json
 RC_ALL=0
 for RUNG in 2048 4096 8192 16384; do
   JSONL=$WK/eval_rungs/EVALDIR_SUB/rung_${RUNG}.jsonl
@@ -61,10 +70,15 @@ WORK="${WORK//ARM_SUB/$ARM}"
 WORK="${WORK//TASK_SUB/$TASK}"
 WORK="${WORK//EVALDIR_SUB/$EVALDIR}"
 
+# NOTE the REAL `--install`, not the `--install true` no-op that beaker.md recommends for baked
+# images: this image predates olmo-core's `dataclass_extensions` dependency, so the no-op path dies
+# with `ModuleNotFoundError: No module named 'dataclass_extensions'` the moment the evaluator
+# imports olmo_core.data -- every rung failing in ~6s. Training jobs never hit this because
+# BeakerLaunchConfig installs the package itself.
 gantry run --name "$NAME" -w ai2/flex2 -b ai2/oe-other \
   --cluster ai2/jupiter-cirrascale-2 --gpus 8 --priority urgent \
   --beaker-image tylerr/olmo-core-tch291cu128-2025-11-25 \
   --weka oe-training-default:/weka/oe-training-default \
   --env-secret AWS_CREDS=PRASANNS_AWS_CREDENTIALS --env-secret AWS_CFG=PRASANNS_AWS_CONFIG \
   --env-secret WANDB_API_KEY=PRASANNS_WANDB_API_KEY \
-  --install true --allow-dirty --timeout 0 --yes -- bash -c "$WORK"
+  --install 'pip install -e .' --allow-dirty --timeout 0 --yes -- bash -c "$WORK"
