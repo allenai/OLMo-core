@@ -135,6 +135,64 @@ RESERVED_IDS: Dict[str, ReservedIds] = {
         pad=248203,
         real_vocab_size=248077,
     ),
+    # Verified against the Gemma-3 tokenizer (``google/gemma-3-4b-pt``, 262144 real ids + 64 rows of
+    # embedding padding = ``vocab_size`` 262208). Gemma reserves ``<unused0>``..``<unused6241>``
+    # (ids 6..262143); the first two stand in for ``<|box_start|>`` / ``<|box_end|>``, which Gemma
+    # does not have. EOS is the real ``<eos>``=1 (Gemma's base EOS, matching ``eos_token_id`` in the
+    # HF config). ``<image_soft_token>``=262144 is the last real row, so landmark/pad sit in the
+    # untrained padded region [262145, 262208) exactly like the Qwen sets do.
+    "gemma": ReservedIds(
+        doc_start=6,
+        doc_end=7,
+        eos=1,
+        landmark=262150,
+        pad=262153,
+        real_vocab_size=262145,
+    ),
+    # Llama 3 family (Llama-3.2-3B / Llama-3.1-*). Its tokenizer has 256 added specials at
+    # 128000..128255, ~250 of them UNTRAINED ``<|reserved_special_token_N|>`` slots -- exactly what
+    # the marker path wants (no vocab growth, no embedding resize). NOTE the embedding matrix is
+    # 128256 rows == the full vocab, i.e. there is NO padded region past the vocab, so landmark/pad
+    # must also be reserved-special ids rather than out-of-vocab rows.
+    #   doc_start 128002 = ``<|reserved_special_token_0|>``, doc_end 128003 = ``..._token_1|>``,
+    #   landmark 128011 = ``..._token_3|>``, pad 128012 = ``..._token_4|>``, eos 128001 =
+    #   ``<|end_of_text|>`` (the BASE model's EOS; ``<|eot_id|>``=128009 is the chat one).
+    # The document-chunk converter wraps documents with the literal strings ``<|box_start|>`` /
+    # ``<|box_end|>`` and verifies ``tok.convert_tokens_to_ids`` against these ids, so the Llama
+    # runs use a patched tokenizer copy in which those two reserved slots are RENAMED to
+    # ``<|box_start|>`` / ``<|box_end|>`` (ids unchanged) -- see
+    # ``src/scripts/data/make_llama_marker_tokenizer.py``.
+    #   real_vocab_size 128000 = the end of the trained BPE vocab; every id at/after it is a
+    # special token and most are untrained, so marker-embedding repair is MANDATORY here too.
+    "llama": ReservedIds(
+        doc_start=128002,
+        doc_end=128003,
+        eos=128001,
+        landmark=128011,
+        pad=128012,
+        real_vocab_size=128000,
+    ),
+    # OLMo 3 (``allenai/Olmo-3-1025-7B``, dolma2 tokenizer). The real vocab is 0..100277 (100278
+    # ids); olmo-core pads the embedding matrix to 100352, so landmark/pad can sit in the untrained
+    # padded region [100278, 100352) exactly like the Qwen sets do.
+    #   doc_start 100266 = ``<|extra_id_1|>``, doc_end 100267 = ``<|extra_id_2|>`` -- reserved
+    # "extra id" slots that never occur in Dolma, so they cost no vocab growth and no embedding
+    # resize. eos 100257 = ``<|endoftext|>`` (the base model's EOS).
+    # As with the Llama set, the converter/eval wrap documents with the literal strings
+    # ``<|box_start|>`` / ``<|box_end|>`` and verify ``tok.convert_tokens_to_ids`` against these
+    # ids, so the OLMo runs use a patched tokenizer copy in which those two extra-id slots are
+    # RENAMED to ``<|box_start|>`` / ``<|box_end|>`` (ids unchanged).
+    #   Marker-embedding health is MEASURED, not assumed: see
+    # ``src/scripts/train/memexpress/ctc_suite/olmo3_marker_audit.py``, which gates on cosine AND
+    # norm and repairs from trained delimiter donor rows only if a gate fails.
+    "olmo3": ReservedIds(
+        doc_start=100266,
+        doc_end=100267,
+        eos=100257,
+        landmark=100300,
+        pad=100303,
+        real_vocab_size=100278,
+    ),
 }
 
 

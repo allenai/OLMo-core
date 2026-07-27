@@ -41,6 +41,7 @@ Real run (via ``run_ctc_local.sbatch``; ``--variant chunked-mix`` forces ``--no-
 
 import argparse
 import datetime
+import functools
 import json
 import os
 import subprocess
@@ -74,6 +75,7 @@ from olmo_core.train import (
     teardown_training_environment,
 )
 from olmo_core.train.callbacks import (
+    CheckpointerCallback,
     ConfigSaverCallback,
     GPUMemoryMonitorCallback,
     WandBCallback,
@@ -87,6 +89,17 @@ from olmo_core.train.train_module import (
 )
 from olmo_core.utils import seed_all
 
+try:  # package import (PYTHONPATH=src) or same-directory fallback (torchrun on the file path)
+    from scripts.train.memexpress.ctc_suite.llama_configs import (
+        LLAMA_MARKER_TOKENIZER,
+        llama3_2_3B,
+    )
+except ImportError:  # pragma: no cover
+    import sys as _sys
+
+    _sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from llama_configs import LLAMA_MARKER_TOKENIZER, llama3_2_3B  # type: ignore[no-redef]
+
 #: Supported model families. The trainer is family-agnostic: everything below (marker ids,
 #: embedding size, tokenizer, model factory) is keyed on the family, which is auto-detected from
 #: the shard's ``marker_set`` (or forced via ``--model-family``). ``qwen3_5`` is the GDN+attn
@@ -96,12 +109,20 @@ from olmo_core.utils import seed_all
 FAMILY_VOCAB_SIZE = {
     "qwen3_5": 248320,  # Qwen3.5-{0.8B,4B,9B}-Base embedding size
     "qwen3": 151936,  # Qwen3-{0.6B,1.7B,4B,8B}-Base embedding size
+    "gemma": 262208,  # Gemma-3-{1B,4B,12B,27B} embedding size (262144 real ids + 64 padding rows)
+    "llama": 128256,  # Llama-3.x embedding size (no padding rows: vocab == matrix rows)
 }
 
 #: Per-family HF tokenizer identifier (all sizes within a family share one tokenizer).
 FAMILY_TOKENIZER = {
     "qwen3_5": "Qwen/Qwen3.5-0.8B-Base",
     "qwen3": "Qwen/Qwen3-4B",
+    "gemma": "google/gemma-3-4b-pt",
+    # Llama 3 has no ``<|box_start|>``/``<|box_end|>`` tokens, so the suite uses a local tokenizer
+    # copy in which reserved slots 128002/128003 are RENAMED to those strings (ids unchanged) --
+    # built by ``src/scripts/data/make_llama_marker_tokenizer.py``. Point at the patched copy, not
+    # the stock repo, or the converter's marker-id verification fails.
+    "llama": LLAMA_MARKER_TOKENIZER,
 }
 
 #: Per-family model factories, keyed by ``--model-scale``.
@@ -116,6 +137,25 @@ MODEL_FACTORIES = {
         "1.7b": TransformerConfig.qwen3_1_7B,
         "4b": TransformerConfig.qwen3_4B,
         "8b": TransformerConfig.qwen3_8B,
+    },
+    # Gemma 3 (local/global sliding-window hybrid). ``gemma3_4B``'s factory defaults do NOT match
+    # the released ``google/gemma-3-4b-pt`` checkpoint (8 query heads / head_dim 256, and the
+    # global layers carry HF ``rope_scaling={"rope_type":"linear","factor":8}``), so the exact HF
+    # dims are pinned here rather than inherited -- a silently mismatched shape loads the weights
+    # wrong and produces plausible garbage instead of crashing.
+    "gemma": {
+        "4b": functools.partial(
+            TransformerConfig.gemma3_4B,
+            n_heads=8,
+            head_dim=256,
+            global_rope_linear_scaling_factor=8.0,
+        ),
+    },
+    # Llama 3.2 (plain dense/causal, GQA). olmo-core ships no 3B factory, so ``llama_configs``
+    # builds one with the generic ``llama_like`` using dims read off ``meta-llama/Llama-3.2-3B``'s
+    # own config.json, and hard-asserts the resulting parameter count against it.
+    "llama": {
+        "3b": llama3_2_3B,
     },
 }
 
@@ -588,6 +628,19 @@ def resolve_plan(opts: argparse.Namespace, world_size: int) -> Dict[str, Any]:
     # 256k seq_len would be a ~32x compute waste. Packing composes with CP (proven in the
     # sft_longctx -packed- scripts: "Packing is supported under CP"). Same npy format either way.
     if opts.pack:
+        # HARD GUARD: the packer builds a SegmentTree over max_sequence_length, which asserts
+        # log2(N) is an integer. A non-power-of-2 --seq-len (e.g. 40960) therefore dies with a bare
+        # "N should be a power of 2" -- but only AFTER the base checkpoint loads and the mesh is
+        # built (~15 min at 4B), and only on rank 0, so every other rank then hangs until the 900 s
+        # gloo timeout. One bad argument costs a full node-hour and reports itself as a distributed
+        # timeout. Fail here instead, before anything expensive happens.
+        if opts.seq_len & (opts.seq_len - 1) != 0:
+            lo = 1 << (opts.seq_len.bit_length() - 1)
+            raise SystemExit(
+                f"--pack requires a power-of-2 --seq-len (the instance packer's SegmentTree "
+                f"asserts it); got {opts.seq_len}. Use {lo} or {lo * 2} "
+                f"(and keep --seq-len >= the shard's max_example_len)."
+            )
         instance_source_config = PackingInstanceSourceConfig.from_npy(
             f"{opts.data}/token_ids_part_*.npy",
             tokenizer=tokenizer_config,
@@ -737,12 +790,20 @@ def build_and_fit(opts: argparse.Namespace) -> None:
             hard_stop=Duration.steps(opts.max_steps) if opts.max_steps else None,
             # no_checkpoints=True would ALSO skip the base-checkpoint LOAD block (trainer.fit
             # gates loading on `not no_checkpoints`) -> silent train-from-scratch. Keep False;
-            # nothing is auto-saved mid-run (no CheckpointerCallback) -- the explicit
-            # --save-checkpoint below writes the single model-only checkpoint for eval.
+            # mid-run saving is controlled by the explicit CheckpointerCallback below, and the
+            # --save-checkpoint block after fit() writes the model-only checkpoint for eval.
             no_checkpoints=False,
         )
         .with_callback("gpu_monitor", GPUMemoryMonitorCallback())
         .with_callback("config_saver", ConfigSaverCallback())
+        # Register the checkpointer EXPLICITLY. Leaving it out does not disable it -- Trainer does
+        # `callbacks.setdefault("checkpointer", CheckpointerCallback())` (trainer.py), so omitting it
+        # silently activates the DEFAULT save_interval=250. At 4B that wrote a full
+        # model+optim+train-state checkpoint (~55G) every 250 steps: a 750-step run produced 165G of
+        # step*/ dirs that nothing reads, since eval loads the model-only `model_and_optim` saved
+        # after fit(). Default to no mid-run checkpoints; pass --save-interval N to get resume
+        # points back for a long run on a preemptible queue.
+        .with_callback("checkpointer", CheckpointerCallback(save_interval=opts.save_interval))
     )
     if opts.wandb:
         trainer_config = trainer_config.with_callback(
@@ -964,6 +1025,14 @@ def parse_args() -> argparse.Namespace:
         "--save-checkpoint",
         action="store_true",
         help="after fit, save model-only checkpoint (config.json + model_and_optim) for eval",
+    )
+    ap.add_argument(
+        "--save-interval",
+        type=int,
+        default=None,
+        help="steps between mid-run model+optim checkpoints. Default None = none written (eval only "
+        "needs the post-fit model-only save, and at 4B each mid-run checkpoint costs ~55G). Set an "
+        "integer to get resume points for a long run on a preemptible queue.",
     )
     ap.add_argument("--no-compile", dest="compile", action="store_false")
     ap.add_argument(
