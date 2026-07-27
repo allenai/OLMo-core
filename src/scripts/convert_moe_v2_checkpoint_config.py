@@ -8,17 +8,18 @@ unaffected — the rename preserved the same class objects, so parameter names a
 ``config.json`` serialized under the old names records stale ``_CLASS_`` values that no longer
 resolve. This script rewrites just those ``_CLASS_`` strings in place so the checkpoint loads again.
 
-Usage (run by file path from the repo root — ``src/scripts`` is not an importable module)::
+Run it by file path with ``src`` on the import path so ``olmo_core`` resolves. If the package is
+already installed (``pip install -e .``), the ``PYTHONPATH=src`` prefix is unnecessary::
 
     # Rewrite one or more checkpoints (a checkpoint dir or a config.json, local or remote).
-    python src/scripts/convert_moe_v2_checkpoint_config.py /path/to/checkpoint/step10000
-    python src/scripts/convert_moe_v2_checkpoint_config.py s3://bucket/run/step10000/config.json
+    PYTHONPATH=src python src/scripts/convert_moe_v2_checkpoint_config.py /path/to/checkpoint/step10000
+    PYTHONPATH=src python src/scripts/convert_moe_v2_checkpoint_config.py s3://bucket/run/step10000/config.json
 
     # Preview the changes without writing.
-    python src/scripts/convert_moe_v2_checkpoint_config.py --dry-run /path/to/checkpoint/step10000
+    PYTHONPATH=src python src/scripts/convert_moe_v2_checkpoint_config.py --dry-run /path/to/checkpoint/step10000
 
     # Write the migrated config to a different location instead of in place.
-    python src/scripts/convert_moe_v2_checkpoint_config.py \
+    PYTHONPATH=src python src/scripts/convert_moe_v2_checkpoint_config.py \
         --output /tmp/config.json /path/to/checkpoint/step10000
 """
 
