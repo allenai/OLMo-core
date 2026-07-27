@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import shlex
 from pathlib import Path
 from typing import Any
 
@@ -21,7 +22,6 @@ from scripts.train.jacobm_olmoe_ladder.v2.models.geometry_matched_scale import (
     build_geometry_matched_scale_model_config,
 )
 
-
 SCRIPT_DIR = Path(__file__).resolve().parent
 DEFAULT_MANIFEST = SCRIPT_DIR / "manifests" / "geometry_matched_scale_nope_full.yaml"
 DEFAULT_RECORD = SCRIPT_DIR / "generated" / "geometry_matched_scale_full_submissions.json"
@@ -35,6 +35,7 @@ GDN2_FLA_SPEC = (
     "flash-linear-attention[cuda] @ git+https://github.com/fla-org/"
     "flash-linear-attention.git@cbb0a72efb55c18ca0ef4f298298317573ad2cb3"
 )
+GDN2_FLA_EXPECTED_COMMIT = "cbb0a72efb55c18ca0ef4f298298317573ad2cb3"
 
 GLOBAL_BATCHES = {
     1: 262_144,
@@ -318,13 +319,24 @@ def recipe_for(
     runtime_env_overrides: dict[str, str] | None = None,
     recipe_suffix_override: str | None = None,
     description_suffix: str | None = None,
+    gdn2_fla_overlay: str | None = None,
+    gdn2_fla_spec: str | None = None,
+    gdn2_fla_expected_commit: str | None = None,
 ) -> Recipe:
     source = manifest["source"]
     beaker = manifest["beaker"]
     training = manifest["training"]
     is_gdn2 = bool(MODEL_VARIANTS[str(training["model_variant"])]["gdn2"])
+    selected_gdn2_fla_overlay = gdn2_fla_overlay or GDN2_FLA_OVERLAY
+    selected_gdn2_fla_spec = gdn2_fla_spec or GDN2_FLA_SPEC
+    selected_gdn2_fla_expected_commit = (
+        gdn2_fla_expected_commit or GDN2_FLA_EXPECTED_COMMIT
+    )
     env_vars = [
-        ("PYTHONPATH", f"{GDN2_FLA_OVERLAY}:src" if is_gdn2 else "src"),
+        (
+            "PYTHONPATH",
+            f"{selected_gdn2_fla_overlay}:src" if is_gdn2 else "src",
+        ),
         ("PYTHONUNBUFFERED", "1"),
         ("CUDA_SCALE_LAUNCH_QUEUES", "4x"),
         ("OLMO_SHARED_FS", "1"),
@@ -413,12 +425,32 @@ def recipe_for(
     )
     pre_setup = "unset S3_PROFILE"
     if is_gdn2:
+        verify_script = f"""
+import json
+from importlib.metadata import distributions
+
+import fla
+from fla.ops.gdn2 import chunk_gdn2
+
+dist = next(
+    dist
+    for dist in distributions(path=[{selected_gdn2_fla_overlay!r}])
+    if dist.metadata["Name"] == "flash-linear-attention"
+)
+direct_url = json.loads(dist.read_text("direct_url.json"))
+commit = direct_url["vcs_info"]["commit_id"]
+print(f"GDN2 FLA overlay: version={{fla.__version__}} commit={{commit}} path={{fla.__file__}}")
+print(f"GDN2 kernel: {{chunk_gdn2.__module__}}.{{chunk_gdn2.__name__}}")
+assert fla.__version__ == "0.5.2"
+assert commit == {selected_gdn2_fla_expected_commit!r}
+"""
         pre_setup += (
-            f"\nrm -rf {GDN2_FLA_OVERLAY}"
-            f"\npython -m pip install --target {GDN2_FLA_OVERLAY} --no-deps "
-            f"--no-build-isolation '{GDN2_FLA_SPEC}'"
-            f'\nPYTHONPATH={GDN2_FLA_OVERLAY} python -c "import fla; '
-            "from fla.ops.gdn2 import chunk_gdn2; assert fla.__version__ == '0.5.2'\""
+            f"\nrm -rf {shlex.quote(selected_gdn2_fla_overlay)}"
+            "\npython -m pip install "
+            f"--target {shlex.quote(selected_gdn2_fla_overlay)} --no-deps "
+            f"--no-build-isolation {shlex.quote(selected_gdn2_fla_spec)}"
+            f"\nPYTHONPATH={shlex.quote(selected_gdn2_fla_overlay)} "
+            f"python -c {shlex.quote(verify_script)}"
         )
     return Recipe(
         args=[

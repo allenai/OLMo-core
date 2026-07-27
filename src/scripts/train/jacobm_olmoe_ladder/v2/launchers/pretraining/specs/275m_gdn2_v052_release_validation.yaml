@@ -1,0 +1,42 @@
+version: v2
+description: GDN2 v0.5.2 release-tag reference validation for production settings
+tasks:
+  - name: gdn2-v052-release-reference-2x2
+    image:
+      beaker: 01KW8G8JC20H11Y60PPTE2VN4Q
+    command:
+      - /bin/bash
+      - -lc
+    arguments:
+      - >-
+        set -euo pipefail;
+        SOURCE_REPO=/weka/oe-adapt-default/jacobm/olmoe3/olmo-ddp-migration/OLMo-core-moe-v2-core;
+        export SOURCE_REPO;
+        bash "${SOURCE_REPO}/src/scripts/train/jacobm_olmoe3_gdn2_reference_beaker.sh"
+    envVars:
+      - name: GDN2_FLA_OVERLAY
+        value: /tmp/fla-gdn2-v0.5.2-release
+      - name: GDN2_FLA_SPEC
+        value: flash-linear-attention[cuda] @ git+https://github.com/fla-org/flash-linear-attention.git@v0.5.2
+      - name: GDN2_FLA_EXPECTED_COMMIT
+        value: 9c8e42e762fce087c27b673af4922795d9edb85e
+    datasets:
+      - mountPath: /weka/oe-adapt-default
+        source:
+          weka: oe-adapt-default
+    result:
+      path: /results
+    resources:
+      gpuCount: 1
+      sharedMemory: 64 GiB
+    context:
+      priority: urgent
+      minRuntime: 0m
+      autoResume: false
+    constraints:
+      cluster:
+        - ai2/holmes
+    hostNetworking: true
+    propagateFailure: false
+    propagatePreemption: false
+    timeout: 2h
