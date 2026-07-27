@@ -66,7 +66,9 @@ OUT=${OUT_ROOT}
 SEQ=${SEQ_LEN}; MF=${MEM_FREQ}
 run() { # name task chunk emit
   name=\$1; task=\$2; chunk=\$3; emit=\$4
-  extra=""; [ "\$chunk" = line ] && extra="--item-regex ||"
+  # NO --item-regex override: the converter default is the ESCAPED r"\|\|". A bare '||' matches
+  # EVERY line (empty-branch alternation) -> preamble wrapped as chunks, FREE gaps between them.
+  extra=""
   outdir=\$OUT/\${name}_\${emit}
   echo "=== convert \$name (\$task,\$chunk) emit=\$emit -> \$outdir \$(date '+%T') ==="
   python \$CONV --emit \$emit --task \$task --chunk-by \$chunk \$extra \

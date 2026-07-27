@@ -63,7 +63,10 @@ case "$NAME" in
     FILES=("$DATA/contradiction_pool/contradiction_train_pubmed_realistic_n50-950_k3.jsonl")
     ;;
   oolong)
-    TASK=oolong; CHUNK=line; EXTRA="--item-regex ||"
+    # NO --item-regex: the converter default is the ESCAPED r"\|\|". Passing a bare '||' is an
+    # alternation of empty branches that matches EVERY line -- it wrapped the instruction/question/
+    # header as chunks and left the blank lines between them FREE (CHUNK_LEAK_AUDIT.md). Guarded now.
+    TASK=oolong; CHUNK=line; EXTRA=""
     FILES=("$DATA/oolong_pool/oolong_ladder_train_combined.jsonl")
     ;;
   outlier)

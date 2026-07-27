@@ -1,0 +1,122 @@
+{
+  "tokenizer": "/scratch/users/prasann/hf_models/Qwen3.5-4B-Base",
+  "bands": [
+    2048,
+    4096,
+    8192,
+    16384,
+    32768,
+    65536,
+    131072,
+    262144
+  ],
+  "tasks": {
+    "contradiction": {
+      "pool": "/data/prasann/ctc_suite_data/contradiction_pool/contradiction_train_pubmed_realistic_n50-950_k3.jsonl",
+      "audit": {
+        "gold_indices": "PASS: checked=300 out_of_range=0 observed=[1,905] -- 1-indexed, valid [1, n_docs+0]"
+      },
+      "fit": {
+        "intercept": 188.13,
+        "tok_per_doc": 42.413,
+        "mape": 0.0249
+      },
+      "pool_n_docs": {
+        "min": 50,
+        "max": 949,
+        "median": 528
+      },
+      "n_for_band": {
+        "2048": 44,
+        "4096": 92,
+        "8192": 189,
+        "16384": 382,
+        "32768": 768,
+        "65536": 1541,
+        "131072": 3086,
+        "262144": 6176
+      }
+    },
+    "nq": {
+      "pool": "/scratch/users/prasann/nq_p10_20k/nq_train_k25-202_clean.jsonl",
+      "audit": {
+        "hard_neg_ratio": "PASS: mean=0.097 min=0.000 max=0.111 (want ~0.10; 98%-hard build is BANNED)",
+        "gold_indices": "PASS: checked=300 out_of_range=0 observed=[0,174] -- 0-indexed, valid [0, n_docs-1]"
+      },
+      "fit": {
+        "intercept": 26.09,
+        "tok_per_doc": 156.5382,
+        "mape": 0.0119
+      },
+      "pool_n_docs": {
+        "min": 25,
+        "max": 202,
+        "median": 117
+      },
+      "n_for_band": {
+        "2048": 13,
+        "4096": 26,
+        "8192": 52,
+        "16384": 104,
+        "32768": 209,
+        "65536": 418,
+        "131072": 837,
+        "262144": 1674
+      }
+    },
+    "outlier": {
+      "pool": "/data/prasann/ctc_suite_data/outlier_pool/outlier_wiki100w_contin_n14-220_k3_20000.jsonl",
+      "audit": {
+        "gold_indices": "PASS: checked=300 out_of_range=0 observed=[0,207] -- 0-indexed, valid [0, n_docs-1]"
+      },
+      "fit": {
+        "intercept": -5.41,
+        "tok_per_doc": 144.3278,
+        "mape": 0.0328
+      },
+      "pool_n_docs": {
+        "min": 14,
+        "max": 220,
+        "median": 117
+      },
+      "n_for_band": {
+        "2048": 14,
+        "4096": 28,
+        "8192": 57,
+        "16384": 114,
+        "32768": 227,
+        "65536": 454,
+        "131072": 908,
+        "262144": 1816
+      }
+    },
+    "rerank": {
+      "pool": "/data/prasann/ctc_suite_data/rerank_pool/msmarco_trainhn_train_k20-315_20000.jsonl",
+      "audit": {
+        "gold_indices": "PASS: checked=300 out_of_range=0 observed=[0,299] -- 0-indexed, valid [0, n_docs-1]",
+        "ce_scores": "PASS: 300/300 examples carry ce_scores (CE-filtered pool required)"
+      },
+      "fit": {
+        "intercept": 13.83,
+        "tok_per_doc": 85.2275,
+        "mape": 0.0307
+      },
+      "pool_n_docs": {
+        "min": 20,
+        "max": 313,
+        "median": 166
+      },
+      "n_for_band": {
+        "2048": 24,
+        "4096": 48,
+        "8192": 96,
+        "16384": 192,
+        "32768": 384,
+        "65536": 769,
+        "131072": 1538,
+        "262144": 3076
+      }
+    }
+  },
+  "blocked": false
+}

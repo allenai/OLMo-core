@@ -14,9 +14,18 @@ wrapping, tokenization, segmentation) lives in
 :func:`olmo_core.data.document_chunk_landmark.segment_prompt_to_chunks`, which is also used by the
 native eval harness so train and eval token layouts match exactly.
 
-  * ``--chunk-by line`` (OOLONG): each item line matching ``--item-regex`` (default ``||``) is a
-    document; intro / instruction / question lines stay FREE. **Document count scales with context
-    length.**
+  * ``--chunk-by line`` (OOLONG): each item line matching ``--item-regex`` (default ``\\|\\|``, i.e. a
+    literal ``||``) is a document; intro / instruction / question lines stay FREE. **Document count
+    scales with context length.**
+
+    .. warning::
+       Pass the regex **escaped** (``'\\|\\|'``), never the bare ``'||'``. As a *regex* ``||`` is an
+       alternation of empty branches, so it matches **every** line -- the instruction, question and
+       data-header lines then each become their own chunk and the blank lines between them stay FREE,
+       bridging otherwise-isolated chunks. That is exactly the oolong train/eval layout mismatch
+       measured in ``debug/ctc_vllm_validation/CHUNK_LEAK_AUDIT.md`` (2019 inter-chunk FREE tokens,
+       ~5/example, while eval keeps the preamble FREE and wraps only data items). A startup guard now
+       rejects any ``--item-regex`` that matches the empty string.
   * ``--chunk-by document`` (absence / retrieval / contradiction / ...): each ``documents[i]`` is a
     document.
 
@@ -40,8 +49,10 @@ import argparse
 import glob
 import json
 import logging
+import multiprocessing as mp
 import os
-from typing import List, Optional, Tuple
+import re
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 from transformers import AutoTokenizer
@@ -65,6 +76,29 @@ TOKEN_DTYPE = np.uint32
 MASK_DTYPE = np.bool_
 
 
+# ---------------------------------------------------------------------------------------------
+# Worker-parallel tokenization.
+#
+# The hot loop makes ONE tokenizer call per example over that example's whole concatenated prompt,
+# so there is nothing to memoize (every example's text is unique) and batching would mean
+# restructuring segment_prompt_to_chunks in olmo_core. Process-level parallelism is the safe win:
+# the tokenize path is verified free of RNG, and results are consumed through an ORDERED imap, so
+# output is byte-identical to the serial path -- only wall-clock changes. --num-proc 1 keeps the
+# original single-process code path exactly.
+_W: Dict[str, Any] = {}
+
+
+def _worker_init(tokenizer_name: str, kwargs: Dict[str, Any], ids_set: ReservedIds) -> None:
+    """Build one tokenizer per worker process (tokenizers are cheap to construct, costly to ship)."""
+    _W["tok"] = AutoTokenizer.from_pretrained(tokenizer_name)
+    _W["kwargs"] = kwargs
+    _W["ids_set"] = ids_set
+
+
+def _worker_tokenize(example: dict) -> Optional[Tuple[np.ndarray, np.ndarray]]:
+    return tokenize_example(_W["tok"], example, ids_set=_W["ids_set"], **_W["kwargs"])
+
+
 def tokenize_example(
     tok,
     example: dict,
@@ -82,11 +116,17 @@ def tokenize_example(
     repeat_doc_text: int = 1,
     summary_every_k: int = 0,
     ids_set: ReservedIds = RESERVED_IDS["qwen3"],
+    doc_markers: bool = True,
 ) -> Optional[Tuple[np.ndarray, np.ndarray]]:
     """Tokenize one unified example into a document-chunked instance, or ``None`` to skip.
 
     :param ids_set: The tokenizer-specific reserved ids (boundary markers / EOS / landmark / pad).
         Defaults to the Qwen3 set, which keeps every existing invocation byte-identical.
+    :param doc_markers: Emit the ``<|box_start|>``/``<|box_end|>`` document boundary tokens
+        (default). ``False`` renders the **same** prompt -- same ``build_prompt``, same chat
+        template, same tokenizer, same EOS -- with the boundary strings empty, producing a
+        marker-free stream for a plain full-attention baseline. The only difference between the two
+        outputs is the 2 marker tokens per document.
     """
     segments, ids, _mask = segment_prompt_to_chunks(
         tok,
@@ -100,6 +140,8 @@ def tokenize_example(
         use_titles=use_titles,
         doc_start_id=ids_set.doc_start,
         doc_end_id=ids_set.doc_end,
+        doc_start_str=DOC_START_STR if doc_markers else "",
+        doc_end_str=DOC_END_STR if doc_markers else "",
         free_pad_repeat=free_pad_repeat,
         repeat_doc_text=repeat_doc_text,
         summary_every_k=summary_every_k,
@@ -284,7 +326,26 @@ def main() -> None:
         help="(landmark) Override the window-fill pad id from --marker-set.",
     )
     p.add_argument("--limit", type=int, default=0)
+    p.add_argument(
+        "--num-proc",
+        type=int,
+        default=0,
+        help="worker processes for tokenization. 0 = auto (min(8, cpu_count)); 1 = the original "
+        "single-process path. The tokenize path has no RNG and results are consumed in input "
+        "order, so output is byte-identical regardless of this value -- only wall-clock changes. "
+        "The old serial loop used ~1 of the 8 CPUs a typical job allocates.",
+    )
     p.add_argument("--shard-tokens", type=int, default=20_000_000)
+    p.add_argument(
+        "--no-doc-markers",
+        action="store_true",
+        help="Render the prompt WITHOUT the <|box_start|>/<|box_end|> document boundary tokens -- "
+        "the plain full-attention baseline. Everything else is identical to the marker build "
+        "(same pools, same build_prompt, same chat template, same tokenizer, same EOS), so a "
+        "marker/no-marker shard PAIR differs only by the 2 boundary tokens per document. Use the "
+        "marker build for the chunked arm (it needs the boundaries to derive chunk ids) and this "
+        "one for the standard arm.",
+    )
     p.add_argument(
         "--emit-gold-sidecar",
         action="store_true",
@@ -300,6 +361,25 @@ def main() -> None:
         )
     if args.emit_gold_sidecar and args.emit != "dense":
         raise SystemExit("--emit-gold-sidecar requires --emit dense (chunk index == Claim id - 1).")
+
+    if args.chunk_by == "line":
+        # A regex that matches the empty string matches EVERY line, so the instruction / question /
+        # data-header lines each become their own chunk and the blank lines between them stay FREE --
+        # a global bridge between chunks, and a train/eval layout mismatch (eval keeps the preamble
+        # FREE). The bare '||' is exactly this: an alternation of empty branches. It silently produced
+        # the oolong leak in CHUNK_LEAK_AUDIT.md, so fail loudly instead.
+        try:
+            _item_re = re.compile(args.item_regex)
+        except re.error as e:
+            raise SystemExit(f"--item-regex {args.item_regex!r} is not a valid regex: {e}")
+        if _item_re.search("") is not None:
+            raise SystemExit(
+                f"--item-regex {args.item_regex!r} matches the EMPTY STRING, so it matches every "
+                "line: the instruction/question/header lines would each be wrapped as their own "
+                "chunk and the blank lines between them would stay FREE, bridging chunks and "
+                "mismatching the eval layout (see debug/ctc_vllm_validation/CHUNK_LEAK_AUDIT.md). "
+                r"Did you mean '\|\|' (escaped) instead of '||'?"
+            )
 
     # Resolve the reserved-id set: --marker-set base, explicit --*-id flags override field-by-field.
     ids_set = reserved_ids(args.marker_set)
@@ -366,24 +446,34 @@ def main() -> None:
     n_gold = 0
     lengths: List[int] = []
     n_loss_tokens = 0
-    for ex in examples:
-        res = tokenize_example(
-            tok,
-            ex,
-            args.task,
-            emit=args.emit,
-            query_position=args.query_position,
-            cot_mode=args.cot_mode,
-            mem_freq=args.mem_freq,
-            seq_len=args.seq_len,
-            chunk_by=args.chunk_by,
-            item_regex=args.item_regex,
-            use_titles=args.use_titles,
-            free_pad_repeat=args.free_pad_repeat,
-            repeat_doc_text=args.repeat_doc_text,
-            summary_every_k=args.summary_every_k,
-            ids_set=ids_set,
-        )
+    tok_kwargs: Dict[str, Any] = dict(
+        task=args.task,
+        emit=args.emit,
+        query_position=args.query_position,
+        cot_mode=args.cot_mode,
+        mem_freq=args.mem_freq,
+        seq_len=args.seq_len,
+        chunk_by=args.chunk_by,
+        item_regex=args.item_regex,
+        use_titles=args.use_titles,
+        free_pad_repeat=args.free_pad_repeat,
+        repeat_doc_text=args.repeat_doc_text,
+        summary_every_k=args.summary_every_k,
+        doc_markers=not args.no_doc_markers,
+    )
+    n_proc = args.num_proc if args.num_proc > 0 else min(8, os.cpu_count() or 1)
+    pool = None
+    if n_proc > 1:
+        # imap (NOT imap_unordered) so results stay in input order -- shard content, the gold
+        # sidecar and the length stats must not depend on scheduling.
+        pool = mp.Pool(n_proc, initializer=_worker_init,
+                       initargs=(args.tokenizer, tok_kwargs, ids_set))
+        results = pool.imap(_worker_tokenize, examples, chunksize=8)
+        log.info(f"tokenizing with {n_proc} worker processes")
+    else:
+        results = (tokenize_example(tok, ex, ids_set=ids_set, **tok_kwargs) for ex in examples)
+
+    for ex, res in zip(examples, results):
         if res is None:
             dropped += 1
             continue
@@ -402,6 +492,9 @@ def main() -> None:
         if buffered >= args.shard_tokens:
             flush()
             buffered = 0
+    if pool is not None:
+        pool.close()
+        pool.join()
     flush()
 
     # ---- metadata.json: a HARD requirement of the docchunk trainers ----
@@ -415,7 +508,8 @@ def main() -> None:
         "emit": args.emit,
         "cot_mode": args.cot_mode,
         "chunk_by": args.chunk_by,
-        "wrap_docs": True,
+        "wrap_docs": not args.no_doc_markers,
+        "doc_markers": not args.no_doc_markers,
         "free_pad_repeat": args.free_pad_repeat,
         "summary_every_k": args.summary_every_k,
         "use_titles": args.use_titles,

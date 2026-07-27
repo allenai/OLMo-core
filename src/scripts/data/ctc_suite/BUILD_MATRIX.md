@@ -57,8 +57,15 @@ python src/scripts/data/convert_unified_to_document_landmark.py \
   **Every Qwen3.5 shard build MUST pass `--marker-set qwen3_5`** (default stays `qwen3`,
   byte-identical to the old behavior; regression-guarded in
   `src/test/data/document_chunk_marker_set_test.py`).
-- `--chunk-by`: `line` (+ `--item-regex '||'`) ONLY for oolong; `document` for everything else
+- `--chunk-by`: `line` ONLY for oolong; `document` for everything else
   (matches `convert_docchunk_singletask_v2_local.sbatch`).
+  ⚠ **Do NOT pass `--item-regex`.** The converter default is the *escaped* `r"\|\|"`, which is what
+  you want. A bare `'||'` is a regex alternation of empty branches, so it matches **every** line —
+  the instruction/question/header get wrapped as their own chunks and the blank lines between them
+  stay FREE, bridging chunks and mismatching the eval layout (which keeps the preamble FREE). This
+  is the oolong leak in `debug/ctc_vllm_validation/CHUNK_LEAK_AUDIT.md` (2019 inter-chunk FREE
+  tokens, ~5/example). The converter now rejects any `--item-regex` matching the empty string.
+  **Any oolong shard built before 2026-07-26 has this defect and must be rebuilt.**
 - CoT is applied at CONVERT time via `--cot-mode` (build_prompt), not at generation — generator
   commands below never carry CoT flags. `lib/data_format.py` `build_prompt` already supports
   every task key in this file (incl. qa/summarization/rerank/qdmatch/xabsence/groups4/...).
@@ -116,13 +123,13 @@ histogram in the Stage-1 audit; ⚠ marks estimates corrected vs. the plan §3 t
 | 14 | grouping_labeled | ~180+labels | 9 | 20 | 42 | 85 | 170 | minor |
 | 15 | textgroups | ~150 | 11 | 24 | 50 | 103 | 210 | ok |
 | 16 | contradiction | ~42 | 40 | 88 | 190 | 385 | 765 | ok (v2-calibrated exactly) |
-| 17 | redundancy | ~43 | 40 | 85 | 180 | 365 | 735 | ok |
-| 18 | absence PubMed | ~80/item (item appears in BOTH versions A+B) | 22 | 47 | 98 | 200 | 400 | ⚠ was 45/doc 40→700 → **22→400** (README: n1000 ≈ 74K tok) |
-| 19 | absence official | fixed sets | — | — | — | — | — | n/a |
+| ~~17~~ | ~~redundancy~~ | ~~43~~ | — | — | — | — | — | DROPPED for now (user 2026-07-19); LLM-serving-bound generator, revisit later |
+| 18 | absence Gutenberg (text-diff) | ~20/sentence (each sentence = 1 doc/chunk) | ~90 | ~180 | ~360 | ~720 | ~1440 | ⚠ REPLACES absence-PubMed (user 2026-07-19). `generate_absence_data.py --gutenberg`; VersionA=N sents, VersionB=−K, gold=first-four-words. n=sentences, calibrate vs Qwen3.5 tok. Existing eval n10/n50/n200 |
+| ~~19~~ | ~~absence official~~ | ~~fixed sets~~ | — | — | — | — | — | DROPPED (user 2026-07-19); published AbsenceBench poetry/numerical/github_prs no longer in suite |
 | 20 | strmatch | ~45 (synth ×1.5–3) | 38 | 82 | 170 | 350 | 700 | ⚠ was 30→500 → **~38→~700**; calibrate |
 | 21a | qdmatch NQ | ~175/(q+doc) unit | q9 | q20 | q42 | q87 | q178 | ⚠ was q8→120 → **q9→178** (q100 ≈ 17K measured) |
 | 21b | qdmatch HPQA | ~175 | q9 | q20 | q42 | q87 | q178 | ⚠ same |
-| 21c | qdmatch ObliQ | ~430 (long abstracts) | q4 | q8 | q17 | q36 | q73 | ⚠ ObliQ ≠ wiki: **q4→73** |
+| 21c | ObliQ retrieval (standalone) | ~430/doc (long text) | 4 | 9 | 18 | 37 | 74 | ⚠ REPLACES qdmatch-ObliQ (user 2026-07-19: drop qdmatch variant of ObliQ). `generate_obliq_data.py` `--task retrieval`, pick gold by 1-idx ID; doc-count needs final calibration |
 | 22 | xabsence | ~95/pair | P18 | P39 | P81 | P165 | P333 | ⚠ was P4→60 → **P18→333** (P48 ≈ 4.5k measured) |
 | 23 | mathmatch | ~35 | 48 | 105 | 220 | 450 | 900 | ~ok (plan 60→1000) |
 | 24 | reorder Gutenberg | ~135 | 12 | 27 | 57 | 116 | 234 | ok |
@@ -179,7 +186,7 @@ equal counts, and concatenate · `GEN=src/corpus_reasoning/data` · `OUT=/data/p
   example identity) — no new machinery. eval_size = 488 ⚠ (inherits contradiction's held-out set).
 - **ACTION A3:** `--num-docs` is a single override — no per-example randomization; discrete-uniform.
 
-### 4. OOLONG — **P1** — `--task oolong` — chunk-by **`line`** (`--item-regex '||'`) — short-cot (`plan`)
+### 4. OOLONG — **P1** — `--task oolong` — chunk-by **`line`** (no `--item-regex`; default `r"\|\|"`) — short-cot (`plan`)
 - **Generator:** `$GEN/generate_oolong_ladder_data.py` (✔n — in TOKENS: `--len-min/--len-max`,
   target sampled per example; `--num-examples`, sharding, tokenizer-budgeted).
 - **Pool:** HF `oolongbench/oolong-synth`. EXISTS (already downloaded; ladder files built).
@@ -377,31 +384,32 @@ equal counts, and concatenate · `GEN=src/corpus_reasoning/data` · `OUT=/data/p
   contra, incl. its filler harvest). ACTION A17b: v2 config (`gold_is_pairs=True`). Build
   canonical 500 at n40 + expand, or at n735 + shrink (shrink simpler: fillers are gold-free).
 
-### 18. Absence PubMed — **P1** — `--task absence` — chunk-by `document` — no-cot (`walk`=long option)
-- **Generator:** `$GEN/generate_absence_data.py` — mode `--from <unified.jsonl>` (derives
-  items from an existing PubMed-derived file; `--p 0.1` deletion; `--num-train/--num-eval`).
-  LLM-free.
-- **Pool:** derives from contradiction/absence source files (EXIST: `absence_*_pubmed_n*_p01`
-  ladder to n1000 already built; pool ~170k sentences).
-- **20k feasible:** YES (pool 170k sentences; items resampled per example).
-- **TRAIN FINAL (discrete-uniform):** for n in 22 47 98 200 400:
-  `python $GEN/generate_absence_data.py --from $OUT/raw/contradiction/<big-file>.jsonl --num-docs $n --p 0.1 --num-train 4000 --num-eval 0 --src-tag pubmed --output-dir $OUT/raw/absence --seed 42` ; cat.
-  ⚠ Verify `--num-docs` drives item count in `--from` mode (agent audit says count comes from
-  source in from-mode — **ACTION A18: confirm/add item-count control in from-mode**; else drive
-  n via pre-sliced source files).
-- **EVAL (fixed-500):** gold = the removed items — hold the removed set + kept-core fixed, add
-  extra PRESENT items for bigger rungs (expand) or build n400 and shrink non-gold present items.
-  Shrink is gold-safe. ACTION A18b: v2 config (gold = removed-item ids — check the schema's gold
-  representation; answers are item texts not indices → needs the answers-from-gold recompute
-  hook, precedent exists in the outlier config).
-- ⚠ n=corpus items; both Versions A+B in-context (the 2× token factor already in the table).
+### 18. Absence Gutenberg (text-diff) — **P1** — `--task absence` — chunk-by `document` — no-cot
+- **REPLACES absence-PubMed** (user 2026-07-19): natural-prose text-diff variant, preferred because
+  each sentence is its own document/chunk (real chunk structure for the full-vs-chunked contrast)
+  and it shares NO substrate with contradiction (removes the PubMed-overlap confound).
+- **Generator:** `$GEN/generate_absence_data.py --gutenberg`. A random window of N consecutive
+  sentences from a Gutenberg book = Version A; Version B = same window with K sentences removed;
+  target = first-four-words of each removed sentence (uniqueness-filtered → unambiguous gold).
+  Emits `documents=[{text: sentence} × N]`, `gold_doc_indices=removed positions`, `answers=first-4-words`.
+  LLM-free. `--n-sents N --k-remove K --num-train/--num-eval --min-sentence-words 4`.
+- **Pool:** HF `sedthh/gutenberg_english` (same book substrate as reorder row 24; cache exists).
+  Existing eval sets already on /scratch: `absence_eval_gutenberg_n{10,50,200}_k3.jsonl`; gen job
+  `gen_absence_gutenberg.sh`.
+- **n = sentences (~20 tok each)** → ladder ≈ {90,180,360,720,1440} for 2k–32k; CALIBRATE against
+  the Qwen3.5 tokenizer before freezing (Version A + Version B both in context ≈ 2× factor).
+- **20k feasible:** YES (2000-book scan × examples-per-book; resample windows).
+- **EVAL (fixed-500):** gold = removed sentence positions/first-four-words. Hold the removed set +
+  kept core fixed; grow rungs by adding more PRESENT sentences (expand) or build the largest rung
+  and shrink non-gold present sentences (gold-safe). Bump `--num-eval` to ≥500 (default 300).
+  ACTION A18: v2 ladder config (gold = removed ids; answers are first-four-words strings →
+  answers-from-gold recompute hook, precedent in the outlier config).
 
-### 19. Absence official — P2 — `--task absence` — chunk-by `document` — no-cot
-- **Generator:** `$GEN/generate_absence_data.py --official` → HF `harveyfin/AbsenceBench`
-  (poetry/numerical/github_prs). EXISTS (files built: 1184/1200/751 examples).
-- **No n knob** (fixed reference sets, ctx up to 27K) — CANNOT ladder ⇒ excluded from the
-  rung grid; keep as a fixed transfer eval only (eval_size 1184/1200/751 ✓✓/751 ✓).
-- **Command (eval only):** `python $GEN/generate_absence_data.py --official --output-dir $OUT/eval/absence_official --seed 42`. No train build.
+### 19. ~~Absence official~~ — **DROPPED** (user 2026-07-19)
+- Published `harveyfin/AbsenceBench` (poetry/numerical/github_prs) removed from the suite — it has
+  no n knob (fixed sets, cannot ladder) and external-benchmark comparability isn't needed for the
+  full-vs-chunked scaling study. One-line revert if wanted back as a fixed transfer eval:
+  `python $GEN/generate_absence_data.py --official --output-dir $OUT/eval/absence_official --seed 42`.
 
 ### 20. strmatch — **P1** — `--task strmatch` — chunk-by `document` — no-cot (`enumerate`=long option)
 - **Generator:** `$GEN/generate_strmatch_data.py` (fixed `--num-docs` → discrete-uniform;
@@ -416,7 +424,12 @@ equal counts, and concatenate · `GEN=src/corpus_reasoning/data` · `OUT=/data/p
 - ⚠ Synthetic-vocab ×1.5–3 tokenization — calibrate before freezing n values.
 
 ### 21a. qdmatch NQ — **P1** — `--task qdmatch` — chunk-by `document` — no-cot
-### 21b. qdmatch HPQA — P2 · 21c. qdmatch ObliQ — P2
+> **ROSTER CHANGE (user 2026-07-19):** qdmatch-**ObliQ** is DROPPED from the suite. Keep qdmatch
+> NQ (21a) + HPQA (21b). ObliQ instead enters as a **standalone in-context-retrieval** row (21c,
+> see below) via `generate_obliq_data.py`, NOT `generate_qdmatch_data.py`. Do not tokenize/train
+> the `qdmatch_*obliq*` pilot jsonl — discard it.
+
+### 21b. qdmatch HPQA — P2
 - **Generator:** `$GEN/generate_qdmatch_data.py` (derives from single-query unified JSONL —
   `--from-train/--from-eval`; fixed `--num-docs`/`--num-queries` → discrete-uniform;
   `--num-relevant 3`; `--layout separate`).
@@ -436,6 +449,23 @@ equal counts, and concatenate · `GEN=src/corpus_reasoning/data` · `OUT=/data/p
   the current builder only remaps doc indices; qdmatch gold is (q_idx, d_idx) pairs.** Moderate
   (one new remap function). eval_size: NQ/HPQA 500 ✓; ObliQ ⚠ ~300 max from 850-query pool
   (flag inline).
+
+### 21c. ObliQ retrieval (standalone) — **P2** — `--task retrieval` — chunk-by `document` — no-cot
+- **REPLACES qdmatch-ObliQ** (user 2026-07-19). This is OBLIQ-Bench in-context retrieval, NOT
+  query-doc matching: ~N docs stuffed in the prompt, model picks the gold by 1-indexed ID (same
+  `--task retrieval` path as NQ/HPQA/BEIR).
+- **Generator:** `$GEN/generate_obliq_data.py` (BM25-mines distractors from the ObliQ subset's own
+  corpus, forces all qrels golds, `--num-docs`, `--num-train-perms`, `--train-frac`; combine
+  subsets via `mix_obliq_subsets.py` / `expand_obliq_train.py`). Env: `corpus-reasoning-eval`
+  (needs pyserini).
+- **Pool:** HF `dianetc/OBLIQ-Bench`, 5 subsets (writing/congress/twitter/wildchat + math).
+  Existing standalone files already on /scratch (`obliq_<subset>_train/test_*`, plus combined
+  `obliq_mix4_train_1797` / `obliq_mix4_test_488`) — reusable substrate; the 488-example mix4 test
+  is a clean fixed eval set.
+- **Doc length ~430 tok/doc** (long social-media/writing text) → ladder n ≈ {4,9,18,37,74}
+  (calibrate against Qwen3.5 tokenizer before freezing, same as row-11/20 procedure).
+- **eval_size:** mix4 test = 488 ✓ (accept as-is, same basis as contradiction). Small subsets
+  cap lower — prefer the combined mix.
 
 ### 22. xabsence — **P1** — `--task xabsence` — chunk-by `document` — no-cot
 - **Generator:** `$GEN/generate_xabsence_data.py` (two-phase: `--build-pool` LLM paraphrases →
@@ -603,7 +633,7 @@ Outputs → **mooney `/data/prasann/ctc_suite_data/<task>/`**. Logs + sbatch scr
 | grouping-OpenAlex (13) | ✅ **DONE** — 5 rungs n∈{10,21,43,88,176} × 4000 = 20k train (`openalex_grouping_n*_levels_train_4000.jsonl`), from the 52k-work compact pool. EVAL deferred (A13 nested mode). | mooney `/data/prasann/ctc_suite_data/grouping/` (job 3337678, ~4 min) |
 | HotpotQA (2) | 🔄 LAUNCHED — 5 rungs n∈{11,24,50,100,205} × 4000 train (bridge, hn=n/10, BM25 from NFS `~/.cache/pyserini`) + canonical eval 500 @ n205 (shrink-derive later, A2b). | job **3337734** on **CUBBINS** (see trap note) |
 | reorder-Gutenberg (24) | 🔄 LAUNCHED — 5 rungs n∈{12,27,57,116,234} × 4000 train (`--num-examples 4001` because `--eval-frac 0` still forces 1 eval row). EVAL deferred: generator confirmed to have NO nested mode (A24). | job **3337735** on **CUBBINS** |
-| NQ (1) | 🔄 LAUNCHED (regen — old pool failed audit, below) — 6 stride-shards × 4334 = 26k requested, `--num-docs-min 11 --num-docs-max 200 --hard-neg-frac 0.1 --ce-filter` (CE MiniLM-L6 on CPU), → ~20k post-CE. | job **3337736** on **CUBBINS** |
+| NQ (1) | ❌ **STILL MISSING** — job 3337736 (6-shard) killed after 3.5h w/ 0 output; 2026-07-19 fast-retry fixed the real per-example BM25 bottleneck (~5x, see below) but the 48-way shard relaunch (3337963/3337964) thread-thrashed and also produced 0 output. Needs a re-run at safe concurrency (~6-way/node) with thread pinning. | see "NQ fast-regen attempt (2026-07-19)" below |
 
 ⚠ These three write to **cubbins** `/data/prasann/ctc_suite_data/` (grouping's output is on
 **mooney** — consolidate later).
@@ -639,6 +669,51 @@ honor `--hard-neg-frac`; the stale comment at ~line 132 claims n_random=0 — th
 205-212 splits hard/random correctly). Grouping n176 file ≈ 155 KB/example (~38k tok by chars/4)
 — slightly over the 32k budget; settle in the tokenizer calibration pass before freezing rung
 assignment.
+
+### NQ fast-regen attempt (2026-07-19) — bottleneck fixed, shard scaling FAILED, 0 output
+
+**Goal:** regenerate the p10 NQ pool in ≤10 min wall-clock (job 3337736's 6-shard CPU run had
+been killed after 3.5h at ~97% done with **zero** output, because `save_jsonl` only fires once
+at the very end of `_generate_split` — a partial/killed run always yields 0 rows, never a
+partial file).
+
+**Root cause found (real, fixed in code):** `generate_nq_training_data.py`'s continuous-n path
+called `BM25Searcher.sample_random_passages()` **once per random distractor per example** — a
+serial Lucene `doc()` lookup each time. At `--hard-neg-frac 0.1` and n up to 200, that's up to
+~180 serial lookups/example, and this (not CE scoring, which is batched and cheap) was the
+actual bottleneck matching the observed ~2-3s/kept-example. `bm25.py` already has the fix
+pattern used elsewhere in this codebase (`generate_musique_unified_corpus.py`,
+`generate_matching_ngram_data.py`): `BM25Searcher.prefetch_random_pool()` once + pure-Python
+`sample_from_pool()` per example. Ported the same pattern into
+`generate_nq_training_data.py` (new `--pool-passages`/`--pool-fetch-threads` flags, opt-in via
+`--pool-passages > 0`, old per-example path kept as fallback). **Validated in isolation:**
+single process, `--bm25-threads 8 --pool-passages 20000`, on a busy cubbins node: **~2.0
+kept-items/s**, vs. the original run's ~0.3-0.5/s — a **~5x** per-process speedup. CE model
+already auto-selects CUDA when visible (`CrossEncoderScorer.__init__`); not exercised (see
+below).
+
+**Shard-scaling FAILED:** launched 48-way sharding (40 procs on mooney + 8 on cubbins,
+`--num-shards 48`, 4 cores / `--bm25-threads 4` / `--pool-fetch-threads 4` each, `--time
+00:09:00`, targeting 420 kept/shard ≈ 20,160 total). **Both jobs (3337963 mooney, 3337964
+cubbins) ran the full 9 min and TIMED OUT with every one of the 48 per-shard log files at 0
+bytes** — none of the 48 concurrent processes even finished printing their first startup line
+(pyserini index load) in 9 minutes, vs. ~12s for a single isolated process. A 6-way-concurrent
+calibration on cubbins (job 3337950, `--bm25-threads 4`/6 cores each) DID get through startup
+fine in that same window. Diagnosis (not yet fix-validated): 40-48 concurrent cold starts of
+JVM (pyserini/Lucene) + PyTorch + transformers on one `srun` step, all sharing **one** cgroup —
+none of the per-process launches pinned `OMP_NUM_THREADS`/`MKL_NUM_THREADS`/JVM heap, so each
+process's intra-op thread pool defaults to the size of the *whole* visible cpuset, not its
+1/N share → severe oversubscription/thrash, not a graceful slowdown. **Net result: 0 lines of
+NQ output, 0 output files, from this attempt.**
+
+**Status:** NQ pool still MISSING an audited fast regen. The per-process fix (pool-based random
+sampling) is real, committed, and ~5x validated — do not revert it. The shard-count strategy
+needs `OMP_NUM_THREADS=1 MKL_NUM_THREADS=1` (or explicit `torch.set_num_threads`) pinned per
+shard and a much lower concurrency ceiling (the 6-way calibration is the only concurrency level
+actually observed to start cleanly) before it's safe to scale back up. Files:
+`src/corpus_reasoning/data/generate_nq_training_data.py` (pool fix),
+`/tmp/.../scratchpad/nq_fast_{mooney,cubbins}.sbatch` (the failed 48-way launcher, for reference
+only — do not rerun as-is).
 
 ---
 
@@ -803,3 +878,100 @@ extrapolation risk there.
   7.8MB (old, wrong) to 19.5MB (correct) — now **exceeds the <10MB budget**, so the stale repo
   copy was removed rather than left wrong; it stays cubbins-only like `hotpotqa/rung_8192.jsonl`
   (16.9MB) and `outlier/rung_8192.jsonl` (18.4MB) already did.
+
+---
+
+## Stage-3 build log (2026-07-19 — PILOT data for every remaining task)
+
+Goal (per task brief, supersedes the 20k-train/multi-rung machinery above for pilot purposes):
+per remaining task, ONE point at `n(2k)` — ~2,500 train examples (mixed ±30% fine) + a 500-example
+eval, both converted to a `--marker-set qwen3_5 --seq-len 4096` dense shard. Pilot does **not**
+need the nested/fixed-across-rungs eval machinery (A2b/A7b/A12/A13/...) — those stay open ACTION
+items for the FINAL 20k/multi-rung build. contradiction/hotpotqa/oolong/outlier/rerank/grouping/
+reorder were already DONE from Stage-1/2 and were skipped here.
+
+Generation: 4 sbatch batches on **cubbins** (`≤6 concurrent procs/node, OMP_NUM_THREADS=1
+MKL_NUM_THREADS=1`, scripts in `/scratch/users/prasann/ctc_suite_logs/gen_pilot_batch{A,B,C,D}_*.sbatch`)
++ one NQ-specific fix/relaunch. Harvest/consolidation: `harvest_pilot_all.py` (trims every train
+file to ≤2500 rows and every eval file to ≤500 rows into canonical
+`ctc_suite_data/pilot_train/<task>.jsonl` and `ctc_suite_data/eval_rungs_pilot/<task>/rung_2048.jsonl`).
+Conversion: new `src/scripts/data/ctc_suite/convert_ctc_pilot_dense_cubbins.sbatch` (array job,
+mirrors the Stage-2 dense converter but `--seq-len 4096`, pilot single-n files) →
+`/data/prasann/ctc_suite/shards_pilot/<task>_train/`.
+
+### NQ — fixed and regenerated (unblocks the Stage-1 "STILL MISSING" row)
+
+Applied the task-brief fix directly: 6-way sharded (`--num-shards 6`), `OMP_NUM_THREADS=1
+MKL_NUM_THREADS=1` pinned, `--bm25-threads 4 --pool-fetch-threads 8` per shard (vs. the failed
+48-way attempt's unpinned threads) — **all 6 shards completed cleanly in ~7 min wall** (job
+3338226), no thrash. `--num-docs-min 12 --num-docs-max 18` (k≈15 pilot target per task brief),
+`--hard-neg-frac 0.1`, `--ce-filter` dropped for pilot speed. Output: 2,520 train + 510 eval
+(420+85/shard × 6) → harvested to 2,500 train / 500 eval. **Hard-neg ratio audited: 0.0987**
+(target ≈0.10 — PASSES, unlike the retired 98%-hard `nq_train_k20-200_combined_aligned` pool).
+Converted cleanly (`box_start==box_end=37,555`, avg 15.0 docs/ex, matching k12-18). Deviated from
+the brief's "mooney+cubbins split" — ran cubbins-only (6 shards were already fast enough to clear
+the whole pilot in minutes; mooney carries a known NFS/datasets-import wedge risk documented above
+that wasn't worth the risk for a workload this small). **NQ pilot data now unblocked.**
+
+### Generated + converted this pass (16 tasks, all `ALL_OK` — box_start==box_end, non-degenerate)
+
+| Task | train (raw→kept) | eval (raw→kept) | n_docs target | measured (shard) | flags |
+|---|---|---|---|---|---|
+| niah_contradiction | 2500→2500 | 500→500 | 40 | 100,000 box tok = 40.0/ex exactly | — |
+| absence_pubmed | 1500→1499 | 500→500 | 22 | 29,980 box tok = 20.0/ex (source capped at n20) | ⚠ train 1499 < 2500 (source pool `absence_train_pubmed_n20_p01.jsonl` only has 2000 rows total; 500 went to eval, 1 more dropped by seq-len) |
+| qdmatch_nq | 2500→2500 | 500→500 | q9/d9 | 18.0 items/ex (9q+9d, as designed) | — |
+| qdmatch_hpqa | 2500→2500 | 500→500 | q9/d9 | 18.0 items/ex | — |
+| qdmatch_obliq | 2500→1354 | 300→300 | q4/d4 | 8.0 items/ex on survivors | ⚠ 46% dropped by `--seq-len 4096` (ObliQ source docs are long social-media-style text); eval only 300 (850-query pool cap, matches BUILD_MATRIX's own flag) |
+| grouping_labeled | 2500→2500 | 500→500 | 10 | 10.0 docs/ex | ⚠ eval is a disjoint SLICE of the same `openalex_grouping_n10_levels_train_4000.jsonl` generation, not an independently-sampled held-out set (A13 nested-eval mode is still generator-side future work) |
+| mathmatch | 2500→2500 | 500→500 | 48 | 48.0 docs/ex | fixed: widened `--ans-min/--ans-max` to ±400 (default ±50 couldn't place 48 docs + 3 gold pairs without collision) |
+| cycle | 2500→2500 | 500→500 | 60 | 60.0 docs/ex | — |
+| groups4 | 2500→2500 | 500→500 | 100 | 100.0 docs/ex | — |
+| textgroups | 2500→2500 | 500→500 | 11 | 11.0 docs/ex | — |
+| strmatch | 2500→2500 | 500→500 | 38 | 38.0 docs/ex | — |
+| outlier_amzn | 2500→2500 | 500→500 | 20 | 20.0 docs/ex | `--use-titles` not applicable (generator has no title leak path used at convert) |
+| helmet_qa | 2500→2499 | 500→500 | single-doc | 1.0 doc/ex (narrativeqa, `--lengths 2000`) | `--task qa` |
+| helmet_summ | 2500→2500 | 500→500 | single-doc | 1.0 doc/ex (govreport, `--lengths 2000`) | `--task summarization` |
+| xabsence | 2000→2000 | 300→300 | P18 | 39.0 docs/ex (2×18 pair-docs + unmatched) | pool-limited (existing 659-pair pool → P18 train/eval already built pre-brief; only staged, not regenerated); eval 300 < 500 (whole pool) |
+| nq | 2520→2500 | 510→500 | k12-18 | 15.02 docs/ex, hard-neg ratio 0.0987 | see NQ section above |
+
+Fixes applied (ONE obvious fix each, per task brief):
+- **mathmatch**: `RuntimeError: Could not assemble answer set after 200 attempts` at n=48 with the
+  default `--ans-min -50 --ans-max 50` (100-value range too narrow for 48 docs + 3 tolerance-gold
+  pairs without collision) → widened to `--ans-min -400 --ans-max 400`. Fixed, reran clean.
+- **qdmatch_obliq**: `ValueError: relevant gold docs G=14 exceeds N=4` — ObliQ bridge-style
+  questions can carry many gold docs per query (unlike NQ/HPQA's 1-2), overflowing `--num-docs 4`
+  at `--num-relevant 3`. Added `--max-gold-per-query 1` (NQ-style 1:1 cap) so `G<=k<=N` always
+  holds. Fixed, reran clean (yield loss from `--seq-len 4096` truncation is separate, see table).
+
+### Redundancy — DROPPED (user directive, not attempted)
+
+Out of scope for this pilot pass per explicit directive — do not build or unblock. (Was
+tentatively BLOCKED on LLM-serving/GPU quota before the directive; not attempted further.)
+
+### BEIR scifact / BEIR fiqa / MS MARCO — DONE (root cause found + fixed)
+
+**msmarco** converted cleanly on the first (CPU) pass: 2,500 train / 500 eval, 15.4 docs/ex
+(k13-18 target) — `ALL_OK`, `shards_pilot/msmarco_train` (+ `msmarco_rerank_train` reusing the
+same source under `--task rerank`).
+
+**scifact/fiqa root cause (job 3338218, CPU-only batch):** the original `gen_pilot_batchD_retrieval.sbatch`
+requested no GPU, so `CrossEncoderScorer` in `generate_beir_ce_data.py` fell back to
+`torch.cuda.is_available() → False → "cpu"`. CE-scoring ~600-6,600 queries × ~100-150 BM25
+candidates each on CPU ran **1h20m+ with zero output** before being killed — the generator's own
+docstring says CE scoring is "cheap on one GPU," and it is: **fix = `--gres=gpu:1`** (MiniLM-L6 is
+tiny, one GPU is plenty), `qos=preemptive` (not `_high`, unnecessary for a few-minute job). Rerun
+(job 3338277, scifact+fiqa only, `--ce-batch-size 512`) finished **both in ~15 min wall** (scifact
+train+test in <9 min, fiqa — the bigger 5,500-query pool — by ~15 min), vs. the CPU path's 80+ min
+with nothing to show. **Do not run BEIR/CE generation without a GPU again.**
+
+| Task | train (raw→kept) | eval (raw→kept) | n_docs | shard | flags |
+|---|---|---|---|---|---|
+| scifact | 809→807 | 300→300 | 5 | `shards_pilot/scifact_train` (807, box_start=4,035=5.0/ex) | ⚠ train 807 < 2500 (entire train-qrels pool, matches the matrix's own known ~800-query BEIR/scifact ceiling — not a bug); eval 300 < 500 (entire test set, matches the matrix's pre-flagged SciFact eval_size=299/300 ceiling) |
+| fiqa | 5500→2500 | 648→500 | 4 | `shards_pilot/fiqa_train` (2498, box_start=9,977≈4.0/ex) | clean — 5,500-query pool trimmed to the 2,500 pilot cap by the harvester |
+
+Locations: `/data/prasann/ctc_suite_data/eval_rungs_pilot/{scifact,fiqa}/rung_2048.jsonl` (300 /
+500 rows).
+
+### Redundancy — DROPPED, second confirmation (user directive)
+
+Re-confirmed: not built, not unblocked, removed from the readiness/build list. No further action.

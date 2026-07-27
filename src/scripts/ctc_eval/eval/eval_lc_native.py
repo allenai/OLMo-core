@@ -333,16 +333,41 @@ def main():
                 ("16k", f"{E5}/contra/contradiction_eval_fever_plain_n820_k3.jsonl"),
                 ("32k", f"{E5}/contra/contradiction_eval_fever_plain_n1642_k3.jsonl")],
         }
+        # ---- oolong SHORT rungs (2k/4k): extend the ladder DOWNWARD ----
+        # The v2 oolong ladder starts at 8k because no shorter synthesized rungs existed. Added
+        # conditionally so an EVAL500_ROOT without them still works. Prepended, not appended, so
+        # the rungs stay in ascending length order.
+        if args.ladder_version == "v2" and "oolong" in LADDERS:
+            _short = []
+            for _lab, _ctx in (("2k", 2048), ("4k", 4096)):
+                _p = os.path.join(E5, "oolong", f"oolong_test_synth_ctx{_ctx}_spliteval.jsonl")
+                if os.path.exists(_p):
+                    _short.append((_lab, _p))
+            if _short:
+                LADDERS["oolong"] = _short + LADDERS["oolong"]
+
         # ---- OPT-IN ultra-long rungs (64k/128k/256k), OFF by default (v2 only) ----
         # Resolved by size-labelled glob so the calibrated doc-count in the filename can drift
         # (rebuild with a different --count/tokenizer) without editing this file.
         if args.xlong and args.ladder_version == "v2":
             import glob as _glob
+            # rerank and oolong were originally excluded: no CE-graded rerank pool above k100
+            # existed, and oolong is not a doc pool. Both now have xlong rungs (built 2026-07-27),
+            # so they are wired here. oolong does NOT use the `_xlong_` convention -- it is a packed
+            # item stream labelled by its token budget (ctx{N}_spliteval), so it gets its own map.
             _XL = {
                 "contradiction": ("contra",  "contradiction_eval_pubmed_both_n*_k3_xlong_{s}.jsonl"),
                 "nq":            ("nq",       "nq_validation_k*_xlong_{s}.jsonl"),
                 "outlier":       ("outlier",  "outlier_wiki100w_n*_k3_eval_xlong_{s}.jsonl"),
+                # ⚠ APPROXIMATE above k100: the added negatives are random non-gold docs carrying
+                # ce=None, not CE-mined hard negatives. The grader scores ce=None as gain 0 and
+                # excludes them from the Kendall-tau reference, so NDCG@10 still measures "surface
+                # the CE-relevant docs among far more noise" -- but it is MORE noise, not HARDER
+                # noise. Flag that next to any rerank number at 64k+.
+                "rerank":        ("rerank",  "msmarco_trainhn_eval_k*_xlong_{s}.jsonl"),
             }
+            # oolong: token-budget-labelled files rather than a calibrated doc count.
+            _XL_OOLONG = {"64k": 65536, "128k": 131072, "256k": 262144}
             for _t, (_sub, _pat) in _XL.items():
                 if _t not in LADDERS:
                     continue
@@ -350,6 +375,11 @@ def main():
                     _hits = sorted(_glob.glob(os.path.join(E5, _sub, _pat.format(s=_s))))
                     if _hits:
                         LADDERS[_t].append((_s, _hits[0]))
+            if "oolong" in LADDERS:
+                for _s, _ctx in _XL_OOLONG.items():
+                    _p = os.path.join(E5, "oolong", f"oolong_test_synth_ctx{_ctx}_spliteval.jsonl")
+                    if os.path.exists(_p):
+                        LADDERS["oolong"].append((_s, _p))
             print(f"[xlong] appended ultra-long rungs where files exist under {E5}", flush=True)
         LSPEC = {
             "contradiction": ("contradiction", _eval_contradiction, "f1", 200),

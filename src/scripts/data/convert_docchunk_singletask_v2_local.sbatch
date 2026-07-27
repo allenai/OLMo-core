@@ -53,7 +53,9 @@ declare -A SPEC=(
 
 for name in $TASKS; do
   read -r task chunk jsonl <<< "${SPEC[$name]}"
-  extra=""; [ "$chunk" = line ] && extra="--item-regex ||"
+  # NO --item-regex override: the converter default is the ESCAPED r"\|\|". A bare '||' matches
+  # EVERY line (empty-branch alternation) -> preamble wrapped as chunks, FREE gaps between them.
+  extra=""
   outdir="$OUT/${name}_dense"
   src="$SRC/$jsonl"
   echo "=== [$name] task=$task chunk=$chunk src=$src -> $outdir $(date '+%T') ==="

@@ -1,0 +1,11 @@
+srun: job 3377751 queued and waiting for resources
+srun: job 3377751 has been allocated resources
+/data/prasann/conda/envs/corpus-reasoning-olmo/lib/python3.12/site-packages/transformers/utils/hub.py:110: FutureWarning: Using `TRANSFORMERS_CACHE` is deprecated and will be removed in v5 of Transformers. Use `HF_HOME` instead.
+  warnings.warn(
+marker set 'qwen3_5': doc_start=248049 doc_end=248050 eos=248044 landmark=248200 pad=248203
+loaded 19764 examples (task=oolong, emit=dense, chunk_by=line); tokenizing -> /data/prasann/xlong5/shards_full/oolong_train
+tokenizing with 16 worker processes
+metadata.json -> /data/prasann/xlong5/shards_full/oolong_train/metadata.json (num_instances=19764, max_example_len=253211, num_loss_tokens=118953)
+length tokens: min 2198 / p50 7093 / p90 39615 / max 253211
+done: kept 19764, dropped 0 (too long / reserved collision). shards: 4
+TOKENIZE_DONE shards_full rc=0
