@@ -99,6 +99,11 @@ EXPLICIT_RESUME_CHAINS = {
         "ji0e0rcg",
     ),
 }
+LOCAL_HISTORY_RECOVERIES = {
+    "pt-1p2b-geometry-hybrid-gdn2-ev1-noneg-nope-gated-cx8-lr4e-4-ep8-sync-r1": (
+        "results/pretraining/canonical_gdn2_kda/recovered_histories/dlerge4x.json"
+    ),
+}
 
 
 def _lr_name(lr: float) -> str:
@@ -248,6 +253,7 @@ def resolve_interventions(
                         lr,
                         resume_chain[-1],
                         predecessor_run_ids=resume_chain[:-1],
+                        recovered_history_path=LOCAL_HISTORY_RECOVERIES.get(display_name),
                     )
                 )
                 continue
@@ -257,7 +263,15 @@ def resolve_interventions(
                     f"{display_name!r} resolved to multiple W&B runs ({ids}); "
                     "register the intended run and predecessor segments explicitly"
                 )
-            registered.append(RegisteredRun(model, cx, lr, exact[0].id))
+            registered.append(
+                RegisteredRun(
+                    model,
+                    cx,
+                    lr,
+                    exact[0].id,
+                    recovered_history_path=LOCAL_HISTORY_RECOVERIES.get(display_name),
+                )
+            )
         return Variant(key=key, label=label, color=color, runs=tuple(registered))
 
     canonical_gdn2 = build_variant(

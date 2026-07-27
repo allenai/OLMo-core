@@ -54,6 +54,7 @@ class RegisteredRun:
     lr: float
     run_id: str
     predecessor_run_ids: tuple[str, ...] = ()
+    recovered_history_path: str | None = None
 
 
 @dataclass(frozen=True)
@@ -98,6 +99,8 @@ class Point:
     segment_run_ids: tuple[str, ...]
     token_resets: int
     deduplicated_samples: int
+    history_source: str
+    history_source_sha256: str | None
 
 
 class IncompleteTailWindowError(RuntimeError):
@@ -644,6 +647,54 @@ def _load_tail_history(
     return history
 
 
+def _load_recovered_history(
+    registered: RegisteredRun,
+    *,
+    window_tokens: int,
+) -> tuple[list[dict[str, Any]], str]:
+    """Load and verify an explicitly registered local W&B recovery artifact."""
+
+    if registered.recovered_history_path is None:
+        raise ValueError("a recovered history path is required")
+    path = Path(registered.recovered_history_path)
+    if not path.is_absolute():
+        path = V2_DIR / path
+    payload = json.loads(path.read_text())
+    if payload.get("schema_version") != 1:
+        raise ValueError(f"unsupported recovered-history schema in {path}")
+    if payload.get("run_id") != registered.run_id:
+        raise ValueError(
+            f"recovered-history run mismatch in {path}: "
+            f"{payload.get('run_id')!r} != {registered.run_id!r}"
+        )
+    if payload.get("verified_training_complete") is not True:
+        raise ValueError(f"recovered history is not marked training-complete: {path}")
+    source_sha256 = payload.get("source_sha256")
+    if not isinstance(source_sha256, str) or len(source_sha256) != 64:
+        raise ValueError(f"missing or invalid source SHA256 in {path}")
+    rows = payload.get("rows")
+    if not isinstance(rows, list):
+        raise TypeError(f"missing recovered history rows in {path}")
+
+    loss_info = _mean_tail_loss(rows, window_tokens)
+    if loss_info is None:
+        raise ValueError(f"recovered history contains no usable loss rows: {path}")
+    loss, tokens_b, _, _ = loss_info
+    expected_loss = float(payload["mean_final_window_ce"])
+    expected_tokens_b = float(payload["final_tokens"]) / 1e9
+    if not math.isclose(loss, expected_loss, rel_tol=0.0, abs_tol=1e-12):
+        raise ValueError(
+            f"recovered-history loss verification failed in {path}: "
+            f"{loss} != {expected_loss}"
+        )
+    if not math.isclose(tokens_b, expected_tokens_b, rel_tol=0.0, abs_tol=1e-9):
+        raise ValueError(
+            f"recovered-history token verification failed in {path}: "
+            f"{tokens_b}B != {expected_tokens_b}B"
+        )
+    return rows, source_sha256
+
+
 def load_points(
     wave: Wave,
     *,
@@ -671,20 +722,30 @@ def load_points(
             segment_run_ids = (*registered.predecessor_run_ids, registered.run_id)
             segment_runs = [api.run(f"{project}/{run_id}") for run_id in segment_run_ids]
             run = segment_runs[-1]
-            if run.state not in allowed_states:
+            recovered = registered.recovered_history_path is not None
+            if not recovered and run.state not in allowed_states:
                 print(f"skip {registered.run_id}: state={run.state}")
                 continue
             history: list[dict[str, Any]] = []
-            for segment, segment_run in enumerate(segment_runs):
-                segment_history = _load_tail_history(
-                    segment_run,
-                    project=project,
-                    cache_dir=cache_dir,
+            history_source = "wandb"
+            history_source_sha256 = None
+            if recovered:
+                history, history_source_sha256 = _load_recovered_history(
+                    registered,
                     window_tokens=window_tokens,
-                    refresh_cache=refresh_cache,
-                    refresh_stale_cache=refresh_stale_cache,
                 )
-                history.extend({**row, "_segment": segment} for row in segment_history)
+                history_source = "local_wandb_recovery"
+            else:
+                for segment, segment_run in enumerate(segment_runs):
+                    segment_history = _load_tail_history(
+                        segment_run,
+                        project=project,
+                        cache_dir=cache_dir,
+                        window_tokens=window_tokens,
+                        refresh_cache=refresh_cache,
+                        refresh_stale_cache=refresh_stale_cache,
+                    )
+                    history.extend({**row, "_segment": segment} for row in segment_history)
             try:
                 loss_info = _mean_tail_loss(history, window_tokens)
             except IncompleteTailWindowError as exc:
@@ -706,7 +767,7 @@ def load_points(
                     lr=registered.lr,
                     lr_tag=f"{registered.lr:.2g}",
                     loss=loss,
-                    state=run.state,
+                    state="finished" if recovered else run.state,
                     tokens_b=tokens_b,
                     run_id=registered.run_id,
                     name=run.display_name or run.name,
@@ -714,13 +775,21 @@ def load_points(
                     segment_run_ids=segment_run_ids,
                     token_resets=token_resets,
                     deduplicated_samples=deduplicated_samples,
+                    history_source=history_source,
+                    history_source_sha256=history_source_sha256,
                 )
             )
+            effective_state = "finished" if recovered else run.state
             print(
                 f"loaded {variant.key:>18} {registered.model:>4} "
                 f"Cx{registered.cx} {registered.lr:.2g} "
-                f"{run.state:>8} avg{window_m}M={loss:.6f} tokens={tokens_b:.3f}B"
+                f"{effective_state:>8} avg{window_m}M={loss:.6f} tokens={tokens_b:.3f}B"
             )
+            if recovered:
+                print(
+                    "  recovered from local W&B file: "
+                    f"SHA256 {history_source_sha256}"
+                )
             if len(segment_run_ids) > 1:
                 print(f"  combined W&B segments: {', '.join(segment_run_ids)}")
             if token_resets or deduplicated_samples:
@@ -1180,11 +1249,18 @@ def write_results(
             f"[{run_id}]({wandb_base_url}/runs/{run_id})" for run_id in point.segment_run_ids
         )
         replay = "—"
+        replay_parts = []
+        if point.history_source == "local_wandb_recovery":
+            replay_parts.append(
+                f"local W&B recovery (SHA256 {point.history_source_sha256[:12]}…)"
+            )
         if point.token_resets or point.deduplicated_samples:
-            replay = (
+            replay_parts.append(
                 f"{point.token_resets} reset(s); "
                 f"{point.deduplicated_samples} duplicate token sample(s) removed"
             )
+        if replay_parts:
+            replay = "; ".join(replay_parts)
         lines.append(
             f"| {point.model} | {point.variant_label} | {point.cx} | {point.lr:.2g} | {point.state} | "
             f"{point.tokens_b:.3f} | {point.loss:.6f} | {replay} | "

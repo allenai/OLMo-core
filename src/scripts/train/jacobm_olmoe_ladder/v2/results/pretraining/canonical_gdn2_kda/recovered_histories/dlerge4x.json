@@ -1,0 +1,6385 @@
+{
+  "schema_version": 1,
+  "run_id": "dlerge4x",
+  "display_name": "pt-1p2b-geometry-hybrid-gdn2-ev1-noneg-nope-gated-cx8-lr4e-4-ep8-sync-r1",
+  "source_file": "/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/olmo-ddp/pretraining/pt-1p2b-geometry-hybrid-gdn2-ev1-noneg-nope-gated-cx8-lr4e-4-ep8-sync-r1/wandb/wandb/run-20260725_174840-dlerge4x/run-dlerge4x.wandb",
+  "source_file_size": 3427820807,
+  "source_sha256": "04755c05000b82b36e63b6e96d12830805412004df3d730414af5f7905969b75",
+  "remote_state_at_recovery": "crashed",
+  "verified_training_complete": true,
+  "final_step": 223898,
+  "final_tokens": 176080551936,
+  "window_tokens": 250000000,
+  "mean_final_window_ce": 2.0205293192803486,
+  "total_records": 923468,
+  "history_records": 223898,
+  "paired_history_records": 223897,
+  "retained_history_records": 1273,
+  "rows": [
+    {
+      "train/CE loss": 2.0002431869506836,
+      "throughput/total tokens": 175080210432.0,
+      "_step": 222626
+    },
+    {
+      "throughput/total tokens": 175080996864.0,
+      "_step": 222627,
+      "train/CE loss": 2.036539316177368
+    },
+    {
+      "throughput/total tokens": 175081783296.0,
+      "train/CE loss": 2.0124473571777344,
+      "_step": 222628
+    },
+    {
+      "train/CE loss": 1.9007055759429932,
+      "_step": 222629,
+      "throughput/total tokens": 175082569728.0
+    },
+    {
+      "_step": 222630,
+      "throughput/total tokens": 175083356160.0,
+      "train/CE loss": 2.063539981842041
+    },
+    {
+      "throughput/total tokens": 175084142592.0,
+      "_step": 222631,
+      "train/CE loss": 2.079695224761963
+    },
+    {
+      "throughput/total tokens": 175084929024.0,
+      "train/CE loss": 2.048150062561035,
+      "_step": 222632
+    },
+    {
+      "train/CE loss": 2.0543336868286133,
+      "throughput/total tokens": 175085715456.0,
+      "_step": 222633
+    },
+    {
+      "throughput/total tokens": 175086501888.0,
+      "_step": 222634,
+      "train/CE loss": 2.014444589614868
+    },
+    {
+      "train/CE loss": 2.0786495208740234,
+      "throughput/total tokens": 175087288320.0,
+      "_step": 222635
+    },
+    {
+      "train/CE loss": 1.980472207069397,
+      "_step": 222636,
+      "throughput/total tokens": 175088074752.0
+    },
+    {
+      "train/CE loss": 1.9427895545959473,
+      "throughput/total tokens": 175088861184.0,
+      "_step": 222637
+    },
+    {
+      "throughput/total tokens": 175089647616.0,
+      "_step": 222638,
+      "train/CE loss": 2.036776065826416
+    },
+    {
+      "throughput/total tokens": 175090434048.0,
+      "train/CE loss": 2.0020782947540283,
+      "_step": 222639
+    },
+    {
+      "_step": 222640,
+      "train/CE loss": 2.094747543334961,
+      "throughput/total tokens": 175091220480.0
+    },
+    {
+      "train/CE loss": 2.057427406311035,
+      "_step": 222641,
+      "throughput/total tokens": 175092006912.0
+    },
+    {
+      "throughput/total tokens": 175092793344.0,
+      "train/CE loss": 2.1038761138916016,
+      "_step": 222642
+    },
+    {
+      "train/CE loss": 2.0045464038848877,
+      "throughput/total tokens": 175093579776.0,
+      "_step": 222643
+    },
+    {
+      "train/CE loss": 2.009470224380493,
+      "throughput/total tokens": 175094366208.0,
+      "_step": 222644
+    },
+    {
+      "throughput/total tokens": 175095152640.0,
+      "_step": 222645,
+      "train/CE loss": 1.9613027572631836
+    },
+    {
+      "train/CE loss": 2.0540881156921387,
+      "_step": 222646,
+      "throughput/total tokens": 175095939072.0
+    },
+    {
+      "_step": 222647,
+      "train/CE loss": 2.059199333190918,
+      "throughput/total tokens": 175096725504.0
+    },
+    {
+      "train/CE loss": 2.0343196392059326,
+      "throughput/total tokens": 175097511936.0,
+      "_step": 222648
+    },
+    {
+      "_step": 222649,
+      "throughput/total tokens": 175098298368.0,
+      "train/CE loss": 1.976650357246399
+    },
+    {
+      "train/CE loss": 1.9940277338027954,
+      "throughput/total tokens": 175099084800.0,
+      "_step": 222650
+    },
+    {
+      "_step": 222651,
+      "train/CE loss": 1.9886415004730225,
+      "throughput/total tokens": 175099871232.0
+    },
+    {
+      "throughput/total tokens": 175100657664.0,
+      "train/CE loss": 1.9720978736877441,
+      "_step": 222652
+    },
+    {
+      "train/CE loss": 2.072646141052246,
+      "_step": 222653,
+      "throughput/total tokens": 175101444096.0
+    },
+    {
+      "train/CE loss": 1.9980055093765259,
+      "_step": 222654,
+      "throughput/total tokens": 175102230528.0
+    },
+    {
+      "_step": 222655,
+      "throughput/total tokens": 175103016960.0,
+      "train/CE loss": 2.0449681282043457
+    },
+    {
+      "throughput/total tokens": 175103803392.0,
+      "train/CE loss": 2.09476375579834,
+      "_step": 222656
+    },
+    {
+      "train/CE loss": 1.9512804746627808,
+      "throughput/total tokens": 175104589824.0,
+      "_step": 222657
+    },
+    {
+      "train/CE loss": 2.1414761543273926,
+      "_step": 222658,
+      "throughput/total tokens": 175105376256.0
+    },
+    {
+      "_step": 222659,
+      "train/CE loss": 1.9509291648864746,
+      "throughput/total tokens": 175106162688.0
+    },
+    {
+      "_step": 222660,
+      "throughput/total tokens": 175106949120.0,
+      "train/CE loss": 1.931567907333374
+    },
+    {
+      "train/CE loss": 1.9210803508758545,
+      "throughput/total tokens": 175107735552.0,
+      "_step": 222661
+    },
+    {
+      "train/CE loss": 1.9719555377960205,
+      "_step": 222662,
+      "throughput/total tokens": 175108521984.0
+    },
+    {
+      "train/CE loss": 2.0082180500030518,
+      "throughput/total tokens": 175109308416.0,
+      "_step": 222663
+    },
+    {
+      "train/CE loss": 2.1441123485565186,
+      "_step": 222664,
+      "throughput/total tokens": 175110094848.0
+    },
+    {
+      "_step": 222665,
+      "train/CE loss": 1.9734641313552856,
+      "throughput/total tokens": 175110881280.0
+    },
+    {
+      "train/CE loss": 2.071101188659668,
+      "_step": 222666,
+      "throughput/total tokens": 175111667712.0
+    },
+    {
+      "train/CE loss": 2.0413010120391846,
+      "_step": 222667,
+      "throughput/total tokens": 175112454144.0
+    },
+    {
+      "_step": 222668,
+      "train/CE loss": 2.037564277648926,
+      "throughput/total tokens": 175113240576.0
+    },
+    {
+      "_step": 222669,
+      "throughput/total tokens": 175114027008.0,
+      "train/CE loss": 2.0462775230407715
+    },
+    {
+      "train/CE loss": 2.0716381072998047,
+      "_step": 222670,
+      "throughput/total tokens": 175114813440.0
+    },
+    {
+      "train/CE loss": 2.002408742904663,
+      "throughput/total tokens": 175115599872.0,
+      "_step": 222671
+    },
+    {
+      "_step": 222672,
+      "train/CE loss": 2.0633320808410645,
+      "throughput/total tokens": 175116386304.0
+    },
+    {
+      "train/CE loss": 2.0855040550231934,
+      "_step": 222673,
+      "throughput/total tokens": 175117172736.0
+    },
+    {
+      "train/CE loss": 1.8906199932098389,
+      "_step": 222674,
+      "throughput/total tokens": 175117959168.0
+    },
+    {
+      "_step": 222675,
+      "train/CE loss": 2.057544708251953,
+      "throughput/total tokens": 175118745600.0
+    },
+    {
+      "train/CE loss": 1.9663262367248535,
+      "throughput/total tokens": 175119532032.0,
+      "_step": 222676
+    },
+    {
+      "train/CE loss": 1.974744200706482,
+      "_step": 222677,
+      "throughput/total tokens": 175120318464.0
+    },
+    {
+      "_step": 222678,
+      "throughput/total tokens": 175121104896.0,
+      "train/CE loss": 2.136014461517334
+    },
+    {
+      "_step": 222679,
+      "throughput/total tokens": 175121891328.0,
+      "train/CE loss": 2.1034817695617676
+    },
+    {
+      "train/CE loss": 2.026838541030884,
+      "_step": 222680,
+      "throughput/total tokens": 175122677760.0
+    },
+    {
+      "throughput/total tokens": 175123464192.0,
+      "_step": 222681,
+      "train/CE loss": 1.9947090148925781
+    },
+    {
+      "train/CE loss": 2.0765178203582764,
+      "throughput/total tokens": 175124250624.0,
+      "_step": 222682
+    },
+    {
+      "throughput/total tokens": 175125037056.0,
+      "train/CE loss": 2.024752616882324,
+      "_step": 222683
+    },
+    {
+      "train/CE loss": 1.9122419357299805,
+      "_step": 222684,
+      "throughput/total tokens": 175125823488.0
+    },
+    {
+      "throughput/total tokens": 175126609920.0,
+      "train/CE loss": 2.0025784969329834,
+      "_step": 222685
+    },
+    {
+      "train/CE loss": 2.047389030456543,
+      "throughput/total tokens": 175127396352.0,
+      "_step": 222686
+    },
+    {
+      "throughput/total tokens": 175128182784.0,
+      "_step": 222687,
+      "train/CE loss": 2.105240821838379
+    },
+    {
+      "train/CE loss": 2.010455369949341,
+      "throughput/total tokens": 175128969216.0,
+      "_step": 222688
+    },
+    {
+      "_step": 222689,
+      "throughput/total tokens": 175129755648.0,
+      "train/CE loss": 1.9371299743652344
+    },
+    {
+      "throughput/total tokens": 175130542080.0,
+      "train/CE loss": 2.038639783859253,
+      "_step": 222690
+    },
+    {
+      "train/CE loss": 2.0164661407470703,
+      "throughput/total tokens": 175131328512.0,
+      "_step": 222691
+    },
+    {
+      "_step": 222692,
+      "train/CE loss": 1.9692916870117188,
+      "throughput/total tokens": 175132114944.0
+    },
+    {
+      "_step": 222693,
+      "throughput/total tokens": 175132901376.0,
+      "train/CE loss": 1.9864377975463867
+    },
+    {
+      "train/CE loss": 1.955588698387146,
+      "throughput/total tokens": 175133687808.0,
+      "_step": 222694
+    },
+    {
+      "train/CE loss": 2.023729085922241,
+      "throughput/total tokens": 175134474240.0,
+      "_step": 222695
+    },
+    {
+      "_step": 222696,
+      "throughput/total tokens": 175135260672.0,
+      "train/CE loss": 2.0735116004943848
+    },
+    {
+      "_step": 222697,
+      "train/CE loss": 2.0315136909484863,
+      "throughput/total tokens": 175136047104.0
+    },
+    {
+      "throughput/total tokens": 175136833536.0,
+      "train/CE loss": 1.895632028579712,
+      "_step": 222698
+    },
+    {
+      "_step": 222699,
+      "throughput/total tokens": 175137619968.0,
+      "train/CE loss": 1.9208979606628418
+    },
+    {
+      "train/CE loss": 2.054318428039551,
+      "_step": 222700,
+      "throughput/total tokens": 175138406400.0
+    },
+    {
+      "_step": 222701,
+      "throughput/total tokens": 175139192832.0,
+      "train/CE loss": 2.074186325073242
+    },
+    {
+      "throughput/total tokens": 175139979264.0,
+      "train/CE loss": 1.9873714447021484,
+      "_step": 222702
+    },
+    {
+      "throughput/total tokens": 175140765696.0,
+      "train/CE loss": 2.0272603034973145,
+      "_step": 222703
+    },
+    {
+      "_step": 222704,
+      "train/CE loss": 2.0117549896240234,
+      "throughput/total tokens": 175141552128.0
+    },
+    {
+      "train/CE loss": 1.9416508674621582,
+      "throughput/total tokens": 175142338560.0,
+      "_step": 222705
+    },
+    {
+      "train/CE loss": 2.0543315410614014,
+      "_step": 222706,
+      "throughput/total tokens": 175143124992.0
+    },
+    {
+      "train/CE loss": 2.035799503326416,
+      "throughput/total tokens": 175143911424.0,
+      "_step": 222707
+    },
+    {
+      "train/CE loss": 1.9931633472442627,
+      "_step": 222708,
+      "throughput/total tokens": 175144697856.0
+    },
+    {
+      "train/CE loss": 2.029391050338745,
+      "_step": 222709,
+      "throughput/total tokens": 175145484288.0
+    },
+    {
+      "throughput/total tokens": 175146270720.0,
+      "train/CE loss": 1.9611759185791016,
+      "_step": 222710
+    },
+    {
+      "train/CE loss": 2.0050196647644043,
+      "_step": 222711,
+      "throughput/total tokens": 175147057152.0
+    },
+    {
+      "throughput/total tokens": 175147843584.0,
+      "train/CE loss": 2.001197338104248,
+      "_step": 222712
+    },
+    {
+      "train/CE loss": 2.0392942428588867,
+      "_step": 222713,
+      "throughput/total tokens": 175148630016.0
+    },
+    {
+      "_step": 222714,
+      "throughput/total tokens": 175149416448.0,
+      "train/CE loss": 2.0403690338134766
+    },
+    {
+      "throughput/total tokens": 175150202880.0,
+      "train/CE loss": 2.001366138458252,
+      "_step": 222715
+    },
+    {
+      "train/CE loss": 2.0428054332733154,
+      "_step": 222716,
+      "throughput/total tokens": 175150989312.0
+    },
+    {
+      "_step": 222717,
+      "train/CE loss": 1.9605610370635986,
+      "throughput/total tokens": 175151775744.0
+    },
+    {
+      "train/CE loss": 2.03478741645813,
+      "throughput/total tokens": 175152562176.0,
+      "_step": 222718
+    },
+    {
+      "train/CE loss": 1.9665087461471558,
+      "throughput/total tokens": 175153348608.0,
+      "_step": 222719
+    },
+    {
+      "train/CE loss": 2.013368606567383,
+      "_step": 222720,
+      "throughput/total tokens": 175154135040.0
+    },
+    {
+      "_step": 222721,
+      "throughput/total tokens": 175154921472.0,
+      "train/CE loss": 2.1394166946411133
+    },
+    {
+      "train/CE loss": 2.112122058868408,
+      "_step": 222722,
+      "throughput/total tokens": 175155707904.0
+    },
+    {
+      "throughput/total tokens": 175156494336.0,
+      "_step": 222723,
+      "train/CE loss": 2.010371446609497
+    },
+    {
+      "_step": 222724,
+      "train/CE loss": 2.1363143920898438,
+      "throughput/total tokens": 175157280768.0
+    },
+    {
+      "train/CE loss": 2.071448802947998,
+      "throughput/total tokens": 175158067200.0,
+      "_step": 222725
+    },
+    {
+      "_step": 222726,
+      "train/CE loss": 1.9859213829040527,
+      "throughput/total tokens": 175158853632.0
+    },
+    {
+      "throughput/total tokens": 175159640064.0,
+      "train/CE loss": 2.0411550998687744,
+      "_step": 222727
+    },
+    {
+      "train/CE loss": 2.043884754180908,
+      "throughput/total tokens": 175160426496.0,
+      "_step": 222728
+    },
+    {
+      "_step": 222729,
+      "throughput/total tokens": 175161212928.0,
+      "train/CE loss": 2.074230909347534
+    },
+    {
+      "_step": 222730,
+      "train/CE loss": 2.006326198577881,
+      "throughput/total tokens": 175161999360.0
+    },
+    {
+      "_step": 222731,
+      "throughput/total tokens": 175162785792.0,
+      "train/CE loss": 1.9503393173217773
+    },
+    {
+      "throughput/total tokens": 175163572224.0,
+      "train/CE loss": 1.9051425457000732,
+      "_step": 222732
+    },
+    {
+      "throughput/total tokens": 175164358656.0,
+      "train/CE loss": 1.9653968811035156,
+      "_step": 222733
+    },
+    {
+      "_step": 222734,
+      "throughput/total tokens": 175165145088.0,
+      "train/CE loss": 1.971893548965454
+    },
+    {
+      "_step": 222735,
+      "train/CE loss": 2.0098960399627686,
+      "throughput/total tokens": 175165931520.0
+    },
+    {
+      "_step": 222736,
+      "throughput/total tokens": 175166717952.0,
+      "train/CE loss": 1.9560884237289429
+    },
+    {
+      "train/CE loss": 2.0071756839752197,
+      "_step": 222737,
+      "throughput/total tokens": 175167504384.0
+    },
+    {
+      "_step": 222738,
+      "throughput/total tokens": 175168290816.0,
+      "train/CE loss": 2.0012340545654297
+    },
+    {
+      "train/CE loss": 2.0520730018615723,
+      "throughput/total tokens": 175169077248.0,
+      "_step": 222739
+    },
+    {
+      "train/CE loss": 1.9688456058502197,
+      "throughput/total tokens": 175169863680.0,
+      "_step": 222740
+    },
+    {
+      "train/CE loss": 1.9409958124160767,
+      "_step": 222741,
+      "throughput/total tokens": 175170650112.0
+    },
+    {
+      "throughput/total tokens": 175171436544.0,
+      "_step": 222742,
+      "train/CE loss": 1.9755905866622925
+    },
+    {
+      "_step": 222743,
+      "throughput/total tokens": 175172222976.0,
+      "train/CE loss": 1.9910334348678589
+    },
+    {
+      "train/CE loss": 2.072328567504883,
+      "throughput/total tokens": 175173009408.0,
+      "_step": 222744
+    },
+    {
+      "throughput/total tokens": 175173795840.0,
+      "train/CE loss": 1.9468848705291748,
+      "_step": 222745
+    },
+    {
+      "train/CE loss": 2.014176368713379,
+      "throughput/total tokens": 175174582272.0,
+      "_step": 222746
+    },
+    {
+      "throughput/total tokens": 175175368704.0,
+      "_step": 222747,
+      "train/CE loss": 1.9079502820968628
+    },
+    {
+      "train/CE loss": 2.0150721073150635,
+      "throughput/total tokens": 175176155136.0,
+      "_step": 222748
+    },
+    {
+      "_step": 222749,
+      "throughput/total tokens": 175176941568.0,
+      "train/CE loss": 1.9999040365219116
+    },
+    {
+      "throughput/total tokens": 175177728000.0,
+      "train/CE loss": 1.962660789489746,
+      "_step": 222750
+    },
+    {
+      "_step": 222751,
+      "throughput/total tokens": 175178514432.0,
+      "train/CE loss": 1.9127552509307861
+    },
+    {
+      "_step": 222752,
+      "train/CE loss": 1.9593197107315063,
+      "throughput/total tokens": 175179300864.0
+    },
+    {
+      "train/CE loss": 2.117687940597534,
+      "throughput/total tokens": 175180087296.0,
+      "_step": 222753
+    },
+    {
+      "train/CE loss": 2.067955732345581,
+      "throughput/total tokens": 175180873728.0,
+      "_step": 222754
+    },
+    {
+      "throughput/total tokens": 175181660160.0,
+      "train/CE loss": 1.9485199451446533,
+      "_step": 222755
+    },
+    {
+      "train/CE loss": 1.9511322975158691,
+      "_step": 222756,
+      "throughput/total tokens": 175182446592.0
+    },
+    {
+      "throughput/total tokens": 175183233024.0,
+      "_step": 222757,
+      "train/CE loss": 2.0134599208831787
+    },
+    {
+      "_step": 222758,
+      "train/CE loss": 2.087341785430908,
+      "throughput/total tokens": 175184019456.0
+    },
+    {
+      "throughput/total tokens": 175184805888.0,
+      "_step": 222759,
+      "train/CE loss": 1.9989869594573975
+    },
+    {
+      "throughput/total tokens": 175185592320.0,
+      "train/CE loss": 1.9258586168289185,
+      "_step": 222760
+    },
+    {
+      "_step": 222761,
+      "throughput/total tokens": 175186378752.0,
+      "train/CE loss": 1.9700286388397217
+    },
+    {
+      "throughput/total tokens": 175187165184.0,
+      "_step": 222762,
+      "train/CE loss": 2.0666213035583496
+    },
+    {
+      "_step": 222763,
+      "throughput/total tokens": 175187951616.0,
+      "train/CE loss": 2.06925892829895
+    },
+    {
+      "throughput/total tokens": 175188738048.0,
+      "_step": 222764,
+      "train/CE loss": 2.001588821411133
+    },
+    {
+      "train/CE loss": 1.9888583421707153,
+      "_step": 222765,
+      "throughput/total tokens": 175189524480.0
+    },
+    {
+      "train/CE loss": 1.8539104461669922,
+      "throughput/total tokens": 175190310912.0,
+      "_step": 222766
+    },
+    {
+      "train/CE loss": 1.9840561151504517,
+      "throughput/total tokens": 175191097344.0,
+      "_step": 222767
+    },
+    {
+      "train/CE loss": 2.086507558822632,
+      "throughput/total tokens": 175191883776.0,
+      "_step": 222768
+    },
+    {
+      "throughput/total tokens": 175192670208.0,
+      "_step": 222769,
+      "train/CE loss": 2.070688247680664
+    },
+    {
+      "train/CE loss": 2.019793748855591,
+      "throughput/total tokens": 175193456640.0,
+      "_step": 222770
+    },
+    {
+      "_step": 222771,
+      "throughput/total tokens": 175194243072.0,
+      "train/CE loss": 1.9662505388259888
+    },
+    {
+      "_step": 222772,
+      "throughput/total tokens": 175195029504.0,
+      "train/CE loss": 1.9154040813446045
+    },
+    {
+      "throughput/total tokens": 175195815936.0,
+      "train/CE loss": 1.9415805339813232,
+      "_step": 222773
+    },
+    {
+      "_step": 222774,
+      "throughput/total tokens": 175196602368.0,
+      "train/CE loss": 1.9323265552520752
+    },
+    {
+      "train/CE loss": 2.025649070739746,
+      "_step": 222775,
+      "throughput/total tokens": 175197388800.0
+    },
+    {
+      "_step": 222776,
+      "throughput/total tokens": 175198175232.0,
+      "train/CE loss": 1.973992109298706
+    },
+    {
+      "throughput/total tokens": 175198961664.0,
+      "train/CE loss": 1.9355111122131348,
+      "_step": 222777
+    },
+    {
+      "train/CE loss": 2.079596519470215,
+      "_step": 222778,
+      "throughput/total tokens": 175199748096.0
+    },
+    {
+      "train/CE loss": 1.9458585977554321,
+      "_step": 222779,
+      "throughput/total tokens": 175200534528.0
+    },
+    {
+      "throughput/total tokens": 175201320960.0,
+      "train/CE loss": 1.932922601699829,
+      "_step": 222780
+    },
+    {
+      "_step": 222781,
+      "train/CE loss": 1.8940975666046143,
+      "throughput/total tokens": 175202107392.0
+    },
+    {
+      "train/CE loss": 2.039943218231201,
+      "throughput/total tokens": 175202893824.0,
+      "_step": 222782
+    },
+    {
+      "train/CE loss": 1.9654386043548584,
+      "throughput/total tokens": 175203680256.0,
+      "_step": 222783
+    },
+    {
+      "_step": 222784,
+      "throughput/total tokens": 175204466688.0,
+      "train/CE loss": 1.9472899436950684
+    },
+    {
+      "throughput/total tokens": 175205253120.0,
+      "train/CE loss": 1.9662774801254272,
+      "_step": 222785
+    },
+    {
+      "throughput/total tokens": 175206039552.0,
+      "_step": 222786,
+      "train/CE loss": 2.0863096714019775
+    },
+    {
+      "train/CE loss": 2.011232376098633,
+      "_step": 222787,
+      "throughput/total tokens": 175206825984.0
+    },
+    {
+      "train/CE loss": 2.108466148376465,
+      "_step": 222788,
+      "throughput/total tokens": 175207612416.0
+    },
+    {
+      "throughput/total tokens": 175208398848.0,
+      "train/CE loss": 2.003040075302124,
+      "_step": 222789
+    },
+    {
+      "train/CE loss": 2.0166797637939453,
+      "_step": 222790,
+      "throughput/total tokens": 175209185280.0
+    },
+    {
+      "throughput/total tokens": 175209971712.0,
+      "train/CE loss": 1.9509050846099854,
+      "_step": 222791
+    },
+    {
+      "throughput/total tokens": 175210758144.0,
+      "_step": 222792,
+      "train/CE loss": 2.0093302726745605
+    },
+    {
+      "throughput/total tokens": 175211544576.0,
+      "train/CE loss": 2.0178418159484863,
+      "_step": 222793
+    },
+    {
+      "_step": 222794,
+      "train/CE loss": 1.9921759366989136,
+      "throughput/total tokens": 175212331008.0
+    },
+    {
+      "_step": 222795,
+      "throughput/total tokens": 175213117440.0,
+      "train/CE loss": 2.0441925525665283
+    },
+    {
+      "_step": 222796,
+      "train/CE loss": 1.9509611129760742,
+      "throughput/total tokens": 175213903872.0
+    },
+    {
+      "_step": 222797,
+      "train/CE loss": 1.9873685836791992,
+      "throughput/total tokens": 175214690304.0
+    },
+    {
+      "throughput/total tokens": 175215476736.0,
+      "train/CE loss": 1.9860734939575195,
+      "_step": 222798
+    },
+    {
+      "_step": 222799,
+      "train/CE loss": 2.087909698486328,
+      "throughput/total tokens": 175216263168.0
+    },
+    {
+      "throughput/total tokens": 175217049600.0,
+      "_step": 222800,
+      "train/CE loss": 2.061763286590576
+    },
+    {
+      "train/CE loss": 2.064857006072998,
+      "throughput/total tokens": 175217836032.0,
+      "_step": 222801
+    },
+    {
+      "train/CE loss": 1.9825762510299683,
+      "throughput/total tokens": 175218622464.0,
+      "_step": 222802
+    },
+    {
+      "throughput/total tokens": 175219408896.0,
+      "train/CE loss": 2.0063838958740234,
+      "_step": 222803
+    },
+    {
+      "throughput/total tokens": 175220195328.0,
+      "train/CE loss": 2.0782713890075684,
+      "_step": 222804
+    },
+    {
+      "throughput/total tokens": 175220981760.0,
+      "train/CE loss": 2.018165349960327,
+      "_step": 222805
+    },
+    {
+      "_step": 222806,
+      "throughput/total tokens": 175221768192.0,
+      "train/CE loss": 1.9761160612106323
+    },
+    {
+      "train/CE loss": 1.9705984592437744,
+      "throughput/total tokens": 175222554624.0,
+      "_step": 222807
+    },
+    {
+      "throughput/total tokens": 175223341056.0,
+      "train/CE loss": 2.049988269805908,
+      "_step": 222808
+    },
+    {
+      "train/CE loss": 1.991072177886963,
+      "_step": 222809,
+      "throughput/total tokens": 175224127488.0
+    },
+    {
+      "throughput/total tokens": 175224913920.0,
+      "_step": 222810,
+      "train/CE loss": 2.052614212036133
+    },
+    {
+      "throughput/total tokens": 175225700352.0,
+      "train/CE loss": 2.0211830139160156,
+      "_step": 222811
+    },
+    {
+      "throughput/total tokens": 175226486784.0,
+      "_step": 222812,
+      "train/CE loss": 1.9269537925720215
+    },
+    {
+      "throughput/total tokens": 175227273216.0,
+      "train/CE loss": 1.933861255645752,
+      "_step": 222813
+    },
+    {
+      "_step": 222814,
+      "throughput/total tokens": 175228059648.0,
+      "train/CE loss": 1.996114730834961
+    },
+    {
+      "_step": 222815,
+      "train/CE loss": 2.1238811016082764,
+      "throughput/total tokens": 175228846080.0
+    },
+    {
+      "throughput/total tokens": 175229632512.0,
+      "train/CE loss": 1.8980128765106201,
+      "_step": 222816
+    },
+    {
+      "_step": 222817,
+      "train/CE loss": 1.9919567108154297,
+      "throughput/total tokens": 175230418944.0
+    },
+    {
+      "train/CE loss": 2.015317678451538,
+      "throughput/total tokens": 175231205376.0,
+      "_step": 222818
+    },
+    {
+      "train/CE loss": 1.9937037229537964,
+      "_step": 222819,
+      "throughput/total tokens": 175231991808.0
+    },
+    {
+      "_step": 222820,
+      "throughput/total tokens": 175232778240.0,
+      "train/CE loss": 2.0658347606658936
+    },
+    {
+      "_step": 222821,
+      "train/CE loss": 2.0587124824523926,
+      "throughput/total tokens": 175233564672.0
+    },
+    {
+      "throughput/total tokens": 175234351104.0,
+      "_step": 222822,
+      "train/CE loss": 2.0358893871307373
+    },
+    {
+      "train/CE loss": 2.101057529449463,
+      "_step": 222823,
+      "throughput/total tokens": 175235137536.0
+    },
+    {
+      "train/CE loss": 2.002660036087036,
+      "throughput/total tokens": 175235923968.0,
+      "_step": 222824
+    },
+    {
+      "throughput/total tokens": 175236710400.0,
+      "train/CE loss": 1.9615811109542847,
+      "_step": 222825
+    },
+    {
+      "_step": 222826,
+      "throughput/total tokens": 175237496832.0,
+      "train/CE loss": 2.018475294113159
+    },
+    {
+      "throughput/total tokens": 175238283264.0,
+      "train/CE loss": 2.0198936462402344,
+      "_step": 222827
+    },
+    {
+      "throughput/total tokens": 175239069696.0,
+      "train/CE loss": 1.9759855270385742,
+      "_step": 222828
+    },
+    {
+      "train/CE loss": 1.9578149318695068,
+      "throughput/total tokens": 175239856128.0,
+      "_step": 222829
+    },
+    {
+      "train/CE loss": 2.017796516418457,
+      "throughput/total tokens": 175240642560.0,
+      "_step": 222830
+    },
+    {
+      "train/CE loss": 2.041665554046631,
+      "_step": 222831,
+      "throughput/total tokens": 175241428992.0
+    },
+    {
+      "_step": 222832,
+      "throughput/total tokens": 175242215424.0,
+      "train/CE loss": 1.9824504852294922
+    },
+    {
+      "train/CE loss": 2.0410430431365967,
+      "throughput/total tokens": 175243001856.0,
+      "_step": 222833
+    },
+    {
+      "throughput/total tokens": 175243788288.0,
+      "_step": 222834,
+      "train/CE loss": 1.9493834972381592
+    },
+    {
+      "train/CE loss": 2.053439140319824,
+      "throughput/total tokens": 175244574720.0,
+      "_step": 222835
+    },
+    {
+      "throughput/total tokens": 175245361152.0,
+      "train/CE loss": 1.9632631540298462,
+      "_step": 222836
+    },
+    {
+      "train/CE loss": 2.0406925678253174,
+      "_step": 222837,
+      "throughput/total tokens": 175246147584.0
+    },
+    {
+      "train/CE loss": 2.0105488300323486,
+      "throughput/total tokens": 175246934016.0,
+      "_step": 222838
+    },
+    {
+      "_step": 222839,
+      "throughput/total tokens": 175247720448.0,
+      "train/CE loss": 2.1332106590270996
+    },
+    {
+      "_step": 222840,
+      "throughput/total tokens": 175248506880.0,
+      "train/CE loss": 2.048524856567383
+    },
+    {
+      "throughput/total tokens": 175249293312.0,
+      "train/CE loss": 2.0451698303222656,
+      "_step": 222841
+    },
+    {
+      "throughput/total tokens": 175250079744.0,
+      "_step": 222842,
+      "train/CE loss": 2.0533206462860107
+    },
+    {
+      "throughput/total tokens": 175250866176.0,
+      "train/CE loss": 1.9825459718704224,
+      "_step": 222843
+    },
+    {
+      "_step": 222844,
+      "throughput/total tokens": 175251652608.0,
+      "train/CE loss": 1.9326279163360596
+    },
+    {
+      "_step": 222845,
+      "throughput/total tokens": 175252439040.0,
+      "train/CE loss": 2.058806896209717
+    },
+    {
+      "train/CE loss": 1.9779400825500488,
+      "_step": 222846,
+      "throughput/total tokens": 175253225472.0
+    },
+    {
+      "train/CE loss": 2.0168447494506836,
+      "throughput/total tokens": 175254011904.0,
+      "_step": 222847
+    },
+    {
+      "train/CE loss": 1.9682624340057373,
+      "_step": 222848,
+      "throughput/total tokens": 175254798336.0
+    },
+    {
+      "_step": 222849,
+      "throughput/total tokens": 175255584768.0,
+      "train/CE loss": 2.1548938751220703
+    },
+    {
+      "train/CE loss": 1.9620951414108276,
+      "_step": 222850,
+      "throughput/total tokens": 175256371200.0
+    },
+    {
+      "throughput/total tokens": 175257157632.0,
+      "train/CE loss": 1.982832908630371,
+      "_step": 222851
+    },
+    {
+      "train/CE loss": 1.9806842803955078,
+      "throughput/total tokens": 175257944064.0,
+      "_step": 222852
+    },
+    {
+      "train/CE loss": 2.0358943939208984,
+      "throughput/total tokens": 175258730496.0,
+      "_step": 222853
+    },
+    {
+      "throughput/total tokens": 175259516928.0,
+      "_step": 222854,
+      "train/CE loss": 1.96247136592865
+    },
+    {
+      "_step": 222855,
+      "throughput/total tokens": 175260303360.0,
+      "train/CE loss": 2.025408983230591
+    },
+    {
+      "train/CE loss": 1.973820447921753,
+      "_step": 222856,
+      "throughput/total tokens": 175261089792.0
+    },
+    {
+      "throughput/total tokens": 175261876224.0,
+      "train/CE loss": 1.953364610671997,
+      "_step": 222857
+    },
+    {
+      "_step": 222858,
+      "train/CE loss": 1.9344406127929688,
+      "throughput/total tokens": 175262662656.0
+    },
+    {
+      "train/CE loss": 1.9873998165130615,
+      "throughput/total tokens": 175263449088.0,
+      "_step": 222859
+    },
+    {
+      "_step": 222860,
+      "throughput/total tokens": 175264235520.0,
+      "train/CE loss": 1.9846041202545166
+    },
+    {
+      "_step": 222861,
+      "train/CE loss": 2.0283782482147217,
+      "throughput/total tokens": 175265021952.0
+    },
+    {
+      "train/CE loss": 2.0285685062408447,
+      "throughput/total tokens": 175265808384.0,
+      "_step": 222862
+    },
+    {
+      "_step": 222863,
+      "train/CE loss": 2.0475616455078125,
+      "throughput/total tokens": 175266594816.0
+    },
+    {
+      "_step": 222864,
+      "train/CE loss": 1.9886727333068848,
+      "throughput/total tokens": 175267381248.0
+    },
+    {
+      "_step": 222865,
+      "throughput/total tokens": 175268167680.0,
+      "train/CE loss": 1.954470157623291
+    },
+    {
+      "_step": 222866,
+      "throughput/total tokens": 175268954112.0,
+      "train/CE loss": 2.0154809951782227
+    },
+    {
+      "throughput/total tokens": 175269740544.0,
+      "_step": 222867,
+      "train/CE loss": 2.030998706817627
+    },
+    {
+      "throughput/total tokens": 175270526976.0,
+      "_step": 222868,
+      "train/CE loss": 2.012645959854126
+    },
+    {
+      "train/CE loss": 1.9556550979614258,
+      "_step": 222869,
+      "throughput/total tokens": 175271313408.0
+    },
+    {
+      "_step": 222870,
+      "throughput/total tokens": 175272099840.0,
+      "train/CE loss": 2.0309391021728516
+    },
+    {
+      "train/CE loss": 1.943639874458313,
+      "throughput/total tokens": 175272886272.0,
+      "_step": 222871
+    },
+    {
+      "train/CE loss": 1.9761015176773071,
+      "_step": 222872,
+      "throughput/total tokens": 175273672704.0
+    },
+    {
+      "throughput/total tokens": 175274459136.0,
+      "train/CE loss": 1.9625205993652344,
+      "_step": 222873
+    },
+    {
+      "_step": 222874,
+      "train/CE loss": 1.9837723970413208,
+      "throughput/total tokens": 175275245568.0
+    },
+    {
+      "throughput/total tokens": 175276032000.0,
+      "train/CE loss": 1.9777989387512207,
+      "_step": 222875
+    },
+    {
+      "_step": 222876,
+      "train/CE loss": 2.0057637691497803,
+      "throughput/total tokens": 175276818432.0
+    },
+    {
+      "train/CE loss": 1.9958499670028687,
+      "_step": 222877,
+      "throughput/total tokens": 175277604864.0
+    },
+    {
+      "throughput/total tokens": 175278391296.0,
+      "train/CE loss": 1.976768970489502,
+      "_step": 222878
+    },
+    {
+      "train/CE loss": 2.0608153343200684,
+      "_step": 222879,
+      "throughput/total tokens": 175279177728.0
+    },
+    {
+      "throughput/total tokens": 175279964160.0,
+      "_step": 222880,
+      "train/CE loss": 1.8807952404022217
+    },
+    {
+      "train/CE loss": 2.060917854309082,
+      "_step": 222881,
+      "throughput/total tokens": 175280750592.0
+    },
+    {
+      "throughput/total tokens": 175281537024.0,
+      "train/CE loss": 1.9933397769927979,
+      "_step": 222882
+    },
+    {
+      "throughput/total tokens": 175282323456.0,
+      "_step": 222883,
+      "train/CE loss": 1.9785857200622559
+    },
+    {
+      "train/CE loss": 2.0356078147888184,
+      "throughput/total tokens": 175283109888.0,
+      "_step": 222884
+    },
+    {
+      "train/CE loss": 2.0925467014312744,
+      "throughput/total tokens": 175283896320.0,
+      "_step": 222885
+    },
+    {
+      "train/CE loss": 2.027557134628296,
+      "_step": 222886,
+      "throughput/total tokens": 175284682752.0
+    },
+    {
+      "_step": 222887,
+      "train/CE loss": 1.9765756130218506,
+      "throughput/total tokens": 175285469184.0
+    },
+    {
+      "_step": 222888,
+      "throughput/total tokens": 175286255616.0,
+      "train/CE loss": 1.9247500896453857
+    },
+    {
+      "throughput/total tokens": 175287042048.0,
+      "train/CE loss": 2.0480399131774902,
+      "_step": 222889
+    },
+    {
+      "_step": 222890,
+      "throughput/total tokens": 175287828480.0,
+      "train/CE loss": 2.0626158714294434
+    },
+    {
+      "_step": 222891,
+      "throughput/total tokens": 175288614912.0,
+      "train/CE loss": 1.9988682270050049
+    },
+    {
+      "_step": 222892,
+      "train/CE loss": 2.0697553157806396,
+      "throughput/total tokens": 175289401344.0
+    },
+    {
+      "train/CE loss": 1.9837455749511719,
+      "throughput/total tokens": 175290187776.0,
+      "_step": 222893
+    },
+    {
+      "_step": 222894,
+      "throughput/total tokens": 175290974208.0,
+      "train/CE loss": 2.021331787109375
+    },
+    {
+      "throughput/total tokens": 175291760640.0,
+      "train/CE loss": 2.1027109622955322,
+      "_step": 222895
+    },
+    {
+      "throughput/total tokens": 175292547072.0,
+      "_step": 222896,
+      "train/CE loss": 2.0358853340148926
+    },
+    {
+      "_step": 222897,
+      "train/CE loss": 2.005018949508667,
+      "throughput/total tokens": 175293333504.0
+    },
+    {
+      "_step": 222898,
+      "train/CE loss": 2.052731990814209,
+      "throughput/total tokens": 175294119936.0
+    },
+    {
+      "train/CE loss": 2.083413600921631,
+      "throughput/total tokens": 175294906368.0,
+      "_step": 222899
+    },
+    {
+      "train/CE loss": 1.984995722770691,
+      "throughput/total tokens": 175295692800.0,
+      "_step": 222900
+    },
+    {
+      "_step": 222901,
+      "throughput/total tokens": 175296479232.0,
+      "train/CE loss": 2.0251901149749756
+    },
+    {
+      "_step": 222902,
+      "throughput/total tokens": 175297265664.0,
+      "train/CE loss": 2.0415799617767334
+    },
+    {
+      "throughput/total tokens": 175298052096.0,
+      "train/CE loss": 2.0014591217041016,
+      "_step": 222903
+    },
+    {
+      "throughput/total tokens": 175298838528.0,
+      "_step": 222904,
+      "train/CE loss": 1.983018398284912
+    },
+    {
+      "throughput/total tokens": 175299624960.0,
+      "_step": 222905,
+      "train/CE loss": 2.08537220954895
+    },
+    {
+      "throughput/total tokens": 175300411392.0,
+      "_step": 222906,
+      "train/CE loss": 2.0747663974761963
+    },
+    {
+      "train/CE loss": 1.9808096885681152,
+      "_step": 222907,
+      "throughput/total tokens": 175301197824.0
+    },
+    {
+      "train/CE loss": 1.9995020627975464,
+      "_step": 222908,
+      "throughput/total tokens": 175301984256.0
+    },
+    {
+      "throughput/total tokens": 175302770688.0,
+      "train/CE loss": 2.019770383834839,
+      "_step": 222909
+    },
+    {
+      "train/CE loss": 2.025564432144165,
+      "throughput/total tokens": 175303557120.0,
+      "_step": 222910
+    },
+    {
+      "_step": 222911,
+      "train/CE loss": 2.014815092086792,
+      "throughput/total tokens": 175304343552.0
+    },
+    {
+      "throughput/total tokens": 175305129984.0,
+      "_step": 222912,
+      "train/CE loss": 1.9577984809875488
+    },
+    {
+      "train/CE loss": 1.9644676446914673,
+      "_step": 222913,
+      "throughput/total tokens": 175305916416.0
+    },
+    {
+      "throughput/total tokens": 175306702848.0,
+      "train/CE loss": 2.0138437747955322,
+      "_step": 222914
+    },
+    {
+      "_step": 222915,
+      "throughput/total tokens": 175307489280.0,
+      "train/CE loss": 2.015868902206421
+    },
+    {
+      "_step": 222916,
+      "throughput/total tokens": 175308275712.0,
+      "train/CE loss": 1.901543378829956
+    },
+    {
+      "_step": 222917,
+      "train/CE loss": 2.1396496295928955,
+      "throughput/total tokens": 175309062144.0
+    },
+    {
+      "train/CE loss": 2.0112595558166504,
+      "throughput/total tokens": 175309848576.0,
+      "_step": 222918
+    },
+    {
+      "train/CE loss": 2.049760341644287,
+      "throughput/total tokens": 175310635008.0,
+      "_step": 222919
+    },
+    {
+      "throughput/total tokens": 175311421440.0,
+      "_step": 222920,
+      "train/CE loss": 1.9978809356689453
+    },
+    {
+      "_step": 222921,
+      "train/CE loss": 1.95333731174469,
+      "throughput/total tokens": 175312207872.0
+    },
+    {
+      "train/CE loss": 2.0929667949676514,
+      "throughput/total tokens": 175312994304.0,
+      "_step": 222922
+    },
+    {
+      "throughput/total tokens": 175313780736.0,
+      "train/CE loss": 1.9989733695983887,
+      "_step": 222923
+    },
+    {
+      "train/CE loss": 2.0650076866149902,
+      "throughput/total tokens": 175314567168.0,
+      "_step": 222924
+    },
+    {
+      "throughput/total tokens": 175315353600.0,
+      "train/CE loss": 2.0192556381225586,
+      "_step": 222925
+    },
+    {
+      "train/CE loss": 1.994276523590088,
+      "_step": 222926,
+      "throughput/total tokens": 175316140032.0
+    },
+    {
+      "throughput/total tokens": 175316926464.0,
+      "train/CE loss": 2.0551273822784424,
+      "_step": 222927
+    },
+    {
+      "throughput/total tokens": 175317712896.0,
+      "_step": 222928,
+      "train/CE loss": 1.879312515258789
+    },
+    {
+      "train/CE loss": 2.0377256870269775,
+      "_step": 222929,
+      "throughput/total tokens": 175318499328.0
+    },
+    {
+      "train/CE loss": 2.0591676235198975,
+      "throughput/total tokens": 175319285760.0,
+      "_step": 222930
+    },
+    {
+      "_step": 222931,
+      "train/CE loss": 1.9903091192245483,
+      "throughput/total tokens": 175320072192.0
+    },
+    {
+      "train/CE loss": 1.9790058135986328,
+      "throughput/total tokens": 175320858624.0,
+      "_step": 222932
+    },
+    {
+      "throughput/total tokens": 175321645056.0,
+      "train/CE loss": 2.0464484691619873,
+      "_step": 222933
+    },
+    {
+      "throughput/total tokens": 175322431488.0,
+      "train/CE loss": 1.9619362354278564,
+      "_step": 222934
+    },
+    {
+      "_step": 222935,
+      "train/CE loss": 2.0320069789886475,
+      "throughput/total tokens": 175323217920.0
+    },
+    {
+      "_step": 222936,
+      "throughput/total tokens": 175324004352.0,
+      "train/CE loss": 2.0576765537261963
+    },
+    {
+      "_step": 222937,
+      "train/CE loss": 2.0332093238830566,
+      "throughput/total tokens": 175324790784.0
+    },
+    {
+      "throughput/total tokens": 175325577216.0,
+      "train/CE loss": 2.068108081817627,
+      "_step": 222938
+    },
+    {
+      "_step": 222939,
+      "throughput/total tokens": 175326363648.0,
+      "train/CE loss": 1.9733014106750488
+    },
+    {
+      "throughput/total tokens": 175327150080.0,
+      "train/CE loss": 1.9362115859985352,
+      "_step": 222940
+    },
+    {
+      "throughput/total tokens": 175327936512.0,
+      "train/CE loss": 1.9974594116210938,
+      "_step": 222941
+    },
+    {
+      "_step": 222942,
+      "train/CE loss": 2.073787212371826,
+      "throughput/total tokens": 175328722944.0
+    },
+    {
+      "_step": 222943,
+      "train/CE loss": 2.0796897411346436,
+      "throughput/total tokens": 175329509376.0
+    },
+    {
+      "_step": 222944,
+      "throughput/total tokens": 175330295808.0,
+      "train/CE loss": 2.0643484592437744
+    },
+    {
+      "throughput/total tokens": 175331082240.0,
+      "_step": 222945,
+      "train/CE loss": 1.943893313407898
+    },
+    {
+      "_step": 222946,
+      "train/CE loss": 2.031008005142212,
+      "throughput/total tokens": 175331868672.0
+    },
+    {
+      "_step": 222947,
+      "train/CE loss": 2.0220165252685547,
+      "throughput/total tokens": 175332655104.0
+    },
+    {
+      "throughput/total tokens": 175333441536.0,
+      "_step": 222948,
+      "train/CE loss": 2.019200086593628
+    },
+    {
+      "throughput/total tokens": 175334227968.0,
+      "train/CE loss": 1.92373526096344,
+      "_step": 222949
+    },
+    {
+      "throughput/total tokens": 175335014400.0,
+      "train/CE loss": 1.9606131315231323,
+      "_step": 222950
+    },
+    {
+      "train/CE loss": 2.0729246139526367,
+      "throughput/total tokens": 175335800832.0,
+      "_step": 222951
+    },
+    {
+      "throughput/total tokens": 175336587264.0,
+      "train/CE loss": 1.9943108558654785,
+      "_step": 222952
+    },
+    {
+      "_step": 222953,
+      "throughput/total tokens": 175337373696.0,
+      "train/CE loss": 1.9682843685150146
+    },
+    {
+      "throughput/total tokens": 175338160128.0,
+      "_step": 222954,
+      "train/CE loss": 1.9892771244049072
+    },
+    {
+      "train/CE loss": 2.054513692855835,
+      "_step": 222955,
+      "throughput/total tokens": 175338946560.0
+    },
+    {
+      "throughput/total tokens": 175339732992.0,
+      "train/CE loss": 2.065446376800537,
+      "_step": 222956
+    },
+    {
+      "_step": 222957,
+      "train/CE loss": 2.050415515899658,
+      "throughput/total tokens": 175340519424.0
+    },
+    {
+      "train/CE loss": 2.140550374984741,
+      "throughput/total tokens": 175341305856.0,
+      "_step": 222958
+    },
+    {
+      "train/CE loss": 1.9725018739700317,
+      "_step": 222959,
+      "throughput/total tokens": 175342092288.0
+    },
+    {
+      "throughput/total tokens": 175342878720.0,
+      "_step": 222960,
+      "train/CE loss": 2.0153605937957764
+    },
+    {
+      "train/CE loss": 2.0129785537719727,
+      "_step": 222961,
+      "throughput/total tokens": 175343665152.0
+    },
+    {
+      "train/CE loss": 1.9881901741027832,
+      "_step": 222962,
+      "throughput/total tokens": 175344451584.0
+    },
+    {
+      "throughput/total tokens": 175345238016.0,
+      "_step": 222963,
+      "train/CE loss": 1.9929988384246826
+    },
+    {
+      "_step": 222964,
+      "train/CE loss": 1.9756931066513062,
+      "throughput/total tokens": 175346024448.0
+    },
+    {
+      "throughput/total tokens": 175346810880.0,
+      "_step": 222965,
+      "train/CE loss": 2.0322928428649902
+    },
+    {
+      "throughput/total tokens": 175347597312.0,
+      "_step": 222966,
+      "train/CE loss": 1.874327301979065
+    },
+    {
+      "throughput/total tokens": 175348383744.0,
+      "train/CE loss": 1.9005197286605835,
+      "_step": 222967
+    },
+    {
+      "train/CE loss": 1.9672095775604248,
+      "throughput/total tokens": 175349170176.0,
+      "_step": 222968
+    },
+    {
+      "train/CE loss": 2.0374536514282227,
+      "throughput/total tokens": 175349956608.0,
+      "_step": 222969
+    },
+    {
+      "throughput/total tokens": 175350743040.0,
+      "train/CE loss": 2.026465654373169,
+      "_step": 222970
+    },
+    {
+      "train/CE loss": 2.011044502258301,
+      "_step": 222971,
+      "throughput/total tokens": 175351529472.0
+    },
+    {
+      "train/CE loss": 1.9070727825164795,
+      "_step": 222972,
+      "throughput/total tokens": 175352315904.0
+    },
+    {
+      "train/CE loss": 2.0512280464172363,
+      "_step": 222973,
+      "throughput/total tokens": 175353102336.0
+    },
+    {
+      "_step": 222974,
+      "train/CE loss": 1.9822101593017578,
+      "throughput/total tokens": 175353888768.0
+    },
+    {
+      "train/CE loss": 1.9954631328582764,
+      "throughput/total tokens": 175354675200.0,
+      "_step": 222975
+    },
+    {
+      "_step": 222976,
+      "train/CE loss": 2.0348072052001953,
+      "throughput/total tokens": 175355461632.0
+    },
+    {
+      "throughput/total tokens": 175356248064.0,
+      "_step": 222977,
+      "train/CE loss": 1.9705721139907837
+    },
+    {
+      "_step": 222978,
+      "throughput/total tokens": 175357034496.0,
+      "train/CE loss": 2.045834541320801
+    },
+    {
+      "_step": 222979,
+      "train/CE loss": 2.120136022567749,
+      "throughput/total tokens": 175357820928.0
+    },
+    {
+      "_step": 222980,
+      "throughput/total tokens": 175358607360.0,
+      "train/CE loss": 2.1177115440368652
+    },
+    {
+      "throughput/total tokens": 175359393792.0,
+      "_step": 222981,
+      "train/CE loss": 2.003143787384033
+    },
+    {
+      "_step": 222982,
+      "throughput/total tokens": 175360180224.0,
+      "train/CE loss": 2.03434157371521
+    },
+    {
+      "train/CE loss": 1.9839818477630615,
+      "throughput/total tokens": 175360966656.0,
+      "_step": 222983
+    },
+    {
+      "_step": 222984,
+      "throughput/total tokens": 175361753088.0,
+      "train/CE loss": 2.0177929401397705
+    },
+    {
+      "train/CE loss": 1.943375825881958,
+      "throughput/total tokens": 175362539520.0,
+      "_step": 222985
+    },
+    {
+      "train/CE loss": 2.0080671310424805,
+      "throughput/total tokens": 175363325952.0,
+      "_step": 222986
+    },
+    {
+      "throughput/total tokens": 175364112384.0,
+      "train/CE loss": 2.0132901668548584,
+      "_step": 222987
+    },
+    {
+      "_step": 222988,
+      "throughput/total tokens": 175364898816.0,
+      "train/CE loss": 2.108647346496582
+    },
+    {
+      "_step": 222989,
+      "train/CE loss": 2.0506668090820312,
+      "throughput/total tokens": 175365685248.0
+    },
+    {
+      "_step": 222990,
+      "train/CE loss": 1.9095087051391602,
+      "throughput/total tokens": 175366471680.0
+    },
+    {
+      "train/CE loss": 2.067176342010498,
+      "throughput/total tokens": 175367258112.0,
+      "_step": 222991
+    },
+    {
+      "_step": 222992,
+      "train/CE loss": 2.0363242626190186,
+      "throughput/total tokens": 175368044544.0
+    },
+    {
+      "_step": 222993,
+      "throughput/total tokens": 175368830976.0,
+      "train/CE loss": 1.9498625993728638
+    },
+    {
+      "_step": 222994,
+      "throughput/total tokens": 175369617408.0,
+      "train/CE loss": 2.0632245540618896
+    },
+    {
+      "train/CE loss": 1.927199363708496,
+      "_step": 222995,
+      "throughput/total tokens": 175370403840.0
+    },
+    {
+      "throughput/total tokens": 175371190272.0,
+      "train/CE loss": 1.9270250797271729,
+      "_step": 222996
+    },
+    {
+      "throughput/total tokens": 175371976704.0,
+      "_step": 222997,
+      "train/CE loss": 2.058485984802246
+    },
+    {
+      "_step": 222998,
+      "train/CE loss": 2.029176950454712,
+      "throughput/total tokens": 175372763136.0
+    },
+    {
+      "train/CE loss": 2.0543606281280518,
+      "_step": 222999,
+      "throughput/total tokens": 175373549568.0
+    },
+    {
+      "train/CE loss": 1.8856958150863647,
+      "_step": 223000,
+      "throughput/total tokens": 175374336000.0
+    },
+    {
+      "throughput/total tokens": 175375122432.0,
+      "train/CE loss": 1.951099157333374,
+      "_step": 223001
+    },
+    {
+      "_step": 223002,
+      "throughput/total tokens": 175375908864.0,
+      "train/CE loss": 2.054373264312744
+    },
+    {
+      "throughput/total tokens": 175376695296.0,
+      "_step": 223003,
+      "train/CE loss": 1.9732710123062134
+    },
+    {
+      "train/CE loss": 1.9661368131637573,
+      "_step": 223004,
+      "throughput/total tokens": 175377481728.0
+    },
+    {
+      "train/CE loss": 1.9447112083435059,
+      "_step": 223005,
+      "throughput/total tokens": 175378268160.0
+    },
+    {
+      "throughput/total tokens": 175379054592.0,
+      "_step": 223006,
+      "train/CE loss": 2.085047483444214
+    },
+    {
+      "train/CE loss": 1.9839051961898804,
+      "throughput/total tokens": 175379841024.0,
+      "_step": 223007
+    },
+    {
+      "_step": 223008,
+      "throughput/total tokens": 175380627456.0,
+      "train/CE loss": 2.166682720184326
+    },
+    {
+      "train/CE loss": 1.9777511358261108,
+      "throughput/total tokens": 175381413888.0,
+      "_step": 223009
+    },
+    {
+      "train/CE loss": 2.0176243782043457,
+      "throughput/total tokens": 175382200320.0,
+      "_step": 223010
+    },
+    {
+      "throughput/total tokens": 175382986752.0,
+      "_step": 223011,
+      "train/CE loss": 2.095032215118408
+    },
+    {
+      "train/CE loss": 2.1084439754486084,
+      "_step": 223012,
+      "throughput/total tokens": 175383773184.0
+    },
+    {
+      "throughput/total tokens": 175384559616.0,
+      "train/CE loss": 2.15201997756958,
+      "_step": 223013
+    },
+    {
+      "throughput/total tokens": 175385346048.0,
+      "_step": 223014,
+      "train/CE loss": 2.050818920135498
+    },
+    {
+      "_step": 223015,
+      "train/CE loss": 1.9994560480117798,
+      "throughput/total tokens": 175386132480.0
+    },
+    {
+      "throughput/total tokens": 175386918912.0,
+      "train/CE loss": 1.9916188716888428,
+      "_step": 223016
+    },
+    {
+      "throughput/total tokens": 175387705344.0,
+      "_step": 223017,
+      "train/CE loss": 1.9371907711029053
+    },
+    {
+      "_step": 223018,
+      "train/CE loss": 2.0446183681488037,
+      "throughput/total tokens": 175388491776.0
+    },
+    {
+      "train/CE loss": 2.084329128265381,
+      "_step": 223019,
+      "throughput/total tokens": 175389278208.0
+    },
+    {
+      "_step": 223020,
+      "throughput/total tokens": 175390064640.0,
+      "train/CE loss": 1.8978744745254517
+    },
+    {
+      "_step": 223021,
+      "throughput/total tokens": 175390851072.0,
+      "train/CE loss": 2.082589626312256
+    },
+    {
+      "train/CE loss": 1.9965715408325195,
+      "throughput/total tokens": 175391637504.0,
+      "_step": 223022
+    },
+    {
+      "_step": 223023,
+      "train/CE loss": 2.065347909927368,
+      "throughput/total tokens": 175392423936.0
+    },
+    {
+      "train/CE loss": 2.073455810546875,
+      "throughput/total tokens": 175393210368.0,
+      "_step": 223024
+    },
+    {
+      "_step": 223025,
+      "throughput/total tokens": 175393996800.0,
+      "train/CE loss": 2.0275371074676514
+    },
+    {
+      "train/CE loss": 2.0098941326141357,
+      "throughput/total tokens": 175394783232.0,
+      "_step": 223026
+    },
+    {
+      "_step": 223027,
+      "throughput/total tokens": 175395569664.0,
+      "train/CE loss": 1.9016309976577759
+    },
+    {
+      "throughput/total tokens": 175396356096.0,
+      "train/CE loss": 2.0695149898529053,
+      "_step": 223028
+    },
+    {
+      "_step": 223029,
+      "throughput/total tokens": 175397142528.0,
+      "train/CE loss": 2.051072359085083
+    },
+    {
+      "_step": 223030,
+      "train/CE loss": 1.942697286605835,
+      "throughput/total tokens": 175397928960.0
+    },
+    {
+      "throughput/total tokens": 175398715392.0,
+      "train/CE loss": 2.0988035202026367,
+      "_step": 223031
+    },
+    {
+      "train/CE loss": 1.9987306594848633,
+      "_step": 223032,
+      "throughput/total tokens": 175399501824.0
+    },
+    {
+      "_step": 223033,
+      "throughput/total tokens": 175400288256.0,
+      "train/CE loss": 2.0235209465026855
+    },
+    {
+      "train/CE loss": 1.9024755954742432,
+      "throughput/total tokens": 175401074688.0,
+      "_step": 223034
+    },
+    {
+      "_step": 223035,
+      "train/CE loss": 1.9989285469055176,
+      "throughput/total tokens": 175401861120.0
+    },
+    {
+      "train/CE loss": 1.998506784439087,
+      "_step": 223036,
+      "throughput/total tokens": 175402647552.0
+    },
+    {
+      "train/CE loss": 2.1126644611358643,
+      "throughput/total tokens": 175403433984.0,
+      "_step": 223037
+    },
+    {
+      "train/CE loss": 1.945770502090454,
+      "throughput/total tokens": 175404220416.0,
+      "_step": 223038
+    },
+    {
+      "train/CE loss": 2.0958616733551025,
+      "_step": 223039,
+      "throughput/total tokens": 175405006848.0
+    },
+    {
+      "throughput/total tokens": 175405793280.0,
+      "_step": 223040,
+      "train/CE loss": 2.059093475341797
+    },
+    {
+      "throughput/total tokens": 175406579712.0,
+      "train/CE loss": 2.0410144329071045,
+      "_step": 223041
+    },
+    {
+      "train/CE loss": 1.9680255651474,
+      "throughput/total tokens": 175407366144.0,
+      "_step": 223042
+    },
+    {
+      "train/CE loss": 1.9832154512405396,
+      "_step": 223043,
+      "throughput/total tokens": 175408152576.0
+    },
+    {
+      "train/CE loss": 2.022550582885742,
+      "_step": 223044,
+      "throughput/total tokens": 175408939008.0
+    },
+    {
+      "train/CE loss": 1.986470341682434,
+      "throughput/total tokens": 175409725440.0,
+      "_step": 223045
+    },
+    {
+      "_step": 223046,
+      "throughput/total tokens": 175410511872.0,
+      "train/CE loss": 2.061652183532715
+    },
+    {
+      "throughput/total tokens": 175411298304.0,
+      "train/CE loss": 2.0123519897460938,
+      "_step": 223047
+    },
+    {
+      "_step": 223048,
+      "throughput/total tokens": 175412084736.0,
+      "train/CE loss": 2.046722412109375
+    },
+    {
+      "throughput/total tokens": 175412871168.0,
+      "train/CE loss": 2.0065531730651855,
+      "_step": 223049
+    },
+    {
+      "throughput/total tokens": 175413657600.0,
+      "train/CE loss": 1.8978196382522583,
+      "_step": 223050
+    },
+    {
+      "throughput/total tokens": 175414444032.0,
+      "train/CE loss": 2.019700527191162,
+      "_step": 223051
+    },
+    {
+      "train/CE loss": 1.9363415241241455,
+      "throughput/total tokens": 175415230464.0,
+      "_step": 223052
+    },
+    {
+      "throughput/total tokens": 175416016896.0,
+      "_step": 223053,
+      "train/CE loss": 1.9569885730743408
+    },
+    {
+      "_step": 223054,
+      "throughput/total tokens": 175416803328.0,
+      "train/CE loss": 2.0009078979492188
+    },
+    {
+      "_step": 223055,
+      "throughput/total tokens": 175417589760.0,
+      "train/CE loss": 1.9703559875488281
+    },
+    {
+      "train/CE loss": 2.0623762607574463,
+      "_step": 223056,
+      "throughput/total tokens": 175418376192.0
+    },
+    {
+      "train/CE loss": 2.079739809036255,
+      "_step": 223057,
+      "throughput/total tokens": 175419162624.0
+    },
+    {
+      "throughput/total tokens": 175419949056.0,
+      "train/CE loss": 1.9036104679107666,
+      "_step": 223058
+    },
+    {
+      "_step": 223059,
+      "train/CE loss": 1.9596964120864868,
+      "throughput/total tokens": 175420735488.0
+    },
+    {
+      "throughput/total tokens": 175421521920.0,
+      "train/CE loss": 1.9953641891479492,
+      "_step": 223060
+    },
+    {
+      "train/CE loss": 1.960199236869812,
+      "throughput/total tokens": 175422308352.0,
+      "_step": 223061
+    },
+    {
+      "throughput/total tokens": 175423094784.0,
+      "_step": 223062,
+      "train/CE loss": 2.030263662338257
+    },
+    {
+      "throughput/total tokens": 175423881216.0,
+      "train/CE loss": 1.9924757480621338,
+      "_step": 223063
+    },
+    {
+      "throughput/total tokens": 175424667648.0,
+      "train/CE loss": 1.9656575918197632,
+      "_step": 223064
+    },
+    {
+      "_step": 223065,
+      "throughput/total tokens": 175425454080.0,
+      "train/CE loss": 2.091154098510742
+    },
+    {
+      "_step": 223066,
+      "train/CE loss": 1.9953036308288574,
+      "throughput/total tokens": 175426240512.0
+    },
+    {
+      "throughput/total tokens": 175427026944.0,
+      "train/CE loss": 2.0680835247039795,
+      "_step": 223067
+    },
+    {
+      "throughput/total tokens": 175427813376.0,
+      "train/CE loss": 1.987304449081421,
+      "_step": 223068
+    },
+    {
+      "_step": 223069,
+      "train/CE loss": 1.9312912225723267,
+      "throughput/total tokens": 175428599808.0
+    },
+    {
+      "throughput/total tokens": 175429386240.0,
+      "_step": 223070,
+      "train/CE loss": 2.0953705310821533
+    },
+    {
+      "_step": 223071,
+      "throughput/total tokens": 175430172672.0,
+      "train/CE loss": 2.035341262817383
+    },
+    {
+      "_step": 223072,
+      "throughput/total tokens": 175430959104.0,
+      "train/CE loss": 1.9953362941741943
+    },
+    {
+      "_step": 223073,
+      "train/CE loss": 1.9143977165222168,
+      "throughput/total tokens": 175431745536.0
+    },
+    {
+      "_step": 223074,
+      "throughput/total tokens": 175432531968.0,
+      "train/CE loss": 1.9864912033081055
+    },
+    {
+      "throughput/total tokens": 175433318400.0,
+      "train/CE loss": 1.9564836025238037,
+      "_step": 223075
+    },
+    {
+      "throughput/total tokens": 175434104832.0,
+      "train/CE loss": 2.1677937507629395,
+      "_step": 223076
+    },
+    {
+      "throughput/total tokens": 175434891264.0,
+      "_step": 223077,
+      "train/CE loss": 2.0186080932617188
+    },
+    {
+      "throughput/total tokens": 175435677696.0,
+      "train/CE loss": 2.0370991230010986,
+      "_step": 223078
+    },
+    {
+      "_step": 223079,
+      "throughput/total tokens": 175436464128.0,
+      "train/CE loss": 1.9844262599945068
+    },
+    {
+      "_step": 223080,
+      "train/CE loss": 1.9408299922943115,
+      "throughput/total tokens": 175437250560.0
+    },
+    {
+      "train/CE loss": 2.0421972274780273,
+      "throughput/total tokens": 175438036992.0,
+      "_step": 223081
+    },
+    {
+      "throughput/total tokens": 175438823424.0,
+      "_step": 223082,
+      "train/CE loss": 1.8736459016799927
+    },
+    {
+      "train/CE loss": 2.0703160762786865,
+      "_step": 223083,
+      "throughput/total tokens": 175439609856.0
+    },
+    {
+      "train/CE loss": 2.0371909141540527,
+      "throughput/total tokens": 175440396288.0,
+      "_step": 223084
+    },
+    {
+      "train/CE loss": 2.0415003299713135,
+      "_step": 223085,
+      "throughput/total tokens": 175441182720.0
+    },
+    {
+      "_step": 223086,
+      "train/CE loss": 2.0651371479034424,
+      "throughput/total tokens": 175441969152.0
+    },
+    {
+      "_step": 223087,
+      "throughput/total tokens": 175442755584.0,
+      "train/CE loss": 2.071037530899048
+    },
+    {
+      "_step": 223088,
+      "train/CE loss": 1.9861865043640137,
+      "throughput/total tokens": 175443542016.0
+    },
+    {
+      "throughput/total tokens": 175444328448.0,
+      "_step": 223089,
+      "train/CE loss": 2.0664138793945312
+    },
+    {
+      "throughput/total tokens": 175445114880.0,
+      "_step": 223090,
+      "train/CE loss": 2.058298349380493
+    },
+    {
+      "throughput/total tokens": 175445901312.0,
+      "train/CE loss": 2.004413366317749,
+      "_step": 223091
+    },
+    {
+      "_step": 223092,
+      "throughput/total tokens": 175446687744.0,
+      "train/CE loss": 2.088301658630371
+    },
+    {
+      "train/CE loss": 2.0255181789398193,
+      "_step": 223093,
+      "throughput/total tokens": 175447474176.0
+    },
+    {
+      "_step": 223094,
+      "train/CE loss": 2.0070748329162598,
+      "throughput/total tokens": 175448260608.0
+    },
+    {
+      "train/CE loss": 2.064244031906128,
+      "throughput/total tokens": 175449047040.0,
+      "_step": 223095
+    },
+    {
+      "_step": 223096,
+      "throughput/total tokens": 175449833472.0,
+      "train/CE loss": 1.9457261562347412
+    },
+    {
+      "_step": 223097,
+      "throughput/total tokens": 175450619904.0,
+      "train/CE loss": 2.074460983276367
+    },
+    {
+      "train/CE loss": 1.9753245115280151,
+      "_step": 223098,
+      "throughput/total tokens": 175451406336.0
+    },
+    {
+      "_step": 223099,
+      "throughput/total tokens": 175452192768.0,
+      "train/CE loss": 2.0124001502990723
+    },
+    {
+      "train/CE loss": 2.056025505065918,
+      "throughput/total tokens": 175452979200.0,
+      "_step": 223100
+    },
+    {
+      "train/CE loss": 2.0302178859710693,
+      "throughput/total tokens": 175453765632.0,
+      "_step": 223101
+    },
+    {
+      "_step": 223102,
+      "train/CE loss": 1.9633625745773315,
+      "throughput/total tokens": 175454552064.0
+    },
+    {
+      "train/CE loss": 2.0725221633911133,
+      "throughput/total tokens": 175455338496.0,
+      "_step": 223103
+    },
+    {
+      "_step": 223104,
+      "train/CE loss": 1.9714939594268799,
+      "throughput/total tokens": 175456124928.0
+    },
+    {
+      "train/CE loss": 1.9629123210906982,
+      "_step": 223105,
+      "throughput/total tokens": 175456911360.0
+    },
+    {
+      "throughput/total tokens": 175457697792.0,
+      "_step": 223106,
+      "train/CE loss": 2.028679370880127
+    },
+    {
+      "throughput/total tokens": 175458484224.0,
+      "_step": 223107,
+      "train/CE loss": 2.0097222328186035
+    },
+    {
+      "throughput/total tokens": 175459270656.0,
+      "_step": 223108,
+      "train/CE loss": 2.071000814437866
+    },
+    {
+      "_step": 223109,
+      "throughput/total tokens": 175460057088.0,
+      "train/CE loss": 2.009312152862549
+    },
+    {
+      "throughput/total tokens": 175460843520.0,
+      "train/CE loss": 1.990502119064331,
+      "_step": 223110
+    },
+    {
+      "_step": 223111,
+      "train/CE loss": 2.03753924369812,
+      "throughput/total tokens": 175461629952.0
+    },
+    {
+      "train/CE loss": 2.0845489501953125,
+      "_step": 223112,
+      "throughput/total tokens": 175462416384.0
+    },
+    {
+      "_step": 223113,
+      "train/CE loss": 1.9829809665679932,
+      "throughput/total tokens": 175463202816.0
+    },
+    {
+      "train/CE loss": 1.9397845268249512,
+      "throughput/total tokens": 175463989248.0,
+      "_step": 223114
+    },
+    {
+      "throughput/total tokens": 175464775680.0,
+      "train/CE loss": 2.018082618713379,
+      "_step": 223115
+    },
+    {
+      "_step": 223116,
+      "train/CE loss": 1.9221580028533936,
+      "throughput/total tokens": 175465562112.0
+    },
+    {
+      "_step": 223117,
+      "train/CE loss": 2.069450855255127,
+      "throughput/total tokens": 175466348544.0
+    },
+    {
+      "throughput/total tokens": 175467134976.0,
+      "train/CE loss": 2.057596206665039,
+      "_step": 223118
+    },
+    {
+      "train/CE loss": 1.9972457885742188,
+      "throughput/total tokens": 175467921408.0,
+      "_step": 223119
+    },
+    {
+      "_step": 223120,
+      "throughput/total tokens": 175468707840.0,
+      "train/CE loss": 2.0595600605010986
+    },
+    {
+      "_step": 223121,
+      "train/CE loss": 2.0268466472625732,
+      "throughput/total tokens": 175469494272.0
+    },
+    {
+      "train/CE loss": 1.9356870651245117,
+      "_step": 223122,
+      "throughput/total tokens": 175470280704.0
+    },
+    {
+      "_step": 223123,
+      "train/CE loss": 2.13806414604187,
+      "throughput/total tokens": 175471067136.0
+    },
+    {
+      "train/CE loss": 2.0728187561035156,
+      "throughput/total tokens": 175471853568.0,
+      "_step": 223124
+    },
+    {
+      "_step": 223125,
+      "train/CE loss": 2.010183095932007,
+      "throughput/total tokens": 175472640000.0
+    },
+    {
+      "throughput/total tokens": 175473426432.0,
+      "_step": 223126,
+      "train/CE loss": 2.07965087890625
+    },
+    {
+      "_step": 223127,
+      "throughput/total tokens": 175474212864.0,
+      "train/CE loss": 1.9456419944763184
+    },
+    {
+      "train/CE loss": 2.0432920455932617,
+      "_step": 223128,
+      "throughput/total tokens": 175474999296.0
+    },
+    {
+      "throughput/total tokens": 175475785728.0,
+      "_step": 223129,
+      "train/CE loss": 2.1049482822418213
+    },
+    {
+      "_step": 223130,
+      "throughput/total tokens": 175476572160.0,
+      "train/CE loss": 2.0099518299102783
+    },
+    {
+      "train/CE loss": 2.056807518005371,
+      "_step": 223131,
+      "throughput/total tokens": 175477358592.0
+    },
+    {
+      "train/CE loss": 2.0743257999420166,
+      "_step": 223132,
+      "throughput/total tokens": 175478145024.0
+    },
+    {
+      "train/CE loss": 2.081286907196045,
+      "_step": 223133,
+      "throughput/total tokens": 175478931456.0
+    },
+    {
+      "_step": 223134,
+      "train/CE loss": 2.035604953765869,
+      "throughput/total tokens": 175479717888.0
+    },
+    {
+      "throughput/total tokens": 175480504320.0,
+      "_step": 223135,
+      "train/CE loss": 2.019559383392334
+    },
+    {
+      "train/CE loss": 1.9785124063491821,
+      "throughput/total tokens": 175481290752.0,
+      "_step": 223136
+    },
+    {
+      "throughput/total tokens": 175482077184.0,
+      "train/CE loss": 2.0259203910827637,
+      "_step": 223137
+    },
+    {
+      "_step": 223138,
+      "train/CE loss": 2.0600457191467285,
+      "throughput/total tokens": 175482863616.0
+    },
+    {
+      "throughput/total tokens": 175483650048.0,
+      "train/CE loss": 2.0411300659179688,
+      "_step": 223139
+    },
+    {
+      "train/CE loss": 2.0569863319396973,
+      "throughput/total tokens": 175484436480.0,
+      "_step": 223140
+    },
+    {
+      "throughput/total tokens": 175485222912.0,
+      "train/CE loss": 2.0149683952331543,
+      "_step": 223141
+    },
+    {
+      "throughput/total tokens": 175486009344.0,
+      "train/CE loss": 2.0251784324645996,
+      "_step": 223142
+    },
+    {
+      "_step": 223143,
+      "throughput/total tokens": 175486795776.0,
+      "train/CE loss": 2.073345184326172
+    },
+    {
+      "throughput/total tokens": 175487582208.0,
+      "train/CE loss": 1.9844822883605957,
+      "_step": 223144
+    },
+    {
+      "throughput/total tokens": 175488368640.0,
+      "train/CE loss": 2.0009922981262207,
+      "_step": 223145
+    },
+    {
+      "throughput/total tokens": 175489155072.0,
+      "_step": 223146,
+      "train/CE loss": 2.1273674964904785
+    },
+    {
+      "throughput/total tokens": 175489941504.0,
+      "_step": 223147,
+      "train/CE loss": 2.1073946952819824
+    },
+    {
+      "_step": 223148,
+      "train/CE loss": 2.056964874267578,
+      "throughput/total tokens": 175490727936.0
+    },
+    {
+      "_step": 223149,
+      "throughput/total tokens": 175491514368.0,
+      "train/CE loss": 2.040260076522827
+    },
+    {
+      "train/CE loss": 1.9375146627426147,
+      "_step": 223150,
+      "throughput/total tokens": 175492300800.0
+    },
+    {
+      "_step": 223151,
+      "train/CE loss": 2.0801963806152344,
+      "throughput/total tokens": 175493087232.0
+    },
+    {
+      "_step": 223152,
+      "throughput/total tokens": 175493873664.0,
+      "train/CE loss": 1.9832561016082764
+    },
+    {
+      "_step": 223153,
+      "throughput/total tokens": 175494660096.0,
+      "train/CE loss": 2.0767858028411865
+    },
+    {
+      "throughput/total tokens": 175495446528.0,
+      "_step": 223154,
+      "train/CE loss": 2.1344759464263916
+    },
+    {
+      "train/CE loss": 2.088221549987793,
+      "_step": 223155,
+      "throughput/total tokens": 175496232960.0
+    },
+    {
+      "throughput/total tokens": 175497019392.0,
+      "_step": 223156,
+      "train/CE loss": 2.1245319843292236
+    },
+    {
+      "_step": 223157,
+      "train/CE loss": 2.070103883743286,
+      "throughput/total tokens": 175497805824.0
+    },
+    {
+      "throughput/total tokens": 175498592256.0,
+      "train/CE loss": 2.0503182411193848,
+      "_step": 223158
+    },
+    {
+      "train/CE loss": 1.9710618257522583,
+      "_step": 223159,
+      "throughput/total tokens": 175499378688.0
+    },
+    {
+      "train/CE loss": 2.0426411628723145,
+      "throughput/total tokens": 175500165120.0,
+      "_step": 223160
+    },
+    {
+      "train/CE loss": 2.073012351989746,
+      "throughput/total tokens": 175500951552.0,
+      "_step": 223161
+    },
+    {
+      "throughput/total tokens": 175501737984.0,
+      "_step": 223162,
+      "train/CE loss": 2.045321464538574
+    },
+    {
+      "train/CE loss": 2.0848824977874756,
+      "throughput/total tokens": 175502524416.0,
+      "_step": 223163
+    },
+    {
+      "_step": 223164,
+      "train/CE loss": 2.0425219535827637,
+      "throughput/total tokens": 175503310848.0
+    },
+    {
+      "throughput/total tokens": 175504097280.0,
+      "train/CE loss": 1.9741337299346924,
+      "_step": 223165
+    },
+    {
+      "train/CE loss": 2.006277561187744,
+      "_step": 223166,
+      "throughput/total tokens": 175504883712.0
+    },
+    {
+      "throughput/total tokens": 175505670144.0,
+      "_step": 223167,
+      "train/CE loss": 2.1143994331359863
+    },
+    {
+      "throughput/total tokens": 175506456576.0,
+      "train/CE loss": 1.8796632289886475,
+      "_step": 223168
+    },
+    {
+      "train/CE loss": 2.0272092819213867,
+      "_step": 223169,
+      "throughput/total tokens": 175507243008.0
+    },
+    {
+      "throughput/total tokens": 175508029440.0,
+      "train/CE loss": 2.107799530029297,
+      "_step": 223170
+    },
+    {
+      "train/CE loss": 1.9832127094268799,
+      "throughput/total tokens": 175508815872.0,
+      "_step": 223171
+    },
+    {
+      "throughput/total tokens": 175509602304.0,
+      "_step": 223172,
+      "train/CE loss": 2.0755362510681152
+    },
+    {
+      "train/CE loss": 2.005493402481079,
+      "throughput/total tokens": 175510388736.0,
+      "_step": 223173
+    },
+    {
+      "throughput/total tokens": 175511175168.0,
+      "train/CE loss": 2.038731813430786,
+      "_step": 223174
+    },
+    {
+      "throughput/total tokens": 175511961600.0,
+      "_step": 223175,
+      "train/CE loss": 2.0282962322235107
+    },
+    {
+      "throughput/total tokens": 175512748032.0,
+      "train/CE loss": 2.0563526153564453,
+      "_step": 223176
+    },
+    {
+      "throughput/total tokens": 175513534464.0,
+      "train/CE loss": 1.9558100700378418,
+      "_step": 223177
+    },
+    {
+      "train/CE loss": 1.9905781745910645,
+      "_step": 223178,
+      "throughput/total tokens": 175514320896.0
+    },
+    {
+      "_step": 223179,
+      "throughput/total tokens": 175515107328.0,
+      "train/CE loss": 1.9249260425567627
+    },
+    {
+      "_step": 223180,
+      "train/CE loss": 2.029261350631714,
+      "throughput/total tokens": 175515893760.0
+    },
+    {
+      "throughput/total tokens": 175516680192.0,
+      "_step": 223181,
+      "train/CE loss": 1.9494661092758179
+    },
+    {
+      "train/CE loss": 2.070662260055542,
+      "throughput/total tokens": 175517466624.0,
+      "_step": 223182
+    },
+    {
+      "throughput/total tokens": 175518253056.0,
+      "train/CE loss": 1.9935667514801025,
+      "_step": 223183
+    },
+    {
+      "_step": 223184,
+      "train/CE loss": 1.9718436002731323,
+      "throughput/total tokens": 175519039488.0
+    },
+    {
+      "throughput/total tokens": 175519825920.0,
+      "_step": 223185,
+      "train/CE loss": 2.132643699645996
+    },
+    {
+      "throughput/total tokens": 175520612352.0,
+      "train/CE loss": 2.0392067432403564,
+      "_step": 223186
+    },
+    {
+      "train/CE loss": 2.091653347015381,
+      "_step": 223187,
+      "throughput/total tokens": 175521398784.0
+    },
+    {
+      "throughput/total tokens": 175522185216.0,
+      "train/CE loss": 2.077561855316162,
+      "_step": 223188
+    },
+    {
+      "_step": 223189,
+      "train/CE loss": 2.004830837249756,
+      "throughput/total tokens": 175522971648.0
+    },
+    {
+      "throughput/total tokens": 175523758080.0,
+      "train/CE loss": 1.9812138080596924,
+      "_step": 223190
+    },
+    {
+      "_step": 223191,
+      "throughput/total tokens": 175524544512.0,
+      "train/CE loss": 2.0990395545959473
+    },
+    {
+      "_step": 223192,
+      "train/CE loss": 1.998468279838562,
+      "throughput/total tokens": 175525330944.0
+    },
+    {
+      "_step": 223193,
+      "train/CE loss": 2.0748178958892822,
+      "throughput/total tokens": 175526117376.0
+    },
+    {
+      "train/CE loss": 1.9972097873687744,
+      "throughput/total tokens": 175526903808.0,
+      "_step": 223194
+    },
+    {
+      "train/CE loss": 2.1505236625671387,
+      "throughput/total tokens": 175527690240.0,
+      "_step": 223195
+    },
+    {
+      "_step": 223196,
+      "throughput/total tokens": 175528476672.0,
+      "train/CE loss": 2.0045833587646484
+    },
+    {
+      "_step": 223197,
+      "throughput/total tokens": 175529263104.0,
+      "train/CE loss": 1.9474905729293823
+    },
+    {
+      "train/CE loss": 1.9890048503875732,
+      "_step": 223198,
+      "throughput/total tokens": 175530049536.0
+    },
+    {
+      "throughput/total tokens": 175530835968.0,
+      "train/CE loss": 2.146347761154175,
+      "_step": 223199
+    },
+    {
+      "throughput/total tokens": 175531622400.0,
+      "train/CE loss": 2.0336670875549316,
+      "_step": 223200
+    },
+    {
+      "_step": 223201,
+      "train/CE loss": 2.0531415939331055,
+      "throughput/total tokens": 175532408832.0
+    },
+    {
+      "throughput/total tokens": 175533195264.0,
+      "train/CE loss": 1.9948567152023315,
+      "_step": 223202
+    },
+    {
+      "_step": 223203,
+      "throughput/total tokens": 175533981696.0,
+      "train/CE loss": 1.9569282531738281
+    },
+    {
+      "_step": 223204,
+      "train/CE loss": 2.0964457988739014,
+      "throughput/total tokens": 175534768128.0
+    },
+    {
+      "_step": 223205,
+      "throughput/total tokens": 175535554560.0,
+      "train/CE loss": 2.0101969242095947
+    },
+    {
+      "train/CE loss": 2.1003990173339844,
+      "_step": 223206,
+      "throughput/total tokens": 175536340992.0
+    },
+    {
+      "throughput/total tokens": 175537127424.0,
+      "_step": 223207,
+      "train/CE loss": 1.8982781171798706
+    },
+    {
+      "train/CE loss": 2.063509702682495,
+      "_step": 223208,
+      "throughput/total tokens": 175537913856.0
+    },
+    {
+      "throughput/total tokens": 175538700288.0,
+      "train/CE loss": 2.046043634414673,
+      "_step": 223209
+    },
+    {
+      "_step": 223210,
+      "throughput/total tokens": 175539486720.0,
+      "train/CE loss": 2.0163965225219727
+    },
+    {
+      "_step": 223211,
+      "throughput/total tokens": 175540273152.0,
+      "train/CE loss": 2.0075135231018066
+    },
+    {
+      "throughput/total tokens": 175541059584.0,
+      "_step": 223212,
+      "train/CE loss": 1.9692436456680298
+    },
+    {
+      "_step": 223213,
+      "train/CE loss": 1.9882341623306274,
+      "throughput/total tokens": 175541846016.0
+    },
+    {
+      "_step": 223214,
+      "train/CE loss": 2.016495704650879,
+      "throughput/total tokens": 175542632448.0
+    },
+    {
+      "train/CE loss": 1.9800691604614258,
+      "_step": 223215,
+      "throughput/total tokens": 175543418880.0
+    },
+    {
+      "train/CE loss": 2.0227394104003906,
+      "throughput/total tokens": 175544205312.0,
+      "_step": 223216
+    },
+    {
+      "throughput/total tokens": 175544991744.0,
+      "train/CE loss": 2.0313234329223633,
+      "_step": 223217
+    },
+    {
+      "_step": 223218,
+      "throughput/total tokens": 175545778176.0,
+      "train/CE loss": 2.0415220260620117
+    },
+    {
+      "throughput/total tokens": 175546564608.0,
+      "train/CE loss": 2.1121275424957275,
+      "_step": 223219
+    },
+    {
+      "train/CE loss": 1.9984090328216553,
+      "_step": 223220,
+      "throughput/total tokens": 175547351040.0
+    },
+    {
+      "train/CE loss": 1.9793434143066406,
+      "throughput/total tokens": 175548137472.0,
+      "_step": 223221
+    },
+    {
+      "throughput/total tokens": 175548923904.0,
+      "_step": 223222,
+      "train/CE loss": 2.028205156326294
+    },
+    {
+      "_step": 223223,
+      "throughput/total tokens": 175549710336.0,
+      "train/CE loss": 2.0622403621673584
+    },
+    {
+      "_step": 223224,
+      "train/CE loss": 2.0704057216644287,
+      "throughput/total tokens": 175550496768.0
+    },
+    {
+      "throughput/total tokens": 175551283200.0,
+      "train/CE loss": 1.9564646482467651,
+      "_step": 223225
+    },
+    {
+      "throughput/total tokens": 175552069632.0,
+      "train/CE loss": 2.0508391857147217,
+      "_step": 223226
+    },
+    {
+      "train/CE loss": 2.024912118911743,
+      "_step": 223227,
+      "throughput/total tokens": 175552856064.0
+    },
+    {
+      "throughput/total tokens": 175553642496.0,
+      "_step": 223228,
+      "train/CE loss": 2.0293984413146973
+    },
+    {
+      "train/CE loss": 1.9625139236450195,
+      "throughput/total tokens": 175554428928.0,
+      "_step": 223229
+    },
+    {
+      "throughput/total tokens": 175555215360.0,
+      "_step": 223230,
+      "train/CE loss": 2.006190538406372
+    },
+    {
+      "throughput/total tokens": 175556001792.0,
+      "train/CE loss": 2.0215253829956055,
+      "_step": 223231
+    },
+    {
+      "throughput/total tokens": 175556788224.0,
+      "_step": 223232,
+      "train/CE loss": 2.1186418533325195
+    },
+    {
+      "train/CE loss": 2.0519299507141113,
+      "_step": 223233,
+      "throughput/total tokens": 175557574656.0
+    },
+    {
+      "train/CE loss": 2.0238916873931885,
+      "throughput/total tokens": 175558361088.0,
+      "_step": 223234
+    },
+    {
+      "throughput/total tokens": 175559147520.0,
+      "train/CE loss": 1.9925363063812256,
+      "_step": 223235
+    },
+    {
+      "train/CE loss": 1.9571369886398315,
+      "_step": 223236,
+      "throughput/total tokens": 175559933952.0
+    },
+    {
+      "_step": 223237,
+      "throughput/total tokens": 175560720384.0,
+      "train/CE loss": 1.9792709350585938
+    },
+    {
+      "train/CE loss": 1.987349271774292,
+      "throughput/total tokens": 175561506816.0,
+      "_step": 223238
+    },
+    {
+      "throughput/total tokens": 175562293248.0,
+      "_step": 223239,
+      "train/CE loss": 1.9800750017166138
+    },
+    {
+      "train/CE loss": 1.9501625299453735,
+      "throughput/total tokens": 175563079680.0,
+      "_step": 223240
+    },
+    {
+      "train/CE loss": 2.107686758041382,
+      "_step": 223241,
+      "throughput/total tokens": 175563866112.0
+    },
+    {
+      "train/CE loss": 2.0248563289642334,
+      "_step": 223242,
+      "throughput/total tokens": 175564652544.0
+    },
+    {
+      "throughput/total tokens": 175565438976.0,
+      "train/CE loss": 2.013453483581543,
+      "_step": 223243
+    },
+    {
+      "throughput/total tokens": 175566225408.0,
+      "train/CE loss": 2.0113131999969482,
+      "_step": 223244
+    },
+    {
+      "train/CE loss": 2.103101968765259,
+      "throughput/total tokens": 175567011840.0,
+      "_step": 223245
+    },
+    {
+      "throughput/total tokens": 175567798272.0,
+      "train/CE loss": 2.111483097076416,
+      "_step": 223246
+    },
+    {
+      "_step": 223247,
+      "throughput/total tokens": 175568584704.0,
+      "train/CE loss": 1.9632518291473389
+    },
+    {
+      "throughput/total tokens": 175569371136.0,
+      "train/CE loss": 1.919646978378296,
+      "_step": 223248
+    },
+    {
+      "throughput/total tokens": 175570157568.0,
+      "_step": 223249,
+      "train/CE loss": 2.0613884925842285
+    },
+    {
+      "_step": 223250,
+      "train/CE loss": 1.9819762706756592,
+      "throughput/total tokens": 175570944000.0
+    },
+    {
+      "_step": 223251,
+      "throughput/total tokens": 175571730432.0,
+      "train/CE loss": 2.0241692066192627
+    },
+    {
+      "train/CE loss": 1.9949331283569336,
+      "throughput/total tokens": 175572516864.0,
+      "_step": 223252
+    },
+    {
+      "train/CE loss": 1.9670772552490234,
+      "_step": 223253,
+      "throughput/total tokens": 175573303296.0
+    },
+    {
+      "train/CE loss": 1.9871052503585815,
+      "throughput/total tokens": 175574089728.0,
+      "_step": 223254
+    },
+    {
+      "_step": 223255,
+      "throughput/total tokens": 175574876160.0,
+      "train/CE loss": 1.9854894876480103
+    },
+    {
+      "throughput/total tokens": 175575662592.0,
+      "train/CE loss": 1.9821116924285889,
+      "_step": 223256
+    },
+    {
+      "train/CE loss": 1.9415605068206787,
+      "throughput/total tokens": 175576449024.0,
+      "_step": 223257
+    },
+    {
+      "throughput/total tokens": 175577235456.0,
+      "_step": 223258,
+      "train/CE loss": 2.040008783340454
+    },
+    {
+      "_step": 223259,
+      "train/CE loss": 1.9272569417953491,
+      "throughput/total tokens": 175578021888.0
+    },
+    {
+      "throughput/total tokens": 175578808320.0,
+      "_step": 223260,
+      "train/CE loss": 1.8785098791122437
+    },
+    {
+      "_step": 223261,
+      "train/CE loss": 2.054720878601074,
+      "throughput/total tokens": 175579594752.0
+    },
+    {
+      "_step": 223262,
+      "train/CE loss": 2.0041019916534424,
+      "throughput/total tokens": 175580381184.0
+    },
+    {
+      "_step": 223263,
+      "train/CE loss": 2.028041362762451,
+      "throughput/total tokens": 175581167616.0
+    },
+    {
+      "train/CE loss": 2.1347169876098633,
+      "throughput/total tokens": 175581954048.0,
+      "_step": 223264
+    },
+    {
+      "_step": 223265,
+      "throughput/total tokens": 175582740480.0,
+      "train/CE loss": 1.9554132223129272
+    },
+    {
+      "throughput/total tokens": 175583526912.0,
+      "_step": 223266,
+      "train/CE loss": 1.9096908569335938
+    },
+    {
+      "train/CE loss": 1.9274789094924927,
+      "_step": 223267,
+      "throughput/total tokens": 175584313344.0
+    },
+    {
+      "throughput/total tokens": 175585099776.0,
+      "_step": 223268,
+      "train/CE loss": 2.0839083194732666
+    },
+    {
+      "train/CE loss": 2.0131242275238037,
+      "throughput/total tokens": 175585886208.0,
+      "_step": 223269
+    },
+    {
+      "train/CE loss": 2.1321005821228027,
+      "_step": 223270,
+      "throughput/total tokens": 175586672640.0
+    },
+    {
+      "train/CE loss": 2.091787099838257,
+      "throughput/total tokens": 175587459072.0,
+      "_step": 223271
+    },
+    {
+      "train/CE loss": 2.07654070854187,
+      "_step": 223272,
+      "throughput/total tokens": 175588245504.0
+    },
+    {
+      "train/CE loss": 2.13018798828125,
+      "_step": 223273,
+      "throughput/total tokens": 175589031936.0
+    },
+    {
+      "train/CE loss": 1.82319974899292,
+      "_step": 223274,
+      "throughput/total tokens": 175589818368.0
+    },
+    {
+      "throughput/total tokens": 175590604800.0,
+      "_step": 223275,
+      "train/CE loss": 2.0449352264404297
+    },
+    {
+      "_step": 223276,
+      "throughput/total tokens": 175591391232.0,
+      "train/CE loss": 1.9542527198791504
+    },
+    {
+      "train/CE loss": 1.9765890836715698,
+      "_step": 223277,
+      "throughput/total tokens": 175592177664.0
+    },
+    {
+      "train/CE loss": 2.031238317489624,
+      "throughput/total tokens": 175592964096.0,
+      "_step": 223278
+    },
+    {
+      "throughput/total tokens": 175593750528.0,
+      "train/CE loss": 2.0233356952667236,
+      "_step": 223279
+    },
+    {
+      "throughput/total tokens": 175594536960.0,
+      "train/CE loss": 1.9986200332641602,
+      "_step": 223280
+    },
+    {
+      "train/CE loss": 2.007162570953369,
+      "throughput/total tokens": 175595323392.0,
+      "_step": 223281
+    },
+    {
+      "_step": 223282,
+      "train/CE loss": 1.966472864151001,
+      "throughput/total tokens": 175596109824.0
+    },
+    {
+      "_step": 223283,
+      "train/CE loss": 1.9668636322021484,
+      "throughput/total tokens": 175596896256.0
+    },
+    {
+      "train/CE loss": 1.9279446601867676,
+      "_step": 223284,
+      "throughput/total tokens": 175597682688.0
+    },
+    {
+      "_step": 223285,
+      "train/CE loss": 1.9321753978729248,
+      "throughput/total tokens": 175598469120.0
+    },
+    {
+      "train/CE loss": 1.9097514152526855,
+      "throughput/total tokens": 175599255552.0,
+      "_step": 223286
+    },
+    {
+      "throughput/total tokens": 175600041984.0,
+      "train/CE loss": 1.9158527851104736,
+      "_step": 223287
+    },
+    {
+      "throughput/total tokens": 175600828416.0,
+      "_step": 223288,
+      "train/CE loss": 1.9618182182312012
+    },
+    {
+      "_step": 223289,
+      "train/CE loss": 2.0450210571289062,
+      "throughput/total tokens": 175601614848.0
+    },
+    {
+      "_step": 223290,
+      "train/CE loss": 1.9178187847137451,
+      "throughput/total tokens": 175602401280.0
+    },
+    {
+      "throughput/total tokens": 175603187712.0,
+      "_step": 223291,
+      "train/CE loss": 1.9485163688659668
+    },
+    {
+      "_step": 223292,
+      "throughput/total tokens": 175603974144.0,
+      "train/CE loss": 2.000378370285034
+    },
+    {
+      "_step": 223293,
+      "throughput/total tokens": 175604760576.0,
+      "train/CE loss": 1.9261490106582642
+    },
+    {
+      "_step": 223294,
+      "throughput/total tokens": 175605547008.0,
+      "train/CE loss": 2.017411231994629
+    },
+    {
+      "_step": 223295,
+      "throughput/total tokens": 175606333440.0,
+      "train/CE loss": 1.9589502811431885
+    },
+    {
+      "train/CE loss": 2.011298894882202,
+      "throughput/total tokens": 175607119872.0,
+      "_step": 223296
+    },
+    {
+      "train/CE loss": 2.0400264263153076,
+      "throughput/total tokens": 175607906304.0,
+      "_step": 223297
+    },
+    {
+      "_step": 223298,
+      "throughput/total tokens": 175608692736.0,
+      "train/CE loss": 2.0631251335144043
+    },
+    {
+      "throughput/total tokens": 175609479168.0,
+      "train/CE loss": 2.0025863647460938,
+      "_step": 223299
+    },
+    {
+      "_step": 223300,
+      "train/CE loss": 2.058785915374756,
+      "throughput/total tokens": 175610265600.0
+    },
+    {
+      "_step": 223301,
+      "throughput/total tokens": 175611052032.0,
+      "train/CE loss": 2.091536045074463
+    },
+    {
+      "train/CE loss": 2.0340662002563477,
+      "throughput/total tokens": 175611838464.0,
+      "_step": 223302
+    },
+    {
+      "train/CE loss": 1.9565298557281494,
+      "_step": 223303,
+      "throughput/total tokens": 175612624896.0
+    },
+    {
+      "train/CE loss": 2.0723683834075928,
+      "_step": 223304,
+      "throughput/total tokens": 175613411328.0
+    },
+    {
+      "throughput/total tokens": 175614197760.0,
+      "_step": 223305,
+      "train/CE loss": 1.97340726852417
+    },
+    {
+      "train/CE loss": 2.005910634994507,
+      "_step": 223306,
+      "throughput/total tokens": 175614984192.0
+    },
+    {
+      "_step": 223307,
+      "train/CE loss": 2.018510580062866,
+      "throughput/total tokens": 175615770624.0
+    },
+    {
+      "throughput/total tokens": 175616557056.0,
+      "train/CE loss": 2.155634880065918,
+      "_step": 223308
+    },
+    {
+      "throughput/total tokens": 175617343488.0,
+      "_step": 223309,
+      "train/CE loss": 2.0560410022735596
+    },
+    {
+      "train/CE loss": 2.113009214401245,
+      "throughput/total tokens": 175618129920.0,
+      "_step": 223310
+    },
+    {
+      "throughput/total tokens": 175618916352.0,
+      "_step": 223311,
+      "train/CE loss": 2.080892562866211
+    },
+    {
+      "throughput/total tokens": 175619702784.0,
+      "train/CE loss": 2.0280518531799316,
+      "_step": 223312
+    },
+    {
+      "train/CE loss": 1.9885483980178833,
+      "_step": 223313,
+      "throughput/total tokens": 175620489216.0
+    },
+    {
+      "_step": 223314,
+      "throughput/total tokens": 175621275648.0,
+      "train/CE loss": 1.9829363822937012
+    },
+    {
+      "throughput/total tokens": 175622062080.0,
+      "train/CE loss": 1.968552589416504,
+      "_step": 223315
+    },
+    {
+      "_step": 223316,
+      "throughput/total tokens": 175622848512.0,
+      "train/CE loss": 2.0326333045959473
+    },
+    {
+      "_step": 223317,
+      "train/CE loss": 1.941756010055542,
+      "throughput/total tokens": 175623634944.0
+    },
+    {
+      "_step": 223318,
+      "throughput/total tokens": 175624421376.0,
+      "train/CE loss": 1.9646973609924316
+    },
+    {
+      "_step": 223319,
+      "throughput/total tokens": 175625207808.0,
+      "train/CE loss": 1.989606499671936
+    },
+    {
+      "_step": 223320,
+      "train/CE loss": 2.0194454193115234,
+      "throughput/total tokens": 175625994240.0
+    },
+    {
+      "train/CE loss": 1.8972505331039429,
+      "throughput/total tokens": 175626780672.0,
+      "_step": 223321
+    },
+    {
+      "_step": 223322,
+      "train/CE loss": 2.0129029750823975,
+      "throughput/total tokens": 175627567104.0
+    },
+    {
+      "train/CE loss": 2.0356335639953613,
+      "_step": 223323,
+      "throughput/total tokens": 175628353536.0
+    },
+    {
+      "_step": 223324,
+      "train/CE loss": 2.004147529602051,
+      "throughput/total tokens": 175629139968.0
+    },
+    {
+      "throughput/total tokens": 175629926400.0,
+      "_step": 223325,
+      "train/CE loss": 1.985776424407959
+    },
+    {
+      "train/CE loss": 2.0650014877319336,
+      "_step": 223326,
+      "throughput/total tokens": 175630712832.0
+    },
+    {
+      "_step": 223327,
+      "train/CE loss": 2.021695137023926,
+      "throughput/total tokens": 175631499264.0
+    },
+    {
+      "train/CE loss": 1.9638111591339111,
+      "throughput/total tokens": 175632285696.0,
+      "_step": 223328
+    },
+    {
+      "throughput/total tokens": 175633072128.0,
+      "_step": 223329,
+      "train/CE loss": 1.9965872764587402
+    },
+    {
+      "throughput/total tokens": 175633858560.0,
+      "_step": 223330,
+      "train/CE loss": 2.137600898742676
+    },
+    {
+      "_step": 223331,
+      "throughput/total tokens": 175634644992.0,
+      "train/CE loss": 1.976672887802124
+    },
+    {
+      "throughput/total tokens": 175635431424.0,
+      "train/CE loss": 2.0082128047943115,
+      "_step": 223332
+    },
+    {
+      "throughput/total tokens": 175636217856.0,
+      "train/CE loss": 2.0119919776916504,
+      "_step": 223333
+    },
+    {
+      "throughput/total tokens": 175637004288.0,
+      "train/CE loss": 2.070258617401123,
+      "_step": 223334
+    },
+    {
+      "train/CE loss": 1.9902763366699219,
+      "_step": 223335,
+      "throughput/total tokens": 175637790720.0
+    },
+    {
+      "train/CE loss": 2.0616583824157715,
+      "_step": 223336,
+      "throughput/total tokens": 175638577152.0
+    },
+    {
+      "throughput/total tokens": 175639363584.0,
+      "_step": 223337,
+      "train/CE loss": 2.007904529571533
+    },
+    {
+      "train/CE loss": 2.0233359336853027,
+      "_step": 223338,
+      "throughput/total tokens": 175640150016.0
+    },
+    {
+      "_step": 223339,
+      "train/CE loss": 2.101057767868042,
+      "throughput/total tokens": 175640936448.0
+    },
+    {
+      "throughput/total tokens": 175641722880.0,
+      "train/CE loss": 2.0825319290161133,
+      "_step": 223340
+    },
+    {
+      "_step": 223341,
+      "throughput/total tokens": 175642509312.0,
+      "train/CE loss": 1.9622859954833984
+    },
+    {
+      "_step": 223342,
+      "train/CE loss": 2.0243797302246094,
+      "throughput/total tokens": 175643295744.0
+    },
+    {
+      "train/CE loss": 2.0688352584838867,
+      "_step": 223343,
+      "throughput/total tokens": 175644082176.0
+    },
+    {
+      "throughput/total tokens": 175644868608.0,
+      "_step": 223344,
+      "train/CE loss": 1.9101643562316895
+    },
+    {
+      "_step": 223345,
+      "throughput/total tokens": 175645655040.0,
+      "train/CE loss": 2.1415622234344482
+    },
+    {
+      "train/CE loss": 2.0376195907592773,
+      "throughput/total tokens": 175646441472.0,
+      "_step": 223346
+    },
+    {
+      "throughput/total tokens": 175647227904.0,
+      "_step": 223347,
+      "train/CE loss": 1.9518332481384277
+    },
+    {
+      "train/CE loss": 2.073617935180664,
+      "_step": 223348,
+      "throughput/total tokens": 175648014336.0
+    },
+    {
+      "throughput/total tokens": 175648800768.0,
+      "_step": 223349,
+      "train/CE loss": 2.0642592906951904
+    },
+    {
+      "throughput/total tokens": 175649587200.0,
+      "train/CE loss": 2.06052827835083,
+      "_step": 223350
+    },
+    {
+      "train/CE loss": 1.9926230907440186,
+      "_step": 223351,
+      "throughput/total tokens": 175650373632.0
+    },
+    {
+      "_step": 223352,
+      "train/CE loss": 2.013108730316162,
+      "throughput/total tokens": 175651160064.0
+    },
+    {
+      "_step": 223353,
+      "train/CE loss": 2.0110509395599365,
+      "throughput/total tokens": 175651946496.0
+    },
+    {
+      "_step": 223354,
+      "train/CE loss": 2.1724014282226562,
+      "throughput/total tokens": 175652732928.0
+    },
+    {
+      "train/CE loss": 2.0918309688568115,
+      "throughput/total tokens": 175653519360.0,
+      "_step": 223355
+    },
+    {
+      "_step": 223356,
+      "throughput/total tokens": 175654305792.0,
+      "train/CE loss": 1.9573109149932861
+    },
+    {
+      "train/CE loss": 2.004953384399414,
+      "_step": 223357,
+      "throughput/total tokens": 175655092224.0
+    },
+    {
+      "train/CE loss": 1.8966182470321655,
+      "_step": 223358,
+      "throughput/total tokens": 175655878656.0
+    },
+    {
+      "throughput/total tokens": 175656665088.0,
+      "train/CE loss": 2.0194993019104004,
+      "_step": 223359
+    },
+    {
+      "_step": 223360,
+      "train/CE loss": 2.030698776245117,
+      "throughput/total tokens": 175657451520.0
+    },
+    {
+      "throughput/total tokens": 175658237952.0,
+      "_step": 223361,
+      "train/CE loss": 1.9880822896957397
+    },
+    {
+      "_step": 223362,
+      "train/CE loss": 2.0245907306671143,
+      "throughput/total tokens": 175659024384.0
+    },
+    {
+      "_step": 223363,
+      "train/CE loss": 2.0298213958740234,
+      "throughput/total tokens": 175659810816.0
+    },
+    {
+      "train/CE loss": 2.0271472930908203,
+      "throughput/total tokens": 175660597248.0,
+      "_step": 223364
+    },
+    {
+      "throughput/total tokens": 175661383680.0,
+      "_step": 223365,
+      "train/CE loss": 2.080770492553711
+    },
+    {
+      "throughput/total tokens": 175662170112.0,
+      "train/CE loss": 2.057335615158081,
+      "_step": 223366
+    },
+    {
+      "train/CE loss": 2.0356016159057617,
+      "throughput/total tokens": 175662956544.0,
+      "_step": 223367
+    },
+    {
+      "throughput/total tokens": 175663742976.0,
+      "train/CE loss": 1.9971904754638672,
+      "_step": 223368
+    },
+    {
+      "train/CE loss": 2.057183027267456,
+      "throughput/total tokens": 175664529408.0,
+      "_step": 223369
+    },
+    {
+      "_step": 223370,
+      "throughput/total tokens": 175665315840.0,
+      "train/CE loss": 1.964608907699585
+    },
+    {
+      "_step": 223371,
+      "throughput/total tokens": 175666102272.0,
+      "train/CE loss": 1.9405118227005005
+    },
+    {
+      "throughput/total tokens": 175666888704.0,
+      "train/CE loss": 2.0133395195007324,
+      "_step": 223372
+    },
+    {
+      "throughput/total tokens": 175667675136.0,
+      "_step": 223373,
+      "train/CE loss": 2.049075126647949
+    },
+    {
+      "train/CE loss": 1.9610793590545654,
+      "_step": 223374,
+      "throughput/total tokens": 175668461568.0
+    },
+    {
+      "_step": 223375,
+      "throughput/total tokens": 175669248000.0,
+      "train/CE loss": 2.0194969177246094
+    },
+    {
+      "_step": 223376,
+      "throughput/total tokens": 175670034432.0,
+      "train/CE loss": 2.0147836208343506
+    },
+    {
+      "_step": 223377,
+      "throughput/total tokens": 175670820864.0,
+      "train/CE loss": 1.9032578468322754
+    },
+    {
+      "_step": 223378,
+      "train/CE loss": 2.1072638034820557,
+      "throughput/total tokens": 175671607296.0
+    },
+    {
+      "_step": 223379,
+      "train/CE loss": 2.0630359649658203,
+      "throughput/total tokens": 175672393728.0
+    },
+    {
+      "throughput/total tokens": 175673180160.0,
+      "train/CE loss": 2.0113370418548584,
+      "_step": 223380
+    },
+    {
+      "throughput/total tokens": 175673966592.0,
+      "train/CE loss": 1.9897993803024292,
+      "_step": 223381
+    },
+    {
+      "_step": 223382,
+      "throughput/total tokens": 175674753024.0,
+      "train/CE loss": 1.9998431205749512
+    },
+    {
+      "throughput/total tokens": 175675539456.0,
+      "_step": 223383,
+      "train/CE loss": 2.0779268741607666
+    },
+    {
+      "_step": 223384,
+      "throughput/total tokens": 175676325888.0,
+      "train/CE loss": 2.1568477153778076
+    },
+    {
+      "_step": 223385,
+      "train/CE loss": 1.9421367645263672,
+      "throughput/total tokens": 175677112320.0
+    },
+    {
+      "train/CE loss": 2.041834592819214,
+      "_step": 223386,
+      "throughput/total tokens": 175677898752.0
+    },
+    {
+      "_step": 223387,
+      "throughput/total tokens": 175678685184.0,
+      "train/CE loss": 2.0609021186828613
+    },
+    {
+      "_step": 223388,
+      "throughput/total tokens": 175679471616.0,
+      "train/CE loss": 1.9783194065093994
+    },
+    {
+      "_step": 223389,
+      "throughput/total tokens": 175680258048.0,
+      "train/CE loss": 2.0815560817718506
+    },
+    {
+      "train/CE loss": 2.0764691829681396,
+      "_step": 223390,
+      "throughput/total tokens": 175681044480.0
+    },
+    {
+      "_step": 223391,
+      "throughput/total tokens": 175681830912.0,
+      "train/CE loss": 2.071946859359741
+    },
+    {
+      "throughput/total tokens": 175682617344.0,
+      "_step": 223392,
+      "train/CE loss": 2.0068440437316895
+    },
+    {
+      "train/CE loss": 1.9995602369308472,
+      "_step": 223393,
+      "throughput/total tokens": 175683403776.0
+    },
+    {
+      "train/CE loss": 1.9713597297668457,
+      "_step": 223394,
+      "throughput/total tokens": 175684190208.0
+    },
+    {
+      "_step": 223395,
+      "throughput/total tokens": 175684976640.0,
+      "train/CE loss": 2.0749168395996094
+    },
+    {
+      "throughput/total tokens": 175685763072.0,
+      "_step": 223396,
+      "train/CE loss": 1.9386138916015625
+    },
+    {
+      "_step": 223397,
+      "train/CE loss": 2.040588617324829,
+      "throughput/total tokens": 175686549504.0
+    },
+    {
+      "train/CE loss": 2.079500198364258,
+      "throughput/total tokens": 175687335936.0,
+      "_step": 223398
+    },
+    {
+      "train/CE loss": 1.8851442337036133,
+      "_step": 223399,
+      "throughput/total tokens": 175688122368.0
+    },
+    {
+      "train/CE loss": 2.021749258041382,
+      "throughput/total tokens": 175688908800.0,
+      "_step": 223400
+    },
+    {
+      "train/CE loss": 2.1165504455566406,
+      "throughput/total tokens": 175689695232.0,
+      "_step": 223401
+    },
+    {
+      "train/CE loss": 2.1329829692840576,
+      "_step": 223402,
+      "throughput/total tokens": 175690481664.0
+    },
+    {
+      "train/CE loss": 2.0272650718688965,
+      "throughput/total tokens": 175691268096.0,
+      "_step": 223403
+    },
+    {
+      "_step": 223404,
+      "train/CE loss": 2.0544309616088867,
+      "throughput/total tokens": 175692054528.0
+    },
+    {
+      "throughput/total tokens": 175692840960.0,
+      "_step": 223405,
+      "train/CE loss": 2.0905895233154297
+    },
+    {
+      "throughput/total tokens": 175693627392.0,
+      "_step": 223406,
+      "train/CE loss": 1.9123733043670654
+    },
+    {
+      "_step": 223407,
+      "throughput/total tokens": 175694413824.0,
+      "train/CE loss": 2.0709755420684814
+    },
+    {
+      "train/CE loss": 2.033351182937622,
+      "throughput/total tokens": 175695200256.0,
+      "_step": 223408
+    },
+    {
+      "_step": 223409,
+      "throughput/total tokens": 175695986688.0,
+      "train/CE loss": 1.9683833122253418
+    },
+    {
+      "throughput/total tokens": 175696773120.0,
+      "_step": 223410,
+      "train/CE loss": 2.0702362060546875
+    },
+    {
+      "_step": 223411,
+      "throughput/total tokens": 175697559552.0,
+      "train/CE loss": 2.036667823791504
+    },
+    {
+      "throughput/total tokens": 175698345984.0,
+      "_step": 223412,
+      "train/CE loss": 2.0787179470062256
+    },
+    {
+      "_step": 223413,
+      "throughput/total tokens": 175699132416.0,
+      "train/CE loss": 2.0510778427124023
+    },
+    {
+      "_step": 223414,
+      "train/CE loss": 2.1061713695526123,
+      "throughput/total tokens": 175699918848.0
+    },
+    {
+      "throughput/total tokens": 175700705280.0,
+      "train/CE loss": 2.070575714111328,
+      "_step": 223415
+    },
+    {
+      "_step": 223416,
+      "train/CE loss": 2.122593641281128,
+      "throughput/total tokens": 175701491712.0
+    },
+    {
+      "throughput/total tokens": 175702278144.0,
+      "_step": 223417,
+      "train/CE loss": 2.041032552719116
+    },
+    {
+      "_step": 223418,
+      "throughput/total tokens": 175703064576.0,
+      "train/CE loss": 2.1244494915008545
+    },
+    {
+      "throughput/total tokens": 175703851008.0,
+      "_step": 223419,
+      "train/CE loss": 2.0096566677093506
+    },
+    {
+      "_step": 223420,
+      "throughput/total tokens": 175704637440.0,
+      "train/CE loss": 2.0282607078552246
+    },
+    {
+      "throughput/total tokens": 175705423872.0,
+      "_step": 223421,
+      "train/CE loss": 2.0423688888549805
+    },
+    {
+      "throughput/total tokens": 175706210304.0,
+      "train/CE loss": 2.03062105178833,
+      "_step": 223422
+    },
+    {
+      "throughput/total tokens": 175706996736.0,
+      "train/CE loss": 1.9294437170028687,
+      "_step": 223423
+    },
+    {
+      "train/CE loss": 2.0204105377197266,
+      "throughput/total tokens": 175707783168.0,
+      "_step": 223424
+    },
+    {
+      "throughput/total tokens": 175708569600.0,
+      "train/CE loss": 1.9882018566131592,
+      "_step": 223425
+    },
+    {
+      "_step": 223426,
+      "train/CE loss": 2.0406694412231445,
+      "throughput/total tokens": 175709356032.0
+    },
+    {
+      "train/CE loss": 2.0397043228149414,
+      "throughput/total tokens": 175710142464.0,
+      "_step": 223427
+    },
+    {
+      "throughput/total tokens": 175710928896.0,
+      "_step": 223428,
+      "train/CE loss": 2.0050089359283447
+    },
+    {
+      "throughput/total tokens": 175711715328.0,
+      "_step": 223429,
+      "train/CE loss": 1.9600529670715332
+    },
+    {
+      "train/CE loss": 1.9090368747711182,
+      "_step": 223430,
+      "throughput/total tokens": 175712501760.0
+    },
+    {
+      "train/CE loss": 2.000065565109253,
+      "_step": 223431,
+      "throughput/total tokens": 175713288192.0
+    },
+    {
+      "throughput/total tokens": 175714074624.0,
+      "_step": 223432,
+      "train/CE loss": 2.065493106842041
+    },
+    {
+      "train/CE loss": 1.9850152730941772,
+      "_step": 223433,
+      "throughput/total tokens": 175714861056.0
+    },
+    {
+      "_step": 223434,
+      "throughput/total tokens": 175715647488.0,
+      "train/CE loss": 1.9665393829345703
+    },
+    {
+      "_step": 223435,
+      "train/CE loss": 1.9554357528686523,
+      "throughput/total tokens": 175716433920.0
+    },
+    {
+      "train/CE loss": 2.1205952167510986,
+      "_step": 223436,
+      "throughput/total tokens": 175717220352.0
+    },
+    {
+      "train/CE loss": 2.0686235427856445,
+      "throughput/total tokens": 175718006784.0,
+      "_step": 223437
+    },
+    {
+      "_step": 223438,
+      "throughput/total tokens": 175718793216.0,
+      "train/CE loss": 2.059494733810425
+    },
+    {
+      "train/CE loss": 1.8742656707763672,
+      "throughput/total tokens": 175719579648.0,
+      "_step": 223439
+    },
+    {
+      "train/CE loss": 2.041572093963623,
+      "_step": 223440,
+      "throughput/total tokens": 175720366080.0
+    },
+    {
+      "throughput/total tokens": 175721152512.0,
+      "_step": 223441,
+      "train/CE loss": 2.1050868034362793
+    },
+    {
+      "_step": 223442,
+      "throughput/total tokens": 175721938944.0,
+      "train/CE loss": 2.0210981369018555
+    },
+    {
+      "_step": 223443,
+      "throughput/total tokens": 175722725376.0,
+      "train/CE loss": 1.986518144607544
+    },
+    {
+      "train/CE loss": 2.025207996368408,
+      "throughput/total tokens": 175723511808.0,
+      "_step": 223444
+    },
+    {
+      "_step": 223445,
+      "throughput/total tokens": 175724298240.0,
+      "train/CE loss": 1.9694219827651978
+    },
+    {
+      "throughput/total tokens": 175725084672.0,
+      "_step": 223446,
+      "train/CE loss": 2.0202760696411133
+    },
+    {
+      "_step": 223447,
+      "throughput/total tokens": 175725871104.0,
+      "train/CE loss": 1.962590217590332
+    },
+    {
+      "throughput/total tokens": 175726657536.0,
+      "train/CE loss": 2.0185675621032715,
+      "_step": 223448
+    },
+    {
+      "throughput/total tokens": 175727443968.0,
+      "train/CE loss": 2.0180630683898926,
+      "_step": 223449
+    },
+    {
+      "throughput/total tokens": 175728230400.0,
+      "_step": 223450,
+      "train/CE loss": 1.9577293395996094
+    },
+    {
+      "throughput/total tokens": 175729016832.0,
+      "_step": 223451,
+      "train/CE loss": 2.006443738937378
+    },
+    {
+      "throughput/total tokens": 175729803264.0,
+      "_step": 223452,
+      "train/CE loss": 2.085573196411133
+    },
+    {
+      "_step": 223453,
+      "throughput/total tokens": 175730589696.0,
+      "train/CE loss": 1.97157621383667
+    },
+    {
+      "_step": 223454,
+      "train/CE loss": 2.105698823928833,
+      "throughput/total tokens": 175731376128.0
+    },
+    {
+      "train/CE loss": 2.0233728885650635,
+      "throughput/total tokens": 175732162560.0,
+      "_step": 223455
+    },
+    {
+      "throughput/total tokens": 175732948992.0,
+      "train/CE loss": 2.0853962898254395,
+      "_step": 223456
+    },
+    {
+      "_step": 223457,
+      "throughput/total tokens": 175733735424.0,
+      "train/CE loss": 1.971217155456543
+    },
+    {
+      "train/CE loss": 2.0793960094451904,
+      "throughput/total tokens": 175734521856.0,
+      "_step": 223458
+    },
+    {
+      "throughput/total tokens": 175735308288.0,
+      "train/CE loss": 2.038586139678955,
+      "_step": 223459
+    },
+    {
+      "train/CE loss": 2.1314125061035156,
+      "_step": 223460,
+      "throughput/total tokens": 175736094720.0
+    },
+    {
+      "_step": 223461,
+      "train/CE loss": 1.9657647609710693,
+      "throughput/total tokens": 175736881152.0
+    },
+    {
+      "train/CE loss": 1.9999922513961792,
+      "throughput/total tokens": 175737667584.0,
+      "_step": 223462
+    },
+    {
+      "throughput/total tokens": 175738454016.0,
+      "train/CE loss": 1.9686535596847534,
+      "_step": 223463
+    },
+    {
+      "_step": 223464,
+      "train/CE loss": 2.0356392860412598,
+      "throughput/total tokens": 175739240448.0
+    },
+    {
+      "train/CE loss": 2.0470077991485596,
+      "throughput/total tokens": 175740026880.0,
+      "_step": 223465
+    },
+    {
+      "train/CE loss": 2.0688490867614746,
+      "_step": 223466,
+      "throughput/total tokens": 175740813312.0
+    },
+    {
+      "throughput/total tokens": 175741599744.0,
+      "train/CE loss": 2.114882707595825,
+      "_step": 223467
+    },
+    {
+      "throughput/total tokens": 175742386176.0,
+      "_step": 223468,
+      "train/CE loss": 2.060378074645996
+    },
+    {
+      "_step": 223469,
+      "train/CE loss": 2.140002965927124,
+      "throughput/total tokens": 175743172608.0
+    },
+    {
+      "train/CE loss": 2.0017614364624023,
+      "_step": 223470,
+      "throughput/total tokens": 175743959040.0
+    },
+    {
+      "train/CE loss": 1.9469451904296875,
+      "_step": 223471,
+      "throughput/total tokens": 175744745472.0
+    },
+    {
+      "throughput/total tokens": 175745531904.0,
+      "train/CE loss": 2.0153541564941406,
+      "_step": 223472
+    },
+    {
+      "throughput/total tokens": 175746318336.0,
+      "_step": 223473,
+      "train/CE loss": 2.0436670780181885
+    },
+    {
+      "_step": 223474,
+      "throughput/total tokens": 175747104768.0,
+      "train/CE loss": 1.998023509979248
+    },
+    {
+      "throughput/total tokens": 175747891200.0,
+      "train/CE loss": 1.9761180877685547,
+      "_step": 223475
+    },
+    {
+      "_step": 223476,
+      "throughput/total tokens": 175748677632.0,
+      "train/CE loss": 1.9903104305267334
+    },
+    {
+      "train/CE loss": 1.9756457805633545,
+      "throughput/total tokens": 175749464064.0,
+      "_step": 223477
+    },
+    {
+      "train/CE loss": 2.1054604053497314,
+      "throughput/total tokens": 175750250496.0,
+      "_step": 223478
+    },
+    {
+      "train/CE loss": 1.9718003273010254,
+      "_step": 223479,
+      "throughput/total tokens": 175751036928.0
+    },
+    {
+      "train/CE loss": 2.0706467628479004,
+      "_step": 223480,
+      "throughput/total tokens": 175751823360.0
+    },
+    {
+      "train/CE loss": 2.0949575901031494,
+      "throughput/total tokens": 175752609792.0,
+      "_step": 223481
+    },
+    {
+      "throughput/total tokens": 175753396224.0,
+      "_step": 223482,
+      "train/CE loss": 2.117581844329834
+    },
+    {
+      "throughput/total tokens": 175754182656.0,
+      "_step": 223483,
+      "train/CE loss": 1.9974024295806885
+    },
+    {
+      "throughput/total tokens": 175754969088.0,
+      "_step": 223484,
+      "train/CE loss": 2.0308709144592285
+    },
+    {
+      "train/CE loss": 2.038422107696533,
+      "throughput/total tokens": 175755755520.0,
+      "_step": 223485
+    },
+    {
+      "throughput/total tokens": 175756541952.0,
+      "_step": 223486,
+      "train/CE loss": 1.992995023727417
+    },
+    {
+      "_step": 223487,
+      "throughput/total tokens": 175757328384.0,
+      "train/CE loss": 2.058677911758423
+    },
+    {
+      "throughput/total tokens": 175758114816.0,
+      "_step": 223488,
+      "train/CE loss": 1.990924596786499
+    },
+    {
+      "throughput/total tokens": 175758901248.0,
+      "train/CE loss": 2.0443506240844727,
+      "_step": 223489
+    },
+    {
+      "train/CE loss": 1.994717001914978,
+      "_step": 223490,
+      "throughput/total tokens": 175759687680.0
+    },
+    {
+      "train/CE loss": 2.078399658203125,
+      "_step": 223491,
+      "throughput/total tokens": 175760474112.0
+    },
+    {
+      "throughput/total tokens": 175761260544.0,
+      "_step": 223492,
+      "train/CE loss": 2.049980878829956
+    },
+    {
+      "train/CE loss": 2.0160646438598633,
+      "throughput/total tokens": 175762046976.0,
+      "_step": 223493
+    },
+    {
+      "throughput/total tokens": 175762833408.0,
+      "_step": 223494,
+      "train/CE loss": 1.9729301929473877
+    },
+    {
+      "_step": 223495,
+      "throughput/total tokens": 175763619840.0,
+      "train/CE loss": 2.0909156799316406
+    },
+    {
+      "_step": 223496,
+      "train/CE loss": 1.9510084390640259,
+      "throughput/total tokens": 175764406272.0
+    },
+    {
+      "_step": 223497,
+      "train/CE loss": 1.9561617374420166,
+      "throughput/total tokens": 175765192704.0
+    },
+    {
+      "_step": 223498,
+      "train/CE loss": 2.0079681873321533,
+      "throughput/total tokens": 175765979136.0
+    },
+    {
+      "_step": 223499,
+      "train/CE loss": 1.9894546270370483,
+      "throughput/total tokens": 175766765568.0
+    },
+    {
+      "throughput/total tokens": 175767552000.0,
+      "train/CE loss": 1.977132797241211,
+      "_step": 223500
+    },
+    {
+      "throughput/total tokens": 175768338432.0,
+      "train/CE loss": 2.0232086181640625,
+      "_step": 223501
+    },
+    {
+      "train/CE loss": 2.023301839828491,
+      "_step": 223502,
+      "throughput/total tokens": 175769124864.0
+    },
+    {
+      "train/CE loss": 1.9336248636245728,
+      "throughput/total tokens": 175769911296.0,
+      "_step": 223503
+    },
+    {
+      "_step": 223504,
+      "throughput/total tokens": 175770697728.0,
+      "train/CE loss": 2.0145413875579834
+    },
+    {
+      "train/CE loss": 1.8818395137786865,
+      "throughput/total tokens": 175771484160.0,
+      "_step": 223505
+    },
+    {
+      "throughput/total tokens": 175772270592.0,
+      "_step": 223506,
+      "train/CE loss": 2.0387465953826904
+    },
+    {
+      "throughput/total tokens": 175773057024.0,
+      "train/CE loss": 1.9927115440368652,
+      "_step": 223507
+    },
+    {
+      "_step": 223508,
+      "throughput/total tokens": 175773843456.0,
+      "train/CE loss": 2.0074799060821533
+    },
+    {
+      "throughput/total tokens": 175774629888.0,
+      "_step": 223509,
+      "train/CE loss": 1.971086025238037
+    },
+    {
+      "train/CE loss": 2.0071685314178467,
+      "_step": 223510,
+      "throughput/total tokens": 175775416320.0
+    },
+    {
+      "throughput/total tokens": 175776202752.0,
+      "_step": 223511,
+      "train/CE loss": 1.9895505905151367
+    },
+    {
+      "throughput/total tokens": 175776989184.0,
+      "train/CE loss": 1.9915961027145386,
+      "_step": 223512
+    },
+    {
+      "train/CE loss": 1.9839321374893188,
+      "_step": 223513,
+      "throughput/total tokens": 175777775616.0
+    },
+    {
+      "train/CE loss": 2.0564680099487305,
+      "throughput/total tokens": 175778562048.0,
+      "_step": 223514
+    },
+    {
+      "train/CE loss": 1.9205632209777832,
+      "throughput/total tokens": 175779348480.0,
+      "_step": 223515
+    },
+    {
+      "_step": 223516,
+      "train/CE loss": 2.0217838287353516,
+      "throughput/total tokens": 175780134912.0
+    },
+    {
+      "train/CE loss": 2.031688690185547,
+      "throughput/total tokens": 175780921344.0,
+      "_step": 223517
+    },
+    {
+      "_step": 223518,
+      "train/CE loss": 2.0369718074798584,
+      "throughput/total tokens": 175781707776.0
+    },
+    {
+      "_step": 223519,
+      "throughput/total tokens": 175782494208.0,
+      "train/CE loss": 2.0286686420440674
+    },
+    {
+      "throughput/total tokens": 175783280640.0,
+      "_step": 223520,
+      "train/CE loss": 2.0155534744262695
+    },
+    {
+      "train/CE loss": 1.9652142524719238,
+      "_step": 223521,
+      "throughput/total tokens": 175784067072.0
+    },
+    {
+      "throughput/total tokens": 175784853504.0,
+      "train/CE loss": 1.9321117401123047,
+      "_step": 223522
+    },
+    {
+      "_step": 223523,
+      "throughput/total tokens": 175785639936.0,
+      "train/CE loss": 2.012561321258545
+    },
+    {
+      "throughput/total tokens": 175786426368.0,
+      "_step": 223524,
+      "train/CE loss": 2.0193560123443604
+    },
+    {
+      "throughput/total tokens": 175787212800.0,
+      "_step": 223525,
+      "train/CE loss": 1.9992595911026
+    },
+    {
+      "throughput/total tokens": 175787999232.0,
+      "_step": 223526,
+      "train/CE loss": 2.0837562084198
+    },
+    {
+      "_step": 223527,
+      "train/CE loss": 2.154587507247925,
+      "throughput/total tokens": 175788785664.0
+    },
+    {
+      "train/CE loss": 2.1038904190063477,
+      "_step": 223528,
+      "throughput/total tokens": 175789572096.0
+    },
+    {
+      "throughput/total tokens": 175790358528.0,
+      "_step": 223529,
+      "train/CE loss": 2.005373477935791
+    },
+    {
+      "throughput/total tokens": 175791144960.0,
+      "_step": 223530,
+      "train/CE loss": 1.9948773384094238
+    },
+    {
+      "_step": 223531,
+      "throughput/total tokens": 175791931392.0,
+      "train/CE loss": 1.9043296575546265
+    },
+    {
+      "throughput/total tokens": 175792717824.0,
+      "_step": 223532,
+      "train/CE loss": 1.941514253616333
+    },
+    {
+      "throughput/total tokens": 175793504256.0,
+      "_step": 223533,
+      "train/CE loss": 1.9877934455871582
+    },
+    {
+      "throughput/total tokens": 175794290688.0,
+      "train/CE loss": 2.118856906890869,
+      "_step": 223534
+    },
+    {
+      "train/CE loss": 1.9442899227142334,
+      "_step": 223535,
+      "throughput/total tokens": 175795077120.0
+    },
+    {
+      "train/CE loss": 2.0540480613708496,
+      "throughput/total tokens": 175795863552.0,
+      "_step": 223536
+    },
+    {
+      "_step": 223537,
+      "throughput/total tokens": 175796649984.0,
+      "train/CE loss": 1.9847652912139893
+    },
+    {
+      "_step": 223538,
+      "throughput/total tokens": 175797436416.0,
+      "train/CE loss": 2.008190393447876
+    },
+    {
+      "_step": 223539,
+      "throughput/total tokens": 175798222848.0,
+      "train/CE loss": 2.0127129554748535
+    },
+    {
+      "train/CE loss": 2.0284783840179443,
+      "throughput/total tokens": 175799009280.0,
+      "_step": 223540
+    },
+    {
+      "train/CE loss": 2.0952069759368896,
+      "_step": 223541,
+      "throughput/total tokens": 175799795712.0
+    },
+    {
+      "throughput/total tokens": 175800582144.0,
+      "_step": 223542,
+      "train/CE loss": 1.9742838144302368
+    },
+    {
+      "train/CE loss": 2.137669801712036,
+      "throughput/total tokens": 175801368576.0,
+      "_step": 223543
+    },
+    {
+      "_step": 223544,
+      "train/CE loss": 2.0635766983032227,
+      "throughput/total tokens": 175802155008.0
+    },
+    {
+      "_step": 223545,
+      "throughput/total tokens": 175802941440.0,
+      "train/CE loss": 2.0447170734405518
+    },
+    {
+      "train/CE loss": 1.9773203134536743,
+      "_step": 223546,
+      "throughput/total tokens": 175803727872.0
+    },
+    {
+      "train/CE loss": 2.0974843502044678,
+      "_step": 223547,
+      "throughput/total tokens": 175804514304.0
+    },
+    {
+      "_step": 223548,
+      "train/CE loss": 2.053069829940796,
+      "throughput/total tokens": 175805300736.0
+    },
+    {
+      "_step": 223549,
+      "train/CE loss": 2.0787603855133057,
+      "throughput/total tokens": 175806087168.0
+    },
+    {
+      "_step": 223550,
+      "train/CE loss": 2.0978479385375977,
+      "throughput/total tokens": 175806873600.0
+    },
+    {
+      "_step": 223551,
+      "train/CE loss": 1.9680896997451782,
+      "throughput/total tokens": 175807660032.0
+    },
+    {
+      "_step": 223552,
+      "train/CE loss": 2.0238571166992188,
+      "throughput/total tokens": 175808446464.0
+    },
+    {
+      "throughput/total tokens": 175809232896.0,
+      "train/CE loss": 2.0347061157226562,
+      "_step": 223553
+    },
+    {
+      "_step": 223554,
+      "train/CE loss": 1.959568977355957,
+      "throughput/total tokens": 175810019328.0
+    },
+    {
+      "_step": 223555,
+      "throughput/total tokens": 175810805760.0,
+      "train/CE loss": 1.99929940700531
+    },
+    {
+      "throughput/total tokens": 175811592192.0,
+      "train/CE loss": 2.0172300338745117,
+      "_step": 223556
+    },
+    {
+      "throughput/total tokens": 175812378624.0,
+      "train/CE loss": 1.9614571332931519,
+      "_step": 223557
+    },
+    {
+      "_step": 223558,
+      "throughput/total tokens": 175813165056.0,
+      "train/CE loss": 2.0732011795043945
+    },
+    {
+      "train/CE loss": 2.0636284351348877,
+      "_step": 223559,
+      "throughput/total tokens": 175813951488.0
+    },
+    {
+      "throughput/total tokens": 175814737920.0,
+      "_step": 223560,
+      "train/CE loss": 2.101370334625244
+    },
+    {
+      "train/CE loss": 2.038236141204834,
+      "_step": 223561,
+      "throughput/total tokens": 175815524352.0
+    },
+    {
+      "train/CE loss": 2.0453615188598633,
+      "_step": 223562,
+      "throughput/total tokens": 175816310784.0
+    },
+    {
+      "throughput/total tokens": 175817097216.0,
+      "_step": 223563,
+      "train/CE loss": 2.092527389526367
+    },
+    {
+      "train/CE loss": 2.0093913078308105,
+      "throughput/total tokens": 175817883648.0,
+      "_step": 223564
+    },
+    {
+      "train/CE loss": 2.0484745502471924,
+      "throughput/total tokens": 175818670080.0,
+      "_step": 223565
+    },
+    {
+      "train/CE loss": 1.9236900806427002,
+      "_step": 223566,
+      "throughput/total tokens": 175819456512.0
+    },
+    {
+      "train/CE loss": 1.9881712198257446,
+      "_step": 223567,
+      "throughput/total tokens": 175820242944.0
+    },
+    {
+      "throughput/total tokens": 175821029376.0,
+      "_step": 223568,
+      "train/CE loss": 2.015314817428589
+    },
+    {
+      "throughput/total tokens": 175821815808.0,
+      "train/CE loss": 1.9795490503311157,
+      "_step": 223569
+    },
+    {
+      "train/CE loss": 2.0075576305389404,
+      "_step": 223570,
+      "throughput/total tokens": 175822602240.0
+    },
+    {
+      "_step": 223571,
+      "throughput/total tokens": 175823388672.0,
+      "train/CE loss": 2.0703020095825195
+    },
+    {
+      "throughput/total tokens": 175824175104.0,
+      "_step": 223572,
+      "train/CE loss": 2.1609139442443848
+    },
+    {
+      "_step": 223573,
+      "throughput/total tokens": 175824961536.0,
+      "train/CE loss": 1.9804118871688843
+    },
+    {
+      "train/CE loss": 2.050259590148926,
+      "throughput/total tokens": 175825747968.0,
+      "_step": 223574
+    },
+    {
+      "throughput/total tokens": 175826534400.0,
+      "_step": 223575,
+      "train/CE loss": 2.0799427032470703
+    },
+    {
+      "train/CE loss": 2.0134220123291016,
+      "throughput/total tokens": 175827320832.0,
+      "_step": 223576
+    },
+    {
+      "throughput/total tokens": 175828107264.0,
+      "_step": 223577,
+      "train/CE loss": 1.9854657649993896
+    },
+    {
+      "train/CE loss": 1.9978277683258057,
+      "throughput/total tokens": 175828893696.0,
+      "_step": 223578
+    },
+    {
+      "train/CE loss": 1.963460087776184,
+      "_step": 223579,
+      "throughput/total tokens": 175829680128.0
+    },
+    {
+      "throughput/total tokens": 175830466560.0,
+      "_step": 223580,
+      "train/CE loss": 1.8436980247497559
+    },
+    {
+      "train/CE loss": 2.0821633338928223,
+      "throughput/total tokens": 175831252992.0,
+      "_step": 223581
+    },
+    {
+      "train/CE loss": 2.057509422302246,
+      "throughput/total tokens": 175832039424.0,
+      "_step": 223582
+    },
+    {
+      "train/CE loss": 2.048417091369629,
+      "throughput/total tokens": 175832825856.0,
+      "_step": 223583
+    },
+    {
+      "train/CE loss": 2.0554232597351074,
+      "_step": 223584,
+      "throughput/total tokens": 175833612288.0
+    },
+    {
+      "_step": 223585,
+      "train/CE loss": 1.9872658252716064,
+      "throughput/total tokens": 175834398720.0
+    },
+    {
+      "_step": 223586,
+      "throughput/total tokens": 175835185152.0,
+      "train/CE loss": 2.019235134124756
+    },
+    {
+      "throughput/total tokens": 175835971584.0,
+      "_step": 223587,
+      "train/CE loss": 2.0006909370422363
+    },
+    {
+      "_step": 223588,
+      "throughput/total tokens": 175836758016.0,
+      "train/CE loss": 2.006732225418091
+    },
+    {
+      "throughput/total tokens": 175837544448.0,
+      "_step": 223589,
+      "train/CE loss": 2.0183753967285156
+    },
+    {
+      "throughput/total tokens": 175838330880.0,
+      "_step": 223590,
+      "train/CE loss": 2.079982280731201
+    },
+    {
+      "throughput/total tokens": 175839117312.0,
+      "train/CE loss": 2.0142135620117188,
+      "_step": 223591
+    },
+    {
+      "_step": 223592,
+      "throughput/total tokens": 175839903744.0,
+      "train/CE loss": 1.9763175249099731
+    },
+    {
+      "throughput/total tokens": 175840690176.0,
+      "_step": 223593,
+      "train/CE loss": 1.9103962182998657
+    },
+    {
+      "throughput/total tokens": 175841476608.0,
+      "_step": 223594,
+      "train/CE loss": 2.0425405502319336
+    },
+    {
+      "throughput/total tokens": 175842263040.0,
+      "train/CE loss": 1.9550189971923828,
+      "_step": 223595
+    },
+    {
+      "train/CE loss": 1.9323481321334839,
+      "_step": 223596,
+      "throughput/total tokens": 175843049472.0
+    },
+    {
+      "throughput/total tokens": 175843835904.0,
+      "_step": 223597,
+      "train/CE loss": 2.120232105255127
+    },
+    {
+      "train/CE loss": 2.0414862632751465,
+      "throughput/total tokens": 175844622336.0,
+      "_step": 223598
+    },
+    {
+      "_step": 223599,
+      "throughput/total tokens": 175845408768.0,
+      "train/CE loss": 2.0525097846984863
+    },
+    {
+      "train/CE loss": 2.009965181350708,
+      "_step": 223600,
+      "throughput/total tokens": 175846195200.0
+    },
+    {
+      "_step": 223601,
+      "throughput/total tokens": 175846981632.0,
+      "train/CE loss": 2.0613722801208496
+    },
+    {
+      "_step": 223602,
+      "train/CE loss": 1.927964210510254,
+      "throughput/total tokens": 175847768064.0
+    },
+    {
+      "_step": 223603,
+      "train/CE loss": 2.0495500564575195,
+      "throughput/total tokens": 175848554496.0
+    },
+    {
+      "throughput/total tokens": 175849340928.0,
+      "train/CE loss": 1.9845085144042969,
+      "_step": 223604
+    },
+    {
+      "train/CE loss": 1.9853793382644653,
+      "throughput/total tokens": 175850127360.0,
+      "_step": 223605
+    },
+    {
+      "throughput/total tokens": 175850913792.0,
+      "_step": 223606,
+      "train/CE loss": 1.9908651113510132
+    },
+    {
+      "throughput/total tokens": 175851700224.0,
+      "train/CE loss": 1.971390962600708,
+      "_step": 223607
+    },
+    {
+      "train/CE loss": 2.0595390796661377,
+      "throughput/total tokens": 175852486656.0,
+      "_step": 223608
+    },
+    {
+      "_step": 223609,
+      "throughput/total tokens": 175853273088.0,
+      "train/CE loss": 2.0075666904449463
+    },
+    {
+      "train/CE loss": 2.1091530323028564,
+      "_step": 223610,
+      "throughput/total tokens": 175854059520.0
+    },
+    {
+      "throughput/total tokens": 175854845952.0,
+      "_step": 223611,
+      "train/CE loss": 1.924816370010376
+    },
+    {
+      "throughput/total tokens": 175855632384.0,
+      "train/CE loss": 2.085103988647461,
+      "_step": 223612
+    },
+    {
+      "throughput/total tokens": 175856418816.0,
+      "train/CE loss": 2.0194485187530518,
+      "_step": 223613
+    },
+    {
+      "throughput/total tokens": 175857205248.0,
+      "_step": 223614,
+      "train/CE loss": 2.0330748558044434
+    },
+    {
+      "train/CE loss": 2.0238466262817383,
+      "throughput/total tokens": 175857991680.0,
+      "_step": 223615
+    },
+    {
+      "train/CE loss": 2.131718635559082,
+      "_step": 223616,
+      "throughput/total tokens": 175858778112.0
+    },
+    {
+      "train/CE loss": 1.9794442653656006,
+      "throughput/total tokens": 175859564544.0,
+      "_step": 223617
+    },
+    {
+      "_step": 223618,
+      "train/CE loss": 2.064427137374878,
+      "throughput/total tokens": 175860350976.0
+    },
+    {
+      "train/CE loss": 1.9350759983062744,
+      "_step": 223619,
+      "throughput/total tokens": 175861137408.0
+    },
+    {
+      "_step": 223620,
+      "throughput/total tokens": 175861923840.0,
+      "train/CE loss": 1.9851444959640503
+    },
+    {
+      "throughput/total tokens": 175862710272.0,
+      "_step": 223621,
+      "train/CE loss": 1.9835491180419922
+    },
+    {
+      "train/CE loss": 2.058600902557373,
+      "_step": 223622,
+      "throughput/total tokens": 175863496704.0
+    },
+    {
+      "train/CE loss": 2.0795962810516357,
+      "throughput/total tokens": 175864283136.0,
+      "_step": 223623
+    },
+    {
+      "throughput/total tokens": 175865069568.0,
+      "_step": 223624,
+      "train/CE loss": 2.0502774715423584
+    },
+    {
+      "_step": 223625,
+      "throughput/total tokens": 175865856000.0,
+      "train/CE loss": 1.9621095657348633
+    },
+    {
+      "train/CE loss": 2.0224645137786865,
+      "throughput/total tokens": 175866642432.0,
+      "_step": 223626
+    },
+    {
+      "_step": 223627,
+      "train/CE loss": 2.095654010772705,
+      "throughput/total tokens": 175867428864.0
+    },
+    {
+      "throughput/total tokens": 175868215296.0,
+      "_step": 223628,
+      "train/CE loss": 2.05056095123291
+    },
+    {
+      "_step": 223629,
+      "throughput/total tokens": 175869001728.0,
+      "train/CE loss": 2.0018439292907715
+    },
+    {
+      "_step": 223630,
+      "train/CE loss": 1.9937000274658203,
+      "throughput/total tokens": 175869788160.0
+    },
+    {
+      "_step": 223631,
+      "throughput/total tokens": 175870574592.0,
+      "train/CE loss": 1.9730732440948486
+    },
+    {
+      "_step": 223632,
+      "train/CE loss": 2.0473222732543945,
+      "throughput/total tokens": 175871361024.0
+    },
+    {
+      "train/CE loss": 2.0820443630218506,
+      "throughput/total tokens": 175872147456.0,
+      "_step": 223633
+    },
+    {
+      "train/CE loss": 2.069955348968506,
+      "throughput/total tokens": 175872933888.0,
+      "_step": 223634
+    },
+    {
+      "train/CE loss": 1.975494623184204,
+      "throughput/total tokens": 175873720320.0,
+      "_step": 223635
+    },
+    {
+      "train/CE loss": 1.9867184162139893,
+      "throughput/total tokens": 175874506752.0,
+      "_step": 223636
+    },
+    {
+      "train/CE loss": 2.1002025604248047,
+      "throughput/total tokens": 175875293184.0,
+      "_step": 223637
+    },
+    {
+      "train/CE loss": 2.0029191970825195,
+      "throughput/total tokens": 175876079616.0,
+      "_step": 223638
+    },
+    {
+      "throughput/total tokens": 175876866048.0,
+      "_step": 223639,
+      "train/CE loss": 1.9374079704284668
+    },
+    {
+      "train/CE loss": 2.0615878105163574,
+      "throughput/total tokens": 175877652480.0,
+      "_step": 223640
+    },
+    {
+      "train/CE loss": 2.0019683837890625,
+      "_step": 223641,
+      "throughput/total tokens": 175878438912.0
+    },
+    {
+      "train/CE loss": 1.9877095222473145,
+      "_step": 223642,
+      "throughput/total tokens": 175879225344.0
+    },
+    {
+      "throughput/total tokens": 175880011776.0,
+      "_step": 223643,
+      "train/CE loss": 1.966522216796875
+    },
+    {
+      "throughput/total tokens": 175880798208.0,
+      "_step": 223644,
+      "train/CE loss": 1.9906501770019531
+    },
+    {
+      "train/CE loss": 1.8792710304260254,
+      "_step": 223645,
+      "throughput/total tokens": 175881584640.0
+    },
+    {
+      "train/CE loss": 2.0383572578430176,
+      "throughput/total tokens": 175882371072.0,
+      "_step": 223646
+    },
+    {
+      "throughput/total tokens": 175883157504.0,
+      "_step": 223647,
+      "train/CE loss": 2.0128142833709717
+    },
+    {
+      "train/CE loss": 2.1265151500701904,
+      "_step": 223648,
+      "throughput/total tokens": 175883943936.0
+    },
+    {
+      "train/CE loss": 2.0097923278808594,
+      "throughput/total tokens": 175884730368.0,
+      "_step": 223649
+    },
+    {
+      "throughput/total tokens": 175885516800.0,
+      "_step": 223650,
+      "train/CE loss": 1.9782688617706299
+    },
+    {
+      "throughput/total tokens": 175886303232.0,
+      "train/CE loss": 1.9755022525787354,
+      "_step": 223651
+    },
+    {
+      "throughput/total tokens": 175887089664.0,
+      "train/CE loss": 1.9986251592636108,
+      "_step": 223652
+    },
+    {
+      "_step": 223653,
+      "throughput/total tokens": 175887876096.0,
+      "train/CE loss": 2.1572818756103516
+    },
+    {
+      "train/CE loss": 1.9638183116912842,
+      "throughput/total tokens": 175888662528.0,
+      "_step": 223654
+    },
+    {
+      "train/CE loss": 2.050964832305908,
+      "_step": 223655,
+      "throughput/total tokens": 175889448960.0
+    },
+    {
+      "_step": 223656,
+      "throughput/total tokens": 175890235392.0,
+      "train/CE loss": 1.9782506227493286
+    },
+    {
+      "train/CE loss": 1.9836809635162354,
+      "throughput/total tokens": 175891021824.0,
+      "_step": 223657
+    },
+    {
+      "throughput/total tokens": 175891808256.0,
+      "train/CE loss": 1.9940847158432007,
+      "_step": 223658
+    },
+    {
+      "throughput/total tokens": 175892594688.0,
+      "_step": 223659,
+      "train/CE loss": 2.065610408782959
+    },
+    {
+      "train/CE loss": 1.8787633180618286,
+      "_step": 223660,
+      "throughput/total tokens": 175893381120.0
+    },
+    {
+      "_step": 223661,
+      "train/CE loss": 2.0672051906585693,
+      "throughput/total tokens": 175894167552.0
+    },
+    {
+      "_step": 223662,
+      "throughput/total tokens": 175894953984.0,
+      "train/CE loss": 2.094477415084839
+    },
+    {
+      "train/CE loss": 2.0925514698028564,
+      "throughput/total tokens": 175895740416.0,
+      "_step": 223663
+    },
+    {
+      "_step": 223664,
+      "train/CE loss": 2.040576457977295,
+      "throughput/total tokens": 175896526848.0
+    },
+    {
+      "train/CE loss": 2.0748796463012695,
+      "_step": 223665,
+      "throughput/total tokens": 175897313280.0
+    },
+    {
+      "throughput/total tokens": 175898099712.0,
+      "train/CE loss": 2.0138309001922607,
+      "_step": 223666
+    },
+    {
+      "throughput/total tokens": 175898886144.0,
+      "train/CE loss": 2.0875561237335205,
+      "_step": 223667
+    },
+    {
+      "train/CE loss": 2.025791645050049,
+      "_step": 223668,
+      "throughput/total tokens": 175899672576.0
+    },
+    {
+      "_step": 223669,
+      "train/CE loss": 1.9592278003692627,
+      "throughput/total tokens": 175900459008.0
+    },
+    {
+      "_step": 223670,
+      "train/CE loss": 2.0772080421447754,
+      "throughput/total tokens": 175901245440.0
+    },
+    {
+      "train/CE loss": 1.9440736770629883,
+      "_step": 223671,
+      "throughput/total tokens": 175902031872.0
+    },
+    {
+      "throughput/total tokens": 175902818304.0,
+      "train/CE loss": 1.9826858043670654,
+      "_step": 223672
+    },
+    {
+      "_step": 223673,
+      "throughput/total tokens": 175903604736.0,
+      "train/CE loss": 1.9978793859481812
+    },
+    {
+      "throughput/total tokens": 175904391168.0,
+      "train/CE loss": 2.0613009929656982,
+      "_step": 223674
+    },
+    {
+      "train/CE loss": 1.9926940202713013,
+      "throughput/total tokens": 175905177600.0,
+      "_step": 223675
+    },
+    {
+      "throughput/total tokens": 175905964032.0,
+      "_step": 223676,
+      "train/CE loss": 2.1044769287109375
+    },
+    {
+      "throughput/total tokens": 175906750464.0,
+      "_step": 223677,
+      "train/CE loss": 2.0194339752197266
+    },
+    {
+      "train/CE loss": 1.9946017265319824,
+      "_step": 223678,
+      "throughput/total tokens": 175907536896.0
+    },
+    {
+      "_step": 223679,
+      "train/CE loss": 1.9700555801391602,
+      "throughput/total tokens": 175908323328.0
+    },
+    {
+      "train/CE loss": 2.0716867446899414,
+      "throughput/total tokens": 175909109760.0,
+      "_step": 223680
+    },
+    {
+      "_step": 223681,
+      "train/CE loss": 1.9589977264404297,
+      "throughput/total tokens": 175909896192.0
+    },
+    {
+      "train/CE loss": 1.9666025638580322,
+      "_step": 223682,
+      "throughput/total tokens": 175910682624.0
+    },
+    {
+      "throughput/total tokens": 175911469056.0,
+      "train/CE loss": 2.0448479652404785,
+      "_step": 223683
+    },
+    {
+      "throughput/total tokens": 175912255488.0,
+      "train/CE loss": 2.081066131591797,
+      "_step": 223684
+    },
+    {
+      "throughput/total tokens": 175913041920.0,
+      "_step": 223685,
+      "train/CE loss": 1.9020485877990723
+    },
+    {
+      "train/CE loss": 1.9345552921295166,
+      "_step": 223686,
+      "throughput/total tokens": 175913828352.0
+    },
+    {
+      "train/CE loss": 2.0173802375793457,
+      "throughput/total tokens": 175914614784.0,
+      "_step": 223687
+    },
+    {
+      "throughput/total tokens": 175915401216.0,
+      "train/CE loss": 2.0562057495117188,
+      "_step": 223688
+    },
+    {
+      "throughput/total tokens": 175916187648.0,
+      "_step": 223689,
+      "train/CE loss": 2.078420639038086
+    },
+    {
+      "train/CE loss": 2.0683717727661133,
+      "_step": 223690,
+      "throughput/total tokens": 175916974080.0
+    },
+    {
+      "train/CE loss": 1.8822669982910156,
+      "_step": 223691,
+      "throughput/total tokens": 175917760512.0
+    },
+    {
+      "throughput/total tokens": 175918546944.0,
+      "train/CE loss": 2.0395617485046387,
+      "_step": 223692
+    },
+    {
+      "throughput/total tokens": 175919333376.0,
+      "_step": 223693,
+      "train/CE loss": 2.097214698791504
+    },
+    {
+      "train/CE loss": 2.042041778564453,
+      "throughput/total tokens": 175920119808.0,
+      "_step": 223694
+    },
+    {
+      "throughput/total tokens": 175920906240.0,
+      "_step": 223695,
+      "train/CE loss": 1.9773457050323486
+    },
+    {
+      "train/CE loss": 2.00848388671875,
+      "throughput/total tokens": 175921692672.0,
+      "_step": 223696
+    },
+    {
+      "throughput/total tokens": 175922479104.0,
+      "train/CE loss": 2.03538179397583,
+      "_step": 223697
+    },
+    {
+      "train/CE loss": 2.1439216136932373,
+      "_step": 223698,
+      "throughput/total tokens": 175923265536.0
+    },
+    {
+      "_step": 223699,
+      "throughput/total tokens": 175924051968.0,
+      "train/CE loss": 1.9975595474243164
+    },
+    {
+      "throughput/total tokens": 175924838400.0,
+      "train/CE loss": 2.100712537765503,
+      "_step": 223700
+    },
+    {
+      "throughput/total tokens": 175925624832.0,
+      "_step": 223701,
+      "train/CE loss": 2.0284125804901123
+    },
+    {
+      "train/CE loss": 1.9574699401855469,
+      "throughput/total tokens": 175926411264.0,
+      "_step": 223702
+    },
+    {
+      "_step": 223703,
+      "train/CE loss": 1.9637885093688965,
+      "throughput/total tokens": 175927197696.0
+    },
+    {
+      "throughput/total tokens": 175927984128.0,
+      "train/CE loss": 1.9603577852249146,
+      "_step": 223704
+    },
+    {
+      "_step": 223705,
+      "throughput/total tokens": 175928770560.0,
+      "train/CE loss": 1.97063148021698
+    },
+    {
+      "train/CE loss": 2.112234115600586,
+      "throughput/total tokens": 175929556992.0,
+      "_step": 223706
+    },
+    {
+      "train/CE loss": 2.0751266479492188,
+      "throughput/total tokens": 175930343424.0,
+      "_step": 223707
+    },
+    {
+      "train/CE loss": 1.9475359916687012,
+      "throughput/total tokens": 175931129856.0,
+      "_step": 223708
+    },
+    {
+      "train/CE loss": 1.9735532999038696,
+      "throughput/total tokens": 175931916288.0,
+      "_step": 223709
+    },
+    {
+      "_step": 223710,
+      "throughput/total tokens": 175932702720.0,
+      "train/CE loss": 1.9351686239242554
+    },
+    {
+      "throughput/total tokens": 175933489152.0,
+      "train/CE loss": 2.091709613800049,
+      "_step": 223711
+    },
+    {
+      "train/CE loss": 2.0853207111358643,
+      "throughput/total tokens": 175934275584.0,
+      "_step": 223712
+    },
+    {
+      "_step": 223713,
+      "throughput/total tokens": 175935062016.0,
+      "train/CE loss": 2.0357420444488525
+    },
+    {
+      "throughput/total tokens": 175935848448.0,
+      "train/CE loss": 2.1436209678649902,
+      "_step": 223714
+    },
+    {
+      "_step": 223715,
+      "throughput/total tokens": 175936634880.0,
+      "train/CE loss": 1.9017219543457031
+    },
+    {
+      "_step": 223716,
+      "throughput/total tokens": 175937421312.0,
+      "train/CE loss": 1.9624203443527222
+    },
+    {
+      "_step": 223717,
+      "train/CE loss": 2.115906238555908,
+      "throughput/total tokens": 175938207744.0
+    },
+    {
+      "_step": 223718,
+      "throughput/total tokens": 175938994176.0,
+      "train/CE loss": 2.051502227783203
+    },
+    {
+      "throughput/total tokens": 175939780608.0,
+      "train/CE loss": 2.074396848678589,
+      "_step": 223719
+    },
+    {
+      "train/CE loss": 2.036705493927002,
+      "_step": 223720,
+      "throughput/total tokens": 175940567040.0
+    },
+    {
+      "train/CE loss": 1.9212723970413208,
+      "_step": 223721,
+      "throughput/total tokens": 175941353472.0
+    },
+    {
+      "throughput/total tokens": 175942139904.0,
+      "train/CE loss": 2.0871193408966064,
+      "_step": 223722
+    },
+    {
+      "train/CE loss": 1.9807536602020264,
+      "_step": 223723,
+      "throughput/total tokens": 175942926336.0
+    },
+    {
+      "_step": 223724,
+      "throughput/total tokens": 175943712768.0,
+      "train/CE loss": 2.0224757194519043
+    },
+    {
+      "train/CE loss": 2.0940980911254883,
+      "_step": 223725,
+      "throughput/total tokens": 175944499200.0
+    },
+    {
+      "_step": 223726,
+      "train/CE loss": 2.131493091583252,
+      "throughput/total tokens": 175945285632.0
+    },
+    {
+      "_step": 223727,
+      "throughput/total tokens": 175946072064.0,
+      "train/CE loss": 2.05167555809021
+    },
+    {
+      "throughput/total tokens": 175946858496.0,
+      "train/CE loss": 2.0417354106903076,
+      "_step": 223728
+    },
+    {
+      "_step": 223729,
+      "train/CE loss": 2.0487399101257324,
+      "throughput/total tokens": 175947644928.0
+    },
+    {
+      "_step": 223730,
+      "throughput/total tokens": 175948431360.0,
+      "train/CE loss": 2.136399984359741
+    },
+    {
+      "throughput/total tokens": 175949217792.0,
+      "_step": 223731,
+      "train/CE loss": 1.8696911334991455
+    },
+    {
+      "train/CE loss": 2.0858049392700195,
+      "throughput/total tokens": 175950004224.0,
+      "_step": 223732
+    },
+    {
+      "_step": 223733,
+      "train/CE loss": 2.0416300296783447,
+      "throughput/total tokens": 175950790656.0
+    },
+    {
+      "train/CE loss": 2.0828990936279297,
+      "throughput/total tokens": 175951577088.0,
+      "_step": 223734
+    },
+    {
+      "train/CE loss": 2.1006925106048584,
+      "_step": 223735,
+      "throughput/total tokens": 175952363520.0
+    },
+    {
+      "_step": 223736,
+      "throughput/total tokens": 175953149952.0,
+      "train/CE loss": 2.0208959579467773
+    },
+    {
+      "throughput/total tokens": 175953936384.0,
+      "train/CE loss": 2.014759063720703,
+      "_step": 223737
+    },
+    {
+      "_step": 223738,
+      "throughput/total tokens": 175954722816.0,
+      "train/CE loss": 2.050128936767578
+    },
+    {
+      "train/CE loss": 2.0372352600097656,
+      "throughput/total tokens": 175955509248.0,
+      "_step": 223739
+    },
+    {
+      "_step": 223740,
+      "train/CE loss": 2.048356533050537,
+      "throughput/total tokens": 175956295680.0
+    },
+    {
+      "train/CE loss": 2.0370194911956787,
+      "throughput/total tokens": 175957082112.0,
+      "_step": 223741
+    },
+    {
+      "_step": 223742,
+      "throughput/total tokens": 175957868544.0,
+      "train/CE loss": 1.9283970594406128
+    },
+    {
+      "_step": 223743,
+      "throughput/total tokens": 175958654976.0,
+      "train/CE loss": 2.011992931365967
+    },
+    {
+      "_step": 223744,
+      "train/CE loss": 2.0337512493133545,
+      "throughput/total tokens": 175959441408.0
+    },
+    {
+      "train/CE loss": 1.8554943799972534,
+      "_step": 223745,
+      "throughput/total tokens": 175960227840.0
+    },
+    {
+      "_step": 223746,
+      "train/CE loss": 2.0172717571258545,
+      "throughput/total tokens": 175961014272.0
+    },
+    {
+      "throughput/total tokens": 175961800704.0,
+      "_step": 223747,
+      "train/CE loss": 2.008561849594116
+    },
+    {
+      "throughput/total tokens": 175962587136.0,
+      "_step": 223748,
+      "train/CE loss": 2.04295015335083
+    },
+    {
+      "throughput/total tokens": 175963373568.0,
+      "train/CE loss": 1.9841241836547852,
+      "_step": 223749
+    },
+    {
+      "throughput/total tokens": 175964160000.0,
+      "train/CE loss": 2.042665958404541,
+      "_step": 223750
+    },
+    {
+      "throughput/total tokens": 175964946432.0,
+      "_step": 223751,
+      "train/CE loss": 1.9294127225875854
+    },
+    {
+      "_step": 223752,
+      "throughput/total tokens": 175965732864.0,
+      "train/CE loss": 2.0268149375915527
+    },
+    {
+      "throughput/total tokens": 175966519296.0,
+      "train/CE loss": 2.0461385250091553,
+      "_step": 223753
+    },
+    {
+      "_step": 223754,
+      "train/CE loss": 1.9172099828720093,
+      "throughput/total tokens": 175967305728.0
+    },
+    {
+      "throughput/total tokens": 175968092160.0,
+      "train/CE loss": 2.1369547843933105,
+      "_step": 223755
+    },
+    {
+      "train/CE loss": 2.0657577514648438,
+      "throughput/total tokens": 175968878592.0,
+      "_step": 223756
+    },
+    {
+      "throughput/total tokens": 175969665024.0,
+      "train/CE loss": 1.9899600744247437,
+      "_step": 223757
+    },
+    {
+      "_step": 223758,
+      "throughput/total tokens": 175970451456.0,
+      "train/CE loss": 1.921604871749878
+    },
+    {
+      "throughput/total tokens": 175971237888.0,
+      "train/CE loss": 2.080514669418335,
+      "_step": 223759
+    },
+    {
+      "_step": 223760,
+      "throughput/total tokens": 175972024320.0,
+      "train/CE loss": 2.0712270736694336
+    },
+    {
+      "train/CE loss": 1.9515122175216675,
+      "_step": 223761,
+      "throughput/total tokens": 175972810752.0
+    },
+    {
+      "throughput/total tokens": 175973597184.0,
+      "_step": 223762,
+      "train/CE loss": 2.0149197578430176
+    },
+    {
+      "train/CE loss": 2.0244598388671875,
+      "_step": 223763,
+      "throughput/total tokens": 175974383616.0
+    },
+    {
+      "throughput/total tokens": 175975170048.0,
+      "_step": 223764,
+      "train/CE loss": 2.0023956298828125
+    },
+    {
+      "train/CE loss": 2.1082279682159424,
+      "throughput/total tokens": 175975956480.0,
+      "_step": 223765
+    },
+    {
+      "_step": 223766,
+      "train/CE loss": 1.9460558891296387,
+      "throughput/total tokens": 175976742912.0
+    },
+    {
+      "throughput/total tokens": 175977529344.0,
+      "train/CE loss": 2.013232707977295,
+      "_step": 223767
+    },
+    {
+      "throughput/total tokens": 175978315776.0,
+      "_step": 223768,
+      "train/CE loss": 2.065915107727051
+    },
+    {
+      "throughput/total tokens": 175979102208.0,
+      "_step": 223769,
+      "train/CE loss": 1.956308364868164
+    },
+    {
+      "train/CE loss": 2.05365252494812,
+      "_step": 223770,
+      "throughput/total tokens": 175979888640.0
+    },
+    {
+      "train/CE loss": 2.067087173461914,
+      "_step": 223771,
+      "throughput/total tokens": 175980675072.0
+    },
+    {
+      "_step": 223772,
+      "throughput/total tokens": 175981461504.0,
+      "train/CE loss": 2.0012640953063965
+    },
+    {
+      "train/CE loss": 2.058300733566284,
+      "throughput/total tokens": 175982247936.0,
+      "_step": 223773
+    },
+    {
+      "_step": 223774,
+      "train/CE loss": 1.9529836177825928,
+      "throughput/total tokens": 175983034368.0
+    },
+    {
+      "throughput/total tokens": 175983820800.0,
+      "train/CE loss": 2.0507736206054688,
+      "_step": 223775
+    },
+    {
+      "train/CE loss": 1.9300779104232788,
+      "_step": 223776,
+      "throughput/total tokens": 175984607232.0
+    },
+    {
+      "_step": 223777,
+      "throughput/total tokens": 175985393664.0,
+      "train/CE loss": 1.940035104751587
+    },
+    {
+      "throughput/total tokens": 175986180096.0,
+      "_step": 223778,
+      "train/CE loss": 2.001087188720703
+    },
+    {
+      "_step": 223779,
+      "train/CE loss": 2.0440659523010254,
+      "throughput/total tokens": 175986966528.0
+    },
+    {
+      "_step": 223780,
+      "throughput/total tokens": 175987752960.0,
+      "train/CE loss": 1.9591691493988037
+    },
+    {
+      "_step": 223781,
+      "throughput/total tokens": 175988539392.0,
+      "train/CE loss": 2.105936288833618
+    },
+    {
+      "throughput/total tokens": 175989325824.0,
+      "_step": 223782,
+      "train/CE loss": 2.078922748565674
+    },
+    {
+      "_step": 223783,
+      "throughput/total tokens": 175990112256.0,
+      "train/CE loss": 1.99787175655365
+    },
+    {
+      "train/CE loss": 2.014409303665161,
+      "throughput/total tokens": 175990898688.0,
+      "_step": 223784
+    },
+    {
+      "train/CE loss": 2.0166501998901367,
+      "_step": 223785,
+      "throughput/total tokens": 175991685120.0
+    },
+    {
+      "_step": 223786,
+      "throughput/total tokens": 175992471552.0,
+      "train/CE loss": 2.0465800762176514
+    },
+    {
+      "throughput/total tokens": 175993257984.0,
+      "train/CE loss": 2.0942485332489014,
+      "_step": 223787
+    },
+    {
+      "throughput/total tokens": 175994044416.0,
+      "_step": 223788,
+      "train/CE loss": 1.9648077487945557
+    },
+    {
+      "throughput/total tokens": 175994830848.0,
+      "train/CE loss": 2.0261220932006836,
+      "_step": 223789
+    },
+    {
+      "_step": 223790,
+      "train/CE loss": 2.0368270874023438,
+      "throughput/total tokens": 175995617280.0
+    },
+    {
+      "train/CE loss": 2.0672574043273926,
+      "_step": 223791,
+      "throughput/total tokens": 175996403712.0
+    },
+    {
+      "throughput/total tokens": 175997190144.0,
+      "_step": 223792,
+      "train/CE loss": 2.004776954650879
+    },
+    {
+      "_step": 223793,
+      "train/CE loss": 1.7735414505004883,
+      "throughput/total tokens": 175997976576.0
+    },
+    {
+      "_step": 223794,
+      "throughput/total tokens": 175998763008.0,
+      "train/CE loss": 2.0079193115234375
+    },
+    {
+      "throughput/total tokens": 175999549440.0,
+      "train/CE loss": 1.9684200286865234,
+      "_step": 223795
+    },
+    {
+      "train/CE loss": 2.0213842391967773,
+      "throughput/total tokens": 176000335872.0,
+      "_step": 223796
+    },
+    {
+      "_step": 223797,
+      "train/CE loss": 1.969266414642334,
+      "throughput/total tokens": 176001122304.0
+    },
+    {
+      "_step": 223798,
+      "throughput/total tokens": 176001908736.0,
+      "train/CE loss": 2.111196756362915
+    },
+    {
+      "_step": 223799,
+      "throughput/total tokens": 176002695168.0,
+      "train/CE loss": 2.0354013442993164
+    },
+    {
+      "_step": 223800,
+      "train/CE loss": 2.0139002799987793,
+      "throughput/total tokens": 176003481600.0
+    },
+    {
+      "_step": 223801,
+      "throughput/total tokens": 176004268032.0,
+      "train/CE loss": 2.049381732940674
+    },
+    {
+      "train/CE loss": 1.9805350303649902,
+      "_step": 223802,
+      "throughput/total tokens": 176005054464.0
+    },
+    {
+      "throughput/total tokens": 176005840896.0,
+      "train/CE loss": 2.0281829833984375,
+      "_step": 223803
+    },
+    {
+      "throughput/total tokens": 176006627328.0,
+      "train/CE loss": 1.994114637374878,
+      "_step": 223804
+    },
+    {
+      "train/CE loss": 1.9618003368377686,
+      "_step": 223805,
+      "throughput/total tokens": 176007413760.0
+    },
+    {
+      "throughput/total tokens": 176008200192.0,
+      "_step": 223806,
+      "train/CE loss": 1.9382116794586182
+    },
+    {
+      "throughput/total tokens": 176008986624.0,
+      "train/CE loss": 2.0657620429992676,
+      "_step": 223807
+    },
+    {
+      "throughput/total tokens": 176009773056.0,
+      "_step": 223808,
+      "train/CE loss": 2.1137232780456543
+    },
+    {
+      "throughput/total tokens": 176010559488.0,
+      "train/CE loss": 1.9045500755310059,
+      "_step": 223809
+    },
+    {
+      "train/CE loss": 1.9589669704437256,
+      "throughput/total tokens": 176011345920.0,
+      "_step": 223810
+    },
+    {
+      "_step": 223811,
+      "train/CE loss": 2.061065196990967,
+      "throughput/total tokens": 176012132352.0
+    },
+    {
+      "train/CE loss": 2.110553741455078,
+      "throughput/total tokens": 176012918784.0,
+      "_step": 223812
+    },
+    {
+      "throughput/total tokens": 176013705216.0,
+      "_step": 223813,
+      "train/CE loss": 1.9617559909820557
+    },
+    {
+      "_step": 223814,
+      "throughput/total tokens": 176014491648.0,
+      "train/CE loss": 2.0655720233917236
+    },
+    {
+      "throughput/total tokens": 176015278080.0,
+      "train/CE loss": 2.050654649734497,
+      "_step": 223815
+    },
+    {
+      "_step": 223816,
+      "throughput/total tokens": 176016064512.0,
+      "train/CE loss": 1.985737681388855
+    },
+    {
+      "throughput/total tokens": 176016850944.0,
+      "train/CE loss": 2.0152862071990967,
+      "_step": 223817
+    },
+    {
+      "_step": 223818,
+      "train/CE loss": 2.0785553455352783,
+      "throughput/total tokens": 176017637376.0
+    },
+    {
+      "_step": 223819,
+      "train/CE loss": 2.0515854358673096,
+      "throughput/total tokens": 176018423808.0
+    },
+    {
+      "throughput/total tokens": 176019210240.0,
+      "_step": 223820,
+      "train/CE loss": 2.0281848907470703
+    },
+    {
+      "train/CE loss": 2.013911485671997,
+      "_step": 223821,
+      "throughput/total tokens": 176019996672.0
+    },
+    {
+      "_step": 223822,
+      "throughput/total tokens": 176020783104.0,
+      "train/CE loss": 2.0611491203308105
+    },
+    {
+      "train/CE loss": 2.0715322494506836,
+      "throughput/total tokens": 176021569536.0,
+      "_step": 223823
+    },
+    {
+      "_step": 223824,
+      "throughput/total tokens": 176022355968.0,
+      "train/CE loss": 2.0817818641662598
+    },
+    {
+      "throughput/total tokens": 176023142400.0,
+      "_step": 223825,
+      "train/CE loss": 2.055271863937378
+    },
+    {
+      "train/CE loss": 2.020759344100952,
+      "throughput/total tokens": 176023928832.0,
+      "_step": 223826
+    },
+    {
+      "train/CE loss": 1.9886395931243896,
+      "_step": 223827,
+      "throughput/total tokens": 176024715264.0
+    },
+    {
+      "throughput/total tokens": 176025501696.0,
+      "train/CE loss": 2.1131434440612793,
+      "_step": 223828
+    },
+    {
+      "throughput/total tokens": 176026288128.0,
+      "train/CE loss": 2.131927013397217,
+      "_step": 223829
+    },
+    {
+      "train/CE loss": 2.1562116146087646,
+      "throughput/total tokens": 176027074560.0,
+      "_step": 223830
+    },
+    {
+      "train/CE loss": 1.9894170761108398,
+      "throughput/total tokens": 176027860992.0,
+      "_step": 223831
+    },
+    {
+      "throughput/total tokens": 176028647424.0,
+      "_step": 223832,
+      "train/CE loss": 2.0246500968933105
+    },
+    {
+      "train/CE loss": 1.992775559425354,
+      "throughput/total tokens": 176029433856.0,
+      "_step": 223833
+    },
+    {
+      "throughput/total tokens": 176030220288.0,
+      "_step": 223834,
+      "train/CE loss": 2.027289628982544
+    },
+    {
+      "throughput/total tokens": 176031006720.0,
+      "train/CE loss": 2.1512694358825684,
+      "_step": 223835
+    },
+    {
+      "_step": 223836,
+      "train/CE loss": 1.9413198232650757,
+      "throughput/total tokens": 176031793152.0
+    },
+    {
+      "_step": 223837,
+      "throughput/total tokens": 176032579584.0,
+      "train/CE loss": 2.013672113418579
+    },
+    {
+      "_step": 223838,
+      "train/CE loss": 2.0809311866760254,
+      "throughput/total tokens": 176033366016.0
+    },
+    {
+      "throughput/total tokens": 176034152448.0,
+      "train/CE loss": 1.9717026948928833,
+      "_step": 223839
+    },
+    {
+      "throughput/total tokens": 176034938880.0,
+      "_step": 223840,
+      "train/CE loss": 2.025179147720337
+    },
+    {
+      "train/CE loss": 1.9966785907745361,
+      "_step": 223841,
+      "throughput/total tokens": 176035725312.0
+    },
+    {
+      "_step": 223842,
+      "throughput/total tokens": 176036511744.0,
+      "train/CE loss": 2.1186604499816895
+    },
+    {
+      "_step": 223843,
+      "train/CE loss": 1.967583417892456,
+      "throughput/total tokens": 176037298176.0
+    },
+    {
+      "_step": 223844,
+      "train/CE loss": 1.9979573488235474,
+      "throughput/total tokens": 176038084608.0
+    },
+    {
+      "throughput/total tokens": 176038871040.0,
+      "train/CE loss": 1.996617317199707,
+      "_step": 223845
+    },
+    {
+      "train/CE loss": 2.0151329040527344,
+      "throughput/total tokens": 176039657472.0,
+      "_step": 223846
+    },
+    {
+      "train/CE loss": 2.0515246391296387,
+      "_step": 223847,
+      "throughput/total tokens": 176040443904.0
+    },
+    {
+      "throughput/total tokens": 176041230336.0,
+      "train/CE loss": 2.058452606201172,
+      "_step": 223848
+    },
+    {
+      "_step": 223849,
+      "throughput/total tokens": 176042016768.0,
+      "train/CE loss": 2.0203263759613037
+    },
+    {
+      "train/CE loss": 2.050916910171509,
+      "throughput/total tokens": 176042803200.0,
+      "_step": 223850
+    },
+    {
+      "throughput/total tokens": 176043589632.0,
+      "train/CE loss": 1.9352760314941406,
+      "_step": 223851
+    },
+    {
+      "_step": 223852,
+      "throughput/total tokens": 176044376064.0,
+      "train/CE loss": 2.0672309398651123
+    },
+    {
+      "_step": 223853,
+      "throughput/total tokens": 176045162496.0,
+      "train/CE loss": 2.0913987159729004
+    },
+    {
+      "throughput/total tokens": 176045948928.0,
+      "train/CE loss": 2.060072183609009,
+      "_step": 223854
+    },
+    {
+      "throughput/total tokens": 176046735360.0,
+      "train/CE loss": 2.0122313499450684,
+      "_step": 223855
+    },
+    {
+      "_step": 223856,
+      "throughput/total tokens": 176047521792.0,
+      "train/CE loss": 2.0314483642578125
+    },
+    {
+      "train/CE loss": 2.074965000152588,
+      "throughput/total tokens": 176048308224.0,
+      "_step": 223857
+    },
+    {
+      "train/CE loss": 2.004189968109131,
+      "throughput/total tokens": 176049094656.0,
+      "_step": 223858
+    },
+    {
+      "_step": 223859,
+      "train/CE loss": 2.1570472717285156,
+      "throughput/total tokens": 176049881088.0
+    },
+    {
+      "throughput/total tokens": 176050667520.0,
+      "_step": 223860,
+      "train/CE loss": 1.9641389846801758
+    },
+    {
+      "throughput/total tokens": 176051453952.0,
+      "train/CE loss": 2.0268635749816895,
+      "_step": 223861
+    },
+    {
+      "throughput/total tokens": 176052240384.0,
+      "_step": 223862,
+      "train/CE loss": 2.063236713409424
+    },
+    {
+      "train/CE loss": 1.994778037071228,
+      "throughput/total tokens": 176053026816.0,
+      "_step": 223863
+    },
+    {
+      "train/CE loss": 1.9923772811889648,
+      "throughput/total tokens": 176053813248.0,
+      "_step": 223864
+    },
+    {
+      "throughput/total tokens": 176054599680.0,
+      "train/CE loss": 2.0546977519989014,
+      "_step": 223865
+    },
+    {
+      "_step": 223866,
+      "train/CE loss": 2.0450196266174316,
+      "throughput/total tokens": 176055386112.0
+    },
+    {
+      "_step": 223867,
+      "train/CE loss": 1.8991103172302246,
+      "throughput/total tokens": 176056172544.0
+    },
+    {
+      "throughput/total tokens": 176056958976.0,
+      "_step": 223868,
+      "train/CE loss": 1.9178919792175293
+    },
+    {
+      "throughput/total tokens": 176057745408.0,
+      "_step": 223869,
+      "train/CE loss": 1.9667572975158691
+    },
+    {
+      "train/CE loss": 2.033360481262207,
+      "throughput/total tokens": 176058531840.0,
+      "_step": 223870
+    },
+    {
+      "_step": 223871,
+      "throughput/total tokens": 176059318272.0,
+      "train/CE loss": 2.0011096000671387
+    },
+    {
+      "throughput/total tokens": 176060104704.0,
+      "train/CE loss": 2.105562210083008,
+      "_step": 223872
+    },
+    {
+      "train/CE loss": 2.060938835144043,
+      "_step": 223873,
+      "throughput/total tokens": 176060891136.0
+    },
+    {
+      "train/CE loss": 2.0567755699157715,
+      "_step": 223874,
+      "throughput/total tokens": 176061677568.0
+    },
+    {
+      "_step": 223875,
+      "throughput/total tokens": 176062464000.0,
+      "train/CE loss": 1.9367676973342896
+    },
+    {
+      "throughput/total tokens": 176063250432.0,
+      "_step": 223876,
+      "train/CE loss": 1.9475585222244263
+    },
+    {
+      "throughput/total tokens": 176064036864.0,
+      "train/CE loss": 1.9816064834594727,
+      "_step": 223877
+    },
+    {
+      "throughput/total tokens": 176064823296.0,
+      "train/CE loss": 1.9153499603271484,
+      "_step": 223878
+    },
+    {
+      "_step": 223879,
+      "throughput/total tokens": 176065609728.0,
+      "train/CE loss": 1.9407750368118286
+    },
+    {
+      "train/CE loss": 2.0143048763275146,
+      "throughput/total tokens": 176066396160.0,
+      "_step": 223880
+    },
+    {
+      "throughput/total tokens": 176067182592.0,
+      "_step": 223881,
+      "train/CE loss": 2.015737533569336
+    },
+    {
+      "throughput/total tokens": 176067969024.0,
+      "train/CE loss": 2.0535969734191895,
+      "_step": 223882
+    },
+    {
+      "throughput/total tokens": 176068755456.0,
+      "_step": 223883,
+      "train/CE loss": 2.0072360038757324
+    },
+    {
+      "_step": 223884,
+      "train/CE loss": 1.9600589275360107,
+      "throughput/total tokens": 176069541888.0
+    },
+    {
+      "_step": 223885,
+      "train/CE loss": 2.0837411880493164,
+      "throughput/total tokens": 176070328320.0
+    },
+    {
+      "train/CE loss": 1.9660351276397705,
+      "throughput/total tokens": 176071114752.0,
+      "_step": 223886
+    },
+    {
+      "_step": 223887,
+      "throughput/total tokens": 176071901184.0,
+      "train/CE loss": 2.002916097640991
+    },
+    {
+      "throughput/total tokens": 176072687616.0,
+      "_step": 223888,
+      "train/CE loss": 2.000326633453369
+    },
+    {
+      "_step": 223889,
+      "train/CE loss": 1.9376168251037598,
+      "throughput/total tokens": 176073474048.0
+    },
+    {
+      "throughput/total tokens": 176074260480.0,
+      "train/CE loss": 1.8899502754211426,
+      "_step": 223890
+    },
+    {
+      "_step": 223891,
+      "throughput/total tokens": 176075046912.0,
+      "train/CE loss": 2.1047847270965576
+    },
+    {
+      "train/CE loss": 2.0773017406463623,
+      "throughput/total tokens": 176075833344.0,
+      "_step": 223892
+    },
+    {
+      "train/CE loss": 2.0020182132720947,
+      "throughput/total tokens": 176076619776.0,
+      "_step": 223893
+    },
+    {
+      "_step": 223894,
+      "train/CE loss": 2.0669171810150146,
+      "throughput/total tokens": 176077406208.0
+    },
+    {
+      "throughput/total tokens": 176078192640.0,
+      "train/CE loss": 1.9926211833953857,
+      "_step": 223895
+    },
+    {
+      "train/CE loss": 2.0218586921691895,
+      "_step": 223896,
+      "throughput/total tokens": 176078979072.0
+    },
+    {
+      "throughput/total tokens": 176079765504.0,
+      "train/CE loss": 2.006847381591797,
+      "_step": 223897
+    },
+    {
+      "throughput/total tokens": 176080551936.0,
+      "_step": 223898,
+      "train/CE loss": 2.040454149246216
+    }
+  ]
+}

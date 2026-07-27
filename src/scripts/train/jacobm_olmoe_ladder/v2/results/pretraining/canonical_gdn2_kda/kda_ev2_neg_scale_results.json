@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-07-27T21:27:02.393555+00:00",
+  "generated_at": "2026-07-27T21:43:23.041972+00:00",
   "project": "ai2-llm/jacobm-olmoe-ladder",
   "wave": "kda_ev2_neg_scale",
   "models": [
@@ -50,7 +50,9 @@
         "jwvsplw5"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "275m",
@@ -69,7 +71,9 @@
         "cuhx0qpo"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "275m",
@@ -88,7 +92,9 @@
         "ug857663"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "275m",
@@ -107,7 +113,9 @@
         "7c9554yt"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "275m",
@@ -126,7 +134,9 @@
         "rsxmn720"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "275m",
@@ -145,7 +155,9 @@
         "pqrdvu63"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "275m",
@@ -164,7 +176,9 @@
         "5uzr9dva"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "275m",
@@ -183,7 +197,9 @@
         "j2t5c2jb"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "275m",
@@ -202,7 +218,9 @@
         "lg619wiz"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "275m",
@@ -221,7 +239,9 @@
         "q81uxrxu"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "275m",
@@ -240,7 +260,9 @@
         "sxuuwzzm"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "275m",
@@ -259,7 +281,9 @@
         "1pr3blts"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "275m",
@@ -278,7 +302,9 @@
         "un2ak8n2"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "275m",
@@ -297,7 +323,9 @@
         "qqzuujzr"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "275m",
@@ -316,7 +344,9 @@
         "2azf8mif"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "275m",
@@ -335,7 +365,9 @@
         "slhcy5vp"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "275m",
@@ -354,7 +386,9 @@
         "75dy08n9"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 0,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "275m",
@@ -373,7 +407,9 @@
         "kfua3dcq"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "275m",
@@ -392,7 +428,9 @@
         "h86x1nv3"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "275m",
@@ -411,7 +449,9 @@
         "afxq80js"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "275m",
@@ -430,7 +470,9 @@
         "lkbfz2co"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "275m",
@@ -449,7 +491,9 @@
         "0q55sr49"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "275m",
@@ -468,7 +512,9 @@
         "mq4qj9fh"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "275m",
@@ -487,7 +533,9 @@
         "fuhodjut"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "275m",
@@ -506,7 +554,9 @@
         "7yh4rfi1"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "275m",
@@ -525,7 +575,9 @@
         "2egeqyvo"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "275m",
@@ -546,7 +598,9 @@
         "jhcmk80f"
       ],
       "token_resets": 1,
-      "deduplicated_samples": 79
+      "deduplicated_samples": 79,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "275m",
@@ -565,7 +619,9 @@
         "xwtxd1pv"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "275m",
@@ -584,7 +640,9 @@
         "sehjqtyk"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "275m",
@@ -603,7 +661,9 @@
         "bttby9r8"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "275m",
@@ -622,7 +682,9 @@
         "ef4umox3"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "275m",
@@ -641,7 +703,9 @@
         "ofodwbzz"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "275m",
@@ -660,7 +724,9 @@
         "kbyiiu9m"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "275m",
@@ -679,7 +745,9 @@
         "wxoo2qa2"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "275m",
@@ -698,7 +766,9 @@
         "8enpoxny"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "275m",
@@ -717,7 +787,9 @@
         "pjcs93wf"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "275m",
@@ -736,7 +808,9 @@
         "ysswifrz"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 0,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "275m",
@@ -755,7 +829,9 @@
         "o2bdr3gw"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "275m",
@@ -774,7 +850,9 @@
         "6porpbo2"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "275m",
@@ -793,7 +871,9 @@
         "0f782vrw"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "275m",
@@ -812,7 +892,9 @@
         "eyy5j1cl"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "275m",
@@ -831,7 +913,9 @@
         "e6lv3u9m"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "275m",
@@ -850,7 +934,9 @@
         "fi7dujq6"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "275m",
@@ -869,7 +955,9 @@
         "e97cv7m0"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "275m",
@@ -888,7 +976,9 @@
         "6b0vighm"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "275m",
@@ -907,7 +997,9 @@
         "yq4mi5o0"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "275m",
@@ -926,7 +1018,9 @@
         "0w6ezwgx"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "275m",
@@ -945,7 +1039,9 @@
         "kcig30ty"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "275m",
@@ -964,7 +1060,9 @@
         "fh9tl31v"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "275m",
@@ -983,7 +1081,9 @@
         "gwzx0ekc"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "275m",
@@ -1002,7 +1102,9 @@
         "jr74v01c"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "275m",
@@ -1021,7 +1123,9 @@
         "2s5s1yw0"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "275m",
@@ -1040,7 +1144,9 @@
         "w144s49d"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "275m",
@@ -1059,7 +1165,9 @@
         "21wgu1z4"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "275m",
@@ -1078,7 +1186,9 @@
         "ermxjrl6"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "275m",
@@ -1097,7 +1207,9 @@
         "ueut0d6s"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "275m",
@@ -1116,7 +1228,9 @@
         "cyyeyven"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "275m",
@@ -1135,7 +1249,9 @@
         "n1gjknwg"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "275m",
@@ -1154,7 +1270,9 @@
         "9n3xk8gs"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "275m",
@@ -1173,7 +1291,9 @@
         "ttjquo05"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "275m",
@@ -1192,7 +1312,9 @@
         "5u03fshf"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "275m",
@@ -1211,7 +1333,9 @@
         "nj7j2hcd"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "275m",
@@ -1230,7 +1354,9 @@
         "p2n3w891"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "275m",
@@ -1249,7 +1375,9 @@
         "rzqjmgtu"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "275m",
@@ -1268,7 +1396,9 @@
         "hsc710bv"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "275m",
@@ -1287,7 +1417,9 @@
         "jewjx6yq"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "275m",
@@ -1306,7 +1438,9 @@
         "1lpz9reu"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "275m",
@@ -1325,7 +1459,9 @@
         "e6n5iscu"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "275m",
@@ -1344,7 +1480,9 @@
         "qehufcr5"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "275m",
@@ -1363,7 +1501,9 @@
         "ouxblu4g"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "275m",
@@ -1382,7 +1522,9 @@
         "3xjjt5sa"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "275m",
@@ -1401,7 +1543,9 @@
         "mbvin02a"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "275m",
@@ -1420,7 +1564,9 @@
         "dingsxpt"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "275m",
@@ -1439,7 +1585,9 @@
         "qza3k4xg"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "275m",
@@ -1458,7 +1606,9 @@
         "uki4tt6j"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "275m",
@@ -1477,7 +1627,9 @@
         "k138zhd6"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "275m",
@@ -1496,7 +1648,9 @@
         "vrjssy6q"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "275m",
@@ -1515,7 +1669,9 @@
         "iv901lom"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "275m",
@@ -1534,7 +1690,9 @@
         "qe052lo4"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "275m",
@@ -1553,7 +1711,9 @@
         "qu2zaxr7"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "275m",
@@ -1572,7 +1732,9 @@
         "235ye5lg"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "480m",
@@ -1591,7 +1753,9 @@
         "wvniacs0"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "480m",
@@ -1610,7 +1774,9 @@
         "6r2blwru"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "480m",
@@ -1629,7 +1795,9 @@
         "9rltp47w"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "480m",
@@ -1648,7 +1816,9 @@
         "udjn8rwa"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "480m",
@@ -1667,7 +1837,9 @@
         "sb4yqi8x"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 0,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "480m",
@@ -1686,7 +1858,9 @@
         "z4wxvc6h"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "480m",
@@ -1705,7 +1879,9 @@
         "07rx8ez4"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "480m",
@@ -1724,7 +1900,9 @@
         "0crj05wz"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "480m",
@@ -1743,7 +1921,9 @@
         "c0kdnkyq"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "480m",
@@ -1762,7 +1942,9 @@
         "k2zf4esa"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "480m",
@@ -1781,7 +1963,9 @@
         "ywj13bkw"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "480m",
@@ -1800,7 +1984,9 @@
         "pex4fe3k"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "480m",
@@ -1819,7 +2005,9 @@
         "9u4z0e36"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "480m",
@@ -1838,7 +2026,9 @@
         "ur7yonej"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "480m",
@@ -1857,7 +2047,9 @@
         "jsgk8go8"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "480m",
@@ -1876,7 +2068,9 @@
         "lesw7ogm"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "480m",
@@ -1895,7 +2089,9 @@
         "rblv9hpr"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "480m",
@@ -1914,7 +2110,9 @@
         "z4p7hqgv"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "480m",
@@ -1933,7 +2131,9 @@
         "7p8q3v6p"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "480m",
@@ -1952,7 +2152,9 @@
         "4737op7s"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "480m",
@@ -1971,7 +2173,9 @@
         "f6g2nosm"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "480m",
@@ -1990,7 +2194,9 @@
         "nfgfhyv8"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "480m",
@@ -2009,7 +2215,9 @@
         "vdcrgfy0"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "810m",
@@ -2028,7 +2236,9 @@
         "lmfercuy"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "810m",
@@ -2047,7 +2257,9 @@
         "3wukvwyl"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "810m",
@@ -2066,7 +2278,9 @@
         "027xoq0r"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "810m",
@@ -2085,7 +2299,9 @@
         "4k5dasv8"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "810m",
@@ -2104,7 +2320,9 @@
         "w912irkq"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "810m",
@@ -2123,7 +2341,9 @@
         "geoqui5p"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "810m",
@@ -2142,7 +2362,9 @@
         "7ryj4klm"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "810m",
@@ -2161,7 +2383,9 @@
         "1e7z0xar"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "810m",
@@ -2180,7 +2404,9 @@
         "jpbqhfvc"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "810m",
@@ -2199,7 +2425,9 @@
         "qbuzv5jk"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "810m",
@@ -2218,7 +2446,9 @@
         "dzffl1jy"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "810m",
@@ -2237,7 +2467,9 @@
         "l0u9gv52"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "810m",
@@ -2256,7 +2488,9 @@
         "58ftjxmw"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "810m",
@@ -2275,7 +2509,9 @@
         "o4ui2mxg"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 0
+      "deduplicated_samples": 0,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "810m",
@@ -2294,7 +2530,9 @@
         "pvoq0dq6"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     },
     {
       "model": "810m",
@@ -2313,7 +2551,9 @@
         "kyti8h1y"
       ],
       "token_resets": 0,
-      "deduplicated_samples": 1
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
     }
   ],
   "results": [
@@ -2342,7 +2582,9 @@
           "h86x1nv3"
         ],
         "token_resets": 0,
-        "deduplicated_samples": 1
+        "deduplicated_samples": 1,
+        "history_source": "wandb",
+        "history_source_sha256": null
       },
       "references": {
         "wide_integration": {
@@ -2362,7 +2604,9 @@
             "h86x1nv3"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 1
+          "deduplicated_samples": 1,
+          "history_source": "wandb",
+          "history_source_sha256": null
         },
         "geometry_gdn_ev2_nope_gated": {
           "model": "275m",
@@ -2381,7 +2625,9 @@
             "q81uxrxu"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 1
+          "deduplicated_samples": 1,
+          "history_source": "wandb",
+          "history_source_sha256": null
         },
         "geometry_gdn2_ev2_nope_gated": {
           "model": "275m",
@@ -2400,7 +2646,9 @@
             "5uzr9dva"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 1
+          "deduplicated_samples": 1,
+          "history_source": "wandb",
+          "history_source_sha256": null
         },
         "geometry_gdn2_ev1_noneg_nope_gated": {
           "model": "275m",
@@ -2419,7 +2667,9 @@
             "ug857663"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 1
+          "deduplicated_samples": 1,
+          "history_source": "wandb",
+          "history_source_sha256": null
         },
         "geometry_kda_ev1_noneg_nope_gated": {
           "model": "275m",
@@ -2438,7 +2688,9 @@
             "2azf8mif"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 1
+          "deduplicated_samples": 1,
+          "history_source": "wandb",
+          "history_source_sha256": null
         }
       },
       "intervention_result": {
@@ -2458,7 +2710,9 @@
           "75dy08n9"
         ],
         "token_resets": 0,
-        "deduplicated_samples": 0
+        "deduplicated_samples": 0,
+        "history_source": "wandb",
+        "history_source_sha256": null
       },
       "delta_intervention_minus_wide": -0.04834905785334698,
       "delta_intervention_minus_reference": {
@@ -2494,7 +2748,9 @@
           "6porpbo2"
         ],
         "token_resets": 0,
-        "deduplicated_samples": 1
+        "deduplicated_samples": 1,
+        "history_source": "wandb",
+        "history_source_sha256": null
       },
       "references": {
         "wide_integration": {
@@ -2514,7 +2770,9 @@
             "6porpbo2"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 1
+          "deduplicated_samples": 1,
+          "history_source": "wandb",
+          "history_source_sha256": null
         },
         "geometry_gdn_ev2_nope_gated": {
           "model": "275m",
@@ -2533,7 +2791,9 @@
             "ef4umox3"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 1
+          "deduplicated_samples": 1,
+          "history_source": "wandb",
+          "history_source_sha256": null
         },
         "geometry_gdn2_ev2_nope_gated": {
           "model": "275m",
@@ -2554,7 +2814,9 @@
             "jhcmk80f"
           ],
           "token_resets": 1,
-          "deduplicated_samples": 79
+          "deduplicated_samples": 79,
+          "history_source": "wandb",
+          "history_source_sha256": null
         },
         "geometry_gdn2_ev1_noneg_nope_gated": {
           "model": "275m",
@@ -2573,7 +2835,9 @@
             "mq4qj9fh"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 1
+          "deduplicated_samples": 1,
+          "history_source": "wandb",
+          "history_source_sha256": null
         },
         "geometry_kda_ev1_noneg_nope_gated": {
           "model": "275m",
@@ -2592,7 +2856,9 @@
             "8enpoxny"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 1
+          "deduplicated_samples": 1,
+          "history_source": "wandb",
+          "history_source_sha256": null
         }
       },
       "intervention_result": {
@@ -2612,7 +2878,9 @@
           "ysswifrz"
         ],
         "token_resets": 0,
-        "deduplicated_samples": 0
+        "deduplicated_samples": 0,
+        "history_source": "wandb",
+        "history_source_sha256": null
       },
       "delta_intervention_minus_wide": -0.04577576026976482,
       "delta_intervention_minus_reference": {
@@ -2648,7 +2916,9 @@
           "9n3xk8gs"
         ],
         "token_resets": 0,
-        "deduplicated_samples": 1
+        "deduplicated_samples": 1,
+        "history_source": "wandb",
+        "history_source_sha256": null
       },
       "references": {
         "wide_integration": {
@@ -2668,7 +2938,9 @@
             "9n3xk8gs"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 1
+          "deduplicated_samples": 1,
+          "history_source": "wandb",
+          "history_source_sha256": null
         },
         "geometry_gdn_ev2_nope_gated": {
           "model": "275m",
@@ -2687,7 +2959,9 @@
             "gwzx0ekc"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 1
+          "deduplicated_samples": 1,
+          "history_source": "wandb",
+          "history_source_sha256": null
         },
         "geometry_gdn2_ev2_nope_gated": {
           "model": "275m",
@@ -2706,7 +2980,9 @@
             "0w6ezwgx"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 1
+          "deduplicated_samples": 1,
+          "history_source": "wandb",
+          "history_source_sha256": null
         },
         "geometry_gdn2_ev1_noneg_nope_gated": {
           "model": "275m",
@@ -2725,7 +3001,9 @@
             "fi7dujq6"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 1
+          "deduplicated_samples": 1,
+          "history_source": "wandb",
+          "history_source_sha256": null
         },
         "geometry_kda_ev1_noneg_nope_gated": {
           "model": "275m",
@@ -2744,7 +3022,9 @@
             "ermxjrl6"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 1
+          "deduplicated_samples": 1,
+          "history_source": "wandb",
+          "history_source_sha256": null
         }
       },
       "intervention_result": {
@@ -2764,7 +3044,9 @@
           "cyyeyven"
         ],
         "token_resets": 0,
-        "deduplicated_samples": 1
+        "deduplicated_samples": 1,
+        "history_source": "wandb",
+        "history_source_sha256": null
       },
       "delta_intervention_minus_wide": -0.041771172977343785,
       "delta_intervention_minus_reference": {
@@ -2800,7 +3082,9 @@
           "qe052lo4"
         ],
         "token_resets": 0,
-        "deduplicated_samples": 1
+        "deduplicated_samples": 1,
+        "history_source": "wandb",
+        "history_source_sha256": null
       },
       "references": {
         "wide_integration": {
@@ -2820,7 +3104,9 @@
             "qe052lo4"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 1
+          "deduplicated_samples": 1,
+          "history_source": "wandb",
+          "history_source_sha256": null
         },
         "geometry_gdn_ev2_nope_gated": {
           "model": "275m",
@@ -2839,7 +3125,9 @@
             "ouxblu4g"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 1
+          "deduplicated_samples": 1,
+          "history_source": "wandb",
+          "history_source_sha256": null
         },
         "geometry_gdn2_ev2_nope_gated": {
           "model": "275m",
@@ -2858,7 +3146,9 @@
             "1lpz9reu"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 1
+          "deduplicated_samples": 1,
+          "history_source": "wandb",
+          "history_source_sha256": null
         },
         "geometry_gdn2_ev1_noneg_nope_gated": {
           "model": "275m",
@@ -2877,7 +3167,9 @@
             "rzqjmgtu"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 1
+          "deduplicated_samples": 1,
+          "history_source": "wandb",
+          "history_source_sha256": null
         },
         "geometry_kda_ev1_noneg_nope_gated": {
           "model": "275m",
@@ -2896,7 +3188,9 @@
             "uki4tt6j"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 1
+          "deduplicated_samples": 1,
+          "history_source": "wandb",
+          "history_source_sha256": null
         }
       },
       "intervention_result": {
@@ -2916,7 +3210,9 @@
           "vrjssy6q"
         ],
         "token_resets": 0,
-        "deduplicated_samples": 1
+        "deduplicated_samples": 1,
+        "history_source": "wandb",
+        "history_source_sha256": null
       },
       "delta_intervention_minus_wide": -0.03900028774573405,
       "delta_intervention_minus_reference": {
@@ -2952,7 +3248,9 @@
           "z4wxvc6h"
         ],
         "token_resets": 0,
-        "deduplicated_samples": 1
+        "deduplicated_samples": 1,
+        "history_source": "wandb",
+        "history_source_sha256": null
       },
       "references": {
         "wide_integration": {
@@ -2972,7 +3270,9 @@
             "z4wxvc6h"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 1
+          "deduplicated_samples": 1,
+          "history_source": "wandb",
+          "history_source_sha256": null
         },
         "geometry_gdn_ev2_nope_gated": {
           "model": "480m",
@@ -2991,7 +3291,9 @@
             "9rltp47w"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 1
+          "deduplicated_samples": 1,
+          "history_source": "wandb",
+          "history_source_sha256": null
         },
         "geometry_gdn2_ev2_nope_gated": {
           "model": "480m",
@@ -3010,7 +3312,9 @@
             "6r2blwru"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 1
+          "deduplicated_samples": 1,
+          "history_source": "wandb",
+          "history_source_sha256": null
         },
         "geometry_gdn2_ev1_noneg_nope_gated": {
           "model": "480m",
@@ -3029,7 +3333,9 @@
             "wvniacs0"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 1
+          "deduplicated_samples": 1,
+          "history_source": "wandb",
+          "history_source_sha256": null
         },
         "geometry_kda_ev1_noneg_nope_gated": {
           "model": "480m",
@@ -3048,7 +3354,9 @@
             "udjn8rwa"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 1
+          "deduplicated_samples": 1,
+          "history_source": "wandb",
+          "history_source_sha256": null
         }
       },
       "intervention_result": {
@@ -3068,7 +3376,9 @@
           "sb4yqi8x"
         ],
         "token_resets": 0,
-        "deduplicated_samples": 0
+        "deduplicated_samples": 0,
+        "history_source": "wandb",
+        "history_source_sha256": null
       },
       "delta_intervention_minus_wide": -0.050998799955819685,
       "delta_intervention_minus_reference": {
@@ -3104,7 +3414,9 @@
           "ywj13bkw"
         ],
         "token_resets": 0,
-        "deduplicated_samples": 1
+        "deduplicated_samples": 1,
+        "history_source": "wandb",
+        "history_source_sha256": null
       },
       "references": {
         "wide_integration": {
@@ -3124,7 +3436,9 @@
             "ywj13bkw"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 1
+          "deduplicated_samples": 1,
+          "history_source": "wandb",
+          "history_source_sha256": null
         },
         "geometry_gdn_ev2_nope_gated": {
           "model": "480m",
@@ -3143,7 +3457,9 @@
             "0crj05wz"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 1
+          "deduplicated_samples": 1,
+          "history_source": "wandb",
+          "history_source_sha256": null
         },
         "geometry_gdn2_ev2_nope_gated": {
           "model": "480m",
@@ -3162,7 +3478,9 @@
             "07rx8ez4"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 1
+          "deduplicated_samples": 1,
+          "history_source": "wandb",
+          "history_source_sha256": null
         },
         "geometry_gdn2_ev1_noneg_nope_gated": null,
         "geometry_kda_ev1_noneg_nope_gated": {
@@ -3182,7 +3500,9 @@
             "c0kdnkyq"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 1
+          "deduplicated_samples": 1,
+          "history_source": "wandb",
+          "history_source_sha256": null
         }
       },
       "intervention_result": {
@@ -3202,7 +3522,9 @@
           "k2zf4esa"
         ],
         "token_resets": 0,
-        "deduplicated_samples": 1
+        "deduplicated_samples": 1,
+        "history_source": "wandb",
+        "history_source_sha256": null
       },
       "delta_intervention_minus_wide": -0.04119240900255594,
       "delta_intervention_minus_reference": {
@@ -3238,7 +3560,9 @@
           "rblv9hpr"
         ],
         "token_resets": 0,
-        "deduplicated_samples": 1
+        "deduplicated_samples": 1,
+        "history_source": "wandb",
+        "history_source_sha256": null
       },
       "references": {
         "wide_integration": {
@@ -3258,7 +3582,9 @@
             "rblv9hpr"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 1
+          "deduplicated_samples": 1,
+          "history_source": "wandb",
+          "history_source_sha256": null
         },
         "geometry_gdn_ev2_nope_gated": {
           "model": "480m",
@@ -3277,7 +3603,9 @@
             "ur7yonej"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 1
+          "deduplicated_samples": 1,
+          "history_source": "wandb",
+          "history_source_sha256": null
         },
         "geometry_gdn2_ev2_nope_gated": {
           "model": "480m",
@@ -3296,7 +3624,9 @@
             "9u4z0e36"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 1
+          "deduplicated_samples": 1,
+          "history_source": "wandb",
+          "history_source_sha256": null
         },
         "geometry_gdn2_ev1_noneg_nope_gated": {
           "model": "480m",
@@ -3315,7 +3645,9 @@
             "pex4fe3k"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 1
+          "deduplicated_samples": 1,
+          "history_source": "wandb",
+          "history_source_sha256": null
         },
         "geometry_kda_ev1_noneg_nope_gated": {
           "model": "480m",
@@ -3334,7 +3666,9 @@
             "jsgk8go8"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 1
+          "deduplicated_samples": 1,
+          "history_source": "wandb",
+          "history_source_sha256": null
         }
       },
       "intervention_result": {
@@ -3354,7 +3688,9 @@
           "lesw7ogm"
         ],
         "token_resets": 0,
-        "deduplicated_samples": 1
+        "deduplicated_samples": 1,
+        "history_source": "wandb",
+        "history_source_sha256": null
       },
       "delta_intervention_minus_wide": -0.03879732055983931,
       "delta_intervention_minus_reference": {
@@ -3390,7 +3726,9 @@
           "vdcrgfy0"
         ],
         "token_resets": 0,
-        "deduplicated_samples": 1
+        "deduplicated_samples": 1,
+        "history_source": "wandb",
+        "history_source_sha256": null
       },
       "references": {
         "wide_integration": {
@@ -3410,7 +3748,9 @@
             "vdcrgfy0"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 1
+          "deduplicated_samples": 1,
+          "history_source": "wandb",
+          "history_source_sha256": null
         },
         "geometry_gdn_ev2_nope_gated": {
           "model": "480m",
@@ -3429,7 +3769,9 @@
             "4737op7s"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 1
+          "deduplicated_samples": 1,
+          "history_source": "wandb",
+          "history_source_sha256": null
         },
         "geometry_gdn2_ev2_nope_gated": {
           "model": "480m",
@@ -3448,7 +3790,9 @@
             "7p8q3v6p"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 1
+          "deduplicated_samples": 1,
+          "history_source": "wandb",
+          "history_source_sha256": null
         },
         "geometry_gdn2_ev1_noneg_nope_gated": {
           "model": "480m",
@@ -3467,7 +3811,9 @@
             "z4p7hqgv"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 1
+          "deduplicated_samples": 1,
+          "history_source": "wandb",
+          "history_source_sha256": null
         },
         "geometry_kda_ev1_noneg_nope_gated": {
           "model": "480m",
@@ -3486,7 +3832,9 @@
             "f6g2nosm"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 1
+          "deduplicated_samples": 1,
+          "history_source": "wandb",
+          "history_source_sha256": null
         }
       },
       "intervention_result": {
@@ -3506,7 +3854,9 @@
           "nfgfhyv8"
         ],
         "token_resets": 0,
-        "deduplicated_samples": 1
+        "deduplicated_samples": 1,
+        "history_source": "wandb",
+        "history_source_sha256": null
       },
       "delta_intervention_minus_wide": -0.0348040337832467,
       "delta_intervention_minus_reference": {
@@ -3542,7 +3892,9 @@
           "w912irkq"
         ],
         "token_resets": 0,
-        "deduplicated_samples": 1
+        "deduplicated_samples": 1,
+        "history_source": "wandb",
+        "history_source_sha256": null
       },
       "references": {
         "wide_integration": {
@@ -3562,7 +3914,9 @@
             "w912irkq"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 1
+          "deduplicated_samples": 1,
+          "history_source": "wandb",
+          "history_source_sha256": null
         },
         "geometry_gdn_ev2_nope_gated": {
           "model": "810m",
@@ -3581,7 +3935,9 @@
             "027xoq0r"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 1
+          "deduplicated_samples": 1,
+          "history_source": "wandb",
+          "history_source_sha256": null
         },
         "geometry_gdn2_ev2_nope_gated": {
           "model": "810m",
@@ -3600,7 +3956,9 @@
             "3wukvwyl"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 1
+          "deduplicated_samples": 1,
+          "history_source": "wandb",
+          "history_source_sha256": null
         },
         "geometry_gdn2_ev1_noneg_nope_gated": {
           "model": "810m",
@@ -3619,7 +3977,9 @@
             "lmfercuy"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 1
+          "deduplicated_samples": 1,
+          "history_source": "wandb",
+          "history_source_sha256": null
         },
         "geometry_kda_ev1_noneg_nope_gated": null
       },
@@ -3640,7 +4000,9 @@
           "4k5dasv8"
         ],
         "token_resets": 0,
-        "deduplicated_samples": 1
+        "deduplicated_samples": 1,
+        "history_source": "wandb",
+        "history_source_sha256": null
       },
       "delta_intervention_minus_wide": -0.020893370205501416,
       "delta_intervention_minus_reference": {
@@ -3676,7 +4038,9 @@
           "jpbqhfvc"
         ],
         "token_resets": 0,
-        "deduplicated_samples": 1
+        "deduplicated_samples": 1,
+        "history_source": "wandb",
+        "history_source_sha256": null
       },
       "references": {
         "wide_integration": {
@@ -3696,7 +4060,9 @@
             "jpbqhfvc"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 1
+          "deduplicated_samples": 1,
+          "history_source": "wandb",
+          "history_source_sha256": null
         },
         "geometry_gdn_ev2_nope_gated": {
           "model": "810m",
@@ -3715,7 +4081,9 @@
             "7ryj4klm"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 1
+          "deduplicated_samples": 1,
+          "history_source": "wandb",
+          "history_source_sha256": null
         },
         "geometry_gdn2_ev2_nope_gated": null,
         "geometry_gdn2_ev1_noneg_nope_gated": {
@@ -3735,7 +4103,9 @@
             "geoqui5p"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 1
+          "deduplicated_samples": 1,
+          "history_source": "wandb",
+          "history_source_sha256": null
         },
         "geometry_kda_ev1_noneg_nope_gated": null
       },
@@ -3756,7 +4126,9 @@
           "1e7z0xar"
         ],
         "token_resets": 0,
-        "deduplicated_samples": 1
+        "deduplicated_samples": 1,
+        "history_source": "wandb",
+        "history_source_sha256": null
       },
       "delta_intervention_minus_wide": -0.027074898751276777,
       "delta_intervention_minus_reference": {
@@ -3792,7 +4164,9 @@
           "58ftjxmw"
         ],
         "token_resets": 0,
-        "deduplicated_samples": 1
+        "deduplicated_samples": 1,
+        "history_source": "wandb",
+        "history_source_sha256": null
       },
       "references": {
         "wide_integration": {
@@ -3812,7 +4186,9 @@
             "58ftjxmw"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 1
+          "deduplicated_samples": 1,
+          "history_source": "wandb",
+          "history_source_sha256": null
         },
         "geometry_gdn_ev2_nope_gated": {
           "model": "810m",
@@ -3831,7 +4207,9 @@
             "l0u9gv52"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 1
+          "deduplicated_samples": 1,
+          "history_source": "wandb",
+          "history_source_sha256": null
         },
         "geometry_gdn2_ev2_nope_gated": {
           "model": "810m",
@@ -3850,7 +4228,9 @@
             "dzffl1jy"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 1
+          "deduplicated_samples": 1,
+          "history_source": "wandb",
+          "history_source_sha256": null
         },
         "geometry_gdn2_ev1_noneg_nope_gated": {
           "model": "810m",
@@ -3869,7 +4249,9 @@
             "qbuzv5jk"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 1
+          "deduplicated_samples": 1,
+          "history_source": "wandb",
+          "history_source_sha256": null
         },
         "geometry_kda_ev1_noneg_nope_gated": null
       },
@@ -3908,7 +4290,9 @@
           "kyti8h1y"
         ],
         "token_resets": 0,
-        "deduplicated_samples": 1
+        "deduplicated_samples": 1,
+        "history_source": "wandb",
+        "history_source_sha256": null
       },
       "references": {
         "wide_integration": {
@@ -3928,7 +4312,9 @@
             "kyti8h1y"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 1
+          "deduplicated_samples": 1,
+          "history_source": "wandb",
+          "history_source_sha256": null
         },
         "geometry_gdn_ev2_nope_gated": {
           "model": "810m",
@@ -3947,7 +4333,9 @@
             "pvoq0dq6"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 1
+          "deduplicated_samples": 1,
+          "history_source": "wandb",
+          "history_source_sha256": null
         },
         "geometry_gdn2_ev2_nope_gated": null,
         "geometry_gdn2_ev1_noneg_nope_gated": {
@@ -3967,7 +4355,9 @@
             "o4ui2mxg"
           ],
           "token_resets": 0,
-          "deduplicated_samples": 0
+          "deduplicated_samples": 0,
+          "history_source": "wandb",
+          "history_source_sha256": null
         },
         "geometry_kda_ev1_noneg_nope_gated": null
       },

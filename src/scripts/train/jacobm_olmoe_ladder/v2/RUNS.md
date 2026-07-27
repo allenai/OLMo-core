@@ -30,7 +30,7 @@ transfer, and MXFP8 rows were refreshed at 2026-07-27 21:29 UTC.
 | pretraining | 275M GDN2 stability 2x2 | 3/3 finished | Fresh Cx8/LR `1.6e-3` ev1+negative, ev2+nonnegative, and canonical ev1+nonnegative controls all completed | [work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYBVM2N2D3DM67S8HWARJP6C) |
 | pretraining | canonical GDN2 (`expand_v=1`, nonnegative) 275M sweep | 16/16 finished | All four Cx curves are complete and bracketed; observed-best LR is `1.6e-3` at every Cx | [results](results/pretraining/canonical_gdn2_kda/results.md) |
 | pretraining | canonical KDA 275M sweep | 16/16 finished | All four Cx curves are complete and bracketed; observed-best LR is `1.6e-3` at every Cx | [results](results/pretraining/canonical_gdn2_kda/results.md) |
-| pretraining | canonical GDN2 larger-scale transfer | 9 loss-collected / 1 checkpoint-complete with tracking gap / 2 failed | 1.2B Cx8 reached step 223898 and saved its final checkpoint, but a W&B filestream-capacity failure stopped remote history at 156.48B/176.08B tokens, so strict final-250M CE remains unpublished; 480M Cx2 and 1.2B Cx2 remain failed | [results](results/pretraining/canonical_gdn2_kda/scale_results.md) |
+| pretraining | canonical GDN2 larger-scale transfer | 10 loss-collected / 2 failed | 1.2B Cx8 local W&B history was recovered through the verified final step; strict final-250M CE is `2.020529`; 480M Cx2 and 1.2B Cx2 remain failed | [results](results/pretraining/canonical_gdn2_kda/scale_results.md) |
 | pretraining | canonical KDA 480M stability transfer | 4/4 finished | Cx1/2/4/8 strict final-250M CEs are `2.517826`, `2.412884`, `2.323228`, and `2.237558` | [launches](#canonical-kda-480m-stability-transfer) |
 | pretraining | KDA `expand_v=2`, negative-eigenvalue transfer (275M/480M/810M) | 10 finished / 2 running | 810M Cx2 newly finished with strict final-250M CE `2.241873`; Cx4 is 72% complete and Cx8 is 27% complete; no KDA cell has failed | [results](results/pretraining/canonical_gdn2_kda/kda_ev2_neg_scale_results.md) |
 | pretraining | aggressive MXFP8 KDA 275M LR sweep | 16/16 started: 9 stepping / 7 compiling | Nine Cx1/Cx2/Cx8 tasks reached real optimizer steps; the remaining seven were still compiling; zero failures | [work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYJPTZ3J4VHGBH0FSVAQRDGC) / [plan](MXFP8_LADDER.md) |
@@ -44,13 +44,15 @@ transfer, and MXFP8 rows were refreshed at 2026-07-27 21:29 UTC.
 | midtraining | first hybrid 480M Cx8 | finished | 100.001B; final checkpoint `step95368`; validation finished | [mnp9rv5l](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/mnp9rv5l) |
 | validation | V2 post-training backfills | 117/117 registered targets complete; 2 new finals pending registration | The newly finished KDA 810M Cx2 and checkpoint-complete canonical GDN2 1.2B Cx8 are not yet in the backfill registry | [results](results/validation/hybrid_full.md) |
 
-At the 2026-07-27 21:29 UTC audit, the only live production workloads are KDA
+At the 2026-07-27 21:43 UTC audit, the only live production workloads are KDA
 810M Cx4/Cx8 and the 16-cell aggressive-MXFP8 275M sweep. None is queued and
 none has failed. Canonical GDN2 480M Cx2 and 1.2B Cx2 remain terminal numerical
-failures and are not counted as live. The canonical GDN2 1.2B Cx8 training and
-final checkpoint completed successfully, but its remote W&B history is
-incomplete after a `409 filestream at capacity` error, so it remains excluded
-from strict loss plots pending history repair.
+failures and are not counted as live. Canonical GDN2 1.2B Cx8 training and its
+final checkpoint completed successfully. Its remote W&B history remains
+incomplete after a `409 filestream at capacity` error, but the complete local
+W&B binary was recovered and independently verified through step 223898 and
+176.081B tokens. Its strict final-250M CE `2.020529` is now included in the
+scale plot with explicit local-recovery provenance.
 
 The formal pretraining results and plots use finished runs only and enforce a
 complete final-250M-token history. The gated-RoPE sweep is now complete. Its
@@ -195,14 +197,14 @@ and
 Live, queued, or unresolved canonical cells are labeled pending; only finished
 runs with a complete strict final-250M-token window enter the plotted series.
 
-Status at 2026-07-27 16:56 UTC: 480M Cx1/Cx4/Cx8 have strict final-250M CEs
+Status at 2026-07-27 21:43 UTC: 480M Cx1/Cx4/Cx8 have strict final-250M CEs
 `2.492882`, `2.293165`, and `2.226409`. All four 810M cells are now finished at
 `2.346904`, `2.260980`, `2.181919`, and `2.109020`. The 1.2B Cx1 explicit
-resume chain finished at `2.253605`, and Cx4 finished at `2.089778`. Cx8 is
-healthy at 92.7% of its token budget with a Beaker ETA of about 3h42m. The
-480M Cx2 and 1.2B Cx2 repeatable numerical failures remain pending. The collector
-registers the complete explicit W&B chains and enforces the full final-250M
-window before admitting any result.
+resume chain finished at `2.253605`, Cx4 finished at `2.089778`, and Cx8's
+complete local W&B history was recovered at `2.020529`. The 480M Cx2 and 1.2B
+Cx2 repeatable numerical failures remain pending. The collector registers
+complete explicit W&B chains, verifies registered local recovery artifacts,
+and enforces the full final-250M window before admitting any result.
 
 ## Canonical KDA 480M stability transfer
 

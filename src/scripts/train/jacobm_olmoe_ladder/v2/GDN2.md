@@ -526,14 +526,17 @@ audits exact `expand_v=1`, nonnegative mixer settings and active counts of
 `489,954,144`, `823,189,952`, and `1,228,949,248`. Exact Beaker works and the
 immutable submission ledger are recorded in `RUNS.md`.
 
-At the 2026-07-27 21:29 UTC refresh, 1.2B Cx8 reached its target step 223898,
+At the 2026-07-27 21:43 UTC refresh, 1.2B Cx8 reached its target step 223898,
 saved the durable final checkpoint, finalized all four Beaker replicas with
 exit code 0, and logged zero skipped optimizer steps. Its W&B filestream had
-failed earlier with `409 filestream at capacity`, however, leaving the remote
-history at 156.48B of the 176.08B target tokens and the run marked crashed.
-The strict collector therefore continues to leave this cell pending rather
-than publishing an incomplete final-250M-token statistic. The complete local
-W&B run file remains beside the checkpoint for a later history-repair pass.
+failed earlier with `409 filestream at capacity`, leaving the remote history
+at 156.48B of the 176.08B target tokens and the run marked crashed. The full
+local W&B binary nevertheless contains all 223,898 history records. A strict
+recovery extracted the final tail, verified final step 223898 and
+176,080,551,936 tokens, and recomputed final-250M CE `2.020529319280`. The
+checked-in recovery artifact records the 3.2-GiB source file's SHA256
+`04755c05000b82b36e63b6e96d12830805412004df3d730414af5f7905969b75`;
+plots and ledgers label this point as a local W&B recovery.
 
 ### Production-shape kernel reference validation
 
