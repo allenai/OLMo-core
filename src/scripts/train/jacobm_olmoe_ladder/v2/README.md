@@ -72,7 +72,7 @@ without reference points, then one shared observed-best plot containing only
 bracketed curves for wide integration, matching gated-NoPE GDN1 geometry,
 original `expand_v=2` GDN2, canonical `expand_v=1`/nonnegative GDN2, and
 canonical KDA. It resolves the 32 paired 275M sweep jobs plus the 12 canonical
-GDN2 scale-transfer jobs, four canonical-KDA 480M jobs, and eight separately
+GDN2 scale-transfer jobs, four canonical-KDA 480M jobs, and 12 separately
 named KDA `expand_v=2`/negative-eigenvalue transfers by exact W&B display name.
 The latter family gets its own fixed-LR plot and result ledgers rather than
 entering the canonical U-plots. Queued jobs can initialize without a registry

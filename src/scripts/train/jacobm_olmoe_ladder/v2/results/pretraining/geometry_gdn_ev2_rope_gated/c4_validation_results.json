@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-07-26T17:30:04.703633+00:00",
+  "generated_at": "2026-07-27T16:58:26.390024+00:00",
   "metric": "eval/lm/c4_en-validation/CE loss",
   "selection_rule": "Use the same checkpoints selected by the final-250M training-loss comparison: observed-best learning rates at 275M and wide-optimal transferred learning rates at larger sizes. Never substitute a partial or running validation result.",
   "variants": [
@@ -1350,8 +1350,8 @@
       "source_training_run_id": "1147k891",
       "source_training_run_name": "pt-1p2b-geometry-gdn-ev2-rope-gated-cx8-lr4e-4-ep8-sync-r1",
       "learning_rate": 0.0004,
-      "c4_validation_ce": null,
-      "validation_state": "running",
+      "c4_validation_ce": 2.637233257293701,
+      "validation_state": "finished",
       "validation_run_id": "ved01fli",
       "validation_url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/ved01fli"
     }

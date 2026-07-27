@@ -1,6 +1,6 @@
 # C4 validation comparison for selected gated-RoPE checkpoints
 
-Generated: `2026-07-26T17:30:04.703633+00:00`
+Generated: `2026-07-27T16:58:26.390024+00:00`
 
 Metric: `eval/lm/c4_en-validation/CE loss` (lower is better).
 
@@ -105,4 +105,4 @@ Running, missing, and unregistered validation cells remain pending.
 | 1p2b | Cx8 | geometry-matched GDN (expand_v=2) | wide_lr_transfer | — | — | training_result_missing | — |
 | 1p2b | Cx8 | geometry-matched GDN + NoPE | wide_lr_transfer | 0.0004 | — | not_registered | — |
 | 1p2b | Cx8 | geometry-matched GDN + NoPE + gated attention | wide_lr_transfer | 0.0004 | — | not_registered | — |
-| 1p2b | Cx8 | geometry-matched GDN + RoPE + gated attention | wide_lr_transfer | 0.0004 | — | running | [ved01fli](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/ved01fli) |
+| 1p2b | Cx8 | geometry-matched GDN + RoPE + gated attention | wide_lr_transfer | 0.0004 | 2.637233 | finished | [ved01fli](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/ved01fli) |

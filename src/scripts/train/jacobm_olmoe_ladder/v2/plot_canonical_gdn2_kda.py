@@ -342,13 +342,13 @@ def kda_ev2_neg_scale_wave(
         architecture_note=(
             "KDA uses the matching gated-NoPE geometry with expand_v=2 and "
             "negative eigenvalues. The 275M cells use the observed-best LRs "
-            "from matching GDN1; 480M uses transferred wide-integration LRs."
+            "from matching GDN1; 480M and 810M use transferred wide-integration LRs."
         ),
-        models=("275m", "480m"),
+        models=("275m", "480m", "810m"),
         lr_sweep_models=(),
         active_parameters=KDA_EV2_NEG_ACTIVE_PARAMETERS,
         baseline_active_parameters={
-            model: WIDE_ACTIVE_PARAMETERS[model] for model in ("275m", "480m")
+            model: WIDE_ACTIVE_PARAMETERS[model] for model in ("275m", "480m", "810m")
         },
         baseline=WIDE_INTEGRATION,
         additional_baselines=(
@@ -362,6 +362,7 @@ def kda_ev2_neg_scale_wave(
         model_mode_labels={
             "275m": "GDN1-LR transfer",
             "480m": "wide-LR transfer",
+            "810m": "wide-LR transfer",
         },
     )
 

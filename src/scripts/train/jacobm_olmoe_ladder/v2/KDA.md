@@ -105,20 +105,19 @@ with the recurrent settings used by matching GDN1: `expand_v=2` and negative
 eigenvalues enabled. It otherwise retains the same gated-NoPE geometry and
 FLA 0.4.1 KDA kernel as canonical KDA.
 
-The fixed-LR transfer covers 275M and 480M at Cx1/2/4/8. The 275M LRs are the
-observed-best matching-GDN1 values (`8e-4`, `1.6e-3`, `8e-4`, `8e-4`); 480M
-uses the standard transferred wide LRs (`1.2e-3`, `9e-4`, `8e-4`, `8e-4`).
-The two sizes request 20 and 40 GPUs respectively, use accumulation one, and
-write distinct W&B/checkpoint identities containing `kda-ev2-neg`.
+The fixed-LR transfer covers 275M, 480M, and 810M at Cx1/2/4/8. The 275M LRs
+are the observed-best matching-GDN1 values (`8e-4`, `1.6e-3`, `8e-4`,
+`8e-4`); 480M and 810M use the standard transferred wide LRs. All sizes use
+accumulation one and write distinct W&B/checkpoint identities containing
+`kda-ev2-neg`.
 
 `plot_canonical_gdn2_kda.py` registers these identities separately and writes
 `kda_ev2_neg_fixed_lr_scale_comparison.png` plus its own JSON/Markdown result
 ledger. These fixed-LR points do not enter the canonical 275M LR-sweep U-plots
 or observed-optimal summary.
 
-At the 2026-07-27 04:31 UTC refresh, 275M Cx1/Cx2 and 480M Cx1 had finished
-with strict final-250M CEs `2.692695`, `2.562520`, and `2.492283`; the other
-five cells were running without a failed attempt. At the two completed 275M
-points, `expand_v=2` + negative-eigenvalue KDA improves over both matching
-GDN1 and canonical KDA. The 480M Cx1 result is effectively tied with canonical
-GDN2 (`-0.000599` CE) and improves over canonical KDA by `0.025544`.
+At the 2026-07-27 16:56 UTC refresh, all 275M/480M cells and 810M Cx1 had
+finished without a failed attempt. The 275M Cx1/2/4/8 strict final-250M CEs
+are `2.692695`, `2.562520`, `2.464247`, and `2.380273`; the 480M values are
+`2.492283`, `2.382695`, `2.291179`, and `2.216501`; 810M Cx1 is `2.352304`.
+The other three 810M cells remain healthy and running.
