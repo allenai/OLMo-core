@@ -71,6 +71,7 @@ CANONICAL_GDN2_ACTIVE_PARAMETERS = {
 KDA_EV2_NEG_ACTIVE_PARAMETERS = {
     "275m": 290_503_488,
     "480m": 498_741_600,
+    "810m": 839_239_616,
 }
 WIDE_ACTIVE_PARAMETERS = {
     "275m": 280_207_872,
@@ -181,19 +182,20 @@ def _planned_display_names() -> dict[str, list[tuple[str, int, float, str]]]:
                 ),
             )
         )
-    for cx in CXS:
-        lr = SCALE_LRS[("480m", cx)]
-        planned[KDA_EV2_NEG_KEY].append(
-            (
-                "480m",
-                cx,
-                lr,
+    for model in ("480m", "810m"):
+        for cx in CXS:
+            lr = SCALE_LRS[(model, cx)]
+            planned[KDA_EV2_NEG_KEY].append(
                 (
-                    f"pt-480m-geometry-hybrid-kda-ev2-neg-nope-gated-"
-                    f"cx{cx}-lr{_scale_lr_name(lr)}-r1"
-                ),
+                    model,
+                    cx,
+                    lr,
+                    (
+                        f"pt-{model}-geometry-hybrid-kda-ev2-neg-nope-gated-"
+                        f"cx{cx}-lr{_scale_lr_name(lr)}-r1"
+                    ),
+                )
             )
-        )
     return planned
 
 
