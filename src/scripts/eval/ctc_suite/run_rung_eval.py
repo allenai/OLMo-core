@@ -4,8 +4,12 @@ Per-rung eval driver for the CTC suite (``records/ctc-suite-scaling-plan.md`` §
 Wraps the PROVEN native olmo-core evaluators for one (task, checkpoint, rung):
 
 * ``contradiction`` -> ``src/corpus_reasoning/eval/eval_lc_native_docchunk_contra.py``
-* ``oolong | retrieval | rerank | outlier`` -> ``src/corpus_reasoning/eval/eval_lc_native_docchunk.py``
-  (multi-task via its ``TASK_CFG``).
+* everything else in :data:`NATIVE_TASKS` (all 20 plan §3 canonical task keys) ->
+  ``src/corpus_reasoning/eval/eval_lc_native_docchunk.py`` (multi-task via its ``TASK_CFG``).
+  Plan/suite catalog names that aren't a canonical ``--task`` key (``hotpotqa``,
+  ``niah_contradiction``, ``beir_scifact``, ``beir_fiqa``, ``msmarco``, ``outlier_amazon``,
+  ``helmet_qa``, ``helmet_summ``) route through :data:`TASK_ALIASES` to the canonical key that
+  carries the right metric (e.g. ``hotpotqa`` -> ``retrieval`` -> ``gold_id_f1``).
 
 Both evaluators have the Qwen3.5 ``--doc-start-id/--doc-end-id/--eos-token-id`` overrides +
 ``--per-example-out``, so the driver passes the id args and a generations-dump path through for
@@ -77,21 +81,81 @@ TASK_CLASS = {
     "cycle": "N3",
     "groups4": "N3",
 }
-TASK_ALIASES = {"nq": "retrieval", "contra": "contradiction"}
+#: Canonical ``--task`` aliases (run-name / launcher / plan-§3 catalog shorthands). Suite/plan
+#: names on the left route to the evaluator's canonical task key on the right; the metric that
+#: comes along is whatever ``TASK_METRIC[canonical]`` says (e.g. hotpotqa -> retrieval ->
+#: gold_id_f1) -- no separate per-alias metric table needed since the alias IS the canonical task.
+TASK_ALIASES = {
+    "nq": "retrieval",
+    "contra": "contradiction",
+    "hotpotqa": "retrieval",  # metric gold_id_f1 (plan §3 row 2)
+    "niah_contradiction": "retrieval",  # metric gold_id_f1 (row 3; NIAH-contra transform)
+    "beir_scifact": "retrieval",  # row 7
+    "beir_fiqa": "retrieval",  # row 8
+    "msmarco": "retrieval",  # row 9
+    "outlier_amazon": "outlier",  # row 12
+    "helmet_qa": "qa",  # row 5
+    "helmet_summ": "summarization",  # row 6
+}
 
 #: Tasks the proven native evaluators support today. Everything else needs an evaluator first.
-NATIVE_TASKS = ("oolong", "contradiction", "retrieval", "rerank", "outlier")
+#: Full plan §3 canonical task set (20 keys; qdmatch's 3 catalog variants -- NQ/HPQA/ObliQ -- and
+#: the retrieval-family aliases above all route to one of these via TASK_ALIASES).
+NATIVE_TASKS = (
+    "oolong",
+    "contradiction",
+    "retrieval",
+    "rerank",
+    "outlier",
+    "redundancy",
+    "absence",
+    "xabsence",
+    "strmatch",
+    "qdmatch",
+    "mathmatch",
+    "cycle",
+    "groups4",
+    "textgroups",
+    "reorder",
+    "grouping",
+    "grouping_labeled",
+    "qa",
+    "summarization",
+    "cot_retrieval",
+)
 
-#: task -> (summary key in the evaluator JSON, metric key inside it, §8 metric_name).
+#: task -> (summary key in the evaluator JSON, metric key inside it, §8 metric_name). Mirrors
+#: eval_lc_native_docchunk.py's TASK_CFG scorer reuse: several canonical tasks share a scorer
+#: function there (redundancy/strmatch/mathmatch -> _eval_contradiction's "f1", xabsence ->
+#: _eval_absence's "f1", groups4/textgroups -> _eval_cycle's "f1", cot_retrieval ->
+#: _eval_retrieval's "f1", grouping_labeled -> _eval_grouping's "pairwise_f1") -- the metric_key
+#: read out of the evaluator JSON follows the same reuse; only metric_name (the §8 label) is
+#: task-specific for readability in results-hub.
 TASK_METRIC = {
     "oolong": ("oolong", "score", "partial_credit"),
     "contradiction": ("contradiction", "f1", "set_f1"),
     "retrieval": ("metrics", "f1", "gold_id_f1"),
     "rerank": ("metrics", "mrr@10", "mrr@10"),
     "outlier": ("metrics", "f1", "set_f1"),
+    "redundancy": ("metrics", "f1", "set_f1"),
+    "absence": ("metrics", "f1", "set_f1"),
+    "xabsence": ("metrics", "f1", "set_f1"),
+    "strmatch": ("metrics", "f1", "set_f1"),
+    "qdmatch": ("metrics", "f1", "pair_f1"),
+    "mathmatch": ("metrics", "f1", "set_f1"),
+    "cycle": ("metrics", "f1", "cycle_f1"),
+    "groups4": ("metrics", "f1", "cycle_f1"),
+    "textgroups": ("metrics", "f1", "textgroups_f1"),
+    "reorder": ("metrics", "kendall_tau", "kendall_tau"),
+    "grouping": ("metrics", "pairwise_f1", "pairwise_f1"),
+    "grouping_labeled": ("metrics", "pairwise_f1", "pairwise_f1"),
+    "qa": ("metrics", "f1", "token_f1"),
+    "summarization": ("metrics", "rouge1_f", "rouge1_f"),
+    "cot_retrieval": ("metrics", "f1", "gold_id_f1"),
 }
 
-#: Per-task decode budget defaults (mirroring the evaluators' TASK_CFG). Contradiction is
+#: Per-task decode budget defaults (mirroring the evaluators' TASK_CFG, which in turn mirrors
+#: evaluate.py's ``--max-tokens`` per-task overrides, ~lines 1171-1231). Contradiction is
 #: CoT-dependent: enumerate-CoT walks every claim (~2400 tokens); no-cot is one pair list that
 #: early-stops at ``]]`` (512 is generous) -- see ``resolve``.
 TASK_MAX_NEW = {
@@ -100,6 +164,21 @@ TASK_MAX_NEW = {
     "retrieval": 64,
     "rerank": 512,
     "outlier": 256,
+    "redundancy": 200,
+    "absence": 200,
+    "xabsence": 200,
+    "strmatch": 200,
+    "qdmatch": 200,
+    "mathmatch": 200,
+    "cycle": 200,
+    "groups4": 200,
+    "textgroups": 200,
+    "reorder": 1024,
+    "grouping": 2048,
+    "grouping_labeled": 2048,
+    "qa": 64,
+    "summarization": 1024,
+    "cot_retrieval": 512,
 }
 CONTRA_ENUMERATE_MAX_NEW = 2400
 
@@ -217,6 +296,15 @@ def build_parser() -> argparse.ArgumentParser:
         "which would silently shrink the eval)",
     )
     ap.add_argument("--nproc", type=int, default=8, help="torchrun --nproc_per_node")
+    ap.add_argument(
+        "--batch-size",
+        type=int,
+        default=1,
+        help="examples decoded per forward within each rank (left-padded, KV-cached). Default 1 "
+        "keeps the original bs=1 behavior. Only 'dense'/'chunked' and 'full' variants support "
+        "batching -- see corpus_reasoning.eval.batched_native_decode and "
+        "results/ctc_suite/batched_eval_status.md for the parity proof + safe batch sizes.",
+    )
     ap.add_argument("--master-port", type=int, default=None, help="torchrun --master_port")
     ap.add_argument(
         "--trained-ctx",
@@ -345,6 +433,8 @@ def resolve(args: argparse.Namespace):
         str(args.eos_token_id),
         "--per-example-out",
         gen_out,
+        "--batch-size",
+        str(args.batch_size),
     ]
     if task == "contradiction":
         cmd += [

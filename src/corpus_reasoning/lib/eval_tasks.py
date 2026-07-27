@@ -33,22 +33,49 @@ def parse_outlier_ids(text: str, n_docs: int) -> list[int] | None:
 
 # ── Grouping ─────────────────────────────────────────────────────────────
 
+def _first_groups_object(text: str) -> list[list[int]] | None:
+    """Return clusters from the FIRST complete ``{"groups": ...}`` JSON object in ``text``
+    (via raw_decode, which stops at the end of one object -> ignores any trailing ramble),
+    or None if there is no such object. An earlier greedy ``\\{[\\s\\S]*\\}`` regex spanned
+    first-brace..last-brace across the ramble, failed to json-decode, and fell through to a
+    digit-scrape fallback that lumped every doc_id on the first line into one giant cluster --
+    silently deflating pairwise-F1 by ~0.5."""
+    decoder = json.JSONDecoder()
+    for m in re.finditer(r'\{', text):
+        try:
+            obj, _ = decoder.raw_decode(text[m.start():])
+        except (json.JSONDecodeError, ValueError):
+            continue
+        if isinstance(obj, dict) and "groups" in obj:
+            out = []
+            for g in obj["groups"]:
+                ids = g.get("doc_ids") if isinstance(g, dict) else g
+                if isinstance(ids, list):
+                    out.append([int(x) for x in ids])
+            if out:
+                return out
+    return None
+
+
 def parse_partition(text: str, n_docs: int) -> list[list[int]] | None:
     """Extract list of clusters (each a list of 1-indexed doc IDs)."""
     text = text.strip()
-    for match in re.finditer(r'\{[\s\S]*\}', text):
-        try:
-            obj = json.loads(match.group())
-            if isinstance(obj, dict) and "groups" in obj:
-                out = []
-                for g in obj["groups"]:
-                    ids = g.get("doc_ids") if isinstance(g, dict) else g
-                    if isinstance(ids, list):
-                        out.append([int(x) for x in ids])
-                if out:
-                    return out
-        except (json.JSONDecodeError, ValueError, TypeError):
-            continue
+    out = _first_groups_object(text)
+    if out is not None:
+        return out
+    # Primed-continuation recovery: some checkpoints (notably the chunked -cmix models) emit the
+    # grouping answer such that its opening ``{"groups": [{"doc_ids": [`` is missing -- it lands
+    # ahead of a late ``</think>`` that run_vllm_eval's truncate splits away, leaving a response that
+    # BEGINS mid-array, e.g. ``2, 3, 4]}, {"doc_ids": [1, 6, 9]}]}``. Re-attach the standard grouping
+    # primer and retry the first-object decode. Dense responses carry the full object (handled above)
+    # and never reach this branch. Without this, EVERY such response falls to the digit-scrape
+    # fallback and mis-grades (measured chunked grouping @2k: 0.44 broken vs 0.82 recovered).
+    if not text.startswith('{'):
+        for primer in ('{"groups": [{"doc_ids": [', '{"groups": ['):
+            out = _first_groups_object(primer + text)
+            if out is not None:
+                return out
+    # Non-JSON fallbacks (unchanged): list-of-lists, then bare ids-per-line.
     m = re.search(r'\[\s*\[[\s\S]*\]\s*\]', text)
     if m:
         try:

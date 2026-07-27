@@ -231,6 +231,15 @@ def main():
         help="landmark variant: top-k = ceil(fraction * num_prompt_blocks), set per example. "
         "Overridden by --landmark-top-k-blocks.",
     )
+    ap.add_argument(
+        "--batch-size",
+        type=int,
+        default=1,
+        help="examples decoded per forward (left-padded, KV-cached). Default 1 keeps the exact "
+        "original bs=1 loop. Only '--variant dense' and '--variant full' are supported -- "
+        "'--variant landmark' always uses the bs=1 path (periodic landmark re-insertion during "
+        "decode doesn't fit the batched loop). See corpus_reasoning.eval.batched_native_decode.",
+    )
     args = ap.parse_args()
 
     # Pure-argument validation FIRST, before CUDA init / the model build: a flag typo should fail in
@@ -245,6 +254,17 @@ def main():
             f"--gold-hops needs --variant dense (DocumentChunkedAttention); got {args.variant!r}. "
             "'--variant full' does not even thread chunk_ids, so the gold mask would be silently "
             "absent and every arm would score as unrestricted attention."
+        )
+    if args.batch_size > 1 and args.gold_pairs:
+        raise SystemExit(
+            "--batch-size > 1 is not supported together with --gold-pairs (the gold-hop hook's "
+            "per-forward fingerprint lookup is bs=1-only). Use --batch-size 1 for gold_hop_controlled "
+            "evals."
+        )
+    if args.batch_size > 1 and args.variant == "landmark":
+        raise SystemExit(
+            "--batch-size > 1 is not supported for --variant landmark (periodic landmark-token "
+            "re-insertion during decode doesn't fit the batched loop). Use --batch-size 1."
         )
 
     os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
@@ -307,14 +327,41 @@ def main():
     gm = TransformerGenerationModuleConfig(
         gen_cfg, float8_config=None, dtype=DType("bfloat16"), compile_model=False
     ).build(checkpoint_dir=args.model_path, device=device)
+    # pad_id is always PAD_TOKEN_ID now (not just for landmark): batched eval (--batch-size > 1)
+    # left-pads the prompt with this id, and chunk_ids reconstruction must mark it PAD (non-
+    # attendable) rather than FREE. At --batch-size 1 no such token ever appears in the dense/full
+    # prefill, so this is bit-identical to the old ``pad_id=None`` behavior for those variants.
     if args.variant != "full":
         gm.model.enable_document_chunk_attention(
             doc_start_id=ds_id,
             doc_end_id=de_id,
             eos_id=eos_id,
             mode="chunked",
-            pad_id=PAD_TOKEN_ID if args.variant == "landmark" else None,
+            pad_id=PAD_TOKEN_ID,
         )
+    elif args.batch_size > 1:
+        from corpus_reasoning.eval.batched_native_decode import (
+            model_has_document_chunked_attention,
+        )
+
+        if model_has_document_chunked_attention(gm):
+            # This "full" checkpoint's attention layers really are DocumentChunkedAttention (mask
+            # disabled for this arm). Batched decode left-pads the prompt, so the pad prefix must
+            # still be excluded from attention -- done via batched_native_decode's
+            # force_standard_pattern, which forces the "standard" pattern (causal & not_pad, no
+            # document isolation) around each batched call. Thread chunk_ids here so that pattern has
+            # a pad role to exclude; bs=1 "full" is untouched (this branch requires batch_size > 1).
+            gm.model.enable_document_chunk_attention(
+                doc_start_id=ds_id,
+                doc_end_id=de_id,
+                eos_id=eos_id,
+                mode="chunked",
+                pad_id=PAD_TOKEN_ID,
+            )
+        # else: a genuinely plain-attention-trained "full" checkpoint. Its KV-cached prefill already
+        # honors cache_leftpad natively (flash_attn_with_kvcache) -- no chunk-id/pattern setup needed,
+        # and calling enable_document_chunk_attention would crash (those blocks don't accept
+        # chunk_ids).
     print(
         f"[docchunk-contra-{args.variant}] built from {args.model_path} in {time.time() - t0:.1f}s",
         flush=True,
@@ -488,19 +535,63 @@ def main():
 
     local = []
     skipped = 0
-    for gi in my_gidx:
-        raw = examples[gi].get("ex", examples[gi])
-        prefill = build_prefill(raw)
-        if len(prefill) > cap:
-            skipped += 1
-            local.append((gi, ""))  # too long for this max_length -> empty (scored wrong)
-            continue
-        if args.variant == "landmark" and args.landmark_top_k_fraction is not None:
-            n_blocks = max(1, len(prefill) // block_size)
-            gm.model.set_landmark_eval_top_k(
-                max(1, math.ceil(args.landmark_top_k_fraction * n_blocks))
-            )
-        local.append((gi, generate_one(prefill)))
+    if args.batch_size <= 1:
+        for gi in my_gidx:
+            raw = examples[gi].get("ex", examples[gi])
+            prefill = build_prefill(raw)
+            if len(prefill) > cap:
+                skipped += 1
+                local.append((gi, ""))  # too long for this max_length -> empty (scored wrong)
+                continue
+            if args.variant == "landmark" and args.landmark_top_k_fraction is not None:
+                n_blocks = max(1, len(prefill) // block_size)
+                gm.model.set_landmark_eval_top_k(
+                    max(1, math.ceil(args.landmark_top_k_fraction * n_blocks))
+                )
+            local.append((gi, generate_one(prefill)))
+    else:
+        # Batched path (--variant dense | full only -- validated above). Length-filter first (exactly
+        # as bs=1), then decode the survivors ``--batch-size`` at a time.
+        from corpus_reasoning.eval.batched_native_decode import (
+            force_standard_pattern,
+            generate_batch_docchunk,
+        )
+
+        keep: list = []
+        for gi in my_gidx:
+            raw = examples[gi].get("ex", examples[gi])
+            prefill = build_prefill(raw)
+            if len(prefill) > cap:
+                skipped += 1
+                local.append((gi, ""))
+            else:
+                keep.append((gi, prefill))
+
+        def is_answer_complete(content):
+            return bool(content) and content[-1] == NEWLINE_ID and _answer_complete(content)
+
+        from contextlib import nullcontext
+
+        ctx = force_standard_pattern(gm) if args.variant == "full" else nullcontext()
+        with ctx:
+            for start in range(0, len(keep), args.batch_size):
+                group = keep[start : start + args.batch_size]
+                gidxs = [gi for gi, _ in group]
+                prefills = [p for _, p in group]
+                outs = generate_batch_docchunk(
+                    gm,
+                    prefills,
+                    device=device,
+                    eos_id=eos_id,
+                    pad_token_id=PAD_TOKEN_ID,
+                    max_new_tokens=max_new_tokens,
+                    max_length=args.max_length,
+                    is_answer_complete=is_answer_complete,
+                )
+                for gi, new_content in zip(gidxs, outs):
+                    text = tok.decode(new_content, skip_special_tokens=True)
+                    text = text.split("</think>", 1)[1] if "</think>" in text else text
+                    local.append((gi, text))
 
     # ---- gold-hop POST-HOC: the hook must actually have masked every document-bearing forward ----
     # The pre-flight proved the keys match; this proves the graph reached attention. Raises rather than
