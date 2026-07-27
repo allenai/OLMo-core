@@ -69,7 +69,7 @@ eval = [
     "google-cloud-storage",  # for cached_path gs:// downloads of the eval data archive
 ]
 fa4 = ["flash-attn-4>=4.0.0b4 ; sys_platform == 'linux'"]
-fla = ["flash-linear-attention==0.4.1"]
+fla = ["flash-linear-attention[cuda] @ git+https://github.com/fla-org/flash-linear-attention.git@cbb0a72efb55c18ca0ef4f298298317573ad2cb3 ; sys_platform == 'linux'"]
 torchao = ["torchao==0.15.0"]
 transformers = ["transformers>=5.4.0"]
 wandb = ["wandb"]
