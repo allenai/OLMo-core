@@ -1,5 +1,6 @@
 from typing import Optional
 
+import pytest
 import torch
 
 from olmo_core.config import DType
@@ -40,6 +41,7 @@ def _build_block(
     top_k: int = 1,
     uniform_expert_assignment: bool = True,
     rowwise_fp8: Optional[MoERowwiseFP8Config] = None,
+    routed_rowwise_fp8: Optional[MoERowwiseFP8Config] = None,
     init_device: str = "cuda",
 ) -> OLMoDDPTransformerBlock:
     layer_norm = LayerNormConfig(
@@ -79,6 +81,7 @@ def _build_block(
             num_experts=num_experts,
             bias=False,
             dtype=DType.float32,
+            rowwise_fp8=routed_rowwise_fp8,
         ),
         feed_forward_norm=layer_norm,
         ep=ExpertParallelConfig(path=ExpertParallelPath.sync_1d, major_align=1),
@@ -157,13 +160,25 @@ def test_v2_no_ep_forward_backward_smoke():
 
 @requires_gpu
 @requires_compute_capability(min_cc=10)
-def test_v2_no_ep_rowwise_fp8_forward_backward_smoke():
+@pytest.mark.parametrize(
+    ("rowwise_fp8", "routed_rowwise_fp8"),
+    [
+        (MoERowwiseFP8Config(), None),
+        (None, MoERowwiseFP8Config()),
+    ],
+    ids=("inherited-block-config", "direct-routed-config"),
+)
+def test_v2_no_ep_rowwise_fp8_forward_backward_smoke(
+    rowwise_fp8: Optional[MoERowwiseFP8Config],
+    routed_rowwise_fp8: Optional[MoERowwiseFP8Config],
+):
     block = _build_block(
         d_model=128,
         hidden_size=256,
         num_experts=4,
         top_k=1,
-        rowwise_fp8=MoERowwiseFP8Config(),
+        rowwise_fp8=rowwise_fp8,
+        routed_rowwise_fp8=routed_rowwise_fp8,
         init_device="cuda",
     )
     _init_block_params(block)
@@ -186,6 +201,41 @@ def test_v2_no_ep_rowwise_fp8_forward_backward_smoke():
     assert block.routed_experts is not None
     assert block.routed_experts._rowwise_fp8_up_gate_weight.grad_bf16 is not None
     assert block.routed_experts._rowwise_fp8_down_weight.grad_bf16 is not None
+
+
+@requires_gpu
+@requires_grouped_gemm
+@requires_compute_capability(min_cc=10)
+def test_v2_no_ep_routed_rowwise_fp8_explicit_disable_overrides_block_config():
+    block = _build_block(
+        d_model=128,
+        hidden_size=256,
+        num_experts=4,
+        top_k=1,
+        rowwise_fp8=MoERowwiseFP8Config(),
+        routed_rowwise_fp8=MoERowwiseFP8Config(enabled=False),
+        init_device="cuda",
+    )
+    _init_block_params(block)
+    _install_forced_router(block)
+    block.train()
+
+    block.refresh_rowwise_fp8_cache()
+    x = torch.randn(1, 8, block.d_model, device="cuda", dtype=torch.float32, requires_grad=True)
+    y = block(x)
+
+    assert y.shape == x.shape
+    assert torch.isfinite(y).all()
+
+    y.square().mean().backward()
+
+    assert x.grad is not None
+    assert torch.isfinite(x.grad).all()
+    assert block.routed_experts is not None
+    assert block.routed_experts.w_up_gate.grad is not None
+    assert block.routed_experts.w_down.grad is not None
+    assert block.routed_experts._rowwise_fp8_up_gate_weight.grad_bf16 is None
+    assert block.routed_experts._rowwise_fp8_down_weight.grad_bf16 is None
 
 
 @requires_gpu

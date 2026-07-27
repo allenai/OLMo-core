@@ -58,16 +58,24 @@ def combined_forward_no_ep(
         loss_div_factor=loss_div_factor,
     )
 
-    rowwise_fp8_cfg = self.rowwise_fp8
+    shared_rowwise_fp8_cfg = self.rowwise_fp8
+    routed_rowwise_fp8_cfg = self.routed_experts.rowwise_fp8
     # The grouped MXFP8 expert kernels are local compute kernels; they do not
     # intrinsically require an expert-parallel process group. Historically the
     # flag was only forwarded by the rowwise EP path, so pure-DP jobs always
     # took the ordinary BF16 no-EP path.
-    use_rowwise_fp8 = (
-        rowwise_fp8_cfg is not None and rowwise_fp8_cfg.enabled and moe_inp.device.type == "cuda"
+    use_shared_rowwise_fp8 = (
+        shared_rowwise_fp8_cfg is not None
+        and shared_rowwise_fp8_cfg.enabled
+        and moe_inp.device.type == "cuda"
+    )
+    use_routed_rowwise_fp8 = (
+        routed_rowwise_fp8_cfg is not None
+        and routed_rowwise_fp8_cfg.enabled
+        and moe_inp.device.type == "cuda"
     )
 
-    if requires_host_side_split_sizes() and not use_rowwise_fp8:
+    if requires_host_side_split_sizes() and not use_routed_rowwise_fp8:
         local_batch_size_per_global_routed_expert_cpu, copy_stream, dtoh_event = async_copy_to_cpu(
             local_batch_size_per_global_routed_expert,
             event=self._dtoh_event,
@@ -100,12 +108,12 @@ def combined_forward_no_ep(
         )
 
         with torch.cuda.stream(self.get_dense_stream()):
-            if use_rowwise_fp8:
-                assert rowwise_fp8_cfg is not None
+            if use_shared_rowwise_fp8:
+                assert shared_rowwise_fp8_cfg is not None
                 shared_out = shared_experts_forward_rowwise_fp8(
                     self,
                     moe_inp,
-                    use_fast_accum=rowwise_fp8_cfg.use_fast_accum,
+                    use_fast_accum=shared_rowwise_fp8_cfg.use_fast_accum,
                 )
             else:
                 shared_out = self.shared_experts(moe_inp)
@@ -136,7 +144,7 @@ def combined_forward_no_ep(
     # can trigger Dynamo constraint violations.
     # torch._dynamo.mark_dynamic(permutated_input_tokens, 0)
 
-    if use_rowwise_fp8:
+    if use_routed_rowwise_fp8:
         # scaled_grouped_mm consumes device-side int32 offsets. Do not take the
         # legacy grouped_gemm CPU split-size path for MXFP8 experts.
         mlp_x = self.routed_experts(
