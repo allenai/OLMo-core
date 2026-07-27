@@ -63,42 +63,58 @@ _LANDMARK_ATTENTION_TYPES = (
 )
 
 
-def _insert_landmark_tokens(input_ids: torch.Tensor, mem_freq: int, mem_id: int) -> torch.Tensor:
+def _insert_landmark_tokens(
+    input_ids: torch.Tensor, mem_freq: int, mem_id: int, num_landmarks: int = 1
+) -> torch.Tensor:
     """
-    Insert a landmark token after every ``mem_freq`` content tokens of each row, reproducing the
-    block structure that landmark models are trained on (a landmark at every position ``p`` with
-    ``(p + 1) % (mem_freq + 1) == 0``). A trailing partial block (fewer than ``mem_freq`` tokens) is
-    left without a landmark.
+    Insert ``num_landmarks`` landmark tokens after every ``mem_freq`` content tokens of each row,
+    reproducing the block structure that landmark models are trained on: with
+    ``block_size = mem_freq + num_landmarks``, the last ``num_landmarks`` positions of each block are
+    landmarks. A trailing partial block (fewer than ``mem_freq`` tokens) is left without landmarks.
+
+    This must agree with how the model derives ``is_mem`` (see
+    :meth:`~olmo_core.nn.attention.landmark_multi_compressive.MultiCompressiveLandmarkAttention._attn_core`),
+    otherwise landmarks land in columns the kernel does not treat as landmarks.
 
     :param input_ids: Content token IDs of shape ``(batch_size, seq_len)`` (no landmarks).
-    :param mem_freq: Number of content tokens between landmarks (landmark block size is
-        ``mem_freq + 1``).
+    :param mem_freq: Number of content tokens between landmark runs (landmark block size is
+        ``mem_freq + num_landmarks``).
     :param mem_id: The landmark token ID to insert.
+    :param num_landmarks: Landmark tokens per block. The default of 1 is the single-landmark
+        geometry.
 
-    :returns: Token IDs of shape ``(batch_size, seq_len + seq_len // mem_freq)`` with landmarks
-        inserted at the fixed periodic positions.
+    :returns: Token IDs of shape
+        ``(batch_size, seq_len + num_landmarks * (seq_len // mem_freq))`` with landmarks inserted at
+        the fixed periodic positions.
     """
     B, C = input_ids.shape
-    n_land = C // mem_freq
-    if n_land == 0:
+    n_blocks = C // mem_freq
+    if n_blocks == 0:
         return input_ids
-    block_size = mem_freq + 1
-    out_len = C + n_land
+    block_size = mem_freq + num_landmarks
+    out_len = C + n_blocks * num_landmarks
     out = input_ids.new_full((B, out_len), mem_id)
     pos = torch.arange(out_len, device=input_ids.device)
-    content_pos = pos[((pos + 1) % block_size) != 0]  # everything except the landmark slots
+    # Content occupies the first ``mem_freq`` slots of each block; the tail is landmarks.
+    content_pos = pos[(pos % block_size) < mem_freq]
     out[:, content_pos] = input_ids
     return out
 
 
 def _build_landmark_prompt(
-    input_ids: torch.Tensor, mem_freq: int, mem_id: int, *, mode: str, pad_id: int
+    input_ids: torch.Tensor,
+    mem_freq: int,
+    mem_id: int,
+    *,
+    mode: str,
+    pad_id: int,
+    num_landmarks: int = 1,
 ) -> torch.Tensor:
     """
     Build the landmark-structured prompt fed to prefill from a content-only prompt.
 
     In ``"generation_only"`` mode the final partial block is padded with ``pad_id`` up to the next
-    landmark position, so the prompt always ends with a landmark token (keeping landmarks at the
+    landmark position, so the prompt always ends with a landmark run (keeping landmarks at the
     trained periodic positions). In ``"extend_last_block"`` mode a trailing partial block is left
     as-is (it stays part of the growing local block during decode).
     """
@@ -108,7 +124,7 @@ def _build_landmark_prompt(
         if pad_len:
             pad_block = content.new_full((content.shape[0], pad_len), pad_id)
             content = torch.cat([content, pad_block], dim=1)
-    return _insert_landmark_tokens(content, mem_freq, mem_id)
+    return _insert_landmark_tokens(content, mem_freq, mem_id, num_landmarks)
 
 
 class TransformerGenerationModule(GenerationModule):
@@ -364,16 +380,26 @@ class TransformerGenerationModule(GenerationModule):
                 raise OLMoConfigurationError(
                     f"Landmark layers have inconsistent mem_freq values: {sorted(mem_freqs)}"
                 )
+            # Multi-landmark variants put ``num_landmarks`` landmarks at the end of each block; the
+            # single-landmark classes have no such attribute and default to 1.
+            nums_landmarks = {int(getattr(a, "num_landmarks", 1)) for a in landmark_layers}
+            if len(nums_landmarks) != 1:
+                raise OLMoConfigurationError(
+                    f"Landmark layers have inconsistent num_landmarks values: "
+                    f"{sorted(nums_landmarks)}"
+                )
             pad_id = generation_config.landmark_pad_id
             if pad_id is None:
                 pad_id = generation_config.pad_token_id
             mem_freq = mem_freqs.pop()
+            num_landmarks = nums_landmarks.pop()
             input_ids = _build_landmark_prompt(
                 input_ids,
                 mem_freq,
                 generation_config.landmark_mem_id,
                 mode=generation_config.landmark_decode_mode,
                 pad_id=pad_id,
+                num_landmarks=num_landmarks,
             )
 
         batch_size, prompt_len = input_ids.shape
@@ -383,7 +409,7 @@ class TransformerGenerationModule(GenerationModule):
             # for both falls back to dense soft-gating over all past blocks.
             top_k = generation_config.landmark_top_k_blocks
             if top_k is None and generation_config.landmark_top_k_fraction is not None:
-                num_blocks = max(1, prompt_len // (mem_freq + 1))
+                num_blocks = max(1, prompt_len // (mem_freq + num_landmarks))
                 top_k = max(1, math.ceil(generation_config.landmark_top_k_fraction * num_blocks))
             self._set_landmark_eval_decode(
                 prompt_len,
@@ -689,10 +715,16 @@ class TransformerGenerationModule(GenerationModule):
         mem_freqs = {int(getattr(a, "mem_freq")) for a in layers}
         if len(mem_freqs) != 1:
             raise OLMoConfigurationError(f"Inconsistent mem_freq: {sorted(mem_freqs)}")
+        nums_landmarks = {int(getattr(a, "num_landmarks", 1)) for a in layers}
+        if len(nums_landmarks) != 1:
+            raise OLMoConfigurationError(f"Inconsistent num_landmarks: {sorted(nums_landmarks)}")
         mem_freq = mem_freqs.pop()
-        block_size = mem_freq + 1
+        num_landmarks = nums_landmarks.pop()
+        block_size = mem_freq + num_landmarks
         mem_id = gen_cfg.landmark_mem_id
-        pad_id = gen_cfg.landmark_pad_id if gen_cfg.landmark_pad_id is not None else gen_cfg.pad_token_id
+        pad_id = (
+            gen_cfg.landmark_pad_id if gen_cfg.landmark_pad_id is not None else gen_cfg.pad_token_id
+        )
         eos = gen_cfg.eos_token_id
         dev = self.device
         B = len(prompts)
@@ -702,7 +734,14 @@ class TransformerGenerationModule(GenerationModule):
         lm_rows: List[torch.Tensor] = []
         for p in prompts:
             ids = torch.tensor([p], dtype=torch.long, device=dev)
-            lm = _build_landmark_prompt(ids, mem_freq, mem_id, mode=decode_mode, pad_id=pad_id)
+            lm = _build_landmark_prompt(
+                ids,
+                mem_freq,
+                mem_id,
+                mode=decode_mode,
+                pad_id=pad_id,
+                num_landmarks=num_landmarks,
+            )
             lm_rows.append(lm[0])
         prompt_lens = torch.tensor([r.numel() for r in lm_rows], dtype=torch.long, device=dev)
         P = int(prompt_lens.max().item())

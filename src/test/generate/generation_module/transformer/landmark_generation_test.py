@@ -41,6 +41,81 @@ def test_insert_landmark_tokens():
     assert torch.equal(_insert_landmark_tokens(short, mem_freq=4, mem_id=999), short)
 
 
+@pytest.mark.parametrize("num_landmarks", [2, 4])
+def test_insert_landmark_tokens_multi(num_landmarks: int):
+    """Multi-landmark variants put ``num_landmarks`` landmarks at the end of every block."""
+    mem_freq, mem_id = 4, 999
+    block_size = mem_freq + num_landmarks
+    lm = [mem_id] * num_landmarks
+
+    # Content a multiple of mem_freq -> every block ends with a full landmark run.
+    x = torch.arange(1, 13).view(1, 12)
+    out = _insert_landmark_tokens(x, mem_freq=mem_freq, mem_id=mem_id, num_landmarks=num_landmarks)
+    assert out.tolist() == [[1, 2, 3, 4] + lm + [5, 6, 7, 8] + lm + [9, 10, 11, 12] + lm]
+    assert out.shape[1] == 12 + 3 * num_landmarks
+
+    # Trailing partial block is left without landmarks.
+    xx = torch.arange(1, 11).view(1, 10)
+    out2 = _insert_landmark_tokens(
+        xx, mem_freq=mem_freq, mem_id=mem_id, num_landmarks=num_landmarks
+    )
+    assert out2.tolist() == [[1, 2, 3, 4] + lm + [5, 6, 7, 8] + lm + [9, 10]]
+
+    # Fewer than mem_freq content tokens -> unchanged.
+    short = torch.arange(1, 4).view(1, 3)
+    assert torch.equal(
+        _insert_landmark_tokens(
+            short, mem_freq=mem_freq, mem_id=mem_id, num_landmarks=num_landmarks
+        ),
+        short,
+    )
+
+    # num_landmarks=1 must reproduce the single-landmark behavior exactly.
+    assert torch.equal(
+        _insert_landmark_tokens(x, mem_freq=mem_freq, mem_id=mem_id, num_landmarks=1),
+        _insert_landmark_tokens(x, mem_freq=mem_freq, mem_id=mem_id),
+    )
+
+    # The inserted landmark columns must match how the model derives ``is_mem``:
+    # ``arange(T) % block_size >= block_size - num_landmarks``.
+    T = out.shape[1]
+    is_mem_model = (torch.arange(T) % block_size) >= (block_size - num_landmarks)
+    is_mem_prompt = out[0] == mem_id
+    assert torch.equal(is_mem_prompt, is_mem_model)
+
+
+@pytest.mark.parametrize("num_landmarks", [2, 4])
+def test_build_landmark_prompt_multi_landmark(num_landmarks: int):
+    """generation_only pads the final partial block so the prompt ends with a full landmark run."""
+    mem_freq, mem_id, pad_id = 4, 999, 7
+    block_size = mem_freq + num_landmarks
+    content = torch.arange(1, 15).view(1, 14)  # 14 = 3 full blocks + 2 leftover
+
+    out = _build_landmark_prompt(
+        content,
+        mem_freq=mem_freq,
+        mem_id=mem_id,
+        mode="generation_only",
+        pad_id=pad_id,
+        num_landmarks=num_landmarks,
+    )
+    assert out.shape[1] % block_size == 0  # whole blocks only
+    assert out[0, -num_landmarks:].tolist() == [mem_id] * num_landmarks
+    # The padded leftover block: 13, 14, pad, pad, then the landmark run.
+    assert out[0, -block_size:].tolist() == [13, 14, pad_id, pad_id] + [mem_id] * num_landmarks
+
+    # extend_last_block leaves the trailing partial block, so it ends on content.
+    ext = _build_landmark_prompt(
+        content,
+        mem_freq=mem_freq,
+        mem_id=mem_id,
+        mode="extend_last_block",
+        pad_id=pad_id,
+        num_landmarks=num_landmarks,
+    )
+    assert ext[0, -1].item() == 14
+
+
 def test_build_landmark_prompt_generation_only_ends_with_landmark():
     # Partial final block (14 not a multiple of mem_freq=4): generation_only pads with pad_id up to
     # the next landmark position, so the prompt ends with a landmark.
