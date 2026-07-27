@@ -1,49 +1,35 @@
 #!/bin/bash
-# Autonomous driver for the Llama hotpotqa (RETRIEVAL) row: wait for the raw pool -> tokenize ->
-# train both arms -> chain the 2k/4k/8k/16k eval ladder behind each arm.
+# Autonomous driver for the Llama hotpotqa (RETRIEVAL) row: wait for the tokenized shard -> train
+# both arms -> chain the 2k/4k/8k/16k eval ladder behind each arm.
 #
 # hotpotqa is the O(N) half of the CTC hypothesis (expect dense ~= chunked), the counterpart to the
 # O(N*M) qdmatch row (expect dense >> chunked). It routes through --task retrieval (gold_id_f1).
 #
 # Run detached from the login node:
-#   nohup bash debug/ctc_llama/drive_hpqa.sh > /scratch/users/prasann/ctc_llama_logs/drive_hpqa.log 2>&1 &
+#   setsid nohup bash debug/ctc_llama/drive_hpqa.sh > /scratch/users/prasann/ctc_llama_logs/drive_hpqa.log 2>&1 < /dev/null &
 set -uo pipefail
 REPO=/accounts/projects/berkeleynlp/prasann/projects/OLMo-core
 LOGDIR=/scratch/users/prasann/ctc_llama_logs
-RAW=$REPO/debug/ctc_multifamily/hpqa_raw
 say() { echo "[drive_hpqa $(date '+%F %T')] $*"; }
 
-# ---- 1. wait for the raw pool. The generator is owned by the coordinator and may run EITHER as a
-#         login-node process OR as a slurm job (job name gen-hpqa-*), so wait on both: a bare
-#         file-exists check would fire on a partially written pool (the loop appends one n-bucket
-#         at a time) and silently train on a fraction of the ladder. ----
-say "waiting for raw hotpotqa pool in $RAW"
-while true; do
-  n_files=$(ls "$RAW"/*.jsonl 2>/dev/null | wc -l)
-  running_local=$(pgrep -u "$USER" -f generate_hotpotqa_data.py | wc -l)
-  running_slurm=$(squeue -u "$USER" -h -o '%j' 2>/dev/null | grep -c 'gen-hpqa')
-  if [ "$n_files" -gt 0 ] && [ "$running_local" -eq 0 ] && [ "$running_slurm" -eq 0 ]; then break; fi
-  sleep 60
-done
-say "raw pool ready: $(ls "$RAW"/*.jsonl | wc -l) files, $(cat "$RAW"/*.jsonl | wc -l) lines"
-
-# ---- 2. tokenize with the Llama marker set ----
-rm -f "$LOGDIR/HPQA_SHARD_READY"
-jid=$(sbatch --parsable "$REPO/debug/ctc_llama/tokenize_hpqa.sbatch")
-say "tokenization job $jid"
+# ---- 1. wait for the tokenization job (submitted separately) to publish the shard ----
+say "waiting for $LOGDIR/HPQA_SHARD_READY"
 while [ ! -f "$LOGDIR/HPQA_SHARD_READY" ]; do
-  squeue -j "$jid" -h -o %T 2>/dev/null | grep -q . || { sleep 30; break; }
+  if ! squeue -u "$USER" -h -o '%j' 2>/dev/null | grep -q 'llama-tok-hpqa'; then
+    [ -f "$LOGDIR/HPQA_SHARD_READY" ] || { say "FATAL: tokenization job gone and no shard"; exit 3; }
+  fi
   sleep 60
 done
-[ -f "$LOGDIR/shard_meta_hotpotqa.json" ] || { say "FATAL: tokenization produced no metadata"; exit 3; }
 MAXLEN_EX=$(python3 -c "import json;print(json.load(open('$LOGDIR/shard_meta_hotpotqa.json'))['max_example_len'])")
 NINST=$(python3 -c "import json;print(json.load(open('$LOGDIR/shard_meta_hotpotqa.json'))['num_instances'])")
+NDROP=$(python3 -c "import json;print(json.load(open('$LOGDIR/shard_meta_hotpotqa.json'))['num_dropped'])")
 # Train at the smallest multiple of 512 that still covers the longest example: PadToLength pads
-# EVERY instance to seq_len, so any slack above max_example_len is pure wasted compute.
+# EVERY instance up to seq_len, so any slack above max_example_len is pure wasted compute and
+# padding is the dominant cost driver here.
 SEQ_LEN=$(( ((MAXLEN_EX + 511) / 512) * 512 ))
-say "shard: num_instances=$NINST max_example_len=$MAXLEN_EX -> SEQ_LEN=$SEQ_LEN"
+say "shard: num_instances=$NINST dropped=$NDROP max_example_len=$MAXLEN_EX -> SEQ_LEN=$SEQ_LEN"
 
-# ---- 3. train both arms (4 GPUs each = the 8-GPU preemptive_high cap) ----
+# ---- 2. train both arms (4 GPUs each = the 8-GPU preemptive_high cap) ----
 declare -A TRAIN
 for V in full chunked-mix; do
   RUN=llama32-3b-hpqa-$V
@@ -55,19 +41,20 @@ for V in full chunked-mix; do
   say "train $V -> job $j (seq_len=$SEQ_LEN)"
 done
 
-# ---- 4. chain the eval ladder behind each arm ----
-# --max-length is set explicitly and generously: the rung label bounds the DOCUMENT COUNT, not the
-# prompt length, so the driver default (rung+2048) silently skips long prompts and scores them 0 at
-# parse_rate 1.0. retrieval's decode budget is only 64 tokens, so a large max_length is cheap.
-PORT=29700
+# ---- 3. chain the eval ladder behind each arm ----
+# MAXLEN is deliberately NOT passed: run_rung_eval now auto-sizes --max-length from the MEASURED
+# prompt distribution of the rung file and hard-fails rather than silently scoring skipped examples
+# 0 at parse_rate 1.0. retrieval's decode budget is only 64 tokens, so a generous auto-sized
+# max_length is cheap here (unlike contradiction, whose 101k-token tail forced a matched-budget
+# compromise).
+PORT=29900
 for V in full chunked-mix; do
   case "$V" in full) VARIANT=dense;; chunked-mix) VARIANT=chunked;; esac
   for RUNG in 2048 4096 8192 16384; do
     PORT=$((PORT + 31))
-    MAXLEN=32768; [ "$RUNG" -ge 16384 ] && MAXLEN=40960
     sbatch --nodelist=cubbins --gres=gpu:H200:2 --job-name="ev-hpqa-${V}-${RUNG}" \
       --dependency=afterany:${TRAIN[$V]} \
-      --export=ALL,CKPT=/data/prasann/ctc_suite/ckpts/llama32-3b-hpqa-$V,TASK=hotpotqa,VARIANT=$VARIANT,ARM=$V,RUNG=$RUNG,EVAL_JSONL=/scratch/users/prasann/ctc_suite_staged/eval_rungs/hotpotqa/rung_${RUNG}.jsonl,NGPU=2,MAXLEN=$MAXLEN,MASTER_PORT=$PORT \
+      --export=ALL,CKPT=/data/prasann/ctc_suite/ckpts/llama32-3b-hpqa-$V,TASK=hotpotqa,VARIANT=$VARIANT,ARM=$V,RUNG=$RUNG,EVAL_JSONL=/scratch/users/prasann/ctc_suite_staged/eval_rungs/hotpotqa/rung_${RUNG}.jsonl,NGPU=2,MASTER_PORT=$PORT \
       "$REPO/debug/ctc_llama/eval_llama_native.sbatch"
   done
 done

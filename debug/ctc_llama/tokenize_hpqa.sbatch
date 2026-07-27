@@ -1,46 +1,58 @@
 #!/bin/bash
-# Tokenize the hotpotqa RETRIEVAL training pool into Llama document-chunked dense SFT shards.
+# Tokenize the hotpotqa RETRIEVAL pool into Llama document-chunked dense SFT shards.
 # hotpotqa routes through --task retrieval (metric gold_id_f1); this is the O(N) half of the CTC
 # hypothesis, the counterpart to the O(N*M) qdmatch row.
+#
+# The BUILD_MATRIX-§2 pool (n in 11/24/50/100/205, bridge, hard-negs n/10, 4000 each) already has
+# its BM25 hard negatives mined, from the original Qwen build. Nothing about hotpotqa needs
+# regeneration -- only re-TOKENIZATION with the Llama tokenizer + marker set. That also keeps
+# pyserini's JVM out of the loop entirely; it is documented to hang on jsteinhardt compute nodes.
+#
+# Subsample 2000 per n with seed 42 -> 10k, discrete-uniform over n, exactly as the recipe says.
+#
+# NOTE: no `#SBATCH --gres` line at all. Requesting `gpu:0` explicitly makes slurm report
+# ReqNodeNotAvail even on a node that is MIXED with hundreds of free CPUs; omitting it schedules
+# instantly.
 #SBATCH --account=site
 #SBATCH --partition=jsteinhardt
 #SBATCH --qos=preemptive_high
 #SBATCH --nodelist=cubbins
-#SBATCH --gres=gpu:H200:0
 #SBATCH --cpus-per-task=16
-#SBATCH --mem=96G
-#SBATCH --time=02:00:00
+#SBATCH --mem=128G
+#SBATCH --time=03:00:00
 #SBATCH --job-name=llama-tok-hpqa
-#SBATCH --output=/data/prasann/joblogs/llama_tok_hpqa_%j.log
+#SBATCH --output=/scratch/users/prasann/ctc_llama_logs/tok_hpqa_%j.log
 set -uo pipefail
 REPO=/accounts/projects/berkeleynlp/prasann/projects/OLMo-core
 LOGDIR=/scratch/users/prasann/ctc_llama_logs
-mkdir -p "$LOGDIR"
-SRC=/data/prasann/joblogs/llama_tok_hpqa_${SLURM_JOB_ID}.log
-( while true; do cp -f "$SRC" "$LOGDIR/tok_hpqa.log" 2>/dev/null; sleep 20; done ) &
-trap 'cp -f "$SRC" "$LOGDIR/tok_hpqa.log" 2>/dev/null; kill %1 2>/dev/null' EXIT
+WORK=/data/prasann/ctc_llama/hpqa_subsample
+OUTDIR=/data/prasann/ctc_llama/shards/hotpotqa_train_llama
 ENV=/data/prasann/conda/envs/corpus-reasoning-olmo
 [ -d "$ENV" ] || ENV=/scratch/users/prasann/conda/envs/corpus-reasoning-olmo
 export PATH="$ENV/bin:$PATH" PYTHONPATH="$REPO/src"
 export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 PYTHONWARNINGS=ignore PYTHONUNBUFFERED=1 TOKENIZERS_PARALLELISM=false
 export HOME=/data/prasann
 TOK=/scratch/users/prasann/hf_models/Llama-3.2-3B-marker-tok
-SEQ_LEN=${SEQ_LEN:-24576}
-RAW=${RAW:-$REPO/debug/ctc_multifamily/hpqa_raw}
-OUTDIR=/data/prasann/ctc_llama/shards/hotpotqa_train_llama
-echo "=== HOST=$(hostname) SEQ_LEN=$SEQ_LEN START=$(date '+%F %T') ==="
-ls -la "$RAW"
-N=$(cat "$RAW"/*.jsonl 2>/dev/null | wc -l); echo "raw lines: $N"
-[ "$N" -gt 0 ] || { echo "FATAL: no raw hotpotqa jsonl in $RAW"; exit 2; }
+SEQ_LEN=${SEQ_LEN:-28672}
+mkdir -p "$LOGDIR" "$WORK"
+echo "=== HOST=$(hostname) START=$(date '+%F %T') SEQ_LEN=$SEQ_LEN ==="
+rm -f "$WORK"/*.jsonl
+python "$REPO/debug/ctc_llama/subsample_hpqa_pool.py" \
+  --pool /scratch/users/prasann/ctc_suite_staged/hpqa_pool \
+  --out "$WORK" --per-bucket 2000 --seed 42 || exit 2
+ls -la "$WORK"
 rm -rf "$OUTDIR"; mkdir -p "$OUTDIR"
 cd "$REPO"
 python src/scripts/data/convert_unified_to_document_landmark.py \
   --emit dense --task retrieval --chunk-by document --cot-mode none \
   --marker-set llama --tokenizer "$TOK" \
   --seq-len "$SEQ_LEN" --num-proc 8 --shard-tokens 60000000 \
-  --input-jsonl "$RAW"/*.jsonl --out-dir "$OUTDIR"
-echo "convert rc=$?"
-cat "$OUTDIR/metadata.json"; cp -f "$OUTDIR/metadata.json" "$LOGDIR/shard_meta_hotpotqa.json"
+  --input-jsonl "$WORK"/*.jsonl --out-dir "$OUTDIR"
+rc=$?
+echo "convert rc=$rc"
+[ $rc -eq 0 ] || exit $rc
+cat "$OUTDIR/metadata.json"
+cp -f "$OUTDIR/metadata.json" "$LOGDIR/shard_meta_hotpotqa.json"
 DST=/scratch/users/prasann/ctc_llama/shards/hotpotqa_train_llama
 mkdir -p "$DST"; cp -f "$OUTDIR"/* "$DST"/ && echo "staged -> $DST"
 touch "$LOGDIR/HPQA_SHARD_READY"
