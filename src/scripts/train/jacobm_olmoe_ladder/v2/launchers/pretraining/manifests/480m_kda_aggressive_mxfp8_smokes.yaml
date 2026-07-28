@@ -1,0 +1,59 @@
+schema_version: 1
+
+experiment:
+  description: 480M aggressive-MXFP8 KDA production-shape capacity smokes
+  checkpoint_root: /tmp/olmoe3-480m-kda-aggressive-mxfp8-smokes
+
+source:
+  remote: https://github.com/allenai/OLMo-core
+  branch: jacobm/moe-v2-core-gdn2
+  image: 01KW8G8JC20H11Y60PPTE2VN4Q
+
+beaker:
+  workspace: ai2/OLMo-3-moe-experiments
+  cluster: ai2/holmes
+  priority: urgent
+  shared_memory: 128GiB
+  min_runtime: 0m
+  preemptible: false
+  auto_resume: true
+  timeout: 4h
+
+secrets:
+  AWS_ACCESS_KEY_ID: AWS_ACCESS_KEY_ID
+  AWS_SECRET_ACCESS_KEY: AWS_SECRET_ACCESS_KEY
+  WANDB_API_KEY: jacobm_WANDB_API_KEY
+  BEAKER_TOKEN: jacobm_BEAKER_TOKEN
+
+weka:
+  - {bucket: oe-adapt-default, mount: /weka/oe-adapt-default}
+  - {bucket: oe-training-default, mount: /weka/oe-training-default}
+
+training:
+  model_variant: geometry_matched_kda_ev2_neg_nope_gated_mxfp8_aligned
+  layout_profile: kda_mxfp8_480m
+  capacity_qualified_model_sizes: []
+  smoke: true
+  sequence_length: 8192
+  hard_stop_steps: 50
+  checkpoints: false
+  save_interval: 999999999
+  ephemeral_save_interval: 999999999
+  checkpoint_removal: never
+  evals: false
+  eval_interval: 999999999
+  compile: true
+  wandb: true
+  attention_impl: fused_v2
+  attention_backend: flash_4
+  mxfp8_experts: true
+  mxfp8_attention: true
+  mxfp8_scale_mode: rceil
+
+# The launcher validates all four production layouts; the qualification command
+# selects only Cx4 (largest one-node MB) and Cx8 (the two-node path).
+runs:
+  - {task_name: 480m-mxfp8-smoke-cx1, run_name: smoke-480m-kda-ev2-neg-nope-gated-mxfp8-832-cx1-mb4-8gpu-r1, model_size: 480m, cx: 1, learning_rate: "1.2e-3", global_batch_size: 262144, num_nodes: 1, gpus_per_node: 8, expert_parallel_size: 1, rank_microbatch_sequences: 4}
+  - {task_name: 480m-mxfp8-smoke-cx2, run_name: smoke-480m-kda-ev2-neg-nope-gated-mxfp8-832-cx2-mb6-8gpu-r1, model_size: 480m, cx: 2, learning_rate: "9e-4", global_batch_size: 393216, num_nodes: 1, gpus_per_node: 8, expert_parallel_size: 1, rank_microbatch_sequences: 6}
+  - {task_name: 480m-mxfp8-smoke-cx4, run_name: smoke-480m-kda-ev2-neg-nope-gated-mxfp8-832-cx4-mb8-8gpu-r1, model_size: 480m, cx: 4, learning_rate: "8e-4", global_batch_size: 524288, num_nodes: 1, gpus_per_node: 8, expert_parallel_size: 1, rank_microbatch_sequences: 8}
+  - {task_name: 480m-mxfp8-smoke-cx8, run_name: smoke-480m-kda-ev2-neg-nope-gated-mxfp8-832-cx8-mb6-16gpu-r1, model_size: 480m, cx: 8, learning_rate: "8e-4", global_batch_size: 786432, num_nodes: 2, gpus_per_node: 8, expert_parallel_size: 1, rank_microbatch_sequences: 6}

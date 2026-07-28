@@ -49,6 +49,12 @@ BF16_LRS = {
     ("1p2b", 4): 3e-4,
     ("1p2b", 8): 4e-4,
 }
+MXFP8_TRANSFER_LRS = {
+    ("480m", 1): 1.2e-3,
+    ("480m", 2): 9e-4,
+    ("480m", 4): 8e-4,
+    ("480m", 8): 8e-4,
+}
 BF16_ACTIVE_PARAMETERS = 290_503_488
 MXFP8_ACTIVE_PARAMETERS = 291_885_888
 LOCAL_HISTORY_RECOVERIES = {
@@ -97,6 +103,15 @@ def _planned_names() -> dict[str, list[tuple[str, int, float, str]]]:
                     (f"pt-275m-kda-ev2-neg-nope-gated-mxfp8-672-cx{cx}-lr{_lr_name(lr)}-r1"),
                 )
             )
+    for (model, cx), lr in MXFP8_TRANSFER_LRS.items():
+        planned[MXFP8_KEY].append(
+            (
+                model,
+                cx,
+                lr,
+                (f"pt-{model}-kda-ev2-neg-nope-gated-mxfp8-832-cx{cx}-lr{_lr_name(lr)}-r1"),
+            )
+        )
     return planned
 
 
@@ -151,7 +166,7 @@ def resolve_variants(
     )
     mxfp8 = build(
         MXFP8_KEY,
-        "aggressive MXFP8 KDA (672 expert width, fused_v2/FA4)",
+        "aggressive MXFP8 KDA (32-aligned experts, fused_v2/FA4)",
         "#7c3aed",
     )
     return bf16, mxfp8, unresolved
@@ -164,14 +179,20 @@ def comparison_wave(bf16: Variant, mxfp8: Variant) -> Wave:
         intervention_label=mxfp8.label,
         architecture_note=(
             "Aggressive MXFP8 uses the same KDA expand_v=2/negative-eigenvalue "
-            "recipe as the BF16 reference. It also rounds expert width 664->672 "
-            "and enables fused_v2/FlashAttention-4, so the comparison does not "
-            "isolate precision alone."
+            "recipe as the BF16 reference. It rounds each expert width to its "
+            "audited 32-aligned value and enables fused_v2/FlashAttention-4, so "
+            "the comparison does not isolate precision alone."
         ),
         models=("275m",),
         lr_sweep_models=("275m",),
-        active_parameters={"275m": MXFP8_ACTIVE_PARAMETERS},
-        baseline_active_parameters={"275m": BF16_ACTIVE_PARAMETERS},
+        active_parameters={
+            "275m": MXFP8_ACTIVE_PARAMETERS,
+            "480m": 496_253_280,
+        },
+        baseline_active_parameters={
+            "275m": BF16_ACTIVE_PARAMETERS,
+            "480m": 498_741_600,
+        },
         baseline=bf16,
         intervention=mxfp8,
         uplot_baselines=False,
@@ -189,7 +210,8 @@ def plot_best_of(points: list[Any], output_path: Path) -> Path:
     filtered = [
         point
         for point in points
-        if point.variant == BF16_KEY or (point.variant == MXFP8_KEY and point.cx in eligible)
+        if point.variant == BF16_KEY
+        or (point.variant == MXFP8_KEY and (point.model != "275m" or point.cx in eligible))
     ]
     provisional = {
         ("275m", cx, MXFP8_KEY)
@@ -199,7 +221,7 @@ def plot_best_of(points: list[Any], output_path: Path) -> Path:
     plot_observed_best_summary(
         filtered,
         out_path=output_path,
-        title="KDA: BF16 transferred points vs 275M MXFP8 observed bests",
+        title="KDA: BF16 transfer vs aggressive MXFP8",
         variants=(
             SummaryVariant(
                 BF16_KEY,

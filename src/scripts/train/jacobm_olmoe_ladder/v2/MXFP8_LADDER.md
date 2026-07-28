@@ -140,6 +140,13 @@ enabled. No larger job should be launched before size-specific MB/EP/GPU
 smokes, because the 275M throughput result does not determine the larger
 systems optimum.
 
+The 480M continuation uses the established resource-balanced KDA layout:
+8 GPUs with rank MB 4/6/8 for Cx1/2/4 and 16 GPUs with rank MB6 for Cx8.
+All four cells have accumulation one and retain the transferred wide LRs
+`1.2e-3`, `9e-4`, `8e-4`, and `8e-4`. The checked-in qualification manifest
+selects the Cx4 MB8 one-node shape and the Cx8 MB6 two-node shape for 50
+checkpoint-free steps before the four production jobs are unlocked.
+
 ## Proposed KDA continuation strategy
 
 If the 275M aggressive-MXFP8 curves remain stable and competitive, make the

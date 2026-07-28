@@ -84,6 +84,12 @@ src/scripts/train/jacobm_olmoe_ladder/v2/launchers/pretraining/launch_480m_kda_e
 src/scripts/train/jacobm_olmoe_ladder/v2/launchers/pretraining/launch_810m_kda_ev2_neg_transfer.sh
 src/scripts/train/jacobm_olmoe_ladder/v2/launchers/pretraining/launch_1p2b_kda_ev2_neg_transfer.sh
 
+# Qualify and then launch the 480M aggressive-MXFP8 KDA continuation. The
+# smoke command covers the largest one-node MB and the two-node Cx8 path.
+src/scripts/train/jacobm_olmoe_ladder/v2/launchers/pretraining/launch_480m_kda_aggressive_mxfp8_smokes.sh \
+  --task 480m-mxfp8-smoke-cx4 --task 480m-mxfp8-smoke-cx8
+src/scripts/train/jacobm_olmoe_ladder/v2/launchers/pretraining/launch_480m_kda_aggressive_mxfp8_full.sh
+
 # Inspect the canonical expand_v=1, nonnegative GDN2 scale transfer. The
 # checked-in manifest preserves the approved longest-first submission order
 # and uses the balanced 176-GPU layout at full concurrency.

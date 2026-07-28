@@ -17,6 +17,7 @@ from scripts.train.jacobm_olmoe_ladder.v2.launchers.pretraining.launch_geometry_
     validate_remote_commit,
 )
 from scripts.train.jacobm_olmoe_ladder.v2.models.geometry_matched_scale import (
+    MXFP8_ALIGNED_EXPERT_HIDDEN_SIZES,
     build_geometry_matched_scale_gdn2_model_config,
     build_geometry_matched_scale_kda_model_config,
     build_geometry_matched_scale_model_config,
@@ -104,6 +105,7 @@ GDN2_BALANCED_LAYOUT = {
     ("1p2b", 8): (4, 8, 8, "sync_1d", 3),
 }
 KDA_480M_LAYOUT = {key: value for key, value in GDN2_BALANCED_LAYOUT.items() if key[0] == "480m"}
+KDA_MXFP8_480M_LAYOUT = dict(KDA_480M_LAYOUT)
 KDA_810M_LAYOUT = {key: value for key, value in GDN2_BALANCED_LAYOUT.items() if key[0] == "810m"}
 KDA_1P2B_LAYOUT = {
     # Keep the qualified balanced GPU/MB/EP layout, but use the current
@@ -136,6 +138,7 @@ LAYOUT_PROFILES = {
     "gdn2_wallclock_candidate": GDN2_WALLCLOCK_CANDIDATE_LAYOUT,
     "gdn2_balanced": GDN2_BALANCED_LAYOUT,
     "kda_480m": KDA_480M_LAYOUT,
+    "kda_mxfp8_480m": KDA_MXFP8_480M_LAYOUT,
     "kda_810m": KDA_810M_LAYOUT,
     "kda_1p2b": KDA_1P2B_LAYOUT,
 }
@@ -194,6 +197,15 @@ MODEL_VARIANTS = {
         "expand_v": 2.0,
         "allow_neg_eigval": True,
     },
+    "geometry_matched_kda_ev2_neg_nope_gated_mxfp8_aligned": {
+        "rope": False,
+        "attention_gate": True,
+        "gdn2": False,
+        "kda": True,
+        "expand_v": 2.0,
+        "allow_neg_eigval": True,
+        "mxfp8_aligned": True,
+    },
 }
 NONFINITE_DIAGNOSTIC_STOPS = {
     ("geometry_matched_gdn_ev2_nope", "1p2b-cx8"): 18_500,
@@ -208,19 +220,43 @@ def validate(manifest: dict[str, Any]) -> list[dict[str, Any]]:
         profile = MODEL_VARIANTS[variant]
     except KeyError as exc:
         raise ValueError(f"unsupported production model variant {variant!r}") from exc
+    smoke = bool(training.get("smoke", False))
     layout_profile = str(training.get("layout_profile", "accelerated"))
     try:
         selected_layout = LAYOUT_PROFILES[layout_profile]
     except KeyError as exc:
         raise ValueError(f"unsupported production layout profile {layout_profile!r}") from exc
-    if int(training["hard_stop_steps"]) != 0:
-        raise ValueError("production runs must set hard_stop_steps: 0")
-    if not bool(training["checkpoints"]):
-        raise ValueError("production runs must enable checkpoints")
+    hard_stop_steps = int(training["hard_stop_steps"])
+    if smoke:
+        if hard_stop_steps < 12:
+            raise ValueError("capacity smokes require at least 12 optimizer steps")
+        if bool(training["checkpoints"]):
+            raise ValueError("capacity smokes must disable checkpoints")
+    else:
+        if hard_stop_steps != 0:
+            raise ValueError("production runs must set hard_stop_steps: 0")
+        if not bool(training["checkpoints"]):
+            raise ValueError("production runs must enable checkpoints")
     if bool(training["evals"]):
         raise ValueError("production runs must disable in-loop evaluation")
-    if str(training["checkpoint_removal"]) != "ephemeral_only":
+    if not smoke and str(training["checkpoint_removal"]) != "ephemeral_only":
         raise ValueError("production runs must retain only rolling ephemeral checkpoints")
+
+    mxfp8_aligned = bool(profile.get("mxfp8_aligned", False))
+    mxfp8_experts = bool(training.get("mxfp8_experts", False))
+    mxfp8_attention = bool(training.get("mxfp8_attention", False))
+    attention_impl = str(training.get("attention_impl", "default"))
+    attention_backend = str(training.get("attention_backend", "te"))
+    mxfp8_scale_mode = str(training.get("mxfp8_scale_mode", ""))
+    if mxfp8_aligned:
+        if not mxfp8_experts or not mxfp8_attention:
+            raise ValueError("aggressive MXFP8 requires both expert and attention MXFP8")
+        if attention_impl != "fused_v2" or attention_backend != "flash_4":
+            raise ValueError("aggressive MXFP8 requires fused_v2 attention with FlashAttention-4")
+        if mxfp8_scale_mode != "rceil":
+            raise ValueError("aggressive MXFP8 requires mxfp8_scale_mode: rceil")
+    elif mxfp8_experts or mxfp8_attention or mxfp8_scale_mode:
+        raise ValueError("MXFP8 controls require the audited MXFP8-aligned model variant")
 
     rows = manifest["runs"]
     keys = {(str(row["model_size"]), int(row["cx"])) for row in rows}
@@ -294,6 +330,9 @@ def validate(manifest: dict[str, Any]) -> list[dict[str, Any]]:
                 model_size,
                 expand_v=float(profile["expand_v"]),
                 allow_neg_eigval=bool(profile["allow_neg_eigval"]),
+                expert_hidden_size=(
+                    MXFP8_ALIGNED_EXPERT_HIDDEN_SIZES[model_size] if mxfp8_aligned else None
+                ),
             )
         elif bool(profile["gdn2"]):
             model = build_geometry_matched_scale_gdn2_model_config(
@@ -338,9 +377,7 @@ def recipe_for(
     is_gdn2 = bool(MODEL_VARIANTS[str(training["model_variant"])]["gdn2"])
     selected_gdn2_fla_overlay = gdn2_fla_overlay or GDN2_FLA_OVERLAY
     selected_gdn2_fla_spec = gdn2_fla_spec or GDN2_FLA_SPEC
-    selected_gdn2_fla_expected_commit = (
-        gdn2_fla_expected_commit or GDN2_FLA_EXPECTED_COMMIT
-    )
+    selected_gdn2_fla_expected_commit = gdn2_fla_expected_commit or GDN2_FLA_EXPECTED_COMMIT
     env_vars = [
         (
             "PYTHONPATH",
@@ -373,9 +410,10 @@ def recipe_for(
         ("OLMOE3_HYBRID_SEQUENCE_LENGTH", str(training["sequence_length"])),
         (
             "OLMOE3_HYBRID_HARD_STOP_STEPS",
-            str(diagnostic_stop_step or 0),
+            str(diagnostic_stop_step or int(training["hard_stop_steps"])),
         ),
-        ("OLMOE3_HYBRID_CHECKPOINTS", "1"),
+        ("OLMOE3_HYBRID_CHECKPOINTS", str(int(bool(training["checkpoints"])))),
+        ("OLMOE3_HYBRID_CHECKPOINT_WRITES", str(int(bool(training["checkpoints"])))),
         ("OLMOE3_HYBRID_SAVE_INTERVAL", str(training["save_interval"])),
         (
             "OLMOE3_HYBRID_EPHEMERAL_SAVE_INTERVAL",
@@ -388,8 +426,20 @@ def recipe_for(
         ("OLMOE3_HYBRID_EVAL_STEPS", "0"),
         ("OLMOE3_HYBRID_USE_COMPILE", str(int(bool(training["compile"])))),
         ("OLMOE3_HYBRID_WANDB", str(int(bool(training["wandb"])))),
+        ("OLMOE3_HYBRID_ATTENTION_IMPL", str(training.get("attention_impl", "default"))),
+        ("OLMOE3_HYBRID_ATTENTION_BACKEND", str(training.get("attention_backend", "te"))),
+        (
+            "OLMOE3_HYBRID_MXFP8_EXPERTS",
+            str(int(bool(training.get("mxfp8_experts", False)))),
+        ),
+        (
+            "OLMOE3_HYBRID_MXFP8_ATTENTION",
+            str(int(bool(training.get("mxfp8_attention", False)))),
+        ),
         ("OLMOE3_HYBRID_SAVE_ROOT", str(manifest["experiment"]["checkpoint_root"])),
     ]
+    if mxfp8_scale_mode := training.get("mxfp8_scale_mode"):
+        env_vars.append(("OLMO_MXFP8_SCALE_MODE", str(mxfp8_scale_mode)))
     if diagnose_nonfinite:
         if diagnostic_stop_step is None:
             raise ValueError("diagnostic_stop_step is required for a diagnostic run")
@@ -436,8 +486,7 @@ def recipe_for(
     post_setup = None
     if (
         int(row["expert_parallel_size"]) > 1
-        and str(row.get("expert_parallel_path", "rowwise_nvshmem"))
-        == "rowwise_nvshmem"
+        and str(row.get("expert_parallel_path", "rowwise_nvshmem")) == "rowwise_nvshmem"
     ):
         # The source branch contains the fixed rowwise implementation, while
         # the current base image predates its small CUDA helper extension.
@@ -620,23 +669,28 @@ def main() -> None:
     if not args.submit:
         print("Dry run only; pass --submit to launch.")
         return
-    qualified_model_sizes = {
-        str(model_size)
-        for model_size in manifest["training"].get("capacity_qualified_model_sizes", [])
-    }
-    unqualified_model_sizes = {str(row["model_size"]) for row in rows} - qualified_model_sizes
-    if unqualified_model_sizes:
-        raise RuntimeError(
-            "Submission is locked for model sizes without recorded checkpoint-free "
-            f"capacity qualification: {sorted(unqualified_model_sizes)}"
-        )
+    if not bool(manifest["training"].get("smoke", False)):
+        qualified_model_sizes = {
+            str(model_size)
+            for model_size in manifest["training"].get("capacity_qualified_model_sizes", [])
+        }
+        unqualified_model_sizes = {str(row["model_size"]) for row in rows} - qualified_model_sizes
+        if unqualified_model_sizes:
+            raise RuntimeError(
+                "Submission is locked for model sizes without recorded checkpoint-free "
+                f"capacity qualification: {sorted(unqualified_model_sizes)}"
+            )
 
     checkpoint_root = Path(str(manifest["experiment"]["checkpoint_root"]))
-    existing = [
-        checkpoint_root / str(row["run_name"])
-        for row in rows
-        if (checkpoint_root / str(row["run_name"])).exists()
-    ]
+    existing = (
+        [
+            checkpoint_root / str(row["run_name"])
+            for row in rows
+            if (checkpoint_root / str(row["run_name"])).exists()
+        ]
+        if bool(manifest["training"]["checkpoints"])
+        else []
+    )
     if existing and not args.resume_existing:
         raise RuntimeError(
             "Refusing to submit existing checkpoint directories:\n"
