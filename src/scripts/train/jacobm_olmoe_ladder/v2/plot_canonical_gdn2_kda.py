@@ -72,6 +72,7 @@ KDA_EV2_NEG_ACTIVE_PARAMETERS = {
     "275m": 290_503_488,
     "480m": 498_741_600,
     "810m": 839_239_616,
+    "1p2b": 1_251_462_912,
 }
 WIDE_ACTIVE_PARAMETERS = {
     "275m": 280_207_872,
@@ -187,9 +188,10 @@ def _planned_display_names() -> dict[str, list[tuple[str, int, float, str]]]:
                 ),
             )
         )
-    for model in ("480m", "810m"):
+    for model in ("480m", "810m", "1p2b"):
         for cx in CXS:
             lr = SCALE_LRS[(model, cx)]
+            ep_suffix = "-ep8-sync" if model == "1p2b" else ""
             planned[KDA_EV2_NEG_KEY].append(
                 (
                     model,
@@ -197,7 +199,7 @@ def _planned_display_names() -> dict[str, list[tuple[str, int, float, str]]]:
                     lr,
                     (
                         f"pt-{model}-geometry-hybrid-kda-ev2-neg-nope-gated-"
-                        f"cx{cx}-lr{_scale_lr_name(lr)}-r1"
+                        f"cx{cx}-lr{_scale_lr_name(lr)}{ep_suffix}-r1"
                     ),
                 )
             )
@@ -356,13 +358,13 @@ def kda_ev2_neg_scale_wave(
         architecture_note=(
             "KDA uses the matching gated-NoPE geometry with expand_v=2 and "
             "negative eigenvalues. The 275M cells use the observed-best LRs "
-            "from matching GDN1; 480M and 810M use transferred wide-integration LRs."
+            "from matching GDN1; larger sizes use transferred wide-integration LRs."
         ),
-        models=("275m", "480m", "810m"),
+        models=MODELS,
         lr_sweep_models=(),
         active_parameters=KDA_EV2_NEG_ACTIVE_PARAMETERS,
         baseline_active_parameters={
-            model: WIDE_ACTIVE_PARAMETERS[model] for model in ("275m", "480m", "810m")
+            model: WIDE_ACTIVE_PARAMETERS[model] for model in MODELS
         },
         baseline=WIDE_INTEGRATION,
         additional_baselines=(

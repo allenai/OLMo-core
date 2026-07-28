@@ -82,6 +82,7 @@ src/scripts/train/jacobm_olmoe_ladder/v2/launchers/pretraining/launch_480m_geome
 src/scripts/train/jacobm_olmoe_ladder/v2/launchers/pretraining/launch_275m_kda_ev2_neg_transfer.sh
 src/scripts/train/jacobm_olmoe_ladder/v2/launchers/pretraining/launch_480m_kda_ev2_neg_transfer.sh
 src/scripts/train/jacobm_olmoe_ladder/v2/launchers/pretraining/launch_810m_kda_ev2_neg_transfer.sh
+src/scripts/train/jacobm_olmoe_ladder/v2/launchers/pretraining/launch_1p2b_kda_ev2_neg_transfer.sh
 
 # Inspect the canonical expand_v=1, nonnegative GDN2 scale transfer. The
 # checked-in manifest preserves the approved longest-first submission order

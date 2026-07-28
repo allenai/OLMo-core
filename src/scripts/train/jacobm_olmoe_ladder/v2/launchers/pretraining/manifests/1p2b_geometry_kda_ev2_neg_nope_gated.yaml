@@ -1,0 +1,53 @@
+schema_version: 1
+
+experiment:
+  description: 1.2B KDA expand_v=2 negative-eigenvalue gated-NoPE transfer at wide LRs
+  checkpoint_root: /weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/olmo-ddp/pretraining
+
+source:
+  remote: https://github.com/allenai/OLMo-core
+  branch: jacobm/moe-v2-core-gdn2
+  image: 01KW8G8JC20H11Y60PPTE2VN4Q
+
+beaker:
+  workspace: ai2/OLMo-3-moe-experiments
+  cluster: ai2/holmes
+  priority: urgent
+  shared_memory: 128GiB
+  min_runtime: 0m
+  preemptible: false
+  auto_resume: true
+  timeout: 168h
+
+secrets:
+  AWS_ACCESS_KEY_ID: AWS_ACCESS_KEY_ID
+  AWS_SECRET_ACCESS_KEY: AWS_SECRET_ACCESS_KEY
+  WANDB_API_KEY: jacobm_WANDB_API_KEY
+  BEAKER_TOKEN: jacobm_BEAKER_TOKEN
+
+weka:
+  - {bucket: oe-adapt-default, mount: /weka/oe-adapt-default}
+  - {bucket: oe-training-default, mount: /weka/oe-training-default}
+
+training:
+  model_variant: geometry_matched_kda_ev2_neg_nope_gated
+  layout_profile: kda_1p2b
+  capacity_qualified_model_sizes: [1p2b]
+  sequence_length: 8192
+  hard_stop_steps: 0
+  checkpoints: true
+  save_interval: 999999999
+  ephemeral_save_interval: 500
+  checkpoint_removal: ephemeral_only
+  evals: false
+  eval_interval: 999999999
+  compile: true
+  wandb: true
+
+# Reuse the balanced 1.2B recurrent-model layout: EP8 throughout, with Cx1/2/4/8
+# on 8/16/16/32 GPUs and accumulation-free rank microbatches 4/3/4/3.
+runs:
+  - {task_name: 1p2b-kda-ev2-neg-cx1, run_name: pt-1p2b-geometry-hybrid-kda-ev2-neg-nope-gated-cx1-lr4e-4-ep8-sync-r1, model_size: 1p2b, cx: 1, learning_rate: "4e-4", global_batch_size: 262144, num_nodes: 1, gpus_per_node: 8, expert_parallel_size: 8, expert_parallel_path: sync_1d, rank_microbatch_sequences: 4}
+  - {task_name: 1p2b-kda-ev2-neg-cx2, run_name: pt-1p2b-geometry-hybrid-kda-ev2-neg-nope-gated-cx2-lr6e-4-ep8-sync-r1, model_size: 1p2b, cx: 2, learning_rate: "6e-4", global_batch_size: 393216, num_nodes: 2, gpus_per_node: 8, expert_parallel_size: 8, expert_parallel_path: sync_1d, rank_microbatch_sequences: 3}
+  - {task_name: 1p2b-kda-ev2-neg-cx4, run_name: pt-1p2b-geometry-hybrid-kda-ev2-neg-nope-gated-cx4-lr3e-4-ep8-sync-r1, model_size: 1p2b, cx: 4, learning_rate: "3e-4", global_batch_size: 524288, num_nodes: 2, gpus_per_node: 8, expert_parallel_size: 8, expert_parallel_path: sync_1d, rank_microbatch_sequences: 4}
+  - {task_name: 1p2b-kda-ev2-neg-cx8, run_name: pt-1p2b-geometry-hybrid-kda-ev2-neg-nope-gated-cx8-lr4e-4-ep8-sync-r1, model_size: 1p2b, cx: 8, learning_rate: "4e-4", global_batch_size: 786432, num_nodes: 4, gpus_per_node: 8, expert_parallel_size: 8, expert_parallel_path: sync_1d, rank_microbatch_sequences: 3}

@@ -105,6 +105,7 @@ GDN2_BALANCED_LAYOUT = {
 }
 KDA_480M_LAYOUT = {key: value for key, value in GDN2_BALANCED_LAYOUT.items() if key[0] == "480m"}
 KDA_810M_LAYOUT = {key: value for key, value in GDN2_BALANCED_LAYOUT.items() if key[0] == "810m"}
+KDA_1P2B_LAYOUT = {key: value for key, value in GDN2_BALANCED_LAYOUT.items() if key[0] == "1p2b"}
 COMPACT_V1_LAYOUT = {
     # Reuse the demonstrated first-hybrid layouts for 480M/810M, then retain
     # extra nodes only for the larger 1.2B data-multiple cells.
@@ -129,6 +130,7 @@ LAYOUT_PROFILES = {
     "gdn2_balanced": GDN2_BALANCED_LAYOUT,
     "kda_480m": KDA_480M_LAYOUT,
     "kda_810m": KDA_810M_LAYOUT,
+    "kda_1p2b": KDA_1P2B_LAYOUT,
 }
 MODEL_VARIANTS = {
     "geometry_matched_gdn_ev2_nope": {
