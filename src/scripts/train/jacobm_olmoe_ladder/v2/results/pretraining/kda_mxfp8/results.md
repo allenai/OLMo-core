@@ -1,6 +1,6 @@
 # 275M KDA aggressive-MXFP8 comparison
 
-Generated: `2026-07-28T04:36:23.106048+00:00`
+Generated: `2026-07-28T04:52:17.941748+00:00`
 
 Selection metric: final `250M`-token mean training CE. Only finished runs are eligible.
 The optimal-LR summary includes only bracketed 275M sweeps with a valid quadratic fit.

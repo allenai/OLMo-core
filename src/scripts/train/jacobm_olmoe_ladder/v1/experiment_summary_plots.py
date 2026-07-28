@@ -74,6 +74,7 @@ def plot_observed_best_summary(
     window_m: int,
     provisional_points: set[tuple[str, int, str]] | None = None,
     legend_columns: int | None = None,
+    models: Sequence[str] | None = None,
 ) -> bool:
     """Plot best observed finished loss by model/Cx/variant.
 
@@ -90,13 +91,24 @@ def plot_observed_best_summary(
         _write_placeholder(out_path, title)
         return False
 
-    models = sorted(
-        {model for model, _ in experiment_keys}, key=lambda model: MODEL_ORDER.get(model, 99)
+    plot_models = (
+        list(models)
+        if models is not None
+        else sorted(
+            {model for model, _ in experiment_keys},
+            key=lambda model: MODEL_ORDER.get(model, 99),
+        )
     )
-    fig_width = max(8.0, 4.2 * len(models))
-    fig, axes = plt.subplots(1, len(models), figsize=(fig_width, 4.4), squeeze=False, sharey=False)
+    fig_width = max(8.0, 4.2 * len(plot_models))
+    fig, axes = plt.subplots(
+        1,
+        len(plot_models),
+        figsize=(fig_width, 4.4),
+        squeeze=False,
+        sharey=False,
+    )
 
-    for ax, model in zip(axes[0], models):
+    for ax, model in zip(axes[0], plot_models):
         model_keys = {cx for model_name, cx in experiment_keys if model_name == model}
         handles = []
         labels = []
@@ -168,6 +180,7 @@ def plot_observed_best_summary(
         ax.set_title(model)
         ax.grid(True, which="both", alpha=0.25)
         if not any(cx in model_keys for cx in CX_ORDER):
+            ax.text(0.5, 0.5, "pending", ha="center", va="center", transform=ax.transAxes)
             ax.axis("off")
     axes[0][0].set_ylabel(f"best observed train CE avg{window_m}M")
     fig.suptitle(title)
