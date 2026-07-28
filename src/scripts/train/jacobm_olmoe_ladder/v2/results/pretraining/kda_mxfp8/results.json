@@ -1,21 +1,23 @@
 {
-  "generated_at": "2026-07-28T04:52:17.941748+00:00",
+  "generated_at": "2026-07-28T05:58:01.237763+00:00",
   "project": "ai2-llm/jacobm-olmoe-ladder",
   "wave": "kda_mxfp8_275m",
   "models": [
     "275m"
   ],
-  "architecture_note": "Aggressive MXFP8 uses the same KDA expand_v=2/negative-eigenvalue recipe as the BF16 reference. It also rounds expert width 664->672 and enables fused_v2/FlashAttention-4, so the comparison does not isolate precision alone.",
+  "architecture_note": "Aggressive MXFP8 uses the same KDA expand_v=2/negative-eigenvalue recipe as the BF16 reference. It rounds each expert width to its audited 32-aligned value and enables fused_v2/FlashAttention-4, so the comparison does not isolate precision alone.",
   "selection_metric": "mean train/CE loss over the final 250M observed tokens",
   "selection_rule": "275M optimal-summary cells require an interior observed best and a valid quadratic fit. Larger sizes are fixed-LR transfer comparisons at the wide-optimal LR and are never reported as hybrid-optimal without an LR sweep.",
   "baseline_active_parameters": {
-    "275m": 290503488
+    "275m": 290503488,
+    "480m": 498741600
   },
   "reference_variants": [
     "geometry_kda_ev2_neg_nope_gated"
   ],
   "intervention_active_parameters": {
-    "275m": 291885888
+    "275m": 291885888,
+    "480m": 496253280
   },
   "active_parameter_delta_fraction": {
     "275m": 0.004758634774120196
@@ -45,7 +47,7 @@
     {
       "model": "275m",
       "variant": "geometry_kda_ev2_neg_nope_gated_mxfp8_672",
-      "variant_label": "aggressive MXFP8 KDA (672 expert width, fused_v2/FA4)",
+      "variant_label": "aggressive MXFP8 KDA (32-aligned experts, fused_v2/FA4)",
       "cx": 1,
       "lr": 0.0004,
       "lr_tag": "0.0004",
@@ -66,7 +68,7 @@
     {
       "model": "275m",
       "variant": "geometry_kda_ev2_neg_nope_gated_mxfp8_672",
-      "variant_label": "aggressive MXFP8 KDA (672 expert width, fused_v2/FA4)",
+      "variant_label": "aggressive MXFP8 KDA (32-aligned experts, fused_v2/FA4)",
       "cx": 1,
       "lr": 0.0008,
       "lr_tag": "0.0008",
@@ -87,7 +89,7 @@
     {
       "model": "275m",
       "variant": "geometry_kda_ev2_neg_nope_gated_mxfp8_672",
-      "variant_label": "aggressive MXFP8 KDA (672 expert width, fused_v2/FA4)",
+      "variant_label": "aggressive MXFP8 KDA (32-aligned experts, fused_v2/FA4)",
       "cx": 1,
       "lr": 0.0016,
       "lr_tag": "0.0016",
@@ -108,7 +110,7 @@
     {
       "model": "275m",
       "variant": "geometry_kda_ev2_neg_nope_gated_mxfp8_672",
-      "variant_label": "aggressive MXFP8 KDA (672 expert width, fused_v2/FA4)",
+      "variant_label": "aggressive MXFP8 KDA (32-aligned experts, fused_v2/FA4)",
       "cx": 1,
       "lr": 0.0032,
       "lr_tag": "0.0032",
@@ -150,7 +152,7 @@
     {
       "model": "275m",
       "variant": "geometry_kda_ev2_neg_nope_gated_mxfp8_672",
-      "variant_label": "aggressive MXFP8 KDA (672 expert width, fused_v2/FA4)",
+      "variant_label": "aggressive MXFP8 KDA (32-aligned experts, fused_v2/FA4)",
       "cx": 2,
       "lr": 0.0004,
       "lr_tag": "0.0004",
@@ -171,7 +173,7 @@
     {
       "model": "275m",
       "variant": "geometry_kda_ev2_neg_nope_gated_mxfp8_672",
-      "variant_label": "aggressive MXFP8 KDA (672 expert width, fused_v2/FA4)",
+      "variant_label": "aggressive MXFP8 KDA (32-aligned experts, fused_v2/FA4)",
       "cx": 2,
       "lr": 0.0008,
       "lr_tag": "0.0008",
@@ -192,7 +194,7 @@
     {
       "model": "275m",
       "variant": "geometry_kda_ev2_neg_nope_gated_mxfp8_672",
-      "variant_label": "aggressive MXFP8 KDA (672 expert width, fused_v2/FA4)",
+      "variant_label": "aggressive MXFP8 KDA (32-aligned experts, fused_v2/FA4)",
       "cx": 2,
       "lr": 0.0016,
       "lr_tag": "0.0016",
@@ -213,7 +215,7 @@
     {
       "model": "275m",
       "variant": "geometry_kda_ev2_neg_nope_gated_mxfp8_672",
-      "variant_label": "aggressive MXFP8 KDA (672 expert width, fused_v2/FA4)",
+      "variant_label": "aggressive MXFP8 KDA (32-aligned experts, fused_v2/FA4)",
       "cx": 2,
       "lr": 0.0032,
       "lr_tag": "0.0032",
@@ -330,7 +332,7 @@
       "intervention_result": {
         "model": "275m",
         "variant": "geometry_kda_ev2_neg_nope_gated_mxfp8_672",
-        "variant_label": "aggressive MXFP8 KDA (672 expert width, fused_v2/FA4)",
+        "variant_label": "aggressive MXFP8 KDA (32-aligned experts, fused_v2/FA4)",
         "cx": 1,
         "lr": 0.0016,
         "lr_tag": "0.0016",
@@ -408,7 +410,7 @@
       "intervention_result": {
         "model": "275m",
         "variant": "geometry_kda_ev2_neg_nope_gated_mxfp8_672",
-        "variant_label": "aggressive MXFP8 KDA (672 expert width, fused_v2/FA4)",
+        "variant_label": "aggressive MXFP8 KDA (32-aligned experts, fused_v2/FA4)",
         "cx": 2,
         "lr": 0.0016,
         "lr_tag": "0.0016",

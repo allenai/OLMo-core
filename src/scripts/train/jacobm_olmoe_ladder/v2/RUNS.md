@@ -8,7 +8,7 @@ job IDs and W&B IDs once they exist. Detailed migration-era DDP jobs remain in
 
 Rows are updated as their corresponding collectors run; detailed sections
 retain the full launch and retry history. The canonical GDN2/KDA, new KDA
-transfer, MXFP8, and validation rows were refreshed at 2026-07-28 05:53 UTC.
+transfer, MXFP8, and validation rows were refreshed at 2026-07-28 05:56 UTC.
 
 | Stage | Family / cell | State | Progress / result | Current W&B |
 |---|---|---|---|---|
@@ -34,6 +34,7 @@ transfer, MXFP8, and validation rows were refreshed at 2026-07-28 05:53 UTC.
 | pretraining | canonical KDA 480M stability transfer | 4/4 finished | Cx1/2/4/8 strict final-250M CEs are `2.517826`, `2.412884`, `2.323228`, and `2.237558` | [launches](#canonical-kda-480m-stability-transfer) |
 | pretraining | KDA `expand_v=2`, negative-eigenvalue transfer (275M/480M/810M/1.2B) | 11 finished / 5 running | 810M Cx4 finished at strict final-250M CE `2.158207`; 810M Cx8 and all four balanced 1.2B rowwise jobs are running, with no failures in this KDA family | [results](results/pretraining/canonical_gdn2_kda/kda_ev2_neg_scale_results.md) / [launches](#kda-expand_v2-negative-eigenvalue-transfer) |
 | pretraining | aggressive MXFP8 KDA 275M LR sweep | Cx1/Cx2 8/8 finished; Cx4/Cx8 8 running | Observed bests are `2.685399 @ 1.6e-3` and `2.566948 @ 1.6e-3` for Cx1/Cx2; the best-of plot retains finished BF16 KDA scale points across all four model panels while pending cells remain explicit | [results](results/pretraining/kda_mxfp8/results.md) / [work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYJPTZ3J4VHGBH0FSVAQRDGC) |
+| pretraining | aggressive MXFP8 KDA 480M transferred-LR continuation | 4/4 submitted | Cx1/Cx2/Cx4 are running; the two-node Cx8 cell is waiting for both replicas. The exact-name plot registry already contains all four runs. | [launches](#480m-aggressive-mxfp8-kda-transferred-lr-continuation) |
 | throughput | aggressive MXFP8 KDA 480M qualification | 2/2 finished | MB8/8-GPU: 192.7 TFLOPs/GPU, 69.8K TPS/GPU, 146.6/193.2 GiB active/reserved; MB6/16-GPU: 132.5 TFLOPs/GPU, 48.0K TPS/GPU, 111.1/155.7 GiB; zero skipped steps | [one node](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYKK27K7N1MVV702AKJ2DST8) / [two nodes](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYKK2A58MK03ANV6GAAZPAVG) |
 | diagnostic | GDN2 production-shape PyTorch reference 2x2 | finished | All four `expand_v`/negative-eigenvalue cells passed forward, final-state, backward, packed-document, and recompute/retain comparisons | [work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYBY8DXT5BVM85WYKAT5TXQN) |
 | diagnostic | Matched KDA/GDN2 numerical audit | finished | All 40 one/four-chunk output/state comparisons passed; GDN2 is broadly KDA-like, with localized 3.80% `A_log` relative-L2 error at T256/V256/negative eigvals | [work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYBZX8MHJ611ZSJD43SYS9HZ) / [results](results/diagnostics/matched_kda_gdn2_numerics.md) |
@@ -1112,6 +1113,38 @@ gates, and audited larger-size configurations are recorded in
 [`MXFP8_LADDER.md`](MXFP8_LADDER.md). Add exact W&B IDs here after task
 initialization and use the dedicated MXFP8 plotting family; do not mix these
 runs into the existing BF16 KDA registry by broad display-name matching.
+
+## 480M aggressive MXFP8 KDA transferred-LR continuation
+
+- Model variant: `geometry_matched_kda_ev2_neg_nope_gated_mxfp8_aligned`
+- Manifest:
+  [`launchers/pretraining/manifests/480m_kda_aggressive_mxfp8_full.yaml`](launchers/pretraining/manifests/480m_kda_aggressive_mxfp8_full.yaml)
+- Submission ledger:
+  [`launchers/pretraining/generated/480m_kda_aggressive_mxfp8_full_submissions.json`](launchers/pretraining/generated/480m_kda_aggressive_mxfp8_full_submissions.json)
+- Source commit: `785a87cf0aba6f12d81bf1d7b37b11cb49e6f9ab`
+- Scheduling: urgent unallocated Holmes B300s, `minRuntime: 0m`,
+  nonpreemptible, auto-resuming
+- Precision and architecture: KDA `expand_v=2`, negative eigenvalues, NoPE,
+  gated full attention, EP1, 832-wide aligned experts, rowwise MXFP8 on every
+  shared/routed FFN, MXFP8 QKV/output projections, `moe_fused_v2`,
+  FlashAttention-4, and `OLMO_MXFP8_SCALE_MODE=rceil`
+- Parameters: 496,253,280 active; 419,182,944 active non-embedding;
+  7,151,827,296 stored
+- Checkpointing: rolling ephemeral saves every 500 steps, permanent final
+  checkpoint, no in-loop or on-finish evaluation
+
+| Cx | LR | Global batch | GPUs | Rank MB | Accumulation | Job | Launch state |
+|---:|---:|---:|---:|---:|---:|---|---|
+| 1 | `1.2e-3` | 262,144 | 8 | 4 | 1 | [01KYKMN56Y5PWCE2173E50VV2J](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYKMN56Y5PWCE2173E50VV2J) | running |
+| 2 | `9e-4` | 393,216 | 8 | 6 | 1 | [01KYKMN7YPTVTE5WB8T7S8734A](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYKMN7YPTVTE5WB8T7S8734A) | running |
+| 4 | `8e-4` | 524,288 | 8 | 8 | 1 | [01KYKMNAS6WKSTKE3S7QZBTXY4](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYKMNAS6WKSTKE3S7QZBTXY4) | running |
+| 8 | `8e-4` | 786,432 | 16 | 6 | 1 | [01KYKMNDDJS7D7D9DGC7Y32A43](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYKMNDDJS7D7D9DGC7Y32A43) | submitted; waiting for both replicas |
+
+The four exact W&B display names are registered in `plot_kda_mxfp8.py`.
+Consequently the next collection pass will add each finished 480M point to
+the four-size best-of comparison without a plotting-code edit. These are
+single transferred-LR cells, not four-point 480M sweeps, so they belong in the
+best-of plot rather than a 480M U-plot.
 
 ## New wave template
 

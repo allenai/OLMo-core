@@ -155,6 +155,16 @@ less resource-efficient than the one-node layout, but it remains the selected
 wall-clock layout because 16 devices provide more aggregate throughput than
 the corresponding eight-device run.
 
+The four 480M production cells were submitted on 2026-07-28 from commit
+`785a87cf0aba6f12d81bf1d7b37b11cb49e6f9ab`. They use the transferred wide
+LRs and qualified layouts above: Cx1 `1.2e-3`/8 GPUs/MB4, Cx2
+`9e-4`/8 GPUs/MB6, Cx4 `8e-4`/8 GPUs/MB8, and Cx8 `8e-4`/16 GPUs/MB6. This is
+40 GPUs at full concurrency. Exact launch records live in
+[`launchers/pretraining/generated/480m_kda_aggressive_mxfp8_full_submissions.json`](launchers/pretraining/generated/480m_kda_aggressive_mxfp8_full_submissions.json),
+and all four exact display names are already registered in
+[`plot_kda_mxfp8.py`](plot_kda_mxfp8.py) so finished cells flow into the
+four-size best-of plot on the next collector run.
+
 ## Proposed KDA continuation strategy
 
 If the 275M aggressive-MXFP8 curves remain stable and competitive, make the
