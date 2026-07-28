@@ -2,9 +2,9 @@
 
 ## Status and objective
 
-The 275M LR sweep was submitted on 2026-07-27. Larger-model configurations
-are audited and launchable in the trainer, but no larger MXFP8 jobs have been
-launched.
+The 275M LR sweep was submitted on 2026-07-27. The 480M production shapes
+passed their checkpoint-free qualification on 2026-07-28; 810M and 1.2B
+remain audited but unqualified and unlaunched.
 
 The immediate experiment is a full 275M Cx1/Cx2/Cx4/Cx8 LR sweep using the
 aggressive OLMo-core MXFP8 recipe demonstrated by
@@ -146,6 +146,14 @@ All four cells have accumulation one and retain the transferred wide LRs
 `1.2e-3`, `9e-4`, `8e-4`, and `8e-4`. The checked-in qualification manifest
 selects the Cx4 MB8 one-node shape and the Cx8 MB6 two-node shape for 50
 checkpoint-free steps before the four production jobs are unlocked.
+
+Both shapes completed 50 finite steps with zero skipped updates. The Cx4
+shape measured 192.7 TFLOPs/GPU and 69.8K TPS/GPU with 146.6 GiB active and
+193.2 GiB reserved. The Cx8 shape measured 132.5 TFLOPs/GPU and 48.0K TPS/GPU
+with 111.1 GiB active and 155.7 GiB reserved. The two-node layout is materially
+less resource-efficient than the one-node layout, but it remains the selected
+wall-clock layout because 16 devices provide more aggregate throughput than
+the corresponding eight-device run.
 
 ## Proposed KDA continuation strategy
 

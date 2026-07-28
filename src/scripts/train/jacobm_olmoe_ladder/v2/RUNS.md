@@ -8,7 +8,7 @@ job IDs and W&B IDs once they exist. Detailed migration-era DDP jobs remain in
 
 Rows are updated as their corresponding collectors run; detailed sections
 retain the full launch and retry history. The canonical GDN2/KDA, new KDA
-transfer, MXFP8, and validation rows were refreshed at 2026-07-28 04:38 UTC.
+transfer, MXFP8, and validation rows were refreshed at 2026-07-28 05:53 UTC.
 
 | Stage | Family / cell | State | Progress / result | Current W&B |
 |---|---|---|---|---|
@@ -34,6 +34,7 @@ transfer, MXFP8, and validation rows were refreshed at 2026-07-28 04:38 UTC.
 | pretraining | canonical KDA 480M stability transfer | 4/4 finished | Cx1/2/4/8 strict final-250M CEs are `2.517826`, `2.412884`, `2.323228`, and `2.237558` | [launches](#canonical-kda-480m-stability-transfer) |
 | pretraining | KDA `expand_v=2`, negative-eigenvalue transfer (275M/480M/810M/1.2B) | 11 finished / 5 running | 810M Cx4 finished at strict final-250M CE `2.158207`; 810M Cx8 and all four balanced 1.2B rowwise jobs are running, with no failures in this KDA family | [results](results/pretraining/canonical_gdn2_kda/kda_ev2_neg_scale_results.md) / [launches](#kda-expand_v2-negative-eigenvalue-transfer) |
 | pretraining | aggressive MXFP8 KDA 275M LR sweep | Cx1/Cx2 8/8 finished; Cx4/Cx8 8 running | Observed bests are `2.685399 @ 1.6e-3` and `2.566948 @ 1.6e-3` for Cx1/Cx2; the best-of plot retains finished BF16 KDA scale points across all four model panels while pending cells remain explicit | [results](results/pretraining/kda_mxfp8/results.md) / [work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYJPTZ3J4VHGBH0FSVAQRDGC) |
+| throughput | aggressive MXFP8 KDA 480M qualification | 2/2 finished | MB8/8-GPU: 192.7 TFLOPs/GPU, 69.8K TPS/GPU, 146.6/193.2 GiB active/reserved; MB6/16-GPU: 132.5 TFLOPs/GPU, 48.0K TPS/GPU, 111.1/155.7 GiB; zero skipped steps | [one node](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYKK27K7N1MVV702AKJ2DST8) / [two nodes](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYKK2A58MK03ANV6GAAZPAVG) |
 | diagnostic | GDN2 production-shape PyTorch reference 2x2 | finished | All four `expand_v`/negative-eigenvalue cells passed forward, final-state, backward, packed-document, and recompute/retain comparisons | [work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYBY8DXT5BVM85WYKAT5TXQN) |
 | diagnostic | Matched KDA/GDN2 numerical audit | finished | All 40 one/four-chunk output/state comparisons passed; GDN2 is broadly KDA-like, with localized 3.80% `A_log` relative-L2 error at T256/V256/negative eigvals | [work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYBZX8MHJ611ZSJD43SYS9HZ) / [results](results/diagnostics/matched_kda_gdn2_numerics.md) |
 | diagnostic | Actual FLA `v0.5.2` GDN2 release | qualified; original replay matrix complete | Release commit `9c8e42e` passes the reference suite, but 4/6 reliably failing original checkpoints reproduce exactly; all four reproduced failures originate in GDN2 forward. The release is not a general fix. | [qualification](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYJSQRXFW1XH1Y1EQPEXVGM6) / [matrix](GDN2.md#fla-v052-release-qualification) |

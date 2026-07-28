@@ -1,0 +1,35 @@
+[
+  {
+    "model_variant": "geometry_matched_kda_ev2_neg_nope_gated_mxfp8_aligned",
+    "task_name": "480m-mxfp8-smoke-cx4",
+    "run_name": "smoke-480m-kda-ev2-neg-nope-gated-mxfp8-832-cx4-mb8-8gpu-r1",
+    "run_suffix": null,
+    "commit": "a019638661a0e9abc57cf11ba4933cf41b95b892",
+    "diagnose_nonfinite": false,
+    "debug_gradients": false,
+    "diagnostic_stop_step": null,
+    "diagnostic_dump_root": null,
+    "experiment_id": "01KYKK27K7N1MVV702AKJ2DST8",
+    "task_ids": [
+      "01KYKK27KDRNW7FS944HSM27KF"
+    ],
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYKK27K7N1MVV702AKJ2DST8"
+  },
+  {
+    "model_variant": "geometry_matched_kda_ev2_neg_nope_gated_mxfp8_aligned",
+    "task_name": "480m-mxfp8-smoke-cx8",
+    "run_name": "smoke-480m-kda-ev2-neg-nope-gated-mxfp8-832-cx8-mb6-16gpu-r1",
+    "run_suffix": null,
+    "commit": "a019638661a0e9abc57cf11ba4933cf41b95b892",
+    "diagnose_nonfinite": false,
+    "debug_gradients": false,
+    "diagnostic_stop_step": null,
+    "diagnostic_dump_root": null,
+    "experiment_id": "01KYKK2A58MK03ANV6GAAZPAVG",
+    "task_ids": [
+      "01KYKK2A5EJRRCFHWWEQ13E6G5",
+      "01KYKK2A8X2EBRN1MSBC47KNEN"
+    ],
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYKK2A58MK03ANV6GAAZPAVG"
+  }
+]
