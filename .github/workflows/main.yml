@@ -44,7 +44,6 @@ jobs:
           - name: Test
             run: |
               pytest -v --color=yes --durations=6 \
-                --ignore-glob='src/test/edullm/**' \
                 --ignore-glob='src/test/distributed/checkpoint*' \
                 --ignore-glob='src/test/train/checkpoint*' \
                 --ignore-glob='src/test/nn/transformer*' \
@@ -80,14 +79,7 @@ jobs:
           - name: Test scripts
             run: |
               pytest -v --color=yes --durations=3 \
-                --ignore-glob='src/test/scripts/orcd/**' \
                 src/test/scripts/
-
-          - name: Test eduLLM core
-            run: |
-              pytest -v --color=yes --durations=3 \
-                src/test/edullm/ \
-                src/test/scripts/orcd/
 
           - name: Integration tests
             run: |

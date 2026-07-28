@@ -1,7 +1,0 @@
-# eduLLM queue controls remain inert until this team exists and governance is proven.
-/config/edullm/ @edu-llm/team-leads
-/.github/CODEOWNERS @edu-llm/team-leads
-/.github/ISSUE_TEMPLATE/ @edu-llm/team-leads
-/.github/workflows/edullm-* @edu-llm/team-leads
-/src/edullm/ @edu-llm/team-leads
-/.cursor/skills/submit-edullm-job/ @edu-llm/team-leads
