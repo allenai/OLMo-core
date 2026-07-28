@@ -67,6 +67,10 @@ PYTHONPATH=src uv run --with matplotlib python \
 uv run --isolated --with 'wandb==0.21.4' --with matplotlib python \
   src/scripts/train/jacobm_olmoe_ladder/v2/plot_canonical_gdn2_kda.py \
   --refresh-stale-cache
+
+uv run --isolated --with 'wandb==0.21.4' --with matplotlib python \
+  src/scripts/train/jacobm_olmoe_ladder/v2/plot_kda_mxfp8.py \
+  --refresh-stale-cache
 ```
 
 `plot_canonical_gdn2_kda.py` produces separate canonical GDN2 and KDA U-plots
@@ -81,6 +85,11 @@ entering the canonical U-plots. Queued jobs can initialize without a registry
 edit; duplicate exact names fail closed and require an explicit resume-segment
 decision. Pass `--resolve-only` while training is active to audit registration
 without publishing partial plots.
+
+`plot_kda_mxfp8.py` is a separate exact-name registry for the aggressive
+MXFP8 KDA sweep. It writes an intervention-only U-plot and a best-of plot that
+compares only aggressive MXFP8 against BF16 KDA with our matching
+`expand_v=2`, negative-eigenvalue settings; canonical KDA is excluded.
 
 The script writes each selected wave into one matching artifact directory and
 uses the final-250M-token mean training CE. The 275M outputs follow the strict

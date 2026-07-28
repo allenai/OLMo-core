@@ -105,7 +105,7 @@ with the recurrent settings used by matching GDN1: `expand_v=2` and negative
 eigenvalues enabled. It otherwise retains the same gated-NoPE geometry and
 FLA 0.4.1 KDA kernel as canonical KDA.
 
-The fixed-LR transfer covers 275M, 480M, and 810M at Cx1/2/4/8. The 275M LRs
+The fixed-LR transfer covers 275M, 480M, 810M, and 1.2B at Cx1/2/4/8. The 275M LRs
 are the observed-best matching-GDN1 values (`8e-4`, `1.6e-3`, `8e-4`,
 `8e-4`); 480M and 810M use the standard transferred wide LRs. All sizes use
 accumulation one and write distinct W&B/checkpoint identities containing
@@ -122,3 +122,12 @@ are `2.692695`, `2.562520`, `2.464247`, and `2.380273`; the 480M values are
 `2.492283`, `2.382695`, `2.291179`, and `2.216501`; 810M Cx1/Cx2 are
 `2.352304` and `2.241873`. Cx4 is healthy at 72% with an approximately 5h48m
 ETA, while Cx8 is healthy at 27% with an approximately 1d2h ETA.
+
+The final four 1.2B cells were submitted on 2026-07-28 using the transferred
+wide LRs (`4e-4`, `6e-4`, `3e-4`, `4e-4`) and the balanced 8/16/16/32-GPU
+layout. They use EP8 with `rowwise_nvshmem` on the fixed branch and MB4/3/4/3.
+Their Beaker works are
+[Cx1](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYKBJ7HJQEV3K08B0VHKCYE8),
+[Cx2](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYKBJADMQ0YEVWHA2NKFY1HP),
+[Cx4](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYKBJD3AQHJ8CFP4D151MBGP),
+and [Cx8](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYKBJGM1H6A2M6NCJ0TARZ5W).

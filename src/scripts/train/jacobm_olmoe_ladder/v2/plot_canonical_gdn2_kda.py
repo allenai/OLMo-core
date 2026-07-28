@@ -191,7 +191,7 @@ def _planned_display_names() -> dict[str, list[tuple[str, int, float, str]]]:
     for model in ("480m", "810m", "1p2b"):
         for cx in CXS:
             lr = SCALE_LRS[(model, cx)]
-            ep_suffix = "-ep8-rowwise" if model == "1p2b" else ""
+            ep_suffix = "-ep8-rowwise-ext3" if model == "1p2b" else ""
             planned[KDA_EV2_NEG_KEY].append(
                 (
                     model,

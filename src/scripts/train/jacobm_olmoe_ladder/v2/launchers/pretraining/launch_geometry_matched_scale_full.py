@@ -433,6 +433,22 @@ def recipe_for(
         recipe_suffix_override if recipe_suffix_override is not None else default_recipe_suffix
     )
     pre_setup = "unset S3_PROFILE"
+    post_setup = None
+    if (
+        int(row["expert_parallel_size"]) > 1
+        and str(row.get("expert_parallel_path", "rowwise_nvshmem"))
+        == "rowwise_nvshmem"
+    ):
+        # The source branch contains the fixed rowwise implementation, while
+        # the current base image predates its small CUDA helper extension.
+        # Build once per replica before torchrun rather than racing an
+        # import-time auto-build across local ranks.
+        post_setup = (
+            "cd /gantry-runtime && "
+            "PYTHONPATH=/gantry-runtime/src python -m "
+            "olmo_core.kernels.build_symm_mem_vdev2d_ext "
+            "--inplace --backend cmake"
+        )
     if is_gdn2:
         verify_script = f"""
 import json
@@ -508,6 +524,7 @@ assert commit == {selected_gdn2_fla_expected_commit!r}
         torchrun=True,
         no_python=True,
         pre_setup=pre_setup,
+        post_setup=post_setup,
     )
 
 

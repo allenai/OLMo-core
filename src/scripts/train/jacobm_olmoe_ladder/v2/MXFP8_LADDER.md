@@ -104,9 +104,17 @@ Proposed run-name prefix:
 
 The 16 jobs were submitted as urgent unallocated Holmes work in
 [Beaker experiment `01KYJPTZ3J4VHGBH0FSVAQRDGC`](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYJPTZ3J4VHGBH0FSVAQRDGC).
-At the latest post-submission check, all 16 tasks had started: nine had reached
-real optimizer steps and seven remained in initial kernel compilation. None
-had failed.
+At the 2026-07-28 03:18 UTC refresh, Cx1 is complete at all four LRs. Its
+strict final-250M CEs are `2.712740`, `2.695471`, `2.685399`, and `2.694743`
+at `4e-4`, `8e-4`, `1.6e-3`, and `3.2e-3`; the bracketed observed best is
+`1.6e-3`. The `8e-4` run completed training but its remote W&B record was
+stale, so its exact local binary history was hash-verified through final step
+17,370 and 4.553B tokens. The remaining 12 Cx2/Cx4/Cx8 runs are training.
+
+`plot_kda_mxfp8.py` publishes the baseline-free MXFP8 U-plot and a dedicated
+best-of comparison containing only aggressive MXFP8 and matching BF16 KDA
+with our `expand_v=2`, negative-eigenvalue settings. Canonical KDA is
+deliberately excluded.
 
 ## Audited larger-size configurations
 

@@ -648,3 +648,8 @@ gradient diagnostics enabled.
 
 Each startup installs tag `v0.5.2` and asserts installed VCS commit
 `9c8e42e762fce087c27b673af4922795d9edb85e` before training.
+
+Final status: 810M Cx2 and 1.2B Cx1 failed numerically despite starting from
+initialization with the release. The remaining 810M Cx1 was manually canceled
+at step 14,660 on 2026-07-28 to avoid spending further compute; this fresh-run
+wave is closed.
