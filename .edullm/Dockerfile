@@ -12,30 +12,35 @@ FROM ${BASE_IMAGE}
 
 # THIS FILE USED TO INSTALL NOTHING, AND THE REASON IT STOPPED IS WORTH READING.
 #
-# Against the previous base -- a plain python image -- installing was not an option:
-# ai2-olmo-core declares torch>=2.6.0, so `pip install .` would have fetched a
-# multi-gigabyte wheel and taken the build past what a standard runner can do, and
-# `pip install --no-deps .` would have left an installed distribution whose imports fail
-# anyway, having bought nothing. Putting the source on PYTHONPATH was the honest answer.
+# The claim was that installing was impossible here: ai2-olmo-core declares torch>=2.6.0,
+# so `pip install .` would fetch a multi-gigabyte wheel and take the build past what a
+# standard runner can do, and `pip install --no-deps .` would leave an installed
+# distribution whose imports fail anyway. Putting the source on PYTHONPATH was the answer.
 #
-# The comment that replaced said the code would "become importable with no edit here" on a
-# training base that already carries torch. That was optimistic and Phase 4 measured it.
-# The registered base is now pytorch/pytorch:2.6.0-cuda12.6-cudnn9-runtime, which carries
-# torch, numpy, pyyaml, filelock, requests and packaging -- and none of cached-path,
-# dataclass-extensions, rich, safetensors, importlib_resources, bettermap or pandas, every
-# one of which ai2-olmo-core imports. `import olmo_core` fails on that base without this
-# step.
+# Both halves of that were measured in Phase 4 and the first half is false. A build of this
+# file against the registered python base produced a working 2.94 GB image on an ordinary
+# runner, and the torch wheel PyPI serves for linux x86_64 is CUDA-enabled, so it runs on a
+# GPU. The install the comment was avoiding is affordable and always was.
 #
-# So the install is back, and it is cheap in a way it could not have been before: torch is
-# already present, so what arrives is roughly a couple of hundred megabytes of small pure
-# Python packages rather than the wheel the old comment was avoiding.
+# WHAT THE PLATFORM REGISTERS IS STILL A BARE PYTHON BASE, AND THAT IS A KNOWN LIMITATION
+# RATHER THAN AN OVERSIGHT. The obvious alternative was to register a base that already
+# carries torch, so the platform's pinned base digest would cover it. That was tried and
+# withdrawn: the platform's Phase 1 rebuild study is asserted to have been made from the
+# currently registered base, and re-recording it needs the new image published, which needs
+# the registry change merged -- the change that invalidates the study is a prerequisite for
+# the evidence that repairs it. The ways through were a knowingly broken main or relaxing a
+# control and restoring it afterwards, and neither is worth a tidier narrative.
+#
+# So the honest statement is: the registered base digest describes a small fraction of this
+# image, and the rest is pinned here instead. Reproducibility is preserved -- an exact
+# version against an index that never republishes a version is as deterministic as a digest
+# -- but a reader of the provenance record who takes base_image_digest as a description of
+# the image will be wrong, and this paragraph is where they find out.
 ENV PYTHONPATH=/opt/olmo-core/src \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
-# The base sets no PYTHONPATH of its own -- checked against the registered digest's image
-# config rather than assumed, because the landmine recorded here previously was that this
-# ENV overwrites rather than prepends. If a future base does set one, this line silently
+# The base sets no PYTHONPATH of its own. If a future base does set one, this line silently
 # discards it. Prepending is not the safe-looking fix it appears to be:
 # ENV PYTHONPATH=/opt/olmo-core/src:${PYTHONPATH} leaves a trailing colon when the base
 # sets nothing, and Python reads a trailing colon as the current working directory.
@@ -46,24 +51,44 @@ WORKDIR /opt/olmo-core
 # out of this layer, and out of the context entirely.
 COPY . .
 
+# TORCH IS PINNED TO AN EXACT VERSION AND INSTALLED FIRST, WHICH IS THE WHOLE ARGUMENT.
+#
+# The project declares torch>=2.6.0. Resolved against PyPI at build time that is an
+# unpinned multi-gigabyte dependency, so two builds of one commit months apart produce
+# different images -- and the platform has a study whose entire subject is what does and
+# does not stay identical across rebuilds. An exact version fixes that: a published wheel
+# is never replaced, so `torch==2.6.0` names one artifact forever.
+#
+# 2.6.0 rather than the newest available, because it is the floor the project declares. A
+# newer torch is a research decision with a compatibility surface, not something a
+# Dockerfile should pick silently on everyone's behalf.
+#
+# Installed before the project so pip sees the constraint already satisfied and has no
+# reason to resolve torch again.
+#
 # wandb comes from the extra the project already declares. boto3 is named directly because
 # olmo_core.io imports it lazily for s3:// paths and the project declares it only under the
 # dev extra, which would drag in pytest, mypy, sphinx and the rest of a contributor's
 # toolchain -- none of which belongs in an image an untrusted training command runs inside.
 #
-# THE ASSERTION IS THE POINT OF THIS STEP, not the install. pip is free to decide that some
-# dependency's metadata is better served by a different torch and replace the base's CUDA
-# build with a CPU wheel from PyPI. Nothing would fail: the image builds, the container
-# starts, the job runs, and it trains on the CPU at GPU prices while every log line looks
-# ordinary. torch.version.cuda is None on a CPU build and a string on a CUDA one, so this
-# turns the most expensive silent failure available here into a failed build.
+# THE ASSERTION IS THE POINT OF THIS STEP, not the install. pip is free to decide some
+# dependency's metadata is better served by a different torch and replace a CUDA build with
+# a CPU wheel. Nothing would fail: the image builds, the container starts, the job runs, and
+# it trains on the CPU at GPU prices while every log line looks ordinary. torch.version.cuda
+# is None on a CPU build and a string on a CUDA one, so this turns the most expensive silent
+# failure available here into a failed build.
 #
-# The second line is the cheaper half and still worth having: it proves the three imports
-# this image exists to make actually resolve, in the image, rather than at run time on a
-# paid instance.
+# The version is re-asserted alongside it, because the pin above only binds if nothing later
+# in the resolution moved it.
+#
+# The last line is the cheaper half and still worth having: it proves the three imports this
+# image exists to make actually resolve, in the image, rather than at run time on a paid
+# instance.
 RUN set -eux; \
+    python -m pip install --no-cache-dir "torch==2.6.0"; \
     python -m pip install --no-cache-dir ".[wandb]" boto3; \
-    python -c "import torch; assert torch.version.cuda, 'pip replaced the CUDA build of torch with a CPU wheel'"; \
+    python -c "import torch; assert torch.__version__.startswith('2.6.0'), f'torch was moved off the pin: {torch.__version__}'"; \
+    python -c "import torch; assert torch.version.cuda, 'the CUDA build of torch was replaced by a CPU wheel'"; \
     python -c "import olmo_core, boto3, wandb"
 
 # No CMD. The entrypoint of the registered base is inherited deliberately, so swapping the
