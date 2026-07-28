@@ -105,7 +105,14 @@ GDN2_BALANCED_LAYOUT = {
 }
 KDA_480M_LAYOUT = {key: value for key, value in GDN2_BALANCED_LAYOUT.items() if key[0] == "480m"}
 KDA_810M_LAYOUT = {key: value for key, value in GDN2_BALANCED_LAYOUT.items() if key[0] == "810m"}
-KDA_1P2B_LAYOUT = {key: value for key, value in GDN2_BALANCED_LAYOUT.items() if key[0] == "1p2b"}
+KDA_1P2B_LAYOUT = {
+    # Keep the qualified balanced GPU/MB/EP layout, but use the current
+    # codebase's fixed default rowwise collective rather than the legacy
+    # sync_1d workaround.
+    key: (nodes, gpus_per_node, ep, "rowwise_nvshmem", rank_mb)
+    for key, (nodes, gpus_per_node, ep, _ep_path, rank_mb) in GDN2_BALANCED_LAYOUT.items()
+    if key[0] == "1p2b"
+}
 COMPACT_V1_LAYOUT = {
     # Reuse the demonstrated first-hybrid layouts for 480M/810M, then retain
     # extra nodes only for the larger 1.2B data-multiple cells.

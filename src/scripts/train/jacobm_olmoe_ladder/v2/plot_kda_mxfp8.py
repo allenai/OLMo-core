@@ -32,6 +32,11 @@ MXFP8_KEY = "geometry_kda_ev2_neg_nope_gated_mxfp8_672"
 BF16_LRS = {1: 8e-4, 2: 1.6e-3, 4: 8e-4, 8: 8e-4}
 BF16_ACTIVE_PARAMETERS = 290_503_488
 MXFP8_ACTIVE_PARAMETERS = 291_885_888
+LOCAL_HISTORY_RECOVERIES = {
+    "pt-275m-kda-ev2-neg-nope-gated-mxfp8-672-cx1-lr8e-4-r1": (
+        "results/pretraining/kda_mxfp8/recovered_histories/uzg7z0t2.json"
+    ),
+}
 
 
 def _lr_name(lr: float) -> str:
@@ -104,7 +109,15 @@ def resolve_variants(
                     f"{name!r} resolved to multiple W&B runs ({ids}); "
                     "register the intended resume chain explicitly"
                 )
-            registered.append(RegisteredRun("275m", cx, lr, exact[0].id))
+            registered.append(
+                RegisteredRun(
+                    "275m",
+                    cx,
+                    lr,
+                    exact[0].id,
+                    recovered_history_path=LOCAL_HISTORY_RECOVERIES.get(name),
+                )
+            )
         return Variant(key=key, label=label, color=color, runs=tuple(registered))
 
     bf16 = build(
