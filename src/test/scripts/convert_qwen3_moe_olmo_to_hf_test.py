@@ -3,7 +3,7 @@ import torch
 from transformers import Qwen3MoeConfig, Qwen3MoeForCausalLM
 
 from olmo_core.nn.hf.convert import convert_state_from_hf
-from scripts.convert_qwen3_moe_olmo_to_hf import load_qwen3_moe_from_olmo_state
+from olmo_core.nn.moe.v2.qwen_hf_export import load_qwen3_moe_from_olmo_state
 
 
 @pytest.fixture
