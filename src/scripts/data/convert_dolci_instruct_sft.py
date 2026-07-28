@@ -45,6 +45,14 @@ MASK DERIVATION:
     entirely. We then tokenize the *full* string once with ``return_offsets_mapping=True`` and
     mark every token whose start offset falls inside an assistant span.
 
+TOOL-USE ROLES:
+    Dolci-Instruct-SFT's Tool Use subset (~9% of rows) carries ``environment``/``tool`` turns that
+    neither Qwen chat template renders. They are filtered out by role before templating, so the row
+    is dropped whole rather than rendered with a hole in the dialogue. This reproduces what the
+    Qwen3 build already did by accident -- that template drops the unknown turn, after which the
+    turn-marker scan fails and the conversation is skipped -- and keeps the two builds comparable.
+    Qwen3.5's template instead raises, which is why the filter is explicit rather than incidental.
+
 OTHER TOKENIZERS:
     ``--tokenizer`` alone is not enough to retarget this script: the EOS separator and the
     reserved landmark id are tokenizer-specific and default to the Qwen3 values. Override both
@@ -98,6 +106,13 @@ MASK_DTYPE = np.bool_
 # Special-token strings stripped from message content so they can't be re-parsed as control tokens.
 _SPECIAL_STRINGS = ("<|endoftext|>", "<|im_start|>", "<|im_end|>", "<|object_ref_start|>")
 
+# Roles the plain chat rendering handles. Dolci-Instruct-SFT's Tool Use subset (~9% of rows) also
+# carries 'environment'/'tool' turns, and the two Qwen templates disagree about them: Qwen3 silently
+# drops the turn (so the span scan then fails and the conversation is skipped), while Qwen3.5 raises
+# a jinja2 TemplateError and takes the whole job down mid-run. Filtering here makes the drop explicit
+# and identical across tokenizers, so the two builds stay comparable.
+_SUPPORTED_ROLES = frozenset({"system", "user", "assistant"})
+
 
 def sanitize(text: Optional[str]) -> str:
     text = text or ""
@@ -148,7 +163,13 @@ def tokenize_instance(
     if not any(m["role"] == "assistant" for m in messages):
         return None
 
-    full_str = tok.apply_chat_template(messages, tokenize=False, add_generation_prompt=False)
+    # Belt and braces: callers filter unsupported roles up front, but a template can reject a
+    # conversation for other reasons too, and one bad row must not kill a multi-hour job.
+    try:
+        full_str = tok.apply_chat_template(messages, tokenize=False, add_generation_prompt=False)
+    except Exception as exc:  # noqa: BLE001 -- any template failure degrades to a skipped row
+        log.debug("chat template rejected a conversation (%s); skipping", exc)
+        return None
 
     spans = find_turn_spans(full_str, messages)
     if not spans:
@@ -303,6 +324,7 @@ def main() -> None:
     writer = ShardWriter(args.out_dir, args.flush_tokens)
     n_written = 0
     n_skipped_no_assistant = 0
+    n_skipped_unsupported_role = 0
     n_skipped_template = 0
     n_skipped_too_long = 0
     n_skipped_bad = 0
@@ -318,6 +340,9 @@ def main() -> None:
         row = ds[i]
         raw_messages = row["messages"] or []
         messages = normalize_messages(raw_messages)
+        if any(m["role"] not in _SUPPORTED_ROLES for m in messages):
+            n_skipped_unsupported_role += 1
+            continue
         if not any(m["role"] == "assistant" for m in messages):
             n_skipped_no_assistant += 1
             continue
@@ -362,6 +387,7 @@ def main() -> None:
         "num_loss_tokens": writer.total_loss_tokens,
         "num_parts": writer.part,
         "skipped_no_assistant": n_skipped_no_assistant,
+        "skipped_unsupported_role": n_skipped_unsupported_role,
         "skipped_template_mismatch": n_skipped_template,
         "skipped_too_long": n_skipped_too_long,
         "skipped_bad": n_skipped_bad,
