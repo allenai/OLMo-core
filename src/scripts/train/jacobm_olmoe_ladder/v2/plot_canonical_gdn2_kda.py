@@ -74,6 +74,12 @@ KDA_EV2_NEG_ACTIVE_PARAMETERS = {
     "810m": 839_239_616,
     "1p2b": 1_251_462_912,
 }
+GDN1_OURS_ACTIVE_PARAMETERS = {
+    "275m": 292_092_800,
+    "480m": 503_497_152,
+    "810m": 864_528_512,
+    "1p2b": 1_299_927_040,
+}
 WIDE_ACTIVE_PARAMETERS = {
     "275m": 280_207_872,
     "480m": 486_348_800,
@@ -383,6 +389,39 @@ def kda_ev2_neg_scale_wave(
     )
 
 
+def our_settings_best_of_wave(kda_ev2_neg: Variant) -> Wave:
+    """Compare only the expand_v=2/negative-eigenvalue mixer families."""
+
+    gdn1 = replace(GEOMETRY_GDN_EV2_NOPE_GATED, label="GDN1 (our settings)")
+    gdn2 = replace(GEOMETRY_GDN2_EV2_NOPE_GATED, label="GDN2 (our settings)")
+    kda = replace(kda_ev2_neg, label="KDA (our settings)")
+    return Wave(
+        key="our_settings_gdn1_gdn2_kda",
+        title="GDN1 vs GDN2 vs KDA — our settings",
+        intervention_label=kda.label,
+        architecture_note=(
+            "Only our expand_v=2 gated-NoPE recurrent-mixer families are shown. "
+            "GDN1 and GDN2 use their best finished 275M LR-sweep points; KDA uses "
+            "the transferred GDN1 LR at 275M. Larger sizes use transferred wide LRs. "
+            "Canonical expand_v=1/nonnegative variants and wide integration are excluded."
+        ),
+        models=MODELS,
+        lr_sweep_models=(),
+        active_parameters=KDA_EV2_NEG_ACTIVE_PARAMETERS,
+        baseline_active_parameters=GDN1_OURS_ACTIVE_PARAMETERS,
+        baseline=gdn1,
+        additional_baselines=(gdn2,),
+        intervention=kda,
+        uplot_baselines=False,
+        model_mode_labels={
+            "275m": "best finished at tested LRs",
+            "480m": "wide-LR transfer",
+            "810m": "wide-LR transfer",
+            "1p2b": "wide-LR transfer",
+        },
+    )
+
+
 def _variant_expected_count(variant: Variant, model: str, cx: int) -> int:
     if model == "275m" and variant.key in {GDN2_KEY, KDA_KEY}:
         return EXPECTED_SWEEP_POINTS
@@ -554,6 +593,7 @@ def main() -> None:
         canonical_kda,
         kda_ev2_neg,
     )
+    our_settings_wave = our_settings_best_of_wave(kda_ev2_neg)
     points = load_points(
         wave,
         project=args.project,
@@ -574,6 +614,15 @@ def main() -> None:
     )
     kda_ev2_neg_points = load_points(
         kda_ev2_neg_wave,
+        project=args.project,
+        cache_dir=args.cache_dir,
+        window_m=FINAL_WINDOW_M,
+        include_running=False,
+        refresh_cache=args.refresh_cache,
+        refresh_stale_cache=args.refresh_stale_cache,
+    )
+    our_settings_points = load_points(
+        our_settings_wave,
         project=args.project,
         cache_dir=args.cache_dir,
         window_m=FINAL_WINDOW_M,
@@ -637,6 +686,12 @@ def main() -> None:
             output_dir / "kda_ev2_neg_fixed_lr_scale_comparison.png",
             FINAL_WINDOW_M,
         ),
+        plot_fixed_lr_scale_comparison(
+            our_settings_points,
+            our_settings_wave,
+            output_dir / "our_settings_best_of.png",
+            FINAL_WINDOW_M,
+        ),
     ]
     sweep_unresolved = {
         key: [name for name in names if name.startswith("pt-275m-")]
@@ -655,6 +710,12 @@ def main() -> None:
             kda_ev2_neg_points,
             kda_ev2_neg_wave,
             results_path.with_name("kda_ev2_neg_scale_results"),
+            FINAL_WINDOW_M,
+        ),
+        *write_results(
+            our_settings_points,
+            our_settings_wave,
+            results_path.with_name("our_settings_best_of_results"),
             FINAL_WINDOW_M,
         ),
     )
