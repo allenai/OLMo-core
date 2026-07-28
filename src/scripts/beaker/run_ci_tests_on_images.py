@@ -48,8 +48,9 @@ IMAGE_TAG_STEMS: Dict[str, str] = {
 
 NUM_GPUS = 2
 
-# GPU targets. At AI2 the GPU type is selected by cluster; we also set the canonical Beaker
-# `gpu_types` constraint so a job only lands on the intended GPU even on a mixed cluster.
+# GPU targets. At AI2 each cluster is homogeneous, so selecting the cluster selects the GPU type;
+# GPU_TYPE_NAMES is just for display. (A `gpu_types` constraint isn't needed and its name format
+# differs from these, so we don't set one.)
 GPU_TYPE_NAMES: Dict[str, str] = {
     "h100": "NVIDIA H100 80GB HBM3",
     "b200": "NVIDIA B200",
@@ -253,7 +254,6 @@ def launch_and_collect(
             workspace="ai2/OLMo-core",
             beaker_image=image,
             clusters=clusters_by_gpu[gpu],
-            gpu_types=[GPU_TYPE_NAMES[gpu]],
             num_nodes=1,
             num_gpus=NUM_GPUS,
             shared_filesystem=True,
