@@ -62,6 +62,20 @@ LOCAL_HISTORY_RECOVERIES = {
         "results/pretraining/kda_mxfp8/recovered_histories/uzg7z0t2.json"
     ),
 }
+EXPLICIT_RESUME_CHAINS = {
+    "pt-275m-kda-ev2-neg-nope-gated-mxfp8-672-cx8-lr4e-4-r1": (
+        "jmziu5bb",
+        "zummhtee",
+    ),
+    "pt-275m-kda-ev2-neg-nope-gated-mxfp8-672-cx8-lr8e-4-r1": (
+        "evlhqb93",
+        "e4f39xpj",
+    ),
+    "pt-275m-kda-ev2-neg-nope-gated-mxfp8-672-cx8-lr1p6e-3-r1": (
+        "l6ccoimm",
+        "i3y6wj3r",
+    ),
+}
 
 
 def _lr_name(lr: float) -> str:
@@ -142,8 +156,28 @@ def resolve_variants(
             if not exact:
                 unresolved[key].append(name)
                 continue
+            exact_ids = {run.id for run in exact}
+            resume_chain = EXPLICIT_RESUME_CHAINS.get(name)
+            if resume_chain is not None:
+                if exact_ids != set(resume_chain):
+                    ids = ", ".join(sorted(exact_ids))
+                    raise RuntimeError(
+                        f"{name!r} resume-chain registry is stale; "
+                        f"W&B currently resolves ({ids})"
+                    )
+                registered.append(
+                    RegisteredRun(
+                        model,
+                        cx,
+                        lr,
+                        resume_chain[-1],
+                        predecessor_run_ids=resume_chain[:-1],
+                        recovered_history_path=LOCAL_HISTORY_RECOVERIES.get(name),
+                    )
+                )
+                continue
             if len(exact) != 1:
-                ids = ", ".join(sorted(run.id for run in exact))
+                ids = ", ".join(sorted(exact_ids))
                 raise RuntimeError(
                     f"{name!r} resolved to multiple W&B runs ({ids}); "
                     "register the intended resume chain explicitly"
@@ -175,7 +209,7 @@ def resolve_variants(
 def comparison_wave(bf16: Variant, mxfp8: Variant) -> Wave:
     return Wave(
         key="kda_mxfp8_275m",
-        title="275M KDA aggressive-MXFP8 comparison",
+        title="KDA aggressive-MXFP8 comparison",
         intervention_label=mxfp8.label,
         architecture_note=(
             "Aggressive MXFP8 uses the same KDA expand_v=2/negative-eigenvalue "
@@ -271,7 +305,12 @@ def main() -> None:
 
     load_wave = comparison_wave(bf16, mxfp8)
     load_wave = replace(load_wave, models=MODELS)
-    wave = replace(load_wave, models=("275m",))
+    wave = replace(
+        load_wave,
+        models=("275m",),
+        title="275M KDA aggressive-MXFP8 comparison",
+    )
+    results_wave = replace(load_wave, models=("275m", "480m"))
     points = load_points(
         load_wave,
         project=args.project,
@@ -293,7 +332,7 @@ def main() -> None:
             FINAL_WINDOW_M,
         ),
         plot_best_of(points, output_dir / "best_of.png"),
-        *write_results(points_275m, wave, results_path, FINAL_WINDOW_M),
+        *write_results(points, results_wave, results_path, FINAL_WINDOW_M),
     )
     print("\nWrote:")
     for path in paths:

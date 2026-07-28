@@ -1,6 +1,6 @@
 # Geometry-matched NoPE gated-attention GDN2 intervention
 
-Generated: `2026-07-25T17:20:35.915344+00:00`
+Generated: `2026-07-28T16:30:00.077102+00:00`
 
 Selection metric: final `250M`-token mean training CE. Only finished runs are eligible.
 The optimal-LR summary includes only bracketed 275M sweeps with a valid quadratic fit.

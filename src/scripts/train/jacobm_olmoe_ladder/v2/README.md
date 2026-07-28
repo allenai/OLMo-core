@@ -93,7 +93,10 @@ compares only aggressive MXFP8 against BF16 KDA with our matching
 best-of plot spans all four model sizes and retains every finished BF16 KDA
 transferred-LR scale point, while a 275M MXFP8 Cx appears only after its curve
 satisfies the normal bracketed quadratic-fit rule. Larger MXFP8 panels remain
-empty until corresponding runs exist.
+empty until corresponding runs finish. The result export includes the 275M
+LR sweep and registered 480M fixed-transfer cells. Duplicate W&B names fail
+closed; verified restart segments must be listed as explicit predecessor/current
+chains so the strict final-window collector can combine them deterministically.
 
 The script writes each selected wave into one matching artifact directory and
 uses the final-250M-token mean training CE. The 275M outputs follow the strict

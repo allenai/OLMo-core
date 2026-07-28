@@ -3,8 +3,10 @@
 ## Status and objective
 
 The 275M LR sweep was submitted on 2026-07-27. The 480M production shapes
-passed their checkpoint-free qualification on 2026-07-28; 810M and 1.2B
-remain audited but unqualified and unlaunched.
+passed their checkpoint-free qualification and all four production cells were
+launched on 2026-07-28; 810M and 1.2B remain audited but unqualified and
+unlaunched. The 275M Cx1/Cx2/Cx4 curves and the 480M Cx1 transfer are now
+finished.
 
 The immediate experiment is a full 275M Cx1/Cx2/Cx4/Cx8 LR sweep using the
 aggressive OLMo-core MXFP8 recipe demonstrated by
@@ -104,12 +106,14 @@ Proposed run-name prefix:
 
 The 16 jobs were submitted as urgent unallocated Holmes work in
 [Beaker experiment `01KYJPTZ3J4VHGBH0FSVAQRDGC`](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYJPTZ3J4VHGBH0FSVAQRDGC).
-At the 2026-07-28 03:18 UTC refresh, Cx1 is complete at all four LRs. Its
-strict final-250M CEs are `2.712740`, `2.695471`, `2.685399`, and `2.694743`
-at `4e-4`, `8e-4`, `1.6e-3`, and `3.2e-3`; the bracketed observed best is
-`1.6e-3`. The `8e-4` run completed training but its remote W&B record was
-stale, so its exact local binary history was hash-verified through final step
-17,370 and 4.553B tokens. The remaining 12 Cx2/Cx4/Cx8 runs are training.
+At the 2026-07-28 16:36 UTC refresh, Cx1/Cx2/Cx4 are complete and bracketed.
+Their observed-best final-250M CEs are `2.685399`, `2.566948`, and `2.463998`,
+all at `1.6e-3`. Relative to matching BF16 KDA, they are `-0.007296`,
+`+0.004429`, and `-0.000250` CE. The Cx1 `8e-4` run's exact local binary
+history remains hash-verified through final step 17,370 and 4.553B tokens.
+All four Cx8 jobs are running around 76% complete. Three were restarted after
+their original attempts crashed; the plotting collector explicitly registers
+each predecessor/current W&B pair and will combine the histories after finish.
 
 `plot_kda_mxfp8.py` publishes the baseline-free MXFP8 U-plot and a dedicated
 best-of comparison containing only aggressive MXFP8 and matching BF16 KDA
@@ -164,6 +168,12 @@ LRs and qualified layouts above: Cx1 `1.2e-3`/8 GPUs/MB4, Cx2
 and all four exact display names are already registered in
 [`plot_kda_mxfp8.py`](plot_kda_mxfp8.py) so finished cells flow into the
 four-size best-of plot on the next collector run.
+
+At the 2026-07-28 16:36 UTC refresh, 480M Cx1 is finished with strict
+final-250M CE `2.497288`, which is `+0.005005` versus the matching BF16 KDA
+point. Cx2/Cx4/Cx8 are running at roughly 80%/55%/2%. The result export now
+contains both the 275M sweep and 480M fixed-transfer table; unfinished cells
+remain explicit and are excluded from the plotted MXFP8 series.
 
 ## Proposed KDA continuation strategy
 

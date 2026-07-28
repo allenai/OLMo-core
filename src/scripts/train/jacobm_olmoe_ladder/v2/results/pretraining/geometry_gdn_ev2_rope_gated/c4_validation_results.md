@@ -1,6 +1,6 @@
 # C4 validation comparison for selected gated-RoPE checkpoints
 
-Generated: `2026-07-27T16:58:26.390024+00:00`
+Generated: `2026-07-28T16:35:54.120601+00:00`
 
 Metric: `eval/lm/c4_en-validation/CE loss` (lower is better).
 
