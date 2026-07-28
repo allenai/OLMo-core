@@ -77,15 +77,37 @@ expert MXFP8 reduced the result to 357.1 TFLOPs/GPU and 233.5K TPS/GPU
 versus 236.8/240.2 GiB for BF16). At this scale, the measured regression comes
 from the rowwise expert path, not the attention projection path.
 
-The 480M production-layout qualifications are less controlled because the
-MXFP8 candidate also uses aligned expert widths and the fused-v2/FA4 path, but
-they show a larger systems regression. The 8-GPU MB8 shape moved from 335.9
-TFLOPs/GPU and 114.1K TPS/GPU in the nearby BF16 KDA qualification to 192.7
-TFLOPs/GPU and 69.8K TPS/GPU (`-42.6%` TFLOPs, `-38.8%` TPS). Active memory
-fell 23.0% (190.4 to 146.6 GiB), while reserved memory fell only 1.9%. The
-16-GPU MB6 shape moved from 287.4 TFLOPs/GPU and 97.6K TPS/GPU to 132.5
-TFLOPs/GPU and 48.0K TPS/GPU (`-53.9%`, `-50.8%`); active memory fell 26.1%
-but reserved memory was unchanged. Sixteen devices still provide greater
+The first draft of this note incorrectly used the 480M GDN2 qualification as
+the BF16 baseline. The corrected comparison uses the completed BF16 KDA
+`expand_v=2`/negative-eigenvalue production runs, which have the same GPU and
+rank-microbatch layouts as the MXFP8 runs. Medians over 1,000 sampled
+throughput records are:
+
+| Cx / layout | BF16 KDA TFLOPs/GPU | MXFP8 TFLOPs/GPU | Delta | BF16 TPS/GPU | MXFP8 TPS/GPU | Delta |
+|---|---:|---:|---:|---:|---:|---:|
+| Cx1 / 8 GPU / MB4 | 275.2 | 103.8 | -62.3% | 99.2K | 37.6K | -62.1% |
+| Cx2 / 8 GPU / MB6 | 319.7 | 148.0 | -53.7% | 115.2K | 53.6K | -53.5% |
+| Cx4 / 8 GPU / MB8 | 348.5 | 202.8 | -41.8% | 125.6K | 73.5K | -41.5% |
+| Cx8 / 16 GPU / MB6 | 316.1 | 138.6 | -56.2% | 113.9K | 50.2K | -55.9% |
+
+This is still not a perfect precision-only control because MXFP8 rounds the
+expert width from 840 to 832 and switches the full-attention implementation to
+fused-v2/FA4. The controlled 275M grid shows that fused-v2/FA4 and attention
+MXFP8 are essentially neutral, however, so they are unlikely to explain a
+40--62% regression.
+
+The leading systems explanation is expert-weight refresh cost. EP1 makes each
+rank own all 256 experts. After every optimizer update the optimizer refreshes
+the rowwise-FP8 caches for every routed and shared expert block. The 480M
+candidate has 7.15B stored parameters versus 3.17B at 275M, while its rank
+microbatches are only 4--8 sequences versus MB16 in the clean 275M test. That
+is roughly 4.5--9 times more expert-cache refresh work per token, and the
+observed ordering follows it: MB4 is worst, MB8 is least bad. The grouped
+MXFP8 GEMMs at these per-expert token counts do not recover that fixed cost.
+An NVTX profile and EP2/EP4 smokes are required to confirm attribution.
+
+Against matched BF16 KDA, sampled peak active memory falls about 18--26%, but
+reserved memory is 4--9% higher. Sixteen devices still provide greater
 aggregate throughput than eight for the long Cx8 cell, but with poor
 per-device efficiency.
 
