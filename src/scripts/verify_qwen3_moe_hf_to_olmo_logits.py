@@ -16,7 +16,7 @@ from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 from olmo_core.config import DType
 from olmo_core.distributed.checkpoint import load_model_and_optim_state
 from olmo_core.nn.attention import AttentionBackendName
-from olmo_core.nn.moe.v2.hf.convert_checkpoint import load_state_dict_direct
+from olmo_core.nn.moe.v2.checkpoint import load_olmo_ddp_checkpoint_state
 from olmo_core.nn.moe.v2.qwen import build_qwen3_moe_config_from_hf_config
 from olmo_core.utils import prepare_cli_environment
 
@@ -83,11 +83,9 @@ def _load_olmo_checkpoint(checkpoint_dir: Path, model: torch.nn.Module) -> None:
         return
 
     log.info("Detected OLMo DDP checkpoint layout")
-    checkpoint_state = load_state_dict_direct(
+    checkpoint_state = load_olmo_ddp_checkpoint_state(
         checkpoint_dir,
-        process_group=None,
         pre_download=False,
-        thread_count=32,
     )
     remaining = set(checkpoint_state)
     for model_name, target in model.state_dict().items():
@@ -268,17 +266,13 @@ def verify_logits(
         }
         expected_layers = model_config.n_layers
         if any(length != expected_layers for length in capture_lengths.values()):
-            raise RuntimeError(
-                f"Expected {expected_layers} layer captures, got {capture_lengths}"
-            )
+            raise RuntimeError(f"Expected {expected_layers} layer captures, got {capture_lengths}")
 
         layers: list[dict[str, Any]] = []
         for layer_idx in range(expected_layers):
             router_top_k = hf_router_indices[layer_idx].shape[-1]
             hf_indices = hf_router_indices[layer_idx].reshape(-1, router_top_k)
-            olmo_indices = olmo_router_indices[layer_idx].reshape(
-                -1, router_top_k
-            )
+            olmo_indices = olmo_router_indices[layer_idx].reshape(-1, router_top_k)
             hf_weights = hf_router_weights[layer_idx].reshape(-1, router_top_k)
             olmo_weights = olmo_router_weights[layer_idx].reshape(-1, router_top_k)
             hf_sorted = hf_indices.sort(dim=-1).values
@@ -292,15 +286,16 @@ def verify_logits(
                     "attention_output": _tensor_metrics(
                         hf_attention_outputs[layer_idx], olmo_attention_outputs[layer_idx]
                     ),
-                    "router_weight": _tensor_metrics(
-                        hf_weights, olmo_weights
-                    ),
-                    "router_index_position_agreement": (
-                        hf_indices == olmo_indices
-                    ).float().mean().item(),
-                    "router_expert_set_agreement": (
-                        hf_sorted == olmo_sorted
-                    ).all(dim=-1).float().mean().item(),
+                    "router_weight": _tensor_metrics(hf_weights, olmo_weights),
+                    "router_index_position_agreement": (hf_indices == olmo_indices)
+                    .float()
+                    .mean()
+                    .item(),
+                    "router_expert_set_agreement": (hf_sorted == olmo_sorted)
+                    .all(dim=-1)
+                    .float()
+                    .mean()
+                    .item(),
                 }
             )
         metrics["layers"] = layers
@@ -312,7 +307,10 @@ def verify_logits(
             f"Mean absolute logit difference {logit_metrics['mean_abs_diff']} exceeds "
             f"{max_mean_abs_diff}"
         )
-    if min_cosine_similarity is not None and logit_metrics["cosine_similarity"] < min_cosine_similarity:
+    if (
+        min_cosine_similarity is not None
+        and logit_metrics["cosine_similarity"] < min_cosine_similarity
+    ):
         raise AssertionError(
             f"Logit cosine similarity {logit_metrics['cosine_similarity']} is below "
             f"{min_cosine_similarity}"
