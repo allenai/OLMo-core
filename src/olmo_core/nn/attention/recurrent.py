@@ -609,9 +609,14 @@ class GatedDeltaNet2(SequenceMixer):
 
         if self.cp_enabled and self.uly is not None:
             assert self._cp_group is not None
-            # [B, T_local, C] -> [B, T_total, C/CP]
-            q, k, g, b = all_to_all_cp2hp([q, k, g, b], self._cp_group)
+            # [B, T_local, C] -> [B, T_total, C/CP]. Tensors sharing a batched
+            # exchange must have the same dtype: the all-to-all concatenates them
+            # into one buffer, and torch.cat promotes mixed dtypes, which would
+            # silently upcast q/k/b and break the kernel's dtype expectations.
+            # g is intentionally float32, so it is exchanged on its own.
+            q, k, b = all_to_all_cp2hp([q, k, b], self._cp_group)
             v, w = all_to_all_cp2hp([v, w], self._cp_group)
+            g = all_to_all_single_cp2hp(g, self._cp_group)
 
         q = self.q_conv1d(x=q, cu_seqlens=cu_doc_lens)
         k = self.k_conv1d(x=k, cu_seqlens=cu_doc_lens)
