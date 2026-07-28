@@ -160,7 +160,16 @@ def plot_best_of(points: list[Any], output_path: Path) -> Path:
         for cx in CXS
         if _fit_minimum(_finished(points, MXFP8_KEY, "275m", cx)) is not None
     }
-    filtered = [point for point in points if point.cx in eligible]
+    # Keep every finished transferred-LR BF16 KDA reference visible while the
+    # MXFP8 sweep is still filling in. Only the MXFP8 series is gated on a
+    # bracketed quadratic curve; filtering the whole point set here would hide
+    # valid Cx2/Cx4/Cx8 KDA references until their MXFP8 counterparts finish.
+    filtered = [
+        point
+        for point in points
+        if point.variant == BF16_KEY
+        or (point.variant == MXFP8_KEY and point.cx in eligible)
+    ]
     provisional = {
         ("275m", cx, MXFP8_KEY)
         for cx in eligible
@@ -172,7 +181,7 @@ def plot_best_of(points: list[Any], output_path: Path) -> Path:
         title="275M KDA: BF16 transferred points vs MXFP8 observed bests",
         variants=(
             SummaryVariant(
-                "baseline",
+                BF16_KEY,
                 (BF16_KEY,),
                 "BF16 KDA (our settings; transferred LR)",
                 color="#d97706",

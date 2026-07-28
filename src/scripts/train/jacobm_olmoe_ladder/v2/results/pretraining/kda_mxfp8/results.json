@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-07-28T03:07:50.855457+00:00",
+  "generated_at": "2026-07-28T04:36:23.106048+00:00",
   "project": "ai2-llm/jacobm-olmoe-ladder",
   "wave": "kda_mxfp8_275m",
   "models": [
@@ -149,6 +149,90 @@
     },
     {
       "model": "275m",
+      "variant": "geometry_kda_ev2_neg_nope_gated_mxfp8_672",
+      "variant_label": "aggressive MXFP8 KDA (672 expert width, fused_v2/FA4)",
+      "cx": 2,
+      "lr": 0.0004,
+      "lr_tag": "0.0004",
+      "loss": 2.5922464473442464,
+      "state": "finished",
+      "tokens_b": 9.106489344,
+      "run_id": "wgns7v5v",
+      "name": "pt-275m-kda-ev2-neg-nope-gated-mxfp8-672-cx2-lr4e-4-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/wgns7v5v",
+      "segment_run_ids": [
+        "wgns7v5v"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
+    },
+    {
+      "model": "275m",
+      "variant": "geometry_kda_ev2_neg_nope_gated_mxfp8_672",
+      "variant_label": "aggressive MXFP8 KDA (672 expert width, fused_v2/FA4)",
+      "cx": 2,
+      "lr": 0.0008,
+      "lr_tag": "0.0008",
+      "loss": 2.575318340610408,
+      "state": "finished",
+      "tokens_b": 9.106489344,
+      "run_id": "n39xypjm",
+      "name": "pt-275m-kda-ev2-neg-nope-gated-mxfp8-672-cx2-lr8e-4-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/n39xypjm",
+      "segment_run_ids": [
+        "n39xypjm"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
+    },
+    {
+      "model": "275m",
+      "variant": "geometry_kda_ev2_neg_nope_gated_mxfp8_672",
+      "variant_label": "aggressive MXFP8 KDA (672 expert width, fused_v2/FA4)",
+      "cx": 2,
+      "lr": 0.0016,
+      "lr_tag": "0.0016",
+      "loss": 2.566948286017532,
+      "state": "finished",
+      "tokens_b": 9.106489344,
+      "run_id": "x1fah0f5",
+      "name": "pt-275m-kda-ev2-neg-nope-gated-mxfp8-672-cx2-lr1p6e-3-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/x1fah0f5",
+      "segment_run_ids": [
+        "x1fah0f5"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
+    },
+    {
+      "model": "275m",
+      "variant": "geometry_kda_ev2_neg_nope_gated_mxfp8_672",
+      "variant_label": "aggressive MXFP8 KDA (672 expert width, fused_v2/FA4)",
+      "cx": 2,
+      "lr": 0.0032,
+      "lr_tag": "0.0032",
+      "loss": 2.579905001622326,
+      "state": "finished",
+      "tokens_b": 9.106489344,
+      "run_id": "mcehf9yi",
+      "name": "pt-275m-kda-ev2-neg-nope-gated-mxfp8-672-cx2-lr3p2e-3-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/mcehf9yi",
+      "segment_run_ids": [
+        "mcehf9yi"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
+    },
+    {
+      "model": "275m",
       "variant": "geometry_kda_ev2_neg_nope_gated",
       "variant_label": "BF16 KDA (expand_v=2, negative eigenvalues; transferred LR)",
       "cx": 4,
@@ -273,9 +357,9 @@
       "model": "275m",
       "cx": 2,
       "mode": "lr_sweep",
-      "complete": false,
-      "optimal_summary_eligible": false,
-      "completed_intervention_runs": 0,
+      "complete": true,
+      "optimal_summary_eligible": true,
+      "completed_intervention_runs": 4,
       "expected_intervention_runs": 4,
       "wide_reference": {
         "model": "275m",
@@ -321,10 +405,30 @@
           "history_source_sha256": null
         }
       },
-      "intervention_result": null,
-      "delta_intervention_minus_wide": null,
+      "intervention_result": {
+        "model": "275m",
+        "variant": "geometry_kda_ev2_neg_nope_gated_mxfp8_672",
+        "variant_label": "aggressive MXFP8 KDA (672 expert width, fused_v2/FA4)",
+        "cx": 2,
+        "lr": 0.0016,
+        "lr_tag": "0.0016",
+        "loss": 2.566948286017532,
+        "state": "finished",
+        "tokens_b": 9.106489344,
+        "run_id": "x1fah0f5",
+        "name": "pt-275m-kda-ev2-neg-nope-gated-mxfp8-672-cx2-lr1p6e-3-r1",
+        "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/x1fah0f5",
+        "segment_run_ids": [
+          "x1fah0f5"
+        ],
+        "token_resets": 0,
+        "deduplicated_samples": 1,
+        "history_source": "wandb",
+        "history_source_sha256": null
+      },
+      "delta_intervention_minus_wide": 0.004428703829927105,
       "delta_intervention_minus_reference": {
-        "geometry_kda_ev2_neg_nope_gated": null
+        "geometry_kda_ev2_neg_nope_gated": 0.004428703829927105
       }
     },
     {
