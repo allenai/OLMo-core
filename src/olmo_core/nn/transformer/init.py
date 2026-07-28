@@ -196,8 +196,9 @@ class InitMethod(StrEnum):
         elif self == InitMethod.llama_depth:
             std = std / (2 * (block_idx + 1)) ** 0.5
         elif self == InitMethod.fan_in:
-            # For fan_in, router weight uses 1/√d_model
-            std = d_model**-0.5
+            # For fan_in, router weight uses the routed branch's input dimension. This differs
+            # from d_model when latent MoE is enabled.
+            std = m.router.d_model**-0.5
 
         _apply_init(
             nn.init.trunc_normal_,
@@ -208,6 +209,11 @@ class InitMethod(StrEnum):
             b=3 * std,
             generator=generator,
         )
+
+        for projection in (m.latent_down_proj, m.latent_up_proj):
+            if projection is not None:
+                projection_std = projection.in_features**-0.5 if self == InitMethod.fan_in else std
+                init_linear(projection, std=projection_std, generator=generator)
 
         mlp = cast(Union[MoEMLP, DroplessMoEMLP], m.experts.mlp)
 
