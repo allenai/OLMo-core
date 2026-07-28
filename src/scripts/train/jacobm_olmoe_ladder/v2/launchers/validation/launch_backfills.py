@@ -36,10 +36,11 @@ class Target:
     expert_parallel_size: int
     expert_parallel_path: str
     rank_microbatch_sequences: int
+    eval_run_name: str | None = None
 
     @property
     def eval_run(self) -> str:
-        return f"val-{self.source_run}"
+        return self.eval_run_name or f"val-{self.source_run}"
 
     @property
     def task_name(self) -> str:
@@ -96,6 +97,9 @@ def parse_targets(manifest: dict[str, Any], source_runs: set[str] | None = None)
                     "rank_microbatch_sequences",
                     manifest["evaluation"]["rank_microbatch_sequences"],
                 )
+            ),
+            eval_run_name=(
+                str(raw["eval_run_name"]) if raw.get("eval_run_name") else None
             ),
         )
         if target.variant not in {

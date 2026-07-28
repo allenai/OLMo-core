@@ -1,0 +1,53 @@
+schema_version: 1
+
+experiment:
+  key: 1p2b_ep1_fast_qualification
+  description: Single-checkpoint qualification of the EP1 fast validation path
+  checkpoint_root: /weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/olmo-ddp/pretraining
+
+source:
+  repo: /weka/oe-adapt-default/jacobm/olmoe3/olmo-ddp-migration/OLMo-core-moe-v2-core
+  wrapper: src/scripts/train/jacobm_olmoe3_hybrid_scale_beaker.sh
+  image: 01KW8G8JC20H11Y60PPTE2VN4Q
+
+beaker:
+  workspace: ai2/OLMo-3-moe-experiments
+  cluster: ai2/holmes
+  priority: urgent
+  gpu_count: 8
+  shared_memory: 128 GiB
+  min_runtime: 1h
+  auto_resume: true
+  timeout: 4h0m0s
+  result_path: /results
+
+secrets:
+  AWS_ACCESS_KEY_ID: AWS_ACCESS_KEY_ID
+  AWS_SECRET_ACCESS_KEY: AWS_SECRET_ACCESS_KEY
+  WANDB_API_KEY: jacobm_WANDB_API_KEY
+  BEAKER_TOKEN: jacobm_BEAKER_TOKEN
+
+datasets:
+  - mount_path: /weka/oe-adapt-default
+    weka: oe-adapt-default
+  - mount_path: /weka/oe-training-default
+    weka: oe-training-default
+
+evaluation:
+  task_set: fast
+  sequence_length: 8192
+  rank_microbatch_sequences: 4
+  expert_parallel_size: 1
+  expert_parallel_path: rowwise_nvshmem
+  save_root: /weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/olmo-ddp/eval-backfills/pretraining
+  batch_sizes:
+    1: 262144
+
+targets:
+  - source_run: pt-1p2b-geometry-gdn-ev2-rope-gated-cx1-lr4e-4-ep8-sync-r1
+    eval_run_name: val-fast-ep1-qual-pt-1p2b-geometry-gdn-ev2-rope-gated-cx1-lr4e-4-r1
+    model_size: 1p2b
+    variant: geometry_matched_gdn_ev2_rope_gated
+    cx: 1
+    lr: '0.0004'
+    step: step89377

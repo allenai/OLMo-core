@@ -47,6 +47,7 @@ transfer, MXFP8, and validation rows were refreshed at 2026-07-28 16:36 UTC.
 | midtraining | first hybrid 275M Cx8 | finished | 100B; final checkpoint `step95368`; validation finished | [1keo2hz6](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/1keo2hz6) |
 | midtraining | first hybrid 480M Cx8 | finished | 100.001B; final checkpoint `step95368`; validation finished | [mnp9rv5l](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/mnp9rv5l) |
 | validation | V2 post-training backfills | 117/117 registered targets complete; 3 new finals pending registration | KDA 810M Cx2/Cx4 and checkpoint-complete canonical GDN2 1.2B Cx8 are not yet in the backfill registry | [results](results/validation/hybrid_full.md) |
+| validation | 1.2B EP1 fast-path qualification | scheduled | One gated-RoPE Cx1 winner; 8 GPUs, EP1 `rowwise_nvshmem`, `fast`, urgent, 1h allocated minimum runtime | [work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYND6K86VHPBBARK4KSV9TZQ) |
 
 At the 2026-07-28 16:36 UTC audit, every current production task is either
 running or finished; no new terminal failure was found. KDA 810M Cx8 is about
@@ -83,8 +84,11 @@ only, using the `fast` task set plus LM validation. Eval-only jobs use EP1 at
 every size, including checkpoints trained with EP8; the legacy `sync_1d`
 training layout must not be inherited. Historical `_full` manifests and their
 117 completed results remain unchanged. The newer GDN2/KDA/MXFP8 winners are
-not yet registered, and no new winner backfill was launched as part of this
-policy change.
+not yet registered. The first systems qualification of that policy uses the
+finished 1.2B gated-RoPE Cx1 winner and a distinct W&B name so it cannot be
+confused with the historical EP8/full evaluator; it was submitted alone at
+urgent priority in
+[01KYND6K86VHPBBARK4KSV9TZQ](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYND6K86VHPBBARK4KSV9TZQ).
 
 The gated-RoPE scale comparison now also has a C4 validation-CE view at
 [`plots/pretraining/geometry_gdn_ev2_rope_gated/c4_validation_fixed_lr_scale_comparison.png`](plots/pretraining/geometry_gdn_ev2_rope_gated/c4_validation_fixed_lr_scale_comparison.png),
