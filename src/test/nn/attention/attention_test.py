@@ -148,6 +148,8 @@ def test_attention(
         pytest.skip("flash-attn requires a low precision dtype")
     if dtype == torch.bfloat16 and device.type == "cpu":
         pytest.skip("bf16 requires GPU")
+    if backend == "te" and device.type != "cuda":
+        pytest.skip("TransformerEngine attention requires a CUDA device")
     if attention_cls is NormalizedAttention:
         if "clip_qkv" in kwargs:
             pytest.skip("clip_qkv is not supported for NormalizedAttention")
