@@ -17,14 +17,21 @@ Data (all Qwen3.5-tokenized -- these models do NOT share the Qwen3 vocabulary):
     --eos-token-id 248044 --landmark-token-id 248200``. The pre-existing
     ``dolci-instruct-sft/qwen3`` tree is a *different vocabulary* and must not be used here.
 
-LONG-DOC ASYMMETRY vs. the dense arm -- worth knowing before reading the eval deltas. Landmark
-packing spends one slot in 64 on a landmark token, so a 262,144-token window holds 4096 x 63 =
-258,048 *content* tokens, while the dense arm's window holds all 262,144. Documents above the
-content capacity are dropped. The 5-task shards were built against a 262,144 cap and their longest
-examples sit just under it (max 262,072), so the landmark arm loses the handful of instances in
-(258,048, 262,072] -- well under 0.2% of instances, but concentrated in exactly the 128-256k bucket
-the runs are meant to test. Left as a drop rather than truncation because truncating a long-context
-example cuts off the trailing answer and leaves a fully-masked, NaN-loss window.
+TWO MEASURED ASYMMETRIES vs. the dense arm, both from landmark packing spending one slot in 64 on a
+landmark token (a 262,144-token window holds 4096 x 63 = 258,048 *content* tokens, where the dense
+arm's window holds all 262,144). Neither is a defect, but both matter when reading eval deltas:
+
+  1. Dropped long documents. Documents over the content capacity are dropped -- truncating them
+     would cut off the trailing answer and leave a fully-masked, NaN-loss window. Measured at prep:
+     **41 of 1,030,564 documents (0.004%)**, i.e. the instances in (258,048, 262,072] that the dense
+     arm keeps. Negligible in aggregate, though they sit in exactly the 128-256k bucket under test.
+
+  2. Steps per epoch. The landmark/padding overhead inflates the packed instance count by ~13%:
+     **10,145 instances here vs. 8,971 for the dense arm**, both at 262,144 tokens. So one full pass
+     is 634 steps here but 561 for dense. The runs are deliberately **token-matched** at 560 steps
+     each -- equal compute, the convention the 32k SFT comparisons used -- which means this arm sees
+     ~88% of a data epoch against dense's ~100%. To epoch-match instead, override just this arm with
+     ``--trainer.max_duration.value=634`` and accept ~13% more compute on the landmark side.
 
 Model/geometry: ``AttentionType.fast_compressive_landmark`` swapped into the full-attention blocks
 of the GDN hybrid, ``mem_freq=63``, no ``nonselected_landmark_mass`` override -- exactly as the CPT
@@ -133,10 +140,13 @@ DOLCI_FRAC = 0.25
 # Optimization / budget. LR and weight decay follow the 32k SFT runs (1e-5, wd 0), not the CPT's
 # 3.2e-4 / 0.1.
 #
-# ~1 epoch: the 5-task shards hold 1.764B tokens, so at FIVE_TASK_FRAC the whole mix is
-# 1.764B / 0.75 = 2.35B tokens. 560 steps x 16 DP windows x 262144 = 2.35B. The 5-task side is what
-# binds; the Qwen3.5 Dolci build is larger than its 588M share, so it is subsampled rather than
-# repeated and max_repetition_factor never comes into play.
+# 560 steps x 16 DP windows x 262144 = 2.35B model tokens. Token-matched to the dense arm.
+#
+# Measured at prep (not estimated): the document mixture is 2.4B tokens -- 1.8B from the 5-task side
+# (which binds; the Qwen3.5 Dolci build is larger than its 588M share, so it is subsampled rather
+# than repeated and max_repetition_factor never applies) -- and packing turns that into 10,145
+# instances, so a full epoch is 634 steps. 560 is therefore ~88% of an epoch here vs. ~100% for the
+# dense arm's 8,971 instances; see the docstring for why that trade is deliberate.
 # ---------------------------------------------------------------------------
 LR = 1e-5
 TARGET_STEPS = 560

@@ -5,8 +5,10 @@ full-attention blocks left alone) on 75% the 2k-256k 5-task mix / 25%
 
 Paired with ``Qwen3.5-4B-fast-compressive-landmark-xlong5-dolci25-256k-SFT.py``: same data, same
 budget, same parallelism, so the landmark-vs-dense comparison isolates the architecture. Read that
-script's docstring for the one data difference the two arms cannot share (landmark packing spends
-one slot in 64 on a landmark token, so it drops the handful of near-cap documents this arm keeps).
+script's docstring for the two differences the arms cannot share, both from landmark packing
+spending one slot in 64 on a landmark token: it drops 41 near-cap documents this arm keeps, and it
+packs the same mixture into 13% more instances (10,145 vs. 8,971 here), so the token-matched 560
+steps is ~one epoch for this arm but ~88% of one for that arm.
 
 Data (all Qwen3.5-tokenized -- these models do NOT share the Qwen3 vocabulary):
 
@@ -118,10 +120,13 @@ DOLCI_FRAC = 0.25
 # Optimization / budget. LR and weight decay follow the 32k SFT runs (1e-5, wd 0), not the CPT's
 # 3.2e-4 / 0.1.
 #
-# ~1 epoch: the 5-task shards hold 1.764B tokens, so at FIVE_TASK_FRAC the whole mix is
-# 1.764B / 0.75 = 2.35B tokens. 560 steps x 16 DP windows x 262144 = 2.35B. The 5-task side is what
-# binds; the Qwen3.5 Dolci build is larger than its 588M share, so it is subsampled rather than
-# repeated and max_repetition_factor never comes into play.
+# 560 steps x 16 DP windows x 262144 = 2.35B model tokens. Token-matched to the landmark arm.
+#
+# Measured at prep (not estimated): the document mixture is 2.4B tokens -- 1.8B from the 5-task side
+# (which binds; the Qwen3.5 Dolci build is larger than its 588M share, so it is subsampled rather
+# than repeated and max_repetition_factor never applies) -- and packing turns that into 8,971
+# instances, so 560 steps is very close to exactly one epoch (561) for this arm. The landmark arm
+# packs the same mixture into 10,145 instances, so the same 560 steps is ~88% of an epoch there.
 # ---------------------------------------------------------------------------
 LR = 1e-5
 TARGET_STEPS = 560
