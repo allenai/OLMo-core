@@ -14,8 +14,7 @@ Two phases; the analysis phase is standalone so it can be re-run on already-down
 Launch + collect + analyze (needs Beaker access)::
 
     python src/scripts/beaker/run_ci_tests_on_images.py --date 2026-07-28
-    python src/scripts/beaker/run_ci_tests_on_images.py --date 2026-07-28 --gpus h100 b200 \
-        --b300-clusters ai2/your-b300-cluster
+    python src/scripts/beaker/run_ci_tests_on_images.py --date 2026-07-28 --gpus h100 b200
 
 Analyze only, on a directory of ``<image>@<gpu>.xml`` JUnit files::
 
@@ -51,7 +50,6 @@ NUM_GPUS = 2
 
 # GPU targets. At AI2 the GPU type is selected by cluster; we also set the canonical Beaker
 # `gpu_types` constraint so a job only lands on the intended GPU even on a mixed cluster.
-# NOTE: the B300 cluster list is a best guess — override it with --b300-clusters.
 GPU_TYPE_NAMES: Dict[str, str] = {
     "h100": "NVIDIA H100 80GB HBM3",
     "b200": "NVIDIA B200",
@@ -60,7 +58,7 @@ GPU_TYPE_NAMES: Dict[str, str] = {
 DEFAULT_CLUSTERS_BY_GPU: Dict[str, List[str]] = {
     "h100": ["ai2/jupiter", "ai2/ceres"],
     "b200": ["ai2/titan"],
-    "b300": ["ai2/titan"],
+    "b300": ["ai2/holmes"],
 }
 
 
@@ -360,7 +358,7 @@ def main() -> None:
         "--b300-clusters",
         nargs="+",
         default=DEFAULT_CLUSTERS_BY_GPU["b300"],
-        help="Cluster(s) hosting B300 GPUs (the default is a guess — set your real B300 cluster).",
+        help=f"Cluster(s) hosting B300 GPUs (default: {DEFAULT_CLUSTERS_BY_GPU['b300']}).",
     )
     p.add_argument("--out-dir", type=Path, default=Path("/tmp/olmo-core-image-tests"))
     args = p.parse_args()
