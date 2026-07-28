@@ -671,13 +671,7 @@ class OLMoDDPOptimizer:
             self._init_flat_model_param_buffers()
 
         # copy model params to main params
-        if self.should_maintain_fp32_main_param:
-            for param_group in param_groups:
-                for name, param in param_group["named_params"].items():
-                    main_param = self.states[f"{name}.main"]
-                    assign_full_tensor_to_dtensor(
-                        dst=main_param, src=param.data.float().reshape(-1)
-                    )
+        self._copy_model_params_to_main_params()
 
         if self.should_maintain_fp32_main_param:
             self._check_model_param_main_param_the_same()
@@ -1763,6 +1757,18 @@ class OLMoDDPOptimizer:
         local_shard = orignal.narrow(0, start, shard_size)
 
         return local_shard
+
+    @torch._dynamo.disable()
+    @maybe_nvtx_annotate("OLMoDDPOptimizer._copy_model_params_to_main_params")
+    def _copy_model_params_to_main_params(self) -> None:
+        if not self.should_maintain_fp32_main_param:
+            return
+        for param_group in self.param_groups:
+            for name, param in param_group["named_params"].items():
+                assign_full_tensor_to_dtensor(
+                    dst=self.states[f"{name}.main"],
+                    src=param.data.float().reshape(-1),
+                )
 
     @torch._dynamo.disable()
     @maybe_nvtx_annotate("OLMoDDPOptimizer._copy_main_params_to_model_params")

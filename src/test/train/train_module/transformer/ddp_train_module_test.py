@@ -284,3 +284,35 @@ def test_moe_v2_train_module_direct_checkpoint_restores_buffers(tmp_path):
         start_method="spawn",
         func_args=(str(tmp_path / "checkpoint"),),
     )
+
+
+def _run_model_only_checkpoint_refreshes_optimizer_main_params(save_dir):
+    tm = _build_ddp_train_module_for_checkpoint()
+    with torch.no_grad():
+        for model_part in tm.model_parts:
+            for param in model_part.parameters():
+                param.fill_(0.25)
+    tm.save_state_dict_direct(save_dir)
+
+    tm_restored = _build_ddp_train_module_for_checkpoint()
+    assert tm_restored.optim is not None
+    tm_restored.load_state_dict_direct(save_dir, load_optim_state=False)
+
+    for model_part in tm_restored.model_parts:
+        for param in model_part.parameters():
+            torch.testing.assert_close(param, torch.full_like(param, 0.25))
+    for group in tm_restored.optim.param_groups:
+        for name, param in group["named_params"].items():
+            main = tm_restored.optim.states[f"{name}.main"].full_tensor().reshape_as(param)
+            torch.testing.assert_close(main, param.float())
+
+
+@requires_multi_gpu
+def test_moe_v2_train_module_model_only_checkpoint_refreshes_optimizer_main_params(tmp_path):
+    run_distributed_test(
+        _run_model_only_checkpoint_refreshes_optimizer_main_params,
+        world_size=2,
+        backend="nccl",
+        start_method="spawn",
+        func_args=(str(tmp_path / "checkpoint"),),
+    )
