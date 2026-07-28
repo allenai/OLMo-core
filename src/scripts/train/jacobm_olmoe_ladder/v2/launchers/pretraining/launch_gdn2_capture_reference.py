@@ -94,7 +94,6 @@ def main() -> None:
         weka=[(str(item["bucket"]), str(item["mount"])) for item in manifest.get("weka", [])],
         priority=str(beaker["priority"]),
         min_runtime=str(beaker["min_runtime"]),
-        preemptible=False,
         auto_resume=False,
         task_timeout="6h",
         host_networking=True,

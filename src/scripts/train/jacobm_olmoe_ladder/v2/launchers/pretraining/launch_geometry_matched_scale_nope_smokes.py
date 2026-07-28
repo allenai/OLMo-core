@@ -225,7 +225,6 @@ def recipe_for(
         weka=weka,
         priority=str(beaker["priority"]),
         min_runtime=str(beaker["min_runtime"]),
-        preemptible=bool(beaker["preemptible"]),
         auto_resume=bool(beaker["auto_resume"]),
         task_timeout=str(beaker["timeout"]),
         replicas=int(row["num_nodes"]) if int(row["num_nodes"]) > 1 else None,

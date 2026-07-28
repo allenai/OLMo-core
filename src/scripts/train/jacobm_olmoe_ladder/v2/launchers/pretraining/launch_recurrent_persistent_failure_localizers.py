@@ -112,7 +112,6 @@ def _load_case(case: Case) -> tuple[dict[str, Any], dict[str, Any]]:
         "branch": BRANCH,
         "image": manifest["source"]["image"],
     }
-    adapted["beaker"]["preemptible"] = False
     adapted["weka"] = [
         {"bucket": item["weka"], "mount": item["mount_path"]}
         for item in manifest.get("datasets", [])

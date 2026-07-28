@@ -561,7 +561,6 @@ assert commit == {selected_gdn2_fla_expected_commit!r}
         weka=weka,
         priority=str(beaker["priority"]),
         min_runtime=str(beaker["min_runtime"]),
-        preemptible=bool(beaker["preemptible"]),
         auto_resume=bool(beaker["auto_resume"]),
         task_timeout=str(beaker["timeout"]),
         replicas=num_nodes if num_nodes > 1 else None,

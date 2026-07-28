@@ -104,14 +104,15 @@ The geometry/`expand_v=2` and NoPE-plus-gating capacity smokes are deliberate
 exceptions: they set the trainer's `no_checkpoints` mode and write no model or
 optimizer checkpoint.
 
-Only explicitly designated geometry/`expand_v=2` work uses Beaker's
-unallocated queue (`minRuntime: 0m`, `autoResume: true`). This currently
-includes the 275M geometry, NoPE, gated-attention, canonical GDN2, and KDA
-sweeps plus the larger NoPE production wave. Do not copy that scheduling
-exception into other
-intervention manifests without an explicit decision. Gantry receives
-`preemptible=False`; it omits the deprecated Beaker field while retaining the
-requested non-preemptible behavior.
+Historical explicitly designated geometry/`expand_v=2` work used Beaker's
+unallocated queue (`minRuntime: 0m`, `autoResume: true`). Do not copy that
+scheduling exception into a new intervention manifest without an explicit
+decision. For launches on or after 2026-07-30, omit the deprecated
+`preemptible` field entirely. Normal production work should use the allocated
+queue with a realistic positive `minRuntime` (the ladder default is `1h` for
+multi-hour checkpointed training); `0m` is reserved for intentionally
+unallocated backfill or checkpoint-free smokes. See `EXPERIMENT_RULES.md` for
+the full scheduling contract.
 
 To add an intervention:
 

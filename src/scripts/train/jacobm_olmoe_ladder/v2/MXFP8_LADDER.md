@@ -66,6 +66,34 @@ completed 50 compiled MB16 optimizer steps with finite loss and zero skipped
 updates. Its isolated patch is commit `8fb79223c` on
 `codex/ep1-mxfp8`, based directly on `akshitab/moe-v2-core`.
 
+## Measured throughput and memory so far
+
+The exact single-B300 275M MB16 grid isolates the precision components while
+holding the 672-wide model and 2M-token batch fixed. BF16 with fused-v2/FA4
+measured 398.9 TFLOPs/GPU and 260.8K TPS/GPU. Attention MXFP8 alone was
+effectively neutral at 397.9 TFLOPs/GPU and 260.2K TPS/GPU (`-0.3%`). Enabling
+expert MXFP8 reduced the result to 357.1 TFLOPs/GPU and 233.5K TPS/GPU
+(`-10.5%`), with no peak-memory reduction (236.6/243.0 GiB active/reserved
+versus 236.8/240.2 GiB for BF16). At this scale, the measured regression comes
+from the rowwise expert path, not the attention projection path.
+
+The 480M production-layout qualifications are less controlled because the
+MXFP8 candidate also uses aligned expert widths and the fused-v2/FA4 path, but
+they show a larger systems regression. The 8-GPU MB8 shape moved from 335.9
+TFLOPs/GPU and 114.1K TPS/GPU in the nearby BF16 KDA qualification to 192.7
+TFLOPs/GPU and 69.8K TPS/GPU (`-42.6%` TFLOPs, `-38.8%` TPS). Active memory
+fell 23.0% (190.4 to 146.6 GiB), while reserved memory fell only 1.9%. The
+16-GPU MB6 shape moved from 287.4 TFLOPs/GPU and 97.6K TPS/GPU to 132.5
+TFLOPs/GPU and 48.0K TPS/GPU (`-53.9%`, `-50.8%`); active memory fell 26.1%
+but reserved memory was unchanged. Sixteen devices still provide greater
+aggregate throughput than eight for the long Cx8 cell, but with poor
+per-device efficiency.
+
+These measurements do not currently show an MXFP8 speed benefit at 275M or
+480M. They do show useful active-memory headroom at 480M, although the caching
+allocator keeps reserved memory nearly flat. Re-evaluate throughput at larger
+model sizes before drawing a general conclusion about MXFP8 scaling.
+
 ## Planned 275M LR sweep
 
 Use the established four-point grid at every data multiple:
@@ -112,7 +140,10 @@ all at `1.6e-3`. Relative to matching BF16 KDA, they are `-0.007296`,
 `+0.004429`, and `-0.000250` CE. The Cx1 `8e-4` run's exact local binary
 history remains hash-verified through final step 17,370 and 4.553B tokens.
 All four Cx8 jobs are running around 76% complete. Three were restarted after
-their original attempts crashed; the plotting collector explicitly registers
+Holmes simultaneously canceled them with exit 143 while cordoning their
+shared node after a health-check failure. Their final logs were finite and
+progressing normally; this is an infrastructure interruption, not evidence of
+a KDA or MXFP8 numerical failure. The plotting collector explicitly registers
 each predecessor/current W&B pair and will combine the histories after finish.
 
 `plot_kda_mxfp8.py` publishes the baseline-free MXFP8 U-plot and a dedicated

@@ -33,7 +33,7 @@ transfer, MXFP8, and validation rows were refreshed at 2026-07-28 16:36 UTC.
 | pretraining | canonical GDN2 larger-scale transfer | 10 loss-collected / 2 failed | 1.2B Cx8 local W&B history was recovered through the verified final step; strict final-250M CE is `2.020529`; 480M Cx2 and 1.2B Cx2 remain failed | [results](results/pretraining/canonical_gdn2_kda/scale_results.md) |
 | pretraining | canonical KDA 480M stability transfer | 4/4 finished | Cx1/2/4/8 strict final-250M CEs are `2.517826`, `2.412884`, `2.323228`, and `2.237558` | [launches](#canonical-kda-480m-stability-transfer) |
 | pretraining | KDA `expand_v=2`, negative-eigenvalue transfer (275M/480M/810M/1.2B) | 11 finished / 5 running | 810M Cx4 finished at strict final-250M CE `2.158207`; 810M Cx8 and all four balanced 1.2B rowwise jobs are running, with no failures in this KDA family | [results](results/pretraining/canonical_gdn2_kda/kda_ev2_neg_scale_results.md) / [launches](#kda-expand_v2-negative-eigenvalue-transfer) |
-| pretraining | aggressive MXFP8 KDA 275M LR sweep | 12/16 finished; Cx8 4 running | Cx1/Cx2/Cx4 are complete and bracketed with observed bests `2.685399`, `2.566948`, and `2.463998`, all at `1.6e-3`; the three restarted Cx8 cells have explicit verified resume chains | [results](results/pretraining/kda_mxfp8/results.md) / [work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYJPTZ3J4VHGBH0FSVAQRDGC) |
+| pretraining | aggressive MXFP8 KDA 275M LR sweep | 12/16 finished; Cx8 4 running | Cx1/Cx2/Cx4 are complete and bracketed with observed bests `2.685399`, `2.566948`, and `2.463998`, all at `1.6e-3`; three Cx8 attempts were canceled together by a Holmes node-health cordon (exit 143), not a KDA/numerics failure, and their explicit verified resume chains are running | [results](results/pretraining/kda_mxfp8/results.md) / [work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYJPTZ3J4VHGBH0FSVAQRDGC) |
 | pretraining | aggressive MXFP8 KDA 480M transferred-LR continuation | 1 finished / 3 running | Cx1 finished at strict final-250M CE `2.497288`, `+0.005005` versus matching BF16 KDA; Cx2/Cx4/Cx8 remain running | [results](results/pretraining/kda_mxfp8/results.md) / [launches](#480m-aggressive-mxfp8-kda-transferred-lr-continuation) |
 | throughput | aggressive MXFP8 KDA 480M qualification | 2/2 finished | MB8/8-GPU: 192.7 TFLOPs/GPU, 69.8K TPS/GPU, 146.6/193.2 GiB active/reserved; MB6/16-GPU: 132.5 TFLOPs/GPU, 48.0K TPS/GPU, 111.1/155.7 GiB; zero skipped steps | [one node](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYKK27K7N1MVV702AKJ2DST8) / [two nodes](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYKK2A58MK03ANV6GAAZPAVG) |
 | diagnostic | GDN2 production-shape PyTorch reference 2x2 | finished | All four `expand_v`/negative-eigenvalue cells passed forward, final-state, backward, packed-document, and recompute/retain comparisons | [work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYBY8DXT5BVM85WYKAT5TXQN) |
@@ -1108,6 +1108,11 @@ retains the identical 192-GPU peak layout and transferred LRs.
   and `-0.000250` CE. The Cx1 `8e-4` local W&B recovery remains hash-verified.
   All four Cx8 cells are running around 76% complete; the `4e-4`, `8e-4`, and
   `1.6e-3` restarts are registered as explicit predecessor/current W&B chains.
+  The three predecessors were simultaneously canceled with exit 143 when
+  Holmes cordoned node `01KV3W9DWEVF1JE98MQJXZ7Y05` after a health-check
+  failure. Their final logs were finite and progressing normally, so this is
+  classified as one infrastructure interruption rather than three KDA
+  training crashes.
 
 The exact architecture delta, parameter counts, token budgets, promotion
 gates, and audited larger-size configurations are recorded in

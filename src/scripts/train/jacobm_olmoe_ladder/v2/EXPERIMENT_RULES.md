@@ -135,6 +135,25 @@ global_tokens = sequence_length * world_size * rank_microbatch_sequences * accum
 
 ## Launch workflow
 
+### Holmes scheduling policy (effective 2026-07-30)
+
+- Do not set Beaker's deprecated `preemptible` field. Express scheduling only
+  through `minRuntime` and `autoResume`.
+- Normal PT/MT/LCE production work should use the allocated queue when the
+  target workspace group has a Holmes allocation. Start with a realistic
+  `minRuntime: 1h` for these multi-hour, checkpointed training jobs and adjust
+  it deliberately when the job needs a shorter or longer protected window.
+- Use `minRuntime: 0m` only for explicitly approved backfill work (including
+  checkpoint-free smokes). It is unallocated and therefore runs only on idle
+  capacity.
+- Keep `autoResume: true` for checkpointed training. Priority still orders
+  work within our workspace group, but it no longer determines our position
+  relative to other allocation groups. Prefer smaller GPU requests when the
+  wall-clock tradeoff is acceptable because GPU count is a queue tiebreaker.
+- Before submitting an allocated job, confirm the workspace is attached to a
+  funded workspace group with a Holmes allocation; otherwise positive
+  `minRuntime` is rejected. Existing jobs are not rewritten in place.
+
 1. Write the intervention hypothesis and enumerate every change from wide.
 2. Implement the model/trainer and verify parameter counts and layer placement.
 3. Run a short smoke for a new code path. A new LR point using already validated

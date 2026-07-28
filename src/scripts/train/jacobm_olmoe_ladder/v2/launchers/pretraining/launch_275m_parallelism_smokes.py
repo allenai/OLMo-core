@@ -272,8 +272,6 @@ def build_task(manifest: dict[str, Any], row: dict[str, Any], source_repo: str) 
         "minRuntime": str(beaker["min_runtime"]),
         "autoResume": bool(beaker["auto_resume"]),
     }
-    if "preemptible" in beaker:
-        context["preemptible"] = bool(beaker["preemptible"])
     return {
         "name": str(row["task_name"]),
         "image": {"beaker": str(source["image"])},
