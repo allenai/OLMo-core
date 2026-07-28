@@ -1,0 +1,55 @@
+# Build-context exclusions for the eduLLM platform image build.
+#
+# The platform builds .edullm/Dockerfile with the repository root as the context, so this
+# is the file Docker consults: the build client reads .dockerignore from the root of the
+# context, never from the directory holding the Dockerfile, which is why a
+# .edullm/.dockerignore would be silently inert. Patterns match against the whole
+# context-relative path rather than gitignore-style at any depth, so anything that has to
+# match below the root carries an explicit **/ prefix.
+
+# actions/checkout leaves the run's token in .git/config, and the context is the
+# repository root. Dropping .git here keeps both that credential and the repository
+# history out of the context altogether, so no COPY in this or any future revision of the
+# Dockerfile can reach them.
+.git
+
+# .git is the only tracked-or-present path this file removes on purpose. Everything below
+# names something this repository does not track, so excluding it takes no source out of
+# the image; it stops a local build from absorbing developer state that the clean
+# checkout CI builds from would never have.
+
+# Python bytecode and packaging artefacts
+**/__pycache__
+**/*.py[cod]
+**/*.egg-info
+.eggs
+build
+dist
+pip-wheel-metadata
+
+# Virtual environments and local worktrees
+**/.venv
+**/venv
+.worktrees
+
+# Tool caches and test output
+.pytest_cache
+.mypy_cache
+.ruff_cache
+.benchmarks
+.coverage
+**/.ipynb_checkpoints
+
+# Editor and operating system artefacts
+**/.DS_Store
+.idea
+.vscode
+**/*.swp
+
+# Local training output and caches
+runs
+wandb
+scratch
+dataset-cache
+docs/build
+site
