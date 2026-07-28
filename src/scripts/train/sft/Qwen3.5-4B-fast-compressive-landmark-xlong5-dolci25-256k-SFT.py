@@ -134,8 +134,9 @@ DOLCI_FRAC = 0.25
 # 3.2e-4 / 0.1.
 #
 # ~1 epoch: the 5-task shards hold 1.764B tokens, so at FIVE_TASK_FRAC the whole mix is
-# 1.764B / 0.75 = 2.35B tokens. 560 steps x 16 DP windows x 262144 = 2.35B. Dolci is smaller than
-# its 588M share and repeats ~1.3x, which max_repetition_factor=8.0 permits.
+# 1.764B / 0.75 = 2.35B tokens. 560 steps x 16 DP windows x 262144 = 2.35B. The 5-task side is what
+# binds; the Qwen3.5 Dolci build is larger than its 588M share, so it is subsampled rather than
+# repeated and max_repetition_factor never comes into play.
 # ---------------------------------------------------------------------------
 LR = 1e-5
 TARGET_STEPS = 560
