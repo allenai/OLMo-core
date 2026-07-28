@@ -34,7 +34,7 @@ transfer, MXFP8, and validation rows were refreshed at 2026-07-28 16:36 UTC.
 | pretraining | canonical KDA 480M stability transfer | 4/4 finished | Cx1/2/4/8 strict final-250M CEs are `2.517826`, `2.412884`, `2.323228`, and `2.237558` | [launches](#canonical-kda-480m-stability-transfer) |
 | pretraining | KDA `expand_v=2`, negative-eigenvalue transfer (275M/480M/810M/1.2B) | 11 finished / 5 running | 810M Cx4 finished at strict final-250M CE `2.158207`; 810M Cx8 and all four balanced 1.2B rowwise jobs are running, with no failures in this KDA family | [results](results/pretraining/canonical_gdn2_kda/kda_ev2_neg_scale_results.md) / [launches](#kda-expand_v2-negative-eigenvalue-transfer) |
 | pretraining | aggressive MXFP8 KDA 275M LR sweep | 12/16 finished; Cx8 4 running | Cx1/Cx2/Cx4 are complete and bracketed with observed bests `2.685399`, `2.566948`, and `2.463998`, all at `1.6e-3`; three Cx8 attempts were canceled together by a Holmes node-health cordon (exit 143), not a KDA/numerics failure, and their explicit verified resume chains are running | [results](results/pretraining/kda_mxfp8/results.md) / [work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYJPTZ3J4VHGBH0FSVAQRDGC) |
-| pretraining | aggressive MXFP8 KDA 480M transferred-LR continuation | 1 finished / 3 running | Cx1 finished at strict final-250M CE `2.497288`, `+0.005005` versus matching BF16 KDA; Cx2/Cx4/Cx8 remain running | [results](results/pretraining/kda_mxfp8/results.md) / [launches](#480m-aggressive-mxfp8-kda-transferred-lr-continuation) |
+| pretraining | aggressive MXFP8 KDA 480M transferred-LR continuation | 1 finished / 3 intentionally canceled | Cx1 finished at strict final-250M CE `2.497288`, `+0.005005` versus matching BF16 KDA; Cx2/Cx4/Cx8 were paused after the matched throughput audit found a 42--62% regression; durable checkpoints retained | [results](results/pretraining/kda_mxfp8/results.md) / [launches](#480m-aggressive-mxfp8-kda-transferred-lr-continuation) |
 | throughput | aggressive MXFP8 KDA 480M qualification | 2/2 finished | MB8/8-GPU: 192.7 TFLOPs/GPU, 69.8K TPS/GPU, 146.6/193.2 GiB active/reserved; MB6/16-GPU: 132.5 TFLOPs/GPU, 48.0K TPS/GPU, 111.1/155.7 GiB; zero skipped steps | [one node](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYKK27K7N1MVV702AKJ2DST8) / [two nodes](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYKK2A58MK03ANV6GAAZPAVG) |
 | diagnostic | GDN2 production-shape PyTorch reference 2x2 | finished | All four `expand_v`/negative-eigenvalue cells passed forward, final-state, backward, packed-document, and recompute/retain comparisons | [work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYBY8DXT5BVM85WYKAT5TXQN) |
 | diagnostic | Matched KDA/GDN2 numerical audit | finished | All 40 one/four-chunk output/state comparisons passed; GDN2 is broadly KDA-like, with localized 3.80% `A_log` relative-L2 error at T256/V256/negative eigvals | [work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYBZX8MHJ611ZSJD43SYS9HZ) / [results](results/diagnostics/matched_kda_gdn2_numerics.md) |
@@ -1142,15 +1142,20 @@ runs into the existing BF16 KDA registry by broad display-name matching.
 | Cx | LR | Global batch | GPUs | Rank MB | Accumulation | Job | Launch state |
 |---:|---:|---:|---:|---:|---:|---|---|
 | 1 | `1.2e-3` | 262,144 | 8 | 4 | 1 | [01KYKMN56Y5PWCE2173E50VV2J](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYKMN56Y5PWCE2173E50VV2J) | finished; CE `2.497288` |
-| 2 | `9e-4` | 393,216 | 8 | 6 | 1 | [01KYKMN7YPTVTE5WB8T7S8734A](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYKMN7YPTVTE5WB8T7S8734A) | running |
-| 4 | `8e-4` | 524,288 | 8 | 8 | 1 | [01KYKMNAS6WKSTKE3S7QZBTXY4](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYKMNAS6WKSTKE3S7QZBTXY4) | running |
-| 8 | `8e-4` | 786,432 | 16 | 6 | 1 | [01KYKMNDDJS7D7D9DGC7Y32A43](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYKMNDDJS7D7D9DGC7Y32A43) | running |
+| 2 | `9e-4` | 393,216 | 8 | 6 | 1 | [01KYKMN7YPTVTE5WB8T7S8734A](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYKMN7YPTVTE5WB8T7S8734A) | intentionally canceled at ~88%; durable `step38000` |
+| 4 | `8e-4` | 524,288 | 8 | 8 | 1 | [01KYKMNAS6WKSTKE3S7QZBTXY4](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYKMNAS6WKSTKE3S7QZBTXY4) | intentionally canceled at ~60%; durable `step38500` (`step39000-tmp` ignored) |
+| 8 | `8e-4` | 786,432 | 16 | 6 | 1 | [01KYKMNDDJS7D7D9DGC7Y32A43](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYKMNDDJS7D7D9DGC7Y32A43) | intentionally canceled at ~6%; durable `step5000` (`step5500-tmp` ignored) |
 
 The four exact W&B display names are registered in `plot_kda_mxfp8.py`.
 Consequently the next collection pass will add each finished 480M point to
 the four-size best-of comparison without a plotting-code edit. These are
 single transferred-LR cells, not four-point 480M sweeps, so they belong in the
 best-of plot rather than a 480M U-plot.
+
+Cx2/Cx4/Cx8 were manually stopped on 2026-07-28 to release 32 B300s while the
+rowwise expert-MXFP8 path is optimized. This was a systems decision, not a
+numerical failure. Resume only from the durable checkpoints recorded above;
+the two `-tmp` directories were interrupted mid-save and are not checkpoints.
 
 ## New wave template
 

@@ -4,9 +4,11 @@
 
 The 275M LR sweep was submitted on 2026-07-27. The 480M production shapes
 passed their checkpoint-free qualification and all four production cells were
-launched on 2026-07-28; 810M and 1.2B remain audited but unqualified and
-unlaunched. The 275M Cx1/Cx2/Cx4 curves and the 480M Cx1 transfer are now
-finished.
+launched on 2026-07-28. Cx1 finished, but Cx2/Cx4/Cx8 were intentionally
+canceled later that day after the matched BF16 audit exposed a 42--62%
+throughput regression. Their durable checkpoints are retained for a future
+optimized resume. The 810M and 1.2B MXFP8 configurations remain audited but
+unqualified and unlaunched. The 275M Cx1/Cx2/Cx4 curves are finished.
 
 The immediate experiment is a full 275M Cx1/Cx2/Cx4/Cx8 LR sweep using the
 aggressive OLMo-core MXFP8 recipe demonstrated by
