@@ -245,7 +245,7 @@ beaker-image-cu130-fa4 :
 beaker-image-cu130-rma :
 	$(MAKE) beaker-image $(CUDA13_ARGS) $(RMA_CU13_ARGS)
 
-# olmo-core-tch2110cu130-fa4-rma-<date>  (full OLMoDDP: flash_4 attention + rowwise EP)
+# olmo-core-tch2110cu130-fa4-rma-<date>  (flash_4 attention + symm-mem/RMA rowwise EP)
 .PHONY : beaker-image-cu130-fa4-rma
 beaker-image-cu130-fa4-rma :
 	$(MAKE) beaker-image $(CUDA13_ARGS) $(FA4_ARGS) $(RMA_CU13_ARGS)

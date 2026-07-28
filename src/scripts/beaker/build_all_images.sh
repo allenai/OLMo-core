@@ -26,7 +26,7 @@ ALL_SUFFIXES=(
     cu130            # tch2110cu130-<date>          H100/B200/B300
     cu130-fa4        # tch2110cu130-fa4-<date>      + flash_4
     cu130-rma        # tch2110cu130-rma-<date>      + symm-mem/RMA
-    cu130-fa4-rma    # tch2110cu130-fa4-rma-<date>  full OLMoDDP
+    cu130-fa4-rma    # tch2110cu130-fa4-rma-<date>  H100/B200/B300, flash_4 + symm-mem/RMA
 )
 
 # Resolve repo root (this script lives at src/scripts/beaker/).
