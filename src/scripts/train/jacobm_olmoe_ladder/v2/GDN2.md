@@ -629,3 +629,22 @@ deterministic under the current source/runtime; they are not evidence that the
 release fixed those trajectories. The three newly localized reproductions all
 begin in a GDN2 forward output before local loss or backward becomes
 non-finite, consistent with the already reference-verified 1.2B Cx4 mechanism.
+
+### Fresh original-GDN2 retrains with the release
+
+On 2026-07-28, three clean trajectories were submitted to test whether the
+actual release changes stability when training begins from initialization
+rather than replaying an old state. They use the original architecture,
+learning rates, global batches, and distributed layouts, but write to distinct
+`-fla-v052-release-fresh-r1` checkpoint directories. All are urgent,
+unallocated Holmes jobs with rolling resumable checkpoints and non-finite
+gradient diagnostics enabled.
+
+| Run | LR | Global batch | GPUs / EP / MB | Work |
+|---|---:|---:|---:|---|
+| 810M Cx1 | `6e-4` | 262,144 | 16 / 1 / 2 | [01KYK1NKNB5MTWC30J72A019WK](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYK1NKNB5MTWC30J72A019WK) |
+| 810M Cx2 | `5.6e-4` | 393,216 | 16 / 1 / 3 | [01KYK1NPRCEPJ2160GJ59HQ6XB](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYK1NPRCEPJ2160GJ59HQ6XB) |
+| 1.2B Cx1 | `4e-4` | 262,144 | 8 / 8 / 4 | [01KYK1NSRZ0RBFMGN51775TB7H](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYK1NSRZ0RBFMGN51775TB7H) |
+
+Each startup installs tag `v0.5.2` and asserts installed VCS commit
+`9c8e42e762fce087c27b673af4922795d9edb85e` before training.

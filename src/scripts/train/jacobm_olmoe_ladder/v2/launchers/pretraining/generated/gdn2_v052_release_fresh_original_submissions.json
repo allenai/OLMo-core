@@ -1,0 +1,67 @@
+[
+  {
+    "task_name": "810m-cx1-fla-v052-release-fresh-r1",
+    "run_name": "pt-810m-geometry-hybrid-gdn2-ev2-nope-gated-cx1-lr6e-4-r1-fla-v052-release-fresh-r1",
+    "model_size": "810m",
+    "cx": 1,
+    "learning_rate": "6e-4",
+    "global_batch_size": 262144,
+    "world_size": 16,
+    "expert_parallel_size": 1,
+    "rank_microbatch_sequences": 2,
+    "accumulation_steps": 1,
+    "source_commit": "0aec0e8f1f93915d7e4586a010c5b047d8ba7ee7",
+    "fla_tag": "v0.5.2",
+    "fla_commit": "9c8e42e762fce087c27b673af4922795d9edb85e",
+    "fresh_checkpoint_directory": true,
+    "experiment_id": "01KYK1NKNB5MTWC30J72A019WK",
+    "task_ids": [
+      "01KYK1NKNGCDPFD8VBN18VHN18",
+      "01KYK1NKRVAVFRMHQ2X5BDHFTF"
+    ],
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYK1NKNB5MTWC30J72A019WK"
+  },
+  {
+    "task_name": "810m-cx2-fla-v052-release-fresh-r1",
+    "run_name": "pt-810m-geometry-hybrid-gdn2-ev2-nope-gated-cx2-lr5p6e-4-r1-fla-v052-release-fresh-r1",
+    "model_size": "810m",
+    "cx": 2,
+    "learning_rate": "5.6e-4",
+    "global_batch_size": 393216,
+    "world_size": 16,
+    "expert_parallel_size": 1,
+    "rank_microbatch_sequences": 3,
+    "accumulation_steps": 1,
+    "source_commit": "0aec0e8f1f93915d7e4586a010c5b047d8ba7ee7",
+    "fla_tag": "v0.5.2",
+    "fla_commit": "9c8e42e762fce087c27b673af4922795d9edb85e",
+    "fresh_checkpoint_directory": true,
+    "experiment_id": "01KYK1NPRCEPJ2160GJ59HQ6XB",
+    "task_ids": [
+      "01KYK1NPRHWJA8F24A66NVXMH2",
+      "01KYK1NPW4EBJH6WKK511SP2QG"
+    ],
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYK1NPRCEPJ2160GJ59HQ6XB"
+  },
+  {
+    "task_name": "1p2b-cx1-fla-v052-release-fresh-r1",
+    "run_name": "pt-1p2b-geometry-hybrid-gdn2-ev2-nope-gated-cx1-lr4e-4-ep8-sync-r1-fla-v052-release-fresh-r1",
+    "model_size": "1p2b",
+    "cx": 1,
+    "learning_rate": "4e-4",
+    "global_batch_size": 262144,
+    "world_size": 8,
+    "expert_parallel_size": 8,
+    "rank_microbatch_sequences": 4,
+    "accumulation_steps": 1,
+    "source_commit": "0aec0e8f1f93915d7e4586a010c5b047d8ba7ee7",
+    "fla_tag": "v0.5.2",
+    "fla_commit": "9c8e42e762fce087c27b673af4922795d9edb85e",
+    "fresh_checkpoint_directory": true,
+    "experiment_id": "01KYK1NSRZ0RBFMGN51775TB7H",
+    "task_ids": [
+      "01KYK1NSS3F7WW7GB0T4XE1H79"
+    ],
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYK1NSRZ0RBFMGN51775TB7H"
+  }
+]
