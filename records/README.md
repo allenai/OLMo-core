@@ -13,3 +13,4 @@ root; the root keeps only README/CHANGELOG/CONTRIBUTING/CLAUDE.md/local_cluster.
 | `instruction-tuning-setup.md` | Instruction-tuning / longctx SFT pipeline setup notes (weka-era; some pointers superseded by `local_cluster.md`). |
 | `landmark-packing-cp-task.md` | GPU-agent task brief: landmark attention + sequence packing + context parallelism (done). |
 | `landmark-sparse-decode-task.md` | GPU-agent task brief: make landmark top-k decode O(k·block) (open). |
+| `weka-checkpoint-cleanup.md` | The 2026-07-28 weka audit + cleanup (21.37 TB → 7.2 TB). Why `stepN/` dirs are redundant against the model-only `model_and_optim/` that eval reads, what was deleted, and the paths that must never be. Tooling in `debug/weka_cleanup/`. |

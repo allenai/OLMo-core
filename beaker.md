@@ -115,3 +115,4 @@ beaker job update-priority <JOB-id> urgent
 | S3→weka gantry sync + grep `MISSING` | Eval exits 0 with zero results |
 | Fresh run name per config | Silent auto-resume from a stale checkpoint (chimera runs, garbage timings) |
 | zsh loops via `bash -c` | Cancel/status loops silently operate on one blob argument |
+| Freshness guard trips on its own writes | Deleting a `stepN` bumps its **parent** mtime; an inline in-flight check then refuses every later path in that run (74/210 deleted). Resolve each parent once, in a pre-pass. |

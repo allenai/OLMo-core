@@ -26,14 +26,33 @@ from corpus_reasoning.lib.olmo_models import build_transformer_config, resolve_o
 
 
 def latest_step_dir(save_folder: str) -> str:
+    """Resolve the checkpoint dir to export from.
+
+    Prefers the highest ``step<N>/`` under the save folder. Falls back to the save folder itself
+    when it holds a model-only ``model_and_optim/`` and no ``step<N>/`` -- that is the layout left
+    behind by ``train_ctc_suite.py --save-checkpoint`` (post-fit model-only save), and by any run
+    whose intermediate ``step<N>/`` dirs have been reclaimed. Those dirs hold optimizer + train
+    state that export never reads, so pruning them must not break the export path.
+
+    :param save_folder: Run directory containing ``step<N>/`` and/or ``model_and_optim/``.
+
+    :returns: Path to a directory containing a ``model_and_optim/`` subdir.
+
+    :raises SystemExit: If neither a ``step<N>/`` dir nor a ``model_and_optim/`` subdir is found.
+    """
     steps = []
     for d in glob.glob(os.path.join(save_folder, "step*")):
         m = re.search(r"step(\d+)$", d)
         if m and os.path.isdir(d):
             steps.append((int(m.group(1)), d))
-    if not steps:
-        raise SystemExit(f"no step<N> checkpoint dir under {save_folder}")
-    return max(steps)[1]
+    if steps:
+        return max(steps)[1]
+    if os.path.isdir(os.path.join(save_folder, "model_and_optim")):
+        print(f"[export] no step<N> dir; using model-only save at {save_folder}", flush=True)
+        return save_folder
+    raise SystemExit(
+        f"no step<N> checkpoint dir and no model_and_optim/ under {save_folder}"
+    )
 
 
 def apply_rope_overrides(cfg, rope_theta: float, max_pos: int, label: str):

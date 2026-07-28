@@ -10,5 +10,6 @@ in `records/`. Not imported by anything; safe to ignore unless you are re-checki
 | `build_free_varied.py` | Builds `contra_n100_v2_free60v`: the FREE-token budget of `free_pad_repeat` rebuilt from *distinct* sentences. Separates "more FREE positions" from "a block of exactly-repeated text". |
 | `build_chunkpad.py` / `build_chunkpad2.py` | The within-chunk twin of the above (`contra_n100_v2_chunkpad{,2}`): the same varied filler placed *inside* each chunk. `chunkpad2` drops the claim index from the filler (`chunkpad` restated each claim's own number, which is a redundant index label, not neutral filler). |
 | `collect_n100fix.py` | Collects the n100fix eval JSONs into one table (f1 + binomial SE + eval_size). |
+| `weka_cleanup/` | Two-stage weka checkpoint reclamation (plan → explicit manifest → apply). Deletes only enumerated absolute paths, never globs. See `records/weka-checkpoint-cleanup.md`. |
 
 See `records/n100-chunked-marker-position-bug.md` and `records/free-pad-probe-is-confounded.md`.
