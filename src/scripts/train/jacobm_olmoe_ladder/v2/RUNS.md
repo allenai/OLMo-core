@@ -266,10 +266,10 @@ sizes use the usual transferred-wide LRs.
 | 810M | 2 | `5.6e-4` | 16 | 3 | [work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYGZYPM4T4TE78G24GR72Y2G) |
 | 810M | 4 | `4e-4` | 16 | 4 | [work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYGZYSH64GPWVTCT7WTV7AMT) |
 | 810M | 8 | `4e-4` | 16 | 6 | [work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYGZYW6R9CW9JTJ6CGPEK10D) |
-| 1.2B | 1 | `4e-4` | 8 | 4 | [work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYKBJ7HJQEV3K08B0VHKCYE8) |
-| 1.2B | 2 | `6e-4` | 16 | 3 | [work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYKBJADMQ0YEVWHA2NKFY1HP) |
-| 1.2B | 4 | `3e-4` | 16 | 4 | [work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYKBJD3AQHJ8CFP4D151MBGP) |
-| 1.2B | 8 | `4e-4` | 32 | 3 | [work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYKBJGM1H6A2M6NCJ0TARZ5W) |
+| 1.2B | 1 | `4e-4` | 8 | 4 | [work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYKDA9Y1Z8MCH7AVBGYZ1KJ8) |
+| 1.2B | 2 | `6e-4` | 16 | 3 | [work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYKDB9N96S6T5GPRCASXEVEK) |
+| 1.2B | 4 | `3e-4` | 16 | 4 | [work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYKDBCHNWNHQB6EFN7DTZ07N) |
+| 1.2B | 8 | `4e-4` | 32 | 3 | [work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYKDBFGHC70RPHRQ326P9ZBQ) |
 
 The immutable launch ledgers are
 [`275m_kda_ev2_neg_nope_gated_transfer_submissions.json`](launchers/pretraining/generated/275m_kda_ev2_neg_nope_gated_transfer_submissions.json),
@@ -277,7 +277,7 @@ The immutable launch ledgers are
 and
 [`810m_geometry_kda_ev2_neg_nope_gated_submissions.json`](launchers/pretraining/generated/810m_geometry_kda_ev2_neg_nope_gated_submissions.json).
 The final 1.2B rowwise submissions are recorded in
-[`1p2b_geometry_kda_ev2_neg_nope_gated_rowwise_submissions.json`](launchers/pretraining/generated/1p2b_geometry_kda_ev2_neg_nope_gated_rowwise_submissions.json).
+[`1p2b_geometry_kda_ev2_neg_nope_gated_rowwise_ext3_submissions.json`](launchers/pretraining/generated/1p2b_geometry_kda_ev2_neg_nope_gated_rowwise_ext3_submissions.json).
 The dedicated finished-only plot is
 `plots/pretraining/canonical_gdn2_kda/kda_ev2_neg_fixed_lr_scale_comparison.png`;
 its result ledgers are kept separate from the canonical KDA LR sweep.
@@ -298,13 +298,16 @@ canonical 810M GDN2 wave. At the first post-submit audit, Cx1/Cx2 were
 initializing and Cx4/Cx8 were queued.
 
 The four 1.2B extensions were submitted on 2026-07-28 from commit
-`4f9576ad0` as urgent, unallocated Holmes jobs. They preserve the balanced
+`dac4353bf` as urgent, unallocated Holmes jobs. They preserve the balanced
 8/16/16/32-GPU, EP8, MB4/3/4/3 layout, but use the fixed codebase default
 `rowwise_nvshmem` collective rather than the legacy `sync_1d` workaround.
-An initial four-job `sync_1d` submission was stopped during startup and is not
-part of the result registry; the rowwise jobs have distinct W&B and checkpoint
-names. Two accidental duplicate rowwise submission sets were canceled before
-any worker started, so they created neither W&B runs nor checkpoint state.
+Because the current image predates the rowwise helper extension, each replica
+builds `symm_mem_vdev2d` once in Gantry's post-checkout setup phase before
+`torchrun`.
+Earlier startup-only submissions were stopped and excluded from the result
+registry; the final jobs have distinct W&B and checkpoint names. Accidental
+duplicate rowwise works were canceled before any worker started, so they
+created neither W&B runs nor checkpoint state.
 
 ## 275M geometry-matched gated-NoPE GDN2 sweep
 

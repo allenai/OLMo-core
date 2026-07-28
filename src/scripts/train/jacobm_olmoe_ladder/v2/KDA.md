@@ -127,7 +127,9 @@ The final four 1.2B cells were submitted on 2026-07-28 using the transferred
 wide LRs (`4e-4`, `6e-4`, `3e-4`, `4e-4`) and the balanced 8/16/16/32-GPU
 layout. They use EP8 with `rowwise_nvshmem` on the fixed branch and MB4/3/4/3.
 Their Beaker works are
-[Cx1](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYKBJ7HJQEV3K08B0VHKCYE8),
-[Cx2](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYKBJADMQ0YEVWHA2NKFY1HP),
-[Cx4](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYKBJD3AQHJ8CFP4D151MBGP),
-and [Cx8](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYKBJGM1H6A2M6NCJ0TARZ5W).
+[Cx1](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYKDA9Y1Z8MCH7AVBGYZ1KJ8),
+[Cx2](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYKDB9N96S6T5GPRCASXEVEK),
+[Cx4](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYKDBCHNWNHQB6EFN7DTZ07N),
+and [Cx8](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYKDBFGHC70RPHRQ326P9ZBQ).
+The current image lacks the small rowwise CUDA helper, so the launcher builds
+it once per node in Gantry's post-checkout setup phase before `torchrun`.
