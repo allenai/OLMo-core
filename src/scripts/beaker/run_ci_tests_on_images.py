@@ -1,19 +1,23 @@
 """
-Run the CI pytest suite on each locally-built image on Beaker (2 GPUs each), collect the JUnit
-results, and verify that every test executed (passed or failed) on at least one image — except tests
-that need more than 2 GPUs, which cannot run on a 2-GPU node.
+Run the CI pytest suite on each locally-built image on Beaker (2 GPUs each), across the GPU types
+each image supports (H100, B200, B300), collect the JUnit results, and verify that every test
+executed (passed or failed) on at least one run — except tests that need more than 2 GPUs, which
+cannot run on a 2-GPU node.
 
-Each image runs a different subset for real: e.g. the ``flash_3`` backend tests only execute on the
+Each run covers a different subset for real: e.g. the ``flash_3`` backend tests only execute on the
 CUDA-12.8 images and ``flash_4`` only on the ``-fa4`` (CUDA-13) images, so no single image covers
-everything but the *union* should — that is what the coverage check verifies.
+everything but the *union* should. CUDA-12.8 images (sm_90/100) are only launched on H100/B200, not
+B300 (sm_103); CUDA-13 images run on all three.
 
 Two phases; the analysis phase is standalone so it can be re-run on already-downloaded results.
 
-Launch + collect + analyze (needs Docker-less Beaker access)::
+Launch + collect + analyze (needs Beaker access)::
 
     python src/scripts/beaker/run_ci_tests_on_images.py --date 2026-07-28
+    python src/scripts/beaker/run_ci_tests_on_images.py --date 2026-07-28 --gpus h100 b200 \
+        --b300-clusters ai2/your-b300-cluster
 
-Analyze only, on a directory of ``<image-label>.xml`` JUnit files::
+Analyze only, on a directory of ``<image>@<gpu>.xml`` JUnit files::
 
     python src/scripts/beaker/run_ci_tests_on_images.py --analyze-dir /path/to/junit-xmls
 
@@ -43,8 +47,27 @@ IMAGE_TAG_STEMS: Dict[str, str] = {
     "cu130-fa4-rma": "tch2110cu130-fa4-rma",
 }
 
-DEFAULT_CLUSTERS = ["ai2/jupiter", "ai2/ceres"]
 NUM_GPUS = 2
+
+# GPU targets. At AI2 the GPU type is selected by cluster; we also set the canonical Beaker
+# `gpu_types` constraint so a job only lands on the intended GPU even on a mixed cluster.
+# NOTE: the B300 cluster list is a best guess — override it with --b300-clusters.
+GPU_TYPE_NAMES: Dict[str, str] = {
+    "h100": "NVIDIA H100 80GB HBM3",
+    "b200": "NVIDIA B200",
+    "b300": "NVIDIA B300",
+}
+DEFAULT_CLUSTERS_BY_GPU: Dict[str, List[str]] = {
+    "h100": ["ai2/jupiter", "ai2/ceres"],
+    "b200": ["ai2/titan"],
+    "b300": ["ai2/titan"],
+}
+
+
+def compatible_gpus(image_label: str) -> List[str]:
+    """GPUs an image can run on. CUDA-12.8 images (sm_90/100) can't run on B300 (sm_103)."""
+    return ["h100", "b200"] if image_label.startswith("cu128") else ["h100", "b200", "b300"]
+
 
 # A test skipped on *every* image is a coverage gap UNLESS it needs more GPUs than we launch with.
 # Skip reasons like "requires four GPUs" / "Requires 4 GPUs" identify those; "Requires multiple GPUs"
@@ -149,13 +172,11 @@ def analyze(results: Dict[str, Dict[str, Outcome]]) -> CoverageReport:
 
 
 def print_report(report: CoverageReport) -> None:
-    print("\n================ Per-image outcomes ================")
-    for label in IMAGE_TAG_STEMS:
-        if label not in report.per_image:
-            continue
+    print("\n================ Per-run outcomes (image@gpu) ================")
+    for label in sorted(report.per_image):
         c = report.per_image[label]
         print(
-            f"  {label:16s} passed={c.get('passed', 0):5d} failed={c.get('failed', 0):3d} "
+            f"  {label:22s} passed={c.get('passed', 0):5d} failed={c.get('failed', 0):3d} "
             f"error={c.get('error', 0):3d} skipped={c.get('skipped', 0):5d}"
         )
 
@@ -191,7 +212,13 @@ def _beaker_user() -> str:
     return json.loads(out)[0]["name"]
 
 
-def launch_and_collect(date: str, clusters: List[str], out_dir: Path, images: List[str]) -> None:
+def launch_and_collect(
+    date: str,
+    out_dir: Path,
+    images: List[str],
+    gpus: List[str],
+    clusters_by_gpu: Dict[str, List[str]],
+) -> None:
     from beaker.types import BeakerWorkload
 
     from olmo_core.launch.beaker import BeakerEnvSecret, BeakerLaunchConfig
@@ -210,18 +237,25 @@ def launch_and_collect(date: str, clusters: List[str], out_dir: Path, images: Li
         'echo "pytest exit: $?"'
     )
 
+    # (image, gpu) matrix, skipping GPUs an image can't run on (cu128 has no B300 kernels).
+    jobs = [(img, gpu) for img in images for gpu in compatible_gpus(img) if gpu in gpus]
+    print(f"[launch] {len(jobs)} job(s) across {len(images)} image(s) x GPUs {gpus}:")
+    for img, gpu in jobs:
+        print(f"    {img}@{gpu}  -> {GPU_TYPE_NAMES[gpu]}  on {clusters_by_gpu[gpu]}")
+
     workloads: Dict[str, BeakerWorkload] = {}
-    for label in images:
-        tag = f"{IMAGE_TAG_STEMS[label]}-{date}"
-        image = f"{user}/olmo-core-{tag}"
+    for img, gpu in jobs:
+        label = f"{img}@{gpu}"
+        image = f"{user}/olmo-core-{IMAGE_TAG_STEMS[img]}-{date}"
         cfg = BeakerLaunchConfig(
-            name=f"olmo-core-imgtest-{label}-{generate_uuid()[:8]}",
+            name=f"olmo-core-imgtest-{img}-{gpu}-{generate_uuid()[:6]}",
             budget="ai2/oe-other",
             cmd=["bash", "-lc", pytest_cmd],
-            task_name=f"test-{label}",
+            task_name=f"test-{img}-{gpu}",
             workspace="ai2/OLMo-core",
             beaker_image=image,
-            clusters=clusters,
+            clusters=clusters_by_gpu[gpu],
+            gpu_types=[GPU_TYPE_NAMES[gpu]],
             num_nodes=1,
             num_gpus=NUM_GPUS,
             shared_filesystem=True,
@@ -310,25 +344,33 @@ def main() -> None:
     p.add_argument(
         "--analyze-dir",
         type=Path,
-        help="Analyze existing <label>.xml JUnit files in this dir instead of launching.",
+        help="Analyze existing *.xml JUnit files (named <image>@<gpu>.xml) in this dir.",
     )
-    p.add_argument("--clusters", nargs="+", default=DEFAULT_CLUSTERS)
     p.add_argument(
         "--images", nargs="+", default=list(IMAGE_TAG_STEMS), choices=list(IMAGE_TAG_STEMS)
+    )
+    p.add_argument(
+        "--gpus",
+        nargs="+",
+        default=list(GPU_TYPE_NAMES),
+        choices=list(GPU_TYPE_NAMES),
+        help="GPU types to test on (default: all).",
+    )
+    p.add_argument(
+        "--b300-clusters",
+        nargs="+",
+        default=DEFAULT_CLUSTERS_BY_GPU["b300"],
+        help="Cluster(s) hosting B300 GPUs (the default is a guess — set your real B300 cluster).",
     )
     p.add_argument("--out-dir", type=Path, default=Path("/tmp/olmo-core-image-tests"))
     args = p.parse_args()
 
     if args.analyze_dir is not None:
         results = {}
-        for label in args.images:
-            xml = args.analyze_dir / f"{label}.xml"
-            if xml.exists():
-                results[label] = parse_junit(xml)
-            else:
-                print(f"[analyze] missing {xml}; skipping {label}")
+        for xml in sorted(args.analyze_dir.glob("*.xml")):
+            results[xml.stem] = parse_junit(xml)
         if not results:
-            print("[analyze] no JUnit XMLs found.")
+            print(f"[analyze] no JUnit XMLs found in {args.analyze_dir}.")
             sys.exit(1)
         report = analyze(results)
         print_report(report)
@@ -336,7 +378,9 @@ def main() -> None:
 
     if not args.date:
         p.error("--date is required to launch (or use --analyze-dir).")
-    launch_and_collect(args.date, args.clusters, args.out_dir, args.images)
+    clusters_by_gpu = dict(DEFAULT_CLUSTERS_BY_GPU)
+    clusters_by_gpu["b300"] = args.b300_clusters
+    launch_and_collect(args.date, args.out_dir, args.images, args.gpus, clusters_by_gpu)
 
 
 if __name__ == "__main__":
