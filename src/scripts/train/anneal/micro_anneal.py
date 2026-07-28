@@ -1,9 +1,6 @@
-"""Micro-anneal recipe (ARCH-PARAMETERIZED) — added for sftlab's olmo_core_anneal backend.
-
-Launched by sftlab (`python <this> launch <run_name> <cluster> …`); it must live IN this repo (on
-the davidg/anneal branch) because the launch clones the pushed commit into the Beaker job. One
-script serves any base (Qwen, OLMo, Llama, …) via --model_arch. Modeled on OLMo3-32B-midtraining.py:
-anneal a FIXED base checkpoint for a small token budget on a source_mixtures data mix, model-only
+"""Micro-anneal recipe — added for sftlab's olmo_core_anneal backend.
+ One script serves any base (Qwen, OLMo, Llama, …) via --model_arch. Modeled on OLMo3-32B-midtraining.py:
+anneal a fixed base checkpoint for a small token budget on a source_mixtures data mix, model-only
 load (fresh optimizer) with an explicit decaying LR.
 
 CLI (internal-experiment style, plus sftlab build-time flags this module pre-parses):
@@ -16,14 +13,12 @@ CLI (internal-experiment style, plus sftlab build-time flags this module pre-par
         --save_folder=<weka dir>  --save_freq=0  --seed=42  --num_nodes=1 \
         [--launch.priority=high --launch.workspace=… --launch.beaker_image=… …]
 
-The build-time flags (above the launch/dotted ones) must be known BEFORE the ExperimentConfig is
+The build-time flags (above the launch/dotted ones) must be known before the ExperimentConfig is
 built (they pick the arch, mix, LR, load behaviour), so they cannot ride the post-hoc
 `.merge(overrides)` path — this module strips them from argv and stashes them, then hands the rest
 (<cmd> <run_name> <cluster> + any --launch.*/--trainer.* dotted overrides) to olmo-core's `main`.
 They are re-appended to the remote `launch` command so the Beaker-side `train` hop sees them too.
 
-NOTE: first run should be validated with the `dry_run` subcommand (renders the resolved config,
-no Beaker submit) — this is internal-API code and may need an iteration to match olmo-core exactly.
 """
 
 import re
@@ -34,6 +29,7 @@ _BUILD_KEYS = {
     "base_checkpoint", "model_arch", "tokenizer", "source_mixture_yaml", "source_mixture_b64",
     "length_tokens", "seq_len", "peak_lr", "lr_schedule", "warmup_steps", "load_optim_state",
     "load_trainer_state", "save_folder", "save_freq", "ephemeral_save_freq", "seed", "num_nodes",
+    "global_batch_size",
 }
 _BUILD: dict[str, str] = {}
 _build_argv: list[str] = []   # the stripped flags, re-appended to the remote launch cmd
@@ -73,7 +69,10 @@ from olmo_core.nn.transformer import TransformerConfig  # noqa: E402
 from olmo_core.optim.scheduler import LinearWithWarmup, SchedulerUnits, WSD  # noqa: E402
 from olmo_core.train import Duration  # noqa: E402
 
-GLOBAL_BATCH_SIZE = 4 * 1024 * 1024  # ~4M tokens; override via --global_batch_size / --data_loader.*
+# Fallback only. The batch size belongs to the recipe being continued, not to this script — an
+# anneal that changes it is no longer the same optimization as the run it resumes — so callers pass
+# --global_batch_size (sftlab sends the profile's). ~4M tokens when they don't.
+DEFAULT_GLOBAL_BATCH_SIZE = 4 * 1024 * 1024
 
 
 def _scheduler(warmup_steps: int, kind: str):
@@ -88,6 +87,8 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     b = _BUILD
     seq_len = int(b["seq_len"])
     seed = int(b.get("seed", 42))
+
+    global_batch_size = int(b.get("global_batch_size") or DEFAULT_GLOBAL_BATCH_SIZE)
     run_ts = f"{cli_context.run_name}-{datetime.now().astimezone().strftime('%Y%m%dT%H%M%S%z')}"
     root_dir = get_root_dir(cli_context.cluster)
     work_dir = get_work_dir(root_dir)
@@ -128,7 +129,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         src_mix=SourceMixtureDatasetConfig(
             source_list=source_list,
             requested_tokens=int(float(b["length_tokens"])),
-            global_batch_size=GLOBAL_BATCH_SIZE,
+            global_batch_size=global_batch_size,
             processes=16,
             seed=seed,
         ),
@@ -139,7 +140,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
             repetition_max_period=13, repetition_min_period=1, repetition_max_count=32
         ),
     )
-    data_loader_config = NumpyDataLoaderConfig(global_batch_size=GLOBAL_BATCH_SIZE, seed=seed, num_workers=4)
+    data_loader_config = NumpyDataLoaderConfig(global_batch_size=global_batch_size, seed=seed, num_workers=4)
 
     save_freq = int(b.get("save_freq", 0))
     # sftlab is a pure Beaker-job INITIATOR: `launch`/`dry_run` run on a host with NO /weka mount,
