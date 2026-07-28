@@ -300,6 +300,7 @@ def main() -> None:
     parser.add_argument("--max-shard-size", default="5GB")
     parser.add_argument("--save-overwrite", action="store_true")
     parser.add_argument("--verify-only", action="store_true")
+    parser.add_argument("--verify-after-export", action="store_true")
     args = parser.parse_args()
 
     prepare_cli_environment()
@@ -320,6 +321,13 @@ def main() -> None:
         max_shard_size=args.max_shard_size,
         save_overwrite=args.save_overwrite,
     )
+    if args.verify_after_export:
+        verify_export(
+            checkpoint_path=args.checkpoint_path,
+            output_path=args.output_path,
+            tokenizer_name=args.tokenizer_name,
+            dtype=getattr(torch, args.dtype),
+        )
 
 
 if __name__ == "__main__":
