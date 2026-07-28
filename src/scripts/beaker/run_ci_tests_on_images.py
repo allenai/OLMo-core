@@ -218,6 +218,7 @@ def launch_and_collect(
     gpus: List[str],
     clusters_by_gpu: Dict[str, List[str]],
     workspace: str,
+    priority: str,
 ) -> None:
     from beaker.types import BeakerWorkload
 
@@ -255,6 +256,7 @@ def launch_and_collect(
             workspace=workspace,
             beaker_image=image,
             clusters=clusters_by_gpu[gpu],
+            priority=priority,
             num_nodes=1,
             num_gpus=NUM_GPUS,
             shared_filesystem=True,
@@ -362,6 +364,12 @@ def main() -> None:
         help=f"Cluster(s) hosting B300 GPUs (default: {DEFAULT_CLUSTERS_BY_GPU['b300']}).",
     )
     p.add_argument("--workspace", default="ai2/OLMo-core", help="Beaker workspace to launch in.")
+    p.add_argument(
+        "--priority",
+        default="normal",
+        choices=["low", "normal", "high", "urgent"],
+        help="Beaker job priority (default: normal).",
+    )
     p.add_argument("--out-dir", type=Path, default=Path("/tmp/olmo-core-image-tests"))
     args = p.parse_args()
 
@@ -381,7 +389,13 @@ def main() -> None:
     clusters_by_gpu = dict(DEFAULT_CLUSTERS_BY_GPU)
     clusters_by_gpu["b300"] = args.b300_clusters
     launch_and_collect(
-        args.date, args.out_dir, args.images, args.gpus, clusters_by_gpu, args.workspace
+        args.date,
+        args.out_dir,
+        args.images,
+        args.gpus,
+        clusters_by_gpu,
+        args.workspace,
+        args.priority,
     )
 
 
