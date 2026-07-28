@@ -75,7 +75,16 @@ then exited 127 on a post-eval wrapper typo, so the evaluation itself does not
 need a retry. The 1.2B gated-RoPE Cx8 target finished in W&B run `ved01fli`
 after earlier scheduler-preempted attempts, and the separately registered
 first-hybrid 810M Cx8 target finished in `niu69ade`. No v2 validation job is
-currently live or missing from the collector.
+currently live, and the historical full-suite collector is complete for all
+117 registered targets.
+
+On 2026-07-28, new validation work changed to observed training-loss winners
+only, using the `fast` task set plus LM validation. Eval-only jobs use EP1 at
+every size, including checkpoints trained with EP8; the legacy `sync_1d`
+training layout must not be inherited. Historical `_full` manifests and their
+117 completed results remain unchanged. The newer GDN2/KDA/MXFP8 winners are
+not yet registered, and no new winner backfill was launched as part of this
+policy change.
 
 The gated-RoPE scale comparison now also has a C4 validation-CE view at
 [`plots/pretraining/geometry_gdn_ev2_rope_gated/c4_validation_fixed_lr_scale_comparison.png`](plots/pretraining/geometry_gdn_ev2_rope_gated/c4_validation_fixed_lr_scale_comparison.png),

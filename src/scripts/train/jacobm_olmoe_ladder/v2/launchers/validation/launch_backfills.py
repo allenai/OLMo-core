@@ -59,7 +59,11 @@ def load_manifest(path: Path) -> dict[str, Any]:
 
 def parse_targets(manifest: dict[str, Any], source_runs: set[str] | None = None) -> list[Target]:
     checkpoint_root = Path(str(manifest["experiment"]["checkpoint_root"]))
-    batch_sizes = {int(k): int(v) for k, v in manifest["evaluation"]["batch_sizes"].items()}
+    evaluation = manifest["evaluation"]
+    task_set = str(evaluation["task_set"])
+    if task_set not in {"fast", "full"}:
+        raise ValueError(f"Unsupported evaluation task set: {task_set!r}")
+    batch_sizes = {int(k): int(v) for k, v in evaluation["batch_sizes"].items()}
     available = {str(raw["source_run"]) for raw in manifest["targets"]}
     if source_runs and (missing := source_runs - available):
         raise ValueError(f"Unknown source runs: {sorted(missing)}")
@@ -78,8 +82,15 @@ def parse_targets(manifest: dict[str, Any], source_runs: set[str] | None = None)
             cx=cx,
             lr=str(raw["lr"]),
             global_batch_size=batch_sizes[cx],
-            expert_parallel_size=int(raw.get("expert_parallel_size", 1)),
-            expert_parallel_path=str(raw.get("expert_parallel_path", "sync_1d")),
+            expert_parallel_size=int(
+                raw.get("expert_parallel_size", evaluation.get("expert_parallel_size", 1))
+            ),
+            expert_parallel_path=str(
+                raw.get(
+                    "expert_parallel_path",
+                    evaluation.get("expert_parallel_path", "rowwise_nvshmem"),
+                )
+            ),
             rank_microbatch_sequences=int(
                 raw.get(
                     "rank_microbatch_sequences",
@@ -94,11 +105,20 @@ def parse_targets(manifest: dict[str, Any], source_runs: set[str] | None = None)
             "geometry_275m_gdn_ev2_nope_gated",
             "geometry_275m_gdn_ev2_rope_gated",
             "geometry_275m_gdn2_ev2_nope_gated",
+            "geometry_275m_gdn2_ev1_noneg_nope_gated",
             "geometry_275m_gdn2_ev2_rope_gated",
+            "geometry_275m_kda_ev1_noneg_nope_gated",
+            "geometry_275m_kda_ev2_neg_nope_gated",
+            "geometry_275m_kda_ev2_neg_nope_gated_mxfp8_672",
             "geometry_matched_gdn_ev2",
             "geometry_matched_gdn_ev2_nope",
             "geometry_matched_gdn_ev2_nope_gated",
             "geometry_matched_gdn_ev2_rope_gated",
+            "geometry_matched_gdn2_ev2_nope_gated",
+            "geometry_matched_gdn2_ev1_noneg_nope_gated",
+            "geometry_matched_kda_ev1_noneg_nope_gated",
+            "geometry_matched_kda_ev2_neg_nope_gated",
+            "geometry_matched_kda_ev2_neg_nope_gated_mxfp8_aligned",
         }:
             raise ValueError(f"Unknown model variant for {source_run}: {target.variant}")
         if not target.checkpoint.is_dir():

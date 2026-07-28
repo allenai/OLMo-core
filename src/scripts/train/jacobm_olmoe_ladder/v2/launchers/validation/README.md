@@ -2,8 +2,36 @@
 
 Validation runs separately from training and targets only permanent final
 checkpoints. Each task loads model weights in eval-only mode, skips optimizer
-construction/state, runs the full downstream suite plus LM validation, and
-records results in a distinct W&B run.
+construction/state, runs the configured downstream suite plus LM validation,
+and records results in a distinct W&B run.
+
+## Current policy
+
+New backfills target only the final checkpoint selected by observed
+final-250M-token training loss for each family/model-size/Cx cell. Do not
+backfill every LR point, and do not use a fitted-but-unobserved LR. Fixed-LR
+scale-transfer cells have only one eligible checkpoint.
+
+Use the `fast` downstream task set plus LM validation. Eval-only jobs use EP1
+at every model size, including 1.2B; evaluation parallelism must not inherit
+the training job's EP8 setting. The manifest-level defaults for new work are:
+
+```yaml
+evaluation:
+  task_set: fast
+  expert_parallel_size: 1
+  expert_parallel_path: rowwise_nvshmem
+```
+
+The path is inactive under EP1, but records the current codebase default rather
+than the legacy `sync_1d` fallback. On the completed full-suite backfills, 810M
+EP1 took about 67 minutes, while 1.2B EP8 took about 6.5 hours. The 1.2B job
+spent 6,733 seconds on the same 578 LM batches for which 810M EP1 needed 199
+seconds, so EP8 is not an acceptable eval default. Smoke one 1.2B EP1 winner
+before releasing a large backfill batch.
+
+Existing manifests ending in `_full.yaml` are historical records of completed
+full-suite evaluations. Do not rewrite them to the new policy.
 
 Inspect without launching:
 
@@ -34,7 +62,7 @@ Targets may override `model_size`, `expert_parallel_size`,
 eval-only launcher cover the larger hybrid checkpoints while preserving the
 simple 275M EP1 defaults.
 
-The RoPE-gated family is split into two manifests so small-model validation
+The historical RoPE-gated family is split into two manifests so small-model validation
 does not reserve eight GPUs unnecessarily:
 
 - `manifests/275m_rope_gated_full.yaml`: 16 two-GPU tasks;

@@ -212,6 +212,23 @@ large throughput regressions and illegal-memory failures in the DDP training
 process. Run validation in a separate eval-only job from the completed final
 checkpoint instead.
 
+The default post-training evaluation is the `fast` downstream task set plus LM
+validation, matching the v1 in-loop launcher policy. Backfill exactly one
+checkpoint per family/model-size/Cx cell: the best observed finished LR by the
+final-250M-token training CE. Never select a fitted-but-unobserved LR for
+validation, and do not backfill every LR point unless a separate scientific
+question explicitly requires it.
+
+Eval-only jobs use EP1 at every size, including 1.2B, because they do not carry
+optimizer state or backward activations. Do not inherit EP8 or the legacy
+`sync_1d` path from a training run name/config. The completed backfills showed
+that the 1.2B EP8 run's 578-batch LM validation was 34x slower than 810M EP1;
+model size alone does not explain that gap, and the full 1.2B eval took roughly
+6.5 hours. Use the current codebase default path if EP must ever be enabled,
+and justify that exception with a measured EP1 memory or throughput failure.
+Historical full-suite results remain valid and retain their original
+manifests.
+
 Pretraining plots use training CE plus post-training validation results.
 Midtraining and long-context comparisons use post-training validation rather
 than training-loss plots. Long-context additionally uses external RULER
