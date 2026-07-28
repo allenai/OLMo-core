@@ -100,8 +100,18 @@ def test_qwen3_moe_hf_state_load_and_gather_roundtrip():
     native_model = native_config.build(init_device="cpu")
 
     load_olmo_ddp_hf_state(native_model, hf_config, hf_state)
+
     roundtrip = gather_olmo_ddp_hf_state(native_model, hf_config)
 
     assert roundtrip.keys() == hf_state.keys()
     for name in hf_state:
         torch.testing.assert_close(roundtrip[name], hf_state[name])
+    if torch.cuda.is_available():
+        device = torch.device("cuda")
+        input_ids = torch.tensor([[1, 2, 3, 4], [4, 3, 2, 1]], device=device)
+        hf_model.to(device).eval()
+        native_model.to(device).eval()
+        with torch.no_grad():
+            hf_logits = hf_model(input_ids=input_ids).logits
+            native_logits = native_model(input_ids)
+        torch.testing.assert_close(native_logits, hf_logits, rtol=1e-4, atol=1e-5)
