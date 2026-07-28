@@ -13,7 +13,7 @@ from torch.distributed.tensor.parallel import (
     parallelize_module,
 )
 
-from olmo_core.config import DType, StrEnum
+from olmo_core.config import Config, DType, StrEnum
 from olmo_core.distributed.parallel import (
     flatten_mesh,
     get_pp_stage_mesh,
@@ -33,7 +33,7 @@ from .router import MoERouterConfig
 if TYPE_CHECKING:
     from olmo_core.train.common import ReduceType
 
-__all__ = ["MoEBase", "MoE", "DroplessMoE", "MoEConfig", "MoEType"]
+__all__ = ["LatentMoEConfig", "MoEBase", "MoE", "DroplessMoE", "MoEConfig", "MoEType"]
 
 
 log = logging.getLogger(__name__)
@@ -56,6 +56,23 @@ class MoEType(StrEnum):
 
 
 @dataclass
+class LatentMoEConfig(Config):
+    """Configuration for running the routed MoE branch in a latent dimension."""
+
+    routed_expert_dim: int
+    """Input and output dimension of the router and routed experts."""
+
+    bias: bool = False
+    """Whether to use bias in the model-to-latent and latent-to-model projections."""
+
+    def num_params(self, d_model: int) -> int:
+        params = 2 * d_model * self.routed_expert_dim
+        if self.bias:
+            params += self.routed_expert_dim + d_model
+        return params
+
+
+@dataclass
 class MoEConfig(ModuleConfig):
     name: MoEType = MoEType.default
     """
@@ -66,6 +83,7 @@ class MoEConfig(ModuleConfig):
     capacity_factor: Optional[float] = None
     router: MoERouterConfig = field(default_factory=MoERouterConfig)
     shared_mlp: Optional[FeedForwardConfig] = None
+    latent_moe: Optional[LatentMoEConfig] = None
     lb_loss_weight: Optional[float] = 0.01
     lb_loss_granularity: MoELoadBalancingLossGranularity = (
         MoELoadBalancingLossGranularity.local_batch
@@ -75,18 +93,26 @@ class MoEConfig(ModuleConfig):
     dtype: DType = DType.float32
 
     def num_params(self, d_model: int) -> int:
+        routed_expert_dim = (
+            d_model if self.latent_moe is None else self.latent_moe.routed_expert_dim
+        )
         num_params = 0
-        num_params += self.router.num_params(d_model, self.num_experts)
-        num_params += 3 * d_model * self.hidden_size * self.num_experts
+        num_params += self.router.num_params(routed_expert_dim, self.num_experts)
+        num_params += 3 * routed_expert_dim * self.hidden_size * self.num_experts
         if self.shared_mlp is not None:
             num_params += self.shared_mlp.num_params(d_model)
+        if self.latent_moe is not None:
+            num_params += self.latent_moe.num_params(d_model)
         return num_params
 
     def num_active_params(self, d_model: int) -> int:
+        routed_expert_dim = (
+            d_model if self.latent_moe is None else self.latent_moe.routed_expert_dim
+        )
         return (
             self.num_params(d_model)
-            - (3 * d_model * self.hidden_size * self.num_experts)
-            + (3 * d_model * self.hidden_size * self.router.top_k)
+            - (3 * routed_expert_dim * self.hidden_size * self.num_experts)
+            + (3 * routed_expert_dim * self.hidden_size * self.router.top_k)
         )
 
     def build(
@@ -97,6 +123,13 @@ class MoEConfig(ModuleConfig):
         init_device: str = "cpu",
         cache: Optional[BufferCache] = None,
     ) -> "MoEBase":
+        if self.latent_moe is not None and not (
+            0 < self.latent_moe.routed_expert_dim < d_model
+        ):
+            raise OLMoConfigurationError(
+                "latent_moe.routed_expert_dim must be greater than 0 and less than d_model "
+                f"({d_model}), got {self.latent_moe.routed_expert_dim}"
+            )
         kwargs = self.as_dict(exclude_none=True, recurse=False)
         kwargs.pop("name")
         kwargs.update(
@@ -141,6 +174,7 @@ class MoEBase(nn.Module):
         scale_loss_by_num_layers: bool = True,
         dtype: torch.dtype = torch.float32,
         cache: Optional[BufferCache] = None,
+        latent_moe: Optional[LatentMoEConfig] = None,
         **kwargs,
     ):
         super().__init__()
@@ -150,8 +184,30 @@ class MoEBase(nn.Module):
             if z_loss_weight is not None:
                 z_loss_weight = z_loss_weight / n_layers
 
+        routed_expert_dim = d_model if latent_moe is None else latent_moe.routed_expert_dim
+        self.latent_down_proj: Optional[nn.Linear]
+        self.latent_up_proj: Optional[nn.Linear]
+        if latent_moe is None:
+            self.latent_down_proj = None
+            self.latent_up_proj = None
+        else:
+            self.latent_down_proj = nn.Linear(
+                d_model,
+                routed_expert_dim,
+                bias=latent_moe.bias,
+                dtype=dtype,
+                device=init_device,
+            )
+            self.latent_up_proj = nn.Linear(
+                routed_expert_dim,
+                d_model,
+                bias=latent_moe.bias,
+                dtype=dtype,
+                device=init_device,
+            )
+
         self.router = router.build(
-            d_model,
+            routed_expert_dim,
             num_experts,
             lb_loss_weight=lb_loss_weight,
             lb_loss_granularity=lb_loss_granularity,
@@ -160,7 +216,7 @@ class MoEBase(nn.Module):
             init_device=init_device,
         )
         self.experts = self._init_parallel_mlp(
-            d_model=d_model,
+            d_model=routed_expert_dim,
             num_experts=num_experts,
             hidden_size=hidden_size,
             dtype=dtype,
@@ -231,18 +287,21 @@ class MoEBase(nn.Module):
         :returns: The output of the MoE layer, the optional load-balancing loss, and the optional
             router Z-loss.
         """
+        routed_x = x if self.latent_down_proj is None else self.latent_down_proj(x)
         expert_weights, expert_indices, batch_size_per_expert, router_aux_loss = self.router(
-            x, loss_div_factor=loss_div_factor
+            routed_x, loss_div_factor=loss_div_factor
         )
 
         if router_aux_loss is not None:
-            x = attach_auxiliary_loss(x, router_aux_loss)
+            routed_x = attach_auxiliary_loss(routed_x, router_aux_loss)
 
         shared_out: Optional[torch.Tensor] = None
         if self.shared_mlp is not None:
             shared_out = self.shared_mlp(x)
 
-        out = self.experts(x, expert_weights, expert_indices, batch_size_per_expert)
+        out = self.experts(routed_x, expert_weights, expert_indices, batch_size_per_expert)
+        if self.latent_up_proj is not None:
+            out = self.latent_up_proj(out)
 
         if shared_out is not None:
             shared_out = shared_out / (self.top_k + 1)
@@ -326,11 +385,17 @@ class MoEBase(nn.Module):
 
     def num_flops_per_token(self, seq_len: int) -> int:
         router_flops = 6 * sum(p.numel() for p in self.router.parameters())
+        latent_projection_flops = 6 * sum(
+            p.numel()
+            for projection in (self.latent_down_proj, self.latent_up_proj)
+            if projection is not None
+            for p in projection.parameters()
+        )
         shared_mlp_flops = (
             self.shared_mlp.num_flops_per_token(seq_len) if self.shared_mlp is not None else 0
         )
         expert_flops = self.experts.num_flops_per_token(seq_len)
-        return router_flops + shared_mlp_flops + expert_flops
+        return router_flops + latent_projection_flops + shared_mlp_flops + expert_flops
 
 
 class MoE(MoEBase):
@@ -355,6 +420,7 @@ class MoE(MoEBase):
         n_layers: int = 1,
         dtype: torch.dtype = torch.float32,
         cache: Optional[BufferCache] = None,
+        latent_moe: Optional[LatentMoEConfig] = None,
     ):
         super().__init__(
             d_model=d_model,
@@ -371,6 +437,7 @@ class MoE(MoEBase):
             dtype=dtype,
             capacity_factor=capacity_factor,
             cache=cache,
+            latent_moe=latent_moe,
         )
 
     def _init_parallel_mlp(  # type: ignore[override]

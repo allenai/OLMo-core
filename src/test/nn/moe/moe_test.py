@@ -19,11 +19,13 @@ from olmo_core.distributed.parallel import (
 from olmo_core.distributed.utils import get_local_tensor
 from olmo_core.nn.feed_forward import FeedForwardConfig
 from olmo_core.nn.moe import (
+    LatentMoEConfig,
     MoEConfig,
     MoELoadBalancingLossGranularity,
     MoERouterConfig,
     MoEType,
 )
+from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.testing import (
     has_grouped_gemm,
     requires_gpu,
@@ -82,6 +84,70 @@ def test_moe(moe_type: MoEType, shared: bool, dtype: torch.dtype):
     # Trigger backwards pass.
     output.sum().backward()
     assert x.grad is not None
+
+
+@pytest.mark.parametrize("moe_type", [MoEType.dropless, MoEType.default])
+@pytest.mark.parametrize("shared", [False, True])
+def test_latent_moe(moe_type: MoEType, shared: bool):
+    d_model = 16
+    routed_expert_dim = 8
+    config = MoEConfig(
+        name=moe_type,
+        num_experts=4,
+        hidden_size=32,
+        router=MoERouterConfig(top_k=2),
+        shared_mlp=FeedForwardConfig(hidden_size=24) if shared else None,
+        latent_moe=LatentMoEConfig(routed_expert_dim=routed_expert_dim),
+    )
+    moe = config.build(d_model=d_model)
+
+    assert moe.router.d_model == routed_expert_dim
+    assert moe.experts.mlp.d_model == routed_expert_dim
+    assert moe.latent_down_proj is not None
+    assert moe.latent_down_proj.in_features == d_model
+    assert moe.latent_down_proj.out_features == routed_expert_dim
+    assert moe.latent_up_proj is not None
+    assert moe.latent_up_proj.in_features == routed_expert_dim
+    assert moe.latent_up_proj.out_features == d_model
+    if shared:
+        assert moe.shared_mlp is not None
+        assert moe.shared_mlp.w1.in_features == d_model
+
+    assert config.num_params(d_model) == sum(p.numel() for p in moe.parameters())
+    expected_inactive_expert_params = (
+        3 * routed_expert_dim * config.hidden_size * (config.num_experts - config.router.top_k)
+    )
+    assert config.num_active_params(d_model) == (
+        config.num_params(d_model) - expected_inactive_expert_params
+    )
+
+    class IdentityExperts(torch.nn.Module):
+        def forward(self, x, expert_weights, expert_indices, batch_size_per_expert):
+            del expert_weights, expert_indices, batch_size_per_expert
+            return x
+
+    # The production expert kernels require CUDA. Replacing only their computation keeps this
+    # unit test focused on the latent/model-space branch boundaries and their gradients.
+    moe.experts = IdentityExperts()
+    x = torch.randn(2, 3, d_model, requires_grad=True)
+    output = moe(x)
+    assert output.shape == x.shape
+    output.sum().backward()
+    assert x.grad is not None
+    assert moe.latent_down_proj.weight.grad is not None
+    assert moe.latent_up_proj.weight.grad is not None
+
+
+@pytest.mark.parametrize("routed_expert_dim", [0, 16, 32])
+def test_latent_moe_rejects_invalid_routed_expert_dim(routed_expert_dim: int):
+    config = MoEConfig(latent_moe=LatentMoEConfig(routed_expert_dim=routed_expert_dim))
+    with pytest.raises(OLMoConfigurationError, match="routed_expert_dim"):
+        config.build(d_model=16)
+
+
+def test_moe_without_latent_config_preserves_state_dict_keys():
+    moe = MoEConfig().build(d_model=16)
+    assert not any("latent_" in key for key in moe.state_dict())
 
 
 def run_moe_with_expert_parallelism(
