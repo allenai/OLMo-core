@@ -739,7 +739,11 @@ class MoERouterV2(nn.Module):
                     cp_mesh=self.cp_mesh,
                 )
                 if accumulate_metrics:
-                    self.load_balancing_loss += lb_loss.detach()
+                    # NOTE: under TP the loss is a replicated-scalar DTensor; the metric
+                    # accumulator is a plain tensor, so accumulate its local value to avoid
+                    # a plain-tensor += DTensor in-place error. The training path below keeps
+                    # the DTensor for correct autograd.
+                    self.load_balancing_loss += get_local_tensor(lb_loss.detach())
 
                 scaled_lb_loss = self.lb_loss_weight * lb_loss
                 aux_loss = scaled_lb_loss
@@ -754,7 +758,7 @@ class MoERouterV2(nn.Module):
                     cp_mesh=self.cp_mesh,
                 )
                 if accumulate_metrics:
-                    self.z_loss += z_loss.detach()
+                    self.z_loss += get_local_tensor(z_loss.detach())
 
                 scaled_z_loss = self.z_loss_weight * z_loss
                 aux_loss = scaled_z_loss if aux_loss is None else aux_loss + scaled_z_loss
@@ -777,7 +781,7 @@ class MoERouterV2(nn.Module):
                 orth_loss = self.compute_orthogonal_loss() * orth_loss_factor
 
                 if accumulate_metrics:
-                    self.orth_loss += orth_loss.detach()
+                    self.orth_loss += get_local_tensor(orth_loss.detach())
 
                 scaled_orth_loss = self.orth_loss_weight * orth_loss
                 aux_loss = scaled_orth_loss if aux_loss is None else aux_loss + scaled_orth_loss

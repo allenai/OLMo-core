@@ -196,3 +196,50 @@ def test_router_tp_replicates_weight_and_runs():
         backend="nccl",
         func_args=(torch.device("cuda"),),
     )
+
+
+def _run_router_tp_accumulates_aux_losses(device: torch.device):
+    tp_mesh = dist.init_device_mesh(device.type, (get_world_size(),), mesh_dim_names=("tp",))
+
+    router = MoERouterConfigV2(
+        d_model=16,
+        num_experts=4,
+        top_k=2,
+        dtype=DType.float32,
+        lb_loss_weight=0.01,
+        z_loss_weight=0.001,
+    ).build(init_device=device.type)
+    router.apply_tp(tp_mesh)
+
+    B, S, D = 2, 4 * get_world_size(), 16
+    x = torch.randn(B, S, D, device=device)
+    local_x = distribute_tensor(x, tp_mesh, [Shard(1)]).to_local()
+
+    # Under TP the aux losses are replicated-scalar DTensors; accumulating them into the
+    # plain-tensor metric accumulators must not raise (regression: plain += DTensor in-place).
+    loss_div_factor = float(B * S)
+    router(local_x, scores_only=False, loss_div_factor=loss_div_factor)
+    router(local_x, scores_only=False, loss_div_factor=loss_div_factor)
+
+    metrics = router.compute_metrics(reset=True)
+    lb = metrics["load balancing loss unscaled"][0]
+    z = metrics["router Z loss unscaled"][0]
+    assert not isinstance(lb, DTensor)
+    assert not isinstance(z, DTensor)
+    assert torch.isfinite(lb).all()
+    assert torch.isfinite(z).all()
+    # compute_metrics(reset=True) should have zeroed the accumulators.
+    assert router.load_balancing_loss is not None
+    assert router.z_loss is not None
+    assert float(router.load_balancing_loss) == 0.0
+    assert float(router.z_loss) == 0.0
+
+
+def test_router_tp_accumulates_aux_losses_cpu():
+    run_distributed_test(
+        _run_router_tp_accumulates_aux_losses,
+        world_size=2,
+        backend="gloo",
+        func_args=(torch.device("cpu"),),
+        start_method="spawn",
+    )
