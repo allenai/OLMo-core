@@ -217,6 +217,7 @@ def launch_and_collect(
     images: List[str],
     gpus: List[str],
     clusters_by_gpu: Dict[str, List[str]],
+    workspace: str,
 ) -> None:
     from beaker.types import BeakerWorkload
 
@@ -251,7 +252,7 @@ def launch_and_collect(
             budget="ai2/oe-other",
             cmd=["bash", "-lc", pytest_cmd],
             task_name=f"test-{img}-{gpu}",
-            workspace="ai2/OLMo-core",
+            workspace=workspace,
             beaker_image=image,
             clusters=clusters_by_gpu[gpu],
             num_nodes=1,
@@ -360,6 +361,7 @@ def main() -> None:
         default=DEFAULT_CLUSTERS_BY_GPU["b300"],
         help=f"Cluster(s) hosting B300 GPUs (default: {DEFAULT_CLUSTERS_BY_GPU['b300']}).",
     )
+    p.add_argument("--workspace", default="ai2/OLMo-core", help="Beaker workspace to launch in.")
     p.add_argument("--out-dir", type=Path, default=Path("/tmp/olmo-core-image-tests"))
     args = p.parse_args()
 
@@ -378,7 +380,9 @@ def main() -> None:
         p.error("--date is required to launch (or use --analyze-dir).")
     clusters_by_gpu = dict(DEFAULT_CLUSTERS_BY_GPU)
     clusters_by_gpu["b300"] = args.b300_clusters
-    launch_and_collect(args.date, args.out_dir, args.images, args.gpus, clusters_by_gpu)
+    launch_and_collect(
+        args.date, args.out_dir, args.images, args.gpus, clusters_by_gpu, args.workspace
+    )
 
 
 if __name__ == "__main__":
