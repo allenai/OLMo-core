@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-07-29T15:43:11.262430+00:00",
+  "generated_at": "2026-07-29T20:45:08.523753+00:00",
   "project": "ai2-llm/jacobm-olmoe-ladder",
   "selection_metric": "mean train/CE loss over the final 250M tokens",
   "selection_rule": "LatentMoE enters the best-of plot only after its 275M Cx curve brackets a valid quadratic minimum. The plotted point remains the best observed finished LR; the fitted prediction is diagnostic only.",
@@ -14,20 +14,10 @@
   "baseline": "geometry_kda_ev2_neg_nope_gated",
   "unresolved_planned_runs": {
     "geometry_kda_ev2_neg_nope_gated_latentmoe_l2_paper": [
-      "pt-275m-kda-ev2-neg-nope-gated-latentmoe-l2-paper-cx4-lr4e-4-r1",
-      "pt-275m-kda-ev2-neg-nope-gated-latentmoe-l2-paper-cx4-lr8e-4-r1",
-      "pt-275m-kda-ev2-neg-nope-gated-latentmoe-l2-paper-cx4-lr1p6e-3-r1",
-      "pt-275m-kda-ev2-neg-nope-gated-latentmoe-l2-paper-cx4-lr3p2e-3-r1",
-      "pt-275m-kda-ev2-neg-nope-gated-latentmoe-l2-paper-cx8-lr4e-4-r1",
-      "pt-275m-kda-ev2-neg-nope-gated-latentmoe-l2-paper-cx8-lr8e-4-r1",
       "pt-275m-kda-ev2-neg-nope-gated-latentmoe-l2-paper-cx8-lr1p6e-3-r1",
       "pt-275m-kda-ev2-neg-nope-gated-latentmoe-l2-paper-cx8-lr3p2e-3-r1"
     ],
     "geometry_kda_ev2_neg_nope_gated_latentmoe_l4_1000e": [
-      "pt-275m-kda-ev2-neg-nope-gated-latentmoe-l4-1000e-cx4-lr4e-4-r1",
-      "pt-275m-kda-ev2-neg-nope-gated-latentmoe-l4-1000e-cx4-lr8e-4-r1",
-      "pt-275m-kda-ev2-neg-nope-gated-latentmoe-l4-1000e-cx4-lr1p6e-3-r1",
-      "pt-275m-kda-ev2-neg-nope-gated-latentmoe-l4-1000e-cx4-lr3p2e-3-r1",
       "pt-275m-kda-ev2-neg-nope-gated-latentmoe-l4-1000e-cx8-lr4e-4-r1",
       "pt-275m-kda-ev2-neg-nope-gated-latentmoe-l4-1000e-cx8-lr8e-4-r1",
       "pt-275m-kda-ev2-neg-nope-gated-latentmoe-l4-1000e-cx8-lr1p6e-3-r1",

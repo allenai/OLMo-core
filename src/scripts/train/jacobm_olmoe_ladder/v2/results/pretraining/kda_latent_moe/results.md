@@ -1,6 +1,6 @@
 # KDA LatentMoE paper-matched pretraining
 
-Generated: `2026-07-29T15:43:11.262430+00:00`
+Generated: `2026-07-29T20:45:08.523753+00:00`
 
 Metric: final `250M`-token mean training CE. The best-of plot uses observed finished points only after a curve is bracketed.
 
@@ -15,4 +15,4 @@ Metric: final `250M`-token mean training CE. The best-of plot uses observed fini
 | LatentMoE L=4 (1,000 experts/top-32) | Cx4 | 0/4 | — | — | — |
 | LatentMoE L=4 (1,000 experts/top-32) | Cx8 | 0/4 | — | — | — |
 
-Uninitialized planned W&B runs: `16`.
+Uninitialized planned W&B runs: `6`.
