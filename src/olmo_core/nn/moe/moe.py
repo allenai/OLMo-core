@@ -67,21 +67,25 @@ class LatentMoEConfig(Config):
     bias: bool = False
     """Whether to use bias in the model-to-latent and latent-to-model projections."""
 
-    up_proj_input_norm: Optional[LayerNormConfig] = field(
-        default_factory=lambda: LayerNormConfig(name=LayerNormType.rms, bias=False)
-    )
+    up_proj_input_norm: Optional[LayerNormConfig] = None
     """Normalization applied in latent space immediately before the up projection.
 
-    RMSNorm is used by default. Set this to another layer norm configuration to select a
-    different implementation, or to ``None`` to disable normalization.
+    When normalization is enabled, a bias-free RMSNorm is used if this is ``None``. Set this to
+    another layer norm configuration to select a different implementation.
     """
+
+    up_proj_input_norm_enabled: bool = False
+    """Whether to apply ``up_proj_input_norm`` before the latent up projection."""
+
+    def resolved_up_proj_input_norm(self) -> LayerNormConfig:
+        return self.up_proj_input_norm or LayerNormConfig(name=LayerNormType.rms, bias=False)
 
     def num_params(self, d_model: int) -> int:
         params = 2 * d_model * self.routed_expert_dim
         if self.bias:
             params += self.routed_expert_dim + d_model
-        if self.up_proj_input_norm is not None:
-            params += self.up_proj_input_norm.num_params(self.routed_expert_dim)
+        if self.up_proj_input_norm_enabled:
+            params += self.resolved_up_proj_input_norm().num_params(self.routed_expert_dim)
         return params
 
 
@@ -212,9 +216,11 @@ class MoEBase(nn.Module):
                 device=init_device,
             )
             self.latent_up_proj_input_norm = (
-                None
-                if latent_moe.up_proj_input_norm is None
-                else latent_moe.up_proj_input_norm.build(routed_expert_dim, init_device=init_device)
+                latent_moe.resolved_up_proj_input_norm().build(
+                    routed_expert_dim, init_device=init_device
+                )
+                if latent_moe.up_proj_input_norm_enabled
+                else None
             )
             self.latent_up_proj = nn.Linear(
                 routed_expert_dim,

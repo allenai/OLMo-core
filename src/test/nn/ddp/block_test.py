@@ -88,14 +88,27 @@ def test_latent_block_dimensions_and_param_accounting():
     assert block._restore_routed_moe_output(routed_input).shape == model_input.shape
 
 
-def test_latent_block_defaults_to_up_proj_input_rms_norm():
+def test_latent_block_norm_is_disabled_by_default():
     config = _block_config(routed_expert_dim=16)
     block = _build_block(config)
 
-    assert block.latent_up_proj_input_norm is not None
+    assert block.latent_up_proj_input_norm is None
+
+
+def test_latent_block_enabled_norm_defaults_to_rms_norm():
+    config = _block_config(routed_expert_dim=16)
     assert config.latent_moe is not None
-    assert config.latent_moe.up_proj_input_norm is not None
-    assert config.latent_moe.up_proj_input_norm.name == LayerNormType.rms
+    config.latent_moe.up_proj_input_norm_enabled = True
+    block = _build_block(config)
+
+    assert block.latent_up_proj_input_norm is not None
+    assert config.latent_moe.resolved_up_proj_input_norm().name == LayerNormType.rms
+    serialized = config.latent_moe.as_config_dict()
+    assert serialized["up_proj_input_norm_enabled"] is True
+    assert "up_proj_input_norm" not in serialized
+    restored = LatentMoEConfig.from_dict(serialized)
+    assert restored.up_proj_input_norm_enabled is True
+    assert restored.resolved_up_proj_input_norm().name == LayerNormType.rms
     assert config.num_params(D_MODEL) == sum(p.numel() for p in block.parameters())
     routed_out = torch.randn(2, 3, 16)
     assert block.latent_up_proj is not None
@@ -107,6 +120,7 @@ def test_latent_block_defaults_to_up_proj_input_rms_norm():
 def test_latent_block_accepts_configurable_up_proj_input_norm(norm_type: LayerNormType):
     config = _block_config(routed_expert_dim=16)
     assert config.latent_moe is not None
+    config.latent_moe.up_proj_input_norm_enabled = True
     config.latent_moe.up_proj_input_norm = LayerNormConfig(name=norm_type)
     block = _build_block(config)
     assert block.latent_up_proj_input_norm is not None
@@ -115,9 +129,13 @@ def test_latent_block_accepts_configurable_up_proj_input_norm(norm_type: LayerNo
 def test_latent_block_can_disable_up_proj_input_norm():
     config = _block_config(routed_expert_dim=16)
     assert config.latent_moe is not None
-    config.latent_moe.up_proj_input_norm = None
     block = _build_block(config)
     assert block.latent_up_proj_input_norm is None
+
+    serialized = config.latent_moe.as_config_dict()
+    assert serialized["up_proj_input_norm_enabled"] is False
+    restored = LatentMoEConfig.from_dict(serialized)
+    assert restored.up_proj_input_norm_enabled is False
 
 
 @pytest.mark.parametrize("routed_expert_dim", [0, D_MODEL, D_MODEL * 2])
@@ -139,6 +157,8 @@ def test_latent_block_projection_initialization():
 
     assert block.latent_down_proj is not None
     assert block.latent_up_proj is not None
+    assert block.routed_experts_router is not None
+    assert block.routed_experts is not None
     torch.testing.assert_close(
         block.latent_down_proj.weight.std(),
         torch.tensor(D_MODEL**-0.5),
@@ -148,6 +168,24 @@ def test_latent_block_projection_initialization():
     torch.testing.assert_close(
         block.latent_up_proj.weight.std(),
         torch.tensor(routed_expert_dim**-0.5),
+        rtol=0.35,
+        atol=0.0,
+    )
+    torch.testing.assert_close(
+        block.routed_experts_router.weight.std(),
+        torch.tensor(routed_expert_dim**-0.5),
+        rtol=0.35,
+        atol=0.0,
+    )
+    torch.testing.assert_close(
+        block.routed_experts.w_up_gate.std(),
+        torch.tensor(routed_expert_dim**-0.5),
+        rtol=0.35,
+        atol=0.0,
+    )
+    torch.testing.assert_close(
+        block.routed_experts.w_down.std(),
+        torch.tensor(block.routed_experts.hidden_size**-0.5),
         rtol=0.35,
         atol=0.0,
     )

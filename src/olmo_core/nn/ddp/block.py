@@ -454,11 +454,11 @@ class OLMoDDPTransformerBlock(olmo_core.nn.transformer.block.TransformerBlockBas
                 device=init_device,
             )
             self.latent_up_proj_input_norm = (
-                None
-                if latent_moe.up_proj_input_norm is None
-                else latent_moe.up_proj_input_norm.build(
+                latent_moe.resolved_up_proj_input_norm().build(
                     latent_moe.routed_expert_dim, init_device=init_device
                 )
+                if latent_moe.up_proj_input_norm_enabled
+                else None
             )
             self.latent_up_proj = torch.nn.Linear(
                 latent_moe.routed_expert_dim,

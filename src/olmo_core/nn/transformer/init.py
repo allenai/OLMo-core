@@ -306,13 +306,18 @@ class InitMethod(StrEnum):
             if b.shared_experts_router.bias is not None:
                 _apply_init(nn.init.zeros_, b.shared_experts_router.bias)
         if b.routed_experts_router:
+            routed_router_std = (
+                b.routed_experts_router.d_model**-0.5
+                if self == InitMethod.fan_in
+                else std
+            )
             _apply_init(
                 nn.init.trunc_normal_,
                 b.routed_experts_router.weight,
                 mean=0.0,
-                std=std,
-                a=-3 * std,
-                b=3 * std,
+                std=routed_router_std,
+                a=-3 * routed_router_std,
+                b=3 * routed_router_std,
                 generator=generator,
             )
             if b.routed_experts_router.bias is not None:
@@ -328,22 +333,28 @@ class InitMethod(StrEnum):
         if b.routed_experts:
             # The routed expert weights may be sharded across the expert-parallel mesh, so use the
             # EP generator to keep initialization consistent across shards.
+            routed_up_gate_std = (
+                b.routed_experts.d_model**-0.5 if self == InitMethod.fan_in else std
+            )
             _apply_init(
                 nn.init.trunc_normal_,
                 b.routed_experts.w_up_gate,
                 mean=0.0,
-                std=std,
-                a=-3 * std,
-                b=3 * std,
+                std=routed_up_gate_std,
+                a=-3 * routed_up_gate_std,
+                b=3 * routed_up_gate_std,
                 generator=ep_generator,
+            )
+            routed_down_std = (
+                b.routed_experts.hidden_size**-0.5 if self == InitMethod.fan_in else std
             )
             _apply_init(
                 nn.init.trunc_normal_,
                 b.routed_experts.w_down,
                 mean=0.0,
-                std=std,
-                a=-3 * std,
-                b=3 * std,
+                std=routed_down_std,
+                a=-3 * routed_down_std,
+                b=3 * routed_down_std,
                 generator=ep_generator,
             )
             if b.routed_experts.b_up_gate is not None:
