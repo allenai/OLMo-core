@@ -35,5 +35,39 @@
     "debug_gradients": false,
     "run_suffix": null,
     "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYP9CDR7QV5Y9Z88M0CZQ0TC"
+  },
+  {
+    "experiment_name": "jacobm-275m-kda-latentmoe-l2-l4-cx4-allocated",
+    "experiment_id": "01KYQS79P3JFX4SSB4AM7B8CDK",
+    "tasks": [
+      "l2-cx4-lr4e-4",
+      "l2-cx4-lr8e-4",
+      "l2-cx4-lr1p6e-3",
+      "l2-cx4-lr3p2e-3",
+      "l4-1000e-cx4-lr4e-4",
+      "l4-1000e-cx4-lr8e-4",
+      "l4-1000e-cx4-lr1p6e-3",
+      "l4-1000e-cx4-lr3p2e-3"
+    ],
+    "debug_gradients": false,
+    "run_suffix": null,
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYQS79P3JFX4SSB4AM7B8CDK"
+  },
+  {
+    "experiment_name": "jacobm-275m-kda-latentmoe-l2-l4-cx8-unallocated",
+    "experiment_id": "01KYQS7J3NBH1TFX6Y1FGQ7WM2",
+    "tasks": [
+      "l2-cx8-lr4e-4",
+      "l2-cx8-lr8e-4",
+      "l2-cx8-lr1p6e-3",
+      "l2-cx8-lr3p2e-3",
+      "l4-1000e-cx8-lr4e-4",
+      "l4-1000e-cx8-lr8e-4",
+      "l4-1000e-cx8-lr1p6e-3",
+      "l4-1000e-cx8-lr3p2e-3"
+    ],
+    "debug_gradients": false,
+    "run_suffix": null,
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYQS7J3NBH1TFX6Y1FGQ7WM2"
   }
 ]

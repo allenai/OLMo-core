@@ -218,7 +218,7 @@ The refreshed U-plots, best-of plot, and machine-readable results live under
 [`plots/pretraining/kda_latent_moe`](plots/pretraining/kda_latent_moe) and
 [`results/pretraining/kda_latent_moe`](results/pretraining/kda_latent_moe).
 
-## Planned completion of the 275M sweep
+## Cx4/Cx8 completion of the 275M sweep
 
 The next LatentMoE wave finishes the four-LR curves at Cx4 and Cx8 for both
 promoted families:
@@ -243,10 +243,7 @@ The planned optimizer batches and rank-local shapes are:
 | L=4, 1,000/top-32 | 8 | 786,432 | 8 GPUs, EP1 | 6 / 2 |
 
 These shapes stay within the already qualified physical limits; no new model
-or parameter change is involved. Before launch, generate the final manifests
-and run the ordinary config-only audit. Under allocation-based Holmes
-scheduling, request an explicit realistic `minRuntime` rather than using the
-legacy non-preemptible flag.
+or parameter change is involved.
 
 Measured end-to-end wall times for the completed jobs, including startup and
 compilation, were about 2h18m/4h02m for L=2 Cx1/Cx2 and 2h47m/4h45m for L=4
@@ -264,6 +261,68 @@ resource-constrained 64-GPU layout runs Cx8 on four GPUs with L2 MB12/acc2 and
 L4 MB8/acc3; its Cx8 cells should take roughly 14--16 and 17--19 hours,
 respectively, for an approximately 19--20-hour critical path. If still fewer
 GPUs are available, queue the slow Cx8 cells before Cx4.
+
+The full wave was submitted on 2026-07-29:
+
+- [Cx4 allocated work `01KYQS79P3JFX4SSB4AM7B8CDK`](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYQS79P3JFX4SSB4AM7B8CDK)
+  contains all eight L2/L4 Cx4 cells. Each task requests four Holmes B300s,
+  urgent priority, `minRuntime=4h`, and automatic resume.
+- [Cx8 unallocated work `01KYQS7J3NBH1TFX6Y1FGQ7WM2`](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYQS7J3NBH1TFX6Y1FGQ7WM2)
+  contains all eight L2/L4 Cx8 cells. Each task requests eight Holmes B300s,
+  urgent priority, `minRuntime=0m`, and automatic resume.
+
+At submission, all eight Cx4 tasks were scheduled; one Cx8 task was scheduled
+and seven were queued as backfill. The durable manifests are
+[`275m_kda_latent_moe_lr_sweep_cx4_allocated.yaml`](launchers/pretraining/manifests/275m_kda_latent_moe_lr_sweep_cx4_allocated.yaml)
+and
+[`275m_kda_latent_moe_lr_sweep_cx8_unallocated.yaml`](launchers/pretraining/manifests/275m_kda_latent_moe_lr_sweep_cx8_unallocated.yaml).
+
+## Proposed larger LatentMoE configs
+
+The scale-up parent should remain the already-trained BF16 KDA family with our
+settings: geometry-matched gated NoPE, KDA `expand_v=2`, negative eigenvalues,
+full-width routing, one dense-first FFN layer, and unchanged shared experts.
+Only the routed expert path changes.
+
+The proposed promoted families are:
+
+- L=2: project the routed path to `d_model / 2`, use 512 routed experts and
+  top-16;
+- L=4: project the routed path to `d_model / 4`, use 1,000 routed experts and
+  top-32.
+
+Using 1,000 rather than 1,024 experts carries the selected 275M L=4 family
+through every size, keeps EP1 legal for 480M/810M, and remains divisible by the
+1.2B parent's EP8. The router continues to see the full-width token; the
+latent up-projection input norm remains disabled; expert hidden widths, mixer
+placement, full-attention geometry, shared experts, and initialization remain
+unchanged.
+
+| Size | `d_model` / layers | Expert hidden | L=2 latent / experts / top-k | L=4 latent / experts / top-k |
+|---|---:|---:|---:|---:|
+| 480M | 768 / 15 | 840 | 384 / 512 / 16 | 192 / 1,000 / 32 |
+| 810M | 1,024 / 15 | 1,032 | 512 / 512 / 16 | 256 / 1,000 / 32 |
+| 1.2B | 1,280 / 20 | 952 | 640 / 512 / 16 | 320 / 1,000 / 32 |
+
+Closed-form parameter accounting gives:
+
+| Size | KDA parent active / total | L=2 active / total | L=4 1,000e active / total |
+|---|---:|---:|---:|
+| 480M | 498,741,600 / 7,218,311,520 | 509,751,648 / 7,229,321,568 | 510,869,856 / 7,067,869,536 |
+| 810M | 839,239,616 / 11,846,535,104 | 857,589,696 / 11,864,885,184 | 857,245,632 / 11,598,235,584 |
+| 1.2B | 1,251,462,912 / 18,477,027,072 | 1,288,818,432 / 18,514,382,592 | 1,285,121,792 / 18,093,938,432 |
+
+The active increases versus the KDA parent are approximately 2.21%/2.43% at
+480M, 2.19%/2.15% at 810M, and 2.98%/2.69% at 1.2B for L2/L4. L=4 stores
+roughly 2.1% fewer parameters because the 1,000-expert EP1 approximation is
+slightly below the exact paper-matched 1,024-expert count; its active count
+stays close because top-k remains 32.
+
+No larger LatentMoE jobs are launched. Before training, add audited model
+builders with exact count guards, then run capacity smokes because increased
+top-k and routing state—not stored parameter count—drove the 275M memory
+increase. Prefer EP1 for 480M/810M and retain EP8 for 1.2B unless the capacity
+tests show a clear reason to change it.
 
 ## Validation hold
 
