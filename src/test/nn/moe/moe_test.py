@@ -168,6 +168,34 @@ def test_latent_moe_accepts_non_rms_up_proj_input_norm():
     assert moe.latent_up_proj_input_norm is not None
 
 
+def test_latent_moe_tensor_parallelizes_projection_stack(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    config = MoEConfig(latent_moe=LatentMoEConfig(routed_expert_dim=8))
+    moe = config.build(d_model=16)
+    parallelized = {}
+
+    def record_parallelize(module, *, device_mesh, parallelize_plan):
+        del device_mesh
+        parallelized[module] = parallelize_plan
+        return module
+
+    monkeypatch.setattr("olmo_core.nn.moe.moe.parallelize_module", record_parallelize)
+    monkeypatch.setattr(moe.router, "apply_tp", lambda *args, **kwargs: None)
+    monkeypatch.setattr(moe.experts, "apply_tp", lambda *args, **kwargs: None)
+    moe.apply_tp(object())  # type: ignore[arg-type]
+
+    for module in (
+        moe.latent_down_proj,
+        moe.latent_up_proj_input_norm,
+        moe.latent_up_proj,
+    ):
+        assert module is not None
+        plan = parallelized[module]
+        assert plan.__class__.__name__ == "SequenceParallel"
+        assert plan.use_local_output is True
+
+
 def test_moe_without_latent_config_preserves_state_dict_keys():
     moe = MoEConfig().build(d_model=16)
     assert not any("latent_" in key for key in moe.state_dict())
