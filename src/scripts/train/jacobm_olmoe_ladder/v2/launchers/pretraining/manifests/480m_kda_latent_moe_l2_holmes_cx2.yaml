@@ -1,0 +1,51 @@
+schema_version: 1
+
+experiment:
+  description: 480M KDA LatentMoE paper-matched L=2 Cx2 on Holmes B300s
+  checkpoint_root: /weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/olmo-ddp/pretraining
+
+source:
+  repo: /weka/oe-adapt-default/jacobm/olmoe3/olmo-ddp-migration/OLMo-core-moe-v2-core
+  wrapper: src/scripts/train/jacobm_olmoe3_hybrid_scale_beaker.sh
+  image: 01KW8G8JC20H11Y60PPTE2VN4Q
+
+beaker:
+  workspace: ai2/OLMo-3-moe-experiments
+  cluster: ai2/holmes
+  priority: urgent
+  shared_memory: 128 GiB
+  min_runtime: 4h
+  auto_resume: true
+  timeout: 168h
+  result_path: /results
+
+secrets:
+  AWS_ACCESS_KEY_ID: AWS_ACCESS_KEY_ID
+  AWS_SECRET_ACCESS_KEY: AWS_SECRET_ACCESS_KEY
+  WANDB_API_KEY: jacobm_WANDB_API_KEY
+  BEAKER_TOKEN: jacobm_BEAKER_TOKEN
+  HF_TOKEN: jacobm_HF_TOKEN
+
+datasets:
+  - mount_path: /weka/oe-adapt-default
+    weka: oe-adapt-default
+  - mount_path: /weka/oe-training-default
+    weka: oe-training-default
+
+training:
+  sequence_length: 8192
+  hard_stop_steps: 0
+  checkpoints: true
+  save_interval: 999999999
+  ephemeral_save_interval: 500
+  checkpoint_removal: ephemeral_only
+  evals: false
+  eval_interval: 999999999
+  eval_steps: 0
+  eval_task_set: hellaswag
+  eval_on_finish: false
+  compile: true
+  wandb: true
+
+runs:
+  - {task_name: 480m-l2-cx2-holmes, run_name: pt-480m-kda-ev2-neg-nope-gated-latentmoe-l2-paper-cx2-lr9e-4-r1, model_variant: geometry_matched_kda_ev2_neg_nope_gated_latent2x_papermatched, model_size: 480m, cx: 2, learning_rate: "9e-4", global_batch_size: 393216, gpu_count: 8, expert_parallel_size: 1, expert_parallel_path: rowwise_nvshmem, rank_microbatch_sequences: 6}
