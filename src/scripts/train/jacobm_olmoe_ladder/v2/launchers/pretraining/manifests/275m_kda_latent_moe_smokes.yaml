@@ -14,8 +14,9 @@ beaker:
   cluster: ai2/holmes
   priority: urgent
   shared_memory: 64 GiB
-  # Short functional checks are unallocated Holmes backfill.
-  min_runtime: 0m
+  # These tests need to run despite the full unallocated queue. Thirty minutes
+  # covers image setup, compilation, and the short 12-step qualification.
+  min_runtime: 30m
   auto_resume: false
   timeout: 2h
   result_path: /results

@@ -63,7 +63,9 @@ Model variants:
 The minimal smoke manifest is
 [`launchers/pretraining/manifests/275m_kda_latent_moe_smokes.yaml`](launchers/pretraining/manifests/275m_kda_latent_moe_smokes.yaml).
 It runs 12 compiled optimizer steps per candidate on one Holmes B300 with EP1,
-MB4/accumulation-2, no W&B, no evaluation, and no checkpoint writes.
+MB4/accumulation-2, a 30-minute allocated runtime, no W&B, no evaluation, and
+no checkpoint writes. The first unallocated submission was canceled before
+startup because the workspace's 64 unallocated slots were already full.
 
 ## Validation hold
 
