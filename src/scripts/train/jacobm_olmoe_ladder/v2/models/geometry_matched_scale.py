@@ -28,6 +28,7 @@ from olmo_core.nn.attention import (
 )
 from olmo_core.nn.attention.recurrent import GatedDeltaNetConfig
 from olmo_core.nn.ddp import OLMoDDPTransformerBlockConfig
+from olmo_core.nn.moe import LatentMoEConfig
 from olmo_core.nn.transformer import OLMoDDPModelConfig
 from scripts.train.jacobm_olmoe_ladder.v2.models.geometry_matched_275m import (
     build_geometry_matched_model_config as build_geometry_matched_275m_model_config,
@@ -156,6 +157,19 @@ EXPECTED_KDA_MXFP8_ALIGNED_COUNTS = {
     "480m": (496_253_280, 419_182_944, 7_151_827_296),
     "810m": (835_921_856, 733_161_408, 11_757_889_472),
     "1p2b": (1_256_992_512, 1_128_541_952, 18_627_309_312),
+}
+
+# Paper-matched LatentMoE keeps the router and shared expert at the residual
+# width, projects only the routed branch by L, and scales both the total routed
+# experts and top-k by L. These exact counts guard the promoted configurations
+# before any expensive scale run is submitted.
+EXPECTED_KDA_LATENT_MOE_SCALE_COUNTS = {
+    ("480m", 2, None): (509_751_648, 432_681_312, 7_229_321_568),
+    ("480m", 4, 1000): (510_869_856, 433_799_520, 7_067_869_536),
+    ("810m", 2, None): (857_589_696, 754_829_248, 11_864_885_184),
+    ("810m", 4, 1000): (857_245_632, 754_485_184, 11_598_235_584),
+    ("1p2b", 2, None): (1_288_818_432, 1_160_367_872, 18_514_382_592),
+    ("1p2b", 4, 1000): (1_285_121_792, 1_156_671_232, 18_093_938_432),
 }
 
 
@@ -793,6 +807,117 @@ def build_geometry_matched_scale_kda_model_config(
                             f"MXFP8-aligned KDA layer {layer_idx} routed dimension "
                             f"{dimension} is not divisible by 32"
                         )
+    return candidate
+
+
+def build_geometry_matched_scale_kda_latent_moe_model_config(
+    model_size: str,
+    *,
+    compression: int,
+    num_experts_override: int | None = None,
+) -> OLMoDDPModelConfig:
+    """Add the paper-matched LatentMoE routed branch to a promoted KDA model.
+
+    The residual stream, router input, shared expert, expert hidden width,
+    mixer geometry, and dense-first layer remain unchanged. The routed expert
+    payload is compressed by ``compression`` while expert count and top-k are
+    scaled by the same factor. The 1,000-expert override is the audited L=4
+    EP1 approximation used by the 275M experiments.
+    """
+
+    if model_size == "275m":
+        raise ValueError(
+            "Use build_geometry_matched_kda_latent_moe_model_config for the 275M model"
+        )
+    geometry = _geometry(model_size)
+    if compression not in {2, 4}:
+        raise ValueError("promoted LatentMoE supports only compression=2 or compression=4")
+    if geometry.d_model % compression:
+        raise ValueError(
+            f"{model_size} d_model={geometry.d_model} is not divisible by L={compression}"
+        )
+    if compression == 2 and num_experts_override is not None:
+        raise ValueError("the paper-matched L=2 configuration uses exactly 512 experts")
+    if compression == 4 and num_experts_override != 1000:
+        raise ValueError("the audited EP1 L=4 configuration uses exactly 1,000 experts")
+
+    latent_dim = geometry.d_model // compression
+    num_experts = num_experts_override or 256 * compression
+    top_k = TOP_K * compression
+    candidate = build_geometry_matched_scale_kda_model_config(
+        model_size,
+        expand_v=2.0,
+        allow_neg_eigval=True,
+    )
+    resolved = candidate.resolved_block_configs
+
+    def with_latent_moe(
+        block: OLMoDDPTransformerBlockConfig,
+    ) -> OLMoDDPTransformerBlockConfig:
+        latent = deepcopy(block)
+        if latent.routed_experts is None or latent.routed_experts_router is None:
+            raise ValueError("LatentMoE requires a routed expert and router")
+        latent.latent_moe = LatentMoEConfig(
+            latent_dim=latent_dim,
+            up_proj_input_norm_enabled=False,
+        )
+        latent.routed_experts.d_model = latent_dim
+        latent.routed_experts.num_experts = num_experts
+        latent.routed_experts_router.d_model = geometry.d_model
+        latent.routed_experts_router.num_experts = num_experts
+        latent.routed_experts_router.top_k = top_k
+        return latent
+
+    default_idx = next(layer_idx for layer_idx in geometry.gdn_layers if layer_idx != 0)
+    candidate.block = with_latent_moe(resolved[default_idx])
+    candidate.block_overrides = {
+        0: deepcopy(resolved[0]),
+        **{
+            layer_idx: with_latent_moe(resolved[layer_idx])
+            for layer_idx in geometry.full_attention_layers
+        },
+    }
+    candidate.validate()
+
+    for layer_idx, block in enumerate(candidate.resolved_block_configs):
+        if layer_idx == 0:
+            if block.latent_moe is not None or block.routed_experts is not None:
+                raise ValueError("LatentMoE scale model must retain dense-first layer 0")
+            continue
+        if block.latent_moe is None:
+            raise ValueError(f"LatentMoE scale layer {layer_idx} is missing latent_moe")
+        if (
+            block.latent_moe.latent_dim != latent_dim
+            or block.latent_moe.up_proj_input_norm_enabled
+        ):
+            raise ValueError(f"LatentMoE scale layer {layer_idx} has wrong projection settings")
+        if block.routed_experts is None or block.routed_experts_router is None:
+            raise ValueError(f"LatentMoE scale layer {layer_idx} lost its routed branch")
+        if (
+            block.routed_experts.d_model != latent_dim
+            or block.routed_experts.hidden_size != geometry.expert_hidden_size
+            or block.routed_experts.num_experts != num_experts
+            or block.routed_experts_router.d_model != geometry.d_model
+            or block.routed_experts_router.num_experts != num_experts
+            or block.routed_experts_router.top_k != top_k
+        ):
+            raise ValueError(f"LatentMoE scale layer {layer_idx} has inconsistent experts/router")
+        if block.shared_experts is None or block.shared_experts.d_model != geometry.d_model:
+            raise ValueError(f"LatentMoE scale layer {layer_idx} changed its shared expert")
+
+    actual_counts = (
+        candidate.num_active_params,
+        candidate.num_active_non_embedding_params,
+        candidate.num_params,
+    )
+    expected_counts = EXPECTED_KDA_LATENT_MOE_SCALE_COUNTS[
+        (model_size, compression, num_experts_override)
+    ]
+    if actual_counts != expected_counts:
+        raise ValueError(
+            f"unexpected {model_size} LatentMoE L={compression} parameter counts: "
+            f"expected {expected_counts}, found {actual_counts}"
+        )
     return candidate
 
 

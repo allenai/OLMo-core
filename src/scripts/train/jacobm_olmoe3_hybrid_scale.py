@@ -187,6 +187,10 @@ KDA_SCALE_ALL_SETTINGS = {
     **KDA_SCALE_NOPE_SETTINGS,
     **KDA_SCALE_MXFP8_SETTINGS,
 }
+LATENT_MOE_SCALE_SETTINGS = {
+    "geometry_matched_kda_ev2_neg_nope_gated_latent2x_papermatched": (2, None),
+    "geometry_matched_kda_ev2_neg_nope_gated_latent4x_1000experts": (4, 1000),
+}
 
 
 def env_bool(name: str, default: bool) -> bool:
@@ -582,6 +586,17 @@ def model_config():
                 else None
             ),
         )
+    elif MODEL_VARIANT in LATENT_MOE_SCALE_SETTINGS:
+        from scripts.train.jacobm_olmoe_ladder.v2.models.geometry_matched_scale import (
+            build_geometry_matched_scale_kda_latent_moe_model_config,
+        )
+
+        compression, num_experts_override = LATENT_MOE_SCALE_SETTINGS[MODEL_VARIANT]
+        model = build_geometry_matched_scale_kda_latent_moe_model_config(
+            MODEL_SIZE,
+            compression=compression,
+            num_experts_override=num_experts_override,
+        )
     else:
         raise ValueError(f"Unknown model variant {MODEL_VARIANT!r}")
     if EP_SIZE > 1:
@@ -802,6 +817,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         "geometry_matched_gdn_ev2_rope_gated",
         *GDN2_SCALE_NOPE_SETTINGS,
         *KDA_SCALE_ALL_SETTINGS,
+        *LATENT_MOE_SCALE_SETTINGS,
     }
     if MODEL_VARIANT == "geometry_275m_gdn_ev2_rope_gated":
         variant_group = "olmoe3-275m-geometry-gdn-ev2-rope-gated"
@@ -878,6 +894,15 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             f"olmoe3-geometry-matched-kda-ev{expand_v:g}-{eigval_tag}"
             f"-nope-gated{precision_tag}-scale"
         )
+    elif MODEL_VARIANT in LATENT_MOE_SCALE_SETTINGS:
+        compression, num_experts_override = LATENT_MOE_SCALE_SETTINGS[MODEL_VARIANT]
+        expert_count_tag = (
+            f"-{num_experts_override}experts" if num_experts_override is not None else ""
+        )
+        variant_group = (
+            "olmoe3-geometry-matched-kda-ev2-neg-nope-gated-"
+            f"latentmoe-{compression}x-paper-matched{expert_count_tag}-scale"
+        )
     else:
         variant_group = "olmoe3-integration-wide-hybrid-scale"
     if MODEL_VARIANT in {
@@ -888,6 +913,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         *KDA_MIXED_ATTENTION_275M_SETTINGS,
         *LATENT_MOE_275M_SETTINGS,
         *KDA_SCALE_ALL_SETTINGS,
+        *LATENT_MOE_SCALE_SETTINGS,
         "geometry_matched_gdn_ev2_nope",
         "geometry_matched_gdn_ev2_nope_gated",
         *GDN2_SCALE_NOPE_SETTINGS,
@@ -898,6 +924,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             **KDA_275M_NOPE_SETTINGS,
             **KDA_MIXED_ATTENTION_275M_SETTINGS,
             **KDA_SCALE_ALL_SETTINGS,
+            **{key: (2.0, True) for key in LATENT_MOE_SCALE_SETTINGS},
         }
         expand_v = recurrent_settings.get(MODEL_VARIANT, (2.0, True))[0]
         variant_tags = ["geometry-matched", f"expand-v-{expand_v:g}", "nope"]
@@ -908,6 +935,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             *KDA_MIXED_ATTENTION_275M_SETTINGS,
             *LATENT_MOE_275M_SETTINGS,
             *KDA_SCALE_ALL_SETTINGS,
+            *LATENT_MOE_SCALE_SETTINGS,
             "geometry_matched_gdn_ev2_nope_gated",
             *GDN2_SCALE_NOPE_SETTINGS,
         }:
@@ -932,6 +960,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             **KDA_275M_NOPE_SETTINGS,
             **KDA_MIXED_ATTENTION_275M_SETTINGS,
             **KDA_SCALE_ALL_SETTINGS,
+            **{key: (2.0, True) for key in LATENT_MOE_SCALE_SETTINGS},
         }
         if MODEL_VARIANT in kda_settings:
             variant_tags.extend(
@@ -1006,6 +1035,18 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                         "attention-1to1",
                     ]
                 )
+        elif MODEL_VARIANT in LATENT_MOE_SCALE_SETTINGS:
+            compression, num_experts_override = LATENT_MOE_SCALE_SETTINGS[MODEL_VARIANT]
+            variant_tags.extend(
+                [
+                    "latent-moe",
+                    f"latent-{compression}x",
+                    "full-width-router",
+                    "paper-expert-scaling",
+                ]
+            )
+            if num_experts_override is not None:
+                variant_tags.append(f"routed-experts-{num_experts_override}")
     elif geometry_variant:
         variant_tags = ["geometry-matched", "expand-v-2", "rope"]
         if MODEL_VARIANT in {
@@ -1214,6 +1255,7 @@ def finalize_config(config: ExperimentConfig) -> None:
         # This guard admits the planned 4x compression control's delta.
         max_active_parameter_delta_fraction = 0.207
     elif MODEL_VARIANT in {
+        *LATENT_MOE_SCALE_SETTINGS,
         "geometry_matched_gdn_ev2_nope_gated",
         "geometry_matched_gdn_ev2_rope_gated",
     }:
