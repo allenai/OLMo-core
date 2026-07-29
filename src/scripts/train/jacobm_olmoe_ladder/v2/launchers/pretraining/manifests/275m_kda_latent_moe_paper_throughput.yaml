@@ -47,6 +47,17 @@ training:
   evals: false
 
 runs:
+  - task_name: 275m-kda-l1-default-ep1-mb16-2m-50step
+    run_name: throughput-275m-kda-l1-default-ep1-mb16-2m-50step
+    model_size: 275m
+    model_variant: geometry_275m_kda_ev2_neg_nope_gated
+    cx: 1
+    learning_rate: "1.6e-3"
+    global_batch_size: 2097152
+    gpu_count: 1
+    expert_parallel_size: 1
+    expert_parallel_path: rowwise_nvshmem
+    rank_microbatch_sequences: 16
   - task_name: 275m-kda-latent2x-paper-ep1-mb16-2m-50step
     run_name: throughput-275m-kda-latentmoe-2x-paper-ep1-mb16-2m-50step
     model_size: 275m
