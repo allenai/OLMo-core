@@ -79,9 +79,20 @@ def main():
                    "512k": 524288, "1M": 1048576, "2M": 2097152}
         _sel = set(args.ladder_rungs.split(",")) if args.ladder_rungs else set(_XL_TOK)
         _need = max((t for r, t in _XL_TOK.items() if r in _sel), default=0)
-        if _need and args.max_length < _need + 1024:
-            print(f"[xlong] raising --max-length {args.max_length} -> {_need + 1024}", flush=True)
-            args.max_length = _need + 1024
+        # A rung's LABEL is its nominal token budget, but the built prompt reliably lands slightly
+        # ABOVE it: the doc count is calibrated from a median, and the instruction/query/marker wrap
+        # is added on top. Measured through this exact load path (Qwen3.5, 2026-07-29):
+        #   512k -> 535,855 (1.022x)   nq 528,021 (1.007x)   outlier 526,249 (1.004x)
+        #   rerank 530,993 (1.013x)    2M -> 2,165,314 (1.033x)
+        # so the old `+1024` slack was NOT enough and silently truncated the prompt TAIL -- which is
+        # where the question lives. That yields an empty/garbage generation and scores f1 0.000 at
+        # parse_rate 1.0 for a model that is fine (the maxlen-truncation trap). Use a 10% margin,
+        # which covers the per-example max above the median with room to spare.
+        _budget = int(_need * 1.10) + 2048 if _need else 0
+        if _budget and args.max_length < _budget:
+            print(f"[xlong] raising --max-length {args.max_length} -> {_budget} "
+                  f"(rung label {_need} + 10% margin; prompts run ~0.4-3.3% over label)", flush=True)
+            args.max_length = _budget
         # Rungs past 262,144 exceed Qwen3.5's native max_position_embeddings. Scoring them at all
         # requires a RoPE-extended (YaRN) copy of the checkpoint -- without one the model silently
         # reads garbage positions and the rung looks like a long-context collapse that is really a
