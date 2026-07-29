@@ -102,7 +102,9 @@ exact global model and batch:
 
 The corresponding 50-step throughput qualification uses a 2 Mi-token batch,
 MB16, and final-10 medians:
-[throughput work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYP2RYXXK398CRZMB94ARXAK).
+[latent throughput work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYP2RYXXK398CRZMB94ARXAK).
+The matched non-latent `L=1` control uses the same single-B300 protocol:
+[L=1 control](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYP31SFS8DYN7GJHX2CTDHT1).
 
 ## Validation hold
 
