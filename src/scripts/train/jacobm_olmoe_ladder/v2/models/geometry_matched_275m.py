@@ -46,6 +46,7 @@ N_HEADS = 8
 HEAD_DIM = 128
 FULL_ATTENTION_LAYERS = (4, 9)
 GDN_LAYERS = tuple(i for i in range(N_LAYERS) if i not in FULL_ATTENTION_LAYERS)
+NUM_EXPERTS = 256
 TOP_K = 8
 SWA_WINDOW_SIZE = 2_048
 
@@ -143,8 +144,10 @@ LATENT_MOE_ROUTED_DIMS_BY_COMPRESSION = {
     4: 160,
 }
 EXPECTED_LATENT_MOE_COUNTS = {
-    2: (248_294_208, 184_068_928, 1_671_060_288),
-    4: (223_503_168, 159_277_888, 934_886_208),
+    (2, False): (248_294_208, 184_068_928, 1_671_060_288),
+    (4, False): (223_503_168, 159_277_888, 934_886_208),
+    (2, True): (295_664_448, 231_439_168, 3_141_196_608),
+    (4, True): (296_770_368, 232_545_088, 3_142_302_528),
 }
 
 # A strict 1:1 hybrid alternates a recurrent/local mixer at even layers with
@@ -526,15 +529,18 @@ def build_geometry_matched_kda_latent_moe_model_config(
     *,
     compression: int,
     up_proj_input_norm_enabled: bool = False,
+    scale_experts_with_compression: bool = False,
 ) -> OLMoDDPModelConfig:
     """Add LatentMoE to the promoted 275M KDA recipe.
 
     Only the routed expert branch is projected. Routing decisions are made from
     the full-width token representation, while the routed experts operate at
     ``d_model / compression``. The shared expert, attention/recurrent mixers,
-    residual stream, expert hidden width, expert count, and top-k stay unchanged.
-    The optional pre-up-projection RMSNorm is exposed explicitly so a later
-    ablation cannot silently change the architecture.
+    residual stream, and expert hidden width stay unchanged. When
+    ``scale_experts_with_compression`` is enabled, both total experts and top-k
+    are multiplied by the compression ratio, matching the paper's
+    parameter/compute-matched recipe. The optional pre-up-projection RMSNorm is
+    exposed explicitly so a later ablation cannot silently change the architecture.
     """
 
     try:
@@ -562,6 +568,10 @@ def build_geometry_matched_kda_latent_moe_model_config(
         )
         latent.routed_experts.d_model = routed_expert_dim
         latent.routed_experts_router.d_model = D_MODEL
+        if scale_experts_with_compression:
+            latent.routed_experts.num_experts *= compression
+            latent.routed_experts_router.num_experts *= compression
+            latent.routed_experts_router.top_k *= compression
         return latent
 
     candidate.block = with_latent_moe(resolved[1])
@@ -594,15 +604,28 @@ def build_geometry_matched_kda_latent_moe_model_config(
             raise ValueError(f"LatentMoE candidate layer {layer_idx} has inconsistent dimensions")
         if block.shared_experts is None or block.shared_experts.d_model != D_MODEL:
             raise ValueError(f"LatentMoE candidate layer {layer_idx} changed its shared expert")
-        if block.routed_experts.hidden_size != 664 or block.routed_experts_router.top_k != TOP_K:
-            raise ValueError(f"LatentMoE candidate layer {layer_idx} changed expert width/top-k")
+        expected_num_experts = (
+            NUM_EXPERTS * compression if scale_experts_with_compression else NUM_EXPERTS
+        )
+        expected_top_k = TOP_K * compression if scale_experts_with_compression else TOP_K
+        if (
+            block.routed_experts.hidden_size != 664
+            or block.routed_experts.num_experts != expected_num_experts
+            or block.routed_experts_router.num_experts != expected_num_experts
+            or block.routed_experts_router.top_k != expected_top_k
+        ):
+            raise ValueError(
+                f"LatentMoE candidate layer {layer_idx} has the wrong expert width/count/top-k"
+            )
 
     actual_counts = (
         candidate.num_active_params,
         candidate.num_active_non_embedding_params,
         candidate.num_params,
     )
-    expected_counts = EXPECTED_LATENT_MOE_COUNTS[compression]
+    expected_counts = EXPECTED_LATENT_MOE_COUNTS[
+        (compression, scale_experts_with_compression)
+    ]
     if not up_proj_input_norm_enabled and actual_counts != expected_counts:
         raise ValueError(
             f"unexpected LatentMoE {compression}x parameter counts: "

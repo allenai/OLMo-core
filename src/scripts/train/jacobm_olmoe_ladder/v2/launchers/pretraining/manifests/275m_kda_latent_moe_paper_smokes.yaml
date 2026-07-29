@@ -1,0 +1,71 @@
+schema_version: 1
+
+experiment:
+  description: Minimal EP1 functional smokes for paper-matched 275M KDA LatentMoE candidates
+  checkpoint_root: /weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/olmo-ddp/pretraining-smokes
+
+source:
+  repo: /weka/oe-adapt-default/jacobm/olmoe3/olmo-ddp-migration/OLMo-core-moe-v2-core
+  wrapper: src/scripts/train/jacobm_olmoe3_hybrid_scale_beaker.sh
+  image: 01KW8G8JC20H11Y60PPTE2VN4Q
+
+beaker:
+  workspace: ai2/OLMo-3-moe-experiments
+  cluster: ai2/holmes
+  priority: urgent
+  shared_memory: 64 GiB
+  min_runtime: 30m
+  auto_resume: false
+  timeout: 2h
+  result_path: /results
+
+secrets:
+  AWS_ACCESS_KEY_ID: AWS_ACCESS_KEY_ID
+  AWS_SECRET_ACCESS_KEY: AWS_SECRET_ACCESS_KEY
+  BEAKER_TOKEN: jacobm_BEAKER_TOKEN
+  HF_TOKEN: jacobm_HF_TOKEN
+
+datasets:
+  - mount_path: /weka/oe-adapt-default
+    weka: oe-adapt-default
+  - mount_path: /weka/oe-training-default
+    weka: oe-training-default
+
+training:
+  sequence_length: 8192
+  hard_stop_steps: 12
+  save_interval: 1000
+  ephemeral_save_interval: 500
+  checkpoint_removal: never
+  eval_interval: 1000
+  eval_steps: 1
+  eval_task_set: fast
+  eval_on_finish: false
+  compile: true
+  wandb: false
+  checkpoints: false
+  evals: false
+
+smokes:
+  - task_name: 275m-kda-latent2x-paper-ep1-smoke
+    run_name: smoke-275m-geometry-kda-ev2-neg-nope-gated-latentmoe-2x-paper-ep1
+    model_size: 275m
+    model_variant: geometry_275m_kda_ev2_neg_nope_gated_latent2x_papermatched
+    cx: 1
+    learning_rate: "1.6e-3"
+    global_batch_size: 65536
+    gpu_count: 1
+    expert_parallel_size: 1
+    expert_parallel_path: sync_1d
+    rank_microbatch_sequences: 4
+  - task_name: 275m-kda-latent4x-paper-ep1-smoke
+    run_name: smoke-275m-geometry-kda-ev2-neg-nope-gated-latentmoe-4x-paper-ep1
+    model_size: 275m
+    model_variant: geometry_275m_kda_ev2_neg_nope_gated_latent4x_papermatched
+    cx: 1
+    learning_rate: "1.6e-3"
+    global_batch_size: 65536
+    gpu_count: 1
+    expert_parallel_size: 1
+    expert_parallel_path: sync_1d
+    rank_microbatch_sequences: 4

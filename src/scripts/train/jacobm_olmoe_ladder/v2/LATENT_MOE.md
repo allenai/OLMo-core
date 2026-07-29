@@ -27,8 +27,8 @@ One scientific distinction remains visible. PR #799 routes on the
 down-projected representation, whereas the LatentMoE paper keeps the routing
 gate at full model width. We qualify both semantics independently. The paper's
 accuracy-oriented recipe also increases total experts and top-k by the
-compression factor; both of our first arms hold expert count/top-k fixed so the
-router-input correction remains isolated.
+compression factor. We retain fixed-expert controls to isolate the router-input
+correction and add a third, paper-matched arm that scales both quantities.
 
 Kimi K3 independently confirms the full-width-router design in released code:
 it computes routing from the 7,168-wide residual representation, then projects
@@ -45,31 +45,39 @@ different supported EP path and smoke-test that layout independently.
 
 ## First 275M candidates
 
-Both candidates start from the promoted 275M KDA recipe: 640 model width, 10
+All candidates start from the promoted 275M KDA recipe: 640 model width, 10
 layers, KDA `expand_v=2` with negative eigenvalues, gated NoPE full-attention
-layers, 664 expert hidden width, 64 routed experts, top-8, and one full-width
-shared expert. Only the routed latent width changes. The optional RMSNorm before
-the latent up projection is explicitly disabled for these first candidates,
-matching the PR default and avoiding a second intervention.
+layers, 664 expert hidden width, 256 routed experts, top-8, and one full-width
+shared expert. The fixed-expert controls change only routed latent width and
+router semantics. The paper-matched arm additionally multiplies both total
+experts and top-k by compression. The optional RMSNorm before the latent up
+projection remains disabled, matching the PR default and avoiding another
+intervention.
 
-| Candidate | Model → latent | Compression | Active params | Active non-embedding | Stored params | Active change vs KDA parent |
+| Candidate | Model → latent | Experts / top-k | Active params | Active non-embedding | Stored params | Active change vs KDA parent |
 |---|---:|---:|---:|---:|---:|---:|
-| KDA parent | 640 → 640 | 1× | 290,503,488 | 226,278,208 | 3,136,035,648 | — |
-| LatentMoE 2× full router | 640 → 320 | 2× | 248,294,208 | 184,068,928 | 1,671,060,288 | -14.530% |
-| LatentMoE 4× full router | 640 → 160 | 4× | 223,503,168 | 159,277,888 | 934,886,208 | -23.064% |
+| KDA parent | 640 → 640 | 256 / 8 | 290,503,488 | 226,278,208 | 3,136,035,648 | — |
+| LatentMoE 2× full-router control | 640 → 320 | 256 / 8 | 248,294,208 | 184,068,928 | 1,671,060,288 | -14.530% |
+| LatentMoE 4× full-router control | 640 → 160 | 256 / 8 | 223,503,168 | 159,277,888 | 934,886,208 | -23.064% |
+| LatentMoE 2× paper-matched | 640 → 320 | 512 / 16 | 295,664,448 | 231,439,168 | 3,141,196,608 | +1.777% |
+| LatentMoE 4× paper-matched | 640 → 160 | 1,024 / 32 | 296,770,368 | 232,545,088 | 3,142,302,528 | +2.157% |
 
 The 4× point matches the compression selected in the
 [LatentMoE paper](https://arxiv.org/abs/2601.18089); the 2× point is the
-conservative control. These are not active-parameter-matched models because
-expert count/top-k remain fixed.
+conservative control. Multiplying total experts preserves stored routed-expert
+parameters, while multiplying top-k preserves active routed-expert parameters.
 
 Model variants:
 
 - `geometry_275m_kda_ev2_neg_nope_gated_latent2x_fullrouter`
 - `geometry_275m_kda_ev2_neg_nope_gated_latent4x_fullrouter`
+- `geometry_275m_kda_ev2_neg_nope_gated_latent2x_papermatched`
+- `geometry_275m_kda_ev2_neg_nope_gated_latent4x_papermatched`
 
-The minimal smoke manifest is
+The fixed-expert smoke manifest is
 [`launchers/pretraining/manifests/275m_kda_latent_moe_smokes.yaml`](launchers/pretraining/manifests/275m_kda_latent_moe_smokes.yaml).
+The paper-matched smoke manifest is
+[`launchers/pretraining/manifests/275m_kda_latent_moe_paper_smokes.yaml`](launchers/pretraining/manifests/275m_kda_latent_moe_paper_smokes.yaml).
 It runs 12 compiled optimizer steps per candidate on one Holmes B300 with EP1,
 MB4/accumulation-2, a 30-minute allocated runtime, no W&B, no evaluation, and
 no checkpoint writes. The first unallocated submission was canceled before
