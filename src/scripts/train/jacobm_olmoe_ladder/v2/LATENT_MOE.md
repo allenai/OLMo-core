@@ -29,6 +29,15 @@ qualification intentionally tests the PR behavior as written and holds expert
 count/top-k fixed. Before a full ladder, decide whether to retain that isolated
 variant or add a separate paper-exact router/expert-scaling recipe.
 
+Kimi K3 independently confirms the full-width-router design in released code:
+it computes routing from the 7,168-wide residual representation, then projects
+only the routed expert input to 3,584 dimensions. It enables a pre-up-projection
+RMSNorm and uses 896 routed experts with top-16. After the PR-as-written smokes,
+our intended follow-up is therefore to make the router full-width while keeping
+the 2×/4× expert compression points. Treat enabling the norm and scaling
+expert-count/top-k as separately visible choices rather than folding them into
+that implementation correction.
+
 The current 320/160 latent widths are qualified for EP1/no-EP first. PR #799's
 DeepEP BF16 path requires the routed hidden dimension to be divisible by 256,
 so these exact small-model widths must not be carried into DeepEP runs. If a

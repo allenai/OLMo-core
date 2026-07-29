@@ -1,0 +1,24 @@
+[
+  {
+    "experiment_name": "jacobm-275m-kda-latentmoe-qualification",
+    "experiment_id": "01KYNYMY73QJH4ZVDF9M3EATBT",
+    "tasks": [
+      "275m-kda-latent2x-ep1-smoke",
+      "275m-kda-latent4x-ep1-smoke"
+    ],
+    "debug_gradients": false,
+    "run_suffix": null,
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYNYMY73QJH4ZVDF9M3EATBT"
+  },
+  {
+    "experiment_name": "jacobm-275m-kda-latentmoe-qualification-allocated",
+    "experiment_id": "01KYNYYCBH19B2R047E9WWC85J",
+    "tasks": [
+      "275m-kda-latent2x-ep1-smoke",
+      "275m-kda-latent4x-ep1-smoke"
+    ],
+    "debug_gradients": false,
+    "run_suffix": null,
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYNYYCBH19B2R047E9WWC85J"
+  }
+]
