@@ -12,8 +12,8 @@ FROM ${BASE_IMAGE}
 
 # THIS FILE USED TO INSTALL NOTHING, AND THE REASON IT STOPPED IS WORTH READING.
 #
-# The claim was that installing was impossible here: ai2-olmo-core declares torch>=2.6.0,
-# so `pip install .` would fetch a multi-gigabyte wheel and take the build past what a
+# The claim was that installing was impossible here: ai2-olmo-core declares a torch
+# dependency, so `pip install .` would fetch a multi-gigabyte wheel and take the build past what a
 # standard runner can do, and `pip install --no-deps .` would leave an installed
 # distribution whose imports fail anyway. Putting the source on PYTHONPATH was the answer.
 #
@@ -53,15 +53,37 @@ COPY . .
 
 # TORCH IS PINNED TO AN EXACT VERSION AND INSTALLED FIRST, WHICH IS THE WHOLE ARGUMENT.
 #
-# The project declares torch>=2.6.0. Resolved against PyPI at build time that is an
-# unpinned multi-gigabyte dependency, so two builds of one commit months apart produce
+# The project declares a lower bound on torch. Resolved against PyPI at build time that is
+# an unpinned multi-gigabyte dependency, so two builds of one commit months apart produce
 # different images -- and the platform has a study whose entire subject is what does and
 # does not stay identical across rebuilds. An exact version fixes that: a published wheel
-# is never replaced, so `torch==2.6.0` names one artifact forever.
+# is never replaced, so an exact pin names one artifact forever.
 #
-# 2.6.0 rather than the newest available, because it is the floor the project declares. A
-# newer torch is a research decision with a compatibility surface, not something a
-# Dockerfile should pick silently on everyone's behalf.
+# The pin moved twice before it was right, and both moves were measurements rather than
+# preferences. It was 2.6.0, the floor this project declared, and the first GPU training
+# run proved that floor does not import. `import olmo_core` reaches
+# nn/attention/backend.py, which decorates a method with torch.compiler.disable(reason=...),
+# and that keyword does not exist in 2.6.0 -- so the import dies with `TypeError: disable()
+# got an unexpected keyword argument` before any model is built. The declared floor was
+# stale metadata rather than a tested claim, and pyproject.toml is corrected with this.
+#
+# WHICH VERSION, MEASURED RATHER THAN GUESSED THE THIRD TIME. torch.compiler.disable grew
+# its `reason` keyword in 2.8.0 exactly -- read out of torch/compiler/__init__.py at tags
+# v2.7.1, v2.8.0, v2.9.0 and v2.10.0 -- so 2.8.0 is the true floor and everything below it
+# fails the import outright.
+#
+# The pin is 2.9.0 rather than 2.8.0, and the difference is what is tested versus what is
+# merely sufficient. .github/workflows/docker.yml builds this project against 2.7.1 and
+# 2.9.0; of those, 2.9.0 is the only one that can import the package at all. So 2.9.0 is
+# the lowest version that both works and is exercised by this repository, and 2.8.0 would
+# be a floor nothing here has ever run.
+#
+# That the 2.7.1 leg of that matrix cannot import olmo_core.nn is a real inconsistency in
+# this project and is worth someone looking at; it is not fixed here.
+#
+# This is also the argument for pinning rather than tracking a floor. An unpinned
+# `>=2.6.0` resolves to whatever is newest, would have worked here by accident, and would
+# have left the stale floor to be discovered by whoever next had an older environment.
 #
 # Installed before the project so pip sees the constraint already satisfied and has no
 # reason to resolve torch again.
@@ -81,15 +103,22 @@ COPY . .
 # The version is re-asserted alongside it, because the pin above only binds if nothing later
 # in the resolution moved it.
 #
-# The last line is the cheaper half and still worth having: it proves the three imports this
-# image exists to make actually resolve, in the image, rather than at run time on a paid
-# instance.
+# THE LAST LINE IMPORTS SUBMODULES, AND THE SHALLOW VERSION OF IT ALREADY FAILED ONCE.
+#
+# It used to read `import olmo_core, boto3, wandb`, which passed on an image whose first
+# GPU training run then died at startup: the top-level package imports lazily, so nothing
+# under olmo_core.nn was touched until the workload asked for a model, four minutes and one
+# image pull later, on a paid instance. A check that stops at the package name proves the
+# distribution installed, not that the code loads.
+#
+# So it names what a training workload actually reaches for. Anything that breaks between
+# the pinned torch and this library now breaks the build, where it costs a runner minute.
 RUN set -eux; \
-    python -m pip install --no-cache-dir "torch==2.6.0"; \
+    python -m pip install --no-cache-dir "torch==2.9.0"; \
     python -m pip install --no-cache-dir ".[wandb]" boto3; \
-    python -c "import torch; assert torch.__version__.startswith('2.6.0'), f'torch was moved off the pin: {torch.__version__}'"; \
+    python -c "import torch; assert torch.__version__.startswith('2.9.0'), f'torch was moved off the pin: {torch.__version__}'"; \
     python -c "import torch; assert torch.version.cuda, 'the CUDA build of torch was replaced by a CPU wheel'"; \
-    python -c "import olmo_core, boto3, wandb"
+    python -c "import boto3, wandb; from olmo_core.data import TokenizerConfig; from olmo_core.nn.transformer import TransformerConfig; print(TransformerConfig.olmo2_190M(vocab_size=TokenizerConfig.gpt2().padded_vocab_size()).__class__.__name__)"
 
 # No CMD. The entrypoint of the registered base is inherited deliberately, so swapping the
 # base does not leave a stale command behind.
