@@ -1313,9 +1313,7 @@ def combined_forward_ep_no_sync_rowwise_wave(
                 "rowwise_wave:inverse-meta-local-build-exit",
                 block=self.block_idx,
             )
-            rowwise_stage_debug_sync(
-                "rowwise_wave:inverse-meta-local-build", routed_moe_inp.device
-            )
+            rowwise_stage_debug_sync("rowwise_wave:inverse-meta-local-build", routed_moe_inp.device)
         else:
             rowwise_stage_debug_print("rowwise_wave:inverse-meta-put-enter", block=self.block_idx)
             symm_mem_vdev2d_kernels.rowwise_inverse_route_meta_put_compact(

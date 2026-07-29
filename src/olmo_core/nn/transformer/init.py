@@ -212,7 +212,9 @@ class InitMethod(StrEnum):
 
         for projection in (m.latent_down_proj, m.latent_up_proj):
             if projection is not None:
-                projection_std = projection.in_features**-0.5 if self == InitMethod.fan_in else std
+                projection_std = (
+                    projection.in_features**-0.5 if self == InitMethod.fan_in else std
+                )
                 init_linear(projection, std=projection_std, generator=generator)
 
         mlp = cast(Union[MoEMLP, DroplessMoEMLP], m.experts.mlp)
@@ -318,7 +320,9 @@ class InitMethod(StrEnum):
 
         for projection in (b.latent_down_proj, b.latent_up_proj):
             if projection is not None:
-                projection_std = projection.in_features**-0.5 if self == InitMethod.fan_in else std
+                projection_std = (
+                    projection.in_features**-0.5 if self == InitMethod.fan_in else std
+                )
                 init_linear(projection, std=projection_std, generator=generator)
 
         if b.routed_experts:

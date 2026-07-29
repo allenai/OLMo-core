@@ -123,9 +123,7 @@ class MoEConfig(ModuleConfig):
         init_device: str = "cpu",
         cache: Optional[BufferCache] = None,
     ) -> "MoEBase":
-        if self.latent_moe is not None and not (
-            0 < self.latent_moe.routed_expert_dim < d_model
-        ):
+        if self.latent_moe is not None and not (0 < self.latent_moe.routed_expert_dim < d_model):
             raise OLMoConfigurationError(
                 "latent_moe.routed_expert_dim must be greater than 0 and less than d_model "
                 f"({d_model}), got {self.latent_moe.routed_expert_dim}"

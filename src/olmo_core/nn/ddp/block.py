@@ -29,6 +29,7 @@ from olmo_core.utils import get_or_init_stream
 from ..attention.base import SequenceMixerConfig
 from ..buffer_cache import BufferCache
 from ..layer_norm import LayerNormConfig
+from ..moe.moe import LatentMoEConfig
 from ..moe.v2.activation_debug import (
     EP_NO_SYNC_SAVED_ACTIVATIONS_DEBUG_ENABLED,
     maybe_dump_ep_no_sync_saved_activations,
@@ -65,7 +66,6 @@ from ..moe.v2.fp8 import invalidate_rowwise_fp8_cache as _invalidate_rowwise_fp8
 from ..moe.v2.fp8 import normalize_rowwise_fp8_config
 from ..moe.v2.fp8 import refresh_rowwise_fp8_cache as _refresh_rowwise_fp8_cache
 from ..moe.v2.fp8 import shared_experts_forward_rowwise_fp8
-from ..moe.moe import LatentMoEConfig
 from ..moe.v2.no_ep import combined_forward_no_ep as _combined_forward_no_ep
 from ..moe.v2.routed_experts import RoutedExperts, RoutedExpertsConfig
 from ..moe.v2.router import MoERouterConfigV2, MoERouterV2
@@ -223,7 +223,10 @@ class OLMoDDPTransformerBlockConfig(TransformerBlockConfig):
                     "shared_experts.d_model must equal block d_model when latent_moe is enabled "
                     f"({self.shared_experts.d_model} != {d_model})"
                 )
-            if self.shared_experts_router is not None and self.shared_experts_router.d_model != d_model:
+            if (
+                self.shared_experts_router is not None
+                and self.shared_experts_router.d_model != d_model
+            ):
                 raise OLMoConfigurationError(
                     "shared_experts_router.d_model must equal block d_model when latent_moe is "
                     f"enabled ({self.shared_experts_router.d_model} != {d_model})"
@@ -827,17 +830,9 @@ class OLMoDDPTransformerBlock(olmo_core.nn.transformer.block.TransformerBlockBas
 
         # Routers can consume different widths when the routed branch is latent.
         if self.routed_experts_router is not None:
-            flops += (
-                6
-                * self.routed_experts_router.d_model
-                * self.routed_experts_router.num_experts
-            )
+            flops += 6 * self.routed_experts_router.d_model * self.routed_experts_router.num_experts
         if self.shared_experts_router is not None:
-            flops += (
-                6
-                * self.shared_experts_router.d_model
-                * self.shared_experts_router.num_experts
-            )
+            flops += 6 * self.shared_experts_router.d_model * self.shared_experts_router.num_experts
 
         # routed experts: top_k active per token; SwiGLU has 3 matmuls; fwd+bwd x3; GEMM x2.
         if self.routed_experts is not None:

@@ -17,6 +17,7 @@ from olmo_core.distributed.parallel import (
     get_ep_mesh,
 )
 from olmo_core.distributed.utils import get_local_tensor
+from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.nn.feed_forward import FeedForwardConfig
 from olmo_core.nn.moe import (
     LatentMoEConfig,
@@ -25,7 +26,6 @@ from olmo_core.nn.moe import (
     MoERouterConfig,
     MoEType,
 )
-from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.testing import (
     has_grouped_gemm,
     requires_gpu,
