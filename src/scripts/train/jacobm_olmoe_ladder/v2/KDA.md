@@ -66,6 +66,8 @@ to 552 active-matches the deeper model:
 | Current KDA parent | 10 | 664 | 290,503,488 | 226,278,208 | 3,136,035,648 |
 | Mixed 3-KDA/2-SWA/1-FA | 12 | 552 | 290,904,368 | 226,679,088 | 3,182,147,888 |
 | Mixed + paper-matched LatentMoE L=2 | 12 | 552 | 297,212,208 | 232,986,928 | 3,188,455,728 |
+| Mixed 5-KDA/3-SWA/2-FA depth control | 10 | 712 | 291,449,640 | 227,224,360 | 3,342,682,920 |
+| Mixed depth control + LatentMoE L=2 | 10 | 712 | 296,610,600 | 232,385,320 | 3,347,843,880 |
 
 The mixed candidate is `+0.138%` in active parameters and `+1.470%` in stored
 parameters versus the parent.
@@ -103,6 +105,30 @@ it uses 4.6 GiB more active memory. Relative to the non-latent mixed model's
 MB16 result, L=2 reduces TPS by 16.70% but reduces active memory by 31.18%.
 The machine-readable result is
 [`results/throughput/275m_kda_mixed6_latent2x_single_gpu.csv`](results/throughput/275m_kda_mixed6_latent2x_single_gpu.csv).
+
+The 10-layer depth control removes the first KDA/SWA pair from the second
+motif, leaving:
+
+`KDA -> SWA -> KDA -> SWA -> KDA -> FA -> KDA -> SWA -> KDA -> FA`
+
+Increasing only expert hidden width from 552 to 712 puts the non-latent control
+0.19% above its 12-layer parent's active count and the L=2 control 0.20% below
+its parent. Their matched 50-step work is [Beaker
+`01KYQP504SNRMKGXZ7XSRJMFCV`](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYQP504SNRMKGXZ7XSRJMFCV).
+All four depth/latent comparisons use one B300 and an exact 2-Mi-token batch:
+
+| Variant | Layers | Latent | MB | TPS/GPU | TFLOPs/GPU | Seconds/step | Active / reserved GiB |
+|---|---:|---|---:|---:|---:|---:|---:|
+| Mixed attention | 12 | none | 16 | 258,334 | 412.20 | 8.1180 | 243.4 / 247.6 |
+| Mixed attention | 10 | none | 16 | 285,107 | 447.40 | 7.3557 | 234.9 / 238.3 |
+| Mixed attention | 12 | L=2 | 8 | 215,205 | 351.55 | 9.7449 | 167.5 / 169.2 |
+| Mixed attention | 10 | L=2 | 8 | 232,846 | 372.55 | 9.0066 | 166.0 / 167.5 |
+
+At matched latent settings, ten layers improve raw TPS by 10.36% without
+LatentMoE and 8.20% with L=2. Step time falls by 9.39% and 7.58% respectively,
+while peak active memory also falls. All four runs have zero skipped steps.
+The 10-layer machine-readable results are
+[`results/throughput/275m_kda_mixed10_single_gpu.csv`](results/throughput/275m_kda_mixed10_single_gpu.csv).
 
 ## Qualification and sweep
 
