@@ -192,6 +192,17 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         nccl_debug=False,
         beaker_image=OLMoCoreBeakerImage.stable,  # override via --launch.beaker_image=
     )
+    # build_launch_config attaches optional secrets (COMET_API_KEY, R2_ENDPOINT_URL,
+    # WEKA_ENDPOINT_URL, SLACK_WEBHOOK_URL) that most workspaces do not define.
+    # BeakerLaunchConfig._get_env_secrets skips its existence check whenever the launcher itself
+    # runs inside a Beaker batch job, which is exactly how sftlab drives this, so an undefined
+    # optional secret reaches the experiment spec and Beaker rejects the whole submit with
+    # `[code=404] no secret found with name ...`. Resolve them here instead: required secrets pass
+    # through untouched, optional ones only if the workspace actually has them.
+    launch_config.env_secrets = [
+        s for s in launch_config.env_secrets
+        if s.required or launch_config._secret_exists(s)
+    ]
 
     config = ExperimentConfig(
         run_name=cli_context.run_name,
