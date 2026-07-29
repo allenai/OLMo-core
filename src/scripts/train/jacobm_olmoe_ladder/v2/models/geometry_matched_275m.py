@@ -150,6 +150,7 @@ KDA_MIXED6_KDA_LAYERS = (0, 2, 4, 6, 8, 10)
 KDA_MIXED6_SWA_LAYERS = (1, 3, 7, 9)
 KDA_MIXED6_FULL_ATTENTION_LAYERS = (5, 11)
 EXPECTED_KDA_MIXED6_COUNTS = (290_904_368, 226_679_088, 3_182_147_888)
+EXPECTED_KDA_MIXED6_LATENT2X_COUNTS = (297_212_208, 232_986_928, 3_188_455_728)
 
 # LatentMoE qualification starts with the two compression ratios discussed for
 # the 275M rung: a conservative 2x projection and the paper's default 4x
@@ -493,9 +494,10 @@ def build_geometry_matched_kda_model_config(
         raise ValueError(f"unexpected mixer pattern: KDA={actual_kda}, full={actual_full}")
     if candidate.resolved_block_configs[0].routed_experts is not None:
         raise ValueError("KDA candidate must retain the dense-first layer-0 FFN")
-    if candidate.resolved_block_configs[0].shared_experts.hidden_size != (
-        TOP_K + 1
-    ) * expert_hidden_size:
+    if (
+        candidate.resolved_block_configs[0].shared_experts.hidden_size
+        != (TOP_K + 1) * expert_hidden_size
+    ):
         raise ValueError("KDA candidate has an unexpected dense-first FFN width")
     for layer_idx in range(1, candidate.n_layers):
         block = candidate.resolved_block_configs[layer_idx]
@@ -680,6 +682,78 @@ def build_geometry_matched_kda_mixed6_model_config() -> OLMoDDPModelConfig:
     return candidate
 
 
+def build_geometry_matched_kda_mixed6_latent2x_model_config() -> OLMoDDPModelConfig:
+    """Add paper-matched L=2 LatentMoE to the mixed-attention candidate.
+
+    This retains the 12-layer 3-KDA/2-SWA/1-full-attention motif and its
+    552-wide experts. Only the routed expert path is projected from 640 to
+    320, while routed expert count and top-k are doubled to 512 and 16.
+    Routing continues to see the full 640-wide token representation.
+    """
+
+    candidate = build_geometry_matched_kda_mixed6_model_config()
+    resolved = candidate.resolved_block_configs
+
+    def with_latent_moe(block: OLMoDDPTransformerBlockConfig) -> OLMoDDPTransformerBlockConfig:
+        latent = deepcopy(block)
+        if latent.routed_experts is None or latent.routed_experts_router is None:
+            raise ValueError("mixed6 LatentMoE requires a routed expert and router")
+        latent.latent_moe = LatentMoEConfig(
+            latent_dim=LATENT_MOE_ROUTED_DIMS_BY_COMPRESSION[2],
+            up_proj_input_norm_enabled=False,
+        )
+        latent.routed_experts.d_model = LATENT_MOE_ROUTED_DIMS_BY_COMPRESSION[2]
+        latent.routed_experts_router.d_model = D_MODEL
+        latent.routed_experts.num_experts *= 2
+        latent.routed_experts_router.num_experts *= 2
+        latent.routed_experts_router.top_k *= 2
+        return latent
+
+    candidate.block = with_latent_moe(resolved[2])
+    candidate.block_overrides = {
+        0: deepcopy(resolved[0]),
+        **{
+            layer_idx: with_latent_moe(resolved[layer_idx])
+            for layer_idx in range(1, candidate.n_layers)
+        },
+    }
+    candidate.validate()
+
+    for layer_idx, block in enumerate(candidate.resolved_block_configs):
+        if layer_idx == 0:
+            if block.latent_moe is not None or block.routed_experts is not None:
+                raise ValueError("mixed6 LatentMoE must retain the dense-first layer 0")
+            continue
+        if block.latent_moe is None or block.latent_moe.latent_dim != 320:
+            raise ValueError(f"mixed6 LatentMoE layer {layer_idx} has the wrong latent width")
+        if block.routed_experts is None or block.routed_experts_router is None:
+            raise ValueError(f"mixed6 LatentMoE layer {layer_idx} lost its routed branch")
+        if (
+            block.routed_experts.d_model != 320
+            or block.routed_experts.hidden_size != KDA_MIXED6_EXPERT_HIDDEN_SIZE
+            or block.routed_experts.num_experts != 512
+            or block.routed_experts_router.d_model != D_MODEL
+            or block.routed_experts_router.num_experts != 512
+            or block.routed_experts_router.top_k != 16
+        ):
+            raise ValueError(f"mixed6 LatentMoE layer {layer_idx} has inconsistent expert settings")
+        if block.shared_experts is None or block.shared_experts.d_model != D_MODEL:
+            raise ValueError(f"mixed6 LatentMoE layer {layer_idx} changed its shared expert")
+
+    actual_counts = (
+        candidate.num_active_params,
+        candidate.num_active_non_embedding_params,
+        candidate.num_params,
+    )
+    if actual_counts != EXPECTED_KDA_MIXED6_LATENT2X_COUNTS:
+        raise ValueError(
+            "unexpected mixed6 LatentMoE counts: expected "
+            f"{EXPECTED_KDA_MIXED6_LATENT2X_COUNTS}, found {actual_counts}"
+        )
+
+    return candidate
+
+
 def build_geometry_matched_kda_latent_moe_model_config(
     *,
     compression: int,
@@ -743,10 +817,7 @@ def build_geometry_matched_kda_latent_moe_model_config(
     candidate.block = with_latent_moe(resolved[1])
     candidate.block_overrides = {
         0: deepcopy(resolved[0]),
-        **{
-            layer_idx: with_latent_moe(resolved[layer_idx])
-            for layer_idx in FULL_ATTENTION_LAYERS
-        },
+        **{layer_idx: with_latent_moe(resolved[layer_idx]) for layer_idx in FULL_ATTENTION_LAYERS},
     }
     candidate.validate()
 

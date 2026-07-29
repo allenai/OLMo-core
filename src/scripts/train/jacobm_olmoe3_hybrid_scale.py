@@ -115,15 +115,47 @@ KDA_MIXED_ATTENTION_275M_SETTINGS = {
     "geometry_275m_kda_ev2_neg_nope_gated_3kda_2swa_1fa": (2.0, True, 552),
 }
 LATENT_MOE_275M_SETTINGS = {
-    "geometry_275m_kda_ev2_neg_nope_gated_latent2x_fullrouter": (2, False, False, None),
-    "geometry_275m_kda_ev2_neg_nope_gated_latent4x_fullrouter": (4, False, False, None),
-    "geometry_275m_kda_ev2_neg_nope_gated_latent2x_papermatched": (2, False, True, None),
-    "geometry_275m_kda_ev2_neg_nope_gated_latent4x_papermatched": (4, False, True, None),
+    "geometry_275m_kda_ev2_neg_nope_gated_latent2x_fullrouter": (
+        2,
+        False,
+        False,
+        None,
+        False,
+    ),
+    "geometry_275m_kda_ev2_neg_nope_gated_latent4x_fullrouter": (
+        4,
+        False,
+        False,
+        None,
+        False,
+    ),
+    "geometry_275m_kda_ev2_neg_nope_gated_latent2x_papermatched": (
+        2,
+        False,
+        True,
+        None,
+        False,
+    ),
+    "geometry_275m_kda_ev2_neg_nope_gated_latent4x_papermatched": (
+        4,
+        False,
+        True,
+        None,
+        False,
+    ),
     "geometry_275m_kda_ev2_neg_nope_gated_latent4x_1000experts": (
         4,
         False,
         True,
         1000,
+        False,
+    ),
+    "geometry_275m_kda_ev2_neg_nope_gated_3kda_2swa_1fa_latent2x_papermatched": (
+        2,
+        False,
+        True,
+        None,
+        True,
     ),
 }
 KDA_SCALE_NOPE_SETTINGS = {
@@ -230,9 +262,7 @@ def configure_attention_and_mxfp8(model):
     """Configure packed attention and the independently controlled MXFP8 surfaces."""
 
     if MXFP8_EXPERTS_ENABLED:
-        if EP_SIZE > 1 and (
-            EP_USE_CODE_DEFAULTS or EP_PATH != ExpertParallelPath.rowwise_nvshmem
-        ):
+        if EP_SIZE > 1 and (EP_USE_CODE_DEFAULTS or EP_PATH != ExpertParallelPath.rowwise_nvshmem):
             raise ValueError("MXFP8 expert training requires explicit rowwise_nvshmem EP")
     if MXFP8_ATTENTION_ENABLED and ATTENTION_IMPL != AttentionType.fused_v2:
         raise ValueError("MXFP8 attention projections require attention_impl=fused_v2")
@@ -409,6 +439,7 @@ def model_config():
     elif MODEL_VARIANT in LATENT_MOE_275M_SETTINGS:
         from scripts.train.jacobm_olmoe_ladder.v2.models.geometry_matched_275m import (
             build_geometry_matched_kda_latent_moe_model_config,
+            build_geometry_matched_kda_mixed6_latent2x_model_config,
         )
 
         if MODEL_SIZE != "275m":
@@ -418,13 +449,17 @@ def model_config():
             up_proj_input_norm_enabled,
             scale_experts_with_compression,
             num_experts_override,
+            mixed_attention,
         ) = LATENT_MOE_275M_SETTINGS[MODEL_VARIANT]
-        model = build_geometry_matched_kda_latent_moe_model_config(
-            compression=compression,
-            up_proj_input_norm_enabled=up_proj_input_norm_enabled,
-            scale_experts_with_compression=scale_experts_with_compression,
-            num_experts_override=num_experts_override,
-        )
+        if mixed_attention:
+            model = build_geometry_matched_kda_mixed6_latent2x_model_config()
+        else:
+            model = build_geometry_matched_kda_latent_moe_model_config(
+                compression=compression,
+                up_proj_input_norm_enabled=up_proj_input_norm_enabled,
+                scale_experts_with_compression=scale_experts_with_compression,
+                num_experts_override=num_experts_override,
+            )
     elif MODEL_VARIANT == "geometry_275m_swa_rope_gated":
         from scripts.train.jacobm_olmoe_ladder.v2.models.geometry_matched_275m import (
             build_geometry_matched_swa_model_config,
@@ -755,8 +790,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         eigval_tag = "neg" if allow_neg_eigval else "noneg"
         width_tag = f"-h{expert_hidden_size}" if expert_hidden_size != 664 else ""
         variant_group = (
-            f"olmoe3-275m-geometry-kda-ev{expand_v:g}-{eigval_tag}"
-            f"-nope-gated{width_tag}"
+            f"olmoe3-275m-geometry-kda-ev{expand_v:g}-{eigval_tag}-nope-gated{width_tag}"
         )
     elif MODEL_VARIANT in KDA_MIXED_ATTENTION_275M_SETTINGS:
         variant_group = "olmoe3-275m-geometry-kda-ev2-neg-nope-gated-3kda-2swa-1fa"
@@ -766,6 +800,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             up_proj_input_norm_enabled,
             scale_experts_with_compression,
             num_experts_override,
+            mixed_attention,
         ) = LATENT_MOE_275M_SETTINGS[MODEL_VARIANT]
         norm_tag = "-upnorm" if up_proj_input_norm_enabled else ""
         expert_scale_tag = "-paper-matched" if scale_experts_with_compression else "-fullrouter"
@@ -775,6 +810,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         variant_group = (
             f"olmoe3-275m-geometry-kda-ev2-neg-nope-gated-"
             f"latentmoe-{compression}x{expert_scale_tag}{expert_count_tag}{norm_tag}"
+            f"{'-3kda-2swa-1fa' if mixed_attention else ''}"
         )
     elif MODEL_VARIANT == "geometry_275m_swa_rope_gated":
         variant_group = "olmoe3-275m-geometry-swa-rope-gated-throughput"
@@ -808,9 +844,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
     elif MODEL_VARIANT in KDA_SCALE_ALL_SETTINGS:
         expand_v, allow_neg_eigval = KDA_SCALE_ALL_SETTINGS[MODEL_VARIANT]
         eigval_tag = "neg" if allow_neg_eigval else "noneg"
-        precision_tag = (
-            "-mxfp8-aligned" if MODEL_VARIANT in KDA_SCALE_MXFP8_SETTINGS else ""
-        )
+        precision_tag = "-mxfp8-aligned" if MODEL_VARIANT in KDA_SCALE_MXFP8_SETTINGS else ""
         variant_group = (
             f"olmoe3-geometry-matched-kda-ev{expand_v:g}-{eigval_tag}"
             f"-nope-gated{precision_tag}-scale"
@@ -911,6 +945,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 up_proj_input_norm_enabled,
                 scale_experts_with_compression,
                 num_experts_override,
+                mixed_attention,
             ) = LATENT_MOE_275M_SETTINGS[MODEL_VARIANT]
             variant_tags.extend(
                 [
@@ -927,6 +962,15 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 variant_tags.append(f"routed-experts-{num_experts_override}")
             if up_proj_input_norm_enabled:
                 variant_tags.append("latent-up-proj-input-norm")
+            if mixed_attention:
+                variant_tags.extend(
+                    [
+                        "expert-hidden-552",
+                        "mixed-attention",
+                        "3kda-2swa-1fa",
+                        "attention-1to1",
+                    ]
+                )
     elif geometry_variant:
         variant_tags = ["geometry-matched", "expand-v-2", "rope"]
         if MODEL_VARIANT in {
