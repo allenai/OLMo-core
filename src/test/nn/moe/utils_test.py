@@ -41,6 +41,25 @@ def test_moe_permutation_torch_fallback(monkeypatch):
     torch.testing.assert_close(inp.grad, torch.ones_like(inp))
 
 
+def test_moe_unpermutation_torch_fallback_preserves_activation_dtype(monkeypatch):
+    monkeypatch.setattr(utils, "moe_unpermute", None)
+
+    inp = torch.tensor([[2.0, 4.0], [2.0, 4.0]], dtype=torch.bfloat16)
+    row_id_map = torch.tensor([0, 1], dtype=torch.int32)
+    merging_probs = torch.tensor([[0.25, 0.75]], dtype=torch.float32)
+
+    restored = utils.moe_unpermute_no_compile(
+        inp=inp,
+        row_id_map=row_id_map,
+        merging_probs=merging_probs,
+        restore_shape=torch.Size((1, 2)),
+        map_type="index",
+    )
+
+    assert restored.dtype == torch.bfloat16
+    torch.testing.assert_close(restored, torch.tensor([[2.0, 4.0]], dtype=torch.bfloat16))
+
+
 def test_grouped_mm_torch_fallback(monkeypatch):
     monkeypatch.setattr(routed_experts, "grouped_gemm", None)
 

@@ -170,6 +170,7 @@ def _moe_unpermute_torch_fallback(
     if merging_probs is not None:
         if merging_probs.numel() != row_id_map.numel():
             raise ValueError("merging_probs and row_id_map must describe the same number of routes")
+        merging_probs = merging_probs.to(dtype=inp.dtype)
         restored = (
             restored_routes.view(*merging_probs.shape, inp.shape[-1]) * merging_probs.unsqueeze(-1)
         ).sum(dim=-2)
