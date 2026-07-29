@@ -72,11 +72,17 @@ def finish_moe_forward(
     prepared: PreparedMoEForward,
     mlp_output: torch.Tensor,
     routing: RoutedTokens,
+    *,
+    accumulate_aux_loss_metrics: Optional[bool] = None,
 ) -> torch.Tensor:
     """Apply the common residual/norm epilogue and routed auxiliary loss."""
 
     final_output = block._res_norm_mlp(prepared.attention_residual, mlp_output)
-    return block._attach_routed_aux_loss(final_output, routing.aux_loss_info)
+    return block._attach_routed_aux_loss(
+        final_output,
+        routing.aux_loss_info,
+        accumulate_metrics=accumulate_aux_loss_metrics,
+    )
 
 
 class ExpertParallelBackend(ABC):
@@ -100,7 +106,10 @@ class Sync1DBackend(ExpertParallelBackend):
     path = ExpertParallelPath.sync_1d
 
     def run_moe(self, block, x, *, loss_div_factor=None, **kwargs):
-        return block.combined_forward_ep_1d(
+        from .ep_sync_1d import combined_forward_ep_1d
+
+        return combined_forward_ep_1d(
+            block,
             x, loss_div_factor=loss_div_factor, **kwargs
         )
 
@@ -123,8 +132,20 @@ class RowwiseNVSHMEMBackend(ExpertParallelBackend):
     path = ExpertParallelPath.rowwise_nvshmem
 
     def run_moe(self, block, x, *, loss_div_factor=None, **kwargs):
-        return block.combined_forward_ep_no_sync_rowwise(
-            x, loss_div_factor=loss_div_factor, **kwargs
+        from .checkpointing import get_rowwise_checkpoint_state
+        from .ep_no_sync_rowwise import combined_forward_ep_no_sync_rowwise
+
+        checkpoint_state = block._ep_no_sync_rowwise_static_checkpoint_state
+        if checkpoint_state is None:
+            checkpoint_state = get_rowwise_checkpoint_state()
+        activation_checkpointing, accumulate_aux_loss_metrics = checkpoint_state
+        return combined_forward_ep_no_sync_rowwise(
+            block,
+            x,
+            activation_checkpointing=activation_checkpointing,
+            accumulate_routed_aux_loss_metrics=accumulate_aux_loss_metrics,
+            loss_div_factor=loss_div_factor,
+            **kwargs,
         )
 
 
@@ -132,8 +153,20 @@ class RowwiseWaveBackend(ExpertParallelBackend):
     path = ExpertParallelPath.rowwise_wave
 
     def run_moe(self, block, x, *, loss_div_factor=None, **kwargs):
-        return block.combined_forward_ep_no_sync_rowwise_wave(
-            x, loss_div_factor=loss_div_factor, **kwargs
+        from .checkpointing import get_rowwise_checkpoint_state
+        from .ep_no_sync_rowwise_wave import combined_forward_ep_no_sync_rowwise_wave
+
+        checkpoint_state = block._ep_no_sync_rowwise_static_checkpoint_state
+        if checkpoint_state is None:
+            checkpoint_state = get_rowwise_checkpoint_state()
+        activation_checkpointing, accumulate_aux_loss_metrics = checkpoint_state
+        return combined_forward_ep_no_sync_rowwise_wave(
+            block,
+            x,
+            activation_checkpointing=activation_checkpointing,
+            accumulate_routed_aux_loss_metrics=accumulate_aux_loss_metrics,
+            loss_div_factor=loss_div_factor,
+            **kwargs,
         )
 
 
@@ -141,8 +174,23 @@ class DeepEPV2Backend(ExpertParallelBackend):
     path = ExpertParallelPath.deepep_v2
 
     def run_moe(self, block, x, *, loss_div_factor=None, **kwargs):
-        return block.combined_forward_ep_deepep_v2(
-            x, loss_div_factor=loss_div_factor, **kwargs
+        from .checkpointing import get_rowwise_checkpoint_state
+        from .ep_deepep_v2 import combined_forward_ep_deepep_v2
+
+        checkpoint_state = block._ep_no_sync_rowwise_static_checkpoint_state
+        if checkpoint_state is None:
+            checkpoint_state = get_rowwise_checkpoint_state()
+        _, accumulate_aux_loss_metrics = checkpoint_state
+        deepep_reentrant_checkpoint = bool(kwargs.pop("deepep_reentrant_checkpoint", False))
+        return combined_forward_ep_deepep_v2(
+            block,
+            x,
+            accumulate_routed_aux_loss_metrics=accumulate_aux_loss_metrics,
+            accumulate_router_aux_loss_metrics=(
+                True if deepep_reentrant_checkpoint else None
+            ),
+            loss_div_factor=loss_div_factor,
+            **kwargs,
         )
 
 

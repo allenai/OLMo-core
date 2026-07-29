@@ -45,6 +45,21 @@ class _NoSync1DCapacityPlan:
     rank_capacity: int
 
 
+@dataclass(frozen=True)
+class _NoSync1DLocalDispatch:
+    tokens: torch.Tensor
+    send_rank_splits: torch.Tensor
+    reverse_permutation: torch.Tensor
+    input_shape: torch.Size
+
+
+@dataclass(frozen=True)
+class _SharedExpertWork:
+    up: Optional[torch.Tensor]
+    gate: Optional[torch.Tensor]
+    weights: Optional[torch.Tensor]
+
+
 def _apply_token_capacity_and_drop(
     block: OLMoDDPTransformerBlock,
     local_batch_size_per_global_routed_expert: torch.Tensor,
@@ -125,6 +140,196 @@ def _get_buffers(block: OLMoDDPTransformerBlock, plan: _NoSync1DCapacityPlan, x:
     )
 
 
+def _route_shared_experts(
+    block: OLMoDDPTransformerBlock,
+    model_input: torch.Tensor,
+    *,
+    loss_div_factor: Optional[Union[torch.Tensor, float]],
+) -> Optional[torch.Tensor]:
+    """Launch shared-expert routing on the dense stream when configured."""
+
+    wait_stream_no_compile(
+        this_stream=block.get_dense_stream(),
+        other_stream=torch.cuda.current_stream(),
+    )
+    with torch.cuda.stream(block.get_dense_stream()):
+        if block.shared_experts_router is None:
+            return None
+        shared_weights, _, _, _ = block.shared_experts_router(
+            model_input,
+            True,
+            loss_div_factor=loss_div_factor,
+        )
+        return shared_weights
+
+
+def _start_shared_experts(
+    block: OLMoDDPTransformerBlock,
+    model_input: torch.Tensor,
+    shared_weights: Optional[torch.Tensor],
+) -> _SharedExpertWork:
+    """Launch the first shared-expert linear projections on the dense stream."""
+
+    if block.shared_experts is None:
+        return _SharedExpertWork(up=None, gate=None, weights=shared_weights)
+    wait_stream_no_compile(
+        this_stream=block.get_dense_stream(),
+        other_stream=torch.cuda.current_stream(),
+    )
+    with torch.cuda.stream(block.get_dense_stream()):
+        up, gate = block.shared_experts.forward1(model_input)
+    return _SharedExpertWork(up=up, gate=gate, weights=shared_weights)
+
+
+def _finish_shared_experts(
+    block: OLMoDDPTransformerBlock,
+    work: _SharedExpertWork,
+    output_shape: torch.Size,
+) -> Optional[torch.Tensor]:
+    """Finish shared-expert computation and mix multiple shared experts."""
+
+    if block.shared_experts is None:
+        return None
+    assert work.up is not None
+    assert work.gate is not None
+    with torch.cuda.stream(block.get_dense_stream()):
+        shared_out = block.shared_experts.forward2(work.up, work.gate, output_shape)
+        return block._mix_shared_out(shared_out, work.weights, output_shape)
+
+
+def _permute_local_tokens(
+    block: OLMoDDPTransformerBlock,
+    routed_input: torch.Tensor,
+    expert_indices: torch.Tensor,
+    plan: _NoSync1DCapacityPlan,
+    buffers,
+) -> _NoSync1DLocalDispatch:
+    """Drop overflow routes and permute retained local tokens into rank-major order."""
+
+    assert block.routed_experts_router is not None
+    assert block.num_local_routed_experts is not None
+    input_shape = routed_input.shape
+    routing_map = expert_indices.view(-1, block.routed_experts_router.top_k).int()
+    with nvtx.annotate("Permute local tokens", color="green"):
+        tokens, reverse_permutation = moe_permute_1d_fused_drop_no_compile(
+            inp=routed_input,
+            routing_map=routing_map,
+            num_out_tokens=plan.num_out_tokens,
+            reorder_indices=plan.local_reorder_indices,
+            inverse_reorder_indices=plan.local_inverse_reorder_indices,
+            requested_splits=plan.requested_splits,
+            keep_splits=plan.allowed_splits,
+            out=buffers.dispatch_in.detach(),
+            map_type="index",
+        )
+    with torch.no_grad():
+        send_rank_splits = plan.allowed_splits.view(
+            block.ep_world_size, block.num_local_routed_experts
+        ).sum(dim=-1, dtype=torch.long)
+    return _NoSync1DLocalDispatch(
+        tokens=tokens,
+        send_rank_splits=send_rank_splits,
+        reverse_permutation=reverse_permutation,
+        input_shape=input_shape,
+    )
+
+
+def _dispatch_tokens(block, local_dispatch, buffers, group_name):
+    """Dispatch rank-major token rows without a host synchronization."""
+
+    return _DispatchVDevAutograd.apply(
+        local_dispatch.tokens,
+        local_dispatch.send_rank_splits,
+        buffers.dispatch_in,
+        buffers.dispatch_in_rank_splits,
+        buffers.dispatch_out,
+        buffers.dispatch_rank_splits_offsets,
+        buffers.dispatch_tmp_rank_splits_offsets,
+        group_name,
+        block.ep_pg,
+    )
+
+
+def _compute_local_experts(block, dispatch_out, plan, buffers):
+    """Reorder received rows by local expert, compute experts, and restore rank order."""
+
+    assert block.routed_experts is not None
+    with torch.no_grad():
+        padded_expert_splits = padded_local_expert_splits_for_capacity(
+            plan.recv_splits_by_src_local,
+            rank_capacity=plan.rank_capacity,
+        )
+
+    with nvtx.annotate("Permute global tokens", color="green"):
+        if block.routed_experts.num_local_experts == 1:
+            expert_input = dispatch_out.clone()
+            global_chunk_row_id_map = None
+        else:
+            with torch.no_grad():
+                global_chunk_routing_map = build_chunk_te_routing_map(
+                    plan.recv_splits_by_src_local,
+                    rows=dispatch_out.shape[0],
+                )
+            expert_input, global_chunk_row_id_map = moe_chunk_reorder_no_compile(
+                dispatch_out,
+                routing_map=global_chunk_routing_map,
+                num_out_tokens=dispatch_out.shape[0],
+                backward_grad_input_buffer=buffers.dispatch_out.detach(),
+            )
+
+    expert_output = block.routed_experts(expert_input, padded_expert_splits)
+    with nvtx.annotate("Unpermute global tokens", color="green"):
+        if block.routed_experts.num_local_experts == 1:
+            return expert_output
+        assert global_chunk_row_id_map is not None
+        return moe_chunk_reorder_no_compile(
+            inp=expert_output,
+            row_id_map=global_chunk_row_id_map,
+            out=buffers.combine_in.detach(),
+        )
+
+
+def _combine_and_restore_local_tokens(
+    block,
+    expert_output,
+    dispatch_rank_splits_offsets,
+    local_dispatch,
+    plan,
+    buffers,
+    group_name,
+    expert_weights,
+):
+    """Return expert rows to source ranks and restore source-token order."""
+
+    combine_out, _ = _CombineVDevAutograd.apply(
+        expert_output,
+        dispatch_rank_splits_offsets[0],
+        buffers.combine_in,
+        buffers.combine_in_rank_splits,
+        buffers.combine_out,
+        buffers.combine_rank_splits_offsets,
+        buffers.combine_tmp_rank_splits_offsets,
+        group_name,
+        block.ep_pg,
+    )
+    with nvtx.annotate("Unpermute-Merge local tokens", color="green"):
+        combine_out_for_unpermute = (
+            combine_out.clone() if buffers.combine_out_is_shared else combine_out
+        )
+        return restore_drop_unpermute_1d(
+            block,
+            combine_out=combine_out_for_unpermute,
+            local_inverse_reorder_indices=plan.local_inverse_reorder_indices,
+            packed_keep_mask=plan.packed_keep_mask,
+            num_kept=plan.num_kept,
+            reversed_local_x_permutation_mapping=local_dispatch.reverse_permutation,
+            local_x_global_routed_expert_weights=expert_weights,
+            hidden_shape_before_permute=local_dispatch.input_shape,
+            row_id_map_is_packed=True,
+            backward_grad_input_buffer=buffers.combine_out.detach(),
+        )
+
+
 def combined_forward_ep_no_sync_1d(
     block: OLMoDDPTransformerBlock,
     x: torch.Tensor,
@@ -147,7 +352,6 @@ def combined_forward_ep_no_sync_1d(
         not requires_host_side_split_sizes()
     ), "EP no-sync implementation does not support host-side split size communication"
     group_name = get_ep_no_sync_group_name(self)
-    B, S, D = x.shape
     prepared, routing = prepare_and_route_moe(
         self,
         x,
@@ -160,25 +364,11 @@ def combined_forward_ep_no_sync_1d(
     local_x_global_routed_expert_indices = routing.expert_indices
     local_batch_size_per_global_routed_expert = routing.tokens_per_expert
 
-    wait_stream_no_compile(
-        this_stream=self.get_dense_stream(),
-        other_stream=torch.cuda.current_stream(),
+    shared_weights = _route_shared_experts(
+        self,
+        moe_inp,
+        loss_div_factor=loss_div_factor,
     )
-
-    with torch.cuda.stream(self.get_dense_stream()):
-        if self.shared_experts_router:
-            (
-                local_x_global_shared_expert_weights,
-                _,
-                _,
-                _,
-            ) = self.shared_experts_router(
-                moe_inp,
-                True,
-                loss_div_factor=loss_div_factor,
-            )
-        else:
-            local_x_global_shared_expert_weights = None
 
     in_shape = moe_inp.size()
     moe_inp = moe_inp.view(-1, in_shape[-1])
@@ -190,154 +380,35 @@ def combined_forward_ep_no_sync_1d(
     )
     buffers = _get_buffers(self, capacity, moe_inp)
 
-    requested_splits = capacity.requested_splits
-    allowed_splits = capacity.allowed_splits
-    recv_splits_by_src_local = capacity.recv_splits_by_src_local
-    local_reorder_indices = capacity.local_reorder_indices
-    local_inverse_reorder_indices = capacity.local_inverse_reorder_indices
-    packed_keep_mask = capacity.packed_keep_mask
-    num_kept = capacity.num_kept
-    num_out_tokens = capacity.num_out_tokens
-    rank_capacity = capacity.rank_capacity
-
-    routing_map = local_x_global_routed_expert_indices.view(
-        -1, self.routed_experts_router.top_k
-    ).int()
-    hidden_shape_before_permute = moe_inp.shape
-
-    with torch.no_grad():
-        padded_batch_size_per_local_expert = padded_local_expert_splits_for_capacity(
-            recv_splits_by_src_local,
-            rank_capacity=rank_capacity,
-        )
-
-    with nvtx.annotate("Permute local tokens", color="green"):
-        (
-            permutated_local_x,
-            reversed_local_x_permutation_mapping,
-        ) = moe_permute_1d_fused_drop_no_compile(
-            inp=moe_inp,
-            routing_map=routing_map,
-            num_out_tokens=num_out_tokens,
-            reorder_indices=local_reorder_indices,
-            inverse_reorder_indices=local_inverse_reorder_indices,
-            requested_splits=requested_splits,
-            keep_splits=allowed_splits,
-            out=buffers.dispatch_in.detach(),
-            map_type="index",
-        )
-
-    with torch.no_grad():
-        send_rank_splits = allowed_splits.view(
-            self.ep_world_size, self.num_local_routed_experts
-        ).sum(dim=-1, dtype=torch.long)
-
-    if self.shared_experts is not None:
-        wait_stream_no_compile(
-            this_stream=self.get_dense_stream(),
-            other_stream=torch.cuda.current_stream(),
-        )
-        with torch.cuda.stream(self.get_dense_stream()):
-            shared_out_up, shared_out_gate = self.shared_experts.forward1(moe_inp.view(B, S, D))
-    else:
-        shared_out_up, shared_out_gate = None, None
-
-    dispatch_out, dispatch_rank_splits_offsets = _DispatchVDevAutograd.apply(
-        permutated_local_x,
-        send_rank_splits,
-        buffers.dispatch_in,
-        buffers.dispatch_in_rank_splits,
-        buffers.dispatch_out,
-        buffers.dispatch_rank_splits_offsets,
-        buffers.dispatch_tmp_rank_splits_offsets,
-        group_name,
-        self.ep_pg,
+    local_dispatch = _permute_local_tokens(
+        self,
+        moe_inp,
+        local_x_global_routed_expert_indices,
+        capacity,
+        buffers,
     )
-
-    dispatch_rank_major = dispatch_out
-
-    with nvtx.annotate("Permute global tokens", color="green"):
-        if self.routed_experts.num_local_experts == 1:
-            dispatch_rank_major = dispatch_rank_major.clone()
-            global_chunk_row_id_map = None
-        else:
-            with torch.no_grad():
-                global_chunk_routing_map = build_chunk_te_routing_map(
-                    recv_splits_by_src_local,
-                    rows=dispatch_rank_major.shape[0],
-                )
-            dispatch_rank_major, global_chunk_row_id_map = moe_chunk_reorder_no_compile(
-                dispatch_rank_major,
-                routing_map=global_chunk_routing_map,
-                num_out_tokens=dispatch_rank_major.shape[0],
-                backward_grad_input_buffer=buffers.dispatch_out.detach(),
-            )
-
-    dispatch_rank_major = self.routed_experts(
-        dispatch_rank_major,
-        padded_batch_size_per_local_expert,
+    shared_work = _start_shared_experts(self, prepared.model_input, shared_weights)
+    dispatch_out, dispatch_rank_splits_offsets = _dispatch_tokens(
+        self, local_dispatch, buffers, group_name
     )
-
-    with nvtx.annotate("Unpermute global tokens", color="green"):
-        if self.routed_experts.num_local_experts == 1:
-            global_x_rank_major = dispatch_rank_major
-        else:
-            assert global_chunk_row_id_map is not None
-            global_x_rank_major = moe_chunk_reorder_no_compile(
-                inp=dispatch_rank_major,
-                row_id_map=global_chunk_row_id_map,
-                out=buffers.combine_in.detach(),
-            )
+    expert_output = _compute_local_experts(self, dispatch_out, capacity, buffers)
 
     wait_stream_no_compile(
         this_stream=self.get_dense_stream(),
         other_stream=torch.cuda.current_stream(),
     )
 
-    combine_out, _combine_rank_splits_offsets = _CombineVDevAutograd.apply(
-        global_x_rank_major,
-        dispatch_rank_splits_offsets[0],
-        buffers.combine_in,
-        buffers.combine_in_rank_splits,
-        buffers.combine_out,
-        buffers.combine_rank_splits_offsets,
-        buffers.combine_tmp_rank_splits_offsets,
+    local_x = _combine_and_restore_local_tokens(
+        self,
+        expert_output,
+        dispatch_rank_splits_offsets,
+        local_dispatch,
+        capacity,
+        buffers,
         group_name,
-        self.ep_pg,
+        local_x_global_routed_expert_weights,
     )
-
-    with nvtx.annotate("Unpermute-Merge local tokens", color="green"):
-        combine_out_for_unpermute = (
-            combine_out.clone() if buffers.combine_out_is_shared else combine_out
-        )
-        local_x = restore_drop_unpermute_1d(
-            self,
-            combine_out=combine_out_for_unpermute,
-            local_inverse_reorder_indices=local_inverse_reorder_indices,
-            packed_keep_mask=packed_keep_mask,
-            num_kept=num_kept,
-            reversed_local_x_permutation_mapping=reversed_local_x_permutation_mapping,
-            local_x_global_routed_expert_weights=local_x_global_routed_expert_weights,
-            hidden_shape_before_permute=hidden_shape_before_permute,
-            row_id_map_is_packed=True,
-            backward_grad_input_buffer=buffers.combine_out.detach(),
-        )
-
-    if self.shared_experts is not None:
-        assert shared_out_up is not None
-        assert shared_out_gate is not None
-
-        with torch.cuda.stream(self.get_dense_stream()):
-            shared_out = self.shared_experts.forward2(
-                shared_out_up, shared_out_gate, attn_res_out.shape
-            )
-            mixed_shared_out = self._mix_shared_out(
-                shared_out,
-                local_x_global_shared_expert_weights,
-                attn_res_out.shape,
-            )
-    else:
-        mixed_shared_out = None
+    mixed_shared_out = _finish_shared_experts(self, shared_work, attn_res_out.shape)
 
     local_x = local_x.view(in_shape)
     wait_stream_no_compile(torch.cuda.current_stream(), self.get_dense_stream())

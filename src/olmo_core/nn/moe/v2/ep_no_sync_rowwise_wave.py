@@ -26,6 +26,7 @@ from .comm import (
     _rowwise_ibgda_enabled,
     _RowwiseCombineWeightedAutograd,
 )
+from .ep_backend import finish_moe_forward, prepare_and_route_moe
 from .ep_config import ExpertParallelPath
 from .ep_no_sync_buffers import (
     compute_ep_no_sync_rank_capacity,
@@ -1019,25 +1020,17 @@ def combined_forward_ep_no_sync_rowwise_wave(
         group=group_name,
     )
 
-    block_inp = x
-    del x
-
-    attn_res_out = self._checkpointed_res_norm_attn(block_inp, **kwargs)
-
-    kwargs.pop("max_doc_len", None)
-    kwargs.pop("cu_doc_lens", None)
-    moe_inp = self._prepare_moe_input(attn_res_out)
-
-    (
-        local_x_global_routed_expert_weights,
-        local_x_global_routed_expert_indices,
-        local_batch_size_per_global_routed_expert,
-        routed_expert_router_aux_loss_info,
-    ) = self.routed_experts_router(
-        moe_inp,
-        False,
+    prepared, routing = prepare_and_route_moe(
+        self,
+        x,
         loss_div_factor=loss_div_factor,
+        forward_kwargs=kwargs,
     )
+    attn_res_out = prepared.attention_residual
+    moe_inp = prepared.model_input
+    local_x_global_routed_expert_weights = routing.expert_weights
+    local_x_global_routed_expert_indices = routing.expert_indices
+    local_batch_size_per_global_routed_expert = routing.tokens_per_expert
     rowwise_stage_debug_print(
         "rowwise_wave:router-exit",
         block=self.block_idx,
@@ -1431,10 +1424,11 @@ def combined_forward_ep_no_sync_rowwise_wave(
 
     mlp_out = self._merge_routed_and_shared(local_x, mixed_shared_out)
 
-    final_out = self._res_norm_mlp(attn_res_out, mlp_out)
     rowwise_stage_debug_print("rowwise_wave:exit", block=self.block_idx)
-    return self._attach_routed_aux_loss(
-        final_out,
-        routed_expert_router_aux_loss_info,
-        accumulate_metrics=accumulate_routed_aux_loss_metrics,
+    return finish_moe_forward(
+        self,
+        prepared,
+        mlp_out,
+        routing,
+        accumulate_aux_loss_metrics=accumulate_routed_aux_loss_metrics,
     )
