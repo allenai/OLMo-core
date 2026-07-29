@@ -111,6 +111,9 @@ KDA_275M_NOPE_SETTINGS = {
     "geometry_275m_kda_ev2_neg_nope_gated": (2.0, True, 664),
     "geometry_275m_kda_ev2_neg_nope_gated_mxfp8_672": (2.0, True, 672),
 }
+KDA_MIXED_ATTENTION_275M_SETTINGS = {
+    "geometry_275m_kda_ev2_neg_nope_gated_3kda_2swa_1fa": (2.0, True, 552),
+}
 LATENT_MOE_275M_SETTINGS = {
     "geometry_275m_kda_ev2_neg_nope_gated_latent2x_fullrouter": (2, False, False, None),
     "geometry_275m_kda_ev2_neg_nope_gated_latent4x_fullrouter": (4, False, False, None),
@@ -395,6 +398,14 @@ def model_config():
             allow_neg_eigval=allow_neg_eigval,
             expert_hidden_size=expert_hidden_size,
         )
+    elif MODEL_VARIANT in KDA_MIXED_ATTENTION_275M_SETTINGS:
+        from scripts.train.jacobm_olmoe_ladder.v2.models.geometry_matched_275m import (
+            build_geometry_matched_kda_mixed6_model_config,
+        )
+
+        if MODEL_SIZE != "275m":
+            raise ValueError(f"The {MODEL_VARIANT} variant only supports MODEL_SIZE=275m")
+        model = build_geometry_matched_kda_mixed6_model_config()
     elif MODEL_VARIANT in LATENT_MOE_275M_SETTINGS:
         from scripts.train.jacobm_olmoe_ladder.v2.models.geometry_matched_275m import (
             build_geometry_matched_kda_latent_moe_model_config,
@@ -716,6 +727,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         "geometry_275m_gdn_ev2_rope_gated",
         *GDN2_275M_NOPE_SETTINGS,
         *KDA_275M_NOPE_SETTINGS,
+        *KDA_MIXED_ATTENTION_275M_SETTINGS,
         *LATENT_MOE_275M_SETTINGS,
         "geometry_275m_gdn2_ev2_rope_gated",
         "geometry_275m_swa_rope_gated",
@@ -746,6 +758,8 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             f"olmoe3-275m-geometry-kda-ev{expand_v:g}-{eigval_tag}"
             f"-nope-gated{width_tag}"
         )
+    elif MODEL_VARIANT in KDA_MIXED_ATTENTION_275M_SETTINGS:
+        variant_group = "olmoe3-275m-geometry-kda-ev2-neg-nope-gated-3kda-2swa-1fa"
     elif MODEL_VARIANT in LATENT_MOE_275M_SETTINGS:
         (
             compression,
@@ -808,6 +822,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         "geometry_275m_gdn_ev2_nope",
         *GDN2_275M_NOPE_SETTINGS,
         *KDA_275M_NOPE_SETTINGS,
+        *KDA_MIXED_ATTENTION_275M_SETTINGS,
         *LATENT_MOE_275M_SETTINGS,
         *KDA_SCALE_ALL_SETTINGS,
         "geometry_matched_gdn_ev2_nope",
@@ -818,6 +833,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             **GDN2_275M_NOPE_SETTINGS,
             **GDN2_SCALE_NOPE_SETTINGS,
             **KDA_275M_NOPE_SETTINGS,
+            **KDA_MIXED_ATTENTION_275M_SETTINGS,
             **KDA_SCALE_ALL_SETTINGS,
         }
         expand_v = recurrent_settings.get(MODEL_VARIANT, (2.0, True))[0]
@@ -826,6 +842,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             "geometry_275m_gdn_ev2_nope_gated",
             *GDN2_275M_NOPE_SETTINGS,
             *KDA_275M_NOPE_SETTINGS,
+            *KDA_MIXED_ATTENTION_275M_SETTINGS,
             *LATENT_MOE_275M_SETTINGS,
             *KDA_SCALE_ALL_SETTINGS,
             "geometry_matched_gdn_ev2_nope_gated",
@@ -848,7 +865,11 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 )
             if GDN2_DISABLE_RECOMPUTE:
                 variant_tags.append("gdn2-no-recompute")
-        kda_settings = {**KDA_275M_NOPE_SETTINGS, **KDA_SCALE_ALL_SETTINGS}
+        kda_settings = {
+            **KDA_275M_NOPE_SETTINGS,
+            **KDA_MIXED_ATTENTION_275M_SETTINGS,
+            **KDA_SCALE_ALL_SETTINGS,
+        }
         if MODEL_VARIANT in kda_settings:
             variant_tags.extend(
                 [
@@ -864,6 +885,15 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 expert_hidden_size = KDA_275M_NOPE_SETTINGS[MODEL_VARIANT][2]
                 if expert_hidden_size != 664:
                     variant_tags.append(f"expert-hidden-{expert_hidden_size}")
+            elif MODEL_VARIANT in KDA_MIXED_ATTENTION_275M_SETTINGS:
+                variant_tags.extend(
+                    [
+                        "expert-hidden-552",
+                        "mixed-attention",
+                        "3kda-2swa-1fa",
+                        "attention-1to1",
+                    ]
+                )
             elif MODEL_VARIANT in KDA_SCALE_MXFP8_SETTINGS:
                 from scripts.train.jacobm_olmoe_ladder.v2.models.geometry_matched_scale import (
                     MXFP8_ALIGNED_EXPERT_HIDDEN_SIZES,

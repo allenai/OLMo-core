@@ -42,6 +42,34 @@ The KDA layers match FLA `0.4.1`'s released Kimi configuration:
 The candidate's default Cx1 token budget is 4,204,908,800 tokens under the
 usual `20 * active_non_embedding_params * Cx` rule.
 
+## Mixed-attention 1:1 candidate
+
+The unlaunched
+`geometry_275m_kda_ev2_neg_nope_gated_3kda_2swa_1fa` candidate tests an exact
+six-layer motif:
+
+`KDA -> SWA -> KDA -> SWA -> KDA -> full attention`
+
+The motif is repeated twice, producing 12 layers with six KDA, four
+2,048-token SWA, and two full-attention mixers. It therefore has an exact
+1:1 KDA-to-ordinary-attention ratio, while ordinary attention is split 2:1
+between SWA and full attention. KDA stays at `expand_v=2` with negative
+eigenvalues. Both SWA and full attention retain the parent's NoPE,
+elementwise full-precision attention gate, 8-Q/4-KV GQA, and 128-dimensional
+heads. Layer 0 remains dense-first; every other layer remains MoE.
+
+Twelve is the nearest depth to the ten-layer parent that can contain complete
+six-layer motifs. Reducing only the shared/routed expert hidden size from 664
+to 552 active-matches the deeper model:
+
+| Variant | Layers | Expert hidden | Active params | Active non-embedding | Total params |
+|---|---:|---:|---:|---:|---:|
+| Current KDA parent | 10 | 664 | 290,503,488 | 226,278,208 | 3,136,035,648 |
+| Mixed 3-KDA/2-SWA/1-FA | 12 | 552 | 290,904,368 | 226,679,088 | 3,182,147,888 |
+
+The mixed candidate is `+0.138%` in active parameters and `+1.470%` in stored
+parameters versus the parent. No launcher or training work has been submitted.
+
 ## Qualification and sweep
 
 The qualification wrapper first compares the Triton kernel's output and all

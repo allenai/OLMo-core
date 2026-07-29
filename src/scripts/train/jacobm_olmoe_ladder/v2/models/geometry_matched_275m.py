@@ -135,6 +135,22 @@ EXPECTED_KDA_COUNTS_BY_SETTINGS = {
     (2.0, True, 672): (291_885_888, 227_660_608, 3_171_701_568),
 }
 
+# Experimental six-layer mixer motif:
+#
+#   KDA -> SWA -> KDA -> SWA -> KDA -> full attention
+#
+# Repeating it twice gives an exact 1:1 split between KDA and ordinary
+# attention while keeping a 2:1 split between local and global ordinary
+# attention. Twelve layers is the smallest depth near the current ten-layer
+# KDA parent that can contain whole motifs. Narrowing only the expert hidden
+# dimension to 552 keeps the active size within 0.14% of that parent.
+KDA_MIXED6_N_LAYERS = 12
+KDA_MIXED6_EXPERT_HIDDEN_SIZE = 552
+KDA_MIXED6_KDA_LAYERS = (0, 2, 4, 6, 8, 10)
+KDA_MIXED6_SWA_LAYERS = (1, 3, 7, 9)
+KDA_MIXED6_FULL_ATTENTION_LAYERS = (5, 11)
+EXPECTED_KDA_MIXED6_COUNTS = (290_904_368, 226_679_088, 3_182_147_888)
+
 # LatentMoE qualification starts with the two compression ratios discussed for
 # the 275M rung: a conservative 2x projection and the paper's default 4x
 # projection. Expert count, top-k, hidden width, and the surrounding KDA hybrid
@@ -525,6 +541,142 @@ def build_geometry_matched_kda_model_config(
         raise ValueError(
             f"unexpected KDA parameter counts: expected {expected_counts}, found {actual_counts}"
         )
+    return candidate
+
+
+def build_geometry_matched_kda_mixed6_model_config() -> OLMoDDPModelConfig:
+    """Build the active-matched 3-KDA/2-SWA/1-full-attention motif.
+
+    The current promoted KDA settings are retained: ``expand_v=2``, negative
+    eigenvalues, NoPE, elementwise full-precision attention gates, 8-Q/4-KV
+    GQA, a 2,048-token SWA window, and the dense-first FFN. The exact six-layer
+    motif is repeated twice. Only depth and expert hidden size change to
+    preserve the motif and recover the parent's active parameter count.
+    """
+
+    source = build_geometry_matched_kda_model_config(
+        expand_v=2.0,
+        allow_neg_eigval=True,
+        expert_hidden_size=664,
+    )
+    source_resolved = source.resolved_block_configs
+
+    candidate = deepcopy(source)
+    candidate.n_layers = KDA_MIXED6_N_LAYERS
+
+    kda_block = deepcopy(source_resolved[1])
+    _resize_moe_block(kda_block, KDA_MIXED6_EXPERT_HIDDEN_SIZE)
+
+    dense_first = deepcopy(source_resolved[0])
+    assert dense_first.shared_experts is not None
+    dense_first.shared_experts.hidden_size = (TOP_K + 1) * KDA_MIXED6_EXPERT_HIDDEN_SIZE
+
+    full_attention = deepcopy(source_resolved[FULL_ATTENTION_LAYERS[0]])
+    _resize_moe_block(full_attention, KDA_MIXED6_EXPERT_HIDDEN_SIZE)
+
+    sliding_attention = deepcopy(full_attention)
+    sliding_mixer = cast(AttentionConfig, sliding_attention.sequence_mixer)
+    sliding_mixer.sliding_window = SlidingWindowAttentionConfig(
+        pattern=[SWA_WINDOW_SIZE],
+        force_full_attention_on_first_layer=False,
+        force_full_attention_on_last_layer=False,
+    )
+
+    candidate.block = kda_block
+    candidate.block_overrides = {
+        0: dense_first,
+        **{layer_idx: deepcopy(sliding_attention) for layer_idx in KDA_MIXED6_SWA_LAYERS},
+        **{layer_idx: deepcopy(full_attention) for layer_idx in KDA_MIXED6_FULL_ATTENTION_LAYERS},
+    }
+    candidate.validate()
+
+    resolved = candidate.resolved_block_configs
+    actual_kda: list[int] = []
+    actual_swa: list[int] = []
+    actual_full: list[int] = []
+    for layer_idx, block in enumerate(resolved):
+        mixer = block.sequence_mixer
+        if isinstance(mixer, KimiDeltaAttentionConfig):
+            actual_kda.append(layer_idx)
+        elif isinstance(mixer, AttentionConfig):
+            if mixer.sliding_window is not None and mixer.sliding_window.should_use_swa(
+                layer_idx, candidate.n_layers
+            ):
+                actual_swa.append(layer_idx)
+            else:
+                actual_full.append(layer_idx)
+        else:
+            raise TypeError(
+                f"unexpected mixed6 sequence mixer at layer {layer_idx}: {type(mixer).__name__}"
+            )
+
+    actual_pattern = (tuple(actual_kda), tuple(actual_swa), tuple(actual_full))
+    expected_pattern = (
+        KDA_MIXED6_KDA_LAYERS,
+        KDA_MIXED6_SWA_LAYERS,
+        KDA_MIXED6_FULL_ATTENTION_LAYERS,
+    )
+    if actual_pattern != expected_pattern:
+        raise ValueError(
+            f"unexpected mixed6 pattern: expected {expected_pattern}, found {actual_pattern}"
+        )
+    if resolved[0].routed_experts is not None:
+        raise ValueError("mixed6 model must retain the dense-first layer-0 FFN")
+    if candidate.init_std != source.init_std:
+        raise ValueError("mixed6 model changed initialization")
+
+    for layer_idx in KDA_MIXED6_KDA_LAYERS:
+        kda = cast(KimiDeltaAttentionConfig, resolved[layer_idx].sequence_mixer)
+        if kda.expand_v != 2.0 or not kda.allow_neg_eigval:
+            raise ValueError(
+                f"mixed6 KDA layer {layer_idx} must use expand_v=2 and negative eigenvalues"
+            )
+    for layer_idx in (*KDA_MIXED6_SWA_LAYERS, *KDA_MIXED6_FULL_ATTENTION_LAYERS):
+        attention = cast(AttentionConfig, resolved[layer_idx].sequence_mixer)
+        if attention.rope is not None:
+            raise ValueError(f"mixed6 attention layer {layer_idx} must use NoPE")
+        if (
+            attention.gate is None
+            or attention.gate.granularity != GateGranularity.elementwise
+            or not attention.gate.full_precision
+        ):
+            raise ValueError(f"mixed6 attention layer {layer_idx} must retain elementwise gating")
+    for layer_idx in KDA_MIXED6_SWA_LAYERS:
+        attention = cast(AttentionConfig, resolved[layer_idx].sequence_mixer)
+        assert attention.sliding_window is not None
+        if (
+            attention.sliding_window.get_window_size(layer_idx, candidate.n_layers)
+            != SWA_WINDOW_SIZE
+        ):
+            raise ValueError(
+                f"mixed6 SWA layer {layer_idx} must use a {SWA_WINDOW_SIZE}-token window"
+            )
+    for layer_idx in KDA_MIXED6_FULL_ATTENTION_LAYERS:
+        attention = cast(AttentionConfig, resolved[layer_idx].sequence_mixer)
+        if attention.sliding_window is not None:
+            raise ValueError(f"mixed6 full-attention layer {layer_idx} cannot use SWA")
+
+    for layer_idx in range(1, candidate.n_layers):
+        block = resolved[layer_idx]
+        if block.shared_experts is None or block.routed_experts is None:
+            raise ValueError(f"mixed6 layer {layer_idx} must retain MoE experts")
+        if (
+            block.shared_experts.hidden_size != KDA_MIXED6_EXPERT_HIDDEN_SIZE
+            or block.routed_experts.hidden_size != KDA_MIXED6_EXPERT_HIDDEN_SIZE
+        ):
+            raise ValueError(f"mixed6 layer {layer_idx} has an unexpected expert width")
+
+    actual_counts = (
+        candidate.num_active_params,
+        candidate.num_active_non_embedding_params,
+        candidate.num_params,
+    )
+    if actual_counts != EXPECTED_KDA_MIXED6_COUNTS:
+        raise ValueError(
+            f"unexpected mixed6 parameter counts: expected "
+            f"{EXPECTED_KDA_MIXED6_COUNTS}, found {actual_counts}"
+        )
+
     return candidate
 
 
