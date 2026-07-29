@@ -77,7 +77,10 @@ startup because the workspace's 64 unallocated slots were already full. The
 first allocated PR-semantics attempt was mistakenly canceled after startup and
 is inconclusive. Its exact two-task replacement is pinned to detached commit
 `7490a4a5a`; the full-width-router pair is pinned independently so the two arms
-cannot read each other's source checkout.
+cannot read each other's source checkout:
+
+- [PR #799 routing semantics](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYNZRH7S8APE059CR042BTPC)
+- [full-width routing semantics](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYP02F6BRDCQSDR8JWDATAK8)
 
 ## Validation hold
 

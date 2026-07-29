@@ -31,5 +31,16 @@
     "debug_gradients": false,
     "run_suffix": "-pr799-rerun",
     "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYNZRH7S8APE059CR042BTPC"
+  },
+  {
+    "experiment_name": "jacobm-275m-kda-latentmoe-fullrouter-qualification",
+    "experiment_id": "01KYP02F6BRDCQSDR8JWDATAK8",
+    "tasks": [
+      "275m-kda-latent2x-fullrouter-ep1-smoke",
+      "275m-kda-latent4x-fullrouter-ep1-smoke"
+    ],
+    "debug_gradients": false,
+    "run_suffix": null,
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYP02F6BRDCQSDR8JWDATAK8"
   }
 ]
