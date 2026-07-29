@@ -130,6 +130,24 @@ while peak active memory also falls. All four runs have zero skipped steps.
 The 10-layer machine-readable results are
 [`results/throughput/275m_kda_mixed10_single_gpu.csv`](results/throughput/275m_kda_mixed10_single_gpu.csv).
 
+For future architecture decisions, the promoted four-way single-device
+reference is:
+
+| Variant | Attention layout | Layers | Active params | Rank MB | TPS/GPU | TFLOPs/GPU |
+|---|---|---:|---:|---:|---:|---:|
+| KDA parent | 8 KDA + 2 FA | 10 | 290,503,488 | 16 | 255,489 | 388.60 |
+| KDA parent + LatentMoE L=2 | 8 KDA + 2 FA | 10 | 295,664,448 | 8 | 214,672 | 333.15 |
+| Mixed depth control | 5 KDA + 3 SWA + 2 FA | 10 | 291,449,640 | 16 | 285,107 | 447.40 |
+| Mixed depth control + LatentMoE L=2 | 5 KDA + 3 SWA + 2 FA | 10 | 296,610,600 | 8 | 232,846 | 372.55 |
+
+Every row uses one Holmes B300, EP1, an 8,192-token sequence length, an exact
+2-Mi-token optimizer batch, and the median of final steps 41--50. Relative to
+the ordinary KDA parent, the mixed depth control improves TPS/GPU by 11.59%.
+With L=2 on both sides, it improves TPS/GPU by 8.47%. Source rows are in
+[`results/throughput/275m_kda_latent_moe_paper.csv`](results/throughput/275m_kda_latent_moe_paper.csv)
+and
+[`results/throughput/275m_kda_mixed10_single_gpu.csv`](results/throughput/275m_kda_mixed10_single_gpu.csv).
+
 ## Qualification and sweep
 
 The qualification wrapper first compares the Triton kernel's output and all

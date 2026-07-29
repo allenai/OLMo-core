@@ -5,8 +5,16 @@ operational rules in `EXPERIMENT_RULES.md` govern every item below. All isolated
 tests train from scratch at Cx1/Cx2/Cx4/Cx8 and compare against the 275M-active
 wide v1 integration model.
 
-After the current gated-RoPE wave, the near-term priorities are GDN2, KDA, and
-LatentMoE. Test each independently before considering a combined recipe.
+The current near-term priority order is:
+
+1. finish the 275M LatentMoE L=2 sweep;
+2. finish the 275M LatentMoE L=4/1,000-expert sweep; and
+3. evaluate the 1:1 `KDA/SWA/FA` mixed-attention candidate ("yolo hybrid"),
+   starting from the active-matched 10-layer speed-qualified control.
+
+Test each independently before considering a combined recipe. GDN2 and KDA
+remain important completed evidence, but they are no longer ahead of these
+three launch candidates.
 
 Within GDN2, first resolve the current FLA stability failures. The
 `expand_v`/negative-eigenvalue 275M two-by-two comparison finished cleanly,
@@ -23,7 +31,7 @@ has only two Cx8 cells remaining.
 | 5 | RoPE × attention-gating interaction | Starting from the gated NoPE geometry model, restore RoPE only on full-attention layers 4 and 9. Keep GQA, gating, geometry, initialization, data, and optimization fixed. | 275M sweep complete. Larger wave has 11 finished and one repeatedly failed 1.2B Cx2 cell. |
 | 6 | Gated DeltaNet 2 (GDN2) | Starting from the geometry-matched gated-NoPE parent, replace only GDN v1 with GDN2. Hold attention geometry, MoE, optimization, `expand_v`, convolution, and other model settings fixed; audit the active-parameter increase before launch. | Native adapter and isolated pinned-FLA overlay implemented. Functional smoke, throughput matrix, production-shape 2x2 reference test, and matched KDA/GDN2 one/four-chunk audit passed. GDN2 is 11--13% slower in raw TPS than GDN1. Common gradient errors are broadly KDA-like; the localized exception is 3.80% relative-L2 error in `A_log` at T256/V256 with negative eigenvalues. The fresh 275M stability controls finished 3/3. The canonical `expand_v=1`, nonnegative sweep is 14/16 complete with only two Cx8 cells running; the original larger GDN2 wave is 6/12 complete and retains five numerical failures plus one canceled cell. Retained-intermediate backward is numerically equivalent but OOMs at production MB16. |
 | 7 | Kimi Delta Attention (KDA) | Starting from the geometry-matched gated-NoPE parent, replace GDN with canonical KDA using the pre-GDN2 FLA `0.4.1` Triton training kernel, `expand_v=1`, and nonnegative eigenvalues. | Native adapter and audited 275M config implemented. Reference numerics, packed documents, and the 50-step MB16 training smoke passed. The 16-cell LR sweep finished without a failed attempt; all four bracketed curves select observed LR `1.6e-3`. |
-| 8 | LatentMoE | On promoted KDA, project only the routed expert branch to a smaller latent width. Start with 2× and paper-standard 4× compression; compare PR #799's latent-width routing, full-width-router fixed-expert controls, and the paper-matched recipe that multiplies both total experts and top-k by compression. | PR #799's implementation and our full-width-router correction are ported. Exact-count 275M 2×/4× fixed-expert and paper-matched configs pass local construction/dry-run checks. Separate commit-pinned, no-checkpoint EP1 qualification pairs cover each arm; full runs and validation remain deferred. See [`LATENT_MOE.md`](LATENT_MOE.md). |
+| 8 | LatentMoE | On promoted KDA, project only the routed expert branch to a smaller latent width. Start with 2× and paper-standard 4× compression; compare PR #799's latent-width routing, full-width-router fixed-expert controls, and the paper-matched recipe that multiplies both total experts and top-k by compression. | PR #799's full-width router fix is ported. The promoted 275M families are L=2 512/top-16 and L=4 1,000/top-32; all 16 Cx1/Cx2 cells finished with bracketed curves selecting observed LR `1.6e-3`. Completing Cx4/Cx8 is 16 more jobs: the standard 4-GPU Cx4/8-GPU Cx8 layout needs 96 concurrent GPUs and about 10--12 hours; a 64-GPU all-four-GPU layout takes about 19--20 hours. See [`LATENT_MOE.md`](LATENT_MOE.md). |
 | 9 | Initialization | On the promoted control, change only initialization standard deviation from 0.01 to 0.02. | Optional/planned. |
 | 10 | Remove QK norm | On the promoted control, remove per-head RMSNorm from Q and K in global-attention layers only. Keep GDN's internal output norm and every other norm unchanged. | Deferred isolated architecture ablation. This intentionally departs from the dense ladder, which uses QK norm. |
 | 11 | FP8 training | Hold the promoted architecture fixed and test the aggressive OLMo-core MXFP8 recipe, recording loss, stability, memory, tokens/s, and TFLOPs/GPU. | 275M KDA 672-expert-width EP1 qualification complete. The 16-cell 275M Cx1/2/4/8 LR sweep is submitted; 480M/810M/1.2B 32-aligned configs are audited but not launched. Larger-scale throughput remains open and exact BF16 controls are deferred to save compute. |

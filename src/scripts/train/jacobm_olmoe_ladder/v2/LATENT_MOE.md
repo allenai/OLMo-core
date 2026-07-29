@@ -218,6 +218,53 @@ The refreshed U-plots, best-of plot, and machine-readable results live under
 [`plots/pretraining/kda_latent_moe`](plots/pretraining/kda_latent_moe) and
 [`results/pretraining/kda_latent_moe`](results/pretraining/kda_latent_moe).
 
+## Planned completion of the 275M sweep
+
+The next LatentMoE wave finishes the four-LR curves at Cx4 and Cx8 for both
+promoted families:
+
+- L=2, 512 routed experts, top-16; and
+- L=4, 1,000 routed experts, top-32.
+
+This is `2 families * 2 data multiples * 4 LRs = 16` jobs. The standard
+wall-clock layout uses four GPUs for every Cx4 cell and eight GPUs for every
+Cx8 cell, requiring 96 concurrent B300s if all cells start together. A
+resource-constrained layout can keep Cx8 on four GPUs and needs 64 concurrent
+B300s. A winner-only promotion would instead be four jobs, but that is not
+considered a finished LR sweep.
+
+The planned optimizer batches and rank-local shapes are:
+
+| Family | Cx | Global batch tokens | Topology | Rank MB / accumulation |
+|---|---:|---:|---|---:|
+| L=2, 512/top-16 | 4 | 524,288 | 4 GPUs, EP1 | 8 / 2 |
+| L=2, 512/top-16 | 8 | 786,432 | 8 GPUs, EP1 | 12 / 1 |
+| L=4, 1,000/top-32 | 4 | 524,288 | 4 GPUs, EP1 | 8 / 2 |
+| L=4, 1,000/top-32 | 8 | 786,432 | 8 GPUs, EP1 | 6 / 2 |
+
+These shapes stay within the already qualified physical limits; no new model
+or parameter change is involved. Before launch, generate the final manifests
+and run the ordinary config-only audit. Under allocation-based Holmes
+scheduling, request an explicit realistic `minRuntime` rather than using the
+legacy non-preemptible flag.
+
+Measured end-to-end wall times for the completed jobs, including startup and
+compilation, were about 2h18m/4h02m for L=2 Cx1/Cx2 and 2h47m/4h45m for L=4
+Cx1/Cx2. Scaling those measurements by the exact token budgets and the planned
+microbatch/accumulation shapes gives:
+
+| Family | Cx4 ETA per job, 4 GPUs | Cx8 ETA per job, 8 GPUs |
+|---|---:|---:|
+| L=2, 512/top-16 | 7.5--8.5h | 8.5--9.5h |
+| L=4, 1,000/top-32 | 8.5--9.5h | 10--11.5h |
+
+With all 96 GPUs available concurrently, Cx4 should finish in roughly 8--10
+hours and the entire remaining sweep in roughly 10--12 hours. The
+resource-constrained 64-GPU layout runs Cx8 on four GPUs with L2 MB12/acc2 and
+L4 MB8/acc3; its Cx8 cells should take roughly 14--16 and 17--19 hours,
+respectively, for an approximately 19--20-hour critical path. If still fewer
+GPUs are available, queue the slow Cx8 cells before Cx4.
+
 ## Validation hold
 
 Do not launch new validation backfills while the current capacity constraint is
