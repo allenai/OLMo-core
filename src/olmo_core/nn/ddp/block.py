@@ -213,10 +213,10 @@ class OLMoDDPTransformerBlockConfig(TransformerBlockConfig):
                     "latent_moe.routed_expert_dim must equal routed_experts.d_model "
                     f"({routed_expert_dim} != {self.routed_experts.d_model})"
                 )
-            if self.routed_experts_router.d_model != routed_expert_dim:
+            if self.routed_experts_router.d_model != d_model:
                 raise OLMoConfigurationError(
-                    "latent_moe.routed_expert_dim must equal routed_experts_router.d_model "
-                    f"({routed_expert_dim} != {self.routed_experts_router.d_model})"
+                    "routed_experts_router.d_model must equal block d_model when latent_moe is "
+                    f"enabled ({self.routed_experts_router.d_model} != {d_model})"
                 )
             if self.shared_experts is not None and self.shared_experts.d_model != d_model:
                 raise OLMoConfigurationError(
@@ -442,9 +442,10 @@ class OLMoDDPTransformerBlock(olmo_core.nn.transformer.block.TransformerBlockBas
                 raise OLMoConfigurationError(
                     "latent_moe.routed_expert_dim must equal routed_experts.d_model"
                 )
-            if routed_experts_router.d_model != latent_moe.routed_expert_dim:
+            if routed_experts_router.d_model != d_model:
                 raise OLMoConfigurationError(
-                    "latent_moe.routed_expert_dim must equal routed_experts_router.d_model"
+                    "routed_experts_router.d_model must equal block d_model when latent_moe is "
+                    "enabled"
                 )
             self.latent_down_proj = torch.nn.Linear(
                 d_model,

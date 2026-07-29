@@ -36,7 +36,7 @@ def _block_config(
             d_model=routed_dim, hidden_size=128, num_experts=4, bias=False, dtype=dtype
         ),
         routed_experts_router=MoERouterConfigV2(
-            d_model=routed_dim, num_experts=4, top_k=2, dtype=dtype
+            d_model=D_MODEL, num_experts=4, top_k=2, dtype=dtype
         ),
         shared_experts=None,
         layer_norm=layer_norm,
@@ -76,7 +76,7 @@ def test_latent_block_dimensions_and_param_accounting():
     assert block.routed_experts is not None
     assert block.routed_experts.d_model == routed_expert_dim
     assert block.routed_experts_router is not None
-    assert block.routed_experts_router.d_model == routed_expert_dim
+    assert block.routed_experts_router.d_model == D_MODEL
     assert block.latent_down_proj is not None
     assert block.latent_down_proj.weight.shape == (routed_expert_dim, D_MODEL)
     assert block.latent_up_proj is not None
@@ -173,7 +173,7 @@ def test_latent_block_projection_initialization():
     )
     torch.testing.assert_close(
         block.routed_experts_router.weight.std(),
-        torch.tensor(routed_expert_dim**-0.5),
+        torch.tensor(D_MODEL**-0.5),
         rtol=0.35,
         atol=0.0,
     )
@@ -216,6 +216,14 @@ def test_latent_block_rejects_routed_config_dimension_mismatch():
     assert config.routed_experts is not None
     config.routed_experts.d_model = 8
     with pytest.raises(OLMoConfigurationError, match="routed_experts.d_model"):
+        config.build(d_model=D_MODEL, block_idx=0, n_layers=1, init_device="cpu")
+
+
+def test_latent_block_rejects_router_dimension_mismatch():
+    config = _block_config(routed_expert_dim=16)
+    assert config.routed_experts_router is not None
+    config.routed_experts_router.d_model = 16
+    with pytest.raises(OLMoConfigurationError, match="routed_experts_router.d_model"):
         config.build(d_model=D_MODEL, block_idx=0, n_layers=1, init_device="cpu")
 
 

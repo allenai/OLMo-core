@@ -112,8 +112,8 @@ KDA_275M_NOPE_SETTINGS = {
     "geometry_275m_kda_ev2_neg_nope_gated_mxfp8_672": (2.0, True, 672),
 }
 LATENT_MOE_275M_SETTINGS = {
-    "geometry_275m_kda_ev2_neg_nope_gated_latent2x": (2, False),
-    "geometry_275m_kda_ev2_neg_nope_gated_latent4x": (4, False),
+    "geometry_275m_kda_ev2_neg_nope_gated_latent2x_fullrouter": (2, False),
+    "geometry_275m_kda_ev2_neg_nope_gated_latent4x_fullrouter": (4, False),
 }
 KDA_SCALE_NOPE_SETTINGS = {
     "geometry_matched_kda_ev1_noneg_nope_gated": (1.0, False),
@@ -736,7 +736,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         norm_tag = "-upnorm" if up_proj_input_norm_enabled else ""
         variant_group = (
             f"olmoe3-275m-geometry-kda-ev2-neg-nope-gated-"
-            f"latentmoe-{compression}x{norm_tag}"
+            f"latentmoe-{compression}x-fullrouter{norm_tag}"
         )
     elif MODEL_VARIANT == "geometry_275m_swa_rope_gated":
         variant_group = "olmoe3-275m-geometry-swa-rope-gated-throughput"
@@ -854,7 +854,13 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         if MODEL_VARIANT in LATENT_MOE_275M_SETTINGS:
             compression, up_proj_input_norm_enabled = LATENT_MOE_275M_SETTINGS[MODEL_VARIANT]
             variant_tags.extend(
-                ["kda", "negative-eigenvalues", "latent-moe", f"latent-{compression}x"]
+                [
+                    "kda",
+                    "negative-eigenvalues",
+                    "latent-moe",
+                    f"latent-{compression}x",
+                    "full-width-router",
+                ]
             )
             if up_proj_input_norm_enabled:
                 variant_tags.append("latent-up-proj-input-norm")

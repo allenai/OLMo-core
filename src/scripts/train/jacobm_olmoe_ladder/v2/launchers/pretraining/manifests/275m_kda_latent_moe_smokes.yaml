@@ -1,7 +1,7 @@
 schema_version: 1
 
 experiment:
-  description: Minimal EP1 functional smokes for 275M KDA LatentMoE candidates
+  description: Minimal EP1 functional smokes for 275M KDA LatentMoE full-width-router candidates
   checkpoint_root: /weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/olmo-ddp/pretraining-smokes
 
 source:
@@ -49,10 +49,10 @@ training:
   evals: false
 
 smokes:
-  - task_name: 275m-kda-latent2x-ep1-smoke
-    run_name: smoke-275m-geometry-kda-ev2-neg-nope-gated-latentmoe-2x-ep1
+  - task_name: 275m-kda-latent2x-fullrouter-ep1-smoke
+    run_name: smoke-275m-geometry-kda-ev2-neg-nope-gated-latentmoe-2x-fullrouter-ep1
     model_size: 275m
-    model_variant: geometry_275m_kda_ev2_neg_nope_gated_latent2x
+    model_variant: geometry_275m_kda_ev2_neg_nope_gated_latent2x_fullrouter
     cx: 1
     learning_rate: "1.6e-3"
     global_batch_size: 65536
@@ -60,10 +60,10 @@ smokes:
     expert_parallel_size: 1
     expert_parallel_path: sync_1d
     rank_microbatch_sequences: 4
-  - task_name: 275m-kda-latent4x-ep1-smoke
-    run_name: smoke-275m-geometry-kda-ev2-neg-nope-gated-latentmoe-4x-ep1
+  - task_name: 275m-kda-latent4x-fullrouter-ep1-smoke
+    run_name: smoke-275m-geometry-kda-ev2-neg-nope-gated-latentmoe-4x-fullrouter-ep1
     model_size: 275m
-    model_variant: geometry_275m_kda_ev2_neg_nope_gated_latent4x
+    model_variant: geometry_275m_kda_ev2_neg_nope_gated_latent4x_fullrouter
     cx: 1
     learning_rate: "1.6e-3"
     global_batch_size: 65536

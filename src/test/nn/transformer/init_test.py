@@ -169,7 +169,7 @@ def test_fan_in_init_latent_moe():
     assert moe.latent_up_proj is not None
     torch.testing.assert_close(
         moe.router.weight.std(),
-        torch.tensor(routed_expert_dim**-0.5),
+        torch.tensor(d_model**-0.5),
         rtol=0.3,
         atol=0.0,
     )

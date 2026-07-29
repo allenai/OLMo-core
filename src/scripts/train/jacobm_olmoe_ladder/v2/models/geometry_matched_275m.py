@@ -143,8 +143,8 @@ LATENT_MOE_ROUTED_DIMS_BY_COMPRESSION = {
     4: 160,
 }
 EXPECTED_LATENT_MOE_COUNTS = {
-    2: (247_556_928, 183_331_648, 1_670_323_008),
-    4: (222_397_248, 158_171_968, 933_780_288),
+    2: (248_294_208, 184_068_928, 1_671_060_288),
+    4: (223_503_168, 159_277_888, 934_886_208),
 }
 
 # A strict 1:1 hybrid alternates a recurrent/local mixer at even layers with
@@ -529,11 +529,12 @@ def build_geometry_matched_kda_latent_moe_model_config(
 ) -> OLMoDDPModelConfig:
     """Add LatentMoE to the promoted 275M KDA recipe.
 
-    Only the routed branch is projected: the router and routed experts operate
-    at ``d_model / compression`` while the shared expert, attention/recurrent
-    mixers, residual stream, expert hidden width, expert count, and top-k stay
-    unchanged. The optional pre-up-projection RMSNorm is exposed explicitly so
-    a later ablation cannot silently change the architecture.
+    Only the routed expert branch is projected. Routing decisions are made from
+    the full-width token representation, while the routed experts operate at
+    ``d_model / compression``. The shared expert, attention/recurrent mixers,
+    residual stream, expert hidden width, expert count, and top-k stay unchanged.
+    The optional pre-up-projection RMSNorm is exposed explicitly so a later
+    ablation cannot silently change the architecture.
     """
 
     try:
@@ -560,7 +561,7 @@ def build_geometry_matched_kda_latent_moe_model_config(
             up_proj_input_norm_enabled=up_proj_input_norm_enabled,
         )
         latent.routed_experts.d_model = routed_expert_dim
-        latent.routed_experts_router.d_model = routed_expert_dim
+        latent.routed_experts_router.d_model = D_MODEL
         return latent
 
     candidate.block = with_latent_moe(resolved[1])
@@ -588,7 +589,7 @@ def build_geometry_matched_kda_latent_moe_model_config(
             raise ValueError(f"LatentMoE candidate layer {layer_idx} lost its routed branch")
         if (
             block.routed_experts.d_model != routed_expert_dim
-            or block.routed_experts_router.d_model != routed_expert_dim
+            or block.routed_experts_router.d_model != D_MODEL
         ):
             raise ValueError(f"LatentMoE candidate layer {layer_idx} has inconsistent dimensions")
         if block.shared_experts is None or block.shared_experts.d_model != D_MODEL:

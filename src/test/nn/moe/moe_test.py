@@ -102,7 +102,7 @@ def test_latent_moe(moe_type: MoEType, shared: bool):
     )
     moe = config.build(d_model=d_model)
 
-    assert moe.router.d_model == routed_expert_dim
+    assert moe.router.d_model == d_model
     assert moe.experts.mlp.d_model == routed_expert_dim
     assert moe.latent_down_proj is not None
     assert moe.latent_down_proj.in_features == d_model
@@ -131,7 +131,13 @@ def test_latent_moe(moe_type: MoEType, shared: bool):
     # unit test focused on the latent/model-space branch boundaries and their gradients.
     moe.experts = IdentityExperts()
     x = torch.randn(2, 3, d_model, requires_grad=True)
+    routed_shapes = []
+    hook = moe.router.register_forward_pre_hook(
+        lambda _module, args: routed_shapes.append(args[0].shape)
+    )
     output = moe(x)
+    hook.remove()
+    assert routed_shapes == [x.shape]
     assert output.shape == x.shape
     output.sum().backward()
     assert x.grad is not None

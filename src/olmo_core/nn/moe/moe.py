@@ -62,7 +62,10 @@ class LatentMoEConfig(Config):
     """Configuration for running the routed MoE branch in a latent dimension."""
 
     routed_expert_dim: int
-    """Input and output dimension of the router and routed experts."""
+    """Input and output dimension of the routed experts.
+
+    Routing decisions are made from the full model-width token representation.
+    """
 
     bias: bool = False
     """Whether to use bias in the model-to-latent and latent-to-model projections."""
@@ -114,7 +117,7 @@ class MoEConfig(ModuleConfig):
             d_model if self.latent_moe is None else self.latent_moe.routed_expert_dim
         )
         num_params = 0
-        num_params += self.router.num_params(routed_expert_dim, self.num_experts)
+        num_params += self.router.num_params(d_model, self.num_experts)
         num_params += 3 * routed_expert_dim * self.hidden_size * self.num_experts
         if self.shared_mlp is not None:
             num_params += self.shared_mlp.num_params(d_model)
@@ -231,7 +234,7 @@ class MoEBase(nn.Module):
             )
 
         self.router = router.build(
-            routed_expert_dim,
+            d_model,
             num_experts,
             lb_loss_weight=lb_loss_weight,
             lb_loss_granularity=lb_loss_granularity,
@@ -313,7 +316,7 @@ class MoEBase(nn.Module):
         """
         routed_x = self.prepare_routed_input(x)
         expert_weights, expert_indices, batch_size_per_expert, router_aux_loss = self.router(
-            routed_x, loss_div_factor=loss_div_factor
+            x, loss_div_factor=loss_div_factor
         )
 
         if router_aux_loss is not None:

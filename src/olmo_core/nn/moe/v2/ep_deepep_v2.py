@@ -775,7 +775,7 @@ def combined_forward_ep_deepep_v2(
         local_batch_size_per_global_routed_expert,
         routed_expert_router_aux_loss_info,
     ) = self.routed_experts_router(
-        routed_moe_inp,
+        moe_inp,
         False,
         loss_div_factor=loss_div_factor,
     )

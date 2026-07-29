@@ -103,7 +103,7 @@ def build_task(
     training = manifest["training"]
     arguments = (
         "set -euo pipefail\n"
-        f"SOURCE_REPO={shlex.quote(str(source_repo))}\n"
+        f"export SOURCE_REPO={shlex.quote(str(source_repo))}\n"
         "WRAPPER=/tmp/jacobm_olmoe3_hybrid_scale_beaker.sh\n"
         f'cp "${{SOURCE_REPO}}/{source["wrapper"]}" "${{WRAPPER}}"\n'
         'bash "${WRAPPER}"\n'
