@@ -100,11 +100,41 @@ replacement uses EP2, leaving 512 routed experts per rank while preserving the
 exact global model and batch:
 [4× EP2 replacement](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYP2ESY2RPK1PBHTK42VEGPZ).
 
-The corresponding 50-step throughput qualification uses a 2 Mi-token batch,
-MB16, and final-10 medians:
-[latent throughput work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYP2RYXXK398CRZMB94ARXAK).
-The matched non-latent `L=1` control uses the same single-B300 protocol:
+The final throughput protocol uses 50 optimizer steps and the median of steps
+41--50. The matched non-latent `L=1` control is EP1/MB16 on one B300:
 [L=1 control](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYP31SFS8DYN7GJHX2CTDHT1).
+The initial LatentMoE MB16 attempt OOMed during the compiled dry-run and is
+superseded by an explicit capacity search. At a one-microbatch batch, 2×
+physically fits MB15 but not MB16; 4× fits MB9 but not MB10. However, 4× MB9
+OOMs on the second accumulated microbatch because persistent gradient and
+accumulation buffers are then live. Its usable large-batch maximum is therefore
+MB8. Future capacity tests must execute at least two accumulated microbatches;
+a one-microbatch dry-run is insufficient.
+
+Final exact-2-Mi measurements:
+
+| Variant | Topology | Rank MB / accumulation | TPS/GPU | Aggregate TPS | TFLOPs/GPU | Step seconds | Active / reserved GiB |
+|---|---|---:|---:|---:|---:|---:|---:|
+| KDA parent (`L=1`) | 1 B300, EP1 | 16 / 16 | 255,489.0 | 255,489.0 | 388.60 | 8.2084 | 235.70 / 239.20 |
+| LatentMoE 2× paper-matched | 1 B300, EP1 | 8 / 32 | 214,671.5 | 214,671.5 | 333.15 | 9.7691 | 162.90 / 164.50 |
+| LatentMoE 4× paper-matched | 2 B300s, EP2 | 8 / 16 | 143,012.5 | 286,025.0 | 222.90 | 7.3321 | 197.50 / 214.20 |
+
+The 2× physical-max point uses MB15/accumulation-17 and the nearest lower
+batch to 2 Mi, 2,088,960 tokens. It reaches 219,975.0 TPS/GPU and 341.40
+TFLOPs/GPU: 2.47% faster than the exact-2-Mi MB8 point, but still 13.90% below
+the `L=1` TPS. The exact-2-Mi 2× point is 15.98% below `L=1`. The 4× point is
+44.02% lower per GPU than `L=1`; its 286,025 aggregate TPS is 11.95% higher
+only because it uses two GPUs, so it is not a resource-efficiency win.
+
+All accepted rows have 50 metric-bearing steps and zero skipped optimizer
+steps. The 4× job logged `Training complete` after step 50, then exited nonzero
+from a DataLoader/torchrun shutdown segfault; its measurements are complete and
+the failure is not a training or capacity failure.
+
+- [Capacity sweep](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYP4ZJGFTKBVHBEKW6GCZV58)
+- [Exact-2-Mi final measurements](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYP5SXH7ZK32FA8NM7AHXRV0)
+- [Physical-max near-2-Mi measurements](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYP6RYG25M5VDSMDQ2S0ZRTR)
+- [Machine-readable results](results/throughput/275m_kda_latent_moe_paper.csv)
 
 ## Validation hold
 

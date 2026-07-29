@@ -1,7 +1,7 @@
 schema_version: 1
 
 experiment:
-  description: 50-step throughput qualification for paper-matched 275M KDA LatentMoE
+  description: 50-step capacity-qualified throughput comparison for paper-matched 275M KDA LatentMoE
   checkpoint_root: /weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/olmo-ddp/pretraining-smokes
 
 source:
@@ -58,8 +58,8 @@ runs:
     expert_parallel_size: 1
     expert_parallel_path: rowwise_nvshmem
     rank_microbatch_sequences: 16
-  - task_name: 275m-kda-latent2x-paper-ep1-mb16-2m-50step
-    run_name: throughput-275m-kda-latentmoe-2x-paper-ep1-mb16-2m-50step
+  - task_name: 275m-kda-latent2x-paper-ep1-mb8-2m-50step
+    run_name: throughput-275m-kda-latentmoe-2x-paper-ep1-mb8-2m-50step
     model_size: 275m
     model_variant: geometry_275m_kda_ev2_neg_nope_gated_latent2x_papermatched
     cx: 1
@@ -68,9 +68,20 @@ runs:
     gpu_count: 1
     expert_parallel_size: 1
     expert_parallel_path: rowwise_nvshmem
-    rank_microbatch_sequences: 16
-  - task_name: 275m-kda-latent4x-paper-ep2-mb16-2m-50step
-    run_name: throughput-275m-kda-latentmoe-4x-paper-ep2-mb16-2m-50step
+    rank_microbatch_sequences: 8
+  - task_name: 275m-kda-latent2x-paper-ep1-mb15-near2m-50step
+    run_name: throughput-275m-kda-latentmoe-2x-paper-ep1-mb15-near2m-50step
+    model_size: 275m
+    model_variant: geometry_275m_kda_ev2_neg_nope_gated_latent2x_papermatched
+    cx: 1
+    learning_rate: "1.6e-3"
+    global_batch_size: 2088960
+    gpu_count: 1
+    expert_parallel_size: 1
+    expert_parallel_path: rowwise_nvshmem
+    rank_microbatch_sequences: 15
+  - task_name: 275m-kda-latent4x-paper-ep2-mb8-2m-50step
+    run_name: throughput-275m-kda-latentmoe-4x-paper-ep2-mb8-2m-50step
     model_size: 275m
     model_variant: geometry_275m_kda_ev2_neg_nope_gated_latent4x_papermatched
     cx: 1
@@ -79,4 +90,4 @@ runs:
     gpu_count: 2
     expert_parallel_size: 2
     expert_parallel_path: rowwise_nvshmem
-    rank_microbatch_sequences: 16
+    rank_microbatch_sequences: 8

@@ -19,5 +19,41 @@
     "debug_gradients": false,
     "run_suffix": null,
     "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYP31SFS8DYN7GJHX2CTDHT1"
+  },
+  {
+    "experiment_name": "jacobm-275m-kda-latentmoe-paper-l4-capacity-parallel",
+    "experiment_id": "01KYP4ZJGFTKBVHBEKW6GCZV58",
+    "tasks": [
+      "275m-kda-latent4x-paper-ep2-mb8-capacity-3step",
+      "275m-kda-latent4x-paper-ep2-mb9-capacity-3step",
+      "275m-kda-latent4x-paper-ep2-mb11-capacity-3step",
+      "275m-kda-latent4x-paper-ep2-mb12-capacity-3step",
+      "275m-kda-latent4x-paper-ep2-mb13-capacity-3step"
+    ],
+    "debug_gradients": false,
+    "run_suffix": null,
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYP4ZJGFTKBVHBEKW6GCZV58"
+  },
+  {
+    "experiment_name": "jacobm-275m-kda-latentmoe-paper-throughput-mb8-final",
+    "experiment_id": "01KYP5SXH7ZK32FA8NM7AHXRV0",
+    "tasks": [
+      "275m-kda-latent2x-paper-ep1-mb8-2m-50step-final",
+      "275m-kda-latent4x-paper-ep2-mb8-2m-50step-final"
+    ],
+    "debug_gradients": false,
+    "run_suffix": null,
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYP5SXH7ZK32FA8NM7AHXRV0"
+  },
+  {
+    "experiment_name": "jacobm-275m-kda-latentmoe-paper-throughput-maxmb-final",
+    "experiment_id": "01KYP6RYG25M5VDSMDQ2S0ZRTR",
+    "tasks": [
+      "275m-kda-latent2x-paper-ep1-mb15-2088960-50step-max",
+      "275m-kda-latent4x-paper-ep2-mb9-2064384-50step-max"
+    ],
+    "debug_gradients": false,
+    "run_suffix": null,
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYP6RYG25M5VDSMDQ2S0ZRTR"
   }
 ]

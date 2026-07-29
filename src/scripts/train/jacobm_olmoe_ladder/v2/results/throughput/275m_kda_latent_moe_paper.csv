@@ -1,0 +1,5 @@
+variant,latent_factor,total_experts,top_k,gpus,expert_parallel_size,global_batch_tokens,rank_microbatch_sequences,accumulation_steps,final10_median_tps_gpu,aggregate_tps,final10_median_tflops_gpu,stable_step_seconds,final10_median_mfu_pct,peak_active_gib,peak_reserved_gib,max_skipped_steps,beaker_job,notes
+KDA parent,1,256,8,1,1,2097152,16,16,255489.0,255489.0,388.60,8.2084,17.270,235.70,239.20,0,01KYP31SKJDN3C3VG131ASZ3WV,Exact 2 Mi-token control
+LatentMoE 2x paper-matched,2,512,16,1,1,2097152,8,32,214671.5,214671.5,333.15,9.7691,14.810,162.90,164.50,0,01KYP5SXMMB2BRGWAVHQCTVDZ5,Exact 2 Mi-token comparison
+LatentMoE 2x paper-matched,2,512,16,1,1,2088960,15,17,219975.0,219975.0,341.40,9.4964,15.175,259.30,262.40,0,01KYP6RYNSXD3KM8Q23XF8YQEQ,Physical-max MB with nearest lower batch to 2 Mi
+LatentMoE 4x paper-matched,4,1024,32,2,2,2097152,8,16,143012.5,286025.0,222.90,7.3321,9.906,197.50,214.20,0,01KYP5SXQTDT36CMT4GFEM66SR,Exact 2 Mi; training completed before shutdown-only DataLoader segfault
