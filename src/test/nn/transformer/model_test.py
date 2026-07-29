@@ -471,7 +471,7 @@ def run_moe_hybrid_combined_forward(
                     FeedForwardConfig(hidden_size=512, bias=False) if shared_experts else None
                 ),
                 router=MoERouterConfig(uniform_expert_assignment=True),
-                latent_moe=LatentMoEConfig(routed_expert_dim=256) if latent_moe else None,
+                latent_moe=LatentMoEConfig(latent_dim=256) if latent_moe else None,
             ),
         ),
         lm_head=LMHeadConfig(layer_norm=layer_norm, bias=False),

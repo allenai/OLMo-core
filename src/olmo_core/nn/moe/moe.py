@@ -61,11 +61,8 @@ class MoEType(StrEnum):
 class LatentMoEConfig(Config):
     """Configuration for running the routed MoE branch in a latent dimension."""
 
-    routed_expert_dim: int
-    """Input and output dimension of the routed experts.
-
-    Routing decisions are made from the full model-width token representation.
-    """
+    latent_dim: int
+    """Input and output dimension of the routed expert payloads and expert MLPs."""
 
     bias: bool = False
     """Whether to use bias in the model-to-latent and latent-to-model projections."""
@@ -84,11 +81,11 @@ class LatentMoEConfig(Config):
         return self.up_proj_input_norm or LayerNormConfig(name=LayerNormType.rms, bias=False)
 
     def num_params(self, d_model: int) -> int:
-        params = 2 * d_model * self.routed_expert_dim
+        params = 2 * d_model * self.latent_dim
         if self.bias:
-            params += self.routed_expert_dim + d_model
+            params += self.latent_dim + d_model
         if self.up_proj_input_norm_enabled:
-            params += self.resolved_up_proj_input_norm().num_params(self.routed_expert_dim)
+            params += self.resolved_up_proj_input_norm().num_params(self.latent_dim)
         return params
 
 
@@ -113,12 +110,10 @@ class MoEConfig(ModuleConfig):
     dtype: DType = DType.float32
 
     def num_params(self, d_model: int) -> int:
-        routed_expert_dim = (
-            d_model if self.latent_moe is None else self.latent_moe.routed_expert_dim
-        )
+        latent_dim = d_model if self.latent_moe is None else self.latent_moe.latent_dim
         num_params = 0
         num_params += self.router.num_params(d_model, self.num_experts)
-        num_params += 3 * routed_expert_dim * self.hidden_size * self.num_experts
+        num_params += 3 * latent_dim * self.hidden_size * self.num_experts
         if self.shared_mlp is not None:
             num_params += self.shared_mlp.num_params(d_model)
         if self.latent_moe is not None:
@@ -126,13 +121,11 @@ class MoEConfig(ModuleConfig):
         return num_params
 
     def num_active_params(self, d_model: int) -> int:
-        routed_expert_dim = (
-            d_model if self.latent_moe is None else self.latent_moe.routed_expert_dim
-        )
+        latent_dim = d_model if self.latent_moe is None else self.latent_moe.latent_dim
         return (
             self.num_params(d_model)
-            - (3 * routed_expert_dim * self.hidden_size * self.num_experts)
-            + (3 * routed_expert_dim * self.hidden_size * self.router.top_k)
+            - (3 * latent_dim * self.hidden_size * self.num_experts)
+            + (3 * latent_dim * self.hidden_size * self.router.top_k)
         )
 
     def build(
@@ -143,10 +136,10 @@ class MoEConfig(ModuleConfig):
         init_device: str = "cpu",
         cache: Optional[BufferCache] = None,
     ) -> "MoEBase":
-        if self.latent_moe is not None and not (0 < self.latent_moe.routed_expert_dim < d_model):
+        if self.latent_moe is not None and not (0 < self.latent_moe.latent_dim < d_model):
             raise OLMoConfigurationError(
-                "latent_moe.routed_expert_dim must be greater than 0 and less than d_model "
-                f"({d_model}), got {self.latent_moe.routed_expert_dim}"
+                "latent_moe.latent_dim must be greater than 0 and less than d_model "
+                f"({d_model}), got {self.latent_moe.latent_dim}"
             )
         kwargs = self.as_dict(exclude_none=True, recurse=False)
         kwargs.pop("name")
@@ -202,7 +195,7 @@ class MoEBase(nn.Module):
             if z_loss_weight is not None:
                 z_loss_weight = z_loss_weight / n_layers
 
-        routed_expert_dim = d_model if latent_moe is None else latent_moe.routed_expert_dim
+        latent_dim = d_model if latent_moe is None else latent_moe.latent_dim
         self.latent_down_proj: Optional[nn.Linear]
         self.latent_up_proj_input_norm: Optional[LayerNorm]
         self.latent_up_proj: Optional[nn.Linear]
@@ -213,20 +206,20 @@ class MoEBase(nn.Module):
         else:
             self.latent_down_proj = nn.Linear(
                 d_model,
-                routed_expert_dim,
+                latent_dim,
                 bias=latent_moe.bias,
                 dtype=dtype,
                 device=init_device,
             )
             self.latent_up_proj_input_norm = (
                 latent_moe.resolved_up_proj_input_norm().build(
-                    routed_expert_dim, init_device=init_device
+                    latent_dim, init_device=init_device
                 )
                 if latent_moe.up_proj_input_norm_enabled
                 else None
             )
             self.latent_up_proj = nn.Linear(
-                routed_expert_dim,
+                latent_dim,
                 d_model,
                 bias=latent_moe.bias,
                 dtype=dtype,
@@ -243,7 +236,7 @@ class MoEBase(nn.Module):
             init_device=init_device,
         )
         self.experts = self._init_parallel_mlp(
-            d_model=routed_expert_dim,
+            d_model=latent_dim,
             num_experts=num_experts,
             hidden_size=hidden_size,
             dtype=dtype,
@@ -314,10 +307,10 @@ class MoEBase(nn.Module):
         :returns: The output of the MoE layer, the optional load-balancing loss, and the optional
             router Z-loss.
         """
-        routed_x = self.prepare_routed_input(x)
         expert_weights, expert_indices, batch_size_per_expert, router_aux_loss = self.router(
             x, loss_div_factor=loss_div_factor
         )
+        routed_x = self.prepare_routed_input(x)
 
         if router_aux_loss is not None:
             routed_x = attach_auxiliary_loss(routed_x, router_aux_loss)
@@ -345,6 +338,9 @@ class MoEBase(nn.Module):
             return routed_output
         if self.latent_up_proj_input_norm is not None:
             routed_output = self.latent_up_proj_input_norm(routed_output)
+        # Grouped-GEMM experts can return BF16 even when the projection parameters use a
+        # different dtype. Restore the configured projection dtype before the dense up projection.
+        routed_output = routed_output.to(dtype=self.latent_up_proj.weight.dtype)
         return self.latent_up_proj(routed_output)
 
     def apply_pp(self, pp_mesh: DeviceMesh):

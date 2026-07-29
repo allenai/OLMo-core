@@ -141,7 +141,7 @@ def test_fan_in_init_moe(d_model, init_device, device):
 
 def test_fan_in_init_latent_moe():
     d_model = 256
-    routed_expert_dim = 64
+    latent_dim = 64
     config = TransformerConfig(
         name=TransformerType.moe,
         d_model=d_model,
@@ -154,7 +154,7 @@ def test_fan_in_init_latent_moe():
             feed_forward_moe=MoEConfig(
                 num_experts=4,
                 hidden_size=128,
-                latent_moe=LatentMoEConfig(routed_expert_dim=routed_expert_dim),
+                latent_moe=LatentMoEConfig(latent_dim=latent_dim),
             ),
             layer_norm=LayerNormConfig(name=LayerNormType.rms, bias=False),
         ),
@@ -181,7 +181,7 @@ def test_fan_in_init_latent_moe():
     )
     torch.testing.assert_close(
         moe.latent_up_proj.weight.std(),
-        torch.tensor(routed_expert_dim**-0.5),
+        torch.tensor(latent_dim**-0.5),
         rtol=0.3,
         atol=0.0,
     )

@@ -22,10 +22,10 @@ D_MODEL = 64
 
 
 def _block_config(
-    *, use_peri_norm: bool = False, routed_expert_dim: int | None = None
+    *, use_peri_norm: bool = False, latent_dim: int | None = None
 ) -> OLMoDDPTransformerBlockConfig:
     dtype = DType.float32
-    routed_dim = D_MODEL if routed_expert_dim is None else routed_expert_dim
+    routed_dim = D_MODEL if latent_dim is None else latent_dim
     layer_norm = LayerNormConfig(name=LayerNormType.rms, eps=1e-6, bias=False, dtype=dtype)
     return OLMoDDPTransformerBlockConfig(
         name=TransformerBlockType.moe_fused_v2,
@@ -42,7 +42,7 @@ def _block_config(
         layer_norm=layer_norm,
         use_peri_norm=use_peri_norm,
         latent_moe=(
-            LatentMoEConfig(routed_expert_dim=routed_dim) if routed_expert_dim is not None else None
+            LatentMoEConfig(latent_dim=routed_dim) if latent_dim is not None else None
         ),
     )
 
@@ -68,35 +68,35 @@ def test_block_num_active_params_below_total():
 
 
 def test_latent_block_dimensions_and_param_accounting():
-    routed_expert_dim = 16
-    config = _block_config(routed_expert_dim=routed_expert_dim)
+    latent_dim = 16
+    config = _block_config(latent_dim=latent_dim)
     block = _build_block(config)
 
     assert config.num_params(D_MODEL) == sum(p.numel() for p in block.parameters())
     assert block.routed_experts is not None
-    assert block.routed_experts.d_model == routed_expert_dim
+    assert block.routed_experts.d_model == latent_dim
     assert block.routed_experts_router is not None
     assert block.routed_experts_router.d_model == D_MODEL
     assert block.latent_down_proj is not None
-    assert block.latent_down_proj.weight.shape == (routed_expert_dim, D_MODEL)
+    assert block.latent_down_proj.weight.shape == (latent_dim, D_MODEL)
     assert block.latent_up_proj is not None
-    assert block.latent_up_proj.weight.shape == (D_MODEL, routed_expert_dim)
+    assert block.latent_up_proj.weight.shape == (D_MODEL, latent_dim)
 
     model_input = torch.randn(2, 3, D_MODEL)
     routed_input = block._prepare_routed_moe_input(model_input)
-    assert routed_input.shape == (2, 3, routed_expert_dim)
+    assert routed_input.shape == (2, 3, latent_dim)
     assert block._restore_routed_moe_output(routed_input).shape == model_input.shape
 
 
 def test_latent_block_norm_is_disabled_by_default():
-    config = _block_config(routed_expert_dim=16)
+    config = _block_config(latent_dim=16)
     block = _build_block(config)
 
     assert block.latent_up_proj_input_norm is None
 
 
 def test_latent_block_enabled_norm_defaults_to_rms_norm():
-    config = _block_config(routed_expert_dim=16)
+    config = _block_config(latent_dim=16)
     assert config.latent_moe is not None
     config.latent_moe.up_proj_input_norm_enabled = True
     block = _build_block(config)
@@ -118,7 +118,7 @@ def test_latent_block_enabled_norm_defaults_to_rms_norm():
 
 @pytest.mark.parametrize("norm_type", [LayerNormType.default, LayerNormType.l2_norm])
 def test_latent_block_accepts_configurable_up_proj_input_norm(norm_type: LayerNormType):
-    config = _block_config(routed_expert_dim=16)
+    config = _block_config(latent_dim=16)
     assert config.latent_moe is not None
     config.latent_moe.up_proj_input_norm_enabled = True
     config.latent_moe.up_proj_input_norm = LayerNormConfig(name=norm_type)
@@ -127,7 +127,7 @@ def test_latent_block_accepts_configurable_up_proj_input_norm(norm_type: LayerNo
 
 
 def test_latent_block_can_disable_up_proj_input_norm():
-    config = _block_config(routed_expert_dim=16)
+    config = _block_config(latent_dim=16)
     assert config.latent_moe is not None
     block = _build_block(config)
     assert block.latent_up_proj_input_norm is None
@@ -138,16 +138,16 @@ def test_latent_block_can_disable_up_proj_input_norm():
     assert restored.up_proj_input_norm_enabled is False
 
 
-@pytest.mark.parametrize("routed_expert_dim", [0, D_MODEL, D_MODEL * 2])
-def test_latent_block_rejects_invalid_dimension(routed_expert_dim: int):
-    config = _block_config(routed_expert_dim=routed_expert_dim)
-    with pytest.raises(OLMoConfigurationError, match="routed_expert_dim"):
+@pytest.mark.parametrize("latent_dim", [0, D_MODEL, D_MODEL * 2])
+def test_latent_block_rejects_invalid_dimension(latent_dim: int):
+    config = _block_config(latent_dim=latent_dim)
+    with pytest.raises(OLMoConfigurationError, match="latent_dim"):
         config.build(d_model=D_MODEL, block_idx=0, n_layers=1, init_device="cpu")
 
 
 def test_latent_block_projection_initialization():
-    routed_expert_dim = 16
-    block = _build_block(_block_config(routed_expert_dim=routed_expert_dim))
+    latent_dim = 16
+    block = _build_block(_block_config(latent_dim=latent_dim))
     InitMethod.fan_in.init_moe_v2(
         block,
         d_model=D_MODEL,
@@ -167,7 +167,7 @@ def test_latent_block_projection_initialization():
     )
     torch.testing.assert_close(
         block.latent_up_proj.weight.std(),
-        torch.tensor(routed_expert_dim**-0.5),
+        torch.tensor(latent_dim**-0.5),
         rtol=0.35,
         atol=0.0,
     )
@@ -179,7 +179,7 @@ def test_latent_block_projection_initialization():
     )
     torch.testing.assert_close(
         block.routed_experts.w_up_gate.std(),
-        torch.tensor(routed_expert_dim**-0.5),
+        torch.tensor(latent_dim**-0.5),
         rtol=0.35,
         atol=0.0,
     )
@@ -192,7 +192,7 @@ def test_latent_block_projection_initialization():
 
 
 def test_latent_block_keeps_shared_experts_in_model_space():
-    config = _block_config(routed_expert_dim=16)
+    config = _block_config(latent_dim=16)
     config.shared_experts = SharedExpertsConfig(
         d_model=D_MODEL,
         hidden_size=32,
@@ -212,15 +212,15 @@ def test_non_latent_block_preserves_state_dict_keys():
 
 
 def test_latent_block_rejects_routed_config_dimension_mismatch():
-    config = _block_config(routed_expert_dim=16)
+    config = _block_config(latent_dim=16)
     assert config.routed_experts is not None
     config.routed_experts.d_model = 8
     with pytest.raises(OLMoConfigurationError, match="routed_experts.d_model"):
         config.build(d_model=D_MODEL, block_idx=0, n_layers=1, init_device="cpu")
 
 
-def test_latent_block_rejects_router_dimension_mismatch():
-    config = _block_config(routed_expert_dim=16)
+def test_latent_block_rejects_model_space_router_dimension_mismatch():
+    config = _block_config(latent_dim=16)
     assert config.routed_experts_router is not None
     config.routed_experts_router.d_model = 16
     with pytest.raises(OLMoConfigurationError, match="routed_experts_router.d_model"):

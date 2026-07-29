@@ -702,7 +702,7 @@ def build_geometry_matched_kda_latent_moe_model_config(
     """
 
     try:
-        routed_expert_dim = LATENT_MOE_ROUTED_DIMS_BY_COMPRESSION[compression]
+        latent_dim = LATENT_MOE_ROUTED_DIMS_BY_COMPRESSION[compression]
     except KeyError as exc:
         raise ValueError(
             f"unsupported LatentMoE compression={compression}; expected one of "
@@ -726,10 +726,10 @@ def build_geometry_matched_kda_latent_moe_model_config(
         if latent.routed_experts is None or latent.routed_experts_router is None:
             raise ValueError("LatentMoE requires a routed expert and router")
         latent.latent_moe = LatentMoEConfig(
-            routed_expert_dim=routed_expert_dim,
+            latent_dim=latent_dim,
             up_proj_input_norm_enabled=up_proj_input_norm_enabled,
         )
-        latent.routed_experts.d_model = routed_expert_dim
+        latent.routed_experts.d_model = latent_dim
         latent.routed_experts_router.d_model = D_MODEL
         if scale_experts_with_compression:
             latent.routed_experts.num_experts *= compression
@@ -757,14 +757,14 @@ def build_geometry_matched_kda_latent_moe_model_config(
             continue
         if block.latent_moe is None:
             raise ValueError(f"LatentMoE candidate layer {layer_idx} is missing latent_moe")
-        if block.latent_moe.routed_expert_dim != routed_expert_dim:
+        if block.latent_moe.latent_dim != latent_dim:
             raise ValueError(f"LatentMoE candidate layer {layer_idx} has the wrong latent width")
         if block.latent_moe.up_proj_input_norm_enabled != up_proj_input_norm_enabled:
             raise ValueError(f"LatentMoE candidate layer {layer_idx} has the wrong norm setting")
         if block.routed_experts is None or block.routed_experts_router is None:
             raise ValueError(f"LatentMoE candidate layer {layer_idx} lost its routed branch")
         if (
-            block.routed_experts.d_model != routed_expert_dim
+            block.routed_experts.d_model != latent_dim
             or block.routed_experts_router.d_model != D_MODEL
         ):
             raise ValueError(f"LatentMoE candidate layer {layer_idx} has inconsistent dimensions")

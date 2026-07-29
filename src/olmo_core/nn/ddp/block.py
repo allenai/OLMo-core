@@ -202,16 +202,16 @@ class OLMoDDPTransformerBlockConfig(TransformerBlockConfig):
                 raise OLMoConfigurationError(
                     "latent_moe requires routed_experts and routed_experts_router"
                 )
-            routed_expert_dim = self.latent_moe.routed_expert_dim
-            if not 0 < routed_expert_dim < d_model:
+            latent_dim = self.latent_moe.latent_dim
+            if not 0 < latent_dim < d_model:
                 raise OLMoConfigurationError(
-                    "latent_moe.routed_expert_dim must be greater than 0 and less than "
-                    f"d_model ({d_model}), got {routed_expert_dim}"
+                    "latent_moe.latent_dim must be greater than 0 and less than "
+                    f"d_model ({d_model}), got {latent_dim}"
                 )
-            if self.routed_experts.d_model != routed_expert_dim:
+            if self.routed_experts.d_model != latent_dim:
                 raise OLMoConfigurationError(
-                    "latent_moe.routed_expert_dim must equal routed_experts.d_model "
-                    f"({routed_expert_dim} != {self.routed_experts.d_model})"
+                    "latent_moe.latent_dim must equal routed_experts.d_model "
+                    f"({latent_dim} != {self.routed_experts.d_model})"
                 )
             if self.routed_experts_router.d_model != d_model:
                 raise OLMoConfigurationError(
@@ -365,7 +365,7 @@ class OLMoDDPTransformerBlockConfig(TransformerBlockConfig):
             )
         if self.latent_moe is not None:
             # Both model<->latent projections are used for every routed token.
-            flops += 12 * seqlen * d_model * self.latent_moe.routed_expert_dim
+            flops += 12 * seqlen * d_model * self.latent_moe.latent_dim
 
         # shared experts
         # (seq_len, d_model) * (d_model, expert_hidden_size) * num_experts
@@ -433,14 +433,14 @@ class OLMoDDPTransformerBlock(olmo_core.nn.transformer.block.TransformerBlockBas
                 raise OLMoConfigurationError("latent_moe requires routed_experts")
             if routed_experts_router is None:
                 raise OLMoConfigurationError("latent_moe requires routed_experts_router")
-            if not 0 < latent_moe.routed_expert_dim < d_model:
+            if not 0 < latent_moe.latent_dim < d_model:
                 raise OLMoConfigurationError(
-                    "latent_moe.routed_expert_dim must be greater than 0 and less than "
-                    f"d_model ({d_model}), got {latent_moe.routed_expert_dim}"
+                    "latent_moe.latent_dim must be greater than 0 and less than "
+                    f"d_model ({d_model}), got {latent_moe.latent_dim}"
                 )
-            if routed_experts.d_model != latent_moe.routed_expert_dim:
+            if routed_experts.d_model != latent_moe.latent_dim:
                 raise OLMoConfigurationError(
-                    "latent_moe.routed_expert_dim must equal routed_experts.d_model"
+                    "latent_moe.latent_dim must equal routed_experts.d_model"
                 )
             if routed_experts_router.d_model != d_model:
                 raise OLMoConfigurationError(
@@ -449,20 +449,20 @@ class OLMoDDPTransformerBlock(olmo_core.nn.transformer.block.TransformerBlockBas
                 )
             self.latent_down_proj = torch.nn.Linear(
                 d_model,
-                latent_moe.routed_expert_dim,
+                latent_moe.latent_dim,
                 bias=latent_moe.bias,
                 dtype=routed_experts.dtype.as_pt(),
                 device=init_device,
             )
             self.latent_up_proj_input_norm = (
                 latent_moe.resolved_up_proj_input_norm().build(
-                    latent_moe.routed_expert_dim, init_device=init_device
+                    latent_moe.latent_dim, init_device=init_device
                 )
                 if latent_moe.up_proj_input_norm_enabled
                 else None
             )
             self.latent_up_proj = torch.nn.Linear(
-                latent_moe.routed_expert_dim,
+                latent_moe.latent_dim,
                 d_model,
                 bias=latent_moe.bias,
                 dtype=routed_experts.dtype.as_pt(),
@@ -838,7 +838,8 @@ class OLMoDDPTransformerBlock(olmo_core.nn.transformer.block.TransformerBlockBas
         # attention
         flops += self.attention.num_flops_per_token(seq_len)
 
-        # Routers can consume different widths when the routed branch is latent.
+        # Routers always consume model-space activations; only routed expert payloads may use a
+        # latent width.
         if self.routed_experts_router is not None:
             flops += 6 * self.routed_experts_router.d_model * self.routed_experts_router.num_experts
         if self.shared_experts_router is not None:

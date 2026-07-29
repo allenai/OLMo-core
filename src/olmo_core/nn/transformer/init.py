@@ -196,8 +196,7 @@ class InitMethod(StrEnum):
         elif self == InitMethod.llama_depth:
             std = std / (2 * (block_idx + 1)) ** 0.5
         elif self == InitMethod.fan_in:
-            # For fan_in, router weight uses the routed branch's input dimension. This differs
-            # from d_model when latent MoE is enabled.
+            # Routing decisions are always computed from model-space activations.
             std = m.router.d_model**-0.5
 
         _apply_init(
