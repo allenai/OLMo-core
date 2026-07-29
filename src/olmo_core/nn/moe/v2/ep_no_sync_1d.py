@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional, Tuple, Union, cast
 
 import torch
@@ -13,6 +14,7 @@ from ..utils import (
     moe_permute_1d_fused_drop_no_compile,
 )
 from .comm import _CombineVDevAutograd, _DispatchVDevAutograd
+from .ep_backend import finish_moe_forward, prepare_and_route_moe
 from .ep_no_sync_buffers import (
     compute_ep_no_sync_rank_capacity,
     get_ep_no_sync_buffers,
@@ -28,6 +30,99 @@ from .routed_experts import requires_host_side_split_sizes, use_torch_grouped_mm
 
 if TYPE_CHECKING:
     from olmo_core.nn.ddp.block import OLMoDDPTransformerBlock
+
+
+@dataclass(frozen=True)
+class _NoSync1DCapacityPlan:
+    requested_splits: torch.Tensor
+    allowed_splits: torch.Tensor
+    recv_splits_by_src_local: torch.Tensor
+    local_reorder_indices: torch.Tensor
+    local_inverse_reorder_indices: torch.Tensor
+    packed_keep_mask: torch.Tensor
+    num_kept: torch.Tensor
+    num_out_tokens: int
+    rank_capacity: int
+
+
+def _apply_token_capacity_and_drop(
+    block: OLMoDDPTransformerBlock,
+    local_batch_size_per_global_routed_expert: torch.Tensor,
+    *,
+    num_out_tokens: int,
+) -> _NoSync1DCapacityPlan:
+    """Build the deterministic tail-drop and local reorder plan for no-sync 1D EP."""
+
+    with torch.no_grad(), nvtx.annotate("ConfigCapacity", color="green"):
+        requested_splits = local_batch_size_per_global_routed_expert.to(dtype=torch.long)
+        rank_capacity = compute_ep_no_sync_rank_capacity(block, num_out_tokens)
+        allowed_splits, recv_splits_by_src_local, drop_token_count = cast(
+            Tuple[torch.Tensor, torch.Tensor, torch.Tensor],
+            sync_tail_drop_allowed_splits_single_a2a(
+                block,
+                requested_splits,
+                rank_capacity=rank_capacity,
+            ),
+        )
+        (
+            local_reorder_indices,
+            local_inverse_reorder_indices,
+            packed_keep_mask,
+        ) = build_keep_reorder(
+            requested_splits=requested_splits,
+            keep_splits=allowed_splits,
+            num_out_tokens=num_out_tokens,
+        )
+        num_kept = allowed_splits.sum(dtype=torch.long)
+        block._ep_no_sync_last_debug = {
+            "num_dropped": drop_token_count.detach(),
+            "rank_capacity": torch.tensor(
+                rank_capacity,
+                device=requested_splits.device,
+                dtype=torch.long,
+            ),
+            "received_tokens_after_drop": recv_splits_by_src_local.sum(
+                dtype=torch.long
+            ).detach(),
+            "allowed_splits": allowed_splits.detach(),
+            "local_kept_tokens": num_kept.detach(),
+            "combined_tokens": num_kept.detach(),
+            "zero_rows_after_local_unpermute": (
+                torch.tensor(
+                    num_out_tokens,
+                    device=requested_splits.device,
+                    dtype=torch.long,
+                )
+                - num_kept
+            ).detach(),
+        }
+
+    return _NoSync1DCapacityPlan(
+        requested_splits=requested_splits,
+        allowed_splits=allowed_splits,
+        recv_splits_by_src_local=recv_splits_by_src_local,
+        local_reorder_indices=local_reorder_indices,
+        local_inverse_reorder_indices=local_inverse_reorder_indices,
+        packed_keep_mask=packed_keep_mask,
+        num_kept=num_kept,
+        num_out_tokens=num_out_tokens,
+        rank_capacity=rank_capacity,
+    )
+
+
+def _get_buffers(block: OLMoDDPTransformerBlock, plan: _NoSync1DCapacityPlan, x: torch.Tensor):
+    """Acquire no-sync 1D buffers sized from the capacity plan and routed width."""
+
+    return get_ep_no_sync_buffers(
+        block,
+        dispatch_in_cap=plan.num_out_tokens,
+        dispatch_out_cap=plan.rank_capacity,
+        combine_in_cap=plan.rank_capacity,
+        combine_out_cap=plan.num_out_tokens,
+        d_model=x.shape[-1],
+        dtype=x.dtype,
+        device=x.device,
+    )
 
 
 def combined_forward_ep_no_sync_1d(
@@ -53,26 +148,17 @@ def combined_forward_ep_no_sync_1d(
     ), "EP no-sync implementation does not support host-side split size communication"
     group_name = get_ep_no_sync_group_name(self)
     B, S, D = x.shape
-
-    block_inp = x
-    del x
-
-    attn_res_out = self._checkpointed_res_norm_attn(block_inp, **kwargs)
-
-    kwargs.pop("max_doc_len", None)
-    kwargs.pop("cu_doc_lens", None)
-    moe_inp = self._prepare_moe_input(attn_res_out)
-
-    (
-        local_x_global_routed_expert_weights,
-        local_x_global_routed_expert_indices,
-        local_batch_size_per_global_routed_expert,
-        routed_expert_router_aux_loss_info,
-    ) = self.routed_experts_router(
-        moe_inp,
-        False,
+    prepared, routing = prepare_and_route_moe(
+        self,
+        x,
         loss_div_factor=loss_div_factor,
+        forward_kwargs=kwargs,
     )
+    attn_res_out = prepared.attention_residual
+    moe_inp = prepared.model_input
+    local_x_global_routed_expert_weights = routing.expert_weights
+    local_x_global_routed_expert_indices = routing.expert_indices
+    local_batch_size_per_global_routed_expert = routing.tokens_per_expert
 
     wait_stream_no_compile(
         this_stream=self.get_dense_stream(),
@@ -97,67 +183,22 @@ def combined_forward_ep_no_sync_1d(
     in_shape = moe_inp.size()
     moe_inp = moe_inp.view(-1, in_shape[-1])
 
-    num_out_tokens = local_x_global_routed_expert_indices.numel()
-
-    with torch.no_grad():
-        with nvtx.annotate("ConfigCapacity", color="green"):
-            requested_splits = local_batch_size_per_global_routed_expert.to(dtype=torch.long)
-            rank_capacity = compute_ep_no_sync_rank_capacity(self, num_out_tokens)
-            allowed_splits, recv_splits_by_src_local, _drop_token_cnt = cast(
-                Tuple[torch.Tensor, torch.Tensor, torch.Tensor],
-                sync_tail_drop_allowed_splits_single_a2a(
-                    self,
-                    requested_splits,
-                    rank_capacity=rank_capacity,
-                ),
-            )
-            (
-                local_reorder_indices,
-                local_inverse_reorder_indices,
-                packed_keep_mask,
-            ) = build_keep_reorder(
-                requested_splits=requested_splits,
-                keep_splits=allowed_splits,
-                num_out_tokens=num_out_tokens,
-            )
-            num_kept = allowed_splits.sum(dtype=torch.long)
-            dispatch_in_cap = num_out_tokens
-            dispatch_out_cap = rank_capacity
-            combine_in_cap = rank_capacity
-            combine_out_cap = num_out_tokens
-            self._ep_no_sync_last_debug = {
-                "num_dropped": _drop_token_cnt.detach(),
-                "rank_capacity": torch.tensor(
-                    rank_capacity,
-                    device=requested_splits.device,
-                    dtype=torch.long,
-                ),
-                "received_tokens_after_drop": recv_splits_by_src_local.sum(
-                    dtype=torch.long
-                ).detach(),
-                "allowed_splits": allowed_splits.detach(),
-                "local_kept_tokens": num_kept.detach(),
-                "combined_tokens": num_kept.detach(),
-                "zero_rows_after_local_unpermute": (
-                    torch.tensor(
-                        num_out_tokens,
-                        device=requested_splits.device,
-                        dtype=torch.long,
-                    )
-                    - num_kept
-                ).detach(),
-            }
-
-    buffers = get_ep_no_sync_buffers(
+    capacity = _apply_token_capacity_and_drop(
         self,
-        dispatch_in_cap=dispatch_in_cap,
-        dispatch_out_cap=dispatch_out_cap,
-        combine_in_cap=combine_in_cap,
-        combine_out_cap=combine_out_cap,
-        d_model=moe_inp.shape[-1],
-        dtype=moe_inp.dtype,
-        device=moe_inp.device,
+        local_batch_size_per_global_routed_expert,
+        num_out_tokens=local_x_global_routed_expert_indices.numel(),
     )
+    buffers = _get_buffers(self, capacity, moe_inp)
+
+    requested_splits = capacity.requested_splits
+    allowed_splits = capacity.allowed_splits
+    recv_splits_by_src_local = capacity.recv_splits_by_src_local
+    local_reorder_indices = capacity.local_reorder_indices
+    local_inverse_reorder_indices = capacity.local_inverse_reorder_indices
+    packed_keep_mask = capacity.packed_keep_mask
+    num_kept = capacity.num_kept
+    num_out_tokens = capacity.num_out_tokens
+    rank_capacity = capacity.rank_capacity
 
     routing_map = local_x_global_routed_expert_indices.view(
         -1, self.routed_experts_router.top_k
@@ -169,11 +210,6 @@ def combined_forward_ep_no_sync_1d(
             recv_splits_by_src_local,
             rank_capacity=rank_capacity,
         )
-
-    assert local_reorder_indices is not None
-    assert local_inverse_reorder_indices is not None
-    assert packed_keep_mask is not None
-    assert num_kept is not None
 
     with nvtx.annotate("Permute local tokens", color="green"):
         (
@@ -308,9 +344,4 @@ def combined_forward_ep_no_sync_1d(
 
     mlp_out = self._merge_routed_and_shared(local_x, mixed_shared_out)
 
-    final_out = self._res_norm_mlp(attn_res_out, mlp_out)
-
-    return self._attach_routed_aux_loss(
-        final_out,
-        routed_expert_router_aux_loss_info,
-    )
+    return finish_moe_forward(self, prepared, mlp_out, routing)

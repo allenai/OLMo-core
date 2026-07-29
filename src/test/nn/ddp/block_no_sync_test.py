@@ -11,6 +11,14 @@ from olmo_core.nn.ddp.block import OLMoDDPTransformerBlock
 from olmo_core.nn.layer_norm import LayerNormConfig, LayerNormType
 from olmo_core.nn.moe import MoERouterGatingFunction
 from olmo_core.nn.moe.v2.ep_config import ExpertParallelConfig, ExpertParallelPath
+from olmo_core.nn.moe.v2.ep_backend import (
+    DeepEPV2Backend,
+    NoSync1DBackend,
+    RowwiseNVSHMEMBackend,
+    RowwiseWaveBackend,
+    Sync1DBackend,
+    get_expert_parallel_backend,
+)
 from olmo_core.nn.moe.v2.fp8 import MoERowwiseFP8Config
 from olmo_core.nn.moe.v2.routed_experts import RoutedExpertsConfig
 from olmo_core.nn.moe.v2.router import MoERouterConfigV2
@@ -48,6 +56,20 @@ def test_v2_extracted_forward_module_names_importable():
     assert hasattr(ep_no_sync_1d, "combined_forward_ep_no_sync_1d")
     assert hasattr(ep_no_sync_rowwise, "combined_forward_ep_no_sync_rowwise")
     assert hasattr(ep_no_sync_rowwise_wave, "combined_forward_ep_no_sync_rowwise_wave")
+
+
+@pytest.mark.parametrize(
+    ("path", "backend_type"),
+    [
+        (ExpertParallelPath.sync_1d, Sync1DBackend),
+        (ExpertParallelPath.no_sync_1d, NoSync1DBackend),
+        (ExpertParallelPath.rowwise_nvshmem, RowwiseNVSHMEMBackend),
+        (ExpertParallelPath.rowwise_wave, RowwiseWaveBackend),
+        (ExpertParallelPath.deepep_v2, DeepEPV2Backend),
+    ],
+)
+def test_v2_ep_path_selects_backend(path, backend_type):
+    assert isinstance(get_expert_parallel_backend(path), backend_type)
 
 
 def _build_ep_mesh() -> DeviceMesh:

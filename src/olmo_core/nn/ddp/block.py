@@ -38,6 +38,7 @@ from ..moe.v2.checkpointing import (
     is_checkpoint_recomputing,
 )
 from ..moe.v2.ep_config import ExpertParallelConfig, ExpertParallelPath
+from ..moe.v2.ep_backend import get_expert_parallel_backend
 from ..moe.v2.ep_no_sync_1d import (
     combined_forward_ep_no_sync_1d as _combined_forward_ep_no_sync_1d,
 )
@@ -821,36 +822,42 @@ class OLMoDDPTransformerBlock(olmo_core.nn.transformer.block.TransformerBlockBas
         if not self.ep_enabled:
             return self.combined_forward_no_ep(x, loss_div_factor=loss_div_factor, **kwargs)
 
-        # In eval mode, different ranks might get different input token counts,
-        # and no-sync can freeze. Fall back to the synced EP path there.
-        if not (self.ep.no_sync and self.training):
-            return self.combined_forward_ep_1d(x, loss_div_factor=loss_div_factor, **kwargs)
-
-        if self.ep.path == ExpertParallelPath.rowwise_wave:
-            no_sync_forward = self.combined_forward_ep_no_sync_rowwise_wave
-        elif self.ep.path == ExpertParallelPath.rowwise_nvshmem:
-            no_sync_forward = self.combined_forward_ep_no_sync_rowwise
-        elif self.ep.path == ExpertParallelPath.deepep_v2:
-            no_sync_forward = self.combined_forward_ep_deepep_v2
-        elif self.ep.path == ExpertParallelPath.no_sync_1d:
-            no_sync_forward = self.combined_forward_ep_no_sync_1d
-        else:
-            raise RuntimeError(f"Unsupported EP no-sync path {self.ep.path!r}")
+        # In eval mode, different ranks might get different input token counts, and no-sync can
+        # freeze. Fall back to the synchronized backend there.
+        backend_path = (
+            self.ep.path
+            if self.ep.no_sync and self.training
+            else ExpertParallelPath.sync_1d
+        )
+        backend = get_expert_parallel_backend(backend_path)
 
         # Keep the disabled-by-default activation diagnostic out of the compiled hot path. Its
         # per-layer block_idx key otherwise forces one Dynamo graph per block (and per grad mode
         # under reentrant checkpoint), eventually sending unmatched block forwards to eager.
         if EP_NO_SYNC_SAVED_ACTIVATIONS_DEBUG_ENABLED:
+            def backend_forward(
+                backend_x: torch.Tensor,
+                *,
+                loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
+                **backend_kwargs,
+            ) -> torch.Tensor:
+                return backend.run_moe(
+                    self,
+                    backend_x,
+                    loss_div_factor=loss_div_factor,
+                    **backend_kwargs,
+                )
+
             debug_out = maybe_dump_ep_no_sync_saved_activations(
                 self,
                 x,
                 loss_div_factor=loss_div_factor,
                 forward_kwargs=kwargs,
-                no_sync_forward=no_sync_forward,
+                no_sync_forward=backend_forward,
             )
             if debug_out is not None:
                 return debug_out
-        return no_sync_forward(x, loss_div_factor=loss_div_factor, **kwargs)
+        return backend.run_moe(self, x, loss_div_factor=loss_div_factor, **kwargs)
 
     def apply_pp(self, pp_mesh: DeviceMesh):
         pass  # nothing to do
