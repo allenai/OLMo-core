@@ -35,10 +35,10 @@ CXS = (1, 2, 4, 8)
 LRS = (4e-4, 8e-4, 1.6e-3, 3.2e-3)
 MODELS = ("275m", "480m", "810m", "1p2b")
 L2_KEY = "geometry_kda_ev2_neg_nope_gated_latentmoe_l2_paper"
-L4_KEY = "geometry_kda_ev2_neg_nope_gated_latentmoe_l4_paper"
+L4_KEY = "geometry_kda_ev2_neg_nope_gated_latentmoe_l4_1000e"
 ACTIVE_PARAMETERS = {
     L2_KEY: {"275m": 295_664_448},
-    L4_KEY: {"275m": 296_770_368},
+    L4_KEY: {"275m": 296_632_128},
 }
 
 
@@ -56,6 +56,7 @@ def _planned_names() -> dict[str, list[tuple[str, int, float, str]]]:
     for key, compression in ((L2_KEY, 2), (L4_KEY, 4)):
         for cx in CXS:
             for lr in LRS:
+                family_tag = "l2-paper" if compression == 2 else "l4-1000e"
                 planned[key].append(
                     (
                         "275m",
@@ -63,7 +64,7 @@ def _planned_names() -> dict[str, list[tuple[str, int, float, str]]]:
                         lr,
                         (
                             "pt-275m-kda-ev2-neg-nope-gated-latentmoe-"
-                            f"l{compression}-paper-cx{cx}-lr{_lr_name(lr)}-r1"
+                            f"{family_tag}-cx{cx}-lr{_lr_name(lr)}-r1"
                         ),
                     )
                 )
@@ -108,7 +109,7 @@ def resolve_latent_variants(
 
     return (
         build(L2_KEY, "LatentMoE L=2 (paper-matched)", "#7c3aed"),
-        build(L4_KEY, "LatentMoE L=4 (paper-matched)", "#0891b2"),
+        build(L4_KEY, "LatentMoE L=4 (1,000 experts/top-32)", "#0891b2"),
         unresolved,
     )
 
@@ -122,7 +123,8 @@ def comparison_wave(kda: Variant, l2: Variant, l4: Variant) -> Wave:
             "The parent is BF16 KDA with expand_v=2, negative eigenvalues, NoPE, "
             "and gated attention. Paper-matched LatentMoE keeps the full-width "
             "router and scales total/active experts with compression: L=2 uses "
-            "512/top-16 and L=4 uses 1024/top-32."
+            "512/top-16. The L=4 EP1 approximation uses 1,000/top-32, staying "
+            "below the grouped-MM kernel's strict 1,024-group limit."
         ),
         models=MODELS,
         lr_sweep_models=("275m",),

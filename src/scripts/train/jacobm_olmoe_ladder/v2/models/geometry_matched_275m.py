@@ -144,10 +144,13 @@ LATENT_MOE_ROUTED_DIMS_BY_COMPRESSION = {
     4: 160,
 }
 EXPECTED_LATENT_MOE_COUNTS = {
-    (2, False): (248_294_208, 184_068_928, 1_671_060_288),
-    (4, False): (223_503_168, 159_277_888, 934_886_208),
-    (2, True): (295_664_448, 231_439_168, 3_141_196_608),
-    (4, True): (296_770_368, 232_545_088, 3_142_302_528),
+    (2, False, None): (248_294_208, 184_068_928, 1_671_060_288),
+    (4, False, None): (223_503_168, 159_277_888, 934_886_208),
+    (2, True, None): (295_664_448, 231_439_168, 3_141_196_608),
+    (4, True, None): (296_770_368, 232_545_088, 3_142_302_528),
+    # Keep paper-matched top-32 routing but stay below the grouped-MM
+    # implementation's strict group_count < 1024 limit on EP1.
+    (4, True, 1000): (296_632_128, 232_406_848, 3_073_320_768),
 }
 
 # A strict 1:1 hybrid alternates a recurrent/local mixer at even layers with
@@ -530,6 +533,7 @@ def build_geometry_matched_kda_latent_moe_model_config(
     compression: int,
     up_proj_input_norm_enabled: bool = False,
     scale_experts_with_compression: bool = False,
+    num_experts_override: int | None = None,
 ) -> OLMoDDPModelConfig:
     """Add LatentMoE to the promoted 275M KDA recipe.
 
@@ -541,6 +545,8 @@ def build_geometry_matched_kda_latent_moe_model_config(
     are multiplied by the compression ratio, matching the paper's
     parameter/compute-matched recipe. The optional pre-up-projection RMSNorm is
     exposed explicitly so a later ablation cannot silently change the architecture.
+    ``num_experts_override`` supports the explicitly audited 1,000-expert L=4
+    EP1 approximation while leaving top-k at the paper-matched value of 32.
     """
 
     try:
@@ -550,6 +556,11 @@ def build_geometry_matched_kda_latent_moe_model_config(
             f"unsupported LatentMoE compression={compression}; expected one of "
             f"{tuple(LATENT_MOE_ROUTED_DIMS_BY_COMPRESSION)}"
         ) from exc
+    if num_experts_override is not None:
+        if not scale_experts_with_compression:
+            raise ValueError("num_experts_override requires paper-matched expert scaling")
+        if num_experts_override <= TOP_K * compression:
+            raise ValueError("num_experts_override must exceed the routed top-k")
 
     candidate = build_geometry_matched_kda_model_config(
         expand_v=2.0,
@@ -572,6 +583,9 @@ def build_geometry_matched_kda_latent_moe_model_config(
             latent.routed_experts.num_experts *= compression
             latent.routed_experts_router.num_experts *= compression
             latent.routed_experts_router.top_k *= compression
+        if num_experts_override is not None:
+            latent.routed_experts.num_experts = num_experts_override
+            latent.routed_experts_router.num_experts = num_experts_override
         return latent
 
     candidate.block = with_latent_moe(resolved[1])
@@ -604,7 +618,7 @@ def build_geometry_matched_kda_latent_moe_model_config(
             raise ValueError(f"LatentMoE candidate layer {layer_idx} has inconsistent dimensions")
         if block.shared_experts is None or block.shared_experts.d_model != D_MODEL:
             raise ValueError(f"LatentMoE candidate layer {layer_idx} changed its shared expert")
-        expected_num_experts = (
+        expected_num_experts = num_experts_override or (
             NUM_EXPERTS * compression if scale_experts_with_compression else NUM_EXPERTS
         )
         expected_top_k = TOP_K * compression if scale_experts_with_compression else TOP_K
@@ -624,7 +638,7 @@ def build_geometry_matched_kda_latent_moe_model_config(
         candidate.num_params,
     )
     expected_counts = EXPECTED_LATENT_MOE_COUNTS[
-        (compression, scale_experts_with_compression)
+        (compression, scale_experts_with_compression, num_experts_override)
     ]
     if not up_proj_input_norm_enabled and actual_counts != expected_counts:
         raise ValueError(

@@ -61,6 +61,7 @@ intervention.
 | LatentMoE 4× full-router control | 640 → 160 | 256 / 8 | 223,503,168 | 159,277,888 | 934,886,208 | -23.064% |
 | LatentMoE 2× paper-matched | 640 → 320 | 512 / 16 | 295,664,448 | 231,439,168 | 3,141,196,608 | +1.777% |
 | LatentMoE 4× paper-matched | 640 → 160 | 1,024 / 32 | 296,770,368 | 232,545,088 | 3,142,302,528 | +2.157% |
+| LatentMoE 4× EP1 approximation | 640 → 160 | 1,000 / 32 | 296,632,128 | 232,406,848 | 3,073,320,768 | +2.110% |
 
 The 4× point matches the compression selected in the
 [LatentMoE paper](https://arxiv.org/abs/2601.18089); the 2× point is the
@@ -73,6 +74,7 @@ Model variants:
 - `geometry_275m_kda_ev2_neg_nope_gated_latent4x_fullrouter`
 - `geometry_275m_kda_ev2_neg_nope_gated_latent2x_papermatched`
 - `geometry_275m_kda_ev2_neg_nope_gated_latent4x_papermatched`
+- `geometry_275m_kda_ev2_neg_nope_gated_latent4x_1000experts`
 
 The fixed-expert smoke manifest is
 [`launchers/pretraining/manifests/275m_kda_latent_moe_smokes.yaml`](launchers/pretraining/manifests/275m_kda_latent_moe_smokes.yaml).

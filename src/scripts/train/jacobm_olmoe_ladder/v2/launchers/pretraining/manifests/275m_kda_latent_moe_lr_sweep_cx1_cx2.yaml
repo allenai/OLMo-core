@@ -1,7 +1,7 @@
 schema_version: 1
 
 experiment:
-  description: 275M KDA LatentMoE paper-matched L=2/L=4 Cx1/Cx2 LR sweeps
+  description: 275M KDA LatentMoE paper-matched L=2 Cx1/Cx2 LR sweep
   checkpoint_root: /weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/olmo-ddp/pretraining
 
 source:
@@ -58,14 +58,3 @@ runs:
   - {task_name: l2-cx2-lr8e-4, run_name: pt-275m-kda-ev2-neg-nope-gated-latentmoe-l2-paper-cx2-lr8e-4-r1, model_variant: geometry_275m_kda_ev2_neg_nope_gated_latent2x_papermatched, model_size: 275m, cx: 2, learning_rate: "8e-4", global_batch_size: 393216, gpu_count: 4, expert_parallel_size: 1, expert_parallel_path: rowwise_nvshmem, rank_microbatch_sequences: 12}
   - {task_name: l2-cx2-lr1p6e-3, run_name: pt-275m-kda-ev2-neg-nope-gated-latentmoe-l2-paper-cx2-lr1p6e-3-r1, model_variant: geometry_275m_kda_ev2_neg_nope_gated_latent2x_papermatched, model_size: 275m, cx: 2, learning_rate: "1.6e-3", global_batch_size: 393216, gpu_count: 4, expert_parallel_size: 1, expert_parallel_path: rowwise_nvshmem, rank_microbatch_sequences: 12}
   - {task_name: l2-cx2-lr3p2e-3, run_name: pt-275m-kda-ev2-neg-nope-gated-latentmoe-l2-paper-cx2-lr3p2e-3-r1, model_variant: geometry_275m_kda_ev2_neg_nope_gated_latent2x_papermatched, model_size: 275m, cx: 2, learning_rate: "3.2e-3", global_batch_size: 393216, gpu_count: 4, expert_parallel_size: 1, expert_parallel_path: rowwise_nvshmem, rank_microbatch_sequences: 12}
-
-  # L=4: 1,024 total experts, top-32, EP2. EP2 keeps each rank's grouped-MM
-  # group count below 1,024. Cx2 uses MB6 with two accumulation steps.
-  - {task_name: l4-cx1-lr4e-4, run_name: pt-275m-kda-ev2-neg-nope-gated-latentmoe-l4-paper-cx1-lr4e-4-r1, model_variant: geometry_275m_kda_ev2_neg_nope_gated_latent4x_papermatched, model_size: 275m, cx: 1, learning_rate: "4e-4", global_batch_size: 262144, gpu_count: 4, expert_parallel_size: 2, expert_parallel_path: rowwise_nvshmem, rank_microbatch_sequences: 8}
-  - {task_name: l4-cx1-lr8e-4, run_name: pt-275m-kda-ev2-neg-nope-gated-latentmoe-l4-paper-cx1-lr8e-4-r1, model_variant: geometry_275m_kda_ev2_neg_nope_gated_latent4x_papermatched, model_size: 275m, cx: 1, learning_rate: "8e-4", global_batch_size: 262144, gpu_count: 4, expert_parallel_size: 2, expert_parallel_path: rowwise_nvshmem, rank_microbatch_sequences: 8}
-  - {task_name: l4-cx1-lr1p6e-3, run_name: pt-275m-kda-ev2-neg-nope-gated-latentmoe-l4-paper-cx1-lr1p6e-3-r1, model_variant: geometry_275m_kda_ev2_neg_nope_gated_latent4x_papermatched, model_size: 275m, cx: 1, learning_rate: "1.6e-3", global_batch_size: 262144, gpu_count: 4, expert_parallel_size: 2, expert_parallel_path: rowwise_nvshmem, rank_microbatch_sequences: 8}
-  - {task_name: l4-cx1-lr3p2e-3, run_name: pt-275m-kda-ev2-neg-nope-gated-latentmoe-l4-paper-cx1-lr3p2e-3-r1, model_variant: geometry_275m_kda_ev2_neg_nope_gated_latent4x_papermatched, model_size: 275m, cx: 1, learning_rate: "3.2e-3", global_batch_size: 262144, gpu_count: 4, expert_parallel_size: 2, expert_parallel_path: rowwise_nvshmem, rank_microbatch_sequences: 8}
-  - {task_name: l4-cx2-lr4e-4, run_name: pt-275m-kda-ev2-neg-nope-gated-latentmoe-l4-paper-cx2-lr4e-4-r1, model_variant: geometry_275m_kda_ev2_neg_nope_gated_latent4x_papermatched, model_size: 275m, cx: 2, learning_rate: "4e-4", global_batch_size: 393216, gpu_count: 4, expert_parallel_size: 2, expert_parallel_path: rowwise_nvshmem, rank_microbatch_sequences: 6}
-  - {task_name: l4-cx2-lr8e-4, run_name: pt-275m-kda-ev2-neg-nope-gated-latentmoe-l4-paper-cx2-lr8e-4-r1, model_variant: geometry_275m_kda_ev2_neg_nope_gated_latent4x_papermatched, model_size: 275m, cx: 2, learning_rate: "8e-4", global_batch_size: 393216, gpu_count: 4, expert_parallel_size: 2, expert_parallel_path: rowwise_nvshmem, rank_microbatch_sequences: 6}
-  - {task_name: l4-cx2-lr1p6e-3, run_name: pt-275m-kda-ev2-neg-nope-gated-latentmoe-l4-paper-cx2-lr1p6e-3-r1, model_variant: geometry_275m_kda_ev2_neg_nope_gated_latent4x_papermatched, model_size: 275m, cx: 2, learning_rate: "1.6e-3", global_batch_size: 393216, gpu_count: 4, expert_parallel_size: 2, expert_parallel_path: rowwise_nvshmem, rank_microbatch_sequences: 6}
-  - {task_name: l4-cx2-lr3p2e-3, run_name: pt-275m-kda-ev2-neg-nope-gated-latentmoe-l4-paper-cx2-lr3p2e-3-r1, model_variant: geometry_275m_kda_ev2_neg_nope_gated_latent4x_papermatched, model_size: 275m, cx: 2, learning_rate: "3.2e-3", global_batch_size: 393216, gpu_count: 4, expert_parallel_size: 2, expert_parallel_path: rowwise_nvshmem, rank_microbatch_sequences: 6}

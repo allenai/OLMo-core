@@ -112,10 +112,16 @@ KDA_275M_NOPE_SETTINGS = {
     "geometry_275m_kda_ev2_neg_nope_gated_mxfp8_672": (2.0, True, 672),
 }
 LATENT_MOE_275M_SETTINGS = {
-    "geometry_275m_kda_ev2_neg_nope_gated_latent2x_fullrouter": (2, False, False),
-    "geometry_275m_kda_ev2_neg_nope_gated_latent4x_fullrouter": (4, False, False),
-    "geometry_275m_kda_ev2_neg_nope_gated_latent2x_papermatched": (2, False, True),
-    "geometry_275m_kda_ev2_neg_nope_gated_latent4x_papermatched": (4, False, True),
+    "geometry_275m_kda_ev2_neg_nope_gated_latent2x_fullrouter": (2, False, False, None),
+    "geometry_275m_kda_ev2_neg_nope_gated_latent4x_fullrouter": (4, False, False, None),
+    "geometry_275m_kda_ev2_neg_nope_gated_latent2x_papermatched": (2, False, True, None),
+    "geometry_275m_kda_ev2_neg_nope_gated_latent4x_papermatched": (4, False, True, None),
+    "geometry_275m_kda_ev2_neg_nope_gated_latent4x_1000experts": (
+        4,
+        False,
+        True,
+        1000,
+    ),
 }
 KDA_SCALE_NOPE_SETTINGS = {
     "geometry_matched_kda_ev1_noneg_nope_gated": (1.0, False),
@@ -400,11 +406,13 @@ def model_config():
             compression,
             up_proj_input_norm_enabled,
             scale_experts_with_compression,
+            num_experts_override,
         ) = LATENT_MOE_275M_SETTINGS[MODEL_VARIANT]
         model = build_geometry_matched_kda_latent_moe_model_config(
             compression=compression,
             up_proj_input_norm_enabled=up_proj_input_norm_enabled,
             scale_experts_with_compression=scale_experts_with_compression,
+            num_experts_override=num_experts_override,
         )
     elif MODEL_VARIANT == "geometry_275m_swa_rope_gated":
         from scripts.train.jacobm_olmoe_ladder.v2.models.geometry_matched_275m import (
@@ -743,12 +751,16 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             compression,
             up_proj_input_norm_enabled,
             scale_experts_with_compression,
+            num_experts_override,
         ) = LATENT_MOE_275M_SETTINGS[MODEL_VARIANT]
         norm_tag = "-upnorm" if up_proj_input_norm_enabled else ""
         expert_scale_tag = "-paper-matched" if scale_experts_with_compression else "-fullrouter"
+        expert_count_tag = (
+            f"-{num_experts_override}experts" if num_experts_override is not None else ""
+        )
         variant_group = (
             f"olmoe3-275m-geometry-kda-ev2-neg-nope-gated-"
-            f"latentmoe-{compression}x{expert_scale_tag}{norm_tag}"
+            f"latentmoe-{compression}x{expert_scale_tag}{expert_count_tag}{norm_tag}"
         )
     elif MODEL_VARIANT == "geometry_275m_swa_rope_gated":
         variant_group = "olmoe3-275m-geometry-swa-rope-gated-throughput"
