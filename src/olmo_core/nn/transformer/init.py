@@ -307,9 +307,7 @@ class InitMethod(StrEnum):
                 _apply_init(nn.init.zeros_, b.shared_experts_router.bias)
         if b.routed_experts_router:
             routed_router_std = (
-                b.routed_experts_router.d_model**-0.5
-                if self == InitMethod.fan_in
-                else std
+                b.routed_experts_router.d_model**-0.5 if self == InitMethod.fan_in else std
             )
             _apply_init(
                 nn.init.trunc_normal_,
