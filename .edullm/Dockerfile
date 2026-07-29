@@ -12,8 +12,8 @@ FROM ${BASE_IMAGE}
 
 # THIS FILE USED TO INSTALL NOTHING, AND THE REASON IT STOPPED IS WORTH READING.
 #
-# The claim was that installing was impossible here: ai2-olmo-core declares torch>=2.6.0,
-# so `pip install .` would fetch a multi-gigabyte wheel and take the build past what a
+# The claim was that installing was impossible here: ai2-olmo-core declares a torch
+# dependency, so `pip install .` would fetch a multi-gigabyte wheel and take the build past what a
 # standard runner can do, and `pip install --no-deps .` would leave an installed
 # distribution whose imports fail anyway. Putting the source on PYTHONPATH was the answer.
 #
@@ -53,14 +53,15 @@ COPY . .
 
 # TORCH IS PINNED TO AN EXACT VERSION AND INSTALLED FIRST, WHICH IS THE WHOLE ARGUMENT.
 #
-# The project declares torch>=2.6.0. Resolved against PyPI at build time that is an
-# unpinned multi-gigabyte dependency, so two builds of one commit months apart produce
+# The project declares a lower bound on torch. Resolved against PyPI at build time that is
+# an unpinned multi-gigabyte dependency, so two builds of one commit months apart produce
 # different images -- and the platform has a study whose entire subject is what does and
 # does not stay identical across rebuilds. An exact version fixes that: a published wheel
-# is never replaced, so `torch==2.6.0` names one artifact forever.
+# is never replaced, so an exact pin names one artifact forever.
 #
-# 2.7.1 rather than the 2.6.0 this project used to declare, because 2.6.0 does not work and
-# the first GPU training run proved it. `import olmo_core` reaches
+# The pin moved twice before it was right, and both moves were measurements rather than
+# preferences. It was 2.6.0, the floor this project declared, and the first GPU training
+# run proved that floor does not import. `import olmo_core` reaches
 # nn/attention/backend.py, which decorates a method with torch.compiler.disable(reason=...),
 # and that keyword does not exist in 2.6.0 -- so the import dies with `TypeError: disable()
 # got an unexpected keyword argument` before any model is built. The declared floor was
