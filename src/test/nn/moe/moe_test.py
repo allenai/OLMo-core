@@ -147,9 +147,7 @@ def test_latent_moe_rejects_invalid_routed_expert_dim(routed_expert_dim: int):
 
 
 def test_latent_moe_defaults_to_up_proj_input_rms_norm():
-    config = MoEConfig(
-        latent_moe=LatentMoEConfig(routed_expert_dim=8)
-    )
+    config = MoEConfig(latent_moe=LatentMoEConfig(routed_expert_dim=8))
     moe = config.build(d_model=16)
 
     assert moe.latent_up_proj_input_norm is not None

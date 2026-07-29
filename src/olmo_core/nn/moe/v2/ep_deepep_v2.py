@@ -246,6 +246,13 @@ def _expanded_weight_grad_to_topk_grad(
     return grad_topk
 
 
+def _validate_deepep_v2_hidden_size(hidden: int) -> None:
+    if hidden % 256 != 0:
+        raise RuntimeError(
+            "deepep_v2 BF16 combine requires routed hidden size divisible by 256 " f"(got {hidden})"
+        )
+
+
 def _validate_deepep_v2_block(
     block: OLMoDDPTransformerBlock,
     x: torch.Tensor,
@@ -258,10 +265,7 @@ def _validate_deepep_v2_block(
         raise RuntimeError("deepep_v2 EP requires CUDA input")
     if x.dtype != torch.bfloat16:
         raise RuntimeError(f"deepep_v2 EP currently supports bf16 only, got {x.dtype}")
-    if x.shape[-1] % 256 != 0:
-        raise RuntimeError(
-            "deepep_v2 BF16 combine requires d_model divisible by 256 " f"(got {x.shape[-1]})"
-        )
+    _validate_deepep_v2_hidden_size(x.shape[-1])
     if block.ep_pg is None:
         raise RuntimeError("deepep_v2 EP requires block.ep_pg to be initialized")
     if block.routed_experts is None or block.routed_experts_router is None:
@@ -751,7 +755,6 @@ def combined_forward_ep_deepep_v2(
     uses DeepEP's own ElasticBuffer on the EP process group.
     """
     self = block
-    _validate_deepep_v2_block(self, x)
     assert self.routed_experts is not None
     assert self.routed_experts_router is not None
 
@@ -764,6 +767,7 @@ def combined_forward_ep_deepep_v2(
     kwargs.pop("cu_doc_lens", None)
     moe_inp = self._prepare_moe_input(attn_res_out)
     routed_moe_inp = self._prepare_routed_moe_input(moe_inp)
+    _validate_deepep_v2_block(self, routed_moe_inp)
 
     (
         local_x_global_routed_expert_weights,
