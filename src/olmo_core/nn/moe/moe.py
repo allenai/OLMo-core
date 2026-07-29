@@ -25,6 +25,7 @@ from olmo_core.ops import attach_auxiliary_loss
 from ..buffer_cache import BufferCache
 from ..config import ModuleConfig
 from ..feed_forward import FeedForwardConfig
+from ..layer_norm import LayerNorm, LayerNormConfig, LayerNormType
 from .loss import MoELoadBalancingLossGranularity
 from .mlp import DroplessMoEMLP, MoEMLP
 from .parallel_mlp import ParallelDroplessMLP, ParallelMLP, ParallelMLPBase
@@ -65,10 +66,21 @@ class LatentMoEConfig(Config):
     bias: bool = False
     """Whether to use bias in the model-to-latent and latent-to-model projections."""
 
+    up_proj_input_norm: Optional[LayerNormConfig] = field(
+        default_factory=lambda: LayerNormConfig(name=LayerNormType.rms, bias=False)
+    )
+    """Normalization applied in latent space immediately before the up projection.
+
+    RMSNorm is used by default. Set this to another layer norm configuration to select a
+    different implementation, or to ``None`` to disable normalization.
+    """
+
     def num_params(self, d_model: int) -> int:
         params = 2 * d_model * self.routed_expert_dim
         if self.bias:
             params += self.routed_expert_dim + d_model
+        if self.up_proj_input_norm is not None:
+            params += self.up_proj_input_norm.num_params(self.routed_expert_dim)
         return params
 
 
@@ -184,9 +196,11 @@ class MoEBase(nn.Module):
 
         routed_expert_dim = d_model if latent_moe is None else latent_moe.routed_expert_dim
         self.latent_down_proj: Optional[nn.Linear]
+        self.latent_up_proj_input_norm: Optional[LayerNorm]
         self.latent_up_proj: Optional[nn.Linear]
         if latent_moe is None:
             self.latent_down_proj = None
+            self.latent_up_proj_input_norm = None
             self.latent_up_proj = None
         else:
             self.latent_down_proj = nn.Linear(
@@ -195,6 +209,11 @@ class MoEBase(nn.Module):
                 bias=latent_moe.bias,
                 dtype=dtype,
                 device=init_device,
+            )
+            self.latent_up_proj_input_norm = (
+                None
+                if latent_moe.up_proj_input_norm is None
+                else latent_moe.up_proj_input_norm.build(routed_expert_dim, init_device=init_device)
             )
             self.latent_up_proj = nn.Linear(
                 routed_expert_dim,
@@ -299,6 +318,8 @@ class MoEBase(nn.Module):
 
         out = self.experts(routed_x, expert_weights, expert_indices, batch_size_per_expert)
         if self.latent_up_proj is not None:
+            if self.latent_up_proj_input_norm is not None:
+                out = self.latent_up_proj_input_norm(out)
             out = self.latent_up_proj(out)
 
         if shared_out is not None:
