@@ -1,0 +1,13 @@
+[
+  {
+    "experiment_name": "olmoe3-480m-kda-latentmoe-l2-titan-cx1-cx2",
+    "experiment_id": "01KYQTETYYWGQ6F93B19ACEB27",
+    "tasks": [
+      "480m-l2-cx1-titan",
+      "480m-l2-cx2-titan"
+    ],
+    "debug_gradients": false,
+    "run_suffix": null,
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYQTETYYWGQ6F93B19ACEB27"
+  }
+]
