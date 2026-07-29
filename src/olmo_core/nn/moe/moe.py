@@ -19,6 +19,7 @@ from olmo_core.distributed.parallel import (
     get_pp_stage_mesh,
     get_world_mesh,
 )
+from olmo_core.distributed.parallel.tensor_parallel import SequenceParallel
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.ops import attach_auxiliary_loss
 
@@ -378,6 +379,20 @@ class MoEBase(nn.Module):
 
         # Sequence parallel.
         self.router.apply_tp(tp_mesh, float8_enabled=float8_enabled)
+
+        # The latent projection stack operates independently on sequence-sharded tokens. Replicate
+        # its parameters and return local tensors, matching the router and expert input contract.
+        for module in (
+            self.latent_down_proj,
+            self.latent_up_proj_input_norm,
+            self.latent_up_proj,
+        ):
+            if module is not None:
+                parallelize_module(
+                    module,
+                    device_mesh=tp_mesh,
+                    parallelize_plan=SequenceParallel(use_local_output=True),
+                )
 
         # Expert parallel.
         self.experts.apply_tp(tp_mesh, float8_enabled=float8_enabled)
