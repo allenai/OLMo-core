@@ -75,12 +75,23 @@ def main():
     # xlong opt-in: the runner truncates prompts to (max_length - max_new_tokens), so max_length
     # MUST cover the largest selected ultra-long rung, and it feeds the gen budget built below.
     if args.xlong:
-        _XL_TOK = {"64k": 65536, "128k": 131072, "256k": 262144}
+        _XL_TOK = {"64k": 65536, "128k": 131072, "256k": 262144,
+                   "512k": 524288, "1M": 1048576, "2M": 2097152}
         _sel = set(args.ladder_rungs.split(",")) if args.ladder_rungs else set(_XL_TOK)
         _need = max((t for r, t in _XL_TOK.items() if r in _sel), default=0)
         if _need and args.max_length < _need + 1024:
             print(f"[xlong] raising --max-length {args.max_length} -> {_need + 1024}", flush=True)
             args.max_length = _need + 1024
+        # Rungs past 262,144 exceed Qwen3.5's native max_position_embeddings. Scoring them at all
+        # requires a RoPE-extended (YaRN) copy of the checkpoint -- without one the model silently
+        # reads garbage positions and the rung looks like a long-context collapse that is really a
+        # config error. Warn loudly; the caller is responsible for pointing --model-path at the
+        # extended copy (debug/ctx_ceiling_4b/make_yarn_copy.py).
+        if _need > 262144:
+            print(f"[xlong] ⚠ selected rungs reach {_need} tokens, PAST the Qwen3.5 native "
+                  f"262144 position limit -- this measures RoPE-EXTENDED extrapolation. Point "
+                  f"--model-path at a YaRN serving copy and label every >256k number as such.",
+                  flush=True)
     if args.root:
         os.chdir(args.root)
 
@@ -390,11 +401,12 @@ def main():
                 "rerank":        ("rerank",  "msmarco_trainhn_eval_k*_xlong_{s}.jsonl"),
             }
             # oolong: token-budget-labelled files rather than a calibrated doc count.
-            _XL_OOLONG = {"64k": 65536, "128k": 131072, "256k": 262144}
+            _XL_OOLONG = {"64k": 65536, "128k": 131072, "256k": 262144,
+                          "512k": 524288, "1M": 1048576, "2M": 2097152}
             for _t, (_sub, _pat) in _XL.items():
                 if _t not in LADDERS:
                     continue
-                for _s in ("64k", "128k", "256k"):
+                for _s in ("64k", "128k", "256k", "512k", "1M", "2M"):
                     _hits = sorted(_glob.glob(os.path.join(E5, _sub, _pat.format(s=_s))))
                     if _hits:
                         LADDERS[_t].append((_s, _hits[0]))

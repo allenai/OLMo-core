@@ -58,7 +58,12 @@ import sys
 # sys.path hack removed: corpus_reasoning is a package on PYTHONPATH=src
 import build_v2_eval_ladders as v2  # noqa: E402
 
-SIZES = {"64k": 65536, "128k": 131072, "256k": 262144}
+# 2026-07-29: extended past the old 256k ceiling to 512k/1M. Those two rungs are BEYOND
+# Qwen3.5's native max_position_embeddings (262,144), so scoring them requires a RoPE-extended
+# (YaRN) serving copy -- they measure extrapolation, not native context. They are also pool-hungry
+# (see the pool>=need guard in build_size): 1M needs ~24.7k filler docs/example for contra.
+SIZES = {"64k": 65536, "128k": 131072, "256k": 262144,
+         "512k": 524288, "1M": 1048576, "2M": 2097152}
 E5 = "/scratch/users/prasann/cpt_data/eval500_v2"
 OUT_ROOT_DEFAULT = E5
 
@@ -309,8 +314,17 @@ def main():
         nd, ctx, eff, ns = calibrate(cfg, canon, pool, tok)
         print(f"\n[{task}] canonical={os.path.basename(cfg['canonical'])} "
               f"canon_ndocs={len(canon[0]['documents'])} pool={len(pool)}")
+        _ncal = "  ".join(f"{lab}={ns[lab]}" for lab in SIZES)
+        # pool>=need is what keeps a rung free of within-example verbatim repeats (a repeat is a
+        # known confound: see the free_pad_repeat / repeat_doc_text finding). Report it per size
+        # rather than only warning at write time, so an infeasible rung is visible in calibration.
+        _short = [lab for lab in SIZES
+                  if len(pool) < ns[lab] - len(v2.gold_index_set(canon[0], cfg))]
         print(f"        probe({nd} docs)->{ctx:.0f} tok  eff_tok/doc={eff:.2f}   "
-              f"calibrated n:  64k={ns['64k']}  128k={ns['128k']}  256k={ns['256k']}")
+              f"calibrated n:  {_ncal}")
+        if _short:
+            print(f"        ⚠ pool={len(pool)} TOO SMALL for {','.join(_short)} "
+                  f"-> would repeat docs within an example; do NOT build those rungs")
         if not sizes:
             continue
         for size in sizes:
