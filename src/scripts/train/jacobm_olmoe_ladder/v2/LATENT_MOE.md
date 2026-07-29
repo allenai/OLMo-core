@@ -95,7 +95,7 @@ The paper-matched 2× EP1 task passed. The first paper-matched 4× EP1 task
 reached the grouped-kernel limit because 1,024 routed experts plus the shared
 group exceed its 1,024-group ceiling. Its qualification replacement uses EP2,
 leaving 512 routed experts per rank while preserving the exact global model and
-batch.
+batch: [4× EP2 replacement](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYP2ESY2RPK1PBHTK42VEGPZ).
 
 ## Validation hold
 
