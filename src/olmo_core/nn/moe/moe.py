@@ -311,7 +311,7 @@ class MoEBase(nn.Module):
         :returns: The output of the MoE layer, the optional load-balancing loss, and the optional
             router Z-loss.
         """
-        routed_x = x if self.latent_down_proj is None else self.latent_down_proj(x)
+        routed_x = self.prepare_routed_input(x)
         expert_weights, expert_indices, batch_size_per_expert, router_aux_loss = self.router(
             routed_x, loss_div_factor=loss_div_factor
         )
@@ -324,16 +324,25 @@ class MoEBase(nn.Module):
             shared_out = self.shared_mlp(x)
 
         out = self.experts(routed_x, expert_weights, expert_indices, batch_size_per_expert)
-        if self.latent_up_proj is not None:
-            if self.latent_up_proj_input_norm is not None:
-                out = self.latent_up_proj_input_norm(out)
-            out = self.latent_up_proj(out)
+        out = self.restore_routed_output(out)
 
         if shared_out is not None:
             shared_out = shared_out / (self.top_k + 1)
             out = shared_out.add(out, alpha=self.top_k / (self.top_k + 1))
 
         return out
+
+    def prepare_routed_input(self, model_input: torch.Tensor) -> torch.Tensor:
+        if self.latent_down_proj is None:
+            return model_input
+        return self.latent_down_proj(model_input)
+
+    def restore_routed_output(self, routed_output: torch.Tensor) -> torch.Tensor:
+        if self.latent_up_proj is None:
+            return routed_output
+        if self.latent_up_proj_input_norm is not None:
+            routed_output = self.latent_up_proj_input_norm(routed_output)
+        return self.latent_up_proj(routed_output)
 
     def apply_pp(self, pp_mesh: DeviceMesh):
         world_mesh = get_world_mesh()
