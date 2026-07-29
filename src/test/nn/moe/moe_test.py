@@ -148,9 +148,7 @@ def test_latent_moe_rejects_invalid_routed_expert_dim(routed_expert_dim: int):
 
 def test_latent_moe_enabled_norm_defaults_to_up_proj_input_rms_norm():
     config = MoEConfig(
-        latent_moe=LatentMoEConfig(
-            routed_expert_dim=8, up_proj_input_norm_enabled=True
-        )
+        latent_moe=LatentMoEConfig(routed_expert_dim=8, up_proj_input_norm_enabled=True)
     )
     moe = config.build(d_model=16)
 
@@ -176,9 +174,7 @@ def test_latent_moe_tensor_parallelizes_projection_stack(
     monkeypatch: pytest.MonkeyPatch,
 ):
     config = MoEConfig(
-        latent_moe=LatentMoEConfig(
-            routed_expert_dim=8, up_proj_input_norm_enabled=True
-        )
+        latent_moe=LatentMoEConfig(routed_expert_dim=8, up_proj_input_norm_enabled=True)
     )
     moe = config.build(d_model=16)
     parallelized = {}
