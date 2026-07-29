@@ -1,0 +1,12 @@
+[
+  {
+    "experiment_name": "olmoe3-480m-kda-latentmoe-l2-holmes-cx1",
+    "experiment_id": "01KYQV7G4MX67GCYSFPMWEB1J8",
+    "tasks": [
+      "480m-l2-cx1-holmes"
+    ],
+    "debug_gradients": false,
+    "run_suffix": null,
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYQV7G4MX67GCYSFPMWEB1J8"
+  }
+]
