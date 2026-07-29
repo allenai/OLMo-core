@@ -342,6 +342,9 @@ class MoEBase(nn.Module):
             return routed_output
         if self.latent_up_proj_input_norm is not None:
             routed_output = self.latent_up_proj_input_norm(routed_output)
+        # grouped-gemm experts return BF16 regardless of their parameter/input dtype. Restore the
+        # configured projection dtype before applying the dense up projection.
+        routed_output = routed_output.to(dtype=self.latent_up_proj.weight.dtype)
         return self.latent_up_proj(routed_output)
 
     def apply_pp(self, pp_mesh: DeviceMesh):

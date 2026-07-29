@@ -170,6 +170,17 @@ def test_latent_moe_accepts_non_rms_up_proj_input_norm():
     assert moe.latent_up_proj_input_norm is not None
 
 
+def test_latent_moe_up_projection_accepts_bf16_expert_output():
+    moe = MoEConfig(latent_moe=LatentMoEConfig(routed_expert_dim=8)).build(d_model=16)
+    assert moe.latent_up_proj is not None
+
+    routed_output = torch.randn(2, 3, 8, dtype=torch.bfloat16)
+    output = moe.restore_routed_output(routed_output)
+
+    assert output.shape == (2, 3, 16)
+    assert output.dtype == moe.latent_up_proj.weight.dtype
+
+
 def test_latent_moe_tensor_parallelizes_projection_stack(
     monkeypatch: pytest.MonkeyPatch,
 ):
