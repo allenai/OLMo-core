@@ -91,24 +91,24 @@ def test_moe(moe_type: MoEType, shared: bool, dtype: torch.dtype):
 @pytest.mark.parametrize("shared", [False, True])
 def test_latent_moe(moe_type: MoEType, shared: bool):
     d_model = 16
-    routed_expert_dim = 8
+    latent_dim = 8
     config = MoEConfig(
         name=moe_type,
         num_experts=4,
         hidden_size=32,
         router=MoERouterConfig(top_k=2),
         shared_mlp=FeedForwardConfig(hidden_size=24) if shared else None,
-        latent_moe=LatentMoEConfig(routed_expert_dim=routed_expert_dim),
+        latent_moe=LatentMoEConfig(latent_dim=latent_dim),
     )
     moe = config.build(d_model=d_model)
 
-    assert moe.router.d_model == routed_expert_dim
-    assert moe.experts.mlp.d_model == routed_expert_dim
+    assert moe.router.d_model == d_model
+    assert moe.experts.mlp.d_model == latent_dim
     assert moe.latent_down_proj is not None
     assert moe.latent_down_proj.in_features == d_model
-    assert moe.latent_down_proj.out_features == routed_expert_dim
+    assert moe.latent_down_proj.out_features == latent_dim
     assert moe.latent_up_proj is not None
-    assert moe.latent_up_proj.in_features == routed_expert_dim
+    assert moe.latent_up_proj.in_features == latent_dim
     assert moe.latent_up_proj.out_features == d_model
     if shared:
         assert moe.shared_mlp is not None
@@ -116,7 +116,7 @@ def test_latent_moe(moe_type: MoEType, shared: bool):
 
     assert config.num_params(d_model) == sum(p.numel() for p in moe.parameters())
     expected_inactive_expert_params = (
-        3 * routed_expert_dim * config.hidden_size * (config.num_experts - config.router.top_k)
+        3 * latent_dim * config.hidden_size * (config.num_experts - config.router.top_k)
     )
     assert config.num_active_params(d_model) == (
         config.num_params(d_model) - expected_inactive_expert_params
@@ -131,24 +131,28 @@ def test_latent_moe(moe_type: MoEType, shared: bool):
     # unit test focused on the latent/model-space branch boundaries and their gradients.
     moe.experts = IdentityExperts()
     x = torch.randn(2, 3, d_model, requires_grad=True)
+    routed_inputs = []
+    moe.router.register_forward_pre_hook(lambda _module, args: routed_inputs.append(args[0]))
     output = moe(x)
     assert output.shape == x.shape
+    assert routed_inputs[0] is x
+    assert routed_inputs[0].shape[-1] == d_model
     output.sum().backward()
     assert x.grad is not None
     assert moe.latent_down_proj.weight.grad is not None
     assert moe.latent_up_proj.weight.grad is not None
 
 
-@pytest.mark.parametrize("routed_expert_dim", [0, 16, 32])
-def test_latent_moe_rejects_invalid_routed_expert_dim(routed_expert_dim: int):
-    config = MoEConfig(latent_moe=LatentMoEConfig(routed_expert_dim=routed_expert_dim))
-    with pytest.raises(OLMoConfigurationError, match="routed_expert_dim"):
+@pytest.mark.parametrize("latent_dim", [0, 16, 32])
+def test_latent_moe_rejects_invalid_latent_dim(latent_dim: int):
+    config = MoEConfig(latent_moe=LatentMoEConfig(latent_dim=latent_dim))
+    with pytest.raises(OLMoConfigurationError, match="latent_dim"):
         config.build(d_model=16)
 
 
 def test_latent_moe_enabled_norm_defaults_to_up_proj_input_rms_norm():
     config = MoEConfig(
-        latent_moe=LatentMoEConfig(routed_expert_dim=8, up_proj_input_norm_enabled=True)
+        latent_moe=LatentMoEConfig(latent_dim=8, up_proj_input_norm_enabled=True)
     )
     moe = config.build(d_model=16)
 
@@ -161,7 +165,7 @@ def test_latent_moe_enabled_norm_defaults_to_up_proj_input_rms_norm():
 def test_latent_moe_accepts_non_rms_up_proj_input_norm():
     config = MoEConfig(
         latent_moe=LatentMoEConfig(
-            routed_expert_dim=8,
+            latent_dim=8,
             up_proj_input_norm_enabled=True,
             up_proj_input_norm=LayerNormConfig(name=LayerNormType.default),
         )
@@ -171,7 +175,7 @@ def test_latent_moe_accepts_non_rms_up_proj_input_norm():
 
 
 def test_latent_moe_up_projection_accepts_bf16_expert_output():
-    moe = MoEConfig(latent_moe=LatentMoEConfig(routed_expert_dim=8)).build(d_model=16)
+    moe = MoEConfig(latent_moe=LatentMoEConfig(latent_dim=8)).build(d_model=16)
     assert moe.latent_up_proj is not None
 
     routed_output = torch.randn(2, 3, 8, dtype=torch.bfloat16)
@@ -185,7 +189,7 @@ def test_latent_moe_tensor_parallelizes_projection_stack(
     monkeypatch: pytest.MonkeyPatch,
 ):
     config = MoEConfig(
-        latent_moe=LatentMoEConfig(routed_expert_dim=8, up_proj_input_norm_enabled=True)
+        latent_moe=LatentMoEConfig(latent_dim=8, up_proj_input_norm_enabled=True)
     )
     moe = config.build(d_model=16)
     parallelized = {}

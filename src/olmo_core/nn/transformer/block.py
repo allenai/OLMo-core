@@ -912,7 +912,7 @@ class MoEHybridTransformerBlock(MoEHybridTransformerBlockBase):
         routed_dim = x_moe.shape[-1]
 
         expert_weights, expert_indices, batch_size_per_expert, router_aux_loss = self.router(
-            x_moe, loss_div_factor=loss_div_factor
+            model_moe_input, loss_div_factor=loss_div_factor
         )
 
         if router_aux_loss is not None:
@@ -1021,7 +1021,7 @@ class MoEHybridReorderedNormTransformerBlock(MoEHybridTransformerBlockBase):
         routed_dim = x_moe.shape[-1]
 
         expert_weights, expert_indices, batch_size_per_expert, router_aux_loss = self.router(
-            x_moe, loss_div_factor=loss_div_factor
+            model_moe_input, loss_div_factor=loss_div_factor
         )
 
         if router_aux_loss is not None:
