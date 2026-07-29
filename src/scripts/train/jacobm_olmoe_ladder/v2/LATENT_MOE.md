@@ -136,6 +136,28 @@ the failure is not a training or capacity failure.
 - [Physical-max near-2-Mi measurements](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYP6RYG25M5VDSMDQ2S0ZRTR)
 - [Machine-readable results](results/throughput/275m_kda_latent_moe_paper.csv)
 
+## Initial full LR sweep
+
+The first production wave covers Cx1 and Cx2 for both paper-matched families
+at `4e-4`, `8e-4`, `1.6e-3`, and `3.2e-3` (16 jobs total). Every job uses four
+Holmes B300s, urgent priority, a two-hour allocated `minRuntime`, automatic
+checkpoint resume, 500-step ephemeral saves, no in-loop evaluation, and no
+permanent intermediate checkpoints. The optimizer batches remain the standard
+262,144 tokens at Cx1 and 393,216 tokens at Cx2.
+
+| Family | Cx | Topology | Rank MB / accumulation |
+|---|---:|---|---:|
+| L=2, 512/top-16 | 1 | 4 GPUs, EP1 | 8 / 1 |
+| L=2, 512/top-16 | 2 | 4 GPUs, EP1 | 12 / 1 |
+| L=4, 1024/top-32 | 1 | 4 GPUs, EP2 | 8 / 1 |
+| L=4, 1024/top-32 | 2 | 4 GPUs, EP2 | 6 / 2 |
+
+The source manifest is
+[`launchers/pretraining/manifests/275m_kda_latent_moe_lr_sweep_cx1_cx2.yaml`](launchers/pretraining/manifests/275m_kda_latent_moe_lr_sweep_cx1_cx2.yaml).
+The paired `plot_kda_latent_moe.py` entry point publishes separate `L=2` and
+`L=4` U-plots plus one strict best-of comparison against the BF16 KDA parent.
+Cx4/Cx8 exact names are reserved in the registry but remain unlaunched.
+
 ## Validation hold
 
 Do not launch new validation backfills while the current capacity constraint is

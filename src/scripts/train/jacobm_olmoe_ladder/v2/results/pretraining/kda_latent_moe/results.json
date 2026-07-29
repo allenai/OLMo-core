@@ -1,0 +1,447 @@
+{
+  "generated_at": "2026-07-29T06:27:16.740013+00:00",
+  "project": "ai2-llm/jacobm-olmoe-ladder",
+  "selection_metric": "mean train/CE loss over the final 250M tokens",
+  "selection_rule": "LatentMoE enters the best-of plot only after its 275M Cx curve brackets a valid quadratic minimum. The plotted point remains the best observed finished LR; the fitted prediction is diagnostic only.",
+  "active_parameters": {
+    "geometry_kda_ev2_neg_nope_gated_latentmoe_l2_paper": {
+      "275m": 295664448
+    },
+    "geometry_kda_ev2_neg_nope_gated_latentmoe_l4_paper": {
+      "275m": 296770368
+    }
+  },
+  "baseline": "geometry_kda_ev2_neg_nope_gated",
+  "unresolved_planned_runs": {
+    "geometry_kda_ev2_neg_nope_gated_latentmoe_l2_paper": [
+      "pt-275m-kda-ev2-neg-nope-gated-latentmoe-l2-paper-cx1-lr4e-4-r1",
+      "pt-275m-kda-ev2-neg-nope-gated-latentmoe-l2-paper-cx1-lr8e-4-r1",
+      "pt-275m-kda-ev2-neg-nope-gated-latentmoe-l2-paper-cx1-lr1p6e-3-r1",
+      "pt-275m-kda-ev2-neg-nope-gated-latentmoe-l2-paper-cx1-lr3p2e-3-r1",
+      "pt-275m-kda-ev2-neg-nope-gated-latentmoe-l2-paper-cx2-lr4e-4-r1",
+      "pt-275m-kda-ev2-neg-nope-gated-latentmoe-l2-paper-cx2-lr8e-4-r1",
+      "pt-275m-kda-ev2-neg-nope-gated-latentmoe-l2-paper-cx2-lr1p6e-3-r1",
+      "pt-275m-kda-ev2-neg-nope-gated-latentmoe-l2-paper-cx2-lr3p2e-3-r1",
+      "pt-275m-kda-ev2-neg-nope-gated-latentmoe-l2-paper-cx4-lr4e-4-r1",
+      "pt-275m-kda-ev2-neg-nope-gated-latentmoe-l2-paper-cx4-lr8e-4-r1",
+      "pt-275m-kda-ev2-neg-nope-gated-latentmoe-l2-paper-cx4-lr1p6e-3-r1",
+      "pt-275m-kda-ev2-neg-nope-gated-latentmoe-l2-paper-cx4-lr3p2e-3-r1",
+      "pt-275m-kda-ev2-neg-nope-gated-latentmoe-l2-paper-cx8-lr4e-4-r1",
+      "pt-275m-kda-ev2-neg-nope-gated-latentmoe-l2-paper-cx8-lr8e-4-r1",
+      "pt-275m-kda-ev2-neg-nope-gated-latentmoe-l2-paper-cx8-lr1p6e-3-r1",
+      "pt-275m-kda-ev2-neg-nope-gated-latentmoe-l2-paper-cx8-lr3p2e-3-r1"
+    ],
+    "geometry_kda_ev2_neg_nope_gated_latentmoe_l4_paper": [
+      "pt-275m-kda-ev2-neg-nope-gated-latentmoe-l4-paper-cx1-lr4e-4-r1",
+      "pt-275m-kda-ev2-neg-nope-gated-latentmoe-l4-paper-cx1-lr8e-4-r1",
+      "pt-275m-kda-ev2-neg-nope-gated-latentmoe-l4-paper-cx1-lr1p6e-3-r1",
+      "pt-275m-kda-ev2-neg-nope-gated-latentmoe-l4-paper-cx1-lr3p2e-3-r1",
+      "pt-275m-kda-ev2-neg-nope-gated-latentmoe-l4-paper-cx2-lr4e-4-r1",
+      "pt-275m-kda-ev2-neg-nope-gated-latentmoe-l4-paper-cx2-lr8e-4-r1",
+      "pt-275m-kda-ev2-neg-nope-gated-latentmoe-l4-paper-cx2-lr1p6e-3-r1",
+      "pt-275m-kda-ev2-neg-nope-gated-latentmoe-l4-paper-cx2-lr3p2e-3-r1",
+      "pt-275m-kda-ev2-neg-nope-gated-latentmoe-l4-paper-cx4-lr4e-4-r1",
+      "pt-275m-kda-ev2-neg-nope-gated-latentmoe-l4-paper-cx4-lr8e-4-r1",
+      "pt-275m-kda-ev2-neg-nope-gated-latentmoe-l4-paper-cx4-lr1p6e-3-r1",
+      "pt-275m-kda-ev2-neg-nope-gated-latentmoe-l4-paper-cx4-lr3p2e-3-r1",
+      "pt-275m-kda-ev2-neg-nope-gated-latentmoe-l4-paper-cx8-lr4e-4-r1",
+      "pt-275m-kda-ev2-neg-nope-gated-latentmoe-l4-paper-cx8-lr8e-4-r1",
+      "pt-275m-kda-ev2-neg-nope-gated-latentmoe-l4-paper-cx8-lr1p6e-3-r1",
+      "pt-275m-kda-ev2-neg-nope-gated-latentmoe-l4-paper-cx8-lr3p2e-3-r1"
+    ]
+  },
+  "runs": [
+    {
+      "model": "275m",
+      "variant": "geometry_kda_ev2_neg_nope_gated",
+      "variant_label": "KDA (expand_v=2, negative eigenvalues)",
+      "cx": 1,
+      "lr": 0.0008,
+      "lr_tag": "0.0008",
+      "loss": 2.692694975145208,
+      "state": "finished",
+      "tokens_b": 4.525654016,
+      "run_id": "75dy08n9",
+      "name": "pt-275m-geometry-hybrid-kda-ev2-neg-nope-gated-cx1-lr8e-4-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/75dy08n9",
+      "segment_run_ids": [
+        "75dy08n9"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0,
+      "history_source": "wandb",
+      "history_source_sha256": null
+    },
+    {
+      "model": "275m",
+      "variant": "geometry_kda_ev2_neg_nope_gated",
+      "variant_label": "KDA (expand_v=2, negative eigenvalues)",
+      "cx": 2,
+      "lr": 0.0016,
+      "lr_tag": "0.0016",
+      "loss": 2.562519582187605,
+      "state": "finished",
+      "tokens_b": 9.051439104,
+      "run_id": "ysswifrz",
+      "name": "pt-275m-geometry-hybrid-kda-ev2-neg-nope-gated-cx2-lr1p6e-3-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/ysswifrz",
+      "segment_run_ids": [
+        "ysswifrz"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0,
+      "history_source": "wandb",
+      "history_source_sha256": null
+    },
+    {
+      "model": "275m",
+      "variant": "geometry_kda_ev2_neg_nope_gated",
+      "variant_label": "KDA (expand_v=2, negative eigenvalues)",
+      "cx": 4,
+      "lr": 0.0008,
+      "lr_tag": "0.0008",
+      "loss": 2.4642473941579053,
+      "state": "finished",
+      "tokens_b": 18.102616064,
+      "run_id": "cyyeyven",
+      "name": "pt-275m-geometry-hybrid-kda-ev2-neg-nope-gated-cx4-lr8e-4-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/cyyeyven",
+      "segment_run_ids": [
+        "cyyeyven"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
+    },
+    {
+      "model": "275m",
+      "variant": "geometry_kda_ev2_neg_nope_gated",
+      "variant_label": "KDA (expand_v=2, negative eigenvalues)",
+      "cx": 8,
+      "lr": 0.0008,
+      "lr_tag": "0.0008",
+      "loss": 2.3802730804719263,
+      "state": "finished",
+      "tokens_b": 36.204969984,
+      "run_id": "vrjssy6q",
+      "name": "pt-275m-geometry-hybrid-kda-ev2-neg-nope-gated-cx8-lr8e-4-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/vrjssy6q",
+      "segment_run_ids": [
+        "vrjssy6q"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
+    },
+    {
+      "model": "480m",
+      "variant": "geometry_kda_ev2_neg_nope_gated",
+      "variant_label": "KDA (expand_v=2, negative eigenvalues)",
+      "cx": 1,
+      "lr": 0.0012,
+      "lr_tag": "0.0012",
+      "loss": 2.49228262301511,
+      "state": "finished",
+      "tokens_b": 8.433434624,
+      "run_id": "sb4yqi8x",
+      "name": "pt-480m-geometry-hybrid-kda-ev2-neg-nope-gated-cx1-lr1p2e-3-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/sb4yqi8x",
+      "segment_run_ids": [
+        "sb4yqi8x"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0,
+      "history_source": "wandb",
+      "history_source_sha256": null
+    },
+    {
+      "model": "480m",
+      "variant": "geometry_kda_ev2_neg_nope_gated",
+      "variant_label": "KDA (expand_v=2, negative eigenvalues)",
+      "cx": 2,
+      "lr": 0.0009,
+      "lr_tag": "0.0009",
+      "loss": 2.382695420733038,
+      "state": "finished",
+      "tokens_b": 16.86700032,
+      "run_id": "k2zf4esa",
+      "name": "pt-480m-geometry-hybrid-kda-ev2-neg-nope-gated-cx2-lr9e-4-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/k2zf4esa",
+      "segment_run_ids": [
+        "k2zf4esa"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
+    },
+    {
+      "model": "480m",
+      "variant": "geometry_kda_ev2_neg_nope_gated",
+      "variant_label": "KDA (expand_v=2, negative eigenvalues)",
+      "cx": 4,
+      "lr": 0.0008,
+      "lr_tag": "0.0008",
+      "loss": 2.291178529367507,
+      "state": "finished",
+      "tokens_b": 33.733738496,
+      "run_id": "lesw7ogm",
+      "name": "pt-480m-geometry-hybrid-kda-ev2-neg-nope-gated-cx4-lr8e-4-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/lesw7ogm",
+      "segment_run_ids": [
+        "lesw7ogm"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
+    },
+    {
+      "model": "480m",
+      "variant": "geometry_kda_ev2_neg_nope_gated",
+      "variant_label": "KDA (expand_v=2, negative eigenvalues)",
+      "cx": 8,
+      "lr": 0.0008,
+      "lr_tag": "0.0008",
+      "loss": 2.216500552195423,
+      "state": "finished",
+      "tokens_b": 67.46800128,
+      "run_id": "nfgfhyv8",
+      "name": "pt-480m-geometry-hybrid-kda-ev2-neg-nope-gated-cx8-lr8e-4-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/nfgfhyv8",
+      "segment_run_ids": [
+        "nfgfhyv8"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
+    },
+    {
+      "model": "810m",
+      "variant": "geometry_kda_ev2_neg_nope_gated",
+      "variant_label": "KDA (expand_v=2, negative eigenvalues)",
+      "cx": 1,
+      "lr": 0.0006,
+      "lr_tag": "0.0006",
+      "loss": 2.352303770603124,
+      "state": "finished",
+      "tokens_b": 14.729609216,
+      "run_id": "4k5dasv8",
+      "name": "pt-810m-geometry-hybrid-kda-ev2-neg-nope-gated-cx1-lr6e-4-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/4k5dasv8",
+      "segment_run_ids": [
+        "4k5dasv8"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
+    },
+    {
+      "model": "810m",
+      "variant": "geometry_kda_ev2_neg_nope_gated",
+      "variant_label": "KDA (expand_v=2, negative eigenvalues)",
+      "cx": 2,
+      "lr": 0.00056,
+      "lr_tag": "0.00056",
+      "loss": 2.241872620657555,
+      "state": "finished",
+      "tokens_b": 29.459349504,
+      "run_id": "1e7z0xar",
+      "name": "pt-810m-geometry-hybrid-kda-ev2-neg-nope-gated-cx2-lr5p6e-4-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/1e7z0xar",
+      "segment_run_ids": [
+        "1e7z0xar"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
+    },
+    {
+      "model": "810m",
+      "variant": "geometry_kda_ev2_neg_nope_gated",
+      "variant_label": "KDA (expand_v=2, negative eigenvalues)",
+      "cx": 4,
+      "lr": 0.0004,
+      "lr_tag": "0.0004",
+      "loss": 2.158206992679172,
+      "state": "finished",
+      "tokens_b": 58.918436864,
+      "run_id": "gxgef1hf",
+      "name": "pt-810m-geometry-hybrid-kda-ev2-neg-nope-gated-cx4-lr4e-4-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/gxgef1hf",
+      "segment_run_ids": [
+        "gxgef1hf"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
+    },
+    {
+      "model": "810m",
+      "variant": "geometry_kda_ev2_neg_nope_gated",
+      "variant_label": "KDA (expand_v=2, negative eigenvalues)",
+      "cx": 8,
+      "lr": 0.0004,
+      "lr_tag": "0.0004",
+      "loss": 2.0907190284639037,
+      "state": "finished",
+      "tokens_b": 117.837398016,
+      "run_id": "x3nar750",
+      "name": "pt-810m-geometry-hybrid-kda-ev2-neg-nope-gated-cx8-lr4e-4-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/x3nar750",
+      "segment_run_ids": [
+        "x3nar750"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
+    },
+    {
+      "model": "1p2b",
+      "variant": "geometry_kda_ev2_neg_nope_gated",
+      "variant_label": "KDA (expand_v=2, negative eigenvalues)",
+      "cx": 1,
+      "lr": 0.0004,
+      "lr_tag": "0.0004",
+      "loss": 2.236574077131363,
+      "state": "finished",
+      "tokens_b": 22.46049792,
+      "run_id": "yuv9m7p1",
+      "name": "pt-1p2b-geometry-hybrid-kda-ev2-neg-nope-gated-cx1-lr4e-4-ep8-rowwise-ext3-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/yuv9m7p1",
+      "segment_run_ids": [
+        "yuv9m7p1"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
+    },
+    {
+      "model": "1p2b",
+      "variant": "geometry_kda_ev2_neg_nope_gated",
+      "variant_label": "KDA (expand_v=2, negative eigenvalues)",
+      "cx": 2,
+      "lr": 0.0006,
+      "lr_tag": "0.0006",
+      "loss": 2.1462986688568906,
+      "state": "finished",
+      "tokens_b": 44.920602624,
+      "run_id": "86nmqw4e",
+      "name": "pt-1p2b-geometry-hybrid-kda-ev2-neg-nope-gated-cx2-lr6e-4-ep8-rowwise-ext3-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/86nmqw4e",
+      "segment_run_ids": [
+        "86nmqw4e"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
+    }
+  ],
+  "results": [
+    {
+      "variant": "geometry_kda_ev2_neg_nope_gated_latentmoe_l2_paper",
+      "variant_label": "LatentMoE L=2 (paper-matched)",
+      "cx": 1,
+      "finished_points": 0,
+      "expected_points": 4,
+      "bracketed": false,
+      "provisional": false,
+      "observed_best": null,
+      "predicted_fit_lr": null,
+      "predicted_fit_loss": null
+    },
+    {
+      "variant": "geometry_kda_ev2_neg_nope_gated_latentmoe_l2_paper",
+      "variant_label": "LatentMoE L=2 (paper-matched)",
+      "cx": 2,
+      "finished_points": 0,
+      "expected_points": 4,
+      "bracketed": false,
+      "provisional": false,
+      "observed_best": null,
+      "predicted_fit_lr": null,
+      "predicted_fit_loss": null
+    },
+    {
+      "variant": "geometry_kda_ev2_neg_nope_gated_latentmoe_l2_paper",
+      "variant_label": "LatentMoE L=2 (paper-matched)",
+      "cx": 4,
+      "finished_points": 0,
+      "expected_points": 4,
+      "bracketed": false,
+      "provisional": false,
+      "observed_best": null,
+      "predicted_fit_lr": null,
+      "predicted_fit_loss": null
+    },
+    {
+      "variant": "geometry_kda_ev2_neg_nope_gated_latentmoe_l2_paper",
+      "variant_label": "LatentMoE L=2 (paper-matched)",
+      "cx": 8,
+      "finished_points": 0,
+      "expected_points": 4,
+      "bracketed": false,
+      "provisional": false,
+      "observed_best": null,
+      "predicted_fit_lr": null,
+      "predicted_fit_loss": null
+    },
+    {
+      "variant": "geometry_kda_ev2_neg_nope_gated_latentmoe_l4_paper",
+      "variant_label": "LatentMoE L=4 (paper-matched)",
+      "cx": 1,
+      "finished_points": 0,
+      "expected_points": 4,
+      "bracketed": false,
+      "provisional": false,
+      "observed_best": null,
+      "predicted_fit_lr": null,
+      "predicted_fit_loss": null
+    },
+    {
+      "variant": "geometry_kda_ev2_neg_nope_gated_latentmoe_l4_paper",
+      "variant_label": "LatentMoE L=4 (paper-matched)",
+      "cx": 2,
+      "finished_points": 0,
+      "expected_points": 4,
+      "bracketed": false,
+      "provisional": false,
+      "observed_best": null,
+      "predicted_fit_lr": null,
+      "predicted_fit_loss": null
+    },
+    {
+      "variant": "geometry_kda_ev2_neg_nope_gated_latentmoe_l4_paper",
+      "variant_label": "LatentMoE L=4 (paper-matched)",
+      "cx": 4,
+      "finished_points": 0,
+      "expected_points": 4,
+      "bracketed": false,
+      "provisional": false,
+      "observed_best": null,
+      "predicted_fit_lr": null,
+      "predicted_fit_loss": null
+    },
+    {
+      "variant": "geometry_kda_ev2_neg_nope_gated_latentmoe_l4_paper",
+      "variant_label": "LatentMoE L=4 (paper-matched)",
+      "cx": 8,
+      "finished_points": 0,
+      "expected_points": 4,
+      "bracketed": false,
+      "provisional": false,
+      "observed_best": null,
+      "predicted_fit_lr": null,
+      "predicted_fit_loss": null
+    }
+  ]
+}
