@@ -2,14 +2,20 @@
 
 ## Implementation source and audit
 
-The implementation is the nine-commit LatentMoE series from
+The implementation is the LatentMoE series from
 [OLMo-core PR #799](https://github.com/allenai/OLMo-core/pull/799), ported onto
 `jacobm/moe-v2-core-gdn2` without merging the PR branch's unrelated upstream
 history. It covers legacy MoE, MoEHybrid, and OLMo-DDP MoE-v2 execution paths,
 including no-EP, 1D EP, rowwise EP, rowwise-wave, and DeepEP. The port retains
 this branch's existing EP1 MXFP8 no-EP behavior at the one overlapping call
-site. Our follow-up changes the router input from the projected expert input to
-the full-width token representation, matching the paper and Kimi K3.
+site. The PR's latest router fix changes the router input from the projected
+expert input to the full-width token representation, matching the paper and
+Kimi K3. We synchronized that implementation at PR head
+`967abef8cf835e8076672cc622b9d9e866f26908`. The material source-level API
+change is the rename from `routed_expert_dim` to `latent_dim`; tensor parameter
+names, model shapes, and the previously audited parameter counts are
+unchanged. Older serialized configs using the former field name must be
+updated, while their checkpoint tensors remain compatible.
 
 The implementation is structurally coherent:
 
@@ -23,12 +29,12 @@ The implementation is structurally coherent:
   TP plans, serialization, and every supported MoE-v2 dispatch path; and
 - it explicitly rejects the unsupported LatentMoE + rowwise-TBO combination.
 
-One scientific distinction remains visible. PR #799 routes on the
-down-projected representation, whereas the LatentMoE paper keeps the routing
-gate at full model width. We qualify both semantics independently. The paper's
+The earlier PR implementation routed on the down-projected representation,
+whereas the LatentMoE paper keeps the routing gate at full model width. The
+latest PR fix and this branch now both use the paper behavior. The paper's
 accuracy-oriented recipe also increases total experts and top-k by the
-compression factor. We retain fixed-expert controls to isolate the router-input
-correction and add a third, paper-matched arm that scales both quantities.
+compression factor. We retain fixed-expert controls to isolate latent
+projection effects and add a paper-matched arm that scales both quantities.
 
 Kimi K3 independently confirms the full-width-router design in released code:
 it computes routing from the 7,168-wide residual representation, then projects

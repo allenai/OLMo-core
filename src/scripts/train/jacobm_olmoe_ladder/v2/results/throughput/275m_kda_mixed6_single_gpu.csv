@@ -1,0 +1,2 @@
+family,batch_tokens,gpus,path,rank_microbatch_sequences,final10_median_tflops_gpu,final10_median_tps_gpu,aggregate_tps,stable_step_seconds,final10_median_mfu_pct,peak_active_gib,peak_reserved_gib,max_skipped_steps,beaker_job,wandb_url
+KDA mixed6,2097152,1,EP1/all-reduce,16,412.20,258333.5,258333.5,8.1180,18.320,243.40,247.60,0,01KYQEMRWEG8TAB21B3RX1VY5Z,

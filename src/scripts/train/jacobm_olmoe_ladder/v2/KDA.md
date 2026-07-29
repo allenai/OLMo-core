@@ -44,8 +44,7 @@ usual `20 * active_non_embedding_params * Cx` rule.
 
 ## Mixed-attention 1:1 candidate
 
-The unlaunched
-`geometry_275m_kda_ev2_neg_nope_gated_3kda_2swa_1fa` candidate tests an exact
+`geometry_275m_kda_ev2_neg_nope_gated_3kda_2swa_1fa` tests an exact
 six-layer motif:
 
 `KDA -> SWA -> KDA -> SWA -> KDA -> full attention`
@@ -68,7 +67,24 @@ to 552 active-matches the deeper model:
 | Mixed 3-KDA/2-SWA/1-FA | 12 | 552 | 290,904,368 | 226,679,088 | 3,182,147,888 |
 
 The mixed candidate is `+0.138%` in active parameters and `+1.470%` in stored
-parameters versus the parent. No launcher or training work has been submitted.
+parameters versus the parent.
+
+Its matched 50-step throughput qualification completed with zero skipped
+steps in [Beaker work
+`01KYQEMRRW27EDVEZ9VEVYHEPP`](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYQEMRRW27EDVEZ9VEVYHEPP).
+Both measurements below use one Holmes B300, EP1/all-reduce, MB16, an
+8,192-token sequence length, a 2-Mi-token optimizer batch, compilation, and
+the median of final steps 41--50:
+
+| Variant | TPS/GPU | TFLOPs/GPU | Seconds/step | MFU | Active / reserved memory |
+|---|---:|---:|---:|---:|---:|
+| Current KDA parent | 255,489 | 388.6 | 8.2084 | 17.27% | 235.7 / 239.2 GiB |
+| Mixed 3-KDA/2-SWA/1-FA | 258,334 | 412.2 | 8.1180 | 18.32% | 243.4 / 247.6 GiB |
+
+The mixed model performs 4.91% more modeled FLOPs per token, but its raw
+throughput is 1.11% higher and its step time is 1.10% lower. Peak active
+memory increases by 7.7 GiB. The machine-readable result is
+[`results/throughput/275m_kda_mixed6_single_gpu.csv`](results/throughput/275m_kda_mixed6_single_gpu.csv).
 
 ## Qualification and sweep
 
