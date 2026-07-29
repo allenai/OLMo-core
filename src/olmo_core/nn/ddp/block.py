@@ -28,7 +28,7 @@ from olmo_core.utils import get_or_init_stream
 
 from ..attention.base import SequenceMixerConfig
 from ..buffer_cache import BufferCache
-from ..layer_norm import LayerNormConfig
+from ..layer_norm import LayerNorm, LayerNormConfig
 from ..moe.moe import LatentMoEConfig
 from ..moe.v2.activation_debug import (
     EP_NO_SYNC_SAVED_ACTIVATIONS_DEBUG_ENABLED,
@@ -422,9 +422,11 @@ class OLMoDDPTransformerBlock(olmo_core.nn.transformer.block.TransformerBlockBas
         self.d_model = d_model
         self.block_idx = block_idx
         self.latent_down_proj: Optional[torch.nn.Linear]
+        self.latent_up_proj_input_norm: Optional[LayerNorm]
         self.latent_up_proj: Optional[torch.nn.Linear]
         if latent_moe is None:
             self.latent_down_proj = None
+            self.latent_up_proj_input_norm = None
             self.latent_up_proj = None
         else:
             if routed_experts is None:
@@ -450,6 +452,13 @@ class OLMoDDPTransformerBlock(olmo_core.nn.transformer.block.TransformerBlockBas
                 bias=latent_moe.bias,
                 dtype=routed_experts.dtype.as_pt(),
                 device=init_device,
+            )
+            self.latent_up_proj_input_norm = (
+                None
+                if latent_moe.up_proj_input_norm is None
+                else latent_moe.up_proj_input_norm.build(
+                    latent_moe.routed_expert_dim, init_device=init_device
+                )
             )
             self.latent_up_proj = torch.nn.Linear(
                 latent_moe.routed_expert_dim,
@@ -1447,6 +1456,8 @@ class OLMoDDPTransformerBlock(olmo_core.nn.transformer.block.TransformerBlockBas
     def _restore_routed_moe_output(self, routed_output: torch.Tensor) -> torch.Tensor:
         if self.latent_up_proj is None:
             return routed_output
+        if self.latent_up_proj_input_norm is not None:
+            routed_output = self.latent_up_proj_input_norm(routed_output)
         return self.latent_up_proj(routed_output)
 
     def _merge_routed_and_shared(

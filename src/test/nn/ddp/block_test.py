@@ -88,6 +88,38 @@ def test_latent_block_dimensions_and_param_accounting():
     assert block._restore_routed_moe_output(routed_input).shape == model_input.shape
 
 
+def test_latent_block_defaults_to_up_proj_input_rms_norm():
+    config = _block_config(routed_expert_dim=16)
+    block = _build_block(config)
+
+    assert block.latent_up_proj_input_norm is not None
+    assert config.latent_moe is not None
+    assert config.latent_moe.up_proj_input_norm is not None
+    assert config.latent_moe.up_proj_input_norm.name == LayerNormType.rms
+    assert config.num_params(D_MODEL) == sum(p.numel() for p in block.parameters())
+    routed_out = torch.randn(2, 3, 16)
+    assert block.latent_up_proj is not None
+    expected = block.latent_up_proj(block.latent_up_proj_input_norm(routed_out))
+    torch.testing.assert_close(block._restore_routed_moe_output(routed_out), expected)
+
+
+@pytest.mark.parametrize("norm_type", [LayerNormType.default, LayerNormType.l2_norm])
+def test_latent_block_accepts_configurable_up_proj_input_norm(norm_type: LayerNormType):
+    config = _block_config(routed_expert_dim=16)
+    assert config.latent_moe is not None
+    config.latent_moe.up_proj_input_norm = LayerNormConfig(name=norm_type)
+    block = _build_block(config)
+    assert block.latent_up_proj_input_norm is not None
+
+
+def test_latent_block_can_disable_up_proj_input_norm():
+    config = _block_config(routed_expert_dim=16)
+    assert config.latent_moe is not None
+    config.latent_moe.up_proj_input_norm = None
+    block = _build_block(config)
+    assert block.latent_up_proj_input_norm is None
+
+
 @pytest.mark.parametrize("routed_expert_dim", [0, D_MODEL, D_MODEL * 2])
 def test_latent_block_rejects_invalid_dimension(routed_expert_dim: int):
     config = _block_config(routed_expert_dim=routed_expert_dim)

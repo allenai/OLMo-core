@@ -19,6 +19,7 @@ from olmo_core.distributed.parallel import (
 from olmo_core.distributed.utils import get_local_tensor
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.nn.feed_forward import FeedForwardConfig
+from olmo_core.nn.layer_norm import LayerNormConfig, LayerNormType
 from olmo_core.nn.moe import (
     LatentMoEConfig,
     MoEConfig,
@@ -143,6 +144,30 @@ def test_latent_moe_rejects_invalid_routed_expert_dim(routed_expert_dim: int):
     config = MoEConfig(latent_moe=LatentMoEConfig(routed_expert_dim=routed_expert_dim))
     with pytest.raises(OLMoConfigurationError, match="routed_expert_dim"):
         config.build(d_model=16)
+
+
+def test_latent_moe_defaults_to_up_proj_input_rms_norm():
+    config = MoEConfig(
+        latent_moe=LatentMoEConfig(routed_expert_dim=8)
+    )
+    moe = config.build(d_model=16)
+
+    assert moe.latent_up_proj_input_norm is not None
+    assert config.latent_moe is not None
+    assert config.latent_moe.up_proj_input_norm is not None
+    assert config.latent_moe.up_proj_input_norm.name == LayerNormType.rms
+    assert config.num_params(16) == sum(p.numel() for p in moe.parameters())
+
+
+def test_latent_moe_accepts_non_rms_up_proj_input_norm():
+    config = MoEConfig(
+        latent_moe=LatentMoEConfig(
+            routed_expert_dim=8,
+            up_proj_input_norm=LayerNormConfig(name=LayerNormType.default),
+        )
+    )
+    moe = config.build(d_model=16)
+    assert moe.latent_up_proj_input_norm is not None
 
 
 def test_moe_without_latent_config_preserves_state_dict_keys():
