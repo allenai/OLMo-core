@@ -763,6 +763,7 @@ def combined_forward_ep_deepep_v2(
     kwargs.pop("max_doc_len", None)
     kwargs.pop("cu_doc_lens", None)
     moe_inp = self._prepare_moe_input(attn_res_out)
+    routed_moe_inp = self._prepare_routed_moe_input(moe_inp)
 
     (
         local_x_global_routed_expert_weights,
@@ -770,7 +771,7 @@ def combined_forward_ep_deepep_v2(
         local_batch_size_per_global_routed_expert,
         routed_expert_router_aux_loss_info,
     ) = self.routed_experts_router(
-        moe_inp,
+        routed_moe_inp,
         False,
         loss_div_factor=loss_div_factor,
     )
@@ -795,7 +796,7 @@ def combined_forward_ep_deepep_v2(
         else:
             local_x_global_shared_expert_weights = None
 
-    in_shape = moe_inp.size()
+    routed_in_shape = routed_moe_inp.size()
 
     mixed_shared_out = None
     if self.shared_experts is not None:
@@ -819,7 +820,7 @@ def combined_forward_ep_deepep_v2(
                 attn_res_out.shape,
             )
 
-    moe_inp = moe_inp.view(-1, in_shape[-1])
+    routed_moe_inp = routed_moe_inp.view(-1, routed_in_shape[-1])
     top_k = self.routed_experts_router.top_k
     routing_map = local_x_global_routed_expert_indices.view(-1, top_k)
     route_weights = local_x_global_routed_expert_weights.view(-1, top_k)
@@ -858,10 +859,10 @@ def combined_forward_ep_deepep_v2(
 
     runtime = _get_deepep_v2_runtime(
         self,
-        local_tokens=moe_inp.shape[0],
-        hidden=moe_inp.shape[-1],
+        local_tokens=routed_moe_inp.shape[0],
+        hidden=routed_moe_inp.shape[-1],
         top_k=top_k,
-        device=moe_inp.device,
+        device=routed_moe_inp.device,
     )
     # Reuse rowwise's deterministic tail-drop policy, then present dropped
     # routes to DeepEP as invalid top-k slots. DeepEP ignores negative expert
@@ -897,16 +898,19 @@ def combined_forward_ep_deepep_v2(
     grad_anchor: Optional[torch.Tensor] = None
     if (
         torch.is_grad_enabled()
-        and not (moe_inp.requires_grad or topk_weights.requires_grad)
+        and not (routed_moe_inp.requires_grad or topk_weights.requires_grad)
         and _routed_experts_need_grad(self.routed_experts)
     ):
         grad_anchor = torch.zeros(
-            (), device=moe_inp.device, dtype=moe_inp.dtype, requires_grad=True
+            (),
+            device=routed_moe_inp.device,
+            dtype=routed_moe_inp.dtype,
+            requires_grad=True,
         )
 
     with nvtx.annotate("deepep_v2/routed", color="green"):
         routed_out = _DeepEpV2Autograd.apply(
-            moe_inp,
+            routed_moe_inp,
             topk_idx,
             topk_weights,
             self,
@@ -915,7 +919,8 @@ def combined_forward_ep_deepep_v2(
             grad_anchor,
         )
 
-    x_moe = routed_out.view(in_shape)
+    x_moe = routed_out.view(routed_in_shape)
+    x_moe = self._restore_routed_moe_output(x_moe)
     wait_stream_no_compile(torch.cuda.current_stream(), self.get_dense_stream())
 
     mlp_out = self._merge_routed_and_shared(x_moe, mixed_shared_out)

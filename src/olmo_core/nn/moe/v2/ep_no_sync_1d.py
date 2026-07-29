@@ -52,8 +52,6 @@ def combined_forward_ep_no_sync_1d(
         not requires_host_side_split_sizes()
     ), "EP no-sync implementation does not support host-side split size communication"
     group_name = get_ep_no_sync_group_name(self)
-    B, S, D = x.shape
-
     block_inp = x
     del x
 
@@ -62,6 +60,7 @@ def combined_forward_ep_no_sync_1d(
     kwargs.pop("max_doc_len", None)
     kwargs.pop("cu_doc_lens", None)
     moe_inp = self._prepare_moe_input(attn_res_out)
+    routed_moe_inp = self._prepare_routed_moe_input(moe_inp)
 
     (
         local_x_global_routed_expert_weights,
@@ -69,7 +68,7 @@ def combined_forward_ep_no_sync_1d(
         local_batch_size_per_global_routed_expert,
         routed_expert_router_aux_loss_info,
     ) = self.routed_experts_router(
-        moe_inp,
+        routed_moe_inp,
         False,
         loss_div_factor=loss_div_factor,
     )
@@ -94,8 +93,8 @@ def combined_forward_ep_no_sync_1d(
         else:
             local_x_global_shared_expert_weights = None
 
-    in_shape = moe_inp.size()
-    moe_inp = moe_inp.view(-1, in_shape[-1])
+    routed_in_shape = routed_moe_inp.size()
+    routed_moe_inp = routed_moe_inp.view(-1, routed_in_shape[-1])
 
     num_out_tokens = local_x_global_routed_expert_indices.numel()
 
@@ -154,15 +153,15 @@ def combined_forward_ep_no_sync_1d(
         dispatch_out_cap=dispatch_out_cap,
         combine_in_cap=combine_in_cap,
         combine_out_cap=combine_out_cap,
-        d_model=moe_inp.shape[-1],
-        dtype=moe_inp.dtype,
-        device=moe_inp.device,
+        d_model=routed_moe_inp.shape[-1],
+        dtype=routed_moe_inp.dtype,
+        device=routed_moe_inp.device,
     )
 
     routing_map = local_x_global_routed_expert_indices.view(
         -1, self.routed_experts_router.top_k
     ).int()
-    hidden_shape_before_permute = moe_inp.shape
+    hidden_shape_before_permute = routed_moe_inp.shape
 
     with torch.no_grad():
         padded_batch_size_per_local_expert = padded_local_expert_splits_for_capacity(
@@ -180,7 +179,7 @@ def combined_forward_ep_no_sync_1d(
             permutated_local_x,
             reversed_local_x_permutation_mapping,
         ) = moe_permute_1d_fused_drop_no_compile(
-            inp=moe_inp,
+            inp=routed_moe_inp,
             routing_map=routing_map,
             num_out_tokens=num_out_tokens,
             reorder_indices=local_reorder_indices,
@@ -202,7 +201,7 @@ def combined_forward_ep_no_sync_1d(
             other_stream=torch.cuda.current_stream(),
         )
         with torch.cuda.stream(self.get_dense_stream()):
-            shared_out_up, shared_out_gate = self.shared_experts.forward1(moe_inp.view(B, S, D))
+            shared_out_up, shared_out_gate = self.shared_experts.forward1(moe_inp)
     else:
         shared_out_up, shared_out_gate = None, None
 
@@ -303,7 +302,8 @@ def combined_forward_ep_no_sync_1d(
     else:
         mixed_shared_out = None
 
-    local_x = local_x.view(in_shape)
+    local_x = local_x.view(routed_in_shape)
+    local_x = self._restore_routed_moe_output(local_x)
     wait_stream_no_compile(torch.cuda.current_stream(), self.get_dense_stream())
 
     mlp_out = self._merge_routed_and_shared(local_x, mixed_shared_out)

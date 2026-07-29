@@ -1,23 +1,31 @@
 """Tests for ``OLMoDDPTransformerBlock`` config accounting and construction."""
 
 import pytest
+import torch
 
 from olmo_core.config import DType
+from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.nn.attention import AttentionConfig, AttentionType
 from olmo_core.nn.ddp.block import (
     OLMoDDPTransformerBlock,
     OLMoDDPTransformerBlockConfig,
 )
 from olmo_core.nn.layer_norm import LayerNormConfig, LayerNormType
+from olmo_core.nn.moe import LatentMoEConfig
 from olmo_core.nn.moe.v2.routed_experts import RoutedExpertsConfig
 from olmo_core.nn.moe.v2.router import MoERouterConfigV2
+from olmo_core.nn.moe.v2.shared_experts import SharedExpertsConfig
 from olmo_core.nn.transformer import TransformerBlockType
+from olmo_core.nn.transformer.init import InitMethod
 
 D_MODEL = 64
 
 
-def _block_config(*, use_peri_norm: bool = False) -> OLMoDDPTransformerBlockConfig:
+def _block_config(
+    *, use_peri_norm: bool = False, routed_expert_dim: int | None = None
+) -> OLMoDDPTransformerBlockConfig:
     dtype = DType.float32
+    routed_dim = D_MODEL if routed_expert_dim is None else routed_expert_dim
     layer_norm = LayerNormConfig(name=LayerNormType.rms, eps=1e-6, bias=False, dtype=dtype)
     return OLMoDDPTransformerBlockConfig(
         name=TransformerBlockType.moe_fused_v2,
@@ -25,14 +33,19 @@ def _block_config(*, use_peri_norm: bool = False) -> OLMoDDPTransformerBlockConf
             name=AttentionType.default, n_heads=4, bias=False, use_flash=False, dtype=dtype
         ),
         routed_experts=RoutedExpertsConfig(
-            d_model=D_MODEL, hidden_size=128, num_experts=4, bias=False, dtype=dtype
+            d_model=routed_dim, hidden_size=128, num_experts=4, bias=False, dtype=dtype
         ),
         routed_experts_router=MoERouterConfigV2(
-            d_model=D_MODEL, num_experts=4, top_k=2, dtype=dtype
+            d_model=routed_dim, num_experts=4, top_k=2, dtype=dtype
         ),
         shared_experts=None,
         layer_norm=layer_norm,
         use_peri_norm=use_peri_norm,
+        latent_moe=(
+            LatentMoEConfig(routed_expert_dim=routed_dim)
+            if routed_expert_dim is not None
+            else None
+        ),
     )
 
 
@@ -54,6 +67,88 @@ def test_block_num_active_params_below_total():
     # Only top_k of num_experts routed experts are active per token, so active < total.
     config = _block_config()
     assert 0 < config.num_active_params(D_MODEL) < config.num_params(D_MODEL)
+
+
+def test_latent_block_dimensions_and_param_accounting():
+    routed_expert_dim = 16
+    config = _block_config(routed_expert_dim=routed_expert_dim)
+    block = _build_block(config)
+
+    assert config.num_params(D_MODEL) == sum(p.numel() for p in block.parameters())
+    assert block.routed_experts is not None
+    assert block.routed_experts.d_model == routed_expert_dim
+    assert block.routed_experts_router is not None
+    assert block.routed_experts_router.d_model == routed_expert_dim
+    assert block.latent_down_proj is not None
+    assert block.latent_down_proj.weight.shape == (routed_expert_dim, D_MODEL)
+    assert block.latent_up_proj is not None
+    assert block.latent_up_proj.weight.shape == (D_MODEL, routed_expert_dim)
+
+    model_input = torch.randn(2, 3, D_MODEL)
+    routed_input = block._prepare_routed_moe_input(model_input)
+    assert routed_input.shape == (2, 3, routed_expert_dim)
+    assert block._restore_routed_moe_output(routed_input).shape == model_input.shape
+
+
+@pytest.mark.parametrize("routed_expert_dim", [0, D_MODEL, D_MODEL * 2])
+def test_latent_block_rejects_invalid_dimension(routed_expert_dim: int):
+    config = _block_config(routed_expert_dim=routed_expert_dim)
+    with pytest.raises(OLMoConfigurationError, match="routed_expert_dim"):
+        config.build(d_model=D_MODEL, block_idx=0, n_layers=1, init_device="cpu")
+
+
+def test_latent_block_projection_initialization():
+    routed_expert_dim = 16
+    block = _build_block(_block_config(routed_expert_dim=routed_expert_dim))
+    InitMethod.fan_in.init_moe_v2(
+        block,
+        d_model=D_MODEL,
+        block_idx=0,
+        num_blocks=1,
+    )
+
+    assert block.latent_down_proj is not None
+    assert block.latent_up_proj is not None
+    torch.testing.assert_close(
+        block.latent_down_proj.weight.std(),
+        torch.tensor(D_MODEL**-0.5),
+        rtol=0.35,
+        atol=0.0,
+    )
+    torch.testing.assert_close(
+        block.latent_up_proj.weight.std(),
+        torch.tensor(routed_expert_dim**-0.5),
+        rtol=0.35,
+        atol=0.0,
+    )
+
+
+def test_latent_block_keeps_shared_experts_in_model_space():
+    config = _block_config(routed_expert_dim=16)
+    config.shared_experts = SharedExpertsConfig(
+        d_model=D_MODEL,
+        hidden_size=32,
+        num_experts=1,
+        bias=False,
+        dtype=DType.float32,
+    )
+    block = _build_block(config)
+    assert block.shared_experts is not None
+    assert block.shared_experts.d_model == D_MODEL
+    assert config.num_params(D_MODEL) == sum(p.numel() for p in block.parameters())
+
+
+def test_non_latent_block_preserves_state_dict_keys():
+    block = _build_block(_block_config())
+    assert not any("latent_" in key for key in block.state_dict())
+
+
+def test_latent_block_rejects_routed_config_dimension_mismatch():
+    config = _block_config(routed_expert_dim=16)
+    assert config.routed_experts is not None
+    config.routed_experts.d_model = 8
+    with pytest.raises(OLMoConfigurationError, match="routed_experts.d_model"):
+        config.build(d_model=D_MODEL, block_idx=0, n_layers=1, init_device="cpu")
 
 
 def test_block_flops_positive():
