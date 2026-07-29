@@ -1,6 +1,6 @@
 # Canonical GDN2 and KDA 275M comparison
 
-Generated: `2026-07-29T06:57:32.603734+00:00`
+Generated: `2026-07-29T15:42:01.046003+00:00`
 
 Only bracketed curves enter the shared best-of plot. Every label is the observed-best LR; fitted minima are never substituted.
 

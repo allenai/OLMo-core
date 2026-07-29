@@ -189,12 +189,27 @@ The paired `plot_kda_latent_moe.py` entry point publishes separate `L=2` and
 `L=4` U-plots plus one strict best-of comparison against the BF16 KDA parent.
 Cx4/Cx8 exact names are reserved in the registry but remain unlaunched.
 
+Final status on 2026-07-29: all 16 launched Cx1/Cx2 cells finished and both
+families have complete, bracketed curves. Three original L2 jobs had terminal
+post-training bookkeeping failures; their exact replacements completed in
+[01KYP9CDR7QV5Y9Z88M0CZQ0TC](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYP9CDR7QV5Y9Z88M0CZQ0TC).
+The observed winner is `1.6e-3` for both Cx values and both families:
+
+| Family | Cx1 final-250M CE | Cx2 final-250M CE |
+|---|---:|---:|
+| L=2, 512/top-16 | `2.659602` | `2.541918` |
+| L=4, 1,000/top-32 | `2.663658` | `2.555501` |
+
+The refreshed U-plots, best-of plot, and machine-readable results live under
+[`plots/pretraining/kda_latent_moe`](plots/pretraining/kda_latent_moe) and
+[`results/pretraining/kda_latent_moe`](results/pretraining/kda_latent_moe).
+
 ## Validation hold
 
 Do not launch new validation backfills while the current capacity constraint is
-in effect. The last audited winner-only backlog had 48 checkpoints ready and 5
-KDA checkpoints still training; re-audit completion and de-duplicate against
-the finished 117-target historical registry before submission. The intended
-policy remains final-checkpoint LR winners only, EP1, LM validation plus the
-`fast` downstream suite. LatentMoE has no validation target until a full
-training sweep produces a selected winner.
+in effect. The earlier 48-ready/five-training audit is stale; re-audit and
+de-duplicate against the finished 117-target historical registry before
+submission. The intended policy remains final-checkpoint LR winners only, EP1,
+LM validation plus the `fast` downstream suite. The completed LatentMoE sweep
+now contributes four selected targets: L2 and L4 at Cx1 and Cx2, all at
+observed LR `1.6e-3`.

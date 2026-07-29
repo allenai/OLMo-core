@@ -1,10 +1,10 @@
 # OLMoBase Eval Results
 
-Generated: 2026-07-18 02:33 UTC
+Generated: 2026-07-29 16:21 UTC
 
 Values are suite-level aggregates emitted by `olmo-eval`. Higher is better for accuracy/F1/pass-style metrics; lower is better for BPB/loss/perplexity-style metrics. The `direction` column is a heuristic based on suite/metric names, so treat `see metric` rows literally.
 
-Completed result caches live under `/weka/oe-adapt-default/jacobm/olmoe3/olmo-ddp-migration/OLMo-core/src/scripts/train/jacobm_olmoe_ladder/v1/results/cache/olmobase`.
+Completed result caches live under `/weka/oe-adapt-default/jacobm/olmoe3/olmo-ddp-migration/OLMo-core-moe-v2-core/src/scripts/train/jacobm_olmoe_ladder/v1/results/cache/olmobase`.
 
 ## High-Level Aggregates
 

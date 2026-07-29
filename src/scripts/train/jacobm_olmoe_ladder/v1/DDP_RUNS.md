@@ -16,7 +16,7 @@ into the remaining V1 runs.
 Evaluator callbacks are disabled in all resumed training jobs as of 2026-07-16.
 Validation and RULER run afterward from final checkpoints in separate jobs.
 
-| Size | Family | LR | Global batch | Rank microbatch | Beaker experiment | Job | W&B | Current state (2026-07-24 01:38 UTC) |
+| Size | Family | LR | Global batch | Rank microbatch | Beaker experiment | Job | W&B | Current state (2026-07-29 15:49 UTC) |
 |---|---|---:|---:|---:|---|---|---|---|
 | 275M | baseline | `1e-4` | 2 Mi tokens | 4 seq | [`01KXEW4KTBWXMY9XPYANZ6T7YD`](https://beaker.org/ex/01KXEW4KTBWXMY9XPYANZ6T7YD) | `01KXEW4M665ZHPG6SCV25N533Q` | [`e4hvrd33`](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/e4hvrd33) | finished, step 47,684 / 100.001B tokens |
 | 275M | integration deep | `8e-5` | 2 Mi tokens | 4 seq | [`01KXFP8ZKCB5BBMX5WY9MV5WWW`](https://beaker.org/ex/01KXFP8ZKCB5BBMX5WY9MV5WWW) | `01KXFP8ZYY404ABS636ANN09HX` | [`hq0yjd50`](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/hq0yjd50) | finished, step 47,684 / 100.001B tokens |
@@ -47,6 +47,11 @@ weights, respectively. The one-H100 Jupiter RULER-64K evaluations finished:
 has aggregate recall `0.1879` at 1.28 examples/s, and
 [baseline](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KXZ2H9E4TKZ7REK9Z7RW9VJZ)
 has aggregate recall `0.2234` at 1.34 examples/s.
+
+The 2026-07-29 refresh found no live V1 training or evaluation jobs and no new
+terminal failures. The 1.2B baseline and integration-wide final checkpoints
+remain complete, while their validation, HF conversion, and RULER backfills
+remain intentionally pending.
 
 ## 275M integration-wide hybrid control
 

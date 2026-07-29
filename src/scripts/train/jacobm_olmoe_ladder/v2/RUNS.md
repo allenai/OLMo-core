@@ -8,7 +8,8 @@ job IDs and W&B IDs once they exist. Detailed migration-era DDP jobs remain in
 
 Rows are updated as their corresponding collectors run; detailed sections
 retain the full launch and retry history. The canonical GDN2/KDA, new KDA
-transfer, MXFP8, and LatentMoE rows were refreshed at 2026-07-29 06:58 UTC.
+transfer, MXFP8, LatentMoE, and validation rows were refreshed at
+2026-07-29 15:49 UTC.
 
 | Stage | Family / cell | State | Progress / result | Current W&B |
 |---|---|---|---|---|
@@ -32,9 +33,9 @@ transfer, MXFP8, and LatentMoE rows were refreshed at 2026-07-29 06:58 UTC.
 | pretraining | canonical KDA 275M sweep | 16/16 finished | All four Cx curves are complete and bracketed; observed-best LR is `1.6e-3` at every Cx | [results](results/pretraining/canonical_gdn2_kda/results.md) |
 | pretraining | canonical GDN2 larger-scale transfer | 10 loss-collected / 2 failed | 1.2B Cx8 local W&B history was recovered through the verified final step; strict final-250M CE is `2.020529`; 480M Cx2 and 1.2B Cx2 remain failed | [results](results/pretraining/canonical_gdn2_kda/scale_results.md) |
 | pretraining | canonical KDA 480M stability transfer | 4/4 finished | Cx1/2/4/8 strict final-250M CEs are `2.517826`, `2.412884`, `2.323228`, and `2.237558` | [launches](#canonical-kda-480m-stability-transfer) |
-| pretraining | KDA `expand_v=2`, negative-eigenvalue transfer (275M/480M/810M/1.2B) | 14 finished / 2 running | 810M is now 4/4; 1.2B Cx1/Cx2 finished at strict final-250M CE `2.236574`/`2.146299`, while Cx4/Cx8 remain active. No failures in this KDA family. | [results](results/pretraining/canonical_gdn2_kda/kda_ev2_neg_scale_results.md) / [launches](#kda-expand_v2-negative-eigenvalue-transfer) |
+| pretraining | KDA `expand_v=2`, negative-eigenvalue transfer (275M/480M/810M/1.2B) | 14 finished / 2 running | 810M is 4/4; 1.2B Cx1/Cx2 finished at strict final-250M CE `2.236574`/`2.146299`. The distributed Cx4/Cx8 continuations are healthy at steps `146,270/171,359` (85.4%, ETA 6h08m) and `183,000/228,478` (80.1%, ETA 8h53m), respectively. No failures in this KDA family. | [results](results/pretraining/canonical_gdn2_kda/kda_ev2_neg_scale_results.md) / [launches](#kda-expand_v2-negative-eigenvalue-transfer) |
 | qualification | LatentMoE PR #799, full-width-router controls, and 275M parameter-matched configs | 1,000-expert EP1 replacement qualified | Paper-matched 2× and exact 4× are 295.664M/296.770M active params. The selected 4× EP1 approximation uses exactly 1,000 experts/top-32 and is 296.632M active / 3.073B stored. Its exact-2-Mi result is 180.0K TPS/GPU and 280.4 TFLOPs/GPU; physical-max MB11 reaches 182.9K/284.9. Both 50-step runs have zero skips. | [plan and results](LATENT_MOE.md) / [capacity](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYP96YAGZ4CZCZBT87NHSA5X) / [throughput](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYPA1GYA09H78GCVT3PQ1TZH) |
-| pretraining | LatentMoE 275M Cx1/Cx2 LR sweep | L2 8 running; L4 replacement submitted | L2 uses 512/top-16 on EP1. The original 1,024-expert L4 jobs were canceled before training and replaced by the qualified 1,000/top-32 EP1 config. Both families use the four-LR `4e-4`--`3.2e-3` sweep. | [results](results/pretraining/kda_latent_moe/results.md) / [L2 work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYP8XVJJ0PTT6KHY4PNZV861) / [L4 work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYPC428EW5CZFE2X8VZJ2QMQ) |
+| pretraining | LatentMoE 275M Cx1/Cx2 LR sweep | 16/16 finished | Both L2 and the 1,000-expert L4 replacement have complete, bracketed Cx1/Cx2 curves and select observed LR `1.6e-3` throughout. Strict final-250M CE is `2.659602`/`2.541918` for L2 and `2.663658`/`2.555501` for L4 at Cx1/Cx2. | [results](results/pretraining/kda_latent_moe/results.md) / [L2 work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYP8XVJJ0PTT6KHY4PNZV861) / [L4 work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYPC428EW5CZFE2X8VZJ2QMQ) |
 | pretraining | aggressive MXFP8 KDA 275M LR sweep | 16/16 finished | All Cx curves are complete and bracketed. Observed best is `1.6e-3` throughout, with strict final-250M CE `2.685399`, `2.566948`, `2.463998`, and `2.383008` at Cx1/2/4/8. | [results](results/pretraining/kda_mxfp8/results.md) / [work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYJPTZ3J4VHGBH0FSVAQRDGC) |
 | pretraining | aggressive MXFP8 KDA 480M transferred-LR continuation | 1 finished / 3 intentionally canceled | Cx1 finished at strict final-250M CE `2.497288`, `+0.005005` versus matching BF16 KDA; Cx2/Cx4/Cx8 were paused after the matched throughput audit found a 42--62% regression; durable checkpoints retained | [results](results/pretraining/kda_mxfp8/results.md) / [launches](#480m-aggressive-mxfp8-kda-transferred-lr-continuation) |
 | throughput | aggressive MXFP8 KDA 480M qualification | 2/2 finished | MB8/8-GPU: 192.7 TFLOPs/GPU, 69.8K TPS/GPU, 146.6/193.2 GiB active/reserved; MB6/16-GPU: 132.5 TFLOPs/GPU, 48.0K TPS/GPU, 111.1/155.7 GiB; zero skipped steps | [one node](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYKK27K7N1MVV702AKJ2DST8) / [two nodes](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYKK2A58MK03ANV6GAAZPAVG) |
@@ -48,24 +49,23 @@ transfer, MXFP8, and LatentMoE rows were refreshed at 2026-07-29 06:58 UTC.
 | throughput | 275M KDA 672-wide EP1 fused-attention/MXFP8 qualification | finished | 6/6 50-step cells, zero skips. BF16/fused-v2/FA4/attention-MXFP8 tie at 397.9--399.0 TFLOPs/GPU; expert MXFP8 is 357.1--358.6 and does not lower peak memory | [qualification](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYJK6WM1C9A8PQ273XYV22T4) / [grid](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYJM4P6ZDD3QQRC6HWR4PCPN) / [results](results/throughput/275m_kda_672_ep1_fa4_mxfp8.csv) |
 | midtraining | first hybrid 275M Cx8 | finished | 100B; final checkpoint `step95368`; validation finished | [1keo2hz6](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/1keo2hz6) |
 | midtraining | first hybrid 480M Cx8 | finished | 100.001B; final checkpoint `step95368`; validation finished | [mnp9rv5l](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/mnp9rv5l) |
-| validation | V2 post-training backfills | 117/117 registered targets complete; 3 new finals pending registration | KDA 810M Cx2/Cx4 and checkpoint-complete canonical GDN2 1.2B Cx8 are not yet in the backfill registry | [results](results/validation/hybrid_full.md) |
-| validation | 1.2B EP1 fast-path qualification | running; qualification passed | EP8-trained checkpoint loaded under EP1; `moe_mesh=None`; LM eval advancing normally beyond 100/578 batches | [work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYND6K86VHPBBARK4KSV9TZQ) / [p5fp6bc5](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/p5fp6bc5) |
+| validation | V2 historical full-suite backfills | 117/117 registered targets complete | The consolidated historical registry remains complete; newly finished winner-only KDA, MXFP8, and LatentMoE checkpoints are deliberately outside this frozen full-suite registry. | [results](results/validation/hybrid_full.md) |
+| validation | 1.2B EP1 fast-path qualification | finished | Exit code 0. The EP8-trained checkpoint loaded under EP1 with `moe_mesh=None`; LM validation plus the downstream `fast` suite completed in 1,745 seconds of evaluation time. | [work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYND6K86VHPBBARK4KSV9TZQ) / [p5fp6bc5](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/p5fp6bc5) |
 
-The winner-only validation wave is capacity-deferred. At the last audit, 48
-checkpoints were ready and five additional KDA winners were still training.
-Before launching, refresh that inventory and de-duplicate it against the 117
-historical completed targets. Keep the new policy at EP1 with LM validation and
-the `fast` downstream suite; do not register LatentMoE until a full run has an
-LR winner.
+The winner-only validation wave is capacity-deferred. The previous 48-ready /
+five-training inventory is now stale: four new LatentMoE Cx1/Cx2 winners are
+selected, the 275M MXFP8 sweep is complete, and only the 1.2B KDA Cx4/Cx8
+winners remain in training. Before launching, rebuild the inventory and
+de-duplicate it against the 117 historical completed targets. Keep the new
+policy at EP1 with LM validation and the `fast` downstream suite.
 
-At the 2026-07-28 16:36 UTC audit, every current production task is either
-running or finished; no new terminal failure was found. KDA 810M Cx8 is about
-81% complete. The balanced 1.2B KDA Cx1/Cx2/Cx4/Cx8 jobs are about
-57%/54%/30%/29% complete. All four 275M aggressive-MXFP8 Cx4 points are now
-finished; the four Cx8 points are about 76% complete. The 480M aggressive-MXFP8
-Cx1 cell is finished, while Cx2/Cx4/Cx8 are about 80%/55%/2% complete.
-Canonical GDN2 480M Cx2 and 1.2B Cx2 remain historical terminal numerical
-failures and are not counted as live.
+At the 2026-07-29 15:49 UTC audit, the only live project training is the
+distributed 1.2B KDA Cx4/Cx8 continuation: two eight-GPU Cx4 replicas and four
+eight-GPU Cx8 replicas, 48 B300s total. All six replicas are running without a
+failed attempt. Cx4 is at step `146,270/171,359` with an in-process ETA of
+6h08m; Cx8 is at `183,000/228,478` with an ETA of 8h53m. Both LatentMoE
+Cx1/Cx2 sweeps and the 1.2B EP1 fast-validation qualification finished. No
+V1 training or evaluation job is live.
 
 The formal pretraining results and plots use finished runs only and enforce a
 complete final-250M-token history. The gated-RoPE sweep is now complete. Its
