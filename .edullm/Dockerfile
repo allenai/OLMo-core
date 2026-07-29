@@ -66,10 +66,19 @@ COPY . .
 # got an unexpected keyword argument` before any model is built. The declared floor was
 # stale metadata rather than a tested claim, and pyproject.toml is corrected with this.
 #
-# 2.7.1 is the lowest version this project actually tests: .github/workflows/docker.yml
-# builds against 2.7.1 and 2.9.0. Taking the newest instead would be a research decision
-# with a compatibility surface, which a Dockerfile should not make silently on everyone's
-# behalf; taking the lowest tested one is the conservative read.
+# WHICH VERSION, MEASURED RATHER THAN GUESSED THE THIRD TIME. torch.compiler.disable grew
+# its `reason` keyword in 2.8.0 exactly -- read out of torch/compiler/__init__.py at tags
+# v2.7.1, v2.8.0, v2.9.0 and v2.10.0 -- so 2.8.0 is the true floor and everything below it
+# fails the import outright.
+#
+# The pin is 2.9.0 rather than 2.8.0, and the difference is what is tested versus what is
+# merely sufficient. .github/workflows/docker.yml builds this project against 2.7.1 and
+# 2.9.0; of those, 2.9.0 is the only one that can import the package at all. So 2.9.0 is
+# the lowest version that both works and is exercised by this repository, and 2.8.0 would
+# be a floor nothing here has ever run.
+#
+# That the 2.7.1 leg of that matrix cannot import olmo_core.nn is a real inconsistency in
+# this project and is worth someone looking at; it is not fixed here.
 #
 # This is also the argument for pinning rather than tracking a floor. An unpinned
 # `>=2.6.0` resolves to whatever is newest, would have worked here by accident, and would
@@ -104,9 +113,9 @@ COPY . .
 # So it names what a training workload actually reaches for. Anything that breaks between
 # the pinned torch and this library now breaks the build, where it costs a runner minute.
 RUN set -eux; \
-    python -m pip install --no-cache-dir "torch==2.7.1"; \
+    python -m pip install --no-cache-dir "torch==2.9.0"; \
     python -m pip install --no-cache-dir ".[wandb]" boto3; \
-    python -c "import torch; assert torch.__version__.startswith('2.7.1'), f'torch was moved off the pin: {torch.__version__}'"; \
+    python -c "import torch; assert torch.__version__.startswith('2.9.0'), f'torch was moved off the pin: {torch.__version__}'"; \
     python -c "import torch; assert torch.version.cuda, 'the CUDA build of torch was replaced by a CPU wheel'"; \
     python -c "import boto3, wandb; from olmo_core.data import TokenizerConfig; from olmo_core.nn.transformer import TransformerConfig; print(TransformerConfig.olmo2_190M(vocab_size=TokenizerConfig.gpt2().padded_vocab_size()).__class__.__name__)"
 
