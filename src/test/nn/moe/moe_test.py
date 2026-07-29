@@ -146,14 +146,17 @@ def test_latent_moe_rejects_invalid_routed_expert_dim(routed_expert_dim: int):
         config.build(d_model=16)
 
 
-def test_latent_moe_defaults_to_up_proj_input_rms_norm():
-    config = MoEConfig(latent_moe=LatentMoEConfig(routed_expert_dim=8))
+def test_latent_moe_enabled_norm_defaults_to_up_proj_input_rms_norm():
+    config = MoEConfig(
+        latent_moe=LatentMoEConfig(
+            routed_expert_dim=8, up_proj_input_norm_enabled=True
+        )
+    )
     moe = config.build(d_model=16)
 
     assert moe.latent_up_proj_input_norm is not None
     assert config.latent_moe is not None
-    assert config.latent_moe.up_proj_input_norm is not None
-    assert config.latent_moe.up_proj_input_norm.name == LayerNormType.rms
+    assert config.latent_moe.resolved_up_proj_input_norm().name == LayerNormType.rms
     assert config.num_params(16) == sum(p.numel() for p in moe.parameters())
 
 
@@ -161,6 +164,7 @@ def test_latent_moe_accepts_non_rms_up_proj_input_norm():
     config = MoEConfig(
         latent_moe=LatentMoEConfig(
             routed_expert_dim=8,
+            up_proj_input_norm_enabled=True,
             up_proj_input_norm=LayerNormConfig(name=LayerNormType.default),
         )
     )
@@ -171,7 +175,11 @@ def test_latent_moe_accepts_non_rms_up_proj_input_norm():
 def test_latent_moe_tensor_parallelizes_projection_stack(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    config = MoEConfig(latent_moe=LatentMoEConfig(routed_expert_dim=8))
+    config = MoEConfig(
+        latent_moe=LatentMoEConfig(
+            routed_expert_dim=8, up_proj_input_norm_enabled=True
+        )
+    )
     moe = config.build(d_model=16)
     parallelized = {}
 
