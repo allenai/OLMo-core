@@ -1,0 +1,12 @@
+[
+  {
+    "experiment_name": "throughput-275m-kda-latentmoe-l4-1000e-ep1-mb8",
+    "experiment_id": "01KYPA1GYA09H78GCVT3PQ1TZH",
+    "tasks": [
+      "l4-1000e-ep1-mb8-2m-50step"
+    ],
+    "debug_gradients": false,
+    "run_suffix": null,
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYPA1GYA09H78GCVT3PQ1TZH"
+  }
+]

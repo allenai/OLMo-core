@@ -12,5 +12,36 @@
     "debug_gradients": false,
     "run_suffix": null,
     "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYP96YAGZ4CZCZBT87NHSA5X"
+  },
+  {
+    "experiment_name": "capacity-275m-kda-latentmoe-l4-1000e-ep1-mb13",
+    "experiment_id": "01KYP9NQY5T7N1DAXNHBRTH1VT",
+    "tasks": [
+      "l4-1000e-ep1-mb13-near2m"
+    ],
+    "debug_gradients": false,
+    "run_suffix": null,
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYP9NQY5T7N1DAXNHBRTH1VT"
+  },
+  {
+    "experiment_name": "capacity-275m-kda-latentmoe-l4-1000e-ep1-mb10-mb11",
+    "experiment_id": "01KYP9SCDZB9ZW4A2EK2ABA1ER",
+    "tasks": [
+      "l4-1000e-ep1-mb10-near2m",
+      "l4-1000e-ep1-mb11-near2m"
+    ],
+    "debug_gradients": false,
+    "run_suffix": null,
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYP9SCDZB9ZW4A2EK2ABA1ER"
+  },
+  {
+    "experiment_name": "capacity-275m-kda-latentmoe-l4-1000e-ep1-mb9",
+    "experiment_id": "01KYPARNB9QDWBGV5HE3PKDK76",
+    "tasks": [
+      "l4-1000e-ep1-mb9-near2m"
+    ],
+    "debug_gradients": false,
+    "run_suffix": null,
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYPARNB9QDWBGV5HE3PKDK76"
   }
 ]

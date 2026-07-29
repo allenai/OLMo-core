@@ -63,10 +63,14 @@ intervention.
 | LatentMoE 4× paper-matched | 640 → 160 | 1,024 / 32 | 296,770,368 | 232,545,088 | 3,142,302,528 | +2.157% |
 | LatentMoE 4× EP1 approximation | 640 → 160 | 1,000 / 32 | 296,632,128 | 232,406,848 | 3,073,320,768 | +2.110% |
 
-The 4× point matches the compression selected in the
+The 4× compression matches the setting selected in the
 [LatentMoE paper](https://arxiv.org/abs/2601.18089); the 2× point is the
 conservative control. Multiplying total experts preserves stored routed-expert
 parameters, while multiplying top-k preserves active routed-expert parameters.
+The exact paper-scaled 4× point has 1,024 routed experts and therefore requires
+EP2 with the current grouped expert kernel. The 1,000-expert approximation
+changes no other architectural setting, keeps top-32 routing, runs on EP1, and
+is the 4× production candidate.
 
 Model variants:
 
@@ -113,7 +117,7 @@ accumulation buffers are then live. Its usable large-batch maximum is therefore
 MB8. Future capacity tests must execute at least two accumulated microbatches;
 a one-microbatch dry-run is insufficient.
 
-Final exact-2-Mi measurements:
+Final exact-2-Mi measurements for the original qualification candidates:
 
 | Variant | Topology | Rank MB / accumulation | TPS/GPU | Aggregate TPS | TFLOPs/GPU | Step seconds | Active / reserved GiB |
 |---|---|---:|---:|---:|---:|---:|---:|
@@ -140,22 +144,26 @@ the failure is not a training or capacity failure.
 
 ## Initial full LR sweep
 
-The first production wave covers Cx1 and Cx2 for both paper-matched families
-at `4e-4`, `8e-4`, `1.6e-3`, and `3.2e-3` (16 jobs total). Every job uses four
-Holmes B300s, urgent priority, a two-hour allocated `minRuntime`, automatic
-checkpoint resume, 500-step ephemeral saves, no in-loop evaluation, and no
-permanent intermediate checkpoints. The optimizer batches remain the standard
-262,144 tokens at Cx1 and 393,216 tokens at Cx2.
+The first production wave covers Cx1 and Cx2 for the 2× paper-matched family
+and the 4×/1,000-expert EP1 approximation at `4e-4`, `8e-4`, `1.6e-3`, and
+`3.2e-3` (16 jobs total). Every job uses four Holmes B300s, urgent priority, a
+two-hour allocated `minRuntime`, automatic checkpoint resume, 500-step
+ephemeral saves, no in-loop evaluation, and no permanent intermediate
+checkpoints. The optimizer batches remain the standard 262,144 tokens at Cx1
+and 393,216 tokens at Cx2.
 
 | Family | Cx | Topology | Rank MB / accumulation |
 |---|---:|---|---:|
 | L=2, 512/top-16 | 1 | 4 GPUs, EP1 | 8 / 1 |
 | L=2, 512/top-16 | 2 | 4 GPUs, EP1 | 12 / 1 |
-| L=4, 1024/top-32 | 1 | 4 GPUs, EP2 | 8 / 1 |
-| L=4, 1024/top-32 | 2 | 4 GPUs, EP2 | 6 / 2 |
+| L=4, 1000/top-32 | 1 | 4 GPUs, EP1 | 8 / 1 |
+| L=4, 1000/top-32 | 2 | 4 GPUs, EP1 | 6 / 2 |
 
-The source manifest is
+The 2× source manifest is
 [`launchers/pretraining/manifests/275m_kda_latent_moe_lr_sweep_cx1_cx2.yaml`](launchers/pretraining/manifests/275m_kda_latent_moe_lr_sweep_cx1_cx2.yaml).
+The original 1,024-expert 4× tasks in that submission were canceled before
+training. Their EP1 replacements are generated from
+[`launchers/pretraining/manifests/275m_kda_latent_moe_l4_1000e_lr_sweep_cx1_cx2.yaml`](launchers/pretraining/manifests/275m_kda_latent_moe_l4_1000e_lr_sweep_cx1_cx2.yaml).
 The paired `plot_kda_latent_moe.py` entry point publishes separate `L=2` and
 `L=4` U-plots plus one strict best-of comparison against the BF16 KDA parent.
 Cx4/Cx8 exact names are reserved in the registry but remain unlaunched.

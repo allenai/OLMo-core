@@ -102,13 +102,14 @@ LR sweep and registered 480M fixed-transfer cells. Duplicate W&B names fail
 closed; verified restart segments must be listed as explicit predecessor/current
 chains so the strict final-window collector can combine them deterministically.
 
-`plot_kda_latent_moe.py` registers the paper-matched KDA LatentMoE families
-independently. It writes separate 275M U-plots for `L=2` and `L=4`, then one
-four-size best-of figure against the BF16 KDA `expand_v=2`/negative-eigenvalue
-parent. A LatentMoE cell enters the best-of figure only after its finished LR
-points bracket a valid quadratic minimum; the selected point is still the
-observed best. Until larger LatentMoE configs are launched, their panels retain
-the finished KDA parent curve and label the LatentMoE cells pending.
+`plot_kda_latent_moe.py` registers the paper-matched KDA LatentMoE 2× family
+and the 4×/1,000-expert EP1 approximation independently. It writes separate
+275M U-plots for `L=2` and `L=4`, then one four-size best-of figure against the
+BF16 KDA `expand_v=2`/negative-eigenvalue parent. A LatentMoE cell enters the
+best-of figure only after its finished LR points bracket a valid quadratic
+minimum; the selected point is still the observed best. Until larger LatentMoE
+configs are launched, their panels retain the finished KDA parent curve and
+label the LatentMoE cells pending.
 
 The script writes each selected wave into one matching artifact directory and
 uses the final-250M-token mean training CE. The 275M outputs follow the strict

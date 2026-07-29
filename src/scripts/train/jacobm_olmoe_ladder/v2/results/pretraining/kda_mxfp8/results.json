@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-07-28T16:35:36.772272+00:00",
+  "generated_at": "2026-07-29T06:57:59.565363+00:00",
   "project": "ai2-llm/jacobm-olmoe-ladder",
   "wave": "kda_mxfp8_275m",
   "models": [
@@ -362,6 +362,93 @@
       "history_source_sha256": null
     },
     {
+      "model": "275m",
+      "variant": "geometry_kda_ev2_neg_nope_gated_mxfp8_672",
+      "variant_label": "aggressive MXFP8 KDA (32-aligned experts, fused_v2/FA4)",
+      "cx": 8,
+      "lr": 0.0004,
+      "lr_tag": "0.0004",
+      "loss": 2.39628699965447,
+      "state": "finished",
+      "tokens_b": 36.425957376,
+      "run_id": "zummhtee",
+      "name": "pt-275m-kda-ev2-neg-nope-gated-mxfp8-672-cx8-lr4e-4-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/zummhtee",
+      "segment_run_ids": [
+        "jmziu5bb",
+        "zummhtee"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 3,
+      "history_source": "wandb",
+      "history_source_sha256": null
+    },
+    {
+      "model": "275m",
+      "variant": "geometry_kda_ev2_neg_nope_gated_mxfp8_672",
+      "variant_label": "aggressive MXFP8 KDA (32-aligned experts, fused_v2/FA4)",
+      "cx": 8,
+      "lr": 0.0008,
+      "lr_tag": "0.0008",
+      "loss": 2.383956480326143,
+      "state": "finished",
+      "tokens_b": 36.425957376,
+      "run_id": "e4f39xpj",
+      "name": "pt-275m-kda-ev2-neg-nope-gated-mxfp8-672-cx8-lr8e-4-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/e4f39xpj",
+      "segment_run_ids": [
+        "evlhqb93",
+        "e4f39xpj"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 3,
+      "history_source": "wandb",
+      "history_source_sha256": null
+    },
+    {
+      "model": "275m",
+      "variant": "geometry_kda_ev2_neg_nope_gated_mxfp8_672",
+      "variant_label": "aggressive MXFP8 KDA (32-aligned experts, fused_v2/FA4)",
+      "cx": 8,
+      "lr": 0.0016,
+      "lr_tag": "0.0016",
+      "loss": 2.3830076336110912,
+      "state": "finished",
+      "tokens_b": 36.425957376,
+      "run_id": "i3y6wj3r",
+      "name": "pt-275m-kda-ev2-neg-nope-gated-mxfp8-672-cx8-lr1p6e-3-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/i3y6wj3r",
+      "segment_run_ids": [
+        "l6ccoimm",
+        "i3y6wj3r"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 3,
+      "history_source": "wandb",
+      "history_source_sha256": null
+    },
+    {
+      "model": "275m",
+      "variant": "geometry_kda_ev2_neg_nope_gated_mxfp8_672",
+      "variant_label": "aggressive MXFP8 KDA (32-aligned experts, fused_v2/FA4)",
+      "cx": 8,
+      "lr": 0.0032,
+      "lr_tag": "0.0032",
+      "loss": 2.4023022456738934,
+      "state": "finished",
+      "tokens_b": 36.425957376,
+      "run_id": "fyxmrl8t",
+      "name": "pt-275m-kda-ev2-neg-nope-gated-mxfp8-672-cx8-lr3p2e-3-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/fyxmrl8t",
+      "segment_run_ids": [
+        "fyxmrl8t"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
+    },
+    {
       "model": "480m",
       "variant": "geometry_kda_ev2_neg_nope_gated",
       "variant_label": "BF16 KDA (expand_v=2, negative eigenvalues; transferred LR)",
@@ -523,6 +610,69 @@
       "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/gxgef1hf",
       "segment_run_ids": [
         "gxgef1hf"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
+    },
+    {
+      "model": "810m",
+      "variant": "geometry_kda_ev2_neg_nope_gated",
+      "variant_label": "BF16 KDA (expand_v=2, negative eigenvalues; transferred LR)",
+      "cx": 8,
+      "lr": 0.0004,
+      "lr_tag": "0.0004",
+      "loss": 2.0907190284639037,
+      "state": "finished",
+      "tokens_b": 117.837398016,
+      "run_id": "x3nar750",
+      "name": "pt-810m-geometry-hybrid-kda-ev2-neg-nope-gated-cx8-lr4e-4-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/x3nar750",
+      "segment_run_ids": [
+        "x3nar750"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
+    },
+    {
+      "model": "1p2b",
+      "variant": "geometry_kda_ev2_neg_nope_gated",
+      "variant_label": "BF16 KDA (expand_v=2, negative eigenvalues; transferred LR)",
+      "cx": 1,
+      "lr": 0.0004,
+      "lr_tag": "0.0004",
+      "loss": 2.236574077131363,
+      "state": "finished",
+      "tokens_b": 22.46049792,
+      "run_id": "yuv9m7p1",
+      "name": "pt-1p2b-geometry-hybrid-kda-ev2-neg-nope-gated-cx1-lr4e-4-ep8-rowwise-ext3-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/yuv9m7p1",
+      "segment_run_ids": [
+        "yuv9m7p1"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
+    },
+    {
+      "model": "1p2b",
+      "variant": "geometry_kda_ev2_neg_nope_gated",
+      "variant_label": "BF16 KDA (expand_v=2, negative eigenvalues; transferred LR)",
+      "cx": 2,
+      "lr": 0.0006,
+      "lr_tag": "0.0006",
+      "loss": 2.1462986688568906,
+      "state": "finished",
+      "tokens_b": 44.920602624,
+      "run_id": "86nmqw4e",
+      "name": "pt-1p2b-geometry-hybrid-kda-ev2-neg-nope-gated-cx2-lr6e-4-ep8-rowwise-ext3-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/86nmqw4e",
+      "segment_run_ids": [
+        "86nmqw4e"
       ],
       "token_resets": 0,
       "deduplicated_samples": 1,
@@ -769,9 +919,9 @@
       "model": "275m",
       "cx": 8,
       "mode": "lr_sweep",
-      "complete": false,
-      "optimal_summary_eligible": false,
-      "completed_intervention_runs": 0,
+      "complete": true,
+      "optimal_summary_eligible": true,
+      "completed_intervention_runs": 4,
       "expected_intervention_runs": 4,
       "wide_reference": {
         "model": "275m",
@@ -817,10 +967,31 @@
           "history_source_sha256": null
         }
       },
-      "intervention_result": null,
-      "delta_intervention_minus_wide": null,
+      "intervention_result": {
+        "model": "275m",
+        "variant": "geometry_kda_ev2_neg_nope_gated_mxfp8_672",
+        "variant_label": "aggressive MXFP8 KDA (32-aligned experts, fused_v2/FA4)",
+        "cx": 8,
+        "lr": 0.0016,
+        "lr_tag": "0.0016",
+        "loss": 2.3830076336110912,
+        "state": "finished",
+        "tokens_b": 36.425957376,
+        "run_id": "i3y6wj3r",
+        "name": "pt-275m-kda-ev2-neg-nope-gated-mxfp8-672-cx8-lr1p6e-3-r1",
+        "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/i3y6wj3r",
+        "segment_run_ids": [
+          "l6ccoimm",
+          "i3y6wj3r"
+        ],
+        "token_resets": 0,
+        "deduplicated_samples": 3,
+        "history_source": "wandb",
+        "history_source_sha256": null
+      },
+      "delta_intervention_minus_wide": 0.0027345531391649303,
       "delta_intervention_minus_reference": {
-        "geometry_kda_ev2_neg_nope_gated": null
+        "geometry_kda_ev2_neg_nope_gated": 0.0027345531391649303
       }
     },
     {

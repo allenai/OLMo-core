@@ -1,6 +1,6 @@
 # KDA aggressive-MXFP8 comparison
 
-Generated: `2026-07-28T16:35:36.772272+00:00`
+Generated: `2026-07-29T06:57:59.565363+00:00`
 
 Selection metric: final `250M`-token mean training CE. Only finished runs are eligible.
 The optimal-LR summary includes only bracketed 275M sweeps with a valid quadratic fit.
@@ -14,7 +14,7 @@ Fitted LR minima in the 275M U-plot are visual aids and are never used to select
 | 275m | Cx1 | LR sweep | complete | geometry_kda_ev2_neg_nope_gated: 2.692695 @ 0.0008 | 2.685399 (0.0016) | geometry_kda_ev2_neg_nope_gated: -0.007296 |
 | 275m | Cx2 | LR sweep | complete | geometry_kda_ev2_neg_nope_gated: 2.562520 @ 0.0016 | 2.566948 (0.0016) | geometry_kda_ev2_neg_nope_gated: +0.004429 |
 | 275m | Cx4 | LR sweep | complete | geometry_kda_ev2_neg_nope_gated: 2.464247 @ 0.0008 | 2.463998 (0.0016) | geometry_kda_ev2_neg_nope_gated: -0.000250 |
-| 275m | Cx8 | LR sweep | provisional (0/4) | geometry_kda_ev2_neg_nope_gated: 2.380273 @ 0.0008 | — | geometry_kda_ev2_neg_nope_gated: — |
+| 275m | Cx8 | LR sweep | complete | geometry_kda_ev2_neg_nope_gated: 2.380273 @ 0.0008 | 2.383008 (0.0016) | geometry_kda_ev2_neg_nope_gated: +0.002735 |
 | 480m | Cx1 | fixed-LR transfer | finished | geometry_kda_ev2_neg_nope_gated: 2.492283 @ 0.0012 | 2.497288 (0.0012) | geometry_kda_ev2_neg_nope_gated: +0.005005 |
 | 480m | Cx2 | fixed-LR transfer | pending | geometry_kda_ev2_neg_nope_gated: 2.382695 @ 0.0009 | — | geometry_kda_ev2_neg_nope_gated: — |
 | 480m | Cx4 | fixed-LR transfer | pending | geometry_kda_ev2_neg_nope_gated: 2.291179 @ 0.0008 | — | geometry_kda_ev2_neg_nope_gated: — |
@@ -40,6 +40,10 @@ Fitted LR minima in the 275M U-plot are visual aids and are never used to select
 | 275m | aggressive MXFP8 KDA (32-aligned experts, fused_v2/FA4) | 4 | 0.0016 | finished | 18.213 | 2.463998 | 0 reset(s); 1 duplicate token sample(s) removed | [lr2xex1r](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/lr2xex1r) |
 | 275m | aggressive MXFP8 KDA (32-aligned experts, fused_v2/FA4) | 4 | 0.0032 | finished | 18.213 | 2.482777 | 0 reset(s); 1 duplicate token sample(s) removed | [u5lenacg](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/u5lenacg) |
 | 275m | BF16 KDA (expand_v=2, negative eigenvalues; transferred LR) | 8 | 0.0008 | finished | 36.205 | 2.380273 | 0 reset(s); 1 duplicate token sample(s) removed | [vrjssy6q](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/vrjssy6q) |
+| 275m | aggressive MXFP8 KDA (32-aligned experts, fused_v2/FA4) | 8 | 0.0004 | finished | 36.426 | 2.396287 | 0 reset(s); 3 duplicate token sample(s) removed | [jmziu5bb](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/jmziu5bb) / [zummhtee](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/zummhtee) |
+| 275m | aggressive MXFP8 KDA (32-aligned experts, fused_v2/FA4) | 8 | 0.0008 | finished | 36.426 | 2.383956 | 0 reset(s); 3 duplicate token sample(s) removed | [evlhqb93](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/evlhqb93) / [e4f39xpj](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/e4f39xpj) |
+| 275m | aggressive MXFP8 KDA (32-aligned experts, fused_v2/FA4) | 8 | 0.0016 | finished | 36.426 | 2.383008 | 0 reset(s); 3 duplicate token sample(s) removed | [l6ccoimm](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/l6ccoimm) / [i3y6wj3r](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/i3y6wj3r) |
+| 275m | aggressive MXFP8 KDA (32-aligned experts, fused_v2/FA4) | 8 | 0.0032 | finished | 36.426 | 2.402302 | 0 reset(s); 1 duplicate token sample(s) removed | [fyxmrl8t](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/fyxmrl8t) |
 | 480m | BF16 KDA (expand_v=2, negative eigenvalues; transferred LR) | 1 | 0.0012 | finished | 8.433 | 2.492283 | — | [sb4yqi8x](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/sb4yqi8x) |
 | 480m | aggressive MXFP8 KDA (32-aligned experts, fused_v2/FA4) | 1 | 0.0012 | finished | 8.384 | 2.497288 | 0 reset(s); 1 duplicate token sample(s) removed | [ei2f8ttc](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/ei2f8ttc) |
 | 480m | BF16 KDA (expand_v=2, negative eigenvalues; transferred LR) | 2 | 0.0009 | finished | 16.867 | 2.382695 | 0 reset(s); 1 duplicate token sample(s) removed | [k2zf4esa](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/k2zf4esa) |
@@ -48,3 +52,6 @@ Fitted LR minima in the 275M U-plot are visual aids and are never used to select
 | 810m | BF16 KDA (expand_v=2, negative eigenvalues; transferred LR) | 1 | 0.0006 | finished | 14.730 | 2.352304 | 0 reset(s); 1 duplicate token sample(s) removed | [4k5dasv8](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/4k5dasv8) |
 | 810m | BF16 KDA (expand_v=2, negative eigenvalues; transferred LR) | 2 | 0.00056 | finished | 29.459 | 2.241873 | 0 reset(s); 1 duplicate token sample(s) removed | [1e7z0xar](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/1e7z0xar) |
 | 810m | BF16 KDA (expand_v=2, negative eigenvalues; transferred LR) | 4 | 0.0004 | finished | 58.918 | 2.158207 | 0 reset(s); 1 duplicate token sample(s) removed | [gxgef1hf](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/gxgef1hf) |
+| 810m | BF16 KDA (expand_v=2, negative eigenvalues; transferred LR) | 8 | 0.0004 | finished | 117.837 | 2.090719 | 0 reset(s); 1 duplicate token sample(s) removed | [x3nar750](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/x3nar750) |
+| 1p2b | BF16 KDA (expand_v=2, negative eigenvalues; transferred LR) | 1 | 0.0004 | finished | 22.460 | 2.236574 | 0 reset(s); 1 duplicate token sample(s) removed | [yuv9m7p1](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/yuv9m7p1) |
+| 1p2b | BF16 KDA (expand_v=2, negative eigenvalues; transferred LR) | 2 | 0.0006 | finished | 44.921 | 2.146299 | 0 reset(s); 1 duplicate token sample(s) removed | [86nmqw4e](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/86nmqw4e) |
