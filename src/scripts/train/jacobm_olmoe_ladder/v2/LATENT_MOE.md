@@ -92,10 +92,17 @@ cannot read each other's source checkout:
 - [paper-matched expert scaling](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYP0NWK5P0R9GQ22HS0P6BFH)
 
 The paper-matched 2× EP1 task passed. The first paper-matched 4× EP1 task
-reached the grouped-kernel limit because 1,024 routed experts plus the shared
-group exceed its 1,024-group ceiling. Its qualification replacement uses EP2,
-leaving 512 routed experts per rank while preserving the exact global model and
-batch: [4× EP2 replacement](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYP2ESY2RPK1PBHTK42VEGPZ).
+reached the grouped-kernel limit because the CUDA implementation requires
+`group_count < 1024`, despite its error saying it cannot process *more than*
+1,024 groups. Exactly 1,024 routed experts therefore fails on EP1; the shared
+expert is unrelated and runs through a separate dense path. Its qualification
+replacement uses EP2, leaving 512 routed experts per rank while preserving the
+exact global model and batch:
+[4× EP2 replacement](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYP2ESY2RPK1PBHTK42VEGPZ).
+
+The corresponding 50-step throughput qualification uses a 2 Mi-token batch,
+MB16, and final-10 medians:
+[throughput work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYP2RYXXK398CRZMB94ARXAK).
 
 ## Validation hold
 

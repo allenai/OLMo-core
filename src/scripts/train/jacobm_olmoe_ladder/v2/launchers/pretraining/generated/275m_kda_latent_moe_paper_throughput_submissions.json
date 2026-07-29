@@ -1,0 +1,13 @@
+[
+  {
+    "experiment_name": "jacobm-275m-kda-latentmoe-paper-throughput-50step",
+    "experiment_id": "01KYP2RYXXK398CRZMB94ARXAK",
+    "tasks": [
+      "275m-kda-latent2x-paper-ep1-mb16-2m-50step",
+      "275m-kda-latent4x-paper-ep2-mb16-2m-50step"
+    ],
+    "debug_gradients": false,
+    "run_suffix": null,
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYP2RYXXK398CRZMB94ARXAK"
+  }
+]
