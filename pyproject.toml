@@ -70,7 +70,7 @@ fa4 = [
     # breaks `import olmo_core.nn`.
     "nvidia-cutlass-dsl<4.6.0 ; sys_platform == 'linux'",
 ]
-fla = ["flash-linear-attention==0.4.1"]
+fla = ["flash-linear-attention==0.5.2"]
 profiling = ["nvtx"]
 torchao = ["torchao==0.15.0"]
 transformers = ["transformers>=5.4.0"]
