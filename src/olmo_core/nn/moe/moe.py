@@ -212,9 +212,7 @@ class MoEBase(nn.Module):
                 device=init_device,
             )
             self.latent_up_proj_input_norm = (
-                latent_moe.resolved_up_proj_input_norm().build(
-                    latent_dim, init_device=init_device
-                )
+                latent_moe.resolved_up_proj_input_norm().build(latent_dim, init_device=init_device)
                 if latent_moe.up_proj_input_norm_enabled
                 else None
             )

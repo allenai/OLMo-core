@@ -41,9 +41,7 @@ def _block_config(
         shared_experts=None,
         layer_norm=layer_norm,
         use_peri_norm=use_peri_norm,
-        latent_moe=(
-            LatentMoEConfig(latent_dim=routed_dim) if latent_dim is not None else None
-        ),
+        latent_moe=(LatentMoEConfig(latent_dim=routed_dim) if latent_dim is not None else None),
     )
 
 
