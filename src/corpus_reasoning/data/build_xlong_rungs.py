@@ -76,6 +76,17 @@ XTASKS = {
         "gold_field": "gold_doc_indices", "gold_is_pairs": True, "index_base": 1,
         "extra_index_fields": [],
         "pool": "contra_harvest",
+        # PUBMED-ONLY fillers. The inherited glob was `contradiction_*_k3.jsonl`, which also matched
+        # the FEVER and wiki_mix corpora -- so a nominally PubMed contradiction eval got Wikipedia
+        # claims as distractors (e.g. "Caryn Mandabach produced A Different World." was found in the
+        # live 256k rung). contra_fever is a SEPARATE experimental setting and must not bleed in.
+        #
+        # It also made rungs non-reproducible: the three families have very different document
+        # lengths (FEVER ~15-20 tok/doc, PubMed ~35, wiki_mix ~146), so the pool's mean doc length
+        # depended on which files happened to be on disk at build time. Between the 2026-07-02 and
+        # 2026-07-29 builds it moved 36.5 -> 47.1 tok/doc, which is why `n` for the same token
+        # target differs by ~29% across those two builds (tokens matched; doc counts did not).
+        "filler_glob": "contradiction_*pubmed*_k3.jsonl",
         "out_tmpl": "contradiction_eval_pubmed_both_n{n}_k3_xlong_{size}.jsonl",
     },
     # keep_all=True => every doc of the v2-32k canonical (gold + its original hard/CE-mined
@@ -158,10 +169,32 @@ def gold_texts_of(rows, cfg):
     return out
 
 
+def filler_manifest(cfg):
+    """The exact source files feeding a globbed filler harvest, with size+mtime.
+
+    Recorded alongside every built rung because the harvest globs a MUTABLE directory: without a
+    manifest, "same rung label" silently means "whatever corpora existed that day". Two builds a
+    month apart produced pools averaging 36.5 vs 47.1 tok/doc for exactly this reason.
+    """
+    import glob as _g
+    pat = cfg.get("filler_glob")
+    if not pat:
+        return None
+    files = sorted(_g.glob(os.path.join(v2.DATA, pat)))
+    return {
+        "filler_glob": pat,
+        "data_root": v2.DATA,
+        "n_source_files": len(files),
+        "sources": [{"file": os.path.basename(p), "bytes": os.path.getsize(p),
+                     "mtime": int(os.path.getmtime(p))} for p in files],
+    }
+
+
 def build_pool(cfg, canon):
     """Distinct distractor docs, excluding every global gold-member text."""
     if cfg["pool"] == "contra_harvest":
-        return v2.harvest_fillers({"filler_glob": f"{v2.DATA}/contradiction_*_k3.jsonl",
+        # cfg["filler_glob"] is REQUIRED for a globbed harvest -- see filler_manifest().
+        return v2.harvest_fillers({"filler_glob": os.path.join(v2.DATA, cfg["filler_glob"]),
                                    "gold_field": cfg["gold_field"],
                                    "gold_is_pairs": cfg["gold_is_pairs"]},
                                   gold_texts_of(canon, cfg))
@@ -261,11 +294,24 @@ def expand_example(ex, cfg, pool, tgt_docs, off):
     return rec
 
 
-def build_size(task, cfg, size, n, count, pool, canon, out_root, verbose=True):
+def build_size(task, cfg, size, n, count, pool, canon, out_root, verbose=True,
+               pool_stats=None):
     rows_out = [expand_example(ex, cfg, pool, n, off_for(ei, pool, n))
                 for ei, ex in enumerate(canon[:count])]
     out_path = os.path.join(out_root, task, cfg["out_tmpl"].format(n=n, size=size))
     v2.save_jsonl(out_path, rows_out)
+    # Pin what this rung was actually built FROM, next to the rung itself. Reading a rung months
+    # later must not require guessing which corpora were on disk at build time.
+    man = {"task": task, "rung": size, "target_tokens": SIZES[size], "n_docs": n,
+           "eval_size": len(rows_out), "canonical": os.path.basename(cfg["canonical"]),
+           "pool_kind": cfg["pool"], "pool_size": len(pool)}
+    if pool_stats:
+        man.update(pool_stats)
+    fm = filler_manifest(cfg)
+    if fm:
+        man["fillers"] = fm
+    with open(out_path + ".manifest.json", "w") as f:
+        json.dump(man, f, indent=1)
     if verbose:
         need = n - len(v2.gold_index_set(canon[0], cfg))
         warn = "  [WARN pool<need -> within-example repeats]" if len(pool) < need else ""
@@ -328,7 +374,9 @@ def main():
         if not sizes:
             continue
         for size in sizes:
-            build_size(task, cfg, size, ns[size], args.count, pool, canon, args.out_root)
+            build_size(task, cfg, size, ns[size], args.count, pool, canon, args.out_root,
+                       pool_stats={"measured_eff_tok_per_doc": round(eff, 2),
+                                   "probe_docs": nd, "probe_ctx_tokens": round(ctx)})
 
     # oolong + rerank guidance (not built here)
     print("\n[oolong] NOT a doc pool -> regenerate packed-item ladder at the token budget, e.g.:")

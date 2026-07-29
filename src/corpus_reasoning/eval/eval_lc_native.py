@@ -49,7 +49,7 @@ def main():
                     help="comma list restricting --ladder to a subset of tasks (split into per-task jobs).")
     ap.add_argument("--ladder-rungs", default=None,
                     help="comma list restricting --ladder to a subset of rungs (e.g. 16k,32k).")
-    ap.add_argument("--ladder-version", choices=["v1", "v2"], default="v2",
+    ap.add_argument("--ladder-version", choices=["v2"], default="v2",
                     help="v2 (DEFAULT) = cleaned ladders where every rung of a task shares the SAME "
                          "500 questions/answers and only distractors vary (all rungs read from "
                          "$EVAL500_ROOT/<task>/; point EVAL500_ROOT at the v2 bundle). "
@@ -208,6 +208,15 @@ def main():
         # n>=500 eval at the goal-critical rungs (8k/16k/32k) from cpt_data/eval500; 64k dropped
         # (beyond the 32k goal, saves GPU). 2k/3k base + oolong (capped ~80) keep their files.
         E5 = os.environ.get("EVAL500_ROOT", "/scratch/users/prasann/cpt_data/eval500")
+        # v1 ladders are DISABLED (2026-07-29). Each v1 rung drew its OWN questions, so every
+        # rung-to-rung delta carried eval-set resampling noise on top of the length effect it was
+        # meant to isolate. v2 fixes the question set across rungs and varies only the distractors.
+        if args.ladder_version != "v2":
+            raise NotImplementedError(
+                f"--ladder-version {args.ladder_version!r} is no longer supported: v2 is the only "
+                "ladder. Build what you need as v2 (build_v2_eval_ladders.py for 2k-32k, "
+                "build_xlong_rungs.py for 64k-2M) and point EVAL500_ROOT at a v2 bundle."
+            )
         if args.ladder_version == "v2":
             # v2: every rung shares the SAME >=500 questions; only distractors vary. ALL rungs live
             # under $EVAL500_ROOT/<task>/ (point EVAL500_ROOT at .../eval500_v2). oolong is freshly

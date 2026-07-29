@@ -49,14 +49,16 @@ def main():
                     help="comma list restricting --ladder to a subset of tasks (split into per-task jobs).")
     ap.add_argument("--ladder-rungs", default=None,
                     help="comma list restricting --ladder to a subset of rungs (e.g. 16k,32k).")
-    ap.add_argument("--ladder-version", choices=["v1", "v2"], default="v2",
-                    help="v2 (DEFAULT) = cleaned ladders where every rung of a task shares the SAME "
-                         "500 questions/answers and only the distractor documents vary (read entirely "
-                         "from $EVAL500_ROOT/<task>/, i.e. point EVAL500_ROOT at the v2 bundle). "
-                         "v1 = original independently-generated per-rung eval files.")
+    ap.add_argument("--ladder-version", choices=["v2"], default="v2",
+                    help="v2 is the ONLY supported ladder: every rung of a task shares the SAME "
+                         "500 questions/answers and only the distractor documents vary, read "
+                         "entirely from $EVAL500_ROOT/<task>/ (point EVAL500_ROOT at the v2 "
+                         "bundle). v1 (independently-generated per-rung files) is REMOVED -- "
+                         "passing it raises NotImplementedError, because per-rung question "
+                         "resampling put eval-set noise into every rung-to-rung delta.")
     ap.add_argument("--xlong", action="store_true",
                     default=os.environ.get("LADDER_XLONG") == "1",
-                    help="OPT-IN: append the ultra-long 64k/128k/256k rungs (built offline by "
+                    help="OPT-IN: append the ultra-long 64k..2M rungs (built offline by "
                          "scripts/data/build_xlong_rungs.py) to each task's v2 ladder. OFF by "
                          "default; also honors env LADDER_XLONG=1. Auto-raises --max-length to fit "
                          "the largest selected xlong rung (else long prompts get truncated).")
@@ -277,13 +279,10 @@ def main():
             "/weka/oe-training-default/ai2-llm/checkpoints/prasanns/xlong5_2k256k_qwen35/eval",
             "/scratch/users/prasann/cpt_data/eval500_v2",
         ]
-        _V1_BUNDLES = ["/scratch/users/prasann/cpt_data/eval500"]
         E5 = os.environ.get("EVAL500_ROOT")
         if not E5:
-            _cands = _V2_BUNDLES if args.ladder_version == "v2" else _V1_BUNDLES
-            E5 = next((p for p in _cands if os.path.isdir(p)), _cands[-1])
-            print(f"[ladder] EVAL500_ROOT unset -> {E5} (ladder_version={args.ladder_version})",
-                  flush=True)
+            E5 = next((p for p in _V2_BUNDLES if os.path.isdir(p)), _V2_BUNDLES[-1])
+            print(f"[ladder] EVAL500_ROOT unset -> {E5} (ladder_version=v2)", flush=True)
         if args.ladder_version == "v2":
             # v2: every rung of a task shares the SAME >=500 questions/answers; only the
             # distractor documents differ (built by build_v2_eval_ladders.py). ALL rungs live
@@ -334,55 +333,22 @@ def main():
                     ("32k", f"{E5}/contra/contradiction_eval_fever_plain_n1642_k3.jsonl")],
             }
         else:
-          LADDERS = {
-            "contradiction": [("2k", args.contra_data),
-                ("8k", f"{E5}/contra/contradiction_eval_pubmed_both_n190_k3.jsonl"),
-                ("16k", f"{E5}/contra/contradiction_eval_pubmed_both_n385_k3.jsonl"),
-                ("32k", f"{E5}/contra/contradiction_eval_pubmed_both_n765_k3.jsonl")],
-            # p10 pipeline: 10% hard negs + CE gold-quality filter, all docs from wikipedia-dpr-100w
-            # (matches the training-data negative distribution; the old hn49/hn99/hn199 files were 98% hard).
-            "nq": [("3k", args.nq_data),
-                ("8k", f"{E5}/nq/nq_validation_k50_hn5_600.jsonl"),
-                ("16k", f"{E5}/nq/nq_validation_k100_hn10_600.jsonl"),
-                ("32k", f"{E5}/nq/nq_validation_k200_hn20_600.jsonl")],
-            "oolong": [("1k", "data/oolong_test_synth_ctx1024_spliteval.jsonl"),
-                ("2k", "data/oolong_test_synth_ctx2048_spliteval.jsonl"),
-                ("4k", "data/oolong_test_synth_ctx4096_spliteval.jsonl"),
-                ("8k", "data/oolong_test_synth_ctx8192_spliteval.jsonl"),
-                ("16k", "data/oolong_test_synth_ctx16384_spliteval.jsonl"),
-                ("32k", "data/oolong_test_synth_ctx32768_spliteval.jsonl")],
-            "rerank": [("2k", args.rerank_data),
-                ("8k", f"{E5}/rerank/msmarco_validation_rerank_k80_600.jsonl"),
-                ("16k", f"{E5}/rerank/msmarco_validation_rerank_k158_597.jsonl"),
-                ("32k", f"{E5}/rerank/msmarco_validation_rerank_k315_599.jsonl")],
-            "outlier": [("3k", args.outlier_data),
-                ("8k", f"{E5}/outlier/outlier_wiki100w_n55_k3_eval_600.jsonl"),
-                ("16k", f"{E5}/outlier/outlier_wiki100w_n110_k3_eval_600.jsonl"),
-                ("32k", f"{E5}/outlier/outlier_wiki100w_n220_k3_eval_600.jsonl")],
-            # OOD generalization (held-out BEIR retrieval, graded as retrieval f1); same files for v1/v2.
-            "fiqa": [("2k", f"{E5}/beir/beir_fiqa_ce_ladder_k10_648.jsonl"),
-                ("4k", f"{E5}/beir/beir_fiqa_ce_ladder_k20_648.jsonl"),
-                ("8k", f"{E5}/beir/beir_fiqa_ce_ladder_k40_648.jsonl"),
-                ("16k", f"{E5}/beir/beir_fiqa_ce_ladder_k80_648.jsonl")],
-            "scifact": [("4k", f"{E5}/beir/beir_scifact_ladder_k11_299.jsonl"),
-                ("8k", f"{E5}/beir/beir_scifact_ladder_k22_299.jsonl"),
-                ("16k", f"{E5}/beir/beir_scifact_ladder_k44_299.jsonl"),
-                ("32k", f"{E5}/beir/beir_scifact_ladder_k88_299.jsonl")],
-            # OOD generalization for outlier + contradiction (review / FEVER source); same files v1/v2.
-            "outlier_review": [("3k", f"{E5}/outlier/outlier_review_matched_n30_k3_eval_600.jsonl"),
-                ("8k", f"{E5}/outlier/outlier_review_matched_n75_k3_eval_600.jsonl"),
-                ("16k", f"{E5}/outlier/outlier_review_matched_n150_k3_eval_600.jsonl"),
-                ("32k", f"{E5}/outlier/outlier_review_matched_n300_k3_eval_600.jsonl")],
-            "contra_fever": [("2k", f"{E5}/contra/contradiction_eval_fever_plain_n100_k3.jsonl"),
-                ("8k", f"{E5}/contra/contradiction_eval_fever_plain_n408_k3.jsonl"),
-                ("16k", f"{E5}/contra/contradiction_eval_fever_plain_n820_k3.jsonl"),
-                ("32k", f"{E5}/contra/contradiction_eval_fever_plain_n1642_k3.jsonl")],
-        }
+            # v1 = the original independently-generated per-rung eval files. DISABLED 2026-07-29:
+            # each rung drew its OWN questions, so every rung-to-rung delta carried eval-set
+            # resampling noise on top of the length effect it was supposed to isolate. v2 fixes
+            # the question set across rungs and varies only the distractor documents.
+            raise NotImplementedError(
+                f"--ladder-version {args.ladder_version!r} is no longer supported: v2 is the only "
+                "ladder. v1 resampled the questions per rung, so rung-to-rung deltas mixed "
+                "eval-set noise into the length effect. Build what you need as v2 "
+                "(build_v2_eval_ladders.py for 2k-32k, build_xlong_rungs.py for 64k-2M) and "
+                "point EVAL500_ROOT at a v2 bundle."
+            )
         # ---- oolong SHORT rungs (2k/4k): extend the ladder DOWNWARD ----
         # The v2 oolong ladder starts at 8k because no shorter synthesized rungs existed. Added
         # conditionally so an EVAL500_ROOT without them still works. Prepended, not appended, so
         # the rungs stay in ascending length order.
-        if args.ladder_version == "v2" and "oolong" in LADDERS:
+        if "oolong" in LADDERS:
             _short = []
             for _lab, _ctx in (("2k", 2048), ("4k", 4096)):
                 _p = os.path.join(E5, "oolong", f"oolong_test_synth_ctx{_ctx}_spliteval.jsonl")
@@ -391,10 +357,10 @@ def main():
             if _short:
                 LADDERS["oolong"] = _short + LADDERS["oolong"]
 
-        # ---- OPT-IN ultra-long rungs (64k/128k/256k), OFF by default (v2 only) ----
+        # ---- OPT-IN ultra-long rungs (64k..2M), OFF by default ----
         # Resolved by size-labelled glob so the calibrated doc-count in the filename can drift
         # (rebuild with a different --count/tokenizer) without editing this file.
-        if args.xlong and args.ladder_version == "v2":
+        if args.xlong:
             import glob as _glob
             # rerank and oolong were originally excluded: no CE-graded rerank pool above k100
             # existed, and oolong is not a doc pool. Both now have xlong rungs (built 2026-07-27),

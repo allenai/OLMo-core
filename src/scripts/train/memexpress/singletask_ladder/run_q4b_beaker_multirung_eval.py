@@ -125,21 +125,24 @@ def main():
                     help="GPUs per eval job (data-parallel over examples). 4B model fits on 1-2 GPUs; "
                          "2 lets ~4x more evals run concurrently than 8 and fits fragmented free slots.")
     ap.add_argument("--priority", default="urgent")  # never below urgent (user directive)
-    ap.add_argument("--ladder-version", choices=["v1", "v2"], default="v2",
-                    help="v2 (DEFAULT) = cleaned ladders where every rung of a task shares the SAME "
+    ap.add_argument("--ladder-version", choices=["v2"], default="v2",
+                    help="v2 is the ONLY supported ladder: every rung of a task shares the SAME "
                          "500 questions/answers and only distractors vary (reads the "
-                         "_eval_bundle_eval500_v2 weka bundle). Pass --ladder-version v1 for the "
-                         "original independently-generated per-rung files.")
+                         "_eval_bundle_eval500_v2 weka bundle). v1 is DISABLED -- its per-rung "
+                         "question resampling put eval-set noise into every rung-to-rung delta, "
+                         "and both the runner and eval_lc_native.py now reject it.")
     ap.add_argument("--cot-mode", choices=["none", "plan"], default="none",
                     help="docchunk OOLONG only: 'plan' builds the CoT prefill (match a CoT-trained "
                          "checkpoint); default 'none' keeps the no-CoT eval byte-identical.")
     ap.add_argument("--xlong", action="store_true",
-                    help="OPT-IN: also run the ultra-long 64k/128k/256k rungs (contra|nq|outlier). "
+                    help="OPT-IN: also run the ultra-long 64k/128k/256k/512k/1M/2M rungs (contra|nq|outlier). "
                          "Forces bs=1 + raises MAX_LENGTH on-node. Use an 80GB GPU (ai2/jupiter); "
                          "256k needs bs=1 single-GPU. Files must be built by build_xlong_rungs.py "
                          "and uploaded to the v2 eval bundle.")
     ap.add_argument("--xlong-rungs", default="64k,128k",
-                    help="which xlong sizes to add when --xlong (add 256k explicitly; it is huge).")
+                    help="which xlong sizes to add when --xlong: 64k,128k,256k,512k,1M,2M. Anything above "
+                         "256k needs a YaRN serving copy (past Qwen3.5's native 262,144) and more "
+                         "than one 80GB GPU (KV ~32KB/token: 2M alone is ~69GB).")
     ap.add_argument("--dry-run", action="store_true", help="build + print the job, do NOT submit.")
     args = ap.parse_args()
 

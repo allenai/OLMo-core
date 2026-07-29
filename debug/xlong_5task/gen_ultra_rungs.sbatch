@@ -24,8 +24,13 @@
 set -uo pipefail
 REPO=/accounts/projects/berkeleynlp/prasann/projects/OLMo-core
 TASKS=(contra nq outlier rerank)
+# NOTE: --array=0 alone rebuilds ONLY contra (pubmed-only fillers, 2026-07-29).
 T=${TASKS[$SLURM_ARRAY_TASK_ID]}
-OUT=/data/prasann/xlong5/eval_ultra
+# OUT is overridable so a corrected rebuild lands in a CLEAN directory rather than sitting next to
+# the files it supersedes: `n` changes whenever the filler pool changes, so a rebuilt rung gets a
+# NEW filename and would otherwise coexist with the old one -- two files for one size, and
+# sorted()[0] silently picks the rung.
+OUT="${OUT:-/data/prasann/xlong5/eval_ultra}"
 mkdir -p "$OUT" /data/prasann/xlong5/logs
 
 source /usr/local/linux/miniforge-3.13/etc/profile.d/conda.sh 2>/dev/null \

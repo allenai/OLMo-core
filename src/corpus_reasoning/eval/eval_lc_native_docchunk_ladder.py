@@ -75,6 +75,15 @@ ALL_TASKS = ["contradiction", "nq", "oolong", "rerank", "outlier",
 # ----------------------------------------------------------------------------------------------------
 def build_ladders(args):
     E5 = os.environ.get("EVAL500_ROOT", "/scratch/users/prasann/cpt_data/eval500")
+    # v1 ladders are DISABLED (2026-07-29). Each v1 rung drew its OWN questions, so every
+    # rung-to-rung delta carried eval-set resampling noise on top of the length effect it was
+    # meant to isolate. v2 fixes the question set across rungs and varies only the distractors.
+    if args.ladder_version != "v2":
+        raise NotImplementedError(
+            f"--ladder-version {args.ladder_version!r} is no longer supported: v2 is the only "
+            "ladder. Build what you need as v2 (build_v2_eval_ladders.py for 2k-32k, "
+            "build_xlong_rungs.py for 64k-2M) and point EVAL500_ROOT at a v2 bundle."
+        )
     if args.ladder_version == "v2":
         # v2: every rung of a task shares the SAME >=500 questions; only distractor docs differ. ALL
         # rungs live under $EVAL500_ROOT/<task>/ (point EVAL500_ROOT at the v2 bundle).
@@ -187,7 +196,7 @@ def main():
                     help="ladder JSON. MERGES <task>_<rung> keys into an existing file if present, so "
                          "per-task/per-rung split invocations accumulate into one ladder JSON.")
     ap.add_argument("--tokenizer", default="Qwen/Qwen3-4B")
-    ap.add_argument("--ladder-version", choices=["v1", "v2"], default="v2",
+    ap.add_argument("--ladder-version", choices=["v2"], default="v2",
                     help="v2 (DEFAULT): every rung of a task shares the SAME >=500 questions, only "
                          "distractors vary (reads the _eval_bundle_eval500_v2 bundle via EVAL500_ROOT).")
     ap.add_argument("--mem-freq", type=int, default=63,

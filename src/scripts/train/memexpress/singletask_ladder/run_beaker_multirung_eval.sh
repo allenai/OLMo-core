@@ -39,17 +39,20 @@ case "$VARIANT" in landmark|compressive) BATCH_SIZE=1 ;; esac
 
 PRASANNS="$WEKA_LLM/checkpoints/prasanns"
 BUNDLE="${BUNDLE:-$PRASANNS/_eval_bundle}"
-# LADDER_VERSION (default v2) -> cleaned ladders: every rung of a task shares the SAME 500 questions,
-# only distractors vary; all rungs (incl. base + rerank + oolong) live under the v2 bundle.
-# Set LADDER_VERSION=v1 for the original independently-generated per-rung files.
+# LADDER_VERSION: v2 is the ONLY supported ladder -- every rung of a task shares the SAME 500
+# questions and only the distractors vary; all rungs (base + rerank + oolong + xlong) live under the
+# v2 bundle. v1 is DISABLED (2026-07-29): its rungs each drew their own questions, so every
+# rung-to-rung delta carried eval-set resampling noise on top of the length effect. Fail loudly
+# rather than silently resolving v2 rung names against a v1 tree.
 LADDER_VERSION="${LADDER_VERSION:-v2}"
-if [ "$LADDER_VERSION" = "v2" ]; then
-  EVAL500="${EVAL500:-$PRASANNS/_eval_bundle_eval500_v2}"
-  VFLAG="--ladder-version v2"
-else
-  EVAL500="${EVAL500:-$PRASANNS/_eval_bundle_eval500}"
-  VFLAG=""
+if [ "$LADDER_VERSION" != "v2" ]; then
+  echo "ERROR: LADDER_VERSION=$LADDER_VERSION is not supported -- v2 is the only ladder." >&2
+  echo "       v1 resampled questions per rung; rebuild as v2 (build_v2_eval_ladders.py for" >&2
+  echo "       2k-32k, build_xlong_rungs.py for 64k-2M) and point EVAL500 at a v2 bundle." >&2
+  exit 2
 fi
+EVAL500="${EVAL500:-$PRASANNS/_eval_bundle_eval500_v2}"
+VFLAG="--ladder-version v2"
 # ---- OPT-IN ultra-long rungs (OFF by default). LADDER_XLONG=1 appends 64k/128k/256k for the
 # doc-pool tasks (contra|nq|outlier), forces bs=1, and raises MAX_LENGTH so prompts aren't truncated.
 LADDER_XLONG="${LADDER_XLONG:-0}"
@@ -105,30 +108,14 @@ TR="torchrun --nproc_per_node=$NGPU --master_port=$PORT src/scripts/ctc_eval/eva
 # blocks below with the dense/landmark/compressive path; only the final torchrun differs (branched at
 # the invocation on VARIANT=docchunk). So we do NOT early-exit here -- just fall through.
 
-# ---- rerank: CE-graded eval files (k20~3k, k50~8k, k100~16k); eval each at the base ladder rung ----
-# (v1 non-docchunk only; v2 rerank is a normal shared-question ladder; docchunk grades rerank inside
-# the docchunk ladder eval.)
-if [ "$TASK" = "rerank" ] && [ "$LADDER_VERSION" != "v2" ] && [ "$VARIANT" != "docchunk" ]; then
-  rc=0
-  for pair in "3k:data/msmarco_trainhn_eval_k20_500.jsonl" \
-              "8k:data/msmarco_trainhn_eval_k50_500.jsonl" \
-              "16k:data/msmarco_trainhn_eval_k100_500.jsonl"; do
-    r="${pair%%:*}"; CEF="${pair#*:}"
-    [ -f "$BUNDLE/$CEF" ] || { echo "[rerank CE @${r}] MISSING $CEF, skipping"; continue; }
-    O="$EVAL_OUT_DIR/rerank_ce_${r}.json"
-    echo "=== rerank CE @${r} ($CEF) -> $O ==="
-    $TR --model-path "$CKPT" --out "$O" --tokenizer "$TOKENIZER" --max-length "$MAX_LENGTH" \
-        --root "$BUNDLE" --max-test-samples "$MAX_TEST" --batch-size "$BATCH_SIZE" --skip-ruler --skip-gen \
-        --ladder --ladder-tasks rerank --ladder-rungs 2k --rerank-data "$CEF" || rc=$?
-    [ -f "$O" ] && cp "$O" "$RESULTS/${RUN}_rerank_ce_${r}.json" 2>/dev/null || true
-    GEN="${O%.json}.generations.jsonl"
-    [ -f "$GEN" ] && cp "$GEN" "$RESULTS/${RUN}_rerank_ce_${r}.generations.jsonl" 2>/dev/null || true
-  done
-  echo "=== DONE rerank-CE rc=$rc $(date -u '+%F %T')Z ==="; exit $rc
-fi
+# NOTE: a v1-only rerank branch used to live here (CE-graded k20/k50/k100 files evaluated at the
+# base rung). It is gone with v1: under v2 rerank is a normal shared-question ladder, and the
+# docchunk path grades rerank inside the docchunk ladder eval.
 
 # ---- dense / landmark / compressive: standard multi-rung ladder (NDCG/F1/score per rung) ----
-if [ "$LADDER_VERSION" = "v2" ]; then
+# v2 is the only ladder (v1 is rejected above), so the rung table is unconditional: all rungs
+# -- base, rerank, oolong, xlong -- come from the v2 bundle via --ladder-version v2, and the
+# per-task base-data args (--contra-data/--nq-data/--outlier-data/--rerank-data) are unused.
   # v2: all rungs (incl. base + rerank) come from the v2 bundle via --ladder-version v2;
   # the per-task base-data (--contra-data/--nq-data/--outlier-data/--rerank-data) args are unused.
   case "$TASK" in
@@ -143,26 +130,23 @@ if [ "$LADDER_VERSION" = "v2" ]; then
     contra_fever)   RUNGS="2k,8k,16k,32k"; LTASK=contra_fever;   EXTRA="--contra-max-new-tokens 512" ;;  # OOD contradiction (FEVER)
     *) echo "ERROR unknown TASK=$TASK"; exit 2 ;;
   esac
-else
-  case "$TASK" in
-    contra)  RUNGS="2k,8k,16k,32k"; LTASK=contradiction; EXTRA="--contra-data data/contradiction_eval_pubmed_both_n100_k3.jsonl --contra-max-new-tokens 512" ;;
-    nq)      RUNGS="3k,8k,16k,32k"; LTASK=nq;            EXTRA="--nq-data data/nq_validation_k20_hn2_600.jsonl" ;;  # @3k: single-query k20, p10 pipeline (10% hard + CE filter, wikipedia-dpr-100w source) matching training + the k50/k100/k200 rungs
-    outlier) RUNGS="3k,8k,16k,32k"; LTASK=outlier;       EXTRA="--outlier-data data/outlier_wiki100w_n55_k3_eval_600.jsonl" ;;
-    oolong)  RUNGS="8k,16k,32k";    LTASK=oolong;        EXTRA="" ;;
-    fiqa)    RUNGS="2k,4k,8k,16k";  LTASK=fiqa;          EXTRA="" ;;  # OOD generalization (BEIR)
-    scifact) RUNGS="4k,8k,16k,32k"; LTASK=scifact;       EXTRA="" ;;  # OOD generalization (BEIR)
-    outlier_review) RUNGS="3k,8k,16k,32k"; LTASK=outlier_review; EXTRA="" ;;  # OOD outlier (Amazon reviews)
-    contra_fever)   RUNGS="2k,8k,16k,32k"; LTASK=contra_fever;   EXTRA="--contra-max-new-tokens 512" ;;  # OOD contradiction (FEVER)
-    *) echo "ERROR unknown TASK=$TASK"; exit 2 ;;
-  esac
-fi
-if [ "$LADDER_XLONG" = "1" ] && [ "$LADDER_VERSION" = "v2" ]; then
+if [ "$LADDER_XLONG" = "1" ]; then
   case "$TASK" in
     contra|nq|outlier)
       RUNGS="$RUNGS,$XLONG_RUNGS"; BATCH_SIZE=1
+      # Built prompts run ~0.4-4% OVER the rung label (doc count calibrated from a median, plus the
+      # instruction/query/marker wrap), so these caps carry a ~10% margin. The old 256k value of
+      # 263168 (= label + 1024) truncated the prompt TAIL -- where the question lives -- scoring
+      # f1 0.000 at parse_rate 1.0 for a healthy model. eval_lc_native.py re-raises max_length by
+      # the same 10% rule, so it corrects an undersized value here rather than trusting it.
+      # ⚠ 512k/1M/2M exceed Qwen3.5's native 262,144 positions: they need a YaRN serving copy and
+      # more than one 80GB GPU (KV is ~32KB/token, so 2M alone is ~69GB).
       case ",$XLONG_RUNGS," in
-        *,256k,*) MAX_LENGTH=263168 ;;
-        *,128k,*) MAX_LENGTH=132096 ;;
+        *,2M,*)   MAX_LENGTH=2308915 ;;
+        *,1M,*)   MAX_LENGTH=1155482 ;;
+        *,512k,*) MAX_LENGTH=578765 ;;
+        *,256k,*) MAX_LENGTH=290406 ;;
+        *,128k,*) MAX_LENGTH=146227 ;;
         # 64k-only: 68608 (cap 68512) -> nq (max real prefill 67679) and outlier (67986) run
         # skipped_too_long=0. NOTE the empirical single-80GB-H100 ceiling for the docchunk
         # FlexAttention eval path: seq_len ~66k fits, ~77k OOMs (measured -- contra's long tail
