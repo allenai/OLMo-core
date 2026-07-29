@@ -114,6 +114,7 @@ def combined_forward_ep_1d(
     kwargs.pop("max_doc_len", None)
     kwargs.pop("cu_doc_lens", None)
     moe_inp = self._prepare_moe_input(attn_res_out)
+    routed_moe_inp = self._prepare_routed_moe_input(moe_inp)
 
     (
         local_x_global_routed_expert_weights,
@@ -121,7 +122,7 @@ def combined_forward_ep_1d(
         local_batch_size_per_global_routed_expert,
         routed_expert_router_aux_loss_info,
     ) = self.routed_experts_router(
-        moe_inp,
+        routed_moe_inp,
         False,
         loss_div_factor=loss_div_factor,
     )
@@ -159,9 +160,9 @@ def combined_forward_ep_1d(
         else:
             local_x_global_shared_expert_weights = None
 
-    in_shape = moe_inp.size()
+    routed_in_shape = routed_moe_inp.size()
 
-    moe_inp = moe_inp.view(-1, in_shape[-1])
+    routed_moe_inp = routed_moe_inp.view(-1, routed_in_shape[-1])
 
     with nvtx.annotate("Sync token count", color="green"):
         with torch.no_grad():
@@ -198,7 +199,7 @@ def combined_forward_ep_1d(
             torch.arange(
                 self.routed_experts_router.num_experts,
                 dtype=torch.int32,
-                device=moe_inp.device,
+                device=routed_moe_inp.device,
             ),
             self.num_local_routed_experts,
         )
@@ -208,9 +209,9 @@ def combined_forward_ep_1d(
             -1, self.routed_experts_router.top_k
         ).int()
         num_out_tokens = routing_map.size(0) * self.routed_experts_router.top_k
-        hidden_shape_before_permute = moe_inp.shape
+        hidden_shape_before_permute = routed_moe_inp.shape
         permutated_local_x, reversed_local_x_permutation_mapping = moe_permute_no_compile(
-            inp=moe_inp,
+            inp=routed_moe_inp,
             routing_map=routing_map,
             num_out_tokens=num_out_tokens,
             map_type="index",
@@ -330,7 +331,8 @@ def combined_forward_ep_1d(
             )
             local_x = cast(torch.Tensor, local_x)
 
-    local_x = local_x.view(in_shape)
+    local_x = local_x.view(routed_in_shape)
+    local_x = self._restore_routed_moe_output(local_x)
 
     wait_stream_no_compile(torch.cuda.current_stream(), self.get_dense_stream())
 

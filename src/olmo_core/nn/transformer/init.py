@@ -316,6 +316,11 @@ class InitMethod(StrEnum):
             if b.routed_experts_router.bias is not None:
                 _apply_init(nn.init.zeros_, b.routed_experts_router.bias)
 
+        for projection in (b.latent_down_proj, b.latent_up_proj):
+            if projection is not None:
+                projection_std = projection.in_features**-0.5 if self == InitMethod.fan_in else std
+                init_linear(projection, std=projection_std, generator=generator)
+
         if b.routed_experts:
             # The routed expert weights may be sharded across the expert-parallel mesh, so use the
             # EP generator to keep initialization consistent across shards.
