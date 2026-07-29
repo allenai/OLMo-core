@@ -91,6 +91,12 @@ cannot read each other's source checkout:
 - [full-width routing semantics](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYP02F6BRDCQSDR8JWDATAK8)
 - [paper-matched expert scaling](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYP0NWK5P0R9GQ22HS0P6BFH)
 
+The paper-matched 2× EP1 task passed. The first paper-matched 4× EP1 task
+reached the grouped-kernel limit because 1,024 routed experts plus the shared
+group exceed its 1,024-group ceiling. Its qualification replacement uses EP2,
+leaving 512 routed experts per rank while preserving the exact global model and
+batch.
+
 ## Validation hold
 
 Do not launch new validation backfills while the current capacity constraint is

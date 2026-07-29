@@ -58,14 +58,14 @@ smokes:
     expert_parallel_size: 1
     expert_parallel_path: sync_1d
     rank_microbatch_sequences: 4
-  - task_name: 275m-kda-latent4x-paper-ep1-smoke
-    run_name: smoke-275m-geometry-kda-ev2-neg-nope-gated-latentmoe-4x-paper-ep1
+  - task_name: 275m-kda-latent4x-paper-ep2-smoke
+    run_name: smoke-275m-geometry-kda-ev2-neg-nope-gated-latentmoe-4x-paper-ep2
     model_size: 275m
     model_variant: geometry_275m_kda_ev2_neg_nope_gated_latent4x_papermatched
     cx: 1
     learning_rate: "1.6e-3"
     global_batch_size: 65536
-    gpu_count: 1
-    expert_parallel_size: 1
+    gpu_count: 2
+    expert_parallel_size: 2
     expert_parallel_path: sync_1d
     rank_microbatch_sequences: 4
