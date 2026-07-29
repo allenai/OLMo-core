@@ -111,6 +111,10 @@ KDA_275M_NOPE_SETTINGS = {
     "geometry_275m_kda_ev2_neg_nope_gated": (2.0, True, 664),
     "geometry_275m_kda_ev2_neg_nope_gated_mxfp8_672": (2.0, True, 672),
 }
+LATENT_MOE_275M_SETTINGS = {
+    "geometry_275m_kda_ev2_neg_nope_gated_latent2x": (2, False),
+    "geometry_275m_kda_ev2_neg_nope_gated_latent4x": (4, False),
+}
 KDA_SCALE_NOPE_SETTINGS = {
     "geometry_matched_kda_ev1_noneg_nope_gated": (1.0, False),
     "geometry_matched_kda_ev2_neg_nope_gated": (2.0, True),
@@ -382,6 +386,18 @@ def model_config():
             expand_v=expand_v,
             allow_neg_eigval=allow_neg_eigval,
             expert_hidden_size=expert_hidden_size,
+        )
+    elif MODEL_VARIANT in LATENT_MOE_275M_SETTINGS:
+        from scripts.train.jacobm_olmoe_ladder.v2.models.geometry_matched_275m import (
+            build_geometry_matched_kda_latent_moe_model_config,
+        )
+
+        if MODEL_SIZE != "275m":
+            raise ValueError(f"The {MODEL_VARIANT} variant only supports MODEL_SIZE=275m")
+        compression, up_proj_input_norm_enabled = LATENT_MOE_275M_SETTINGS[MODEL_VARIANT]
+        model = build_geometry_matched_kda_latent_moe_model_config(
+            compression=compression,
+            up_proj_input_norm_enabled=up_proj_input_norm_enabled,
         )
     elif MODEL_VARIANT == "geometry_275m_swa_rope_gated":
         from scripts.train.jacobm_olmoe_ladder.v2.models.geometry_matched_275m import (
@@ -685,6 +701,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         "geometry_275m_gdn_ev2_rope_gated",
         *GDN2_275M_NOPE_SETTINGS,
         *KDA_275M_NOPE_SETTINGS,
+        *LATENT_MOE_275M_SETTINGS,
         "geometry_275m_gdn2_ev2_rope_gated",
         "geometry_275m_swa_rope_gated",
         "geometry_275m_gdn_ev2_rope_gated_1to1",
@@ -713,6 +730,13 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         variant_group = (
             f"olmoe3-275m-geometry-kda-ev{expand_v:g}-{eigval_tag}"
             f"-nope-gated{width_tag}"
+        )
+    elif MODEL_VARIANT in LATENT_MOE_275M_SETTINGS:
+        compression, up_proj_input_norm_enabled = LATENT_MOE_275M_SETTINGS[MODEL_VARIANT]
+        norm_tag = "-upnorm" if up_proj_input_norm_enabled else ""
+        variant_group = (
+            f"olmoe3-275m-geometry-kda-ev2-neg-nope-gated-"
+            f"latentmoe-{compression}x{norm_tag}"
         )
     elif MODEL_VARIANT == "geometry_275m_swa_rope_gated":
         variant_group = "olmoe3-275m-geometry-swa-rope-gated-throughput"
@@ -760,6 +784,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         "geometry_275m_gdn_ev2_nope",
         *GDN2_275M_NOPE_SETTINGS,
         *KDA_275M_NOPE_SETTINGS,
+        *LATENT_MOE_275M_SETTINGS,
         *KDA_SCALE_ALL_SETTINGS,
         "geometry_matched_gdn_ev2_nope",
         "geometry_matched_gdn_ev2_nope_gated",
@@ -777,6 +802,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             "geometry_275m_gdn_ev2_nope_gated",
             *GDN2_275M_NOPE_SETTINGS,
             *KDA_275M_NOPE_SETTINGS,
+            *LATENT_MOE_275M_SETTINGS,
             *KDA_SCALE_ALL_SETTINGS,
             "geometry_matched_gdn_ev2_nope_gated",
             *GDN2_SCALE_NOPE_SETTINGS,
@@ -825,6 +851,13 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                         "aggressive-mxfp8",
                     ]
                 )
+        if MODEL_VARIANT in LATENT_MOE_275M_SETTINGS:
+            compression, up_proj_input_norm_enabled = LATENT_MOE_275M_SETTINGS[MODEL_VARIANT]
+            variant_tags.extend(
+                ["kda", "negative-eigenvalues", "latent-moe", f"latent-{compression}x"]
+            )
+            if up_proj_input_norm_enabled:
+                variant_tags.append("latent-up-proj-input-norm")
     elif geometry_variant:
         variant_tags = ["geometry-matched", "expand-v-2", "rope"]
         if MODEL_VARIANT in {
@@ -1027,6 +1060,11 @@ def finalize_config(config: ExperimentConfig) -> None:
         "geometry_275m_gdn2_ev2_rope_gated_1to1",
     }:
         max_active_parameter_delta_fraction = GDN2_MAX_ACTIVE_PARAMETER_DELTA_FRACTIONS[MODEL_SIZE]
+    elif MODEL_VARIANT in LATENT_MOE_275M_SETTINGS:
+        # LatentMoE intentionally reduces routed active parameters. The model
+        # builder enforces exact audited counts; this guard merely admits the
+        # planned 4x candidate's expected delta from the wide baseline.
+        max_active_parameter_delta_fraction = 0.207
     elif MODEL_VARIANT in {
         "geometry_matched_gdn_ev2_nope_gated",
         "geometry_matched_gdn_ev2_rope_gated",

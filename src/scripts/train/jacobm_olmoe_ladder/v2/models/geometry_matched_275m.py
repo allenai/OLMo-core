@@ -34,11 +34,11 @@ from olmo_core.nn.attention import (
 )
 from olmo_core.nn.attention.recurrent import GatedDeltaNetConfig
 from olmo_core.nn.ddp import OLMoDDPTransformerBlockConfig
+from olmo_core.nn.moe import LatentMoEConfig
 from olmo_core.nn.transformer import OLMoDDPModelConfig
 from scripts.train.jacobm_olmoe_ladder.v2.models.hybrid_wide import (
     build_hybrid_model_config,
 )
-
 
 D_MODEL = 640
 N_LAYERS = 10
@@ -132,6 +132,19 @@ EXPECTED_KDA_COUNTS_BY_SETTINGS = {
     # First production-shaped MXFP8 candidate. Changing only the expert width
     # from 664 to 672 also changes the dense-first FFN from 5,976 to 6,048.
     (2.0, True, 672): (291_885_888, 227_660_608, 3_171_701_568),
+}
+
+# LatentMoE qualification starts with the two compression ratios discussed for
+# the 275M rung: a conservative 2x projection and the paper's default 4x
+# projection. Expert count, top-k, hidden width, and the surrounding KDA hybrid
+# are deliberately held fixed so this is an isolated latent-width experiment.
+LATENT_MOE_ROUTED_DIMS_BY_COMPRESSION = {
+    2: 320,
+    4: 160,
+}
+EXPECTED_LATENT_MOE_COUNTS = {
+    2: (247_556_928, 183_331_648, 1_670_323_008),
+    4: (222_397_248, 158_171_968, 933_780_288),
 }
 
 # A strict 1:1 hybrid alternates a recurrent/local mixer at even layers with
@@ -506,6 +519,95 @@ def build_geometry_matched_kda_model_config(
         raise ValueError(
             f"unexpected KDA parameter counts: expected {expected_counts}, found {actual_counts}"
         )
+    return candidate
+
+
+def build_geometry_matched_kda_latent_moe_model_config(
+    *,
+    compression: int,
+    up_proj_input_norm_enabled: bool = False,
+) -> OLMoDDPModelConfig:
+    """Add LatentMoE to the promoted 275M KDA recipe.
+
+    Only the routed branch is projected: the router and routed experts operate
+    at ``d_model / compression`` while the shared expert, attention/recurrent
+    mixers, residual stream, expert hidden width, expert count, and top-k stay
+    unchanged. The optional pre-up-projection RMSNorm is exposed explicitly so
+    a later ablation cannot silently change the architecture.
+    """
+
+    try:
+        routed_expert_dim = LATENT_MOE_ROUTED_DIMS_BY_COMPRESSION[compression]
+    except KeyError as exc:
+        raise ValueError(
+            f"unsupported LatentMoE compression={compression}; expected one of "
+            f"{tuple(LATENT_MOE_ROUTED_DIMS_BY_COMPRESSION)}"
+        ) from exc
+
+    candidate = build_geometry_matched_kda_model_config(
+        expand_v=2.0,
+        allow_neg_eigval=True,
+        expert_hidden_size=664,
+    )
+    resolved = candidate.resolved_block_configs
+
+    def with_latent_moe(block: OLMoDDPTransformerBlockConfig) -> OLMoDDPTransformerBlockConfig:
+        latent = deepcopy(block)
+        if latent.routed_experts is None or latent.routed_experts_router is None:
+            raise ValueError("LatentMoE requires a routed expert and router")
+        latent.latent_moe = LatentMoEConfig(
+            routed_expert_dim=routed_expert_dim,
+            up_proj_input_norm_enabled=up_proj_input_norm_enabled,
+        )
+        latent.routed_experts.d_model = routed_expert_dim
+        latent.routed_experts_router.d_model = routed_expert_dim
+        return latent
+
+    candidate.block = with_latent_moe(resolved[1])
+    candidate.block_overrides = {
+        0: deepcopy(resolved[0]),
+        **{
+            layer_idx: with_latent_moe(resolved[layer_idx])
+            for layer_idx in FULL_ATTENTION_LAYERS
+        },
+    }
+    candidate.validate()
+
+    for layer_idx, block in enumerate(candidate.resolved_block_configs):
+        if layer_idx == 0:
+            if block.latent_moe is not None or block.routed_experts is not None:
+                raise ValueError("LatentMoE candidate must retain the dense-first layer 0")
+            continue
+        if block.latent_moe is None:
+            raise ValueError(f"LatentMoE candidate layer {layer_idx} is missing latent_moe")
+        if block.latent_moe.routed_expert_dim != routed_expert_dim:
+            raise ValueError(f"LatentMoE candidate layer {layer_idx} has the wrong latent width")
+        if block.latent_moe.up_proj_input_norm_enabled != up_proj_input_norm_enabled:
+            raise ValueError(f"LatentMoE candidate layer {layer_idx} has the wrong norm setting")
+        if block.routed_experts is None or block.routed_experts_router is None:
+            raise ValueError(f"LatentMoE candidate layer {layer_idx} lost its routed branch")
+        if (
+            block.routed_experts.d_model != routed_expert_dim
+            or block.routed_experts_router.d_model != routed_expert_dim
+        ):
+            raise ValueError(f"LatentMoE candidate layer {layer_idx} has inconsistent dimensions")
+        if block.shared_experts is None or block.shared_experts.d_model != D_MODEL:
+            raise ValueError(f"LatentMoE candidate layer {layer_idx} changed its shared expert")
+        if block.routed_experts.hidden_size != 664 or block.routed_experts_router.top_k != TOP_K:
+            raise ValueError(f"LatentMoE candidate layer {layer_idx} changed expert width/top-k")
+
+    actual_counts = (
+        candidate.num_active_params,
+        candidate.num_active_non_embedding_params,
+        candidate.num_params,
+    )
+    expected_counts = EXPECTED_LATENT_MOE_COUNTS[compression]
+    if not up_proj_input_norm_enabled and actual_counts != expected_counts:
+        raise ValueError(
+            f"unexpected LatentMoE {compression}x parameter counts: "
+            f"expected {expected_counts}, found {actual_counts}"
+        )
+
     return candidate
 
 
