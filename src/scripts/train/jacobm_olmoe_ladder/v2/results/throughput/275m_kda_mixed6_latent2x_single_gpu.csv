@@ -1,0 +1,2 @@
+family,batch_tokens,gpus,path,rank_microbatch_sequences,final10_median_tflops_gpu,final10_median_tps_gpu,aggregate_tps,stable_step_seconds,final10_median_mfu_pct,peak_active_gib,peak_reserved_gib,max_skipped_steps,beaker_job,wandb_url
+KDA mixed6 LatentMoE L2,2097152,1,EP1/all-reduce,8,351.55,215204.5,215204.5,9.7449,15.625,167.50,169.20,0,01KYQJT9NF9KXFC1MTH6CZ86J9,

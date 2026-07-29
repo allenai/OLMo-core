@@ -129,6 +129,7 @@ Final exact-2-Mi measurements for the original qualification candidates:
 |---|---|---:|---:|---:|---:|---:|---:|
 | KDA parent (`L=1`) | 1 B300, EP1 | 16 / 16 | 255,489.0 | 255,489.0 | 388.60 | 8.2084 | 235.70 / 239.20 |
 | LatentMoE 2× paper-matched | 1 B300, EP1 | 8 / 32 | 214,671.5 | 214,671.5 | 333.15 | 9.7691 | 162.90 / 164.50 |
+| Mixed 3-KDA/2-SWA/1-FA + LatentMoE 2× | 1 B300, EP1 | 8 / 32 | 215,204.5 | 215,204.5 | 351.55 | 9.7449 | 167.50 / 169.20 |
 | LatentMoE 4× paper-matched | 2 B300s, EP2 | 8 / 16 | 143,012.5 | 286,025.0 | 222.90 | 7.3321 | 197.50 / 214.20 |
 | LatentMoE 4×, 1,000 experts | 1 B300, EP1 | 8 / 32 | 179,997.0 | 179,997.0 | 280.40 | 11.6510 | 199.00 / 202.00 |
 
@@ -138,6 +139,9 @@ TFLOPs/GPU: 2.47% faster than the exact-2-Mi MB8 point, but still 13.90% below
 the `L=1` TPS. The exact-2-Mi 2× point is 15.98% below `L=1`. The 4× point is
 44.02% lower per GPU than `L=1`; its 286,025 aggregate TPS is 11.95% higher
 only because it uses two GPUs, so it is not a resource-efficiency win.
+At the exact-2-Mi MB8 setting, replacing the ordinary KDA mixer pattern with
+the deeper mixed-attention motif changes raw TPS by only `+0.25%`, while peak
+active memory rises 4.6 GiB.
 
 All accepted rows have 50 metric-bearing steps and zero skipped optimizer
 steps. The 4× job logged `Training complete` after step 50, then exited nonzero

@@ -65,6 +65,7 @@ to 552 active-matches the deeper model:
 |---|---:|---:|---:|---:|---:|
 | Current KDA parent | 10 | 664 | 290,503,488 | 226,278,208 | 3,136,035,648 |
 | Mixed 3-KDA/2-SWA/1-FA | 12 | 552 | 290,904,368 | 226,679,088 | 3,182,147,888 |
+| Mixed + paper-matched LatentMoE L=2 | 12 | 552 | 297,212,208 | 232,986,928 | 3,188,455,728 |
 
 The mixed candidate is `+0.138%` in active parameters and `+1.470%` in stored
 parameters versus the parent.
@@ -85,6 +86,23 @@ The mixed model performs 4.91% more modeled FLOPs per token, but its raw
 throughput is 1.11% higher and its step time is 1.10% lower. Peak active
 memory increases by 7.7 GiB. The machine-readable result is
 [`results/throughput/275m_kda_mixed6_single_gpu.csv`](results/throughput/275m_kda_mixed6_single_gpu.csv).
+
+The paper-matched L=2 extension projects only the routed path from 640 to 320,
+doubles routed experts from 256 to 512, and doubles top-k from 8 to 16. Its
+matched MB8/accumulation-32, exact-2-Mi qualification completed with zero
+skipped steps in [Beaker work
+`01KYQJT9HQ7F3P4WNR6NP60PCS`](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYQJT9HQ7F3P4WNR6NP60PCS).
+The final-10 medians are 215,205 TPS/GPU, 351.55 TFLOPs/GPU, 9.7449
+seconds/step, and 15.625% MFU, with 167.5/169.2 GiB peak active/reserved
+memory.
+
+At the identical L=2 protocol, ordinary KDA reaches 214,672 TPS/GPU and
+333.15 TFLOPs/GPU. The mixed architecture is therefore effectively tied in
+raw throughput (`+0.25%`) despite its deeper/more-compute-heavy mixer stack;
+it uses 4.6 GiB more active memory. Relative to the non-latent mixed model's
+MB16 result, L=2 reduces TPS by 16.70% but reduces active memory by 31.18%.
+The machine-readable result is
+[`results/throughput/275m_kda_mixed6_latent2x_single_gpu.csv`](results/throughput/275m_kda_mixed6_latent2x_single_gpu.csv).
 
 ## Qualification and sweep
 
