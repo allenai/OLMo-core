@@ -47,6 +47,13 @@ SFT_THINK_CONFIGS = {
         cp_degree=2,
         load_path="/weka/oe-training-default/ai2-llm/checkpoints/yashasbls/hybrid-small-long-context-v2-1.4b/step23842/",
     ),
+    "2.7b": dict(
+        lr=1e-4,
+        global_batch_size=64 * SEQUENCE_LENGTH,
+        fused_linear_loss=True,
+        cp_degree=2,
+        load_path="/weka/oe-training-default/ai2-llm/checkpoints/yashasbls/hybrid-small-lc-2.7B/step23842/",
+    ),
 }
 
 if __name__ == "__main__":
