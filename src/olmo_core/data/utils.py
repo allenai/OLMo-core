@@ -349,6 +349,26 @@ def load_array_slice_into_tensor(
         return torch.tensor(array.astype(np.int_), dtype=torch.long)
 
 
+def _collapse_boundary_runs(boundaries: torch.Tensor) -> torch.Tensor:
+    """
+    Drop the interior of every run of consecutive document boundaries, keeping only the first and
+    last boundary of each run.
+
+    A run of consecutive boundaries means a span of empty documents, which comes up whenever the
+    padding token is the same as the EOS token: every padding token then reads as its own
+    single-token document. Keeping the first boundary of the run terminates the last real document
+    and keeping the last one turns the whole span into a single empty document, so the resulting
+    lengths still tile the sequence.
+    """
+    if boundaries.numel() < 3:
+        return boundaries
+    prev_adjacent = torch.zeros_like(boundaries, dtype=torch.bool)
+    prev_adjacent[1:] = boundaries[1:] == boundaries[:-1] + 1
+    next_adjacent = torch.zeros_like(boundaries, dtype=torch.bool)
+    next_adjacent[:-1] = prev_adjacent[1:]
+    return boundaries[~(prev_adjacent & next_adjacent)]
+
+
 def get_document_lengths(
     input_ids: Union[torch.Tensor, np.ndarray],
     eos_token_id: int,
@@ -356,6 +376,11 @@ def get_document_lengths(
 ) -> torch.Tensor:
     """
     Get the length of documents.
+
+    Runs of consecutive document boundaries are collapsed into a single (empty) document. This
+    matters for tokenizers whose padding token is also their EOS token, where the padding tail of a
+    packed instance would otherwise turn into one single-token document per padding token. The
+    returned lengths always sum to ``len(input_ids)``.
 
     :param input_ids: An integer-type tensor of token IDs.
     :param eos_token_id: The ID of the EOS token (use to denote document boundaries).
@@ -366,26 +391,26 @@ def get_document_lengths(
         input_ids = torch.tensor(input_ids.astype(np.int_), dtype=torch.long)
 
     if bos_token_id is None:
-        doc_boundaries = torch.cat(
-            [
-                torch.tensor([-1], dtype=torch.int32),
-                (input_ids == eos_token_id).nonzero(as_tuple=True)[0].to(dtype=torch.int32),
-                torch.tensor(
-                    [] if input_ids[-1] == eos_token_id else [input_ids.shape[0] - 1],
-                    dtype=torch.int32,
-                ),
-            ]
+        boundaries = (input_ids == eos_token_id).nonzero(as_tuple=True)[0].to(dtype=torch.int32)
+        final_boundary = torch.tensor(
+            [] if input_ids[-1] == eos_token_id else [input_ids.shape[0] - 1],
+            dtype=torch.int32,
         )
     else:
-        doc_boundaries = torch.cat(
-            [
-                torch.tensor([-1], dtype=torch.int32),
-                torch.logical_and(input_ids[:-1] == eos_token_id, input_ids[1:] == bos_token_id)
-                .nonzero(as_tuple=True)[0]
-                .to(dtype=torch.int32),
-                torch.tensor([input_ids.shape[0] - 1], dtype=torch.int32),
-            ]
+        boundaries = (
+            torch.logical_and(input_ids[:-1] == eos_token_id, input_ids[1:] == bos_token_id)
+            .nonzero(as_tuple=True)[0]
+            .to(dtype=torch.int32)
         )
+        final_boundary = torch.tensor([input_ids.shape[0] - 1], dtype=torch.int32)
+
+    doc_boundaries = torch.cat(
+        [
+            torch.tensor([-1], dtype=torch.int32),
+            _collapse_boundary_runs(boundaries),
+            final_boundary,
+        ]
+    )
 
     return doc_boundaries[1:] - doc_boundaries[:-1]
 

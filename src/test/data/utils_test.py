@@ -172,7 +172,56 @@ def test_get_document_lengths():
     ).tolist() == [6, 4, 4]
 
 
-def test_get_cumulative_document_lengths():
+def test_get_document_lengths_collapses_padding_tail():
+    # When the padding token is the same as the EOS token (e.g. Qwen3.5), the padding tail of a
+    # packed instance must come out as a single document, not one document per padding token.
+    eos_token_id = 248044
+    pad_token_id = eos_token_id
+
+    input_ids = torch.tensor([3, 4, 5, eos_token_id, 6, 7, eos_token_id] + [pad_token_id] * 8)
+    doc_lens = get_document_lengths(input_ids, eos_token_id=eos_token_id)
+    assert doc_lens.tolist() == [4, 3, 8]
+    assert doc_lens.sum().item() == input_ids.numel()
+
+    # Same when a BOS token is provided that's also the EOS/padding token.
+    doc_lens = get_document_lengths(input_ids, eos_token_id=eos_token_id, bos_token_id=eos_token_id)
+    assert doc_lens.sum().item() == input_ids.numel()
+    assert len(doc_lens) <= 4
+
+    # A run in the middle of an instance collapses too.
+    input_ids = torch.tensor([3, 4, eos_token_id, eos_token_id, eos_token_id, eos_token_id, 5, 6])
+    doc_lens = get_document_lengths(input_ids, eos_token_id=eos_token_id)
+    assert doc_lens.tolist() == [3, 3, 2]
+    assert doc_lens.sum().item() == input_ids.numel()
+
+    # A single-token final document is preserved (it isn't a boundary run).
+    input_ids = torch.tensor([3, 4, eos_token_id, 5])
+    assert get_document_lengths(input_ids, eos_token_id=eos_token_id).tolist() == [3, 1]
+
+    # An instance that is entirely padding is one document.
+    input_ids = torch.tensor([pad_token_id] * 6)
+    doc_lens = get_document_lengths(input_ids, eos_token_id=eos_token_id)
+    assert doc_lens.tolist() == [1, 5]
+    assert doc_lens.sum().item() == input_ids.numel()
+
+
+def test_get_document_lengths_bounds_varlen_grid():
+    # Regression test for the fla causal_conv varlen launch failure: the number of chunks
+    # (sum of ceil(doc_len / BT), which becomes CUDA grid.y) must stay well under 65535 for a
+    # heavily padded long-context instance.
+    eos_token_id = 248044
+    seq_len = 262144
+    n_pad = 61440
+    input_ids = torch.full((seq_len,), 7, dtype=torch.long)
+    input_ids[seq_len - n_pad - 1] = eos_token_id  # end of the last real document
+    input_ids[seq_len - n_pad :] = eos_token_id  # padding tail
+
+    doc_lens = get_document_lengths(input_ids, eos_token_id=eos_token_id)
+    assert doc_lens.sum().item() == seq_len
+
+    bt = 64
+    n_chunks = int(torch.ceil(doc_lens.to(torch.float64) / bt).sum().item())
+    assert n_chunks < 65535
     assert get_cumulative_document_lengths(
         torch.tensor(
             [
