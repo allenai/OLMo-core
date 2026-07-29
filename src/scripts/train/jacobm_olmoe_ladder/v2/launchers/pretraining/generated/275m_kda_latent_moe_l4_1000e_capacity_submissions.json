@@ -1,0 +1,16 @@
+[
+  {
+    "experiment_name": "capacity-275m-kda-latentmoe-l4-1000e-ep1",
+    "experiment_id": "01KYP96YAGZ4CZCZBT87NHSA5X",
+    "tasks": [
+      "l4-1000e-ep1-mb8-2m",
+      "l4-1000e-ep1-mb12-near2m",
+      "l4-1000e-ep1-mb14-near2m",
+      "l4-1000e-ep1-mb15-near2m",
+      "l4-1000e-ep1-mb16-2m"
+    ],
+    "debug_gradients": false,
+    "run_suffix": null,
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYP96YAGZ4CZCZBT87NHSA5X"
+  }
+]

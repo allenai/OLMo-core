@@ -880,6 +880,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 compression,
                 up_proj_input_norm_enabled,
                 scale_experts_with_compression,
+                num_experts_override,
             ) = LATENT_MOE_275M_SETTINGS[MODEL_VARIANT]
             variant_tags.extend(
                 [
@@ -892,6 +893,8 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             )
             if scale_experts_with_compression:
                 variant_tags.append("paper-expert-scaling")
+            if num_experts_override is not None:
+                variant_tags.append(f"routed-experts-{num_experts_override}")
             if up_proj_input_norm_enabled:
                 variant_tags.append("latent-up-proj-input-norm")
     elif geometry_variant:
