@@ -124,6 +124,7 @@ Final exact-2-Mi measurements for the original qualification candidates:
 | KDA parent (`L=1`) | 1 B300, EP1 | 16 / 16 | 255,489.0 | 255,489.0 | 388.60 | 8.2084 | 235.70 / 239.20 |
 | LatentMoE 2× paper-matched | 1 B300, EP1 | 8 / 32 | 214,671.5 | 214,671.5 | 333.15 | 9.7691 | 162.90 / 164.50 |
 | LatentMoE 4× paper-matched | 2 B300s, EP2 | 8 / 16 | 143,012.5 | 286,025.0 | 222.90 | 7.3321 | 197.50 / 214.20 |
+| LatentMoE 4×, 1,000 experts | 1 B300, EP1 | 8 / 32 | 179,997.0 | 179,997.0 | 280.40 | 11.6510 | 199.00 / 202.00 |
 
 The 2× physical-max point uses MB15/accumulation-17 and the nearest lower
 batch to 2 Mi, 2,088,960 tokens. It reaches 219,975.0 TPS/GPU and 341.40
@@ -137,10 +138,28 @@ steps. The 4× job logged `Training complete` after step 50, then exited nonzero
 from a DataLoader/torchrun shutdown segfault; its measurements are complete and
 the failure is not a training or capacity failure.
 
+For the selected 1,000-expert EP1 replacement, MB11 is the exact one-B300
+ceiling: MB9, MB10, and MB11 each completed the compiled dry run and all six
+accumulated optimizer steps, while MB12--16 OOMed. MB11 peaked at 247.1 GiB
+active and 256.3 GiB reserved in the six-step bracket on the 267.7-GiB B300.
+Production deliberately uses MB8/accumulation-1 at Cx1 and
+MB6/accumulation-2 at Cx2 because those are the largest legal factorizations
+of their standard global batches.
+
+The formal physical-ceiling measurement uses MB11/accumulation-23 and the
+nearest lower batch to 2 Mi, 2,072,576 tokens. It reaches 182,898.5 TPS/GPU and
+284.90 TFLOPs/GPU, 1.61% more TPS than the exact-2-Mi MB8 point, with 254.2 GiB
+active / 257.9 GiB reserved. Both 50-step runs have zero skipped optimizer
+steps.
+
 - [Capacity sweep](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYP4ZJGFTKBVHBEKW6GCZV58)
 - [Exact-2-Mi final measurements](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYP5SXH7ZK32FA8NM7AHXRV0)
 - [Physical-max near-2-Mi measurements](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYP6RYG25M5VDSMDQ2S0ZRTR)
 - [Machine-readable results](results/throughput/275m_kda_latent_moe_paper.csv)
+- [1,000-expert capacity bracket](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYP96YAGZ4CZCZBT87NHSA5X)
+- [1,000-expert MB9 completion](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYPARNB9QDWBGV5HE3PKDK76)
+- [1,000-expert exact-2-Mi throughput](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYPA1GYA09H78GCVT3PQ1TZH)
+- [1,000-expert MB11 throughput](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYPBK8K72R636K3H4SJ13G5X)
 
 ## Initial full LR sweep
 
@@ -164,6 +183,8 @@ The 2× source manifest is
 The original 1,024-expert 4× tasks in that submission were canceled before
 training. Their EP1 replacements are generated from
 [`launchers/pretraining/manifests/275m_kda_latent_moe_l4_1000e_lr_sweep_cx1_cx2.yaml`](launchers/pretraining/manifests/275m_kda_latent_moe_l4_1000e_lr_sweep_cx1_cx2.yaml).
+The replacement sweep is
+[Beaker experiment `01KYPC428EW5CZFE2X8VZJ2QMQ`](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYPC428EW5CZFE2X8VZJ2QMQ).
 The paired `plot_kda_latent_moe.py` entry point publishes separate `L=2` and
 `L=4` U-plots plus one strict best-of comparison against the BF16 KDA parent.
 Cx4/Cx8 exact names are reserved in the registry but remain unlaunched.

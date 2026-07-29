@@ -1,0 +1,19 @@
+[
+  {
+    "experiment_name": "pt-275m-kda-latentmoe-l4-1000e-cx1-cx2-lr-sweep",
+    "experiment_id": "01KYPC428EW5CZFE2X8VZJ2QMQ",
+    "tasks": [
+      "l4-1000e-cx1-lr4e-4",
+      "l4-1000e-cx1-lr8e-4",
+      "l4-1000e-cx1-lr1p6e-3",
+      "l4-1000e-cx1-lr3p2e-3",
+      "l4-1000e-cx2-lr4e-4",
+      "l4-1000e-cx2-lr8e-4",
+      "l4-1000e-cx2-lr1p6e-3",
+      "l4-1000e-cx2-lr3p2e-3"
+    ],
+    "debug_gradients": false,
+    "run_suffix": null,
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYPC428EW5CZFE2X8VZJ2QMQ"
+  }
+]

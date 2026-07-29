@@ -8,5 +8,15 @@
     "debug_gradients": false,
     "run_suffix": null,
     "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYPA1GYA09H78GCVT3PQ1TZH"
+  },
+  {
+    "experiment_name": "throughput-275m-kda-latentmoe-l4-1000e-ep1-mb11",
+    "experiment_id": "01KYPBK8K72R636K3H4SJ13G5X",
+    "tasks": [
+      "l4-1000e-ep1-mb11-near2m-50step"
+    ],
+    "debug_gradients": false,
+    "run_suffix": null,
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYPBK8K72R636K3H4SJ13G5X"
   }
 ]
