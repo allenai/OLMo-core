@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Optional
 from transformers import Olmo2Config, PretrainedConfig
 
 from olmo_core.doc_utils import beta_feature
-from olmo_core.nn.attention import Attention
+from olmo_core.nn.attention import Attention, GateGranularity, KimiDeltaAttention
 from olmo_core.nn.attention.recurrent import GatedDeltaNet
 from olmo_core.nn.moe.mlp import DroplessMoEMLP, MoEMLP
 from olmo_core.nn.moe.router import MoERouterGatingFunction
@@ -121,6 +121,261 @@ def _register_olmo3moe_auto_classes() -> None:
     Olmo3MoeForCausalLM.register_for_auto_class("AutoModelForCausalLM")
 
 
+def _get_olmo3moe_kda_latent_config(
+    model: "MoEFusedV2Transformer",
+) -> PretrainedConfig:
+    """Build the fail-closed HF config for the KDA + LatentMoE ladder family."""
+    from olmo_core.nn.moe.v2.block import MoEFusedV2TransformerBlock
+
+    if Olmo3MoeConfig is None:
+        raise RuntimeError("The olmo3moe HF model files are unavailable.")
+    _register_olmo3moe_auto_classes()
+
+    blocks = list(model.blocks.values())
+    if not blocks or not all(isinstance(block, MoEFusedV2TransformerBlock) for block in blocks):
+        raise NotImplementedError("KDA + LatentMoE export requires MoE-v2 blocks at every layer.")
+
+    dense_layers_indices: List[int] = []
+    sparse_blocks: List[MoEFusedV2TransformerBlock] = []
+    layer_types: List[str] = []
+    attention_blocks: List[MoEFusedV2TransformerBlock] = []
+    kda_blocks: List[MoEFusedV2TransformerBlock] = []
+    for idx, block in enumerate(blocks):
+        assert isinstance(block, MoEFusedV2TransformerBlock)
+        if block.routed_experts is None:
+            dense_layers_indices.append(idx)
+            if block.shared_experts is None or block.shared_experts.num_experts != 1:
+                raise NotImplementedError(
+                    "Dense ladder layers must contain exactly one shared expert."
+                )
+        else:
+            sparse_blocks.append(block)
+
+        if isinstance(block.attention, KimiDeltaAttention):
+            layer_types.append("linear_attention")
+            kda_blocks.append(block)
+        elif isinstance(block.attention, Attention):
+            if block.attention.backend.window_size != (-1, -1):
+                raise NotImplementedError(
+                    "Sliding-window layers are not yet supported in KDA + LatentMoE export."
+                )
+            layer_types.append("full_attention")
+            attention_blocks.append(block)
+        else:
+            raise NotImplementedError(
+                f"Unsupported sequence mixer {type(block.attention).__name__} at layer {idx}."
+            )
+
+    if not sparse_blocks or not kda_blocks or not attention_blocks:
+        raise NotImplementedError(
+            "KDA + LatentMoE export requires sparse, KDA, and full-attention layers."
+        )
+
+    representative = sparse_blocks[0]
+    routed_experts = representative.routed_experts
+    router = representative.routed_experts_router
+    assert routed_experts is not None and router is not None
+    if representative.latent_down_proj is None or representative.latent_up_proj is None:
+        raise NotImplementedError("This KDA export path requires LatentMoE down/up projections.")
+    latent_dim = representative.latent_down_proj.out_features
+
+    # Reject heterogeneous expert/LatentMoE layouts: the HF config intentionally
+    # stores one sparse-layer shape and must never silently reshape another.
+    sparse_signature = (
+        routed_experts.hidden_size,
+        routed_experts.num_experts,
+        router.top_k,
+        latent_dim,
+        representative.latent_down_proj.bias is not None,
+        representative.latent_up_proj_input_norm is not None,
+        representative.shared_experts.hidden_size
+        if representative.shared_experts is not None
+        else None,
+    )
+    for block in sparse_blocks[1:]:
+        if (
+            block.routed_experts is None
+            or block.routed_experts_router is None
+            or block.latent_down_proj is None
+            or block.latent_up_proj is None
+        ):
+            raise NotImplementedError("Every sparse layer must use LatentMoE.")
+        signature = (
+            block.routed_experts.hidden_size,
+            block.routed_experts.num_experts,
+            block.routed_experts_router.top_k,
+            block.latent_down_proj.out_features,
+            block.latent_down_proj.bias is not None,
+            block.latent_up_proj_input_norm is not None,
+            block.shared_experts.hidden_size if block.shared_experts is not None else None,
+        )
+        if signature != sparse_signature:
+            raise NotImplementedError("Heterogeneous sparse/LatentMoE layers are unsupported.")
+
+    unsupported_router = []
+    if router.bias is not None:
+        unsupported_router.append("router bias")
+    if router.bias_gamma is not None:
+        unsupported_router.append("bias_gamma")
+    if router.score_correction_bias:
+        unsupported_router.append("score_correction_bias")
+    if router.n_group is not None or router.topk_group is not None:
+        unsupported_router.append("grouped routing")
+    if router.expert_weight_scale is not None:
+        unsupported_router.append("expert_weight_scale")
+    if router.gating_function not in (
+        MoERouterGatingFunction.softmax,
+        MoERouterGatingFunction.sigmoid,
+    ):
+        unsupported_router.append(f"gating_function={router.gating_function.value}")
+    if unsupported_router:
+        raise NotImplementedError(
+            "Unsupported KDA + LatentMoE router settings: " + ", ".join(unsupported_router)
+        )
+
+    kda = kda_blocks[0].attention
+    assert isinstance(kda, KimiDeltaAttention)
+    kda_signature = (
+        kda.n_heads,
+        kda.n_v_heads,
+        kda.head_k_dim,
+        kda.head_v_dim,
+        kda.conv_size,
+        kda.allow_neg_eigval,
+    )
+    if any(
+        (
+            block.attention.n_heads,
+            block.attention.n_v_heads,
+            block.attention.head_k_dim,
+            block.attention.head_v_dim,
+            block.attention.conv_size,
+            block.attention.allow_neg_eigval,
+        )
+        != kda_signature
+        for block in kda_blocks[1:]
+        if isinstance(block.attention, KimiDeltaAttention)
+    ):
+        raise NotImplementedError("Heterogeneous KDA layer shapes are unsupported.")
+
+    attention = attention_blocks[0].attention
+    assert isinstance(attention, Attention)
+    if any(
+        (
+            block.attention.n_heads,
+            block.attention.n_kv_heads,
+            block.attention.head_dim,
+            block.attention.rope is not None,
+            block.attention.gate,
+        )
+        != (
+            attention.n_heads,
+            attention.n_kv_heads,
+            attention.head_dim,
+            attention.rope is not None,
+            attention.gate,
+        )
+        for block in attention_blocks[1:]
+        if isinstance(block.attention, Attention)
+    ):
+        raise NotImplementedError("Heterogeneous full-attention layers are unsupported.")
+    if attention.q_norm is None or attention.k_norm is None or not attention.use_head_qk_norm:
+        raise NotImplementedError("Export requires head-wise QK norm on full-attention layers.")
+    if any(
+        projection.bias is not None
+        for projection in (
+            attention.w_q,
+            attention.w_k,
+            attention.w_v,
+            attention.w_out,
+        )
+    ):
+        raise NotImplementedError("Biased full-attention projections are unsupported.")
+
+    gate_type: Optional[str] = None
+    gate_full_precision = True
+    if attention.gate is not None:
+        gate_type = str(attention.gate.granularity)
+        if attention.gate.granularity not in (
+            GateGranularity.headwise,
+            GateGranularity.elementwise,
+        ):
+            raise NotImplementedError(f"Unsupported attention gate {attention.gate.granularity!r}.")
+        gate_full_precision = attention.gate.full_precision
+
+    use_peri_ln = representative.use_peri_norm
+    if any(block.use_peri_norm != use_peri_ln or block.use_pre_norm for block in blocks):
+        raise NotImplementedError(
+            "All KDA + LatentMoE layers must share peri-norm placement; pre-norm is unsupported."
+        )
+
+    dense_hidden_sizes = {
+        blocks[idx].shared_experts.hidden_size
+        for idx in dense_layers_indices
+        if blocks[idx].shared_experts is not None
+    }
+    if len(dense_hidden_sizes) > 1:
+        raise NotImplementedError("Heterogeneous dense-layer MLP widths are unsupported.")
+    dense_hidden = next(iter(dense_hidden_sizes), None)
+
+    shared_hidden = (
+        representative.shared_experts.hidden_size
+        if representative.shared_experts is not None
+        else None
+    )
+    use_rope = attention.rope is not None
+    rope_theta = attention.rope.theta if attention.rope is not None else 10000.0
+    kda_norm_eps = float(getattr(kda.o_norm, "eps", getattr(kda.o_norm, "variance_epsilon", 1e-5)))
+
+    return Olmo3MoeConfig(
+        vocab_size=model.vocab_size,
+        hidden_size=model.d_model,
+        attention_hidden_size=attention.n_heads * attention.head_dim,
+        head_dim=attention.head_dim,
+        dense_mlp_intermediate_size=dense_hidden,
+        moe_intermediate_size=routed_experts.hidden_size,
+        shared_expert_intermediate_size=shared_hidden,
+        n_routed_experts=routed_experts.num_experts,
+        num_experts_per_tok=router.top_k,
+        original_num_experts_per_tok=router.original_top_k,
+        num_hidden_layers=model.n_layers,
+        num_attention_heads=attention.n_heads,
+        num_key_value_heads=attention.n_kv_heads,
+        hidden_act="silu",
+        gating_function=str(router.gating_function),
+        normalize_expert_weights=router.normalize_expert_weights,
+        restore_weight_scale=router.restore_weight_scale,
+        max_position_embeddings=-1,
+        attention_bias=False,
+        rope_theta=rope_theta,
+        rope_scaling=None,
+        rms_norm_eps=representative.feed_forward_norm.eps,
+        use_head_qk_norm=True,
+        use_rope=use_rope,
+        attention_gate_type=gate_type,
+        attention_gate_full_precision=gate_full_precision,
+        linear_num_key_heads=kda.n_heads,
+        linear_num_value_heads=kda.n_v_heads,
+        linear_key_head_dim=kda.head_k_dim,
+        linear_value_head_dim=kda.head_v_dim,
+        linear_conv_kernel_dim=kda.conv_size,
+        linear_allow_neg_eigval=kda.allow_neg_eigval,
+        linear_norm_eps=kda_norm_eps,
+        latent_moe_dim=latent_dim,
+        latent_moe_bias=representative.latent_down_proj.bias is not None,
+        latent_moe_up_proj_input_norm=(representative.latent_up_proj_input_norm is not None),
+        layer_types=layer_types,
+        dense_layers_indices=dense_layers_indices,
+        embed_scale=model.embed_scale if model.embed_scale is not None else 1.0,
+        embed_norm=model.embedding_norm is not None,
+        use_peri_ln=use_peri_ln,
+        pad_token_id=None,  # type: ignore[arg-type]
+        bos_token_id=None,
+        eos_token_id=None,  # type: ignore[arg-type]
+        tie_word_embeddings=model.tie_word_embeddings,
+    )
+
+
 def _get_olmo3moe_config(model: "MoEFusedV2Transformer") -> PretrainedConfig:
     from olmo_core.nn.moe.v2.block import MoEFusedV2TransformerBlock
 
@@ -133,6 +388,8 @@ def _get_olmo3moe_config(model: "MoEFusedV2Transformer") -> PretrainedConfig:
     _register_olmo3moe_auto_classes()
 
     blocks = list(model.blocks.values())
+    if any(isinstance(block.attention, KimiDeltaAttention) for block in blocks):
+        return _get_olmo3moe_kda_latent_config(model)
 
     # Identify the dense (non-MoE) layers and pick a representative MoE and dense block.
     dense_layers_indices: List[int] = []
@@ -173,8 +430,7 @@ def _get_olmo3moe_config(model: "MoEFusedV2Transformer") -> PretrainedConfig:
         )
     if attention.rope is None:
         raise NotImplementedError(
-            f"Attention does not use rope, unable to build HF config for "
-            f"{model.__class__.__name__}"
+            f"Attention does not use rope, unable to build HF config for {model.__class__.__name__}"
         )
     # The olmo3moe converter only round-trips head-wise QK-norm, unscaled RoPE, and bias-free
     # attention; reject anything else rather than silently exporting a divergent model.
