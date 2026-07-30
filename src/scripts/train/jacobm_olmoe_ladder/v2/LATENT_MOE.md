@@ -306,15 +306,21 @@ and seven were queued as backfill. The durable manifests are
 and
 [`275m_kda_latent_moe_lr_sweep_cx8_unallocated.yaml`](launchers/pretraining/manifests/275m_kda_latent_moe_lr_sweep_cx8_unallocated.yaml).
 
-At the 2026-07-30 04:28 UTC refresh, all four L=2 Cx4 cells finished cleanly.
-The curve is complete and bracketed: its observed best is `2.443058 @
-1.6e-3`, and its diagnostic quadratic fit is `2.442457 @ 1.37e-3`. All four
-L=4 Cx4 cells and all eight Cx8 cells are running without a failed attempt.
+At the 2026-07-30 07:47 UTC refresh, all four L=2 and all four L=4 Cx4 cells
+finished cleanly. Both curves are complete and bracketed. L=2 has observed
+best `2.443058 @ 1.6e-3` and diagnostic fit `2.442457 @ 1.37e-3`; L=4 has
+observed best `2.462333 @ 1.6e-3` and diagnostic fit `2.461737 @ 1.35e-3`.
+Three L=2 Cx8 cells are finished and already bracket the optimum; their
+provisional observed best is `2.362515 @ 1.6e-3`, while the 8e-4 cell remains
+in flight. All four L=4 Cx8 cells remain in flight.
 
 The promoted 480M L=2 Cx1 run also finished cleanly at transferred LR
 `1.2e-3`, with strict final-250M CE `2.463192`. That is `0.029091` lower than
-the matching non-latent KDA Cx1 result (`2.492283`). The 480M Cx2 run remains
-healthy and running. These scale results now flow into
+the matching non-latent KDA Cx1 result (`2.492283`). The 480M Cx2 run also
+finished cleanly with strict final-250M CE `2.361694`, versus `2.382695` for
+its non-latent KDA parent. The remaining 480M Cx4/Cx8 cells and all four 810M
+cells were submitted on 2026-07-30 at the same transferred wide-integration
+LRs. These scale results now flow into
 [`plot_kda_latent_moe.py`](plot_kda_latent_moe.py) and the shared best-of plot.
 
 ## Proposed larger LatentMoE configs
@@ -358,11 +364,27 @@ roughly 2.1% fewer parameters because the 1,000-expert EP1 approximation is
 slightly below the exact paper-matched 1,024-expert count; its active count
 stays close because top-k remains 32.
 
-No larger LatentMoE jobs are launched. Before training, add audited model
-builders with exact count guards, then run capacity smokes because increased
-top-k and routing state—not stored parameter count—drove the 275M memory
-increase. Prefer EP1 for 480M/810M and retain EP8 for 1.2B unless the capacity
-tests show a clear reason to change it.
+The L=2 scale builders have exact count guards and the promoted 480M/810M wave
+uses EP1. The remaining 480M cells use 8 GPUs each: Cx4 uses MB8/acc1 and Cx8
+uses MB6/acc2. The 810M cells use the established two-node layout (2x8 GPUs)
+with MB2/3/4/6 and no accumulation for Cx1/2/4/8.
+
+- [480M Cx4/Cx8 allocated work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYRZ44KSS6A9EJ10BKR5H5HE)
+  is urgent with `minRuntime=4h`. The two 480M tasks are valid; four terminal
+  one-node 810M tasks in the same work item are rejected renderer artifacts
+  and never started training.
+- The corrected 810M jobs are separately tracked as
+  [Cx1](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYRZACTKCVCGTBHWFWFQJ1XN),
+  [Cx2](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYRZAH05NCSNX6B5KTAP2RDF),
+  [Cx4](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYRZAKTWS4WGFED4MPYKCKX6),
+  and
+  [Cx8](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYRZAPNN7NDT3BG248BQ9D61).
+  Each is urgent, allocated with `minRuntime=4h`, auto-resumable, and expressed
+  as two synchronized 8-GPU replicas.
+
+Before promoting L=4 or 1.2B, capacity-test the increased top-k and routing
+state. Prefer EP1 for 480M/810M and retain EP8 for 1.2B unless those tests show
+a clear reason to change it.
 
 ## Validation hold
 

@@ -282,6 +282,52 @@ def write_history_to_cache(
     tmp_path.replace(cache_path)
 
 
+def _sampled_tail_history(
+    run: Any,
+    *,
+    keys: list[str],
+    min_step: int,
+    max_step: int,
+) -> list[dict[str, Any]] | None:
+    """Fetch a bounded, unsampled step window through W&B GraphQL.
+
+    Recent W&B clients route ``scan_history()`` through a local service whose
+    scan initialization can hang on large runs. ``sampledHistory`` accepts
+    explicit step bounds; requesting one sample per possible optimizer step
+    makes the bounded response exhaustive rather than sampled. Keep the
+    ordinary scan path as a fallback for unusually wide windows or older W&B
+    clients without the private execution hook.
+    """
+
+    step_span = max_step - min_step
+    if step_span <= 0 or step_span > 10_000 or not hasattr(run, "_exec"):
+        return None
+    history_keys = list(dict.fromkeys(["_step", *keys]))
+    spec = {
+        "keys": history_keys,
+        "samples": step_span,
+        "minStep": min_step,
+        "maxStep": max_step,
+    }
+    query = """
+    query RunSampledHistory(
+      $project: String!,
+      $entity: String!,
+      $name: String!,
+      $specs: [JSONString!]!
+    ) {
+      project(name: $project, entityName: $entity) {
+        run(name: $name) { sampledHistory(specs: $specs) }
+      }
+    }
+    """
+    response = run._exec(query, specs=[json.dumps(spec)])
+    return [
+        dict(row)
+        for row in response["project"]["run"]["sampledHistory"][0]
+    ]
+
+
 def scan_history_cached(
     run: Any,
     *,
@@ -325,15 +371,22 @@ def scan_history_cached(
 
     if run.state == "finished" and tail_window_tokens is not None:
         min_step, max_step = _tail_step_range(run, window_tokens=tail_window_tokens)
-        history = [
-            dict(row)
-            for row in run.scan_history(
-                keys=keys,
-                min_step=min_step,
-                max_step=max_step,
-                page_size=tail_page_size,
-            )
-        ]
+        history = _sampled_tail_history(
+            run,
+            keys=keys,
+            min_step=min_step,
+            max_step=max_step,
+        )
+        if history is None:
+            history = [
+                dict(row)
+                for row in run.scan_history(
+                    keys=keys,
+                    min_step=min_step,
+                    max_step=max_step,
+                    page_size=tail_page_size,
+                )
+            ]
         write_tail_history_to_cache(
             cache_dir,
             project,
