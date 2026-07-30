@@ -94,6 +94,31 @@ Everything is configured via `@dataclass` classes inheriting from `Config`. This
 - `composable/`: The preferred data loading API, built on a pipeline of `TokenSource` -> `InstanceSource` -> `ComposableDataLoader`. Sources can be sliced, sampled, mixed with ratios, and split for curriculum learning. Use `InstanceSource.visualize()` to inspect the source tree. See the module docstring in `src/olmo_core/data/composable/__init__.py` for detailed examples.
 - `mixes/`: Predefined data mixture configs (dolma17, OLMoE-mix-0824, etc.) with paths to tokenized data by source and tokenizer.
 - Training data is stored on AI2 infrastructure (Weka filesystem, GCS). For local development, use small validation sets or synthetic data.
+- **Our data-generation pipeline** (task JSONL → tokenized SFT shards → weka/local staging) is
+  mapped in `src/scripts/data/README.md`: layer 1 = `src/corpus_reasoning/data/` (task
+  generators), layer 2 = `src/scripts/data/` (converters + gantry/sbatch staging).
+
+### Document-chunked / landmark attention: REPAIR THE BASE CHECKPOINT FIRST
+
+Qwen3 never trains the embedding rows for the reserved marker tokens that the document-chunked and
+landmark data paths are built on (`<|box_start|>`/`<|box_end|>`, plus the landmark/pad ids past the
+real vocab). Their embeddings are **bit-identical** (cosine similarity 1.0000), so the model cannot
+distinguish an "open document" marker from a "close document" one. Marker-dense runs then train to
+chance and the failure looks exactly like a modeling result.
+
+**Before any document-chunked / landmark training from a fresh base, run
+`src/scripts/data/fix_marker_embeddings.py` on the checkpoint and train from the repaired copy.** The
+tokenized shards are correct — do NOT rebuild data. See `records/document-chunked-marker-embeddings.md` for
+the full diagnosis, the one-line check for whether a base is affected, and the validation numbers.
+
+⚠ **Fixing the marker cosine is NOT enough — the marker NORM matters too.** The first version of
+`fix_marker_embeddings.py` made the markers mutually distinguishable but left them at ~1/3.6 the norm
+of a real token, which RMSNorm amplifies into full-strength noise. On the leak-free (label-inside-chunk)
+shards this flatlines training at CE ≈ 0.79 for **every** mask, including plain causal — an
+unrestricted model cannot even memorize the data, so it reads as "the mask is too restrictive" when it
+is not. The script now seeds each marker from a real trained delimiter row (`«`/`»`/…) and asserts the
+norm is in-distribution. Any base repaired before 2026-07-14 is affected: re-run the script.
+See `records/n100-chunked-marker-position-bug.md`.
 
 ### Distributed Training (`src/olmo_core/distributed/`)
 
@@ -122,12 +147,43 @@ torchrun --nproc-per-node=8 src/scripts/official/OLMo2/OLMo-2-0325-32B-train.py 
 
 **Internal scripts** (`src/scripts/train/`): Use `prepare_cli_environment()` with commands (`launch`, `train`, `train_single`, `prep`, `dry_run`). See `template.py` for the starting point.
 
+ALL of our own training code lives in `src/scripts/train/memexpress/`, organized by experiment
+family (`cpt/`, `sft_5task/`, `sft_docchunk/`, `attn_explore/`, ...) — see the index in
+`src/scripts/train/memexpress/README.md` and each family's README. Two shortcuts point there:
+`scripts/memexpress` (tracked symlink) and the gitignored repo-root `training/`. New training
+scripts go in the matching family folder (or a new one with a README), never loose in
+`src/scripts/train/sft/` (upstream-only).
+
 ```bash
 python src/scripts/train/OLMo2-1B.py dry_run test-run ai2/titan-cirrascale
 python src/scripts/train/OLMo2-1B.py launch olmo2-1b-test ai2/jupiter-cirrascale-2 --launch.num_nodes=4
 ```
 
+## Deprecated scripts
+
+Retired scripts live in `deprecated/` (mirroring their old repo-relative path) with a README row
+saying why and what replaces them — see `deprecated/README.md` for the convention. Never use or
+reference anything in there; when you retire a script, `git mv` it in and log it.
+
+## Records (standalone writeups)
+
+Experiment diagnoses, task briefs, and setup notes live in `records/` (see its README for the
+index). New writeups of this kind go there — the repo root keeps only
+README/CHANGELOG/CONTRIBUTING/CLAUDE.md/local_cluster.md/beaker.md.
+
+## Local (Berkeley) cluster
+
+We also train/eval on Berkeley slurm H200 nodes without AI2 infra (no weka, no Beaker). The full
+pipeline — nodes/QOS, the NFS-vs-`/data` rule, env setup, the weka-free training recipe, and the
+known traps — is documented in `local_cluster.md`. Read it before touching any `*local*.sbatch`
+launcher or debugging a hung/crashed local run.
+
 ## Docker and Beaker Launch
+
+**Practical how-to + hard-won lessons for launching anything on Beaker from this machine live in
+`beaker.md` (repo root)** — launch/gantry templates, monitoring/cancel commands that actually
+work, the weka-vs-S3 staging two-step, and the traps index. This section covers the underlying
+mechanics.
 
 The Docker image (`src/Dockerfile`) is a two-stage build: a `build` stage compiles GPU-specific dependencies (flash-attn, TransformerEngine, grouped_gemm, ring-flash-attn, etc.) on an NVIDIA CUDA devel image, and a `release` stage copies the conda environment into a lighter Ubuntu base with AWS CLI, Google Cloud SDK, and MLNX OFED drivers. The image contains all dependencies but *not* the OLMo-core package itself — source code is cloned at runtime.
 
@@ -152,9 +208,35 @@ Pre-built images are listed in the `OLMoCoreBeakerImage` enum in `src/olmo_core/
 
 `BeakerLaunchConfig` also supports `pre_setup` and `post_setup` hooks for running commands before/after the package install step, Weka bucket mounts, and multi-node settings (replicas, leader selection, host networking).
 
+**Job priority — ALWAYS `urgent`, never lower.** Every Beaker/gantry job (training, eval, data build) must launch at `priority="urgent"` — exactly `urgent`: never `normal`/`high`/`low`, and not `immediate` either. Lower-priority jobs pend behind capacity; `urgent` preempts to get nodes. Set `BeakerLaunchConfig.priority = "urgent"`, pass `--priority urgent` to launchers, or bump a live job with `beaker job update-priority <job-id> urgent`. If you add or edit a launcher, make `urgent` its default.
+
 ## Testing
 
 - Tests in `src/test/` mirror the source structure.
 - Name individual test functions `test_*` and prefer `pytest.mark.parametrize` to cover multiple inputs or configurations without duplicating code.
 - GPU tests use `@pytest.mark.gpu` and are skipped without a GPU.
 - Distributed tests use helpers in `src/olmo_core/testing/distributed.py`.
+
+## Reporting experimental results
+
+**`n` means CORPUS SIZE — never eval-set size.** In this project `n` is reserved for the number of
+documents/claims in an example's context (`n=20`, `n=100`, the `..._n100_k3` files, `--ndocs`). It is
+a property of the *task*. Using the same letter for how many examples an eval ran on has already
+caused real confusion, so:
+
+- For eval-set size write **`eval_size`** (or spell it out: "488 eval examples"). Never `n=488`.
+- New eval scripts must emit the field `eval_size` in their result JSON. Older results wrote this as
+  `n`, which is exactly the collision being retired — when reading them, translate to `eval_size`
+  rather than propagating the old name.
+- The same applies in prose, tables, run names, and anything ingested into results-hub.
+
+**Eval sets should have at least 500 examples, and a smaller one must be flagged.** If a number came
+from fewer than 500 eval examples, say so *inline, next to the number* — give the size and its error
+bar, e.g. `f1=0.83  ⚠ eval_size=100 only (±0.038)`. Never present a sub-500 result bare; a small eval
+inflates noise into apparent findings. (The contradiction held-out set is 488 examples, which is the
+entire file and is accepted as-is.)
+
+**Quote a resolution, not three decimals.** On a right/wrong-graded eval, the binomial standard error
+is ±0.021 at f1≈0.70 and ±0.010 at f1≈0.95 for 488 examples. Before calling a difference real, check
+it against that — and remember eval noise is only half the story, since run-to-run seed variation adds
+more.

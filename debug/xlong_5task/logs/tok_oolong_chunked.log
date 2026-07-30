@@ -1,0 +1,16 @@
+srun: job 3377750 queued and waiting for resources
+srun: job 3377750 has been allocated resources
+/data/prasann/conda/envs/corpus-reasoning-olmo/lib/python3.12/site-packages/transformers/utils/hub.py:110: FutureWarning: Using `TRANSFORMERS_CACHE` is deprecated and will be removed in v5 of Transformers. Use `HF_HOME` instead.
+  warnings.warn(
+marker set 'qwen3_5': doc_start=248049 doc_end=248050 eos=248044 landmark=248200 pad=248203
+loaded 19764 examples (task=oolong, emit=dense, chunk_by=line); tokenizing -> /data/prasann/xlong5/shards_chunked/oolong_train
+tokenizing with 16 worker processes
+Token indices sequence length is longer than the specified maximum sequence length for this model (263484 > 262144). Running this sequence through the model will result in indexing errors
+Token indices sequence length is longer than the specified maximum sequence length for this model (264328 > 262144). Running this sequence through the model will result in indexing errors
+Token indices sequence length is longer than the specified maximum sequence length for this model (264464 > 262144). Running this sequence through the model will result in indexing errors
+Token indices sequence length is longer than the specified maximum sequence length for this model (262352 > 262144). Running this sequence through the model will result in indexing errors
+Token indices sequence length is longer than the specified maximum sequence length for this model (262182 > 262144). Running this sequence through the model will result in indexing errors
+metadata.json -> /data/prasann/xlong5/shards_chunked/oolong_train/metadata.json (num_instances=19758, max_example_len=260447, num_loss_tokens=118907)
+length tokens: min 2275 / p50 7368 / p90 41217 / max 260447
+done: kept 19758, dropped 6 (too long / reserved collision). shards: 4
+TOKENIZE_DONE shards_chunked rc=0

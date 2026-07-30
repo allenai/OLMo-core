@@ -94,6 +94,12 @@ def main():
     ap.add_argument("--mem-freq", type=int, default=63)
     ap.add_argument("--cot-mode", default=None, help="override the per-task default prompt CoT mode.")
     ap.add_argument(
+        "--use-titles",
+        action="store_true",
+        help="Render document titles in the prefill. Off by default -- MUST match the training "
+        "converter (convert_unified_to_document_landmark.py --use-titles).",
+    )
+    ap.add_argument(
         "--landmark-top-k-blocks",
         type=int,
         default=None,
@@ -225,6 +231,7 @@ def main():
         segs, ids, _ = segment_prompt_to_chunks(
             tok, raw_example, seg_task, query_position="both", cot_mode=cot_mode,
             chunk_by=chunk_by, item_regex=r"\|\|", include_answer=False,
+            use_titles=args.use_titles,
             doc_start_id=DOC_START_ID, doc_end_id=DOC_END_ID,
         )
         if args.variant in ("dense", "full"):
@@ -239,7 +246,14 @@ def main():
 
     @torch.no_grad()
     def generate_one(prefill):
-        gm.prepare_inference_cache(1, args.max_length)  # (re)set the cache cursor to 0 per example
+        # Size the KV cache to THIS example's actual need (prefill + decode budget), not the full
+        # --max-length: at long context a full-max_length cache wastes GPU memory and starves the
+        # FlexAttention prefill kernel. The landmark decode inserts a landmark token every mem_freq
+        # generated tokens, so budget for those extra slots. The cache manager only reallocates to GROW
+        # (is_reusable keeps a larger buffer), so this never shrinks mid-run. Capped at --max-length.
+        lm_overhead = (max_new_tokens // args.mem_freq + 2) if args.variant == "landmark" else 0
+        cache_len = min(len(prefill) + max_new_tokens + lm_overhead + 1, args.max_length)
+        gm.prepare_inference_cache(1, cache_len)  # (re)set the cache cursor to 0 per example
         leftpad = torch.zeros(1, dtype=torch.int32, device=device)
         if args.variant in ("dense", "full"):
             # Dense / full: prefill once (chunked mask applied + K,V cached), then single-token greedy

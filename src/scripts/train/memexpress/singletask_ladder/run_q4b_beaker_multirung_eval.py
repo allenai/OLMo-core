@@ -1,0 +1,416 @@
+"""
+Submit a multi-rung NATIVE long-context eval as a **Beaker** job for one trained checkpoint --
+fully on Beaker, NO local sync. This is the on-Beaker counterpart of the LOCAL driver
+``run_q4b_stl_multirung_eval.sbatch``.
+
+The eval reads everything from weka (eval code + eval data + the distcp checkpoint), so the job needs
+no data copied to the node:
+
+  * eval CODE + DATA + the goal-rung ladder files live in the weka eval bundle
+    (``checkpoints/prasanns/_eval_bundle`` + ``_eval_bundle_eval500``); upload/refresh it with
+    ``upload_lc_eval_bundle.sh`` before launching.
+  * the checkpoint is the just-trained distcp step dir under
+    ``checkpoints/prasanns/<run_name>/step*`` -- the on-node runner auto-globs the latest complete step.
+
+The actual eval logic is the on-node runner ``run_beaker_multirung_eval.sh`` (uploaded to the bundle):
+it runs ``torchrun --nproc_per_node=8 scripts/eval/eval_lc_native.py`` (8-way DP, native olmo_core
+generate -- NO HF/vLLM, required for landmark/compressive). gantry's own torchrun wrapping is disabled
+(``torchrun=False``) so the runner can issue its own (and multiple, for rerank) torchrun calls.
+
+Per-task rungs (matching the local driver):
+  contra 2k,8k,16k,32k | nq 3k,8k,16k,32k | outlier 3k,8k,16k,32k | oolong 8k,16k,32k |
+  rerank CE files k20/k50/k100 (NDCG@10 + Kendall-tau). ``--max-test-samples 600``.
+
+Usage::
+
+    # one (run, task) -> one Beaker job; variant inferred from the run name
+    PYTHONPATH=src python src/scripts/train/memexpress/singletask_ladder/run_q4b_beaker_multirung_eval.py \\
+        q4b-dense-contra-ladder32k-10k ai2/neptune --task contra
+
+    # all 5 tasks for a run (5 jobs)
+    PYTHONPATH=src python src/scripts/train/memexpress/singletask_ladder/run_q4b_beaker_multirung_eval.py \\
+        q4b-landmark-nq-ladder32k-10k ai2/neptune --task all
+
+    # validate without submitting
+    PYTHONPATH=src python src/scripts/train/memexpress/singletask_ladder/run_q4b_beaker_multirung_eval.py \\
+        q4b-dense-contra-ladder32k-10k ai2/neptune --task contra --dry-run
+"""
+
+import argparse
+import sys
+
+from olmo_core.internal.common import build_launch_config, get_root_dir
+from olmo_core.launch.beaker import BeakerEnvVar, OLMoCoreBeakerImage
+from olmo_core.utils import prepare_cli_environment
+
+ALL_TASKS = [
+    "contra",
+    "nq",
+    "rerank",
+    "outlier",
+    "oolong",
+    "fiqa",
+    "scifact",
+    "outlier_review",
+    "contra_fever",
+]
+VARIANTS = ["dense", "landmark", "compressive", "docchunk"]
+
+
+def variant_from_run_name(run_name: str) -> str:
+    # docchunk run names use the explicit "docchunk_dense" token; check docchunk first.
+    if "docchunk" in run_name:
+        return "docchunk"
+    found = [v for v in ("dense", "landmark", "compressive") if v in run_name]
+    if len(found) != 1:
+        raise SystemExit(
+            f"could not infer variant from run name {run_name!r} (found {found}); pass --variant."
+        )
+    return found[0]
+
+
+def build_eval_launch_config(
+    *,
+    run_name,
+    task,
+    variant,
+    cluster,
+    step,
+    ckpt,
+    results_dir,
+    prompt_format,
+    ngpu,
+    max_test,
+    max_length,
+    batch_size,
+    priority,
+    ladder_version,
+    xlong,
+    xlong_rungs,
+    cot_mode,
+    tokenizer="",
+    landmark_top_k_blocks,
+    landmark_nonselected_mass,
+    landmark_group_selection=None,
+    landmark_decode_gate_mode=None,
+    eval_tag="",
+    gate_log_dir="",
+    gate_log_all=False,
+    landmark_flat_softmax=False,
+):
+    root_dir = get_root_dir(cluster)  # e.g. /weka/oe-training-default/ai2-llm (mounts weka bucket)
+    # Eval CODE now ships IN the cloned repo (src/scripts/ctc_eval); the runner runs from the repo root
+    # (gantry cwd). DATA still comes from weka (the runner derives BUNDLE/EVAL500 from WEKA_LLM=root_dir).
+    runner = "src/scripts/train/memexpress/singletask_ladder/run_beaker_multirung_eval.sh"
+
+    # The on-node runner reads its inputs from env; gantry torchrun wrapping is disabled so the runner
+    # can drive its own 8-way `torchrun`. cmd[0]="bash" => not auto-prefixed with `python`.
+    landmark_env = ""
+    # Model families do NOT share a vocabulary: Qwen3.5 checkpoints need Qwen/Qwen3.5-0.8B
+    # (vocab 248320), not the runner's Qwen/Qwen3-4B default. Empty -> keep the runner default.
+    if tokenizer:
+        landmark_env += f"TOKENIZER={tokenizer} "
+    if landmark_top_k_blocks is not None:
+        landmark_env += f"LANDMARK_TOP_K_BLOCKS={landmark_top_k_blocks} "
+    if landmark_nonselected_mass is not None:
+        landmark_env += f"LANDMARK_NONSELECTED_MASS={landmark_nonselected_mass} "
+    inner = (
+        f"RUN={run_name} TASK={task} VARIANT={variant} STEP='{step}' CKPT='{ckpt}' "
+        f"EVAL_OUT_DIR='{results_dir}' PROMPT_FORMAT='{prompt_format}' "
+        f"MAX_TEST={max_test} MAX_LENGTH={max_length} BATCH_SIZE={batch_size} NGPU={ngpu} "
+        f"LADDER_XLONG={int(xlong)} XLONG_RUNGS='{xlong_rungs}' COT_MODE='{cot_mode}' "
+        f"LANDMARK_GROUP_SELECTION='{landmark_group_selection or ''}' "
+        f"LANDMARK_DECODE_GATE_MODE='{landmark_decode_gate_mode or ''}' "
+        f"EVAL_TAG='{eval_tag}' "
+        f"LADDER_VERSION={ladder_version} {landmark_env}WEKA_LLM={root_dir} bash {runner}"
+    )
+    cmd = ["bash", "-lc", inner]
+
+    # ``eval_tag`` keeps parallel configs on the same checkpoint (e.g. the two decode-gate modes) from
+    # colliding: it both suffixes the on-weka result files/dirs (via EVAL_TAG in the runner) AND
+    # disambiguates the Beaker job name here.
+    name = f"ev-{task}-{run_name}" + (f"-{eval_tag}" if eval_tag else "")
+    launch_config = build_launch_config(
+        name=name,
+        cmd=cmd,
+        cluster=cluster,
+        root_dir=root_dir,
+        task_name="eval",
+        beaker_image=OLMoCoreBeakerImage.stable,
+        workspace="ai2/flex2",
+        budget="ai2/oe-other",
+        num_nodes=1,
+        num_gpus=ngpu,
+    )
+    launch_config.torchrun = False  # the runner issues its own torchrun(s)
+    launch_config.allow_dirty = True  # ship the (uncommitted) launcher via an ephemeral ref
+    launch_config.priority = priority
+    launch_config.step_soft_timeout = (
+        None  # we submit with follow=False (don't block on many evals);
+    )
+    launch_config.step_timeout = None  # the 10-min default soft timeout forbids follow=False
+
+    # Optional landmark gate-score logging (olmo_core.nn.attention.landmark_gate_analysis). Only
+    # landmark/compressive variants apply the hard top-k retrieval the hook records (set via
+    # --landmark-top-k-blocks above, threaded through landmark_env to the shell runner). Each of the
+    # NGPU torchrun workers inherits these container env vars and writes its own "<base>.rank<N>"
+    # JSONL under the (weka-mounted) gate_log_dir, readable after the run. The recorder assumes bs=1,
+    # which the on-node runner already forces for landmark/compressive.
+    if gate_log_dir:
+        base = f"{gate_log_dir.rstrip('/')}/gate_{run_name}_{task}"
+        launch_config.env_vars.append(BeakerEnvVar(name="OLMO_LANDMARK_GATE_LOG", value=base))
+        launch_config.env_vars.append(BeakerEnvVar(name="OLMO_GATE_DATASET", value=task))
+        if gate_log_all:
+            launch_config.env_vars.append(BeakerEnvVar(name="OLMO_GATE_LOG_ALL", value="1"))
+    # Inference-only flat-softmax ablation: keep the native eval's hard top-k selection but drop the
+    # per-block gate reweighting (plain softmax over the selected support). Read by the generation
+    # module's env fallback; only meaningful for landmark/compressive variants. See
+    # analysis/flat_softmax_variant_eval.md.
+    if landmark_flat_softmax:
+        launch_config.env_vars.append(BeakerEnvVar(name="OLMO_LANDMARK_FLAT_SOFTMAX", value="1"))
+    return launch_config
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument(
+        "run_name", help="trained run name (checkpoints under checkpoints/prasanns/<run_name>)"
+    )
+    ap.add_argument("cluster", help="Beaker cluster, e.g. ai2/neptune (weka-backed)")
+    ap.add_argument(
+        "--task",
+        default="all",
+        help=f"comma list from {ALL_TASKS}, or 'all' (one Beaker job per task).",
+    )
+    ap.add_argument(
+        "--variant",
+        default=None,
+        choices=VARIANTS,
+        help="dense|landmark|compressive|docchunk (default: infer from run name).",
+    )
+    ap.add_argument(
+        "--step", default="", help="pin a step dir (e.g. step580); default = latest complete."
+    )
+    ap.add_argument(
+        "--ckpt",
+        default="",
+        help="ABSOLUTE weka step dir to eval ANY checkpoint, e.g. "
+        "/weka/oe-training-default/ai2-llm/checkpoints/<you>/<run>/step1234 . "
+        "Overrides run_name globbing (run_name is then just a results label).",
+    )
+    ap.add_argument(
+        "--results-dir",
+        default="",
+        help="ABSOLUTE weka dir for the per-task result JSONs "
+        "(default: checkpoints/prasanns/<run_name>/eval).",
+    )
+    ap.add_argument(
+        "--prompt-format",
+        choices=["chat", "raw", "alpaca"],
+        default="chat",
+        help="chat=SFT (apply_chat_template, matches training); raw=BASE/CPT models; alpaca=legacy.",
+    )
+    ap.add_argument(
+        "--tokenizer",
+        default="",
+        help="HF tokenizer for the eval prompts. Empty (default) keeps the on-node runner's "
+        "Qwen/Qwen3-4B. Qwen3.5 checkpoints MUST pass Qwen/Qwen3.5-0.8B -- the two "
+        "families have different vocabularies (248320 vs 151936).",
+    )
+    ap.add_argument("--max-test", type=int, default=600)
+    ap.add_argument("--max-length", type=int, default=40960)
+    ap.add_argument(
+        "--batch-size", type=int, default=2
+    )  # 40960-ctx generation on ~48GB neptune GPUs; 8 OOMs
+    ap.add_argument(
+        "--ngpu",
+        type=int,
+        default=2,
+        help="GPUs per eval job (data-parallel over examples). 4B model fits on 1-2 GPUs; "
+        "2 lets ~4x more evals run concurrently than 8 and fits fragmented free slots.",
+    )
+    ap.add_argument("--priority", default="urgent")  # never below urgent (user directive)
+    ap.add_argument(
+        "--ladder-version",
+        choices=["v2"],
+        default="v2",
+        help="v2 is the ONLY supported ladder: every rung of a task shares the SAME "
+        "500 questions/answers and only distractors vary (reads the "
+        "_eval_bundle_eval500_v2 weka bundle). v1 is DISABLED -- its per-rung "
+        "question resampling put eval-set noise into every rung-to-rung delta, "
+        "and both the runner and eval_lc_native.py now reject it.",
+    )
+    ap.add_argument(
+        "--cot-mode",
+        choices=["none", "plan"],
+        default="none",
+        help="docchunk OOLONG only: 'plan' builds the CoT prefill (match a CoT-trained "
+        "checkpoint); default 'none' keeps the no-CoT eval byte-identical.",
+    )
+    ap.add_argument(
+        "--xlong",
+        action="store_true",
+        help="OPT-IN: also run the ultra-long 64k/128k/256k/512k/1M/2M rungs (contra|nq|outlier). "
+        "Forces bs=1 + raises MAX_LENGTH on-node. Use an 80GB GPU (ai2/jupiter); "
+        "256k needs bs=1 single-GPU. Files must be built by build_xlong_rungs.py "
+        "and uploaded to the v2 eval bundle.",
+    )
+    ap.add_argument(
+        "--eval-tag",
+        default="",
+        help="extra suffix for the on-weka result dir/files and the Beaker job name, so a "
+        "second config on the SAME checkpoint (e.g. an --xlong pass alongside the "
+        "base-rung pass) doesn't overwrite the first. Appended to any decode-gate / "
+        "group-selection tag.",
+    )
+    ap.add_argument(
+        "--xlong-rungs",
+        default="64k,128k",
+        help="which xlong sizes to add when --xlong: 64k,128k,256k,512k,1M,2M. Anything above "
+        "256k needs a YaRN serving copy (past Qwen3.5's native 262,144) and more "
+        "than one 80GB GPU (KV ~32KB/token: 2M alone is ~69GB).",
+    )
+    ap.add_argument(
+        "--landmark-top-k-blocks",
+        type=int,
+        default=None,
+        help="landmark/compressive variant: fixed number of landmark BLOCKS to keep per "
+        "query at decode (overrides the default 10%%-of-prompt fraction). "
+        "No effect on dense/docchunk.",
+    )
+    ap.add_argument(
+        "--landmark-nonselected-mass",
+        type=float,
+        default=None,
+        help="compressive-landmark variant only, and only applied when "
+        "--landmark-top-k-blocks is also set: attention mass reserved for "
+        "non-selected landmark blocks, in [0, 1). Unset keeps the checkpoint's "
+        "trained value.",
+    )
+    ap.add_argument(
+        "--landmark-group-selection",
+        choices=["mean", "max", "inverse_mean"],
+        default=None,
+        help="GQA compressive-landmark checkpoints only: share top-k landmark block "
+        "selection across each KV group's query heads instead of each head "
+        "retrieving independently. Omit (default) for independent per-head "
+        "selection. 'inverse_mean' is an anti-selection SANITY CHECK (keeps the "
+        "group's LEAST-attended blocks) -- not a real method. Distinct configs are "
+        "auto-separated by the eval tag (see --landmark-decode-gate-mode), so you do "
+        "NOT need a manual --results-dir to avoid overwrites.",
+    )
+    ap.add_argument(
+        "--landmark-decode-gate-mode",
+        choices=["grouped", "selection_only"],
+        default=None,
+        help="GROUPED-TRAINED (compressive_gqa_grouped) checkpoints only: decode-gate mode. "
+        "'grouped' (Version A) = group-mean gate matching training; 'selection_only' "
+        "(Version B) = per-head gate, pair with --landmark-group-selection=mean to "
+        "share only the top-k selection. Omit for the module default ('grouped'). The "
+        "value is folded into an eval tag that suffixes result files/dirs AND the "
+        "Beaker job name, so two decode modes on the same checkpoint never collide.",
+    )
+    ap.add_argument("--dry-run", action="store_true", help="build + print the job, do NOT submit.")
+    ap.add_argument(
+        "--gate-log-dir",
+        default="",
+        help="landmark/compressive only: ABSOLUTE weka dir for per-decoded-token landmark "
+        "gate-score logs (olmo_core.nn.attention.landmark_gate_analysis). Each job "
+        "writes '<dir>/gate_<run>_<task>.rank<N>' (one per GPU worker), readable "
+        "after the run. Empty (default) = no gate logging.",
+    )
+    ap.add_argument(
+        "--gate-log-all",
+        action="store_true",
+        help="with --gate-log-dir: also log EVERY candidate block's gate score each step "
+        "(not just the top-k kept ones), so the full distribution is recoverable.",
+    )
+    ap.add_argument(
+        "--landmark-flat-softmax",
+        action="store_true",
+        help="landmark/compressive only: inference-only ablation -- keep the hard top-k "
+        "block selection but drop the per-block gate reweighting (plain softmax over "
+        "the selected support). See analysis/flat_softmax_variant_eval.md.",
+    )
+    args = ap.parse_args()
+
+    # Eval tag = a compact, self-describing suffix built from the decode-gate mode (+ group selection),
+    # plus any explicit --eval-tag. It suffixes on-weka outputs (via EVAL_TAG) and the Beaker job name
+    # so parallel configs on ONE checkpoint don't overwrite each other. Empty when nothing is set ->
+    # unchanged legacy paths.
+    _tag_parts = []
+    if args.landmark_decode_gate_mode:
+        _tag_parts.append(f"dg-{args.landmark_decode_gate_mode}")
+    if args.landmark_group_selection:
+        _tag_parts.append(f"gs-{args.landmark_group_selection}")
+    if args.eval_tag:
+        _tag_parts.append(args.eval_tag)
+    eval_tag = "_".join(_tag_parts)
+
+    prepare_cli_environment()
+
+    variant = args.variant or variant_from_run_name(args.run_name)
+    tasks = (
+        ALL_TASKS if args.task == "all" else [t.strip() for t in args.task.split(",") if t.strip()]
+    )
+    bad = [t for t in tasks if t not in ALL_TASKS]
+    if bad:
+        raise SystemExit(f"unknown task(s) {bad}; choose from {ALL_TASKS}.")
+
+    if (args.gate_log_dir or args.landmark_top_k_blocks is not None) and variant not in (
+        "landmark",
+        "compressive",
+    ):
+        print(
+            f"WARNING: gate logging / landmark top-k requested but variant={variant} is not "
+            f"landmark/compressive -- the hook records nothing and top-k is ignored.",
+            file=sys.stderr,
+        )
+
+    print(
+        f"=== Beaker multirung eval | run={args.run_name} variant={variant} "
+        f"tasks={tasks} cluster={args.cluster} dry_run={args.dry_run} ==="
+    )
+    for task in tasks:
+        # docchunk now evaluates the FULL ladder (all 9 tasks incl. OOD) via
+        # eval_lc_native_docchunk_ladder.py (box-marker chunked prefill + bs=1 KV-cached decode).
+        lc = build_eval_launch_config(
+            run_name=args.run_name,
+            task=task,
+            variant=variant,
+            cluster=args.cluster,
+            step=args.step,
+            ckpt=args.ckpt,
+            results_dir=args.results_dir,
+            prompt_format=args.prompt_format,
+            tokenizer=args.tokenizer,
+            ngpu=args.ngpu,
+            max_test=args.max_test,
+            max_length=args.max_length,
+            batch_size=args.batch_size,
+            priority=args.priority,
+            ladder_version=args.ladder_version,
+            xlong=args.xlong,
+            xlong_rungs=args.xlong_rungs,
+            cot_mode=args.cot_mode,
+            landmark_top_k_blocks=args.landmark_top_k_blocks,
+            landmark_nonselected_mass=args.landmark_nonselected_mass,
+            landmark_group_selection=args.landmark_group_selection,
+            landmark_decode_gate_mode=args.landmark_decode_gate_mode,
+            eval_tag=eval_tag,
+            gate_log_dir=args.gate_log_dir,
+            gate_log_all=args.gate_log_all,
+            landmark_flat_softmax=args.landmark_flat_softmax,
+        )
+        print(f"\n--- [{task}] {lc.name} ---")
+        print(f"    cmd: {lc.cmd[-1]}")
+        if args.dry_run:
+            print("    [dry-run] not submitting.")
+            continue
+        workload = lc.launch(follow=False)
+        print(f"    submitted: {getattr(workload, 'id', workload)}")
+    print("\n=== done ===")
+
+
+if __name__ == "__main__":
+    main()

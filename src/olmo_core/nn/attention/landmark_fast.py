@@ -168,7 +168,10 @@ if triton is not None:
             do_ptrs = DO + (offs_m[:, None] * sqm + offs_d[None, :] * sqd)
 
             q = tl.load(q_ptrs)
-            qk = tl.dot(q, tl.trans(k), allow_tf32=False)
+            # Scale BEFORE the causal / chunk floor so the -1e30 floor matches the forward (which floors
+            # the already-scaled qk). Otherwise a fully-masked (pad) query's stored ``M ~ -1e30`` makes
+            # ``exp(qk*sm_scale - M)`` overflow to +inf, and inf*0 (do=0 for a loss-masked pad row) -> NaN.
+            qk = tl.dot(q, tl.trans(k), allow_tf32=False) * sm_scale
             qk = tl.where(offs_m_real[:, None] >= (offs_n[None, :]), qk, float("-inf"))
             if CHUNK_MASK:
                 q_chunk = tl.load(
@@ -182,11 +185,14 @@ if triton is not None:
                     & _knp
                     & (_same | ((q_chunk[:, None] < 0) & _qnp) | ((k_chunk[None, :] < 0) & _knp))
                 )
-                _al = _al | (offs_m_real[:, None] == offs_n[None, :])
+                # Self-diagonal guard on the query's OWN position ``offs_m`` (NOT the landmark-decremented
+                # ``offs_m_real``), matching the forward kernel: on a landmark row ``offs_m_real == p-1``
+                # would force-attend the interior-pad token at ``p-1``.
+                _al = _al | (offs_m[:, None] == offs_n[None, :])
                 qk = tl.where(_al, qk, -1e30)
 
             m = tl.load(m_ptrs + offs_m)
-            last_p = tl.exp(qk * sm_scale - m[:, None])
+            last_p = tl.exp(qk - m[:, None])
 
             do = tl.load(do_ptrs)
             dv += tl.dot(tl.trans(last_p.to(Q.dtype.element_ty)), do, allow_tf32=False)
@@ -405,7 +411,9 @@ if triton is not None:
         k = tl.load(K + (offs_n[:, None] * skn + offs_d[None, :] * skd))
         v = tl.load(V + (offs_n[:, None] * svn + offs_d[None, :] * svd))
         offs_m_real = offs_m + tl.where(tl.arange(0, BLOCK_M) == BLOCK_M - 1, -1, 0)
-        qk = tl.dot(q, tl.trans(k), allow_tf32=False)
+        # Scale BEFORE the causal / chunk floor (see the _bwd_kv diagonal block): keeps the -1e30 floor
+        # consistent with the forward so a fully-masked pad query (M ~ -1e30) doesn't overflow exp -> NaN.
+        qk = tl.dot(q, tl.trans(k), allow_tf32=False) * sm_scale
         qk = tl.where(offs_m_real[:, None] >= (offs_n[None, :]), qk, float("-inf"))
         if CHUNK_MASK:
             k_chunk = tl.load(
@@ -419,9 +427,11 @@ if triton is not None:
                 & _knp
                 & (_same | ((q_chunk[:, None] < 0) & _qnp) | ((k_chunk[None, :] < 0) & _knp))
             )
-            _al = _al | (offs_m_real[:, None] == offs_n[None, :])
+            # Self-diagonal guard on the query's OWN position ``offs_m`` (NOT the landmark-decremented
+            # ``offs_m_real``), matching the forward kernel (avoids force-attending interior-pad@p-1).
+            _al = _al | (offs_m[:, None] == offs_n[None, :])
             qk = tl.where(_al, qk, -1e30)
-        last_p = tl.exp(qk * sm_scale - m[:, None])
+        last_p = tl.exp(qk - m[:, None])
         last_dp = tl.zeros([BLOCK_M, BLOCK_N], dtype=tl.float32) - Di[:, None]
         last_dp += tl.dot(do, tl.trans(v), allow_tf32=False)
         ds = last_p * last_dp * sm_scale
@@ -707,8 +717,12 @@ class FastLandmarkAttention(Attention):
         # (content keeps absolute positions 0..L_i, the pad TAIL is masked per row; see
         # :meth:`TransformerGenerationModule.generate_landmark_batch`). All-None == the legacy
         # bs=1 / exact-length path (unchanged).
-        self._ragged_qpos: Optional[torch.Tensor] = None  # (B,) current per-row query/write position
-        self._ragged_prompt_lens: Optional[torch.Tensor] = None  # (B,) per-row landmark-prompt length
+        self._ragged_qpos: Optional[torch.Tensor] = (
+            None  # (B,) current per-row query/write position
+        )
+        self._ragged_prompt_lens: Optional[torch.Tensor] = (
+            None  # (B,) per-row landmark-prompt length
+        )
         self._ragged_top_k: Optional[torch.Tensor] = None  # (B,) per-row top-k, or None for dense
 
     def set_landmark_ragged_decode(
@@ -1206,7 +1220,9 @@ class FastLandmarkAttention(Attention):
         # query's own ("last") section bucket so they never form an isolated all-(-inf) softmax
         # bucket (which would NaN). Their scores are -inf below, so they carry exactly zero weight --
         # identical to the legacy bs=1 decode that simply never sees them.
-        last_section = (torch.where(eval_row, last_eval, last_non) & causal) | (~causal)  # (B,total)
+        last_section = (torch.where(eval_row, last_eval, last_non) & causal) | (
+            ~causal
+        )  # (B,total)
 
         scores = torch.matmul(q, k.transpose(-1, -2)) * self.softmax_scale  # (B,H,1,total)
         scores = scores.masked_fill(~causal[:, None, None, :], float("-inf"))

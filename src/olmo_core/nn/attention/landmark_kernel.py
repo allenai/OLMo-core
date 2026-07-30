@@ -165,7 +165,13 @@ if triton is not None:
                 q_fr = (q_chunk[:, None] < 0) & q_np
                 kv_fr = (k_chunk[None, :] < 0) & kv_np
                 allowed = q_np & kv_np & (same | q_fr | kv_fr)
-                allowed = allowed | (offs_m_real[:, None] == offs_n[None, :])
+                # Self-diagonal NaN guard: force-allow the query's OWN position (``offs_m``), never the
+                # landmark-decremented ``offs_m_real`` -- on a landmark row ``offs_m_real == p - 1``, and
+                # position ``p - 1`` is a PAD token whenever a window is only partially filled (interior
+                # window-fill padding sits right before the block-end landmark). Using ``offs_m`` keeps
+                # the guard on the actual self (already causal-masked to -inf for a landmark row, so it
+                # stays excluded) and matches the eager ``build_chunked_allowed_mask`` ``| diag`` guard.
+                allowed = allowed | (offs_m[:, None] == offs_n[None, :])
                 qk = tl.where(allowed, qk, -1e30)
             landmark_qk = tl.max(
                 tl.where(tl.arange(0, BLOCK_N)[None, :] == BLOCK_N - 1, qk, float("-inf")), 1
@@ -221,7 +227,10 @@ if triton is not None:
             q_fr = (q_chunk[:, None] < 0) & q_np
             kv_fr = (k_chunk[None, :] < 0) & kv_np
             allowed = q_np & kv_np & (same | q_fr | kv_fr)
-            allowed = allowed | (offs_m_real[:, None] == offs_n[None, :])
+            # Self-diagonal guard on the query's OWN position (see the grouping-loop note above): using
+            # ``offs_m`` instead of the landmark-decremented ``offs_m_real`` avoids force-attending the
+            # interior-pad token at ``p - 1`` on a landmark row.
+            allowed = allowed | (offs_m[:, None] == offs_n[None, :])
             qk = tl.where(allowed, qk, -1e30)
 
         m_curr = tl.maximum(tl.max(qk, 1), m_prev)  # compute new m

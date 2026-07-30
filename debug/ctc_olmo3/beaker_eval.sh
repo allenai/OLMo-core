@@ -1,0 +1,95 @@
+#!/bin/bash
+# Per-(task, arm) rung-ladder eval for the OLMo-3 CTC arm, run ON BEAKER (the Beaker-trained
+# checkpoints live on weka and are far too large to pull back to Berkeley).
+#
+# One gantry job = one checkpoint x the 2k/4k/8k/16k ladder, looping run_rung_eval.py. Results are
+# written to weka and relayed to S3 at the end so this host can pull the few-KB JSONs.
+#
+#   bash debug/ctc_olmo3/beaker_eval.sh <ckpt-dir-on-weka> <dense|chunked> <arm> <task> <eval-dir>
+# e.g.
+#   bash debug/ctc_olmo3/beaker_eval.sh \
+#     /weka/oe-training-default/ai2-llm/checkpoints/prasanns/ctc_suite/ckpts/ctc-olmo3-7b-contra-cmix-... \
+#     chunked chunked-mix contradiction contradiction
+set -uo pipefail
+export PATH=/scratch/users/prasann/conda/envs/corpus-reasoning-olmo/bin:$HOME/.local/bin:$PATH
+cd /accounts/projects/berkeleynlp/prasann/projects/OLMo-core
+
+CKPT="${1:?ckpt dir on weka}"
+VARIANT="${2:?dense|chunked}"
+ARM="${3:?full|chunked-mix}"
+TASK="${4:-contradiction}"
+EVALDIR="${5:-contradiction}"
+# Explicit max_length (env MAXLEN), because the driver's default of rung_tokens + 2048 is far too
+# small for these rung files. The contradiction rungs hold a FIXED corpus size but wildly varying
+# claim lengths, so at "rung 4096" the median prompt is 6,969 tokens and the longest is 23,796. Any
+# prompt over (max_length - max_new) is skipped and scored 0 while parse_rate still reads 1.0 --
+# that silently zeroed 354/500 examples at every rung >= 4k on the first pass, which is what made
+# the two arms look tied. MAXLEN=32768 covers 500/500 at 2k/4k and 489/500 at 8k/16k.
+MAXLEN="${MAXLEN:-}"
+MAXLEN_ARG=""
+[ -n "$MAXLEN" ] && MAXLEN_ARG="--max-length $MAXLEN"
+NAME="olmo3-eval-$(echo "$ARM-$TASK" | tr '_' '-')-$(date +%H%M%S)"
+
+WORK='
+set -uo pipefail
+export PYTHONPATH=$PWD/src
+export TOKENIZERS_PARALLELISM=false PYTHONWARNINGS=ignore PYTHONUNBUFFERED=1
+WK=/weka/oe-training-default/ai2-llm/checkpoints/prasanns/ctc_olmo3
+OUT=$WK/results
+mkdir -p "$OUT"
+echo "ckpt=CKPT_SUB variant=VARIANT_SUB arm=ARM_SUB task=TASK_SUB"
+# The eval job is submitted while its training run is still going, so the jupiter queue wait
+# overlaps the remaining training. train_ctc_suite.py writes config.json LAST (after
+# save_model_and_optim_state), so it is the correct "checkpoint is complete" sentinel.
+WAITED=0
+while [ ! -f CKPT_SUB/config.json ]; do
+  if [ $WAITED -ge 5400 ]; then echo "FATAL: checkpoint never appeared after ${WAITED}s"; exit 3; fi
+  [ $((WAITED % 300)) -eq 0 ] && echo "waiting for checkpoint... ${WAITED}s"
+  sleep 60; WAITED=$((WAITED + 60))
+done
+echo "checkpoint present after ${WAITED}s"
+ls -l CKPT_SUB/config.json
+RC_ALL=0
+for RUNG in 2048 4096 8192 16384; do
+  JSONL=$WK/eval_rungs/EVALDIR_SUB/rung_${RUNG}.jsonl
+  if [ ! -f "$JSONL" ]; then echo "MISSING eval rung $JSONL"; RC_ALL=1; continue; fi
+  PORT=$((29000 + RANDOM % 1000))
+  echo "########## rung=$RUNG port=$PORT $(date -u +%T) ##########"
+  python -u -m scripts.eval.ctc_suite.run_rung_eval \
+    --task TASK_SUB --ckpt CKPT_SUB --variant VARIANT_SUB --arm ARM_SUB \
+    --rung-tokens $RUNG --eval-jsonl "$JSONL" \
+    --model-scale olmo3-7b --nproc 8 --master-port $PORT \
+    --tokenizer $WK/tokenizer \
+    --doc-start-id 100266 --doc-end-id 100267 --eos-token-id 100257 \
+    --small-eval-ok MAXLEN_SUB --out-root "$OUT"
+  RC=$?; echo "---- rung $RUNG rc=$RC ----"
+  [ $RC -ne 0 ] && RC_ALL=$RC
+done
+echo "=== relay results to S3 ==="
+mkdir -p ~/.aws
+printf "%s" "$AWS_CREDS" > ~/.aws/credentials
+printf "%s" "$AWS_CFG" > ~/.aws/config
+command -v aws >/dev/null 2>&1 || python -m pip install -q awscli
+AWS=$(command -v aws)
+AWS_PROFILE=S3 "$AWS" s3 sync "$OUT" s3://ai2-llm/checkpoints/prasanns/ctc_olmo3/results --only-show-errors
+echo "EVAL_LADDER_DONE rc=$RC_ALL"
+'
+WORK="${WORK//CKPT_SUB/$CKPT}"
+WORK="${WORK//VARIANT_SUB/$VARIANT}"
+WORK="${WORK//ARM_SUB/$ARM}"
+WORK="${WORK//TASK_SUB/$TASK}"
+WORK="${WORK//EVALDIR_SUB/$EVALDIR}"
+WORK="${WORK//MAXLEN_SUB/$MAXLEN_ARG}"
+
+# NOTE the REAL `--install`, not the `--install true` no-op that beaker.md recommends for baked
+# images: this image predates olmo-core's `dataclass_extensions` dependency, so the no-op path dies
+# with `ModuleNotFoundError: No module named 'dataclass_extensions'` the moment the evaluator
+# imports olmo_core.data -- every rung failing in ~6s. Training jobs never hit this because
+# BeakerLaunchConfig installs the package itself.
+gantry run --name "$NAME" -w ai2/flex2 -b ai2/oe-other \
+  --cluster ai2/jupiter-cirrascale-2 --gpus 8 --priority urgent \
+  --beaker-image tylerr/olmo-core-tch291cu128-2025-11-25 \
+  --weka oe-training-default:/weka/oe-training-default \
+  --env-secret AWS_CREDS=PRASANNS_AWS_CREDENTIALS --env-secret AWS_CFG=PRASANNS_AWS_CONFIG \
+  --env-secret WANDB_API_KEY=PRASANNS_WANDB_API_KEY \
+  --install 'pip install -e .' --allow-dirty --timeout 0 --yes -- bash -c "$WORK"

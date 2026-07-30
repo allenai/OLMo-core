@@ -1,0 +1,15 @@
+{
+  "model_path": "/data/prasann/ctc_suite/ckpts/llama32-3b-contra-chunked-mix",
+  "variant": "dense",
+  "contra_data": "/scratch/users/prasann/ctc_suite_staged/eval_rungs/contradiction/rung_8192.jsonl",
+  "eval_size": 500,
+  "landmark_top_k_blocks": null,
+  "landmark_top_k_fraction": null,
+  "contradiction": {
+    "precision": 0.04196225098285913,
+    "recall": 0.1633333333333333,
+    "f1": 0.059992887991937006,
+    "exact_match": 0.0,
+    "parse_rate": 1.0
+  }
+}

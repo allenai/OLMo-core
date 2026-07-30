@@ -24,7 +24,7 @@
 #
 # ── RUN (from your laptop, with CLAUDE_CODE_OAUTH_TOKEN exported) ──
 #   scripts/launch_remote_control_agent.sh
-#   EPHEMERAL=1 TASK_BRIEF=landmark-sparse-decode-task.md scripts/launch_remote_control_agent.sh
+#   EPHEMERAL=1 TASK_BRIEF=records/landmark-sparse-decode-task.md scripts/launch_remote_control_agent.sh
 #
 # ── CONNECT FROM PHONE ──
 #   Open claude.ai/code (or the Claude app -> Code) and find the session by NAME (${NAME}); or grab
@@ -41,7 +41,7 @@ IMAGE="${IMAGE:-beaker://tylerr/olmo-core-tch291cu128-2025-11-25}"
 NAME="${NAME:-landmark-gpu-agent}"
 SECRET="${SECRET:-PRASANNS_CLAUDE_CODE_OAUTH_TOKEN}"   # flex2 secret name (user-prefixed, like the others)
 BRANCH="${BRANCH:-prasann/landmark}"
-TASK_BRIEF="${TASK_BRIEF:-landmark-sparse-decode-task.md}"  # optional: seed the agent with this brief
+TASK_BRIEF="${TASK_BRIEF:-records/landmark-sparse-decode-task.md}"  # optional: seed the agent with this brief
 
 CLUSTER_ARGS=()
 IFS=',' read -ra _C <<< "${CLUSTER}"; for c in "${_C[@]}"; do CLUSTER_ARGS+=(--cluster "$c"); done

@@ -56,6 +56,12 @@ import torch
 
 # Reserved ids (match the converter + olmo_core.data.document_chunk_landmark defaults).
 EOS_TOKEN_ID = 151643
+# The SFT model ends its assistant turn with <|im_end|> (chat template), and 151643 is appended by the
+# converter UNSUPERVISED (not in the loss mask) -- so the model reliably emits 151645 but often never
+# emits 151643. Stopping ONLY on 151643 made the (stopkind=None) tasks (outlier/nq/...) decode the full
+# max_new budget every example (huge slowdown; outlier@3k ~40min). Stop on 151645 too -> stops at the
+# real answer end (answer is fully emitted before <|im_end|>), ~10x faster, results unchanged.
+IM_END_ID = 151645  # <|im_end|>
 LANDMARK_TOKEN_ID = 151860
 DOC_START_ID = 151648  # <|box_start|>
 DOC_END_ID = 151649  # <|box_end|>
@@ -72,10 +78,19 @@ ALL_TASKS = ["contradiction", "nq", "oolong", "rerank", "outlier",
 # ----------------------------------------------------------------------------------------------------
 def build_ladders(args):
     E5 = os.environ.get("EVAL500_ROOT", "/scratch/users/prasann/cpt_data/eval500")
+    # v1 ladders are DISABLED (2026-07-29). Each v1 rung drew its OWN questions, so every
+    # rung-to-rung delta carried eval-set resampling noise on top of the length effect it was
+    # meant to isolate. v2 fixes the question set across rungs and varies only the distractors.
+    if args.ladder_version != "v2":
+        raise NotImplementedError(
+            f"--ladder-version {args.ladder_version!r} is no longer supported: v2 is the only "
+            "ladder. Build what you need as v2 (build_v2_eval_ladders.py for 2k-32k, "
+            "build_xlong_rungs.py for 64k-2M) and point EVAL500_ROOT at a v2 bundle."
+        )
     if args.ladder_version == "v2":
         # v2: every rung of a task shares the SAME >=500 questions; only distractor docs differ. ALL
         # rungs live under $EVAL500_ROOT/<task>/ (point EVAL500_ROOT at the v2 bundle).
-        return {
+        ladders_v2 = {
             "contradiction": [("2k", f"{E5}/contra/contradiction_eval_pubmed_both_n100_k3.jsonl"),
                 ("8k", f"{E5}/contra/contradiction_eval_pubmed_both_n190_k3.jsonl"),
                 ("16k", f"{E5}/contra/contradiction_eval_pubmed_both_n385_k3.jsonl"),
@@ -113,6 +128,25 @@ def build_ladders(args):
                 ("16k", f"{E5}/contra/contradiction_eval_fever_plain_n820_k3.jsonl"),
                 ("32k", f"{E5}/contra/contradiction_eval_fever_plain_n1642_k3.jsonl")],
         }
+        # ---- OPT-IN ultra-long rungs (64k/128k/256k), OFF by default (v2 only) ----
+        # KEEP IN SYNC with eval_lc_native.py: size-labelled glob so the calibrated doc-count in the
+        # filename can drift without editing this file. Files staged on weka under EVAL500_ROOT/<sub>/
+        # (NB contra subdir is "contra"). contra|nq|outlier only. Runner forces bs=1 + raises max_length.
+        if getattr(args, "xlong", False):
+            import glob as _glob
+
+            _XL = {
+                "contradiction": ("contra", "contradiction_eval_pubmed_both_n*_k3_xlong_{s}.jsonl"),
+                "nq": ("nq", "nq_validation_k*_xlong_{s}.jsonl"),
+                "outlier": ("outlier", "outlier_wiki100w_n*_k3_eval_xlong_{s}.jsonl"),
+            }
+            for _t, (_sub, _pat) in _XL.items():
+                for _s in ("64k", "128k", "256k"):
+                    _hits = sorted(_glob.glob(os.path.join(E5, _sub, _pat.format(s=_s))))
+                    if _hits:
+                        ladders_v2[_t].append((_s, _hits[0]))
+            print(f"[xlong] appended ultra-long rungs where files exist under {E5}", flush=True)
+        return ladders_v2
     return {
         "contradiction": [("2k", args.contra_data),
             ("8k", f"{E5}/contra/contradiction_eval_pubmed_both_n190_k3.jsonl"),
@@ -184,7 +218,7 @@ def main():
                     help="ladder JSON. MERGES <task>_<rung> keys into an existing file if present, so "
                          "per-task/per-rung split invocations accumulate into one ladder JSON.")
     ap.add_argument("--tokenizer", default="Qwen/Qwen3-4B")
-    ap.add_argument("--ladder-version", choices=["v1", "v2"], default="v2",
+    ap.add_argument("--ladder-version", choices=["v2"], default="v2",
                     help="v2 (DEFAULT): every rung of a task shares the SAME >=500 questions, only "
                          "distractors vary (reads the _eval_bundle_eval500_v2 bundle via EVAL500_ROOT).")
     ap.add_argument("--mem-freq", type=int, default=63,
@@ -198,6 +232,11 @@ def main():
                     help="comma list restricting which of the 9 tasks to run.")
     ap.add_argument("--rungs", default=None,
                     help="comma list restricting rungs (e.g. '16k,32k'); applied across tasks.")
+    ap.add_argument("--xlong", action="store_true",
+                    default=os.environ.get("LADDER_XLONG") == "1",
+                    help="OPT-IN (v2 only): append the ultra-long 64k/128k/256k rungs (contra|nq|outlier) "
+                         "by size-labelled glob under EVAL500_ROOT. Combine with --rungs 64k,128k to pick "
+                         "which; the runner forces bs=1 and raises --max-length. Honors env LADDER_XLONG=1.")
 
     # ---- per-task max-new-tokens knobs ----
     ap.add_argument("--contra-max-new-tokens", type=int, default=96,
@@ -233,22 +272,6 @@ def main():
     if args.root:
         os.chdir(args.root)
 
-    from transformers import AutoTokenizer
-
-    from olmo_core.config import DType
-    from olmo_core.data.document_chunk_landmark import (
-        DOC_END_ID as _DE,
-    )
-    from olmo_core.data.document_chunk_landmark import (
-        DOC_START_ID as _DS,
-    )
-    from olmo_core.data.document_chunk_landmark import (
-        emit_document_chunk_dense,
-        emit_document_chunk_landmark,
-        segment_prompt_to_chunks,
-    )
-    from olmo_core.generate.generation_module.config import GenerationConfig
-    from olmo_core.generate.generation_module.transformer import TransformerGenerationModuleConfig
     from ctc_eval.eval.evaluate import (
         _eval_contradiction,
         _eval_oolong,
@@ -256,6 +279,20 @@ def main():
         _eval_rerank,
         _eval_retrieval,
         load_unified_examples,
+    )
+    from transformers import AutoTokenizer
+
+    from olmo_core.config import DType
+    from olmo_core.data.document_chunk_landmark import DOC_END_ID as _DE
+    from olmo_core.data.document_chunk_landmark import DOC_START_ID as _DS
+    from olmo_core.data.document_chunk_landmark import (
+        emit_document_chunk_dense,
+        emit_document_chunk_landmark,
+        segment_prompt_to_chunks,
+    )
+    from olmo_core.generate.generation_module.config import GenerationConfig
+    from olmo_core.generate.generation_module.transformer import (
+        TransformerGenerationModuleConfig,
     )
 
     assert (_DS, _DE) == (DOC_START_ID, DOC_END_ID)
@@ -357,7 +394,16 @@ def main():
 
     @torch.no_grad()
     def generate_one(prefill, max_new_tokens, answer_complete):
-        gm.prepare_inference_cache(1, args.max_length)  # (re)set the cache cursor to 0 per example
+        # Size the KV cache to THIS example's actual need (prefill + decode budget), not the raised
+        # --max-length. At the xlong 64k/128k rungs the runner raises --max-length to cover the longest
+        # rung, so a full-max_length cache wastes ~10 GiB at the 64k rung and starves the FlexAttention
+        # prefill kernel (the OOM that killed the docchunk xlong jobs). The landmark decode also inserts
+        # a landmark token every mem_freq generated tokens, so budget for those extra cache slots. The
+        # cache manager only reallocates when it needs to GROW (is_reusable keeps a larger buffer), so
+        # this never shrinks a cache mid-rung. Capped at args.max_length as a hard ceiling.
+        lm_overhead = (max_new_tokens // args.mem_freq + 2) if is_landmark else 0
+        cache_len = min(len(prefill) + max_new_tokens + lm_overhead + 1, args.max_length)
+        gm.prepare_inference_cache(1, cache_len)  # (re)set the cache cursor to 0 per example
         leftpad = torch.zeros(1, dtype=torch.int32, device=device)
         if not is_landmark:
             # Dense / hierarchical / full: prefill once (chunked mask applied + K,V cached for the
@@ -368,7 +414,7 @@ def main():
             nxt = int(logits[0, -1].argmax().item())
             new_content = []
             for _ in range(max_new_tokens):
-                if nxt == EOS_TOKEN_ID:
+                if nxt == EOS_TOKEN_ID or nxt == IM_END_ID:
                     break
                 new_content.append(nxt)
                 if nxt == NEWLINE_ID and answer_complete is not None and answer_complete(new_content):
@@ -388,7 +434,7 @@ def main():
         new_content = []
         since_landmark = 0
         for _ in range(max_new_tokens):
-            if nxt == EOS_TOKEN_ID:
+            if nxt == EOS_TOKEN_ID or nxt == IM_END_ID:
                 break
             new_content.append(nxt)
             logits = gm.model(torch.tensor([[nxt]], device=device), logits_to_keep=1)

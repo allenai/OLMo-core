@@ -1,0 +1,5 @@
+/scratch/users/prasann/conda/envs/corpus-reasoning-olmo/lib/python3.12/site-packages/transformers/utils/hub.py:110: FutureWarning: Using `TRANSFORMERS_CACHE` is deprecated and will be removed in v5 of Transformers. Use `HF_HOME` instead.
+  warnings.warn(
+loaded 2000 examples (task=contradiction, emit=dense, chunk_by=document); tokenizing -> /scratch/users/prasann/longctx_sft_qwen/contradiction_n20_docdense_nocot
+length tokens: min 849 / p50 1089 / p90 1229 / max 1661
+done: kept 2000, dropped 0 (too long / reserved collision). shards: 1

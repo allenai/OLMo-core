@@ -10,3 +10,8 @@ Instead, see [`src/scripts/official/`](https://github.com/allenai/OLMo-core/tree
 
 Most of the scripts here have a consistent command-line API, but that's not guaranteed.
 Generally if you run the script without any arguments it will print out some usage information.
+
+---
+
+Our own training code lives in [`memexpress/`](memexpress/README.md) — one folder per
+experiment family. Upstream AI2 scripts stay at this level.

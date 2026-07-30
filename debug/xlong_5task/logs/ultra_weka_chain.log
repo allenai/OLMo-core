@@ -1,0 +1,28 @@
+S3 upload finished with state=COMPLETED at 2026-07-29 15:48:11
+
+                                             o=======[]   
+   __ _                    _               _ |_      []   
+  / _` |  __ _    _ _     | |_      _ _   | || |     []   
+  \__, | / _` |  | ' \    |  _|    | '_|   \_, |   _/ ]_  
+  |___/  \__,_|  |_||_|   _\__|   _|_|_   _|__/   |_____| 
+_|"""""|_|"""""|_|"""""|_|"""""|_|"""""|_| """"| 
+ `---------------------------------------------' 
+
+Attempted to use the GitHub CLI to validate that the commit exists on the 
+remote, however it appears that it's not installed. Please ensure the GitHub CLI
+is installed to avoid this warning message.
+[2026-07-29 15:48:14] WARNING  [py.warnings:112] 
+/scratch/users/prasann/conda/envs/corpus-reasoning-olmo/lib/python3.12/site-pack
+ages/beaker/client.py:138: UserWarning: You're using beaker-py v2.7.0, but a 
+newer version (v2.7.1) is available.
+
+Please upgrade with `pip install --upgrade beaker-py`.
+  warnings.warn(
+
+Experiment: prasanns/xlong5-ultra-weka-sync → 
+https://beaker.org/ex/01KYR10XJJ1NFNCKYGHNK2YTH8
+Workspace: ai2/flex2 → https://beaker.org/ws/ai2/flex2
+Commit: 55ed7ef xlong eval ladder: extend past the 256k ceiling t… → 
+https://github.com/allenai/OLMo-core/commit/55ed7ef
+Branch: prasann/landmark → 
+https://github.com/allenai/OLMo-core/tree/prasann/landmark

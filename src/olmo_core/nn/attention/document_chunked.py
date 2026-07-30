@@ -25,7 +25,7 @@ intra-document packing (``cu_doc_lens``), or Ulysses CP while ``chunk_ids`` is a
 """
 
 import logging
-from typing import Optional
+from typing import Any, Optional
 
 import torch
 import torch.nn.functional as F
@@ -64,6 +64,14 @@ _FLEX_MIN_SEQ_LEN = 8192
 # it via ``flex_block_size`` to let sub-128-token chunks realize their block-sparsity.
 _FLEX_DEFAULT_BLOCK_SIZE = 128
 
+# Above this sequence length the dense materialized ``(B, 1, T, T)`` additive mask is too big to be a
+# safe fallback: it needs ~``2 * B * T**2`` bytes (bf16) -- ~44 GiB at T=64k, ~176 GiB at T=128k -- so
+# if FlexAttention itself OOMs at long context, materializing the dense mask would just OOM again
+# (fatally). At/below this length the dense mask is small enough (<= ~2 GiB) to be a real fallback, so
+# the historical <=32k behavior is preserved exactly; beyond it we raise a clear, actionable error
+# instead of allocating the T x T tensor. See :meth:`DocumentChunkedAttention._sdpa_masked`.
+_DENSE_MASK_MAX_SEQ_LEN = 32768
+
 # Single-slot BlockMask cache shared across all attention layers within one forward pass. The chunked
 # block mask depends only on ``chunk_ids`` (the SAME tensor threaded to every block), the sequence
 # length, the pattern, and the flex block size -- all identical across layers -- so it is built once by
@@ -100,12 +108,34 @@ class DocumentChunkedAttention(Attention):
     :param token_window_w: Window width for the ``"token_window"`` pattern.
     :param dilation_n: Documents attended per layer for the ``"hierarchical_dilated"`` pattern.
     :param dilation_m: Dilation base for the ``"hierarchical_dilated"`` pattern. At this layer the
-        stride is ``m**layer_idx`` (saturated once the span covers all history).
+        stride is ``m**(layer_idx % dilation_cycle)`` (saturated within the cycle once the span covers
+        all history).
+    :param dilation_cycle: Rotation period ``L`` for the ``"hierarchical_dilated"`` pattern (the stride
+        rotates with depth as ``layer_idx % L``). Defaults to 3.
     :param dilation_max_docs: Optional fixed saturation reference for ``"hierarchical_dilated"``
         (``None`` -> compute the cap per sequence from the actual chunk count).
+    :param summary_every_k: Cell size for the ``"summary_attention"`` pattern: how many context
+        documents precede each summary span. Must match the tokenized layout.
+    :param summary_bandwidth: Relay bandwidth for ``"summary_attention"``: how many of each earlier
+        summary span's leading tokens a later chunk may attend. ``0`` removes the relay (a pure
+        cell-blocks mask -- the bandwidth ladder's floor control).
+    :param summary_relay: Whether a ``"summary_attention"`` summary span may read its own cell
+        (``True``, the treatment) or nothing at all (``False``, the vacuous placebo).
+    :param gold_decoys: ``"gold_hop_controlled"``: distance-matched non-gold decoy pairs per gold
+        pair (the leak fix). Recorded so eval rebuilds the SAME graph the model trained under.
+    :param gold_hops: Arm of the ``"gold_hop_controlled"`` ladder: ``1`` / ``2`` / ``3`` / ``-1``
+        (=inf). Recorded so the saved ``config.json`` names the arm; the per-example graph itself is
+        supplied at runtime by :func:`~olmo_core.nn.attention.gold_hop_mask.install_gold_hop_mask`,
+        which cross-checks this value against the hook it installs.
     :param layer_idx: The transformer layer index this module lives at (0-based). The
         ``"hierarchical_dilated"`` pattern reads it to pick the per-layer dilation stride; other
         patterns ignore it.
+    :param full_attention_layers: Optional list of layer indices that should use **plain full
+        (causal) attention** instead of the chunked mask -- a hybrid where these ``N`` layers see the
+        whole sequence and the rest stay document-chunked. Negative indices count from the end
+        (``-1`` = last layer). When ``layer_idx`` is in this set the module drops ``chunk_ids`` and
+        falls through to ordinary causal attention (identical to a ``"standard"``-pattern layer, and
+        KV-cache-friendly at eval). ``None`` / empty -> every layer uses the chunked mask.
 
     See :class:`Attention` for the remaining parameters.
     """
@@ -116,12 +146,22 @@ class DocumentChunkedAttention(Attention):
         cross_doc_mode: str = "chunked",
         doc_window_k: int = 0,
         token_window_w: int = 0,
+        doc_keep_prob: float = 0.1,
+        random_seed: int = 42,
+        random_doc_per_example: bool = False,
         dilation_n: int = 2,
         dilation_m: int = 2,
+        dilation_cycle: int = 3,
         dilation_max_docs: Optional[int] = None,
+        summary_every_k: int = 10,
+        summary_bandwidth: int = 0,
+        summary_relay: bool = True,
+        gold_hops: int = 2,
+        gold_decoys: int = 0,
         flex_block_size: int = _FLEX_DEFAULT_BLOCK_SIZE,
         layer_idx: int = 0,
         n_layers: int = 1,
+        full_attention_layers: Optional[list] = None,
         softmax_scale: Optional[float] = None,
         **kwargs,
     ):
@@ -142,20 +182,45 @@ class DocumentChunkedAttention(Attention):
         self.cross_doc_mode = cross_doc_mode
         self.layer_idx = layer_idx
         self.n_layers = n_layers
+        # Hybrid full/chunked: designated layers ignore the chunked mask and run plain causal
+        # attention. Normalize negative indices from the end and validate against depth.
+        normalized_full: set = set()
+        for i in full_attention_layers or []:
+            j = i + n_layers if i < 0 else i
+            if not (0 <= j < n_layers):
+                raise OLMoConfigurationError(
+                    f"full_attention_layers index {i} is out of range for n_layers={n_layers}."
+                )
+            normalized_full.add(j)
+        self.full_attention_layers = frozenset(normalized_full)
+        self._is_full_attention_layer = layer_idx in self.full_attention_layers
         self.flex_block_size = int(flex_block_size)
         self._pattern = AttentionPattern(
             name=cross_doc_mode,
             doc_window_k=doc_window_k,
             token_window_w=token_window_w,
+            doc_keep_prob=doc_keep_prob,
+            random_seed=random_seed,
+            random_doc_per_example=random_doc_per_example,
             dilation_n=dilation_n,
             dilation_m=dilation_m,
+            dilation_cycle=dilation_cycle,
             dilation_max_docs=dilation_max_docs,
+            summary_every_k=summary_every_k,
+            summary_bandwidth=summary_bandwidth,
+            summary_relay=summary_relay,
+            gold_hops=gold_hops,
+            gold_decoys=gold_decoys,
         )
         # The base ``Attention`` only forwards ``softmax_scale`` to the backend; store it for our own
         # SDPA call (mirrors :class:`LandmarkAttention`).
         self.softmax_scale = softmax_scale if softmax_scale is not None else self.head_dim**-0.5
         # Transient per-forward chunk roles, stashed by ``forward`` for ``sdpa`` to read.
         self._chunk_ids: Optional[torch.Tensor] = None
+        # Set by ``gold_hop_mask.install_gold_hop_mask``: the shared holder whose ``adjacency`` a
+        # forward pre-hook refreshes each forward with this batch's gold-edited doc->doc graph. Only
+        # the "gold_hop_controlled" pattern reads it; ``None`` for every other pattern.
+        self._gold_hop_holder: Optional[Any] = None
         # Sticky fallback: set if FlexAttention errors at runtime (then use the dense mask). Also
         # settable by tests to force the materialized path for flex-vs-dense parity checks.
         self._force_eager_mask: bool = False
@@ -171,6 +236,10 @@ class DocumentChunkedAttention(Attention):
         ``(B, T)`` (or ``(T,)``); see the module docstring. All other arguments are forwarded to
         :meth:`Attention.forward`.
         """
+        # Hybrid: a full-attention layer ignores the roles entirely -> plain causal attention (and no
+        # chunk_ids/CP conflict, since there are effectively no roles here).
+        if self._is_full_attention_layer:
+            chunk_ids = None
         if chunk_ids is not None and self.cp_enabled:
             raise OLMoConfigurationError(
                 "DocumentChunkedAttention does not support Ulysses CP together with chunk_ids "
@@ -206,6 +275,32 @@ class DocumentChunkedAttention(Attention):
             chunk_ids = chunk_ids.expand(batch_size, T)
         return chunk_ids
 
+    def _gold_hop_adjacency(self, batch_size: int) -> Optional[torch.Tensor]:
+        """
+        This forward's per-example gold-edited doc->doc graph, or ``None`` for non-gold patterns.
+
+        Raises rather than falling back if the ``"gold_hop_controlled"`` pattern is configured but no
+        hook is installed: a missing graph is not a degraded mask, it is a *different experiment*, and
+        the whole point of the arm is which edges are absent.
+        """
+        if self.cross_doc_mode != "gold_hop_controlled":
+            return None
+        holder = self._gold_hop_holder
+        adj = None if holder is None else holder.adjacency
+        if adj is None:
+            raise OLMoConfigurationError(
+                "cross_doc_mode='gold_hop_controlled' but no gold-hop graph is available for this "
+                "forward. Install the fingerprint hook with "
+                "olmo_core.nn.attention.gold_hop_mask.install_gold_hop_mask(model, fn) before "
+                "training/eval."
+            )
+        if adj.shape[0] != batch_size and adj.shape[0] != 1:
+            raise OLMoConfigurationError(
+                f"gold-hop adjacency batch ({adj.shape[0]}) does not match the forward's batch "
+                f"({batch_size}); the pre-hook and the attention forward disagree about the batch."
+            )
+        return adj
+
     def _build_additive_mask(self, chunk_ids: torch.Tensor, *, dtype: torch.dtype) -> torch.Tensor:
         """Materialize the chunked allowed-mask as a ``(B, 1, T, T)`` additive bias (0 / finfo.min)."""
         device = chunk_ids.device
@@ -213,7 +308,11 @@ class DocumentChunkedAttention(Attention):
         # (B, T, T) boolean: True where the query may attend the key (causal + roles + pattern). The
         # layer index drives the per-layer dilation stride for the "hierarchical_dilated" pattern.
         allowed = build_chunked_allowed_mask(
-            self._pattern, chunk_ids, is_anchor=is_anchor, layer_idx=self.layer_idx
+            self._pattern,
+            chunk_ids,
+            is_anchor=is_anchor,
+            layer_idx=self.layer_idx,
+            doc_adjacency=self._gold_hop_adjacency(chunk_ids.shape[0]),
         )
         finfo_min = torch.finfo(dtype).min
         return torch.where(
@@ -221,6 +320,76 @@ class DocumentChunkedAttention(Attention):
             torch.zeros((), dtype=dtype, device=device),
             torch.full((), finfo_min, dtype=dtype, device=device),
         )
+
+    def _run_flex_attention(
+        self,
+        q: torch.Tensor,
+        k: torch.Tensor,
+        v: torch.Tensor,
+        chunk_ids: torch.Tensor,
+        mask_mod,
+        *,
+        B: int,
+        T: int,
+    ) -> Optional[torch.Tensor]:
+        """
+        Run the block-sparse FlexAttention path once (building/reusing the shared BlockMask).
+
+        On a CUDA OOM the failed BlockMask and any fragmentation are released
+        (:func:`torch.cuda.empty_cache`) and the kernel is retried **once** -- long-context evals often
+        OOM only because a slightly-too-large transient could not be carved out, and freeing the cached
+        block mask recovers enough headroom to succeed. If it still OOMs, or a non-OOM flex error is
+        raised, this returns ``None`` (the sticky ``_force_eager_mask`` flag is set so the rest of the
+        forward skips flex) and the caller decides the fallback. Never materializes a dense mask itself.
+
+        :returns: The attention output as ``(B, T, H, D)``, or ``None`` if flex could not run.
+        """
+        # Build the block mask once per forward and reuse it across all layers (they share the same
+        # chunk_ids / T / pattern / block size). Key on the stashed chunk_ids identity so a new forward
+        # rebuilds it.
+        cids = self._chunk_ids
+        key = (
+            id(cids),
+            cids.data_ptr(),
+            cids._version,
+            B,
+            T,
+            self.flex_block_size,
+            self.cross_doc_mode,
+            str(q.device),
+        )
+        for attempt in range(2):
+            try:
+                block_mask = _get_or_build_block_mask(
+                    mask_mod, key, B=B, T=T, device=q.device, block_size=self.flex_block_size
+                )
+                out = _flex_attention(
+                    q.contiguous(),
+                    k.contiguous(),
+                    v.contiguous(),
+                    block_mask=block_mask,
+                    scale=self.softmax_scale,
+                )
+                return out.transpose(1, 2).contiguous()
+            except torch.cuda.OutOfMemoryError:  # pragma: no cover - CUDA-only long-context path
+                # Drop the (possibly half-built) cached block mask and free fragments, then retry once.
+                _BLOCK_MASK_CACHE.pop("cur", None)
+                torch.cuda.empty_cache()
+                if attempt == 1:
+                    self._force_eager_mask = True
+                    log.warning(
+                        f"FlexAttention OOM at seq_len={T} even after empty_cache; giving up on the "
+                        "block-sparse path for this DocumentChunkedAttention forward."
+                    )
+                    return None
+            except Exception as e:  # pragma: no cover - fall back if flex fails at runtime
+                self._force_eager_mask = True
+                log.warning(
+                    f"FlexAttention failed ({e}); falling back to the dense chunked mask "
+                    "for this DocumentChunkedAttention layer."
+                )
+                return None
+        return None
 
     def sdpa(
         self,
@@ -301,45 +470,25 @@ class DocumentChunkedAttention(Attention):
         if _HAS_FLEX and q.is_cuda and T >= _FLEX_MIN_SEQ_LEN and not self._force_eager_mask:
             mask_mod = build_chunked_mask_mod(self._pattern, chunk_ids)
             if mask_mod is not None:
-                try:
-                    # Build the block mask once per forward and reuse it across all layers (they share
-                    # the same chunk_ids / T / pattern / block size). Key on the stashed chunk_ids
-                    # identity so a new forward rebuilds it.
-                    cids = self._chunk_ids
-                    key = (
-                        id(cids),
-                        cids.data_ptr(),
-                        cids._version,
-                        B,
-                        T,
-                        self.flex_block_size,
-                        self.cross_doc_mode,
-                        str(q.device),
-                    )
-                    block_mask = _get_or_build_block_mask(
-                        mask_mod,
-                        key,
-                        B=B,
-                        T=T,
-                        device=q.device,
-                        block_size=self.flex_block_size,
-                    )
-                    out = _flex_attention(
-                        q.contiguous(),
-                        k.contiguous(),
-                        v.contiguous(),
-                        block_mask=block_mask,
-                        scale=self.softmax_scale,
-                    )
-                    return out.transpose(1, 2).contiguous()
-                except Exception as e:  # pragma: no cover - fall back if flex fails at runtime
-                    self._force_eager_mask = True
-                    log.warning(
-                        f"FlexAttention failed ({e}); falling back to the dense chunked mask "
-                        "for this DocumentChunkedAttention layer."
+                out = self._run_flex_attention(q, k, v, chunk_ids, mask_mod, B=B, T=T)
+                if out is not None:
+                    return out
+                # FlexAttention gave up (OOM even after a cache-clearing retry, or a non-OOM error).
+                # At long context the dense (B,1,T,T) materialization below would allocate ~2*B*T**2
+                # bytes and just OOM again fatally, so fail loudly with an actionable message instead
+                # of the cryptic allocator OOM. At/below _DENSE_MASK_MAX_SEQ_LEN the dense mask is small
+                # enough to be a genuine fallback (preserving the historical <=32k behavior).
+                if T > _DENSE_MASK_MAX_SEQ_LEN:
+                    gib = 2 * B * T * T / 2**30
+                    raise RuntimeError(
+                        f"DocumentChunkedAttention: FlexAttention could not run at seq_len={T} and "
+                        f"the dense fallback mask would need ~{gib:.0f} GiB (B={B}). Reduce the eval "
+                        f"max_length / KV-cache size to free GPU memory (the dense T x T fallback is "
+                        f"only viable at seq_len <= {_DENSE_MASK_MAX_SEQ_LEN})."
                     )
 
-        # Fallback: dense materialized additive mask (CPU/tests, unsupported pattern, or flex error).
+        # Fallback: dense materialized additive mask (CPU/tests, unsupported pattern, or flex error at
+        # short context). Guarded above so it is never reached with a fatally large T x T mask.
         attn_mask = self._build_additive_mask(chunk_ids, dtype=q.dtype)
         out = F.scaled_dot_product_attention(
             q,

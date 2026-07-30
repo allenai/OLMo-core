@@ -1,0 +1,10 @@
+
+### {'cmin': 4, 'cmax': 40, 'target': 70, 'filler_max': 50}
+  N=  100: 3/3 ok  (0.04s)  brute T-triples=2 [OK]  count range [4,50]
+  N=  500: 3/3 ok  (0.08s)  brute T-triples=2 [OK]  count range [4,45]
+  N= 1000: 3/3 ok  (0.22s)  brute T-triples=2 [OK]  count range [6,50]
+
+### {'cmin': 4, 'cmax': 40, 'target': 70, 'filler_max': 70}
+  N=  100: 3/3 ok  (0.05s)  brute T-triples=2 [OK]  count range [5,70]
+  N=  500: 3/3 ok  (0.19s)  brute T-triples=2 [OK]  count range [7,70]
+  N= 1000: 3/3 ok  (0.36s)  brute T-triples=2 [OK]  count range [10,70]

@@ -61,6 +61,15 @@ site/
 core
 /dataset-cache/
 
+# slurm job logs: old sbatch launchers wrote hidden `.<family>_%x_%j.log` files to the repo root;
+# those now live in /logs. Both patterns ignored so stale launchers don't re-clutter git status.
+/logs/
+/.*.log
+
+# runtime artifacts: gantry scratch dir from launching at repo root; wrangler (viz site) cache
+/train/
+/.wrangler/
+
 # local-only artifacts (never commit): preserved eval-score dumps + scratch configs
 /eval_results_kept/
 /configfile.txt
@@ -68,5 +77,10 @@ core
 # Claude Code session/memory dir
 .claude/
 
-# corpus-reasoning kept as a standalone clone (was a submodule; removed so gantry launches work)
+# The corpus-reasoning CODE lives in src/corpus_reasoning/ (tracked). The root clone was DELETED
+# 2026-07-13 (its unique viz-hub work pushed to origin + vendored into src/corpus_reasoning/viz_hub/).
+# This entry only guards against an accidental re-clone at the repo root.
 /corpus-reasoning/
+
+# repo-root symlink to src/scripts/train/memexpress (the training-code hub) for quick inspection
+/training

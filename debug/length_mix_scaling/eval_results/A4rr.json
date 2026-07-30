@@ -1,0 +1,25 @@
+{
+  "arm": "A4rr",
+  "eval_backend": "vllm",
+  "note": "re-eval of the collapsed round-1 checkpoint; reproduces it exactly",
+  "rungs": {
+    "2048": {
+      "f1": 0.921,
+      "parse_rate": 1.0,
+      "eval_size": 500,
+      "binomial_se": 0.012063084182745303
+    },
+    "8192": {
+      "f1": 0.796,
+      "parse_rate": 1.0,
+      "eval_size": 500,
+      "binomial_se": 0.018021320706318945
+    },
+    "32768": {
+      "f1": 0.249,
+      "parse_rate": 1.0,
+      "eval_size": 500,
+      "binomial_se": 0.019339027896975586
+    }
+  }
+}

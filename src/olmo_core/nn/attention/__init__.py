@@ -93,6 +93,7 @@ __all__ = [
     "MultiLandmarkAttention",
     "DocumentMultiLandmarkAttention",
     "DocumentChunkedAttention",
+    "DilatedSlidingWindowAttention",
     "AttentionPattern",
     "RingAttentionLoadBalancerType",
     "RingAttentionLoadBalancer",
@@ -269,6 +270,14 @@ class AttentionType(StrEnum):
     ➡️ :class:`DocumentChunkedAttention` (dense full attention restricted by the chunked-document
     mask: context chunks isolated, FREE query/answer bridges across them -- the non-landmark dense
     analogue of ``document_landmark``)
+    """
+
+    dilated_sliding_window = "dilated_sliding_window"
+    """
+    ➡️ :class:`DilatedSlidingWindowAttention` (dilated causal sliding window whose dilation stride
+    rotates with transformer depth -- "Hierarchical K": each layer attends only ``K`` keys spaced
+    ``base**(layer_idx % num_configs)`` apart, so attention stays O(N*K) while the receptive field of a
+    stack of layers grows geometrically)
     """
 
 
@@ -462,8 +471,17 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
     dilation_m: Optional[int] = None
     """
     For :class:`DocumentChunkedAttention` with ``cross_doc_mode="hierarchical_dilated"`` only: the
-    dilation base ``m >= 1``. At transformer layer ``ell`` the stride is ``m**ell`` (saturated once it
-    spans all history), so the receptive span is ``(n-1)*m**ell`` documents. Defaults to 2.
+    dilation base ``m >= 1``. At cycle position ``p = ell % dilation_cycle`` the stride is ``m**p``
+    (saturated within the cycle once it spans all history), so the receptive span is ``(n-1)*m**p``
+    documents. Defaults to 2.
+    """
+    dilation_cycle: Optional[int] = None
+    """
+    For the document-chunked family with ``cross_doc_mode="hierarchical_dilated"`` only: the rotation
+    period ``L`` -- the dilation stride rotates with depth as ``layer_idx % L`` (the "Hierarchical K"
+    schedule), so deep layers revisit the fine-grained small-stride patterns. ``None`` (default) uses
+    the pattern default of 3. (Note the pure-saturation schedule ``dilation_cycle=None`` at the
+    :class:`~olmo_core.nn.attention.chunked_mask.AttentionPattern` level is deprecated.)
     """
     dilation_max_docs: Optional[int] = None
     """
@@ -471,12 +489,96 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
     optional fixed document count for the saturation cap. ``None`` (default) computes the cap per
     sequence from the actual number of context chunks.
     """
+    doc_keep_prob: Optional[float] = None
+    """
+    For :class:`DocumentChunkedAttention` with ``cross_doc_mode="random_doc"`` only: each context
+    document attends to itself + a random subset of the strictly-earlier documents, each kept with this
+    Bernoulli probability (~this fraction of previous docs on average). Defaults to 0.1. The keep set is
+    a deterministic seeded hash of the ``(query_doc, key_doc)`` pair (fixed random sparsity graph over
+    document indices; vary :attr:`random_doc_seed`).
+    """
+    random_doc_seed: Optional[int] = None
+
+    random_doc_per_example: Optional[bool] = None
+    """
+    ``random_doc``: give EVERY EXAMPLE its own random sparsity graph (still deterministic
+    per example) instead of one graph shared across all examples. The ablation for "does the
+    model need a *stable* mask, or just sparse connectivity?".
+    """
+    """
+    For :class:`DocumentChunkedAttention` with ``cross_doc_mode="random_doc"`` only: seed for the
+    per-document-pair keep hash. Defaults to 42.
+    """
+    summary_every_k: Optional[int] = None
+    """
+    For :class:`DocumentChunkedAttention` with ``cross_doc_mode="summary_attention"`` only: the **cell
+    size** -- how many context documents precede each summary span. The tokenized layout must match
+    (``summary_every_k`` docs then one summary span per cell), so chunk indices run on a stride of
+    ``summary_every_k + 1``. Defaults to 10.
+    """
+    summary_bandwidth: Optional[int] = None
+    """
+    For :class:`DocumentChunkedAttention` with ``cross_doc_mode="summary_attention"`` only: the **relay
+    bandwidth** -- how many of each earlier summary span's leading tokens a later chunk may attend. The
+    dose knob of the bandwidth ladder; the data is identical across rungs, only visibility changes.
+    ``0`` (default) removes the relay entirely, reproducing a pure cell-blocks mask (the floor control).
+    """
+    summary_relay: Optional[bool] = None
+    """
+    For :class:`DocumentChunkedAttention` with ``cross_doc_mode="summary_attention"`` only: whether a
+    summary span may read its own cell's documents. ``True`` (default) is the treatment. ``False`` is
+    the **placebo** -- the span keeps its position, tokens, and every edge into it, but reads nothing,
+    so it provably carries zero document content.
+    """
+    gold_decoys: Optional[int] = None
+    """
+    For :class:`DocumentChunkedAttention` with ``cross_doc_mode="gold_hop_controlled"`` only:
+    distance-matched non-gold decoy pairs per gold pair, given the identical edit so the arm's
+    structural signature stops naming the gold pair. Measured: ``0`` leaves ``hop_inf`` at graph-only
+    precision@3 16.2% (66x chance); ``12`` cuts it to 2.0% (8x) and makes ``hop2`` / ``hop_inf``
+    leak-matched, which is what the ``hop2 - hop_inf`` contrast requires.
+    """
+    gold_hops: Optional[int] = None
+    """
+    For :class:`DocumentChunkedAttention` with ``cross_doc_mode="gold_hop_controlled"`` only: which arm
+    of the multi-hop gold-routing ladder -- ``1`` (gold edge forced present), ``2`` / ``3`` (gold edge
+    **deleted**, shortest gold path forced to exactly that length), or ``-1``
+    (:data:`~olmo_core.nn.attention.gold_hop_mask.GOLD_HOPS_INF`: gold edge deleted and every path cut,
+    the leak-matched control). Recorded here so the checkpoint's ``config.json`` names the arm; the
+    per-example graph is built at runtime by
+    :func:`~olmo_core.nn.attention.gold_hop_mask.install_gold_hop_mask`, which refuses to install if the
+    two disagree.
+    """
     flex_block_size: Optional[int] = None
     """
     For :class:`DocumentChunkedAttention` only: the FlexAttention ``create_block_mask`` block size (the
     granularity at which fully-masked blocks are skipped). ``None`` (default) uses FlexAttention's
     default of 128. Shrinking it (e.g. 64 / 32) lets sub-128-token chunks realize their block-sparsity
     at the cost of higher kernel overhead; profile the crossover per chunk-size distribution.
+    """
+    full_attention_layers: Optional[List[int]] = None
+    """
+    For :class:`DocumentChunkedAttention` (``name="document_chunked"``) only: layer indices that use
+    plain full (causal) attention instead of the chunked mask -- a hybrid where these ``N`` layers see
+    the whole sequence while the rest stay document-chunked. Negative indices count from the end
+    (``-1`` = last layer). ``None`` / empty (default) -> every layer uses the chunked mask.
+    """
+    dilated_window_k: Optional[int] = None
+    """
+    For :class:`DilatedSlidingWindowAttention` (``name="dilated_sliding_window"``) only: the number of
+    keys ``K`` each query attends per layer (its own position + ``K-1`` strided predecessors). Defaults
+    to 3.
+    """
+    dilated_window_num_configs: Optional[int] = None
+    """
+    For :class:`DilatedSlidingWindowAttention` only: the rotation cycle length ``L`` (number of
+    distinct dilation configs before the rotation resets). Defaults to 3.
+    """
+    dilated_window_base: Optional[int] = None
+    """
+    For :class:`DilatedSlidingWindowAttention` only: the dilation base ``m``. At transformer layer
+    ``ell`` the dilation stride is ``m ** (ell % L)``, so successive layers attend keys spaced
+    ``1, m, m**2, ...`` apart. Defaults to 2.
     """
 
     def num_params(self, d_model: int) -> int:
@@ -620,8 +722,21 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
         cross_doc_mode = kwargs.pop("cross_doc_mode", None)
         dilation_n = kwargs.pop("dilation_n", None)
         dilation_m = kwargs.pop("dilation_m", None)
+        dilation_cycle = kwargs.pop("dilation_cycle", None)
         dilation_max_docs = kwargs.pop("dilation_max_docs", None)
+        doc_keep_prob = kwargs.pop("doc_keep_prob", None)
+        random_doc_seed = kwargs.pop("random_doc_seed", None)
+        random_doc_per_example = kwargs.pop("random_doc_per_example", None)
+        summary_every_k = kwargs.pop("summary_every_k", None)
+        summary_bandwidth = kwargs.pop("summary_bandwidth", None)
+        summary_relay = kwargs.pop("summary_relay", None)
+        gold_hops = kwargs.pop("gold_hops", None)
+        gold_decoys = kwargs.pop("gold_decoys", None)
         flex_block_size = kwargs.pop("flex_block_size", None)
+        dilated_window_k = kwargs.pop("dilated_window_k", None)
+        dilated_window_num_configs = kwargs.pop("dilated_window_num_configs", None)
+        dilated_window_base = kwargs.pop("dilated_window_base", None)
+        full_attention_layers = kwargs.pop("full_attention_layers", None)
         if mem_freq is not None and not (possible_types & set(_LANDMARK_ATTENTION_TYPES)):
             raise OLMoConfigurationError(
                 "'mem_freq' is only supported with landmark attention variants "
@@ -634,11 +749,13 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
                 AttentionType.document_landmark,
                 AttentionType.shared_vector_landmark,
                 AttentionType.compressive_gqa_grouped,
+                AttentionType.document_compressive_landmark,
             }
         ):
             raise OLMoConfigurationError(
                 "'landmark_use_kernel' is only supported with landmark, document_landmark, "
-                f"shared_vector_landmark, or compressive_gqa_grouped attention (got name='{self.name}')"
+                "shared_vector_landmark, compressive_gqa_grouped, or document_compressive_landmark "
+                f"attention (got name='{self.name}')"
             )
         if vec_dim is not None and AttentionType.shared_vector_landmark not in possible_types:
             raise OLMoConfigurationError(
@@ -686,12 +803,15 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
             AttentionType.document_compressive_landmark,
         }
         if (
-            dilation_n is not None or dilation_m is not None or dilation_max_docs is not None
+            dilation_n is not None
+            or dilation_m is not None
+            or dilation_cycle is not None
+            or dilation_max_docs is not None
         ) and not (possible_types & _DOC_CHUNKED_TYPES):
             raise OLMoConfigurationError(
-                "'dilation_n' / 'dilation_m' / 'dilation_max_docs' are only supported with "
-                "document_chunked, document_landmark, or document_compressive_landmark attention "
-                f"(got name='{self.name}')"
+                "'dilation_n' / 'dilation_m' / 'dilation_cycle' / 'dilation_max_docs' are only "
+                "supported with document_chunked, document_landmark, or "
+                f"document_compressive_landmark attention (got name='{self.name}')"
             )
         _COMPRESSIVE_TYPES = {
             AttentionType.fast_compressive_landmark,
@@ -717,6 +837,38 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
             raise OLMoConfigurationError(
                 "'gate_temperature' is only supported with fast_compressive_landmark attention; "
                 f"got name='{self.name}'"
+            )
+        if (
+            dilated_window_k is not None
+            or dilated_window_num_configs is not None
+            or dilated_window_base is not None
+        ) and AttentionType.dilated_sliding_window not in possible_types:
+            raise OLMoConfigurationError(
+                "'dilated_window_k' / 'dilated_window_num_configs' / 'dilated_window_base' are only "
+                f"supported with dilated_sliding_window attention (got name='{self.name}')"
+            )
+        if full_attention_layers is not None and AttentionType.document_chunked not in possible_types:
+            raise OLMoConfigurationError(
+                "'full_attention_layers' (hybrid full/chunked layers) is only supported with "
+                f"document_chunked attention (got name='{self.name}')"
+            )
+        if (
+            summary_every_k is not None
+            or summary_bandwidth is not None
+            or summary_relay is not None
+        ) and not (possible_types & _DOC_CHUNKED_TYPES):
+            raise OLMoConfigurationError(
+                "'summary_every_k' / 'summary_bandwidth' / 'summary_relay' are only supported with "
+                "document_chunked, document_landmark, or document_compressive_landmark attention "
+                f"(got name='{self.name}')"
+            )
+        if (
+            gold_hops is not None or gold_decoys is not None
+        ) and AttentionType.document_chunked not in possible_types:
+            raise OLMoConfigurationError(
+                "'gold_hops' / 'gold_decoys' (the multi-hop gold-routing ladder) are only supported "
+                "with "
+                f"document_chunked attention (got name='{self.name}')"
             )
 
         try:
@@ -817,6 +969,8 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
                     kwargs["dilation_n"] = dilation_n
                 if dilation_m is not None:
                     kwargs["dilation_m"] = dilation_m
+                if dilation_cycle is not None:
+                    kwargs["dilation_cycle"] = dilation_cycle
                 if dilation_max_docs is not None:
                     kwargs["dilation_max_docs"] = dilation_max_docs
                 kwargs["layer_idx"] = layer_idx
@@ -833,11 +987,15 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
                     kwargs["nonselected_landmark_mass"] = nonselected_landmark_mass
                 if group_landmark_selection is not None:
                     kwargs["group_landmark_selection"] = group_landmark_selection
+                if landmark_use_kernel is not None:
+                    kwargs["use_kernel"] = landmark_use_kernel
                 # Per-layer dilation stride for the "hierarchical_dilated" cross_doc_mode.
                 if dilation_n is not None:
                     kwargs["dilation_n"] = dilation_n
                 if dilation_m is not None:
                     kwargs["dilation_m"] = dilation_m
+                if dilation_cycle is not None:
+                    kwargs["dilation_cycle"] = dilation_cycle
                 if dilation_max_docs is not None:
                     kwargs["dilation_max_docs"] = dilation_max_docs
                 kwargs["layer_idx"] = layer_idx
@@ -873,14 +1031,50 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
                     kwargs["dilation_n"] = dilation_n
                 if dilation_m is not None:
                     kwargs["dilation_m"] = dilation_m
+                if dilation_cycle is not None:
+                    kwargs["dilation_cycle"] = dilation_cycle
                 if dilation_max_docs is not None:
                     kwargs["dilation_max_docs"] = dilation_max_docs
+                if doc_keep_prob is not None:
+                    kwargs["doc_keep_prob"] = doc_keep_prob
+                if random_doc_seed is not None:
+                    kwargs["random_seed"] = random_doc_seed
+                if random_doc_per_example is not None:
+                    kwargs["random_doc_per_example"] = random_doc_per_example
+                # Cell size / relay bandwidth / relay on-off for the "summary_attention" pattern.
+                if summary_every_k is not None:
+                    kwargs["summary_every_k"] = summary_every_k
+                if summary_bandwidth is not None:
+                    kwargs["summary_bandwidth"] = summary_bandwidth
+                if summary_relay is not None:
+                    kwargs["summary_relay"] = summary_relay
+                # The arm of the "gold_hop_controlled" ladder (recorded; the graph arrives via the hook).
+                if gold_hops is not None:
+                    kwargs["gold_hops"] = gold_hops
+                if gold_decoys is not None:
+                    kwargs["gold_decoys"] = gold_decoys
                 if flex_block_size is not None:
                     kwargs["flex_block_size"] = flex_block_size
+                if full_attention_layers is not None:
+                    kwargs["full_attention_layers"] = full_attention_layers
                 # The hierarchical-dilated pattern picks its stride from the layer index.
                 kwargs["layer_idx"] = layer_idx
                 kwargs["n_layers"] = n_layers
                 return DocumentChunkedAttention(**kwargs)
+            elif effective_name == "dilated_sliding_window":
+                # Dilated causal sliding window with a per-layer rotating dilation stride.
+                if dilated_window_k is not None:
+                    kwargs["window"] = dilated_window_k
+                if dilated_window_num_configs is not None:
+                    kwargs["num_configs"] = dilated_window_num_configs
+                if dilated_window_base is not None:
+                    kwargs["base"] = dilated_window_base
+                if flex_block_size is not None:
+                    kwargs["flex_block_size"] = flex_block_size
+                # The dilation stride is picked from the layer index.
+                kwargs["layer_idx"] = layer_idx
+                kwargs["n_layers"] = n_layers
+                return DilatedSlidingWindowAttention(**kwargs)
             else:
                 raise NotImplementedError(effective_name)
         except TypeError as e:
@@ -1232,6 +1426,7 @@ class Attention(SequenceMixer):
         pos_cos: Optional[torch.Tensor] = None,
         freqs_cis: Optional[torch.Tensor] = None,
         cache_leftpad: Optional[torch.Tensor] = None,
+        chunk_ids: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """
         Apply attention to the input.
@@ -1243,9 +1438,18 @@ class Attention(SequenceMixer):
             Required together with ``max_doc_len`` when using intra-document masking.
         :param max_doc_len: The maximum document length in the input ``x``.
             Required together with ``cu_doc_lens`` when using intra-document masking.
+        :param chunk_ids: **Accepted and ignored.** When a model enables document-chunked
+            attention, :class:`~olmo_core.nn.transformer.Transformer` threads ``chunk_ids`` to
+            *every* block, so a model that mixes chunked and non-chunked sequence mixers requires
+            the non-chunked ones to tolerate it -- exactly as
+            :class:`~olmo_core.nn.attention.recurrent.GatedDeltaNet` already does via ``**kwargs``
+            for the Qwen3.5 hybrid. Plain attention has no chunked mask, so the roles carry no
+            meaning here. This is what lets Olmo 3's sliding-window layers stay untouched while its
+            full-attention layers carry the document-chunk mask.
 
         :returns: The output of attention with shape ``(batch_size, seq_len, d_model)``.
         """
+        del chunk_ids  # not applicable to plain attention; see the parameter docs above
         B, T, _ = x.shape
 
         # shape: (batch_size, seq_len, n_heads (local), head_dim),
@@ -2242,6 +2446,7 @@ class FusedAttention(SequenceMixer):
 # (defined above), so they are imported at the end of this package to avoid a circular import; the
 # ``AttentionConfig.build`` branches above reference them by name at call time.
 from .chunked_mask import AttentionPattern  # noqa: E402
+from .dilated_window import DilatedSlidingWindowAttention  # noqa: E402
 from .document_chunked import DocumentChunkedAttention  # noqa: E402
 from .landmark_compressive import FastCompressiveLandmarkAttention  # noqa: E402
 from .landmark_compressive_gqa import CompressiveGQAGroupedAttention  # noqa: E402

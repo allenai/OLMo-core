@@ -63,6 +63,8 @@ class DocumentLandmarkAttention(LandmarkAttention):
     :param doc_window_k: Window size for the ``"doc_window"`` pattern.
     :param token_window_w: Window width for the ``"token_window"`` pattern.
     :param dilation_n: Documents attended per layer for the ``"hierarchical_dilated"`` pattern.
+    :param dilation_cycle: Rotation period ``L`` for the ``"hierarchical_dilated"`` pattern (the stride
+        rotates with depth as ``layer_idx % L``). Defaults to 3.
     :param dilation_m: Dilation base for the ``"hierarchical_dilated"`` pattern (stride
         ``m**layer_idx``, saturated once the span covers all history).
     :param dilation_max_docs: Optional fixed saturation reference for ``"hierarchical_dilated"``
@@ -108,6 +110,7 @@ class DocumentLandmarkAttention(LandmarkAttention):
         token_window_w: int = 0,
         dilation_n: int = 2,
         dilation_m: int = 2,
+        dilation_cycle: int = 3,
         dilation_max_docs: Optional[int] = None,
         layer_idx: int = 0,
         n_layers: int = 1,
@@ -136,6 +139,7 @@ class DocumentLandmarkAttention(LandmarkAttention):
             token_window_w=token_window_w,
             dilation_n=dilation_n,
             dilation_m=dilation_m,
+            dilation_cycle=dilation_cycle,
             dilation_max_docs=dilation_max_docs,
         )
         # Transient per-forward chunk roles, stashed by ``forward`` for ``_landmark_masks`` to read.
@@ -353,8 +357,23 @@ class DocumentLandmarkAttention(LandmarkAttention):
         mem_ids = torch.where(attn_mask < -1, -1, torch.cumsum(is_mem, -1) - is_mem.int())
         last_section_mask = torch.amax(mem_ids, -1, keepdim=True) == mem_ids
         # Mask landmark tokens that fall in the query's own (last) section.
-        attn_mask.masked_fill_(last_section_mask & is_mem, finfo_min)
+        own_landmark = last_section_mask & is_mem
+        attn_mask.masked_fill_(own_landmark, finfo_min)
         last_section_mask = last_section_mask.logical_and(attn_mask > -1)
-        is_mem = is_mem.logical_and(attn_mask > -1)
+        # RIGID landmark blocks (match the fused Triton kernel). Keep every landmark POSITIONAL --
+        # even one that is cross-document-masked for this query -- so its block is gated ONLY by its
+        # own landmark (whose floored score gives it ~0 gate weight) and never MERGES into the next
+        # visible landmark's section.
+        #
+        # The previous ``is_mem = is_mem & (attn_mask > -1)`` DEMOTED any masked landmark to a regular
+        # token, which for a **multi-window document** (a context doc longer than one landmark window,
+        # so its interior block-end landmarks sit INSIDE the box span and carry the doc's chunk-id)
+        # merged that block's content into the section of the next FREE/visible landmark -- letting one
+        # block's content be gated by a DIFFERENT block's landmark. That is a leak the fused kernel
+        # (rigid blocks) never had, and it is semantically wrong: a landmark summarises its OWN block,
+        # and the model is trained with per-block gating. So this made the eager EVAL path disagree
+        # with the fused-kernel TRAINING path on multi-window docs. Demote only the own-section
+        # landmark (already floored just above); everything else stays positional -> eager == kernel.
+        is_mem = is_mem & ~own_landmark
 
         return attn_mask, is_mem, last_section_mask

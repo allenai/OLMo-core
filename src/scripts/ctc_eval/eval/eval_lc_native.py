@@ -49,14 +49,16 @@ def main():
                     help="comma list restricting --ladder to a subset of tasks (split into per-task jobs).")
     ap.add_argument("--ladder-rungs", default=None,
                     help="comma list restricting --ladder to a subset of rungs (e.g. 16k,32k).")
-    ap.add_argument("--ladder-version", choices=["v1", "v2"], default="v2",
-                    help="v2 (DEFAULT) = cleaned ladders where every rung of a task shares the SAME "
-                         "500 questions/answers and only the distractor documents vary (read entirely "
-                         "from $EVAL500_ROOT/<task>/, i.e. point EVAL500_ROOT at the v2 bundle). "
-                         "v1 = original independently-generated per-rung eval files.")
+    ap.add_argument("--ladder-version", choices=["v2"], default="v2",
+                    help="v2 is the ONLY supported ladder: every rung of a task shares the SAME "
+                         "500 questions/answers and only the distractor documents vary, read "
+                         "entirely from $EVAL500_ROOT/<task>/ (point EVAL500_ROOT at the v2 "
+                         "bundle). v1 (independently-generated per-rung files) is REMOVED -- "
+                         "passing it raises NotImplementedError, because per-rung question "
+                         "resampling put eval-set noise into every rung-to-rung delta.")
     ap.add_argument("--xlong", action="store_true",
                     default=os.environ.get("LADDER_XLONG") == "1",
-                    help="OPT-IN: append the ultra-long 64k/128k/256k rungs (built offline by "
+                    help="OPT-IN: append the ultra-long 64k..2M rungs (built offline by "
                          "scripts/data/build_xlong_rungs.py) to each task's v2 ladder. OFF by "
                          "default; also honors env LADDER_XLONG=1. Auto-raises --max-length to fit "
                          "the largest selected xlong rung (else long prompts get truncated).")
@@ -99,12 +101,34 @@ def main():
     # xlong opt-in: the runner truncates prompts to (max_length - max_new_tokens), so max_length
     # MUST cover the largest selected ultra-long rung, and it feeds the gen budget built below.
     if args.xlong:
-        _XL_TOK = {"64k": 65536, "128k": 131072, "256k": 262144}
+        _XL_TOK = {"64k": 65536, "128k": 131072, "256k": 262144,
+                   "512k": 524288, "1M": 1048576, "2M": 2097152}
         _sel = set(args.ladder_rungs.split(",")) if args.ladder_rungs else set(_XL_TOK)
         _need = max((t for r, t in _XL_TOK.items() if r in _sel), default=0)
-        if _need and args.max_length < _need + 1024:
-            print(f"[xlong] raising --max-length {args.max_length} -> {_need + 1024}", flush=True)
-            args.max_length = _need + 1024
+        # A rung's LABEL is its nominal token budget, but the built prompt reliably lands slightly
+        # ABOVE it: the doc count is calibrated from a median, and the instruction/query/marker wrap
+        # is added on top. Measured through this exact load path (Qwen3.5, 2026-07-29):
+        #   512k -> 535,855 (1.022x)   nq 528,021 (1.007x)   outlier 526,249 (1.004x)
+        #   rerank 530,993 (1.013x)    2M -> 2,165,314 (1.033x)
+        # so the old `+1024` slack was NOT enough and silently truncated the prompt TAIL -- which is
+        # where the question lives. That yields an empty/garbage generation and scores f1 0.000 at
+        # parse_rate 1.0 for a model that is fine (the maxlen-truncation trap). Use a 10% margin,
+        # which covers the per-example max above the median with room to spare.
+        _budget = int(_need * 1.10) + 2048 if _need else 0
+        if _budget and args.max_length < _budget:
+            print(f"[xlong] raising --max-length {args.max_length} -> {_budget} "
+                  f"(rung label {_need} + 10% margin; prompts run ~0.4-3.3% over label)", flush=True)
+            args.max_length = _budget
+        # Rungs past 262,144 exceed Qwen3.5's native max_position_embeddings. Scoring them at all
+        # requires a RoPE-extended (YaRN) copy of the checkpoint -- without one the model silently
+        # reads garbage positions and the rung looks like a long-context collapse that is really a
+        # config error. Warn loudly; the caller is responsible for pointing --model-path at the
+        # extended copy (debug/ctx_ceiling_4b/make_yarn_copy.py).
+        if _need > 262144:
+            print(f"[xlong] ⚠ selected rungs reach {_need} tokens, PAST the Qwen3.5 native "
+                  f"262144 position limit -- this measures RoPE-EXTENDED extrapolation. Point "
+                  f"--model-path at a YaRN serving copy and label every >256k number as such.",
+                  flush=True)
     if args.root:
         os.chdir(args.root)
 
@@ -266,7 +290,31 @@ def main():
         RR = args.rerank_root
         # n>=500 eval at the goal-critical rungs (8k/16k/32k) from cpt_data/eval500; 64k dropped
         # (beyond the 32k goal, saves GPU). 2k/3k base + oolong (capped ~80) keep their files.
-        E5 = os.environ.get("EVAL500_ROOT", "/scratch/users/prasann/cpt_data/eval500")
+        #
+        # Bundle resolution. The old default was the **v1** `cpt_data/eval500` directory even when
+        # --ladder-version v2 (the default) was selected, so forgetting to export EVAL500_ROOT
+        # silently resolved v2 rung filenames against a v1 tree and produced mostly-missing rungs.
+        # Now: explicit env wins; otherwise pick the first bundle that actually EXISTS for the
+        # selected ladder version -- the weka 2k..256k bundle (mounted on Beaker) before the
+        # Berkeley-local /scratch copies.
+        # ⚠ These bundles are NOT equivalent at the long end, so ORDER MATTERS.
+        #   1. _eval_bundle_eval500_v2_clean -- the DEFAULT (2026-07-29): a verified 2k..2M ladder,
+        #      eval_size>=500 at every rung, PubMed-only contradiction distractors.
+        #   2. xlong5_2k256k_qwen35/eval    -- build-output bundle; contra fillers are ~29% FEVER/wiki
+        #      and it stops at 256k.
+        #   3. /scratch/.../eval500_v2      -- Berkeley-local; its xlong rungs are eval_size=300.
+        # Falling back past (1) means quoting numbers off a contaminated or sub-500 rung, so a run
+        # that lands on (2) or (3) needs the contamination/eval_size caveats stated inline. Prefer
+        # setting EVAL500_ROOT explicitly over relying on this order.
+        _V2_BUNDLES = [
+            "/weka/oe-training-default/ai2-llm/checkpoints/prasanns/_eval_bundle_eval500_v2_clean",
+            "/weka/oe-training-default/ai2-llm/checkpoints/prasanns/xlong5_2k256k_qwen35/eval",
+            "/scratch/users/prasann/cpt_data/eval500_v2",
+        ]
+        E5 = os.environ.get("EVAL500_ROOT")
+        if not E5:
+            E5 = next((p for p in _V2_BUNDLES if os.path.isdir(p)), _V2_BUNDLES[-1])
+            print(f"[ladder] EVAL500_ROOT unset -> {E5} (ladder_version=v2)", flush=True)
         if args.ladder_version == "v2":
             # v2: every rung of a task shares the SAME >=500 questions/answers; only the
             # distractor documents differ (built by build_v2_eval_ladders.py). ALL rungs live
@@ -317,68 +365,81 @@ def main():
                     ("32k", f"{E5}/contra/contradiction_eval_fever_plain_n1642_k3.jsonl")],
             }
         else:
-          LADDERS = {
-            "contradiction": [("2k", args.contra_data),
-                ("8k", f"{E5}/contra/contradiction_eval_pubmed_both_n190_k3.jsonl"),
-                ("16k", f"{E5}/contra/contradiction_eval_pubmed_both_n385_k3.jsonl"),
-                ("32k", f"{E5}/contra/contradiction_eval_pubmed_both_n765_k3.jsonl")],
-            # p10 pipeline: 10% hard negs + CE gold-quality filter, all docs from wikipedia-dpr-100w
-            # (matches the training-data negative distribution; the old hn49/hn99/hn199 files were 98% hard).
-            "nq": [("3k", args.nq_data),
-                ("8k", f"{E5}/nq/nq_validation_k50_hn5_600.jsonl"),
-                ("16k", f"{E5}/nq/nq_validation_k100_hn10_600.jsonl"),
-                ("32k", f"{E5}/nq/nq_validation_k200_hn20_600.jsonl")],
-            "oolong": [("1k", "data/oolong_test_synth_ctx1024_spliteval.jsonl"),
-                ("2k", "data/oolong_test_synth_ctx2048_spliteval.jsonl"),
-                ("4k", "data/oolong_test_synth_ctx4096_spliteval.jsonl"),
-                ("8k", "data/oolong_test_synth_ctx8192_spliteval.jsonl"),
-                ("16k", "data/oolong_test_synth_ctx16384_spliteval.jsonl"),
-                ("32k", "data/oolong_test_synth_ctx32768_spliteval.jsonl")],
-            "rerank": [("2k", args.rerank_data),
-                ("8k", f"{E5}/rerank/msmarco_validation_rerank_k80_600.jsonl"),
-                ("16k", f"{E5}/rerank/msmarco_validation_rerank_k158_597.jsonl"),
-                ("32k", f"{E5}/rerank/msmarco_validation_rerank_k315_599.jsonl")],
-            "outlier": [("3k", args.outlier_data),
-                ("8k", f"{E5}/outlier/outlier_wiki100w_n55_k3_eval_600.jsonl"),
-                ("16k", f"{E5}/outlier/outlier_wiki100w_n110_k3_eval_600.jsonl"),
-                ("32k", f"{E5}/outlier/outlier_wiki100w_n220_k3_eval_600.jsonl")],
-            # OOD generalization (held-out BEIR retrieval, graded as retrieval f1); same files for v1/v2.
-            "fiqa": [("2k", f"{E5}/beir/beir_fiqa_ce_ladder_k10_648.jsonl"),
-                ("4k", f"{E5}/beir/beir_fiqa_ce_ladder_k20_648.jsonl"),
-                ("8k", f"{E5}/beir/beir_fiqa_ce_ladder_k40_648.jsonl"),
-                ("16k", f"{E5}/beir/beir_fiqa_ce_ladder_k80_648.jsonl")],
-            "scifact": [("4k", f"{E5}/beir/beir_scifact_ladder_k11_299.jsonl"),
-                ("8k", f"{E5}/beir/beir_scifact_ladder_k22_299.jsonl"),
-                ("16k", f"{E5}/beir/beir_scifact_ladder_k44_299.jsonl"),
-                ("32k", f"{E5}/beir/beir_scifact_ladder_k88_299.jsonl")],
-            # OOD generalization for outlier + contradiction (review / FEVER source); same files v1/v2.
-            "outlier_review": [("3k", f"{E5}/outlier/outlier_review_matched_n30_k3_eval_600.jsonl"),
-                ("8k", f"{E5}/outlier/outlier_review_matched_n75_k3_eval_600.jsonl"),
-                ("16k", f"{E5}/outlier/outlier_review_matched_n150_k3_eval_600.jsonl"),
-                ("32k", f"{E5}/outlier/outlier_review_matched_n300_k3_eval_600.jsonl")],
-            "contra_fever": [("2k", f"{E5}/contra/contradiction_eval_fever_plain_n100_k3.jsonl"),
-                ("8k", f"{E5}/contra/contradiction_eval_fever_plain_n408_k3.jsonl"),
-                ("16k", f"{E5}/contra/contradiction_eval_fever_plain_n820_k3.jsonl"),
-                ("32k", f"{E5}/contra/contradiction_eval_fever_plain_n1642_k3.jsonl")],
-        }
-        # ---- OPT-IN ultra-long rungs (64k/128k/256k), OFF by default (v2 only) ----
+            # v1 = the original independently-generated per-rung eval files. DISABLED 2026-07-29:
+            # each rung drew its OWN questions, so every rung-to-rung delta carried eval-set
+            # resampling noise on top of the length effect it was supposed to isolate. v2 fixes
+            # the question set across rungs and varies only the distractor documents.
+            raise NotImplementedError(
+                f"--ladder-version {args.ladder_version!r} is no longer supported: v2 is the only "
+                "ladder. v1 resampled the questions per rung, so rung-to-rung deltas mixed "
+                "eval-set noise into the length effect. Build what you need as v2 "
+                "(build_v2_eval_ladders.py for 2k-32k, build_xlong_rungs.py for 64k-2M) and "
+                "point EVAL500_ROOT at a v2 bundle."
+            )
+        # ---- oolong SHORT rungs (2k/4k): extend the ladder DOWNWARD ----
+        # The v2 oolong ladder starts at 8k because no shorter synthesized rungs existed. Added
+        # conditionally so an EVAL500_ROOT without them still works. Prepended, not appended, so
+        # the rungs stay in ascending length order.
+        if "oolong" in LADDERS:
+            _short = []
+            for _lab, _ctx in (("2k", 2048), ("4k", 4096)):
+                _p = os.path.join(E5, "oolong", f"oolong_test_synth_ctx{_ctx}_spliteval.jsonl")
+                if os.path.exists(_p):
+                    _short.append((_lab, _p))
+            if _short:
+                LADDERS["oolong"] = _short + LADDERS["oolong"]
+
+        # ---- OPT-IN ultra-long rungs (64k..2M), OFF by default ----
         # Resolved by size-labelled glob so the calibrated doc-count in the filename can drift
         # (rebuild with a different --count/tokenizer) without editing this file.
-        if args.xlong and args.ladder_version == "v2":
+        if args.xlong:
             import glob as _glob
+            # rerank and oolong were originally excluded: no CE-graded rerank pool above k100
+            # existed, and oolong is not a doc pool. Both now have xlong rungs (built 2026-07-27),
+            # so they are wired here. oolong does NOT use the `_xlong_` convention -- it is a packed
+            # item stream labelled by its token budget (ctx{N}_spliteval), so it gets its own map.
             _XL = {
                 "contradiction": ("contra",  "contradiction_eval_pubmed_both_n*_k3_xlong_{s}.jsonl"),
                 "nq":            ("nq",       "nq_validation_k*_xlong_{s}.jsonl"),
                 "outlier":       ("outlier",  "outlier_wiki100w_n*_k3_eval_xlong_{s}.jsonl"),
+                # ⚠ APPROXIMATE above k100: the added negatives are random non-gold docs carrying
+                # ce=None, not CE-mined hard negatives. The grader scores ce=None as gain 0 and
+                # excludes them from the Kendall-tau reference, so NDCG@10 still measures "surface
+                # the CE-relevant docs among far more noise" -- but it is MORE noise, not HARDER
+                # noise. Flag that next to any rerank number at 64k+.
+                "rerank":        ("rerank",  "msmarco_trainhn_eval_k*_xlong_{s}.jsonl"),
             }
+            # oolong: token-budget-labelled files rather than a calibrated doc count.
+            _XL_OOLONG = {"64k": 65536, "128k": 131072, "256k": 262144,
+                          "512k": 524288, "1M": 1048576, "2M": 2097152}
             for _t, (_sub, _pat) in _XL.items():
                 if _t not in LADDERS:
                     continue
-                for _s in ("64k", "128k", "256k"):
+                for _s in ("64k", "128k", "256k", "512k", "1M", "2M"):
                     _hits = sorted(_glob.glob(os.path.join(E5, _sub, _pat.format(s=_s))))
                     if _hits:
                         LADDERS[_t].append((_s, _hits[0]))
+            if "oolong" in LADDERS:
+                for _s, _ctx in _XL_OOLONG.items():
+                    _p = os.path.join(E5, "oolong", f"oolong_test_synth_ctx{_ctx}_spliteval.jsonl")
+                    if os.path.exists(_p):
+                        LADDERS["oolong"].append((_s, _p))
             print(f"[xlong] appended ultra-long rungs where files exist under {E5}", flush=True)
+
+        # ---- Resolve check: a missing rung file must not pass silently ----
+        # The rungs are literal paths; if the bundle is the wrong version (or not staged) the
+        # runner would otherwise skip rungs and report a partial ladder as if it were complete.
+        _missing = [(t, lab, p) for t, rl in LADDERS.items() for lab, p in rl
+                    if not os.path.exists(p)]
+        if _missing:
+            print(f"[ladder] WARNING: {len(_missing)} rung file(s) MISSING under {E5}:", flush=True)
+            for _t, _lab, _p in _missing[:20]:
+                print(f"    {_t:>14} {_lab:>5}  {_p}", flush=True)
+            print("[ladder] set EVAL500_ROOT to a bundle containing these rungs, or restrict with "
+                  "--ladder-tasks / --ladder-rungs.", flush=True)
+            LADDERS = {t: [(lab, p) for lab, p in rl if os.path.exists(p)]
+                       for t, rl in LADDERS.items()}
+            LADDERS = {t: rl for t, rl in LADDERS.items() if rl}
         LSPEC = {
             "contradiction": ("contradiction", _eval_contradiction, "f1", 200),
             "nq": ("retrieval", _eval_retrieval, "f1", 64),

@@ -143,12 +143,13 @@ def test_document_compressive_config_builds():
     assert attn.nonselected_landmark_mass == 0.1
 
 
-def test_document_compressive_kernel_rejected():
-    # The fused compressive kernel has no chunk-mask path; the variant is eager-only.
-    with pytest.raises(OLMoConfigurationError):
-        DocumentCompressiveLandmarkAttention(
-            mem_freq=3, n_heads=8, head_dim=8, d_model=64, use_kernel=True
-        )
+def test_document_compressive_kernel_accepted():
+    # use_kernel=True is now supported (fused compressive kernel with the ported chunk-mask path);
+    # the module stores the flag and routes to the kernel when applicable (CPU falls back to eager).
+    attn = DocumentCompressiveLandmarkAttention(
+        mem_freq=3, n_heads=8, head_dim=8, d_model=64, use_kernel=True
+    )
+    assert attn._use_chunk_kernel is True
 
 
 def test_document_compressive_unknown_mode_rejected():

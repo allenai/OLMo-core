@@ -1,0 +1,2 @@
+Fetching 10 files:   0%|          | 0/10 [00:00<?, ?it/s]Fetching 10 files:  10%|█         | 1/10 [00:00<00:02,  3.67it/s]Fetching 10 files:  30%|███       | 3/10 [00:00<00:00,  7.05it/s]Fetching 10 files:  40%|████      | 4/10 [03:05<06:24, 64.03s/it]Fetching 10 files:  50%|█████     | 5/10 [03:06<03:35, 43.11s/it]Fetching 10 files: 100%|██████████| 10/10 [03:06<00:00, 18.60s/it]
+DOWNLOADED -> /scratch/users/prasann/huggingface-cache/hub/models--Qwen--Qwen3-4B-Base/snapshots/906bfd4b4dc7f14ee4320094d8b41684abff8539
