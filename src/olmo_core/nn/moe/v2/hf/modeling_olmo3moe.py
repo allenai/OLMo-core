@@ -243,7 +243,7 @@ class Olmo3MoeExperts(nn.ModuleList):
         topk_weights: torch.Tensor,
     ) -> torch.Tensor:
         N, H = hidden_states.shape
-        out = torch.zeros((N, H), device=hidden_states.device, dtype=torch.float32)
+        out = hidden_states.new_zeros((N, H))
         for expert_id, expert in enumerate(self):
             mask = topk_ids == expert_id  # (N, K) bool
             if not mask.any():
@@ -255,9 +255,54 @@ class Olmo3MoeExperts(nn.ModuleList):
             out.index_add_(
                 0,
                 token_ids,
-                y_sel.float() * w_sel.float(),
+                y_sel * w_sel.to(dtype=hidden_states.dtype),
             )
-        return out.to(dtype=hidden_states.dtype)
+        return out
+
+    def _forward_transformer_engine(
+        self,
+        hidden_states: torch.Tensor,
+        topk_ids: torch.Tensor,
+        topk_weights: torch.Tensor,
+    ) -> torch.Tensor:
+        """Mirror OLMo-core's no-EP permutation and weighted-unpermutation path."""
+        from transformer_engine.pytorch.permutation import moe_permute, moe_unpermute
+
+        N, H = hidden_states.shape
+        K = topk_ids.shape[-1]
+        num_experts = len(self)
+        routing_map = topk_ids.int()
+        x_grouped, row_id_map = moe_permute(
+            inp=hidden_states,
+            routing_map=routing_map,
+            num_out_tokens=N * K,
+            map_type="index",
+        )
+        batch_size_per_expert = torch.bincount(
+            topk_ids.reshape(-1), minlength=num_experts
+        ).to(dtype=torch.int32)
+        offs = torch.cumsum(batch_size_per_expert, dim=0, dtype=torch.int32)
+
+        # Match RoutedExperts.w_up_gate exactly: up columns first, then gate.
+        w_up_gate = torch.stack(
+            [
+                torch.cat((expert.up_proj.weight, expert.gate_proj.weight), dim=0).transpose(0, 1)
+                for expert in self
+            ]
+        )
+        w_down = torch.stack([expert.down_proj.weight.transpose(0, 1) for expert in self])
+        up_gate = F.grouped_mm(x_grouped, w_up_gate, offs=offs)
+        up, gate = up_gate.chunk(2, dim=-1)
+        hidden = up * cast(Olmo3MoeExpert, self[0]).act_fn(gate)
+        y_grouped = F.grouped_mm(hidden, w_down, offs=offs)
+
+        return moe_unpermute(
+            inp=y_grouped,
+            row_id_map=row_id_map,
+            restore_shape=hidden_states.shape,
+            map_type="index",
+            merging_probs=topk_weights,
+        )
 
     def _forward_grouped_mm(
         self,
@@ -272,7 +317,7 @@ class Olmo3MoeExperts(nn.ModuleList):
 
         route_token_ids = torch.arange(N, device=hidden_states.device).repeat_interleave(K)
         route_expert_ids = topk_ids.reshape(-1)
-        route_weights = topk_weights.reshape(-1)
+        route_weights = topk_weights.reshape(-1).to(dtype=hidden_states.dtype)
 
         sorted_route_ids = torch.argsort(route_expert_ids)
         sorted_expert_ids = route_expert_ids.index_select(0, sorted_route_ids)
@@ -285,27 +330,24 @@ class Olmo3MoeExperts(nn.ModuleList):
         offs = torch.cumsum(batch_size_per_expert, dim=0, dtype=torch.int32)
         x_grouped = hidden_states.index_select(0, sorted_token_ids)
 
-        w_gate_up = torch.stack(
+        w_up_gate = torch.stack(
             [
-                torch.cat((expert.gate_proj.weight, expert.up_proj.weight), dim=0).transpose(0, 1)
+                torch.cat((expert.up_proj.weight, expert.gate_proj.weight), dim=0).transpose(0, 1)
                 for expert in self
             ]
         )
         w_down = torch.stack([expert.down_proj.weight.transpose(0, 1) for expert in self])
 
-        gate_up = F.grouped_mm(x_grouped, w_gate_up, offs=offs)
-        gate, up = gate_up.chunk(2, dim=-1)
-        hidden = cast(Olmo3MoeExpert, self[0]).act_fn(gate) * up
+        up_gate = F.grouped_mm(x_grouped, w_up_gate, offs=offs)
+        up, gate = up_gate.chunk(2, dim=-1)
+        hidden = up * cast(Olmo3MoeExpert, self[0]).act_fn(gate)
         y_grouped = F.grouped_mm(hidden, w_down, offs=offs)
 
-        # Restore the original flattened (token, top-k slot) order before
-        # reducing. Transformer Engine's MoE unpermute combines routed rows in
-        # that order; changing the BF16 summation order is enough to perturb
-        # hidden states and eventually alter later top-k routing decisions.
-        weighted_y_grouped = y_grouped.float() * sorted_weights.float().unsqueeze(-1)
-        original_route_order = torch.argsort(sorted_route_ids)
-        weighted_y = weighted_y_grouped.index_select(0, original_route_order)
-        return weighted_y.reshape(N, K, H).sum(dim=1).to(dtype=hidden_states.dtype)
+        # Deterministic fallback when Transformer Engine is unavailable.
+        weighted_y_grouped = y_grouped * sorted_weights.unsqueeze(-1)
+        token_expert_order = torch.argsort(sorted_token_ids * num_experts + sorted_expert_ids)
+        weighted_y = weighted_y_grouped.index_select(0, token_expert_order)
+        return weighted_y.reshape(N, K, H).sum(dim=1)
 
     def forward(
         self,
@@ -332,6 +374,16 @@ class Olmo3MoeExperts(nn.ModuleList):
             return self._forward_compile_fallback(hidden_states, topk_ids, topk_weights)
 
         if self._can_use_grouped_mm(hidden_states):
+            if hidden_states.is_cuda:
+                try:
+                    return self._forward_transformer_engine(
+                        hidden_states, topk_ids, topk_weights
+                    )
+                except (ImportError, NotImplementedError, RuntimeError):
+                    if os.environ.get(
+                        "OLMO_HF_REQUIRE_TE_EXPERT_PARITY", ""
+                    ).strip().lower() in {"1", "true", "yes", "on"}:
+                        raise
             # `_can_use_grouped_mm` is a cheap gate, but whether `grouped_mm` actually accepts a
             # given device/dtype combination varies across torch builds. Fall back to the reference
             # loop if the op rejects the operands rather than failing the forward.
@@ -407,9 +459,6 @@ class Olmo3MoeSparseMLP(nn.Module):
         routed_h = routed_x.shape[-1]
         x_flat = routed_x.reshape(B * S, routed_h)
         idx_flat = expert_indices.reshape(B * S, K)  # (N, K)
-        # The training path keeps router weights in FP32 through the weighted
-        # expert reduction, then casts the combined routed output back to the
-        # model dtype. Retaining that precision matters with a large top-k.
         w_flat = expert_weights.reshape(B * S, K)  # (N, K)
 
         out_flat = self.experts(x_flat, topk_ids=idx_flat, topk_weights=w_flat)
