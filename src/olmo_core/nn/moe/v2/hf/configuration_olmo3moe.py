@@ -56,6 +56,19 @@ class Olmo3MoeConfig(PretrainedConfig):
         rms_norm_eps=1e-5,
         sliding_window=4096,
         use_head_qk_norm=False,
+        use_rope=True,
+        attention_gate_type=None,
+        attention_gate_full_precision=True,
+        linear_num_key_heads=None,
+        linear_num_value_heads=None,
+        linear_key_head_dim=None,
+        linear_value_head_dim=None,
+        linear_conv_kernel_dim=4,
+        linear_allow_neg_eigval=False,
+        linear_norm_eps=1e-5,
+        latent_moe_dim=None,
+        latent_moe_bias=False,
+        latent_moe_up_proj_input_norm=False,
         layer_types: Optional[List[str]] = None,
         dense_layers_indices: Optional[List[int]] = None,
         embed_scale=1.0,
@@ -143,6 +156,27 @@ class Olmo3MoeConfig(PretrainedConfig):
 
         self.rms_norm_eps = rms_norm_eps
         self.use_head_qk_norm = use_head_qk_norm
+        self.use_rope = use_rope
+        self.attention_gate_type = attention_gate_type
+        self.attention_gate_full_precision = attention_gate_full_precision
+
+        # Kimi Delta Attention (KDA) fields. They are model-wide because the
+        # OLMo-core ladder uses one KDA shape for every linear-attention layer.
+        self.linear_num_key_heads = linear_num_key_heads
+        self.linear_num_value_heads = (
+            linear_num_value_heads if linear_num_value_heads is not None else linear_num_key_heads
+        )
+        self.linear_key_head_dim = linear_key_head_dim
+        self.linear_value_head_dim = linear_value_head_dim
+        self.linear_conv_kernel_dim = linear_conv_kernel_dim
+        self.linear_allow_neg_eigval = linear_allow_neg_eigval
+        self.linear_norm_eps = linear_norm_eps
+
+        # LatentMoE keeps the router and shared expert at ``hidden_size`` while
+        # running only the routed expert payload through this narrower width.
+        self.latent_moe_dim = latent_moe_dim
+        self.latent_moe_bias = latent_moe_bias
+        self.latent_moe_up_proj_input_norm = latent_moe_up_proj_input_norm
 
         self.embed_scale = embed_scale
         self.embed_norm = embed_norm
