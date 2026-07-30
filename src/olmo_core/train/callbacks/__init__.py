@@ -16,6 +16,7 @@ from .evaluator_callback import (
 )
 from .gap_monitor import GAPMonitorCallback
 from .garbage_collector import GarbageCollectorCallback
+from .gated_attn_monitor import GatedAttnMonitorCallback
 from .gpu_memory_monitor import GPUMemoryMonitorCallback
 from .hf_converter import HFConverterCallback
 from .list_checkpointer import ListCheckpointerCallback
@@ -43,6 +44,7 @@ __all__ = [
     "DownstreamEvaluatorCallbackConfig",
     "GAPMonitorCallback",
     "GarbageCollectorCallback",
+    "GatedAttnMonitorCallback",
     "GPUMemoryMonitorCallback",
     "HFConverterCallback",
     "ProfilerCallback",
