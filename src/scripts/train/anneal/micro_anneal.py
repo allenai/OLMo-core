@@ -50,6 +50,7 @@ def _bool(v: str) -> bool:
 
 # Imports AFTER the argv strip (they're heavy; keeping them here also documents the olmo-core API).
 import base64  # noqa: E402
+import hashlib  # noqa: E402
 from datetime import datetime  # noqa: E402
 
 import yaml  # noqa: E402
@@ -73,6 +74,18 @@ from olmo_core.train import Duration  # noqa: E402
 # anneal that changes it is no longer the same optimization as the run it resumes — so callers pass
 # --global_batch_size (sftlab sends the profile's). ~4M tokens when they don't.
 DEFAULT_GLOBAL_BATCH_SIZE = 4 * 1024 * 1024
+
+
+def _wandb_run_id(save_folder: str) -> str:
+    """A W&B run id keyed to the checkpoint folder, so the W&B run tracks the training run.
+
+    The trainer resumes from whatever it finds in `save_folder`, which makes that path the exact
+    condition under which metrics should continue on one curve: same folder means the restart picks
+    up mid-training, a new folder means training starts over from the base checkpoint and deserves
+    its own run. Deriving the id from anything process-local instead — the default, a timestamp —
+    splits a preempted job into one short run per attempt.
+    """
+    return hashlib.sha256(save_folder.encode()).hexdigest()[:16]
 
 
 def _scheduler(warmup_steps: int, kind: str):
@@ -176,6 +189,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     trainer_config = trainer_config.with_callbacks(
         cookbook.configure_default_callbacks(
             run_name=run_ts, wandb_group_name=cli_context.run_name,
+            wandb_run_id=_wandb_run_id(b["save_folder"]),
             **({"checkpoint_save_interval": save_freq} if save_freq > 0 else {}),
             **({"ephemeral_checkpoint_save_interval": _ephemeral} if _ephemeral > 0 else {}),
         )

@@ -138,6 +138,7 @@ def configure_default_callbacks(
     wandb_project: str = "olmo-cookbook",
     checkpoint_save_interval: int | None = 1000,
     ephemeral_checkpoint_save_interval: int | None = None,
+    wandb_run_id: str | None = None,
 ) -> Dict[str, Callback]:
     callbacks = configure_required_callbacks(run_name)
     callbacks["checkpointer"] = CheckpointerCallback(
@@ -145,6 +146,9 @@ def configure_default_callbacks(
         ephemeral_save_interval=ephemeral_checkpoint_save_interval,
         save_async=True,
     )
+    # `wandb_run_id` opts into resume: a restarted job appends to the same W&B run rather than
+    # opening a new one. Left unset, every restart mints a fresh run, so a preempted job shows up
+    # as a series of short disconnected curves.
     callbacks["wandb"] = WandBCallback(
         name=run_name,
         group=wandb_group_name,
@@ -152,5 +156,7 @@ def configure_default_callbacks(
         entity="ai2-llm",
         cancel_check_interval=20,
         enabled=True,
+        run_id=wandb_run_id,
+        resume="allow" if wandb_run_id else None,
     )
     return callbacks
