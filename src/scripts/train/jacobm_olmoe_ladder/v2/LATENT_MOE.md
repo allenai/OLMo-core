@@ -319,9 +319,11 @@ The promoted 480M L=2 Cx1 run also finished cleanly at transferred LR
 `1.2e-3`, with strict final-250M CE `2.463192`. That is `0.029091` lower than
 the matching non-latent KDA Cx1 result (`2.492283`). The 480M Cx2 run also
 finished cleanly with strict final-250M CE `2.361694`, versus `2.382695` for
-its non-latent KDA parent. The remaining 480M Cx4/Cx8 cells and all four 810M
-cells were submitted on 2026-07-30 at the same transferred wide-integration
-LRs. These scale results now flow into
+its non-latent KDA parent. The 810M Cx1 run has now finished cleanly as well:
+its strict final-250M CE is `2.320513`, versus `2.352304` for the non-latent
+KDA parent. At the 2026-07-30 19:18 UTC audit, the remaining 480M Cx4/Cx8 and
+810M Cx2/Cx4/Cx8 cells were running, as were the 1.2B Cx1/Cx2/Cx4 cells;
+1.2B Cx8 remained queued. These scale results flow into
 [`plot_kda_latent_moe.py`](plot_kda_latent_moe.py) and the shared best-of plot.
 
 ## Proposed larger LatentMoE configs

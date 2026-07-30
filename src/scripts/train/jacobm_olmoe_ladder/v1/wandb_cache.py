@@ -321,13 +321,16 @@ def _sampled_tail_history(
       }
     }
     """
-    # ``Run._exec`` expects the parsed GraphQL document used by W&B's public
-    # client internals, not a raw query string. Keep this import local so the
-    # cache helpers remain importable in environments that do not install
-    # W&B until the plotting entry point is invoked.
-    from wandb.apis.public.runs import gql
+    # W&B 0.28+ accepts the raw query string, while older clients expected the
+    # parsed GraphQL document exposed by their public-runs module.
+    try:
+        from wandb.apis.public.runs import gql
+    except ImportError:
+        parsed_query = query
+    else:
+        parsed_query = gql(query)
 
-    response = run._exec(gql(query), specs=[json.dumps(spec)])
+    response = run._exec(parsed_query, specs=[json.dumps(spec)])
     return [
         dict(row)
         for row in response["project"]["run"]["sampledHistory"][0]
