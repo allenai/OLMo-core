@@ -292,8 +292,7 @@ class Olmo3MoeExperts(nn.ModuleList):
         ).transpose(1, 2)
         w_down = torch.stack([expert.down_proj.weight.transpose(0, 1) for expert in self])
         up_gate = F.grouped_mm(x_grouped, w_up_gate, offs=offs)
-        up, gate = up_gate.chunk(2, dim=-1)
-        hidden = up * cast(Olmo3MoeExpert, self[0]).act_fn(gate)
+        hidden = self._activate_grouped(up_gate, offs[-1])
         y_grouped = F.grouped_mm(hidden, w_down, offs=offs)
         if os.environ.get(
             "OLMO_HF_CAPTURE_TE_EXPERT_TENSORS", ""
@@ -310,6 +309,21 @@ class Olmo3MoeExperts(nn.ModuleList):
             map_type="index",
             merging_probs=topk_weights,
         )
+
+    def _activate_grouped(
+        self,
+        up_gate: torch.Tensor,
+        num_valid_rows: torch.Tensor,
+    ) -> torch.Tensor:
+        if up_gate.is_cuda and not torch.is_grad_enabled():
+            try:
+                from olmo_core.kernels.swiglu import swiglu_valid_prefix
+
+                return swiglu_valid_prefix(up_gate, num_valid_rows)
+            except ImportError:
+                pass
+        up, gate = up_gate.chunk(2, dim=-1)
+        return up * cast(Olmo3MoeExpert, self[0]).act_fn(gate)
 
     def _forward_grouped_mm(
         self,
@@ -346,8 +360,7 @@ class Olmo3MoeExperts(nn.ModuleList):
         w_down = torch.stack([expert.down_proj.weight.transpose(0, 1) for expert in self])
 
         up_gate = F.grouped_mm(x_grouped, w_up_gate, offs=offs)
-        up, gate = up_gate.chunk(2, dim=-1)
-        hidden = up * cast(Olmo3MoeExpert, self[0]).act_fn(gate)
+        hidden = self._activate_grouped(up_gate, offs[-1])
         y_grouped = F.grouped_mm(hidden, w_down, offs=offs)
 
         # Deterministic fallback when Transformer Engine is unavailable.
