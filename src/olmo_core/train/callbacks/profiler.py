@@ -283,8 +283,7 @@ class ProfilerCallback(Callback):
 
         if self.export_distributed_event_summary:
             summary_path = (
-                output_dir
-                / f"rank-{get_rank()}-step-{prof.step_num}.distributed-events.json"
+                output_dir / f"rank-{get_rank()}-step-{prof.step_num}.distributed-events.json"
             )
             summary = {
                 "rank": get_rank(),

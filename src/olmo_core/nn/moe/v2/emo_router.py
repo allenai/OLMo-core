@@ -21,7 +21,7 @@ class EmoRouterV2(MoERouterV2):
     def __init__(self, *, emo: EmoRouterConfig, **kwargs):
         super().__init__(**kwargs)
         self.emo = emo
-        self.emo.validate(num_experts=self.num_experts, top_k=self.top_k)
+        self.emo.validate_for_router(num_experts=self.num_experts, top_k=self.top_k)
 
         unsupported = {
             "uniform_expert_assignment": self.uniform_expert_assignment,
@@ -33,9 +33,7 @@ class EmoRouterV2(MoERouterV2):
         }
         enabled = [name for name, value in unsupported.items() if value]
         if enabled:
-            raise OLMoConfigurationError(
-                f"EMO routing does not support: {', '.join(enabled)}"
-            )
+            raise OLMoConfigurationError(f"EMO routing does not support: {', '.join(enabled)}")
 
     @property
     def requires_segment_ids(self) -> bool:
@@ -108,9 +106,7 @@ class EmoRouterV2(MoERouterV2):
             expert_weights = scores.gather(-1, expert_indices)
 
         if self.normalize_expert_weights is not None:
-            expert_weights = F.normalize(
-                expert_weights, p=self.normalize_expert_weights, dim=-1
-            )
+            expert_weights = F.normalize(expert_weights, p=self.normalize_expert_weights, dim=-1)
         if self.restore_weight_scale:
             expert_weights = expert_weights * self.top_k
         if self.expert_weight_scale is not None:
