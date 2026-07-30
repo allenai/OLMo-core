@@ -266,10 +266,21 @@ def convert_checkpoint_to_hf(
                     len(key_mapping),
                 )
                 model_state = model.state_dict()
-                checkpoint_state = {
-                    checkpoint_key: model_state[model_key]
-                    for model_key, checkpoint_key in key_mapping.items()
-                }
+                checkpoint_state: dict[str, torch.Tensor] = {}
+                for model_key, checkpoint_key in key_mapping.items():
+                    tensor_metadata = checkpoint_metadata.state_dict_metadata[checkpoint_key]
+                    model_tensor = model_state[model_key]
+                    if tensor_metadata.size.numel() != model_tensor.numel():
+                        raise RuntimeError(
+                            f"Checkpoint tensor {checkpoint_key!r} has "
+                            f"{tensor_metadata.size.numel()} elements, but model tensor "
+                            f"{model_key!r} has {model_tensor.numel()}"
+                        )
+                    checkpoint_state[checkpoint_key] = torch.empty(
+                        tuple(tensor_metadata.size),
+                        dtype=tensor_metadata.properties.dtype,
+                        device=model_tensor.device,
+                    )
                 dist_cp.state_dict_loader.load(
                     checkpoint_state,
                     checkpoint_id=model_and_optim_dir,
@@ -279,7 +290,9 @@ def convert_checkpoint_to_hf(
                 )
                 model.load_state_dict(
                     {
-                        model_key: checkpoint_state[checkpoint_key]
+                        model_key: checkpoint_state[checkpoint_key].reshape(
+                            model_state[model_key].shape
+                        )
                         for model_key, checkpoint_key in key_mapping.items()
                     },
                     strict=True,
