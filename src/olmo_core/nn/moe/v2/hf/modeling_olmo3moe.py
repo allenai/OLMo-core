@@ -234,7 +234,7 @@ class Olmo3MoeExperts(nn.ModuleList):
                 dim=1, keepdim=True
             )  # (N, 1)
             out = out + expert(hidden_states) * w
-        return out
+        return out.to(dtype=hidden_states.dtype)
 
     def _forward_loop(
         self,
@@ -243,7 +243,7 @@ class Olmo3MoeExperts(nn.ModuleList):
         topk_weights: torch.Tensor,
     ) -> torch.Tensor:
         N, H = hidden_states.shape
-        out = hidden_states.new_zeros((N, H))
+        out = torch.zeros((N, H), device=hidden_states.device, dtype=torch.float32)
         for expert_id, expert in enumerate(self):
             mask = topk_ids == expert_id  # (N, K) bool
             if not mask.any():
@@ -251,9 +251,13 @@ class Olmo3MoeExperts(nn.ModuleList):
             token_ids, k_ids = mask.nonzero(as_tuple=True)  # both (M,)
             x_sel = hidden_states.index_select(0, token_ids)  # (M, H)
             y_sel = expert(x_sel)  # (M, H)
-            w_sel = topk_weights[token_ids, k_ids].unsqueeze(-1).to(dtype=hidden_states.dtype)
-            out.index_add_(0, token_ids, y_sel * w_sel)
-        return out
+            w_sel = topk_weights[token_ids, k_ids].unsqueeze(-1)
+            out.index_add_(
+                0,
+                token_ids,
+                y_sel.float() * w_sel.float(),
+            )
+        return out.to(dtype=hidden_states.dtype)
 
     def _forward_grouped_mm(
         self,
@@ -268,7 +272,7 @@ class Olmo3MoeExperts(nn.ModuleList):
 
         route_token_ids = torch.arange(N, device=hidden_states.device).repeat_interleave(K)
         route_expert_ids = topk_ids.reshape(-1)
-        route_weights = topk_weights.reshape(-1).to(dtype=hidden_states.dtype)
+        route_weights = topk_weights.reshape(-1)
 
         sorted_route_ids = torch.argsort(route_expert_ids)
         sorted_expert_ids = route_expert_ids.index_select(0, sorted_route_ids)
@@ -298,10 +302,10 @@ class Olmo3MoeExperts(nn.ModuleList):
         # reducing. Transformer Engine's MoE unpermute combines routed rows in
         # that order; changing the BF16 summation order is enough to perturb
         # hidden states and eventually alter later top-k routing decisions.
-        weighted_y_grouped = y_grouped * sorted_weights.unsqueeze(-1)
+        weighted_y_grouped = y_grouped.float() * sorted_weights.float().unsqueeze(-1)
         original_route_order = torch.argsort(sorted_route_ids)
         weighted_y = weighted_y_grouped.index_select(0, original_route_order)
-        return weighted_y.reshape(N, K, H).sum(dim=1)
+        return weighted_y.reshape(N, K, H).sum(dim=1).to(dtype=hidden_states.dtype)
 
     def forward(
         self,
@@ -403,7 +407,10 @@ class Olmo3MoeSparseMLP(nn.Module):
         routed_h = routed_x.shape[-1]
         x_flat = routed_x.reshape(B * S, routed_h)
         idx_flat = expert_indices.reshape(B * S, K)  # (N, K)
-        w_flat = expert_weights.reshape(B * S, K).to(dtype=x.dtype)  # (N, K)
+        # The training path keeps router weights in FP32 through the weighted
+        # expert reduction, then casts the combined routed output back to the
+        # model dtype. Retaining that precision matters with a large top-k.
+        w_flat = expert_weights.reshape(B * S, K)  # (N, K)
 
         out_flat = self.experts(x_flat, topk_ids=idx_flat, topk_weights=w_flat)
         routed_expert_out = out_flat.view(B, S, routed_h)
