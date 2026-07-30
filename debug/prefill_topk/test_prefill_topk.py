@@ -23,7 +23,10 @@ import torch
 
 from olmo_core.nn.attention.landmark_compressive import fused_compressive_landmark_attention
 from olmo_core.nn.attention.landmark_fast import fused_landmark_attention_fast
-from olmo_core.nn.attention.landmark_prefill_topk import landmark_topk_prefill_attention
+from olmo_core.nn.attention.landmark_prefill_topk import (
+    landmark_topk_prefill_attention,
+    landmark_topk_prefill_attention_fast,
+)
 
 DEV = "cuda"
 DTYPE = torch.bfloat16
@@ -157,6 +160,39 @@ def test_tiling_invariance():
     return _report("tile 64 vs 512", a, b, 0.0)
 
 
+def test_fused_matches_eager():
+    print("[4] fused (Triton) prefill top-k == the eager reference (alpha=0)")
+    ok = True
+    for B, H, T, D, Lb in [(1, 8, 1024, 64, 64), (2, 4, 2048, 128, 64)]:
+        q, k, v = _mk(B, H, T, D, seed=4)
+        scale = D**-0.5
+        n_blocks = T // Lb
+        for compressive in (False, True):
+            for top_k in [1, 3, 8, None]:
+                ref = landmark_topk_prefill_attention(
+                    q,
+                    k,
+                    v,
+                    block_size=Lb,
+                    softmax_scale=scale,
+                    top_k=top_k,
+                    compressive=compressive,
+                    nonselected_mass=0.0,
+                )
+                got = landmark_topk_prefill_attention_fast(
+                    q,
+                    k,
+                    v,
+                    block_size=Lb,
+                    softmax_scale=scale,
+                    top_k=top_k,
+                    compressive=compressive,
+                )
+                tag = f"B{B} H{H} T{T} D{D} nblk{n_blocks} compressive={compressive} top_k={top_k}"
+                ok &= _report(tag, got, ref, 3e-2)
+    return ok
+
+
 if __name__ == "__main__":
     if not torch.cuda.is_available():
         sys.exit("needs a CUDA device (the reference kernels are Triton)")
@@ -164,5 +200,6 @@ if __name__ == "__main__":
     all_ok &= test_dense_equivalence()
     all_ok &= test_decode_agreement()
     all_ok &= test_tiling_invariance()
+    all_ok &= test_fused_matches_eager()
     print("ALL PASS" if all_ok else "FAILURES ABOVE")
     sys.exit(0 if all_ok else 1)

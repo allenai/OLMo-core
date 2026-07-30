@@ -29,22 +29,40 @@ RUNNER = "debug/prefill_topk/run_beaker_prefill_topk_eval.sh"
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("run_name", help="run under checkpoints/prasanns/<run_name> (checkpoint + label)")
+    ap.add_argument(
+        "run_name", help="run under checkpoints/prasanns/<run_name> (checkpoint + label)"
+    )
     ap.add_argument("cluster", help="Beaker cluster, e.g. ai2/jupiter (weka-backed, H100)")
-    ap.add_argument("--task", default="contradiction", help="ladder task key (default contradiction)")
+    ap.add_argument(
+        "--task", default="contradiction", help="ladder task key (default contradiction)"
+    )
     ap.add_argument("--rungs", default="2k,8k,16k,32k")
-    ap.add_argument("--configs", default="",
-                    help="';'-separated '<tag>|<extra eval flags>'; empty = the runner's default sweep "
-                         "(baseline, prefill top-k at 10/25/50%%, and 10%% with a hard drop).")
-    ap.add_argument("--step", default="", help="pin a step dir (e.g. step580); default = latest complete.")
-    ap.add_argument("--ckpt", default="", help="ABSOLUTE weka step dir; overrides run_name globbing.")
-    ap.add_argument("--results-dir", default="",
-                    help="ABSOLUTE weka dir for result JSONs (default <run>/eval_prefill_topk).")
+    ap.add_argument(
+        "--configs",
+        default="",
+        help="';'-separated '<tag>|<extra eval flags>'; empty = the runner's default sweep "
+        "(baseline, prefill top-k at 10/25/50%%, and 10%% with a hard drop).",
+    )
+    ap.add_argument(
+        "--step", default="", help="pin a step dir (e.g. step580); default = latest complete."
+    )
+    ap.add_argument(
+        "--ckpt", default="", help="ABSOLUTE weka step dir; overrides run_name globbing."
+    )
+    ap.add_argument(
+        "--results-dir",
+        default="",
+        help="ABSOLUTE weka dir for result JSONs (default <run>/eval_prefill_topk).",
+    )
     ap.add_argument("--prompt-format", choices=["chat", "raw", "alpaca"], default="chat")
     ap.add_argument("--max-test", type=int, default=600)
     ap.add_argument("--max-length", type=int, default=40960)
-    ap.add_argument("--ngpu", type=int, default=2,
-                    help="GPUs per job (data-parallel over examples); the 4B model fits on 1-2.")
+    ap.add_argument(
+        "--ngpu",
+        type=int,
+        default=2,
+        help="GPUs per job (data-parallel over examples); the 4B model fits on 1-2.",
+    )
     ap.add_argument("--priority", default="urgent")  # never below urgent (user directive)
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()

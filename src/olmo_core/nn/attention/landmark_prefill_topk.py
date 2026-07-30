@@ -183,6 +183,262 @@ def landmark_topk_prefill_attention(
     return out
 
 
+try:  # optional: the fused fast path needs triton + CUDA
+    import triton  # type: ignore
+    import triton.language as tl  # type: ignore
+except ImportError:  # pragma: no cover
+    triton = None  # type: ignore
+    tl = None  # type: ignore
+
+
+if triton is not None:
+
+    @triton.jit
+    def _fwd_kernel_prefill_topk(
+        Q,
+        K,
+        V,
+        sm_scale,
+        Out,
+        sqz,
+        sqh,
+        sqm,
+        sqd,
+        skz,
+        skh,
+        skn,
+        skd,
+        svz,
+        svh,
+        svn,
+        svd,
+        soz,
+        soh,
+        som,
+        sod,
+        Thresh,  # fp32 (Z*H, N_CTX_Q): per-query k-th largest landmark score, or -inf to keep all
+        Z,
+        H,
+        N_CTX,
+        BLOCK: tl.constexpr,
+        BLOCK_DMODEL: tl.constexpr,
+        COMPRESSIVE: tl.constexpr,
+    ):
+        # Forward-only landmark attention with per-query hard top-k block retrieval. Structurally the
+        # same as landmark_kernel._fwd_kernel / landmark_compressive._fwd_kernel_compressive with
+        # N_PREFIX_Q=0 and no doc/chunk masking, plus one extra line: a past block whose landmark
+        # score falls below this query's threshold is floored to -1e30, so its gate weight underflows
+        # to 0 and it contributes nothing. The floor is finite (not -inf) for the same reason as
+        # DOC_MASK's: if EVERY block so far is dropped the running max stays at the floor and the
+        # partial accumulator is garbage, but the diagonal block that always follows has finite
+        # scores, so the rescale exp(-1e30 - finite) = 0 wipes it. -inf would produce inf - inf = nan.
+        start_m = tl.program_id(0)
+        off_hz = tl.program_id(1)
+
+        BLOCK_M: tl.constexpr = BLOCK
+        BLOCK_N: tl.constexpr = BLOCK
+
+        offs_m = start_m * BLOCK_M + tl.arange(0, BLOCK_M)
+        # Last row of a block is its landmark token, which does not attend to itself.
+        offs_m_real = offs_m + tl.where(tl.arange(0, BLOCK_M) == BLOCK_M - 1, -1, 0)
+        offs_n = tl.arange(0, BLOCK_N)
+        offs_d = tl.arange(0, BLOCK_DMODEL)
+
+        offs_q = off_hz * sqh + offs_m[:, None] * sqm + offs_d[None, :] * sqd
+        offs_k = off_hz * skh + offs_n[None, :] * skn + offs_d[:, None] * skd
+        offs_v = off_hz * svh + offs_n[:, None] * svn + offs_d[None, :] * svd
+
+        thresh = tl.load(Thresh + off_hz * N_CTX + offs_m, mask=offs_m < N_CTX, other=0.0)
+
+        m_prev = tl.zeros([BLOCK_M], dtype=tl.float32) - float("inf")
+        l_prev = tl.zeros([BLOCK_M], dtype=tl.float32)
+        acc = tl.zeros([BLOCK_M, BLOCK_DMODEL], dtype=tl.float32)
+
+        q_vals = tl.load(Q + offs_q, mask=offs_m[:, None] < N_CTX, other=0)
+
+        for _ in range(0, start_m):
+            k_vals = tl.load(K + offs_k, mask=offs_n[None, :] < N_CTX, other=0)
+            qk = tl.zeros([BLOCK_M, BLOCK_N], dtype=q_vals.dtype)
+            qk += tl.dot(q_vals, k_vals, allow_tf32=False)
+            qk *= sm_scale
+            qk = tl.where(offs_m_real[:, None] >= offs_n[None, :], qk, float("-inf"))
+
+            landmark_qk = tl.max(
+                tl.where(tl.arange(0, BLOCK_N)[None, :] == BLOCK_N - 1, qk, float("-inf")), 1
+            )
+            # ---- the whole point: drop blocks outside this query's top-k ----
+            landmark_qk = tl.where(landmark_qk >= thresh, landmark_qk, -1e30)
+
+            if COMPRESSIVE:
+                within_qk = qk
+            else:
+                within_qk = tl.where(
+                    tl.arange(0, BLOCK_N)[None, :] == BLOCK_N - 1, float("-inf"), qk
+                )
+            within_m = tl.max(within_qk, 1)
+            within_p = tl.exp(within_qk - within_m[:, None])
+            within_denom = tl.sum(within_p, 1)
+
+            m_curr = tl.maximum(landmark_qk, m_prev)
+            l_prev *= tl.exp(m_prev - m_curr)
+            landmark_p = tl.exp(landmark_qk - m_curr)
+            l_curr = landmark_p + l_prev
+            l_rcp = 1.0 / l_curr
+            landmark_p *= l_rcp
+
+            acc *= (l_prev * l_rcp)[:, None]
+            v_vals = tl.load(V + offs_v, mask=offs_n[:, None] < N_CTX, other=0)
+            acc += tl.dot(
+                (landmark_p[:, None] * within_p / within_denom[:, None]).to(Q.dtype.element_ty),
+                v_vals,
+                allow_tf32=False,
+            )
+
+            l_prev = l_curr
+            m_prev = m_curr
+
+            offs_n += BLOCK_N
+            offs_k += BLOCK_N * skn
+            offs_v += BLOCK_N * svn
+
+        # Diagonal (local) block: plain causal softmax, never gated by top-k.
+        k_vals = tl.load(K + offs_k, mask=offs_n[None, :] < N_CTX, other=0)
+        qk = tl.zeros([BLOCK_M, BLOCK_N], dtype=q_vals.dtype)
+        qk += tl.dot(q_vals, k_vals, allow_tf32=False)
+        qk *= sm_scale
+        qk = tl.where(offs_m_real[:, None] >= offs_n[None, :], qk, float("-inf"))
+
+        m_curr = tl.maximum(tl.max(qk, 1), m_prev)
+        l_prev *= tl.exp(m_prev - m_curr)
+        p = tl.exp(qk - m_curr[:, None])
+        l_curr = tl.sum(p, 1) + l_prev
+        l_rcp = 1.0 / l_curr
+        p *= l_rcp[:, None]
+        acc *= (l_prev * l_rcp)[:, None]
+        v_vals = tl.load(V + offs_v, mask=offs_n[:, None] < N_CTX, other=0)
+        acc += tl.dot(p.to(Q.dtype.element_ty), v_vals, allow_tf32=False)
+
+        offs_o = off_hz * soh + offs_m[:, None] * som + offs_d[None, :] * sod
+        tl.store(Out + offs_o, acc, mask=offs_m[:, None] < N_CTX)
+
+
+@torch.no_grad()
+def landmark_topk_thresholds(
+    q: torch.Tensor,
+    k: torch.Tensor,
+    *,
+    block_size: int,
+    softmax_scale: float,
+    top_k: Optional[int],
+    query_tile: int = 4096,
+) -> torch.Tensor:
+    """
+    Per-query cutoff for hard top-k landmark retrieval, for use as ``landmark_score >= thresh``.
+
+    The cutoff is the **midpoint between the k-th and (k+1)-th largest** score over the query's
+    strictly-past landmark keys, not the k-th value itself. The k-th value would be fragile: this
+    pass computes scores with a torch fp32 matmul while the kernel recomputes them with a bf16
+    ``tl.dot``, so at ``top_k=1`` the arg-max block's own score can land a rounding step *below* its
+    threshold and get dropped -- selecting nothing at all. A midpoint tolerates any noise smaller
+    than half the gap between the last kept and first dropped block.
+
+    ``-inf`` (keep every past block) is returned when the query has ``<= top_k`` past blocks, which
+    falls out for free: the (k+1)-th value is then ``-inf`` and so is the midpoint.
+
+    Costs ``T x n_blocks`` instead of ``T x T``.
+
+    :returns: fp32 ``(B * H, T)`` thresholds, laid out for the fused kernel.
+    """
+    B, H, T, _ = q.shape
+    Lb = block_size
+    n_blocks = T // Lb
+    device = q.device
+    if top_k is None or top_k >= n_blocks:
+        return torch.full((B * H, T), -float("inf"), device=device, dtype=torch.float32)
+
+    lm_k = k[:, :, Lb - 1 :: Lb, :].float()  # (B, H, n_blocks, D)
+    blk_idx = torch.arange(n_blocks, device=device)
+    thresh = torch.empty(B, H, T, device=device, dtype=torch.float32)
+
+    for m0 in range(0, T, query_tile):
+        m1 = min(m0 + query_tile, T)
+        pos = torch.arange(m0, m1, device=device)
+        q_block = pos // Lb
+        s = torch.matmul(q[:, :, m0:m1].float(), lm_k.transpose(-1, -2)) * softmax_scale
+        valid = blk_idx[None, :] < q_block[:, None]  # (M, n_blocks) strictly-past blocks
+        s = s.masked_fill(~valid, -float("inf"))
+        top = s.topk(top_k + 1, dim=-1).values  # (B, H, M, top_k + 1)
+        thresh[:, :, m0:m1] = 0.5 * (top[..., -2] + top[..., -1])
+    return thresh.reshape(B * H, T)
+
+
+@torch.no_grad()
+def landmark_topk_prefill_attention_fast(
+    q: torch.Tensor,
+    k: torch.Tensor,
+    v: torch.Tensor,
+    *,
+    block_size: int,
+    softmax_scale: float,
+    top_k: Optional[int],
+    compressive: bool,
+) -> torch.Tensor:
+    """
+    Fused (Triton) equivalent of :func:`landmark_topk_prefill_attention` with
+    ``nonselected_mass=0``. Two passes: landmark-only scores -> per-query threshold, then the
+    landmark forward kernel with blocks below the threshold floored out.
+
+    Roughly the speed of the ordinary fused prefill kernel, vs ~55x slower for the eager path at 32k.
+    """
+    if triton is None:
+        raise RuntimeError("the fused prefill top-k path requires triton + CUDA")
+    B, H, T, D = q.shape
+    Lb = block_size
+    if T % Lb != 0:
+        raise ValueError(f"sequence length {T} is not a multiple of block_size {Lb}")
+    q, k, v = q.contiguous(), k.contiguous(), v.contiguous()
+    thresh = landmark_topk_thresholds(
+        q, k, block_size=Lb, softmax_scale=softmax_scale, top_k=top_k
+    ).contiguous()
+    o = torch.empty_like(q)
+    grid = (T // Lb, B * H, 1)
+    num_warps = 8 if D > 128 else 4
+    num_stages = 2 if D > 128 else 3
+    _fwd_kernel_prefill_topk[grid](
+        q,
+        k,
+        v,
+        softmax_scale,
+        o,
+        q.stride(0),
+        q.stride(1),
+        q.stride(2),
+        q.stride(3),
+        k.stride(0),
+        k.stride(1),
+        k.stride(2),
+        k.stride(3),
+        v.stride(0),
+        v.stride(1),
+        v.stride(2),
+        v.stride(3),
+        o.stride(0),
+        o.stride(1),
+        o.stride(2),
+        o.stride(3),
+        thresh,
+        B,
+        H,
+        T,
+        BLOCK=Lb,
+        BLOCK_DMODEL=D,
+        COMPRESSIVE=compressive,
+        num_warps=num_warps,
+        num_stages=num_stages,
+    )
+    return o
+
+
 def _prefill_topk(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor) -> torch.Tensor:
     """Replacement for ``FastLandmarkAttention._prefill`` that applies per-query top-k retrieval."""
     cfg = self._prefill_topk_cfg
@@ -197,17 +453,35 @@ def _prefill_topk(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor) -> to
     top_k = cfg["top_k"]
     if top_k is None and cfg["top_k_fraction"] is not None:
         top_k = max(1, math.ceil(cfg["top_k_fraction"] * n_blocks))
-    att = landmark_topk_prefill_attention(
-        q,
-        k,
-        v,
-        block_size=Lb,
-        softmax_scale=self.softmax_scale,
-        top_k=top_k,
-        compressive=cfg["compressive"],
-        nonselected_mass=cfg["nonselected_mass"],
-        query_tile=cfg["query_tile"],
+    # The fused path is ~55x faster at 32k but only implements the hard drop (alpha = 0).
+    use_fast = cfg["backend"] == "fused" or (
+        cfg["backend"] == "auto"
+        and triton is not None
+        and q.is_cuda
+        and cfg["nonselected_mass"] == 0.0
     )
+    if use_fast:
+        att = landmark_topk_prefill_attention_fast(
+            q,
+            k,
+            v,
+            block_size=Lb,
+            softmax_scale=self.softmax_scale,
+            top_k=top_k,
+            compressive=cfg["compressive"],
+        )
+    else:
+        att = landmark_topk_prefill_attention(
+            q,
+            k,
+            v,
+            block_size=Lb,
+            softmax_scale=self.softmax_scale,
+            top_k=top_k,
+            compressive=cfg["compressive"],
+            nonselected_mass=cfg["nonselected_mass"],
+            query_tile=cfg["query_tile"],
+        )
     return att[:, :, :T]
 
 
@@ -226,10 +500,11 @@ def enable_prefill_topk(
     top_k_fraction: Optional[float] = None,
     nonselected_mass: Optional[float] = None,
     query_tile: int = 128,
+    backend: str = "auto",
 ) -> int:
     """
-    Route every landmark layer's prefill through :func:`landmark_topk_prefill_attention`, so *all*
-    prompt positions -- not just the decoded ones -- see only their top-k landmark blocks.
+    Route every landmark layer's prefill through the top-k attention above, so *all* prompt
+    positions -- not just the decoded ones -- see only their top-k landmark blocks.
 
     Inference only; the training path is untouched. Call :func:`disable_prefill_topk` to restore.
 
@@ -237,8 +512,10 @@ def enable_prefill_topk(
     :param top_k: Fixed number of past blocks per query. Takes precedence over ``top_k_fraction``.
     :param top_k_fraction: ``k = ceil(fraction * num_prompt_blocks)``, the same rule the decode uses.
     :param nonselected_mass: ``alpha`` for compressive layers; ``None`` reuses each layer's own
-        :attr:`nonselected_landmark_mass`.
-    :param query_tile: Query positions per tile (peak-memory knob).
+        :attr:`nonselected_landmark_mass`. Note ``alpha > 0`` forces the slow eager backend.
+    :param query_tile: Query positions per tile (eager backend peak-memory knob).
+    :param backend: ``"auto"`` (fused when it applies -- CUDA, triton, ``alpha == 0``),
+        ``"fused"`` (force the Triton path; ignores ``alpha``), or ``"eager"``.
 
     :returns: Number of layers patched.
 
@@ -254,6 +531,8 @@ def enable_prefill_topk(
         )
     if top_k is not None and top_k < 1:
         raise ValueError(f"top_k must be >= 1 or None (got {top_k})")
+    if backend not in ("auto", "fused", "eager"):
+        raise ValueError(f"backend must be auto|fused|eager (got {backend!r})")
     for attn in layers:
         compressive = isinstance(attn, FastCompressiveLandmarkAttention)
         alpha = 0.0
@@ -269,6 +548,7 @@ def enable_prefill_topk(
             "compressive": compressive,
             "nonselected_mass": alpha,
             "query_tile": query_tile,
+            "backend": backend,
         }
         if not hasattr(attn, "_prefill_orig"):
             attn._prefill_orig = attn._prefill

@@ -75,9 +75,12 @@ cd "$REPO"
 # tag|extra flags. Baseline first so a partial job still yields the reference point.
 #   baseline            = production behaviour (dense prefill, top-k at decode only)
 #   prefill_topkNNpct   = the same top-k rule applied to EVERY prefill query as well
-#   alpha defaults to each compressive layer's nonselected_landmark_mass (0.1), matching decode;
-#   the *_alpha0 configs hard-drop non-selected blocks instead.
-DEFAULT_CONFIGS="baseline_decode_only|;prefill_topk10pct|--prefill-topk-fraction 0.1;prefill_topk25pct|--prefill-topk-fraction 0.25;prefill_topk50pct|--prefill-topk-fraction 0.5;prefill_topk10pct_alpha0|--prefill-topk-fraction 0.1 --prefill-nonselected-mass 0"
+#
+# All prefill configs pass --prefill-nonselected-mass 0 (hard drop). That is deliberate: it is the
+# variant that actually buys O(k * block) prefill, AND it is the only one with a fused Triton path --
+# alpha > 0 falls back to the eager reference, which is ~55x slower (82 s/prompt at 32k, i.e. ~7 GPU-h
+# per rung). The 0.6B sweep found alpha makes no difference worth that cost (.906 vs .902 at 10%).
+DEFAULT_CONFIGS="baseline_decode_only|;prefill_topk10pct|--prefill-topk-fraction 0.1 --prefill-nonselected-mass 0;prefill_topk25pct|--prefill-topk-fraction 0.25 --prefill-nonselected-mass 0;prefill_topk50pct|--prefill-topk-fraction 0.5 --prefill-nonselected-mass 0"
 CONFIGS="${CONFIGS:-$DEFAULT_CONFIGS}"
 
 rc=0
