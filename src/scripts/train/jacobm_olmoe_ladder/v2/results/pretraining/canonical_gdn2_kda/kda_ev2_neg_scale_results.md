@@ -1,6 +1,6 @@
 # KDA expand_v=2 negative-eigenvalue fixed-LR transfer
 
-Generated: `2026-07-29T15:42:01.060305+00:00`
+Generated: `2026-07-30T15:49:13.862921+00:00`
 
 Selection metric: final `250M`-token mean training CE. Only finished runs are eligible.
 The optimal-LR summary includes only bracketed 275M sweeps with a valid quadratic fit.
@@ -25,8 +25,8 @@ Fitted LR minima in the 275M U-plot are visual aids and are never used to select
 | 810m | Cx8 | fixed-LR transfer | finished | wide_integration: 2.104939 @ 0.0004; geometry_gdn_ev2_nope_gated: 2.114516 @ 0.0004; geometry_gdn2_ev2_nope_gated: —; geometry_gdn2_ev1_noneg_nope_gated: 2.109020 @ 0.0004; geometry_kda_ev1_noneg_nope_gated: — | 2.090719 (0.0004) | wide_integration: -0.014220; geometry_gdn_ev2_nope_gated: -0.023797; geometry_gdn2_ev2_nope_gated: —; geometry_gdn2_ev1_noneg_nope_gated: -0.018301; geometry_kda_ev1_noneg_nope_gated: — |
 | 1p2b | Cx1 | fixed-LR transfer | finished | wide_integration: 2.273062 @ 0.0004; geometry_gdn_ev2_nope_gated: 2.273007 @ 0.0004; geometry_gdn2_ev2_nope_gated: —; geometry_gdn2_ev1_noneg_nope_gated: 2.253605 @ 0.0004; geometry_kda_ev1_noneg_nope_gated: — | 2.236574 (0.0004) | wide_integration: -0.036488; geometry_gdn_ev2_nope_gated: -0.036433; geometry_gdn2_ev2_nope_gated: —; geometry_gdn2_ev1_noneg_nope_gated: -0.017031; geometry_kda_ev1_noneg_nope_gated: — |
 | 1p2b | Cx2 | fixed-LR transfer | finished | wide_integration: 2.178332 @ 0.0006; geometry_gdn_ev2_nope_gated: 2.188236 @ 0.0006; geometry_gdn2_ev2_nope_gated: —; geometry_gdn2_ev1_noneg_nope_gated: —; geometry_kda_ev1_noneg_nope_gated: — | 2.146299 (0.0006) | wide_integration: -0.032034; geometry_gdn_ev2_nope_gated: -0.041938; geometry_gdn2_ev2_nope_gated: —; geometry_gdn2_ev1_noneg_nope_gated: —; geometry_kda_ev1_noneg_nope_gated: — |
-| 1p2b | Cx4 | fixed-LR transfer | pending | wide_integration: 2.094219 @ 0.0003; geometry_gdn_ev2_nope_gated: 2.108263 @ 0.0003; geometry_gdn2_ev2_nope_gated: —; geometry_gdn2_ev1_noneg_nope_gated: 2.089778 @ 0.0003; geometry_kda_ev1_noneg_nope_gated: — | — | wide_integration: —; geometry_gdn_ev2_nope_gated: —; geometry_gdn2_ev2_nope_gated: —; geometry_gdn2_ev1_noneg_nope_gated: —; geometry_kda_ev1_noneg_nope_gated: — |
-| 1p2b | Cx8 | fixed-LR transfer | pending | wide_integration: 2.022641 @ 0.0004; geometry_gdn_ev2_nope_gated: 2.037147 @ 0.0004; geometry_gdn2_ev2_nope_gated: —; geometry_gdn2_ev1_noneg_nope_gated: 2.020529 @ 0.0004; geometry_kda_ev1_noneg_nope_gated: — | — | wide_integration: —; geometry_gdn_ev2_nope_gated: —; geometry_gdn2_ev2_nope_gated: —; geometry_gdn2_ev1_noneg_nope_gated: —; geometry_kda_ev1_noneg_nope_gated: — |
+| 1p2b | Cx4 | fixed-LR transfer | finished | wide_integration: 2.094219 @ 0.0003; geometry_gdn_ev2_nope_gated: 2.108263 @ 0.0003; geometry_gdn2_ev2_nope_gated: —; geometry_gdn2_ev1_noneg_nope_gated: 2.089778 @ 0.0003; geometry_kda_ev1_noneg_nope_gated: — | 2.067653 (0.0003) | wide_integration: -0.026567; geometry_gdn_ev2_nope_gated: -0.040610; geometry_gdn2_ev2_nope_gated: —; geometry_gdn2_ev1_noneg_nope_gated: -0.022125; geometry_kda_ev1_noneg_nope_gated: — |
+| 1p2b | Cx8 | fixed-LR transfer | finished | wide_integration: 2.022641 @ 0.0004; geometry_gdn_ev2_nope_gated: 2.037147 @ 0.0004; geometry_gdn2_ev2_nope_gated: —; geometry_gdn2_ev1_noneg_nope_gated: 2.020529 @ 0.0004; geometry_kda_ev1_noneg_nope_gated: — | 1.999736 (0.0004) | wide_integration: -0.022905; geometry_gdn_ev2_nope_gated: -0.037411; geometry_gdn2_ev2_nope_gated: —; geometry_gdn2_ev1_noneg_nope_gated: -0.020793; geometry_kda_ev1_noneg_nope_gated: — |
 
 ## Runs
 
@@ -163,7 +163,9 @@ Fitted LR minima in the 275M U-plot are visual aids and are never used to select
 | 1p2b | wide integration (SWA) | 2 | 0.0006 | finished | 42.835 | 2.178332 | 0 reset(s); 1 duplicate token sample(s) removed | [jfwntmwm](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/jfwntmwm) |
 | 1p2b | canonical GDN2 (expand_v=1, nonnegative) | 4 | 0.0003 | finished | 88.040 | 2.089778 | 0 reset(s); 1 duplicate token sample(s) removed | [ws7c1f1s](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/ws7c1f1s) |
 | 1p2b | geometry-matched hybrid (GDN, expand_v=2, NoPE, gated attention) | 4 | 0.0003 | finished | 93.719 | 2.108263 | 0 reset(s); 1 duplicate token sample(s) removed | [bhr5mgpr](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/bhr5mgpr) |
+| 1p2b | KDA (expand_v=2, negative eigenvalues) | 4 | 0.0003 | finished | 89.841 | 2.067653 | — | [8j8vgags](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/8j8vgags) |
 | 1p2b | wide integration (SWA) | 4 | 0.0003 | finished | 85.670 | 2.094219 | 0 reset(s); 1 duplicate token sample(s) removed | [u7ab1tpb](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/u7ab1tpb) |
 | 1p2b | canonical GDN2 (expand_v=1, nonnegative) | 8 | 0.0004 | finished | 176.081 | 2.020529 | local W&B recovery (SHA256 04755c05000b…) | [dlerge4x](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/dlerge4x) |
 | 1p2b | geometry-matched hybrid (GDN, expand_v=2, NoPE, gated attention) | 8 | 0.0004 | finished | 187.437 | 2.037147 | 0 reset(s); 1 duplicate token sample(s) removed | [z4zmtqmu](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/z4zmtqmu) |
+| 1p2b | KDA (expand_v=2, negative eigenvalues) | 8 | 0.0004 | finished | 179.682 | 1.999736 | — | [shy5gj1d](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/shy5gj1d) |
 | 1p2b | wide integration (SWA) | 8 | 0.0004 | finished | 171.340 | 2.022641 | 0 reset(s); 1 duplicate token sample(s) removed | [bqjzmiqi](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/bqjzmiqi) |
