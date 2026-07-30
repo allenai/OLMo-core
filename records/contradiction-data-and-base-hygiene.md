@@ -123,6 +123,62 @@ is clean, which is why existing results are safe — the contamination only bite
 ⚠ Do not confuse the **root** `/scratch/users/prasann/corpus-reasoning/` clone with the in-tree code —
 the clone is stale (see the corpus-reasoning-submodule memory); only its `data/` is live.
 
+## 4b. ⚠ FEVER / wiki_mix fillers leaking into PubMed contradiction evals (2026-07-29)
+
+**The defect.** Contradiction distractors are harvested by `harvest_fillers`, which globs a *mutable*
+directory. `build_xlong_rungs.py` used `contradiction_*_k3.jsonl` — which also matches the **FEVER**
+and **wiki_mix** corpora. So a file named `contradiction_eval_pubmed_both_*` shipped Wikipedia claims
+as distractors. `build_v2_eval_ladders.py` already restricted to `*pubmed*` (its own comment calls the
+broad glob "the dominant leak vector"); the xlong builder never inherited that, which is why the leak
+**starts at 64k**. `contra_fever` is a *separate experimental setting* and must never bleed in.
+
+**Why it fakes a result.** The gold pair is PubMed; the distractors are not. "Find the contradicting
+pair among n documents" then collapses to "find the biomedical sentences, then pick the pair among
+those" — the effective search space is the gold set, not n, *regardless of the rung label*. The
+shortcut gets relatively stronger as n grows, so a contaminated ladder can look artificially robust
+to context length.
+
+Measured (exact-text fingerprint match, `debug/xlong_5task/audit_contra_fever_leak.py`):
+
+| bundle / rung | FEVER+wiki share of documents | verdict |
+|---|---|---|
+| `eval500_v2` contra base 2k/8k/16k/32k | **0.00%** | ✅ clean (pubmed-only glob) |
+| `_eval_bundle_eval500_v2` contra 64k…2M | **28–31%** | ❌ contaminated → rebuilt |
+| **CTC suite** `contradiction/rung_2048…32768` | **92–99.6%** — *all* fillers, gold 100% PubMed | ❌ **OPEN** |
+| CTC suite `contradiction/rung_131072` | 30% (mixed pool, built later) | ⚠ different task than the rungs below it |
+
+⚠ **The CTC-suite contradiction ladder is the worst instance and is NOT fixed.** At 8k/32k, *every*
+filler is FEVER/wiki and *every* gold doc is PubMed — e.g. `'A Floppy disk is a type of storage.'`
+against gold `'In S clones, the ratio of dihydroxylysinonorleucine (DHLNL) to …'`. Recorded numbers
+rest on it (`results/ctc_suite/all_results.jsonl` contradiction 2k f1 .958/.865/.843, 8k .219,
+32k .038, plus the Stage-3 2k validation). The confound is *constant* across 2k–32k so it does not
+manufacture the 2k→32k collapse, but absolute values are not comparable to a pubmed-only ladder — and
+`rung_131072` **is** a different (harder) task than the rungs below it, so part of any apparent
+long-context drop at 131k is a task change, not a length effect.
+
+**Second-order damage: non-reproducible rungs.** The three families have very different document
+lengths (FEVER ~15–20 tok/doc, PubMed ~35, wiki_mix ~146), so the pool's mean depended on which files
+happened to be on disk. Between the 2026-07-02 and 2026-07-29 builds it moved **36.5 → 47.1 tok/doc**,
+so the same token target solved to a ~29% different doc count (contra 256k: n6408 vs n4944) — the
+rungs hit their token labels but `n` was not comparable across builds.
+
+**Fixed / mitigations.**
+- `build_xlong_rungs.py` glob is now `contradiction_*pubmed*_k3.jsonl` (81,250-doc pool, 42.96
+  tok/doc), which also restores a clean 2× doc-count progression across the whole 64k…2M ladder.
+- Every rung now writes a `.manifest.json` pinning its source files with sizes + mtimes, so "same
+  rung label" can no longer silently mean "different corpora".
+- Calibration **fails loudly** when the pool is smaller than a rung needs (a short pool repeats
+  documents within an example — a known confound in its own right).
+- Audit tooling: `debug/xlong_5task/audit_contra_fever_leak.py` (per-rung membership),
+  `audit_filler_pool.py` (pool composition by source), `audit_weka_ladder.py` (per-rung eval_size +
+  leak + glob ambiguity, run on weka via `audit_weka_ladder.sh`).
+
+**Use this bundle.** `_eval_bundle_eval500_v2_clean` on weka — the **default** since 2026-07-29 in
+`run_beaker_multirung_eval.sh` (`EVAL500`) and in `eval_lc_native.py`'s `_V2_BUNDLES` order. Verified
+2k→2M for contra/nq/outlier/rerank/oolong at `eval_size ≥ 500` and 0.00% contra leak. The ≤32k rungs
+are **byte-identical** to the old bundle (ContentLength + ETag), so no ≤32k number moved; **contra at
+64k+ is not comparable across the switch** (clean 256k = n6102 vs old n6408) — re-run, don't mix.
+
 ## 5. Defaults that are wrong for gold-edge work
 
 - `random_doc_per_example=False` (the default, and what every prior random_doc run used) gives **one
@@ -230,5 +286,13 @@ quietly corrupts step counts, wall-clock, and speedup numbers. Keep the guard; c
   f1 **0.000 at parse_rate 1.0** for a *perfect* model. Faked a whole "goldgrad doesn't replicate"
   conclusion. Use MAXLEN ≥ 8192 at n=100. **Dump generations whenever a trained model evals exactly 0.**
 - **no-cot never emits EOS** → rambles → precision collapse. Pass `--eos-token-id 151643`.
+- **A rung's LABEL is a nominal budget; the built prompt runs 0.4–4% OVER it** (doc count calibrated
+  from a median, plus the instruction/query/marker wrap). The xlong `--max-length` auto-raise used
+  `label + 1024`, which truncated the prompt *tail* — where the question is — at 512k (535,855 actual
+  vs 525,312 allowed) and 2M (2,165,314 vs 2,098,176). Same 0.000-at-parse-1.0 signature as the
+  `--max-length` item above. Now a 10% margin, in both `eval_lc_native.py` and the runner's rung table.
+- **v1 ladders are DISABLED** (2026-07-29) and raise `NotImplementedError`: each v1 rung drew its OWN
+  questions, so every rung-to-rung delta carried eval-set resampling noise on top of the length effect
+  it was meant to isolate. v2 fixes the question set and varies only distractors.
 - **Trainer silently auto-resumes** into an existing `--save-folder` (starts at step N, not 1), making
   step counts and wall-clock/speedup numbers garbage, and can inherit a poisoned base.

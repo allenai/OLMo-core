@@ -7,7 +7,7 @@ root; the root keeps only README/CHANGELOG/CONTRIBUTING/CLAUDE.md/local_cluster.
 
 | Doc | What it is |
 |---|---|
-| `contradiction-data-and-base-hygiene.md` | **Load-bearing**: the running list of *silently wrong* contradiction shards, base checkpoints, sidecars and defaults — things that load, train, and yield a plausible-but-garbage number. Read before picking a base or a shard; check here before adding a new data build. |
+| `contradiction-data-and-base-hygiene.md` | **Load-bearing**: the running list of *silently wrong* contradiction shards, base checkpoints, sidecars and defaults — things that load, train, and yield a plausible-but-garbage number. Read before picking a base or a shard; check here before adding a new data build. Includes §4b, the FEVER/wiki filler leak into PubMed contradiction evals — **still OPEN for the CTC suite ladder** — and which eval bundle to use. |
 | `document-chunked-marker-embeddings.md` | Diagnosis of Qwen3's untrained (bit-identical) marker-token embeddings + the `fix_marker_embeddings.py` repair. **Load-bearing**: read before any docchunk/landmark training from a fresh base (CLAUDE.md points here). |
 | `multihop-gold-routing-experiment.md` | Experiment proposal: can a model use two gold docs that never directly attend to each other? (channel (c) = multi-hop routing across layers). Hop ladder + the leak-matched `hop∞` control. |
 | `instruction-tuning-setup.md` | Instruction-tuning / longctx SFT pipeline setup notes (weka-era; some pointers superseded by `local_cluster.md`). |
