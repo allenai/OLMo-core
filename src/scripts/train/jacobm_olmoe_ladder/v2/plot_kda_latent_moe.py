@@ -228,6 +228,8 @@ def plot_best_of(
         replace(
             wave,
             title="KDA vs paper-matched LatentMoE L=2/L=4 best-of",
+            intervention=l2,
+            additional_baselines=(l4,),
         ),
         output_path,
         FINAL_WINDOW_M,

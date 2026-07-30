@@ -1,6 +1,6 @@
 # KDA LatentMoE paper-matched pretraining
 
-Generated: `2026-07-30T07:51:25.206050+00:00`
+Generated: `2026-07-30T07:53:12.445520+00:00`
 
 Metric: final `250M`-token mean training CE. The best-of plot uses observed finished points only after a curve is bracketed.
 
