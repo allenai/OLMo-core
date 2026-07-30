@@ -55,6 +55,21 @@ class WandBCallback(Callback):
     The W&B group to use.
     """
 
+    run_id: Optional[str] = None
+    """
+    An explicit W&B run ID. Leave unset to let W&B mint a fresh one per process, which starts a new
+    run every time the job restarts. Set it, together with :data:`resume`, to a value derived from
+    something as stable as the training run itself (the checkpoint folder, say) so that a job
+    resuming from a checkpoint appends to the same W&B run instead of fragmenting the curve.
+    """
+
+    resume: Optional[str] = None
+    """
+    W&B's ``resume`` mode, passed straight through to ``wandb.init``. ``"allow"`` attaches to
+    :data:`run_id` if it exists and creates it otherwise, which is the mode that survives
+    preemption. Only meaningful alongside :data:`run_id`.
+    """
+
     tags: Optional[List[str]] = None
     """
     Tags to assign the run.
@@ -125,6 +140,9 @@ class WandBCallback(Callback):
             self.wandb
             wandb_dir = self.trainer.work_dir / "wandb"
             wandb_dir.mkdir(parents=True, exist_ok=True)
+            # On resume W&B keeps the existing run's name, so `name` only applies the first time.
+            # Replayed steps (a restart rewinds to the last checkpoint) log below the run's high
+            # water mark and W&B drops them, leaving one continuous curve with no duplicate points.
             self.wandb.init(
                 dir=wandb_dir,
                 project=self.project,
@@ -134,6 +152,8 @@ class WandBCallback(Callback):
                 tags=self.tags,
                 notes=self.notes,
                 config=self.config,
+                **({"id": self.run_id} if self.run_id else {}),
+                **({"resume": self.resume} if self.resume else {}),
             )
             self._run_path = self.run.path  # type: ignore
 
