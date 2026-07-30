@@ -512,8 +512,75 @@ def validate_conversion(
     hf_config = hf_model.config
 
     olmo_core_state, hf_state = {}, {}
+    olmo_core_parity_state: Dict[str, torch.Tensor] = {}
+    hf_parity_state: Dict[str, torch.Tensor] = {}
     if debug:
         olmo_core_state, hf_state = _register_debug_hooks(hf_model, model)
+
+        def capture_tensor(
+            state: Dict[str, torch.Tensor],
+            name: str,
+            *,
+            tuple_index: int | None = None,
+        ):
+            def hook(_module, _args, output):
+                if tuple_index is not None:
+                    output = output[tuple_index]
+                if isinstance(output, torch.Tensor):
+                    state[name] = output.detach()
+
+            return hook
+
+        for layer_idx, (olmo_block, hf_layer) in enumerate(
+            zip(model.blocks.values(), hf_model.model.layers, strict=True)
+        ):
+            olmo_block.register_forward_hook(
+                capture_tensor(olmo_core_parity_state, f"layer.{layer_idx}.block")
+            )
+            hf_layer.register_forward_hook(
+                capture_tensor(hf_parity_state, f"layer.{layer_idx}.block")
+            )
+            olmo_block.attention.register_forward_hook(
+                capture_tensor(olmo_core_parity_state, f"layer.{layer_idx}.attention")
+            )
+            hf_layer.self_attn.register_forward_hook(
+                capture_tensor(
+                    hf_parity_state,
+                    f"layer.{layer_idx}.attention",
+                    tuple_index=0,
+                )
+            )
+            if olmo_block.routed_experts_router is not None and hasattr(
+                hf_layer.mlp, "router"
+            ):
+                olmo_block.routed_experts_router.register_forward_hook(
+                    capture_tensor(
+                        olmo_core_parity_state,
+                        f"layer.{layer_idx}.router_weights",
+                        tuple_index=0,
+                    )
+                )
+                olmo_block.routed_experts_router.register_forward_hook(
+                    capture_tensor(
+                        olmo_core_parity_state,
+                        f"layer.{layer_idx}.router_indices",
+                        tuple_index=1,
+                    )
+                )
+                hf_layer.mlp.router.register_forward_hook(
+                    capture_tensor(
+                        hf_parity_state,
+                        f"layer.{layer_idx}.router_weights",
+                        tuple_index=0,
+                    )
+                )
+                hf_layer.mlp.router.register_forward_hook(
+                    capture_tensor(
+                        hf_parity_state,
+                        f"layer.{layer_idx}.router_indices",
+                        tuple_index=1,
+                    )
+                )
 
     log.info("Running OLMo core and HF models for validation...")
     with torch.no_grad():
@@ -534,6 +601,43 @@ def validate_conversion(
         logits = model(input_ids=input_ids)
 
     if debug:
+        for name in sorted(set(olmo_core_parity_state) | set(hf_parity_state)):
+            if name not in olmo_core_parity_state or name not in hf_parity_state:
+                log.info(
+                    "Parity debug %s: missing from %s",
+                    name,
+                    "OLMo core" if name not in olmo_core_parity_state else "HF",
+                )
+                continue
+            olmo_tensor = olmo_core_parity_state[name]
+            hf_tensor = hf_parity_state[name]
+            if olmo_tensor.shape != hf_tensor.shape:
+                log.info(
+                    "Parity debug %s: shape mismatch OLMo=%s HF=%s",
+                    name,
+                    tuple(olmo_tensor.shape),
+                    tuple(hf_tensor.shape),
+                )
+                continue
+            if not torch.is_floating_point(olmo_tensor):
+                unequal = (olmo_tensor != hf_tensor).sum().item()
+                log.info(
+                    "Parity debug %s: exact=%s, unequal=%d/%d",
+                    name,
+                    unequal == 0,
+                    unequal,
+                    olmo_tensor.numel(),
+                )
+                continue
+            error = (olmo_tensor.float() - hf_tensor.float()).abs()
+            log.info(
+                "Parity debug %s: exact=%s, max_abs_error=%.9g, mean_abs_error=%.9g",
+                name,
+                torch.equal(olmo_tensor, hf_tensor),
+                error.max().item(),
+                error.mean().item(),
+            )
+
         state_converter = get_converter_to_hf(getattr(hf_config, "model_type", None))
         if not hasattr(hf_config, "num_hidden_layers"):
             raise ValueError(f"Number of hidden layers missing in HF config: {hf_config}")
