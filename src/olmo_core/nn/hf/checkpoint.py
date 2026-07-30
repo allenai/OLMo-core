@@ -33,8 +33,9 @@ except ImportError:
     @contextmanager
     def init_empty_weights(include_buffers: bool = False) -> Generator[None, None, None]:
         del include_buffers
-        log.warning("accelerate not installed, will initialize weights.")
-        yield None
+        log.warning("accelerate not installed, initializing weights on the meta device.")
+        with torch.device("meta"):
+            yield None
 
 
 log = logging.getLogger(__name__)

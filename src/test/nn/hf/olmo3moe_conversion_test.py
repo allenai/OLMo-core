@@ -165,6 +165,16 @@ def test_olmo3moe_kda_latent_conversion_roundtrips_exactly():
     model.load_state_dict(hf_roundtrip, strict=True)
 
 
+def test_olmo3moe_can_initialize_on_meta_without_accelerate():
+    from olmo_core.nn.hf.checkpoint import init_empty_weights
+    from olmo_core.nn.moe.v2.hf.modeling_olmo3moe import Olmo3MoeForCausalLM
+
+    with init_empty_weights():
+        model = Olmo3MoeForCausalLM(_small_kda_latent_config())
+
+    assert all(parameter.is_meta for parameter in model.parameters())
+
+
 def test_olmo3moe_conversion_rejects_unexpected_source_key():
     config = _fake_config()
     hf = _synthetic_hf_state(config)
