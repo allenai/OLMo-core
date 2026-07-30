@@ -12,6 +12,7 @@ rather than using ``save_pretrained()``.
 
 import json
 import logging
+import os
 import re
 from functools import partial
 from pathlib import Path
@@ -515,7 +516,11 @@ def validate_conversion(
     olmo_core_parity_state: Dict[str, torch.Tensor] = {}
     hf_parity_state: Dict[str, torch.Tensor] = {}
     if debug:
-        olmo_core_state, hf_state = _register_debug_hooks(hf_model, model)
+        targeted_only = os.environ.get(
+            "OLMO_HF_PARITY_TARGETED_ONLY", ""
+        ).strip().lower() in {"1", "true", "yes", "on"}
+        if not targeted_only:
+            olmo_core_state, hf_state = _register_debug_hooks(hf_model, model)
 
         def capture_tensor(
             state: Dict[str, torch.Tensor],
