@@ -108,6 +108,9 @@ GDN2_BALANCED_LAYOUT = {
 KDA_480M_LAYOUT = {key: value for key, value in GDN2_BALANCED_LAYOUT.items() if key[0] == "480m"}
 KDA_MXFP8_480M_LAYOUT = dict(KDA_480M_LAYOUT)
 KDA_810M_LAYOUT = {key: value for key, value in GDN2_BALANCED_LAYOUT.items() if key[0] == "810m"}
+KDA_810M_CX4_LAYOUT = {
+    key: value for key, value in KDA_810M_LAYOUT.items() if key == ("810m", 4)
+}
 KDA_1P2B_LAYOUT = {
     # Keep the qualified balanced GPU/MB/EP layout, but use the current
     # codebase's fixed default rowwise collective rather than the legacy
@@ -141,6 +144,7 @@ LAYOUT_PROFILES = {
     "kda_480m": KDA_480M_LAYOUT,
     "kda_mxfp8_480m": KDA_MXFP8_480M_LAYOUT,
     "kda_810m": KDA_810M_LAYOUT,
+    "kda_810m_cx4": KDA_810M_CX4_LAYOUT,
     "kda_1p2b": KDA_1P2B_LAYOUT,
 }
 MODEL_VARIANTS = {
@@ -215,6 +219,16 @@ MODEL_VARIANTS = {
         "expand_v": 2.0,
         "allow_neg_eigval": True,
         "latent_moe_compression": 2,
+    },
+    "geometry_matched_kda_ev2_neg_nope_gated_latent4x_1000experts": {
+        "rope": False,
+        "attention_gate": True,
+        "gdn2": False,
+        "kda": True,
+        "expand_v": 2.0,
+        "allow_neg_eigval": True,
+        "latent_moe_compression": 4,
+        "latent_moe_num_experts": 1000,
     },
 }
 NONFINITE_DIAGNOSTIC_STOPS = {
@@ -339,6 +353,11 @@ def validate(manifest: dict[str, Any]) -> list[dict[str, Any]]:
             model = build_geometry_matched_scale_kda_latent_moe_model_config(
                 model_size,
                 compression=int(latent_moe_compression),
+                num_experts_override=(
+                    int(num_experts)
+                    if (num_experts := profile.get("latent_moe_num_experts")) is not None
+                    else None
+                ),
             )
         elif bool(profile.get("kda", False)):
             model = build_geometry_matched_scale_kda_model_config(

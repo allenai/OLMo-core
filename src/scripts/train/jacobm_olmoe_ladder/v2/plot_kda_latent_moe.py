@@ -41,8 +41,12 @@ ACTIVE_PARAMETERS = {
         "275m": 295_664_448,
         "480m": 509_751_648,
         "810m": 857_589_696,
+        "1p2b": 1_288_818_432,
     },
-    L4_KEY: {"275m": 296_632_128},
+    L4_KEY: {
+        "275m": 296_632_128,
+        "810m": 857_245_632,
+    },
 }
 
 
@@ -122,6 +126,38 @@ def _planned_names() -> dict[str, list[tuple[str, int, float, str]]]:
                 4e-4,
                 "pt-810m-kda-ev2-neg-nope-gated-latentmoe-l2-paper-cx8-lr4e-4-r1",
             ),
+            (
+                "1p2b",
+                1,
+                4e-4,
+                "pt-1p2b-kda-ev2-neg-nope-gated-latentmoe-l2-paper-cx1-lr4e-4-r1",
+            ),
+            (
+                "1p2b",
+                2,
+                6e-4,
+                "pt-1p2b-kda-ev2-neg-nope-gated-latentmoe-l2-paper-cx2-lr6e-4-r1",
+            ),
+            (
+                "1p2b",
+                4,
+                3e-4,
+                "pt-1p2b-kda-ev2-neg-nope-gated-latentmoe-l2-paper-cx4-lr3e-4-r1",
+            ),
+            (
+                "1p2b",
+                8,
+                4e-4,
+                "pt-1p2b-kda-ev2-neg-nope-gated-latentmoe-l2-paper-cx8-lr4e-4-r1",
+            ),
+        )
+    )
+    planned[L4_KEY].append(
+        (
+            "810m",
+            4,
+            4e-4,
+            "pt-810m-kda-ev2-neg-nope-gated-latentmoe-l4-1000e-cx4-lr4e-4-r1",
         )
     )
     return planned
@@ -194,7 +230,7 @@ def comparison_wave(kda: Variant, l2: Variant, l4: Variant) -> Wave:
             "275m": "observed-best LR sweep",
             "480m": "wide-LR transfer",
             "810m": "wide-LR transfer",
-            "1p2b": "not yet promoted",
+            "1p2b": "wide-LR transfer",
         },
     )
 
@@ -221,7 +257,7 @@ def plot_best_of(
             and point.variant in eligible
             and point.cx in eligible[point.variant]
         )
-        or (point.model != "275m" and point.variant == l2.key)
+        or (point.model != "275m" and point.variant in {l2.key, l4.key})
     ]
     return plot_fixed_lr_scale_comparison(
         filtered,
