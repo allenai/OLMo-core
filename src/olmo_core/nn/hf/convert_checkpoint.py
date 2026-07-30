@@ -531,6 +531,13 @@ def validate_conversion(
 
             return hook
 
+        def capture_input_tensor(state: Dict[str, torch.Tensor], name: str):
+            def hook(_module, args):
+                if args and isinstance(args[0], torch.Tensor):
+                    state[name] = args[0].detach()
+
+            return hook
+
         for layer_idx, (olmo_block, hf_layer) in enumerate(
             zip(model.blocks.values(), hf_model.model.layers, strict=True)
         ):
@@ -581,6 +588,63 @@ def validate_conversion(
                         tuple_index=1,
                     )
                 )
+            if (
+                olmo_block.latent_down_proj is not None
+                and olmo_block.latent_up_proj is not None
+                and getattr(hf_layer.mlp, "latent_down_proj", None) is not None
+                and getattr(hf_layer.mlp, "latent_up_proj", None) is not None
+            ):
+                olmo_block.latent_down_proj.register_forward_hook(
+                    capture_tensor(
+                        olmo_core_parity_state,
+                        f"layer.{layer_idx}.latent_down",
+                    )
+                )
+                hf_layer.mlp.latent_down_proj.register_forward_hook(
+                    capture_tensor(
+                        hf_parity_state,
+                        f"layer.{layer_idx}.latent_down",
+                    )
+                )
+                olmo_block.latent_up_proj.register_forward_pre_hook(
+                    capture_input_tensor(
+                        olmo_core_parity_state,
+                        f"layer.{layer_idx}.routed_latent",
+                    )
+                )
+                hf_layer.mlp.experts.register_forward_hook(
+                    capture_tensor(
+                        hf_parity_state,
+                        f"layer.{layer_idx}.routed_latent",
+                    )
+                )
+                olmo_block.latent_up_proj.register_forward_hook(
+                    capture_tensor(
+                        olmo_core_parity_state,
+                        f"layer.{layer_idx}.routed_restored",
+                    )
+                )
+                hf_layer.mlp.latent_up_proj.register_forward_hook(
+                    capture_tensor(
+                        hf_parity_state,
+                        f"layer.{layer_idx}.routed_restored",
+                    )
+                )
+            if olmo_block.shared_experts is not None and getattr(
+                hf_layer.mlp, "shared_expert", None
+            ) is not None:
+                olmo_block.shared_experts.register_forward_hook(
+                    capture_tensor(
+                        olmo_core_parity_state,
+                        f"layer.{layer_idx}.shared_expert",
+                    )
+                )
+                hf_layer.mlp.shared_expert.register_forward_hook(
+                    capture_tensor(
+                        hf_parity_state,
+                        f"layer.{layer_idx}.shared_expert",
+                    )
+                )
 
     log.info("Running OLMo core and HF models for validation...")
     with torch.no_grad():
@@ -612,13 +676,16 @@ def validate_conversion(
             olmo_tensor = olmo_core_parity_state[name]
             hf_tensor = hf_parity_state[name]
             if olmo_tensor.shape != hf_tensor.shape:
-                log.info(
-                    "Parity debug %s: shape mismatch OLMo=%s HF=%s",
-                    name,
-                    tuple(olmo_tensor.shape),
-                    tuple(hf_tensor.shape),
-                )
-                continue
+                if olmo_tensor.numel() == hf_tensor.numel():
+                    hf_tensor = hf_tensor.reshape_as(olmo_tensor)
+                else:
+                    log.info(
+                        "Parity debug %s: shape mismatch OLMo=%s HF=%s",
+                        name,
+                        tuple(olmo_tensor.shape),
+                        tuple(hf_tensor.shape),
+                    )
+                    continue
             if not torch.is_floating_point(olmo_tensor):
                 unequal = (olmo_tensor != hf_tensor).sum().item()
                 log.info(
