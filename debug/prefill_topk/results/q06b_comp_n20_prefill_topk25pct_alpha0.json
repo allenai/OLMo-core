@@ -1,0 +1,20 @@
+{
+  "model_path": "/data/prasann/olmo_ckpts/q06b-comp-contra-n20-sft-local/step750",
+  "ruler": {},
+  "contradiction": {
+    "precision": 0.9494535519125683,
+    "recall": 0.9494535519125683,
+    "f1": 0.9494535519125683,
+    "exact_match": 0.8627049180327869,
+    "parse_rate": 1.0
+  },
+  "nq": {},
+  "prefill_topk": {
+    "top_k": null,
+    "top_k_fraction": 0.25,
+    "nonselected_mass": 0.0,
+    "query_tile": 128,
+    "layers_patched": 28
+  },
+  "decode_topk_fraction": 0.1
+}
