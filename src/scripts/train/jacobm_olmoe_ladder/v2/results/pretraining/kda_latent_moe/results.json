@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-07-30T07:53:56.639267+00:00",
+  "generated_at": "2026-07-30T15:38:17.308180+00:00",
   "project": "ai2-llm/jacobm-olmoe-ladder",
   "selection_metric": "mean train/CE loss over the final 250M tokens",
   "selection_rule": "LatentMoE enters the best-of plot only after its 275M Cx curve brackets a valid quadratic minimum. The plotted point remains the best observed finished LR; the fitted prediction is diagnostic only.",
@@ -633,6 +633,27 @@
       "variant": "geometry_kda_ev2_neg_nope_gated_latentmoe_l2_paper",
       "variant_label": "LatentMoE L=2 (paper-matched)",
       "cx": 8,
+      "lr": 0.0008,
+      "lr_tag": "0.0008",
+      "loss": 2.3641298372040755,
+      "state": "finished",
+      "tokens_b": 37.030723584,
+      "run_id": "l0p6cbqe",
+      "name": "pt-275m-kda-ev2-neg-nope-gated-latentmoe-l2-paper-cx8-lr8e-4-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/l0p6cbqe",
+      "segment_run_ids": [
+        "l0p6cbqe"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0,
+      "history_source": "wandb",
+      "history_source_sha256": null
+    },
+    {
+      "model": "275m",
+      "variant": "geometry_kda_ev2_neg_nope_gated_latentmoe_l2_paper",
+      "variant_label": "LatentMoE L=2 (paper-matched)",
+      "cx": 8,
       "lr": 0.0016,
       "lr_tag": "0.0016",
       "loss": 2.362515021420125,
@@ -664,6 +685,90 @@
       "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/zdwvw1gh",
       "segment_run_ids": [
         "zdwvw1gh"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0,
+      "history_source": "wandb",
+      "history_source_sha256": null
+    },
+    {
+      "model": "275m",
+      "variant": "geometry_kda_ev2_neg_nope_gated_latentmoe_l4_1000e",
+      "variant_label": "LatentMoE L=4 (1,000 experts/top-32)",
+      "cx": 8,
+      "lr": 0.0004,
+      "lr_tag": "0.0004",
+      "loss": 2.4032211925998426,
+      "state": "finished",
+      "tokens_b": 37.185650688,
+      "run_id": "72inpwau",
+      "name": "pt-275m-kda-ev2-neg-nope-gated-latentmoe-l4-1000e-cx8-lr4e-4-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/72inpwau",
+      "segment_run_ids": [
+        "72inpwau"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0,
+      "history_source": "wandb",
+      "history_source_sha256": null
+    },
+    {
+      "model": "275m",
+      "variant": "geometry_kda_ev2_neg_nope_gated_latentmoe_l4_1000e",
+      "variant_label": "LatentMoE L=4 (1,000 experts/top-32)",
+      "cx": 8,
+      "lr": 0.0008,
+      "lr_tag": "0.0008",
+      "loss": 2.3839767039197044,
+      "state": "finished",
+      "tokens_b": 37.185650688,
+      "run_id": "nvb55kzt",
+      "name": "pt-275m-kda-ev2-neg-nope-gated-latentmoe-l4-1000e-cx8-lr8e-4-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/nvb55kzt",
+      "segment_run_ids": [
+        "nvb55kzt"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0,
+      "history_source": "wandb",
+      "history_source_sha256": null
+    },
+    {
+      "model": "275m",
+      "variant": "geometry_kda_ev2_neg_nope_gated_latentmoe_l4_1000e",
+      "variant_label": "LatentMoE L=4 (1,000 experts/top-32)",
+      "cx": 8,
+      "lr": 0.0016,
+      "lr_tag": "0.0016",
+      "loss": 2.3847636824134013,
+      "state": "finished",
+      "tokens_b": 37.185650688,
+      "run_id": "6t8wamfw",
+      "name": "pt-275m-kda-ev2-neg-nope-gated-latentmoe-l4-1000e-cx8-lr1p6e-3-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/6t8wamfw",
+      "segment_run_ids": [
+        "6t8wamfw"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0,
+      "history_source": "wandb",
+      "history_source_sha256": null
+    },
+    {
+      "model": "275m",
+      "variant": "geometry_kda_ev2_neg_nope_gated_latentmoe_l4_1000e",
+      "variant_label": "LatentMoE L=4 (1,000 experts/top-32)",
+      "cx": 8,
+      "lr": 0.0032,
+      "lr_tag": "0.0032",
+      "loss": 2.401339376497569,
+      "state": "finished",
+      "tokens_b": 37.185650688,
+      "run_id": "zvmec8n9",
+      "name": "pt-275m-kda-ev2-neg-nope-gated-latentmoe-l4-1000e-cx8-lr3p2e-3-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/zvmec8n9",
+      "segment_run_ids": [
+        "zvmec8n9"
       ],
       "token_resets": 0,
       "deduplicated_samples": 0,
@@ -1066,10 +1171,10 @@
       "variant": "geometry_kda_ev2_neg_nope_gated_latentmoe_l2_paper",
       "variant_label": "LatentMoE L=2 (paper-matched)",
       "cx": 8,
-      "finished_points": 3,
+      "finished_points": 4,
       "expected_points": 4,
       "bracketed": true,
-      "provisional": true,
+      "provisional": false,
       "observed_best": {
         "model": "275m",
         "variant": "geometry_kda_ev2_neg_nope_gated_latentmoe_l2_paper",
@@ -1091,8 +1196,8 @@
         "history_source": "wandb",
         "history_source_sha256": null
       },
-      "predicted_fit_lr": 0.001118365719907021,
-      "predicted_fit_loss": 2.3600450495531953
+      "predicted_fit_lr": 0.0011950913515811799,
+      "predicted_fit_loss": 2.36070509993634
     },
     {
       "variant": "geometry_kda_ev2_neg_nope_gated_latentmoe_l4_1000e",
@@ -1194,13 +1299,33 @@
       "variant": "geometry_kda_ev2_neg_nope_gated_latentmoe_l4_1000e",
       "variant_label": "LatentMoE L=4 (1,000 experts/top-32)",
       "cx": 8,
-      "finished_points": 0,
+      "finished_points": 4,
       "expected_points": 4,
-      "bracketed": false,
+      "bracketed": true,
       "provisional": false,
-      "observed_best": null,
-      "predicted_fit_lr": null,
-      "predicted_fit_loss": null
+      "observed_best": {
+        "model": "275m",
+        "variant": "geometry_kda_ev2_neg_nope_gated_latentmoe_l4_1000e",
+        "variant_label": "LatentMoE L=4 (1,000 experts/top-32)",
+        "cx": 8,
+        "lr": 0.0008,
+        "lr_tag": "0.0008",
+        "loss": 2.3839767039197044,
+        "state": "finished",
+        "tokens_b": 37.185650688,
+        "run_id": "nvb55kzt",
+        "name": "pt-275m-kda-ev2-neg-nope-gated-latentmoe-l4-1000e-cx8-lr8e-4-r1",
+        "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/nvb55kzt",
+        "segment_run_ids": [
+          "nvb55kzt"
+        ],
+        "token_resets": 0,
+        "deduplicated_samples": 0,
+        "history_source": "wandb",
+        "history_source_sha256": null
+      },
+      "predicted_fit_lr": 0.0011009773530303991,
+      "predicted_fit_loss": 2.381850800713726
     }
   ],
   "scale_results": [

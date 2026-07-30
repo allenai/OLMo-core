@@ -306,13 +306,14 @@ and seven were queued as backfill. The durable manifests are
 and
 [`275m_kda_latent_moe_lr_sweep_cx8_unallocated.yaml`](launchers/pretraining/manifests/275m_kda_latent_moe_lr_sweep_cx8_unallocated.yaml).
 
-At the 2026-07-30 07:47 UTC refresh, all four L=2 and all four L=4 Cx4 cells
-finished cleanly. Both curves are complete and bracketed. L=2 has observed
-best `2.443058 @ 1.6e-3` and diagnostic fit `2.442457 @ 1.37e-3`; L=4 has
-observed best `2.462333 @ 1.6e-3` and diagnostic fit `2.461737 @ 1.35e-3`.
-Three L=2 Cx8 cells are finished and already bracket the optimum; their
-provisional observed best is `2.362515 @ 1.6e-3`, while the 8e-4 cell remains
-in flight. All four L=4 Cx8 cells remain in flight.
+At the 2026-07-30 15:38 UTC refresh, all 32 cells in the 275M L=2/L=4 sweep
+finished cleanly and every Cx curve is complete and bracketed. At Cx4, L=2 has
+observed best `2.443058 @ 1.6e-3` and diagnostic fit
+`2.442457 @ 1.37e-3`; L=4 has observed best `2.462333 @ 1.6e-3` and
+diagnostic fit `2.461737 @ 1.35e-3`. At Cx8, L=2 has observed best
+`2.362515 @ 1.6e-3` and diagnostic fit `2.360705 @ 1.20e-3`; L=4 has
+observed best `2.383977 @ 8e-4` and diagnostic fit
+`2.381851 @ 1.10e-3`.
 
 The promoted 480M L=2 Cx1 run also finished cleanly at transferred LR
 `1.2e-3`, with strict final-250M CE `2.463192`. That is `0.029091` lower than
