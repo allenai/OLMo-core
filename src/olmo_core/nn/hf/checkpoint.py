@@ -171,6 +171,38 @@ def save_hf_model(
 
     hf_state_dict: Dict[str, torch.Tensor] = convert_state_to_hf(hf_config, model_state_dict)
 
+    # The custom MoE-v2 mapping includes fused expert tensors, KDA, and optional
+    # LatentMoE projections. Verify it as a lossless bijection before writing
+    # anything so a future missing/incorrect mapping cannot produce a
+    # superficially loadable checkpoint.
+    if getattr(hf_config, "model_type", None) == "olmo3moe":
+        roundtrip_state = convert_state_from_hf(hf_config, hf_state_dict, model_type="olmo3moe")
+        if set(roundtrip_state) != set(model_state_dict):
+            missing = sorted(set(model_state_dict) - set(roundtrip_state))
+            unexpected = sorted(set(roundtrip_state) - set(model_state_dict))
+            raise RuntimeError(
+                "olmo3moe HF tensor roundtrip changed state keys: "
+                f"missing={missing}, unexpected={unexpected}"
+            )
+        for key, source in model_state_dict.items():
+            converted = roundtrip_state[key]
+            if source.shape != converted.shape or source.dtype != converted.dtype:
+                raise RuntimeError(
+                    f"olmo3moe HF tensor roundtrip changed {key}: "
+                    f"{tuple(source.shape)}/{source.dtype} -> "
+                    f"{tuple(converted.shape)}/{converted.dtype}"
+                )
+            if not torch.equal(source, converted):
+                max_abs = (
+                    (source.float() - converted.float()).abs().max().item()
+                    if source.numel()
+                    else 0.0
+                )
+                raise RuntimeError(
+                    f"olmo3moe HF tensor roundtrip is not exact for {key}; max_abs_diff={max_abs}"
+                )
+        del roundtrip_state
+
     # model.save_pretrained fails says `tensor.reshape()` should be used instead of `tensor.view()`
     # if we do not make the state contiguous. Unfortunately this is bad for perf.
     hf_state_dict = {key: state.contiguous() for key, state in hf_state_dict.items()}
