@@ -1027,6 +1027,7 @@ def combined_forward_ep_no_sync_rowwise_wave(
     kwargs.pop("max_doc_len", None)
     kwargs.pop("cu_doc_lens", None)
     moe_inp = self._prepare_moe_input(attn_res_out)
+    routed_moe_inp = self._prepare_routed_moe_input(moe_inp)
 
     (
         local_x_global_routed_expert_weights,
@@ -1065,14 +1066,14 @@ def combined_forward_ep_no_sync_rowwise_wave(
         else:
             local_x_global_shared_expert_weights = None
 
-    in_shape = moe_inp.size()
-    moe_inp = moe_inp.view(-1, in_shape[-1])
+    routed_in_shape = routed_moe_inp.size()
+    routed_moe_inp = routed_moe_inp.view(-1, routed_in_shape[-1])
 
     num_out_tokens = local_x_global_routed_expert_indices.numel()
-    num_input_tokens = moe_inp.shape[0]
+    num_input_tokens = routed_moe_inp.shape[0]
     top_k = self.routed_experts_router.top_k
     rank_capacity = compute_ep_no_sync_rank_capacity(self, num_out_tokens)
-    use_fused_wave_node = moe_inp.dtype == torch.bfloat16
+    use_fused_wave_node = routed_moe_inp.dtype == torch.bfloat16
     use_symm_dispatch_in = use_ep_no_sync_rowwise_symm_dispatch_in(self)
     lease_dispatch_out = torch.is_grad_enabled()
     lease_combine_gather = torch.is_grad_enabled() and use_fused_wave_node
@@ -1128,9 +1129,9 @@ def combined_forward_ep_no_sync_rowwise_wave(
             dispatch_out_cap=rank_capacity,
             combine_in_cap=rank_capacity,
             combine_out_cap=num_input_tokens,
-            d_model=moe_inp.shape[-1],
-            dtype=moe_inp.dtype,
-            device=moe_inp.device,
+            d_model=routed_moe_inp.shape[-1],
+            dtype=routed_moe_inp.dtype,
+            device=routed_moe_inp.device,
             need_dispatch_in=use_symm_dispatch_in,
             need_dispatch_meta=False,
             need_dispatch_out=True,
@@ -1160,9 +1161,9 @@ def combined_forward_ep_no_sync_rowwise_wave(
             dispatch_out_cap=rank_capacity,
             combine_in_cap=rank_capacity,
             combine_out_cap=num_input_tokens,
-            d_model=moe_inp.shape[-1],
-            dtype=moe_inp.dtype,
-            device=moe_inp.device,
+            d_model=routed_moe_inp.shape[-1],
+            dtype=routed_moe_inp.dtype,
+            device=routed_moe_inp.device,
             need_dispatch_in=use_symm_dispatch_in,
             need_dispatch_meta=False,
             need_dispatch_out=True,
@@ -1177,14 +1178,14 @@ def combined_forward_ep_no_sync_rowwise_wave(
         )
         rowwise_stage_debug_print("rowwise_wave:get-buffers-exit", block=self.block_idx)
 
-    dispatch_input = moe_inp
+    dispatch_input = routed_moe_inp
     if use_symm_dispatch_in:
         rowwise_stage_debug_print("rowwise_wave:stage-dispatch-input-enter", block=self.block_idx)
-        dispatch_input = buffers.dispatch_in.narrow(0, 0, moe_inp.shape[0])
+        dispatch_input = buffers.dispatch_in.narrow(0, 0, routed_moe_inp.shape[0])
         if not dispatch_input.is_contiguous():
             raise RuntimeError("rowwise_wave symmetric dispatch staging view must be contiguous")
         with torch.no_grad():
-            dispatch_input.copy_(moe_inp)
+            dispatch_input.copy_(routed_moe_inp)
         rowwise_stage_debug_print("rowwise_wave:stage-dispatch-input-exit", block=self.block_idx)
         rowwise_stage_debug_sync("rowwise_wave:stage-dispatch-input", dispatch_input.device)
 
@@ -1247,14 +1248,14 @@ def combined_forward_ep_no_sync_rowwise_wave(
             nblocks=rowwise_put_nblocks,
         )
         rowwise_stage_debug_print("rowwise_wave:compact-route-exit", block=self.block_idx)
-        rowwise_stage_debug_sync("rowwise_wave:compact-route", moe_inp.device)
+        rowwise_stage_debug_sync("rowwise_wave:compact-route", routed_moe_inp.device)
         rowwise_stage_debug_print("rowwise_wave:inverse-meta-alloc-enter", block=self.block_idx)
         inverse_route_meta = get_or_init_ep_no_sync_symm_tensor(
             self,
             name="rowwise_wave_inverse_route_meta",
             shape=(rank_capacity, 2),
             dtype=torch.long,
-            device=moe_inp.device,
+            device=routed_moe_inp.device,
         )
         local_ep_rank = dist.get_rank(self.ep_pg)
         if _use_rowwise_wave_global_route_meta():
@@ -1312,7 +1313,7 @@ def combined_forward_ep_no_sync_rowwise_wave(
                 "rowwise_wave:inverse-meta-local-build-exit",
                 block=self.block_idx,
             )
-            rowwise_stage_debug_sync("rowwise_wave:inverse-meta-local-build", moe_inp.device)
+            rowwise_stage_debug_sync("rowwise_wave:inverse-meta-local-build", routed_moe_inp.device)
         else:
             rowwise_stage_debug_print("rowwise_wave:inverse-meta-put-enter", block=self.block_idx)
             symm_mem_vdev2d_kernels.rowwise_inverse_route_meta_put_compact(
@@ -1327,12 +1328,12 @@ def combined_forward_ep_no_sync_rowwise_wave(
                 scalar_put=use_symm_dispatch_in,
             )
             rowwise_stage_debug_print("rowwise_wave:inverse-meta-put-exit", block=self.block_idx)
-            rowwise_stage_debug_sync("rowwise_wave:inverse-meta-put", moe_inp.device)
+            rowwise_stage_debug_sync("rowwise_wave:inverse-meta-put", routed_moe_inp.device)
 
     if use_fused_wave_node:
         assert route_out is not None
         local_x = _RowwiseWaveDispatchExpertsCombineAutograd.apply(
-            moe_inp,
+            routed_moe_inp,
             route_probs,
             self.routed_experts.w_up_gate,
             self.routed_experts.w_down,
@@ -1359,7 +1360,7 @@ def combined_forward_ep_no_sync_rowwise_wave(
         )
     else:
         dispatch_rank_major = _DispatchRowwiseAutograd.apply(
-            moe_inp,
+            routed_moe_inp,
             buffers.dispatch_in if use_symm_dispatch_in else None,
             dst_ranks_full,
             dst_rows_full,
@@ -1426,7 +1427,8 @@ def combined_forward_ep_no_sync_rowwise_wave(
     else:
         mixed_shared_out = None
 
-    local_x = local_x.view(in_shape)
+    local_x = local_x.view(routed_in_shape)
+    local_x = self._restore_routed_moe_output(local_x)
     wait_stream_no_compile(torch.cuda.current_stream(), self.get_dense_stream())
 
     mlp_out = self._merge_routed_and_shared(local_x, mixed_shared_out)

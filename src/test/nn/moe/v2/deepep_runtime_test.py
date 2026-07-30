@@ -180,6 +180,15 @@ def test_deepep_source_capacity_is_not_route_capacity() -> None:
         deepep_v2._requested_num_max_tokens_per_rank(0)
 
 
+@pytest.mark.parametrize("hidden", [128, 256, 384, 1024])
+def test_deepep_validates_routed_hidden_size(hidden: int) -> None:
+    if hidden % 256 == 0:
+        deepep_v2._validate_deepep_v2_hidden_size(hidden)
+    else:
+        with pytest.raises(RuntimeError, match=f"routed hidden size.*got {hidden}"):
+            deepep_v2._validate_deepep_v2_hidden_size(hidden)
+
+
 def test_deepep_runtime_key_separates_fp8_dispatch() -> None:
     ep_pg = object()
     bf16_block = _stub_block(ep_pg=ep_pg, runtime_cache={})

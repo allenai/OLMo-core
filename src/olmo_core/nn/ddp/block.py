@@ -28,7 +28,8 @@ from olmo_core.utils import get_or_init_stream
 
 from ..attention.base import SequenceMixerConfig
 from ..buffer_cache import BufferCache
-from ..layer_norm import LayerNormConfig
+from ..layer_norm import LayerNorm, LayerNormConfig
+from ..moe.moe import LatentMoEConfig
 from ..moe.v2.activation_debug import (
     EP_NO_SYNC_SAVED_ACTIVATIONS_DEBUG_ENABLED,
     maybe_dump_ep_no_sync_saved_activations,
@@ -137,6 +138,9 @@ class OLMoDDPTransformerBlockConfig(TransformerBlockConfig):
     weights.
     """
 
+    latent_moe: Optional[LatentMoEConfig] = None
+    """Optional projections that run only the routed MoE branch in a latent dimension."""
+
     use_peri_norm: bool = False
     """
     Apply a "peri-norm" — an additional input (pre) norm on the attention and feed-forward
@@ -193,6 +197,40 @@ class OLMoDDPTransformerBlockConfig(TransformerBlockConfig):
             "OLMoDDPTransformerBlock does not support `feed_forward` or `feed_forward_moe`. "
             "Use `shared_experts` for dense/shared MLPs and `routed_experts` for routed MoE."
         )
+        if self.latent_moe is not None:
+            if self.routed_experts is None or self.routed_experts_router is None:
+                raise OLMoConfigurationError(
+                    "latent_moe requires routed_experts and routed_experts_router"
+                )
+            latent_dim = self.latent_moe.latent_dim
+            if not 0 < latent_dim < d_model:
+                raise OLMoConfigurationError(
+                    "latent_moe.latent_dim must be greater than 0 and less than "
+                    f"d_model ({d_model}), got {latent_dim}"
+                )
+            if self.routed_experts.d_model != latent_dim:
+                raise OLMoConfigurationError(
+                    "latent_moe.latent_dim must equal routed_experts.d_model "
+                    f"({latent_dim} != {self.routed_experts.d_model})"
+                )
+            if self.routed_experts_router.d_model != d_model:
+                raise OLMoConfigurationError(
+                    "routed_experts_router.d_model must equal block d_model when latent_moe is "
+                    f"enabled ({self.routed_experts_router.d_model} != {d_model})"
+                )
+            if self.shared_experts is not None and self.shared_experts.d_model != d_model:
+                raise OLMoConfigurationError(
+                    "shared_experts.d_model must equal block d_model when latent_moe is enabled "
+                    f"({self.shared_experts.d_model} != {d_model})"
+                )
+            if (
+                self.shared_experts_router is not None
+                and self.shared_experts_router.d_model != d_model
+            ):
+                raise OLMoConfigurationError(
+                    "shared_experts_router.d_model must equal block d_model when latent_moe is "
+                    f"enabled ({self.shared_experts_router.d_model} != {d_model})"
+                )
 
         kwargs = self.as_dict(exclude_none=False, recurse=False)
         kwargs.pop("name")
@@ -235,6 +273,8 @@ class OLMoDDPTransformerBlockConfig(TransformerBlockConfig):
             block_params += self.routed_experts_router.num_params()
         if self.shared_experts_router is not None:
             block_params += self.shared_experts_router.num_params()
+        if self.latent_moe is not None:
+            block_params += self.latent_moe.num_params(d_model)
         if self.layer_norm is not None:
             block_params += self.layer_norm.num_params(d_model)
         if self.use_peri_norm and self.layer_norm is not None:
@@ -259,6 +299,8 @@ class OLMoDDPTransformerBlockConfig(TransformerBlockConfig):
             block_params += self.routed_experts_router.num_params()
         if self.shared_experts_router is not None:
             block_params += self.shared_experts_router.num_params()
+        if self.latent_moe is not None:
+            block_params += self.latent_moe.num_params(d_model)
         if self.layer_norm is not None:
             block_params += self.layer_norm.num_params(d_model)
         if self.use_peri_norm and self.layer_norm is not None:
@@ -291,25 +333,21 @@ class OLMoDDPTransformerBlockConfig(TransformerBlockConfig):
                 * seqlen
             )
 
-        # router
-        # (seq_len * d_model) * (d_model * num_total_experts)
-        flops += (
-            6
-            * seqlen
-            * d_model
-            * (
-                (
-                    self.routed_experts_router.num_experts
-                    if self.routed_experts_router is not None
-                    else 0
-                )
-                + (
-                    self.shared_experts_router.num_experts
-                    if self.shared_experts_router is not None
-                    else 0
-                )
+        # routers
+        if self.routed_experts_router is not None:
+            flops += (
+                6
+                * seqlen
+                * self.routed_experts_router.d_model
+                * self.routed_experts_router.num_experts
             )
-        )
+        if self.shared_experts_router is not None:
+            flops += (
+                6
+                * seqlen
+                * self.shared_experts_router.d_model
+                * self.shared_experts_router.num_experts
+            )
 
         # routed experts
         # (seq_len, d_model) * (d_model, expert_hidden_size) * top_k
@@ -321,10 +359,13 @@ class OLMoDDPTransformerBlockConfig(TransformerBlockConfig):
             flops += (
                 (3 * 3 * 2)
                 * seqlen
-                * d_model
+                * self.routed_experts.d_model
                 * self.routed_experts.hidden_size
                 * self.routed_experts_router.top_k
             )
+        if self.latent_moe is not None:
+            # Both model<->latent projections are used for every routed token.
+            flops += 12 * seqlen * d_model * self.latent_moe.latent_dim
 
         # shared experts
         # (seq_len, d_model) * (d_model, expert_hidden_size) * num_experts
@@ -371,6 +412,7 @@ class OLMoDDPTransformerBlock(olmo_core.nn.transformer.block.TransformerBlockBas
         checkpoint_second_unpermute=False,
         ep: Optional[ExpertParallelConfig] = None,
         rowwise_fp8: Optional[MoERowwiseFP8Config] = None,
+        latent_moe: Optional[LatentMoEConfig] = None,
         init_device: str = "cpu",
         cache: Optional[BufferCache] = None,
     ):
@@ -379,6 +421,53 @@ class OLMoDDPTransformerBlock(olmo_core.nn.transformer.block.TransformerBlockBas
         assert dropout == 0.0 or dropout is None, "OLMoDDPTransformerBlock does not support dropout"
         self.d_model = d_model
         self.block_idx = block_idx
+        self.latent_down_proj: Optional[torch.nn.Linear]
+        self.latent_up_proj_input_norm: Optional[LayerNorm]
+        self.latent_up_proj: Optional[torch.nn.Linear]
+        if latent_moe is None:
+            self.latent_down_proj = None
+            self.latent_up_proj_input_norm = None
+            self.latent_up_proj = None
+        else:
+            if routed_experts is None:
+                raise OLMoConfigurationError("latent_moe requires routed_experts")
+            if routed_experts_router is None:
+                raise OLMoConfigurationError("latent_moe requires routed_experts_router")
+            if not 0 < latent_moe.latent_dim < d_model:
+                raise OLMoConfigurationError(
+                    "latent_moe.latent_dim must be greater than 0 and less than "
+                    f"d_model ({d_model}), got {latent_moe.latent_dim}"
+                )
+            if routed_experts.d_model != latent_moe.latent_dim:
+                raise OLMoConfigurationError(
+                    "latent_moe.latent_dim must equal routed_experts.d_model"
+                )
+            if routed_experts_router.d_model != d_model:
+                raise OLMoConfigurationError(
+                    "routed_experts_router.d_model must equal block d_model when latent_moe is "
+                    "enabled"
+                )
+            self.latent_down_proj = torch.nn.Linear(
+                d_model,
+                latent_moe.latent_dim,
+                bias=latent_moe.bias,
+                dtype=routed_experts.dtype.as_pt(),
+                device=init_device,
+            )
+            self.latent_up_proj_input_norm = (
+                latent_moe.resolved_up_proj_input_norm().build(
+                    latent_moe.latent_dim, init_device=init_device
+                )
+                if latent_moe.up_proj_input_norm_enabled
+                else None
+            )
+            self.latent_up_proj = torch.nn.Linear(
+                latent_moe.latent_dim,
+                d_model,
+                bias=latent_moe.bias,
+                dtype=routed_experts.dtype.as_pt(),
+                device=init_device,
+            )
 
         if attention_residual_alpha is not None:
             raise OLMoConfigurationError(
@@ -749,20 +838,19 @@ class OLMoDDPTransformerBlock(olmo_core.nn.transformer.block.TransformerBlockBas
         # attention
         flops += self.attention.num_flops_per_token(seq_len)
 
-        # router(s): (d_model) * (num_experts) per token, x6 (fwd + bwd, GEMM x2)
-        num_router_experts = 0
+        # Routers always consume model-space activations; only routed expert payloads may use a
+        # latent width.
         if self.routed_experts_router is not None:
-            num_router_experts += self.routed_experts_router.num_experts
+            flops += 6 * self.routed_experts_router.d_model * self.routed_experts_router.num_experts
         if self.shared_experts_router is not None:
-            num_router_experts += self.shared_experts_router.num_experts
-        flops += 6 * d_model * num_router_experts
+            flops += 6 * self.shared_experts_router.d_model * self.shared_experts_router.num_experts
 
         # routed experts: top_k active per token; SwiGLU has 3 matmuls; fwd+bwd x3; GEMM x2.
         if self.routed_experts is not None:
             assert self.routed_experts_router is not None
             flops += (
                 (3 * 3 * 2)
-                * d_model
+                * self.routed_experts.d_model
                 * self.routed_experts.hidden_size
                 * self.routed_experts_router.top_k
             )
@@ -775,6 +863,10 @@ class OLMoDDPTransformerBlock(olmo_core.nn.transformer.block.TransformerBlockBas
                 * self.shared_experts.hidden_size
                 * self.shared_experts.num_experts
             )
+
+        for projection in (self.latent_down_proj, self.latent_up_proj):
+            if projection is not None:
+                flops += 6 * projection.weight.numel()
 
         return flops
 
@@ -1287,6 +1379,8 @@ class OLMoDDPTransformerBlock(olmo_core.nn.transformer.block.TransformerBlockBas
         loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
         **kwargs,
     ) -> Tuple[torch.Tensor, object]:
+        if self.latent_down_proj is not None:
+            raise NotImplementedError("LatentMoE is not supported with rowwise NVSHMEM TBO yet")
         if self.ep.path != ExpertParallelPath.rowwise_nvshmem:
             raise RuntimeError(
                 "EP TBO is only supported with "
@@ -1355,6 +1449,18 @@ class OLMoDDPTransformerBlock(olmo_core.nn.transformer.block.TransformerBlockBas
         if self.use_pre_norm:
             return self.feed_forward_norm(x)
         return x
+
+    def _prepare_routed_moe_input(self, model_input: torch.Tensor) -> torch.Tensor:
+        if self.latent_down_proj is None:
+            return model_input
+        return self.latent_down_proj(model_input)
+
+    def _restore_routed_moe_output(self, routed_output: torch.Tensor) -> torch.Tensor:
+        if self.latent_up_proj is None:
+            return routed_output
+        if self.latent_up_proj_input_norm is not None:
+            routed_output = self.latent_up_proj_input_norm(routed_output)
+        return self.latent_up_proj(routed_output)
 
     def _merge_routed_and_shared(
         self,

@@ -128,6 +128,7 @@ def combined_forward_ep_no_sync_rowwise(
     kwargs.pop("max_doc_len", None)
     kwargs.pop("cu_doc_lens", None)
     moe_inp = self._prepare_moe_input(attn_res_out)
+    routed_moe_inp = self._prepare_routed_moe_input(moe_inp)
 
     (
         local_x_global_routed_expert_weights,
@@ -166,20 +167,20 @@ def combined_forward_ep_no_sync_rowwise(
         else:
             local_x_global_shared_expert_weights = None
 
-    in_shape = moe_inp.size()
-    moe_inp = moe_inp.view(-1, in_shape[-1])
+    routed_in_shape = routed_moe_inp.size()
+    routed_moe_inp = routed_moe_inp.view(-1, routed_in_shape[-1])
     rowwise_fp8_cfg = self.rowwise_fp8
     use_rowwise_fp8 = (
         rowwise_fp8_cfg is not None
         and rowwise_fp8_cfg.enabled
-        and moe_inp.device.type == "cuda"
+        and routed_moe_inp.device.type == "cuda"
         and self.ep.uses_rowwise_buffers
     )
     if not use_rowwise_fp8:
         rowwise_fp8_cfg = None
 
     num_out_tokens = local_x_global_routed_expert_indices.numel()
-    num_input_tokens = moe_inp.shape[0]
+    num_input_tokens = routed_moe_inp.shape[0]
     top_k = self.routed_experts_router.top_k
     if activation_checkpointing is None:
         (
@@ -291,9 +292,9 @@ def combined_forward_ep_no_sync_rowwise(
             combine_in_cap=combine_in_cap,
             combine_gather_cap=num_input_tokens,
             combine_gather_top_k=top_k,
-            d_model=moe_inp.shape[1],
+            d_model=routed_moe_inp.shape[1],
             block_size=rowwise_fp8_cfg.block_size,
-            device=moe_inp.device,
+            device=routed_moe_inp.device,
             need_dispatch_in=use_fp8_symm_dispatch_in,
             need_dispatch_out=not lease_lifetime_buffers,
             need_combine_gather=not fp8_lease_combine_gather,
@@ -311,9 +312,9 @@ def combined_forward_ep_no_sync_rowwise(
                 combine_in_cap=combine_in_cap,
                 combine_gather_cap=num_input_tokens,
                 combine_gather_top_k=top_k,
-                d_model=moe_inp.shape[1],
+                d_model=routed_moe_inp.shape[1],
                 block_size=rowwise_fp8_cfg.block_size,
-                device=moe_inp.device,
+                device=routed_moe_inp.device,
                 lease_dispatch_out=False,
                 lease_combine_gather=False,
                 need_dispatch_in=use_fp8_symm_dispatch_in,
@@ -332,9 +333,9 @@ def combined_forward_ep_no_sync_rowwise(
             dispatch_out_lease = acquire_ep_no_sync_fp8_dispatch_out_lease(
                 self,
                 dispatch_out_cap=dispatch_out_cap,
-                d_model=moe_inp.shape[1],
+                d_model=routed_moe_inp.shape[1],
                 block_size=rowwise_fp8_cfg.block_size,
-                device=moe_inp.device,
+                device=routed_moe_inp.device,
             )
             fp8_buffers = replace(
                 fp8_buffers,
@@ -355,9 +356,9 @@ def combined_forward_ep_no_sync_rowwise(
                     self,
                     combine_gather_cap=num_input_tokens,
                     combine_gather_top_k=top_k,
-                    d_model=moe_inp.shape[1],
+                    d_model=routed_moe_inp.shape[1],
                     block_size=rowwise_fp8_cfg.block_size,
-                    device=moe_inp.device,
+                    device=routed_moe_inp.device,
                 )
                 fp8_buffers = replace(
                     fp8_buffers,
@@ -379,7 +380,7 @@ def combined_forward_ep_no_sync_rowwise(
             block=self.block_idx,
             dispatch_out_cap=dispatch_out_cap,
             combine_in_cap=combine_in_cap,
-            d_model=moe_inp.shape[-1],
+            d_model=routed_moe_inp.shape[-1],
         )
         buffers = get_cached_ep_no_sync_buffers(
             self,
@@ -387,9 +388,9 @@ def combined_forward_ep_no_sync_rowwise(
             dispatch_out_cap=dispatch_out_cap,
             combine_in_cap=combine_in_cap,
             combine_out_cap=combine_out_cap,
-            d_model=moe_inp.shape[-1],
-            dtype=moe_inp.dtype,
-            device=moe_inp.device,
+            d_model=routed_moe_inp.shape[-1],
+            dtype=routed_moe_inp.dtype,
+            device=routed_moe_inp.device,
             need_dispatch_in=use_symm_dispatch_in,
             need_dispatch_meta=False,
             need_dispatch_out=not lease_dispatch_out,
@@ -408,9 +409,9 @@ def combined_forward_ep_no_sync_rowwise(
                 dispatch_out_cap=dispatch_out_cap,
                 combine_in_cap=combine_in_cap,
                 combine_out_cap=combine_out_cap,
-                d_model=moe_inp.shape[-1],
-                dtype=moe_inp.dtype,
-                device=moe_inp.device,
+                d_model=routed_moe_inp.shape[-1],
+                dtype=routed_moe_inp.dtype,
+                device=routed_moe_inp.device,
                 need_dispatch_in=use_symm_dispatch_in,
                 need_dispatch_meta=False,
                 need_dispatch_out=not lease_dispatch_out,
@@ -434,9 +435,9 @@ def combined_forward_ep_no_sync_rowwise(
                 combine_out_cap=combine_out_cap,
                 combine_gather_cap=num_input_tokens,
                 combine_gather_top_k=top_k,
-                d_model=moe_inp.shape[-1],
-                dtype=moe_inp.dtype,
-                device=moe_inp.device,
+                d_model=routed_moe_inp.shape[-1],
+                dtype=routed_moe_inp.dtype,
+                device=routed_moe_inp.device,
                 need_dispatch_out=lease_dispatch_out,
                 need_combine_out=lease_combine_out,
                 need_combine_gather=lease_combine_gather,
@@ -531,7 +532,7 @@ def combined_forward_ep_no_sync_rowwise(
                 name="rowwise_inverse_route_meta",
                 shape=(rank_capacity, 2),
                 dtype=torch.long,
-                device=moe_inp.device,
+                device=routed_moe_inp.device,
             )
             inverse_route_meta.fill_(-1)
             symm_mem_vdev2d_kernels.rowwise_inverse_route_meta_put_compact(
@@ -548,7 +549,7 @@ def combined_forward_ep_no_sync_rowwise(
             rowwise_combine_row_start = batch_size_per_local_expert.new_zeros(())
             rowwise_combine_num_rows = batch_size_per_local_expert.sum()
             rowwise_stage_debug_print("rowwise:combine-put-meta-exit", block=self.block_idx)
-            rowwise_stage_debug_sync("rowwise:combine-put-meta", moe_inp.device)
+            rowwise_stage_debug_sync("rowwise:combine-put-meta", routed_moe_inp.device)
 
     if self.shared_experts is not None:
         with torch.cuda.stream(self.get_dense_stream()):
@@ -605,7 +606,7 @@ def combined_forward_ep_no_sync_rowwise(
             down_anchor = down_anchor.detach()
 
         local_x = _RowwiseFP8DispatchExpertsCombineAutograd.apply(
-            moe_inp,
+            routed_moe_inp,
             dst_ranks,
             dst_rows,
             routed_expert_offsets,
@@ -651,7 +652,7 @@ def combined_forward_ep_no_sync_rowwise(
             fp8_buffers.combine_gather_scales if use_fp8_symm_combine_gather else None  # type: ignore[union-attr]
         )
         dispatch_rank_major = _DispatchRowwiseFP8Autograd.apply(
-            moe_inp,
+            routed_moe_inp,
             dst_ranks,
             dst_rows,
             dispatch_out_q,
@@ -674,7 +675,7 @@ def combined_forward_ep_no_sync_rowwise(
         grad_out_aliases_symm_out = True
         rowwise_stage_debug_print("rowwise:dispatch-enter", block=self.block_idx)
         dispatch_rank_major = _DispatchRowwiseAutograd.apply(
-            moe_inp,
+            routed_moe_inp,
             buffers.dispatch_in if use_symm_dispatch_in else None,
             dst_ranks,
             dst_rows,
@@ -690,7 +691,7 @@ def combined_forward_ep_no_sync_rowwise(
             False,
         )
         rowwise_stage_debug_print("rowwise:dispatch-exit", block=self.block_idx)
-        rowwise_stage_debug_sync("rowwise:dispatch", moe_inp.device)
+        rowwise_stage_debug_sync("rowwise:dispatch", routed_moe_inp.device)
 
     if not use_fused_rowwise_fp8:
         rowwise_stage_debug_print("rowwise:experts-enter", block=self.block_idx)
@@ -772,9 +773,9 @@ def combined_forward_ep_no_sync_rowwise(
                 post_barrier=True,
             )
             local_x = torch.empty(
-                (num_input_tokens, moe_inp.shape[-1]),
-                device=moe_inp.device,
-                dtype=moe_inp.dtype,
+                (num_input_tokens, routed_moe_inp.shape[-1]),
+                device=routed_moe_inp.device,
+                dtype=routed_moe_inp.dtype,
             )
             probs_f32 = route_probs if route_probs.dtype == torch.float32 else route_probs.float()
             symm_mem_vdev2d_kernels.rowwise_reduce_gathered_routes(
@@ -834,7 +835,8 @@ def combined_forward_ep_no_sync_rowwise(
     else:
         mixed_shared_out = None
 
-    local_x = local_x.view(in_shape)
+    local_x = local_x.view(routed_in_shape)
+    local_x = self._restore_routed_moe_output(local_x)
     wait_stream_no_compile(torch.cuda.current_stream(), self.get_dense_stream())
 
     mlp_out = self._merge_routed_and_shared(local_x, mixed_shared_out)

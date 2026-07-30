@@ -46,6 +46,7 @@ def combined_forward_no_ep(
     kwargs.pop("max_doc_len", None)
     kwargs.pop("cu_doc_lens", None)
     moe_inp = self._prepare_moe_input(attn_res_out)
+    routed_moe_inp = self._prepare_routed_moe_input(moe_inp)
 
     (
         local_x_global_routed_expert_weights,
@@ -72,7 +73,7 @@ def combined_forward_no_ep(
     use_routed_rowwise_fp8 = (
         routed_rowwise_fp8_cfg is not None
         and routed_rowwise_fp8_cfg.enabled
-        and moe_inp.device.type == "cuda"
+        and routed_moe_inp.device.type == "cuda"
     )
 
     if requires_host_side_split_sizes() and not use_routed_rowwise_fp8:
@@ -98,7 +99,7 @@ def combined_forward_no_ep(
     else:
         local_x_global_shared_expert_weights = None
 
-    in_shape = moe_inp.size()
+    routed_in_shape = routed_moe_inp.size()
 
     mixed_shared_out = None
     if self.shared_experts is not None:
@@ -123,17 +124,17 @@ def combined_forward_no_ep(
                 attn_res_out.shape,
             )
 
-    moe_inp = moe_inp.view(-1, in_shape[-1])
+    routed_moe_inp = routed_moe_inp.view(-1, routed_in_shape[-1])
 
     routing_map = local_x_global_routed_expert_indices.view(
         -1, self.routed_experts_router.top_k
     ).int()
     num_out_tokens = routing_map.size(0) * self.routed_experts_router.top_k
-    hidden_shape_before_permute = moe_inp.shape
+    hidden_shape_before_permute = routed_moe_inp.shape
 
     with nvtx.annotate("Permute", color="green"):
         permutated_input_tokens, reversed_input_permutation_mapping = moe_permute_no_compile(
-            inp=moe_inp,
+            inp=routed_moe_inp,
             routing_map=routing_map,
             num_out_tokens=num_out_tokens,
             map_type="index",
@@ -180,7 +181,8 @@ def combined_forward_no_ep(
     if _debug_tensors_enabled() and self.block_idx == 0:
         self._debug_no_ep_combined_local_x = unpermutated_x.detach()
 
-    x_moe = unpermutated_x.view(in_shape)
+    x_moe = unpermutated_x.view(routed_in_shape)
+    x_moe = self._restore_routed_moe_output(x_moe)
 
     wait_stream_no_compile(torch.cuda.current_stream(), self.get_dense_stream())
 
