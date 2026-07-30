@@ -766,6 +766,10 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
 
         dp_group = dense_process_group if dense_process_group is not None else dp_mesh.get_group()
 
+        for block in self.routed_blocks():
+            assert block.routed_experts_router is not None
+            block.routed_experts_router.set_load_balancing_process_group(dp_group)
+
         if ep_mesh is None:
             epdp_group = dp_group
         else:

@@ -42,6 +42,7 @@ def combined_forward_no_ep(
     block_inp = x
     del x
 
+    segment_ids = kwargs.pop("segment_ids", None)
     attn_res_out = self._res_norm_attn(block_inp, **kwargs)
     kwargs.pop("max_doc_len", None)
     kwargs.pop("cu_doc_lens", None)
@@ -57,6 +58,7 @@ def combined_forward_no_ep(
         moe_inp,
         False,
         loss_div_factor=loss_div_factor,
+        segment_ids=segment_ids,
     )
 
     shared_rowwise_fp8_cfg = self.rowwise_fp8
