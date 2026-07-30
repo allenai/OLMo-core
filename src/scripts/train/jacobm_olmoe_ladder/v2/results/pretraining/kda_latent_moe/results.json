@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-07-30T19:21:27.516556+00:00",
+  "generated_at": "2026-07-30T21:24:11.592203+00:00",
   "project": "ai2-llm/jacobm-olmoe-ladder",
   "selection_metric": "mean train/CE loss over the final 250M tokens",
   "selection_rule": "LatentMoE enters the best-of plot only after its 275M Cx curve brackets a valid quadratic minimum. The plotted point remains the best observed finished LR; the fitted prediction is diagnostic only.",
@@ -970,6 +970,27 @@
     },
     {
       "model": "810m",
+      "variant": "geometry_kda_ev2_neg_nope_gated_latentmoe_l2_paper",
+      "variant_label": "LatentMoE L=2 (paper-matched)",
+      "cx": 2,
+      "lr": 0.00056,
+      "lr_tag": "0.00056",
+      "loss": 2.2231991082992195,
+      "state": "finished",
+      "tokens_b": 30.193483776,
+      "run_id": "uet3vyje",
+      "name": "pt-810m-kda-ev2-neg-nope-gated-latentmoe-l2-paper-cx2-lr5p6e-4-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/uet3vyje",
+      "segment_run_ids": [
+        "uet3vyje"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0,
+      "history_source": "wandb",
+      "history_source_sha256": null
+    },
+    {
+      "model": "810m",
       "variant": "geometry_kda_ev2_neg_nope_gated",
       "variant_label": "KDA (expand_v=2, negative eigenvalues)",
       "cx": 4,
@@ -1411,6 +1432,27 @@
       "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/3pf9w1p5",
       "segment_run_ids": [
         "3pf9w1p5"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0,
+      "history_source": "wandb",
+      "history_source_sha256": null
+    },
+    {
+      "model": "810m",
+      "variant": "geometry_kda_ev2_neg_nope_gated_latentmoe_l2_paper",
+      "variant_label": "LatentMoE L=2 (paper-matched)",
+      "cx": 2,
+      "lr": 0.00056,
+      "lr_tag": "0.00056",
+      "loss": 2.2231991082992195,
+      "state": "finished",
+      "tokens_b": 30.193483776,
+      "run_id": "uet3vyje",
+      "name": "pt-810m-kda-ev2-neg-nope-gated-latentmoe-l2-paper-cx2-lr5p6e-4-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/uet3vyje",
+      "segment_run_ids": [
+        "uet3vyje"
       ],
       "token_resets": 0,
       "deduplicated_samples": 0,
