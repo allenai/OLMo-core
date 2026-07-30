@@ -22,7 +22,7 @@ def test_emo_config_validates_against_routed_experts() -> None:
             eos_token_id=0,
             min_document_expert_pool=2,
             max_document_expert_pool=5,
-        ).validate(num_experts=4, top_k=2)
+        ).validate_for_router(num_experts=4, top_k=2)
 
 
 def test_emo_router_uses_document_pool_across_all_routed_experts() -> None:
@@ -42,9 +42,7 @@ def test_emo_router_uses_document_pool_across_all_routed_experts() -> None:
     with torch.no_grad():
         router.weight.copy_(torch.eye(4).reshape(-1))
 
-    x = torch.tensor(
-        [[[4.0, 0, 0, 0], [3.0, 0, 0, 0], [0, 0, 4.0, 0], [0, 0, 3.0, 0]]]
-    )
+    x = torch.tensor([[[4.0, 0, 0, 0], [3.0, 0, 0, 0], [0, 0, 4.0, 0], [0, 0, 3.0, 0]]])
     segment_ids = torch.tensor([[0, 0, 1, 1]])
     _, indices, counts, _ = router(x, False, segment_ids=segment_ids)
 

@@ -788,9 +788,7 @@ class MoERouterV2(nn.Module):
                     op=dist.ReduceOp.SUM,
                     group=self.lb_process_group,
                 )
-                global_batch_size_per_expert.div_(
-                    dist.get_world_size(self.lb_process_group)
-                )
+                global_batch_size_per_expert.div_(dist.get_world_size(self.lb_process_group))
 
             if self.lb_loss_weight is not None:
                 assert self.load_balancing_loss is not None

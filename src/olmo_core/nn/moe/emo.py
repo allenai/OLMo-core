@@ -14,7 +14,7 @@ class EmoRouterConfig(Config):
     max_document_expert_pool: int
     eval_document_expert_pool: Optional[int] = None
 
-    def validate(self, *, num_experts: int, top_k: int) -> None:
+    def validate_for_router(self, *, num_experts: int, top_k: int) -> None:
         if not 0 < self.min_document_expert_pool <= self.max_document_expert_pool:
             raise OLMoConfigurationError(
                 "EMO document expert pools must satisfy 0 < min_pool <= max_pool"
