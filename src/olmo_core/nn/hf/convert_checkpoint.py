@@ -543,6 +543,23 @@ def validate_conversion(
 
             return hook
 
+        def capture_expert_internals(
+            state: Dict[str, torch.Tensor],
+            layer_idx: int,
+        ):
+            def hook(module, _args, _output):
+                for suffix in (
+                    "grouped_input",
+                    "up_gate",
+                    "hidden",
+                    "grouped_output",
+                ):
+                    value = getattr(module, f"_hf_parity_{suffix}", None)
+                    if isinstance(value, torch.Tensor):
+                        state[f"layer.{layer_idx}.expert_{suffix}"] = value.detach()
+
+            return hook
+
         for layer_idx, (olmo_block, hf_layer) in enumerate(
             zip(model.blocks.values(), hf_model.model.layers, strict=True)
         ):
@@ -634,6 +651,12 @@ def validate_conversion(
                         hf_parity_state,
                         f"layer.{layer_idx}.routed_restored",
                     )
+                )
+                olmo_block.routed_experts.register_forward_hook(
+                    capture_expert_internals(olmo_core_parity_state, layer_idx)
+                )
+                hf_layer.mlp.experts.register_forward_hook(
+                    capture_expert_internals(hf_parity_state, layer_idx)
                 )
             if olmo_block.shared_experts is not None and getattr(
                 hf_layer.mlp, "shared_expert", None

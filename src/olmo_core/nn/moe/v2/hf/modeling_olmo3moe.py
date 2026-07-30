@@ -295,6 +295,13 @@ class Olmo3MoeExperts(nn.ModuleList):
         up, gate = up_gate.chunk(2, dim=-1)
         hidden = up * cast(Olmo3MoeExpert, self[0]).act_fn(gate)
         y_grouped = F.grouped_mm(hidden, w_down, offs=offs)
+        if os.environ.get(
+            "OLMO_HF_CAPTURE_TE_EXPERT_TENSORS", ""
+        ).strip().lower() in {"1", "true", "yes", "on"}:
+            self._hf_parity_grouped_input = x_grouped.detach()
+            self._hf_parity_up_gate = up_gate.detach()
+            self._hf_parity_hidden = hidden.detach()
+            self._hf_parity_grouped_output = y_grouped.detach()
 
         return moe_unpermute(
             inp=y_grouped,

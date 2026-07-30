@@ -930,6 +930,12 @@ class RoutedExperts(nn.Module):
             trans_b=True,
             input_grad_out=up_proj_input_grad_out,
         )  # -> (BS, 2H)
+        capture_parity = os.environ.get(
+            "OLMO_HF_CAPTURE_TE_EXPERT_TENSORS", ""
+        ).strip().lower() in {"1", "true", "yes", "on"}
+        if capture_parity:
+            self._hf_parity_grouped_input = x.detach()
+            self._hf_parity_up_gate = cast(torch.Tensor, up_gate).detach()
 
         up_gate = cast(torch.Tensor, up_gate)  # ensure type is Tensor
         if self.b_up_gate is not None:
@@ -941,6 +947,8 @@ class RoutedExperts(nn.Module):
 
         num_valid_rows = batch_size_per_expert_tensor.sum()
         h = self.chunk_and_activate(up_gate, num_elements=num_valid_rows)  # -> (BS, H)
+        if capture_parity:
+            self._hf_parity_hidden = h.detach()
         if row_weights is not None:
             if row_weights.numel() != h.shape[0]:
                 raise RuntimeError(
@@ -963,6 +971,8 @@ class RoutedExperts(nn.Module):
                 batch_size_per_expert_tensor,
                 output_size=down.shape[0],
             )
+        if capture_parity:
+            self._hf_parity_grouped_output = cast(torch.Tensor, down).detach()
 
         return cast(torch.Tensor, down)  # ensure type is Tensor
 
