@@ -1,3 +1,4 @@
+import os
 from collections.abc import Callable
 from inspect import signature
 from typing import Optional, Union, cast
@@ -306,6 +307,14 @@ class Olmo3MoeExperts(nn.ModuleList):
         topk_ids: torch.Tensor,  # (N, K)
         topk_weights: torch.Tensor,  # (N, K)
     ) -> torch.Tensor:
+        if os.environ.get("OLMO_HF_MOE_REFERENCE_LOOP", "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }:
+            return self._forward_loop(hidden_states, topk_ids, topk_weights)
+
         # Use a compile-safe fallback if TorchDynamo is tracing this module.
         # NOTE: This is extremely slow because it runs every expert on every token.
         try:
