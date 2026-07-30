@@ -387,6 +387,40 @@ Before promoting L=4 or 1.2B, capacity-test the increased top-k and routing
 state. Prefer EP1 for 480M/810M and retain EP8 for 1.2B unless those tests show
 a clear reason to change it.
 
+## 810M L=4 control and 1.2B L=2 promotion
+
+The 810M L=4 control and full 1.2B L=2 wave were submitted on 2026-07-30 from
+commit `3e9585cb2`. They are urgent, allocated Holmes jobs with
+`minRuntime=4h`, automatic resume, 500-step rolling ephemeral checkpoints,
+and no in-loop evaluation.
+
+The deliberately YOLO 810M L=4 control uses exactly 1,000 routed experts and
+top-32—not 1,024 experts—and otherwise mirrors the 810M L=2 Cx4 layout:
+two eight-GPU nodes, EP1, rank MB4, accumulation 1, a 524,288-token global
+batch, and transferred LR `4e-4`. Its guarded counts are 857,245,632 active
+and 11,598,235,584 stored parameters.
+
+- [810M L=4/1,000e Cx4](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYSWABKPZ9DAVYW2RGH70CAZ)
+
+The 1.2B L=2 model has 512 routed experts/top-16, 1,288,818,432 active
+parameters, and 18,514,382,592 stored parameters. It reuses the balanced
+KDA layout and the codebase-default rowwise EP path:
+
+| Cx | LR | Nodes / GPUs | EP | Rank MB / accumulation | Global batch | Beaker |
+|---:|---:|---:|---:|---:|---:|---|
+| 1 | `4e-4` | 1 / 8 | 8 | 4 / 1 | 262,144 | [work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYSWATZWSFH4M7P1TBY06H5C) |
+| 2 | `6e-4` | 2 / 16 | 8 | 3 / 1 | 393,216 | [work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYSWAZR77STKQF9WC36ZE65T) |
+| 4 | `3e-4` | 2 / 16 | 8 | 4 / 1 | 524,288 | [work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYSWB33ED9NQYDNZGSN0E561) |
+| 8 | `4e-4` | 4 / 32 | 8 | 3 / 1 | 786,432 | [work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYSWB63K9FANBNQESFEA9VWB) |
+
+The four 1.2B cells request 72 GPUs concurrently; including the 810M L=4
+control, this submission wave requests 88 GPUs. Durable definitions are
+[`1p2b_kda_latent_moe_l2_balanced_allocated.yaml`](launchers/pretraining/manifests/1p2b_kda_latent_moe_l2_balanced_allocated.yaml)
+and
+[`810m_kda_latent_moe_l4_1000e_cx4_yolo_allocated.yaml`](launchers/pretraining/manifests/810m_kda_latent_moe_l4_1000e_cx4_yolo_allocated.yaml).
+Both families are registered in the LatentMoE results collector so their
+finished results will enter the shared best-of plot automatically.
+
 ## Validation hold
 
 Do not launch new validation backfills while the current capacity constraint is

@@ -1,0 +1,19 @@
+[
+  {
+    "model_variant": "geometry_matched_kda_ev2_neg_nope_gated_latent4x_1000experts",
+    "task_name": "810m-l4-1000e-cx4-holmes",
+    "run_name": "pt-810m-kda-ev2-neg-nope-gated-latentmoe-l4-1000e-cx4-lr4e-4-r1",
+    "run_suffix": null,
+    "commit": "3e9585cb24c577f56881fcb90fec3f172739248d",
+    "diagnose_nonfinite": false,
+    "debug_gradients": false,
+    "diagnostic_stop_step": null,
+    "diagnostic_dump_root": null,
+    "experiment_id": "01KYSWABKPZ9DAVYW2RGH70CAZ",
+    "task_ids": [
+      "01KYSWABKV1D2QD4MGYHBFGZGS",
+      "01KYSWABQF1TM2KQT6S2WT7PYN"
+    ],
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYSWABKPZ9DAVYW2RGH70CAZ"
+  }
+]
