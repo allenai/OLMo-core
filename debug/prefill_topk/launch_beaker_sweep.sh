@@ -16,6 +16,8 @@ DRY_FLAG=""; [ "${DRY:-0}" = "1" ] && DRY_FLAG="--dry-run"
 
 cd "$REPO"
 export PYTHONPATH="$REPO/src"
+# gantry/beaker-py live in the corpus-reasoning-olmo env (see beaker.md), not the system python.
+PY="${PY:-/scratch/users/prasann/conda/envs/corpus-reasoning-olmo/bin/python}"
 
 CONFIGS=(
   "baseline_decode_only|"
@@ -27,7 +29,7 @@ CONFIGS=(
 for entry in "${CONFIGS[@]}"; do
   TAG="${entry%%|*}"
   echo "=== submitting $TAG ==="
-  python debug/prefill_topk/launch_beaker_prefill_topk_eval.py "$RUN" "$CLUSTER" \
+  "$PY" debug/prefill_topk/launch_beaker_prefill_topk_eval.py "$RUN" "$CLUSTER" \
     --task contradiction --rungs 2k,8k,16k,32k --ngpu "$NGPU" \
     --configs "$entry" $DRY_FLAG
 done
