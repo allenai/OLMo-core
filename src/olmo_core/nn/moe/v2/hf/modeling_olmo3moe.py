@@ -286,10 +286,10 @@ class Olmo3MoeExperts(nn.ModuleList):
         # Match RoutedExperts.w_up_gate exactly: up columns first, then gate.
         w_up_gate = torch.stack(
             [
-                torch.cat((expert.up_proj.weight, expert.gate_proj.weight), dim=0).transpose(0, 1)
+                torch.cat((expert.up_proj.weight, expert.gate_proj.weight), dim=0)
                 for expert in self
             ]
-        )
+        ).transpose(1, 2)
         w_down = torch.stack([expert.down_proj.weight.transpose(0, 1) for expert in self])
         up_gate = F.grouped_mm(x_grouped, w_up_gate, offs=offs)
         up, gate = up_gate.chunk(2, dim=-1)
@@ -332,10 +332,10 @@ class Olmo3MoeExperts(nn.ModuleList):
 
         w_up_gate = torch.stack(
             [
-                torch.cat((expert.up_proj.weight, expert.gate_proj.weight), dim=0).transpose(0, 1)
+                torch.cat((expert.up_proj.weight, expert.gate_proj.weight), dim=0)
                 for expert in self
             ]
-        )
+        ).transpose(1, 2)
         w_down = torch.stack([expert.down_proj.weight.transpose(0, 1) for expert in self])
 
         up_gate = F.grouped_mm(x_grouped, w_up_gate, offs=offs)
