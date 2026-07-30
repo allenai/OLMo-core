@@ -100,14 +100,16 @@ Reading:
 all prefill configs hard-drop (α=0). This is the setting that matters: at 32k the prompt is ~512
 landmark blocks, so a 10% budget is ~52 blocks — a far richer selection than the 0.6B task's 2.
 
-results-hub baselines (dense prefill, decode-only top-k): f1 **0.783 / 0.741 / 0.626 / 0.554**.
+| config | Beaker experiment | 2k | 8k | 16k | 32k |
+| --- | --- | --- | --- | --- | --- |
+| baseline_decode_only | `01KYTB8FCFAV4RY3Q71AZFK1DC` | 0.783 | 0.741 | 0.626 | 0.554 |
+| prefill_topk10pct | `01KYTB9BZ1TV6FDBDFK1JSD23C` | | | | |
+| prefill_topk25pct | `01KYTBA7JS7KG6R0N1PE05XFRP` | | | | |
+| prefill_topk50pct | `01KYTBB3BFT2DNYRJQBGHHWEZQ` | | | | |
 
-| config | Beaker experiment |
-| --- | --- |
-| baseline_decode_only | `01KYTB8FCFAV4RY3Q71AZFK1DC` |
-| prefill_topk10pct | `01KYTB9BZ1TV6FDBDFK1JSD23C` |
-| prefill_topk25pct | `01KYTBA7JS7KG6R0N1PE05XFRP` |
-| prefill_topk50pct | `01KYTBB3BFT2DNYRJQBGHHWEZQ` |
+The baseline row reproduces the results-hub numbers (0.783 / 0.741 / 0.626 / 0.554) **exactly**, so
+this harness copy is faithful to the production eval and the prefill-top-k rows are directly
+comparable to everything already recorded for this checkpoint.
 
 Results land on weka at
 `checkpoints/prasanns/q4b-compressive-5task-32k-nocpt-fixdata/eval_prefill_topk/contradiction_<tag>.json`
