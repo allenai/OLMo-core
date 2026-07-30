@@ -17,12 +17,37 @@ what that costs.
 
 | file | what |
 | --- | --- |
-| `../../src/olmo_core/nn/attention/landmark_prefill_topk.py` | the implementation (new, additive: no existing file changed). Eager forward-only landmark/compressive attention with per-query top-k, plus `enable_prefill_topk(model, ...)` which monkeypatches `_prefill` on a built model at eval time. |
+| `../../src/olmo_core/nn/attention/landmark_prefill_topk.py` | the implementation (new, additive: no existing file changed). Two backends + `enable_prefill_topk(model, ...)`, which monkeypatches `_prefill` on a built model at eval time. |
+| ↳ eager backend | `landmark_topk_prefill_attention` — readable reference, supports the compressive `nonselected_mass` (α) reserve. ~55x slower than the fused prefill kernel. |
+| ↳ fused backend | `landmark_topk_prefill_attention_fast` — two passes: a landmark-only matmul (`T × n_blocks`) gives each query its cutoff, then a Triton landmark forward floors sub-cutoff blocks out of the gate softmax. α = 0 only. Selected automatically when α = 0 on CUDA. |
 | `test_prefill_topk.py` | GPU validation (below). |
 | `bench_prefill_topk.py` | wall-clock / peak memory vs the fused Triton prefill kernel. |
 | `eval_lc_native_prefill_topk.py` | **copy** of `src/scripts/ctc_eval/eval/eval_lc_native.py` + `--prefill-topk*` flags. The production eval script is untouched. |
 | `run_q06b_comp_prefill_topk_sweep.sbatch` | local sweep on the 0.6B compressive contra-n20 checkpoint (mooney). |
 | `run_beaker_prefill_topk_eval.sh` / `launch_beaker_prefill_topk_eval.py` | on-Beaker sweep over the contra v2 ladder for a weka-resident checkpoint. |
+| `launch_beaker_sweep.sh` | submits one Beaker job **per config** so they run concurrently. |
+
+## The threshold trap (fused backend)
+
+The fused path selects blocks by comparing each block's landmark score against a per-query cutoff.
+The cutoff must be the **midpoint between the k-th and (k+1)-th** landmark score, *not* the k-th
+value: pass 1 computes scores with a torch fp32 matmul while the kernel recomputes them with a bf16
+`tl.dot`, so at `top_k=1` the arg-max block's own score lands a rounding step below its own threshold
+and gets dropped — selecting **nothing**, and falling back to local-block-only attention. That bug
+measured as max abs err **3.3 (rel 0.96)** against the eager reference; the midpoint takes it to bf16
+noise (7.8e-3). If you port this selection rule anywhere else, port the midpoint with it.
+
+## Speed (H200, H=32, D=128, 36 layers, per prompt)
+
+| T | fused landmark kernel | fused top-k | eager top-k |
+| --- | --- | --- | --- |
+| 8k | 0.1 s | 0.2 s | 5.4 s |
+| 16k | 0.4 s | 0.7 s | 20.0 s |
+| 32k | 1.4 s | **2.7 s** | 81.8 s |
+
+So prefill top-k costs ~2x the dense landmark prefill — and note that is measuring the *masked* form,
+which still touches every block. A production implementation would gather only the selected blocks
+and be sublinear; nothing here claims that speedup, this is an accuracy probe.
 
 ## Validation (`test_prefill_topk.py`, H200)
 
@@ -71,6 +96,19 @@ Reading:
 
 ## Result 2 — Qwen3-4B compressive landmark, contradiction v2 ladder (in flight)
 
-`q4b-compressive-5task-32k-nocpt-fixdata/step8550` (weka), Beaker experiment
-`01KYTAGRDFDBFTXMZBYX4DEH87`, rungs 2k/8k/16k/32k × {baseline, prefill 10%, 25%, 50%, 10% hard-drop}.
-results-hub baselines to beat: f1 0.783 / 0.741 / 0.626 / 0.554.
+`q4b-compressive-5task-32k-nocpt-fixdata/step8550` (weka), rungs 2k/8k/16k/32k, eval_size 500,
+all prefill configs hard-drop (α=0). This is the setting that matters: at 32k the prompt is ~512
+landmark blocks, so a 10% budget is ~52 blocks — a far richer selection than the 0.6B task's 2.
+
+results-hub baselines (dense prefill, decode-only top-k): f1 **0.783 / 0.741 / 0.626 / 0.554**.
+
+| config | Beaker experiment |
+| --- | --- |
+| baseline_decode_only | `01KYTB8FCFAV4RY3Q71AZFK1DC` |
+| prefill_topk10pct | `01KYTB9BZ1TV6FDBDFK1JSD23C` |
+| prefill_topk25pct | `01KYTBA7JS7KG6R0N1PE05XFRP` |
+| prefill_topk50pct | `01KYTBB3BFT2DNYRJQBGHHWEZQ` |
+
+Results land on weka at
+`checkpoints/prasanns/q4b-compressive-5task-32k-nocpt-fixdata/eval_prefill_topk/contradiction_<tag>.json`
+and are echoed into each job's log.
