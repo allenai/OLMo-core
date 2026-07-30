@@ -184,6 +184,7 @@ def ep_no_sync_rowwise_tbo_stage_a(
     # _tbo_debug_print(self, f"A{lane_id}:enter slot={slot_idx} group={group_name}", x=x)
     block_inp = x
     del x
+    segment_ids = kwargs.pop("segment_ids", None)
 
     with nvtx.annotate("RowwiseTBO-A-AttnRouter", color="purple"):
         # _tbo_debug_print(self, f"A{lane_id}:attn-router-enter", block_inp=block_inp)
@@ -198,6 +199,7 @@ def ep_no_sync_rowwise_tbo_stage_a(
             moe_inp_3d,
             False,
             loss_div_factor=loss_div_factor,
+            segment_ids=segment_ids,
         )
         # _tbo_debug_print(
         #     self,

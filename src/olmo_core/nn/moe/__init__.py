@@ -2,6 +2,7 @@
 MoE layers.
 """
 
+from .emo import EmoRouterConfig
 from .loss import MoELoadBalancingLossGranularity
 from .mlp import DroplessMoEMLP, MoEMLP
 from .moe import DroplessMoE, LatentMoEConfig, MoEBase, MoEConfig, MoEType
@@ -27,4 +28,5 @@ __all__ = [
     "MoERouterType",
     "MoERouterGatingFunction",
     "MoELoadBalancingLossGranularity",
+    "EmoRouterConfig",
 ]

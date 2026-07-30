@@ -25,6 +25,8 @@ from torch.distributed.tensor.parallel import (
     parallelize_module,
 )
 
+import olmo_core.ops.moe as moe_ops
+
 from olmo_core.data.utils import get_cumulative_document_lengths
 from olmo_core.distributed.parallel import get_pp_mesh
 from olmo_core.distributed.utils import hide_from_torch, unhide_from_torch
@@ -614,6 +616,26 @@ class Transformer(nn.Module):
                 all_block_kwargs["cu_doc_lens"] = move_to_device(cu_doc_lens, self.device)
             if cache_leftpad is not None:
                 all_block_kwargs["cache_leftpad"] = move_to_device(cache_leftpad, self.device)
+
+        emo_blocks = []
+        emo_eos_token_ids = set()
+        for block_idx, block in self.blocks.items():
+            router = getattr(block, "routed_experts_router", None)
+            if router is not None and getattr(router, "requires_segment_ids", False):
+                emo_blocks.append(int(block_idx))
+                emo_eos_token_ids.add(router.eos_token_id)
+        if emo_blocks:
+            if self._cp_load_balancer is not None:
+                raise OLMoConfigurationError(
+                    "EMO routing does not currently support context parallelism"
+                )
+            if len(emo_eos_token_ids) != 1:
+                raise OLMoConfigurationError(
+                    "All EMO routers in a model must use the same eos_token_id"
+                )
+            segment_ids = moe_ops.segment_ids_from_eos(input_ids, emo_eos_token_ids.pop())
+            for block_idx in emo_blocks:
+                per_block_kwargs[block_idx]["segment_ids"] = segment_ids
 
         if "cu_doc_lens" in all_block_kwargs:
             mark_dynamic(all_block_kwargs["cu_doc_lens"], 0, strict=False)  # type: ignore[arg-type]
