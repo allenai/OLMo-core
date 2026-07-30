@@ -175,6 +175,25 @@ def test_olmo3moe_can_initialize_on_meta_without_accelerate():
     assert all(parameter.is_meta for parameter in model.parameters())
 
 
+def test_olmo3moe_router_projection_stays_in_fp32(monkeypatch):
+    import torch.nn.functional as F
+
+    from olmo_core.nn.moe.v2.hf.modeling_olmo3moe import Olmo3MoeRouter
+
+    router = Olmo3MoeRouter(_small_kda_latent_config()).to(torch.bfloat16)
+    original_linear = F.linear
+    projection_dtypes = []
+
+    def record_linear(input, weight, bias=None):
+        projection_dtypes.append((input.dtype, weight.dtype))
+        return original_linear(input, weight, bias)
+
+    monkeypatch.setattr(F, "linear", record_linear)
+    router(torch.randn(2, 3, router.hidden_size, dtype=torch.bfloat16))
+
+    assert projection_dtypes == [(torch.float32, torch.float32)]
+
+
 def test_olmo3moe_conversion_rejects_unexpected_source_key():
     config = _fake_config()
     hf = _synthetic_hf_state(config)

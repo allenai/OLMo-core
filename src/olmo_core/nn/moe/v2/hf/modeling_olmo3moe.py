@@ -424,7 +424,16 @@ class Olmo3MoeRouter(nn.Module):
         self.restore_weight_scale = config.restore_weight_scale
 
     def forward(self, x):
-        logits = self.gate(x)
+        # The training router deliberately performs both the input cast and
+        # router projection in FP32. With hundreds of experts, doing this
+        # projection in BF16 can change near-tied top-k selections and quickly
+        # produce materially different logits even when every converted weight
+        # is exact.
+        logits = F.linear(
+            x.float(),
+            self.gate.weight.float(),
+            None if self.gate.bias is None else self.gate.bias.float(),
+        )
 
         if self.gating_function == "softmax":
             scores = logits.softmax(dim=-1)
