@@ -20,6 +20,7 @@ from typing import Any, Dict, Optional, Tuple
 
 import rich
 import torch
+import torch.distributed.checkpoint as dist_cp
 import torch.distributed.checkpoint.state_dict as dist_cp_sd
 import torch.nn.functional as F
 from cached_path import cached_path
@@ -71,18 +72,18 @@ def _legacy_optimizer_in_backward_key_mapping(
     ``module.<name>.main`` alongside its optimizer statistics. Fail closed if the
     checkpoint only partially matches either schema.
     """
-    plain_keys = {f"model.{key}" for key in model_state_keys}
-    if plain_keys <= checkpoint_keys:
+    plain_checkpoint_keys = {f"model.{key}" for key in model_state_keys}
+    if plain_checkpoint_keys <= checkpoint_keys:
         return None
 
     mapping = {
-        f"model.{key}": f"module.{key}.main"
+        key: f"module.{key}.main"
         for key in model_state_keys
         if f"module.{key}.main" in checkpoint_keys
     }
     checkpoint_main_keys = {key for key in checkpoint_keys if key.endswith(".main")}
-    if set(mapping) != plain_keys or set(mapping.values()) != checkpoint_main_keys:
-        missing = sorted(plain_keys - set(mapping))
+    if set(mapping) != model_state_keys or set(mapping.values()) != checkpoint_main_keys:
+        missing = sorted(model_state_keys - set(mapping))
         unexpected = sorted(checkpoint_main_keys - set(mapping.values()))
         raise RuntimeError(
             "Checkpoint does not strictly match the plain or optimizer-in-backward model schema: "
@@ -264,12 +265,31 @@ def convert_checkpoint_to_hf(
                     "'module.*.main' tensors into the plain model state",
                     len(key_mapping),
                 )
-            load_model_and_optim_state(
-                model_and_optim_dir,
-                model,
-                key_mapping=key_mapping,
-                work_dir=work_dir,
-            )
+                model_state = model.state_dict()
+                checkpoint_state = {
+                    checkpoint_key: model_state[model_key]
+                    for model_key, checkpoint_key in key_mapping.items()
+                }
+                dist_cp.state_dict_loader.load(
+                    checkpoint_state,
+                    checkpoint_id=model_and_optim_dir,
+                    storage_reader=RemoteFileSystemReader(
+                        model_and_optim_dir, work_dir=work_dir
+                    ),
+                )
+                model.load_state_dict(
+                    {
+                        model_key: checkpoint_state[checkpoint_key]
+                        for model_key, checkpoint_key in key_mapping.items()
+                    },
+                    strict=True,
+                )
+            else:
+                load_model_and_optim_state(
+                    model_and_optim_dir,
+                    model,
+                    work_dir=work_dir,
+                )
             log.info(f"Saving checkpoint to '{output_path}'")
             state_dict_options = dist_cp_sd.StateDictOptions(
                 flatten_optimizer_state_dict=True, cpu_offload=True

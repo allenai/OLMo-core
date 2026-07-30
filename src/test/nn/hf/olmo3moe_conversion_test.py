@@ -96,8 +96,8 @@ def test_legacy_optimizer_in_backward_key_mapping_is_strict():
         "module.blocks.0.attention.w_q.weight.exp_avg",
     }
     assert _legacy_optimizer_in_backward_key_mapping(model_keys, checkpoint_keys) == {
-        "model.embeddings.weight": "module.embeddings.weight.main",
-        "model.blocks.0.attention.w_q.weight": (
+        "embeddings.weight": "module.embeddings.weight.main",
+        "blocks.0.attention.w_q.weight": (
             "module.blocks.0.attention.w_q.weight.main"
         ),
     }
