@@ -40,6 +40,7 @@ ACTIVE_PARAMETERS = {
     L2_KEY: {
         "275m": 295_664_448,
         "480m": 509_751_648,
+        "810m": 857_589_696,
     },
     L4_KEY: {"275m": 296_632_128},
 }
@@ -84,6 +85,42 @@ def _planned_names() -> dict[str, list[tuple[str, int, float, str]]]:
                 2,
                 9e-4,
                 "pt-480m-kda-ev2-neg-nope-gated-latentmoe-l2-paper-cx2-lr9e-4-r1",
+            ),
+            (
+                "480m",
+                4,
+                8e-4,
+                "pt-480m-kda-ev2-neg-nope-gated-latentmoe-l2-paper-cx4-lr8e-4-r1",
+            ),
+            (
+                "480m",
+                8,
+                8e-4,
+                "pt-480m-kda-ev2-neg-nope-gated-latentmoe-l2-paper-cx8-lr8e-4-r1",
+            ),
+            (
+                "810m",
+                1,
+                6e-4,
+                "pt-810m-kda-ev2-neg-nope-gated-latentmoe-l2-paper-cx1-lr6e-4-r1",
+            ),
+            (
+                "810m",
+                2,
+                5.6e-4,
+                "pt-810m-kda-ev2-neg-nope-gated-latentmoe-l2-paper-cx2-lr5p6e-4-r1",
+            ),
+            (
+                "810m",
+                4,
+                4e-4,
+                "pt-810m-kda-ev2-neg-nope-gated-latentmoe-l2-paper-cx4-lr4e-4-r1",
+            ),
+            (
+                "810m",
+                8,
+                4e-4,
+                "pt-810m-kda-ev2-neg-nope-gated-latentmoe-l2-paper-cx8-lr4e-4-r1",
             ),
         )
     )
@@ -156,7 +193,7 @@ def comparison_wave(kda: Variant, l2: Variant, l4: Variant) -> Wave:
         model_mode_labels={
             "275m": "observed-best LR sweep",
             "480m": "wide-LR transfer",
-            "810m": "pending scale config",
+            "810m": "wide-LR transfer",
             "1p2b": "pending scale config",
         },
     )

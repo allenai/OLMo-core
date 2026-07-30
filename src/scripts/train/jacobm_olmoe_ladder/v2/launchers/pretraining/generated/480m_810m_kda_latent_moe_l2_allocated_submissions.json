@@ -1,0 +1,17 @@
+[
+  {
+    "experiment_name": "jacobm-latentmoe-l2-480m-rem-810m-full-allocated",
+    "experiment_id": "01KYRZ44KSS6A9EJ10BKR5H5HE",
+    "tasks": [
+      "480m-l2-cx4-holmes",
+      "480m-l2-cx8-holmes",
+      "810m-l2-cx1-holmes",
+      "810m-l2-cx2-holmes",
+      "810m-l2-cx4-holmes",
+      "810m-l2-cx8-holmes"
+    ],
+    "debug_gradients": false,
+    "run_suffix": null,
+    "url": "https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYRZ44KSS6A9EJ10BKR5H5HE"
+  }
+]

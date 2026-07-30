@@ -20,6 +20,7 @@ from scripts.train.jacobm_olmoe_ladder.v2.models.geometry_matched_scale import (
     MXFP8_ALIGNED_EXPERT_HIDDEN_SIZES,
     build_geometry_matched_scale_gdn2_model_config,
     build_geometry_matched_scale_kda_model_config,
+    build_geometry_matched_scale_kda_latent_moe_model_config,
     build_geometry_matched_scale_model_config,
 )
 
@@ -206,6 +207,15 @@ MODEL_VARIANTS = {
         "allow_neg_eigval": True,
         "mxfp8_aligned": True,
     },
+    "geometry_matched_kda_ev2_neg_nope_gated_latent2x_papermatched": {
+        "rope": False,
+        "attention_gate": True,
+        "gdn2": False,
+        "kda": True,
+        "expand_v": 2.0,
+        "allow_neg_eigval": True,
+        "latent_moe_compression": 2,
+    },
 }
 NONFINITE_DIAGNOSTIC_STOPS = {
     ("geometry_matched_gdn_ev2_nope", "1p2b-cx8"): 18_500,
@@ -325,7 +335,12 @@ def validate(manifest: dict[str, Any]) -> list[dict[str, Any]]:
         row["accumulation_steps"] = rank_sequences // microbatch
 
     for model_size in sorted({str(row["model_size"]) for row in rows}):
-        if bool(profile.get("kda", False)):
+        if latent_moe_compression := profile.get("latent_moe_compression"):
+            model = build_geometry_matched_scale_kda_latent_moe_model_config(
+                model_size,
+                compression=int(latent_moe_compression),
+            )
+        elif bool(profile.get("kda", False)):
             model = build_geometry_matched_scale_kda_model_config(
                 model_size,
                 expand_v=float(profile["expand_v"]),

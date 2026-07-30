@@ -1,0 +1,50 @@
+schema_version: 1
+
+experiment:
+  description: 810M KDA LatentMoE paper-matched L=2 transfer at wide LRs
+  checkpoint_root: /weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/olmo-ddp/pretraining
+
+source:
+  remote: https://github.com/allenai/OLMo-core
+  branch: jacobm/moe-v2-core-gdn2
+  image: 01KW8G8JC20H11Y60PPTE2VN4Q
+
+beaker:
+  workspace: ai2/OLMo-3-moe-experiments
+  cluster: ai2/holmes
+  priority: urgent
+  shared_memory: 128GiB
+  min_runtime: 4h
+  auto_resume: true
+  timeout: 168h
+
+secrets:
+  AWS_ACCESS_KEY_ID: AWS_ACCESS_KEY_ID
+  AWS_SECRET_ACCESS_KEY: AWS_SECRET_ACCESS_KEY
+  WANDB_API_KEY: jacobm_WANDB_API_KEY
+  BEAKER_TOKEN: jacobm_BEAKER_TOKEN
+
+weka:
+  - {bucket: oe-adapt-default, mount: /weka/oe-adapt-default}
+  - {bucket: oe-training-default, mount: /weka/oe-training-default}
+
+training:
+  model_variant: geometry_matched_kda_ev2_neg_nope_gated_latent2x_papermatched
+  layout_profile: kda_810m
+  capacity_qualified_model_sizes: [810m]
+  sequence_length: 8192
+  hard_stop_steps: 0
+  checkpoints: true
+  save_interval: 999999999
+  ephemeral_save_interval: 500
+  checkpoint_removal: ephemeral_only
+  evals: false
+  eval_interval: 999999999
+  compile: true
+  wandb: true
+
+runs:
+  - {task_name: 810m-l2-cx1-holmes, run_name: pt-810m-kda-ev2-neg-nope-gated-latentmoe-l2-paper-cx1-lr6e-4-r1, model_size: 810m, cx: 1, learning_rate: "6e-4", global_batch_size: 262144, num_nodes: 2, gpus_per_node: 8, expert_parallel_size: 1, rank_microbatch_sequences: 2}
+  - {task_name: 810m-l2-cx2-holmes, run_name: pt-810m-kda-ev2-neg-nope-gated-latentmoe-l2-paper-cx2-lr5p6e-4-r1, model_size: 810m, cx: 2, learning_rate: "5.6e-4", global_batch_size: 393216, num_nodes: 2, gpus_per_node: 8, expert_parallel_size: 1, rank_microbatch_sequences: 3}
+  - {task_name: 810m-l2-cx4-holmes, run_name: pt-810m-kda-ev2-neg-nope-gated-latentmoe-l2-paper-cx4-lr4e-4-r1, model_size: 810m, cx: 4, learning_rate: "4e-4", global_batch_size: 524288, num_nodes: 2, gpus_per_node: 8, expert_parallel_size: 1, rank_microbatch_sequences: 4}
+  - {task_name: 810m-l2-cx8-holmes, run_name: pt-810m-kda-ev2-neg-nope-gated-latentmoe-l2-paper-cx8-lr4e-4-r1, model_size: 810m, cx: 8, learning_rate: "4e-4", global_batch_size: 786432, num_nodes: 2, gpus_per_node: 8, expert_parallel_size: 1, rank_microbatch_sequences: 6}
