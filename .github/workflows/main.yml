@@ -246,7 +246,7 @@ jobs:
           # run here since they need TransformerEngine + the same custom kernels, which the torch
           # 2.9 image lacks.
           - name: Test MoE kernels (GPU, torch 2.10)
-            image: akshitab/olmo-core-tch2100cu128-rma-2026-07-08
+            image: akshitab/olmo-core-tch2100cu128-rma-2026-07-28
             gpus: 2
             # This image's kernels (grouped_gemm, symm_mem_vdev2d, FP8) are built for sm_90 only
             # (`-gencode arch=compute_90,code=sm_90`), so pin to h100 — on a100/b200 grouped_gemm
