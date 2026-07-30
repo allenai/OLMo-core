@@ -495,3 +495,34 @@ def histc(x: torch.Tensor, num_classes: int) -> torch.Tensor:
         return torch.histc(x.float(), bins=num_classes, min=0, max=num_classes - 1).int()
     else:
         return torch.histc(x, bins=num_classes, min=0, max=num_classes - 1)
+
+
+def segment_ids_from_eos(input_ids: torch.Tensor, eos_token_id: int) -> torch.Tensor:
+    """Return per-token document IDs, with each EOS token starting the next segment."""
+    eos = (input_ids == eos_token_id).to(torch.long)
+    eos[:, 0] = 0
+    return eos.cumsum(dim=1)
+
+
+def doc_sum_scatter(per_token: torch.Tensor, segment_ids: torch.Tensor) -> torch.Tensor:
+    """Sum values within each document and broadcast the sums back to its tokens."""
+    batch_size, seq_len, num_experts = per_token.shape
+    indices = segment_ids.unsqueeze(-1).expand(-1, -1, num_experts)
+    document_sums = torch.zeros(
+        batch_size,
+        seq_len,
+        num_experts,
+        dtype=per_token.dtype,
+        device=per_token.device,
+    )
+    document_sums.scatter_add_(1, indices, per_token)
+    return document_sums.gather(1, indices)
+
+
+def pool_keep_mask(
+    document_scores: torch.Tensor,
+    pool_size_per_token: torch.Tensor,
+) -> torch.Tensor:
+    """Return a mask retaining each document's highest-scoring expert pool."""
+    ranks = document_scores.argsort(dim=-1, descending=True).argsort(dim=-1)
+    return ranks < pool_size_per_token.unsqueeze(-1)
