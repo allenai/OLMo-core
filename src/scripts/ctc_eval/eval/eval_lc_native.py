@@ -269,13 +269,17 @@ def main():
         # Now: explicit env wins; otherwise pick the first bundle that actually EXISTS for the
         # selected ladder version -- the weka 2k..256k bundle (mounted on Beaker) before the
         # Berkeley-local /scratch copies.
-        # ⚠ The two v2 bundles are NOT equivalent at the long end. The weka bundle carries the
-        # 2k..256k ladder rebuilt at eval_size=500 (plus oolong 2k/4k); the Berkeley-local
-        # eval500_v2 still holds the ORIGINAL xlong rungs at eval_size=300, which the --xlong glob
-        # will happily pick up. If you are quoting 64k/128k/256k numbers from a Berkeley run,
-        # point EVAL500_ROOT at the weka bundle (or a copy of it) rather than relying on this
-        # fallback, or the rungs are 300 examples and need an inline eval_size warning.
+        # ⚠ These bundles are NOT equivalent at the long end, so ORDER MATTERS.
+        #   1. _eval_bundle_eval500_v2_clean -- the DEFAULT (2026-07-29): a verified 2k..2M ladder,
+        #      eval_size>=500 at every rung, PubMed-only contradiction distractors.
+        #   2. xlong5_2k256k_qwen35/eval    -- build-output bundle; contra fillers are ~29% FEVER/wiki
+        #      and it stops at 256k.
+        #   3. /scratch/.../eval500_v2      -- Berkeley-local; its xlong rungs are eval_size=300.
+        # Falling back past (1) means quoting numbers off a contaminated or sub-500 rung, so a run
+        # that lands on (2) or (3) needs the contamination/eval_size caveats stated inline. Prefer
+        # setting EVAL500_ROOT explicitly over relying on this order.
         _V2_BUNDLES = [
+            "/weka/oe-training-default/ai2-llm/checkpoints/prasanns/_eval_bundle_eval500_v2_clean",
             "/weka/oe-training-default/ai2-llm/checkpoints/prasanns/xlong5_2k256k_qwen35/eval",
             "/scratch/users/prasann/cpt_data/eval500_v2",
         ]

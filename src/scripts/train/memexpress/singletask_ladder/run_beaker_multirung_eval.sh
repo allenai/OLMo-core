@@ -51,7 +51,18 @@ if [ "$LADDER_VERSION" != "v2" ]; then
   echo "       2k-32k, build_xlong_rungs.py for 64k-2M) and point EVAL500 at a v2 bundle." >&2
   exit 2
 fi
-EVAL500="${EVAL500:-$PRASANNS/_eval_bundle_eval500_v2}"
+# DEFAULT = the CLEAN bundle (2026-07-29). It carries a verified 2k..2M ladder for every task:
+# eval_size>=500 at every rung and PubMed-only contradiction distractors. The previous default
+# (_eval_bundle_eval500_v2) has contra 64k..2M at 28-31% FEVER/wiki distractors -- a domain shortcut,
+# since the gold pair is the only biomedical text -- and eval_size=300 at 64k/128k/256k for every
+# doc-pool task.
+#
+# The <=32k rungs are BYTE-IDENTICAL between the two bundles (size+ETag verified for all 18), so
+# switching does NOT move any <=32k number. What does change: contra at 64k and above is a different
+# (harder, domain-homogeneous) task -- clean 256k is n6102 vs the old n6408 -- so contra numbers must
+# NOT be compared across this switch without re-running the earlier points. Set
+# EVAL500=$PRASANNS/_eval_bundle_eval500_v2 to reproduce a pre-switch run.
+EVAL500="${EVAL500:-$PRASANNS/_eval_bundle_eval500_v2_clean}"
 VFLAG="--ladder-version v2"
 # ---- OPT-IN ultra-long rungs (OFF by default). LADDER_XLONG=1 appends 64k/128k/256k for the
 # doc-pool tasks (contra|nq|outlier), forces bs=1, and raises MAX_LENGTH so prompts aren't truncated.
