@@ -15,7 +15,10 @@ from olmo_core.nn.hf.convert import (
     convert_olmo3moe_state_from_hf,
     convert_olmo3moe_state_to_hf,
 )
-from olmo_core.nn.hf.convert_checkpoint import _normalize_legacy_latent_moe_config
+from olmo_core.nn.hf.convert_checkpoint import (
+    _legacy_optimizer_in_backward_key_mapping,
+    _normalize_legacy_latent_moe_config,
+)
 
 
 def _fake_config():
@@ -82,6 +85,34 @@ def test_olmo3moe_hf_conversion_roundtrips():
     assert set(hf_roundtrip.keys()) == set(hf.keys())
     for key, tensor in hf.items():
         assert torch.equal(hf_roundtrip[key], tensor), f"roundtrip mismatch for '{key}'"
+
+
+def test_legacy_optimizer_in_backward_key_mapping_is_strict():
+    model_keys = {"embeddings.weight", "blocks.0.attention.w_q.weight"}
+    checkpoint_keys = {
+        "module.embeddings.weight.main",
+        "module.embeddings.weight.exp_avg",
+        "module.blocks.0.attention.w_q.weight.main",
+        "module.blocks.0.attention.w_q.weight.exp_avg",
+    }
+    assert _legacy_optimizer_in_backward_key_mapping(model_keys, checkpoint_keys) == {
+        "model.embeddings.weight": "module.embeddings.weight.main",
+        "model.blocks.0.attention.w_q.weight": (
+            "module.blocks.0.attention.w_q.weight.main"
+        ),
+    }
+
+    assert (
+        _legacy_optimizer_in_backward_key_mapping(
+            model_keys, {f"model.{key}" for key in model_keys}
+        )
+        is None
+    )
+
+    with pytest.raises(RuntimeError, match="does not strictly match"):
+        _legacy_optimizer_in_backward_key_mapping(
+            model_keys, checkpoint_keys - {"module.embeddings.weight.main"}
+        )
 
 
 def _small_kda_latent_config():

@@ -28,7 +28,7 @@ from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 from olmo_core.aliases import PathOrStr
 from olmo_core.config import DType
 from olmo_core.data.tokenizer import TokenizerConfig
-from olmo_core.distributed.checkpoint import load_model_and_optim_state
+from olmo_core.distributed.checkpoint import RemoteFileSystemReader, load_model_and_optim_state
 from olmo_core.io import file_exists, join_path
 from olmo_core.nn.attention import AttentionBackendName, AttentionConfig, AttentionType
 from olmo_core.nn.conversion.state_mapping import StateType, TemplatePlaceholder
@@ -58,6 +58,37 @@ def _normalize_legacy_latent_moe_config(value: Any) -> None:
     elif isinstance(value, list):
         for child in value:
             _normalize_legacy_latent_moe_config(child)
+
+
+def _legacy_optimizer_in_backward_key_mapping(
+    model_state_keys: set[str], checkpoint_keys: set[str]
+) -> dict[str, str] | None:
+    """Map plain model keys to optimizer-in-backward DCP ``module.*.main`` keys.
+
+    Recent OLMo Core checkpoints store a plain model state under ``model.*``. The
+    ladder checkpoints used for this migration instead wrap every parameter in an
+    optimizer-in-backward container, whose durable model value is stored under
+    ``module.<name>.main`` alongside its optimizer statistics. Fail closed if the
+    checkpoint only partially matches either schema.
+    """
+    plain_keys = {f"model.{key}" for key in model_state_keys}
+    if plain_keys <= checkpoint_keys:
+        return None
+
+    mapping = {
+        f"model.{key}": f"module.{key}.main"
+        for key in model_state_keys
+        if f"module.{key}.main" in checkpoint_keys
+    }
+    checkpoint_main_keys = {key for key in checkpoint_keys if key.endswith(".main")}
+    if set(mapping) != plain_keys or set(mapping.values()) != checkpoint_main_keys:
+        missing = sorted(plain_keys - set(mapping))
+        unexpected = sorted(checkpoint_main_keys - set(mapping.values()))
+        raise RuntimeError(
+            "Checkpoint does not strictly match the plain or optimizer-in-backward model schema: "
+            f"missing={missing[:20]}, unexpected={unexpected[:20]}"
+        )
+    return mapping
 
 
 def convert_checkpoint_to_hf(
@@ -220,9 +251,23 @@ def convert_checkpoint_to_hf(
             assert original_checkpoint_path is not None
             model_and_optim_dir = join_path(original_checkpoint_path, "model_and_optim")
             log.info(f"Loading checkpoint from '{model_and_optim_dir}'")
+            checkpoint_metadata = RemoteFileSystemReader(
+                model_and_optim_dir, work_dir=work_dir
+            ).read_metadata()
+            key_mapping = _legacy_optimizer_in_backward_key_mapping(
+                set(model.state_dict()),
+                set(checkpoint_metadata.state_dict_metadata),
+            )
+            if key_mapping is not None:
+                log.info(
+                    "Detected optimizer-in-backward checkpoint schema; mapping %d "
+                    "'module.*.main' tensors into the plain model state",
+                    len(key_mapping),
+                )
             load_model_and_optim_state(
                 model_and_optim_dir,
                 model,
+                key_mapping=key_mapping,
                 work_dir=work_dir,
             )
             log.info(f"Saving checkpoint to '{output_path}'")
@@ -405,7 +450,8 @@ def validate_conversion(
     log.info(f"Running validation on {device}")
 
     B, T = 1, 60
-    input_ids = torch.randint(0, vocab_size, (B, T)).to(device)
+    generator = torch.Generator(device="cpu").manual_seed(0)
+    input_ids = torch.randint(0, vocab_size, (B, T), generator=generator).to(device)
 
     is_sliding = any(
         hasattr(block.attention, "window_size") and block.attention.window_size != (-1, -1)
@@ -544,9 +590,16 @@ def validate_conversion(
                         f"{olmo_core_state_name}, {hf_state_name} element diff abs mean: {(olmo_core_tensor - hf_tensor).float().abs().mean()}"
                     )
 
-    torch.testing.assert_close(
-        hf_logits[..., :vocab_size].float(), logits[..., :vocab_size].float(), rtol=1e-4, atol=1e-4
+    hf_logits = hf_logits[..., :vocab_size].float()
+    logits = logits[..., :vocab_size].float()
+    absolute_error = (hf_logits - logits).abs()
+    log.info(
+        "Logit validation: exact=%s, max_abs_error=%.9g, mean_abs_error=%.9g",
+        torch.equal(hf_logits, logits),
+        absolute_error.max().item(),
+        absolute_error.mean().item(),
     )
+    torch.testing.assert_close(hf_logits, logits, rtol=1e-4, atol=1e-4)
 
 
 def load_config(checkpoint_input_dir: PathOrStr) -> Optional[dict]:
