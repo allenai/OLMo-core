@@ -167,6 +167,19 @@ def test_global_load_balancing_averages_counts_without_mutating_local_counts(
 
     torch.testing.assert_close(captured["counts"], torch.tensor([4.0, 4.0]))
     torch.testing.assert_close(local_counts, torch.tensor([8, 0]))
+    torch.testing.assert_close(router.batch_size_per_expert, torch.tensor([8.0, 0.0]))
+    assert router.global_batch_size_per_expert is not None
+    torch.testing.assert_close(
+        router.global_batch_size_per_expert, torch.tensor([4.0, 4.0])
+    )
+
+    metrics = router.compute_metrics(reset=False)
+    torch.testing.assert_close(metrics["load imbalance"][0], torch.tensor(2.0))
+    torch.testing.assert_close(metrics["global load imbalance"][0], torch.tensor(1.0))
+
+    router.reset_metrics()
+    torch.testing.assert_close(router.batch_size_per_expert, torch.zeros(2))
+    torch.testing.assert_close(router.global_batch_size_per_expert, torch.zeros(2))
 
 
 def test_global_load_balancing_requires_process_group():

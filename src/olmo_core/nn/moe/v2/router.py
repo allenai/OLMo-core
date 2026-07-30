@@ -245,6 +245,7 @@ class MoERouterV2(nn.Module):
         self._batch_size_per_expert = hide_from_torch(
             torch.zeros(self.num_experts, device=init_device)
         )
+        self._global_batch_size_per_expert: Optional[_HiddenTensor] = None
         self._score_bias_batch_size_per_expert: Optional[_HiddenTensor] = None
         self._load_balancing_loss: Optional[_HiddenTensor] = None
         self._z_loss: Optional[_HiddenTensor] = None
@@ -268,6 +269,10 @@ class MoERouterV2(nn.Module):
         self._batch_size_per_expert = hide_from_torch(
             torch.zeros(self.num_experts, device=self.device)
         )
+        if self.global_load_balancing:
+            self._global_batch_size_per_expert = hide_from_torch(
+                torch.zeros(self.num_experts, device=self.device)
+            )
 
         if self.score_bias is not None:
             score_bias = cast(torch.Tensor, self.score_bias)
@@ -329,6 +334,22 @@ class MoERouterV2(nn.Module):
     @batch_size_per_expert.setter
     def batch_size_per_expert(self, value: torch.Tensor):
         self._batch_size_per_expert = hide_from_torch(value)
+
+    @property
+    def global_batch_size_per_expert(self) -> Optional[torch.Tensor]:
+        if not self.global_load_balancing:
+            return None
+        if self._global_batch_size_per_expert is None:
+            self._global_batch_size_per_expert = hide_from_torch(
+                torch.zeros(self.num_experts, device=self.device)
+            )
+        elif self._global_batch_size_per_expert.device != self.device:
+            self._global_batch_size_per_expert = self._global_batch_size_per_expert.to(self.device)
+        return unhide_from_torch(self._global_batch_size_per_expert)
+
+    @global_batch_size_per_expert.setter
+    def global_batch_size_per_expert(self, value: torch.Tensor):
+        self._global_batch_size_per_expert = hide_from_torch(value)
 
     @property
     def load_balancing_loss(self) -> Optional[torch.Tensor]:
@@ -477,6 +498,16 @@ class MoERouterV2(nn.Module):
             ReduceType.max,
         )
 
+        if self.global_load_balancing:
+            global_batch_size_per_expert = self.global_batch_size_per_expert
+            assert global_batch_size_per_expert is not None
+            out["global load imbalance"] = (
+                global_batch_size_per_expert.max()
+                / global_batch_size_per_expert.mean(dtype=torch.float),
+                # All DP ranks accumulate the same globally reduced counts.
+                ReduceType.mean,
+            )
+
         # record the number of tokens routed to each routed expert.
         if self.record_routing_batch_size:
             for i in range(self.num_experts):
@@ -519,6 +550,8 @@ class MoERouterV2(nn.Module):
     def reset_metrics(self):
         if (bz_per_expert := self.batch_size_per_expert) is not None:
             bz_per_expert.zero_()
+        if (global_bz_per_expert := self.global_batch_size_per_expert) is not None:
+            global_bz_per_expert.zero_()
         if (lb_loss := self.load_balancing_loss) is not None:
             lb_loss.zero_()
         if (z_loss := self.z_loss) is not None:
@@ -735,6 +768,30 @@ class MoERouterV2(nn.Module):
         # Maybe compute auxiliary losses and accumulate metrics.
         aux_loss: Optional[torch.Tensor] = None
         if self.training and torch.is_grad_enabled():
+            global_batch_size_per_expert = None
+            if self.global_load_balancing:
+                if self.lb_process_group is None:
+                    raise RuntimeError(
+                        "global_load_balancing requires a load-balancing process group; "
+                        "apply data parallelism before training"
+                    )
+                # DDP averages parameter gradients, and the training module supplies a
+                # loss_div_factor normalized by the DP world size. Average the global counts
+                # to preserve the single-rank-equivalent auxiliary-loss scale.
+                global_batch_size_per_expert = batch_size_per_expert.float().clone()
+                # TODO: This is a tiny but synchronous collective for every routed MoE layer
+                # and microbatch, so latency can dominate its bandwidth cost, especially across
+                # nodes. Consider coalescing count reductions across layers/microbatches or
+                # overlapping asynchronous reductions with other work.
+                dist.all_reduce(
+                    global_batch_size_per_expert,
+                    op=dist.ReduceOp.SUM,
+                    group=self.lb_process_group,
+                )
+                global_batch_size_per_expert.div_(
+                    dist.get_world_size(self.lb_process_group)
+                )
+
             if self.lb_loss_weight is not None:
                 assert self.load_balancing_loss is not None
 
@@ -742,25 +799,11 @@ class MoERouterV2(nn.Module):
                 if self.gating_function == MoERouterGatingFunction.sigmoid:
                     scores = scores / scores.sum(dim=-1, keepdim=True)
 
-                lb_batch_size_per_expert = batch_size_per_expert
-                if self.global_load_balancing:
-                    if self.lb_process_group is None:
-                        raise RuntimeError(
-                            "global_load_balancing requires a load-balancing process group; "
-                            "apply data parallelism before training"
-                        )
-                    # DDP averages parameter gradients, and the training module supplies a
-                    # loss_div_factor normalized by the DP world size. Average the global counts
-                    # to preserve the single-rank-equivalent auxiliary-loss scale.
-                    lb_batch_size_per_expert = batch_size_per_expert.float().clone()
-                    dist.all_reduce(
-                        lb_batch_size_per_expert,
-                        op=dist.ReduceOp.SUM,
-                        group=self.lb_process_group,
-                    )
-                    lb_batch_size_per_expert.div_(
-                        dist.get_world_size(self.lb_process_group)
-                    )
+                lb_batch_size_per_expert = (
+                    global_batch_size_per_expert
+                    if global_batch_size_per_expert is not None
+                    else batch_size_per_expert
+                )
 
                 lb_loss = load_balancing_loss(
                     num_experts=self.num_experts,
@@ -822,6 +865,9 @@ class MoERouterV2(nn.Module):
                 aux_loss = scaled_orth_loss if aux_loss is None else aux_loss + scaled_orth_loss
             if accumulate_metrics:
                 self.batch_size_per_expert += batch_size_per_expert
+                if global_batch_size_per_expert is not None:
+                    assert self.global_batch_size_per_expert is not None
+                    self.global_batch_size_per_expert += global_batch_size_per_expert
                 if self.bias_gamma is not None:
                     assert self.score_bias_batch_size_per_expert is not None
                     self.score_bias_batch_size_per_expert += batch_size_per_expert
