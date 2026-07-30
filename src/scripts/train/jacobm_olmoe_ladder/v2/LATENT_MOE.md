@@ -218,6 +218,35 @@ The refreshed U-plots, best-of plot, and machine-readable results live under
 [`plots/pretraining/kda_latent_moe`](plots/pretraining/kda_latent_moe) and
 [`results/pretraining/kda_latent_moe`](results/pretraining/kda_latent_moe).
 
+## HF conversion qualification
+
+The OLMo3-MoE HF converter now supports this KDA + LatentMoE family. The
+exported config records the hybrid layer pattern, KDA head/value dimensions,
+negative-eigenvalue setting, NoPE gated full attention, full-width router,
+latent width, expert count/top-k, peri-norm placement, dense first layer, and
+shared-expert layout. Unsupported or heterogeneous layouts fail closed instead
+of silently producing a different model. Optimizer-in-backward DCP checkpoints
+are loaded through their flattened `module.*.main` model tensors; optimizer
+state is intentionally excluded from the HF artifact.
+
+Strict conversion checks cover all source tensors and mappings, save/reload the
+HF artifact, compare every transformer block and LatentMoE subpath, and require
+fixed-input logits to be exactly equal. Both escalation models passed with zero
+error:
+
+| Checkpoint | Layers | HF tensors | Block/logit result | Beaker |
+|---|---:|---:|---|---|
+| 275M L=2 Cx1 winner, step 17,658 | 10 | 14,067 | exact, max error `0` | [01KYRX9JFZ45AADBCA5HBGBE2W](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYRX9JFZ45AADBCA5HBGBE2W) |
+| 480M L=2 Cx1 winner, step 33,011 | 15 | 21,868 | exact, max error `0` | [01KYRXNPA2AWZQTSC1JKVZY72M](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYRXNPA2AWZQTSC1JKVZY72M) |
+
+Exact expert parity requires mirroring the training no-EP path: FP32 router
+projection, Transformer Engine permutation/unpermutation, grouped-MM weight
+layout, and the fused valid-prefix SwiGLU activation. The last item was the
+source of the initially observed sparse-layer drift; after matching it, routed
+and shared expert outputs, every block, and final logits became bitwise equal.
+KDA recurrent-state caching is not implemented in this HF model yet, so KDA
+exports deliberately reject `use_cache=True`.
+
 ## Cx4/Cx8 completion of the 275M sweep
 
 The next LatentMoE wave finishes the four-LR curves at Cx4 and Cx8 for both

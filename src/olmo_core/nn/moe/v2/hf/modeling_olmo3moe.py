@@ -1018,6 +1018,12 @@ class Olmo3MoeModel(Olmo3MoePreTrainedModel):
         use_cache: Optional[bool] = None,
         **kwargs: Unpack[TransformersKwargs],
     ) -> BaseModelOutputWithPast:
+        r"""
+        cache_position (`torch.Tensor`, *optional*):
+            Indices describing the positions of input tokens in the sequence. This is used to
+            update a static cache in the correct position and to infer `position_ids` when those
+            are not provided.
+        """
         if (input_ids is None) ^ (inputs_embeds is not None):
             raise ValueError("You must specify exactly one of input_ids or inputs_embeds")
 
@@ -1145,6 +1151,11 @@ class Olmo3MoeForCausalLM(Olmo3MoePreTrainedModel, GenerationMixin):
         logits_to_keep: Union[int, torch.Tensor] = 0,
         **kwargs: Unpack[TransformersKwargs],
     ) -> CausalLMOutputWithPast:
+        r"""
+        cache_position (`torch.LongTensor`, *optional*):
+            Indices describing the positions of input tokens in the sequence. This is forwarded
+            to the base model for cache placement and position inference.
+        """
         outputs: BaseModelOutputWithPast = self.model(
             input_ids=input_ids,
             attention_mask=attention_mask,
