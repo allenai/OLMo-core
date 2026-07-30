@@ -47,7 +47,7 @@ echo "--- /data free before build ---"; df -h /data | tail -1
 # not survive, so a task can legitimately land just under 500. Trust the "N ex" the builder prints,
 # not this number, and report that realized count.
 python -u $REPO/src/corpus_reasoning/data/build_xlong_rungs.py \
-  --tasks "$T" --sizes 512k,1M,2M --count 500 \
+  --tasks "$T" --sizes "${SIZES:-512k,1M,2M}" --count "${COUNT:-500}" \
   --tokenizer /scratch/users/prasann/hf_models/Qwen3.5-4B-Base \
   --out-root "$OUT"
 rc=$?
