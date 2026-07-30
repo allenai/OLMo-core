@@ -37,7 +37,10 @@ MODELS = ("275m", "480m", "810m", "1p2b")
 L2_KEY = "geometry_kda_ev2_neg_nope_gated_latentmoe_l2_paper"
 L4_KEY = "geometry_kda_ev2_neg_nope_gated_latentmoe_l4_1000e"
 ACTIVE_PARAMETERS = {
-    L2_KEY: {"275m": 295_664_448},
+    L2_KEY: {
+        "275m": 295_664_448,
+        "480m": 509_751_648,
+    },
     L4_KEY: {"275m": 296_632_128},
 }
 
@@ -68,6 +71,22 @@ def _planned_names() -> dict[str, list[tuple[str, int, float, str]]]:
                         ),
                     )
                 )
+    planned[L2_KEY].extend(
+        (
+            (
+                "480m",
+                1,
+                1.2e-3,
+                "pt-480m-kda-ev2-neg-nope-gated-latentmoe-l2-paper-cx1-lr1p2e-3-r1",
+            ),
+            (
+                "480m",
+                2,
+                9e-4,
+                "pt-480m-kda-ev2-neg-nope-gated-latentmoe-l2-paper-cx2-lr9e-4-r1",
+            ),
+        )
+    )
     return planned
 
 
@@ -136,7 +155,7 @@ def comparison_wave(kda: Variant, l2: Variant, l4: Variant) -> Wave:
         uplot_baselines=False,
         model_mode_labels={
             "275m": "observed-best LR sweep",
-            "480m": "pending scale config",
+            "480m": "wide-LR transfer",
             "810m": "pending scale config",
             "1p2b": "pending scale config",
         },
@@ -165,6 +184,7 @@ def plot_best_of(
             and point.variant in eligible
             and point.cx in eligible[point.variant]
         )
+        or (point.model != "275m" and point.variant == l2.key)
     ]
     return plot_fixed_lr_scale_comparison(
         filtered,
@@ -207,6 +227,9 @@ def write_results(
                 }
             )
 
+    scale_rows = [
+        asdict(point) for point in points if point.variant == l2.key and point.model != "275m"
+    ]
     payload = {
         "generated_at": generated_at,
         "project": PROJECT,
@@ -221,6 +244,7 @@ def write_results(
         "unresolved_planned_runs": unresolved,
         "runs": [asdict(point) for point in points],
         "results": rows,
+        "scale_results": scale_rows,
     }
     json_path = output_path.with_suffix(".json")
     md_path = output_path.with_suffix(".md")
@@ -255,6 +279,23 @@ def write_results(
             f"{observed} | {predicted} |"
         )
     pending = sum(len(names) for names in unresolved.values())
+    lines.extend(
+        [
+            "",
+            "## Larger-size transferred-LR results",
+            "",
+            "| Model | Cx | LR | Final-250M CE | Tokens | W&B |",
+            "|---|---:|---:|---:|---:|---|",
+        ]
+    )
+    for row in scale_rows:
+        lines.append(
+            f"| {row['model']} | Cx{row['cx']} | {row['lr']:.2g} | "
+            f"{row['loss']:.6f} | {row['tokens_b']:.3f}B | "
+            f"[{row['run_id']}]({row['url']}) |"
+        )
+    if not scale_rows:
+        lines.append("| — | — | — | — | — | no finished scale runs |")
     lines.extend(["", f"Uninitialized planned W&B runs: `{pending}`."])
     md_path.write_text("\n".join(lines) + "\n")
     return json_path, md_path

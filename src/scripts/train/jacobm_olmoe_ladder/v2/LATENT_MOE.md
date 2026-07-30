@@ -277,6 +277,17 @@ and seven were queued as backfill. The durable manifests are
 and
 [`275m_kda_latent_moe_lr_sweep_cx8_unallocated.yaml`](launchers/pretraining/manifests/275m_kda_latent_moe_lr_sweep_cx8_unallocated.yaml).
 
+At the 2026-07-30 04:28 UTC refresh, all four L=2 Cx4 cells finished cleanly.
+The curve is complete and bracketed: its observed best is `2.443058 @
+1.6e-3`, and its diagnostic quadratic fit is `2.442457 @ 1.37e-3`. All four
+L=4 Cx4 cells and all eight Cx8 cells are running without a failed attempt.
+
+The promoted 480M L=2 Cx1 run also finished cleanly at transferred LR
+`1.2e-3`, with strict final-250M CE `2.463192`. That is `0.029091` lower than
+the matching non-latent KDA Cx1 result (`2.492283`). The 480M Cx2 run remains
+healthy and running. These scale results now flow into
+[`plot_kda_latent_moe.py`](plot_kda_latent_moe.py) and the shared best-of plot.
+
 ## Proposed larger LatentMoE configs
 
 The scale-up parent should remain the already-trained BF16 KDA family with our

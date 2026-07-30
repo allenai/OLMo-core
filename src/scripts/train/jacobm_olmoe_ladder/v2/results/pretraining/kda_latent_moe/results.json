@@ -1,11 +1,12 @@
 {
-  "generated_at": "2026-07-29T20:45:08.523753+00:00",
+  "generated_at": "2026-07-30T04:27:50.838932+00:00",
   "project": "ai2-llm/jacobm-olmoe-ladder",
   "selection_metric": "mean train/CE loss over the final 250M tokens",
   "selection_rule": "LatentMoE enters the best-of plot only after its 275M Cx curve brackets a valid quadratic minimum. The plotted point remains the best observed finished LR; the fitted prediction is diagnostic only.",
   "active_parameters": {
     "geometry_kda_ev2_neg_nope_gated_latentmoe_l2_paper": {
-      "275m": 295664448
+      "275m": 295664448,
+      "480m": 509751648
     },
     "geometry_kda_ev2_neg_nope_gated_latentmoe_l4_1000e": {
       "275m": 296632128
@@ -13,16 +14,8 @@
   },
   "baseline": "geometry_kda_ev2_neg_nope_gated",
   "unresolved_planned_runs": {
-    "geometry_kda_ev2_neg_nope_gated_latentmoe_l2_paper": [
-      "pt-275m-kda-ev2-neg-nope-gated-latentmoe-l2-paper-cx8-lr1p6e-3-r1",
-      "pt-275m-kda-ev2-neg-nope-gated-latentmoe-l2-paper-cx8-lr3p2e-3-r1"
-    ],
-    "geometry_kda_ev2_neg_nope_gated_latentmoe_l4_1000e": [
-      "pt-275m-kda-ev2-neg-nope-gated-latentmoe-l4-1000e-cx8-lr4e-4-r1",
-      "pt-275m-kda-ev2-neg-nope-gated-latentmoe-l4-1000e-cx8-lr8e-4-r1",
-      "pt-275m-kda-ev2-neg-nope-gated-latentmoe-l4-1000e-cx8-lr1p6e-3-r1",
-      "pt-275m-kda-ev2-neg-nope-gated-latentmoe-l4-1000e-cx8-lr3p2e-3-r1"
-    ]
+    "geometry_kda_ev2_neg_nope_gated_latentmoe_l2_paper": [],
+    "geometry_kda_ev2_neg_nope_gated_latentmoe_l4_1000e": []
   },
   "runs": [
     {
@@ -426,6 +419,90 @@
     },
     {
       "model": "275m",
+      "variant": "geometry_kda_ev2_neg_nope_gated_latentmoe_l2_paper",
+      "variant_label": "LatentMoE L=2 (paper-matched)",
+      "cx": 4,
+      "lr": 0.0004,
+      "lr_tag": "0.0004",
+      "loss": 2.4682838951766617,
+      "state": "finished",
+      "tokens_b": 18.51523072,
+      "run_id": "3hnyvbw8",
+      "name": "pt-275m-kda-ev2-neg-nope-gated-latentmoe-l2-paper-cx4-lr4e-4-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/3hnyvbw8",
+      "segment_run_ids": [
+        "3hnyvbw8"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0,
+      "history_source": "wandb",
+      "history_source_sha256": null
+    },
+    {
+      "model": "275m",
+      "variant": "geometry_kda_ev2_neg_nope_gated_latentmoe_l2_paper",
+      "variant_label": "LatentMoE L=2 (paper-matched)",
+      "cx": 4,
+      "lr": 0.0008,
+      "lr_tag": "0.0008",
+      "loss": 2.449770539061828,
+      "state": "finished",
+      "tokens_b": 18.51523072,
+      "run_id": "wgq592wi",
+      "name": "pt-275m-kda-ev2-neg-nope-gated-latentmoe-l2-paper-cx4-lr8e-4-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/wgq592wi",
+      "segment_run_ids": [
+        "wgq592wi"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0,
+      "history_source": "wandb",
+      "history_source_sha256": null
+    },
+    {
+      "model": "275m",
+      "variant": "geometry_kda_ev2_neg_nope_gated_latentmoe_l2_paper",
+      "variant_label": "LatentMoE L=2 (paper-matched)",
+      "cx": 4,
+      "lr": 0.0016,
+      "lr_tag": "0.0016",
+      "loss": 2.443057608054619,
+      "state": "finished",
+      "tokens_b": 18.51523072,
+      "run_id": "2y5e3zvd",
+      "name": "pt-275m-kda-ev2-neg-nope-gated-latentmoe-l2-paper-cx4-lr1p6e-3-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/2y5e3zvd",
+      "segment_run_ids": [
+        "2y5e3zvd"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0,
+      "history_source": "wandb",
+      "history_source_sha256": null
+    },
+    {
+      "model": "275m",
+      "variant": "geometry_kda_ev2_neg_nope_gated_latentmoe_l2_paper",
+      "variant_label": "LatentMoE L=2 (paper-matched)",
+      "cx": 4,
+      "lr": 0.0032,
+      "lr_tag": "0.0032",
+      "loss": 2.460557271849434,
+      "state": "finished",
+      "tokens_b": 18.51523072,
+      "run_id": "pj8ftq0l",
+      "name": "pt-275m-kda-ev2-neg-nope-gated-latentmoe-l2-paper-cx4-lr3p2e-3-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/pj8ftq0l",
+      "segment_run_ids": [
+        "pj8ftq0l"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0,
+      "history_source": "wandb",
+      "history_source_sha256": null
+    },
+    {
+      "model": "275m",
       "variant": "geometry_kda_ev2_neg_nope_gated",
       "variant_label": "KDA (expand_v=2, negative eigenvalues)",
       "cx": 8,
@@ -460,6 +537,27 @@
       "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/sb4yqi8x",
       "segment_run_ids": [
         "sb4yqi8x"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0,
+      "history_source": "wandb",
+      "history_source_sha256": null
+    },
+    {
+      "model": "480m",
+      "variant": "geometry_kda_ev2_neg_nope_gated_latentmoe_l2_paper",
+      "variant_label": "LatentMoE L=2 (paper-matched)",
+      "cx": 1,
+      "lr": 0.0012,
+      "lr_tag": "0.0012",
+      "loss": 2.4631922619897613,
+      "state": "finished",
+      "tokens_b": 8.653635584,
+      "run_id": "meyce8po",
+      "name": "pt-480m-kda-ev2-neg-nope-gated-latentmoe-l2-paper-cx1-lr1p2e-3-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/meyce8po",
+      "segment_run_ids": [
+        "meyce8po"
       ],
       "token_resets": 0,
       "deduplicated_samples": 0,
@@ -725,13 +823,33 @@
       "variant": "geometry_kda_ev2_neg_nope_gated_latentmoe_l2_paper",
       "variant_label": "LatentMoE L=2 (paper-matched)",
       "cx": 4,
-      "finished_points": 0,
+      "finished_points": 4,
       "expected_points": 4,
-      "bracketed": false,
+      "bracketed": true,
       "provisional": false,
-      "observed_best": null,
-      "predicted_fit_lr": null,
-      "predicted_fit_loss": null
+      "observed_best": {
+        "model": "275m",
+        "variant": "geometry_kda_ev2_neg_nope_gated_latentmoe_l2_paper",
+        "variant_label": "LatentMoE L=2 (paper-matched)",
+        "cx": 4,
+        "lr": 0.0016,
+        "lr_tag": "0.0016",
+        "loss": 2.443057608054619,
+        "state": "finished",
+        "tokens_b": 18.51523072,
+        "run_id": "2y5e3zvd",
+        "name": "pt-275m-kda-ev2-neg-nope-gated-latentmoe-l2-paper-cx4-lr1p6e-3-r1",
+        "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/2y5e3zvd",
+        "segment_run_ids": [
+          "2y5e3zvd"
+        ],
+        "token_resets": 0,
+        "deduplicated_samples": 0,
+        "history_source": "wandb",
+        "history_source_sha256": null
+      },
+      "predicted_fit_lr": 0.0013710882707117875,
+      "predicted_fit_loss": 2.4424569206583353
     },
     {
       "variant": "geometry_kda_ev2_neg_nope_gated_latentmoe_l2_paper",
@@ -832,6 +950,29 @@
       "observed_best": null,
       "predicted_fit_lr": null,
       "predicted_fit_loss": null
+    }
+  ],
+  "scale_results": [
+    {
+      "model": "480m",
+      "variant": "geometry_kda_ev2_neg_nope_gated_latentmoe_l2_paper",
+      "variant_label": "LatentMoE L=2 (paper-matched)",
+      "cx": 1,
+      "lr": 0.0012,
+      "lr_tag": "0.0012",
+      "loss": 2.4631922619897613,
+      "state": "finished",
+      "tokens_b": 8.653635584,
+      "run_id": "meyce8po",
+      "name": "pt-480m-kda-ev2-neg-nope-gated-latentmoe-l2-paper-cx1-lr1p2e-3-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/meyce8po",
+      "segment_run_ids": [
+        "meyce8po"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0,
+      "history_source": "wandb",
+      "history_source_sha256": null
     }
   ]
 }
