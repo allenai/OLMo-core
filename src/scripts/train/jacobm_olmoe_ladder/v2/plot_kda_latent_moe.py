@@ -194,7 +194,7 @@ def comparison_wave(kda: Variant, l2: Variant, l4: Variant) -> Wave:
             "275m": "observed-best LR sweep",
             "480m": "wide-LR transfer",
             "810m": "wide-LR transfer",
-            "1p2b": "pending scale config",
+            "1p2b": "not yet promoted",
         },
     )
 

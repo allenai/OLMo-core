@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-07-30T07:53:12.445520+00:00",
+  "generated_at": "2026-07-30T07:53:56.639267+00:00",
   "project": "ai2-llm/jacobm-olmoe-ladder",
   "selection_metric": "mean train/CE loss over the final 250M tokens",
   "selection_rule": "LatentMoE enters the best-of plot only after its 275M Cx curve brackets a valid quadratic minimum. The plotted point remains the best observed finished LR; the fitted prediction is diagnostic only.",
