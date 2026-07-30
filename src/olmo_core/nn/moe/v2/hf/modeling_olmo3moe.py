@@ -294,11 +294,13 @@ class Olmo3MoeExperts(nn.ModuleList):
         hidden = cast(Olmo3MoeExpert, self[0]).act_fn(gate) * up
         y_grouped = F.grouped_mm(hidden, w_down, offs=offs)
 
-        # Reduce in the same expert-order as the reference loop. This avoids
-        # duplicate-index CUDA atomics and keeps close greedy decisions stable.
+        # Restore the original flattened (token, top-k slot) order before
+        # reducing. Transformer Engine's MoE unpermute combines routed rows in
+        # that order; changing the BF16 summation order is enough to perturb
+        # hidden states and eventually alter later top-k routing decisions.
         weighted_y_grouped = y_grouped * sorted_weights.unsqueeze(-1)
-        token_expert_order = torch.argsort(sorted_token_ids * num_experts + sorted_expert_ids)
-        weighted_y = weighted_y_grouped.index_select(0, token_expert_order)
+        original_route_order = torch.argsort(sorted_route_ids)
+        weighted_y = weighted_y_grouped.index_select(0, original_route_order)
         return weighted_y.reshape(N, K, H).sum(dim=1)
 
     def forward(
