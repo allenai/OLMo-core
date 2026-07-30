@@ -94,22 +94,43 @@ Reading:
   (2k…32k, up to ~512 blocks) is the setting where a 10% budget is a genuinely rich selection — see
   result 2.
 
-## Result 2 — Qwen3-4B compressive landmark, contradiction v2 ladder (in flight)
+## Result 2 — Qwen3-4B compressive landmark, contradiction v2 ladder ✅
 
 `q4b-compressive-5task-32k-nocpt-fixdata/step8550` (weka), rungs 2k/8k/16k/32k, eval_size 500,
 all prefill configs hard-drop (α=0). This is the setting that matters: at 32k the prompt is ~512
 landmark blocks, so a 10% budget is ~52 blocks — a far richer selection than the 0.6B task's 2.
 
-| config | Beaker experiment | 2k | 8k | 16k | 32k |
-| --- | --- | --- | --- | --- | --- |
-| baseline_decode_only | `01KYTB8FCFAV4RY3Q71AZFK1DC` | 0.783 | 0.741 | 0.626 | 0.554 |
-| prefill_topk10pct | `01KYTB9BZ1TV6FDBDFK1JSD23C` | | | | |
-| prefill_topk25pct | `01KYTBA7JS7KG6R0N1PE05XFRP` | | | | |
-| prefill_topk50pct | `01KYTBB3BFT2DNYRJQBGHHWEZQ` | | | | |
+Binomial SE at eval_size=500: **±0.019** at f1≈0.78, **±0.022** at f1≈0.55.
 
-The baseline row reproduces the results-hub numbers (0.783 / 0.741 / 0.626 / 0.554) **exactly**, so
-this harness copy is faithful to the production eval and the prefill-top-k rows are directly
-comparable to everything already recorded for this checkpoint.
+| config | 2k | 8k | 16k | 32k | Beaker experiment |
+| --- | --- | --- | --- | --- | --- |
+| baseline (dense prefill, decode-only top-k) | 0.783 | 0.741 | 0.626 | 0.554 | `01KYTB8FCFAV4RY3Q71AZFK1DC` |
+| prefill top-50% | 0.785 | 0.740 | 0.626 | 0.557 | `01KYTBB3BFT2DNYRJQBGHHWEZQ` |
+| prefill top-25% | 0.784 | 0.742 | 0.628 | 0.559 | `01KYTBA7JS7KG6R0N1PE05XFRP` |
+| prefill top-10% | 0.768 | 0.742 | 0.618 | 0.552 | `01KYTB9BZ1TV6FDBDFK1JSD23C` |
+| Δ (10% − baseline) | −0.015 | +0.001 | −0.008 | −0.002 | |
+
+**Applying top-k to the entire prefill is free on this ladder.** At the same 10% budget the decode
+already uses, the largest movement is −0.015 at 2k and every rung sits inside 1 SE; 25% and 50% are
+indistinguishable from baseline at every rung. The landmark gate is doing its job — the blocks the
+prompt tokens actually needed were in their top 10% all along, so the dense soft-gating that prefill
+was doing bought nothing.
+
+The baseline row reproduces the results-hub numbers **exactly**, so this harness copy is faithful to
+the production eval and these rows are directly comparable to everything already recorded for this
+checkpoint.
+
+### Reconciling with the 0.6B result
+
+The 0.6B contra-n20 run *did* lose 0.038 f1 at 10%. That is not a model-size effect: those prompts
+are ~16 blocks, so "10%" is **2 blocks**, and its own k-sweep shows the cliff is between k=2 (0.902)
+and k=4 (0.943) — i.e. the loss tracks the *absolute* number of retained blocks, not the fraction. On
+the 4B ladder 10% is 6 blocks at 2k and ~52 at 32k, all comfortably past that cliff. The one rung
+where 10% shows any movement at all (2k, −0.015) is the shortest, i.e. the one with the fewest
+absolute blocks, which is consistent.
+
+**Practical read:** report top-k budgets in absolute blocks, not percentages. A percentage silently
+becomes a starvation regime at short context.
 
 Results land on weka at
 `checkpoints/prasanns/q4b-compressive-5task-32k-nocpt-fixdata/eval_prefill_topk/contradiction_<tag>.json`
