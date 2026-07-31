@@ -1,6 +1,6 @@
 # V2 Post-Training Validation Results
 
-Generated: 2026-07-29 15:43 UTC
+Generated: 2026-07-31 21:29 UTC
 
 Each finished W&B run used the full post-training validation task set. The complete metric dictionary is retained in the adjacent JSON file.
 

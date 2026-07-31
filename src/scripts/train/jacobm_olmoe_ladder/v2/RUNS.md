@@ -9,8 +9,9 @@ job IDs and W&B IDs once they exist. Detailed migration-era DDP jobs remain in
 Rows are updated as their corresponding collectors run; detailed sections
 retain the full launch and retry history. The canonical GDN2/KDA, new KDA
 transfer, MXFP8, LatentMoE, and validation rows were refreshed at
-2026-07-29 15:49 UTC. LatentMoE losses and live statuses were refreshed again
-at 2026-07-30 15:38 UTC.
+2026-07-29 15:49 UTC. Training losses, LatentMoE live statuses, MXFP8/KDA
+comparisons, and the validation registry were refreshed again at
+2026-07-31 21:40 UTC.
 
 | Stage | Family / cell | State | Progress / result | Current W&B |
 |---|---|---|---|---|
@@ -37,8 +38,8 @@ at 2026-07-30 15:38 UTC.
 | pretraining | KDA `expand_v=2`, negative-eigenvalue transfer (275M/480M/810M/1.2B) | 16/16 finished | 810M and 1.2B are both 4/4. The final 1.2B Cx1/2/4/8 strict final-250M CEs are `2.236574`, `2.146299`, `2.067653`, and `1.999736`; this KDA family had no failed training attempt. | [results](results/pretraining/canonical_gdn2_kda/kda_ev2_neg_scale_results.md) / [launches](#kda-expand_v2-negative-eigenvalue-transfer) |
 | qualification | LatentMoE PR #799, full-width-router controls, and 275M parameter-matched configs | 1,000-expert EP1 replacement qualified | Paper-matched 2× and exact 4× are 295.664M/296.770M active params. The selected 4× EP1 approximation uses exactly 1,000 experts/top-32 and is 296.632M active / 3.073B stored. Its exact-2-Mi result is 180.0K TPS/GPU and 280.4 TFLOPs/GPU; physical-max MB11 reaches 182.9K/284.9. Both 50-step runs have zero skips. | [plan and results](LATENT_MOE.md) / [capacity](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYP96YAGZ4CZCZBT87NHSA5X) / [throughput](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYPA1GYA09H78GCVT3PQ1TZH) |
 | pretraining | LatentMoE 275M LR sweeps | 32/32 finished | Every L2/L4 Cx curve is complete and bracketed. Cx8 selects L2 `2.362515 @ 1.6e-3` and L4 `2.383977 @ 8e-4`. | [results](results/pretraining/kda_latent_moe/results.md) / [Cx4 work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYQS79P3JFX4SSB4AM7B8CDK) / [Cx8 work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYQS7J3NBH1TFX6Y1FGQ7WM2) |
-| pretraining | LatentMoE L=2 scale promotion | 480M Cx1/Cx2/Cx4 and 810M Cx1/Cx2 finished; seven running | The new 480M Cx4 strict final-250M CE is `2.270144`, improving `0.021035` over matching KDA. The previously queued 1.2B Cx8 started on all 32 GPUs; L=2 now uses 112 running GPUs with no queued cell. | [results](results/pretraining/kda_latent_moe/results.md) / [480M Cx4/Cx8](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYRZ44KSS6A9EJ10BKR5H5HE) / [810M](LATENT_MOE.md#proposed-larger-latentmoe-configs) / [1.2B](LATENT_MOE.md#810m-l4-control-and-12b-l2-promotion) |
-| pretraining | LatentMoE L=4 1,000e 810M Cx4 control | running | YOLO transferred-LR control: 16 GPUs, EP1, MB4, LR `4e-4`; at step `13,516/115,126` with zero skipped steps at the 2026-07-30 19:18 UTC audit. | [work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYSWABKPZ9DAVYW2RGH70CAZ) |
+| pretraining | LatentMoE L=2 scale promotion | 9 finished / 3 running | 480M Cx1/2/4/8, 810M Cx1/2/4, and 1.2B Cx1/2 are finished. Newly collected strict final-250M CEs are 480M Cx8 `2.203397`, 810M Cx4 `2.139766`, and 1.2B Cx1/Cx2 `2.213475`/`2.131599`; 810M Cx8 and 1.2B Cx4/Cx8 remain running. | [results](results/pretraining/kda_latent_moe/results.md) / [480M Cx4/Cx8](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYRZ44KSS6A9EJ10BKR5H5HE) / [810M](LATENT_MOE.md#proposed-larger-latentmoe-configs) / [1.2B](LATENT_MOE.md#810m-l4-control-and-12b-l2-promotion) |
+| pretraining | LatentMoE L=4 1,000e 810M Cx4 control | finished | YOLO transferred-LR control: 16 GPUs, EP1, MB4, LR `4e-4`; strict final-250M CE `2.152349`. | [work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYSWABKPZ9DAVYW2RGH70CAZ) |
 | pretraining | aggressive MXFP8 KDA 275M LR sweep | 16/16 finished | All Cx curves are complete and bracketed. Observed best is `1.6e-3` throughout, with strict final-250M CE `2.685399`, `2.566948`, `2.463998`, and `2.383008` at Cx1/2/4/8. | [results](results/pretraining/kda_mxfp8/results.md) / [work](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYJPTZ3J4VHGBH0FSVAQRDGC) |
 | pretraining | aggressive MXFP8 KDA 480M transferred-LR continuation | 1 finished / 3 intentionally canceled | Cx1 finished at strict final-250M CE `2.497288`, `+0.005005` versus matching BF16 KDA; Cx2/Cx4/Cx8 were paused after the matched throughput audit found a 42--62% regression; durable checkpoints retained | [results](results/pretraining/kda_mxfp8/results.md) / [launches](#480m-aggressive-mxfp8-kda-transferred-lr-continuation) |
 | throughput | aggressive MXFP8 KDA 480M qualification | 2/2 finished | MB8/8-GPU: 192.7 TFLOPs/GPU, 69.8K TPS/GPU, 146.6/193.2 GiB active/reserved; MB6/16-GPU: 132.5 TFLOPs/GPU, 48.0K TPS/GPU, 111.1/155.7 GiB; zero skipped steps | [one node](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYKK27K7N1MVV702AKJ2DST8) / [two nodes](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYKK2A58MK03ANV6GAAZPAVG) |
@@ -65,10 +66,9 @@ winners remain in training. Before launching, rebuild the inventory and
 de-duplicate it against the 117 historical completed targets. Keep the new
 policy at EP1 with LM validation and the `fast` downstream suite.
 
-At the 2026-07-31 02:33 UTC audit, seven L=2 LatentMoE cells and the 810M L=4
-control are running on 128 Holmes B300s. No pretraining cell is queued. The
-finished 480M L=2 Cx1/Cx2/Cx4 and 810M L=2 Cx1/Cx2 cells have been collected;
-no validation or legacy V1 job is live.
+At the 2026-07-31 21:40 UTC audit, three L=2 LatentMoE cells remain running:
+810M Cx8 and 1.2B Cx4/Cx8. The other nine L=2 scale cells and the 810M L=4
+control are finished and collected. No validation or legacy V1 job is live.
 
 The formal pretraining results and plots use finished runs only and enforce a
 complete final-250M-token history. The gated-RoPE sweep is now complete. Its

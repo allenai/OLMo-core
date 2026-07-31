@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-07-29T15:42:31.475741+00:00",
+  "generated_at": "2026-07-31T21:39:15.166260+00:00",
   "project": "ai2-llm/jacobm-olmoe-ladder",
   "wave": "kda_mxfp8_275m",
   "models": [
@@ -676,6 +676,48 @@
       ],
       "token_resets": 0,
       "deduplicated_samples": 1,
+      "history_source": "wandb",
+      "history_source_sha256": null
+    },
+    {
+      "model": "1p2b",
+      "variant": "geometry_kda_ev2_neg_nope_gated",
+      "variant_label": "BF16 KDA (expand_v=2, negative eigenvalues; transferred LR)",
+      "cx": 4,
+      "lr": 0.0003,
+      "lr_tag": "0.0003",
+      "loss": 2.0676525288907737,
+      "state": "finished",
+      "tokens_b": 89.841467392,
+      "run_id": "8j8vgags",
+      "name": "pt-1p2b-geometry-hybrid-kda-ev2-neg-nope-gated-cx4-lr3e-4-ep8-rowwise-ext3-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/8j8vgags",
+      "segment_run_ids": [
+        "8j8vgags"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0,
+      "history_source": "wandb",
+      "history_source_sha256": null
+    },
+    {
+      "model": "1p2b",
+      "variant": "geometry_kda_ev2_neg_nope_gated",
+      "variant_label": "BF16 KDA (expand_v=2, negative eigenvalues; transferred LR)",
+      "cx": 8,
+      "lr": 0.0004,
+      "lr_tag": "0.0004",
+      "loss": 1.999736099123205,
+      "state": "finished",
+      "tokens_b": 179.682410496,
+      "run_id": "shy5gj1d",
+      "name": "pt-1p2b-geometry-hybrid-kda-ev2-neg-nope-gated-cx8-lr4e-4-ep8-rowwise-ext3-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/shy5gj1d",
+      "segment_run_ids": [
+        "shy5gj1d"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0,
       "history_source": "wandb",
       "history_source_sha256": null
     }

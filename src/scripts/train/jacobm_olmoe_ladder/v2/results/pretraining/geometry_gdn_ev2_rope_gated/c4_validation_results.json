@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-07-29T15:43:21.993452+00:00",
+  "generated_at": "2026-07-31T21:39:43.412659+00:00",
   "metric": "eval/lm/c4_en-validation/CE loss",
   "selection_rule": "Use the same checkpoints selected by the final-250M training-loss comparison: observed-best learning rates at 275M and wide-optimal transferred learning rates at larger sizes. Never substitute a partial or running validation result.",
   "variants": [

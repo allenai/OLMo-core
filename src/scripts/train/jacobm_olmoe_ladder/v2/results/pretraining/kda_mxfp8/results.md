@@ -1,6 +1,6 @@
 # KDA aggressive-MXFP8 comparison
 
-Generated: `2026-07-29T15:42:31.475741+00:00`
+Generated: `2026-07-31T21:39:15.166260+00:00`
 
 Selection metric: final `250M`-token mean training CE. Only finished runs are eligible.
 The optimal-LR summary includes only bracketed 275M sweeps with a valid quadratic fit.
@@ -55,3 +55,5 @@ Fitted LR minima in the 275M U-plot are visual aids and are never used to select
 | 810m | BF16 KDA (expand_v=2, negative eigenvalues; transferred LR) | 8 | 0.0004 | finished | 117.837 | 2.090719 | 0 reset(s); 1 duplicate token sample(s) removed | [x3nar750](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/x3nar750) |
 | 1p2b | BF16 KDA (expand_v=2, negative eigenvalues; transferred LR) | 1 | 0.0004 | finished | 22.460 | 2.236574 | 0 reset(s); 1 duplicate token sample(s) removed | [yuv9m7p1](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/yuv9m7p1) |
 | 1p2b | BF16 KDA (expand_v=2, negative eigenvalues; transferred LR) | 2 | 0.0006 | finished | 44.921 | 2.146299 | 0 reset(s); 1 duplicate token sample(s) removed | [86nmqw4e](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/86nmqw4e) |
+| 1p2b | BF16 KDA (expand_v=2, negative eigenvalues; transferred LR) | 4 | 0.0003 | finished | 89.841 | 2.067653 | — | [8j8vgags](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/8j8vgags) |
+| 1p2b | BF16 KDA (expand_v=2, negative eigenvalues; transferred LR) | 8 | 0.0004 | finished | 179.682 | 1.999736 | — | [shy5gj1d](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/shy5gj1d) |
