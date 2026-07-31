@@ -779,7 +779,7 @@ def combined_forward_ep_deepep_v2(
         moe_inp,
         False,
         loss_div_factor=loss_div_factor,
-        segment_ids=segment_ids,
+        **({"segment_ids": segment_ids} if segment_ids is not None else {}),
     )
 
     wait_stream_no_compile(
