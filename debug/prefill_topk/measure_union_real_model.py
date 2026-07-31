@@ -82,11 +82,16 @@ def main():
         attn._prefill_orig_stats = attn._prefill
         attn._prefill = types.MethodType(_prefill_stats, attn)
 
-    rows = [json.loads(l) for l in open(args.data)][: args.n_examples]
+    # Build prompts exactly as the eval does (raw JSONL fields are documents/claims, not a prompt).
+    from ctc_eval.eval.evaluate import load_unified_examples
+
+    rows = load_unified_examples(
+        args.data, args.n_examples, task="contradiction", query_position="both"
+    )
     for i, row in enumerate(rows):
-        text = row.get("prompt") or row.get("input") or row.get("context") or ""
-        if isinstance(text, list):
-            text = "\n".join(map(str, text))
+        text = tok.apply_chat_template(
+            [{"role": "user", "content": row["prompt"]}], tokenize=False, add_generation_prompt=True
+        )
         ids = tok(text, return_tensors="pt", truncation=True, max_length=args.max_length,
                   add_special_tokens=False)["input_ids"].to(device)
         print(f"[stats] example {i}: {ids.shape[1]} tokens", flush=True)
