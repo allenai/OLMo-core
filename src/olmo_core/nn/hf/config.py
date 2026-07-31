@@ -124,6 +124,9 @@ def _register_olmo3moe_auto_classes() -> None:
 def _get_olmo3moe_config(model: "OLMoDDPModel") -> PretrainedConfig:
     from olmo_core.nn.ddp.block import OLMoDDPTransformerBlock
 
+    if any(isinstance(block.attention, KimiDeltaAttention) for block in model.blocks.values()):
+        return _get_olmo3moe_kda_emo_config(model)
+
     if Olmo3MoeConfig is None:
         raise RuntimeError(
             "Building an Olmo3MoeConfig requires the olmo3moe HF model files "
@@ -323,12 +326,185 @@ def _get_olmo3moe_config(model: "OLMoDDPModel") -> PretrainedConfig:
         sliding_window=sliding_window,
         layer_types=layer_types,
         dense_layers_indices=dense_layers_indices,
+        dense_layers_use_shared_expert=True,
         embed_scale=model.embed_scale if model.embed_scale is not None else 1.0,
         embed_norm=model.embedding_norm is not None,
         use_peri_ln=False,
         pad_token_id=None,  # type: ignore
         bos_token_id=None,
         eos_token_id=None,  # type: ignore
+        tie_word_embeddings=model.tie_word_embeddings,
+    )
+
+
+def _get_olmo3moe_kda_emo_config(model: "OLMoDDPModel") -> PretrainedConfig:
+    """Build a fail-closed HF config for the KDA + full-width EMo ladder."""
+
+    from olmo_core.nn.ddp.block import OLMoDDPTransformerBlock
+
+    if Olmo3MoeConfig is None:
+        raise RuntimeError("The olmo3moe HF model files are unavailable.")
+    _register_olmo3moe_auto_classes()
+
+    blocks = list(model.blocks.values())
+    if not blocks or not all(isinstance(block, OLMoDDPTransformerBlock) for block in blocks):
+        raise NotImplementedError("KDA + EMo export requires OLMoDDP blocks at every layer.")
+
+    dense_layers_indices = [idx for idx, block in enumerate(blocks) if block.routed_experts is None]
+    sparse_blocks = [block for block in blocks if block.routed_experts is not None]
+    kda_blocks = [block for block in blocks if isinstance(block.attention, KimiDeltaAttention)]
+    attention_blocks = [block for block in blocks if isinstance(block.attention, Attention)]
+    if not dense_layers_indices or not sparse_blocks or not kda_blocks or not attention_blocks:
+        raise NotImplementedError(
+            "KDA + EMo export requires dense, sparse, KDA, and full-attention layers."
+        )
+
+    representative = sparse_blocks[0]
+    routed_experts = representative.routed_experts
+    router = representative.routed_experts_router
+    assert routed_experts is not None and router is not None
+    if representative.latent_down_proj is not None or representative.latent_up_proj is not None:
+        raise NotImplementedError("The EMo ladder export expects latent_moe=None.")
+    if router.emo is None:
+        raise NotImplementedError("The EMo ladder export requires an EmoRouterConfig.")
+    if router.emo.eval_pool_size() != routed_experts.num_experts:
+        raise NotImplementedError(
+            "HF EMo export currently requires eval_document_expert_pool=num_experts."
+        )
+
+    sparse_signature = (
+        routed_experts.d_model,
+        routed_experts.hidden_size,
+        routed_experts.num_experts,
+        router.top_k,
+        representative.shared_experts.hidden_size
+        if representative.shared_experts is not None
+        else None,
+    )
+    for block in sparse_blocks[1:]:
+        assert block.routed_experts is not None and block.routed_experts_router is not None
+        signature = (
+            block.routed_experts.d_model,
+            block.routed_experts.hidden_size,
+            block.routed_experts.num_experts,
+            block.routed_experts_router.top_k,
+            block.shared_experts.hidden_size if block.shared_experts is not None else None,
+        )
+        if signature != sparse_signature or block.latent_down_proj is not None:
+            raise NotImplementedError("Heterogeneous sparse EMo layers are unsupported.")
+
+    kda = kda_blocks[0].attention
+    assert isinstance(kda, KimiDeltaAttention)
+    kda_signature = (
+        kda.n_heads,
+        kda.n_v_heads,
+        kda.head_k_dim,
+        kda.head_v_dim,
+        kda.conv_size,
+        kda.allow_neg_eigval,
+    )
+    for block in kda_blocks[1:]:
+        other = block.attention
+        assert isinstance(other, KimiDeltaAttention)
+        if (
+            other.n_heads,
+            other.n_v_heads,
+            other.head_k_dim,
+            other.head_v_dim,
+            other.conv_size,
+            other.allow_neg_eigval,
+        ) != kda_signature:
+            raise NotImplementedError("Heterogeneous KDA layer shapes are unsupported.")
+
+    attention = attention_blocks[0].attention
+    assert isinstance(attention, Attention)
+    if attention.q_norm is None or attention.k_norm is None or not attention.use_head_qk_norm:
+        raise NotImplementedError("HF export requires head-wise QK norm.")
+    if any(
+        projection.bias is not None
+        for projection in (attention.w_q, attention.w_k, attention.w_v, attention.w_out)
+    ):
+        raise NotImplementedError("Biased full-attention projections are unsupported.")
+
+    gate_type: Optional[str] = None
+    gate_full_precision = True
+    if attention.gate is not None:
+        gate_type = str(attention.gate.granularity)
+        if attention.gate.granularity not in (
+            GateGranularity.headwise,
+            GateGranularity.elementwise,
+        ):
+            raise NotImplementedError(f"Unsupported attention gate {attention.gate.granularity!r}.")
+        gate_full_precision = attention.gate.full_precision
+
+    if any(not block.use_peri_norm or block.use_pre_norm for block in blocks):
+        raise NotImplementedError("KDA + EMo export requires peri-norm without pre-norm.")
+
+    dense_hidden_sizes = {
+        blocks[idx].shared_experts.hidden_size
+        for idx in dense_layers_indices
+        if blocks[idx].shared_experts is not None
+    }
+    if len(dense_hidden_sizes) != 1:
+        raise NotImplementedError("Dense layers must share one MLP width.")
+    shared_hidden = (
+        representative.shared_experts.hidden_size
+        if representative.shared_experts is not None
+        else None
+    )
+    layer_types = [
+        "linear_attention" if isinstance(block.attention, KimiDeltaAttention) else "full_attention"
+        for block in blocks
+    ]
+    kda_norm_eps = float(
+        getattr(kda.o_norm, "eps", getattr(kda.o_norm, "variance_epsilon", 1e-5))
+    )
+
+    return Olmo3MoeConfig(
+        vocab_size=model.vocab_size,
+        hidden_size=model.d_model,
+        attention_hidden_size=attention.n_heads * attention.head_dim,
+        head_dim=attention.head_dim,
+        dense_mlp_intermediate_size=next(iter(dense_hidden_sizes)),
+        moe_intermediate_size=routed_experts.hidden_size,
+        shared_expert_intermediate_size=shared_hidden,
+        n_routed_experts=routed_experts.num_experts,
+        num_experts_per_tok=router.top_k,
+        original_num_experts_per_tok=router.original_top_k,
+        num_hidden_layers=model.n_layers,
+        num_attention_heads=attention.n_heads,
+        num_key_value_heads=attention.n_kv_heads,
+        gating_function=str(router.gating_function),
+        normalize_expert_weights=router.normalize_expert_weights,
+        restore_weight_scale=router.restore_weight_scale,
+        max_position_embeddings=-1,
+        use_head_qk_norm=True,
+        use_rope=attention.rope is not None,
+        attention_gate_type=gate_type,
+        attention_gate_full_precision=gate_full_precision,
+        linear_num_key_heads=kda.n_heads,
+        linear_num_value_heads=kda.n_v_heads,
+        linear_key_head_dim=kda.head_k_dim,
+        linear_value_head_dim=kda.head_v_dim,
+        linear_conv_kernel_dim=kda.conv_size,
+        linear_allow_neg_eigval=kda.allow_neg_eigval,
+        linear_norm_eps=kda_norm_eps,
+        latent_moe_dim=None,
+        layer_types=layer_types,
+        dense_layers_indices=dense_layers_indices,
+        dense_layers_use_shared_expert=True,
+        embed_scale=model.embed_scale if model.embed_scale is not None else 1.0,
+        embed_norm=model.embedding_norm is not None,
+        use_peri_ln=True,
+        rms_norm_eps=representative.feed_forward_norm.eps,
+        emo_min_document_expert_pool=router.emo.min_document_expert_pool,
+        emo_max_document_expert_pool=router.emo.max_document_expert_pool,
+        emo_eval_document_expert_pool=router.emo.eval_pool_size(),
+        emo_eos_token_id=router.emo.eos_token_id,
+        global_load_balancing=router.global_load_balancing,
+        pad_token_id=None,
+        bos_token_id=None,
+        eos_token_id=router.emo.eos_token_id,
         tie_word_embeddings=model.tie_word_embeddings,
     )
 

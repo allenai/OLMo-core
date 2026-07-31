@@ -84,6 +84,23 @@ def test_olmo3moe_hf_conversion_roundtrips():
         assert torch.equal(hf_roundtrip[key], tensor), f"roundtrip mismatch for '{key}'"
 
 
+def test_olmo3moe_full_width_shared_dense_conversion_roundtrips():
+    config = _fake_config()
+    config.dense_layers_use_shared_expert = True
+    config.latent_moe_dim = None
+    config.dense_mlp_intermediate_size = 7
+    hf = _synthetic_hf_state(config)
+
+    olmo = convert_olmo3moe_state_from_hf(config, hf)
+    assert "blocks.0.shared_experts.w_up_gate" in olmo
+    assert "blocks.0.feed_forward.w1.weight" not in olmo
+
+    hf_roundtrip = convert_olmo3moe_state_to_hf(config, olmo)
+    assert set(hf_roundtrip) == set(hf)
+    for key, tensor in hf.items():
+        assert torch.equal(hf_roundtrip[key], tensor), f"roundtrip mismatch for '{key}'"
+
+
 def _small_kda_latent_config():
     from olmo_core.nn.moe.v2.hf.configuration_olmo3moe import Olmo3MoeConfig
 

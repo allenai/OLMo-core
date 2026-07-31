@@ -804,6 +804,7 @@ def convert_olmo3moe_state_from_hf(
     dense_indices = _olmo3moe_dense_layer_indices(config)
     has_shared = getattr(config, "shared_expert_intermediate_size", None) is not None
     latent_dim = getattr(config, "latent_moe_dim", None)
+    dense_layers_use_shared_expert = getattr(config, "dense_layers_use_shared_expert", False)
     peri_ln = getattr(config, "use_peri_ln", False)
     used: set[str] = set()
 
@@ -859,7 +860,7 @@ def convert_olmo3moe_state_from_hf(
             gate = _take(hf_state, used, f"{prefix}mlp.gate_proj.weight")
             down = _take(hf_state, used, f"{prefix}mlp.down_proj.weight")
             up = _take(hf_state, used, f"{prefix}mlp.up_proj.weight")
-            if latent_dim is None:
+            if not dense_layers_use_shared_expert:
                 olmo_state[f"{olmo_prefix}feed_forward.w1.weight"] = gate
                 olmo_state[f"{olmo_prefix}feed_forward.w2.weight"] = down
                 olmo_state[f"{olmo_prefix}feed_forward.w3.weight"] = up
@@ -956,6 +957,7 @@ def convert_olmo3moe_state_to_hf(
     has_shared = getattr(config, "shared_expert_intermediate_size", None) is not None
     shared_hidden = getattr(config, "shared_expert_intermediate_size", None)
     latent_dim = getattr(config, "latent_moe_dim", None)
+    dense_layers_use_shared_expert = getattr(config, "dense_layers_use_shared_expert", False)
     peri_ln = getattr(config, "use_peri_ln", False)
     used: set[str] = set()
 
@@ -1008,7 +1010,7 @@ def convert_olmo3moe_state_to_hf(
             )
 
         if layer_idx in dense_indices:
-            if latent_dim is None:
+            if not dense_layers_use_shared_expert:
                 hf_state[f"{prefix}mlp.gate_proj.weight"] = _take(
                     olmo_core_state, used, f"{olmo_prefix}feed_forward.w1.weight"
                 )

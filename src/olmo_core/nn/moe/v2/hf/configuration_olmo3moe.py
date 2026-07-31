@@ -69,8 +69,14 @@ class Olmo3MoeConfig(PretrainedConfig):
         latent_moe_dim=None,
         latent_moe_bias=False,
         latent_moe_up_proj_input_norm=False,
+        emo_min_document_expert_pool=None,
+        emo_max_document_expert_pool=None,
+        emo_eval_document_expert_pool=None,
+        emo_eos_token_id=None,
+        global_load_balancing=False,
         layer_types: Optional[List[str]] = None,
         dense_layers_indices: Optional[List[int]] = None,
+        dense_layers_use_shared_expert=False,
         embed_scale=1.0,
         embed_norm=False,
         use_peri_ln=False,
@@ -170,6 +176,15 @@ class Olmo3MoeConfig(PretrainedConfig):
         self.latent_moe_bias = latent_moe_bias
         self.latent_moe_up_proj_input_norm = latent_moe_up_proj_input_norm
 
+        # EMo document-pool metadata. The HF implementation is inference-only;
+        # export currently requires the deterministic evaluation pool to span
+        # every expert, which is equivalent to ordinary global top-k routing.
+        self.emo_min_document_expert_pool = emo_min_document_expert_pool
+        self.emo_max_document_expert_pool = emo_max_document_expert_pool
+        self.emo_eval_document_expert_pool = emo_eval_document_expert_pool
+        self.emo_eos_token_id = emo_eos_token_id
+        self.global_load_balancing = global_load_balancing
+
         self.embed_scale = embed_scale
         self.embed_norm = embed_norm
         self.use_peri_ln = use_peri_ln
@@ -177,6 +192,7 @@ class Olmo3MoeConfig(PretrainedConfig):
         self.dense_layers_indices = (
             dense_layers_indices if dense_layers_indices is not None else [0]
         )
+        self.dense_layers_use_shared_expert = dense_layers_use_shared_expert
 
     def _rope_scaling_validation(self):
         """
