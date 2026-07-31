@@ -30,6 +30,9 @@ def main():
     ap.add_argument("--top-k-fraction", type=float, default=None)
     ap.add_argument("--max-length", type=int, default=16384)
     ap.add_argument("--n-examples", type=int, default=2)
+    ap.add_argument("--time-kernels", action="store_true",
+                    help="also time dense vs union vs qblock on the REAL q/k of the first few layers")
+    ap.add_argument("--time-layers", type=int, default=6)
     args = ap.parse_args()
 
     from transformers import AutoTokenizer
@@ -74,6 +77,42 @@ def main():
             )
             st["layer"] = self._stat_layer
             st["n_blocks"] = n_blocks
+            # Time the kernels on THESE (real) tensors. Synthetic q/k give ~100% union coverage and
+            # would badly misreport the union mode, so the timing has to happen here.
+            if args.time_kernels and self._stat_layer < args.time_layers:
+                import time as _t
+
+                from olmo_core.nn.attention.landmark_compressive import (
+                    fused_compressive_landmark_attention,
+                )
+                from olmo_core.nn.attention.landmark_prefill_sparse import (
+                    landmark_topk_prefill_sparse,
+                )
+
+                is_mem = (torch.arange(q.shape[2], device=q.device) % Lb) == (Lb - 1)
+
+                def _t_it(fn, iters=5):
+                    for _ in range(2):
+                        fn()
+                    torch.cuda.synchronize()
+                    t0 = _t.time()
+                    for _ in range(iters):
+                        fn()
+                    torch.cuda.synchronize()
+                    return (_t.time() - t0) / iters
+
+                st["ms_dense"] = 1e3 * _t_it(
+                    lambda: fused_compressive_landmark_attention(
+                        q, k, v, is_mem, sm_scale=self.softmax_scale, block_size=Lb
+                    )
+                )
+                for mm in ("union", "qblock"):
+                    st[f"ms_{mm}"] = 1e3 * _t_it(
+                        lambda m=mm: landmark_topk_prefill_sparse(
+                            q, k, v, block_size=Lb, softmax_scale=self.softmax_scale,
+                            top_k=tk, compressive=True, mode=m,
+                        )
+                    )
             collected.append(st)
         return self._prefill_orig_stats(q[:, :, : q.shape[2]], k, v)[:, :, :T]
 
@@ -110,6 +149,18 @@ def main():
     print(f"  mean union size      : {mean_u:.1f}  ({mean_ratio:.1f}x top_k)")
     print(f"  covers               : {mean_frac*100:.1f}% of each query's past blocks")
     print(f"  => exact 'union' mode speedup ceiling vs dense landmark: {1/max(mean_frac,1e-6):.1f}x")
+    timed = [s for s in collected if "ms_dense" in s]
+    if timed:
+        print("\n  kernel timing on REAL q/k (ms/layer):")
+        print(f"    {'layer':>5} {'dense':>8} {'union':>8} {'qblock':>8}   union-x  qblock-x")
+        for s2 in timed:
+            print(f"    {s2['layer']:>5} {s2['ms_dense']:>8.2f} {s2['ms_union']:>8.2f} "
+                  f"{s2['ms_qblock']:>8.2f}   {s2['ms_dense']/s2['ms_union']:>6.2f}x  "
+                  f"{s2['ms_dense']/s2['ms_qblock']:>6.2f}x")
+        du = statistics.mean(s2['ms_dense']/s2['ms_union'] for s2 in timed)
+        dq = statistics.mean(s2['ms_dense']/s2['ms_qblock'] for s2 in timed)
+        print(f"    mean over timed layers: union {du:.2f}x, qblock {dq:.2f}x vs dense landmark")
+
     print("\n  per-layer union/k:")
     for s in collected[: len(layers)]:
         print(f"    layer {s['layer']:>2}: {s['union_mean']:>7.1f} ({s['union_over_k']:>5.1f}x k), "

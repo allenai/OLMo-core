@@ -244,6 +244,21 @@ def build_candidates(
 
     lm_k = k[:, :, Lb - 1 :: Lb, :].float()
     blk_idx = torch.arange(n_blocks, device=device)
+
+    if mode == "qblock":
+        # The pooled score is LINEAR in the query, so mean-pooling the 64 queries first and dotting
+        # once is exactly equal to dotting all 64 and averaging -- at 1/64 the work. Building the
+        # candidate list was 82% of qblock's total runtime; this removes almost all of it.
+        qp = q.view(B, H, n_blocks, Lb, -1).mean(dim=3).float()  # (B, H, n_qblocks, D)
+        s = torch.matmul(qp, lm_k.transpose(-1, -2)) * softmax_scale  # (B, H, n_qb, n_blocks)
+        s = s.masked_fill(~(blk_idx[None, :] < blk_idx[:, None]), -float("inf"))
+        kk = min(top_k, n_blocks)
+        u = torch.zeros_like(s, dtype=torch.bool).scatter_(-1, s.topk(kk, dim=-1).indices, True)
+        u &= blk_idx[None, None, None, :] < blk_idx[None, None, :, None]
+        cand, counts, maxsel = _pack(u.reshape(BH, n_blocks, n_blocks))
+        thresh = torch.full((BH, T), -float("inf"), device=device, dtype=torch.float32)
+        return cand, counts, maxsel, thresh
+
     sel_mask = torch.zeros(BH, n_blocks, n_blocks, dtype=torch.bool, device=device)
     thresh = torch.empty(B, H, T, device=device, dtype=torch.float32)
 
