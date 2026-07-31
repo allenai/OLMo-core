@@ -245,6 +245,12 @@ class BeakerLaunchConfig(Config):
     The Beaker workspace to use.
     """
 
+    gh_token_secret: str = "GITHUB_TOKEN"
+    """
+    The Beaker secret containing the GitHub token Gantry should use to clone a
+    private source repository.
+    """
+
     description: str | None = None
     """
     A description for the experiment.
@@ -646,6 +652,7 @@ class BeakerLaunchConfig(Config):
             google_credentials_secret=self.google_credentials_secret,
             aws_config_secret=self.aws_config_secret,
             aws_credentials_secret=self.aws_credentials_secret,
+            gh_token_secret=self.gh_token_secret,
             weka=[(b.bucket, b.mount) for b in self.weka_buckets],
             # Outputs.
             results=self.result_dir,
