@@ -204,7 +204,7 @@ def ep_no_sync_rowwise_tbo_stage_a(
             moe_inp_3d,
             False,
             loss_div_factor=loss_div_factor,
-            segment_ids=segment_ids,
+            **({"segment_ids": segment_ids} if segment_ids is not None else {}),
         )
         # _tbo_debug_print(
         #     self,

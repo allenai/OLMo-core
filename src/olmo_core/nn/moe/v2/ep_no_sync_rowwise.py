@@ -140,7 +140,7 @@ def combined_forward_ep_no_sync_rowwise(
         moe_inp,
         False,
         loss_div_factor=loss_div_factor,
-        segment_ids=segment_ids,
+        **({"segment_ids": segment_ids} if segment_ids is not None else {}),
     )
     rowwise_stage_debug_print(
         "rowwise:router-exit",

@@ -58,7 +58,7 @@ def combined_forward_no_ep(
         moe_inp,
         False,
         loss_div_factor=loss_div_factor,
-        segment_ids=segment_ids,
+        **({"segment_ids": segment_ids} if segment_ids is not None else {}),
     )
 
     shared_rowwise_fp8_cfg = self.rowwise_fp8
