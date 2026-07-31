@@ -497,7 +497,7 @@ class GatedDeltaNet2(SequenceMixer):
     ):
         super().__init__()
         assert has_fla()
-        from fla.modules import FusedRMSNormGated
+        from olmo_core.kernels.fused_rms_norm_gated import FusedRMSNormGated
 
         self.d_model = d_model
         self.n_heads = n_heads
