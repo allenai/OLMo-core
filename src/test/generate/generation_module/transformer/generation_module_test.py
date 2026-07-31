@@ -220,7 +220,7 @@ def test_generation_module_hybrid_gdn_attn_cache_equivalence(batch_size: int):
 @requires_gpu
 @requires_fla
 @requires_flash_attn_2
-@pytest.mark.parametrize("chunk_size", [4, 5, 16])
+@pytest.mark.parametrize("chunk_size", [3, 4, 5, 7, 8])
 @pytest.mark.parametrize("batch_size", [1, 2])
 def test_generation_module_chunked_prefill_matches_one_shot(chunk_size: int, batch_size: int):
     """
@@ -230,11 +230,19 @@ def test_generation_module_chunked_prefill_matches_one_shot(chunk_size: int, bat
     On the hybrid Qwen3.5 layout this exercises both mixer families at once: attention has to offset
     each chunk's RoPE by the KV-cache position and attend over the full cached prefix, while the
     GatedDeltaNet layers have to carry their short-conv window and delta-rule recurrent state across
-    chunk boundaries. Getting either wrong silently corrupts only the tokens near a chunk boundary,
-    so we compare the whole greedy continuation, not just the first token.
+    chunk boundaries.
 
-    ``chunk_size`` is deliberately swept across values that do and do not divide the prompt length
-    (12), and one below the conv width, so a ragged final chunk and a chunk shorter than the
+    We assert on the **prefill output** -- the next-token logits and the carried recurrent state --
+    rather than on a multi-step greedy rollout. Chunking changes the reduction order, so logits move
+    by ~1 bf16 ULP; on a small randomly-initialized model the top candidates sit within a couple of
+    ULPs of each other, so a rollout would test bf16 determinism through a near-tied argmax rather
+    than the invariant we care about, and would flake on some chunk sizes and not others. The
+    recurrent-state check is the sharp one: it is compared in fp32 and a genuinely broken carry
+    (dropped ``initial_state``, or a conv that restarts cold each chunk) moves it far more than the
+    ~1e-6 tolerance here.
+
+    ``chunk_size`` sweeps values that do and do not divide the prompt length (12), values at and
+    below the convolution width (4), so a ragged final chunk and a chunk shorter than the
     convolution's history are both covered.
     """
     device = torch.device("cuda")
@@ -243,12 +251,15 @@ def test_generation_module_chunked_prefill_matches_one_shot(chunk_size: int, bat
     transformer_config = small_hybrid_gdn_transformer_config(use_flash=True, dtype=DType.bfloat16)
     model = transformer_config.build()
 
-    def run(prefill_chunk_size):
+    context_len = 12
+    input_ids = torch.randint(2, 500, (batch_size, context_len), device=device)
+
+    def prefill(prefill_chunk_size):
         seed_all(0)
         generation_module = TransformerGenerationModule(
             model=model,
             generation_config=GenerationConfig(
-                max_length=24,
+                max_length=context_len + 1,
                 do_sample=False,
                 eos_token_id=1,
                 pad_token_id=0,
@@ -257,25 +268,35 @@ def test_generation_module_chunked_prefill_matches_one_shot(chunk_size: int, bat
             ),
             device=device,
         )
-        return generation_module.generate_batch(
-            input_ids,
-            attention_mask=attention_mask,
-            return_logits=True,
-            completions_only=False,
+        generation_module.prepare_inference_cache(batch_size, context_len + 1)
+        logits = generation_module._prefill_forward(
+            input_ids, cache_leftpad=None, chunk_size=prefill_chunk_size
+        )
+        states = [
+            block.attention.state_cache.recurrent_state.float().clone()
+            for block in generation_module.model.blocks.values()
+            if getattr(block.attention, "state_cache", None) is not None
+            and block.attention.state_cache.recurrent_state is not None
+        ]
+        return logits.float(), states
+
+    one_shot_logits, one_shot_states = prefill(None)
+    chunked_logits, chunked_states = prefill(chunk_size)
+
+    # The GatedDeltaNet state carried across chunk boundaries must be the same state a single
+    # prefill would have produced.
+    assert one_shot_states, "expected at least one GatedDeltaNet layer to hold recurrent state"
+    for i, (expected, got) in enumerate(zip(one_shot_states, chunked_states)):
+        torch.testing.assert_close(
+            got, expected, atol=1e-5, rtol=1e-4, msg=f"GDN recurrent state diverged at layer {i}"
         )
 
-    context_len = 12
-    input_ids = torch.randint(2, 500, (batch_size, context_len), device=device)
-    attention_mask = torch.ones(batch_size, context_len, device=device, dtype=torch.bool)
-
-    one_shot_ids, one_shot_logits, _ = run(None)
-    chunked_ids, chunked_logits, _ = run(chunk_size)
-
-    assert torch.equal(one_shot_ids, chunked_ids), (
-        f"chunked prefill (chunk_size={chunk_size}) diverged from one-shot:\n"
-        f"one-shot: {one_shot_ids.tolist()}\nchunked:  {chunked_ids.tolist()}"
+    # The prediction itself must be unchanged, and the logits equal to within bf16 rounding.
+    assert torch.equal(chunked_logits.argmax(-1), one_shot_logits.argmax(-1)), (
+        f"chunked prefill (chunk_size={chunk_size}) changed the predicted token:\n"
+        f"one-shot: {one_shot_logits.argmax(-1).tolist()}\n"
+        f"chunked:  {chunked_logits.argmax(-1).tolist()}"
     )
-    assert isinstance(one_shot_logits, torch.Tensor) and isinstance(chunked_logits, torch.Tensor)
     torch.testing.assert_close(chunked_logits, one_shot_logits, atol=BF16_ATOL, rtol=BF16_RTOL)
 
 
