@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Optional
 from transformers import Olmo2Config, PretrainedConfig
 
 from olmo_core.doc_utils import beta_feature
-from olmo_core.nn.attention import Attention
+from olmo_core.nn.attention import Attention, GateGranularity, KimiDeltaAttention
 from olmo_core.nn.attention.recurrent import GatedDeltaNet
 from olmo_core.nn.moe.mlp import DroplessMoEMLP, MoEMLP
 from olmo_core.nn.moe.router import MoERouterGatingFunction
