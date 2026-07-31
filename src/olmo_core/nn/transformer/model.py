@@ -624,6 +624,11 @@ class Transformer(nn.Module):
                 emo_blocks.append(int(block_idx))
                 emo_eos_token_ids.add(router.eos_token_id)
         if emo_blocks:
+            if self._pp_enabled:
+                raise OLMoConfigurationError(
+                    "EMO routing does not currently support pipeline parallelism because "
+                    "token-derived segment IDs are not carried between pipeline stages"
+                )
             if self._cp_load_balancer is not None:
                 raise OLMoConfigurationError(
                     "EMO routing does not currently support context parallelism"
@@ -765,6 +770,13 @@ class Transformer(nn.Module):
         """
         Prepare the model for pipeline parallelism after it's been split into stages.
         """
+        for block in self.blocks.values():
+            router = getattr(block, "routed_experts_router", None)
+            if router is not None and getattr(router, "requires_segment_ids", False):
+                raise OLMoConfigurationError(
+                    "EMO routing does not currently support pipeline parallelism because "
+                    "token-derived segment IDs are not carried between pipeline stages"
+                )
         for block in self.blocks.values():
             block = cast(TransformerBlockBase, block)
             block.apply_pp(pp_mesh)
