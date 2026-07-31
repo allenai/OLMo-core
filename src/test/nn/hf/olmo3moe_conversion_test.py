@@ -16,6 +16,7 @@ from olmo_core.nn.hf.convert import (
     convert_olmo3moe_state_to_hf,
 )
 from olmo_core.nn.hf.convert_checkpoint import _normalize_legacy_latent_moe_config
+from olmo_core.testing.utils import requires_fla, requires_gpu, requires_triton
 
 
 def _fake_config():
@@ -135,6 +136,9 @@ def _small_kda_latent_config():
     )
 
 
+@requires_gpu
+@requires_fla
+@requires_triton
 def test_olmo3moe_kda_latent_conversion_roundtrips_exactly():
     from olmo_core.nn.moe.v2.hf.modeling_olmo3moe import Olmo3MoeForCausalLM
 
