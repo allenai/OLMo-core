@@ -660,7 +660,7 @@ class BeakerLaunchConfig(Config):
             # Outputs.
             results=self.result_dir,
             # Python settings.
-            system_python=self.system_python,
+            system_python=False if self.no_python else self.system_python,
             no_python=self.no_python,
             torchrun=torchrun,
             # Hooks.
