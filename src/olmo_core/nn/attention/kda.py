@@ -262,6 +262,20 @@ class KimiDeltaAttention(SequenceMixer):
 @SequenceMixerConfig.register("kimi_delta_attention")
 @dataclass
 class KimiDeltaAttentionConfig(SequenceMixerConfig[KimiDeltaAttention]):
+    """Configuration for :class:`KimiDeltaAttention`.
+
+    :param n_heads: The number of key/query heads.
+    :param n_v_heads: The number of value heads. The pinned KDA kernel currently requires this
+        to equal ``n_heads``. Defaults to ``n_heads`` when unset.
+    :param head_dim: The key/query head dimension. Defaults to ``d_model // n_heads``.
+    :param expand_v: Multiplier applied to ``head_dim`` to determine the value head dimension.
+    :param allow_neg_eigval: Whether to scale the delta gate to allow negative eigenvalues.
+    :param conv_size: The kernel size of the causal convolutions applied to Q, K, and V.
+    :param conv_bias: Whether the causal convolutions include bias parameters.
+    :param norm_eps: Epsilon used by the gated RMS normalization on the output.
+    :param dtype: The parameter dtype.
+    """
+
     n_heads: int = 16
     n_v_heads: int | None = None
     head_dim: int | None = None

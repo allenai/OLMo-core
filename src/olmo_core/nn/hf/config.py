@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Optional
 from transformers import Olmo2Config, PretrainedConfig
 
 from olmo_core.doc_utils import beta_feature
-from olmo_core.nn.attention import Attention
+from olmo_core.nn.attention import Attention, GateGranularity, KimiDeltaAttention
 from olmo_core.nn.attention.recurrent import GatedDeltaNet
 from olmo_core.nn.moe.mlp import DroplessMoEMLP, MoEMLP
 from olmo_core.nn.moe.router import MoERouterGatingFunction
@@ -326,7 +326,6 @@ def _get_olmo3moe_config(model: "OLMoDDPModel") -> PretrainedConfig:
         sliding_window=sliding_window,
         layer_types=layer_types,
         dense_layers_indices=dense_layers_indices,
-        dense_layers_use_shared_expert=True,
         embed_scale=model.embed_scale if model.embed_scale is not None else 1.0,
         embed_norm=model.embedding_norm is not None,
         use_peri_ln=False,
