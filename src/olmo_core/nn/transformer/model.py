@@ -907,8 +907,17 @@ class Transformer(nn.Module):
         if mode == TransformerActivationCheckpointingMode.selected_modules and modules is None:
             raise ValueError("'modules' is required for 'selected_modules' mode")
 
-        # TODO: only preserve RNG state if dropout is active
-        preserve_rng_state = False
+        # EMO samples a routed-expert pool size for each document. Recompute must replay those
+        # samples so it routes through the same experts as the original checkpointed forward.
+        # TODO: also preserve RNG state if dropout is active.
+        preserve_rng_state = any(
+            getattr(
+                getattr(block, "routed_experts_router", None),
+                "requires_segment_ids",
+                False,
+            )
+            for block in self.blocks.values()
+        )
 
         if mode == TransformerActivationCheckpointingMode.selected_modules:
             from fnmatch import fnmatch
