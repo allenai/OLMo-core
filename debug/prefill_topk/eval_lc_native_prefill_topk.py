@@ -100,6 +100,12 @@ def main():
                          "nonselected_landmark_mass (0.1). Pass 0 for a hard drop.")
     ap.add_argument("--prefill-query-tile", type=int, default=128,
                     help="query positions per tile in the eager prefill top-k kernel (memory knob).")
+    ap.add_argument("--prefill-sparse-mode", choices=["off", "union", "qblock"], default="off",
+                    help="use the SKIP-WORK prefill kernel (landmark_prefill_sparse) instead of the "
+                         "masked one. 'union' keeps the exact per-token selection (same numbers as "
+                         "--prefill-topk*, just faster when neighbouring queries agree); 'qblock' "
+                         "pools the selection over each 64-query block -- much faster, different "
+                         "attention. Requires --prefill-topk or --prefill-topk-fraction.")
     ap.add_argument("--decode-topk-fraction", type=float, default=0.1,
                     help="decode-side top-k fraction (GenerationConfig.landmark_top_k_fraction). "
                          "0 disables decode top-k entirely (dense decode).")
@@ -180,7 +186,24 @@ def main():
 
     # ---- prefill-wide top-k landmark retrieval ----
     prefill_topk_info = None
-    if args.prefill_topk is not None or args.prefill_topk_fraction is not None:
+    if args.prefill_sparse_mode != "off":
+        if args.prefill_topk is None and args.prefill_topk_fraction is None:
+            raise SystemExit("--prefill-sparse-mode needs --prefill-topk or --prefill-topk-fraction")
+        from olmo_core.nn.attention.landmark_prefill_sparse import enable_prefill_sparse
+        n_patched = enable_prefill_sparse(
+            gm.model,
+            top_k=args.prefill_topk,
+            top_k_fraction=args.prefill_topk_fraction,
+            mode=args.prefill_sparse_mode,
+        )
+        prefill_topk_info = {
+            "top_k": args.prefill_topk,
+            "top_k_fraction": args.prefill_topk_fraction,
+            "sparse_mode": args.prefill_sparse_mode,
+            "layers_patched": n_patched,
+        }
+        print(f"[prefill-sparse] patched {n_patched} landmark layers: {prefill_topk_info}", flush=True)
+    elif args.prefill_topk is not None or args.prefill_topk_fraction is not None:
         from olmo_core.nn.attention.landmark_prefill_topk import enable_prefill_topk
         n_patched = enable_prefill_topk(
             gm.model,
