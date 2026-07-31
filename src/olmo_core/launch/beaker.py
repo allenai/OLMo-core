@@ -361,6 +361,9 @@ class BeakerLaunchConfig(Config):
     system_python: bool = True
     """Use the system Python installation in the Beaker image."""
 
+    no_python: bool = False
+    """Skip Python environment setup and use the image environment as-is."""
+
     num_execution_units: int | None = None
     """
     Number of "execution units", defaults to 1. An "execution unit" is abstraction
@@ -658,6 +661,7 @@ class BeakerLaunchConfig(Config):
             results=self.result_dir,
             # Python settings.
             system_python=self.system_python,
+            no_python=self.no_python,
             torchrun=torchrun,
             # Hooks.
             pre_setup=self.pre_setup,
