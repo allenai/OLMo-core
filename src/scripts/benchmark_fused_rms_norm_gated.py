@@ -182,7 +182,9 @@ def run_benchmarks(args) -> None:
 
 def _raw_jit_fn(kernel):
     """Unwrap Autotuner/Heuristics decorators down to the raw JITFunction."""
-    while hasattr(kernel, "fn"):
+    from triton.runtime.jit import JITFunction
+
+    while not isinstance(kernel, JITFunction):
         kernel = kernel.fn
     return kernel
 
