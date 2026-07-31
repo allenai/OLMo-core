@@ -6,6 +6,8 @@ from torch.distributed.tensor import DTensor, Replicate, Shard, distribute_tenso
 import olmo_core.nn.moe.v2.router as router_v2
 from olmo_core.config import DType
 from olmo_core.distributed.utils import get_rank, get_world_size
+from olmo_core.exceptions import OLMoConfigurationError
+from olmo_core.nn.moe.loss import MoELoadBalancingLossGranularity
 from olmo_core.nn.moe.router import MoERouterConfig, MoERouterGatingFunction
 from olmo_core.nn.moe.v2.router import MoERouterConfigV2
 from olmo_core.testing import requires_multi_gpu, run_distributed_test
@@ -186,6 +188,15 @@ def test_global_load_balancing_requires_process_group():
     assert aux is not None
     with pytest.raises(RuntimeError, match="requires a load-balancing process group"):
         router.compute_aux_loss(*aux)
+
+
+def test_global_load_balancing_rejects_instance_granularity():
+    with pytest.raises(OLMoConfigurationError, match="instance-granularity"):
+        _build(
+            lb_loss_weight=1.0,
+            global_load_balancing=True,
+            lb_loss_granularity=MoELoadBalancingLossGranularity.instance,
+        )
 
 
 def _run_global_load_balancing_matches_concatenated_reference():
