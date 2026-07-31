@@ -190,6 +190,16 @@ class MoERouterV2(nn.Module):
         self.global_load_balancing = global_load_balancing
         self.lb_process_group: Optional[dist.ProcessGroup] = None
 
+        if (
+            self.global_load_balancing
+            and self.lb_loss_granularity == MoELoadBalancingLossGranularity.instance
+        ):
+            raise OLMoConfigurationError(
+                "global_load_balancing does not support instance-granularity load-balancing "
+                "loss because per-instance assignments cannot be combined across unrelated "
+                "data-parallel batches"
+            )
+
         if (self.n_group is None) != (self.topk_group is None):
             # Grouped routing needs both knobs; with only one set, the group-masking branch
             # (which checks both) never runs and routing silently falls back to global top-k.
