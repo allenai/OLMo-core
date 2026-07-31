@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-07-30T21:24:11.592203+00:00",
+  "generated_at": "2026-07-31T02:33:05.912731+00:00",
   "project": "ai2-llm/jacobm-olmoe-ladder",
   "selection_metric": "mean train/CE loss over the final 250M tokens",
   "selection_rule": "LatentMoE enters the best-of plot only after its 275M Cx curve brackets a valid quadratic minimum. The plotted point remains the best observed finished LR; the fitted prediction is diagnostic only.",
@@ -17,9 +17,7 @@
   },
   "baseline": "geometry_kda_ev2_neg_nope_gated",
   "unresolved_planned_runs": {
-    "geometry_kda_ev2_neg_nope_gated_latentmoe_l2_paper": [
-      "pt-1p2b-kda-ev2-neg-nope-gated-latentmoe-l2-paper-cx8-lr4e-4-r1"
-    ],
+    "geometry_kda_ev2_neg_nope_gated_latentmoe_l2_paper": [],
     "geometry_kda_ev2_neg_nope_gated_latentmoe_l4_1000e": []
   },
   "runs": [
@@ -886,6 +884,27 @@
     },
     {
       "model": "480m",
+      "variant": "geometry_kda_ev2_neg_nope_gated_latentmoe_l2_paper",
+      "variant_label": "LatentMoE L=2 (paper-matched)",
+      "cx": 4,
+      "lr": 0.0008,
+      "lr_tag": "0.0008",
+      "loss": 2.2701441351972536,
+      "state": "finished",
+      "tokens_b": 34.614542336,
+      "run_id": "feop0y0x",
+      "name": "pt-480m-kda-ev2-neg-nope-gated-latentmoe-l2-paper-cx4-lr8e-4-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/feop0y0x",
+      "segment_run_ids": [
+        "feop0y0x"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0,
+      "history_source": "wandb",
+      "history_source_sha256": null
+    },
+    {
+      "model": "480m",
       "variant": "geometry_kda_ev2_neg_nope_gated",
       "variant_label": "KDA (expand_v=2, negative eigenvalues)",
       "cx": 8,
@@ -1411,6 +1430,27 @@
       "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/quugqq1o",
       "segment_run_ids": [
         "quugqq1o"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0,
+      "history_source": "wandb",
+      "history_source_sha256": null
+    },
+    {
+      "model": "480m",
+      "variant": "geometry_kda_ev2_neg_nope_gated_latentmoe_l2_paper",
+      "variant_label": "LatentMoE L=2 (paper-matched)",
+      "cx": 4,
+      "lr": 0.0008,
+      "lr_tag": "0.0008",
+      "loss": 2.2701441351972536,
+      "state": "finished",
+      "tokens_b": 34.614542336,
+      "run_id": "feop0y0x",
+      "name": "pt-480m-kda-ev2-neg-nope-gated-latentmoe-l2-paper-cx4-lr8e-4-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/feop0y0x",
+      "segment_run_ids": [
+        "feop0y0x"
       ],
       "token_resets": 0,
       "deduplicated_samples": 0,
