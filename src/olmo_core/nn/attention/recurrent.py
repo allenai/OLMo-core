@@ -257,6 +257,10 @@ class GatedDeltaNet(SequenceMixer):
         # call (prefill) always takes the parallel chunk path and, if caching, seeds the state.
         cache = self.state_cache
         use_precomputed = cache is not None and cache.has_state and T_og == 1
+        # Chunked prefill: a multi-token call arriving when the cache already holds state is the
+        # next slice of one long prompt, so it must continue the conv window and the recurrent
+        # state rather than restart from zero (see :meth:`CausalConv1d.forward_with_state`).
+        continue_prefill = cache is not None and cache.has_state and T_og > 1
 
         # shape: (batch_size, seq_len, n_heads * head_k_dim),
         #        (batch_size, seq_len, n_heads * head_k_dim),
@@ -283,6 +287,14 @@ class GatedDeltaNet(SequenceMixer):
             q = self.q_conv1d.step(q, cache.conv_state_q)
             k = self.k_conv1d.step(k, cache.conv_state_k)
             v = self.v_conv1d.step(v, cache.conv_state_v)
+        elif continue_prefill:
+            assert cache is not None
+            assert cu_doc_lens is None, "chunked prefill does not support packed cu_doc_lens"
+            # ``forward_with_state`` both consumes and updates each window, so the conv sees the
+            # tokens that preceded this chunk.
+            q = self.q_conv1d.forward_with_state(q, cache.conv_state_q)
+            k = self.k_conv1d.forward_with_state(k, cache.conv_state_k)
+            v = self.v_conv1d.forward_with_state(v, cache.conv_state_v)
         else:
             if cache is not None:
                 # Seed the conv windows from the prefill inputs (pre-convolution).
@@ -316,6 +328,11 @@ class GatedDeltaNet(SequenceMixer):
                 use_qk_l2norm_in_kernel=True,
             )
         else:
+            # Continuing a chunked prefill resumes from the previous chunk's final state; a fresh
+            # prefill starts the recurrence from zero, as before.
+            initial_state = (
+                cache.recurrent_state if (continue_prefill and cache is not None) else None
+            )
             o, new_state = dispatch_chunk_gated_delta_rule(
                 q=q,
                 k=k,
@@ -323,6 +340,7 @@ class GatedDeltaNet(SequenceMixer):
                 g=g,
                 beta=beta,
                 cu_seqlens=cu_doc_lens,
+                initial_state=initial_state,
                 output_final_state=cache is not None,
                 use_qk_l2norm_in_kernel=True,
             )

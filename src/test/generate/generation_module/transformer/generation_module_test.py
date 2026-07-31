@@ -17,6 +17,7 @@ from olmo_core.generate.generation_module.transformer.config import (
 from olmo_core.nn.attention import AttentionConfig, GatedDeltaNetConfig
 from olmo_core.nn.feed_forward import FeedForwardConfig
 from olmo_core.nn.layer_norm import LayerNormConfig, LayerNormType
+from olmo_core.nn.convolution import CausalConv1d
 from olmo_core.nn.lm_head import LMHeadConfig
 from olmo_core.nn.rope import RoPEConfig, RoPEType
 from olmo_core.nn.transformer import (
@@ -214,6 +215,96 @@ def test_generation_module_hybrid_gdn_attn_cache_equivalence(batch_size: int):
     )
     assert isinstance(cached_logits, torch.Tensor) and isinstance(uncached_logits, torch.Tensor)
     torch.testing.assert_close(cached_logits, uncached_logits, atol=BF16_ATOL, rtol=BF16_RTOL)
+
+
+@requires_gpu
+@requires_fla
+@requires_flash_attn_2
+@pytest.mark.parametrize("chunk_size", [4, 5, 16])
+@pytest.mark.parametrize("batch_size", [1, 2])
+def test_generation_module_chunked_prefill_matches_one_shot(chunk_size: int, batch_size: int):
+    """
+    ``prefill_chunk_size`` must not change what the model computes -- it only bounds the activation
+    memory of the prefill forward, which is what lets ultra-long rungs (512k/1M) fit on an 80GB GPU.
+
+    On the hybrid Qwen3.5 layout this exercises both mixer families at once: attention has to offset
+    each chunk's RoPE by the KV-cache position and attend over the full cached prefix, while the
+    GatedDeltaNet layers have to carry their short-conv window and delta-rule recurrent state across
+    chunk boundaries. Getting either wrong silently corrupts only the tokens near a chunk boundary,
+    so we compare the whole greedy continuation, not just the first token.
+
+    ``chunk_size`` is deliberately swept across values that do and do not divide the prompt length
+    (12), and one below the conv width, so a ragged final chunk and a chunk shorter than the
+    convolution's history are both covered.
+    """
+    device = torch.device("cuda")
+    seed_all(0)
+
+    transformer_config = small_hybrid_gdn_transformer_config(use_flash=True, dtype=DType.bfloat16)
+    model = transformer_config.build()
+
+    def run(prefill_chunk_size):
+        seed_all(0)
+        generation_module = TransformerGenerationModule(
+            model=model,
+            generation_config=GenerationConfig(
+                max_length=24,
+                do_sample=False,
+                eos_token_id=1,
+                pad_token_id=0,
+                use_cache=True,
+                prefill_chunk_size=prefill_chunk_size,
+            ),
+            device=device,
+        )
+        return generation_module.generate_batch(
+            input_ids,
+            attention_mask=attention_mask,
+            return_logits=True,
+            completions_only=False,
+        )
+
+    context_len = 12
+    input_ids = torch.randint(2, 500, (batch_size, context_len), device=device)
+    attention_mask = torch.ones(batch_size, context_len, device=device, dtype=torch.bool)
+
+    one_shot_ids, one_shot_logits, _ = run(None)
+    chunked_ids, chunked_logits, _ = run(chunk_size)
+
+    assert torch.equal(one_shot_ids, chunked_ids), (
+        f"chunked prefill (chunk_size={chunk_size}) diverged from one-shot:\n"
+        f"one-shot: {one_shot_ids.tolist()}\nchunked:  {chunked_ids.tolist()}"
+    )
+    assert isinstance(one_shot_logits, torch.Tensor) and isinstance(chunked_logits, torch.Tensor)
+    torch.testing.assert_close(chunked_logits, one_shot_logits, atol=BF16_ATOL, rtol=BF16_RTOL)
+
+
+@requires_gpu
+@requires_fla
+def test_causal_conv1d_chunked_matches_one_shot():
+    """
+    :meth:`CausalConv1d.forward_with_state` fed a sequence in slices must equal one ``forward`` over
+    the whole sequence. This is the piece that makes chunked prefill exact on the GatedDeltaNet
+    layers: ``forward`` zero-pads its left edge, which is only right for the first chunk, so every
+    later chunk has to convolve against the real preceding tokens instead.
+    """
+    device = torch.device("cuda")
+    seed_all(0)
+    hidden, kernel, seq = 32, 4, 20
+    conv = CausalConv1d(
+        hidden_size=hidden, kernel_size=kernel, dtype=torch.float32, init_device="cuda"
+    ).to(device)
+    x = torch.randn(2, seq, hidden, device=device)
+
+    expected = conv(x)
+
+    state = torch.zeros(2, hidden, kernel - 1, device=device)
+    outs = []
+    for start in range(0, seq, 6):  # 6 does not divide 20 -> ragged final chunk
+        outs.append(conv.forward_with_state(x[:, start : start + 6], state))
+    got = torch.cat(outs, dim=1)
+
+    torch.testing.assert_close(got, expected, atol=1e-5, rtol=1e-5)
 
 
 @requires_gpu

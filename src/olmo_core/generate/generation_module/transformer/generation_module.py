@@ -498,7 +498,11 @@ class TransformerGenerationModule(GenerationModule):
             landmark_active and generation_config.use_cache and prompt_len >= 2
         )
         if landmark_decode_first_token:
-            self.model(input_ids[:, :-1], logits_to_keep=1, cache_leftpad=prefill_cache_leftpad)
+            self._prefill_forward(
+                input_ids[:, :-1],
+                cache_leftpad=prefill_cache_leftpad,
+                chunk_size=generation_config.prefill_chunk_size,
+            )
 
         # Per-row string-level early-stop (much more effective than single-token stop_token_ids for
         # short-answer eval) + reduced finished-all sync. A row is marked finished once its decoded
@@ -540,12 +544,14 @@ class TransformerGenerationModule(GenerationModule):
                     else None
                 )
 
-            # Forward pass - handles both prefill and decode phases
+            # Forward pass - handles both prefill and decode phases. Single-token decode steps fall
+            # through ``_prefill_forward`` as one plain forward; only a multi-token prefill longer
+            # than ``prefill_chunk_size`` is actually sliced.
             forward_start_time = time.perf_counter()
-            next_token_logits = self.model(  # (batch_size, seq_len=1, vocab_size)
+            next_token_logits = self._prefill_forward(  # (batch_size, seq_len=1, vocab_size)
                 input_ids_for_model,
-                logits_to_keep=1,
                 cache_leftpad=cache_leftpad if generation_config.use_cache else None,
+                chunk_size=generation_config.prefill_chunk_size,
             )
 
             # Landmark-gate analysis: flush this decode step's opened gates as one record (no-op on
@@ -661,6 +667,42 @@ class TransformerGenerationModule(GenerationModule):
             generated = generated[:, prompt_len:]
             # NOTE: completions_only does not apply to logits/logprobs. They are already computed only for completions.
         return generated, logits, logprobs
+
+    def _prefill_forward(
+        self,
+        input_ids: torch.Tensor,
+        *,
+        cache_leftpad: Optional[torch.Tensor],
+        chunk_size: Optional[int],
+    ) -> torch.Tensor:
+        """
+        Run the prefill forward, optionally in chunks to bound activation memory.
+
+        See :data:`GenerationConfig.prefill_chunk_size`. Each chunk advances the KV cache (and the
+        recurrent state on Gated DeltaNet layers), so the last chunk's logits are the same ones a
+        single-shot prefill would return.
+
+        :param input_ids: The prompt token IDs of shape ``(batch_size, seq_len)``.
+        :param cache_leftpad: Per-row left-padding offsets, recorded on the first chunk only
+            (``KVCacheManager.record_leftpad`` ignores ``None``, so the value persists).
+        :param chunk_size: Tokens per chunk, or ``None`` for a single forward.
+
+        :returns: Logits for the final prompt position, shape ``(batch_size, 1, vocab_size)``.
+        """
+        seq_len = input_ids.shape[1]
+        if not chunk_size or seq_len <= chunk_size:
+            return self.model(input_ids, logits_to_keep=1, cache_leftpad=cache_leftpad)
+
+        logits = None
+        for start in range(0, seq_len, chunk_size):
+            logits = self.model(
+                input_ids[:, start : start + chunk_size],
+                logits_to_keep=1,
+                # Only the first chunk carries the left-pad offsets; later chunks must not reset it.
+                cache_leftpad=cache_leftpad if start == 0 else None,
+            )
+        assert logits is not None
+        return logits
 
     def supports_landmark_ragged_batch(self) -> bool:
         """True if every landmark layer supports the right-padded cross-length batched decode

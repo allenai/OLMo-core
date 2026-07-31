@@ -72,6 +72,13 @@ def main():
     ap.add_argument("--save-generations", action=argparse.BooleanOptionalAction, default=True,
                     help="dump per-example model generations (+ gold/per-example metrics) to a sidecar "
                          "<out>.generations.jsonl for error inspection. On by default; --no-save-generations to skip.")
+    ap.add_argument("--prefill-chunk-size", type=int, default=int(os.environ.get("PREFILL_CHUNK_SIZE", "0")) or None,
+                    help="feed the prompt to prefill in slices of this many tokens instead of one "
+                         "forward (env PREFILL_CHUNK_SIZE). Mathematically identical, but bounds "
+                         "prefill activations by the chunk instead of the prompt: one layer's SwiGLU "
+                         "is ~59KiB/token vs ~32KiB/token of KV, so past ~256k that transient is what "
+                         "OOMs, not the cache. 32768 puts the 1M rung at ~48GiB on an 80GB card. "
+                         "Unset/0 keeps the single-shot prefill.")
     ap.add_argument("--landmark-top-k-blocks", type=int, default=None,
                     help="landmark/compressive variant: fixed number of landmark BLOCKS to keep per "
                          "query at decode (overrides GenerationConfig's default 10%%-of-prompt "
@@ -165,6 +172,7 @@ def main():
     t0 = time.time()
     gen_cfg = GenerationConfig(eos_token_id=tok.eos_token_id, pad_token_id=tok.pad_token_id,
                                max_length=args.max_length, use_cache=True,
+                               prefill_chunk_size=args.prefill_chunk_size,
                                landmark_top_k_blocks=args.landmark_top_k_blocks,
                                landmark_nonselected_mass=args.landmark_nonselected_mass,
                                landmark_group_selection=args.landmark_group_selection,

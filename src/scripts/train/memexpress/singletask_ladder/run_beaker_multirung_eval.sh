@@ -183,12 +183,20 @@ if [ "$LADDER_XLONG" = "1" ]; then
       # 263168 (= label + 1024) truncated the prompt TAIL -- where the question lives -- scoring
       # f1 0.000 at parse_rate 1.0 for a healthy model. eval_lc_native.py re-raises max_length by
       # the same 10% rule, so it corrects an undersized value here rather than trusting it.
-      # ⚠ 512k/1M/2M exceed Qwen3.5's native 262,144 positions: they need a YaRN serving copy and
-      # more than one 80GB GPU (KV is ~32KB/token, so 2M alone is ~69GB).
+      # ⚠ 512k/1M/2M exceed Qwen3.5's native 262,144 positions and need a YaRN serving copy
+      # (debug/ctx_ceiling_4b/make_yarn_copy.py).
+      #
+      # They also need PREFILL_CHUNK_SIZE. A one-shot prefill materializes every intermediate at the
+      # full prompt length, and one layer's SwiGLU (~59KiB/token) is nearly twice the KV cache it
+      # produces (~32KiB/token) -- so past ~256k the transient, not the cache, is what exhausts the
+      # GPU. Measured on an 80GB H100: 512k peaked at 77 of 79.19 GiB (7 of 10 tasks OOMed) and 1M
+      # died outright. Chunking bounds activations by the chunk instead of the prompt, putting 512k
+      # at ~30 GiB and 1M at ~48 GiB, and is mathematically identical (see the parity test
+      # test_generation_module_chunked_prefill_matches_one_shot).
       case ",$XLONG_RUNGS," in
-        *,2M,*)   MAX_LENGTH=2308915 ;;
-        *,1M,*)   MAX_LENGTH=1155482 ;;
-        *,512k,*) MAX_LENGTH=578765 ;;
+        *,2M,*)   MAX_LENGTH=2308915; PREFILL_CHUNK_SIZE=32768 ;;
+        *,1M,*)   MAX_LENGTH=1155482; PREFILL_CHUNK_SIZE=32768 ;;
+        *,512k,*) MAX_LENGTH=578765;  PREFILL_CHUNK_SIZE=32768 ;;
         *,256k,*) MAX_LENGTH=290406 ;;
         *,128k,*) MAX_LENGTH=146227 ;;
         # 64k-only: 68608 (cap 68512) -> nq (max real prefill 67679) and outlier (67986) run
@@ -202,7 +210,10 @@ if [ "$LADDER_XLONG" = "1" ]; then
         # ~66k so contra completes (its extreme tail skipped) rather than OOM-crashing the job.
         *)        MAX_LENGTH=68608  ;;
       esac
-      echo "    [xlong] RUNGS=$RUNGS MAX_LENGTH=$MAX_LENGTH BATCH_SIZE=$BATCH_SIZE" ;;
+      # torchrun inherits the environment, and eval_lc_native.py defaults --prefill-chunk-size from
+      # PREFILL_CHUNK_SIZE, so this must be exported rather than left a plain shell variable.
+      [ -n "${PREFILL_CHUNK_SIZE:-}" ] && export PREFILL_CHUNK_SIZE
+      echo "    [xlong] RUNGS=$RUNGS MAX_LENGTH=$MAX_LENGTH BATCH_SIZE=$BATCH_SIZE PREFILL_CHUNK_SIZE=${PREFILL_CHUNK_SIZE:-off}" ;;
     # fiqa/scifact/outlier_review/contra_fever have no xlong rung files, so they keep their base
     # ladder rather than silently re-running it under an xlong tag.
     *) echo "    [xlong] no xlong rungs for TASK=$TASK; base ladder unchanged." ;;
