@@ -265,7 +265,7 @@ jobs:
             # NVSHMEM + CUDA toolkit) before pytest, so the rowwise-EP tests that import the built
             # module at collection time can run. One `bash -c` so both run inside the gantry container.
             run: |
-              bash -c 'python -m olmo_core.kernels.build_symm_mem_vdev2d_ext --inplace && pytest -v --color=yes --durations=3 -m gpu src/test/kernels/ src/test/nn/ddp/ src/test/nn/moe/v2/ src/test/nn/moe/moe_test.py src/test/nn/moe/routed_experts_v2_test.py src/test/train/train_module/transformer/ddp_train_module_test.py'
+              bash -c 'unset TRITON_PTXAS_PATH TRITON_PTXAS_BLACKWELL_PATH; python -m olmo_core.kernels.build_symm_mem_vdev2d_ext --inplace && pytest -v --color=yes --durations=3 -m gpu src/test/kernels/ src/test/nn/ddp/ src/test/nn/moe/v2/ src/test/nn/moe/moe_test.py src/test/nn/moe/routed_experts_v2_test.py src/test/train/train_module/transformer/ddp_train_module_test.py'
     steps:
       - uses: actions/checkout@v5
         with:
