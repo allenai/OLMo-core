@@ -90,8 +90,9 @@ fi
 # EVAL500=$PRASANNS/_eval_bundle_eval500_v2 to reproduce a pre-switch run.
 EVAL500="${EVAL500:-$PRASANNS/_eval_bundle_eval500_v2_clean}"
 VFLAG="--ladder-version v2"
-# ---- OPT-IN ultra-long rungs (OFF by default). LADDER_XLONG=1 appends 64k/128k/256k for the
-# doc-pool tasks (contra|nq|outlier), forces bs=1, and raises MAX_LENGTH so prompts aren't truncated.
+# ---- OPT-IN ultra-long rungs (OFF by default). LADDER_XLONG=1 appends the requested XLONG_RUNGS
+# (64k..2M) for every task that has xlong rung files -- contra|nq|outlier plus rerank|oolong, whose
+# rungs were built 2026-07-27 -- forces bs=1, and raises MAX_LENGTH so prompts aren't truncated.
 LADDER_XLONG="${LADDER_XLONG:-0}"
 XLONG_RUNGS="${XLONG_RUNGS:-64k,128k}"   # 256k is huge + needs an 80GB GPU -> opt in explicitly
 XLFLAG=""
@@ -175,7 +176,7 @@ TR="torchrun --nproc_per_node=$NGPU --master_port=$PORT src/scripts/ctc_eval/eva
   esac
 if [ "$LADDER_XLONG" = "1" ]; then
   case "$TASK" in
-    contra|nq|outlier)
+    contra|nq|outlier|rerank|oolong)
       RUNGS="$RUNGS,$XLONG_RUNGS"; BATCH_SIZE=1
       # Built prompts run ~0.4-4% OVER the rung label (doc count calibrated from a median, plus the
       # instruction/query/marker wrap), so these caps carry a ~10% margin. The old 256k value of
@@ -202,7 +203,9 @@ if [ "$LADDER_XLONG" = "1" ]; then
         *)        MAX_LENGTH=68608  ;;
       esac
       echo "    [xlong] RUNGS=$RUNGS MAX_LENGTH=$MAX_LENGTH BATCH_SIZE=$BATCH_SIZE" ;;
-    *) echo "    [xlong] supports contra|nq|outlier only; TASK=$TASK unchanged." ;;
+    # fiqa/scifact/outlier_review/contra_fever have no xlong rung files, so they keep their base
+    # ladder rather than silently re-running it under an xlong tag.
+    *) echo "    [xlong] no xlong rungs for TASK=$TASK; base ladder unchanged." ;;
   esac
 fi
 OUT="$EVAL_OUT_DIR/${TASK}_multirung.json"
