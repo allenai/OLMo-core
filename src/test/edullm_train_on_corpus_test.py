@@ -545,3 +545,30 @@ def test_the_config_print_names_how_many_shards_rather_than_all_of_them(monkeypa
     assert printed[0].dataset.paths == [f"<{len(paths)} objects>"]
     # The config itself is untouched, because the run trains on it after this prints.
     assert list(config.dataset.paths) == paths
+
+
+def test_the_wandb_url_is_read_while_the_run_still_has_one(monkeypatch):
+    """WandBCallback.post_train finishes the run, so reading it in summarise gets None."""
+    import types
+
+    watcher = entry.LossWatcher()
+    fake = types.SimpleNamespace(run=types.SimpleNamespace(url="https://wandb.ai/o/p/runs/abc"))
+    monkeypatch.setitem(sys.modules, "wandb", fake)
+
+    watcher.log_metrics(1, {"train/CE loss": 6.9})
+    assert watcher.wandb_url == "https://wandb.ai/o/p/runs/abc"
+
+    # Once the run is finished the url is kept rather than overwritten with a blank.
+    fake.run = None
+    watcher.log_metrics(2, {"train/CE loss": 6.1})
+    assert watcher.wandb_url == "https://wandb.ai/o/p/runs/abc"
+
+
+def test_a_run_with_no_wandb_reports_a_blank_url_rather_than_failing(monkeypatch):
+    watcher = entry.LossWatcher()
+    monkeypatch.setitem(sys.modules, "wandb", None)
+
+    watcher.log_metrics(1, {"train/CE loss": 6.9})
+
+    assert watcher.wandb_url == ""
+    assert watcher.first == 6.9

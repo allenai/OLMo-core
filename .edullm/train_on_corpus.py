@@ -532,14 +532,27 @@ def build_config(opts, overrides: List[str]):
 
 
 class LossWatcher(Callback):
-    """Keeps the first and last training loss so the summary below can report them."""
+    """Keeps what the summary can only learn while the run is still going.
+
+    The W&B url is read here rather than in ``summarise`` because ``WandBCallback.post_train``
+    finishes the run, after which ``wandb.run`` is None. Read on a metrics callback rather
+    than in ``pre_train``, because callbacks of equal priority run in reverse registration
+    order and this one is registered last, so ``pre_train`` here happens before W&B has a run
+    to name.
+    """
 
     def __init__(self) -> None:
         self.first: Optional[float] = None
         self.last: Optional[float] = None
+        self.wandb_url = ""
 
     def log_metrics(self, step: int, metrics: Dict[str, float]) -> None:
         del step
+        if not self.wandb_url:
+            with contextlib.suppress(Exception):
+                import wandb
+
+                self.wandb_url = getattr(wandb.run, "url", "") or ""
         loss = metrics.get("train/CE loss")
         if loss is None:
             return
@@ -560,12 +573,6 @@ def summarise(*, opts, config, trainer, losses: LossWatcher, seconds: float) -> 
         return
     device = torch.cuda.get_device_name(0) if torch.cuda.is_available() else "cpu"
     peak = torch.cuda.max_memory_allocated() / 1024**3 if torch.cuda.is_available() else 0.0
-    url = ""
-    if os.environ.get("EDULLM_WANDB_PROJECT"):
-        with contextlib.suppress(Exception):
-            import wandb
-
-            url = getattr(wandb.run, "url", "") or ""
     print(
         json.dumps(
             {
@@ -585,7 +592,7 @@ def summarise(*, opts, config, trainer, losses: LossWatcher, seconds: float) -> 
                 "peak_memory_gib": peak,
                 "checkpoint_uri": opts.save_folder,
                 "wandb_project": os.environ.get("EDULLM_WANDB_PROJECT", ""),
-                "wandb_url": url,
+                "wandb_url": losses.wandb_url,
             },
             indent=2,
         ),
