@@ -30,8 +30,11 @@ IMAGE = "01KW8G8JC20H11Y60PPTE2VN4Q"
 NAME = "convert-lc-275m-kda-cx8-step37991-hf"
 
 
-def build_spec(commit: str, *, force: bool = False) -> dict[str, object]:
+def build_spec(
+    commit: str, *, force: bool = False, cache_only: bool = False
+) -> dict[str, object]:
     force_value = "1" if force else "0"
+    cache_only_value = "1" if cache_only else "0"
     command = f"""set -euo pipefail
 mkdir -p /results {OUTPUT.parent}
 cd {REPO}
@@ -43,13 +46,18 @@ SOURCE={SOURCE}
 OUTPUT={OUTPUT}
 MARKER="${{OUTPUT}}/conversion_complete.json"
 FORCE={force_value}
+CACHE_ONLY={cache_only_value}
 
 if [[ "${{FORCE}}" == "1" && -f "${{MARKER}}" ]]; then
   cp "${{MARKER}}" /results/prior_conversion_complete.json
   rm "${{MARKER}}"
 fi
 
-if [[ -f "${{MARKER}}" && "${{FORCE}}" != "1" ]]; then
+if [[ "${{CACHE_ONLY}}" == "1" ]]; then
+  test -f "${{OUTPUT}}/config.json"
+  test -f "${{OUTPUT}}/model.safetensors"
+  echo "Running cache-only validation for existing HF artifact at ${{OUTPUT}}"
+elif [[ -f "${{MARKER}}" && "${{FORCE}}" != "1" ]]; then
   echo "Validated HF conversion already exists at ${{OUTPUT}}"
 else
   if [[ -e "${{OUTPUT}}" ]] && find "${{OUTPUT}}" -mindepth 1 -print -quit | grep -q .; then
@@ -92,11 +100,13 @@ input_ids = torch.tensor(
     device="cuda",
 )
 with torch.no_grad():
-    full_logits = model(input_ids, use_cache=False).logits
+    prefill_reference = model(input_ids[:, :8], use_cache=False).logits
     cache = DynamicCache(config=model.config)
-    cached_logits = [
-        model(input_ids[:, :8], past_key_values=cache, use_cache=True).logits
-    ]
+    prefill_cached = model(
+        input_ids[:, :8], past_key_values=cache, use_cache=True
+    ).logits
+    cached_logits = [prefill_cached]
+    reference_logits = [prefill_reference]
     for position in range(8, input_ids.shape[1]):
         cached_logits.append(
             model(
@@ -105,17 +115,33 @@ with torch.no_grad():
                 use_cache=True,
             ).logits
         )
+        reference_logits.append(
+            model(input_ids[:, : position + 1], use_cache=False).logits[:, -1:]
+        )
     cached_logits = torch.cat(cached_logits, dim=1)
+    reference_logits = torch.cat(reference_logits, dim=1)
+
+diff = (cached_logits.float() - reference_logits.float()).abs()
+for position in range(input_ids.shape[1]):
+    position_diff = diff[:, position]
+    cached_top1 = cached_logits[:, position].argmax(dim=-1)
+    reference_top1 = reference_logits[:, position].argmax(dim=-1)
+    print(
+        f"KDA cache position {{position}}: "
+        f"max_abs_error={{position_diff.max().item():.6g}}, "
+        f"mean_abs_error={{position_diff.mean().item():.6g}}, "
+        f"top1_match={{bool(torch.equal(cached_top1, reference_top1))}}"
+    )
 
 torch.testing.assert_close(
     cached_logits.float(),
-    full_logits.float(),
+    reference_logits.float(),
     rtol=2e-2,
     atol=2e-2,
 )
 print(
     "KDA cached decode validation: "
-    f"max_abs_error={{(cached_logits.float() - full_logits.float()).abs().max().item():.6g}}"
+    f"max_abs_error={{diff.max().item():.6g}}"
 )
 PY
 
@@ -243,6 +269,11 @@ def main() -> None:
         action="store_true",
         help="Re-run conversion and validation even when the completion marker exists.",
     )
+    parser.add_argument(
+        "--cache-only",
+        action="store_true",
+        help="Validate the existing HF artifact without repeating conversion.",
+    )
     parser.add_argument("--name", default=NAME)
     args = parser.parse_args()
 
@@ -253,7 +284,9 @@ def main() -> None:
     commit = subprocess.check_output(
         ["git", "-C", str(REPO), "rev-parse", "HEAD"], text=True
     ).strip()
-    spec = build_spec(commit, force=args.force)
+    if args.force and args.cache_only:
+        parser.error("--force and --cache-only are mutually exclusive")
+    spec = build_spec(commit, force=args.force, cache_only=args.cache_only)
     rendered = yaml.safe_dump(spec, sort_keys=False)
     if not args.submit:
         print(rendered)
