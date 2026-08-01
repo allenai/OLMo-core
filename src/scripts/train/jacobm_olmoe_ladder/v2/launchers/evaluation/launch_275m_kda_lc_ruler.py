@@ -18,7 +18,10 @@ MODEL = Path(
 )
 LENGTHS = (4096, 8192, 16384, 32768, 65536, 131072)
 WORKSPACE = "ai2/OLMo-3-moe-experiments"
-CLUSTER = "ai2/holmes"
+# The stock olmo-eval HF image currently carries a CUDA 12.3 runtime. Its FLA
+# 0.4.1 KDA kernel is valid on Jupiter's H100s but fails at launch on Holmes'
+# B300s, which require the newer Blackwell runtime used by our training image.
+CLUSTER = "ai2/jupiter"
 BUDGET = "ai2/oe-other"
 GROUP = "olmoe3-v2-kda-lc-ruler"
 
@@ -42,6 +45,8 @@ def command(length: int, *, dry_run: bool) -> list[str]:
         "provider.dtype=bfloat16",
         "-o",
         "provider.trust_remote_code=true",
+        "-o",
+        "batching.chunk_size=8",
         "-o",
         'provider.dependencies=["flash-linear-attention==0.4.1"]',
         "-n",
