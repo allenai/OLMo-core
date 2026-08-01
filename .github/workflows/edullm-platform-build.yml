@@ -50,8 +50,25 @@ jobs:
       # today, but a cosmetic nit should not be able to stop an image being published.
       #
       # --no-cache keeps .ruff_cache out of the checkout the platform verifies as clean.
+      #
+      # The second command is not this repository's own test. It holds
+      # Checkpointer.dir_is_checkpoint equal to the file list the platform's
+      # checkpoints.py copied out of it by hand, and it runs here because this is the one
+      # moment the two can start disagreeing: an image built from a commit that changed
+      # the rule. Blocking the build is the point. Afterwards the platform would go on
+      # refusing checkpoints a resume would load, or promising ones it would not, and
+      # nothing would say so.
+      #
+      # It reads the source rather than importing it, for the same reason the lint above
+      # is narrower than the real suite: nothing is installed on this runner and
+      # olmo_core.train.checkpoint pulls in torch. The platform is checked out beside this
+      # repository by the reusable workflow and its lockfile is already synced, which is
+      # what makes the invocation a single line.
       test_command: |
         lint_venv="$(mktemp -d)/ruff"
         python3 -m venv "${lint_venv}"
         "${lint_venv}/bin/pip" install --quiet --disable-pip-version-check ruff==0.15.22
         "${lint_venv}/bin/ruff" check --no-cache .
+        (cd "${GITHUB_WORKSPACE}/platform" && uv run --frozen python \
+          tools/verify_checkpoint_shape_agreement.py \
+          --olmo-core-root "${GITHUB_WORKSPACE}/source")
