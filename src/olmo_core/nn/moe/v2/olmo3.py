@@ -341,27 +341,21 @@ def build_olmo3_moe_config_from_hf_config(
         capacity_factor=ep_capacity_factor,
     )
     ep.validate()
-    common = dict(
-        name=TransformerBlockType.moe_fused_v2,
-        use_pre_norm=False,
-        use_peri_norm=bool(config.get("use_peri_ln", False)),
-        layer_norm=layer_norm,
-        shared_experts_router=None,
-    )
 
     def make_block(sliding: bool, *, dense: bool) -> OLMoDDPTransformerBlockConfig:
         window = int(config["sliding_window"]) - 1
-        block_shared_experts = (
-            SharedExpertsConfig(
+        block_shared_experts: SharedExpertsConfig | None
+        if dense:
+            assert dense_hidden is not None
+            block_shared_experts = SharedExpertsConfig(
                 d_model=d_model,
                 hidden_size=int(dense_hidden),
                 num_experts=1,
                 bias=False,
                 dtype=dtype,
             )
-            if dense
-            else shared_experts
-        )
+        else:
+            block_shared_experts = shared_experts
         return OLMoDDPTransformerBlockConfig(
             sequence_mixer=AttentionConfig(
                 name=attention_type,
@@ -393,7 +387,11 @@ def build_olmo3_moe_config_from_hf_config(
             routed_experts=None if dense else routed_experts,
             routed_experts_router=None if dense else routed_router,
             shared_experts=block_shared_experts,
-            **{key: deepcopy(value) for key, value in common.items()},
+            name=TransformerBlockType.moe_fused_v2,
+            use_pre_norm=False,
+            use_peri_norm=bool(config.get("use_peri_ln", False)),
+            layer_norm=deepcopy(layer_norm),
+            shared_experts_router=None,
         )
 
     def block_name(layer_type: str, *, dense: bool) -> str:
