@@ -27,6 +27,30 @@ requires_olmo3moe = pytest.mark.skipif(
 )
 
 
+@requires_olmo3moe
+def test_kda_cache_state_query_supports_old_and_new_transformers_apis():
+    from types import SimpleNamespace
+
+    from olmo_core.nn.moe.v2.hf.modeling_olmo3moe import _cache_has_previous_state
+
+    old_cache = SimpleNamespace(
+        layers=[SimpleNamespace(has_previous_state={0: True, 1: False})]
+    )
+    assert _cache_has_previous_state(old_cache, 0, 0)
+    assert not _cache_has_previous_state(old_cache, 0, 1)
+
+    class NewCache:
+        def __init__(self):
+            self.layers = []
+
+        @staticmethod
+        def has_previous_state(layer_idx, state_idx=None):
+            return (layer_idx, state_idx) == (2, 1)
+
+    assert _cache_has_previous_state(NewCache(), 2, 1)
+    assert not _cache_has_previous_state(NewCache(), 2, 0)
+
+
 def _small_config():
     from olmo_core.nn.moe.v2.hf.configuration_olmo3moe import Olmo3MoeConfig
 

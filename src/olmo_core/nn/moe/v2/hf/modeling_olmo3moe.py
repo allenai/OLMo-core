@@ -38,6 +38,25 @@ def _create_mask_compat(mask_fn: Callable, **kwargs):
     return mask_fn(**{k: v for k, v in kwargs.items() if k in params})
 
 
+def _cache_has_previous_state(cache: Cache, layer_idx: int, state_idx: int) -> bool:
+    """Query linear-attention state across Transformers cache API versions."""
+    has_previous_state = getattr(cache, "has_previous_state", None)
+    if callable(has_previous_state):
+        try:
+            return bool(has_previous_state(layer_idx, state_idx=state_idx))
+        except TypeError:
+            # Transformers 5.4 exposed only the per-layer marker. A later cache
+            # API added ``Cache.has_previous_state(..., state_idx=...)``.
+            pass
+
+    if layer_idx >= len(cache.layers):
+        return False
+    marker = getattr(cache.layers[layer_idx], "has_previous_state", False)
+    if isinstance(marker, dict):
+        return bool(marker.get(state_idx, False))
+    return bool(marker)
+
+
 def _uses_layer_type_rope_parameters(config: Olmo3MoeConfig) -> bool:
     rope_parameters = getattr(config, "rope_parameters", None)
     layer_types = set(getattr(config, "layer_types", []) or [])
@@ -674,8 +693,8 @@ class Olmo3MoeKimiDeltaAttention(nn.Module):
             raise RuntimeError("KDA inference requires flash-linear-attention KDA kernels") from exc
 
         batch_size, seq_len, _ = hidden_states.shape
-        has_previous_state = past_key_values is not None and past_key_values.has_previous_state(
-            self.layer_idx, state_idx=0
+        has_previous_state = past_key_values is not None and _cache_has_previous_state(
+            past_key_values, self.layer_idx, state_idx=0
         )
         q = self.q_conv1d(
             self.q_proj(hidden_states),
