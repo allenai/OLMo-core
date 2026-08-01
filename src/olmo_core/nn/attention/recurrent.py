@@ -822,13 +822,13 @@ class GatedDeltaNet2Config(SequenceMixerConfig[GatedDeltaNet2]):
     """
     The dimension of each head. If ``None``, defaults to ``d_model // n_heads``.
     """
-    expand_v: float = 1.0
+    expand_v: float = 2.0
     """
     The expansion ratio for the value dimension (``head_v_dim = head_dim * expand_v``).
     Like ``n_v_heads``, this increases the constant-size recurrent state, improving
     capacity without memory scaling concerns.
     """
-    allow_neg_eigval: bool = False
+    allow_neg_eigval: bool = True
     """
     Allow negative eigenvalues in the recurrent dynamics (doubles the erase gate ``b``).
     """
