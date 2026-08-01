@@ -23,7 +23,12 @@ from olmo_core.nn.transformer import (
 )
 from olmo_core.optim import LinearWithWarmup, OptimGroupOverride, SkipStepAdamWConfig
 from olmo_core.train import Duration, LoadStrategy, TrainerConfig
-from olmo_core.train.callbacks import ConfigSaverCallback, WandBCallback
+from olmo_core.train.callbacks import (
+    CheckpointerCallback,
+    ConfigSaverCallback,
+    GPUMemoryMonitorCallback,
+    WandBCallback,
+)
 from olmo_core.train.train_module import (
     TransformerActivationCheckpointingConfig,
     TransformerContextParallelConfig,
@@ -179,9 +184,16 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
             metrics_collect_interval=1,
             cancel_check_interval=1,
             max_duration=Duration.steps(MAX_STEPS),
-            # Not no_checkpoints=True: that gates loading as well as saving, which would silently
-            # start from random weights. No CheckpointerCallback is registered, so nothing is saved.
+            # Not no_checkpoints=True: that gates loading as well as saving (trainer.py:679), which
+            # would silently start from random weights.
         )
+        # Register a disabled checkpointer explicitly. Simply omitting one does NOT mean nothing is
+        # saved -- the trainer auto-adds a default CheckpointerCallback (trainer.py:345), which
+        # writes a full ~57GB checkpoint when the run ends. Useless for a 10-step smoke test.
+        .with_callback("checkpointer", CheckpointerCallback(enabled=False))
+        # The number this smoke test exists to produce: per-rank peak memory, to check the ~40GB
+        # prediction for 1M at cp=16.
+        .with_callback("gpu_memory_monitor", GPUMemoryMonitorCallback())
         .with_callback(
             "wandb",
             WandBCallback(
