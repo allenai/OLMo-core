@@ -21,9 +21,17 @@ on:
   # push and workflow_dispatch are also the only events the reusable workflow accepts: on
   # anything else github.ref names the default branch rather than the pushed commit, so
   # the run would publish something other than what the caller meant.
+  #
+  # main is here for the opposite reason to the namespace, not as an exception to it. The
+  # platform's submission form takes a branch name and resolves it to a commit, and refuses
+  # a commit with no published image. So every merge to main that nobody happened to build
+  # leaves the most obvious thing a researcher can type failing for a reason that names the
+  # image rather than the merge. Volume is not the objection the namespace was answering:
+  # main is protected and receives reviewed merges, not the 29 people's working branches.
   push:
     branches:
       - "edullm/**"
+      - main
 
 jobs:
   publish:
