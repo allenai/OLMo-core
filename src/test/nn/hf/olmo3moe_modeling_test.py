@@ -104,3 +104,67 @@ def test_olmo3moe_experts_grouped_mm_matches_reference_loop():
     reference = experts._forward_loop(hidden_states, topk_ids, topk_weights)
     grouped = experts._forward_grouped_mm(hidden_states, topk_ids, topk_weights)
     torch.testing.assert_close(grouped, reference, rtol=1e-5, atol=1e-5)
+
+
+@requires_olmo3moe
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="requires CUDA KDA kernels")
+def test_olmo3moe_kda_cached_decode_matches_full_forward():
+    pytest.importorskip("fla")
+    from transformers.cache_utils import DynamicCache
+
+    from olmo_core.nn.moe.v2.hf.configuration_olmo3moe import Olmo3MoeConfig
+    from olmo_core.nn.moe.v2.hf.modeling_olmo3moe import Olmo3MoeForCausalLM
+
+    config = Olmo3MoeConfig(
+        vocab_size=64,
+        hidden_size=64,
+        attention_hidden_size=64,
+        head_dim=16,
+        dense_mlp_intermediate_size=32,
+        moe_intermediate_size=16,
+        shared_expert_intermediate_size=16,
+        n_routed_experts=4,
+        num_experts_per_tok=2,
+        num_hidden_layers=2,
+        num_attention_heads=4,
+        num_key_value_heads=2,
+        max_position_embeddings=64,
+        use_head_qk_norm=True,
+        use_rope=False,
+        attention_gate_type="elementwise",
+        linear_num_key_heads=4,
+        linear_num_value_heads=4,
+        linear_key_head_dim=16,
+        linear_value_head_dim=32,
+        linear_conv_kernel_dim=4,
+        linear_allow_neg_eigval=True,
+        layer_types=["linear_attention", "full_attention"],
+        dense_layers_indices=[0],
+        embed_norm=True,
+        use_peri_ln=True,
+    )
+    model = Olmo3MoeForCausalLM(config).cuda().to(torch.bfloat16).eval()
+    input_ids = torch.randint(
+        0,
+        config.vocab_size,
+        (1, 16),
+        generator=torch.Generator().manual_seed(0),
+        device="cuda",
+    )
+
+    with torch.no_grad():
+        full_logits = model(input_ids, use_cache=False).logits
+        cache = DynamicCache(config=config)
+        cached_logits = [model(input_ids[:, :12], past_key_values=cache, use_cache=True).logits]
+        for position in range(12, input_ids.shape[1]):
+            cached_logits.append(
+                model(
+                    input_ids[:, position : position + 1],
+                    past_key_values=cache,
+                    use_cache=True,
+                ).logits
+            )
+        cached_logits = torch.cat(cached_logits, dim=1)
+
+    torch.testing.assert_close(cached_logits.float(), full_logits.float(), rtol=2e-2, atol=2e-2)
+    assert cache.get_seq_length() == input_ids.shape[1]

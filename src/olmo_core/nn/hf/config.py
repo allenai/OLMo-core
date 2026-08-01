@@ -121,10 +121,10 @@ def _register_olmo3moe_auto_classes() -> None:
     Olmo3MoeForCausalLM.register_for_auto_class("AutoModelForCausalLM")
 
 
-def _get_olmo3moe_kda_latent_config(
+def _get_olmo3moe_kda_config(
     model: "MoEFusedV2Transformer",
 ) -> PretrainedConfig:
-    """Build the fail-closed HF config for the KDA + LatentMoE ladder family."""
+    """Build the fail-closed HF config for KDA, with optional LatentMoE."""
     from olmo_core.nn.moe.v2.block import MoEFusedV2TransformerBlock
 
     if Olmo3MoeConfig is None:
@@ -133,7 +133,7 @@ def _get_olmo3moe_kda_latent_config(
 
     blocks = list(model.blocks.values())
     if not blocks or not all(isinstance(block, MoEFusedV2TransformerBlock) for block in blocks):
-        raise NotImplementedError("KDA + LatentMoE export requires MoE-v2 blocks at every layer.")
+        raise NotImplementedError("KDA export requires MoE-v2 blocks at every layer.")
 
     dense_layers_indices: List[int] = []
     sparse_blocks: List[MoEFusedV2TransformerBlock] = []
@@ -157,7 +157,7 @@ def _get_olmo3moe_kda_latent_config(
         elif isinstance(block.attention, Attention):
             if block.attention.backend.window_size != (-1, -1):
                 raise NotImplementedError(
-                    "Sliding-window layers are not yet supported in KDA + LatentMoE export."
+                    "Sliding-window layers are not yet supported in KDA export."
                 )
             layer_types.append("full_attention")
             attention_blocks.append(block)
@@ -167,17 +167,27 @@ def _get_olmo3moe_kda_latent_config(
             )
 
     if not sparse_blocks or not kda_blocks or not attention_blocks:
-        raise NotImplementedError(
-            "KDA + LatentMoE export requires sparse, KDA, and full-attention layers."
-        )
+        raise NotImplementedError("KDA export requires sparse, KDA, and full-attention layers.")
 
     representative = sparse_blocks[0]
     routed_experts = representative.routed_experts
     router = representative.routed_experts_router
     assert routed_experts is not None and router is not None
-    if representative.latent_down_proj is None or representative.latent_up_proj is None:
-        raise NotImplementedError("This KDA export path requires LatentMoE down/up projections.")
-    latent_dim = representative.latent_down_proj.out_features
+    representative_uses_latent = (
+        representative.latent_down_proj is not None
+        or representative.latent_up_proj is not None
+        or representative.latent_up_proj_input_norm is not None
+    )
+    if representative_uses_latent:
+        if representative.latent_down_proj is None or representative.latent_up_proj is None:
+            raise NotImplementedError("LatentMoE requires both down and up projections.")
+        latent_dim: Optional[int] = representative.latent_down_proj.out_features
+        latent_bias = representative.latent_down_proj.bias is not None
+        latent_up_proj_input_norm = representative.latent_up_proj_input_norm is not None
+    else:
+        latent_dim = None
+        latent_bias = False
+        latent_up_proj_input_norm = False
 
     # Reject heterogeneous expert/LatentMoE layouts: the HF config intentionally
     # stores one sparse-layer shape and must never silently reshape another.
@@ -186,31 +196,41 @@ def _get_olmo3moe_kda_latent_config(
         routed_experts.num_experts,
         router.top_k,
         latent_dim,
-        representative.latent_down_proj.bias is not None,
-        representative.latent_up_proj_input_norm is not None,
+        latent_bias,
+        latent_up_proj_input_norm,
         representative.shared_experts.hidden_size
         if representative.shared_experts is not None
         else None,
     )
     for block in sparse_blocks[1:]:
-        if (
-            block.routed_experts is None
-            or block.routed_experts_router is None
-            or block.latent_down_proj is None
-            or block.latent_up_proj is None
-        ):
-            raise NotImplementedError("Every sparse layer must use LatentMoE.")
+        if block.routed_experts is None or block.routed_experts_router is None:
+            raise NotImplementedError(
+                "Every sparse layer must contain routed experts and a router."
+            )
+        block_uses_latent = (
+            block.latent_down_proj is not None
+            or block.latent_up_proj is not None
+            or block.latent_up_proj_input_norm is not None
+        )
+        if block_uses_latent != representative_uses_latent:
+            raise NotImplementedError(
+                "Mixed LatentMoE and non-Latent sparse layers are unsupported."
+            )
+        if block_uses_latent and (block.latent_down_proj is None or block.latent_up_proj is None):
+            raise NotImplementedError("LatentMoE requires both down and up projections.")
         signature = (
             block.routed_experts.hidden_size,
             block.routed_experts.num_experts,
             block.routed_experts_router.top_k,
-            block.latent_down_proj.out_features,
-            block.latent_down_proj.bias is not None,
+            block.latent_down_proj.out_features if block.latent_down_proj is not None else None,
+            block.latent_down_proj.bias is not None
+            if block.latent_down_proj is not None
+            else False,
             block.latent_up_proj_input_norm is not None,
             block.shared_experts.hidden_size if block.shared_experts is not None else None,
         )
         if signature != sparse_signature:
-            raise NotImplementedError("Heterogeneous sparse/LatentMoE layers are unsupported.")
+            raise NotImplementedError("Heterogeneous sparse layers are unsupported.")
 
     unsupported_router = []
     if router.bias is not None:
@@ -230,7 +250,7 @@ def _get_olmo3moe_kda_latent_config(
         unsupported_router.append(f"gating_function={router.gating_function.value}")
     if unsupported_router:
         raise NotImplementedError(
-            "Unsupported KDA + LatentMoE router settings: " + ", ".join(unsupported_router)
+            "Unsupported KDA router settings: " + ", ".join(unsupported_router)
         )
 
     kda = kda_blocks[0].attention
@@ -306,7 +326,7 @@ def _get_olmo3moe_kda_latent_config(
     use_peri_ln = representative.use_peri_norm
     if any(block.use_peri_norm != use_peri_ln or block.use_pre_norm for block in blocks):
         raise NotImplementedError(
-            "All KDA + LatentMoE layers must share peri-norm placement; pre-norm is unsupported."
+            "All KDA layers must share peri-norm placement; pre-norm is unsupported."
         )
 
     dense_hidden_sizes = {
@@ -362,8 +382,8 @@ def _get_olmo3moe_kda_latent_config(
         linear_allow_neg_eigval=kda.allow_neg_eigval,
         linear_norm_eps=kda_norm_eps,
         latent_moe_dim=latent_dim,
-        latent_moe_bias=representative.latent_down_proj.bias is not None,
-        latent_moe_up_proj_input_norm=(representative.latent_up_proj_input_norm is not None),
+        latent_moe_bias=latent_bias,
+        latent_moe_up_proj_input_norm=latent_up_proj_input_norm,
         layer_types=layer_types,
         dense_layers_indices=dense_layers_indices,
         embed_scale=model.embed_scale if model.embed_scale is not None else 1.0,
@@ -389,7 +409,7 @@ def _get_olmo3moe_config(model: "MoEFusedV2Transformer") -> PretrainedConfig:
 
     blocks = list(model.blocks.values())
     if any(isinstance(block.attention, KimiDeltaAttention) for block in blocks):
-        return _get_olmo3moe_kda_latent_config(model)
+        return _get_olmo3moe_kda_config(model)
 
     # Identify the dense (non-MoE) layers and pick a representative MoE and dense block.
     dense_layers_indices: List[int] = []

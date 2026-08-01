@@ -165,6 +165,25 @@ def test_olmo3moe_kda_latent_conversion_roundtrips_exactly():
     model.load_state_dict(hf_roundtrip, strict=True)
 
 
+def test_olmo3moe_kda_nonlatent_conversion_roundtrips_exactly():
+    from olmo_core.nn.moe.v2.hf.modeling_olmo3moe import Olmo3MoeForCausalLM
+
+    config = _small_kda_latent_config()
+    config.latent_moe_dim = None
+    config.latent_moe_bias = False
+    config.latent_moe_up_proj_input_norm = False
+    model = Olmo3MoeForCausalLM(config)
+    hf = {key: value.detach().clone() for key, value in model.state_dict().items()}
+
+    olmo = convert_olmo3moe_state_from_hf(config, hf)
+    hf_roundtrip = convert_olmo3moe_state_to_hf(config, olmo)
+
+    assert set(hf_roundtrip) == set(hf)
+    for key, tensor in hf.items():
+        assert torch.equal(hf_roundtrip[key], tensor), f"roundtrip mismatch for '{key}'"
+    model.load_state_dict(hf_roundtrip, strict=True)
+
+
 def test_olmo3moe_can_initialize_on_meta_without_accelerate():
     from olmo_core.nn.hf.checkpoint import init_empty_weights
     from olmo_core.nn.moe.v2.hf.modeling_olmo3moe import Olmo3MoeForCausalLM

@@ -572,7 +572,14 @@ class Olmo3MoeCausalConv1d(nn.Conv1d):
             padding=kernel_size - 1,
         )
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self,
+        x: torch.Tensor,
+        *,
+        past_key_values: Optional[Cache] = None,
+        layer_idx: Optional[int] = None,
+        state_idx: int = 0,
+    ) -> torch.Tensor:
         try:
             from fla.modules.convolution import causal_conv1d
         except ImportError as exc:  # pragma: no cover - environment failure
@@ -580,15 +587,27 @@ class Olmo3MoeCausalConv1d(nn.Conv1d):
                 "KDA inference requires flash-linear-attention with "
                 "fla.modules.convolution.causal_conv1d"
             ) from exc
+        seq_len = x.shape[1]
+        if past_key_values is not None:
+            if layer_idx is None:
+                raise ValueError("layer_idx is required when caching KDA convolution state")
+            conv_input = past_key_values.update_conv_state(
+                x.transpose(1, 2),
+                layer_idx,
+                state_idx,
+                conv_kernel_size=self.kernel_size[0],
+            ).transpose(1, 2)
+        else:
+            conv_input = x
         output, _ = causal_conv1d(
-            x=x,
+            x=conv_input,
             weight=self.weight.squeeze(1),
             bias=None,
             activation="silu",
             backend="triton",
             cu_seqlens=None,
         )
-        return output
+        return output[:, -seq_len:]
 
 
 class Olmo3MoeKimiDeltaAttention(nn.Module):
@@ -645,22 +664,34 @@ class Olmo3MoeKimiDeltaAttention(nn.Module):
         **kwargs,
     ) -> tuple[torch.Tensor, None]:
         del kwargs
-        if past_key_values is not None:
-            raise NotImplementedError(
-                "The exported KDA model does not yet implement recurrent-state caching; "
-                "run with use_cache=False."
-            )
         try:
-            from fla.ops.kda import chunk_kda
+            from fla.ops.kda import chunk_kda, fused_recurrent_kda
+            from fla.ops.kda.gate import fused_kda_gate
         except ImportError as exc:  # pragma: no cover - environment failure
-            raise RuntimeError(
-                "KDA inference requires flash-linear-attention with fla.ops.kda.chunk_kda"
-            ) from exc
+            raise RuntimeError("KDA inference requires flash-linear-attention KDA kernels") from exc
 
         batch_size, seq_len, _ = hidden_states.shape
-        q = self.q_conv1d(self.q_proj(hidden_states))
-        k = self.k_conv1d(self.k_proj(hidden_states))
-        v = self.v_conv1d(self.v_proj(hidden_states))
+        has_previous_state = past_key_values is not None and past_key_values.has_previous_state(
+            self.layer_idx, state_idx=0
+        )
+        q = self.q_conv1d(
+            self.q_proj(hidden_states),
+            past_key_values=past_key_values,
+            layer_idx=self.layer_idx,
+            state_idx=0,
+        )
+        k = self.k_conv1d(
+            self.k_proj(hidden_states),
+            past_key_values=past_key_values,
+            layer_idx=self.layer_idx,
+            state_idx=1,
+        )
+        v = self.v_conv1d(
+            self.v_proj(hidden_states),
+            past_key_values=past_key_values,
+            layer_idx=self.layer_idx,
+            state_idx=2,
+        )
         raw_decay = self.f_proj_2(self.f_proj_1(hidden_states))
         beta = self.beta_proj(hidden_states).float().sigmoid()
         if self.allow_neg_eigval:
@@ -670,17 +701,46 @@ class Olmo3MoeKimiDeltaAttention(nn.Module):
         k = k.view(batch_size, seq_len, self.n_heads, self.head_k_dim)
         v = v.view(batch_size, seq_len, self.n_v_heads, self.head_v_dim)
         raw_decay = raw_decay.view(batch_size, seq_len, self.n_v_heads, self.head_k_dim)
-        output, _ = chunk_kda(
-            q=q,
-            k=k,
-            v=v,
-            g=raw_decay,
-            beta=beta,
-            A_log=self.A_log,
-            dt_bias=self.dt_bias,
-            use_qk_l2norm_in_kernel=True,
-            use_gate_in_kernel=True,
-        )
+        recurrent_state = None
+        if has_previous_state:
+            recurrent_state = past_key_values.layers[self.layer_idx].recurrent_states[0]
+        if has_previous_state and seq_len <= 64:
+            decay = fused_kda_gate(
+                g=raw_decay,
+                A_log=self.A_log,
+                dt_bias=self.dt_bias,
+            )
+            output, recurrent_state = fused_recurrent_kda(
+                q=q,
+                k=k,
+                v=v,
+                g=decay,
+                beta=beta,
+                initial_state=recurrent_state,
+                output_final_state=past_key_values is not None,
+                use_qk_l2norm_in_kernel=True,
+            )
+        else:
+            output, recurrent_state = chunk_kda(
+                q=q,
+                k=k,
+                v=v,
+                g=raw_decay,
+                beta=beta,
+                A_log=self.A_log,
+                dt_bias=self.dt_bias,
+                initial_state=recurrent_state,
+                output_final_state=past_key_values is not None,
+                use_qk_l2norm_in_kernel=True,
+                use_gate_in_kernel=True,
+            )
+        if past_key_values is not None:
+            assert recurrent_state is not None
+            past_key_values.update_recurrent_state(
+                recurrent_state,
+                self.layer_idx,
+                state_idx=0,
+            )
         output_gate = self.g_proj_2(self.g_proj_1(hidden_states)).view(
             batch_size, seq_len, self.n_v_heads, self.head_v_dim
         )
@@ -942,6 +1002,7 @@ class Olmo3MoePreTrainedModel(PreTrainedModel):
 
     _can_compile_fullgraph = True
     _supports_attention_backend = True
+    _supports_cache_class = True
     _can_record_outputs = {
         "hidden_states": Olmo3MoeDecoderLayer,
         "attentions": Olmo3MoeAttention,
@@ -1034,12 +1095,6 @@ class Olmo3MoeModel(Olmo3MoePreTrainedModel):
             if self.embed_norm is not None:
                 inputs_embeds = self.embed_norm(inputs_embeds)
 
-        has_linear_attention = "linear_attention" in self.config.layer_types
-        if use_cache and has_linear_attention:
-            raise NotImplementedError(
-                "KDA recurrent-state caching is not implemented in the exported HF model; "
-                "run with use_cache=False."
-            )
         if use_cache and past_key_values is None:
             past_key_values = DynamicCache(config=self.config)
 

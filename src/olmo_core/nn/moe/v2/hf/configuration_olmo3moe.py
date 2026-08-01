@@ -64,6 +64,7 @@ class Olmo3MoeConfig(PretrainedConfig):
         linear_key_head_dim=None,
         linear_value_head_dim=None,
         linear_conv_kernel_dim=4,
+        number_of_conv_states=3,
         linear_allow_neg_eigval=False,
         linear_norm_eps=1e-5,
         latent_moe_dim=None,
@@ -161,6 +162,9 @@ class Olmo3MoeConfig(PretrainedConfig):
         self.linear_key_head_dim = linear_key_head_dim
         self.linear_value_head_dim = linear_value_head_dim
         self.linear_conv_kernel_dim = linear_conv_kernel_dim
+        # KDA keeps independent q/k/v convolution states in each linear layer.
+        # ``DynamicCache`` uses this field to allocate the three state slots.
+        self.number_of_conv_states = number_of_conv_states
         self.linear_allow_neg_eigval = linear_allow_neg_eigval
         self.linear_norm_eps = linear_norm_eps
 
