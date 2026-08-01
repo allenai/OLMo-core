@@ -7,6 +7,7 @@ import torch.distributed as dist
 from olmo_core.distributed.parallel.context_parallel import (
     all_to_all_cp2hp,
     all_to_all_hp2cp,
+    all_to_all_qkv_cp2hp,
     all_to_all_single_cp2hp,
     all_to_all_single_hp2cp,
 )
@@ -274,6 +275,126 @@ def _test_batched_hp2cp(input_ndim: int = 4):
     assert torch.allclose(outputs[1], expected2), (
         f"Rank {rank}: Output 1 values don't match expected. "
         f"Max diff = {(outputs[1] - expected2).abs().max()}"
+    )
+
+
+def _test_qkv_cp2hp_replicates_kv_heads(n_heads: int, n_kv_heads: int):
+    """
+    ``all_to_all_qkv_cp2hp`` must hand each rank the KV heads its query heads actually attend to,
+    replicating them when the CP degree doesn't divide ``n_kv_heads``.
+    """
+    device = get_default_device()
+    dtype = torch.float32
+    rank = dist.get_rank()
+    world_size = dist.get_world_size()
+    group = dist.new_group()
+    assert group is not None
+
+    B, T, D = 2, 8, 16
+    t_local = T // world_size
+    n_rep = n_heads // n_kv_heads
+
+    # Fill each head with its own global head index so we can check the pairing by value. The
+    # tensors are identical on every rank, so a value tells us which head it came from.
+    q = (
+        torch.arange(n_heads, device=device, dtype=dtype)
+        .view(1, 1, n_heads, 1)
+        .expand(B, t_local, n_heads, D)
+        .contiguous()
+    )
+    kv = (
+        torch.arange(n_kv_heads, device=device, dtype=dtype)
+        .view(1, 1, n_kv_heads, 1)
+        .expand(B, t_local, n_kv_heads, D)
+        .contiguous()
+    )
+
+    q_out, k_out, v_out = all_to_all_qkv_cp2hp(q, kv.clone(), kv.clone(), group)
+
+    h_local = n_heads // world_size
+    assert q_out.shape == (B, T, h_local, D), f"got q shape {q_out.shape}"
+    if n_kv_heads % world_size == 0:
+        # No replication needed: the plain split still applies.
+        assert k_out.shape == (B, T, n_kv_heads // world_size, D), f"got k shape {k_out.shape}"
+        return
+
+    assert k_out.shape == (B, T, h_local, D), f"got k shape {k_out.shape}"
+    assert v_out.shape == (B, T, h_local, D), f"got v shape {v_out.shape}"
+
+    # Rank r holds query heads [r*h_local, (r+1)*h_local); each must be paired with KV head
+    # ``head // n_rep``, which is the GQA grouping the non-CP path uses.
+    expected_q = (
+        torch.arange(rank * h_local, (rank + 1) * h_local, device=device, dtype=dtype)
+        .view(1, 1, h_local, 1)
+        .expand(B, T, h_local, D)
+    )
+    torch.testing.assert_close(q_out, expected_q)
+    torch.testing.assert_close(k_out, torch.div(expected_q, n_rep, rounding_mode="floor"))
+    torch.testing.assert_close(v_out, torch.div(expected_q, n_rep, rounding_mode="floor"))
+
+
+def _test_qkv_cp2hp_kv_grads_sum_over_replicas(n_heads: int, n_kv_heads: int):
+    """
+    The whole point of replicating with ``expand``: autograd must sum ``dK``/``dV`` back over the
+    replicas, so a KV head used by ``n_rep`` query heads receives ``n_rep`` times the gradient.
+    """
+    device = get_default_device()
+    world_size = dist.get_world_size()
+    group = dist.new_group()
+    assert group is not None
+
+    B, T, D = 1, 8, 4
+    t_local = T // world_size
+    n_rep = n_heads // n_kv_heads
+
+    q = torch.zeros(B, t_local, n_heads, D, device=device, requires_grad=True)
+    k = torch.zeros(B, t_local, n_kv_heads, D, device=device, requires_grad=True)
+    v = torch.zeros(B, t_local, n_kv_heads, D, device=device, requires_grad=True)
+
+    q_out, k_out, v_out = all_to_all_qkv_cp2hp(q, k, v, group)
+    (q_out.sum() + k_out.sum() + v_out.sum()).backward()
+
+    assert q.grad is not None and k.grad is not None and v.grad is not None
+    torch.testing.assert_close(q.grad, torch.ones_like(q))
+    # Each KV head was replicated n_rep times, so its gradient is n_rep, not 1.
+    expected_kv_grad = float(n_rep) if n_kv_heads % world_size != 0 else 1.0
+    torch.testing.assert_close(k.grad, torch.full_like(k, expected_kv_grad))
+    torch.testing.assert_close(v.grad, torch.full_like(v, expected_kv_grad))
+
+
+_KV_REPLICATION_CASES = [
+    pytest.param(2, 4, 1, id="cp2-mqa"),
+    # n_kv_heads > 1 and smaller than the CP degree: the only shape that pins down the replicated
+    # head *order*. Mirrors Qwen3.5-4B (n_heads=16, n_kv_heads=4) at cp=16.
+    pytest.param(4, 8, 2, id="cp4-gqa-replicated"),
+    pytest.param(2, 4, 2, id="cp2-gqa-no-replication"),
+    pytest.param(2, 4, 4, id="cp2-mha-no-replication"),
+]
+
+
+@pytest.mark.parametrize("backend", BACKENDS)
+@pytest.mark.parametrize("world_size, n_heads, n_kv_heads", _KV_REPLICATION_CASES)
+def test_qkv_cp2hp_replicates_kv_heads(
+    backend: str, world_size: int, n_heads: int, n_kv_heads: int
+):
+    run_distributed_test(
+        partial(_test_qkv_cp2hp_replicates_kv_heads, n_heads=n_heads, n_kv_heads=n_kv_heads),
+        backend=backend,
+        start_method="spawn",
+        world_size=world_size,
+    )
+
+
+@pytest.mark.parametrize("backend", BACKENDS)
+@pytest.mark.parametrize("world_size, n_heads, n_kv_heads", _KV_REPLICATION_CASES)
+def test_qkv_cp2hp_kv_grads_sum_over_replicas(
+    backend: str, world_size: int, n_heads: int, n_kv_heads: int
+):
+    run_distributed_test(
+        partial(_test_qkv_cp2hp_kv_grads_sum_over_replicas, n_heads=n_heads, n_kv_heads=n_kv_heads),
+        backend=backend,
+        start_method="spawn",
+        world_size=world_size,
     )
 
 

@@ -847,7 +847,10 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
                 "'dilated_window_k' / 'dilated_window_num_configs' / 'dilated_window_base' are only "
                 f"supported with dilated_sliding_window attention (got name='{self.name}')"
             )
-        if full_attention_layers is not None and AttentionType.document_chunked not in possible_types:
+        if (
+            full_attention_layers is not None
+            and AttentionType.document_chunked not in possible_types
+        ):
             raise OLMoConfigurationError(
                 "'full_attention_layers' (hybrid full/chunked layers) is only supported with "
                 f"document_chunked attention (got name='{self.name}')"
@@ -1582,7 +1585,25 @@ class Attention(SequenceMixer):
         :param cp_mesh: The context parallel device sub-mesh.
         :param ring: The ring context parallel style.
         :param uly: The ulysses context parallel style.
+
+        :raises OLMoConfigurationError: If the Ulysses CP degree is incompatible with the head
+            counts of this module.
         """
+        if uly is not None:
+            # Checked here rather than left to the collective, which would otherwise fail deep
+            # inside a '.view()' with an unhelpful shape error. n_kv_heads need not divide the CP
+            # degree: all_to_all_qkv_cp2hp replicates the KV heads when it doesn't.
+            cp_size = cp_mesh.size()
+            if self.n_heads % cp_size != 0:
+                raise OLMoConfigurationError(
+                    f"Ulysses CP degree ({cp_size}) must divide n_heads ({self.n_heads})"
+                )
+            if self.n_kv_heads % cp_size != 0 and self.n_heads % self.n_kv_heads != 0:
+                raise OLMoConfigurationError(
+                    f"Ulysses CP degree ({cp_size}) does not divide n_kv_heads "
+                    f"({self.n_kv_heads}), so KV heads must be replicated, but n_kv_heads does not "
+                    f"divide n_heads ({self.n_heads})"
+                )
         self.backend.apply_cp(cp_mesh, ring=ring, uly=uly)
 
     def init_weights(
@@ -2459,8 +2480,6 @@ from .landmark_multi import (  # noqa: E402
     DocumentMultiLandmarkAttention,
     MultiLandmarkAttention,
 )
-from .landmark_multi_compressive import (  # noqa: E402
-    MultiCompressiveLandmarkAttention,
-)
+from .landmark_multi_compressive import MultiCompressiveLandmarkAttention  # noqa: E402
 from .landmark_shared_vector import SharedVectorLandmarkAttention  # noqa: E402
 from .landmark_sparse import SparseLandmarkAttention  # noqa: E402

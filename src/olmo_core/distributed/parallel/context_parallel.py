@@ -128,6 +128,83 @@ def all_to_all_cp2hp(
     return outputs
 
 
+def _repeat_kv_heads(input_: torch.Tensor, n_rep: int) -> torch.Tensor:
+    """
+    Expand the head dimension of a ``[B, T, H_kv, D]`` tensor by ``n_rep`` in GQA order, i.e.
+    ``[kv_0] * n_rep + [kv_1] * n_rep + ...``.
+
+    Implemented with ``expand`` + ``reshape`` (rather than a materializing copy) so that autograd
+    sums the gradients back across the replicas on the backward pass. That is what makes the
+    replication in :func:`all_to_all_qkv_cp2hp` correct without any hand-written gradient reduction.
+
+    :param input_: The tensor to expand, with shape ``[B, T, H_kv, D]``.
+    :param n_rep: The number of times to repeat each KV head.
+
+    :returns: A tensor with shape ``[B, T, H_kv * n_rep, D]``.
+    """
+    if n_rep == 1:
+        return input_
+    B, T, h_kv, d = input_.shape
+    return input_.unsqueeze(3).expand(B, T, h_kv, n_rep, d).reshape(B, T, h_kv * n_rep, d)
+
+
+def all_to_all_qkv_cp2hp(
+    q: torch.Tensor,
+    k: torch.Tensor,
+    v: torch.Tensor,
+    cp_group: torch.distributed.ProcessGroup,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """
+    Transform ``q``, ``k`` and ``v`` from context-parallel to head-parallel partitioning for Ulysses
+    attention, replicating KV heads when the CP degree does not divide ``n_kv_heads``.
+
+    Ulysses gathers the *full* sequence on every rank, so the head split is purely a work
+    partitioning choice: nothing about the attention math requires the CP degree to divide
+    ``n_kv_heads``. When it doesn't (typically because the CP degree exceeds ``n_kv_heads`` on a GQA
+    model), each KV head is first replicated ``n_heads // n_kv_heads`` times so that the split is
+    well defined. Rank ``r`` then receives query heads ``[r * H/CP, (r+1) * H/CP)`` alongside exactly
+    the replicated KV heads those queries attend to, since :func:`all_to_all_cp2hp` splits heads
+    contiguously and :func:`_repeat_kv_heads` lays replicas out in matching GQA order.
+
+    When the CP degree already divides ``n_kv_heads`` this is exactly the plain two-collective path,
+    with no extra communication.
+
+    :param q: Query tensor with shape ``[B, T/CP, n_heads, D]``.
+    :param k: Key tensor with shape ``[B, T/CP, n_kv_heads, D]``.
+    :param v: Value tensor with shape ``[B, T/CP, n_kv_heads, D]``.
+    :param cp_group: The process group for context parallel communication.
+
+    :returns: ``(q, k, v)`` with shapes ``[B, T, n_heads/CP, D]`` and, for ``k``/``v``, either
+        ``[B, T, n_kv_heads/CP, D]`` (no replication) or ``[B, T, n_heads/CP, D]`` (replicated).
+
+    :raises RuntimeError: If the CP degree doesn't divide ``n_heads``, or if ``n_kv_heads`` doesn't
+        divide ``n_heads``.
+    """
+    world_size = get_world_size(cp_group)
+    n_heads, n_kv_heads = q.shape[2], k.shape[2]
+
+    if n_heads % world_size != 0:
+        raise RuntimeError(
+            f"Ulysses CP degree ({world_size}) must divide the number of query heads ({n_heads})"
+        )
+
+    # Only replicate when the plain split isn't well defined; otherwise keep the cheaper path so
+    # existing configurations are unchanged, both numerically and in communication volume.
+    if n_kv_heads % world_size != 0:
+        if n_heads % n_kv_heads != 0:
+            raise RuntimeError(
+                f"Number of KV heads ({n_kv_heads}) must divide the number of query heads "
+                f"({n_heads}) to replicate KV heads across {world_size} context parallel ranks"
+            )
+        n_rep = n_heads // n_kv_heads
+        k = _repeat_kv_heads(k, n_rep)
+        v = _repeat_kv_heads(v, n_rep)
+
+    q = all_to_all_single_cp2hp(q, cp_group)
+    k, v = all_to_all_cp2hp([k, v], cp_group)
+    return q, k, v
+
+
 def all_to_all_single_hp2cp(
     input_: torch.Tensor, cp_group: torch.distributed.ProcessGroup
 ) -> torch.Tensor:
@@ -250,6 +327,10 @@ def all_to_all_single_cp2hp_qkvpacked(
     :param cp_group: The process group for context parallel communication.
     :returns: The output tensor with shape ``[B, T, 3, H/CP, D]``, partitioned along
         the head dimension.
+
+    :raises RuntimeError: If the CP degree doesn't divide the number of heads. Packed QKV implies
+        ``n_heads == n_kv_heads``, so unlike :func:`all_to_all_qkv_cp2hp` there is no KV replication
+        that could rescue this — the CP degree is simply too large for the model.
     """
     assert (
         input_.dim() == 5
@@ -258,6 +339,11 @@ def all_to_all_single_cp2hp_qkvpacked(
 
     B, t_local, three, h_in, d_in = input_.shape
     assert three == 3
+    if h_in % world_size != 0:
+        raise RuntimeError(
+            f"Ulysses CP degree ({world_size}) must divide the number of heads ({h_in}) "
+            "when using packed QKV"
+        )
     h_out = h_in // world_size
 
     # [B, T/CP, 3, H, D] -> [B, T/CP, 3, CP, H/CP, D] -> [CP, B, T/CP, 3, H/CP, D]

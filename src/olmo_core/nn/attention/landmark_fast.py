@@ -34,8 +34,7 @@ import torch
 import torch.nn.functional as F
 
 from olmo_core.distributed.parallel.context_parallel import (
-    all_to_all_cp2hp,
-    all_to_all_single_cp2hp,
+    all_to_all_qkv_cp2hp,
     all_to_all_single_hp2cp,
 )
 from olmo_core.distributed.utils import get_rank
@@ -811,10 +810,18 @@ class FastLandmarkAttention(Attention):
         if uly is None:
             raise ValueError("One of 'ring' or 'uly' must be specified")
         cp_size = cp_mesh.size()
-        if self.n_heads % cp_size != 0 or self.n_kv_heads % cp_size != 0:
+        # Only n_heads has to divide: when the CP degree doesn't divide n_kv_heads, the KV heads are
+        # replicated inside the cp2hp all-to-all (see all_to_all_qkv_cp2hp), which is what lets the
+        # CP degree exceed n_kv_heads on GQA models.
+        if self.n_heads % cp_size != 0:
             raise OLMoConfigurationError(
-                f"Ulysses CP degree ({cp_size}) must divide n_heads ({self.n_heads}) and "
-                f"n_kv_heads ({self.n_kv_heads})"
+                f"Ulysses CP degree ({cp_size}) must divide n_heads ({self.n_heads})"
+            )
+        if self.n_kv_heads % cp_size != 0 and self.n_heads % self.n_kv_heads != 0:
+            raise OLMoConfigurationError(
+                f"Ulysses CP degree ({cp_size}) does not divide n_kv_heads ({self.n_kv_heads}), so "
+                f"KV heads must be replicated, but n_kv_heads does not divide n_heads "
+                f"({self.n_heads})"
             )
         self._cp_pg = cp_mesh.get_group()
         self._cp_world_size = cp_size
@@ -889,8 +896,9 @@ class FastLandmarkAttention(Attention):
         )
         if self.cp_enabled:
             assert self._cp_pg is not None
-            q = all_to_all_single_cp2hp(q, self._cp_pg)
-            k, v = all_to_all_cp2hp([k, v], self._cp_pg)
+            # Replicates the KV heads first when the CP degree doesn't divide n_kv_heads, in which
+            # case ``n_rep`` below comes out as 1 and the ``repeat_kv`` calls become no-ops.
+            q, k, v = all_to_all_qkv_cp2hp(q, k, v, self._cp_pg)
 
         T = q.shape[1]
         if T % self.block_size != 0:

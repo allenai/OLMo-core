@@ -9,8 +9,7 @@ from torch.distributed import DeviceMesh
 
 from olmo_core.config import StrEnum
 from olmo_core.distributed.parallel.context_parallel import (
-    all_to_all_cp2hp,
-    all_to_all_single_cp2hp,
+    all_to_all_qkv_cp2hp,
     all_to_all_single_cp2hp_qkvpacked,
     all_to_all_single_hp2cp,
 )
@@ -346,11 +345,13 @@ class TorchAttentionBackend(AttentionBackend):
             assert self.cp_pg is not None
             # Transform from context-parallel to head-parallel partitioning
             # [B, T/CP, H, D] -> [B, T, H/CP, D]
-            q = all_to_all_single_cp2hp(q, self.cp_pg)
-            k, v = all_to_all_cp2hp([k, v], self.cp_pg)
+            q, k, v = all_to_all_qkv_cp2hp(q, k, v, self.cp_pg)
 
         # NOTE: PyTorch's SDPA doesn't support GQA, so we have to do this.
-        n_rep = self.n_heads // self.n_kv_heads
+        # Derive the ratio from the tensors rather than from self.n_heads/self.n_kv_heads: under
+        # Ulysses CP the all-to-all above may already have replicated the KV heads, in which case
+        # the local ratio is 1 even though the global one isn't.
+        n_rep = q.shape[2] // k.shape[2]
         # shape: (batch_size, seq_len, n_heads, head_dim)
         k = _repeat_kv(k, n_rep)
         v = _repeat_kv(v, n_rep)
@@ -600,8 +601,7 @@ class FlashAttention2Backend(AttentionBackend):
             elif self.uly is not None:
                 # Transform from context-parallel to head-parallel partitioning
                 # [B, T/CP, H, D] -> [B, T, H/CP, D]
-                q = all_to_all_single_cp2hp(q, self.cp_pg)
-                k, v = all_to_all_cp2hp([k, v], self.cp_pg)
+                q, k, v = all_to_all_qkv_cp2hp(q, k, v, self.cp_pg)
                 B, T, H_local, D = q.shape
 
                 # NOTE: cu_doc_lens and max_doc_len are assumed to describe the FULL sequence
@@ -798,8 +798,7 @@ class FlashAttention3Backend(AttentionBackend):
 
                 # Transform from context-parallel to head-parallel partitioning
                 # [B, T/CP, H, D] -> [B, T, H/CP, D]
-                q = all_to_all_single_cp2hp(q, self.cp_pg)
-                k, v = all_to_all_cp2hp([k, v], self.cp_pg)
+                q, k, v = all_to_all_qkv_cp2hp(q, k, v, self.cp_pg)
                 B, T, H_local, D = q.shape
 
                 # NOTE: cu_doc_lens and max_doc_len are assumed to describe the FULL sequence
@@ -946,8 +945,7 @@ class FlashAttention4Backend(AttentionBackend):
 
                 # Transform from context-parallel to head-parallel partitioning
                 # [B, T/CP, H, D] -> [B, T, H/CP, D]
-                q = all_to_all_single_cp2hp(q, self.cp_pg)
-                k, v = all_to_all_cp2hp([k, v], self.cp_pg)
+                q, k, v = all_to_all_qkv_cp2hp(q, k, v, self.cp_pg)
                 B, T, H_local, D = q.shape
 
                 # NOTE: cu_doc_lens and max_doc_len are assumed to describe the FULL sequence
