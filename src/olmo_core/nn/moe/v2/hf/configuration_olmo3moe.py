@@ -30,6 +30,7 @@ class Olmo3MoeConfig(PretrainedConfig):
         attention_hidden_size=4096,
         head_dim=None,
         dense_mlp_intermediate_size=11008,
+        dense_mlp_uses_shared_experts=False,
         moe_intermediate_size=2048,
         shared_expert_intermediate_size=2048,
         n_routed_experts=64,
@@ -98,6 +99,11 @@ class Olmo3MoeConfig(PretrainedConfig):
 
         # for dense MLP layers
         self.dense_mlp_intermediate_size = dense_mlp_intermediate_size
+        # MoE-v2 represents a dense block as one fused ``shared_experts`` MLP,
+        # whereas older OLMo-core models use ``feed_forward.w{1,2,3}``.
+        # The HF architecture is identical, but checkpoint conversion needs to
+        # preserve which source layout to reconstruct for exact round trips.
+        self.dense_mlp_uses_shared_experts = dense_mlp_uses_shared_experts
 
         # for sparse MLP layers
         self.moe_intermediate_size = moe_intermediate_size

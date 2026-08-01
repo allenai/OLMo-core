@@ -124,6 +124,7 @@ def _small_kda_latent_config():
         attention_hidden_size=32,
         head_dim=8,
         dense_mlp_intermediate_size=24,
+        dense_mlp_uses_shared_experts=True,
         moe_intermediate_size=12,
         shared_expert_intermediate_size=16,
         n_routed_experts=4,

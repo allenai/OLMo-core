@@ -353,6 +353,7 @@ def _get_olmo3moe_kda_config(
         attention_hidden_size=attention.n_heads * attention.head_dim,
         head_dim=attention.head_dim,
         dense_mlp_intermediate_size=dense_hidden,
+        dense_mlp_uses_shared_experts=True,
         moe_intermediate_size=routed_experts.hidden_size,
         shared_expert_intermediate_size=shared_hidden,
         n_routed_experts=routed_experts.num_experts,
