@@ -218,10 +218,11 @@ def test_the_whole_config_builds_from_a_corpus_without_touching_s3(monkeypatch):
     assert config.dataset_id == "pretrain/regmix-10b"
     assert config.trainer.save_folder.endswith("/a-run-id/checkpoints/")
     # A retry must resume rather than overwrite what the first attempt left, which is the only
-    # thing that makes a second attempt cheaper than a second run.
+    # thing that makes a second attempt cheaper than a second run. remove_torn_checkpoints is
+    # what lets this stay false while a retry still gets past a step it died writing.
     assert config.trainer.save_overwrite is False
-    # Pruning is off because the workload role has no delete permission. At OLMo-core's
-    # default of three, the fourth save fails a run that is most of a day old.
+    # Pruning is off because the workload role is denied the delete a prune starts with. At
+    # OLMo-core's default of three, the fourth save fails a run that is most of a day old.
     assert config.trainer.callbacks["checkpointer"].max_checkpoints is None
     # Serializing is what the config saver does beside the checkpoint; a config that cannot be
     # written is one whose record of what ran does not exist.
@@ -415,6 +416,96 @@ def test_nothing_is_sent_to_wandb_when_the_platform_named_no_project(monkeypatch
     entry.leave_the_reason_in_wandb(
         run_name="run_x", stage=entry.Stage.TRAINING_ITSELF_FAILED, explanation="whatever"
     )
+
+
+def write(path: Path, contents: str = "x") -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(contents)
+    return path
+
+
+def torn(root: Path, step: int) -> Path:
+    """The directory a host lost mid-write leaves, in the shape one actually did.
+
+    ``run_019fbe1f-b84f-703a-8eb8-2b4504232948`` was terminated at step 100 immediately after
+    ``train/rank0.pt`` landed and before the first ``model_and_optim`` shard started, leaving
+    that one object and nothing else. ``rank0.pt`` first is not luck: the checkpointer writes
+    the train state, then the shards, then ``.metadata.json`` last.
+    """
+    write(root / f"step{step}" / "train" / "rank0.pt")
+    return root / f"step{step}"
+
+
+def whole(root: Path, step: int) -> Path:
+    """The three objects ``Checkpointer.dir_is_checkpoint`` requires of a full checkpoint."""
+    write(root / f"step{step}" / "train" / "rank0.pt")
+    write(root / f"step{step}" / "model_and_optim" / ".metadata")
+    write(root / f"step{step}" / ".metadata.json", '{"version": "0"}')
+    return root / f"step{step}"
+
+
+def test_a_step_directory_holding_only_the_train_state_is_torn(tmp_path):
+    """Mutation: judge a directory by whether it exists, or by whether it has any object in it.
+
+    Either reading calls this whole, and the trainer then refuses to write the step because
+    the directory is not empty, which is the failure being fixed. The judgement has to be the
+    loader's own: ``dir_is_checkpoint`` is what ``find_checkpoints`` filters on, so what a
+    resume would skip and what this clears are the same set by construction.
+    """
+    torn(tmp_path, 100)
+
+    assert entry.torn_step_directories(str(tmp_path)) == [str(tmp_path / "step100")]
+
+
+def test_a_finished_checkpoint_is_not_a_candidate_for_removal(tmp_path):
+    """The safety property, and the reason this is not ``save_overwrite=True``.
+
+    That flag clears whatever is at the target step before every save. This cannot reach a
+    directory a resume would load, because the test for the second is the test for leaving it
+    alone -- so the set of removable directories excludes every checkpoint by definition
+    rather than by nothing having gone wrong yet.
+    """
+    whole(tmp_path, 50)
+    torn(tmp_path, 100)
+
+    assert entry.remove_torn_checkpoints(str(tmp_path)) == [str(tmp_path / "step100")]
+    assert not (tmp_path / "step100").exists()
+    kept = tmp_path / "step50"
+    assert sorted(str(path.relative_to(kept)) for path in kept.rglob("*") if path.is_file()) == [
+        ".metadata.json",
+        "model_and_optim/.metadata",
+        "train/rank0.pt",
+    ]
+
+
+def test_a_weights_only_directory_is_a_checkpoint_and_is_left_alone(tmp_path):
+    # The other shape the loader accepts: a bare ``.metadata`` is model state, possibly with
+    # optimizer state, and no trainer state. Reading only the three-object shape would clear a
+    # directory somebody put there to resume weights from.
+    write(tmp_path / "step100" / ".metadata")
+
+    assert entry.torn_step_directories(str(tmp_path)) == []
+
+
+def test_nothing_outside_a_step_directory_is_a_candidate(tmp_path):
+    """Mutation: clear anything under the save folder that is not a checkpoint.
+
+    The save folder holds more than step directories. ``ConfigSaverCallback`` writes
+    ``config.json`` beside them, and that is the record of what the run was configured to do.
+    """
+    write(tmp_path / "config.json", "{}")
+    write(tmp_path / "notes" / "something.txt")
+    torn(tmp_path, 100)
+
+    assert entry.remove_torn_checkpoints(str(tmp_path)) == [str(tmp_path / "step100")]
+    assert (tmp_path / "config.json").is_file()
+    assert (tmp_path / "notes" / "something.txt").is_file()
+
+
+def test_a_save_folder_that_does_not_exist_yet_is_not_an_error(tmp_path):
+    # Every first attempt. Listing a prefix nothing has been written to raises
+    # FileNotFoundError locally and yields nothing on S3, and neither is a problem to report.
+    assert entry.remove_torn_checkpoints(str(tmp_path / "never-written")) == []
 
 
 class FakeModel:

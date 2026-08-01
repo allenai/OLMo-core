@@ -45,6 +45,12 @@ before training writes its explanation to a CloudWatch stream that no credential
 platform side may read, and Batch reports only ``exitCode`` and "Essential container in task
 exited". So the exit code carries the stage -- see ``Stage`` -- and the explanation is also
 written to W&B, which is the one place a run's own output lands that a researcher can open.
+
+WHAT A RETRY HAS TO CLEAN UP BEFORE IT CAN GET PAST THE STEP THAT KILLED IT. See
+``remove_torn_checkpoints``. Resuming correctly is not enough on its own: a second attempt
+that skips an unfinished step directory on the way in still meets it on the way out, when
+the trainer reaches that step number again and refuses to write into a directory that is
+not empty.
 """
 
 import argparse
@@ -54,6 +60,7 @@ import enum
 import json
 import logging
 import os
+import re
 import sys
 import time
 import traceback
@@ -71,7 +78,8 @@ from olmo_core.data import (
     TokenizerConfig,
 )
 from olmo_core.distributed.parallel import DataParallelType
-from olmo_core.distributed.utils import get_rank
+from olmo_core.distributed.utils import barrier, get_rank
+from olmo_core.io import clear_directory, list_directory, normalize_path
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import AdamWConfig, CosWithWarmup, OptimGroupOverride
 from olmo_core.train import (
@@ -87,6 +95,7 @@ from olmo_core.train.callbacks import (
     GPUMemoryMonitorCallback,
     WandBCallback,
 )
+from olmo_core.train.checkpoint import Checkpointer
 from olmo_core.train.train_module import (
     TransformerDataParallelConfig,
     TransformerTrainModuleConfig,
@@ -402,6 +411,90 @@ def resolve_corpus(*, dataset_id: str, version: str, tokenizer_id: str) -> Corpu
     )
 
 
+#: How OLMo-core names a checkpoint directory, and therefore where the step number is
+#: written down. ``Checkpointer.CHECKPOINT_DIR`` is the format string this matches; the
+#: pattern is spelled out rather than derived from it so that a change upstream shows up as
+#: this failing to find a directory rather than as a regex that quietly stops matching.
+STEP_DIRECTORY = re.compile(r"^step(\d+)$")
+
+
+def torn_step_directories(save_folder: str) -> List[str]:
+    """Every ``step{N}`` directory under the save folder that the library's loader refuses.
+
+    Judged by ``Checkpointer.dir_is_checkpoint``, which is the same function
+    ``find_checkpoints`` filters on, so this and the resume path agree on which directories
+    are real by construction rather than by two implementations matching.
+
+    A complete checkpoint is therefore never a candidate. That is the whole safety
+    property: the removal below cannot take a directory a resume would have loaded, because
+    the test for "would a resume load this" is the test for "leave it alone".
+
+    Sorted so the log reads in step order. Returns paths, not step numbers, because the
+    caller has to remove them and the path is what it removes.
+    """
+    try:
+        children = list(list_directory(save_folder, include_files=False))
+    except FileNotFoundError:
+        # No save folder yet, which is every first attempt.
+        return []
+    torn = [
+        path
+        for path in children
+        if STEP_DIRECTORY.match(os.path.basename(normalize_path(path))) is not None
+        and not Checkpointer.dir_is_checkpoint(path)
+    ]
+    return sorted(torn)
+
+
+def remove_torn_checkpoints(save_folder: str) -> List[str]:
+    """Clear the unfinished step directories a lost attempt left, so this one can rewrite them.
+
+    THE DEFECT THIS EXISTS FOR, AND WHY READING THE RESUME PATH DID NOT FIND IT. Killing the
+    host during a checkpoint write leaves a ``step{N}`` holding part of one -- on
+    ``run_019fbe1f-b84f-703a-8eb8-2b4504232948``, exactly ``step100/train/rank0.pt`` and
+    nothing else, because ``rank0.pt`` is written before the first ``model_and_optim`` shard
+    starts. The retry resumes from ``step50`` and skips ``step100``, correctly and by
+    design: ``find_checkpoints`` drops any directory failing ``dir_is_checkpoint`` and
+    ``latest_checkpoint`` takes the highest of what survives.
+
+    Then it trains back to step 100, saves, and ``Checkpointer._prepare_dir`` raises
+    ``FileExistsError`` on a directory that is not empty. Deterministically, at the same
+    step, on every attempt. With two attempts that is the end of the run. The read path
+    being right is what makes this so easy to miss: the resume line in the log says the
+    recovery worked, and the recovery then fails half an hour later at the write.
+
+    WHY THIS AND NOT ``save_overwrite=True``, WHICH IS THE ONE-LINE VERSION. That flag makes
+    ``_prepare_dir`` clear the target directory before every save, whatever is in it, and
+    turns every object write into an unconditional overwrite. The refusal it removes is the
+    one that caught this bug. What is removed here is only a directory the library itself
+    will not read, which is a strictly smaller set that happens to contain exactly the
+    problem, and everything else still meets ``FileExistsError`` -- so a write into a
+    directory nobody expected to be occupied stays a refusal rather than becoming a
+    silent overwrite.
+
+    Two attempts of one Batch job never run at the same time, so a directory that looks
+    unfinished here is unfinished rather than in progress. That is a property of the retry
+    and not of this function, and it is the assumption to check first if this is ever
+    reused somewhere jobs overlap.
+
+    Rank zero only, and once, because the save folder is one remote prefix that every rank
+    shares. The barrier is what stops another rank listing the directory in the middle of
+    the removal.
+    """
+    removed: List[str] = []
+    if get_rank() == 0:
+        for path in torn_step_directories(save_folder):
+            log.warning(
+                "%s is not a checkpoint the loader accepts, so an earlier attempt died "
+                "writing it; clearing it so this attempt can write that step",
+                path,
+            )
+            clear_directory(path)
+            removed.append(path)
+    barrier()
+    return removed
+
+
 def build_config(opts, overrides: List[str]):
     corpus = resolve_corpus(
         dataset_id=opts.dataset_id,
@@ -471,6 +564,12 @@ def build_config(opts, overrides: List[str]):
             # save_overwrite is false, unlike the example. The save folder here is a per-run
             # S3 prefix that a Batch retry re-derives identically, and overwriting is exactly
             # what must not happen when the second attempt is meant to resume the first.
+            #
+            # It stays false now that a retry can meet its own unfinished step directory.
+            # True would clear whatever is at the target step before every save and would
+            # overwrite every object unconditionally, which reaches finished checkpoints as
+            # well as torn ones. remove_torn_checkpoints does the narrow thing instead, and
+            # leaving this false is what keeps the refusal for the case it did not expect.
             save_overwrite=False,
             metrics_collect_interval=5,
             cancel_check_interval=5,
@@ -485,11 +584,18 @@ def build_config(opts, overrides: List[str]):
                 # interval is not below save_interval, and it refuses it in the first seconds
                 # rather than at the first save.
                 ephemeral_save_interval=None,
-                # KEEP EVERY CHECKPOINT, BECAUSE THE ROLE CANNOT DELETE ONE. The default is 3
-                # and the rest are pruned; the workload role has no s3:DeleteObject and
-                # deliberately never will, since every run writes under its own id and nothing
-                # ever needs removing. Left at the default, the fourth save fails an
-                # eleven-hour run on a permission it should never have had.
+                # KEEP EVERY CHECKPOINT, BECAUSE THE ROLE CANNOT PRUNE ONE. The default is 3
+                # and the rest are pruned. _remove_checkpoint deletes the directory's
+                # .metadata.json first, to invalidate the checkpoint before clearing it, and
+                # the workload role is denied that one key by name -- so a prune fails on its
+                # first call and the refusal reaches Trainer.fit rather than being swallowed.
+                # Left at the default, the fourth save kills an eleven-hour run.
+                #
+                # The role does hold s3:DeleteObject under checkpoints/, which is what
+                # remove_torn_checkpoints needs. A torn directory never contains
+                # .metadata.json, since that object is written last and its presence is what
+                # makes the directory complete, so the deny bounds the prune without
+                # reaching the repair.
                 max_checkpoints=None,
                 save_async=True,
             ),
@@ -628,6 +734,12 @@ def train(config, opts=None) -> None:
     cast(ConfigSaverCallback, trainer.callbacks["config_saver"]).config = config.as_config_dict()
     losses = LossWatcher()
     trainer.add_callback("edullm_losses", losses)
+
+    # Before the load rather than after it, so that the state of the save folder the loader
+    # reads is the state this attempt is going to write into. Either order resumes from the
+    # same step -- the loader skips a torn directory on its own -- and doing it first means
+    # the log says what was cleared before it says what was loaded.
+    remove_torn_checkpoints(trainer.save_folder)
 
     # maybe_load_checkpoint is what makes a second Batch attempt continue the first rather
     # than start over. It looks in the save folder, which is EDULLM_CHECKPOINT_DIR, which is
