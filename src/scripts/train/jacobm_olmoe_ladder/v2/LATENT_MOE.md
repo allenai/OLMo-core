@@ -323,9 +323,13 @@ its non-latent KDA parent. The 810M Cx1 run has now finished cleanly as well:
 its strict final-250M CE is `2.320513`, versus `2.352304` for the non-latent
 KDA parent. The 810M Cx2 run subsequently finished at `2.223199`, versus
 `2.241873` for its KDA parent. The 480M Cx4 run then finished at `2.270144`,
-versus `2.291179` for its KDA parent. At the 2026-07-31 02:33 UTC audit, the
-remaining 480M Cx8 and 810M Cx4/Cx8 cells were running, as were all four 1.2B
-cells. These scale results flow into
+versus `2.291179` for its KDA parent. The 480M Cx8, 810M Cx4, and 810M Cx8
+cells have since finished at `2.203397`, `2.139766`, and `2.074273`,
+respectively. At the 2026-08-01 18:49 UTC audit, 1.2B Cx1/Cx2/Cx4 are also
+complete at `2.213475`, `2.131599`, and `2.051686`; only 1.2B Cx8 remains
+running. The Cx1/Cx2/Cx4 Beaker workers reported teardown SIGSEGVs only after
+their complete token budgets and strict final-250M histories were recorded.
+These scale results flow into
 [`plot_kda_latent_moe.py`](plot_kda_latent_moe.py) and the shared best-of plot.
 
 ## Proposed larger LatentMoE configs
@@ -405,6 +409,10 @@ batch, and transferred LR `4e-4`. Its guarded counts are 857,245,632 active
 and 11,598,235,584 stored parameters.
 
 - [810M L=4/1,000e Cx4](https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01KYSWABKPZ9DAVYW2RGH70CAZ)
+
+The one-off control finished with strict final-250M CE `2.152349` at 60.359B
+tokens. It remains a separately labeled L=4 point in both the shared best-of
+plot and the generated larger-size results table.
 
 The 1.2B L=2 model has 512 routed experts/top-16, 1,288,818,432 active
 parameters, and 18,514,382,592 stored parameters. It reuses the balanced

@@ -1,6 +1,6 @@
 # Geometry-matched NoPE active hybrid GDN intervention
 
-Generated: `2026-07-31T21:33:59.769874+00:00`
+Generated: `2026-08-01T18:43:44.638714+00:00`
 
 Selection metric: final `250M`-token mean training CE. Only finished runs are eligible.
 The optimal-LR summary includes only bracketed 275M sweeps with a valid quadratic fit.

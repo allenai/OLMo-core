@@ -303,7 +303,9 @@ def write_results(
             )
 
     scale_rows = [
-        asdict(point) for point in points if point.variant == l2.key and point.model != "275m"
+        asdict(point)
+        for point in points
+        if point.variant in {l2.key, l4.key} and point.model != "275m"
     ]
     payload = {
         "generated_at": generated_at,
@@ -359,18 +361,19 @@ def write_results(
             "",
             "## Larger-size transferred-LR results",
             "",
-            "| Model | Cx | LR | Final-250M CE | Tokens | W&B |",
-            "|---|---:|---:|---:|---:|---|",
+            "| Variant | Model | Cx | LR | Final-250M CE | Tokens | W&B |",
+            "|---|---|---:|---:|---:|---:|---|",
         ]
     )
     for row in scale_rows:
+        label = l2.label if row["variant"] == l2.key else l4.label
         lines.append(
-            f"| {row['model']} | Cx{row['cx']} | {row['lr']:.2g} | "
+            f"| {label} | {row['model']} | Cx{row['cx']} | {row['lr']:.2g} | "
             f"{row['loss']:.6f} | {row['tokens_b']:.3f}B | "
             f"[{row['run_id']}]({row['url']}) |"
         )
     if not scale_rows:
-        lines.append("| — | — | — | — | — | no finished scale runs |")
+        lines.append("| — | — | — | — | — | — | no finished scale runs |")
     lines.extend(["", f"Uninitialized planned W&B runs: `{pending}`."])
     md_path.write_text("\n".join(lines) + "\n")
     return json_path, md_path
