@@ -47,6 +47,44 @@ ENV PYTHONPATH=/opt/olmo-core/src \
 
 WORKDIR /opt/olmo-core
 
+# A C COMPILER, BECAUSE torch.compile IS UNUSABLE WITHOUT ONE AND THE EXAMPLE TURNS IT ON.
+#
+# The registered base is a bare python image and carries no toolchain. That is invisible
+# until something compiles, and the first thing that does is Inductor: a training run built
+# from src/examples/llm/train.py sets compile_model=True, and the run dies with
+# `InductorError: RuntimeError: Failed to find C compiler. Please specify via CC
+# environment variable or set triton.knobs.build.impl.`
+#
+# Found the way these things are: a twelve-hour submission on 2026-08-01 reached the GPU,
+# built the model, wrote its first checkpoint object to S3, and died on the first compiled
+# region. Not at build time, not in a smoke test, and not until an A10G had been paid for.
+#
+# gcc rather than build-essential. Inductor and Triton shell out to a C compiler to build
+# the kernels they generate; they do not need make, dpkg-dev, or the rest of the
+# metapackage, and this image is what an untrusted training command runs inside -- so the
+# smaller toolchain is both lighter and less to reason about. g++ comes with it because
+# Inductor's CPU path emits C++.
+#
+# Pinned to no version deliberately, unlike torch above. The pin on torch exists because a
+# resolved wheel changes what the model computes; a compiler that builds a kernel and then
+# is never shipped anywhere does not, and pinning to a Debian point release would make this
+# line expire on the base's next security update.
+#
+# apt-get is the right tool here rather than an assumption: the registered base digest
+# sha256:57cd7c3a…10de resolves to Debian trixie carrying python 3.12.13, read out of the
+# image config on Docker Hub rather than inferred from the repository name. An Alpine base
+# would need apk and would not have manylinux wheels for torch either, so a base swap that
+# broke this line would already have broken the install above it.
+#
+# `cc --version` at the end of the RUN is the assertion, in the same spirit as the torch
+# checks below: it fails the build if the compiler is somehow not on PATH afterwards, which
+# is the whole condition this layer exists to guarantee.
+RUN set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends gcc g++; \
+    rm -rf /var/lib/apt/lists/*; \
+    cc --version
+
 # The build context is the repository root, so the root .dockerignore is what keeps .git
 # out of this layer, and out of the context entirely.
 COPY . .
