@@ -65,6 +65,14 @@ else
     2>&1 | tee /results/conversion.log
 fi
 
+# The training image intentionally supplies the exact Torch, FLA, and TE stack
+# used for training and strict parity. Its Transformers 5.4 cache predates the
+# native linear-attention cache layer used by KDA generation, however, so update
+# only the pure-Python HF runtime to the version locked by this checkout.
+python -m pip install --no-deps \
+  "transformers==5.14.1" \
+  "huggingface-hub==1.12.2"
+
 OLMO_HF_REQUIRE_TE_EXPERT_PARITY=1 python - "${{OUTPUT}}" <<'PY'
 import sys
 from pathlib import Path

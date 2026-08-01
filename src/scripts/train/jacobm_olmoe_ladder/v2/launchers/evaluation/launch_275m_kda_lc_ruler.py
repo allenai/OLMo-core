@@ -47,7 +47,10 @@ def command(length: int, *, dry_run: bool) -> list[str]:
         "-o",
         "batching.chunk_size=8",
         "-o",
-        'provider.dependencies=["huggingface-hub==1.12.2"]',
+        (
+            'provider.dependencies=["huggingface-hub==1.12.2",'
+            '"transformers==5.14.1"]'
+        ),
         "-n",
         f"lc-275m-kda-cx8-ruler-{length // 1024}k-hf",
         "-m",
